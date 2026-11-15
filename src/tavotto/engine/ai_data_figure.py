@@ -79,6 +79,10 @@ ERROR_CODES = (
     # v2（数据文件夹 / TSV / XLSX）：不认识的后缀、`.xls` 等旧格式、XLSX 的各种读不了（码表在 `xlsxread.ERROR_CODES`，
     # 其中与上面重名的只登记一次）
     "data_format_unsupported",
+    # v2 的文本表格（`read_text_table`）：像二进制 / 有文字但没有成列的数据 / 指定的表头行不对
+    "data_binary",
+    "data_not_table",
+    "data_header_row_invalid",
 )
 ERROR_CODES = ERROR_CODES + tuple(c for c in xlsxread.ERROR_CODES if c not in ERROR_CODES)
 
@@ -95,7 +99,31 @@ class DataSourceError(ValueError):
 
 # --------------------------------------------------------------------------- 单元格解析（与模板里的 `_cell` 同一规则）
 def parse_cell(s: str) -> tuple[str, float | None]:
-    """`(类别, 值)`：`empty` / `nan`（缺失，值为 NaN）、`numeric`（有限浮点）、`text`（不是数，值为 None）。"""
+    """`(类别, 值)`：`empty` / `nan`（缺失，值为 NaN）、`numeric`（有限浮点）、`text`（不是数，值为 None）。
+
+    **千分位**（v2）：`1,000` / `-12,345,678.9` 认成数。规则只有一条——整格（去首尾空白）是「首组 1–3 位且不以 0 开头，
+    后面每组恰好 3 位」的逗号分组整数，可跟小数点与小数：`1,000` → 1000、`1,000.5` → 1000.5；**不认**的有：`1,2` / `0,5` /
+    `12,75`（欧式小数，各组不是 3 位或首组是 0）、`1,000,5` / `1,00` / `1,0000`（乱格式）、`,100`、`1,000,`。
+    三位小数的欧式写法（`1,234` = 1.234）与千分位无法区分，按千分位读（整格就是一个写法，不做列级猜测）。
+    **这是运行时函数**：父进程与生成的脚本共用同一份源码；v1 的摘要走 `legacy_parse_cell`（不认千分位，v1 逐字不变）。"""
+    t = s.strip()
+    if not t:
+        return "empty", math.nan
+    try:
+        v = float(t)
+    except ValueError:
+        if "," in t and re.fullmatch(r"[-+]?[1-9]\d{0,2}(?:,\d{3})+(?:\.\d+)?", t):
+            return "numeric", float(t.replace(",", ""))
+        return "text", None
+    if math.isnan(v):
+        return "nan", math.nan
+    if math.isinf(v):
+        return "text", None
+    return "numeric", v
+
+
+def legacy_parse_cell(s: str) -> tuple[str, float | None]:
+    """v1 的单元格规则（不认千分位）：v1 的摘要、期望数据与脚本里的 `_cell` 是一套，**逐字不变**；只给 v1 用。"""
     t = s.strip()
     if not t:
         return "empty", math.nan
@@ -189,13 +217,19 @@ class DataSummary:
     row_count: int | None = None
     #: 与 `rows` 逐项对应的文件行号（人看到的行号，表头算第 1 行；空行被丢掉所以不是下标 + 2）；空 = 不知道，按下标 + 2
     row_numbers: list[int] = field(default_factory=list)
+    #: 文本表格的读法（v2；`read_text_table` 给，生成的脚本照抄同一组参数）：`delimiter` 是 `,` / `\t` / `;` / `ws`（连续空白）；
+    #: `header_row` 是传给 `read_delimited` 的显式表头行（1 起的物理行号），`None` = 第一条非空记录、没有说明行（老读法）；
+    #: `header_line` 是这次实际用的表头物理行号（与预览同一口径）。XLSX 与 v1 都是 None。
+    delimiter: str | None = None
+    header_row: int | None = None
+    header_line: int | None = None
 
     def row_number(self, i: int) -> int:
         return self.row_numbers[i] if i < len(self.row_numbers) else i + 2
 
     def to_dict(self) -> dict:
         """给前端 / 历史库 / 模型看的那份：**不带行数据**，只带列名、类型与计数（`privacy_policy`）。"""
-        return {
+        out = {
             "file": self.path_name,
             "sha256": self.sha256,
             "size": self.size,
@@ -208,18 +242,380 @@ class DataSummary:
             "id_like": list(self.id_like),
             "repeats": self.repeats,
         }
+        if self.header_line is not None:  # 只有 v2 的文本表格才有；v1 / XLSX 的输出逐字不变
+            out["header_row"] = self.header_line
+        return out
 
 
 #: 表格文件后缀（小写）：CSV / TSV 同一条解析，XLSX 经 `xlsxread`；旧 Excel 格式明确拒绝
 CSV_SUFFIXES = (".csv",)
 TSV_SUFFIXES = (".tsv", ".tab")
+#: 纯文本的数据导出（仪器 / 数值软件常见）：分隔符与表头行靠嗅探（`read_text_table`）；`.dat` 是二进制时归「读不了」
+TEXT_SUFFIXES = (".txt", ".dat", ".asc")
 XLSX_SUFFIXES = (".xlsx",)
-TABLE_SUFFIXES = CSV_SUFFIXES + TSV_SUFFIXES + XLSX_SUFFIXES
+TABLE_SUFFIXES = CSV_SUFFIXES + TSV_SUFFIXES + TEXT_SUFFIXES + XLSX_SUFFIXES
 LEGACY_EXCEL_SUFFIXES = xlsxread.LEGACY_SUFFIXES
 
 
 def _from_xlsx_error(exc: xlsxread.XlsxError) -> DataSourceError:
     return DataSourceError(exc.code, str(exc).partition(": ")[2])
+
+
+# --------------------------------------------------------------------------- 文本表格（v2）：嗅探 + 按读法解析
+# 两层，各一份实现：
+#   * 运行时函数（`delimited_records` / `resolve_header` / `table_from_text`）：给定**读法**（分隔符 + 表头物理行号）把文本
+#     解析成表。父进程算摘要 / 期望指纹与生成的脚本（`read_delimited`）调用的是同一份源码（`inspect.getsource` 内嵌）；
+#   * 嗅探（`_detect` / `read_text_table`）：只在父进程，从文件内容定出读法。脚本里**不嗅探**，读法以字面量写进脚本。
+# 读法 = `(delimiter, header_row)`：`delimiter` 是 `,` / `\t` / `;` / `ws`（连续空白）；`header_row` 是 1 起的**物理行号**
+# （与预览里给用户看的行号同一口径；带引号的跨行字段只占一条记录，行号仍按物理行）。
+def delimited_records(text, delimiter):
+    """全文 → `[(起始物理行号, 单元格列表)]`；全空记录（空行、只有分隔符的行）丢掉。`ws` = 每行按连续空白切；其余按 `csv` 规则。
+    **这是运行时函数**（生成的脚本里也是它）。"""
+    out = []
+    if delimiter == "ws":
+        for n, line in enumerate(re.split(r"\r\n|\r|\n", text), start=1):
+            cells = line.split()
+            if cells:
+                out.append((n, cells))
+        return out
+    reader = csv.reader(io.StringIO(text, newline=""), delimiter=delimiter)
+    prev = 0
+    for row in reader:
+        if any(c.strip() for c in row):
+            out.append((prev + 1, row))
+        prev = reader.line_num
+    return out
+
+
+def resolve_header(cells, raw, delimiter, width):
+    """显式表头行 → 列名。去掉行首的 `#` 说明标记（`# time voltage`）；`ws` 切出来的个数对不上数据列数时，改按「两个以上空白或制表符」
+    切（`Time (s)   Voltage (V)` 这种列名里带空格的）。**运行时函数**。"""
+    if delimiter == "ws":
+        t = raw.strip()
+        if t.startswith("#"):
+            t = t[1:].strip()
+        out = t.split()
+        if len(out) != width:
+            wide = [c.strip() for c in re.split(r"\s{2,}|\t", t)]
+            if len(wide) == width:
+                out = wide
+        return out
+    out = [c.strip() for c in cells]
+    if out and out[0].startswith("#"):
+        out[0] = out[0][1:].strip()
+    return out
+
+
+def table_from_text(text, delimiter, header_row=None):
+    """`(表头, 数据行, 数据行的物理行号)`。`header_row` 为 None：第一条非空记录是表头，其余都是数据（老读法，干净的 CSV / TSV 与它逐字相同）。
+    给了行号：从该行起（第一条起始行号 ≥ 它的记录）是表头，之前的行都是说明、不读；表头之后以 `#` 开头**且列数与表头不同**的行是
+    注释、丢掉（列数相同的 `#` 行是数据）。**运行时函数**：父进程与生成的脚本读出来的必然是同一张表。"""
+    records = delimited_records(text, delimiter)
+    if header_row is not None:
+        records = [r for r in records if r[0] >= header_row]
+    if not records:
+        return [], [], []
+    first_line, first = records[0]
+    rest = records[1:]
+    if header_row is None:
+        return [h.strip() for h in first], [c for _, c in rest], [n for n, _ in rest]
+    probe = next((c for _, c in rest if not c[0].lstrip().startswith("#")), None)
+    if probe is None and rest:
+        probe = rest[0][1]
+    raw = re.split(r"\r\n|\r|\n", text)[first_line - 1] if delimiter == "ws" else ""
+    header = resolve_header(first, raw, delimiter, len(probe) if probe is not None else len(first))
+    body = [(n, c) for n, c in rest if len(c) == len(header) or not c[0].lstrip().startswith("#")]
+    return header, [c for _, c in body], [n for n, _ in body]
+
+
+# --- 嗅探（只在父进程）
+#: 嗅探只看开头这么多字符（再往后只会让同一个读法重复得到验证）；整份文件仍按 `MAX_BYTES` / `MAX_ROWS` 限制读
+SNIFF_CHARS = 256 * 1024
+#: 嗅探候选的优先顺序（得分相同时靠前的赢）
+_SNIFF_ORDER = ("\t", ";", ",", "ws")
+#: 没认准时给前端的原文预览：默认前 30 行，猜的表头更靠后就多给到它后 5 行；最多 100 行、每行最多 200 字符
+PREVIEW_LINES = 30
+PREVIEW_MAX_LINES = 100
+PREVIEW_CHARS = 200
+#: 界面 / 接口里的分隔符名字（`,` 等字符本身不外露）
+DELIMITER_NAMES = {",": "comma", "\t": "tab", ";": "semicolon", "ws": "space"}
+_UNITS_CELL = re.compile(r"^[\[(（【].*[\])）】]$")
+_DECIMAL_COMMA = re.compile(r"[-+]?\d+,\d+")
+
+
+def _is_hash(cells) -> bool:
+    return cells[0].lstrip().startswith("#")
+
+
+def _numlike(cell: str) -> bool:
+    """嗅探用的「像数」：数、NaN，或欧式小数（`1,5`）——后者只用于挑分隔符，读表时仍是文字。"""
+    t = cell.strip()
+    return parse_cell(t)[0] in ("numeric", "nan") or bool(_DECIMAL_COMMA.fullmatch(t))
+
+
+def _units_like(cells) -> bool:
+    cells = [c.strip() for c in cells if c.strip()]
+    return bool(cells) and all(_UNITS_CELL.match(c) or c in UNITS for c in cells)
+
+
+def _block(records):
+    """数据块：`(列数 W, 块内记录, 非注释行数)` 或 None。W = 非 `#` 记录里最常见的列数（≥ 2；并列取更宽的）；块 = 文件末尾连续
+    列数为 W 的那一段（列数不同的 `#` 行当注释跳过）。块里至少要有 2 条记录（表头 + 一行数据）。"""
+    plain = [r for r in records if not _is_hash(r[1])]
+    pool = [r for r in (plain or records) if len(r[1]) >= 2]
+    if not pool:
+        return None
+    counts: dict[int, int] = {}
+    for _, c in pool:
+        counts[len(c)] = counts.get(len(c), 0) + 1
+    width = max(counts, key=lambda w: (counts[w], w))
+    kept = [r for r in records if not _is_hash(r[1]) or len(r[1]) == width]
+    start = len(kept)
+    while start > 0 and len(kept[start - 1][1]) == width:
+        start -= 1
+    block = kept[start:]
+    return (width, block, len(plain)) if len(block) >= 2 else None
+
+
+def _numeric_columns(block, width) -> list[int]:
+    """数值列：块里（不含第一条与 `#` 行）该列非空格子 ≥ 50% 像数。"""
+    tail = [r for r in block[1:] if not _is_hash(r[1])][-50:]
+    out = []
+    for j in range(width):
+        vals = [r[1][j].strip() for r in tail if r[1][j].strip()]
+        if vals and sum(_numlike(v) for v in vals) >= 0.5 * len(vals):
+            out.append(j)
+    return out
+
+
+def _name_like(cells) -> bool:
+    return (
+        all(c.strip() for c in cells)
+        and not any(_numlike(c) for c in cells)
+        and not _units_like(cells)
+    )
+
+
+@dataclass(frozen=True)
+class TextLayout:
+    """嗅探结果：读法 + 把握。`sure` 假 = 表头行是猜的（`header_line` 是猜的那一行）。"""
+
+    delimiter: str
+    header_line: int
+    sure: bool
+
+
+def _detect(text: str, suffix: str) -> TextLayout | None:
+    """从内容定读法；不是表（没有成列的数据）→ None。
+
+    * 候选分隔符：`.csv` / `.tsv` / `.tab` 先只试自己的（干净的老文件逐字不变），不成才试其它（分号 CSV）；其余后缀四种都试。
+    * 打分：数据块的记录数大的赢；相同则「像数」的格子占比高的赢（欧式小数 `1,5` 也算像数，所以 `1,5;2,5` 判分号、`1,5 2,5` 判空白）；
+      再相同按 制表 / 分号 / 逗号 / 空白。`.txt` / `.dat` / `.asc` 的块里必须有数值列——散文、清单不是表。
+    * 表头：块里第一条「有数值列的格子是数」的记录之前的记录是表头候选（0 条：表头可能是块外紧挨着的 `#` 行或带空格的列名行；
+      还没有 = 没有表头，猜第一行）。候选 1 条 = 认得准；≥ 2 条（标题 + 列名、列名 + 单位）= 猜第一条「像名字」的，没认准。"""
+    primary = {".csv": ",", ".tsv": "\t", ".tab": "\t"}.get(suffix)
+    sample = text
+    if len(sample) > SNIFF_CHARS:
+        cut = sample.rfind("\n", 0, SNIFF_CHARS)
+        sample = sample[: cut if cut > 0 else SNIFF_CHARS]
+    stages = (
+        [(primary,), tuple(d for d in _SNIFF_ORDER if d != primary)] if primary else [_SNIFF_ORDER]
+    )
+    for stage in stages:
+        best = None
+        for pref, d in enumerate(stage):
+            recs = delimited_records(sample, d)
+            blk = _block(recs)
+            if blk is None:
+                continue
+            width, block, _plain = blk
+            numeric = _numeric_columns(block, width)
+            if primary is None and not numeric:
+                continue
+            cells = [c.strip() for _, r in block[1:] for c in r if c.strip()]
+            frac = sum(_numlike(c) for c in cells) / len(cells) if cells else 0.0
+            key = (len(block), round(frac, 3), -pref)
+            if best is None or key > best[0]:
+                best = (key, d, width, block, numeric, recs)
+        if best is None:
+            continue
+        _key, d, width, block, numeric, recs = best
+        # 表头候选
+        k = 1
+        if numeric:
+            k = next(
+                (i for i, (_n, r) in enumerate(block) if any(_numlike(r[j]) for j in numeric)),
+                0,
+            )
+        if k >= 1:
+            cands = [r for r in block[:k] if not _is_hash(r[1])] or block[
+                :k
+            ]  # 与表头同列数的 `#` 行是注释
+            pick = next((r for r in cands if _name_like(r[1])), cands[0])
+            return TextLayout(d, pick[0], len(cands) == 1)
+        first_line = block[0][0]
+        prev = next((r for r in reversed(recs) if r[0] < first_line), None)
+        if prev is not None:
+            raw = re.split(r"\r\n|\r|\n", sample)[prev[0] - 1] if d == "ws" else ""
+            hdr = resolve_header(prev[1], raw, d, width)
+            if (_is_hash(prev[1]) or d == "ws") and len(hdr) == width and all(hdr):
+                return TextLayout(d, prev[0], True)
+        return TextLayout(d, first_line, False)
+    return None
+
+
+def _preview(text: str, guess: int) -> tuple[tuple[int, str], ...]:
+    """没认准时给用户点的那几行原文：`((物理行号, 原文),…)`。行数与每行长度都有上界；控制字符换成空格（表里的文字是不可信输入，只显示）。"""
+    lines = re.split(r"\r\n|\r|\n", text, maxsplit=PREVIEW_MAX_LINES)[:PREVIEW_MAX_LINES]
+    last = min(len(lines), max(PREVIEW_LINES, guess + 5))
+    out = []
+    for n in range(1, last + 1):
+        t = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", " ", lines[n - 1])
+        out.append((n, t if len(t) <= PREVIEW_CHARS else t[: PREVIEW_CHARS - 1] + "…"))
+    return tuple(out)
+
+
+@dataclass(frozen=True)
+class TextTable:
+    """`read_text_table` 的结果。`status`：`ok`（认得准）/ `unsure`（能读成列但表头行是猜的）/ `unreadable`（读不了，`code` 是 `ERROR_CODES` 里的稳定码）。
+    `preview` 只在 `unsure` 时有（原文行，有上界）；`summary` 在 `unreadable` 时为 None，`unsure` 且猜的表头读不出合格的表（空 / 重复列名）时也为 None。"""
+
+    status: str
+    code: str | None = None
+    delimiter: str | None = None
+    header_line: int | None = None
+    columns: int | None = None
+    rows: int | None = None
+    preview: tuple[tuple[int, str], ...] = ()
+    summary: DataSummary | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "status": self.status,
+            "code": self.code,
+            "delimiter": DELIMITER_NAMES.get(self.delimiter) if self.delimiter else None,
+            "header_row": self.header_line,
+            "columns": self.columns,
+            "rows": self.rows,
+            "preview": [{"line": n, "text": t} for n, t in self.preview],
+        }
+
+
+def _unreadable(code: str) -> TextTable:
+    return TextTable("unreadable", code=code)
+
+
+def read_text_table(
+    path: str | Path, *, header_row: int | None = None, keep_rows: bool = True
+) -> TextTable:
+    """读一个文本表格（`.csv` / `.tsv` / `.tab` / `.txt` / `.dat` / `.asc`）：嗅探读法 → 按读法解析 → 受控摘要。**不抛异常**，读不了就是
+    `status == "unreadable"`。`header_row`（1 起的物理行号）是调用方指定的「每列名字在第几行」，不给就用嗅探的。
+
+    上限沿用 `MAX_BYTES` / `MAX_ROWS` / `MAX_COLUMNS`。只读：数据文件不被改写。后缀是 `.csv` / `.tsv` / `.tab` 而嗅探不出读法时，
+    退回老读法（第一行是表头、按后缀分隔），错误码与 v1 逐字相同。"""
+    p = Path(path)
+    suffix = p.suffix.lower()
+    try:
+        size = p.stat().st_size
+        if size > MAX_BYTES:
+            return _unreadable("data_too_large")
+        raw = p.read_bytes()
+    except OSError:
+        return _unreadable("data_unreadable")
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return _unreadable("data_decode_error")  # UTF-16：不是 UTF-8，读不了（不是二进制）
+    if b"\x00" in raw:
+        return _unreadable("data_binary")
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return _unreadable("data_decode_error")
+    if sum(1 for ch in text if ch < " " and ch not in "\t\r\n\f") > max(8, len(text) // 50):
+        return _unreadable("data_binary")  # 控制字符占 2% 以上：不是文本
+    if not text.strip():
+        return _unreadable("data_empty")
+    if text.count("\n") + text.count("\r") > 2 * MAX_ROWS + 1000:
+        return _unreadable("data_too_long")
+    sha = hashlib.sha256(raw).hexdigest()
+    try:
+        layout = _detect(text, suffix)
+    except csv.Error:
+        return _unreadable("data_malformed")
+    if layout is None:
+        if suffix not in CSV_SUFFIXES + TSV_SUFFIXES:
+            return _unreadable("data_not_table")
+        delim = "\t" if suffix in TSV_SUFFIXES else ","
+        layout = TextLayout(delim, 0, True)  # 老读法：行号 0 = 「第一条非空记录」
+    delim = layout.delimiter
+    lines = re.split(r"\r\n|\r|\n", text)
+    if header_row is not None and not 1 <= header_row <= len(lines):
+        return _unreadable("data_header_row_invalid")
+    if layout.header_line == 0 and header_row is None:
+        # 老读法（嗅探不出）：错误码与 v1 一致，行号按记录序号（与 v1 一致）
+        try:
+            table = list(csv.reader(io.StringIO(text, newline=""), delimiter=delim))
+        except csv.Error:
+            return _unreadable("data_malformed")
+        try:
+            summ = _summarize(
+                table,
+                path_name=p.name,
+                sha256=sha,
+                size=size,
+                keep_rows=keep_rows,
+                row_numbers=list(range(1, len(table) + 1)),
+                parse=parse_cell,
+                delimiter=delim,
+                header_line=1,
+            )
+        except DataSourceError as exc:
+            return _unreadable(exc.code)
+        return TextTable(
+            "ok", delimiter=delim, header_line=1, columns=len(summ.columns),
+            rows=summ.row_count if summ.row_count is not None else len(summ.rows), summary=summ,
+        )  # fmt: skip
+    line = header_row if header_row is not None else layout.header_line
+    # 读法里的 header_row：干净的老文件（首行表头、非空白分隔、没有 `#` 行）仍写 None，脚本与 v1 / 老版同一行；其余一律显式
+    first_physical = next((i + 1 for i, ln in enumerate(lines) if ln.strip()), 1)
+    script_header: int | None = line
+    if delim != "ws" and line == first_physical and not re.search(r"(?m)^\s*#", text):
+        script_header = None
+    try:
+        header, rows, row_lines = table_from_text(text, delim, script_header)
+    except csv.Error:
+        return _unreadable("data_malformed")
+    if not header:
+        return _unreadable("data_header_row_invalid" if header_row is not None else "data_empty")
+    guessed = not layout.sure and header_row is None
+    try:
+        summ = _summarize(
+            [header, *rows],
+            path_name=p.name,
+            sha256=sha,
+            size=size,
+            keep_rows=keep_rows,
+            row_numbers=[line, *row_lines],
+            parse=parse_cell,
+            delimiter=delim,
+            header_row=script_header,
+            header_line=line,
+        )
+    except DataSourceError as exc:
+        if guessed and exc.code == "data_header_invalid":
+            return TextTable(
+                "unsure", delimiter=delim, header_line=line, columns=len(header),
+                preview=_preview(text, line),
+            )  # fmt: skip
+        return _unreadable(exc.code)
+    return TextTable(
+        "unsure" if guessed else "ok",
+        delimiter=delim,
+        header_line=line,
+        columns=len(summ.columns),
+        rows=summ.row_count if summ.row_count is not None else len(summ.rows),
+        preview=_preview(text, line) if guessed else (),
+        summary=summ,
+    )
 
 
 def _read_delimited(p: Path, delimiter: str) -> tuple[list[list[str]], str, int]:
@@ -242,10 +638,20 @@ def _read_delimited(p: Path, delimiter: str) -> tuple[list[list[str]], str, int]
     return table, hashlib.sha256(raw).hexdigest(), size
 
 
-def inspect_data_source(path: str | Path, sheet: str | int | None = None) -> DataSummary:
+def inspect_data_source(
+    path: str | Path,
+    sheet: str | int | None = None,
+    *,
+    v2: bool = False,
+    header_row: int | None = None,
+) -> DataSummary:
     """读一份表的受控摘要。后缀 `.tsv` / `.tab` 按制表符分隔、`.xlsx` 读 `sheet`（表名 / 序号 0 起 / `None` = 第一张可见表）、
     `.xls` / `.xlsm` / `.xlsb` 拒绝（`data_excel_unsupported`）；**其余一律按 CSV 读**（v1 行为不变：后缀的白名单由调用方
-    管，如 `ai_data_task` 的 `data_not_csv`）。UTF-8 / UTF-8 BOM。调用方负责路径在项目内（`contained_path`）。"""
+    管，如 `ai_data_task` 的 `data_not_csv`）。UTF-8 / UTF-8 BOM。调用方负责路径在项目内（`contained_path`）。
+
+    `v2=True`（数据出图 v2 的读法，v1 不传）：文本格式走 `read_text_table`（嗅探分隔符、跳过说明行、找表头行，`.txt` / `.dat` / `.asc` 也认；
+    `header_row` 是调用方指定的表头物理行号），单元格规则认千分位（`1,000`）；读不了抛 `DataSourceError`（稳定码）。XLSX 的读法不变，
+    只是同样认千分位的文字格。"""
     p = Path(path)
     suffix = p.suffix.lower()
     if suffix in LEGACY_EXCEL_SUFFIXES:
@@ -253,9 +659,14 @@ def inspect_data_source(path: str | Path, sheet: str | int | None = None) -> Dat
     if suffix in XLSX_SUFFIXES:
         try:
             with xlsxread.XlsxBook(p) as book:
-                return _summarize_book(book, sheet)
+                return _summarize_book(book, sheet, parse=parse_cell if v2 else None)
         except xlsxread.XlsxError as exc:
             raise _from_xlsx_error(exc) from None
+    if v2:
+        info = read_text_table(p, header_row=header_row)
+        if info.summary is None:
+            raise DataSourceError(info.code or "data_header_invalid")
+        return info.summary
     table, sha, size = _read_delimited(p, "\t" if suffix in TSV_SUFFIXES else ",")
     return _summarize(
         table,
@@ -267,7 +678,7 @@ def inspect_data_source(path: str | Path, sheet: str | int | None = None) -> Dat
 
 
 def _summarize_book(
-    book: xlsxread.XlsxBook, sheet: str | int | None, *, keep_rows: bool = True
+    book: xlsxread.XlsxBook, sheet: str | int | None, *, keep_rows: bool = True, parse=None
 ) -> DataSummary:
     info = book.resolve(sheet)
     table = book.read(info.index)
@@ -279,6 +690,7 @@ def _summarize_book(
         size=book.size,
         sheet=info.name,
         keep_rows=keep_rows,
+        parse=parse,
     )
 
 
@@ -291,7 +703,13 @@ def _summarize(
     sheet: str | None = None,
     keep_rows: bool = True,
     row_numbers: list[int] | None = None,
+    parse=None,
+    delimiter: str | None = None,
+    header_row: int | None = None,
+    header_line: int | None = None,
 ) -> DataSummary:
+    #: 单元格规则：默认 v1 的（不认千分位）；v2 传 `parse_cell`
+    parse = parse or legacy_parse_cell
     numbered = (
         list(zip(row_numbers, table)) if row_numbers and len(row_numbers) == len(table) else None
     )
@@ -323,7 +741,7 @@ def _summarize(
     for r in rows:
         for h, cell in zip(header, r):
             s = per[h]
-            cls, _ = parse_cell(cell)
+            cls, _ = parse(cell)
             if cls == "text":
                 s.text_count += 1
                 if parse_date(cell) is not None:
@@ -335,7 +753,7 @@ def _summarize(
                     lv.add(cell.strip())
             else:
                 setattr(s, cls, getattr(s, cls) + 1)
-    layout, groups, id_like, repeats = _structure(header, rows, per, levels)
+    layout, groups, id_like, repeats = _structure(header, rows, per, levels, parse)
     return DataSummary(
         path_name=path_name,
         sha256=sha256,
@@ -350,6 +768,9 @@ def _summarize(
         repeats=repeats,
         row_count=None if keep_rows else len(rows),
         row_numbers=list(row_numbers[1:]) if row_numbers and keep_rows else [],
+        delimiter=delimiter,
+        header_row=header_row,
+        header_line=header_line,
     )
 
 
@@ -392,6 +813,7 @@ def _structure(
     rows: list[list[str]],
     per: dict[str, ColumnSummary],
     levels: dict[str, set[str]],
+    parse=None,
 ) -> tuple[str, dict[str, int], list[str], bool | None]:
     """`(layout, groups, id_like, repeats)`。全部保守：拿不准就 `unknown` / 空 / None，不猜。定义（一处，下面是实现）：
 
@@ -408,6 +830,7 @@ def _structure(
       `long` = 有 groups、没有混合列，且数值列恰有 1 或 2 个（一个值列，可再有一个 x / 时间列）；
       `wide` = 没有 groups、没有混合列，第一列是数 / 日期 / 互不相同的文字，其余**至少 2 列**全是数（行 = 位置，列 = 系列）。
       单个 y 的两列表 `x, y`、分组加多个数值列、带备注文字列的表，一律 `unknown`。"""
+    parse = parse or legacy_parse_cell
     n = len(rows)
     groups: dict[str, int] = {}
     for h in header:
@@ -424,7 +847,7 @@ def _structure(
             continue
         vals = [r[col_of[h]].strip() for r in rows]
         vals = [v for v in vals if v]
-        if s.kind == "numeric" and not all(float(v).is_integer() for v in vals):
+        if s.kind == "numeric" and not all(parse(v)[1].is_integer() for v in vals):
             continue
         distinct = len(set(vals))
         if distinct < 2:
@@ -522,8 +945,11 @@ class FolderProfile:
         }
 
 
-def profile_folder(root: str | Path) -> FolderProfile:
+def profile_folder(root: str | Path, header_rows: dict[str, int] | None = None) -> FolderProfile:
     """一个文件夹里全部表（`.csv` / `.tsv` / `.tab` / `.xlsx`，后缀大小写不敏感）的受控摘要。
+
+    `header_rows`：`{相对路径: 表头物理行号}`，调用方按文件指定「每列名字在第几行」；键只和遍历结果逐字比对（不拼路径）。
+    文本格式（含 `.txt` / `.dat` / `.asc`）一律经 `read_text_table`；单元格规则认千分位。
 
     遍历规则就是 `discover.walk_files`（与 `/api/ai/data-files` 同一份：隐藏 / `PRUNE_DIRS` 剪枝、不跟随链接）；按相对
     POSIX 路径排序，XLSX 内按工作簿里的表顺序（隐藏表也列，`hidden=True`）。`.xls` / `.xlsm` / `.xlsb` 进 `skipped`
@@ -578,7 +1004,7 @@ def profile_folder(root: str | Path) -> FolderProfile:
                         reason = "tables"
                         break
                     try:
-                        summ = _summarize_book(book, info.index, keep_rows=False)
+                        summ = _summarize_book(book, info.index, keep_rows=False, parse=parse_cell)
                     except (DataSourceError, xlsxread.XlsxError) as exc:
                         if not skip(rel, info.name, exc.code):
                             break
@@ -592,17 +1018,16 @@ def profile_folder(root: str | Path) -> FolderProfile:
                 break
             continue
         try:
-            table, sha, size = _read_delimited(p, "\t" if suffix in TSV_SUFFIXES else ",")
-            summ = _summarize(table, path_name=p.name, sha256=sha, size=size, keep_rows=False)
-        except DataSourceError as exc:
-            if not skip(rel, None, exc.code):
+            info = read_text_table(p, header_row=(header_rows or {}).get(rel), keep_rows=False)
+        except Exception:  # noqa: BLE001 - 单个文件的任何意外都不该拖垮整个文件夹
+            info = TextTable("unreadable", code="data_unreadable")
+        if info.summary is None:
+            if info.code == "data_not_table":
+                continue  # README / 清单这类散文不是数据，不当成「读不了的数据」占名额
+            if not skip(rel, None, info.code or "data_header_invalid"):
                 break
             continue
-        except Exception:  # noqa: BLE001
-            if not skip(rel, None, "data_unreadable"):
-                break
-            continue
-        tables.append(TableEntry(rel, None, False, summ))
+        tables.append(TableEntry(rel, None, False, info.summary))
     if reason is None and scan_truncated:
         reason = "scan"
     return FolderProfile(tuple(tables), tuple(skipped), reason is not None, reason)
@@ -614,7 +1039,8 @@ def apply_cells(header, rows, rules):
     **这是运行时函数**：父进程算期望值与生成的脚本调用同一份源码（`inspect.getsource` 内嵌进公共模块）。
 
     `rules`：`[(列名, 方式, 映射, 其余)]`。方式 `skip`：文字格当缺失（该行这一格不画、不计 n，折线在那里断开，同空格）；
-    `extract`：取格子里**第一个**数（`12.5*` → 12.5、`<0.5` → 0.5、`3.2 mg` → 3.2），取不出就当缺失；`map`：原文（去首尾空白后精确匹配）
+    `extract`：取格子里**第一个**数（`12.5*` → 12.5、`<0.5` → 0.5、`3.2 mg` → 3.2、`<1,000` → 1000，千分位规则同 `parse_cell`；
+    `1,2` / `1,000,5` 这类不是千分位写法的，仍只取逗号前那个数 1），取不出就当缺失；`map`：原文（去首尾空白后精确匹配）
     → 数或 None（缺失），不在映射里的按「其余」（`skip` / `extract`）。非文字格（数、空、NaN）一律原样。
     返回 `(新行, 说明, 统计)`：说明是图下方写的几句英文（每列一句，没有可说的不写），统计是 `[{列, 方式, 忽略, 取数, 映射}]`。"""
     idx = {h: i for i, h in enumerate(header)}
@@ -637,12 +1063,15 @@ def apply_cells(header, rows, rules):
                 continue
             how = rest if mode == "map" else mode
             m = (
-                re.search(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?", text)
+                re.search(
+                    r"[-+]?(?:[1-9]\d{0,2}(?:,\d{3})+(?:\.\d+)?(?![\d,])|\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?",
+                    text,
+                )
                 if how == "extract"
                 else None
             )
             if m is not None:
-                r[i] = repr(float(m.group(0)))
+                r[i] = repr(float(m.group(0).replace(",", "")))
                 extracted += 1
             else:
                 r[i] = ""
@@ -811,7 +1240,7 @@ def plotted_data(summary: DataSummary, mapping: Mapping) -> Plotted:
                 d = parse_date(row[xi])
                 xv = date_number(d) if d is not None else None
             else:
-                cls, xv = parse_cell(row[xi])
+                cls, xv = legacy_parse_cell(row[xi])
                 if cls != "numeric":
                     xv = None
             if xv is None:
@@ -819,7 +1248,7 @@ def plotted_data(summary: DataSummary, mapping: Mapping) -> Plotted:
                 continue
             xs.append(xv)
             for y in mapping.ys:
-                cls, v = parse_cell(row[summary.columns.index(y)])
+                cls, v = legacy_parse_cell(row[summary.columns.index(y)])
                 if cls == "text":
                     not_plotted.append({"row": n, "column": y, "reason": "not_a_number"})
                     v = math.nan
@@ -834,7 +1263,7 @@ def plotted_data(summary: DataSummary, mapping: Mapping) -> Plotted:
         yi = summary.columns.index(y)
         heights: list[float] = []
         for n, row in enumerate(summary.rows, start=2):
-            cls, v = parse_cell(row[yi])
+            cls, v = legacy_parse_cell(row[yi])
             if cls != "numeric":
                 not_plotted.append(
                     {

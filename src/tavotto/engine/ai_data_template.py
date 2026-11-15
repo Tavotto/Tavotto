@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import ast
 import bisect
-import csv
 import datetime
 import functools
 import hashlib
@@ -38,7 +37,15 @@ import re
 from dataclasses import dataclass
 
 from . import ai_data_figure as adf, ai_data_recipe as recipe_mod, xlsxread
-from .ai_data_figure import apply_cells, date_number, parse_cell, parse_date
+from .ai_data_figure import (
+    apply_cells,
+    date_number,
+    delimited_records,
+    parse_cell,
+    parse_date,
+    resolve_header,
+    table_from_text,
+)
 
 # --------------------------------------------------------------------------- 错误
 TEMPLATE_ERROR_CODES = (
@@ -64,11 +71,13 @@ class TemplateError(ValueError):
 _ISO_DATE_PREAMBLE = 'import datetime as _dt\n_ISO_DATE = re.compile(r"\\d{4}-\\d{2}-\\d{2}")\n_EPOCH = _dt.date(1970, 1, 1)\n'
 
 
-def read_delimited(path, delimiter):
-    """CSV / TSV → `(表头, 数据行)`：UTF-8（可带 BOM）；全空行不算数据行；表头去首尾空白。"""
+def read_delimited(path, delimiter, header_row=None):
+    """文本表格 → `(表头, 数据行)`：UTF-8（可带 BOM）；全空行不算数据行；表头去首尾空白。`delimiter` 是 `,` / `\t` / `;` / `ws`（连续空白）；
+    `header_row`（1 起的物理行号）不给 = 第一条非空记录是表头，给了 = 跳过它之前的说明行（读法全文在 `table_from_text`，Tavotto 读出来的是同一张表）。"""
     with open(path, newline="", encoding="utf-8-sig") as fh:
-        table = [r for r in csv.reader(fh, delimiter=delimiter) if any(c.strip() for c in r)]
-    return [h.strip() for h in table[0]], table[1:]
+        text = fh.read()
+    header, rows, _lines = table_from_text(text, delimiter, header_row)
+    return header, rows
 
 
 def read_xlsx(path, sheet):
@@ -617,6 +626,9 @@ RUNTIME_FUNCTIONS = (
     parse_cell,
     parse_date,
     date_number,
+    delimited_records,
+    resolve_header,
+    table_from_text,
     read_delimited,
     read_xlsx,
     apply_cells,
@@ -973,6 +985,7 @@ def _runtime_source() -> str:
         "",
         "import bisect",
         "import csv",
+        "import io",
         "import math",
         "import re",
         "",
@@ -1160,8 +1173,7 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
     if is_xlsx:
         reader = "read_xlsx(DATA, SHEET)"
     else:
-        delim = "'\\t'" if entry.path.lower().endswith((".tsv", ".tab")) else "','"
-        reader = f"read_delimited(DATA, {delim})"
+        reader = _reader_expr(entry, False)
     L += ["", "", "def main():"]
     main_at = len(L)
     L += _read_lines(recipe, reader)
@@ -1321,8 +1333,7 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
     if is_xlsx:
         reader = "read_xlsx(DATA, SHEET)"
     else:
-        delim = "'\\t'" if entry.path.lower().endswith((".tsv", ".tab")) else "','"
-        reader = f"read_delimited(DATA, {delim})"
+        reader = _reader_expr(entry, False)
     L += ["", "", "def main():"]
     main_at = len(L)
     L += _read_lines(recipe, reader)
@@ -1572,10 +1583,15 @@ def _render_distribution(entry, recipe, data_rel, stem, style) -> str:
 
 
 def _reader_expr(entry, is_xlsx: bool) -> str:
+    """脚本里读表那一句。文本表格的读法（分隔符 + 显式表头行）取自摘要（`read_text_table` 嗅探 / 调用方指定的结果），以字面量写进脚本——
+    脚本不嗅探；Tavotto 算期望值读表用的是同一组参数（同一个 `table_from_text`），所以脚本读出来的和预览 / 资格判定读出来的是同一张表。
+    老读法（首行表头、按后缀分隔）写成 `read_delimited(DATA, ',')`，与此前生成的脚本逐字相同。"""
     if is_xlsx:
         return "read_xlsx(DATA, SHEET)"
-    delim = "'\\t'" if entry.path.lower().endswith((".tsv", ".tab")) else "','"
-    return f"read_delimited(DATA, {delim})"
+    s = entry.summary
+    delim = s.delimiter or ("\t" if entry.path.lower().endswith((".tsv", ".tab")) else ",")
+    args = [repr(delim)] + ([repr(s.header_row)] if s.header_row is not None else [])
+    return f"read_delimited(DATA, {', '.join(args)})"
 
 
 def _group_legend(style) -> list[str]:

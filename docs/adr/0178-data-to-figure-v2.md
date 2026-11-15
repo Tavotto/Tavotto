@@ -104,6 +104,22 @@ worker 以项目里的显示路径为 `__file__`），这里不能照搬——�
 id 是服务端登记的不透明串）、`POST /api/ai/data-figure/commit`（`{session, id, client_request_id?}`）、`POST /api/ai/data-figure/discard`（放弃会话，幂等）；`/api/ai/data-files` 扩到
 `.csv / .tsv / .tab / .xlsx`，XLSX 带 `sheets: [{name, hidden}]`。旧的 `POST /api/ai/data-figure`（v1）不变。遥测不新增事件（本 PR 不改 `CONSENT_VERSION`）。
 
+## 文本表格：`.txt` / `.dat` / 嗅探 / 表头行覆盖 / 千分位（`ai_data_figure.read_text_table`）
+
+第一版只做文本格式（`.mat` / `.npy` / HDF5 等二进制以后再说；`.xlsx` 读法不动）。整件事在 `ai.taf.enabled` 后面；v1（`inspect_data_source` 默认分支、v1 模板的 `_cell`）**逐字不变**——新读法只在 `v2=True` 时启用。
+
+**读法 = `(分隔符, 表头物理行号)`，只有一份解析实现。** 分隔符 `,` / `\t` / `;` / `ws`（连续空白）；行号是 1 起的**物理行**（与给用户看的原文预览同一口径，说明行与空行都占号）。解析（`delimited_records` / `resolve_header` / `table_from_text`）是运行时函数：父进程算摘要与期望指纹、生成的脚本里的 `read_delimited(DATA, 分隔符[, 表头行])` 调用**同一份源码**（`inspect.getsource` 进公共模块）；嗅探（`_detect`）只在父进程，读法以字面量写进脚本，脚本不嗅探。干净的 CSV / TSV 读法仍是 `read_delimited(DATA, ',')`，与此前生成的脚本逐字相同（公共模块多了函数，哈希随之换名，新旧并存）。表头行显式时：它之前的行不读；表头首格的 `#` 标记去掉；`ws` 切出的列数对不上数据时改按「两个以上空白」切（`Time (s)   Voltage (V)`）；表头之后以 `#` 开头**且列数与表头不同**的行是注释、丢掉（列数相同的 `#` 行是数据）。
+
+**嗅探规则**：`.csv` / `.tsv` / `.tab` 先只试自己的分隔符（干净老文件不变），读不成才试别的（分号 CSV）；`.txt` / `.dat` / `.asc` 四种都试。数据块 = 文件末尾连续列数一致（≥ 2 列、≥ 2 条记录）的一段；块大者胜，相同则「像数」的格子占比高者胜（欧式小数 `1,5` 也算像数，仅用于挑分隔符），再相同按 制表 / 分号 / 逗号 / 空白。`.txt` 等必须有数值列（README、清单不是表）。嗅探只看开头 256 KiB，整份文件仍按 `MAX_BYTES`（5 MiB）/ `MAX_ROWS` / `MAX_COLUMNS` 读。表头：块里第一条「数值列有数」的记录之前的记录是候选；1 条 = 认得准，≥ 2 条（标题 + 列名、列名 + 单位）= 猜第一条像名字的、没认准；0 条时看块外紧挨着的 `#` 行或带空格的列名行，都没有 = 没有表头、猜第一行、没认准。猜的表头读出来列名为空 / 重复也是「没认准」（不是读不了），用户点另一行即可。
+
+**状态与接口**。`read_text_table(path, header_row=None) -> TextTable`（**不抛**）：`status` 三选一 `ok` 认得准 / `unsure` 没认准 / `unreadable` 读不了（稳定码：`data_binary`（NUL 或控制字符 ≥ 2%）、`data_decode_error`（非 UTF-8、UTF-16）、`data_not_table`（没有成列的数据）、`data_empty`、`data_too_large`、`data_too_long`、`data_too_wide`、`data_ragged`、`data_header_row_invalid`…）。`GET /api/ai/data-files?formats=all` 给每个文本文件加 `table: {status, code, delimiter: comma|tab|semicolon|space, header_row, columns, rows, preview}`；默认（只列 CSV）的响应**不变**、没有该字段。`preview: [{line, text}]` 只在 `unsure` 时有：前 30 行（猜的行更靠后则多给到它后 5 行），最多 100 行、每行最多 200 字符、控制字符换空格（表里的文字不可信，只显示）。最多读 100 个文件、合计 64 MiB，超出的 `table` 是 `null`（不是「读不了」）。`.txt` 等散文（`data_not_table`）不进 `profile_folder` 的 `skipped`。
+
+**表头行覆盖**。`POST /api/ai/data-figure/propose` 新增 `header_rows: {表路径（相对 folder，同 table）: 物理行号}`：形状校验（≤ 64 项、整数、不收布尔）后只与遍历结果（`discover.walk_files`）**逐字比对**，不拿来拼路径；`profile_folder` / `with_explicit_table` / `_table_for_values` 都按它读，实际用的行号记进 `Session.header_line` → `Selection.header_line`，提交按同一读法重读、不重新嗅探；它进幂等摘要（同请求号不同表头行不会拿到旧答案）。按指定行读不出来（`data_header_row_invalid` / `data_ragged`…）→ 400 + 稳定码。
+
+**千分位**（`parse_cell`，v2 与脚本共用；v1 走 `legacy_parse_cell`）：整格是「首组 1–3 位且不以 0 开头、其后每组恰好 3 位」的逗号分组整数，可带小数——`1,000` → 1000、`-12,345.5` → -12345.5。不认：`1,2` / `0,5` / `12,75`（欧式小数）、`1,000,5` / `1,00` / `1,0000` / `0,123` / `01,000`（乱格式）。纯千分位的整列是数值列，不触发「混了文字」；千分位列里夹 `1,5` 仍是混列、先问用户。`apply_cells` 的「取数字」同规则：`<1,000` → 1000；不是千分位写法的仍取逗号前的数（`1,2` → 1）。已知歧义：三位小数的欧式写法（`1,234` = 1.234）与千分位无法区分，按千分位读。XLSX 的文字格同样认千分位（读法不动）。
+
+**没做**：非 UTF-8 编码（GBK / UTF-16）自动识别、无表头文件自动编列名（`header_row = 0`）、按覆盖值重新预览的接口（前端用 propose 的结果与 400 码）、`.mat` / `.npy` / HDF5。
+
 ## 注入分析：Agent 能读整个文件，表里的文字能影响模型
 
 表里的文字（列名、单元格、工作表名）可以诱导模型，但**模型能交出的只有一份闭集配方**：未知键、未知取值、层数不对、`why` 含换行都在 `from_dict` 当场拒收；
