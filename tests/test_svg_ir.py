@@ -561,6 +561,37 @@ def test_clip_union_roundtrips_svg_with_each_child_rule(tmp_path, provider):
     assert image.getpixel((100, 100)) == (255, 0, 0)
 
 
+def test_nested_clip_path_on_a_clip_definition_is_rejected_not_widened():
+    """clipPath / 其内部 g 上的 clip-path 需要交集；IR 只有并集，必须显式拒绝。"""
+    from support.fakeface import FakeProvider
+
+    for body in (
+        '<defs><clipPath id="inner"><rect width="10" height="10"/></clipPath>'
+        '<clipPath id="outer" clip-path="url(#inner)">'
+        '<rect width="100" height="100"/></clipPath></defs>'
+        '<rect width="100" height="100" clip-path="url(#outer)"/>',
+        '<defs><clipPath id="inner"><rect width="10" height="10"/></clipPath>'
+        '<clipPath id="outer"><g clip-path="url(#inner)">'
+        '<rect width="100" height="100"/></g></clipPath></defs>'
+        '<rect width="100" height="100" clip-path="url(#outer)"/>',
+    ):
+        with pytest.raises(SVGIRError) as ei:
+            svg_to_ir(svg(body), 100, 100, FakeProvider())
+        assert ei.value.code == "svgir_unsupported_element"
+
+
+def test_text_length_is_rejected_instead_of_ignored():
+    from support.fakeface import FakeProvider
+
+    source = svg(
+        '<text x="10" y="50" font-size="20" textLength="80" '
+        'lengthAdjust="spacingAndGlyphs">Hi</text>'
+    )
+    with pytest.raises(SVGIRError) as ei:
+        svg_to_ir(source, 100, 100, FakeProvider())
+    assert ei.value.code == "svgir_unsupported_element"
+
+
 def test_clip_union_validation_and_eps_overlay_reject_structurally(tmp_path, provider):
     from tavotto.rendercore.epswriter import OverlayWriter, UnsupportedCapability
 

@@ -53,8 +53,8 @@ class SceneError(ValueError):
 
 
 def _physical_size(root: ET.Element) -> tuple[float, float, list[float] | None]:
-    """物理 pt 尺寸与 viewBox（换算规则与 svgasset._length 同一口径）。"""
-    from tavotto.svgasset import UnsupportedSVG, _length  # noqa: PLC0415 — 延后避免环
+    """物理 pt 尺寸与 viewBox（与 svgasset.resolve_size 同一口径）。"""
+    from tavotto.svgasset import UnsupportedSVG, _length, resolve_size  # noqa: PLC0415
 
     width = root.attrib.get("width")
     height = root.attrib.get("height")
@@ -68,14 +68,10 @@ def _physical_size(root: ET.Element) -> tuple[float, float, list[float] | None]:
         if len(parts) != 4:
             raise SceneError("svg_scene_invalid", "viewBox must have 4 components")
         view_box = parts
+    if width is None and height is None and view_box is None:
+        raise SceneError("svg_scene_invalid", "no width/height and no viewBox")
     try:
-        if width is not None and height is not None:
-            w_pt = _length(width)
-            h_pt = _length(height)
-        elif view_box is not None:
-            w_pt, h_pt = _length(f"{view_box[2]}pt"), _length(f"{view_box[3]}pt")
-        else:
-            raise SceneError("svg_scene_invalid", "no width/height and no viewBox")
+        w_pt, h_pt = resolve_size(_length(width), _length(height), view_box)
     except UnsupportedSVG as exc:
         raise SceneError("svg_dimensions", str(exc)) from exc
     return w_pt, h_pt, view_box
@@ -99,9 +95,10 @@ def scene_inventory(data: bytes) -> dict:
 
     w_pt, h_pt, view_box = _physical_size(root)
 
+    reserved_ids = _explicit_ids(root)
     nodes: list[dict] = []
     truncated = False
-    used_ids: set[str] = set()
+    used_ids: set[str] = set(reserved_ids)
 
     def visit(el: ET.Element, path: str) -> None:
         nonlocal truncated
@@ -114,8 +111,7 @@ def scene_inventory(data: bytes) -> dict:
         if tag in GRAPHIC_TAGS or tag == "svg":
             node_id = el.attrib.get("id")
             if node_id:
-                if node_id in used_ids:
-                    raise SceneError("svg_scene_invalid", f"duplicate element id {node_id!r}")
+                # 显式 id 已在遍历前统一验重并预留，合成 id 不会占用它们。
                 used_ids.add(node_id)
             else:
                 # id 规则唯一出处：_logical_id（build_node_index 同源）
@@ -175,6 +171,19 @@ def scene_inventory(data: bytes) -> dict:
     }
 
 
+def _explicit_ids(root: ET.Element) -> set[str]:
+    """遍历前预留全部显式 id：合成 id 不得占用它们（与 build_node_index 同源）。"""
+    seen: set[str] = set()
+    for el in root.iter():
+        node_id = el.attrib.get("id")
+        if not node_id:
+            continue
+        if node_id in seen:
+            raise SceneError("svg_scene_invalid", f"duplicate element id {node_id!r}")
+        seen.add(node_id)
+    return seen
+
+
 def _logical_id(el: ET.Element, path: str, used: set[str]) -> str:
     """inventory 与节点索引共用的 id 规则（唯一出处；改这里两处同步）。"""
     node_id = el.attrib.get("id")
@@ -197,7 +206,7 @@ def build_node_index(root: ET.Element) -> dict[str, ET.Element]:
     任何一次重新解析中指到同一个元素（B5）。
     """
     index: dict[str, ET.Element] = {}
-    used: set[str] = set()
+    used: set[str] = set(_explicit_ids(root))
 
     def visit(el: ET.Element, path: str) -> None:
         tag = el.tag.split("}")[-1]
