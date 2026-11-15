@@ -729,3 +729,118 @@ def test_text_tables_keep_the_raw_cell_text(project):
     write(figs, "d/a.csv", "g,v\na,0.6840000000000001\nb,0.6879999999999999\nc,1\n")
     cells = [r["cells"] for r in get(client, "d/a.csv").get_json()["preview_rows"]]
     assert cells[0] == ["a", "0.6840000000000001"] and cells[1][1] == "0.6879999999999999"
+
+
+# =========================================================================== 读不了但可以靠指定表头行补救：原文行与猜的行号不丢
+CODEX_RAGGED = "Temperature,25\nInstrument,foo,bar\ntime,value\n0,1\n1,2\n2,3\n"
+FOOTER_RAGGED = "time,value\n0,1\n1,2\n2,3\ntotal,6,extra\nend\n"
+
+
+@pytest.mark.parametrize("name", ["r.txt", "r.csv", "r.dat"])
+def test_a_ragged_file_keeps_its_raw_lines_and_guessed_row_and_the_right_row_reads(project, name):
+    m, client, figs, _ = project
+    write(figs, f"d/{name}", CODEX_RAGGED)
+    body = get(client, f"d/{name}").get_json()
+    assert body["status"] == "unreadable" and body["code"] == "data_ragged"
+    assert body["raw_lines"][:3] == [
+        {"line": 1, "text": "Temperature,25"},
+        {"line": 2, "text": "Instrument,foo,bar"},
+        {"line": 3, "text": "time,value"},
+    ], "原文行给出去：这就是「可以让用户点一行」的信号"
+    assert body["header_row"] == 1 and body["delimiter"] == "comma", "猜的行号与分隔符"
+    assert body["rows"] is None and body["fields"] == []
+    again = get(client, f"d/{name}", header_row=3).get_json()
+    assert again["status"] == "ok" and again["code"] is None and again["header_row"] == 3
+    assert [f["name"] for f in again["fields"]] == ["time", "value"] and again["rows"] == 3
+    assert [r["cells"] for r in again["preview_rows"]] == [["0", "1"], ["1", "2"], ["2", "3"]]
+    assert again["raw_lines"] == []
+    assert [x["line"] for x in again["lead_lines"]] == [1, 2]
+
+
+def test_a_footer_triggered_ragged_file_also_keeps_the_raw_lines(project):
+    m, client, figs, _ = project
+    write(figs, "d/f.csv", FOOTER_RAGGED)
+    body = get(client, "d/f.csv").get_json()
+    assert body["status"] == "unreadable" and body["code"] == "data_ragged"
+    texts = [x["text"] for x in body["raw_lines"]]
+    assert "total,6,extra" in texts and "end" in texts
+    # 指定别的行也救不了（页脚还在表里）：仍读不了，仍带原文，用户可以再点
+    again = get(client, "d/f.csv", header_row=1).get_json()
+    assert again["status"] == "unreadable" and again["code"] == "data_ragged"
+    assert again["raw_lines"] and again["header_row"] == 1
+
+
+@pytest.mark.parametrize(
+    ("text", "row", "code"),
+    [
+        (CODEX_RAGGED, 1, "data_ragged"),  # 指定的行读出来仍有畸形行
+        (CODEX_RAGGED, 99, "data_header_row_invalid"),  # 行号超出文件
+        ("a,a\n1,2\n3,4\n5,6\n", 1, "data_header_invalid"),  # 指定的行列名重复
+        ("x,y\n1,2\n\n\n", 4, "data_header_row_invalid"),  # 指定的是空行
+    ],
+)
+def test_a_wrong_row_is_still_unreadable_and_still_has_raw_lines(project, text, row, code):
+    m, client, figs, _ = project
+    write(figs, "d/w.csv", text)
+    body = get(client, "d/w.csv", header_row=row).get_json()
+    assert body["status"] == "unreadable" and body["code"] == code
+    assert body["raw_lines"], "还能让用户再点一行"
+    assert len(body["raw_lines"]) <= adf.PREVIEW_MAX_LINES
+    assert all(len(x["text"]) <= adf.PREVIEW_CHARS for x in body["raw_lines"])
+
+
+def test_raw_lines_of_an_unreadable_file_are_bounded_and_control_characters_are_gone(project):
+    m, client, figs, _ = project
+    long = "z" * 500
+    write(
+        figs,
+        "d/c.csv",
+        "T,\x07" + long + "\nI,foo,bar\n" + "\n".join(["t,v"] + ["1,2"] * 300) + "\n",
+    )
+    body = get(client, "d/c.csv").get_json()
+    assert body["status"] == "unreadable" and body["raw_lines"]
+    assert len(body["raw_lines"]) <= adf.PREVIEW_MAX_LINES
+    assert all(len(x["text"]) <= adf.PREVIEW_CHARS for x in body["raw_lines"])
+    assert not re.search(
+        r"[\x00-\x08\x0b-\x1f\x7f]", json.dumps(body["raw_lines"]).replace("\\n", "")
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "raw", "code"),
+    [
+        ("blob.dat", b"\x00\x01\x02" * 50, "data_binary"),
+        ("README.txt", b"hello world\nno table\n", "data_not_table"),
+        ("gbk.csv", "a,b\n你,1\n".encode("gb18030"), "data_decode_error"),
+        ("empty.csv", b"", "data_empty"),
+    ],
+)
+def test_files_that_no_row_can_rescue_have_no_raw_lines(project, name, raw, code):
+    m, client, figs, _ = project
+    (figs / "d").mkdir()
+    (figs / "d" / name).write_bytes(raw)
+    for extra in ({}, {"header_row": 2}):
+        body = get(client, f"d/{name}", **extra).get_json()
+        assert body["status"] == "unreadable" and body["raw_lines"] == [], (name, extra)
+        assert body["code"] == code
+
+
+def test_xlsx_is_unaffected_by_the_recovery_preview(project):
+    m, client, figs, _ = project
+    (figs / "d").mkdir()
+    make_xlsx(figs / "d" / "x.xlsx", {"S": [["a", "a"], [1, 2], [3, 4]]})
+    body = get(client, "d/x.xlsx", header_row=2).get_json()
+    assert body["status"] == "unreadable" and body["code"] == "data_header_invalid"
+    assert body["raw_lines"] == [] and body["lead_lines"] == [] and body["header_row"] is None
+
+
+def test_the_data_files_listing_still_carries_the_same_preview_for_a_ragged_file(project):
+    m, client, figs, _ = project
+    write(figs, "d/r.csv", CODEX_RAGGED)
+    t = {
+        f["path"]: f["table"]
+        for f in client.get("/api/ai/data-files?formats=all").get_json()["files"]
+    }["d/r.csv"]
+    o = get(client, "d/r.csv").get_json()
+    assert t["status"] == "unreadable" and t["code"] == "data_ragged"
+    assert t["preview"] == o["raw_lines"] and t["header_row"] == o["header_row"]

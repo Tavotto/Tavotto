@@ -340,7 +340,7 @@ order: 240
 - **数据出图 v2 的数据概览与脚本来源（`engine/ai_data_overview.py`，ADR 0178「数据概览与脚本来源」，实验开关后面）**：`GET /api/ai/data-overview?path=&sheet=&header_row=`
   只读：状态（`ok` / `unsure` / `unreadable` + 稳定码，读不了是 200 不是 4xx）、行列数、`fields`（`ColumnSummary.kind` 口径）、前 20 行单元格原文、表头行前的说明行；**读表必须是 propose 读表的那两个函数**
   （`read_text_table` / `inspect_data_source(v2=True)`），`header_row` 经 `ai_data_propose.parse_header_row`（与 `header_rows` 一份判据）——别在这里另写读法。路径只经 `normalize_rel` + `contained_path` +
-  与 `discover.walk_files` 结果逐字比对，打开的是遍历结果里的那一项。响应一律有上界、控制字符换空格（表里的文字不可信）。XLSX 每个工作表的行列数在 `/api/ai/data-files?formats=all` 的 `sheets` 里
+  与 `discover.walk_files` 结果逐字比对，打开的是遍历结果里的那一项。响应一律有上界、控制字符换空格（表里的文字不可信）。读不了但能靠指定表头行补救的文本表（`data_ragged` 等）概览照带 `raw_lines` 与猜的行号（`raw_lines` 非空 = 前端可让用户点一行，二进制 / 散文为空），别在概览里提前丢掉 `read_text_table` 给的预览；XLSX 每个工作表的行列数在 `/api/ai/data-files?formats=all` 的 `sheets` 里
   （有预算，超出 `null` = 没读）。`/api/registry` 的 `all_scripts[]` 对 v2 生成的脚本加 `generated_from: {data, sheet}`：解析只有 `ai_data_template.parse_source_comment` 一处（严格：tokenize 真注释、第一条、固定键集合；
   只外传路径与工作表名，不给配方与哈希），开关关着整个不读、响应逐字不变。不写文件、不发遥测。看护 `tests/test_ai_data_overview.py`。
 - **TAF 改图（`engine/ai_figure_edit.py`，Phase 3a）**：只在 `config.ai_settings()["taf"]["enabled"] is True`（默认关、无界面开关）

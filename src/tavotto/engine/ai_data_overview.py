@@ -184,8 +184,8 @@ def overview(root: str | Path, path, *, sheet=None, header_row=None) -> dict:
     except Exception:  # noqa: BLE001
         return _base(rel, "unreadable", "data_unreadable")
     out = _base(rel, info.status, info.code)
-    if info.status == "unreadable":
-        return out
+    # 读不了但可以靠指定表头行补救的（`data_ragged`、指定的行读不成表…）：`read_text_table` 带着原文行与猜的 / 用的行号，原样带出去；
+    # 真二进制 / 散文 / 编码错这类没有 preview，`raw_lines` 为空 = 没法点一行补救（前端据 `raw_lines` 非空决定要不要让用户点一行）
     out.update(
         delimiter=adf.DELIMITER_NAMES.get(info.delimiter) if info.delimiter else None,
         header_row=info.header_line,

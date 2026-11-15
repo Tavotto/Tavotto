@@ -638,7 +638,9 @@ def read_text_table(
     delim = layout.delimiter
     lines = re.split(r"\r\n|\r|\n", text)
     if header_row is not None and not 1 <= header_row <= len(lines):
-        return _unreadable("data_header_row_invalid")
+        return TextTable(
+            "unreadable", code="data_header_row_invalid", preview=_preview(text, 1)
+        )  # 指定的行不在文件里：原文照给，用户可以重新点一行
     if layout.header_line == 0 and header_row is None:
         # 老读法（嗅探不出）：错误码与 v1 一致，行号按记录序号（与 v1 一致）
         try:
@@ -674,7 +676,12 @@ def read_text_table(
     except csv.Error:
         return _unreadable("data_malformed")
     if not header:
-        return _unreadable("data_header_row_invalid" if header_row is not None else "data_empty")
+        if header_row is not None:
+            return TextTable(
+                "unreadable", code="data_header_row_invalid", delimiter=delim,
+                header_line=line, preview=_preview(text, line),
+            )  # fmt: skip
+        return _unreadable("data_empty")
     guessed = not layout.sure and header_row is None
     try:
         summ = _summarize(
@@ -694,6 +701,13 @@ def read_text_table(
             return TextTable(
                 "unsure", delimiter=delim, header_line=line, columns=len(header),
                 preview=_preview(text, line), lead=_lead(lines, line),
+            )  # fmt: skip
+        if (
+            header_row is not None
+        ):  # 用户指定的行读不成表（畸形行 / 列名空或重复…）：原文照给，用户可以再点一行
+            return TextTable(
+                "unreadable", code=exc.code, delimiter=delim, header_line=line,
+                preview=_preview(text, line),
             )  # fmt: skip
         return _unreadable(exc.code)
     return TextTable(
