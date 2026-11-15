@@ -490,7 +490,8 @@
     "outlineStroke": "Outline stroke",
     "reversePath": "Reverse path direction",
     "simplifyPath": "Simplify path",
-    "roundCorners": "Round corners"
+    "roundCorners": "Round corners",
+    "shapeBuilder": "Shape builder"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",

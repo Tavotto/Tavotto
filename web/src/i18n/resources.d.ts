@@ -1703,6 +1703,10 @@ export default interface Resources {
           "keywords": "select all qx quanxuan",
           "label": "全选"
         },
+        "shape-builder": {
+          "keywords": "shape builder merge regions xszcq 形状生成器 合并 区域",
+          "label": "形状生成器"
+        },
         "shortcut-help": {
           "keywords": "shortcut help kjj kuaijiejian",
           "label": "快捷键帮助"
@@ -6425,6 +6429,7 @@ export default interface Resources {
       "saveNamed": "把现在存为命名节点",
       "script": "上标 / 下标（属性面板文字框内）",
       "selectAll": "全选",
+      "shapeBuilder": "形状生成器",
       "tabs": "焦点在画布标签上时：重命名 / 关闭 / 左右挪动",
       "timeline": "打开 / 关闭排版时间线",
       "tools": "选择 / 文字 / 箭头 / 矩形 / 椭圆 / 直线",
@@ -6996,6 +7001,7 @@ export default interface Resources {
       "setPageSize": "修改画布尺寸",
       "setProp": "修改{{prop}}",
       "setPublicationProfile": "设置出版规范",
+      "shapeBuilder": "形状生成器",
       "showObject": "显示对象",
       "showObjects": "显示 {{count}} 个对象",
       "simplifyPath": "简化路径",

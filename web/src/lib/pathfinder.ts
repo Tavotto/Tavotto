@@ -407,3 +407,75 @@ export function reversePath(o: PathObject): PathObject {
     })),
   }
 }
+
+/* ------------------------------ 形状生成器（⇧M） ------------------------------ */
+
+/** 形状生成器里的一块区域：页面 mm（旋转已算进去）的子路径 + 沿用哪个原对象的样式（`sources` 的下标） */
+export interface BuilderFace {
+  key: number
+  subs: MmSubpath[]
+}
+
+/** 内核的形状栈编码（从后往前，key = 下标） */
+function encodeStack(items: readonly { rule: 0 | 1; subs: MmSubpath[] }[]): number[] {
+  const input: number[] = [items.length]
+  items.forEach((it, i) => input.push(it.rule, i, ...encodeSubpaths(it.subs)))
+  return input
+}
+
+function decodeResults(out: readonly number[]): { key: number; subs: MmSubpath[] }[] | null {
+  const results: { key: number; subs: MmSubpath[] }[] = []
+  let i = 1
+  for (let r = 0; r < out[0]; r++) {
+    const key = out[i++]
+    const d = decodeSubpaths(out, i)
+    if (!d) return null
+    i = d.next
+    results.push({ key, subs: d.subs })
+  }
+  return results
+}
+
+/**
+ * 进形状生成器：选中的对象按「分割」切成互不重叠的区域，每块记着盖住它的最前面那个原对象（样式与 id 都跟它）。
+ * 不能参与 / 少于两个 / 内核算不出 = null。
+ */
+export function builderFaces(
+  kernel: VecopsKernel,
+  objects: readonly CanvasObject[],
+  ids: readonly string[],
+): { sources: PathObject[]; faces: BuilderFace[] } | null {
+  const sources = operands(objects, ids)
+  if (!sources || sources.length < 2) return null
+  const out = kernel.pathfinder(
+    OP_CODE.divide,
+    encodeStack(sources.map((o) => ({ rule: o.fillRule === 'evenodd' ? 1 : 0, subs: worldSubpaths(o) }))),
+  )
+  const faces = out && decodeResults(out)
+  return faces && faces.length ? { sources, faces } : null
+}
+
+/** 把几块区域并成一块（内核「合并」）：沿用 `faces[0]` 的样式来源 */
+export function mergeFaces(kernel: VecopsKernel, faces: readonly BuilderFace[]): BuilderFace | null {
+  if (!faces.length) return null
+  if (faces.length === 1) return faces[0]
+  const out = kernel.pathfinder(OP_CODE.unite, encodeStack(faces.map((f) => ({ rule: 0, subs: f.subs }))))
+  const res = out && decodeResults(out)
+  if (!res || !res.length) return null
+  return { key: faces[0].key, subs: res.flatMap((r) => r.subs) }
+}
+
+/** 退出形状生成器时的落位：剩下的每块区域一个路径对象（id / 样式 / 位置规则与路径查找器相同） */
+export function builderPlan(
+  objects: readonly CanvasObject[],
+  sources: readonly PathObject[],
+  faces: readonly BuilderFace[],
+): PathfinderPlan | null {
+  if (!faces.length) {
+    // 全删掉了：原对象都删，什么都不加
+    const ids = new Set(sources.map((s) => s.id))
+    const idx = objects.map((o, i) => (ids.has(o.id) ? i : -1)).filter((i) => i >= 0)
+    return { remove: [...ids], add: [], at: Math.max(...idx) - (idx.length - 1) }
+  }
+  return planReplace(objects, sources, faces)
+}

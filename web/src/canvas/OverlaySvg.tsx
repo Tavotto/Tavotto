@@ -53,6 +53,7 @@ import { ReviewOverlay } from './ReviewOverlay'
 import { AnchorEdit, AnchorMarquee, PenDraft } from './PathEditOverlay'
 import { GradientHandles } from './GradientHandles'
 import { LiveCorners } from './LiveCorners'
+import { ShapeBuilderOverlay } from './ShapeBuilderOverlay'
 import { useActivePathEdit } from '@/store/pathEditStore'
 
 /**
@@ -419,6 +420,8 @@ export function OverlaySvg() {
       {/* 实时圆角的圆点、渐变柄（ADR 0185 M3 第二批 / ADR 0186 第二期）：渐变柄在最上面，与圆角点重叠时先拿到指针 */}
       <LiveCorners t={t} />
       <GradientHandles t={t} />
+      {/* 形状生成器（⇧M）开着时的区域：盖在最上面 */}
+      <ShapeBuilderOverlay t={t} />
 
       {cropTarget && cropTarget.type === 'panel' && <CropFrame obj={cropTarget} t={t} />}
 
