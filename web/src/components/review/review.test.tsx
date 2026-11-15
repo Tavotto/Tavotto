@@ -146,7 +146,7 @@ function resetStore(over: Partial<ReturnType<typeof useReviewStore.getState>> = 
     stage: 'idle',
     failure: null,
     picker: null,
-    quota: { new_left: 1, update_left: 4 },
+    quota: { new_left: 1 },
     others: [],
     unread: { total: 0, latest: null },
     capsuleDismissedAt: 0,
@@ -203,7 +203,7 @@ describe('分享弹窗三态', () => {
     expect(shareReview).toHaveBeenCalledTimes(1)
   })
   it('次数未知（联网不通）：页脚不写剩余次数', async () => {
-    resetStore({ dialogOpen: true, quota: { new_left: null, update_left: null } })
+    resetStore({ dialogOpen: true, quota: { new_left: null } })
     await render(<ReviewDialog />)
     expect(q('[data-review-quota]')).toBeNull()
   })
@@ -214,7 +214,7 @@ describe('分享弹窗三态', () => {
     await render(<ReviewDialog />)
     expect(q('[data-review-link]')?.textContent).toContain('review.tavotto.cn/r/k7QmAAAA3fA')
     expect(q('[data-review-stats]')?.textContent).toMatch(/3 条意见，2 条未处理/)
-    expect(q('[data-review-quota]')?.textContent).toBe('今天这个链接还能更新 4 次')
+    expect(q('[data-review-quota]')).toBeNull() // 更新同一链接不限次数，页脚不写更新次数
     await click(q('[data-review-stop]'))
     expect(revokeReview).not.toHaveBeenCalled()
     await click(q('[data-review-stop]'))
@@ -316,10 +316,24 @@ describe('额度用满选择卡', () => {
     expect(useUiStore.getState().exportOpen).toBe(true)
     expect(useReviewStore.getState().dialogOpen).toBe(false)
   })
-  it('更新用满：只有导出 PNG / 明天再更新', async () => {
-    resetStore({ dialogOpen: true, share: SHARE, picker: 'update', others: [SHARE] })
+  it('更新不限次数：更新被限流时按 rate_limited 一句话 + 重试', async () => {
+    resetStore({ dialogOpen: true, share: SHARE, stage: 'failed', failure: { code: 'rate_limited', retryable: true }, lastOp: { kind: 'update', shareId: 'sh_1', note: '' } })
+    vi.mocked(updateReview).mockResolvedValue({ ok: true })
+    vi.mocked(fetchReviewStatus).mockResolvedValue({ stage: 'uploading', failure: null, retryable: false, share: null })
     await render(<ReviewDialog />)
-    expect(qa('[data-review-pick]').map((e) => e.dataset.reviewPick)).toEqual(['export-png', 'later'])
+    expect(q('[data-review-failure="rate_limited"]')?.textContent).toContain('太频繁')
+    await click(q('[data-review-retry]'))
+    expect(updateReview).toHaveBeenCalledWith('sh_1', '', expect.anything())
+  })
+  it('服务端若仍回 quota_update_exhausted：不再有专门的选择卡，按「没有成功」一句话 + 重试', async () => {
+    resetStore({ dialogOpen: true, share: SHARE })
+    vi.mocked(updateReview).mockResolvedValue({ ok: true })
+    vi.mocked(fetchReviewStatus).mockResolvedValue({ stage: 'failed', failure: 'quota_update_exhausted' as never, retryable: true, share: SHARE })
+    await render(<ReviewDialog />)
+    await click(q('[data-review-update]'))
+    await settle()
+    expect(useReviewStore.getState().picker).toBeNull()
+    expect(q('[data-review-retry]')).not.toBeNull()
   })
 })
 
@@ -582,7 +596,7 @@ describe('中英键对齐', () => {
     expect([...zh].filter((k) => !en.has(k))).toEqual([])
     expect([...en].filter((k) => !zh.has(k))).toEqual([])
     // 失败码闭集全有文案
-    for (const c of ['quota_new_exhausted', 'quota_update_exhausted', 'share_gone', 'too_large', 'rate_limited', 'network', 'server', 'client_error', 'render_failed'])
+    for (const c of ['quota_new_exhausted', 'share_gone', 'too_large', 'rate_limited', 'network', 'server', 'client_error', 'render_failed'])
       expect(zh.has(`failure.${c}`)).toBe(true)
   })
 })

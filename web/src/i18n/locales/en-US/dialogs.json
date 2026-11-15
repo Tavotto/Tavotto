@@ -2578,7 +2578,6 @@
     "cancel": "Cancel",
     "close": "Close",
     "quotaNew": "{{n}} new link(s) left today",
-    "quotaUpdate": "{{n}} update(s) left today for this link",
     "copy": "Copy",
     "linkCopied": "Link copied",
     "sharedMeta": "V{{v}} · {{when}}",
@@ -2592,7 +2591,6 @@
     },
     "failure": {
       "quota_new_exhausted": "You have used today's new links.",
-      "quota_update_exhausted": "This link has used today's updates.",
       "share_gone": "This link is no longer valid; the comments are kept on this computer.",
       "too_large": "The picture is too large. Make the figure smaller and try again.",
       "rate_limited": "Too many requests. Try again in a moment.",
@@ -2604,7 +2602,6 @@
     "retry": "Retry",
     "picker": {
       "newTitle": "You've already created a link today",
-      "updateTitle": "This link can't be updated again today",
       "updateExisting": "Update an existing link",
       "updateExistingDesc": "Swap in this figure's picture; the link stays the same",
       "pickOne": "Which link",
@@ -2612,8 +2609,6 @@
       "exportPngDesc": "Save an image and send it yourself",
       "laterNew": "Share tomorrow",
       "laterNewDesc": "New links reset at midnight Beijing time",
-      "laterUpdate": "Update tomorrow",
-      "laterUpdateDesc": "Resets at midnight Beijing time",
       "updateOne": "Swap this figure into the link “{{title}}”"
     },
     "tab": {

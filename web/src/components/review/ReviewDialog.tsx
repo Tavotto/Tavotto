@@ -50,8 +50,7 @@ function Caption({ children, ...rest }: { children: React.ReactNode } & React.HT
 function Picker({ onClose }: { onClose: () => void }) {
   const s = useReviewStore()
   const [choosing, setChoosing] = useState(false)
-  const isNew = s.picker === 'new'
-  const canUpdateOther = isNew && s.others.length > 0
+  const canUpdateOther = s.others.length > 0
   const cardClass = cn(listRowClass({ size: 'md' }), 'w-full flex-col items-start justify-center gap-0.5 px-3 text-left')
   if (choosing) {
     return (
@@ -100,8 +99,8 @@ function Picker({ onClose }: { onClose: () => void }) {
         <span className="type-caption text-ink-3">{rs('picker.exportPngDesc')}</span>
       </button>
       <button type="button" className={cardClass} data-review-pick="later" onClick={onClose}>
-        <b className="text-sm font-medium text-ink">{rs(isNew ? 'picker.laterNew' : 'picker.laterUpdate')}</b>
-        <span className="type-caption text-ink-3">{rs(isNew ? 'picker.laterNewDesc' : 'picker.laterUpdateDesc')}</span>
+        <b className="text-sm font-medium text-ink">{rs('picker.laterNew')}</b>
+        <span className="type-caption text-ink-3">{rs('picker.laterNewDesc')}</span>
       </button>
     </div>
   )
@@ -206,7 +205,6 @@ export function ReviewDialog() {
           {confirmStop ? rs('stopConfirm') : rs('stop')}
         </Button>
       ),
-      secondary: s.quota.update_left !== null ? <Caption data-review-quota>{rs('quotaUpdate', { n: s.quota.update_left })}</Caption> : undefined,
       primary:
         retry ?? (
           <Button variant="primary" size="lg" loading={busy} disabled={busy} onClick={() => void s.update(note || undefined)} data-review-update>
@@ -250,7 +248,7 @@ export function ReviewDialog() {
     <Dialog
       open={s.dialogOpen}
       onOpenChange={(o) => (o ? undefined : close())}
-      title={s.picker ? rs(s.picker === 'new' ? 'picker.newTitle' : 'picker.updateTitle') : rs('title')}
+      title={s.picker ? rs('picker.newTitle') : rs('title')}
       size="md"
       anchor="review"
       blockDismiss={busy}

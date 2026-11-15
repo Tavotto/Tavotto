@@ -2552,7 +2552,6 @@
     "cancel": "取消",
     "close": "关闭",
     "quotaNew": "今天还能新建 {{n}} 个",
-    "quotaUpdate": "今天这个链接还能更新 {{n}} 次",
     "copy": "复制",
     "linkCopied": "链接已复制",
     "sharedMeta": "V{{v}} · {{when}}",
@@ -2566,7 +2565,6 @@
     },
     "failure": {
       "quota_new_exhausted": "今天新建的次数用完了。",
-      "quota_update_exhausted": "这个链接今天更新的次数用完了。",
       "share_gone": "这个链接已经失效了，本机留着当时的意见。",
       "too_large": "画面太大了，缩小图幅后再试。",
       "rate_limited": "请求太频繁，过一会儿再试。",
@@ -2578,7 +2576,6 @@
     "retry": "重试",
     "picker": {
       "newTitle": "今天已经新建过分享链接",
-      "updateTitle": "这个链接今天不能再更新了",
       "updateExisting": "更新已有的链接",
       "updateExistingDesc": "换成这张图的画面，链接不变",
       "pickOne": "换到哪个链接上",
@@ -2586,8 +2583,6 @@
       "exportPngDesc": "存成图片，发给对方",
       "laterNew": "明天再分享",
       "laterNewDesc": "北京时间 0 点后可以新建",
-      "laterUpdate": "明天再更新",
-      "laterUpdateDesc": "北京时间 0 点后恢复",
       "updateOne": "「{{title}}」的链接，换成这张图的画面"
     },
     "tab": {

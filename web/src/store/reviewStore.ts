@@ -36,7 +36,8 @@ import { sameTarget } from '@/lib/reviewTarget'
  * 进度、剩余次数、意见详情与未读。**前端不碰远程**：生成 / 更新 / 停止 / 拉意见都是本机引擎做，这里只遥控；
  * 会引出远程请求的只有用户点的那几下与「审阅」页签开着时每 60 秒一次的 `refresh`。
  */
-export type ReviewPicker = 'new' | 'update' | null
+/** 额度用满的选择卡只有「今天新建用完」这一种（更新同一链接不限次数） */
+export type ReviewPicker = 'new' | null
 export interface ReviewFailure {
   code: ReviewFailureCode
   retryable: boolean
@@ -146,8 +147,8 @@ export const useReviewStore = create<ReviewState>((set, get) => {
       if (st.stage === 'failed') {
         const code = st.failure ?? 'client_error'
         void dismissReview().catch(() => {})
-        if (code === 'quota_new_exhausted' || code === 'quota_update_exhausted') {
-          set({ stage: 'idle', failure: null, picker: code === 'quota_new_exhausted' ? 'new' : 'update' })
+        if (code === 'quota_new_exhausted') {
+          set({ stage: 'idle', failure: null, picker: 'new' })
           await get().loadQuota()
         } else {
           set({ stage: 'failed', failure: { code, retryable: st.retryable } })
@@ -167,7 +168,7 @@ export const useReviewStore = create<ReviewState>((set, get) => {
     stage: 'idle',
     failure: null,
     picker: null,
-    quota: { new_left: null, update_left: null },
+    quota: { new_left: null },
     others: [],
     changed: true,
     unread: { total: 0, latest: null },
@@ -211,11 +212,10 @@ export const useReviewStore = create<ReviewState>((set, get) => {
     },
 
     loadQuota: async () => {
-      const id = get().share?.share_id
       try {
-        set({ quota: (await fetchReviewQuota(id)) ?? { new_left: null, update_left: null } })
+        set({ quota: (await fetchReviewQuota()) ?? { new_left: null } })
       } catch {
-        set({ quota: { new_left: null, update_left: null } })
+        set({ quota: { new_left: null } })
       }
       try {
         const all = (await fetchReviewShares())?.shares ?? []

@@ -8140,7 +8140,6 @@ export type ReviewTarget = { kind: 'figure' | 'layout'; id: string }
 /** 失败码闭集（与引擎 / 服务端一致；界面按 `review.failure.*` 一码一句） */
 export type ReviewFailureCode =
   | 'quota_new_exhausted'
-  | 'quota_update_exhausted'
   | 'share_gone'
   | 'too_large'
   | 'rate_limited'
@@ -8215,7 +8214,6 @@ export interface ReviewStatus {
 
 export interface ReviewQuota {
   new_left: number | null
-  update_left: number | null
 }
 
 export interface ReviewUnread {
