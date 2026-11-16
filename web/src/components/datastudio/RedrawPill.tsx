@@ -1,7 +1,9 @@
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useDataFigureStore } from '@/store/dataFigureStore'
+import { runUndoRedo } from '@/hooks/useKeyboard'
 import { useDocumentStore } from '@/store/documentStore'
+import { useWorkspaceStore } from '@/store/workspace'
 
 /**
  * 画布底部工具条上方的一枚胶囊：「用 growth.csv 画的 · 换个画法」，点了回到这份数据的临时标签。
@@ -16,6 +18,11 @@ export function RedrawPill() {
   useEffect(() => {
     if (fresh && fresh.canvasId == null && canvasId) useDataFigureStore.getState().adoptFresh(canvasId)
   }, [fresh, canvasId])
+  // 「撤销」= 撤销「编辑原图」把这张图加进文档的那一步（与顶栏撤销同一条栈）；撤销栈还停在加入那一刻才给，之后再改了别的，撤销撤的就是别的了
+  const justAdded = useWorkspaceStore((s) => s.addedForEdit !== null && s.addedForEdit === s.activePanelId)
+  const addedDepth = useWorkspaceStore((s) => s.addedForEditDepth)
+  const historyDepth = useDocumentStore((s) => s.past.length)
+  const canUndo = justAdded && historyDepth === addedDepth
   if (!fresh || draftActive || fresh.canvasId == null || fresh.canvasId !== canvasId) return null
   const file = fresh.file.path.slice(fresh.file.path.lastIndexOf('/') + 1)
   return (
@@ -29,6 +36,16 @@ export function RedrawPill() {
       >
         {t('dataFigureV2.redraw.again')}
       </button>
+      {canUndo && (
+        <button
+          type="button"
+          data-redraw-undo
+          onClick={() => runUndoRedo(false)}
+          className="h-6 rounded-full px-2.5 text-ink-2 outline-none hover:bg-surface-hover hover:text-ink focus-visible:focus-ring"
+        >
+          {t('dataFigureV2.redraw.undo')}
+        </button>
+      )}
     </div>
   )
 }

@@ -617,8 +617,7 @@
       "register_failed": "The new figure couldn’t be registered, so the files created were removed.",
       "data_folder_not_writable": "This data folder doesn’t allow writing (read-only or no permission), so nothing was created.",
       "disk_full": "The disk is full, so nothing was created.",
-      "data_changed": "The data file changed after the options were made. Please generate them again.",
-      "rows_not_plotted": "{{count}} rows aren’t numbers (or lack an x value) and weren’t drawn."
+      "data_changed": "The data file changed after the options were made. Please generate them again."
     },
     "result": {
       "verified": "The figure is ready and its data matches the file.",
@@ -662,11 +661,6 @@
     "nothing": {
       "generic": "Couldn’t draw anything from this table."
     },
-    "drawn": {
-      "rows": "Rows {{rows}}",
-      "andMore": " and more",
-      "open": "Open this figure"
-    },
     "problem": {
       "retry": "Try again",
       "unwritable": "This folder can’t be written to, so the figure has nowhere to go.",
@@ -691,7 +685,11 @@
     },
     "redraw": {
       "from": "Drawn from {{file}}",
-      "again": "Try another style"
+      "again": "Try another style",
+      "undo": "Undo"
+    },
+    "note": {
+      "unplotted": "{{count}} rows were not drawn."
     }
   }
 }

@@ -78,14 +78,15 @@ export function Inspector({
   const rawTab = useUiStore((s) => s.rightTab)
   // 「审阅」页签只在这张图 / 排版有分享记录时存在；记录没了（删除 / 换了图）而页签还停在它上面，就落回属性页
   const reviewShare = useReviewStore((s) => reviewTabVisible(s.enabled, s.share) ? s.share : null)
-  const tab: RightTab = rawTab === 'review' && !reviewShare ? 'properties' : rawTab
+  const draftActive = useDataFigureStore((s) => s.draftActive)
+  // 「数据」临时标签激活时右栏显示这份数据：分段控件停在「属性」
+  const tab: RightTab = draftActive ? 'properties' : rawTab === 'review' && !reviewShare ? 'properties' : rawTab
   const tabs = reviewShare ? REVIEW_TABS : TABS
   const setTab = useUiStore((s) => s.setRightTab)
   const width = useUiStore((s) => s.rightWidth)
   const pinned = useUiStore(isRightPinned)
   const layout = useUiStore((s) => s.layout)
   const runningAi = useAiStore((s) => s.sessions.some((x) => x.status === 'running'))
-  const draftActive = useDataFigureStore((s) => s.draftActive)
 
   const motion = drawerMotion({ state, overlay, width, side: 'right' })
   // 属性栏里的 ColorField 带可编辑 hex 与取色面板（文档颜色 / 最近 / 系统取色器）；浮动栏不挂这层
@@ -126,7 +127,11 @@ export function Inspector({
               data-inspector-tab={id}
               panelId={PANEL_ID[id]}
               active={tab === id}
-              onClick={() => setTab(id)}
+              onClick={() => {
+                // 点别的页签 = 回到画布去看那一页：临时标签退到后台（标签还在）
+                useDataFigureStore.getState().deactivateDraft()
+                setTab(id)
+              }}
               // 助手页签：可达名带上「有任务在运行」，视觉上是页签右上角的一颗点
               aria-label={
                 id === 'assistant' && runningAi

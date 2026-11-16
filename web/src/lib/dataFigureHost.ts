@@ -9,6 +9,7 @@ import { scriptTarget, useProjectPreparationStore } from '@/store/projectPrepara
 import { useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
+import { useWorkspaceStore } from '@/store/workspace'
 
 configureDataFigureHost({
   openDrawer: () => useUiStore.getState().setLeftTab('data'),
@@ -19,4 +20,6 @@ configureDataFigureHost({
   },
   projectWritable: () => useProjectStore.getState().project?.writable,
   activeCanvasId: () => useDocumentStore.getState().activeCanvasId ?? null,
+  notify: (message) => useUiStore.getState().setStatus(message, 'info'),
+  dismissAddedNote: () => useWorkspaceStore.setState({ addedForEdit: null }),
 })

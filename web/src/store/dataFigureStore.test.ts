@@ -37,6 +37,7 @@ const propose = vi.mocked(aiDataFigurePropose)
 const commit = vi.mocked(aiDataFigureCommit)
 const discard = vi.mocked(aiDataFigureDiscard)
 const prepOpen = vi.fn(async (..._a: unknown[]) => {})
+const notify = vi.fn()
 
 const st = () => useDataFigureStore.getState()
 const apiError = (status: number, code: string) => new ApiError(code, status, { code })
@@ -57,7 +58,7 @@ const committed = (extra: Partial<AiDataCommitResult> = {}): AiDataCommitResult 
 const flush = () => new Promise((r) => setTimeout(r, 0))
 
 beforeEach(() => {
-  for (const f of [files, overview, propose, commit, discard, refresh, prepOpen]) f.mockReset()
+  for (const f of [files, overview, propose, commit, discard, refresh, prepOpen, notify]) f.mockReset()
   discard.mockResolvedValue({ ok: true })
   setCurrentProjectId('pa')
   useDataFigureStore.getState().clear()
@@ -73,6 +74,8 @@ beforeEach(() => {
     },
     projectWritable: () => useProjectStore.getState().project?.writable,
     activeCanvasId: () => null,
+    notify,
+    dismissAddedNote: () => {},
   })
 })
 
@@ -129,7 +132,7 @@ describe('临时标签：开 / 复用 / 关', () => {
   it('enter：开抽屉；只有一个可读文件就直接开它的临时标签，多个只开抽屉', async () => {
     withNumbers()
     const drawer = vi.fn()
-    configureDataFigureHost({ openDrawer: drawer, openScript: async () => {}, projectWritable: () => true, activeCanvasId: () => null })
+    configureDataFigureHost({ openDrawer: drawer, openScript: async () => {}, projectWritable: () => true, activeCanvasId: () => null, notify, dismissAddedNote: () => {} })
     const okf = (path: string) => ({ path, size: 1, table: { status: 'ok' as const, code: null, delimiter: 'comma' as const, header_row: 1, columns: 2, rows: 3 } })
     files.mockResolvedValue({ files: [okf('one.csv'), { path: 'bad.dat', size: 1, table: { status: 'unreadable', code: 'data_binary', delimiter: null, header_row: null, columns: null, rows: null, preview: [] } }], truncated: false })
     propose.mockResolvedValue(cands('S1'))
@@ -161,13 +164,20 @@ describe('出图的各结局', () => {
     expect(prepOpen).toHaveBeenCalled()
     expect(st()).toMatchObject({ draftOpen: false, drawingId: null, fresh: { file: ref('a.csv') } })
   })
-  it('有行没画出来 / 没法逐项核对：先说一句，点「打开这张图」才进编辑器；缺 data_check 不写成已核对', async () => {
+  it('有行没画出来 / 没法逐项核对：照样打开图，一句话走浮动通知，不留在临时标签里；缺 data_check 不写成已核对', async () => {
     await ready()
-    commit.mockResolvedValueOnce(committed({ data_check: undefined, unplotted: { count: 2, rows: [{ row: 3, column: 'x', reason: 'x' }, { row: 5, column: 'x', reason: 'x' }], code: 'rows_not_plotted' } }))
+    commit.mockResolvedValueOnce(committed({ data_check: 'verified', unplotted: { count: 3, rows: [{ row: 3, column: 'x', reason: 'x' }], code: 'rows_not_plotted' } }))
     await st().draw('i1')
-    expect(st().drawn).toMatchObject({ script: 'tavotto_figures/a_figure.py', notes: { unplotted: { count: 2, rows: [3, 5] }, check: 'unknown' } })
-    expect(prepOpen).not.toHaveBeenCalled()
-    await st().openDrawn()
+    expect(prepOpen).toHaveBeenCalled()
+    expect(notify).toHaveBeenCalledTimes(1)
+    expect(notify.mock.calls[0]![0]).toMatchObject({ key: 'dataFigureV2.note.unplotted', values: { count: 3 } })
+    expect(st().draftOpen).toBe(false)
+  })
+  it('缺 data_check = 没核对过：通知说「核对没能完成」，绝不静默当成已核对', async () => {
+    await ready()
+    commit.mockResolvedValueOnce(committed({ data_check: undefined }))
+    await st().draw('i1')
+    expect(notify.mock.calls.at(-1)![0]).toMatchObject({ key: 'dataFigureV2.result.unknown' })
     expect(prepOpen).toHaveBeenCalled()
   })
   it('数据对不上 / 写不进：各一种结局；没落盘 = 没画出来', async () => {

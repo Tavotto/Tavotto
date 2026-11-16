@@ -217,7 +217,7 @@ describe('数据条里的表 TablePreview', () => {
     const raw = [1, 2, 3, 4].map((n) => ({ line: n, text: `row ${n}` }))
     await mount(<TablePreview ov={ov({ status: 'unsure', header_row: 2, raw_lines: raw, fields: [], preview_rows: [] })} rows={3} onHeaderRow={onHeaderRow} />)
     expect(q('label[data-look-line="2"]')!.textContent).toContain('列名')
-    expect(q('label[data-look-line="1"]')!.className).toContain('text-ink-3') // 猜的那行之前是说明行，灰显
+    expect(q('label[data-look-line="1"]')!.className).toContain('opacity-45') // 猜的那行之前是说明行，灰显
     await click(q('[data-look-line="4"] input'))
     expect(onHeaderRow).toHaveBeenLastCalledWith(4)
     await click(q('[data-look-line="2"] input'))
@@ -359,7 +359,7 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     commit.mockReturnValueOnce(new Promise((r) => (release = r)))
     const openScript = vi.fn(async () => {})
     const { configureDataFigureHost } = await import('@/store/dataFigureStore')
-    configureDataFigureHost({ openDrawer: () => {}, openScript, projectWritable: () => true, activeCanvasId: () => 'c0' })
+    configureDataFigureHost({ openDrawer: () => {}, openScript, projectWritable: () => true, activeCanvasId: () => 'c0', notify: () => {}, dismissAddedNote: () => {} })
     useDocumentStore.setState({ activeCanvasId: 'c0' })
     await start(<><DataDrawer /><DataDraft /><RedrawPill /></>)
     await open(0)
@@ -378,6 +378,7 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     act(() => useDocumentStore.setState({ activeCanvasId: 'c9' }))
     expect(useDataFigureStore.getState().fresh?.canvasId).toBe('c9')
     expect(q('[data-redraw-pill]')!.textContent).toContain('用 growth.csv 画的')
+    expect(q('[data-redraw-undo]')).toBeNull() // 没有「加入」那一步在栈顶时不给撤销
     await click(q('[data-redraw-again]'))
     await flush()
     expect(useDataFigureStore.getState()).toMatchObject({ draftOpen: true, draftActive: true, fresh: null })
@@ -399,7 +400,7 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     expect(commit.mock.calls[1]![0].client_request_id).toBe(rid)
   })
 
-  it('出图中关掉临时标签只是收起；有话要说的结局再把它翻出来', async () => {
+  it('出图中关掉临时标签只是收起；没成的结局再把它翻出来', async () => {
     propose.mockResolvedValue(cands())
     let release!: (v: AiDataCommitResult) => void
     commit.mockReturnValueOnce(new Promise((r) => (release = r)))
@@ -408,11 +409,11 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     await click(qa('[data-candidate]')[0]!)
     act(() => useDataFigureStore.getState().closeDraft())
     expect(useDataFigureStore.getState()).toMatchObject({ draftOpen: false, drawingId: 'i1' })
-    release({ task: { outcome: 'completed' }, script: 's.py', stem: 's', data_check: 'unverifiable' })
+    release({ task: { outcome: 'failed' } } as AiDataCommitResult)
     await flush()
     await flush()
     expect(useDataFigureStore.getState()).toMatchObject({ draftOpen: true, draftActive: true })
-    expect(q('[data-studio-drawn]')!.textContent).toContain('没法逐项核对')
+    expect(q('[data-studio-problem]')!.textContent).toContain('这次没画出来')
   })
 
   it('网格里方向键移动、Enter 选；Esc 关临时标签；切到别的画布，临时标签留着但不激活', async () => {

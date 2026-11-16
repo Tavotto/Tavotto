@@ -16,7 +16,7 @@ import {
 import { currentProjectId } from '@/lib/session'
 import { candidatesFromResponse, type Candidate } from '@/lib/dataFigureAdapter'
 import { cellModeOf, fileRows, hasNumericColumn, isStaleProposeCode, mergeAnswers, sameTable, tableKey, usableOptions, type CellMode, type TableRef } from '@/lib/dataFigure'
-import type { UiMessage } from '@/i18n'
+import { msg, type UiMessage } from '@/i18n'
 
 /**
  * 「从数据到图」的页面状态（ADR 0178，实验开关 `ai.taf.enabled` 后面）。
@@ -101,8 +101,12 @@ export interface DataFigureHost {
   projectWritable: () => boolean | undefined
   /** 此刻激活的画布 id（打开新图之后记下来，给「换个画法」胶囊认） */
   activeCanvasId: () => string | null
+  /** 浮动通知（胶囊）里说一句话：没有按钮 */
+  notify: (message: UiMessage) => void
+  /** 「已在新画布里打开 · 撤销」那条说明不再有意义（用户回去换画法了）：清掉 */
+  dismissAddedNote: () => void
 }
-let host: DataFigureHost = { openDrawer: () => {}, openScript: async () => {}, projectWritable: () => undefined, activeCanvasId: () => null }
+let host: DataFigureHost = { openDrawer: () => {}, openScript: async () => {}, projectWritable: () => undefined, activeCanvasId: () => null, notify: () => {}, dismissAddedNote: () => {} }
 export const configureDataFigureHost = (h: DataFigureHost): void => {
   host = h
 }
@@ -133,9 +137,8 @@ interface DataFigureStore {
   error: UiMessage | null
   /** 正在出图的那一张候选 */
   drawingId: string | null
-  /** 出图没成 / 要说话的结局（出图成功且没有要说的就直接进编辑器） */
+  /** 出图没成的结局（出图成功就直接进编辑器；没画出来的行 / 没法核对这类话走浮动通知，不留在临时标签里） */
   problem: ProblemKind | null
-  drawn: { script: string; notes: DrawNotes } | null
   fresh: FreshFigure | null
 
   /** 首页左卡进项目之后：开「数据」抽屉；只有一个可读文件就直接开它的临时标签 */
@@ -153,8 +156,6 @@ interface DataFigureStore {
   draw: (id: string) => Promise<void>
   /** 出图中 / 出候选失败之后「再试一次」 */
   retry: () => Promise<void>
-  /** 带着说明的那一步：打开这张图 */
-  openDrawn: () => Promise<void>
   /** 出图失败之后回到候选 */
   dismissProblem: () => void
   /** 画布上的「换个画法」：回到这份数据的临时标签 */
@@ -207,7 +208,6 @@ const initial = {
   error: null as UiMessage | null,
   drawingId: null as string | null,
   problem: null as ProblemKind | null,
-  drawn: null as { script: string; notes: DrawNotes } | null,
   fresh: null as FreshFigure | null,
 }
 /** 换一份数据 / 回到起点时清掉的那些（文件清单、概览、表头行、画好的那张不在内） */
@@ -221,7 +221,6 @@ const idleDraft = {
   error: null as UiMessage | null,
   drawingId: null as string | null,
   problem: null as ProblemKind | null,
-  drawn: null as { script: string; notes: DrawNotes } | null,
 }
 /** 选择题的默认答案轮数上限：后端不会连着问这么多道，防的是死循环 */
 const MAX_ASKS = 8
@@ -369,11 +368,16 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   async function goEditor(script: string): Promise<void> {
     const ep = epoch
     const file = get().selected
-    set({ draftOpen: false, draftActive: false, drawingId: null, problem: null, drawn: null, phase: 'idle', session: null, candidates: [] })
+    set({ draftOpen: false, draftActive: false, drawingId: null, problem: null, phase: 'idle', session: null, candidates: [], fresh: file ? { file, from: host.activeCanvasId(), canvasId: null } : null })
     if (ep !== epoch) return
     await host.openScript(script).catch(() => undefined)
     if (ep !== epoch) return
-    if (file) set({ fresh: { file, from: host.activeCanvasId(), canvasId: null } })
+    // 一直没认下新图所在的画布（打开失败 / 画布没换）：不留着，免得之后不相干的画布切换被当成它
+    const pending = get().fresh
+    window.setTimeout(() => {
+      const f = get().fresh
+      if (f && f === pending && f.canvasId == null) set({ fresh: null })
+    }, 20000)
   }
 
   /** 没成 / 要说话的结局：把临时标签翻出来（出图期间用户可能已经把它收起了） */
@@ -386,7 +390,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     const forKey = `${sessionId}/${itemId}`
     if (!commitRid || commitRid.for !== forKey) commitRid = { for: forKey, rid: newRid() }
     const rid = commitRid.rid
-    set({ drawingId: itemId, problem: null, drawn: null })
+    set({ drawingId: itemId, problem: null })
     try {
       const res = await aiDataFigureCommit({ session: sessionId, id: itemId, client_request_id: rid }, pj)
       if (!still()) return
@@ -405,11 +409,11 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         showOutcome({ problem: { kind: 'mismatch', script: res.script } })
         return
       }
+      // 有行没画出来 / 这类图没法逐项核对：照样打开图，说明走浮动通知（一句话，没有按钮）；缺 data_check 不写成已核对
       const notes = notesOf(res)
-      if (notes.unplotted || notes.check) {
-        showOutcome({ drawn: { script: res.script, notes } })
-        return
-      }
+      if (notes.unplotted) host.notify(msg('dataFigureV2.note.unplotted', { count: notes.unplotted.count }, 'ai'))
+      else if (notes.check === 'unverifiable') host.notify(msg('dataFigureV2.result.unverifiable', undefined, 'ai'))
+      else if (notes.check) host.notify(msg('dataFigureV2.result.unknown', undefined, 'ai'))
       await goEditor(res.script)
     } catch (e) {
       if (!still()) return
@@ -551,16 +555,12 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       await run()
     },
 
-    dismissProblem: () => set({ problem: null, drawn: null }),
-
-    openDrawn: async () => {
-      const d = get().drawn
-      if (d) await goEditor(d.script)
-    },
+    dismissProblem: () => set({ problem: null }),
 
     redraw: () => {
       const f = get().fresh
       set({ fresh: null })
+      host.dismissAddedNote()
       if (f) get().select(f.file)
     },
 

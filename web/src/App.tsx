@@ -187,6 +187,7 @@ function Workspace() {
   const multiCanvas = useDocumentStore((s) => s.canvases.length > 1)
   // 「数据」临时标签开着时标签栏一定要有（快速编辑只有一张画布时本来不显示）
   const dataDraftOpen = useDataFigureStore((s) => s.draftOpen)
+  const dataDraftActive = useDataFigureStore((s) => s.draftActive)
   const showTabs = !fastEdit || multiCanvas || dataDraftOpen
   const leftOpen = useUiStore((s) => s.leftOpen)
   const rightOpen = useUiStore((s) => s.rightOpen)
@@ -307,9 +308,11 @@ function Workspace() {
                     底部居中 = 浮动工具条 + 通知轨；左下 = HUD（工具提示）；顶部居中 = 工作区上下文条（CanvasStage 里）；
                     右上 = 一个容器从上往下：缩放（快速编辑没有标签行时）→ `tavotto run` 会话卡 → 性能探针。
                     此前右上三者各自 absolute（right-2 / right-3、z 10 / 20 / 30）互相压 */}
-                <CanvasToolbar />
+                {/* 「数据」临时标签激活时画布被盖住：工具条 / 缩放 / 提示这些画布上的浮物不画；通知轨与准备卡照常（出图期间的通知不能被盖住） */}
+                {!dataDraftActive && <CanvasToolbar />}
                 {/* 刚用「数据」画出这张图时：工具条上方一枚「用 X 画的 · 换个画法」，只在这一次会话里出现 */}
                 <RedrawPill />
+                {!dataDraftActive && (
                 <div
                   data-canvas-corner="top-right"
                   className="pointer-events-none absolute right-3 top-3 z-canvas-chrome flex max-h-[calc(100%-1.5rem)] w-72 max-w-[calc(100%-1.5rem)] flex-col items-end gap-2"
@@ -323,7 +326,8 @@ function Workspace() {
                   <NativeSessionCards />
                   <PerfProbeHud />
                 </div>
-                <CanvasHud />
+                )}
+                {!dataDraftActive && <CanvasHud />}
                 <NotificationRail />
                 {/* 准备引导卡（T13b）：所有「准备并打开」入口共用的一张浮动卡，画布右下、浮动工具条上方；
                     不占布局（页面不下移），缩成角标 / 收起只改呈现 */}

@@ -33,9 +33,9 @@ export function TablePreview({
               data-look-line={l.line}
               data-checked={on || undefined}
               className={cn(
-                'flex h-7 cursor-default items-center gap-3 rounded-md px-2 outline-none hover:bg-surface-hover has-[:focus-visible]:focus-ring-inset',
-                on && 'outline outline-2 -outline-offset-2 outline-ink',
-                guess != null && l.line < guess && 'text-ink-3',
+                'flex h-7 cursor-default items-center gap-3 rounded-md px-2 hover:bg-surface-hover has-[:focus-visible]:focus-ring-inset',
+                on && 'outline outline-2 -outline-offset-2 outline-ink-2',
+                guess != null && l.line < guess && 'opacity-45',
               )}
             >
               <input

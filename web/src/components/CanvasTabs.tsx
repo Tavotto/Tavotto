@@ -247,7 +247,8 @@ export function CanvasTabs() {
 
       {menuPinned || overflowing ? <AllCanvasesMenu activate={activate} /> : null}
       {/* 缩放菜单住在标签行最右（2026-09-30 重设计 A1；此前在顶栏右段） */}
-      <ZoomControls />
+      {/* 临时标签激活时没有画布可缩放：缩放菜单没有作用对象，先藏起来 */}
+      {!draftActive && <ZoomControls />}
     </div>
   )
 }

@@ -130,11 +130,6 @@ export default interface Resources {
         "stripInfo": "前 {{shown}} 行，共 {{total}} 行 · {{columns}} 列",
         "unreadable": "这个文件不是表格，读不了。"
       },
-      "drawn": {
-        "andMore": " 等",
-        "open": "打开这张图",
-        "rows": "第 {{rows}} 行"
-      },
       "list": {
         "empty": "这个文件夹里没找到数据文件。",
         "fileMeta": "{{rows}} 行 · {{columns}} 列",
@@ -146,6 +141,9 @@ export default interface Resources {
         "unreadable": "读不了",
         "unsure": "没认准",
         "unsureTitle": "没认准，先不用"
+      },
+      "note": {
+        "unplotted": "有 {{count}} 行没画出来。"
       },
       "nothing": {
         "generic": "这张表没能画出图。"
@@ -200,7 +198,6 @@ export default interface Resources {
         "no_renderable_family": "这张表暂时没有能画的画法。",
         "no_usable_table": "这个文件夹里没有能画的数据表。",
         "register_failed": "没能把新图登记进项目，新建的文件已撤回。",
-        "rows_not_plotted": "有 {{count}} 行不是数字或缺横轴的值，没有画出来。",
         "stem_taken": "这个图名刚被占用了，请再试一次。",
         "table_not_found": "找不到你选的那张表。",
         "target_exists": "同名脚本已经存在，没有覆盖它。",
@@ -208,7 +205,8 @@ export default interface Resources {
       },
       "redraw": {
         "again": "换个画法",
-        "from": "用 {{file}} 画的"
+        "from": "用 {{file}} 画的",
+        "undo": "撤销"
       },
       "result": {
         "mismatch": "画出来的图和你的数据对不上，所以没有打开它。",

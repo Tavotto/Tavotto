@@ -610,8 +610,7 @@
       "register_failed": "没能把新图登记进项目，新建的文件已撤回。",
       "data_folder_not_writable": "这个数据文件夹不让写入（只读或没有权限），没有生成。",
       "disk_full": "磁盘空间不够，没有生成。",
-      "data_changed": "数据文件在生成备选之后变过了，请重新生成。",
-      "rows_not_plotted": "有 {{count}} 行不是数字或缺横轴的值，没有画出来。"
+      "data_changed": "数据文件在生成备选之后变过了，请重新生成。"
     },
     "result": {
       "verified": "图画好了，数据和文件逐项对上。",
@@ -655,11 +654,6 @@
     "nothing": {
       "generic": "这张表没能画出图。"
     },
-    "drawn": {
-      "rows": "第 {{rows}} 行",
-      "andMore": " 等",
-      "open": "打开这张图"
-    },
     "problem": {
       "retry": "再试一次",
       "unwritable": "这个文件夹写不进，图放不下。",
@@ -684,7 +678,11 @@
     },
     "redraw": {
       "from": "用 {{file}} 画的",
-      "again": "换个画法"
+      "again": "换个画法",
+      "undo": "撤销"
+    },
+    "note": {
+      "unplotted": "有 {{count}} 行没画出来。"
     }
   }
 }

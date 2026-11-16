@@ -25,6 +25,7 @@ import {
 } from '@/store/scriptInputStore'
 import { statusDismissTimer, useUiStore, type StatusTone } from '@/store/uiStore'
 import { userEnvironmentName } from '@/lib/userEnvironmentText'
+import { useDataFigureStore } from '@/store/dataFigureStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { useExitNoticeStore } from '@/store/exitNoticeStore'
 import { useNoticeRailStore } from '@/store/noticeRailStore'
@@ -370,8 +371,10 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const toolbarUp = useCanvasToolbarVisible()
 
   // 「编辑原图」这一次把图加进了文档（此前不在）：说出口，并给撤销；回排版 / 撤销即消失
+  // 刚用「数据」画出来的图：说明与「撤销」都并进画布上的那枚「换个画法」胶囊（`RedrawPill`），这里不再弹
+  const fromData = useDataFigureStore((s) => s.fresh !== null)
   const justAdded = useWorkspaceStore(
-    (s) => s.addedForEdit !== null && s.addedForEdit === s.activePanelId,
+    (s) => s.addedForEdit !== null && s.addedForEdit === s.activePanelId && !fromData,
   )
   const addedPresence = usePresence(justAdded, DURATION.fast)
   // 「撤销」= 撤销加入那一步；只在撤销栈还停在加入那一刻时给（之后再改了别的，撤销撤的就是

@@ -9,6 +9,7 @@ import '@/lib/dataFigureHost'
 import { overviewKeyOf, useDataFigureStore } from '@/store/dataFigureStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
+import { useUiStore } from '@/store/uiStore'
 import { CandidateGrid, useDrawingLine } from './CandidateGrid'
 import { DataStrip } from './DataStrip'
 
@@ -40,7 +41,6 @@ export function DataDraft() {
   const error = useDataFigureStore((s) => s.error)
   const drawingId = useDataFigureStore((s) => s.drawingId)
   const problem = useDataFigureStore((s) => s.problem)
-  const drawn = useDataFigureStore((s) => s.drawn)
   const root = useRef<HTMLDivElement>(null)
   const st = useDataFigureStore.getState
   const drawingLine = useDrawingLine(drawingId != null)
@@ -56,6 +56,14 @@ export function DataDraft() {
       useDataFigureStore.getState().deactivateDraft()
     }
   }, [activeCanvasId])
+
+  // 窄屏（左抽屉是覆盖式的）：点了文件、临时标签激活，抽屉就收起，免得盖住候选
+  const draftKey = active && selected ? `${selected.path}|${selected.sheet}` : null
+  useEffect(() => {
+    if (!draftKey) return
+    const ui = useUiStore.getState()
+    if (ui.layout === 'narrow' && ui.leftOpen) ui.toggleLeft()
+  }, [draftKey])
 
   // Esc 关临时标签（激活时；对话框 / 菜单自己收的 Esc 不算）
   useEffect(() => {
@@ -122,27 +130,6 @@ export function DataDraft() {
         </Button>
       </div>
     )
-  } else if (drawn) {
-    const shown = drawn.notes.unplotted ? drawn.notes.unplotted.rows.slice(0, 8) : []
-    top = (
-      <div data-studio-drawn className="flex flex-col items-start gap-2">
-        {drawn.notes.unplotted && (
-          <Line anchor="data-studio-unplotted">
-            {t('dataFigureV2.reason.rows_not_plotted', { count: drawn.notes.unplotted.count })}
-            {shown.length > 0 && (
-              <span className="mt-1 block text-sm text-ink-2">
-                {t('dataFigureV2.drawn.rows', { rows: shown.join('、') })}
-                {drawn.notes.unplotted.rows.length > shown.length ? t('dataFigureV2.drawn.andMore') : ''}
-              </span>
-            )}
-          </Line>
-        )}
-        {drawn.notes.check && <p className={drawn.notes.unplotted ? 'text-sm text-ink-2' : 'text-base text-ink'} data-studio-unchecked>{t(`dataFigureV2.result.${drawn.notes.check}`)}</p>}
-        <Button variant="primary" size="lg" className="mt-1" data-studio-primary onClick={() => void st().openDrawn()}>
-          {t('dataFigureV2.drawn.open')}
-        </Button>
-      </div>
-    )
   } else if (phase === 'unreadable') {
     top = <Line anchor="data-studio-unreadable">{t('dataFigureV2.draft.unreadable')}</Line>
   } else if (phase === 'text') {
@@ -173,7 +160,8 @@ export function DataDraft() {
       data-data-draft
       role="tabpanel"
       aria-label={selected.path.slice(selected.path.lastIndexOf('/') + 1)}
-      className="absolute inset-0 z-drawer flex flex-col bg-surface"
+      // z-sticky：盖住画布，但压在通知轨（z-canvas-chrome）与准备卡（z-drawer）下面，出图期间的通知不会被盖住
+      className="absolute inset-0 z-sticky flex flex-col bg-surface"
     >
       <div key={`top|${selected.path}|${selected.sheet}`} className="min-h-0 flex-1 animate-fade-in overflow-auto px-7 pb-6 pt-5" style={{ containerType: 'size' }}>
         {top}
