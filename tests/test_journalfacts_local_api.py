@@ -9,7 +9,7 @@ from tavotto import app as appmod, security
 from tavotto.engine import journalfacts_remote as facts
 from test_journalfacts_remote import fact_bundle, index_for, signed
 
-pytest_plugins = ["test_journalfacts_remote"]
+pytest_plugins = ("support.journalfacts_fixture",)
 
 
 @pytest.fixture

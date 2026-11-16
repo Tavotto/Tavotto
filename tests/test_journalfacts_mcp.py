@@ -15,7 +15,7 @@ from tavotto.engine import journalfacts_remote as facts, journalremote, journals
 from tavotto_mcp import bridge, server  # noqa: E402
 from test_journalfacts_remote import fact_bundle, index_for, signed  # noqa: E402
 
-pytest_plugins = ["test_journalfacts_remote"]
+pytest_plugins = ("support.journalfacts_fixture",)
 
 
 def test_mcp_exposes_facts_with_sources_without_telemetry(isolated, monkeypatch):
