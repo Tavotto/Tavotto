@@ -72,7 +72,8 @@ export type Scene =
   | { kind: 'mixed'; columns: AiDataMixedColumn[] }
   | { kind: 'pick'; session: string; items: PickItem[]; selectedId: string; sourcePath: string; fromRetry: boolean }
   | { kind: 'nothing'; reasons: string[] }
-  | { kind: 'drawing' }
+  /** 出图中；`thumb` = 刚选中的那张缩略图（出图屏留着它，卡片不空；重试拿不到就是 null） */
+  | { kind: 'drawing'; thumb: string | null }
   | { kind: 'drawn'; script: string; notes: DrawNotes }
   | { kind: 'problem'; problem: ProblemKind }
 
@@ -275,7 +276,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     const forKey = `${sessionId}/${itemId}`
     if (!commitRid || commitRid.for !== forKey) commitRid = { for: forKey, rid: newRid() }
     const rid = commitRid.rid
-    set({ scene: { kind: 'drawing' } })
+    set({ scene: { kind: 'drawing', thumb: items.find((i) => i.id === itemId)?.thumb ?? null } })
     try {
       const res = await aiDataFigureCommit({ session: sessionId, id: itemId, client_request_id: rid }, pj)
       if (!still()) return
@@ -286,6 +287,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         // 这时「再试一次」没有用，给的是换个文件夹；其余一句话 + 再试一次
         const unwritable = res.reason_code === 'figures_dir_unusable' || host.projectWritable() === false
         set({
+          overlay: true,
           scene: {
             kind: 'problem',
             problem: unwritable
@@ -296,12 +298,12 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         return
       }
       if (res.data_check === 'mismatch' || outcome === 'failed') {
-        set({ scene: { kind: 'problem', problem: { kind: 'mismatch', script: res.script } } })
+        set({ overlay: true, scene: { kind: 'problem', problem: { kind: 'mismatch', script: res.script } } })
         return
       }
       const notes = notesOf(res)
       if (notes.unplotted || notes.check) {
-        set({ scene: { kind: 'drawn', script: res.script, notes } })
+        set({ overlay: true, scene: { kind: 'drawn', script: res.script, notes } })
         return
       }
       await goEditor(res.script)
@@ -312,6 +314,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         // 备选过期 / 数据变了：不是用户的错，静默重新出备选；原来选的画法还在就接着画，没有就让用户看新的
         const wanted = items.find((i) => i.id === itemId)
         commitRid = null
+        set({ overlay: true })
         await propose({ fromRetry: true })
         if (!still()) return
         const sc = get().scene
@@ -326,13 +329,13 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       }
       if (e instanceof ApiError && (code === 'figures_dir_unusable' || code === 'common_module_conflict')) {
         commitRid = null
-        set({ scene: { kind: 'problem', problem: { kind: 'unwritable', error: reasonOf(e) ?? { key: 'dataFigureV2.problem.unwritable', ns: 'ai' } } } })
+        set({ overlay: true, scene: { kind: 'problem', problem: { kind: 'unwritable', error: reasonOf(e) ?? { key: 'dataFigureV2.problem.unwritable', ns: 'ai' } } } })
         return
       }
       // 后端明确拒绝了：这次请求号作废；没收到结果（断网 / 网关）：保留请求号，「再试一次」复用，不会画出第二份
       const definite = isDefiniteRunFailure(e)
       if (definite) commitRid = null
-      set({ scene: { kind: 'problem', problem: { kind: 'commit', error: reasonOf(e), retryable: true } } })
+      set({ overlay: true, scene: { kind: 'problem', problem: { kind: 'commit', error: reasonOf(e), retryable: true } } })
     }
   }
 
@@ -353,7 +356,11 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     },
     closeOverlay: () => {
       const sc = get().scene
-      if (sc.kind === 'drawing') return // 正在画：画完再说
+      // 正在画：只收起卡片，不取消；画完照样打开（成功进编辑器，要说话的结局把卡片再翻出来）
+      if (sc.kind === 'drawing') {
+        set({ overlay: false })
+        return
+      }
       if (sc.kind === 'pick') void aiDataFigureDiscard(sc.session, currentProjectId()).catch(() => undefined)
       proposeSeq += 1
       commitRid = null
@@ -380,7 +387,11 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
 
     select: (ref) => {
       const sc = get().scene
-      if (sc.kind === 'drawing') return // 正在画：画完再换，别让在飞的提交没人认领
+      if (sc.kind === 'drawing') {
+        // 正在画：画完再换，别让在飞的提交没人认领；卡片被收起了就翻出来给他看进度
+        if (!get().overlay) set({ overlay: true })
+        return
+      }
       if (sc.kind === 'pick') void aiDataFigureDiscard(sc.session, currentProjectId()).catch(() => undefined)
       proposeSeq += 1 // 还在出备选的那一轮作废
       commitRid = null

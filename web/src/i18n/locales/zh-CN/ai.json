@@ -664,7 +664,8 @@
     "working": {
       "reading": "正在读…",
       "proposing": "正在画几种画法…",
-      "drawing": "正在画…"
+      "drawing": "正在画…",
+      "slow": "还在画，数据多会久一点。"
     },
     "preview": {
       "unreadable": "这个文件读不了。",
@@ -681,7 +682,8 @@
         "id": "编号"
       },
       "failed": "没能读出这张表。",
-      "pickHint": "点一下每列名字所在的那一行。"
+      "pickHint": "点一下每列名字所在的那一行。",
+      "noNumeric": "这张表里没有数值列，画不了。"
     },
     "start": "看看怎么画",
     "back": "返回",
@@ -700,12 +702,10 @@
       "title": "这份数据可以这样画",
       "methods": "画法",
       "recommended": "推荐",
-      "draw": "画这张",
-      "another": "换一张表"
+      "draw": "画这张"
     },
     "nothing": {
-      "generic": "这张表没能画出图。",
-      "another": "换一张表"
+      "generic": "这张表没能画出图。"
     },
     "drawn": {
       "rows": "第 {{rows}} 行",

@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/Button'
 import { Notice } from '@/components/ui/Notice'
 import { ProgressBar } from '@/components/ui/ProgressBar'
 import type { AiDataOverview } from '@/lib/api'
-import { fileRows } from '@/lib/dataFigure'
+import { fileRows, sameTable } from '@/lib/dataFigure'
 import '@/lib/dataFigureHost' // 注册宿主（开抽屉 / 刷新 / 打开并运行 / 项目可写性），见该文件头
 import { overviewKeyOf, useDataFigureStore } from '@/store/dataFigureStore'
 import { useProjectStore } from '@/store/projectStore'
@@ -65,7 +65,26 @@ export function DataDrawer() {
   if (!entries) return <ProgressBar pct={null} label={t('dataFigureV2.working.reading')} className="m-3 w-40" />
   return (
     <div data-studio-data className="flex min-h-0 flex-1 flex-col">
-      <DataList rows={rows} selected={selected} overviews={listOverviews} onSelect={(ref) => useDataFigureStore.getState().select(ref)} />
+      <DataList
+        rows={rows}
+        selected={selected}
+        overviews={listOverviews}
+        onSelect={(ref) => useDataFigureStore.getState().select(ref)}
+        onFocusRow={(ref) => {
+          // 卡片开着、停在预览上：方向键走到哪个文件，卡片就换成哪个；其它屏（出备选、选画法……）不动，免得丢掉进度
+          const st = useDataFigureStore.getState()
+          if (st.overlay && st.scene.kind === 'browse' && !sameTable(st.selected, ref)) st.select(ref)
+        }}
+        onConfirm={() => {
+          // Enter = 卡片的主按钮；焦点交给卡片，接下来的方向键 / Enter 在卡片里生效
+          const card = document.querySelector<HTMLElement>('[data-data-overlay]')
+          const go = card?.querySelector<HTMLButtonElement>('[data-studio-start]')
+          if (!card || !go || go.disabled) return false
+          go.click()
+          card.focus()
+          return true
+        }}
+      />
     </div>
   )
 }

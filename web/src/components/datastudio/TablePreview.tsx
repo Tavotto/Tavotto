@@ -1,5 +1,4 @@
 import { useTranslation } from 'react-i18next'
-import { Notice } from '@/components/ui/Notice'
 import { backendCodeMsg, type AiDataOverview } from '@/lib/api'
 import { useFormatMessage } from '@/i18n/react'
 import { cn } from '@/lib/utils'
@@ -83,7 +82,12 @@ export function TablePreview({
   if (ov.status === 'unreadable') {
     // 原因句（后端的稳定码翻出来的）本身就说了「读不了」；码不认识就只说这一句
     const reason = fm(backendCodeMsg(ov.code ?? undefined, undefined, ''))
-    return <Notice tone="neutral" data-studio-unreadable title={reason || t('dataFigureV2.preview.unreadable')} />
+    // 一行正文字：不带底色、不带图标（用户明令不要带底色的状态块）
+    return (
+      <p data-studio-unreadable className="text-base text-ink-2">
+        {reason || t('dataFigureV2.preview.unreadable')}
+      </p>
+    )
   }
 
   const numericCols = ov.fields.map((f) => f.kind === 'numeric')

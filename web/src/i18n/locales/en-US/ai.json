@@ -671,7 +671,8 @@
     "working": {
       "reading": "Reading…",
       "proposing": "Drawing a few options…",
-      "drawing": "Drawing…"
+      "drawing": "Drawing…",
+      "slow": "Still drawing. More data takes a bit longer."
     },
     "preview": {
       "unreadable": "This file can’t be read.",
@@ -688,7 +689,8 @@
         "id": "ID"
       },
       "failed": "Couldn’t read this table.",
-      "pickHint": "Click the row that holds the column names."
+      "pickHint": "Click the row that holds the column names.",
+      "noNumeric": "This table has no numeric column, so it can't be drawn."
     },
     "start": "See ways to draw",
     "back": "Back",
@@ -707,12 +709,10 @@
       "title": "Ways to draw this data",
       "methods": "Style",
       "recommended": "Recommended",
-      "draw": "Draw this one",
-      "another": "Pick another table"
+      "draw": "Draw this one"
     },
     "nothing": {
-      "generic": "Couldn’t draw anything from this table.",
-      "another": "Pick another table"
+      "generic": "Couldn’t draw anything from this table."
     },
     "drawn": {
       "rows": "Rows {{rows}}",

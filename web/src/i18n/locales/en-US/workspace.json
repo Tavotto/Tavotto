@@ -611,7 +611,7 @@
     "workspace": "Projects",
     "problemsBlocking_one": "Problems · {{count}} blocking (of {{total}})",
     "problemsBlocking_other": "Problems · {{count}} blocking (of {{total}})",
-    "data": "Data to figure"
+    "data": "Data"
   },
   "readiness": {
     "foreign": {
@@ -789,7 +789,8 @@
     "tryTutorial": "Try the sample project",
     "rulerUnit": "mm",
     "rulerUnitTitle": "Ruler unit: millimetres",
-    "textPlaceholder": "Type text"
+    "textPlaceholder": "Type text",
+    "emptyFromData": "Draw from data"
   },
   "stylePanel": {
     "emptyTitle": "Select a figure on the canvas to see its style here",
@@ -1770,5 +1771,8 @@
     "fitContent": "Fit to content",
     "clearPad": "Remove margin",
     "notWrittenBack": "Margins apply to Tavotto exports only and are not written back to the script"
+  },
+  "dataDrawer": {
+    "count": "{{count}} data files"
   }
 }

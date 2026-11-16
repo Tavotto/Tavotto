@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useSyncExternalStore } from 'react'
+import { Fragment, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChartLine, Folder, Images, LayoutList, ListChecks, Paintbrush, Settings } from '@/components/ui/icons'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
@@ -6,7 +6,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { cn } from '@/lib/utils'
 import { RAIL_ICON_ONLY, RAIL_W, useUiStore, type LeftTab } from '@/store/uiStore'
 import { useValidationStore } from '@/store/validationStore'
-import { useDataFigureStore } from '@/store/dataFigureStore'
+import { useHasDataFiles } from '@/components/datastudio/useHasDataFiles'
 import { useTafFlagStore } from '@/store/tafFlagStore'
 import { Tip } from '../ui/Tooltip'
 
@@ -74,14 +74,7 @@ export function LeftRail() {
   const iconOnly = useRailIconOnly()
   // 「数据」：实验开关开着、且项目里有数据文件（或此刻就在数据页）才出现。开关关着时这一整段什么都不渲染、不请求
   const taf = useTafFlagStore((s) => s.enabled)
-  const filesStatus = useDataFigureStore((s) => s.files.status)
-  const hasData = useDataFigureStore((s) => {
-    const f = s.files
-    return (f.status === 'ready' || f.status === 'error' || f.status === 'loading') && (f.entries?.length ?? 0) > 0
-  })
-  useEffect(() => {
-    if (taf && filesStatus === 'idle') void useDataFigureStore.getState().loadFiles()
-  }, [taf, filesStatus])
+  const hasData = useHasDataFiles()
   const showData = taf && (tab === 'data' || hasData)
   // 「数据」是正式的轨道项（`LeftTab` 'data'，走 `railClick`），挨在「素材」后面；开关关着 / 没有数据文件时不在 `items` 里
   const items = showData ? [...ITEMS.slice(0, 2), { id: 'data' as LeftTab, icon: ChartLine }, ...ITEMS.slice(2)] : ITEMS

@@ -65,7 +65,7 @@ import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectStore } from '@/store/projectStore'
 import '@/lib/dataFigureHost'
-import { DataOverlay } from '@/components/datastudio/DataOverlay'
+import { DataOverlay, useDataOverlayInset } from '@/components/datastudio/DataOverlay'
 import { useEnvStore } from '@/store/envStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
@@ -188,6 +188,7 @@ function Workspace() {
   const rightOpen = useUiStore((s) => s.rightOpen)
   const layoutKind = useWorkspaceLayout()
   const overlay = layoutKind === 'narrow'
+  const dataInset = useDataOverlayInset(overlay)
   // 属性栏 < 1280 且没固定时也是覆盖层（G1）；左抽屉与遮罩仍只在 narrow 覆盖
   const rightOverlay = useUiStore(isRightOverlay)
   // 收起时先把退场播完再卸载；退场时长与 --animate-drawer-out 同源
@@ -305,6 +306,9 @@ function Workspace() {
                     底部居中 = 浮动工具条 + 通知轨；左下 = HUD（工具提示）；顶部居中 = 工作区上下文条（CanvasStage 里）；
                     右上 = 一个容器从上往下：缩放（快速编辑没有标签行时）→ `tavotto run` 会话卡 → 性能探针。
                     此前右上三者各自 absolute（right-2 / right-3、z 10 / 20 / 30）互相压 */}
+                {/* 居中的浮条（工具条 / 通知条 / 左下提示）共用这一层：「数据」预览卡片开着时它左边让出卡片的宽度（带过渡），
+                    浮条就在没被盖住的那部分画布里重新居中；卡片关着 = 0，几何与没有这一层时相同。这一层不吃指针：浮条自己各有 pointer-events */}
+                <div data-canvas-chrome className="pointer-events-none absolute inset-y-0 right-0 transition-[left] duration-base ease-standard" style={{ left: dataInset }}>
                 <CanvasToolbar />
                 <div
                   data-canvas-corner="top-right"
@@ -321,6 +325,7 @@ function Workspace() {
                 </div>
                 <CanvasHud />
                 <NotificationRail />
+                </div>
                 {/* 准备引导卡（T13b）：所有「准备并打开」入口共用的一张浮动卡，画布右下、浮动工具条上方；
                     不占布局（页面不下移），缩成角标 / 收起只改呈现 */}
                 <PreparationCard />

@@ -258,7 +258,9 @@ describe('选择题 AskScene', () => {
     const unsure = { code: 'unsure', params: {}, answer: { y: 'unsure' } }
     await mount(<AskScene code="pick_value" options={opts} unsure={unsure} onAnswer={onAnswer} onBack={onBack} />)
     expect(q('[data-studio-ask] h2')!.textContent).toBe('要画的是哪一列的数值？')
-    expect(qa('[data-studio-choice]')).toHaveLength(2)
+    // 「不确定」是列表最后一行、同样式的选项；底栏只剩「返回」
+    expect(qa('[data-studio-choice]')).toHaveLength(3)
+    expect(qa('[data-studio-choice]')[2]).toBe(q('[data-studio-unsure]'))
     await click(qa('[data-studio-choice]')[1]!)
     expect(onAnswer).toHaveBeenCalledWith(opts[1])
     await click(q('[data-studio-unsure]'))
@@ -662,5 +664,117 @@ describe('读不了但能补救的文本表（仪器说明行触发 data_ragged�
     await click(q('[data-studio-start]'))
     await flush()
     expect(propose.mock.calls[0]![0]).toMatchObject({ table: 'inst.txt', header_rows: { 'inst.txt': 4 } })
+  })
+})
+
+describe('流程体验返工（第一遍）', () => {
+  const textOv = (over: Partial<AiDataOverview> = {}) =>
+    ov({ fields: [{ name: 'label', kind: 'text', numeric: 0, text: 3, empty: 0, nan: 0, id_like: false }], preview_rows: [{ line: 2, cells: ['a'] }], columns: 1, ...over })
+
+  it('选择题：数值列行尾是这一列前三个值的灰字样例，「不确定」是同样式的最后一行', async () => {
+    const opts: AiDataOption[] = [
+      { code: 'column', params: { column: 'day', kind: 'numeric' }, answer: { y: 'day' } },
+      { code: 'column', params: { column: 'group', kind: 'text' }, answer: { y: 'group' } },
+    ]
+    const unsure = { code: 'unsure', params: {}, answer: { y: 'unsure' } }
+    const { columnSample } = await import('@/lib/dataFigure')
+    const o = ov({ preview_rows: [{ line: 2, cells: ['0', 'a', '1'] }, { line: 3, cells: ['2', 'b', '2'] }, { line: 4, cells: ['4', 'c', '3'] }, { line: 5, cells: ['6', 'd', '4'] }], rows: 4 })
+    await mount(<AskScene code="pick_value" options={opts} unsure={unsure} sampleOf={(c) => columnSample(o, c)} onAnswer={() => {}} onBack={() => {}} />)
+    const rows = qa('[data-studio-choice]')
+    expect(rows[0]!.textContent).toContain('0, 2, 4…')
+    expect(rows[2]!.textContent).toBe('不确定')
+    expect(qa('[data-studio-footer] button, [data-studio-ask] button').filter((b) => b.hasAttribute('data-studio-back'))).toHaveLength(1)
+  })
+
+  it('选画法：返回（不再是「换一张表」）、只有 1 个画法时单列、双击 = 画这张', async () => {
+    const one = [{ id: 'i1', title_code: 'ecdf', why_code: 'ecdf', recommended: true, unplotted: { count: 0, code: null }, thumbnail_url: '/t/1', thumb: '/t/1?pj=pa' }]
+    const onChoose = vi.fn()
+    const onDraw = vi.fn()
+    await mount(<PickScene items={one} selectedId="i1" source="a.csv" onChoose={onChoose} onDraw={onDraw} onBack={() => {}} />)
+    expect(q('[data-studio-back]')!.textContent).toBe('返回')
+    expect(q('[role=radiogroup]')!.className).toContain('grid-cols-1')
+    expect(q('[role=radiogroup]')!.className).not.toContain('min-[560px]:grid-cols-2')
+    await act(async () => {
+      q('[data-studio-option]')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    })
+    expect(onChoose).toHaveBeenCalledWith('i1')
+    expect(onDraw).toHaveBeenCalled()
+  })
+
+  it('出图中：留着刚选中的缩略图；超过 8 秒换成「还在画」', async () => {
+    vi.useFakeTimers()
+    try {
+      await mount(<WorkingScene kind="drawing" thumb="/t/1?pj=pa" />)
+      expect(q('[data-studio-working-thumb] img')!.getAttribute('src')).toBe('/t/1?pj=pa')
+      expect(q('[role=status]')!.textContent).toBe('正在画…')
+      await act(async () => {
+        vi.advanceTimersByTime(8100)
+      })
+      expect(q('[role=status]')!.textContent).toBe('还在画，数据多会久一点。')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('没有数值列：预览照常，底栏左边一句灰字，不出主按钮', async () => {
+    const { hasNumericColumn } = await import('@/lib/dataFigure')
+    expect(hasNumericColumn(textOv())).toBe(false)
+    expect(hasNumericColumn(ov())).toBe(true)
+    // 浮层接 store：只有文字列
+    const o = textOv()
+    vi.mocked(aiDataFilesAll).mockResolvedValue({ files: [{ path: 't.csv', size: 1, table: { status: 'ok', code: null, delimiter: 'comma', header_row: 1, columns: 1, rows: 3 } }], truncated: false })
+    vi.mocked(aiDataOverview).mockResolvedValue(o)
+    setCurrentProjectId('pa')
+    useDataFigureStore.getState().clear()
+    await act(async () => useDataFigureStore.getState().loadFiles())
+    await mount(<><DataDrawer /><DataOverlay narrow={false} /></>)
+    await flush()
+    await click(qa('[data-studio-file]')[0]!)
+    await flush()
+    expect(q('[data-studio-no-numeric]')!.textContent).toBe('这张表里没有数值列，画不了。')
+    expect(q('[data-studio-start]')).toBeNull()
+  })
+
+  it('读不了：一行正文，不带状态块', async () => {
+    await mount(<TablePreview ov={ov({ status: 'unreadable', code: 'data_binary', fields: [], preview_rows: [], raw_lines: [] })} loading={false} onHeaderRow={() => {}} />)
+    const p = q('[data-studio-unreadable]')!
+    expect(p.tagName).toBe('P')
+    expect(p.querySelector('svg')).toBeNull()
+  })
+
+  it('各结果屏：正文字号、左对齐、不再居中大字', async () => {
+    await mount(<ProblemScene problem={{ kind: 'commit', error: null, retryable: true }} onRetry={() => {}} onBack={() => {}} onChooseFolder={() => {}} />)
+    const el = q('[data-studio-problem]')!
+    expect(el.className).toContain('text-left')
+    expect(el.className).not.toContain('text-center')
+    expect(el.innerHTML).not.toContain('type-heading')
+  })
+
+  it('空画布：有数据文件时「添加图」旁边多一个同级按钮', async () => {
+    const { EmptyState } = await import('@/components/ui/EmptyState')
+    const go = vi.fn()
+    await mount(<EmptyState art="canvas" title="空" action={{ label: '添加图', onClick: () => {} }} actionAlt={{ label: '用数据画一张', onClick: go }} />)
+    await click(q('[data-empty-from-data]'))
+    expect(go).toHaveBeenCalled()
+    expect(q('[data-empty-from-data]')!.textContent).toBe('用数据画一张')
+  })
+
+  it('Enter 落在卡片上 = 主按钮', async () => {
+    vi.mocked(aiDataFilesAll).mockResolvedValue({ files: [{ path: 'a.csv', size: 1, table: { status: 'ok', code: null, delimiter: 'comma', header_row: 1, columns: 2, rows: 3 } }], truncated: false })
+    vi.mocked(aiDataOverview).mockResolvedValue(ov())
+    vi.mocked(aiDataFigurePropose).mockReset()
+    vi.mocked(aiDataFigurePropose).mockResolvedValue({ kind: 'nothing', reasons: [] })
+    setCurrentProjectId('pa')
+    useDataFigureStore.getState().clear()
+    await act(async () => useDataFigureStore.getState().loadFiles())
+    await mount(<><DataDrawer /><DataOverlay narrow={false} /></>)
+    await flush()
+    await click(qa('[data-studio-file]')[0]!)
+    await flush()
+    await act(async () => {
+      q('[data-data-overlay]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    })
+    await flush()
+    expect(vi.mocked(aiDataFigurePropose)).toHaveBeenCalled()
   })
 })

@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/Button'
 import type { AiDataOption } from '@/lib/api'
 import { usableOptions } from '@/lib/dataFigure'
+import { cn } from '@/lib/utils'
 import { OverlayFooter } from './OverlayFooter'
 
 const KNOWN_QUESTIONS = ['pick_table', 'pick_value', 'pick_group', 'pick_x', 'pick_design', 'pick_unit']
@@ -16,12 +17,15 @@ export function AskScene({
   code,
   options,
   unsure,
+  sampleOf,
   onAnswer,
   onBack,
 }: {
   code: string
   options: AiDataOption[]
   unsure: AiDataOption | null
+  /** 这一列前几个值的样例（灰字，帮不认识列名的人判断）；没有就不放 */
+  sampleOf?: (column: string) => string | null
   onAnswer: (o: AiDataOption) => void
   onBack: () => void
 }) {
@@ -31,39 +35,35 @@ export function AskScene({
     return t(`dataFigureV2.option.${o.code}`, { ...o.params })
   }
   const choices = usableOptions(options)
-  const kindText = (o: AiDataOption) =>
-    o.code === 'column' && typeof o.params?.kind === 'string'
-      ? t(`dataFigureV2.preview.type.${o.params.kind === 'numeric' || o.params.kind === 'date' || o.params.kind === 'mixed' ? o.params.kind : 'text'}`)
-      : null
+  // 「不确定」是列表最后一行，和别的选项同一个样式：永远有安全的默认，所以任何回答都能继续
+  const rows = unsure ? [...choices, unsure] : choices
   return (
     <div data-studio-ask className="flex flex-col gap-3">
       <h2 className="text-base font-medium">{KNOWN_QUESTIONS.includes(code) ? t(`dataFigureV2.question.${code}`) : t('dataFigureV2.question.other')}</h2>
       <div className="flex flex-col">
-        {choices.map((o, i) => (
-          <button
-            key={i}
-            type="button"
-            data-studio-choice
-            onClick={() => onAnswer(o)}
-            className="flex w-full items-baseline gap-3 rounded-md px-3 py-2.5 text-left text-base outline-none transition-colors hover:bg-surface-hover focus-visible:focus-ring-inset"
-          >
-            <span className="min-w-0 flex-1 truncate">{label(o)}</span>
-            {kindText(o) && <span className="shrink-0 text-xs text-ink-3">{kindText(o)}</span>}
-          </button>
-        ))}
+        {rows.map((o, i) => {
+          const sample = o.code === 'column' && typeof o.params?.column === 'string' ? sampleOf?.(o.params.column) : null
+          const isUnsure = unsure != null && o === unsure
+          return (
+            <button
+              key={i}
+              type="button"
+              data-studio-choice
+              data-studio-unsure={isUnsure || undefined}
+              onClick={() => onAnswer(o)}
+              className="flex w-full items-baseline gap-3 rounded-md px-3 py-2.5 text-left text-base outline-none transition-colors hover:bg-surface-hover active:bg-surface-active focus-visible:focus-ring-inset"
+            >
+              <span className={cn('min-w-0 flex-1 truncate', isUnsure && 'text-ink-2')}>{label(o)}</span>
+              {sample && <span className="max-w-[45%] shrink-0 truncate font-mono text-xs text-ink-3 tabular-nums">{sample}</span>}
+            </button>
+          )
+        })}
       </div>
       <OverlayFooter
         left={
           <Button variant="ghost" size="lg" data-studio-back onClick={onBack}>
             {t('dataFigureV2.back')}
           </Button>
-        }
-        right={
-          unsure ? (
-            <Button variant="secondary" size="lg" data-studio-unsure onClick={() => onAnswer(unsure)}>
-              {t('dataFigureV2.option.unsure')}
-            </Button>
-          ) : undefined
         }
       />
     </div>

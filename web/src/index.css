@@ -226,6 +226,10 @@
   --shadow-dialog:
     0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 6%, transparent),
     0 24px 64px color-mix(in srgb, var(--color-shadow) 10%, transparent);
+  /* 浮在工作面板上的预览卡片：边缘靠**内侧** 1px 低透明度的线（浅色是深线、深色是亮线，随 --color-shadow-edge），不靠外描边；大模糊同 --shadow-dialog */
+  --shadow-dialog-inset:
+    inset 0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 8%, transparent),
+    0 24px 64px color-mix(in srgb, var(--color-shadow) 10%, transparent);
   --shadow-thumb:
     0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 6%, transparent),
     0 1px 2px color-mix(in srgb, var(--color-shadow) 8%, transparent);

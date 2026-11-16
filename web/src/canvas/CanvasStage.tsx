@@ -8,6 +8,7 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { EmptyPickCards } from './EmptyPickCards'
 import { RestoreIssueBody } from '@/components/RestoreIssueBody'
 import { Card } from '@/components/ui/Card'
+import { useHasDataFiles } from '@/components/datastudio/useHasDataFiles'
 import { DocWindowCard } from '@/components/DocWindowCard'
 import { heldEntryCount, subscribeHeldEntries } from '@/store/documentRestore'
 import { runTutorialEntry } from '@/lib/onboarding/tutorial'
@@ -572,6 +573,7 @@ function EmptyHint() {
   // 有没有可摆的图按「看得见的图」算（ADR 0184）：从脚本进来、脚本还没出图时是空状态，不是一块空的选图卡
   const hasAssets = visibleFigureCards(panels, viewScope).length > 0
   const inTutorial = useProjectStore((s) => s.project?.tutorial === true)
+  const fromData = useHasDataFiles()
   const restoreIssue = useDocumentStore((s) => (s.restoreGate.state === 'needs_user' ? s.restoreIssue : null))
   const held = useSyncExternalStore(subscribeHeldEntries, heldEntryCount) > 0
   // 恢复卡不看选区：它是这时唯一的出口，选区里留着什么都不能把它收走（Codex #1839）
@@ -635,6 +637,7 @@ function EmptyHint() {
           // 素材清单还没回来时先按「有」说：那句「放文件进目录」是对空项目说的
           hint={sg(assetsLoaded && !hasAssets ? 'emptyHintNoAssets' : 'emptyHint')}
           action={{ label: sg('addFigure'), onClick: () => setLeftTab('assets') }}
+          actionAlt={fromData ? { label: sg('emptyFromData'), onClick: () => setLeftTab('data') } : undefined}
           secondary={
             inTutorial
               ? undefined

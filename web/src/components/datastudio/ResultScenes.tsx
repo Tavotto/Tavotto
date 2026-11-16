@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/Button'
 import { ProgressBar } from '@/components/ui/ProgressBar'
@@ -8,45 +9,74 @@ import { useFormatMessage } from '@/i18n/react'
 import { useProjectStore } from '@/store/projectStore'
 import type { DrawNotes, ProblemKind } from '@/store/dataFigureStore'
 import type { ReactNode } from 'react'
+import { FigureThumb } from './FigureThumb'
 import { OverlayFooter } from './OverlayFooter'
 
-/** 一屏一句话 + 按钮：舞台里居中（抉择 / 说明内容居中） */
-function Centered({ children, anchor }: { children: ReactNode; anchor: string }) {
+/** 一屏一句话 + 按钮：正文字号、左对齐、放在内容区顶部；动作在底栏（主按钮右、次要左） */
+function Top({ children, anchor }: { children: ReactNode; anchor: string }) {
   return (
-    <div {...{ [anchor]: '' }} className="mx-auto flex w-full max-w-[420px] flex-1 flex-col items-center justify-center gap-3 text-center">
+    <div {...{ [anchor]: '' }} className="flex w-full flex-col gap-2 text-left">
       {children}
     </div>
   )
 }
 
-/** 画备选 / 画这张：等后端一次回来，没有可报的步骤——不定态，不装百分比 */
-export function WorkingScene({ kind }: { kind: 'proposing' | 'drawing' }) {
+/** 出图超过这么久还没回来：换一句话，让人知道没卡住 */
+const SLOW_MS = 8000
+
+/**
+ * 画备选 / 画这张：等后端一次回来，没有可报的步骤——不定态，不装百分比。
+ * 出图时留着刚选中的那张缩略图（带一道扫光），下面一行字；超过 8 秒换成「还在画」。
+ */
+export function WorkingScene({ kind, thumb }: { kind: 'proposing' | 'drawing'; thumb?: string | null }) {
   const { t } = useTranslation('ai')
+  const [slow, setSlow] = useState(false)
+  useEffect(() => {
+    setSlow(false)
+    if (kind !== 'drawing') return
+    const id = window.setTimeout(() => setSlow(true), SLOW_MS)
+    return () => window.clearTimeout(id)
+  }, [kind])
+  if (kind === 'drawing')
+    return (
+      <Top anchor="data-studio-working">
+        {thumb && (
+          <div className="relative mx-auto w-full max-w-72 overflow-hidden rounded-lg" data-studio-working-thumb>
+            <FigureThumb src={thumb} alt="" />
+            <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-1/3 animate-sweep bg-linear-to-r from-transparent via-paper/70 to-transparent" />
+          </div>
+        )}
+        <p className={thumb ? 'text-center text-base text-ink-2' : 'text-base text-ink-2'} role="status">
+          {t(slow ? 'dataFigureV2.working.slow' : 'dataFigureV2.working.drawing')}
+        </p>
+        {!thumb && <ProgressBar pct={null} label={t('dataFigureV2.working.drawing')} className="w-56" />}
+      </Top>
+    )
   return (
-    <Centered anchor="data-studio-working">
-      <p className="type-heading" role="status">
-        {t(kind === 'drawing' ? 'dataFigureV2.working.drawing' : 'dataFigureV2.working.proposing')}
+    <Top anchor="data-studio-working">
+      <p className="text-base text-ink-2" role="status">
+        {t('dataFigureV2.working.proposing')}
       </p>
-      <ProgressBar pct={null} label={t(kind === 'drawing' ? 'dataFigureV2.working.drawing' : 'dataFigureV2.working.proposing')} className="w-56" />
-    </Centered>
+      <ProgressBar pct={null} label={t('dataFigureV2.working.proposing')} className="w-56" />
+    </Top>
   )
 }
 
-/** 一张表画不出：一句人话（按后端给的原因码）+ 下一步（换一张表） */
+/** 一张表画不出：一句人话（按后端给的原因码）+ 底栏「返回」 */
 export function NothingScene({ reasons, onBack }: { reasons: string[]; onBack: () => void }) {
   const { t } = useTranslation('ai')
   const first = reasons.find((r) => KNOWN_NOTHING_REASONS.includes(r))
   return (
-    <Centered anchor="data-studio-nothing">
-      <p className="type-heading">{first ? t(`dataFigureV2.reason.${first}`) : t('dataFigureV2.nothing.generic')}</p>
+    <Top anchor="data-studio-nothing">
+      <p className="text-base">{first ? t(`dataFigureV2.reason.${first}`) : t('dataFigureV2.nothing.generic')}</p>
       <OverlayFooter
-        right={
-          <Button variant="primary" size="lg" data-studio-primary data-studio-back onClick={onBack}>
-            {t('dataFigureV2.nothing.another')}
+        left={
+          <Button variant="ghost" size="lg" data-studio-back onClick={onBack}>
+            {t('dataFigureV2.back')}
           </Button>
         }
       />
-    </Centered>
+    </Top>
   )
 }
 
@@ -55,10 +85,10 @@ export function DrawnScene({ notes, onOpen }: { notes: DrawNotes; onOpen: () => 
   const { t } = useTranslation('ai')
   const shown = notes.unplotted ? notes.unplotted.rows.slice(0, 8) : []
   return (
-    <Centered anchor="data-studio-drawn">
+    <Top anchor="data-studio-drawn">
       <div className="flex flex-col gap-2">
         {notes.unplotted && (
-          <p className="type-heading" data-studio-unplotted>
+          <p className="text-base" data-studio-unplotted>
             {t('dataFigureV2.reason.rows_not_plotted', { count: notes.unplotted.count })}
             {shown.length > 0 && (
               <span className="mt-1 block text-base font-normal text-ink-2">
@@ -69,7 +99,7 @@ export function DrawnScene({ notes, onOpen }: { notes: DrawNotes; onOpen: () => 
           </p>
         )}
         {notes.check && (
-          <p className={notes.unplotted ? 'text-base text-ink-2' : 'type-heading'} data-studio-unchecked>
+          <p className={notes.unplotted ? 'text-base text-ink-2' : 'text-base'} data-studio-unchecked>
             {t(`dataFigureV2.result.${notes.check}`)}
           </p>
         )}
@@ -81,7 +111,7 @@ export function DrawnScene({ notes, onOpen }: { notes: DrawNotes; onOpen: () => 
           </Button>
         }
       />
-    </Centered>
+    </Top>
   )
 }
 
@@ -108,8 +138,8 @@ export function ProblemScene({
   if (problem.kind === 'mismatch') {
     const reveal = root && canRevealInFileManager() ? () => void revealProjectFile(root, problem.script) : null
     return (
-      <Centered anchor="data-studio-problem">
-        <p className="type-heading">{t('dataFigureV2.result.mismatch')}</p>
+      <Top anchor="data-studio-problem">
+        <p className="text-base">{t('dataFigureV2.result.mismatch')}</p>
         <p className="text-base text-ink-2">{t('dataFigureV2.problem.mismatchNext')}</p>
         {/* 脚本已经在项目里了：写明在哪，用户要删就知道删哪个（Tavotto 不替用户删文件） */}
         <p className="max-w-full truncate font-mono text-sm text-ink-3" data-studio-script-path title={problem.script}>
@@ -136,13 +166,13 @@ export function ProblemScene({
             </Button>
           }
         />
-      </Centered>
+      </Top>
     )
   }
   if (problem.kind === 'unwritable') {
     return (
-      <Centered anchor="data-studio-problem">
-        <p className="type-heading">{t('dataFigureV2.problem.unwritable')}</p>
+      <Top anchor="data-studio-problem">
+        <p className="text-base">{t('dataFigureV2.problem.unwritable')}</p>
         <OverlayFooter
           left={
             <Button variant="secondary" size="lg" data-studio-retry onClick={onRetry}>
@@ -155,17 +185,17 @@ export function ProblemScene({
             </Button>
           }
         />
-      </Centered>
+      </Top>
     )
   }
   return (
-    <Centered anchor="data-studio-problem">
-      <p className="type-heading">{problem.kind === 'commit' ? t('dataFigureV2.problem.notDrawn') : t('dataFigureV2.problem.proposeFailed')}</p>
+    <Top anchor="data-studio-problem">
+      <p className="text-base">{problem.kind === 'commit' ? t('dataFigureV2.problem.notDrawn') : t('dataFigureV2.problem.proposeFailed')}</p>
       {problem.error && <p className="text-base text-ink-2">{fm(problem.error)}</p>}
       <OverlayFooter
         left={
           <Button variant="secondary" size="lg" data-studio-back onClick={onBack}>
-            {t('dataFigureV2.nothing.another')}
+            {t('dataFigureV2.back')}
           </Button>
         }
         right={
@@ -174,6 +204,6 @@ export function ProblemScene({
           </Button>
         }
       />
-    </Centered>
+    </Top>
   )
 }

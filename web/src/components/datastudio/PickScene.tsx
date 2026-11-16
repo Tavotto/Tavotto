@@ -1,7 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
-import { Card } from '@/components/ui/Card'
 import { cn } from '@/lib/utils'
 import type { PickItem } from '@/store/dataFigureStore'
 import { FigureThumb } from './FigureThumb'
@@ -36,47 +35,54 @@ export function PickScene({
   const known = (c: string) => KNOWN_CANDIDATES.includes(c)
   const title = (c: string) => (known(c) ? t(`dataFigureV2.candidate.${c}.title`) : t('dataFigureV2.candidate.other.title'))
   const why = (c: string) => (known(c) ? t(`dataFigureV2.candidate.${c}.why`) : t('dataFigureV2.candidate.other.why'))
+  const cols = items.length === 1 ? 'grid-cols-1 max-w-80' : items.length === 3 ? 'grid-cols-1 min-[560px]:grid-cols-3' : 'grid-cols-1 min-[560px]:grid-cols-2'
   return (
     <div data-studio-pick className="flex flex-col gap-3">
       <span className="type-section text-ink-2" id="studio-pick-methods" data-studio-source title={source}>
         {t('dataFigureV2.pick.methods')}
       </span>
-      <div role="radiogroup" aria-labelledby="studio-pick-methods" className="grid auto-rows-fr grid-cols-1 gap-3 min-[560px]:grid-cols-2">
+      <div role="radiogroup" aria-labelledby="studio-pick-methods" className={cn('grid auto-rows-fr gap-3', cols)}>
         {items.map((it, i) => {
           const on = it.id === selectedId
           return (
-            <Card
+            // 无边的浅底磁贴：选中 = 一圈描边环；悬停换深一档的底（仓库规矩：交互态不位移）；双击 = 画这张
+            <label
               key={it.id}
-              interactive
-              selected={on}
-              padding="sm"
-              className="h-full animate-rise-in"
+              data-studio-option
+              data-checked={on || undefined}
+              onDoubleClick={() => {
+                onChoose(it.id)
+                onDraw()
+              }}
+              className={cn(
+                'flex h-full cursor-default animate-rise-in flex-col gap-2 rounded-lg bg-field p-2 outline-2 -outline-offset-2 transition-colors duration-fast ease-standard',
+                'hover:bg-field-hover has-[:focus-visible]:focus-ring-inset',
+                on ? 'outline outline-ink-3' : 'outline-transparent',
+              )}
               style={{ animationDelay: `calc(var(--duration-exit) * ${i})`, animationFillMode: 'backwards' }}
             >
-              <label data-studio-option data-checked={on || undefined} className="flex h-full cursor-default flex-col gap-2 rounded-md">
-                <input
-                  type="radio"
-                  name="studio-pick"
-                  className="sr-only"
-                  checked={on}
-                  onChange={() => onChoose(it.id)}
-                  aria-label={title(it.title_code)}
-                />
-                <FigureThumb src={it.thumb} alt={title(it.title_code)} />
-                <span className="flex items-center gap-2 px-1">
-                  <span className={cn('min-w-0 flex-1 truncate text-base', on ? 'font-medium' : 'font-normal')}>{title(it.title_code)}</span>
-                  {it.recommended && <Badge>{t('dataFigureV2.pick.recommended')}</Badge>}
-                </span>
-                <span className="px-1 pb-1 text-sm text-ink-2">{why(it.why_code)}</span>
-              </label>
-            </Card>
+              <input
+                type="radio"
+                name="studio-pick"
+                className="sr-only"
+                checked={on}
+                onChange={() => onChoose(it.id)}
+                aria-label={title(it.title_code)}
+              />
+              <FigureThumb src={it.thumb} alt={title(it.title_code)} />
+              <span className="flex items-start gap-2 px-1">
+                <span className={cn('min-w-0 flex-1 text-base', on ? 'font-medium' : 'font-normal')}>{title(it.title_code)}</span>
+                {it.recommended && <Badge>{t('dataFigureV2.pick.recommended')}</Badge>}
+              </span>
+              <span className="px-1 pb-1 text-sm text-ink-2">{why(it.why_code)}</span>
+            </label>
           )
         })}
       </div>
       <OverlayFooter
         left={
-          <Button variant="secondary" size="lg" data-studio-back onClick={onBack}>
-            {t('dataFigureV2.pick.another')}
+          <Button variant="ghost" size="lg" data-studio-back onClick={onBack}>
+            {t('dataFigureV2.back')}
           </Button>
         }
         right={

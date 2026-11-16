@@ -59,12 +59,18 @@ export function DataList({
   selected,
   overviews,
   onSelect,
+  onFocusRow,
+  onConfirm,
 }: {
   rows: DataFileRow[]
   selected: TableRef | null
   /** 用户改过表头行后，这一行说重读后的行数（键 = 路径） */
   overviews: Record<string, AiDataOverview | undefined>
   onSelect: (ref: TableRef) => void
+  /** 键盘移到某个文件行（↑↓ / Tab）：卡片开着时预览跟着换（像访达的快速查看） */
+  onFocusRow?: (ref: TableRef) => void
+  /** 在已经选中的文件行上按 Enter：= 卡片的主按钮；返回 true 表示处理了 */
+  onConfirm?: (ref: TableRef) => boolean
 }) {
   const { t } = useTranslation('ai')
   const tree = useMemo(() => buildTree(rows), [rows])
@@ -222,7 +228,8 @@ export function DataList({
                     data-kind={s.kind}
                     title={`${sh.ref.sheet} · ${m.title}`}
                     onClick={() => onSelect(sh.ref)}
-                    onKeyDown={(e) => onKeyDown(e, () => onSelect(sh.ref))}
+                    onFocus={(e) => e.target === e.currentTarget && onFocusRow?.(sh.ref)}
+                    onKeyDown={(e) => onKeyDown(e, () => (on && onConfirm?.(sh.ref)) || onSelect(sh.ref))}
                     className={cn(rowShell(on), sst.className)}
                     style={{ paddingLeft: 8 + (n.depth + 1) * 12, ...sst.style }}
                   >
@@ -255,7 +262,8 @@ export function DataList({
         data-kind={s.kind}
         title={`${baseName(f.path)} · ${m.title}`}
         onClick={() => onSelect(only.ref)}
-        onKeyDown={(e) => onKeyDown(e, () => onSelect(only.ref))}
+        onFocus={(e) => e.target === e.currentTarget && onFocusRow?.(only.ref)}
+        onKeyDown={(e) => onKeyDown(e, () => (on && onConfirm?.(only.ref)) || onSelect(only.ref))}
         className={cn(rowShell(on), st.className)}
         style={{ paddingLeft: 8 + n.depth * 12, ...st.style }}
       >

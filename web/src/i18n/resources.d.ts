@@ -159,7 +159,6 @@ export default interface Resources {
         "previewRow": "第 {{row}} 行：{{text}}"
       },
       "nothing": {
-        "another": "换一张表",
         "generic": "这张表没能画出图。"
       },
       "option": {
@@ -178,7 +177,6 @@ export default interface Resources {
         "close": "关闭"
       },
       "pick": {
-        "another": "换一张表",
         "draw": "画这张",
         "methods": "画法",
         "recommended": "推荐",
@@ -189,6 +187,7 @@ export default interface Resources {
         "headerPick": "哪一行是每列的名字",
         "headerTag": "当作每列的名字",
         "lineN": "第 {{n}} 行",
+        "noNumeric": "这张表里没有数值列，画不了。",
         "pickHint": "点一下每列名字所在的那一行。",
         "shown": "显示前 {{shown}} 行，共 {{total}} 行",
         "skipped": "开头 {{count}} 行是说明，已跳过。",
@@ -258,7 +257,8 @@ export default interface Resources {
       "working": {
         "drawing": "正在画…",
         "proposing": "正在画几种画法…",
-        "reading": "正在读…"
+        "reading": "正在读…",
+        "slow": "还在画，数据多会久一点。"
       }
     },
     "dependency": {
@@ -6401,6 +6401,9 @@ export default interface Resources {
       "details": "详情",
       "title": "界面出错了"
     },
+    "dataDrawer": {
+      "count": "{{count}} 个数据文件"
+    },
     "docBanner": {
       "checkUpdate": "检查更新",
       "conflictDisk": "磁盘上：{{canvases}} 张画布 · {{objects}} 个对象 · 改动于 {{time}}",
@@ -7399,7 +7402,7 @@ export default interface Resources {
     },
     "rail": {
       "assets": "素材",
-      "data": "从数据到图",
+      "data": "数据",
       "elements": "图内元素",
       "navLabel": "工作区侧栏",
       "outline": "大纲",
@@ -7619,6 +7622,7 @@ export default interface Resources {
       "backToCanvas": "返回画布",
       "contextBarLabel": "工作区位置",
       "crumbsLabel": "当前对象",
+      "emptyFromData": "用数据画一张",
       "emptyHint": "从素材库选一张图放到画布上。",
       "emptyHintNoAssets": "把 PDF/PNG 或绘图脚本放进项目目录，就会出现在素材库。",
       "emptyTitle": "画布是空的",

@@ -1,12 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button, IconButton } from '@/components/ui/Button'
 import { X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { Notice } from '@/components/ui/Notice'
-import { ProgressBar } from '@/components/ui/ProgressBar'
 import { DURATION, usePresence } from '@/lib/motion'
-import { previewCardWidth } from '@/lib/dataFigure'
+import { columnSample, hasNumericColumn, overlayTargetWidth, overlayWidthCss, tableKey } from '@/lib/dataFigure'
 import { cn } from '@/lib/utils'
 import { useFormatMessage } from '@/i18n/react'
 import '@/lib/dataFigureHost'
@@ -117,18 +115,80 @@ export function DataOverlay({ narrow }: { narrow: boolean }) {
     }
   }
 
+  // Enter = 卡片的主按钮（落在卡片自己或内容区上；按钮 / 链接 / 输入框自己处理 Enter）
+  const confirmKey = (e: React.KeyboardEvent) => {
+    if (e.key !== 'Enter' || e.defaultPrevented || e.nativeEvent.isComposing) return
+    const el = e.target as HTMLElement
+    if (el.closest('button,a,textarea,input[type="text"],[role="dialog"]:not([data-data-overlay])')) return
+    const primary = root.current?.querySelector<HTMLButtonElement>('[data-studio-primary],[data-studio-start]')
+    if (!primary || primary.disabled) return
+    e.preventDefault()
+    primary.click()
+  }
+
   const [footerLeft, setFooterLeft] = useState<HTMLElement | null>(null)
   const [footerRight, setFooterRight] = useState<HTMLElement | null>(null)
-  const [edges, setEdges] = useState({ top: false, bottom: false })
+  const [edges, setEdges] = useState({ top: false, bottom: false, left: false, right: false })
   const scroller = useRef<HTMLDivElement>(null)
   const measureEdges = () => {
     const el = scroller.current
     if (!el) return
     const top = el.scrollTop > 2
     const bottom = el.scrollTop + el.clientHeight < el.scrollHeight - 2
-    setEdges((e) => (e.top === top && e.bottom === bottom ? e : { top, bottom }))
+    const left = el.scrollLeft > 2
+    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 2
+    setEdges((e) => (e.top === top && e.bottom === bottom && e.left === left && e.right === right ? e : { top, bottom, left, right }))
   }
   useEffect(measureEdges)
+
+  // 高度走「量出来再过渡」：内层按内容自然撑高（上限 = 画布栏高 − 16），外层卡片取它量到的高度并过渡。
+  // 不用 `interpolate-size`：桌面壳（WebKit）不认，换屏时高度会直接跳
+  const inner = useRef<HTMLDivElement>(null)
+  const [avail, setAvail] = useState<number | null>(null)
+  const [height, setHeight] = useState<number | null>(null)
+  const [settled, setSettled] = useState(false)
+  useLayoutEffect(() => {
+    const host = root.current?.offsetParent
+    if (!mounted || !(host instanceof HTMLElement) || typeof ResizeObserver === 'undefined') return
+    const read = () => setAvail(Math.max(0, host.clientHeight - 16))
+    read()
+    const ro = new ResizeObserver(read)
+    ro.observe(host)
+    return () => ro.disconnect()
+  }, [mounted])
+  useLayoutEffect(() => {
+    const el = inner.current
+    if (!mounted || !el || typeof ResizeObserver === 'undefined') return
+    const read = () => setHeight(Math.ceil(el.getBoundingClientRect().height))
+    read()
+    const ro = new ResizeObserver(read)
+    ro.observe(el)
+    // 第一次量完之后才开高度过渡：打开那一下卡片从无到有靠进场动画，不是长高
+    const id = window.requestAnimationFrame(() => setSettled(true))
+    return () => {
+      ro.disconnect()
+      window.cancelAnimationFrame(id)
+    }
+  }, [mounted])
+  useEffect(() => {
+    if (!mounted) setSettled(false)
+  }, [mounted])
+
+  // 换屏 / 关卡片后焦点没地方放（按下的按钮被换掉了）：收回卡片上，方向键 / Enter 接着能用；选画法屏落在选中的那一张上
+  const sceneKind = scene.kind
+  useEffect(() => {
+    const el = root.current
+    if (!open || !el) return
+    const a = document.activeElement
+    if (a && a !== document.body && a !== el && (el.contains(a) || a.closest('[data-left-drawer]'))) return
+    const id = window.setTimeout(() => {
+      const r = root.current
+      if (!r) return
+      const checked = r.querySelector<HTMLElement>('[data-studio-pick] input[type="radio"]:checked')
+      ;(checked ?? r).focus()
+    }, 0)
+    return () => window.clearTimeout(id)
+  }, [open, sceneKind])
 
   if (!mounted) return null
   const ovState = selected ? overviews[overviewKeyOf(selected, headerRows)] : undefined
@@ -137,19 +197,21 @@ export function DataOverlay({ narrow }: { narrow: boolean }) {
   const busy = scene.kind === 'proposing' || scene.kind === 'drawing'
   const toFolderPicker = () => useProjectStore.getState().showPicker()
   // 卡片目标宽度（要走 CSS 过渡，必须渲染前就知道）：预览按内容估，其余各屏固定
-  const target =
-    scene.kind === 'pick' ? 640 : scene.kind === 'ask' ? 480 : scene.kind === 'browse' ? previewCardWidth(ov) : 420
+  const target = overlayTargetWidth(scene.kind, ov)
   // 高度：各屏都随内容，上限是画布栏全高（上下各留 8px），超出才在卡片里滚动
-  const width = narrow ? undefined : `max(360px, min(${target}px, 60%))`
-  const maskImage = `linear-gradient(to bottom, ${edges.top ? 'transparent 0, black 20px' : 'black 0'}, ${edges.bottom ? 'black calc(100% - 24px), transparent 100%' : 'black 100%'})`
+  const width = narrow ? undefined : overlayWidthCss(target)
+  // 渐隐只出现在「还能滚」的那一侧：贴顶 / 贴左时那一侧不渐隐；列太多横向滚动时右缘渐隐就是「后面还有」的提示
+  const fadeV = `linear-gradient(to bottom, ${edges.top ? 'transparent 0, black 20px' : 'black 0'}, ${edges.bottom ? 'black calc(100% - 24px), transparent 100%' : 'black 100%'})`
+  const fadeH = `linear-gradient(to right, ${edges.left ? 'transparent 0, black 24px' : 'black 0'}, ${edges.right ? 'black calc(100% - 32px), transparent 100%' : 'black 100%'})`
+  const maskImage = `${fadeV}, ${fadeH}`
 
   const body = (() => {
     switch (scene.kind) {
       case 'proposing':
       case 'drawing':
-        return <WorkingScene kind={scene.kind} />
+        return <WorkingScene kind={scene.kind} thumb={scene.kind === 'drawing' ? scene.thumb : null} />
       case 'ask':
-        return <AskScene code={scene.code} options={scene.options} unsure={scene.unsure} onAnswer={(o) => void st().answer(o)} onBack={st().back} />
+        return <AskScene code={scene.code} options={scene.options} unsure={scene.unsure} sampleOf={(c) => columnSample(ov, c)} onAnswer={(o) => void st().answer(o)} onBack={st().back} />
       case 'pick':
         return (
           <PickScene
@@ -170,22 +232,34 @@ export function DataOverlay({ narrow }: { narrow: boolean }) {
       default:
         return selected ? (
           <div className="flex flex-col gap-4" data-studio-browse>
-            {ovState?.status === 'error' && !ov ? (
-              <Notice tone="neutral" title={ovState.error ? fm(ovState.error) : t('dataFigureV2.preview.failed')} action={<Button variant="ghost" size="sm" onClick={() => st().select(selected)}>{t('dataFigureV2.problem.retry')}</Button>} />
-            ) : !ov ? (
-              <ProgressBar pct={null} label={t('dataFigureV2.working.reading')} className="w-56" />
-            ) : (
-              <TablePreview ov={ov} loading={loadingOv} picked={headerRows[selected.path] != null} onHeaderRow={(line) => st().setHeaderRow(selected.path, selected.sheet, line)} />
-            )}
-            {/* 只有认准了、读得了的表才有主按钮：没认准的先点哪一行是每列的名字，读不了的没有下一步 */}
+            {/* 换文件时这一块按「哪张表 + 读到了没有」换键：新内容淡入，卡片的宽高同时过渡（卡片本身不关不开） */}
+            <div key={`${tableKey(selected)}:${ov ? 'ready' : ovState?.status ?? 'loading'}`} className="animate-fade-in">
+              {ovState?.status === 'error' && !ov ? (
+                <div className="flex flex-col items-start gap-2">
+                  <p className="text-base text-ink-2">{ovState.error ? fm(ovState.error) : t('dataFigureV2.preview.failed')}</p>
+                  <Button variant="ghost" size="sm" onClick={() => st().select(selected)}>
+                    {t('dataFigureV2.problem.retry')}
+                  </Button>
+                </div>
+              ) : !ov ? (
+                <TableSkeleton label={t('dataFigureV2.working.reading')} />
+              ) : (
+                <TablePreview ov={ov} loading={loadingOv} picked={headerRows[selected.path] != null} onHeaderRow={(line) => st().setHeaderRow(selected.path, selected.sheet, line)} />
+              )}
+            </div>
+            {/* 只有认准了、读得了、有数值列的表才有主按钮：没认准的先点哪一行是每列的名字，读不了的没有下一步，没数值列的画不了（说清，不让人点了才失败） */}
             <OverlayFooter
               left={
-                ov?.status === 'ok' && ov.truncated && ov.rows != null ? (
+                ov?.status === 'ok' && !hasNumericColumn(ov) ? (
+                  <span className="text-xs text-ink-3" data-studio-no-numeric>
+                    {t('dataFigureV2.preview.noNumeric')}
+                  </span>
+                ) : ov?.status === 'ok' && ov.truncated && ov.rows != null ? (
                   <span className="text-xs text-ink-3">{t('dataFigureV2.preview.shown', { shown: ov.preview_rows.length, total: ov.rows })}</span>
                 ) : undefined
               }
               right={
-                ov?.status === 'ok' ? (
+                ov?.status === 'ok' && hasNumericColumn(ov) ? (
                   <Button variant="primary" size="lg" data-studio-start disabled={loadingOv || busy} onClick={() => void st().start()}>
                     {t('dataFigureV2.start')}
                   </Button>
@@ -208,21 +282,26 @@ export function DataOverlay({ narrow }: { narrow: boolean }) {
       data-data-overlay
       data-state={state}
       inert={state === 'closed'}
-      onKeyDown={trap}
+      onKeyDown={(e) => {
+        trap(e)
+        confirmKey(e)
+      }}
       style={{
         ...(narrow ? {} : { width }),
-        height: 'auto',
+        // 量到之前（首帧 / 没有 ResizeObserver 的环境）按内容自然高
+        height: height ?? 'auto',
         maxHeight: 'calc(100% - 1rem)',
-        // 高度也走过渡（Chromium 认 interpolate-size；不认的内核直接切换，不影响用）
-        interpolateSize: 'allow-keywords',
-      } as React.CSSProperties}
+        // 高度只在量到第一次之后才过渡
+        transitionProperty: settled ? 'width, height' : 'width',
+      }}
       className={cn(
-        'absolute left-2 top-2 z-overlay flex min-w-0 flex-col overflow-hidden rounded-panel bg-surface shadow-dialog outline-none',
+        'absolute left-2 top-2 z-overlay min-w-0 overflow-hidden rounded-panel bg-surface shadow-dialog-inset outline-none',
         'transition-[width,height] duration-base ease-standard',
         narrow && 'right-2',
         'data-[state=open]:animate-sheet-in data-[state=closed]:animate-sheet-out',
       )}
     >
+      <div ref={inner} className="flex flex-col" style={{ maxHeight: avail ?? undefined }}>
       <div className="flex h-11 shrink-0 items-center gap-2 pl-5 pr-2">
         <h2 className="min-w-0 flex-1 truncate text-base font-medium" title={selected?.path}>
           {selected ? baseName(selected.path) : ''}
@@ -243,8 +322,8 @@ export function DataOverlay({ narrow }: { narrow: boolean }) {
           key={scene.kind}
           onScroll={measureEdges}
           data-studio-stage
-          style={{ maskImage, WebkitMaskImage: maskImage }}
-          className={cn('relative flex min-h-0 flex-1 animate-fade-in flex-col overflow-auto px-5 pb-4 pt-1', scene.kind !== 'browse' && 'min-h-32 justify-center')}
+          style={{ maskImage, WebkitMaskImage: maskImage, maskComposite: 'intersect', WebkitMaskComposite: 'source-in' }}
+          className={cn('relative flex min-h-0 flex-1 animate-fade-in flex-col overflow-auto px-5 pb-4 pt-1', scene.kind !== 'browse' && 'min-h-32')}
         >
           {body}
         </div>
@@ -253,7 +332,35 @@ export function DataOverlay({ narrow }: { narrow: boolean }) {
           <span ref={setFooterRight} className="flex shrink-0 items-center gap-2" />
         </div>
       </OverlayFooterContext.Provider>
+      </div>
       {scene.kind === 'mixed' && <MixedCellsDialog columns={scene.columns} onCancel={st().back} onContinue={(picks) => void st().answerCells(picks)} />}
     </div>
   )
+}
+
+/** 读表时的占位：几行灰条，和最终的表差不多高，卡片先站稳再换成真内容（静态骨架，不闪） */
+function TableSkeleton({ label }: { label: string }) {
+  return (
+    <div role="status" aria-label={label} data-studio-skeleton className="flex flex-col gap-3 pt-2">
+      {[62, 48, 55, 40, 58, 44, 52, 36].map((w, i) => (
+        <span key={i} aria-hidden className="block h-4 rounded-sm bg-surface-active" style={{ width: `${w}%` }} />
+      ))}
+    </div>
+  )
+}
+
+/**
+ * 画布上居中的浮条（工具条 / 通知条 / 提示）在卡片开着时的左内缩：等于卡片占掉的宽度（8px 边距 + 卡片宽 + 8px 间隙），
+ * 让它们在没被盖住的那部分画布里重新居中。宽度表达式与卡片同一份（`overlayWidthCss`），所以过渡起点 / 终点与卡片对得上。
+ * 没开卡片 / 窄屏（卡片占满宽、浮条本来就被盖）时是 0。
+ */
+export function useDataOverlayInset(narrow: boolean): string {
+  const open = useDataFigureStore((s) => s.overlay)
+  const kind = useDataFigureStore((s) => s.scene.kind)
+  const selected = useDataFigureStore((s) => s.selected)
+  const overviews = useDataFigureStore((s) => s.overviews)
+  const headerRows = useDataFigureStore((s) => s.headerRows)
+  if (!open || narrow) return '0px'
+  const ov = selected ? (overviews[overviewKeyOf(selected, headerRows)]?.data ?? null) : null
+  return `calc(1rem + ${overlayWidthCss(overlayTargetWidth(kind, ov))})`
 }

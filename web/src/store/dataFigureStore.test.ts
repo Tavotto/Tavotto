@@ -354,7 +354,7 @@ describe('画这张：各结局', () => {
 })
 
 describe('抽屉 + 浮层：打开 / 关闭 / 换项目', () => {
-  it('select 打开浮层；closeOverlay 关掉并放弃这一轮的备选；正在画时关不掉', async () => {
+  it('select 打开浮层；closeOverlay 关掉并放弃这一轮的备选；正在画时关掉只是收起，画完照样出结局', async () => {
     st().select(ref('a.csv'))
     expect(st().overlay).toBe(true)
     propose.mockResolvedValueOnce(cands('SX'))
@@ -369,9 +369,16 @@ describe('抽屉 + 浮层：打开 / 关闭 / 换项目', () => {
     commit.mockReturnValueOnce(new Promise((r) => (release = r)))
     const p = st().draw()
     st().closeOverlay()
-    expect(st().overlay).toBe(true)
+    // 收起卡片不取消：出图还在进行
+    expect(st()).toMatchObject({ overlay: false, scene: { kind: 'drawing' } })
+    st().select(ref('a.csv'))
+    expect(st().overlay).toBe(true) // 点文件把卡片翻出来看进度，不换表
+    expect(st().scene.kind).toBe('drawing')
+    st().closeOverlay()
     release(committed({ data_check: 'unverifiable' }))
     await p
+    // 要说话的结局把卡片再翻出来
+    expect(st()).toMatchObject({ overlay: true, scene: { kind: 'drawn' } })
   })
 
   it('enter：开「数据」抽屉；只有一个可读文件就直接开它的浮层，多个只开抽屉', async () => {
