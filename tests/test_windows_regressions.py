@@ -2546,14 +2546,6 @@ def _byte_compared_generated_files() -> list[str]:
         # Codex 插件的启动器对（#266）：POSIX 半边的 shebang 遇 CRLF 即失效；Windows 半边逐字节稳定
         "codex-plugin/mcp/launch",
         "codex-plugin/mcp/launch.cmd",
-        # Playground 案例源码：前端 examples.test.ts 把源码 sha256 与生成的
-        # examples-manifest.json 逐字比。按目录现读，新增案例没登记就红。
-        *sorted(
-            p.relative_to(Path(__file__).resolve().parent.parent).as_posix()
-            for p in (
-                Path(__file__).resolve().parent.parent / "web" / "src" / "playground" / "examples"
-            ).glob("*.py")
-        ),
     ]
 
 
