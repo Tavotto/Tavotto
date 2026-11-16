@@ -2053,6 +2053,40 @@ def prepare_realign(sid: str, project: str) -> tuple[Path, dict, threading.Event
     return cdir, meta, ev, note
 
 
+def _restore_candidate(src: Path, cdir: Path) -> None:
+    """把备份的候选放回 `cdir`，**还原期间目录与 meta 始终存在、始终可读**（轮询 `status()` 不持锁，不许看到 404 / 409）：
+    不删整个目录，备份里的文件逐个原子覆盖（先写临时文件再 `os.replace`），备份里没有的多余文件最后才删；meta 最后换。"""
+    src_l, dst_l = Path(longpath.long(src)), Path(longpath.long(cdir))
+    dst_l.mkdir(parents=True, exist_ok=True)
+    keep: set[str] = set()
+    meta_rel = None
+    for dirpath, _dirs, files in os.walk(src_l):
+        rel_dir = Path(dirpath).relative_to(src_l)
+        (dst_l / rel_dir).mkdir(parents=True, exist_ok=True)
+        for name in files:
+            rel = rel_dir / name
+            keep.add(rel.as_posix())
+            if rel.as_posix() == META_NAME:
+                meta_rel = rel
+                continue
+            atomicio.write_bytes(dst_l / rel, (Path(dirpath) / name).read_bytes())
+    if meta_rel is not None:
+        atomicio.write_bytes(dst_l / META_NAME, (src_l / META_NAME).read_bytes())
+    for dirpath, dirs, files in os.walk(dst_l, topdown=False):
+        rel_dir = Path(dirpath).relative_to(dst_l)
+        for name in files:
+            if (rel_dir / name).as_posix() not in keep:
+                try:
+                    (Path(dirpath) / name).unlink()
+                except OSError:
+                    pass
+        for d in dirs:
+            try:
+                (Path(dirpath) / d).rmdir()  # 只删空目录
+            except OSError:
+                pass
+
+
 def run_realign(
     sid: str,
     project: str,
@@ -2092,8 +2126,7 @@ def run_realign(
                 remove_dir(cdir)
             elif cand is None or not cand.ready:
                 # 修正没有产生新的可采用候选：把备份原样放回
-                shutil.rmtree(longpath.long(cdir), ignore_errors=True)
-                shutil.copytree(backup / "cand", longpath.long(cdir))
+                _restore_candidate(backup / "cand", cdir)
             _RESUMES.pop(sid, None)
         return {"state": "cancelled" if cancelled else "ready"}
     finally:

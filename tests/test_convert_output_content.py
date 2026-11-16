@@ -6,6 +6,7 @@ worker through `run_validation`: the candidate files are compared before the red
 # ruff: noqa: F811 - imported pytest fixture
 from __future__ import annotations
 
+import json
 import os
 import time
 import zipfile
@@ -326,6 +327,57 @@ def test_a_realign_that_does_not_help_restores_the_adoptable_candidate(project, 
         assert got["comparison"]["output_evidence"]["files"][0]["state"] == "differs"
         assert (ai_convert.CONVERT_DIR / sid / "fig_matplotlib.py").read_bytes() == before
         assert client.post(f"/api/ai/convert/{sid}/adopt").status_code == 200
+    finally:
+        workdir.forget(figs)
+
+
+def test_restoring_a_candidate_never_makes_it_vanish_for_pollers(project, monkeypatch):
+    """还原备份期间（`run_realign` 持 `_RESUMES_LOCK` 的那一段）轮询不持锁：候选目录与 meta 必须一直在、一直可读。
+    确定性：在还原的每一次落盘前后插一次 status 轮询，全部必须是 200 且带 state。"""
+    client, sid, _status, _state, figs = _ready_with_difference(
+        project, monkeypatch, "this is not python (\n"
+    )
+    cdir = ai_convert.CONVERT_DIR / sid
+    seen: list[tuple[int, object]] = []
+    real = ai_convert.atomicio.write_bytes
+    restoring = {"on": False}
+
+    project_dir = json.loads((cdir / ai_convert.META_NAME).read_text("utf-8"))["project"]
+
+    def poll():
+        # `status()` 的第一步（不持锁）；还原发生在持 `_RESUMES_LOCK` 的线程里，所以这里不能走会拿锁的整条 status
+        try:
+            _cdir, meta = ai_convert._load_meta(sid, project_dir)
+            seen.append((200, meta.get("state")))
+        except ai_convert.ConvertError as exc:
+            seen.append((exc.status, exc.code))
+
+    def spy(path, data, **kw):
+        if restoring["on"]:
+            poll()
+        real(path, data, **kw)
+        if restoring["on"]:
+            poll()
+
+    real_restore = ai_convert._restore_candidate
+
+    def wrapped(src, dst):
+        (dst / "stray.txt").write_text("left by the failed realign")
+        restoring["on"] = True
+        try:
+            real_restore(src, dst)
+        finally:
+            restoring["on"] = False
+
+    monkeypatch.setattr(ai_convert.atomicio, "write_bytes", spy)
+    monkeypatch.setattr(ai_convert, "_restore_candidate", wrapped)
+    try:
+        assert client.post(f"/api/ai/convert/{sid}/realign").status_code == 202
+        _wait_idle(client, sid)
+        assert seen, "restore did not write anything"
+        assert all(code == 200 and state == "ready" for code, state in seen), seen
+        assert not (cdir / "stray.txt").exists()
+        assert client.get(f"/api/ai/convert/{sid}").get_json()["state"] == "ready"
     finally:
         workdir.forget(figs)
 
