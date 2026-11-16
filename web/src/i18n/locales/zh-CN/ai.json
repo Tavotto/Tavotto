@@ -270,7 +270,7 @@
     "running": "运行中",
     "timeout": "超时"
   },
-  "tabLabel": "改图助手",
+  "tabLabel": "助手",
   "dataFigure": {
     "open": "从数据出图",
     "title": "从数据出图",
@@ -608,6 +608,8 @@
       "figures_dir_unusable": "tavotto_figures 不是普通文件夹，没有生成。",
       "target_exists": "同名脚本已经存在，没有覆盖它。",
       "register_failed": "没能把新图登记进项目，新建的文件已撤回。",
+      "data_folder_not_writable": "这个数据文件夹不让写入（只读或没有权限），没有生成。",
+      "disk_full": "磁盘空间不够，没有生成。",
       "data_changed": "数据文件在生成备选之后变过了，请重新生成。",
       "rows_not_plotted": "有 {{count}} 行不是数字或缺横轴的值，没有画出来。"
     },

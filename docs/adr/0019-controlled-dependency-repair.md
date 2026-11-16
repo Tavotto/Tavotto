@@ -291,6 +291,30 @@ optional 分支、有平台相关、有本地模块。**真实的 `ModuleNotFoun
 「用项目 `.venv` + pip install」**不是** native 执行的后门。
 `tests/test_dependency_repair.py::test_repair_does_not_weaken_the_sandbox` 看护。
 
+## 修订（2026-11-15）：第三种安装目标——你为这个项目选的 Python
+
+**症状（Windows 反馈）**：用户为项目选了自己的系统 Python（项目外），脚本缺 scipy → 一键准备推荐「装到
+Tavotto 管理环境」→ pip 装完、`pip check` / import 都过，但 worker 自检（`deprepair.worker_self_test`）每次失败
+（`dependency_worker_selftest_failed`），用户连点十次、每次白等 30–50 秒，最后靠 AI 修复把包装进自己选的那个
+Python 才用上。
+
+**决定**：新增第三种安装目标 `TARGET_CONFIGURED = "configured_interpreter"`（界面叫「你为这个项目选的 Python」）。
+
+* **判据唯一出处 `deprepair.configured_interpreter(project)`**，五条全过才有：项目记住的解释器 `trigger ==
+  user_selected`、文件在、来源是「项目之外的系统 Python / Conda」（`pool.remembered_source == SOURCE_SYSTEM`：
+  非项目 venv、非受管、非内置）、此刻 `pool.resolve_worker_python` 对这个项目解析出的正是它、没有全局显式解释器
+  （`pool.explicit_worker_python()` 为空；全局固定时本目标与另两个一样不给）。不起子进程。**不接受任意路径**——
+  联合 / 单包计划只认这个函数的结果，确认到执行之间判据不再成立（选了别的 Python、被全局固定）计划作废。
+* **只在管理环境自检失败过时优先推荐它**：`deprepair.managed_selftest_failed(project)` = 受管环境最近登记的一代
+  是 incomplete 且原因是 `managedenv.REASON_SELFTEST_FAILED`（建代时 worker 自检未通过写它）；之后成功建出一代，最近一代
+  不再是失败的，自然回到原样。管理环境没失败过时推荐不变（仍是受管）。`offer()` 把本目标排在受管之前，受管目标
+  带 `selftest_failed`；准备会话 `_observe_missing` 按它们选 `target_kind`。
+* **执行 = 原地安装**，与项目 `.venv` 同一条路径（`_run_joint_in_place`：`pip check` + `_verify_imports` +
+  `_verify_distributions` + `worker_self_test`），`modifies_user_environment=True`、不可完整回滚（§八）。
+* **必须用户亲手确认，不自动授权**：「打开并运行」的 `InstallGrant` 对它一律拒（`target_kind`），界面逐次确认。
+* 界面：管理环境自检失败过且有本目标 → 它是主按钮；没有本目标 → 不再把管理环境当主按钮，主按钮改为「选择其他
+  Python」，管理环境重试留在「详情」备选里。
+
 ## 修订（2026-09-21，#465 / #466）
 
 * **全局显式解释器生效时不提供安装目标。** ADR 0018 §四把 `TAVOTTO_WORKER_PYTHON`
