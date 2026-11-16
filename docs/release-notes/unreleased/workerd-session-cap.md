@@ -1,0 +1,3 @@
+## Projects with more than three script figures no longer keep re-running scripts you just opened
+
+On machines with enough memory, Tavotto keeps up to eight script figures ready at once, but its background process still closed every figure beyond the third on its own. In a project with four or more script figures, switching back to a figure you had just opened often re-ran its script, and saving or exporting could not keep the export-ready copy of those figures ("The existing Figure session expired; SVG capture cannot rerun it" in the log), so an SVG export could fail for them. Figures that Tavotto keeps ready now stay ready.
