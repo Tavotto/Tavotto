@@ -22,6 +22,7 @@ from tavotto.engine import (
     ai_data_propose as P,
     ai_data_recipe as R,
     ai_data_task,
+    ai_data_template as tpl,
     ai_figure_edit,
     ai_history,
     ai_tasks,
@@ -1862,6 +1863,100 @@ def test_lazy_propose_on_an_instrument_export_uses_the_real_header_row(project, 
     body = propose(client, folder="data/instrument", render="lazy").get_json()
     assert body["kind"] == "candidates", body
     assert body["header_row"] == 3
-    # 列名取对了（不是 `operator:` / `lab`）；单位行（`nm  a.u.`）目前仍被读成数据里的一行文字，见回报里的未解决项
-    cols = set(body["roles"]["options"]["y"]) | set(body["roles"]["options"]["x"])
-    assert "Intensity" in cols and "operator:" not in cols
+    roles = body["roles"]
+    assert roles["x"] == "Wavelength" and roles["y"] == ["Intensity"]
+    assert body["mixed_cells"] == []  # 单位行被切掉了：不是「1 个非数字格」
+    assert body["items"][0]["values"]["family"] in ("trend", "relationship")  # 不是一堆直方图
+    assert {i["values"]["family"] for i in body["items"]} & {"trend", "relationship"}
+
+
+def _read_instrument(tmp_path, **kw):
+    p = tmp_path / "calibration.txt"
+    p.write_text(instrument_text(), encoding="utf-8")
+    return p, adf.read_text_table(p, **kw)
+
+
+def test_units_row_is_cut_in_every_reader_and_counts_as_no_data(tmp_path):
+    p, t = _read_instrument(tmp_path)
+    s = t.summary
+    assert t.header_line == 3 and s.columns == ["Wavelength", "Intensity"] and s.units_row is True
+    assert t.rows == 20 and s.rows[0] == ["400", "0.1"]
+    assert s.row_numbers[:2] == [5, 6]  # 数据行的物理行号不变（单位行是第 4 行）
+    assert {c: (v.kind, v.text_count) for c, v in s.per_column.items()} == {
+        "Wavelength": ("numeric", 0),
+        "Intensity": ("numeric", 0),
+    }
+    # 概览 / 摘要 / 脚本读出同一张表
+    again = adf.inspect_data_source(p, None, v2=True, header_row=3)  # 提交时按 header_line 重读
+    assert again.rows == s.rows and again.units_row is True
+    entry = adf.TableEntry("calibration.txt", None, False, s)
+    expr = tpl._reader_expr(entry, False)
+    assert expr == "read_delimited(DATA, 'ws', 3, True)"
+    ns: dict = {}
+    exec(compile(tpl._runtime_source(), "<rt>", "exec"), ns)  # noqa: S102 - 我们自己生成的公共模块
+    ns["DATA"] = p
+    header, rows = eval(expr, ns)  # noqa: S307
+    assert header == s.columns and rows == s.rows
+
+
+def test_units_row_is_not_cut_when_the_user_names_another_header_line(tmp_path):
+    p, _ = _read_instrument(tmp_path)
+    other = adf.read_text_table(p, header_row=4)  # 用户说：单位行才是表头
+    assert other.summary.columns == ["nm", "a.u."] and other.summary.units_row is False
+    assert other.rows == 20 and other.summary.row_numbers[0] == 5
+    notes = adf.read_text_table(p, header_row=2)
+    assert notes.summary is None or notes.summary.units_row is False
+    assert (
+        tpl._reader_expr(adf.TableEntry("c.txt", None, False, other.summary), False)
+        == "read_delimited(DATA, 'ws', 4)"
+    )
+
+
+def test_units_row_detection_leaves_other_shapes_alone(tmp_path):
+    # 干净 CSV：没有单位行，读法与脚本逐字不变
+    csv_p = tmp_path / "g.csv"
+    csv_p.write_text("group,value\na,1\nb,2\n", encoding="utf-8")
+    t = adf.read_text_table(csv_p)
+    assert t.summary.units_row is False
+    assert tpl._reader_expr(adf.TableEntry("g.csv", None, False, t.summary), False) == (
+        "read_delimited(DATA, ',')"
+    )
+    # 括号包着的单位 / 列名行仍由用户在两行里点（不自动切）
+    br = tmp_path / "b.dat"
+    br.write_text("first second\n(a) (b)\n1 2\n3 4\n", encoding="utf-8")
+    assert adf.read_text_table(br).summary.units_row is False
+    # 表头后紧跟的是一行文字数据而不是单位：不切
+    txt = tmp_path / "t.txt"
+    txt.write_text("name value\nalpha 1\nbeta 2\ngamma 3\n", encoding="utf-8")
+    assert adf.read_text_table(txt).summary.units_row is False
+    assert adf.read_text_table(txt).rows == 3
+
+
+def test_units_row_first_line_header_csv(tmp_path):
+    # 表头就在第 1 行、第 2 行是单位：`header_row` 仍是 None（老读法），单位行靠第四项切
+    p = tmp_path / "w.csv"
+    p.write_text("wavelength,intensity\nnm,a.u.\n400,1\n405,2\n410,3\n", encoding="utf-8")
+    t = adf.read_text_table(p)
+    assert t.summary.units_row is True and t.summary.header_row is None and t.rows == 3
+    entry = adf.TableEntry("w.csv", None, False, t.summary)
+    assert tpl._reader_expr(entry, False) == "read_delimited(DATA, ',', None, True)"
+    ns: dict = {}
+    exec(compile(tpl._runtime_source(), "<rt>", "exec"), ns)  # noqa: S102
+    ns["DATA"] = p
+    header, rows = eval(tpl._reader_expr(entry, False), ns)  # noqa: S307
+    assert header == ["wavelength", "intensity"] and rows == t.summary.rows
+
+
+@needs_worker
+def test_instrument_export_commits_and_verifies_with_the_units_row_cut(project):
+    m, client, figs, _ = project
+    path = figs / "data" / "instrument" / "calibration.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text(instrument_text(), encoding="utf-8")
+    body = propose(client, folder="data/instrument", render="lazy").get_json()
+    first = body["items"][0]
+    assert client.get(first["thumbnail_url"]).status_code == 200
+    out = commit(client, body["session"], first["id"]).get_json()
+    assert out["task"]["outcome"] == "completed" and out["data_check"] == "verified", out
+    script = (figs / out["script"]).read_text(encoding="utf-8")
+    assert "read_delimited(DATA, 'ws', 3, True)" in script

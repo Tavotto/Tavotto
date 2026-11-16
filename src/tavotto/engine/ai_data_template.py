@@ -74,12 +74,13 @@ class TemplateError(ValueError):
 _ISO_DATE_PREAMBLE = 'import datetime as _dt\n_ISO_DATE = re.compile(r"\\d{4}-\\d{2}-\\d{2}")\n_EPOCH = _dt.date(1970, 1, 1)\n'
 
 
-def read_delimited(path, delimiter, header_row=None):
+def read_delimited(path, delimiter, header_row=None, units_row=False):
     """文本表格 → `(表头, 数据行)`：UTF-8（可带 BOM）；全空行不算数据行；表头去首尾空白。`delimiter` 是 `,` / `\t` / `;` / `ws`（连续空白）；
-    `header_row`（1 起的物理行号）不给 = 第一条非空记录是表头，给了 = 跳过它之前的说明行（读法全文在 `table_from_text`，Tavotto 读出来的是同一张表）。"""
+    `header_row`（1 起的物理行号）不给 = 第一条非空记录是表头，给了 = 跳过它之前的说明行；`units_row` 真 = 表头后紧跟的单位行不是数据、切掉
+    （读法全文在 `table_from_text`，Tavotto 读出来的是同一张表）。"""
     with open(path, newline="", encoding="utf-8-sig") as fh:
         text = fh.read()
-    header, rows, _lines = table_from_text(text, delimiter, header_row)
+    header, rows, _lines = table_from_text(text, delimiter, header_row, units_row)
     return header, rows
 
 
@@ -1661,6 +1662,8 @@ def _reader_expr(entry, is_xlsx: bool) -> str:
     s = entry.summary
     delim = s.delimiter or ("\t" if entry.path.lower().endswith((".tsv", ".tab")) else ",")
     args = [repr(delim)] + ([repr(s.header_row)] if s.header_row is not None else [])
+    if s.units_row:  # 只在嗅探到单位行时多写这一项：其余脚本逐字不变
+        args = [*args[:1], repr(s.header_row), "True"]
     codec = adf.script_codec(s.encoding)
     if codec is not None:
         # 非 UTF-8（GB18030 / 有 BOM 的 UTF-16）：编码由父进程定下、以字面量写进脚本，脚本不探测。字节原样 `decode`（不经平台换行转换），
