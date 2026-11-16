@@ -4,6 +4,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { usePathTextOutline } from '@/canvas/PathTextView'
 import { clampOffset } from '@/lib/pathText'
+import { MOD } from '@/lib/utils'
 import { updateObjects } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { GAP_STEP_PT } from '@/store/pathTextActions'
@@ -64,6 +65,7 @@ export function PathTextSection({ objs }: { objs: PathTextObject[] }) {
           <TextInput
             data-path-text-content=""
             aria-label={px('title')}
+            title={translate('pathText.editPathTip', { ns: 'inspector', mod: MOD })}
             value={one.text}
             placeholder={tx('placeholder')}
             onFocus={() => beginTxn('editText')}

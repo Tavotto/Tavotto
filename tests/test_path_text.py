@@ -232,6 +232,106 @@ def test_auto_offset_keeps_every_glyph_clear_of_the_stroke(provider, flip):
     assert min(near) > 0.05 * 12 / PT, near
 
 
+# --------------------------------------------------------------- 沿平行线排（离线多大字距都不变）
+def _mids(o, provider):
+    """每个字的中点（框空间 pt）与 advance：从落字组的变换反推（原点 + 半个字宽沿 x 轴）。"""
+    _p, groups = _glyph_groups(o, provider)
+    adv = _line(o, provider)
+    to_page = plan._object_transform(o, 50 * PT)
+    inv = _invert(to_page)
+    out = []
+    for g, a in zip(groups, adv):
+        m = ir.compose(g.transform, inv)  # 字局部 → 框空间
+        x, y = ir.apply(m, a / 2, 0.0)
+        out.append((x, y))
+    return out, adv
+
+
+def _invert(m):
+    a, b, c, d, e, f = m
+    det = a * d - b * c
+    return (d / det, -b / det, -c / det, a / det, (c * f - d * e) / det, (b * e - a * f) / det)
+
+
+@pytest.mark.parametrize("off,flip", [(17, False), (17, True), (8, False)])
+def test_glyph_spacing_does_not_grow_with_offset(provider, off, flip):
+    o = _pt(
+        subpaths=[{"closed": True, "nodes": CIRCLE}],
+        w_mm=40,
+        h_mm=40,
+        text="ABCDEFGH",
+        baseline_offset_pt=off,
+        **({"flip": True} if flip else {}),
+    )
+    mids, adv = _mids(o, provider)
+    for (p, q), a, b in zip(zip(mids, mids[1:]), adv, adv[1:]):
+        # 相邻两字中点的弦长 ≈ 两个半字宽之和（平行线上按弧长排；按原线排时圆外会大出 off / r 那么多）
+        assert math.hypot(q[0] - p[0], q[1] - p[1]) == pytest.approx((a + b) / 2, rel=0.03)
+
+
+def _arc_param(pts, cum, q):
+    best = (math.inf, 0.0)
+    for i in range(1, len(pts)):
+        (ax, ay), (bx, by) = pts[i - 1], pts[i]
+        dx, dy = bx - ax, by - ay
+        ln2 = dx * dx + dy * dy
+        u = 0.0 if ln2 == 0 else max(0.0, min(1.0, ((q[0] - ax) * dx + (q[1] - ay) * dy) / ln2))
+        d = math.hypot(ax + dx * u - q[0], ay + dy * u - q[1])
+        if d < best[0]:
+            best = (d, cum[i - 1] + (cum[i] - cum[i - 1]) * u)
+    return best[1]
+
+
+@pytest.mark.parametrize(
+    "nodes,off",
+    [
+        # 直角拐弯，内侧离得比拐角还远：平行线会打结
+        ([{"p": [0, 1]}, {"p": [0.5, 0]}, {"p": [1, 1]}], -14),
+        ([{"p": [0, 0]}, {"p": [0.5, 1]}, {"p": [1, 0]}], 14),
+        # 小弧内侧，离线大于曲率半径
+        ([{"p": [0, 1], "out": [0, 0]}, {"p": [1, 1], "in": [1, 0]}], -40),
+    ],
+    ids=["corner-inside-neg", "corner-inside", "tight-arc"],
+)
+def test_sharp_corners_and_cusps_keep_glyphs_in_order(provider, nodes, off):
+    """尖角 / 平行线自交：字仍按路径的先后排开，不来回跳；落到哪就落到哪，不抛错。"""
+    o = _pt(
+        subpaths=[{"closed": False, "nodes": nodes}],
+        w_mm=20,
+        h_mm=10,
+        text="abcdefghij",
+        baseline_offset_pt=off,
+    )
+    mids, _adv = _mids(o, provider)
+    assert mids
+    _x, _y, w, h = plan._box_pt(o, allow_zero=True)
+    pts, cum, _closed = pathtext.path_of(o, w, h)
+    # 不来回跳：相邻两字中点隔得不比两个字宽还远
+    step = max(_adv) * 2
+    assert all(math.hypot(q[0] - p[0], q[1] - p[1]) <= step for p, q in zip(mids, mids[1:]))
+    # 平行线没整个塌掉时，字沿原路径的先后顺序排（离线比曲率半径还大、整条塌掉时退回「原线 + 法向平移」，只核不跳）
+    if len(pathtext.parallel(pts, False, off)) > 1:
+        ts = [_arc_param(pts, cum, m) for m in mids]
+        assert all(b >= a - 1e-6 for a, b in zip(ts, ts[1:])), ts
+
+
+def test_parallel_of_zero_offset_is_the_path_itself():
+    pts = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)]
+    assert pathtext.parallel(pts, False, 0) == pts
+    # 直线向上（y 向下空间里是 −y）平移
+    assert pathtext.parallel([(0.0, 0.0), (10.0, 0.0)], False, 3) == [(0.0, -3.0), (10.0, -3.0)]
+
+
+# --------------------------------------------------------------- 放不下的字
+def test_overflow_flag_only_when_glyphs_fall_off_an_open_path(provider):
+    short = _pt(subpaths=[{"closed": False, "nodes": LINE}], w_mm=6, h_mm=0.5, text="ABCDEFGHIJ")
+    long = {**short, "w_mm": 80}
+    ring = _pt(subpaths=[{"closed": True, "nodes": CIRCLE}], w_mm=6, h_mm=6, text="ABCDEFGHIJ")
+    assert plan.path_text_overflow(short, provider) is True
+    assert plan.path_text_overflow(long, provider) is False
+    assert plan.path_text_overflow(ring, provider) is False
+
+
 def test_open_path_drops_glyphs_past_its_end(provider):
     o = _pt(subpaths=[{"closed": False, "nodes": LINE}], w_mm=6, h_mm=0.5, text="ABCDEFGHIJ")
     _p, groups = _glyph_groups(o, provider)
@@ -356,6 +456,7 @@ def _diff(a, b):
         {"text": "x² + y² = r²"},
         {"line_width_pt": 2.5},
         {"baseline_offset_pt": -3, "flip": True},
+        {"baseline_offset_pt": 17},
     ],
     ids=[
         "arc",
@@ -366,6 +467,7 @@ def _diff(a, b):
         "superscript",
         "auto-offset-thick-line",
         "manual-negative-flip",
+        "offset-17pt-parallel",
     ],
 )
 def test_outline_preview_renders_like_the_export(provider, tmp_path, over):
@@ -432,8 +534,12 @@ def test_outline_endpoint_accepts_path_text():
     assert r["results"][0]["auto_offset_pt"] == pytest.approx(
         plan.path_text_auto_offset(o, facade.provider()), abs=1e-4
     )
+    assert r["results"][0]["overflow"] is False
+    tight = _pt(subpaths=[{"closed": False, "nodes": LINE}], w_mm=6, h_mm=0.5, text="ABCDEFGHIJ")
+    r2 = client.post("/api/text/outline", json={"objects": [tight]}).get_json()
+    assert r2["results"][0]["overflow"] is True
     t = client.post("/api/text/outline", json={"objects": [{**o, "type": "text"}]}).get_json()
-    assert "auto_offset_pt" not in t["results"][0]
+    assert "auto_offset_pt" not in t["results"][0] and "overflow" not in t["results"][0]
 
 
 def test_copy_as_svg_endpoint_takes_path_text():

@@ -2509,7 +2509,7 @@ export const copyAsSvg = (objects: ExportObject[], w_mm: number, h_mm: number) =
 export interface TextOutlineResult {
   ok: boolean
   /** 路径文字另带 `auto_offset_pt`：自动离线算出来是多少（ADR 0190） */
-  results: ({ paths: unknown[]; auto_offset_pt?: number } | { error: string })[]
+  results: ({ paths: unknown[]; auto_offset_pt?: number; overflow?: boolean } | { error: string })[]
 }
 export const outlineText = (objects: ExportObject[]) =>
   jsonFetch<TextOutlineResult>('/api/text/outline', {

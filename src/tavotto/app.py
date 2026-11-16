@@ -4876,6 +4876,8 @@ def api_text_outline():
             if o.get("type") == "pathText":
                 # 路径文字（ADR 0190）：自动离线算出来是多少——属性栏「离线」框用它做占位数
                 r["auto_offset_pt"] = round(rc_plan.path_text_auto_offset(o, provider), 4)
+                # 开放路径上放不下的字（ADR 0190）：画布在路径末端画红「+」
+                r["overflow"] = rc_plan.path_text_overflow(o, provider)
             results.append(r)
         except rc_plan.PlanError as exc:
             results.append({"error": exc.code})

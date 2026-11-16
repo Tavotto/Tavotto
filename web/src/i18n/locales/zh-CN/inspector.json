@@ -1429,6 +1429,7 @@
     "offsetTip": "基线离开线多远：0 贴线，负数压到线上；清空回到自动",
     "offsetAuto": "自动 {{value}}",
     "offsetAutoBare": "自动",
-    "offsetReset": "自动"
+    "offsetReset": "自动",
+    "editPathTip": "改字；要改字排的那条路径，在画布上 {{mod}} 双击这段字"
   }
 }

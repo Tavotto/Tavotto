@@ -6,7 +6,9 @@ import { arcPathOf, nearestOffset, type XY } from '@/lib/pathText'
 import { canvasTextDefaults } from '@/lib/typography'
 import type { CanvasObject, PathObject, PathSubpath, PathTextObject } from '@/types/document'
 import { objectRotation } from '@/types/document'
-import { useDocumentStore } from './documentStore'
+import { useDocumentStore, type HistoryEntry } from './documentStore'
+import { activePathEdit, usePathEditStore } from './pathEditStore'
+import { editAnchors } from './pathActions'
 import { finishActiveGesture } from './gestureCoordinator'
 import { useSelectionStore } from './selectionStore'
 import { useUiStore } from './uiStore'
@@ -197,3 +199,54 @@ export function nudgePathTextGap(dir: 1 | -1, step = GAP_STEP_PT): boolean {
   })
   return true
 }
+
+/* ------------------------------------ 编辑路径文字的路径 ------------------------------------ */
+
+/**
+ * ⌘ 双击路径文字 = 进它自带那份路径的锚点编辑（直接选择工具，`pathActions.editAnchors`）。编辑期间每拖一下照常一条历史，
+ * 编辑一结束（退出锚点编辑、换了选区、对象没了）就把这段时间里压进撤销栈、还在栈顶的那几条并成一条（`squashTop`）——
+ * 整次编辑撤销一次就回去。字在每一下之后由画布按新路径重新落（`PathTextView` 的请求键里有路径）。
+ */
+let session: { id: string; entries: Set<HistoryEntry>; stop: () => void } | null = null
+
+function finishPathSession(): void {
+  const s = session
+  if (!s) return
+  session = null
+  s.stop()
+  const past = useDocumentStore.getState().past
+  let k = 0
+  while (k < past.length && s.entries.has(past[past.length - 1 - k])) k++
+  if (k >= 2) useDocumentStore.getState().squashTop(k, hist('editPathTextPath'))
+}
+
+export function editPathTextPath(id: string): boolean {
+  const o = useDocumentStore.getState().doc.objects.find((x) => x.id === id)
+  if (!o || o.type !== 'pathText' || o.locked || o.hidden) return false
+  finishPathSession()
+  useUiStore.getState().setEditingText(null)
+  editAnchors(id)
+  if (activePathEdit()?.path.id !== id) return false
+  const entries = new Set<HistoryEntry>()
+  const check = () => {
+    if (session && activePathEdit()?.path.id !== id) finishPathSession()
+  }
+  const unDoc = useDocumentStore.subscribe((st, prev) => {
+    const top = st.past.at(-1)
+    if (top && top !== prev.past.at(-1) && st.past.length >= prev.past.length) entries.add(top)
+    check()
+  })
+  const unEdit = usePathEditStore.subscribe(check)
+  const unSel = useSelectionStore.subscribe(check)
+  session = {
+    id,
+    entries,
+    stop: () => {
+      unDoc()
+      unEdit()
+      unSel()
+    },
+  }
+  return true
+}
+

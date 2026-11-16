@@ -14,6 +14,7 @@ import { openQuickEdit } from './quickEditStore'
 import { editAnchors } from '@/store/pathActions'
 import { enterGroupAt } from '@/store/groupActions'
 import { trackKeyClick } from '@/store/keyObject'
+import { editPathTextPath } from '@/store/pathTextActions'
 import { ArrowView } from './ArrowView'
 import { PanelView } from './PanelView'
 import { PathTextView } from './PathTextView'
@@ -122,6 +123,11 @@ export const ObjectView = memo(function ObjectView({
     e.stopPropagation()
     if (outside) return
     // 组里的对象：双击先进到组里（组内编辑，ADR 0191），进到它是直接成员的那一层后，双击才改字 / 编辑锚点 / 进图内编辑
+    // 路径文字：⌘ / Ctrl 双击 = 直接编辑它自带的那份路径（ADR 0190）；与直接选择一样不管它在不在组里
+    if (obj.type === 'pathText' && (e.metaKey || e.ctrlKey)) {
+      editPathTextPath(obj.id)
+      return
+    }
     if (enterGroupAt(obj.id)) return
     if (obj.type === 'text' || obj.type === 'pathText') useUiStore.getState().setEditingText(obj.id)
     // 路径：双击进锚点编辑（直接选择，ADR 0185 M1）

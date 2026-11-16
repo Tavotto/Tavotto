@@ -8,6 +8,8 @@ import { MM_PER_PT } from '@/lib/units'
 import { useDocumentStore } from '@/store/documentStore'
 import { commitPathText, rememberAutoOffset } from '@/store/pathTextActions'
 import { useInteractionStore } from '@/store/interactionStore'
+import { useSelectionStore } from '@/store/selectionStore'
+import { usePathTextGlyphStore } from '@/store/pathTextGlyphStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { PathObject, PathTextObject } from '@/types/document'
@@ -23,7 +25,7 @@ import { PathBody } from './PathView'
  */
 
 /** 后端给的字形轮廓（对象挪到原点、不带旋转）与这次用的自动离线（pt，属性栏占位数） */
-type Outline = { paths: PathObject[]; autoOffsetPt: number | null }
+type Outline = { paths: PathObject[]; autoOffsetPt: number | null; overflow: boolean }
 const cache = new Map<string, Outline>()
 const pending = new Map<string, Promise<Outline | null>>()
 const CACHE_MAX = 200
@@ -51,6 +53,7 @@ export function fetchPathTextOutline(obj: PathTextObject, lineWidthPt = 0): Prom
       const out = {
         paths: one.paths as PathObject[],
         autoOffsetPt: typeof one.auto_offset_pt === 'number' ? one.auto_offset_pt : null,
+        overflow: one.overflow === true,
       }
       if (out.autoOffsetPt != null) rememberAutoOffset(obj.id, out.autoOffsetPt)
       if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value as string)
@@ -100,11 +103,29 @@ export function PathTextView({ obj, hit = 'none' }: { obj: PathTextObject; hit?:
   const w = Math.max(mmToWorld(obj.w), 0.001)
   const h = Math.max(mmToWorld(obj.h), 0.001)
   const { outline } = usePathTextOutline(obj)
+  // 字实际占到哪（对象局部 mm）：选框与浮动栏让开字（`pathTextGlyphStore`）
+  useEffect(() => {
+    const ps = outline?.paths ?? []
+    if (!ps.length) {
+      usePathTextGlyphStore.getState().setBounds(obj.id, null)
+      return
+    }
+    const x0 = Math.min(...ps.map((p) => p.x))
+    const y0 = Math.min(...ps.map((p) => p.y))
+    const x1 = Math.max(...ps.map((p) => p.x + p.w))
+    const y1 = Math.max(...ps.map((p) => p.y + p.h))
+    usePathTextGlyphStore.getState().setBounds(obj.id, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
+  }, [outline, obj.id])
+  useEffect(() => () => usePathTextGlyphStore.getState().setBounds(obj.id, null), [obj.id])
   const id = `ptext-${useId().replace(/:/g, '')}`
   const d = pathD(pathGeometry({ subpaths: obj.subpaths }, w, h, 0).fill)
   const sizeW = mmToWorld(obj.sizePt * MM_PER_PT)
   const s = mmToWorld(1)
   const editing = useUiStore((st) => st.editingTextId === obj.id)
+  // 放不下的字的红「+」只在选中或悬停时画（导出从来不画：它不在后端的落字里）
+  const selected = useSelectionStore((st) => st.ids.includes(obj.id))
+  const hovered = useInteractionStore((st) => st.hoverId === obj.id)
+  const marked = selected || hovered
 
   return (
     <>
@@ -127,6 +148,7 @@ export function PathTextView({ obj, hit = 'none' }: { obj: PathTextObject; hit?:
       ) : (
         d && <FallbackText obj={obj} id={id} d={d} sizeW={sizeW} w={w} h={h} />
       )}
+      {outline?.overflow && marked && <OverflowMark obj={obj} w={w} h={h} zoom={zoom} />}
       {hit !== 'none' && d && (
         <path
           data-hit-path=""
@@ -220,3 +242,27 @@ function FallbackText({ obj, id, d, sizeW, w, h }: { obj: PathTextObject; id: st
 function reversedSegs(pts: [number, number][]): PathSeg[] {
   return pts.map((p, i): PathSeg => (i === 0 ? ['M', p[0], p[1]] : ['L', p[0], p[1]]))
 }
+
+/**
+ * 开放路径上放不下的字（后端 `pathtext.layout` 报的 `overflow`）：在路径末端（沿字走的方向的终点，再往外挪出一点，免得被选框的边柄盖住）画一个小红框带「+」，
+ * 与 Illustrator 的溢出标记一样，不加文案。大小按屏幕像素固定。
+ */
+function OverflowMark({ obj, w, h, zoom }: { obj: PathTextObject; w: number; h: number; zoom: number }) {
+  const a = arcPathOf(obj, w, h)
+  const last = a.pts[a.pts.length - 1]
+  const prev = a.pts[a.pts.length - 2]
+  if (!last || !prev) return null
+  const r = 4.5 / Math.max(zoom, 0.01)
+  const sw = 1 / Math.max(zoom, 0.01)
+  // 往路径的去向再挪出去一点：末端常常和选框的边柄重合，标记要看得见
+  const len = Math.hypot(last[0] - prev[0], last[1] - prev[1]) || 1
+  const k = (r * 2.2) / len
+  const end: [number, number] = [last[0] + (last[0] - prev[0]) * k, last[1] + (last[1] - prev[1]) * k]
+  return (
+    <g data-path-text-overflow="" style={{ color: 'var(--color-danger)' }}>
+      <rect x={end[0] - r} y={end[1] - r} width={2 * r} height={2 * r} fill="var(--color-surface)" stroke="currentColor" strokeWidth={sw} />
+      <path d={`M${end[0] - r * 0.55} ${end[1]}H${end[0] + r * 0.55}M${end[0]} ${end[1] - r * 0.55}V${end[1] + r * 0.55}`} stroke="currentColor" strokeWidth={sw * 1.2} />
+    </g>
+  )
+}
+
