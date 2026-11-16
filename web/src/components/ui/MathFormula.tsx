@@ -22,11 +22,10 @@ export function MathFormula({
   sizePx: number
   /**
    * 竖排（ADR 0163）：公式与侧躺的拉丁字同样**顺时针转 90° 整块侧躺**，沿列方向占公式的宽度
-   * （导出 `plan._vertical_nodes`：基线 = 列中线 − 字号 ×（上升 + 下降）/ 2，公式顺时针转 90°）。
-   * `columnPx` = 列宽（字号 × 行距），盒子占满一整列，所以公式落在列中线上、与浏览器怎么摆内联盒无关；
+   * （导出 `plan._vertical_nodes`；盒子恰好包住墨迹、比列宽厚时撑开所在的那一列，见 `verticalFormulaBox`）。
    * `stack` = 正文的字体栈，用来量侧躺字的基线位置（与同列侧躺字同一条基线）。
    */
-  vertical?: { columnPx: number; stack: string }
+  vertical?: { stack: string }
   /**
    * 横排画布文字：公式撑开所在行。`shiftPx` = 宿主给整段内容的基线补差（`horizontalBaselineFixPx`）：
    * 浏览器的行盒按它自己的字体度量摆，宿主再把内容整体往下挪 `shiftPx`；公式的布局盒先往下错开同样的量，
@@ -52,7 +51,6 @@ export function MathFormula({
   // 竖排：外层盒与 SVG 的摆法来自 `verticalFormulaBox`（预览与对账探针读同一份）；横排保持原样
   const g = vertical
     ? verticalFormulaBox({
-        columnPx: vertical.columnPx,
         sizePx,
         widthEm: box.width,
         ascentEm: asc,

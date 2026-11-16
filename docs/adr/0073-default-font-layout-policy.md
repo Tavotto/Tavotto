@@ -91,7 +91,15 @@ OS/2 typo 摆基线，字整体偏上——中文墨迹离框顶 0.02 em、离�
 
 **代价（已向用户说明）**：存量项目里所有横排标注导出位置下移约 0.11 em（9 pt 约 0.7 pt）；预览位置几乎不变
 （Liberation / Times 的 hhea 本来就离 0.35 em 不到 0.02 em）；含高公式的标注框高变大（预览量了写回 `h`，并进触发它的历史或静默）。
-竖排不在本次范围（列中线另有一套，ADR 0163）。
+
+**竖排同一条规则（转 90°）**：侧躺段（拉丁、公式）的基线 = 列中线左边固定同一个 `BASELINE_BELOW_CENTER`——横排「基线在行盒中线下」
+顺时针转过来就是这一条，原先按 OS/2 typo 算 `(上升 + 下降)/2`（Liberation 0.24 em），侧躺字整体偏右、预览（浏览器 hhea 的中线基线，
+批准衬线 0.34 em）≠ 导出约 0.1 em；现在两侧差约 0.01 em，存量竖排标注的侧躺段导出左移约 0.11 em。高公式撑开所在的那一列
+（`rendercore/vertical.column_box`：列盒 = 普通列宽 ∪ 公式盒，后面的列往左让）；预览的公式盒恰好包住墨迹、按中线对齐后
+`vertical-align` 挪到基线两侧（`web/src/lib/verticalFormula.ts`），浏览器的行盒自然取并。直立字（中日文）的摆法不变。
+
+**复制图里文字（ADR 0163）**：第一行有高公式时，按 `text_block.asc`（原图 matplotlib 量的那一行上伸，公式也是 mathtext 排的）
+超出普通行盒上半的部分给框加高、框顶往上让，第一行基线仍落在原处——复制是同步的（⌘C 的 `copy` 事件），等不到公式排版结果。
 
 | 变异 | 红在 |
 |---|---|
@@ -99,3 +107,7 @@ OS/2 typo 摆基线，字整体偏上——中文墨迹离框顶 0.02 em、离�
 | 两侧常数只改一边 | `tests/test_text_line_box.py` |
 | 预览不补差 / 补差方向反了 | `tests/test_horizontal_css_parity.py`（真 Chromium 逐行对账基线、公式上下边、框高，容差 0.1 pt；手工反证：补差置零 → 11.25 对 11.7 pt 红） |
 | 公式不撑行 | `tests/test_rendercore_typography.py::test_a_tall_formula_grows_only_its_own_line_and_short_ones_change_nothing`、`tests/test_horizontal_css_parity.py`（框高） |
+| 竖排公式不撑列（导出） | `tests/test_rendercore_vertical.py::test_a_tall_formula_widens_only_its_own_column_and_short_ones_change_nothing`、`tests/test_vertical_css_parity.py`（手工反证：去掉 `column_box` 的公式项 → 第二列公式落点 −23.7 对 −29.4 pt 红） |
+| 竖排预览公式不挪到基线两侧 | `tests/test_vertical_css_parity.py`（手工反证：`verticalAlign` 置零 → 红） |
+| 竖排侧躺基线改回读字体度量 | `tests/test_rendercore_vertical.py::test_mixed_script_latin_lies_on_its_side_and_cjk_stays_upright` |
+| 复制文字不算第一行高公式 | `web/src/lib/figureTextCopy.test.ts`「第一行有高公式」（手工反证：撑高量置零 → 红） |

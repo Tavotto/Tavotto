@@ -184,7 +184,7 @@ export function TextView({
       format={obj.textFormat}
       family={effectiveCanvasFamily(obj)}
       runStack={source || boldCjk ? (run) => previewStackOf(source, stack, own, run, boldCjk) : undefined}
-      vertical={vertical ? { columnPx, stack: previewStack } : undefined}
+      vertical={vertical ? { stack: previewStack } : undefined}
       lineBox={lineBox}
     />
   )
@@ -284,7 +284,7 @@ function RenderedText({
   /** 带行内粗斜的片段用哪个字体栈（本机字体按片段换脸，ADR 0169 修订）；缺席 = 继承外层 */
   runStack?: (run: { bold: boolean; italic: boolean }) => string
   /** 竖排：公式整块侧躺（`MathFormula` 的竖排形态） */
-  vertical?: { columnPx: number; stack: string }
+  vertical?: { stack: string }
   /** 横排：公式撑开所在行（`MathFormula` 的 `lineBox`） */
   lineBox?: { shiftPx: number }
 }) {
