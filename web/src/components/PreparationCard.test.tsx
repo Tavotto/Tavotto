@@ -3687,6 +3687,8 @@ describe('打开并运行 + 后端会话内回退的呈现（V2 PR4）', () => {
       expect(visibleSentenceCount(panel(), 'zh-CN')).toBeLessThanOrEqual(1)
       // 不说成运行方式 / 环境的问题
       expect(panel().textContent).not.toMatch(/安全运行|原样运行|环境|沙盒/)
+      // 不带警告图标：标题行前面没有图标槽
+      expect(panel().querySelector('[data-prep-line]')!.parentElement!.querySelector('svg')).toBeNull()
     })
 
     it('后端建议 AI 修复时：主按钮仍是「再试一次」，AI 修复只是次入口', async () => {
