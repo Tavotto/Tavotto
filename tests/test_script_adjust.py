@@ -1944,6 +1944,93 @@ def test_shared_norm_meshes_keep_their_colour_map_for_the_replay(tmp_path, gid):
         pool.discard(worker)
 
 
+def _line_el(i: int, label: str) -> dict:
+    return {
+        "gid": f"axes_0.lines_{i}",
+        "role": "line",
+        "label": label,
+        "editable": [{"prop": "label", "value": label, "value_original": label}],
+    }
+
+
+def test_chained_renames_are_one_statement():
+    """A→B 与 B→C 分成两条语句时，第二条按原 label「B」找会撞上刚改好的那条（Codex P1）：合成一条，先认全再改。"""
+    man = {"elements": [_line_el(0, "A"), _line_el(1, "B")]}
+    patches = [
+        {"gid": "axes_0.lines_0", "prop": "label", "value": "B"},
+        {"gid": "axes_0.lines_1", "prop": "label", "value": "C"},
+    ]
+    out = scriptadjust.build(b"import os\n", "Fig1", patches, man, version="9.9")
+    text = out.data.decode()
+    assert out.written == 2 and "def _tavotto_0(" in text and "def _tavotto_1(" not in text
+    assert "_rename(fig, [" in text
+
+
+TWO_LINES_SCRIPT = """\
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+
+def main():
+    fig, ax = plt.subplots(figsize=(3.2, 2.4))
+    ax.plot([0, 1, 2], [0, 1, 0], label="A")
+    ax.plot([0, 1, 2], [1, 0, 1], label="B")
+    fig.savefig("Fig1.pdf")
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+@pytest.fixture
+def two_lines_project(tmp_path, monkeypatch):
+    m, figs = _open_project(tmp_path, monkeypatch, TWO_LINES_SCRIPT)
+    try:
+        yield m.app.test_client(), figs
+    finally:
+        _close_project(m, figs)
+
+
+@real_worker
+def test_chained_renames_land_on_the_right_lines(two_lines_project, tmp_path):
+    client, _figs = two_lines_project
+    patches = [
+        {"gid": "axes_0.lines_0", "prop": "label", "value": "B"},
+        {"gid": "axes_0.lines_1", "prop": "label", "value": "C"},
+    ]
+    body = _export(client, patches, formats=[])
+    assert body["status"] == "done", body
+    out = Path(body["export_dir"]) / "Fig1_edited.py"
+    trailer = (
+        "\nimport matplotlib.pyplot as plt\n"
+        "print([ln.get_label() for ln in plt.gcf().axes[0].lines])\n"
+    )
+    assert _run_exported(out, tmp_path, trailer).strip() == "['B', 'C']"
+
+
+@real_worker
+def test_rename_of_a_line_with_a_replayed_drag_is_left_for_the_replay(two_lines_project):
+    """线有 label 又被拖动（`pos_frac` 留作重放、带改名前的 `identity`）：改名写进脚本后重放认不出这条线，
+    引擎拒绝拖动、整份不交付（Codex P2）。改名一起留作重放。"""
+    import hashlib
+
+    client, _figs = two_lines_project
+    identity = "l1:" + hashlib.sha256(b"A").hexdigest()[:16]
+    patches = [
+        {"gid": "axes_0.lines_0", "prop": "label", "value": "renamed", "identity": identity},
+        {"gid": "axes_0.lines_0", "prop": "pos_frac", "value": [0.4, 0.4], "identity": identity},
+        {"gid": "axes_0.lines_1", "prop": "label", "value": "other"},
+    ]
+    body = _export(client, patches, formats=[])
+    assert body["status"] == "done", body
+    report = _script_output(body)["script_report"]
+    assert ("axes_0.lines_0", "label") in {(i["gid"], i["prop"]) for i in report["skipped"]}
+    assert report["written"] == 1  # 另一条线的改名照写
+
+
 @real_worker
 def test_renames_reach_the_objects(tmp_path):
     """`label` 在整图扫描里是隐形的，这里直接跑导出的脚本、读各对象最后的 label。

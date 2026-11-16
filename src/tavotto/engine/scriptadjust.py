@@ -778,7 +778,9 @@ def _rank(prop: str, statement: str) -> float:
     7. 示意线样式：写在「脚本原样 + 这几条」上；
     8. 改名（`label`）：最后落。
     """
-    if prop == "label" and ".set_label(" in statement:  # 色条的标签是 set_ylabel，不在此列
+    if prop == "label" and (
+        ".set_label(" in statement or statement.startswith("_rename(")
+    ):  # 色条的标签是 set_ylabel，不在此列
         return 8  # 曲线靠原 label 认（`_line`）、图例色块靠 label 对（`_with_legend`、重排）：改名要在所有别的语句之后
     if prop in ("xscale", "yscale"):
         return 0
@@ -860,6 +862,13 @@ def _line(ax, j, label):
             raise _Skip("no unique line labelled %r" % (label,))
         return hits[0]
     return _at(ax.lines, j)
+
+
+def _rename(fig, pairs):
+    # Find every target by its original label first, then rename: a rename must not change what the next one finds.
+    found = [(find(), name) for find, name in pairs]
+    for item, name in found:
+        item.set_label(name)
 
 
 def _with_legend(item, setter):
@@ -1545,6 +1554,10 @@ def _cmap_group_reaches_beyond(el: dict | None, manifest: dict, mine: str | None
     )
 
 
+def _is_rename(p: dict, stmt: str) -> bool:
+    return p["prop"] == "label" and ".set_label(" in stmt and not stmt.startswith("_rename(")
+
+
 def _cmap_group(p: dict, els: dict) -> str:
     """cmap 这一组的名字：色条取它的 mappable，图像就是自己。"""
     return (els.get(p["gid"]) or {}).get("mappable_gid") or p["gid"]
@@ -1619,6 +1632,27 @@ def _translate(
             residual.append(p)
         else:
             kept.append((p, stmt))
+    # 改名：对象按原 label 认，所以同一个对象上还有留作重放的修改（拖动带的 `identity` 是按**改名前**的 label 算的，
+    # 改名写进脚本后重放里认不出它）时，改名也留作重放；子孙 gid 上的也算
+    for p, stmt in list(kept):
+        if _is_rename(p, stmt) and any(
+            r["gid"] == p["gid"] or r["gid"].startswith(p["gid"] + ".") for r in residual
+        ):
+            kept.remove((p, stmt))
+            residual.append(p)
+    # 同一张图上的所有改名合成一条：先把每个对象都按原 label / 位置认出来，再统一改。分开写的话第一条改完，
+    # 后一条按原 label 找（A→B、B→C）就会撞上刚改好的那个
+    renames = [(p, stmt) for p, stmt in kept if _is_rename(p, stmt)]
+    if renames:
+        pairs = []
+        for _p, stmt in renames:
+            obj, _sep, value = stmt[:-1].rpartition(".set_label(")
+            pairs.append(f"(lambda: {obj}, {value})")
+        merged = (
+            {"gid": " ".join(p["gid"] for p, _s in renames), "prop": "label"},
+            "_rename(fig, [" + ", ".join(pairs) + "])",
+        )
+        kept = [e for e in kept if e not in renames] + [merged]
     # 改了源对象、图例里跟着它走的示意线要重新派生：整份重排（第 1 档），源对象的修改排在它前面
     for p, _stmt in list(kept):
         if id(p) in refresh:
