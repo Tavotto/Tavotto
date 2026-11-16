@@ -1,9 +1,8 @@
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/Button'
-import { Card } from '@/components/ui/Card'
 import type { AiDataOption } from '@/lib/api'
 import { usableOptions } from '@/lib/dataFigure'
-import { cn } from '@/lib/utils'
+import { OverlayFooter } from './OverlayFooter'
 
 const KNOWN_QUESTIONS = ['pick_table', 'pick_value', 'pick_group', 'pick_x', 'pick_design', 'pick_unit']
 const KNOWN_OPTIONS = ['table', 'table_sheet', 'column', 'unsure', 'design_independent', 'design_repeated']
@@ -32,38 +31,41 @@ export function AskScene({
     return t(`dataFigureV2.option.${o.code}`, { ...o.params })
   }
   const choices = usableOptions(options)
+  const kindText = (o: AiDataOption) =>
+    o.code === 'column' && typeof o.params?.kind === 'string'
+      ? t(`dataFigureV2.preview.type.${o.params.kind === 'numeric' || o.params.kind === 'date' || o.params.kind === 'mixed' ? o.params.kind : 'text'}`)
+      : null
   return (
-    <div data-studio-ask className="mx-auto flex w-full max-w-[480px] flex-1 flex-col justify-center gap-5 pb-12">
-      <h2 className="type-heading text-center">
-        {KNOWN_QUESTIONS.includes(code) ? t(`dataFigureV2.question.${code}`) : t('dataFigureV2.question.other')}
-      </h2>
-      <div className="flex flex-col gap-2">
+    <div data-studio-ask className="flex flex-col gap-3">
+      <h2 className="text-base font-medium">{KNOWN_QUESTIONS.includes(code) ? t(`dataFigureV2.question.${code}`) : t('dataFigureV2.question.other')}</h2>
+      <div className="flex flex-col">
         {choices.map((o, i) => (
-          <Card key={i} interactive padding="none">
-            <button
-              type="button"
-              data-studio-choice
-              onClick={() => onAnswer(o)}
-              className="flex w-full flex-col items-start gap-0.5 rounded-lg px-4 py-3 text-left outline-none focus-visible:focus-ring"
-            >
-              <span className="min-w-0 max-w-full truncate text-base">{label(o)}</span>
-              {o.code === 'column' && typeof o.params?.kind === 'string' && (
-                <span className="text-xs text-ink-3">{t(`dataFigureV2.preview.type.${o.params.kind === 'numeric' || o.params.kind === 'date' || o.params.kind === 'mixed' ? o.params.kind : 'text'}`)}</span>
-              )}
-            </button>
-          </Card>
+          <button
+            key={i}
+            type="button"
+            data-studio-choice
+            onClick={() => onAnswer(o)}
+            className="flex w-full items-baseline gap-3 rounded-md px-3 py-2.5 text-left text-base outline-none transition-colors hover:bg-surface-hover focus-visible:focus-ring-inset"
+          >
+            <span className="min-w-0 flex-1 truncate">{label(o)}</span>
+            {kindText(o) && <span className="shrink-0 text-xs text-ink-3">{kindText(o)}</span>}
+          </button>
         ))}
       </div>
-      <div className={cn('flex justify-center gap-2')}>
-        {unsure && (
-          <Button variant="secondary" size="lg" data-studio-unsure onClick={() => onAnswer(unsure)}>
-            {t('dataFigureV2.option.unsure')}
+      <OverlayFooter
+        left={
+          <Button variant="ghost" size="lg" data-studio-back onClick={onBack}>
+            {t('dataFigureV2.back')}
           </Button>
-        )}
-        <Button variant="ghost" size="lg" data-studio-back onClick={onBack}>
-          {t('dataFigureV2.back')}
-        </Button>
-      </div>
+        }
+        right={
+          unsure ? (
+            <Button variant="secondary" size="lg" data-studio-unsure onClick={() => onAnswer(unsure)}>
+              {t('dataFigureV2.option.unsure')}
+            </Button>
+          ) : undefined
+        }
+      />
     </div>
   )
 }

@@ -200,11 +200,13 @@ describe('预览 TablePreview', () => {
   it('认得准：列名 + 每列类型 + 前几行；编号列写「编号」；超过只显示一部分时说明', async () => {
     await mount(<TablePreview ov={ov({ truncated: true, rows: 90 })} loading={false} onHeaderRow={() => {}} />)
     const t = q('[data-studio-preview]')!.textContent!
+    // 没有套框的卡片；表头吸顶
+    expect(q('[data-studio-preview] table')!.closest('[data-card]')).toBeNull()
+    expect(q('[data-studio-preview] th')!.className).toContain('sticky')
     expect(t).toContain('day')
     expect(t).toContain('数值')
     expect(t).toContain('文字')
     expect(t).toContain('编号')
-    expect(t).toContain('显示前 2 行，共 90 行')
   })
 
   it('开头被跳过的说明行单独灰显并写明跳过了几行', async () => {
@@ -318,12 +320,10 @@ describe('选画法 PickScene', () => {
     { id: 'i2', title_code: 'scatter', why_code: 'scatter', recommended: false, unplotted: { count: 0, code: null }, thumbnail_url: '/t/2', thumb: '/t/2?pj=pa' },
     { id: 'i3', title_code: 'brand_new_code', why_code: 'brand_new_code', recommended: false, unplotted: { count: 0, code: null }, thumbnail_url: '/t/3', thumb: '/t/3?pj=pa' },
   ]
-  it('标题 + 来源小标签 + 行标签「画法」+ 真缩略图（带项目标识）+ 推荐默认选中 + 每张一句话；码不认识用通用名', async () => {
+  it('行标签「画法」+ 真缩略图（带项目标识）+ 推荐默认选中 + 每张一句话；码不认识用通用名', async () => {
     const onChoose = vi.fn()
     await mount(<PickScene items={items} selectedId="i1" source="growth.csv" onChoose={onChoose} onDraw={() => {}} onBack={() => {}} />)
     const t = q('[data-studio-pick]')!.textContent!
-    expect(t).toContain('这份数据可以这样画')
-    expect(q('[data-studio-source]')!.textContent).toBe('growth.csv')
     expect(t).toContain('画法')
     expect(t).toContain('均值线 + 误差带')
     expect(t).toContain('推荐')
@@ -442,6 +442,26 @@ describe('抽屉 + 浮层接 store 走一遍', () => {
     // 点 × 关；Esc 也关；浮层外按下也关（抽屉里不算）
     await click(q('[data-studio-close]'))
     expect(useDataFigureStore.getState().overlay).toBe(false)
+  })
+
+  it('浮起的卡片：三段结构，主按钮在底栏右端、次要信息在左端；换场景内容重挂（交叉淡入）', async () => {
+    overview.mockResolvedValue(ov({ truncated: true, rows: 90 }))
+    propose.mockResolvedValueOnce({ kind: 'ask', question_code: 'pick_value', unsure: null, options: [{ code: 'column', params: { column: 'day', kind: 'numeric' }, answer: { y: 'day' } }] })
+    await start()
+    await open(0)
+    const card = q('[data-data-overlay]')!
+    expect(card.className).toContain('rounded-panel')
+    expect(card.className).toContain('shadow-dialog')
+    expect(card.className).toContain('top-2')
+    expect(card.className).toContain('left-2')
+    expect(q('[data-data-overlay] [data-studio-footer] [data-studio-start]')).not.toBeNull()
+    expect(q('[data-data-overlay] [data-studio-footer]')!.textContent).toContain('显示前 2 行，共 90 行')
+    expect(q('[data-studio-start]')!.textContent).toBe('看看怎么画')
+    await click(q('[data-studio-start]'))
+    await flush()
+    // 选择题：返回在左、「不确定」不在（没给）；内容区换了一个挂载
+    expect(q('[data-studio-footer] [data-studio-back]')).not.toBeNull()
+    expect(q('[data-studio-stage]')!.className).toContain('animate-fade-in')
   })
 
   it('Esc 与点浮层外关浮层；点抽屉里别的文件是换文件不是关', async () => {

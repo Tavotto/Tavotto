@@ -331,6 +331,9 @@
   --animate-drawer-out: drawer-out var(--duration-fast) var(--ease-exit);
   --animate-drawer-slide-in: drawer-slide-in var(--duration-base) var(--ease-pop);
   --animate-drawer-slide-out: drawer-slide-out var(--duration-fast) var(--ease-exit);
+  /* 数据预览浮层（浮起的卡片）：进场 = 从抽屉边缘位移 8px + 透明度，起步猛、几乎不过冲（--ease-snap）；退场更快更干脆 */
+  --animate-sheet-in: sheet-in var(--duration-slow) var(--ease-snap);
+  --animate-sheet-out: sheet-out var(--duration-fast) var(--ease-exit) forwards;
 
   /* 冷启动那几分钟的「还活着」信号：不确定进度条来回扫 */
   --animate-sweep: sweep 1.4s ease-in-out infinite;
@@ -541,6 +544,28 @@
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes sheet-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-8px);
   }
 }
 

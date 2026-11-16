@@ -293,13 +293,13 @@ function Workspace() {
             className="relative mb-2 mr-2 flex min-w-0 flex-1 overflow-hidden rounded-panel bg-surface shadow-card"
           >
             <div className="relative flex min-w-0 flex-1 flex-col">
-              {/* 「从数据到图」的预览浮层：抽屉里点数据文件后从这一栏（标签行 + 画布）左缘滑出、盖在画布上，右侧留出属性栏与一条画布（关着时不渲染任何东西） */}
-              <DataOverlay narrow={overlay} />
               {/* 工作面板里不再有提示条（2026-10-16 UI 2.0）：文档的事（冲突 / 保存失败……）在顶栏的文档状态芯片里，
                   项目接入状态在项目名后面的胶囊里，「构建版本不一致」是顶栏右侧的 `BuildMismatchChip`——
                   没有任何东西会在这里插进一行把画布往下推 */}
               {showTabs && <CanvasTabs />}
               <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+              {/* 「从数据到图」的预览浮层：抽屉里点数据文件后在标签行下方、离画布栏上 / 下 / 左各 8px 浮起，右侧仍露出画布（关着时不渲染任何东西） */}
+              <DataOverlay narrow={overlay} />
                 <CanvasStage />
                 {/* 画布视口的浮层按角位摆（2026-10-07 设计审计 §10.1）：四个角各 12px 内距、每角一个堆叠容器。
                     底部居中 = 浮动工具条 + 通知轨；左下 = HUD（工具提示）；顶部居中 = 工作区上下文条（CanvasStage 里）；

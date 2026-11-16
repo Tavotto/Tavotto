@@ -253,7 +253,7 @@ export default interface Resources {
       "stage": {
         "pickOne": "从左边选一张表。"
       },
-      "start": "开始",
+      "start": "看看怎么画",
       "working": {
         "drawing": "正在画…",
         "proposing": "正在画几种画法…",

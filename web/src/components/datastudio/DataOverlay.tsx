@@ -1,17 +1,20 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button, IconButton } from '@/components/ui/Button'
 import { X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Notice } from '@/components/ui/Notice'
 import { ProgressBar } from '@/components/ui/ProgressBar'
-import { DURATION, drawerMotion, usePresence } from '@/lib/motion'
+import { DURATION, usePresence } from '@/lib/motion'
+import { previewCardWidth } from '@/lib/dataFigure'
+import { cn } from '@/lib/utils'
 import { useFormatMessage } from '@/i18n/react'
 import '@/lib/dataFigureHost'
 import { overviewKeyOf, useDataFigureStore } from '@/store/dataFigureStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { AskScene } from './AskScene'
+import { OverlayFooter, OverlayFooterContext } from './OverlayFooter'
 import { MixedCellsDialog } from './MixedCellsDialog'
 import { PickScene } from './PickScene'
 import { DrawnScene, NothingScene, ProblemScene, WorkingScene } from './ResultScenes'
@@ -21,7 +24,9 @@ const baseName = (p: string): string => p.slice(p.lastIndexOf('/') + 1)
 const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),textarea,select,[tabindex]:not([tabindex="-1"])'
 
 /**
- * 数据预览浮层：抽屉里点一个文件，从工作面板左缘（贴着抽屉）滑出一块盖在画布上的面板，右侧仍露出画布；
+ * 数据预览浮层：抽屉里点一个文件，从抽屉边缘滑出一张**浮起的卡片**（离画布栏上 / 下 / 左各 8px、面板圆角、hairline + 弹窗级阴影，
+ * 不压暗画布、不加遮罩，标签行不被盖住），宽度跟内容走（360–640，且不超过画布栏的 60%），右侧仍露出画布；
+ * 三段结构：顶栏（文件名 · 行列数 · ×，高 44）/ 可滚动内容（上下边缘渐隐）/ 底栏（左次要信息，右主按钮）；
  * 依次承载预览（含点一行改每列的名字）→ 选择题 → 选画法 → 出图中 → 失败结局，混了文字的弹窗照旧是弹窗。
  * Esc、点浮层外（抽屉不算）、右上角 × 都能关；打开时焦点进浮层并陷在里面，关闭时还给打开它的那一行。
  * 窄屏（抽屉本身是覆盖式）：浮层占满工作面板宽度、抽屉自动收起，关浮层后抽屉回来。
@@ -112,14 +117,32 @@ export function DataOverlay({ narrow }: { narrow: boolean }) {
     }
   }
 
+  const [footerLeft, setFooterLeft] = useState<HTMLElement | null>(null)
+  const [footerRight, setFooterRight] = useState<HTMLElement | null>(null)
+  const [edges, setEdges] = useState({ top: false, bottom: false })
+  const scroller = useRef<HTMLDivElement>(null)
+  const measureEdges = () => {
+    const el = scroller.current
+    if (!el) return
+    const top = el.scrollTop > 2
+    const bottom = el.scrollTop + el.clientHeight < el.scrollHeight - 2
+    setEdges((e) => (e.top === top && e.bottom === bottom ? e : { top, bottom }))
+  }
+  useEffect(measureEdges)
+
   if (!mounted) return null
-  const width = narrow ? '100%' : 'min(720px, calc(100% - 96px))'
-  const motion = drawerMotion({ state, overlay: true, width: 720, side: 'left' })
   const ovState = selected ? overviews[overviewKeyOf(selected, headerRows)] : undefined
   const ov = ovState?.data ?? null
   const loadingOv = ovState?.status === 'loading'
   const busy = scene.kind === 'proposing' || scene.kind === 'drawing'
   const toFolderPicker = () => useProjectStore.getState().showPicker()
+  // 卡片目标宽度（要走 CSS 过渡，必须渲染前就知道）：预览按内容估，其余各屏固定
+  const target =
+    scene.kind === 'pick' ? 640 : scene.kind === 'ask' ? 480 : scene.kind === 'browse' ? previewCardWidth(ov) : 420
+  // 高度：表格 / 选画法这类要滚动的屏占满画布栏（上下各留 8px）；选择题 / 等待 / 失败这类短屏随内容
+  const tall = scene.kind === 'browse' || scene.kind === 'pick'
+  const width = narrow ? undefined : `max(360px, min(${target}px, 60%))`
+  const maskImage = `linear-gradient(to bottom, ${edges.top ? 'transparent 0, black 20px' : 'black 0'}, ${edges.bottom ? 'black calc(100% - 24px), transparent 100%' : 'black 100%'})`
 
   const body = (() => {
     switch (scene.kind) {
@@ -147,7 +170,7 @@ export function DataOverlay({ narrow }: { narrow: boolean }) {
         return <ProblemScene problem={scene.problem} onRetry={() => void st().retry()} onBack={st().back} onChooseFolder={toFolderPicker} />
       default:
         return selected ? (
-          <div className="flex w-full max-w-[720px] flex-col gap-5" data-studio-browse>
+          <div className="flex flex-col gap-4" data-studio-browse>
             {ovState?.status === 'error' && !ov ? (
               <Notice tone="neutral" title={ovState.error ? fm(ovState.error) : t('dataFigureV2.preview.failed')} action={<Button variant="ghost" size="sm" onClick={() => st().select(selected)}>{t('dataFigureV2.problem.retry')}</Button>} />
             ) : !ov ? (
@@ -155,14 +178,21 @@ export function DataOverlay({ narrow }: { narrow: boolean }) {
             ) : (
               <TablePreview ov={ov} loading={loadingOv} picked={headerRows[selected.path] != null} onHeaderRow={(line) => st().setHeaderRow(selected.path, selected.sheet, line)} />
             )}
-            {/* 只有认准了、读得了的表才有「开始」：没认准的先点哪一行是每列的名字，读不了的没有下一步 */}
-            {ov?.status === 'ok' && (
-              <div>
-                <Button variant="primary" size="lg" data-studio-start disabled={loadingOv || busy} onClick={() => void st().start()}>
-                  {t('dataFigureV2.start')}
-                </Button>
-              </div>
-            )}
+            {/* 只有认准了、读得了的表才有主按钮：没认准的先点哪一行是每列的名字，读不了的没有下一步 */}
+            <OverlayFooter
+              left={
+                ov?.status === 'ok' && ov.truncated && ov.rows != null ? (
+                  <span className="text-xs text-ink-3">{t('dataFigureV2.preview.shown', { shown: ov.preview_rows.length, total: ov.rows })}</span>
+                ) : undefined
+              }
+              right={
+                ov?.status === 'ok' ? (
+                  <Button variant="primary" size="lg" data-studio-start disabled={loadingOv || busy} onClick={() => void st().start()}>
+                    {t('dataFigureV2.start')}
+                  </Button>
+                ) : undefined
+              }
+            />
           </div>
         ) : null
     }
@@ -177,18 +207,29 @@ export function DataOverlay({ narrow }: { narrow: boolean }) {
       tabIndex={-1}
       data-studio
       data-data-overlay
+      data-state={state}
+      inert={state === 'closed'}
       onKeyDown={trap}
-      {...motion}
-      style={{ ...motion.style, width, left: 0 }}
-      className={`absolute inset-y-0 z-overlay flex min-w-0 flex-col bg-canvas shadow-pop outline-none ${motion.className}`}
+      style={{
+        ...(narrow ? {} : { width }),
+        height: tall ? 'calc(100% - 1rem)' : 'auto',
+        maxHeight: 'calc(100% - 1rem)',
+        // 高度也走过渡（Chromium 认 interpolate-size；不认的内核直接切换，不影响用）
+        interpolateSize: 'allow-keywords',
+      } as React.CSSProperties}
+      className={cn(
+        'absolute left-2 top-2 z-overlay flex min-w-0 flex-col overflow-hidden rounded-panel bg-surface shadow-dialog outline-none',
+        'transition-[width,height] duration-base ease-standard',
+        narrow && 'right-2',
+        'data-[state=open]:animate-sheet-in data-[state=closed]:animate-sheet-out',
+      )}
     >
-      <div className="flex h-11 shrink-0 items-center gap-2 pl-6 pr-2">
-        <h2 className="type-heading min-w-0 flex-1 truncate" title={selected?.path}>
+      <div className="flex h-11 shrink-0 items-center gap-2 pl-5 pr-2">
+        <h2 className="min-w-0 flex-1 truncate text-base font-medium" title={selected?.path}>
           {selected ? baseName(selected.path) : ''}
-          {selected?.sheet ? <span className="text-ink-3"> · {selected.sheet}</span> : null}
+          {selected?.sheet ? <span className="font-normal text-ink-3"> · {selected.sheet}</span> : null}
           {ov?.status === 'ok' && ov.rows != null && ov.columns != null ? (
-            <span className="text-base font-normal text-ink-3" data-studio-dims>
-              {' · '}
+            <span className="ml-2 text-sm font-normal text-ink-3" data-studio-dims>
               {t('dataFigureV2.list.fileMeta', { rows: ov.rows, columns: ov.columns })}
             </span>
           ) : null}
@@ -197,9 +238,22 @@ export function DataOverlay({ narrow }: { narrow: boolean }) {
           <X size={ICON_SIZE.md} />
         </IconButton>
       </div>
-      <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto px-6 pb-6 pt-2" data-studio-stage>
-        {body}
-      </div>
+      <OverlayFooterContext.Provider value={{ left: footerLeft, right: footerRight }}>
+        <div
+          ref={scroller}
+          key={scene.kind}
+          onScroll={measureEdges}
+          data-studio-stage
+          style={{ maskImage, WebkitMaskImage: maskImage }}
+          className={cn('relative flex min-h-0 flex-1 animate-fade-in flex-col overflow-auto px-5 pb-4 pt-1', !tall && 'min-h-32 justify-center')}
+        >
+          {body}
+        </div>
+        <div data-studio-footer className="flex min-h-14 shrink-0 items-center justify-between gap-3 px-5 pb-3 pt-2">
+          <span ref={setFooterLeft} className="flex min-w-0 items-center gap-2" />
+          <span ref={setFooterRight} className="flex shrink-0 items-center gap-2" />
+        </div>
+      </OverlayFooterContext.Provider>
       {scene.kind === 'mixed' && <MixedCellsDialog columns={scene.columns} onCancel={st().back} onContinue={(picks) => void st().answerCells(picks)} />}
     </div>
   )

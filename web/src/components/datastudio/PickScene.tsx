@@ -2,11 +2,10 @@ import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
-import { File } from '@/components/ui/icons'
-import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import { cn } from '@/lib/utils'
 import type { PickItem } from '@/store/dataFigureStore'
 import { FigureThumb } from './FigureThumb'
+import { OverlayFooter } from './OverlayFooter'
 
 const KNOWN_CANDIDATES = [
   'points_mean', 'box_points', 'violin_points', 'ecdf_groups', 'bar_error', 'line_points', 'line_band',
@@ -38,24 +37,11 @@ export function PickScene({
   const title = (c: string) => (known(c) ? t(`dataFigureV2.candidate.${c}.title`) : t('dataFigureV2.candidate.other.title'))
   const why = (c: string) => (known(c) ? t(`dataFigureV2.candidate.${c}.why`) : t('dataFigureV2.candidate.other.why'))
   return (
-    <div data-studio-pick className="flex w-full max-w-[1040px] flex-col gap-6">
-      <div className="flex flex-col gap-2">
-        <h2 className="type-heading">{t('dataFigureV2.pick.title')}</h2>
-        <span data-studio-source title={source} className="inline-flex h-5 max-w-full items-center gap-1 self-start rounded-full bg-surface-2 pl-1.5 pr-2 text-xs text-ink-2">
-          <IconSlot className="text-ink-3">
-            <File size={ICON_SIZE.sm} aria-hidden />
-          </IconSlot>
-          <span className="min-w-0 truncate">{source}</span>
-        </span>
-      </div>
-      <span className="type-section -mb-3 text-ink-2" id="studio-pick-methods">
+    <div data-studio-pick className="flex flex-col gap-3">
+      <span className="type-section text-ink-2" id="studio-pick-methods" data-studio-source title={source}>
         {t('dataFigureV2.pick.methods')}
       </span>
-      <div
-        role="radiogroup"
-        aria-labelledby="studio-pick-methods"
-        className={cn('grid grid-cols-1 gap-3 sm:grid-cols-2', items.length === 3 && 'lg:grid-cols-3')}
-      >
+      <div role="radiogroup" aria-labelledby="studio-pick-methods" className="grid grid-cols-1 gap-3 min-[560px]:grid-cols-2">
         {items.map((it, i) => {
           const on = it.id === selectedId
           return (
@@ -87,15 +73,18 @@ export function PickScene({
           )
         })}
       </div>
-      {/* 备选多（4 张两行）时按钮也不被推到屏外：贴着舞台底边 */}
-      <div className="sticky -bottom-6 z-sticky -mx-6 -mb-6 flex gap-2 bg-canvas px-6 pb-6 pt-3">
-        <Button variant="primary" size="lg" data-studio-primary onClick={onDraw}>
-          {t('dataFigureV2.pick.draw')}
-        </Button>
-        <Button variant="secondary" size="lg" data-studio-back onClick={onBack}>
-          {t('dataFigureV2.pick.another')}
-        </Button>
-      </div>
+      <OverlayFooter
+        left={
+          <Button variant="secondary" size="lg" data-studio-back onClick={onBack}>
+            {t('dataFigureV2.pick.another')}
+          </Button>
+        }
+        right={
+          <Button variant="primary" size="lg" data-studio-primary onClick={onDraw}>
+            {t('dataFigureV2.pick.draw')}
+          </Button>
+        }
+      />
     </div>
   )
 }

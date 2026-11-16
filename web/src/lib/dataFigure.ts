@@ -130,3 +130,19 @@ export const KNOWN_NOTHING_REASONS: readonly string[] = [
   'candidate_fingerprint_mismatch',
   'candidate_write_blocked',
 ]
+
+/**
+ * 预览浮层的目标宽度（px，最终再夹进 [360, 640] 与画布栏的 60%）：按内容估——每列取「列名 / 前几行里最长的格子」的字符数，
+ * 一个字符约 7.5px，加列间距 24；没认准的原文行固定 560。不测 DOM：宽度变化要走 CSS 过渡，必须在渲染前就知道目标值。
+ */
+export function previewCardWidth(ov: AiDataOverview | null): number {
+  if (!ov) return 420
+  if ((ov.status === 'unsure' || ov.status === 'unreadable') && (ov.raw_lines?.length ?? 0) > 0) return 560
+  if (ov.status !== 'ok' || ov.fields.length === 0) return 420
+  let w = 40
+  ov.fields.forEach((f, i) => {
+    const longest = Math.max(f.name.length, ...ov.preview_rows.map((r) => (r.cells[i] ?? '').length))
+    w += Math.min(Math.max(longest, 6) * 7.5 + 24, 232)
+  })
+  return Math.round(Math.min(640, Math.max(360, w)))
+}
