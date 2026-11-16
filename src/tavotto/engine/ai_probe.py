@@ -23,8 +23,10 @@ import re
 import time
 from urllib.parse import urlsplit
 
-from . import ai_providers
 from .agent_runner import wires
+
+#: 三种对话协议（与 ai_providers 的 PROTOCOLS 相同，测试对拍）。不 import ai_providers：它在运行期反过来用本模块，两边互引会成环
+PROTOCOLS = ("anthropic", "openai-responses", "openai-chat")
 
 #: 每种协议的结论（闭集）。`ok` 之外的都是失败原因。
 REASON_OK = "ok"
@@ -107,7 +109,7 @@ def order(base_url: str, model: str, preferred: str | None = None) -> list[str]:
         base = ["openai-responses", "openai-chat", "anthropic"]
     else:
         base = ["openai-chat", "openai-responses", "anthropic"]
-    if preferred in ai_providers.PROTOCOLS:
+    if preferred in PROTOCOLS:
         base = [preferred, *[p for p in base if p != preferred]]
     return base
 

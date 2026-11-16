@@ -867,3 +867,8 @@ def test_fix_path_builds_fallbacks_and_persists_the_report():
     )
     assert ai_providers.get("fx")["protocol"] == "openai-chat"
     assert ai_providers.get("fx")["agent"] == "codex"
+
+
+def test_probe_protocols_match_the_providers_list():
+    """ai_probe 自带一份协议名（避免与 ai_providers 互引成环）：两份必须一致。"""
+    assert ai_probe.PROTOCOLS == ai_providers.PROTOCOLS
