@@ -399,6 +399,9 @@ class NativeSession:
         self.script_error: dict | None = None
         self.exception_category: str | None = None
         self._missing_read: dict | None = None  # private local recovery fact, never an event
+        # 「图片内容与扩展名不符」：只随 exit 带来（没到屏障时 script_error 不经屏障上报）；私有，不进事件历史。
+        # 校验与换成稳定码在 `pool.image_format_error`
+        self._image_format_mismatch: dict | None = None
         self.terminal_error: dict | None = None
         self.exit_code: int | None = None
         self.figures_captured = 0
@@ -567,6 +570,10 @@ class NativeSession:
             self._on_input_request(frame)
         elif name == "exit":
             self._capture_missing_read(frame)
+            mismatch = frame.get("image_format_mismatch")
+            if isinstance(mismatch, dict):
+                with self._lock:
+                    self._image_format_mismatch = dict(mismatch)
             with self._lock:
                 self._barrier_snapshot_epoch = None
             self._release_lease()
@@ -607,6 +614,11 @@ class NativeSession:
             if self.state in TERMINAL_STATES:
                 return
             self._missing_read = {"requested": requested, "cwd": cwd}
+
+    def image_format_mismatch(self) -> dict | None:
+        with self._lock:
+            fact = self._image_format_mismatch
+            return dict(fact) if fact is not None else None
 
     def take_missing_read(self) -> dict | None:
         with self._lock:

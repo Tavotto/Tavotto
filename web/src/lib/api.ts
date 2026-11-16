@@ -284,6 +284,16 @@ function artifactErrorMsg(err: unknown): UiMessage {
   return msg(classifyArtifactFailure(err).messageKey, undefined, 'errors')
 }
 
+/**
+ * `errors:backend.<code>` 的键。`image_format_mismatch` 有文件名时用点名那一句（`_file`），没有（敏感运行里与参数有关的文件名被省掉）
+ * 用「这张图片」那一句——同一个码两句话，占位符各自对得上后端给的参数。
+ */
+export function backendTextKey(code: string, params?: Record<string, unknown>): string {
+  return code === 'image_format_mismatch' && typeof params?.file === 'string' && params.file
+    ? 'backend.image_format_mismatch_file'
+    : `backend.${code}`
+}
+
 export function engineErrorMsg(err: unknown): UiMessage {
   if (err instanceof ArtifactValidationError || (err instanceof EngineError && err.code === 'artifact_source_unavailable')) {
     return artifactErrorMsg(err)
@@ -302,7 +312,7 @@ export function engineErrorMsg(err: unknown): UiMessage {
     if (detail || !template.includes('{{error}}')) {
       // 结构化 params（错误转换合同 `pool.recovery_params`，如 TeX 缺的命令 / 文件）一并给文案；
       // `error` 永远是 traceback 末行，不让 params 里的同名键盖掉
-      return msg(`backend.${err.code}`, { ...(err.params ?? {}), error: detail }, 'errors')
+      return msg(backendTextKey(err.code, err.params), { ...(err.params ?? {}), error: detail }, 'errors')
     }
   }
   return literal(err instanceof Error ? err.message : String(err))
@@ -337,7 +347,7 @@ export function backendCodeMsg(
     return msg('backend.script_rejected_arguments', params ?? {}, 'errors')
   }
   if (code && i18n.exists(`backend.${code}`, { ns: 'errors' })) {
-    return msg(`backend.${code}`, params ?? {}, 'errors')
+    return msg(backendTextKey(code, params), params ?? {}, 'errors')
   }
   return literal(fallback)
 }
@@ -7568,6 +7578,10 @@ export interface PreparationResultError {
     abi?: string
     current?: string
     ignore_token?: string
+    /** `image_format_mismatch`（TVD-3MWS）：扩展名所属格式、文件内容的真实格式、扩展名（不带点）；`file` 是项目相对显示名，敏感运行里可能没有 */
+    claimed?: string
+    actual?: string
+    ext?: string
     /** `interpreter_cache_denied`（TVD-B6MR）：一键「改用自带的 Python」要清哪一层选择；没有 = 失败的就是 Tavotto 自己的解释器，不给按钮 */
     switch?: 'global' | 'project' | 'both' | string
     /** `tex_*`（TeX 工具链，`texdiag.params_of`）：缺的命令 / 宏包文件名 / LaTeX 报错那一行，有才带 */
