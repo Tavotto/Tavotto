@@ -1,3 +1,4 @@
+import { documentAddressKey, type DocumentFormat } from '@/lib/documentFormat'
 /**
  * 「找回本机排版」的纯逻辑（ADR 0108 §四）：候选列表的分页 / 去重 / 行状态，和「恢复副本」。
  *
@@ -32,13 +33,14 @@ export type RowIssue = 'invalid' | 'too_new' | 'too_large'
 
 /** 这一行为什么不能恢复；可以恢复是 `null`。同时看后端给的 status 与 schema（前端构建可能比后端旧） */
 export function rowIssue(item: RecoveryCandidateItem): RowIssue | null {
-  if (item.status === 'too_new' || (item.schema !== null && item.schema > SCHEMA_CURRENT)) return 'too_new'
+  if (item.status === 'too_new' || (item.schema !== null && item.schema > (item.format === 'v4' ? 4 : SCHEMA_CURRENT))) return 'too_new'
   if (item.status === 'too_large') return 'too_large'
   if (item.status === 'invalid') return 'invalid'
   return null
 }
 
 export interface CandidateList {
+  namespaces?: Partial<Record<DocumentFormat, CandidateList>>
   rows: RecoveryCandidateItem[]
   /** 还有下一页（不透明游标）；到头是 null */
   next: string | null
@@ -72,6 +74,7 @@ export async function loadCandidates(
   pj: string | null,
   prev?: CandidateList,
   exclude?: ReadonlySet<string>,
+  format: DocumentFormat = 'legacy',
 ): Promise<CandidateLoad> {
   const seen = new Set(prev?.rows.map((r) => r.doc_id) ?? [])
   const rows = [...(prev?.rows ?? [])]
@@ -99,7 +102,7 @@ export async function loadCandidates(
   // 这一批还有余量、上一批没有留下被截掉的行、后面还有页：接着读。后端按 scope 过滤之后一页可能为空而
   // next_cursor 仍在——连续空页最多再翻 MAX_EMPTY_HOPS 页
   for (let hops = 0; hops < MAX_HOPS && room() > 0 && leftover.length === 0 && (!fetchedAny || next !== null); hops++) {
-    const res = await fetchRecoveryCandidates(scope, pj, next ?? undefined, CANDIDATE_PAGE)
+    const res = await fetchRecoveryCandidates(scope, pj, next ?? undefined, CANDIDATE_PAGE, ...(format === 'v4' ? [format] : []))
     if (res === 'unsupported' || res === 'unavailable') {
       // 这一批一行都没读到就把故障原样交出去；读到一部分后失败则保留已读到的，`next` 仍是要重试的那页
       if (rows.length === startLen) return { kind: res }
@@ -169,8 +172,8 @@ export function recoveryCopyId(sourceId: string, revision: string | null, pj: st
  * 而另一个 profile 已经把同一个槽位认领给了别的项目。旧后端（404）/ 问不到 / 读不到 revision 都拒绝
  * （恢复副本这套流程本来就要新后端）。
  */
-async function ownsTarget(id: string, pj: string | null, probedRevision: string | null): Promise<boolean> {
-  const ev = await fetchLayoutOwnerEvidence(id, pj)
+async function ownsTarget(id: string, pj: string | null, probedRevision: string | null, format: DocumentFormat): Promise<boolean> {
+  const ev = await fetchLayoutOwnerEvidence(id, pj, ...(format === 'v4' ? [format] : []))
   if (ev === 'unsupported' || ev === 'unavailable') return false
   if (!(ev.owner === 'this' && ev.evidence === 'owners' && ev.verified)) return false
   return ev.revision !== null && ev.revision === probedRevision
@@ -203,7 +206,7 @@ const inflight = new Map<string, Promise<RecoverCopyResult>>()
  */
 export function recoverCopy(item: RecoveryCandidateItem, deps: RecoverCopyDeps): Promise<RecoverCopyResult> {
   const target = recoveryCopyId(item.doc_id, item.revision, deps.pj)
-  const key = `${deps.pj ?? ''}|${target}`
+  const key = `${deps.pj ?? ''}|${documentAddressKey(target, item.format)}`
   const running = inflight.get(key)
   if (running) return running
   const p = doRecover(item, target, deps).finally(() => inflight.delete(key))
@@ -216,11 +219,12 @@ async function doRecover(
   target: string,
   deps: RecoverCopyDeps,
 ): Promise<RecoverCopyResult> {
+  const format = item.format ?? 'legacy'
   const stale = () => deps.stillCurrent?.() === false
-  const there = await probeAutosave(target, deps.pj)
+  const there = await probeAutosave(target, deps.pj, ...(format === 'v4' ? [format] : []))
   if (there.kind === 'found') {
     // 已存在的目标必须是这个项目的：不重开别人的副本
-    if (!(await ownsTarget(target, deps.pj, there.revision))) return { kind: 'issue', reason: 'foreign' }
+    if (!(await ownsTarget(target, deps.pj, there.revision, format))) return { kind: 'issue', reason: 'foreign' }
     if (stale()) return { kind: 'issue', reason: 'cancelled' }
     return (await deps.openExisting(target, there.revision))
       ? { kind: 'opened', id: target, existed: true }
@@ -230,12 +234,12 @@ async function doRecover(
   if (there.kind === 'unavailable') return { kind: 'issue', reason: 'unavailable' }
   if (there.kind === 'invalid') return { kind: 'issue', reason: 'invalid' }
 
-  const src = await probeAutosave(item.doc_id, deps.pj)
+  const src = await probeAutosave(item.doc_id, deps.pj, ...(format === 'v4' ? [format] : []))
   if (src.kind === 'missing') return { kind: 'issue', reason: 'missing' }
   if (src.kind === 'unavailable') return { kind: 'issue', reason: 'unavailable' }
   if (src.kind === 'invalid') return { kind: 'issue', reason: 'invalid' }
   const raw = src.doc as { schema?: unknown; updatedAt?: unknown } | null
-  if (raw && typeof raw.schema === 'number' && raw.schema > SCHEMA_CURRENT) {
+  if (raw && typeof raw.schema === 'number' && raw.schema > (format === 'v4' ? 4 : SCHEMA_CURRENT)) {
     return { kind: 'issue', reason: 'too_new' }
   }
   // 预览之后源正文是不是变了：有 hash 比 hash；拿不到 hash（旧后端 / 代理吃了响应头）退回文档自报的 updatedAt
@@ -256,4 +260,15 @@ async function doRecover(
   return (await deps.install(pd, target))
     ? { kind: 'opened', id: target, existed: false }
     : { kind: 'issue', reason: 'cancelled' }
+}
+
+/** 两个格式的只读列表分别分页；地址由格式和 id 共同确定，不把正文塞进列表。 */
+export async function loadAllCandidates(scope: 'project' | 'unknown', pj: string | null, prev?: CandidateList, exclude?: ReadonlySet<string>): Promise<CandidateLoad> {
+  const formats: DocumentFormat[] = ['legacy', 'v4']
+  const results = await Promise.all(formats.map((format) => loadCandidates(scope, pj, prev?.namespaces?.[format], undefined, format)))
+  const lists: Partial<Record<DocumentFormat, CandidateList>> = {}
+  results.forEach((r, i) => { if (r.kind === 'ok') lists[formats[i]] = r.list })
+  if (!Object.keys(lists).length) return { kind: results.some((r) => r.kind === 'unavailable') ? 'unavailable' : 'unsupported' }
+  const rows = Object.values(lists).flatMap((list) => list.rows).filter((r) => !exclude?.has(documentAddressKey(r.doc_id, r.format)))
+  return { kind: 'ok', list: { rows, namespaces: lists, next: Object.values(lists).some(hasMore) ? 'namespaces' : null, leftover: [], capped: Object.values(lists).some((l) => l.capped), truncated: Object.values(lists).some((l) => l.truncated), index: results.some((r) => r.kind === 'unavailable') || Object.values(lists).some((l) => l.index === 'degraded') ? 'degraded' : 'ok' } }
 }

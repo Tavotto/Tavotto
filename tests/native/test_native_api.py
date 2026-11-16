@@ -467,6 +467,22 @@ def test_every_worker_error_payload_in_app_carries_a_status_code():
             and node.func.id == "_worker_error_payload"
         )
 
+    def is_failure_status(node) -> bool:
+        if isinstance(node, ast.Constant) and type(node.value) is int and 400 <= node.value < 600:
+            return True
+        # `exc.http_status` / `getattr(exc, "http_status", 500)`: the worker-error
+        # contract defines these as 4xx/5xx, never a 200 success.
+        if isinstance(node, ast.Attribute) and node.attr == "http_status":
+            return True
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value == "http_status"
+        )
+
     calls = [n for n in ast.walk(tree) if is_payload_call(n)]
     ok: set[int] = set()
     for ret in ast.walk(tree):
@@ -484,11 +500,7 @@ def test_every_worker_error_payload_in_app_carries_a_status_code():
             and is_payload_call(body.args[0])
         ):
             continue
-        if (
-            isinstance(status, ast.Constant)
-            and type(status.value) is int
-            and 400 <= status.value < 600
-        ):
+        if is_failure_status(status):
             ok.add(id(body.args[0]))
     assert len(calls) >= 10, f"没解析到使用点（只拿到 {len(calls)} 处）——判据本身坏了"
     bare = [

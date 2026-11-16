@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import sys
 import weakref
+from contextlib import contextmanager
 
 import numpy as np
 from matplotlib import cbook
@@ -489,11 +490,34 @@ def frame_unavailable(fig) -> str | None:
     return root_figure(fig).__dict__.get(_UNAVAILABLE_ATTR)
 
 
+@contextmanager
+def measured_output_frame(fig, bbox):
+    """Temporary computed output basis; never a recorded savefig provenance.
+
+    Reuses the actual in_frame/adjust_bbox authority. The caller keeps the
+    original final renderer; no draw or layout occurs in this context.
+    """
+    fig = root_figure(fig)
+    keys = (FRAME_ATTR, _SUPPRESSED_ATTR, "_tavotto_computed_measurement")
+    old = {key: fig.__dict__[key] for key in keys if key in fig.__dict__}
+    try:
+        set_frame(fig, bbox)
+        fig.__dict__[_SUPPRESSED_ATTR] = False
+        fig.__dict__["_tavotto_computed_measurement"] = True
+        yield
+    finally:
+        for key in keys:
+            fig.__dict__.pop(key, None)
+        fig.__dict__.update(old)
+
+
 def frame_report(fig) -> dict | None:
     """manifest 的 `frame` 字段（ADR 0098 §三）：这张图有脚本存盘的图幅时，告诉前端它在
     figsize 里的哪一块（mm，top-origin：`savefig_mm = [左, 上, 宽, 高]`，左 / 上相对 figsize
     左上角，可以为负）以及此刻生不生效。前端据此给升级前的面板提示并做「内容不动」的换算。
     没有 frame 的图回 None——字段整个不出现，manifest 与以前逐字节相同。"""
+    if root_figure(fig).__dict__.get("_tavotto_computed_measurement"):
+        return None
     out = savefig_outsets(fig)
     if out is None:
         return None

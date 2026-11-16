@@ -18,6 +18,8 @@ import type { ProjectDocument } from '@/types/document'
 import {
   activeProjectFile,
   captureFigureSnapshotSave,
+  captureChartSourceSave,
+  mergeSavedChartSources,
   flushAutosave,
   getWindowHold,
   isAutosaveSuspendedFor,
@@ -98,6 +100,7 @@ async function writeNewProjectFile(
     try {
       const res = await saveLayout(name, { ...pd, project: { ...pd.project, name } }, REVISION_ABSENT, {
         target: 'project',
+        ...(pd.schema === 4 ? { format: 'v4' as const, pj: currentProjectId() } : {}),
       })
       return { res, name }
     } catch (e) {
@@ -128,9 +131,11 @@ export async function forkCurrentDocument(opts: { beforeSwitch?: () => void } = 
   let file: string | null = null
   let written: { res: SavedLayout; name: string } | null = null
   if (binding) {
-    const snapshots = captureFigureSnapshotSave(pd, pj)
+    const sources = pd.schema === 4 ? captureChartSourceSave(pd, pj) : null
+    const sent = sources?.document ?? pd
+    const snapshots = captureFigureSnapshotSave(sent, pj)
     try {
-      written = await writeNewProjectFile(stem, pd)
+      written = await writeNewProjectFile(stem, sent)
     } catch (error) {
       resumeAutosaveAfterFork(ctx.documentId)
       return { ok: false, reason: 'write_failed', error }
@@ -141,13 +146,14 @@ export async function forkCurrentDocument(opts: { beforeSwitch?: () => void } = 
     if (!stillCurrent(ctx)) return { ok: false, reason: 'switched', file }
     // 回执里的快照引用合进内存里这份（再带进副本）；原排版已摘出自动保存，这次合并不会把它写回盘
     mergeSavedFigureSnapshots(snapshots, written.res.figure_snapshots)
+    if (sources) mergeSavedChartSources(sources, written.res.chart_sources)
   }
   const latest = useDocumentStore.getState().buildProject()
   const id = await installFork({ ...latest, project: { ...latest.project, name } }, opts.beforeSwitch)
   if (!id) return { ok: false, reason: 'busy' }
   if (written && pj && file) {
-    rememberLayoutName(name, written.res.name)
-    rememberLayoutRevision(written.res.name ?? name, written.res.revision, pj)
+    rememberLayoutName(name, written.res.name, ...(ctx.format === 'v4' ? [ctx.format] : []))
+    rememberLayoutRevision(written.res.name ?? name, written.res.revision, pj, ...(ctx.format === 'v4' ? [ctx.format] : []))
     setProjectFile(
       { projectId: pj, name: written.res.name ?? name, file, revision: written.res.revision, dirty: false },
       id,

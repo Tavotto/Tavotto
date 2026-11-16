@@ -23,6 +23,7 @@ const autosave = new Map<string, string>()
 const puts: string[] = []
 const projectFiles = new Map<string, string>()
 const posts: string[] = []
+const postedPaths: string[] = []
 let layoutFail = false
 
 globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
@@ -39,10 +40,11 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
     const v = autosave.get(id)
     return new Response(v ?? '{}', { status: v ? 200 : 404, headers: v ? { 'X-Tavotto-Revision': revisionOf(v) } : {} })
   }
-  const lay = u.pathname.match(/^\/api\/layouts\/([^/]+)$/)
+  const lay = u.pathname.match(/^\/api(?:\/documents\/v4)?\/layouts\/([^/]+)$/)
   if (lay && init?.method === 'POST') {
     const name = decodeURIComponent(lay[1])
     posts.push(name)
+    postedPaths.push(u.pathname)
     if (layoutFail) return new Response('{"error":"permission denied"}', { status: 500 })
     const base = u.searchParams.get('base_revision')
     if (base === 'absent' && projectFiles.has(name)) {
@@ -52,7 +54,7 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
       )
     }
     projectFiles.set(name, String(init.body))
-    return new Response(JSON.stringify({ ok: true, revision: revisionOf(String(init.body)), name, file: `tavottofile/${name}.json` }))
+    return new Response(JSON.stringify({ ok: true, ...(u.pathname.includes('/documents/v4/') ? { document_format: 'v4' } : {}), revision: revisionOf(String(init.body)), name, file: `tavottofile/${name}.json` }))
   }
   return new Response('{}', { status: 404 })
 }) as typeof fetch
@@ -75,6 +77,7 @@ beforeEach(async () => {
   puts.length = 0
   projectFiles.clear()
   posts.length = 0
+  postedPaths.length = 0
   sent.length = 0
   layoutFail = false
   forgetLayoutRevisions()
@@ -170,4 +173,20 @@ describe('存成副本（绑定了项目文件）', () => {
     expect(s().documentId).toBe('d_orig')
     expect(s().projectMeta.name).toBe('排版一')
   })
+})
+
+
+it('main 的分叉入口沿用计算文档格式，原项目文件保持不变', async () => {
+  setCurrentProjectId('project-v4')
+  await s().switchDocument({ ...emptyProject(), schema: 4 }, 'd_chart', undefined, { format: 'v4' })
+  setProjectFile({ projectId: 'project-v4', name: 'original', file: 'original.json', revision: 'old', dirty: false })
+  projectFiles.set('original', 'original bytes')
+  const out = await forkCurrentDocument()
+  expect(out.ok).toBe(true)
+  expect(postedPaths).toHaveLength(1)
+  expect(postedPaths[0]).toMatch(/^\/api\/documents\/v4\/layouts\//)
+  expect(s().documentFormat).toBe('v4')
+  expect(s().documentId).not.toBe('d_chart')
+  expect(projectFiles.get('original')).toBe('original bytes')
+  expect(readProjectFile('d_chart', 'v4')?.name).toBe('original')
 })

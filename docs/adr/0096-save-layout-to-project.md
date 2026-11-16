@@ -3,7 +3,7 @@
 日期：2026-09-26 · 状态：**Accepted**（用户 2026-09-26 拍板「⌘S 保存到项目」，实现随本 PR）
 相关：[0023 文档落盘的唯一权威](0023-document-persistence-authority.md)（原子写、内容修订号）、
 [0024 保存生命周期与外部修改检测](0024-save-lifecycle-and-external-change.md)（§3 两个基线、§3d 另存为共用判据、§6 ⌘S 真的保存、§9 R-07）、
-[0008 统一本机会话认证](0008-unified-local-session-auth.md)（本条不加端点，沿用已认证的 `/api/layouts/<名>`）、
+[0008 统一本机会话认证](0008-unified-local-session-auth.md)（正文沿用已认证的 `/api/layouts/<名>`；关联元信息见下列2026-11-06修订）、
 [0001 项目 / 画布 / 标签 / 对象层级](0001-project-canvas-tab-object.md)。
 
 ## 问题
@@ -23,6 +23,14 @@
 （R-07）列为单独处置——本条是那次处置，但**没有**把自动保存搬家。
 
 ## 裁决
+
+### 2026-11-06 修订：关联以后端会话为权威
+
+依ADR0108，后文§一/§三中“关联只存localStorage”的原实现口径被本节替代；自动保存不写named文件、named revision基线、用户编辑dirty等语义不变。后端`layoutsession`以(project,document_format,working docId)持久化规范目标/revision、用户轴和绑定代次，本机缓存只作兼容/兜底。关联不进入可携schema3/4；首次计算fork的新working ID不继承旧目标。外改named文件时仍以原绑定revision冲突，冷恢复不能读新revision把外改洗成已保存。
+
+显式save/open预留完整服务器票据，正文实际成功或confirm核过实际named revision后CAS绑定；A→B→A按代次挡旧回执。显式打开先捕获安装时的同步基线，等待期间用户编辑必须保dirty；derived来源回执不推进用户轴。正文成功、关联元信息失败是两个事实，不让后者变成正文I/O失败或覆盖重试。后端wire/锁与看护唯一说明见[文档落盘规则](../rules/backend/layout-versions-and-documents.md)；实施/真实UI资格仅由PROGRESS记录。
+
+前端在同一documentStore/writer消费该视图，只有明确404才走旧缓存合同。外部AS修改后的未知祖先不能静默洗白：用户明确覆盖/重载才捕获不可自动刷新的完整证明，并建立独立编辑分支；named修订基线保持。重载前保护最新本机稿、失败停止安装，以及异步保存上下文的前端合同见[项目与自动保存规则](../rules/frontend/project-document-and-autosave.md)。该保护同样覆盖旧后端兼容路径。
 
 ### 一、排版可以「绑定」项目里的一个文件
 
