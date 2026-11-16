@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 
+from support.linkkit import symlink_or_skip
 from tavotto.engine import depresolve, distmeta, importscan, scanbudget
 
 SP_REL = "lib/python3.12/site-packages"
@@ -1113,7 +1114,7 @@ class TestSeveralProviders:
         self._top_only_layer(site, "none", "u")
         if upper == "pkg":
             # 目录链接：拒绝跟进 = 形状推不出
-            os.symlink(tmp_path, site / "lyr", target_is_directory=True)
+            symlink_or_skip(tmp_path, site / "lyr", is_dir=True)
         elif upper == "ns":
             # 目录在、清单读不了。不用 chmod 0：Windows 上 chmod 只管只读位，挡不住 scandir
             (site / "lyr").mkdir()

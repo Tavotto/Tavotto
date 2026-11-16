@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import vectors from '../../../tests/golden/preflight_vectors.json'
 import { runSpec, type PreflightSpec } from './preflight'
 import { loadProfile, type JournalOverride } from './profile'
+import { formatMessage, setLocale } from '@/i18n'
 
 /**
  * 预检的**跨语言等价性**看护。
@@ -59,5 +60,41 @@ describe('preflight golden vectors（与 engine/preflight.py 逐条对齐）', (
       }))
       expect(got).toEqual(c.expected)
     })
+  }
+})
+
+it.each([
+  [['body_min'], 'fontSizeAdvisedBody'],
+  [['script_min'], 'fontSizeAdvisedScript'],
+  [['body_min', 'script_min'], 'fontSizeAdvisedBoth'],
+] as const)('describes approximate %s advice as a comparison value in both languages', async (roles, key) => {
+  const original = CASES.find((item) => item.name === 'journal-advice-body-and-script')!
+  const journal = structuredClone(original.journal!) as JournalOverride
+  journal.advisories = roles.map((role) => ({
+    check: 'font-size-recommended', role, value_pt: roles.length === 2 && role === 'script_min' ? 7 : 9,
+    qualifier: 'recommended', journal: 'Synthetic Journal', quote: 'Text should be approximately 9 pt.',
+  }))
+  const profile = loadProfile(original.profile_id, journal)
+  const issue = runSpec(original.spec as PreflightSpec, profile).find((item) => item.id === 'font-size-recommended')!
+  expect(issue.severity).toBe('suggestion')
+  expect(issue.message.key).toBe(`preflight.${key}`)
+  if (roles.length === 2) expect(issue.detail).toMatchObject({ body_min_pt: 9, script_min_pt: 7 })
+  try {
+    await setLocale('zh-CN')
+    expect(formatMessage(issue.message)).toContain('不一定是期刊规定的下限')
+    expect(formatMessage(issue.message)).toContain(
+      roles.length === 2 ? '预检以正文数值比较，未区分文字类型' : '预检未区分文字类型',
+    )
+    expect(formatMessage(issue.message)).toContain('Text should be approximately 9 pt.')
+    await setLocale('en-US')
+    expect(formatMessage(issue.message)).toContain(
+      roles.length === 2 ? 'not necessarily journal minima' : 'not necessarily a journal minimum',
+    )
+    expect(formatMessage(issue.message)).toContain(
+      roles.length === 2 ? 'compares against the body value without distinguishing text types' : 'preflight does not distinguish text types',
+    )
+    expect(formatMessage(issue.message)).toContain('Text should be approximately 9 pt.')
+  } finally {
+    await setLocale('zh-CN')
   }
 })

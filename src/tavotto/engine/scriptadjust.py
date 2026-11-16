@@ -52,6 +52,7 @@ _ROLE_CLS = {
     "axes": "axes",
     "axes3d": "axes",  # 3D 轴的字段在 manifest 里自成一族，写得进的只有 grid_visible
     "ticks": "ticks",
+    "ticklabel": "ticklabel",
     "figure": "figure",
     "scatter": "collection",
     "fill": "collection",
@@ -115,6 +116,22 @@ _HANDLE_PROPS = (
     "handle_linewidth",
     "handle_marker",
     "handle_markersize",
+)
+#: 刻度的定位与格式（引擎 `tickmodel` 的 Locator / Formatter 模型）：「没表态 = 脚本原样」，
+#: 所以同一条轴上的这几条合成**一次** `_tick_model`，只带用户改过的那几条。
+#: 改了整页或坐标轴大小的几条，一律不写进脚本（`NOT_WRITABLE`），由引擎在脚本跑完之后重放——引擎里它们排在刻度之前
+#: （`_apply_rank` 的 0 / 1 / 2 / 3 档）。自动刻度的个数跟轴有多长、字有多大有关，所以只要其中一条留作重放，
+#: 靠「落笔那一刻的刻度」算出来的那几条（`_snapshots_ticks`）也留给重放，免得两边在不同的轴长上各算各的。
+_RESHAPES_AXES = ("size_mm", "frame", "position", "orientation", "extend")
+_TICK_MODEL = (
+    "major_mode",
+    "major_step",
+    "major_values",
+    "minor_visible",
+    "minor_mode",
+    "minor_step",
+    "format",
+    "minor_format",
 )
 
 #: (cls 键, prop) → 一条公开 API 语句。`{o}` 对象、`{v}` 值、`{x}` 值的元素。
@@ -188,6 +205,12 @@ WRITES: dict[tuple[str, str], str | None] = {
     ("ticks", "rotation"): "{o}.params(labelrotation={v})",
     ("ticks", "direction"): "{o}.params(direction={v})",
     ("ticks", "length"): "{o}.params(which='major', length={v})",
+    ("ticks", "width"): "{o}.params(which='major', width={v})",
+    ("ticks", "minor_length"): "{o}.params(which='minor', length={v})",
+    ("ticks", "minor_width"): "{o}.params(which='minor', width={v})",
+    ("ticks", "visible"): None,
+    **{("ticks", p): None for p in _TICK_MODEL},
+    ("ticklabel", "text"): None,
     ("figure", "facecolor"): "{o}.set_facecolor({v})",
     **{("collection", p): t for p, t in _SHAPE.items()},
     **{("collection", p): t for p, t in _KEYED.items()},
@@ -233,9 +256,6 @@ NOT_WRITABLE: dict[str, str] = {
     "proj_type axis_arrows arrow_color arrow_width arrow_head axline_color "
     "axline_width pane_visible pane_color",
     "image": "gradient_color origin",
-    "ticklabel": "text",
-    "ticks": "visible width minor_length minor_width major_mode major_step major_values "
-    "minor_visible minor_mode minor_step format minor_format",
     "figure": "size_mm frame transparent",
     "colorbar": "label cmap vmin vmax tick_fontsize tick_color outline_visible outline_width "
     "visible orientation extend",
@@ -285,6 +305,8 @@ def _selector(gid: str, el: dict | None) -> str:
         return f"{ax}.title"
     if rest in ("xticks", "yticks"):
         return f"_TickSet({ax}, {rest[0]!r})"
+    if mm := re.fullmatch(r"([xy])ticklabels_(\d+)", rest):
+        return f"_TickSet({ax}, {mm.group(1)!r})"
     if rest == "legend":
         return f"_legend({ax})"
     if mm := re.fullmatch(r"legend\.texts_(\d+)", rest):
@@ -377,10 +399,80 @@ def _rebuild(gid: str, patches, manifest: dict, encoding: str) -> str:
     )
 
 
+def _is_3d(manifest: dict, i: int) -> bool:
+    return any(
+        e["gid"] == f"axes_{i}" and e.get("role") == "axes3d" for e in manifest.get("elements", [])
+    )
+
+
+def _tick_statement(
+    gid: str, prop: str, value, patches, manifest: dict, encoding: str, obj: str
+) -> str:
+    """刻度组（`axes_i.xticks` / `yticks`）上的几条：显隐、线宽按档、定位与格式合成一次。"""
+    m = re.fullmatch(r"axes_(\d+)\.([xy])ticks", gid)
+    if m is None:
+        raise _Unsupported(gid)
+    i, which = int(m.group(1)), m.group(2)
+    if prop == "visible":  # 引擎只动标签的显隐（`tickmodel.HANDLERS_TEXT`），刻度线不管
+        return f"{obj}.params(label{'bottom' if which == 'x' else 'left'}={bool(value)!r})"
+    if prop == "width":
+        # 3D 轴每次 draw 都用 `_axinfo`（私有）盖回刻度线宽，公开 API 留不住
+        if _is_3d(manifest, i):
+            raise _Unsupported(prop)
+    if prop in _TICK_MODEL:
+        spec: dict = {}
+        for p in patches:
+            q = p["prop"]
+            if p["gid"] != gid or q not in _TICK_MODEL or p["value"] is None:
+                continue
+            v = p["value"]
+            if q == "major_values":
+                v = _number_list(v)
+            elif q in ("major_step", "minor_step"):
+                v = float(v)
+            elif q == "minor_visible":
+                v = bool(v)
+            else:
+                v = str(v)
+            spec[q] = v
+        spec = {k: spec[k] for k in _TICK_MODEL if k in spec}
+        return f"_tick_model(_ax(fig, {i}), {which!r}, {_literal(spec, encoding)})"
+    tmpl = WRITES[("ticks", prop)]
+    assert tmpl is not None
+    return tmpl.format(o=obj, v=_literal(value, encoding))
+
+
+def _snapshots_ticks(patch: dict, patches: list[dict]) -> bool:
+    """这条刻度 override 是不是靠「落笔那一刻的刻度」算的：单条文字、固定刻度没给值、固定间隔没给步长。"""
+    prop, gid = patch["prop"], patch["gid"]
+    if prop == "text":
+        return bool(re.search(r"\.[xy]ticklabels_\d+$", gid))
+    if prop not in _TICK_MODEL:
+        return False
+    given = {p["prop"]: p["value"] for p in patches if p["gid"] == gid and p["prop"] in _TICK_MODEL}
+    mode = given.get("major_mode")
+    if mode == "fixed":
+        return not _number_list(given.get("major_values"))
+    if mode == "step":
+        step = given.get("major_step")
+        return not (isinstance(step, (int, float)) and step > 0)
+    return False
+
+
+def _number_list(v) -> list[float]:
+    """与引擎 `tickmodel._num_list` 同口径：单个数当一项，非数字的元素丢掉。"""
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return [float(v)]
+    return [float(x) for x in (v or []) if isinstance(x, (int, float)) and not isinstance(x, bool)]
+
+
 def _statement(
     el: dict | None, gid: str, prop: str, value, patches, encoding: str, manifest: dict
 ) -> str:
     role = (el or {}).get("role") or ("figure" if gid == "figure" else "")
+    if not role and re.fullmatch(r"axes_\d+\.[xy]ticks", gid):
+        # 刻度文字全关掉之后这一组量不出几何，manifest 把它丢了；它是坐标轴的固有部分，身份看 gid 形状
+        role = "ticks"
     cls = _ROLE_CLS.get(role)
     if cls is None or (cls, prop) not in WRITES:
         raise _Unsupported(prop)
@@ -411,6 +503,14 @@ def _statement(
                 raise _Unsupported(prop)
             return f"_legend_detach({ax}, {j})"
         return f"_legend_handle_set({ax}, {j}, {prop[len('handle_') :]!r}, {_literal(value, encoding)})"
+    if cls == "ticks":
+        return _tick_statement(gid, prop, value, patches, manifest, encoding, obj)
+    if cls == "ticklabel":
+        m = re.fullmatch(r"axes_(\d+)\.([xy])ticklabels_(\d+)", gid)
+        # 3D 曲面图（Inv3DS）上 y 轴的刻度标签：热态 5 条、脚本重放 9 条，位置也错开，不写
+        if m is None or _is_3d(manifest, int(m.group(1))):
+            raise _Unsupported(gid)
+        return f"_tick_text(_ax(fig, {int(m.group(1))}), {m.group(2)!r}, {int(m.group(3))}, {_literal(str(value), encoding)})"
     tmpl = WRITES[(cls, prop)]
     assert tmpl is not None
     return tmpl.format(
@@ -430,8 +530,10 @@ def _rank(prop: str, statement: str) -> int:
     2. 锚点、条目脱开跟随：锚点要在拖动之前（拖动清锚框，与位置模型的优先级一致）；
        脱开要在源对象改样式之前，否则 `_with_legend` 会把源的新样子带进示意线；
     3. 「全部」档的广播（边框总颜色 / 总线宽）：要在四边各自的语句之前，窄的盖广播；
-    4. 普通属性；
-    5. 示意线样式：写在「脚本原样 + 这几条」上，最后落。
+    4. 普通属性（含坐标范围：刻度定位与刻度文字都按落下之后的视区现算）；
+    5. 刻度定位与格式：引擎的第 6 档，素材是换完刻度类型之后脚本原样的 locator / formatter；
+    6. 单条刻度文字：引擎的第 7 档，把整条轴冻成固定刻度，必须在定位之后；
+    7. 示意线样式：写在「脚本原样 + 这几条」上，最后落。
     """
     if prop in ("xscale", "yscale"):
         return 0
@@ -441,8 +543,12 @@ def _rank(prop: str, statement: str) -> int:
         return 2
     if prop in _NARROWER:  # 广播先于窄的（四边各自的颜色 / 线宽），与 `overrides.ALIAS_GROUPS` 同序
         return 3
-    if prop.startswith("handle_"):
+    if "_tick_model(" in statement:
         return 5
+    if "_tick_text(" in statement:
+        return 6
+    if prop.startswith("handle_"):
+        return 7
     return 4
 
 
@@ -556,6 +662,86 @@ class _TickSet:
 
     def params(self, which="both", **kw):
         self.ax.tick_params(axis=self.which, which=which, **kw)
+
+
+def _tick_formatter(name):
+    from matplotlib import ticker as mt
+
+    if name == "none":
+        return mt.NullFormatter()
+    if name == "sci":
+        fmt = mt.ScalarFormatter(useMathText=True)
+        fmt.set_powerlimits((0, 0))
+        return fmt
+    return mt.FormatStrFormatter(name)
+
+
+def _minor_auto(axis):
+    # AutoMinorLocator gives nothing on a log-type scale, so each scale gets its own.
+    from matplotlib import ticker as mt
+
+    name = axis.get_scale()
+    if name == "log":
+        return mt.LogLocator(base=axis.get_transform().base, subs="auto")
+    if name == "symlog":
+        return mt.SymmetricalLogLocator(axis.get_transform(), subs=list(range(1, 10)))
+    if name == "logit":
+        return mt.LogitLocator(minor=True)
+    return mt.AutoMinorLocator()
+
+
+def _tick_model(ax, which, spec):
+    # What the editor sets as a whole: a key that was not asked for keeps what the
+    # script made (the locator and formatter in place now), nothing is swapped for a default.
+    from matplotlib import ticker as mt
+
+    axis = getattr(ax, which + "axis")
+    mode = spec.get("major_mode") or "auto"
+    if mode in ("fixed", "step"):
+        try:
+            locs = [float(v) for v in axis.get_majorticklocs()]
+        except Exception:
+            locs = []
+        if mode == "fixed":
+            axis.set_major_locator(mt.FixedLocator([float(v) for v in spec.get("major_values") or ()] or locs))
+        else:
+            step = float(spec.get("major_step") or 0.0)
+            if step <= 0 and len(locs) >= 2:
+                step = abs(locs[1] - locs[0])
+            if step <= 0:
+                lo, hi = axis.get_view_interval()
+                step = abs(float(hi) - float(lo)) / 5.0 or 1.0
+            axis.set_major_locator(mt.MultipleLocator(step))
+    if spec.get("format") not in (None, "auto"):
+        axis.set_major_formatter(_tick_formatter(spec["format"]))
+    if spec.get("minor_format") not in (None, "auto"):
+        axis.set_minor_formatter(_tick_formatter(spec["minor_format"]))
+    vis, minor_mode, minor_step = spec.get("minor_visible"), spec.get("minor_mode"), spec.get("minor_step")
+    if vis is False:
+        axis.set_minor_locator(mt.NullLocator())
+    elif vis is None and minor_mode is None and minor_step is None:
+        pass
+    elif (minor_mode or "auto") == "step" and minor_step and float(minor_step) > 0:
+        axis.set_minor_locator(mt.MultipleLocator(float(minor_step)))
+    else:
+        axis.set_minor_locator(_minor_auto(axis))
+
+
+def _tick_text(ax, which, j, text):
+    # One label asks for the whole axis to be fixed: the ticks where they are now,
+    # each with the text the formatter gives it, and this one replaced.
+    from matplotlib import ticker as mt
+
+    axis = getattr(ax, which + "axis")
+    locs = [float(v) for v in axis.get_majorticklocs()]
+    if not locs:
+        raise _Skip("no major ticks on this axis")
+    texts = [str(t) for t in axis.get_major_formatter().format_ticks(locs)]
+    if not 0 <= j < len(texts):
+        raise _Skip("tick label %d not found" % j)
+    texts[j] = text
+    axis.set_major_locator(mt.FixedLocator(locs))
+    axis.set_ticklabels(texts)
 
 
 def _disp(fig, fx, fy):
@@ -996,6 +1182,14 @@ def _translate(
             )
         except (_Unsupported, KeyError, TypeError, ValueError, IndexError):
             residual.append(p)
+    # 整页 / 子图大小留给重放时，靠落笔那一刻的刻度算的几条跟着留下（`_RESHAPES_AXES`）
+    if any(r["prop"] in _RESHAPES_AXES for r in residual):
+        # 一条轴上的定位与格式是一整套：其中一条留下，这条轴的其余几条也留下（不然写进脚本的那一份缺了它）
+        held = {p["gid"] for p, _s in steps if _snapshots_ticks(p, patches) and p["prop"] != "text"}
+        for p, stmt in list(steps):
+            if _snapshots_ticks(p, patches) or (p["gid"] in held and p["prop"] in _TICK_MODEL):
+                steps.remove((p, stmt))
+                residual.append(p)
     # 留作 override 的「广播」条目在重放时排在窄条目之前、会盖掉写进脚本的窄条目：
     # 同一 prop、gid 是它子孙的，一起留下（ADR 0094 §五.3）
     kept: list[tuple[dict, str]] = []

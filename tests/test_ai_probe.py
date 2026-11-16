@@ -956,3 +956,69 @@ def test_legacy_form_refuses_to_reuse_a_saved_key_on_a_new_origin(client, gw):
     same = {**moved, "base_url": "https://relay.example.test/openai/v1"}
     assert client.put("/api/ai/endpoints", json=same).status_code == 200
     assert all(c["url"].startswith("https://relay.example.test/") for c in gw.calls)
+
+
+# =========================================================================== 型号清单失败 / models 列表
+def test_passed_probe_with_no_model_list_is_not_an_error(client, gw, _world):
+    _world["fetch"] = (None, "network")
+    gw.routes = {"https://gw.example.org/v1/chat/completions": _j(CHAT_OK)}
+    resp = _post(
+        client, vendor="custom", api_key=KEY, base_url="https://gw.example.org/v1", model="m1"
+    )
+    conn = resp.get_json()["connection"]
+    assert resp.status_code == 200 and conn["protocol_checked"] is True
+    assert conn["state"] == "ready" and "error" not in conn
+
+
+def test_unauthorized_fetch_error_still_overlays_an_error():
+    conn = {"id": "x", "state": "ready", "protocol_checked": True}
+    out = ai_connections.overlay_fetch_error(conn, "unauthorized")
+    assert out["state"] == "error" and out["error"] == "unauthorized"
+    # 没探测通过时，清单失败照旧算错；探测通过 + 网络失败不算
+    unchecked = {"id": "x", "state": "ready", "protocol_checked": False}
+    assert ai_connections.overlay_fetch_error(unchecked, "network")["error"] == "network"
+    assert ai_connections.overlay_fetch_error(conn, "network") is conn
+
+
+def test_models_list_is_saved_deduped_and_default_follows_model(client, gw, _world):
+    _world["fetch"] = (None, "network")
+    gw.routes = {"https://gw.example.org/v1/chat/completions": _j(CHAT_OK)}
+    resp = _post(
+        client,
+        vendor="custom",
+        api_key=KEY,
+        base_url="https://gw.example.org/v1",
+        models=["m1", "m2", "m2", " m3 "],
+    )
+    conn = resp.get_json()["connection"]
+    assert resp.status_code == 200
+    assert conn["default_model"] == "m1" and conn["models"] == ["m1", "m2", "m3"]
+    assert ai_providers.get(conn["id"])["models"] == ["m1", "m2", "m3"]
+    resp = _post(
+        client,
+        vendor="custom",
+        api_key=KEY,
+        base_url="https://gw.example.org/v1",
+        model="m2",
+        models=["m1"],
+        id=conn["id"],
+    )
+    again = resp.get_json()["connection"]
+    assert again["default_model"] == "m2" and set(again["models"]) == {"m1", "m2"}
+
+
+@pytest.mark.parametrize(
+    "models", ["m1", [1], [""], ["  "], ["x" * 201], [f"m{i}" for i in range(51)], {"a": 1}]
+)
+def test_bad_models_are_refused_with_a_reason(client, gw, models):
+    resp = _post(
+        client,
+        vendor="custom",
+        api_key=KEY,
+        base_url="https://gw.example.org/v1",
+        model="m1",
+        models=models,
+    )
+    j = resp.get_json()
+    assert resp.status_code == 400 and j["code"] == "endpoint_invalid"
+    assert j["params"]["reason"] == "bad_models"

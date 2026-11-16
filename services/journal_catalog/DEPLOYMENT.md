@@ -15,7 +15,10 @@
 ## 步骤
 
 1. **代码与运行环境**：把 `services/` 里的 `journal_catalog/`（连同 `services/__init__.py`）拷到
-   服务器，如 `/opt/tavotto-jc/app/services/...`。Python 3.10+，纯标准库；gunicorn 单独装：
+   服务器，如 `/opt/tavotto-jc/app/services/...`。v2 服务端共享应用内的唯一事实契约：同时将
+   `src/tavotto/__init__.py`、`src/tavotto/engine/__init__.py` 和
+   `src/tavotto/engine/journalfacts_contract.py` 按包路径复制到 `/opt/tavotto-jc/app/tavotto/`；
+   仅部署旧 services 目录不够，缺契约时服务拒绝启动。Python 3.10+，纯标准库；gunicorn 单独装：
    `python -m venv /opt/tavotto-jc/venv && /opt/tavotto-jc/venv/bin/pip install gunicorn`。
 2. **目录与权限**：专用用户 `tavotto-jc`。`/opt/tavotto-jc/data`（DATA，服务账号**只读**）、
    `/var/lib/tavotto-jc/`（sqlite，服务账号可写）。

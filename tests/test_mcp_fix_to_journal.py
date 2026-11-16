@@ -643,3 +643,97 @@ def test_fix_kind_auto_is_exactly_specfix_fixable_rules_read_structurally():
         bridge.issue_fix({"id": r, "severity": "warn"})["kind"] != "manual"
         for r in specfix.FIXABLE_RULES
     )
+
+
+# ------------------------------ 没修成要说清原因 ------------------------------
+#: 评测里 18-inset 那种图：inset_axes 内嵌图、bbox_inches="tight" 存盘。缩到单栏时坐标轴 / 标题
+#: 出界，normalize 挪不动，fix_to_journal 在图幅这一步撤回。
+INSET_SCRIPT = """\
+from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+
+OUT = Path(__file__).resolve().parent
+
+
+def main():
+    x = np.linspace(0, 0.12, 200)
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.plot(x, 400 + 3e3 * x, lw=2, label="Stress-strain curve")
+    ax.set_xlabel("Strain")
+    ax.set_ylabel("Stress (MPa)")
+    ax.set_title("Stress-strain curve with elastic-region inset")
+    ax.legend(loc="lower right")
+    axins = inset_axes(ax, width="40%", height="40%", loc="upper left",
+                       bbox_to_anchor=(0.02, 0.02, 1, 1), bbox_transform=ax.transAxes)
+    axins.plot(x[:20], 2e5 * x[:20])
+    axins.set_title("Elastic region", fontsize=8)
+    fig.savefig(OUT / "Ins.pdf", bbox_inches="tight")
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+@pytest.fixture
+def inset_sid(tmp_path) -> str:
+    figures = tmp_path / "ins"
+    figures.mkdir()
+    (figures / "fig.py").write_text(INSET_SCRIPT, encoding="utf-8")
+    (figures / "tavotto_registry.json").write_text(
+        json.dumps({"scripts": {"fig.py": {"entry": "main", "cost": "light", "stems": ["Ins"]}}}),
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [WORKER_PY, str(figures / "fig.py")],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(figures),
+    )
+    assert proc.returncode == 0, proc.stderr
+    return bridge.open_figure(str(figures), stem="Ins")["session_id"]
+
+
+def test_a_size_step_that_cannot_fit_names_the_blocking_elements_and_the_way_out(inset_sid):
+    j = _journal(double=183.0)
+    b0_hash, _ = _state(inset_sid)
+    res = _fix(inset_sid, journal=j, column="single")
+    assert not res["ok"] and res["stage"] == "size", json.dumps(res, ensure_ascii=False)[:2000]
+    assert res["size"]["target"] == {"width_mm": 110.0}
+    assert _state(inset_sid)[0] == b0_hash
+    text = "\n".join(server.fix_report_lines(res))
+    assert "卡在改图幅这一步（目标 宽 110 mm）" in text
+    first = res["detail"]["blocking"][0]
+    assert first["text"] in text and first["gids"][0] in text
+    assert "figsize" in text and "tavotto_refresh_project" in text
+    assert "tavotto_apply_overrides 硬改" in text
+
+
+def test_failure_lines_cap_the_list_and_cover_panel_and_recheck():
+    many = [{"id": "x", "text": f"问题 {n}", "gids": [f"g{n}"]} for n in range(9)]
+    panel = server.fix_report_lines(
+        {"ok": False, "exit": "constraint_conflict", "stage": "panel", "detail": {"blocking": many}}
+    )
+    assert any("面板内" in line for line in panel)
+    assert sum("✗" in line for line in panel) == server.FIX_BLOCKING_SHOWN
+    assert any("共 9 条" in line for line in panel)
+    assert not any("figsize" in line for line in panel)
+    recheck = server.fix_report_lines(
+        {
+            "ok": False,
+            "exit": "constraint_conflict",
+            "stage": "recheck",
+            "issues": {
+                "introduced": [{"id": "text-overlap", "text": "文字互相重叠", "gids": ["a"]}]
+            },
+        }
+    )
+    assert any("新出了" in line for line in recheck)
+    assert any("文字互相重叠［a］" in line for line in recheck)

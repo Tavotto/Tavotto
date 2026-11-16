@@ -333,8 +333,11 @@ test('流程 D：设置页没有文字墙，问号键盘可达、Esc 可关，�
   // POSIX 顶级目录名（usr|opt|home|Users|private|tmp），windows-exe-smoke 上
   // 打包产物报的是 `D:\a\Tavotto\...\runtime\python.exe`，`\a\` 不在那张表里
   // ——**产品没问题，是判据只认得一种平台的路径长相**。
+  // 尾段原先 `[^\s]{8,}` 不认含空格的 Windows 路径（本机文档目录
+  // `E:\0 - Project\...` 盘符根段带空格），同样是判据形状问题：分隔符后
+  // ≥8 个字符、中间允许空格、首尾非空白。
   // 前导守卫排除 `:` 与 `/`，挡掉 `https://…` 这类 URL 的双斜杠。
-  const absolutePath = /(^|[^\w:/])(?:[A-Za-z]:)?[/\\][^\s]{8,}/
+  const absolutePath = /(^|[^\w:/])(?:[A-Za-z]:)?[/\\]\S[^\n]{6,}\S/
 
   // --- 项目页首屏没有绝对路径：正文只给末级目录，全路径在展开项里（审计 T40）---
   await dialog.getByRole('navigation').getByRole('button', { name: '项目' }).click()
