@@ -412,7 +412,7 @@ Offering the option uploads nothing; sending does:
   checkboxes that start unticked every time it opens: *script source* (the scripts
   registered in the open project, the scripts of recent test runs and of recent "generate editable
   version" conversions — including R and MATLAB scripts — and the unadopted candidate script such
-  a conversion left in Tavotto's local cache, attached as they are — **secret removal in scripts is best
+  a conversion left in Tavotto's local cache, and the local Python modules those scripts loaded from outside the project folder when they last ran — only `.py` modules that were really loaded from a folder the script itself added to Python's search path, never third-party packages or Python's own; never files sitting directly in your home folder or at the root of a drive, never anything under the credential folders Tavotto's AI helpers are also barred from (such as `.ssh`), never through a symbolic link; at most 20 per script, each cut at 1 MiB and counted in the same 100-file limit as the scripts; Tavotto remembers only the paths of these modules, in its own data folder for 30 days, and reads their contents only when you tick this box — attached as they are — **secret removal in scripts is best
   effort and cannot be guaranteed, so do not tick it if your scripts contain secrets**;
   without it the bundle contains no script source at all, including the source lines normally
   printed inside tracebacks), *system crash
@@ -546,6 +546,41 @@ cancelled, closed or failed send is never resumed on its own.
   period. To have a letter deleted earlier, email `feedback@tavotto.com` quoting
   its number (`TVM-…`).
 * **Switch.** `TAVOTTO_NO_CONTACT=1` removes the feature (no button, no network).
+
+## External review links
+
+*Share for review* (top bar, next to *Export*) turns the figure or layout you are
+looking at into a link that other people can open in a browser and comment on,
+without installing Tavotto or signing in. It uploads **only when you press
+*Create link* or *Update this link***; opening the window uploads nothing, and a
+cancelled or failed upload is never resumed on its own.
+
+* **What is uploaded.** A rendered picture of the current figure or layout (PNG,
+  at most 3000 px on the long side), a list of the elements' positions on that
+  picture with the text you can already see on it (axis labels, legend entries),
+  the title, and the note to reviewers if you wrote one. **Your scripts, data,
+  project files, file paths and computer details are never uploaded.**
+* **Who can see it.** Anyone who has the link. Links are not listed or indexed.
+  Reviewers type a display name of their choice; it is not verified.
+* **Where it is stored.** A service operated by the Tavotto maintainers on
+  Tencent Cloud CloudBase (mainland China), reached at `review.tavotto.cn`. No
+  other host is contacted for this feature.
+* **How long it is kept.** 30 days after the last update. *Stop sharing* deletes
+  the pictures, comments and verdicts at once; expired links are deleted the same
+  way.
+* **Daily limit.** To count the free daily limit (1 new link per device per
+  day; updating an existing link is not limited) the app creates a random device key on first
+  use and signs its requests with it. The key identifies this installation only,
+  is not linked to usage statistics and is not used for anything else.
+* **What stays on your computer.** The link's number, a secret management token,
+  thumbnails of the versions you shared and a copy of the comments, in the app's
+  data folder (readable by your user only, where the platform supports it), so
+  you can still read the comments after the link expires. While you have an
+  unexpired link, the app asks the service for new comments every 30 minutes, and
+  every minute while the *Review* tab is open; with no such link it makes no
+  request at all.
+* **Turning it off.** `TAVOTTO_NO_REVIEW_SHARE=1` removes the feature and all of
+  its network requests.
 
 ## Local service
 

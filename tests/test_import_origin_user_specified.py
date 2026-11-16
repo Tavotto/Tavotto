@@ -491,7 +491,13 @@ class TestBindingAndDisclosure:
                     user_specified={"lab_tools": "lab-tools"},
                 )
             assert err.value.code == deprepair.ERROR_NOT_ALLOWED, kind
-        assert set(deprepair.TARGETS) == {"project_venv", "tavotto_managed"}
+        # ADR 0019 2026-11-15 修订：第三种是「你为这个项目选的 Python」（原地、要确认）；内置 runtime 仍永远不在其中
+        assert set(deprepair.TARGETS) == {
+            "project_venv",
+            "tavotto_managed",
+            "configured_interpreter",
+        }
+        assert not {"bundled", "bundled_runtime", "builtin"} & set(deprepair.TARGETS)
 
 
 # ===========================================================================

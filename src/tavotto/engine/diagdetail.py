@@ -206,6 +206,9 @@ class Sources:
     fix_journey: list[dict] | None = None
     #: AI 修复的本地审计尾部（`fixsession.audit_tail`，ADR 0149 §四）：哪个工具、什么档、谁批准、结果码；不含内容
     fix_audit: list[dict] | None = None
+    #: 脚本（项目相对路径）→ 它运行时从项目外加载过的本地 `.py` 模块的**候选**绝对路径（`diagexternal.modules_for`，
+    #: 持久记录）。不信：`collect_source` 在父进程里逐个重新校验才收
+    external_lookup: Callable[[str], list[str]] | None = None
 
 
 @dataclasses.dataclass
@@ -2513,6 +2516,9 @@ SOURCE_REASON_PANEL = "panel"
 SOURCE_REASON_RECENT = "recent"
 #: 转换任务留在候选目录里的候选脚本（AI 写的、没被采用的那份）
 SOURCE_REASON_CANDIDATE = "convert_candidate"
+#: 已收脚本运行时从项目外加载过的本地 `.py` 模块（脚本自己加进 `sys.path` 的目录里的，如公共代码目录）
+SOURCE_REASON_EXTERNAL = "imported_external"
+EXTERNAL_MEMBER_DIR = "external"
 #: 转换入口接受的来源脚本后缀（`sourcelang`：`.py` / `.R` / `.r` / `.m`）；会话记录里的 `script` 不信，再按它过滤一遍
 CONVERT_SOURCE_EXTS = (".py", ".r", ".m")
 CONVERT_CANDIDATE_DIR = "convert-candidate"
@@ -2641,6 +2647,72 @@ def source_candidates(
     if over_cap is not None:  # 数量上限之外的：调用方在 index 与 truncated 里记账
         over_cap.extend(chosen[SOURCE_FILES:])
     return [(r, seen[r]) for r in chosen][:SOURCE_FILES]
+
+
+def external_candidates(
+    src: Sources,
+    chosen: list[tuple[str, Path]],
+    failed: list[str],
+) -> list[tuple[str, Path, str, FileId]]:
+    """已被收进来的脚本运行时从**项目外**加载过的本地模块：`[(虚拟成员名, 真实路径, 导入它的脚本, 身份)]`。
+
+    记录来自渲染进程自报、落在应用数据目录里（`diagexternal`），这里**一个都不信，在父进程重新校验**：绝对路径、
+    后缀 `.py`、此刻仍是常规文件且路径本身没有符号链接（`realpath` 与记录一致：文件自己与各级父目录都不跟随）、
+    不在项目内（项目内的走原来的路，且原规则「解析到项目外的脚本一律不收」不变）、不在 `readscope` 的敏感目录。
+    同一文件只收一次（先到的脚本算 `imported_by`）。成员名用不带绝对路径的虚拟写法 `external/<父目录的短哈希>/<文件名>`。
+    只对 `chosen`（真被收进来的脚本）找，不猜没被加载过的文件。"""
+    lookup = src.external_lookup
+    fig = (src.project or {}).get("figures_dir")
+    if lookup is None or not fig:
+        return []
+    try:
+        root = os.path.realpath(fig)
+        from .fixtools import readscope
+
+        scope = readscope.ReadScope(home=Path.home(), project_root=root)
+        home = os.path.normcase(os.path.realpath(Path.home()))
+    except Exception:  # noqa: BLE001 — 判不了敏感目录就一个都不收
+        return []
+    taken: set[str] = set()
+    out: list[tuple[str, Path, str, FileId]] = []
+    for rel, _path in chosen:
+        try:
+            raws = list(lookup(rel) or [])
+        except Exception:  # noqa: BLE001
+            continue
+        for raw in raws[:20]:
+            if (
+                not isinstance(raw, str)
+                or not os.path.isabs(raw)
+                or not raw.lower().endswith(".py")
+            ):
+                continue
+            try:
+                real = os.path.realpath(raw)
+                key = os.path.normcase(real)
+                if key in taken or os.path.normcase(real) != os.path.normcase(os.path.abspath(raw)):
+                    continue  # 同一文件只收一次；路径里有符号链接（写下之后被换过）一律不收
+                nroot = os.path.normcase(root)
+                if key == nroot or key.startswith(nroot.rstrip(os.sep) + os.sep):
+                    continue  # 项目内的：别的路收
+                parent = os.path.normcase(os.path.dirname(real))
+                if parent == home or os.path.dirname(parent) == parent:
+                    continue  # 直接放在主目录根 / 盘符根下的不收：那是整个主目录 / 整个盘被加进了 sys.path
+                st = os.lstat(real)
+                if not stat.S_ISREG(st.st_mode) or scope.is_denied(real):
+                    continue
+                fid = FileId.of(st)
+            except (OSError, ValueError):
+                failed.append(f"{EXTERNAL_MEMBER_DIR}/?/{Path(raw).name}")
+                continue
+            taken.add(key)
+            parent_hash = hashlib.sha1(
+                os.path.dirname(real).encode("utf-8", "replace")
+            ).hexdigest()[:8]
+            out.append(
+                (f"{EXTERNAL_MEMBER_DIR}/{parent_hash}/{Path(real).name}", Path(real), rel, fid)
+            )
+    return out
 
 
 def declared_candidates(
@@ -3016,6 +3088,32 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
             "reason": reasons.get(rel, SOURCE_REASON_RECENT),
         }
         add(rel, path, zip_name, row, ids)
+    # 这些脚本运行时从项目外加载过的本地模块（只收真正加载过的）：同一个勾选项，同一套清理、单文件上限与总条数上限
+    ext_failed: list[str] = []
+    externals = external_candidates(src, candidates, ext_failed)
+    index.extend({"script": _clean_name(scrub, rel), "read_failed": True} for rel in ext_failed)
+    room = max(0, SOURCE_FILES - len(candidates))
+    for virtual, path, by_rel, fid in externals[room:]:
+        index.append(
+            {
+                "script": _clean_name(scrub, str(path)),
+                "reason": SOURCE_REASON_EXTERNAL,
+                "skipped_over_count_cap": True,
+            }
+        )
+    for n, (virtual, path, by_rel, fid) in enumerate(externals[:room]):
+        add(
+            virtual,
+            path,
+            f"ext-{n + 1:02d}-{_member_name(scrub, virtual, slash='__')}",
+            {
+                "script": _clean_name(scrub, str(path)),
+                "id": _name_id(str(path)),
+                "reason": SOURCE_REASON_EXTERNAL,
+                "imported_by": _name_id(by_rel),
+            },
+            {virtual: fid},
+        )
     # 依赖计划的声明文件：同一个勾选项，同一套清理与上限
     decl_failed: list[str] = []
     decl_ids: dict[str, FileId] = {}
@@ -3046,9 +3144,12 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
                     "criterion": "scripts from recent failed / attempted runs first (even if not registered in the "
                     "project; only files inside the project folder), then scripts registered in the open project "
                     "(panel scripts first, then newest first); each script carries a reason "
-                    "(failing_attempt / panel / recent / convert_candidate). Scripts of recent 'generate editable "
+                    "(failing_attempt / panel / recent / convert_candidate / imported_external). Scripts of recent 'generate editable "
                     "version' (R / MATLAB / Python) conversion tasks are included, together with the candidate "
-                    "script such a task left in its own candidate folder (convert_candidate). `declarations` are the dependency declaration files "
+                    "script such a task left in its own candidate folder (convert_candidate). Local .py modules that an included "
+                    "script actually imported at run time from outside the project folder (a directory the script "
+                    "itself added to sys.path; third-party packages and the standard library are not included) are "
+                    "included too (imported_external; imported_by is the id of the importing script). `declarations` are the dependency declaration files "
                     "(requirements*.txt / constraints.txt / pyproject.toml) the dependency planner reads",
                     "scripts": index,
                     "declarations": declarations,
