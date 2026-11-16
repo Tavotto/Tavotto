@@ -472,6 +472,12 @@ export interface PathNode {
 export interface PathSubpath {
   closed: boolean
   nodes: PathNode[]
+  /**
+   * 实时圆角的记录（ADR 0185 M7 方案 B）：`nodes` 照旧是圆过之后的几何（导出、旧版本都只读它），这里另记圆之前的尖角锚点
+   * （同一套框比例坐标）与每个尖角的半径（相对框的长边 `max(w, h)`，0 = 没圆）——再调圆角时从尖角重新圆一遍。
+   * **只经 `lib/liveCornerRecord.liveCornerRecord` 读**：记录与 `nodes` 对不上（别的操作改过几何）就当没有。
+   */
+  liveCorners?: { sharp: PathNode[]; radii: number[] }
 }
 
 /**

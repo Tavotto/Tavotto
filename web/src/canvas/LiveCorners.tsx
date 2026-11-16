@@ -6,11 +6,12 @@ import {
   radiusFromPointer,
   rectRadiusFromPointer,
   rectWidgets,
-  roundCorners,
+  roundCornersEach,
   type CornerInfo,
   type RectCorner,
 } from '@/lib/liveCorners'
-import { parseAnchorKey, pathFromMm, pathToMm, type AnchorRef } from '@/lib/pathEdit'
+import { liveCornerRecord, makeLiveCorners } from '@/lib/liveCornerRecord'
+import { parseAnchorKey, pathFromMm, pathToMm, type AnchorRef, type MmSubpath } from '@/lib/pathEdit'
 import { rotateAbout } from '@/lib/pathGeom'
 import { useDocumentStore } from '@/store/documentStore'
 import { canEditAnchors, useActivePathEdit, usePathEditStore } from '@/store/pathEditStore'
@@ -83,12 +84,31 @@ function startRect(e: ReactPointerEvent, o: ShapeObject, corner: RectCorner) {
   })
 }
 
-function startPath(e: ReactPointerEvent, o: PathObject, grabbed: CornerInfo, refs: AnchorRef[]) {
+/**
+ * 路径的圆点从哪儿算：有还对得上的圆角记录（`liveCornerRecord`，ADR 0185 M7 方案 B）的子路径用记录里的尖角与半径——圆过的角
+ * 还是一个角、圆点在圆心上，拖它接着改半径；没有记录的用现在的几何（半径 0）。编辑锚点时（只给选中的那几个角）照现在的几何。
+ */
+function cornerBase(o: PathObject, useRecord: boolean): { subs: MmSubpath[]; radii: Map<string, number> } {
+  const now = pathToMm(o)
+  const radii = new Map<string, number>()
+  const subs = now.map((sp, si) => {
+    const rec = useRecord ? liveCornerRecord(o, si) : null
+    if (!rec) return sp
+    rec.radii.forEach((r, i) => {
+      if (r > 0) radii.set(`${si}:${i}`, r)
+    })
+    return rec.sharp
+  })
+  return { subs, radii }
+}
+
+function startPath(e: ReactPointerEvent, o: PathObject, grabbed: CornerInfo, refs: AnchorRef[], useRecord: boolean) {
   e.stopPropagation()
   e.preventDefault()
   if (e.button !== 0) return
   const store = useDocumentStore.getState()
-  const base = pathToMm(o)
+  const { subs: base, radii: start } = cornerBase(o, useRecord)
+  const maxR = new Map(pathCorners(base).map((c) => [`${c.ref.sp}:${c.ref.i}`, c.maxR]))
   const rot = objectRotation(o)
   useInteractionStore.getState().begin('corner')
   store.beginTxn(msg('history.roundCorners', undefined, 'workspace'))
@@ -97,8 +117,21 @@ function startPath(e: ReactPointerEvent, o: PathObject, grabbed: CornerInfo, ref
     onMove: (ev) => {
       const p = clientToMm(ev.clientX, ev.clientY)
       const q = rotateAbout([p.x, p.y], center(o), -rot)
-      const next = pathFromMm(o, roundCorners(base, refs, radiusFromPointer(grabbed, q)))
+      const r = radiusFromPointer(grabbed, q)
+      const radii = new Map(start)
+      for (const a of refs) {
+        const key = `${a.sp}:${a.i}`
+        radii.set(key, Math.min(r, maxR.get(key) ?? r))
+      }
+      const next = pathFromMm(o, roundCornersEach(base, radii))
       if (!next) return
+      // 记下圆之前的尖角与每个角的半径：之后还能接着当圆角调（对不上的时候 `liveCornerRecord` 当没有）
+      if (useRecord) {
+        next.subpaths = next.subpaths.map((sp, si) => {
+          const rec = base[si] ? makeLiveCorners(next, base[si], base[si].nodes.map((_n, i) => radii.get(`${si}:${i}`) ?? 0)) : undefined
+          return rec ? { ...sp, liveCorners: rec } : sp
+        })
+      }
       store.txnUpdate((d) => {
         const i = d.objects.findIndex((x) => x.id === o.id)
         if (i >= 0) d.objects[i] = next
@@ -141,14 +174,19 @@ export function LiveCorners({ t }: { t: ViewTransform }) {
       dot(w.corner, w.at, (e) => startRect(e, target.o, w.corner), { 'data-live-corner': w.corner }),
     )
   } else {
-    const all = pathCorners(pathToMm(target.o))
     const only = target.only
+    const useRecord = !only
+    const { subs, radii } = cornerBase(target.o, useRecord)
+    const all = pathCorners(subs)
     const shown = only ? all.filter((c) => only.some((a) => a.sp === c.ref.sp && a.i === c.ref.i)) : all
     const refs = shown.map((c) => c.ref)
     dots = shown.map((c) =>
-      dot(`${c.ref.sp}:${c.ref.i}`, cornerWidget(c, 0, minMm), (e) => startPath(e, target.o, c, refs), {
-        'data-live-corner': `${c.ref.sp}:${c.ref.i}`,
-      }),
+      dot(
+        `${c.ref.sp}:${c.ref.i}`,
+        cornerWidget(c, radii.get(`${c.ref.sp}:${c.ref.i}`) ?? 0, minMm),
+        (e) => startPath(e, target.o, c, refs, useRecord),
+        { 'data-live-corner': `${c.ref.sp}:${c.ref.i}` },
+      ),
     )
   }
   if (!dots.length) return null
