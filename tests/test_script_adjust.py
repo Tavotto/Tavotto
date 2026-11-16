@@ -1768,6 +1768,35 @@ def test_label_visibility_of_a_tick_set_the_manifest_dropped_is_still_written():
     assert "_TickSet(_ax(fig, 0), 'y').params(labelleft=False)" in text
 
 
+def test_class_of_a_tick_set_the_manifest_dropped_is_ticks():
+    """类别只在 `_cls_of` 推断：刻度组缺席时 `_statement`、档位、去重问的是同一处，刻度定位排在坐标范围之后（Codex P2）。"""
+    assert scriptadjust._cls_of("axes_0.xticks", None) == "ticks"
+    assert scriptadjust._cls_of("axes_0.title", None) is None
+    els = [{"gid": "axes_0", "role": "axes", "editable": []}]
+    edits = [
+        {"gid": "axes_0.xticks", "prop": "major_mode", "value": "fixed"},
+        {"gid": "axes_0", "prop": "xlim", "value": [0, 9]},
+    ]
+    out = scriptadjust.build(b"import os\n", "Fig1", edits, {"elements": els}, version="9.9")
+    text = out.data.decode()
+    assert out.written == 2 and text.index("set_xlim") < text.index("_tick_model(_ax(fig, 0)")
+
+
+@real_worker
+def test_frozen_ticks_follow_the_final_view_when_their_group_left_the_manifest(project):
+    """先设 fixed 不给值、隐藏全部刻度文字（刻度组量不出几何、从 manifest 里掉了）、再改 xlim、开着网格：
+    定位必须排在 xlim 之后，否则按旧范围冻结，网格线对不上（Codex P2）。"""
+    client, _figs = project
+    patches = [
+        {"gid": "axes_0.xticks", "prop": "major_mode", "value": "fixed"},
+        {"gid": "axes_0.xticks", "prop": "visible", "value": False},
+        {"gid": "axes_0", "prop": "xlim", "value": [-3.0, 9.0]},
+        {"gid": "axes_0", "prop": "grid_x", "value": True},
+    ]
+    body = _export(client, patches, formats=[])
+    assert body["status"] == "done", body
+
+
 @real_worker
 def test_script_order_matches_the_engines_apply_order():
     """脚本里的先后与 `overrides._apply_rank` 对账：刻度类型 -> 坐标范围 -> 刻度定位 -> 单条刻度文字。

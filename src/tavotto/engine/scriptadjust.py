@@ -437,7 +437,7 @@ def _mappable(els: dict, gid: str, prop: str) -> str:
     target = els.get(m)
     if (
         target is None
-        or _ROLE_CLS.get(target.get("role")) not in ("image", "collection")
+        or _cls_of(m, target) not in ("image", "collection")
         or not any(f.get("prop") == prop for f in target.get("editable") or [])
     ):
         raise _Unsupported(gid)
@@ -662,14 +662,22 @@ def _refresh(
     return _rebuild(leg_gid, patches, manifest, encoding)
 
 
+def _cls_of(gid: str, el: dict | None) -> str | None:
+    """这个 gid 的 override 类（`WRITES` / `NOT_WRITABLE` 的键）：**类别只在这里推断**。
+
+    元素在 manifest 里缺席时（刻度文字全关掉之后刻度组量不出几何，manifest 把它丢了）按 gid 形状认：
+    它是坐标轴的固有部分。`_statement`、档位（`_kind`）、去重、色阶分组都问这一处，不各自从 role 推。
+    """
+    role = (el or {}).get("role") or ("figure" if gid == "figure" else "")
+    if not role and re.fullmatch(r"axes_\d+\.[xy]ticks", gid):
+        role = "ticks"
+    return _ROLE_CLS.get(role)
+
+
 def _statement(
     el: dict | None, gid: str, prop: str, value, patches, encoding: str, manifest: dict
 ) -> str:
-    role = (el or {}).get("role") or ("figure" if gid == "figure" else "")
-    if not role and re.fullmatch(r"axes_\d+\.[xy]ticks", gid):
-        # 刻度文字全关掉之后这一组量不出几何，manifest 把它丢了；它是坐标轴的固有部分，身份看 gid 形状
-        role = "ticks"
-    cls = _ROLE_CLS.get(role)
+    cls = _cls_of(gid, el)
     if cls is None or (cls, prop) not in WRITES:
         raise _Unsupported(prop)
     obj = _selector(gid, el)
@@ -1584,9 +1592,7 @@ def _translate(
         try:
             el = els.get(p["gid"])
             stmt = _statement(el, p["gid"], p["prop"], p["value"], patches, encoding, manifest)
-            cls = _ROLE_CLS.get(
-                (el or {}).get("role") or ("figure" if p["gid"] == "figure" else ""), ""
-            )
+            cls = _cls_of(p["gid"], el) or ""
             tags[id(p)] = _kind(cls, p["prop"])
             if extra := _refresh(el, p["gid"], cls, p["prop"], patches, manifest, encoding):
                 refresh[id(p)] = extra
@@ -1606,7 +1612,7 @@ def _translate(
     held_maps = {
         r["gid"]
         for r in residual
-        if r["prop"] in ("cmap", *_CLIM) and (els.get(r["gid"]) or {}).get("role") != "colorbar"
+        if r["prop"] in ("cmap", *_CLIM) and _cls_of(r["gid"], els.get(r["gid"])) != "colorbar"
     }
     held_axes = {
         e["gid"][: -len(".colorbar")]
