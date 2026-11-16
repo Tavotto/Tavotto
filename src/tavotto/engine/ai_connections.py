@@ -51,6 +51,8 @@ ENV_BUILTIN = "TAVOTTO_AI_BUILTIN"
 #: 保存连接时对 Key 的形状要求：可打印 ASCII、无空白（Key 会进 HTTP 头与环境变量，换行 / 空格都是注入面）
 _KEY_RE = re.compile(r"[\x21-\x7e]{1,4096}")
 _MODEL_MAX = 200
+#: `POST /api/ai/connections` 的 `models` 列表最多收几项
+_MODELS_MAX = 50
 
 #: 内置循环支持的线上协议 → 内部家族（自定义厂商用）。chat 记录的家族是 openai（= codex），但**只走内置**（`ai_providers.builtin_only`）
 _WIRE_AGENT = {"anthropic": "claude", "openai-responses": "codex", "openai-chat": "codex"}
@@ -637,6 +639,17 @@ def add_connection(body: object) -> tuple[str, str | None, dict | None]:
     if model is not None and not (isinstance(model, str) and len(model) <= _MODEL_MAX):
         raise _invalid("bad_model")
     model = (model or "").strip() or None
+    extra = body.get("models")
+    extra_models: list[str] = []
+    if extra is not None:
+        if not isinstance(extra, list) or len(extra) > _MODELS_MAX:
+            raise _invalid("bad_models")
+        for item in extra:
+            if not (isinstance(item, str) and item.strip() and len(item) <= _MODEL_MAX):
+                raise _invalid("bad_models")
+            if item.strip() not in extra_models:
+                extra_models.append(item.strip())
+        model = model or (extra_models[0] if extra_models else None)
     if model is None and existing is not None:
         model = (
             str(existing.get("default_model") or "").strip() or None
@@ -650,6 +663,8 @@ def add_connection(body: object) -> tuple[str, str | None, dict | None]:
     live_list = list(live.get("models") or []) if live.get("source") != "none" else []
     reason = live.get("reason") if live.get("source") == "none" else None
     models = live_list or hints or ([model] if model else [])
+    if extra_models:  # 用户自己填的型号一并留下（没有 /models 的自填地址只能靠这个）
+        models = [*models, *(m for m in extra_models if m not in models)]
     if live_list:
         default = model or next((h for h in hints if h in live_list), None) or live_list[0]
     else:
@@ -703,6 +718,16 @@ def add_connection(body: object) -> tuple[str, str | None, dict | None]:
     # 型号清单会自己补 `/v1`，拿得到不等于地址对：探测没拿到结论（断网）时仍核一次，少写了 `/v1` 直接存成改正后的（TVD-J5QG）
     ai_providers.ensure_api_root(ai_providers.get(cid))
     return cid, reason, summary
+
+
+def overlay_fetch_error(conn: dict, fetch_error: str | None) -> dict:
+    """把「试取型号清单失败」的原因码叠在 `ready` 的连接视图上变成 `error`。
+    对话探测已通过（`protocol_checked`：地址与型号至今没变）时，清单取不到只说明中转站没有 `/models`，不算连接出错；Key 被拒（`unauthorized`）照旧算错。"""
+    if not fetch_error or conn.get("state") != "ready":
+        return conn
+    if conn.get("protocol_checked") and fetch_error != "unauthorized":
+        return conn
+    return {**conn, "state": "error", "error": fetch_error}
 
 
 def probe_after_endpoint_save(

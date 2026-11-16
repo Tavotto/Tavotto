@@ -14418,17 +14418,15 @@ def _apply_connection(body: dict, agent: str, model: str | None, endpoint_id):
 
 
 def _connection_view(cid: str, fetch_error: str | None = None) -> dict:
-    """一条 Key 连接的当前视图（重新读能力表）；试取型号清单失败的那次原因码叠在 `ready` 上变成 `error`。"""
+    """一条 Key 连接的当前视图（重新读能力表）；试取型号清单失败的那次原因码叠在 `ready` 上变成 `error`（对话探测已通过时，只有 Key 被拒才算）。"""
     engine_ai.invalidate_capabilities()
     conn = next(c for c in engine_ai.capabilities(refresh=True)["connections"] if c["id"] == cid)
-    if fetch_error and conn["state"] == "ready":
-        conn = {**conn, "state": "error", "error": fetch_error}
-    return conn
+    return engine_ai_connections.overlay_fetch_error(conn, fetch_error)
 
 
 @app.post("/api/ai/connections")
 def api_ai_connection_add():
-    """连一个 Key 类 AI。body：`{vendor, api_key, base_url?, model?, label?, wire?, id?}`（`custom` 必须有 `base_url`；`wire` 可选：
+    """连一个 Key 类 AI。body：`{vendor, api_key, base_url?, model?, models?, label?, wire?, id?}`（`models` = 额外型号列表，≤50 项；`custom` 必须有 `base_url`；`wire` 可选：
     缺省 / `auto` = 保存时探测对话协议，`anthropic` | `openai-responses` | `openai-chat` 也会探测，没通过就换探测到能通的；带已存在的 `id` = 换这条的 Key / 型号）。
     保存前试取一次型号清单、保存后探测一次对话协议（一条很短的测试请求），都失败也保存，但返回的连接 `state="error"` 并带原因码 `error`
     （探测全不通 = `endpoint_unusable` + `error_reason`）。返回 `{ok, connection, probe}`；**密钥不回传**。"""
