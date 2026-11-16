@@ -67,6 +67,7 @@ from .engine import (
     ai_connections as engine_ai_connections,
     ai_convert as engine_ai_convert,
     ai_data_figure as engine_ai_data_figure,
+    ai_data_overview as engine_ai_data_overview,
     ai_data_propose as engine_ai_data_propose,
     ai_data_task as engine_ai_data_task,
     ai_figure_edit as engine_ai_figure_edit,
@@ -93,6 +94,7 @@ from .engine import (
     deprepair as engine_deprepair,
     desktopproc as engine_desktopproc,
     diagdetail as engine_diagdetail,
+    diagexternal as engine_diagexternal,
     diagnostics as engine_diagnostics,
     diagnostics_frontend as engine_diagnostics_frontend,
     diagsend as engine_diagsend,
@@ -159,6 +161,8 @@ from .engine import (
     receipt as engine_receipt,
     registry as engine_registry,
     reinstall_marker as engine_reinstall_marker,
+    reviewinbox as engine_reviewinbox,
+    reviewshare as engine_reviewshare,
     runcodes as engine_runcodes,
     runconfig as engine_runconfig,
     runtime as engine_runtime,
@@ -6355,6 +6359,16 @@ def _build_diagnostics_bundle(
         fix_audit=engine_fixsession.audit_tail(engine_fixsession.SESSIONS.ids_for(pid))
         if pid
         else None,
+        # 已收脚本运行时从项目外加载过的本地模块（持久记录，收集时在 diagdetail 里重新校验）
+        external_lookup=(
+            (
+                lambda rel, fd=(status or {}).get("figures_dir"): engine_diagexternal.modules_for(
+                    fd, rel
+                )
+            )
+            if (status or {}).get("figures_dir")
+            else None
+        ),
     )
     items = engine_diagdetail.collect(src, detail.options)
     # report.json 只算一次：超限时 `fit` 会按优先级截断重建几次 ZIP，不该每次都重新探测渲染环境
@@ -6665,6 +6679,309 @@ def api_contact_forget(mid: str):
     """从本机记录里删掉一封信（只删本机记录；服务端按保留期自行清理）。"""
     engine_contactinbox.forget(mid)
     return _contact_json({"unread": engine_contactinbox.unread_count()})
+
+
+# --------------------- 外部审阅（ADR 0187）---------------------
+# 全部在会话认证之内（ADR 0008，全局 before_request guard，没有旁路）。逻辑在 `engine/reviewshare.py`（出站 / 轮询）与
+# `engine/reviewinbox.py`（本机分享记录）；这里只做 HTTP 形状与出图回调。**只有 `POST /api/review/{share,update,revoke,refresh}`、
+# 回复 / 标记已处理与 `GET /api/review/quota` 会引出远程请求**（后台轮询另在 `engine_reviewshare.start_poller`，没有未到期的分享就
+# 一次网络都不发）；状态 / 详情对象里没有管理令牌。`TAVOTTO_NO_REVIEW_SHARE=1` 或端点不合规：能力说明回 `{"enabled": false}`，
+# 其余一律 404。出图描述 `render` 由前端带来（图：`{"original": <original 段>}`；排版：`{"canvas": {page_w_mm, page_h_mm, objects}}`，
+# 与 `POST /api/export` 的同名段一致）——排版文档是前端 schema，引擎无法自己反推。
+
+
+def _review_error(exc: engine_reviewshare.ReviewError):
+    resp = jsonify({"ok": False, "error": exc.code, "code": f"review_{exc.code}"})
+    resp.status_code = exc.status
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _review_json(payload: dict, status: int = 200):
+    resp = jsonify(payload)
+    resp.status_code = status
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _review_off():
+    return _review_error(engine_reviewshare.ReviewError("disabled", 404))
+
+
+def _review_render(target: dict, render: dict, long_edge: int):
+    """出图回调（`reviewshare.set_renderer`）：现有导出管线出一张 PNG（长边约 `long_edge` px）+ 元素表。
+
+    只调 `_export_produce`（不经 `exportjob.run`），中间文件全在这次私有的临时目录，**不写项目导出目录**。
+    元素表取 worker 的 manifest JSON（`_hot_manifest`）；拿不到（位图 / 矢量素材没有脚本）只有面板外框。"""
+    pdfbackend.selected()
+    kind = target["kind"]
+    if kind == "figure":
+        seg = render.get("original")
+        if not isinstance(seg, dict):
+            raise ValueError("render_original_missing")
+        long_mm = max(float(seg.get("w_mm") or 0), float(seg.get("h_mm") or 0))
+        spec = {"scope": engine_exportreq.SCOPE_ORIGINAL, "original": seg}
+    else:
+        seg = render.get("canvas")
+        if not isinstance(seg, dict):
+            raise ValueError("render_canvas_missing")
+        long_mm = max(float(seg.get("page_w_mm") or 0), float(seg.get("page_h_mm") or 0))
+        # `object_id`（文档对象的不透明 id）只给元素表用，不进导出请求
+        export_seg = {
+            **seg,
+            "objects": [
+                {k: v for k, v in o.items() if k != "object_id"} if isinstance(o, dict) else o
+                for o in seg.get("objects") or []
+            ],
+        }
+        spec = {"scope": engine_exportreq.SCOPE_CANVAS, "canvas": export_seg}
+    ppi = round(long_edge / (long_mm / 25.4)) if long_mm > 0 else round(long_edge / 12)
+    spec.update(
+        {
+            "formats": [engine_exportreq.FORMAT_PNG],
+            "filename": "review",
+            "ppi": max(engine_exportreq.PPI_MIN, min(engine_exportreq.PPI_MAX, ppi)),
+            "overwrite": engine_exportreq.OVERWRITE_REPLACE,
+        }
+    )
+    tmp = Path(tempfile.mkdtemp(prefix="render-", dir=_review_tmp_root()))
+    try:
+        job = engine_exportjob.prepare(spec, tmp / "out")
+        artifact_sources = _export_artifact_sources(job.request)
+        produced = _export_produce(
+            job, tmp, **({"artifact_sources": artifact_sources} if artifact_sources else {})
+        )
+        png = next(
+            (
+                p
+                for p in produced
+                if p.format == engine_exportreq.FORMAT_PNG and p.tmp_path and not p.error_code
+            ),
+            None,
+        )
+        if png is None:
+            raise ValueError("render_no_png")
+        data = Path(png.tmp_path).read_bytes()
+        return engine_reviewshare.Rendered(data, _review_elements(kind, job.request, seg))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _review_tmp_root() -> Path:
+    root = engine_config.data_path("review", "tmp")
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _review_manifest(figure_id: str, overrides: list):
+    """一张图的 manifest JSON = 用户画布上看到的那份（热会话按这组 overrides 的当前状态）。热态不是这组 patches 时
+    先让 worker 按它们重放一次（与画布同一组、幂等），再取；没有脚本 / 仍拿不到回 None（日志只记个数），从不抛。"""
+    patches = list(overrides or [])
+    try:
+        worker, stem = _edited_script_worker(figure_id)
+        if worker is None:
+            LOG.info("外部审阅: 元素表为空（没有脚本）")
+            return None
+        man = _hot_manifest(worker, stem, patches)
+        if man is None:
+            worker.override(stem, patches)
+            man = _hot_manifest(worker, stem, patches)
+        if man is None:
+            LOG.info("外部审阅: 元素表为空（热会话没有这组 overrides）")
+        return man
+    except Exception as exc:  # noqa: BLE001 — 元素表是锦上添花，拿不到只是少了「点选元素」
+        LOG.info("外部审阅: 元素表不可用 类型=%s", type(exc).__name__)
+        return None
+
+
+def _review_elements(kind: str, req, seg: dict) -> list:
+    if kind == "figure":
+        man = _review_manifest(req.original.figure_id, req.original.overrides)
+        return engine_reviewshare.manifest_elements(man)
+    # 前端原样的对象（带 `object_id`）与规范化后的请求对象一一对齐；面板键（`panel_keys`）是不透明的：
+    # 导出请求里对象的 `id` 是图的项目内路径，不许进元素表
+    src = [o for o in (seg.get("objects") or []) if isinstance(o, dict)]
+    objects = req.canvas.objects if req.canvas else []
+    manifests = {}
+    for i, key in list(engine_reviewshare.panel_keys(src).items())[:60]:
+        obj = objects[i]
+        if not obj.get("hidden") and isinstance(obj.get("id"), str):
+            manifests[key] = _review_manifest(obj["id"], obj.get("overrides") or [])
+    return engine_reviewshare.layout_elements(
+        seg.get("page_w_mm"), seg.get("page_h_mm"), src, manifests
+    )
+
+
+engine_reviewshare.set_renderer(_review_render)
+
+
+def _review_scope():
+    """后台出图线程的项目绑定：有项目就钉在**发起请求的那个项目**上（线程里没有 request context，不钉会落到默认项目）；
+    没开项目（排版可以不属于任何项目）就不绑。"""
+    ctx = _request_ctx()
+    return (lambda: bound_project(ctx)) if ctx is not None else contextlib.nullcontext
+
+
+def _review_project() -> str:
+    """分享记录按发起时所在的项目分开（图 id 在不同项目里会重名）；没开项目 = 空串。"""
+    ctx = _request_ctx()
+    return str(getattr(ctx, "id", "") or "") if ctx is not None else ""
+
+
+def _review_body() -> dict:
+    body = request.get_json(silent=True)
+    return body if isinstance(body, dict) else {}
+
+
+@app.get("/api/review/capability")
+def api_review_capability():
+    return _review_json(engine_reviewshare.capability())
+
+
+@app.get("/api/review/quota")
+def api_review_quota():
+    return _review_json(engine_reviewshare.quota(request.args.get("share_id", "")))
+
+
+@app.get("/api/review/for")
+def api_review_for():
+    if not engine_reviewshare.enabled():
+        return _review_json({"share": None})
+    rec = engine_reviewinbox.for_target(
+        request.args.get("kind", ""), request.args.get("id", ""), _review_project()
+    )
+    return _review_json({"share": engine_reviewinbox.summary(rec) if rec else None})
+
+
+@app.get("/api/review/shares")
+def api_review_list():
+    if not engine_reviewshare.enabled():
+        return _review_off()
+    return _review_json(
+        {"shares": [engine_reviewinbox.summary(r) for r in engine_reviewinbox.listed()]}
+    )
+
+
+@app.post("/api/review/share")
+def api_review_share():
+    try:
+        return _review_json(
+            engine_reviewshare.start_share(
+                _review_body(), scope=_review_scope(), project=_review_project()
+            )
+        )
+    except engine_reviewshare.ReviewError as exc:
+        return _review_error(exc)
+
+
+@app.post("/api/review/changed")
+def api_review_changed():
+    body = _review_body()
+    return _review_result(
+        lambda: engine_reviewshare.changed(
+            body.get("share_id"), body.get("render"), project=_review_project()
+        )
+    )
+
+
+@app.post("/api/review/update")
+def api_review_update():
+    try:
+        return _review_json(
+            engine_reviewshare.start_update(
+                _review_body(), scope=_review_scope(), project=_review_project()
+            )
+        )
+    except engine_reviewshare.ReviewError as exc:
+        return _review_error(exc)
+
+
+@app.get("/api/review/status")
+def api_review_status():
+    if not engine_reviewshare.enabled():
+        return _review_off()
+    return _review_json(engine_reviewshare.status())
+
+
+@app.post("/api/review/dismiss")
+def api_review_dismiss():
+    return _review_json(engine_reviewshare.dismiss())
+
+
+def _review_result(fn, *args):
+    if not engine_reviewshare.enabled():
+        return _review_off()
+    try:
+        return _review_json(fn(*args))
+    except engine_reviewshare.ReviewError as exc:
+        return _review_error(exc)
+
+
+@app.post("/api/review/revoke")
+def api_review_revoke():
+    return _review_result(engine_reviewshare.revoke, str(_review_body().get("share_id") or ""))
+
+
+@app.delete("/api/review/shares/<share_id>")
+def api_review_forget(share_id: str):
+    outcome = engine_reviewinbox.forget(share_id)
+    if outcome == "ok":
+        return _review_json({"ok": True})
+    status = 404 if outcome == "missing" else 409
+    return _review_json({"ok": False, "error": outcome, "code": f"review_{outcome}"}, status)
+
+
+@app.get("/api/review/shares/<share_id>")
+def api_review_detail(share_id: str):
+    rec = engine_reviewinbox.get(share_id)
+    if rec is None or not rec["delivered"]:
+        return _review_error(engine_reviewshare.ReviewError("not_found", 404))
+    return _review_json(engine_reviewinbox.detail(rec))
+
+
+@app.post("/api/review/refresh")
+def api_review_refresh():
+    if not engine_reviewshare.enabled():
+        return _review_off()
+    sid = _review_body().get("share_id")
+    info = engine_reviewshare.poll_once(force=True, share_id=sid if isinstance(sid, str) else None)
+    return _review_json(
+        {"ok": bool(info.get("ok")), "unread": engine_reviewinbox.unread_summary()["total"]}
+    )
+
+
+@app.post("/api/review/shares/<share_id>/comments/<cid>/reply")
+def api_review_reply(share_id: str, cid: str):
+    return _review_result(engine_reviewshare.reply, share_id, cid, _review_body().get("text"))
+
+
+@app.post("/api/review/shares/<share_id>/comments/<cid>/resolve")
+def api_review_resolve(share_id: str, cid: str):
+    return _review_result(engine_reviewshare.resolve, share_id, cid, _review_body().get("resolved"))
+
+
+@app.post("/api/review/shares/<share_id>/read")
+def api_review_read(share_id: str):
+    if not engine_reviewinbox.mark_read(share_id):
+        return _review_error(engine_reviewshare.ReviewError("not_found", 404))
+    return _review_json({"ok": True, "unread": engine_reviewinbox.unread_summary()["total"]})
+
+
+@app.get("/api/review/shares/<share_id>/versions/<int:v>/snapshot.png")
+def api_review_snapshot(share_id: str, v: int):
+    snap = engine_reviewinbox.snapshot_file(share_id, v)
+    if snap is None:
+        return _review_error(engine_reviewshare.ReviewError("not_found", 404))
+    resp = send_file(snap, mimetype="image/png", conditional=True)
+    resp.headers["Cache-Control"] = "private, no-cache"
+    return resp
+
+
+@app.get("/api/review/unread")
+def api_review_unread():
+    if not engine_reviewshare.enabled():
+        return _review_json({"total": 0, "latest": None})
+    return _review_json(engine_reviewinbox.unread_summary())
 
 
 @app.get("/api/project")
@@ -7360,6 +7677,9 @@ def api_registry():
     )
     for item in inventory:
         item["linked"] = item["script"] in linked
+    if engine_ai_figure_edit.enabled():
+        # 实验开关后面才加（关着时响应逐字不变）：v2 从数据生成的脚本带 `generated_from: {data, sheet}`（只给认出来源的条目加）
+        engine_ai_data_overview.annotate_generated_from(ctx.path, inventory)
     return jsonify(
         {
             "source": ctx.registry.source(),
@@ -15993,16 +16313,30 @@ _DATA_FILES_MAX = 500
 _DATA_FILES_SCAN_MAX = 50_000
 #: 最多给多少个 XLSX 读工作表清单（每个要开一次 zip；超出的不带清单）
 _DATA_FILES_SHEETS_MAX = 100
+#: `formats=all` 时最多逐个读多少个文本文件给「状态与摘要」，以及这些文件合计最多读多少字节（超出的 `table` 是 null，不是「读不了」）
+_DATA_FILES_TABLE_MAX = 100
+_DATA_FILES_TABLE_BYTES = 64 * 1024 * 1024
+#: `formats=all` 时最多给多少个 XLSX 逐表数行列、这些工作簿合计最多多少字节；超出的工作簿只带表名（行列数是 null = 没读）
+_DATA_FILES_SHEET_COUNT_MAX = 30
+_DATA_FILES_SHEET_COUNT_BYTES = 32 * 1024 * 1024
 
 
 @app.get("/api/ai/data-files")
 def api_ai_data_files():
     """TAF 数据出图的数据文件列表（**实验开关后面**，只读）：**默认只列 `.csv`**（v1 表单走 `/api/ai/data-figure`，只认 CSV）；
-    带 `?formats=all` 才列 `.csv` / `.tsv` / `.tab` / `.xlsx`（v2 出备选用），后缀大小写不敏感。
+    带 `?formats=all` 才列 `.csv` / `.tsv` / `.tab` / `.txt` / `.dat` / `.asc` / `.xlsx`（v2 出备选用），后缀大小写不敏感。
 
     walk 剪枝与隐藏目录规则同 `discover.PRUNE_DIRS`；不跟随链接；最多 500 个，按项目相对 POSIX 路径排序；最多看
-    `_DATA_FILES_SCAN_MAX` 个目录项，超了停下并标 `truncated`。`formats=all` 时 XLSX 带 `sheets: [{name, hidden}]`（读不了 / 超过
-    `_DATA_FILES_SHEETS_MAX` 个之后是 null）。"""
+    `_DATA_FILES_SCAN_MAX` 个目录项，超了停下并标 `truncated`。`formats=all` 时 XLSX 带 `sheets: [{name, hidden, rows, columns, status, code}]`（读不了 / 超过
+    `_DATA_FILES_SHEETS_MAX` 个之后整个是 null）；`rows` / `columns` 是该表的数据行数与列数（口径同 `propose` 读到的表），`status` 是
+    `ok` / `unreadable`（`code` 稳定码，此时行列数 null）；超过预算（`_DATA_FILES_SHEET_COUNT_MAX` 个工作簿 / `_DATA_FILES_SHEET_COUNT_BYTES`
+    字节 / 每个工作簿 `adf.SHEET_COUNT_MAX` 张表）的四项是 null = 没读（不是读不了）。单张表的详情走 `GET /api/ai/data-overview`。
+
+    `formats=all` 时每个文本文件（非 XLSX）另带 `table`（默认只列 CSV 的响应没有这个字段）：
+    `{status: "ok" | "unsure" | "unreadable", code, delimiter, header_row, columns, rows, preview}`——`ok` 认得准；`unsure` 能读出成列
+    数据但哪一行是每列的名字拿不准（`header_row` 是猜的物理行号，`preview` 是文件前若干行原文 `[{line, text}]`，行数与每行长度有上界，
+    前端让用户点一行，再把 `{路径: 行号}` 放进 `/api/ai/data-figure/propose` 的 `header_rows`）；`unreadable` 读不了（`code` 是稳定错误码）。
+    只有 `unsure` 带 `preview`。最多读 `_DATA_FILES_TABLE_MAX` 个文件、合计 `_DATA_FILES_TABLE_BYTES` 字节，超出的 `table` 是 null。"""
     if not engine_ai_figure_edit.enabled():
         return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
     root = require_project()
@@ -16018,16 +16352,73 @@ def api_ai_data_files():
         found, truncated = found[:_DATA_FILES_MAX], True
     files = []
     sheets_read = 0
+    tables_read = 0
+    table_bytes = 0
+    counted_books = 0
+    counted_bytes = 0
     for rel, size in found:
         row = {"path": rel, "size": size}
+        if every and not rel.lower().endswith(engine_ai_data_figure.XLSX_SUFFIXES):
+            if (
+                tables_read < _DATA_FILES_TABLE_MAX
+                and table_bytes + size <= _DATA_FILES_TABLE_BYTES
+            ):
+                tables_read += 1
+                table_bytes += size
+                try:
+                    row["table"] = engine_ai_data_figure.read_text_table(
+                        root / rel, keep_rows=False
+                    ).to_dict()
+                except Exception:  # noqa: BLE001 —— 单个文件的任何意外只是这一个读不了，不拖垮列表
+                    row["table"] = {"status": "unreadable", "code": "data_unreadable"}
+            else:
+                row["table"] = None
         if rel.lower().endswith(engine_ai_data_figure.XLSX_SUFFIXES):
             if sheets_read < _DATA_FILES_SHEETS_MAX:
                 sheets_read += 1
-                row["sheets"] = engine_ai_data_figure.xlsx_sheets(root / rel)
+                counted = (
+                    counted_books < _DATA_FILES_SHEET_COUNT_MAX
+                    and counted_bytes + size <= _DATA_FILES_SHEET_COUNT_BYTES
+                )
+                if counted:
+                    counted_books += 1
+                    counted_bytes += size
+                row["sheets"] = engine_ai_data_figure.xlsx_sheets(root / rel, counts=counted)
             else:
                 row["sheets"] = None
         files.append(row)
     resp = jsonify({"files": files, "truncated": truncated})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/ai/data-overview")
+def api_ai_data_overview():
+    """数据概览（**实验开关后面**，只读）：一个数据文件（文本表或 XLSX 的一张表）的状态、行列数、每列名字与类型、前 20 行原文、
+    表头行之前被跳过的说明行。query：`path`（项目相对路径，必填）、`sheet`（XLSX 的工作表名，缺省第一张可见表）、`header_row`
+    （「每列名字」所在的物理行号，与 propose 的 `header_rows` 同一口径；点了某一行后用它立刻看到按那一行重读的结果）。
+
+    读表就是 propose 读表的那一份（预览看到的就是之后出图读到的那张表）。读不了不是 HTTP 错误：200 + `status: "unreadable"` + 稳定 `code`；
+    路径出界 / 文件不在 / 工作表不存在 / 参数不对才是 400 + 稳定码。路径经 `normalize_rel` + `contained_path` + 与遍历结果逐字比对才打开。
+    返回里的文字（列名、单元格、说明行）是不可信输入，有长度 / 条数上界、控制字符已换成空格。用户文件只读不改；不发遥测。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    ctx = current_ctx()
+    raw_row = request.args.get("header_row")
+    if raw_row is not None:
+        raw_row = int(raw_row) if re.fullmatch(r"[0-9]{1,9}", raw_row) else raw_row
+    try:
+        out = engine_ai_data_overview.overview(
+            ctx.path,
+            request.args.get("path"),
+            sheet=request.args.get("sheet"),
+            header_row=raw_row,
+        )
+    except engine_ai_data_propose.ProposeError as exc:
+        return _propose_error(exc)
+    except engine_ai_data_figure.DataSourceError as exc:
+        return jsonify({"error": str(exc), "code": exc.code}), 400
+    resp = jsonify(out)
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -16052,7 +16443,8 @@ def _propose_error(exc: "engine_ai_data_propose.ProposeError"):
 
 @app.post("/api/ai/data-figure/propose")
 def api_ai_data_figure_propose():
-    """出备选（不调模型）。body：`{folder?, table?, sheet?, hint?, answers?, client_request_id?}`（`folder` 项目相对、缺省项目根）。
+    """出备选（不调模型）。body：`{folder?, table?, sheet?, hint?, answers?, header_rows?, client_request_id?}`（`folder` 项目相对、缺省项目根；
+    `header_rows` = `{表的路径（相对 folder，同 `table`）: 每列名字所在的物理行号}`，按文件指定，生成的脚本读表用同一个行号）。
 
     回三选一：`{kind: "ask", question_code, options, unsure}`（决定科学含义的事只能用户定；选项里的 `answer` 原样并进下一次的
     `answers`）/ `{kind: "candidates", session, items: [{id, title_code, why_code, values, recommended, coverage, thumbnail_url}],
@@ -16076,6 +16468,7 @@ def api_ai_data_figure_propose():
             sheet=body.get("sheet"),
             hint=body.get("hint"),
             answers=body.get("answers"),
+            header_rows=body.get("header_rows"),
             client_request_id=rid,
         )
     except engine_ai_data_propose.ProposeError as exc:
@@ -16159,6 +16552,7 @@ def api_ai_data_figure_commit():
             confirmed=sess.confirmed,
             recipe=item.recipe,
             title_code=item.code,
+            header_line=sess.header_line,
         )
         prepared = engine_ai_data_task.prepare_v2(ctx.path, sel)
         env = engine_ai_data_task.envelope_for_v2(project_key=project, prepared=prepared, rid=rid)
@@ -19233,6 +19627,7 @@ def main():
         # 桌面模式的升级由 Tauri 层负责，Python updater 连后台检查都不跑
         engine_updater.check_in_background()  # 默认每天一次；设置里可关，关了不联网
     engine_contactsend.start_poller()  # 联系作者的回信：启动时 + 每 6 小时；没有已发的信就一次网络都不发
+    engine_reviewshare.start_poller()  # 外部审阅的意见：启动时 + 每 30 分钟；没有未到期的分享就一次网络都不发
 
     # --figures 最高优先；否则恢复最近项目；都没有（或无效）→ 界面里的
     # Project Picker 接手，进程不再直接退出。

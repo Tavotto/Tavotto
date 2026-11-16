@@ -3584,6 +3584,27 @@ describe('打开并运行 + 后端会话内回退的呈现（V2 PR4）', () => {
     expect(primary()?.textContent).toBe('安装')
   })
 
+  it('装进「你为这个项目选的 Python」：那一句用新文案、不拼「装到…」，主按钮仍是逐次确认的「安装」（不给 run_when_ready 自动授权）', async () => {
+    await mount()
+    await openWith(
+      report({
+        phase: 'awaiting_confirmation',
+        requirements: [{ id: 'dependencies', kind: 'dependency_authorization', code: 'dependency_preparation_required', payload: { module: 'scipy', installable: true }, origin: 'runtime_missing' }],
+        actions: [
+          action('prepare_dependencies', {
+            installs: ['scipy'],
+            impact_digest: 'imp-c',
+            modifies_user_environment: true,
+            target_kind: 'configured_interpreter',
+          } as never),
+          action('recheck'),
+        ],
+      }),
+    )
+    expect(primary()?.dataset.prepPrimary).toBe('prepare_dependencies')
+    expect(panel().querySelector('[data-prep-install]')?.textContent).toBe('把 scipy 装到你为这个项目选的 Python 里')
+  })
+
   it('运行时才发现缺包（已执行过）：没有 run_when_ready，仍是逐次确认的「安装」', async () => {
     await mount()
     await openWith(report({ ...STATES.depsRuntime, actions: [...(STATES.depsRuntime.actions ?? []), action('run_when_ready')] }))

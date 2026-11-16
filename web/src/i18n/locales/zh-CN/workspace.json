@@ -1122,7 +1122,10 @@
       "copyAsk": "脚本要从 {{path}} 读数据",
       "copyDenied": "没有权限写到 {{dir}}",
       "copyProtected": "{{dir}} 受系统保护，写不进去",
-      "copyFailed": "没能把数据复制到 {{dir}}"
+      "copyFailed": "没能把数据复制到 {{dir}}",
+      "libraryEntry": "{{script}} 只定义了画图函数，真正画图的是 {{entry}}",
+      "libraryEntryOutside": "{{script}} 只定义了画图函数，真正画图的是项目外的 {{entry}}",
+      "libraryNone": "{{script}} 只定义了画图函数、没有调用，运行它不会出图"
     },
     "btn": {
       "later": "稍后",
@@ -1169,7 +1172,9 @@
       "otherData": "换一份数据",
       "grantCopy": "授权后复制",
       "openPrivacy": "打开系统设置",
-      "rewritePath": "改脚本里的路径"
+      "rewritePath": "改脚本里的路径",
+      "runEntry": "运行它",
+      "openRunEntry": "打开并运行"
     },
     "card": {
       "stepOf": "第 {{n}} 步，共 {{total}} 步：{{name}}",
@@ -1217,6 +1222,7 @@
       "toManaged": "装到 Tavotto 目录",
       "toUser": "装到你电脑上已有的那套",
       "toUserLong": "你电脑上已有的那套，装坏了不能完整回滚",
+      "toConfigured": "把 {{module}} 装到你为这个项目选的 Python 里",
       "download": "需要先下载约 {{mb}} MB。",
       "managedPlace": "Tavotto 目录"
     },
@@ -1668,6 +1674,10 @@
       "documents": "文稿",
       "downloads": "下载",
       "icloud": "iCloud 云盘"
+    },
+    "library": {
+      "partial": "只查了一部分文件，可能还有别的脚本调用它",
+      "openFailed": "没能打开那个文件夹"
     }
   },
   "canvasMenu": {
