@@ -8249,7 +8249,8 @@ export interface ReviewShareSummary {
 }
 
 export type ReviewAnchor =
-  | { kind: 'element'; gid: string; box: ReviewBox }
+  /** `pt`：审阅者点在元素上的那一处（画面比例坐标，0.21.4 起的审阅网页才有） */
+  | { kind: 'element'; gid: string; box: ReviewBox; pt?: [number, number] }
   | { kind: 'region'; box: ReviewBox }
   | { kind: 'overall' }
 

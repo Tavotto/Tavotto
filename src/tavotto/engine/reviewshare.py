@@ -268,9 +268,151 @@ _STRUCTURAL_NAMES: dict[str, str] = {
     "arrow_patch": "箭头",
     "legend": "图例",
     "colorbar": "色条",
-    "axes": "坐标轴",
-    "axes3d": "坐标轴",
+    "axes": "子图",
+    "axes3d": "子图",
 }
+
+
+#: 上传的路径坐标保留 4 位小数（画面比例；3000 px 长边下 0.3 px），够点选、省体积
+_GEOM_DP = 4
+Rect = tuple[float, float, float, float]  # x0, y0, x1, y1
+
+
+def _clip_polyline(pts: list[tuple[float, float]], r: Rect) -> list[list[tuple[float, float]]]:
+    """折线裁进矩形 `r`（逐段 Liang–Barsky）：出框断开，返回框内的若干段。"""
+    runs: list[list[tuple[float, float]]] = []
+    cur: list[tuple[float, float]] = []
+    for a, b in zip(pts, pts[1:]):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        t0, t1 = 0.0, 1.0
+        ok = True
+        for p, q in ((-dx, a[0] - r[0]), (dx, r[2] - a[0]), (-dy, a[1] - r[1]), (dy, r[3] - a[1])):
+            if p == 0:
+                if q < 0:
+                    ok = False
+                    break
+                continue
+            t = q / p
+            if p < 0:
+                t0 = max(t0, t)
+            else:
+                t1 = min(t1, t)
+            if t0 > t1:
+                ok = False
+                break
+        if not ok:
+            if cur:
+                runs.append(cur)
+                cur = []
+            continue
+        s = (a[0] + dx * t0, a[1] + dy * t0)
+        e = (a[0] + dx * t1, a[1] + dy * t1)
+        if not cur or cur[-1] != s:
+            if cur:
+                runs.append(cur)
+            cur = [s]
+        if e != cur[-1]:
+            cur.append(e)
+        if t1 < 1.0:
+            runs.append(cur)
+            cur = []
+    if cur:
+        runs.append(cur)
+    return [run for run in runs if len(run) >= 2]
+
+
+def _clip_segment(
+    a: tuple[float, float] | list[float], b: tuple[float, float] | list[float], r: Rect
+) -> list[list[float]] | None:
+    """线段 a→b 裁进矩形 `r`，保持方向；返回 5 位小数的 `[起, 终]`，整段在框外 None。"""
+    runs = _clip_polyline([(a[0], a[1]), (b[0], b[1])], r)
+    if not runs:
+        return None
+    s, e = runs[0][0], runs[0][-1]
+    return [[round(s[0], 5), round(s[1], 5)], [round(e[0], 5), round(e[1], 5)]]
+
+
+def _clip_polygon(pts: list[tuple[float, float]], r: Rect) -> list[tuple[float, float]]:
+    """闭合多边形裁进矩形 `r`（Sutherland–Hodgman）。"""
+    out = pts
+    for axis, lim, keep_ge in (
+        (0, r[0], True),
+        (0, r[2], False),
+        (1, r[1], True),
+        (1, r[3], False),
+    ):
+        if not out:
+            break
+        src, out = out, []
+        for i, cur in enumerate(src):
+            prev = src[i - 1]
+            cin = cur[axis] >= lim if keep_ge else cur[axis] <= lim
+            pin = prev[axis] >= lim if keep_ge else prev[axis] <= lim
+            if cin != pin:
+                t = (lim - prev[axis]) / (cur[axis] - prev[axis])
+                out.append((prev[0] + (cur[0] - prev[0]) * t, prev[1] + (cur[1] - prev[1]) * t))
+            if cin:
+                out.append(cur)
+    return out
+
+
+def _visible_geometry(
+    geom: object, transform=None, frame: Rect = (0.0, 0.0, 1.0, 1.0)
+) -> dict | None:
+    """manifest 的 `geometry` → 只剩**画面上看得见的部分**：先（可选）变换坐标，再裁进 `clip ∩ frame`。
+    manifest 的路径没裁剪（xlim 之外的数据点也在），原样上传就把图上看不见的数据传出去了——ADR 0187 只许上传画面。"""
+    g = reviewinbox.clean_geometry(geom)
+    if g is None:
+        return None
+    r: Rect = frame
+    if "clip" in g:
+        c = g["clip"]
+        cr = (c[0], c[1], c[0] + c[2], c[1] + c[3])
+        if transform is not None:
+            corners = [transform(cr[0], cr[1]), transform(cr[2], cr[3])]
+            cr = (
+                min(p[0] for p in corners),
+                min(p[1] for p in corners),
+                max(p[0] for p in corners),
+                max(p[1] for p in corners),
+            )
+        r = (max(r[0], cr[0]), max(r[1], cr[1]), min(r[2], cr[2]), min(r[3], cr[3]))
+    if r[2] <= r[0] or r[3] <= r[1]:
+        return None
+    paths: list[dict] = []
+    for p in g["paths"]:
+        pts = [(q[0], q[1]) for q in p["points"]]
+        if transform is not None:
+            pts = [transform(x, y) for x, y in pts]
+        if p["closed"] and g.get("fill"):
+            poly = _clip_polygon(pts, r)
+            pieces = [(poly, True)] if len(poly) >= 3 else []
+        elif p["closed"]:
+            # 未填充的闭合路径只画描边：多边形裁剪会在裁剪框边界上凭空造出 matplotlib 没画的边，
+            # 所以带上收口那一段当折线裁，出框就断开成开放段
+            pieces = [(run, False) for run in _clip_polyline(pts + pts[:1], r)]
+        else:
+            pieces = [(run, False) for run in _clip_polyline(pts, r)]
+        for run, closed in pieces:
+            paths.append(
+                {
+                    "points": [[round(x, _GEOM_DP), round(y, _GEOM_DP)] for x, y in run],
+                    "closed": closed,
+                }
+            )
+    if not paths:
+        return None
+    g["paths"] = paths
+    g["clip"] = [round(r[0], 5), round(r[1], 5), round(r[2] - r[0], 5), round(r[3] - r[1], 5)]
+    return g
+
+
+def _is_hidden(el: dict) -> bool:
+    """manifest 里 `visible=false` = 用户已在画布上删掉（非破坏性隐藏）：画面上没有，不进元素表。"""
+    ed = el.get("editable")
+    return isinstance(ed, list) and any(
+        isinstance(f, dict) and f.get("prop") == "visible" and f.get("value") is False for f in ed
+    )
 
 
 def manifest_elements(manifest: object) -> list[dict]:
@@ -281,7 +423,7 @@ def manifest_elements(manifest: object) -> list[dict]:
     counts: dict[str, int] = {}
     els = manifest.get("elements") if isinstance(manifest, dict) else None
     for el in els if isinstance(els, list) else []:
-        if not isinstance(el, dict):
+        if not isinstance(el, dict) or _is_hidden(el):
             continue
         gid, bb = el.get("gid"), _finite4(el.get("bbox"))
         if not isinstance(gid, str) or not gid or gid == "figure" or bb is None:
@@ -297,8 +439,35 @@ def manifest_elements(manifest: object) -> list[dict]:
             word = _STRUCTURAL_NAMES.get(role, "元素")
             counts[word] = counts.get(word, 0) + 1
             name = f"{word} {counts[word]}"
-        out.append({"gid": gid[:256], "label": name[:120], "bbox": box})
+        item: dict = {"gid": gid[:256], "label": name[:120], "bbox": box}
+        if role and reviewinbox._ROLE.match(role):
+            item["role"] = role
+        order = el.get("paint_order")
+        if isinstance(order, int) and not isinstance(order, bool) and order >= 0:
+            item["paint_order"] = order
+        ends = el.get("arrow_endpoints")
+        if isinstance(ends, list) and len(ends) >= 2:
+            # 端点不能逐坐标夹值（会改箭头方向）：取原值，线段 a→b 与画面求交，起点仍是尾端
+            a, b = reviewinbox._point_raw(ends[0]), reviewinbox._point_raw(ends[-1])
+            if a and b:
+                seg = _clip_segment(a, b, (0.0, 0.0, 1.0, 1.0))
+                if seg:
+                    item["arrow_endpoints"] = seg
+        geom = _visible_geometry(el.get("geometry"))
+        if geom is not None:
+            item["geometry"] = geom
+        out.append(item)
     return out
+
+
+def manifest_size_mm(manifest: object) -> list[float] | None:
+    """manifest 的图幅（mm）：审阅页的点选容差按 mm 算（与画布同一口径）。"""
+    sz = manifest.get("size_mm") if isinstance(manifest, dict) else None
+    if isinstance(sz, (list, tuple)) and len(sz) == 2:
+        vals = [v for v in sz if isinstance(v, (int, float)) and not isinstance(v, bool)]
+        if len(vals) == 2 and all(math.isfinite(v) and 0 < v < 10000 for v in vals):
+            return [round(float(v), 3) for v in vals]
+    return None
 
 
 def _to_local(
@@ -409,22 +578,72 @@ def layout_elements(
             box = _clamp_box(
                 (x + lx0 * w) / pw, (y + ly0 * h) / ph, (x + lx1 * w) / pw, (y + ly1 * h) / ph
             )
-            if box is not None:
-                inner.append(
-                    {"gid": f"{oid}::{el['gid']}"[:256], "label": el["label"], "bbox": box}
+            if box is None:
+                continue
+            item = {"gid": f"{oid}::{el['gid']}"[:256], "label": el["label"], "bbox": box}
+            for k in ("role", "paint_order"):
+                if k in el:
+                    item[k] = el[k]
+
+            def to_page(u: float, v: float, _o=o, _x=x, _y=y, _w=w, _h=h, _c=crop_t, _r=rot):
+                lu, lv = _to_local(u, v, _c, _r, bool(_o.get("flip_h")), bool(_o.get("flip_v")))
+                return ((_x + lu * _w) / pw, (_y + lv * _h) / ph)
+
+            if "arrow_endpoints" in el:
+                # 面板框外（裁掉的部分）看不见：裁进面板在页面上的框
+                frame = (
+                    max(0.0, x / pw),
+                    max(0.0, y / ph),
+                    min(1.0, (x + w) / pw),
+                    min(1.0, (y + h) / ph),
                 )
+                a, b = (to_page(*q) for q in el["arrow_endpoints"][:2])
+                seg = _clip_segment(a, b, frame)
+                if seg:
+                    item["arrow_endpoints"] = seg
+            if "geometry" in el:
+                frame = (
+                    max(0.0, x / pw),
+                    max(0.0, y / ph),
+                    min(1.0, (x + w) / pw),
+                    min(1.0, (y + h) / ph),
+                )
+                geom = _visible_geometry(el["geometry"], to_page, frame)
+                if geom is not None:
+                    # 排版里同一张图的绘制次序只在面板内可比；跨面板按面板先后（z 序）错开
+                    if "paint_order" in geom:
+                        geom["paint_order"] += n * 100000
+                    item["geometry"] = geom
+            if "paint_order" in item:
+                item["paint_order"] += n * 100000
+            inner.append(item)
     return boxes + inner
 
 
 def trim_elements(elements: list[dict]) -> tuple[list[dict], int]:
-    """超过 `MAX_ELEMENTS` 项或 `MAX_ELEMENTS_BYTES` 字节时按面积从小到大丢，保持原顺序。返回 (保留的, 丢弃个数)。"""
+    """超限时先**去形状**（点数最多的先去，该元素退回按 bbox 点选），还超再按面积从小到大丢元素，保持原顺序。
+    超过 `MAX_ELEMENTS` 项或 `MAX_ELEMENTS_BYTES` 字节算超限。返回 (保留的, 丢弃个数)。"""
     cleaned = reviewinbox.clean_elements(elements)
 
     def size(items: list[dict]) -> int:
         return len(json.dumps(items, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
-    if len(cleaned) <= MAX_ELEMENTS and size(cleaned) <= MAX_ELEMENTS_BYTES:
+    total = size(cleaned)
+    if len(cleaned) <= MAX_ELEMENTS and total <= MAX_ELEMENTS_BYTES:
         return cleaned, 0
+    if total > MAX_ELEMENTS_BYTES:
+        heavy = sorted(
+            (i for i, e in enumerate(cleaned) if "geometry" in e),
+            key=lambda i: size([cleaned[i]["geometry"]]),
+            reverse=True,
+        )
+        for i in heavy:
+            total -= size([cleaned[i]["geometry"]]) + len(',"geometry":')
+            del cleaned[i]["geometry"]
+            if total <= MAX_ELEMENTS_BYTES:
+                break
+        if len(cleaned) <= MAX_ELEMENTS and size(cleaned) <= MAX_ELEMENTS_BYTES:
+            return cleaned, 0
     order = sorted(
         range(len(cleaned)),
         key=lambda i: cleaned[i]["bbox"][2] * cleaned[i]["bbox"][3],
@@ -628,6 +847,8 @@ def quota(share_id: str = "") -> dict:
 class Rendered:
     png: bytes = field(repr=False)
     elements: list[dict] = field(default_factory=list)
+    #: 图幅（mm）：审阅页按 mm 算点选容差；拿不到 None（审阅页退回按像素）
+    size_mm: list[float] | None = None
 
 
 #: `(target, render, long_edge_px) -> Rendered`；`target` = `{"kind", "id"}`，`render` = 前端发来的出图描述（见 `app._review_render`）。
@@ -644,6 +865,7 @@ def set_renderer(fn: Renderer | None) -> None:
 class _Artifact:
     png: bytes = field(repr=False)
     elements: list[dict] = field(repr=False)
+    size_mm: list[float] | None = None
 
 
 _RESAMPLE_MAX_PIXELS = 16_000_000
@@ -720,6 +942,10 @@ def shrink_png(data: bytes, factor: float) -> bytes | None:
     return None
 
 
+def _size_mm(res: Rendered) -> list[float] | None:
+    return manifest_size_mm({"size_mm": getattr(res, "size_mm", None)})
+
+
 def _render(spec: "_Spec") -> _Artifact:
     """出图：长边 ≤ 3000 px 且 ≤ 8 MiB，超了降分辨率重出；元素表超限按面积从小到大丢。"""
     fn = _RENDERER
@@ -754,13 +980,13 @@ def _render(spec: "_Spec") -> _Artifact:
             if small is None:
                 raise _Failure("too_large")
             elements, dropped = trim_elements(res.elements)
-            return _Artifact(small, elements)
+            return _Artifact(small, elements, _size_mm(res))
         prev = dims
         if factor >= 1.0:
             elements, dropped = trim_elements(res.elements)
             if dropped:
                 LOG.info("外部审阅: 元素表超限，丢弃 %d 项", dropped)
-            return _Artifact(res.png, elements)
+            return _Artifact(res.png, elements, _size_mm(res))
         edge = max(int(edge * factor), 64)
     raise _Failure("too_large")
 
@@ -1267,6 +1493,8 @@ def _init_share(target: diagsend.Target, spec: _Spec, client_id: str, art: _Arti
         "png_bytes": len(art.png),
         "elements": art.elements,
     }
+    if art.size_mm:
+        payload["size_mm"] = art.size_mm
     resp = _call(target, "POST", "/v1/shares", payload)
     if resp.status not in (200, 201):
         raise _error_of(resp)
@@ -1321,6 +1549,8 @@ def _init_version(
         "png_bytes": len(art.png),
         "elements": art.elements,
     }
+    if art.size_mm:
+        payload["size_mm"] = art.size_mm
     if spec.note:
         payload["note"] = spec.note
     resp = _call(target, "POST", f"/v1/shares/{spec.share_id}/versions", payload, bearer=token)

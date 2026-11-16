@@ -873,8 +873,8 @@ def test_manifest_elements_clamp_drop_figure_and_empty_areas():
         )
     )
     assert out == [
-        {"gid": "ax0.line", "label": "曲线", "bbox": [0.0, 0.0, 1.0, 1.0]},
-        {"gid": "ax0.t", "label": "元素 1", "bbox": [0.1, 0.1, 0.2, 0.05]},
+        {"gid": "ax0.line", "label": "曲线", "bbox": [0.0, 0.0, 1.0, 1.0], "role": "text"},
+        {"gid": "ax0.t", "label": "元素 1", "bbox": [0.1, 0.1, 0.2, 0.05], "role": "text"},
     ]
     assert (
         reviewshare.manifest_elements(None) == []
@@ -1318,3 +1318,241 @@ def test_undelivered_records_survive_the_old_two_hour_cleanup(on, renders, monke
     assert len(reviewinbox._load_pruned_locked()["shares"]) == 1  # 3 小时后仍在
     monkeypatch.setattr(reviewinbox, "_now", lambda: ts + 25 * 3600)
     assert reviewinbox._load_pruned_locked()["shares"] == []
+
+
+# ---------------------------------------------------------------------------
+# 点选细到真实形状（ADR 0187 修订 2026-11-16）
+# ---------------------------------------------------------------------------
+def _line(gid, pts, clip=(0.1, 0.1, 0.8, 0.8), **extra):
+    return {
+        "gid": gid,
+        "role": "line",
+        "label": "曲线 “/Users/x/secret.csv”",
+        "bbox": [-5, -5, 50, 50],
+        "geometry": {
+            "kind": "polyline",
+            "paths": [{"points": pts, "closed": False}],
+            "fill": False,
+            "stroke": True,
+            "stroke_pt": 1.5,
+            "clip": list(clip),
+            "paint_order": 4,
+            **extra,
+        },
+    }
+
+
+def test_uploaded_geometry_only_keeps_what_is_visible_inside_the_axes():
+    """xlim 之外的数据点在 PNG 上看不见，也不许随形状出机：上传的点全在裁剪框内，框外断开成两段。"""
+    pts = [[0.0, 0.5], [0.5, 0.5], [3.0, 0.5], [0.5, 0.85], [0.5, 9.0]]
+    (el,) = reviewshare.manifest_elements({"elements": [_line("ax0.l", pts)]})
+    g = el["geometry"]
+    assert el["role"] == "line" and el["label"] == "曲线 1"  # artist label（可能是路径）照旧不传
+    assert all(
+        0.1 - 1e-9 <= x <= 0.9 + 1e-9 and 0.1 - 1e-9 <= y <= 0.9 + 1e-9
+        for p in g["paths"]
+        for x, y in p["points"]
+    )
+    assert [p["points"] for p in g["paths"]] == [
+        [[0.1, 0.5], [0.5, 0.5], [0.9, 0.5]],
+        [[0.9, 0.794], [0.5, 0.85], [0.5, 0.9]],
+    ]
+    assert g["clip"] == [0.1, 0.1, 0.8, 0.8] and g["stroke_pt"] == 1.5 and g["paint_order"] == 4
+
+
+def test_filled_shape_is_clipped_as_a_polygon_and_fully_hidden_shapes_lose_geometry():
+    poly = {
+        "gid": "ax0.f",
+        "role": "fill",
+        "label": "",
+        "bbox": [0.1, 0.1, 0.8, 0.8],
+        "geometry": {
+            "kind": "path",
+            "paths": [{"points": [[-1, -1], [2, -1], [2, 2], [-1, 2]], "closed": True}],
+            "fill": True,
+            "stroke": False,
+            "clip": [0.1, 0.1, 0.8, 0.8],
+            "fill_alpha": 0.4,
+        },
+    }
+    gone = _line("ax0.gone", [[3.0, 3.0], [4.0, 4.0]])
+    gone["bbox"] = [0.2, 0.2, 0.1, 0.1]
+    out = reviewshare.manifest_elements({"elements": [poly, gone]})
+    assert out[0]["geometry"]["paths"] == [
+        {"points": [[0.1, 0.9], [0.1, 0.1], [0.9, 0.1], [0.9, 0.9]], "closed": True}
+    ]
+    assert out[0]["geometry"]["fill_alpha"] == 0.4
+    assert "geometry" not in out[1]  # 看不见的形状不出机；元素本身退回按 bbox 点
+
+
+def test_hidden_elements_and_unknown_fields_never_reach_the_element_table():
+    hidden = {
+        "gid": "ax0.h",
+        "role": "text",
+        "label": "已删",
+        "bbox": [0.1, 0.1, 0.1, 0.1],
+        "editable": [{"prop": "visible", "value": False}],
+    }
+    odd = {
+        "gid": "ax0.t",
+        "role": "Weird Role!",
+        "label": "x",
+        "bbox": [0.1, 0.1, 0.1, 0.1],
+        "source_path": "/Users/x/a.csv",
+        "paint_order": True,
+    }
+    out = reviewshare.manifest_elements({"elements": [hidden, odd]})
+    assert out == [{"gid": "ax0.t", "label": "元素 1", "bbox": [0.1, 0.1, 0.1, 0.1]}]
+
+
+def test_trim_drops_geometry_before_dropping_elements():
+    """超字节上限时先去点数最多的形状（元素退回按 bbox 点），刻度这些小元素不先丢。"""
+    long_pts = [[0.1 + i * 0.8 / 30000, 0.5] for i in range(30000)]
+    big = reviewshare.manifest_elements({"elements": [_line("ax0.big", long_pts)]})[0]
+    small = reviewshare.manifest_elements({"elements": [_line("ax0.s", [[0.2, 0.2], [0.3, 0.3]])]})[
+        0
+    ]
+    ticks = [
+        {"gid": f"ax0.tick{i}", "label": str(i), "bbox": [0.01 * i, 0.95, 0.005, 0.01]}
+        for i in range(50)
+    ]
+    keep, dropped = reviewshare.trim_elements([big, small, *ticks])
+    assert dropped == 0 and len(keep) == 52
+    assert "geometry" not in keep[0] and "geometry" in keep[1]
+
+
+def test_layout_geometry_is_moved_into_the_panel_and_cut_at_the_panel_crop():
+    man = {"elements": [_line("ax0.l", [[0.0, 0.5], [1.0, 0.5]], clip=(0.0, 0.0, 1.0, 1.0))]}
+    objs = [
+        {
+            "type": "panel",
+            "object_id": "pA",
+            "x_mm": 50,
+            "y_mm": 0,
+            "w_mm": 50,
+            "h_mm": 50,
+            "crop": {"x": 0.0, "y": 0.0, "w": 0.5, "h": 1.0},
+        }
+    ]
+    out = reviewshare.layout_elements(100, 50, objs, {"pA": man})
+    el = next(e for e in out if e["gid"] == "pA::ax0.l")
+    (path,) = el["geometry"]["paths"]
+    # 源图左半边 → 面板整个宽度（页面 x 0.5..1.0）；源图右半边被裁掉
+    assert path["points"] == [[0.5, 0.5], [1.0, 0.5]]
+    assert el["geometry"]["paint_order"] == 100004
+
+
+def test_size_mm_goes_with_the_upload_when_the_renderer_knows_it():
+    assert reviewshare.manifest_size_mm({"size_mm": [162.56, 106.68]}) == [162.56, 106.68]
+    assert reviewshare.manifest_size_mm({"size_mm": [0, 10]}) is None
+    assert reviewshare.manifest_size_mm({"size_mm": ["a", 1]}) is None
+    assert reviewshare.manifest_size_mm(None) is None
+
+
+def test_init_carries_size_mm_when_the_renderer_gives_one(on, renders):
+    reviewshare.set_renderer(
+        lambda *a: reviewshare.Rendered(make_png(), list(ELEMENTS), [162.56, 106.68])
+    )
+    share_ok()
+    init = json.loads(on.calls[0]["body"])
+    assert init["size_mm"] == [162.56, 106.68]
+    assert set(init) - {"size_mm"} == {
+        "client_share_id",
+        "kind",
+        "title",
+        "note",
+        "png_bytes",
+        "elements",
+    }
+
+
+def test_element_anchor_keeps_the_clicked_point_when_the_reviewer_page_sends_one():
+    a = reviewinbox.clean_anchor(
+        {"kind": "element", "gid": "ax0.l", "box": [0.1, 0.1, 0.2, 0.2], "pt": [0.15, 1.7]}
+    )
+    assert a == {"kind": "element", "gid": "ax0.l", "box": [0.1, 0.1, 0.2, 0.2], "pt": [0.15, 1.0]}
+    old = reviewinbox.clean_anchor({"kind": "element", "gid": "g", "box": [0, 0, 1, 1]})
+    assert old == {"kind": "element", "gid": "g", "box": [0.0, 0.0, 1.0, 1.0]}
+    bad = reviewinbox.clean_anchor(
+        {"kind": "element", "gid": "g", "box": [0, 0, 1, 1], "pt": ["x", 1]}
+    )
+    assert "pt" not in bad
+
+
+def _rect_path(fill):
+    return {
+        "gid": "ax0.r",
+        "role": "patch",
+        "label": "",
+        "bbox": [-1, -1, 3, 3],
+        "geometry": {
+            "kind": "path",
+            "paths": [{"points": [[-1, -1], [2, -1], [2, 2], [-1, 2]], "closed": True}],
+            "fill": fill,
+            "stroke": True,
+            "clip": [0.1, 0.1, 0.8, 0.8],
+        },
+    }
+
+
+def test_unfilled_closed_path_is_clipped_as_polyline_without_boundary_edges():
+    """围住坐标轴的未填充矩形：四边全在裁剪框外，matplotlib 在框内什么也没画——不许凭空造出一圈边界。"""
+    (el,) = reviewshare.manifest_elements({"elements": [_rect_path(False)]})
+    assert "geometry" not in el
+    # 只有一条边穿过裁剪框：留下框内那一段（开放段），不出收口边
+    man = _rect_path(False)
+    man["geometry"]["paths"][0]["points"] = [[0.5, 0.5], [2.0, 0.5], [2.0, 2.0], [0.5, 2.0]]
+    (el,) = reviewshare.manifest_elements({"elements": [man]})
+    paths = el["geometry"]["paths"]
+    assert paths and all(p["closed"] is False for p in paths)
+    for p in paths:
+        for x, y in p["points"]:
+            assert 0.1 <= x <= 0.9 and 0.1 <= y <= 0.9
+
+
+def test_filled_closed_path_still_polygon_clipped():
+    (el,) = reviewshare.manifest_elements({"elements": [_rect_path(True)]})
+    assert el["geometry"]["paths"] == [
+        {"points": [[0.1, 0.9], [0.1, 0.1], [0.9, 0.1], [0.9, 0.9]], "closed": True}
+    ]
+
+
+def test_arrow_endpoints_are_intersected_with_the_frame_keeping_direction():
+    el = {"gid": "ax0.a", "role": "arrow_patch", "bbox": [0.0, 0.2, 0.5, 0.6]}
+    el["arrow_endpoints"] = [[-1.0, 0.2], [0.5, 0.8]]
+    (out,) = reviewshare.manifest_elements({"elements": [el]})
+    # 不是逐坐标夹值（那会得到 [0, 0.2]）：沿原直线在 x=0 处进入
+    assert out["arrow_endpoints"] == [[0.0, 0.6], [0.5, 0.8]]
+    el["arrow_endpoints"] = [[0.9, 0.5], [3.0, 0.5]]
+    (out,) = reviewshare.manifest_elements({"elements": [el]})
+    assert out["arrow_endpoints"] == [[0.9, 0.5], [1.0, 0.5]]
+    el["arrow_endpoints"] = [[2.0, 2.0], [3.0, 3.0]]
+    (out,) = reviewshare.manifest_elements({"elements": [el]})
+    assert "arrow_endpoints" not in out
+
+
+def test_layout_arrow_endpoints_are_cut_at_the_panel_frame():
+    arrow = {
+        "gid": "ax0.a",
+        "role": "arrow_patch",
+        "bbox": [0.0, 0.4, 1.0, 0.2],
+        "arrow_endpoints": [[0.0, 0.5], [1.0, 0.5]],
+    }
+    objs = [
+        {
+            "type": "panel",
+            "object_id": "pA",
+            "x_mm": 50,
+            "y_mm": 0,
+            "w_mm": 50,
+            "h_mm": 50,
+            "crop": {"x": 0.0, "y": 0.0, "w": 0.5, "h": 1.0},
+        }
+    ]
+    out = reviewshare.layout_elements(100, 50, objs, {"pA": {"elements": [arrow]}})
+    el = next(e for e in out if e["gid"] == "pA::ax0.a")
+    # 终点被面板裁掉：停在面板右边（页面 x=1.0），起点仍是尾端
+    assert el["arrow_endpoints"] == [[0.5, 0.5], [1.0, 0.5]]
+    arrow["arrow_endpoints"] = [[0.6, 0.5], [0.9, 0.5]]  # 整根在被裁掉的那半边
+    out = reviewshare.layout_elements(100, 50, objs, {"pA": {"elements": [arrow]}})
+    assert all("arrow_endpoints" not in e for e in out)

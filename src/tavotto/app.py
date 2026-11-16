@@ -6212,7 +6212,8 @@ def _review_render(target: dict, render: dict, long_edge: int):
         if png is None:
             raise ValueError("render_no_png")
         data = Path(png.tmp_path).read_bytes()
-        return engine_reviewshare.Rendered(data, _review_elements(kind, job.request, seg))
+        elements, size_mm = _review_elements(kind, job.request, seg)
+        return engine_reviewshare.Rendered(data, elements, size_mm)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -6244,10 +6245,11 @@ def _review_manifest(figure_id: str, overrides: list):
         return None
 
 
-def _review_elements(kind: str, req, seg: dict) -> list:
+def _review_elements(kind: str, req, seg: dict) -> tuple[list, list | None]:
+    """(元素表, 图幅 mm)；图幅给审阅页按 mm 算点选容差（与画布同一口径），拿不到 None。"""
     if kind == "figure":
         man = _review_manifest(req.original.figure_id, req.original.overrides)
-        return engine_reviewshare.manifest_elements(man)
+        return engine_reviewshare.manifest_elements(man), engine_reviewshare.manifest_size_mm(man)
     # 前端原样的对象（带 `object_id`）与规范化后的请求对象一一对齐；面板键（`panel_keys`）是不透明的：
     # 导出请求里对象的 `id` 是图的项目内路径，不许进元素表
     src = [o for o in (seg.get("objects") or []) if isinstance(o, dict)]
@@ -6257,8 +6259,11 @@ def _review_elements(kind: str, req, seg: dict) -> list:
         obj = objects[i]
         if not obj.get("hidden") and isinstance(obj.get("id"), str):
             manifests[key] = _review_manifest(obj["id"], obj.get("overrides") or [])
-    return engine_reviewshare.layout_elements(
+    els = engine_reviewshare.layout_elements(
         seg.get("page_w_mm"), seg.get("page_h_mm"), src, manifests
+    )
+    return els, engine_reviewshare.manifest_size_mm(
+        {"size_mm": [seg.get("page_w_mm"), seg.get("page_h_mm")]}
     )
 
 
