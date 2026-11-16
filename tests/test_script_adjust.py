@@ -417,6 +417,29 @@ _HELD_OUT = {
 }
 _HELD_OUT_PROPS = set().union(*_HELD_OUT.values())
 
+
+def _every_other(field):
+    """固定刻度：现有主刻度隔一个取一个（视区内的位置，少几条、看得出变了）。"""
+    vals = [float(v) for v in field["value"]]
+    return vals[::2] if len(vals) > 2 else None
+
+
+#: 按 **(cls, prop)** 划的组，整图扫描里放不下：值是这一组里的采样值（None = 照常采，函数吃 manifest 字段）。
+#: - 单条刻度文字冻结整条轴，序号按定位**之后**的刻度认——与 `major_*` 同扫，序号会越界；
+#: - `major_values` 只在 `major_mode=fixed` 时生效，整图扫描里 mode 采到的是 step，它在那里是空转。
+_HELD_OUT_KEYED: dict[str, dict[tuple[str, str], object]] = {
+    "tick_text": {("ticklabel", "text"): None},
+    "tick_fixed": {("ticks", "major_mode"): "fixed", ("ticks", "major_values"): _every_other},
+}
+_HELD_OUT_KEYS = {("ticklabel", "text"), ("ticks", "major_values")}
+_GROUPS: dict[str, tuple[set[str] | None, dict | None]] = {
+    **{g: (props, None) for g, props in _HELD_OUT.items()},
+    **{g: (None, keyed) for g, keyed in _HELD_OUT_KEYED.items()},
+}
+#: 整图扫描里采样值要换的 prop：次刻度格式默认的下一档是 auto（= 脚本原样，空转），换成真改格式的那一档；
+#: 次刻度显隐钉成 True：脚本原样已有次刻度的图上「取反」会把它关掉，随后的次刻度模式 / 步长就是空转。
+_LOCAL_SAMPLES = {"minor_format": "%.1f", "minor_visible": True}
+
 #: 扫描采不到（或刻意不进扫描）的写得进脚本的键 → 证明它等价的专用用例名。
 #: 覆盖断言（`test_every_writable_key_is_swept_or_named`）要求 `WRITES` 的每个键二者居一。
 _DEDICATED: dict[tuple[str, str], str] = {
@@ -431,12 +454,16 @@ _DEDICATED: dict[tuple[str, str], str] = {
 
 
 def _sweep_patches(
-    man: dict, only: set[tuple[str, str]] | None = None, props: set[str] | None = None
+    man: dict,
+    only: set[tuple[str, str]] | None = None,
+    props: set[str] | None = None,
+    keyed: dict | None = None,
 ):
     """(patches, 采到的 (cls, prop))：图上每个写得进脚本的字段挑一个不同的值，带上它的使能项。
 
     `only` 只采这几个键（定位用：`TAVOTTO_SWEEP_ONLY=legend.ncol,axes.grid_color`）；
-    `props` 给了就只采这些 prop（`_HELD_OUT` 的一组），不给就采整图扫描的全部。
+    `props` 给了就只采这些 prop（`_HELD_OUT` 的一组），`keyed` 给了就只采这些 (cls, prop)
+    并用它给的采样值（`_HELD_OUT_KEYED` 的一组），都不给就采整图扫描的全部。
     """
     patches, covered = [], set()
     for el in man["elements"]:
@@ -446,20 +473,27 @@ def _sweep_patches(
             key = (cls, field["prop"])
             if key not in scriptadjust.WRITES:
                 continue
-            if props is None and field["prop"] in (_NOT_IN_THE_SWEEP | _HELD_OUT_PROPS):
-                continue
-            if props is not None and field["prop"] not in props:
+            if keyed is not None:
+                if key not in keyed:
+                    continue
+            elif props is None:
+                if field["prop"] in (_NOT_IN_THE_SWEEP | _HELD_OUT_PROPS) or key in _HELD_OUT_KEYS:
+                    continue
+            elif field["prop"] not in props:
                 continue
             if only is not None and key not in only:
                 continue
             prop = field["prop"]
-            if prop in _STRUCTURED:
+            if keyed is not None and keyed[key] is not None:
+                value = keyed[key]
+                value = value(field) if callable(value) else value
+            elif prop in _STRUCTURED:
                 value = _STRUCTURED[prop]
                 value = value(field) if callable(value) else value
             elif field.get("type") == "color":
                 value = _sample_color(key, field, len(patches))
             else:
-                value = _SAMPLE_OVERRIDE.get(prop, _sample_value(field))
+                value = _LOCAL_SAMPLES.get(prop, _SAMPLE_OVERRIDE.get(prop, _sample_value(field)))
             if value is None:
                 continue
             for ep, ev in _ENABLERS.get(prop, ()):
@@ -521,10 +555,10 @@ _HELD_OUT_STEMS = {"scale": [("inv", "InvScale")]}
 
 
 @real_worker
-@pytest.mark.parametrize("group", sorted(_HELD_OUT))
+@pytest.mark.parametrize("group", sorted(_GROUPS))
 def test_held_out_fields_replay_identically(tmp_path, group):
-    """整图扫描里刻意不放的键（`_HELD_OUT`）：每张图上这一组一起改，照样要等价。"""
-    props = _HELD_OUT[group]
+    """整图扫描里刻意不放的键（`_HELD_OUT` / `_HELD_OUT_KEYED`）：每张图上这一组一起改，照样要等价。"""
+    props, keyed = _GROUPS[group]
     seen = False
     for lib in _LIBRARIES:
         stems = [s for lb, s in _SWEEP + _HELD_OUT_STEMS.get(group, []) if lb == lib]
@@ -536,7 +570,7 @@ def test_held_out_fields_replay_identically(tmp_path, group):
         try:
             for stem in stems:
                 man = worker.override(stem, [])["manifest"]
-                patches, _covered = _sweep_patches(man, _sweep_only(), props)
+                patches, _covered = _sweep_patches(man, _sweep_only(), props, keyed)
                 if patches:
                     seen = True
                     _replays_identically(worker, name, sub, stem, patches)
@@ -545,11 +579,13 @@ def test_held_out_fields_replay_identically(tmp_path, group):
     assert seen, f"{group} 这一组在任何图上都没采到"
 
 
-def _written_keys(worker, script: Path, stem: str, man: dict, props) -> set[tuple[str, str]]:
+def _written_keys(
+    worker, script: Path, stem: str, man: dict, props, keyed=None
+) -> set[tuple[str, str]]:
     """这张图上采到、而且**真写进了脚本**的键（被 `_Unsupported` 挡下留作重放的不算验证过）。"""
     from tavotto import app
 
-    patches, _covered = _sweep_patches(man, props=props)
+    patches, _covered = _sweep_patches(man, props=props, keyed=keyed)
     if not patches:
         return set()
     worker.override(stem, patches)
@@ -582,8 +618,8 @@ def test_every_writable_key_is_swept_or_named(tmp_path):
         try:
             for stem in stems:
                 man = worker.override(stem, [])["manifest"]
-                for props in (None, _HELD_OUT_PROPS):
-                    covered |= _written_keys(worker, sub / _name, stem, man, props)
+                for props, keyed in [(None, None), *_GROUPS.values()]:
+                    covered |= _written_keys(worker, sub / _name, stem, man, props, keyed)
         finally:
             pool.discard(worker)
     missing = set(scriptadjust.WRITES) - covered - set(_DEDICATED)
@@ -997,6 +1033,249 @@ def test_legend_with_an_unreadable_anchor_is_not_rebuilt():
     }
     edit = {"gid": _LEG, "prop": "ncol", "value": 2}
     assert scriptadjust.build(b"import os\n", "Fig1", [edit], man, version="9.9").residual == [edit]
+
+
+_XT = "axes_0.xticks"
+
+
+@real_worker
+@pytest.mark.parametrize(
+    "patches",
+    [
+        # 改步长 + 改坐标范围
+        [
+            {"gid": "axes_0", "prop": "xlim", "value": [-1.0, 7.0]},
+            {"gid": _XT, "prop": "major_mode", "value": "step"},
+            {"gid": _XT, "prop": "major_step", "value": 0.5},
+        ],
+        # 切到固定间隔而没给步长：取脚本原样的刻度在**落下之后的视区**里的间距（xlim 放宽到 40，间距是 5 而不是 1），
+        # 步长相同的写法验不出先后，这一条才验得出
+        [
+            {"gid": "axes_0", "prop": "xlim", "value": [-3.0, 40.0]},
+            {"gid": _XT, "prop": "major_mode", "value": "step"},
+        ],
+        # 同理，固定刻度没给值：取放宽之后原样刻度的位置
+        [
+            {"gid": "axes_0", "prop": "xlim", "value": [0.0, 40.0]},
+            {"gid": _XT, "prop": "major_mode", "value": "fixed"},
+        ],
+        # 单条文字冻结的是**落下之后**的视区里的刻度，序号也按那一组认
+        [
+            {"gid": "axes_0", "prop": "xlim", "value": [0.0, 40.0]},
+            {"gid": "axes_0.xticklabels_2", "prop": "text", "value": "ten"},
+        ],
+        # 改格式 + 改对数轴：换刻度类型会把 locator / formatter 整套换掉，格式要落在换完之后的那一套上
+        [
+            {"gid": "axes_0.yticks", "prop": "format", "value": "%.1f"},
+            {"gid": "axes_0.yticks", "prop": "minor_visible", "value": True},
+            {"gid": "axes_0.yticks", "prop": "minor_format", "value": "%.0f"},
+            {"gid": "axes_0", "prop": "yscale", "value": "log"},
+        ],
+        # 固定刻度之后改单条文字：文字冻结的是定位之后的那组刻度
+        [
+            {"gid": _XT, "prop": "major_mode", "value": "fixed"},
+            {"gid": _XT, "prop": "major_values", "value": [0.0, 2.0, 4.0]},
+            {"gid": "axes_0.xticklabels_1", "prop": "text", "value": "two"},
+        ],
+        # 科学计数与逐档格式：整图扫描只采到每个枚举的第一个不同值，这里补 sci 和次刻度标数字
+        [
+            {"gid": "axes_0.yticks", "prop": "format", "value": "sci"},
+            {"gid": _XT, "prop": "format", "value": "%g"},
+            {"gid": _XT, "prop": "minor_visible", "value": True},
+            {"gid": _XT, "prop": "minor_format", "value": "%.2f"},
+        ],
+        # 次刻度：长度、线宽与步长一起
+        [
+            {"gid": _XT, "prop": "minor_visible", "value": True},
+            {"gid": _XT, "prop": "minor_mode", "value": "step"},
+            {"gid": _XT, "prop": "minor_step", "value": 0.25},
+            {"gid": _XT, "prop": "minor_length", "value": 5.0},
+            {"gid": _XT, "prop": "minor_width", "value": 1.2},
+        ],
+    ],
+    ids=[
+        "step-and-xlim",
+        "step-without-a-step-after-xlim",
+        "fixed-without-values-after-xlim",
+        "text-after-xlim",
+        "format-on-log",
+        "fixed-then-text",
+        "sci-and-minor-labels",
+        "minor-ticks",
+    ],
+)
+def test_tick_edits_combine_like_the_editor(project, patches):
+    client, _figs = project
+    body = _export(client, patches, formats=[])
+    assert body["status"] == "done", body
+    assert _script_output(body)["script_report"]["written"] == len(patches)
+
+
+def test_tick_keys_of_one_axis_make_one_call_in_the_editors_order():
+    """同一条轴上的定位与格式合成一次 `_tick_model`；先后：刻度类型 → 坐标范围 → 定位 → 单条文字。"""
+    els = [
+        {"gid": "axes_0", "role": "axes", "editable": []},
+        {"gid": "axes_0.xticks", "role": "ticks", "editable": []},
+        {"gid": "axes_0.yticks", "role": "ticks", "editable": []},
+        {"gid": "axes_0.xticklabels_1", "role": "ticklabel", "editable": []},
+    ]
+    edits = [
+        {"gid": "axes_0.xticklabels_1", "prop": "text", "value": "two"},
+        {"gid": "axes_0.xticks", "prop": "major_step", "value": 2},
+        {"gid": "axes_0", "prop": "xlim", "value": [0, 9]},
+        {"gid": "axes_0.xticks", "prop": "major_mode", "value": "step"},
+        {"gid": "axes_0.xticks", "prop": "format", "value": "%.1f"},
+        {"gid": "axes_0.yticks", "prop": "minor_visible", "value": True},
+        {"gid": "axes_0", "prop": "xscale", "value": "linear"},
+    ]
+    out = scriptadjust.build(b"import os\n", "Fig1", edits, {"elements": els}, version="9.9")
+    text = out.data.decode()
+    assert out.written == len(edits) and not out.residual
+    calls = [ln.strip() for ln in text.splitlines() if "_tick_model(_ax(fig" in ln]
+    assert len(calls) == 2, calls  # x 一次、y 一次
+    assert "'major_mode': 'step', 'major_step': 2.0" in calls[0] and "'format': '%.1f'" in calls[0]
+    order = [
+        text.index(k)
+        for k in (
+            "set_xscale('linear')",
+            "set_xlim(0, 9)",
+            "_tick_model(_ax(fig, 0), 'x'",
+            "_tick_text(_ax",
+        )
+    ]
+    assert order == sorted(order), order
+
+
+@real_worker
+@pytest.mark.parametrize(
+    "tick_edit",
+    [
+        {"gid": "axes_0.xticklabels_1", "prop": "text", "value": "two"},
+        {"gid": _XT, "prop": "major_mode", "value": "fixed"},
+        {"gid": _XT, "prop": "major_mode", "value": "step"},
+    ],
+    ids=["text", "fixed-without-values", "step-without-a-step"],
+)
+def test_resized_page_with_view_dependent_ticks_still_delivers(project, tick_edit):
+    """改了图幅（留给重放）又改靠落笔时刻度算的几条：不能因为两边各在不同的轴长上算刻度而整份不交付。"""
+    client, _figs = project
+    resize = {"gid": "figure", "prop": "size_mm", "value": [120.0, 60.0]}
+    keep = {
+        "gid": "axes_0.yticks",
+        "prop": "minor_visible",
+        "value": True,
+    }  # 另一条轴：照常写进脚本
+    body = _export(client, [resize, tick_edit, keep], formats=[])
+    assert body["status"] == "done", body
+    report = _script_output(body)["script_report"]
+    assert report["written"] == 1  # minor_visible 写进脚本，其余留给重放
+
+
+_RANK_DRIVER = """\
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import matplotlib
+matplotlib.use("Agg")
+from matplotlib.figure import Figure
+import overrides, tickmodel
+
+ax = Figure().add_subplot()
+items = [
+    ("xscale", ax, "axes_0"),
+    ("xlim", ax, "axes_0"),
+    ("major_step", tickmodel.TickSet(ax, "x"), "axes_0.xticks"),
+    ("text", tickmodel.TickLabel(ax, "x", 1), "axes_0.xticklabels_1"),
+]
+print(json.dumps([overrides._apply_rank(p, a, g) for p, a, g in items]))
+"""
+
+
+def test_label_visibility_of_a_tick_set_the_manifest_dropped_is_still_written():
+    """标签全关掉之后这一组量不出几何，manifest 里没有它：按 gid 形状认出是刻度组，x 管下边、y 管左边。"""
+    els = [{"gid": "axes_0", "role": "axes", "editable": []}]
+    edits = [
+        {"gid": "axes_0.xticks", "prop": "visible", "value": False},
+        {"gid": "axes_0.yticks", "prop": "visible", "value": False},
+    ]
+    out = scriptadjust.build(b"import os\n", "Fig1", edits, {"elements": els}, version="9.9")
+    text = out.data.decode()
+    assert out.written == 2 and not out.residual
+    assert "_TickSet(_ax(fig, 0), 'x').params(labelbottom=False)" in text
+    assert "_TickSet(_ax(fig, 0), 'y').params(labelleft=False)" in text
+
+
+@real_worker
+def test_script_order_matches_the_engines_apply_order():
+    """脚本里的先后与 `overrides._apply_rank` 对账：刻度类型 -> 坐标范围 -> 刻度定位 -> 单条刻度文字。
+
+    引擎那一侧要 matplotlib，父进程 import 不了，在 worker 的解释器里问。
+    """
+    engine_dir = Path(scriptadjust.__file__).resolve().parent
+    out = subprocess.run(
+        [WORKER_PY, "-c", _RANK_DRIVER, str(engine_dir)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=True,
+    )
+    engine = json.loads(out.stdout.strip().splitlines()[-1])
+    script = [
+        scriptadjust._rank("xscale", "_ax(fig, 0).set_xscale('log')"),
+        scriptadjust._rank("xlim", "_ax(fig, 0).set_xlim(1, 9)"),
+        scriptadjust._rank("major_step", "_tick_model(_ax(fig, 0), 'x', {})"),
+        scriptadjust._rank("text", "_tick_text(_ax(fig, 0), 'x', 1, 'a')"),
+    ]
+    assert engine == sorted(set(engine)) and script == sorted(set(script)), (engine, script)
+
+
+def test_ticks_read_off_at_write_time_wait_for_a_resized_page():
+    """图幅 / 子图大小留给重放时，靠落笔那一刻的刻度算的几条一起留下：自动刻度的个数跟轴长有关。"""
+    els = [
+        {"gid": "figure", "role": "figure", "editable": []},
+        {"gid": "axes_0.xticks", "role": "ticks", "editable": []},
+        {"gid": "axes_0.xticklabels_1", "role": "ticklabel", "editable": []},
+    ]
+    resize = {"gid": "figure", "prop": "size_mm", "value": [120, 60]}
+    text = {"gid": "axes_0.xticklabels_1", "prop": "text", "value": "two"}
+    # x 轴：固定刻度没给值（取落笔时的刻度）；同一轴上的格式跟着一起留下
+    fixed = [
+        {"gid": "axes_0.xticks", "prop": "major_mode", "value": "fixed"},
+        {"gid": "axes_0.xticks", "prop": "format", "value": "%.1f"},
+    ]
+    # y 轴：值都给了，不依赖落笔时的刻度
+    given = [
+        {"gid": "axes_0.yticks", "prop": "major_mode", "value": "step"},
+        {"gid": "axes_0.yticks", "prop": "major_step", "value": 2},
+    ]
+    els.append({"gid": "axes_0.yticks", "role": "ticks", "editable": []})
+
+    def run(*edits):
+        return scriptadjust.build(
+            b"import os\n", "Fig1", list(edits), {"elements": els}, version="9.9"
+        )
+
+    out = run(resize, text, *fixed, *given)
+    assert out.residual == [resize, text, *fixed] and out.written == 2
+    out = run(text, *fixed)  # 没改大小：照常写进脚本
+    assert not out.residual and out.written == 3
+    out = run(resize, *given)
+    assert out.residual == [resize] and out.written == 2
+
+
+def test_tick_width_and_label_text_on_a_3d_axes_stay_with_the_replay():
+    """3D 轴：刻度线宽每次 draw 都被私有的 `_axinfo` 盖回，公开 API 留不住；单条刻度文字在曲面图上
+    两边标签条数对不上（实测 Inv3DS 的 y 轴：热态 5 条、脚本重放 9 条）。都不写。"""
+    els = [
+        {"gid": "axes_0", "role": "axes3d", "editable": []},
+        {"gid": "axes_0.xticks", "role": "ticks", "editable": []},
+        {"gid": "axes_0.xticklabels_1", "role": "ticklabel", "editable": []},
+    ]
+    edits = [
+        {"gid": "axes_0.xticks", "prop": "width", "value": 2.0},
+        {"gid": "axes_0.xticklabels_1", "prop": "text", "value": "two"},
+    ]
+    out = scriptadjust.build(b"import os\n", "Fig1", edits, {"elements": els}, version="9.9")
+    assert out.residual == edits
 
 
 @real_worker
