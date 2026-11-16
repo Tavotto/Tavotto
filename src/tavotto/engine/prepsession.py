@@ -51,6 +51,7 @@ from . import (
     execpolicy,
     execspec,
     fixrouter,
+    libmodule,
     nativesession,
     pool,
     preparation,
@@ -224,6 +225,8 @@ _MISSING_INPUT_CODE = "missing_input"
 _WORKDIR_HINT_CODE = "workdir_hint"
 #: 脚本源码里有弹窗选文件 / 询问的写法（`dialogscan`）：不阻塞的提示，运行照样可用
 _GUI_DIALOG_CODE = "script_uses_gui_dialog"
+#: 脚本只定义了画图函数、没有调用（`libmodule`，反馈包 TVD-Y5JF）：不阻塞的提示，载荷带 import 了它的入口脚本
+_LIBRARY_CODE = "script_is_library"
 
 #: 数量 / 生命周期预算。活跃的（有没跑完 / 没登记完的尝试）永远不被这里回收。
 MAX_SESSIONS = 64
@@ -406,6 +409,17 @@ def gui_dialogs(plan: preparation.PreparationPlan) -> dict | None:
     return found if found["status"] == "found" else None
 
 
+def library_module(plan: preparation.PreparationPlan) -> dict | None:
+    """计划里那份脚本是不是只定义了画图函数的库模块（`libmodule.analyze`，只读源码、按文件身份缓存）；是 → 入口反查结果。"""
+    if plan.script is None or plan.target != TARGET_SCRIPT:
+        return None
+    try:
+        return libmodule.analyze(plan.project_root, plan.script, registered_entry=plan.entry)
+    except Exception:  # noqa: BLE001 — 提示判不出就不说，绝不拖垮报告
+        LOG.exception("库模块判定失败")
+        return None
+
+
 #: 固定解释器卡上最多列几个缺的模块名（其余只在计划里）
 _PINNED_MISSING_LIMIT = 8
 
@@ -569,6 +583,19 @@ def requirements_of(
                     },
                 }
             )
+    library = library_module(plan)
+    if library is not None:
+        # 只定义了画图函数、没有调用：跑它不会出图。**只是提示**——不阻塞、不改 phase；卡片的主按钮换成「运行入口脚本」
+        # （项目外的入口经前端打开那个文件夹再运行），「仍然运行」照样在
+        out.append(
+            {
+                "id": "entry",
+                "kind": "library_module",
+                "code": _LIBRARY_CODE,
+                "blocking": False,
+                "payload": library,
+            }
+        )
     dialogs = gui_dialogs(plan)
     if dialogs is not None:
         # 脚本会弹窗：无界面 worker 里弹不出来（且每次编辑都重跑）。**只是提示**——不阻塞运行、不改任何 phase；
@@ -1783,14 +1810,23 @@ class SessionService:
                 info["code"] = str(offer.get("code") or "dependency_unresolved")
                 info["route"] = pool.INSTALL_ROUTE_UNRESOLVABLE
                 return info
+            # 受管环境装完 worker 自检过不去过、且用户为本项目选了自己的 Python：改推荐它（要用户亲手确认，
+            # `InstallGrant` 对它一律拒）；否则照旧受管
+            target_kind = deprepair.TARGET_MANAGED
+            if managed.get("selftest_failed") and any(
+                t.get("kind") == deprepair.TARGET_CONFIGURED and t.get("available") is not False
+                for t in offer.get("targets") or ()
+            ):
+                target_kind = deprepair.TARGET_CONFIGURED
             preview = deprepair.preview_impact(
-                sess.project_root, plan.script, module, target_kind=deprepair.TARGET_MANAGED
+                sess.project_root, plan.script, module, target_kind=target_kind
             )
         except Exception as exc:  # noqa: BLE001 — 预览失败 = 不能在会话里授权，如实带码
             info["code"] = str(getattr(exc, "code", "") or "dependency_unresolved")
             return info
         info.update(
             installable=True,
+            target_kind=target_kind,
             requirement=dict(offer["requirement"]),
             rounds_remaining=int(offer.get("rounds_remaining") or 0),
             impact=preview["impact"],
@@ -3158,6 +3194,9 @@ class SessionService:
         if (no_figure_hint or {}).get("kind") == rasterhint.KIND_COPIED:
             # 只复制现成图片的脚本：本来就不画图，没有可修的（AI / 转写都白跑一轮），卡片只指向输出的图片（TVD-537W）
             return None
+        if outcome.get("kind") == OUTCOME_NO_FIGURE and library_module(sess.plan) is not None:
+            # 只定义了画图函数的库模块：没有可修的（AI 只会编数据去调这些函数），卡片指向调用它的入口脚本（TVD-Y5JF）
+            return None
         code = str(
             outcome.get("code") or ((result.error or {}).get("code") if result else "") or ""
         )
@@ -3775,7 +3814,7 @@ class SessionService:
                 "impact": missing["impact"],
                 "impact_digest": missing["impact_digest"],
                 "module": missing["module"],
-                "target_kind": deprepair.TARGET_MANAGED,
+                "target_kind": str(missing.get("target_kind") or deprepair.TARGET_MANAGED),
                 "scope_policy": "",
             }
         by_id = {c["id"]: c for c in checks}

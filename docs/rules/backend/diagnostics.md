@@ -2,16 +2,42 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「诊断与排障」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_diagnostics_bundle.py`、`test_diag_send.py`、`test_diag_send_api.py`、`test_diagnostics_worker_evidence.py`、`test_diagnostics_worker_structure.py`、`test_diagnostics_log_privacy.py`、`test_task_diagnostics.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_review_share.py`、`test_review_api.py`、`tests/test_diagnostics_bundle.py`、`test_diag_send.py`、`test_diag_send_api.py`、`test_diagnostics_worker_evidence.py`、`test_diagnostics_worker_structure.py`、`test_diagnostics_log_privacy.py`、`test_task_diagnostics.py`
 > `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：先脱敏再交出；report.json 换形必升 bundle schema；不写盘不进 telemetry；不自动上传（唯一例外：用户逐次确认的「发送问题反馈」，默认开启，ADR 0118）；日志只读出门版；导出包严格脱敏不变，仅发送包多 `detail/`（schema 8）
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 280
-改到: `engine/diagnostics.py`、`diagnostictext.py`、`diagnostics_frontend.py`、`diagdetail.py`、`taskdiag.py`、`diagsend.py`、`contact*.py`、`/api/diagnostics/*`
+改到: `engine/diagnostics.py`、`diagnostictext.py`、`diagnostics_frontend.py`、`diagdetail.py`、`taskdiag.py`、`diagsend.py`、`contact*.py`、`review*.py`、`/api/diagnostics/*`、`/api/review/*`
 主题: 诊断包与任务绑定诊断 → `diagnostics.md`
 必守要点: 先脱敏再交出；report.json 换形必升 bundle schema；不写盘不进 telemetry；不自动上传（唯一例外是用户逐次确认）
 -->
+
+## 外部审阅（[ADR 0187](../../adr/0187-external-review-share.md)；1.0 纪律下已由维护者豁免的新能力）
+
+`engine/reviewshare.py`（出站、设备签名、分享 / 更新 / 停止 / 回复 / 标记已处理、feed 轮询）与 `engine/reviewinbox.py`（本机分享记录）是 `contactsend` / `contactinbox` 的同形状兄弟：
+把当前这张图 / 这份排版的**画面**分享成链接。线上格式 v1 的唯一出处是 ADR 0187 §六；本机接口 `/api/review/*` 全部在会话认证之内（ADR 0008，`test_browser_auth` 从 url_map 枚举）。
+
+- **上线开关 `PRODUCTION_LIVE`**：线上服务部署并验通（建链接、更新、审阅页、额度计数）之前为 `False`——不设 `TAVOTTO_REVIEW_ENDPOINT` 时入口不出现、零网络；验通后单独一个 PR 改成 `True`（发版依赖，先报合并大队长）。
+- **只上传画面**：每个版本只有 `snapshot.png`（走现有导出管线，长边 ≤ 3000 px、≤ 8 MiB，超了降分辨率重出）、元素位置表（≤ 4000 项 / 256 KiB，超了按面积从小到大丢并只在日志记个数）与标题 / 给审阅者的话。脚本、数据、路径、本机信息一律不传。
+  出图与元素表由 `app._review_render` 注册给引擎（`reviewshare.set_renderer`）：父进程这里不碰 `manifest` / `figsession`；只调 `_export_produce`（不经 `exportjob.run`），中间文件在 `data_dir()/review/tmp/` 的私有目录、用完即删，**不写项目导出目录**。
+  出图描述 `render` 由前端带来（图 `{"original": …}`、排版 `{"canvas": {page_w_mm, page_h_mm, objects}}`，与 `POST /api/export` 同名段一致）：排版文档是前端 schema、worker 热会话只记 patch 哈希，引擎无法自己反推；缺 `render` = 同步 422。
+- **元素 label 只有两种来源**（`reviewshare.manifest_elements`）：画在图上的文字（manifest 里按 `artist.get_text()` 现算的 title / axis_label / text / legend_text / ticklabel）或按角色的结构性名字 + 序号（曲线 1 / 散点 2 / 图例 …）。**artist 自己的 `label`（脚本里随便写，没进图例就不在画面上，可能是路径 / 文件名）、url、文件名一律不传。**
+- **元素 gid**：单图就是 manifest 的 gid；排版里面板外框 gid = 面板键（`reviewshare.panel_keys`：前端在出图描述的对象上带 `object_id`——文档对象自己的不透明 id——就用它，缺 / 不合规 / 重复就用 `p<第几个面板>`），面板内元素 gid = `<面板键>::<manifest gid>`。**绝不用导出请求里对象的 `id`**（那是图的项目内相对路径，路径不许出机，同一张图的两个面板也会撞）；`object_id` 只给元素表用、不进导出请求；面板显示名只认 `label` / `name` 且含 `/` 或 `\\` 的当没有；面板内元素按面板的裁剪 → 顺时针 90° 旋转 → 翻转（与 `rendercore/plan._panel_node` 同序）换算到页面比例坐标。manifest 里 `gid == "figure"` 不进表（「整体意见」另有锚点）。
+- **目的地钉死**：`REVIEW_HOSTS = {review.tavotto.cn}`；`TAVOTTO_REVIEW_ENDPOINT` 设了就必须合规（或回环开发模式 `TAVOTTO_DIAG_DEV_LOOPBACK=1`），不合规整个功能关闭、**不回退内置端点**；`TAVOTTO_NO_REVIEW_SHARE=1` 整个功能不出现、不联网（测试进程由 conftest 硬关，生产主机被会话级探针兜底）。
+  出站只经 `diagsend._send`；直传存储地址不复用 `diagsend.validate_upload_url`（它拒收查询串，而预签名 PUT 带签名查询串），另有 `reviewshare._upload_spec`：https、主机必须匹配 `UPLOAD_HOST_PATTERNS`（COS 桶域名 + CloudBase 存储域名）或（回环开发）与端点同源，头部有禁用名单，不带任何 Tavotto 签名 / 令牌头。
+- **回环开发模式**（`TAVOTTO_DIAG_DEV_LOOPBACK=1`，只此一种）额外放宽：端点可以是 `http://127.0.0.1|localhost[:端口]`，`review_url` 与上传地址允许任意回环端口 / 路径、http 也行（`_DevTarget`）；非回环主机照旧拒。生产规则（`REVIEW_HOSTS`、https、`UPLOAD_HOST_SUFFIXES`）不变，`test_production_rules_are_untouched_by_the_dev_relaxation` 钉。
+- **设备签名**：Ed25519（PyNaCl，延后 import）私钥 32 字节 0600 存 `data_dir()/review/device.key`；签名消息 `tavotto-review-v1\nMETHOD\nPATH(含 query)\nTS\nsha256(body)`，签的就是发出去的那份字节。写不下去密钥 = `client_error`，**不用一次性密钥**（那等于每次新设备、绕额度）。
+- **逐次授权与零网络**：上传只由 `start_share` / `start_update`（一次点击）触发；失败后不自己重试。**没有未到期且未停止的记录就一次网络都不发**（后台轮询每 30 分钟，`/api/review/refresh` 手动）。
+- **重试幂等**：`client_share_id` / `client_version_id` 与渲染好的 PNG、元素表跟着失败的尝试留在内存（`_REUSE`，指纹 = 模式 / 目标 / 标题 / 说明 / 出图描述），内容没变的重试逐字节相同、不重复扣额度；init 一拿到管理令牌就写本机记录（`delivered=False`，留 24 小时——与服务端幂等重放窗口一致，期间用户重试能补投递、不会连管理令牌一起丢掉已发布的链接；不出现在列表、不被轮询），complete 之后转正。**远端 complete 成功后本机记录落盘失败（`reviewinbox._save_locked(strict=True)` 抛 `OSError`）= 这次分享失败**（`server`，可再试），绝不报 done；重试复用同一个 id 与同一份字节，init / complete 都是幂等重放。**complete 的重试退避可被取消打断**（`_sleep(cancel, s)`），取消后不再发送。
+- **直传存储**：review-api 签发的是 COS 的 `POST` multipart（签名在 `fields`、url 无查询串），也认 `PUT`；主机只认后缀 `UPLOAD_HOST_SUFFIXES`（`.myqcloud.com` / `.tcb.qcloud.la` / `.tcloudbaseapp.com`，环境开通后收紧）+ 回环同源。版本记录带 `frame`（排版 `page` = 快照只含页面范围，单图 `figure`）；update 可带 `target` 改指别的图 / 排版（同 kind）。
+- **分享记录按项目分开**：记录带发起时的项目 id（`ProjectCtx.id`，没开项目 = 空串），`/api/review/for` 与更新都按它匹配——图 id / 排版 id 在不同项目里会重名，不分开就会把 B 项目的画面推到 A 的链接上。
+- **位图素材不认 ppi**（`scope=original` 保源像素网格）：降分辨率重出仍是同样尺寸就在本机把 PNG 等比缩小（`shrink_png`：stdlib 解本引擎自己编的 PNG + `rendercore.raster.resample_area` 面积平均，bbox 是比例坐标不受影响）；缩完仍超限 / 解不了才 `too_large`。
+- **单图元素表**取用户画布上那份热会话 manifest（`app._review_manifest`：热态不是这组 overrides 就先按它们重放再取），拿不到（没有脚本）= 空表 + 日志，不失败。
+- **额度**：免费版只限每台设备每天新建 1 个链接；更新同一链接不限次数（服务端只有每链接每小时 30 次的兜底，回 `rate_limited`，可再试），所以没有 `quota_update_exhausted`，`/api/review/quota` 的 `update_left` 恒为 null。
+- **失败码闭集** `reviewshare.FAILURES`（与前端 `review.failure.*` 对拍）：服务端错误体是嵌套的 `{"error": {"code"}}`；`quota_new_exhausted` / `share_gone` / `too_large` / `rate_limited` 直通（**只认服务端明说的 code**：裸 404 多半是网关，归 `server`，不标 revoked、停止分享也不当成功），`bad_signature` / `clock_skew` / `invalid` 一律 `client_error`，5xx / 坏响应 `server`，传输失败（含 TLS）`network`。
+- **秘密不落地**：`owner_token` 只在 `reviewinbox` 的 0600 文件里，`status()` / `summary` / `detail` / 日志都没有；日志模板是字面量、参数只有闭集里的阶段名与结果码（不记 URL、令牌、标题、意见文字）。意见文字来自网络：逐项形状清洗、文字封顶（500 / 20 字）、按纯文本存。
+- **本机保留**：到期后意见副本仍在，到期 + 30 天或用户删除（只有已停止 / 已到期的才许删）才清；`for` 只回「这个 target 有没有未删除的记录」，「审阅」页签出现与否只看它。
 
 ## 受管环境作业的披露例外（2026-10-31 用户授权）
 
@@ -491,4 +517,6 @@ Windows 上诊断缓存原子替换若遇共享冲突（WinError 5 / 32 / 33）�
 spawn 失败是哪一种（#1520），分不出卡在哪个启动阶段（#1550），AI 失败不知道停在哪一步（#1534），13 次失败只有
 `status=failed`（#1571），只有 code、没有底层 `OSError`，根因只能写「推测」（#1633）。认不出的那一档也要留闭集证据：
 外部 CLI 失败分类只收 401/403/429/5xx，其余状态只剩计数，一份用户反馈（中转每次几秒就失败）定不了根因，补成只留三位
-状态码（#1901，2026-11-14）。
+状态码（#1901，2026-11-14）。受管环境装完自检没过的终局码只带错误码，detail 只给界面、出门时整段丢弃，一份用户反馈里
+十次失败全是同一个码、根因查不出；会让用户反复重试的终局码，在加它的同一个 PR 里就带上阶段 / 退出码 / 异常类型并断言
+进得了 `report.json`（#1932，2026-11-15）。
