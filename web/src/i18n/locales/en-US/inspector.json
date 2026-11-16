@@ -689,7 +689,8 @@
     "setGradientKind": "Change paint type",
     "setGradient": "Edit gradient",
     "flipPathText": "Flip text on path",
-    "pathTextStart": "Move text start"
+    "pathTextStart": "Move text start",
+    "pathTextOffset": "Change text-on-path offset"
   },
   "lock": "Lock",
   "locked": "Locked",
@@ -1455,6 +1456,11 @@
     "alignStart": "Start at the start point",
     "alignCenter": "Center on the start point",
     "alignEnd": "End at the start point",
-    "flip": "Flip to the other side"
+    "flip": "Flip to the other side",
+    "offset": "Offset",
+    "offsetTip": "Distance from the line to the baseline: 0 sits on the line, negative overlaps it; clear for auto",
+    "offsetAuto": "Auto {{value}}",
+    "offsetAutoBare": "Auto",
+    "offsetReset": "Auto"
   }
 }

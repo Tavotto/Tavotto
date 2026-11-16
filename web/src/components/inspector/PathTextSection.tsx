@@ -1,10 +1,12 @@
 import { useTranslation } from 'react-i18next'
-import { Bold, FlipVertical2, Italic, TextAlignCenter, TextAlignEnd, TextAlignStart } from '@/components/ui/icons'
+import { Bold, FlipVertical2, Italic, RotateCcw, TextAlignCenter, TextAlignEnd, TextAlignStart } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { msg, t as translate, type UiMessage } from '@/i18n'
+import { usePathTextOutline } from '@/canvas/PathTextView'
 import { clampOffset } from '@/lib/pathText'
 import { updateObjects } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
+import { GAP_STEP_PT } from '@/store/pathTextActions'
 import type { PathTextObject } from '@/types/document'
 import { Button } from '../ui/Button'
 import { Row, Section } from '../ui/Field'
@@ -43,6 +45,17 @@ export function PathTextSection({ objs }: { objs: PathTextObject[] }) {
   const align = shared(objs, (o): Align => (o as PathTextObject).textAlign ?? 'start')
   const flip = shared(objs, (o) => (o as PathTextObject).flip === true)
   const start = shared(objs, (o) => Math.round(clampOffset((o as PathTextObject).startOffset) * 1000) / 10)
+  // 离线：都没写 = 自动（null）；写的不一样 = 多个值（undefined）
+  const offsetShared = shared(objs, (o) => (o as PathTextObject).baselineOffsetPt ?? null)
+  const offset = offsetShared === undefined ? undefined : offsetShared
+  // 自动值只有后端知道（与落字同一个式子）：单选时拿画布同一份请求的结果做占位数
+  const { outline } = usePathTextOutline(objs[0])
+  // 拖「离线」标签时整轮一条历史：开着事务时 commit 自己并进事务（documentStore.commit）
+  const setOffset = (v: number) => patch(hist('pathTextOffset'), (o) => (o.baselineOffsetPt = v))
+  const autoText =
+    objs.length === 1 && outline?.autoOffsetPt != null
+      ? translate('pathText.offsetAuto', { ns: 'inspector', value: outline.autoOffsetPt.toFixed(1) })
+      : px('offsetAutoBare')
 
   return (
     <Section title={px('title')}>
@@ -158,26 +171,63 @@ export function PathTextSection({ objs }: { objs: PathTextObject[] }) {
             </Button>
           </div>
         </Row>
+        {/*
+          起点与离线同一行（不加行）。离线：没写 = 自动，框里用占位样式显示后端算出来的数；按住「离线」两个字左右拖改值（一次拖动
+          一条历史），↑↓ 每次 0.5 pt、⇧ 每次 2 pt；旁边的小钮回到自动，清空框也一样
+        */}
         <Row label={px('start')} labelWidth={INSPECTOR_LABEL_W}>
-          <NumberField
-            half
-            value={start ?? 0}
-            mixed={start === undefined}
-            min={0}
-            max={100}
-            step={1}
-            precision={1}
-            unit="%"
-            ariaLabel={px('start')}
-            dataProp="path-text-start"
-            onChange={(v) =>
-              patch(hist('pathTextStart'), (o) => {
-                const off = Math.round(Math.min(100, Math.max(0, v)) * 100) / 10000
-                if (off > 0) o.startOffset = off
-                else delete o.startOffset
-              })
-            }
-          />
+          <div className="grid w-full min-w-0 grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)_auto] items-center gap-1.5">
+            <NumberField
+              fill
+              value={start ?? 0}
+              mixed={start === undefined}
+              min={0}
+              max={100}
+              step={1}
+              precision={1}
+              unit="%"
+              ariaLabel={px('start')}
+              dataProp="path-text-start"
+              onChange={(v) =>
+                patch(hist('pathTextStart'), (o) => {
+                  const off = Math.round(Math.min(100, Math.max(0, v)) * 100) / 10000
+                  if (off > 0) o.startOffset = off
+                  else delete o.startOffset
+                })
+              }
+            />
+            <NumberField
+              fill
+              prefix={px('offset')}
+              value={offset ?? 0}
+              mixed={offset == null}
+              mixedPlaceholder={offset === null ? autoText : undefined}
+              min={-200}
+              max={200}
+              step={GAP_STEP_PT}
+              shiftMult={4}
+              precision={1}
+              unit="pt"
+              ariaLabel={px('offset')}
+              title={px('offsetTip')}
+              dataProp="path-text-offset"
+              onScrubStart={() => beginTxn('pathTextOffset')}
+              onScrubEnd={endTxn}
+              onScrubCancel={() => useDocumentStore.getState().endTxn({ discard: true })}
+              onClear={() => patch(hist('pathTextOffset'), (o) => delete o.baselineOffsetPt)}
+              onChange={(v) => setOffset(Math.round(v * 10) / 10)}
+            />
+            <Button
+              size="icon-sm"
+              aria-label={px('offsetReset')}
+              title={px('offsetReset')}
+              data-path-text-offset-auto=""
+              disabled={offset === null}
+              onClick={() => patch(hist('pathTextOffset'), (o) => delete o.baselineOffsetPt)}
+            >
+              <RotateCcw size={ICON_SIZE.sm} />
+            </Button>
+          </div>
         </Row>
       </div>
     </Section>

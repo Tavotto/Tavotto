@@ -487,7 +487,8 @@
     "outlineText": "文字转轮廓（{{count}} 个）",
     "arrayCopies_other": "阵列（{{count}} 份）",
     "addPathText": "在路径上加文字",
-    "pathTextStart": "移动路径文字起点"
+    "pathTextStart": "移动路径文字起点",
+    "pathTextGap": "调整路径文字离线"
   },
   "layerTree": {
     "collapseGroup": "折叠组",

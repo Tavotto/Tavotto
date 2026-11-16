@@ -1,11 +1,13 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { outlineText } from '@/lib/api'
-import { pathTextExport } from '@/lib/exportPayload'
+import { lineWidthOf, pathTextExport } from '@/lib/exportPayload'
 import { arcPathOf, clampOffset, startHandle } from '@/lib/pathText'
 import { pathD, pathGeometry, type PathSeg } from '@/lib/pathGeom'
 import { hitStrokeWidth } from '@/lib/shapeGeometry'
 import { MM_PER_PT } from '@/lib/units'
-import { commitPathText } from '@/store/pathTextActions'
+import { useDocumentStore } from '@/store/documentStore'
+import { commitPathText, rememberAutoOffset } from '@/store/pathTextActions'
+import { useInteractionStore } from '@/store/interactionStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { PathObject, PathTextObject } from '@/types/document'
@@ -20,17 +22,23 @@ import { PathBody } from './PathView'
  * 命中：外层 div 让位（ObjectView），交给沿路径的透明命中带（带宽按字号），点字附近就能选中。
  */
 
-type Outline = { paths: PathObject[] }
+/** 后端给的字形轮廓（对象挪到原点、不带旋转）与这次用的自动离线（pt，属性栏占位数） */
+type Outline = { paths: PathObject[]; autoOffsetPt: number | null }
 const cache = new Map<string, Outline>()
 const pending = new Map<string, Promise<Outline | null>>()
 const CACHE_MAX = 200
 
-function localPayload(obj: PathTextObject) {
-  return { ...pathTextExport({ ...obj, x: 0, y: 0, rotationDeg: undefined }), id: obj.id }
+function localPayload(obj: PathTextObject, lineWidthPt: number) {
+  return { ...pathTextExport({ ...obj, x: 0, y: 0, rotationDeg: undefined }, lineWidthPt), id: obj.id }
 }
 
-export function fetchPathTextOutline(obj: PathTextObject): Promise<Outline | null> {
-  const body = localPayload(obj)
+/** 这段路径文字那条线的描边宽度（pt），跟着文档变（与导出载荷 `lineWidthOf` 同一判据） */
+export function useLineWidth(obj: PathTextObject): number {
+  return useDocumentStore((s) => lineWidthOf(obj, s.doc.objects))
+}
+
+export function fetchPathTextOutline(obj: PathTextObject, lineWidthPt = 0): Promise<Outline | null> {
+  const body = localPayload(obj, lineWidthPt)
   const key = JSON.stringify(body)
   const hit = cache.get(key)
   if (hit) return Promise.resolve(hit)
@@ -40,7 +48,11 @@ export function fetchPathTextOutline(obj: PathTextObject): Promise<Outline | nul
     .then((r) => {
       const one = r.results[0]
       if (!one || !('paths' in one)) return null
-      const out = { paths: one.paths as PathObject[] }
+      const out = {
+        paths: one.paths as PathObject[],
+        autoOffsetPt: typeof one.auto_offset_pt === 'number' ? one.auto_offset_pt : null,
+      }
+      if (out.autoOffsetPt != null) rememberAutoOffset(obj.id, out.autoOffsetPt)
       if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value as string)
       cache.set(key, out)
       return out
@@ -52,23 +64,27 @@ export function fetchPathTextOutline(obj: PathTextObject): Promise<Outline | nul
 }
 
 export function usePathTextOutline(obj: PathTextObject): { outline: Outline | null; fresh: boolean } {
-  const key = JSON.stringify(localPayload(obj))
+  const lineWidthPt = useLineWidth(obj)
+  const key = JSON.stringify(localPayload(obj, lineWidthPt))
   const [state, setState] = useState<{ key: string; outline: Outline } | null>(() => {
     const hit = cache.get(key)
     return hit ? { key, outline: hit } : null
   })
   useEffect(() => {
     if (cache.has(key)) {
-      setState({ key, outline: cache.get(key)! })
+      const hit = cache.get(key)!
+      if (hit.autoOffsetPt != null) rememberAutoOffset(obj.id, hit.autoOffsetPt)
+      setState({ key, outline: hit })
       return
     }
     let alive = true
-    // 打字 / 拖起点时连着变：歇 120 ms 再问后端
+    // 打字时连着变：歇 120 ms 再问后端；拖起点柄 / 间隙柄时字要实时跟着动，只等一帧
+    const delay = useInteractionStore.getState().kind === 'none' ? 120 : 16
     const timer = setTimeout(() => {
-      void fetchPathTextOutline(obj).then((o) => {
+      void fetchPathTextOutline(obj, lineWidthPt).then((o) => {
         if (alive && o) setState({ key, outline: o })
       })
-    }, 120)
+    }, delay)
     return () => {
       alive = false
       clearTimeout(timer)

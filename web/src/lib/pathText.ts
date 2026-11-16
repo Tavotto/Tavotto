@@ -1,5 +1,5 @@
 import { pathGeometry, type PathSeg } from '@/lib/pathGeom'
-import type { PathTextObject } from '@/types/document'
+import type { CanvasObject, PathTextObject } from '@/types/document'
 
 /**
  * 路径文字（ADR 0190）的路径几何：与后端 `rendercore/pathtext.py` 同一个展平规则（第一条画得出的子路径；直线段原样、
@@ -102,6 +102,16 @@ export function startHandle(o: PathTextObject, w: number, h: number): { x: numbe
   const a = arcPathOf(o, w, h)
   const total = a.cum[a.cum.length - 1] ?? 0
   return pointAt(a, clampOffset(o.startOffset) * total)
+}
+
+/**
+ * 复制出来的一批对象里，路径文字指着的那条线也一起复制了：改指新的那条（自动离线跟着副本自己的线走）。没一起复制就留着原样——
+ * 仍取原来那条线的线宽（ADR 0190）。就地改 `copies`。
+ */
+export function remapLineIds(copies: CanvasObject[], idMap: ReadonlyMap<string, string>): void {
+  for (const c of copies) {
+    if (c.type === 'pathText' && c.lineId && idMap.has(c.lineId)) c.lineId = idMap.get(c.lineId)
+  }
 }
 
 export const clampOffset = (v: number | undefined): number =>

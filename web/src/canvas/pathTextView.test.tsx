@@ -73,7 +73,7 @@ beforeEach(() => {
   globalThis.fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
     if (String(url).includes('/api/text/outline')) {
       calls.push(JSON.parse(String(init?.body)))
-      return new Response(JSON.stringify({ ok: true, results: [{ paths: vectors.preview.paths }] }), { status: 200 })
+      return new Response(JSON.stringify({ ok: true, results: [{ paths: vectors.preview.paths, auto_offset_pt: 4.567 }] }), { status: 200 })
     }
     return new Response('{}', { status: 200 })
   }) as typeof fetch
@@ -207,5 +207,162 @@ describe('属性页', () => {
     await act(async () => center.click())
     expect(o().textAlign).toBe('center')
     expect(past()).toBe(3)
+  })
+})
+
+describe('离线', () => {
+  const setInput = async (input: HTMLInputElement, v: string) => {
+    await act(async () => {
+      input.focus()
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      set.call(input, v)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+  }
+
+  it('没写 = 自动：框里用占位样式显示后端算的数；填 0 落 0（贴线）；清空回到自动', async () => {
+    await seed([obj({ text: 'Off' })])
+    const o = () => objs()[0] as PathTextObject
+    await mount(<PathTextSection objs={[o()]} />)
+    await settle()
+    const field = () => el.querySelector<HTMLInputElement>('input[data-inspector-prop="path-text-offset"]')!
+    expect(field().value).toBe('')
+    expect(field().placeholder).toMatch(/4\.6/)
+    await setInput(field(), '0')
+    expect(o().baselineOffsetPt).toBe(0)
+    await act(async () => root.render(<TooltipProvider><PathTextSection objs={[o()]} /></TooltipProvider>))
+    expect(field().value).toBe('0')
+    await setInput(field(), '')
+    expect(o().baselineOffsetPt).toBeUndefined()
+  })
+
+  it('画布发给后端的请求带上一起成组的那条线的线宽', async () => {
+    const line = { id: 'L', type: 'path', x: 15, y: 12, w: 60, h: 20, subpaths: P.subpaths, strokePt: 2, color: '#000000', fill: null } as CanvasObject
+    const o = obj({ text: 'Lw', lineId: 'L' })
+    await seed([line, o])
+    await mount(<ObjectView obj={o} />)
+    await settle()
+    const sent = (calls.at(-1) as { objects: Record<string, unknown>[] }).objects[0]
+    expect(sent.line_width_pt).toBe(2)
+    expect(sent.baseline_offset_pt).toBeUndefined()
+  })
+})
+
+
+describe('调间隙', () => {
+  const lineObj = () =>
+    obj({ x: 10, y: 20, w: 40, h: 0.5, text: 'Gap', subpaths: [{ closed: false, nodes: [{ p: [0, 0.5] }, { p: [1, 0.5] }] }] })
+  const o = () => objs()[0] as PathTextObject
+
+  it('画布间隙柄：沿法线拖改离线，字头朝上时往上拖变大；拖动中浮动栏让开；一次拖动一条历史', async () => {
+    await seed([lineObj()])
+    useSelectionStore.getState().set(['pt'])
+    await mount(<svg><PathTextHandles t={getTransform()} /></svg>)
+    await settle()
+    const h = el.querySelector<SVGCircleElement>('[data-path-text-gap-handle]')!
+    expect(h.dataset.auto).toBe('true')
+    const t = getTransform()
+    const at = (y: number) => ({ clientX: mmToViewX(30, t), clientY: mmToViewY(y, t), bubbles: true })
+    await act(async () => h.dispatchEvent(new PointerEvent('pointerdown', { ...at(19), button: 0 })))
+    let kindWhileDragging = ''
+    for (const y of [19, 18.5, 18.25 - 3 * 0.3528]) {
+      await act(async () => window.dispatchEvent(new MouseEvent('pointermove', at(y))))
+      kindWhileDragging = useInteractionStore.getState().kind
+    }
+    await act(async () => window.dispatchEvent(new MouseEvent('pointerup', at(18.25 - 3 * 0.3528))))
+    expect(kindWhileDragging).toBe('pathTextGap')
+    expect(useInteractionStore.getState().kind).toBe('none')
+    // 线在 y = 20.25；往上 3 pt 再多 2 mm
+    expect(o().baselineOffsetPt).toBeCloseTo(8.7, 1)
+    expect(past()).toBe(1)
+  })
+
+  it('⇧ 拖：靠近 0 吸到 0（贴线），靠近自动值吸回自动（字段删掉）', async () => {
+    await seed([lineObj()])
+    useSelectionStore.getState().set(['pt'])
+    await mount(<svg><PathTextHandles t={getTransform()} /></svg>)
+    await settle() // 自动值 4.567 回来了
+    const t = getTransform()
+    const drag = async (toMm: number) => {
+      const h = el.querySelector<SVGCircleElement>('[data-path-text-gap-handle]')!
+      await act(async () => h.dispatchEvent(new PointerEvent('pointerdown', { clientX: mmToViewX(30, t), clientY: mmToViewY(19, t), bubbles: true, button: 0 })))
+      for (const y of [19.5, toMm]) {
+        await act(async () => window.dispatchEvent(new MouseEvent('pointermove', { clientX: mmToViewX(30, t), clientY: mmToViewY(y, t), bubbles: true, shiftKey: true })))
+      }
+      await act(async () => window.dispatchEvent(new MouseEvent('pointerup', { clientX: mmToViewX(30, t), clientY: mmToViewY(toMm, t), bubbles: true, shiftKey: true })))
+    }
+    await drag(20.25 - 0.3) // 0.85 pt：吸到 0
+    expect(o().baselineOffsetPt).toBe(0)
+    await drag(20.25 - 4.2 * 0.3528) // 4.2 pt：离自动 4.567 不到 1.5 pt
+    expect(o().baselineOffsetPt).toBeUndefined()
+  })
+
+  it('⌥⇧↑ / ⌥⇧↓：选区全是路径文字时每次 0.5 pt（从自动值起步）；别的选区照旧是微调', async () => {
+    const { useKeyboard } = await import('@/hooks/useKeyboard')
+    function Host() {
+      useKeyboard()
+      return null
+    }
+    const shape = { id: 'r', type: 'shape', shape: 'rect', x: 0, y: 0, w: 5, h: 5, strokePt: 1, color: '#000', fill: null } as CanvasObject
+    await seed([lineObj(), shape])
+    await mount(<><Host /><ObjectView obj={lineObj()} /></>)
+    await settle()
+    useSelectionStore.getState().set(['pt'])
+    const key = async (k: string) =>
+      act(async () => {
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: k, code: k, altKey: true, shiftKey: true, bubbles: true, cancelable: true }))
+      })
+    await key('ArrowUp')
+    expect(o().baselineOffsetPt).toBeCloseTo(5.1, 6) // 4.567 → 4.6 + 0.5（一位小数）
+    await key('ArrowDown')
+    await key('ArrowDown')
+    expect(o().baselineOffsetPt).toBeCloseTo(4.1, 6)
+    expect(o().x).toBe(10)
+    // 选区不全是路径文字：这组键照旧是 ⇧ 大步微调，离线不动
+    useSelectionStore.getState().set(['r'])
+    await key('ArrowUp')
+    expect((objs()[1] as CanvasObject).y).toBeLessThan(0)
+    expect(o().baselineOffsetPt).toBeCloseTo(4.1, 6)
+  })
+
+  it('属性栏：↑ 0.5 pt、⇧↑ 2 pt；旁边的小钮回到自动', async () => {
+    await seed([obj({ baselineOffsetPt: 1 })])
+    await mount(<PathTextSection objs={[o()]} />)
+    const field = () => el.querySelector<HTMLInputElement>('input[data-inspector-prop="path-text-offset"]')!
+    const rerender = async () => act(async () => root.render(<TooltipProvider><PathTextSection objs={[o()]} /></TooltipProvider>))
+    await act(async () => {
+      field().focus()
+      field().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }))
+    })
+    expect(o().baselineOffsetPt).toBeCloseTo(1.5, 6)
+    await rerender()
+    await act(async () => {
+      field().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', shiftKey: true, bubbles: true, cancelable: true }))
+    })
+    expect(o().baselineOffsetPt).toBeCloseTo(3.5, 6)
+    await rerender()
+    const reset = el.querySelector<HTMLButtonElement>('[data-path-text-offset-auto]')!
+    expect(reset.disabled).toBe(false)
+    await act(async () => reset.click())
+    expect(o().baselineOffsetPt).toBeUndefined()
+    await rerender()
+    expect(el.querySelector<HTMLButtonElement>('[data-path-text-offset-auto]')!.disabled).toBe(true)
+  })
+
+  it('按住「离线」标签左右拖：整轮一条历史', async () => {
+    await seed([obj({ baselineOffsetPt: 1 })])
+    await mount(<PathTextSection objs={[o()]} />)
+    const label = [...el.querySelectorAll<HTMLElement>('[data-number-scrub]')].find((x) => x.textContent === '离线' || x.textContent === 'Offset')!
+    expect(label).toBeTruthy()
+    label.setPointerCapture = () => {}
+    label.hasPointerCapture = () => false
+    await act(async () => label.dispatchEvent(new PointerEvent('pointerdown', { clientX: 100, bubbles: true, pointerId: 1 })))
+    for (const x of [104, 108, 112]) await act(async () => window.dispatchEvent(new PointerEvent('pointermove', { clientX: x, bubbles: true })))
+    await act(async () => window.dispatchEvent(new PointerEvent('pointerup', { clientX: 112, bubbles: true })))
+    expect(o().baselineOffsetPt).toBeCloseTo(7, 6) // 1 + 12 px × 0.5
+    expect(past()).toBe(1)
   })
 })

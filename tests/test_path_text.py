@@ -129,7 +129,11 @@ def test_arc_length_of_a_quarter_circle_is_close_to_exact():
 # --------------------------------------------------------------- 落字
 def test_straight_path_places_glyphs_at_cumulative_advances(provider):
     o = _pt(
-        subpaths=[{"closed": False, "nodes": LINE}], text="Hello wd", h_mm=0.5, start_offset=0.1
+        subpaths=[{"closed": False, "nodes": LINE}],
+        text="Hello wd",
+        h_mm=0.5,
+        start_offset=0.1,
+        baseline_offset_pt=0,
     )
     _page, groups = _glyph_groups(o, provider)
     adv = _line(o, provider)
@@ -141,7 +145,7 @@ def test_straight_path_places_glyphs_at_cumulative_advances(provider):
         assert ex == pytest.approx(x0 + run, abs=1e-6)
         assert ang == pytest.approx(0, abs=1e-9)
         run += a
-    # 基线在路径上：所有字同一个 y，等于路径的 y（页面 50 mm 高，PDF y 向上）
+    # 离线 0 = 基线在路径上：所有字同一个 y，等于路径的 y（页面 50 mm 高，PDF y 向上）
     ys = {round(ey, 6) for _ex, ey, _a in org}
     assert ys == {round((50 - (o["y_mm"] + o["h_mm"] / 2)) * PT, 6)}
 
@@ -156,13 +160,76 @@ def test_alignment_pulls_the_run_back_from_the_start_point(provider, align, shif
 
 
 def test_flip_walks_the_path_backwards_with_glyphs_upside_down(provider):
-    o = _pt(subpaths=[{"closed": False, "nodes": LINE}], text="Ab", h_mm=0.5, flip=True)
+    o = _pt(
+        subpaths=[{"closed": False, "nodes": LINE}],
+        text="Ab",
+        h_mm=0.5,
+        flip=True,
+        baseline_offset_pt=0,
+    )
     _p, groups = _glyph_groups(o, provider)
     (x1, _y1, a1), (x2, _y2, _a2) = _origins(groups)
     right = (o["x_mm"] + o["w_mm"]) * PT
     assert x1 == pytest.approx(right, abs=1e-6)  # 第一个字从路径的终点起
     assert x2 < x1  # 往左走
     assert abs(a1) == pytest.approx(math.pi, abs=1e-9)  # 字头朝下（翻到路径另一侧）
+
+
+# --------------------------------------------------------------- 离线（字不碰线）
+def _line_y_pdf(o):
+    return (50 - (o["y_mm"] + o["h_mm"] / 2)) * PT
+
+
+def _descender(o, provider):
+    return plan.faces_for(provider, o.get("font_family"), False, False).primary.descender
+
+
+@pytest.mark.parametrize("flip", [False, True])
+def test_auto_offset_lifts_the_baseline_off_the_line(provider, flip):
+    line = [{"closed": False, "nodes": LINE}]
+    o = _pt(
+        subpaths=line, text="Hag", h_mm=0.5, line_width_pt=1.5, **({"flip": True} if flip else {})
+    )
+    want = 1.5 / 2 + 0.2 * 12 + -_descender(o, provider) * 12
+    assert pathtext.offset_pt(o, _descender(o, provider)) == pytest.approx(want)
+    assert plan.path_text_auto_offset(o, provider) == pytest.approx(want)
+    _p, groups = _glyph_groups(o, provider)
+    ys = {round(f, 6) for _e, f, _a in _origins(groups)}
+    # 没翻面：字在线上方（PDF y 向上 = 大）；翻面：字在线下方、头朝下
+    sign = -1 if flip else 1
+    assert ys == {round(_line_y_pdf(o) + sign * want, 6)}
+
+
+def test_manual_offset_wins_and_may_be_negative(provider):
+    o = _pt(
+        subpaths=[{"closed": False, "nodes": LINE}], text="Hag", h_mm=0.5, baseline_offset_pt=-2
+    )
+    _p, groups = _glyph_groups(o, provider)
+    assert {round(f, 6) for _e, f, _a in _origins(groups)} == {round(_line_y_pdf(o) - 2, 6)}
+    assert pathtext.offset_pt({**o, "baseline_offset_pt": float("nan")}, -0.2) == pytest.approx(
+        pathtext.auto_offset_pt(o, -0.2)
+    )
+
+
+@pytest.mark.parametrize("flip", [False, True])
+def test_auto_offset_keeps_every_glyph_clear_of_the_stroke(provider, flip):
+    """字形轮廓（与导出同一份）离线的描边外缘至少还有一点空：降部也不穿线。"""
+    lw = 2.0
+    o = _pt(
+        subpaths=[{"closed": False, "nodes": LINE}],
+        text="Hagypj (q)",
+        h_mm=0.5,
+        line_width_pt=lw,
+        **({"flip": True} if flip else {}),
+    )
+    paths = textoutline.outline_text(o, faces=provider)
+    line_y = o["y_mm"] + o["h_mm"] / 2
+    edge = lw / 2 / PT
+    near = []
+    for p in paths:
+        top, bottom = p["y"], p["y"] + p["h"]
+        near.append((line_y - edge) - bottom if not flip else top - (line_y + edge))
+    assert min(near) > 0.05 * 12 / PT, near
 
 
 def test_open_path_drops_glyphs_past_its_end(provider):
@@ -287,8 +354,19 @@ def _diff(a, b):
             "start_offset": 0.6,
         },
         {"text": "x² + y² = r²"},
+        {"line_width_pt": 2.5},
+        {"baseline_offset_pt": -3, "flip": True},
     ],
-    ids=["arc", "rotated", "flip-center", "bold-italic-sans", "circle", "superscript"],
+    ids=[
+        "arc",
+        "rotated",
+        "flip-center",
+        "bold-italic-sans",
+        "circle",
+        "superscript",
+        "auto-offset-thick-line",
+        "manual-negative-flip",
+    ],
 )
 def test_outline_preview_renders_like_the_export(provider, tmp_path, over):
     o = _pt(**over)
@@ -346,6 +424,16 @@ def test_outline_endpoint_accepts_path_text():
     body = r.get_json()
     assert r.status_code == 200 and body["ok"] is True
     assert body["results"][0]["paths"][0]["type"] == "path"
+    # 自动离线算出来是多少：属性栏「离线」框的占位数，与落字同一个式子
+    o = _pt(text="Hi", line_width_pt=1)
+    r = client.post("/api/text/outline", json={"objects": [o]}).get_json()
+    from tavotto.rendercore import facade
+
+    assert r["results"][0]["auto_offset_pt"] == pytest.approx(
+        plan.path_text_auto_offset(o, facade.provider()), abs=1e-4
+    )
+    t = client.post("/api/text/outline", json={"objects": [{**o, "type": "text"}]}).get_json()
+    assert "auto_offset_pt" not in t["results"][0]
 
 
 def test_copy_as_svg_endpoint_takes_path_text():

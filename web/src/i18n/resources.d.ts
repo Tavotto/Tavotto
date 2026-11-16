@@ -5524,6 +5524,7 @@ export default interface Resources {
       "flipV": "垂直翻转",
       "insertNewline": "插入换行",
       "matchFigureSize": "对齐图内字号",
+      "pathTextOffset": "修改路径文字离线",
       "pathTextStart": "移动路径文字起点",
       "resetTextProp": "恢复文字属性",
       "restoreVersion": "恢复历史版本",
@@ -5712,6 +5713,11 @@ export default interface Resources {
       "alignEnd": "到起点结束",
       "alignStart": "从起点开始",
       "flip": "翻到路径另一侧",
+      "offset": "离线",
+      "offsetAuto": "自动 {{value}}",
+      "offsetAutoBare": "自动",
+      "offsetReset": "自动",
+      "offsetTip": "基线离开线多远：0 贴线，负数压到线上；清空回到自动",
       "start": "起点",
       "title": "路径文字"
     },
@@ -7049,6 +7055,7 @@ export default interface Resources {
       "outlineText": "文字转轮廓（{{count}} 个）",
       "pasteObjects_other": "粘贴 {{count}} 个对象",
       "pasteStyle": "粘贴样式",
+      "pathTextGap": "调整路径文字离线",
       "pathTextStart": "移动路径文字起点",
       "pathfinder": {
         "crop": "裁剪",

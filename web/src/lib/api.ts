@@ -1961,6 +1961,10 @@ type ExportObjectBody =
       start_offset?: number
       text_align?: 'center' | 'end'
       flip?: true
+      /** 离线（pt）；缺席 = 自动 */
+      baseline_offset_pt?: number
+      /** 一起成组的那条线的描边宽度（pt）；0 不发 */
+      line_width_pt?: number
       rotation_deg?: number
     })
   | (ExportBox & ArtifactRequestFields & {
@@ -2460,7 +2464,8 @@ export const copyAsSvg = (objects: ExportObject[], w_mm: number, h_mm: number) =
 /** 文字转轮廓（ADR 0189）：每个文字对象一份结果，路径对象是页面 mm、不带 id */
 export interface TextOutlineResult {
   ok: boolean
-  results: ({ paths: unknown[] } | { error: string })[]
+  /** 路径文字另带 `auto_offset_pt`：自动离线算出来是多少（ADR 0190） */
+  results: ({ paths: unknown[]; auto_offset_pt?: number } | { error: string })[]
 }
 export const outlineText = (objects: ExportObject[]) =>
   jsonFetch<TextOutlineResult>('/api/text/outline', {

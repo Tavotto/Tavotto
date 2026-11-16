@@ -535,6 +535,13 @@ export interface PathTextObject extends ObjectBase {
   textAlign?: 'center' | 'end'
   /** 翻到路径另一侧（沿反方向走）；只写 true */
   flip?: true
+  /**
+   * 离线（pt）：基线离开路径中心线多远，沿字的上方量；0 = 基线贴在线上，负 = 往线上压。没写 = 自动（线宽 / 2 + 0.2 em +
+   * 降部深度，字不碰线；只在后端算，`rendercore/pathtext.auto_offset_pt`）
+   */
+  baselineOffsetPt?: number
+  /** 生成时一起成组的那条线（只用来取它的描边宽度算自动离线；那条线没了 / 隐藏 / 没描边 = 0） */
+  lineId?: string
 }
 
 /** `readPath` 读出来的锚点：手柄缺省已补成锚点本身 */

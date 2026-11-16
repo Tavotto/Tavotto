@@ -6,10 +6,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { literal } from '@/i18n'
 import { startDraw } from '@/canvas/interactions'
 import { visibleContentBounds } from '@/lib/exportCrop'
-import { pathTextExport } from '@/lib/exportPayload'
+import { lineWidthOf, pathTextExport, toExportObjects } from '@/lib/exportPayload'
 import { groupPathOf } from '@/lib/groupTree'
 import { reflectObject, scaleObject } from '@/lib/transform'
 import { emptyProject, type CanvasObject, type PathObject, type PathTextObject, type ShapeObject } from '@/types/document'
+import { duplicateSelected } from './actions'
 import { useDocumentStore } from './documentStore'
 import { useInteractionStore } from './interactionStore'
 import { commitPathText, createPathText, pathSourceAt, pathTextTarget, startOffsetAt } from './pathTextActions'
@@ -119,6 +120,7 @@ describe('创建', () => {
     expect(t.type).toBe('pathText')
     expect(t.subpaths).toEqual([two.subpaths[0]])
     expect(t.startOffset).toBe(0.3)
+    expect(t.lineId).toBe('src')
     expect([t.x, t.y, t.w, t.h]).toEqual([two.x, two.y, two.w, two.h])
     const gp = groupPathOf(t)
     expect(gp.slice(0, 2)).toEqual(['G0', 'G1'])
@@ -158,6 +160,20 @@ describe('创建', () => {
     startDraw(down(30, 60), 'text')
     up(30, 60)
     expect(objs().at(-1)!.type).toBe('text')
+  })
+})
+
+describe('复制时线的指向跟着走', () => {
+  it('和线一起复制：副本指副本的线；只复制字：仍指原来的线', async () => {
+    await seed([line('L', { groupId: 'G' }), pt({ lineId: 'L', groupId: 'G' })])
+    useSelectionStore.getState().set(['L', 'pt'])
+    duplicateSelected()
+    const [, , l2, t2] = objs() as [CanvasObject, CanvasObject, CanvasObject, PathTextObject]
+    expect(l2.type).toBe('path')
+    expect(t2.lineId).toBe(l2.id)
+    useSelectionStore.getState().set(['pt'])
+    duplicateSelected()
+    expect((objs().at(-1) as PathTextObject).lineId).toBe('L')
   })
 })
 
@@ -244,9 +260,25 @@ describe('导出载荷', () => {
       start_offset: undefined,
       text_align: undefined,
       flip: undefined,
+      baseline_offset_pt: undefined,
+      line_width_pt: undefined,
       rotation_deg: undefined,
     })
     const e = pathTextExport(pt({ startOffset: 0.4, textAlign: 'center', flip: true, rotationDeg: 15, fontFamily: 'sans-serif' })) as unknown as Record<string, unknown>
     expect([e.start_offset, e.text_align, e.flip, e.rotation_deg, e.font_family]).toEqual([0.4, 'center', true, 15, 'sans-serif'])
+    // 离线 0 也要发（0 = 贴线，不是「没写」）
+    expect((pathTextExport(pt({ baselineOffsetPt: 0 })) as unknown as Record<string, unknown>).baseline_offset_pt).toBe(0)
+  })
+
+  it('线宽取一起成组的那条线：看得见、有描边才算；线没了 / 隐藏 / 无描边 = 0（不发）', () => {
+    const t = pt({ lineId: 'L' })
+    const w = (objs: CanvasObject[]) => (toExportObjects([t], objs)[0] as unknown as Record<string, unknown>).line_width_pt
+    expect(w([t, line('L', { strokePt: 1.5 })])).toBe(1.5)
+    expect(w([t, rect('L', { strokePt: 2 })])).toBe(2)
+    expect(w([t, line('L', { strokePt: 1.5, hidden: true })])).toBeUndefined()
+    expect(w([t, line('L', { strokePt: 1.5, stroke: false })])).toBeUndefined()
+    expect(w([t, rect('L', { stroke: false, fill: '#ff0000' })])).toBeUndefined()
+    expect(w([t])).toBeUndefined()
+    expect(lineWidthOf(pt(), [line('L')])).toBe(0)
   })
 })

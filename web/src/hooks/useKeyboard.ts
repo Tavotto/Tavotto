@@ -43,6 +43,7 @@ import { useTimelineStore } from '@/store/timelineStore'
 import { isTimelineOpen, useUiStore, type Tool } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { fitStage, zoomToSelection } from '@/store/zoomToSelection'
+import { canNudgeGap, nudgePathTextGap } from '@/store/pathTextActions'
 
 
 const TOOL_KEYS: Record<string, Tool> = {
@@ -432,6 +433,15 @@ export function useKeyboard() {
         }
         return
       }
+      // 路径文字的离线（ADR 0190）：选区全是路径文字时 ⌥⇧↑ / ⌥⇧↓ 调字与线的间隙；别的选区照旧是 ⇧ 大步微调
+      if (e.altKey && e.shiftKey && !mod && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && !arrowOwnedByWidget(e)) {
+        if (canNudgeGap()) {
+          e.preventDefault()
+          nudgePathTextGap(e.key === 'ArrowUp' ? 1 : -1)
+          return
+        }
+      }
+
       if (e.key.startsWith('Arrow')) {
         // 方向键微调（ADR 0093）：图内编辑态推图内选中的元素，否则推画布选区；
         // 快速编辑里画布对象不动（`canvas/nudge.ts`）。归了微调就不让它冒出去滚界面

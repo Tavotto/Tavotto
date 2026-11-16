@@ -4,6 +4,7 @@ import { boundsOf, visualBounds, type Rect } from './geometry'
 import { remapGroupPath } from './groupTree'
 import { newId } from './id'
 import { rotateObjectAbout } from './transform'
+import { remapLineIds } from '@/lib/pathText'
 
 /**
  * 阵列（ADR 0185 M6）：把选区当一个整体，按网格或沿圆周复制几份。**纯函数**，结果只用已有字段（位置、旋转角），导出端没有新东西；
@@ -57,6 +58,8 @@ export function makeArray(objs: readonly CanvasObject[], spec: ArraySpec): Canva
   for (const off of arrayOffsets(box, spec)) {
     const groups = new Map<string, string>()
     const fresh = (g: string) => groups.get(g) ?? (groups.set(g, newId('g')), groups.get(g)!)
+    const renamed = new Map<string, string>()
+    const batch: CanvasObject[] = []
     for (const o of objs) {
       let copy = structuredClone(o) as CanvasObject
       if (spec.kind === 'radial' && spec.rotate && off.deg) {
@@ -64,11 +67,14 @@ export function makeArray(objs: readonly CanvasObject[], spec: ArraySpec): Canva
         if (canTurn) copy = rotateObjectAbout(copy, off.deg, center)
       }
       copy.id = newId(o.type[0])
+      renamed.set(o.id, copy.id)
       copy.x += off.dx
       copy.y += off.dy
       remapGroupPath(copy, fresh)
-      out.push(copy)
+      batch.push(copy)
     }
+    remapLineIds(batch, renamed)
+    out.push(...batch)
   }
   return out
 }
