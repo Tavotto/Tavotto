@@ -11,6 +11,7 @@ import {
   MousePointerClick,
   Shapes,
   Slash,
+  Pencil2,
   Spline,
   Square,
   Tags,
@@ -107,6 +108,13 @@ function Bar() {
   // 属性栏以覆盖层开着（< 1280 且没固定）时盖住画布右边一段：工具条在剩下看得见的那段里居中、宽度也只用那段，
   // 否则工具一多（钢笔）右端的「适应画布」就钻到属性栏底下点不着
   const coveredRight = useUiStore((s) => (s.rightOpen && isRightOverlay(s) ? s.rightWidth : 0))
+  // 钢笔 / 铅笔那一格：正在用哪一把；都没在用时显示上次用的（快捷键切过去的也算）
+  const [lastPathTool, setLastPathTool] = useState<'pen' | 'pencil'>('pen')
+  const pathTool = tool === 'pen' || tool === 'pencil' ? tool : null
+  useEffect(() => {
+    if (pathTool) setLastPathTool(pathTool)
+  }, [pathTool])
+  const shownPathTool = pathTool ?? lastPathTool
   const ActiveMark = activeMark?.icon
 
   // 动作按钮的字窄于 900 收成只有图标（名字仍在 aria-label 与读屏里）：画布窄时工具条不许比画布还宽
@@ -226,22 +234,51 @@ function Bar() {
       </Menu>
       <PresetsDialog open={presetsOpen} onClose={() => setPresetsOpen(false)} />
 
-      {/* 钢笔（ADR 0185 M1）：画自由路径，与形状不是同一种东西，单独一格、紧挨形状 */}
-      <Tip label={t('workspace:canvasTools.pen')} shortcut={keyOf('toolPen')}>
-        <Button
-          size="icon-lg"
-          active={tool === 'pen'}
-          aria-pressed={tool === 'pen'}
-          data-tool="pen"
-          data-toolbar-item
-          onMouseDown={noFocusOnPointer}
-          onClick={() => setTool(tool === 'pen' ? 'select' : 'pen')}
-          aria-label={t('workspace:canvasTools.pen')}
-          className={toolClass(tool === 'pen')}
+      {/*
+        钢笔与铅笔（ADR 0185 M1 / M8）：画自由路径的两把工具收在同一格（与「标注 ▾」同一个做法，不多一颗一级按钮）。
+        格子上显示正在用的那把；都没在用时显示上次用的（缺省钢笔）
+      */}
+      <Menu
+        width={188}
+        align="center"
+        pointerKeepsFocus
+        trigger={
+          <Button
+            size="icon-lg"
+            active={pathTool === 'pen' || pathTool === 'pencil'}
+            aria-pressed={tool === 'pen' || tool === 'pencil'}
+            data-toolbar-item
+            data-tool-menu="path"
+            data-tool={shownPathTool}
+            onMouseDown={noFocusOnPointer}
+            aria-label={t('workspace:canvasTools.pathTools')}
+            className={cn('w-auto gap-0.5 px-2', toolClass(tool === 'pen' || tool === 'pencil'))}
+          >
+            {shownPathTool === 'pencil' ? (
+              <Pencil2 size={ICON_SIZE.md} filled={tool === 'pencil'} />
+            ) : (
+              <Spline size={ICON_SIZE.md} filled={tool === 'pen'} />
+            )}
+            <ChevronDown size={ICON_SIZE.xs} className={tool === 'pen' || tool === 'pencil' ? undefined : 'text-ink-3'} />
+          </Button>
+        }
+      >
+        <MenuRadioGroup
+          value={tool === 'pen' || tool === 'pencil' ? tool : ''}
+          onValueChange={(v) => {
+            const next = v as 'pen' | 'pencil'
+            setLastPathTool(next)
+            setTool(tool === next ? 'select' : next)
+          }}
         >
-          <Spline size={ICON_SIZE.md} filled={tool === 'pen'} />
-        </Button>
-      </Tip>
+          <MenuRadioItem value="pen" icon={Spline} shortcut={keyOf('toolPen')} data-path-tool="pen">
+            {t('workspace:canvasTools.pen')}
+          </MenuRadioItem>
+          <MenuRadioItem value="pencil" icon={Pencil2} shortcut={keyOf('toolPencil')} data-path-tool="pencil">
+            {t('workspace:canvasTools.pencil')}
+          </MenuRadioItem>
+        </MenuRadioGroup>
+      </Menu>
 
       {/* 工具（模式）与一次性动作之间一道竖线：前者按下去「换了一种状态」，后者「做一件事就完」 */}
       <span aria-hidden className="mx-1 h-5 w-px shrink-0 bg-border" />

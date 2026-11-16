@@ -65,7 +65,7 @@ describe('浮动工具条', () => {
     expect(bar!.querySelectorAll('[data-tool="text"]')).toHaveLength(1)
     expect(bar!.querySelectorAll('[data-fit-canvas]')).toHaveLength(1)
     expect(bar!.querySelectorAll('[data-tool="pen"]')).toHaveLength(1)
-    // 选择 / 文字 / 标注 ▾ / 钢笔 / 序号 / 适应 = 六颗按钮
+    // 选择 / 文字 / 标注 ▾ / 钢笔与铅笔 ▾ / 序号 / 适应 = 六颗按钮
     expect(bar!.querySelectorAll('button')).toHaveLength(6)
   })
 
@@ -315,13 +315,32 @@ describe('标注菜单：一张形状列表 + 预设；钢笔单独一格', () =
     expect(useDocumentStore.getState().doc.objects).toHaveLength(0)
   })
 
-  it('钢笔：工具条上单独一格，点了切到钢笔，再点回到选择', async () => {
+  it('钢笔与铅笔收在同一格（不多一颗一级按钮）：菜单里两把单选、带键位；选了就切过去，再选一次回到选择；格子显示正在用 / 上次用的那把', async () => {
     await mount(<CanvasToolbar />)
-    const pen = q('[data-tool="pen"]')!
-    await act(async () => pen.click())
-    expect(useUiStore.getState().tool).toBe('pen')
-    expect(pen.getAttribute('aria-pressed')).toBe('true')
-    await act(async () => pen.click())
+    const trigger = () => q('[data-tool-menu="path"]')!
+    expect(trigger().getAttribute('data-tool')).toBe('pen')
+    const open = async () => {
+      await act(async () => {
+        trigger().dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, ctrlKey: false }))
+      })
+      return document.body.querySelector<HTMLElement>('[role="menu"]')!
+    }
+    let menu = await open()
+    const radios = [...menu.querySelectorAll<HTMLElement>('[role="menuitemradio"]')]
+    expect(radios.map((r) => r.dataset.pathTool)).toEqual(['pen', 'pencil'])
+    expect(radios[0].textContent).toContain('P')
+    expect(radios[1].textContent).toContain('N')
+    await act(async () => radios[1].click())
+    expect(useUiStore.getState().tool).toBe('pencil')
+    expect(trigger().getAttribute('aria-pressed')).toBe('true')
+    expect(trigger().getAttribute('data-tool')).toBe('pencil')
+    menu = await open()
+    await act(async () => menu.querySelector<HTMLElement>('[data-path-tool="pencil"]')!.click())
     expect(useUiStore.getState().tool).toBe('select')
+    // 没在用时显示上次用的那把
+    expect(trigger().getAttribute('data-tool')).toBe('pencil')
+    // 快捷键切到钢笔：格子跟着换
+    await act(async () => useUiStore.getState().setTool('pen'))
+    expect(trigger().getAttribute('data-tool')).toBe('pen')
   })
 })
