@@ -95,6 +95,7 @@ export const GROUPS: { id: string; rows: Row[] }[] = [
     rows: [
       row('tools', 'toolSelect', 'toolText', 'toolArrow', 'toolRect', 'toolEllipse', 'toolLine'),
       row('pen', 'toolPen'),
+      row('pencil', 'toolPencil'),
       row('anchors', 'addAnchor', 'deleteAnchor', 'convertAnchor'),
       row('pathJoin', 'joinPaths', 'averageAnchors'),
       row('compoundPath', 'makeCompound', 'releaseCompound'),

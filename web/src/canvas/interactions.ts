@@ -179,7 +179,7 @@ const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
  * 而且换不回来（原始 tool 已经没了）。
  */
 /** 拖一下就落一个对象的工具（钢笔是多次点击的状态机，另走 `canvas/penController`） */
-export type DrawTool = Exclude<Tool, 'select' | 'pen' | 'eyedropper'>
+export type DrawTool = Exclude<Tool, 'select' | 'pen' | 'pencil' | 'eyedropper'>
 
 const drawnToolMsg = (tool: DrawTool): UiMessage =>
   tool === 'text' || tool === 'arrow'
