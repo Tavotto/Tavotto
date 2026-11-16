@@ -1197,7 +1197,8 @@
     "failed": "Render failed (HTTP {{status}})",
     "previewPngFailed": "Couldn’t fetch the preview bitmap (HTTP {{status}})",
     "projectEnvSwitched": "Now using this project’s Python environment ({{path}})",
-    "timeout": "No response after {{minutes}} minutes, so the request was dropped. The service may still be running — try again later."
+    "timeout": "No response after {{minutes}} minutes, so the request was dropped. The service may still be running — try again later.",
+    "frameNotReady": "The figure is still rendering; wait for the exact frame before editing it."
   },
   "update": {
     "applyFailed": "Upgrade failed",
