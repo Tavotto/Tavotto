@@ -45,6 +45,7 @@ FIXED = {
     "G1-show-close-zero-figures": 1138,
     "G2-same-path-multi-figure": 1141,
     "G6-bytesio-close-zero-figures": 749,
+    "G7-main-guard-setup-skipped": 1964,
     # G4 / G5：行为按 ADR 0047 / 0084 有意保留，fix_pr 是诊断修复（#1297 / #1299），不是行为修复
     "G4-cwd-relative-reader-zero-figures": 1297,
     "G5-sandbox-empty-glob-empty-figure": 1299,
@@ -61,6 +62,7 @@ class Records(unittest.TestCase):
                 "G4-cwd-relative-reader-zero-figures",
                 "G5-sandbox-empty-glob-empty-figure",
                 "G6-bytesio-close-zero-figures",
+                "G7-main-guard-setup-skipped",
             ],
         )
 
@@ -223,6 +225,15 @@ class RealRepro(unittest.TestCase):
         self.assertEqual((native["exit_status"], native["figure_count"]), (0, 1), native)
         self.assertIsNone(tavotto.get("error"), tavotto)
         self.assertEqual(len(tavotto["stems"]), 1)
+        self.assertEqual(verdict["outcome"], "no_difference", verdict)
+
+    def test_g7_minimal_repro_is_fixed(self):
+        """G7 已由 #1964 修复：守卫里 main() 之前改 rcParams，原生标题 lw=3.0；Tavotto 以前走 main 入口跳过守卫、
+        标题是默认 lw=1.5，现在按 __main__ 跑，与原生一致。"""
+        verdict, native, tavotto = self.run_family("G7-main-guard-setup-skipped")
+        self.assertIsNone(tavotto.get("error"), tavotto)
+        self.assertEqual(tavotto["entry"], "__main__", tavotto)
+        self.assertEqual([s["titles"] for s in tavotto["stems"].values()], [["lw=3.0"]], tavotto)
         self.assertEqual(verdict["outcome"], "no_difference", verdict)
 
     # pyarrow 只在 Guardian job 里装（产品依赖不含它）；别的 job 跑不出原生那张图
