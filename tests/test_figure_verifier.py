@@ -766,3 +766,100 @@ def test_relabel_scenarios_on_the_real_worker(built):
     assert (c.verdict, c.reason_code) == ("failed", "subject_removed")
     swap = _by_gid(figureverify.data_unchanged(_ok(manifests, "FB-S11__n.swap"), base))
     assert {(c.verdict, c.reason_code) for c in swap.values()} == {("failed", "label_swapped")}
+
+
+# ---------------------------------------------------------------------------
+# data_matches_expected：可选 gid（#1877 / ADR 0178）
+# ---------------------------------------------------------------------------
+
+
+def _expected_element(
+    gid: str,
+    label: str | None = None,
+    *,
+    sha: str = "a" * 64,
+    shape: tuple[int, ...] = (2, 2),
+    part: str = "xy",
+    status: str = "ok",
+) -> dict:
+    editable = [{"prop": "label", "value": label}] if label is not None else []
+    fingerprint = {"status": status}
+    if status == "ok":
+        fingerprint["parts"] = {part: {"sha256": sha, "shape": list(shape), "finite": 4}}
+    return {"gid": gid, "editable": editable, "data_fingerprint": fingerprint}
+
+
+def _digest(sha: str = "a" * 64, shape: tuple[int, ...] = (2, 2)) -> dict:
+    return {"sha256": sha, "shape": list(shape), "finite": 4}
+
+
+def test_expected_gid_resolves_duplicate_labels():
+    man = {
+        "elements": [
+            _expected_element("axes_0.lines_0", "曲线 “A”", sha="a" * 64),
+            _expected_element("axes_0.lines_1", "曲线 “A”", sha="b" * 64),
+        ]
+    }
+    got = figureverify.data_matches_expected(
+        man,
+        [{"label": "s1", "gid": "axes_0.lines_1", "part": "xy", "digest": _digest("b" * 64)}],
+    )
+    assert [(c.id, c.verdict) for c in got] == [("data.s1", "verified")]
+
+    # 原 label 路径不变：同名两个元素仍然 series_missing，不会因为 gid 能力而变绿。
+    got = figureverify.data_matches_expected(
+        man, [{"label": "曲线 “A”", "part": "xy", "digest": _digest()}]
+    )
+    assert (got[0].verdict, got[0].reason_code) == ("failed", "series_missing")
+
+
+def test_expected_gid_matches_an_element_without_label():
+    man = {"elements": [_expected_element("axes_0.errorbar_0", None, sha="c" * 64)]}
+    got = figureverify.data_matches_expected(
+        man,
+        [{"label": "e1", "gid": "axes_0.errorbar_0", "part": "xy", "digest": _digest("c" * 64)}],
+    )
+    assert got[0].verdict == "verified"
+
+
+def test_unknown_gid_is_series_missing_and_reports_the_gid():
+    got = figureverify.data_matches_expected(
+        {"elements": []},
+        [{"label": "s1", "gid": "axes_0.lines_9", "part": "xy", "digest": _digest()}],
+    )
+    assert (got[0].verdict, got[0].reason_code) == ("failed", "series_missing")
+    assert got[0].observed["gid"] == "axes_0.lines_9"
+
+
+def test_gid_pointing_at_a_non_data_element_is_series_missing():
+    man = {"elements": [{"gid": "axes_0.lines_0", "editable": []}]}
+    got = figureverify.data_matches_expected(
+        man,
+        [{"label": "s1", "gid": "axes_0.lines_0", "part": "xy", "digest": _digest()}],
+    )
+    assert (got[0].verdict, got[0].reason_code) == ("failed", "series_missing")
+
+
+def test_gid_over_budget_is_unknown_not_verified():
+    man = {"elements": [_expected_element("axes_0.lines_0", "a", status="over_budget")]}
+    got = figureverify.data_matches_expected(
+        man,
+        [{"label": "s1", "gid": "axes_0.lines_0", "part": "xy", "digest": _digest()}],
+    )
+    assert (got[0].verdict, got[0].reason_code) == ("unknown", "not_measured")
+
+
+def test_label_path_without_gid_is_unchanged():
+    man = {"elements": [_expected_element("axes_0.lines_0", "voltage_mV", sha="d" * 64)]}
+    got = figureverify.data_matches_expected(
+        man, [{"label": "voltage_mV", "part": "xy", "digest": _digest("d" * 64)}]
+    )
+    assert [(c.id, c.verdict) for c in got] == [("data.voltage_mV", "verified")]
+
+
+def test_gid_only_item_uses_gid_as_the_check_id():
+    man = {"elements": [_expected_element("axes_0.lines_0", "a", sha="e" * 64)]}
+    got = figureverify.data_matches_expected(
+        man, [{"gid": "axes_0.lines_0", "part": "xy", "digest": _digest("e" * 64)}]
+    )
+    assert [(c.id, c.verdict) for c in got] == [("data.axes_0.lines_0", "verified")]

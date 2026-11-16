@@ -467,6 +467,17 @@ function ScriptRow({
           >
             {busy ? sc('cancel') : sc(entry.registered ? 'rerun' : 'run')}
           </MenuItem>
+          {viaPanel && (
+            <MenuItem
+              icon={Settings}
+              data-script-inputs={entry.script}
+              onSelect={() => void useProjectPreparationStore.getState().open(
+                scriptTarget(entry.script, { reuse: true }), { run: false },
+              )}
+            >
+              {translate('prep.inputs.title', { ns: 'workspace' })}
+            </MenuItem>
+          )}
           {hasAnswers && (
             <MenuItem
               icon={CornerDownLeft}

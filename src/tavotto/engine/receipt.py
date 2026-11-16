@@ -54,8 +54,13 @@ import hashlib
 import json
 import os
 import re
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import execspec, executionfact, figcapture
+
+if TYPE_CHECKING:
+    from .inputdeclaration import InputArchive
 
 #: 回执形态的版本。加可选字段不升；改语义 / 删字段才升。
 RECEIPT_VERSION = 1
@@ -228,6 +233,14 @@ class ExecutionReceipt:
     #: 执行实例的私有键：native 会话 id + 屏障代次；safe 实际执行 id（旧 worker 留空）。
     #: 两次启动或用户代码续跑后的不同 Figure 不能得到同一个 `receipt_id`。
     instance: str = ""
+    #: Optional evidence captured around this actual execution; never current binding.
+    #: Only the path-free revision is public. No field is emitted for old executions.
+    captured_inputs: dict | None = None
+    #: Verified bytes in the control plane's own cache. Never serialized or
+    #: included in either identity; the public revision already names the graph.
+    captured_input_archive: InputArchive | None = dataclasses.field(
+        default=None, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         if self.profile not in execspec.PROFILES:
@@ -250,6 +263,32 @@ class ExecutionReceipt:
             raise ValueError("被拒的自报不能同时留在 runtime 里")
         if self.binding is not None and not isinstance(self.binding, dict):
             raise ValueError("binding 必须是 None 或对象")
+        if self.captured_inputs is not None:
+            from . import inputdeclaration
+
+            checked = inputdeclaration.validate_public_fact(self.captured_inputs)
+            if checked is None:
+                raise ValueError("Invalid captured input declaration")
+            object.__setattr__(self, "captured_inputs", execspec.FrozenDict(checked))
+        if self.captured_input_archive is not None:
+            from . import inputdeclaration
+
+            archive = self.captured_input_archive
+            if (
+                not isinstance(archive, inputdeclaration.InputArchive)
+                or self.captured_inputs is None
+            ):
+                raise ValueError("Invalid captured input archive")
+            try:
+                graph = inputdeclaration.validate_graph(
+                    json.loads(archive.graph_bytes),
+                    expected_revision=self.captured_inputs["revision"],
+                )
+                canonical = inputdeclaration.canonical_graph_bytes(graph)
+            except (ValueError, TypeError, UnicodeError) as exc:
+                raise ValueError("Invalid captured input archive") from exc
+            if canonical != archive.graph_bytes:
+                raise ValueError("Invalid captured input archive")
 
     # ---------------- 完备性 ----------------
     @property
@@ -337,6 +376,8 @@ class ExecutionReceipt:
             # 数据身份：换一份数据就是另一次执行（同名干扰 / 预检后被改都在这一维上分开）
             "inputs": sorted(self.observed_files().items()),
         }
+        if self.captured_inputs is not None:
+            payload["captured_inputs"] = dict(self.captured_inputs)
         return _sha(payload)
 
     def private_invalidation_key(self) -> str:
@@ -370,7 +411,7 @@ class ExecutionReceipt:
         身份 / 完备性 / generation / source revision / 解释器版本 / 关键包版本 / 数据绑定核对 / 观察的完备性。"""
         rt = self.runtime or {}
         check = self.binding_check()
-        return {
+        out = {
             "receipt_identity": self.public_identity(),
             "receipt_id": self.receipt_id,
             "completeness": self.completeness,
@@ -395,6 +436,9 @@ class ExecutionReceipt:
                 "unobserved": len(check["unobserved"]),
             },
         }
+        if self.captured_inputs is not None:
+            out["captured_inputs"] = dict(self.captured_inputs)
+        return out
 
     # ---------------- 序列化 ----------------
     def to_payload(self, *, include_private: bool = False) -> dict:
@@ -440,6 +484,8 @@ class ExecutionReceipt:
             "binding_check": self.binding_check(),
             "descriptors": [dict(d) for d in self.descriptors],
         }
+        if self.captured_inputs is not None:
+            out["captured_inputs"] = dict(self.captured_inputs)
         if include_private:
             out["private_invalidation_key"] = self.private_invalidation_key()
             out["interpreter"] = self.interpreter
@@ -508,6 +554,52 @@ def from_worker(
         if isinstance(build_resp, dict) and "execution_id" in build_resp
         else getattr(worker, "execution_id", None)
     )
+    captured_inputs, captured_input_archive = None, None
+    latest_id = getattr(worker, "execution_id", None) or getattr(
+        worker, "last_build_execution_id", None
+    )
+    if spec.profile == execspec.PROFILE_NATIVE:
+        # Native continues can reach a newer barrier after this response was
+        # returned. Only an explicitly stamped response belongs to this fact.
+        if isinstance(build_resp, dict) and build_resp.get("execution_id") == latest_id:
+            captured_inputs, captured_input_archive = _native_captured_inputs(
+                worker,
+                spec,
+                script=spec.target,
+                runtime=runtime,
+                rejected=rejected,
+                pid_check=pid_check,
+                expected_execution_id=latest_id,
+            )
+    elif (
+        runtime is not None
+        and rejected is None
+        and pid_check in (PID_CHECK_OK, PID_CHECK_LAUNCHER)
+        and executionfact.valid_id(execution_id)
+        and execution_id == latest_id
+        and not getattr(worker, "execution_observation_unknown", False)
+    ):
+        from . import inputdeclaration
+
+        fact = inputdeclaration.validate_fact(
+            getattr(worker, "last_captured_inputs", None), execution_id=execution_id
+        )
+        expected_scope = {
+            "script": spec.target,
+            "cwd_mode": spec.cwd_mode,
+            "run_config": spec.run_config or None,
+        }
+        if fact is not None and fact["declaration"]["scope"] == expected_scope:
+            captured_inputs = inputdeclaration.public_fact(fact)
+            descriptor = getattr(worker, "last_captured_input_archive", None)
+            captured_input_archive = _verified_input_archive(worker, fact, descriptor)
+            if descriptor is not None and (
+                execution_id != getattr(worker, "execution_id", None)
+                or getattr(worker, "execution_observation_unknown", False)
+                or fact != getattr(worker, "last_captured_inputs", None)
+                or descriptor != getattr(worker, "last_captured_input_archive", None)
+            ):
+                captured_inputs, captured_input_archive = None, None
     return ExecutionReceipt(
         profile=spec.profile,
         control_plane=control_plane,
@@ -526,6 +618,8 @@ def from_worker(
         launcher=_launcher_public(worker),
         session_env=_session_env(worker),
         instance=execution_id if executionfact.valid_id(execution_id) else "",
+        captured_inputs=captured_inputs,
+        captured_input_archive=captured_input_archive,
     )
 
 
@@ -558,6 +652,80 @@ def worker_pid(worker) -> int | None:
 #: native 会话不记 argv 的**值**（ADR 0021 §4：里面可能有路径 / 样本名 / 凭据），只记数量；
 #: 回执的 spec 里每个位置放这个占位串——数量进身份，值不进。
 NATIVE_ARGV_PLACEHOLDER = "<argv>"
+
+
+def _verified_input_archive(worker, fact, descriptor):
+    """Read only an opaque key below the control plane's known output cache."""
+    out_dir = getattr(worker, "out_dir", None)
+    if descriptor is None or out_dir is None:
+        return None
+    from . import inputdeclaration, projectcopy
+
+    if not isinstance(out_dir, (str, Path)) or not os.path.isabs(out_dir):
+        return None
+    return inputdeclaration.verify_archive(
+        descriptor,
+        fact,
+        archive_root=Path(out_dir) / inputdeclaration.ARCHIVE_DIRNAME,
+        limits={"max_files": projectcopy.MAX_FILES, "max_bytes": projectcopy.MAX_BYTES},
+    )
+
+
+def _native_captured_inputs(
+    session,
+    spec,
+    *,
+    script,
+    runtime,
+    rejected,
+    pid_check,
+    expected_execution_id=None,
+    expected_epoch=None,
+):
+    """One projection for both existing native receipt entry points."""
+    reader = getattr(session, "captured_inputs_for_receipt", None)
+    execution_id = getattr(session, "execution_id", None)
+    epoch = getattr(session, "snapshot_epoch", None)
+    if not (
+        callable(reader)
+        and runtime is not None
+        and rejected is None
+        and pid_check in (PID_CHECK_OK, PID_CHECK_LAUNCHER)
+        and spec.target_kind == execspec.TARGET_SCRIPT
+        and executionfact.valid_id(execution_id)
+        and (expected_execution_id is None or expected_execution_id == execution_id)
+        and (expected_epoch is None or expected_epoch == epoch)
+    ):
+        return None, None
+    from . import inputdeclaration
+
+    fact = inputdeclaration.validate_fact(reader(script=script), execution_id=execution_id)
+    if fact is None:
+        return None, None
+    scope = fact["declaration"]["scope"]
+    mode = scope["cwd_mode"]
+    if (
+        scope["script"] == script
+        and scope["run_config"] == (spec.run_config or None)
+        and mode in (execspec.CWD_PROJECT, execspec.CWD_PROJECT_ROOT)
+        and (spec.owner == execspec.OWNER_DESKTOP or not spec.argv)
+        and os.path.normcase(os.path.abspath(spec.cwd))
+        == os.path.normcase(os.path.abspath(execspec.desktop_cwd(spec.project_root, script, mode)))
+    ):
+        archive_reader = getattr(session, "captured_input_archive_for_receipt", None)
+        descriptor = archive_reader(script=script) if callable(archive_reader) else None
+        archive = _verified_input_archive(session, fact, descriptor)
+        # Verification may stream large files. A release, EOF or newer barrier
+        # during that IO must not lend this evidence to a different Figure.
+        if (
+            execution_id != getattr(session, "execution_id", None)
+            or epoch != getattr(session, "snapshot_epoch", None)
+            or reader(script=script) != fact
+            or (callable(archive_reader) and archive_reader(script=script) != descriptor)
+        ):
+            return None, None
+        return inputdeclaration.public_fact(fact), archive
+    return None, None
 
 
 def from_native_session(session, script: str, *, grant: dict | None = None) -> ExecutionReceipt:
@@ -597,6 +765,16 @@ def from_native_session(session, script: str, *, grant: dict | None = None) -> E
     descriptors = tuple(
         d for d in (getattr(session, "descriptors", None) or []) if isinstance(d, dict)
     )
+    snapshot_epoch = getattr(session, "snapshot_epoch", 0)
+    captured_inputs, captured_input_archive = _native_captured_inputs(
+        session,
+        spec,
+        script=script,
+        runtime=runtime,
+        rejected=rejected,
+        pid_check=pid_check,
+        expected_epoch=snapshot_epoch,
+    )
     return ExecutionReceipt(
         profile=execspec.PROFILE_NATIVE,
         control_plane=CONTROL_PLANE_NATIVE,
@@ -611,11 +789,9 @@ def from_native_session(session, script: str, *, grant: dict | None = None) -> E
         descriptors=descriptors,
         runtime_rejected=rejected,
         pid_check=pid_check,
-        instance=(
-            str(getattr(session, "session_id", "") or "")
-            + ":"
-            + str(getattr(session, "snapshot_epoch", 0))
-        ),
+        instance=(str(getattr(session, "session_id", "") or "") + ":" + str(snapshot_epoch)),
+        captured_inputs=captured_inputs,
+        captured_input_archive=captured_input_archive,
     )
 
 
