@@ -87,8 +87,41 @@ def test_relative_path_read_from_a_sandbox_cwd_resolves_against_the_roots(
     other = tmp_path / "sandbox"
     other.mkdir()
     monkeypatch.chdir(other)  # 异常处理时 cwd 已不是读文件时的那个
-    fact = bridgeboot.image_format_facts(exc, [str(root)])
+    # 不给沙盒：换算不出来就不猜
+    assert bridgeboot.image_format_facts(exc, [str(root)]) == {}
+    fact = bridgeboot.image_format_facts(
+        exc, [str(root)], sandbox_dir=str(other), script_dir=str(root)
+    )
     assert (fact["file"], fact["claimed"], fact["actual"]) == ("cell.png", "PNG", "JPEG")
+    # 沙盒里有这份文件（脚本自己写的）：那次 open 读的就是它，不换算到项目里那份
+    (other / "cell.png").write_bytes(b"not an image at all")
+    assert (
+        bridgeboot.image_format_facts(
+            exc, [str(root)], sandbox_dir=str(other), script_dir=str(root)
+        )
+        == {}
+    )
+
+
+def test_relative_read_after_chdir_out_of_the_sandbox_never_blames_a_project_file(
+    tmp_path, root, monkeypatch
+):
+    """#1966 Codex P2：脚本 chdir 进项目外的数据目录、读那里一个坏掉的 photo.png；项目里恰好有一张 JPEG 存成的
+    photo.png——它从没被读过，不能点名它。"""
+    _save_as(root / "photo.png", "JPEG")
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "photo.png").write_bytes(b"not an image, not sniffable")
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    monkeypatch.chdir(external)
+    err = _png_error(Path("photo.png"))  # 真 PIL 的 SyntaxError，帧里是相对路径
+    assert (
+        bridgeboot.image_format_facts(
+            err, [str(root)], sandbox_dir=str(sandbox), script_dir=str(root)
+        )
+        == {}
+    )
 
 
 def test_script_dir_counts_as_inside(tmp_path, root):
@@ -295,3 +328,69 @@ def test_native_bridge_carries_the_fact(tmp_path):
         "actual": "JPEG",
         "ext": "png",
     }
+
+
+EARLY_SCRIPT = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+img = plt.imread({path!r})
+"""
+
+
+def test_native_bridge_carries_the_fact_on_exit_before_any_figure(tmp_path):
+    """#1966 Codex P2：脚本在建第一张图之前就读图失败，桥不停在 script_end 屏障上——事实随 exit 事件带走。"""
+    if not _user_has_pil():
+        pytest.skip("用户解释器没有 PIL")
+    from tavotto.engine import bridge
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    _save_as(proj / "photo.png", "JPEG")
+    script = bridgekit.write(proj / "fig.py", EARLY_SCRIPT.format(path=str(proj / "photo.png")))
+    spec = bridge.spec_for(
+        str(script), interpreter=bridgekit.USER_PYTHON, cwd=str(proj), project_root=str(proj)
+    )
+    saved = os.environ.pop("PYTHONPATH", None)
+    try:
+        sess = bridge.BridgeSession(spec, out_dir=tmp_path / "out")
+        sess.start()
+        try:
+            ended = sess.wait_event("exit")
+        finally:
+            sess.close()
+    finally:
+        if saved is not None:
+            os.environ["PYTHONPATH"] = saved
+    assert ended["image_format_mismatch"] == {
+        "file": "photo.png",
+        "claimed": "PNG",
+        "actual": "JPEG",
+        "ext": "png",
+    }
+
+
+def test_native_exit_without_a_barrier_maps_to_the_stable_code():
+    """父进程侧：没到屏障就结束的 native 会话，exit 带来的事实换成同一个稳定码；畸形事实照旧是 script_error。"""
+    from types import SimpleNamespace
+
+    from tavotto import app
+
+    def session(fact):
+        return SimpleNamespace(
+            terminal_error=None,
+            cancelled=False,
+            owned=None,
+            exit_code=1,
+            exception_category="other",
+            image_format_mismatch=lambda: fact,
+        )
+
+    err = app._native_run_error(
+        session({"file": "photo.png", "claimed": "PNG", "actual": "JPEG", "ext": "png"})
+    )
+    assert err.code == engine_pool.IMAGE_FORMAT_MISMATCH_CODE
+    assert err.extra["image_format_mismatch"]["actual"] == "JPEG"
+    bogus = app._native_run_error(session({"claimed": "PNG", "actual": "PNG", "ext": "png"}))
+    assert bogus.code == engine_pool.SCRIPT_ERROR_CODE
+    assert app._native_run_error(session(None)).code == engine_pool.SCRIPT_ERROR_CODE

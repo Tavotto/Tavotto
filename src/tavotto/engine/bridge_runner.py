@@ -1657,6 +1657,12 @@ def main(argv: list | None = None) -> int:
             figures=figures,
             **({"exception_category": category} if category else {}),
             **({"missing_read": run.missing_read} if run.missing_read else {}),
+            # 没到 script_end 屏障就退出（脚本在建第一张图之前就读图失败）：这条事实只能随 exit 带走（#1966 Codex P2）
+            **(
+                {"image_format_mismatch": run.script_error["image_format_mismatch"]}
+                if run.script_error and run.script_error.get("image_format_mismatch")
+                else {}
+            ),
         )
         run.control.close()
     return exit_code

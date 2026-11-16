@@ -12368,6 +12368,15 @@ def _native_run_error(session):
         traceback_text=tail,
         code=engine_pool.SCRIPT_ERROR_CODE if session.exit_code else "no_figure_captured",
     )
+    if failure.code == engine_pool.SCRIPT_ERROR_CODE:
+        # 脚本在建第一张图之前就读图失败（没到屏障）：图片内容与扩展名不符的事实随 exit 带来，与屏障出口同一个稳定码
+        getter = getattr(session, "image_format_mismatch", None)
+        fact = getter() if callable(getter) else None
+        mismatch = engine_pool.image_format_error(
+            str(failure), tail, {"image_format_mismatch": fact} if fact else None
+        )
+        if mismatch is not None:
+            return mismatch
     category = getattr(session, "exception_category", None)
     if failure.code == engine_pool.SCRIPT_ERROR_CODE and category:
         failure.extra["exception_category"] = category

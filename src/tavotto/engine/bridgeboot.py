@@ -888,7 +888,9 @@ def _path_candidates(chain: list) -> list[str]:
     return out
 
 
-def image_format_facts(exc: BaseException, project_roots=(), sensitive_tokens=()) -> dict:
+def image_format_facts(
+    exc: BaseException, project_roots=(), sensitive_tokens=(), *, sandbox_dir=None, script_dir=None
+) -> dict:
     """失败是不是「图片内容与扩展名不符」（解码器按扩展名选，文件里其实是别的格式）：是则
     `{"file"?: 项目相对显示名, "claimed": 扩展名所属格式, "actual": 嗅探到的格式, "ext": 扩展名}`，否则 `{}`。
 
@@ -896,7 +898,12 @@ def image_format_facts(exc: BaseException, project_roots=(), sensitive_tokens=()
     `SyntaxError`）；PIL / `matplotlib.image` 帧里取得到被读的文件，且它在 `project_roots`（项目根、脚本目录）之内——
     项目外的一律不报；读文件前 16 字节嗅探出的格式与扩展名所属格式不同。一致 / 嗅探不出 / 读不了 / 任何意外都回 `{}`，
     绝不盖掉原来的脚本错误。敏感运行（`sensitive_tokens` 非空）里文件名与任一 token 有关（casefold 子串，任一方向）就不带
-    `file`，只带格式。"""
+    `file`，只带格式。
+
+    相对路径的换算只镜像 safe worker 的只读回退（`figcapture.install_relative_read_fallback`）这**一条**规则：给了
+    `sandbox_dir` / `script_dir`，相对路径按此刻的 cwd 解出来落在沙盒里、而沙盒里没有这个文件——那次 open 一定被回退换成了
+    `<脚本目录>/<相对路径>`，就看那一份。脚本切到别的目录、沙盒里有这份文件、或 native（不传 sandbox_dir）都不换算：
+    换算不出来的不猜，宁可回 `{}` 保留原来的错误，也不点名一张没被读过的图（#1966 Codex P2）。"""
     try:
         chain: list = []
         cur, seen = exc, 0
@@ -922,15 +929,19 @@ def image_format_facts(exc: BaseException, project_roots=(), sensitive_tokens=()
         for candidate in _path_candidates(chain):
             real = os.path.realpath(os.path.abspath(candidate))
             base = inside(real)
-            if base is None and not os.path.isabs(candidate):
-                # 相对路径在沙盒 cwd 里解到了 Tavotto 自己的副本（或已不在）：按项目根 / 脚本目录再解一次；
-                # 副本还在的话，两份内容的错配结论必须一致才算同一个文件
-                theirs = image_mismatch_of_file(real) if os.path.isfile(real) else None
-                for r in roots:
-                    alt = os.path.realpath(os.path.join(r, candidate))
-                    if inside(alt) and (theirs is None or image_mismatch_of_file(alt) == theirs):
+            if (
+                base is None
+                and not os.path.isabs(candidate)
+                and sandbox_dir
+                and script_dir
+                and not os.path.lexists(os.path.abspath(candidate))
+            ):
+                box = os.path.realpath(sandbox_dir)
+                here = os.path.realpath(os.path.abspath(candidate))
+                if here.startswith(box.rstrip(os.sep) + os.sep):
+                    alt = os.path.realpath(os.path.join(script_dir, candidate))
+                    if inside(alt) and os.path.isfile(alt):
                         real, base = alt, inside(alt)
-                        break
             if base is None:
                 continue
             mismatch = image_mismatch_of_file(real)

@@ -2651,6 +2651,9 @@ class Worker(wireproto.V1Handler):
                 exc,
                 (str(self.figures_dir), str(self.script.parent)),
                 self.script_argv if self.sensitive_argv else (),
+                # 只有沙盒 cwd 才有只读回退可镜像；「在脚本目录里运行」时相对路径本来就指向项目
+                sandbox_dir=str(self.sandbox) if self.workdir is None else None,
+                script_dir=str(self.script.parent),
             )
         except Exception:  # noqa: BLE001
             return {}
