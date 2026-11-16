@@ -268,8 +268,8 @@ _STRUCTURAL_NAMES: dict[str, str] = {
     "arrow_patch": "箭头",
     "legend": "图例",
     "colorbar": "色条",
-    "axes": "坐标轴",
-    "axes3d": "坐标轴",
+    "axes": "子图",
+    "axes3d": "子图",
 }
 
 
