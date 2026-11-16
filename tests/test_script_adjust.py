@@ -22,8 +22,19 @@ from pathlib import Path
 import pymupdf
 import pytest
 
-from support.invariant_figures import ENTRY, LIBRARY, SCRIPT_NAME, STEMS
-from support.overridesample import _sample_value
+from support.invariant_figures import (
+    ENTRY as INV_ENTRY,
+    LIBRARY as INV_LIBRARY,
+    SCRIPT_NAME as INV_SCRIPT,
+    STEMS,
+)
+from support.overridesample import _ENABLERS, _SAMPLE_OVERRIDE, _sample_value
+from support.scriptadjust_figures import (
+    ENTRY as ADJ_ENTRY,
+    LIBRARY as ADJ_LIBRARY,
+    SCRIPT_NAME as ADJ_SCRIPT,
+    STEMS as ADJ_STEMS,
+)
 from tavotto.engine import (
     exportjob,
     exportreq,
@@ -189,7 +200,7 @@ def test_tick_fonts_go_through_tick_params():
 
 def test_block_only_carries_the_helpers_it_uses():
     out = _build(b"import os\n").data.decode()
-    assert "_legend_refont" not in out and "_title_to" not in out
+    assert "_legend_rebuild" not in out and "_title_to" not in out
     assert "def _install" in out
 
 
@@ -305,41 +316,210 @@ _NOT_IN_THE_SWEEP = {"visible", "invert_x", "invert_y", "xscale", "yscale"}
 #: 3D 图逐字段单独都等价，所有字段一次全改才超像素阈值（max 22 / 255），同样由验证拦下。
 _FLAT_STEMS = [s for s in STEMS if not s.startswith("Inv3D")]
 
+#: 扫描的图：(图库, stem)。`invariant_figures` 是全套不变式共用的那份（不往里加图，别的用例写死了编号），
+#: 导出脚本自己要的图（箭头、带框文字、多列图例……）加在 `scriptadjust_figures` 里。
+_LIBRARIES = {
+    "inv": (INV_LIBRARY, INV_SCRIPT, INV_ENTRY),
+    "adj": (ADJ_LIBRARY, ADJ_SCRIPT, ADJ_ENTRY),
+}
+_SWEEP = [("inv", s) for s in _FLAT_STEMS] + [("adj", s) for s in ADJ_STEMS]
 
-@real_worker
-@pytest.mark.parametrize("stem", _FLAT_STEMS)
-def test_every_writable_field_replays_identically(tmp_path, stem):
-    """夹具里每张图上所有写得进脚本的字段**一起**改，新脚本重放必须与热态几何 + 像素一致。"""
+
+#: 结构化字段（pair / order / number_list）`_sample_value` 挑不出值，在这里按 prop 给一个明显不同的值。
+#: 写进 `WRITES` 的结构化键要么在这里有采样，要么在 `_DEDICATED` 里点名专用用例。
+def _widen(field):
+    lo, hi = (float(v) for v in field["value"])
+    return [lo - (hi - lo) * 0.25, hi + (hi - lo) * 0.1]
+
+
+_STRUCTURED: dict[str, object] = {
+    "xlim": _widen,
+    "ylim": _widen,
+    # 锚点：图例的右上角钉在子图里的一个点上（预设 loc 是 upper right / left，两种都看得出挪动）
+    "loc_anchor": [0.8, 0.7],
+}
+
+#: 不进整图扫描的键（`_NOT_IN_THE_SWEEP`），按组单独扫：同组一起改，组与组之间不叠。
+#: 坐标范围（pair）放进整图扫描会被 scale 的副作用搅乱，所以也自成一组。
+_HELD_OUT = {
+    "visible": {"visible"},
+    "scale": {"xscale", "yscale"},
+    "lim": {"xlim", "ylim"},
+}
+_HELD_OUT_PROPS = set().union(*_HELD_OUT.values())
+
+#: 扫描采不到（或刻意不进扫描）的写得进脚本的键 → 证明它等价的专用用例名。
+#: 覆盖断言（`test_every_writable_key_is_swept_or_named`）要求 `WRITES` 的每个键二者居一。
+_DEDICATED: dict[tuple[str, str], str] = {
+    ("text", "pos_frac"): "test_moves_on_a_tight_cropped_figure_land_where_the_editor_shows",
+    ("legend", "loc_frac"): "test_moves_on_a_tight_cropped_figure_land_where_the_editor_shows",
+    ("text", "fontfamily"): "test_font_edits_replay_identically",
+    ("legend_text", "fontfamily"): "test_font_edits_replay_identically",
+    ("ticks", "fontfamily"): "test_font_edits_replay_identically",
+    ("axes", "invert_x"): "test_inverted_axes_replay_identically",
+    ("axes", "invert_y"): "test_inverted_axes_replay_identically",
+}
+
+
+def _sweep_patches(
+    man: dict, only: set[tuple[str, str]] | None = None, props: set[str] | None = None
+):
+    """(patches, 采到的 (cls, prop))：图上每个写得进脚本的字段挑一个不同的值，带上它的使能项。
+
+    `only` 只采这几个键（定位用：`TAVOTTO_SWEEP_ONLY=legend.ncol,axes.grid_color`）；
+    `props` 给了就只采这些 prop（`_HELD_OUT` 的一组），不给就采整图扫描的全部。
+    """
+    patches, covered = [], set()
+    for el in man["elements"]:
+        cls = scriptadjust._ROLE_CLS.get(el.get("role"))
+        advertised = {f["prop"] for f in el.get("editable") or []}
+        for field in el.get("editable") or []:
+            key = (cls, field["prop"])
+            if key not in scriptadjust.WRITES:
+                continue
+            if props is None and field["prop"] in (_NOT_IN_THE_SWEEP | _HELD_OUT_PROPS):
+                continue
+            if props is not None and field["prop"] not in props:
+                continue
+            if only is not None and key not in only:
+                continue
+            prop = field["prop"]
+            if prop in _STRUCTURED:
+                value = _STRUCTURED[prop]
+                value = value(field) if callable(value) else value
+            else:
+                value = _SAMPLE_OVERRIDE.get(prop, _sample_value(field))
+            if value is None:
+                continue
+            for ep, ev in _ENABLERS.get(prop, ()):
+                if ep != prop and ep in advertised:
+                    patches.append({"gid": el["gid"], "prop": ep, "value": ev})
+            patches.append({"gid": el["gid"], "prop": prop, "value": value})
+            covered.add(key)
+    return patches, covered
+
+
+def _sweep_only() -> set[tuple[str, str]] | None:
+    raw = os.environ.get("TAVOTTO_SWEEP_ONLY", "").strip()
+    if not raw:
+        return None
+    return {tuple(k.strip().split(".", 1)) for k in raw.split(",") if k.strip()}
+
+
+def _library_worker(tmp_path: Path, lib: str):
+    text, name, entry = _LIBRARIES[lib]
+    (tmp_path / name).write_text(text, encoding="utf-8")
+    worker = pool.one_shot(name, str(tmp_path), entry)
+    worker.ensure_built()
+    return worker, name
+
+
+def _replays_identically(worker, name: str, tmp_path: Path, stem: str, patches: list[dict]):
     from tavotto import app
 
-    (tmp_path / SCRIPT_NAME).write_text(LIBRARY, encoding="utf-8")
-    worker = pool.one_shot(SCRIPT_NAME, str(tmp_path), ENTRY)
+    assert not (worker.override(stem, patches).get("warnings") or [])
+    hot = app._hot_manifest(worker, stem, patches)
+    src = (tmp_path / name).read_bytes()
+    adjusted = scriptadjust.build(src, stem, patches, hot, version="9.9")
+    assert adjusted.written
+    stage = tmp_path / f"_stage_{stem}"
+    stage.mkdir()
+    target = stage / "edited.py"
+    target.write_bytes(adjusted.data)
+    assert app._verify_edited_script(worker, stem, target, adjusted, hot, stage) == [], stem
+    worker.override(stem, [])
+
+
+@real_worker
+@pytest.mark.parametrize(("lib", "stem"), _SWEEP, ids=[f"{lib}-{s}" for lib, s in _SWEEP])
+def test_every_writable_field_replays_identically(tmp_path, lib, stem):
+    """夹具里每张图上所有写得进脚本的字段**一起**改，新脚本重放必须与热态几何 + 像素一致。"""
+    worker, name = _library_worker(tmp_path, lib)
     try:
-        worker.ensure_built()
         man = worker.override(stem, [])["manifest"]
-        patches = []
-        for el in man["elements"]:
-            cls = scriptadjust._ROLE_CLS.get(el.get("role"))
-            for field in el.get("editable") or []:
-                if (cls, field["prop"]) not in scriptadjust.WRITES:
-                    continue
-                value = _sample_value(field)
-                if value is not None and field["prop"] not in _NOT_IN_THE_SWEEP:
-                    patches.append({"gid": el["gid"], "prop": field["prop"], "value": value})
+        patches, _covered = _sweep_patches(man, _sweep_only())
         if not patches:
             pytest.skip("这张图上没有写得进脚本的字段")
-        assert not (worker.override(stem, patches).get("warnings") or [])
-        hot = app._hot_manifest(worker, stem, patches)
-        src = (tmp_path / SCRIPT_NAME).read_bytes()
-        adjusted = scriptadjust.build(src, stem, patches, hot, version="9.9")
-        assert adjusted.written
-        stage = tmp_path / "_stage"
-        stage.mkdir()
-        target = stage / "edited.py"
-        target.write_bytes(adjusted.data)
-        assert app._verify_edited_script(worker, stem, target, adjusted, hot, stage) == []
+        _replays_identically(worker, name, tmp_path, stem, patches)
     finally:
         pool.discard(worker)
+
+
+#: 对数轴要严格为正的数据，那张图不在整图扫描里（其余几张的 y 轴跨 0，log 会被夹住）。
+_HELD_OUT_STEMS = {"scale": [("inv", "InvScale")]}
+
+
+@real_worker
+@pytest.mark.parametrize("group", sorted(_HELD_OUT))
+def test_held_out_fields_replay_identically(tmp_path, group):
+    """整图扫描里刻意不放的键（`_HELD_OUT`）：每张图上这一组一起改，照样要等价。"""
+    props = _HELD_OUT[group]
+    seen = False
+    for lib in _LIBRARIES:
+        stems = [s for lb, s in _SWEEP + _HELD_OUT_STEMS.get(group, []) if lb == lib]
+        if not stems:
+            continue
+        sub = tmp_path / lib
+        sub.mkdir()
+        worker, name = _library_worker(sub, lib)
+        try:
+            for stem in stems:
+                man = worker.override(stem, [])["manifest"]
+                patches, _covered = _sweep_patches(man, _sweep_only(), props)
+                if patches:
+                    seen = True
+                    _replays_identically(worker, name, sub, stem, patches)
+        finally:
+            pool.discard(worker)
+    assert seen, f"{group} 这一组在任何图上都没采到"
+
+
+def _written_keys(worker, script: Path, stem: str, man: dict, props) -> set[tuple[str, str]]:
+    """这张图上采到、而且**真写进了脚本**的键（被 `_Unsupported` 挡下留作重放的不算验证过）。"""
+    from tavotto import app
+
+    patches, _covered = _sweep_patches(man, props=props)
+    if not patches:
+        return set()
+    worker.override(stem, patches)
+    hot = app._hot_manifest(worker, stem, patches)
+    worker.override(stem, [])
+    assert hot is not None, stem
+    adjusted = scriptadjust.build(script.read_bytes(), stem, patches, hot, version="9.9")
+    residual = {(p["gid"], p["prop"]) for p in adjusted.residual}
+    roles = {e["gid"]: e.get("role") for e in man["elements"]}
+    return {
+        (scriptadjust._ROLE_CLS.get(roles.get(p["gid"])), p["prop"])
+        for p in patches
+        if (p["gid"], p["prop"]) not in residual
+    }
+
+
+@real_worker
+def test_every_writable_key_is_swept_or_named(tmp_path):
+    """`WRITES` 的每个键都在某张图上真被采样验证过，或者点名了证明它的专用用例。
+
+    没有这一条，进了 `WRITES` 却在任何夹具上都采不到值的键（结构化字段、夹具里没有的元素）
+    会被扫描静默放过，「逐键验证过」就是一句空话。
+    """
+    covered: set[tuple[str, str]] = set()
+    for lib in _LIBRARIES:
+        stems = {s for lb, s in _SWEEP + _HELD_OUT_STEMS["scale"] if lb == lib}
+        sub = tmp_path / lib
+        sub.mkdir()
+        worker, _name = _library_worker(sub, lib)
+        try:
+            for stem in stems:
+                man = worker.override(stem, [])["manifest"]
+                for props in (None, _HELD_OUT_PROPS):
+                    covered |= _written_keys(worker, sub / _name, stem, man, props)
+        finally:
+            pool.discard(worker)
+    missing = set(scriptadjust.WRITES) - covered - set(_DEDICATED)
+    assert not missing, f"写进了脚本、却既没被扫描采到也没点名专用用例：{sorted(missing)}"
+    for key, test in _DEDICATED.items():
+        assert callable(globals().get(test)), f"{key} 点名的用例 {test} 不存在"
+        assert key in scriptadjust.WRITES, f"{key} 已不在 WRITES，从 _DEDICATED 删掉"
 
 
 # ---------------------------------------------------------------------- 请求
@@ -620,6 +800,85 @@ def test_font_edits_replay_identically(project, patch):
     body = _export(client, [patch], formats=[])
     assert body["status"] == "done", body
     assert _script_output(body)["script_report"]["written"] == 1
+
+
+_LEG = "axes_0.legend"
+_ENTRY = "axes_0.legend.texts_0"
+
+
+@real_worker
+@pytest.mark.parametrize(
+    "patches",
+    [
+        # 重建之后再拖：拖动的点落在重建出来的那个图例上
+        [
+            {"gid": _LEG, "prop": "borderpad", "value": 1.6},
+            {"gid": _LEG, "prop": "loc_frac", "value": [0.5, 0.3]},
+        ],
+        # 先拖再给锚点：拖动清锚框（位置模型的优先级），与列表顺序无关
+        [
+            {"gid": _LEG, "prop": "loc_frac", "value": [0.5, 0.3]},
+            {"gid": _LEG, "prop": "loc_anchor", "value": [0.9, 0.9]},
+        ],
+        # 示意线先断开再改曲线：示意线不跟着曲线变
+        [
+            {"gid": _ENTRY, "prop": "handle_color", "value": "#ff00ff"},
+            {"gid": "axes_0.lines_0", "prop": "color", "value": "#00aa00"},
+        ],
+        [
+            {"gid": _ENTRY, "prop": "binding", "value": "custom"},
+            {"gid": "axes_0.lines_0", "prop": "linewidth", "value": 4.0},
+        ],
+        # 图例字号与间距同一次重建
+        [
+            {"gid": _LEG, "prop": "fontsize", "value": 6.0},
+            {"gid": _LEG, "prop": "handlelength", "value": 4.0},
+            {"gid": _ENTRY, "prop": "color", "value": "#aa0000"},
+        ],
+    ],
+    ids=["rebuild-then-drag", "drag-wins-anchor", "detached-key", "binding-custom", "one-rebuild"],
+)
+def test_legend_edits_combine_like_the_editor(project, patches):
+    client, _figs = project
+    body = _export(client, patches, formats=[])
+    assert body["status"] == "done", body
+    assert _script_output(body)["script_report"]["written"] == len(patches)
+
+
+def test_one_rebuild_per_legend():
+    """同一个图例上几条构建期参数只合成一次 `ax.legend(...)`。"""
+    man = {
+        "elements": [
+            {
+                "gid": _LEG,
+                "role": "legend",
+                "editable": [
+                    {"prop": "loc", "value": "upper left"},
+                    {"prop": "loc_anchor", "value": None},
+                    {"prop": "ncol", "value": 1},
+                ],
+            }
+        ]
+    }
+    edits = [
+        {"gid": _LEG, "prop": "ncol", "value": 2},
+        {"gid": _LEG, "prop": "borderpad", "value": 1.2},
+        {"gid": _LEG, "prop": "fontsize", "value": 7},
+    ]
+    out = scriptadjust.build(b"import os\n", "Fig1", edits, man, version="9.9")
+    assert out.written == 3
+    assert out.data.decode().count("_legend_rebuild(_ax(fig, 0)") == 1
+
+
+def test_legend_with_an_unreadable_anchor_is_not_rebuilt():
+    """锚点表达不出来（manifest 不发 `loc_anchor`）时重建会把它弄丢：留给引擎重放。"""
+    man = {
+        "elements": [
+            {"gid": _LEG, "role": "legend", "editable": [{"prop": "loc", "value": "best"}]}
+        ]
+    }
+    edit = {"gid": _LEG, "prop": "ncol", "value": 2}
+    assert scriptadjust.build(b"import os\n", "Fig1", [edit], man, version="9.9").residual == [edit]
 
 
 @real_worker
