@@ -660,6 +660,47 @@ class TestSubprocess:
         assert (done["reason"], done["detail"]) == ("internal", "bad_args")
         assert srv.requests == []
 
+    def test_cli_skips_a_fallback_that_cannot_honour_thinking(self, cand, serve):
+        """Codex #1936 P2：anthropic + 思考模式时 chat 备选照办不了，换过去会悄悄丢掉思考设置——不换，按原样失败。"""
+        srv = serve([(404, {}, _err("no route"))])
+        p = run_cli(
+            cand,
+            "anthropic",
+            "--base-url",
+            srv.url,
+            "--model",
+            "m-1",
+            "--thinking",
+            "budget",
+            "--effort",
+            "high",
+            "--fallback",
+            f"openai-chat={srv.url}/v1",
+            "--retry-base",
+            "0",
+            key=KEY_CANARY,
+            stdin="hi",
+        )
+        assert p.returncode == 1
+        done = json.loads(p.stdout.splitlines()[-1])
+        assert (done["reason"], done["detail"]) == ("network", "http_404")
+        assert [path for path, _, _ in srv.requests] == ["/v1/messages"]
+
+
+@pytest.mark.parametrize(
+    ("wire", "effort", "thinking", "ok"),
+    [
+        ("openai-chat", None, "none", True),
+        ("openai-chat", "high", "none", False),
+        ("openai-responses", "high", "budget", False),
+        ("anthropic", "high", "budget", True),
+        ("anthropic", "minimal", "none", False),
+        ("openai-responses", "minimal", "none", True),
+    ],
+)
+def test_fallback_must_honour_declared_options(wire, effort, thinking, ok):
+    assert runner_cli._honours_options(wire, effort, thinking) is ok
+
 
 class TestFallbackSpecParsing:
     BASE = "https://api.example.test/v1"

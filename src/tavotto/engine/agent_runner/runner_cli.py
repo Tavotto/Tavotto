@@ -119,6 +119,17 @@ def _parser() -> argparse.ArgumentParser:
     return p
 
 
+def _honours_options(wire: str, effort: str | None, thinking: str) -> bool:
+    """这个协议能不能原样照办声明的推理强度 / 思考模式（与上面对主协议的 bad_args 判据同一套）。"""
+    if effort is not None and wire == "openai-chat":
+        return False
+    if thinking != "none" and wire != "anthropic":
+        return False
+    if wire == "openai-responses" and effort not in (None, *RESPONSES_EFFORTS):
+        return False
+    return not (wire == "anthropic" and effort not in (None, *ANTHROPIC_EFFORTS))
+
+
 def _parse_fallbacks(specs: list[str], primary: str, base_url: str) -> list[tuple[str, str]] | None:
     """`WIRE=BASE_URL` 列表 → `[(wire, base_url)]`；任何一条不合规回 None（起跑即 bad_args，零请求）。
     合规 = 协议在 `WIRES` 里、不与主协议或彼此重复、地址通过 `check_base_url`、与主地址同源。"""
@@ -310,6 +321,11 @@ def main(argv: list[str] | None = None) -> int:
     elif (bad := check_base_url(args.base_url)) is not None:
         model = _FailModel(RunnerFailure("network", bad))
     else:
+        # 照办不了声明的推理强度 / 思考模式的备选协议不用：换过去会悄悄丢掉这些设置（Codex #1936 P2）；
+        # 主协议本身已按同一套判据核过，剩下的备选不够时照旧以「协议不对」收场
+        fallbacks = [
+            (w, u) for w, u in fallbacks if _honours_options(w, args.effort, args.thinking)
+        ]
         model = loop.HttpModel(
             _make_wire(args.wire, args),
             base_url=args.base_url,
