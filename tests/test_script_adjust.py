@@ -265,6 +265,38 @@ def test_narrow_entry_stays_with_its_residual_broadcast():
     assert {p["gid"] for p in out.residual} == {broad["gid"], narrow["gid"]}
 
 
+_AX0 = "axes_0"
+_FRAME_MAN = {"elements": [{"gid": _AX0, "role": "axes", "editable": []}]}
+
+
+@pytest.mark.parametrize("broadcast_first", [True, False], ids=["broadcast-first", "narrow-first"])
+def test_spine_broadcast_is_written_before_its_narrow_entries(broadcast_first):
+    """「全部」档在列表里排哪儿都一样：脚本里它先落、四边各自的后落（窄的盖广播，与引擎同序）。"""
+    broad = {"gid": _AX0, "prop": "spine_color", "value": "#112233"}
+    narrow = {"gid": _AX0, "prop": "spine_top_color", "value": "#aa0000"}
+    wide = {"gid": _AX0, "prop": "spine_linewidth", "value": 2.0}
+    thin = {"gid": _AX0, "prop": "spine_left_linewidth", "value": 0.5}
+    edits = [broad, narrow, wide, thin] if broadcast_first else [thin, narrow, wide, broad]
+    out = scriptadjust.build(b"import os\n", "Fig1", edits, _FRAME_MAN, version="9.9")
+    assert out.written == 4 and not out.residual
+    text = out.data.decode()
+    assert text.index("#112233") < text.index("#aa0000")
+    assert text.index("set_linewidth(2.0)") < text.index("set_linewidth(0.5)")
+
+
+def test_narrow_spine_entries_stay_with_a_residual_broadcast(monkeypatch):
+    """广播写不进脚本留作重放时，窄条目也一起留下（重放的广播会盖掉写进脚本的窄条目）；别的边框键不受牵连。"""
+    monkeypatch.delitem(scriptadjust.WRITES, ("axes", "spine_color"))
+    broad = {"gid": _AX0, "prop": "spine_color", "value": "#112233"}
+    narrow = {"gid": _AX0, "prop": "spine_top_color", "value": "#aa0000"}
+    other = {"gid": _AX0, "prop": "spine_top_linewidth", "value": 2.0}
+    out = scriptadjust.build(
+        b"import os\n", "Fig1", [narrow, other, broad], _FRAME_MAN, version="9.9"
+    )
+    assert out.written == 1
+    assert {p["prop"] for p in out.residual} == {"spine_color", "spine_top_color"}
+
+
 def test_block_stem_matches_the_engine():
     """严格同源对：块里的 `_stem` ↔ `figcapture.savefig_stem`。两边不一致，调整就落不到那张图上。"""
     tree = ast.parse(scriptadjust._RUNTIME)
@@ -337,7 +369,38 @@ _STRUCTURED: dict[str, object] = {
     "ylim": _widen,
     # 锚点：图例的右上角钉在子图里的一个点上（预设 loc 是 upper right / left，两种都看得出挪动）
     "loc_anchor": [0.8, 0.7],
+    # 网格透明度：默认 1.0，`_sample_value` 只挑 0.9，细网格线上低于像素阈值，看不出写没写
+    "grid_alpha": 0.25,
+    # 线型默认 "-" 与 `_sample_value` 挑的第一个选项相同，给一个看得出的
+    "grid_linestyle": "--",
 }
+
+#: **颜色采样不能全用同一个值**：`_sample_value` 对每个颜色字段都给 `#123456`，于是图底、子图底和所有前景
+#: 一个颜色，前景色译错了（甚至写死成一个常量）像素比对也看不出来。底色给两个浅色，前景按序号轮一组
+#: 彼此分得开的饱和色，并且避开字段当前值。
+_BACKGROUND = {("figure", "facecolor"): "#f6f2dc", ("axes", "facecolor"): "#e6eefb"}
+_FOREGROUND = (
+    "#d62728",
+    "#1f77b4",
+    "#2ca02c",
+    "#9467bd",
+    "#ff7f0e",
+    "#17becf",
+    "#e377c2",
+    "#8c564b",
+)
+
+
+def _sample_color(key, field, k: int) -> str:
+    if key in _BACKGROUND:
+        return _BACKGROUND[key]
+    cur = str(field.get("value")).lower()
+    for i in range(len(_FOREGROUND)):
+        c = _FOREGROUND[(k + i) % len(_FOREGROUND)]
+        if c != cur:
+            return c
+    return "#000000"
+
 
 #: 不进整图扫描的键（`_NOT_IN_THE_SWEEP`），按组单独扫：同组一起改，组与组之间不叠。
 #: 坐标范围（pair）放进整图扫描会被 scale 的副作用搅乱，所以也自成一组。
@@ -345,6 +408,12 @@ _HELD_OUT = {
     "visible": {"visible"},
     "scale": {"xscale", "yscale"},
     "lim": {"xlim", "ylim"},
+    # 边框颜色 / 线宽：整图扫描里四条边同时被关掉、画不出来，所以单独扫；「全部」与四边各自分开两组，
+    # 否则四边各自的设定把「全部」整个盖住，广播那条等于没验
+    "spine_all": {"spine_color", "spine_linewidth"},
+    "spine_sides": {
+        f"spine_{s}_{k}" for s in ("top", "right", "bottom", "left") for k in ("color", "linewidth")
+    },
 }
 _HELD_OUT_PROPS = set().union(*_HELD_OUT.values())
 
@@ -387,6 +456,8 @@ def _sweep_patches(
             if prop in _STRUCTURED:
                 value = _STRUCTURED[prop]
                 value = value(field) if callable(value) else value
+            elif field.get("type") == "color":
+                value = _sample_color(key, field, len(patches))
             else:
                 value = _SAMPLE_OVERRIDE.get(prop, _sample_value(field))
             if value is None:
@@ -839,6 +910,53 @@ _ENTRY = "axes_0.legend.texts_0"
     ids=["rebuild-then-drag", "drag-wins-anchor", "detached-key", "binding-custom", "one-rebuild"],
 )
 def test_legend_edits_combine_like_the_editor(project, patches):
+    client, _figs = project
+    body = _export(client, patches, formats=[])
+    assert body["status"] == "done", body
+    assert _script_output(body)["script_report"]["written"] == len(patches)
+
+
+_AXES = "axes_0"
+
+
+@real_worker
+@pytest.mark.parametrize(
+    "patches",
+    [
+        # 广播在前 / 在后：窄的都要盖住广播，与列表顺序无关
+        [
+            {"gid": _AXES, "prop": "spine_color", "value": "#2255aa"},
+            {"gid": _AXES, "prop": "spine_top_color", "value": "#cc3300"},
+            {"gid": _AXES, "prop": "spine_linewidth", "value": 2.2},
+            {"gid": _AXES, "prop": "spine_left_linewidth", "value": 0.4},
+        ],
+        [
+            {"gid": _AXES, "prop": "spine_left_linewidth", "value": 0.4},
+            {"gid": _AXES, "prop": "spine_top_color", "value": "#cc3300"},
+            {"gid": _AXES, "prop": "spine_linewidth", "value": 2.2},
+            {"gid": _AXES, "prop": "spine_color", "value": "#2255aa"},
+        ],
+        # 网格没开时先改样式，再打开
+        [
+            {"gid": _AXES, "prop": "grid_color", "value": "#cc3300"},
+            {"gid": _AXES, "prop": "grid_linestyle", "value": "--"},
+            {"gid": _AXES, "prop": "grid_linewidth", "value": 1.4},
+            {"gid": _AXES, "prop": "grid_alpha", "value": 0.5},
+            {"gid": _AXES, "prop": "grid_y", "value": True},
+        ],
+        # 先开网格再改样式；刻度线四边开关与边框显隐同改
+        [
+            {"gid": _AXES, "prop": "grid_x", "value": True},
+            {"gid": _AXES, "prop": "grid_color", "value": "#2255aa"},
+            {"gid": _AXES, "prop": "ticks_bottom", "value": False},
+            {"gid": _AXES, "prop": "ticks_top", "value": True},
+            {"gid": _AXES, "prop": "ticks_right", "value": True},
+            {"gid": _AXES, "prop": "spine_right", "value": False},
+        ],
+    ],
+    ids=["broadcast-first", "narrow-first", "style-then-open", "open-then-style-ticks"],
+)
+def test_grid_and_spine_edits_combine_like_the_editor(project, patches):
     client, _figs = project
     body = _export(client, patches, formats=[])
     assert body["status"] == "done", body

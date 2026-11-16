@@ -9,7 +9,7 @@ from __future__ import annotations
 
 SCRIPT_NAME = "fig_scriptadjust.py"
 ENTRY = "main"
-STEMS: tuple[str, ...] = ("AdjLegend", "AdjProxy")
+STEMS: tuple[str, ...] = ("AdjLegend", "AdjProxy", "AdjGrid", "AdjGrid3D")
 
 LIBRARY = """\\
 import numpy as np
@@ -40,4 +40,22 @@ def main():
     proxy = Line2D([], [], color="#b34700", marker="o", markersize=6, linestyle="none")
     ax.legend([proxy], ["proxy"], loc="upper right", markerscale=2)
     fig.savefig("AdjProxy.pdf")
+
+    # ---- AdjGrid：网格与边框（InvMix 的网格默认关；这张图只开了 x 网格、边框粗细不一、带镜像刻度）----
+    # 整图扫描把 grid_x / grid_y 各翻一次：x 关、y 开，开着的那一边才看得出样式；样式改在两个轴上。
+    fig, ax = plt.subplots(figsize=(4.4, 3.2))
+    ax.plot(x, np.sin(x), label="sin")
+    ax.plot(x, np.cos(x), label="cos")
+    ax.grid(True, axis="x", color="#99aadd", linestyle="-.", linewidth=0.6)
+    for side, w in (("top", 0.4), ("right", 1.6)):
+        ax.spines[side].set_linewidth(w)
+    ax.spines["left"].set_edgecolor("#aa3333")
+    ax.tick_params(top=True, right=True)
+    fig.savefig("AdjGrid.pdf")
+
+    # ---- AdjGrid3D：3D 轴的网格开关（Inv3D 一族不进整图扫描，所以单独一张只有一条线的 3D 图） ----
+    fig = plt.figure(figsize=(4.0, 3.4))
+    ax3 = fig.add_subplot(projection="3d")
+    ax3.plot(x, np.sin(x), np.cos(x), color="#336699")
+    fig.savefig("AdjGrid3D.pdf")
 """
