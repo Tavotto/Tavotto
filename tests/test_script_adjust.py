@@ -519,13 +519,19 @@ def _library_worker(tmp_path: Path, lib: str):
     return worker, name
 
 
-def _replays_identically(worker, name: str, tmp_path: Path, stem: str, patches: list[dict]):
+def _replays_identically(
+    worker, name: str, tmp_path: Path, stem: str, patches: list[dict], *, must_write: bool = True
+) -> bool:
+    """新脚本重放与热态一致。`must_write=False`：这张图上这组键全被挡下留作重放时不算错，回 False。"""
     from tavotto import app
 
     assert not (worker.override(stem, patches).get("warnings") or [])
     hot = app._hot_manifest(worker, stem, patches)
     src = (tmp_path / name).read_bytes()
     adjusted = scriptadjust.build(src, stem, patches, hot, version="9.9")
+    if not adjusted.written and not must_write:
+        worker.override(stem, [])
+        return False
     assert adjusted.written
     stage = tmp_path / f"_stage_{stem}"
     stage.mkdir()
@@ -533,6 +539,7 @@ def _replays_identically(worker, name: str, tmp_path: Path, stem: str, patches: 
     target.write_bytes(adjusted.data)
     assert app._verify_edited_script(worker, stem, target, adjusted, hot, stage) == [], stem
     worker.override(stem, [])
+    return True
 
 
 @real_worker
@@ -571,12 +578,14 @@ def test_held_out_fields_replay_identically(tmp_path, group):
             for stem in stems:
                 man = worker.override(stem, [])["manifest"]
                 patches, _covered = _sweep_patches(man, _sweep_only(), props, keyed)
-                if patches:
+                # 这张图上整组都被挡下（比如 3D 轴的单条刻度文字）不算错，但至少要有一张图真写进去并验过
+                if patches and _replays_identically(
+                    worker, name, sub, stem, patches, must_write=False
+                ):
                     seen = True
-                    _replays_identically(worker, name, sub, stem, patches)
         finally:
             pool.discard(worker)
-    assert seen, f"{group} 这一组在任何图上都没采到"
+    assert seen, f"{group} 这一组在任何图上都没真写进脚本"
 
 
 def _written_keys(
