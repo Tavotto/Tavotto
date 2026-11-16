@@ -446,6 +446,26 @@ describe('CompatibleEndpoint', () => {
     expect(document.body.querySelector('[data-endpoint-save-error]')).toBeNull()
   })
 
+  it('编辑已存的连接：发全部型号（model 是第一个），且不发父厂商（百炼 Coding Plan 这类不会被当成换厂商）', async () => {
+    const onSaved = vi.fn()
+    onPost = (c) => (c.url === '/api/ai/connections' && c.method === 'POST' ? json({ ok: true, connection: okConn, probe: passed }) : null)
+    const ep = {
+      id: 'qwen-coding', label: '百炼 Coding Plan', agent: 'codex', base_url: 'https://coding.example/v1',
+      models: ['qwen3-coder', 'qwen3-max'], default_model: 'qwen3-coder', wire_api: 'responses', has_key: true, key_hint: '…1234', incompatible: null,
+    } as never
+    serverCaps = connectCapsOf([connection('qwen-coding', { vendor: 'qwen' })], { endpoints: [ep] })
+    useAiStore.setState({ caps: serverCaps })
+    await render(<CompatibleEndpoint existing={ep} onClose={() => {}} onSaved={onSaved} />)
+    await click(saveBtn())
+    expect(posts()).toHaveLength(1)
+    const body = posts()[0].body!
+    expect(body.id).toBe('qwen-coding')
+    expect('vendor' in body).toBe(false)
+    expect(body.model).toBe('qwen3-coder')
+    expect(body.models).toEqual(['qwen3-coder', 'qwen3-max'])
+    expect(onSaved).toHaveBeenCalledTimes(1)
+  })
+
   it('存下来了但探测不通：表单不关、写一句原因；再点保存改的是同一条（带 id），不新建', async () => {
     const onSaved = vi.fn()
     let n = 0

@@ -3825,11 +3825,14 @@ export interface AiProbeSummary {
 export interface AiConnectBody {
   /** 带已有连接 id = 换 Key / 换型号 */
   id?: string
-  vendor: string
+  /** 带 `id` 时可省：按已存记录自己的连接方式处理 */
+  vendor?: string
   /** 带 `id`（换已存连接）时可省：沿用已存的 Key */
   api_key?: string
   base_url?: string
   model?: string
+  /** 用户自己填的全部型号（后端去重、至多 50 项）；`model` 仍给默认的那一个 */
+  models?: string[]
   label?: string
   /** 缺省或 'auto' = 保存时自动探测协议；界面不让用户选 */
   wire?: 'auto' | AiWireProtocol

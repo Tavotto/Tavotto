@@ -85,15 +85,16 @@ export function CompatibleEndpoint({
     setSaveError(null)
     setNote(null)
     const id = savedId.current ?? rec.id
-    const vendor = (id && useAiStore.getState().caps?.connections?.find((c) => c.id === id)?.vendor) || 'custom'
     let res: AiConnectResult
     try {
       res = await connectAi({
-        ...(id ? { id } : {}),
-        vendor,
+        // 改已存的连接：不给厂商，后端按这条记录自己的方式（如 dashscope-coding:key）处理——发父厂商会被当成换了厂商（vendor_mismatch）
+        ...(id ? { id } : { vendor: 'custom' }),
         api_key: rec.api_key,
         base_url: rec.base_url,
         model: rec.models?.[0],
+        // 全部型号一并发（后端去重、留下用户自己填的）；编辑时也不丢其余型号
+        ...(rec.models && rec.models.length > 0 ? { models: rec.models } : {}),
         label: rec.label,
       })
     } catch (e) {

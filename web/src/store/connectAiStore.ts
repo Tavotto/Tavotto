@@ -95,11 +95,13 @@ export async function runConnectionCheck(id: string): Promise<ConnectionCheckRes
     /* 重读失败：下面照常按这次响应里的连接视图下结论 */
   }
   const conn = res.connection
-  if (conn?.state === 'ready') return { ok: true, reason: null }
   const probe = res.probe
-  // 断网 / 缺型号时记录没动（checked=false）：说「连不上」，别把旧记录里的原因当成这次的结论
+  // 断网 / 缺型号时记录没动（checked=false），返回的还是旧的 ready 视图：不算通了，说「连不上」
   if (probe && !probe.checked) return { ok: false, reason: 'network' }
-  return { ok: false, reason: conn?.error_reason ?? probe?.reason ?? conn?.error ?? null }
+  // 有探测结论：以它为准（协议有值或没有失败原因才算通）；老后端没给 probe 才看连接状态
+  const passed = probe ? probe.protocol != null || probe.reason == null : conn?.state === 'ready'
+  if (passed) return { ok: true, reason: null }
+  return { ok: false, reason: probe?.reason ?? conn?.error_reason ?? conn?.error ?? null }
 }
 
 /** 连接卡上的「改地址 / 改模型 / 重填密钥」：打开**这一条**连接的编辑表单；它没有接口记录（目录厂商没存过）→ 返回 false，由调用方就地处理 */
