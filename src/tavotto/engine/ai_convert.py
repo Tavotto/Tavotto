@@ -29,6 +29,7 @@ import logging
 import os
 import re
 import shutil
+import stat
 import threading
 import time
 import tokenize
@@ -2053,6 +2054,97 @@ def prepare_realign(sid: str, project: str) -> tuple[Path, dict, threading.Event
     return cdir, meta, ev, note
 
 
+def _is_redirect(p: Path) -> bool:
+    """符号链接 / Windows junction（重解析点）：跟着走会写到候选目录之外。"""
+    try:
+        st = os.lstat(p)
+    except OSError:
+        return False
+    return stat.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & 0x400)
+
+
+def _drop_redirect(p: Path) -> None:
+    """只摘掉链接本身（不碰指向的内容）。"""
+    try:
+        os.unlink(p)
+    except OSError:
+        try:
+            os.rmdir(p)  # Windows 的目录链接 / junction
+        except OSError:
+            pass
+
+
+def _real_dir(d: Path) -> None:
+    """让 `d` 成为真目录：`d` 本身是链接就先摘掉，再建；不跟链接。"""
+    if _is_redirect(d):
+        _drop_redirect(d)
+    elif d.exists() and not d.is_dir():
+        d.unlink()
+    d.mkdir(exist_ok=True)
+
+
+def _scrub_redirects(d: Path) -> None:
+    """先把目标树里所有链接 / junction 摘掉（只摘链接本身），之后的遍历与写入才不会越出候选目录。自己递归，不用 `os.walk`
+    （它不识别 Windows junction，会走进去）。"""
+    try:
+        entries = list(os.scandir(d))
+    except OSError:
+        return
+    for e in entries:
+        child = Path(e.path)
+        if _is_redirect(child):
+            _drop_redirect(child)
+        elif e.is_dir(follow_symlinks=False):
+            _scrub_redirects(child)
+
+
+def _restore_candidate(src: Path, cdir: Path) -> None:
+    """把备份的候选放回 `cdir`，**还原期间目录与 meta 始终存在、始终可读**（轮询 `status()` 不持锁，不许看到 404 / 409）：
+    不删整个目录，备份里的文件逐个原子覆盖（先写临时文件再 `os.replace`），备份里没有的多余文件最后才删；meta 最后换。
+    修正期间目标树里若被换成了链接 / junction（候选树校验正是因此拒收的），逐层只摘链接本身再建真目录，
+    绝不跟着写到 `CONVERT_DIR` 之外。"""
+    src_l, dst_l = Path(longpath.long(src)), Path(longpath.long(cdir))
+    _real_dir(dst_l)
+    _scrub_redirects(dst_l)
+    keep: set[str] = set()
+    for dirpath, _dirs, files in os.walk(src_l):
+        rel_dir = Path(dirpath).relative_to(src_l)
+        cur = dst_l
+        for part in rel_dir.parts:
+            cur = cur / part
+            _real_dir(cur)
+        for name in files:
+            rel = rel_dir / name
+            keep.add(rel.as_posix())
+            if rel.as_posix() == META_NAME:
+                continue
+            target = dst_l / rel
+            if target.is_dir():  # 修正期间同名位置被换成了目录：先让位，否则原子替换会失败
+                shutil.rmtree(target, ignore_errors=True)
+            atomicio.write_bytes(target, (Path(dirpath) / name).read_bytes())
+    if (src_l / META_NAME).is_file():
+        if (dst_l / META_NAME).is_dir():
+            shutil.rmtree(dst_l / META_NAME, ignore_errors=True)
+        atomicio.write_bytes(dst_l / META_NAME, (src_l / META_NAME).read_bytes())
+    for dirpath, dirs, files in os.walk(dst_l, topdown=False):
+        rel_dir = Path(dirpath).relative_to(dst_l)
+        for name in files:
+            if (rel_dir / name).as_posix() not in keep:
+                try:
+                    (Path(dirpath) / name).unlink()
+                except OSError:
+                    pass
+        for d in dirs:
+            child = Path(dirpath) / d
+            if _is_redirect(child):
+                _drop_redirect(child)
+            else:
+                try:
+                    child.rmdir()  # 只删空目录
+                except OSError:
+                    pass
+
+
 def run_realign(
     sid: str,
     project: str,
@@ -2092,8 +2184,7 @@ def run_realign(
                 remove_dir(cdir)
             elif cand is None or not cand.ready:
                 # 修正没有产生新的可采用候选：把备份原样放回
-                shutil.rmtree(longpath.long(cdir), ignore_errors=True)
-                shutil.copytree(backup / "cand", longpath.long(cdir))
+                _restore_candidate(backup / "cand", cdir)
             _RESUMES.pop(sid, None)
         return {"state": "cancelled" if cancelled else "ready"}
     finally:
