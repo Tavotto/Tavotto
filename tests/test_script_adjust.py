@@ -494,6 +494,64 @@ def test_block_stem_matches_the_engine():
     assert ns["_stem"](io.BytesIO()) == figcapture.savefig_stem(io.BytesIO()) == ""
 
 
+_BBOX_PAIR = """\
+import json, sys
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import overrides as o
+
+ns = {}
+exec(sys.argv[1], ns)  # the block's `_bbox`
+SAMPLES = {
+    "visible": True, "facecolor": "#ff0000", "edgecolor": "#00ff00", "linewidth": 2.5,
+    "alpha": 0.4, "pad": 0.9, "rounded": True,
+}
+
+def look(t):
+    p = t.get_bbox_patch()
+    if p is None:
+        return None
+    bs = p.get_boxstyle()
+    return [p.get_visible(), list(p.get_facecolor()), list(p.get_edgecolor()), p.get_linewidth(),
+            p.get_alpha(), type(bs).__name__, getattr(bs, "pad", None)]
+
+out = {}
+fig, ax = plt.subplots()
+for prop, value in SAMPLES.items():
+    a, b = ax.text(0.5, 0.5, "x"), ax.text(0.5, 0.5, "x")
+    o.HANDLERS[("text", "bbox_" + prop)][1](a, value)
+    ns["_bbox"](b, prop, value)
+    out[prop] = [look(a), look(b)]
+# 「关」在没有框的文字上是空操作，两边都不许凭空造出一个框
+a, b = ax.text(0.5, 0.5, "x"), ax.text(0.5, 0.5, "x")
+o.HANDLERS[("text", "bbox_visible")][1](a, False)
+ns["_bbox"](b, "visible", False)
+out["off"] = [look(a), look(b)]
+print(json.dumps(out))
+"""
+
+
+@real_worker
+def test_block_bbox_matches_the_engine():
+    """严格同源对：块里的 `_bbox`（现建的框不可见、只有 visible 显示、默认值）↔ `overrides` 的 bbox_* handler。"""
+    tree = ast.parse(scriptadjust._RUNTIME)
+    node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_bbox")
+    src = ast.get_source_segment(scriptadjust._RUNTIME, node)
+    env = {**os.environ, "PYTHONPATH": str(Path(exportjob.__file__).parent)}
+    done = subprocess.run(
+        [WORKER_PY, "-c", _BBOX_PAIR, src],
+        capture_output=True,
+        encoding="utf-8",
+        check=True,
+        env=env,
+    )
+    got = json.loads(done.stdout.strip().splitlines()[-1])
+    for prop, (engine, block) in got.items():
+        assert engine == block, prop
+    assert got["off"] == [None, None]
+
+
 # ---------------------------------------------------------------------- 表态
 def _handler_keys() -> set[tuple[str, str]]:
     code = "import json\nimport overrides as o\nprint(json.dumps(sorted(o.HANDLERS)))\n"
@@ -559,6 +617,16 @@ _STRUCTURED: dict[str, object] = {
     "grid_alpha": 0.25,
     # 线型默认 "-" 与 `_sample_value` 挑的第一个选项相同，给一个看得出的
     "grid_linestyle": "--",
+}
+
+#: 按 (cls, prop) 给的采样值（同名 prop 在不同类里要不同的值才看得出）。层次（zorder）默认采 `原值 + 5.5`，
+#: 整张图的元素都同样往上挪，相对次序几乎不变，箭头 / 锚定框的层次改了也不动一个像素：箭头抬到最上层、
+#: 锚定框沉到最下层，夹具里二者叠在一起（`AdjText` 左下角），次序一翻像素就变（各自单独扫，见 `_HELD_OUT`）。
+_SAMPLE_BY_KEY: dict[tuple[str, str], object] = {
+    # 箭头样式默认采第一个不同的选项 "-"（无头）：线型改成虚线时头保持实线这件事就没有东西可看
+    ("arrowpatch", "arrowstyle"): "<|-|>",
+    # 箭头帽大小：默认采 原值 + 3.9，帽子只大两成，像素差在阈值边上（变异实测可以溜过去）
+    ("arrowpatch", "mutation_scale"): 36.0,
 }
 
 #: **颜色采样不能全用同一个值**：`_sample_value` 对每个颜色字段都给 `#123456`，于是图底、子图底和所有前景
@@ -632,9 +700,16 @@ _HELD_OUT_KEYED: dict[str, dict[tuple[str, str], object]] = {
     "bar_each": {("bar", p): None for p in scriptadjust._BAR_BROADCAST if p != "visible"},
     "bar_series_visible": {("bar_series", "visible"): None},
     "bar_each_visible": {("bar", "visible"): None},
+    # 层次（zorder，ADR 0171 修订 ⑥）：箭头抬到最上、锚定框沉到最下，夹具 `AdjText` 里二者叠在一起；同扫时谁的翻译是
+    # 常量，另一个的变化已经把像素带到同一个结果，所以各自单独扫
+    "arrow_zorder": {("arrowpatch", "zorder"): 30.0},
+    "artist_zorder": {("artist", "zorder"): -3.0},
 }
 _HELD_OUT_KEYS = {("ticklabel", "text"), ("ticks", "major_values")} | {
-    k for g, d in _HELD_OUT_KEYED.items() if g.startswith(("cb_", "bar_")) for k in d
+    k
+    for g, d in _HELD_OUT_KEYED.items()
+    if g.startswith(("cb_", "bar_", "arrow_", "artist_"))
+    for k in d
 }
 _GROUPS: dict[str, tuple[set[str] | None, dict | None]] = {
     **{g: (props, None) for g, props in _HELD_OUT.items()},
@@ -659,6 +734,7 @@ _DEDICATED: dict[tuple[str, str], str] = {
         (cls, "label"): "test_renames_reach_the_objects"
         for cls in ("line", "collection", "bar_series", "stem_series")
     },
+    ("arrowpatch", "endpoints_frac"): "test_arrow_endpoints_replay_identically",
 }
 
 
@@ -676,7 +752,7 @@ def _sweep_patches(
     """
     patches, covered = [], set()
     for el in man["elements"]:
-        cls = scriptadjust._ROLE_CLS.get(el.get("role"))
+        cls = scriptadjust._cls_of(el["gid"], el)
         advertised = {f["prop"] for f in el.get("editable") or []}
         for field in el.get("editable") or []:
             key = (cls, field["prop"])
@@ -696,6 +772,8 @@ def _sweep_patches(
             if keyed is not None and keyed[key] is not None:
                 value = keyed[key]
                 value = value(field) if callable(value) else value
+            elif key in _SAMPLE_BY_KEY:
+                value = _SAMPLE_BY_KEY[key]
             elif prop in _STRUCTURED:
                 value = _STRUCTURED[prop]
                 value = value(field) if callable(value) else value
@@ -845,9 +923,9 @@ def _written_keys(
     assert hot is not None, stem
     adjusted = scriptadjust.build(script.read_bytes(), stem, patches, hot, version="9.9")
     residual = {(p["gid"], p["prop"]) for p in adjusted.residual}
-    roles = {e["gid"]: e.get("role") for e in man["elements"]}
+    els = {e["gid"]: e for e in man["elements"]}
     return {
-        (scriptadjust._ROLE_CLS.get(roles.get(p["gid"])), p["prop"])
+        (scriptadjust._cls_of(p["gid"], els.get(p["gid"])), p["prop"])
         for p in patches
         if (p["gid"], p["prop"]) not in residual
     }
@@ -1089,6 +1167,32 @@ if __name__ == "__main__":
 @pytest.fixture
 def series_project(tmp_path, monkeypatch):
     m, figs = _open_project(tmp_path, monkeypatch, SERIES_SCRIPT)
+    try:
+        yield m.app.test_client(), figs
+    finally:
+        _close_project(m, figs)
+
+
+#: 同一张图再加两根箭头：一根纯箭头注释（gid `axes_0.texts_0.arrow`）、一根独立箭头（`axes_0.arrows_0`）
+ARROW_SCRIPT = SCRIPT.replace(
+    "import matplotlib.pyplot as plt\n",
+    "import matplotlib.pyplot as plt\nfrom matplotlib.patches import FancyArrowPatch\n",
+    1,
+).replace(
+    '    ax.legend(loc="upper left")\n',
+    '    ax.annotate("", xy=(3.0, 9.0), xytext=(1.5, 4.0),'
+    ' arrowprops=dict(arrowstyle="->", color="#444444"))\n'
+    '    ax.add_patch(FancyArrowPatch((3.5, 3.0), (4.6, 6.0), arrowstyle="-|>",'
+    ' mutation_scale=14, color="#335588"))\n'
+    '    ax.legend(loc="upper left")\n',
+    1,
+)
+assert "FancyArrowPatch((3.5" in ARROW_SCRIPT and "annotate" in ARROW_SCRIPT
+
+
+@pytest.fixture
+def arrow_project(tmp_path, monkeypatch):
+    m, figs = _open_project(tmp_path, monkeypatch, ARROW_SCRIPT)
     try:
         yield m.app.test_client(), figs
     finally:
@@ -1525,6 +1629,162 @@ def test_series_edits_combine_like_the_editor(series_project, patches):
     body = _export(client, patches, formats=[])
     assert body["status"] == "done", body
     assert _script_output(body)["script_report"]["written"] == len(patches)
+
+
+_TITLE = "axes_0.title"
+_ARR_ANN = "axes_0.texts_0.arrow"
+_ARR_ALONE = "axes_0.arrows_0"
+
+
+@real_worker
+@pytest.mark.parametrize(
+    "patches",
+    [
+        # 先改底框颜色、再打开底框（现建的框不可见，样式不改显隐）
+        [
+            {"gid": _TITLE, "prop": "bbox_facecolor", "value": "#ffd0d0"},
+            {"gid": _TITLE, "prop": "bbox_edgecolor", "value": "#aa0000"},
+            {"gid": _TITLE, "prop": "bbox_linewidth", "value": 1.5},
+            {"gid": _TITLE, "prop": "bbox_visible", "value": True},
+        ],
+        # 先打开、再改颜色与圆角 / 内边距
+        [
+            {"gid": _TITLE, "prop": "bbox_visible", "value": True},
+            {"gid": _TITLE, "prop": "bbox_facecolor", "value": "#ffd0d0"},
+            {"gid": _TITLE, "prop": "bbox_rounded", "value": True},
+            {"gid": _TITLE, "prop": "bbox_pad", "value": 0.8},
+            {"gid": _TITLE, "prop": "bbox_alpha", "value": 0.5},
+        ],
+        # 只改底色、从没打开：脚本里也不能凭空多出一个框
+        [{"gid": _TITLE, "prop": "bbox_facecolor", "value": "#ffd0d0"}],
+        # 描边三条分着改：开关、颜色、线宽合成一次路径效果；图例项的文字同理
+        [
+            {"gid": _TITLE, "prop": "stroke_color", "value": "#3355ff"},
+            {"gid": _TITLE, "prop": "stroke_width", "value": 3.0},
+            {"gid": _TITLE, "prop": "stroke_enabled", "value": True},
+            {"gid": "axes_0.legend.texts_0", "prop": "stroke_enabled", "value": True},
+            {"gid": "axes_0.legend.texts_0", "prop": "bbox_visible", "value": True},
+            {"gid": "axes_0.legend.texts_0", "prop": "bbox_facecolor", "value": "#ccffcc"},
+        ],
+        # 描边与底框同一段文字、再改行距
+        [
+            {"gid": _TITLE, "prop": "stroke_enabled", "value": True},
+            {"gid": _TITLE, "prop": "bbox_visible", "value": True},
+            {"gid": _TITLE, "prop": "bbox_facecolor", "value": "#ffeeaa"},
+            {"gid": _TITLE, "prop": "text", "value": "two\nlines"},
+            {"gid": _TITLE, "prop": "linespacing", "value": 2.0},
+        ],
+    ],
+    ids=[
+        "style-then-open",
+        "open-then-style",
+        "style-never-opened",
+        "stroke-legend",
+        "stroke-bbox",
+    ],
+)
+def test_text_look_edits_combine_like_the_editor(project, patches):
+    client, _figs = project
+    body = _export(client, patches, formats=[])
+    assert body["status"] == "done", body
+    assert _script_output(body)["script_report"]["written"] == len(patches)
+
+
+@real_worker
+@pytest.mark.parametrize(
+    "patches",
+    [
+        # 拖纯箭头注释的端点 + 改文字（标题加底框与描边）
+        [
+            {"gid": _ARR_ANN, "prop": "endpoints_frac", "value": [0.35, 0.55, 0.62, 0.3]},
+            {"gid": _TITLE, "prop": "bbox_visible", "value": True},
+            {"gid": _TITLE, "prop": "stroke_enabled", "value": True},
+            {"gid": _TITLE, "prop": "fontsize", "value": 12},
+        ],
+        # 拖独立箭头的端点、改线型与样式（只虚杆、头保持实线）
+        [
+            {"gid": _ARR_ALONE, "prop": "endpoints_frac", "value": [0.4, 0.6, 0.7, 0.35]},
+            {"gid": _ARR_ALONE, "prop": "linestyle", "value": "--"},
+            {"gid": _ARR_ALONE, "prop": "arrowstyle", "value": "<->"},
+            {"gid": _ARR_ALONE, "prop": "linewidth", "value": 2.0},
+        ],
+        # 端点按 figure 分数落在最终的坐标范围上：改 ylim 在列表里排前排后，两根箭头落点都不变
+        [
+            {"gid": _ARR_ANN, "prop": "endpoints_frac", "value": [0.35, 0.55, 0.62, 0.3]},
+            {"gid": _ARR_ALONE, "prop": "endpoints_frac", "value": [0.4, 0.6, 0.7, 0.35]},
+            {"gid": "axes_0", "prop": "ylim", "value": [-6.0, 14.0]},
+        ],
+        [
+            {"gid": "axes_0", "prop": "ylim", "value": [-6.0, 14.0]},
+            {"gid": _ARR_ANN, "prop": "endpoints_frac", "value": [0.35, 0.55, 0.62, 0.3]},
+            {"gid": _ARR_ALONE, "prop": "endpoints_frac", "value": [0.4, 0.6, 0.7, 0.35]},
+        ],
+        # 两根箭头的样式一起改，注释箭头先改颜色再改线型
+        [
+            {"gid": _ARR_ANN, "prop": "color", "value": "#cc3300"},
+            {"gid": _ARR_ANN, "prop": "linestyle", "value": "--"},
+            {"gid": _ARR_ANN, "prop": "arrowstyle", "value": "-|>"},
+            {"gid": _ARR_ALONE, "prop": "visible", "value": False},
+        ],
+    ],
+    ids=[
+        "drag-annotation-and-text",
+        "drag-standalone-dashed",
+        "drag-then-ylim",
+        "ylim-then-drag",
+        "style-both",
+    ],
+)
+def test_arrow_edits_combine_like_the_editor(arrow_project, patches):
+    client, _figs = arrow_project
+    body = _export(client, patches, formats=[])
+    assert body["status"] == "done", body
+    assert _script_output(body)["script_report"]["written"] == len(patches)
+
+
+def test_endpoints_of_a_text_annotation_stay_with_the_engine():
+    """有字的注释上端点是失效的（manifest 不发 `arrow_endpoints`）：脚本里照落会把文字箭头拖走，留给引擎裁决。"""
+    gid = "axes_0.texts_0.arrow"
+    patch = {"gid": gid, "prop": "endpoints_frac", "value": [0.2, 0.3, 0.6, 0.4]}
+    live = {
+        "elements": [
+            {"gid": gid, "role": "arrow_patch", "editable": [], "arrow_endpoints": [[0, 0], [1, 1]]}
+        ]
+    }
+    dead = {"elements": [{"gid": gid, "role": "arrow_patch", "editable": []}]}
+    out = scriptadjust.build(b"import os\n", "Fig1", [patch], live, version="9.9")
+    assert out.written == 1 and not out.residual and "_ann_to(" in out.data.decode()
+    out = scriptadjust.build(b"import os\n", "Fig1", [patch], dead, version="9.9")
+    assert out.written == 0 and out.residual == [patch]
+
+
+@real_worker
+def test_arrow_endpoints_replay_identically(tmp_path):
+    """`endpoints_frac` 不在 manifest 的可编辑字段里（端点另发 `arrow_endpoints`），扫描采不到：
+    这里按 manifest 的端点逐根箭头挪一遍（注释箭头改的是注释的锚点、独立箭头 `set_positions`），
+    再与热态比。"""
+    worker, name = _library_worker(tmp_path, "adj")
+    try:
+        man = worker.override("AdjText", [])["manifest"]
+        arrows = [e for e in man["elements"] if e.get("arrow_endpoints")]
+        assert len(arrows) == 4, [e["gid"] for e in arrows]  # 纯箭头注释两根 + 独立箭头两根
+        patches = [
+            {
+                "gid": e["gid"],
+                "prop": "endpoints_frac",
+                "value": [
+                    min(0.95, a[0] + 0.07 * (k + 1)),
+                    max(0.05, a[1] - 0.06),
+                    max(0.05, b[0] - 0.05),
+                    min(0.95, b[1] + 0.08 * (k + 1)),
+                ],
+            }
+            for k, e in enumerate(arrows)
+            for a, b in [e["arrow_endpoints"]]
+        ]
+        _replays_identically(worker, name, tmp_path, "AdjText", patches)
+    finally:
+        pool.discard(worker)
 
 
 def test_one_rebuild_per_legend():
