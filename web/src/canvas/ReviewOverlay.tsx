@@ -75,8 +75,10 @@ function ReviewPin({ p, objects, t }: { p: PlacedComment; objects: readonly Canv
     }
   }
   if (!rect) return null
-  const cx = rect.x + rect.width
-  const cy = rect.y
+  // 元素意见带点击位置时，圆点落在元素上被点的那一处：按它在当时元素框里的相对位置换到元素现在的框（元素挪了也跟着走）
+  const at = a.kind === 'element' && a.pt && owner && owner.id !== a.gid ? pinOnElement(a.box, a.pt) : null
+  const cx = at ? rect.x + at[0] * rect.width : rect.x + rect.width
+  const cy = at ? rect.y + at[1] * rect.height : rect.y
   const label = translate('review.comment.pin', { ns: 'dialogs', n: p.n })
   const pick = () => useReviewStore.getState().select(p.comment.id)
   const done = p.comment.resolved
@@ -128,6 +130,15 @@ function ReviewPin({ p, objects, t }: { p: PlacedComment; objects: readonly Canv
       </g>
     </g>
   )
+}
+
+/** 点击位置在元素框里的相对位置（0..1）；框退化时 null（退回角上） */
+export function pinOnElement(box: readonly number[], pt: readonly number[]): [number, number] | null {
+  const [bx, by, bw, bh] = box
+  if (!(bw > 0 && bh > 0)) return null
+  const u = (pt[0] - bx) / bw
+  const v = (pt[1] - by) / bh
+  return [Math.min(1, Math.max(0, u)), Math.min(1, Math.max(0, v))]
 }
 
 /** `useElementRect` 是 hook、不能有条件地调：没有所属面板时喂一个占位（gid 为空，它返回 null） */
