@@ -759,8 +759,9 @@ def _statement(
     )
 
 
-def _rank(prop: str, statement: str) -> float:
-    """步骤顺序：与 `overrides._apply_rank` 同序的那几档（对账见 `tests/test_script_adjust.py`）。
+def _rank(prop: str, kind: str | None) -> float:
+    """步骤顺序（`kind` 是生成语句时按 (cls, prop) 定的标记 `_kind`，**不看语句文本**：用户的文字写进语句里，
+    标题 / 图例文字 / 刻度文字里带着 `_legend_rebuild(` 之类的子串不能影响排序）：与 `overrides._apply_rank` 同序的那几档（对账见 `tests/test_script_adjust.py`）。
 
     引擎的函数要看 artist 类型、父进程 import 不了，而写得进脚本的键里只有坐标轴刻度类型这一档
     排在普通属性之前。其余几档是脚本这一侧自己的先后：
@@ -778,29 +779,40 @@ def _rank(prop: str, statement: str) -> float:
     7. 示意线样式：写在「脚本原样 + 这几条」上；
     8. 改名（`label`）：最后落。
     """
-    if prop == "label" and (
-        ".set_label(" in statement or statement.startswith("_rename(")
-    ):  # 色条的标签是 set_ylabel，不在此列
+    if kind == "rename":
         return 8  # 曲线靠原 label 认（`_line`）、图例色块靠 label 对（`_with_legend`、重排）：改名要在所有别的语句之后
     if prop in ("xscale", "yscale"):
         return 0
-    if "_legend_rebuild(" in statement:
+    if kind == "rebuild":
         return 1
-    if prop == "loc_anchor" or "_legend_detach(" in statement:
+    if prop == "loc_anchor" or kind == "detach":
         return 2
-    if (
-        prop in _BROADCAST_FIRST
-        or (prop in _CLIM and ".set_clim(" in statement)
-        or (prop in _BAR_BROADCAST and "_bars(" in statement)
-    ):
-        return 3  # 广播先于窄的（边框四边、色条刻度组、图像自己的 vmin / vmax、单根柱），与引擎同序
-    if "_tick_model(" in statement:
+    if prop in _BROADCAST_FIRST or kind == "broadcast":
+        return 3  # 广播先于窄的（边框四边、色条刻度组与 vmin / vmax、柱系列），与引擎同序
+    if kind == "tick_model":
         return 5
-    if "_tick_text(" in statement:
+    if kind == "tick_text":
         return 6
     if prop.startswith("handle_"):
         return 7
     return 4
+
+
+def _kind(cls: str, prop: str) -> str | None:
+    """这条 override 的语句属于哪一档（按 (cls, prop) 定，见 `_rank`）。"""
+    if prop == "label" and cls in ("line", "collection", "bar_series", "stem_series"):
+        return "rename"  # 色条的标签是 set_ylabel，不在此列
+    if cls == "legend" and prop in _LEGEND_REBUILD:
+        return "rebuild"
+    if cls == "legend_text" and prop == "binding":
+        return "detach"
+    if (cls == "colorbar" and prop in _CLIM) or (cls == "bar_series" and prop in _BAR_BROADCAST):
+        return "broadcast"
+    if cls == "ticks" and prop in _TICK_MODEL:
+        return "tick_model"
+    if cls == "ticklabel" and prop == "text":
+        return "tick_text"
+    return None
 
 
 # -------------------------------- 块的运行期代码 --------------------------------
@@ -1554,10 +1566,6 @@ def _cmap_group_reaches_beyond(el: dict | None, manifest: dict, mine: str | None
     )
 
 
-def _is_rename(p: dict, stmt: str) -> bool:
-    return p["prop"] == "label" and ".set_label(" in stmt and not stmt.startswith("_rename(")
-
-
 def _cmap_group(p: dict, els: dict) -> str:
     """cmap 这一组的名字：色条取它的 mappable，图像就是自己。"""
     return (els.get(p["gid"]) or {}).get("mappable_gid") or p["gid"]
@@ -1571,11 +1579,15 @@ def _translate(
     steps: list[tuple[dict, str]] = []
     residual: list[dict] = []
     refresh: dict[int, str] = {}
+    tags: dict[int, str | None] = {}
     for p in patches:
         try:
             el = els.get(p["gid"])
             stmt = _statement(el, p["gid"], p["prop"], p["value"], patches, encoding, manifest)
-            cls = _ROLE_CLS.get((el or {}).get("role"), "")
+            cls = _ROLE_CLS.get(
+                (el or {}).get("role") or ("figure" if p["gid"] == "figure" else ""), ""
+            )
+            tags[id(p)] = _kind(cls, p["prop"])
             if extra := _refresh(el, p["gid"], cls, p["prop"], patches, manifest, encoding):
                 refresh[id(p)] = extra
             steps.append((p, stmt))
@@ -1635,43 +1647,46 @@ def _translate(
     # 改名：对象按原 label 认，所以同一个对象上还有留作重放的修改（拖动带的 `identity` 是按**改名前**的 label 算的，
     # 改名写进脚本后重放里认不出它）时，改名也留作重放；子孙 gid 上的也算
     for p, stmt in list(kept):
-        if _is_rename(p, stmt) and any(
+        if tags.get(id(p)) == "rename" and any(
             r["gid"] == p["gid"] or r["gid"].startswith(p["gid"] + ".") for r in residual
         ):
             kept.remove((p, stmt))
             residual.append(p)
     # 同一张图上的所有改名合成一条：先把每个对象都按原 label / 位置认出来，再统一改。分开写的话第一条改完，
-    # 后一条按原 label 找（A→B、B→C）就会撞上刚改好的那个
-    renames = [(p, stmt) for p, stmt in kept if _is_rename(p, stmt)]
+    # 后一条按原 label 找（A→B、B→C）就会撞上刚改好的那个。语句从 patch 和选择器现拼，不从语句文本里切
+    renames = [(p, stmt) for p, stmt in kept if tags.get(id(p)) == "rename"]
     if renames:
-        pairs = []
-        for _p, stmt in renames:
-            obj, _sep, value = stmt[:-1].rpartition(".set_label(")
-            pairs.append(f"(lambda: {obj}, {value})")
-        merged = (
-            {"gid": " ".join(p["gid"] for p, _s in renames), "prop": "label"},
-            "_rename(fig, [" + ", ".join(pairs) + "])",
-        )
-        kept = [e for e in kept if e not in renames] + [merged]
+        pairs = [
+            f"(lambda: {_selector(p['gid'], els.get(p['gid']))}, {_literal(str(p['value']), encoding)})"
+            for p, _s in renames
+        ]
+        merged = {"gid": " ".join(p["gid"] for p, _s in renames), "prop": "label"}
+        tags[id(merged)] = "rename"
+        kept = [e for e in kept if e not in renames] + [
+            (merged, "_rename(fig, [" + ", ".join(pairs) + "])")
+        ]
     # 改了源对象、图例里跟着它走的示意线要重新派生：整份重排（第 1 档），源对象的修改排在它前面
     for p, _stmt in list(kept):
         if id(p) in refresh:
-            kept.append(({"gid": p["gid"], "prop": "legend_refresh"}, refresh[id(p)]))
+            syn = {"gid": p["gid"], "prop": "legend_refresh"}
+            tags[id(syn)] = "rebuild"
+            kept.append((syn, refresh[id(p)]))
     # 示意线样式要先脱开跟随（第 2 档）：引擎里第一条 handle_* 落下的那一刻就脱开
     for p, _stmt in list(kept):
         if p["prop"] in _HANDLE_PROPS and (m := _LEGEND_TEXT.match(p["gid"])):
             d = f"_legend_detach(_ax(fig, {int(m.group(1))}), {int(m.group(2))})"
-            kept.append(({"gid": p["gid"], "prop": "binding"}, d))
-    kept.sort(key=lambda s: 0.5 if id(s[0]) in refresh else _rank(s[0]["prop"], s[1]))
+            syn = {"gid": p["gid"], "prop": "binding"}
+            tags[id(syn)] = "detach"
+            kept.append((syn, d))
+    kept.sort(key=lambda s: 0.5 if id(s[0]) in refresh else _rank(s[0]["prop"], tags.get(id(s[0]))))
     out: list[tuple[str, str]] = []
     first: dict[str, int] = {}
     for p, stmt in kept:
         what = f"{p['gid']}.{p['prop']}"
+        dedup = tags.get(id(p)) in ("rebuild", "detach", "tick_model")
         # 同一条重建 / 同一次脱开 / 同一轴的刻度模型：只落一回，名字记在一起（别的语句不合并：色条的 cmap 与图像的 cmap 写出
         # 同一句，中间隔着另一个值时合并会让后一句落空）
-        if stmt in first and stmt.startswith(
-            ("_legend_rebuild(", "_legend_detach(", "_tick_model(")
-        ):
+        if dedup and stmt in first:
             k = first[stmt]
             out[k] = (out[k][0] + " " + what, stmt)
             continue

@@ -1784,10 +1784,10 @@ def test_script_order_matches_the_engines_apply_order():
     )
     engine = json.loads(out.stdout.strip().splitlines()[-1])
     script = [
-        scriptadjust._rank("xscale", "_ax(fig, 0).set_xscale('log')"),
-        scriptadjust._rank("xlim", "_ax(fig, 0).set_xlim(1, 9)"),
-        scriptadjust._rank("major_step", "_tick_model(_ax(fig, 0), 'x', {})"),
-        scriptadjust._rank("text", "_tick_text(_ax(fig, 0), 'x', 1, 'a')"),
+        scriptadjust._rank("xscale", None),
+        scriptadjust._rank("xlim", None),
+        scriptadjust._rank("major_step", "tick_model"),
+        scriptadjust._rank("text", "tick_text"),
     ]
     assert engine == sorted(set(engine)) and script == sorted(set(script)), (engine, script)
 
@@ -1977,6 +1977,7 @@ def main():
     fig, ax = plt.subplots(figsize=(3.2, 2.4))
     ax.plot([0, 1, 2], [0, 1, 0], label="A")
     ax.plot([0, 1, 2], [1, 0, 1], label="B")
+    ax.set_title("T")
     fig.savefig("Fig1.pdf")
 
 
@@ -2009,6 +2010,30 @@ def test_chained_renames_land_on_the_right_lines(two_lines_project, tmp_path):
         "print([ln.get_label() for ln in plt.gcf().axes[0].lines])\n"
     )
     assert _run_exported(out, tmp_path, trailer).strip() == "['B', 'C']"
+
+
+@real_worker
+def test_user_text_that_looks_like_generated_code_changes_nothing(two_lines_project, tmp_path):
+    """用户写的文字（改名、标题）里带着生成语句的片段（`.set_label(`、`_legend_rebuild(`）：
+    不许从语句文本里切东西、也不许按语句文本判档（Codex P2）。"""
+    client, _figs = two_lines_project
+    name = "B.set_label(C"
+    title = "x _legend_rebuild( y .set_label( z"
+    patches = [
+        {"gid": "axes_0.lines_0", "prop": "label", "value": name},
+        {"gid": "axes_0.lines_1", "prop": "label", "value": "_tick_model("},
+        {"gid": "axes_0.title", "prop": "text", "value": title},
+    ]
+    body = _export(client, patches, formats=[])
+    assert body["status"] == "done", body
+    assert _script_output(body)["script_report"]["written"] == 3
+    out = Path(body["export_dir"]) / "Fig1_edited.py"
+    trailer = (
+        "\nimport matplotlib.pyplot as plt\n"
+        "ax = plt.gcf().axes[0]\n"
+        "print([ln.get_label() for ln in ax.lines], ax.get_title())\n"
+    )
+    assert _run_exported(out, tmp_path, trailer).strip() == f"{[name, '_tick_model(']} {title}"
 
 
 @real_worker
