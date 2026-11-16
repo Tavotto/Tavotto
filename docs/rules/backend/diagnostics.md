@@ -19,7 +19,7 @@ order: 280
 把当前这张图 / 这份排版的**画面**分享成链接。线上格式 v1 的唯一出处是 ADR 0187 §六；本机接口 `/api/review/*` 全部在会话认证之内（ADR 0008，`test_browser_auth` 从 url_map 枚举）。
 
 - **上线开关 `PRODUCTION_LIVE`**：线上服务部署并验通（建链接、更新、审阅页、额度计数）之前为 `False`——不设 `TAVOTTO_REVIEW_ENDPOINT` 时入口不出现、零网络；2026-11-16 验通后为 `True`。再关掉（服务下线 / 换域名）同样单独一个 PR，先报合并大队长。
-- **只上传画面**：每个版本只有 `snapshot.png`（走现有导出管线，长边 ≤ 3000 px、≤ 8 MiB，超了降分辨率重出）、元素位置表（≤ 4000 项 / 256 KiB，超了按面积从小到大丢并只在日志记个数）与标题 / 给审阅者的话。脚本、数据、路径、本机信息一律不传。
+- **只上传画面**：每个版本只有 `snapshot.png`（走现有导出管线，长边 ≤ 3000 px、≤ 8 MiB，超了降分辨率重出）、元素表（≤ 4000 项 / 256 KiB；带角色、绘制次序与**裁到画面可见部分**的曲线 / 形状轮廓，隐藏元素不传；超了先去形状、再按面积从小到大丢，只在日志记个数）与标题 / 给审阅者的话。脚本、数据、路径、本机信息一律不传。
   出图与元素表由 `app._review_render` 注册给引擎（`reviewshare.set_renderer`）：父进程这里不碰 `manifest` / `figsession`；只调 `_export_produce`（不经 `exportjob.run`），中间文件在 `data_dir()/review/tmp/` 的私有目录、用完即删，**不写项目导出目录**。
   出图描述 `render` 由前端带来（图 `{"original": …}`、排版 `{"canvas": {page_w_mm, page_h_mm, objects}}`，与 `POST /api/export` 同名段一致）：排版文档是前端 schema、worker 热会话只记 patch 哈希，引擎无法自己反推；缺 `render` = 同步 422。
 - **元素 label 只有两种来源**（`reviewshare.manifest_elements`）：画在图上的文字（manifest 里按 `artist.get_text()` 现算的 title / axis_label / text / legend_text / ticklabel）或按角色的结构性名字 + 序号（曲线 1 / 散点 2 / 图例 …）。**artist 自己的 `label`（脚本里随便写，没进图例就不在画面上，可能是路径 / 文件名）、url、文件名一律不传。**
