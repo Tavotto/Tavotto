@@ -74,7 +74,7 @@
      `contentToPageVec` → `atan2` 得页面上的**顺时针**角 = `rotationDeg`（y 轴标签 θ = 90 → −90；面板再转 90° 就是 0）。面板被镜像（翻转一次）时
      页面上没有「镜像的文字」：取同一条基线上读得顺的方向，左 / 右对齐跟着对调。
    * **位置**：标注的框绕**自己的中心**转（A 的语义），所以先让**第一行基线**落在原文字的第一行基线上（竖直方向：标注基线在框内的位置
-     `size × (行高/2 + K)`，`K = (sTypoAscender + sTypoDescender)/2` 是批准三族各一个常数，`tests/test_figure_text_copy_metrics.py` 从字体文件反推），
+     `size × (行高/2 + K)`，`K` 原为批准三族各一个常数 `(sTypoAscender + sTypoDescender)/2`；2026-11-16 起三族同一个数 `TEXT_BASELINE_BELOW_CENTER_PER_MILLE`，见 ADR 0073「修订：文字框里上下居中」，`tests/test_text_line_box.py` 看护），
      再让文字块沿阅读方向与原文字块同一条边 / 同一条中线（水平方向由 `align` 决定）。框宽 = `textFit.fitWidthMm(块宽, 字号)`——与 A 的
      「旋转前收框」**同一个公式**（`FIT_MARGIN_*` 不另造；多行用块宽加同样余量）。多行时 `lineHeight` 取原文字的相邻基线间距。
 4. **剪贴板走既有路径**：复制写的是现有对象剪贴板负载（系统剪贴板 JSON + 魔数）里的**已换算好的 TextObject**，所以跨标签页 / 跨排版粘贴、
@@ -96,7 +96,7 @@
 * **图例文字：manifest 里的位置与导出 PDF 里画的位置有 1–2 pt 的既有偏差**（教程图实测，8 pt 字：`Blank` 约 1.0 pt，含公式的 `Catalyst` 约 1.9 pt；
   画布上图例文字的选框与字也有同样的错位）。标注复制的是 manifest 的位置、与它逐点吻合（偏差 ≤ 0.02 pt），所以与导出里**原图**的图例文字就有同样的偏差。
   标题 / 轴标签 / 刻度数字没有这个偏差（≤ 0.07 pt）。偏差出在 manifest 的图例几何（图例是 `offsetbox` 布局，原因未查清），不在复制路径，另案处理（issue #1667）。
-* 预览（CSS，按 hhea）与导出（按 OS/2 typo）对基线的度量差约 0.09 em，标注对齐的是导出，画布预览里可能比原文字高低约 0.7 pt；既有差异，另案处理（issue #1669）。
+* 预览（CSS，按 hhea）与导出（按 OS/2 typo）对基线的度量差约 0.09 em，标注对齐的是导出，画布预览里可能比原文字高低约 0.7 pt；既有差异，另案处理（issue #1669）。**2026-11-16 已解决**：基线改按行盒中线、预览量出浏览器基线补齐（ADR 0073 修订）。
 * 前端没有字体度量，竖直方向的 `K` 常数按批准三族取；用户字体（`sourceFont`）的 typo 度量与批准族差在 0.02 em 内。
 * 非镜像面板才保证左右对齐语义与页面一致（镜像时按「读得顺」取向，左右对调）。
 * 复制的是**当前画出来的**文字（含尚未写回脚本的 override）；标注与原文字此后**没有关联**（改一边不影响另一边）。
@@ -175,4 +175,4 @@
 - 图内文字复制为标注：`web/src/lib/figureTextCopy.test.ts`（换算：横排 / y 轴标签 -90 / 面板转 90° / 水平翻转 / 裁剪 / 多行 / 30° / 字体族 / sourceFont / 粗斜 / 公式与转义）、
   `web/src/lib/figureTextClipboard.test.tsx`（⌘C 分派与曲线胶囊、权威缺席、粘贴一条历史与撤销重做、选中新标注并退出图内编辑、右键弹层两项与置灰）、
   `tests/test_manifest_text_block.py`（块中心 / 尺寸 / 第一行基线对任意转角——期望值取自 `va=baseline` 锚点与真实 artist 外接框两把独立的尺）、
-  `tests/test_figure_text_copy_metrics.py`（前端基线常数 ↔ 批准字体的 OS/2 typo 度量）。
+  `tests/test_text_line_box.py`（前端基线常数 ↔ 导出行盒常数；2026-11-16 前是 `test_figure_text_copy_metrics.py` 从字体文件反推三族常数）。

@@ -2,12 +2,10 @@ import { describe, expect, it } from 'vitest'
 import type { ManifestElement, ManifestTextBlock } from './api'
 import type { PanelObject } from '@/types/document'
 import { fitWidthMm } from '@/canvas/textFit'
+import { TEXT_BASELINE_BELOW_CENTER_PER_MILLE } from './typography'
 import { MM_PER_PT } from './units'
 import {
   annotationTextOf,
-  BASELINE_MONO_PER_MILLE,
-  BASELINE_SANS_PER_MILLE,
-  BASELINE_SERIF_PER_MILLE,
   figureTextToAnnotation,
   isCopyableText,
 } from './figureTextCopy'
@@ -18,7 +16,8 @@ import {
  * 标注这一侧的基线 = 框中心 + (行盒中线到基线 K em − 框高 / 2 + 框高 / 2 ……) 按渲染的公式单独写在 `baselineOf` 里。
  */
 
-const K = { sans: BASELINE_SANS_PER_MILLE / 1000, serif: BASELINE_SERIF_PER_MILLE / 1000, mono: BASELINE_MONO_PER_MILLE / 1000 }
+/** 行盒中线到基线（em）：三族同一个数（ADR 0073 修订，2026-11-16） */
+const K = { sans: TEXT_BASELINE_BELOW_CENTER_PER_MILLE / 1000 }
 
 /** 面板：页面上 (10, 20)，100 × 75 mm，原生 50 × 37.5 mm（放大一倍） */
 const panelOf = (extra: Record<string, unknown> = {}): PanelObject =>
@@ -161,16 +160,16 @@ describe('图内文字 → 标注：摆放', () => {
     expect(got[1]).toBeCloseTo(want[1], 5)
   })
 
-  it('字体族：具体字体名归到最接近的通用族；基线常数跟族走', () => {
+  it('字体族：具体字体名归到最接近的通用族；基线与族无关', () => {
     const times = figureTextToAnnotation(panelOf(), elOf(block(), { face: 'Times New Roman' }))!
     expect(times.fontFamily).toBe('serif')
     const mono = figureTextToAnnotation(panelOf(), elOf(block(), { face: 'Courier New' }))!
     expect(mono.fontFamily).toBe('monospace')
     const dj = figureTextToAnnotation(panelOf(), elOf(block(), { face: 'DejaVu Sans' }))!
     expect(dj.fontFamily).toBe('sans-serif')
-    // 同一块、不同族：框中心的竖直位置差 = 两个 K 之差（基线重合 → 框要跟着挪）
-    expect(times.y + times.h / 2 - (dj.y + dj.h / 2)).toBeCloseTo((K.sans - K.serif) * dj.sizePt * MM_PER_PT, 6)
-    expect(mono.y + mono.h / 2 - (dj.y + dj.h / 2)).toBeCloseTo((K.sans - K.mono) * dj.sizePt * MM_PER_PT, 6)
+    // 同一块、不同族：基线在框里的位置三族相同，框不跟着族挪
+    expect(times.y + times.h / 2).toBeCloseTo(dj.y + dj.h / 2, 6)
+    expect(mono.y + mono.h / 2).toBeCloseTo(dj.y + dj.h / 2, 6)
   })
 
   it('原图字体、粗体、斜体：sourceFont 取 face_src，粗斜以那张脸为准；没有身份时走仓库判据', () => {

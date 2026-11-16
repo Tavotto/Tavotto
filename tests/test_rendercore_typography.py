@@ -142,13 +142,55 @@ def test_alignment_moves_the_line_start_not_the_glyphs():
     assert right.lines[0].x == pytest.approx(x0 + box_w - w)
 
 
+def test_the_baseline_does_not_depend_on_the_primary_face_metrics():
+    """文字框里上下居中（2026-11-16）：基线只由行盒决定，换一张度量不同的正文脸基线不动。"""
+    a = ty.layout_text(_text(), FACES)
+    b = ty.layout_text(_text(font_family="sans-serif"), FACES_NO_CJK)
+    assert a is not None and b is not None
+    assert a.lines[0].baseline == pytest.approx(b.lines[0].baseline)
+
+
+def _formula_box(asc: float, desc: float) -> dict:
+    return {"ok": True, "width": 1.0, "ascent": asc, "descent": desc, "segments": []}
+
+
+def test_a_tall_formula_grows_only_its_own_line_and_short_ones_change_nothing():
+    """公式撑开所在的那一行（ADR 0152 修订）：行盒 = 普通字的行盒 ∪ 公式盒；装得下的公式（x²）不改行距。"""
+    size, lh = 10.0, 1.25
+    up0, down0 = (
+        size * (lh / 2 + ty.BASELINE_BELOW_CENTER),
+        size * (lh / 2 - ty.BASELINE_BELOW_CENTER),
+    )
+    tall, short = r"\frac{a}{b}", "x^2"
+    math = {
+        ty.math_key(tall, "serif"): _formula_box(1.2, 0.9),
+        ty.math_key(short, "serif"): _formula_box(0.79, 0.0),
+    }
+    y0 = 20.0 * 72 / 25.4
+    block = ty.layout_text(
+        _text(text=f"a ${short}$\nb ${tall}$\nc", text_format="latex"), FACES, math
+    )
+    assert block is not None and len(block.lines) == 3
+    b1, b2, b3 = (ln.baseline for ln in block.lines)
+    assert b1 == pytest.approx(y0 + up0)  # x² 装得下：与纯文字同一条基线
+    assert b2 == pytest.approx(b1 + down0 + 1.2 * size)  # 第二行顶 + 公式的上伸
+    assert b3 == pytest.approx(b2 + 0.9 * size + up0)  # 第二行底 = 公式的下伸，第三行照常
+    # 不排公式（缩略图等）：公式按源码画，不撑行
+    plain = ty.layout_text(_text(text=f"a ${short}$\nb ${tall}$\nc", text_format="latex"), FACES)
+    assert plain is not None
+    assert [ln.baseline for ln in plain.lines] == pytest.approx(
+        [y0 + up0 + k * size * lh for k in range(3)]
+    )
+
+
 def test_the_first_baseline_is_the_css_line_box_baseline_of_the_primary_face():
-    """baseline = y0 + size × ((line_h − (asc − desc)) / 2 + asc)，asc / desc 来自正文脸。"""
+    """baseline = y0 + size × (line_h / 2 + BASELINE_BELOW_CENTER)：与正文脸的度量无关（ADR 0073 修订）。"""
     block = ty.layout_text(_text(line_height=1.5, padding_mm=1.0), FACES)
     assert block is not None
     y0 = 20.0 * 72 / 25.4 + 1.0 * 72 / 25.4
-    asc, desc = FACES.primary.ascender, FACES.primary.descender
-    assert block.lines[0].baseline == pytest.approx(y0 + 10.0 * ((1.5 - (asc - desc)) / 2 + asc))
+    assert block.lines[0].baseline == pytest.approx(
+        y0 + 10.0 * (1.5 / 2 + ty.BASELINE_BELOW_CENTER)
+    )
 
 
 # ---------------------------------------------------------------- 上下标与 ActualText

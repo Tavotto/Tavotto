@@ -27,6 +27,7 @@ import { isSourceFont } from '@/lib/sourceFont'
 import { useSourceFonts } from '@/lib/sourceFontCache'
 import { approvedCjkBoldFor, previewStackOf } from '@/lib/sourceFontPreview'
 import { canvasFontStack, effectiveCanvasFamily, WRITING_MODE_VERTICAL } from '@/lib/typography'
+import { horizontalBaselineFixPx } from '@/lib/lineBox'
 import type { TextObject } from '@/types/document'
 
 /**
@@ -152,6 +153,41 @@ export function TextView({
   const own = { bold: obj.bold === true, italic: obj.italic === true }
   const boldCjk = approvedCjkBoldFor(effectiveCanvasFamily(obj), obj.text)
   const previewStack = previewStackOf(source, stack, own, undefined, boldCjk)
+  // 横排在文字框里上下居中（ADR 0073 修订，2026-11-16）：导出把基线放在行盒中线下固定 em，浏览器按这张脸自己的
+  // 度量放——整段内容往下挪二者之差，公式按同一个量错开布局盒（`MathFormula` 的 `lineBox`），逐行与导出一致。
+  // 只挪内容层：外层的框（底色 / 描边 / 内边距）与量出来的框高都不变。
+  const lineBox = vertical ? undefined : { shiftPx: horizontalBaselineFixPx(previewStack, sizePx, obj.lineHeight ?? 1.25, own) }
+  const body = editing ? (
+    <RichTextField
+      variant="inline"
+      // 与属性页文字框同一个名字（「文字」）
+      aria-label={translate('text.title', { ns: 'inspector' })}
+      value={obj.text}
+      codec={annotationCodec(obj.textFormat)}
+      onChange={(text) => (pending.current = text)}
+      onBlur={commitText}
+      onEnter={blurEditor}
+      onEscape={blurEditor}
+      // 编辑时空着就写一句占位（2026-10-07 设计审计 §10.1），只在 ::before 里、不进正文
+      placeholder={translate('stage.textPlaceholder', { ns: 'workspace' })}
+      sizePx={sizePx}
+      mathFamily={effectiveCanvasFamily(obj)}
+      mathLineBox={lineBox}
+      selectAllOnMount
+      testId="canvas-text-editor"
+    />
+  ) : (
+    <RenderedText
+      text={obj.text}
+      sizePx={sizePx}
+      interpretation={obj.interpretation}
+      format={obj.textFormat}
+      family={effectiveCanvasFamily(obj)}
+      runStack={source || boldCjk ? (run) => previewStackOf(source, stack, own, run, boldCjk) : undefined}
+      vertical={vertical ? { columnPx, stack: previewStack } : undefined}
+      lineBox={lineBox}
+    />
+  )
 
   return (
     <div
@@ -208,34 +244,12 @@ export function TextView({
           : undefined,
       }}
     >
-      {editing ? (
-        <RichTextField
-          variant="inline"
-          // 与属性页文字框同一个名字（「文字」）
-          aria-label={translate('text.title', { ns: 'inspector' })}
-          value={obj.text}
-          codec={annotationCodec(obj.textFormat)}
-          onChange={(text) => (pending.current = text)}
-          onBlur={commitText}
-          onEnter={blurEditor}
-          onEscape={blurEditor}
-          // 编辑时空着就写一句占位（2026-10-07 设计审计 §10.1），只在 ::before 里、不进正文
-          placeholder={translate('stage.textPlaceholder', { ns: 'workspace' })}
-          sizePx={sizePx}
-          mathFamily={effectiveCanvasFamily(obj)}
-          selectAllOnMount
-          testId="canvas-text-editor"
-        />
+      {lineBox ? (
+        <div data-text-lines style={{ position: 'relative', top: lineBox.shiftPx }}>
+          {body}
+        </div>
       ) : (
-        <RenderedText
-          text={obj.text}
-          sizePx={sizePx}
-          interpretation={obj.interpretation}
-          format={obj.textFormat}
-          family={effectiveCanvasFamily(obj)}
-          runStack={source || boldCjk ? (run) => previewStackOf(source, stack, own, run, boldCjk) : undefined}
-          vertical={vertical ? { columnPx, stack: previewStack } : undefined}
-        />
+        body
       )}
     </div>
   )
@@ -260,6 +274,7 @@ function RenderedText({
   family,
   runStack,
   vertical,
+  lineBox,
 }: {
   text: string
   sizePx: number
@@ -270,6 +285,8 @@ function RenderedText({
   runStack?: (run: { bold: boolean; italic: boolean }) => string
   /** 竖排：公式整块侧躺（`MathFormula` 的竖排形态） */
   vertical?: { columnPx: number; stack: string }
+  /** 横排：公式撑开所在行（`MathFormula` 的 `lineBox`） */
+  lineBox?: { shiftPx: number }
 }) {
   // 与导出读同一份判据：`layerOf` 的覆盖表就是 PDF 后端那三张脸的能力。
   // **浏览器自己的字体栈不参与这个判断**——它画得出 `⁵` 不代表导出画得出，
@@ -284,7 +301,7 @@ function RenderedText({
   return (
     <>
       {runs.map((r, i) => {
-        if (r.math) return <MathFormula key={i} src={r.text} family={family} sizePx={sizePx} vertical={vertical} />
+        if (r.math) return <MathFormula key={i} src={r.text} family={family} sizePx={sizePx} vertical={vertical} lineBox={lineBox} />
         // 行内样式只在**打开**时写：对象自己是粗 / 斜体时，片段不写 normal 去覆盖它（与导出的「或」一致）
         const style: CSSProperties = {}
         if (r.italic) style.fontStyle = 'italic'

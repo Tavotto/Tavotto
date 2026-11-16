@@ -348,11 +348,11 @@ describe('TextView 预览：公式在竖排里整块侧躺、沿列占公式宽�
     expect(parseFloat(svg.style.left)).toBeCloseTo((sizePx * 1.25) / 2 - 0.35 * sizePx + 0.8 * sizePx, 3)
   })
 
-  it('横排：仍是零高、基线上的原样（旧文档预览逐字不变）', () => {
+  it('横排：不侧躺，真高的盒子坐在基线上、撑开所在行（ADR 0152 修订）', () => {
     act(() => root.render(<TextView obj={textObj({ text: '弹性 $x^2$ 段', textFormat: 'latex' })} />))
     const box = formula()
     expect(box.hasAttribute('data-math-vertical')).toBe(false)
-    expect(box.style.height).toBe('0px')
+    expect(box.style.height).not.toBe('0px')
     expect(box.querySelector('svg')!.style.transform).toBe('')
   })
 })
