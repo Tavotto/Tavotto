@@ -145,7 +145,13 @@ TARGET_MANAGED = "tavotto_managed"
 #: 采用它一个字节都不装，走的是项目环境 PATCH（`app._set_project_environment`），
 #: 所以刻意不进 `TARGETS`：`create_plan` 对它一律 `dependency_install_not_allowed`。
 TARGET_SYSTEM = "system_interpreter"
-TARGETS = (TARGET_PROJECT_VENV, TARGET_MANAGED)
+#: 「你为这个项目选的 Python」（ADR 0019 2026-11-15 修订）：项目记住的解释器是用户亲手选的、在项目之外的系统 Python /
+#: Conda 环境，而 Tavotto 受管环境的 worker 自检又过不去时，缺的包直接装进它。执行走和项目 venv 一样的原地路径
+#: （改的是用户的环境，必须用户亲手确认）；哪条路径可以作目标只认 `configured_interpreter` 一处，不接受任意路径。
+TARGET_CONFIGURED = "configured_interpreter"
+TARGETS = (TARGET_PROJECT_VENV, TARGET_MANAGED, TARGET_CONFIGURED)
+#: 原地改用户环境的目标种类（项目 venv + 用户为项目选的 Python）：原地 pip、不可回滚、要明确确认
+IN_PLACE_TARGETS = (TARGET_PROJECT_VENV, TARGET_CONFIGURED)
 
 #: 同一个 (项目, 脚本) 上最多修几轮。**不是**「自动装三次」——每一轮都要用户
 #: 明确点一次；这个上限挡的是「装完还缺、再装还缺」把用户拖进无尽循环。
@@ -512,7 +518,7 @@ def impact_of(
     `scope_policy="switch"`（D04）：换成本作用域——新一代只装本作用域的集合：账上别的作用域装进去的包不再
     在 active 的环境里（`drops`），保留的包里版本要变的（`changes`，别的作用域依赖的那个版本不在了）。
     这是**更大的影响**，所以单列、进摘要。"""
-    in_place = target_kind == TARGET_PROJECT_VENV
+    in_place = target_kind in IN_PLACE_TARGETS
     return {
         "impact_version": IMPACT_VERSION,
         "target_kind": target_kind,
@@ -1058,6 +1064,21 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
                 }
             )
 
+    # ---- A2. 你为这个项目选的 Python：只在判据过时列出，排在受管之前（改的是用户环境，要确认）-----
+    configured = configured_interpreter(root)
+    if configured:
+        out["targets"].append(
+            {
+                "kind": TARGET_CONFIGURED,
+                "python": configured,
+                "venv": "",
+                "modifies_user_environment": True,
+                "creates_environment": False,
+                "available": True,
+                "reason": "",
+            }
+        )
+
     # ---- B. Tavotto 受管环境：可删可重建，改的是我们自己的东西 ------------
     managed = managedenv.state(root)
     # 受管目标**每次**都建新的一代（U04 §五）：有没有 active 代都要基础解释器，「可用」看的是 base
@@ -1081,6 +1102,8 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
             "available": available,
             "reason": "" if available is not False else ERROR_MANAGED_UNAVAILABLE,
             "private_python": private,
+            # 最近一代装完 worker 自检没过：界面据此不再把它当主按钮（有 configured 目标时让位给它）
+            "selftest_failed": managed_selftest_failed(root),
         }
     )
     out["managed"] = managed
@@ -1105,6 +1128,59 @@ def pinned_payload() -> dict | None:
         pair = pool.worker_python_env_pair()
         out["variable"] = pair[0] if pair else pool.WORKER_PYTHON_ENV
     return out
+
+
+#: 用户亲手为项目选的解释器在设置里的触发记号（`configured_interpreter` 判据认它）
+TRIGGER_USER_SELECTED = "user_selected"
+
+
+def _remember_trigger(target_kind: str) -> str:
+    """原地装完要重新记一次解释器（环境代变了，不记会被当成「被重建」）。装进「你为这个项目选的 Python」时
+    **保留** `user_selected`：它仍是用户的选择，换成 `dependency_repair` 的话下一次缺包这条目标就消失了（Codex #1934 P2）。"""
+    return TRIGGER_USER_SELECTED if target_kind == TARGET_CONFIGURED else TRIGGER_DEPENDENCY_REPAIR
+
+
+def configured_interpreter(project: str | Path) -> str | None:
+    """「你为这个项目选的 Python」——第三种安装目标的**唯一判据出处**（ADR 0019 2026-11-15 修订）。
+
+    五条全过才回路径，否则 None：项目记住的解释器是用户亲手选的（`trigger == user_selected`）、文件在、
+    属于「项目之外的系统 Python / Conda」档（非项目 venv、非受管、非内置）、此刻项目解析出的正是它、没有
+    全局显式解释器压着。只读设置与 `stat`，不起任何子进程、不装任何东西。"""
+    root = str(Path(project))
+    try:
+        record = projectenv.remembered_record(root)
+        if not record or record.get("trigger") != TRIGGER_USER_SELECTED or not record.get("exists"):
+            return None
+        python = str(record.get("path") or "")
+        if not python or pool.remembered_source(root, python) != pool.SOURCE_SYSTEM:
+            return None
+        if pool.explicit_worker_python():
+            return None
+        # 只 stat、不体检、不写配置（`offer` 在渲染失败的响应路径上不许起解释器）：与解析时第 3 档同一判据
+        peek = pool.peek_project_resolution(root)
+        if peek is None or not pool.same_python(peek[0], python):
+            return None
+        return python
+    except Exception:  # noqa: BLE001 — 判据读不出来 = 不提供这个目标（失败只会少一个选项，不会多装一个）
+        return None
+
+
+def managed_selftest_failed(project: str | Path) -> bool:
+    """本项目受管环境**最近登记的一代**是不是「装完 worker 自检没过」而没能启用。
+
+    之后成功建出一代，最近一代就不再是失败的——自然为 False。只读 manifest，不起子进程。
+    用来决定「管理环境装了也用不了」时优先推荐 `TARGET_CONFIGURED`（避免用户反复白等）。"""
+    try:
+        gens = managedenv.generations(str(Path(project)))
+    except Exception:  # noqa: BLE001
+        return False
+    if not gens:
+        return False
+    latest = max(gens.items(), key=lambda kv: (int(kv[1].get("created_at") or 0), kv[0]))[1]
+    return (
+        latest.get("state") == managedenv.GEN_STATE_INCOMPLETE
+        and latest.get("incomplete_reason") == managedenv.REASON_SELFTEST_FAILED
+    )
 
 
 def _refuse_if_pinned() -> None:
@@ -1151,7 +1227,11 @@ def create_plan(
     if not_pip is not None:
         raise RepairError(
             ERROR_UNRESOLVED,
-            f"{not_pip['label']} 不在 PyPI 上，需要有它的自己的环境",
+            (
+                f"{not_pip['label']} 只在 AI 聊天的网页沙箱里有，要让 AI 去掉它重新生成脚本"
+                if not_pip["hint"] == depresolve.NOT_PIP_HINT_AI_SANDBOX
+                else f"{not_pip['label']} 不在 PyPI 上，需要有它的自己的环境"
+            ),
             not_pip_installable=not_pip,
         )
     if not requirement.installable:
@@ -1166,6 +1246,20 @@ def create_plan(
         health = projectenv.probe_environment(python, module)
         if health.get("code") == projectenv.ERROR_MODULE_MISSING:
             pass  # 正是我们要修的状态
+        elif health.get("ok"):
+            raise RepairError(ERROR_ALREADY_PRESENT, f"这个环境里已经有 {module} 了")
+        else:
+            raise RepairError(
+                health.get("code") or ERROR_NOT_ALLOWED, "这个环境不适合作为安装目标", health=health
+            )
+    elif target_kind == TARGET_CONFIGURED:
+        # 只认判据的结果，不接受调用方给的路径；缺包才装（与项目 venv 同一条体检）
+        python = configured_interpreter(root) or ""
+        if not python:
+            raise RepairError(ERROR_NOT_ALLOWED, "这个项目此刻没有你为它选的 Python，不能往里装")
+        health = projectenv.probe_environment(python, module)
+        if health.get("code") == projectenv.ERROR_MODULE_MISSING:
+            pass
         elif health.get("ok"):
             raise RepairError(ERROR_ALREADY_PRESENT, f"这个环境里已经有 {module} 了")
         else:
@@ -1199,7 +1293,7 @@ def create_plan(
         python=python,
         env_fingerprint=_fingerprint(target_kind, python, root),
         requirement=requirement,
-        modifies_user_environment=target_kind == TARGET_PROJECT_VENV,
+        modifies_user_environment=target_kind in IN_PLACE_TARGETS,
         creates_environment=creates,
         network_required=True,
         created_at=now,
@@ -1711,7 +1805,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         project,
         python,
         automatic=False,
-        trigger=TRIGGER_DEPENDENCY_REPAIR,
+        trigger=_remember_trigger(plan.target_kind),
         module=req.import_name,
         health=health,
     )
@@ -2660,6 +2754,59 @@ def _selftest_error(selftest: dict) -> "RepairError":
     return RepairError(ERROR_SELFTEST_FAILED, detail)
 
 
+#: 自检没过时「失败在哪一步」的闭集（诊断包 `managed_environment_jobs[].selftest.stage`，`envdiag` 按同一张表再投影）。
+SELFTEST_STAGE_SPAWN = "spawn_failed"  # 子进程根本没起来（OSError）
+SELFTEST_STAGE_LAUNCHER = "launcher_unavailable"  # Conda 激活取环境失败
+SELFTEST_STAGE_TIMEOUT = "timeout"
+SELFTEST_STAGE_ERROR_REPLY = "error_reply"  # worker 起来了，回了 ok=false 的信封
+SELFTEST_STAGE_NO_REPLY = "no_reply"  # 进程结束了，却没有一条对得上的信封（多半启动阶段就崩了）
+SELFTEST_STAGES = frozenset(
+    {
+        SELFTEST_STAGE_SPAWN,
+        SELFTEST_STAGE_LAUNCHER,
+        SELFTEST_STAGE_TIMEOUT,
+        SELFTEST_STAGE_ERROR_REPLY,
+        SELFTEST_STAGE_NO_REPLY,
+    }
+)
+
+
+def _reply_traceback(resp: dict) -> str:
+    err = resp.get("error")
+    tb = err.get("traceback") if isinstance(err, dict) else resp.get("traceback")
+    return tb if isinstance(tb, str) else ""
+
+
+def _selftest_failure(
+    stage: str,
+    *,
+    exit_code: int | None = None,
+    worker_code: object = None,
+    text: str | None = None,
+    exc_type: str | None = None,
+) -> dict:
+    """自检没过的**闭集形状**（TVD-JXMR：六次自检失败、诊断包里只有错误码，查不出原因）。
+
+    只放：哪一步、退出码、worker 回的稳定错误码、报错文本的 `[structure]` 摘要与最深一帧引擎位置
+    （`diagnostics.failure_shape`，与 worker 日志同一套白名单）。`detail` 原文不进这里——它只给界面。"""
+    shape: dict = {"structure": [], "engine_frame": None}
+    if text:
+        try:
+            from . import diagnostics
+
+            shape = diagnostics.failure_shape(text)
+        except Exception:  # noqa: BLE001 — 诊断不该拖垮自检的结论
+            pass
+    if exc_type and not shape["structure"]:
+        shape["structure"] = [f"[structure] {exc_type}"]
+    return {
+        "stage": stage,
+        "exit_code": exit_code,
+        "worker_code": worker_code if isinstance(worker_code, str) else None,
+        **shape,
+    }
+
+
 def worker_self_test(python: str) -> dict:
     """真起一次 worker 跑通一次 build——验证的第三层。
 
@@ -2716,7 +2863,11 @@ def worker_self_test(python: str) -> dict:
             )
         except subprocess.TimeoutExpired:
             _kill(proc)
-            return {"ok": False, "detail": f"worker 自检超时（{SELFTEST_TIMEOUT_S}s）"}
+            return {
+                "ok": False,
+                "detail": f"worker 自检超时（{SELFTEST_TIMEOUT_S}s）",
+                "failure": _selftest_failure(SELFTEST_STAGE_TIMEOUT),
+            }
         for line in (stdout or "").splitlines():
             try:
                 resp = json.loads(line)
@@ -2732,12 +2883,37 @@ def worker_self_test(python: str) -> dict:
                     # `stems` 才是「捕获到几张图」——调用方据此断言 worker
                     # 是真跑通了，而不是「函数返回了 True」。
                     return {"ok": True, "figures": len(resp.get("stems") or {})}
-                return {"ok": False, "detail": str(resp.get("error", ""))[:800]}
-        return {"ok": False, "detail": (stderr or stdout or "")[-800:]}
+                err = resp.get("error")
+                return {
+                    "ok": False,
+                    "detail": str(err or "")[:800],
+                    "failure": _selftest_failure(
+                        SELFTEST_STAGE_ERROR_REPLY,
+                        exit_code=proc.returncode,
+                        worker_code=err.get("code") if isinstance(err, dict) else None,
+                        text=_reply_traceback(resp) or stderr,
+                    ),
+                }
+        return {
+            "ok": False,
+            "detail": (stderr or stdout or "")[-800:],
+            "failure": _selftest_failure(
+                SELFTEST_STAGE_NO_REPLY, exit_code=proc.returncode, text=stderr
+            ),
+        }
     except launcher.LauncherUnavailable as exc:
-        return {"ok": False, "detail": str(exc)[:800], "code": exc.code}
+        return {
+            "ok": False,
+            "detail": str(exc)[:800],
+            "code": exc.code,
+            "failure": _selftest_failure(SELFTEST_STAGE_LAUNCHER),
+        }
     except OSError as exc:
-        return {"ok": False, "detail": str(exc)[:800]}
+        return {
+            "ok": False,
+            "detail": str(exc)[:800],
+            "failure": _selftest_failure(SELFTEST_STAGE_SPAWN, exc_type=type(exc).__name__),
+        }
     finally:
         import shutil
 
@@ -4621,6 +4797,12 @@ def create_joint_plan(
         raise RepairError(ERROR_NOT_ALLOWED, f"未知的安装目标: {kind!r}")
     if kind == TARGET_PROJECT_VENV and auto_kind != TARGET_PROJECT_VENV:
         raise RepairError(ERROR_NOT_ALLOWED, "这个项目此刻没有选中自己的虚拟环境，不能往里装")
+    if kind == TARGET_CONFIGURED:
+        # 只认判据的结果（不接受任意路径）；干净机器 / 换 Python 版本的替身路径上没有「用户选的」这回事
+        configured = configured_interpreter(root)
+        if standin is not None or not configured:
+            raise RepairError(ERROR_NOT_ALLOWED, "这个项目此刻没有你为它选的 Python，不能往里装")
+        python = configured
     if scope_policy not in ("", SCOPE_POLICY_SWITCH):
         raise RepairError(ERROR_NOT_ALLOWED, f"未知的作用域策略: {scope_policy!r}")
     if scope_policy == SCOPE_POLICY_SWITCH and kind != TARGET_MANAGED:
@@ -4638,7 +4820,8 @@ def create_joint_plan(
             root,
             script,
             facts=facts,
-            target_kind=kind,
+            # 联合求解只认两种落点；用户为项目选的 Python 与项目 venv 同为「原地装进现成环境」
+            target_kind=TARGET_PROJECT_VENV if kind == TARGET_CONFIGURED else kind,
             groups=groups,
             install_facts=install_facts,
             coverage=_coverage_reader(facts),
@@ -4732,7 +4915,7 @@ def create_joint_plan(
             for m in installing_entries
         ),
         groups=tuple(joint.selection.get("selected_groups") or ()),
-        modifies_user_environment=kind == TARGET_PROJECT_VENV,
+        modifies_user_environment=kind in IN_PLACE_TARGETS,
         creates_environment=creates,
         created_at=now,
         expires_at=now + PLAN_TTL_S,
@@ -5100,6 +5283,11 @@ def prepare(
         if plan.selection != selection_signature(plan.project):
             # 确认期间用户采用 / 选回了别的环境：安装结束会把结果记成项目的环境，不能盖掉他刚做的选择
             raise RepairError(ERROR_PLAN_STALE, "确认期间项目的解释器选择变了")
+        if plan.target_kind == TARGET_CONFIGURED and not pool.same_python(
+            configured_interpreter(plan.project), plan.python
+        ):
+            # 目标只认判据此刻的结果：确认期间它不再成立（选了别的 Python / 全局固定了）= 不再往里装
+            raise RepairError(ERROR_PLAN_STALE, "确认期间你为这个项目选的 Python 变了")
         # 解释器指纹只看 `pyvenv.cfg`：确认期间有人往目标里装 / 卸了包它不变，事实 digest 会变——
         # 重新量一次（不走缓存），不一样就是 stale，一个字节不装（Codex #461 P2）
         run, install = _facts_for_plan(plan, use_cache=False)
@@ -5239,7 +5427,9 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
             plan.plan_id, STATE_CANCELLED, on_event, joint=plan, code=ERROR_CANCELLED, result=detail
         )
         return {"ok": False, "code": ERROR_CANCELLED, **detail}
-    projectenv.remember(plan.project, python, automatic=False, trigger=TRIGGER_DEPENDENCY_REPAIR)
+    projectenv.remember(
+        plan.project, python, automatic=False, trigger=_remember_trigger(plan.target_kind)
+    )
     pool.note_project_python_ok(python)
     pool.invalidate(plan.script, plan.project)
     depplan.reset_cache(python)
@@ -5250,7 +5440,7 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
     result = {
         "ok": True,
         "python": python,
-        "target_kind": TARGET_PROJECT_VENV,
+        "target_kind": plan.target_kind,
         "installed": installed,
         "providers": _provider_receipt(plan.record, provided, installed, ""),
     }
@@ -5593,8 +5783,9 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         )
     selftest = worker_self_test(python)
     if not selftest.get("ok"):
+        job.diagnostic["selftest"] = selftest.get("failure")
         managedenv.mark_generation(
-            project, generation, managedenv.GEN_STATE_INCOMPLETE, "worker 自检未通过"
+            project, generation, managedenv.GEN_STATE_INCOMPLETE, managedenv.REASON_SELFTEST_FAILED
         )
         raise _selftest_error(selftest)
     # ---- 提交点：切 active。之后拒绝取消 ----

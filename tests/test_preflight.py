@@ -192,6 +192,79 @@ def test_width_check_uses_the_profile_not_a_hardcoded_number():
     assert "page-width" not in _ids(preflight.run(spec, p85))
 
 
+def _width_issue(columns, width, tol=None):
+    """给 journal-base-v1 套上 `page_columns`，在 `width` mm 的页宽上跑预检，返回 page-width 条目（或 None）。"""
+    journal = {"page_columns": columns, "widths_mm": {"single": None, "double": None}}
+    if tol is not None:
+        journal["widths_mm"]["tolerance_mm"] = tol
+    p = profiles.load("journal-base-v1", journal)
+    spec = preflight.spec_from_manifest(_manifest())
+    spec["page"]["w_mm"] = width
+    return next((i for i in preflight.run(spec, p) if i["id"] == "page-width"), None)
+
+
+def _col(cid, w, q="exact"):
+    return {"id": cid, "label": {"zh": cid, "en": cid}, "width_mm": w, "qualifier": q}
+
+
+_JACS = [_col("single", 84.7, "max"), _col("double", 177.8, "max")]
+
+
+def test_max_only_columns_flag_a_page_wider_than_the_largest_max():
+    issue = _width_issue(_JACS, 228.6)
+    assert issue is not None
+    assert issue["message"] == {
+        "key": "pageWidthMax",
+        "params": {"actual": "228.6", "max": "177.8"},
+    }
+    assert issue["detail"]["columns"] == [
+        {"id": "single", "width_mm": 84.7, "qualifier": "max"},
+        {"id": "double", "width_mm": 177.8, "qualifier": "max"},
+    ]
+
+
+def test_max_only_columns_accept_anything_up_to_the_max_plus_tolerance():
+    assert _width_issue(_JACS, 60.0) is None
+    assert _width_issue(_JACS, 177.8) is None
+    assert _width_issue(_JACS, 178.3) is None  # 默认容差 0.5 恰在边上
+    assert _width_issue(_JACS, 178.4) is not None
+
+
+def test_exact_and_max_columns_both_count_as_a_pass():
+    cols = [_col("c1", 90.0), _col("cap", 140.0, "max"), _col("typ", 200.0, "typical")]
+    assert _width_issue(cols, 90.0) is None  # 命中 exact
+    assert _width_issue(cols, 120.0) is None  # 没命中 exact，但不超 max
+    assert _width_issue(cols, 150.0) is not None
+    assert _width_issue(cols, 200.0) is not None  # typical 不参与
+
+
+def test_judged_page_columns_match_the_golden_vectors_and_the_ts_helper():
+    """与前端 `judgedPageColumns` 同口径：按向量里记录的期望（detail.columns 的 id 集合）断言。"""
+    cases = {c["name"]: c for c in json.loads(GOLDEN.read_text(encoding="utf-8"))["cases"]}
+    for name in ("journal-max-over", "journal-exact-and-max-over"):
+        c = cases[name]
+        got = preflight.judged_page_columns(profiles.load(c["profile_id"], c["journal"]))
+        want = next(i for i in c["expected"] if i["id"] == "page-width")["detail"]["columns"]
+        assert [x["id"] for x in got] == [x["id"] for x in want]
+        assert [x["qualifier"] for x in got] == [x.get("qualifier", "exact") for x in want]
+    mixed = preflight.judged_page_columns(
+        profiles.load(
+            cases["journal-exact-and-max-over"]["profile_id"],
+            cases["journal-exact-and-max-over"]["journal"],
+        )
+    )
+    assert [c["id"] for c in mixed] == ["col1", "cap"]  # typical 不进
+
+
+def test_exact_only_columns_keep_the_old_message_and_detail_shape():
+    issue = _width_issue([_col("a", 90.0), _col("b", 180.0)], 100.0)
+    assert issue["message"]["key"] == "pageWidth"
+    assert issue["detail"]["columns"] == [
+        {"id": "a", "width_mm": 90.0},
+        {"id": "b", "width_mm": 180.0},
+    ]
+
+
 def test_aspect_ratio_check():
     p = profiles.load("lab-publication-v1")
     spec = preflight.spec_from_manifest(_manifest())

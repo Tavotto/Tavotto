@@ -36,7 +36,10 @@ vi.mock('@/lib/api', async (orig) => ({
   extractNotebook: mocks.extractNotebook,
   importNotebook: mocks.importNotebook,
 }))
-vi.mock('@/lib/packageImport', () => ({ openPackageFile: mocks.openPackageFile }))
+vi.mock('@/lib/packageImport', async (orig) => ({
+  ...(await orig<typeof import('@/lib/packageImport')>()),
+  openPackageFile: mocks.openPackageFile,
+}))
 vi.mock('@/lib/desktop', async (orig) => ({
   ...(await orig<typeof import('@/lib/desktop')>()),
   isDesktop: mocks.isDesktop,
@@ -198,6 +201,18 @@ describe('整次放下', () => {
     expect(text()).toContain('1')
   })
 
+  it('项目包来自更新的版本：说清楚，桌面版主按钮是「检查更新」', async () => {
+    mocks.isDesktop.mockReturnValue(true)
+    mocks.openPackageFile.mockRejectedValue(
+      new ApiError('x', 400, { code: 'package_schema_too_new', params: { schema: 4 } }),
+    )
+    await drop([named('new.tavotto')])
+    expect(text()).toContain('new.tavotto')
+    expect(text()).toContain('更新的')
+    expect(formatMessage(status().statusAction!.label)).toBe('检查更新')
+    mocks.isDesktop.mockReturnValue(false)
+  })
+
   it('项目包打不开：一句话 + 发送问题反馈', async () => {
     mocks.openPackageFile.mockRejectedValue(new ApiError('x', 400, { code: 'package_invalid', params: { reason: 'bad zip' } }))
     await drop([named('x.zip')])
@@ -226,7 +241,7 @@ describe('整次放下', () => {
       status().statusAction!.run()
       await new Promise((r) => setTimeout(r, 0))
     })
-    expect(openProject).toHaveBeenCalledExactlyOnceWith('/Users/me/other')
+    expect(openProject).toHaveBeenCalledExactlyOnceWith('/Users/me/other', false, { entry: 'script', script: 'fig.py' })
     expect(open).toHaveBeenCalledExactlyOnceWith({ script: 'fig.py', reuse_last_success: true }, { run: true })
   })
 
@@ -289,7 +304,7 @@ describe('整次放下', () => {
       status().statusAction!.run()
       await new Promise((r) => setTimeout(r, 0))
     })
-    expect(openProject).toHaveBeenCalledWith('/Users/me/other')
+    expect(openProject).toHaveBeenCalledWith('/Users/me/other', false, { entry: 'script', script: 'plot.m' })
     expect(useForeignScriptStore.getState().offer).toEqual({ script: 'plot.m', language: 'matlab' })
   })
 
@@ -314,7 +329,7 @@ describe('整次放下', () => {
       status().statusAction!.run()
       await new Promise((r) => setTimeout(r, 0))
     })
-    expect(openProject).toHaveBeenCalledExactlyOnceWith('/Users/me/other')
+    expect(openProject).toHaveBeenCalledExactlyOnceWith('/Users/me/other', false, { entry: 'script', script: 'plot.m' })
   })
 
   it('原生事件里的 .py 路径同样直接用 `script`（项目根下的 .py 照常运行）', async () => {
@@ -383,7 +398,7 @@ describe('笔记本拖进画布', () => {
       status().statusAction!.run()
       await new Promise((r) => setTimeout(r, 0))
     })
-    expect(openProject).toHaveBeenCalledExactlyOnceWith('/Users/me/other')
+    expect(openProject).toHaveBeenCalledExactlyOnceWith('/Users/me/other', false, { entry: 'script', script: 'fig.ipynb' })
     expect(mocks.extractNotebook).toHaveBeenCalledExactlyOnceWith('fig.ipynb', 'pj_a')
     expect(open).toHaveBeenCalledExactlyOnceWith({ script: 'fig.py', reuse_last_success: true }, { run: true })
   })

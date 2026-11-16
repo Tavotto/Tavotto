@@ -574,6 +574,17 @@ fn request(
             ProtoError::new(CODE_SESSION_DEAD, true, "渲染进程已退出，会话需要重建")
         })?;
         // 写只是往写线程的 channel 里塞一条——**永不阻塞**。
+        if inner
+            .spec
+            .max_frame_bytes
+            .is_some_and(|limit| line.len() > limit)
+        {
+            return Err(ProtoError::new(
+                "svg_resource_limit",
+                false,
+                "Worker request byte budget exceeded",
+            ));
+        }
         proc.send_line(line);
         proc.pid
     };
@@ -668,6 +679,7 @@ fn await_response(
             Ok(WorkerEvent::Line(gen, _))
             | Ok(WorkerEvent::Garbage(gen, _))
             | Ok(WorkerEvent::Eof(gen))
+            | Ok(WorkerEvent::Limit(gen))
                 if gen != generation =>
             {
                 continue
@@ -694,6 +706,14 @@ fn await_response(
                     return Ok(value);
                 }
                 return Err(worker_error(&value));
+            }
+            Ok(WorkerEvent::Limit(_)) => {
+                kill_and_forget(inner);
+                return Err(ProtoError::new(
+                    "svg_resource_limit",
+                    false,
+                    "Worker response byte budget exceeded",
+                ));
             }
             Ok(WorkerEvent::Garbage(_, line)) => {
                 kill_and_forget(inner);

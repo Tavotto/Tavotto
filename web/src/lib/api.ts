@@ -78,6 +78,18 @@ export interface PanelInfo {
    * **不是**"这张图没有规格"——解析时退到文档里那份，见 originalSpec.ts。
    */
   original_spec?: AssetOriginalSpec
+  /**
+   * 同一张图的几份文件（ADR 0184 §一，后端 `engine/figuregroup` 是唯一出处）：图键、是不是这张图的主文件
+   * （PDF > 最大位图 > SVG）、这张图的全部文件 id。老后端不发：`undefined` = 一份文件一张图（旧行为）。
+   */
+  figure_key?: string
+  primary?: boolean
+  formats?: string[]
+  /**
+   * 画这张图的脚本（项目相对路径）：Python 注册表、R / MATLAB 源码里写死的输出、或同目录同名的 R / MATLAB 脚本
+   * （ADR 0184 修订）。只用于「这张图归哪个脚本」（范围、归组）；能不能进图内编辑仍只看 `script` / `capability`。
+   */
+  source_script?: string
 }
 
 /**
@@ -214,6 +226,8 @@ export interface PanelsResponse {
    * `code` 按 `errors:backend.<code>` 翻译（params 只有 `file`）。老后端不发这个字段。
    */
   unsupported?: UnsupportedAsset[]
+  /** 素材区的显示范围（ADR 0184 §三）；老后端不发 = 整个文件夹 */
+  view_scope?: ViewScope
 }
 
 export interface UnsupportedAsset {
@@ -642,11 +656,31 @@ export const fetchOpenProjects = () =>
     (r) => r.projects,
   )
 
-export const openProjectApi = (path: string, create = false) =>
+/**
+ * 怎么进来的（ADR 0184 §三）：带着一个脚本（素材区只看脚本的图）/ 明确打开整个文件夹。
+ * 不给 = 沿用上次记的范围（最近 / 收藏重开）。
+ */
+export type ProjectEntry = { entry: 'folder' } | { entry: 'script'; script: string }
+
+export const openProjectApi = (path: string, create = false, entry?: ProjectEntry) =>
   jsonFetch<ProjectStatus>('/api/projects/open', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path, create }),
+    body: JSON.stringify({ path, create, ...entry }),
+  })
+
+/** 素材区的显示范围（后端 `config.view_scope`）。老后端不发 = 整个文件夹 */
+export interface ViewScope {
+  mode: 'folder' | 'scripts'
+  scripts: string[]
+}
+
+/** 运行了一个脚本：范围是「只看脚本的图」时把它加进去（后台顺手发，失败不打扰用户） */
+export const addViewScopeScript = (script: string) =>
+  jsonFetch<{ view_scope: ViewScope }>('/api/project/view_scope', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ add_script: script }),
   })
 
 /**
@@ -6566,13 +6600,19 @@ export interface DependencyRequirementInfo {
   installable: boolean
 }
 
+/**
+ * 安装目标的种类（后端 `deprepair.TARGETS`）。`configured_interpreter` = 用户为这个项目选的、在项目之外的 Python
+ * （ADR 0019 2026-11-15 修订）：原地装、改用户环境，与 `project_venv` 同为要明确确认的一类
+ */
+export type RepairTargetKind = 'project_venv' | 'tavotto_managed' | 'configured_interpreter'
+
 /** 一个可选的安装目标 */
 export interface DependencyTarget {
   /**
    * `system_interpreter`（ADR 0044）不是安装目标：这台机器上已有的解释器里
    * 已经装着那个包，采用它一个字节都不装——走项目环境 PATCH，不走 plan。
    */
-  kind: 'project_venv' | 'tavotto_managed' | 'system_interpreter'
+  kind: 'project_venv' | 'tavotto_managed' | 'configured_interpreter' | 'system_interpreter'
   /** 项目相对路径（项目 venv 才有） */
   venv: string
   /** 项目 venv 是项目相对路径；系统解释器是项目外的绝对路径（它本来就不跟项目走） */
@@ -6599,6 +6639,8 @@ export interface DependencyTarget {
    * 这次授权**包含先下载它**——`download_bytes` 界面必须说出口（`cached` 时为 0、不联网）。
    */
   private_python?: PrivatePythonOffer | null
+  /** 受管目标才有：最近一代装完 worker 自检没过——装到它里面也用不了，界面不再把它当主按钮 */
+  selftest_failed?: boolean
 }
 
 /** 「先准备私有 Python」段：版本 / 目标 / 体积 / 来源域名，没有机器路径 */
@@ -6678,7 +6720,7 @@ export interface DependencyRepairPlan extends DependencyRequirementInfo {
   plan_id: string
   /** 这次授权真正要装的全部包（规范串）：新建第一代时多于用户点的那一个；老后端没有这个字段 */
   requirements?: string[]
-  target_kind: 'project_venv' | 'tavotto_managed'
+  target_kind: RepairTargetKind
   /** 这份计划的影响摘要（执行请求必须回显它；老后端没有） */
   impact_digest?: string
   python: string
@@ -6752,7 +6794,7 @@ export interface DependencyProgress {
 export const createDependencyPlan = (body: {
   module: string
   script: string
-  target: 'project_venv' | 'tavotto_managed'
+  target: RepairTargetKind
   distribution?: string
 }) =>
   jsonFetch<{ plan: DependencyRepairPlan }>('/api/engine/dependency/plan', {
@@ -6863,7 +6905,7 @@ export interface JointUserSpecified {
 export interface JointDependencyPlan {
   plan_version: number
   status: 'nothing_needed' | 'ready' | 'blocked'
-  target_kind: 'project_venv' | 'tavotto_managed'
+  target_kind: RepairTargetKind
   script: string
   /** 脚本开跑就要的第三方 import（无条件） */
   needed: { module: string; distribution: string; resolution_source: string; via: string[] }[]
@@ -6947,7 +6989,7 @@ export interface DependencyPreparationOffer {
 /** `deprepair.impact_of` 的公开形态：没有机器路径 */
 export interface DependencyImpact {
   impact_version: number
-  target_kind: 'project_venv' | 'tavotto_managed'
+  target_kind: RepairTargetKind
   scope: 'managed_generation' | 'project_venv_in_place'
   installs: string[]
   constraints: string[]
@@ -7007,7 +7049,7 @@ export interface UserEnvironment {
 export interface JointDependencyRepairPlan {
   plan_id: string
   script: string
-  target_kind: 'project_venv' | 'tavotto_managed'
+  target_kind: RepairTargetKind
   python: string
   requirements: string[]
   constraints: string[]
@@ -7041,7 +7083,7 @@ export const fetchDependencyOffer = (script: string) =>
 /** 绑定一份联合计划（不装）。blocked / 什么都不缺 → 409，body.joint 里是计划 */
 export const createJointDependencyPlan = (body: {
   script: string
-  target?: 'project_venv' | 'tavotto_managed'
+  target?: RepairTargetKind
   /**
    * 用户在确认界面接受（可改）预填后提交的 `{ import 名: '包名[版本约束]' }`（PR5b）。只收 `origins[]` 里带
    * `suggested_distribution` 的那类 import；语法不合 `package_requirement_invalid`，不是来源未定的表外名
@@ -7854,6 +7896,28 @@ export interface GuiDialogPayload {
   truncated: boolean
 }
 
+/**
+ * 只定义了画图函数、没有调用的库模块（后端 `engine/libmodule`，反馈包 TVD-Y5JF）里，import 了它的入口脚本。
+ * `open_root` / `open_script`：打开哪个文件夹、运行其中哪个脚本（在项目里的就是当前项目根，`script` 是项目相对路径）。
+ * `path` 是本机绝对路径，只用来显示 title，不往别处发。
+ */
+export interface LibraryEntryScript {
+  path: string
+  in_project: boolean
+  direct: boolean
+  open_root: string
+  open_script: string
+  script?: string
+}
+
+export interface LibraryModulePayload {
+  entries: LibraryEntryScript[]
+  /** 预算没停、没有读不动的候选；false = 「没找到」不代表真的没有 */
+  complete: boolean
+  /** `repo` = 找到了项目外的仓库根，在那里找过 */
+  scope: 'project' | 'repo'
+}
+
 export type PreparationRequirement =
   | { id: 'environment'; kind: 'environment_choice'; code: string; payload: EnvRecommendation }
   | { id: 'workdir'; kind: 'workdir_choice'; code: string; payload: WorkdirConfirmation | null }
@@ -7874,6 +7938,8 @@ export type PreparationRequirement =
   | { id: 'data'; kind: 'workdir_hint'; code: string; origin: 'last_attempt'; blocking: false; payload: WorkdirConfirmation }
   /** 脚本源码里有弹窗选文件 / 询问的写法（`engine/dialogscan`）：不阻塞的提示，运行照样可用 */
   | { id: 'interaction'; kind: 'gui_dialog'; code: string; blocking: false; payload: GuiDialogPayload }
+  /** 只定义了画图函数的库模块：不阻塞的提示，主按钮换成「运行调用它的脚本」（TVD-Y5JF） */
+  | { id: 'entry'; kind: 'library_module'; code: string; blocking: false; payload: LibraryModulePayload }
   | {
       id: 'arguments'
       kind: 'script_arguments'
@@ -8716,3 +8782,147 @@ export const forgetNativePermission = (permissionKey: string, projectRoot?: stri
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ permission_key: permissionKey, project_root: projectRoot }),
   })
+
+/* ------------------- 外部审阅（ADR 0187） -------------------
+ * 作者把当前这张图 / 这份排版的画面分享成一个链接，别人在网页上批；这里只是**本机引擎**的遥控器
+ * （WebView 不碰远程，`/api/review/*` 契约见 ADR 0187 §七）。会引出远程请求的只有 `shareReview` / `updateReview`
+ * （用户点「生成链接」/「更新到同一链接」）、`revokeReview`（「停止分享」）、`refreshReview` 与回复 / 标记已处理；
+ * 其余都是读本机记录。 */
+
+export type ReviewTarget = { kind: 'figure' | 'layout'; id: string }
+
+/** 失败码闭集（与引擎 / 服务端一致；界面按 `review.failure.*` 一码一句） */
+export type ReviewFailureCode =
+  | 'quota_new_exhausted'
+  | 'share_gone'
+  | 'too_large'
+  | 'rate_limited'
+  | 'network'
+  | 'server'
+  | 'client_error'
+  | 'render_failed'
+
+export type ReviewBox = [number, number, number, number]
+
+export interface ReviewShareSummary {
+  share_id: string
+  review_url: string
+  kind: 'figure' | 'layout'
+  target_id: string
+  title: string
+  note: string
+  latest_version: number
+  created_at: string
+  updated_at: string
+  expires_at: string
+  revoked: boolean
+  expired: boolean
+  comment_count: number
+  open_count: number
+  unread: number
+}
+
+export type ReviewAnchor =
+  | { kind: 'element'; gid: string; box: ReviewBox }
+  | { kind: 'region'; box: ReviewBox }
+  | { kind: 'overall' }
+
+export interface ReviewReply {
+  id: string
+  from: 'reviewer' | 'owner'
+  author: string
+  text: string
+  created_at: string
+}
+
+export interface ReviewComment {
+  id: string
+  v: number
+  anchor: ReviewAnchor
+  author: string
+  text: string
+  resolved: boolean
+  created_at: string
+  replies: ReviewReply[]
+}
+
+export interface ReviewShareDetail extends ReviewShareSummary {
+  versions: {
+    v: number
+    created_at: string
+    /** 坐标基准：page = 排版的页面图（导出 scope=canvas 的页面，超出页面的不在快照里）；figure = 整张图 */
+    frame?: 'page' | 'figure'
+    elements: { gid: string; label: string; bbox: ReviewBox }[]
+  }[]
+  comments: ReviewComment[]
+  verdicts: { v: number; decision: 'approved' | 'changes'; note: string; author: string; at: string }[]
+}
+
+export type ReviewStage = 'idle' | 'rendering' | 'uploading' | 'done' | 'failed'
+export interface ReviewStatus {
+  stage: ReviewStage
+  failure: ReviewFailureCode | null
+  retryable: boolean
+  share: ReviewShareSummary | null
+}
+
+export interface ReviewQuota {
+  new_left: number | null
+}
+
+export interface ReviewUnread {
+  total: number
+  latest: { share_id: string; author: string; count: number } | null
+}
+
+const reviewPost = (body?: unknown): RequestInit => ({
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body ?? {}),
+})
+const rv = (id: string) => `/api/review/shares/${encodeURIComponent(id)}`
+
+export const fetchReviewCapability = () => jsonFetch<{ enabled: boolean }>('/api/review/capability')
+export const fetchReviewQuota = (shareId?: string) =>
+  jsonFetch<ReviewQuota>(`/api/review/quota${shareId ? `?share_id=${encodeURIComponent(shareId)}` : ''}`)
+export const fetchReviewFor = (t: ReviewTarget) =>
+  jsonFetch<{ share: ReviewShareSummary | null }>(
+    `/api/review/for?kind=${t.kind}&id=${encodeURIComponent(t.id)}`,
+  )
+/** `render` = 导出请求里的 `original` / `canvas` 段原样（`lib/reviewRender`）；缺它引擎回 `client_error` */
+export type ReviewRender = Pick<ExportRequest, 'original' | 'canvas'>
+export const shareReview = (target: ReviewTarget, title: string, note: string, render: ReviewRender) =>
+  jsonFetch<{ ok: boolean }>('/api/review/share', reviewPost({ target, title, note, render }))
+/** `target` 只在「额度用满 → 把这张图的画面更新到别的链接上」时给；缺省 = 更新那个链接自己的画面 */
+export const updateReview = (shareId: string, note: string | undefined, render: ReviewRender, target?: ReviewTarget) =>
+  jsonFetch<{ ok: boolean }>(
+    '/api/review/update',
+    reviewPost({ share_id: shareId, ...(note ? { note } : {}), render, ...(target ? { target } : {}) }),
+  )
+/** 本机所有分享记录（额度用满选择卡列「更新已有的链接」用；local-api.md 之外的补充端点） */
+export const fetchReviewShares = () => jsonFetch<{ shares: ReviewShareSummary[] }>('/api/review/shares')
+export const fetchReviewStatus = () => jsonFetch<ReviewStatus>('/api/review/status')
+export const dismissReview = () => jsonFetch<unknown>('/api/review/dismiss', reviewPost())
+export const revokeReview = (shareId: string) =>
+  jsonFetch<{ ok: boolean; failure?: ReviewFailureCode }>('/api/review/revoke', reviewPost({ share_id: shareId }))
+export const deleteReviewRecord = (shareId: string) => jsonFetch<unknown>(rv(shareId), { method: 'DELETE' })
+export const fetchReviewShare = (shareId: string) => jsonFetch<ReviewShareDetail>(rv(shareId))
+export const refreshReview = (shareId?: string) =>
+  jsonFetch<{ ok: boolean; unread: number }>('/api/review/refresh', reviewPost(shareId ? { share_id: shareId } : {}))
+export const replyReviewComment = (shareId: string, commentId: string, text: string) =>
+  jsonFetch<{ ok: boolean; comment: ReviewComment }>(
+    `${rv(shareId)}/comments/${encodeURIComponent(commentId)}/reply`,
+    reviewPost({ text }),
+  )
+export const resolveReviewComment = (shareId: string, commentId: string, resolved: boolean) =>
+  jsonFetch<{ ok: boolean; comment: ReviewComment }>(
+    `${rv(shareId)}/comments/${encodeURIComponent(commentId)}/resolve`,
+    reviewPost({ resolved }),
+  )
+export const markReviewRead = (shareId: string) => jsonFetch<unknown>(`${rv(shareId)}/read`, reviewPost())
+export const reviewSnapshotUrl = (shareId: string, v: number) =>
+  apiUrl(`${rv(shareId)}/versions/${v}/snapshot.png`)
+/** 画布相对该分享的最新版本有没有改动（本机比对、不联网）；404 / 422 由调用方按「有改动」处理 */
+export const fetchReviewChanged = (shareId: string, render: ReviewRender) =>
+  jsonFetch<{ changed: boolean }>('/api/review/changed', reviewPost({ share_id: shareId, render }))
+export const fetchReviewUnread = () => jsonFetch<ReviewUnread>('/api/review/unread')

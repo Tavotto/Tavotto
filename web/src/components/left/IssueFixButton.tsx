@@ -5,6 +5,7 @@ import { fixOptions } from '@/lib/issueFix'
 import { resolveDocumentSpec } from '@/lib/specBinding'
 import { cn } from '@/lib/utils'
 import type { ValidationIssue } from '@/lib/validation'
+import { deferWhileWindowHeld } from '@/store/documentRestore'
 import { useDocumentStore } from '@/store/documentStore'
 import {
   applyIssueFix,
@@ -104,6 +105,8 @@ export function FixButton({
 
 /** 修一条；结果用问题面板同一套措辞报出来。 */
 export function runFix(issue: ValidationIssue, choice?: string): Promise<void> {
+  // 只读窗口（ADR 0181）：修复的结果要写进文档，会被门挡住、后端热态却已经变了——记住，选完再做
+  if (deferWhileWindowHeld(() => void runFix(issue, choice))) return Promise.resolve()
   return withBusy(() => applyIssueFix(issue, choice))
 }
 
@@ -130,6 +133,7 @@ export function useBatchable(
  * （集合由 `batchable()` 定，与计数同一份）。
  */
 export function runBatchFix(issues: ValidationIssue[], opts?: BatchOptions): Promise<void> {
+  if (deferWhileWindowHeld(() => void runBatchFix(issues, opts))) return Promise.resolve()
   return withBusy(() => applyIssueFixes(issues, opts))
 }
 

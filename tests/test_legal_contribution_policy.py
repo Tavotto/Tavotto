@@ -308,7 +308,7 @@ class TestAgreementVersionBinding:
     def test_exemptions_are_explicit_and_justified(self, policy):
         assert policy["exemptions"], "豁免表是空的？至少应有著作权人本人"
         for ex in policy["exemptions"]:
-            assert ex["kind"] in ("rights_holder", "bot")
+            assert ex["kind"] in ("rights_holder", "bot", "countersigned_paper")
             assert len(ex["reason"]) > 20, (
                 f"豁免 `{ex['login']}` 的理由太短——写不出理由的豁免不该存在"
             )
@@ -964,28 +964,30 @@ class TestContributorCollection:
             gate.collect_contributors(None, {"not": "a list"})
 
 
-# ═════════════════════════════════════════════ 10. 线下双签（服务商启用前）
+# ═════════════════════════════════════════════ 10. 纸面双签（countersigned_paper，ADR 0183）
 class TestOfflineSignatures:
-    """服务商启用前，双签纸面协议是唯一签署途径；policy 只存它的索引。
+    """服务启用前已双签纸面协议的人，记在豁免表里，kind=countersigned_paper。
 
     主语：**这个 PR 里某个 login 名下实际出现的 GitHub 账号**，是不是与
     著作权人双签过当前版本协议的那个账号。login 只是查找键，身份按不可变 id 核。
+    服务启用后照样有效（ADR 0183），不迁进服务。
     """
 
     SIG = {
         "login": "signer",
+        "kind": "countersigned_paper",
         "github_id": 777,
         "agreement": "individual",
         "version": "1.0",
         "contributor_signed_on": "2026-11-01",
         "countersigned_on": "2026-11-02",
-        "record": "executed copy held privately by the rights holder",
+        "reason": "executed copy held privately by the rights holder",
     }
 
     def _policy(self, *, provider_on=False, sigs=None, ver="1.0"):
         pol = TestGateDecisions()._policy(provider_on=provider_on)
         pol["agreements"]["individual"]["version"] = ver
-        pol["offline_signatures"] = [dict(self.SIG)] if sigs is None else sigs
+        pol["exemptions"] += [dict(self.SIG)] if sigs is None else sigs
         return pol
 
     @staticmethod
@@ -994,16 +996,17 @@ class TestOfflineSignatures:
 
     def test_repository_entries_are_valid_and_carry_no_personal_data(self, gate, policy):
         gate.validate_policy(policy)
-        for sig in policy.get("offline_signatures", []):
-            assert set(sig) == set(gate.OFFLINE_SIGNATURE_KEYS)
-            assert policy["agreements"][sig["agreement"]]["version"] == sig["version"]
-        if policy.get("offline_signatures"):
-            assert policy["provider"]["configured"] is False
+        assert "offline_signatures" not in policy, "offline_signatures 已废弃（ADR 0183）"
+        for ex in policy["exemptions"]:
+            if ex["kind"] == gate.PAPER_KIND:
+                assert set(ex) == set(gate.PAPER_EXEMPTION_KEYS)
+                assert policy["agreements"][ex["agreement"]]["version"] == ex["version"]
 
     def test_countersigned_signer_with_matching_id_passes_without_provider(self, gate):
         v = gate.decide("pull_request", self._policy(), None, self._who())
         assert v["status"] == "success", v
-        assert v["contributors"][0]["verdict"] == "signed"
+        assert v["contributors"][0]["verdict"] == "exempt"
+        assert "纸面" in v["contributors"][0]["detail"]
 
     def test_same_login_different_account_is_not_signed(self, gate):
         """改名 / 被重新注册：login 对上了，人不是那个人。"""
@@ -1029,24 +1032,30 @@ class TestOfflineSignatures:
         v = gate.decide("pull_request", self._policy(), None, self._who(login="stranger"))
         assert v["status"] == "failure"
 
-    def test_cannot_coexist_with_a_configured_provider(self, gate):
-        """两个权威不许并存——启用服务商前必须先迁移、清空。"""
-        with pytest.raises(gate.ConfigError, match="一个权威"):
-            gate.validate_policy(self._policy(provider_on=True))
-        gate.validate_policy(self._policy(provider_on=True, sigs=[]))
+    def test_survives_a_configured_provider(self, gate):
+        """ADR 0183：启用服务不再要求迁移或清空纸面记录。"""
+        gate.validate_policy(self._policy(provider_on=True))
+
+    def test_retired_offline_signatures_section_is_rejected(self, gate):
+        pol = self._policy(sigs=[])
+        pol["offline_signatures"] = [dict(self.SIG)]
+        with pytest.raises(gate.ConfigError, match="ADR 0183"):
+            gate.validate_policy(pol)
 
     @pytest.mark.parametrize(
         "mutate",
         [
             lambda s: s.update(address="1 Main St"),
             lambda s: s.update(name="Real Name"),
+            lambda s: s.update(record="old field name"),
             lambda s: s.pop("github_id"),
             lambda s: s.update(github_id="777"),
             lambda s: s.update(github_id=0),
             lambda s: s.update(agreement="nonexistent"),
+            lambda s: s.update(version=""),
             lambda s: s.update(contributor_signed_on="Nov 1"),
             lambda s: s.update(countersigned_on="2026-10-31"),
-            lambda s: s.update(record=""),
+            lambda s: s.update(reason=""),
         ],
     )
     def test_malformed_entry_is_rejected(self, gate, mutate):
@@ -1055,7 +1064,7 @@ class TestOfflineSignatures:
         with pytest.raises(gate.ConfigError):
             gate.validate_policy(self._policy(sigs=[sig]))
 
-    def test_login_cannot_be_both_exempt_and_offline_signed(self, gate):
+    def test_login_cannot_be_both_exempt_and_paper_signed(self, gate):
         with pytest.raises(gate.ConfigError):
             gate.validate_policy(self._policy(sigs=[dict(self.SIG, login="Owner")]))
 
@@ -1092,9 +1101,7 @@ class TestOfflineSignatures:
 
     @staticmethod
     def _repo_policy_with_signer():
-        pol = TestOfflineSignatures()._policy()
-        pol["offline_signatures"][0].update(login="signer", github_id=777)
-        return pol
+        return TestOfflineSignatures()._policy()
 
     def test_trailer_cannot_vouch_for_a_recycled_pr_author_login(self, gate):
         """Codex #1630 复现：抢注了旧 login 的人开 PR，提交署名豁免账号，
@@ -1133,8 +1140,10 @@ class TestOfflineSignatures:
         assert "CLA_PR_AUTHOR_ID" in " ".join(v["problems"])
 
     def test_end_to_end_against_the_repository_policy(self, gate, policy, tmp_path):
-        """真 policy + 真 CLI：每个线下签署人凭自己的 id 能过，换个 id 就红。"""
-        for sig in policy.get("offline_signatures", []):
+        """真 policy + 真 CLI：每个纸面签署人凭自己的 id 能过，换个 id 就红。"""
+        papers = [ex for ex in policy["exemptions"] if ex["kind"] == gate.PAPER_KIND]
+        assert papers, "仓库 policy 里应有纸面签署条目（mvanhorn）"
+        for sig in papers:
             for account_id, want in ((sig["github_id"], 0), (sig["github_id"] + 1, 1)):
                 commits = tmp_path / f"c{account_id}.json"
                 commits.write_text(

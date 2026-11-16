@@ -77,7 +77,7 @@
   "autosave": {
     "diskFailed": "没能保存到磁盘。",
     "docConflict": "这份排版已在另一个窗口打开，同时编辑会互相覆盖。",
-    "staleOtherWindow": "另一窗口保存了更新的版本。改动只保留在这里，未写入磁盘。"
+    "staleOtherWindow": "另一个窗口保存了更新的版本。"
   },
   "boot": {
     "desktopSessionFailed": "无法建立 Tavotto 桌面会话。请关闭窗口后重新打开应用。",
@@ -126,6 +126,7 @@
     "unsupportedType": "「{{name}}」放不进画布，能放进来的有图片、脚本和项目包。",
     "unsupportedImage": "「{{name}}」这种格式的图还放不进画布，能放的有 PNG、JPG、TIFF、PDF、SVG。",
     "packageFailed": "「{{name}}」没能作为项目包打开。{{reason}}",
+    "packageTooNew": "「{{name}}」来自更新的 {{product}}，本版本无法打开。",
     "packageOnly_other": "已打开项目包「{{name}}」，另外 {{count}} 个文件这次没有处理"
   },
   "canvasTools": {
@@ -219,9 +220,8 @@
   },
   "docBanner": {
     "conflictDisk": "磁盘上：{{canvases}} 张画布 · {{objects}} 个对象 · 改动于 {{time}}",
-    "conflictDiskUnknown": "无法读取磁盘上的内容摘要",
-    "conflictExternal": "磁盘上的排版已被外部修改，本窗口的编辑未写入，以免覆盖。",
-    "conflictStale": "另一窗口保存了更新的版本，本窗口的编辑没有写入。",
+    "conflictExternal": "这份排版在别处被改过，这个窗口的改动还没存上。",
+    "conflictStale": "另一个窗口保存了更新的版本。",
     "dismiss": "知道了",
     "keepMain": "保留主版本",
     "lastDocBody": "已打开空白排版，磁盘文件没有改动。",
@@ -235,7 +235,7 @@
     "recover": "恢复",
     "recoveryBody": "{{name}} · {{canvases}} 张画布 · {{objects}} 个对象 · 存于 {{time}}",
     "recoveryTitle": "有未恢复的编辑",
-    "reload": "从磁盘重新加载",
+    "reload": "重新加载",
     "retry": "重试保存",
     "saveAs": "另存为…",
     "saveErrorBody": "改动已暂存，尚未写入磁盘。",
@@ -248,6 +248,15 @@
     "updateNone": "已经是最新版，这份排版要等新版发布才能打开。",
     "updateCheckFailed": "没能检查更新，请确认网络后再点一次。",
     "moreActions": "其他处理方式"
+  },
+  "docWindow": {
+    "choose": "先在画布上选一下。",
+    "entryDropped": "已换了排版，刚才的操作没有执行。",
+    "openElsewhere": "这份排版已在另一个窗口打开。",
+    "saveCopy": "存成副本",
+    "takeBack": "拿回来编辑",
+    "takeHere": "在这里编辑",
+    "takenOver": "这份排版正在另一个窗口编辑。"
   },
   "document": {
     "defaultName": "新排版"
@@ -308,10 +317,18 @@
     "figureMissing": "项目里找不到 {{name}}",
     "layoutOnly": "未连接源脚本。可在版面上摆放，不能改图内元素。"
   },
+  "fork": {
+    "copyName": "{{name}} 副本",
+    "done": "已存成“{{name}}”。",
+    "failed": "没能存成副本。",
+    "switched": "副本已存进项目里的 {{file}}，没有换过去。",
+    "untitled": "未命名排版"
+  },
   "history": {
     "addArrow": "添加箭头",
     "addGuide": "添加参考线",
     "addPanel": "加入图 {{name}}",
+    "useVectorPrimary": "改用 {{name}} 的矢量原图",
     "addShape": "添加{{shape}}",
     "addSubLabels": "添加序号标签",
     "addText": "添加文字",
@@ -646,7 +663,7 @@
     }
   },
   "save": {
-    "conflict": "排版已在别处改过，请先处理冲突。",
+    "conflict": "排版已在别处改过，这次没存上。",
     "doneLocal": "已保存在本机（没有打开项目）",
     "doneProject": "已保存到项目：{{file}}",
     "failed": "无法保存。改动仍在，请检查磁盘空间后重试。",
@@ -862,6 +879,7 @@
     "packageDrift_other": "已打开项目包。{{count}} 个素材与打包时不一致，请核对。",
     "packageFailed": "无法打包。{{error}}",
     "packageOpenFailed": "无法打开项目包。{{error}}",
+    "packageTooNew": "这个项目包来自更新的 {{product}}，本版本无法打开。",
     "packageOpened": "已打开项目包（{{createdAt}}），素材全部就位",
     "packagedIncomplete_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材。恢复前请补齐。",
     "packagedExecutionIncomplete": "已生成项目包 {{name}}。运行依赖尚未确认完整，迁移前请检查数据与运行配置。",
@@ -871,7 +889,7 @@
     "pastedWithSkips_other": "已粘贴 {{count}} 个对象，跳过 {{skipped}} 张缺失素材的图。{{undo}} 可撤销。",
     "pasted_other": "已粘贴 {{count}} 个对象（{{undo}} 可撤销）",
     "projectBackgroundError": "后台检查项目文件时出错。已打开的内容不受影响，修好文件后会自动重试。",
-    "recentMissing": "这份排版在本机的副本已不存在",
+    "recentMissing": "这份排版已不在本机，已从列表里去掉",
     "recentTooNew": "这份排版来自更新的 Tavotto，本版本无法打开。磁盘上的文件没有改动。",
     "redone": "重做：{{label}}",
     "relinkNone": "未重链接任何图；缺失素材的图保持原样",
@@ -960,7 +978,7 @@
     "redoWith": "重做 {{label}}",
     "refreshProject": "刷新项目",
     "renameDocument": "重命名排版…",
-    "saveConflict": "外部冲突",
+    "saveConflict": "别处有改动",
     "saveDirty": "有未保存修改",
     "saveDocumentAs": "另存为新排版…",
     "saveError": "保存失败",
@@ -1104,7 +1122,10 @@
       "copyAsk": "脚本要从 {{path}} 读数据",
       "copyDenied": "没有权限写到 {{dir}}",
       "copyProtected": "{{dir}} 受系统保护，写不进去",
-      "copyFailed": "没能把数据复制到 {{dir}}"
+      "copyFailed": "没能把数据复制到 {{dir}}",
+      "libraryEntry": "{{script}} 只定义了画图函数，真正画图的是 {{entry}}",
+      "libraryEntryOutside": "{{script}} 只定义了画图函数，真正画图的是项目外的 {{entry}}",
+      "libraryNone": "{{script}} 只定义了画图函数、没有调用，运行它不会出图"
     },
     "btn": {
       "later": "稍后",
@@ -1151,7 +1172,9 @@
       "otherData": "换一份数据",
       "grantCopy": "授权后复制",
       "openPrivacy": "打开系统设置",
-      "rewritePath": "改脚本里的路径"
+      "rewritePath": "改脚本里的路径",
+      "runEntry": "运行它",
+      "openRunEntry": "打开并运行"
     },
     "card": {
       "stepOf": "第 {{n}} 步，共 {{total}} 步：{{name}}",
@@ -1199,6 +1222,7 @@
       "toManaged": "装到 Tavotto 目录",
       "toUser": "装到你电脑上已有的那套",
       "toUserLong": "你电脑上已有的那套，装坏了不能完整回滚",
+      "toConfigured": "把 {{module}} 装到你为这个项目选的 Python 里",
       "download": "需要先下载约 {{mb}} MB。",
       "managedPlace": "Tavotto 目录"
     },
@@ -1314,6 +1338,7 @@
       "detail": {
         "listIntro": "这些库的来源还没法确定，Tavotto 不会替你装：",
         "notPip": "这个脚本需要 {{name}}，内置 Python 装不了，请用装有它的环境。",
+        "notPipAiSandbox": "这个脚本需要 {{name}}，它只在 ChatGPT 网页里有，本机装不了。",
         "localMissing": "找不到本地模块 {{name}}（脚本把 {{dirs}} 加进了搜索路径，请确认这个文件夹在）。",
         "userSpecifiedBadge": "用户指定，未经核实",
         "trustNote": "你填的包名不算可信来源：Tavotto 没法核实它们，所以装之前会让你再确认一次。",
@@ -1649,6 +1674,10 @@
       "documents": "文稿",
       "downloads": "下载",
       "icloud": "iCloud 云盘"
+    },
+    "library": {
+      "partial": "只查了一部分文件，可能还有别的脚本调用它",
+      "openFailed": "没能打开那个文件夹"
     }
   },
   "canvasMenu": {

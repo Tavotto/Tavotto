@@ -119,7 +119,10 @@ order: 330
   配对生成、`require_built` 与持久化约束分别在 `export-pipeline.md` / `layout-versions-and-documents.md`。
 - **SVG 安全与检查共用一处（X03）**：纯标准库 `svgcheck.parse_svg` 是导入和 `inspector` 的有界 XML / CSS 闸，
   拒绝 DTD / entities / 脚本 / 事件 / 外链 / 远程字体、危险 CSS，以及重复、悬空、循环资源引用；内嵌图片也受预算。
-  只在可信 worker 生成边界、hash 冻结前允许移除精确匹配的 Matplotlib 惰性 DOCTYPE；任意导入文件不借这条放行。
+  只在可信 worker 生成边界、hash 冻结前允许两种规范化：移除精确匹配的 Matplotlib 惰性 DOCTYPE；被闸拒收
+  时按 `svgcheck.repair_worker_ids` 给语法外 / 重复的 id 改名（用户 `set_gid("面板 A")`；引用只在 href / `url(#…)` / 选择器 id 记号这些结构位置跟着改，
+  重复者让给第一个，选择器点名重复 id 时不改），改完仍过整道闸。
+  任意导入文件不借这两条放行（`parse_svg` 本身照旧拒收）。
   `svgwriter` 封口前再验整份组装结果，`inspector` 重新打开成品读物理尺寸、viewBox、轮廓 / 图片等字节事实。
   轮廓策略不把字体嵌入或文字检索判为 verified，text 策略也不判字体嵌入（只核 `font-family` 的首选族）；这也不等于已通过 Office 插入 / 重开 / 转 PDF 兼容性验证。
   看护：`tests/test_rendercore_svgwriter.py`、`tests/test_rendercore_svginspect.py`、`tests/test_worker_svg_pair.py`。

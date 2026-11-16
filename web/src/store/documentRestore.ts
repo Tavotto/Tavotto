@@ -48,9 +48,11 @@ import {
   consumeSkipRestoreOnce,
   DOCUMENT_READY_TIMEOUT_MS,
   getRestoreGate,
+  getWindowHold,
   installRestoredDocument,
   isRestoreTokenCurrent,
   onBlockedWrite,
+  onWindowBlockedWrite,
   probeDocument,
   readCurrentDocId,
   registerRestoreSession,
@@ -791,6 +793,12 @@ interface HeldEntry {
 /** 一次恢复问题上最多记这么多动作（再多就丢最早的——连点十几下不该在选完之后一口气全落进去） */
 const HELD_MAX = 8
 const held: HeldEntry[] = []
+/**
+ * 同一份排版在两个窗口开着、这个窗口还没选「在这里编辑 / 存成副本」时用户动了手（ADR 0181）：与上面是同一个原则
+ * （记住、选完接着做、不丢），但门不一样——它们等的是**这个窗口拿到编辑权**，不是恢复落定，所以单独放一张表，
+ * 不进 `runnable` / `flushHeld` 那套按恢复门代次判的逻辑。
+ */
+const heldWindow: HeldEntry[] = []
 const heldListeners = new Set<() => void>()
 
 /** 画布上那张卡用：此刻有没有动作在等用户选排版（`useSyncExternalStore`） */
@@ -798,7 +806,7 @@ export const subscribeHeldEntries = (fn: () => void): (() => void) => {
   heldListeners.add(fn)
   return () => heldListeners.delete(fn)
 }
-export const heldEntryCount = (): number => held.length
+export const heldEntryCount = (): number => held.length + heldWindow.length
 
 function heldChanged(): void {
   for (const fn of [...heldListeners]) fn()
@@ -869,10 +877,73 @@ function onGateChanged(): void {
   }
 }
 
+/**
+ * 取走此刻记住的、等这个窗口拿到编辑权的动作，返回「执行它们 / 放回去」两个函数。选择方在**放开编辑权之前**取走，
+ * 放开之后（分叉换了文档、接管载入了最新版）再调返回的函数——放开那一刻会清掉没被取走的（见 `ensureHooks`）。
+ */
+export function takeWindowEntries(): { run: () => void; putBack: () => void; drop: () => void } {
+  const batch = heldWindow.splice(0)
+  if (batch.length > 0) heldChanged()
+  return {
+    run: () => {
+      for (const e of batch) {
+        // 执行途中编辑权又被收走了（极少见）：剩下的不往里写
+        if (getWindowHold()) {
+          e.settle('dropped')
+          continue
+        }
+        e.run()
+        e.settle('ran')
+      }
+    },
+    /** 上下文已被取代（读盘期间换了排版 / 项目）：这些动作是对旧排版说的，丢掉 */
+    drop: () => {
+      for (const e of batch) e.settle('dropped')
+    },
+    /** 选择没做成（分叉失败 / 接管没载入）：动作放回去，仍等用户再选 */
+    putBack: () => {
+      if (!getWindowHold()) {
+        for (const e of batch) e.settle('dropped')
+        return
+      }
+      heldWindow.unshift(...batch)
+      heldChanged()
+    },
+  }
+}
+
+function dropWindowEntries(): void {
+  if (heldWindow.length === 0) return
+  for (const e of heldWindow.splice(0)) e.settle('dropped')
+  heldChanged()
+  useUiStore.getState().setStatus(msg('docWindow.entryDropped', undefined, 'workspace'), 'info')
+}
+
+/**
+ * 只读窗口（ADR 0181）里「会把这个窗口手里的内容送出去」的动作——保存、写回原图 / 脚本、改图助手发任务、
+ * 一键修复——统一走这里：窗口只读时记住这次动作（卡上提示先选，选完接着做）并返回 true，调用方直接 return；
+ * 否则返回 false，照常执行。`run` 必须是重新调用入口本身（编辑权放开后它会走 false 分支）。
+ * 窗口里的内容可能是旧的：此刻写回会把旧 override 写进用户的文件、改图助手会拿旧内容当上下文。
+ */
+export function deferWhileWindowHeld(run: () => void): boolean {
+  if (!getWindowHold()) return false
+  deferUserEntry(run)
+  return true
+}
+
 export function deferUserEntry(run: () => void): EntryGate {
   ensureHooks()
   const g = getRestoreGate()
-  if (g.state === 'ready') return 'run'
+  if (g.state === 'ready') {
+    if (!getWindowHold()) return 'run'
+    let settle!: (o: DeferredEntryOutcome) => void
+    lastDeferred = new Promise<DeferredEntryOutcome>((r) => (settle = r))
+    if (heldWindow.length >= HELD_MAX) heldWindow.shift()?.settle('dropped')
+    heldWindow.push({ run, pj: g.pj, queuedGen: null, anyReady: false, settle })
+    heldChanged()
+    notifyWindowChoose()
+    return 'deferred'
+  }
   let settle!: (o: DeferredEntryOutcome) => void
   lastDeferred = new Promise<DeferredEntryOutcome>((r) => (settle = r))
   hold({ run, pj: g.pj, queuedGen: g.state === 'restoring' ? g.gen : null, anyReady: false, settle })
@@ -974,6 +1045,17 @@ export function resolveHeldIssue(): void {
     .setStatus(msg(held.length > 0 ? 'restore.heldChoose' : 'restore.blockedWrite', undefined, 'workspace'), 'info')
 }
 
+/** 只读期间用户动手被拒：说一句先选（节流，别连点刷屏） */
+let lastWindowNote = 0
+function notifyWindowChoose(): void {
+  const now = Date.now()
+  if (now - lastWindowNote < CHOOSE_NOTE_GAP_MS) return
+  lastWindowNote = now
+  useUiStore
+    .getState()
+    .setStatus(msg(heldWindow.length > 0 ? 'restore.heldChoose' : 'docWindow.choose', undefined, 'workspace'), 'info')
+}
+
 let hooked = false
 
 /** 登记一次（模块实例内）：门的变化驱动记住的动作；底层写入被拒（画标注、键盘动作……）同样走 `resolveHeldIssue` */
@@ -981,15 +1063,20 @@ function ensureHooks(): void {
   if (hooked) return
   hooked = true
   onBlockedWrite(resolveHeldIssue)
+  onWindowBlockedWrite(notifyWindowChoose)
   useDocumentStore.subscribe((s, prev) => {
     if (s.restoreGate !== prev.restoreGate) onGateChanged()
+    // 编辑权放开了（选了出口，或换了排版）而动作还没被选择方取走 = 换了排版：它们是对旧排版说的，丢掉并说一句
+    if (prev.windowHold && !s.windowHold) dropWindowEntries()
   })
 }
 
 /** 仅给用例：忘掉记住的动作与自动重试记录（真实的全新启动是模块重新求值） */
 export function resetHeldEntriesForTests(): void {
   for (const e of held.splice(0)) e.settle('dropped')
+  for (const e of heldWindow.splice(0)) e.settle('dropped')
   heldChanged()
+  lastWindowNote = 0
   autoRetriedPj = undefined
   resolving = false
   lastChooseNote = 0
