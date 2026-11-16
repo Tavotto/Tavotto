@@ -34,7 +34,7 @@ import { documentDigest, recordDiagnosticEvent } from '@/diagnostics'
 import { patchRefs } from '@/diagnostics/patches'
 import { defaultCanvasName, type CanvasData, type FigureDocument, type FigureExecutionOwner, type FigureSnapshot, type PanelObject, type ProjectDocument } from '@/types/document'
 import {
-  SCHEMA_CURRENT,
+  futureSchemaOf,
   canvasToDoc,
   docToCanvas,
   emptyProject,
@@ -1991,14 +1991,6 @@ export interface LoadedDoc {
   notice: DocNotice | null
   /** 没有 doc 时为什么：`missing`（确认过不在了）/ `unavailable`（暂时读不到，文件多半还在）/ `invalid`（读到了但坏）/ `too_new` */
   kind: ProbeResult['kind']
-}
-
-/** `migrateToProject` 认不出的载荷里，是不是一份"来自更新的 Tavotto"？ */
-function futureSchemaOf(raw: unknown): number | null {
-  const d = raw as { schema?: unknown } | null
-  if (!d || typeof d !== 'object') return null
-  const schema = d.schema
-  return typeof schema === 'number' && schema > SCHEMA_CURRENT ? schema : null
 }
 
 /**

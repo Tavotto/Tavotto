@@ -130,6 +130,57 @@ def loads_document(data: str | bytes) -> Any:
     return json.loads(data, parse_constant=_reject_non_finite)
 
 
+def reject_future_schema(raw: Any) -> None:
+    """Reject newer versions while retaining legacy layout migration support."""
+    schema = raw.get("schema") if isinstance(raw, dict) else None
+    if (
+        isinstance(schema, (int, float))
+        and not isinstance(schema, bool)
+        and schema > SCHEMA_CURRENT
+    ):
+        raise DocumentError(
+            "schema_too_new",
+            f"这份排版来自更新的 Tavotto（schema {schema}），请升级后再打开",
+        )
+
+
+def validate_named_layout_version(raw: Any) -> None:
+    """Permit sparse legacy layouts, but reject structures that cannot be read safely."""
+    if not isinstance(raw, dict):
+        raise DocumentError("invalid_document", "无效的排版（需要一个 JSON 对象）")
+    reject_future_schema(raw)
+    schema = raw.get("schema")
+    if "schema" in raw and (
+        isinstance(schema, bool)
+        or not isinstance(schema, (int, float))
+        or schema not in (1, *SUPPORTED_SCHEMAS)
+    ):
+        raise DocumentError("invalid_document", "无效的排版版本，请检查文件或升级应用")
+    if schema == SCHEMA_PROJECT:
+        validate_document(raw)
+    if schema == SCHEMA_FIGURE and "objects" in raw:
+        objects = raw["objects"]
+        if not isinstance(objects, list) or any(
+            not isinstance(obj, dict) or not isinstance(obj.get("type"), str) for obj in objects
+        ):
+            raise DocumentError("invalid_document", "排版对象列表无效")
+    if "schema" not in raw or schema == 1:
+        if any(key in raw for key in ("project", "canvases", "activeCanvasId", "objects")):
+            raise DocumentError("invalid_document", "排版格式不明确")
+        if "objs" in raw:
+            objs = raw["objs"]
+            if not isinstance(objs, list) or any(
+                not isinstance(obj, dict)
+                or obj.get("type") not in ("text", "panel")
+                or (
+                    obj.get("type") == "panel"
+                    and (not isinstance(obj.get("id"), str) or not obj["id"])
+                )
+                for obj in objs
+            ):
+                raise DocumentError("invalid_document", "旧版排版对象列表无效")
+
+
 def validate_document(raw: Any) -> dict:
     """校验并原样返回文档载荷；不合法时抛 `DocumentError`。
 
@@ -143,13 +194,9 @@ def validate_document(raw: Any) -> dict:
     if not isinstance(raw, dict):
         raise DocumentError("invalid_document", "无效的排版（需要一个 JSON 对象）")
 
+    reject_future_schema(raw)
     schema = raw.get("schema")
     if schema not in SUPPORTED_SCHEMAS:
-        if isinstance(schema, int) and schema > SCHEMA_CURRENT:
-            raise DocumentError(
-                "schema_too_new",
-                f"这份排版来自更新的 Tavotto（schema {schema}），请升级后再打开",
-            )
         raise DocumentError(
             "invalid_document",
             f"无效的排版（需要 schema {' 或 '.join(str(s) for s in SUPPORTED_SCHEMAS)}）",

@@ -1,4 +1,6 @@
 import { newId } from '@/lib/id'
+import { t } from '@/i18n'
+import { PRODUCT_NAME } from '@/lib/brand'
 import type {
   CanvasObject,
   FigureDocument,
@@ -6,7 +8,7 @@ import type {
   ProjectDocument,
   TextObject,
 } from '@/types/document'
-import { emptyDocument, migrateToProject } from '@/types/document'
+import { SCHEMA_CURRENT, emptyDocument, futureSchemaOf, migrateToProject } from '@/types/document'
 
 type Unknown = Record<string, unknown>
 
@@ -71,14 +73,25 @@ export function normalizeLayout(
   payload: unknown,
   name: string,
 ): FigureDocument | ProjectDocument {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error(t('layoutSchemaInvalid', { ns: 'errors', product: PRODUCT_NAME }))
+  }
+  if (futureSchemaOf(payload) !== null) {
+    throw new Error(`${t('docBanner.tooNewTitle', { ns: 'workspace', product: PRODUCT_NAME })}。${t('docBanner.tooNewBody', { ns: 'workspace', product: PRODUCT_NAME })}`)
+  }
+  if (payload && typeof payload === 'object' && Object.prototype.hasOwnProperty.call(payload, 'schema')) {
+    const schema = (payload as {schema?: unknown}).schema
+    if (typeof schema !== 'number' || !Number.isInteger(schema) || schema < 1 || schema > SCHEMA_CURRENT) {
+      throw new Error(t('layoutSchemaInvalid', { ns: 'errors', product: PRODUCT_NAME }))
+    }
+  }
   if (payload && typeof payload === 'object' && (payload as { schema?: number }).schema === 3) {
     const pd = migrateToProject(payload)
     if (pd) return pd
+    throw new Error(t('layoutSchemaInvalid', { ns: 'errors', product: PRODUCT_NAME }))
   }
   const doc = emptyDocument()
   doc.name = name
-  if (!payload || typeof payload !== 'object') return doc
-
   const raw = payload as Unknown
   const page = raw.page as Unknown | undefined
   doc.page = {
@@ -86,10 +99,15 @@ export function normalizeLayout(
     h: num(page?.h, doc.page.h),
   }
 
-  if (raw.schema === 2 && Array.isArray(raw.objects)) {
-    doc.objects = (raw.objects as CanvasObject[]).filter(
-      (o) => o && typeof o === 'object' && typeof o.type === 'string',
-    )
+  if (raw.schema === 2) {
+    if ('objects' in raw && !Array.isArray(raw.objects)) {
+      throw new Error(t('layoutSchemaInvalid', { ns: 'errors', product: PRODUCT_NAME }))
+    }
+    const objects = (raw.objects ?? []) as unknown[]
+    if (objects.some((o) => !o || typeof o !== 'object' || Array.isArray(o) || typeof (o as {type?: unknown}).type !== 'string')) {
+      throw new Error(t('layoutSchemaInvalid', { ns: 'errors', product: PRODUCT_NAME }))
+    }
+    doc.objects = objects as CanvasObject[]
     doc.guides = Array.isArray(raw.guides) ? (raw.guides as FigureDocument['guides']) : []
     doc.name = typeof raw.name === 'string' && raw.name ? raw.name : name
     // 样式绑定（ADR 0081）是 schema 2 形状里的可选字段：原样带过来，否则打开一份绑定的版面
@@ -109,9 +127,17 @@ export function normalizeLayout(
     return doc
   }
 
+  if (['project', 'canvases', 'activeCanvasId', 'objects'].some((key) => Object.prototype.hasOwnProperty.call(raw, key))) {
+    throw new Error(t('layoutSchemaInvalid', { ns: 'errors', product: PRODUCT_NAME }))
+  }
+  if ('objs' in raw && !Array.isArray(raw.objs)) {
+    throw new Error(t('layoutSchemaInvalid', { ns: 'errors', product: PRODUCT_NAME }))
+  }
   const objs = Array.isArray(raw.objs) ? raw.objs : []
-  doc.objects = objs
-    .map((o) => migrateObject(o as Unknown))
-    .filter((o): o is CanvasObject => o !== null)
+  const migrated = objs.map((o) => o && typeof o === 'object' && !Array.isArray(o) ? migrateObject(o as Unknown) : null)
+  if (migrated.some((o) => o === null)) {
+    throw new Error(t('layoutSchemaInvalid', { ns: 'errors', product: PRODUCT_NAME }))
+  }
+  doc.objects = migrated as CanvasObject[]
   return doc
 }
