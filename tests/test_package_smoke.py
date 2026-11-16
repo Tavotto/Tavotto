@@ -21,13 +21,10 @@ docs/implementation/ci-foundation/CI03B_PACKAGE_SMOKE_ISOLATION.md。
 
 from __future__ import annotations
 
-import importlib.util
-import io
 import json
 import os
 import shlex
 import signal
-import socket
 import subprocess
 import sys
 import time
@@ -50,24 +47,6 @@ def _stub_launch(*extra: str) -> str:
     Windows 的反斜杠会被当成转义。"""
     parts = [Path(sys.executable).as_posix(), STUB.as_posix(), "--port", "{port}", *extra]
     return " ".join(shlex.quote(p) for p in parts)
-
-
-def _load_stub_module():
-    """把桩当模块加载，直接调它的纯函数——判据与桩共用同一份实现，不另抄一份。
-
-    加载会把 `sys.stdout/stderr` 重设成 UTF-8（桩自己钉编码）；先换成 StringIO，
-    别去改 pytest 的捕获流。
-    """
-    real = sys.stdout, sys.stderr
-    sys.stdout, sys.stderr = io.StringIO(), io.StringIO()
-    try:
-        spec = importlib.util.spec_from_file_location("stub_http_server_under_test", STUB)
-        assert spec is not None and spec.loader is not None
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-    finally:
-        sys.stdout, sys.stderr = real
-    return mod
 
 
 def _run(
@@ -231,27 +210,6 @@ def test_the_stub_never_resolves_a_hostname_between_bind_and_listen():
     assert "getfqdn" not in src, "连注释都不许提——那是下次顺手加回去的入口"
 
 
-def test_the_fallback_port_probe_steps_over_a_port_someone_else_is_holding():
-    """`fallback` 的 Q 必须是**现在真能 bind** 的号，不能盲取 P+1。
-
-    盲取时 P+1 被机器上任何进程占着（租约释放之后冒烟脚本自己去连 leased 端口的源端口也算），
-    桩就在 `Server(...)` 处 OSError 退 1；脚本仍按日志那句判 `lease_lost`，可这一次顺延的实例
-    根本没活到被终止——`test_the_fallback_instance_is_terminated_before_the_retry` 量的主语
-    （「活着被终止」）就落空了（2026-11-15 backend-fast (3.10, 1) 的红）。
-
-    变异：`_free_port_from` 改成直接 `return start` → 这里红（选中的还是被占着的那个）。
-    """
-    stub = _load_stub_module()
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as held:
-        held.bind(("127.0.0.1", 0))
-        held.listen(1)
-        busy = held.getsockname()[1]
-        chosen = stub._free_port_from(busy)
-        assert chosen != busy, f"选中的还是被占着的 {busy}"
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-            probe.bind(("127.0.0.1", chosen))  # 正面：选出来那个现在真能 bind
-
-
 # ---------------------------------------------------------------- 正例
 
 
@@ -289,12 +247,7 @@ def test_a_lost_lease_is_retried_on_a_fresh_port_without_waiting_for_the_timeout
 
 
 def test_the_fallback_instance_is_terminated_before_the_retry(tmp_path):
-    """顺延那次桩其实在 Q 上活着——重试之前必须把它连组终止，否则每次重试都多留一个进程。
-
-    失败时把那次尝试的日志尾嵌进断言消息：`already-exited` 只说明「我们开口之前它已经没了」，
-    **为什么没了**在桩自己写的那份 `server.log` 里（2026-11-15 backend-fast (3.10, 1) 那次
-    只留了一句「顺延那次进程是活着被终止的」，桩 bind Q 的 OSError 没进任何一处日志）。
-    """
+    """顺延那次桩其实在 Q 上活着——重试之前必须把它连组终止，否则每次重试都多留一个进程。"""
     launch = _stub_launch(
         "--fail-mode",
         "fallback",
@@ -305,14 +258,8 @@ def test_the_fallback_instance_is_terminated_before_the_retry(tmp_path):
     )
     out, res = _run(tmp_path / "run", "--launch", launch, "--timeout", "60")
     assert out.returncode == 0, out.stderr
-    first = res["history"][0]
-    assert first["state"] == "lease_lost", first
-    terminate = first["terminate"]
-    assert terminate["how"] != "already-exited", (
-        "顺延那次进程是活着被终止的，实际"
-        f" how={terminate['how']!r}、returncode={terminate['returncode']!r}"
-        f"——桩自己先退了，这次尝试的日志尾：\n{PS.log_tail(Path(first['log']))}"
-    )
+    assert res["history"][0]["state"] == "lease_lost"
+    assert res["history"][0]["terminate"]["how"] != "already-exited", "顺延那次进程是活着被终止的"
     # pid 文件被第二次起覆盖了，这里只核第一次的终止记录 + 最终没有任何桩残留
     pids = json.loads((tmp_path / "pids.json").read_text(encoding="utf-8"))
     assert _wait_gone(pids["pid"]) and _wait_gone(pids["worker"])

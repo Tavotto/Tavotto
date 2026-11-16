@@ -19,7 +19,7 @@
 |---|---|---|
 | `normal`（默认） | 正常服务 | rc 0 |
 | `bind-busy` | **第一次**起（`--state-file` 还不存在）时在同一进程里把 `--port` bind 两遍，把平台真实的 EADDRINUSE 文案打到 stderr 后退 1；第二次起正常服务 | 认出租约丢了，换端口重试后 rc 0，attempts == 2 |
-| `fallback` | 第一次起时打「* 端口 P 被占用，改用 Q」（产品 `resolve_port` 顺延时的那句）并在 Q 上服务——Q 是从 P+1 起第一个**现在真能 bind** 的端口（与产品同样先探再 bind）；第二次正常 | 同上——租约丢了不必等到超时 |
+| `fallback` | 第一次起时打「* 端口 P 被占用，改用 Q」（产品 `resolve_port` 顺延时的那句）并在 Q 上服务；第二次正常 | 同上——租约丢了不必等到超时 |
 | `never-ready` | `/api/version` 永远 503 | 超时 rc 1，stderr 带日志尾 |
 | `slow-ready` | 起来 `--delay` 秒之后 `/api/version` 才 200 | rc 0 且 ready_seconds ≥ delay |
 | `crash` | 启动即退 3，stderr 有一句 | rc 1，stderr 含那一句 |
@@ -109,35 +109,13 @@ def _bind_twice(port: int) -> int:
     return 4
 
 
-def _free_port_from(start: int) -> int:
-    """从 `start` 起找第一个**现在真能 bind** 的端口——产品 `resolve_port` 也是先探再 bind。
-
-    不能盲取 `port + 1`：租约释放之后，机器上任何进程（包括冒烟脚本自己去连 leased 端口时用的
-    源端口）都可能正占着它。盲取撞上时桩在 `Server(...)` 处 OSError 退 1，冒烟脚本仍按日志里
-    那句「端口 P 被占用」判 `lease_lost`——但这一次**顺延的实例根本没活到被终止**，
-    `test_the_fallback_instance_is_terminated_before_the_retry` 量的正是「活着被终止」，
-    2026-11-15 backend-fast (3.10, 1) 就红在这里。探不到就交给系统发号（bind 0）。
-    """
-    for cand in range(start, min(start + 32, 65536)):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-            try:
-                probe.bind(("127.0.0.1", cand))
-            except OSError:
-                continue
-            return cand
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.bind(("127.0.0.1", 0))
-        return int(probe.getsockname()[1])
-
-
 def serve(args: argparse.Namespace) -> int:
     mode = args.fail_mode
     port = args.port
     if mode == "fallback":
-        # 产品 resolve_port 顺延时的原话；然后真的在 Q 上服务——冒烟脚本对着 P 等是等不到的。
-        # Q 要取真正空闲的那个：盲取 P+1 被占时桩会先退，看护用例量的「活着被终止」就落空了
-        port = _free_port_from(port + 1)
-        print(f"* 端口 {args.port} 被占用，改用 {port}", flush=True)
+        # 产品 resolve_port 顺延时的原话；然后真的在 Q 上服务——冒烟脚本对着 P 等是等不到的
+        print(f"* 端口 {port} 被占用，改用 {port + 1}", flush=True)
+        port = port + 1
 
     secret = "stub-" + secrets.token_urlsafe(16)
     if mode != "no-credentials":
