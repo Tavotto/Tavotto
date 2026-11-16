@@ -748,10 +748,6 @@ def test_held_out_fields_replay_identically(tmp_path, group):
     seen = False
     for lib in _LIBRARIES:
         stems = [s for lb, s in _SWEEP + _HELD_OUT_STEMS.get(group, []) if lb == lib]
-        if group == "tick_text":
-            # 色条三张图上单条刻度文字不等价（色条轴 / 带色条的宿主轴的标签数，热态与重放里不同；把色条这一族
-            # 从 `_ROLE_CLS` 拿掉照样复现，所以不是色条键的问题）：③ 的遗留，另行评估
-            stems = [s for s in stems if s not in _CBAR_STEMS]
         if not stems:
             continue
         sub = tmp_path / lib
@@ -1445,6 +1441,42 @@ def test_tick_edits_combine_like_the_editor(project, patches):
     body = _export(client, patches, formats=[])
     assert body["status"] == "done", body
     assert _script_output(body)["script_report"]["written"] == len(patches)
+
+
+@pytest.mark.parametrize(
+    ("axes_extra", "ax_aspect", "left"),
+    [
+        ([], "1.0", True),  # 按纵横比在画的时候收缩的轴
+        ([{"gid": "axes_0.colorbar", "role": "colorbar", "editable": []}], "auto", True),  # 色条轴
+        ([], "auto", False),  # 画之前大小就定了的轴：照写
+    ],
+    ids=["aspect", "colorbar-axes", "fixed-size"],
+)
+def test_ticks_read_off_at_write_time_wait_when_the_axes_is_sized_at_draw(
+    axes_extra, ax_aspect, left
+):
+    """轴的大小要画出来才定（`aspect` 不是 auto、色条轴）：落笔时还没画过，自动刻度按「还没定的大小」算，
+    与热态画完之后的不同（实测 `InvCbar2` x 轴 6 个 → 5 个，单条文字验证不过）。靠落笔刻度的几条（单条文字、
+    固定刻度没给值）与同一条轴上其余的定位 / 格式一起留给重放；不靠落笔刻度的键（线宽、标签显隐）不受牵连。"""
+    els = [
+        {"gid": "axes_0", "role": "axes", "editable": [{"prop": "aspect", "value": ax_aspect}]},
+        {"gid": "axes_0.xticks", "role": "ticks", "editable": []},
+        {"gid": "axes_0.xticklabels_1", "role": "ticklabel", "editable": []},
+        *axes_extra,
+    ]
+    text_edit = {"gid": "axes_0.xticklabels_1", "prop": "text", "value": "two"}
+    fixed = {"gid": "axes_0.xticks", "prop": "major_mode", "value": "fixed"}
+    fmt = {"gid": "axes_0.xticks", "prop": "format", "value": "%.1f"}
+    size = {"gid": "axes_0.xticks", "prop": "fontsize", "value": 9}
+    out = scriptadjust.build(
+        b"import os\n", "Fig1", [text_edit, fixed, fmt, size], {"elements": els}, version="9.9"
+    )
+    held = {(p["gid"], p["prop"]) for p in out.residual}
+    if left:
+        assert held == {(e["gid"], e["prop"]) for e in (text_edit, fixed, fmt)}
+        assert out.written == 1
+    else:
+        assert not held and out.written == 4
 
 
 def test_tick_keys_of_one_axis_make_one_call_in_the_editors_order():

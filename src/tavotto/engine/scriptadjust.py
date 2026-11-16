@@ -522,6 +522,30 @@ def _snapshots_ticks(patch: dict, patches: list[dict]) -> bool:
     return False
 
 
+def _sized_at_draw(gid: str, els: dict) -> bool:
+    """这条轴的大小是不是要画出来才定：落笔那一刻（还没画过）的刻度按「还没定的大小」算，与热态里画完之后的不同。
+
+    实测（`InvCbar2`：`imshow` 加四条色条）：宿主轴 `aspect=1` 与底部横色条的轴，落笔时宽 167 / 223 px、
+    画完 162 / 205 px，x 轴自动刻度 6 个 → 5 个，冻结出来的单条刻度文字比热态多一条、位置错开，验证不过、整份不交付。
+    能判的两种：`aspect` 不是 auto 的轴（按纵横比在画的时候收缩），以及色条轴（色条 locator 画的时候才落位）。
+    """
+    m = re.match(r"(axes_\d+)\.", gid)
+    if m is None:
+        return False
+    ax = m.group(1)
+    if f"{ax}.colorbar" in els:
+        return True
+    aspect = next(
+        (
+            f.get("value")
+            for f in (els.get(ax) or {}).get("editable", [])
+            if f.get("prop") == "aspect"
+        ),
+        "auto",
+    )
+    return str(aspect) != "auto"
+
+
 def _number_list(v) -> list[float]:
     """与引擎 `tickmodel._num_list` 同口径：单个数当一项，非数字的元素丢掉。"""
     if isinstance(v, (int, float)) and not isinstance(v, bool):
@@ -1278,14 +1302,19 @@ def _translate(
             )
         except (_Unsupported, KeyError, TypeError, ValueError, IndexError):
             residual.append(p)
-    # 整页 / 子图大小留给重放时，靠落笔那一刻的刻度算的几条跟着留下（`_RESHAPES_AXES`）
-    if any(r["prop"] in _RESHAPES_AXES for r in residual):
-        # 一条轴上的定位与格式是一整套：其中一条留下，这条轴的其余几条也留下（不然写进脚本的那一份缺了它）
-        held = {p["gid"] for p, _s in steps if _snapshots_ticks(p, patches) and p["prop"] != "text"}
-        for p, stmt in list(steps):
-            if _snapshots_ticks(p, patches) or (p["gid"] in held and p["prop"] in _TICK_MODEL):
-                steps.remove((p, stmt))
-                residual.append(p)
+    # 整页 / 子图大小留给重放时，靠落笔那一刻的刻度算的几条跟着留下（`_RESHAPES_AXES`）；轴的大小要到
+    # 画出来才定的（`_sized_at_draw`）也一样
+    reshaped = any(r["prop"] in _RESHAPES_AXES for r in residual)
+
+    def late(p: dict) -> bool:
+        return _snapshots_ticks(p, patches) and (reshaped or _sized_at_draw(p["gid"], els))
+
+    # 一条轴上的定位与格式是一整套：其中一条留下，这条轴的其余几条也留下（不然写进脚本的那一份缺了它）
+    held = {p["gid"] for p, _s in steps if late(p) and p["prop"] != "text"}
+    for p, stmt in list(steps):
+        if late(p) or (p["gid"] in held and p["prop"] in _TICK_MODEL):
+            steps.remove((p, stmt))
+            residual.append(p)
     # 留作 override 的「广播」条目在重放时排在窄条目之前、会盖掉写进脚本的窄条目：
     # 同一 prop、gid 是它子孙的，一起留下（ADR 0094 §五.3）
     # 色条与它的 mappable 的 cmap 是互相广播的一组（ADR 0135：组里任一条改 cmap = 整组改，文档序靠后的赢）：
