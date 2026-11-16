@@ -232,6 +232,13 @@ def parse_table(text: str) -> dict:
                 text_ok = False
                 continue
             if kind == "numeric":
+                if "," in raw:
+                    # 0178 的 parse_cell 把合法千分位当数值；chartdata 的合同仍是
+                    # 「报告、不猜」，所以含逗号的数值格回落到 _text_issue
+                    # （data_thousands_separator），不把值收进数值列。
+                    texts.append(raw)
+                    column_issues.append(_text_issue(raw, r, c + 1, col_name))
+                    continue
                 values.append(float(value))
                 texts.append(raw)
                 continue
