@@ -14,6 +14,7 @@ import { LEFT_DEFAULT, LEFT_MAX, LEFT_MIN, RAIL_W, isLeftPinned, useUiStore } fr
 import { IconButton } from '../ui/Button'
 import { DESK_FIELD_SCOPE } from '../ui/fieldBox'
 import { AssetBrowser } from './AssetBrowser'
+import { DataDrawer } from '../datastudio/DataDrawer'
 import { DrawerCount } from './DrawerCount'
 import { DrawerSlotsContext } from './drawerSlots'
 import { ElementTree } from './ElementTree'
@@ -103,6 +104,8 @@ export function LeftPanel({
         <WorkspaceList />
       ) : tab === 'assets' ? (
         <AssetBrowser />
+      ) : tab === 'data' ? (
+        <DataDrawer />
       ) : tab === 'elements' ? (
         <ElementTree />
       ) : tab === 'style' ? (

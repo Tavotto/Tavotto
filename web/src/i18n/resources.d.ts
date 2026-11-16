@@ -174,6 +174,9 @@ export default interface Resources {
         "table_sheet": "{{file}} 的「{{sheet}}」：{{rows}} 行，{{groups}} 组",
         "unsure": "不确定"
       },
+      "overlay": {
+        "close": "关闭"
+      },
       "pick": {
         "another": "换一张表",
         "draw": "画这张",

@@ -17,7 +17,7 @@ import {
   type AiDataProposeItem,
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
-import { isStaleProposeCode, mergeAnswers, tableKey, type TableRef } from '@/lib/dataFigure'
+import { fileRows, isStaleProposeCode, mergeAnswers, tableKey, type TableRef } from '@/lib/dataFigure'
 import type { UiMessage } from '@/i18n'
 
 /**
@@ -76,7 +76,6 @@ export type Scene =
   | { kind: 'drawn'; script: string; notes: DrawNotes }
   | { kind: 'problem'; problem: ProblemKind }
 
-type View = 'none' | 'entering' | 'data'
 
 /**
  * 这个 store 要借用的「项目 / 编辑器」那一头的几件事。**不在这里 import 它们**：`projectStore` 在换项目时要调本 store 的 `clear()`，
@@ -84,18 +83,21 @@ type View = 'none' | 'entering' | 'data'
  * （和 `prepEnterEdit` 的持有者同一个办法）。没注册 = 什么都不做、项目可写性未知。
  */
 export interface DataFigureHost {
+  /** 打开左栏「数据」抽屉（首页左卡进项目后用） */
+  openDrawer: () => void
   /** 把项目刷新到新脚本已经在的状态，然后用「打开并运行」那条现有路径进编辑器（准备会话检查 → 运行 → 放进画布进单图快速编辑） */
   openScript: (script: string) => Promise<void>
   /** 项目文件夹可不可写（后端给的 `writable`）；不知道回 undefined */
   projectWritable: () => boolean | undefined
 }
-let host: DataFigureHost = { openScript: async () => {}, projectWritable: () => undefined }
+let host: DataFigureHost = { openDrawer: () => {}, openScript: async () => {}, projectWritable: () => undefined }
 export const configureDataFigureHost = (h: DataFigureHost): void => {
   host = h
 }
 
 interface DataFigureStore {
-  view: View
+  /** 工作面板上的预览浮层开着（抽屉里点了一个文件）；抽屉本身是左栏的 `LeftTab`「data」，不归这里管 */
+  overlay: boolean
   files: FilesState
   /** 用户点中的那一张表 */
   selected: TableRef | null
@@ -107,14 +109,9 @@ interface DataFigureStore {
   answers: Record<string, unknown>
   scene: Scene
 
-  /** 点「只有数据」之后、项目还没打开完：先把数据页的位置占住，不闪一帧画布 */
-  beginEntering: () => void
-  cancelEntering: () => void
+  /** 首页左卡进项目之后：开「数据」抽屉；只有一个可读文件就直接打开它的浮层 */
   enter: () => void
-  leave: () => void
-  /** 左轨「数据」：回到数据页（上次选中的表与状态都留着）；收起 = 去编辑器（状态不丢） */
-  show: () => void
-  hide: () => void
+  closeOverlay: () => void
   loadFiles: () => Promise<void>
   select: (ref: TableRef) => void
   setHeaderRow: (path: string, sheet: string | null, line: number) => void
@@ -157,7 +154,7 @@ function codeOf(e: unknown): string {
 }
 
 const initial = {
-  view: 'none' as View,
+  overlay: false,
   files: { status: 'idle' } as FilesState,
   selected: null as TableRef | null,
   overviews: {} as Record<string, OverviewState>,
@@ -266,7 +263,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   /** 进编辑器（宿主那一头做刷新与「打开并运行」）；先收起数据页：准备卡与落图的提示都出在编辑器那一边 */
   async function goEditor(script: string): Promise<void> {
     const ep = epoch
-    set({ view: 'none', scene: { kind: 'browse' } })
+    set({ overlay: false, scene: { kind: 'browse' } })
     if (ep !== epoch) return
     await host.openScript(script).catch(() => undefined)
   }
@@ -342,24 +339,25 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   return {
     ...initial,
 
-    beginEntering: () => set({ view: 'entering' }),
-    cancelEntering: () => set((s) => (s.view === 'entering' ? { view: 'none' } : s)),
     enter: () => {
-      set({ ...initial, view: 'data' })
-      void get().loadFiles()
-    },
-    show: () => {
-      if (get().view === 'data') return
-      set({ view: 'data' })
-      // 清单可能是上一轮的：回来时静默再读一次（失败不清空）
-      void get().loadFiles()
-    },
-    hide: () => set((s) => (s.view === 'data' ? { view: 'none' } : s)),
-    leave: () => {
-      const sc = get().scene
-      if (sc.kind === 'pick') void aiDataFigureDiscard(sc.session, currentProjectId()).catch(() => undefined)
-      epoch += 1
       set({ ...initial })
+      host.openDrawer()
+      void get()
+        .loadFiles()
+        .then(() => {
+          const f = get().files
+          if (f.status !== 'ready') return
+          const tables = fileRows(f.entries).flatMap((r) => r.rows).filter((r) => r.status.kind === 'table')
+          if (tables.length === 1) get().select(tables[0]!.ref)
+        })
+    },
+    closeOverlay: () => {
+      const sc = get().scene
+      if (sc.kind === 'drawing') return // 正在画：画完再说
+      if (sc.kind === 'pick') void aiDataFigureDiscard(sc.session, currentProjectId()).catch(() => undefined)
+      proposeSeq += 1
+      commitRid = null
+      set({ overlay: false, scene: { kind: 'browse' }, answers: {} })
     },
 
     loadFiles: async () => {
@@ -386,7 +384,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       if (sc.kind === 'pick') void aiDataFigureDiscard(sc.session, currentProjectId()).catch(() => undefined)
       proposeSeq += 1 // 还在出备选的那一轮作废
       commitRid = null
-      set({ selected: ref, scene: { kind: 'browse' }, answers: {} })
+      set({ selected: ref, overlay: true, scene: { kind: 'browse' }, answers: {} })
       void loadOverview(ref)
     },
 
@@ -461,9 +459,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       epoch += 1
       commitRid = null
       overviewSeq.clear()
-      // 「正在进数据页」是跨项目换代的那一刻发出的，不属于被换掉的项目：留着，等打开完成后 `enter()`
-      set((s) => ({ ...initial, view: s.view === 'entering' ? 'entering' : 'none' }))
+      set({ ...initial })
     },
   }
 })
-

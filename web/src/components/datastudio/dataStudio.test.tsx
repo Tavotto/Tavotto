@@ -14,7 +14,8 @@ import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useProjectStore } from '@/store/projectStore'
 import { AskScene } from './AskScene'
 import { DataList } from './DataList'
-import { DataPage } from './DataPage'
+import { DataDrawer } from './DataDrawer'
+import { DataOverlay } from './DataOverlay'
 import { MixedCellsDialog } from './MixedCellsDialog'
 import { PickScene } from './PickScene'
 import { DrawnScene, NothingScene, ProblemScene, WorkingScene } from './ResultScenes'
@@ -186,7 +187,7 @@ describe('清单 DataList（文件树）', () => {
     await click(row('book.xlsx'))
     await click(row('P1'))
     expect(onSelect).toHaveBeenLastCalledWith({ path: 'book.xlsx', sheet: 'P1' })
-    for (const el of qa('[data-studio-data] *')) for (const a of el.getAttributeNames()) if (a.startsWith('data-')) expect(el.getAttribute(a)).not.toMatch(/\.(csv|txt|dat|xlsx)/)
+    for (const el of qa('[role=tree] *')) for (const a of el.getAttributeNames()) if (a.startsWith('data-')) expect(el.getAttribute(a)).not.toMatch(/\.(csv|txt|dat|xlsx)/)
   })
 
   it('用户改过表头行、重读成功后，这一行改说重读后的行数', async () => {
@@ -396,7 +397,7 @@ describe('结果与失败出口', () => {
   })
 })
 
-describe('整页 DataPage 接 store 走一遍', () => {
+describe('抽屉 + 浮层接 store 走一遍', () => {
   const files = vi.mocked(aiDataFilesAll)
   const overview = vi.mocked(aiDataOverview)
   const propose = vi.mocked(aiDataFigurePropose)
@@ -420,8 +421,8 @@ describe('整页 DataPage 接 store 走一遍', () => {
   })
 
   const start = async () => {
-    await act(async () => useDataFigureStore.getState().enter())
-    await mount(<DataPage />)
+    await act(async () => useDataFigureStore.getState().loadFiles())
+    await mount(<><DataDrawer /><DataOverlay narrow={false} /></>)
     await flush()
   }
   const open = async (i: number) => {
@@ -429,12 +430,45 @@ describe('整页 DataPage 接 store 走一遍', () => {
     await flush()
   }
 
-  it('进页：清单来自后端；没选表时舞台是一句话，没有「开始」', async () => {
+  it('抽屉：清单来自后端；没点文件时没有浮层；点一个文件才出浮层（标题就是文件名）', async () => {
     await start()
     expect(files).toHaveBeenCalledWith('pa')
     expect(qa('[data-studio-file]')).toHaveLength(3)
-    expect(q('[data-studio-empty-stage]')).not.toBeNull()
-    expect(q('[data-studio-start]')).toBeNull()
+    expect(q('[data-data-overlay]')).toBeNull()
+    overview.mockResolvedValue(ov())
+    await open(0)
+    expect(q('[data-data-overlay]')).not.toBeNull()
+    expect(q('[data-data-overlay] h2')!.textContent).toContain('a.csv')
+    // 点 × 关；Esc 也关；浮层外按下也关（抽屉里不算）
+    await click(q('[data-studio-close]'))
+    expect(useDataFigureStore.getState().overlay).toBe(false)
+  })
+
+  it('Esc 与点浮层外关浮层；点抽屉里别的文件是换文件不是关', async () => {
+    overview.mockResolvedValue(ov())
+    await start()
+    await open(0)
+    await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
+    expect(useDataFigureStore.getState().overlay).toBe(false)
+    await open(0)
+    await act(async () => { document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })) })
+    expect(useDataFigureStore.getState().overlay).toBe(false)
+    await open(0)
+    await open(1)
+    expect(useDataFigureStore.getState().overlay).toBe(true)
+    expect(useDataFigureStore.getState().selected).toEqual({ path: 'g.txt', sheet: null })
+  })
+
+  it('焦点：打开时进浮层，关闭后还给打开它的那一行', async () => {
+    overview.mockResolvedValue(ov())
+    await start()
+    const rowEl = qa<HTMLElement>('[data-studio-file]')[0]!
+    rowEl.focus()
+    await click(rowEl)
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+    expect(q('[data-data-overlay]')!.contains(document.activeElement)).toBe(true)
+    await click(q('[data-studio-close]'))
+    expect(document.activeElement).toBe(rowEl)
   })
 
   it('认得准的表：预览 + 开始；没认准的：点哪一行当列名之后才有开始；读不了的：没有开始', async () => {
@@ -481,7 +515,7 @@ describe('整页 DataPage 接 store 走一遍', () => {
     await click(q('[data-studio-primary]'))
     await flush()
     expect(prepOpen).toHaveBeenCalledTimes(1)
-    expect(useDataFigureStore.getState().view).toBe('none')
+    expect(useDataFigureStore.getState().overlay).toBe(false)
   })
 
   it('出备选失败：一句话 + 再试一次 / 换一张表，不卡住', async () => {
@@ -576,8 +610,8 @@ describe('读不了但能补救的文本表（仪器说明行触发 data_ragged�
     files.mockResolvedValue({ files: [{ path: 'inst.txt', size: 1, table: { status: 'unreadable', code: 'data_ragged', delimiter: 'comma', header_row: 3, columns: null, rows: null, preview: [{ line: 1, text: 'Temperature,25' }] } }], truncated: false })
     overview.mockImplementation(async (qy) => (qy.headerRow === 4 ? ov({ path: 'inst.txt', header_row: 4, rows: 7, columns: 2 }) : qy.headerRow === 2 ? ragged({ path: 'inst.txt', code: 'data_header_row_invalid', header_row: 2 }) : ragged({ path: 'inst.txt' })))
     propose.mockResolvedValue({ kind: 'nothing', reasons: ['no_usable_table'] })
-    await act(async () => useDataFigureStore.getState().enter())
-    await mount(<DataPage />)
+    await act(async () => useDataFigureStore.getState().loadFiles())
+    await mount(<><DataDrawer /><DataOverlay narrow={false} /></>)
     await flush()
     expect(qa('[data-studio-nav]')[0]!.textContent).toContain('没认准')
     await click(qa('[data-studio-file]')[0]!)

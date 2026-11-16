@@ -68,29 +68,32 @@ describe('开关开着', () => {
     expect(rails()).not.toContain('data')
   })
 
-  it('点「数据」回数据页（它高亮，「素材」不亮）；点别的项离开数据页，那个抽屉开着', async () => {
+  it('「数据」是正式的轨道项：走 railClick 开抽屉（高亮、aria-expanded），再点一次收起；点「素材」换回素材', async () => {
     await mount()
     await act(async () => {})
     useUiStore.setState({ leftOpen: true, leftTab: 'assets' })
-    expect(q('[data-rail="assets"]')!.getAttribute('aria-expanded')).toBe('true')
     await act(async () => q('[data-rail="data"]')!.click())
-    expect(useDataFigureStore.getState().view).toBe('data')
-    expect(q('[data-rail="data"]')!.getAttribute('aria-current')).toBe('page')
+    expect(useUiStore.getState()).toMatchObject({ leftTab: 'data', leftOpen: true })
+    expect(q('[data-rail="data"]')!.getAttribute('aria-expanded')).toBe('true')
     expect(q('[data-rail="assets"]')!.getAttribute('aria-expanded')).toBe('false')
-    // 数据页里点「素材」：离开数据页，抽屉仍开着（不被再点一次收起）
+    await act(async () => q('[data-rail="data"]')!.click())
+    expect(useUiStore.getState().leftOpen).toBe(false)
+    await act(async () => q('[data-rail="data"]')!.click())
     await act(async () => q('[data-rail="assets"]')!.click())
-    expect(useDataFigureStore.getState().view).toBe('none')
-    expect(useUiStore.getState().leftOpen).toBe(true)
-    expect(q('[data-rail="data"]')!.hasAttribute('aria-current')).toBe(false)
+    expect(useUiStore.getState()).toMatchObject({ leftTab: 'assets', leftOpen: true })
   })
 
-  it('回数据页保持上次选中的表', async () => {
+  it('画布不受影响：点「数据」不改文档 / 选区（抽屉与浮层都只是叠加）', async () => {
     await mount()
     await act(async () => {})
-    useDataFigureStore.setState({ selected: { path: 'a.csv', sheet: null } })
     await act(async () => q('[data-rail="data"]')!.click())
-    await act(async () => useDataFigureStore.getState().hide())
-    await act(async () => q('[data-rail="data"]')!.click())
-    expect(useDataFigureStore.getState().selected).toEqual({ path: 'a.csv', sheet: null })
+    expect(useDataFigureStore.getState().overlay).toBe(false)
+  })
+
+  it('抽屉当前就是「数据」时即使清单还没读到，「数据」项也在（开抽屉的入口不能消失）', async () => {
+    files.mockResolvedValue({ files: [], truncated: false })
+    useUiStore.setState({ leftOpen: true, leftTab: 'data' })
+    await mount()
+    expect(rails()).toContain('data')
   })
 })

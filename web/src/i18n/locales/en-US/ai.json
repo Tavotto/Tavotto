@@ -727,6 +727,9 @@
       "otherWay": "Try another way",
       "reveal": "Show in folder",
       "mismatchNext": "Its script is still in the project: draw it another way, or delete that script from the folder."
+    },
+    "overlay": {
+      "close": "Close"
     }
   }
 }

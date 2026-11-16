@@ -10,9 +10,6 @@ import { cn } from '@/lib/utils'
 import { sameTable, withOverview, type DataFileRow, type DataRow, type RowStatus, type TableRef } from '@/lib/dataFigure'
 import type { AiDataOverview } from '@/lib/api'
 
-/** 侧栏宽度：w-75 = 300px */
-export const DATA_LIST_WIDTH_CLASS = 'w-75'
-
 /** 子文件夹默认展开的数据文件总数上限：总数少于它全展开，多了只展开顶层（上百个文件时不一屏铺满） */
 export const AUTO_EXPAND_BELOW = 30
 /** 展开时只给前若干个子项做错峰淡入（几百行也不卡） */
@@ -271,17 +268,8 @@ export function DataList({
   }
 
   return (
-    <aside
-      data-studio-data
-      aria-label={t('dataFigureV2.list.heading')}
-      className={cn('flex h-full shrink-0 flex-col border-r border-border bg-surface', DATA_LIST_WIDTH_CLASS)}
-    >
-      <div className="flex h-11 shrink-0 items-center px-4">
-        <h2 className="type-section text-ink-3">{t('dataFigureV2.list.heading')}</h2>
-      </div>
-      <ul ref={nav} role="tree" aria-label={t('dataFigureV2.list.heading')} className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto pb-3">
-        {tree.map((n, i) => renderNode(n, '', i))}
-      </ul>
-    </aside>
+    <ul ref={nav} role="tree" aria-label={t('dataFigureV2.list.heading')} className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto pb-3">
+      {tree.map((n, i) => renderNode(n, '', i))}
+    </ul>
   )
 }

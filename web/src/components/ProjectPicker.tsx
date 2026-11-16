@@ -77,13 +77,11 @@ export function ProjectPicker() {
     }
   }
 
-  // 主页左卡「只有数据，还没有图」（实验开关 `ai.taf.enabled` 开着才画）：选一个文件夹，按「整个文件夹」打开，成功后进数据页。
-  // 先占住数据页的位置（`beginEntering`），免得打开完成到进数据页之间闪一帧画布
+  // 主页左卡「只有数据，还没有图」（实验开关 `ai.taf.enabled` 开着才画）：选一个文件夹，按「整个文件夹」打开，成功后开「数据」抽屉。
+  // 成功后开「数据」抽屉（只有一个可读文件就直接开它的浮层）
   const dataEntry = useProjectEntry((path) => {
-    useDataFigureStore.getState().beginEntering()
     void openPath(path, false, { entry: 'folder' }).then((ok) => {
       if (ok) useDataFigureStore.getState().enter()
-      else useDataFigureStore.getState().cancelEntering()
     })
   })
 

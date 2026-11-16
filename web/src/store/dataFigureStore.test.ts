@@ -62,7 +62,7 @@ beforeEach(() => {
   discard.mockResolvedValue({ ok: true })
   setCurrentProjectId('pa')
   useDataFigureStore.getState().clear()
-  useDataFigureStore.setState({ view: 'data' })
+  useDataFigureStore.setState({ overlay: true })
   useProjectStore.setState({ project: { open: true, writable: true } })
   useProjectPreparationStore.setState({ open: prepOpen })
   overview.mockResolvedValue(ov())
@@ -236,7 +236,7 @@ describe('画这张：各结局', () => {
     expect(prepOpen).toHaveBeenCalledTimes(1)
     expect(prepOpen.mock.calls[0]![0]).toMatchObject({ script: 'tavotto_figures/a_figure.py' })
     expect(prepOpen.mock.calls[0]![1]).toMatchObject({ run: true })
-    expect(st().view).toBe('none')
+    expect(st().overlay).toBe(false)
   })
 
   it('unverifiable：不直接跳，先说「没法逐项核对」，点打开才进编辑器；绝不写成已核对', async () => {
@@ -353,15 +353,49 @@ describe('画这张：各结局', () => {
   })
 })
 
-describe('换项目：这一页的状态全丢，「正在进数据页」的占位留着', () => {
-  it('clear 后回到初始；entering 不被换代吃掉，进完才 enter', () => {
+describe('抽屉 + 浮层：打开 / 关闭 / 换项目', () => {
+  it('select 打开浮层；closeOverlay 关掉并放弃这一轮的备选；正在画时关不掉', async () => {
+    st().select(ref('a.csv'))
+    expect(st().overlay).toBe(true)
+    propose.mockResolvedValueOnce(cands('SX'))
+    await st().start()
+    st().closeOverlay()
+    expect(st()).toMatchObject({ overlay: false, scene: { kind: 'browse' } })
+    expect(discard).toHaveBeenCalledWith('SX', 'pa')
+    st().select(ref('a.csv'))
+    propose.mockResolvedValueOnce(cands())
+    await st().start()
+    let release!: (v: AiDataCommitResult) => void
+    commit.mockReturnValueOnce(new Promise((r) => (release = r)))
+    const p = st().draw()
+    st().closeOverlay()
+    expect(st().overlay).toBe(true)
+    release(committed({ data_check: 'unverifiable' }))
+    await p
+  })
+
+  it('enter：开「数据」抽屉；只有一个可读文件就直接开它的浮层，多个只开抽屉', async () => {
+    const drawer = vi.fn()
+    const { configureDataFigureHost } = await import('./dataFigureStore')
+    configureDataFigureHost({ openDrawer: drawer, openScript: async () => {}, projectWritable: () => true })
+    const ok = (path: string) => ({ path, size: 1, table: { status: 'ok' as const, code: null, delimiter: 'comma' as const, header_row: 1, columns: 2, rows: 3 } })
+    files.mockResolvedValue({ files: [ok('one.csv'), { path: 'bad.dat', size: 1, table: { status: 'unreadable', code: 'data_binary', delimiter: null, header_row: null, columns: null, rows: null, preview: [] } }], truncated: false })
+    st().enter()
+    await flush()
+    await flush()
+    expect(drawer).toHaveBeenCalled()
+    expect(st()).toMatchObject({ overlay: true, selected: { path: 'one.csv', sheet: null } })
+    files.mockResolvedValue({ files: [ok('a.csv'), ok('b.csv')], truncated: false })
+    st().enter()
+    await flush()
+    await flush()
+    expect(st()).toMatchObject({ overlay: false, selected: null })
+    await import('@/lib/dataFigureHost') // 还原真宿主给后面的用例
+  })
+
+  it('clear 回到初始（浮层关、选中清掉）', () => {
     st().select(ref('a.csv'))
     useDataFigureStore.getState().clear()
-    expect(st()).toMatchObject({ view: 'none', selected: null, scene: { kind: 'browse' }, answers: {}, headerRows: {} })
-    st().beginEntering()
-    useDataFigureStore.getState().clear()
-    expect(st().view).toBe('entering')
-    st().cancelEntering()
-    expect(st().view).toBe('none')
+    expect(st()).toMatchObject({ overlay: false, selected: null, scene: { kind: 'browse' }, answers: {}, headerRows: {} })
   })
 })

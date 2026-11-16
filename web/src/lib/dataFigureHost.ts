@@ -7,8 +7,10 @@ import { configureDataFigureHost } from '@/store/dataFigureStore'
 import { refreshProjectNow } from '@/store/liveSync'
 import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useProjectStore } from '@/store/projectStore'
+import { useUiStore } from '@/store/uiStore'
 
 configureDataFigureHost({
+  openDrawer: () => useUiStore.getState().setLeftTab('data'),
   openScript: async (script) => {
     // 项目先刷新到新脚本已经在的状态，再走素材库里「打开并运行」那条现有路径
     await refreshProjectNow().catch(() => undefined)

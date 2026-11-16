@@ -88,7 +88,7 @@ export function PickScene({
         })}
       </div>
       {/* 备选多（4 张两行）时按钮也不被推到屏外：贴着舞台底边 */}
-      <div className="sticky -bottom-6 z-sticky -mx-8 -mb-6 flex gap-2 bg-canvas px-8 pb-6 pt-3">
+      <div className="sticky -bottom-6 z-sticky -mx-6 -mb-6 flex gap-2 bg-canvas px-6 pb-6 pt-3">
         <Button variant="primary" size="lg" data-studio-primary onClick={onDraw}>
           {t('dataFigureV2.pick.draw')}
         </Button>

@@ -14,6 +14,7 @@ import { configureOnboardingPersistence, useOnboardingStore, type OnboardingStat
 import { useProjectStore } from '@/store/projectStore'
 import { useDataFigureStore } from '@/store/dataFigureStore'
 import { useTafFlagStore } from '@/store/tafFlagStore'
+import '@/lib/dataFigureHost'
 import { useAiStore } from '@/store/aiStore'
 import { useTutorialStore } from '@/lib/onboarding/tutorial'
 import { useUiStore } from '@/store/uiStore'
@@ -139,34 +140,24 @@ describe('开关开着', () => {
     expect(q('[data-onboarding-anchor="tutorial-entry"]')).not.toBeNull()
   })
 
-  it('左卡只做点击：选一个文件夹 → 按「整个文件夹」打开 → 进数据页；取消 / 打开失败不进', async () => {
+  it('左卡只做点击：选一个文件夹 → 按「整个文件夹」打开 → 开「数据」抽屉；取消 / 打开失败不开', async () => {
     await mount('completed', true)
     await act(async () => q<HTMLButtonElement>('[data-home-entry="data"]')!.click())
     await act(async () => {})
     expect(desktop.pickDirectory).toHaveBeenCalled()
     expect(open).toHaveBeenCalledWith('/Users/me/data-folder', false, { entry: 'folder' })
-    expect(useDataFigureStore.getState().view).toBe('data')
+    expect(useUiStore.getState()).toMatchObject({ leftTab: 'data', leftOpen: true })
 
-    useDataFigureStore.getState().clear()
+    useUiStore.setState({ leftTab: 'assets' })
     desktop.pickDirectory.mockResolvedValueOnce(null)
     await act(async () => q<HTMLButtonElement>('[data-home-entry="data"]')!.click())
     await act(async () => {})
-    expect(useDataFigureStore.getState().view).toBe('none')
+    expect(useUiStore.getState().leftTab).toBe('assets')
 
     open.mockRejectedValueOnce(new Error('nope'))
     await act(async () => q<HTMLButtonElement>('[data-home-entry="data"]')!.click())
     await act(async () => {})
-    expect(useDataFigureStore.getState().view).toBe('none')
-  })
-
-  it('打开那一刻先占住数据页的位置（entering），不闪一帧画布', async () => {
-    let finish!: (v: ProjectStatus) => void
-    open.mockReturnValueOnce(new Promise((r) => (finish = r)))
-    await mount('completed', true)
-    await act(async () => q<HTMLButtonElement>('[data-home-entry="data"]')!.click())
-    expect(useDataFigureStore.getState().view).toBe('entering')
-    await act(async () => finish({ open: true }))
-    expect(useDataFigureStore.getState().view).toBe('data')
+    expect(useUiStore.getState().leftTab).toBe('assets')
   })
 })
 
