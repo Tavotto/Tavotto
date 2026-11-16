@@ -311,6 +311,21 @@ def test_chat_retries_with_max_completion_tokens(gw):
     assert r["protocol"] == "openai-chat" and r["token_field"] == "max_completion_tokens"
 
 
+def test_responses_drops_a_rejected_optional_field_before_judging(gw):
+    """Codex #1965 P2：Responses 中转站点名拒收 `max_output_tokens`——runner 能剥掉重发，探测也要，别记成不可用。"""
+
+    def route(body):
+        if "max_output_tokens" in body:
+            return _j({"error": {"message": "Unsupported parameter: 'max_output_tokens'"}}, 400)
+        assert body.get("store") is False  # store 永不剥
+        return _j(RESP_OK)
+
+    gw.routes = {"https://gw.example.org/v1/responses": route}
+    r = ai_probe.detect("https://gw.example.org/v1", KEY, "gpt-x", preferred="openai-responses")
+    assert r["protocol"] == "openai-responses"
+    assert len(gw.calls) == 2
+
+
 def test_total_budget_is_bounded(monkeypatch, real_probe):
     g = Gateway()
     monkeypatch.setattr(wires, "post_json", g)
@@ -855,7 +870,11 @@ def test_fix_path_builds_fallbacks_and_persists_the_report():
     wrapped = fixsession._FinishAware(model, __import__("threading").Event())
     assert wrapped.report() == model.report()
     s = fixsession.FixSession(
-        id="x", scope="p", script="a.py", prep_session_id="s", endpoint=("fx", "m1")
+        id="x",
+        scope="p",
+        script="a.py",
+        prep_session_id="s",
+        endpoint=("fx", "m1", rec["base_url"]),
     )
     fixsession.FixSessions._persist_runtime_report(
         s,
@@ -869,6 +888,44 @@ def test_fix_path_builds_fallbacks_and_persists_the_report():
     assert ai_providers.get("fx")["agent"] == "codex"
 
 
+def test_fix_path_ignores_a_report_for_an_address_changed_mid_run():
+    """Codex #1965 P2：修复会话期间用户改了地址——旧会话的回报不得写到新地址上。"""
+    from tavotto.engine import fixsession
+
+    _custom("fy", protocol="openai-responses")
+    s = fixsession.FixSession(
+        id="y",
+        scope="p",
+        script="a.py",
+        prep_session_id="s",
+        endpoint=("fy", "m1", "https://old-relay.example.test/v1"),
+    )
+    fixsession.FixSessions._persist_runtime_report(
+        s, {"wire_used": "openai-chat", "wire_switched_from": "openai-responses"}
+    )
+    assert ai_providers.get("fy")["protocol"] == "openai-responses"
+
+
 def test_probe_protocols_match_the_providers_list():
     """ai_probe 自带一份协议名（避免与 ai_providers 互引成环）：两份必须一致。"""
     assert ai_probe.PROTOCOLS == ai_providers.PROTOCOLS
+
+
+def test_legacy_endpoint_form_save_also_detects_the_protocol(client, gw):
+    """Codex #1965 P2：「其他兼容接口」表单仍走 PUT /api/ai/endpoints——存完也要探测，只说 chat 的中转站要被认出来。"""
+    gw.routes = {"https://relay.example.test/v1/chat/completions": _j(CHAT_OK)}
+    body = {
+        "id": "relay",
+        "label": "relay",
+        "agent": "codex",
+        "base_url": "https://relay.example.test/v1",
+        "api_key": KEY,
+        "default_model": "m1",
+    }
+    assert client.put("/api/ai/endpoints", json=body).status_code == 200
+    rec = ai_providers.get("relay")
+    assert rec["protocol"] == "openai-chat" and rec["protocol_ok"]["protocol"] == "openai-chat"
+    n = len(gw.calls)
+    # 只改名称：已有结论，不重探
+    assert client.put("/api/ai/endpoints", json={**body, "label": "Relay 2"}).status_code == 200
+    assert len(gw.calls) == n

@@ -336,7 +336,7 @@ class FixSession:
     script: str
     prep_session_id: str
     #: 这次修复用的连接 `(provider id, 型号)`：结束后把 runner 的自救回报落进这条记录（没有 = 不落）
-    endpoint: tuple[str, str] | None = None
+    endpoint: tuple[str, str, str] | None = None
     state: str = STATE_RUNNING
     card: dict | None = None
     outcome: str | None = None
@@ -550,7 +550,7 @@ class FixSessions:
         script_path: Path | None = None,
         background: bool = True,
         locale: object = None,
-        endpoint: tuple[str, str] | None = None,
+        endpoint: tuple[str, str, str] | None = None,
     ) -> FixSession:
         with self._lock:
             cur = self.active()
@@ -673,7 +673,9 @@ class FixSessions:
         try:
             from . import ai_providers
 
-            ai_providers.apply_runtime_report(s.endpoint[0], model=s.endpoint[1], report=done)
+            pid, model, base_url = s.endpoint
+            # 带上起跑时的地址：运行期间用户改了地址，回报说的是旧地址，不写（与 ai_bridge.run 同一道闸）
+            ai_providers.apply_runtime_report(pid, model=model, report=done, base_url=base_url)
         except Exception:  # noqa: BLE001
             LOG.warning("修复会话的自救回报落盘失败", exc_info=True)
 

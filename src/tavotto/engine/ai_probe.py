@@ -23,7 +23,7 @@ import re
 import time
 from urllib.parse import urlsplit
 
-from .agent_runner import wires
+from .agent_runner import fallback, wires
 
 #: 三种对话协议（与 ai_providers 的 PROTOCOLS 相同，测试对拍）。不 import ai_providers：它在运行期反过来用本模块，两边互引会成环
 PROTOCOLS = ("anthropic", "openai-responses", "openai-chat")
@@ -217,16 +217,28 @@ def _attempt(protocol, base, key, model, budget: _Budget) -> tuple[str, str, boo
         ("max_tokens", "max_completion_tokens") if protocol == "openai-chat" else ("max_tokens",)
     )
     used = fields[0]
+    # Responses 上被点名拒收的非必需字段（`include` / `max_output_tokens`）：与 runner 同一套判据剥掉重发一次，
+    # 否则 runner 跑得通的中转站在保存时就被记成「不可用」（Codex #1965 P2）。`store` 永不剥
+    adjuster = fallback.FieldAdjuster(protocol) if protocol == "openai-responses" else None
     for field in fields:
         used = field
-        timeout = budget.slice()
-        if timeout is None:
-            return "network", used, True
-        wire, req = _build(protocol, base, key, model, field)
-        try:
-            status, _h, data = wires.post_json(req.url, req.headers, req.body, timeout=timeout)
-        except wires.RunnerFailure:
-            return "network", used, True
+        while True:
+            timeout = budget.slice()
+            if timeout is None:
+                return "network", used, True
+            wire, req = _build(protocol, base, key, model, field)
+            body = adjuster.apply(req.body) if adjuster is not None else req.body
+            try:
+                status, _h, data = wires.post_json(req.url, req.headers, body, timeout=timeout)
+            except wires.RunnerFailure:
+                return "network", used, True
+            if (
+                adjuster is not None
+                and status in (400, 422)
+                and adjuster.consider(status, data, body)
+            ):
+                continue
+            break
         reason, retry = classify(wire, status, data)
         if not retry:
             return reason, used, False

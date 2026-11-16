@@ -705,6 +705,23 @@ def add_connection(body: object) -> tuple[str, str | None, dict | None]:
     return cid, reason, summary
 
 
+def probe_after_endpoint_save(before: list[dict], after: list[dict]) -> dict | None:
+    """旧的「其他兼容接口」表单（`PUT /api/ai/endpoints`）存完之后补一次协议探测（Codex #1965 P2）→ 摘要 | None。
+
+    只对用户自填地址、且还没有探测结论（新建 / 改了地址或型号，`_clean` 已丢掉旧的 `protocol_ok`）的那一条做；
+    只改了名称之类不重探。目录厂商与账号登录不动。会联网（≤ 30 s）。"""
+    old = {str(p.get("id") or ""): p for p in before}
+    changed = [
+        p for p in after if old.get(str(p.get("id") or "")) != p and p.get("auth") != "oauth"
+    ]
+    if len(changed) != 1:
+        return None
+    rec = changed[0]
+    if not ai_providers._is_custom(rec) or rec.get("protocol_ok") or not rec.get("api_key"):
+        return None
+    return _probe_and_store(str(rec["id"]), preferred=ai_providers.protocol_of(rec), custom=True)
+
+
 def _reset_protocol(rec: dict, existing: dict) -> dict:
     """`save()` 是合并写（`None` 值不覆盖）：要让「协议 / 探测结论」真被清掉，得显式给空串再由 `_clean` 丢弃。"""
     out = dict(rec)
