@@ -895,6 +895,97 @@ def _has_inline_main(tree: ast.Module) -> bool:
     return False
 
 
+def _is_main_guard(node: ast.stmt) -> bool:
+    """顶层的 `if __name__ == "__main__":`（两边可对调）。别的 `__name__` 比较不算——判不出就不改入口。"""
+    if not isinstance(node, ast.If) or not isinstance(node.test, ast.Compare):
+        return False
+    test = node.test
+    if len(test.ops) != 1 or not isinstance(test.ops[0], ast.Eq):
+        return False
+    sides = (test.left, test.comparators[0])
+
+    def is_name(n: ast.expr) -> bool:
+        return isinstance(n, ast.Name) and n.id == "__name__"
+
+    def is_main(n: ast.expr) -> bool:
+        return isinstance(n, ast.Constant) and n.value == "__main__"
+
+    return (is_name(sides[0]) and is_main(sides[1])) or (is_main(sides[0]) and is_name(sides[1]))
+
+
+def _is_bare_call(node: ast.expr, name: str) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == name
+        and not node.args
+        and not node.keywords
+    )
+
+
+#: 守卫里与「调入口函数」等价的收尾：`plt.show()` 在 Tavotto 里被拦截，不改图
+_GUARD_NEUTRAL_CALLS = frozenset({"show"})
+#: `sys.exit(main())` / `exit(main())` / `raise SystemExit(main())`：退出码不影响出图
+_GUARD_EXIT_CALLS = frozenset({"exit", "SystemExit"})
+
+
+def _guard_stmt_kind(stmt: ast.stmt, entry: str) -> str | None:
+    """守卫里一条语句：`"entry"`（调入口）/ `"neutral"`（不改图）/ None（别的事）。"""
+    if isinstance(stmt, ast.Pass):
+        return "neutral"
+    value = stmt.exc if isinstance(stmt, ast.Raise) and stmt.cause is None else None
+    if isinstance(stmt, ast.Expr):
+        value = stmt.value
+    if value is None or not isinstance(value, ast.Call):
+        return None
+    if _is_bare_call(value, entry):
+        return "entry"
+    if _func_name(value.func) in _GUARD_NEUTRAL_CALLS and not value.args and not value.keywords:
+        return "neutral" if isinstance(stmt, ast.Expr) else None
+    if (
+        _func_name(value.func) in _GUARD_EXIT_CALLS
+        and len(value.args) == 1
+        and not value.keywords
+        and _is_bare_call(value.args[0], entry)
+    ):
+        return "entry"
+    return None
+
+
+def guard_does_more_than(tree: ast.Module, entry: str) -> bool:
+    """`if __name__ == "__main__":` 守卫里除了零参调用 `entry()` 还做了别的事？（cl-b941e8b82f）
+
+    worker 用函数入口时是 `getattr(module, entry)()`，模块不以 `__main__` 名义执行，**守卫整段不跑**：
+    守卫里 `main()` 之前的 `plt.style.use` / `rcParams` / 随机种子 / 全局赋值全丢，图静默按默认样式出。
+    这时只有按 `__main__` 跑（Python 原生语义）才与 `python script.py` 一致。守卫只调一次 `entry()`
+    （或 `sys.exit(entry())` / `raise SystemExit(entry())` / `plt.show()` / `pass`）时两种跑法结果相同，
+    返回 False，入口保持函数名。没有守卫、或守卫写法认不出，也返回 False（判不出就不改）。
+    静态起草（`_entry_of`）、试运行候选（`entry_candidates_of`）与登记入口的对照（`entryfresh.is_stale`）
+    共用这一个判据。"""
+    for node in tree.body:
+        if not _is_main_guard(node):
+            continue
+        kinds = [_guard_stmt_kind(s, entry) for s in node.body]  # type: ignore[attr-defined]
+        if node.orelse or None in kinds or kinds.count("entry") > 1:  # type: ignore[attr-defined]
+            return True
+    return False
+
+
+def guard_calls(tree: ast.Module, entry: str) -> bool:
+    """守卫里有没有调到 `entry`（任何写法、任何位置）——登记的入口被守卫包着，才谈得上「守卫多做了事」。"""
+    for node in tree.body:
+        if not _is_main_guard(node):
+            continue
+        for sub in ast.walk(node):
+            if (
+                isinstance(sub, ast.Call)
+                and isinstance(sub.func, ast.Name)
+                and sub.func.id == entry
+            ):
+                return True
+    return False
+
+
 def _callable_without_args(fn: ast.FunctionDef) -> bool:
     """能否零参调用（worker 就是 `getattr(module, entry)()` 直接调的）。"""
     a = fn.args
@@ -923,19 +1014,31 @@ def _entry_of(tree: ast.Module) -> str | None:
     第三档是为「按自己习惯命名入口」的图库准备的（plot() / build() /
     make_figures()）——worker 用 getattr(module, entry)() 调用，函数名本来就
     不必是 main。找不到任何函数时才退回内联脚本。
+
+    选中的函数入口如果被 `if __name__ == "__main__":` 守卫包着、守卫里还做了别的事
+    （`guard_does_more_than`），改按 `__main__` 跑：函数入口会跳过整段守卫。
     """
+    picked = _function_entry_of(tree)
+    if picked is not None and guard_does_more_than(tree, picked):
+        return registry.INLINE_ENTRY
+    if picked is not None:
+        return picked
+    return registry.INLINE_ENTRY if _has_inline_main(tree) else None
+
+
+def _function_entry_of(tree: ast.Module) -> str | None:
+    """`_entry_of` 的函数档（main > render > 其它无参且能走到存图的顶层函数），不看守卫。"""
     funcs = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
     for preferred in ("main", "render"):
         if preferred in funcs:
             return preferred
-    inline = _has_inline_main(tree)
     candidates = [
         n for name, n in funcs.items() if _callable_without_args(n) and _reaches_save(n, funcs)
     ]
     if candidates:
         candidates.sort(key=lambda n: (_ENTRY_RANK.get(n.name, 99), n.lineno))
         return candidates[0].name
-    return "__main__" if inline else None
+    return None
 
 
 def _toplevel_reaches_plot(tree: ast.Module, funcs: dict[str, ast.FunctionDef]) -> bool:
@@ -975,6 +1078,8 @@ def probe_entry_candidates(path: Path) -> list[str] | None:
           MAX_PROBE_CUSTOM_ENTRIES）
         → `__main__` 兜底（import 期出图这类非常规写法，保证至少一个候选）
 
+    排第一的函数入口被一个多做了事的 `__main__` 守卫包着（`guard_does_more_than`）时，`__main__` 挪到最前。
+
     解析不了（语法错误 / 读不动）返回 None——调用方据此分类 unparseable，
     并退回盲试列表（运行期会给出真正的报错）。
     """
@@ -1004,6 +1109,11 @@ def entry_candidates_of(tree: ast.Module) -> list[str]:
     out.extend(n.name for n in custom[:MAX_PROBE_CUSTOM_ENTRIES])
     if "__main__" not in out:
         out.append("__main__")
+    # 排在 `__main__` 前面的第一个函数入口会跳过守卫；守卫里多做了事就让 `__main__` 先试（与 `_entry_of` 同一判据）
+    first = out[0]
+    if first != "__main__" and guard_does_more_than(tree, first):
+        out.remove("__main__")
+        out.insert(0, "__main__")
     return out
 
 

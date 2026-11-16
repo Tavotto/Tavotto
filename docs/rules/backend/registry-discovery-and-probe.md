@@ -21,6 +21,14 @@ order: 130
   `entry` **不限于 main/render/__main__**——worker 就是 `getattr(module, entry)()`，
   任何合法标识符都行；`script` 键是图库**相对路径**（POSIX 分隔符），
   子目录里的脚本照样登记（worker 会把脚本自己所在目录也加进 sys.path）。
+- **守卫里多做了事就按 `__main__` 跑（Guardian cl-b941e8b82f，2026-11-16 维护者拍板）**：函数入口是
+  `getattr(module, entry)()`，模块不以 `__main__` 名义执行，`if __name__ == "__main__":` 守卫整段不跑——守卫里
+  `main()` 前后的 `plt.style.use` / `rcParams` / 种子 / 全局赋值全丢，图**静默**按默认样式出。判据唯一出处
+  `discover.guard_does_more_than(tree, entry)`：守卫只调一次 `entry()`（或 `sys.exit(entry())` / `raise SystemExit(entry())`，
+  外加 `plt.show()` / `pass`）= 两种跑法结果相同，保持函数入口；多出任何语句、有 `else`、调了两次 = 让守卫自己跑。
+  静态起草 `_entry_of`（选中的函数档被它包着就回 `__main__`）、试运行候选 `entry_candidates_of`（`__main__` 挪到第一）、
+  登记入口对照 `entryfresh.is_stale`（守卫**调到**登记的函数且多做了事才算过时）三处同一把尺。不在 worker 里复刻守卫语义
+  （第三路径审查）。看护 `tests/test_entry_guard_body.py`。
 - **修静态扫描漏的写法时枚举整族，判不全要有运行时回路（错题本 L-140 升级，2026-11-06）。**
   修复前列出同一语义的语法族并补回归，无法静态证明时保留未知、走保守分支，或把运行时事实并回原决定；
   不为每份反馈只补一个特例。为什么：目录变量已被识别后，`parents[N]` 与分号连写仍漏扫，用户反复反馈，
@@ -60,7 +68,8 @@ order: 130
     导入即扫描从不给），`discover` 自己不挑解释器、不 import pool。
 - **登记的入口必须对照当前源码（`engine/entryfresh.py`，TVD-CHR5）**：`entry` 是首次打开时起草的函数名，脚本之后被改写成顶层直接画图
   时 `getattr(module, entry)()` 只会撞 `AttributeError`。判据 `is_stale`：入口是函数名、源码能解析、顶层作用域**没有**这个名字
-  （def / async def / class / 赋值 / import 进来的同名都算还在；`import *`、模块级 `__getattr__`、读不动 / 解析不了 = 判不出 = 不动）。
+  （def / async def / class / 赋值 / import 进来的同名都算还在；`import *`、模块级 `__getattr__`、读不动 / 解析不了 = 判不出 = 不动）；
+  名字还在、但被一个多做了事的 `__main__` 守卫调用（上一条）也算过时，重判得 `__main__`。
   `reconcile` 按 `probe.entry_candidates(static_only=True)` 重判，**只改这一条的 `entry` 字段**（经 `discover.write_config`，其余键原样），
   消费点只有四处且都调同一函数：app 的 `_reconcile_registered_entry`（磁盘面板 `_disk_panel_rel`、runtime 素材 `_resolve_runtime_asset`、
   准备目标 `entry is None` 分支）、准备会话规划 `prepsession._plan_of`（`effective_entry`：只纠正「就是登记的那个」，调用方显式给的入口不碰）、
