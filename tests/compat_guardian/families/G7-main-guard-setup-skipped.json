@@ -1,0 +1,81 @@
+{
+  "schema": "tavotto-guardian-family/1",
+  "id": "G7-main-guard-setup-skipped",
+  "title": "Style / rcParams set inside the __main__ guard before main(): native applies them, Tavotto rendered with defaults",
+  "affected_script_shapes": [
+    "a script with def main() and an if __name__ == \"__main__\": guard that does more than call main() — plt.style.use(...), plt.rcParams[...] = ..., sns.set_theme(), np.random.seed(...) or a global assignment before (or edits after) the call"
+  ],
+  "root_cause": "Entry inference preferred the function entry (main > render > other zero-arg functions > __main__), and the worker calls getattr(module, entry)() on a module that is not executed as __main__, so the whole guard body was skipped and every setting made there was silently lost (cl-b941e8b82f). Fixed by #1964: discover.guard_does_more_than makes drafting, probe candidates and the registered-entry check (entryfresh) run the script as __main__ whenever the guard does anything besides one call of the entry.",
+  "category": "safe_execution_divergence",
+  "signature": {
+    "behavior_kind": "pixel_mismatch",
+    "call_site": [
+      "figure",
+      "close",
+      "figure",
+      "show"
+    ],
+    "tavotto_error": null
+  },
+  "repro": {
+    "script": "tests/compat_guardian/families/G7-main-guard-setup-skipped/repro.py",
+    "sha256": "7b33bdb99a702512f6f54f65b2ae27e21ecb7b16249b728fd2703f7366d41a47",
+    "entry": "__main__",
+    "derived_from": {
+      "parent": {
+        "suite": "compat_engine",
+        "case": "shape_no_savefig_multi"
+      },
+      "chain": [
+        "wrap_main",
+        "rcparams"
+      ],
+      "seed": 20261114
+    },
+    "minimized_by": "hand-written (compat_guardian.py minimize hit its 40-step budget at 7 statements; the rcParams value is put into the title so the title comparison sees it without a pixel diff)",
+    "before": {
+      "statements": 18,
+      "lines": 21,
+      "bytes": 677,
+      "files": 1
+    },
+    "after": {
+      "statements": 9,
+      "lines": 9,
+      "bytes": 287,
+      "files": 1
+    },
+    "reproducibility": {
+      "confirmed": 2,
+      "total": 2
+    },
+    "runs": 6
+  },
+  "key_regression_tests": [
+    "tests/test_compat_guardian_families.py::RealRepro::test_g7_minimal_repro_is_fixed",
+    "tests/test_entry_guard_body.py"
+  ],
+  "environments": {
+    "verified": [
+      {
+        "platform": "macOS-27.2-arm64-arm-64bit-Mach-O",
+        "python": "3.13.16",
+        "matplotlib": "3.11.2",
+        "route": "Safe engine path via the product discovery chain",
+        "revision": "fix/guardian-entry-guard-body at 95da30d4a (#1964)"
+      }
+    ],
+    "unverified": [
+      "Linux",
+      "Windows",
+      "the desktop (Native) route",
+      "other matplotlib / Python versions",
+      "a real user session through the UI"
+    ]
+  },
+  "recurrence": "6 findings in nightly explores 11-11 to 11-14 (wrap_main + style_use / rcparams on shape_no_savefig_multi, shape_no_savefig_multi_2, shape_toplevel_imperative); every candidate whose guard setting differs from the matplotlib default",
+  "in_corpus": false,
+  "fix_pr": 1964,
+  "promoted": false,
+  "issues": []
+}
