@@ -65,6 +65,15 @@ def resolve_size(
     aspect ratio. This is the single size authority for every SVG consumer.
     """
     if view_box is not None:
+        # Extent validation belongs here, before any aspect-ratio division: a zero
+        # or non-finite viewBox must be a structured svg_dimensions refusal for
+        # every consumer, not a ZeroDivisionError from one of them.
+        if (
+            len(view_box) != 4
+            or not all(math.isfinite(v) for v in view_box)
+            or min(view_box[2:]) <= 0
+        ):
+            raise UnsupportedSVG("svg_dimensions")
         if width is None and height is None:
             width, height = view_box[2] * 0.75, view_box[3] * 0.75
         elif width is None:
@@ -95,8 +104,6 @@ def inspect_bytes(data: bytes) -> tuple[bytes, dict]:
     if view is not None:
         try:
             box = [float(v) for v in re.split(r"[\s,]+", view.strip())]
-            if len(box) != 4 or not all(math.isfinite(v) for v in box) or min(box[2:]) <= 0:
-                raise ValueError
         except ValueError as exc:
             raise UnsupportedSVG("svg_dimensions") from exc
     w, h = resolve_size(w, h, box)

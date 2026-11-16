@@ -459,3 +459,49 @@ def test_snapshot_exposed_in_sources_and_absent_means_none():
 def test_errors_are_profile_errors():
     """调用方按 ProfileError 转 4xx 的既有路径不用改。"""
     assert issubclass(journals.JournalCatalogError, profiles.ProfileError)
+
+
+# ------------------------------ strength（原文语气标签） ------------------------------
+def _without_strength(cat: dict) -> dict:
+    out = copy.deepcopy(cat)
+    for scope in ("publishers", "journals"):
+        for entry in out[scope].values():
+            for rule in (entry.get("rules") or {}).values():
+                rule.pop("strength", None)
+    return out
+
+
+def test_strength_is_label_only_and_never_changes_folding():
+    """strength 只是给人看的标签：去掉它，折叠结果（覆盖、预检判据、建议性提示）逐字不变。"""
+    cat = _fixture()
+    bare = _without_strength(cat)
+    for jid in cat["journals"]:
+        assert journals.journal_override(jid, cat) == journals.journal_override(jid, bare)
+        got = journals.journal_sources(jid, cat)
+        for item in got.values():  # 出版社原条目（overrides）里也可能带
+            item.pop("strength", None)
+            (item["overrides"] or {}).pop("strength", None)
+        assert got == journals.journal_sources(jid, bare)
+
+
+def test_strength_reaches_field_source_only_when_written():
+    cat = _fixture()
+    src = journals.journal_sources("fx-alpha", cat)
+    assert src["min_raster_dpi"]["strength"] == "recommended"
+    assert src["line_widths_pt"]["strength"] == "required"
+    assert "strength" not in src["widths_mm.single"]  # 缺省不写：旧绑定形状不变
+
+
+def test_every_strength_value_is_accepted_and_others_are_schema_errors():
+    for value in journals.STRENGTHS:
+        cat = gen.apply_ops(_fixture(), [])
+        cat["publishers"]["fx-press"]["rules"]["widths_mm.single"]["strength"] = value
+        journals.load_catalog(cat)
+    cat = _fixture()
+    cat["publishers"]["fx-press"]["rules"]["widths_mm.single"]["strength"] = "Required"
+    assert _code_of(cat) == "journal_catalog_schema"
+
+
+def test_a_client_that_ignores_strength_reads_the_same_catalog():
+    """旧客户端不认识 strength：没有任何一处按未知键拒绝（去掉后能照常加载，且折叠相同）。"""
+    journals.load_catalog(_without_strength(_fixture()))

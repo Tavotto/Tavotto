@@ -974,7 +974,7 @@ def test_data_files_lists_all_table_formats_with_xlsx_sheets(project):
     make_xlsx(figs / "d" / "x.xlsx", {"S1": simple_rows(), "S2": simple_rows()}, hidden=("S2",))
     (figs / "d" / "~$lock.xlsx").write_bytes(b"lock")
     (figs / "d" / "old.xls").write_bytes(b"x")
-    (figs / "d" / "n.txt").write_text("x", encoding="utf-8")
+    (figs / "d" / "n.md").write_text("x", encoding="utf-8")  # 不在表格后缀里
     (figs / "d" / "bad.xlsx").write_bytes(b"nope")
     default = client.get("/api/ai/data-files").get_json()
     assert [f["path"] for f in default["files"]] == ["d/a.csv"], "默认只列 CSV（v1 表单只认 CSV）"
@@ -982,10 +982,10 @@ def test_data_files_lists_all_table_formats_with_xlsx_sheets(project):
     body = client.get("/api/ai/data-files?formats=all").get_json()
     rows = {f["path"]: f for f in body["files"]}
     assert set(rows) == {"d/a.csv", "d/b.tsv", "d/c.TAB", "d/x.xlsx", "d/bad.xlsx"}
-    assert rows["d/x.xlsx"]["sheets"] == [
-        {"name": "S1", "hidden": False},
-        {"name": "S2", "hidden": True},
-    ]
+    assert [(x["name"], x["hidden"]) for x in rows["d/x.xlsx"]["sheets"]] == [
+        ("S1", False),
+        ("S2", True),
+    ]  # 行列数等见 test_ai_data_overview.py
     assert rows["d/bad.xlsx"]["sheets"] is None
     assert "sheets" not in rows["d/a.csv"]
 
@@ -1540,12 +1540,12 @@ def test_a_later_sheet_of_a_big_workbook_can_be_chosen(project):
 
 @pytest.mark.parametrize(
     "table",
-    ["../outside.csv", "/etc/hosts", "C:\\x.csv", "sub/../../outside.csv", "notes.txt", "nope.csv"],
+    ["../outside.csv", "/etc/hosts", "C:\\x.csv", "sub/../../outside.csv", "notes.md", "nope.csv"],
 )
 def test_explicit_tables_outside_the_folder_or_not_tables_are_still_refused(project, table):
     m, client, figs, _ = project
     put(figs, "data/a.csv", simple_rows())
-    (figs / "data" / "notes.txt").write_text("x", encoding="utf-8")
+    (figs / "data" / "notes.md").write_text("x", encoding="utf-8")
     (figs / "outside.csv").write_text(_csv(simple_rows()), encoding="utf-8")
     body = propose(client, table=table).get_json()
     assert body["kind"] == "nothing" and body["reasons"] == ["table_not_found"]
