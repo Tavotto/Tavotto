@@ -802,6 +802,10 @@ def test_direct_argv_index_error_can_be_recovered_with_the_existing_run_config(f
         # 负起点 + 正终点：长度先增后减，补一个参数就够（Codex #1974 P2）
         ("import sys\na, b = sys.argv[-2:2]\n", [], "script_needs_arguments"),
         ("import sys\na, b = sys.argv[-3:3]\n", [], "script_needs_arguments"),
+        # 边界远在天边也照算（Codex #1974 第二条 P2）
+        ("import sys\na, b = sys.argv[5000:]\n", [], "script_needs_arguments"),
+        ("import sys\na, b = sys.argv[:-5000]\n", [], "script_needs_arguments"),
+        ("import sys\na, b = sys.argv[4999:5000]\n", [], "script_error"),
         # 太多：补参数修不好
         ("import sys\na, = sys.argv[1:]\n", ["one", "two"], "script_error"),
         # 切片上限本身就不够：再多参数也拆不出三个

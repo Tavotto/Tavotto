@@ -1364,17 +1364,19 @@ def _direct_argv_unpack_error(
         else:
             got = len(sys.argv[window])
             # Would some longer argv give exactly `count` values? The length is not
-            # monotonic (`[-2:2]` grows, then shrinks), so walk argv lengths up to the
-            # horizon past which every bound is resolved and the length stops changing;
-            # it moves by at most one per added argument. Huge constant bounds: the
-            # walk is capped and the horizon itself is checked last.
-            horizon = (
-                len(sys.argv)
-                + count
-                + sum(abs(v) for v in (window.start, window.stop) if v is not None)
-            )
-            walk = range(len(sys.argv) + 1, min(horizon, len(sys.argv) + 4096) + 1)
-            if not any(len(range(*window.indices(n))) == count for n in (*walk, horizon)):
+            # monotonic (`[-2:2]` grows, then shrinks), but each bound only changes
+            # behaviour where argv length equals its magnitude, so between those
+            # breakpoints the length is monotone and moves by at most one per added
+            # argument: every value between the lengths at two consecutive points is
+            # reached. Past the last breakpoint it is monotone for good: constant,
+            # growing by one per argument, or shrinking to zero within `max(bounds)`
+            # more — so one far point `max(bounds) + count + 1` beyond settles it.
+            bounds = [abs(v) for v in (window.start, window.stop) if v is not None]
+            first = len(sys.argv) + 1
+            last = max([first, *bounds]) + max(bounds, default=0) + count + 1
+            points = sorted({first, last, *(b for b in bounds if first <= b <= last)})
+            sizes = [len(range(*window.indices(n))) for n in points]
+            if not any(min(a, b) <= count <= max(a, b) for a, b in zip(sizes, sizes[1:] or sizes)):
                 return False
         if got >= count:
             return False
