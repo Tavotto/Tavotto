@@ -3,10 +3,10 @@ import { useTranslation } from 'react-i18next'
 import { ChevronRight } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import type { AiAgentId, AiConnection, AiVendor } from '@/lib/api'
-import { canCheckConnection, isCheckableError, probeReasonText } from '@/lib/connectionCheck'
+import { actionForReason, canCheckConnection, connActionLabel, isCheckableError, probeReasonText, type ConnAction } from '@/lib/connectionCheck'
 import { cn } from '@/lib/utils'
 import { useAiStore } from '@/store/aiStore'
-import { runConnectionCheck } from '@/store/connectAiStore'
+import { requestConnectAi, requestEditConnection, runConnectionCheck } from '@/store/connectAiStore'
 import { Button } from '../../ui/Button'
 import { StatusPill } from '../../ui/StatusPill'
 import { BrandLogo } from '../BrandLogo'
@@ -64,29 +64,47 @@ export function VendorRow({
   const needsAuth = connection?.state === 'needs_auth'
   // 地址跑不了对话（endpoint_unusable / builtin_only）：状态胶囊说原因，右侧一个「检查连接」（重新探测，通了就变「已连接」）
   const checkable = !multi && !!connection && !ready && isCheckableError(connection) && canCheckConnection(connection)
-  const canManage = !multi && (ready || checkable) && !!manage && connection?.route !== 'cli:codex' && connection?.route !== 'cli:claude' && !connection?.id.startsWith('sub:')
+  const canManage = !multi && ready && !!manage && connection?.route !== 'cli:codex' && connection?.route !== 'cli:claude' && !connection?.id.startsWith('sub:')
   const unavailable = !multi && !method.available
   const [checking, setChecking] = useState(false)
-  // 这次检查没拿到结论（断网）时记录没动，胶囊仍是旧原因——换成这次的一句
-  const [note, setNote] = useState<string | null>(null)
+  // 检查过一次仍不通时，以这次的结论为准（连接视图里的旧原因不再用）；null = 还没检查过
+  const [checkedReason, setCheckedReason] = useState<string | null>(null)
+  const reason = checkedReason ?? (connection?.error === 'endpoint_unusable' ? (connection.error_reason ?? 'unknown') : 'unknown')
+  const connAct: ConnAction = actionForReason(reason, checkedReason !== null)
   const checkNow = async () => {
     if (!connection || checking) return
     setChecking(true)
-    setNote(null)
     try {
       const r = await runConnectionCheck(connection.id)
-      if (r.ok) onConnected(connection)
-      else if (r.reason === 'network') setNote(probeReasonText('network'))
+      if (r.ok) {
+        setCheckedReason(null)
+        onConnected(connection)
+      } else setCheckedReason(r.reason ?? 'unknown')
     } finally {
       setChecking(false)
     }
   }
+  const runAct = (a: ConnAction) => {
+    if (!connection) return
+    if (a === 'check') void checkNow()
+    else if (a === 'switch_ai') requestConnectAi()
+    else if (a === 'refill_key') setOpen(true) // 就地展开 Key 表单
+    else if (!requestEditConnection(connection.id, a === 'edit_model' ? 'model' : 'url')) setOpen(true)
+  }
 
   const status =
     !multi && connection && !ready ? (
-      <StatusPill tone={needsAuth ? 'warn' : 'danger'} dot data-connect-state={connection.state}>
-        {needsAuth ? cx('needsAuth') : (note ?? connectionErrorText(connection))}
-      </StatusPill>
+      needsAuth ? (
+        <StatusPill tone="warn" dot data-connect-state={connection.state}>
+          {cx('needsAuth')}
+        </StatusPill>
+      ) : checking ? null : (
+        // 出错：小红点 + 普通字，不套胶囊（跟右边的按钮拉开一点）
+        <span data-connect-state={connection.state} className="mr-1 inline-flex items-center gap-1.5 text-sm text-ink-2">
+          <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-danger" />
+          {checkable ? probeReasonText(reason) : connectionErrorText(connection)}
+        </span>
+      )
     ) : null
 
   let action: ReactNode
@@ -118,17 +136,20 @@ export function VendorRow({
       </StatusPill>
     )
   } else if (checkable) {
-    action = (
-      <Button
-        variant="secondary"
-        size="sm"
-        data-connect-action="check"
-        loading={checking}
-        onClick={() => void checkNow()}
-      >
-        {cx('checkConnection')}
-      </Button>
-    )
+    // 换个 AI：弹窗里其它厂商就在下面，不再叠一层；设置页里才给这个按钮
+    action =
+      connAct === 'switch_ai' && onChooseMethods ? null : (
+        <Button
+          variant="secondary"
+          size="sm"
+          data-connect-action={connAct === 'check' ? 'check' : connAct}
+          loading={checking}
+          loadingLabel={connAct === 'check' ? cx('checking') : undefined}
+          onClick={() => runAct(connAct)}
+        >
+          {connActionLabel(connAct)}
+        </Button>
+      )
   } else if (unavailable) {
     // 命令行 AI 没装 / 打不开 / 关了：一句话 + 一个按钮；找不到这个 agent（老后端）才退回「需先安装」
     action = loginAgent ? (
@@ -188,7 +209,7 @@ export function VendorRow({
         </span>
       </div>
       {!multi && method.kind === 'login' && flow.hint && <div className="pl-9 pt-1">{flow.hint}</div>}
-      {open && !ready && !checkable && !multi && method.kind === 'key' && (
+      {open && !ready && (!checkable || connAct === 'refill_key') && !multi && method.kind === 'key' && (
         <div className="pl-9 pt-2">
           <VendorKeyForm vendor={vendor} method={method} connectionId={connection?.id} onConnected={onConnected} />
         </div>

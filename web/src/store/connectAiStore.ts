@@ -23,8 +23,12 @@ interface ConnectAiState {
   close: () => void
   /** 正在编辑的已存 Key 连接 id（「检查连接」打开它的地址 / 密钥 / 型号表单）；null = 没在编辑 */
   editing: string | null
+  /** 编辑表单打开时先聚焦哪一格（「重填密钥」→ key，「改模型」→ model，「改地址」→ url）；null = 不特意聚焦 */
+  editFocus: EditFocus | null
   closeEditor: () => void
 }
+
+export type EditFocus = 'key' | 'model' | 'url'
 
 export const useConnectAiStore = create<ConnectAiState>((set) => ({
   open: false,
@@ -35,7 +39,8 @@ export const useConnectAiStore = create<ConnectAiState>((set) => ({
     set({ open: true, reason: opts?.reason ?? 'general', onConnected: opts?.onConnected ?? null, name: opts?.name ?? null }),
   close: () => set({ open: false, onConnected: null, name: null }),
   editing: null,
-  closeEditor: () => set({ editing: null }),
+  editFocus: null,
+  closeEditor: () => set({ editing: null, editFocus: null }),
 }))
 
 /**
@@ -52,11 +57,11 @@ export function requestConnectAi(opts?: { reason?: ConnectAiReason; onConnected?
  * 地址已填好——自定义中转站不在厂商列表里（`listedVendors` 排除了 custom），通用的「连接 AI」弹窗只能再新建一条，
  * 看不到也改不了出错的地址（Codex #1523 P2）。那条连接不是 Key 类（没有接口记录）→ 退回通用弹窗。
  */
-export function requestCheckConnection(): void {
+export function requestCheckConnection(focus?: EditFocus): void {
   // 用户选中的那条优先（即使它此刻不算 ready——凭据被拒的就是要改它的那条），否则与发送同一个 `effectiveConnection`
   const conn = currentConnection()
   const endpoint = conn ? useAiStore.getState().caps?.endpoints?.find((e) => e.id === conn.id) : undefined
-  if (endpoint) useConnectAiStore.setState({ editing: endpoint.id })
+  if (endpoint) useConnectAiStore.setState({ editing: endpoint.id, editFocus: focus ?? null })
   else requestConnectAi()
 }
 
@@ -95,4 +100,11 @@ export async function runConnectionCheck(id: string): Promise<ConnectionCheckRes
   // 断网 / 缺型号时记录没动（checked=false）：说「连不上」，别把旧记录里的原因当成这次的结论
   if (probe && !probe.checked) return { ok: false, reason: 'network' }
   return { ok: false, reason: conn?.error_reason ?? probe?.reason ?? conn?.error ?? null }
+}
+
+/** 连接卡上的「改地址 / 改模型 / 重填密钥」：打开**这一条**连接的编辑表单；它没有接口记录（目录厂商没存过）→ 返回 false，由调用方就地处理 */
+export function requestEditConnection(id: string, focus?: EditFocus): boolean {
+  if (!useAiStore.getState().caps?.endpoints?.some((e) => e.id === id)) return false
+  useConnectAiStore.setState({ editing: id, editFocus: focus ?? null })
+  return true
 }

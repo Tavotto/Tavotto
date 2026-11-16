@@ -8,11 +8,11 @@ import { t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
 import { connectionAgent, type AiConnection } from '@/lib/api'
 import { useConnectionCheck } from '@/hooks/useConnectionCheck'
-import { probeReasonText } from '@/lib/connectionCheck'
+import { actionForReason, reasonOfAgentError, type ConnAction } from '@/lib/connectionCheck'
 import { splitNoticeText } from '@/lib/noticeText'
 import { cn } from '@/lib/utils'
 import { DATA_FIGURE_TASK, sessionAgentLabel, useAiStore, type AiSession } from '@/store/aiStore'
-import { requestCheckConnection } from '@/store/connectAiStore'
+import { currentConnection, requestCheckConnection, requestConnectAi } from '@/store/connectAiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Reveal } from '../ui/Field'
 import { Notice } from '../ui/Notice'
@@ -141,6 +141,36 @@ function dataFigureStatusText(s: AiSession): string {
 const failedStatus = (s: AiSession) => s.status === 'failed' || s.status === 'timeout'
 
 
+/** 连接类失败的一句话（带连接名、不带句号）；认得的原因各一句，其余「连不上这个地址」 */
+function connReasonText(reason: string | null, name: string): string {
+  switch (reason) {
+    case 'unauthorized':
+      return ai('notice.conn.unauthorized', { name })
+    case 'quota':
+      return ai('notice.conn.quota', { name })
+    case 'no_model':
+      return ai('notice.conn.no_model', { name })
+    default:
+      return ai('notice.conn.unreachable', { name })
+  }
+}
+
+/** 按钮上的字 */
+function connActionText(a: ConnAction): string {
+  switch (a) {
+    case 'refill_key':
+      return ai('notice.refillKey')
+    case 'switch_ai':
+      return ai('notice.switchAi')
+    case 'edit_model':
+      return ai('notice.editModel')
+    case 'edit_address':
+      return ai('notice.editAddress')
+    case 'check':
+      return ai('notice.checkConnection')
+  }
+}
+
 /* ------------------------------------------------------------------ 一轮 */
 
 export function Turn({
@@ -191,6 +221,16 @@ export function Turn({
   // AI 这一侧没跑成（模型 / 连接 / Agent 进程 / 超时）：说具体原因，不落到「没通过写回前检查」——候选根本没写出来；原始码只进「详情」
   const agentError = agentErrorKey(session.error)
   const connCheck = useConnectionCheck()
+  // 连接类失败：还没检查前按错误码说原因，检查过一次就按检查的结论说
+  const connName = currentConnection()?.label ?? session.agentLabel
+  const checkedOnce = connCheck.phase === 'failed'
+  const connReason = checkedOnce ? connCheck.reason : reasonOfAgentError(agentError)
+  const connAction = actionForReason(connReason, checkedOnce)
+  const runConnAction = (a: ConnAction) => {
+    if (a === 'check') void connCheck.check()
+    else if (a === 'switch_ai') requestConnectAi()
+    else requestCheckConnection(a === 'refill_key' ? 'key' : a === 'edit_model' ? 'model' : 'url')
+  }
   // 「型号要新版」且只能自己更新：怎么更新放进「详情」（正文只留一句）
   const cliUpdate = useSubscriptionOf(session.agent)?.cli_update
   const updateFailed = useCliUpdateError(session.agent)
@@ -318,7 +358,8 @@ export function Turn({
           tone="danger"
           data-ai-error="session"
           {...(rejected ? { 'data-ai-task-outcome': 'failed' } : {})}
-          title={rejected ? undefined : statusLabel(session.status)}
+          // 连接类失败的一句话自带「谁 + 什么事」，不再前缀「失败 ·」（下面的状态行已写失败），好让它单行放得下
+          title={rejected || fixedByConnection(agentError) ? undefined : statusLabel(session.status)}
           // 一句话留在正文；长的 / 多行的整段进「详情」（带复制）
           detail={
             manualDetail
@@ -342,26 +383,19 @@ export function Turn({
                 </Button>
               ) : undefined
             ) : fixedByConnection(agentError) ? (
-              // 凭据无效 / 地址指到了网页 / 额度用完 / 连不上 / 归不了的非零退出：重试只会再失败一次，主按钮「检查连接」（重新探测，码表见 AGENT_ERROR_ACTION）；
-              // 检查后仍不通：一句原因 + 「修改连接」，一定有下一步
-              <>
-                {/* 仍不通且不是断网：再检查一次结果不会变，只留「修改连接」（卡片不多一颗按钮）；断网才留着让用户重试 */}
-                {(connCheck.phase !== 'failed' || connCheck.reason === 'network') && (
-                  <Button
-                    data-ai-check-connection
-                    size="sm"
-                    loading={connCheck.phase === 'checking'}
-                    onClick={() => void connCheck.check()}
-                  >
-                    {ai('notice.checkConnection')}
-                  </Button>
-                )}
-                {connCheck.phase === 'failed' && (
-                  <Button data-ai-edit-connection size="sm" onClick={() => requestCheckConnection()}>
-                    {ai('notice.editConnection')}
-                  </Button>
-                )}
-              </>
+              // 按原因给下一步，各只有一个按钮：密钥不对 → 重填密钥；额度用完 → 换个 AI；连不上 → 检查连接（调 /check，
+              // 检查后仍不通换成改地址 / 对应原因的按钮），一定有下一步
+              <Button
+                data-ai-conn-action={connAction}
+                {...(connAction === 'check' ? { 'data-ai-check-connection': true } : {})}
+                variant="secondary"
+                size="sm"
+                loading={connCheck.phase === 'checking'}
+                loadingLabel={connAction === 'check' ? ai('notice.checking') : undefined}
+                onClick={() => runConnAction(connAction)}
+              >
+                {connActionText(connAction)}
+              </Button>
             ) : canRetry ? (
               <Button data-ai-retry size="sm" onClick={() => onRetry(session)}>
                 {ai('panel.retry')}
@@ -371,8 +405,8 @@ export function Turn({
         >
           {fixedByConnection(agentError) && connCheck.phase === 'ok'
             ? ai('notice.connectionOk')
-            : fixedByConnection(agentError) && connCheck.phase === 'failed'
-              ? probeReasonText(connCheck.reason)
+            : fixedByConnection(agentError)
+              ? connReasonText(connReason, connName)
               : agentError
             ? ai(`sessionError.${agentError}`)
             : rejected

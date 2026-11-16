@@ -22,6 +22,7 @@ import { STREAM_WORD_CLASS } from '@/lib/streamMarkdown'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { agentCaps, capsOf } from '@/components/settings/testCaps'
 import { useAiStore, type AiSession } from '@/store/aiStore'
+import { useConnectAiStore } from '@/store/connectAiStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -460,11 +461,11 @@ describe('会话失败的重试', () => {
     requestCheckConnection.mockClear()
     await mount([session({ status: 'failed', error: 'agent_html_response' })])
     const notice = q('[data-ai-error="session"]')!
-    expect(notice.textContent).toContain(ai('sessionError.agent_html_response'))
     expect(notice.textContent).not.toContain(ai('notice.taskRejected'))
     expect(notice.querySelector('[data-ai-retry]')).toBeNull()
     const btn = notice.querySelector<HTMLButtonElement>('[data-ai-check-connection]')!
-    expect(btn.textContent).toBe(ai('notice.checkConnection'))
+    expect(btn.textContent).toContain(ai('notice.checkConnection'))
+    expect(notice.textContent).toContain(ai('notice.conn.unreachable', { name: 'Codex' }))
     await act(async () => btn.click())
     expect(requestCheckConnection).toHaveBeenCalledTimes(1)
   })
@@ -596,7 +597,7 @@ describe('任务结局（TAF Phase 3c）：只翻译 task.outcome', () => {
     await mount([session({ status: 'failed', changed: false, error: 'agent_network', task: task('failed', true) })])
     expect(status()).toBe(ai('status.failed'))
     const card = q('[data-ai-error="session"]')!
-    expect(card.textContent).toContain(ai('sessionError.agent_network'))
+    expect(card.textContent).toContain(ai('notice.conn.unreachable', { name: 'Codex' }))
     expect(card.textContent).not.toContain(ai('notice.taskRejected'))
     expect(card.textContent).not.toContain('agent_network')
     expect(card.dataset.aiTaskOutcome).toBeUndefined()
@@ -612,10 +613,14 @@ describe('任务结局（TAF Phase 3c）：只翻译 task.outcome', () => {
       session({ id: 'a', status: 'failed', changed: false, error: 'agent_auth', task: task('failed') }),
     ])
     const card = q('[data-ai-error="session"]')!
-    expect(card.textContent).toContain(ai('sessionError.agent_auth'))
+    expect(card.textContent).toContain(ai('notice.conn.unauthorized', { name: 'Codex' }))
     expect(card.querySelector('[data-ai-retry]')).toBeNull()
-    await act(async () => card.querySelector<HTMLButtonElement>('[data-ai-check-connection]')!.click())
-    expect(requestCheckConnection).toHaveBeenCalledTimes(1)
+    // 密钥不对：不让用户去「检查」，直接去重填密钥（表单聚焦密钥框）
+    expect(card.querySelector('[data-ai-check-connection]')).toBeNull()
+    const refill = card.querySelector<HTMLButtonElement>('[data-ai-conn-action="refill_key"]')!
+    expect(refill.textContent).toContain(ai('notice.refillKey'))
+    await act(async () => refill.click())
+    expect(requestCheckConnection).toHaveBeenCalledWith('key')
     for (const error of ['agent_something_new', 'executor_error:KeyError']) {
       await mount([session({ id: 'b', status: 'failed', changed: false, error, task: task('failed') })])
       const c = q('[data-ai-error="session"]')!
@@ -626,7 +631,6 @@ describe('任务结局（TAF Phase 3c）：只翻译 task.outcome', () => {
 
   describe('「检查连接」调 /check（Key 连接）', () => {
     const check = vi.mocked(checkAiConnection)
-    const cx = (k: string) => t(`settings.connectAi.${k}`, { ns: 'dialogs' })
     const probe = (reason: string | null) => ({ checked: true, protocol: null, requested: null, switched: false, reason, reasons: {} }) as never
     const setup = async (result: Partial<AiConnectResult> | (() => Promise<never>)) => {
       requestCheckConnection.mockClear()
@@ -637,24 +641,27 @@ describe('任务结局（TAF Phase 3c）：只翻译 task.outcome', () => {
         connection: 'deepseek',
         loadCaps: vi.fn(async () => {}),
       } as never)
-      await mount([session({ status: 'failed', changed: false, error: 'agent_auth', task: task('failed') })])
+      await mount([session({ status: 'failed', changed: false, error: 'agent_network', task: task('failed') })])
       return q('[data-ai-error="session"]')!
     }
     const btn = (sel: string) => q<HTMLButtonElement>(`[data-ai-error="session"] ${sel}`)
-
-    it('点「检查连接」：发 /check、不去开表单；通了 → 一句话 + 主按钮换回「重试」', async () => {
-      await setup({ connection: connection('deepseek'), probe: probe(null) })
-      await act(async () => btn('[data-ai-check-connection]')!.click())
+    const settle = async () => {
       for (let i = 0; i < 5; i++) await act(async () => Promise.resolve())
+    }
+
+    it('连不上：一句话带连接名；点「检查连接」发 /check、不去开表单；通了 → 「连接正常了」+ 主按钮换回「重试」', async () => {
+      const card = await setup({ connection: connection('deepseek'), probe: probe(null) })
+      expect(card.textContent).toContain(ai('notice.conn.unreachable', { name: 'deepseek' }))
+      await act(async () => btn('[data-ai-check-connection]')!.click())
+      await settle()
       expect(check).toHaveBeenCalledWith('deepseek')
       expect(requestCheckConnection).not.toHaveBeenCalled()
-      const card = q('[data-ai-error="session"]')!
-      expect(card.textContent).toContain(ai('notice.connectionOk'))
+      expect(q('[data-ai-error="session"]')!.textContent).toContain(ai('notice.connectionOk'))
       expect(btn('[data-ai-check-connection]')).toBeNull()
       expect(btn('[data-ai-retry]')).not.toBeNull()
     })
 
-    it('检查中按钮禁用；仍不通 → 一句原因 + 「修改连接」（点它去改连接），不卡死', async () => {
+    it('检查中按钮转圈禁用；仍不通且是额度 → 「额度用完了」+ 「换个 AI」（点它开「连接一个 AI」）', async () => {
       let release!: () => void
       await setup(
         () =>
@@ -667,28 +674,29 @@ describe('任务结局（TAF Phase 3c）：只翻译 task.outcome', () => {
       expect(btn('[data-ai-check-connection]')!.disabled).toBe(true)
       expect(btn('[data-ai-check-connection]')!.getAttribute('aria-busy')).toBe('true')
       await act(async () => release())
-      for (let i = 0; i < 5; i++) await act(async () => Promise.resolve())
-      const card = q('[data-ai-error="session"]')!
-      expect(card.textContent).toContain(cx('probe.quota'))
-      // 额度用完这类再检查也不会变：只留「修改连接」，卡片不多一颗按钮
+      await settle()
+      expect(q('[data-ai-error="session"]')!.textContent).toContain(ai('notice.conn.quota', { name: 'deepseek' }))
       expect(btn('[data-ai-check-connection]')).toBeNull()
       expect(btn('[data-ai-retry]')).toBeNull()
-      const edit = btn('[data-ai-edit-connection]')!
-      expect(edit.textContent).toBe(ai('notice.editConnection'))
-      await act(async () => edit.click())
-      expect(requestCheckConnection).toHaveBeenCalledTimes(1)
+      const sw = btn('[data-ai-conn-action="switch_ai"]')!
+      expect(sw.textContent).toContain(ai('notice.switchAi'))
+      await act(async () => sw.click())
+      expect(useConnectAiStore.getState().open).toBe(true)
+      useConnectAiStore.setState({ open: false })
     })
 
-    it('请求没到后端：落成「连不上」+「修改连接」，不停在检查中', async () => {
+    it('请求没到后端：落成「连不上这个地址」+ 「改地址」（打开编辑表单、聚焦地址），不停在检查中', async () => {
       await setup(async () => {
         throw new Error('offline')
       })
       await act(async () => btn('[data-ai-check-connection]')!.click())
-      for (let i = 0; i < 5; i++) await act(async () => Promise.resolve())
-      expect(q('[data-ai-error="session"]')!.textContent).toContain(cx('probe.network'))
-      expect(btn('[data-ai-edit-connection]')).not.toBeNull()
-      // 断网：结论没拿到，「检查连接」留着可以再试
-      expect(btn('[data-ai-check-connection]')).not.toBeNull()
+      await settle()
+      expect(q('[data-ai-error="session"]')!.textContent).toContain(ai('notice.conn.unreachable', { name: 'deepseek' }))
+      expect(btn('[data-ai-check-connection]')).toBeNull()
+      const edit = btn('[data-ai-conn-action="edit_address"]')!
+      expect(edit.textContent).toContain(ai('notice.editAddress'))
+      await act(async () => edit.click())
+      expect(requestCheckConnection).toHaveBeenCalledWith('url')
     })
   })
 
@@ -696,7 +704,7 @@ describe('任务结局（TAF Phase 3c）：只翻译 task.outcome', () => {
     for (const [error, action] of Object.entries(AGENT_ERROR_ACTION)) {
       await mount([session({ id: 'e-' + error, status: 'failed', changed: false, error, task: task('failed') })])
       const card = q('[data-ai-error="session"]')!
-      const check = card.querySelector('[data-ai-check-connection]')
+      const check = card.querySelector('[data-ai-conn-action]')
       const retry = card.querySelector('[data-ai-retry]')
       if (action === 'check_connection') {
         expect(check, error).not.toBeNull()

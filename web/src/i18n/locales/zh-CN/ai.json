@@ -135,9 +135,19 @@
     "timeout": "这次修改超时，已停止。"
   },
   "notice": {
-    "editConnection": "修改连接",
-    "connectionOk": "连接正常了，可以重试。",
     "checkConnection": "检查连接",
+    "conn": {
+      "unauthorized": "{{name}} 的密钥不对",
+      "quota": "{{name}} 额度用完了",
+      "no_model": "{{name}} 没有这个模型",
+      "unreachable": "{{name}} 连不上这个地址"
+    },
+    "refillKey": "重填密钥",
+    "switchAi": "换个 AI",
+    "editModel": "改模型",
+    "editAddress": "改地址",
+    "checking": "检查中",
+    "connectionOk": "连接正常了，可以重试",
     "taskFailedChanged": "改动已写入，但核对发现数据或输出变了；不对的话可以回滚到修改前。",
     "taskPartial": "改动已写入，但有检查没能完成，结果未经完整核对。",
     "taskRejected": "改动没通过写回前检查，没有写入项目。",

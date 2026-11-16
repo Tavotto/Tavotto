@@ -463,7 +463,11 @@ describe('CompatibleEndpoint', () => {
     await render(<CompatibleEndpoint onClose={() => {}} onSaved={onSaved} />)
     await fill()
     await click(saveBtn())
-    expect(document.body.querySelector('[data-endpoint-save-error]')?.textContent).toBe(cx('probe.unusable'))
+    // 原因贴在「接口地址」下面（不进底栏），悬停补一句常见原因
+    const note = document.body.querySelector<HTMLElement>('[data-endpoint-field-note="url"]')!
+    expect(note.textContent).toBe(cx('probe.unreachable'))
+    expect(note.title).toBe(cx('probeHint'))
+    expect(document.body.querySelector('[data-endpoint-save-error]')).toBeNull()
     expect(onSaved).not.toHaveBeenCalled()
     await click(saveBtn())
     expect(posts()).toHaveLength(2)
@@ -509,63 +513,68 @@ describe('CompatibleEndpoint', () => {
 
 /* ---------------------- 连接卡：地址跑不了对话 → 一句话 + 「检查连接」 ---------------------- */
 
-describe('连接卡的「检查连接」', () => {
-  const bad = (over = {}) =>
-    connection('deepseek', { state: 'error', error: 'endpoint_unusable', error_reason: 'unauthorized', ...over })
-  const checkBtn = () => document.body.querySelector<HTMLButtonElement>('[data-connect-action="check"]')
+describe('连接卡：按原因给一个按钮', () => {
+  const bad = (reason: string) =>
+    connection('deepseek', { state: 'error', error: 'endpoint_unusable', error_reason: reason as never })
+  const act1 = () => document.body.querySelector<HTMLButtonElement>('[data-connect-vendor="deepseek"] button[data-connect-action]')
+  const state = () => row('deepseek').querySelector('[data-connect-state="error"]')
 
-  it('endpoint_unusable：胶囊按原因说一句，右侧是「检查连接」而不是「连接」；点它发 /check，通了变「已连接」', async () => {
-    serverCaps = connectCapsOf([bad()])
+  it('密钥被拒：小红点 + 「密钥不对」（不是胶囊），按钮「重填密钥」展开 Key 表单', async () => {
+    serverCaps = connectCapsOf([bad('unauthorized')])
     useAiStore.setState({ caps: serverCaps })
     await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
-    const r = row('deepseek')
-    expect(r.querySelector('[data-connect-state="error"]')?.textContent).toBe(cx('probe.unauthorized'))
-    expect(checkBtn()?.textContent).toBe(cx('checkConnection'))
-    expect(r.querySelector('[data-connect-action="key"]')).toBeNull()
-    serverCaps = connectCapsOf([connection('deepseek')])
-    onPost = (c) =>
-      c.url === '/api/ai/connections/deepseek/check' && c.method === 'POST'
-        ? json({ ok: true, connection: connection('deepseek'), probe: passed })
-        : null
-    await click(checkBtn()!)
-    expect(calls.filter((c) => c.url === '/api/ai/connections/deepseek/check')).toHaveLength(1)
-    expect(row('deepseek').querySelector('[data-connect-state="ready"]')).not.toBeNull()
-    expect(checkBtn()).toBeNull()
+    expect(state()?.textContent).toBe(cx('probe.unauthorized'))
+    expect(state()?.className).not.toMatch(/bg-|rounded-full px/)
+    expect(act1()?.textContent).toBe(cx('action.refillKey'))
+    await click(act1()!)
+    expect(row('deepseek').querySelector('[data-connect-key-form]')).not.toBeNull()
   })
 
-  it('检查中按钮禁用（转圈），仍不通：胶囊换成新原因、按钮还在（不卡死）', async () => {
-    serverCaps = connectCapsOf([bad()])
+  it('地址跑不了对话：「连不上这个地址」+「检查连接」；检查中隐藏文字、按钮转圈；通了变「已连接」', async () => {
+    serverCaps = connectCapsOf([bad('web_page')])
     useAiStore.setState({ caps: serverCaps })
     let release!: () => void
     const gate = new Promise<void>((r) => (release = r))
-    onPost = (c) => {
-      if (c.url !== '/api/ai/connections/deepseek/check') return null
-      return null
-    }
     const base = globalThis.fetch
     globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
       if (String(url) === '/api/ai/connections/deepseek/check') {
         await gate
-        serverCaps = connectCapsOf([bad({ error_reason: 'quota' })])
-        return json({ ok: true, connection: bad({ error_reason: 'quota' }), probe: { ...passed, protocol: null, reason: 'quota' } })
+        serverCaps = connectCapsOf([connection('deepseek')])
+        return json({ ok: true, connection: connection('deepseek'), probe: passed })
       }
       return base(url as never, init)
     }) as typeof fetch
     await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
-    await act(async () => void checkBtn()!.click())
-    expect(checkBtn()!.disabled).toBe(true)
-    expect(checkBtn()!.getAttribute('aria-busy')).toBe('true')
+    expect(state()?.textContent).toBe(cx('probe.unreachable'))
+    expect(act1()?.dataset.connectAction).toBe('check')
+    await act(async () => void act1()!.click())
+    expect(act1()!.disabled).toBe(true)
+    expect(act1()!.getAttribute('aria-busy')).toBe('true')
+    expect(state()).toBeNull() // 检查中不显示错误字
     await act(async () => release())
     await act(async () => {})
-    expect(row('deepseek').querySelector('[data-connect-state="error"]')?.textContent).toBe(cx('probe.quota'))
-    expect(checkBtn()!.disabled).toBe(false)
+    expect(row('deepseek').querySelector('[data-connect-state="ready"]')).not.toBeNull()
   })
 
-  it('别的错误（Key 被拒这类 unauthorized）：仍是原来的「连接」按钮，不出「检查连接」', async () => {
+  it('检查后仍不通：换成对应原因的按钮（额度 → 弹窗里不叠层，只剩文字；其余 → 「改地址」）', async () => {
+    serverCaps = connectCapsOf([bad('web_page')])
+    useAiStore.setState({ caps: serverCaps })
+    const base = globalThis.fetch
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) =>
+      String(url) === '/api/ai/connections/deepseek/check'
+        ? json({ ok: true, connection: bad('wrong_protocol'), probe: { ...passed, protocol: null, reason: 'wrong_protocol' } })
+        : base(url as never, init)) as typeof fetch
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
+    await click(act1()!)
+    expect(state()?.textContent).toBe(cx('probe.unreachable'))
+    expect(act1()?.textContent).toBe(cx('action.editAddress'))
+  })
+
+  it('别的错误（Key 被拒这类 unauthorized）：仍是原来的「连接」按钮', async () => {
     serverCaps = connectCapsOf([connection('deepseek', { state: 'error', error: 'unauthorized' })])
     useAiStore.setState({ caps: serverCaps })
     await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
-    expect(checkBtn()).toBeNull()
+    expect(row('deepseek').querySelector('[data-connect-action="check"]')).toBeNull()
     expect(row('deepseek').querySelector('[data-connect-action="key"]')).not.toBeNull()
   })
 })

@@ -138,9 +138,19 @@
     "timeout": "This edit timed out and stopped."
   },
   "notice": {
-    "editConnection": "Edit connection",
-    "connectionOk": "The connection works now. You can retry.",
     "checkConnection": "Check connection",
+    "conn": {
+      "unauthorized": "{{name}}: the key is wrong",
+      "quota": "{{name}}: the quota is used up",
+      "no_model": "{{name}}: that model doesn’t exist",
+      "unreachable": "{{name}}: can’t reach this address"
+    },
+    "refillKey": "Re-enter key",
+    "switchAi": "Use another AI",
+    "editModel": "Change model",
+    "editAddress": "Change address",
+    "checking": "Checking",
+    "connectionOk": "The connection works now. You can retry",
     "taskFailedChanged": "The edit is saved, but the checks found the data or output changed. If that’s wrong, revert to the previous version.",
     "taskPartial": "The edit is saved, but some checks couldn’t run, so the result isn’t fully verified.",
     "taskRejected": "The edit didn’t pass the pre-write checks and wasn’t written to your project.",

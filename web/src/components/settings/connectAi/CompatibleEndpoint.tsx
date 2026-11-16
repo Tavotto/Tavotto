@@ -19,6 +19,13 @@ function saveErrorText(e: unknown): string {
   return backendErrorText(e)
 }
 
+/** 探测不通的原因 → 贴在哪一格、写什么；地址类的原因悬停补一句常见原因 */
+function noteOf(reason: string): { field: 'key' | 'model' | 'url'; text: string; title?: string } {
+  if (reason === 'unauthorized' || reason === 'quota') return { field: 'key', text: probeReasonText(reason) }
+  if (reason === 'no_model') return { field: 'model', text: probeReasonText(reason) }
+  return { field: 'url', text: probeReasonText(reason), title: cx('probeHint') }
+}
+
 /**
  * 保存后这条连接能不能用 → null（能用）或失败原因。以对话探测的结论为准：型号清单取不到（很多中转站没有 /models）
  * 会让连接视图暂时是 error，但只要探测通了就是能用；探测没拿到结论（断网 / 缺型号）才回头看连接状态。
@@ -43,14 +50,19 @@ export function CompatibleEndpoint({
   onClose,
   onSaved,
   existing = null,
+  focus,
 }: {
   onClose: () => void
   onSaved: () => void
   /** 编辑一条已存的连接（失败卡「检查连接」）：表单预填它的地址 / 型号，保存带它的 id；不给 = 新建 */
   existing?: AiEndpoint | null
+  /** 打开后先聚焦哪一格（失败卡 / 连接卡的「重填密钥」「改模型」「改地址」） */
+  focus?: 'key' | 'model' | 'url'
 }) {
   useTranslation('dialogs')
   const [saveError, setSaveError] = useState<string | null>(null)
+  // 存下来了但探测不通：原因贴在对应的输入框下面（不进底栏）
+  const [note, setNote] = useState<{ field: 'key' | 'model' | 'url'; text: string; title?: string } | null>(null)
   const [saved, setSaved] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const busy = useRef(false)
@@ -71,6 +83,7 @@ export function CompatibleEndpoint({
     if (busy.current || saved) return // 已经存过了：任何路径都不再发新建
     busy.current = true
     setSaveError(null)
+    setNote(null)
     const id = savedId.current ?? rec.id
     const vendor = (id && useAiStore.getState().caps?.connections?.find((c) => c.id === id)?.vendor) || 'custom'
     let res: AiConnectResult
@@ -97,7 +110,7 @@ export function CompatibleEndpoint({
     }
     const why = failureReason(res)
     if (why === null) onSaved()
-    else setSaveError(probeReasonText(why))
+    else setNote(noteOf(why))
   }
 
   if (saved) {
@@ -146,6 +159,8 @@ export function CompatibleEndpoint({
       existing={existing}
       presets={[]}
       saveError={saveError}
+      focus={focus}
+      fieldNote={note}
       onClose={onClose}
       onSave={(rec) => void save(rec)}
     />
