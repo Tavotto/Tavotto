@@ -38,7 +38,8 @@ export async function outlineSelectedText(): Promise<boolean> {
   if (!texts.length) return false
   finishActiveGesture()
   // 裁剪不随载荷走：转出来的路径留在原来的组里，照样被同一个蒙版裁（ADR 0191）
-  const payload = toExportObjects(texts).map(({ clip: _c, ...rest }) => rest)
+  // 上下文给整份文档：路径文字的自动离线要看一起成组的那条线（ADR 0190）
+  const payload = toExportObjects(texts, useDocumentStore.getState().doc.objects).map(({ clip: _c, ...rest }) => rest)
   let results: Awaited<ReturnType<typeof outlineText>>['results']
   try {
     results = (await outlineText(payload)).results

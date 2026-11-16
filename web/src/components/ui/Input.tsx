@@ -214,6 +214,8 @@ interface NumberFieldProps {
    * 在空框里按 Backspace / Delete 也算。不给时空框照旧还原（属性页：数不能「没有」）
    */
   onClear?: () => void
+  /** ⇧ 时步长乘几（方向键与拖标签同一个）；缺省 10 */
+  shiftMult?: number
   className?: string
   title?: string
   /** 无障碍名。缺省时从字符串 prefix/unit 推导（"X (mm)"）；prefix 不是
@@ -250,6 +252,7 @@ export function NumberField({
   mixed,
   mixedPlaceholder,
   onClear,
+  shiftMult = 10,
   className,
   title,
   ariaLabel,
@@ -336,7 +339,7 @@ export function NumberField({
       if (Math.abs(dx) < 2 && !moved) return
       if (!moved) onScrubStart?.()
       moved = true
-      const mult = ev.shiftKey ? 10 : ev.altKey ? 0.1 : 1
+      const mult = ev.shiftKey ? shiftMult : ev.altKey ? 0.1 : 1
       onChange(clampVal(startVal + dx * step * mult))
     }
     const finish = (cancelled: boolean) => {
@@ -459,7 +462,7 @@ export function NumberField({
             } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
               e.preventDefault()
               // 修饰键与拖动改数同一张表：Shift ×10、Alt ×0.1（2026-09-14 审计 S13：此前键盘缺 Alt）
-              const mult = e.shiftKey ? 10 : e.altKey ? 0.1 : 1
+              const mult = e.shiftKey ? shiftMult : e.altKey ? 0.1 : 1
               const next = commit(value + (e.key === 'ArrowUp' ? step : -step) * mult)
               setText(String(Number(next.toFixed(precision))))
             }

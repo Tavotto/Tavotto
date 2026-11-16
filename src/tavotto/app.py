@@ -4872,7 +4872,11 @@ def api_text_outline():
     results = []
     for o in objs:
         try:
-            results.append({"paths": textoutline.outline_text(o, faces=provider, math=math)})
+            r: dict = {"paths": textoutline.outline_text(o, faces=provider, math=math)}
+            if o.get("type") == "pathText":
+                # 路径文字（ADR 0190）：自动离线算出来是多少——属性栏「离线」框用它做占位数
+                r["auto_offset_pt"] = round(rc_plan.path_text_auto_offset(o, provider), 4)
+            results.append(r)
         except rc_plan.PlanError as exc:
             results.append({"error": exc.code})
     return jsonify({"ok": True, "results": results})

@@ -33,6 +33,7 @@ import { DUPLICATE_OFFSET_MM } from '@/lib/units'
 
 import { CLIPBOARD_FORMAT } from '@/lib/brand'
 import { clearAdoption } from '@/lib/artifactValidation'
+import { remapLineIds } from '@/lib/pathText'
 
 /**
  * 只认一个魔数。改名到 Tavotto 时旧魔数（`magplot/objects@1` 与更早的
@@ -595,6 +596,7 @@ export function materializePaste(payload: ClipPayload, resolved: MissingAsset[])
     }
     clones.push(copy)
   }
+  remapLineIds(clones, idMap)
 
   if (!clones.length) {
     useUiStore.getState().setStatus(note('pasteNothing'), 'error')

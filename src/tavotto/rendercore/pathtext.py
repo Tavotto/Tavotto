@@ -2,7 +2,8 @@
 
 **排字**与普通文字同一条路：`typography.layout_text`（同一张字体登记表、同一次 HarfBuzz、同一套富文本上下标）排成**一行**
 （框宽给到足够大，所以不经过断行——`break_lines` 的规则一个字不碰），再按弧长把每个字放到路径上：字的**中点**落在路径上
-s = 起点 + 前面的字宽 + 本字宽 / 2 处，字的基线顺着那里的切线、字的「上方」是切线的左法线（屏幕 y 向下时的 (sin θ, −cos θ)）。
+s = 起点 + 前面的字宽 + 本字宽 / 2 处，字的基线顺着那里的切线、字的「上方」是切线的左法线（屏幕 y 向下时的 (sin θ, −cos θ)）；
+基线再沿这条法线离开路径「离线」那么远（`offset_pt`：缺省自动 = 线宽 / 2 + 0.2 em + 降部深度，字不碰线）。
 起点 = `start_offset`（路径全长的比例）× 全长，再按对齐方式往回退（居中退半个字串宽、末尾退整个字串宽）；`flip` = 沿路径的
 反方向走（字翻到路径另一侧、方向倒过来，Illustrator 的「翻转」）。开放路径上落在 [0, 全长] 之外的字不画（不悄悄折回来），
 闭合路径首尾相接、绕回来。
@@ -109,6 +110,33 @@ def start_of(total: float, run_width: float, o: dict) -> float:
     if align == "end":
         return anchor - run_width
     return anchor
+
+
+#: 自动离线的间隙（em）：字最靠线的那一边与线的描边外缘之间留多少
+AUTO_GAP_EM = 0.2
+
+
+def _finite(v) -> float | None:
+    return (
+        float(v)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+        else None
+    )
+
+
+def auto_offset_pt(o: dict, descender: float) -> float:
+    """自动离线（pt）：基线离开路径中心线 = 线宽 / 2 + 间隙 + 降部深度。字头朝外、基线朝线——翻面只是换到另一侧、
+    方向倒过来，最靠线的仍是降部，所以两种情况同一个式子。`descender` 是主字体 em 单位的下降（负数）；线宽取
+    导出载荷里的 `line_width_pt`（生成时一起成组的那条线的描边宽度，前端查不到就不发 = 0）。"""
+    size = _finite(o.get("size_pt")) or 10.0
+    line = max(_finite(o.get("line_width_pt")) or 0.0, 0.0)
+    return line / 2 + AUTO_GAP_EM * size + max(-descender, 0.0) * size
+
+
+def offset_pt(o: dict, descender: float) -> float:
+    """实际用的离线：写了 `baseline_offset_pt`（可为负，0 = 基线贴在线中心）就用它，没写 = 自动。"""
+    manual = _finite(o.get("baseline_offset_pt"))
+    return manual if manual is not None else auto_offset_pt(o, descender)
 
 
 def line_text(o: dict) -> dict:

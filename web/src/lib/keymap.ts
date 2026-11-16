@@ -64,6 +64,9 @@ export const KEYMAP = {
   // 再次变换 ⌥⌘D（ADR 0185 M4 第二批）：⌥ 会改写 key，按 code 认；有上一次变换、有选区时才消费
   transformAgain: k(`${ALT}${MOD}D`, { code: 'KeyD', mod: true, shift: false, alt: true }),
   delete: k('Delete', { key: 'delete' }, { key: 'backspace' }),
+  // 路径文字的离线（字与线的间隙，ADR 0190）：选区全是路径文字时 ⌥⇧↑ / ⌥⇧↓ 每次 0.5 pt（Illustrator 调基线偏移同一组键）。
+  // ⌥↑ / ⌥↓ 已是细微调（0.1 mm），不占；排在 nudge 前面，`bindingFor` 才认得出它
+  pathTextGap: k(`${ALT}⇧↑ / ${ALT}⇧↓`, { key: 'arrowup', alt: true, shift: true }, { key: 'arrowdown', alt: true, shift: true }),
   nudge: k(
     '↑ ↓ ← →',
     { key: 'arrowup' },

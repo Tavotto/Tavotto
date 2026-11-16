@@ -41,6 +41,7 @@ import {
   emptyProject,
   migrateToProject,
 } from '@/types/document'
+import { remapLineIds } from '@/lib/pathText'
 
 enablePatches()
 
@@ -1125,6 +1126,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       })
       return copy
     })
+    remapLineIds(objects, idMap)
     const layoutGroups = synced.layoutGroups
       ?.filter((g) => groupMap.has(g.id))
       .map((g) => ({

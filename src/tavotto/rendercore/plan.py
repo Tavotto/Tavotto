@@ -474,6 +474,31 @@ def _clipped(node: Node, clips: object, page_h: float) -> Node | None:
     return node
 
 
+def _object_faces(o: dict, faces: FaceProvider, problems: list[dict]) -> FaceSet:
+    """文字 / 路径文字对象用的那组脸（字体族、粗斜、原图字体）；取不到按 `fonts` 报出去。"""
+    try:
+        user_face, user_cjk = _user_faces(o, faces, problems)
+        return faces_for(
+            faces,
+            o.get("font_family"),
+            o.get("bold", False),
+            o.get("italic", False),
+            user_face=user_face,
+            user_cjk=user_cjk,
+        )
+    except Exception as exc:  # noqa: BLE001 —— FontsUnavailable 之类要带 code 出去
+        raise PlanError(
+            "fonts",
+            str(exc),
+            {"id": str(o.get("id", "")), "font_code": getattr(exc, "code", "")},
+        ) from exc
+
+
+def path_text_auto_offset(o: dict, faces: FaceProvider) -> float:
+    """路径文字的自动离线（pt）：与落字同一组脸、同一个式子（`pathtext.auto_offset_pt`）。属性栏的占位数从这里来。"""
+    return pathtext.auto_offset_pt(o, _object_faces(o, faces, []).primary.descender)
+
+
 def _path_text_node(
     o: dict,
     page_h: float,
@@ -493,6 +518,7 @@ def _path_text_node(
     line = block.lines[0]
     run_w = sum(p.width for p in line.pieces)
     s = pathtext.start_of(cum[-1], run_w, o)
+    off = pathtext.offset_pt(o, faces.primary.descender)
     oid = str(o.get("id", ""))
     color = Paint(hex2rgb(block.color))
     to_page = _object_transform(o, page_h)
@@ -509,8 +535,9 @@ def _path_text_node(
                 continue
             mx, my, th = mid
             c, sn = math.cos(th), math.sin(th)
-            # 局部（x 沿切线、y 向上）→ 框空间（y 向下）：x 轴 = (cos, sin)，y 轴 = (sin, −cos)；原点 = 中点往回退半个字宽
-            local = (c, sn, sn, -c, mx - c * adv / 2, my - sn * adv / 2)
+            # 局部（x 沿切线、y 向上）→ 框空间（y 向下）：x 轴 = (cos, sin)，y 轴 = (sin, −cos)；原点 = 中点往回退半个字宽，
+            # 再沿 y 轴（字的上方）离线 `off`
+            local = (c, sn, sn, -c, mx - c * adv / 2 + sn * off, my - sn * adv / 2 - c * off)
             run = GlyphRun(
                 font=key,
                 size=piece.size,
@@ -642,22 +669,7 @@ def compile_page(
         if kind == "panel":
             node = _panel_node(o, page_h, sources, resources, frozen)
         elif kind in ("text", "pathText"):
-            try:
-                user_face, user_cjk = _user_faces(o, faces, problems)
-                fs = faces_for(
-                    faces,
-                    o.get("font_family"),
-                    o.get("bold", False),
-                    o.get("italic", False),
-                    user_face=user_face,
-                    user_cjk=user_cjk,
-                )
-            except Exception as exc:  # noqa: BLE001 —— FontsUnavailable 之类要带 code 出去
-                raise PlanError(
-                    "fonts",
-                    str(exc),
-                    {"id": str(o.get("id", "")), "font_code": getattr(exc, "code", "")},
-                ) from exc
+            fs = _object_faces(o, faces, problems)
             node = (
                 _text_node(o, page_h, fs, resources, problems, math)
                 if kind == "text"

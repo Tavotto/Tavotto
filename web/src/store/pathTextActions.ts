@@ -84,6 +84,7 @@ export function createPathText(src: CanvasObject, offset = 0): string | null {
       },
     ],
     ...(offset > 0 ? { startOffset: Math.round(offset * 10000) / 10000 } : {}),
+    lineId: src.id,
   }
   setGroupPath(obj, [...prefix, gid])
   useDocumentStore.getState().commit(hist('addPathText'), (doc) => {
@@ -141,4 +142,58 @@ export function commitPathText(id: string, text: string): void {
     const x = doc.objects.find((q) => q.id === id)
     if (x && x.type === 'pathText') x.text = clean
   })
+}
+
+/* ------------------------------------ 离线（字与线的间隙） ------------------------------------ */
+
+/**
+ * 每段路径文字最近一次后端算出来的自动离线（pt）：画布预览的请求顺带带回来（`PathTextView`）。没写离线的对象，键盘微调
+ * 与画布间隙柄从它起步；还没回来就是未知（不猜）。
+ */
+const autoOffsets = new Map<string, number>()
+export const rememberAutoOffset = (id: string, pt: number): void => void autoOffsets.set(id, pt)
+export const autoOffsetOf = (id: string): number | null => autoOffsets.get(id) ?? null
+
+/** 此刻实际用的离线（pt）：手动写的，或自动值；自动值还不知道时 null */
+export function resolvedOffset(o: PathTextObject): number | null {
+  return typeof o.baselineOffsetPt === 'number' ? o.baselineOffsetPt : autoOffsetOf(o.id)
+}
+
+/** ⇧ 拖间隙柄时吸附的范围（pt）：离 0（贴线）或自动值这么近就吸过去 */
+export const GAP_SNAP_PT = 1.5
+/** 键盘微调一下（pt） */
+export const GAP_STEP_PT = 0.5
+
+/** 拖动 / 微调得到的离线：保留一位小数；⇧ 时吸到 0 或自动值（吸到自动 = 'auto'，字段删掉） */
+export function snapGap(v: number, auto: number | null, shift: boolean): number | 'auto' {
+  if (shift) {
+    if (auto != null && Math.abs(v - auto) <= GAP_SNAP_PT) return 'auto'
+    if (Math.abs(v) <= GAP_SNAP_PT) return 0
+  }
+  return Math.round(v * 10) / 10
+}
+
+/** 选区里能调间隙的路径文字（看得见、没锁定） */
+function gapTargets(): PathTextObject[] {
+  const ids = new Set(useSelectionStore.getState().ids)
+  return useDocumentStore
+    .getState()
+    .doc.objects.filter((o): o is PathTextObject => ids.has(o.id) && o.type === 'pathText' && !o.hidden && !o.locked)
+}
+
+export const canNudgeGap = (): boolean => gapTargets().length > 0 && gapTargets().length === useSelectionStore.getState().ids.length
+
+/** ⌥⇧↑ / ⌥⇧↓：选区全是路径文字时把离线加 / 减一步，一条历史。自动值还不知道的那段从 0 起不合适，跳过 */
+export function nudgePathTextGap(dir: 1 | -1, step = GAP_STEP_PT): boolean {
+  if (!canNudgeGap()) return false
+  const next = new Map<string, number>()
+  for (const o of gapTargets()) {
+    const cur = resolvedOffset(o)
+    if (cur != null) next.set(o.id, Math.round((cur + dir * step) * 10) / 10)
+  }
+  if (!next.size) return true
+  useDocumentStore.getState().commit(hist('pathTextGap'), (doc) => {
+    for (const x of doc.objects) if (x.type === 'pathText' && next.has(x.id)) x.baselineOffsetPt = next.get(x.id)
+  })
+  return true
 }

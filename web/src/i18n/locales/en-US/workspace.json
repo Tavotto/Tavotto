@@ -509,7 +509,8 @@
     "arrayCopies_one": "Repeat ({{count}} copy)",
     "arrayCopies_other": "Repeat ({{count}} copies)",
     "addPathText": "Add text on path",
-    "pathTextStart": "Move text start"
+    "pathTextStart": "Move text start",
+    "pathTextGap": "Adjust text-on-path offset"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",

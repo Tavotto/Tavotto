@@ -671,7 +671,8 @@
     "setGradientKind": "改填充 / 描边类型",
     "setGradient": "改渐变",
     "flipPathText": "翻转路径文字",
-    "pathTextStart": "移动路径文字起点"
+    "pathTextStart": "移动路径文字起点",
+    "pathTextOffset": "修改路径文字离线"
   },
   "lock": "锁定",
   "locked": "已锁定",
@@ -1423,6 +1424,11 @@
     "alignStart": "从起点开始",
     "alignCenter": "以起点居中",
     "alignEnd": "到起点结束",
-    "flip": "翻到路径另一侧"
+    "flip": "翻到路径另一侧",
+    "offset": "离线",
+    "offsetTip": "基线离开线多远：0 贴线，负数压到线上；清空回到自动",
+    "offsetAuto": "自动 {{value}}",
+    "offsetAutoBare": "自动",
+    "offsetReset": "自动"
   }
 }
