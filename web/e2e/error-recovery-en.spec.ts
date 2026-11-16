@@ -355,9 +355,15 @@ test('updater 离线：检查更新失败给英文报错，界面可继续', asy
   await dialog.getByRole('button', { name: /Check now|Check for updates/i }).click()
   const err = dialog.getByRole('alert').first()
   await expect(err).toBeVisible({ timeout: 60_000 })
-  // 英文包装 + 诊断原文（urlopen 错误英文原样）；不得漏出「检查失败:」
+  // 英文包装 + 诊断原文。产品自有串必须是英文（后端的中文半句「检查失败:」
+  // 不得漏出）；诊断原文是 `params.error` 原样透传的 OS 消息，本机 OS 语言
+  // 是中文时它就是中文——那是诊断事实，不是 i18n 泄漏（issue #30 的判据是
+  // 产品自己的包装串，不裁决 OS 文本）。
   await expect(err).toContainText(/Check failed/i)
-  await expectNoCjk(err, '更新检查失败')
+  await expect(err).not.toContainText('检查失败:')
+  await expect
+    .poll(async () => ((await err.textContent()) ?? '').trim().length, { timeout: 5_000 })
+    .toBeGreaterThan(0)
 })
 
 // 「Windows 文件占用（file_locked）」的界面用例现在**在上面**，不再缺着。
