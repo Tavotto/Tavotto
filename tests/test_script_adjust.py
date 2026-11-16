@@ -371,10 +371,36 @@ _STRUCTURED: dict[str, object] = {
     "loc_anchor": [0.8, 0.7],
     # 网格透明度：默认 1.0，`_sample_value` 只挑 0.9，细网格线上低于像素阈值，看不出写没写
     "grid_alpha": 0.25,
-    # 整图扫描里坐标轴底色与所有颜色都采到同一个 #123456，网格线会隐进底色里；线型默认 "-" 与采样值同
-    "grid_color": "#ffcc00",
+    # 线型默认 "-" 与 `_sample_value` 挑的第一个选项相同，给一个看得出的
     "grid_linestyle": "--",
 }
+
+#: **颜色采样不能全用同一个值**：`_sample_value` 对每个颜色字段都给 `#123456`，于是图底、子图底和所有前景
+#: 一个颜色，前景色译错了（甚至写死成一个常量）像素比对也看不出来。底色给两个浅色，前景按序号轮一组
+#: 彼此分得开的饱和色，并且避开字段当前值。
+_BACKGROUND = {("figure", "facecolor"): "#f6f2dc", ("axes", "facecolor"): "#e6eefb"}
+_FOREGROUND = (
+    "#d62728",
+    "#1f77b4",
+    "#2ca02c",
+    "#9467bd",
+    "#ff7f0e",
+    "#17becf",
+    "#e377c2",
+    "#8c564b",
+)
+
+
+def _sample_color(key, field, k: int) -> str:
+    if key in _BACKGROUND:
+        return _BACKGROUND[key]
+    cur = str(field.get("value")).lower()
+    for i in range(len(_FOREGROUND)):
+        c = _FOREGROUND[(k + i) % len(_FOREGROUND)]
+        if c != cur:
+            return c
+    return "#000000"
+
 
 #: 不进整图扫描的键（`_NOT_IN_THE_SWEEP`），按组单独扫：同组一起改，组与组之间不叠。
 #: 坐标范围（pair）放进整图扫描会被 scale 的副作用搅乱，所以也自成一组。
@@ -430,6 +456,8 @@ def _sweep_patches(
             if prop in _STRUCTURED:
                 value = _STRUCTURED[prop]
                 value = value(field) if callable(value) else value
+            elif field.get("type") == "color":
+                value = _sample_color(key, field, len(patches))
             else:
                 value = _SAMPLE_OVERRIDE.get(prop, _sample_value(field))
             if value is None:
