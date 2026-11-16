@@ -45,10 +45,10 @@ FIXED = {
     "G1-show-close-zero-figures": 1138,
     "G2-same-path-multi-figure": 1141,
     "G6-bytesio-close-zero-figures": 749,
-    "G7-main-guard-setup-skipped": 1964,
     # G4 / G5：行为按 ADR 0047 / 0084 有意保留，fix_pr 是诊断修复（#1297 / #1299），不是行为修复
     "G4-cwd-relative-reader-zero-figures": 1297,
     "G5-sandbox-empty-glob-empty-figure": 1299,
+    "G7-main-guard-setup-skipped": 1964,
 }
 
 
