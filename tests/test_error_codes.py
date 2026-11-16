@@ -442,7 +442,6 @@ USER_VISIBLE_CODES = {
     "data_not_table": set(),
     "data_header_row_invalid": set(),
     # 数据出图 v2（数据文件夹 / TSV / XLSX，`xlsxread`）
-
     "data_format_unsupported": set(),
     "data_excel_unsupported": set(),
     "data_xlsx_invalid": set(),
