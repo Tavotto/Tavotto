@@ -832,4 +832,14 @@ describe('流程体验返工（第一遍）', () => {
     expect(q('[role=status]')!.textContent).toBe('正在画…')
     expect(q('[data-studio-back]')).toBeNull()
   })
+
+  it('选画法：1 个画法卡片贴着单列（360），2 / 3 / 4 个一律 2 列、卡片同宽', async () => {
+    const { overlayTargetWidth } = await import('@/lib/dataFigure')
+    expect(overlayTargetWidth('pick', null, 1)).toBe(360)
+    for (const n of [2, 3, 4]) expect(overlayTargetWidth('pick', null, n)).toBe(640)
+    const it3 = ['a', 'b', 'c'].map((id) => ({ id, title_code: 'scatter', why_code: 'scatter', recommended: false, unplotted: { count: 0, code: null }, thumbnail_url: '/t', thumb: '/t?pj=pa' }))
+    await mount(<PickScene items={it3} selectedId="a" source="a.csv" onChoose={() => {}} onDraw={() => {}} onBack={() => {}} />)
+    expect(q('[role=radiogroup]')!.className).toContain('min-[560px]:grid-cols-2')
+    expect(q('[role=radiogroup]')!.className).not.toContain('grid-cols-3')
+  })
 })

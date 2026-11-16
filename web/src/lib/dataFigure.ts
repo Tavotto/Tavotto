@@ -148,8 +148,9 @@ export function previewCardWidth(ov: AiDataOverview | null): number {
 }
 
 /** 卡片的目标宽度（px，未按画布栏 60% 封顶）：预览按内容估，其余各屏固定；`DataOverlay` 与画布浮条的左内缩共用这一份 */
-export function overlayTargetWidth(sceneKind: string, ov: AiDataOverview | null): number {
-  return sceneKind === 'pick' ? 640 : sceneKind === 'ask' ? 480 : sceneKind === 'browse' ? previewCardWidth(ov) : 420
+export function overlayTargetWidth(sceneKind: string, ov: AiDataOverview | null, pickCount = 2): number {
+  // 选画法：只有 1 个画法时卡片贴着单列的磁贴（左右留白相等），其余 2 列
+  return sceneKind === 'pick' ? (pickCount === 1 ? 360 : 640) : sceneKind === 'ask' ? 480 : sceneKind === 'browse' ? previewCardWidth(ov) : 420
 }
 
 /** 卡片宽度的 CSS 表达式：不窄于 360、不宽于目标、不超过画布栏的 60%（百分数相对画布栏，浮条那一头的容器与它同一个包含块） */

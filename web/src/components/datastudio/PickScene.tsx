@@ -40,7 +40,8 @@ export function PickScene({
   const known = (c: string) => KNOWN_CANDIDATES.includes(c)
   const title = (c: string) => (known(c) ? t(`dataFigureV2.candidate.${c}.title`) : t('dataFigureV2.candidate.other.title'))
   const why = (c: string) => (known(c) ? t(`dataFigureV2.candidate.${c}.why`) : t('dataFigureV2.candidate.other.why'))
-  const cols = items.length === 1 ? 'grid-cols-1 max-w-80' : items.length === 3 ? 'grid-cols-1 min-[560px]:grid-cols-3' : 'grid-cols-1 min-[560px]:grid-cols-2'
+  // 1 个画法单列（卡片贴着它收窄）；其余一律 2 列：3 个画法 = 上面两张、下面一张占一格，磁贴尺寸 2 / 3 / 4 个时一致
+  const cols = items.length === 1 ? 'grid-cols-1' : 'grid-cols-1 min-[560px]:grid-cols-2'
   return (
     <div data-studio-pick {...(drawing ? { 'data-studio-working': '' } : {})} className="flex flex-col gap-3">
       <span className="type-section text-ink-2" id="studio-pick-methods" data-studio-source title={source}>

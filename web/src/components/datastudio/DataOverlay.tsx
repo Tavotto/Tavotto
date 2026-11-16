@@ -197,7 +197,8 @@ export function DataOverlay({ narrow }: { narrow: boolean }) {
   const busy = scene.kind === 'proposing' || scene.kind === 'drawing'
   const toFolderPicker = () => useProjectStore.getState().showPicker()
   // 卡片目标宽度（要走 CSS 过渡，必须渲染前就知道）：预览按内容估，其余各屏固定
-  const target = overlayTargetWidth(scene.kind, ov)
+  const pickCount = scene.kind === 'pick' ? scene.items.length : scene.kind === 'drawing' && scene.pick ? scene.pick.items.length : 2
+  const target = overlayTargetWidth(scene.kind === 'drawing' && scene.pick ? 'pick' : scene.kind, ov, pickCount)
   // 高度：各屏都随内容，上限是画布栏全高（上下各留 8px），超出才在卡片里滚动
   const width = narrow ? undefined : overlayWidthCss(target)
   // 渐隐只出现在「还能滚」的那一侧：贴顶 / 贴左时那一侧不渐隐；列太多横向滚动时右缘渐隐就是「后面还有」的提示
@@ -363,7 +364,8 @@ function TableSkeleton({ label }: { label: string }) {
  */
 export function useDataOverlayChrome(narrow: boolean, layer: React.RefObject<HTMLElement | null>): { inset: string; fit: boolean } {
   const open = useDataFigureStore((s) => s.overlay)
-  const kind = useDataFigureStore((s) => s.scene.kind)
+  const kind = useDataFigureStore((s) => (s.scene.kind === 'drawing' && s.scene.pick ? 'pick' : s.scene.kind))
+  const pickCount = useDataFigureStore((s) => (s.scene.kind === 'pick' ? s.scene.items.length : s.scene.kind === 'drawing' && s.scene.pick ? s.scene.pick.items.length : 2))
   const selected = useDataFigureStore((s) => s.selected)
   const overviews = useDataFigureStore((s) => s.overviews)
   const headerRows = useDataFigureStore((s) => s.headerRows)
@@ -386,7 +388,7 @@ export function useDataOverlayChrome(narrow: boolean, layer: React.RefObject<HTM
   }, [layer, open])
   if (!open || narrow) return { inset: '0px', fit: true }
   const ov = selected ? (overviews[overviewKeyOf(selected, headerRows)]?.data ?? null) : null
-  const target = overlayTargetWidth(kind, ov)
+  const target = overlayTargetWidth(kind, ov, pickCount)
   const fit = parentW == null || toolbarW == null ? true : chromeFits(parentW, 16 + overlayCardPx(target, parentW), toolbarW)
   return { inset: `calc(1rem + ${overlayWidthCss(target)})`, fit }
 }
