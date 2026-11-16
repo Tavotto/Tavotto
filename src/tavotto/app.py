@@ -64,6 +64,7 @@ from . import pdfbackend, richtext, tiffprobe
 from .engine import (
     ai_attachments as engine_ai_attachments,
     ai_bridge as engine_ai,
+    ai_catalog as engine_ai_catalog,
     ai_connections as engine_ai_connections,
     ai_convert as engine_ai_convert,
     ai_data_figure as engine_ai_data_figure,
@@ -126,6 +127,7 @@ from .engine import (
     inputcopy as engine_inputcopy,
     inputremap as engine_inputremap,
     inputtranscript as engine_inputtranscript,
+    journalfacts_remote as engine_journalfacts_remote,
     journalremote as engine_journalremote,
     launchctx as engine_launchctx,
     launcher as engine_launcher,
@@ -11270,6 +11272,9 @@ def api_ai_fix():
             project_root=ctx.path,
             model=model,
             cli=cli,
+            endpoint=(conn["provider_id"], conn["model"], conn["base_url"])
+            if conn is not None
+            else None,
             report=lambda: _session_report(ctx, sess),
             redactor=redactor,
             audit=engine_fixsession.AuditLog(),
@@ -14213,12 +14218,135 @@ def api_journal_catalog_journal():
 @app.get("/api/journal-catalog/assets/<path:file>")
 def api_journal_catalog_asset(file: str):
     """出处卡的高亮短图。`file` 必须是 `snapshots/<sha256>.webp`（内容寻址）；本地没有就带令牌拉一次。"""
-    path = engine_journalremote.snapshot_path(file)
-    if path is None:
+    data = engine_journalremote.snapshot_bytes(file)
+    if data is None:
         return jsonify({"error": "snapshot unavailable", "code": "snapshot_unavailable"}), 404
-    resp = send_file(path, mimetype="image/webp", max_age=31536000)
+    digest = file[len("snapshots/") : -len(".webp")]
+    resp = send_file(io.BytesIO(data), mimetype="image/webp", max_age=31536000, etag=digest)
     resp.headers["Cache-Control"] = "private, max-age=31536000, immutable"
     return resp
+
+
+# v2 source facts are separate from publication profiles and never feed preflight.
+def _journal_facts_payload(payload: dict) -> dict:
+    return {**payload, "semantic_review": "not_authenticated", "catalog_completeness": "unknown"}
+
+
+def _journal_facts_page_fits(payload: dict) -> bool:
+    # Use Flask's actual configured serializer, including the fields added to
+    # every successful HTTP response and its trailing newline.
+    response = jsonify(_journal_facts_payload(payload))
+    return len(response.get_data()) <= engine_journalfacts_remote.MAX_PAGE_BYTES
+
+
+def _journal_facts_response(payload: dict, status: int = 200):
+    response = jsonify(payload)
+    response.status_code = status
+    response.headers["Cache-Control"] = "no-store"
+    # Flask's actual JSON encoding may differ from the engine's compact encoding.
+    if status == 200 and len(response.get_data()) > engine_journalfacts_remote.MAX_PAGE_BYTES:
+        return _journal_facts_response(
+            {
+                "code": "result_too_large",
+                "error": "期刊事实结果过大，请减小 limit 并从同一 offset 重试；单条超限时无法读取。",
+            },
+            413,
+        )
+    return response
+
+
+def _journal_facts_error(exc: engine_journalfacts_remote.FactsError):
+    statuses = {
+        "bad_request": 400,
+        "unknown_journal": 404,
+        "catalog_changed": 409,
+        "result_too_large": 413,
+        "quota_hour": 429,
+        "quota_day": 429,
+        "ip_day": 429,
+        "ip_tokens": 429,
+    }
+    status = statuses.get(exc.code, 503)
+    body = {"code": exc.code, "error": "期刊事实不可用；请检查错误状态后重试。"}
+    for name in (
+        "sync_state",
+        "sync_code",
+        "retry_after_s",
+        "expected_catalog_rev",
+        "current_catalog_rev",
+    ):
+        value = getattr(exc, name, None)
+        if value is not None:
+            body[name] = value
+    return _journal_facts_response(body, status)
+
+
+def _journal_facts_request(kind: str):
+    from .engine import journals as engine_journals
+
+    # Same master switch as the MCP tool and the settings viewer (ADR 0155 section 9).
+    if not engine_journals.agents_enabled():
+        return _journal_facts_response(
+            {"code": "journal_catalog_disabled", "error": "期刊标准库入口尚未开放"}, 403
+        )
+    body = request.get_json(silent=True)
+    common = {"offset", "limit", "locale", "expected_catalog_rev"}
+    extra = {"query"} if kind == "search" else {"journal_id", "inspection"}
+    if not isinstance(body, dict) or set(body) - common - extra:
+        return _journal_facts_error(engine_journalfacts_remote.FactsError("bad_request"))
+    offset = body.get("offset", 0)
+    limit = body.get("limit", 20)
+    revision = body.get("expected_catalog_rev")
+    locale = body.get("locale")
+    if (
+        type(offset) is not int
+        or offset < 0
+        or type(limit) is not int
+        or not 1 <= limit <= 20
+        or (revision is not None and (type(revision) is not int or not 1 <= revision <= 9999999999))
+        or (offset > 0 and revision is None)
+        or (locale is not None and (not isinstance(locale, str) or len(locale) > 64))
+    ):
+        return _journal_facts_error(engine_journalfacts_remote.FactsError("bad_request"))
+    try:
+        options = {
+            "offset": offset,
+            "limit": limit,
+            "ui_locale": locale,
+            "expected_catalog_rev": revision,
+        }
+        if kind == "search":
+            result = engine_journalfacts_remote.search(
+                body.get("query", ""), response_fits=_journal_facts_page_fits, **options
+            )
+        else:
+            selection = body.get("inspection")
+            if "inspection" in body:
+                engine_journalfacts_remote.inspect_facts_page({"facts": []}, selection)
+
+            def page_fits(page):
+                if "inspection" in body:
+                    page = engine_journalfacts_remote.inspect_facts_page(page, selection)
+                return _journal_facts_page_fits(page)
+
+            result = engine_journalfacts_remote.get_facts(
+                body.get("journal_id"), response_fits=page_fits, **options
+            )
+            if "inspection" in body:
+                result = engine_journalfacts_remote.inspect_facts_page(result, selection)
+        return _journal_facts_response(_journal_facts_payload(result))
+    except engine_journalfacts_remote.FactsError as exc:
+        return _journal_facts_error(exc)
+
+
+@app.post("/api/journal-facts/search")
+def api_journal_facts_search():
+    return _journal_facts_request("search")
+
+
+@app.post("/api/journal-facts/journal")
+def api_journal_facts_journal():
+    return _journal_facts_request("journal")
 
 
 # ------------------------- 卸载后重装 → 新手态（Windows，ADR 0136 修订） -----
@@ -14293,12 +14421,29 @@ def api_ai_endpoint_save():
     body = request.get_json(force=True)
     if not str(body.get("label") or body.get("id") or "").strip():
         return jsonify({"error": "缺少名称", "code": "name_missing"}), 400
+    before = engine_ai_providers.list_providers()
+    prev = next((p for p in before if p.get("id") == str(body.get("id") or "")), None)
+    if (
+        prev is not None
+        and not str(body.get("api_key") or "").strip()
+        and body.get("base_url") is not None
+        and engine_ai_catalog.origin_of(str(body.get("base_url") or ""))
+        != engine_ai_catalog.origin_of(str(prev.get("base_url") or ""))
+    ):
+        # Key 留空 = 沿用已存的 Key：换了来源就不许沿用（否则存完的探测 / 之后每次任务都把旧 Key 发给新主机；
+        # 与 POST /api/ai/connections、型号清单同一条 key_origin_mismatch 规矩，Codex #1965 P1）
+        return _connection_error(engine_ai_connections._invalid("key_origin_mismatch"))
     try:
-        engine_ai_providers.save(body)
+        after = engine_ai_providers.save(body)
     except (ValueError, OSError) as exc:
         return jsonify(
             {"error": str(exc), "code": "endpoint_save_failed", "params": {"reason": str(exc)}}
         ), 400
+    # 自填地址：存完补一次对话协议探测（与 POST /api/ai/connections 同一套）；失败照样已保存
+    engine_ai_connections.probe_after_endpoint_save(
+        before, after, key_sent=bool(str(body.get("api_key") or "").strip())
+    )
+    engine_ai.invalidate_capabilities()
     return jsonify(engine_ai.capabilities(refresh=True))
 
 
@@ -14396,25 +14541,48 @@ def _apply_connection(body: dict, agent: str, model: str | None, endpoint_id):
     return agent, model, endpoint_id, None
 
 
+def _connection_view(cid: str, fetch_error: str | None = None) -> dict:
+    """一条 Key 连接的当前视图（重新读能力表）；试取型号清单失败的那次原因码叠在 `ready` 上变成 `error`。"""
+    engine_ai.invalidate_capabilities()
+    conn = next(c for c in engine_ai.capabilities(refresh=True)["connections"] if c["id"] == cid)
+    if fetch_error and conn["state"] == "ready":
+        conn = {**conn, "state": "error", "error": fetch_error}
+    return conn
+
+
 @app.post("/api/ai/connections")
 def api_ai_connection_add():
-    """连一个 Key 类 AI。body：`{vendor, api_key, base_url?, model?, label?}`（`custom` 另需 `wire`：`anthropic` | `openai-responses`；
-    带已存在的 `id` = 换这条的 Key / 型号）。保存前试取一次型号清单，失败也保存，但返回的连接 `state="error"` 并带原因码 `error`。
-    返回 `{ok, connection}`；**密钥不回传**。"""
+    """连一个 Key 类 AI。body：`{vendor, api_key, base_url?, model?, label?, wire?, id?}`（`custom` 必须有 `base_url`；`wire` 可选：
+    缺省 / `auto` = 保存时探测对话协议，`anthropic` | `openai-responses` | `openai-chat` 也会探测，没通过就换探测到能通的；带已存在的 `id` = 换这条的 Key / 型号）。
+    保存前试取一次型号清单、保存后探测一次对话协议（一条很短的测试请求），都失败也保存，但返回的连接 `state="error"` 并带原因码 `error`
+    （探测全不通 = `endpoint_unusable` + `error_reason`）。返回 `{ok, connection, probe}`；**密钥不回传**。"""
     body = request.get_json(silent=True)
     try:
-        cid, fetch_error = engine_ai_connections.add_connection(body)
+        cid, fetch_error, probe = engine_ai_connections.add_connection(body)
     except engine_ai_connections.ConnectionRefused as exc:
         return _connection_error(exc)
     except (ValueError, OSError) as exc:
         return jsonify(
             {"error": str(exc), "code": "endpoint_save_failed", "params": {"reason": str(exc)}}
         ), 400
-    engine_ai.invalidate_capabilities()
-    conn = next(c for c in engine_ai.capabilities(refresh=True)["connections"] if c["id"] == cid)
-    if fetch_error and conn["state"] == "ready":
-        conn = {**conn, "state": "error", "error": fetch_error}
-    resp = jsonify({"ok": True, "connection": conn})
+    resp = jsonify({"ok": True, "connection": _connection_view(cid, fetch_error), "probe": probe})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/ai/connections/<cid>/check")
+def api_ai_connection_check(cid):
+    """重新检查一条 Key 连接：再探测一次对话协议（会联网，≤ 30 s），更新记录。返回 `{ok, connection, probe}`；
+    订阅 / 账号登录类或不存在 → 404 `connection_not_found`。"""
+    try:
+        probe = engine_ai_connections.check_connection(cid)
+    except engine_ai_connections.ConnectionRefused as exc:
+        return _connection_error(exc)
+    except (ValueError, OSError) as exc:
+        return jsonify(
+            {"error": str(exc), "code": "endpoint_save_failed", "params": {"reason": str(exc)}}
+        ), 400
+    resp = jsonify({"ok": True, "connection": _connection_view(cid), "probe": probe})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

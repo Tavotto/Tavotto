@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「出版规范 profile 与预检」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_preflight.py`、`test_manifest_clip_bbox.py`、`test_profile_store.py`、`tests/golden/preflight_vectors.json`；期刊库（ADR 0155）：`tests/test_journal_catalog.py`、`web/src/lib/journals.test.ts`、`tests/golden/journal_vectors.json`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_preflight.py`、`test_manifest_clip_bbox.py`、`test_profile_store.py`、`tests/golden/preflight_vectors.json`；期刊库（ADR 0155）：`tests/test_journal_catalog.py`、`web/src/lib/journals.test.ts`、`tests/golden/journal_vectors.json`；旧期刊底标签的新输出替换：`tests/test_mcp_dpi_attribution.py`、`web/src/lib/profile.test.ts` 与 `tests/golden/profile_display_vectors.json`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
@@ -104,6 +104,7 @@ order: 260
 - **远程目录（ADR 0155 §10，`engine/journalremote.py`；Ed25519 验签用 PyNaCl，只在验签函数里延后 import，用户 2026-11-05 拍板不手写加密）**：取用顺序 服务端（验签、校验通过）→ 本地缓存 → 内置种子。**索引**整份下载（签名信封，Ed25519 验签只认内置 `TRUSTED_KEYS`，`catalog_rev` 不得低于历史最高与种子）、**刊包**选中时按需下载（由签名索引里的 `sha256` + 字节数担保，不单独签），快照内容寻址。
   任何一步不过整次作废、缓存原样、界面不弹错；拼出的完整目录过 `journals.validate_catalog`，前端 `setCatalog` 再过 `loadCatalog`。设备令牌与缓存在 `data_dir()/journal-catalog/`，**app 与 Agent 宿主共用**（谁先到谁领，目录锁里先重读再签发）；请求只带刊 id、令牌、`rev`、`X-Tavotto-Client`，**绝无项目 / 路径 / 脚本**；只认 `TAVOTTO_NO_JOURNAL_SYNC=1`（`TAVOTTO_NO_TELEMETRY` 不代管）；两个入口 `tavotto.cn`（后端本体）与 `tavotto.com`（Vercel 薄反代，真实 IP 经共享密钥头才被后端采信；只缓存签名索引），先后用 `contactsend.region_is_cn` 同一判据。
   生产代码只信 `prod-1`，测试钥只在测试里注入（`test_production_code_does_not_trust_the_test_key`）。**Agent / MCP 读远程目录**：`bridge.list_journals`（种子 + 缓存索引，不计数、离线可用）与 `bridge.journal_selection`（先判冲突、再 `journalremote.agent_resolve`，本地没有才下载并计 1 次）；超限 / 离线 / 验签失败回 `AGENT_ERROR_CODES` 里的 `journal_quota_exceeded` / `journal_offline` / `journal_verification_failed`，不静默退回；测试进程硬关同步（`tests/conftest.py` 钉 `TAVOTTO_NO_JOURNAL_SYNC=1`）。看护：`tests/test_journal_agent_remote.py`、`tests/test_journal_remote.py`、`web/src/lib/journalCatalogSync.test.ts`；服务端 `services/journal_catalog/`（`tests/test_journal_catalog_service.py`）。
+- **v2 来源事实（ADR 0155 §12）**：`engine/journalfacts_contract.py` 是服务、客户端共用的唯一事实与索引校验；`services/journal_catalog/facts.py` 只转发。`engine/journalfacts_remote.py` 只读取验签索引、按需刊包与内容寻址快照，事务化独立缓存与回滚水位，共用 v1 设备令牌，禁止重定向；`tavotto_get_journal_facts` 分页只读、不发遥测。条件、阶段、禁止项与示例只作来源事实，不自动折成 v1 预检。无 v2 数据不能用 v1 / 种子冒充；旧版、既有项目快照照旧。详见 `services/journal_catalog/FACTS-V2.md`。
 - **真实期刊数据严禁凭记忆写**：只收人工核对过、带原文摘录的条目；单元测试 / golden 向量只许用夹具期刊（`fx-*`，`example.invalid`）。
   项目快照（`FigureDocument.profile.snapshot`）机制原样适用，期刊库更新不会改已定稿项目的结论。
 

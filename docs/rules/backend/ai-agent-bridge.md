@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「编码 Agent 桥」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_ai_data_recipe.py`、`tests/test_ai_data_template.py`、`tests/test_ai_data_propose.py`、`tests/test_ai_data_text_tables.py`、`tests/test_ai_agents.py`、`test_ai_login.py`、`test_ai_bridge.py`、`test_ai_capabilities.py`、`test_ai_refresh.py`、`test_ai_history.py`、`test_ai_idempotency.py`、`test_ai_revert_stale.py`、`test_codex_install_cli.py`、`test_managed_cli.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_ai_data_recipe.py`、`tests/test_ai_data_template.py`、`tests/test_ai_data_propose.py`、`tests/test_ai_data_text_tables.py`、`tests/test_ai_agents.py`、`test_ai_login.py`、`test_ai_bridge.py`、`tests/test_ai_probe.py`、`test_ai_capabilities.py`、`test_ai_refresh.py`、`test_ai_history.py`、`test_ai_idempotency.py`、`test_ai_revert_stale.py`、`test_codex_install_cli.py`、`test_managed_cli.py`
 > `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml；revert 只回滚本次 AI 那一版（细则见 `ai-agent-bridge.md`）
 
 <!-- agents-route
@@ -133,9 +133,9 @@ order: 240
   `~/.codex/config.toml`**（cc-switch 是改文件的，那对它合理，对我们是越权：
   用户在别的终端里跑 claude/codex 必须还是他自己那套）。密钥存用户配置
   （目录权限收到 0700），接口一律只回「有没有 + 尾四位」。
-  **协议：Codex 只认 `wire_api = "responses"`**（新版 codex 读到 `"chat"` 直接整个启动失败）。
-  `WIRE_APIS` 只剩 responses，`_clean` 默认 responses，`spawn_overrides` 结构上永远不产出 chat，
-  预设里没有任何 chat 条目。**按协议分流，不是「国产一律走 Claude Code」**：只有 Anthropic 兼容端点的
+  **协议（限定到 Codex）：Codex 只认 `wire_api = "responses"`**（新版 codex 读到 `"chat"` 直接整个启动失败）。
+  `WIRE_APIS` 只剩 responses，`_clean` 默认 responses，**Codex 的注入** `spawn_overrides` 结构上永远不产出 chat，
+  预设里没有任何 Codex chat 条目。**这条只约束 Codex**：内置循环另有 `openai-chat` 协议（记录的 `protocol` 字段，见下「协议探测与 openai-chat 连接」），它**只走内置、绝不注入 Codex**。**按协议分流，不是「国产一律走 Claude Code」**：只有 Anthropic 兼容端点的
   厂商（Kimi 开放平台 / 智谱 / MiniMax / 百炼按量 / 百炼 Coding Plan）经 Claude Code 接入；**原生支持
   Responses 的厂商可留在 Codex**——目前是 DeepSeek 与 Kimi Code 会员。DeepSeek（预设 `deepseek-codex`，base_url `https://api.deepseek.com`
   无结尾斜杠、Codex 其后拼 `/responses`，模型 `deepseek-flash` / `deepseek-v4-pro`；依据 DeepSeek 官方 Codex 集成文档，
@@ -612,9 +612,27 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
   - **路由 `route_for`**（`route` 只给诊断与测试，界面不显示）：订阅 → `cli:<agent>`；Key 类：该家族 CLI 可用且显式 `ai.builtin_default=false` → `cli:<家族>` + 注入；缺省 true（2026-10-26 用户授权，ADR 0147 §五），不覆盖已存 false；
     否则 → `builtin`（内置循环必须能用该记录：`ai_providers.builtin_conn`，不行则在派发前退回可用的 CLI；不在任务中途自动重放）。账号登录类也受默认偏好与强制开关控制，其 CLI 可用性只看安装且启用（不看 CLI 自己的官方登录，凭据由我们注入）；anthropic wire 只发 Bearer（`--auth bearer`），令牌在 spawn 前 `ensure_fresh`、只进环境变量。
     `TAVOTTO_AI_BUILTIN=1` 强制内置、`=0` 强制不用（没 CLI 即走不通）。
+- **协议探测与 openai-chat 连接（TVD-HN4B，ADR 0147 修订 2026-11-15；`engine/ai_probe.py`）**：自填中转站「能列型号、跑不了任务」——型号清单只证明地址通。保存 Key 连接后对 (地址, Key, 型号) 真发对话请求探测：
+  - **记录字段**：`protocol`（闭集 `anthropic | openai-responses | openai-chat`，缺省 = 家族默认；**不是 `wire_api`**，旧 codex + `wire_api="chat"` 记录照旧 `codex_chat_removed`、不自动改）、`protocol_ok`（`{base_url, model, protocol, token_field?}` 指纹，`_clean` 只在地址与默认型号都没变时保留）、
+    `last_error = endpoint_unusable` + `probe_reason`（探测全不通；Key 被拒仍写 `unauthorized`）。换 Key / 改名不丢 `protocol`；`_clean` 丢掉与家族对不上的协议（claude ↔ anthropic，codex ↔ openai-*）。chat 记录的 `agent` = `codex`（openai 家族），**只走内置**。
+  - **判据只在 `ai_providers.builtin_only`**：`route_for` 对它的三个 CLI 出口（`TAVOTTO_AI_BUILTIN=0`、`builtin_default=false`、内置走不通退回 CLI）都不给 `cli:codex`——强制关内置 → `(None, "builtin_only")`；偏好 CLI 对它不适用（它没有别的路，仍走内置）；内置走不通 → 具体原因（`no_model` / `base_url_scheme` / `builtin_only`）；
+    连接视图的 `route` 永不显示 `cli:codex`；`spawn_overrides("codex", chat 记录)` 返回空；`resolve("codex")` 不返回「当前选中」的 chat 记录；`ai_bridge.run("codex", endpoint_id=<chat>)` 在 spawn 之前 `ai_agent_not_usable`；`resolve_connection` 走不通时 params 带 `reason: "builtin_only"`。`builtin_conn` 给 `wire: "openai-chat"`，
+    需要 `max_completion_tokens` 的（探测发现 / 官方 OpenAI o 系列）带 `token_field`，经 `--max-tokens-field` 传 runner，`fixsession.build_model` 同样建出 `OpenAIChatWire`。
+  - **探测判据**：每种协议一条带一个工具定义、`max_tokens ≤ 16` 的最小请求，**复用 `agent_runner.wires` 的 `build` / `parse` / `post_json`**（不新增出站点、不新增 opener）；通过 = 解析出合法 `Turn`，**不是只看 2xx**（200 网页 / 200 错误对象判失败）。
+    每协议结论是闭集 `ok | unauthorized | quota | no_model | wrong_protocol | network | web_page | bad_reply`；**响应体原文只在 `classify` 里被读，不进返回值 / 日志 / 诊断包**。地址按协议换算：OpenAI 系先试原样再试补 `/v1`，Anthropic 系先试原样再试去掉 `/v1`；换协议时记录的 `base_url` 跟着换。
+    顺序与「第一个通过就停」：Claude 型号 → anthropic；api.openai.com 的 gpt / o 系列 → responses；其余 → chat（与 magpie `usable()` 一致）；用户明确给的协议先试，通过就尊重。预算：每条 ≤ 15 s、总 ≤ 30 s；同主机传输层失败就不再试别的。全是网络失败 = 没结论：记录不改、不记错误。
+    目录里的已知厂商只核自己那一种协议（不换协议、不换地址），失败码同上。
+  - **备选协议与自救回报（叠在 runner 的 `--fallback` 之上）**：自填地址（不在厂商目录里；目录厂商与账号登录不给）的 `builtin_conn` 带 `fallbacks`（`ai_providers.fallback_routes`：其余两种协议、按协议换算地址——OpenAI 系带 `/v1`、Anthropic 系去 `/v1`、同 scheme / 主机 / 端口，顺序同探测），
+    改图经 `_builtin_overrides` 传 `--fallback WIRE=BASE_URL`（可重复），AI 修复经 `fixsession.build_model` 给 `HttpModel(fallbacks=…)`。运行**结束后**（不在执行中途）读 `done` 事件的 `wire_used` / `wire_switched_from` / `dropped_fields` / `token_field`：
+    改图由 `BuiltinAgent.classify_event` 记进会话状态、`ai_bridge` 在进程退出后调 `ai_providers.apply_runtime_report`；AI 修复由 `FixSessions._persist_runtime_report`（`_FinishAware.report()` 把内层模型的回报交出）。
+    `wire_used` ≠ 记录的协议 → 改 `protocol` / `agent` / `base_url` / `protocol_ok`；`token_field` 写进 `protocol_ok`（下次起跑带 `--max-tokens-field`）；`dropped_fields` 只记进 `protocol_ok`（runner 暂无「起跑即不发」参数）；有成功回复就清 `last_error` / `probe_reason`。目录厂商报来的换协议不信。
+  - **出站**：探测请求发往用户连接的那个服务商地址（与正式任务同一个、同一套 `wires.post_json`），带用户 Key；隐私说明里写明「保存连接时会发一条很短的测试请求」。
+  - **接口**：`POST /api/ai/connections` 的 `wire` 可选（缺省 / `"auto"` = 探测；`anthropic | openai-responses | openai-chat` 也探测，没通过就换探测到能通的），返回 `{ok, connection, probe}`；
+    `POST /api/ai/connections/<id>/check` 重新探测，返回同形状（订阅 / 账号登录 / 不存在 → 404 `connection_not_found`）。`probe` = `{checked, protocol, requested, switched, reason, reasons}`；连接视图多 `protocol` / `protocol_checked` / `error_reason`。
+    `first_key_connection`（AI 修复挑连接）跳过 `endpoint_unusable`（`quota` / `network` 是暂时性，不挡）。测试进程默认把 `ai_probe.detect` 桩成「没结论」（`tests/conftest.py`），测它的用例自己换回真 `detect` 并桩 `wires.post_json`。
 - **管理接口**（照常过会话守卫与 Host/Origin 校验）：`POST /api/ai/connections`（`{vendor | method, api_key, base_url?, model?, label?, wire?, id?}` → `{ok, connection}`；Key 形状 = 可打印 ASCII 无空白 ≤ 4096；
-  `base_url` 须 https 或回环 http；保存前 `live_models` 试取一次，**失败也保存**，返回的连接 `state:"error"` + `error` 原因码，只有 `unauthorized` 才落盘；`custom` 必须给 `base_url` 与 `wire`
-  （`anthropic` | `openai-responses`）；带已存在的 `id` = 换 Key / 型号并清掉错误）、`DELETE /api/ai/connections/<id>`（订阅类 `connection_not_deletable`）、
+  `base_url` 须 https 或回环 http；保存前 `live_models` 试取一次，**失败也保存**，返回的连接 `state:"error"` + `error` 原因码，只有 `unauthorized` 才落盘；`custom` 必须给 `base_url`、`wire` 可选
+  （缺省 / `auto` = 探测，或 `anthropic` | `openai-responses` | `openai-chat`；见「协议探测」）；带已存在的 `id` = 换 Key / 型号并清掉错误）、`DELETE /api/ai/connections/<id>`（订阅类 `connection_not_deletable`）、
   `POST /api/ai/connections/<id>/login`（订阅类走 `start_login`；`<provider>-oauth` 走设备码流程，返回 `flow_id`，进度仍用 `/api/ai/oauth/flows/<id>`）。错 body 一律 400 `endpoint_invalid{reason}` 且什么都不保存、不碰网络；
   密钥不在任何响应 / 日志里。旧 `endpoints*` 接口保留。
 - **改图请求**接受 `connection`（+ `model`）：`ai_bridge.resolve_connection(id) -> (agent_id, endpoint|None)`（= `ai_connections.resolve_connection` + 本机 CLI 探测结论，不 import 成环）直接解析到那条 provider 与路由（订阅 → `(codex|claude, None)`，请求里 `endpoint_id=""` = 明确用官方登录态）；

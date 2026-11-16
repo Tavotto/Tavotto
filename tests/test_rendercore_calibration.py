@@ -52,7 +52,7 @@ CASES = {
     # 文字：base-14 Times ↔ Liberation Serif advance 相同（墨的左右边 ≤ 1 pt），基线**按批准的量**不同——
     # 两边同一条基线公式 `y0 + size·((line_h − (asc − desc))/2 + asc)`，PyMuPDF 给 Times 的 ascender 是 bbox
     # 的 1.053，Liberation Serif 的 OS/2 typo ascender 是 0.693（ADR 0060 §4 的 D07 迁移）：12 pt 时基线差
-    # 1.77 pt。判据是「差恰好等于那个量（±0.6 pt）」，不是「差得不多」；像素不判（字形本来就不同）
+    # 1.77 pt（2026-11-16 基线改按行盒中线后 ≈ 0.43 pt）。判据是「差恰好等于那个量（±0.6 pt）」，不是「差得不多」；像素不判（字形本来就不同）
     "text": {"geometry_pt": 1.0, "baseline_tol_pt": 0.6, "pixels": None, "mean": None},
 }
 
@@ -294,17 +294,18 @@ def _check_text_ink(old: Path, new: Path, thr: dict, objects: list[dict], provid
     old_face = json.loads((LEGACY / "oracle.json").read_text(encoding="utf-8"))[
         "serif_regular_face"
     ]
-    new_face = provider.face_for("serif", False, False)
+    from tavotto.rendercore.typography import BASELINE_BELOW_CENTER
 
-    def baseline(
-        asc: float, desc: float
-    ) -> float:  # 两边同一条公式（旧 _draw_text / 新 typography），这里手写一份
-        return size * ((line_h - (asc - desc)) / 2 + asc)
-
-    approved_shift = baseline(old_face["ascender"], old_face["descender"]) - baseline(
-        new_face.ascender, new_face.descender
+    # 旧 _draw_text：基线按脸的上升 / 下降定（这里手写一份）；新 typography：行盒中线下固定
+    # `BASELINE_BELOW_CENTER` em、与字体度量无关（ADR 0073 修订，2026-11-16）
+    old_baseline = size * (
+        (line_h - (old_face["ascender"] - old_face["descender"])) / 2 + old_face["ascender"]
     )
-    assert approved_shift > 1.0, approved_shift  # 这是一个真实存在的、批准过的差（不是零）
+    approved_shift = old_baseline - size * (line_h / 2 + BASELINE_BELOW_CENTER)
+    # 批准过的差：D07 时 1.77 pt（换脸），2026-11-16 起基线不再读脸的度量（ADR 0073 修订），剩 ≈ 0.43 pt。
+    # 它已小于容差，这里只钉「两边同一条公式」；基线公式本身的精确值由
+    # `test_compose_text.py::test_baseline_matches_css_line_box`（±0.2 pt）钉着
+    assert 0.3 < approved_shift < 0.6, approved_shift
     assert abs((bo - bn) - approved_shift) <= thr["baseline_tol_pt"], (bo, bn, approved_shift)
 
 

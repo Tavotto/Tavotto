@@ -387,12 +387,26 @@ def severity_of(profile: dict, check_id: str) -> str:
     return value if value in SEVERITIES else DEFAULT_SEVERITY
 
 
+def display_label(profile: dict) -> str:
+    """Neutral output label for the exact historical built-in label; never mutate snapshots.
+
+    Keep in sync with web/src/lib/profile.ts and the shared label vectors.
+    """
+    label = profile.get("label", "")
+    if (
+        profile.get("profile_id") == "journal-base-v1"
+        and label == "期刊底（期刊未规定的项一律不判）"
+    ):
+        return "期刊检查基础"
+    return label
+
+
 def stamp(profile: dict) -> dict:
     """proof report / MCP 响应里的 profile 身份戳。"""
     out = {
         "profile_id": profile.get("profile_id"),
         "profile_version": profile.get("version"),
-        "label": profile.get("label", ""),
+        "label": display_label(profile),
     }
     if profile.get("journal"):
         out["journal"] = profile["journal"]

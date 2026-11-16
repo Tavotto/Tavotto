@@ -26,16 +26,16 @@
   },
   "outputs": {
     "u07.pdf": {
-      "sha256": "32d4e6d577888e2fd7cc8d199352839f95a994fe68b527371358a73a5627810b",
-      "bytes": 8236
+      "sha256": "0b92daf152020ad9bdee58b9b0b8a23d9385be424fda5de25cb35eece7b22b60",
+      "bytes": 8237
     },
     "u07_pdfium.png": {
-      "sha256": "b62bbd450cf74c670cb957b75c3002cd12eca18985ecf742b9c5fbda4525c6ff",
+      "sha256": "c5949027ac3b61c71f87cbd8a4967ddb4af73a65e570ffc5d8782ede193ae379",
       "bytes": 22924,
       "platform_specific": true
     },
     "u07.tiff(not committed)": {
-      "pixel_sha256": "caa7503f199afc90de0340c2ee105935bf7dca7e271b0fd65eee20fe68b8394b",
+      "pixel_sha256": "98e3c60d7a711afd8397ca7c3157634bc72b54c19f86f9c1b4af585b7326b710",
       "px_w": 945,
       "px_h": 709,
       "channels": 3,
@@ -337,7 +337,7 @@
     {
       "name": "pdf.deterministic",
       "ok": true,
-      "sha256": "32d4e6d577888e2fd7cc8d199352839f95a994fe68b527371358a73a5627810b"
+      "sha256": "0b92daf152020ad9bdee58b9b0b8a23d9385be424fda5de25cb35eece7b22b60"
     },
     {
       "name": "pdf.imported_pages",
@@ -385,7 +385,7 @@
     {
       "name": "png_tiff.same_pixels",
       "ok": true,
-      "sha256": "caa7503f199afc90de0340c2ee105935bf7dca7e271b0fd65eee20fe68b8394b"
+      "sha256": "98e3c60d7a711afd8397ca7c3157634bc72b54c19f86f9c1b4af585b7326b710"
     },
     {
       "name": "tiff.tags",

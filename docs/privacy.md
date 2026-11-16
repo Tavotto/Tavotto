@@ -129,6 +129,12 @@ releases until its data is ready). It works in two steps:
   kept on your computer afterwards. Reading a journal you already downloaded sends
   nothing.
 
+The separate v2 source-facts API is requested only when an assistant searches or
+reads those facts. It uses the same device token and quota as v1, but a separate
+local `journal-catalog-v2/` cache. The `tavotto_get_journal_facts` tool does not
+emit an anonymous usage event. An unavailable v2 catalog is not replaced with
+v1 facts.
+
 What the server receives: the journal id, a random anonymous **device token**
 issued by the server the first time it is needed, the catalog version number, a
 client type (`app`, or `agent-<name>` when an AI coding assistant's plugin on your
@@ -199,7 +205,10 @@ AI the user chose, in one of two ways:
   may carry the call with the user's key handed to it; otherwise Tavotto's built-in
   agent sends it directly. Either way the destination is the provider's API address
   the user connected, and the key is not sent anywhere else. Plain `http` addresses
-  are accepted only on the local machine or a private network.
+  are accepted only on the local machine or a private network. When you save such a
+  connection (or press "Check connection"), Tavotto also sends that address a few very short test
+  messages (a one-word prompt, at most 16 tokens of reply) to find out which chat protocol it
+  speaks; this uses a tiny amount of your quota, and the replies are not stored or logged.
 
 What is sent is the user's instruction plus whatever the assistant reads from the
 project to do the job, which can include the script and files in the project folder,

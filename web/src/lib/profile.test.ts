@@ -6,6 +6,7 @@
  * 旧文档没有 profile 字段、存了一个已经删掉的 id、期刊覆盖的合并语义。
  */
 import { describe, expect, it } from 'vitest'
+import displayVectors from '../../../tests/golden/profile_display_vectors.json'
 import {
   columnOf,
   DEFAULT_PROFILE_ID,
@@ -118,4 +119,14 @@ describe('等级', () => {
     expect(severityOf(p, 'missing-asset')).toBe('warn') // 没登记 → 兜底
     expect(severityOf(p, 'font-too-small')).toBe('warn')
   })
+})
+
+
+it('new stamps neutralize only the exact old journal base label without changing snapshots', () => {
+  for (const { id, label, expected } of displayVectors) {
+    const p = { ...loadProfile(), profile_id: id, label }
+    const saved = structuredClone(p)
+    expect(profileStamp(p).label).toBe(expected)
+    expect(p).toEqual(saved)
+  }
 })

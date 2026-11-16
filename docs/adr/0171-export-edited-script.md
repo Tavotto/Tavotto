@@ -98,3 +98,38 @@ ADR 0094 设计过「写回原脚本」，但它改的是用户文件，所以�
   验证逐项比对必然对不上（这就是初版普查里「图例条目显隐」没过的原因）。
 - 写进脚本的条数按 patch 计（`script_report.written`），一条重建语句合并了几条 patch 就算几条。
 
+
+**② 网格与边框**：网格四个样式（颜色 / 线型 / 线宽 / 透明度）、刻度线四边开关、边框「全部」档的颜色与线宽、3D 轴的网格总开关
+（`grid_visible`）写进脚本。十一个键都等价，没有留下的。
+
+- 网格样式与引擎同一句公开 API：`ax.tick_params(axis='both', which='both', grid_*=...)`。网格没开时先存着，之后 `grid_x` /
+  `grid_y` 打开就是这个样子，两类键写的是不同的 kw，互不覆盖、先后无关。
+- 刻度线四边：`tick_params(axis=..., which='both', bottom/top/left/right=...)`（界面开关的口径，主次两档一起）。
+- 边框「全部」是广播键，一次改 `ax.spines` 的每一条（含不在四边里的）；四边各自的键是窄条目，**窄的盖广播**（引擎
+  `spinemodel`：自己的设定 > 「全部」 > 脚本原样）。`_rank` 新增一档：广播排在普通属性（含窄条目）之前，列表里谁先谁后结果都一样。
+  广播写不进脚本留作重放时，同一 axes 上四边各自的颜色 / 线宽也一起留下（`_NARROWER`；`ALIAS_GROUPS` 不登记边框这一族，
+  所以脚本侧自己记这张表）。
+- 3D 轴的 role 是 `axes3d`，原先没映射进 `_ROLE_CLS`，3D 的任何键都写不进；现在映射到 `axes`，但 3D 的 `elev` / `azim` /
+  `axis_arrows` / 面板等仍在 `NOT_WRITABLE`，实际多写进去的只有 `grid_visible`。
+- 验收：新夹具图 `AdjGrid`（只开 x 网格，y 网格靠扫描翻开，样式才看得出）、`AdjGrid3D`。整图扫描里所有颜色都采成同一个
+  `#123456`、四条边同时被关，网格与边框样式在那里是隐形的（变异实测：把网格线宽 / 透明度 / 线型改成常量扫描仍然绿），
+  所以网格样式给了可见的专用采样值，边框颜色 / 线宽拆成「全部」「四边」两个 `_HELD_OUT` 组单独扫（合在一起四边各自的设定会把
+  「全部」整个盖住）。
+
+**③ 刻度**：标签显隐（引擎只动标签，不动刻度线）、主刻度线宽、次刻度长度 / 线宽，以及定位与格式（`major_mode` / `major_step` /
+`major_values` / `minor_visible` / `minor_mode` / `minor_step` / `format` / `minor_format`）、单条刻度文字，13 个键全部写进脚本。
+
+- 引擎的刻度是模型（`tickmodel`：写进 cfg 再整体重建，没表态 = 脚本原样），所以同一条轴上这八条合成**一次**
+  `_tick_model(ax, 'x', {只带改过的几条})`：用公开的 `MultipleLocator` / `FixedLocator` / `AutoMinorLocator`（对数类
+  刻度各用自己那款）/ `NullLocator` 与 `FormatStrFormatter` / `NullFormatter` / `ScalarFormatter`，没表态的键不碰脚本原有的
+  locator / formatter。「固定刻度没给值」「步长没给」取调用那一刻脚本原样的刻度（与引擎锚到 `orig_major_locator` 同义）。
+- 单条刻度文字 = `_tick_text`：把那一刻的刻度位置冻成 `FixedLocator`，文字取当前 formatter 的输出再换掉这一条
+  （与 `set_xticks(locs, texts)` 同结果，但不动视区，用不着事后还原）。同一条轴上几条文字依次落，结果与引擎一次盖全相同。
+- 先后（`_rank`，与 `overrides._apply_rank` 在 worker 解释器里对账，`test_script_order_matches_the_engines_apply_order`）：
+  刻度类型 → 边框广播 → 坐标范围等普通属性 → 刻度定位与格式 → 单条刻度文字。刻度定位和冻结都按落下之后的视区现算，所以必须排在坐标范围之后。
+- **整页 / 子图大小留给重放时，靠落笔那一刻刻度算的几条也留给重放**（单条文字、固定刻度没给值、固定间隔没给步长；
+  同一条轴上的其余定位 / 格式跟着留下）：图幅、子图位置、色条方向与延伸（`NOT_WRITABLE`）在引擎里排在刻度之前，
+  自动刻度的个数又跟轴长有关，两边在不同的轴长上各算各的，实测 `script_export_diverged`、整份不交付。
+- 刻度组的标签全关掉之后量不出几何、manifest 把它丢了，翻译时按 gid 形状认它是刻度组（否则「标签显隐」永远写不进去）。
+- 3D 轴不写两条：刻度线宽（每次 draw 被私有的 `_axinfo` 盖回，公开 API 留不住）、单条刻度文字（曲面图 Inv3DS 的 y 轴
+  热态 5 条标签、脚本重放 9 条，位置错开；Inv3D / Inv3DP 上是等价的）。定位与格式在 3D 的 x / y 轴上逐键验过等价，z 轴本来就写不进。

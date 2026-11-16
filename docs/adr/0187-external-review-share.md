@@ -102,7 +102,7 @@ verdict = { v, decision: "approved" | "changes", note, author, at }   // 每版�
 - 轮询：**没有未到期的分享记录就一次网络都不发**；有记录时引擎每 30 分钟拉一次 `feed`，「审阅」页签开着时前端每 60 秒请求一次刷新。新意见 → 顶栏「分享审阅」按钮小圆点 + 通知轨胶囊（「林老师留了 2 条意见 · 查看」）。
 - 逐次授权：只有用户点「生成链接 / 更新到同一链接」才上传；失败 / 取消后不自己重试。
 - 逃生口：`TAVOTTO_NO_REVIEW_SHARE=1` 整个功能不出现、不联网。
-- **上线开关**：`reviewshare.PRODUCTION_LIVE` 在线上服务部署并验通（建链接、更新、审阅页、额度计数）之前为 `False`——不设 `TAVOTTO_REVIEW_ENDPOINT` 时入口不出现、零网络；验通后单独一个 PR 改为 `True`（发版依赖）。
+- **上线开关**：`reviewshare.PRODUCTION_LIVE` 在线上服务部署并验通（建链接、更新、审阅页、额度计数）之前为 `False`——不设 `TAVOTTO_REVIEW_ENDPOINT` 时入口不出现、零网络。2026-11-16 `review.tavotto.cn` 部署并端到端验通，改为 `True`（维护者同意随 0.21.3 发布）。
 
 ### 八、界面（维护者 2026-11-15 过目的截图稿）
 
