@@ -115,3 +115,21 @@ ADR 0094 设计过「写回原脚本」，但它改的是用户文件，所以�
   `#123456`、四条边同时被关，网格与边框样式在那里是隐形的（变异实测：把网格线宽 / 透明度 / 线型改成常量扫描仍然绿），
   所以网格样式给了可见的专用采样值，边框颜色 / 线宽拆成「全部」「四边」两个 `_HELD_OUT` 组单独扫（合在一起四边各自的设定会把
   「全部」整个盖住）。
+
+**③ 刻度**：标签显隐（引擎只动标签，不动刻度线）、主刻度线宽、次刻度长度 / 线宽，以及定位与格式（`major_mode` / `major_step` /
+`major_values` / `minor_visible` / `minor_mode` / `minor_step` / `format` / `minor_format`）、单条刻度文字，13 个键全部写进脚本。
+
+- 引擎的刻度是模型（`tickmodel`：写进 cfg 再整体重建，没表态 = 脚本原样），所以同一条轴上这八条合成**一次**
+  `_tick_model(ax, 'x', {只带改过的几条})`：用公开的 `MultipleLocator` / `FixedLocator` / `AutoMinorLocator`（对数类
+  刻度各用自己那款）/ `NullLocator` 与 `FormatStrFormatter` / `NullFormatter` / `ScalarFormatter`，没表态的键不碰脚本原有的
+  locator / formatter。「固定刻度没给值」「步长没给」取调用那一刻脚本原样的刻度（与引擎锚到 `orig_major_locator` 同义）。
+- 单条刻度文字 = `_tick_text`：把那一刻的刻度位置冻成 `FixedLocator`，文字取当前 formatter 的输出再换掉这一条
+  （与 `set_xticks(locs, texts)` 同结果，但不动视区，用不着事后还原）。同一条轴上几条文字依次落，结果与引擎一次盖全相同。
+- 先后（`_rank`，与 `overrides._apply_rank` 在 worker 解释器里对账，`test_script_order_matches_the_engines_apply_order`）：
+  刻度类型 → 边框广播 → 坐标范围等普通属性 → 刻度定位与格式 → 单条刻度文字。刻度定位和冻结都按落下之后的视区现算，所以必须排在坐标范围之后。
+- **整页 / 子图大小留给重放时，靠落笔那一刻刻度算的几条也留给重放**（单条文字、固定刻度没给值、固定间隔没给步长；
+  同一条轴上的其余定位 / 格式跟着留下）：图幅、子图位置、色条方向与延伸（`NOT_WRITABLE`）在引擎里排在刻度之前，
+  自动刻度的个数又跟轴长有关，两边在不同的轴长上各算各的，实测 `script_export_diverged`、整份不交付。
+- 刻度组的标签全关掉之后量不出几何、manifest 把它丢了，翻译时按 gid 形状认它是刻度组（否则「标签显隐」永远写不进去）。
+- 3D 轴不写两条：刻度线宽（每次 draw 被私有的 `_axinfo` 盖回，公开 API 留不住）、单条刻度文字（曲面图 Inv3DS 的 y 轴
+  热态 5 条标签、脚本重放 9 条，位置错开；Inv3D / Inv3DP 上是等价的）。定位与格式在 3D 的 x / y 轴上逐键验过等价，z 轴本来就写不进。
