@@ -1658,6 +1658,7 @@ class Worker(wireproto.V1Handler):
                     "missing_module",
                     "missing_dependency",
                     "missing_command",
+                    "image_format_mismatch",
                     "execution_id",
                 )
                 if k in err
@@ -2642,6 +2643,7 @@ class Worker(wireproto.V1Handler):
             facts.update(self._missing_module_fact(exc))
             facts.update(self._unreadable_folder_fact(exc))
             facts.update(self._foreign_abi_fact(exc))
+            facts.update(self._image_format_fact(exc))
             facts.update(self._missing_command_fact(exc))
             raise ProtocolError(
                 "script_error",
@@ -2722,6 +2724,23 @@ class Worker(wireproto.V1Handler):
         except Exception:  # noqa: BLE001 — 绝不盖掉原来的脚本错误
             return {}
         return {"foreign_abi_folder": fact, "foreign_abi_folder_private": private} if fact else {}
+
+    def _image_format_fact(self, exc: BaseException) -> dict:
+        """失败是「图片内容与扩展名不符」（JPEG 存成 `.png`，TVD-3MWS）：`{"image_format_mismatch": {...}}`。
+        判据在 `bridgeboot.image_format_facts`（native 同一份）；只认项目根 / 脚本目录之内的文件；敏感运行里与 argv token
+        有关的文件名不带。只读文件前 16 字节，任何意外都当没有，绝不盖掉原来的脚本错误。"""
+        try:
+            fact = bridgeboot.image_format_facts(
+                exc,
+                (str(self.figures_dir), str(self.script.parent)),
+                self.script_argv if self.sensitive_argv else (),
+                # 只有沙盒 cwd 才有只读回退可镜像；「在脚本目录里运行」时相对路径本来就指向项目
+                sandbox_dir=str(self.sandbox) if self.workdir is None else None,
+                script_dir=str(self.script.parent),
+            )
+        except Exception:  # noqa: BLE001
+            return {}
+        return {"image_format_mismatch": fact} if fact else {}
 
     def _missing_command_fact(self, exc: BaseException) -> dict:
         """脚本拉起外部命令却找不到可执行文件：`{"missing_command": {...}}`（`cmddiag.collect`，用本 worker 的 env）。

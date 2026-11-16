@@ -3504,6 +3504,8 @@ export default interface Resources {
       "format_failed": "无法导出该格式：{{error}}。",
       "group_limit_exceeded": "分组太多了（最多 8 组），颜色会分不清。",
       "hist_density_n_small": "有的组数据太少（不到 10 个），不画直方图和密度曲线。",
+      "image_format_mismatch": "这张图片其实是 {{actual}} 图片，只是扩展名写成了 .{{ext}}，换成真正的 {{claimed}} 文件后再运行。",
+      "image_format_mismatch_file": "{{file}} 其实是 {{actual}} 图片，只是扩展名写成了 .{{ext}}，换成真正的 {{claimed}} 文件后再运行。",
       "import_folder_abi_mismatch": "脚本自带的“{{folder}}”文件夹是为 Python {{abi}} 装的，和当前环境（Python {{current}}）不兼容。选“跳过这个文件夹重跑”即可，不需要换 Python。",
       "import_folder_unreadable": "脚本加载的项目外文件夹“{{folder}}”读不了（当前账户没有读取权限）。给这个账户开放读取权限，或把它移出脚本的加载路径后重试；换 Python 环境没有用。",
       "input_remap_changed": "数据位置刚刚改过，这次结果按旧位置产出，已丢弃。请重试。",

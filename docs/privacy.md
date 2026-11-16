@@ -562,6 +562,12 @@ cancelled or failed upload is never resumed on its own.
   project files, file paths and computer details are never uploaded.**
 * **Who can see it.** Anyone who has the link. Links are not listed or indexed.
   Reviewers type a display name of their choice; it is not verified.
+  Seeing the pictures needs no sign-in. Each picture also has its own web
+  address. It cannot be guessed, but it is not encrypted or password-protected:
+  anyone who gets hold of it (for example, a reviewer who copies it) can open
+  that picture directly, without the link. When you stop sharing or the link
+  expires, the pictures are deleted at once; an address someone already opened
+  may keep working for up to about 10 minutes.
 * **Where it is stored.** A service operated by the Tavotto maintainers on
   Tencent Cloud CloudBase (mainland China), reached at `review.tavotto.cn`. No
   other host is contacted for this feature.
