@@ -3452,7 +3452,6 @@ export default interface Resources {
       "chart_model_unsupported": "当前不支持这份计算图表的模型或编辑方式。",
       "chart_render_pair_missing": "计算图表没有返回同一版的图像与几何，暂未应用本次渲染。",
       "chart_render_unsupported": "当前无法完整渲染这张计算图表。",
-      "chart_source_changed": "计算图表的源文件已变化，本次操作未应用。请恢复匹配的源文件或重新导入。",
       "column_not_found": "这张表里没有这一列。",
       "column_type_mismatch": "这一列的类型不适合画在这个位置，比如把文字当数值用。",
       "composition_negative": "占比图里有负数，不能画。",
@@ -3641,7 +3640,6 @@ export default interface Resources {
       "package_invalid": "不是有效的项目包：{{reason}}",
       "package_schema_too_new": "这个项目包来自更新的版本（schema {{schema}}），请升级后再打开",
       "package_schema_unsupported": "项目包里的排版既不是 schema 2 也不是 schema 3",
-      "package_source_outside_project": "项目包引用了项目目录以外的资源，未生成项目包。请先将资源移入项目。",
       "paired_incomplete": "配对数据要有两个条件，每个个体在两个条件下各一个值。",
       "paired_unconfirmed": "只有你确认过是配对数据，才能画配对连线。",
       "path_ignore_rejected": "Tavotto 不能跳过这个文件夹，没有做任何改动。",
@@ -4523,7 +4521,6 @@ export default interface Resources {
     },
     "render": {
       "failed": "渲染失败（HTTP {{status}}）",
-      "frameNotReady": "图还在渲染；等这一版精确帧落定后再编辑。",
       "previewPngFailed": "无法获取预览位图（HTTP {{status}}）",
       "projectEnvSwitched": "已自动使用项目的 Python 环境（{{path}}）",
       "timeout": "渲染超过 {{minutes}} 分钟无响应，已断开请求。服务可能仍在后台运行，可稍后重试。"

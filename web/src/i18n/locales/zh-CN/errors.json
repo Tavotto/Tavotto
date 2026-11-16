@@ -32,7 +32,6 @@
     "chart_model_invalid": "计算图表的模型或来源引用无效，无法应用本次操作。",
     "chart_model_unsupported": "当前不支持这份计算图表的模型或编辑方式。",
     "chart_render_unsupported": "当前无法完整渲染这张计算图表。",
-    "chart_source_changed": "计算图表的源文件已变化，本次操作未应用。请恢复匹配的源文件或重新导入。",
     "svg_resource_limit": "SVG 或计算图表超过资源预算，无法完成本次操作。",
     "svg_scene_invalid": "无法读取这份 SVG 的图形内容。请检查文件是否为有效的独立 SVG。",
     "chart_render_pair_missing": "计算图表没有返回同一版的图像与几何，暂未应用本次渲染。",
@@ -202,7 +201,6 @@
     "package_invalid": "不是有效的项目包：{{reason}}",
     "package_schema_unsupported": "项目包里的排版既不是 schema 2 也不是 schema 3",
     "package_schema_too_new": "这个项目包来自更新的版本（schema {{schema}}），请升级后再打开",
-    "package_source_outside_project": "项目包引用了项目目录以外的资源，未生成项目包。请先将资源移入项目。",
     "figure_snapshot_unavailable": "项目包引用的 Figure 配对或原件无法核验，未生成项目包。请恢复缺失资源或重新生成这张图。",
     "permission_denied": "无权限读取：{{path}}",
     "ppi_out_of_range": "分辨率 {{value}} 超出范围，应在 {{min}} 到 {{max}} 之间。",
@@ -1174,7 +1172,6 @@
   },
   "render": {
     "failed": "渲染失败（HTTP {{status}}）",
-    "frameNotReady": "图还在渲染；等这一版精确帧落定后再编辑。",
     "previewPngFailed": "无法获取预览位图（HTTP {{status}}）",
     "projectEnvSwitched": "已自动使用项目的 Python 环境（{{path}}）",
     "timeout": "渲染超过 {{minutes}} 分钟无响应，已断开请求。服务可能仍在后台运行，可稍后重试。"
