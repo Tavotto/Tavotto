@@ -1,0 +1,233 @@
+{
+  "vectors": [
+    {
+      "name": "canvas/static-svg/native-conversion",
+      "args": {
+        "scope": "canvas",
+        "formats": [
+          "pdf",
+          "png",
+          "tiff",
+          "svg",
+          "eps"
+        ],
+        "file_kind": "svg",
+        "overrides": [],
+        "has_script": false
+      },
+      "expected": {
+        "source": "disk",
+        "embeds_disk_bitmap": false,
+        "formats": {
+          "pdf": {
+            "how": "convert"
+          },
+          "png": {
+            "how": "convert"
+          },
+          "tiff": {
+            "how": "convert"
+          },
+          "svg": {
+            "how": "convert"
+          },
+          "eps": {
+            "how": "unavailable",
+            "reason": "eps_not_for_canvas"
+          }
+        },
+        "offers": {
+          "eps": {
+            "how": "unavailable",
+            "reason": "eps_not_for_canvas"
+          }
+        }
+      }
+    },
+    {
+      "name": "original/static-svg/same-raw-conversion",
+      "args": {
+        "scope": "original",
+        "formats": [
+          "svg",
+          "pdf",
+          "eps"
+        ],
+        "file_kind": "svg",
+        "overrides": [],
+        "has_script": false
+      },
+      "expected": {
+        "source": "disk",
+        "embeds_disk_bitmap": false,
+        "formats": {
+          "svg": {
+            "how": "copy"
+          },
+          "pdf": {
+            "how": "convert"
+          },
+          "eps": {
+            "how": "unavailable",
+            "reason": "eps_needs_script"
+          }
+        },
+        "offers": {
+          "eps": {
+            "how": "unavailable",
+            "reason": "eps_needs_script"
+          }
+        }
+      }
+    },
+    {
+      "name": "canvas/static-svg/script-does-not-execute",
+      "args": {
+        "scope": "canvas",
+        "formats": [
+          "pdf",
+          "svg"
+        ],
+        "file_kind": "svg",
+        "overrides": [],
+        "has_script": true
+      },
+      "expected": {
+        "source": "disk",
+        "embeds_disk_bitmap": false,
+        "formats": {
+          "pdf": {
+            "how": "convert"
+          },
+          "svg": {
+            "how": "convert"
+          }
+        },
+        "offers": {
+          "eps": {
+            "how": "unavailable",
+            "reason": "eps_not_for_canvas"
+          }
+        }
+      }
+    },
+    {
+      "name": "canvas/edited-svg/no-script-failclosed",
+      "args": {
+        "scope": "canvas",
+        "formats": [
+          "pdf",
+          "svg"
+        ],
+        "file_kind": "svg",
+        "overrides": [
+          {
+            "x": 1
+          }
+        ],
+        "has_script": false
+      },
+      "expected": {
+        "source": "unavailable",
+        "embeds_disk_bitmap": false,
+        "formats": {
+          "pdf": {
+            "how": "unavailable",
+            "reason": "source_needs_execution"
+          },
+          "svg": {
+            "how": "unavailable",
+            "reason": "source_needs_execution"
+          }
+        },
+        "offers": {
+          "eps": {
+            "how": "unavailable",
+            "reason": "eps_not_for_canvas"
+          }
+        }
+      }
+    },
+    {
+      "name": "canvas/edited-svg/script-owned",
+      "args": {
+        "scope": "canvas",
+        "formats": [
+          "pdf",
+          "svg"
+        ],
+        "file_kind": "svg",
+        "overrides": [
+          {
+            "x": 1
+          }
+        ],
+        "has_script": true
+      },
+      "expected": {
+        "source": "redraw",
+        "embeds_disk_bitmap": false,
+        "formats": {
+          "pdf": {
+            "how": "redraw"
+          },
+          "svg": {
+            "how": "redraw"
+          }
+        },
+        "offers": {
+          "eps": {
+            "how": "unavailable",
+            "reason": "eps_not_for_canvas"
+          }
+        }
+      }
+    },
+    {
+      "name": "original/static-svg/eps-without-svg-does-not-execute",
+      "args": {
+        "scope": "original",
+        "formats": [
+          "pdf",
+          "png",
+          "eps",
+          "tiff"
+        ],
+        "file_kind": "svg",
+        "overrides": [],
+        "has_script": true
+      },
+      "expected": {
+        "source": "disk",
+        "embeds_disk_bitmap": false,
+        "formats": {
+          "pdf": {
+            "how": "convert"
+          },
+          "png": {
+            "how": "convert"
+          },
+          "tiff": {
+            "how": "convert"
+          },
+          "eps": {
+            "how": "redraw",
+            "conditions": [
+              "svg_asset_binding",
+              "live_figure"
+            ]
+          }
+        },
+        "offers": {
+          "eps": {
+            "how": "redraw",
+            "conditions": [
+              "svg_asset_binding",
+              "live_figure"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

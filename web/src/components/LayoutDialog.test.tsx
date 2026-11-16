@@ -29,6 +29,8 @@ vi.mock('@/lib/api', async (importOriginal) => {
     // 对话框读的是带修改时间的那一份清单：名字仍由 `fetchLayoutNames` 的桩给（各用例只摆名字）
     fetchLayoutList: vi.fn(async () => ({ names: await fetchLayoutNames(), modified: {} })),
     saveLayout: vi.fn(),
+    // 此文件的旧后端桩不实现工作副本关联；明确 404 分支而非无结构 200。
+    fetchProjectFile: vi.fn(async () => ({ status: 'unsupported' as const })),
   }
 })
 

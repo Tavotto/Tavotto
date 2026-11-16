@@ -58,6 +58,7 @@ Windows `msvcrt.locking`，纯标准库），多个进程共用一个数据目�
 
 from __future__ import annotations
 
+import copy
 import errno
 import hashlib
 import json
@@ -68,11 +69,12 @@ import re
 import threading
 import time
 from collections.abc import Callable, Iterable
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, ContextManager, NamedTuple
 
-from . import atomicio, config, documents
+from . import atomicio, config, documentformat, documents
 
 try:  # POSIX
     import fcntl
@@ -94,6 +96,35 @@ LOCK_FILENAME = "layout-sessions.lock"
 LOCK_TIMEOUT_S = 5.0
 EXPORT_DEFAULTS_FILENAME = "export-defaults.json"
 FORMAT_VERSION = 1
+DOCUMENT_NAMESPACES_KEY = "document_namespaces"
+OPEN_INTENTS_KEY = "document_open_intents"
+OPEN_INTENTS_VERSION = 1
+_MAX_INTENT_SEQUENCE = 2**53 - 1
+_INTENT_ROW_KEYS = frozenset({"sequence", "latest", "witness"})
+_INTENT_LATEST_KEYS = frozenset({"document_format", "doc_id", "pointer"})
+PROJECT_FILES_KEY = "document_project_files"
+_PROJECT_FILE_ROW_KEYS = frozenset(
+    {
+        "intent_sequence",
+        "working_revision",
+        "axis",
+        "axis_known",
+        "target",
+        "pending",
+    }
+)
+_PROJECT_FILE_TICKET_KEYS = frozenset(
+    {
+        "sequence",
+        "binding_sequence",
+        "name",
+        "file",
+        "autosave_revision",
+        "axis",
+    }
+)
+_PROJECT_FILE_TARGET_KEYS = frozenset({"sequence", "name", "file", "revision", "synced_axis"})
+_NAMESPACE: ContextVar[str | None] = ContextVar("layout_session_namespace", default=None)
 
 #: 读取结果四档（`_read()` 的第二项、`GET /api/layout-session` 的 `index`）
 STATUS_OK = "ok"
@@ -126,6 +157,18 @@ class SessionStateUnavailable(OSError):
 
     是 `OSError`：调用方对「元数据写不进去」本来就按 `except OSError` 处理，正文照旧保存。
     """
+
+
+@contextmanager
+def using_namespace(namespace: str | None):
+    """同一文件/锁内选择文档格式视图；退出、异常和其他线程均不泄漏。"""
+    if namespace is not None and namespace != documentformat.CHART4:
+        raise ValueError("unknown document session namespace")
+    token = _NAMESPACE.set(namespace)
+    try:
+        yield
+    finally:
+        _NAMESPACE.reset(token)
 
 
 # ------------------------------- 锁 -----------------------------------------
@@ -439,6 +482,12 @@ def _load(*, preserve: bool = True) -> _Loaded:
         # 主文件不在：通常是首次。但 bak 若来自更新的 Tavotto / 读不动，它可能是唯一一份完整状态——
         # 不能当首次空去覆盖它（只读）。一份好的 v1 bak 不在这里翻案：主文件被删就是想重来
         bak_state, bak_readonly = _load_backup(preserve)
+        if bak_readonly is None and bak_state is not None:
+            # 顶层仍是v1，但备份可能是唯一携带未知namespace版本的副本。
+            # legacy更新也不能把这份未来状态当成普通v1备份整份覆盖。
+            _data, bak_readonly = _namespace_data(bak_state)
+            if bak_readonly is None:
+                bak_readonly = _metadata_reason(bak_state)
         if bak_readonly is None:
             return _Loaded(_empty(), STATUS_MISSING)
         return _from_backup(bak_state, bak_readonly, preserved=True)
@@ -453,6 +502,10 @@ def _load(*, preserve: bool = True) -> _Loaded:
         if _is_future(data):
             LOG.warning("会话状态来自更新的 Tavotto（version %s），只读不写", data.get("version"))
             state["_readonly"] = "future_version"
+            return _Loaded(state, STATUS_DEGRADED)
+        reason = _metadata_reason(state)
+        if reason:
+            state["_readonly"] = reason
             return _Loaded(state, STATUS_DEGRADED)
         return _Loaded(state, STATUS_OK)
     # 字节坏：先留原字节，再看 bak
@@ -486,7 +539,9 @@ def _load_backup(preserve: bool, fresh: set[str] | None = None) -> tuple[dict | 
     if _is_future(data):
         LOG.warning("会话状态备份来自更新的 Tavotto（version %s），只读不写", data.get("version"))
         return _parse_state(data), "future_version"
-    return _parse_state(data), None
+    state = _parse_state(data)
+    reason = _metadata_reason(state)
+    return state, reason
 
 
 def _from_backup(bak_state: dict | None, bak_readonly: str | None, *, preserved: bool) -> _Loaded:
@@ -507,15 +562,13 @@ def _from_backup(bak_state: dict | None, bak_readonly: str | None, *, preserved:
 
 def _read() -> tuple[dict, str]:
     """读整份状态，回 `(state, status)`，status 见模块文档的四档。"""
-    loaded = _load()
+    loaded = _select_namespace(_load())
+    _remember_intent_witnesses(loaded.state)
     return loaded.state, loaded.status
 
 
-def _write(state: dict) -> None:
-    reason = state.get("_readonly")
-    if reason:
-        raise SessionStateUnavailable(f"会话状态此刻不能安全写回（{reason}）")
-    payload = {
+def _payload(state: dict) -> dict:
+    return {
         **dict(sorted(state.get("_extra", {}).items())),
         "version": FORMAT_VERSION,
         "projects": dict(sorted(state["projects"].items())),
@@ -523,6 +576,250 @@ def _write(state: dict) -> None:
         "owners": dict(sorted(state["owners"].items())),
         "owner_revisions": dict(sorted(state["owner_revisions"].items())),
     }
+
+
+def _namespace_data(state: dict):
+    namespaces = state.get("_extra", {}).get(DOCUMENT_NAMESPACES_KEY, _DROP)
+    if namespaces is _DROP:
+        return _DROP, None
+    if not isinstance(namespaces, dict):
+        return _DROP, "invalid_namespace_container"
+    data = namespaces.get(documentformat.CHART4, _DROP)
+    if data is _DROP:
+        return _DROP, None
+    if not isinstance(data, dict):
+        return _DROP, "invalid_namespace"
+    if type(data.get("version")) is not int or data["version"] != FORMAT_VERSION:
+        return data, "unknown_namespace_version"
+    return data, None
+
+
+def _select_namespace(loaded: _Loaded) -> _Loaded:
+    namespace = _NAMESPACE.get()
+    if namespace is None:
+        return loaded
+    outer = loaded.state
+    data, reason = _namespace_data(outer)
+    state = _parse_state(data) if isinstance(data, dict) else _empty()
+    state["_outer_state"], state["_namespace"] = outer, namespace
+    reason = outer.get("_readonly") or reason
+    if reason:
+        state["_readonly"] = reason
+    return _Loaded(state, STATUS_DEGRADED if reason else loaded.status)
+
+
+def _intent_data(outer: dict) -> tuple[Any, str | None]:
+    """新块严格闭集；旧程序保留未知块，新程序不能把未来语义整写掉。"""
+    data = outer.get("_extra", {}).get(OPEN_INTENTS_KEY, _DROP)
+    if data is _DROP:
+        return data, None
+    if not isinstance(data, dict) or set(data) != {"version", "projects", "no_project"}:
+        return data, "invalid_open_intents"
+    if type(data["version"]) is not int or data["version"] != OPEN_INTENTS_VERSION:
+        return data, "unknown_open_intents_version"
+    projects = data["projects"]
+    if not isinstance(projects, dict) or any(not isinstance(k, str) or not k for k in projects):
+        return data, "invalid_open_intents"
+    rows = list(projects.values())
+    if data["no_project"] is not None:
+        rows.append(data["no_project"])
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != _INTENT_ROW_KEYS:
+            return data, "invalid_open_intent"
+        seq = row["sequence"]
+        witness = row["witness"]
+        if type(seq) is not int or not 1 <= seq <= _MAX_INTENT_SEQUENCE:
+            return data, "invalid_open_intent"
+        if not isinstance(witness, str) or re.fullmatch(r"[0-9a-f]{64}", witness) is None:
+            return data, "invalid_open_intent"
+        latest = row["latest"]
+        if latest is not None and (
+            not isinstance(latest, dict)
+            or set(latest) != _INTENT_LATEST_KEYS
+            or latest["document_format"] not in (documentformat.LEGACY, documentformat.CHART4)
+            or not valid_doc_id(latest["doc_id"])
+            or latest["pointer"] not in ("last", "pending")
+        ):
+            return data, "invalid_open_intent"
+    return data, None
+
+
+def _intent_outer(state: dict) -> dict:
+    return state.get("_outer_state", state)
+
+
+def _intent_groups(state: dict, key: str | None) -> dict | None:
+    outer = _intent_outer(state)
+    data, reason = _namespace_data(outer)
+    if reason:
+        return None
+    chart = (
+        state
+        if state.get("_namespace") == documentformat.CHART4
+        else (_parse_state(data) if isinstance(data, dict) else _empty())
+    )
+    return {
+        documentformat.LEGACY: _group_view(outer, key),
+        documentformat.CHART4: _group_view(chart, key),
+    }
+
+
+def _intent_digest(value: dict) -> str:
+    return hashlib.sha256(atomicio.dumps_json(value)).hexdigest()
+
+
+def _intent_witness(groups: dict) -> str:
+    return _intent_digest(
+        {
+            fmt: {pointer: group.get(pointer) for pointer in ("last", "pending")}
+            for fmt, group in groups.items()
+        }
+    )
+
+
+def _intent_row(data: Any, key: str | None) -> dict | None:
+    if data is _DROP:
+        return None
+    return data["no_project"] if key is None else data["projects"].get(key)
+
+
+def _intent_target_matches(groups: dict, latest: dict | None) -> bool:
+    if latest is None:
+        return True
+    target = groups[latest["document_format"]].get(latest["pointer"])
+    return target is not None and target["doc_id"] == latest["doc_id"]
+
+
+def _intent_view(state: dict, key: str | None) -> dict:
+    outer = _intent_outer(state)
+    base = {"version": OPEN_INTENTS_VERSION}
+    data, reason = _intent_data(outer)
+    groups = _intent_groups(state, key)
+    if state.get("_readonly") or outer.get("_readonly") or reason or groups is None:
+        return {**base, "status": "unavailable"}
+    witness = _intent_witness(groups)
+    row = _intent_row(data, key)
+    # Rebuild the small closed record in fixed key order, independently of input JSON order.
+    canonical = None
+    if row:
+        latest = row["latest"]
+        canonical = {
+            "sequence": row["sequence"],
+            "latest": {k: latest[k] for k in ("document_format", "doc_id", "pointer")}
+            if latest is not None
+            else None,
+            "witness": row["witness"],
+        }
+    snapshot = _intent_digest({"current_witness": witness, "record": canonical})
+    if row is None:
+        return {**base, "status": "untracked", "snapshot": snapshot}
+    if row["witness"] != witness or not _intent_target_matches(groups, row["latest"]):
+        return {**base, "status": "stale", "snapshot": snapshot}
+    return {
+        **base,
+        "status": "ok",
+        "sequence": row["sequence"],
+        "snapshot": snapshot,
+        "latest": canonical["latest"],
+    }
+
+
+def _remember_intent_witnesses(state: dict) -> None:
+    data, reason = _intent_data(_intent_outer(state))
+    if data is _DROP or reason:
+        return
+    baseline = {}
+    for key in [*data["projects"], None]:
+        row = _intent_row(data, key)
+        if row is None:
+            continue
+        groups = _intent_groups(state, key)
+        baseline[key] = (
+            not state.get("_readonly")
+            and groups is not None
+            and row["witness"] == _intent_witness(groups)
+            and _intent_target_matches(groups, row["latest"])
+        )
+    state["_intent_baseline"] = baseline
+
+
+def _record_open_intent(state: dict, key: str | None, doc_id: str, pointer: str) -> bool:
+    outer = _intent_outer(state)
+    data, reason = _intent_data(outer)
+    groups = _intent_groups(state, key)
+    if reason or groups is None:
+        raise SessionStateUnavailable(reason or "未知文档命名空间，不能建立打开意图")
+    row = _intent_row(data, key)
+    fmt = state.get("_namespace") or documentformat.LEGACY
+    chart_group = groups[documentformat.CHART4]
+    if (
+        fmt == documentformat.LEGACY
+        and row is None
+        and not any(chart_group.get(p) for p in ("last", "pending"))
+    ):
+        return False
+    seq = (row["sequence"] if row else 0) + 1
+    if seq > _MAX_INTENT_SEQUENCE:
+        raise SessionStateUnavailable("打开意图序号已耗尽，拒绝覆盖")
+    if data is _DROP:
+        data = {"version": OPEN_INTENTS_VERSION, "projects": {}, "no_project": None}
+        outer["_extra"][OPEN_INTENTS_KEY] = data
+    row = {
+        "sequence": seq,
+        "latest": {"document_format": fmt, "doc_id": doc_id, "pointer": pointer},
+        "witness": _intent_witness(groups),
+    }
+    if key is None:
+        data["no_project"] = row
+    else:
+        data["projects"][key] = row
+    state.setdefault("_intent_baseline", {})[key] = True
+    return True
+
+
+def _sync_intent_witnesses(state: dict) -> None:
+    """只确认本次读取时可信的意图；旧程序留下的 stale 不能被普通保存洗白。"""
+    data, reason = _intent_data(_intent_outer(state))
+    if reason:
+        raise SessionStateUnavailable(reason)
+    if data is _DROP:
+        return
+    for key, trusted in state.get("_intent_baseline", {}).items():
+        if not trusted:
+            continue
+        groups = _intent_groups(state, key)
+        if groups is None:
+            raise SessionStateUnavailable("未知文档命名空间，不能确认打开意图")
+        row = _intent_row(data, key)
+        latest = row["latest"]
+        if latest is not None and not _intent_target_matches(groups, latest):
+            last = groups[latest["document_format"]].get("last")
+            if latest["pointer"] == "pending" and last and last["doc_id"] == latest["doc_id"]:
+                row["latest"] = {**latest, "pointer": "last"}
+            else:
+                row["latest"] = None
+        row["witness"] = _intent_witness(groups)
+
+
+def _write(state: dict) -> None:
+    reason = state.get("_readonly")
+    if reason:
+        raise SessionStateUnavailable(f"会话状态此刻不能安全写回（{reason}）")
+    namespace = _NAMESPACE.get()
+    if state.get("_namespace") != namespace:
+        raise SessionStateUnavailable("会话命名空间在读取后已改变")
+    reason = _metadata_reason(_intent_outer(state))
+    if reason:
+        raise SessionStateUnavailable(reason)
+    _sync_intent_witnesses(state)
+    if namespace is None:
+        payload = _payload(state)
+    else:
+        outer = state["_outer_state"]
+        namespaces = dict(outer["_extra"].get(DOCUMENT_NAMESPACES_KEY, {}))
+        namespaces[namespace] = _payload(state)
+        outer["_extra"][DOCUMENT_NAMESPACES_KEY] = namespaces
+        payload = _payload(outer)
     atomicio.write_json(state_path(), payload, indent=1)
     # 同 payload 再留一份：主文件日后坏了，这是上一份好状态。bak 写不出来不影响这次提交
     try:
@@ -546,6 +843,421 @@ def _public(state: dict) -> dict:
     return {k: v for k, v in state.items() if not k.startswith("_")}
 
 
+def _revision_value(value: object) -> bool:
+    return (
+        value is None or isinstance(value, str) and re.fullmatch(r"[0-9a-f]{32}", value) is not None
+    )
+
+
+def _axis_value(value: object) -> bool:
+    return value is None or (
+        isinstance(value, dict)
+        and set(value) == {"editor_id", "sequence"}
+        and valid_doc_id(value["editor_id"])
+        and type(value["sequence"]) is int
+        and 1 <= value["sequence"] <= _MAX_INTENT_SEQUENCE
+    )
+
+
+def _positive_sequence(value: object) -> bool:
+    return type(value) is int and 1 <= value <= _MAX_INTENT_SEQUENCE
+
+
+def _target_names(value: dict) -> bool:
+    # app 是规范名/相对落点的唯一权威；这里只核 wire 形状，不拼路径、不探测文件。
+    return all(isinstance(value.get(k), str) and bool(value[k]) for k in ("name", "file"))
+
+
+def _ticket_value(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and set(value) == _PROJECT_FILE_TICKET_KEYS
+        and _positive_sequence(value["sequence"])
+        and type(value["binding_sequence"]) is int
+        and 0 <= value["binding_sequence"] <= _MAX_INTENT_SEQUENCE
+        and _target_names(value)
+        and _revision_value(value["autosave_revision"])
+        and _axis_value(value["axis"])
+    )
+
+
+def _project_files_data(outer: dict) -> tuple[Any, str | None]:
+    data = outer.get("_extra", {}).get(PROJECT_FILES_KEY, _DROP)
+    if data is _DROP:
+        return data, None
+    if not isinstance(data, dict) or set(data) != {"version", "projects"}:
+        return data, "invalid_project_files"
+    if type(data["version"]) is not int or data["version"] != 1:
+        return data, "unknown_project_files_version"
+    if not isinstance(data["projects"], dict):
+        return data, "invalid_project_files"
+    for key, namespaces in data["projects"].items():
+        if not isinstance(key, str) or not key or not isinstance(namespaces, dict):
+            return data, "invalid_project_files"
+        if not namespaces.keys() <= documentformat.FORMATS:
+            return data, "invalid_project_files"
+        for records in namespaces.values():
+            if not isinstance(records, dict):
+                return data, "invalid_project_files"
+            for doc_id, row in records.items():
+                if (
+                    not valid_doc_id(doc_id)
+                    or not isinstance(row, dict)
+                    or set(row) != _PROJECT_FILE_ROW_KEYS
+                ):
+                    return data, "invalid_project_file"
+                if (
+                    type(row["intent_sequence"]) is not int
+                    or not 0 <= row["intent_sequence"] <= _MAX_INTENT_SEQUENCE
+                    or not _revision_value(row["working_revision"])
+                    or not _axis_value(row["axis"])
+                    or type(row["axis_known"]) is not bool
+                ):
+                    return data, "invalid_project_file"
+                target, pending = row["target"], row["pending"]
+                if target is not None and (
+                    not isinstance(target, dict)
+                    or set(target) != _PROJECT_FILE_TARGET_KEYS
+                    or not _positive_sequence(target["sequence"])
+                    or target["sequence"] > row["intent_sequence"]
+                    or not _target_names(target)
+                    or not _revision_value(target["revision"])
+                    or not _axis_value(target["synced_axis"])
+                ):
+                    return data, "invalid_project_file"
+                if pending is not None and (
+                    not _ticket_value(pending)
+                    or pending["sequence"] != row["intent_sequence"]
+                    or pending["binding_sequence"] != (target["sequence"] if target else 0)
+                ):
+                    return data, "invalid_project_file"
+    return data, None
+
+
+def _metadata_reason(outer: dict) -> str | None:
+    _data, reason = _intent_data(outer)
+    if reason:
+        return reason
+    _data, reason = _project_files_data(outer)
+    return reason
+
+
+def _project_file_address(key: object, doc_id: object) -> None:
+    if not isinstance(key, str) or not key or not valid_doc_id(doc_id):
+        raise ValueError("项目文件关联需要明确项目和工作文档 id")
+
+
+def _project_file_row(state: dict, key: str, doc_id: str, *, create: bool = False) -> dict | None:
+    outer = _intent_outer(state)
+    data, reason = _project_files_data(outer)
+    if state.get("_readonly") or reason:
+        raise SessionStateUnavailable(state.get("_readonly") or reason)
+    fmt = _NAMESPACE.get() or documentformat.LEGACY
+    if data is _DROP:
+        if not create:
+            return None
+        data = {"version": 1, "projects": {}}
+        outer["_extra"][PROJECT_FILES_KEY] = data
+    records = data["projects"].get(key, {}).get(fmt, {})
+    if doc_id not in records and create:
+        records = data["projects"].setdefault(key, {}).setdefault(fmt, {})
+        revision = state["owner_revisions"].get(doc_id)
+        records[doc_id] = {
+            "intent_sequence": 0,
+            "working_revision": revision,
+            "axis": None,
+            "axis_known": revision is None,
+            "target": None,
+            "pending": None,
+        }
+    return records.get(doc_id)
+
+
+def _project_file_view(state: dict, key: str, doc_id: str) -> dict:
+    row = _project_file_row(state, key, doc_id)
+    revision = state["owner_revisions"].get(doc_id) if row is None else row["working_revision"]
+    target = row["target"] if row else None
+    known = (
+        (
+            row["axis_known"]
+            and row["working_revision"] == state["owner_revisions"].get(doc_id)
+            and not owner_conflict(state, doc_id, key)
+        )
+        if row
+        else revision is None
+    )
+    result = {
+        "version": 1,
+        "status": "ok",
+        "binding": None,
+        "edit": {
+            "autosave_revision": revision,
+            "axis": copy.deepcopy(row["axis"]) if row else None,
+            "known": known,
+        },
+        "intent_sequence": row["intent_sequence"] if row else 0,
+    }
+    if target is not None:
+        result["binding"] = {k: target[k] for k in ("sequence", "name", "file", "revision")}
+        result["binding"]["dirty"] = not known or row["axis"] != target["synced_axis"]
+    return result
+
+
+def _actual_project_file_view(
+    state: dict, key: str, doc_id: str, actual_autosave_revision: object = _DROP
+) -> dict:
+    result = _project_file_view(state, key, doc_id)
+    if (
+        actual_autosave_revision is not _DROP
+        and actual_autosave_revision != result["edit"]["autosave_revision"]
+    ):
+        result["edit"]["known"] = False
+        if result["binding"] is not None:
+            result["binding"]["dirty"] = True
+    return result
+
+
+def read_project_file(key: str, doc_id: str, *, actual_autosave_revision: object = _DROP) -> dict:
+    """只读当前项目/格式/工作副本的关联；不观察命名文件、不更新基线。"""
+    _project_file_address(key, doc_id)
+    if actual_autosave_revision is not _DROP and not _revision_value(actual_autosave_revision):
+        raise ValueError("无效的自动保存正文证据")
+    with _LOCK:
+        state, status = _read()
+        if status == STATUS_DEGRADED:
+            return {"version": 1, "status": "unavailable"}
+        return _actual_project_file_view(state, key, doc_id, actual_autosave_revision)
+
+
+def _project_file_json(value: object) -> str:
+    try:
+        return json.dumps(
+            value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+        )
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise ValueError("无效的项目文件恢复证据") from exc
+
+
+def validate_project_file_edit(
+    edit: object, actual_base_revision: object, *, recovery: object = _DROP
+) -> None:
+    """用户编辑输入的唯一纯形状校验；无项目的保正文入口也消费本函数。"""
+    if (
+        not isinstance(edit, dict)
+        or set(edit) != {"axis", "base_axis", "base_revision"}
+        or not _axis_value(edit["axis"])
+        or not _axis_value(edit["base_axis"])
+        or not _revision_value(edit["base_revision"])
+        or not _revision_value(actual_base_revision)
+    ):
+        raise ValueError("无效的项目文件用户编辑轴")
+    if recovery is not _DROP:
+        if (
+            not isinstance(recovery, dict)
+            or set(recovery) != {"revision", "expected"}
+            or not _revision_value(recovery["revision"])
+            or not isinstance(recovery["expected"], dict)
+        ):
+            raise ValueError("无效的项目文件恢复证据")
+        _project_file_json(recovery["expected"])
+
+
+def _prepare_project_file_edit(
+    state: dict,
+    doc_id: str,
+    key: str,
+    edit: dict,
+    actual_base_revision: str | None,
+    *,
+    recovery: object = _DROP,
+) -> str:
+    row = _project_file_row(state, key, doc_id)
+    if edit["base_revision"] != actual_base_revision:
+        return "superseded"
+    if recovery is not _DROP:
+        actual = _actual_project_file_view(state, key, doc_id, actual_base_revision)
+        if recovery["revision"] != actual_base_revision or _project_file_json(
+            recovery["expected"]
+        ) != _project_file_json(actual):
+            return "unconfirmed"
+        incoming = edit["axis"]
+        if (
+            incoming is None
+            or (row is not None and incoming == row["axis"])
+            or (
+                row is not None
+                and row["target"] is not None
+                and incoming == row["target"]["synced_axis"]
+            )
+        ):
+            return "superseded"
+        return "accepted"
+    if row is None:
+        return "accepted" if edit["base_axis"] is None else "unconfirmed"
+    if not row["axis_known"] or row["working_revision"] != actual_base_revision:
+        return "unconfirmed"
+    current, incoming = row["axis"], edit["axis"]
+    if (
+        current is not None
+        and incoming is not None
+        and current["editor_id"] == incoming["editor_id"]
+    ):
+        return "accepted" if incoming["sequence"] >= current["sequence"] else "superseded"
+    if current is not None and incoming is None:
+        return "superseded"
+    if current == incoming or current == edit["base_axis"]:
+        return "accepted"
+    return "superseded"
+
+
+def prepare_project_file_edit(
+    doc_id: str,
+    key: str,
+    edit: object,
+    *,
+    actual_base_revision: str | None,
+    recovery: object = _DROP,
+) -> dict:
+    """调用方持槽位文档锁，写前用实际正文 revision 核轴；commit_slot 复用同一判据。"""
+    _project_file_address(key, doc_id)
+    validate_project_file_edit(edit, actual_base_revision, recovery=recovery)
+    with _LOCK:
+        state, _status = _read()
+        return {
+            "state": _prepare_project_file_edit(
+                state, doc_id, key, edit, actual_base_revision, recovery=recovery
+            )
+        }
+
+
+def reserve_project_file(
+    key: str,
+    doc_id: str,
+    *,
+    name: str,
+    file: str,
+    autosave_revision: str | None,
+    axis: object,
+    expected_binding_sequence: int | None = None,
+    actual_autosave_revision: object = _DROP,
+) -> dict:
+    """明确 save/open 接纳意图时预留序；不改 target/用户轴，不代表正文写成。"""
+    _project_file_address(key, doc_id)
+    if (
+        not _target_names({"name": name, "file": file})
+        or not _revision_value(autosave_revision)
+        or not _axis_value(axis)
+    ):
+        raise ValueError("无效的项目文件关联")
+    if expected_binding_sequence is not None and not _positive_sequence(expected_binding_sequence):
+        raise ValueError("无效的项目文件关联代次")
+    if actual_autosave_revision is not _DROP and not _revision_value(actual_autosave_revision):
+        raise ValueError("无效的自动保存正文证据")
+    with _LOCK:
+        state, _status = _read()
+        row = _project_file_row(state, key, doc_id, create=True)
+        if actual_autosave_revision is not _DROP and actual_autosave_revision != autosave_revision:
+            return {"state": "unconfirmed"}
+        target_sequence = row["target"]["sequence"] if row["target"] else None
+        if target_sequence != expected_binding_sequence:
+            return {"state": "superseded"}
+        if (
+            not _project_file_view(state, key, doc_id)["edit"]["known"]
+            or row["working_revision"] != autosave_revision
+            or row["axis"] != axis
+        ):
+            return {"state": "unconfirmed"}
+        sequence = row["intent_sequence"] + 1
+        if sequence > _MAX_INTENT_SEQUENCE:
+            raise SessionStateUnavailable("项目文件关联序号已耗尽")
+        ticket = {
+            "sequence": sequence,
+            "binding_sequence": target_sequence or 0,
+            "name": name,
+            "file": file,
+            "autosave_revision": autosave_revision,
+            "axis": copy.deepcopy(axis),
+        }
+        row["intent_sequence"], row["pending"] = sequence, ticket
+        _write(state)
+        return {"state": "reserved", "ticket": copy.deepcopy(ticket)}
+
+
+def commit_project_file(key: str, doc_id: str, ticket: object, *, revision: str) -> dict:
+    """仅正文成功后调用；旧票据不能改绑，完整票据逐字段核服务器 pending。"""
+    _project_file_address(key, doc_id)
+    if not _ticket_value(ticket) or not isinstance(revision, str) or not _revision_value(revision):
+        raise ValueError("无效的项目文件保存回执")
+    with _LOCK:
+        state, _status = _read()
+        row = _project_file_row(state, key, doc_id)
+        if row is None or row["pending"] != ticket or row["intent_sequence"] != ticket["sequence"]:
+            return {"state": "superseded"}
+        target_sequence = row["target"]["sequence"] if row["target"] else 0
+        if target_sequence != ticket["binding_sequence"]:
+            return {"state": "superseded"}
+        row["target"] = {
+            "sequence": ticket["sequence"],
+            "name": ticket["name"],
+            "file": ticket["file"],
+            "revision": revision,
+            "synced_axis": copy.deepcopy(ticket["axis"]),
+        }
+        row["pending"] = None
+        _write(state)
+        return {"state": "bound", **_project_file_view(state, key, doc_id)}
+
+
+def pending_project_file(key: str, doc_id: str, sequence: int, *, name: str, file: str) -> dict:
+    """HTTP 只需意图序号；app 规范目标后从服务器取完整票据，commit 仍会重核。"""
+    _project_file_address(key, doc_id)
+    if not _positive_sequence(sequence) or not _target_names({"name": name, "file": file}):
+        raise ValueError("无效的项目文件关联意图")
+    with _LOCK:
+        state, _status = _read()
+        row = _project_file_row(state, key, doc_id)
+        ticket = row["pending"] if row else None
+        if (
+            ticket is None
+            or ticket["sequence"] != sequence
+            or (ticket["name"], ticket["file"]) != (name, file)
+        ):
+            return {"state": "superseded"}
+        return {"state": "pending", "ticket": copy.deepcopy(ticket)}
+
+
+def _cancel_project_file_pending(state: dict, row: dict | None, ticket: object) -> dict:
+    if row is None or ticket is None or row["pending"] != ticket:
+        return {"state": "superseded"}
+    row["pending"] = None
+    _write(state)
+    return {"state": "cancelled"}
+
+
+def cancel_project_file(key: str, doc_id: str, ticket: object) -> dict:
+    _project_file_address(key, doc_id)
+    if not _ticket_value(ticket):
+        raise ValueError("无效的项目文件关联票据")
+    with _LOCK:
+        state, _status = _read()
+        row = _project_file_row(state, key, doc_id)
+        return _cancel_project_file_pending(state, row, ticket)
+
+
+def cancel_project_file_intent(key: str, doc_id: str, sequence: int) -> dict:
+    """HTTP 取消只携序数；同一会话锁内匹配当前 pending，不接客户端票据或目标。"""
+    _project_file_address(key, doc_id)
+    if not _positive_sequence(sequence):
+        raise ValueError("无效的项目文件关联意图")
+    with _LOCK:
+        state, _status = _read()
+        row = _project_file_row(state, key, doc_id)
+        ticket = row["pending"] if row else None
+        if ticket is not None and ticket["sequence"] != sequence:
+            ticket = None
+        return _cancel_project_file_pending(state, row, ticket)
+
+
 def snapshot() -> dict:
     """整份状态的一份拷贝（测试与诊断用；不回给前端——里面有项目路径）。"""
     with _LOCK:
@@ -557,12 +1269,12 @@ def read_status() -> str:
     """当前读取结果四档之一。不写任何东西（不留损坏副本、不建锁文件）。
 
     只读路径**不拿锁**：主文件只会被 `atomicio` 整份原子替换，读到的永远是完整的一份（旧或新）。"""
-    return _load(preserve=False).status
+    return _select_namespace(_load(preserve=False)).status
 
 
 def read_readonly() -> tuple[dict, str]:
     """`(state, status)`，**不写任何东西、不拿锁**——候选发现这类只读端点用。"""
-    loaded = _load(preserve=False)
+    loaded = _select_namespace(_load(preserve=False))
     return _public(loaded.state), loaded.status
 
 
@@ -626,6 +1338,8 @@ def view_for(
     key: str | None,
     rev_of: Callable[[str], str | None] | None = None,
     lock_of: Callable[[str], ContextManager[Any]] | None = None,
+    *,
+    include_open_intent: bool = False,
 ) -> dict:
     """这个项目（`None` = 没开项目）的 `{last, prev, pending, index}`。
 
@@ -635,7 +1349,15 @@ def view_for(
     端点给 `lock_of` 时逐指针取槽位文档锁，在锁里重读会话状态与 revision；指针换了槽位就重试。
     整组指针在收集前后也要相同，否则从头重读；不能把不同代的 last / prev 拼成完整会话。
     给了 `rev_of` 时每个指针多一个 `revision`：校验用的那份快照的 revision，见上。
+    `include_open_intent=True` 才附跨格式意图；默认响应逐字段保持旧合同。
     """
+
+    def degraded():
+        result = {**dict.fromkeys(POINTERS), "index": STATUS_DEGRADED}
+        if include_open_intent:
+            result["open_intent"] = {"version": OPEN_INTENTS_VERSION, "status": "unavailable"}
+        return result
+
     seen_degraded = False
     for _group_attempt in range(3):
         with _LOCK:
@@ -643,8 +1365,9 @@ def view_for(
         seen_degraded |= status == STATUS_DEGRADED
         if seen_degraded:
             # 未来格式可能有可解析的旧字段，但这些指针的语义/归属未必仍可信。
-            return {**dict.fromkeys(POINTERS), "index": STATUS_DEGRADED}
+            return degraded()
         baseline = _group_view(state, key)
+        baseline_intent = _intent_view(state, key) if include_open_intent else None
         out: dict[str, Any] = {}
         changed_group = False
         unstable = False
@@ -661,6 +1384,8 @@ def view_for(
                         seen_degraded |= status == STATUS_DEGRADED
                         fresh_group = _group_view(state, key)
                         changed_group |= fresh_group != baseline
+                        if include_open_intent:
+                            changed_group |= _intent_view(state, key) != baseline_intent
                         fresh = fresh_group.get(name)
                         if fresh is None:
                             out[name] = None
@@ -690,13 +1415,21 @@ def view_for(
         with _LOCK:
             final_state, final_status = _read()
         seen_degraded |= final_status == STATUS_DEGRADED
-        if not unstable and not changed_group and _group_view(final_state, key) == baseline:
+        stable_intent = not include_open_intent or _intent_view(final_state, key) == baseline_intent
+        if (
+            not unstable
+            and not changed_group
+            and stable_intent
+            and _group_view(final_state, key) == baseline
+        ):
             if seen_degraded:
-                return {**dict.fromkeys(POINTERS), "index": STATUS_DEGRADED}
+                return degraded()
             out["index"] = final_status
+            if include_open_intent:
+                out["open_intent"] = baseline_intent
             return out
     # 状态一直在移动，返回可重试的退化结果，绝不把混代指针当成完整快照。
-    return {**dict.fromkeys(POINTERS), "index": STATUS_DEGRADED}
+    return degraded()
 
 
 def last_for(key: str | None, rev_of: Callable[[str], str | None] | None = None) -> dict | None:
@@ -733,6 +1466,7 @@ def set_last(
     slot_ok: bool = True,
     current_revision: str | None = None,
     slot_check: Callable[[], bool] | None = None,
+    repair: bool = False,
 ) -> dict:
     """记「这个项目现在想打开这份排版」。
 
@@ -751,9 +1485,13 @@ def set_last(
     它和槽位删除（`delete_slot` / `remove_slot_unless_protected` 在会话锁里 unlink）被同一把跨进程锁串行：
     另一个进程在「验证」与「发布」之间删掉槽位，这里要么看到它已没了（记 pending），要么它在我们之后才删
     （此时 last 已发布、删除方在锁里重判保护，删不掉）。回调里不许解析正文、不许取文档锁。
+    `repair=True` 只确认共享账本已有的同一意图，不分新序号；新目标已取代它时回 superseded，
+    缺证据回 unconfirmed，二者均不改盘。只有本项目纯 legacy、无共享条目时保留旧补推行为。
     `ValueError`：doc_id 形状不对 / name 不是字符串。`ForeignLayoutError`：槽位确知属于别的项目
     （`owner_conflict`），一个字节都不写。`SessionStateUnavailable` / `atomicio.AtomicWriteError`：写不进去。
     """
+    if type(repair) is not bool:
+        raise ValueError("repair 必须是布尔值")
     if not valid_doc_id(doc_id):
         raise ValueError("doc_id 形状不对")
     if not isinstance(name, str):
@@ -769,6 +1507,35 @@ def set_last(
         pend = group.get("pending")
         if slot_ok and slot_check is not None and not slot_check():
             slot_ok = False
+        if repair:
+            if state.get("_readonly"):
+                raise SessionStateUnavailable(state["_readonly"])
+            intent = _intent_view(state, key)
+            groups = _intent_groups(state, key)
+            data, _reason = _intent_data(_intent_outer(state))
+            legacy_only = (
+                _NAMESPACE.get() is None
+                and _intent_row(data, key) is None
+                and groups is not None
+                and not any(groups[documentformat.CHART4].get(p) for p in ("last", "pending"))
+            )
+            if not legacy_only:
+                if intent["status"] == "unavailable":
+                    raise SessionStateUnavailable("打开意图不可用，拒绝补推")
+                response = {"last": dict(cur) if cur else None}
+                if intent["status"] != "ok":
+                    return {**response, "state": "unconfirmed"}
+                latest = intent["latest"]
+                fmt = _NAMESPACE.get() or documentformat.LEGACY
+                if latest is None or (latest["document_format"], latest["doc_id"]) != (fmt, doc_id):
+                    return {**response, "state": "superseded"}
+                if latest["pointer"] == "last":
+                    return {**response, "state": "durable" if slot_ok else "unconfirmed"}
+                if not slot_ok:
+                    return {**response, "pending": dict(pend), "state": "pending"}
+                _promote(group, {**pend, "at": _next_at(group)})
+                _write(state)
+                return {"last": dict(group["last"]), "state": "durable"}
         if slot_ok:
             # durable 打开**总是**前进 `at` 并写盘，哪怕 (doc_id, name) 没变：再次明确打开同一份排版
             # 是比别的 profile 里还悬着的 pending 更晚的意图，令牌不前进的话那个 pending 会被当成更新的而翻案。
@@ -781,10 +1548,14 @@ def set_last(
             # pending 只是「最新的、还没 durable 的意图」：更晚的 durable 打开取代它，不管它指着谁
             # （否则 A→B(pending)→A(durable) 之后 B 的首次保存会把过期的 pending 晋升、顶掉 A）
             group.pop("pending", None)
+            _record_open_intent(state, key, doc_id, "last")
             _write(state)
             return {"last": dict(group["last"]), "state": "durable"}
-        if not (pend and pend["doc_id"] == doc_id and pend["name"] == name):
+        changed_pending = not (pend and pend["doc_id"] == doc_id and pend["name"] == name)
+        if changed_pending:
             group["pending"] = {"doc_id": doc_id, "name": name, "at": _now_ms()}
+        recorded = _record_open_intent(state, key, doc_id, "pending")
+        if changed_pending or recorded:
             _write(state)
         return {
             "last": dict(cur) if cur else None,
@@ -796,7 +1567,15 @@ def set_last(
 # ------------------------------- owners ------------------------------------
 
 
-def commit_slot(doc_id: str, key: str | None | Any, revision: str) -> dict:
+def commit_slot(
+    doc_id: str,
+    key: str | None | Any,
+    revision: str,
+    *,
+    project_file_edit: object = _DROP,
+    actual_base_revision: object = _DROP,
+    project_file_recovery: object = _DROP,
+) -> dict:
     """正文刚落盘成功的**同一个提交**：记归属、记归属对应的正文 revision、晋升匹配的 pending。
 
     调用方（`PUT /api/autosave/<id>`）在槽位的 `_document_lock` 里调，所以「这份正文是谁的」与
@@ -808,14 +1587,62 @@ def commit_slot(doc_id: str, key: str | None | Any, revision: str) -> dict:
     回 `{"owner": "recorded"|"unchanged"|"skipped", "promoted": bool}`。
     `SessionStateUnavailable` / `AtomicWriteError`（都是 `OSError`）：元数据没提交，正文不受影响。
     """
+    has_edit = project_file_edit is not _DROP
+    if project_file_recovery is not _DROP and not has_edit:
+        raise ValueError("项目文件恢复必须携带用户编辑轴")
+    if has_edit:
+        validate_project_file_edit(
+            project_file_edit, actual_base_revision, recovery=project_file_recovery
+        )
+        if not isinstance(revision, str) or not _revision_value(revision):
+            raise ValueError("无效的自动保存 revision")
+        if key is not None and key is not UNKNOWN:
+            _project_file_address(key, doc_id)
+        if project_file_recovery is not _DROP:
+            _project_file_address(key, doc_id)
     if key is UNKNOWN or not valid_doc_id(doc_id) or not isinstance(revision, str) or not revision:
         return {"owner": "skipped", "promoted": False}
     with _LOCK:
         state, _status = _read()
+        project_file_state = "skipped"
+        binding_row = None
+        if isinstance(key, str):
+            if has_edit:
+                project_file_state = _prepare_project_file_edit(
+                    state,
+                    doc_id,
+                    key,
+                    project_file_edit,
+                    actual_base_revision,
+                    recovery=project_file_recovery,
+                )
+                if project_file_state != "accepted":
+                    return {
+                        "owner": "skipped",
+                        "promoted": False,
+                        "project_file": {"state": project_file_state},
+                    }
+            binding_row = _project_file_row(state, key, doc_id, create=has_edit)
         owners_ = state["owners"]
         revisions = state["owner_revisions"]
         changed = False
         result = "unchanged"
+        if binding_row is not None:
+            next_axis = (
+                copy.deepcopy(project_file_edit["axis"]) if has_edit else binding_row["axis"]
+            )
+            known = has_edit
+            if (
+                binding_row["working_revision"],
+                binding_row["axis"],
+                binding_row["axis_known"],
+            ) != (revision, next_axis, known):
+                binding_row["working_revision"], binding_row["axis"], binding_row["axis_known"] = (
+                    revision,
+                    next_axis,
+                    known,
+                )
+                changed = True
         if not (doc_id in owners_ and owners_[doc_id] == key and revisions.get(doc_id) == revision):
             owners_[doc_id] = key
             revisions[doc_id] = revision
@@ -830,7 +1657,12 @@ def commit_slot(doc_id: str, key: str | None | Any, revision: str) -> dict:
             promoted = True
         if changed:
             _write(state)
-        return {"owner": result, "promoted": promoted}
+        response = {"owner": result, "promoted": promoted}
+        if has_edit:
+            response["project_file"] = {"state": project_file_state}
+            if isinstance(key, str):
+                response["project_file"].update(_project_file_view(state, key, doc_id))
+        return response
 
 
 def record_owner(doc_id: str, key: str | None, revision: str | None = None) -> bool:
@@ -883,12 +1715,50 @@ def protected_doc_ids() -> set[str]:
     return _protected(state)
 
 
+def _forget_project_files(state: dict, gone: set[str] | None, *, key: object = _DROP) -> bool:
+    data, reason = _project_files_data(_intent_outer(state))
+    if reason:
+        raise SessionStateUnavailable(reason)
+    if data is _DROP:
+        return False
+    changed = False
+    fmt = _NAMESPACE.get() or documentformat.LEGACY
+    for project, namespaces in data["projects"].items():
+        if key is not _DROP and project != key:
+            continue
+        for doc_id, row in namespaces.get(fmt, {}).items():
+            if gone is not None and doc_id not in gone:
+                continue
+            if (
+                row["target"] is None
+                and row["pending"] is None
+                and row["working_revision"] is None
+                and row["axis"] is None
+                and row["axis_known"]
+            ):
+                continue
+            if row["intent_sequence"] >= _MAX_INTENT_SEQUENCE:
+                raise SessionStateUnavailable("项目文件关联序号已耗尽")
+            row.update(
+                {
+                    "intent_sequence": row["intent_sequence"] + 1,
+                    "working_revision": None,
+                    "axis": None,
+                    "axis_known": True,
+                    "target": None,
+                    "pending": None,
+                }
+            )
+            changed = True
+    return changed
+
+
 def _forget_locked(state: dict, gone: set[str]) -> tuple[list[str], bool]:
     """在 `_LOCK` 里改 `state`：删掉这些槽位的归属与指向它们的 last / prev / pending。回（删掉的归属，改没改）。"""
     removed = sorted(d for d in gone if d in state["owners"])
     for d in removed:
         del state["owners"][d]
-    changed = bool(removed)
+    changed = _forget_project_files(state, gone) or bool(removed)
     for d in gone:
         if d in state["owner_revisions"]:
             del state["owner_revisions"][d]
@@ -953,6 +1823,9 @@ def delete_slot(doc_id: str, remove: Callable[[], bool]) -> bool:
     只记日志（文件已删是事实）。锁拿不到抛 `SessionStateUnavailable`，此时文件没动。"""
     with _LOCK:
         state, _status = _read()
+        reason = _metadata_reason(_intent_outer(state))
+        if reason:
+            raise SessionStateUnavailable(reason)
         gone = remove()
         if gone:
             _removed, changed = _forget_locked(state, {doc_id})
@@ -991,7 +1864,7 @@ def forget_project(key: str | None, doc_ids: Iterable[str] = ()) -> bool:
     gone = {d for d in doc_ids if isinstance(d, str)}
     with _LOCK:
         state, _status = _read()
-        changed = False
+        changed = _forget_project_files(state, None, key=key)
         if key is None:
             if state["no_project"]:
                 state["no_project"] = {}

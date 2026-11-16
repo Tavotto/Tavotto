@@ -160,10 +160,25 @@ describe('successful executions survive document restoration', () => {
     app.doc.settleRestore(token, { state: 'ready', reason: 'restored' })
     await vi.waitFor(() => expect(be.writes()).toContain('PUT autosave a-layout'), { timeout: 2200 })
     expect(be.writes()).not.toContain('PUT autosave b-layout')
-    await app.doc.useDocumentStore.getState().switchDocument(savedDocument(), 'historical-a')
-    await Promise.resolve()
+    let stopHistoricalSave = () => {}
+    const historicalSaved = new Promise<void>((resolve) => {
+      stopHistoricalSave = app.doc.onDocumentPersisted((id, pj) => {
+        if (id === 'historical-a' && pj === 'pj-a') resolve()
+      })
+    })
+    try {
+      await app.doc.useDocumentStore.getState().switchDocument(savedDocument(), 'historical-a')
+      // Installing queues the original writer; only its persisted event proves completion.
+      await historicalSaved
+      await Promise.resolve()
+    } finally {
+      stopHistoricalSave()
+    }
     expect((app.doc.useDocumentStore.getState().doc.objects[0] as PanelObject).figureSnapshot).toEqual(snapshot('Fig1.png'))
-    expect(app.doc.useDocumentStore.getState().saveState).toBe('clean')
+    const historical = JSON.parse(be.state.slots.get('historical-a')!.body) as ProjectDocument
+    expect((historical.canvases[0].objects[0] as PanelObject).figureSnapshot).toEqual(snapshot('Fig1.png'))
+    expect(be.writes().filter((write) => write === 'PUT autosave historical-a')).toHaveLength(1)
+    expect(['saved', 'clean']).toContain(app.doc.useDocumentStore.getState().saveState)
     // A new explicit run still affects that historical document even though gate.docId names the
     // earlier restoration. Only replay of the already-consumed old run was suppressed above.
     await completeRun(app, 'script')

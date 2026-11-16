@@ -1,3 +1,4 @@
+import { documentAddressKey, type DocumentFormat } from '@/lib/documentFormat'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg } from '@/i18n'
@@ -6,7 +7,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { fetchLayoutOwnerEvidence, type RecoveryCandidateItem } from '@/lib/api'
 import {
   hasMore,
-  loadCandidates,
+  loadAllCandidates,
   recoverCopy,
   rowIssue,
   type CandidateList,
@@ -15,6 +16,8 @@ import {
   type RowIssue,
 } from '@/lib/recoveryCandidates'
 import { currentProjectId } from '@/lib/session'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
+import type { PreviewOwner } from '@/lib/previewOwner'
 import { correctRecordedProject, isForeignDocument } from '@/lib/docOwnership'
 import { cn } from '@/lib/utils'
 import { openDocumentAs } from '@/store/actions'
@@ -68,7 +71,7 @@ const OPEN_FAILURE_OWNER = 'layout.recoverOpenFailure'
 
 export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t } = useTranslation(['dialogs', 'common'])
-  const currentId = useDocumentStore((s) => s.documentId)
+  const currentId = useDocumentStore((s) => documentAddressKey(s.documentId, s.documentFormat))
   /** 项目换了（对话框开着时桌面交接等）：两组列表都是上一个项目的，丢掉重读 */
   const projectKey = useProjectStore((s) => s.project?.id ?? null)
   const [project, setProject] = useState<Group>({ state: 'idle' })
@@ -84,6 +87,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
   const gone = useRef(new Set<string>())
   /** 每组列表是替哪个项目读的：点击时对不上此刻的项目就拒绝（界面还没来得及换也不放行） */
   const listPj = useRef<{ project: string | null; unknown: string | null }>({ project: null, unknown: null })
+  const previewOwners = useRef(new WeakMap<RecoveryCandidateItem, PreviewOwner>())
 
   const load = useCallback(
     async (scope: 'project' | 'unknown', prev?: CandidateList) => {
@@ -91,9 +95,24 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
       const mine = seq.current
       set(prev ? { state: 'loading', list: prev } : { state: 'loading' })
       const pj = currentProjectId()
+      const epoch = captureProjectEpoch()
       listPj.current[scope] = pj
-      const res = await loadCandidates(scope, pj, prev, new Set([useDocumentStore.getState().documentId, ...gone.current]))
-      if (mine !== seq.current) return
+      const current = useDocumentStore.getState()
+      const res = await loadAllCandidates(scope, pj, prev, new Set([documentAddressKey(current.documentId, current.documentFormat), ...gone.current]))
+      if (mine !== seq.current || !epoch.still()) return
+      if (res.kind === 'ok') {
+        for (const item of res.list.rows) {
+          const owner: PreviewOwner = {
+            pj,
+            key: JSON.stringify(['recovery', pj, epoch.generation, mine, scope, item.doc_id, item.revision]),
+            // 草图可在 needs_user 下展示；只有候选自己的归属证据能授权取本项目媒体。
+            still: () => scope === 'project' && item.owner === 'this' && item.evidence !== null
+              && epoch.still() && mine === seq.current,
+            refresh: () => owner,
+          }
+          previewOwners.current.set(item, owner)
+        }
+      }
       set(asGroup(res))
     },
     [],
@@ -123,10 +142,11 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
     expectedRevision: string | null,
     scope: 'project' | 'unknown',
     verifiedTarget = false,
+    format: DocumentFormat = 'legacy',
     attempt = 0,
   ): Promise<boolean> => {
     const ctx = captureSaveContext()
-    const probe = await probeDocument(id, ctx.pj)
+    const probe = await probeDocument(id, ctx.pj, ...(format === 'v4' ? [format] : []))
     if (!stillCurrent(ctx)) {
       useUiStore.getState().setStatus(msg('layout.openSkipped', { name }, 'dialogs'), 'error')
       return false
@@ -137,7 +157,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
         useUiStore.getState().setStatus(msg('status.recentTooNew', undefined, 'workspace'), 'error', { action: tooNewAction() })
       } else if (probe.kind === 'missing') {
         // 确认不在了：这一行从列表里去掉（本机槽位里的数据不动）并说一句，列表按新状态重读
-        gone.current.add(id)
+        gone.current.add(documentAddressKey(id, format))
         dropRecentEntry(id)
         useUiStore.getState().setStatus(msg('status.recentMissing', undefined, 'workspace'), 'info')
         seq.current += 1
@@ -157,7 +177,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
               run: async (next) => {
                 // 点的时候已换了项目：只收提示
                 if (currentProjectId() !== ctx.pj) return
-                if (await openSafely(id, name, expectedRevision, scope, verifiedTarget, next)) onClose()
+                if (await openSafely(id, name, expectedRevision, scope, verifiedTarget, format, next)) onClose()
               },
             }),
           },
@@ -176,7 +196,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
       return false
     }
     if (expectedRevision !== null && diskRevision !== null && diskRevision !== expectedRevision) {
-      const ev = await fetchLayoutOwnerEvidence(id, ctx.pj)
+      const ev = await fetchLayoutOwnerEvidence(id, ctx.pj, ...(format === 'v4' ? [format] : []))
       // 结论还要绑在刚探测到的这一版正文上：revision 对不上（下结论之后又被存了新的一版）就不算
       const mine = ev !== 'unsupported' && ev !== 'unavailable' && ev.owner === 'this' && ev.verified && ev.revision === diskRevision
       if (!stillCurrent(ctx)) {
@@ -193,17 +213,17 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
     let notice: ReturnType<typeof acceptProbe> = null
     const beforeInstall = async () => {
       if (!stillCurrent(ctx)) return false
-      if ((scope !== 'project' && !verifiedTarget) || !isForeignDocument(id, ctx.pj)) {
+      if ((scope !== 'project' && !verifiedTarget) || !isForeignDocument(id, ctx.pj, ...(format === 'v4' ? [format] : []))) {
         notice = acceptProbe(probe, ctx.pj)
         return true
       }
       if (ctx.pj === null) return false
       // 本机索引还记着旧项目：列表行必须再有针对刚读到的正文的权威 owners 结论。
-      const ev = await fetchLayoutOwnerEvidence(id, ctx.pj)
+      const ev = await fetchLayoutOwnerEvidence(id, ctx.pj, ...(format === 'v4' ? [format] : []))
       if (!stillCurrent(ctx)) return false
       if (diskRevision && ev !== 'unsupported' && ev !== 'unavailable' &&
           ev.owner === 'this' && ev.evidence === 'owners' && ev.verified && ev.revision === diskRevision) {
-        correctRecordedProject(id, ctx.pj)
+        correctRecordedProject(id, ctx.pj, ...(format === 'v4' ? [format] : []))
         notice = acceptProbe(probe, ctx.pj)
         return true
       }
@@ -212,7 +232,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
       void load(scope)
       return false
     }
-    if (!(await openDocumentAs(probe.doc, id, { stillCurrent: () => stillCurrent(ctx), beforeInstall }))) return false
+    if (!(await openDocumentAs(probe.doc, id, { stillCurrent: () => stillCurrent(ctx), beforeInstall, ...(format === 'v4' ? { format } : {}) }))) return false
     // 未决的恢复副本跟着这份文档走：switchDocument 刚把待裁决事项清空了
     if (notice) useDocumentStore.setState({ docNotice: notice })
     return useDocumentStore.getState().documentId === id
@@ -234,7 +254,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
     inFlight.current = true
     setBusy(true)
     try {
-      if (await openSafely(it.doc_id, it.name, it.revision, 'project')) onClose()
+      if (await openSafely(it.doc_id, it.name, it.revision, 'project', false, it.format)) onClose()
     } finally {
       inFlight.current = false
       setBusy(false)
@@ -272,7 +292,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
       const r = await recoverCopy(it, {
         pj: ctx.pj,
         stillCurrent: () => stillCurrent(ctx),
-        openExisting: (id, revision) => openSafely(id, it.name, revision, 'unknown', true),
+        openExisting: (id, revision) => openSafely(id, it.name, revision, 'unknown', true, it.format),
         install: (pd, id) => openDocumentAs(pd, id, { stillCurrent: () => stillCurrent(ctx) }),
       })
       if (r.kind === 'opened') {
@@ -351,9 +371,10 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
           )}
           <ul className="-mx-1 flex max-h-60 flex-col gap-0.5 overflow-y-auto">
             {ownRows.map((it) => (
-              <li key={it.doc_id} className="flex">
+              <li key={documentAddressKey(it.doc_id, it.format)} className="flex">
                 <Row
                   item={it}
+                  owner={previewOwners.current.get(it)}
                   currentId={currentId}
                   busy={busy}
                   onActivate={() => void openOwn(it)}
@@ -399,11 +420,12 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
               <ul className="-mx-1 flex max-h-72 flex-col gap-0.5 overflow-y-auto">
                 {otherRows.map((it) => {
                   const issue = rowIssue(it)
-                  const isSel = selected === it.doc_id
+                  const isSel = selected === documentAddressKey(it.doc_id, it.format)
                   return (
-                    <li key={it.doc_id} className="flex flex-col">
+                    <li key={documentAddressKey(it.doc_id, it.format)} className="flex flex-col">
                       <Row
                         item={it}
+                        owner={previewOwners.current.get(it)}
                         currentId={currentId}
                         busy={busy}
                         selected={isSel}
@@ -450,6 +472,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
 
 function Row({
   item,
+  owner,
   currentId,
   busy,
   selected = false,
@@ -457,6 +480,7 @@ function Row({
   action,
 }: {
   item: RecoveryCandidateItem
+  owner: PreviewOwner | undefined
   currentId: string
   busy: boolean
   selected?: boolean
@@ -472,7 +496,8 @@ function Row({
     <button
       type="button"
       data-recover-row={item.doc_id}
-      disabled={busy || issue !== null || item.doc_id === currentId}
+      data-document-format={item.format ?? 'legacy'}
+      disabled={busy || issue !== null || documentAddressKey(item.doc_id, item.format) === currentId}
       aria-expanded={action ? undefined : selected}
       onClick={onActivate}
       className={cn(
@@ -481,14 +506,14 @@ function Row({
       )}
     >
       {item.sketch ? (
-        <CanvasThumb page={item.sketch.page} objects={item.sketch.objects} />
+        <CanvasThumb page={item.sketch.page} objects={item.sketch.objects} owner={owner} />
       ) : (
         <span aria-hidden className="grid h-10 w-14 shrink-0 place-items-center">
           <FolderOpen size={ICON_SIZE.sm} className="text-ink-3" />
         </span>
       )}
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate">{item.name || t('dialogs:layout.recoverUnnamed')}</span>
+        <span className="truncate">{item.name || t('dialogs:layout.recoverUnnamed')}{item.format === 'v4' && <span className="ml-2 type-meta">{t('dialogs:layout.computationalFormat')}</span>}</span>
         <span className={cn(rowMetaClass(selected), 'truncate')}>
           {issue
             ? t(ISSUE_KEY[issue] as 'dialogs:layout.recoverIssueInvalid')

@@ -10,8 +10,9 @@ import { UpdateSourceButton, WriteBackRecordsButton } from './UpdateSourceButton
  * 「同步修改到…」搬到画布对象的右键菜单（`canvas/ObjectContextMenu`），这一行不再有它。
  */
 export function OriginalFileActions({ panel }: { panel: PanelObject }) {
-  // 写回与写回记录读的都是「脚本产出的那张原件」：没有脚本时它们无从谈起，不渲染
-  if (!panel.script) return null
+  // 写回与写回记录读的都是「脚本产出的那张原件」：没有脚本、也没有已验证的历史来源时
+  // 它们无从谈起，不渲染。历史来源的 owner 由后端按 receipt 核，不借当前同名文件的 script。
+  if (!panel.script && panel.figureOrigin === undefined) return null
   return (
     <div className="flex flex-wrap items-center gap-1">
       <UpdateSourceButton panel={panel} />

@@ -1,3 +1,4 @@
+import type { DocumentFormat } from '@/lib/documentFormat'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Bookmark, ChevronDown, Copy, Eye, Minus, Pencil, Plus, RotateCcw, Trash2 } from '@/components/ui/icons'
@@ -40,11 +41,14 @@ import type { UiMessage } from '@/i18n/message'
 import { formatDate, formatTime } from '@/i18n/format'
 import { closeTimeline, restoreLayoutVersion } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
-import { useDocumentStore } from '@/store/documentStore'
+import { captureDocumentPreviewOwner, useDocumentStore } from '@/store/documentStore'
+import type { PreviewOwner } from '@/lib/previewOwner'
+import { useDocumentPreviewOwner } from '@/hooks/useDocumentPreviewOwner'
 import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { useTimelineStore } from '@/store/timelineStore'
 import { useInFlight } from '@/hooks/useInFlight'
 import { useVariantPng, variantNeedsRender } from '@/hooks/useVariantPng'
+import { figureSnapshotPreviewArgs, hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
 import { MM_PER_PT, pickBucket } from '@/lib/units'
 import {
   documentDigest,
@@ -89,6 +93,16 @@ import { isAdoptedPanel, adoptionGuardOf } from '@/lib/artifactValidation'
  * 不触碰 figures 里的任何文件。
  */
 /** 本抽屉的文案在 dialogs:versions.* 下 */
+// 历史正文属于取回它的项目，不是稍后挂载预览时的 current pj；WeakMap 不延长正文寿命。
+const versionPreviewOwners = new WeakMap<FigureDocument, PreviewOwner>()
+async function fetchOwnedVersionDoc(...args: Parameters<typeof fetchVersionDoc>): ReturnType<typeof fetchVersionDoc> {
+  const owner = captureDocumentPreviewOwner()
+  if (!owner.still()) throw new DOMException('The preview owner is no longer active.', 'AbortError')
+  const result = await fetchVersionDoc(args[0], args[1], args[2], owner.pj)
+  versionPreviewOwners.set(result.doc as FigureDocument, owner)
+  return result
+}
+
 const vd = (key: string, values?: Record<string, unknown>) =>
   translate(`versions.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
@@ -100,6 +114,7 @@ export function TimelinePanel() {
   useTranslation(['dialogs', 'common'])
   // 挂载 = 页签亮着（`Inspector` 只在「时间线」页签下渲染它；ADR 0101 2026-10-21 修订）
   const docId = useDocumentStore((s) => s.documentId)
+  const format = useDocumentStore((s) => s.documentFormat)
   // 版本行第三行「来自画布 X」只在它能区分什么的时候才说（左栏审计 L21）
   const canvases = useDocumentStore((s) => s.canvases)
   const activeCanvasId = useDocumentStore((s) => s.activeCanvasId)
@@ -118,7 +133,7 @@ export function TimelinePanel() {
    * 按上下文记账而不是在 effect 里清空：清空晚一帧，那一帧里旧列表照样能被点到。
    * await 之后改本地状态一律经 `afterAwait`（清单在 `lib/timelineContext.ts`）。
    */
-  const ctx = timelineCtxKey(gen, docId)
+  const ctx = timelineCtxKey(gen, docId, format)
   const [list, setList] = useState<{
     ctx: string
     versions: LayoutVersionMeta[]
@@ -197,7 +212,7 @@ export function TimelinePanel() {
   const asideRef = useRef<HTMLElement>(null)
   const nameRef = useRef<HTMLInputElement>(null)
   const restoreFocus = useRef<HTMLElement | null>(null)
-  const previewing = preview?.docId === docId ? preview.meta.id : null
+  const previewing = preview?.docId === docId && (preview.format ?? 'legacy') === format ? preview.meta.id : null
   const multiCanvas = canvases.length > 1
   // 「当前这张图」：画布上恰好一张图（单图编辑），或排版里正在图内编辑的那一张。
   // 「打开」另一个脚本的图 = 另一张画布（ADR 0028），但同一张画布上先后放过几张图的项目里，
@@ -262,7 +277,7 @@ export function TimelinePanel() {
       const res = await fetchTimeline(docId, {
         objects: THUMB_OBJECT_LIMIT,
         textChars: THUMB_TEXT_CHARS,
-      })
+      }, ...(format === 'v4' ? [format] : []))
       if (!fresh()) return
       // 最新在上。照今天的规则本不会记下的重复条（内容没变的打开 / 关闭 / 恢复前，后端标 `unchanged`）
       // 不显示：它和上一条一模一样，上一条就在列表里（用户 2026-10-31）；数据不删
@@ -276,7 +291,7 @@ export function TimelinePanel() {
       // 旧请求的失败同样不落地：它说的是一份已经过期的列表
       if (fresh()) setLoadError(backendErrorText(e))
     }
-  }, [ctx, docId, setLoadError])
+  }, [ctx, docId, format, setLoadError])
 
   useEffect(() => {
     setSaveName('')
@@ -320,32 +335,32 @@ export function TimelinePanel() {
   // 换了上下文：别的排版的预览一并作废（列表、草稿、改名框按上下文记账，见上）
   useEffect(() => {
     const tl = useTimelineStore.getState()
-    if (tl.preview && tl.preview.docId !== docId) tl.setPreview(null)
-  }, [ctx, docId])
+    if (tl.preview && (tl.preview.docId !== docId || (tl.preview.format ?? 'legacy') !== format)) tl.setPreview(null)
+  }, [ctx, docId, format])
 
   const openPreview = useCallback(
     (meta: LayoutVersionMeta, doc?: FigureDocument) => {
       const tl = useTimelineStore.getState()
       // 不重设卡片：从卡片点「放大查看」时调用方刚把它关掉，这里再 set 会让它在关模态后重现
       setPreviewError(null) // 新的一次预览：上一次取正文的失败作废
-      tl.setPreview({ docId, meta, doc: doc ?? null })
+      tl.setPreview({ ...(format === 'v4' ? { format } : {}), docId, meta, doc: doc ?? null })
       // 卡片已经取回了正文：直接放大，不再取第二遍
       if (doc) return
       // 期间换了节点 / 退出了预览：这份正文作废，它的失败也一样。换上下文不必另判：
       // 换项目 `clear()`、换排版那个 effect 都会清掉预览，`current()` 已经是假
       const current = () => {
         const cur = useTimelineStore.getState().preview
-        return cur?.docId === docId && cur.meta.id === meta.id
+        return currentTimelineCtx() === ctx && cur?.docId === docId && (cur.format ?? 'legacy') === format && cur.meta.id === meta.id
       }
-      fetchVersionDoc(docId, meta.id)
+      fetchOwnedVersionDoc(docId, meta.id, ...(format === 'v4' ? [format] : []))
         .then((v) => {
-          if (current()) useTimelineStore.getState().setPreview({ docId, meta, doc: v.doc })
+          if (current()) useTimelineStore.getState().setPreview({ ...(format === 'v4' ? { format } : {}), docId, meta, doc: v.doc })
         })
         .catch((e) => {
           if (current()) setPreviewError(backendErrorText(e))
         })
     },
-    [ctx, docId, setPreviewError],
+    [ctx, docId, format, setPreviewError],
   )
 
   const saveNamed = async () => {
@@ -402,7 +417,7 @@ export function TimelinePanel() {
         docId,
         meta,
         async () => {
-          const v = await fetchVersionDoc(docId, meta.id)
+          const v = await fetchOwnedVersionDoc(docId, meta.id, ...(format === 'v4' ? [format] : []))
           return v.doc as FigureDocument
         },
         { confirmed: true },
@@ -567,7 +582,7 @@ export function TimelinePanel() {
       </div>
       {loaded && strip.length > 1 && (
         <TimelineScrubber
-          docId={docId}
+          {...(format === 'v4' ? { format } : {})} docId={docId}
           versions={strip}
           selectedId={selected}
           summaryOf={summaryOf}
@@ -618,7 +633,7 @@ export function TimelinePanel() {
                 {g.items.map((v) => (
                   <TimelineRow
                     key={v.id}
-                    docId={docId}
+                    {...(format === 'v4' ? { format } : {})} docId={docId}
                     meta={v}
                     all={versions}
                     selected={v.id === selected}
@@ -689,7 +704,7 @@ function KindMark({ meta }: { meta: LayoutVersionMeta }) {
   )
 }
 
-function RowThumb({ docId, meta }: { docId: string; meta: LayoutVersionMeta }) {
+function RowThumb({ docId, meta, format }: { docId: string; meta: LayoutVersionMeta; format?: DocumentFormat }) {
   // 位图缩略图 = 拍节点那一刻带 overrides 的样子；旧节点 / 拍图失败的退回草图
   // （画的是当前磁盘素材，回答「哪一版」）；连草图都画不出来留同尺寸占位
   if (meta.thumb) {
@@ -700,14 +715,14 @@ function RowThumb({ docId, meta }: { docId: string; meta: LayoutVersionMeta }) {
       return (
         <CropFrame page={page} box={box} width={56} height={40} className="rounded-xs border border-border-strong">
           {() => (
-            <VersionThumbImage docId={docId} meta={meta} page={page} data-timeline-thumb />
+            <VersionThumbImage {...(format === 'v4' ? { format } : {})} docId={docId} meta={meta} page={page} data-timeline-thumb />
           )}
         </CropFrame>
       )
     }
     return (
       <img
-        src={versionThumbUrl(docId, meta)}
+        src={versionThumbUrl(docId, meta, ...(format === 'v4' ? [format] : []))}
         alt=""
         data-timeline-thumb
         // 一道细边：纸是白的，浅色主题里白纸落在白面板上整个看不见（2026-10-13 UI 审计）；与草图缩略图的页框同一档
@@ -725,6 +740,7 @@ function RowThumb({ docId, meta }: { docId: string; meta: LayoutVersionMeta }) {
 }
 
 function TimelineRow({
+  format,
   docId,
   meta: v,
   all,
@@ -742,6 +758,7 @@ function TimelineRow({
   ctx,
   children,
 }: {
+  format?: DocumentFormat
   docId: string
   meta: LayoutVersionMeta
   all: LayoutVersionMeta[]
@@ -777,7 +794,7 @@ function TimelineRow({
     // 失焦也可能发生在换了上下文之后（改名框随旧列表卸载）：那就不发
     if (!name || (named && name === v.name) || !after(() => true)) return
     try {
-      await updateVersion(docId, v.id, { name })
+      await updateVersion(docId, v.id, { name }, ...(format === 'v4' ? [format] : []))
       onError(null)
     } catch (e) {
       onError(backendErrorText(e))
@@ -806,7 +823,7 @@ function TimelineRow({
     // 确认框开着的时候也可能换了项目 / 排版：那就什么都不做
     if (!after(() => ok)) return
     if (selected) useTimelineStore.getState().setPreview(null)
-    await act(() => deleteVersion(docId, v.id))()
+    await act(() => deleteVersion(docId, v.id, ...(format === 'v4' ? [format] : [])))()
   }
 
   const index = all.indexOf(v)
@@ -845,7 +862,7 @@ function TimelineRow({
               data-timeline-row
               className="flex min-w-0 flex-1 items-start gap-2 rounded-md py-1.5 pl-3 text-left outline-none focus-visible:focus-ring"
             >
-              <RowThumb docId={docId} meta={v} />
+              <RowThumb {...(format === 'v4' ? { format } : {})} docId={docId} meta={v} />
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="flex items-center gap-1.5">
                   <span className={cn('shrink-0 text-sm tabular-nums text-ink', selected && 'font-medium')}>
@@ -887,7 +904,7 @@ function TimelineRow({
           }
         >
           <CompareCard
-            docId={docId}
+            {...(format === 'v4' ? { format } : {})} docId={docId}
             meta={v}
             summary={versionSummaryText(versionSummary(v, comparableEarlier(all, index)))
               .map(formatMessage)
@@ -929,11 +946,11 @@ function TimelineRow({
             {vd(named ? 'rename' : 'name')}
           </MenuItem>
           {named && (
-            <MenuItem icon={Bookmark} onSelect={act(() => updateVersion(docId, v.id, { named: false }))}>
+            <MenuItem icon={Bookmark} onSelect={act(() => updateVersion(docId, v.id, { named: false }, ...(format === 'v4' ? [format] : [])))}>
               {vd('unname')}
             </MenuItem>
           )}
-          <MenuItem icon={Copy} onSelect={act(() => duplicateVersion(docId, v.id))}>
+          <MenuItem icon={Copy} onSelect={act(() => duplicateVersion(docId, v.id, ...(format === 'v4' ? [format] : [])))}>
             {vd('duplicate')}
           </MenuItem>
           <MenuSeparator />
@@ -990,6 +1007,7 @@ export function cardFrameWidth(page: { w: number; h: number }, maxW: number, max
  * 正文在卡片挂上时才取（Popover 内容只在打开时挂载），关掉就丢。
  */
 function CompareCard({
+  format,
   docId,
   meta,
   summary,
@@ -998,6 +1016,7 @@ function CompareCard({
   onEnlarge,
   onCancel,
 }: {
+  format?: DocumentFormat
   docId: string
   meta: LayoutVersionMeta
   summary: string
@@ -1017,13 +1036,13 @@ function CompareCard({
   const hasThumb = !!meta.thumb || !!meta.sketch
   useEffect(() => {
     let live = true
-    fetchVersionDoc(docId, meta.id)
+    fetchOwnedVersionDoc(docId, meta.id, ...(format === 'v4' ? [format] : []))
       .then((v) => live && setDoc(v.doc as FigureDocument))
       .catch((e) => live && setFailed(backendErrorText(e)))
     return () => {
       live = false
     }
-  }, [docId, meta.id])
+  }, [docId, meta.id, format])
   // 浮层 p-2 + 灰底 p-2 + 两格间距
   const half = (CARD_W - 16 - 16 - 12) / 2
   // 两格都对准内容。页面一样大时用**同一个框**（两边内容的并集），位置变了要看得出来；
@@ -1066,7 +1085,7 @@ function CompareCard({
                 {placeholder && (
                   <span className="absolute inset-0 block bg-paper" data-timeline-card-placeholder>
                     {meta.thumb ? (
-                      <VersionThumbImage docId={docId} meta={meta} page={momentPage} />
+                      <VersionThumbImage {...(format === 'v4' ? { format } : {})} docId={docId} meta={meta} page={momentPage} />
                     ) : (
                       meta.sketch && (
                         <CanvasThumb page={meta.sketch.page} objects={meta.sketch.objects} className="size-full" />
@@ -1371,6 +1390,8 @@ async function restoreUnderLock(
   doc: FigureDocument | (() => Promise<FigureDocument>),
   opts?: { confirmed?: boolean },
 ): Promise<boolean | null> {
+  if (currentTimelineCtx() !== ctx) return null
+  const format = useDocumentStore.getState().documentFormat
   const token = useTimelineStore.getState().beginRestore(ctx)
   if (token === null) return null
   try {
@@ -1379,7 +1400,7 @@ async function restoreUnderLock(
       const mark = editMark()
       const open = useTimelineStore.getState().preview
       if (!(open?.docId === docId && open.meta.id === meta.id)) {
-        useTimelineStore.getState().setPreview({ docId, meta, doc: null })
+        useTimelineStore.getState().setPreview({ ...(format === 'v4' ? { format } : {}), docId, meta, doc: null })
       }
       body = await doc()
       // 换了项目 / 排版才取回来：这次恢复作废，旧上下文的什么都不动
@@ -1393,7 +1414,7 @@ async function restoreUnderLock(
     const tl = useTimelineStore.getState()
     const cur = tl.preview
     if (!(cur?.docId === docId && cur.meta.id === meta.id && cur.doc)) {
-      tl.setPreview({ docId, meta, doc: body })
+      tl.setPreview({ ...(format === 'v4' ? { format } : {}), docId, meta, doc: body })
     }
     return await restoreNode(meta, body, opts)
   } finally {
@@ -1465,9 +1486,10 @@ export function TimelinePreviewDialog() {
   useTranslation(['dialogs', 'common'])
   const preview = useTimelineStore((s) => s.preview)
   const docId = useDocumentStore((s) => s.documentId)
+  const format = useDocumentStore((s) => s.documentFormat)
   const gen = useTimelineStore((s) => s.gen)
-  const ctx = timelineCtxKey(gen, docId)
-  const active = preview && preview.docId === docId ? preview : null
+  const ctx = timelineCtxKey(gen, docId, format)
+  const active = preview && preview.docId === docId && (preview.format ?? 'legacy') === format ? preview : null
   // 锁在 timelineStore 里，抽屉内联条的恢复也挂这同一把（`restoreUnderLock`）
   const restoring = useTimelineStore((s) => s.restoring) === ctx
   const close = () => useTimelineStore.getState().setPreview(null)
@@ -1701,6 +1723,7 @@ export function LayoutSnapshot({
   /** 还有面板按 overrides 的图没出好（`renderOverrides` 时才有意义） */
   onPending?: (pending: boolean) => void
 }) {
+  const owner = useDocumentPreviewOwner(doc, versionPreviewOwners.get(doc))
   const assets = useAssetStore((s) => s.byId)
   const loadingPanels = useRef(new Set<string>())
   const onLoading = useCallback(
@@ -1751,6 +1774,7 @@ export function LayoutSnapshot({
               <SnapshotPanel
                 key={o.id}
                 panel={o}
+                owner={owner}
                 style={style}
                 mtime={assets[o.fileId]?.mtime}
                 renderOverrides={renderOverrides}
@@ -1798,6 +1822,7 @@ export function LayoutSnapshot({
  */
 function SnapshotPanel({
   panel,
+  owner,
   style,
   mtime,
   renderOverrides,
@@ -1806,6 +1831,7 @@ function SnapshotPanel({
   bucket,
 }: {
   panel: PanelObject
+  owner: PreviewOwner
   style: React.CSSProperties
   mtime?: number
   renderOverrides: boolean
@@ -1815,7 +1841,8 @@ function SnapshotPanel({
   /** 取图档位（RENDER_BUCKETS 之一），见 `snapshotBucket` */
   bucket: number
 }) {
-  const wantsVariant = renderOverrides && (panel.overrides.length > 0 || isAdoptedPanel(panel))
+  const archived = hasFigureSnapshotPreview(panel) || panel.figureOrigin !== undefined
+  const wantsVariant = archived || renderOverrides && (!!panel.chart || panel.chartSource !== undefined || panel.overrides.length > 0 || isAdoptedPanel(panel))
   const variant = useVariantPng(
     panel.fileId,
     panel.overrides,
@@ -1823,13 +1850,17 @@ function SnapshotPanel({
     wantsVariant,
     mtime ?? 0,
     adoptionGuardOf(panel),
+    panel.chart, panel.chartSource,
+    owner,
+    ...figureSnapshotPreviewArgs(panel),
+    panel.chartFrame?.renderProfile,
   )
   useEffect(() => {
-    if (renderOverrides) onApproximate?.(variant.approximate)
-  }, [variant.approximate, renderOverrides, onApproximate])
+    if (renderOverrides || archived) onApproximate?.(variant.approximate)
+  }, [variant.approximate, renderOverrides, archived, onApproximate])
   // 「还没出好」从第一帧就算：要出图、既没拿到也没失败（hook 的 loading 晚一帧才置上）
   // 零编辑的来源驱动面板 hook 有意不出图（磁盘原像素即是），不算「还在出」
-  const pending = wantsVariant && variantNeedsRender(panel.overrides, adoptionGuardOf(panel)) && !variant.url && !variant.approximate
+  const pending = wantsVariant && variantNeedsRender(panel.overrides, adoptionGuardOf(panel), panel.chart, ...figureSnapshotPreviewArgs(panel)) && !variant.url && !variant.approximate
   useEffect(() => {
     if (!onLoading) return
     onLoading(panel.id, pending)
@@ -1838,7 +1869,7 @@ function SnapshotPanel({
 
   // panelSrc 可能给不出地址（替代传输里没有 HTTP 服务）：一个都拿不到就不画
   // <img>，绝不留一个空 src 让缩略图挂一个碎图标
-  const src = variant.url || panelSrc(panel.fileId, panel.fileKind, bucket, mtime)
+  const src = !owner.still() ? null : variant.url || (archived || panel.chart || panel.chartSource !== undefined ? null : panelSrc(panel.fileId, panel.fileKind, bucket, mtime, owner.pj))
   if (!src) return null
   return (
     <RetryImg

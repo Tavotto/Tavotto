@@ -66,9 +66,20 @@ import os
 import socket
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
-from . import envlease, executionfact, figcapture, nativerelay, patchspec, pool, runcodes
+from . import (
+    envlease,
+    execspec,
+    executionfact,
+    figcapture,
+    inputdeclaration,
+    nativerelay,
+    patchspec,
+    pool,
+    runcodes,
+)
 from .runcodes import RunError
 
 #: 带外事件的键——**与 `bridge_runner.EVENT_KEY` 严格同源**。
@@ -258,7 +269,15 @@ class NativeTransport:
         self._die(None)
 
     # ---------------- 请求 ----------------
-    def request(self, obj: dict, *, generation: int, revision: int, timeout: float) -> dict:
+    def request(
+        self,
+        obj: dict,
+        *,
+        generation: int,
+        revision: int,
+        timeout: float,
+        dispatch_check: Callable[[], None] | None = None,
+    ) -> dict:
         """发一条 v1 请求并等它的响应。
 
         信封由 `pool.build_envelope()` 产出——**与 stdin/stdout 那条控制面是
@@ -280,6 +299,8 @@ class NativeTransport:
                     raise RunError(runcodes.NATIVE_RELAY_FAILED)
                 if self._closed:
                     raise RunError(runcodes.NATIVE_SESSION_DISCONNECTED)
+                if dispatch_check is not None:
+                    dispatch_check()
                 self._waiters[rid] = slot
             try:
                 self.sock.sendall(data)
@@ -420,6 +441,9 @@ class NativeSession:
         self.execution_id: str | None = None
         self.execution_script: str | None = None
         self.execution_started_ns = 0
+        # Private evidence belongs to one existing barrier epoch. Availability
+        # follows that state machine, not a second release/EOF flag.
+        self._barrier_captured_inputs: tuple[int, str, dict, dict | None] | None = None
         # Application-owned, public invalidation projection; no launch spec/argv.
         self.figure_snapshot_invalidation: dict | None = None
         self.rev = 0
@@ -535,6 +559,7 @@ class NativeSession:
                 if self.state != BARRIER:
                     self.snapshot_epoch += 1
                     self._barrier_snapshot_epoch = self.snapshot_epoch
+                    self._barrier_captured_inputs = self._captured_barrier_fact(frame)
             stems = frame.get("stems") or []
             facts = frame.get("figure_facts")
             if isinstance(facts, list):
@@ -673,6 +698,74 @@ class NativeSession:
     def note_hello(self, hello: dict) -> None:
         """收到 Bridge Runner 转发过来的握手帧——用户的 Python 起来了。"""
         self._set_state(WAITING_FOR_FIGURE, process_pid=_as_int(hello.get("pid")))
+
+    def _captured_barrier_fact(self, frame: dict) -> tuple[int, str, dict, dict | None] | None:
+        """Validate a newly entered barrier, with ``_lock`` held; never read paths."""
+        if (
+            self.target_kind != execspec.TARGET_SCRIPT
+            or not executionfact.valid_id(self.execution_id)
+            or frame.get("execution_id") != self.execution_id
+            or not self.execution_script
+            or frame.get("script") != self.execution_script
+        ):
+            return None
+        fact = inputdeclaration.validate_fact(
+            frame.get("captured_inputs"), execution_id=self.execution_id
+        )
+        if fact is None:
+            return None
+        scope = fact["declaration"]["scope"]
+        if scope["script"] != self.execution_script or scope["cwd_mode"] not in (
+            execspec.CWD_PROJECT,
+            execspec.CWD_PROJECT_ROOT,
+        ):
+            return None
+        spec = self.spec
+        if isinstance(spec, execspec.ExecutionSpec) and spec.owner == execspec.OWNER_DESKTOP:
+            root, cwd, run_config = spec.project_root, spec.cwd, spec.run_config or None
+        else:
+            if self.owned is not None or self.arg_count != 0:
+                return None
+            root, cwd, run_config = self.project_root, self.cwd, None
+        if scope["run_config"] != run_config or not all(os.path.isabs(p) for p in (root, cwd)):
+            return None
+        expected_cwd = execspec.desktop_cwd(root, self.execution_script, scope["cwd_mode"])
+        if os.path.normcase(os.path.abspath(expected_cwd)) != os.path.normcase(
+            os.path.abspath(cwd)
+        ):
+            return None
+        archive = inputdeclaration.validate_archive_descriptor(
+            frame.get("captured_input_archive"), fact=fact
+        )
+        return self.snapshot_epoch, self.execution_id, fact, archive
+
+    def _captured_slot_for_receipt(
+        self, *, script: str
+    ) -> tuple[int, str, dict, dict | None] | None:
+        """Read one barrier slot with ``_lock`` held, without IO or a new lifecycle."""
+        slot = self._barrier_captured_inputs
+        if (
+            self.state != BARRIER
+            or self._barrier_snapshot_epoch != self.snapshot_epoch
+            or slot is None
+            or slot[0] != self.snapshot_epoch
+            or slot[1] != self.execution_id
+            or script != self.execution_script
+        ):
+            return None
+        return slot
+
+    def captured_inputs_for_receipt(self, *, script: str) -> dict | None:
+        """Read frozen current-barrier evidence, never a current declaration or authorization."""
+        with self._lock:
+            slot = self._captured_slot_for_receipt(script=script)
+            return copy.deepcopy(slot[2]) if slot is not None else None
+
+    def captured_input_archive_for_receipt(self, *, script: str) -> dict | None:
+        """Read the same frozen barrier's descriptor; the receipt owner verifies its bytes."""
+        with self._lock:
+            slot = self._captured_slot_for_receipt(script=script)
+            return copy.deepcopy(slot[3]) if slot is not None and len(slot) > 3 else None
 
     # ------------------------------------------------------------------
     # 脚本的提问（P07，ADR 0126）：桌面拥有的进程里 input / stdin / getpass
@@ -827,8 +920,75 @@ class NativeSession:
             raise RunError(runcodes.NATIVE_SESSION_NOT_AT_BARRIER)
         return self.transport
 
-    def _request(self, obj: dict, timeout: float) -> dict:
+    def _existing_figure_context(self, expected_execution_id, expected_snapshot_epoch) -> tuple:
+        if (
+            not executionfact.valid_id(expected_execution_id)
+            or not isinstance(expected_snapshot_epoch, int)
+            or isinstance(expected_snapshot_epoch, bool)
+            or expected_snapshot_epoch < 0
+        ):
+            raise pool.WorkerError(
+                "An execution fact and native epoch are required.", code="bad_request"
+            )
+        with self._lock:
+            transport = self.transport
+            if (
+                self.state != BARRIER
+                or self.snapshot_epoch != expected_snapshot_epoch
+                or self._barrier_snapshot_epoch != expected_snapshot_epoch
+                or self.execution_id != expected_execution_id
+                or not self.built
+                or transport is None
+                or transport.closed
+                or transport.poison is not None
+            ):
+                raise pool.WorkerError(
+                    "The existing native Figure barrier is unavailable.",
+                    code="svg_source_unavailable",
+                )
+            return (
+                self.session_id,
+                self.generation,
+                self.process_pid,
+                transport,
+                expected_snapshot_epoch,
+                expected_execution_id,
+            )
+
+    def _check_existing_figure_context(self, context: tuple) -> None:
+        if self._existing_figure_context(context[-1], context[-2]) != context:
+            raise pool.WorkerError(
+                "The native dispatch instance changed.", code="svg_source_unavailable"
+            )
+
+    def _guard_existing_request(self, payload, expected_execution_id, expected_snapshot_epoch):
+        if expected_execution_id is None and expected_snapshot_epoch is None:
+            return None
+        context = self._existing_figure_context(expected_execution_id, expected_snapshot_epoch)
+        payload.update(
+            cmd="render_existing" if payload["cmd"] == "override" else payload["cmd"] + "_existing",
+            expected_execution_id=expected_execution_id,
+        )
+        return context
+
+    def _request(self, obj: dict, timeout: float, *, existing: tuple | None = None) -> dict:
         try:
+            if existing is not None:
+                self._check_existing_figure_context(existing)
+                resp = existing[3].request(
+                    obj,
+                    generation=existing[1],
+                    revision=self.rev,
+                    timeout=timeout,
+                    dispatch_check=lambda: self._check_existing_figure_context(existing),
+                )
+                self._check_existing_figure_context(existing)
+                if resp.get("execution_id") != existing[-1]:
+                    raise pool.WorkerError(
+                        "The native reply does not prove the requested execution.",
+                        code="svg_source_unavailable",
+                    )
+                return resp
             return self._require_barrier().request(
                 obj, generation=self.generation, revision=self.rev, timeout=timeout
             )
@@ -890,14 +1050,30 @@ class NativeSession:
         return d
 
     def ensure_built(self) -> dict:
-        resp = self._request({"cmd": "build"}, BUILD_TIMEOUT)
-        self.built = True
-        self.last_build = resp
-        self.descriptors = list(resp.get("descriptors") or [])
-        self.figure_facts = list(resp.get("figure_facts") or [])
-        self.stems = list((resp.get("stems") or {}).keys())
-        self.script_error = resp.get("script_error") or self.script_error
-        return resp
+        with self._figure_lock:
+            with self._lock:
+                epoch, execution_id = self.snapshot_epoch, self.execution_id
+                script = self.execution_script
+            resp = self._request({"cmd": "build"}, BUILD_TIMEOUT)
+            fact = self.captured_inputs_for_receipt(script=script or "")
+            with self._lock:
+                if (
+                    fact is not None
+                    and self.state == BARRIER
+                    and self.snapshot_epoch == epoch
+                    and self._barrier_snapshot_epoch == epoch
+                    and self.execution_id == execution_id
+                ):
+                    # Local response identity, never a new wire field. A late
+                    # receipt must not borrow the next barrier's capture fact.
+                    resp = {**resp, "execution_id": execution_id}
+                self.built = True
+                self.last_build = resp
+                self.descriptors = list(resp.get("descriptors") or [])
+                self.figure_facts = list(resp.get("figure_facts") or [])
+                self.stems = list((resp.get("stems") or {}).keys())
+                self.script_error = resp.get("script_error") or self.script_error
+            return resp
 
     def publish_built(self) -> None:
         """build 出来的描述符已经绑上活路由：把带描述符的新快照推给界面（状态不变，序号 +1）。
@@ -909,13 +1085,28 @@ class NativeSession:
         self._publish(built="descriptors")
 
     def override(
-        self, stem: str, patches: list, preview_dpi: int | None = None, inline_svg: bool = False
+        self,
+        stem: str,
+        patches: list,
+        preview_dpi: int | None = None,
+        inline_svg: bool = False,
+        *,
+        expected_execution_id: str | None = None,
+        expected_snapshot_epoch: int | None = None,
+        include_figure_execution: bool = False,
     ) -> dict:
-        """**签名与 `pool.EngineWorker.override()` 逐参对齐。**
+        """位置参数与 `pool.EngineWorker.override()` 对齐。
 
         `app.py` 的渲染端点发的是 `wk.override(st, patches, preview_dpi,
         inline_svg=...)`——第三个是**位置**参数。原来的 `**kw` 收不下它，
         native 面板每一次渲染都是 TypeError。
+
+        显式历史编辑还须给已验证 receipt 对应的屏障代次；不能在分派时拿
+        当前代次代替历史身份。省略两个守卫参数时保留原调用与 wire。
+
+        `include_figure_execution` 只请求本次正常渲染的正面证据：它给 wire 加一个
+        同名字段，响应里带上**本次**真实执行事实。屏障代次/实例在分派前后不一致
+        （continue、迟到事件、重开）时只撤回这份证据，原本成功的渲染照常返回。
         """
         want = patchspec.patch_hash(patches)
         payload = {"cmd": "override", "stem": stem, "patches": patches}
@@ -924,18 +1115,70 @@ class NativeSession:
             payload["preview_dpi"] = int(preview_dpi)
         if inline_svg:
             payload["inline_svg"] = True
+        if include_figure_execution:
+            payload["include_figure_execution"] = True
         with self._figure_lock:
+            existing = self._guard_existing_request(
+                payload, expected_execution_id, expected_snapshot_epoch
+            )
             owed = self.inconsistent.get(stem)
             if owed is not None and owed != want:
                 raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT)
+            proof = self._proof_context() if include_figure_execution else None
             self.rev += 1
-            resp = self._request(payload, REQUEST_TIMEOUT)
+            resp = self._request(
+                payload, REQUEST_TIMEOUT, **({"existing": existing} if existing is not None else {})
+            )
+            if proof is not None:
+                resp = self._proof_response(resp, proof)
             self._session_list[stem] = want
             if self._owes(resp):
                 self.inconsistent[stem] = want
             else:
                 self.inconsistent.pop(stem, None)
             return resp
+
+    def _proof_context(self) -> tuple:
+        """冻结一份「这次分派属于哪个实例/屏障」的事实，供响应后复核。"""
+        with self._lock:
+            return (
+                self.session_id,
+                self.generation,
+                self.process_pid,
+                self.transport,
+                self.snapshot_epoch,
+                self.execution_id,
+                self.state,
+                self._barrier_snapshot_epoch,
+            )
+
+    def _proof_response(self, resp: dict, proof: tuple) -> dict:
+        """只有在同一屏障、同一实例、同一执行事实时，才让响应携带正证。
+
+        任何一项变了都只撤回证据：渲染已经成功，不能因为证据不足改判失败。
+        """
+        if not isinstance(resp, dict):
+            return resp
+        execution_id = resp.get("execution_id")
+        with self._lock:
+            current = (
+                self.session_id,
+                self.generation,
+                self.process_pid,
+                self.transport,
+                self.snapshot_epoch,
+                self.execution_id,
+                self.state,
+                self._barrier_snapshot_epoch,
+            )
+        if (
+            current == proof
+            and proof[6] == BARRIER
+            and executionfact.valid_id(execution_id)
+            and execution_id == proof[5]
+        ):
+            return {**resp, "figure_execution_epoch": proof[4]}
+        return {k: v for k, v in resp.items() if k != "execution_id"}
 
     @staticmethod
     def _owes(resp: dict) -> bool:
@@ -964,6 +1207,8 @@ class NativeSession:
         fmt: str = "pdf",
         dpi: int = 600,
         *,
+        expected_execution_id: str | None = None,
+        expected_snapshot_epoch: int | None = None,
         svg_path: str | None = None,
         require_built: bool = False,
         snapshot_only: bool = False,
@@ -971,22 +1216,25 @@ class NativeSession:
         svg_text_path: str | None = None,
     ) -> dict:
         with self._figure_lock:
+            payload = {
+                "cmd": "export",
+                "stem": stem,
+                "patches": patches,
+                "path": path,
+                "format": fmt,
+                "dpi": dpi,
+                **({"svg_path": svg_path} if svg_path is not None else {}),
+                **({"require_built": True} if require_built else {}),
+                **({"snapshot_only": True} if snapshot_only else {}),
+                **({"svg_fonttype": svg_fonttype} if svg_fonttype is not None else {}),
+                **({"svg_text_path": svg_text_path} if svg_text_path is not None else {}),
+            }
+            existing = self._guard_existing_request(
+                payload, expected_execution_id, expected_snapshot_epoch
+            )
             self._require_consistent(stem)
             resp = self._request(
-                {
-                    "cmd": "export",
-                    "stem": stem,
-                    "patches": patches,
-                    "path": path,
-                    "format": fmt,
-                    "dpi": dpi,
-                    **({"svg_path": svg_path} if svg_path is not None else {}),
-                    **({"require_built": True} if require_built else {}),
-                    **({"snapshot_only": True} if snapshot_only else {}),
-                    **({"svg_fonttype": svg_fonttype} if svg_fonttype is not None else {}),
-                    **({"svg_text_path": svg_text_path} if svg_text_path is not None else {}),
-                },
-                EXPORT_TIMEOUT,
+                payload, EXPORT_TIMEOUT, **({"existing": existing} if existing is not None else {})
             )
             self._note_temporary(stem, resp)
             return resp
@@ -995,34 +1243,57 @@ class NativeSession:
         self._request({"cmd": "render_png", "stem": stem, "width": int(width_px)}, REQUEST_TIMEOUT)
         return self.out_dir / f"{stem}_w{int(width_px)}.png"
 
-    def preview_png(self, stem: str, patches: list, width_px: int, tag: str) -> Path:
+    def preview_png(
+        self,
+        stem: str,
+        patches: list,
+        width_px: int,
+        tag: str,
+        *,
+        expected_execution_id: str | None = None,
+        expected_snapshot_epoch: int | None = None,
+    ) -> Path:
         with self._figure_lock:
+            payload = {
+                "cmd": "preview_png",
+                "stem": stem,
+                "patches": patches,
+                "width": int(width_px),
+                "tag": tag,
+            }
+            existing = self._guard_existing_request(
+                payload, expected_execution_id, expected_snapshot_epoch
+            )
             self._require_consistent(stem)
             resp = self._request(
-                {
-                    "cmd": "preview_png",
-                    "stem": stem,
-                    "patches": patches,
-                    "width": int(width_px),
-                    "tag": tag,
-                },
-                REQUEST_TIMEOUT,
+                payload, REQUEST_TIMEOUT, **({"existing": existing} if existing is not None else {})
             )
             self._note_temporary(stem, resp)
         return self.out_dir / f"{stem}__{tag}.png"
 
-    def preview_png_snapshot(self, stem: str, patches: list, width_px: int) -> dict:
+    def preview_png_snapshot(
+        self,
+        stem: str,
+        patches: list,
+        width_px: int,
+        *,
+        expected_execution_id: str | None = None,
+        expected_snapshot_epoch: int | None = None,
+    ) -> dict:
         with self._figure_lock:
+            payload = {
+                "cmd": "preview_png",
+                "stem": stem,
+                "patches": patches,
+                "width": int(width_px),
+                "with_manifest": True,
+            }
+            existing = self._guard_existing_request(
+                payload, expected_execution_id, expected_snapshot_epoch
+            )
             self._require_consistent(stem)
             resp = self._request(
-                {
-                    "cmd": "preview_png",
-                    "stem": stem,
-                    "patches": patches,
-                    "width": int(width_px),
-                    "with_manifest": True,
-                },
-                REQUEST_TIMEOUT,
+                payload, REQUEST_TIMEOUT, **({"existing": existing} if existing is not None else {})
             )
             self._note_temporary(stem, resp)
             return resp

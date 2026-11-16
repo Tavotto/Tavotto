@@ -14,6 +14,8 @@ import { refuseArtifactOperation, ArtifactValidationError } from '@/lib/artifact
  *   代次，回来时对不上就不写（不拿旧基准上的结果覆盖用户刚做的改动）。
  * * **只走 documentStore**：dirty、undo、autosave 全部照常，与用户手改一模一样。
  */
+import { figureOriginFields, figureOriginFor } from '@/lib/figureSnapshot'
+import { captureDocumentPreviewOwner } from '@/store/documentStore'
 import { effectiveOverride } from '@/lib/effectiveOverride'
 import { releaseOwned } from '@/lib/styleOwned'
 import { msg, type UiMessage } from '@/i18n'
@@ -189,6 +191,10 @@ export function isNativePanelIssue(
   if (fixRoute(issue, doc) !== 'engine') return false
   const panel = doc.objects.find((o) => o.id === issue.objectRef.objectId)
   if (panel?.type !== 'panel') return false
+  // A historical execution's profile comes from its own admitted receipt. The
+  // current same-name asset may be a different execution, so its runtime
+  // profile must neither grant nor deny this panel; the backend decides.
+  if (panel.figureOrigin !== undefined) return false
   return assets[panel.fileId]?.profile === 'native'
 }
 
@@ -223,6 +229,8 @@ async function runLocked(
 ): Promise<FixOutcome> {
   const start = useDocumentStore.getState()
   const docAtStart = start.doc
+  const owner = captureDocumentPreviewOwner()
+  const pj = owner.pj
   const loadSeq = start.loadSeq
   const canvasId = start.activeCanvasId
   const specAtStart = resolvedSpec()
@@ -278,16 +286,23 @@ async function runLocked(
       addFailure(failed, 'native_unsupported', list.length)
       continue
     }
+    if (figureOriginFor(panel) !== undefined && !owner.still()) {
+      addFailure(failed, 'stale', list.length)
+      continue
+    }
     let res: SpecFixResponse
     let out: ReturnType<typeof settle>
     try {
-      refuseArtifactOperation(panel)
+      if (figureOriginFor(panel) === undefined) refuseArtifactOperation(panel)
+      const sourceArgs: [source?: ReturnType<typeof figureOriginFields>, pj?: string | null] =
+        figureOriginFor(panel) === undefined ? [] : [figureOriginFields(panel), pj]
       res = await engineSpecfix(
         panel.fileId,
         panel.overrides,
         panelScale(panel),
         profile,
         list.map((i) => ({ rule: i.ruleCode, gid: i.objectRef.gid ?? '' })),
+        ...sourceArgs,
       )
       // 读响应也在 catch 之内（Codex #549 第七轮 P1）：api 层验过形状，这里是第二道——
       // 读到一半炸了的响应同样是「不知道」，要走下面的重放，不许把整轮修复抛出去
@@ -325,6 +340,7 @@ async function runLocked(
   // 用户在这几秒里改了它们，旧结果就会盖掉新改动。所以整个对象比、页面比、规范绑定比
   const now = useDocumentStore.getState()
   const moved =
+    !owner.still() ||
     now.loadSeq !== loadSeq ||
     now.activeCanvasId !== canvasId ||
     same(now.doc.profile) !== same(docAtStart.profile) ||
@@ -340,7 +356,7 @@ async function runLocked(
    * 渲染则会把 A 的文件与列表渲染、缓存到 B 名下。那时 worker 已不属于当前界面，不动它。
    */
   const replay = (id: string): void => {
-    if (now.loadSeq !== loadSeq) return
+    if (!owner.still() || now.loadSeq !== loadSeq) return
     const panel = now.doc.objects.find((o) => o.id === id)
     if (panel?.type === 'panel') requestRender(panel, true)
   }

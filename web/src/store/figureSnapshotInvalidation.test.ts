@@ -7,6 +7,7 @@ import { useRuntimeAssetStore } from './runtimeAssetStore'
 
 vi.mock('./documentStore', () => ({
   invalidateFigureSnapshots: vi.fn(),
+  adoptReplayedFigureOrigin: vi.fn(),
   getRestoreGate: () => ({ state: 'ready', reason: 'restored', pj: 'project-a', docId: 'doc' }),
   useDocumentStore: { getState: vi.fn() },
 }))

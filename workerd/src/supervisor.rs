@@ -35,7 +35,11 @@ const DEFAULT_ACQUIRE_LEASE_MS: u64 = 30_000;
 fn worker_cmd(op: &str) -> Option<(&'static str, bool)> {
     match op {
         "build" => Some(("build", false)),
+        "chart" => Some(("chart", false)),
         "render" => Some(("render", true)),
+        "render_existing" => Some(("render_existing", true)),
+        "export_existing" => Some(("export_existing", false)),
+        "preview_png_existing" => Some(("preview_png_existing", false)),
         "render_png" => Some(("render_png", false)),
         "preview_png" => Some(("preview_png", false)),
         "export" => Some(("export", false)),
@@ -126,6 +130,7 @@ impl Supervisor {
                 "max_queue": self.max_queue,
                 "acquire_lease_ms": self.acquire_lease.as_millis() as u64,
                 "capabilities": [
+                    "bounded_chart_tasks",
                     "queue_merge_latest",   // per (会话, stem) 的 render 只留最新一条
                     "cancel_kill",          // 在飞的取消 = 杀进程（没有协作中断）
                     "generation_fencing",   // 上一代的迟到响应一律丢弃
@@ -351,5 +356,25 @@ impl Supervisor {
             session.close(None, true, Duration::from_millis(0));
         }
         self.by_hash.clear();
+    }
+}
+
+#[cfg(test)]
+mod existing_render_tests {
+    #[test]
+    fn existing_render_remains_distinct_on_the_worker_wire() {
+        assert_eq!(
+            super::worker_cmd("render_existing"),
+            Some(("render_existing", true))
+        );
+        assert_eq!(super::worker_cmd("render"), Some(("render", true)));
+        assert_eq!(
+            super::worker_cmd("export_existing"),
+            Some(("export_existing", false))
+        );
+        assert_eq!(
+            super::worker_cmd("preview_png_existing"),
+            Some(("preview_png_existing", false))
+        );
     }
 }
