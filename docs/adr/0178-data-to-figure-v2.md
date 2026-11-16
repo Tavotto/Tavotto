@@ -114,6 +114,8 @@ id 是服务端登记的不透明串）、`POST /api/ai/data-figure/commit`（`{
 * **响应的 `roles`**（懒模式在 `candidates` 与 `nothing` 里都有）：`{x, y: [..], group, facet, unit, options: {x: [..], y: [..], group: [..]}}`，`options` 是每个角色此刻可换成的列，供下拉。列角色只有一处定义（`_resolve_roles`），`options` 由它出，不在 propose 里另算。
 * **缩略图懒渲染**：懒模式只写脚本与公共模块（毫秒级），不渲染；每项 `thumbnail_status: "pending"`（旧模式一律 `"ready"`）。渲染在 `GET .../thumbnail/<session>/<id>` 时做：该项没画就画并等它画完再回图（200）；**同一项并发取图只画一次**（项上的锁），画好的不重画；全进程同时在画的缩略图受 `MAX_PARALLEL = 2` 限（与旧模式同一上限，池的存活 worker 数有上限，再多会互相回收），先到先画，前端先取推荐那张。画不出（渲染失败 / 超时 / 缩略图取不到 / 被绊线拦下 / 指纹对不上）→ **422 `propose_thumbnail_failed`**，`params.reason` 是 `DROP_REASONS` 里的码，结果记在项上、不重画；唯一的重试：`candidate_render_failed`（池在内存吃紧时回收刚起的 worker 也落在这个码里，可能是瞬时的）自动再画一次。「渲染失败的备选不进列表」的保证在懒模式下落成两条：该项取图 422、**提交该项 404 `propose_candidate_unknown`**（失败的不许落盘）。列表顺序稳定（推荐标记永远在第一项），推荐落在失败项上时由前端把推荐挪给下一张可用的。模板不认的配方（`candidate_template_unsupported`）仍在 `dropped`，不进列表。
 
+**横轴列夹着少量文字格（2026-11-17）**：有序横轴与纵轴同一套规则——`numeric_like`（非数字占比 ≤ 20%、数值格 ≥ 3）的列也能进横轴候选（`_resolve_roles` 的 `xs`、`roles.options.x`）；用了就和 y 列一样进 `mixed_cells`（懒模式默认 `skip`，`answers.cells` 的 `extract` / `map` 同样生效），规则进配方并随脚本读表套用；被跳过的行计入 `unplotted`（取数字部分取出了数的行不算），统计在 `cells`。文字占多数的列仍不进横轴候选。没有混文字格的表输出逐字不变。
+
 ## 文本表格：`.txt` / `.dat` / 嗅探 / 表头行覆盖 / 千分位（`ai_data_figure.read_text_table`）
 
 第一版只做文本格式（`.mat` / `.npy` / HDF5 等二进制以后再说；`.xlsx` 读法不动）。整件事在 `ai.taf.enabled` 后面；v1（`inspect_data_source` 默认分支、v1 模板的 `_cell`）**逐字不变**——新读法只在 `v2=True` 时启用。

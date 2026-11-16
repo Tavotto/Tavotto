@@ -407,9 +407,15 @@ def unplotted_rows(values: adf.DataSummary, recipe) -> list[dict]:
     idx = {c: i for i, c in enumerate(values.columns)}
     x = recipe.x if recipe.family in ("trend", "relationship") else None
     covered = {c.column for c in recipe.cells}
+    # 横轴列有处理规则时按**规则作用之后**的格子判：「取数字部分」取出了数的行画得出来，不算；「不画那几行」之后是空格，算没画
+    applied = (
+        adf.apply_cells(values.columns, values.rows, [c.args() for c in recipe.cells])[0]
+        if x in covered
+        else values.rows
+    )
     for n, row in enumerate(values.rows):
         if x is not None:
-            cell = row[idx[x]]
+            cell = applied[n][idx[x]]
             if values.per_column[x].kind == "date":
                 ok = adf.parse_date(cell) is not None
             else:

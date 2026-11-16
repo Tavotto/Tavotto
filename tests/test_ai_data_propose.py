@@ -1962,3 +1962,79 @@ def test_instrument_export_commits_and_verifies_with_the_units_row_cut(project):
     assert out["task"]["outcome"] == "completed" and out["data_check"] == "verified", out
     script = (figs / out["script"]).read_text(encoding="utf-8")
     assert "read_delimited(DATA, 'ws', 3, True)" in script
+
+
+# =========================================================================== 横轴列夹着少量文字格：与纵轴列同一套规则
+def gap_rows(n=16, bad=("?", "?")):
+    """`day` 列 16 个数 + 末尾 2 个 `?`（占 11%，在 `numeric_like` 阈值内）；value 全是数。"""
+    rows = [["day", "value"]]
+    for d in range(n):
+        rows.append([d, round(8 + d * 1.3 + (d % 3) * 0.4, 2)])
+    for b in bad:
+        rows.append([b, 12.0])
+    return rows
+
+
+def test_a_mixed_x_column_is_offered_as_the_axis_and_its_text_rows_are_skipped_by_default(
+    project, fake_render
+):
+    m, client, figs, _ = project
+    put(figs, "data/gap.csv", gap_rows())
+    body = propose(client, table="gap.csv", render="lazy").get_json()
+    assert body["kind"] == "candidates", body
+    assert body["roles"]["x"] == "day" and body["roles"]["y"] == ["value"]
+    assert body["items"][0]["values"]["family"] == "trend"  # 折线类排第一
+    assert body["items"][0]["title_code"] in ("line_points", "line_band", "line_units")
+    assert body["mixed_cells"] == [{"column": "day", "non_numeric": 2, "rows": 18, "mode": "skip"}]
+    assert "day" in body["roles"]["options"]["x"]
+    # 被跳过的行计入「没画出来的行数」；规则统计在 cells 里
+    first = body["items"][0]
+    assert first["unplotted"] == {"count": 2, "code": "rows_not_plotted"}
+    assert first["cells"][0]["column"] == "day" and first["cells"][0]["ignored"] == 2
+    # 旧模式照旧先问（问的是 y 列，不是 x）：不带参数的行为没变
+    legacy = propose(client, table="gap.csv").get_json()
+    assert legacy["kind"] == "ask"
+
+
+def test_extract_works_on_the_x_column_and_a_row_it_rescues_is_not_unplotted(project, fake_render):
+    m, client, figs, _ = project
+    put(figs, "data/gap.csv", gap_rows(bad=("16*", "?")))
+    body = propose(
+        client, table="gap.csv", render="lazy", answers={"cells": {"day": {"mode": "extract"}}}
+    ).get_json()
+    assert body["kind"] == "candidates" and body["mixed_cells"] == []  # 用户已表态，不再自动跳过
+    first = body["items"][0]
+    assert first["unplotted"]["count"] == 1  # `16*` 取出 16 画得出；`?` 取不出
+    assert first["cells"][0]["extracted"] == 1 and first["cells"][0]["ignored"] == 1
+
+
+def test_an_x_column_that_is_mostly_text_is_still_not_an_axis(project, fake_render):
+    m, client, figs, _ = project
+    rows = [["day", "value"]] + [[f"d{i}", i * 1.5] for i in range(8)] + [[3, 4.5], [4, 6.0]]
+    put(figs, "data/txt.csv", rows)
+    body = propose(client, table="txt.csv", render="lazy").get_json()
+    assert body["kind"] == "candidates"
+    assert body["roles"]["x"] is None and "day" not in body["roles"]["options"]["x"]
+    assert all(i["values"]["family"] not in ("trend", "relationship") for i in body["items"])
+
+
+def test_clean_numeric_x_output_is_unchanged_by_the_mixed_x_rule(project, fake_render):
+    m, client, figs, _ = project
+    put(figs, "data/clean.csv", gap_rows(bad=()))
+    body = propose(client, table="clean.csv", render="lazy").get_json()
+    assert body["roles"]["x"] == "day" and body["mixed_cells"] == []
+    assert body["items"][0]["unplotted"] == {"count": 0, "code": None}
+    assert body["items"][0]["cells"] is None
+
+
+@needs_worker
+def test_mixed_x_commits_and_the_script_reads_the_same_table(project):
+    m, client, figs, _ = project
+    put(figs, "data/gap.csv", gap_rows())
+    body = propose(client, table="gap.csv", render="lazy").get_json()
+    first = body["items"][0]
+    assert client.get(first["thumbnail_url"]).status_code == 200
+    out = commit(client, body["session"], first["id"]).get_json()
+    assert out["data_check"] == "verified", out
+    assert out["unplotted"]["count"] == 2
+    assert [c["column"] for c in out["cells"]] == ["day"]

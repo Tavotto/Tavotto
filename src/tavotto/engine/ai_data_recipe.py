@@ -777,7 +777,8 @@ def _type_ok(token: str, s: adf.DataSummary, col: str, mixed_ok: bool = False) -
     if token == "num":
         return kind == "numeric" or (mixed_ok and numeric_like(s.per_column[col]))
     if token == "ord":
-        return kind in ("numeric", "date")
+        # 有序横轴：数值 / 日期；数值列里夹着少量文字（与 y 列同一判据 `numeric_like`）在有处理规则 / 结构资格时也算
+        return kind in ("numeric", "date") or (mixed_ok and numeric_like(s.per_column[col]))
     if token == "cat":
         return col in s.groups
     if token == "label":
@@ -1029,7 +1030,9 @@ def check_cell_rules(
 def cell_rule_problems(
     recipe: FigureRecipe, s: adf.DataSummary, values: adf.DataSummary | None
 ) -> list[Problem]:
-    used = tuple(recipe.y) + ((recipe.x,) if recipe.x and recipe.family == "relationship" else ())
+    used = tuple(recipe.y) + (
+        (recipe.x,) if recipe.x and recipe.family in ("relationship", "trend") else ()
+    )
     return check_cell_rules(recipe.cells, s, values, used)
 
 
@@ -1702,6 +1705,7 @@ def _resolve_roles(
     3. **x（有序横轴）**：除 y 外还剩下的日期列 + 数值列（`xs`）：恰好一个就是它；多个：`picks.x` → 点名的第一个 → 宽表第一列；
        都没有且**没有分组列** → **问**（`unsure` 的默认 = 最左的日期列，没有就最左的数值列）；有分组列时不问，不出 trend /
        relationship（分组比较与分布是主图，不拿一个猜出来的横轴去换）。有横轴时分组列做颜色分组（恰好两个分组列时另一个做分面）。
+    （横轴候选 `xs` 里的数值列可以是夹着少量文字的（`numeric_like`，与 y 同一阈值）：那几行不画、先问 / 懒模式默认跳过，处理规则同 y 列；文字占多数的列不进。）
     （`picks.group == "none"` / `picks.x == "none"`：用户在右侧面板明确不要分组 / 不要有序横轴——当没有这个角色，不问。）
     4. layout 是 `matrix`（对称矩阵）→ 画不了（`matrix_unsupported`）：模板没有热图。"""
     s = entry.summary
@@ -1749,7 +1753,12 @@ def _resolve_roles(
         else:
             return NeedsChoice("pick_group", _col_options("group", cats, s), _unsure("group"))
     # --- x
-    xs = [c for c in dates + nums if c not in ys and s.per_column[c].kind in ("numeric", "date")]
+    # 横轴候选：日期列 + 数值列；夹着少量文字的数值列（`numeric_like`，与 y 同一阈值）也行——那几行不画并报告（`default_candidates` 的 `mixed_cells`）
+    xs = [
+        c
+        for c in dates + nums
+        if c not in ys and (s.per_column[c].kind == "date" or numeric_like(s.per_column[c]))
+    ]
     x_ord: str | None = None
     px = picks.get("x")
     named_x = [c for c in named if c in xs]
@@ -1772,15 +1781,13 @@ def _resolve_roles(
     options = {
         "y": list(nums),
         "group": cats_all,
-        "x": [
-            c for c in dates + nums if c not in ys and s.per_column[c].kind in ("numeric", "date")
-        ],
+        "x": list(xs),
     }
     return _Roles(
         tuple(ys),
         tuple(cats),
         x_ord,
-        bool(x_ord and s.per_column[x_ord].kind == "numeric"),
+        bool(x_ord and numeric_like(s.per_column[x_ord])),
         options,
     )
 
@@ -1872,7 +1879,8 @@ def default_candidates(
         "options": {k: list(v) for k, v in roles.options.items()},
     }
     cells = dict(cells or {})
-    mixed = mixed_columns(s, roles.ys)
+    # 夹着少量文字的数值列：y 列与有序横轴列同一套规则（先问 / 懒模式默认「不画那几行」，规则进配方）
+    mixed = mixed_columns(s, (*roles.ys, *([roles.x_ord] if roles.x_ord else [])))
     pending = [c for c in mixed if c not in cells]
     if pending and values is not None and values.rows:
         context = tuple(
@@ -2055,14 +2063,20 @@ def default_candidates(
     dropped: list[Dropped] = []
     for gi, alts in enumerate(groups):
         for code, rec in alts:
-            rules = tuple(cells[c] for c in rec.y if c in cells and c in mixed)
+            used_cols = (
+                *rec.y,
+                *([rec.x] if rec.x and rec.family in ("trend", "relationship") else []),
+            )
+            rules = tuple(cells[c] for c in used_cols if c in cells and c in mixed)
             if rules:
                 rec = replace(rec, cells=rules)
             problems = validate_recipe(profile, rec, confirmed=eff, values=values)
             if len(rec.y) > 1 and any(p.code == "dual_axis_unsupported" for p in problems):
                 # 量纲不同的几列不画同一张图（不做双 y 轴）：退到第一列，不静默丢掉也不报错
                 rec = replace(
-                    rec, y=rec.y[:1], cells=tuple(r for r in rec.cells if r.column == rec.y[0])
+                    rec,
+                    y=rec.y[:1],
+                    cells=tuple(r for r in rec.cells if r.column in (rec.y[0], rec.x)),
                 )
                 problems = validate_recipe(profile, rec, confirmed=eff, values=values)
             if not problems:
