@@ -4533,7 +4533,12 @@ def _fix_run(
             return fail(
                 str(norm.get("exit") or "constraint_conflict"),
                 stage="size",
-                size={**result["size"], "to_mm": None, "column": picked},
+                size={
+                    **result["size"],
+                    "to_mm": None,
+                    "column": picked,
+                    "target": {k: round(float(v), 2) for k, v in targets.items()},
+                },
                 detail={"blocking": blocking[:10], "warnings": norm.get("warnings") or []},
             )
         if norm.get("exit") != engine_normalize.EXIT_NOTHING_TO_DO:
