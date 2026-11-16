@@ -16,6 +16,21 @@ export function listedVendors(caps: AiCapabilities | null | undefined): AiVendor
   return sortVendors(vendors, isCnFirst())
 }
 
+/** 用户自填地址保存下来的连接（vendor = custom）：每条一行，列在厂商列表末尾 */
+export const customConnections = (caps: AiCapabilities | null | undefined): AiConnection[] =>
+  (caps?.connections ?? []).filter((c) => c.vendor === 'custom')
+
+/** 给一条自填连接合成一行用的「厂商」：名字用连接名、图标是通用图标；Key 方式的目录行 id 仍是 custom（换 Key 时当厂商 id 发） */
+export const customVendorOf = (c: AiConnection): AiVendor => ({
+  id: c.id,
+  label: c.label,
+  logo: 'custom',
+  region: 'custom',
+  connect: 'key',
+  available: true,
+  methods: [{ id: 'custom:key', kind: 'key', catalog_id: 'custom', available: true }],
+})
+
 /** 这家厂商当前的连接（同厂商多条时取最该显示的：ready 优先） */
 export function connectionOf(caps: AiCapabilities | null | undefined, vendor: AiVendor): AiConnection | undefined {
   const own = (caps?.connections ?? []).filter((c) => c.vendor === vendor.id)

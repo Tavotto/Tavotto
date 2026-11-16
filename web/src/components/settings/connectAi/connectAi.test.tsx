@@ -578,3 +578,53 @@ describe('连接卡：按原因给一个按钮', () => {
     expect(row('deepseek').querySelector('[data-connect-action="key"]')).not.toBeNull()
   })
 })
+
+describe('自填地址的连接进列表', () => {
+  const mine = (over = {}) =>
+    connection('mine', { vendor: 'custom', label: '公司中转站', state: 'error', error: 'endpoint_unusable', error_reason: 'web_page', ...over } as never)
+  const mineRow = () => document.body.querySelector<HTMLElement>('[data-connect-vendor="mine"]')
+
+  it('有自填连接：厂商后面多一行，名字是连接名、图标是通用图标，状态与按钮同厂商行（连不上这个地址 + 检查连接）', async () => {
+    serverCaps = connectCapsOf([mine()])
+    useAiStore.setState({ caps: serverCaps })
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
+    expect(ids()).toEqual(['deepseek', 'kimi', 'qwen', 'zhipu', 'chatgpt', 'mine'])
+    const r = mineRow()!
+    expect(r.textContent).toContain('公司中转站')
+    expect(r.querySelector('[data-brand-logo="generic"]')).not.toBeNull()
+    expect(r.querySelector('[data-connect-state="error"]')?.textContent).toBe(cx('probe.unreachable'))
+    expect(r.querySelector('[data-connect-action="check"]')?.textContent).toContain(cx('checkConnection'))
+  })
+
+  it('按原因给按钮：额度用完的弹窗里不给；重填密钥打开它的编辑表单并聚焦密钥', async () => {
+    serverCaps = connectCapsOf([mine({ error_reason: 'quota' })])
+    useAiStore.setState({ caps: serverCaps })
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
+    expect(mineRow()!.querySelector('button')).toBeNull()
+    await act(async () => root.unmount())
+    serverCaps = connectCapsOf([mine({ error_reason: 'unauthorized' })], {
+      endpoints: [{ id: 'mine', label: '公司中转站', agent: 'codex', base_url: 'https://x.example/v1', models: [], has_key: true, key_hint: '…1234' } as never],
+    })
+    useAiStore.setState({ caps: serverCaps })
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
+    const b = mineRow()!.querySelector<HTMLButtonElement>('button[data-connect-action]')!
+    expect(b.textContent).toBe(cx('action.refillKey'))
+    await click(b)
+    const { useConnectAiStore } = await import('@/store/connectAiStore')
+    expect(useConnectAiStore.getState().editing).toBe('mine')
+    expect(useConnectAiStore.getState().editFocus).toBe('key')
+    useConnectAiStore.getState().closeEditor()
+  })
+
+  it('已连接的自填连接显示「已连接」；没有自填连接时列表里没有多余的行', async () => {
+    serverCaps = connectCapsOf([mine({ state: 'ready', error: undefined, error_reason: undefined })])
+    useAiStore.setState({ caps: serverCaps })
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
+    expect(mineRow()!.querySelector('[data-connect-state="ready"]')).not.toBeNull()
+    await act(async () => root.unmount())
+    serverCaps = connectCapsOf([connection('deepseek')])
+    useAiStore.setState({ caps: serverCaps })
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
+    expect(ids()).toEqual(['deepseek', 'kimi', 'qwen', 'zhipu', 'chatgpt'])
+  })
+})

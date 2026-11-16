@@ -88,7 +88,10 @@ export function VendorRow({
     if (!connection) return
     if (a === 'check') void checkNow()
     else if (a === 'switch_ai') requestConnectAi()
-    else if (a === 'refill_key') setOpen(true) // 就地展开 Key 表单
+    else if (a === 'refill_key') {
+      // 自填地址的连接：打开它的编辑表单（聚焦密钥）；目录厂商就地展开 Key 表单
+      if (vendor.region !== 'custom' || !requestEditConnection(connection.id, 'key')) setOpen(true)
+    }
     else if (!requestEditConnection(connection.id, a === 'edit_model' ? 'model' : 'url')) setOpen(true)
   }
 
