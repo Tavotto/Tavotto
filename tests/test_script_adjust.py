@@ -853,6 +853,21 @@ def _written_keys(
     }
 
 
+#: prop → 它依赖的公开 API（`模块:类.方法`）。引擎同样按 `hasattr` 判（`overrides` 的 hatchcolor 一族：
+#: `set_hatchcolor` 3.11 起才有），旧版 matplotlib 上 manifest 不发这条字段，扫描采不到不算漏验。
+_NEEDS_API = {"hatchcolor": "matplotlib.patches:Patch.set_hatchcolor"}
+
+
+def _worker_has(api: str) -> bool:
+    mod, attr = api.split(":")
+    cls, meth = attr.split(".")
+    code = f"import importlib; print(hasattr(getattr(importlib.import_module({mod!r}), {cls!r}), {meth!r}))"
+    out = subprocess.run(
+        [WORKER_PY, "-c", code], capture_output=True, encoding="utf-8", check=True, timeout=60
+    )
+    return out.stdout.strip().splitlines()[-1] == "True"
+
+
 @real_worker
 def test_every_writable_key_is_swept_or_named(tmp_path):
     """`WRITES` 的每个键都在某张图上真被采样验证过，或者点名了证明它的专用用例。
@@ -874,6 +889,8 @@ def test_every_writable_key_is_swept_or_named(tmp_path):
         finally:
             pool.discard(worker)
     missing = set(scriptadjust.WRITES) - covered - set(_DEDICATED)
+    # 要较新 matplotlib 才有的 prop：引擎按同一条公开 API 是否存在决定发不发字段，这一档没有就采不到
+    missing -= {k for k in missing if k[1] in _NEEDS_API and not _worker_has(_NEEDS_API[k[1]])}
     assert not missing, f"写进了脚本、却既没被扫描采到也没点名专用用例：{sorted(missing)}"
     for key, test in _DEDICATED.items():
         assert callable(globals().get(test)), f"{key} 点名的用例 {test} 不存在"
