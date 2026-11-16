@@ -91,6 +91,9 @@ export function TablePreview({
   }
 
   const numericCols = ov.fields.map((f) => f.kind === 'numeric')
+  // 第一列贴左、最后一列贴右（表头和数值的边一致，不管是不是数值列）；中间的数值列右对齐、文字列左对齐
+  const lastCol = ov.fields.length - 1
+  const right = ov.fields.map((_, j) => (j === 0 ? false : j === lastCol ? true : numericCols[j]!))
   const decimals = ov.fields.map((_, j) => Math.max(0, ...ov.preview_rows.map((r) => decimalsOf(r.cells[j] ?? ''))))
   return (
     <div className={cn('flex flex-col gap-3', loading && 'opacity-60')} data-studio-preview>
@@ -116,7 +119,7 @@ export function TablePreview({
       >
         <div role="row" className="sticky top-0 z-sticky col-span-full grid grid-cols-subgrid border-b border-border bg-surface pb-1.5 pt-1">
           {ov.fields.map((f, i) => (
-            <div key={i} role="columnheader" className={cn('flex flex-col', numericCols[i] ? 'items-end text-right' : 'items-start text-left')}>
+            <div key={i} role="columnheader" className={cn('flex flex-col', right[i] ? 'items-end text-right' : 'items-start text-left')}>
               <span className="max-w-56 truncate font-medium">{f.name}</span>
               <span className="text-xs text-ink-3">
                 {f.id_like ? t('dataFigureV2.preview.type.id') : t(`dataFigureV2.preview.type.${KIND_KEY[f.kind] ?? 'text'}`)}
@@ -127,7 +130,7 @@ export function TablePreview({
         {ov.preview_rows.map((r) => (
           <div key={r.line} role="row" className="col-span-full grid grid-cols-subgrid border-t border-border py-1.5 first:border-t-0">
             {ov.fields.map((_, j) => (
-              <div key={j} role="cell" className={cn('max-w-56 truncate', numericCols[j] ? 'text-right' : 'text-left')}>
+              <div key={j} role="cell" className={cn('max-w-56 truncate', right[j] ? 'text-right' : 'text-left')}>
                 {numericCols[j] ? alignDecimal(r.cells[j] ?? '', decimals[j]) : (r.cells[j] ?? '')}
               </div>
             ))}

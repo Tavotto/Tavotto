@@ -4,7 +4,7 @@ import { Button, IconButton } from '@/components/ui/Button'
 import { X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { DURATION, usePresence } from '@/lib/motion'
-import { columnSample, hasNumericColumn, overlayTargetWidth, overlayWidthCss, tableKey } from '@/lib/dataFigure'
+import { chromeFits, columnSample, hasNumericColumn, overlayCardPx, overlayTargetWidth, overlayWidthCss, tableKey } from '@/lib/dataFigure'
 import { cn } from '@/lib/utils'
 import { useFormatMessage } from '@/i18n/react'
 import '@/lib/dataFigureHost'
@@ -175,7 +175,7 @@ export function DataOverlay({ narrow }: { narrow: boolean }) {
   }, [mounted])
 
   // 换屏 / 关卡片后焦点没地方放（按下的按钮被换掉了）：收回卡片上，方向键 / Enter 接着能用；选画法屏落在选中的那一张上
-  const sceneKind = scene.kind
+  const sceneKind = scene.kind === 'drawing' && scene.pick ? 'pick' : scene.kind
   useEffect(() => {
     const el = root.current
     if (!open || !el) return
@@ -209,6 +209,10 @@ export function DataOverlay({ narrow }: { narrow: boolean }) {
     switch (scene.kind) {
       case 'proposing':
       case 'drawing':
+        if (scene.kind === 'drawing' && scene.pick) {
+          // 出图中沿用选画法屏的版面：点「画这张」到进编辑器之间卡片尺寸不动
+          return <PickScene items={scene.pick.items} selectedId={scene.pick.selectedId} source={baseName(scene.pick.sourcePath)} drawing onChoose={() => {}} onDraw={() => {}} onBack={() => {}} />
+        }
         return <WorkingScene kind={scene.kind} thumb={scene.kind === 'drawing' ? scene.thumb : null} />
       case 'ask':
         return <AskScene code={scene.code} options={scene.options} unsure={scene.unsure} sampleOf={(c) => columnSample(ov, c)} onAnswer={(o) => void st().answer(o)} onBack={st().back} />
@@ -319,11 +323,11 @@ export function DataOverlay({ narrow }: { narrow: boolean }) {
       <OverlayFooterContext.Provider value={{ left: footerLeft, right: footerRight }}>
         <div
           ref={scroller}
-          key={scene.kind}
+          key={scene.kind === 'drawing' && scene.pick ? 'pick' : scene.kind}
           onScroll={measureEdges}
           data-studio-stage
           style={{ maskImage, WebkitMaskImage: maskImage, maskComposite: 'intersect', WebkitMaskComposite: 'source-in' }}
-          className={cn('relative flex min-h-0 flex-1 animate-fade-in flex-col overflow-auto px-5 pb-4 pt-1', scene.kind !== 'browse' && 'min-h-32')}
+          className={'relative flex min-h-0 flex-1 animate-fade-in flex-col overflow-auto px-5 pb-2 pt-1'}
         >
           {body}
         </div>
@@ -353,14 +357,36 @@ function TableSkeleton({ label }: { label: string }) {
  * 画布上居中的浮条（工具条 / 通知条 / 提示）在卡片开着时的左内缩：等于卡片占掉的宽度（8px 边距 + 卡片宽 + 8px 间隙），
  * 让它们在没被盖住的那部分画布里重新居中。宽度表达式与卡片同一份（`overlayWidthCss`），所以过渡起点 / 终点与卡片对得上。
  * 没开卡片 / 窄屏（卡片占满宽、浮条本来就被盖）时是 0。
+ *
+ * `fit`：让位之后剩下的画布放不放得下底部工具条（量出来的：画布栏宽、卡片目标宽、工具条内容的自然宽度，见 `chromeFits`）。
+ * 放不下时调用方把工具条淡出，卡片关掉或变窄再回来，不硬塞到属性栏底下。
  */
-export function useDataOverlayInset(narrow: boolean): string {
+export function useDataOverlayChrome(narrow: boolean, layer: React.RefObject<HTMLElement | null>): { inset: string; fit: boolean } {
   const open = useDataFigureStore((s) => s.overlay)
   const kind = useDataFigureStore((s) => s.scene.kind)
   const selected = useDataFigureStore((s) => s.selected)
   const overviews = useDataFigureStore((s) => s.overviews)
   const headerRows = useDataFigureStore((s) => s.headerRows)
-  if (!open || narrow) return '0px'
+  const [parentW, setParentW] = useState<number | null>(null)
+  const [toolbarW, setToolbarW] = useState<number | null>(null)
+  useLayoutEffect(() => {
+    const host = layer.current?.parentElement
+    if (!host || typeof ResizeObserver === 'undefined') return
+    const read = () => {
+      setParentW(host.clientWidth)
+      const tb = layer.current?.querySelector<HTMLElement>('[data-canvas-toolbar]')
+      if (tb) setToolbarW(tb.scrollWidth)
+    }
+    read()
+    const ro = new ResizeObserver(read)
+    ro.observe(host)
+    const tb = layer.current?.querySelector<HTMLElement>('[data-canvas-toolbar]')
+    if (tb) ro.observe(tb)
+    return () => ro.disconnect()
+  }, [layer, open])
+  if (!open || narrow) return { inset: '0px', fit: true }
   const ov = selected ? (overviews[overviewKeyOf(selected, headerRows)]?.data ?? null) : null
-  return `calc(1rem + ${overlayWidthCss(overlayTargetWidth(kind, ov))})`
+  const target = overlayTargetWidth(kind, ov)
+  const fit = parentW == null || toolbarW == null ? true : chromeFits(parentW, 16 + overlayCardPx(target, parentW), toolbarW)
+  return { inset: `calc(1rem + ${overlayWidthCss(target)})`, fit }
 }

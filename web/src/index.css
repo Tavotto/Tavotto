@@ -1415,3 +1415,19 @@ samp,
 .font-mono {
   text-autospace: no-autospace;
 }
+
+/* 「数据」预览卡片让位之后剩下的画布放不下底部工具条（`data-fit="false"`，量出来的）：工具条整体淡出且不可点 / 不可聚焦，
+   卡片关掉或变窄再淡入；visibility 在淡出结束后才切，减少动态效果时全局兜底直接切换 */
+[data-canvas-chrome] [data-canvas-toolbar] {
+  transition:
+    opacity var(--duration-base) var(--ease-standard),
+    visibility 0s linear 0s;
+}
+[data-canvas-chrome][data-fit='false'] [data-canvas-toolbar] {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity var(--duration-base) var(--ease-standard),
+    visibility 0s linear var(--duration-base);
+}

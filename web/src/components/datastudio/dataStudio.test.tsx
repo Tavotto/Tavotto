@@ -777,4 +777,59 @@ describe('流程体验返工（第一遍）', () => {
     await flush()
     expect(vi.mocked(aiDataFigurePropose)).toHaveBeenCalled()
   })
+
+  it('样例只取前三个不同的值：不出现「0, 0, 0…」；不足三个有几个显示几个；全相同只显示一个', async () => {
+    const { columnSample } = await import('@/lib/dataFigure')
+    const rows = (vals: string[]) => vals.map((v, i) => ({ line: i + 2, cells: [v] }))
+    const f = [{ name: 'c', kind: 'numeric' as const, numeric: 6, text: 0, empty: 0, nan: 0, id_like: false }]
+    expect(columnSample(ov({ fields: f, preview_rows: rows(['0', '0', '0', '2', '2', '4', '6']) }), 'c')).toBe('0, 2, 4…')
+    expect(columnSample(ov({ fields: f, preview_rows: rows(['0', '0', '1']) }), 'c')).toBe('0, 1')
+    expect(columnSample(ov({ fields: f, preview_rows: rows(['5', '5', '5']), rows: 100 }), 'c')).toBe('5')
+    expect(columnSample(ov({ fields: f, preview_rows: rows(['1', '2', '3']) }), 'c')).toBe('1, 2, 3')
+  })
+
+  it('浮条让位：剩余宽度 ≥ 工具条自身宽度 + 两侧各 12px 才放得下，量出来的数不写死', async () => {
+    const { chromeFits, overlayCardPx } = await import('@/lib/dataFigure')
+    expect(chromeFits(1000, 400, 500)).toBe(true) // 600 ≥ 524
+    expect(chromeFits(1000, 477, 500)).toBe(false) // 523 < 524
+    expect(chromeFits(1000, 476, 500)).toBe(true) // 524 ≥ 524
+    expect(chromeFits(700, 16 + overlayCardPx(640, 700), 520)).toBe(false) // 卡片 420 → 剩 264
+    expect(overlayCardPx(300, 2000)).toBe(360)
+    expect(overlayCardPx(640, 800)).toBe(480)
+  })
+
+  it('表格：第一列贴左、最后一列贴右（表头与数值同侧），中间数值列右对齐', async () => {
+    const o = ov({
+      fields: [
+        { name: 'day', kind: 'numeric', numeric: 2, text: 0, empty: 0, nan: 0, id_like: false },
+        { name: 'mid', kind: 'numeric', numeric: 2, text: 0, empty: 0, nan: 0, id_like: false },
+        { name: 'group', kind: 'text', numeric: 0, text: 2, empty: 0, nan: 0, id_like: false },
+      ],
+      preview_rows: [{ line: 2, cells: ['0', '1', 'a'] }],
+    })
+    await mount(<TablePreview ov={o} loading={false} onHeaderRow={() => {}} />)
+    const heads = qa('[role=columnheader]').map((h) => h.className)
+    const cells = qa('[data-studio-preview] [role=row] [role=cell]').map((c) => c.className)
+    expect(heads[0]).toContain('items-start')
+    expect(cells[0]).toContain('text-left')
+    expect(heads[1]).toContain('items-end')
+    expect(cells[1]).toContain('text-right')
+    expect(heads[2]).toContain('items-end')
+    expect(cells[2]).toContain('text-right')
+  })
+
+  it('出图中：沿用选画法屏的版面，其余的淡下去不可点，主按钮禁用，左边是状态句', async () => {
+    const items = [
+      { id: 'i1', title_code: 'line_band', why_code: 'line_band', recommended: true, unplotted: { count: 0, code: null }, thumbnail_url: '/t/1', thumb: '/t/1?pj=pa' },
+      { id: 'i2', title_code: 'scatter', why_code: 'scatter', recommended: false, unplotted: { count: 0, code: null }, thumbnail_url: '/t/2', thumb: '/t/2?pj=pa' },
+    ]
+    await mount(<PickScene items={items} selectedId="i1" source="a.csv" drawing onChoose={() => {}} onDraw={() => {}} onBack={() => {}} />)
+    const tiles = qa('[data-studio-option]')
+    expect(tiles[1]!.className).toContain('opacity-35')
+    expect(tiles[0]!.className).not.toContain('opacity-35')
+    expect(qa<HTMLInputElement>('input[type=radio]').every((r) => r.disabled)).toBe(true)
+    expect(q<HTMLButtonElement>('[data-studio-primary]')!.disabled).toBe(true)
+    expect(q('[role=status]')!.textContent).toBe('正在画…')
+    expect(q('[data-studio-back]')).toBeNull()
+  })
 })

@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CanvasStage } from '@/canvas/CanvasStage'
 import { CanvasTabs } from '@/components/CanvasTabs'
@@ -65,7 +65,7 @@ import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectStore } from '@/store/projectStore'
 import '@/lib/dataFigureHost'
-import { DataOverlay, useDataOverlayInset } from '@/components/datastudio/DataOverlay'
+import { DataOverlay, useDataOverlayChrome } from '@/components/datastudio/DataOverlay'
 import { useEnvStore } from '@/store/envStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
@@ -188,7 +188,8 @@ function Workspace() {
   const rightOpen = useUiStore((s) => s.rightOpen)
   const layoutKind = useWorkspaceLayout()
   const overlay = layoutKind === 'narrow'
-  const dataInset = useDataOverlayInset(overlay)
+  const chromeLayer = useRef<HTMLDivElement>(null)
+  const { inset: dataInset, fit: chromeFit } = useDataOverlayChrome(overlay, chromeLayer)
   // 属性栏 < 1280 且没固定时也是覆盖层（G1）；左抽屉与遮罩仍只在 narrow 覆盖
   const rightOverlay = useUiStore(isRightOverlay)
   // 收起时先把退场播完再卸载；退场时长与 --animate-drawer-out 同源
@@ -298,7 +299,7 @@ function Workspace() {
                   项目接入状态在项目名后面的胶囊里，「构建版本不一致」是顶栏右侧的 `BuildMismatchChip`——
                   没有任何东西会在这里插进一行把画布往下推 */}
               {showTabs && <CanvasTabs />}
-              <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+              <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" style={{ ["--data-overlay-inset" as string]: dataInset }}>
               {/* 「从数据到图」的预览浮层：抽屉里点数据文件后在标签行下方、离画布栏上 / 下 / 左各 8px 浮起，右侧仍露出画布（关着时不渲染任何东西） */}
               <DataOverlay narrow={overlay} />
                 <CanvasStage />
@@ -308,7 +309,7 @@ function Workspace() {
                     此前右上三者各自 absolute（right-2 / right-3、z 10 / 20 / 30）互相压 */}
                 {/* 居中的浮条（工具条 / 通知条 / 左下提示）共用这一层：「数据」预览卡片开着时它左边让出卡片的宽度（带过渡），
                     浮条就在没被盖住的那部分画布里重新居中；卡片关着 = 0，几何与没有这一层时相同。这一层不吃指针：浮条自己各有 pointer-events */}
-                <div data-canvas-chrome className="pointer-events-none absolute inset-y-0 right-0 transition-[left] duration-base ease-standard" style={{ left: dataInset }}>
+                <div ref={chromeLayer} data-canvas-chrome data-fit={chromeFit} className="pointer-events-none absolute inset-y-0 right-0 transition-[left] duration-base ease-standard" style={{ left: dataInset }}>
                 <CanvasToolbar />
                 <div
                   data-canvas-corner="top-right"

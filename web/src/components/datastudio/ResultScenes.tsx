@@ -24,19 +24,26 @@ function Top({ children, anchor }: { children: ReactNode; anchor: string }) {
 /** 出图超过这么久还没回来：换一句话，让人知道没卡住 */
 const SLOW_MS = 8000
 
+/** 出图中的状态句：正常「正在画…」，超过 8 秒换成慢提示。选画法屏（出图中）和单独的等待屏共用 */
+export function useDrawingLine(active: boolean): string {
+  const { t } = useTranslation('ai')
+  const [slow, setSlow] = useState(false)
+  useEffect(() => {
+    setSlow(false)
+    if (!active) return
+    const id = window.setTimeout(() => setSlow(true), SLOW_MS)
+    return () => window.clearTimeout(id)
+  }, [active])
+  return t(slow ? 'dataFigureV2.working.slow' : 'dataFigureV2.working.drawing')
+}
+
 /**
  * 画备选 / 画这张：等后端一次回来，没有可报的步骤——不定态，不装百分比。
  * 出图时留着刚选中的那张缩略图（带一道扫光），下面一行字；超过 8 秒换成「还在画」。
  */
 export function WorkingScene({ kind, thumb }: { kind: 'proposing' | 'drawing'; thumb?: string | null }) {
   const { t } = useTranslation('ai')
-  const [slow, setSlow] = useState(false)
-  useEffect(() => {
-    setSlow(false)
-    if (kind !== 'drawing') return
-    const id = window.setTimeout(() => setSlow(true), SLOW_MS)
-    return () => window.clearTimeout(id)
-  }, [kind])
+  const drawingLine = useDrawingLine(kind === 'drawing')
   if (kind === 'drawing')
     return (
       <Top anchor="data-studio-working">
@@ -47,7 +54,7 @@ export function WorkingScene({ kind, thumb }: { kind: 'proposing' | 'drawing'; t
           </div>
         )}
         <p className={thumb ? 'text-center text-base text-ink-2' : 'text-base text-ink-2'} role="status">
-          {t(slow ? 'dataFigureV2.working.slow' : 'dataFigureV2.working.drawing')}
+          {drawingLine}
         </p>
         {!thumb && <ProgressBar pct={null} label={t('dataFigureV2.working.drawing')} className="w-56" />}
       </Top>

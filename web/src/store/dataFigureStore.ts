@@ -72,8 +72,8 @@ export type Scene =
   | { kind: 'mixed'; columns: AiDataMixedColumn[] }
   | { kind: 'pick'; session: string; items: PickItem[]; selectedId: string; sourcePath: string; fromRetry: boolean }
   | { kind: 'nothing'; reasons: string[] }
-  /** 出图中；`thumb` = 刚选中的那张缩略图（出图屏留着它，卡片不空；重试拿不到就是 null） */
-  | { kind: 'drawing'; thumb: string | null }
+  /** 出图中；`pick` = 点「画这张」那一刻的那组备选（出图屏沿用选画法屏的版面，其余的淡下去、选中的带扫光）；重试没有备选时是 null，只剩 `thumb` */
+  | { kind: 'drawing'; thumb: string | null; pick: { items: PickItem[]; selectedId: string; sourcePath: string } | null }
   | { kind: 'drawn'; script: string; notes: DrawNotes }
   | { kind: 'problem'; problem: ProblemKind }
 
@@ -276,7 +276,15 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     const forKey = `${sessionId}/${itemId}`
     if (!commitRid || commitRid.for !== forKey) commitRid = { for: forKey, rid: newRid() }
     const rid = commitRid.rid
-    set({ scene: { kind: 'drawing', thumb: items.find((i) => i.id === itemId)?.thumb ?? null } })
+    const sc0 = get().scene
+    // 出图中保持选画法屏的版面不动：带着整组备选（`pick` 是它们的快照）；重试没有备选时只剩缩略图 / 空
+    set({
+      scene: {
+        kind: 'drawing',
+        thumb: items.find((i) => i.id === itemId)?.thumb ?? null,
+        pick: items.length > 0 ? { items, selectedId: itemId, sourcePath: sc0.kind === 'pick' ? sc0.sourcePath : '' } : null,
+      },
+    })
     try {
       const res = await aiDataFigureCommit({ session: sessionId, id: itemId, client_request_id: rid }, pj)
       if (!still()) return

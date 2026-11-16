@@ -155,16 +155,24 @@ export function overlayTargetWidth(sceneKind: string, ov: AiDataOverview | null)
 /** 卡片宽度的 CSS 表达式：不窄于 360、不宽于目标、不超过画布栏的 60%（百分数相对画布栏，浮条那一头的容器与它同一个包含块） */
 export const overlayWidthCss = (target: number): string => `max(360px, min(${target}px, 60%))`
 
-/** 这一列前三个值的样例（`0, 2, 4…`），选择题里的灰字；列不存在或没有值就是 null */
+/** 这一列前三个**不同的**值的样例（`0, 2, 4…`），选择题里的灰字；不足三个不同值有几个显示几个（全相同只显示一个），还有更多不同值才加省略号 */
 export function columnSample(ov: AiDataOverview | null, column: string): string | null {
   if (!ov || ov.status !== 'ok') return null
   const i = ov.fields.findIndex((f) => f.name === column)
   if (i < 0) return null
-  const vals = ov.preview_rows.map((r) => (r.cells[i] ?? '').trim()).filter((v) => v !== '')
-  if (vals.length === 0) return null
-  const head = vals.slice(0, 3).join(', ')
-  return vals.length > 3 || (ov.rows != null && ov.rows > 3) ? `${head}…` : head
+  const distinct = [...new Set(ov.preview_rows.map((r) => (r.cells[i] ?? '').trim()).filter((v) => v !== ''))]
+  if (distinct.length === 0) return null
+  return distinct.length > 3 ? `${distinct.slice(0, 3).join(', ')}…` : distinct.join(', ')
 }
+
+/** 卡片的实际宽度（px）：与 `overlayWidthCss` 同一条规则，给量测用（`parentW` = 画布栏宽） */
+export const overlayCardPx = (target: number, parentW: number): number => Math.max(360, Math.min(target, parentW * 0.6))
+
+/**
+ * 卡片让位之后，剩下的那部分画布放不放得下底部工具条：剩余宽度 ≥ 工具条自身宽度 + 两侧各 12px。
+ * 全是量出来的数（`toolbarW` = 工具条内容的自然宽度），不写死像素；放不下的时候浮条整体淡出，卡片关掉或变窄再回来。
+ */
+export const chromeFits = (parentW: number, insetPx: number, toolbarW: number): boolean => parentW - insetPx >= toolbarW + 24
 
 /** 这张表里有没有能画的数值：数值列或「混有文字」的列（后者会先问怎么处理）。没有就不给「看看怎么画」 */
 export const hasNumericColumn = (ov: AiDataOverview): boolean => ov.fields.some((f) => f.kind === 'numeric' || f.kind === 'mixed')
