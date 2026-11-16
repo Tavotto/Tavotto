@@ -93,6 +93,19 @@ describe('格式刷补全', () => {
     expect('fill' in byId('a')).toBe(false)
   })
 
+  it('来源还在选区里：跳过它，「已粘贴到 N 个对象」只数真正改了的', async () => {
+    await seed([path({ color: '#2f6fe0', strokePt: 1.7 }), arrow({ strokePt: 1, color: '#1b1b18', head: 'end' })])
+    useSelectionStore.getState().set(['p', 'a'])
+    copySelectionStyle() // 来源 = 最后选中的箭头
+    pasteSelectionStyle()
+    expect(byId<PathObject>('p')).toMatchObject({ color: '#1b1b18', strokePt: 1, headEnd: 'triangle' })
+    expect(useUiStore.getState().status?.values).toMatchObject({ count: 1 })
+    // 只选了来源自己：没有可刷的对象
+    useSelectionStore.getState().set(['a'])
+    pasteSelectionStyle()
+    expect(useUiStore.getState().status?.key).toBe('status.stylePasteNoTarget')
+  })
+
   it('跨族不刷：文字样式刷不到形状上', async () => {
     await seed([text(), shape()])
     brush('t', ['s'])
