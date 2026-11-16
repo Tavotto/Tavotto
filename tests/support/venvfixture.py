@@ -5,8 +5,8 @@
 写两份的话其中一份迟早漏掉一个：
 
 1. **matplotlib 直接用宿主那份**，CI 不必联网装几百 MB 的科学栈。
-   注意 `--system-site-packages` **单独不够**：它带进来的是**基础解释器**的
-   site-packages，不是「交给夹具的那个解释器」的（见 `inherit_host_site()`）。
+   新 venv 保持隔离，仅由 `inherit_host_site()` 显式接入宿主的包目录，
+   不用 `--system-site-packages` 重新执行基础环境或用户目录的 `.pth`（#1935）。
 2. **必须把宿主的 `tavotto` 遮掉**（见 `mask_tavotto()`）。
 3. **建完当场验一遍前提，不成立就分档报出来**（见 `verify()`）——夹具的前提
    失效时，红的是十几条**看起来在测别的东西**的用例，而错误信息指向产品。
@@ -155,8 +155,8 @@ def site_packages(venv: Path) -> Path:
 def mask_tavotto(venv: Path) -> Path:
     """把宿主解释器上的 `tavotto` 从这个 venv 里遮掉。
 
-    **为什么必须做**：新 venv 会看到宿主的 site-packages（`--system-site-packages`
-    带来的那一份，以及 `inherit_host_site()` 接进来的那一份），而 CI 的
+    **为什么必须做**：新 venv 会看到宿主的 site-packages（`inherit_host_site()`
+    显式接进来的目录），而 CI 的
     backend-fast 正是 `pip install -e ".[dev]"` 装进那个解释器的。于是夹具 venv 里
     `import tavotto` 成功——「项目 venv 里没有 Tavotto 也能起 worker」那条用例的
     **前提当场失效**（它在 CI 上红过一次，就是这么红的）。
@@ -364,7 +364,7 @@ def make_project_venv(root: Path, name: str = ".venv", *, python: str | None = N
     """在 `root` 下建一个能执行、有 matplotlib、且**不含 Tavotto** 的 venv。"""
     venv = root / name
     subprocess.run(
-        [python, "-m", "venv", "--system-site-packages", str(venv)],
+        [python, "-m", "venv", str(venv)],
         check=True,
         capture_output=True,
         timeout=300,

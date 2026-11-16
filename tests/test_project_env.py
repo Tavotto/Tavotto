@@ -166,6 +166,56 @@ def test_the_fixture_venv_inherits_from_the_host_not_from_its_base(tmp_path):
     assert got.stdout.strip() == "7"
 
 
+@needs_worker
+def test_fixture_does_not_execute_user_site_startup_hooks(tmp_path, monkeypatch):
+    """宿主用户目录的启动钩子不能泄漏进代表用户项目的夹具（#1935）。"""
+    monkeypatch.setenv("PYTHONUSERBASE", str(tmp_path / "user-base"))
+    monkeypatch.delenv("PYTHONNOUSERSITE", raising=False)
+    probe = subprocess.run(
+        [WORKER_PY, "-c", "import site; print(site.getusersitepackages())"],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+    )
+    user_site = Path(probe.stdout.strip())
+    user_site.mkdir(parents=True)
+    marker = tmp_path / "startup-hook.txt"
+    (user_site / "fixture_startup_hook.pth").write_text(
+        "import pathlib; pathlib.Path(" + ascii(str(marker)) + ").write_text('ran')\n",
+        encoding="ascii",
+    )
+    project = tmp_path / "project"
+    project.mkdir()
+    venv = venvfixture.make_project_venv(project, python=WORKER_PY)
+    control = tmp_path / "control"
+    subprocess.run(
+        [WORKER_PY, "-m", "venv", "--without-pip", "--system-site-packages", str(control)],
+        check=True,
+        capture_output=True,
+        timeout=120,
+    )
+    subprocess.run(
+        [venvfixture.interpreter_of(control), "-c", "pass"],
+        check=True,
+        capture_output=True,
+        timeout=120,
+    )
+    assert marker.is_file(), "启用系统包的对照环境必须确实执行用户目录钩子"
+    marker.unlink()
+    child = subprocess.run(
+        [venvfixture.interpreter_of(venv), "-c", "import matplotlib; print('ready')"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+    )
+    assert child.returncode == 0, child.stderr
+    assert child.stdout.strip() == "ready"
+    assert not marker.exists(), "夹具子解释器重新执行了宿主用户目录的 .pth"
+
+
 def test_the_pth_is_pure_ascii_and_the_paths_live_in_utf8_source():
     """接目录这件事**拆成两个文件**，各自解决一件谁来解码的事。
 
@@ -382,11 +432,9 @@ def test_project_venv_starts_the_worker_without_installing_tavotto(tmp_path):
     """
     venv = real_venv(tmp_path)
     python = projectenv.interpreter_of(venv)
-    # **前提是被夹具「造出来」的，不是碰运气碰上的**：`--system-site-packages`
-    # 会把**基础解释器**的 site-packages 带进来，而 CI 的 backend-fast 正是
-    # `pip install -e ".[dev]"` 装进那个基础解释器的。少了这个替身，这条用例
-    # 在 CI 上前提当场失效（真红过一次），而本地永远复现不出来——本地从 venv
-    # 建 venv，继承的是基础解释器的 site-packages，不是父 venv 的。
+    # **前提是被夹具「造出来」的，不是碰运气碰上的**：显式接入宿主包目录
+    # 也会让宿主安装的 Tavotto 可见，因此仍需遮蔽它。CI 的 backend-fast
+    # 会安装 Tavotto；少了替身，「用户环境不含 Tavotto」的前提就会失效。
     # 先断言替身在：把遮蔽拆掉的人**在本地**就会看到红，不必等 CI。
     assert (venvfixture.site_packages(venv) / "tavotto.py").is_file(), (
         "夹具 venv 少了遮蔽宿主 Tavotto 的替身，下面那条断言就只是碰运气"
