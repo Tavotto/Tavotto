@@ -370,9 +370,17 @@ def _numlike(cell: str) -> bool:
     return parse_cell(t)[0] in ("numeric", "nan") or bool(_DECIMAL_COMMA.fullmatch(t))
 
 
+#: 仪器导出的单位行里常见、但不属于 `UNITS`（`UNITS` 管列名后缀的显示，加了会改变列名的写法）的写法：只用来认「这一行是单位行」
+_UNITS_ROW_EXTRA = frozenset(
+    {"a.u.", "a.u", "au", "arb.u.", "arb.", "cps", "counts", "%", "deg", "rad"}
+)
+
+
 def _units_like(cells) -> bool:
     cells = [c.strip() for c in cells if c.strip()]
-    return bool(cells) and all(_UNITS_CELL.match(c) or c in UNITS for c in cells)
+    return bool(cells) and all(
+        _UNITS_CELL.match(c) or c in UNITS or c.lower() in _UNITS_ROW_EXTRA for c in cells
+    )
 
 
 def _block(records):
@@ -511,7 +519,8 @@ def _detect(text: str, suffix: str) -> TextLayout | RaggedLayout | None:
             cands = [r for r in block[:k] if not _is_hash(r[1])] or block[
                 :k
             ]  # 与表头同列数的 `#` 行是注释
-            pick = next((r for r in cands if _name_like(r[1])), cands[0])
+            # 紧挨着数据（或单位行）的那一条像名字的是列名：前面同列数的说明行（`operator: lab`）也「像名字」，不能因它排在前面就被选中
+            pick = next((r for r in reversed(cands) if _name_like(r[1])), cands[0])
             return TextLayout(d, pick[0], len(cands) == 1)
         first_line = block[0][0]
         prev = next((r for r in reversed(recs) if r[0] < first_line), None)

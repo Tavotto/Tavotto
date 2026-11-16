@@ -1837,3 +1837,31 @@ def test_render_gate_lets_the_recommended_one_in_first_and_never_exceeds_its_slo
         t.join(10)
     assert peak[0] == 2
     assert order[2:] == [1, 2, 3, 4]  # 空位出来后按序号小的先进，不论到达先后
+
+
+# =========================================================================== 仪器导出：标题行 + 说明行 + 列名行 + 单位行 + 数据
+def instrument_text():
+    lines = ["Sample A calibration run 3", "operator: lab", "Wavelength  Intensity", "nm  a.u."]
+    lines += [f"{400 + 5 * i}  {round(0.1 + i * 0.013 + (i % 3) * 0.004, 3)}" for i in range(20)]
+    return "\n".join(lines) + "\n"
+
+
+def test_header_guess_prefers_the_name_row_next_to_the_units_row_not_a_note_row():
+    layout = adf._detect(instrument_text(), ".txt")
+    assert layout.header_line == 3  # 不是 2（`operator: lab` 也同列数、也「像名字」）
+    assert layout.sure is False  # 仍是猜的：界面让用户可改
+    # 单位行单独也认得：`a.u.` 不在列名后缀的 UNITS 表里，但仪器单位行里常见
+    assert adf._units_like(["nm", "a.u."]) and not adf._units_like(["operator:", "lab"])
+
+
+def test_lazy_propose_on_an_instrument_export_uses_the_real_header_row(project, fake_render):
+    m, client, figs, _ = project
+    path = figs / "data" / "instrument" / "calibration.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text(instrument_text(), encoding="utf-8")
+    body = propose(client, folder="data/instrument", render="lazy").get_json()
+    assert body["kind"] == "candidates", body
+    assert body["header_row"] == 3
+    # 列名取对了（不是 `operator:` / `lab`）；单位行（`nm  a.u.`）目前仍被读成数据里的一行文字，见回报里的未解决项
+    cols = set(body["roles"]["options"]["y"]) | set(body["roles"]["options"]["x"])
+    assert "Intensity" in cols and "operator:" not in cols
