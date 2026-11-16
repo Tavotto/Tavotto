@@ -143,7 +143,9 @@ def build_vectors() -> list[dict]:
 
     vectors += [
         mutated("reject-style-alpha-out-of-range", style_alpha_out_of_range, "chart_model_invalid"),
-        mutated("reject-style-linewidth-not-number", style_linewidth_not_number, "chart_model_invalid"),
+        mutated(
+            "reject-style-linewidth-not-number", style_linewidth_not_number, "chart_model_invalid"
+        ),
         mutated("reject-style-vmin-order", style_vmin_not_less_than_vmax, "chart_model_invalid"),
     ]
 
