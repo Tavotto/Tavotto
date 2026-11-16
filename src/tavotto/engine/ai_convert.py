@@ -2083,6 +2083,21 @@ def _real_dir(d: Path) -> None:
     d.mkdir(exist_ok=True)
 
 
+def _scrub_redirects(d: Path) -> None:
+    """先把目标树里所有链接 / junction 摘掉（只摘链接本身），之后的遍历与写入才不会越出候选目录。自己递归，不用 `os.walk`
+    （它不识别 Windows junction，会走进去）。"""
+    try:
+        entries = list(os.scandir(d))
+    except OSError:
+        return
+    for e in entries:
+        child = Path(e.path)
+        if _is_redirect(child):
+            _drop_redirect(child)
+        elif e.is_dir(follow_symlinks=False):
+            _scrub_redirects(child)
+
+
 def _restore_candidate(src: Path, cdir: Path) -> None:
     """把备份的候选放回 `cdir`，**还原期间目录与 meta 始终存在、始终可读**（轮询 `status()` 不持锁，不许看到 404 / 409）：
     不删整个目录，备份里的文件逐个原子覆盖（先写临时文件再 `os.replace`），备份里没有的多余文件最后才删；meta 最后换。
@@ -2090,6 +2105,7 @@ def _restore_candidate(src: Path, cdir: Path) -> None:
     绝不跟着写到 `CONVERT_DIR` 之外。"""
     src_l, dst_l = Path(longpath.long(src)), Path(longpath.long(cdir))
     _real_dir(dst_l)
+    _scrub_redirects(dst_l)
     keep: set[str] = set()
     for dirpath, _dirs, files in os.walk(src_l):
         rel_dir = Path(dirpath).relative_to(src_l)
@@ -2102,8 +2118,13 @@ def _restore_candidate(src: Path, cdir: Path) -> None:
             keep.add(rel.as_posix())
             if rel.as_posix() == META_NAME:
                 continue
-            atomicio.write_bytes(dst_l / rel, (Path(dirpath) / name).read_bytes())
+            target = dst_l / rel
+            if target.is_dir():  # 修正期间同名位置被换成了目录：先让位，否则原子替换会失败
+                shutil.rmtree(target, ignore_errors=True)
+            atomicio.write_bytes(target, (Path(dirpath) / name).read_bytes())
     if (src_l / META_NAME).is_file():
+        if (dst_l / META_NAME).is_dir():
+            shutil.rmtree(dst_l / META_NAME, ignore_errors=True)
         atomicio.write_bytes(dst_l / META_NAME, (src_l / META_NAME).read_bytes())
     for dirpath, dirs, files in os.walk(dst_l, topdown=False):
         rel_dir = Path(dirpath).relative_to(dst_l)

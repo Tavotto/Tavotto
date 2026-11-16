@@ -400,6 +400,26 @@ def test_restoring_a_candidate_never_writes_through_a_redirected_directory(tmp_p
     assert (cdir / "project_context" / "data.csv").read_text() == "old"
 
 
+def test_restoring_a_candidate_clears_extra_redirects_and_type_collisions(tmp_path):
+    src, cdir, outside = tmp_path / "bak", tmp_path / "cand", tmp_path / "project"
+    src.mkdir()
+    (src / "fig.py").write_text("old")
+    (src / ai_convert.META_NAME).write_text("{}")
+    outside.mkdir()
+    (outside / "data.csv").write_text("user data")
+    cdir.mkdir()
+    (cdir / "fig.py").mkdir()  # a backed-up file replaced by a directory
+    (cdir / "fig.py" / "x").write_text("x")
+    try:
+        os.symlink(outside, cdir / "extra", target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
+    ai_convert._restore_candidate(src, cdir)
+    assert (outside / "data.csv").read_text() == "user data"
+    assert (cdir / "fig.py").read_text() == "old"
+    assert not (cdir / "extra").exists() and not (cdir / "extra").is_symlink()
+
+
 def test_adopting_or_realigning_while_a_realign_runs_says_so(project, monkeypatch):
     import threading
 
