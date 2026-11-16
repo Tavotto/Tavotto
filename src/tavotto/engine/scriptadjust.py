@@ -50,6 +50,7 @@ _ROLE_CLS = {
     "line": "line",
     "legend": "legend",
     "axes": "axes",
+    "axes3d": "axes",  # 3D 轴的字段在 manifest 里自成一族，写得进的只有 grid_visible
     "ticks": "ticks",
     "figure": "figure",
     "scatter": "collection",
@@ -89,6 +90,12 @@ _KEYED = {
     for p in ("facecolor", "edgecolor", "linewidth", "alpha")
 }
 _SIDES = ("top", "right", "bottom", "left")
+#: 广播键 → 被它盖住的窄键（引擎 `spinemodel`：自己的设定 > 「全部」 > 脚本原样）。广播留作 residual
+#: 重放时窄条目会被盖掉，所以窄条目也要一起留下（`_translate`）；`ALIAS_GROUPS` 不登记这一族，所以这里自己记。
+_NARROWER = {
+    "spine_color": tuple(f"spine_{s}_color" for s in _SIDES),
+    "spine_linewidth": tuple(f"spine_{s}_linewidth" for s in _SIDES),
+}
 #: 构建期参数：改了要整份重排图例（引擎 `legendmodel.rebuild_legend` 的那一组）。脚本里合成**一次**
 #: `ax.legend(...)`（`_legend_rebuild`），同一个图例上几条一起改也只重建一回。
 #: 条目顺序与条目显隐同是重建型，但不写（见 `NOT_WRITABLE`）。
@@ -154,6 +161,22 @@ WRITES: dict[tuple[str, str], str | None] = {
     ("axes", "facecolor"): "{o}.set_facecolor({v})",
     ("axes", "grid_x"): "{o}.grid(visible={v}, axis='x')",
     ("axes", "grid_y"): "{o}.grid(visible={v}, axis='y')",
+    # 网格样式：引擎同样是 `tick_params(axis="both", which="both", grid_*=...)`，网格没开时也先存着，
+    # 之后 `grid_x` / `grid_y` 打开就是这个样子（这两条互不覆盖，先后无关）
+    ("axes", "grid_color"): "{o}.tick_params(axis='both', which='both', grid_color={v})",
+    ("axes", "grid_linestyle"): "{o}.tick_params(axis='both', which='both', grid_linestyle={v})",
+    ("axes", "grid_linewidth"): "{o}.tick_params(axis='both', which='both', grid_linewidth={v})",
+    ("axes", "grid_alpha"): "{o}.tick_params(axis='both', which='both', grid_alpha={v})",
+    # 刻度线四边开关（引擎界面形态 = which="both" 两档一起）
+    ("axes", "ticks_bottom"): "{o}.tick_params(axis='x', which='both', bottom={v})",
+    ("axes", "ticks_top"): "{o}.tick_params(axis='x', which='both', top={v})",
+    ("axes", "ticks_left"): "{o}.tick_params(axis='y', which='both', left={v})",
+    ("axes", "ticks_right"): "{o}.tick_params(axis='y', which='both', right={v})",
+    # 3D 轴的网格总开关（2D 轴 manifest 不发这条）
+    ("axes", "grid_visible"): "{o}.grid({v})",
+    # 「全部」档：作用于每一条 spine，必须排在四边各自的语句之前（`_rank`、`_NARROWER`）
+    ("axes", "spine_color"): "[_s.set_edgecolor({v}) for _s in {o}.spines.values()]",
+    ("axes", "spine_linewidth"): "[_s.set_linewidth({v}) for _s in {o}.spines.values()]",
     **{("axes", f"spine_{s}"): f"{{o}}.spines[{s!r}].set_visible({{v}})" for s in _SIDES},
     **{("axes", f"spine_{s}_color"): f"{{o}}.spines[{s!r}].set_edgecolor({{v}})" for s in _SIDES},
     **{
@@ -206,9 +229,8 @@ NOT_WRITABLE: dict[str, str] = {
     "patch": "pos_frac size_frac hatch_linewidth hatchcolor fill",
     "artist": "pos_frac visible zorder",
     "line": "label pos_frac",
-    "axes": "visible position aspect grid_color grid_linestyle grid_linewidth grid_alpha "
-    "ticks_bottom ticks_top ticks_left ticks_right spine_color spine_linewidth elev azim roll "
-    "grid_visible proj_type axis_arrows arrow_color arrow_width arrow_head axline_color "
+    "axes": "visible position aspect elev azim roll "
+    "proj_type axis_arrows arrow_color arrow_width arrow_head axline_color "
     "axline_width pane_visible pane_color",
     "image": "gradient_color origin",
     "ticklabel": "text",
@@ -407,8 +429,9 @@ def _rank(prop: str, statement: str) -> int:
     1. 重建图例：换掉图例对象，素材必须是脚本原样（引擎同样从源对象 / 原样快照重建）；
     2. 锚点、条目脱开跟随：锚点要在拖动之前（拖动清锚框，与位置模型的优先级一致）；
        脱开要在源对象改样式之前，否则 `_with_legend` 会把源的新样子带进示意线；
-    3. 普通属性；
-    4. 示意线样式：写在「脚本原样 + 这几条」上，最后落。
+    3. 「全部」档的广播（边框总颜色 / 总线宽）：要在四边各自的语句之前，窄的盖广播；
+    4. 普通属性；
+    5. 示意线样式：写在「脚本原样 + 这几条」上，最后落。
     """
     if prop in ("xscale", "yscale"):
         return 0
@@ -416,9 +439,11 @@ def _rank(prop: str, statement: str) -> int:
         return 1
     if prop == "loc_anchor" or "_legend_detach(" in statement:
         return 2
+    if prop in _NARROWER:  # 广播先于窄的（四边各自的颜色 / 线宽），与 `overrides.ALIAS_GROUPS` 同序
+        return 3
     if prop.startswith("handle_"):
-        return 4
-    return 3
+        return 5
+    return 4
 
 
 # -------------------------------- 块的运行期代码 --------------------------------
@@ -975,7 +1000,11 @@ def _translate(
     # 同一 prop、gid 是它子孙的，一起留下（ADR 0094 §五.3）
     kept: list[tuple[dict, str]] = []
     for p, stmt in steps:
-        if any(r["prop"] == p["prop"] and p["gid"].startswith(r["gid"] + ".") for r in residual):
+        if any(
+            r["prop"] == p["prop"] and p["gid"].startswith(r["gid"] + ".") for r in residual
+        ) or any(
+            r["gid"] == p["gid"] and p["prop"] in _NARROWER.get(r["prop"], ()) for r in residual
+        ):
             residual.append(p)
         else:
             kept.append((p, stmt))
