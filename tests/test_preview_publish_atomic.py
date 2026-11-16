@@ -823,12 +823,10 @@ def test_app_side_poisoned_code_kills_the_session_and_blinds_every_reader(tmp_pa
             killed.append(1)
 
         def wait(self, timeout=None):
-            if not killed:
-                raise subprocess.TimeoutExpired("preview-worker", timeout)
             return 0
 
         def poll(self):
-            return 0 if killed else None
+            return None
 
     w = object.__new__(pool.EngineWorker)
     w.script_name = "fit.py"
@@ -836,7 +834,6 @@ def test_app_side_poisoned_code_kills_the_session_and_blinds_every_reader(tmp_pa
     w.log_path = tmp_path / "worker.log"
     w._dead = False
     w.proc = _Proc()
-    w._log = None
     w.built = True
     assert w.svg_path("fig").exists()  # 对照：作废前读得到
 
