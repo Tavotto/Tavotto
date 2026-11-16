@@ -205,7 +205,10 @@ AI the user chose, in one of two ways:
   may carry the call with the user's key handed to it; otherwise Tavotto's built-in
   agent sends it directly. Either way the destination is the provider's API address
   the user connected, and the key is not sent anywhere else. Plain `http` addresses
-  are accepted only on the local machine or a private network.
+  are accepted only on the local machine or a private network. When you save such a
+  connection (or press "Check connection"), Tavotto also sends that address a few very short test
+  messages (a one-word prompt, at most 16 tokens of reply) to find out which chat protocol it
+  speaks; this uses a tiny amount of your quota, and the replies are not stored or logged.
 
 What is sent is the user's instruction plus whatever the assistant reads from the
 project to do the job, which can include the script and files in the project folder,
@@ -568,6 +571,12 @@ cancelled or failed upload is never resumed on its own.
   project files, file paths and computer details are never uploaded.**
 * **Who can see it.** Anyone who has the link. Links are not listed or indexed.
   Reviewers type a display name of their choice; it is not verified.
+  Seeing the pictures needs no sign-in. Each picture also has its own web
+  address. It cannot be guessed, but it is not encrypted or password-protected:
+  anyone who gets hold of it (for example, a reviewer who copies it) can open
+  that picture directly, without the link. When you stop sharing or the link
+  expires, the pictures are deleted at once; an address someone already opened
+  may keep working for up to about 10 minutes.
 * **Where it is stored.** A service operated by the Tavotto maintainers on
   Tencent Cloud CloudBase (mainland China), reached at `review.tavotto.cn`. No
   other host is contacted for this feature.

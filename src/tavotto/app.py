@@ -64,6 +64,7 @@ from . import pdfbackend, richtext, tiffprobe
 from .engine import (
     ai_attachments as engine_ai_attachments,
     ai_bridge as engine_ai,
+    ai_catalog as engine_ai_catalog,
     ai_connections as engine_ai_connections,
     ai_convert as engine_ai_convert,
     ai_data_figure as engine_ai_data_figure,
@@ -11271,6 +11272,9 @@ def api_ai_fix():
             project_root=ctx.path,
             model=model,
             cli=cli,
+            endpoint=(conn["provider_id"], conn["model"], conn["base_url"])
+            if conn is not None
+            else None,
             report=lambda: _session_report(ctx, sess),
             redactor=redactor,
             audit=engine_fixsession.AuditLog(),
@@ -14417,12 +14421,29 @@ def api_ai_endpoint_save():
     body = request.get_json(force=True)
     if not str(body.get("label") or body.get("id") or "").strip():
         return jsonify({"error": "缺少名称", "code": "name_missing"}), 400
+    before = engine_ai_providers.list_providers()
+    prev = next((p for p in before if p.get("id") == str(body.get("id") or "")), None)
+    if (
+        prev is not None
+        and not str(body.get("api_key") or "").strip()
+        and body.get("base_url") is not None
+        and engine_ai_catalog.origin_of(str(body.get("base_url") or ""))
+        != engine_ai_catalog.origin_of(str(prev.get("base_url") or ""))
+    ):
+        # Key 留空 = 沿用已存的 Key：换了来源就不许沿用（否则存完的探测 / 之后每次任务都把旧 Key 发给新主机；
+        # 与 POST /api/ai/connections、型号清单同一条 key_origin_mismatch 规矩，Codex #1965 P1）
+        return _connection_error(engine_ai_connections._invalid("key_origin_mismatch"))
     try:
-        engine_ai_providers.save(body)
+        after = engine_ai_providers.save(body)
     except (ValueError, OSError) as exc:
         return jsonify(
             {"error": str(exc), "code": "endpoint_save_failed", "params": {"reason": str(exc)}}
         ), 400
+    # 自填地址：存完补一次对话协议探测（与 POST /api/ai/connections 同一套）；失败照样已保存
+    engine_ai_connections.probe_after_endpoint_save(
+        before, after, key_sent=bool(str(body.get("api_key") or "").strip())
+    )
+    engine_ai.invalidate_capabilities()
     return jsonify(engine_ai.capabilities(refresh=True))
 
 
@@ -14520,25 +14541,48 @@ def _apply_connection(body: dict, agent: str, model: str | None, endpoint_id):
     return agent, model, endpoint_id, None
 
 
+def _connection_view(cid: str, fetch_error: str | None = None) -> dict:
+    """一条 Key 连接的当前视图（重新读能力表）；试取型号清单失败的那次原因码叠在 `ready` 上变成 `error`。"""
+    engine_ai.invalidate_capabilities()
+    conn = next(c for c in engine_ai.capabilities(refresh=True)["connections"] if c["id"] == cid)
+    if fetch_error and conn["state"] == "ready":
+        conn = {**conn, "state": "error", "error": fetch_error}
+    return conn
+
+
 @app.post("/api/ai/connections")
 def api_ai_connection_add():
-    """连一个 Key 类 AI。body：`{vendor, api_key, base_url?, model?, label?}`（`custom` 另需 `wire`：`anthropic` | `openai-responses`；
-    带已存在的 `id` = 换这条的 Key / 型号）。保存前试取一次型号清单，失败也保存，但返回的连接 `state="error"` 并带原因码 `error`。
-    返回 `{ok, connection}`；**密钥不回传**。"""
+    """连一个 Key 类 AI。body：`{vendor, api_key, base_url?, model?, label?, wire?, id?}`（`custom` 必须有 `base_url`；`wire` 可选：
+    缺省 / `auto` = 保存时探测对话协议，`anthropic` | `openai-responses` | `openai-chat` 也会探测，没通过就换探测到能通的；带已存在的 `id` = 换这条的 Key / 型号）。
+    保存前试取一次型号清单、保存后探测一次对话协议（一条很短的测试请求），都失败也保存，但返回的连接 `state="error"` 并带原因码 `error`
+    （探测全不通 = `endpoint_unusable` + `error_reason`）。返回 `{ok, connection, probe}`；**密钥不回传**。"""
     body = request.get_json(silent=True)
     try:
-        cid, fetch_error = engine_ai_connections.add_connection(body)
+        cid, fetch_error, probe = engine_ai_connections.add_connection(body)
     except engine_ai_connections.ConnectionRefused as exc:
         return _connection_error(exc)
     except (ValueError, OSError) as exc:
         return jsonify(
             {"error": str(exc), "code": "endpoint_save_failed", "params": {"reason": str(exc)}}
         ), 400
-    engine_ai.invalidate_capabilities()
-    conn = next(c for c in engine_ai.capabilities(refresh=True)["connections"] if c["id"] == cid)
-    if fetch_error and conn["state"] == "ready":
-        conn = {**conn, "state": "error", "error": fetch_error}
-    resp = jsonify({"ok": True, "connection": conn})
+    resp = jsonify({"ok": True, "connection": _connection_view(cid, fetch_error), "probe": probe})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/ai/connections/<cid>/check")
+def api_ai_connection_check(cid):
+    """重新检查一条 Key 连接：再探测一次对话协议（会联网，≤ 30 s），更新记录。返回 `{ok, connection, probe}`；
+    订阅 / 账号登录类或不存在 → 404 `connection_not_found`。"""
+    try:
+        probe = engine_ai_connections.check_connection(cid)
+    except engine_ai_connections.ConnectionRefused as exc:
+        return _connection_error(exc)
+    except (ValueError, OSError) as exc:
+        return jsonify(
+            {"error": str(exc), "code": "endpoint_save_failed", "params": {"reason": str(exc)}}
+        ), 400
+    resp = jsonify({"ok": True, "connection": _connection_view(cid), "probe": probe})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

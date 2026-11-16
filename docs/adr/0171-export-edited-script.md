@@ -28,7 +28,7 @@ ADR 0094 设计过「写回原脚本」，但它改的是用户文件，所以�
 - `plt.show()`：没有 savefig 的图（`capture_source=pyplot`）块多挂一个 `plt.show` 钩子（`_watch_show`，只在需要时才带进块，普通脚本不多 import pyplot）。这种图没有文件名，按引擎给 stem 的同一顺序（第几张没存盘的图）认。推翻 0094 Q11 的「v1 不支持」。既不保存也不显示的图没有生效时机，`script_export_no_savefig`。
 - `bbox_inches="tight"`：块在 savefig 那一刻改图，tight 若按改后的样子重裁，改字号就会改图幅，与界面不一致（Tavotto 的图幅在脚本跑完时定下）。这个框只有格式自己的 renderer 量得准，读它要私有 API（0094 Q10 不许），所以把界面上的框写进块（manifest `frame.savefig_in`，英寸），`savefig` 时只替换 `tight`。代价：导出之后再改脚本的数据，这个框不会跟着变；删掉 `_install` 最后一个参数就恢复自动裁切。同一个框也是挪位置的基准：引擎的 `pos_frac` / `loc_frac` 是**这一页**里的比例（ADR 0098），块的 `_disp` 在有框时按框换算（与 `pathgeom.frac_to_display` 同口径），不按整张 figsize。
 
-`WRITES` 与 `NOT_WRITABLE` 合起来覆盖 `overrides.HANDLERS` 的每个键，新键忘了表态用例就红。这一版写得进 105 个键，155 个明说不写：`WRITES` 里的键都在 `tests/support/invariant_figures.py` 上逐键过了验证，普查没过的（单根柱、图例条目显隐、隐藏子图、刻度线宽）移进 `NOT_WRITABLE`，靠 `script_report.skipped` 如实告诉用户。
+`WRITES` 与 `NOT_WRITABLE` 合起来覆盖 `overrides.HANDLERS` 的每个键，新键忘了表态用例就红。初版写得进 105 个键，155 个明说不写（2026-11-16 起逐族补写，见文末「修订」）：`WRITES` 里的键都在 `tests/support/invariant_figures.py` 上逐键过了验证，普查没过的（单根柱、图例条目显隐、隐藏子图、刻度线宽）移进 `NOT_WRITABLE`，靠 `script_report.skipped` 如实告诉用户。
 
 ### 验证
 
@@ -66,3 +66,35 @@ ADR 0094 设计过「写回原脚本」，但它改的是用户文件，所以�
 ## 与 0094 的关系
 
 0094 保持 Proposed。将来真要写回，生成器可以直接用这一份，缺的是事务那一半。
+
+## 修订（2026-11-16）：补写跳过的参数，逐族一个 PR
+
+来信 TVM-VP1Q（Windows 0.21.2）：「在 tavotto 中修改的参数，在导出的 .py 文件似乎没有被修改」。用户 2026-11-16 拍板：
+按推荐把常用的六族补进 `WRITES`，1.0 豁免沿用本 ADR 那一条（「按推荐来，豁免给，①到⑥都做」）。顺序：
+① 图例 → ② 网格与边框 → ③ 刻度定位与格式 → ④ 色条 → ⑤ 误差棒 / 单根柱 / 茎叶 / 散点 → ⑥ 文字描边与底框、箭头。
+图幅 `size_mm` 另行评估；色条 `orientation` / `extend`、3D `axis_arrows` 一族只能靠私有 API，仍然永远不写。
+
+**验收口径收紧（随 ① 落地，之后每族沿用）**：
+
+- `test_every_writable_key_is_swept_or_named`：`WRITES` 的每个键要么在某张夹具图上**真被写进了脚本**并过了验证
+  （被 `_Unsupported` 挡下留作重放的不算），要么在 `_DEDICATED` 里点名证明它的专用用例。补这条时当场查出
+  `visible` 一族、`xlim` / `ylim`、`xscale` / `yscale` 从没被验证过——现在由 `test_held_out_fields_replay_identically`
+  按组单独扫（对数轴用 `InvScale`），全部等价。
+- 结构化字段（pair / order）`_sample_value` 挑不出值，在 `_STRUCTURED` 里按 prop 给采样；使能项沿用
+  `overridesample._ENABLERS`。
+- 导出脚本自己要的夹具图只追加在 `tests/support/scriptadjust_figures.py`（`invariant_figures` 别的用例按编号写死）。
+- 定位单键：`TAVOTTO_SWEEP_ONLY=legend.ncol,axes.grid_color pytest tests/test_script_adjust.py -k replays`。
+
+**① 图例**：标题 / 标题字号（脚本原样有标题时；没有时图例里凭空多一个元素）、圆角、锚点、列数、四种间距、
+示意线五种样式与「断开跟随」写进脚本。
+
+- 构建期参数（字号、列数、间距）合成**一条** `_legend_rebuild`：从图例条目收集自的源对象重建一次
+  `ax.legend(...)`，其余样子（边框、标题、文字的字体颜色）从脚本原样的图例搬过来；列数读不到公开 API，取 manifest。
+  锚点表达不出来（manifest 不发 `loc_anchor`）、或脚本给的是坐标 loc 又没拖动时不写——重建会把它弄丢。
+- 先后（`_rank`）：刻度类型 → 重建 → 锚点与「断开」→ 普通属性 → 示意线样式。锚点排在拖动之前（拖动清锚框，与位置
+  模型的优先级一致）；断开排在源对象改样式之前，`_with_legend` 跳过断开的项（引擎里断开的项 = 脚本原样 + handle_*）。
+- 误差棒 / 茎叶的条目一格画好几条，引擎把颜色落到整格每个 artist 上，公开 API 够不着那一格：这两种的 handle_* 留给重放。
+- **条目顺序、条目显隐仍不写**：脚本重建出来的图例按显示顺序编号，引擎的条目模型按脚本原样序号认、隐藏项留在编号里，
+  验证逐项比对必然对不上（这就是初版普查里「图例条目显隐」没过的原因）。
+- 写进脚本的条数按 patch 计（`script_report.written`），一条重建语句合并了几条 patch 就算几条。
+
