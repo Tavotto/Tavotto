@@ -3356,6 +3356,8 @@ function transferStyle(o: CanvasObject, clip: StyleClip): void {
 
 /** 样式剪贴板不属于文档，不进 undo；粘贴才是一条历史 */
 let styleClip: StyleClip | null = null
+/** 样式是从哪个对象复制的：粘贴时它还在选区里就跳过（它本来就是这个样式，不该算进「已粘贴到 N 个对象」） */
+let styleSourceId: string | null = null
 
 export const styleClipKind = () => styleClip?.kind ?? null
 
@@ -3376,10 +3378,12 @@ export function copySelectionStyle() {
       rotation: src.rotation,
       opacity: src.opacity,
     }
+    styleSourceId = src.id
     status(note('styleCopiedPanel'), 'done')
   } else if (src && src.type in COPIED_NOTE) {
     const kind = src.type as Exclude<StyleClip['kind'], 'panel'>
     styleClip = { kind, ...pickKeys(src, STYLE_KEYS[kind]) } as StyleClip
+    styleSourceId = src.id
     status(note(COPIED_NOTE[kind]), 'done')
   } else {
     status(note('styleCopyNeedSelection'), 'error')
@@ -3391,7 +3395,7 @@ export function pasteSelectionStyle() {
   if (!clip) return
   // 同族就能刷：描边一族（箭头 / 形状 / 路径）、文字一族（文字 / 路径文字）、图（`markStyle.styleFamilyOf`）
   const ids = selectedObjects()
-    .filter((o) => styleFamilyOf(o.type) === styleFamilyOf(clip.kind))
+    .filter((o) => o.id !== styleSourceId && styleFamilyOf(o.type) === styleFamilyOf(clip.kind))
     .map((o) => o.id)
   if (!ids.length) {
     status(note('stylePasteNoTarget', { kind: t(`objectType.${clip.kind}`) }), 'error')
