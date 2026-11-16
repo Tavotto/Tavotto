@@ -598,6 +598,8 @@ def _statement(
         if m is None or _is_3d(manifest, int(m.group(1))):
             raise _Unsupported(gid)
         return f"_tick_text(_ax(fig, {int(m.group(1))}), {m.group(2)!r}, {int(m.group(3))}, {_literal(str(value), encoding)})"
+    if (cls, prop) == ("image", "cmap") and _cmap_group_reaches_beyond(el, manifest, gid):
+        raise _Unsupported(prop)  # 同上：图像的 cmap 也是这一组的广播，另一个 mappable 的色条跟着换
     if cls == "colorbar" and prop == "label":
         # 长轴看脚本原样的方向：方向要是也改了，它留作重放，重放时把标签搬到新长轴
         orient = next(
@@ -622,6 +624,10 @@ def _statement(
             ):
                 raise _Unsupported(prop)
     if cls == "colorbar" and prop in ("cmap", *_CLIM):
+        if prop == "cmap" and _cmap_group_reaches_beyond(el, manifest, el.get("mappable_gid")):
+            # 组里还有写不到的对象（独立 `ScalarMappable` 的色条：共用 norm 不传播色图，引擎经 `scale_colorbars`
+            # 一并换掉它，脚本里 `set_cmap` 只换得了 mappable 这一个）
+            raise _Unsupported(prop)
         if prop == "cmap" and (el or {}).get("scale_gids"):
             # 色阶兄弟（共用 norm 的别的图元）：引擎的 setter 逐个给它们换色图，公开 API 写不出这个「谁是兄弟」
             raise _Unsupported(prop)
@@ -1270,6 +1276,18 @@ def _effective(patches: list[dict]) -> list[dict]:
             seen.add(key)
             out.append(last[key])
     return out
+
+
+def _cmap_group_reaches_beyond(el: dict | None, manifest: dict, mine: str | None) -> bool:
+    """色条的 cmap 组（manifest 的 `cmap_group_gids`，引擎 `scale_colorbars` / `scale_siblings` 的结构性成员表）里，
+    有没有别的 mappable（`mine` 是这条自己的 mappable gid）的色条：同一个 mappable 的几条色条跟着 `set_cmap` 一起变，别的（独立的）不会。"""
+    els = {e["gid"]: e for e in manifest.get("elements", [])}
+    return any(
+        (o := els.get(g)) is not None
+        and o.get("role") == "colorbar"
+        and o.get("mappable_gid") != mine
+        for g in (el or {}).get("cmap_group_gids") or ()
+    )
 
 
 def _cmap_group(p: dict, els: dict) -> str:

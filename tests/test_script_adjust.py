@@ -366,6 +366,25 @@ def test_colorbar_cmap_with_scale_siblings_stays_with_the_image_cmap_for_replay(
     assert out.written == 1
 
 
+def test_cmap_group_with_a_colorbar_of_another_mappable_stays_for_replay():
+    """`cmap_group_gids` 里有别的 mappable 的色条（独立 `ScalarMappable` 与登记图元共用 norm）：引擎一并换，
+    脚本只换得了一个对象，色条与图像两侧的 cmap 都留给重放；同一个 mappable 的两条色条不算。"""
+    man = _cb_man(cmap_group_gids=["axes_0.images_0", "axes_2.colorbar"])
+    man["elements"][0]["cmap_group_gids"] = ["axes_1.colorbar", "axes_2.colorbar"]
+    man["elements"].append(
+        {
+            "gid": "axes_2.colorbar",
+            "role": "colorbar",
+            "editable": [],
+        }  # 独立 mappable：没有 mappable_gid
+    )
+    edits = [_cb_patch("cmap", "viridis"), _cb_patch("cmap", "cividis", "axes_0.images_0")]
+    out = _cb_build(man, edits)
+    assert out.written == 0 and out.residual == edits
+    man["elements"][2]["mappable_gid"] = "axes_0.images_0"  # 同一个 mappable
+    assert _cb_build(man, edits).written == 2
+
+
 def test_colorbar_clim_stays_with_its_narrower_image_entry_when_left_for_replay(monkeypatch):
     """色条 vmin 是广播、图像自己的 vmin 是窄的：广播留作重放，窄的也一起留下；别的键不受牵连。"""
     monkeypatch.delitem(scriptadjust.WRITES, ("colorbar", "vmin"))
@@ -516,7 +535,7 @@ _LIBRARIES = {
 }
 #: 色条的三张图（`invariant_figures` 里有、但不在它的 `STEMS` 里：别的用例按编号写死，不往那里加）：
 #: 同一个 mappable 两条色条 + 独立 `ScalarMappable` 的色条、映射的线组、两块网格共用 norm。
-_CBAR_STEMS = ("InvCbar2", "InvCbarLC", "InvShared")
+_CBAR_STEMS = ("InvCbar2", "InvCbarLC", "InvShared", "InvShared3")
 _SWEEP = (
     [("inv", s) for s in _FLAT_STEMS]
     + [("inv", s) for s in _CBAR_STEMS]
@@ -765,6 +784,39 @@ def test_held_out_fields_replay_identically(tmp_path, group):
         finally:
             pool.discard(worker)
     assert seen, f"{group} 这一组在任何图上都没真写进脚本"
+
+
+@real_worker
+@pytest.mark.parametrize(
+    "gid",
+    ["axes_0.collections_0", "axes_1.colorbar", "axes_2.colorbar"],
+    ids=["mesh", "own", "alone"],
+)
+def test_cmap_of_a_group_with_a_standalone_colorbar_replays_identically(tmp_path, gid):
+    """登记网格 + 它的色条 + 共用 norm 的独立 `ScalarMappable` 色条（`InvShared3`）：引擎换其中任一条的 cmap，
+    组里另一条色条也跟着换；脚本里 `set_cmap` 只换得了一个对象，所以这一组的 cmap 整体留给重放。
+    只改一条（整图扫描里每个键都采同一个值，两条色条一起改，掩盖了这一点）。"""
+    worker, name = _library_worker(tmp_path, "inv")
+    try:
+        patches = [{"gid": gid, "prop": "cmap", "value": "viridis"}]
+        _replays_identically(worker, name, tmp_path, "InvShared3", patches, must_write=False)
+    finally:
+        pool.discard(worker)
+
+
+@real_worker
+def test_standalone_mappable_colorbar_replays_identically(tmp_path):
+    """独立 `ScalarMappable` 的 3D 色条（`Inv3D` 整图全改超像素阈值，不在整图扫描里）：只改色条自己的键。
+    落在色条轴上的写进脚本，cmap / vmin / vmax 公开 API 够不着 mappable，留作重放，两边合起来要等价。"""
+    worker, name = _library_worker(tmp_path, "inv")
+    try:
+        man = worker.override("Inv3D", [])["manifest"]
+        keys = {k for k in scriptadjust.WRITES if k[0] == "colorbar"} - {("colorbar", "visible")}
+        patches, covered = _sweep_patches(man, keys, keyed={k: None for k in keys})
+        assert {p for c, p in covered if c == "colorbar"} >= {"label", "cmap", "tick_color"}
+        assert _replays_identically(worker, name, tmp_path, "Inv3D", patches)
+    finally:
+        pool.discard(worker)
 
 
 def _written_keys(
