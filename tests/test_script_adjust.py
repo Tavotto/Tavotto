@@ -1214,7 +1214,7 @@ def test_script_order_matches_the_engines_apply_order():
     out = subprocess.run(
         [WORKER_PY, "-c", _RANK_DRIVER, str(engine_dir)],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         timeout=120,
         check=True,
     )
