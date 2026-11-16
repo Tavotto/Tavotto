@@ -22,6 +22,12 @@ order: 60
   golden vectors 在 `tests/golden/patch_vectors.json`——Rust supervisor 要
   逐字节复现，改任一侧必须同步另一侧。cancel 只是尽力而为的 no-op，硬取消 =
   kill + 重启。完整契约见 `docs/adr/0003-worker-protocol-v1.md`，改协议前先读。
+- **固定 chart 任务（ADR 0182，#1877）**：`pool.acquire_chart()` 与用户脚本共用池、LRU/租约、环境代次和退役围栏；
+  池键含独立任务身份，`execspec.safe_spec(task="chart")` 只产生固定 safe/module 目标，`worker_argv` 只发 `--task chart`。
+  v1 `chart` 在 build 之前分派；probe、脚手架、EPS 都不读取用户脚本，不发 execution fact；native 不接受该命令。
+  task 固定沙盒 cwd，与 build 共用文件操作守卫。业务字节/结构预算唯一出处是 `chartwire`，共享传输负责有界读写与超时，
+  workerd 消费 Python 提供的 `max_frame_bytes` 并以 `bounded_chart_tasks` 声明支持；旧 supervisor 走 Python 池。
+  kill 未确认不得复用或销账，Python 与 workerd 都保留同一池的围栏。看护 `tests/test_chart_process.py`（真实两条控制面）。
 - **转换校验的写入线索**：只有带项目改道写入根的 worker，v1 build 响应才带
   `redirected_write_attempts`；它是既有 `writetripwire.redirected()` 中至多 64 条项目相对路径，
   在文件真正打开前记录，可能包含失败或后来删除的写入，不能用作文件存在或内容一致的证明。
@@ -44,6 +50,8 @@ order: 60
   **漏了它冷启动的十几秒在数据里就凭空消失**）。`worker_get_ms` 的分段（含 `probe_*_ms` 探测子段，嵌在 `resolve_python_ms` / `env_decide_ms` 里、不可相加）见 `diagnostics.md` 的「渲染池健康摘要」。全部是加字段，协议不升版；
   legacy 信封一个字节不加。基线报告与「值得做的优化」清单在
   `docs/perf-baseline.md`，重测走 `python scripts/bench_render.py`。
+- **声明输入的同版执行账**：可选私有`input_declaration`随每个可执行请求进入同一子Worker；无声明不加字段。实际捕获的`captured_inputs`与冻结`captured_build`同execution_id返回，父共享接收器只接受winning实例，并保留该次runtime/descriptors/source SHA，不用cached build时现量的runtime覆盖它。普通safe和legacy合同保持。workerd可在同一session内更换child；仅带捕获事实的回复由Rust在本次dispatch的proc锁内取得可信`supervisor_child_pid`并覆盖子自报同名字段，普通回复不新增该字段。Python只在有效同版fact/capsule及当前执行锁内用该元信息更新WorkerdWorker的child PID；EngineWorker不消费它。receipt仍按真实PID/launcher ppid核对，迟到回复或runtime自报不提升权限。看护`tests/test_declared_input_worker.py`与Rust session定向用例。
+  原finish读取流封存输入时，响应另有可选私有sibling `captured_input_archive`，不改闭式captured_build；pool在同一winning执行锁内验证descriptor与fact的revision并同步接受/清空。该步骤不在pool锁中读大文件；回执在已知out_dir/captured-inputs中完整核字节，IO后复核当前执行资格。cached只返回原封存，当前批准清单或同名源文件不能替换历史内容；缺/坏descriptor仅使附件缺失，不继承上次附件。看护`tests/test_declared_input_worker_archive.py`。
   **先测量后优化**：那份文档里被数据否掉的两条（挪 SVG 顺序省 draw = 图例 bbox
   错 0.18–0.32 分数，写回自检必报 divergence；`draw_without_rendering` 只省 8%）
   别再重试。**「只为布局」的 draw 不重采样图片**（2026-09-24）：manifest 开头的 `fig.canvas.draw()` 与几何组
