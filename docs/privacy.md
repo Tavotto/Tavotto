@@ -565,10 +565,14 @@ without installing Tavotto or signing in. It uploads **only when you press
 cancelled or failed upload is never resumed on its own.
 
 * **What is uploaded.** A rendered picture of the current figure or layout (PNG,
-  at most 3000 px on the long side), a list of the elements' positions on that
-  picture with the text you can already see on it (axis labels, legend entries),
-  the title, and the note to reviewers if you wrote one. **Your scripts, data,
-  project files, file paths and computer details are never uploaded.**
+  at most 3000 px on the long side), a list of the elements on that picture —
+  where each one is, what kind it is (curve, tick label, legend…), the text you
+  can already see on it (axis labels, legend entries), and the outline of curves
+  and shapes as they are drawn, cut to the part that is visible in the picture —
+  the title, and the note to reviewers if you wrote one. The outlines let a
+  reviewer click a curve or a single tick label precisely; they contain nothing
+  that is not already visible in the picture. **Your scripts, data, project
+  files, file paths and computer details are never uploaded.**
 * **Who can see it.** Anyone who has the link. Links are not listed or indexed.
   Reviewers type a display name of their choice; it is not verified.
   Seeing the pictures needs no sign-in. Each picture also has its own web
