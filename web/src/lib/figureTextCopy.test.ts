@@ -2,12 +2,10 @@ import { describe, expect, it } from 'vitest'
 import type { ManifestElement, ManifestTextBlock } from './api'
 import type { PanelObject } from '@/types/document'
 import { fitWidthMm } from '@/canvas/textFit'
+import { TEXT_BASELINE_BELOW_CENTER_PER_MILLE } from './typography'
 import { MM_PER_PT } from './units'
 import {
   annotationTextOf,
-  BASELINE_MONO_PER_MILLE,
-  BASELINE_SANS_PER_MILLE,
-  BASELINE_SERIF_PER_MILLE,
   figureTextToAnnotation,
   isCopyableText,
 } from './figureTextCopy'
@@ -18,7 +16,8 @@ import {
  * 标注这一侧的基线 = 框中心 + (行盒中线到基线 K em − 框高 / 2 + 框高 / 2 ……) 按渲染的公式单独写在 `baselineOf` 里。
  */
 
-const K = { sans: BASELINE_SANS_PER_MILLE / 1000, serif: BASELINE_SERIF_PER_MILLE / 1000, mono: BASELINE_MONO_PER_MILLE / 1000 }
+/** 行盒中线到基线（em）：三族同一个数（ADR 0073 修订，2026-11-16） */
+const K = { sans: TEXT_BASELINE_BELOW_CENTER_PER_MILLE / 1000 }
 
 /** 面板：页面上 (10, 20)，100 × 75 mm，原生 50 × 37.5 mm（放大一倍） */
 const panelOf = (extra: Record<string, unknown> = {}): PanelObject =>
@@ -139,6 +138,36 @@ describe('图内文字 → 标注：摆放', () => {
     expect(a.text).toBe('line1\nline two')
   })
 
+  it('第一行有高公式：框往上长出公式超出普通行盒的那一截，第一行基线仍落在原处、框底不动', () => {
+    // 字号 20 pt（7.06 mm）：普通行盒基线以上 (1.25 / 2 + K) em ≈ 6.88 mm；原图这一行上伸 0.12 × 75 = 9 mm
+    const tb = block({ text: '$\\sum_{i=1}^{n} x_i$ total', math: true, center: [0.5, 0.3], h: 0.16, asc: 0.12 })
+    const a = figureTextToAnnotation(panelOf(), elOf(tb))!
+    const size = a.sizePt * MM_PER_PT
+    const up = (1.25 / 2 + K.sans) * size
+    const grow = 0.12 * 75 - up
+    expect(grow).toBeGreaterThan(1)
+    expect(a.h).toBeCloseTo(1.25 * size + grow, 6)
+    // 导出 / 预览：第一行基线 = 框顶 + 撑开后的行盒上半（= 原图上伸）
+    const blockTop = 20 + (0.3 - 0.08) * 75
+    expect(a.y + up + grow).toBeCloseTo(blockTop + 0.12 * 75, 6)
+    // 框底与没有公式时同一处：多出的高全在上面
+    const plain = figureTextToAnnotation(panelOf(), elOf({ ...tb, text: 'x total', math: false }))!
+    expect(a.y + a.h).toBeCloseTo(plain.y + plain.h, 6)
+  })
+
+  it('撑高只认第一行的公式：普通文字上伸再高、公式只在第二行，都按普通行盒', () => {
+    const tall = { center: [0.5, 0.3] as [number, number], h: 0.16, asc: 0.12 }
+    const cjk = figureTextToAnnotation(panelOf(), elOf(block({ ...tall, text: '反应动力学' })))!
+    expect(cjk.h).toBeCloseTo(1.25 * cjk.sizePt * MM_PER_PT, 9)
+    const second = figureTextToAnnotation(
+      panelOf(),
+      elOf(block({ ...tall, text: 'rate\n$\\frac{a}{b}$', math: true, step: 0.065 })),
+    )!
+    expect(second.h).toBeCloseTo(2 * second.lineHeight! * second.sizePt * MM_PER_PT, 6)
+    const escaped = figureTextToAnnotation(panelOf(), elOf(block({ ...tall, text: 'cost \\$5 or \\$6', math: true })))!
+    expect(escaped.h).toBeCloseTo(1.25 * escaped.sizePt * MM_PER_PT, 9)
+  })
+
   it('转了任意角度（30°）：框绕自己的中心转，第一行基线起点与原文字对得上', () => {
     const tb = block({ center: [0.4, 0.5], w: 0.15, h: 0.06, asc: 0.045, rotation: 30, ha: 'left' })
     const a = figureTextToAnnotation(panelOf(), elOf(tb))!
@@ -161,16 +190,16 @@ describe('图内文字 → 标注：摆放', () => {
     expect(got[1]).toBeCloseTo(want[1], 5)
   })
 
-  it('字体族：具体字体名归到最接近的通用族；基线常数跟族走', () => {
+  it('字体族：具体字体名归到最接近的通用族；基线与族无关', () => {
     const times = figureTextToAnnotation(panelOf(), elOf(block(), { face: 'Times New Roman' }))!
     expect(times.fontFamily).toBe('serif')
     const mono = figureTextToAnnotation(panelOf(), elOf(block(), { face: 'Courier New' }))!
     expect(mono.fontFamily).toBe('monospace')
     const dj = figureTextToAnnotation(panelOf(), elOf(block(), { face: 'DejaVu Sans' }))!
     expect(dj.fontFamily).toBe('sans-serif')
-    // 同一块、不同族：框中心的竖直位置差 = 两个 K 之差（基线重合 → 框要跟着挪）
-    expect(times.y + times.h / 2 - (dj.y + dj.h / 2)).toBeCloseTo((K.sans - K.serif) * dj.sizePt * MM_PER_PT, 6)
-    expect(mono.y + mono.h / 2 - (dj.y + dj.h / 2)).toBeCloseTo((K.sans - K.mono) * dj.sizePt * MM_PER_PT, 6)
+    // 同一块、不同族：基线在框里的位置三族相同，框不跟着族挪
+    expect(times.y + times.h / 2).toBeCloseTo(dj.y + dj.h / 2, 6)
+    expect(mono.y + mono.h / 2).toBeCloseTo(dj.y + dj.h / 2, 6)
   })
 
   it('原图字体、粗体、斜体：sourceFont 取 face_src，粗斜以那张脸为准；没有身份时走仓库判据', () => {
