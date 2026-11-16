@@ -134,7 +134,7 @@ describe('出处卡', () => {
   it('没有快照：摘录排在白纸上，命中的数标 mark；底栏是结论 + 「期刊 · 域名 · 日期 · PDF」+ 打开原网页 ↗', async () => {
     await mount(<SourceButton journal="Fixture Press" entries={entries('fx-alpha', 'min_raster_dpi')} name="位图分辨率" />)
     await click(q('[data-journal-source]'))
-    expect(q('[data-journal-sentence]')?.textContent).toBe('位图分辨率 ≥ 600 dpi')
+    expect(q('[data-journal-sentence]')?.textContent).toBe('位图分辨率 ≥ 600 dpi 建议')
     expect(q('[data-journal-quote]')?.className).toContain('bg-paper')
     const mark = q('[data-journal-quote] mark')
     expect(mark?.textContent).toBe('600')
@@ -236,6 +236,54 @@ describe('要求清单', () => {
     expect(row('min_effective_font_size_pt').textContent).toContain('有要求')
     expect(row('min_effective_font_size_pt').textContent).not.toContain('FIXTURE')
     expect(row('min_effective_font_size_pt').querySelector('[data-journal-source]')).not.toBeNull()
+  })
+})
+
+describe('原文语气标签（strength）', () => {
+  const row = (p: string) => q(`[data-journal-row="${p}"]`)!
+
+  it('要求清单：required 写「必须」、recommended 写「建议」，同一行里的小号灰字，没有底色', async () => {
+    selectJournal('fx-alpha')
+    await mount(<JournalRequirements />)
+    const dpi = row('min_raster_dpi').querySelector('[data-journal-strength]')
+    expect(dpi?.textContent).toBe('建议')
+    expect(dpi?.className).toContain('text-ink-3')
+    expect(dpi?.className).not.toMatch(/\bbg-/)
+    expect(row('min_raster_dpi').querySelector('[data-journal-value]')?.contains(dpi!)).toBe(true)
+    expect(row('line_widths_pt').querySelector('[data-journal-strength]')?.textContent).toBe('必须')
+    // 没标语气的行不出标签
+    expect(row('widths_mm.single').querySelector('[data-journal-strength]')).toBeNull()
+  })
+
+  it('英文：Required / Recommended', async () => {
+    await setLocale('en-US')
+    selectJournal('fx-alpha')
+    await mount(<JournalRequirements />)
+    expect(row('min_raster_dpi').querySelector('[data-journal-strength]')?.textContent).toBe('Recommended')
+    expect(row('line_widths_pt').querySelector('[data-journal-strength]')?.textContent).toBe('Required')
+  })
+
+  it('其余取值（preferred / example 等）先不显示', async () => {
+    const cat = loadCatalog(vectors.catalog)
+    const src = journalSources('fx-alpha', cat)
+    const dpi = { ...src.min_raster_dpi, strength: 'preferred' as const }
+    await mount(<SourceButton journal="Fixture Press" entries={[['min_raster_dpi', dpi]]} name="x" />)
+    await click(q('[data-journal-source]'))
+    expect(q('[data-journal-sentence]')?.textContent).toBe('位图分辨率 ≥ 600 dpi')
+    expect(q('[data-journal-strength]')).toBeNull()
+  })
+
+  it('预检行点开的出处卡同样带标签；项目绑定里的精简出处保存了 strength', async () => {
+    selectJournal('fx-alpha')
+    expect(useDocumentStore.getState().doc.profile?.journalSources?.min_raster_dpi.strength).toBe('recommended')
+    const issue = {
+      ruleCode: 'raster-dpi',
+      message: literal('x'),
+      objectRef: { canvasId: useDocumentStore.getState().activeCanvasId },
+    } as unknown as ValidationIssue
+    await mount(<IssueJournalSource issue={issue} />)
+    await click(q('[data-journal-source]'))
+    expect(q('[data-journal-strength]')?.textContent).toBe('建议')
   })
 })
 

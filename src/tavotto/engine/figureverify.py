@@ -544,28 +544,44 @@ def data_matches_expected(
     """data_to_figure 的保持断言「画的就是这份数据」：`expected` 的每项 `{label, part, digest}`（父进程按同一解析规则从 CSV
     算出，`ai_data_figure.expected_fingerprints`）在 manifest 里找 **label 唯一相同**的数据元素，`data_fingerprint.parts[part]`
     的 sha256 与形状都相等 → verified；不等 → failed（`data_mismatch`）；找不到 / 不唯一 → failed（`series_missing`）；
-    没量（over_budget / unavailable）→ unknown。"""
+    没量（over_budget / unavailable）→ unknown。
+
+    可选的 `gid` 键：存在且非空时按 manifest 元素的 gid 精确匹配（label 只作检查 id），
+    用于 label 是展示文案、会撞车或缺失的图表元素；没有 gid 的旧项逐字走上面的 label 路径。"""
     out: list[CheckResult] = []
+    elements = _elements(man)
     for e in expected:
+        label = e.get("label")
+        gid = e.get("gid")
+        key = label if label is not None else gid
         base = {
-            "id": f"data.{e['label']}",
+            "id": f"data.{key}",
             "layer": "L2",
             "stage": stage,
             "role": "preserve",
             "method": "data_fingerprint",
         }
-        hits = [
-            el
-            for el in _elements(man).values()
-            if isinstance(el.get("data_fingerprint"), dict) and _label_of(el) == e["label"]
-        ]
+        if isinstance(gid, str) and gid:
+            el = elements.get(gid)
+            hits = [el] if el is not None and isinstance(el.get("data_fingerprint"), dict) else []
+        elif label is None:
+            hits = []
+        else:
+            hits = [
+                el
+                for el in elements.values()
+                if isinstance(el.get("data_fingerprint"), dict) and _label_of(el) == label
+            ]
         if len(hits) != 1:
+            observed = {"matches": len(hits)}
+            if isinstance(gid, str) and gid:
+                observed["gid"] = gid
             out.append(
                 CheckResult(
                     **base,
                     verdict=FAILED,
                     reason_code="series_missing",
-                    observed={"matches": len(hits)},
+                    observed=observed,
                 )
             )
             continue

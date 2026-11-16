@@ -65,6 +65,7 @@ import { BuildMismatchChip } from './BuildMismatchChip'
 import { DesktopUpdateChip } from './DesktopUpdateChip'
 import { TutorialChip, useTutorialChipVisible } from './onboarding/TutorialChip'
 import { ContactButton } from './contact/ContactButton'
+import { ReviewButton } from './review/ReviewButton'
 import { ConflictActions, ConflictDetail, hasDiskSummary } from './DocumentBanner'
 import { RestoreIssueBody, RestoreMetaBody } from './RestoreIssueBody'
 import { useWindowFullscreen } from '@/hooks/useWindowChrome'
@@ -135,6 +136,8 @@ export function TopBar() {
         {/* 联系作者（ADR 0145）：撤销重做与导出之间的次级胶囊，不抢导出这颗主按钮；窄于 900 只留图标。
             引擎说关着（`TAVOTTO_NO_CONTACT=1`）就不渲染 */}
         <ContactButton placement="topbar" />
+        {/* 分享审阅（ADR 0187）：导出左边的次级胶囊；功能关着不渲染 */}
+        <ReviewButton />
         <ExportButton />
         <MoreMenu writeBackItem={writeBack.item} />
         {writeBack.dialog}

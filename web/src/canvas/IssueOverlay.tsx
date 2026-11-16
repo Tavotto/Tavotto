@@ -92,7 +92,7 @@ function ElementHover({ panel, gid, t }: { panel: PanelObject; gid: string; t: V
  * 图内元素在屏幕上的框（含面板内容的显示变换）；解不出来回 null，调用方退回整张图。
  * 悬停轮廓与定位高亮共用这一份换算——两处各算一遍，下一次改换算时只会改到一处。
  */
-function useElementRect(panel: PanelObject, gid: string, t: ViewTransform, pad: number) {
+export function useElementRect(panel: PanelObject, gid: string, t: ViewTransform, pad: number) {
   const manifest = useDisplayedExactManifest(panel)
   const el = manifest?.elements.find((e) => e.gid === gid)
   if (!manifest || !el || el.gid === 'figure' || isElementHidden(el)) return null

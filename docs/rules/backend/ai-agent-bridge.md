@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「编码 Agent 桥」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_ai_data_recipe.py`、`tests/test_ai_data_template.py`、`tests/test_ai_data_propose.py`、`tests/test_ai_agents.py`、`test_ai_login.py`、`test_ai_bridge.py`、`test_ai_capabilities.py`、`test_ai_refresh.py`、`test_ai_history.py`、`test_ai_idempotency.py`、`test_ai_revert_stale.py`、`test_codex_install_cli.py`、`test_managed_cli.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_ai_data_recipe.py`、`tests/test_ai_data_template.py`、`tests/test_ai_data_propose.py`、`tests/test_ai_data_text_tables.py`、`tests/test_ai_agents.py`、`test_ai_login.py`、`test_ai_bridge.py`、`test_ai_capabilities.py`、`test_ai_refresh.py`、`test_ai_history.py`、`test_ai_idempotency.py`、`test_ai_revert_stale.py`、`test_codex_install_cli.py`、`test_managed_cli.py`
 > `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml；revert 只回滚本次 AI 那一版（细则见 `ai-agent-bridge.md`）
 
 <!-- agents-route
@@ -328,6 +328,7 @@ order: 240
   （`make_label`），验证器按 label 匹配。**可核 = 散点（points / jitter）、Line2D（line / step / hline_summary / fit_line / density / ecdf）、柱组（bar / hist）；不核 = errorbar / band / box / violin**
   （误差棒容器与 `fill_between` 在 manifest 里没有 label 字段）——`fingerprint_coverage` 如实列出，不折算成 verified；没有任何可核层 = 这张图的数据没法核。
   relationship / distribution 的规则（Freedman–Diaconis 分箱、Scott 带宽、ECDF 阶梯、在画出来的坐标里拟合的最小二乘线）各只有运行时里一份实现，可画的图元组合由 `validate_recipe` 与模板同口径拒绝（ADR 0178）。样式数字取自 `profiles.load()`（`style_from_profile`，取不到才用具名默认）；分类色是 Okabe–Ito（公开色盲安全色板）。看护 `tests/test_ai_data_template.py`（真 safe worker 对拍）与 `tests/bridge/test_bridge_generated_figure_script.py`。
+- **图表脚手架如何消费 0178（`engine/chartrecipe.py`，ADR 0182 / #1877）**：单元格判据只认 `ai_data_figure.parse_cell` / `parse_date`——`chartdata` 不再自带数值正则；`NaN` 记缺失、`1_000` 记 1000、`Infinity` / 溢出记 `data_non_finite`，表格与网格上限 100,000 行 / 64 列（超出整表拒绝，`data_too_long` / `data_too_wide`）。合法性把 `ChartModel` 反推成 `FigureRecipe` 再跑 `validate_recipe`；表达不了的模型（image / 混合图元 / 多 x）记 `model_not_expressible`，不伪造配方。绘图值期望按脚手架实际画出的数组用 `ai_data_figure.digest` 算，gid 只取 `render_scaffold` 的 `roles[...]["primary_gid"]`（bar+yerr 是 `barseries_1`，不预测原生 index）；`errorbar` / `band` / `box` / `violin` 仍不可核（`ai_data_template.UNCHECKED_MARKS`），绝不折算成 verified。三类摘要（读到的字节 / 画出来的数值 / 模型结构身份）各留一个权威，不合并。看护 `tests/test_chart_data_cell_rules.py` / `tests/test_chart_recipe_bridge.py`。
 - **数据出图 v2 的出备选与落盘（`engine/ai_data_recipe.default_candidates`、`ai_data_propose.py`、`ai_data_task.py` 下半、`/api/ai/data-figure/*`，ADR 0178，实验开关后面）**：
   不调模型的整条流水（模型路径复用它）。`default_candidates(profile, table=, sheet=, confirmed=, hint=, values=, picks=)` → `Candidates | NeedsChoice`：列角色规则只有 `pick_table` / `_resolve_roles` 两处文字定义，
   有歧义问、不猜，每个「不确定」有安全默认；`id_like` 永不当角色、没确认就没有 unit / 配对 / 轨迹；文案只走稳定码（`CANDIDATE_CODES` / `QUESTION_CODES` / `NOTHING_REASONS` / `DROP_REASONS`，前端 `ai:dataFigureV2.*`）。
@@ -337,6 +338,12 @@ order: 240
   **只新建**（`scriptlock.create_script`），再 `discover.register` → 统一刷新 → safe 渲染 → `figureverify.data_matches_expected`；登记失败撤回本次新建的脚本 / 公共模块 / 目录，复用的不删。
   数值列夹着 ≤ 20% 文字（`numeric_like`）：**先问用户**（`{kind:"ask", question_code:"mixed_cells"}`：预览 ≤ 5 行带文件行号、选项 skip / extract / describe），回答放 `answers.cells`（`skip` / `extract` / `map`，声明式；`describe` 不可执行 → 409 `propose_cells_need_rule`；规则不合格 → 400 `propose_cells_invalid`），规则进 `FigureRecipe.cells`，脚本读表后 `apply_cells` 套规则（内存副本，用户文件不动）、图下方写说明、期望指纹按处理后的数据算，用户已决定的格子不再算 partial 理由；幂等键含请求内容摘要。**没有任何可核层 = `data.verifiable` unknown（`data_check: "unverifiable"`），绝不写成 verified**。端点：`propose` / `thumbnail/<session>/<id>` / `commit` / `discard`，`/api/ai/data-files` 带 xlsx 工作表清单；
   请求路径只经 `ai_data_propose.normalize_rel` + `projectenv.contained_path`。看护 `tests/test_ai_data_propose.py`（真 app + 真 safe worker）。
+- **数据出图 v2 的数据概览与脚本来源（`engine/ai_data_overview.py`，ADR 0178「数据概览与脚本来源」，实验开关后面）**：`GET /api/ai/data-overview?path=&sheet=&header_row=`
+  只读：状态（`ok` / `unsure` / `unreadable` + 稳定码，读不了是 200 不是 4xx）、行列数、`fields`（`ColumnSummary.kind` 口径）、前 20 行单元格原文、表头行前的说明行；**读表必须是 propose 读表的那两个函数**
+  （`read_text_table` / `inspect_data_source(v2=True)`），`header_row` 经 `ai_data_propose.parse_header_row`（与 `header_rows` 一份判据）——别在这里另写读法。路径只经 `normalize_rel` + `contained_path` +
+  与 `discover.walk_files` 结果逐字比对，打开的是遍历结果里的那一项。响应一律有上界、控制字符换空格（表里的文字不可信）。读不了但能靠指定表头行补救的文本表（`data_ragged` 等）概览照带 `raw_lines` 与猜的行号（`raw_lines` 非空 = 前端可让用户点一行，二进制 / 散文为空），别在概览里提前丢掉 `read_text_table` 给的预览；XLSX 每个工作表的行列数在 `/api/ai/data-files?formats=all` 的 `sheets` 里
+  （有预算，超出 `null` = 没读）。`/api/registry` 的 `all_scripts[]` 对 v2 生成的脚本加 `generated_from: {data, sheet}`：解析只有 `ai_data_template.parse_source_comment` 一处（严格：tokenize 真注释、第一条、固定键集合；
+  只外传路径与工作表名，不给配方与哈希），开关关着整个不读、响应逐字不变。不写文件、不发遥测。看护 `tests/test_ai_data_overview.py`。
 - **TAF 改图（`engine/ai_figure_edit.py`，Phase 3a）**：只在 `config.ai_settings()["taf"]["enabled"] is True`（默认关、无界面开关）
   时由 `ai_bridge.run` 走到；开关关着时旧路径逐字不变（cwd 是项目目录、不写任务列、`ADAPTERS` 为空）。开着时：spawn 之前在
   `data_dir()/cache/ai_candidates/<sid>/` **字节复制**目标脚本（+ 项目根的 `paper_style.py`，绝不建链接），拍原项目有界指纹（跳过

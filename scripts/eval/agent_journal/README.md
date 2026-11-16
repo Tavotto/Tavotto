@@ -27,3 +27,14 @@ python3 scripts/eval/agent_journal/harness.py report
 ```
 
 结果追加在 `results/<cond>.jsonl`，每行一组，字段有 before / after 判分、agent 用时、token、工具调用数。
+
+## 首轮结果（2026-11，DeepSeek v4-pro，20 张图 × 3 本刊，Tavotto 0.21.1）
+
+| 组 | 期刊合规 | 连通用提示也全过 | 平均工具调用 | 平均用时 |
+|---|---|---|---|---|
+| 原图 | 4/60 | 1/60 | – | – |
+| A：agent 单独 | 60/60 | 24/60 | 9.6 | 101 s |
+| B：agent + Tavotto | 51/60 | 27/60 | 21.6 | 406 s |
+
+B 组按提示词版本分开：`prompt_rev` 1 是 27/32（5 组都是改完关了会话，修改没导出就丢了，后来由 #1903 修）；`prompt_rev` 2 是 24/28。
+没合规的 9 组剩下的都是页宽。`prompt_rev` 2 里 18-inset 三本刊全挂：两组是 `tavotto_fix_to_journal` 已经改到合规，agent 又回脚本修文字重叠、重新打开图，会话里的改动没导出就没了；JMST 那组 `fix_to_journal` 只回 `constraint_conflict` / `unsupported`，没说哪条约束冲突，agent 只好去猜 override 的属性名。

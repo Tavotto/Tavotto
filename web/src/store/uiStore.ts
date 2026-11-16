@@ -14,7 +14,7 @@ export type LeftTab = 'workspace' | 'assets' | 'outline' | 'elements' | 'style' 
 /** 2026-10 审计 A3：画布 + 图层合成一棵「大纲」（图内元素仍是独立的「图内」页签）；旧版本机偏好里的 canvases / layers 落到它上面 */
 const LEGACY_OUTLINE_TABS: readonly string[] = ['canvases', 'layers']
 /** 右栏三模式：属性 / 改图助手 / 画布设置 */
-export type RightTab = 'properties' | 'assistant' | 'canvas' | 'timeline'
+export type RightTab = 'properties' | 'assistant' | 'canvas' | 'timeline' | 'review'
 export type Tool = 'select' | 'text' | 'arrow' | 'rect' | 'ellipse' | 'line'
 /** 工作区断点：≥1440 可双栏钉住 / 1024–1439 左右互斥 / <1024 覆盖式抽屉 */
 export type WorkspaceLayout = 'wide' | 'medium' | 'narrow'
@@ -243,7 +243,8 @@ function readPersisted(): Persisted {
     state = { ...state, prefsVersion: PREFS_VERSION }
   }
   // 时间线页签依赖「打开了哪份排版」，是会话态：刷新后不带着它启动（落回属性页）
-  if (state.rightTab === 'timeline') state = { ...state, rightTab: 'properties' }
+  // 审阅页签同理：只在这张图 / 排版真有分享记录时才存在，刷新后不带着它启动
+  if (state.rightTab === 'timeline' || state.rightTab === 'review') state = { ...state, rightTab: 'properties' }
   // 版本号相同也要收进合法区间：手工改过 localStorage / 未来回滚都不该让
   // 界面拿到一个画不出来的宽度
   state = {

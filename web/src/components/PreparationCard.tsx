@@ -32,6 +32,7 @@ import {
   repairImportFolder,
   type MissingInputOffer,
   type GuiDialogPayload,
+  type LibraryModulePayload,
   type PreparationAttempt,
   type PreparationReport,
   type ProjectScan,
@@ -87,6 +88,7 @@ import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useUiStore } from '@/store/uiStore'
+import { runEntryScript } from '@/store/libraryEntryRun'
 import { aiFixFlow } from './AiFixFlow'
 import { dependencyDecision } from './DependencyDecision'
 import { ProbeResultsDialog } from './left/ScriptLibrary'
@@ -630,6 +632,8 @@ const ARGS_FOLDED = new Set([
   'no_figure',
   'no_figure_raster',
   'no_figure_copied',
+  'library_module',
+  'library_module_none',
   'completed',
   'completed_unlinked',
   'completed_partial',
@@ -688,6 +692,8 @@ function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
       return pt('btn.openRegistry')
     case 'open_assets':
       return pt('btn.openAssets')
+    case 'run_entry':
+      return pt(p.entry.in_project ? 'btn.runEntry' : 'btn.openRunEntry')
     case 'background':
       return pt('btn.background')
     case 'dismiss':
@@ -984,6 +990,8 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         ui.setLeftTab('assets')
         ui.setGuideCard('closed')
         return null
+      case 'run_entry':
+        return (await runEntryScript(p.entry)) ? null : pt('library.openFailed')
       case 'background':
         ui.setGuideCard('pill')
         return null
@@ -1994,6 +2002,14 @@ function InstallLine({ report }: { report: PreparationReport | null }) {
       ? pt('install.many', { list: installs.slice(0, 3).join(', '), count: installs.length })
       : installs.join(', ')
     : pt('install.runtime')
+  // 装进「你为这个项目选的 Python」：整句话说清装什么、装到哪（不再拼「 · 装到…」）
+  if (impact.target_kind === 'configured_interpreter') {
+    return (
+      <p className="text-sm text-ink-2" data-prep-install data-prep-install-target="configured_interpreter">
+        {pt('install.toConfigured', { module: what })}
+      </p>
+    )
+  }
   return (
     <p className="text-sm text-ink-2" data-prep-install>
       {what} · {pt(impact.modifies_user_environment ? 'install.toUser' : 'install.toManaged')}
@@ -2131,6 +2147,38 @@ function GuiDialogHint({ payload }: { payload: GuiDialogPayload }) {
   )
 }
 
+/**
+ * 库模块卡的详情（TVD-Y5JF）：import 了它的脚本一行一个（名字 + 在哪），主按钮之外的那几个各带「运行」。
+ * 没找全（预算用完 / 有读不动的）时多一句，说「没找到」不代表没有。
+ */
+function LibraryEntriesHint({ payload }: { payload: LibraryModulePayload }) {
+  const [error, setError] = useState<string | null>(null)
+  return (
+    <div className="flex flex-col gap-1.5" data-prep-library>
+      {payload.entries.map((e, i) => (
+        <div key={e.path} className="flex items-baseline justify-between gap-3" data-prep-row="library-entry">
+          <span className="min-w-0 truncate text-ink-2" title={e.path}>
+            <span className="font-mono">{e.open_script}</span>
+          </span>
+          {i > 0 && (
+            <Button
+              variant="ghost"
+              size="md"
+              className="shrink-0 text-accent"
+              data-prep-library-run
+              onClick={() => void runEntryScript(e).then((ok) => setError(ok ? null : pt('library.openFailed')))}
+            >
+              {pt(e.in_project ? 'btn.runEntry' : 'btn.openRunEntry')}
+            </Button>
+          )}
+        </div>
+      ))}
+      {!payload.complete && <p data-prep-library-partial>{pt('library.partial')}</p>}
+      {error && <p>{error}</p>}
+    </div>
+  )
+}
+
 const HISTORY_PROFILES = ['safe', 'native']
 const HISTORY_OUTCOMES = ['pending', 'succeeded', 'failed', 'blocked', 'cancelled']
 const HISTORY_DECLINED = [
@@ -2190,6 +2238,8 @@ function SessionDetails({ entry, view, draftRef }: {
   const wdReq = report?.requirements.find((r) => r.kind === 'workdir_choice')
   const dialogReq = report?.requirements.find((r) => r.kind === 'gui_dialog')
   const dialog = dialogReq?.kind === 'gui_dialog' ? dialogReq.payload : null
+  const libReq = report?.requirements.find((r) => r.kind === 'library_module')
+  const library = libReq?.kind === 'library_module' ? libReq.payload : null
   const prepare = report?.actions.find((a) => a.kind === 'prepare_dependencies')
   const error = report?.result?.error
   // 拒绝码没有文案时不渲染那一行（backendCodeMsg 兜底给空串，原来会摆出一行空白）
@@ -2225,6 +2275,8 @@ function SessionDetails({ entry, view, draftRef }: {
   return (
     <>
       {dialog && <GuiDialogHint payload={dialog} />}
+      {/* 只有一个入口时卡片那句话已经说了它，详情里不重复；多个入口 / 没查全才列（2026-11-15 用户：别堆不必要的信息） */}
+      {library && (library.entries.length > 1 || !library.complete) && <LibraryEntriesHint payload={library} />}
       {failed && original && (
         <pre
           data-prep-error={error?.code ?? ''}
