@@ -151,6 +151,16 @@ packages inside were built for a different Python version, so they hide the work
 the Python version (change_python cannot help: that folder is always for another version) and do not install packages over it. \
 Call ignore_import_folder (it needs no path and asks the user itself), then try_run. If a package turns out to be missing \
 afterwards, install it into the managed environment as usual. Never edit the script and never touch that folder.
+3i. IMAGE FILE WHOSE CONTENT DOES NOT MATCH ITS EXTENSION. If the report error code is `image_format_mismatch` (its params: \
+`claimed` is the format the file extension promises, `actual` is the format the file's own first bytes show, `ext` is the \
+extension as written, and `file` is the project-relative name when it can be shown): the script reads an image whose \
+content is `actual` but whose name ends in `.ext` (typically a JPEG photo saved as `.png`). The image reader picks its decoder \
+from the extension and does not sniff the content, so running the same script directly with Python fails the same way: this is \
+NOT caused by the safe run, the environment, the Python version or a missing package, so do not suspect any of them and do \
+not switch execution mode, change_python or install packages. Do NOT edit the script, do NOT rename, convert or overwrite the \
+user's image. Say in one plain sentence that the file is really an `actual` image saved with a `.ext` name and ask the user to \
+replace it with a real `claimed` file (or point the script at the right file), then finish `not_fixed`. If `file` is absent, say \
+"this image" instead of naming it.
 4. If you need something only the user knows, use ask_user (a multiple-choice question) or pick_file (the system file \
 chooser). Never ask for a password, key or token.
 5. If you cannot fix it, distinguish missing user inputs/environment failures from a product defect. If evidence \

@@ -856,6 +856,7 @@ def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=
         *engine_texdiag.ERROR_CODES,
         engine_pool.IMPORT_FOLDER_UNREADABLE_CODE,
         engine_pool.IMPORT_FOLDER_ABI_CODE,
+        engine_pool.IMAGE_FORMAT_MISMATCH_CODE,
         engine_figcapture.EXPORT_RASTER_TOO_LARGE_CODE,
     ):
         # 脚本要输入（ADR 0099：提示原文 + 为什么没人能答，T08）/ 参数解析器退出（T03：个数与类别）：
@@ -12291,6 +12292,13 @@ def _native_preparation_runner(pl, before_retry=None):
         )
         if unreadable is not None:
             raise unreadable
+        image_mismatch = engine_pool.image_format_error(
+            str(error.get("message") or "脚本运行出错"),
+            str(error.get("traceback") or ""),
+            error,
+        )
+        if image_mismatch is not None:
+            raise image_mismatch
         failure = engine_pool.WorkerError(
             str(error.get("message") or "脚本运行出错"),
             traceback_text=str(error.get("traceback") or ""),

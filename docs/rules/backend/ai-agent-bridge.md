@@ -747,6 +747,7 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
 
 - **失败码 `import_folder_abi_mismatch`**（报告 `error.code` / `params.folder|abi|current`）：换 Python 版本救不了——那个目录永远是为别的版本装的（TVD-ZCR4 里 AI 两轮 `change_python` 要 3.12 都是 `python_change_unavailable`）。
   系统提示 3h 明令不换版本、不在它上面装包，改用本工具；`change_python` 在报告错误码是它时直接 `python_change_not_applicable`（不打快照、不建环境）；`pyversionfix.FAILURE_CODES` 不含它，`failure_from_report` / `required_span` 认不出。
+- **失败码 `image_format_mismatch`**（TVD-3MWS；`params.claimed|actual|ext` + 可选 `file`）：图片内容与扩展名不符，直接用 Python 跑同样失败。系统提示 3i：不怀疑安全运行 / 环境、不改脚本、不动用户图片，请用户换成真正的文件；`change_python` 对它直接 `python_change_not_applicable`。
 - **工具不收路径**：忽略哪个文件夹由失败那一刻 Tavotto 登记（`pathignore.latest_path`，随令牌签发），模型指认不了任意目录；没有登记 = `no_foreign_folder`，不打扰用户。
 - **一律问**（approve 卡 = 一句话 `summary` + 折叠 `details`，如实说明这是对「与终端里一致」的偏离、脚本与文件夹都不动、可撤销）。没有 `ctx.ask` / 非 yes = `needs_approval`，名单与快照都不写。
 - **同一条路径**：写入只经 `pathignore.remember`（失败卡主按钮的令牌端点调的也是它）；名单变了才调 `FixContext.on_ignored_paths_changed`（应用侧 = 收掉这个项目的会话，`--ignore-paths` 是 spawn 时交的）。

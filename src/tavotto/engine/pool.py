@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import (
+    bridgeboot,
     config,
     envlease,
     execspec,
@@ -1085,6 +1086,13 @@ def recovery_params(exc: "WorkerError") -> dict:
         if fact.get("ignore_token"):
             params["ignore_token"] = str(fact["ignore_token"])
         return params
+    if exc.code == IMAGE_FORMAT_MISMATCH_CODE:
+        # 格式名（闭集）+ 扩展名 + 项目相对的显示名（敏感运行里与 token 有关就没有）；不是路径
+        fact = extra["image_format_mismatch"]
+        params = {k: str(fact[k]) for k in ("claimed", "actual", "ext")}
+        if fact.get("file"):
+            params = {"file": str(fact["file"]), **params}
+        return params
     if exc.code == IMPORT_FOLDER_UNREADABLE_CODE:
         # 只有目录名（不是路径）；缺了就不发这个码（`unreadable_folder_error`）。`repair_token` 是不透明的服务端令牌
         # （`folderrepair`，仅 Windows 才有），前端凭它请求「修复权限」；它不是路径、也推不出路径
@@ -1728,6 +1736,32 @@ def foreign_abi_error(
     return err
 
 
+def image_format_error(message: str, traceback_text: str, extra=None) -> "WorkerError | None":
+    """worker / bridge 报来的结构化事实 `image_format_mismatch` → 错误；没有或畸形回 None（TVD-3MWS）。
+
+    格式名必须在 `bridgeboot` 认得的闭集里且 claimed != actual，扩展名必须是认得的图片扩展名，显示名是短的项目相对路径
+    （缺了就不带，敏感运行里就是这样）。原始消息与 traceback 原样保留。"""
+    given = extra.get("image_format_mismatch") if isinstance(extra, dict) else None
+    if not isinstance(given, dict):
+        return None
+    formats = set(bridgeboot.image_format_names())
+    claimed, actual, ext = given.get("claimed"), given.get("actual"), given.get("ext")
+    if claimed not in formats or actual not in formats or claimed == actual:
+        return None
+    if not isinstance(ext, str) or bridgeboot.image_format_of_extension(ext) != claimed:
+        return None
+    fact = {"claimed": claimed, "actual": actual, "ext": ext}
+    file = given.get("file")
+    if file is not None:
+        file = _short_text(file, 120)
+        if file is None:
+            return None
+        fact = {"file": file, **fact}
+    err = WorkerError(message, traceback_text, code=IMAGE_FORMAT_MISMATCH_CODE)
+    err.extra = {"image_format_mismatch": fact}
+    return err
+
+
 def unreadable_folder_error(
     message: str, traceback_text: str, extra=None, *, project="", python=""
 ) -> "WorkerError | None":
@@ -2358,6 +2392,9 @@ IMPORT_FOLDER_UNREADABLE_CODE = "import_folder_unreadable"
 #: 脚本加进 `sys.path` 的私有目录里的编译扩展是为别的 Python 小版本编的、盖住了环境里完好的同名包（ADR 0154）。
 #: 换 Python 版本 / 装包都无效：让那个目录对这个项目不生效（`pathignore`），脚本与目录都不动。
 IMPORT_FOLDER_ABI_CODE = "import_folder_abi_mismatch"
+#: 脚本读的图片文件内容与扩展名不符（JPEG 存成了 `.png`，TVD-3MWS）：解码器按扩展名选、不嗅探内容，直接用 Python 跑同样失败。
+#: 不是运行方式 / 环境的问题，也不改脚本和图片：失败卡只说这条事实，用户换成真正的文件。
+IMAGE_FORMAT_MISMATCH_CODE = "image_format_mismatch"
 
 #: 显式为**这个项目**挑的解释器失效时的稳定 code（U03，FO15 / FO16）。与
 #: `EXPLICIT_UNUSABLE_CODE` 分开：那条是全局设置 / 环境变量，这条是项目级（用户在依赖修复
@@ -2379,6 +2416,7 @@ ERROR_CODES = (
     ENGINE_FILES_INCOMPLETE_CODE,
     IMPORT_FOLDER_UNREADABLE_CODE,
     IMPORT_FOLDER_ABI_CODE,
+    IMAGE_FORMAT_MISMATCH_CODE,
     WRITE_OUTSIDE_ROOTS_CODE,
     # worker 直出位图超像素预算（`figcapture.check_export_raster`）：写回事务的 PNG 目标走到这里
     figcapture.EXPORT_RASTER_TOO_LARGE_CODE,
@@ -3413,6 +3451,11 @@ class EngineWorker:
             unreadable.script_name = self.script_name
             unreadable.python_source = getattr(self, "python_source", "") or ""
             return unreadable
+        image = image_format_error(msg, tb, err if isinstance(err, dict) else None)
+        if image is not None:
+            image.script_name = self.script_name
+            image.python_source = getattr(self, "python_source", "") or ""
+            return image
         mod = missing_module(f"{msg}\n{tb}")
         structured, structured_mod = structured_missing_dependency(err)
         mod = mod or structured_mod
@@ -3939,6 +3982,9 @@ def _worker_error(
     )
     if unreadable is not None:
         return unreadable
+    image = image_format_error(message, traceback_text, extra)
+    if image is not None:
+        return image
     mod = missing_module(f"{message}\n{traceback_text}")
     structured, structured_mod = structured_missing_dependency(extra)
     mod = mod or structured_mod

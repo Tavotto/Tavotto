@@ -219,6 +219,8 @@ USER_VISIBLE_CODES = {
     "import_folder_unreadable": {"folder"},
     # ADR 0154：私有依赖目录里的编译扩展是为别的 Python 小版本编的；参数来自 `pool.recovery_params`（显示名 + 两个版本）
     "import_folder_abi_mismatch": {"folder", "abi", "current"},
+    # TVD-3MWS：图片内容与扩展名不符；参数来自 `pool.recovery_params`（格式名 + 扩展名 + 可选的项目相对显示名）
+    "image_format_mismatch": {"claimed", "actual", "ext"},
     # 「跳过这个文件夹」（ADR 0154，`engine/pathignore`）：固定文案、不带参数——路径不进响应
     **{code: set() for code in pathignore.ERROR_CODES},
     # 「修复权限」（ADR 0153 修订 2026-10-30，`engine/folderrepair`）：全是固定文案、不带参数——路径不进响应

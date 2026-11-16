@@ -1511,6 +1511,18 @@ def _foreign_abi_extra(exc: BaseException, args) -> dict:
     return {"foreign_abi_folder": fact, "foreign_abi_folder_private": private} if fact else {}
 
 
+def _image_format_extra(exc: BaseException, args) -> dict:
+    """脚本失败是不是「图片内容与扩展名不符」（JPEG 存成 `.png`，TVD-3MWS）。判据在 `bridgeboot.image_format_facts`
+    （与 safe worker 同一份）；带参数运行时文件名可能由 argv 变形而来，口径同 worker 的敏感运行；任何意外都当没有。"""
+    try:
+        script_dir = os.path.dirname(args.source_path or "")
+        roots = [r for r in (args.project_root or os.getcwd(), script_dir) if r]
+        fact = bridgeboot.image_format_facts(exc, roots, list(args.user_argv or ()))
+    except Exception:  # noqa: BLE001
+        return {}
+    return {"image_format_mismatch": fact} if fact else {}
+
+
 def _parse_ignore_paths(raw) -> list:
     """`--ignore-paths` 的 JSON 数组；没给 / 坏了就当没有。"""
     if not raw:
@@ -1588,6 +1600,7 @@ def main(argv: list | None = None) -> int:
             # 跳过之后仍失败、而失败是脚本加进 sys.path 的项目外目录读不了（ADR 0153）：只带目录名
             **_unreadable_folder_extra(exc, args),
             **_foreign_abi_extra(exc, args),
+            **_image_format_extra(exc, args),
             **_missing_command_extra(exc, args),
         }
         traceback.print_exc()

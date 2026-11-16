@@ -78,6 +78,11 @@ __all__ = [
     "install_ignored_import_paths",
     "ignored_events",
     "foreign_abi_facts",
+    "image_format_facts",
+    "image_format_names",
+    "image_mismatch_of_file",
+    "sniff_image_format",
+    "image_format_of_extension",
     "drop_script_dir_from_sys_path",
     "load_engine_modules",
 ]
@@ -759,6 +764,192 @@ def foreign_abi_facts(
             fact["module"] = module
         return fact, {"path": absentry}
     return {}, {}
+
+
+# --------------------------------------------------------------------------- 图片内容与扩展名不符（TVD-3MWS）
+#
+# 用户把 JPEG 存成了 `x.png`：matplotlib 对 .png 扩展名直接用 PNG 解码器、不嗅探内容，于是 `plt.imread("x.png")`
+# 以 `SyntaxError: not a PNG file` 收场（直接用 Python 跑同样失败）。失败那一刻把「这张图其实是 JPEG」这条事实交给失败卡和
+# AI 修复，用户不必去猜是不是运行方式的问题。判据按模块 / 帧认，不解析消息文本；只读文件前 16 字节，不改任何文件。
+
+#: 扩展名（小写、不带点）→ 格式显示名；同一格式的几种拼写归并
+_IMAGE_EXTENSIONS = {
+    "png": "PNG",
+    "jpg": "JPEG",
+    "jpeg": "JPEG",
+    "jpe": "JPEG",
+    "gif": "GIF",
+    "tif": "TIFF",
+    "tiff": "TIFF",
+    "bmp": "BMP",
+    "webp": "WebP",
+}
+#: 只在这些模块的帧里找被读的图片路径（PIL 自己与 matplotlib 的 imread）
+_IMAGE_READER_MODULES = ("PIL", "matplotlib.image")
+_IMAGE_PATH_LOCALS = ("fp", "filename", "fname", "file", "path", "fobj")
+
+
+def image_format_names() -> tuple[str, ...]:
+    """认得的图片格式显示名（闭集，给父进程核对事实用）。"""
+    return tuple(dict.fromkeys(_IMAGE_EXTENSIONS.values()))
+
+
+def image_format_of_extension(ext: str) -> str | None:
+    """扩展名（带不带点、大小写都行）→ 格式显示名；不是认得的图片格式回 None。"""
+    return _IMAGE_EXTENSIONS.get(str(ext or "").lstrip(".").lower())
+
+
+def sniff_image_format(path: str) -> str | None:
+    """读文件前 16 个字节认真实格式（PNG / JPEG / GIF / TIFF / BMP / WebP）；认不出、读不了、不是普通文件回 None。"""
+    try:
+        if not os.path.isfile(path):
+            return None
+        with open(path, "rb") as handle:
+            head = handle.read(16)
+    except Exception:  # noqa: BLE001 — 读不了就是不知道，绝不盖掉原来的脚本错误
+        return None
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "PNG"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "JPEG"
+    if head.startswith((b"GIF87a", b"GIF89a")):
+        return "GIF"
+    if head.startswith((b"II*\x00", b"MM\x00*")):
+        return "TIFF"
+    if head.startswith(b"BM"):
+        return "BMP"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "WebP"
+    return None
+
+
+def image_mismatch_of_file(path: str) -> tuple[str, str, str] | None:
+    """`(扩展名所属格式, 嗅探到的格式, 扩展名)`；一致、扩展名不认得、嗅探不出都回 None。"""
+    ext = os.path.splitext(path)[1].lstrip(".").lower()
+    claimed = image_format_of_extension(ext)
+    if claimed is None:
+        return None
+    actual = sniff_image_format(path)
+    if actual is None or actual == claimed:
+        return None
+    return claimed, actual, ext
+
+
+def _in_image_reader(frame) -> bool:
+    name = frame.f_globals.get("__name__", "")
+    return isinstance(name, str) and any(
+        name == m or name.startswith(m + ".") for m in _IMAGE_READER_MODULES
+    )
+
+
+def _is_pil_decode_failure(exc: BaseException) -> bool:
+    """`PIL.UnidentifiedImageError`，或抛出点（最内层帧）在 PIL 包里的 `SyntaxError`（如 "not a PNG file"）。"""
+    cls = type(exc)
+    if cls.__name__ == "UnidentifiedImageError" and str(cls.__module__).split(".")[0] == "PIL":
+        return True
+    if not isinstance(exc, SyntaxError):
+        return False
+    tb = exc.__traceback__
+    last = None
+    while tb is not None:
+        last = tb.tb_frame
+        tb = tb.tb_next
+    if last is None:
+        return False
+    name = last.f_globals.get("__name__", "")
+    return isinstance(name, str) and (name == "PIL" or name.startswith("PIL."))
+
+
+def _path_candidates(chain: list) -> list[str]:
+    """异常链各层 traceback 里 PIL / matplotlib.image 帧的 `fp` / `filename` / `fname` 一类局部变量 → 路径串（内层优先）。"""
+    out: list[str] = []
+    for e in chain:
+        frames = []
+        tb = e.__traceback__
+        while tb is not None:
+            frames.append(tb.tb_frame)
+            tb = tb.tb_next
+        for frame in reversed(frames):
+            if not _in_image_reader(frame):
+                continue
+            local = frame.f_locals
+            for key in _IMAGE_PATH_LOCALS:
+                value = local.get(key)
+                if value is None:
+                    continue
+                try:
+                    if not isinstance(value, (str, bytes)) and not hasattr(value, "__fspath__"):
+                        value = getattr(value, "name", None)  # 文件对象；取不到就放弃
+                    value = os.fspath(value) if value is not None else None
+                except Exception:  # noqa: BLE001
+                    continue
+                if isinstance(value, str) and value and value not in out:
+                    out.append(value)
+    return out
+
+
+def image_format_facts(exc: BaseException, project_roots=(), sensitive_tokens=()) -> dict:
+    """失败是不是「图片内容与扩展名不符」（解码器按扩展名选，文件里其实是别的格式）：是则
+    `{"file"?: 项目相对显示名, "claimed": 扩展名所属格式, "actual": 嗅探到的格式, "ext": 扩展名}`，否则 `{}`。
+
+    判据（全部成立才算）：异常链（最多 16 层）里有 PIL 的解码失败（`UnidentifiedImageError`，或抛出点在 PIL 包里的
+    `SyntaxError`）；PIL / `matplotlib.image` 帧里取得到被读的文件，且它在 `project_roots`（项目根、脚本目录）之内——
+    项目外的一律不报；读文件前 16 字节嗅探出的格式与扩展名所属格式不同。一致 / 嗅探不出 / 读不了 / 任何意外都回 `{}`，
+    绝不盖掉原来的脚本错误。敏感运行（`sensitive_tokens` 非空）里文件名与任一 token 有关（casefold 子串，任一方向）就不带
+    `file`，只带格式。"""
+    try:
+        chain: list = []
+        cur, seen = exc, 0
+        while cur is not None and seen < 16:
+            chain.append(cur)
+            cur = cur.__cause__ or cur.__context__
+            seen += 1
+        if not any(_is_pil_decode_failure(e) for e in chain):
+            return {}
+        roots = []
+        for r in project_roots:
+            if isinstance(r, str) and r:
+                roots.append(os.path.realpath(r))
+        if not roots:
+            return {}
+
+        def inside(real: str):
+            return next(
+                (r for r in roots if real != r and real.startswith(r.rstrip(os.sep) + os.sep)),
+                None,
+            )
+
+        for candidate in _path_candidates(chain):
+            real = os.path.realpath(os.path.abspath(candidate))
+            base = inside(real)
+            if base is None and not os.path.isabs(candidate):
+                # 相对路径在沙盒 cwd 里解到了 Tavotto 自己的副本（或已不在）：按项目根 / 脚本目录再解一次；
+                # 副本还在的话，两份内容的错配结论必须一致才算同一个文件
+                theirs = image_mismatch_of_file(real) if os.path.isfile(real) else None
+                for r in roots:
+                    alt = os.path.realpath(os.path.join(r, candidate))
+                    if inside(alt) and (theirs is None or image_mismatch_of_file(alt) == theirs):
+                        real, base = alt, inside(alt)
+                        break
+            if base is None:
+                continue
+            mismatch = image_mismatch_of_file(real)
+            if mismatch is None:
+                continue
+            claimed, actual, ext = mismatch
+            fact = {"claimed": claimed, "actual": actual, "ext": ext}
+            shown = os.path.relpath(real, base).replace(os.sep, "/")
+            folded = shown.casefold()
+            related = any(
+                (t := str(token).casefold()) and (t in folded or folded in t)
+                for token in sensitive_tokens
+            )
+            if not related:
+                fact = {"file": shown, **fact}
+            return fact
+    except Exception:  # noqa: BLE001
+        return {}
+    return {}
 
 
 class _FilteredNamespacePath:

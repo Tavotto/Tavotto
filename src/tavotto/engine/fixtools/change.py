@@ -358,6 +358,13 @@ def change_python(ctx: FixContext, args: dict) -> ToolResult:
             "The failure is a folder the script itself puts on its import path that was installed for a different "
             "Python version, so changing Python cannot fix it. Use ignore_import_folder instead.",
         )
+    if isinstance(failing, dict) and failing.get("code") == "image_format_mismatch":
+        # 失败是图片内容与扩展名不符（TVD-3MWS）：与 Python 版本无关，直接用 Python 跑同样失败
+        return err(
+            "python_change_not_applicable",
+            "The failure is an image file whose content does not match its extension (for example a JPEG saved as "
+            ".png). Running with another Python fails the same way; the file must be replaced by the user.",
+        )
     bad = _snapshot_or_error(ctx, "change_python")
     if bad is not None:
         return bad
