@@ -4,8 +4,8 @@
 > （ADR 0070 / 0071）扩到「自报只收这一条会话的」/ 输入观察 / 数据绑定 / 旧计划失效政策 / 阶段轨迹；速查行在
 > `src/tavotto/AGENTS.md`「按改动路径找细则」表里（`engine/preparation.py` / `receipt.py` 那一行）。
 > 这里是这一主题规则的**唯一全文**；速查表只留一行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_execution_receipt.py`、`test_preparation_api.py`、`test_worker_runtime_report.py`、`tests/bridge/test_bridge_e2e.py`、`tests/test_foundation_harness.py`、`tests/test_foundation_first_open.py`、`tests/test_trace.py`、`tests/test_foundation_join.py`、`tests/test_preparation_session.py`、`tests/test_preparation_session_e2e.py`、`tests/test_preparation_session_dependencies.py`、`tests/test_dialogscan.py`
-> `src/tavotto/AGENTS.md`「改到」压缩前原文（2026-10-23）：`engine/preparation.py`、`prepsession.py`、`dialogscan.py`、`receipt.py`、`trace.py`、`databinding.binding_for`、`figcapture.InputObserver`、`execspec.launch_context`、`workdir.grant_for`、`depresolve.DependencyIntent`、`figcapture.SourceArtifact`、`exportreq.render_plan_ref`、`/api/engine/preparation*`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_execution_receipt.py`、`test_preparation_api.py`、`test_worker_runtime_report.py`、`tests/bridge/test_bridge_e2e.py`、`tests/test_foundation_harness.py`、`tests/test_foundation_first_open.py`、`tests/test_trace.py`、`tests/test_foundation_join.py`、`tests/test_preparation_session.py`、`tests/test_preparation_session_e2e.py`、`tests/test_preparation_session_dependencies.py`、`tests/test_dialogscan.py`、`tests/test_libmodule.py`
+> `src/tavotto/AGENTS.md`「改到」压缩前原文（2026-10-23）：`engine/preparation.py`、`prepsession.py`、`dialogscan.py`、`libmodule.py`、`receipt.py`、`trace.py`、`databinding.binding_for`、`figcapture.InputObserver`、`execspec.launch_context`、`workdir.grant_for`、`depresolve.DependencyIntent`、`figcapture.SourceArtifact`、`exportreq.render_plan_ref`、`/api/engine/preparation*`
 > `src/tavotto/AGENTS.md`「主题」压缩前原文（2026-10-24，与正文同等有效）：准备计划、执行回执与源图产物（ADR 0053 / 0057 / 0070 / 0071）、准备会话（T01） → `preparation-and-receipts.md`
 
 <!-- agents-route
@@ -36,7 +36,13 @@ order: 320
   与用户指认都接不上（#1821）；只复制现成图片的脚本被说成「多半数据没找到」并推荐 AI 修复（#1823）；转换校验
   只看出图，Python 版漏写原脚本的 Excel 也算成功（#1825）。2026-11-14 两份用户反馈又是这一形状：参数都有默认值、
   脚本解析后自己 `parser.error` 报找不到数据，被认成「需要参数」引去填参数（#1899）；stat / getsize / listdir 落空
-  直接到终局的写法认领不到，能救回却到不了指认（#1909）——用例都只覆盖了其中一种写法。
+  直接到终局的写法认领不到，能救回却到不了指认（#1909）——用例都只覆盖了其中一种写法。2026-11-16 一份用户反馈：只定义了画图函数的
+  库模块被直接打开运行，跑完笼统说「没出图」并推荐 AI 修复——用例只放会画图的脚本，没有一条把「本来就不是入口的文件」放进打开并运行；
+  修复初版又在运行意图被授权边界撤销后让库模块卡盖住安装确认卡，评审报 P1（#1940）。
+- **只定义了画图函数的库模块是不阻塞的提示，不是拦截（ADR 0188，TVD-Y5JF）**：`libmodule.is_library` 与产品挑入口共用
+  `discover.entry_candidates_of` / `_toplevel_reaches_plot`，判不出就不说；`requirements_of` 多一条 `library_module`（`blocking: false`），
+  phase / `derive` / 动作都不动，没出图的终局 `remedy` 为空。反查往项目外只读源码，以仓库标记为界、不到主目录与盘符根，只经
+  `discover._iter_py` + `scanbudget.read_regular_text(no_follow=True)` + `importscan.scan` 的正向解析；项目外入口的路径只进 requirement 载荷。
 - **执行只有一条路**：`pool.build_owned()`（`build()` + 池锁里给出的 `created`）。准备接口不另写
   `get + ensure_built`——自动 fallback 只有一份实现，漏掉一个入口就是「素材库里能打开、准备
   接口打不开」。已 build 且解释器决策没变的会话直接用它记下的 build 响应装配回执，不发请求。

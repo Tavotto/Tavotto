@@ -4,4 +4,4 @@ A closed chart model associates axes, series, data and legends explicitly. Matpl
 
 Charts rendered with `native-manifest/2` publish their display frame only inside `manifest.render_frame`; the one-point outward margin is a single contract constant pinned by golden vectors, and new frame fields require `native-manifest/3`. Older builds reject `/2` with `chart_model_unsupported` and keep the previous render.
 
-This is part of the #1873 split. Format contracts and release qualification remain under review in [Issue #1877](https://github.com/Tavotto/Tavotto/issues/1877) and ADR 0182.
+Part of the #1873 split (RFC #1877, ADR 0182).

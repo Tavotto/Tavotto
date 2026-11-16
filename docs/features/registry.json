@@ -1546,6 +1546,26 @@
           "title": "功能：拖入 R 脚本，素材区同样只显示它存的图，PDF 与 PNG 是一张卡"
         }
       ]
+    },
+    {
+      "id": "prep.library-module-entry",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "打开并运行一个只定义了画图函数、没有调用的文件时，运行之前就说出原因，不先装依赖；在项目和它所在的代码仓库里找到调用它的脚本，一键运行它（在项目外就先打开那个文件夹），「仍然运行」照旧",
+        "en-US": "Opening and running a file that only defines plotting functions and never calls them now says so before running, without installing anything first; Tavotto finds the script in the project or its code repository that calls them and runs it in one click (opening that folder first when it is outside the project), and \"Run anyway\" stays available"
+      },
+      "entry": "打开并运行一个只定义画图函数的 .py → 右下准备卡",
+      "e2e": [
+        {
+          "spec": "library-module.spec.ts",
+          "title": "功能：只定义了画图函数的文件，运行前指向项目外调用它的脚本，「打开并运行」打开仓库并运行它（恰好一次）"
+        },
+        {
+          "spec": "library-module.spec.ts",
+          "title": "功能：只定义了画图函数的文件，「运行它」在当前项目里运行调用它的脚本"
+        }
+      ]
     }
   ]
 }
