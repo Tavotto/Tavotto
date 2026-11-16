@@ -395,57 +395,177 @@ describe('BrandLogo', () => {
 
 /* ---------------------- 其他兼容接口：保存失败 / 刷新失败 ---------------------- */
 
+const passed = { checked: true, protocol: 'openai-chat', requested: null, switched: false, reason: null, reasons: {} }
+
 describe('CompatibleEndpoint', () => {
   const ag = (k: string) => t(`settings.agents.${k}`, { ns: 'dialogs' })
-  const puts = () => calls.filter((c) => c.url === '/api/ai/endpoints' && c.method === 'PUT')
+  const posts = () => calls.filter((c) => c.url === '/api/ai/connections' && c.method === 'POST')
   const fill = async () => {
     await type(document.body.querySelector<HTMLInputElement>(`[aria-label="${ag('endpoint.name')}"]`)!, 'LAN model')
     await type(document.body.querySelector<HTMLInputElement>(`[aria-label="${ag('endpoint.baseUrl')}"]`)!, 'https://llm.example/v1')
+    await type(document.body.querySelector<HTMLInputElement>(`[aria-label="${ag('endpoint.apiKey')}"]`)!, 'sk-test-12345678')
   }
   const saveBtn = () => [...document.body.querySelectorAll('button')].find((b) => b.textContent === t('common:actions.save'))!
+  const okConn = connection('custom', { state: 'ready' })
+
+  it('表单里没有协议选择；保存走 POST /api/ai/connections，不带 wire（自动探测），也不再 PUT /api/ai/endpoints', async () => {
+    const onSaved = vi.fn()
+    onPost = (c) => (c.url === '/api/ai/connections' && c.method === 'POST' ? json({ ok: true, connection: okConn, probe: passed }) : null)
+    await render(<CompatibleEndpoint onClose={() => {}} onSaved={onSaved} />)
+    expect(document.body.querySelector('input[type="radio"]')).toBeNull()
+    expect(document.body.textContent).not.toMatch(/responses|chat completions|anthropic messages|协议/i)
+    await fill()
+    await click(saveBtn())
+    expect(posts()).toHaveLength(1)
+    const body = posts()[0].body!
+    expect(body).toMatchObject({ vendor: 'custom', base_url: 'https://llm.example/v1', label: 'LAN model', api_key: 'sk-test-12345678' })
+    expect('wire' in body && body.wire !== 'auto').toBe(false)
+    expect(calls.some((c) => c.url === '/api/ai/endpoints')).toBe(false)
+    expect(onSaved).toHaveBeenCalledTimes(1)
+  })
 
   it('保存失败：表单里显示一句原因，不关、不调 onSaved；改完能再存', async () => {
     const onSaved = vi.fn()
     let fail = true
     onPost = (c) =>
-      c.url === '/api/ai/endpoints' && c.method === 'PUT'
+      c.url === '/api/ai/connections' && c.method === 'POST'
         ? fail
-          ? json({ code: 'endpoint_invalid', error: 'bad' }, 400)
-          : json(serverCaps)
+          ? json({ code: 'endpoint_invalid', error: 'bad', params: { reason: 'api_key_invalid' } }, 400)
+          : json({ ok: true, connection: okConn, probe: passed })
         : null
     await render(<CompatibleEndpoint onClose={() => {}} onSaved={onSaved} />)
     await fill()
     await click(saveBtn())
-    expect(document.body.querySelector('[data-endpoint-save-error]')?.textContent).toBeTruthy()
+    expect(document.body.querySelector('[data-endpoint-save-error]')?.textContent).toBe(cx('keyMissing'))
     expect(onSaved).not.toHaveBeenCalled()
-    expect(puts()).toHaveLength(1)
+    expect(posts()).toHaveLength(1)
     fail = false
     await click(saveBtn())
-    expect(puts()).toHaveLength(2)
+    expect(posts()).toHaveLength(2)
     expect(onSaved).toHaveBeenCalledTimes(1)
     expect(document.body.querySelector('[data-endpoint-save-error]')).toBeNull()
+  })
+
+  it('存下来了但探测不通：表单不关、写一句原因；再点保存改的是同一条（带 id），不新建', async () => {
+    const onSaved = vi.fn()
+    let n = 0
+    onPost = (c) => {
+      if (c.url !== '/api/ai/connections' || c.method !== 'POST') return null
+      n += 1
+      return n === 1
+        ? json({
+            ok: true,
+            connection: connection('custom', { state: 'error', error: 'endpoint_unusable', error_reason: 'web_page' }),
+            probe: { ...passed, protocol: null, reason: 'web_page' },
+          })
+        : json({ ok: true, connection: okConn, probe: passed })
+    }
+    await render(<CompatibleEndpoint onClose={() => {}} onSaved={onSaved} />)
+    await fill()
+    await click(saveBtn())
+    expect(document.body.querySelector('[data-endpoint-save-error]')?.textContent).toBe(cx('probe.unusable'))
+    expect(onSaved).not.toHaveBeenCalled()
+    await click(saveBtn())
+    expect(posts()).toHaveLength(2)
+    expect(posts()[1].body!.id).toBe('custom')
+    expect(onSaved).toHaveBeenCalledTimes(1)
+  })
+
+  it('型号清单取不到但探测通了（中转站没有 /models）：算保存成功', async () => {
+    const onSaved = vi.fn()
+    onPost = (c) =>
+      c.url === '/api/ai/connections' && c.method === 'POST'
+        ? json({ ok: true, connection: connection('custom', { state: 'error', error: 'network' }), probe: passed })
+        : null
+    await render(<CompatibleEndpoint onClose={() => {}} onSaved={onSaved} />)
+    await fill()
+    await click(saveBtn())
+    expect(onSaved).toHaveBeenCalledTimes(1)
   })
 
   it('保存成功但刷新失败：只提示并给「重试刷新」，重试只重读、绝不再发新建', async () => {
     const onSaved = vi.fn()
     let capsOk = false
     onPost = (c) => {
-      if (c.url === '/api/ai/endpoints' && c.method === 'PUT') return json(serverCaps)
+      if (c.url === '/api/ai/connections' && c.method === 'POST') return json({ ok: true, connection: okConn, probe: passed })
       if (c.url.startsWith('/api/ai/capabilities') && !capsOk) return json({ code: 'boom' }, 500)
       return null
     }
     await render(<CompatibleEndpoint onClose={() => {}} onSaved={onSaved} />)
     await fill()
     await click(saveBtn())
-    expect(puts()).toHaveLength(1)
+    expect(posts()).toHaveLength(1)
     expect(document.body.querySelector('[data-endpoint-saved-notice]')).toBeTruthy()
     expect(onSaved).not.toHaveBeenCalled()
     // 再失败一次也还是只重读
     await click(document.body.querySelector('[data-endpoint-retry-refresh]')!)
-    expect(puts()).toHaveLength(1)
+    expect(posts()).toHaveLength(1)
     capsOk = true
     await click(document.body.querySelector('[data-endpoint-retry-refresh]')!)
-    expect(puts()).toHaveLength(1)
+    expect(posts()).toHaveLength(1)
     expect(onSaved).toHaveBeenCalledTimes(1)
+  })
+})
+
+/* ---------------------- 连接卡：地址跑不了对话 → 一句话 + 「检查连接」 ---------------------- */
+
+describe('连接卡的「检查连接」', () => {
+  const bad = (over = {}) =>
+    connection('deepseek', { state: 'error', error: 'endpoint_unusable', error_reason: 'unauthorized', ...over })
+  const checkBtn = () => document.body.querySelector<HTMLButtonElement>('[data-connect-action="check"]')
+
+  it('endpoint_unusable：胶囊按原因说一句，右侧是「检查连接」而不是「连接」；点它发 /check，通了变「已连接」', async () => {
+    serverCaps = connectCapsOf([bad()])
+    useAiStore.setState({ caps: serverCaps })
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
+    const r = row('deepseek')
+    expect(r.querySelector('[data-connect-state="error"]')?.textContent).toBe(cx('probe.unauthorized'))
+    expect(checkBtn()?.textContent).toBe(cx('checkConnection'))
+    expect(r.querySelector('[data-connect-action="key"]')).toBeNull()
+    serverCaps = connectCapsOf([connection('deepseek')])
+    onPost = (c) =>
+      c.url === '/api/ai/connections/deepseek/check' && c.method === 'POST'
+        ? json({ ok: true, connection: connection('deepseek'), probe: passed })
+        : null
+    await click(checkBtn()!)
+    expect(calls.filter((c) => c.url === '/api/ai/connections/deepseek/check')).toHaveLength(1)
+    expect(row('deepseek').querySelector('[data-connect-state="ready"]')).not.toBeNull()
+    expect(checkBtn()).toBeNull()
+  })
+
+  it('检查中按钮禁用（转圈），仍不通：胶囊换成新原因、按钮还在（不卡死）', async () => {
+    serverCaps = connectCapsOf([bad()])
+    useAiStore.setState({ caps: serverCaps })
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    onPost = (c) => {
+      if (c.url !== '/api/ai/connections/deepseek/check') return null
+      return null
+    }
+    const base = globalThis.fetch
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if (String(url) === '/api/ai/connections/deepseek/check') {
+        await gate
+        serverCaps = connectCapsOf([bad({ error_reason: 'quota' })])
+        return json({ ok: true, connection: bad({ error_reason: 'quota' }), probe: { ...passed, protocol: null, reason: 'quota' } })
+      }
+      return base(url as never, init)
+    }) as typeof fetch
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
+    await act(async () => void checkBtn()!.click())
+    expect(checkBtn()!.disabled).toBe(true)
+    expect(checkBtn()!.getAttribute('aria-busy')).toBe('true')
+    await act(async () => release())
+    await act(async () => {})
+    expect(row('deepseek').querySelector('[data-connect-state="error"]')?.textContent).toBe(cx('probe.quota'))
+    expect(checkBtn()!.disabled).toBe(false)
+  })
+
+  it('别的错误（Key 被拒这类 unauthorized）：仍是原来的「连接」按钮，不出「检查连接」', async () => {
+    serverCaps = connectCapsOf([connection('deepseek', { state: 'error', error: 'unauthorized' })])
+    useAiStore.setState({ caps: serverCaps })
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
+    expect(checkBtn()).toBeNull()
+    expect(row('deepseek').querySelector('[data-connect-action="key"]')).not.toBeNull()
   })
 })

@@ -1945,6 +1945,16 @@
         "network": "Can’t reach the provider.",
         "timeout": "The connection timed out."
       },
+      "checkConnection": "Check connection",
+      "keyMissing": "Enter the key.",
+      "probe": {
+        "unauthorized": "The key was rejected.",
+        "quota": "The quota is used up.",
+        "no_model": "That model doesn’t exist.",
+        "unusable": "This address can’t run a chat.",
+        "network": "Can’t reach this address.",
+        "generic": "This connection isn’t working right now."
+      },
       "subtitle": "Connect an AI to edit figures or fix your environment.",
       "method": {
         "subscription": "Subscription",

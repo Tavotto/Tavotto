@@ -7,6 +7,8 @@ import { SwapText } from '@/components/ui/SwapText'
 import { t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
 import { connectionAgent, type AiConnection } from '@/lib/api'
+import { useConnectionCheck } from '@/hooks/useConnectionCheck'
+import { probeReasonText } from '@/lib/connectionCheck'
 import { splitNoticeText } from '@/lib/noticeText'
 import { cn } from '@/lib/utils'
 import { DATA_FIGURE_TASK, sessionAgentLabel, useAiStore, type AiSession } from '@/store/aiStore'
@@ -188,6 +190,7 @@ export function Turn({
         : null
   // AI 这一侧没跑成（模型 / 连接 / Agent 进程 / 超时）：说具体原因，不落到「没通过写回前检查」——候选根本没写出来；原始码只进「详情」
   const agentError = agentErrorKey(session.error)
+  const connCheck = useConnectionCheck()
   // 「型号要新版」且只能自己更新：怎么更新放进「详情」（正文只留一句）
   const cliUpdate = useSubscriptionOf(session.agent)?.cli_update
   const updateFailed = useCliUpdateError(session.agent)
@@ -331,11 +334,34 @@ export function Turn({
           action={
             agentError && AGENT_ERROR_ACTION[agentError] === 'update_cli' ? (
               <ModelUnavailableAction session={session} onRetry={onRetry} canRetry={canRetry} />
+            ) : fixedByConnection(agentError) && connCheck.phase === 'ok' ? (
+              // 检查通了：主按钮换回「重试」
+              canRetry ? (
+                <Button data-ai-retry size="sm" onClick={() => onRetry(session)}>
+                  {ai('panel.retry')}
+                </Button>
+              ) : undefined
             ) : fixedByConnection(agentError) ? (
-              // 凭据无效 / 地址指到了网页 / 额度用完 / 连不上 / 归不了的非零退出：重试只会再失败一次，主按钮去改连接（码表见 AGENT_ERROR_ACTION）
-              <Button data-ai-check-connection size="sm" onClick={() => requestCheckConnection()}>
-                {ai('notice.checkConnection')}
-              </Button>
+              // 凭据无效 / 地址指到了网页 / 额度用完 / 连不上 / 归不了的非零退出：重试只会再失败一次，主按钮「检查连接」（重新探测，码表见 AGENT_ERROR_ACTION）；
+              // 检查后仍不通：一句原因 + 「修改连接」，一定有下一步
+              <>
+                {/* 仍不通且不是断网：再检查一次结果不会变，只留「修改连接」（卡片不多一颗按钮）；断网才留着让用户重试 */}
+                {(connCheck.phase !== 'failed' || connCheck.reason === 'network') && (
+                  <Button
+                    data-ai-check-connection
+                    size="sm"
+                    loading={connCheck.phase === 'checking'}
+                    onClick={() => void connCheck.check()}
+                  >
+                    {ai('notice.checkConnection')}
+                  </Button>
+                )}
+                {connCheck.phase === 'failed' && (
+                  <Button data-ai-edit-connection size="sm" onClick={() => requestCheckConnection()}>
+                    {ai('notice.editConnection')}
+                  </Button>
+                )}
+              </>
             ) : canRetry ? (
               <Button data-ai-retry size="sm" onClick={() => onRetry(session)}>
                 {ai('panel.retry')}
@@ -343,7 +369,11 @@ export function Turn({
             ) : undefined
           }
         >
-          {agentError
+          {fixedByConnection(agentError) && connCheck.phase === 'ok'
+            ? ai('notice.connectionOk')
+            : fixedByConnection(agentError) && connCheck.phase === 'failed'
+              ? probeReasonText(connCheck.reason)
+              : agentError
             ? ai(`sessionError.${agentError}`)
             : rejected
               ? ai('notice.taskRejected')

@@ -3,8 +3,10 @@ import { useTranslation } from 'react-i18next'
 import { ChevronRight } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import type { AiAgentId, AiConnection, AiVendor } from '@/lib/api'
+import { canCheckConnection, isCheckableError, probeReasonText } from '@/lib/connectionCheck'
 import { cn } from '@/lib/utils'
 import { useAiStore } from '@/store/aiStore'
+import { runConnectionCheck } from '@/store/connectAiStore'
 import { Button } from '../../ui/Button'
 import { StatusPill } from '../../ui/StatusPill'
 import { BrandLogo } from '../BrandLogo'
@@ -60,13 +62,30 @@ export function VendorRow({
   const anyReady = all.some((c) => c.state === 'ready')
   const ready = connection?.state === 'ready'
   const needsAuth = connection?.state === 'needs_auth'
-  const canManage = !multi && ready && !!manage && connection?.route !== 'cli:codex' && connection?.route !== 'cli:claude' && !connection?.id.startsWith('sub:')
+  // 地址跑不了对话（endpoint_unusable / builtin_only）：状态胶囊说原因，右侧一个「检查连接」（重新探测，通了就变「已连接」）
+  const checkable = !multi && !!connection && !ready && isCheckableError(connection) && canCheckConnection(connection)
+  const canManage = !multi && (ready || checkable) && !!manage && connection?.route !== 'cli:codex' && connection?.route !== 'cli:claude' && !connection?.id.startsWith('sub:')
   const unavailable = !multi && !method.available
+  const [checking, setChecking] = useState(false)
+  // 这次检查没拿到结论（断网）时记录没动，胶囊仍是旧原因——换成这次的一句
+  const [note, setNote] = useState<string | null>(null)
+  const checkNow = async () => {
+    if (!connection || checking) return
+    setChecking(true)
+    setNote(null)
+    try {
+      const r = await runConnectionCheck(connection.id)
+      if (r.ok) onConnected(connection)
+      else if (r.reason === 'network') setNote(probeReasonText('network'))
+    } finally {
+      setChecking(false)
+    }
+  }
 
   const status =
     !multi && connection && !ready ? (
       <StatusPill tone={needsAuth ? 'warn' : 'danger'} dot data-connect-state={connection.state}>
-        {needsAuth ? cx('needsAuth') : connectionErrorText(connection)}
+        {needsAuth ? cx('needsAuth') : (note ?? connectionErrorText(connection))}
       </StatusPill>
     ) : null
 
@@ -97,6 +116,18 @@ export function VendorRow({
       <StatusPill tone="ok" dot data-connect-state="ready">
         {cx('connected')}
       </StatusPill>
+    )
+  } else if (checkable) {
+    action = (
+      <Button
+        variant="secondary"
+        size="sm"
+        data-connect-action="check"
+        loading={checking}
+        onClick={() => void checkNow()}
+      >
+        {cx('checkConnection')}
+      </Button>
     )
   } else if (unavailable) {
     // 命令行 AI 没装 / 打不开 / 关了：一句话 + 一个按钮；找不到这个 agent（老后端）才退回「需先安装」
@@ -157,7 +188,7 @@ export function VendorRow({
         </span>
       </div>
       {!multi && method.kind === 'login' && flow.hint && <div className="pl-9 pt-1">{flow.hint}</div>}
-      {open && !ready && !multi && method.kind === 'key' && (
+      {open && !ready && !checkable && !multi && method.kind === 'key' && (
         <div className="pl-9 pt-2">
           <VendorKeyForm vendor={vendor} method={method} connectionId={connection?.id} onConnected={onConnected} />
         </div>

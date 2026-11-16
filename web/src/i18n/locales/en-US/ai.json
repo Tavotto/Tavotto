@@ -138,6 +138,8 @@
     "timeout": "This edit timed out and stopped."
   },
   "notice": {
+    "editConnection": "Edit connection",
+    "connectionOk": "The connection works now. You can retry.",
     "checkConnection": "Check connection",
     "taskFailedChanged": "The edit is saved, but the checks found the data or output changed. If that’s wrong, revert to the previous version.",
     "taskPartial": "The edit is saved, but some checks couldn’t run, so the result isn’t fully verified.",

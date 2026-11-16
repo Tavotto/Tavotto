@@ -1923,6 +1923,16 @@
         "network": "连不上服务商。",
         "timeout": "连接超时。"
       },
+      "checkConnection": "检查连接",
+      "keyMissing": "请填写密钥。",
+      "probe": {
+        "unauthorized": "密钥被拒绝了。",
+        "quota": "额度用完了。",
+        "no_model": "没有这个型号。",
+        "unusable": "这个地址跑不了对话。",
+        "network": "连不上这个地址。",
+        "generic": "这个连接暂时用不了。"
+      },
       "subtitle": "连接一个 AI，用于改图或修复环境。",
       "method": {
         "subscription": "订阅登录",

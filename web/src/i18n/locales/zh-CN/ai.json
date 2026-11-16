@@ -135,6 +135,8 @@
     "timeout": "这次修改超时，已停止。"
   },
   "notice": {
+    "editConnection": "修改连接",
+    "connectionOk": "连接正常了，可以重试。",
     "checkConnection": "检查连接",
     "taskFailedChanged": "改动已写入，但核对发现数据或输出变了；不对的话可以回滚到修改前。",
     "taskPartial": "改动已写入，但有检查没能完成，结果未经完整核对。",

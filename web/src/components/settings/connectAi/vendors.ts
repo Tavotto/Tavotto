@@ -1,4 +1,5 @@
 import { currentLocale } from '@/i18n'
+import { isCheckableError, probeReasonText } from '@/lib/connectionCheck'
 import { ag, cx } from './copy'
 import { sortVendors, type AiCapabilities, type AiConnection, type AiVendor, type AiVendorMethod } from '@/lib/api'
 
@@ -26,7 +27,11 @@ export const vendorName = (v: AiVendor): string => (v.label_key ? ag(v.label_key
 
 /** 连接异常的一句人话（只认几个常见原因码，其余统一一句） */
 export const connectionErrorText = (c: AiConnection): string =>
-  c.error && ['unauthorized', 'network', 'timeout'].includes(c.error) ? cx(`err.${c.error}`) : cx('error')
+  isCheckableError(c)
+    ? probeReasonText(c.error_reason) // 地址跑不了对话：按探测原因说一句（没有原因就是通用一句）
+    : c.error && ['unauthorized', 'network', 'timeout'].includes(c.error)
+      ? cx(`err.${c.error}`)
+      : cx('error')
 
 /** 这家厂商的连接方式；没有 `methods`（老后端）就按旧的 `connect` 合成唯一一种 */
 export const methodsOf = (v: AiVendor): AiVendorMethod[] =>

@@ -15,7 +15,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiError, aiRevert, fetchAiHistory } from '@/lib/api'
+import { ApiError, aiRevert, checkAiConnection, fetchAiHistory, type AiConnectResult } from '@/lib/api'
 import { t } from '@/i18n'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { STREAM_WORD_CLASS } from '@/lib/streamMarkdown'
@@ -31,6 +31,7 @@ import { COPIED_MS } from './CopyAction'
 import { createDraftBackend } from '@/test/aiDraftBackend'
 import { setCurrentProjectId } from '@/lib/session'
 import { Markdown } from './Markdown'
+import { connectCapsOf, connection } from '../settings/testCaps'
 import { AGENT_ERROR_ACTION, formatDuration, parseUnifiedDiff, type LineRow } from './transcriptModel'
 
 const refreshProjectNow = vi.hoisted(() => vi.fn(async () => {}))
@@ -47,6 +48,7 @@ vi.mock('@/store/liveSync', async (importOriginal) => ({
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   aiRevert: vi.fn(async () => ({ ok: true })),
+  checkAiConnection: vi.fn(),
   fetchAiHistory: vi.fn(async () => ({ sessions: [], total: 0 })),
 }))
 
@@ -620,6 +622,74 @@ describe('任务结局（TAF Phase 3c）：只翻译 task.outcome', () => {
       expect(c.textContent).toContain(ai('sessionError.agent_internal'))
       expect(c.textContent).not.toContain(error)
     }
+  })
+
+  describe('「检查连接」调 /check（Key 连接）', () => {
+    const check = vi.mocked(checkAiConnection)
+    const cx = (k: string) => t(`settings.connectAi.${k}`, { ns: 'dialogs' })
+    const probe = (reason: string | null) => ({ checked: true, protocol: null, requested: null, switched: false, reason, reasons: {} }) as never
+    const setup = async (result: Partial<AiConnectResult> | (() => Promise<never>)) => {
+      requestCheckConnection.mockClear()
+      check.mockReset()
+      typeof result === 'function' ? check.mockImplementation(result) : check.mockResolvedValue({ ok: true, ...result } as AiConnectResult)
+      useAiStore.setState({
+        caps: connectCapsOf([connection('deepseek', { state: 'error', error: 'endpoint_unusable' }), connection('openai')]),
+        connection: 'deepseek',
+        loadCaps: vi.fn(async () => {}),
+      } as never)
+      await mount([session({ status: 'failed', changed: false, error: 'agent_auth', task: task('failed') })])
+      return q('[data-ai-error="session"]')!
+    }
+    const btn = (sel: string) => q<HTMLButtonElement>(`[data-ai-error="session"] ${sel}`)
+
+    it('点「检查连接」：发 /check、不去开表单；通了 → 一句话 + 主按钮换回「重试」', async () => {
+      await setup({ connection: connection('deepseek'), probe: probe(null) })
+      await act(async () => btn('[data-ai-check-connection]')!.click())
+      for (let i = 0; i < 5; i++) await act(async () => Promise.resolve())
+      expect(check).toHaveBeenCalledWith('deepseek')
+      expect(requestCheckConnection).not.toHaveBeenCalled()
+      const card = q('[data-ai-error="session"]')!
+      expect(card.textContent).toContain(ai('notice.connectionOk'))
+      expect(btn('[data-ai-check-connection]')).toBeNull()
+      expect(btn('[data-ai-retry]')).not.toBeNull()
+    })
+
+    it('检查中按钮禁用；仍不通 → 一句原因 + 「修改连接」（点它去改连接），不卡死', async () => {
+      let release!: () => void
+      await setup(
+        () =>
+          new Promise((r) => {
+            release = () =>
+              r({ ok: true, connection: connection('deepseek', { state: 'error', error: 'endpoint_unusable', error_reason: 'quota' }), probe: probe('quota') } as never)
+          }),
+      )
+      await act(async () => void btn('[data-ai-check-connection]')!.click())
+      expect(btn('[data-ai-check-connection]')!.disabled).toBe(true)
+      expect(btn('[data-ai-check-connection]')!.getAttribute('aria-busy')).toBe('true')
+      await act(async () => release())
+      for (let i = 0; i < 5; i++) await act(async () => Promise.resolve())
+      const card = q('[data-ai-error="session"]')!
+      expect(card.textContent).toContain(cx('probe.quota'))
+      // 额度用完这类再检查也不会变：只留「修改连接」，卡片不多一颗按钮
+      expect(btn('[data-ai-check-connection]')).toBeNull()
+      expect(btn('[data-ai-retry]')).toBeNull()
+      const edit = btn('[data-ai-edit-connection]')!
+      expect(edit.textContent).toBe(ai('notice.editConnection'))
+      await act(async () => edit.click())
+      expect(requestCheckConnection).toHaveBeenCalledTimes(1)
+    })
+
+    it('请求没到后端：落成「连不上」+「修改连接」，不停在检查中', async () => {
+      await setup(async () => {
+        throw new Error('offline')
+      })
+      await act(async () => btn('[data-ai-check-connection]')!.click())
+      for (let i = 0; i < 5; i++) await act(async () => Promise.resolve())
+      expect(q('[data-ai-error="session"]')!.textContent).toContain(cx('probe.network'))
+      expect(btn('[data-ai-edit-connection]')).not.toBeNull()
+      // 断网：结论没拿到，「检查连接」留着可以再试
+      expect(btn('[data-ai-check-connection]')).not.toBeNull()
+    })
   })
 
   it('失败卡主按钮按错误码表走：每个码一条（检查连接 / 重试）', async () => {
