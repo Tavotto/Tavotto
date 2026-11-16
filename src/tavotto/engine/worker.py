@@ -1363,14 +1363,18 @@ def _direct_argv_unpack_error(
             got = len(sys.argv)
         else:
             got = len(sys.argv[window])
-            # Does this slice reach `count` values once argv is long enough? Past
-            # this horizon every bound is resolved, so the length stops depending on it.
+            # Would some longer argv give exactly `count` values? The length is not
+            # monotonic (`[-2:2]` grows, then shrinks), so walk argv lengths up to the
+            # horizon past which every bound is resolved and the length stops changing;
+            # it moves by at most one per added argument. Huge constant bounds: the
+            # walk is capped and the horizon itself is checked last.
             horizon = (
                 len(sys.argv)
                 + count
                 + sum(abs(v) for v in (window.start, window.stop) if v is not None)
             )
-            if len(range(*window.indices(horizon))) < count:
+            walk = range(len(sys.argv) + 1, min(horizon, len(sys.argv) + 4096) + 1)
+            if not any(len(range(*window.indices(n))) == count for n in (*walk, horizon)):
                 return False
         if got >= count:
             return False
