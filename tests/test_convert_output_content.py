@@ -382,6 +382,24 @@ def test_restoring_a_candidate_never_makes_it_vanish_for_pollers(project, monkey
         workdir.forget(figs)
 
 
+def test_restoring_a_candidate_never_writes_through_a_redirected_directory(tmp_path):
+    src, cdir, outside = tmp_path / "bak", tmp_path / "cand", tmp_path / "project"
+    (src / "project_context").mkdir(parents=True)
+    (src / "project_context" / "data.csv").write_text("old")
+    (src / ai_convert.META_NAME).write_text("{}")
+    outside.mkdir()
+    (outside / "data.csv").write_text("user data, newer")
+    cdir.mkdir()
+    try:
+        os.symlink(outside, cdir / "project_context", target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
+    ai_convert._restore_candidate(src, cdir)
+    assert (outside / "data.csv").read_text() == "user data, newer"
+    assert not (cdir / "project_context").is_symlink()
+    assert (cdir / "project_context" / "data.csv").read_text() == "old"
+
+
 def test_adopting_or_realigning_while_a_realign_runs_says_so(project, monkeypatch):
     import threading
 

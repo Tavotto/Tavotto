@@ -29,6 +29,7 @@ import logging
 import os
 import re
 import shutil
+import stat
 import threading
 import time
 import tokenize
@@ -2053,24 +2054,56 @@ def prepare_realign(sid: str, project: str) -> tuple[Path, dict, threading.Event
     return cdir, meta, ev, note
 
 
+def _is_redirect(p: Path) -> bool:
+    """符号链接 / Windows junction（重解析点）：跟着走会写到候选目录之外。"""
+    try:
+        st = os.lstat(p)
+    except OSError:
+        return False
+    return stat.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & 0x400)
+
+
+def _drop_redirect(p: Path) -> None:
+    """只摘掉链接本身（不碰指向的内容）。"""
+    try:
+        os.unlink(p)
+    except OSError:
+        try:
+            os.rmdir(p)  # Windows 的目录链接 / junction
+        except OSError:
+            pass
+
+
+def _real_dir(d: Path) -> None:
+    """让 `d` 成为真目录：`d` 本身是链接就先摘掉，再建；不跟链接。"""
+    if _is_redirect(d):
+        _drop_redirect(d)
+    elif d.exists() and not d.is_dir():
+        d.unlink()
+    d.mkdir(exist_ok=True)
+
+
 def _restore_candidate(src: Path, cdir: Path) -> None:
     """把备份的候选放回 `cdir`，**还原期间目录与 meta 始终存在、始终可读**（轮询 `status()` 不持锁，不许看到 404 / 409）：
-    不删整个目录，备份里的文件逐个原子覆盖（先写临时文件再 `os.replace`），备份里没有的多余文件最后才删；meta 最后换。"""
+    不删整个目录，备份里的文件逐个原子覆盖（先写临时文件再 `os.replace`），备份里没有的多余文件最后才删；meta 最后换。
+    修正期间目标树里若被换成了链接 / junction（候选树校验正是因此拒收的），逐层只摘链接本身再建真目录，
+    绝不跟着写到 `CONVERT_DIR` 之外。"""
     src_l, dst_l = Path(longpath.long(src)), Path(longpath.long(cdir))
-    dst_l.mkdir(parents=True, exist_ok=True)
+    _real_dir(dst_l)
     keep: set[str] = set()
-    meta_rel = None
     for dirpath, _dirs, files in os.walk(src_l):
         rel_dir = Path(dirpath).relative_to(src_l)
-        (dst_l / rel_dir).mkdir(parents=True, exist_ok=True)
+        cur = dst_l
+        for part in rel_dir.parts:
+            cur = cur / part
+            _real_dir(cur)
         for name in files:
             rel = rel_dir / name
             keep.add(rel.as_posix())
             if rel.as_posix() == META_NAME:
-                meta_rel = rel
                 continue
             atomicio.write_bytes(dst_l / rel, (Path(dirpath) / name).read_bytes())
-    if meta_rel is not None:
+    if (src_l / META_NAME).is_file():
         atomicio.write_bytes(dst_l / META_NAME, (src_l / META_NAME).read_bytes())
     for dirpath, dirs, files in os.walk(dst_l, topdown=False):
         rel_dir = Path(dirpath).relative_to(dst_l)
@@ -2081,10 +2114,14 @@ def _restore_candidate(src: Path, cdir: Path) -> None:
                 except OSError:
                     pass
         for d in dirs:
-            try:
-                (Path(dirpath) / d).rmdir()  # 只删空目录
-            except OSError:
-                pass
+            child = Path(dirpath) / d
+            if _is_redirect(child):
+                _drop_redirect(child)
+            else:
+                try:
+                    child.rmdir()  # 只删空目录
+                except OSError:
+                    pass
 
 
 def run_realign(
