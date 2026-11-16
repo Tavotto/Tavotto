@@ -5,9 +5,9 @@ import { cn } from '@/lib/utils'
 import { Button } from '../../ui/Button'
 import { FieldGroup, FormSection } from '../../ui/FormSection'
 import { CompatibleEndpoint } from './CompatibleEndpoint'
-import { cx } from './copy'
+import { ag, cx } from './copy'
 import { ConnectionManage } from './ConnectionManage'
-import { connectionOf, connectionsOf, isCnFirst, listedVendors } from './vendors'
+import { connectionOf, connectionsOf, customConnections, customVendorOf, isCnFirst, listedVendors, methodsOf } from './vendors'
 import { VendorRow } from './VendorRow'
 
 const HAIRLINE = 'relative before:absolute before:inset-x-4 before:top-0 before:h-px before:bg-border'
@@ -45,6 +45,27 @@ export function ConnectionsList({ caps }: { caps: AiCapabilities }) {
           </FieldGroup>
         </FormSection>
       ))}
+      {customConnections(caps).length > 0 && (
+        <FormSection title={ag('endpoint.regionCustom')} data-connect-group="custom">
+          <FieldGroup>
+            <ul className="flex flex-col p-0">
+              {customConnections(caps).map((c, i) => {
+                const v = customVendorOf(c)
+                return (
+                  <VendorRow
+                    key={c.id}
+                    vendor={v}
+                    className={cn(i > 0 && HAIRLINE)}
+                    connection={c}
+                    onConnected={() => undefined}
+                    manage={(conn) => <ConnectionManage vendor={v} method={methodsOf(v)[0]} connection={conn} />}
+                  />
+                )
+              })}
+            </ul>
+          </FieldGroup>
+        </FormSection>
+      )}
       {(
         <div>
           <Button variant="ghost" size="sm" data-connect-other onClick={() => setManual(true)}>

@@ -1924,6 +1924,22 @@
         "network": "连不上服务商。",
         "timeout": "连接超时。"
       },
+      "checkConnection": "检查连接",
+      "checking": "检查中",
+      "keyMissing": "请填写密钥",
+      "probeHint": "常见是地址少了 /v1，或者填成了网页地址",
+      "action": {
+        "refillKey": "重填密钥",
+        "switchAi": "换个 AI",
+        "editModel": "改模型",
+        "editAddress": "改地址"
+      },
+      "probe": {
+        "unauthorized": "密钥不对",
+        "quota": "额度用完了",
+        "no_model": "没有这个模型",
+        "unreachable": "连不上这个地址"
+      },
       "subtitle": "连接一个 AI，用于改图或修复环境。",
       "method": {
         "subscription": "订阅登录",

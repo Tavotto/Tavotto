@@ -3782,23 +3782,60 @@ export interface AiConnection {
   catalog_id?: string
   /** 连的是明文 http 的局域网模型服务器（只放行、界面提示一句） */
   insecure_lan?: boolean
-  /** state=error 时的原因码（unauthorized / network / timeout / …） */
+  /** state=error 时的原因码（unauthorized / network / timeout / endpoint_unusable / builtin_only / …） */
   error?: string
+  /** error=endpoint_unusable 时探测给出的主要原因（闭集，见 `AiProbeReason`） */
+  error_reason?: AiProbeReason
+  /** 内置循环说的对话协议；老后端没有 */
+  protocol?: AiWireProtocol | null
+  /** 保存 / 重新检查时真发过对话请求、地址与型号至今没变 */
+  protocol_checked?: boolean
   /** 只给诊断 / 测试看，界面不显示 */
   route?: 'cli:codex' | 'cli:claude' | 'builtin'
   /** 订阅类连接：背后那份 CLI 比它的模型清单旧时怎么更新（同 `AiAgentCaps.cli_update`） */
   cli_update?: AiCliUpdate | null
 }
 
+/** 对话协议（后端 `ai_providers.protocol_of`） */
+export type AiWireProtocol = 'anthropic' | 'openai-responses' | 'openai-chat'
+
+/** 协议探测的失败原因闭集（后端 `ai_probe.REASONS`）；`ok` 只出现在逐协议的结论里 */
+export type AiProbeReason =
+  | 'ok'
+  | 'unauthorized'
+  | 'quota'
+  | 'no_model'
+  | 'wrong_protocol'
+  | 'network'
+  | 'web_page'
+  | 'bad_reply'
+
+/** 保存 / 重新检查后后端给的探测摘要（没有响应体） */
+export interface AiProbeSummary {
+  /** 拿到了结论（false = 断网 / 缺型号，记录没动） */
+  checked: boolean
+  protocol: AiWireProtocol | null
+  requested: AiWireProtocol | null
+  switched: boolean
+  /** 全不通时的主要原因；通了 / 没结论 = null */
+  reason: AiProbeReason | null
+  reasons: Record<string, AiProbeReason>
+}
+
 export interface AiConnectBody {
   /** 带已有连接 id = 换 Key / 换型号 */
   id?: string
-  vendor: string
-  api_key: string
+  /** 带 `id` 时可省：按已存记录自己的连接方式处理 */
+  vendor?: string
+  /** 带 `id`（换已存连接）时可省：沿用已存的 Key */
+  api_key?: string
   base_url?: string
   model?: string
+  /** 用户自己填的全部型号（后端去重、至多 50 项）；`model` 仍给默认的那一个 */
+  models?: string[]
   label?: string
-  wire?: 'anthropic' | 'openai-responses'
+  /** 缺省或 'auto' = 保存时自动探测协议；界面不让用户选 */
+  wire?: 'auto' | AiWireProtocol
 }
 
 export interface AiConnectResult {
@@ -3806,11 +3843,16 @@ export interface AiConnectResult {
   connection?: AiConnection
   /** 稳定原因码（ok=false 或保存了但试取型号失败时） */
   reason?: string
+  probe?: AiProbeSummary | null
 }
 
 /** 连接一个 Key 类厂商（保存前后端会试取一次型号清单） */
 export const connectAi = (body: AiConnectBody) =>
   jsonFetch<AiConnectResult>('/api/ai/connections', jsonPost(body))
+
+/** 重新探测一条 Key 连接的对话协议（会联网，最长约 30 秒）；订阅 / 账号登录类 404 */
+export const checkAiConnection = (id: string) =>
+  jsonFetch<AiConnectResult>(`/api/ai/connections/${encodeURIComponent(id)}/check`, jsonPost())
 
 /** 断开一个连接（订阅类不可删，只能在命令行里退出登录） */
 export const disconnectAi = (id: string) =>

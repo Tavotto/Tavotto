@@ -13,7 +13,7 @@ import { BrandLines } from './BrandLines'
 import { CompatibleEndpoint } from './CompatibleEndpoint'
 import { cx } from './copy'
 import { MethodList } from './MethodList'
-import { connectionOf, connectionsOf, listedVendors, methodsOf, vendorName } from './vendors'
+import { connectionOf, connectionsOf, customConnections, customVendorOf, listedVendors, methodsOf, vendorName } from './vendors'
 import { chatgptVendorOf, StarterChoices } from './StarterChoices'
 import { VendorRow } from './VendorRow'
 
@@ -164,6 +164,10 @@ export function ConnectAiDialog({
                         onConnected={done}
                         onChooseMethods={setStep}
                       />
+                    ))}
+                    {/* 用户自填地址的连接：接在厂商后面（「更多 AI…」之前），状态与按钮和厂商行同一套；没有就什么都不出现 */}
+                    {customConnections(caps).map((c) => (
+                      <VendorRow key={c.id} vendor={customVendorOf(c)} connection={c} onConnected={done} onChooseMethods={setStep} />
                     ))}
                   </ul>
                   {!all && vendors.length > CONNECT_AI_VISIBLE && (
