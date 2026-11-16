@@ -202,6 +202,7 @@ __all__ = [
     "SIDE_EFFECT_FREE_IMPORTS",
     "InputObserver",
     "observed_local_modules",
+    "observed_external_modules",
     "INPUT_OBSERVER_MAX_FILES",
     "OBSERVATION_PARTIAL",
     "MAX_PYPLOT_FALLBACK",
@@ -5670,6 +5671,119 @@ def observed_local_modules(
             entry["sha256"] = None
         out.append(entry)
         if len(out) >= INPUT_OBSERVER_MAX_FILES:
+            break
+    return out
+
+
+#: 诊断包「脚本源码」附带的、脚本运行时从项目外加载的本地模块：每次运行最多记几个
+EXTERNAL_MODULES_MAX = 20
+
+
+def _stdlib_and_site_dirs() -> list[str]:
+    """这个解释器自己的目录（realpath）：解释器前缀、sysconfig 的 stdlib / purelib 等、site 的 site-packages。
+    与 `interpreter_dirs_within` 不同，这里**不**限定在项目根之内——要排除的是整个解释器与第三方包。"""
+    cands: list = [
+        getattr(sys, n, None) for n in ("prefix", "base_prefix", "exec_prefix", "base_exec_prefix")
+    ]
+    try:
+        import sysconfig
+
+        paths = sysconfig.get_paths()
+        cands += [paths.get(k) for k in ("stdlib", "platstdlib", "purelib", "platlib")]
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import site
+
+        cands += list(site.getsitepackages())
+        cands.append(site.getusersitepackages())
+    except Exception:  # noqa: BLE001 —— 虚拟环境里的 site 可能没有 getsitepackages
+        pass
+    out: list[str] = []
+    for cand in cands:
+        if isinstance(cand, str) and cand:
+            try:
+                real = os.path.realpath(cand)
+            except (OSError, ValueError):
+                continue
+            if real not in out:
+                out.append(real)
+    return out
+
+
+def observed_external_modules(
+    project_root: str,
+    modules: dict,
+    baseline_paths,
+    exclude_dirs=(),
+    *,
+    sys_path=None,
+    extra_files=(),
+) -> list[str]:
+    """脚本运行时实际加载的、**位于项目外的本地 `.py` 模块**（绝对 realpath，有界）——诊断包「脚本源码」据此带上它们。
+
+    主语：跑用户脚本的这个进程、这一次运行。只认脚本**自己**加进 `sys.path` 的目录里的模块：模块所在的 sys.path 根
+    （此刻 `sys_path` 里包含它的最深一项）若在运行前就有（`baseline_paths`）就不是；此刻已不在任何根下的（脚本加了又移走），
+    只要不在运行前的任何根下就算。排除：项目内的（别的路收）、
+    `exclude_dirs`（引擎自己的目录）、解释器前缀 / stdlib / site-packages / 路径段含 `site-packages` /
+    `dist-packages` 的第三方包。`extra_files` 是失败时 traceback 帧里的文件名：模块导入到一半抛错会从
+    `sys.modules` 里被摘掉，但它正是要查的那一个。只收真正加载过的，不猜没加载的文件。"""
+
+    def norm(p) -> str | None:
+        try:
+            return os.path.normcase(os.path.realpath(p))
+        except (ValueError, OSError):
+            return None
+
+    root = norm(os.path.abspath(project_root)) or ""
+    base = {r for r in (norm(p) for p in baseline_paths if isinstance(p, str) and p) if r}
+    excl = [r for r in (norm(p) for p in exclude_dirs if p) if r]
+    excl += [os.path.normcase(d) for d in _stdlib_and_site_dirs()]
+    roots = [
+        r
+        for r in (
+            norm(p) for p in (sys.path if sys_path is None else sys_path) if isinstance(p, str)
+        )
+        if r
+    ]
+    files: list[str] = []
+    for name in sorted(modules):
+        f = getattr(modules.get(name), "__file__", None)
+        if isinstance(f, str) and f:
+            files.append(f)
+    files.extend(f for f in extra_files if isinstance(f, str) and f)
+    out: list[str] = []
+    seen: set[str] = set()
+    cheap = [*excl, root]
+    for f in files:
+        if not f.lower().endswith(".py"):
+            continue
+        # 先做便宜的词法排除（stdlib / site-packages / 项目 / 引擎占了 `sys.modules` 的绝大多数），再对剩下的做 realpath
+        lexical = os.path.normcase(os.path.abspath(f))
+        if lexical in seen or any(_within(lexical, d) for d in cheap if d):
+            continue
+        n = norm(f)
+        if n is None or n in seen:
+            continue
+        seen.add(n)
+        seen.add(lexical)
+        # 真实文件系统的问法：此刻 `os.path.isfile` 可能是脚本观察层包过的，不能让这次观察进它们的账
+        if not _fs_isfile(n):
+            continue
+        if _within(n, root) or any(_within(n, d) for d in excl):
+            continue
+        if {p.lower() for p in pathlib.PurePath(n).parts} & {"site-packages", "dist-packages"}:
+            continue
+        holders = [r for r in roots if _within(n, r)]
+        if holders:
+            if max(holders, key=len) in base:
+                continue  # 此刻持有它的最深 sys.path 根在运行前就有
+        elif any(_within(n, b) for b in base):
+            continue
+        # 此刻不在任何 sys.path 根下、也不在运行前的任何根下：脚本加进又移走了那个目录（`finally` 里恢复
+        # sys.path，Codex #1953 P2）——观察发生在运行之后，只能这样认，仍算脚本自己加载的项目外模块
+        out.append(os.path.realpath(f))
+        if len(out) >= EXTERNAL_MODULES_MAX:
             break
     return out
 
