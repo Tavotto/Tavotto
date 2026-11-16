@@ -83,11 +83,11 @@ describe('开关开着', () => {
     expect(useUiStore.getState()).toMatchObject({ leftTab: 'assets', leftOpen: true })
   })
 
-  it('画布不受影响：点「数据」不改文档 / 选区（抽屉与浮层都只是叠加）', async () => {
+  it('画布不受影响：点「数据」只开抽屉，不开临时标签', async () => {
     await mount()
     await act(async () => {})
     await act(async () => q('[data-rail="data"]')!.click())
-    expect(useDataFigureStore.getState().overlay).toBe(false)
+    expect(useDataFigureStore.getState().draftOpen).toBe(false)
   })
 
   it('抽屉当前就是「数据」时即使清单还没读到，「数据」项也在（开抽屉的入口不能消失）', async () => {

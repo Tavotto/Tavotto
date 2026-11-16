@@ -269,7 +269,7 @@ export function DataList({
       >
         <TreeChevron />
         <TreeIcon icon={iconOf(s)} />
-        <MiddleEllipsis text={baseName(f.path)} tail={8} className="min-w-0 flex-1" />
+        <MiddleEllipsis text={baseName(f.path)} tail={8} className={cn('min-w-0 flex-1', s.kind === 'unreadable' && 'text-ink-3')} />
         <span className={cn(rowMetaClass(on), 'shrink-0 pr-1')}>{m.text}</span>
       </li>
     )

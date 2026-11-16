@@ -1,3 +1,4 @@
+import { useDataFigureStore } from '@/store/dataFigureStore'
 import { useEffect } from 'react'
 import { formatMessage, msg } from '@/i18n'
 import { usePalette } from '@/components/CommandPalette'
@@ -217,6 +218,8 @@ export function useKeyboard() {
         return
       }
       if (inEditableTarget(e)) return
+      // 「数据」临时标签激活时画布被盖住：画布的快捷键（删除 / 撤销 / 方向键……）不许作用在看不见的文档上（Esc 由临时标签自己收）
+      if (useDataFigureStore.getState().draftActive) return
       const doc = useDocumentStore.getState()
 
       // ⇧⌘H = 打开 / 关闭排版时间线（ADR 0101；⌥⌘H 是 macOS 的「隐藏其他」，

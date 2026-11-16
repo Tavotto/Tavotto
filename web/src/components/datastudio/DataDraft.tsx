@@ -1,0 +1,192 @@
+import { useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
+import { Button } from '@/components/ui/Button'
+import { canRevealInFileManager, revealProjectFile } from '@/lib/desktop'
+import { feedbackAction } from '@/lib/canvasFileIntake'
+import { KNOWN_NOTHING_REASONS } from '@/lib/dataFigure'
+import { useFormatMessage } from '@/i18n/react'
+import '@/lib/dataFigureHost'
+import { overviewKeyOf, useDataFigureStore } from '@/store/dataFigureStore'
+import { useDocumentStore } from '@/store/documentStore'
+import { useProjectStore } from '@/store/projectStore'
+import { CandidateGrid, useDrawingLine } from './CandidateGrid'
+import { DataStrip } from './DataStrip'
+
+/** 正文字号、左对齐、没有底色块和图标的一句话（失败 / 说明都用它） */
+function Line({ children, anchor }: { children: React.ReactNode; anchor?: string }) {
+  return (
+    <p {...(anchor ? { [anchor]: '' } : {})} className="text-base text-ink">
+      {children}
+    </p>
+  )
+}
+
+/**
+ * 临时标签的内容区（画布标签栏里的临时标签激活时，盖在画布位置上；画布与文档原样不动）：
+ * 上面是候选画法网格（或一句话的说明），下面是数据条。出图中被点的那张带扫光、其余淡掉。
+ * Esc 关临时标签；切到别的画布标签时临时标签留着但不激活。
+ */
+export function DataDraft() {
+  const { t } = useTranslation('ai')
+  const fm = useFormatMessage()
+  const open = useDataFigureStore((s) => s.draftOpen)
+  const active = useDataFigureStore((s) => s.draftActive)
+  const selected = useDataFigureStore((s) => s.selected)
+  const overviews = useDataFigureStore((s) => s.overviews)
+  const headerRows = useDataFigureStore((s) => s.headerRows)
+  const phase = useDataFigureStore((s) => s.phase)
+  const candidates = useDataFigureStore((s) => s.candidates)
+  const reasons = useDataFigureStore((s) => s.nothingReasons)
+  const error = useDataFigureStore((s) => s.error)
+  const drawingId = useDataFigureStore((s) => s.drawingId)
+  const problem = useDataFigureStore((s) => s.problem)
+  const drawn = useDataFigureStore((s) => s.drawn)
+  const root = useRef<HTMLDivElement>(null)
+  const st = useDataFigureStore.getState
+  const drawingLine = useDrawingLine(drawingId != null)
+  const feedback = feedbackAction()
+  const projectRoot = useProjectStore((s) => s.project?.figures_dir)
+
+  // 切到别的画布（点真标签、新建、别处打开）：临时标签留在标签栏里，但不再激活
+  const activeCanvasId = useDocumentStore((s) => s.activeCanvasId)
+  const lastCanvas = useRef(activeCanvasId)
+  useEffect(() => {
+    if (lastCanvas.current !== activeCanvasId) {
+      lastCanvas.current = activeCanvasId
+      useDataFigureStore.getState().deactivateDraft()
+    }
+  }, [activeCanvasId])
+
+  // Esc 关临时标签（激活时；对话框 / 菜单自己收的 Esc 不算）
+  useEffect(() => {
+    if (!active) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      if (document.querySelector('[role="dialog"][data-state="open"], [role="menu"]')) return
+      e.preventDefault()
+      useDataFigureStore.getState().closeDraft()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [active])
+
+  if (!open || !active || !selected) return null
+  const ovState = overviews[overviewKeyOf(selected, headerRows)]
+  const ov = ovState?.data ?? null
+  const setRow = (line: number) => st().setHeaderRow(selected.path, selected.sheet, line)
+
+  let top: React.ReactNode
+  if (problem?.kind === 'mismatch') {
+    const reveal = projectRoot && canRevealInFileManager() ? () => void revealProjectFile(projectRoot, problem.script) : null
+    top = (
+      <div data-studio-problem className="flex flex-col items-start gap-2">
+        <Line>{t('dataFigureV2.result.mismatch')}</Line>
+        <p className="text-sm text-ink-2">{t('dataFigureV2.problem.mismatchNext')}</p>
+        <p className="max-w-full truncate font-mono text-xs text-ink-3" data-studio-script-path title={problem.script}>
+          {problem.script}
+        </p>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <Button variant="primary" size="lg" data-studio-primary onClick={() => st().dismissProblem()}>
+            {t('dataFigureV2.problem.otherWay')}
+          </Button>
+          {reveal && (
+            <Button variant="secondary" size="lg" onClick={reveal}>
+              {t('dataFigureV2.problem.reveal')}
+            </Button>
+          )}
+          {feedback && (
+            <Button variant="ghost" size="lg" onClick={feedback.run}>
+              {fm(feedback.label)}
+            </Button>
+          )}
+        </div>
+      </div>
+    )
+  } else if (problem?.kind === 'unwritable') {
+    top = (
+      <div data-studio-problem className="flex flex-col items-start gap-2">
+        <Line>{t('dataFigureV2.problem.unwritable')}</Line>
+        <Button variant="primary" size="lg" className="mt-1" data-studio-primary onClick={() => useProjectStore.getState().showPicker()}>
+          {t('dataFigureV2.problem.otherFolder')}
+        </Button>
+      </div>
+    )
+  } else if (problem?.kind === 'commit' || phase === 'failed') {
+    const err = problem?.kind === 'commit' ? problem.error : error
+    top = (
+      <div data-studio-problem className="flex flex-col items-start gap-2">
+        <Line>{t('dataFigureV2.draft.failed')}</Line>
+        {err && <p className="text-sm text-ink-2">{fm(err)}</p>}
+        <Button variant="primary" size="lg" className="mt-1" data-studio-primary data-studio-retry onClick={() => void st().retry()}>
+          {t('dataFigureV2.problem.retry')}
+        </Button>
+      </div>
+    )
+  } else if (drawn) {
+    const shown = drawn.notes.unplotted ? drawn.notes.unplotted.rows.slice(0, 8) : []
+    top = (
+      <div data-studio-drawn className="flex flex-col items-start gap-2">
+        {drawn.notes.unplotted && (
+          <Line anchor="data-studio-unplotted">
+            {t('dataFigureV2.reason.rows_not_plotted', { count: drawn.notes.unplotted.count })}
+            {shown.length > 0 && (
+              <span className="mt-1 block text-sm text-ink-2">
+                {t('dataFigureV2.drawn.rows', { rows: shown.join('、') })}
+                {drawn.notes.unplotted.rows.length > shown.length ? t('dataFigureV2.drawn.andMore') : ''}
+              </span>
+            )}
+          </Line>
+        )}
+        {drawn.notes.check && <p className={drawn.notes.unplotted ? 'text-sm text-ink-2' : 'text-base text-ink'} data-studio-unchecked>{t(`dataFigureV2.result.${drawn.notes.check}`)}</p>}
+        <Button variant="primary" size="lg" className="mt-1" data-studio-primary onClick={() => void st().openDrawn()}>
+          {t('dataFigureV2.drawn.open')}
+        </Button>
+      </div>
+    )
+  } else if (phase === 'unreadable') {
+    top = <Line anchor="data-studio-unreadable">{t('dataFigureV2.draft.unreadable')}</Line>
+  } else if (phase === 'text') {
+    top = <Line anchor="data-studio-text-only">{t('dataFigureV2.draft.allText')}</Line>
+  } else if (phase === 'pickrow') {
+    top = <Line anchor="data-studio-pickrow">{t('dataFigureV2.preview.pickHint')}</Line>
+  } else if (phase === 'nothing') {
+    const first = reasons.find((r) => KNOWN_NOTHING_REASONS.includes(r))
+    top = <Line anchor="data-studio-nothing">{first ? t(`dataFigureV2.reason.${first}`) : t('dataFigureV2.nothing.generic')}</Line>
+  } else if (phase === 'reading') {
+    top = <p className="text-base text-ink-2" role="status">{t('dataFigureV2.working.reading')}</p>
+  } else {
+    const pending = phase === 'loading' || phase === 'idle'
+    top = (
+      <>
+        <p data-draft-lead className="mb-3.5 h-5 text-base text-ink-2" role="status">
+          {drawingId ? drawingLine : pending ? t('dataFigureV2.working.drawing') : t('dataFigureV2.draft.pickLead')}
+        </p>
+        <CandidateGrid items={candidates} pending={pending} drawingId={drawingId} onPick={(id) => void st().draw(id)} />
+      </>
+    )
+  }
+
+  const noStrip = phase === 'unreadable' && !ov?.raw_lines?.length
+  return (
+    <div
+      ref={root}
+      data-data-draft
+      role="tabpanel"
+      aria-label={selected.path.slice(selected.path.lastIndexOf('/') + 1)}
+      className="absolute inset-0 z-drawer flex flex-col bg-surface"
+    >
+      <div key={`top|${selected.path}|${selected.sheet}`} className="min-h-0 flex-1 animate-fade-in overflow-auto px-7 pb-6 pt-5" style={{ containerType: 'size' }}>
+        {top}
+      </div>
+      {!noStrip && (
+        <DataStrip
+          key={`strip|${selected.path}|${selected.sheet}`}
+          ov={ov}
+          loading={ovState?.status === 'loading'}
+          forceOpen={phase === 'text' || phase === 'pickrow' || (ov != null && (ov.status === 'unsure' || ov.status === 'unreadable') && ov.raw_lines.length > 0)}
+          onHeaderRow={setRow}
+        />
+      )}
+    </div>
+  )
+}

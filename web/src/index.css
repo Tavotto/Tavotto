@@ -226,10 +226,6 @@
   --shadow-dialog:
     0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 6%, transparent),
     0 24px 64px color-mix(in srgb, var(--color-shadow) 10%, transparent);
-  /* 浮在工作面板上的预览卡片：边缘靠**内侧** 1px 低透明度的线（浅色是深线、深色是亮线，随 --color-shadow-edge），不靠外描边；大模糊同 --shadow-dialog */
-  --shadow-dialog-inset:
-    inset 0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 8%, transparent),
-    0 24px 64px color-mix(in srgb, var(--color-shadow) 10%, transparent);
   --shadow-thumb:
     0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 6%, transparent),
     0 1px 2px color-mix(in srgb, var(--color-shadow) 8%, transparent);
@@ -335,9 +331,6 @@
   --animate-drawer-out: drawer-out var(--duration-fast) var(--ease-exit);
   --animate-drawer-slide-in: drawer-slide-in var(--duration-base) var(--ease-pop);
   --animate-drawer-slide-out: drawer-slide-out var(--duration-fast) var(--ease-exit);
-  /* 数据预览浮层（浮起的卡片）：进场 = 从抽屉边缘位移 4px + 透明度，起步猛、几乎不过冲（--ease-snap）；退场更快更干脆 */
-  --animate-sheet-in: sheet-in var(--duration-slow) var(--ease-snap);
-  --animate-sheet-out: sheet-out var(--duration-fast) var(--ease-exit) forwards;
 
   /* 冷启动那几分钟的「还活着」信号：不确定进度条来回扫 */
   --animate-sweep: sweep 1.4s ease-in-out infinite;
@@ -548,28 +541,6 @@
   to {
     opacity: 1;
     transform: none;
-  }
-}
-
-@keyframes sheet-in {
-  from {
-    opacity: 0;
-    transform: translateX(-4px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-@keyframes sheet-out {
-  from {
-    opacity: 1;
-    transform: none;
-  }
-  to {
-    opacity: 0;
-    transform: translateX(-4px);
   }
 }
 
@@ -1414,20 +1385,4 @@ kbd,
 samp,
 .font-mono {
   text-autospace: no-autospace;
-}
-
-/* 「数据」预览卡片让位之后剩下的画布放不下底部工具条（`data-fit="false"`，量出来的）：工具条整体淡出且不可点 / 不可聚焦，
-   卡片关掉或变窄再淡入；visibility 在淡出结束后才切，减少动态效果时全局兜底直接切换 */
-[data-canvas-chrome] [data-canvas-toolbar] {
-  transition:
-    opacity var(--duration-base) var(--ease-standard),
-    visibility 0s linear 0s;
-}
-[data-canvas-chrome][data-fit='false'] [data-canvas-toolbar] {
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transition:
-    opacity var(--duration-base) var(--ease-standard),
-    visibility 0s linear var(--duration-base);
 }

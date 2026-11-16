@@ -6,6 +6,7 @@
 import { configureDataFigureHost } from '@/store/dataFigureStore'
 import { refreshProjectNow } from '@/store/liveSync'
 import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
+import { useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -17,4 +18,5 @@ configureDataFigureHost({
     await useProjectPreparationStore.getState().open(scriptTarget(script, { reuse: true }), { run: true })
   },
   projectWritable: () => useProjectStore.getState().project?.writable,
+  activeCanvasId: () => useDocumentStore.getState().activeCanvasId ?? null,
 })

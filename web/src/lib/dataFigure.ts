@@ -131,49 +131,6 @@ export const KNOWN_NOTHING_REASONS: readonly string[] = [
   'candidate_write_blocked',
 ]
 
-/**
- * 预览浮层的目标宽度（px，最终再夹进 [360, 640] 与画布栏的 60%）：按内容估——每列取「列名 / 前几行里最长的格子」的字符数，
- * 一个字符约 7.5px，加列间距 24；没认准的原文行固定 560。不测 DOM：宽度变化要走 CSS 过渡，必须在渲染前就知道目标值。
- */
-export function previewCardWidth(ov: AiDataOverview | null): number {
-  if (!ov) return 420
-  if ((ov.status === 'unsure' || ov.status === 'unreadable') && (ov.raw_lines?.length ?? 0) > 0) return 560
-  if (ov.status !== 'ok' || ov.fields.length === 0) return 420
-  let w = 40
-  ov.fields.forEach((f, i) => {
-    const longest = Math.max(f.name.length, ...ov.preview_rows.map((r) => (r.cells[i] ?? '').length))
-    w += Math.min(Math.max(longest, 6) * 7.5 + 24, 232)
-  })
-  return Math.round(Math.min(640, Math.max(360, w)))
-}
-
-/** 卡片的目标宽度（px，未按画布栏 60% 封顶）：预览按内容估，其余各屏固定；`DataOverlay` 与画布浮条的左内缩共用这一份 */
-export function overlayTargetWidth(sceneKind: string, ov: AiDataOverview | null, pickCount = 2): number {
-  // 选画法：只有 1 个画法时卡片贴着单列的磁贴（左右留白相等），其余 2 列
-  return sceneKind === 'pick' ? (pickCount === 1 ? 360 : 640) : sceneKind === 'ask' ? 480 : sceneKind === 'browse' ? previewCardWidth(ov) : 420
-}
-
-/** 卡片宽度的 CSS 表达式：不窄于 360、不宽于目标、不超过画布栏的 60%（百分数相对画布栏，浮条那一头的容器与它同一个包含块） */
-export const overlayWidthCss = (target: number): string => `max(360px, min(${target}px, 60%))`
-
-/** 这一列前三个**不同的**值的样例（`0, 2, 4…`），选择题里的灰字；不足三个不同值有几个显示几个（全相同只显示一个），还有更多不同值才加省略号 */
-export function columnSample(ov: AiDataOverview | null, column: string): string | null {
-  if (!ov || ov.status !== 'ok') return null
-  const i = ov.fields.findIndex((f) => f.name === column)
-  if (i < 0) return null
-  const distinct = [...new Set(ov.preview_rows.map((r) => (r.cells[i] ?? '').trim()).filter((v) => v !== ''))]
-  if (distinct.length === 0) return null
-  return distinct.length > 3 ? `${distinct.slice(0, 3).join(', ')}…` : distinct.join(', ')
-}
-
-/** 卡片的实际宽度（px）：与 `overlayWidthCss` 同一条规则，给量测用（`parentW` = 画布栏宽） */
-export const overlayCardPx = (target: number, parentW: number): number => Math.max(360, Math.min(target, parentW * 0.6))
-
-/**
- * 卡片让位之后，剩下的那部分画布放不放得下底部工具条：剩余宽度 ≥ 工具条自身宽度 + 两侧各 12px。
- * 全是量出来的数（`toolbarW` = 工具条内容的自然宽度），不写死像素；放不下的时候浮条整体淡出，卡片关掉或变窄再回来。
- */
-export const chromeFits = (parentW: number, insetPx: number, toolbarW: number): boolean => parentW - insetPx >= toolbarW + 24
 
 /** 这张表里有没有能画的数值：数值列或「混有文字」的列（后者会先问怎么处理）。没有就不给「看看怎么画」 */
 export const hasNumericColumn = (ov: AiDataOverview): boolean => ov.fields.some((f) => f.kind === 'numeric' || f.kind === 'mixed')

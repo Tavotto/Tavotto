@@ -1,6 +1,6 @@
 /**
- * 数据页的 store（ADR 0178）：项目代际 / 请求序号 / 发起时的项目、选择题的回答累积、各结局（verified / unverifiable /
- * unplotted / mismatch / 缺 data_check）、静默重新出备选、提交请求号的复用。
+ * 数据页的 store（ADR 0178）：临时标签的开 / 关 / 复用、项目代际 / 请求序号 / 发起时的项目、出图的各结局（verified / unverifiable /
+ * unplotted / mismatch / 缺 data_check）、静默重新出备选、提交请求号的复用。界面走一遍在 `components/datastudio/dataDraft.test.tsx`。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -18,7 +18,7 @@ import { setCurrentProjectId } from '@/lib/session'
 import { useProjectStore } from '@/store/projectStore'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import '@/lib/dataFigureHost' // 宿主：刷新 + 「打开并运行」+ 项目可写性
-import { useDataFigureStore } from './dataFigureStore'
+import { configureDataFigureHost, useDataFigureStore } from './dataFigureStore'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
@@ -57,352 +57,167 @@ const committed = (extra: Partial<AiDataCommitResult> = {}): AiDataCommitResult 
 const flush = () => new Promise((r) => setTimeout(r, 0))
 
 beforeEach(() => {
-  // 用例里排的 *Once 回应不能漏进下一个用例：mockReset（clear 不清 once 队列）
   for (const f of [files, overview, propose, commit, discard, refresh, prepOpen]) f.mockReset()
   discard.mockResolvedValue({ ok: true })
   setCurrentProjectId('pa')
   useDataFigureStore.getState().clear()
-  useDataFigureStore.setState({ overlay: true })
   useProjectStore.setState({ project: { open: true, writable: true } })
   useProjectPreparationStore.setState({ open: prepOpen })
   overview.mockResolvedValue(ov())
-})
-
-describe('清单与概览：项目代际、请求序号、发起时的项目', () => {
-  it('清单请求带发起那一刻的项目；换项目（clear）之后回来的结果作废，不落进新项目', async () => {
-    let release!: (v: Awaited<ReturnType<typeof aiDataFilesAll>>) => void
-    files.mockReturnValue(new Promise((r) => (release = r)))
-    const p = st().loadFiles()
-    expect(files).toHaveBeenCalledWith('pa')
-    setCurrentProjectId('pb')
-    useDataFigureStore.getState().clear()
-    release({ files: [{ path: 'old.csv', size: 1 }], truncated: false })
-    await p
-    expect(st().files).toEqual({ status: 'idle' })
-  })
-
-  it('清单：后到的旧响应不盖新的；失败不清空已有的清单', async () => {
-    files.mockResolvedValueOnce({ files: [{ path: 'a.csv', size: 1 }], truncated: false })
-    await st().loadFiles()
-    expect(st().files).toMatchObject({ status: 'ready' })
-    files.mockRejectedValueOnce(apiError(500, 'x'))
-    await st().loadFiles()
-    expect(st().files).toMatchObject({ status: 'error', entries: [{ path: 'a.csv' }] })
-
-    let slow!: (v: Awaited<ReturnType<typeof aiDataFilesAll>>) => void
-    files.mockReturnValueOnce(new Promise((r) => (slow = r)))
-    const first = st().loadFiles()
-    files.mockResolvedValueOnce({ files: [{ path: 'new.csv', size: 1 }], truncated: false })
-    await st().loadFiles()
-    slow({ files: [{ path: 'stale.csv', size: 1 }], truncated: false })
-    await first
-    expect(st().files).toMatchObject({ status: 'ready', entries: [{ path: 'new.csv' }] })
-  })
-
-  it('点一张表：读它的概览（带项目、路径与工作表）；同一张表不重复请求', async () => {
-    st().select(ref('w.xlsx', 'S 1'))
-    await flush()
-    expect(overview).toHaveBeenCalledWith({ path: 'w.xlsx', sheet: 'S 1', headerRow: null }, 'pa')
-    st().select(ref('w.xlsx', 'S 1'))
-    await flush()
-    expect(overview).toHaveBeenCalledTimes(1)
-  })
-
-  it('概览在飞时换了项目：回来的不落地', async () => {
-    let release!: (v: AiDataOverview) => void
-    overview.mockReturnValue(new Promise((r) => (release = r)))
-    st().select(ref('a.csv'))
-    useDataFigureStore.getState().clear()
-    release(ov())
-    await flush()
-    expect(st().overviews).toEqual({})
-  })
-
-  it('点一行当作「每列的名字」：按那一行重读；之后出图带上 header_rows', async () => {
-    st().select(ref('t.txt'))
-    await flush()
-    st().setHeaderRow('t.txt', null, 4)
-    await flush()
-    expect(overview).toHaveBeenLastCalledWith({ path: 't.txt', sheet: null, headerRow: 4 }, 'pa')
-    propose.mockResolvedValue({ kind: 'nothing', reasons: ['no_usable_table'] })
-    await st().start()
-    expect(propose.mock.calls[0]![0]).toMatchObject({ table: 't.txt', header_rows: { 't.txt': 4 } })
+  // 宿主：刷新 + 「打开并运行」+ 项目可写性（个别用例会换掉它，这里每次还原）
+  configureDataFigureHost({
+    openDrawer: () => {},
+    openScript: async (script) => {
+      await refresh()
+      await prepOpen(script)
+    },
+    projectWritable: () => useProjectStore.getState().project?.writable,
+    activeCanvasId: () => null,
   })
 })
 
-describe('出备选：选择题、混了文字、选画法、没有备选', () => {
-  beforeEach(() => st().select(ref('a.csv')))
+const numeric = [{ name: 'x', kind: 'numeric' as const, numeric: 3, text: 0, empty: 0, nan: 0, id_like: false }]
+const withNumbers = () => overview.mockResolvedValue(ov({ fields: numeric, preview_rows: [{ line: 2, cells: ['1'] }] }))
+const run = async (r = ref('a.csv')) => {
+  st().select(r)
+  await flush()
+  await flush()
+}
 
-  it('start：带选中的表（xlsx 带工作表）；返回 ask → 回答并进下一次的 answers（后端给的 answer 原样）', async () => {
-    st().select(ref('w.xlsx', 'S'))
-    propose.mockResolvedValueOnce({
-      kind: 'ask', question_code: 'pick_value', unsure: null,
-      options: [{ code: 'column', params: { column: 'y' }, answer: { y: 'y' } }],
-    })
-    await st().start()
-    expect(propose.mock.calls[0]![0]).toEqual({ table: 'w.xlsx', sheet: 'S' })
-    expect(propose.mock.calls[0]![1]).toBe('pa')
-    expect(st().scene).toMatchObject({ kind: 'ask', code: 'pick_value' })
-    propose.mockResolvedValueOnce(cands())
-    await st().answer({ code: 'column', params: {}, answer: { y: 'y' } })
-    expect(propose.mock.calls[1]![0]).toMatchObject({ table: 'w.xlsx', sheet: 'S', answers: { y: 'y' } })
-    expect(st().scene).toMatchObject({ kind: 'pick', selectedId: 'i1' })
+describe('临时标签：开 / 复用 / 关', () => {
+  it('select 开临时标签并立刻出候选；再点别的文件复用同一个标签、放弃上一份的候选', async () => {
+    withNumbers()
+    propose.mockResolvedValueOnce(cands('S1')).mockResolvedValueOnce(cands('S2'))
+    await run(ref('a.csv'))
+    expect(st()).toMatchObject({ draftOpen: true, draftActive: true, phase: 'ready', session: 'S1' })
+    await run(ref('b.csv'))
+    expect(discard).toHaveBeenCalledWith('S1', 'pa')
+    expect(st()).toMatchObject({ draftOpen: true, selected: ref('b.csv'), session: 'S2' })
   })
 
-  it('混了文字：一次问多列，两列的回答都并进 answers.cells', async () => {
-    const col = (c: string) => ({ column: c, non_numeric: 2, rows: 10, preview: [], more: 0, options: [] })
-    propose.mockResolvedValueOnce({ kind: 'ask', question_code: 'mixed_cells', columns: [col('c1'), col('c2')] })
-    await st().start()
-    expect(st().scene).toMatchObject({ kind: 'mixed' })
-    propose.mockResolvedValueOnce(cands())
-    await st().answerCells([
-      { column: 'c1', option: { code: 'skip', params: {}, answer: { cells: { c1: { mode: 'skip' } } } } },
-      { column: 'c2', option: { code: 'extract', params: {}, answer: { cells: { c2: { mode: 'extract' } } } } },
-    ])
-    expect(propose.mock.calls[1]![0]).toMatchObject({ answers: { cells: { c1: { mode: 'skip' }, c2: { mode: 'extract' } } } })
+  it('closeDraft 关标签并放弃候选；切到真画布只是不激活（deactivate），标签还在', async () => {
+    withNumbers()
+    propose.mockResolvedValueOnce(cands('S1'))
+    await run()
+    st().deactivateDraft()
+    expect(st()).toMatchObject({ draftOpen: true, draftActive: false })
+    st().activateDraft()
+    st().closeDraft()
+    expect(discard).toHaveBeenCalledWith('S1', 'pa')
+    expect(st()).toMatchObject({ draftOpen: false, draftActive: false, selected: null, phase: 'idle', candidates: [] })
   })
 
-  it('候选：默认选推荐的；缩略图地址带发起时的项目；选另一张', async () => {
-    propose.mockResolvedValueOnce(cands())
-    await st().start()
-    const sc = st().scene
-    if (sc.kind !== 'pick') throw new Error('not pick')
-    expect(sc.selectedId).toBe('i1')
-    expect(sc.items[0]!.thumb).toBe('/api/ai/data-figure/thumbnail/S1/i1?pj=pa')
-    st().choose('i2')
-    expect(st().scene).toMatchObject({ kind: 'pick', selectedId: 'i2' })
-    st().choose('nope')
-    expect(st().scene).toMatchObject({ selectedId: 'i2' })
-  })
-
-  it('nothing：原因码原样放进状态；空备选 / 形状不对按失败，不当成拿到了空的', async () => {
-    propose.mockResolvedValueOnce({ kind: 'nothing', reasons: ['no_numeric_column'] })
-    await st().start()
-    expect(st().scene).toEqual({ kind: 'nothing', reasons: ['no_numeric_column'] })
-    propose.mockResolvedValueOnce({ kind: 'candidates', session: 'S', items: [], dropped: [] })
-    await st().start()
-    expect(st().scene).toMatchObject({ kind: 'problem', problem: { kind: 'propose' } })
-  })
-
-  it('出备选失败：一句话 + 能再试（retry 重发同样的请求）', async () => {
-    propose.mockRejectedValueOnce(apiError(400, 'data_not_found'))
-    await st().start()
-    expect(st().scene).toMatchObject({ kind: 'problem', problem: { kind: 'propose' } })
-    propose.mockResolvedValueOnce(cands())
-    await st().retry()
-    expect(st().scene.kind).toBe('pick')
-  })
-
-  it('出备选在飞时换了一张表：旧的回来不盖新的屏；换项目同理', async () => {
+  it('换项目（clear）：在飞的候选请求回来也丢掉，A 项目的结果不落进 B', async () => {
+    withNumbers()
     let release!: (v: AiDataProposeResponse) => void
     propose.mockReturnValueOnce(new Promise((r) => (release = r)))
-    const p = st().start()
-    st().select(ref('b.csv'))
-    release(cands())
-    await p
-    expect(st().scene).toEqual({ kind: 'browse' })
-
-    let release2!: (v: AiDataProposeResponse) => void
-    propose.mockReturnValueOnce(new Promise((r) => (release2 = r)))
-    const p2 = st().start()
-    useDataFigureStore.getState().clear()
-    release2(cands())
-    await p2
-    expect(st().scene).toEqual({ kind: 'browse' })
-  })
-
-  it('返回：放弃这一轮的候选会话（discard），回到浏览', async () => {
-    propose.mockResolvedValueOnce(cands('SX'))
-    await st().start()
-    st().back()
-    expect(discard).toHaveBeenCalledWith('SX', 'pa')
-    expect(st().scene).toEqual({ kind: 'browse' })
-  })
-})
-
-describe('画这张：各结局', () => {
-  beforeEach(async () => {
     st().select(ref('a.csv'))
-    propose.mockResolvedValue(cands())
-    await st().start()
+    await flush()
+    st().clear()
+    release(cands('SX'))
+    await flush()
+    expect(st()).toMatchObject({ draftOpen: false, phase: 'idle', session: null })
   })
 
-  it('verified：先刷新项目，再走「打开并运行」那条现有路径进编辑器；数据页收起', async () => {
-    commit.mockResolvedValueOnce(committed())
-    await st().draw()
-    expect(commit.mock.calls[0]![0]).toMatchObject({ session: 'S1', id: 'i1' })
-    expect(typeof commit.mock.calls[0]![0].client_request_id).toBe('string')
-    expect(refresh).toHaveBeenCalled()
-    expect(prepOpen).toHaveBeenCalledTimes(1)
-    expect(prepOpen.mock.calls[0]![0]).toMatchObject({ script: 'tavotto_figures/a_figure.py' })
-    expect(prepOpen.mock.calls[0]![1]).toMatchObject({ run: true })
-    expect(st().overlay).toBe(false)
+  it('请求用发起那一刻的项目：中途换项目后缩略图地址仍带 A 的标识', async () => {
+    withNumbers()
+    propose.mockResolvedValueOnce(cands('S1'))
+    await run()
+    expect(st().candidates[0]!.thumb).toContain('pj=pa')
   })
 
-  it('unverifiable：不直接跳，先说「没法逐项核对」，点打开才进编辑器；绝不写成已核对', async () => {
-    commit.mockResolvedValueOnce(committed({ data_check: 'unverifiable' }))
-    await st().draw()
-    expect(st().scene).toMatchObject({ kind: 'drawn', notes: { check: 'unverifiable', unplotted: null } })
-    expect(prepOpen).not.toHaveBeenCalled()
-    await st().openDrawn()
-    expect(prepOpen).toHaveBeenCalledTimes(1)
-  })
-
-  it('缺 data_check（去重的回应）/ unknown：按没核对过说，不当成 verified', async () => {
-    commit.mockResolvedValueOnce(committed({ data_check: undefined }))
-    await st().draw()
-    expect(st().scene).toMatchObject({ kind: 'drawn', notes: { check: 'unknown' } })
-  })
-
-  it('有几行没画出来：告诉用户是哪些行', async () => {
-    commit.mockResolvedValueOnce(
-      committed({ unplotted: { count: 2, code: 'rows_not_plotted', rows: [{ row: 7, column: 'x', reason: 'x_not_a_value' }, { row: 9, column: 'x', reason: 'x_not_a_value' }] } }),
-    )
-    await st().draw()
-    expect(st().scene).toMatchObject({ kind: 'drawn', notes: { unplotted: { count: 2, rows: [7, 9] }, check: null } })
-  })
-
-  it('mismatch：说清并留在数据页（脚本已落盘，不跳进编辑器）', async () => {
-    commit.mockResolvedValueOnce(committed({ data_check: 'mismatch', can_delete_script: true, task: { outcome: 'failed' } }))
-    await st().draw()
-    expect(st().scene).toMatchObject({ kind: 'problem', problem: { kind: 'mismatch', script: 'tavotto_figures/a_figure.py' } })
-    expect(prepOpen).not.toHaveBeenCalled()
-  })
-
-  it('没落盘、项目文件夹写不进：给「换个文件夹」，不是只会再试', async () => {
-    useProjectStore.setState({ project: { open: true, writable: false } })
-    commit.mockResolvedValueOnce({ task: { outcome: 'failed', error: 'executor_error:PermissionError' } })
-    await st().draw()
-    expect(st().scene).toMatchObject({ kind: 'problem', problem: { kind: 'unwritable' } })
-  })
-
-  it('没落盘、别的原因：一句话 + 再试一次', async () => {
-    commit.mockResolvedValueOnce({ task: { outcome: 'failed' }, reason_code: 'candidate_render_failed' })
-    await st().draw()
-    expect(st().scene).toMatchObject({ kind: 'problem', problem: { kind: 'commit', retryable: true } })
-  })
-
-  it('正在画时再点「画这张」不会重复提交', async () => {
-    let release!: (v: AiDataCommitResult) => void
-    commit.mockReturnValueOnce(new Promise((r) => (release = r)))
-    const p = st().draw()
-    await st().draw()
-    expect(commit).toHaveBeenCalledTimes(1)
-    expect(st().scene.kind).toBe('drawing')
-    release(committed({ data_check: 'unverifiable' }))
-    await p
-  })
-
-  it('正在画时点清单里别的表：不理（画完再换），在飞的提交不会没人认领', async () => {
-    let release!: (v: AiDataCommitResult) => void
-    commit.mockReturnValueOnce(new Promise((r) => (release = r)))
-    const p = st().draw()
-    st().select(ref('other.csv'))
-    expect(st().selected).toEqual(ref('a.csv'))
-    release(committed({ data_check: 'unverifiable' }))
-    await p
-  })
-
-  it('提交在飞时换了项目：回来的结果作废，不进编辑器', async () => {
-    let release!: (v: AiDataCommitResult) => void
-    commit.mockReturnValueOnce(new Promise((r) => (release = r)))
-    const p = st().draw()
-    useDataFigureStore.getState().clear()
-    release(committed())
-    await p
-    expect(prepOpen).not.toHaveBeenCalled()
-    expect(st().scene).toEqual({ kind: 'browse' })
-  })
-
-  it('没收到结果（断网）：保留请求号，再试一次复用它（不会画出第二份）；后端明确拒绝则换号', async () => {
-    commit.mockRejectedValueOnce(new TypeError('Failed to fetch'))
-    await st().draw()
-    // 浏览器自己的英文报错不摆给用户（只有标题那一句）；后端明确说过的才显示原因
-    expect(st().scene).toMatchObject({ kind: 'problem', problem: { kind: 'commit', error: null } })
-    const rid = commit.mock.calls[0]![0].client_request_id
-    commit.mockRejectedValueOnce(apiError(409, 'data_figure_recipe_invalid'))
-    await st().retry()
-    expect(commit.mock.calls[1]![0].client_request_id).toBe(rid)
-    // 后端明确拒绝过：号作废，「再试一次」从出备选重来（旧的备选 / 请求号都不再沿用）
-    propose.mockResolvedValueOnce(cands('S3'))
-    await st().retry()
-    expect(st().scene).toMatchObject({ kind: 'pick', session: 'S3' })
-    commit.mockResolvedValueOnce(committed({ data_check: 'unverifiable' }))
-    await st().draw()
-    expect(commit.mock.calls[2]![0].client_request_id).not.toBe(rid)
-  })
-
-  it('会话过期 / 数据变了：静默重新出备选，按推荐的画法对号接着画；不弹错', async () => {
-    commit.mockRejectedValueOnce(apiError(404, 'propose_session_expired'))
-    propose.mockResolvedValueOnce(cands('S2', [['n1', 'line_band'], ['n2', 'scatter']]))
-    commit.mockResolvedValueOnce(committed())
-    await st().draw()
-    expect(propose).toHaveBeenCalledTimes(2)
-    expect(commit.mock.calls[1]![0]).toMatchObject({ session: 'S2', id: 'n1' })
-    expect(commit.mock.calls[1]![0].client_request_id).not.toBe(commit.mock.calls[0]![0].client_request_id)
-    expect(prepOpen).toHaveBeenCalledTimes(1)
-  })
-
-  it('静默重试只一次：再过期就让用户看新的备选（不无限循环）；选的那种没了也看新的', async () => {
-    st().choose('i2')
-    commit.mockRejectedValueOnce(apiError(409, 'propose_data_changed'))
-    propose.mockResolvedValueOnce(cands('S2', [['n1', 'line_band'], ['n3', 'hist']]))
-    await st().draw()
-    expect(commit).toHaveBeenCalledTimes(1)
-    expect(st().scene).toMatchObject({ kind: 'pick', session: 'S2' })
-  })
-})
-
-describe('抽屉 + 浮层：打开 / 关闭 / 换项目', () => {
-  it('select 打开浮层；closeOverlay 关掉并放弃这一轮的备选；正在画时关掉只是收起，画完照样出结局', async () => {
-    st().select(ref('a.csv'))
-    expect(st().overlay).toBe(true)
-    propose.mockResolvedValueOnce(cands('SX'))
-    await st().start()
-    st().closeOverlay()
-    expect(st()).toMatchObject({ overlay: false, scene: { kind: 'browse' } })
-    expect(discard).toHaveBeenCalledWith('SX', 'pa')
-    st().select(ref('a.csv'))
-    propose.mockResolvedValueOnce(cands())
-    await st().start()
-    let release!: (v: AiDataCommitResult) => void
-    commit.mockReturnValueOnce(new Promise((r) => (release = r)))
-    const p = st().draw()
-    st().closeOverlay()
-    // 收起卡片不取消：出图还在进行
-    expect(st()).toMatchObject({ overlay: false, scene: { kind: 'drawing' } })
-    st().select(ref('a.csv'))
-    expect(st().overlay).toBe(true) // 点文件把卡片翻出来看进度，不换表
-    expect(st().scene.kind).toBe('drawing')
-    st().closeOverlay()
-    release(committed({ data_check: 'unverifiable' }))
-    await p
-    // 要说话的结局把卡片再翻出来
-    expect(st()).toMatchObject({ overlay: true, scene: { kind: 'drawn' } })
-  })
-
-  it('enter：开「数据」抽屉；只有一个可读文件就直接开它的浮层，多个只开抽屉', async () => {
+  it('enter：开抽屉；只有一个可读文件就直接开它的临时标签，多个只开抽屉', async () => {
+    withNumbers()
     const drawer = vi.fn()
-    const { configureDataFigureHost } = await import('./dataFigureStore')
-    configureDataFigureHost({ openDrawer: drawer, openScript: async () => {}, projectWritable: () => true })
-    const ok = (path: string) => ({ path, size: 1, table: { status: 'ok' as const, code: null, delimiter: 'comma' as const, header_row: 1, columns: 2, rows: 3 } })
-    files.mockResolvedValue({ files: [ok('one.csv'), { path: 'bad.dat', size: 1, table: { status: 'unreadable', code: 'data_binary', delimiter: null, header_row: null, columns: null, rows: null, preview: [] } }], truncated: false })
+    configureDataFigureHost({ openDrawer: drawer, openScript: async () => {}, projectWritable: () => true, activeCanvasId: () => null })
+    const okf = (path: string) => ({ path, size: 1, table: { status: 'ok' as const, code: null, delimiter: 'comma' as const, header_row: 1, columns: 2, rows: 3 } })
+    files.mockResolvedValue({ files: [okf('one.csv'), { path: 'bad.dat', size: 1, table: { status: 'unreadable', code: 'data_binary', delimiter: null, header_row: null, columns: null, rows: null, preview: [] } }], truncated: false })
+    propose.mockResolvedValue(cands('S1'))
     st().enter()
     await flush()
     await flush()
     expect(drawer).toHaveBeenCalled()
-    expect(st()).toMatchObject({ overlay: true, selected: { path: 'one.csv', sheet: null } })
-    files.mockResolvedValue({ files: [ok('a.csv'), ok('b.csv')], truncated: false })
+    expect(st()).toMatchObject({ draftOpen: true, selected: ref('one.csv') })
+    st().clear()
+    files.mockResolvedValue({ files: [okf('a.csv'), okf('b.csv')], truncated: false })
     st().enter()
     await flush()
     await flush()
-    expect(st()).toMatchObject({ overlay: false, selected: null })
-    await import('@/lib/dataFigureHost') // 还原真宿主给后面的用例
+    expect(st().draftOpen).toBe(false)
   })
+})
 
-  it('clear 回到初始（浮层关、选中清掉）', () => {
-    st().select(ref('a.csv'))
-    useDataFigureStore.getState().clear()
-    expect(st()).toMatchObject({ overlay: false, selected: null, scene: { kind: 'browse' }, answers: {}, headerRows: {} })
+describe('出图的各结局', () => {
+  const ready = async () => {
+    withNumbers()
+    propose.mockResolvedValueOnce(cands('S1'))
+    await run()
+  }
+  it('verified：直接进编辑器，临时标签收掉，记下 fresh', async () => {
+    await ready()
+    commit.mockResolvedValueOnce(committed())
+    await st().draw('i1')
+    expect(refresh).toHaveBeenCalled()
+    expect(prepOpen).toHaveBeenCalled()
+    expect(st()).toMatchObject({ draftOpen: false, drawingId: null, fresh: { file: ref('a.csv') } })
+  })
+  it('有行没画出来 / 没法逐项核对：先说一句，点「打开这张图」才进编辑器；缺 data_check 不写成已核对', async () => {
+    await ready()
+    commit.mockResolvedValueOnce(committed({ data_check: undefined, unplotted: { count: 2, rows: [{ row: 3, column: 'x', reason: 'x' }, { row: 5, column: 'x', reason: 'x' }], code: 'rows_not_plotted' } }))
+    await st().draw('i1')
+    expect(st().drawn).toMatchObject({ script: 'tavotto_figures/a_figure.py', notes: { unplotted: { count: 2, rows: [3, 5] }, check: 'unknown' } })
+    expect(prepOpen).not.toHaveBeenCalled()
+    await st().openDrawn()
+    expect(prepOpen).toHaveBeenCalled()
+  })
+  it('数据对不上 / 写不进：各一种结局；没落盘 = 没画出来', async () => {
+    await ready()
+    commit.mockResolvedValueOnce(committed({ data_check: 'mismatch' }))
+    await st().draw('i1')
+    expect(st().problem).toMatchObject({ kind: 'mismatch', script: 'tavotto_figures/a_figure.py' })
+    st().dismissProblem()
+    useProjectStore.setState({ project: { open: true, writable: false } })
+    commit.mockResolvedValueOnce({ task: { outcome: 'failed' } } as AiDataCommitResult)
+    await st().draw('i1')
+    expect(st().problem).toMatchObject({ kind: 'unwritable' })
+  })
+  it('同一次点击的重试复用请求号（没收到结果的断网），不会画出第二份', async () => {
+    await ready()
+    commit.mockRejectedValueOnce(new Error('network')).mockResolvedValueOnce(committed())
+    await st().draw('i1')
+    expect(st().problem).toMatchObject({ kind: 'commit' })
+    await st().retry()
+    expect(commit.mock.calls[1]![0].client_request_id).toBe(commit.mock.calls[0]![0].client_request_id)
+  })
+  it('备选过期：静默重新出候选，原来选的画法还在就接着画', async () => {
+    await ready()
+    commit.mockRejectedValueOnce(apiError(409, 'propose_session_expired')).mockResolvedValueOnce(committed())
+    propose.mockResolvedValueOnce(cands('S2', [['j1', 'scatter'], ['j2', 'line_band']]))
+    await st().draw('i1')
+    expect(commit.mock.calls[1]![0]).toMatchObject({ session: 'S2', id: 'j2' })
+    expect(st().problem).toBeNull()
+  })
+  it('正在画时再点别的文件：不换表，只把标签翻出来；不重复提交', async () => {
+    await ready()
+    let release!: (v: AiDataCommitResult) => void
+    commit.mockReturnValueOnce(new Promise((r) => (release = r)))
+    const p = st().draw('i1')
+    void st().draw('i2')
+    st().closeDraft()
+    st().select(ref('b.csv'))
+    expect(st()).toMatchObject({ draftOpen: true, selected: ref('a.csv'), drawingId: 'i1' })
+    expect(commit).toHaveBeenCalledTimes(1)
+    release(committed())
+    await p
+  })
+  it('redraw：回到这份数据的临时标签并重新出候选', async () => {
+    await ready()
+    commit.mockResolvedValueOnce(committed())
+    await st().draw('i1')
+    propose.mockResolvedValueOnce(cands('S3'))
+    st().redraw()
+    await flush()
+    await flush()
+    expect(st()).toMatchObject({ draftOpen: true, selected: ref('a.csv'), fresh: null, session: 'S3' })
   })
 })

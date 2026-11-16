@@ -87,12 +87,8 @@ export function WorkspaceContextBar() {
   return (
     <div
       // 顶边居中角位，12px 内距（四个角位同一档，2026-10-07 设计审计 §10.1）
-      // 「数据」预览卡片开着时左边让出卡片的宽度（`--data-overlay-inset` 由 App 给，没有卡片 = 0），条在剩下的那部分画布里居中
-      className="pointer-events-none absolute right-0 top-3 z-drawer flex justify-center px-1 transition-[left] duration-base ease-standard"
-      style={{
-        left: 'var(--data-overlay-inset, 0px)',
-        ...(overlayLeft || overlayRight ? { paddingLeft: overlayLeft + 4, paddingRight: overlayRight + 4 } : {}),
-      }}
+      className="pointer-events-none absolute inset-x-0 top-3 z-drawer flex justify-center px-1"
+      style={overlayLeft || overlayRight ? { paddingLeft: overlayLeft + 4, paddingRight: overlayRight + 4 } : undefined}
     >
       {/* 宽度按内容量：`w-max` = 内容的 max-content，面包屑因此拿到自然宽度、
           完整显示，不会被 flex 压出省略号。**别再写死宽度**——写死 42rem 时浮条

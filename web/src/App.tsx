@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CanvasStage } from '@/canvas/CanvasStage'
 import { CanvasTabs } from '@/components/CanvasTabs'
@@ -65,7 +65,9 @@ import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectStore } from '@/store/projectStore'
 import '@/lib/dataFigureHost'
-import { DataOverlay, useDataOverlayChrome } from '@/components/datastudio/DataOverlay'
+import { useDataFigureStore } from '@/store/dataFigureStore'
+import { DataDraft } from '@/components/datastudio/DataDraft'
+import { RedrawPill } from '@/components/datastudio/RedrawPill'
 import { useEnvStore } from '@/store/envStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
@@ -183,13 +185,13 @@ function Workspace() {
   const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
   // 模式按画布各自判：单图编辑的这一张画布若还有别的画布，标签行要留着，否则切不走
   const multiCanvas = useDocumentStore((s) => s.canvases.length > 1)
-  const showTabs = !fastEdit || multiCanvas
+  // 「数据」临时标签开着时标签栏一定要有（快速编辑只有一张画布时本来不显示）
+  const dataDraftOpen = useDataFigureStore((s) => s.draftOpen)
+  const showTabs = !fastEdit || multiCanvas || dataDraftOpen
   const leftOpen = useUiStore((s) => s.leftOpen)
   const rightOpen = useUiStore((s) => s.rightOpen)
   const layoutKind = useWorkspaceLayout()
   const overlay = layoutKind === 'narrow'
-  const chromeLayer = useRef<HTMLDivElement>(null)
-  const { inset: dataInset, fit: chromeFit } = useDataOverlayChrome(overlay, chromeLayer)
   // 属性栏 < 1280 且没固定时也是覆盖层（G1）；左抽屉与遮罩仍只在 narrow 覆盖
   const rightOverlay = useUiStore(isRightOverlay)
   // 收起时先把退场播完再卸载；退场时长与 --animate-drawer-out 同源
@@ -299,18 +301,15 @@ function Workspace() {
                   项目接入状态在项目名后面的胶囊里，「构建版本不一致」是顶栏右侧的 `BuildMismatchChip`——
                   没有任何东西会在这里插进一行把画布往下推 */}
               {showTabs && <CanvasTabs />}
-              <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" style={{ ["--data-overlay-inset" as string]: dataInset }}>
-              {/* 「从数据到图」的预览浮层：抽屉里点数据文件后在标签行下方、离画布栏上 / 下 / 左各 8px 浮起，右侧仍露出画布（关着时不渲染任何东西） */}
-              <DataOverlay narrow={overlay} />
+              <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
                 <CanvasStage />
                 {/* 画布视口的浮层按角位摆（2026-10-07 设计审计 §10.1）：四个角各 12px 内距、每角一个堆叠容器。
                     底部居中 = 浮动工具条 + 通知轨；左下 = HUD（工具提示）；顶部居中 = 工作区上下文条（CanvasStage 里）；
                     右上 = 一个容器从上往下：缩放（快速编辑没有标签行时）→ `tavotto run` 会话卡 → 性能探针。
                     此前右上三者各自 absolute（right-2 / right-3、z 10 / 20 / 30）互相压 */}
-                {/* 居中的浮条（工具条 / 通知条 / 左下提示）共用这一层：「数据」预览卡片开着时它左边让出卡片的宽度（带过渡），
-                    浮条就在没被盖住的那部分画布里重新居中；卡片关着 = 0，几何与没有这一层时相同。这一层不吃指针：浮条自己各有 pointer-events */}
-                <div ref={chromeLayer} data-canvas-chrome data-fit={chromeFit} className="pointer-events-none absolute inset-y-0 right-0 transition-[left] duration-base ease-standard" style={{ left: dataInset }}>
                 <CanvasToolbar />
+                {/* 刚用「数据」画出这张图时：工具条上方一枚「用 X 画的 · 换个画法」，只在这一次会话里出现 */}
+                <RedrawPill />
                 <div
                   data-canvas-corner="top-right"
                   className="pointer-events-none absolute right-3 top-3 z-canvas-chrome flex max-h-[calc(100%-1.5rem)] w-72 max-w-[calc(100%-1.5rem)] flex-col items-end gap-2"
@@ -326,12 +325,13 @@ function Workspace() {
                 </div>
                 <CanvasHud />
                 <NotificationRail />
-                </div>
                 {/* 准备引导卡（T13b）：所有「准备并打开」入口共用的一张浮动卡，画布右下、浮动工具条上方；
                     不占布局（页面不下移），缩成角标 / 收起只改呈现 */}
                 <PreparationCard />
                 {/* R / MATLAB 脚本的入口卡（ADR 0143 修订）：它出现时 PreparationCard 自己让开 */}
                 <ForeignScriptCard />
+                {/* 「数据」临时标签激活时盖在画布位置上的内容区（画布与文档原样不动；不激活时不渲染任何东西） */}
+                <DataDraft />
               </div>
             </div>
             {right.mounted && <Inspector overlay={rightOverlay} state={right.state} />}

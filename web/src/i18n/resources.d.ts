@@ -58,7 +58,6 @@ export default interface Resources {
       "unconfirmedHint": "上一次的结果还没确认，请先在对话里查询结果。"
     },
     "dataFigureV2": {
-      "back": "返回",
       "candidate": {
         "bar_error": {
           "title": "柱 + 误差线",
@@ -121,15 +120,23 @@ export default interface Resources {
           "why": "看每组数值分布的形状，点保留了每个观测。"
         }
       },
+      "draft": {
+        "allText": "这张表里都是文字，没有能画的数字。",
+        "collapse": "收起",
+        "expand": "展开",
+        "failed": "这次没画出来，数据没问题。",
+        "guessRow": "把第 {{n}} 行当作列名。不对就点对的那一行。",
+        "pickLead": "点一张，放进画布接着改。",
+        "stripInfo": "前 {{shown}} 行，共 {{total}} 行 · {{columns}} 列",
+        "unreadable": "这个文件不是表格，读不了。"
+      },
       "drawn": {
         "andMore": " 等",
         "open": "打开这张图",
         "rows": "第 {{rows}} 行"
       },
       "list": {
-        "collapse": "收起工作表",
         "empty": "这个文件夹里没找到数据文件。",
-        "expand": "展开工作表",
         "fileMeta": "{{rows}} 行 · {{columns}} 列",
         "heading": "数据",
         "loadFailed": "没能看清这个文件夹里有什么。",
@@ -140,85 +147,40 @@ export default interface Resources {
         "unsure": "没认准",
         "unsureTitle": "没认准，先不用"
       },
-      "mixed": {
-        "cancel": "取消",
-        "colOthers": "同一行的其它列",
-        "colRaw": "原文",
-        "colRow": "行",
-        "colUse": "画图时用",
-        "continue": "继续",
-        "none": "不画",
-        "note": "原文件不会改。",
-        "title": "有几格不是数字"
-      },
-      "mixedCells": {
-        "cannotExtract": "取不出数字，会被忽略",
-        "extracted": "取数字后是 {{value}}",
-        "more": "还有 {{count}} 行",
-        "placeholder": "说说这些格子该怎么算，比如「ND 记为 0」",
-        "previewRow": "第 {{row}} 行：{{text}}"
-      },
       "nothing": {
         "generic": "这张表没能画出图。"
       },
       "option": {
-        "column": "{{column}}",
-        "describe": "我来说明",
-        "design_independent": "每一行是不同的对象",
-        "design_repeated": "同一个对象被重复测了好几次",
         "extract": "只用里面的数字",
-        "other": "这一项",
-        "skip": "不画这 {{count}} 行",
-        "table": "{{file}}：{{rows}} 行，{{groups}} 组",
-        "table_sheet": "{{file}} 的「{{sheet}}」：{{rows}} 行，{{groups}} 组",
-        "unsure": "不确定"
+        "skip": "不画这 {{count}} 行"
       },
-      "overlay": {
-        "close": "关闭"
+      "panel": {
+        "mixed": "{{count}} 格不是数字",
+        "note": "原文件不会改。"
       },
       "pick": {
-        "draw": "画这张",
-        "methods": "画法",
-        "recommended": "推荐",
-        "title": "这份数据可以这样画"
+        "recommended": "推荐"
       },
       "preview": {
-        "failed": "没能读出这张表。",
         "headerPick": "哪一行是每列的名字",
-        "headerTag": "当作每列的名字",
+        "headerTag": "列名",
         "lineN": "第 {{n}} 行",
-        "noNumeric": "这张表里没有数值列，画不了。",
         "pickHint": "点一下每列名字所在的那一行。",
-        "shown": "显示前 {{shown}} 行，共 {{total}} 行",
-        "skipped": "开头 {{count}} 行是说明，已跳过。",
         "type": {
           "date": "日期",
           "id": "编号",
           "mixed": "混有文字",
           "numeric": "数值",
           "text": "文字"
-        },
-        "unreadable": "这个文件读不了。"
+        }
       },
       "problem": {
         "mismatchNext": "它的脚本还留在项目里：可以换一种画法重画，或者去文件夹里把这份脚本删掉。",
-        "notDrawn": "这张图没有画出来。",
         "otherFolder": "换个文件夹",
         "otherWay": "换一种画法",
-        "proposeFailed": "没能准备好画法。",
         "retry": "再试一次",
         "reveal": "在文件夹中显示",
         "unwritable": "这个文件夹写不进，图放不下。"
-      },
-      "question": {
-        "mixed_cells": "「{{column}}」里有 {{count}} 个格子不是数字（共 {{rows}} 行有数据），怎么处理？",
-        "other": "还需要你定一件事。",
-        "pick_design": "这些数据是同一个对象被重复测量的吗？",
-        "pick_group": "按哪一列分组比较？",
-        "pick_table": "用哪张表画？",
-        "pick_unit": "哪一列标出了是哪个对象？",
-        "pick_value": "要画的是哪一列的数值？",
-        "pick_x": "横轴用哪一列？"
       },
       "reason": {
         "all_candidates_rejected": "备选都没通过检查。",
@@ -244,19 +206,18 @@ export default interface Resources {
         "target_exists": "同名脚本已经存在，没有覆盖它。",
         "value_column_mixed": "数值列里混着文字（比如「<0.1」），先整理一下再画。"
       },
+      "redraw": {
+        "again": "换个画法",
+        "from": "用 {{file}} 画的"
+      },
       "result": {
         "mismatch": "画出来的图和你的数据对不上，所以没有打开它。",
         "unknown": "图画好了，数据核对没能完成。",
         "unverifiable": "图画好了，但这类图没法逐项核对数据。",
         "verified": "图画好了，数据和文件逐项对上。"
       },
-      "stage": {
-        "pickOne": "从左边选一张表。"
-      },
-      "start": "看看怎么画",
       "working": {
         "drawing": "正在画…",
-        "proposing": "正在画几种画法…",
         "reading": "正在读…",
         "slow": "还在画，数据多会久一点。"
       }

@@ -1,3 +1,5 @@
+import { DataPanel } from '../datastudio/DataPanel'
+import { useDataFigureStore } from '@/store/dataFigureStore'
 import { useTranslation } from 'react-i18next'
 import { perfCount } from '@/perf/core'
 import { useMemo, useState } from 'react'
@@ -83,6 +85,7 @@ export function Inspector({
   const pinned = useUiStore(isRightPinned)
   const layout = useUiStore((s) => s.layout)
   const runningAi = useAiStore((s) => s.sessions.some((x) => x.status === 'running'))
+  const draftActive = useDataFigureStore((s) => s.draftActive)
 
   const motion = drawerMotion({ state, overlay, width, side: 'right' })
   // 属性栏里的 ColorField 带可编辑 hex 与取色面板（文档颜色 / 最近 / 系统取色器）；浮动栏不挂这层
@@ -192,7 +195,10 @@ export function Inspector({
       </div>
 
       <PageBoundsHint />
-      {tab === 'assistant' ? (
+      {draftActive ? (
+        // 画布标签栏里的「数据」临时标签激活时：右栏显示这份数据（不是画布上的任何对象）
+        <DataPanel />
+      ) : tab === 'assistant' ? (
         <TabPanel id={PANEL_ID.assistant} className="flex min-h-0 flex-1 flex-col">
           <AssistantPanel />
         </TabPanel>

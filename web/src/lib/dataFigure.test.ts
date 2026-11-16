@@ -5,7 +5,6 @@ import {
   fileRows,
   isStaleProposeCode,
   mergeAnswers,
-  previewCardWidth,
   sameTable,
   tableKey,
   usableOptions,
@@ -104,22 +103,3 @@ describe('选项过滤与处理方式', () => {
   })
 })
 
-describe('previewCardWidth：卡片宽度跟内容走，夹在 [360, 640]', () => {
-  const ov = (names: string[], cell = '1', over: Partial<AiDataOverview> = {}): AiDataOverview =>
-    ({ path: 'a.csv', sheet: null, status: 'ok', code: null, delimiter: 'comma', header_row: 1, rows: 3, columns: names.length, layout: null,
-      fields: names.map((name) => ({ name, kind: 'numeric', numeric: 3, text: 0, empty: 0, nan: 0, id_like: false })),
-      preview_rows: [{ line: 2, cells: names.map(() => cell) }], truncated: false, lead_lines: [], raw_lines: [], ...over }) as AiDataOverview
-  it('列少 = 最小 360；列多 = 最大 640；中间随列数与内容变', () => {
-    expect(previewCardWidth(ov(['a', 'b']))).toBe(360)
-    expect(previewCardWidth(ov(Array.from({ length: 20 }, (_, i) => `col_${i}`)))).toBe(640)
-    const mid = previewCardWidth(ov(['time_s', 'voltage_v', 'current_a', 'temp']))
-    expect(mid).toBeGreaterThan(360)
-    expect(mid).toBeLessThan(640)
-    expect(previewCardWidth(ov(['a', 'b', 'c'], '0.123456789012345'))).toBeGreaterThan(360)
-  })
-  it('没认准的原文行固定 560；没有概览 / 读不了 / 无列给默认宽', () => {
-    expect(previewCardWidth(ov([], '1', { status: 'unsure', raw_lines: [{ line: 1, text: 'x' }] }))).toBe(560)
-    expect(previewCardWidth(null)).toBe(420)
-    expect(previewCardWidth(ov([], '1', { status: 'unreadable', raw_lines: [] }))).toBe(420)
-  })
-})

@@ -530,27 +530,9 @@
     "installing": "Preparing dependencies, then checking the edit again…"
   },
   "dataFigureV2": {
-    "question": {
-      "pick_table": "Which table should be plotted?",
-      "pick_value": "Which column holds the values to plot?",
-      "pick_group": "Which column splits the groups?",
-      "pick_x": "Which column goes on the x axis?",
-      "pick_design": "Is the same subject measured repeatedly in this data?",
-      "pick_unit": "Which column says which subject a row belongs to?",
-      "mixed_cells": "{{count}} cells in “{{column}}” aren’t numbers (out of {{rows}} rows with data). What should be done with them?",
-      "other": "One more thing to decide."
-    },
     "option": {
-      "table": "{{file}}: {{rows}} rows, {{groups}} groups",
-      "table_sheet": "{{file}}, sheet “{{sheet}}”: {{rows}} rows, {{groups}} groups",
-      "column": "{{column}}",
-      "design_independent": "Every row is a different subject",
-      "design_repeated": "The same subject is measured several times",
-      "unsure": "Not sure",
       "skip": "Don’t plot these {{count}} rows",
-      "extract": "Use only the numbers inside",
-      "describe": "Let me explain",
-      "other": "This one"
+      "extract": "Use only the numbers inside"
     },
     "candidate": {
       "points_mean": {
@@ -644,13 +626,6 @@
       "mismatch": "The figure doesn’t match your data, so it wasn’t opened.",
       "unknown": "The figure is ready, but the data check couldn’t finish."
     },
-    "mixedCells": {
-      "previewRow": "Row {{row}}: {{text}}",
-      "extracted": "Becomes {{value}} after taking the number",
-      "cannotExtract": "No number found; it will be ignored",
-      "more": "{{count}} more rows",
-      "placeholder": "Say how these cells should count, for example “ND counts as 0”"
-    },
     "list": {
       "heading": "Data",
       "fileMeta": "{{rows}} rows · {{columns}} columns",
@@ -658,29 +633,20 @@
       "unsure": "Not sure",
       "unreadable": "Can’t read",
       "unread": "Not read",
-      "expand": "Show sheets",
-      "collapse": "Hide sheets",
       "empty": "No data files found in this folder.",
       "loadFailed": "Couldn’t look through this folder.",
       "rows": "{{rows}} rows",
       "unsureTitle": "Not sure about this one, skipped for now"
     },
-    "stage": {
-      "pickOne": "Pick a table on the left."
-    },
     "working": {
       "reading": "Reading…",
-      "proposing": "Drawing a few options…",
       "drawing": "Drawing…",
       "slow": "Still drawing. More data takes a bit longer."
     },
     "preview": {
-      "unreadable": "This file can’t be read.",
       "headerPick": "Which row holds the column names",
       "lineN": "Row {{n}}",
-      "headerTag": "Use as column names",
-      "skipped": "Skipped {{count}} note lines at the top.",
-      "shown": "Showing the first {{shown}} of {{total}} rows",
+      "headerTag": "Column names",
       "type": {
         "numeric": "Number",
         "date": "Date",
@@ -688,28 +654,10 @@
         "mixed": "Mixed",
         "id": "ID"
       },
-      "failed": "Couldn’t read this table.",
-      "pickHint": "Click the row that holds the column names.",
-      "noNumeric": "This table has no numeric column, so it can't be drawn."
-    },
-    "start": "See ways to draw",
-    "back": "Back",
-    "mixed": {
-      "title": "Some cells aren’t numbers",
-      "colRow": "Row",
-      "colOthers": "Other columns in the row",
-      "colRaw": "As written",
-      "colUse": "Used in the plot",
-      "none": "Not plotted",
-      "note": "Your file won’t be changed.",
-      "continue": "Continue",
-      "cancel": "Cancel"
+      "pickHint": "Click the row that holds the column names."
     },
     "pick": {
-      "title": "Ways to draw this data",
-      "methods": "Style",
-      "recommended": "Recommended",
-      "draw": "Draw this one"
+      "recommended": "Recommended"
     },
     "nothing": {
       "generic": "Couldn’t draw anything from this table."
@@ -721,16 +669,29 @@
     },
     "problem": {
       "retry": "Try again",
-      "notDrawn": "The figure wasn’t drawn.",
-      "proposeFailed": "Couldn’t prepare the options.",
       "unwritable": "This folder can’t be written to, so the figure has nowhere to go.",
       "otherFolder": "Pick another folder",
       "otherWay": "Try another way",
       "reveal": "Show in folder",
       "mismatchNext": "Its script is still in the project: draw it another way, or delete that script from the folder."
     },
-    "overlay": {
-      "close": "Close"
+    "draft": {
+      "pickLead": "Pick one to put it on the canvas and keep editing.",
+      "guessRow": "Row {{n}} is used as the column names. If that's wrong, click the right row.",
+      "allText": "This table is all text, so there is nothing numeric to draw.",
+      "unreadable": "This file is not a table and can't be read.",
+      "failed": "That didn't draw. Your data is fine.",
+      "stripInfo": "First {{shown}} rows of {{total}} · {{columns}} columns",
+      "expand": "Expand",
+      "collapse": "Collapse"
+    },
+    "panel": {
+      "mixed": "{{count}} cells are not numbers",
+      "note": "The original file is never changed."
+    },
+    "redraw": {
+      "from": "Drawn from {{file}}",
+      "again": "Try another style"
     }
   }
 }

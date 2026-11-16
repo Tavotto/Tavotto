@@ -12,7 +12,7 @@ import { DataList } from './DataList'
 
 /**
  * 左栏「数据」抽屉（`LeftTab` 'data'，和「素材」「大纲」一样走 `railClick`）：这个文件夹里的数据文件树。
- * 点一个文件 = 在工作面板上从抽屉边缘滑出预览浮层（`DataOverlay`），抽屉与画布都不动。抽屉里不加说明文字。
+ * 点一个文件 = 在画布标签栏开（或复用）一个临时标签（`DataDraft`）并开始出候选，抽屉与画布文档都不动。抽屉里不加说明文字。
  */
 export function DataDrawer() {
   const { t } = useTranslation('ai')
@@ -71,17 +71,15 @@ export function DataDrawer() {
         overviews={listOverviews}
         onSelect={(ref) => useDataFigureStore.getState().select(ref)}
         onFocusRow={(ref) => {
-          // 卡片开着、停在预览上：方向键走到哪个文件，卡片就换成哪个；其它屏（出备选、选画法……）不动，免得丢掉进度
+          // 临时标签激活着：方向键走到哪个文件，标签就换成哪个（像访达的快速查看）；出图中不动
           const st = useDataFigureStore.getState()
-          if (st.overlay && st.scene.kind === 'browse' && !sameTable(st.selected, ref)) st.select(ref)
+          if (st.draftActive && !st.drawingId && !sameTable(st.selected, ref)) st.select(ref)
         }}
         onConfirm={() => {
-          // Enter = 卡片的主按钮；焦点交给卡片，接下来的方向键 / Enter 在卡片里生效
-          const card = document.querySelector<HTMLElement>('[data-data-overlay]')
-          const go = card?.querySelector<HTMLButtonElement>('[data-studio-start]')
-          if (!card || !go || go.disabled) return false
-          go.click()
-          card.focus()
+          // Enter：焦点交给候选网格（方向键移动、Enter 选）；还没有候选就不处理
+          const first = document.querySelector<HTMLElement>('[data-data-draft] [data-candidate]')
+          if (!first || first.hasAttribute('disabled')) return false
+          first.focus()
           return true
         }}
       />
