@@ -4571,6 +4571,8 @@ export interface AiDataLazyInfo {
   sheet?: string | null
   /** 文本表是实际用的物理行号，XLSX 为 null */
   header_row?: number | null
+  /** 真 = 表头后紧跟的单位行（`header_row + 1` 那一行）不是数据、已被切掉；缺失按 false */
+  units_row?: boolean
   roles?: AiDataRoles | null
   defaults?: { question_code: string; answer?: Record<string, unknown> }[]
   /** 数值列里夹着文字的列：默认不画那几行（`skip`），用户可改成取数字（`extract`） */

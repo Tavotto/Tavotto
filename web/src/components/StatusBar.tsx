@@ -640,7 +640,8 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
       // 画布底部有浮动工具条时整列抬到它上面去（toast 居中、工具条也居中，不抬就叠在一起）
       className={cn(
         'pointer-events-none absolute inset-x-0 z-canvas-chrome flex flex-col items-center gap-1.5 px-4',
-        toolbarUp ? 'bottom-16' : 'bottom-3',
+        // 刚用「数据」画出图时工具条上方多一枚「换个画法」胶囊：通知再往上让一格，不压在它上面
+        toolbarUp ? (fromData ? 'bottom-24' : 'bottom-16') : 'bottom-3',
       )}
     >
       {/* aria-live 常驻在 DOM 里，读屏器才能捕捉内容变化。

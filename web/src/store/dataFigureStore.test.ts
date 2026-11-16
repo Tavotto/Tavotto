@@ -300,3 +300,52 @@ describe('懒模式：不再自动答题，右栏改动带着 answers 重来', (
     expect(st().phase).toBe('failed')
   })
 })
+
+describe('单位行与横轴列夹文字', () => {
+  it('响应的 units_row 进状态；缺失按 false', async () => {
+    withNumbers()
+    propose.mockResolvedValueOnce({ ...(cands('S1') as Extract<AiDataProposeResponse, { kind: 'candidates' }>), units_row: true })
+    await run()
+    expect(st().unitsRow).toBe(true)
+    propose.mockResolvedValueOnce(cands('S2'))
+    st().setRole('y', 'z')
+    await flush()
+    expect(st().unitsRow).toBe(false)
+  })
+
+  it('横轴列夹 2 格文字：右栏 mixed 正常；切「只用里面的数字」后仍取不出数，界面不出错，画出来后说「有 2 行没画出来」', async () => {
+    withNumbers()
+    const m = (mode: 'skip' | 'extract') => [{ column: 'day', non_numeric: 2, rows: 18, mode }]
+    const base = (sess: string, mode: 'skip' | 'extract') => ({ ...(cands(sess) as Extract<AiDataProposeResponse, { kind: 'candidates' }>), mixed_cells: m(mode) })
+    propose.mockResolvedValueOnce(base('S1', 'skip')).mockResolvedValueOnce(base('S2', 'extract'))
+    await run()
+    expect(st().mixed).toMatchObject({ mode: 'skip', columns: [{ column: 'day', nonNumeric: 2 }] })
+    st().setMixedMode('extract')
+    expect(propose.mock.calls[1]![0]).toMatchObject({ answers: { cells: { day: { mode: 'extract' } } } })
+    await flush()
+    expect(st()).toMatchObject({ phase: 'ready', mixed: { mode: 'extract' } })
+    commit.mockResolvedValueOnce(committed({ unplotted: { count: 2, rows: [{ row: 3, column: 'day', reason: 'x' }, { row: 4, column: 'day', reason: 'x' }], code: 'rows_not_plotted' } }))
+    await st().draw('i1')
+    expect(notify.mock.calls.at(-1)![0]).toMatchObject({ key: 'dataFigureV2.note.unplotted', values: { count: 2 } })
+    expect(prepOpen).toHaveBeenCalled()
+  })
+
+  it('切到「只用里面的数字」之后后端不再列出这些列：右栏那一行留着、能切回去', async () => {
+    withNumbers()
+    const base = cands('S1') as Extract<AiDataProposeResponse, { kind: 'candidates' }>
+    propose.mockResolvedValueOnce({ ...base, mixed_cells: [{ column: 'day', non_numeric: 2, rows: 18, mode: 'skip' }] }).mockResolvedValueOnce({ ...cands('S2') as Extract<AiDataProposeResponse, { kind: 'candidates' }>, mixed_cells: [] })
+    await run()
+    st().setMixedMode('extract')
+    await flush()
+    expect(st().mixed).toMatchObject({ mode: 'extract', columns: [{ column: 'day', nonNumeric: 2 }] })
+    propose.mockResolvedValueOnce({ ...cands('S3') as Extract<AiDataProposeResponse, { kind: 'candidates' }>, mixed_cells: [] })
+    st().setMixedMode('skip')
+    expect(propose.mock.calls.at(-1)![0]).toMatchObject({ answers: { cells: { day: { mode: 'skip' } } } })
+    await flush()
+    expect(st().mixed).toMatchObject({ mode: 'skip' })
+    // 换了文件就清掉
+    propose.mockResolvedValueOnce(cands('S4'))
+    await run(ref('b.csv'))
+    expect(st().mixed).toBeNull()
+  })
+})

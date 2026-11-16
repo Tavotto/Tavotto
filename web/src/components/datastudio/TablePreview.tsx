@@ -13,11 +13,14 @@ export function TablePreview({
   ov,
   rows,
   guessRow = null,
+  unitsRow = false,
   onHeaderRow,
 }: {
   ov: AiDataOverview
   /** 这次实际用的表头行（响应里的）；没给就用概览猜的 */
   guessRow?: number | null
+  /** 表头后紧跟的单位行（`guessRow + 1` 那一行）：次要文字色、不参与数据行，不加标签 */
+  unitsRow?: boolean
   /** 最多显示几行（数据条收起 3 行、展开 20 行） */
   rows: number
   onHeaderRow: (line: number) => void
@@ -26,6 +29,7 @@ export function TablePreview({
   const lines = ov.raw_lines
   if ((ov.status === 'unsure' || ov.status === 'unreadable') && lines.length > 0) {
     const guess = guessRow ?? ov.header_row
+    const unitLine = unitsRow && guess != null ? guess + 1 : null
     return (
       <div data-header className="flex w-full flex-col font-mono text-xs" role="radiogroup" aria-label={t('dataFigureV2.preview.headerPick')}>
         {lines.slice(0, Math.max(rows, 8)).map((l) => {
@@ -39,6 +43,7 @@ export function TablePreview({
                 'flex h-7 cursor-default items-center gap-3 rounded-md px-2 hover:bg-surface-hover has-[:focus-visible]:focus-ring-inset',
                 on && 'outline outline-2 -outline-offset-2 outline-ink-2',
                 guess != null && l.line < guess && 'opacity-45',
+                l.line === unitLine && 'text-ink-3',
               )}
             >
               <input
@@ -62,6 +67,7 @@ export function TablePreview({
   }
   if (ov.status !== 'ok') return null
 
+  const unitLine = unitsRow && guessRow != null ? guessRow + 1 : null
   const numericCols = ov.fields.map((f) => f.kind === 'numeric')
   const decimals = ov.fields.map((_, j) => Math.max(0, ...ov.preview_rows.map((r) => decimalsOf(r.cells[j] ?? ''))))
   return (
@@ -82,7 +88,7 @@ export function TablePreview({
       </thead>
       <tbody>
         {ov.preview_rows.slice(0, rows).map((r) => (
-          <tr key={r.line} className="border-t border-border">
+          <tr key={r.line} className={cn('border-t border-border', r.line === unitLine && 'text-ink-3')}>
             {ov.fields.map((_, j) => (
               <td key={j} className={cn('h-7 max-w-56 truncate pr-7 last:pr-0', numericCols[j] ? 'text-right' : 'text-left')}>
                 {numericCols[j] ? alignDecimal(r.cells[j] ?? '', decimals[j]!) : (r.cells[j] ?? '')}

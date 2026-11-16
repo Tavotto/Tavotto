@@ -13,7 +13,7 @@ import {
   type AiDataOverview,
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
-import { candidatesFromResponse, headerRowFromResponse, mixedFromResponse, rolesFromResponse, type Candidate, type ColumnRoles, type MixedColumn, type ThumbState } from '@/lib/dataFigureAdapter'
+import { candidatesFromResponse, headerRowFromResponse, mixedFromResponse, rolesFromResponse, unitsRowFromResponse, type Candidate, type ColumnRoles, type MixedColumn, type ThumbState } from '@/lib/dataFigureAdapter'
 import { fileRows, hasNumericColumn, isStaleProposeCode, sameTable, tableKey, type CellMode, type TableRef } from '@/lib/dataFigure'
 import { msg, type UiMessage } from '@/i18n'
 
@@ -133,6 +133,8 @@ interface DataFigureStore {
   roles: ColumnRoles | null
   /** 这次实际用的表头物理行号（响应的 `header_row`；XLSX / 还没出 = null） */
   headerRowUsed: number | null
+  /** 表头后紧跟的是单位行（`headerRowUsed + 1`），数据条里置灰 */
+  unitsRow: boolean
   /** 每张候选缩略图各自的就绪状态；`failed` 的静默去掉 */
   thumbs: Record<string, ThumbState>
   phase: DraftPhase
@@ -215,6 +217,7 @@ const initial = {
   mixed: null as MixedInfo | null,
   roles: null as ColumnRoles | null,
   headerRowUsed: null as number | null,
+  unitsRow: false,
   thumbs: {} as Record<string, ThumbState>,
   phase: 'idle' as DraftPhase,
   session: null as string | null,
@@ -231,6 +234,7 @@ const idleDraft = {
   mixed: null as MixedInfo | null,
   roles: null as ColumnRoles | null,
   headerRowUsed: null as number | null,
+  unitsRow: false,
   thumbs: {} as Record<string, ThumbState>,
   phase: 'idle' as DraftPhase,
   session: null as string | null,
@@ -292,7 +296,9 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     const common = {
       roles: rolesFromResponse(res) ?? get().roles,
       headerRowUsed: headerRowFromResponse(res),
-      mixed: mixedCols.length > 0 ? { columns: mixedCols, mode: mixedCols[0]!.mode } : null,
+      unitsRow: unitsRowFromResponse(res),
+      // 用户给过 `cells` 规则之后，后端不再把这些列列进 `mixed_cells`（已经不是「替用户做的默认决定」）：右栏那一行要留着，不然切过去就切不回来
+      mixed: mixedCols.length > 0 ? { columns: mixedCols, mode: mixedCols[0]!.mode } : answers.cells !== undefined ? get().mixed : null,
     }
     if (res.kind === 'candidates' && Array.isArray(res.items) && res.items.length > 0) {
       set({

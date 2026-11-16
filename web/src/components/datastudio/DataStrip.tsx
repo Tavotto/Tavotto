@@ -8,6 +8,7 @@ import { TablePreview } from './TablePreview'
 export function DataStrip({
   ov,
   guessRow,
+  unitsRow,
   loading,
   forceOpen,
   onHeaderRow,
@@ -15,6 +16,7 @@ export function DataStrip({
   ov: AiDataOverview | null
   /** 这次出候选实际用的表头行（响应的 `header_row`）；没有就用概览里猜的那一行 */
   guessRow?: number | null
+  unitsRow?: boolean
   loading: boolean
   /** 没认准的、全是文字的：数据本身就是要看的东西，自动展开 */
   forceOpen: boolean
@@ -57,7 +59,7 @@ export function DataStrip({
       </div>
       <div className={cn('min-h-0 flex-1 overflow-auto px-7 pb-3', loading && 'opacity-60')}>
         {ov ? (
-          <TablePreview ov={ov} rows={rows} guessRow={guessRow ?? null} onHeaderRow={onHeaderRow} />
+          <TablePreview ov={ov} rows={rows} guessRow={guessRow ?? null} unitsRow={unitsRow} onHeaderRow={onHeaderRow} />
         ) : (
           <div role="status" aria-label={t('dataFigureV2.working.reading')} className="flex flex-col gap-3 pt-2">
             {[62, 48, 55].map((w, i) => (

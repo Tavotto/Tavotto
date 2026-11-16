@@ -60,3 +60,8 @@ export function mixedFromResponse(res: AiDataProposeResponse): MixedColumn[] {
 export function headerRowFromResponse(res: AiDataProposeResponse): number | null {
   return res.kind === 'ask' ? null : (res.header_row ?? null)
 }
+
+/** 表头后紧跟的单位行（`header_row + 1` 那一行）已被后端切掉：数据条里把它显示成次要文字色、不参与数据行；字段缺失按 false */
+export function unitsRowFromResponse(res: AiDataProposeResponse): boolean {
+  return res.kind === 'ask' ? false : res.units_row === true
+}

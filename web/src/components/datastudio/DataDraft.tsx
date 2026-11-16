@@ -40,6 +40,7 @@ export function DataDraft() {
   const thumbs = useDataFigureStore((s) => s.thumbs)
   const session = useDataFigureStore((s) => s.session)
   const headerRowUsed = useDataFigureStore((s) => s.headerRowUsed)
+  const unitsRow = useDataFigureStore((s) => s.unitsRow)
   const reasons = useDataFigureStore((s) => s.nothingReasons)
   const error = useDataFigureStore((s) => s.error)
   const drawingId = useDataFigureStore((s) => s.drawingId)
@@ -177,6 +178,7 @@ export function DataDraft() {
           key={`strip|${selected.path}|${selected.sheet}`}
           ov={ov}
           guessRow={headerRowUsed}
+          unitsRow={unitsRow}
           loading={ovState?.status === 'loading'}
           forceOpen={phase === 'text' || phase === 'pickrow' || (ov != null && (ov.status === 'unsure' || ov.status === 'unreadable') && ov.raw_lines.length > 0)}
           onHeaderRow={setRow}

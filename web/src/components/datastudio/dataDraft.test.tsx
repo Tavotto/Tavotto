@@ -225,6 +225,28 @@ describe('数据条里的表 TablePreview', () => {
   })
 })
 
+describe('单位行置灰（后端 units_row）', () => {
+  it('原始行视图：header_row + 1 那一行用次要文字色，不加标签、不加底色', async () => {
+    const raw = [1, 2, 3, 4, 5].map((n) => ({ line: n, text: `row ${n}` }))
+    await mount(<TablePreview ov={ov({ status: 'unsure', header_row: 3, raw_lines: raw, fields: [], preview_rows: [] })} rows={3} guessRow={3} unitsRow onHeaderRow={() => {}} />)
+    const unit = q('label[data-look-line="4"]')!
+    expect(unit.className).toContain('text-ink-3')
+    expect(unit.className).not.toMatch(/(^|\s)bg-/)
+    expect(unit.textContent).toBe('4row 4')
+    expect(q('label[data-look-line="5"]')!.className).not.toContain('text-ink-3')
+  })
+  it('表格视图：header_row + 1 那一行次要文字色；没有 units_row（缺失 = false）就不灰', async () => {
+    const o = ov({ preview_rows: [{ line: 3, cells: ['nm', 'a.u.', 'x'] }, { line: 4, cells: ['400', '0.1', 'y'] }] })
+    await mount(<TablePreview ov={o} rows={3} guessRow={2} unitsRow onHeaderRow={() => {}} />)
+    expect(qa('tbody tr')[0]!.className).toContain('text-ink-3')
+    expect(qa('tbody tr')[1]!.className).not.toContain('text-ink-3')
+    act(() => root.unmount())
+    host.remove()
+    await mount(<TablePreview ov={o} rows={3} guessRow={2} onHeaderRow={() => {}} />)
+    expect(qa('tbody tr')[0]!.className).not.toContain('text-ink-3')
+  })
+})
+
 describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 store 走一遍）', () => {
   const files = vi.mocked(aiDataFilesAll)
   const overview = vi.mocked(aiDataOverview)
