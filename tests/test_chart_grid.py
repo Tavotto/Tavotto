@@ -59,6 +59,15 @@ def test_parse_grid_locates_bad_cells_and_ragged_rows():
     assert ("data_row_length", 2) in codes
 
 
+def test_parse_grid_keeps_empty_comma_cells_as_missing():
+    parsed = chartdata.parse_grid("1,,3\n4,,6\n")
+    assert parsed["values"] == []
+    assert [(i["code"], i["row"], i["col"]) for i in parsed["issues"]] == [
+        ("data_missing", 1, 2),
+        ("data_missing", 2, 2),
+    ]
+
+
 # ---------------------------------------------------------------------------
 # 确认产物
 # ---------------------------------------------------------------------------

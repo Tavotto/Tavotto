@@ -54,6 +54,18 @@ def test_empty_cell_is_missing():
     assert codes(parsed) == [("data_missing", 2, 2)]
 
 
+def test_duplicate_headers_are_rejected_not_overwritten():
+    parsed = chartdata.parse_table("x,y,y\n0,10,100\n1,20,200\n")
+    assert parsed["columns"] == {}
+    assert parsed["text_columns"] == {}
+    assert codes(parsed) == [("data_header_invalid", 1, 3)]
+
+
+def test_duplicate_header_after_empty_name_fallback_is_rejected():
+    parsed = chartdata.parse_table(",x,col1\n0,10,100\n")
+    assert codes(parsed) == [("data_header_invalid", 1, 3)]
+
+
 def test_other_text_is_not_numeric():
     parsed = chartdata.parse_table("x\nabc\n")
     assert codes(parsed) == [("data_not_numeric", 2, 1)]
