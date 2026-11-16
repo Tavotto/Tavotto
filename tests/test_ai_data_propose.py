@@ -1581,3 +1581,259 @@ def test_an_explicit_table_under_a_hidden_pruned_or_linked_folder_is_refused_lik
         pytest.skip("not_run：此平台不能建符号链接")
     body = propose(client, table="link/r.csv").get_json()
     assert body["kind"] == "nothing" and body["reasons"] == ["table_not_found"]
+
+
+# =========================================================================== 懒渲染（render="lazy"）：文字先到、缩略图在取图时画
+def two_value_rows():
+    """两个数值列（time_s 与 signal）+ 一个分组列：`pick_value` 要问（旧模式）；懒模式用「不确定」默认继续。"""
+    rows = [["time_s", "arm", "signal"]]
+    for a in ("a", "b"):
+        for t in range(1, 7):
+            rows.append([t, a, round(t * 1.5, 3)])
+    return rows
+
+
+@pytest.fixture
+def fake_render(monkeypatch):
+    """替掉真渲染：记每次被画的 `(stem)`，按 `behave[stem]` 决定结果；用来量「谁被画了几次」，不依赖 worker。"""
+    calls: list[str] = []
+    behave: dict = {}
+
+    def one(sdir, rel, stem, thumb, pin=None):
+        calls.append(stem)
+        time.sleep(behave.get("delay", 0))
+        reason = behave.get(stem)
+        if reason:
+            return P._Rendered(reason=reason)
+        thumb.parent.mkdir(parents=True, exist_ok=True)
+        thumb.write_bytes(PNG + b"fake")
+        return P._Rendered(png=thumb, manifest={})
+
+    monkeypatch.setattr(P, "_render_one", one)
+    monkeypatch.setattr(figureverify, "data_matches_expected", lambda *a, **k: [])
+    return calls, behave
+
+
+def test_lazy_returns_text_without_rendering_anything(project, fake_render):
+    m, client, figs, _ = project
+    calls, _ = fake_render
+    put(figs, "data/g.csv", simple_rows())
+    before = tree_state(figs)
+    r = propose(client, render="lazy")
+    assert r.status_code == 200, r.get_json()
+    body = r.get_json()
+    assert body["kind"] == "candidates" and body["render"] == "lazy"
+    assert calls == []  # 一张都没画
+    assert [i["thumbnail_status"] for i in body["items"]] == ["pending"] * len(body["items"])
+    assert (
+        body["items"][0]["recommended"] is True and body["items"][0]["title_code"] == "points_mean"
+    )
+    assert tree_state(figs) == before  # 用户文件夹仍一个字节没动
+    # 与旧模式同一批备选、同一顺序
+    legacy = propose(client).get_json()
+    assert [i["title_code"] for i in legacy["items"]] == [i["title_code"] for i in body["items"]]
+    assert "render" not in legacy and [i["thumbnail_status"] for i in legacy["items"]] == [
+        "ready"
+    ] * len(legacy["items"])
+
+
+def test_lazy_thumbnail_is_drawn_on_fetch_once_even_when_fetched_concurrently(project, fake_render):
+    import concurrent.futures as cf
+
+    m, client, figs, _ = project
+    calls, behave = fake_render
+    behave["delay"] = 0.3
+    put(figs, "data/g.csv", simple_rows())
+    body = propose(client, render="lazy").get_json()
+    first = body["items"][0]
+    with cf.ThreadPoolExecutor(5) as ex:
+        got = list(ex.map(lambda _: client.get(first["thumbnail_url"]), range(5)))
+    assert [g.status_code for g in got] == [200] * 5
+    assert all(g.data.startswith(PNG) for g in got)
+    assert calls == ["cand_1"]  # 五个并发只画一次
+    assert client.get(first["thumbnail_url"]).status_code == 200 and calls == [
+        "cand_1"
+    ]  # 画好的不重画
+    second = body["items"][1]
+    assert client.get(second["thumbnail_url"]).status_code == 200
+    assert calls == ["cand_1", "cand_2"]  # 只画被取的那几张
+
+
+def test_lazy_failed_thumbnail_is_a_clear_error_and_the_item_cannot_be_committed(
+    project, fake_render
+):
+    m, client, figs, _ = project
+    calls, behave = fake_render
+    behave["cand_1"] = "candidate_thumbnail_failed"
+    put(figs, "data/g.csv", simple_rows())
+    body = propose(client, render="lazy").get_json()
+    first, second = body["items"][0], body["items"][1]
+    r = client.get(first["thumbnail_url"])
+    assert r.status_code == 422
+    assert r.get_json()["code"] == "propose_thumbnail_failed"
+    assert r.get_json()["params"] == {"reason": "candidate_thumbnail_failed"}
+    assert client.get(first["thumbnail_url"]).status_code == 422 and calls == [
+        "cand_1"
+    ]  # 记在项上，不重画
+    assert (
+        commit(client, body["session"], first["id"]).status_code == 404
+    )  # 与旧模式「失败的不进列表」同一保证
+    assert client.get(second["thumbnail_url"]).status_code == 200  # 一张失败不连累别的
+    # 旧模式顺序稳定：推荐标记仍在列表第一项（前端把推荐挪给下一张可用的）
+    assert [i["id"] for i in body["items"]][:2] == [first["id"], second["id"]]
+
+
+def test_lazy_fingerprint_mismatch_fails_the_item(project, fake_render, monkeypatch):
+    m, client, figs, _ = project
+    put(figs, "data/g.csv", simple_rows())
+    body = propose(client, render="lazy").get_json()
+    bad = type("C", (), {"verdict": "failed"})()
+    monkeypatch.setattr(figureverify, "data_matches_expected", lambda *a, **k: [bad])
+    r = client.get(body["items"][0]["thumbnail_url"])
+    assert r.status_code == 422 and r.get_json()["params"] == {
+        "reason": "candidate_fingerprint_mismatch"
+    }
+
+
+def test_lazy_uses_default_answers_instead_of_asking_and_reports_roles(project, fake_render):
+    m, client, figs, _ = project
+    put(figs, "data/t.csv", two_value_rows())
+    # 旧模式：要先答题
+    assert propose(client, table="t.csv").get_json()["kind"] == "ask"
+    body = propose(client, table="t.csv", render="lazy").get_json()
+    assert body["kind"] == "candidates", body
+    assert body["table"] == "t.csv" and body["sheet"] is None and body["header_row"] == 1
+    assert [d["question_code"] for d in body["defaults"]] == ["pick_value"]
+    roles = body["roles"]
+    assert roles["y"] == ["signal"]  # 「不确定」的默认 = 最后一个数值列
+    assert roles["options"]["y"] == ["time_s", "signal"] and roles["options"]["group"] == ["arm"]
+    assert roles["x"] == "time_s" or roles["group"] == "arm"
+    # 面板上换了纵轴 = 复用 answers.y，重新出候选（不另造一套参数）
+    again = propose(client, table="t.csv", render="lazy", answers={"y": "time_s"}).get_json()
+    assert again["kind"] == "candidates" and again["roles"]["y"] == ["time_s"]
+    assert not any(d["question_code"] == "pick_value" for d in again["defaults"])
+
+
+def test_lazy_group_and_x_can_be_turned_off_from_the_panel(project, fake_render):
+    m, client, figs, _ = project
+    put(figs, "data/t.csv", two_value_rows())
+    body = propose(
+        client, table="t.csv", render="lazy", answers={"y": "signal", "group": "none"}
+    ).get_json()
+    assert body["roles"]["group"] is None
+    assert all(i["values"]["group"] is None for i in body["items"])
+    body2 = propose(
+        client, table="t.csv", render="lazy", answers={"y": "signal", "x": "none"}
+    ).get_json()
+    assert body2["roles"]["x"] is None
+    assert all(i["values"]["family"] != "trend" for i in body2["items"])
+
+
+def test_lazy_skips_mixed_cells_by_default_and_reports_counts(project, fake_render):
+    m, client, figs, _ = project
+    put(figs, "data/g.csv", lod_rows())
+    assert propose(client).get_json()["question_code"] == "mixed_cells"  # 旧模式照旧先问
+    body = propose(client, render="lazy").get_json()
+    assert body["kind"] == "candidates", body
+    assert body["mixed_cells"] == [
+        {"column": "value_mV", "non_numeric": 2, "rows": 18, "mode": "skip"}
+    ]
+    assert body["header_row"] == 1
+    assert any(d["question_code"] == "mixed_cells" for d in body["defaults"])
+    # 用户在面板上改成「取数字部分」：照旧的 answers.cells 重来，不再自动跳过
+    again = propose(client, render="lazy", answers=rule(mode="extract")).get_json()
+    assert again["kind"] == "candidates" and again["mixed_cells"] == []
+
+
+def test_lazy_picks_the_first_table_instead_of_asking(project, fake_render):
+    m, client, figs, _ = project
+    put(figs, "data/response.csv", simple_rows())
+    put(figs, "data/other.csv", dist_rows())
+    assert propose(client).get_json()["question_code"] == "pick_table"
+    body = propose(client, render="lazy").get_json()
+    assert body["kind"] == "candidates" and body["defaults"][0]["question_code"] == "pick_table"
+    assert body["table"] == body["defaults"][0]["answer"]["table"]
+
+
+def test_render_mode_is_validated_and_part_of_the_idempotency_key(project, fake_render):
+    m, client, figs, _ = project
+    put(figs, "data/g.csv", simple_rows())
+    assert propose(client, render="bogus").status_code == 400
+    a = propose(client, render="lazy", client_request_id="rid-lazy-0001").get_json()
+    b = propose(client, client_request_id="rid-lazy-0001").get_json()
+    assert a["session"] != b["session"] and "render" not in b
+    assert (
+        propose(client, render="lazy", client_request_id="rid-lazy-0001").get_json()["session"]
+        == a["session"]
+    )
+
+
+@needs_worker
+def test_lazy_end_to_end_real_worker_thumbnail_then_commit(project):
+    m, client, figs, _ = project
+    put(figs, "data/g.csv", simple_rows())
+    body = propose(client, render="lazy").get_json()
+    first = body["items"][0]
+    t = client.get(first["thumbnail_url"])
+    assert t.status_code == 200 and t.data.startswith(PNG)
+    c = commit(client, body["session"], first["id"])
+    assert c.status_code == 200 and c.get_json()["data_check"] == "verified"
+
+
+def test_lazy_retries_a_transient_render_failure_once_but_not_a_definite_one(
+    project, fake_render, monkeypatch
+):
+    m, client, figs, _ = project
+    calls, behave = fake_render
+    put(figs, "data/g.csv", simple_rows())
+    body = propose(client, render="lazy").get_json()
+    real_one = P._render_one
+    seq = {"cand_1": ["candidate_render_failed", None], "cand_2": ["candidate_timeout", None]}
+
+    def flaky(sdir, rel, stem, thumb, pin=None):
+        want = seq[stem].pop(0)
+        if want is None:
+            return real_one(sdir, rel, stem, thumb, pin)
+        calls.append(stem)
+        return P._Rendered(reason=want)
+
+    monkeypatch.setattr(P, "_render_one", flaky)
+    a, b = body["items"][0], body["items"][1]
+    assert client.get(a["thumbnail_url"]).status_code == 200  # 第一次瞬时失败，重试画成
+    r = client.get(b["thumbnail_url"])  # 超时是确定的结论：不重试
+    assert r.status_code == 422 and r.get_json()["params"] == {"reason": "candidate_timeout"}
+    assert calls == ["cand_1", "cand_1", "cand_2"] and seq["cand_2"] == [None]
+
+
+def test_render_gate_lets_the_recommended_one_in_first_and_never_exceeds_its_slots():
+    import threading
+
+    gate = P._PriorityGate(2)
+    inside, peak, order = [0], [0], []
+    lock = threading.Lock()
+    hold = threading.Event()
+
+    def run(n):
+        with gate(n):
+            with lock:
+                inside[0] += 1
+                peak[0] = max(peak[0], inside[0])
+                order.append(n)
+            hold.wait(5)
+            with lock:
+                inside[0] -= 1
+
+    blockers = [threading.Thread(target=run, args=(9,)) for _ in range(2)]
+    for t in blockers:
+        t.start()
+    while len(order) < 2:
+        time.sleep(0.01)
+    waiters = [threading.Thread(target=run, args=(n,)) for n in (4, 3, 2, 1)]  # 倒序到达
+    for t in waiters:
+        t.start()
+        time.sleep(0.05)
+    hold.set()
+    for t in blockers + waiters:
+        t.join(10)
+    assert peak[0] == 2
+    assert order[2:] == [1, 2, 3, 4]  # 空位出来后按序号小的先进，不论到达先后

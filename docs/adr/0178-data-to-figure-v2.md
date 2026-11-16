@@ -106,6 +106,14 @@ worker 以项目里的显示路径为 `__file__`），这里不能照搬——�
 id 是服务端登记的不透明串）、`POST /api/ai/data-figure/commit`（`{session, id, client_request_id?}`）、`POST /api/ai/data-figure/discard`（放弃会话，幂等）；`/api/ai/data-files` 扩到
 `.csv / .tsv / .tab / .xlsx`，XLSX 带 `sheets: [{name, hidden}]`。旧的 `POST /api/ai/data-figure`（v1）不变。遥测不新增事件（本 PR 不改 `CONSENT_VERSION`）。
 
+## 修订（2026-11-16）：文字先到的懒渲染、不再提问（`propose(render="lazy")` / `ensure_thumbnail`）
+
+前端改成「点一个数据文件，立刻出现候选画法的名字和说明，缩略图一张张补上；不再有选择题和弹窗，一律先按默认画出来，右侧面板显示横轴 / 纵轴 / 分组用了哪一列并允许改」。上面那条流水的**判据一字不动**（配方校验、模板出码、指纹对拍、候选目录隔离、写入根绊线、提交只新建），只换了「什么时候画」与「问题怎么处理」；旧请求（不带 `render`）行为与响应逐字不变。
+
+* **请求** `POST /api/ai/data-figure/propose` 增加可选 `render: "lazy"`（别的值 400 `propose_input_invalid`）。懒模式**永不返回 `ask`**：选表 = 发现遍历的第一张；列角色的问题用各自的「不确定」默认（y = 最后一个数值列、横轴 / 分组 / 重复测量同前）；夹着文字格的数值列 = 不画那几行（`skip`）；表头行 = 读表猜的那一行。每个替用户做的决定都写进响应：`defaults: [{question_code, answer?}]`、`mixed_cells: [{column, non_numeric, rows, mode:"skip"}]`、`header_row`（文本表；XLSX 为 null）、`table` / `sheet`。用户在面板上改了就重新出：列角色用**既有的** `answers.y / x / group`（列名；新增值 `none` = 不要有序横轴 / 不要分组）、文字格用既有的 `answers.cells`、表头行用既有的 `header_rows`——没有另造一套参数。`render` 进幂等摘要。
+* **响应的 `roles`**（懒模式在 `candidates` 与 `nothing` 里都有）：`{x, y: [..], group, facet, unit, options: {x: [..], y: [..], group: [..]}}`，`options` 是每个角色此刻可换成的列，供下拉。列角色只有一处定义（`_resolve_roles`），`options` 由它出，不在 propose 里另算。
+* **缩略图懒渲染**：懒模式只写脚本与公共模块（毫秒级），不渲染；每项 `thumbnail_status: "pending"`（旧模式一律 `"ready"`）。渲染在 `GET .../thumbnail/<session>/<id>` 时做：该项没画就画并等它画完再回图（200）；**同一项并发取图只画一次**（项上的锁），画好的不重画；全进程同时在画的缩略图受 `MAX_PARALLEL = 2` 限（与旧模式同一上限，池的存活 worker 数有上限，再多会互相回收），先到先画，前端先取推荐那张。画不出（渲染失败 / 超时 / 缩略图取不到 / 被绊线拦下 / 指纹对不上）→ **422 `propose_thumbnail_failed`**，`params.reason` 是 `DROP_REASONS` 里的码，结果记在项上、不重画；唯一的重试：`candidate_render_failed`（池在内存吃紧时回收刚起的 worker 也落在这个码里，可能是瞬时的）自动再画一次。「渲染失败的备选不进列表」的保证在懒模式下落成两条：该项取图 422、**提交该项 404 `propose_candidate_unknown`**（失败的不许落盘）。列表顺序稳定（推荐标记永远在第一项），推荐落在失败项上时由前端把推荐挪给下一张可用的。模板不认的配方（`candidate_template_unsupported`）仍在 `dropped`，不进列表。
+
 ## 文本表格：`.txt` / `.dat` / 嗅探 / 表头行覆盖 / 千分位（`ai_data_figure.read_text_table`）
 
 第一版只做文本格式（`.mat` / `.npy` / HDF5 等二进制以后再说；`.xlsx` 读法不动）。整件事在 `ai.taf.enabled` 后面；v1（`inspect_data_source` 默认分支、v1 模板的 `_cell`）**逐字不变**——新读法只在 `v2=True` 时启用。
