@@ -82,9 +82,15 @@ def fixture_catalog() -> dict:
                         "src": "s2",
                         "quote": "FIXTURE at least 600 dpi",
                         "qualifier": "min",
+                        "strength": "recommended",
                         "stage": "submission",
                     },
-                    "line_widths_pt": {"value": [0.5, 1.0], "src": "s2", "quote": "FIXTURE lines"},
+                    "line_widths_pt": {
+                        "value": [0.5, 1.0],
+                        "src": "s2",
+                        "quote": "FIXTURE lines",
+                        "strength": "required",
+                    },
                     "severity.page-width": {
                         "value": "error",
                         "src": "s1",
@@ -407,6 +413,7 @@ def invalid_cases() -> list[dict]:
             "journal_alias_conflict",
             _set(["journals", "fx-beta", "aliases"], ["FXA"]),
         ),
+        ("rule-strength-unknown", "journal_catalog_schema", _set([*_W1, "strength"], "must")),
         ("rule-value-null", "journal_rule_value_missing", _set([*_W1, "value"], None)),
         ("rule-no-src", "journal_rule_src_missing", _del([*_W1, "src"])),
         ("rule-src-unknown", "journal_rule_src_unknown", _set([*_W1, "src"], "s404")),
@@ -737,6 +744,7 @@ def build() -> dict:
         "constants": {
             "info_ids": list(journals.INFO_IDS),
             "qualifiers": list(journals.QUALIFIERS),
+            "strengths": list(journals.STRENGTHS),
             "stages": list(journals.STAGES),
             "coverages": list(journals.COVERAGES),
             "exact_only_paths": list(journals.EXACT_ONLY_PATHS),

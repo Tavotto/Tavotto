@@ -768,6 +768,8 @@ def python_version_of(python: str) -> str:
 ENVS_DIRNAME = "envs"
 GEN_STATE_INCOMPLETE = STATE_INCOMPLETE
 GEN_STATE_READY = STATE_READY
+#: 建一代时 worker 自检没过的 `incomplete_reason`（`deprepair.managed_selftest_failed` 读它，写读同一个常量）
+REASON_SELFTEST_FAILED = "worker 自检未通过"
 GEN_STATE_RETIRED = "retired"
 #: 旧布局那一份 venv 的隐式代号（只用于 manifest 里没有 `generations` 时的兼容）。
 LEGACY_GENERATION = "legacy"

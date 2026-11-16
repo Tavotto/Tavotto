@@ -279,3 +279,10 @@ Agent 宿主（Codex / Claude Code 插件、MCP 等）与 app 走**同一套接�
 * **顶栏期刊胶囊**：文档名后一枚中性胶囊显示期刊名，点开设置 › 期刊规范；窄于 900 只留图标。
 * **不做（登记）**：图高上限（`info.max_height_mm`，种子里 5 本）仍只展示——要进判据得新增检查 id、两侧求值器与 golden 向量，并把数据从 `info` 搬进 `rules`（§3b 留的路），另起 PR；
   不在画布属性栏另起一处「超高」提示（「这份项目有什么问题」只有一条链）。
+
+## 13. 修订记录：规则带原文语气 `strength`（2026-11-15，用户拍板）
+
+* **口径**：期刊规则按原文语气记——must / required 记 `required`，should 记 `recommended`，prefer 记 `preferred`，are accepted 记 `permitted`，e.g. / such as 记 `example`，usually 记 `typical`，都没有记 `unspecified`。取代 11-06 的「should + 数值算硬性要求」。语气由两个模型独立判、一致才写入数据；不一致不写，界面就不标。
+* **字段**：每条规则可选 `strength`，闭集与 journal facts v2 的 strength 相同（`required|recommended|preferred|permitted|typical|example|unspecified`），非法值报 `journal_catalog_schema`；缺省 = 不显示标签。精简出处 `JournalFieldSource` 原样保存，已定稿项目离线也看得到。严格同源对：`journals.py` / `journals.ts` 的 `STRENGTHS`。
+* **只管显示，不管判定**：`strength` 与 `qualifier` 正交——折叠、预检判据、严重级别、导出初值、golden 提示文本都不看 `strength`（用户 2026-11-15：照旧报警 + 加标签）。旧客户端忽略未知字段，目录可以先于客户端带上它。
+* **界面**：只给 `required` 标「必须」、`recommended` 标「建议」，小号次级灰字跟在要求清单的值后面、出处卡结论后面；不加底色、不另起行。预检问题行本身不加字（行文已会截断），点开出处卡可见。其余取值暂不显示。

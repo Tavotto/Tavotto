@@ -166,6 +166,24 @@ def test_inspect_endpoint_refuses_danger_and_outside_paths(project):
     assert client.get("/api/svg/chart/inspect?id=img.png").status_code == 422
 
 
+@pytest.mark.parametrize(
+    "svg",
+    [
+        # 单边显式尺寸 + viewBox 宽为 0：算宽高比时曾除零 → 500
+        b'<svg xmlns="http://www.w3.org/2000/svg" width="72pt" viewBox="0 0 0 50"/>',
+        # 只给 height + viewBox 高为 0：同一处除零
+        b'<svg xmlns="http://www.w3.org/2000/svg" height="72pt" viewBox="0 0 100 0"/>',
+    ],
+)
+def test_inspect_endpoint_refuses_zero_viewbox_extents(project, svg):
+    """viewBox 宽/高为 0 是 422 svg_dimensions，不是 500 除零（两端同一条口径）。"""
+    client, root = project
+    (root / "zero.svg").write_bytes(svg)
+    response = client.get("/api/svg/chart/inspect?id=zero.svg")
+    assert response.status_code == 422
+    assert response.json["code"] == "svg_dimensions"
+
+
 def test_inspect_endpoint_never_modifies_the_source(project):
     client, root = project
     before = (root / "chart.svg").read_bytes()

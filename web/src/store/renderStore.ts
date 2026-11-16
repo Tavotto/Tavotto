@@ -313,7 +313,7 @@ export function settleRenderFailureToast(pj: string | null | undefined, fileId: 
 /** 诊断用：这次渲染是怎么被触发的。**与渲染行为无关**，只进 trace */
 export type RenderRequestPolicy = 'immediate' | 'defer' | 'none' | 'sync'
 
-interface RenderState {
+export interface RenderState {
   /** 键见 renderKey()：一个面板变体一条 */
   byKey: Record<string, PanelRender>
   /**

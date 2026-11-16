@@ -277,9 +277,6 @@ class V1Handler:
         if cmd == "cancel":
             return self.cancel(payload)
 
-        if cmd in self.unbuilt_commands():
-            return self.handle_extra(cmd, req, payload)
-
         existing_command = {
             "render_existing": "render",
             "export_existing": "export",
@@ -291,6 +288,8 @@ class V1Handler:
             self.require_existing_figure(req.get("stem"))
             # Reuse the same renderer, patch validation, timings and response shape.
             cmd = existing_command
+        if cmd in self.unbuilt_commands():
+            return self.handle_extra(cmd, req, payload)
 
         patches = payload.get("patches", [])
         if cmd in PATCH_COMMANDS and not isinstance(patches, list):
@@ -325,7 +324,13 @@ class V1Handler:
                     "An already built Figure session is required for SVG capture.",
                 )
         else:
-            self.ensure_built(timings)
+            try:
+                self.ensure_built(timings)
+            except ProtocolError as exc:
+                # 脚本失败时它从项目外加载过的本地模块也带回去（诊断包「脚本源码」用；已有的键不覆盖）
+                for key, value in getattr(self, "external_module_facts", lambda: {})().items():
+                    exc.extra.setdefault(key, value)
+                raise
         if cmd == "build":
             return {**self.build_result(timings), "timings": timings}
         if cmd not in V1_COMMANDS:
