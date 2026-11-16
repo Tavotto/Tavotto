@@ -1317,6 +1317,44 @@ def _call_fix_to_journal(args: dict) -> dict:
     return {"content": content, "structuredContent": out}
 
 
+FIX_BLOCKING_SHOWN = 6
+
+
+def _fix_failure_lines(out: dict) -> list[str]:
+    """没修成时说清卡在哪一步、卡住的是哪几个元素、下一步怎么走——只给 exit 码，Agent 只能去猜。"""
+    stage = out.get("stage")
+    detail = out.get("detail") or {}
+    if stage == "recheck":
+        items = (out.get("issues") or {}).get("introduced") or []
+    else:
+        items = list(detail.get("blocking") or []) + list(detail.get("unresolved") or [])
+    lines: list[str] = []
+    if stage == "size":
+        target = (out.get("size") or {}).get("target") or {}
+        want = " × ".join(
+            f"{'宽' if k == 'width_mm' else '高'} {v:g} mm" for k, v in target.items()
+        )
+        lines.append(f"卡在改图幅这一步（目标 {want or '期刊栏宽'}），改完下面这些会出界或重叠：")
+    elif stage == "panel":
+        lines.append("图幅改好了，但面板内的字号 / 线宽改不到合规，卡住的是：")
+    elif stage == "recheck":
+        lines.append("改完复检时新出了下面这些问题，所以整步撤回：")
+    for i in items[:FIX_BLOCKING_SHOWN]:
+        gids = "、".join((i.get("gids") or ([i["gid"]] if i.get("gid") else []))[:3])
+        text = i.get("text") or i.get("rule") or i.get("id")
+        lines.append(f"  ✗ {text}" + (f"［{gids}］" if gids else ""))
+    if len(items) > FIX_BLOCKING_SHOWN:
+        lines.append(f"  ……共 {len(items)} 条，全部在 detail 里。")
+    if stage == "size":
+        lines.append(
+            "Tavotto 改图幅时挪不动这些元素（常见于 fig.add_axes 摆的内嵌图、手写坐标的文字）。"
+            '下一步：回脚本把 figsize 直接设成目标尺寸（mm ÷ 25.4 = 英寸），用 layout="constrained" '
+            "或 tight_layout 重排；跑一遍脚本，tavotto_refresh_project 后重新打开再调本工具。"
+            "图幅不要用 tavotto_apply_overrides 硬改。"
+        )
+    return lines
+
+
 def fix_report_lines(out: dict) -> list[str]:
     """念给用户听的那一份：结局、图幅、改了什么、还剩什么、没修的与原因、导出。"""
     exit_code = out.get("exit")
@@ -1337,6 +1375,7 @@ def fix_report_lines(out: dict) -> list[str]:
             f"一步改到合规**未完成**（{exit_code}{'/' + out['reason'] if out.get('reason') else ''}）："
             "会话已回到修改前，没有写出任何文件。"
         )
+        lines.extend(_fix_failure_lines(out))
     elif exit_code == "nothing_to_do":
         lines.append("没有需要改的地方；会话未变。" + dry)
     else:
