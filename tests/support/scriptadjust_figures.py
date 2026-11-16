@@ -9,7 +9,7 @@ from __future__ import annotations
 
 SCRIPT_NAME = "fig_scriptadjust.py"
 ENTRY = "main"
-STEMS: tuple[str, ...] = ("AdjLegend", "AdjProxy", "AdjGrid", "AdjGrid3D")
+STEMS: tuple[str, ...] = ("AdjLegend", "AdjProxy", "AdjGrid", "AdjGrid3D", "AdjSeries")
 
 LIBRARY = """\\
 import numpy as np
@@ -58,4 +58,14 @@ def main():
     ax3 = fig.add_subplot(projection="3d")
     ax3.plot(x, np.sin(x), np.cos(x), color="#336699")
     fig.savefig("AdjGrid3D.pdf")
+
+    # ---- AdjSeries：茎压在图例框上 ----
+    # 图例框的层级是 5、茎默认 2，在框下面；整图扫描把茎的 zorder 抬到 7.5，茎才压到框上。InvCont 里茎离图例很远，
+    # 层级那一条在那里是隐形的（变异实测：写成常量扫描仍然绿）。
+    fig, ax = plt.subplots(figsize=(4.4, 3.2))
+    ax.stem([0.8, 1.6, 5.2, 5.7, 6.2], [1.0, 1.8, 3.3, 3.4, 3.5], label="stems")
+    ax.set_xlim(0.2, 6.8)
+    ax.set_ylim(0.0, 3.7)
+    ax.legend(loc="upper right")
+    fig.savefig("AdjSeries.pdf")
 """
