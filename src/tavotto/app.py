@@ -14278,6 +14278,13 @@ def _journal_facts_error(exc: engine_journalfacts_remote.FactsError):
 
 
 def _journal_facts_request(kind: str):
+    from .engine import journals as engine_journals
+
+    # Same master switch as the MCP tool and the settings viewer (ADR 0155 section 9).
+    if not engine_journals.agents_enabled():
+        return _journal_facts_response(
+            {"code": "journal_catalog_disabled", "error": "期刊标准库入口尚未开放"}, 403
+        )
     body = request.get_json(silent=True)
     common = {"offset", "limit", "locale", "expected_catalog_rev"}
     extra = {"query"} if kind == "search" else {"journal_id", "inspection"}

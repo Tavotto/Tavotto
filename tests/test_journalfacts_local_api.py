@@ -30,6 +30,28 @@ def test_v2_endpoints_require_real_session_guard(http_client, monkeypatch):
         assert res.status_code == 401 and res.json["code"] == "session_auth_required"
 
 
+def test_v2_endpoints_follow_the_journal_catalog_master_switch(http_client, monkeypatch):
+    from tavotto.engine import journals
+
+    client, headers = http_client
+    monkeypatch.setattr(
+        facts, "search", lambda *args, **kwargs: pytest.fail("read while the switch is off")
+    )
+    monkeypatch.setattr(
+        facts, "get_facts", lambda *args, **kwargs: pytest.fail("read while the switch is off")
+    )
+    monkeypatch.setattr(journals, "JOURNAL_CATALOG_AGENTS", False)
+    for path in ("/api/journal-facts/search", "/api/journal-facts/journal"):
+        res = client.post(path, json={}, headers=headers)
+        assert res.status_code == 403 and res.json["code"] == "journal_catalog_disabled"
+    monkeypatch.setattr(journals, "JOURNAL_CATALOG_AGENTS", True)
+    monkeypatch.setattr(
+        facts, "search", lambda *args, **kwargs: {"journals": [], "next_offset": None}
+    )
+    res = client.post("/api/journal-facts/search", json={}, headers=headers)
+    assert res.status_code == 200
+
+
 def test_real_signed_reader_preserves_sources_inspection_and_revision(
     http_client, isolated, monkeypatch
 ):

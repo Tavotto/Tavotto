@@ -3630,6 +3630,7 @@ export default interface Resources {
       "invalid_purpose": "渲染请求的用途参数无效：{{value}}，请刷新页面后重试。",
       "invalid_scale": "面板缩放比无效：{{value}}",
       "invalid_width": "宽度应为整数：{{value}}",
+      "journal_catalog_disabled": "期刊标准库入口尚未开放。",
       "layer_role_invalid": "叠在一起的几层搭配不对。",
       "layout_outside_project": "排版文件只能保存在当前项目的 tavottofile/ 文件夹里；那里指向了项目外（符号链接），这次没有写入。",
       "layout_read_only": "项目文件夹是只读的，排版没有存进项目。改动仍在本机，可以另存到别处或检查文件夹权限。",
