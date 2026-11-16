@@ -947,7 +947,9 @@ def test_legacy_form_refuses_to_reuse_a_saved_key_on_a_new_origin(client, gw):
     moved = {k: v for k, v in body.items() if k != "api_key"}
     moved["base_url"] = "https://other-host.example.test/v1"
     r = client.put("/api/ai/endpoints", json=moved)
-    assert r.status_code == 400 and r.get_json()["code"] == "key_origin_mismatch"
+    out = r.get_json()
+    assert r.status_code == 400 and out["code"] == "endpoint_invalid"
+    assert out["params"] == {"reason": "key_origin_mismatch"}
     assert len(gw.calls) == n
     assert ai_providers.get("relay")["base_url"] == "https://relay.example.test/v1"
     # 同源换路径、Key 留空：照常保存

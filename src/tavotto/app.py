@@ -14291,7 +14291,7 @@ def api_ai_endpoint_save():
     ):
         # Key 留空 = 沿用已存的 Key：换了来源就不许沿用（否则存完的探测 / 之后每次任务都把旧 Key 发给新主机；
         # 与 POST /api/ai/connections、型号清单同一条 key_origin_mismatch 规矩，Codex #1965 P1）
-        return jsonify({"error": "地址改了，请重新填写密钥。", "code": "key_origin_mismatch"}), 400
+        return _connection_error(engine_ai_connections._invalid("key_origin_mismatch"))
     try:
         after = engine_ai_providers.save(body)
     except (ValueError, OSError) as exc:
