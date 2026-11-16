@@ -626,9 +626,15 @@ _HELD_OUT_KEYED: dict[str, dict[tuple[str, str], object]] = {
     "cb_clim": {("colorbar", "vmin"): None, ("colorbar", "vmax"): None},
     "cb_cmap": {("colorbar", "cmap"): None},
     "cb_outline": {("colorbar", "outline_visible"): None},
+    # 柱系列（广播）与单根柱（窄条目，ADR 0171 修订 ⑤）：同扫的话每根柱自己的设定把系列的同名键整个盖住，广播那条等于没验；
+    # 显隐再各拆一组（隐藏时两边一样什么都画不出来）
+    "bar_series": {("bar_series", p): None for p in scriptadjust._BAR_BROADCAST if p != "visible"},
+    "bar_each": {("bar", p): None for p in scriptadjust._BAR_BROADCAST if p != "visible"},
+    "bar_series_visible": {("bar_series", "visible"): None},
+    "bar_each_visible": {("bar", "visible"): None},
 }
 _HELD_OUT_KEYS = {("ticklabel", "text"), ("ticks", "major_values")} | {
-    k for g, d in _HELD_OUT_KEYED.items() if g.startswith("cb_") for k in d
+    k for g, d in _HELD_OUT_KEYED.items() if g.startswith(("cb_", "bar_")) for k in d
 }
 _GROUPS: dict[str, tuple[set[str] | None, dict | None]] = {
     **{g: (props, None) for g, props in _HELD_OUT.items()},
@@ -648,6 +654,11 @@ _DEDICATED: dict[tuple[str, str], str] = {
     ("ticks", "fontfamily"): "test_font_edits_replay_identically",
     ("axes", "invert_x"): "test_inverted_axes_replay_identically",
     ("axes", "invert_y"): "test_inverted_axes_replay_identically",
+    # 改名不动像素也不动几何（脚本的图例在 savefig 之前就建好了），整图扫描对它是隐形的：变异实测写成常量仍然绿
+    **{
+        (cls, "label"): "test_renames_reach_the_objects"
+        for cls in ("line", "collection", "bar_series", "stem_series")
+    },
 }
 
 
@@ -842,6 +853,21 @@ def _written_keys(
     }
 
 
+#: prop → 它依赖的公开 API（`模块:类.方法`）。引擎同样按 `hasattr` 判（`overrides` 的 hatchcolor 一族：
+#: `set_hatchcolor` 3.11 起才有），旧版 matplotlib 上 manifest 不发这条字段，扫描采不到不算漏验。
+_NEEDS_API = {"hatchcolor": "matplotlib.patches:Patch.set_hatchcolor"}
+
+
+def _worker_has(api: str) -> bool:
+    mod, attr = api.split(":")
+    cls, meth = attr.split(".")
+    code = f"import importlib; print(hasattr(getattr(importlib.import_module({mod!r}), {cls!r}), {meth!r}))"
+    out = subprocess.run(
+        [WORKER_PY, "-c", code], capture_output=True, encoding="utf-8", check=True, timeout=60
+    )
+    return out.stdout.strip().splitlines()[-1] == "True"
+
+
 @real_worker
 def test_every_writable_key_is_swept_or_named(tmp_path):
     """`WRITES` 的每个键都在某张图上真被采样验证过，或者点名了证明它的专用用例。
@@ -863,6 +889,8 @@ def test_every_writable_key_is_swept_or_named(tmp_path):
         finally:
             pool.discard(worker)
     missing = set(scriptadjust.WRITES) - covered - set(_DEDICATED)
+    # 要较新 matplotlib 才有的 prop：引擎按同一条公开 API 是否存在决定发不发字段，这一档没有就采不到
+    missing -= {k for k in missing if k[1] in _NEEDS_API and not _worker_has(_NEEDS_API[k[1]])}
     assert not missing, f"写进了脚本、却既没被扫描采到也没点名专用用例：{sorted(missing)}"
     for key, test in _DEDICATED.items():
         assert callable(globals().get(test)), f"{key} 点名的用例 {test} 不存在"
@@ -1027,6 +1055,40 @@ def project(tmp_path, monkeypatch):
 @pytest.fixture
 def cbar_project(tmp_path, monkeypatch):
     m, figs = _open_project(tmp_path, monkeypatch, CBAR_SCRIPT)
+    try:
+        yield m.app.test_client(), figs
+    finally:
+        _close_project(m, figs)
+
+
+#: 柱系列 + 误差棒 + 茎叶 + 散点 + 图例：容器的 gid 按 `ax.containers` 的顺序编号（柱系列 0、误差棒 1、茎叶 2）
+SERIES_SCRIPT = """\
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+
+def main():
+    with open("points.csv", encoding="utf-8") as fh:
+        ys = [float(v) for v in fh.read().split(",")]
+    fig, ax = plt.subplots(figsize=(3.6, 2.6))
+    ax.bar(range(len(ys)), ys, label="bars")
+    ax.errorbar(range(len(ys)), ys, yerr=0.8, capsize=3, label="spread")
+    ax.stem(range(len(ys)), [v / 2 for v in ys], label="stems")
+    ax.scatter(range(len(ys)), ys, s=20, label="dots")
+    ax.legend(loc="upper left")
+    fig.savefig("Fig1.pdf")
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+@pytest.fixture
+def series_project(tmp_path, monkeypatch):
+    m, figs = _open_project(tmp_path, monkeypatch, SERIES_SCRIPT)
     try:
         yield m.app.test_client(), figs
     finally:
@@ -1277,6 +1339,10 @@ def test_grid_and_spine_edits_combine_like_the_editor(project, patches):
 
 
 _CB, _IM, _CB_YTICKS = "axes_1.colorbar", "axes_0.images_0", "axes_1.yticks"
+_BARS = "axes_0.barseries_0"
+_ERR = "axes_0.errorbar_1"
+_STEMS = "axes_0.stemseries_2"
+_DOTS = "axes_0.scatter_2"  # 误差棒的竖线、茎的竖线也在 ax.collections 里，占了 0、1 号
 
 
 @real_worker
@@ -1381,6 +1447,84 @@ def test_colorbar_edits_combine_like_the_editor(cbar_project, patches, residual)
     body = _export(client, patches, formats=[])
     assert body["status"] == "done", body
     assert _script_output(body)["script_report"]["written"] == len(patches) - residual
+
+
+@real_worker
+@pytest.mark.parametrize(
+    "patches",
+    [
+        # 柱系列在前 / 单根柱在前：窄的（单根柱）都要盖住广播（柱系列），与列表顺序无关
+        [
+            {"gid": _BARS, "prop": "facecolor", "value": "#2ca02c"},
+            {"gid": f"{_BARS}.bar_1", "prop": "facecolor", "value": "#d62728"},
+        ],
+        [
+            {"gid": f"{_BARS}.bar_1", "prop": "facecolor", "value": "#d62728"},
+            {"gid": _BARS, "prop": "facecolor", "value": "#2ca02c"},
+        ],
+        # 第一根柱是图例色块的来源：改它，图例里的色块跟着变
+        [
+            {"gid": f"{_BARS}.bar_0", "prop": "facecolor", "value": "#9467bd"},
+            {"gid": f"{_BARS}.bar_0", "prop": "hatch", "value": "//"},
+            {"gid": _BARS, "prop": "edgecolor", "value": "#222222"},
+            {"gid": _BARS, "prop": "bar_width", "value": 0.5},
+        ],
+        # 误差棒改色 / 横杠，图例里那一格跟着变（引擎从源重新派生；脚本里靠整份重排，不用图例自己改任何东西）
+        [
+            {"gid": _ERR, "prop": "color", "value": "#d62728"},
+            {"gid": _ERR, "prop": "capsize", "value": 7.0},
+        ],
+        # 同时改图例间距（整份重排）：误差棒的修改在重排之前、重排只落一回，不论列表里谁先谁后
+        [
+            {"gid": _ERR, "prop": "color", "value": "#d62728"},
+            {"gid": "axes_0.legend", "prop": "borderpad", "value": 1.5},
+        ],
+        [
+            {"gid": "axes_0.legend", "prop": "borderpad", "value": 1.5},
+            {"gid": _ERR, "prop": "linewidth", "value": 3.0},
+            {"gid": _ERR, "prop": "alpha", "value": 0.5},
+        ],
+        # 茎叶、散点的示意线一格不止一个 artist / 大小现算：同样靠整份重排
+        [
+            {"gid": _STEMS, "prop": "color", "value": "#9467bd"},
+            {"gid": _STEMS, "prop": "markersize", "value": 10.0},
+            {"gid": _DOTS, "prop": "size", "value": 90.0},
+        ],
+        [
+            {"gid": _DOTS, "prop": "marker", "value": "s"},
+            {"gid": _STEMS, "prop": "linestyle", "value": "--"},
+            {"gid": _ERR, "prop": "cap_thickness", "value": 2.5},
+        ],
+        # 改名：系列的名字挪到最后落，不影响前面按名字找图例色块的语句
+        [
+            {"gid": _BARS, "prop": "label", "value": "renamed"},
+            {"gid": _BARS, "prop": "facecolor", "value": "#2ca02c"},
+            {"gid": _ERR, "prop": "visible", "value": False},
+        ],
+        # 茎叶改名带改色：改色要重排图例（从源按名字收集），改名得排在重排之后
+        [
+            {"gid": _STEMS, "prop": "label", "value": "renamed"},
+            {"gid": _STEMS, "prop": "color", "value": "#9467bd"},
+        ],
+    ],
+    ids=[
+        "series-then-bar",
+        "bar-then-series",
+        "first-bar-feeds-the-legend",
+        "errorbar-alone-legend-follows",
+        "errorbar-then-legend",
+        "legend-then-errorbar",
+        "stem-and-scatter-legend-follow",
+        "scatter-marker-stem-style",
+        "rename-last",
+        "stem-rename-with-restyle",
+    ],
+)
+def test_series_edits_combine_like_the_editor(series_project, patches):
+    client, _figs = series_project
+    body = _export(client, patches, formats=[])
+    assert body["status"] == "done", body
+    assert _script_output(body)["script_report"]["written"] == len(patches)
 
 
 def test_one_rebuild_per_legend():
@@ -1624,6 +1768,35 @@ def test_label_visibility_of_a_tick_set_the_manifest_dropped_is_still_written():
     assert "_TickSet(_ax(fig, 0), 'y').params(labelleft=False)" in text
 
 
+def test_class_of_a_tick_set_the_manifest_dropped_is_ticks():
+    """类别只在 `_cls_of` 推断：刻度组缺席时 `_statement`、档位、去重问的是同一处，刻度定位排在坐标范围之后（Codex P2）。"""
+    assert scriptadjust._cls_of("axes_0.xticks", None) == "ticks"
+    assert scriptadjust._cls_of("axes_0.title", None) is None
+    els = [{"gid": "axes_0", "role": "axes", "editable": []}]
+    edits = [
+        {"gid": "axes_0.xticks", "prop": "major_mode", "value": "fixed"},
+        {"gid": "axes_0", "prop": "xlim", "value": [0, 9]},
+    ]
+    out = scriptadjust.build(b"import os\n", "Fig1", edits, {"elements": els}, version="9.9")
+    text = out.data.decode()
+    assert out.written == 2 and text.index("set_xlim") < text.index("_tick_model(_ax(fig, 0)")
+
+
+@real_worker
+def test_frozen_ticks_follow_the_final_view_when_their_group_left_the_manifest(project):
+    """先设 fixed 不给值、隐藏全部刻度文字（刻度组量不出几何、从 manifest 里掉了）、再改 xlim、开着网格：
+    定位必须排在 xlim 之后，否则按旧范围冻结，网格线对不上（Codex P2）。"""
+    client, _figs = project
+    patches = [
+        {"gid": "axes_0.xticks", "prop": "major_mode", "value": "fixed"},
+        {"gid": "axes_0.xticks", "prop": "visible", "value": False},
+        {"gid": "axes_0", "prop": "xlim", "value": [-3.0, 9.0]},
+        {"gid": "axes_0", "prop": "grid_x", "value": True},
+    ]
+    body = _export(client, patches, formats=[])
+    assert body["status"] == "done", body
+
+
 @real_worker
 def test_script_order_matches_the_engines_apply_order():
     """脚本里的先后与 `overrides._apply_rank` 对账：刻度类型 -> 坐标范围 -> 刻度定位 -> 单条刻度文字。
@@ -1640,10 +1813,10 @@ def test_script_order_matches_the_engines_apply_order():
     )
     engine = json.loads(out.stdout.strip().splitlines()[-1])
     script = [
-        scriptadjust._rank("xscale", "_ax(fig, 0).set_xscale('log')"),
-        scriptadjust._rank("xlim", "_ax(fig, 0).set_xlim(1, 9)"),
-        scriptadjust._rank("major_step", "_tick_model(_ax(fig, 0), 'x', {})"),
-        scriptadjust._rank("text", "_tick_text(_ax(fig, 0), 'x', 1, 'a')"),
+        scriptadjust._rank("xscale", None),
+        scriptadjust._rank("xlim", None),
+        scriptadjust._rank("major_step", "tick_model"),
+        scriptadjust._rank("text", "tick_text"),
     ]
     assert engine == sorted(set(engine)) and script == sorted(set(script)), (engine, script)
 
@@ -1774,6 +1947,192 @@ def _run_exported(path: Path, tmp_path: Path, trailer: str) -> str:
         encoding="utf-8",
     )
     return out.stdout
+
+
+def _hot(worker, stem, patches):
+    from tavotto import app
+
+    return app._hot_manifest(worker, stem, patches)
+
+
+@real_worker
+@pytest.mark.parametrize("gid", ["axes_0.collections_0", "axes_1.collections_0"], ids=["a", "b"])
+def test_shared_norm_meshes_keep_their_colour_map_for_the_replay(tmp_path, gid):
+    """共用同一份 norm 的网格是一个色阶（`scale_gids`）：换色图公开 API 写不出「谁是兄弟」，与色条一侧同一条规矩，留作重放。"""
+    worker, name = _library_worker(tmp_path, "inv")
+    try:
+        patches = [{"gid": gid, "prop": "cmap", "value": "plasma"}]
+        worker.override("InvShared", patches)
+        hot = _hot(worker, "InvShared", patches)
+        adjusted = scriptadjust.build(
+            (tmp_path / name).read_bytes(), "InvShared", patches, hot, version="9.9"
+        )
+        worker.override("InvShared", [])
+        assert adjusted.written == 0 and adjusted.residual == patches
+    finally:
+        pool.discard(worker)
+
+
+def _line_el(i: int, label: str) -> dict:
+    return {
+        "gid": f"axes_0.lines_{i}",
+        "role": "line",
+        "label": label,
+        "editable": [{"prop": "label", "value": label, "value_original": label}],
+    }
+
+
+def test_chained_renames_are_one_statement():
+    """A→B 与 B→C 分成两条语句时，第二条按原 label「B」找会撞上刚改好的那条（Codex P1）：合成一条，先认全再改。"""
+    man = {"elements": [_line_el(0, "A"), _line_el(1, "B")]}
+    patches = [
+        {"gid": "axes_0.lines_0", "prop": "label", "value": "B"},
+        {"gid": "axes_0.lines_1", "prop": "label", "value": "C"},
+    ]
+    out = scriptadjust.build(b"import os\n", "Fig1", patches, man, version="9.9")
+    text = out.data.decode()
+    assert out.written == 2 and "def _tavotto_0(" in text and "def _tavotto_1(" not in text
+    assert "_rename(fig, [" in text
+
+
+TWO_LINES_SCRIPT = """\
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+
+def main():
+    fig, ax = plt.subplots(figsize=(3.2, 2.4))
+    ax.plot([0, 1, 2], [0, 1, 0], label="A")
+    ax.plot([0, 1, 2], [1, 0, 1], label="B")
+    ax.set_title("T")
+    fig.savefig("Fig1.pdf")
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+@pytest.fixture
+def two_lines_project(tmp_path, monkeypatch):
+    m, figs = _open_project(tmp_path, monkeypatch, TWO_LINES_SCRIPT)
+    try:
+        yield m.app.test_client(), figs
+    finally:
+        _close_project(m, figs)
+
+
+@real_worker
+def test_chained_renames_land_on_the_right_lines(two_lines_project, tmp_path):
+    client, _figs = two_lines_project
+    patches = [
+        {"gid": "axes_0.lines_0", "prop": "label", "value": "B"},
+        {"gid": "axes_0.lines_1", "prop": "label", "value": "C"},
+    ]
+    body = _export(client, patches, formats=[])
+    assert body["status"] == "done", body
+    out = Path(body["export_dir"]) / "Fig1_edited.py"
+    trailer = (
+        "\nimport matplotlib.pyplot as plt\n"
+        "print([ln.get_label() for ln in plt.gcf().axes[0].lines])\n"
+    )
+    assert _run_exported(out, tmp_path, trailer).strip() == "['B', 'C']"
+
+
+@real_worker
+def test_user_text_that_looks_like_generated_code_changes_nothing(two_lines_project, tmp_path):
+    """用户写的文字（改名、标题）里带着生成语句的片段（`.set_label(`、`_legend_rebuild(`）：
+    不许从语句文本里切东西、也不许按语句文本判档（Codex P2）。"""
+    client, _figs = two_lines_project
+    name = "B.set_label(C"
+    title = "x _legend_rebuild( y .set_label( z"
+    patches = [
+        {"gid": "axes_0.lines_0", "prop": "label", "value": name},
+        {"gid": "axes_0.lines_1", "prop": "label", "value": "_tick_model("},
+        {"gid": "axes_0.title", "prop": "text", "value": title},
+    ]
+    body = _export(client, patches, formats=[])
+    assert body["status"] == "done", body
+    assert _script_output(body)["script_report"]["written"] == 3
+    out = Path(body["export_dir"]) / "Fig1_edited.py"
+    trailer = (
+        "\nimport matplotlib.pyplot as plt\n"
+        "ax = plt.gcf().axes[0]\n"
+        "print([ln.get_label() for ln in ax.lines], ax.get_title())\n"
+    )
+    assert _run_exported(out, tmp_path, trailer).strip() == f"{[name, '_tick_model(']} {title}"
+
+
+@real_worker
+def test_rename_of_a_line_with_a_replayed_drag_is_left_for_the_replay(two_lines_project):
+    """线有 label 又被拖动（`pos_frac` 留作重放、带改名前的 `identity`）：改名写进脚本后重放认不出这条线，
+    引擎拒绝拖动、整份不交付（Codex P2）。改名一起留作重放。"""
+    import hashlib
+
+    client, _figs = two_lines_project
+    identity = "l1:" + hashlib.sha256(b"A").hexdigest()[:16]
+    patches = [
+        {"gid": "axes_0.lines_0", "prop": "label", "value": "renamed", "identity": identity},
+        {"gid": "axes_0.lines_0", "prop": "pos_frac", "value": [0.4, 0.4], "identity": identity},
+        {"gid": "axes_0.lines_1", "prop": "label", "value": "other"},
+    ]
+    body = _export(client, patches, formats=[])
+    assert body["status"] == "done", body
+    report = _script_output(body)["script_report"]
+    assert ("axes_0.lines_0", "label") in {(i["gid"], i["prop"]) for i in report["skipped"]}
+    assert report["written"] == 1  # 另一条线的改名照写
+
+
+@real_worker
+def test_renames_reach_the_objects(tmp_path):
+    """`label` 在整图扫描里是隐形的，这里直接跑导出的脚本、读各对象最后的 label。
+
+    同一条曲线上改名带改色：曲线靠原 label 认（`_line`），改名排在所有语句之后，颜色才落得上。
+    """
+    from tavotto import app
+
+    worker, name = _library_worker(tmp_path, "inv")
+    try:
+        src = (tmp_path / name).read_bytes()
+        for stem, patches in (
+            (
+                "InvMix",
+                [
+                    {"gid": "axes_0.lines_0", "prop": "label", "value": "new-line"},
+                    {"gid": "axes_0.lines_0", "prop": "color", "value": "#d62728"},
+                    {"gid": "axes_0.scatter_0", "prop": "label", "value": "new-scatter"},
+                    {"gid": "axes_0.scatter_1", "prop": "label", "value": "new-mapped"},
+                ],
+            ),
+            (
+                "InvCont",
+                [
+                    {"gid": "axes_0.stemseries_0", "prop": "label", "value": "new-stems"},
+                    {"gid": "axes_0.barseries_1", "prop": "label", "value": "new-bars"},
+                ],
+            ),
+        ):
+            assert not (worker.override(stem, patches).get("warnings") or [])
+            hot = app._hot_manifest(worker, stem, patches)
+            worker.override(stem, [])
+            adjusted = scriptadjust.build(src, stem, patches, hot, version="9.9")
+            assert adjusted.written == len(patches) and not adjusted.residual
+            src = adjusted.data  # 第二张图在第一张的块之后再追加一块
+    finally:
+        pool.discard(worker)
+    edited = tmp_path / "edited_labels.py"
+    edited.write_bytes(src)
+    trailer = (
+        "\nmain()\nimport matplotlib.pyplot as plt\n"
+        "mix, cont = (plt.figure(n).axes[0] for n in plt.get_fignums()[:2])\n"
+        "print(mix.lines[0].get_label(), mix.lines[0].get_color(), mix.collections[0].get_label(),"
+        " mix.collections[1].get_label(), cont.containers[0].get_label(),"
+        " cont.containers[1].get_label())\n"
+    )
+    got = _run_exported(edited, tmp_path, trailer).split()
+    assert got == ["new-line", "#d62728", "new-scatter", "new-mapped", "new-stems", "new-bars"]
 
 
 @real_worker

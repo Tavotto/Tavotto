@@ -60,6 +60,9 @@ _ROLE_CLS = {
     "collection": "collection",
     "linecoll": "linecoll",
     "bar_series": "bar_series",
+    "bar": "bar",
+    "errorbar": "errorbar",
+    "stem_series": "stem_series",
     "patch": "patch",
     "image": "image",
 }
@@ -114,6 +117,18 @@ def _narrower(r: dict, els: dict) -> set[tuple[str, str]]:
     return set()
 
 
+#: 柱系列的广播键：一次写系列里每一根柱，与单根柱（窄条目）同名同序（引擎 `ALIAS_GROUPS` 的 `bar_series` 一族，
+#: 窄的盖广播）。`label` / `bar_width` 不在其中：窄端没有对应的键。
+_BAR_BROADCAST = (
+    "facecolor",
+    "edgecolor",
+    "linewidth",
+    "hatch",
+    "hatch_linewidth",
+    "hatchcolor",
+    "alpha",
+    "visible",
+)
 #: 构建期参数：改了要整份重排图例（引擎 `legendmodel.rebuild_legend` 的那一组）。脚本里合成**一次**
 #: `ax.legend(...)`（`_legend_rebuild`），同一个图例上几条一起改也只重建一回。
 #: 条目顺序与条目显隐同是重建型，但不写（见 `NOT_WRITABLE`）。
@@ -170,6 +185,7 @@ WRITES: dict[tuple[str, str], str | None] = {
     ("line", "alpha"): "_with_legend({o}, lambda _a: _a.set_alpha({v}))",
     ("line", "visible"): "{o}.set_visible({v})",
     ("line", "zorder"): "{o}.set_zorder({v})",
+    ("line", "label"): "{o}.set_label({v})",
     ("legend", "visible"): "{o}.set_visible({v})",
     ("legend", "frameon"): "{o}.set_frame_on({v})",
     ("legend", "loc"): "{o}.set_loc({v})",
@@ -231,6 +247,14 @@ WRITES: dict[tuple[str, str], str | None] = {
     ("figure", "facecolor"): "{o}.set_facecolor({v})",
     **{("collection", p): t for p, t in _SHAPE.items()},
     **{("collection", p): t for p, t in _KEYED.items()},
+    ("collection", "label"): "{o}.set_label({v})",
+    ("collection", "linestyle"): "_with_legend({o}, lambda _a: _a.set_linestyle({v}))",
+    ("collection", "hatch"): "_with_legend({o}, lambda _a: _a.set_hatch({v}))",
+    ("collection", "size"): "{o}.set_sizes([{v}])",
+    ("collection", "marker"): "_scatter_marker({o}, {v})",
+    ("collection", "cmap"): "{o}.set_cmap({v})",
+    ("collection", "vmin"): "{o}.set_clim(vmin={v})",
+    ("collection", "vmax"): "{o}.set_clim(vmax={v})",
     ("linecoll", "color"): "{o}.set_color({v})",
     ("linecoll", "linewidth"): "{o}.set_linewidth({v})",
     ("linecoll", "linestyle"): "{o}.set_linestyle({v})",
@@ -240,9 +264,42 @@ WRITES: dict[tuple[str, str], str | None] = {
     **{("bar_series", p): t for p, t in _SHAPE.items()},
     **{("bar_series", p): t for p, t in _KEYED.items()},
     ("bar_series", "hatch"): "_with_legend({o}, lambda _a: _a.set_hatch({v}))",
+    ("bar_series", "hatch_linewidth"): "_with_legend({o}, lambda _a: _a.set_hatch_linewidth({v}))",
+    ("bar_series", "hatchcolor"): "_with_legend({o}, lambda _a: _a.set_hatchcolor({v}))",
+    ("bar_series", "bar_width"): "{o}.set_bar_width({v})",
+    ("bar_series", "label"): "{o}.set_label({v})",
+    # 单根柱：窄条目，盖住它所在系列的同名广播键
+    **{("bar", p): _SHAPE[p] for p in ("visible",)},
+    **{("bar", p): t for p, t in _KEYED.items()},
+    **{
+        ("bar", p): f"_with_legend({{o}}, lambda _a: _a.set_{p}({{v}}))"
+        for p in ("hatch", "hatch_linewidth", "hatchcolor")
+    },
+    # 误差棒 / 茎叶是容器：一条 override 落到它的每个成员上（成员与引擎 `SeriesGroup.members()` 同一批）
+    **{
+        ("errorbar", p): f"{{o}}.set_{p}({{v}})"
+        for p in ("color", "linewidth", "capsize", "cap_thickness", "alpha", "visible")
+    },
+    **{
+        ("stem_series", p): f"{{o}}.set_{p}({{v}})"
+        for p in (
+            "color",
+            "linewidth",
+            "linestyle",
+            "marker",
+            "markersize",
+            "alpha",
+            "visible",
+            "zorder",
+            "label",
+        )
+    },
     **{("patch", p): t for p, t in _SHAPE.items()},
     ("patch", "linestyle"): "{o}.set_linestyle({v})",
     ("patch", "hatch"): "{o}.set_hatch({v})",
+    ("patch", "hatch_linewidth"): "{o}.set_hatch_linewidth({v})",
+    ("patch", "hatchcolor"): "{o}.set_hatchcolor({v})",
+    ("patch", "fill"): "{o}.set_fill({v})",
     ("image", "cmap"): "{o}.set_cmap({v})",
     ("image", "vmin"): "{o}.norm.vmin = {v}",
     ("image", "vmax"): "{o}.norm.vmax = {v}",
@@ -279,9 +336,9 @@ NOT_WRITABLE: dict[str, str] = {
     "bbox_rounded",
     "arrowpatch": "color linewidth mutation_scale alpha visible zorder endpoints_frac arrowstyle "
     "linestyle",
-    "patch": "pos_frac size_frac hatch_linewidth hatchcolor fill",
+    "patch": "pos_frac size_frac",
     "artist": "pos_frac visible zorder",
-    "line": "label pos_frac",
+    "line": "pos_frac",
     "axes": "visible position aspect elev azim roll "
     "proj_type axis_arrows arrow_color arrow_width arrow_head axline_color "
     "axline_width pane_visible pane_color",
@@ -290,12 +347,11 @@ NOT_WRITABLE: dict[str, str] = {
     # 方向 / 延伸三角只能靠私有 API（`cb._draw_all()`、`_inside`、重算落位），永远不写（ADR 0094 Q10）：
     # 留作 override，由 Tavotto 在重放时作用。
     "colorbar": "orientation extend",
-    "bar_series": "hatch_linewidth hatchcolor bar_width label",
-    "errorbar": "color linewidth capsize cap_thickness alpha visible",
-    "stem_series": "color linewidth linestyle marker markersize alpha visible zorder label",
-    "collection": "label gradient linestyle hatch size marker cmap vmin vmax",
-    "bar": "facecolor edgecolor linewidth linestyle hatch hatch_linewidth hatchcolor fill alpha "
-    "visible zorder",
+    # 单根柱的 `linestyle` / `fill` / `zorder`：引擎有 handler，但界面（manifest `_bar_fields`）从不发这三个键，
+    # 一条 override 里不会出现它们；没有可采样的字段就验证不了等价，不写
+    "bar": "linestyle fill zorder",
+    # 渐变色带的两端色：要认出「一摞逐条一色的长条」、保留深浅节奏重新配色并带着图例色块，不是一句公开 API
+    "collection": "gradient",
 }
 
 
@@ -351,6 +407,12 @@ def _selector(gid: str, el: dict | None) -> str:
         return f"_line({ax}, {int(mm.group(1))}, {_script_label(el)!r})"
     if mm := re.fullmatch(r"barseries_(\d+)", rest):
         return f"_bars({ax}, {int(mm.group(1))})"
+    if mm := re.fullmatch(r"barseries_(\d+)\.bar_(\d+)", rest):
+        return f"_bar({ax}, {int(mm.group(1))}, {int(mm.group(2))})"
+    if mm := re.fullmatch(r"errorbar_(\d+)", rest):
+        return f"_Err({ax}, _at({ax}.containers, {int(mm.group(1))}))"
+    if mm := re.fullmatch(r"stemseries_(\d+)", rest):
+        return f"_Stem({ax}, _at({ax}.containers, {int(mm.group(1))}))"
     if (mm := re.fullmatch(r"([a-z]+)_(\d+)", rest)) and mm.group(1) in _INDEXED:
         return f"_at({_INDEXED[mm.group(1)].format(ax=ax)}, {int(mm.group(2))})"
     raise _Unsupported(gid)
@@ -375,7 +437,7 @@ def _mappable(els: dict, gid: str, prop: str) -> str:
     target = els.get(m)
     if (
         target is None
-        or _ROLE_CLS.get(target.get("role")) not in ("image", "collection")
+        or _cls_of(m, target) not in ("image", "collection")
         or not any(f.get("prop") == prop for f in target.get("editable") or [])
     ):
         raise _Unsupported(gid)
@@ -553,17 +615,76 @@ def _number_list(v) -> list[float]:
     return [float(x) for x in (v or []) if isinstance(x, (int, float)) and not isinstance(x, bool)]
 
 
+#: 图例示意线跟着源对象变、而脚本里没有公开 API 能就地改的那几种：误差棒 / 茎叶一格画好几条，
+#: 散点的示意线大小是按 markerscale 与 scatterpoints 现算的。引擎对 `follow_source` 的项是「从源重新派生」，
+#: 脚本这边等价的写法是**整份重排图例**（`_legend_rebuild` 从源对象重新收集，与引擎同一个 handler）。
+_REFRESH_PROPS = {
+    "errorbar": None,  # 每个键都改示意线
+    "stem_series": ("color", "linewidth", "linestyle", "marker", "markersize", "alpha", "visible"),
+    "collection": ("size", "marker"),
+}
+
+
+def _refresh(
+    el: dict | None, gid: str, cls: str, prop: str, patches, manifest: dict, encoding: str
+):
+    """这条修改会改到图例里跟着它走的示意线、而公开 API 不能就地改：回要追加的图例重排语句，不用追加回 None。
+
+    重排之后别的项跟着重新派生，所以同一个图例里只要有一项脱开了跟随（custom）就不写：引擎里它停在
+    脚本原样，重排会把它换成源现在的样子。重排不了（锚点读不到……）时抛 `_Unsupported`，这条修改留给重放。
+    """
+    if cls not in _REFRESH_PROPS or (
+        _REFRESH_PROPS[cls] is not None and prop not in _REFRESH_PROPS[cls]
+    ):
+        return None
+    entries = [e for e in manifest.get("elements", []) if e.get("role") == "legend_text"]
+    mine = [e for e in entries if ((e.get("legend_entry") or {}).get("source_gid")) == gid]
+    if not mine:
+        return None
+
+    def binding(e):
+        return next(
+            (f.get("value") for f in e.get("editable", []) if f.get("prop") == "binding"), None
+        )
+
+    legs = {e["gid"].rsplit(".texts_", 1)[0] for e in mine if binding(e) == "follow_source"}
+    if not legs:
+        return None
+    (leg_gid,) = legs if len(legs) == 1 else (None,)
+    if leg_gid is None:
+        raise _Unsupported(gid)
+    same = [e for e in entries if e["gid"].startswith(leg_gid + ".texts_")]
+    if any(
+        (e.get("legend_entry") or {}).get("source_gid") and binding(e) != "follow_source"
+        for e in same
+    ):
+        raise _Unsupported(gid)
+    return _rebuild(leg_gid, patches, manifest, encoding)
+
+
+def _cls_of(gid: str, el: dict | None) -> str | None:
+    """这个 gid 的 override 类（`WRITES` / `NOT_WRITABLE` 的键）：**类别只在这里推断**。
+
+    元素在 manifest 里缺席时（刻度文字全关掉之后刻度组量不出几何，manifest 把它丢了）按 gid 形状认：
+    它是坐标轴的固有部分。`_statement`、档位（`_kind`）、去重、色阶分组都问这一处，不各自从 role 推。
+    """
+    role = (el or {}).get("role") or ("figure" if gid == "figure" else "")
+    if not role and re.fullmatch(r"axes_\d+\.[xy]ticks", gid):
+        role = "ticks"
+    return _ROLE_CLS.get(role)
+
+
 def _statement(
     el: dict | None, gid: str, prop: str, value, patches, encoding: str, manifest: dict
 ) -> str:
-    role = (el or {}).get("role") or ("figure" if gid == "figure" else "")
-    if not role and re.fullmatch(r"axes_\d+\.[xy]ticks", gid):
-        # 刻度文字全关掉之后这一组量不出几何，manifest 把它丢了；它是坐标轴的固有部分，身份看 gid 形状
-        role = "ticks"
-    cls = _ROLE_CLS.get(role)
+    cls = _cls_of(gid, el)
     if cls is None or (cls, prop) not in WRITES:
         raise _Unsupported(prop)
     obj = _selector(gid, el)
+    if prop == "hatch":  # 引擎：空串 / none 都是「不用花纹」
+        value = None if value in (None, "", "none") else str(value)
+    if (cls, prop) == ("collection", "marker") and value in ("original", ""):
+        raise _Unsupported(prop)  # 「放回脚本原样」：脚本里没有原来那条路径可取
     if prop == "pos_frac":
         return _position(el, gid, obj, value)
     if prop == "fontfamily":
@@ -598,8 +719,13 @@ def _statement(
         if m is None or _is_3d(manifest, int(m.group(1))):
             raise _Unsupported(gid)
         return f"_tick_text(_ax(fig, {int(m.group(1))}), {m.group(2)!r}, {int(m.group(3))}, {_literal(str(value), encoding)})"
-    if (cls, prop) == ("image", "cmap") and _cmap_group_reaches_beyond(el, manifest, gid):
-        raise _Unsupported(prop)  # 同上：图像的 cmap 也是这一组的广播，另一个 mappable 的色条跟着换
+    if (
+        cls in ("image", "collection")
+        and prop == "cmap"
+        and (_cmap_group_reaches_beyond(el, manifest, gid) or (el or {}).get("scale_gids"))
+    ):
+        # 同上：图像 / 集合的 cmap 也是这一组的广播（色阶兄弟、另一个 mappable 的色条跟着换），公开 API 写不出「谁是兄弟」
+        raise _Unsupported(prop)
     if cls == "colorbar" and prop == "label":
         # 长轴看脚本原样的方向：方向要是也改了，它留作重放，重放时把标签搬到新长轴
         orient = next(
@@ -641,36 +767,60 @@ def _statement(
     )
 
 
-def _rank(prop: str, statement: str) -> int:
-    """步骤顺序：与 `overrides._apply_rank` 同序的那几档（对账见 `tests/test_script_adjust.py`）。
+def _rank(prop: str, kind: str | None) -> float:
+    """步骤顺序（`kind` 是生成语句时按 (cls, prop) 定的标记 `_kind`，**不看语句文本**：用户的文字写进语句里，
+    标题 / 图例文字 / 刻度文字里带着 `_legend_rebuild(` 之类的子串不能影响排序）：与 `overrides._apply_rank` 同序的那几档（对账见 `tests/test_script_adjust.py`）。
 
     引擎的函数要看 artist 类型、父进程 import 不了，而写得进脚本的键里只有坐标轴刻度类型这一档
     排在普通属性之前。其余几档是脚本这一侧自己的先后：
 
+    0.5 图例里有跟着它走的示意线的误差棒 / 茎叶 / 散点大小与形状（`_refresh`，`_translate` 直接给这一档）：示意线靠整份
+        重排重新派生，源要先改好。没有跟随项的（示意线已脱开、或根本没有图例）照普通属性排在重排之后：
+        重排从**脚本原样**的源收集，脱开的示意线才停在原样；
     1. 重建图例：换掉图例对象，素材必须是脚本原样（引擎同样从源对象 / 原样快照重建）；
     2. 锚点、条目脱开跟随：锚点要在拖动之前（拖动清锚框，与位置模型的优先级一致）；
        脱开要在源对象改样式之前，否则 `_with_legend` 会把源的新样子带进示意线；
-    3. 广播（边框总颜色 / 总线宽、色条刻度、色条 vmin / vmax）：要在被它盖住的窄条目之前，窄的盖广播；
+    3. 广播（边框总颜色 / 总线宽、色条刻度、色条 vmin / vmax、柱系列的样式）：要在被它盖住的窄条目之前，窄的盖广播；
     4. 普通属性（含坐标范围：刻度定位与刻度文字都按落下之后的视区现算）；
     5. 刻度定位与格式：引擎的第 6 档，素材是换完刻度类型之后脚本原样的 locator / formatter；
     6. 单条刻度文字：引擎的第 7 档，把整条轴冻成固定刻度，必须在定位之后；
-    7. 示意线样式：写在「脚本原样 + 这几条」上，最后落。
+    7. 示意线样式：写在「脚本原样 + 这几条」上；
+    8. 改名（`label`）：最后落。
     """
+    if kind == "rename":
+        return 8  # 曲线靠原 label 认（`_line`）、图例色块靠 label 对（`_with_legend`、重排）：改名要在所有别的语句之后
     if prop in ("xscale", "yscale"):
         return 0
-    if "_legend_rebuild(" in statement:
+    if kind == "rebuild":
         return 1
-    if prop == "loc_anchor" or "_legend_detach(" in statement:
+    if prop == "loc_anchor" or kind == "detach":
         return 2
-    if prop in _BROADCAST_FIRST or (prop in _CLIM and ".set_clim(" in statement):
-        return 3  # 广播先于窄的（边框四边、色条刻度组、图像自己的 vmin / vmax），与引擎同序
-    if "_tick_model(" in statement:
+    if prop in _BROADCAST_FIRST or kind == "broadcast":
+        return 3  # 广播先于窄的（边框四边、色条刻度组与 vmin / vmax、柱系列），与引擎同序
+    if kind == "tick_model":
         return 5
-    if "_tick_text(" in statement:
+    if kind == "tick_text":
         return 6
     if prop.startswith("handle_"):
         return 7
     return 4
+
+
+def _kind(cls: str, prop: str) -> str | None:
+    """这条 override 的语句属于哪一档（按 (cls, prop) 定，见 `_rank`）。"""
+    if prop == "label" and cls in ("line", "collection", "bar_series", "stem_series"):
+        return "rename"  # 色条的标签是 set_ylabel，不在此列
+    if cls == "legend" and prop in _LEGEND_REBUILD:
+        return "rebuild"
+    if cls == "legend_text" and prop == "binding":
+        return "detach"
+    if (cls == "colorbar" and prop in _CLIM) or (cls == "bar_series" and prop in _BAR_BROADCAST):
+        return "broadcast"
+    if cls == "ticks" and prop in _TICK_MODEL:
+        return "tick_model"
+    if cls == "ticklabel" and prop == "text":
+        return "tick_text"
+    return None
 
 
 # -------------------------------- 块的运行期代码 --------------------------------
@@ -734,6 +884,13 @@ def _line(ax, j, label):
     return _at(ax.lines, j)
 
 
+def _rename(fig, pairs):
+    # Find every target by its original label first, then rename: a rename must not change what the next one finds.
+    found = [(find(), name) for find, name in pairs]
+    for item, name in found:
+        item.set_label(name)
+
+
 def _with_legend(item, setter):
     # A restyled artist keeps its legend key in step.
     setter(item)
@@ -765,6 +922,17 @@ class _Group:
     def get_label(self):
         return self.container.get_label()
 
+    def set_label(self, label):
+        # The name belongs to the series, not to each bar.
+        self.container.set_label(str(label))
+
+    def set_bar_width(self, width):
+        # Same as the editor: every bar keeps its centre.
+        for r in self.members:
+            centre = r.get_x() + r.get_width() / 2
+            r.set_x(centre - width / 2)
+            r.set_width(width)
+
     def __getattr__(self, name):
         def call(*args, **kwargs):
             for member in self.members:
@@ -775,6 +943,122 @@ class _Group:
 
 def _bars(ax, j):
     return _Group(ax, _at(ax.containers, j))
+
+
+class _FirstBar:
+    # The first bar of a series is what the series' legend key is drawn from.
+    def __init__(self, bar, container):
+        self._bar, self._container = bar, container
+        self.axes = bar.axes
+
+    def get_label(self):
+        return self._container.get_label()
+
+    def __getattr__(self, name):
+        return getattr(self._bar, name)
+
+
+def _bar(ax, j, k):
+    container = _at(ax.containers, j)
+    bar = _at(container.patches, k)
+    return _FirstBar(bar, container) if k == 0 else bar
+
+
+class _Err:
+    # An errorbar container: the data line, the caps and the bar lines, the same
+    # parts the editor restyles together.
+    def __init__(self, ax, container):
+        self.axes, self.container = ax, container
+        self.line, caps, bars = container.lines
+        self.caps, self.bars = list(caps), list(bars)
+        self.stroke = ([self.line] if self.line is not None else []) + self.bars
+        self.parts = ([self.line] if self.line is not None else []) + self.caps + self.bars
+
+    def get_label(self):
+        return self.container.get_label()
+
+    def set_color(self, color):
+        # A cap is drawn by its marker edge.
+        for part in self.parts:
+            part.set_color(color)
+        for cap in self.caps:
+            cap.set_markeredgecolor(color)
+
+    def set_linewidth(self, width):
+        for part in self.stroke:
+            part.set_linewidth(width)
+
+    def set_capsize(self, size):
+        for cap in self.caps:
+            cap.set_markersize(float(size))
+
+    def set_cap_thickness(self, width):
+        for cap in self.caps:
+            cap.set_markeredgewidth(float(width))
+
+    def set_alpha(self, alpha):
+        for part in self.parts:
+            part.set_alpha(alpha)
+
+    def set_visible(self, visible):
+        for part in self.parts:
+            part.set_visible(bool(visible))
+
+
+class _Stem:
+    # A stem container: the marker line and the stems (the zero line stays a plain line).
+    def __init__(self, ax, container):
+        self.axes, self.container = ax, container
+        self.marker = container.markerline
+        stems = container.stemlines
+        self.stems = list(stems) if isinstance(stems, (list, tuple)) else [stems]
+        self.parts = ([self.marker] if self.marker is not None else []) + self.stems
+
+    def get_label(self):
+        return self.container.get_label()
+
+    def set_label(self, label):
+        self.container.set_label(str(label))
+
+    def set_color(self, color):
+        for part in self.parts:
+            part.set_color(color)
+
+    def set_linewidth(self, width):
+        for stem in self.stems:
+            stem.set_linewidth(width)
+
+    def set_linestyle(self, style):
+        for stem in self.stems:
+            stem.set_linestyle(style)
+
+    def set_marker(self, marker):
+        if self.marker is not None:
+            self.marker.set_marker(str(marker))
+
+    def set_markersize(self, size):
+        if self.marker is not None:
+            self.marker.set_markersize(float(size))
+
+    def set_alpha(self, alpha):
+        for part in self.parts:
+            part.set_alpha(alpha)
+
+    def set_visible(self, visible):
+        for part in self.parts:
+            part.set_visible(bool(visible))
+
+    def set_zorder(self, z):
+        for part in self.parts:
+            part.set_zorder(float(z))
+
+
+def _scatter_marker(coll, name):
+    # The path Axes.scatter itself builds for a marker.
+    from matplotlib.markers import MarkerStyle
+
+    style = MarkerStyle(name)
+    coll.set_paths([style.get_path().transformed(style.get_transform())])
 
 
 class _TickSet:
@@ -1302,22 +1586,17 @@ def _translate(
     els = {e["gid"]: e for e in manifest.get("elements", [])}
     steps: list[tuple[dict, str]] = []
     residual: list[dict] = []
+    refresh: dict[int, str] = {}
+    tags: dict[int, str | None] = {}
     for p in patches:
         try:
-            steps.append(
-                (
-                    p,
-                    _statement(
-                        els.get(p["gid"]),
-                        p["gid"],
-                        p["prop"],
-                        p["value"],
-                        patches,
-                        encoding,
-                        manifest,
-                    ),
-                )
-            )
+            el = els.get(p["gid"])
+            stmt = _statement(el, p["gid"], p["prop"], p["value"], patches, encoding, manifest)
+            cls = _cls_of(p["gid"], el) or ""
+            tags[id(p)] = _kind(cls, p["prop"])
+            if extra := _refresh(el, p["gid"], cls, p["prop"], patches, manifest, encoding):
+                refresh[id(p)] = extra
+            steps.append((p, stmt))
         except (_Unsupported, KeyError, TypeError, ValueError, IndexError):
             residual.append(p)
     # 整页 / 子图大小留给重放时，靠落笔那一刻的刻度算的几条跟着留下（`_RESHAPES_AXES`）；轴的大小要到
@@ -1327,6 +1606,28 @@ def _translate(
     def late(p: dict) -> bool:
         return _snapshots_ticks(p, patches) and (reshaped or _sized_at_draw(p["gid"], els))
 
+    # 图元自己的色阶（cmap / vmin / vmax）留作重放时，挂在它上面的色条跟着重画（`_draw_all` 重置色条轴的刻度定位、
+    # 轴线与刻度样式）：写在那条色条轴上的修改（轴本身、刻度、色条自己的字段）也一起留下，重放时排在这次重画之后。
+    # 色条自己的 cmap / vmin / vmax 留作重放不算（④ 的口径：色条轴上的照写）
+    held_maps = {
+        r["gid"]
+        for r in residual
+        if r["prop"] in ("cmap", *_CLIM) and _cls_of(r["gid"], els.get(r["gid"])) != "colorbar"
+    }
+    held_axes = {
+        e["gid"][: -len(".colorbar")]
+        for e in els.values()
+        if e["gid"].endswith(".colorbar") and e.get("mappable_gid") in held_maps
+    }
+
+    def on_colorbar_axis(p: dict) -> bool:
+        m = re.match(r"(axes_\d+)(?:\.|$)", p["gid"])
+        return m is not None and m.group(1) in held_axes
+
+    for p, stmt in list(steps):
+        if on_colorbar_axis(p):
+            steps.remove((p, stmt))
+            residual.append(p)
     # 一条轴上的定位与格式是一整套：其中一条留下，这条轴的其余几条也留下（不然写进脚本的那一份缺了它）
     held = {p["gid"] for p, _s in steps if late(p) and p["prop"] != "text"}
     for p, stmt in list(steps):
@@ -1349,21 +1650,49 @@ def _translate(
             residual.append(p)
         else:
             kept.append((p, stmt))
+    # 改名：对象按原 label 认，所以同一个对象上还有留作重放的修改（拖动带的 `identity` 是按**改名前**的 label 算的，
+    # 改名写进脚本后重放里认不出它）时，改名也留作重放；子孙 gid 上的也算
+    for p, stmt in list(kept):
+        if tags.get(id(p)) == "rename" and any(
+            r["gid"] == p["gid"] or r["gid"].startswith(p["gid"] + ".") for r in residual
+        ):
+            kept.remove((p, stmt))
+            residual.append(p)
+    # 同一张图上的所有改名合成一条：先把每个对象都按原 label / 位置认出来，再统一改。分开写的话第一条改完，
+    # 后一条按原 label 找（A→B、B→C）就会撞上刚改好的那个。语句从 patch 和选择器现拼，不从语句文本里切
+    renames = [(p, stmt) for p, stmt in kept if tags.get(id(p)) == "rename"]
+    if renames:
+        pairs = [
+            f"(lambda: {_selector(p['gid'], els.get(p['gid']))}, {_literal(str(p['value']), encoding)})"
+            for p, _s in renames
+        ]
+        merged = {"gid": " ".join(p["gid"] for p, _s in renames), "prop": "label"}
+        tags[id(merged)] = "rename"
+        kept = [e for e in kept if e not in renames] + [
+            (merged, "_rename(fig, [" + ", ".join(pairs) + "])")
+        ]
+    # 改了源对象、图例里跟着它走的示意线要重新派生：整份重排（第 1 档），源对象的修改排在它前面
+    for p, _stmt in list(kept):
+        if id(p) in refresh:
+            syn = {"gid": p["gid"], "prop": "legend_refresh"}
+            tags[id(syn)] = "rebuild"
+            kept.append((syn, refresh[id(p)]))
     # 示意线样式要先脱开跟随（第 2 档）：引擎里第一条 handle_* 落下的那一刻就脱开
     for p, _stmt in list(kept):
         if p["prop"] in _HANDLE_PROPS and (m := _LEGEND_TEXT.match(p["gid"])):
             d = f"_legend_detach(_ax(fig, {int(m.group(1))}), {int(m.group(2))})"
-            kept.append(({"gid": p["gid"], "prop": "binding"}, d))
-    kept.sort(key=lambda s: _rank(s[0]["prop"], s[1]))
+            syn = {"gid": p["gid"], "prop": "binding"}
+            tags[id(syn)] = "detach"
+            kept.append((syn, d))
+    kept.sort(key=lambda s: 0.5 if id(s[0]) in refresh else _rank(s[0]["prop"], tags.get(id(s[0]))))
     out: list[tuple[str, str]] = []
     first: dict[str, int] = {}
     for p, stmt in kept:
         what = f"{p['gid']}.{p['prop']}"
+        dedup = tags.get(id(p)) in ("rebuild", "detach", "tick_model")
         # 同一条重建 / 同一次脱开 / 同一轴的刻度模型：只落一回，名字记在一起（别的语句不合并：色条的 cmap 与图像的 cmap 写出
         # 同一句，中间隔着另一个值时合并会让后一句落空）
-        if stmt in first and stmt.startswith(
-            ("_legend_rebuild(", "_legend_detach(", "_tick_model(")
-        ):
+        if dedup and stmt in first:
             k = first[stmt]
             out[k] = (out[k][0] + " " + what, stmt)
             continue
