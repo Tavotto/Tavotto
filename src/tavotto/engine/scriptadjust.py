@@ -51,6 +51,7 @@ _ROLE_CLS = {
     "legend": "legend",
     "axes": "axes",
     "axes3d": "axes",  # 3D 轴的字段在 manifest 里自成一族，写得进的只有 grid_visible
+    "colorbar": "colorbar",
     "ticks": "ticks",
     "ticklabel": "ticklabel",
     "figure": "figure",
@@ -91,12 +92,28 @@ _KEYED = {
     for p in ("facecolor", "edgecolor", "linewidth", "alpha")
 }
 _SIDES = ("top", "right", "bottom", "left")
-#: 广播键 → 被它盖住的窄键（引擎 `spinemodel`：自己的设定 > 「全部」 > 脚本原样）。广播留作 residual
-#: 重放时窄条目会被盖掉，所以窄条目也要一起留下（`_translate`）；`ALIAS_GROUPS` 不登记这一族，所以这里自己记。
-_NARROWER = {
-    "spine_color": tuple(f"spine_{s}_color" for s in _SIDES),
-    "spine_linewidth": tuple(f"spine_{s}_linewidth" for s in _SIDES),
-}
+#: 广播键（一条 override 同时写好几个对象）：引擎里「自己的设定 > 广播」（`overrides._apply` 的排序：被广播盖着的窄键
+#: 排在广播之后），所以脚本里广播先落（`_rank`）；广播写不进脚本留作重放时，被它盖住的窄条目也要一起留下
+#: （`_translate`），否则重放的广播会盖掉写进脚本的窄条目。`ALIAS_GROUPS` 只在引擎里，这里自己记这张表。
+_BROADCAST_FIRST = ("spine_color", "spine_linewidth", "tick_fontsize", "tick_color")
+#: 色条 vmin / vmax 的语句（写 norm）；图像自己的 vmin / vmax 是窄键。
+_CLIM = ("vmin", "vmax")
+_CB_TICK_NARROW = {"tick_fontsize": "fontsize", "tick_color": "color"}
+
+
+def _narrower(r: dict, els: dict) -> set[tuple[str, str]]:
+    """广播 patch `r` 盖住的窄键 `{(gid, prop)}`（引擎 `ALIAS_GROUPS` 的同一张表）。"""
+    prop, gid = r["prop"], r["gid"]
+    if prop in ("spine_color", "spine_linewidth"):  # 「全部」档 → 四边各自
+        return {(gid, f"spine_{s}_{prop[6:]}") for s in _SIDES}
+    if prop in _CB_TICK_NARROW and gid.endswith(".colorbar"):  # 色条刻度 → 色条轴上的刻度组
+        ax = gid[: -len(".colorbar")]
+        return {(f"{ax}.{w}ticks", _CB_TICK_NARROW[prop]) for w in "xy"}
+    if prop in _CLIM and (m := (els.get(gid) or {}).get("mappable_gid")):  # 色条 → 它的 mappable
+        return {(m, prop)}
+    return set()
+
+
 #: 构建期参数：改了要整份重排图例（引擎 `legendmodel.rebuild_legend` 的那一组）。脚本里合成**一次**
 #: `ax.legend(...)`（`_legend_rebuild`），同一个图例上几条一起改也只重建一回。
 #: 条目顺序与条目显隐同是重建型，但不写（见 `NOT_WRITABLE`）。
@@ -191,7 +208,7 @@ WRITES: dict[tuple[str, str], str | None] = {
     ("axes", "ticks_right"): "{o}.tick_params(axis='y', which='both', right={v})",
     # 3D 轴的网格总开关（2D 轴 manifest 不发这条）
     ("axes", "grid_visible"): "{o}.grid({v})",
-    # 「全部」档：作用于每一条 spine，必须排在四边各自的语句之前（`_rank`、`_NARROWER`）
+    # 「全部」档：作用于每一条 spine，必须排在四边各自的语句之前（`_rank`、`_narrower`）
     ("axes", "spine_color"): "[_s.set_edgecolor({v}) for _s in {o}.spines.values()]",
     ("axes", "spine_linewidth"): "[_s.set_linewidth({v}) for _s in {o}.spines.values()]",
     **{("axes", f"spine_{s}"): f"{{o}}.spines[{s!r}].set_visible({{v}})" for s in _SIDES},
@@ -233,6 +250,19 @@ WRITES: dict[tuple[str, str], str | None] = {
     ("image", "visible"): "{o}.set_visible({v})",
     ("image", "interpolation"): "{o}.set_interpolation({v})",
     ("image", "zorder"): "{o}.set_zorder({v})",
+    # 色条。`{o}` 是色条轴（`axes_i.colorbar` 的 i 就是它在 `fig.axes` 里的序号），一律公开 API：
+    # 刻度 / 轮廓 / 显隐落在色条轴上（引擎走的 `cb.ax.tick_params`、`cb.outline`、`cb.ax.set_visible`，
+    # `cb.outline` 就是 `ax.spines["outline"]`）；标签看脚本原样的方向落在长轴上（`_statement`）；
+    # cmap / vmin / vmax 与 mappable 是同一份状态，写在 mappable 上（`_statement` 把 `{o}` 换成它）。
+    ("colorbar", "label"): None,
+    ("colorbar", "cmap"): "{o}.set_cmap({v})",
+    ("colorbar", "vmin"): "{o}.set_clim(vmin={v})",
+    ("colorbar", "vmax"): "{o}.set_clim(vmax={v})",
+    ("colorbar", "tick_fontsize"): "{o}.tick_params(labelsize={v})",
+    ("colorbar", "tick_color"): "{o}.tick_params(labelcolor={v})",
+    ("colorbar", "outline_visible"): "{o}.spines['outline'].set_visible({v})",
+    ("colorbar", "outline_width"): "{o}.spines['outline'].set_linewidth({v})",
+    ("colorbar", "visible"): "{o}.set_visible({v})",
 }
 
 #: 这一版不写的键（类 → 空格分隔的 prop）。留在表里而不是「不在 WRITES 就算了」：`HANDLERS` 新增
@@ -257,8 +287,9 @@ NOT_WRITABLE: dict[str, str] = {
     "axline_width pane_visible pane_color",
     "image": "gradient_color origin",
     "figure": "size_mm frame transparent",
-    "colorbar": "label cmap vmin vmax tick_fontsize tick_color outline_visible outline_width "
-    "visible orientation extend",
+    # 方向 / 延伸三角只能靠私有 API（`cb._draw_all()`、`_inside`、重算落位），永远不写（ADR 0094 Q10）：
+    # 留作 override，由 Tavotto 在重放时作用。
+    "colorbar": "orientation extend",
     "bar_series": "hatch_linewidth hatchcolor bar_width label",
     "errorbar": "color linewidth capsize cap_thickness alpha visible",
     "stem_series": "color linewidth linestyle marker markersize alpha visible zorder label",
@@ -270,6 +301,9 @@ NOT_WRITABLE: dict[str, str] = {
 
 # -------------------------------- gid → 表达式 --------------------------------
 _AX = re.compile(r"^axes_(\d+)(?:\.(.+))?$")
+#: 色条的 mappable 还可能是 QuadMesh / 等值线这类通用集合（`collections_N`，N 是 `ax.collections` 的下标）；
+#: 这一族自己的字段不写，所以只有认 mappable 时才用这个前缀（`_mappable`）。
+_MAPPABLE_ONLY = {"collections": "{ax}.collections"}
 _INDEXED = {
     "texts": "{ax}.texts",
     "images": "{ax}.images",
@@ -309,6 +343,8 @@ def _selector(gid: str, el: dict | None) -> str:
         return f"_TickSet({ax}, {mm.group(1)!r})"
     if rest == "legend":
         return f"_legend({ax})"
+    if rest == "colorbar":
+        return ax  # 色条轴本身
     if mm := re.fullmatch(r"legend\.texts_(\d+)", rest):
         return f"_at(_legend({ax}).get_texts(), {int(mm.group(1))})"
     if mm := re.fullmatch(r"lines_(\d+)", rest):
@@ -318,6 +354,33 @@ def _selector(gid: str, el: dict | None) -> str:
     if (mm := re.fullmatch(r"([a-z]+)_(\d+)", rest)) and mm.group(1) in _INDEXED:
         return f"_at({_INDEXED[mm.group(1)].format(ax=ax)}, {int(mm.group(2))})"
     raise _Unsupported(gid)
+
+
+def _mappable(els: dict, gid: str, prop: str) -> str:
+    """色条的 mappable（`mappable_gid`）→ 脚本里取到它的表达式。
+
+    没有 `mappable_gid` 的（独立 `ScalarMappable`：不画在任何地方，公开 API 够不着它），
+    以及 `mappable_gid` 指的是反解位图（那条色条上色的其实是另一个对象）的，都写不了。
+    判据：真在映射的图元自己也发这个 prop（cmap / vmin / vmax），反解位图是 RGB、没有这几个字段。
+    """
+    el = els.get(gid)
+    m = (el or {}).get("mappable_gid")
+    if not m or (mm := _AX.match(m)) is None or mm.group(2) is None:
+        raise _Unsupported(gid)
+    rest = mm.group(2)
+    kind = re.fullmatch(r"([a-z]+)_(\d+)", rest)
+    table = {**_INDEXED, **_MAPPABLE_ONLY}
+    if kind is None or kind.group(1) not in ("images", "scatter", "fill", "collections"):
+        raise _Unsupported(gid)
+    target = els.get(m)
+    if (
+        target is None
+        or _ROLE_CLS.get(target.get("role")) not in ("image", "collection")
+        or not any(f.get("prop") == prop for f in target.get("editable") or [])
+    ):
+        raise _Unsupported(gid)
+    ax = f"_ax(fig, {int(mm.group(1))})"
+    return f"_at({table[kind.group(1)].format(ax=ax)}, {int(kind.group(2))})"
 
 
 def _literal(value, encoding: str) -> str:
@@ -459,6 +522,30 @@ def _snapshots_ticks(patch: dict, patches: list[dict]) -> bool:
     return False
 
 
+def _sized_at_draw(gid: str, els: dict) -> bool:
+    """这条轴的大小是不是要画出来才定：落笔那一刻（还没画过）的刻度按「还没定的大小」算，与热态里画完之后的不同。
+
+    实测（`InvCbar2`：`imshow` 加四条色条）：宿主轴 `aspect=1` 与底部横色条的轴，落笔时宽 167 / 223 px、
+    画完 162 / 205 px，x 轴自动刻度 6 个 → 5 个，冻结出来的单条刻度文字比热态多一条、位置错开，验证不过、整份不交付。
+    能判的两种：`aspect` 不是 auto 的轴（按纵横比在画的时候收缩），以及色条轴（色条 locator 画的时候才落位）。
+    """
+    m = re.match(r"(axes_\d+)\.", gid)
+    if m is None:
+        return False
+    ax = m.group(1)
+    if f"{ax}.colorbar" in els:
+        return True
+    aspect = next(
+        (
+            f.get("value")
+            for f in (els.get(ax) or {}).get("editable", [])
+            if f.get("prop") == "aspect"
+        ),
+        "auto",
+    )
+    return str(aspect) != "auto"
+
+
 def _number_list(v) -> list[float]:
     """与引擎 `tickmodel._num_list` 同口径：单个数当一项，非数字的元素丢掉。"""
     if isinstance(v, (int, float)) and not isinstance(v, bool):
@@ -511,6 +598,40 @@ def _statement(
         if m is None or _is_3d(manifest, int(m.group(1))):
             raise _Unsupported(gid)
         return f"_tick_text(_ax(fig, {int(m.group(1))}), {m.group(2)!r}, {int(m.group(3))}, {_literal(str(value), encoding)})"
+    if (cls, prop) == ("image", "cmap") and _cmap_group_reaches_beyond(el, manifest, gid):
+        raise _Unsupported(prop)  # 同上：图像的 cmap 也是这一组的广播，另一个 mappable 的色条跟着换
+    if cls == "colorbar" and prop == "label":
+        # 长轴看脚本原样的方向：方向要是也改了，它留作重放，重放时把标签搬到新长轴
+        orient = next(
+            (
+                f.get("value_original", f.get("value"))
+                for f in (el or {}).get("editable", [])
+                if f.get("prop") == "orientation"
+            ),
+            None,
+        )
+        if orient not in ("vertical", "horizontal"):  # 多宿主色条不发这个字段，方向认不准
+            raise _Unsupported(prop)
+        return f"{obj}.set_{'y' if orient == 'vertical' else 'x'}label({_literal(str(value), encoding)})"
+    if cls == "colorbar" and prop == "visible" and value is False:
+        # 带标签的色条藏起来之后，标签的几何在热态与重放里不是同一个值（热态在藏起来之前画过一次、
+        # 位置已排定；重放里轴一开始就不可见，轴不画、标签就没排过位置）：画面一样，验证比几何比不过，
+        # 所以这一种不写，留作重放
+        ax = gid[: -len(".colorbar")]
+        for e in manifest.get("elements", []):
+            if e["gid"] in (f"{ax}.xlabel", f"{ax}.ylabel") and any(
+                f.get("prop") == "text" and f.get("value") for f in e.get("editable") or []
+            ):
+                raise _Unsupported(prop)
+    if cls == "colorbar" and prop in ("cmap", *_CLIM):
+        if prop == "cmap" and _cmap_group_reaches_beyond(el, manifest, el.get("mappable_gid")):
+            # 组里还有写不到的对象（独立 `ScalarMappable` 的色条：共用 norm 不传播色图，引擎经 `scale_colorbars`
+            # 一并换掉它，脚本里 `set_cmap` 只换得了 mappable 这一个）
+            raise _Unsupported(prop)
+        if prop == "cmap" and (el or {}).get("scale_gids"):
+            # 色阶兄弟（共用 norm 的别的图元）：引擎的 setter 逐个给它们换色图，公开 API 写不出这个「谁是兄弟」
+            raise _Unsupported(prop)
+        obj = _mappable({e["gid"]: e for e in manifest.get("elements", [])}, gid, prop)
     tmpl = WRITES[(cls, prop)]
     assert tmpl is not None
     return tmpl.format(
@@ -529,7 +650,7 @@ def _rank(prop: str, statement: str) -> int:
     1. 重建图例：换掉图例对象，素材必须是脚本原样（引擎同样从源对象 / 原样快照重建）；
     2. 锚点、条目脱开跟随：锚点要在拖动之前（拖动清锚框，与位置模型的优先级一致）；
        脱开要在源对象改样式之前，否则 `_with_legend` 会把源的新样子带进示意线；
-    3. 「全部」档的广播（边框总颜色 / 总线宽）：要在四边各自的语句之前，窄的盖广播；
+    3. 广播（边框总颜色 / 总线宽、色条刻度、色条 vmin / vmax）：要在被它盖住的窄条目之前，窄的盖广播；
     4. 普通属性（含坐标范围：刻度定位与刻度文字都按落下之后的视区现算）；
     5. 刻度定位与格式：引擎的第 6 档，素材是换完刻度类型之后脚本原样的 locator / formatter；
     6. 单条刻度文字：引擎的第 7 档，把整条轴冻成固定刻度，必须在定位之后；
@@ -541,8 +662,8 @@ def _rank(prop: str, statement: str) -> int:
         return 1
     if prop == "loc_anchor" or "_legend_detach(" in statement:
         return 2
-    if prop in _NARROWER:  # 广播先于窄的（四边各自的颜色 / 线宽），与 `overrides.ALIAS_GROUPS` 同序
-        return 3
+    if prop in _BROADCAST_FIRST or (prop in _CLIM and ".set_clim(" in statement):
+        return 3  # 广播先于窄的（边框四边、色条刻度组、图像自己的 vmin / vmax），与引擎同序
     if "_tick_model(" in statement:
         return 5
     if "_tick_text(" in statement:
@@ -1157,6 +1278,23 @@ def _effective(patches: list[dict]) -> list[dict]:
     return out
 
 
+def _cmap_group_reaches_beyond(el: dict | None, manifest: dict, mine: str | None) -> bool:
+    """色条的 cmap 组（manifest 的 `cmap_group_gids`，引擎 `scale_colorbars` / `scale_siblings` 的结构性成员表）里，
+    有没有别的 mappable（`mine` 是这条自己的 mappable gid）的色条：同一个 mappable 的几条色条跟着 `set_cmap` 一起变，别的（独立的）不会。"""
+    els = {e["gid"]: e for e in manifest.get("elements", [])}
+    return any(
+        (o := els.get(g)) is not None
+        and o.get("role") == "colorbar"
+        and o.get("mappable_gid") != mine
+        for g in (el or {}).get("cmap_group_gids") or ()
+    )
+
+
+def _cmap_group(p: dict, els: dict) -> str:
+    """cmap 这一组的名字：色条取它的 mappable，图像就是自己。"""
+    return (els.get(p["gid"]) or {}).get("mappable_gid") or p["gid"]
+
+
 def _translate(
     patches: list[dict], manifest: dict, encoding: str
 ) -> tuple[list[tuple[str, str]], list[dict]]:
@@ -1182,23 +1320,32 @@ def _translate(
             )
         except (_Unsupported, KeyError, TypeError, ValueError, IndexError):
             residual.append(p)
-    # 整页 / 子图大小留给重放时，靠落笔那一刻的刻度算的几条跟着留下（`_RESHAPES_AXES`）
-    if any(r["prop"] in _RESHAPES_AXES for r in residual):
-        # 一条轴上的定位与格式是一整套：其中一条留下，这条轴的其余几条也留下（不然写进脚本的那一份缺了它）
-        held = {p["gid"] for p, _s in steps if _snapshots_ticks(p, patches) and p["prop"] != "text"}
-        for p, stmt in list(steps):
-            if _snapshots_ticks(p, patches) or (p["gid"] in held and p["prop"] in _TICK_MODEL):
-                steps.remove((p, stmt))
-                residual.append(p)
+    # 整页 / 子图大小留给重放时，靠落笔那一刻的刻度算的几条跟着留下（`_RESHAPES_AXES`）；轴的大小要到
+    # 画出来才定的（`_sized_at_draw`）也一样
+    reshaped = any(r["prop"] in _RESHAPES_AXES for r in residual)
+
+    def late(p: dict) -> bool:
+        return _snapshots_ticks(p, patches) and (reshaped or _sized_at_draw(p["gid"], els))
+
+    # 一条轴上的定位与格式是一整套：其中一条留下，这条轴的其余几条也留下（不然写进脚本的那一份缺了它）
+    held = {p["gid"] for p, _s in steps if late(p) and p["prop"] != "text"}
+    for p, stmt in list(steps):
+        if late(p) or (p["gid"] in held and p["prop"] in _TICK_MODEL):
+            steps.remove((p, stmt))
+            residual.append(p)
     # 留作 override 的「广播」条目在重放时排在窄条目之前、会盖掉写进脚本的窄条目：
     # 同一 prop、gid 是它子孙的，一起留下（ADR 0094 §五.3）
+    # 色条与它的 mappable 的 cmap 是互相广播的一组（ADR 0135：组里任一条改 cmap = 整组改，文档序靠后的赢）：
+    # 一条留作重放，同组另一条写进脚本就会反过来被它盖掉（重放永远排在脚本之后），所以同组一起留下
+    held = {_cmap_group(r, els) for r in residual if r["prop"] == "cmap"}
     kept: list[tuple[dict, str]] = []
     for p, stmt in steps:
+        if p["prop"] == "cmap" and _cmap_group(p, els) in held:
+            residual.append(p)
+            continue
         if any(
             r["prop"] == p["prop"] and p["gid"].startswith(r["gid"] + ".") for r in residual
-        ) or any(
-            r["gid"] == p["gid"] and p["prop"] in _NARROWER.get(r["prop"], ()) for r in residual
-        ):
+        ) or any((p["gid"], p["prop"]) in _narrower(r, els) for r in residual):
             residual.append(p)
         else:
             kept.append((p, stmt))
@@ -1212,7 +1359,11 @@ def _translate(
     first: dict[str, int] = {}
     for p, stmt in kept:
         what = f"{p['gid']}.{p['prop']}"
-        if stmt in first:  # 同一条重建 / 同一次脱开：只落一回，名字记在一起
+        # 同一条重建 / 同一次脱开 / 同一轴的刻度模型：只落一回，名字记在一起（别的语句不合并：色条的 cmap 与图像的 cmap 写出
+        # 同一句，中间隔着另一个值时合并会让后一句落空）
+        if stmt in first and stmt.startswith(
+            ("_legend_rebuild(", "_legend_detach(", "_tick_model(")
+        ):
             k = first[stmt]
             out[k] = (out[k][0] + " " + what, stmt)
             continue

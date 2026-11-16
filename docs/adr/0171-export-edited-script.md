@@ -107,7 +107,7 @@ ADR 0094 设计过「写回原脚本」，但它改的是用户文件，所以�
 - 刻度线四边：`tick_params(axis=..., which='both', bottom/top/left/right=...)`（界面开关的口径，主次两档一起）。
 - 边框「全部」是广播键，一次改 `ax.spines` 的每一条（含不在四边里的）；四边各自的键是窄条目，**窄的盖广播**（引擎
   `spinemodel`：自己的设定 > 「全部」 > 脚本原样）。`_rank` 新增一档：广播排在普通属性（含窄条目）之前，列表里谁先谁后结果都一样。
-  广播写不进脚本留作重放时，同一 axes 上四边各自的颜色 / 线宽也一起留下（`_NARROWER`；`ALIAS_GROUPS` 不登记边框这一族，
+  广播写不进脚本留作重放时，同一 axes 上四边各自的颜色 / 线宽也一起留下（`_narrower`；`ALIAS_GROUPS` 不登记边框这一族，
   所以脚本侧自己记这张表）。
 - 3D 轴的 role 是 `axes3d`，原先没映射进 `_ROLE_CLS`，3D 的任何键都写不进；现在映射到 `axes`，但 3D 的 `elev` / `azim` /
   `axis_arrows` / 面板等仍在 `NOT_WRITABLE`，实际多写进去的只有 `grid_visible`。
@@ -126,10 +126,30 @@ ADR 0094 设计过「写回原脚本」，但它改的是用户文件，所以�
 - 单条刻度文字 = `_tick_text`：把那一刻的刻度位置冻成 `FixedLocator`，文字取当前 formatter 的输出再换掉这一条
   （与 `set_xticks(locs, texts)` 同结果，但不动视区，用不着事后还原）。同一条轴上几条文字依次落，结果与引擎一次盖全相同。
 - 先后（`_rank`，与 `overrides._apply_rank` 在 worker 解释器里对账，`test_script_order_matches_the_engines_apply_order`）：
-  刻度类型 → 边框广播 → 坐标范围等普通属性 → 刻度定位与格式 → 单条刻度文字。刻度定位和冻结都按落下之后的视区现算，所以必须排在坐标范围之后。
+  刻度类型 → 边框 / 色条广播 → 坐标范围等普通属性 → 刻度定位与格式 → 单条刻度文字。刻度定位和冻结都按落下之后的视区现算，所以必须排在坐标范围之后。
 - **整页 / 子图大小留给重放时，靠落笔那一刻刻度算的几条也留给重放**（单条文字、固定刻度没给值、固定间隔没给步长；
   同一条轴上的其余定位 / 格式跟着留下）：图幅、子图位置、色条方向与延伸（`NOT_WRITABLE`）在引擎里排在刻度之前，
   自动刻度的个数又跟轴长有关，两边在不同的轴长上各算各的，实测 `script_export_diverged`、整份不交付。
 - 刻度组的标签全关掉之后量不出几何、manifest 把它丢了，翻译时按 gid 形状认它是刻度组（否则「标签显隐」永远写不进去）。
 - 3D 轴不写两条：刻度线宽（每次 draw 被私有的 `_axinfo` 盖回，公开 API 留不住）、单条刻度文字（曲面图 Inv3DS 的 y 轴
   热态 5 条标签、脚本重放 9 条，位置错开；Inv3D / Inv3DP 上是等价的）。定位与格式在 3D 的 x / y 轴上逐键验过等价，z 轴本来就写不进。
+
+**④ 色条**：标签、刻度字号 / 颜色、轮廓显隐 / 线宽、色条显隐、cmap / vmin / vmax 写进脚本；`orientation` / `extend` 只能靠私有 API，
+永远不写（留在 `NOT_WRITABLE`，由 Tavotto 在重放时作用，重放时标签搬去新的长轴）。
+
+- 色条轴就是 `axes_i.colorbar` 的 `axes_i`（`_ax(fig, i)`），刻度 / 轮廓 / 显隐直接落在它上面（`cb.outline` 即 `ax.spines['outline']`），
+  不需要 `Colorbar` 对象，所以同一个 mappable 的两条色条（`InvCbar2`）、独立 `ScalarMappable` 的色条（`Inv3D`）都照样写。
+  标签落在脚本原样方向的长轴上（manifest 的 `orientation.value_original`），多宿主色条不发这个字段，方向认不准就不写。
+- cmap / vmin / vmax 与 mappable 是同一份状态，语句写在 mappable 上（manifest 的 `mappable_gid`）。没有 `mappable_gid`（独立
+  `ScalarMappable`，公开 API 够不着它）、`mappable_gid` 指的是反解位图（该图元自己不发 cmap / vmin / vmax）、色条带 `scale_gids`
+  （色阶兄弟的 cmap 引擎逐个换，写不出「谁是兄弟」；vmin / vmax 走共用 norm，照写）的，那一项留作重放。
+- 先后与引擎同序：色条的刻度字号 / 颜色是广播，色条轴刻度组自己的 `fontsize` / `color`（窄）盖它；色条的 vmin / vmax 是广播，
+  图像自己的（窄）盖它——`_rank` 的广播档，原先的 `_NARROWER` 表换成函数 `_narrower()`（按 patch 算被盖住的 `(gid, prop)`，边框、色条刻度、
+  色条 vmin / vmax 三种）。cmap 是色条与图像互相广播（ADR 0135，文档序靠后的赢），脚本里按列表序落；一条留作重放时，同一个
+  mappable 的另一条 cmap 也一起留下（重放永远排在脚本之后）。
+- 色条与图像的 cmap 写出来是同一句话：`_translate` 以前按语句去重，A、B、A 会丢掉第二个 A，现在只合并图例重建 / 脱开。
+- **带标签的色条藏起来不写**（实测）：热态里标签在藏起来之前排过位置，重放里轴一开始就不可见、轴不画标签就没排过位置，几何
+  （`ylabel` 的 bbox / anchor）对不上，画面是一样的。验证不放松，这一种留作重放；没有标签的照写。
+- 验收：整图扫描加了 `InvCbar2` / `InvCbarLC` / `InvShared`；色条的标签、刻度、vmin / vmax、cmap、轮廓显隐各拆成 `_HELD_OUT`
+  一组（整图扫描里它们被同一元素上的窄条目 / 同值采样盖住，隐形），逐键反证：把翻译写成常量，对应组变红。`_rank` 的广播档、
+  色条 vmin / vmax 的广播档各做了一次变异，组合用例（两种列表顺序）变红。
