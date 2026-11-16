@@ -633,6 +633,29 @@ class DesktopProcess:
         }
 
 
+def own_process(
+    proc: subprocess.Popen,
+    policy: OwnedPolicy,
+    *,
+    on_output=None,
+    on_exit=None,
+    gated: bool = False,
+) -> DesktopProcess:
+    """Attach the existing owner to a child already spawned in its own scope.
+
+    POSIX callers must have used start_new_session=True. The caller starts the
+    owner after attaching its own state; this preserves desktop startup's gate.
+    No command, lease, protocol or second process manager is introduced here.
+    """
+    try:
+        scope = _scope_for(proc)
+    except BaseException:
+        proc.kill()
+        proc.wait()
+        raise
+    return DesktopProcess(proc, scope, policy, on_output=on_output, on_exit=on_exit, gated=gated)
+
+
 # ---------------------------------------------------------------------------
 # 入口：起进程 → 认证 → 会话
 # ---------------------------------------------------------------------------
@@ -739,15 +762,8 @@ def start(
             raise RunError(
                 runcodes.INTERPRETER_NOT_EXECUTABLE, interpreter=spec.interpreter
             ) from exc
-        try:
-            scope = _scope_for(proc)
-        except BaseException:
-            proc.kill()  # 没有纳管范围就不留它：之后谁也没法保证结束它
-            proc.wait()
-            raise
-        owner = DesktopProcess(
+        owner = own_process(
             proc,
-            scope,
             pol,
             on_output=on_output,
             on_exit=_exit_callback(session, registry, launch.launch_id, ticket),

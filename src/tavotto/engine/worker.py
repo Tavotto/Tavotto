@@ -84,6 +84,14 @@ HERE = Path(__file__).resolve().parent
 if sys.path and os.path.realpath(sys.path[0]) == os.path.realpath(str(HERE)):
     del sys.path[0]
 
+# A fixed task never imports a project script. Its own package must also work
+# in user interpreters where Tavotto is not installed (or another version is).
+_FIXED_CHART_TASK = "--task" in sys.argv and sys.argv[
+    sys.argv.index("--task") + 1 : sys.argv.index("--task") + 2
+] == ["chart"]
+if _FIXED_CHART_TASK:
+    sys.path.insert(0, str(HERE.parent.parent))
+
 
 def _inside(path: str, roots: tuple[str, ...]) -> bool:
     return any(path == r or path.startswith(r.rstrip(os.sep) + os.sep) for r in roots)
@@ -199,6 +207,8 @@ def _startup_bytecode_guard() -> None:
 
 
 _startup_bytecode_guard()
+if _FIXED_CHART_TASK:
+    _suppress_project_bytecode((str(HERE.parent.parent),))
 
 
 #: 叠加的 ROOT 的 DLL 目录（`rootenv.DLL_DIR_ENV` 的镜像，`tests/test_root_env_overlay.py` 对拍；worker 是平铺 import、
@@ -1504,7 +1514,8 @@ class Worker(wireproto.V1Handler):
 
     def __init__(self, args):
         global SESSION
-        self.script = Path(args.script).resolve()
+        self.task_kind = getattr(args, "task", None)
+        self.script = Path(args.script).resolve() if args.script else None
         #: 影子脚本（`--script-source`）：用户项目里**没有**这个文件（校验运行不往用户项目写任何东西），
         #: 字节来自这个路径，而 `__file__` / traceback / `sys.argv[0]` 仍是 `self.script`（项目里它将来所在的位置）。
         #: 没给 = 就是 `self.script`（旧行为逐字节不变）。
@@ -1670,7 +1681,8 @@ class Worker(wireproto.V1Handler):
         try:
             result = super().handle_v1(req)
         except ProtocolError as exc:
-            exc.extra["execution_id"] = self.execution_id
+            if not self.task_kind:
+                exc.extra["execution_id"] = self.execution_id
             raise
         except Exception as exc:  # noqa: BLE001 — same fallback as wireproto.respond
             raise ProtocolError(
@@ -1680,7 +1692,7 @@ class Worker(wireproto.V1Handler):
                 traceback_text=traceback.format_exc(),
                 extra={"execution_id": self.execution_id},
             ) from exc
-        return {**result, "execution_id": self.execution_id}
+        return result if self.task_kind else {**result, "execution_id": self.execution_id}
 
     def select_artifact(self, context):
         try:
@@ -1757,46 +1769,13 @@ class Worker(wireproto.V1Handler):
             redirect=redirect,
         )
 
-    def build(self, timings: dict | None = None) -> dict:
-        """跑一次用户脚本，把产出的 Figure 全部收进内存。
-
-        `timings` 非空时填两个数：`script_build_ms` 是整个 build（脚本 +
-        instrument + 每个 stem 的首次预览），`script_exec_ms` 只是用户脚本
-        自己那一段。两者分开是因为它们的改法完全不同——前者大头在用户的
-        计算里（我们无能为力），差额才是引擎自己的开销。
-        """
-        global BLOCKED_OPS
-        t_build = time.perf_counter()
-        if self.built:
-            return self._stems_summary()
-        # Font enumeration can be slow on some systems. Do it under the build
-        # watchdog, after the worker handshake but before any user code runs.
-        if _repair_incomplete_font_registry():
-            print(
-                "[fonts] Recovered an incomplete Matplotlib font registry for this worker.",
-                file=sys.stderr,
-            )
-        # 快照账绑「这一次脚本执行」：同 worker 重试（instrument / 发布阶段临时失败）也从一份新账开始
-        self.session.begin_save_moments()
-        self.configure_run({})
+    def _prepare_sandbox(self):
         _prepare_cache_dir(lambda: self.out_dir.mkdir(parents=True, exist_ok=True))
         _prepare_cache_dir(lambda: self.sandbox.mkdir(parents=True, exist_ok=True))
-        # cwd：默认沙盒（写入边界）；项目级开关打开时是脚本自己所在的目录——
-        # 脚本用相对路径找数据（exists / glob / C++ 读取器）的唯一成立形态。
         os.chdir(self.workdir or self.sandbox)
-        # 与 `python 脚本.py` 同一个顺序：脚本自己所在目录在 `sys.path[0]`（面板脚本放 panels/ 子目录时，
-        # 只加图库根会让 import_module(stem) 直接 ModuleNotFoundError）；项目根（图库根）**追加到末尾**，排在
-        # site-packages 之后——脚本 import 项目根下的 paper_style / 数据模块照样找得到，但项目根里恰好有同名
-        # 文件夹（比如整份库源码 `celerite/`，里面缺构建时才生成的文件）不会再盖住环境里装好的那个发行包。
-        # 静态侧同一个模型：`importscan._search_roots`（project_root 排在标准库 / site 之后）与
-        # `importshadow.detect(late_roots=…)`；改这里要一起改（tests/test_syspath_order.py 锁住三者一致）。
-        _put_project_on_path(self.script.parent, self.figures_dir)
-        #: 脚本运行前的 `sys.path`：之后新加进来的项目外目录读不了时，失败卡点名它（`_unreadable_folder_fact`）
-        self._path_baseline = list(sys.path)
-        # 项目目录里的源码（脚本本身按模块 import 时、它 import 的本地模块）不写 .pyc——
-        # 必须在第一次 import 用户代码（paper_style / 脚本）之前装好。
-        _suppress_project_bytecode((self.figures_dir, self.script.parent))
 
+    def _install_file_guards(self):
+        global BLOCKED_OPS
         # 删除守卫：fig6 用绝对路径删“过期输出”（ROOT/figures/...），沙盒 cwd
         # 挡不住，这里直接拒绝任何指向真实图库目录的删除（渲染用不到删除）
         real_figs = self.figures_dir
@@ -1911,6 +1890,71 @@ class Worker(wireproto.V1Handler):
             return real_write_text(p, *a, **kw)
 
         Path.write_text = _guarded_write_text
+
+        return ledger
+
+    def commands(self):
+        if self.task_kind == "chart":
+            return frozenset({"ping", "cancel", "shutdown", "chart"})
+        return super().commands()
+
+    def unbuilt_commands(self):
+        return frozenset({"chart"}) if self.task_kind == "chart" else frozenset()
+
+    def handle_extra(self, cmd, req, payload):
+        if cmd != "chart" or self.task_kind != "chart":
+            return super().handle_extra(cmd, req, payload)
+        from tavotto.engine import chartwire, svgchart
+
+        try:
+            chartwire.json_bytes(payload, chartwire.MAX_REQUEST_BYTES)
+            if self._blocked_ops is None:
+                self._prepare_sandbox()
+                self._install_file_guards()
+            return svgchart.execute_request(payload)
+        except Exception as exc:
+            raise ProtocolError(
+                getattr(exc, "code", "svg_scaffold_invalid"), str(exc), extra={"chart_error": True}
+            ) from exc
+
+    def build(self, timings: dict | None = None) -> dict:
+        """跑一次用户脚本，把产出的 Figure 全部收进内存。
+
+        `timings` 非空时填两个数：`script_build_ms` 是整个 build（脚本 +
+        instrument + 每个 stem 的首次预览），`script_exec_ms` 只是用户脚本
+        自己那一段。两者分开是因为它们的改法完全不同——前者大头在用户的
+        计算里（我们无能为力），差额才是引擎自己的开销。
+        """
+        if self.task_kind is not None:
+            raise ProtocolError("unknown_cmd", "Fixed tasks cannot build user scripts")
+        t_build = time.perf_counter()
+        if self.built:
+            return self._stems_summary()
+        # Font enumeration can be slow on some systems. Do it under the build
+        # watchdog, after the worker handshake but before any user code runs.
+        if _repair_incomplete_font_registry():
+            print(
+                "[fonts] Recovered an incomplete Matplotlib font registry for this worker.",
+                file=sys.stderr,
+            )
+        # 快照账绑「这一次脚本执行」：同 worker 重试（instrument / 发布阶段临时失败）也从一份新账开始
+        self.session.begin_save_moments()
+        self.configure_run({})
+        self._prepare_sandbox()
+        # 与 `python 脚本.py` 同一个顺序：脚本自己所在目录在 `sys.path[0]`（面板脚本放 panels/ 子目录时，
+        # 只加图库根会让 import_module(stem) 直接 ModuleNotFoundError）；项目根（图库根）**追加到末尾**，排在
+        # site-packages 之后——脚本 import 项目根下的 paper_style / 数据模块照样找得到，但项目根里恰好有同名
+        # 文件夹（比如整份库源码 `celerite/`，里面缺构建时才生成的文件）不会再盖住环境里装好的那个发行包。
+        # 静态侧同一个模型：`importscan._search_roots`（project_root 排在标准库 / site 之后）与
+        # `importshadow.detect(late_roots=…)`；改这里要一起改（tests/test_syspath_order.py 锁住三者一致）。
+        _put_project_on_path(self.script.parent, self.figures_dir)
+        #: 脚本运行前的 `sys.path`：之后新加进来的项目外目录读不了时，失败卡点名它（`_unreadable_folder_fact`）
+        self._path_baseline = list(sys.path)
+        # 项目目录里的源码（脚本本身按模块 import 时、它 import 的本地模块）不写 .pyc——
+        # 必须在第一次 import 用户代码（paper_style / 脚本）之前装好。
+        _suppress_project_bytecode((self.figures_dir, self.script.parent))
+
+        ledger = self._install_file_guards()
 
         # 相对路径**只读**回退：cwd 在沙盒里，而 `pd.read_csv("data.csv")` 这类
         # 写法在 `python figure.py` 下是天经地义的。只读、只在沙盒里确实没有
@@ -2857,7 +2901,9 @@ def _parse_remap(raw) -> list[dict]:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--script", required=True)
+    target = ap.add_mutually_exclusive_group(required=True)
+    target.add_argument("--script")
+    target.add_argument("--task", choices=["chart"])
     # 影子脚本：字节读自这里、`__file__` 仍是 --script（校验运行不往用户项目写文件；没给 = 旧行为）
     ap.add_argument("--script-source", default=None)
     ap.add_argument("--figures-dir", required=True)
