@@ -2718,6 +2718,27 @@ def test_workerd_export_is_state_neutral(workerd_figs, tmp_path):
 
 
 @needs_workerd
+def test_workerd_keeps_every_session_the_python_pool_keeps(workerd_figs, tmp_path, monkeypatch):
+    """池上限（ADR 0159，自适应到 5 张）之内的会话，workerd 一条都不许自己杀。
+
+    一份用户反馈：9 张图的项目、池上限 5，workerd 却按它自己的默认 3 条淘汰——池以为还活着的
+    第一张图在 workerd 里早没了，导出要用已建好的那张图（`require_built`）时报「会话过期」整批失败。"""
+    monkeypatch.setattr(pool, "MAX_ALIVE", 5)
+    workers = []
+    for i in range(5):
+        name = f"fig_cap_{i}.py"
+        (workerd_figs / name).write_text(FIG_SCRIPT, encoding="utf-8")
+        w = pool.get(name, str(workerd_figs), "main")
+        assert isinstance(w, pool.WorkerdWorker), "应当走 workerd 控制面"
+        w.ensure_built()
+        workers.append(w)
+    first = workers[0]
+    pdf = tmp_path / "first_still_alive.pdf"
+    first.export("TestFig_a", [], str(pdf), "pdf", 200, require_built=True)
+    assert pdf.exists()
+
+
+@needs_workerd
 def test_workerd_export_keeps_vector_text(workerd_figs, tmp_path):
     w = pool.get("fig_test.py", str(workerd_figs), "main")
     w.ensure_built()

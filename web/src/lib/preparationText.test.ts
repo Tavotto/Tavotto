@@ -131,6 +131,25 @@ describe('智能修复（ADR 0148）：主按钮读 remedy，每张失败卡都�
     expect(t('prep.line.feedback', { ns: 'workspace' })).toBe('这个脚本暂时用不了，发给我们看看？')
   })
 
+  it('装进「你为这个项目选的 Python」：改用户环境，主按钮是逐次确认的「安装」，不走「打开并运行」的自动授权', () => {
+    const impactAction = {
+      id: 'a-prepare_dependencies',
+      kind: 'prepare_dependencies',
+      config_revision: 1,
+      impact: { installs: ['scipy'], modifies_user_environment: true, target_kind: 'configured_interpreter' },
+    }
+    const v = view(
+      failed(undefined, {
+        phase: 'awaiting_confirmation',
+        outcome: { kind: 'needs_dependencies', code: 'dependency_preparation_required' },
+        requirements: [{ id: 'dependencies', kind: 'dependency_authorization', origin: 'static', code: 'dependency_preparation_required', payload: {} }],
+        actions: [impactAction, action('run_when_ready'), action('recheck')],
+      }),
+    )
+    expect(v.primary).toMatchObject({ kind: 'action', action: 'prepare_dependencies' })
+    expect(t('prep.install.toConfigured', { ns: 'workspace', module: 'scipy' })).toBe('把 scipy 装到你为这个项目选的 Python 里')
+  })
+
   it('确定的修法（装包 / 选环境 / 转写）：主按钮照旧，AI 次按钮也在', () => {
     const install = view(
       failed({ kind: 'install_packages', packages: ['scipy'], ask: false }, {
@@ -480,5 +499,157 @@ describe('设置里固定的 Python 缺组件：列出缺哪些（QA-WIN-12）',
   it('后端没量到：保持原来那一句，不硬造', () => {
     expect(pinned({ source: 'settings' }).sentence.key).toBe('envLocked')
     expect(pinned({ source: 'settings', missing: [] }).sentence.key).toBe('envLocked')
+  })
+})
+
+describe('只定义了画图函数的库模块（TVD-Y5JF）：指向调用它的入口脚本，不先装依赖、不代用户运行、不摆 AI', () => {
+  const action = (kind: string) => ({ id: `a-${kind}`, kind, config_revision: 1, impact: {} })
+  const inside = { path: '/r/draw_all.py', in_project: true, direct: true, open_root: '/r', open_script: 'tools/draw_all.py', script: 'tools/draw_all.py' }
+  const outside = { path: '/repo/draw.py', in_project: false, direct: true, open_root: '/repo', open_script: 'draw.py' }
+  const lib = (entries: unknown[], complete = true) => ({
+    id: 'entry',
+    kind: 'library_module',
+    code: 'script_is_library',
+    blocking: false,
+    payload: { entries, complete, scope: 'repo' },
+  })
+  const report = (over: Record<string, unknown> = {}) =>
+    ({
+      phase: 'ready_to_run',
+      outcome: { kind: 'pending' },
+      target: { kind: 'script', script: 'plot_helpers.py' },
+      checks: [],
+      requirements: [lib([inside])],
+      actions: [action('run_when_ready'), action('recheck')],
+      provider: { plan_id: 'p', attempt_id: null, attempts: 0, dependency: null },
+      ...over,
+    }) as unknown as PreparationReport
+  const view = (r: PreparationReport) => prepView({ ...lost, connection: 'ok', report: r } as PrepEntry, ctx)
+
+  it('可以运行时：主按钮是「运行它」，「仍然运行」作次按钮；不是 ready（打开并运行入口不会代认领）', () => {
+    const v = view(report())
+    expect(v.state).toBe('library_module')
+    expect(v.state).not.toBe('ready')
+    expect(v.sentence).toEqual({ key: 'libraryEntry', values: { script: 'plot_helpers.py', entry: 'draw_all.py' } })
+    expect(v.primary).toEqual({ kind: 'run_entry', entry: inside })
+    expect(v.secondary).toEqual({ kind: 'action', action: 'run_when_ready', label: 'runAnyway' })
+    expect(v.aiFix).toBe(false)
+  })
+
+  it('入口在项目外：换那一句（说出它在项目外）', () => {
+    const v = view(report({ requirements: [lib([outside])] }))
+    expect(v.sentence.key).toBe('libraryEntryOutside')
+    expect(v.primary).toEqual({ kind: 'run_entry', entry: outside })
+  })
+
+  it('还要装依赖时：库模块的卡排在安装前面', () => {
+    const v = view(
+      report({
+        phase: 'awaiting_confirmation',
+        outcome: { kind: 'needs_input', code: 'dependency_preparation_required' },
+        requirements: [{ id: 'dependencies', kind: 'dependency_authorization', code: 'x', payload: null }, lib([inside])],
+        actions: [action('prepare_dependencies'), action('run_when_ready')],
+      }),
+    )
+    expect(v.state).toBe('library_module')
+  })
+
+  it('跑完没出图：同一张卡，不是「没出图」+ AI 修复', () => {
+    const v = view(
+      report({
+        phase: 'partial',
+        outcome: { kind: 'execution_finished_no_figure', code: 'no_figures_captured_silent' },
+        actions: [action('run'), action('recheck')],
+        remedy: null,
+      }),
+    )
+    expect(v.state).toBe('library_module')
+    expect(v.aiFix).toBe(false)
+  })
+
+  it('一个入口都没找到：只说这一句，主按钮仍是运行', () => {
+    const v = view(report({ requirements: [lib([])] }))
+    expect(v.state).toBe('library_module_none')
+    expect(v.sentence.key).toBe('libraryNone')
+    expect(v.primary).toEqual({ kind: 'action', action: 'run_when_ready', label: 'runAnyway' })
+  })
+
+  it('用户已经点了「仍然运行」、意图在等运行目录的回答：让位给运行目录卡（不盖住它）', () => {
+    const v = view(
+      report({
+        phase: 'awaiting_configuration',
+        outcome: { kind: 'needs_input', code: 'workdir_confirmation_required' },
+        requirements: [
+          { id: 'workdir', kind: 'workdir_choice', code: 'workdir_confirmation_required', payload: { recommended: 'project', options: [], conflicts: [], reads: [] } },
+          lib([inside]),
+        ],
+        actions: [action('recheck')],
+        intent: { id: 'i1', status: 'active', reason: '', waiting_on: 'workdir', steps: 0, max_steps: 2, expires_at: 0, attempt_id: null, transferred: false },
+      }),
+    )
+    expect(v.state).toBe('workdir')
+  })
+
+  it('跑到一半才发现缺包（runtime_missing）：让位给装包卡', () => {
+    const v = view(
+      report({
+        phase: 'awaiting_confirmation',
+        outcome: { kind: 'needs_dependencies', code: 'missing_dependency' },
+        requirements: [
+          { id: 'dependencies', kind: 'dependency_authorization', origin: 'runtime_missing', code: 'missing_dependency', payload: { module: 'scipy', installable: true } },
+          lib([]),
+        ],
+        actions: [action('prepare_dependencies'), action('recheck')],
+      }),
+    )
+    expect(v.state).toBe('deps_runtime')
+  })
+
+  it('「仍然运行」的意图因为要改用户自己的环境被撤回（revoked）：让位给逐次确认的安装卡（Codex #1940 P1）', () => {
+    const v = view(
+      report({
+        phase: 'awaiting_confirmation',
+        outcome: { kind: 'pending' },
+        requirements: [{ id: 'dependencies', kind: 'dependency_authorization', code: 'x', payload: null }, lib([inside])],
+        actions: [action('prepare_dependencies'), action('recheck')],
+        intent: { id: 'i1', status: 'revoked', reason: 'outside_grant', waiting_on: '', steps: 0, max_steps: 2, expires_at: 0, attempt_id: null, transferred: false },
+      }),
+    )
+    expect(v.state).toBe('deps')
+  })
+
+  it('有可确认的依赖来源：确认包名那张卡排在库模块卡前面（Codex #1940）', () => {
+    const v = view(
+      report({
+        checks: [{ id: 'dependencies', status: 'ok', detail: { origins: { count: 1, confirmable: 1, by_reason: {} } } }],
+      }),
+    )
+    expect(v.state).toBe('origin_confirm')
+  })
+
+  it('必填参数没填齐：库模块卡同样换成参数卡（Codex #1940）', () => {
+    const v = prepView({ ...lost, connection: 'ok', report: report() } as PrepEntry, { ...ctx, missingArgs: 1 })
+    expect(v.state).toBe('args')
+  })
+
+  it('此刻没有可运行的动作（解释器被固定）：没找到入口的那张卡主按钮也不为空', () => {
+    const v = view(
+      report({
+        phase: 'action_required',
+        outcome: { kind: 'blocked', code: 'dependency_interpreter_pinned' },
+        requirements: [lib([])],
+        actions: [action('recheck')],
+      }),
+    )
+    expect(v.state).toBe('library_module_none')
+    expect(v.primary).toEqual({ kind: 'dismiss' })
+  })
+
+  it('文案一句话、不甩代码', () => {
+    for (const key of ['libraryEntry', 'libraryEntryOutside', 'libraryNone']) {
+      const s = t(`prep.line.${key}`, { ns: 'workspace', script: 'a.py', entry: 'b.py' })
+      expect(s).not.toMatch(/[。.]$/)
+      expect(s).not.toMatch(/library|import|__main__/)
+    }
   })
 })

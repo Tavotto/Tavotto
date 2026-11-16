@@ -217,3 +217,39 @@ def test_export_writes_proof_report(env):
     data = json.loads((figs / "tavottofile" / "export" / proof["name"]).read_text(encoding="utf-8"))
     assert data["kind"] == "tavotto-proof"
     assert data["files"]  # 成图文件名回填进 report
+
+
+def _schema_package(schema) -> io.BytesIO:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("layout.json", json.dumps({**_layout(), "schema": schema}))
+        z.writestr("package_manifest.json", json.dumps({"kind": "tavotto-package", "version": 1}))
+    buf.seek(0)
+    return buf
+
+
+def test_package_from_a_newer_build_says_too_new_not_invalid(env):
+    """更新的 Tavotto 打出的包（排版 schema 比本版本新）：回 `package_schema_too_new`，
+    界面据此给「检查更新」，而不是「不是项目包」（#1921）。"""
+    client, _, _ = env
+    resp = client.post(
+        "/api/package/open",
+        data={"package": (_schema_package(4), "new.tavotto")},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 400
+    body = resp.get_json()
+    assert body["code"] == "package_schema_too_new"
+    assert body["params"] == {"schema": 4}
+
+
+@pytest.mark.parametrize("schema", [1, "4", None, True])
+def test_package_with_a_bogus_schema_stays_unsupported(env, schema):
+    client, _, _ = env
+    resp = client.post(
+        "/api/package/open",
+        data={"package": (_schema_package(schema), "odd.tavotto")},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 400
+    assert resp.get_json()["code"] == "package_schema_unsupported"

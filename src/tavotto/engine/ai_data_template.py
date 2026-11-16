@@ -27,18 +27,28 @@ from __future__ import annotations
 
 import ast
 import bisect
-import csv
 import datetime
 import functools
 import hashlib
 import inspect
+import io
 import json
 import math
 import re
+import tokenize
 from dataclasses import dataclass
 
 from . import ai_data_figure as adf, ai_data_recipe as recipe_mod, xlsxread
-from .ai_data_figure import apply_cells, date_number, parse_cell, parse_date
+from .ai_data_figure import (
+    SemicolonCell,
+    apply_cells,
+    date_number,
+    delimited_records,
+    parse_cell,
+    parse_date,
+    resolve_header,
+    table_from_text,
+)
 
 # --------------------------------------------------------------------------- 错误
 TEMPLATE_ERROR_CODES = (
@@ -64,11 +74,13 @@ class TemplateError(ValueError):
 _ISO_DATE_PREAMBLE = 'import datetime as _dt\n_ISO_DATE = re.compile(r"\\d{4}-\\d{2}-\\d{2}")\n_EPOCH = _dt.date(1970, 1, 1)\n'
 
 
-def read_delimited(path, delimiter):
-    """CSV / TSV → `(表头, 数据行)`：UTF-8（可带 BOM）；全空行不算数据行；表头去首尾空白。"""
+def read_delimited(path, delimiter, header_row=None):
+    """文本表格 → `(表头, 数据行)`：UTF-8（可带 BOM）；全空行不算数据行；表头去首尾空白。`delimiter` 是 `,` / `\t` / `;` / `ws`（连续空白）；
+    `header_row`（1 起的物理行号）不给 = 第一条非空记录是表头，给了 = 跳过它之前的说明行（读法全文在 `table_from_text`，Tavotto 读出来的是同一张表）。"""
     with open(path, newline="", encoding="utf-8-sig") as fh:
-        table = [r for r in csv.reader(fh, delimiter=delimiter) if any(c.strip() for c in r)]
-    return [h.strip() for h in table[0]], table[1:]
+        text = fh.read()
+    header, rows, _lines = table_from_text(text, delimiter, header_row)
+    return header, rows
 
 
 def read_xlsx(path, sheet):
@@ -614,9 +626,13 @@ def pick_fonts(latin, cjk):
 
 
 RUNTIME_FUNCTIONS = (
+    SemicolonCell,
     parse_cell,
     parse_date,
     date_number,
+    delimited_records,
+    resolve_header,
+    table_from_text,
     read_delimited,
     read_xlsx,
     apply_cells,
@@ -918,6 +934,16 @@ def _footer(recipe, style, n_lines: list[str], n_text_expr: str | None) -> list[
     return out
 
 
+#: 脚本头的来源注释：生产（`_source_comment`、`_header`）与解析（`parse_source_comment`）共用这两个常量
+SOURCE_COMMENT_PREFIX = "# tavotto-source: "
+SOURCE_GENERATOR = "data_to_figure/v2"
+#: 解析来源注释只看脚本开头这么多行 / 字符，注释本身最长这么多字符（脚本是不可信输入）
+SOURCE_SCAN_LINES = 64
+SOURCE_SCAN_CHARS = 16 * 1024
+SOURCE_COMMENT_MAX = 4096
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+
+
 def _source_comment(entry: adf.TableEntry, recipe: recipe_mod.FigureRecipe, data_rel: str) -> str:
     body = {
         k: v for k, v in recipe.to_dict().items() if k != "why"
@@ -927,11 +953,67 @@ def _source_comment(entry: adf.TableEntry, recipe: recipe_mod.FigureRecipe, data
             "data": data_rel,
             "sha256": entry.summary.sha256,
             "recipe": body,
-            "generator": "data_to_figure/v2",
+            "generator": SOURCE_GENERATOR,
         },
         ensure_ascii=True,
         sort_keys=True,
     )
+
+
+def parse_source_comment(head: str) -> dict | None:
+    """从一个脚本的开头文字里读出来源注释：`{"data": <脚本里写的数据路径，相对脚本所在目录>, "sheet": <工作表名 | None>}`；**格式不对一律回 None**。
+
+    注释内容是不可信输入（任何脚本都能写一行一样的），所以严格：只看开头 `SOURCE_SCAN_LINES` 行；必须是 tokenize 认得的**真注释**
+    （不是字符串 / docstring 里的一行字）、从第 0 列起、以 `SOURCE_COMMENT_PREFIX` 开头；整行纯 ASCII 且不超过 `SOURCE_COMMENT_MAX`；
+    只认**第一条**（它不合格就是没有，不往后找）；JSON 对象的键恰好是 `data` / `sha256` / `recipe` / `generator`，`generator` 等于
+    `SOURCE_GENERATOR`，`sha256` 是 64 位小写十六进制，`recipe` 是对象且其 `sheet` 缺省 / null / 1–255 字符不含控制字符的字符串，
+    `data` 是 1–1024 字符、不含 NUL 与反斜杠的字符串。只返回路径与工作表名：配方、哈希都不外传。**不碰文件系统**。"""
+    lines = head.splitlines(keepends=True)[:SOURCE_SCAN_LINES]
+    comment = None
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO("".join(lines)).readline):
+            if (
+                tok.type == tokenize.COMMENT
+                and tok.start[1] == 0
+                and tok.string.startswith(SOURCE_COMMENT_PREFIX.rstrip())
+            ):
+                comment = tok.string
+                break
+    except (tokenize.TokenError, SyntaxError):
+        pass  # 开头之后读不下去了：之前已经找到的照用，没找到就是没有
+    if (
+        comment is None
+        or not comment.startswith(SOURCE_COMMENT_PREFIX)
+        or len(comment) > SOURCE_COMMENT_MAX
+        or not comment.isascii()
+    ):
+        return None
+    try:
+        meta = json.loads(comment[len(SOURCE_COMMENT_PREFIX) :])
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(meta, dict) or set(meta) != {"data", "sha256", "recipe", "generator"}:
+        return None
+    data, sha, rec = meta["data"], meta["sha256"], meta["recipe"]
+    if (
+        meta["generator"] != SOURCE_GENERATOR
+        or not isinstance(sha, str)
+        or not _SHA256_HEX.fullmatch(sha)
+        or not isinstance(rec, dict)
+        or not isinstance(data, str)
+        or not 0 < len(data) <= 1024
+        or "\x00" in data
+        or "\\" in data
+    ):
+        return None
+    sheet = rec.get("sheet")
+    if sheet is not None and (
+        not isinstance(sheet, str)
+        or not 0 < len(sheet) <= 255
+        or any(ord(c) < 32 or ord(c) == 127 for c in sheet)
+    ):
+        return None
+    return {"data": data, "sheet": sheet}
 
 
 XLSX_BEGIN = "# ---- begin xlsxread（Tavotto 的 XLSX 读取，原文内嵌）"
@@ -973,6 +1055,7 @@ def _runtime_source() -> str:
         "",
         "import bisect",
         "import csv",
+        "import io",
         "import math",
         "import re",
         "",
@@ -1011,7 +1094,7 @@ def _header(entry, recipe, data_rel, title, is_xlsx):
     return [
         f'"""由 Tavotto 根据数据生成的图（data_to_figure v2：{title}）。之后就是一份普通的绘图脚本，可以随意修改。\n\n'
         f'读表、汇总、布局的函数在同目录的 {name}.py 里（Tavotto 生成，别改它；它不含数据）。"""',
-        f"# tavotto-source: {_source_comment(entry, recipe, data_rel)}",
+        f"{SOURCE_COMMENT_PREFIX}{_source_comment(entry, recipe, data_rel)}",
         "from __future__ import annotations",
         "",
         "from pathlib import Path",
@@ -1160,8 +1243,7 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
     if is_xlsx:
         reader = "read_xlsx(DATA, SHEET)"
     else:
-        delim = "'\\t'" if entry.path.lower().endswith((".tsv", ".tab")) else "','"
-        reader = f"read_delimited(DATA, {delim})"
+        reader = _reader_expr(entry, False)
     L += ["", "", "def main():"]
     main_at = len(L)
     L += _read_lines(recipe, reader)
@@ -1321,8 +1403,7 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
     if is_xlsx:
         reader = "read_xlsx(DATA, SHEET)"
     else:
-        delim = "'\\t'" if entry.path.lower().endswith((".tsv", ".tab")) else "','"
-        reader = f"read_delimited(DATA, {delim})"
+        reader = _reader_expr(entry, False)
     L += ["", "", "def main():"]
     main_at = len(L)
     L += _read_lines(recipe, reader)
@@ -1572,10 +1653,20 @@ def _render_distribution(entry, recipe, data_rel, stem, style) -> str:
 
 
 def _reader_expr(entry, is_xlsx: bool) -> str:
+    """脚本里读表那一句。文本表格的读法（编码 + 分隔符 + 显式表头行）取自摘要（`read_text_table` 嗅探 / 调用方指定的结果），以字面量写进脚本——
+    脚本不嗅探；Tavotto 算期望值读表用的是同一组参数（同一个 `table_from_text`），所以脚本读出来的和预览 / 资格判定读出来的是同一张表。
+    老读法（首行表头、按后缀分隔）写成 `read_delimited(DATA, ',')`，与此前生成的脚本逐字相同。"""
     if is_xlsx:
         return "read_xlsx(DATA, SHEET)"
-    delim = "'\\t'" if entry.path.lower().endswith((".tsv", ".tab")) else "','"
-    return f"read_delimited(DATA, {delim})"
+    s = entry.summary
+    delim = s.delimiter or ("\t" if entry.path.lower().endswith((".tsv", ".tab")) else ",")
+    args = [repr(delim)] + ([repr(s.header_row)] if s.header_row is not None else [])
+    codec = adf.script_codec(s.encoding)
+    if codec is not None:
+        # 非 UTF-8（GB18030 / 有 BOM 的 UTF-16）：编码由父进程定下、以字面量写进脚本，脚本不探测。字节原样 `decode`（不经平台换行转换），
+        # 再交给公共模块里同一个 `table_from_text`——与父进程读出的是同一张表；公共模块不变（哈希不换）。
+        return f"table_from_text(DATA.read_bytes().decode({codec!r}), {', '.join(args)})[:2]"
+    return f"read_delimited(DATA, {', '.join(args)})"
 
 
 def _group_legend(style) -> list[str]:

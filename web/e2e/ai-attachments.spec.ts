@@ -41,7 +41,7 @@ test(
     await page.goto(a.baseURL)
     await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
     await waitForFigureEdit(page)
-    await page.getByRole('tab', { name: /改图助手|Assistant/i }).first().click()
+    await page.getByRole('tab', { name: /助手|Assistant/i }).first().click()
     await expect(page.locator('[data-ai-composer]')).toBeVisible({ timeout: 30_000 })
 
     // 没有附件：没有预览行

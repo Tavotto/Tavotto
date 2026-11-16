@@ -685,14 +685,38 @@ class TestJointTransaction:
             f"import {ALPHA[1]}\nimport {BETA[1]}\n", encoding="utf-8"
         )
         (project / "requirements.txt").write_text(f"{ALPHA[0]}\n{BETA[0]}\n", encoding="utf-8")
+        tb = (
+            "Traceback (most recent call last):\n"
+            '  File "/Users/alice/secret_lab/tavotto/engine/worker.py", line 752, in build\n'
+            "PermissionError: [Errno 13] denied: '/Users/alice/secret_lab/x'\n"
+        )
+        failure = deprepair._selftest_failure(
+            deprepair.SELFTEST_STAGE_ERROR_REPLY, exit_code=0, worker_code="script_error", text=tb
+        )
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
-                deprepair, "worker_self_test", lambda python: {"ok": False, "detail": "boom"}
+                deprepair,
+                "worker_self_test",
+                lambda python: {"ok": False, "detail": "boom", "failure": failure},
             )
             rec = _prepare(project)
         assert rec["state"] == deprepair.STATE_FAILED
         assert rec["code"] == deprepair.ERROR_SELFTEST_FAILED
         assert managedenv.active_generation(project) == gen
+        # TVD-JXMR：失败那一笔的诊断记录带自检的闭集形状，不带报错文字与路径
+        deadline = time.monotonic() + 5
+        while len(envdiag.recent(project)) < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        last = envdiag.recent(project)[0]  # 最新的在前
+        assert last["error_code"] == deprepair.ERROR_SELFTEST_FAILED
+        assert last["selftest"] == {
+            "stage": "error_reply",
+            "exit_code": 0,
+            "worker_code": "script_error",
+            "structure": ["[structure] PermissionError frames=1 (engine=1)"],
+            "engine_frame": "worker.py:752",
+        }
+        assert "alice" not in json.dumps(last) and "secret_lab" not in json.dumps(last)
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
                 deprepair,

@@ -192,6 +192,7 @@ USER_VISIBLE_CODES = {
     "package_file_missing": set(),
     "package_invalid": {"reason"},
     "package_schema_unsupported": set(),
+    "package_schema_too_new": {"schema"},
     "scan_failed": {"reason"},
     # ADR 0075 性能探针：报告形状不对 / 太大（reason = too_large / malformed / schema），落盘失败
     "perf_report_rejected": {"reason"},
@@ -392,6 +393,10 @@ USER_VISIBLE_CODES = {
     "data_empty": set(),
     "data_header_invalid": set(),
     "data_ragged": set(),
+    # 数据出图 v2 的文本表格（`.txt` / `.dat` / `.asc`、嗅探分隔符与表头行）：像二进制 / 没有成列的数据 / 指定的表头行不对
+    "data_binary": set(),
+    "data_not_table": set(),
+    "data_header_row_invalid": set(),
     # 数据出图 v2（数据文件夹 / TSV / XLSX，`xlsxread`）
     "data_format_unsupported": set(),
     "data_excel_unsupported": set(),
