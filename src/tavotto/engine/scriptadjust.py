@@ -89,6 +89,26 @@ _KEYED = {
     for p in ("facecolor", "edgecolor", "linewidth", "alpha")
 }
 _SIDES = ("top", "right", "bottom", "left")
+#: 构建期参数：改了要整份重排图例（引擎 `legendmodel.rebuild_legend` 的那一组）。脚本里合成**一次**
+#: `ax.legend(...)`（`_legend_rebuild`），同一个图例上几条一起改也只重建一回。
+#: 条目顺序与条目显隐同是重建型，但不写（见 `NOT_WRITABLE`）。
+_LEGEND_REBUILD = (
+    "fontsize",
+    "ncol",
+    "borderpad",
+    "labelspacing",
+    "handlelength",
+    "handletextpad",
+    "columnspacing",
+)
+#: 图例条目的示意线样式（引擎 `legendmodel._handle_write`）。落下即脱开跟随源对象。
+_HANDLE_PROPS = (
+    "handle_color",
+    "handle_linestyle",
+    "handle_linewidth",
+    "handle_marker",
+    "handle_markersize",
+)
 
 #: (cls 键, prop) → 一条公开 API 语句。`{o}` 对象、`{v}` 值、`{x}` 值的元素。
 #: 走专用生成（位置、图例字号）的几个 prop 也在表里占一格，模板写 `None`。
@@ -118,6 +138,13 @@ WRITES: dict[tuple[str, str], str | None] = {
     ("legend", "edgecolor"): "{o}.get_frame().set_edgecolor({v})",
     ("legend", "framealpha"): "{o}.get_frame().set_alpha({v})",
     ("legend", "frame_linewidth"): "{o}.get_frame().set_linewidth({v})",
+    ("legend", "frame_rounded"): "_frame_rounded({o}, {v})",
+    ("legend", "title"): "{o}.set_title({v})",
+    ("legend", "title_fontsize"): "{o}.get_title().set_fontsize({v})",
+    ("legend", "loc_anchor"): "_legend_anchor({o}, {v})",
+    **{("legend", p): None for p in _LEGEND_REBUILD if p != "fontsize"},
+    ("legend_text", "binding"): None,
+    **{("legend_text", p): None for p in _HANDLE_PROPS},
     ("axes", "xlim"): "{o}.set_xlim({x})",
     ("axes", "ylim"): "{o}.set_ylim({x})",
     ("axes", "xscale"): "{o}.set_xscale({v})",
@@ -168,17 +195,17 @@ WRITES: dict[tuple[str, str], str | None] = {
 NOT_WRITABLE: dict[str, str] = {
     "text": "linespacing labelpad stroke_enabled stroke_color stroke_width "
     "bbox_visible bbox_facecolor bbox_edgecolor bbox_linewidth bbox_alpha bbox_pad bbox_rounded",
+    # 条目顺序 / 条目显隐：脚本重建出来的图例按**显示顺序**编号（第几项就是 texts_几），引擎的条目
+    # 模型按脚本原样的序号认、隐藏的项留在编号里。两边认的不是同一项，验证逐项比对必然对不上。
+    "legend": "entry_order",
     "legend_text": "visible pos_frac linespacing labelpad stroke_enabled stroke_color "
     "stroke_width bbox_visible bbox_facecolor bbox_edgecolor bbox_linewidth bbox_alpha bbox_pad "
-    "bbox_rounded binding handle_color handle_linestyle handle_linewidth handle_marker "
-    "handle_markersize",
+    "bbox_rounded",
     "arrowpatch": "color linewidth mutation_scale alpha visible zorder endpoints_frac arrowstyle "
     "linestyle",
     "patch": "pos_frac size_frac hatch_linewidth hatchcolor fill",
     "artist": "pos_frac visible zorder",
     "line": "label pos_frac",
-    "legend": "loc_anchor title title_fontsize entry_order ncol borderpad labelspacing "
-    "handlelength handletextpad columnspacing frame_rounded",
     "axes": "visible position aspect grid_color grid_linestyle grid_linewidth grid_alpha "
     "ticks_bottom ticks_top ticks_left ticks_right spine_color spine_linewidth elev azim roll "
     "grid_visible proj_type axis_arrows arrow_color arrow_width arrow_head axline_color "
@@ -275,29 +302,6 @@ def _position(el: dict | None, gid: str, obj: str, value) -> str:
     raise _Unsupported(gid)
 
 
-#: `_legend_refont` 要的整份图例参数（来自 manifest 的 editable）。
-_LEGEND_SPEC = (
-    "loc",
-    "loc_anchor",
-    "fontsize",
-    "frameon",
-    "visible",
-    "title",
-    "title_fontsize",
-    "facecolor",
-    "framealpha",
-    "edgecolor",
-    "ncol",
-    "borderpad",
-    "labelspacing",
-    "handlelength",
-    "handletextpad",
-    "columnspacing",
-    "frame_linewidth",
-    "frame_rounded",
-)
-
-
 def _font(cls: str, obj: str, value, manifest: dict, encoding: str) -> str:
     """改字体（引擎 `_set_text_fontfamily` / `_apply_family_selection` 的公开 API 写法）。
 
@@ -317,6 +321,40 @@ def _font(cls: str, obj: str, value, manifest: dict, encoding: str) -> str:
     return f"{fn}({obj}, {_literal(chain, encoding)}, {_literal(family, encoding)})"
 
 
+_LEGEND_TEXT = re.compile(r"^axes_(\d+)\.legend\.texts_(\d+)$")
+
+
+def _rebuild(gid: str, patches, manifest: dict, encoding: str) -> str:
+    """同一个图例上所有构建期参数合成**一条** `_legend_rebuild`（`_translate` 按语句去重）。
+
+    素材是脚本原样的图例（这一档排在所有普通属性之前），位置用热态的 loc / 锚点：重建之后
+    loc / 锚点 / 拖动这几条各自的语句照常再落一遍，与引擎的位置模型同一个结果。
+    """
+    m = re.match(r"^(axes_(\d+)\.legend)", gid)
+    if m is None:
+        raise _Unsupported(gid)
+    leg_gid, i = m.group(1), int(m.group(2))
+    els = {e["gid"]: e for e in manifest.get("elements", [])}
+    fields = {f["prop"]: f.get("value") for f in (els.get(leg_gid) or {}).get("editable", [])}
+    # 锚点表达不出来（4 元组锚框、别的参照系）时 manifest 不发这条：重建会把它弄丢，不写
+    if "loc_anchor" not in fields or "loc" not in fields:
+        raise _Unsupported("loc_anchor")
+    edited = {p["prop"]: p["value"] for p in patches if p["gid"] == leg_gid}
+    loc = fields["loc"]
+    if not isinstance(loc, str) or loc == "custom":
+        if "loc_frac" not in edited:  # 脚本自己给的坐标 loc：重建摆不回去
+            raise _Unsupported("loc")
+        loc = "upper right"  # 随后的 `_legend_to` 按拖动的点重摆
+    spec = {k: edited[k] for k in _LEGEND_REBUILD if k in edited}
+    # 列数读不到公开 API（`Legend._ncols`），没改时取 manifest 里的脚本原样
+    spec.setdefault("ncol", int(fields.get("ncol") or 1))
+    anchor = fields["loc_anchor"]
+    return (
+        f"_legend_rebuild(_ax(fig, {i}), {_literal(loc, encoding)}, "
+        f"{_literal(anchor, encoding)}, {_literal(spec, encoding)})"
+    )
+
+
 def _statement(
     el: dict | None, gid: str, prop: str, value, patches, encoding: str, manifest: dict
 ) -> str:
@@ -331,17 +369,26 @@ def _statement(
         return _font(cls, obj, value, manifest, encoding)
     if (cls, prop) == ("legend", "loc_frac"):
         return f"_legend_to({obj}, fig, {float(value[0])!r}, {float(value[1])!r})"
-    if (cls, prop) == ("legend", "fontsize"):
-        m = _AX.match(gid)
-        if m is None or m.group(2) != "legend":
+    if cls == "legend" and prop in _LEGEND_REBUILD:
+        return _rebuild(gid, patches, manifest, encoding)
+    if cls == "legend" and prop in ("title", "title_fontsize"):
+        # 脚本原样没有标题时图例里没有标题这个元素，凭空加一个，验证逐元素比对就多出一项
+        if not any(e["gid"] == gid + ".title" for e in manifest.get("elements", [])):
+            raise _Unsupported(prop)
+    if cls == "legend_text" and (prop == "binding" or prop in _HANDLE_PROPS):
+        m = _LEGEND_TEXT.match(gid)
+        if m is None:
             raise _Unsupported(gid)
-        spec = {f["prop"]: f.get("value") for f in (el or {}).get("editable", [])}
-        for p in patches:  # 同一个图例上别的、能放进 legend() 参数的编辑一起进去
-            if p["gid"] == gid and p["prop"] in spec:
-                spec[p["prop"]] = p["value"]
-        spec["fontsize"] = value
-        spec = {k: spec.get(k) for k in _LEGEND_SPEC}
-        return f"_legend_refont(_ax(fig, {int(m.group(1))}), {_literal(spec, encoding)})"
+        ax, j = f"_ax(fig, {int(m.group(1))})", int(m.group(2))
+        source = str(((el or {}).get("legend_entry") or {}).get("source_gid") or "")
+        if re.search(r"\.(errorbar|stemseries)_\d+$", source):
+            # 误差棒 / 茎叶一格画好几条：引擎把颜色落到整格每个 artist 上，公开 API 够不着那一格
+            raise _Unsupported(prop)
+        if prop == "binding":
+            if value != "custom":  # 改回跟随：脚本原样里没有「重新跟随」这件事可写
+                raise _Unsupported(prop)
+            return f"_legend_detach({ax}, {j})"
+        return f"_legend_handle_set({ax}, {j}, {prop[len('handle_') :]!r}, {_literal(value, encoding)})"
     tmpl = WRITES[(cls, prop)]
     assert tmpl is not None
     return tmpl.format(
@@ -351,13 +398,27 @@ def _statement(
     )
 
 
-def _rank(prop: str, statement: str) -> tuple[int, int]:
+def _rank(prop: str, statement: str) -> int:
     """步骤顺序：与 `overrides._apply_rank` 同序的那几档（对账见 `tests/test_script_adjust.py`）。
 
     引擎的函数要看 artist 类型、父进程 import 不了，而写得进脚本的键里只有坐标轴刻度类型这一档
-    排在普通属性之前。重建图例会换掉图例对象，排在同一档最前。
+    排在普通属性之前。其余几档是脚本这一侧自己的先后：
+
+    1. 重建图例：换掉图例对象，素材必须是脚本原样（引擎同样从源对象 / 原样快照重建）；
+    2. 锚点、条目脱开跟随：锚点要在拖动之前（拖动清锚框，与位置模型的优先级一致）；
+       脱开要在源对象改样式之前，否则 `_with_legend` 会把源的新样子带进示意线；
+    3. 普通属性；
+    4. 示意线样式：写在「脚本原样 + 这几条」上，最后落。
     """
-    return (0 if prop in ("xscale", "yscale") else 1, 0 if "_legend_refont(" in statement else 1)
+    if prop in ("xscale", "yscale"):
+        return 0
+    if "_legend_rebuild(" in statement:
+        return 1
+    if prop == "loc_anchor" or "_legend_detach(" in statement:
+        return 2
+    if prop.startswith("handle_"):
+        return 4
+    return 3
 
 
 # -------------------------------- 块的运行期代码 --------------------------------
@@ -430,6 +491,8 @@ def _with_legend(item, setter):
         if leg is None:
             continue
         for handle, text in zip(leg.legend_handles, leg.get_texts()):
+            if getattr(handle, "_tavotto_detached", False):
+                continue  # this entry no longer follows its series
             if text.get_text() == label and hasattr(handle, "get_linestyle"):
                 setter(handle)
 
@@ -521,51 +584,116 @@ def _title_to(ax, fig, fx, fy):
     t.set_position(tuple(t.get_transform().inverted().transform(_disp(fig, fx, fy))))
 
 
-def _legend_refont(ax, spec):
-    # legend(fontsize=...) lays the whole box out again, which set_fontsize on
-    # each entry does not. Rebuild it from the artists the entries were collected from.
+def _legend_handle(ax, j):
+    return _at(_legend(ax).legend_handles, j)
+
+
+def _legend_detach(ax, j):
+    _legend_handle(ax, j)._tavotto_detached = True
+
+
+def _legend_handle_set(ax, j, prop, value):
+    # Same setters as the editor: a line key takes every style, a patch or a
+    # collection key only its colour.
+    from matplotlib.collections import Collection, LineCollection
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+
+    h = _legend_handle(ax, j)
+    if isinstance(h, Line2D):
+        getattr(h, "set_" + prop)(value)
+    elif prop != "color":
+        raise _Skip("this legend key has no %s" % prop)
+    elif isinstance(h, LineCollection):
+        h.set_color(value)
+    elif isinstance(h, (Patch, Collection)):
+        h.set_facecolor(value)
+
+
+def _frame_rounded(leg, rounded):
+    # Same box styles as Legend(fancybox=...).
+    if rounded:
+        leg.get_frame().set_boxstyle("round", pad=0, rounding_size=0.2)
+    else:
+        leg.get_frame().set_boxstyle("square", pad=0)
+
+
+def _legend_parent(leg):
+    parent = leg.axes if leg.axes is not None else leg.figure
+    return getattr(parent, "transAxes", None) or getattr(parent, "transSubfigure", parent.transFigure)
+
+
+def _legend_anchor(leg, point):
+    if point is None:
+        leg.set_bbox_to_anchor(None)
+    else:
+        leg.set_bbox_to_anchor((float(point[0]), float(point[1])), transform=_legend_parent(leg))
+
+
+def _legend_rebuild(ax, loc, anchor, spec):
+    # Column count, spacing and font size are build-time arguments:
+    # make the legend again from the artists its entries were collected from,
+    # carrying the rest of its look over.
     old = _legend(ax)
-    old_texts = old.get_texts()
+    old_texts = list(old.get_texts())
+    old_handles = list(old.legend_handles)
     labels = [t.get_text() for t in old_texts]
     found = {}
     for h, lab in zip(*ax.get_legend_handles_labels()):
         found.setdefault(lab, []).append(h)
-    if any(len(found.get(lab, [])) != 1 for lab in labels):
-        raise _Skip("legend entries were not collected by label")
+    shown = range(min(len(labels), len(old_handles)))
+
+    def source(j):
+        hits = found.get(labels[j], [])
+        if len(hits) == 1:
+            return hits[0]
+        if old_handles[j] is None:
+            raise _Skip("legend entry %d has no artist to draw it from" % j)
+        return old_handles[j]
+
+    title = old.get_title()
+    frame = old.get_frame()
     kw = dict(
-        loc=spec["loc"],
-        fontsize=spec["fontsize"],
+        loc=loc,
+        fontsize=spec.get("fontsize", old.prop.get_size()),
         ncols=int(spec["ncol"]),
-        frameon=spec["frameon"],
-        framealpha=spec["framealpha"],
-        facecolor=spec["facecolor"],
-        edgecolor=spec["edgecolor"],
-        fancybox=spec["frame_rounded"],
-        borderpad=spec["borderpad"],
-        labelspacing=spec["labelspacing"],
-        handlelength=spec["handlelength"],
-        handletextpad=spec["handletextpad"],
-        columnspacing=spec["columnspacing"],
-        title=spec["title"] or None,
-        title_fontsize=spec["title_fontsize"],
+        frameon=old.get_frame_on(),
+        borderpad=spec.get("borderpad", old.borderpad),
+        labelspacing=spec.get("labelspacing", old.labelspacing),
+        handlelength=spec.get("handlelength", old.handlelength),
+        handletextpad=spec.get("handletextpad", old.handletextpad),
+        columnspacing=spec.get("columnspacing", old.columnspacing),
         borderaxespad=old.borderaxespad,
         markerscale=old.markerscale,
         numpoints=old.numpoints,
         scatterpoints=old.scatterpoints,
         shadow=old.shadow,
+        handler_map=old.get_legend_handler_map(),
+        title=title.get_text() or None,
     )
-    if spec["loc_anchor"] is not None:
-        kw["bbox_to_anchor"] = tuple(spec["loc_anchor"])
-    new = ax.legend([found[lab][0] for lab in labels], labels, **kw)
-    new.get_frame().set_linewidth(spec["frame_linewidth"])
+    if anchor is not None:
+        kw["bbox_to_anchor"] = tuple(anchor)
+    new = ax.legend([source(j) for j in shown], [labels[j] for j in shown], **kw)
+    nf = new.get_frame()
+    nf.set_facecolor(frame.get_facecolor())
+    nf.set_edgecolor(frame.get_edgecolor())
+    nf.set_alpha(frame.get_alpha())
+    nf.set_linewidth(frame.get_linewidth())
+    nf.set_boxstyle(frame.get_boxstyle())
+    nt = new.get_title()
+    nt.set_fontproperties(title.get_fontproperties().copy())
+    nt.set_color(title.get_color())
+    nt.set_alpha(title.get_alpha())
     new.set_zorder(old.get_zorder())
-    new.set_visible(spec["visible"])
-    for n, o in zip(new.get_texts(), old_texts):
+    new.set_visible(old.get_visible())
+    for n_text, j in zip(new.get_texts(), shown):
+        o = old_texts[j]
         # Only the look: Artist.update_from would copy the transform too.
-        n.set_fontproperties(o.get_fontproperties().copy())
-        n.set_color(o.get_color())
-        n.set_alpha(o.get_alpha())
-        n.set_fontsize(spec["fontsize"])
+        n_text.set_fontproperties(o.get_fontproperties().copy())
+        n_text.set_color(o.get_color())
+        n_text.set_alpha(o.get_alpha())
+        if "fontsize" in spec:
+            n_text.set_fontsize(spec["fontsize"])
 
 
 def _math_custom(family):
@@ -843,8 +971,23 @@ def _translate(
             residual.append(p)
         else:
             kept.append((p, stmt))
+    # 示意线样式要先脱开跟随（第 2 档）：引擎里第一条 handle_* 落下的那一刻就脱开
+    for p, _stmt in list(kept):
+        if p["prop"] in _HANDLE_PROPS and (m := _LEGEND_TEXT.match(p["gid"])):
+            d = f"_legend_detach(_ax(fig, {int(m.group(1))}), {int(m.group(2))})"
+            kept.append(({"gid": p["gid"], "prop": "binding"}, d))
     kept.sort(key=lambda s: _rank(s[0]["prop"], s[1]))
-    return [(f"{p['gid']}.{p['prop']}", stmt) for p, stmt in kept], residual
+    out: list[tuple[str, str]] = []
+    first: dict[str, int] = {}
+    for p, stmt in kept:
+        what = f"{p['gid']}.{p['prop']}"
+        if stmt in first:  # 同一条重建 / 同一次脱开：只落一回，名字记在一起
+            k = first[stmt]
+            out[k] = (out[k][0] + " " + what, stmt)
+            continue
+        first[stmt] = len(out)
+        out.append((what, stmt))
+    return out, residual
 
 
 def _frame_inches(manifest: dict) -> tuple[float, float, float, float] | None:
@@ -1003,4 +1146,5 @@ def build(
         return Adjusted(src, 0, residual, skipped)
     ordinal = src.decode(encoding).count(END)
     block = _block(stem, steps, ordinal, indent, version, _frame_inches(manifest), shown_index)
-    return Adjusted(_insert(src, block, encoding, newline), len(steps), residual, skipped)
+    written = len(patches) - len(residual)
+    return Adjusted(_insert(src, block, encoding, newline), written, residual, skipped)
