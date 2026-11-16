@@ -327,6 +327,8 @@
     "script_needs_input": "The script is asking for input: “{{prompt}}”. Run it once in the Tavotto window and answer; the answer is remembered for this project.",
     "engine_files_incomplete": "Tavotto’s program files are incomplete, so it can’t render. Please reinstall Tavotto.",
     "import_folder_unreadable": "The script loads a folder outside the project, “{{folder}}”, that this account can’t read. Grant this account read access to it, or take it off the script’s search path, then try again; switching Python environments won’t help.",
+    "image_format_mismatch": "This image is really a {{actual}} image that was saved with a .{{ext}} name. Replace it with a real {{claimed}} file and run again.",
+    "image_format_mismatch_file": "{{file}} is really a {{actual}} image that was saved with a .{{ext}} name. Replace it with a real {{claimed}} file and run again.",
     "import_folder_abi_mismatch": "The script’s own “{{folder}}” folder was installed for Python {{abi}}, which doesn’t match this environment (Python {{current}}). Choose “Skip this folder and rerun”; there’s no need to change Python.",
     "path_ignore_token_invalid": "This request has expired. Run the script again.",
     "path_ignore_rejected": "Tavotto can’t skip this folder. Nothing was changed.",
