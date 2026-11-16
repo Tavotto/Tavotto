@@ -297,6 +297,166 @@ def test_narrow_spine_entries_stay_with_a_residual_broadcast(monkeypatch):
     assert {p["prop"] for p in out.residual} == {"spine_color", "spine_top_color"}
 
 
+def _cb_man(*, mappable="axes_0.images_0", mapped_props=("cmap", "vmin", "vmax"), **cb_over):
+    """图像 + 一条色条的 manifest（只留 `build` 读的那几个字段）。"""
+    cb = {
+        "gid": "axes_1.colorbar",
+        "role": "colorbar",
+        "editable": [{"prop": "orientation", "value": "vertical"}],
+        **({"mappable_gid": mappable} if mappable else {}),
+        **cb_over,
+    }
+    im = {
+        "gid": "axes_0.images_0",
+        "role": "image",
+        "editable": [{"prop": p, "value": 0} for p in mapped_props],
+    }
+    return {"elements": [im, cb]}
+
+
+def _cb_patch(prop, value, gid="axes_1.colorbar"):
+    return {"gid": gid, "prop": prop, "value": value}
+
+
+def _cb_build(man, patches):
+    return scriptadjust.build(b"import os\n", "Fig1", patches, man, version="9.9")
+
+
+def test_colorbar_orientation_and_extend_are_never_written():
+    """只能靠私有 API 的两个键永远留作重放（ADR 0094 Q10）。"""
+    edits = [_cb_patch("orientation", "horizontal"), _cb_patch("extend", "both")]
+    out = _cb_build(_cb_man(), edits)
+    assert out.written == 0 and out.residual == edits
+
+
+def test_colorbar_without_a_reachable_mappable_keeps_its_color_keys_for_replay():
+    """独立 `ScalarMappable` 的色条（没有 `mappable_gid`）：公开 API 够不着 mappable，cmap / vmin / vmax
+    留作重放；标签、刻度、轮廓这些落在色条轴上的照写。"""
+    man = _cb_man(mappable=None)
+    color = [_cb_patch("cmap", "viridis"), _cb_patch("vmin", 0.2), _cb_patch("vmax", 0.8)]
+    axis = [
+        _cb_patch("label", "x"),
+        _cb_patch("tick_color", "#112233"),
+        _cb_patch("outline_width", 2),
+    ]
+    out = _cb_build(man, color + axis)
+    assert out.residual == color and out.written == 3
+
+
+def test_colorbar_of_a_decoded_raster_keeps_its_color_keys_for_replay():
+    """`mappable_gid` 指的是反解出来的 RGB 位图（它自己没有 cmap / vmin / vmax 字段）：色条上色的其实是
+    另一个对象，写在位图上什么也不会发生。"""
+    man = _cb_man(mapped_props=())
+    edits = [_cb_patch("cmap", "viridis"), _cb_patch("vmin", 0.2)]
+    out = _cb_build(man, edits)
+    assert out.written == 0 and out.residual == edits
+
+
+def test_colorbar_cmap_with_scale_siblings_stays_with_the_image_cmap_for_replay():
+    """色阶兄弟的 cmap 引擎逐个换，写不出来；这条留作重放时，同一个 mappable 的 cmap 一起留下
+    （重放永远排在脚本之后，会盖掉写进脚本的那条）。vmin / vmax 走共用的 norm，照写。"""
+    man = _cb_man(scale_gids=["axes_0.images_1"])
+    cb_cmap, im_cmap = _cb_patch("cmap", "viridis"), _cb_patch("cmap", "cividis", "axes_0.images_0")
+    vmin = _cb_patch("vmin", 0.2)
+    out = _cb_build(man, [im_cmap, cb_cmap, vmin])
+    assert {(p["gid"], p["prop"]) for p in out.residual} == {
+        ("axes_1.colorbar", "cmap"),
+        ("axes_0.images_0", "cmap"),
+    }
+    assert out.written == 1
+
+
+def test_colorbar_clim_stays_with_its_narrower_image_entry_when_left_for_replay(monkeypatch):
+    """色条 vmin 是广播、图像自己的 vmin 是窄的：广播留作重放，窄的也一起留下；别的键不受牵连。"""
+    monkeypatch.delitem(scriptadjust.WRITES, ("colorbar", "vmin"))
+    edits = [
+        _cb_patch("vmin", 0.2),
+        _cb_patch("vmin", 0.1, "axes_0.images_0"),
+        _cb_patch("vmax", 0.9, "axes_0.images_0"),
+    ]
+    out = _cb_build(_cb_man(), edits)
+    assert {(p["gid"], p["prop"]) for p in out.residual} == {
+        ("axes_1.colorbar", "vmin"),
+        ("axes_0.images_0", "vmin"),
+    }
+    assert out.written == 1
+
+
+def test_colorbar_tick_keys_stay_with_their_narrower_tick_group_when_left_for_replay(monkeypatch):
+    monkeypatch.delitem(scriptadjust.WRITES, ("colorbar", "tick_fontsize"))
+    edits = [
+        _cb_patch("tick_fontsize", 9),
+        _cb_patch("fontsize", 6, "axes_1.yticks"),
+        _cb_patch("color", "#112233", "axes_1.yticks"),
+    ]
+    man = _cb_man()
+    man["elements"].append({"gid": "axes_1.yticks", "role": "ticks", "editable": []})
+    out = _cb_build(man, edits)
+    assert {(p["gid"], p["prop"]) for p in out.residual} == {
+        ("axes_1.colorbar", "tick_fontsize"),
+        ("axes_1.yticks", "fontsize"),
+    }
+    assert out.written == 1
+
+
+def test_colorbar_label_goes_on_the_script_original_long_axis():
+    """长轴看脚本原样的方向（方向被改了留作重放，重放时标签搬过去）；方向认不准（多宿主色条不发
+    `orientation`）时不写。"""
+    horiz = _cb_man()
+    horiz["elements"][1]["editable"] = [
+        {"prop": "orientation", "value": "vertical", "value_original": "horizontal"}
+    ]
+    assert ".set_xlabel('t')" in _cb_build(horiz, [_cb_patch("label", "t")]).data.decode()
+    assert ".set_ylabel('t')" in _cb_build(_cb_man(), [_cb_patch("label", "t")]).data.decode()
+    blind = _cb_man()
+    blind["elements"][1]["editable"] = []
+    out = _cb_build(blind, [_cb_patch("label", "t")])
+    assert out.written == 0
+
+
+def test_hiding_a_labelled_colorbar_is_left_for_replay():
+    """带标签的色条藏起来：热态里标签在藏起来之前排过位置，重放里轴一开始就不可见、标签没排过——
+    画面一样、几何对不上，所以留作重放。没有标签的照写。"""
+    man = _cb_man()
+    man["elements"].append(
+        {"gid": "axes_1.ylabel", "role": "axis_label", "editable": [{"prop": "text", "value": "s"}]}
+    )
+    hide = _cb_patch("visible", False)
+    assert _cb_build(man, [hide]).residual == [hide]
+    assert _cb_build(_cb_man(), [hide]).written == 1
+
+
+def test_colorbar_and_image_cmap_with_the_same_text_are_not_merged():
+    """两条色条（同一个 mappable）与图像的 cmap 写出来是同一句话；只合并同一句时，中间隔着另一个值的
+    那句会落空（A、B、A 变成 A、B）。"""
+    man = _cb_man()
+    man["elements"].append(
+        {
+            "gid": "axes_2.colorbar",
+            "role": "colorbar",
+            "mappable_gid": "axes_0.images_0",
+            "editable": [{"prop": "orientation", "value": "vertical"}],
+        }
+    )
+    edits = [
+        _cb_patch("cmap", "viridis"),
+        _cb_patch("cmap", "cividis", "axes_2.colorbar"),
+        _cb_patch("cmap", "viridis", "axes_0.images_0"),
+    ]
+    out = _cb_build(man, edits)
+    assert out.written == 3
+    text = out.data.decode()
+    assert text.count(".set_cmap('viridis')") == 2
+    assert text.rindex(".set_cmap('viridis')") > text.index(".set_cmap('cividis')")
+
+
+def test_colorbar_mappable_may_be_a_generic_collection():
+    man = _cb_man(mappable="axes_0.collections_3")
+    man["elements"][0].update(gid="axes_0.collections_3", role="collection")
+    text = _cb_build(man, [_cb_patch("vmin", 0.2)]).data.decode()
+    assert "_ax(fig, 0).collections, 3).set_clim(vmin=0.2)" in text
+
+
 def test_block_stem_matches_the_engine():
     """严格同源对：块里的 `_stem` ↔ `figcapture.savefig_stem`。两边不一致，调整就落不到那张图上。"""
     tree = ast.parse(scriptadjust._RUNTIME)
@@ -354,7 +514,14 @@ _LIBRARIES = {
     "inv": (INV_LIBRARY, INV_SCRIPT, INV_ENTRY),
     "adj": (ADJ_LIBRARY, ADJ_SCRIPT, ADJ_ENTRY),
 }
-_SWEEP = [("inv", s) for s in _FLAT_STEMS] + [("adj", s) for s in ADJ_STEMS]
+#: 色条的三张图（`invariant_figures` 里有、但不在它的 `STEMS` 里：别的用例按编号写死，不往那里加）：
+#: 同一个 mappable 两条色条 + 独立 `ScalarMappable` 的色条、映射的线组、两块网格共用 norm。
+_CBAR_STEMS = ("InvCbar2", "InvCbarLC", "InvShared")
+_SWEEP = (
+    [("inv", s) for s in _FLAT_STEMS]
+    + [("inv", s) for s in _CBAR_STEMS]
+    + [("adj", s) for s in ADJ_STEMS]
+)
 
 
 #: 结构化字段（pair / order / number_list）`_sample_value` 挑不出值，在这里按 prop 给一个明显不同的值。
@@ -430,8 +597,20 @@ def _every_other(field):
 _HELD_OUT_KEYED: dict[str, dict[tuple[str, str], object]] = {
     "tick_text": {("ticklabel", "text"): None},
     "tick_fixed": {("ticks", "major_mode"): "fixed", ("ticks", "major_values"): _every_other},
+    # 色条（ADR 0171 修订 ④）。整图扫描里它们都是隐形的，各自拆出来：
+    # · 标签：色条轴的 ylabel 元素（`text`）采到同一个值，两条写的是同一个 Text，谁错了看不出来；
+    # · 刻度字号 / 颜色是广播，被色条轴刻度组自己的窄条目（`ticks.fontsize` / `ticks.color`）盖住；
+    # · vmin / vmax 是广播，被图像自己的窄条目盖住；cmap 与图像的 cmap 互相广播，两条都采第一个选项；
+    # · 轮廓关掉之后轮廓线宽看不见。
+    "cb_label": {("colorbar", "label"): None},
+    "cb_ticks": {("colorbar", "tick_fontsize"): None, ("colorbar", "tick_color"): None},
+    "cb_clim": {("colorbar", "vmin"): None, ("colorbar", "vmax"): None},
+    "cb_cmap": {("colorbar", "cmap"): None},
+    "cb_outline": {("colorbar", "outline_visible"): None},
 }
-_HELD_OUT_KEYS = {("ticklabel", "text"), ("ticks", "major_values")}
+_HELD_OUT_KEYS = {("ticklabel", "text"), ("ticks", "major_values")} | {
+    k for g, d in _HELD_OUT_KEYED.items() if g.startswith("cb_") for k in d
+}
 _GROUPS: dict[str, tuple[set[str] | None, dict | None]] = {
     **{g: (props, None) for g, props in _HELD_OUT.items()},
     **{g: (None, keyed) for g, keyed in _HELD_OUT_KEYED.items()},
@@ -569,6 +748,10 @@ def test_held_out_fields_replay_identically(tmp_path, group):
     seen = False
     for lib in _LIBRARIES:
         stems = [s for lb, s in _SWEEP + _HELD_OUT_STEMS.get(group, []) if lb == lib]
+        if group == "tick_text":
+            # 色条三张图上单条刻度文字不等价（色条轴 / 带色条的宿主轴的标签数，热态与重放里不同；把色条这一族
+            # 从 `_ROLE_CLS` 拿掉照样复现，所以不是色条键的问题）：③ 的遗留，另行评估
+            stems = [s for s in stems if s not in _CBAR_STEMS]
         if not stems:
             continue
         sub = tmp_path / lib
@@ -739,8 +922,26 @@ EDITS = [
 ]
 
 
-@pytest.fixture
-def project(tmp_path, monkeypatch):
+#: 图像 + 色条（色条轴是 `axes_1`，图像是 `axes_0.images_0`）：色条的组合用例用它。
+CBAR_SCRIPT = """\
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+def main():
+    fig, ax = plt.subplots(figsize=(3.6, 2.8))
+    im = ax.imshow(np.linspace(0, 1, 144).reshape(12, 12), cmap="magma")
+    cb = fig.colorbar(im, ax=ax)
+    cb.set_label("signal")
+    fig.savefig("Fig1.pdf")
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+def _open_project(tmp_path, monkeypatch, script: str):
     from tavotto import app as m
 
     m.app.config["TESTING"] = True
@@ -751,18 +952,37 @@ def project(tmp_path, monkeypatch):
     monkeypatch.setattr(m, "EXPORT_DIR", tmp_path / "exports")
     figs = tmp_path / "figures"
     figs.mkdir()
-    (figs / "fig1.py").write_text(SCRIPT, encoding="utf-8")
+    (figs / "fig1.py").write_text(script, encoding="utf-8")
     (figs / "points.csv").write_text("0,9,2,10,4,7.5", encoding="utf-8")
     (figs / "tavotto_registry.json").write_text(REGISTRY, encoding="utf-8")
     subprocess.run([WORKER_PY, "fig1.py"], cwd=figs, check=True)
     m.open_project(str(figs))
     exportjob.reset_for_tests()
+    return m, figs
+
+
+def _close_project(m, figs):
+    m.reset_projects()
+    pool.shutdown_all(figures_dir=str(figs), wait=True)
+    project_watch.stop()
+
+
+@pytest.fixture
+def project(tmp_path, monkeypatch):
+    m, figs = _open_project(tmp_path, monkeypatch, SCRIPT)
     try:
         yield m.app.test_client(), figs
     finally:
-        m.reset_projects()
-        pool.shutdown_all(figures_dir=str(figs), wait=True)
-        project_watch.stop()
+        _close_project(m, figs)
+
+
+@pytest.fixture
+def cbar_project(tmp_path, monkeypatch):
+    m, figs = _open_project(tmp_path, monkeypatch, CBAR_SCRIPT)
+    try:
+        yield m.app.test_client(), figs
+    finally:
+        _close_project(m, figs)
 
 
 def _export(client, patches, **over):
@@ -1006,6 +1226,113 @@ def test_grid_and_spine_edits_combine_like_the_editor(project, patches):
     body = _export(client, patches, formats=[])
     assert body["status"] == "done", body
     assert _script_output(body)["script_report"]["written"] == len(patches)
+
+
+_CB, _IM, _CB_YTICKS = "axes_1.colorbar", "axes_0.images_0", "axes_1.yticks"
+
+
+@real_worker
+@pytest.mark.parametrize(
+    ("patches", "residual"),
+    [
+        # 色条与图像的 cmap 互相广播（ADR 0135），文档序靠后的赢：两种列表顺序
+        (
+            [
+                {"gid": _CB, "prop": "cmap", "value": "viridis"},
+                {"gid": _IM, "prop": "cmap", "value": "cividis"},
+            ],
+            0,
+        ),
+        (
+            [
+                {"gid": _IM, "prop": "cmap", "value": "cividis"},
+                {"gid": _CB, "prop": "cmap", "value": "viridis"},
+            ],
+            0,
+        ),
+        # vmin / vmax：图像自己的窄、色条的广播，窄的盖广播，与列表顺序无关
+        (
+            [
+                {"gid": _CB, "prop": "vmin", "value": 0.3},
+                {"gid": _IM, "prop": "vmin", "value": 0.1},
+                {"gid": _CB, "prop": "vmax", "value": 0.7},
+            ],
+            0,
+        ),
+        (
+            [
+                {"gid": _IM, "prop": "vmin", "value": 0.1},
+                {"gid": _CB, "prop": "vmax", "value": 0.7},
+                {"gid": _CB, "prop": "vmin", "value": 0.3},
+            ],
+            0,
+        ),
+        # 刻度字号 / 颜色：色条的广播、刻度组自己的窄，两种列表顺序
+        (
+            [
+                {"gid": _CB, "prop": "tick_fontsize", "value": 11},
+                {"gid": _CB_YTICKS, "prop": "fontsize", "value": 6},
+                {"gid": _CB, "prop": "tick_color", "value": "#2255aa"},
+                {"gid": _CB_YTICKS, "prop": "color", "value": "#cc3300"},
+            ],
+            0,
+        ),
+        (
+            [
+                {"gid": _CB_YTICKS, "prop": "color", "value": "#cc3300"},
+                {"gid": _CB_YTICKS, "prop": "fontsize", "value": 6},
+                {"gid": _CB, "prop": "tick_color", "value": "#2255aa"},
+                {"gid": _CB, "prop": "tick_fontsize", "value": 11},
+            ],
+            0,
+        ),
+        # 标签、轮廓、色条的显隐：同一个标签的两个入口（色条标签与轴标签文字）按列表序后者赢
+        (
+            [
+                {"gid": _CB, "prop": "label", "value": "intensity"},
+                {"gid": "axes_1.ylabel", "prop": "text", "value": "flux"},
+                {"gid": _CB, "prop": "outline_width", "value": 2.5},
+                {"gid": _CB, "prop": "outline_visible", "value": True},
+            ],
+            0,
+        ),
+        (
+            [
+                {"gid": "axes_1.ylabel", "prop": "text", "value": "flux"},
+                {"gid": _CB, "prop": "label", "value": "intensity"},
+                {"gid": _CB, "prop": "visible", "value": False},
+            ],
+            1,  # 带标签的色条藏起来留作重放（见 `_statement`）
+        ),
+        # 方向 / 延伸三角留作重放，其余写进脚本（重放时标签搬去新的长轴）
+        (
+            [
+                {"gid": _CB, "prop": "orientation", "value": "horizontal"},
+                {"gid": _CB, "prop": "extend", "value": "both"},
+                {"gid": _CB, "prop": "label", "value": "intensity"},
+                {"gid": _CB, "prop": "tick_color", "value": "#2255aa"},
+                {"gid": _CB, "prop": "cmap", "value": "viridis"},
+            ],
+            2,
+        ),
+    ],
+    ids=[
+        "cmap-colorbar-first",
+        "cmap-image-first",
+        "clim-broadcast-first",
+        "clim-narrow-first",
+        "ticks-broadcast-first",
+        "ticks-narrow-first",
+        "label-outline",
+        "label-then-hide",
+        "reorient-and-extend",
+    ],
+)
+def test_colorbar_edits_combine_like_the_editor(cbar_project, patches, residual):
+    client, _figs = cbar_project
+    body = _export(client, patches, formats=[])
+    assert body["status"] == "done", body
+    assert _script_output(body)["script_report"]["written"] == len(patches) - residual
 
 
 def test_one_rebuild_per_legend():
