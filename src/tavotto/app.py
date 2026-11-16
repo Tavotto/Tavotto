@@ -94,6 +94,7 @@ from .engine import (
     deprepair as engine_deprepair,
     desktopproc as engine_desktopproc,
     diagdetail as engine_diagdetail,
+    diagexternal as engine_diagexternal,
     diagnostics as engine_diagnostics,
     diagnostics_frontend as engine_diagnostics_frontend,
     diagsend as engine_diagsend,
@@ -1648,6 +1649,25 @@ def _resolve_panel_source(
 def _export_tiff_error(exc: tiffprobe.UnsupportedTiff) -> engine_exportreq.ExportRequestError:
     """导出作业里没有 HTTP 响应可回：范围之外的 TIFF 换成作业自己的结构化失败，code 原样带过去。"""
     return engine_exportreq.ExportRequestError(exc.code, exc.message, exc.params)
+
+
+@app.get("/api/svg/chart/inspect")
+def api_svg_chart_inspect():
+    """计算图表绑定入口的只读盘点（ADR 0182）：同一份字节重新校验 + 稳定节点清单。
+
+    与 `/api/file` 同一条 `safe_resolve` 路径约束、同一个 svgcheck 边界；
+    失败 422 带稳定码，原文件零改动，无任何写入与执行。
+    """
+    from . import svgscene
+
+    path = safe_resolve(request.args.get("id", ""))
+    if path.suffix.lower() not in SVG_EXT:
+        return jsonify({"error": "not an SVG file", "code": "svg_scene_invalid"}), 422
+    try:
+        inventory = svgscene.read_scene(path)
+    except svgscene.SceneError as exc:
+        return jsonify({"code": exc.code, "error": exc.detail}), 422
+    return jsonify(inventory)
 
 
 def _serialize_figure(
@@ -5786,6 +5806,16 @@ def _build_diagnostics_bundle(
         fix_audit=engine_fixsession.audit_tail(engine_fixsession.SESSIONS.ids_for(pid))
         if pid
         else None,
+        # 已收脚本运行时从项目外加载过的本地模块（持久记录，收集时在 diagdetail 里重新校验）
+        external_lookup=(
+            (
+                lambda rel, fd=(status or {}).get("figures_dir"): engine_diagexternal.modules_for(
+                    fd, rel
+                )
+            )
+            if (status or {}).get("figures_dir")
+            else None
+        ),
     )
     items = engine_diagdetail.collect(src, detail.options)
     # report.json 只算一次：超限时 `fit` 会按优先级截断重建几次 ZIP，不该每次都重新探测渲染环境

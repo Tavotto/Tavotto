@@ -31,6 +31,7 @@ from pathlib import Path
 
 from . import (
     config,
+    diagexternal,
     envlease,
     execspec,
     executionfact,
@@ -947,6 +948,23 @@ def _fold_build_timings(resp: dict, build: dict | None) -> dict:
     if "total_ms" in build:
         timings["build_total_ms"] = build["total_ms"]
     return resp
+
+
+def _note_external_modules(worker, source, *, failed: bool) -> None:
+    """worker 这次运行从项目外加载的本地模块（`external_modules`，诊断包「脚本源码」用）→ 持久记录。
+    成功：以这次为准（没有就清掉）；失败：只在带了才记（敏感运行的错误信封被白名单剥掉了它，不当作「没有」）。
+    永不抛——记录只是诊断的辅助。"""
+    try:
+        # 取走就丢：这些是项目外的绝对路径，`err.extra` / 响应是诊断、投影、遥测读得到的那一份，不留（与
+        # `unreadable_folder_private` 同一纪律）；只进应用数据目录里的持久记录，出门要等用户勾「脚本源码」
+        mods = source.pop("external_modules", None) if isinstance(source, dict) else None
+        if failed and not mods:
+            return
+        diagexternal.note(
+            getattr(worker, "figures_dir", ""), getattr(worker, "script_name", ""), mods
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _norm_dir(figures_dir: str | Path) -> str:
@@ -3381,6 +3399,7 @@ class EngineWorker:
             msg = err or "worker 错误"
             tb = resp.get("traceback", "")
             code = ""
+        _note_external_modules(self, err, failed=True)
         # missing_dependency 优先于协议 code：worker 那边它只是一个普通的
         # script_error，但对用户来说「缺包」是完全不同的一件事（有可执行出口）。
         engine_mod = missing_engine_module(f"{msg}\n{tb}")
@@ -3607,6 +3626,7 @@ class EngineWorker:
         self.last_build_inputs_read = inputs_read if isinstance(inputs_read, dict) else None
         misses = resp.get("probe_misses")
         self.last_build_probe_misses = misses if isinstance(misses, list) else None
+        _note_external_modules(self, resp, failed=False)
         self.last_build_execution_id = resp.get("execution_id")
         self.last_build_artifact_probe = resp.get("artifact_probe")
         self.last_build_script_inputs = _script_inputs_of(resp)
@@ -4180,6 +4200,7 @@ class WorkerdWorker:
         if not tb and code in _FATAL_CODES:
             tb = self._log_tail(FATAL_TAIL_LINES)  # 进程级失败时 worker 的 traceback 全在日志里
         message = str(exc)
+        _note_external_modules(self, exc.extra, failed=True)
         if code == "session_dead":
             forget_python_verdict(getattr(self, "python", None))
         if code == "session_dead" and isinstance(exc.extra, dict) and "exit" in exc.extra:
@@ -4391,6 +4412,7 @@ class WorkerdWorker:
         self.last_build_inputs_read = inputs_read if isinstance(inputs_read, dict) else None
         misses = resp.get("probe_misses")
         self.last_build_probe_misses = misses if isinstance(misses, list) else None
+        _note_external_modules(self, resp, failed=False)
         self.last_build_execution_id = resp.get("execution_id")
         self.last_build_artifact_probe = resp.get("artifact_probe")
         self.last_build_script_inputs = _script_inputs_of(resp)
