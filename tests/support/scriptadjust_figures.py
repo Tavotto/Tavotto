@@ -9,7 +9,7 @@ from __future__ import annotations
 
 SCRIPT_NAME = "fig_scriptadjust.py"
 ENTRY = "main"
-STEMS: tuple[str, ...] = ("AdjLegend",)
+STEMS: tuple[str, ...] = ("AdjLegend", "AdjProxy")
 
 LIBRARY = """\\
 import numpy as np
@@ -30,4 +30,14 @@ def main():
     ax.set_ylim(-1.8, 4.6)
     ax.legend(loc="lower left", ncol=2, title="Series", title_fontsize=9, fontsize=8)
     fig.savefig("AdjLegend.pdf")
+
+    # ---- AdjProxy：代理示意线 + markerscale（图例条目没有可收集的源对象） ----
+    # 重建只能从图例里现成的示意线出发，而那份已经乘过一次 markerscale：再交给 legend() 会再乘一次
+    from matplotlib.lines import Line2D
+
+    fig, ax = plt.subplots(figsize=(3.4, 2.6))
+    ax.plot(x, np.sin(x), color="#2a6f3c")
+    proxy = Line2D([], [], color="#b34700", marker="o", markersize=6, linestyle="none")
+    ax.legend([proxy], ["proxy"], loc="upper right", markerscale=2)
+    fig.savefig("AdjProxy.pdf")
 """

@@ -643,12 +643,15 @@ def _legend_rebuild(ax, loc, anchor, spec):
         found.setdefault(lab, []).append(h)
     shown = range(min(len(labels), len(old_handles)))
 
+    fallback = set()
+
     def source(j):
         hits = found.get(labels[j], [])
         if len(hits) == 1:
             return hits[0]
         if old_handles[j] is None:
             raise _Skip("legend entry %d has no artist to draw it from" % j)
+        fallback.add(j)
         return old_handles[j]
 
     title = old.get_title()
@@ -674,6 +677,11 @@ def _legend_rebuild(ax, loc, anchor, spec):
     if anchor is not None:
         kw["bbox_to_anchor"] = tuple(anchor)
     new = ax.legend([source(j) for j in shown], [labels[j] for j in shown], **kw)
+    for h, j in zip(new.legend_handles, shown):
+        # A key drawn from the old legend's own key was already scaled by
+        # markerscale once: keep its size instead of scaling it again.
+        if j in fallback and hasattr(h, "set_markersize") and hasattr(old_handles[j], "get_markersize"):
+            h.set_markersize(old_handles[j].get_markersize())
     nf = new.get_frame()
     nf.set_facecolor(frame.get_facecolor())
     nf.set_edgecolor(frame.get_edgecolor())
