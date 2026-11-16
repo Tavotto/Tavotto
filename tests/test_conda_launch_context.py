@@ -2589,6 +2589,7 @@ def test_a_pinned_decision_and_a_plan_go_stale_when_the_conda_environment_change
         script=None,
         script_revision=None,
         binding=None,
+        input_declaration_state=None,
         environment={"generation": decision.generation},
         environment_state=decision.launch_context,
     )
@@ -2644,6 +2645,7 @@ def test_a_plan_made_while_conda_was_missing_goes_stale_once_conda_is_back(tmp_p
         script=None,
         script_revision=None,
         binding=None,
+        input_declaration_state=None,
         environment={"generation": decision.generation},
         environment_state=decision.launch_context,
     )
