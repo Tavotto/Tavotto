@@ -331,7 +331,7 @@
   --animate-drawer-out: drawer-out var(--duration-fast) var(--ease-exit);
   --animate-drawer-slide-in: drawer-slide-in var(--duration-base) var(--ease-pop);
   --animate-drawer-slide-out: drawer-slide-out var(--duration-fast) var(--ease-exit);
-  /* 数据预览浮层（浮起的卡片）：进场 = 从抽屉边缘位移 8px + 透明度，起步猛、几乎不过冲（--ease-snap）；退场更快更干脆 */
+  /* 数据预览浮层（浮起的卡片）：进场 = 从抽屉边缘位移 4px + 透明度，起步猛、几乎不过冲（--ease-snap）；退场更快更干脆 */
   --animate-sheet-in: sheet-in var(--duration-slow) var(--ease-snap);
   --animate-sheet-out: sheet-out var(--duration-fast) var(--ease-exit) forwards;
 
@@ -550,7 +550,7 @@
 @keyframes sheet-in {
   from {
     opacity: 0;
-    transform: translateX(-8px);
+    transform: translateX(-4px);
   }
   to {
     opacity: 1;
@@ -565,7 +565,7 @@
   }
   to {
     opacity: 0;
-    transform: translateX(-8px);
+    transform: translateX(-4px);
   }
 }
 

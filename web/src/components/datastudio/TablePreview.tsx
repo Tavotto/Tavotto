@@ -3,6 +3,7 @@ import { Notice } from '@/components/ui/Notice'
 import { backendCodeMsg, type AiDataOverview } from '@/lib/api'
 import { useFormatMessage } from '@/i18n/react'
 import { cn } from '@/lib/utils'
+import { OverlayFooter } from './OverlayFooter'
 
 const KIND_KEY = { numeric: 'numeric', date: 'date', text: 'text', mixed: 'mixed' } as const
 
@@ -39,6 +40,8 @@ export function TablePreview({
             {why}
           </p>
         )}
+        {/* 这屏没有主按钮：底栏只放一句话，告诉用户点哪里 */}
+        <OverlayFooter left={<span className="text-xs text-ink-3" data-studio-pick-hint>{t('dataFigureV2.preview.pickHint')}</span>} />
         <div role="radiogroup" aria-label={t('dataFigureV2.preview.headerPick')} data-studio-look className={cn('flex flex-col', loading && 'opacity-60')}>
           {lines.map((l) => {
             const on = l.line === guess

@@ -139,8 +139,8 @@ export function DataOverlay({ narrow }: { narrow: boolean }) {
   // 卡片目标宽度（要走 CSS 过渡，必须渲染前就知道）：预览按内容估，其余各屏固定
   const target =
     scene.kind === 'pick' ? 640 : scene.kind === 'ask' ? 480 : scene.kind === 'browse' ? previewCardWidth(ov) : 420
-  // 高度：表格 / 选画法这类要滚动的屏占满画布栏（上下各留 8px）；选择题 / 等待 / 失败这类短屏随内容
-  const tall = scene.kind === 'browse' || scene.kind === 'pick'
+  // 高度：表格这类要滚动的屏占满画布栏（上下各留 8px）；选画法 / 选择题 / 等待 / 失败这类屏随内容
+  const tall = scene.kind === 'browse'
   const width = narrow ? undefined : `max(360px, min(${target}px, 60%))`
   const maskImage = `linear-gradient(to bottom, ${edges.top ? 'transparent 0, black 20px' : 'black 0'}, ${edges.bottom ? 'black calc(100% - 24px), transparent 100%' : 'black 100%'})`
 

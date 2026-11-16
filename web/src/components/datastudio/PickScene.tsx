@@ -41,7 +41,7 @@ export function PickScene({
       <span className="type-section text-ink-2" id="studio-pick-methods" data-studio-source title={source}>
         {t('dataFigureV2.pick.methods')}
       </span>
-      <div role="radiogroup" aria-labelledby="studio-pick-methods" className="grid grid-cols-1 gap-3 min-[560px]:grid-cols-2">
+      <div role="radiogroup" aria-labelledby="studio-pick-methods" className="grid auto-rows-fr grid-cols-1 gap-3 min-[560px]:grid-cols-2">
         {items.map((it, i) => {
           const on = it.id === selectedId
           return (
@@ -50,10 +50,10 @@ export function PickScene({
               interactive
               selected={on}
               padding="sm"
-              className="animate-rise-in"
+              className="h-full animate-rise-in"
               style={{ animationDelay: `calc(var(--duration-exit) * ${i})`, animationFillMode: 'backwards' }}
             >
-              <label data-studio-option data-checked={on || undefined} className="flex cursor-default flex-col gap-2 rounded-md">
+              <label data-studio-option data-checked={on || undefined} className="flex h-full cursor-default flex-col gap-2 rounded-md">
                 <input
                   type="radio"
                   name="studio-pick"
@@ -67,7 +67,7 @@ export function PickScene({
                   <span className={cn('min-w-0 flex-1 truncate text-base', on ? 'font-medium' : 'font-normal')}>{title(it.title_code)}</span>
                   {it.recommended && <Badge>{t('dataFigureV2.pick.recommended')}</Badge>}
                 </span>
-                <span className="line-clamp-2 px-1 pb-1 text-sm text-ink-2">{why(it.why_code)}</span>
+                <span className="px-1 pb-1 text-sm text-ink-2">{why(it.why_code)}</span>
               </label>
             </Card>
           )

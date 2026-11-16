@@ -687,7 +687,8 @@
         "mixed": "Mixed",
         "id": "ID"
       },
-      "failed": "Couldn’t read this table."
+      "failed": "Couldn’t read this table.",
+      "pickHint": "Click the row that holds the column names."
     },
     "start": "See ways to draw",
     "back": "Back",

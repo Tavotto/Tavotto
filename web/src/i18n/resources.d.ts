@@ -189,6 +189,7 @@ export default interface Resources {
         "headerPick": "哪一行是每列的名字",
         "headerTag": "当作每列的名字",
         "lineN": "第 {{n}} 行",
+        "pickHint": "点一下每列名字所在的那一行。",
         "shown": "显示前 {{shown}} 行，共 {{total}} 行",
         "skipped": "开头 {{count}} 行是说明，已跳过。",
         "type": {
