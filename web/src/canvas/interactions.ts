@@ -161,6 +161,7 @@ import {
   type TextObject,
 } from '@/types/document'
 import { expandGroups, movableTargets, moveLabel, warnBlockedGroups } from '@/store/actions'
+import { dataSnapPoints, pathSnapPoints } from '@/lib/smartGuides'
 
 /** 历史标签描述符（与 store/actions.ts 同一命名空间） */
 const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
@@ -289,6 +290,19 @@ export const candidatesFor = (exclude: Set<string>) => {
       const extra = elementSnapCandidates(o, manifest)
       cands.xs.push(...extra.xs)
       cands.ys.push(...extra.ys)
+      // 智能参考线（ADR 0185 M7）：图内的数据点（曲线顶点、散点中心）
+      for (const [x, y] of dataSnapPoints(o, manifest)) {
+        cands.xs.push(x)
+        cands.ys.push(y)
+      }
+    }
+    // 智能参考线：别的路径 / 形状 / 箭头的锚点与线段中点
+    for (const o of doc().objects) {
+      if (exclude.has(o.id)) continue
+      for (const [x, y] of pathSnapPoints(o)) {
+        cands.xs.push(x)
+        cands.ys.push(y)
+      }
     }
   }
   return cands

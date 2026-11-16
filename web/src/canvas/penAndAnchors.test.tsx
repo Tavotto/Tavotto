@@ -131,6 +131,22 @@ describe('钢笔', () => {
     expect(objects()).toHaveLength(0)
   })
 
+  it('⌘ / Ctrl 按着拖 = 折线：这个点跟着指针走、不拉手柄（ADR 0185 M7）', async () => {
+    await penClick(10, 10)
+    await act(() => {
+      penPointerDown(down(30, 10))
+      fire('pointermove', 35, 20, { metaKey: true })
+      fire('pointerup', 35, 20, { metaKey: true })
+    })
+    await penClick(50, 10)
+    await key('Enter')
+    const p = onlyPath()
+    expect(p.subpaths[0].nodes.every((n) => !n.in && !n.out && !n.smooth)).toBe(true)
+    const pts = pagePoints(p)
+    expect(pts[1][0]).toBeCloseTo(35, 6)
+    expect(pts[1][1]).toBeCloseTo(20, 6)
+  })
+
   it('点回起点：闭合并完成', async () => {
     await penClick(0, 0)
     await penClick(20, 0)
