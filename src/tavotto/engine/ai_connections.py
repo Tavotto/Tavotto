@@ -705,7 +705,9 @@ def add_connection(body: object) -> tuple[str, str | None, dict | None]:
     return cid, reason, summary
 
 
-def probe_after_endpoint_save(before: list[dict], after: list[dict]) -> dict | None:
+def probe_after_endpoint_save(
+    before: list[dict], after: list[dict], *, key_sent: bool
+) -> dict | None:
     """旧的「其他兼容接口」表单（`PUT /api/ai/endpoints`）存完之后补一次协议探测（Codex #1965 P2）→ 摘要 | None。
 
     只对用户自填地址、且还没有探测结论（新建 / 改了地址或型号，`_clean` 已丢掉旧的 `protocol_ok`）的那一条做；
@@ -718,6 +720,16 @@ def probe_after_endpoint_save(before: list[dict], after: list[dict]) -> dict | N
         return None
     rec = changed[0]
     if not ai_providers._is_custom(rec) or rec.get("protocol_ok") or not rec.get("api_key"):
+        return None
+    prev = old.get(str(rec.get("id") or ""))
+    if (
+        not key_sent
+        and prev is not None
+        and ai_catalog.origin_of(str(rec.get("base_url") or ""))
+        != ai_catalog.origin_of(str(prev.get("base_url") or ""))
+    ):
+        # Key 留空 = 沿用已存的 Key；地址换了来源就不拿旧 Key 去探新主机（与 add_connection / live_models 同一条
+        # key_origin_mismatch 规矩，Codex #1965 P1）。不探 = 记录不动，用户重填 Key 再存或点检查时才发
         return None
     return _probe_and_store(str(rec["id"]), preferred=ai_providers.protocol_of(rec), custom=True)
 

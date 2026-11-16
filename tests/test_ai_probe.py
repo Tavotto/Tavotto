@@ -929,3 +929,28 @@ def test_legacy_endpoint_form_save_also_detects_the_protocol(client, gw):
     # 只改名称：已有结论，不重探
     assert client.put("/api/ai/endpoints", json={**body, "label": "Relay 2"}).status_code == 200
     assert len(gw.calls) == n
+
+
+def test_legacy_form_refuses_to_reuse_a_saved_key_on_a_new_origin(client, gw):
+    """Codex #1965 P1：「检查连接」表单改了地址、Key 留空——不得把旧 Key 带去新主机（保存拒绝，探测也不发）。"""
+    gw.routes = {"https://relay.example.test/v1/chat/completions": _j(CHAT_OK)}
+    body = {
+        "id": "relay",
+        "label": "relay",
+        "agent": "codex",
+        "base_url": "https://relay.example.test/v1",
+        "api_key": KEY,
+        "default_model": "m1",
+    }
+    assert client.put("/api/ai/endpoints", json=body).status_code == 200
+    n = len(gw.calls)
+    moved = {k: v for k, v in body.items() if k != "api_key"}
+    moved["base_url"] = "https://other-host.example.test/v1"
+    r = client.put("/api/ai/endpoints", json=moved)
+    assert r.status_code == 400 and r.get_json()["code"] == "key_origin_mismatch"
+    assert len(gw.calls) == n
+    assert ai_providers.get("relay")["base_url"] == "https://relay.example.test/v1"
+    # 同源换路径、Key 留空：照常保存
+    same = {**moved, "base_url": "https://relay.example.test/openai/v1"}
+    assert client.put("/api/ai/endpoints", json=same).status_code == 200
+    assert all(c["url"].startswith("https://relay.example.test/") for c in gw.calls)
