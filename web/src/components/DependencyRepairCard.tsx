@@ -15,7 +15,7 @@ import { listJoin } from '@/i18n/format'
 import { isRepairRunning, managedPreviewKey, useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
-import { Settings } from '@/components/ui/icons'
+import { Check, Copy, Settings } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { RepairProgressLine, RepairStageList } from './RepairProgressLine'
 import { PRODUCT_NAME } from '@/lib/brand'
@@ -143,6 +143,10 @@ export function DependencyRepairCard({
   //（采用它一个字节都不装），排在最前时也不能被当成装包的地方。
   const installTarget = offer.targets.find((tg) => tg.kind !== 'system_interpreter')
   const managedTarget = offer.targets.find((tg) => tg.kind === 'tavotto_managed') ?? null
+  // 管理环境装完 worker 自检没过（最近一代）：装进去也用不了，不再当主按钮——有用户为本项目选的 Python 就推荐它
+  // offer 是失败之前算的：本标签页刚看到这个项目的管理环境自检没过，也按失败过处理（Codex #1934 P2）
+  const seenSelftestFailure = useDepRepairStore((s) => s.managedSelftestFailed[currentProjectId() ?? ''] === true)
+  const selftestFailed = managedTarget?.selftest_failed === true || seenSelftestFailure
   // 受管目标能不能用 offer 形成时还不知道（后端在后台探基础解释器，于是也没挂私有 Python）：先形成一份计划
   // 读出真实要素（计划这一步什么都不装）。不预读的话，一键修复点下去计划多出一段下载，只能停在确认页再点一次
   const previewArgs = { module, script, target: 'tavotto_managed' as const }
@@ -153,6 +157,7 @@ export function DependencyRepairCard({
   const needPreview =
     canInstall &&
     !systemReady &&
+    !selftestFailed &&
     !pinnedSince &&
     !offer.pinned &&
     // 受管目标要新建第一代：要装的全部包（不止缺的这一个）只有形成计划时才算得出，先预读它再写那一句话；
@@ -175,6 +180,7 @@ export function DependencyRepairCard({
       (tg.kind === 'system_interpreter' || canInstall),
   )
   const managedReady = canInstall && !!managedTarget && managedTarget.available !== false && !previewUnavailable
+  const configuredTarget = targets.find((tg) => tg.kind === 'configured_interpreter') ?? null
   const managedUnavailable =
     previewUnavailable ||
     offer.targets.some(
@@ -192,7 +198,10 @@ export function DependencyRepairCard({
     tg.kind === 'system_interpreter'
       ? // 采用已有的解释器不经 plan：没有要安装的东西可以「计划」
         void adoptSystemPython(tg.python, module, script, origin, tg.candidate ?? null)
-      : tg.kind === 'tavotto_managed' && offer.requirement
+      : tg.kind === 'configured_interpreter'
+        ? // 改的是用户自己的环境：先到确认页（与项目 venv 同一条路），不一键执行
+          void makePlan({ module, script, target: 'configured_interpreter' }, origin)
+        : tg.kind === 'tavotto_managed' && offer.requirement
         ? // 一次授权：卡片已经把计划的要素说出口，点一次就开始
           void installNow(
             { module, script, target: 'tavotto_managed' },
@@ -243,20 +252,25 @@ export function DependencyRepairCard({
 
   // ---- 已经形成计划，等用户确认 ------------------------------------------
   if (plan) {
-    const toProject = plan.target_kind === 'project_venv'
+    const toConfigured = plan.target_kind === 'configured_interpreter'
+    const toProject = plan.target_kind === 'project_venv' || toConfigured
     return (
       <Card className="flex flex-col gap-2.5">
         <div>
           {/* 小标题走 type-section（全面打磨 D14）：11/500/ink 是这一族自造的第七个角色 */}
           <h3 className="type-section">{en('repairConfirmTitle', { module: pkg })}</h3>
           <p className="mt-1 text-xs leading-relaxed text-ink-2">
-            {toProject
-              ? en('repairConfirmProject', { path: plan.python || '.venv' })
-              : en('repairConfirmManaged')}
+            {toConfigured
+              ? en('oneClickSentenceConfigured', { module: pkg })
+              : toProject
+                ? en('repairConfirmProject', { path: plan.python || '.venv' })
+                : en('repairConfirmManaged')}
           </p>
           {toProject && (
             // 改用户自己的环境是不可逆的，这句不能藏起来
-            <p className="mt-1 text-xs leading-relaxed text-warn-content">{en('repairModifiesEnv')}</p>
+            <p className="mt-1 text-xs leading-relaxed text-warn-content">
+              {en(toConfigured ? 'repairModifiesConfiguredEnv' : 'repairModifiesEnv')}
+            </p>
           )}
           <p className="mt-1 text-xs leading-relaxed text-ink-3">
             {en('repairWillInstall', {
@@ -268,7 +282,12 @@ export function DependencyRepairCard({
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <Button variant="primary" disabled={busy} onClick={() => install()}>
-            {toProject ? en('repairInstallToProject') : en('repairPrepareAndContinue')}
+            {/* 装到用户选的 Python：不是「项目环境」，按钮与准备卡同一个「安装」 */}
+            {toConfigured
+              ? translate('workspace:prep.btn.install')
+              : toProject
+                ? en('repairInstallToProject')
+                : en('repairPrepareAndContinue')}
           </Button>
           <Button onClick={reset}>{en('repairBack')}</Button>
         </div>
@@ -282,7 +301,10 @@ export function DependencyRepairCard({
   const system = targets.find((tg) => tg.kind === 'system_interpreter') ?? null
   // 一键修复只有一个主动作（2026-09-29，面向不懂 Python 的用户）：这台电脑上已经装好这个包的环境最便宜
   // （不装、不下载，后端也把它排在最前），其次是为项目准备的受管环境。两样都没有时才把各条路摊开
-  const primary: DependencyTarget | null = system ?? (managedReady ? managedTarget : null)
+  // 管理环境自检失败过：有「你为这个项目选的 Python」就改推荐它；没有就不把管理环境当主按钮（见下面 `selftestDeadEnd`）
+  const primary: DependencyTarget | null =
+    system ?? (selftestFailed ? configuredTarget : managedReady ? managedTarget : null)
+  const selftestDeadEnd = !primary && selftestFailed && canInstall
   const rest = targets.filter((tg) => tg !== primary)
   // 解析不出包名：用户可以自己指定，但那串东西同样要过后端的语法关
   const notPip = offer.not_pip_installable
@@ -350,7 +372,7 @@ export function DependencyRepairCard({
         <p>{en('dependencyTargetHint_project_venv', { venv: lead.venv || '.venv' })}</p>
       </div>
     ) : null
-  const alternatives = primary ? rest : []
+  const alternatives = primary || selftestDeadEnd ? rest : []
   const managedAlternative = alternatives.some((tg) => tg.kind === 'tavotto_managed') && managedReady && offer.requirement
   const advanced = (
     <Advanced>
@@ -377,11 +399,25 @@ export function DependencyRepairCard({
           </div>
         )}
         {primary && specify}
-        <OtherPython />
+        {!selftestDeadEnd && <OtherPython />}
         <OpenEnvironment />
       </div>
     </Advanced>
   )
+
+  if (selftestDeadEnd) {
+    // 管理环境装完仍跑不起来、又没有「你为这个项目选的 Python」：不再让用户点一个注定白等的主按钮——
+    // 那一句说原因，主按钮是「选择其他 Python」；管理环境重试留在「详情」的备选里
+    return (
+      <Card className="flex flex-col gap-2" data-one-click-repair="selftest_failed">
+        <p className="text-sm leading-relaxed text-danger" data-repair-failure data-repair-selftest-failed>
+          {repairShortMessage(failing ? errorCode : 'dependency_worker_selftest_failed')}
+        </p>
+        <OtherPython primary />
+        {advanced}
+      </Card>
+    )
+  }
 
   if (primary) {
     // 默认可见的只有：一句话 + 一个主按钮 +「详情」（折叠）。标题、解释、下载大小都不摆出来
@@ -396,7 +432,9 @@ export function DependencyRepairCard({
           <p className="text-sm leading-relaxed text-ink" data-one-click-sentence>
             {managed
               ? oneClickSentence(requirementList.length > 1 ? packagesPhrase(requirementList) : pkg, checking ? null : disclosed)
-              : en('oneClickSentenceSystem', { module: pkg })}
+              : primary.kind === 'configured_interpreter'
+                ? en('oneClickSentenceConfigured', { module: pkg })
+                : en('oneClickSentenceSystem', { module: pkg })}
           </p>
         )}
         <Button
@@ -427,6 +465,20 @@ export function DependencyRepairCard({
             {en('repairManagedUnavailable')}
           </p>
         )}
+        {advanced}
+      </Card>
+    )
+  }
+
+  if (notPip && !exhausted && notPip.hint === 'ai_sandbox') {
+    // 只在 AI 聊天网页沙箱里有的模块（artifact_tool 等，TVD-NH7S）：哪个环境都没有，「选环境」是死路——
+    // 一句话 + 一个主按钮把「请 AI 去掉它重新生成」的话复制走；用户脚本不改
+    return (
+      <Card className="flex flex-col gap-2" data-repair-not-pip={notPip.hint}>
+        <p className="text-sm leading-relaxed text-ink" data-repair-not-pip-sentence>
+          {en('repairNotPipAiSandbox', { name: notPip.label })}
+        </p>
+        <CopyForAi name={notPip.label} />
         {advanced}
       </Card>
     )
@@ -546,6 +598,35 @@ function Rejections({ rejected, pkg }: { rejected: SystemInterpreterRejection[];
 }
 
 /** 就地打开渲染环境对话框（`EngineEnvironmentDialog`，与脚本行恢复说明同一个入口，不深链设置页） */
+/** 把「请去掉这个沙箱模块、重新生成脚本」的话复制到剪贴板；复制成功才改口，剪贴板被挡住时保持原样（不装成功） */
+function CopyForAi({ name }: { name: string }) {
+  useTranslation('errors')
+  const [done, setDone] = useState(false)
+  useEffect(() => {
+    if (!done) return
+    const timer = window.setTimeout(() => setDone(false), 2000)
+    return () => window.clearTimeout(timer)
+  }, [done])
+  return (
+    <Button
+      variant="primary"
+      size="sm"
+      className="self-start"
+      data-repair-copy-for-ai
+      data-copied={done || undefined}
+      onClick={() =>
+        void navigator.clipboard
+          ?.writeText(en('repairAiSandboxPrompt', { name }))
+          .then(() => setDone(true))
+          .catch(() => {})
+      }
+    >
+      {done ? <Check size={ICON_SIZE.sm} /> : <Copy size={ICON_SIZE.sm} />}
+      {en(done ? 'repairCopiedForAi' : 'repairCopyForAi')}
+    </Button>
+  )
+}
+
 function OpenEnvironment({ primary = false }: { primary?: boolean }) {
   useTranslation('workspace')
   return (
@@ -704,7 +785,7 @@ function Pinned({
  * 「选择其他 Python」——写项目作用域那一条（ADR 0018 的 `scope="project"`），
  * 不写全局：用户是在修**这个项目**的这个脚本，没理由改变别的项目的渲染环境。
  */
-function OtherPython() {
+function OtherPython({ primary = false }: { primary?: boolean }) {
   useTranslation('errors')
   const { setProjectPython } = useEnvStore()
   const [path, setPath] = useState('')
@@ -712,7 +793,8 @@ function OtherPython() {
   return (
     <div className="flex flex-col gap-1.5">
       {/* 只留主句：括号里的附加条件是「填错了再说」的事，这里先把出口指清楚 */}
-      <span className="text-xs text-ink-2">{en('repairUseOtherPythonShort')}</span>
+      {/* 作主按钮时（管理环境自检失败、无路可走）上面那一句已经说了原因，「或者…」这行不再出 */}
+      {!primary && <span className="text-xs text-ink-2">{en('repairUseOtherPythonShort')}</span>}
       {/* 占位符是「这里还没填」的提示，不是要读的正文，压到 faint 一档。写在行
           容器上（而不是传 className）是因为 placeholder 的样式归 TextInput 自己
           管，这条后代变体的特指度更高，能盖住它的默认色。 */}
@@ -728,6 +810,8 @@ function OtherPython() {
           aria-label={en('pathAria')}
         />
         <Button
+          variant={primary ? 'primary' : undefined}
+          data-repair-other-python-apply
           disabled={!path.trim()}
           onClick={async () => setError(await setProjectPython(path.trim()))}
         >
@@ -748,6 +832,7 @@ function OtherPython() {
  */
 function label(target: DependencyTarget, pkg: string): string {
   if (target.kind === 'project_venv') return en('repairUseProjectEnv')
+  if (target.kind === 'configured_interpreter') return en('oneClickSentenceConfigured', { module: pkg })
   if (target.kind === 'system_interpreter') return en('repairUseSystemPython')
   return en('repairInstallToManaged', { module: pkg, product: PRODUCT_NAME })
 }
@@ -758,6 +843,7 @@ function label(target: DependencyTarget, pkg: string): string {
  */
 function hint(target: DependencyTarget): string {
   if (target.kind === 'project_venv') return target.venv || '.venv'
+  if (target.kind === 'configured_interpreter') return target.python
   if (target.kind === 'system_interpreter') {
     const base = en('repairSystemHint', {
       python: target.python,
@@ -868,7 +954,10 @@ function RepairProgress({
         )}
         {cancelled && (
           <p className="mt-1 text-xs leading-relaxed text-ink-2">
-            {progress.target_kind === 'project_venv'
+            {/* 原地装进用户自己的环境（项目 venv / 你为这个项目选的 Python）：取消时可能已改了一半，不能说成「下次重建」 */}
+            {progress.target_kind === 'configured_interpreter'
+              ? en('repairCancelledConfiguredEnv')
+              : progress.target_kind === 'project_venv'
               ? en('repairCancelledProjectEnv')
               : en('repairCancelledManaged', { product: PRODUCT_NAME })}
           </p>

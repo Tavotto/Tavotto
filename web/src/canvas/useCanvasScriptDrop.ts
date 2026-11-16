@@ -31,8 +31,10 @@ import { createCanvasDropPairer, projectRelativePath, projectRelativeScript, typ
 import { isDesktop, nativeFileDropAvailable, onNativeFileDrop, pickScriptFile, type NativeFileDrop } from '@/lib/desktop'
 import { foreignLanguageOf, type ForeignLanguage } from '@/lib/foreignScript'
 import { runNotebook } from '@/lib/notebookRun'
-import { openPackageFile } from '@/lib/packageImport'
+import { PRODUCT_NAME } from '@/lib/brand'
+import { isPackageTooNew, openPackageFile } from '@/lib/packageImport'
 import { baseName, dragHasFiles, dropTargetOf, parentDir, pathFromFileUri, type DropData } from '@/lib/scriptImport'
+import { tooNewAction } from '@/store/failureExit'
 import { useForeignScriptStore } from '@/store/foreignScriptStore'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
@@ -67,7 +69,11 @@ export function acceptsScriptDrag(types: readonly string[]): boolean {
 export async function openItsProject(path: string, language: ForeignLanguage | 'notebook' | null): Promise<void> {
   const name = baseName(path)
   try {
-    await useProjectStore.getState().open(parentDir(path))
+    // 带着这个脚本进来：素材区只看脚本的图（ADR 0184 §三）；名字带首尾空白的不进范围（后端同样拒）
+    const store = useProjectStore.getState()
+    await (name === name.trim()
+      ? store.open(parentDir(path), false, { entry: 'script', script: name })
+      : store.open(parentDir(path)))
   } catch {
     say('openProjectFailed', { name }, 'error', feedbackAction())
     return
@@ -282,6 +288,10 @@ export function useCanvasScriptDrop() {
     try {
       await openPackageFile(file)
     } catch (e) {
+      if (isPackageTooNew(e)) {
+        say('packageTooNew', { name: file.name, product: PRODUCT_NAME }, 'error', tooNewAction())
+        return
+      }
       say('packageFailed', { name: file.name, reason: backendErrorMsg(e) }, 'error', feedbackAction())
       return
     }

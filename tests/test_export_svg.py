@@ -1047,3 +1047,20 @@ def test_canvas_svg_of_a_script_figure_without_svg_pairing_says_so_in_user_words
     assert error["params"]["figure"] == source
     assert "custom" in error["params"]["reason"]  # 技术原因进参数 / 诊断，不进文案
     assert "imported_page" in error["params"]["detail"]  # 原文留作详情
+
+
+#: 用户自己给元素起了中文 / 带空格的名字（`set_gid`）：matplotlib 原样写进 SVG 的 id，安全闸的 id 语法不认
+USER_GID_SCRIPT = SCRIPT.replace(
+    '    ax.set_title("Source title")',
+    '    ax.set_gid("面板 A")\n    fig.patch.set_gid("背景 图")\n    ax.set_title("Source title")',
+)
+
+
+def test_canvas_svg_of_a_script_figure_with_user_gid_exports(project):
+    """反馈包：用户脚本 set_gid 了中文名，导出级 SVG 快照被整份拒收，SVG/PDF/PNG 全挂。可信 worker 边界改名后照常导出。"""
+    client, root = project
+    (root / "plot.py").write_text(USER_GID_SCRIPT, encoding="utf-8")
+    source = run_script(client)
+    body, outputs = output(client, spec(source, scope="canvas", formats=("svg", "pdf")))
+    assert body["status"] == "done", body
+    assert outputs["svg"]["status"] == "done", outputs["svg"]

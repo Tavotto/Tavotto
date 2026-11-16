@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from tavotto.engine import pool
+from tavotto.engine import pool, scriptadjust
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -105,10 +105,41 @@ out["undo_equal"] = True
 out["canary"] = str(canary)
 out["canary_opened"] = any(os.path.normcase(os.path.abspath(p)) ==
                             os.path.normcase(os.path.abspath(canary)) for p in out["font_requests"])
+# manifest reads the escaped pattern back with Matplotlib's own parser
+manifest_requests = []
+original_resolved = manifest._resolved_font_paths
+def tracked_resolved(names, *args, **kwargs):
+    manifest_requests.append(list(names))
+    return original_resolved(names, *args, **kwargs)
+manifest._resolved_font_paths = tracked_resolved
+out["manifest_families"] = []
+for family in families:
+    matplotlib.rcParams["mathtext.rm"] = overrides._mathtext_font_name(family)
+    manifest_requests.clear()
+    manifest.font_faces(r"$x$", ["DejaVu Sans"], "custom")
+    out["manifest_families"].append({"family":family, "expected":(
+        matplotlib.rcParams["font.sans-serif"][0] if family == "sans-serif" else family),
+        "requested":manifest_requests[-1]})
+manifest._resolved_font_paths = original_resolved
+
+# the exported .py's runtime writes the same patterns as the editor
+runtime = {}
+exec(Path(sys.argv[3]).read_text(encoding="utf-8"), runtime)
+out["export_patterns"] = []
+for family in families + [payload]:
+    editor_ok = overrides._apply_mathtext_custom_set(family)
+    editor = {k:matplotlib.rcParams["mathtext."+k] for k in ("rm","it","bf","sf")}
+    export_ok = runtime["_math_custom"](family)
+    export = {k:matplotlib.rcParams["mathtext."+k] for k in ("rm","it","bf","sf")}
+    out["export_patterns"].append({"family":family, "editor_ok":editor_ok, "export_ok":export_ok,
+        "editor":editor, "export":export,
+        "files":[font_manager.FontProperties(v).get_file() for v in export.values()]})
 print(json.dumps(out))
 """
+    runtime = temp / "export_runtime.py"
+    runtime.write_text(scriptadjust._needed("_math_custom"), encoding="utf-8")
     proc = subprocess.run(
-        [worker, "-c", script, str(ROOT / "src/tavotto/engine"), str(temp)],
+        [worker, "-c", script, str(ROOT / "src/tavotto/engine"), str(temp), str(runtime)],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -144,3 +175,18 @@ def test_real_text_tick_and_family_selection_never_read_the_canary(font_probe):
 def test_literal_family_keeps_full_edit_replay_and_undo(font_probe):
     assert font_probe["hot_cold_equal"] is True
     assert font_probe["undo_equal"] is True
+
+
+def test_manifest_reads_the_escaped_math_pattern_as_the_literal_family(font_probe):
+    assert len(font_probe["manifest_families"]) == 3
+    for result in font_probe["manifest_families"]:
+        assert result["requested"] == [result["expected"]], result
+
+
+def test_exported_script_runtime_writes_the_editor_math_patterns(font_probe):
+    assert len(font_probe["export_patterns"]) == 4
+    for result in font_probe["export_patterns"]:
+        assert result["export_ok"] is True, result
+        assert result["export_ok"] == result["editor_ok"], result
+        assert result["export"] == result["editor"], result
+        assert result["files"] == [None] * 4, result

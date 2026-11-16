@@ -70,6 +70,9 @@ _CODE_REGISTRIES = (
     "tavotto.engine.ai_data_figure",
     "tavotto.engine.xlsxread",
     "tavotto.engine.ai_data_recipe",
+    # 数据出图 v2 的出备选 / 落盘流水（ADR 0178）：`ProposeError(code)` 由 app 的 `_propose_error` 漏斗转成 JSON
+    "tavotto.engine.ai_data_propose",
+    # ADR 0110：改写脚本里的数据路径与共享的备份底座——`ScriptEditError(code)` 由 app 的 409 漏斗转出
     "tavotto.engine.scriptbackup",
     "tavotto.engine.scriptedit",
     "tavotto.engine.runconfig",
@@ -267,6 +270,7 @@ USER_VISIBLE_CODES = {
     "package_invalid": {"reason"},
     "package_schema_unsupported": set(),
     "figure_snapshot_unavailable": set(),
+    "package_schema_too_new": {"schema"},
     "scan_failed": {"reason"},
     "perf_report_rejected": {"reason"},
     "perf_report_write_failed": set(),
@@ -413,6 +417,14 @@ USER_VISIBLE_CODES = {
     "ai_pending_unresolved": set(),
     "taf_disabled": set(),
     "data_figure_input_missing": set(),
+    # 数据出图 v2（ADR 0178）：候选会话过期 / 备选不存在 / 数据在出备选后变了 / 请求字段不对；提交时配方与数据不再相容
+    "propose_session_expired": set(),
+    "propose_candidate_unknown": set(),
+    "propose_data_changed": set(),
+    "propose_input_invalid": set(),
+    "propose_cells_invalid": set(),
+    "propose_cells_need_rule": set(),
+    "data_figure_recipe_invalid": set(),
     "data_path_outside_project": set(),
     "data_not_found": set(),
     "data_not_csv": set(),
@@ -425,6 +437,11 @@ USER_VISIBLE_CODES = {
     "data_empty": set(),
     "data_header_invalid": set(),
     "data_ragged": set(),
+    # 数据出图 v2 的文本表格（`.txt` / `.dat` / `.asc`、嗅探分隔符与表头行）：像二进制 / 没有成列的数据 / 指定的表头行不对
+    "data_binary": set(),
+    "data_not_table": set(),
+    "data_header_row_invalid": set(),
+    # 数据出图 v2（数据文件夹 / TSV / XLSX，`xlsxread`）
     "data_format_unsupported": set(),
     "data_excel_unsupported": set(),
     "data_xlsx_invalid": set(),
@@ -474,6 +491,10 @@ USER_VISIBLE_CODES = {
     "recipe_unknown_value": set(),
     "recipe_layer_count": set(),
     "recipe_why_invalid": set(),
+    "cell_rule_invalid": set(),
+    "cell_map_too_large": set(),
+    "cell_map_value_invalid": set(),
+    "cell_map_key_unknown": set(),
     "figure_name_exhausted": set(),
     "ai_request_unresolved": set(),
     "ai_panel_file_missing": set(),
@@ -771,6 +792,8 @@ SCANNED = [n for n in _SOURCE_FILES if (SRC_DIR / n).is_file()]
 #: 分诊）。会话 guard 那几个的拒绝对象是攻击页面/畸形请求，正常界面路径由
 #: main.tsx 的专用启动页兜住；401 的 session_auth_required 另有 backend 文案。
 NON_UI_CODES = {
+    # 视图范围加脚本（ADR 0184）：前端只在后台顺手发、名字已是项目相对路径，失败不出界面
+    "invalid_script_name",
     # Conversion-run diagnostics are mapped by ai_convert._failure_check to the
     # existing UI reason run_failed; they are not HTTP response codes.
     "capture_incomplete",

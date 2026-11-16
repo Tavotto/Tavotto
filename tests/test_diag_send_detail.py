@@ -296,7 +296,7 @@ class TestDefaultContents:
         # 勾选项没勾：没有 optional 内容
         assert not [n for n in names if n.startswith("optional-")]
         manifest = json.loads(z.read("manifest.json"))
-        assert manifest["schema_version"] == diagnostics.BUNDLE_SCHEMA_VERSION == 15
+        assert manifest["schema_version"] == diagnostics.BUNDLE_SCHEMA_VERSION == 16
         assert manifest["contains_detail"] is True
         assert manifest["truncated"] == []
         listed = {f["path"]: f["bytes"] for f in manifest["detail_files"]}
@@ -393,6 +393,50 @@ class TestScrubbing:
         assert "~/proj" in blob and "<user>" in blob and "<redacted>" in blob
         assert "CRASH_CANARY_BODY" in blob and "CORRUPT_CANARY_BYTES" in blob  # 勾了才有
         assert "引擎渲染失败: fig_one" in blob and "fig_one.py" in blob  # 文件名、项目内容保留
+
+    def test_an_entry_script_found_outside_the_project_never_reaches_the_bundle(
+        self, client, world, monkeypatch
+    ):
+        """ADR 0188：库模块卡在项目外找到的入口脚本（绝对路径只在本机报告的 requirement 里）不进诊断包的任何文件。"""
+        from tavotto.engine import deprepair, libmodule, prepsession
+
+        monkeypatch.setattr(deprepair, "gate", lambda root, script: None)
+        monkeypatch.setattr(
+            deprepair,
+            "preparation_offer",
+            lambda root, script: {"plan": {"status": "nothing_needed"}},
+        )
+        libmodule.reset_cache()
+        prepsession.SESSIONS.reset_for_tests()
+        repo = world["tmp"] / "repo_zz"
+        pkg = repo / "pkgzz"
+        pkg.mkdir(parents=True)
+        (repo / "pyproject.toml").write_text("[project]\nname = 'x'\n", encoding="utf-8")
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "helpers_zz.py").write_text(
+            "import matplotlib.pyplot as plt\n\n\ndef draw(xs, out):\n"
+            "    fig = plt.figure()\n    fig.add_subplot(111).plot(xs)\n    fig.savefig(out)\n",
+            encoding="utf-8",
+        )
+        (repo / "ENTRY_CANARY_qq.py").write_text(
+            "from pkgzz.helpers_zz import draw\n\ndraw([1, 2], 'a.png')\n", encoding="utf-8"
+        )
+        assert client.post("/api/projects/open", json={"path": str(pkg)}).status_code == 200
+        report = client.post(
+            "/api/engine/preparation-sessions", json={"script": "helpers_zz.py"}
+        ).get_json()
+        (req,) = [r for r in report["requirements"] if r["kind"] == "library_module"]
+        assert (
+            req["payload"]["entries"][0]["open_script"] == "ENTRY_CANARY_qq.py"
+        )  # 反证：本机报告里确实有它
+        try:
+            _prep, z = _prepare(client, source=True)
+            for name, text in _texts(z).items():
+                # 项目本身的路径照旧会出现（项目在仓库里）；项目外的那个入口脚本不许出现
+                assert "ENTRY_CANARY_qq" not in text, name
+        finally:
+            prepsession.SESSIONS.reset_for_tests()
+            libmodule.reset_cache()
 
     def test_scrubber_shapes(self, world):
         s = diagdetail.Scrubber()

@@ -312,6 +312,66 @@ def test_a_script_that_opens_a_file_dialog_gets_a_non_blocking_hint_and_still_ru
     assert [r for r in again["requirements"] if r["kind"] == "gui_dialog"] == []
 
 
+_PLOT_HELPERS = (
+    '"""Plot helpers; the entry script prepares the data."""\n'
+    "import matplotlib\n"
+    'matplotlib.use("Agg")\n'
+    "import matplotlib.pyplot as plt\n\n\n"
+    "def plot_curves(df, out_path):\n"
+    "    fig = plt.figure()\n"
+    "    fig.add_subplot(111).plot(df['x'], df['y'])\n"
+    "    fig.savefig(out_path)\n"
+)
+
+
+def test_a_plot_helper_module_gets_a_non_blocking_hint_naming_the_entry_script(
+    client, tmp_path, fake_pool, sessions
+):
+    """TVD-Y5JF：只定义了画图函数、没有调用的库模块——运行之前就给提示（不阻塞、不改 phase、零 build），载荷里是
+    import 了它的入口脚本；没出图的终局不推荐 AI 修复（AI 只会编数据去调这些函数）。"""
+    from tavotto.engine import libmodule
+
+    libmodule.reset_cache()
+    root = _project(tmp_path, "p")
+    (root / "plot_helpers.py").write_text(_PLOT_HELPERS, encoding="utf-8")
+    (root / "draw_all.py").write_text(
+        "from plot_helpers import plot_curves\n\nplot_curves({'x': [1], 'y': [2]}, 'a.png')\n",
+        encoding="utf-8",
+    )
+    _open(client, root)
+    report = _create(client, {"script": "plot_helpers.py"}).get_json()
+    (req,) = [r for r in report["requirements"] if r["kind"] == "library_module"]
+    assert req["blocking"] is False and req["code"] == "script_is_library"
+    (entry,) = req["payload"]["entries"]
+    assert entry["in_project"] is True and entry["script"] == "draw_all.py"
+    assert report["phase"] == "ready_to_run" and _action(report, "run")
+    assert fake_pool["build_calls"] == 0
+    # 检查项 detail 里没有它（诊断投影只读检查项；入口的路径只在本机报告的 requirement 里）
+    assert "draw_all" not in json.dumps(report["checks"])
+
+    def empty():
+        resp = _build_resp()
+        resp["stems"], resp["descriptors"] = {}, []
+        return resp
+
+    fake_pool["build_resp"] = empty
+    sid = report["session_id"]
+    assert _act(client, sid, _action(report, "run")["id"], 1).status_code == 202
+    final = _settle(client, sid)
+    assert final["outcome"]["kind"] == "execution_finished_no_figure"
+    assert final.get("remedy") is None
+    assert [r["kind"] for r in final["requirements"] if r["kind"] == "library_module"] == [
+        "library_module"
+    ]
+    libmodule.reset_cache()
+
+
+def test_an_ordinary_script_has_no_library_hint(client, tmp_path, fake_pool, sessions):
+    _open(client, _project(tmp_path, "p"))
+    report = _create(client, {"script": "fig.py"}).get_json()
+    assert [r for r in report["requirements"] if r["kind"] == "library_module"] == []
+
+
 def test_a_plain_script_has_no_dialog_hint(client, tmp_path, fake_pool, sessions):
     _open(client, _project(tmp_path, "p"))
     report = _create(client, {"script": "fig.py"}).get_json()

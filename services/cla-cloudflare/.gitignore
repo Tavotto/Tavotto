@@ -12,3 +12,6 @@ deployment/staging/assets/cla-pdf-font.ttf
 assets-reviewed/cla-pdf-font.ttf
 deployment/staging/assets/cla-sig-*.ttf
 assets-reviewed/cla-sig-*.ttf
+deployment/production/assets/cla-pdf.js
+deployment/production/assets/cla-pdf-font.ttf
+deployment/production/assets/cla-sig-*.ttf

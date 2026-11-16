@@ -24,6 +24,7 @@ import {
   type JointDependencyRepairPlan,
   type PrivatePythonOffer,
   privatePythonOrigin,
+  type RepairTargetKind,
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
 import { draftFromOffer, userSpecifiedBody, type OriginDraft } from '@/lib/importOrigin'
@@ -133,7 +134,7 @@ function deliverToOwner(owner: string | null, now: () => void, park: () => void)
 export interface RepairRequest {
   module: string
   script: string
-  target: 'project_venv' | 'tavotto_managed'
+  target: RepairTargetKind
   distribution?: string
 }
 
@@ -243,7 +244,7 @@ interface DepRepairState {
    */
   pinned: InterpreterPin | null
   makePlan: (
-    args: { module: string; script: string; target: 'project_venv' | 'tavotto_managed'; distribution?: string },
+    args: { module: string; script: string; target: RepairTargetKind; distribution?: string },
     scriptOffer?: ScriptRepairOffer | null,
   ) => Promise<void>
   install: () => Promise<void>
@@ -326,6 +327,12 @@ interface DepRepairState {
    */
   rebuilding: Readonly<Record<string, string>>
   rebuildRunningFor: (project: string | null) => boolean
+  /**
+   * 本标签页里亲眼看到过「管理环境装完 worker 自检没过」的项目（项目 → true）。修复卡手里的 offer 是失败之前算的
+   * （`selftest_failed: false`），关掉失败之后不能再拿它推荐同一条注定失败的路（Codex #1934 P2）；同一项目后来管理环境
+   * 装成功就撤掉。按项目分格，`clear()` 不动——它说的是那个项目的事实，不是此刻界面的状态。
+   */
+  managedSelftestFailed: Readonly<Record<string, true>>
 
   // ---- 联合准备（U04，ADR 0061）：跑前的那一次授权 ----
   // 载荷本身（整份联合计划 + 可选目标）住在 `envStore.dependencyPreparation`（与运行目录的确认
@@ -342,7 +349,7 @@ interface DepRepairState {
    * 一步：绑定计划 → 执行（只发 plan_id）。目标由用户在框里选；脚本来自 envStore 里的载荷——素材库脚本行
    * （那里没有框、载荷住在那次运行的错误里）把载荷作为 `offerArg` 直接交进来。
    */
-  prepare: (target: 'project_venv' | 'tavotto_managed', offerArg?: DependencyPreparationOffer) => Promise<void>
+  prepare: (target: RepairTargetKind, offerArg?: DependencyPreparationOffer) => Promise<void>
   cancelPreparation: () => Promise<void>
   /** 「不准备，直接运行」：明确的 skip（这道门一直问到有答案），然后关框并重排那次失败的渲染 */
   skipPreparation: (offerArg?: DependencyPreparationOffer) => Promise<void>
@@ -405,6 +412,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   managedPreviews: {},
   parked: {},
   rebuilding: {},
+  managedSelftestFailed: {},
   rebuildRunningFor: (project) => !!get().rebuilding[projectKey(project)],
 
   prepare: async (target, offerArg) => {
@@ -905,6 +913,20 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
         releaseRebuild(owner, p.plan_id)
       }
     }
+    // 管理环境这一代的结局记到所属项目那格（不论此刻开着哪个项目）：自检没过 → 记下；装成功 → 撤掉。
+    // **只认本标签页自己发起的作业**：`engine.dependency` 事件不按项目过滤，别的标签页的作业 id 不在 `startedPlans` 里，
+    // 不知道它属于谁就不记——不能拿此刻开着的项目兜底（Codex #1934 P2）
+    const kind = p.target_kind ?? seen?.target_kind
+    const managedOutcome =
+      kind === 'tavotto_managed' &&
+      (p.state === 'done' || (p.state === 'failed' && p.code === 'dependency_worker_selftest_failed'))
+    const noteManagedOutcome = (owner: string | null) => {
+      const key = projectKey(owner)
+      const { [key]: _was, ...rest } = get().managedSelftestFailed
+      set({ managedSelftestFailed: p.state === 'done' ? rest : { ...rest, [key]: true } })
+    }
+    const recordOwner = startedPlans.get(p.plan_id)
+    if (managedOutcome && recordOwner !== undefined) noteManagedOutcome(recordOwner)
     // 作业属于**别的项目**（本标签页起的、起完切走了）：进度只更新它那一格，此刻的界面与副作用
     // （刷环境 / 重排渲染 / 关框 / 错误文案）一个都不碰——那些说的都是此刻开着的项目（issue #590）
     // 同一条规则（`deliverToOwner`）：所属项目此刻开着（含 A → B → A 已经切回）就往下走、当场派发；不是就停放
@@ -927,6 +949,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     const { plan, jointPlan, progress } = get()
     const owned = p.plan_id === plan?.plan_id || p.plan_id === jointPlan?.plan_id || p.plan_id === progress?.plan_id
     if (!owned) return
+    // 没登记在 `startedPlans`、但确是这张卡此刻的作业（上面判过）：属于此刻开着的项目
+    if (managedOutcome && recordOwner === undefined) noteManagedOutcome(currentProjectId())
     set({ progress: keepTarget(p, progress) })
     if (p.state === 'done' || p.state === 'failed' || p.state === 'cancelled') {
       // 环境那半边变了（换了解释器 / 建了受管环境），刷一次环境状态

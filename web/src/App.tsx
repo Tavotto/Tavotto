@@ -23,6 +23,8 @@ import { TelemetryConsentDialog } from '@/components/TelemetryConsentDialog'
 import { ConnectAiHost } from '@/components/ConnectAiHost'
 import { DiagnosticsSendHost } from '@/components/DiagnosticsSendHost'
 import { ContactHost } from '@/components/contact/ContactHost'
+import { ReviewHost } from '@/components/review/ReviewHost'
+import { useReviewStore } from '@/store/reviewStore'
 import { useContactStore } from '@/store/contactStore'
 import { ShortcutHelp } from '@/components/ShortcutHelp'
 import { StyleDialog } from '@/components/StyleDialog'
@@ -75,7 +77,7 @@ import { installDiagnosticsWiring } from '@/diagnostics/wiring'
 import { installDiagnosticsDevHook } from '@/diagnostics'
 import { useSelectionRouting } from '@/hooks/useSelectionRouting'
 import { isRightOverlay, useUiStore } from '@/store/uiStore'
-import { msg } from '@/i18n'
+import { enterContested, startDocWindow } from '@/store/docWindow'
 import { reportAutosaveFailure } from '@/store/saveFailureActions'
 import { startValidation } from '@/store/validationStore'
 import { startWorkspaceModeSync, useWorkspaceStore } from '@/store/workspace'
@@ -109,6 +111,9 @@ export function App() {
     // 「联系作者」（ADR 0143）：同样只问本机引擎开没开 + 未读回信数（不联网）；之后每 5 分钟刷新一次本机未读数
     void useContactStore.getState().load()
     const stopContactWatch = useContactStore.getState().watch()
+    // 外部审阅（ADR 0187）：只问本机引擎开没开 + 未读数（不联网）；之后每 5 分钟刷新一次本机未读数
+    void useReviewStore.getState().loadCapability()
+    const stopReviewWatch = useReviewStore.getState().watch()
     // 引擎意外退出的修复卡 + 上次没正常退出的提示卡（ADR 0129）；后者等上面的能力读完再判
     const stopExitNotices = initExitNotices(diagLoaded)
     // 导出默认值以后端为准（#715 PR-B）：换了 origin 的本机缓存是空的，先从数据目录取回来。
@@ -116,6 +121,7 @@ export function App() {
     void hydrateExportDefaults()
     return () => {
       stopContactWatch()
+      stopReviewWatch()
       stopExitNotices()
       cancelStartupProbe()
     }
@@ -232,12 +238,10 @@ function Workspace() {
     // 失败 / 冲突提示与它们的出口按钮住在 `store/saveFailureActions.ts`（用例直接测那里）
     const onAutosaveError = (ev: Event) =>
       reportAutosaveFailure((ev as CustomEvent<{ id?: string; reason?: string }>).detail)
-    // 同一份排版在两个窗口开着：目前没有「分叉成一份新排版」的动作（另存为不换 documentId），
-    // 所以这条先不挂按钮，登记在台账里待做
-    const onDocConflict = () =>
-      useUiStore
-        .getState()
-        .setStatus(msg('autosave.docConflict', undefined, 'workspace'), 'error')
+    // 同一份排版在另一个窗口也开着（ADR 0181）：这个后开的窗口先只读，画布中间的卡让用户选
+    // （`DocWindowCard`）——不再弹红色提示
+    const onDocConflict = (ev: Event) => enterContested((ev as CustomEvent<{ id?: string }>).detail?.id)
+    const stopDocWindow = startDocWindow()
     // `tavotto run` 的会话活在后端进程里，比这个窗口长命：重开界面、SSE
     // 断线重连之后都要对一次账，否则一条还停在屏障上的会话在界面上就不存在
     // 了——而那个终端还在等人点「继续运行脚本」。
@@ -265,6 +269,7 @@ function Workspace() {
       window.removeEventListener('mm:sse-open', syncNative)
       window.removeEventListener('tavotto:autosave-error', onAutosaveError)
       window.removeEventListener('tavotto:doc-conflict', onDocConflict)
+      stopDocWindow()
     }
   }, [])
 
@@ -361,6 +366,7 @@ function Workspace() {
         <DiagnosticsSendHost />
         <ConnectAiHost />
         <ContactHost />
+        <ReviewHost />
         {/* 意外错误 / 上次没正常退出的反馈卡：贴窗口右下角（不在画布的通知轨里） */}
         <FeedbackCorner />
         {/* 动画卡提示（ADR 0177）：同一个角、同一个宽度；反馈卡在场时让位 */}
