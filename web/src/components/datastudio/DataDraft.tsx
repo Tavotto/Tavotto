@@ -36,7 +36,10 @@ export function DataDraft() {
   const overviews = useDataFigureStore((s) => s.overviews)
   const headerRows = useDataFigureStore((s) => s.headerRows)
   const phase = useDataFigureStore((s) => s.phase)
-  const candidates = useDataFigureStore((s) => s.candidates)
+  const allCandidates = useDataFigureStore((s) => s.candidates)
+  const thumbs = useDataFigureStore((s) => s.thumbs)
+  const session = useDataFigureStore((s) => s.session)
+  const headerRowUsed = useDataFigureStore((s) => s.headerRowUsed)
   const reasons = useDataFigureStore((s) => s.nothingReasons)
   const error = useDataFigureStore((s) => s.error)
   const drawingId = useDataFigureStore((s) => s.drawingId)
@@ -79,6 +82,9 @@ export function DataDraft() {
   }, [active])
 
   if (!open || !active || !selected) return null
+  // 取不到图的（422）静默去掉；推荐标记在剩下的第一张上
+  const candidates = allCandidates.filter((c) => thumbs[c.id] !== 'failed')
+  const settled = candidates.length > 0 && candidates.every((c) => thumbs[c.id] === 'ready')
   const ovState = overviews[overviewKeyOf(selected, headerRows)]
   const ov = ovState?.data ?? null
   const setRow = (line: number) => st().setHeaderRow(selected.path, selected.sheet, line)
@@ -146,9 +152,9 @@ export function DataDraft() {
     top = (
       <>
         <p data-draft-lead className="mb-3.5 h-5 text-base text-ink-2" role="status">
-          {drawingId ? drawingLine : pending ? t('dataFigureV2.working.drawing') : t('dataFigureV2.draft.pickLead')}
+          {drawingId ? drawingLine : settled ? t('dataFigureV2.draft.pickLead') : t('dataFigureV2.working.drawing')}
         </p>
-        <CandidateGrid items={candidates} pending={pending} drawingId={drawingId} onPick={(id) => void st().draw(id)} />
+        <CandidateGrid items={candidates} thumbs={thumbs} pending={pending} drawingId={drawingId} onPick={(id) => void st().draw(id)} onThumb={(id, ok) => session && st().thumbSettled(session, id, ok)} />
       </>
     )
   }
@@ -170,6 +176,7 @@ export function DataDraft() {
         <DataStrip
           key={`strip|${selected.path}|${selected.sheet}`}
           ov={ov}
+          guessRow={headerRowUsed}
           loading={ovState?.status === 'loading'}
           forceOpen={phase === 'text' || phase === 'pickrow' || (ov != null && (ov.status === 'unsure' || ov.status === 'unreadable') && ov.raw_lines.length > 0)}
           onHeaderRow={setRow}

@@ -681,7 +681,12 @@
     },
     "panel": {
       "mixed": "{{count}} cells are not numbers",
-      "note": "The original file is never changed."
+      "note": "The original file is never changed.",
+      "x": "X axis",
+      "y": "Y axis",
+      "group": "Group",
+      "noX": "No X axis",
+      "noGroup": "No grouping"
     },
     "redraw": {
       "from": "Drawn from {{file}}",

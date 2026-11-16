@@ -7,7 +7,7 @@ import { useWorkspaceStore } from '@/store/workspace'
 
 /**
  * 画布底部工具条上方的一枚胶囊：「用 growth.csv 画的 · 换个画法」，点了回到这份数据的临时标签。
- * 只在刚用「数据」画出这张图的这一次会话里出现（`fresh` 不持久化，换项目即清），且只在那张画布上、临时标签没激活时。
+ * 只在刚用「数据」画出这张图的这一次会话里出现，紧贴工具条上方 8px（工具条顶边离画布底边 52px）（`fresh` 不持久化，换项目即清），且只在那张画布上、临时标签没激活时。
  */
 export function RedrawPill() {
   const { t } = useTranslation('ai')
@@ -26,7 +26,7 @@ export function RedrawPill() {
   if (!fresh || draftActive || fresh.canvasId == null || fresh.canvasId !== canvasId) return null
   const file = fresh.file.path.slice(fresh.file.path.lastIndexOf('/') + 1)
   return (
-    <div data-redraw-pill className="pointer-events-auto absolute bottom-[6.5rem] left-1/2 z-canvas-chrome flex h-8 -translate-x-1/2 animate-fade-in items-center gap-2 whitespace-nowrap rounded-full bg-surface pl-3.5 pr-1.5 text-sm text-ink-2 shadow-pop">
+    <div data-redraw-pill className="pointer-events-auto absolute bottom-[3.75rem] left-1/2 z-canvas-chrome flex h-8 -translate-x-1/2 animate-fade-in items-center gap-2 whitespace-nowrap rounded-full bg-surface pl-3.5 pr-1.5 text-sm text-ink-2 shadow-pop">
       <span>{t('dataFigureV2.redraw.from', { file })}</span>
       <button
         type="button"

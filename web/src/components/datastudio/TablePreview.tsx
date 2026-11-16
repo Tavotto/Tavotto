@@ -12,9 +12,12 @@ const KIND_KEY = { numeric: 'numeric', date: 'date', text: 'text', mixed: 'mixed
 export function TablePreview({
   ov,
   rows,
+  guessRow = null,
   onHeaderRow,
 }: {
   ov: AiDataOverview
+  /** 这次实际用的表头行（响应里的）；没给就用概览猜的 */
+  guessRow?: number | null
   /** 最多显示几行（数据条收起 3 行、展开 20 行） */
   rows: number
   onHeaderRow: (line: number) => void
@@ -22,7 +25,7 @@ export function TablePreview({
   const { t } = useTranslation('ai')
   const lines = ov.raw_lines
   if ((ov.status === 'unsure' || ov.status === 'unreadable') && lines.length > 0) {
-    const guess = ov.header_row
+    const guess = guessRow ?? ov.header_row
     return (
       <div data-header className="flex w-full flex-col font-mono text-xs" role="radiogroup" aria-label={t('dataFigureV2.preview.headerPick')}>
         {lines.slice(0, Math.max(rows, 8)).map((l) => {

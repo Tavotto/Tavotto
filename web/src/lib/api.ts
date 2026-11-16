@@ -4550,6 +4550,31 @@ export interface AiDataProposeItem {
   unplotted: { count: number; code: string | null }
   /** 服务端给的相对路径；加项目标识要经 `aiDataThumbnailUrl` */
   thumbnail_url: string
+  /** 懒模式 `pending`（缩略图在取图时才画）；旧模式 `ready` */
+  thumbnail_status?: 'pending' | 'ready'
+}
+
+/** 懒模式（`render: "lazy"`）响应里说清这次用了什么：列角色与每个角色可换成的列 */
+export interface AiDataRoles {
+  x: string | null
+  y: string[]
+  group: string | null
+  facet: string | null
+  unit: string | null
+  options: { x?: string[]; y?: string[]; group?: string[] }
+}
+
+/** 懒模式响应里的公共部分（`candidates` 与 `nothing` 都有） */
+export interface AiDataLazyInfo {
+  render?: 'lazy'
+  table?: string
+  sheet?: string | null
+  /** 文本表是实际用的物理行号，XLSX 为 null */
+  header_row?: number | null
+  roles?: AiDataRoles | null
+  defaults?: { question_code: string; answer?: Record<string, unknown> }[]
+  /** 数值列里夹着文字的列：默认不画那几行（`skip`），用户可改成取数字（`extract`） */
+  mixed_cells?: { column: string; non_numeric: number; rows: number; mode: 'skip' | 'extract' }[]
 }
 
 export type AiDataProposeResponse =
@@ -4561,8 +4586,8 @@ export type AiDataProposeResponse =
       unsure?: AiDataOption | null
       columns?: AiDataMixedColumn[]
     }
-  | { kind: 'candidates'; session: string; items: AiDataProposeItem[]; dropped: { reason_code: string }[] }
-  | { kind: 'nothing'; reasons: string[]; dropped?: { reason_code: string }[] }
+  | ({ kind: 'candidates'; session: string; items: AiDataProposeItem[]; dropped: { reason_code: string }[] } & AiDataLazyInfo)
+  | ({ kind: 'nothing'; reasons: string[]; dropped?: { reason_code: string }[] } & AiDataLazyInfo)
 
 export interface AiDataProposeBody {
   folder?: string
@@ -4571,6 +4596,8 @@ export interface AiDataProposeBody {
   answers?: Record<string, unknown>
   header_rows?: Record<string, number>
   client_request_id?: string
+  /** `lazy` = 文字先到、缩略图取图时才画、不返回选择题（列角色用 `answers.y / x / group`，`none` = 不要） */
+  render?: 'lazy'
 }
 
 export const aiDataFigurePropose = (body: AiDataProposeBody, pj?: string | null) =>

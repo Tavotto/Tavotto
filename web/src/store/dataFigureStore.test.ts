@@ -47,10 +47,13 @@ const ov = (over: Partial<AiDataOverview> = {}): AiDataOverview => ({
   fields: [], preview_rows: [], truncated: false, lead_lines: [], raw_lines: [], ...over,
 })
 const item = (id: string, title: string, recommended = false) => ({
-  id, title_code: title, why_code: title, recommended, unplotted: { count: 0, code: null }, thumbnail_url: `/api/ai/data-figure/thumbnail/S1/${id}`,
+  id, title_code: title, why_code: title, recommended, unplotted: { count: 0, code: null }, thumbnail_url: `/api/ai/data-figure/thumbnail/S1/${id}`, thumbnail_status: 'pending' as const,
 })
 const cands = (session = 'S1', ids: [string, string][] = [['i1', 'line_band'], ['i2', 'scatter']]): AiDataProposeResponse => ({
-  kind: 'candidates', session, dropped: [], items: ids.map(([id, t], k) => item(id, t, k === 0)),
+  kind: 'candidates', session, dropped: [], items: ids.map(([id, t], k) => item(id, t, k === 0)), render: 'lazy',
+  header_row: 1, defaults: [],
+  roles: { x: 'x', y: ['y'], group: null, facet: null, unit: null, options: { x: ['x', 'z'], y: ['y', 'z'], group: ['g'] } },
+  mixed_cells: [],
 })
 const committed = (extra: Partial<AiDataCommitResult> = {}): AiDataCommitResult => ({
   task: { outcome: 'completed' }, script: 'tavotto_figures/a_figure.py', stem: 'a_figure', data_check: 'verified', unplotted: { count: 0, rows: [], code: null }, ...extra,
@@ -229,5 +232,71 @@ describe('出图的各结局', () => {
     await flush()
     await flush()
     expect(st()).toMatchObject({ draftOpen: true, selected: ref('a.csv'), fresh: null, session: 'S3' })
+  })
+})
+
+describe('懒模式：不再自动答题，右栏改动带着 answers 重来', () => {
+  it('请求带 render=lazy；响应里的列角色 / 表头行 / 非数字格进状态；每张缩略图各自 pending', async () => {
+    withNumbers()
+    propose.mockResolvedValueOnce({ ...(cands('S1') as Extract<AiDataProposeResponse, { kind: 'candidates' }>), mixed_cells: [{ column: 'v', non_numeric: 2, rows: 10, mode: 'skip' }, { column: 'w', non_numeric: 1, rows: 10, mode: 'skip' }] })
+    await run()
+    expect(propose.mock.calls[0]![0]).toMatchObject({ table: 'a.csv', render: 'lazy' })
+    expect(propose.mock.calls[0]![0]).not.toHaveProperty('answers')
+    expect(st()).toMatchObject({ phase: 'ready', headerRowUsed: 1, roles: { x: 'x', y: 'y', group: null }, thumbs: { i1: 'pending', i2: 'pending' } })
+    expect(st().mixed).toMatchObject({ mode: 'skip', columns: [{ column: 'v', nonNumeric: 2 }, { column: 'w', nonNumeric: 1 }] })
+  })
+
+  it('取不到图（422）的那张静默去掉；一张都没画出来走「没画出来」', async () => {
+    withNumbers()
+    propose.mockResolvedValueOnce(cands('S1'))
+    await run()
+    st().thumbSettled('S1', 'i1', true)
+    st().thumbSettled('S1', 'i2', false)
+    expect(st().thumbs).toEqual({ i1: 'ready', i2: 'failed' })
+    expect(st().phase).toBe('ready')
+    st().thumbSettled('S0', 'i1', false) // 别的会话的回执不算
+    propose.mockResolvedValueOnce(cands('S2'))
+    st().setRole('y', 'z')
+    await flush()
+    st().thumbSettled('S2', 'i1', false)
+    st().thumbSettled('S2', 'i2', false)
+    expect(st().phase).toBe('failed')
+  })
+
+  it('换纵轴 / 横轴 / 分组：answers 带上、重新出候选；重新出的期间右栏的角色不清', async () => {
+    withNumbers()
+    propose.mockResolvedValueOnce(cands('S1'))
+    await run()
+    let release!: (v: AiDataProposeResponse) => void
+    propose.mockReturnValueOnce(new Promise((r) => (release = r)))
+    st().setRole('y', 'z')
+    expect(st()).toMatchObject({ phase: 'loading', roles: { y: 'y' }, candidates: [] })
+    expect(discard).toHaveBeenCalledWith('S1', 'pa')
+    expect(propose.mock.calls[1]![0]).toMatchObject({ answers: { y: 'z' }, render: 'lazy' })
+    release(cands('S2'))
+    await flush()
+    propose.mockResolvedValueOnce(cands('S3'))
+    st().setRole('group', 'none')
+    expect(propose.mock.calls[2]![0]).toMatchObject({ answers: { y: 'z', group: 'none' } })
+    await flush()
+  })
+
+  it('非数字格改成取数字：对每一列都带上 mode', async () => {
+    withNumbers()
+    const base = cands('S1') as Extract<AiDataProposeResponse, { kind: 'candidates' }>
+    propose.mockResolvedValueOnce({ ...base, mixed_cells: [{ column: 'v', non_numeric: 2, rows: 10, mode: 'skip' }, { column: 'w', non_numeric: 1, rows: 10, mode: 'skip' }] })
+    await run()
+    propose.mockResolvedValueOnce({ ...cands('S2') as Extract<AiDataProposeResponse, { kind: 'candidates' }>, mixed_cells: [{ column: 'v', non_numeric: 2, rows: 10, mode: 'extract' }, { column: 'w', non_numeric: 1, rows: 10, mode: 'extract' }] })
+    st().setMixedMode('extract')
+    expect(propose.mock.calls[1]![0]).toMatchObject({ answers: { cells: { v: { mode: 'extract' }, w: { mode: 'extract' } } } })
+    await flush()
+    expect(st().mixed?.mode).toBe('extract')
+  })
+
+  it('后端万一还是问了（ask）：不替用户答，按失败处理', async () => {
+    withNumbers()
+    propose.mockResolvedValueOnce({ kind: 'ask', question_code: 'pick_value', options: [], unsure: null })
+    await run()
+    expect(st().phase).toBe('failed')
   })
 })

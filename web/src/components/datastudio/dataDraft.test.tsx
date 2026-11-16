@@ -6,7 +6,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/Tooltip'
-import { aiDataFigureCommit, aiDataFigurePropose, aiDataFilesAll, aiDataOverview, type AiDataCommitResult, type AiDataFileEntry, type AiDataMixedColumn, type AiDataOverview } from '@/lib/api'
+import { aiDataFigureCommit, aiDataFigurePropose, aiDataFilesAll, aiDataOverview, type AiDataCommitResult, type AiDataFileEntry, type AiDataOverview } from '@/lib/api'
 import { fileRows } from '@/lib/dataFigure'
 import { setCurrentProjectId } from '@/lib/session'
 import { useDataFigureStore } from '@/store/dataFigureStore'
@@ -231,8 +231,12 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
   const propose = vi.mocked(aiDataFigurePropose)
   const commit = vi.mocked(aiDataFigureCommit)
   const items = (n: number) =>
-    ['line_band', 'scatter_fit', 'points_mean', 'box_points'].slice(0, n).map((c, i) => ({ id: `i${i + 1}`, title_code: c, why_code: c, recommended: i === 0, unplotted: { count: 0, code: null }, thumbnail_url: `/t/${i + 1}` }))
-  const cands = (n = 4) => ({ kind: 'candidates' as const, session: 'S1', items: items(n), dropped: [] })
+    ['line_band', 'scatter_fit', 'points_mean', 'box_points'].slice(0, n).map((c, i) => ({ id: `i${i + 1}`, title_code: c, why_code: c, recommended: i === 0, unplotted: { count: 0, code: null }, thumbnail_url: `/t/${i + 1}`, thumbnail_status: 'pending' as const }))
+  const roles = { x: 'day', y: ['tumor_volume'], group: 'group', facet: null, unit: null, options: { x: ['day'], y: ['tumor_volume', 'day'], group: ['group'] } }
+  const cands = (n = 4) => ({ kind: 'candidates' as const, session: 'S1', items: items(n), dropped: [], render: 'lazy' as const, header_row: 1, roles, defaults: [], mixed_cells: [] })
+  /** jsdom 不取图：模拟缩略图到了（ok）/ 取不到（!ok，后端 422） */
+  const thumb = async (i: number, ok = true) => act(async () => { qa('[data-candidate] img')[i]!.dispatchEvent(new Event(ok ? 'load' : 'error')) })
+  const allThumbs = async () => { for (let i = qa('[data-candidate] img').length - 1; i >= 0; i--) await thumb(i) }
   const tbl = (path: string, status: 'ok' | 'unsure' | 'unreadable' = 'ok') => ({
     path,
     size: 1,
@@ -270,6 +274,7 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     expect(tiles).toHaveLength(4)
     expect(tiles[0]!.textContent).toContain('均值线 + 误差带')
     expect(tiles[0]!.textContent).toContain('推荐')
+    await allThumbs()
     expect(q('[data-draft-lead]')!.textContent).toBe('点一张，放进画布接着改。')
     expect(qa<HTMLImageElement>('[data-candidate] img').map((i) => i.getAttribute('src'))).toEqual(['/t/1?pj=pa', '/t/2?pj=pa', '/t/3?pj=pa', '/t/4?pj=pa'])
     expect(q('[data-data-strip]')).not.toBeNull()
@@ -277,48 +282,60 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     expect(q('[data-data-panel-meta]')!.textContent).toBe('144 行 · 3 列')
   })
 
-  it('后端的选择题不打断：用「不确定」答案接着出候选；没有「不确定」就取第一项', async () => {
-    const unsure = { code: 'unsure', params: {}, answer: { y: 'unsure' } }
-    propose
-      .mockResolvedValueOnce({ kind: 'ask', question_code: 'pick_value', unsure, options: [{ code: 'column', params: { column: 'day' }, answer: { y: 'day' } }] })
-      .mockResolvedValueOnce({ kind: 'ask', question_code: 'pick_x', options: [{ code: 'column', params: { column: 'a' }, answer: { x: 'a' } }] })
-      .mockResolvedValueOnce(cands(2))
+  it('文字先到：名字 / 推荐 / 说明立刻上屏，图没到的磁贴不可点、上方「正在画…」；到齐后「点一张…」', async () => {
+    propose.mockResolvedValue(cands())
     await start()
     await open(0)
-    expect(propose).toHaveBeenCalledTimes(3)
-    expect(propose.mock.calls[1]![0]).toMatchObject({ answers: { y: 'unsure' } })
-    expect(propose.mock.calls[2]![0]).toMatchObject({ answers: { y: 'unsure', x: 'a' } })
-    expect(qa('[data-candidate]')).toHaveLength(2)
-    expect(q('[data-studio-ask]')).toBeNull()
+    expect(qa('[data-candidate]')).toHaveLength(4)
+    expect(qa<HTMLButtonElement>('[data-candidate]').every((b) => b.disabled)).toBe(true)
+    expect(q('[data-draft-lead]')!.textContent).toBe('正在画…')
+    await thumb(0)
+    expect(qa<HTMLButtonElement>('[data-candidate]')[0]!.disabled).toBe(false)
+    expect(qa<HTMLButtonElement>('[data-candidate]')[1]!.disabled).toBe(true)
+    expect(q('[data-draft-lead]')!.textContent).toBe('正在画…')
+    await thumb(1); await thumb(2); await thumb(3)
+    expect(q('[data-draft-lead]')!.textContent).toBe('点一张，放进画布接着改。')
   })
 
-  const mixedCols = (): AiDataMixedColumn[] => [
-    {
-      column: 'value',
-      non_numeric: 3,
-      rows: 36,
-      preview: [],
-      more: 0,
-      options: [
-        { code: 'skip', params: { count: 3 }, answer: { cells: { value: { mode: 'skip' } } } },
-        { code: 'extract', params: {}, answer: { cells: { value: { mode: 'extract' } } } },
-      ],
-    },
-  ]
-  it('有非数字格：默认不画，右栏一行「3 格不是数字」+ 下拉；改成「只用里面的数字」重新出候选', async () => {
-    propose
-      .mockResolvedValueOnce({ kind: 'ask', question_code: 'mixed_cells', columns: mixedCols() })
-      .mockResolvedValueOnce(cands())
-      .mockResolvedValueOnce({ kind: 'ask', question_code: 'mixed_cells', columns: mixedCols() })
-      .mockResolvedValueOnce(cands(3))
+  it('取不到图（422）的那张静默去掉，推荐标记挪给剩下的第一张；全部取不到走「没画出来」', async () => {
+    propose.mockResolvedValue(cands(3))
     await start()
     await open(0)
-    expect(propose.mock.calls[1]![0]).toMatchObject({ answers: { cells: { value: { mode: 'skip' } } } })
+    await thumb(0, false)
+    expect(qa('[data-candidate]')).toHaveLength(2)
+    expect(qa('[data-candidate]')[0]!.textContent).toContain('推荐')
+    expect(qa('[data-candidate]')[0]!.textContent).toContain('散点 + 拟合线')
+    await thumb(0, false)
+    await thumb(0, false)
+    expect(q('[data-studio-problem]')!.textContent).toContain('这次没画出来，数据没问题。')
+  })
+
+  it('右栏：横轴 / 纵轴 / 分组三个下拉来自 roles；没有可选列的角色不显示；换一项重新出候选', async () => {
+    propose.mockResolvedValue({ ...cands(), roles: { ...roles, options: { x: [], y: ['tumor_volume', 'day'], group: ['group'] } } })
+    await start()
+    await open(0)
+    const labels = qa('[data-data-roles] [data-row-label], [data-data-roles] label').map((l) => l.textContent)
+    expect(q('[data-data-roles]')!.textContent).toContain('纵轴')
+    expect(q('[data-data-roles]')!.textContent).toContain('分组')
+    expect(q('[data-data-roles]')!.textContent).not.toContain('横轴')
+    expect(labels).not.toContain('横轴')
+    propose.mockResolvedValueOnce(cands(2))
+    await act(async () => useDataFigureStore.getState().setRole('y', 'day'))
+    await flush()
+    expect(propose.mock.calls.at(-1)![0]).toMatchObject({ answers: { y: 'day' } })
+    expect(q('[data-data-roles]')).not.toBeNull() // 重新出候选后下拉仍在
+  })
+
+  it('有非数字格：右栏一行「3 格不是数字」+ 下拉（合计）；改成「只用里面的数字」重新出候选', async () => {
+    const m = (mode: 'skip' | 'extract') => [{ column: 'value', non_numeric: 2, rows: 36, mode }, { column: 'v2', non_numeric: 1, rows: 36, mode }]
+    propose.mockResolvedValueOnce({ ...cands(), mixed_cells: m('skip') }).mockResolvedValueOnce({ ...cands(3), mixed_cells: m('extract') })
+    await start()
+    await open(0)
     expect(q('[data-data-panel]')!.textContent).toContain('3 格不是数字')
     expect(q('[data-studio-mixed]')).toBeNull() // 弹窗不再出现
     await act(async () => useDataFigureStore.getState().setMixedMode('extract'))
     await flush()
-    expect(propose.mock.calls.at(-1)![0]).toMatchObject({ answers: { cells: { value: { mode: 'extract' } } } })
+    expect(propose.mock.calls.at(-1)![0]).toMatchObject({ answers: { cells: { value: { mode: 'extract' }, v2: { mode: 'extract' } } } })
     expect(qa('[data-candidate]')).toHaveLength(3)
   })
 
@@ -341,7 +358,7 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     files.mockResolvedValue({ files: [tbl('g.txt', 'unsure')], truncated: false })
     const raw = [1, 2, 3, 4].map((n) => ({ line: n, text: `row ${n}` }))
     overview.mockResolvedValue(ov({ status: 'unsure', header_row: 3, raw_lines: raw, fields: [], preview_rows: [] }))
-    propose.mockResolvedValue(cands())
+    propose.mockResolvedValue({ ...cands(), header_row: 3 })
     await start()
     await open(0)
     expect(qa('[data-candidate]')).toHaveLength(4)
@@ -363,6 +380,7 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     useDocumentStore.setState({ activeCanvasId: 'c0' })
     await start(<><DataDrawer /><DataDraft /><RedrawPill /></>)
     await open(0)
+    await allThumbs()
     await click(qa('[data-candidate]')[1]!)
     expect(commit.mock.calls[0]![0]).toMatchObject({ session: 'S1', id: 'i2' })
     expect(qa('[data-candidate]')[1]!.hasAttribute('data-drawing')).toBe(true)
@@ -390,6 +408,7 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     commit.mockRejectedValueOnce(new Error('network')).mockResolvedValueOnce({ task: { outcome: 'completed' }, script: 's.py', stem: 's', data_check: 'verified' })
     await start()
     await open(0)
+    await allThumbs()
     await click(qa('[data-candidate]')[0]!)
     await flush()
     expect(q('[data-studio-problem]')!.textContent).toContain('这次没画出来，数据没问题。')
@@ -406,6 +425,7 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     commit.mockReturnValueOnce(new Promise((r) => (release = r)))
     await start()
     await open(0)
+    await allThumbs()
     await click(qa('[data-candidate]')[0]!)
     act(() => useDataFigureStore.getState().closeDraft())
     expect(useDataFigureStore.getState()).toMatchObject({ draftOpen: false, drawingId: 'i1' })
@@ -452,6 +472,7 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     await flush()
     await flush()
     expect(useDataFigureStore.getState().selected).toEqual({ path: 'growth.csv', sheet: null })
+    await allThumbs()
     await act(async () => { qa<HTMLElement>('[data-studio-file]')[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })) })
     expect(document.activeElement).toBe(qa('[data-candidate]')[0])
   })

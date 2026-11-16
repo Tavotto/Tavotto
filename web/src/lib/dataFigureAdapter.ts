@@ -1,32 +1,62 @@
 /**
- * 「从数据到图」前端与后端接口之间的薄适配层。
+ * 「从数据到图」前端与后端接口之间的薄适配层（后端合同：`propose(render="lazy")` + 取图时才画缩略图，ADR 0178 2026-11-16 修订）。
  *
- * 现在的后端一次响应（`propose`）里同时带回画法的文字与缩略图地址（缩略图在这次请求里已经渲染好落盘），
- * 列的角色（横轴 / 纵轴 / 分组）还没有。后端「文字先到、缩略图逐张补、返回列角色」的合同出来后，只换这个文件：
- * 候选的每张缩略图各自有 `pending` / `ready` / `failed`，列角色从响应里读。界面只认这里的形状。
+ * 懒模式：`propose` 一返回就带着每张候选的名字 / 说明 / 推荐（文字先到），缩略图地址在手但图还没画——`<img>` 一取就由后端当场画，
+ * 画好返回 200，画不出返回 422（`propose_thumbnail_failed`，不需要文案）。所以每张缩略图各自有就绪状态：
+ * `pending`（骨架，`<img>` 在取）→ `ready`（到了，淡入）/ `failed`（这张静默去掉，推荐标记挪给剩下的第一张）。
+ * 响应还说清这次用了什么：列角色（`roles`，含下拉的 `options`）、表头行（`header_row`）、非数字格（`mixed_cells`）——界面只认这里的形状。
  */
 import { aiDataThumbnailUrl, type AiDataProposeItem, type AiDataProposeResponse } from '@/lib/api'
 
-/** 一张缩略图的就绪状态：`pending` = 文字先到、图还没好（骨架）；`ready` = 有地址可以取；`failed` = 这张没渲出来 */
 export type ThumbState = 'pending' | 'ready' | 'failed'
 
 export interface Candidate extends AiDataProposeItem {
-  /** 带项目标识的缩略图地址（`<img>` 发不了项目请求头）；`pending` / `failed` 时是 null */
-  thumb: string | null
-  thumbState: ThumbState
+  /** 带项目标识的缩略图地址（`<img>` 发不了项目请求头） */
+  thumb: string
 }
 
-/** 响应里的候选 → 界面用的候选。现接口：地址在手 = 就绪（图本身由 `<img>` 加载，加载失败由缩略图组件自己兜） */
+/** 响应里的候选 → 界面用的候选（地址钉在发起那一刻的项目上；就绪状态在 store 里按张记） */
 export function candidatesFromResponse(items: AiDataProposeItem[], pj: string | null): Candidate[] {
-  return items.map((it) => ({ ...it, thumb: aiDataThumbnailUrl(it.thumbnail_url, pj), thumbState: 'ready' as const }))
+  return items.map((it) => ({ ...it, thumb: aiDataThumbnailUrl(it.thumbnail_url, pj) }))
 }
 
-/** 这份数据被当成哪几列画：后端合同到了之后从响应里读；现在没有，界面只显示文件名与行列数 */
+/** 右栏三个下拉的数据：这次用了哪一列，以及每个角色可换成的列 */
 export interface ColumnRoles {
+  /** 有序横轴；null = 这次没有横轴 */
   x: string | null
+  /** 纵轴（后端给数组：宽表可能把 2–3 列当作纵轴；界面先按第一个显示） */
   y: string | null
-  g: string | null
+  /** 额外有几列当纵轴（界面不显示，只用来在汇报里说清） */
+  yExtra: number
+  /** 分组；null = 不分组 */
+  group: string | null
+  options: { x: string[]; y: string[]; group: string[] }
 }
-export function rolesFromResponse(_res: AiDataProposeResponse): ColumnRoles | null {
-  return null
+export function rolesFromResponse(res: AiDataProposeResponse): ColumnRoles | null {
+  if (res.kind === 'ask') return null
+  const r = res.roles
+  if (!r) return null
+  return {
+    x: r.x ?? null,
+    y: r.y?.[0] ?? null,
+    yExtra: Math.max(0, (r.y?.length ?? 0) - 1),
+    group: r.group ?? null,
+    options: { x: r.options?.x ?? [], y: r.options?.y ?? [], group: r.options?.group ?? [] },
+  }
+}
+
+/** 数值列里夹着文字的列（默认不画那几行）；没有 = 空数组 */
+export interface MixedColumn {
+  column: string
+  nonNumeric: number
+  mode: 'skip' | 'extract'
+}
+export function mixedFromResponse(res: AiDataProposeResponse): MixedColumn[] {
+  if (res.kind === 'ask') return []
+  return (res.mixed_cells ?? []).map((m) => ({ column: m.column, nonNumeric: m.non_numeric, mode: m.mode }))
+}
+
+/** 这次实际用的表头物理行号（XLSX / 没给 = null） */
+export function headerRowFromResponse(res: AiDataProposeResponse): number | null {
+  return res.kind === 'ask' ? null : (res.header_row ?? null)
 }

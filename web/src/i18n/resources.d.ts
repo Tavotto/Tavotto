@@ -153,8 +153,13 @@ export default interface Resources {
         "skip": "不画这 {{count}} 行"
       },
       "panel": {
+        "group": "分组",
         "mixed": "{{count}} 格不是数字",
-        "note": "原文件不会改。"
+        "noGroup": "不分组",
+        "noX": "不要横轴",
+        "note": "原文件不会改。",
+        "x": "横轴",
+        "y": "纵轴"
       },
       "pick": {
         "recommended": "推荐"

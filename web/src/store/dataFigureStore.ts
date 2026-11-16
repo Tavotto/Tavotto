@@ -10,12 +10,11 @@ import {
   isDefiniteRunFailure,
   type AiDataCommitResult,
   type AiDataFileEntry,
-  type AiDataMixedColumn,
   type AiDataOverview,
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
-import { candidatesFromResponse, type Candidate } from '@/lib/dataFigureAdapter'
-import { cellModeOf, fileRows, hasNumericColumn, isStaleProposeCode, mergeAnswers, sameTable, tableKey, usableOptions, type CellMode, type TableRef } from '@/lib/dataFigure'
+import { candidatesFromResponse, headerRowFromResponse, mixedFromResponse, rolesFromResponse, type Candidate, type ColumnRoles, type MixedColumn, type ThumbState } from '@/lib/dataFigureAdapter'
+import { fileRows, hasNumericColumn, isStaleProposeCode, sameTable, tableKey, type CellMode, type TableRef } from '@/lib/dataFigure'
 import { msg, type UiMessage } from '@/i18n'
 
 /**
@@ -72,11 +71,14 @@ export type ProblemKind =
  */
 export type DraftPhase = 'idle' | 'reading' | 'unreadable' | 'text' | 'pickrow' | 'loading' | 'ready' | 'nothing' | 'failed'
 
-/** 这次画图用到的、数值列里混着文字的列：默认「不画这几行」，右栏可改成「只用里面的数字」 */
+/** 这次画图用到的、数值列里混着文字的列（后端 `mixed_cells`）：默认「不画这几行」，右栏可改成「只用里面的数字」；多列时 `mode` 是它们共用的处理方式 */
 export interface MixedInfo {
-  columns: AiDataMixedColumn[]
+  columns: MixedColumn[]
   mode: CellMode
 }
+
+/** 右栏三个下拉的角色 */
+export type RoleKey = 'x' | 'y' | 'group'
 
 /** 刚画出来的那张图：画布上的「换个画法」胶囊认它（只在这一次会话里，不持久化） */
 export interface FreshFigure {
@@ -123,10 +125,16 @@ interface DataFigureStore {
   overviews: Record<string, OverviewState>
   /** 用户指了「哪一行是每列的名字」的文件：路径 → 物理行号；出图时原样带上 `header_rows` */
   headerRows: Record<string, number>
-  /** 累积的回答（后端的选择题都由默认答案自动答，这里只存它们） */
+  /** 用户在右栏改过的东西（`y` / `x` / `group` 的列名或 `none`、`cells`），重新出候选时原样带上；后端不再提问，没改的用它自己的默认 */
   answers: Record<string, unknown>
-  /** 有非数字格时的处理方式（右栏的下拉） */
+  /** 有非数字格时的处理方式（右栏的下拉），来自响应的 `mixed_cells` */
   mixed: MixedInfo | null
+  /** 这次用了哪几列、每个角色可换成哪些列（右栏的下拉），来自响应的 `roles`；重新出候选期间保持上一次的，下拉不卸载 */
+  roles: ColumnRoles | null
+  /** 这次实际用的表头物理行号（响应的 `header_row`；XLSX / 还没出 = null） */
+  headerRowUsed: number | null
+  /** 每张候选缩略图各自的就绪状态；`failed` 的静默去掉 */
+  thumbs: Record<string, ThumbState>
   phase: DraftPhase
   /** 候选（同一个会话的一组） */
   session: string | null
@@ -153,6 +161,10 @@ interface DataFigureStore {
   deactivateDraft: () => void
   setHeaderRow: (path: string, sheet: string | null, line: number) => void
   setMixedMode: (mode: CellMode) => void
+  /** 右栏换了某个角色的列（`value` = 列名；`'none'` = 不要横轴 / 不分组）：带着它重新出候选 */
+  setRole: (key: RoleKey, value: string) => void
+  /** 一张缩略图取到了 / 取不到（422）：就绪状态 + 全部都画不出来时走「没画出来」 */
+  thumbSettled: (session: string, id: string, ok: boolean) => void
   draw: (id: string) => Promise<void>
   /** 出图中 / 出候选失败之后「再试一次」 */
   retry: () => Promise<void>
@@ -201,6 +213,9 @@ const initial = {
   headerRows: {} as Record<string, number>,
   answers: {} as Record<string, unknown>,
   mixed: null as MixedInfo | null,
+  roles: null as ColumnRoles | null,
+  headerRowUsed: null as number | null,
+  thumbs: {} as Record<string, ThumbState>,
   phase: 'idle' as DraftPhase,
   session: null as string | null,
   candidates: [] as Candidate[],
@@ -214,6 +229,9 @@ const initial = {
 const idleDraft = {
   answers: {} as Record<string, unknown>,
   mixed: null as MixedInfo | null,
+  roles: null as ColumnRoles | null,
+  headerRowUsed: null as number | null,
+  thumbs: {} as Record<string, ThumbState>,
   phase: 'idle' as DraftPhase,
   session: null as string | null,
   candidates: [] as Candidate[],
@@ -222,8 +240,6 @@ const idleDraft = {
   drawingId: null as string | null,
   problem: null as ProblemKind | null,
 }
-/** 选择题的默认答案轮数上限：后端不会连着问这么多道，防的是死循环 */
-const MAX_ASKS = 8
 
 export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   /** 发起时的快照；`still()` 为假 = 换过项目 / 被更新的同类请求取代，回来的结果作废 */
@@ -239,64 +255,60 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     if (sid) void aiDataFigureDiscard(sid, currentProjectId()).catch(() => undefined)
   }
 
-  /** 这一列 / 这几列混着文字时的回答：每列按 `mode` 取对应的选项（没有就不答，后端会再问） */
-  const mixedAnswers = (cols: AiDataMixedColumn[], mode: CellMode): Record<string, unknown> =>
-    cols.reduce<Record<string, unknown>>((acc, c) => {
-      const o = c.options.find((x) => !x.free_text && cellModeOf(x) === mode)
-      return o ? mergeAnswers(acc, o.answer) : acc
-    }, {})
-
-  /** 出候选（`answers` 此刻的累积 + 选中的表 + 用户指过的表头行）。后端的选择题一律用默认答案自动答，不打断 */
+  /**
+   * 出候选（懒模式）：文字先到——名字 / 说明 / 推荐 / 列角色 / 表头行 / 非数字格一次回来，缩略图由 `<img>` 各自取（后端当场画）。
+   * 不再有选择题：后端自己用默认答案，说清用了什么；用户在右栏改了就把改动放进 `answers` 重来。
+   */
   async function propose(still: () => boolean, pj: string | null): Promise<void> {
     const sel = get().selected
     if (!sel) return
-    set({ phase: 'loading', error: null })
-    for (let asks = 0; asks < MAX_ASKS; asks++) {
-      const answers = get().answers
-      const hasHeaders = Object.keys(get().headerRows).length > 0
-      let res
-      try {
-        res = await aiDataFigurePropose(
-          {
-            ...('table' in answers ? {} : { table: sel.path }),
-            ...('sheet' in answers || sel.sheet == null ? {} : { sheet: sel.sheet }),
-            ...(Object.keys(answers).length ? { answers } : {}),
-            ...(hasHeaders ? { header_rows: get().headerRows } : {}),
-          },
-          pj,
-        )
-      } catch (e) {
-        if (!still()) return
-        set({ phase: 'failed', error: reasonOf(e) })
-        return
-      }
+    set({ phase: 'loading', error: null, candidates: [], session: null, thumbs: {} })
+    const answers = get().answers
+    const hasHeaders = Object.keys(get().headerRows).length > 0
+    let res
+    try {
+      res = await aiDataFigurePropose(
+        {
+          table: sel.path,
+          ...(sel.sheet == null ? {} : { sheet: sel.sheet }),
+          render: 'lazy',
+          ...(Object.keys(answers).length ? { answers } : {}),
+          ...(hasHeaders ? { header_rows: get().headerRows } : {}),
+        },
+        pj,
+      )
+    } catch (e) {
       if (!still()) return
-      if (res.kind === 'ask') {
-        if (res.question_code === 'mixed_cells' && Array.isArray(res.columns) && res.columns.length > 0) {
-          const mode = get().mixed?.mode ?? 'skip'
-          set((s) => ({ mixed: { columns: res.columns!, mode }, answers: { ...s.answers, ...mergeAnswers(s.answers, mixedAnswers(res.columns!, mode)) } }))
-          continue
-        }
-        // 「不确定」永远有安全的默认；没有就取后端排第一的选项
-        const pick = res.unsure ?? usableOptions(res.options)[0]
-        if (!pick) {
-          set({ phase: 'failed', error: null })
-          return
-        }
-        set((s) => ({ answers: mergeAnswers(s.answers, pick.answer) }))
-        continue
-      }
-      if (res.kind === 'candidates' && Array.isArray(res.items) && res.items.length > 0) {
-        set({ phase: 'ready', session: res.session, candidates: candidatesFromResponse(res.items, pj), nothingReasons: [] })
-      } else if (res.kind === 'nothing') {
-        set({ phase: 'nothing', nothingReasons: [...(res.reasons ?? [])], candidates: [], session: null })
-      } else {
-        // 形状不对按失败处理（不当成拿到了空的）
-        set({ phase: 'failed', error: null })
-      }
+      set({ phase: 'failed', error: reasonOf(e) })
       return
     }
-    set({ phase: 'failed', error: null })
+    if (!still()) return
+    if (res.kind === 'ask') {
+      // 懒模式不会问；万一问了按失败处理（不替用户答）
+      set({ phase: 'failed', error: null })
+      return
+    }
+    const mixedCols = mixedFromResponse(res)
+    const common = {
+      roles: rolesFromResponse(res) ?? get().roles,
+      headerRowUsed: headerRowFromResponse(res),
+      mixed: mixedCols.length > 0 ? { columns: mixedCols, mode: mixedCols[0]!.mode } : null,
+    }
+    if (res.kind === 'candidates' && Array.isArray(res.items) && res.items.length > 0) {
+      set({
+        ...common,
+        phase: 'ready',
+        session: res.session,
+        candidates: candidatesFromResponse(res.items, pj),
+        thumbs: Object.fromEntries(res.items.map((i) => [i.id, 'pending' as ThumbState])),
+        nothingReasons: [],
+      })
+    } else if (res.kind === 'nothing') {
+      set({ ...common, phase: 'nothing', nothingReasons: [...(res.reasons ?? [])], candidates: [], session: null })
+    } else {
+      // 形状不对按失败处理（不当成拿到了空的）
+      set({ phase: 'failed', error: null })
+    }
   }
 
   async function loadOverview(ref: TableRef): Promise<AiDataOverview | null> {
@@ -444,6 +456,17 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     }
   }
 
+  /** 右栏改了东西：改 `answers`（可同时改别的字段），放弃上一份候选，带着重新出；右栏的下拉保持挂着（`roles` / `mixed` 不清） */
+  function reask(fn: (a: Record<string, unknown>) => Record<string, unknown>, extra: Partial<typeof initial> = {}): void {
+    discardSession()
+    commitRid = null
+    const seq = { current: () => runSeq }
+    runSeq += 1
+    const { pj, still } = capture(seq)
+    set({ answers: fn(get().answers), ...extra })
+    void propose(still, pj)
+  }
+
   return {
     ...initial,
 
@@ -525,13 +548,21 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     setMixedMode: (mode) => {
       const m = get().mixed
       if (!m || m.mode === mode || get().drawingId) return
-      discardSession()
-      commitRid = null
-      const seq = { current: () => runSeq }
-      runSeq += 1
-      const { pj, still } = capture(seq)
-      set((s) => ({ mixed: { ...m, mode }, answers: mergeAnswers(s.answers, mixedAnswers(m.columns, mode)), session: null, candidates: [] }))
-      void propose(still, pj)
+      // 每一列都带上同一个 mode
+      reask((a) => ({ ...a, cells: Object.fromEntries(m.columns.map((c) => [c.column, { mode }])) }), { mixed: { ...m, mode } })
+    },
+
+    setRole: (key, value) => {
+      if (get().drawingId) return
+      reask((a) => ({ ...a, [key]: value }))
+    },
+
+    thumbSettled: (session, id, ok) => {
+      if (get().session !== session || get().thumbs[id] !== 'pending') return
+      const thumbs = { ...get().thumbs, [id]: ok ? ('ready' as ThumbState) : ('failed' as ThumbState) }
+      // 一张都没画出来：走「这次没画出来」那一屏
+      const allFailed = get().candidates.length > 0 && get().candidates.every((c) => thumbs[c.id] === 'failed')
+      set(allFailed ? { thumbs, phase: 'failed', error: null } : { thumbs })
     },
 
     draw: async (id) => {

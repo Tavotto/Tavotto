@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/Badge'
 import { cn } from '@/lib/utils'
-import type { Candidate } from '@/lib/dataFigureAdapter'
+import type { Candidate, ThumbState } from '@/lib/dataFigureAdapter'
 import { FigureThumb } from './FigureThumb'
 
 const KNOWN_CANDIDATES = [
@@ -34,15 +34,22 @@ export function useDrawingLine(active: boolean): string {
  */
 export function CandidateGrid({
   items,
+  thumbs,
   pending,
   drawingId,
   onPick,
+  onThumb,
 }: {
+  /** 还没被去掉的候选（取不到图的已经不在里面）；第一张带「推荐」 */
   items: Candidate[]
-  /** 候选还在出：画 4 张骨架 */
+  /** 每张缩略图各自的就绪状态 */
+  thumbs: Record<string, ThumbState>
+  /** 候选的文字还没回来：画 4 张骨架 */
   pending?: boolean
   drawingId: string | null
   onPick: (id: string) => void
+  /** 一张缩略图取到了 / 取不到 */
+  onThumb: (id: string, ok: boolean) => void
 }) {
   const { t } = useTranslation('ai')
   const grid = useRef<HTMLDivElement>(null)
@@ -84,6 +91,7 @@ export function CandidateGrid({
         : items.map((it, i) => {
             const mine = drawingId === it.id
             const dim = drawingId != null && !mine
+            const ready = thumbs[it.id] === 'ready'
             return (
               <button
                 key={it.id}
@@ -91,21 +99,22 @@ export function CandidateGrid({
                 data-candidate={it.id}
                 data-drawing={mine || undefined}
                 tabIndex={i === 0 ? 0 : -1}
-                disabled={drawingId != null}
+                // 图没到的磁贴不可点：点了也没有东西可看
+                disabled={drawingId != null || !ready}
                 onClick={() => onPick(it.id)}
                 className={cn(
                   'flex animate-fade-in flex-col rounded-panel bg-field p-2 pb-3 text-left outline-none transition-colors duration-fast ease-standard',
-                  'enabled:hover:bg-field-hover focus-visible:focus-ring',
+                  'enabled:hover:bg-field-hover focus-visible:focus-ring disabled:cursor-default',
                   dim && 'opacity-35',
                 )}
               >
                 <span className="relative block overflow-hidden rounded-md">
-                  <FigureThumb src={it.thumb} alt="" state={it.thumbState} className="aspect-16/10" />
+                  <FigureThumb src={it.thumb} alt="" onSettled={(ok) => onThumb(it.id, ok)} className="aspect-16/10" />
                   {mine && <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-1/3 animate-sweep bg-linear-to-r from-transparent via-paper/70 to-transparent" />}
                 </span>
                 <span className="mx-1.5 mt-3 flex items-center gap-2">
                   <span className="min-w-0 text-base font-medium text-ink">{title(it.title_code)}</span>
-                  {it.recommended && <Badge>{t('dataFigureV2.pick.recommended')}</Badge>}
+                  {i === 0 && <Badge>{t('dataFigureV2.pick.recommended')}</Badge>}
                 </span>
                 <span className="mx-1.5 mt-1 text-sm text-ink-2">{why(it.why_code)}</span>
               </button>
