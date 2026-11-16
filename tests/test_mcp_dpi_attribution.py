@@ -16,7 +16,7 @@ from tavotto_mcp import bridge  # noqa: E402
 
 @pytest.fixture
 def fixture_catalog():
-    return json.loads((ROOT / "tests/golden/journal_vectors.json").read_text())["catalog"]
+    return json.loads((ROOT / "tests/golden/journal_vectors.json").read_text("utf-8"))["catalog"]
 
 
 def session(profile):
@@ -77,7 +77,7 @@ def test_inherited_journal_session_and_plain_profile_remain_distinct(monkeypatch
 
 
 def test_new_journal_stamps_and_mcp_proof_preserve_old_profile(monkeypatch, fixture_catalog):
-    vectors = json.loads((ROOT / "tests/golden/profile_display_vectors.json").read_text())
+    vectors = json.loads((ROOT / "tests/golden/profile_display_vectors.json").read_text("utf-8"))
     for vector in vectors:
         p = {"profile_id": vector["id"], "label": vector["label"], "version": "1"}
         before = copy.deepcopy(p)
@@ -121,7 +121,9 @@ def test_legacy_engine_stamp_is_normalized_consistently(monkeypatch, fixture_cat
 
     monkeypatch.setattr(bridge.engine_profiles, "stamp", old_stamp)
     monkeypatch.setattr(bridge.engine_telemetry, "capture", lambda *_args, **_kwargs: None)
-    for vector in json.loads((ROOT / "tests/golden/profile_display_vectors.json").read_text()):
+    for vector in json.loads(
+        (ROOT / "tests/golden/profile_display_vectors.json").read_text("utf-8")
+    ):
         candidate = {"profile_id": vector["id"], "label": vector["label"], "version": "1"}
         original = copy.deepcopy(candidate)
         assert bridge._profile_stamp(candidate)["label"] == vector["expected"]

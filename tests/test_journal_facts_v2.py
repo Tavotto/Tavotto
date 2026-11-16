@@ -255,7 +255,7 @@ def test_unverified_facts_cannot_be_served(tmp_path):
     obj = bundle()
     obj["facts"][0]["review"] = {"status": "pending"}
     validate_bundle(obj)
-    (journal_dir / "fx-journal.json").write_text(json.dumps(obj))
+    (journal_dir / "fx-journal.json").write_text(json.dumps(obj), encoding="utf-8")
     service = Service(
         Config(data, tmp_path / "db.sqlite", b"fixture-ip-secret"), clock=lambda: 1800000000
     )

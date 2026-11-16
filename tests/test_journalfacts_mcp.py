@@ -79,7 +79,7 @@ def test_mcp_rejects_ambiguous_or_invalid_paging():
 def test_frozen_spec_includes_dynamically_loaded_v2_client():
     import ast
 
-    tree = ast.parse((ROOT / "packaging" / "tavotto.spec").read_text())
+    tree = ast.parse((ROOT / "packaging" / "tavotto.spec").read_text("utf-8"))
     analyses = [
         node
         for node in ast.walk(tree)
