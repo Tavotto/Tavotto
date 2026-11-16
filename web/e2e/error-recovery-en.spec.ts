@@ -2,8 +2,9 @@
  * 英文错误恢复路径（issue #30）。
  *
  * 在 en-US 界面语言下真实触发各类失败，逐条验证四件事：
- *   1. 不泄漏中文（系统文案必须是英文；用户内容与诊断原文除外——本 spec
- *      刻意使用纯 ASCII 的项目名，凡是可见错误面出现 CJK 即为泄漏）；
+ *   1. 不泄漏中文（系统文案必须是英文；用户内容与诊断原文除外——后者只能经
+ *      `expectNoCjk(..., exempt)` 按「界面这一次实际收到的那一段」显式扣掉，
+ *      不许整块放宽；本 spec 刻意使用纯 ASCII 的项目名）；
  *   2. 显示稳定、本地化的错误文案（来自 errors:backend.<code> 等表）；
  *   3. 给出用户可执行的下一步（按钮 / 设置入口 / 重试路径）；
  *   4. 不丢失当前项目与未保存编辑（出错后画布还在、还能继续操作）。
@@ -42,10 +43,24 @@ function copyTree(src: string, dest: string): void {
 
 const CJK = /[㐀-鿿豈-﫿]/
 
-/** 断言一个可见错误面上没有中文（系统文案泄漏）。 */
-async function expectNoCjk(el: Locator, label: string): Promise<void> {
+/**
+ * 断言一个可见错误面上没有中文（系统文案泄漏）。
+ *
+ * `exempt` 是**原样透传进界面的外部文本**（后端 `params.error` 里的 OS 报警
+ * 原文）：用户的 OS 语言是中文时它本来就是中文，而 issue #30 的判据是**产品
+ * 自己的包装串**，不裁决外部文本。把这一段从可见文本里扣掉之后仍有 CJK，才是
+ * 泄漏。默认为空 = 整块不得有中文——CI（英文系统）上 `params.error` 是 ASCII，
+ * 扣不扣是同一个判据，守卫强度与不传豁免时完全一致。
+ *
+ * 前提（失效时没有机制提醒你）：`exempt` 必须是界面**这一次实际渲染**的那份
+ * 响应里的原文，且产品包装串不会恰好含它。拿别处的关系近似、或让豁免覆盖到
+ * 包装串，判据就哑了。
+ */
+async function expectNoCjk(el: Locator, label: string, exempt = ''): Promise<void> {
   const text = (await el.textContent()) ?? ''
-  expect(CJK.test(text), `${label} 泄漏了中文：${text.slice(0, 200)}`).toBe(false)
+  // 字面量 split（不是正则也不是 replace 一次）：原文里可能有 regex 元字符
+  const own = exempt ? text.split(exempt).join('') : text
+  expect(CJK.test(own), `${label} 泄漏了中文：${own.slice(0, 200)}`).toBe(false)
   expect(text.trim().length, `${label} 是空的`).toBeGreaterThan(0)
 }
 
@@ -343,27 +358,34 @@ test('updater 离线：检查更新失败给英文报错，界面可继续', asy
   })
   await openFigures(page, a.baseURL)
 
-  const res = await page.request.get(`${a.baseURL}/api/update/check`)
-  // 后端如实报失败（不是 500 traceback）
-  expect([200, 502, 503]).toContain(res.status())
-
   // 界面侧：设置 → 关于与更新 → 检查，错误以英文显示
   await page.getByRole('button', { name: /Settings/i }).click()
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()
   await dialog.getByRole('button', { name: /About & updates/i }).click()
+  // 判据的主语是**界面渲染那一刻收到的那份响应**：直接抓住这次 force 请求
+  // （夹具默认关了自动检查，不带 force 时后端回缓存、根本不联网），而不是另发
+  // 一次请求取一个「应该相同」的原文——下面放行的诊断原文就出自这里。
+  const checking = page.waitForResponse((r) => r.url().includes('/api/update/check?force=1'))
   await dialog.getByRole('button', { name: /Check now|Check for updates/i }).click()
+  const res = await checking
+  // 后端如实报失败（不是 500 traceback）
+  expect([200, 502, 503]).toContain(res.status())
+  // 结构化失败理由：`params.error` 是 OS 报警原文。不是 200 时没有原文可放行
+  // → 下面的豁免是空串，退回整块判据。
+  const payload =
+    res.status() === 200 ? ((await res.json()) as { params?: { error?: unknown } }) : null
+  const rawError = String(payload?.params?.error ?? '')
+
   const err = dialog.getByRole('alert').first()
   await expect(err).toBeVisible({ timeout: 60_000 })
-  // 英文包装 + 诊断原文。产品自有串必须是英文（后端的中文半句「检查失败:」
-  // 不得漏出）；诊断原文是 `params.error` 原样透传的 OS 消息，本机 OS 语言
-  // 是中文时它就是中文——那是诊断事实，不是 i18n 泄漏（issue #30 的判据是
-  // 产品自己的包装串，不裁决 OS 文本）。
+  // 产品自己的包装串必须是英文（issue #30）
   await expect(err).toContainText(/Check failed/i)
-  await expect(err).not.toContainText('检查失败:')
-  await expect
-    .poll(async () => ((await err.textContent()) ?? '').trim().length, { timeout: 5_000 })
-    .toBeGreaterThan(0)
+  // 整块不得有中文——**只**放行上面那份诊断原文：`params.error` 是原样透传的
+  // OS 消息，本机 OS 语言是中文时它就是中文，那是诊断事实、不是 i18n 泄漏。
+  // 豁免量取自本次响应，扣不干净就退回整块判据；CI（英文系统）上它等于是空操作，
+  // 守卫强度与不传豁免时一样。
+  await expectNoCjk(err, '更新检查失败', rawError)
 })
 
 // 「Windows 文件占用（file_locked）」的界面用例现在**在上面**，不再缺着。
