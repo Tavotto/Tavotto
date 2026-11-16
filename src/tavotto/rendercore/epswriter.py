@@ -130,6 +130,10 @@ class OverlayWriter:
 
     # ---- 能力核对 ---------------------------------------------------------
     def _check(self, node: ir.Node) -> None:
+        if isinstance(node, ir.Group) and isinstance(node.clip, ir.ClipUnion):
+            raise UnsupportedCapability(
+                "clip", "PostScript overlay cannot represent a vector clip union", node.object_id
+            )
         for op in ir.operations_of(node):
             if op in UNSUPPORTED:
                 raise UnsupportedCapability(op, UNSUPPORTED[op], getattr(node, "object_id", ""))

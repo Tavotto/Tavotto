@@ -192,8 +192,9 @@ def test_an_unsure_file_whose_guess_is_not_a_valid_header_has_no_summary(tmp_pat
     [
         ("bin.dat", {"raw": b"\x00\x01\x02\x03" * 400}, "data_binary"),
         ("ctrl.dat", {"raw": bytes(range(1, 9)) * 300}, "data_binary"),
-        ("u16.txt", {"raw": "x,y\n1,2\n".encode("utf-16")}, "data_decode_error"),
-        ("gbk.txt", {"raw": "名称,值\n甲,1\n".encode("gbk")}, "data_decode_error"),
+        ("u32.txt", {"raw": "x,y\n1,2\n".encode("utf-32")}, "data_decode_error"),
+        ("u16odd.txt", {"raw": "x,y\n1,2\n".encode("utf-16")[:-1]}, "data_decode_error"),
+        ("garbage.txt", {"raw": b"x,y\n1,2\n\x81\x20,3\n"}, "data_decode_error"),
         ("empty.txt", {"raw": b""}, "data_empty"),
         ("blank.txt", {"raw": b"\n  \n\n"}, "data_empty"),
         (
@@ -571,6 +572,7 @@ def test_data_files_default_is_unchanged_and_all_adds_a_table_field_for_text_fil
         "status": "ok",
         "code": None,
         "delimiter": "space",
+        "encoding": "utf-8",
         "header_row": 5,
         "columns": 3,
         "rows": 3,

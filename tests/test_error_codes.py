@@ -155,6 +155,7 @@ def _declared_codes(text: str) -> set[str]:
 USER_VISIBLE_CODES = {
     # Journal facts inspection may return a bounded result error.
     "result_too_large": set(),
+    "svg_scene_invalid": set(),
     # --- ADR 0175：改图助手附文件（`POST /api/ai/attachments`）；固定文案 ---
     "attachment_too_large": set(),
     "attachment_empty": set(),

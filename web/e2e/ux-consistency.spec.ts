@@ -216,7 +216,7 @@ test('流程 C：AI 模型与推理强度——键盘可调、偏好保持、无
 
   // 右栏切到改图助手
   // 2026-09-14 起助手是右栏 tablist 里的第三个页签（ADR 0010 修订），不再是头部按钮
-  await page.getByRole('tab', { name: /改图助手/ }).first().click()
+  await page.getByRole('tab', { name: /助手/ }).first().click()
   const openPopover = async () => {
     // 2026-10-07 起作用范围与执行器的详情弹层挂在输入框上方的上下文带 chip 上（宪法第十八节「重做」）
     await page.locator('[data-ai-target]').click()

@@ -201,6 +201,11 @@ FILE_KINDS = ("pdf", "png", "jpg", "jpeg", "tif", "tiff")
 RASTER_KINDS = ("png", "jpg", "jpeg", "tif", "tiff")
 
 
+def is_native_svg(kind: str, origin: str) -> bool:
+    """A self-contained SVG page; never an unpaired execution representation."""
+    return kind == "svg" and origin in ("static", "declarative")
+
+
 @dataclass(frozen=True)
 class FontResource:
     """一张**已批准**的脸：身份是文件字节（sha256）+ face 序号 + 样式，不是族名
@@ -223,9 +228,9 @@ class FileResource:
     身份，不含路径：字节从哪读、读之前核不核 hash 是 `sources` / 写入器的事。"""
 
     source_id: str
-    kind: str  # FILE_KINDS
+    kind: str  # FILE_KINDS, or an is_native_svg() page resource
     sha256: str
-    origin: str  # execution | static
+    origin: str  # execution | static | declarative
     semantic_identity: str
     svg_sha256: str | None = (
         None  # verified same-Figure companion, never an arbitrary PDF conversion
@@ -358,11 +363,22 @@ class ImportedPage:
 
 
 @dataclass(frozen=True)
+class ClipUnion:
+    """各路径填充区域的并集；每个成员保留自己的 nonzero/evenodd 判据。
+
+    与把 segments 拼成一个 Path 不同：成员重叠不会因绕向相反而抵消，
+    成员自己的洞也不会错误挖掉另一成员。只描述几何，paint 不参与裁剪。
+    """
+
+    paths: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
 class Group:
     children: tuple[Node, ...]
     transform: Matrix = IDENTITY
     #: 局部空间里的裁剪路径（变换之后、children 之前生效）。None = 不裁。
-    clip: Path | None = None
+    clip: Path | ClipUnion | None = None
     #: 整组 alpha。< 1 时写入器用透明组（组内 alpha 从 1 起算）。
     opacity: float = 1.0
     object_id: str = ""
@@ -704,7 +720,8 @@ def _placement(
         raise IRError("unknown_resource", f"资源 {node.resource!r} 不在 page.resources 里", path)
     if not isinstance(res, FileResource):
         raise IRError("resource_kind_mismatch", f"{node.resource!r} 不是文件资源", path)
-    if res.kind not in want_kinds:
+    native_svg = isinstance(node, ImportedPage) and is_native_svg(res.kind, res.origin)
+    if res.kind not in want_kinds and not native_svg:
         raise IRError(
             "resource_kind_mismatch",
             f"{type(node).__name__} 需要 {want_kinds} 之一的源，{node.resource!r} 是 {res.kind!r}",
@@ -737,11 +754,11 @@ def _resource(key: str, res: object) -> None:
         if not _is_sha256(res.sha256):
             raise IRError("unknown_resource", f"字体资源的 sha256 不合形状: {res.sha256!r}", path)
     elif isinstance(res, FileResource):
-        if res.kind not in FILE_KINDS:
+        if res.kind not in FILE_KINDS and not (is_native_svg(res.kind, res.origin)):
             raise IRError("resource_kind_mismatch", f"文件种类不在闭集里: {res.kind!r}", path)
         if not _is_sha256(res.sha256):
             raise IRError("unknown_resource", f"文件资源的 sha256 不合形状: {res.sha256!r}", path)
-        if res.origin not in ("execution", "static"):
+        if res.origin not in ("execution", "static", "declarative"):
             raise IRError("unknown_resource", f"origin 不在闭集里: {res.origin!r}", path)
     else:
         raise IRError("resource_kind_mismatch", f"不是资源: {res!r}", path)
@@ -780,17 +797,24 @@ def validate(page: Page) -> Page:
             _matrix(node.transform, path)
             _alpha(node.opacity, path)
             if node.clip is not None:
-                if not isinstance(node.clip, Path):
-                    raise IRError("bad_path", "clip 必须是 Path", f"{path}.clip")
-                # clip 只借路径的几何：填充 / 描边在这里没有意义，但校验需要一个 Paint
-                _path(
-                    Path(
-                        node.clip.segments,
-                        fill=Paint((0.0, 0.0, 0.0)),
-                        fill_rule=node.clip.fill_rule,
-                    ),
-                    f"{path}.clip",
-                )
+                if isinstance(node.clip, Path):
+                    clips = ((node.clip, f"{path}.clip"),)
+                elif isinstance(node.clip, ClipUnion):
+                    if not isinstance(node.clip.paths, tuple) or not node.clip.paths:
+                        raise IRError("bad_path", "ClipUnion.paths 必须是非空元组", f"{path}.clip")
+                    clips = tuple(
+                        (p, f"{path}.clip.paths[{i}]") for i, p in enumerate(node.clip.paths)
+                    )
+                else:
+                    raise IRError("bad_path", "clip 必须是 Path 或 ClipUnion", f"{path}.clip")
+                for clip, clip_path in clips:
+                    if not isinstance(clip, Path):
+                        raise IRError("bad_path", "裁剪成员必须是 Path", clip_path)
+                    # 裁剪只借几何；paint 没有意义，校验用一个有效 Paint。
+                    _path(
+                        Path(clip.segments, fill=Paint((0, 0, 0)), fill_rule=clip.fill_rule),
+                        clip_path,
+                    )
             if not isinstance(node.children, tuple):
                 raise IRError("bad_node", "children 必须是元组", path)
             for i, child in enumerate(node.children):

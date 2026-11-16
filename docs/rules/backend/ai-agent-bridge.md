@@ -337,6 +337,12 @@ order: 240
   **只新建**（`scriptlock.create_script`），再 `discover.register` → 统一刷新 → safe 渲染 → `figureverify.data_matches_expected`；登记失败撤回本次新建的脚本 / 公共模块 / 目录，复用的不删。
   数值列夹着 ≤ 20% 文字（`numeric_like`）：**先问用户**（`{kind:"ask", question_code:"mixed_cells"}`：预览 ≤ 5 行带文件行号、选项 skip / extract / describe），回答放 `answers.cells`（`skip` / `extract` / `map`，声明式；`describe` 不可执行 → 409 `propose_cells_need_rule`；规则不合格 → 400 `propose_cells_invalid`），规则进 `FigureRecipe.cells`，脚本读表后 `apply_cells` 套规则（内存副本，用户文件不动）、图下方写说明、期望指纹按处理后的数据算，用户已决定的格子不再算 partial 理由；幂等键含请求内容摘要。**没有任何可核层 = `data.verifiable` unknown（`data_check: "unverifiable"`），绝不写成 verified**。端点：`propose` / `thumbnail/<session>/<id>` / `commit` / `discard`，`/api/ai/data-files` 带 xlsx 工作表清单；
   请求路径只经 `ai_data_propose.normalize_rel` + `projectenv.contained_path`。看护 `tests/test_ai_data_propose.py`（真 app + 真 safe worker）。
+- **数据出图 v2 的数据概览与脚本来源（`engine/ai_data_overview.py`，ADR 0178「数据概览与脚本来源」，实验开关后面）**：`GET /api/ai/data-overview?path=&sheet=&header_row=`
+  只读：状态（`ok` / `unsure` / `unreadable` + 稳定码，读不了是 200 不是 4xx）、行列数、`fields`（`ColumnSummary.kind` 口径）、前 20 行单元格原文、表头行前的说明行；**读表必须是 propose 读表的那两个函数**
+  （`read_text_table` / `inspect_data_source(v2=True)`），`header_row` 经 `ai_data_propose.parse_header_row`（与 `header_rows` 一份判据）——别在这里另写读法。路径只经 `normalize_rel` + `contained_path` +
+  与 `discover.walk_files` 结果逐字比对，打开的是遍历结果里的那一项。响应一律有上界、控制字符换空格（表里的文字不可信）。读不了但能靠指定表头行补救的文本表（`data_ragged` 等）概览照带 `raw_lines` 与猜的行号（`raw_lines` 非空 = 前端可让用户点一行，二进制 / 散文为空），别在概览里提前丢掉 `read_text_table` 给的预览；XLSX 每个工作表的行列数在 `/api/ai/data-files?formats=all` 的 `sheets` 里
+  （有预算，超出 `null` = 没读）。`/api/registry` 的 `all_scripts[]` 对 v2 生成的脚本加 `generated_from: {data, sheet}`：解析只有 `ai_data_template.parse_source_comment` 一处（严格：tokenize 真注释、第一条、固定键集合；
+  只外传路径与工作表名，不给配方与哈希），开关关着整个不读、响应逐字不变。不写文件、不发遥测。看护 `tests/test_ai_data_overview.py`。
 - **TAF 改图（`engine/ai_figure_edit.py`，Phase 3a）**：只在 `config.ai_settings()["taf"]["enabled"] is True`（默认关、无界面开关）
   时由 `ai_bridge.run` 走到；开关关着时旧路径逐字不变（cwd 是项目目录、不写任务列、`ADAPTERS` 为空）。开着时：spawn 之前在
   `data_dir()/cache/ai_candidates/<sid>/` **字节复制**目标脚本（+ 项目根的 `paper_style.py`，绝不建链接），拍原项目有界指纹（跳过
@@ -527,6 +533,10 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
 - **出站**：只许 https，或明文 http 但主机属本机回环 / 私网（`10/8`、`172.16/12`、`192.168/16`、`100.64/10`、`fc00::/7`；链路本地 / 公网 / 保留段拒；云元数据地址与主机名先于放行段排除（`netpolicy.METADATA_IPS` / `METADATA_HOSTS`，出处 URL 写在注释里，含 GCP / Akamai 的 IPv6 端点 `fd20:ce::254` / `fd00:a9fe:a9fe::1`）；主机名要全部解析结果都在放行段）——判据只在 `engine/netpolicy.py`（`check_base_url` 与 `ai_catalog.url_refusal` 共用），连接时钉住判定那次解析出的 IP 直连、`Host` 头保留原主机名；URL 不带用户信息 / 查询 / 片段。https 走 `_opener()`（`build_opener(tlstrust.https_handler(tlstrust.client_context()))`
   + 不跟随重定向，代理沿用环境变量）；明文 http 走 `netpolicy.pinned_connection` 直连已校验的 IP、**不经代理**（出站门禁只认这一处变量主机的 `HTTPConnection`）。响应体有上限；
   请求有超时；`tests/test_outbound_https_trust.py` 的 `OUTBOUND` 登记了 `engine/agent_runner/wires.py: _opener`。
+- **runner 层自救（ADR 0147 修订 2026-11-15，`agent_runner/fallback.py`）**：两个**闭集**，判据只看状态码与响应体里的闭集短语，体原文只在内存里匹配、不进事件 / 日志 / 诊断包 / 异常。
+  ① **第一轮换协议**：`--fallback WIRE=BASE_URL`（可重复，按序试；`BASE_URL` 与 `--base-url` 同 scheme / 主机 / 端口，否则起跑即 `internal/bad_args`、0 次请求）。只在**从未收到过成功回复**时（没执行过工具、没有原生回放项）触发：404 / 405，或 400 / 404 / 503 且体里含 `fallback.WRONG_PROTOCOL_PHRASES` 之一（不区分大小写；JSON 体先解码，免得中文短语被 `\uXXXX` 转义漏掉）。401 / 403 / 429 / 其余 5xx 与任意其他 400 一律不换，不吞重试次数。
+  ② **非必需字段降级**：400 / 422 明确点名我们发的 `include`（responses）、`max_output_tokens`（responses）或长度字段（chat 的 `max_tokens` ↔ `max_completion_tokens` 换名）为不被接受（`unsupported` / `unknown` / `unrecognized` / `not permitted` / `not allowed`；值非法不算；`store` / `include` 只认带引号的点名）→ 剥掉 / 换名重发，同一字段一次，之后每轮沿用；剥 `include` 时回放里的 `reasoning` 条目同时剥掉。**`store: false` 绝不自动剥**（提示词含用户未发表脚本）：responses 上 `store` 被点名拒绝按「协议不对」处理，有 `--fallback` 才换到 chat，没备选照常失败。
+  **回报**只在 `done` 事件上、闭集字段（`loop.DONE_REPORT_FIELDS`）：`wire_used`（最后一次成功回复的协议名，没成功过 = `""`）、`wire_switched_from`（换过协议 = 最初协议名，否则 `""`）、`dropped_fields`（`fallback.DROPPABLE_FIELDS` 的子集：`include` / `max_output_tokens` / `max_tokens` / `max_completion_tokens`）、`token_field`（chat 最后实际用的长度字段，否则 `""`）。没有自救能力的模型对象（Demo、`fixsession._FinishAware` 包装）回空值。看护 `tests/test_agent_runner_fallback.py`。
 - **密钥**：只读环境变量 `TAVOTTO_AGENT_API_KEY`（读后从本进程环境删除），绝不进 argv / stdout / stderr / 事件 / 日志 / repr。
   提示词只经 `--prompt-file` 或 stdin。服务端错误体不进任何输出（可能回显提示词），只留 `detail` 短代码。
   **模型的成功回复同样不可信**（服务端在请求头里拿到了密钥，可能回显）：`__main__` 的事件写出函数 `emit` 与 stderr 诊断函数 `diag` 是

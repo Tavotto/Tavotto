@@ -418,7 +418,7 @@ Offering the option uploads nothing; sending does:
   checkboxes that start unticked every time it opens: *script source* (the scripts
   registered in the open project, the scripts of recent test runs and of recent "generate editable
   version" conversions — including R and MATLAB scripts — and the unadopted candidate script such
-  a conversion left in Tavotto's local cache, attached as they are — **secret removal in scripts is best
+  a conversion left in Tavotto's local cache, and the local Python modules those scripts loaded from outside the project folder when they last ran — only `.py` modules that were really loaded from a folder the script itself added to Python's search path, never third-party packages or Python's own; never files sitting directly in your home folder or at the root of a drive, never anything under the credential folders Tavotto's AI helpers are also barred from (such as `.ssh`), never through a symbolic link; at most 20 per script, each cut at 1 MiB and counted in the same 100-file limit as the scripts; Tavotto remembers only the paths of these modules, in its own data folder for 30 days, and reads their contents only when you tick this box — attached as they are — **secret removal in scripts is best
   effort and cannot be guaranteed, so do not tick it if your scripts contain secrets**;
   without it the bundle contains no script source at all, including the source lines normally
   printed inside tracebacks), *system crash
@@ -574,8 +574,8 @@ cancelled or failed upload is never resumed on its own.
 * **How long it is kept.** 30 days after the last update. *Stop sharing* deletes
   the pictures, comments and verdicts at once; expired links are deleted the same
   way.
-* **Daily limits.** To count the free daily limits (1 new link per device per
-  day, 5 updates per link per day) the app creates a random device key on first
+* **Daily limit.** To count the free daily limit (1 new link per device per
+  day; updating an existing link is not limited) the app creates a random device key on first
   use and signs its requests with it. The key identifies this installation only,
   is not linked to usage statistics and is not used for anything else.
 * **What stays on your computer.** The link's number, a secret management token,

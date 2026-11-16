@@ -1175,7 +1175,10 @@
       "copyAsk": "The script reads data from {{path}}",
       "copyDenied": "No permission to write to {{dir}}",
       "copyProtected": "{{dir}} is protected by the system",
-      "copyFailed": "Couldn't copy the data to {{dir}}"
+      "copyFailed": "Couldn't copy the data to {{dir}}",
+      "libraryEntry": "{{script}} only defines plotting functions; {{entry}} is the script that draws",
+      "libraryEntryOutside": "{{script}} only defines plotting functions; {{entry}}, outside this project, is the script that draws",
+      "libraryNone": "{{script}} only defines plotting functions and never calls them, so running it draws nothing"
     },
     "btn": {
       "later": "Later",
@@ -1223,7 +1226,9 @@
       "otherData": "Use other data",
       "grantCopy": "Allow, then copy",
       "openPrivacy": "Open System Settings",
-      "rewritePath": "Change the path in the script"
+      "rewritePath": "Change the path in the script",
+      "runEntry": "Run it",
+      "openRunEntry": "Open and run"
     },
     "card": {
       "stepOf": "Step {{n}} of {{total}}: {{name}}",
@@ -1703,6 +1708,10 @@
       "documents": "Documents",
       "downloads": "Downloads",
       "icloud": "iCloud Drive"
+    },
+    "library": {
+      "partial": "Only some files were checked; other scripts may call it too",
+      "openFailed": "Couldn’t open that folder"
     }
   },
   "canvasMenu": {

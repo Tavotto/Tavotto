@@ -153,6 +153,8 @@ export default interface Resources {
         "candidate_write_blocked": "这个备选想写到别处，已拦下。",
         "common_module_conflict": "同目录里那份公共文件被改过；为了不覆盖你的文件，这次没有生成。",
         "data_changed": "数据文件在生成备选之后变过了，请重新生成。",
+        "data_folder_not_writable": "这个数据文件夹不让写入（只读或没有权限），没有生成。",
+        "disk_full": "磁盘空间不够，没有生成。",
         "figures_dir_unusable": "tavotto_figures 不是普通文件夹，没有生成。",
         "matrix_unsupported": "这种方阵形式的表暂时画不了。",
         "no_numeric_column": "这张表里没有数值列。",
@@ -406,7 +408,7 @@ export default interface Resources {
       "running": "运行中",
       "timeout": "超时"
     },
-    "tabLabel": "改图助手",
+    "tabLabel": "助手",
     "trace": {
       "agent": {
         "builtin": "内置执行器",
@@ -2036,6 +2038,77 @@ export default interface Resources {
       "titleDoc": "重新链接素材",
       "titlePaste": "粘贴前重新链接素材"
     },
+    "review": {
+      "button": "分享审阅",
+      "buttonUnread": "分享审阅（有新意见）",
+      "cancel": "取消",
+      "capsuleClose": "收起",
+      "capsuleOpen": "查看",
+      "capsule_other": "{{author}}留了 {{count}} 条意见",
+      "changed": "画布有新改动",
+      "close": "关闭",
+      "comment": {
+        "allMark": "全",
+        "done": "已处理",
+        "moved": "原位置已变化",
+        "owner": "作者",
+        "pin": "第 {{n}} 条意见",
+        "reopen": "重新打开",
+        "reply": "回复",
+        "replyPlaceholder": "回复…",
+        "resolve": "已处理",
+        "send": "发送",
+        "version": "V{{v}}"
+      },
+      "copy": "复制",
+      "copyLink": "复制链接",
+      "create": "生成链接",
+      "dailyNew": "每天可新建 1 个",
+      "failure": {
+        "client_error": "没有成功，再试一次。",
+        "network": "连不上审阅服务，检查网络后重试。",
+        "quota_new_exhausted": "今天新建的次数用完了。",
+        "rate_limited": "请求太频繁，过一会儿再试。",
+        "render_failed": "画面没生成出来，再试一次。",
+        "server": "审阅服务暂时出错了，稍后再试。",
+        "share_gone": "这个链接已经失效了，本机留着当时的意见。",
+        "too_large": "画面太大了，缩小图幅后再试。"
+      },
+      "linkCopied": "链接已复制",
+      "linkLabel": "审阅链接",
+      "notFound": "这张图不在当前项目里",
+      "notePlaceholder": "给审阅者的话（选填）…",
+      "picker": {
+        "desc": "每天可新建 1 个链接，北京时间 0 点恢复。",
+        "exportPng": "导出 PNG",
+        "newTitle": "今天已经新建过分享链接",
+        "updateMany": "更新已有的链接…",
+        "updateOne": "更新已有的链接（{{title}}）"
+      },
+      "privacyFoot": "只上传画面，脚本和数据不出本机",
+      "retry": "重试",
+      "shareNote": "拿到链接可查看和留言 · {{date}}失效",
+      "sharedMeta": "V{{v}} · {{when}}",
+      "stage": {
+        "rendering": "正在生成画面…",
+        "uploading": "正在上传…"
+      },
+      "stop": "停止分享",
+      "stopConfirm": "再点一次，立刻停止",
+      "tab": {
+        "all": "全部 {{n}}",
+        "deleteRecord": "删除这份记录",
+        "empty": "还没有意见",
+        "emptyOpen": "没有未处理的意见",
+        "expired": "链接已过期，当时的意见留在这里",
+        "filterLabel": "筛选意见",
+        "label": "审阅",
+        "open": "未处理 {{n}}",
+        "revoked": "已停止分享，意见留在本机"
+      },
+      "title": "分享审阅",
+      "updateHere": "更新到这个链接"
+    },
     "scriptInput": {
       "answerLabel": "你的回答",
       "autofilled": "已用上次的答案：{{answer}}",
@@ -3464,7 +3537,7 @@ export default interface Resources {
       "convert_write_failed": "无法把新版本写进项目，请检查文件夹是否可写。",
       "coord_not_allowed": "只有按角度排布的数据才能用极坐标。",
       "data_binary": "这个文件不是文本表格（像是二进制数据），读不了。",
-      "data_decode_error": "这份数据不是 UTF-8 编码，读不出来。",
+      "data_decode_error": "认不出这份数据的文字编码，另存为 UTF-8 的 CSV 再试。",
       "data_empty": "这份数据是空的。",
       "data_excel_unsupported": "不支持旧版 Excel 文件（.xls / .xlsm / .xlsb），请在 Excel 里另存为 .xlsx 或 CSV。",
       "data_figure_input_missing": "请选一份数据文件，并说明想画什么。",
@@ -3770,6 +3843,8 @@ export default interface Resources {
       "svg_asset_export_unsupported": "SVG 素材目前支持预览、摆放和原图 SVG 导出；画布与跨格式导出尚未支持。请先将该素材转换为 PDF 后导入。",
       "svg_asset_unsupported": "此 SVG 暂不支持导入。请使用尺寸明确的独立静态 SVG；不支持脚本、外部资源或 DTD。",
       "svg_figure_unavailable": "{{figure}} 暂时无法导出为 SVG：这张图用了会影响绘制过程的自定义代码，为保证 SVG 与 PDF 是同一张图，这次没有导出 SVG。其余格式已照常导出，也可用 PDF 在矢量软件里转换。",
+      "svg_resource_limit": "SVG 或计算图表超过资源预算，无法完成本次操作。",
+      "svg_scene_invalid": "无法读取这份 SVG 的图形内容。请检查文件是否为有效的独立 SVG。",
       "svg_snapshot_missing": "{{id}} 暂时无法导出为 SVG：请先重新运行这张图的脚本，或改用 PDF 导出。",
       "svg_source_unsupported": "{{id}} 的当前来源无法安全转换为 SVG。请改用 PDF 格式导出。",
       "sync_different_scripts": "两张图不属于同一个脚本，无法同步",
@@ -6731,6 +6806,7 @@ export default interface Resources {
         "openPrivacy": "打开系统设置",
         "openRegistry": "打开接入中心",
         "openRun": "打开并运行",
+        "openRunEntry": "打开并运行",
         "openSettings": "打开设置",
         "otherData": "换一份数据",
         "pickPython": "换用我的 Python",
@@ -6743,6 +6819,7 @@ export default interface Resources {
         "run": "运行",
         "runAgain": "再运行",
         "runAnyway": "仍然运行",
+        "runEntry": "运行它",
         "send": "发送",
         "sendUs": "发给我们看看",
         "skipFolder": "跳过这个文件夹重跑",
@@ -7038,6 +7115,10 @@ export default interface Resources {
         "toUser": "装到你电脑上已有的那套",
         "toUserLong": "你电脑上已有的那套，装坏了不能完整回滚"
       },
+      "library": {
+        "openFailed": "没能打开那个文件夹",
+        "partial": "只查了一部分文件，可能还有别的脚本调用它"
+      },
       "line": {
         "aiEditBroke": "AI 改过之后运行出错了",
         "aiUnavailable": "这个问题 AI 暂时还不会修",
@@ -7090,6 +7171,9 @@ export default interface Resources {
         "inputUnanswered": "脚本中途要你回答，再运行一次就能答",
         "inputUnansweredSecret": "脚本要口令，再运行一次时输入（口令不会被记住）",
         "install": "要先安装缺少的组件",
+        "libraryEntry": "{{script}} 只定义了画图函数，真正画图的是 {{entry}}",
+        "libraryEntryOutside": "{{script}} 只定义了画图函数，真正画图的是项目外的 {{entry}}",
+        "libraryNone": "{{script}} 只定义了画图函数、没有调用，运行它不会出图",
         "missingData": "找不到要读的数据",
         "needsArgs": "脚本要运行参数",
         "noFigure": "跑完了，没有出图",

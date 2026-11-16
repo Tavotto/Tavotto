@@ -982,10 +982,10 @@ def test_data_files_lists_all_table_formats_with_xlsx_sheets(project):
     body = client.get("/api/ai/data-files?formats=all").get_json()
     rows = {f["path"]: f for f in body["files"]}
     assert set(rows) == {"d/a.csv", "d/b.tsv", "d/c.TAB", "d/x.xlsx", "d/bad.xlsx"}
-    assert rows["d/x.xlsx"]["sheets"] == [
-        {"name": "S1", "hidden": False},
-        {"name": "S2", "hidden": True},
-    ]
+    assert [(x["name"], x["hidden"]) for x in rows["d/x.xlsx"]["sheets"]] == [
+        ("S1", False),
+        ("S2", True),
+    ]  # 行列数等见 test_ai_data_overview.py
     assert rows["d/bad.xlsx"]["sheets"] is None
     assert "sheets" not in rows["d/a.csv"]
 
