@@ -624,6 +624,11 @@ interface DocumentState {
    * 用处：松手后按权威渲染的实测补正一次落点（图例整体缩放钉对角）。
    */
   amendLast: (entry: HistoryEntry, recipe: Recipe) => boolean
+  /**
+   * 把撤销栈顶上的 `count` 条并成一条（标签换成 `label`）：撤销一次退掉这一整段。只在没有事务开着时做；不够两条什么都不做。
+   * 用处：一次「编辑路径文字的路径」里拖了好几下锚点，整次编辑只记一步（ADR 0190）。
+   */
+  squashTop: (count: number, label: UiMessage) => boolean
 
   /* ---------------- 画布（Canvas）操作 ---------------- */
   /** 当前完整项目文档快照（激活画布从 doc 同步） */
@@ -843,6 +848,21 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
     set({ doc: next, past: [...state.past.slice(0, -1), merged] })
     noteCommit(entry.label, state, next, patches, false)
+    return true
+  },
+
+  squashTop: (count, label) => {
+    const state = get()
+    if (state.txn || count < 2 || count > state.past.length) return false
+    const top = state.past.slice(-count)
+    const merged: HistoryEntry = {
+      label,
+      patches: top.flatMap((e) => e.patches),
+      // 撤销按倒序退：后来的那条先退
+      inverse: [...top].reverse().flatMap((e) => e.inverse),
+      ...(top.some((e) => e.sizeBasis?.length) ? { sizeBasis: top.flatMap((e) => e.sizeBasis ?? []) } : {}),
+    }
+    set({ past: [...state.past.slice(0, -count), merged] })
     return true
   },
 

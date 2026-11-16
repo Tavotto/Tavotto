@@ -499,6 +499,23 @@ def path_text_auto_offset(o: dict, faces: FaceProvider) -> float:
     return pathtext.auto_offset_pt(o, _object_faces(o, faces, []).primary.descender)
 
 
+def path_text_overflow(o: dict, faces: FaceProvider) -> bool:
+    """开放路径上有没有放不下的字（与落字同一次排字、同一个 `pathtext.layout`）。画布在路径末端画红「+」用。"""
+    fs = _object_faces(o, faces, [])
+    _x, _y, w, h = _box_pt(o, allow_zero=True)
+    pts, cum, closed = pathtext.path_of(o, w, h)
+    if len(pts) < 2 or cum[-1] <= 0:
+        return False
+    block = typography.layout_text(pathtext.line_text(o), fs, None)
+    if block is None or not block.lines:
+        return False
+    line = block.lines[0]
+    advances = [
+        g.x_advance * p.size / p.face.resource.units_per_em for p in line.pieces for g in p.glyphs
+    ]
+    return pathtext.layout(o, pts, closed, advances, pathtext.offset_pt(o, fs.primary.descender))[1]
+
+
 def _path_text_node(
     o: dict,
     page_h: float,
@@ -516,28 +533,29 @@ def _path_text_node(
     if block is None or not block.lines:
         return None
     line = block.lines[0]
-    run_w = sum(p.width for p in line.pieces)
-    s = pathtext.start_of(cum[-1], run_w, o)
     off = pathtext.offset_pt(o, faces.primary.descender)
+    advances = [
+        g.x_advance * p.size / p.face.resource.units_per_em for p in line.pieces for g in p.glyphs
+    ]
+    spots, _overflow = pathtext.layout(o, pts, closed, advances, off)
     oid = str(o.get("id", ""))
     color = Paint(hex2rgb(block.color))
     to_page = _object_transform(o, page_h)
     children: list[Node] = []
+    k = 0
     for piece in line.pieces:
         key = f"font:{piece.face.resource.face_id}"
         resources.setdefault(key, piece.face.resource)
-        scale = piece.size / piece.face.resource.units_per_em
         for g in piece.glyphs:
-            adv = g.x_advance * scale
-            mid = pathtext.point_at(pts, cum, s + adv / 2, closed)
-            s += adv
-            if mid is None or piece.invisible:
+            adv, spot = advances[k], spots[k]
+            k += 1
+            if spot is None or piece.invisible:
                 continue
-            mx, my, th = mid
+            mx, my, th = spot
             c, sn = math.cos(th), math.sin(th)
-            # 局部（x 沿切线、y 向上）→ 框空间（y 向下）：x 轴 = (cos, sin)，y 轴 = (sin, −cos)；原点 = 中点往回退半个字宽，
-            # 再沿 y 轴（字的上方）离线 `off`
-            local = (c, sn, sn, -c, mx - c * adv / 2 + sn * off, my - sn * adv / 2 - c * off)
+            # 局部（x 沿切线、y 向上）→ 框空间（y 向下）：x 轴 = (cos, sin)，y 轴 = (sin, −cos)；原点 = 中点往回退半个字宽
+            # （中点已经在离线后的平行线上）
+            local = (c, sn, sn, -c, mx - c * adv / 2, my - sn * adv / 2)
             run = GlyphRun(
                 font=key,
                 size=piece.size,

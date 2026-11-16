@@ -11,6 +11,7 @@ import { TooltipProvider } from '@/components/ui/Tooltip'
 import { PathTextSection } from '@/components/inspector/PathTextSection'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
+import { usePathEditStore } from '@/store/pathEditStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { getTransform, mmToViewX, mmToViewY, useViewportStore } from '@/store/viewportStore'
@@ -70,6 +71,7 @@ beforeEach(() => {
   useViewportStore.setState({ zoom: 1, panX: 0, panY: 0, originX: 0, originY: 0 })
   useUiStore.setState({ tool: 'select', editingTextId: null, elementPanelId: null })
   useSelectionStore.getState().clear()
+  usePathEditStore.getState().exit()
   globalThis.fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
     if (String(url).includes('/api/text/outline')) {
       calls.push(JSON.parse(String(init?.body)))
@@ -364,5 +366,138 @@ describe('调间隙', () => {
     await act(async () => window.dispatchEvent(new PointerEvent('pointerup', { clientX: 112, bubbles: true })))
     expect(o().baselineOffsetPt).toBeCloseTo(7, 6) // 1 + 12 px × 0.5
     expect(past()).toBe(1)
+  })
+})
+
+describe('放不下的字', () => {
+  const reply = (overflow: boolean) => {
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url).includes('/api/text/outline')) {
+        calls.push(JSON.parse(String(init?.body)))
+        return new Response(JSON.stringify({ ok: true, results: [{ paths: vectors.preview.paths, auto_offset_pt: 4.5, overflow }] }), { status: 200 })
+      }
+      return new Response('{}', { status: 200 })
+    }) as typeof fetch
+  }
+
+  it('后端说放不下：选中或悬停时路径末端画红「+」，没选中也没悬停不画', async () => {
+    reply(true)
+    const o = obj({ text: 'Overflowing words' })
+    await seed([o])
+    await mount(<ObjectView obj={o} />)
+    await settle()
+    expect(el.querySelector('[data-path-text-overflow]')).toBeNull()
+    await act(async () => useSelectionStore.getState().set(['pt']))
+    const mark = el.querySelector('[data-path-text-overflow]')
+    expect(mark).not.toBeNull()
+    expect(mark!.querySelector('rect')).not.toBeNull()
+    await act(async () => useSelectionStore.getState().clear())
+    expect(el.querySelector('[data-path-text-overflow]')).toBeNull()
+    await act(async () => useInteractionStore.getState().setHover('pt'))
+    expect(el.querySelector('[data-path-text-overflow]')).not.toBeNull()
+    await act(async () => useInteractionStore.getState().setHover(null))
+  })
+
+  it('放得下：选中也不画', async () => {
+    reply(false)
+    const o = obj({ text: 'Fits' })
+    await seed([o])
+    useSelectionStore.getState().set(['pt'])
+    await mount(<ObjectView obj={o} />)
+    await settle()
+    expect(el.querySelector('[data-path-text-overflow]')).toBeNull()
+  })
+})
+
+describe('编辑路径', () => {
+  it('⌘ 双击进它自带那份路径的锚点编辑；拖两下锚点、退出编辑后只剩一步撤销，撤销回到原来的路径', async () => {
+    const { activePathEdit } = await import('@/store/pathEditStore')
+    const { startAnchorDrag } = await import('./pathEditDrag')
+    const { usePathEditStore } = await import('@/store/pathEditStore')
+    const o = obj({ text: 'Edit me' })
+    await seed([o])
+    await mount(<ObjectView obj={o} />)
+    // 不按 ⌘：改字
+    await act(async () => {
+      el.querySelector('[data-object-id="pt"]')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    })
+    expect(useUiStore.getState().editingTextId).toBe('pt')
+    expect(activePathEdit()).toBeNull()
+    await act(async () => useUiStore.getState().setEditingText(null))
+    await act(async () => {
+      el.querySelector('[data-object-id="pt"]')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, metaKey: true }))
+    })
+    expect(activePathEdit()?.path.id).toBe('pt')
+    expect(useUiStore.getState().editingTextId).toBeNull()
+    const before = structuredClone((objs()[0] as PathTextObject).subpaths)
+    const drag = async (i: number, dx: number) => {
+      const path = activePathEdit()!.path
+      startAnchorDrag({ clientX: 0, clientY: 0, button: 0, stopPropagation() {}, preventDefault() {} } as unknown as React.PointerEvent, path, { sp: 0, i })
+      await act(async () => window.dispatchEvent(new MouseEvent('pointermove', { clientX: dx, clientY: 0, bubbles: true })))
+      await act(async () => window.dispatchEvent(new MouseEvent('pointermove', { clientX: dx * 2, clientY: 0, bubbles: true })))
+      await act(async () => window.dispatchEvent(new MouseEvent('pointerup', { clientX: dx * 2, clientY: 0, bubbles: true })))
+    }
+    await drag(0, 10)
+    await drag(1, -10)
+    expect(past()).toBe(2)
+    const after = (objs()[0] as PathTextObject)
+    expect(after.type).toBe('pathText')
+    expect(after.text).toBe('Edit me')
+    expect(after.subpaths).not.toEqual(before)
+    await act(async () => usePathEditStore.getState().exit())
+    expect(past()).toBe(1)
+    expect(useDocumentStore.getState().past.at(-1)!.label.key).toBe('history.editPathTextPath')
+    await act(async () => void useDocumentStore.getState().undo())
+    expect((objs()[0] as PathTextObject).subpaths).toEqual(before)
+  })
+})
+
+describe('编辑路径（在组里）', () => {
+  it('⌘ 双击组里的路径文字也直接进路径编辑，不先进组', async () => {
+    const { activePathEdit } = await import('@/store/pathEditStore')
+    const line = { id: 'L', type: 'path', groupId: 'G', x: 15, y: 12, w: 60, h: 20, subpaths: P.subpaths, strokePt: 1, color: '#000000', fill: null } as CanvasObject
+    const o = obj({ text: 'Grouped', groupId: 'G', lineId: 'L' })
+    await seed([line, o])
+    await mount(<ObjectView obj={o} />)
+    await act(async () => {
+      el.querySelector('[data-object-id="pt"]')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, metaKey: true }))
+    })
+    expect(activePathEdit()?.path.id).toBe('pt')
+  })
+})
+
+
+describe('选框与浮动栏让开字', () => {
+  it('pathTextFrame：框并上字的范围；旋转时中心按对象的角度换到页面', async () => {
+    const { pathTextFrame } = await import('@/store/pathTextGlyphStore')
+    const o = obj({ x: 10, y: 20, w: 40, h: 10 })
+    expect(pathTextFrame(o, undefined)).toBe(o)
+    const f = pathTextFrame(o, { x: 5, y: -8, w: 20, h: 6 })
+    expect([f.x, f.y, f.w, f.h]).toEqual([10, 12, 40, 18])
+    const r = pathTextFrame({ ...o, rotationDeg: 90 }, { x: 5, y: -8, w: 20, h: 6 })
+    // 局部并集中心 (20, 1) 比框中心 (20, 5) 高 4：转 90° 后落在框中心右边 4
+    expect(r.x + r.w / 2).toBeCloseTo(30 + 4, 9)
+    expect(r.y + r.h / 2).toBeCloseTo(25, 9)
+    expect([r.w, r.h, r.rotationDeg]).toEqual([40, 18, 90])
+  })
+
+  it('画布画完字之后，选框（缩放手柄）把伸出路径框的字也包进去', async () => {
+    const { OverlaySvg } = await import('./OverlaySvg')
+    const { usePathTextGlyphStore } = await import('@/store/pathTextGlyphStore')
+    const o = obj({ x: 15, y: 30 })
+    await seed([o])
+    useSelectionStore.getState().set(['pt'])
+    await mount(<><ObjectView obj={o} /><OverlaySvg /></>)
+    await settle()
+    const g = usePathTextGlyphStore.getState().bounds.pt
+    expect(g).toBeTruthy()
+    const t = getTransform()
+    const nw = el.querySelector<SVGRectElement>('[data-handle="nw"]')!
+    const cx = Number(nw.getAttribute('x')) + Number(nw.getAttribute('width')) / 2
+    const cy = Number(nw.getAttribute('y')) + Number(nw.getAttribute('height')) / 2
+    expect(cx).toBeCloseTo(mmToViewX(o.x + Math.min(0, g.x), t), 3)
+    expect(cy).toBeCloseTo(mmToViewY(o.y + Math.min(0, g.y), t), 3)
+    // 预览里的字伸出了框（离线以后在线的上方），选框确实比路径的框大
+    expect(Math.min(0, g.x) < 0 || Math.min(0, g.y) < 0).toBe(true)
   })
 })

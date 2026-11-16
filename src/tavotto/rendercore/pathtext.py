@@ -3,7 +3,8 @@
 **排字**与普通文字同一条路：`typography.layout_text`（同一张字体登记表、同一次 HarfBuzz、同一套富文本上下标）排成**一行**
 （框宽给到足够大，所以不经过断行——`break_lines` 的规则一个字不碰），再按弧长把每个字放到路径上：字的**中点**落在路径上
 s = 起点 + 前面的字宽 + 本字宽 / 2 处，字的基线顺着那里的切线、字的「上方」是切线的左法线（屏幕 y 向下时的 (sin θ, −cos θ)）；
-基线再沿这条法线离开路径「离线」那么远（`offset_pt`：缺省自动 = 线宽 / 2 + 0.2 em + 降部深度，字不碰线）。
+基线再沿这条法线离开路径「离线」那么远（`offset_pt`：缺省自动 = 线宽 / 2 + 0.2 em + 降部深度，字不碰线）——字排在
+离线后的那条平行线上（`parallel`），按它的弧长与切线落位，离线多大字距都不变。
 起点 = `start_offset`（路径全长的比例）× 全长，再按对齐方式往回退（居中退半个字串宽、末尾退整个字串宽）；`flip` = 沿路径的
 反方向走（字翻到路径另一侧、方向倒过来，Illustrator 的「翻转」）。开放路径上落在 [0, 全长] 之外的字不画（不悄悄折回来），
 闭合路径首尾相接、绕回来。
@@ -110,6 +111,85 @@ def start_of(total: float, run_width: float, o: dict) -> float:
     if align == "end":
         return anchor - run_width
     return anchor
+
+
+def parallel(pts, closed: bool, off: float) -> list[tuple[float, float]]:
+    """排字用的平行折线：每个顶点沿字的上方（切线左法线，框空间 y 向下时 (dy, −dx)）平移 `off`（pt）。不对外暴露，只给落字用。
+
+    顶点法线 = 相邻两段法线之和再归一（不按斜接放大，尖角处离开原线也不超过 `off`）；首尾：开放路径用那一段自己的，
+    闭合路径两头用「末段 + 首段」，首尾仍重合。内侧离得比曲率半径还远时平行线会折回去打结——往回走的点直接丢掉
+    （与原线同一段方向点积 ≤ 0），字沿剩下的单调折线排，不会来回跳。"""
+    n = len(pts)
+    if n < 2 or abs(off) < 1e-12:
+        return list(pts)
+    seg: list[tuple[float, float] | None] = []
+    for a, b in zip(pts, pts[1:]):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        ln = math.hypot(dx, dy)
+        seg.append(None if ln <= 1e-12 else (dy / ln, -dx / ln))
+    # 零长度段借前一段（开头那几段借后面第一段）的法线
+    last = next((v for v in seg if v is not None), None)
+    if last is None:
+        return list(pts)
+    filled: list[tuple[float, float]] = []
+    for v in seg:
+        last = v if v is not None else last
+        filled.append(last)
+
+    def normal(i: int) -> tuple[float, float]:
+        if closed and (i == 0 or i == n - 1):
+            a, b = filled[-1], filled[0]
+        elif i == 0:
+            return filled[0]
+        elif i == n - 1:
+            return filled[-1]
+        else:
+            a, b = filled[i - 1], filled[i]
+        sx, sy = a[0] + b[0], a[1] + b[1]
+        ln = math.hypot(sx, sy)
+        return b if ln <= 1e-9 else (sx / ln, sy / ln)
+
+    raw = []
+    for i, q in enumerate(pts):
+        nx, ny = normal(i)
+        raw.append((q[0] + nx * off, q[1] + ny * off))
+    out = [raw[0]]
+    last_i = 0
+    for i in range(1, n):
+        d0 = (pts[i][0] - pts[last_i][0], pts[i][1] - pts[last_i][1])
+        d1 = (raw[i][0] - out[-1][0], raw[i][1] - out[-1][1])
+        if d0[0] * d1[0] + d0[1] * d1[1] > 0:
+            out.append(raw[i])
+            last_i = i
+        elif i == n - 1:
+            out[-1] = raw[i]  # 末点一定要到：替掉最后一个保留的点
+    return out
+
+
+def layout(o: dict, pts, closed: bool, advances, off: float):
+    """逐字落位：在离线后的平行线（`parallel`）上按弧长排，字距就是字宽、不随离线变。回 (每个字的 (中点 x, 中点 y, 切线角)
+    或 None——落在开放路径外面的字不画, 有没有放不下的字)。平行线退化（长度为 0）时退回原线、沿法线平移。"""
+    lp = parallel(pts, closed, off)
+    cum = arc_table(lp)
+    shift = 0.0
+    if cum[-1] <= 1e-9:
+        lp, cum, shift = list(pts), arc_table(pts), off
+    run_w = sum(advances)
+    s = start_of(cum[-1], run_w, o)
+    out = []
+    overflow = False
+    for adv in advances:
+        mid = point_at(lp, cum, s + adv / 2, closed)
+        s += adv
+        if mid is None:
+            overflow = True
+            out.append(None)
+            continue
+        mx, my, th = mid
+        if shift:
+            mx, my = mx + math.sin(th) * shift, my - math.cos(th) * shift
+        out.append((mx, my, th))
+    return out, overflow
 
 
 #: 自动离线的间隙（em）：字最靠线的那一边与线的描边外缘之间留多少

@@ -55,6 +55,7 @@ import { IssueElementHighlight, IssueOverlay } from './IssueOverlay'
 import { ReviewOverlay } from './ReviewOverlay'
 import { AnchorEdit, AnchorMarquee, PenDraft } from './PathEditOverlay'
 import { GradientHandles } from './GradientHandles'
+import { pathTextFrame, usePathTextGlyphStore } from '@/store/pathTextGlyphStore'
 import { PathTextHandles } from './PathTextHandles'
 import { LiveCorners } from './LiveCorners'
 import { ShapeBuilderOverlay } from './ShapeBuilderOverlay'
@@ -197,6 +198,9 @@ export function OverlaySvg() {
   const clipSel = selMasks.length > 0 && selected.length > 0 && selected.every((o) => clipChainOf(o, masks).length > 0)
   const outlined = clipSel ? selMasks : selected
   const single = selected.length === 1 && !clipSel && !cropTarget && !elementPanel ? selected[0] : null
+  // 路径文字的选框把字也包进去：字的范围画完才知道，订阅它（`pathTextGlyphStore`）
+  const glyphBounds = usePathTextGlyphStore((st) => st.bounds)
+  const singleFrame = single?.type === 'pathText' ? pathTextFrame(single, glyphBounds[single.id]) : null
   // 单图编辑里那张图的缩放手柄不画（ADR 0161）：拖它的角 / 边是改画布（`FigureEdgeHandles` 的角柄与边带，
   // 贴在画布框上），不是视觉缩放 / 拉伸；两套手柄叠在一起时这一层在上、会抢走指针。选区轮廓照画
   const fastEditFigure = single?.type === 'panel' && fastEdit && single.id === activePanelId
@@ -346,13 +350,13 @@ export function OverlaySvg() {
       {/* 缩放手柄 + 线状对象端点（箭头 / 直线）：整组绕包围盒中心转到对象朝向 */}
       {single && !single.locked && !fastEditFigure && single.id !== anchorEditId && tool !== 'pen' && (
         <g
-          transform={spinOf(single, toScreen(single, t))}
+          transform={spinOf(single, toScreen(singleFrame ?? single, t))}
           // 手柄 / 命中带 / 端点不在 `[data-object-id]` 底下：右键它们要开**这个对象**的菜单，
           // 不能冒到 CanvasStage 被当成空白处（Codex #833）。它就是唯一的选中，选区不用动
           onContextMenu={(e) => onHandleContextMenu(e, single.id, editingTextId === single.id)}
         >
           <EdgeStrips
-            box={toScreen(single, t)}
+            box={toScreen(singleFrame ?? single, t)}
             dirs={dirsFor(single)}
             cursor={(dir) => cursorFor(dir, objectRotation(single))}
             onPointerDown={(e, dir) => startPanelHandleDrag(e, single.id, dir)}
@@ -360,7 +364,7 @@ export function OverlaySvg() {
           {dirsFor(single).map((dir) => (
             <HandleMark
               key={dir}
-              at={handlePos(toScreen(single, t), dir)}
+              at={handlePos(toScreen(singleFrame ?? single, t), dir)}
               hook={{ 'data-handle': dir }}
               cursor={cursorFor(dir, objectRotation(single))}
               onPointerDown={(e) => startPanelHandleDrag(e, single.id, dir)}
@@ -372,8 +376,8 @@ export function OverlaySvg() {
 
       {/* 文字标注的旋转柄（ADR 0163）：选框顶边中点外一枚圆点 + 一条短线，整组跟着对象一起转 */}
       {single && single.type === 'text' && !single.locked && !cropTarget && editingTextId !== single.id && (
-        <g transform={spinOf(single, toScreen(single, t))} data-rotate-handle-group>
-          <RotateKnob box={toScreen(single, t)} onPointerDown={(e) => startRotateDrag(e, single.id)} />
+        <g transform={spinOf(single, toScreen(singleFrame ?? single, t))} data-rotate-handle-group>
+          <RotateKnob box={toScreen(singleFrame ?? single, t)} onPointerDown={(e) => startRotateDrag(e, single.id)} />
         </g>
       )}
 
@@ -557,7 +561,8 @@ function ObjectOutline({
   primary?: boolean
 }) {
   if (isLinear(obj)) return <LinearOutline obj={obj} t={t} hover={hover} primary={primary} />
-  const box = toScreen(obj, t)
+  // 路径文字：框把字也包进去（离线以后字常伸出路径的框，ADR 0190）
+  const box = toScreen(obj.type === 'pathText' ? pathTextFrame(obj) : obj, t)
   const strokeWidth = keyObject ? 3 : primary ? 2 : 1
   const anchor = {
     ...(primary ? { 'data-primary-selection': obj.id } : {}),
