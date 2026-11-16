@@ -829,6 +829,12 @@ f3 = plt.figure(); a3 = f3.add_subplot(projection="3d"); a3.plot_surface(X, Y, X
 out["mplot3d"] = blocker(f3, single_draw=True)
 f4, a4 = plt.subplots(); a4.contourf(X, Y, np.sin(X * Y)); a4.pcolormesh(np.random.rand(4, 4))
 out["collections"] = blocker(f4, single_draw=True)
+f5, a5 = plt.subplots(); cs5 = a5.contour(X, Y, X * Y); a5.clabel(cs5, fmt=lambda v: f"{v:.1f}")
+out["clabel_callable"] = blocker(f5, single_draw=True)
+out["clabel_callable_two_pass"] = blocker(f5, single_draw=False)
+f6, a6 = plt.subplots(); cs6 = a6.contour(X, Y, X * Y); a6.clabel(cs6, fmt=lambda v: f"{v:.1f}")
+cs6.get_paths = lambda: []
+out["clabel_monkeypatch"] = blocker(f6, single_draw=True) is not None
 print(json.dumps(out))
 """
 
@@ -849,4 +855,9 @@ def test_whitelist_accepts_stock_matplotlib_figures(tmp_path):
         "stock": None,
         "mplot3d": None,
         "collections": None,
+        # `clabel(fmt=<函数>)` 的 `labelFmt` 只在 clabel 生成标签文字时调用，绘制不调用：放行（两种口径）
+        "clabel_callable": None,
+        "clabel_callable_two_pass": None,
+        # 同一张等高线图上真正的实例级 monkeypatch 照样拦下：例外只给 `labelFmt` 这一个名字
+        "clabel_monkeypatch": True,
     }
