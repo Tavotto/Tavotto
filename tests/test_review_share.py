@@ -1477,3 +1477,82 @@ def test_element_anchor_keeps_the_clicked_point_when_the_reviewer_page_sends_one
         {"kind": "element", "gid": "g", "box": [0, 0, 1, 1], "pt": ["x", 1]}
     )
     assert "pt" not in bad
+
+
+def _rect_path(fill):
+    return {
+        "gid": "ax0.r",
+        "role": "patch",
+        "label": "",
+        "bbox": [-1, -1, 3, 3],
+        "geometry": {
+            "kind": "path",
+            "paths": [{"points": [[-1, -1], [2, -1], [2, 2], [-1, 2]], "closed": True}],
+            "fill": fill,
+            "stroke": True,
+            "clip": [0.1, 0.1, 0.8, 0.8],
+        },
+    }
+
+
+def test_unfilled_closed_path_is_clipped_as_polyline_without_boundary_edges():
+    """围住坐标轴的未填充矩形：四边全在裁剪框外，matplotlib 在框内什么也没画——不许凭空造出一圈边界。"""
+    (el,) = reviewshare.manifest_elements({"elements": [_rect_path(False)]})
+    assert "geometry" not in el
+    # 只有一条边穿过裁剪框：留下框内那一段（开放段），不出收口边
+    man = _rect_path(False)
+    man["geometry"]["paths"][0]["points"] = [[0.5, 0.5], [2.0, 0.5], [2.0, 2.0], [0.5, 2.0]]
+    (el,) = reviewshare.manifest_elements({"elements": [man]})
+    paths = el["geometry"]["paths"]
+    assert paths and all(p["closed"] is False for p in paths)
+    for p in paths:
+        for x, y in p["points"]:
+            assert 0.1 <= x <= 0.9 and 0.1 <= y <= 0.9
+
+
+def test_filled_closed_path_still_polygon_clipped():
+    (el,) = reviewshare.manifest_elements({"elements": [_rect_path(True)]})
+    assert el["geometry"]["paths"] == [
+        {"points": [[0.1, 0.9], [0.1, 0.1], [0.9, 0.1], [0.9, 0.9]], "closed": True}
+    ]
+
+
+def test_arrow_endpoints_are_intersected_with_the_frame_keeping_direction():
+    el = {"gid": "ax0.a", "role": "arrow_patch", "bbox": [0.0, 0.2, 0.5, 0.6]}
+    el["arrow_endpoints"] = [[-1.0, 0.2], [0.5, 0.8]]
+    (out,) = reviewshare.manifest_elements({"elements": [el]})
+    # 不是逐坐标夹值（那会得到 [0, 0.2]）：沿原直线在 x=0 处进入
+    assert out["arrow_endpoints"] == [[0.0, 0.6], [0.5, 0.8]]
+    el["arrow_endpoints"] = [[0.9, 0.5], [3.0, 0.5]]
+    (out,) = reviewshare.manifest_elements({"elements": [el]})
+    assert out["arrow_endpoints"] == [[0.9, 0.5], [1.0, 0.5]]
+    el["arrow_endpoints"] = [[2.0, 2.0], [3.0, 3.0]]
+    (out,) = reviewshare.manifest_elements({"elements": [el]})
+    assert "arrow_endpoints" not in out
+
+
+def test_layout_arrow_endpoints_are_cut_at_the_panel_frame():
+    arrow = {
+        "gid": "ax0.a",
+        "role": "arrow_patch",
+        "bbox": [0.0, 0.4, 1.0, 0.2],
+        "arrow_endpoints": [[0.0, 0.5], [1.0, 0.5]],
+    }
+    objs = [
+        {
+            "type": "panel",
+            "object_id": "pA",
+            "x_mm": 50,
+            "y_mm": 0,
+            "w_mm": 50,
+            "h_mm": 50,
+            "crop": {"x": 0.0, "y": 0.0, "w": 0.5, "h": 1.0},
+        }
+    ]
+    out = reviewshare.layout_elements(100, 50, objs, {"pA": {"elements": [arrow]}})
+    el = next(e for e in out if e["gid"] == "pA::ax0.a")
+    # 终点被面板裁掉：停在面板右边（页面 x=1.0），起点仍是尾端
+    assert el["arrow_endpoints"] == [[0.5, 0.5], [1.0, 0.5]]
+    arrow["arrow_endpoints"] = [[0.6, 0.5], [0.9, 0.5]]  # 整根在被裁掉的那半边
+    out = reviewshare.layout_elements(100, 50, objs, {"pA": {"elements": [arrow]}})
+    assert all("arrow_endpoints" not in e for e in out)

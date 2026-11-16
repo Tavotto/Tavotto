@@ -321,6 +321,17 @@ def _clip_polyline(pts: list[tuple[float, float]], r: Rect) -> list[list[tuple[f
     return [run for run in runs if len(run) >= 2]
 
 
+def _clip_segment(
+    a: tuple[float, float] | list[float], b: tuple[float, float] | list[float], r: Rect
+) -> list[list[float]] | None:
+    """线段 a→b 裁进矩形 `r`，保持方向；返回 5 位小数的 `[起, 终]`，整段在框外 None。"""
+    runs = _clip_polyline([(a[0], a[1]), (b[0], b[1])], r)
+    if not runs:
+        return None
+    s, e = runs[0][0], runs[0][-1]
+    return [[round(s[0], 5), round(s[1], 5)], [round(e[0], 5), round(e[1], 5)]]
+
+
 def _clip_polygon(pts: list[tuple[float, float]], r: Rect) -> list[tuple[float, float]]:
     """闭合多边形裁进矩形 `r`（Sutherland–Hodgman）。"""
     out = pts
@@ -373,9 +384,13 @@ def _visible_geometry(
         pts = [(q[0], q[1]) for q in p["points"]]
         if transform is not None:
             pts = [transform(x, y) for x, y in pts]
-        if p["closed"]:
+        if p["closed"] and g.get("fill"):
             poly = _clip_polygon(pts, r)
             pieces = [(poly, True)] if len(poly) >= 3 else []
+        elif p["closed"]:
+            # 未填充的闭合路径只画描边：多边形裁剪会在裁剪框边界上凭空造出 matplotlib 没画的边，
+            # 所以带上收口那一段当折线裁，出框就断开成开放段
+            pieces = [(run, False) for run in _clip_polyline(pts + pts[:1], r)]
         else:
             pieces = [(run, False) for run in _clip_polyline(pts, r)]
         for run, closed in pieces:
@@ -432,9 +447,12 @@ def manifest_elements(manifest: object) -> list[dict]:
             item["paint_order"] = order
         ends = el.get("arrow_endpoints")
         if isinstance(ends, list) and len(ends) >= 2:
-            a, b = reviewinbox._point(ends[0]), reviewinbox._point(ends[-1])
+            # 端点不能逐坐标夹值（会改箭头方向）：取原值，线段 a→b 与画面求交，起点仍是尾端
+            a, b = reviewinbox._point_raw(ends[0]), reviewinbox._point_raw(ends[-1])
             if a and b:
-                item["arrow_endpoints"] = [a, b]
+                seg = _clip_segment(a, b, (0.0, 0.0, 1.0, 1.0))
+                if seg:
+                    item["arrow_endpoints"] = seg
         geom = _visible_geometry(el.get("geometry"))
         if geom is not None:
             item["geometry"] = geom
@@ -572,11 +590,18 @@ def layout_elements(
                 return ((_x + lu * _w) / pw, (_y + lv * _h) / ph)
 
             if "arrow_endpoints" in el:
-                ends = [to_page(*q) for q in el["arrow_endpoints"]]
-                if all(0 <= q[0] <= 1 and 0 <= q[1] <= 1 for q in ends):
-                    item["arrow_endpoints"] = [[round(a, 5), round(b, 5)] for a, b in ends]
-            if "geometry" in el:
                 # 面板框外（裁掉的部分）看不见：裁进面板在页面上的框
+                frame = (
+                    max(0.0, x / pw),
+                    max(0.0, y / ph),
+                    min(1.0, (x + w) / pw),
+                    min(1.0, (y + h) / ph),
+                )
+                a, b = (to_page(*q) for q in el["arrow_endpoints"][:2])
+                seg = _clip_segment(a, b, frame)
+                if seg:
+                    item["arrow_endpoints"] = seg
+            if "geometry" in el:
                 frame = (
                     max(0.0, x / pw),
                     max(0.0, y / ph),

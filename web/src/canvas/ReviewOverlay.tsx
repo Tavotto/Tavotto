@@ -53,10 +53,11 @@ function ReviewPin({ p, objects, t }: { p: PlacedComment; objects: readonly Canv
   const elRect = useElementRect((owner ?? FALLBACK) as PanelObject, a.kind === 'element' ? innerGid(a.gid) : '', t, 2)
   let rect: { x: number; y: number; width: number; height: number } | null = null
   if (a.kind === 'element' && owner) {
-    rect =
-      elRect && owner.id !== a.gid
-        ? elRect
-        : { x: mmToViewX(owner.x, t), y: mmToViewY(owner.y, t), width: mmToPx(owner.w, t), height: mmToPx(owner.h, t) }
+    const panelRect = { x: mmToViewX(owner.x, t), y: mmToViewY(owner.y, t), width: mmToPx(owner.w, t), height: mmToPx(owner.h, t) }
+    // 上传的元素框已夹进画面，而 `useElementRect` 用的是当前 manifest 的未裁剪框（可能远大于图幅）：
+    // 先与面板的可见框求交，圆点的相对位置才和上传时的框对得上；交集为空就退回面板框
+    const visible = elRect && owner.id !== a.gid ? intersectRect(elRect, panelRect) : null
+    rect = visible ?? panelRect
   } else if (a.kind === 'region') {
     // 区域的画面比例坐标：排版相对**页面**（快照就是导出 scope=canvas 的页面图），单图相对整张图；版本记录带 `frame` 时以它为准
     const frame = detail?.versions.find((v) => v.v === p.comment.v)?.frame ?? (mode === 'fast_edit' ? 'figure' : 'page')
@@ -130,6 +131,18 @@ function ReviewPin({ p, objects, t }: { p: PlacedComment; objects: readonly Canv
       </g>
     </g>
   )
+}
+
+type ViewRect = { x: number; y: number; width: number; height: number }
+
+/** 两个屏幕框的交集（只取 x / y / width / height）；没有面积时 null */
+export function intersectRect(r: ViewRect, frame: ViewRect): ViewRect | null {
+  const x0 = Math.max(r.x, frame.x)
+  const y0 = Math.max(r.y, frame.y)
+  const x1 = Math.min(r.x + r.width, frame.x + frame.width)
+  const y1 = Math.min(r.y + r.height, frame.y + frame.height)
+  if (!(x1 > x0 && y1 > y0)) return null
+  return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }
 }
 
 /** 点击位置在元素框里的相对位置（0..1）；框退化时 null（退回角上） */
