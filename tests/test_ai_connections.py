@@ -824,6 +824,7 @@ def test_fix_connection_takes_the_first_ready_key_connection(world, monkeypatch)
         "api_key": KEY2,
         "model": "kimi-k3",
         "auth": "key",
+        "provider_id": "good",  # 运行结束后按它把换协议 / 长度字段回报落回这条记录
     }
     # 什么都没「选中」也算连着；老用户选中的那条仍排在最前
     _save("second", base="https://api.deepseek.com/anthropic", key=KEY)

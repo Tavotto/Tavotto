@@ -2338,6 +2338,7 @@ def run(
                         str(endpoint.get("id") or ""),
                         model=str(model or endpoint.get("default_model") or ""),
                         report=st["runner_report"],
+                        base_url=str(endpoint.get("base_url") or ""),
                     )
                     invalidate_capabilities()
                 except Exception:  # noqa: BLE001

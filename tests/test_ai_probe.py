@@ -808,6 +808,13 @@ def test_runtime_report_is_ignored_when_it_cannot_be_trusted():
         ai_providers.apply_runtime_report("nope", model="m1", report={"wire_used": "anthropic"})
         is None
     )
+    # 运行期间地址被改：回报说的是旧地址，不写
+    assert (
+        ai_providers.apply_runtime_report(
+            "c", model="m1", report={"wire_used": "anthropic"}, base_url="https://old.example/v1"
+        )
+        is None
+    )
     assert ai_providers.get("c")["protocol"] == "openai-chat"
     # 目录厂商不传备选，runner 报来的换协议不信
     _custom(

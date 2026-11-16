@@ -767,7 +767,9 @@ def fallback_routes(rec: dict, model: str | None = None) -> list[tuple[str, str]
     ]
 
 
-def apply_runtime_report(pid: str, *, model: str, report: dict) -> dict | None:
+def apply_runtime_report(
+    pid: str, *, model: str, report: dict, base_url: str | None = None
+) -> dict | None:
     """一次真实运行结束后，把 runner `done` 事件的自救回报（`wire_used` / `wire_switched_from` / `dropped_fields` /
     `token_field`）落进记录 → 新记录；没有可落的 / 记录没了 / 运行期间地址或型号被改 → None。**在运行结束之后写，不在执行中途改。**
 
@@ -800,6 +802,10 @@ def apply_runtime_report(pid: str, *, model: str, report: dict) -> dict | None:
         )
         if (model and cur_model != model) or cur.get("auth") == "oauth":
             return {}, None
+        if base_url is not None and str(cur.get("base_url") or "").rstrip("/") != str(
+            base_url
+        ).rstrip("/"):
+            return {}, None  # 运行期间用户改了地址：回报说的是旧地址，不写
         model_ = model or cur_model
         from . import ai_probe
 
