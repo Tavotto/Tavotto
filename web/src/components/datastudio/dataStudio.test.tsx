@@ -201,12 +201,24 @@ describe('预览 TablePreview', () => {
     await mount(<TablePreview ov={ov({ truncated: true, rows: 90 })} loading={false} onHeaderRow={() => {}} />)
     const t = q('[data-studio-preview]')!.textContent!
     // 没有套框的卡片；表头吸顶
-    expect(q('[data-studio-preview] table')!.closest('[data-card]')).toBeNull()
-    expect(q('[data-studio-preview] th')!.className).toContain('sticky')
+    expect(q('[data-studio-preview] [role="table"]')!.closest('[data-card]')).toBeNull()
+    expect(q('[data-studio-preview] [role="table"]')!.className).toContain('w-full')
+    expect(q('[data-studio-preview] [role="row"]')!.className).toContain('sticky')
     expect(t).toContain('day')
     expect(t).toContain('数值')
     expect(t).toContain('文字')
     expect(t).toContain('编号')
+  })
+
+  it('数值列按小数点对齐：补不可见占位、不改显示的数字；文字列不补', async () => {
+    await mount(<TablePreview ov={ov({ preview_rows: [{ line: 2, cells: ['0.38', 'a', '1'] }, { line: 3, cells: ['0.396', 'b', '2'] }, { line: 4, cells: ['5', 'c', '3'] }] })} loading={false} onHeaderRow={() => {}} />)
+    const cells = [...document.querySelectorAll('[data-studio-preview] [role="cell"]')].filter((_, i) => i % 3 === 0)
+    expect(cells.map((c) => c.textContent)).toEqual(['0.380', '0.396', '5.000'])
+    expect(cells[0].querySelector('.invisible')!.textContent).toBe('0')
+    expect(cells[2].querySelector('.invisible')!.textContent).toBe('.000')
+    expect(cells[1].querySelector('.invisible')).toBeNull()
+    const texts = [...document.querySelectorAll('[data-studio-preview] [role="cell"]')].filter((_, i) => i % 3 === 1)
+    expect(texts.every((c) => !c.querySelector('.invisible'))).toBe(true)
   })
 
   it('开头被跳过的说明行单独灰显并写明跳过了几行', async () => {

@@ -87,6 +87,7 @@ export function TablePreview({
   }
 
   const numericCols = ov.fields.map((f) => f.kind === 'numeric')
+  const decimals = ov.fields.map((_, j) => Math.max(0, ...ov.preview_rows.map((r) => decimalsOf(r.cells[j] ?? ''))))
   return (
     <div className={cn('flex flex-col gap-3', loading && 'opacity-60')} data-studio-preview>
       {ov.lead_lines.length > 0 && (
@@ -102,34 +103,52 @@ export function TablePreview({
           <p className="text-xs text-ink-3">{t('dataFigureV2.preview.skipped', { count: ov.lead_lines.length })}</p>
         </div>
       )}
-      {/* 没有套框：表头一行（吸顶）+ 行间 hairline；列宽按内容、列与列之间固定间距，数值列右对齐 */}
-      <table className="w-max border-collapse text-base tabular-nums">
-        <thead>
-          <tr>
-            {ov.fields.map((f, i) => (
-              <th key={i} scope="col" className="sticky top-0 z-sticky border-b border-border bg-surface px-3 pb-1.5 pt-1 text-left font-medium first:pl-1 last:pr-1">
-                <div className={cn('flex flex-col', numericCols[i] ? 'items-end text-right' : 'items-start text-left')}>
-                  <span className="max-w-56 truncate">{f.name}</span>
-                  <span className="text-xs font-normal text-ink-3">
-                    {f.id_like ? t('dataFigureV2.preview.type.id') : t(`dataFigureV2.preview.type.${KIND_KEY[f.kind] ?? 'text'}`)}
-                  </span>
-                </div>
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {ov.preview_rows.map((r) => (
-            <tr key={r.line} className="border-t border-border first:border-t-0">
-              {ov.fields.map((_, j) => (
-                <td key={j} className={cn('max-w-56 truncate px-3 py-1.5 first:pl-1 last:pr-1', numericCols[j] ? 'text-right' : 'text-left')}>
-                  {r.cells[j] ?? ''}
-                </td>
-              ))}
-            </tr>
+      {/* 没有套框：撑满卡片内容区，行间 hairline 从左边画到右边；第一列贴左、最后一列贴右，多出的宽度均分到列间距；
+          数值列按小数点对齐（用不可见字符补小数位，不改显示的数字），表头对齐到列右边 */}
+      <div
+        role="table"
+        className="grid w-full min-w-max text-base tabular-nums"
+        style={{ gridTemplateColumns: `repeat(${ov.fields.length}, max-content)`, justifyContent: 'space-between', columnGap: 24 }}
+      >
+        <div role="row" className="sticky top-0 z-sticky col-span-full grid grid-cols-subgrid border-b border-border bg-surface pb-1.5 pt-1">
+          {ov.fields.map((f, i) => (
+            <div key={i} role="columnheader" className={cn('flex flex-col', numericCols[i] ? 'items-end text-right' : 'items-start text-left')}>
+              <span className="max-w-56 truncate font-medium">{f.name}</span>
+              <span className="text-xs text-ink-3">
+                {f.id_like ? t('dataFigureV2.preview.type.id') : t(`dataFigureV2.preview.type.${KIND_KEY[f.kind] ?? 'text'}`)}
+              </span>
+            </div>
           ))}
-        </tbody>
-      </table>
+        </div>
+        {ov.preview_rows.map((r) => (
+          <div key={r.line} role="row" className="col-span-full grid grid-cols-subgrid border-t border-border py-1.5 first:border-t-0">
+            {ov.fields.map((_, j) => (
+              <div key={j} role="cell" className={cn('max-w-56 truncate', numericCols[j] ? 'text-right' : 'text-left')}>
+                {numericCols[j] ? alignDecimal(r.cells[j] ?? '', decimals[j]) : (r.cells[j] ?? '')}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
     </div>
+  )
+}
+
+const PLAIN_NUMBER = /^[-+]?\d+(\.\d+)?$/
+const decimalsOf = (v: string) => (PLAIN_NUMBER.test(v) ? (v.split('.')[1]?.length ?? 0) : 0)
+
+/** 同一列按最多的小数位补齐宽度：补的是不可见占位，不改显示的数字；不是普通小数的格子原样显示 */
+function alignDecimal(v: string, max: number) {
+  if (max === 0 || !PLAIN_NUMBER.test(v)) return v
+  const d = decimalsOf(v)
+  if (d === max) return v
+  const pad = (d === 0 ? '.' : '') + '0'.repeat(max - d)
+  return (
+    <>
+      {v}
+      <span aria-hidden className="invisible select-none">
+        {pad}
+      </span>
+    </>
   )
 }
