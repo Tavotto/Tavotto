@@ -1624,6 +1624,7 @@ def test_lazy_returns_text_without_rendering_anything(project, fake_render):
     assert r.status_code == 200, r.get_json()
     body = r.get_json()
     assert body["kind"] == "candidates" and body["render"] == "lazy"
+    assert body["units_row"] is False
     assert calls == []  # 一张都没画
     assert [i["thumbnail_status"] for i in body["items"]] == ["pending"] * len(body["items"])
     assert (
@@ -1865,6 +1866,7 @@ def test_lazy_propose_on_an_instrument_export_uses_the_real_header_row(project, 
     assert body["header_row"] == 3
     roles = body["roles"]
     assert roles["x"] == "Wavelength" and roles["y"] == ["Intensity"]
+    assert body["units_row"] is True  # 单位行（第 4 行 = header_row + 1）已被切掉，前端可把它置灰
     assert body["mixed_cells"] == []  # 单位行被切掉了：不是「1 个非数字格」
     assert body["items"][0]["values"]["family"] in ("trend", "relationship")  # 不是一堆直方图
     assert {i["values"]["family"] for i in body["items"]} & {"trend", "relationship"}

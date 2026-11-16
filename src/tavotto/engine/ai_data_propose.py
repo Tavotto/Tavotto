@@ -675,6 +675,9 @@ def _finish_lazy_item(sess: Session, item: Item) -> None:
     else:
         item.reason = reason or "candidate_render_failed"
         item.state = "failed"
+        LOG.info(
+            "数据出图候选缩略图失败：%s（%s）", item.reason, item.code
+        )  # 只记稳定码与画法码，不记列名 / 路径
 
 
 # =========================================================================== 出备选
@@ -899,6 +902,7 @@ def propose(
             "table": chosen.path,
             "sheet": chosen.sheet,
             "header_row": values.header_line,
+            "units_row": values.units_row,  # 表头后紧跟的单位行已被切掉（它是 `header_row + 1` 行）；没有 = False
             "roles": res.roles,
             "defaults": defaults,
             "mixed_cells": mixed_auto,
