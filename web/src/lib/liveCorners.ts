@@ -84,13 +84,17 @@ export function radiusFromPointer(c: CornerInfo, q: XY): number {
  * （手柄长 4/3·tan(φ/4)·r，φ = π − θ 是转过的角）。r ≤ 0 或不是能圆的角 = 原样。
  */
 export function roundCorners(subs: readonly MmSubpath[], refs: readonly AnchorRef[], r: number): MmSubpath[] {
-  const want = new Set(refs.map((a) => `${a.sp}:${a.i}`))
-  const corners = new Map(pathCorners(subs).filter((c) => want.has(`${c.ref.sp}:${c.ref.i}`)).map((c) => [`${c.ref.sp}:${c.ref.i}`, c]))
+  return roundCornersEach(subs, new Map(refs.map((a) => [`${a.sp}:${a.i}`, r])))
+}
+
+/** 每个角各自一个半径（键 `子路径:锚点`，没写的角不圆）；半径照样钳到这个角放得下的最大值 */
+export function roundCornersEach(subs: readonly MmSubpath[], radii: ReadonlyMap<string, number>): MmSubpath[] {
+  const corners = new Map(pathCorners(subs).filter((c) => radii.has(`${c.ref.sp}:${c.ref.i}`)).map((c) => [`${c.ref.sp}:${c.ref.i}`, c]))
   return subs.map((sp, si) => {
     const nodes: MmNode[] = []
     sp.nodes.forEach((n, i) => {
       const c = corners.get(`${si}:${i}`)
-      const rr = c ? Math.min(r, c.maxR) : 0
+      const rr = c ? Math.min(radii.get(`${si}:${i}`) ?? 0, c.maxR) : 0
       if (!c || !(rr > 1e-9)) {
         nodes.push({ ...n, p: [...n.p], in: [...n.in], out: [...n.out] })
         return
