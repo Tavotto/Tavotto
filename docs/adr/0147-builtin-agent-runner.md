@@ -181,5 +181,7 @@ Conversion output recovery remains within the existing budget: create/append sho
   通过 = 回复体解析成合法 `Turn`（200 的网页 / 错误对象判失败）。按优先级排序、第一个通过的就停：Claude 型号 → anthropic；api.openai.com 上的 gpt / o 系列 → responses；其余 → chat；用户明确给的协议先试。
   目录里的已知厂商只核自己那一种协议、不换协议与地址。结论写 `protocol` / `protocol_ok`（地址 + 型号 + 协议指纹，地址或型号变了失效）；全不通仍保存，`last_error = endpoint_unusable` + `probe_reason`（Key 被拒仍记 `unauthorized`）。
 - **`POST /api/ai/connections/<id>/check`** 重新探测并更新记录；失败卡 / 连接卡的「检查连接」调它。
+- 旧的「其他兼容接口」表单（`PUT /api/ai/endpoints`）存完也补一次探测（只对自填地址、且还没有结论的那一条；只改名称不重探）。
+  探测对 Responses 上被点名拒收的非必需字段（`include` / `max_output_tokens`）与 runner 同一套判据剥掉重发一次（`store` 永不剥），runner 跑得通的中转站不会在保存时被记成不可用。
 
 看护 `tests/test_ai_probe.py`。真实服务验证与 runner / 应用连接测试分开记录（见协议验收报告）。

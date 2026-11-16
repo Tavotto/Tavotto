@@ -5,7 +5,7 @@
   "affected_script_shapes": [
     "a script that lists its data with a cwd-relative glob.glob(...) (directly or inside a helper) and plots whatever came back"
   ],
-  "root_cause": "In the sandbox cwd the glob matches nothing, the script keeps running and plots an empty series (ax.plot([])), so Tavotto shows an empty figure (pixel / structure / edit differences) or fails later downstream; `python script.py` in the script directory finds the files (issue #1254). The behavior is kept on purpose (ADR 0047 / 0084: the read-only fallback does not extend to glob / exists / C++ readers); the root cure is the project-level 'run in the script directory' switch. What was fixed is the diagnosis: #1299 observes relative probes that came back empty at run time, and attaches workdir_hint ('run in the script directory') to the error or to the no-figure result when the script directory has what the sandbox lacked.",
+  "root_cause": "In the sandbox cwd the glob matches nothing, the script keeps running and plots an empty series (ax.plot([])), so Tavotto shows an empty figure (pixel / structure / edit differences) or fails later downstream; `python script.py` in the script directory finds the files (issue #1254). The behavior is kept on purpose (ADR 0047 / 0084: the read-only fallback does not extend to glob / exists / C++ readers); the root cure is the project-level 'run in the script directory' switch. What was fixed is the diagnosis: #1299 observes relative probes that came back empty at run time, and attaches workdir_hint ('run in the script directory') to the error or to the no-figure result when the script directory has what the sandbox lacked. Update (#1846, ADR 0047 revision): a project that never decided its working directory is now silently re-run in the script directory when a glob came back empty in the sandbox and the script directory has the files, so the figure that is kept has data; Guardian's tavotto_observe goes through pool.build and observes that path by default. The record stays as the pin for the tier where the user chose the sandbox, where the diagnosis fixed by #1299 is what the user gets.",
   "category": "cwd_or_data_path",
   "signature": {
     "behavior_kind": "pixel_mismatch",
@@ -69,7 +69,8 @@
     "runs": 58
   },
   "key_regression_tests": [
-    "tests/test_compat_guardian_families.py::RealRepro::test_g5_minimal_repro_still_draws_a_figure_without_data_by_design",
+    "tests/test_compat_guardian_families.py::RealRepro::test_g5_minimal_repro_is_rerun_in_the_script_dir_on_the_product_path",
+    "tests/test_compat_guardian_families.py::RealRepro::test_g5_with_the_sandbox_chosen_keeps_the_empty_figure_and_the_hint",
     "tests/test_compat_guardian_families.py::RealRepro::test_g5_sandbox_run_reports_the_empty_glob_and_the_script_dir_hint",
     "tests/test_runtime_probe_hint.py::test_a_successful_build_with_an_empty_glob_carries_the_hint_and_the_same_figure",
     "tests/test_runtime_probe_hint.py::test_an_empty_glob_that_ends_in_no_figures_carries_the_same_hint",
