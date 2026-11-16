@@ -139,8 +139,7 @@ export function DataOverlay({ narrow }: { narrow: boolean }) {
   // 卡片目标宽度（要走 CSS 过渡，必须渲染前就知道）：预览按内容估，其余各屏固定
   const target =
     scene.kind === 'pick' ? 640 : scene.kind === 'ask' ? 480 : scene.kind === 'browse' ? previewCardWidth(ov) : 420
-  // 高度：表格这类要滚动的屏占满画布栏（上下各留 8px）；选画法 / 选择题 / 等待 / 失败这类屏随内容
-  const tall = scene.kind === 'browse'
+  // 高度：各屏都随内容，上限是画布栏全高（上下各留 8px），超出才在卡片里滚动
   const width = narrow ? undefined : `max(360px, min(${target}px, 60%))`
   const maskImage = `linear-gradient(to bottom, ${edges.top ? 'transparent 0, black 20px' : 'black 0'}, ${edges.bottom ? 'black calc(100% - 24px), transparent 100%' : 'black 100%'})`
 
@@ -212,7 +211,7 @@ export function DataOverlay({ narrow }: { narrow: boolean }) {
       onKeyDown={trap}
       style={{
         ...(narrow ? {} : { width }),
-        height: tall ? 'calc(100% - 1rem)' : 'auto',
+        height: 'auto',
         maxHeight: 'calc(100% - 1rem)',
         // 高度也走过渡（Chromium 认 interpolate-size；不认的内核直接切换，不影响用）
         interpolateSize: 'allow-keywords',
@@ -245,7 +244,7 @@ export function DataOverlay({ narrow }: { narrow: boolean }) {
           onScroll={measureEdges}
           data-studio-stage
           style={{ maskImage, WebkitMaskImage: maskImage }}
-          className={cn('relative flex min-h-0 flex-1 animate-fade-in flex-col overflow-auto px-5 pb-4 pt-1', !tall && 'min-h-32 justify-center')}
+          className={cn('relative flex min-h-0 flex-1 animate-fade-in flex-col overflow-auto px-5 pb-4 pt-1', scene.kind !== 'browse' && 'min-h-32 justify-center')}
         >
           {body}
         </div>
