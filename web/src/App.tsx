@@ -23,6 +23,8 @@ import { TelemetryConsentDialog } from '@/components/TelemetryConsentDialog'
 import { ConnectAiHost } from '@/components/ConnectAiHost'
 import { DiagnosticsSendHost } from '@/components/DiagnosticsSendHost'
 import { ContactHost } from '@/components/contact/ContactHost'
+import { ReviewHost } from '@/components/review/ReviewHost'
+import { useReviewStore } from '@/store/reviewStore'
 import { useContactStore } from '@/store/contactStore'
 import { ShortcutHelp } from '@/components/ShortcutHelp'
 import { StyleDialog } from '@/components/StyleDialog'
@@ -109,6 +111,9 @@ export function App() {
     // 「联系作者」（ADR 0143）：同样只问本机引擎开没开 + 未读回信数（不联网）；之后每 5 分钟刷新一次本机未读数
     void useContactStore.getState().load()
     const stopContactWatch = useContactStore.getState().watch()
+    // 外部审阅（ADR 0187）：只问本机引擎开没开 + 未读数（不联网）；之后每 5 分钟刷新一次本机未读数
+    void useReviewStore.getState().loadCapability()
+    const stopReviewWatch = useReviewStore.getState().watch()
     // 引擎意外退出的修复卡 + 上次没正常退出的提示卡（ADR 0129）；后者等上面的能力读完再判
     const stopExitNotices = initExitNotices(diagLoaded)
     // 导出默认值以后端为准（#715 PR-B）：换了 origin 的本机缓存是空的，先从数据目录取回来。
@@ -116,6 +121,7 @@ export function App() {
     void hydrateExportDefaults()
     return () => {
       stopContactWatch()
+      stopReviewWatch()
       stopExitNotices()
       cancelStartupProbe()
     }
@@ -360,6 +366,7 @@ function Workspace() {
         <DiagnosticsSendHost />
         <ConnectAiHost />
         <ContactHost />
+        <ReviewHost />
         {/* 意外错误 / 上次没正常退出的反馈卡：贴窗口右下角（不在画布的通知轨里） */}
         <FeedbackCorner />
         {/* 动画卡提示（ADR 0177）：同一个角、同一个宽度；反馈卡在场时让位 */}

@@ -2501,6 +2501,8 @@
     "requirements": "Journal requirements",
     "unspecified": "Not specified by the journal",
     "hasRequirement": "Has a requirement",
+    "strengthRequired": "Required",
+    "strengthRecommended": "Recommended",
     "unset": "Does not apply to this journal",
     "noJournal": "No journal",
     "cleared": "No longer checking against a journal",
@@ -2600,5 +2602,77 @@
     "resultPending": "Result unconfirmed",
     "receivedResult": "The installation result has arrived. Review it to continue.",
     "viewResult": "Review installation result"
+  },
+  "review": {
+    "button": "Share for review",
+    "buttonUnread": "Share for review (new comments)",
+    "title": "Share for review",
+    "create": "Create link",
+    "cancel": "Cancel",
+    "close": "Close",
+    "copy": "Copy",
+    "linkCopied": "Link copied",
+    "sharedMeta": "V{{v}} · {{when}}",
+    "stop": "Stop sharing",
+    "stopConfirm": "Click again to stop now",
+    "linkLabel": "Review link",
+    "stage": {
+      "rendering": "Preparing the picture…",
+      "uploading": "Uploading…"
+    },
+    "failure": {
+      "quota_new_exhausted": "You have used today's new links.",
+      "share_gone": "This link is no longer valid; the comments are kept on this computer.",
+      "too_large": "The picture is too large. Make the figure smaller and try again.",
+      "rate_limited": "Too many requests. Try again in a moment.",
+      "network": "Can't reach the review service. Check your network and retry.",
+      "server": "The review service had a problem. Try again later.",
+      "client_error": "That didn't work. Try again.",
+      "render_failed": "The picture couldn't be generated. Try again."
+    },
+    "retry": "Retry",
+    "picker": {
+      "newTitle": "You've already created a link today",
+      "exportPng": "Export PNG",
+      "updateOne": "Update an existing link ({{title}})",
+      "desc": "You can create 1 new link per day; it resets at midnight Beijing time.",
+      "updateMany": "Update an existing link…"
+    },
+    "tab": {
+      "label": "Review",
+      "revoked": "Sharing stopped; comments stay on this computer",
+      "expired": "Link expired; the comments from then are kept here",
+      "deleteRecord": "Delete this record",
+      "filterLabel": "Filter comments",
+      "all": "All {{n}}",
+      "open": "Open {{n}}",
+      "empty": "No comments yet",
+      "emptyOpen": "No open comments"
+    },
+    "comment": {
+      "reply": "Reply",
+      "replyPlaceholder": "Reply…",
+      "send": "Send",
+      "resolve": "Resolved",
+      "reopen": "Reopen",
+      "owner": "Author",
+      "moved": "Original position has changed",
+      "version": "V{{v}}",
+      "pin": "Comment {{n}}",
+      "allMark": "All",
+      "done": "Resolved"
+    },
+    "capsuleOpen": "View",
+    "capsuleClose": "Dismiss",
+    "notFound": "This figure isn't in the current project",
+    "capsule_one": "{{author}} left {{count}} comment",
+    "capsule_other": "{{author}} left {{count}} comments",
+    "copyLink": "Copy link",
+    "changed": "Canvas has new changes",
+    "updateHere": "Update this link",
+    "shareNote": "Anyone with the link can view and comment · expires {{date}}",
+    "privacyFoot": "Only the picture is uploaded; scripts and data stay on this computer",
+    "dailyNew": "1 new link per day",
+    "notePlaceholder": "Note for reviewers (optional)…"
   }
 }

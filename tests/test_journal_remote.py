@@ -746,7 +746,11 @@ def test_nacl_is_imported_only_inside_the_verify_function():
             if isinstance(n, ast.Import | ast.ImportFrom):
                 mods = [a.name for a in n.names] if isinstance(n, ast.Import) else [n.module or ""]
                 assert not any(m.split(".")[0] == "nacl" for m in mods), path
-    assert set(offenders) == {("src/tavotto/engine/journalremote.py", "_ed25519_verify")}, offenders
+    # 外部审阅（ADR 0187）的设备签名同样延后 import，只在用户点「生成链接 / 更新」时才加载
+    assert set(offenders) == {
+        ("src/tavotto/engine/journalremote.py", "_ed25519_verify"),
+        ("src/tavotto/engine/reviewshare.py", "_signing_key"),
+    }, offenders
 
 
 # ---------------------------------------------------------------- Codex 评审 PR #1756 的两条后端意见

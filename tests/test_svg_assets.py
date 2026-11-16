@@ -36,6 +36,8 @@ def test_dimensions(tmp_path, dimensions, expected):
         b'<svg width="100%" height="100%"/>',
         b'<svg width="0" height="1"/>',
         b'<svg viewBox="0 0 nan 1"/>',
+        b'<svg width="72pt" viewBox="0 0 0 50"/>',
+        b'<svg height="72pt" viewBox="0 0 100 0"/>',
         b'<svg height="1pt" viewBox="0 0 1e-308 1e308"/>',
         b'<svg width="1pt" viewBox="0 0 1e308 1e-308"/>',
         b'<svg height="100pt" viewBox="0 0 1e308 1e-308"/>',

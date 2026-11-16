@@ -295,7 +295,43 @@ def build_model_and_binding(request: dict, *, engine_identity: dict) -> dict:
     if legend_req is not None:
         binding["legend"] = _legend_spec_from_request(legend_req, series, node_ids, graphic_ids)
     chartmodel.validate_binding(binding, model)
-    return {"model": model, "binding": binding}
+    result = {"model": model, "binding": binding}
+    context = request.get("recipe_context")
+    if context is not None:
+        result.update(_recipe_outcome(model, context))
+    return result
+
+
+def _recipe_outcome(model: dict, context: object) -> dict:
+    """可选的 0178 配方校验；缺省请求完全不走这里，返回形状不变。"""
+    if not isinstance(context, dict):
+        raise BindError("bind_evidence_invalid", "recipe_context must be an object")
+    profile = context.get("profile")
+    table = context.get("table")
+    family = context.get("family")
+    if profile is None or not isinstance(table, str) or not table:
+        raise BindError("bind_evidence_invalid", "recipe_context needs profile and table")
+    if not isinstance(family, str) or not family:
+        raise BindError("bind_evidence_invalid", "recipe_context needs family")
+    from tavotto.engine import chartrecipe  # noqa: PLC0415 — 可选路径，避免父进程导入链变重
+
+    confirmed = context.get("confirmed")
+    if isinstance(confirmed, dict):
+        confirmed = chartrecipe.Confirmed(**confirmed)
+    elif confirmed is None:
+        confirmed = chartrecipe.Confirmed()
+    outcome = chartrecipe.problems_for_model(
+        profile,
+        model,
+        table=table,
+        family=family,
+        why=str(context.get("why") or "图表绑定"),
+        confirmed=confirmed,
+        values=context.get("values"),
+    )
+    if outcome["problems"]:
+        raise BindError("bind_evidence_invalid", f"recipe problems: {outcome['problems'][:3]}")
+    return {"recipe_unchecked": outcome["unchecked"]} if outcome["unchecked"] else {}
 
 
 def _legend_spec_from_request(

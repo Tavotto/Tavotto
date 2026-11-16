@@ -33,6 +33,7 @@ from pathlib import Path
 from . import (
     chartwire,
     config,
+    diagexternal,
     envlease,
     execspec,
     executionfact,
@@ -100,6 +101,21 @@ def _env_cap() -> int | None:
     except ValueError:
         return None
     return max(1, min(MAX_ALIVE_ENV_LIMIT, value))
+
+
+#: workerd 自己的会话上限在 Python 池上限之外多留的余量：写回重放之类的一次性会话也住在 workerd 里，
+#: 池满时它们不该把池以为还活着的热会话挤掉。
+WORKERD_TRANSIENT_HEADROOM = 2
+
+
+def workerd_session_cap() -> int:
+    """hello 里交给 workerd 的会话上限：**盖住 `max_alive()` 可能取到的最大值**再加一次性会话的余量。
+
+    淘汰策略只归 Python 池（`max_alive()` + LRU，淘汰时关掉 workerd 里那条会话）；workerd 的上限只是
+    防失控的兜底，绝不能比池紧——比池紧时 workerd 会按自己的 LRU 悄悄杀掉池以为还活着的会话，
+    下一次渲染白白冷启动，导出（`require_built`）直接失败成 `svg_source_unavailable`。
+    workerd 进程整个生命期只 hello 一次，而 `max_alive()` 随内存变，所以这里取上界，不取当前值。"""
+    return max(MAX_ALIVE_CEILING, _env_cap() or 0) + WORKERD_TRANSIENT_HEADROOM
 
 
 def max_alive() -> int:
@@ -952,6 +968,23 @@ def _fold_build_timings(resp: dict, build: dict | None) -> dict:
     if "total_ms" in build:
         timings["build_total_ms"] = build["total_ms"]
     return resp
+
+
+def _note_external_modules(worker, source, *, failed: bool) -> None:
+    """worker 这次运行从项目外加载的本地模块（`external_modules`，诊断包「脚本源码」用）→ 持久记录。
+    成功：以这次为准（没有就清掉）；失败：只在带了才记（敏感运行的错误信封被白名单剥掉了它，不当作「没有」）。
+    永不抛——记录只是诊断的辅助。"""
+    try:
+        # 取走就丢：这些是项目外的绝对路径，`err.extra` / 响应是诊断、投影、遥测读得到的那一份，不留（与
+        # `unreadable_folder_private` 同一纪律）；只进应用数据目录里的持久记录，出门要等用户勾「脚本源码」
+        mods = source.pop("external_modules", None) if isinstance(source, dict) else None
+        if failed and not mods:
+            return
+        diagexternal.note(
+            getattr(worker, "figures_dir", ""), getattr(worker, "script_name", ""), mods
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _norm_dir(figures_dir: str | Path) -> str:
@@ -3598,6 +3631,7 @@ class EngineWorker:
             msg = err or "worker 错误"
             tb = resp.get("traceback", "")
             code = ""
+        _note_external_modules(self, err, failed=True)
         # missing_dependency 优先于协议 code：worker 那边它只是一个普通的
         # script_error，但对用户来说「缺包」是完全不同的一件事（有可执行出口）。
         engine_mod = missing_engine_module(f"{msg}\n{tb}")
@@ -3842,6 +3876,7 @@ class EngineWorker:
         ):  # 只造了一半的 worker（测试替身）没有产物目录
             figcapture.clear_preview_poison(self.out_dir)
         _remember_build_response(self, resp)
+        _note_external_modules(self, resp, failed=False)
         try:
             inputbroker.finished(self, self.last_build_script_inputs)  # 执行转录（T08）
         except BaseException:
@@ -4364,6 +4399,11 @@ class WorkerdWorker:
         self._fenced = False  # 强制关闭未确认（见 force_kill）：池里保留、acquire 不得复用
         self._closing = False  # 另一线程正在强制关闭它（`force_cancel` 在池锁内置、关完清）：acquire 不得阻塞等它
         self._client = client or workerd_client.client()
+        if self._client is not None:
+            # workerd 的会话上限只做兜底、不得比池紧（ADR 0159）：在这条客户端发第一条请求（hello）之前写进去
+            self._client.session_cap = max(
+                getattr(self._client, "session_cap", 0) or 0, workerd_session_cap()
+            )
         if self._client is None:
             raise WorkerdUnavailable("workerd 不可用")
         # 与 EngineWorker 同源：项目级解释器决策的唯一出处是
@@ -4507,6 +4547,7 @@ class WorkerdWorker:
         if not tb and code in _FATAL_CODES:
             tb = self._log_tail(FATAL_TAIL_LINES)  # 进程级失败时 worker 的 traceback 全在日志里
         message = str(exc)
+        _note_external_modules(self, exc.extra, failed=True)
         if code == "session_dead":
             forget_python_verdict(getattr(self, "python", None))
         if code == "session_dead" and isinstance(exc.extra, dict) and "exit" in exc.extra:
@@ -4725,6 +4766,7 @@ class WorkerdWorker:
         ):  # 只造了一半的 worker（测试替身）没有产物目录
             figcapture.clear_preview_poison(self.out_dir)
         _remember_build_response(self, resp)
+        _note_external_modules(self, resp, failed=False)
         try:
             inputbroker.finished(self, self.last_build_script_inputs)  # 执行转录（T08）
         except BaseException:
