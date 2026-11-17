@@ -1695,7 +1695,7 @@ def _session_record(session: Session) -> dict:
     return record
 
 
-def _persist(session: Session) -> None:
+def _persist(session: Session) -> bool:
     """把会话**已提交**的状态落盘（ADR 0078）。只在提交点调：open / apply / 规范化收尾 / 导出出了文件。
 
     落盘失败不让这次工具调用失败——图已经改好了；但要说出来（stderr 归日志，stdout
@@ -1704,14 +1704,17 @@ def _persist(session: Session) -> None:
     这一版已经导出出了文件时，这张图的草稿（ADR 0189 第 2 条）一并清掉：修改已经落到文件里了。
     """
     record = _session_record(session)
+    written = True
     try:
         sessionjournal.save(_journal_dir(), record)
     except (OSError, ValueError, TypeError) as exc:
+        written = False
         sys.stderr.write(f"tavotto-mcp: 会话 {session.id} 落盘失败，进程换了之后恢复不了：{exc}\n")
     if session.patches and session.exported_hash == session.patch_hash():
         sessionjournal.delete_drafts(
             _drafts_dir(), session.project, session.stem, session.run_config_id
         )
+    return written
 
 
 def _save_draft(record: dict) -> bool:
@@ -2358,9 +2361,10 @@ def open_figure(
             render = _render(session, [], preview_dpi=None)
         _SESSIONS[session.id] = session
         evicted = _evict_if_needed()
-    _persist(session)
-    if restored_draft is not None:
-        # 草稿已经并进这条活会话（它的记录刚落盘）：草稿完成使命，删掉
+    persisted = _persist(session)
+    if restored_draft is not None and persisted:
+        # 草稿已经并进这条活会话（它的记录确实落盘了）：草稿完成使命，删掉。
+        # 落盘没成功就一律不删——源草稿 / 旧记录可能是这批改动唯一的持久副本
         sessionjournal.delete_drafts(_drafts_dir(), project, chosen, run_config_id)
         if restored_draft["from_session"] != session.id:
             # 带回的若是没经 close 就丢了的活会话记录：旧记录删掉，别再按旧 id 复活出第二份
@@ -2390,6 +2394,11 @@ def open_figure(
         out["journal_ref"] = profile["journal_ref"]
     if restored_draft is not None:
         out["restored_draft"] = restored_draft
+        # 内嵌画布用这个字段 seed 它的 override 账本（`web/src/mcp/session.ts::seedSession`）：不带的话账本是空的，
+        # 画布下一次编辑发全量列表就把带回的改动抹掉
+        out["patches"] = list(session.patches)
+        if not persisted:
+            restored_draft["note"] += "（注意：这次没能落盘，草稿保留着。）"
     if draft_failed is not None:
         out["draft_restore_failed"] = draft_failed
     if discarded:
@@ -2417,7 +2426,7 @@ def open_figure(
         # 让 #181 那种图多画一遍不划算。
         if "preview_png_base64" not in out:
             try:
-                out["preview_png_base64"] = preview_png(session, [], 1600)
+                out["preview_png_base64"] = preview_png(session, list(session.patches), 1600)
             except BridgeError as exc:
                 out["preview_png_error"] = exc.code or "preview_failed"
     return out

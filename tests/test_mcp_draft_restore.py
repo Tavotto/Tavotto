@@ -564,3 +564,51 @@ def test_discard_draft_never_deletes_the_record_of_a_session_alive_here(tmp_path
     bridge.apply_overrides(live["session_id"], _fontsize(12.0))
     bridge.open_figure(str(figures), stem="fig", discard_draft=True)
     assert bridge.sessionjournal.load(bridge._journal_dir(), live["session_id"]) is not None
+
+
+# --------------------- Codex 评审（#2007）三条 -------------------------------
+def test_a_restored_open_hands_the_canvas_the_patches_to_seed_its_ledger(tmp_path):
+    figures = _project(tmp_path)
+    _edit_and_close(figures, 23.0)
+    out = bridge.open_figure(str(figures), stem="fig")
+    assert out["patches"] == _fontsize(
+        23.0
+    )  # 画布 seedSession 读 open.patches；缺了账本是空的，下次编辑就抹掉
+    res = server.call_tool("tavotto_open_figure", {"project_path": str(figures), "stem": "fig"})
+    assert "restored_draft" not in res["structuredContent"]  # 第二次是新会话、没有草稿
+    plain = bridge.open_figure(str(figures), stem="fig", discard_draft=True)
+    assert "patches" not in plain  # 没带回草稿：形状不变
+
+
+@pytest.mark.parametrize("source", ["draft", "orphan"])
+def test_the_source_is_kept_when_the_new_record_could_not_be_written(tmp_path, monkeypatch, source):
+    figures = _project(tmp_path)
+    if source == "draft":
+        old = _edit_and_close(figures, 23.0)
+        keep = _drafts() / f"{old}.json"
+    else:
+        old = _orphan(figures, 23.0)
+        keep = bridge._journal_dir() / f"{old}.json"
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(bridge.sessionjournal, "save", boom)
+    out = bridge.open_figure(str(figures), stem="fig")
+    assert out["restored_draft"]["patches"] == 1  # 会话本身照常带回
+    assert keep.is_file(), "新记录没写成，唯一的持久副本不能删"
+
+
+def test_include_png_draws_the_restored_patches_not_the_plain_script(tmp_path, monkeypatch):
+    figures = _project(tmp_path)
+    _edit_and_close(figures, 23.0)
+    seen = []
+    real = bridge.preview_png
+    monkeypatch.setattr(
+        bridge,
+        "preview_png",
+        lambda session, patches, w: seen.append(list(patches)) or real(session, patches, w),
+    )
+    out = bridge.open_figure(str(figures), stem="fig", include_png=True)
+    assert out["restored_draft"]["patches"] == 1
+    assert seen and seen[-1] == _fontsize(23.0)
