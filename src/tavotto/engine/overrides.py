@@ -2805,46 +2805,76 @@ _GRID_ABSENT = object()
 
 
 class _GridOriginal(dict):
-    """`{(轴名 "x"/"y", "major"/"minor"): 当时 tick kw 里的值 | _GRID_ABSENT}`。只活在 `originals` 里。
+    """`{(轴名 "x"/"y", "major"/"minor"): (kw 里的值 | _GRID_ABSENT, [已建刻度线的实际值…])}`。只活在 `originals` 里。
 
     为什么不读 `gridlines[0]` 一根线当「原样」：setter 一次写**两条轴 × 两档**（`tick_params(axis="both",
     which="both")`），还原却只拿到第一条**画着**的那根线的值写回去——没画的那一向（脚本只开了
     x 网格，y 的线宽 / 颜色 / 线型 / 透明度是 rcParams 默认）被写成 x 的样式，之后再打开 y 网格
-    就带着 x 的样式出来，与全新重放不同。所以逐轴逐档各记各的，含「脚本没表态」（ABSENT）。"""
+    就带着 x 的样式出来，与全新重放不同。所以逐轴逐档各记各的，含「脚本没表态」（ABSENT）。
+
+    **ABSENT 时不能回头查 rcParams**：脚本在 `rc_context` / 临时 style 里建图，上下文退出后已建的
+    刻度线带着当时解析出的值（红色网格），kw 里却没有这个键；还原时再读 rcParams 读到的是 worker 的
+    全局默认，与全新重放（同一段脚本、同一个上下文）不同。所以**首次捕获时**就把已建刻度线逐根的
+    实际值记下，还原时写回这些值。"""
+
+
+_GRID_READ = {
+    "grid_color": lambda ln: ln.get_color(),
+    "grid_linestyle": lambda ln: ln.get_linestyle(),
+    "grid_linewidth": lambda ln: float(ln.get_linewidth()),
+    "grid_alpha": lambda ln: ln.get_alpha(),
+}
+_GRID_WRITE = {
+    "grid_color": lambda ln, v: ln.set_color(v),
+    "grid_linestyle": lambda ln, v: ln.set_linestyle(v),
+    "grid_linewidth": lambda ln, v: ln.set_linewidth(v),
+    "grid_alpha": lambda ln, v: ln.set_alpha(v),
+}
+
+
+def _built_ticks(axis, which):
+    """已经建出来的刻度。**不碰** `axis.majorTicks` / `minorTicks`：它们是惰性列表，一访问就现建一根，
+    而全新重放里那根要到绘制时才建（用当时的 kw / rcParams）。没建过 = 空。"""
+    return list(axis.__dict__.get("majorTicks" if which == "major" else "minorTicks") or [])
 
 
 def _grid_original(kw_key):
+    read = _GRID_READ[kw_key]
+
     def g(ax):
         snap = _GridOriginal()
         for name, axis in (("x", ax.xaxis), ("y", ax.yaxis)):
             for which, attr in (("major", "_major_tick_kw"), ("minor", "_minor_tick_kw")):
-                snap[(name, which)] = getattr(axis, attr, {}).get(kw_key, _GRID_ABSENT)
+                snap[(name, which)] = (
+                    getattr(axis, attr, {}).get(kw_key, _GRID_ABSENT),
+                    [read(t.gridline) for t in _built_ticks(axis, which)],
+                )
         return snap
 
     return g
 
 
 def _grid_restore(kw_key):
+    write = _GRID_WRITE[kw_key]
+
     def r(ax, orig):
-        for (name, which), value in orig.items():
+        for (name, which), (value, actual) in orig.items():
             axis = ax.xaxis if name == "x" else ax.yaxis
             if value is not _GRID_ABSENT:
                 ax.tick_params(axis=name, which=which, **{kw_key: value})
                 continue
-            # 脚本没表态：把 kw 里的键拿掉（以后新建的刻度回 rcParams），已建的刻度线写回默认
+            # 脚本没表态：kw 里的键拿掉（以后新建的刻度回到「当时的 rcParams」，与重放一致）；
+            # 已建的刻度线写回**首次捕获时的实际值**（见 `_GridOriginal`）。
             getattr(axis, "_major_tick_kw" if which == "major" else "_minor_tick_kw").pop(
                 kw_key, None
             )
-            default = mpl.rcParams[_GRID_KW[kw_key]]
-            ticks = axis.majorTicks if which == "major" else axis.minorTicks
-            for t in ticks:
-                setter = {
-                    "grid_color": t.gridline.set_color,
-                    "grid_linestyle": t.gridline.set_linestyle,
-                    "grid_linewidth": t.gridline.set_linewidth,
-                    "grid_alpha": t.gridline.set_alpha,
-                }[kw_key]
-                setter(default)
+            ticks = _built_ticks(axis, which)
+            # 捕获之后才建出来的刻度（setter 触发的惰性建刻度、轴范围变化多出来的）：重放里它们要到
+            # 绘制时才建，matplotlib 建新刻度会从第一根刻度拷贝线的样式（`_copy_tick_props`）；
+            # 捕获时一根都没有的档，才用 rcParams（那时没有任何上下文把它改成别的）。
+            fallback = actual[0] if actual else mpl.rcParams[_GRID_KW[kw_key]]
+            for i, t in enumerate(ticks):
+                write(t.gridline, actual[i] if i < len(actual) else fallback)
 
     return r
 

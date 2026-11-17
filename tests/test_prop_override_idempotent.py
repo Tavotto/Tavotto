@@ -134,3 +134,51 @@ def test_removing_a_grid_style_edit_restores_the_original_hot_vs_fresh(
         pool.discard(hot_w)
         pool.discard(fresh_w)
     assert hot == fresh
+
+
+#: 脚本在 `rc_context` 里建图、画网格：上下文退出后已建刻度线带着当时解析的值（红 / 虚线 / 1.7 / 0.6），
+#: 刻度 kw 里却没有 `grid_*`。撤销时若回头去读全局 rcParams，写回的是 worker 的默认而不是这些值。
+_RC_GRID_SCRIPT = """\
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def main():
+    x = np.linspace(0, 6, 40)
+    rc = {"grid.color": "#cc2222", "grid.linewidth": 1.7, "grid.linestyle": "--", "grid.alpha": 0.6}
+    with plt.rc_context(rc):
+        fig, ax = plt.subplots(figsize=(4.4, 3.2))
+        ax.plot(x, np.sin(x))
+        ax.grid(True, axis="x")
+    fig.savefig("RcGrid.pdf")
+"""
+
+
+@pytest.mark.parametrize("prop", sorted(_GRID_EDITS))
+@pytest.mark.parametrize("then", ["grid_y", "grid_x_off_y_on", "nothing"])
+def test_removing_a_grid_edit_restores_rc_context_values_hot_vs_fresh(tmp_path_factory, prop, then):
+    """脚本在 rc_context 里画的网格：改 `grid_*` 再撤销，热态必须回到当时解析出的值（不是撤销时的全局 rcParams）。
+    x 向画着、y 向没画——`grid_y` / `grid_x_off_y_on` 把没画的那一向打开，`nothing` 直接看 x 向。"""
+    figs = tmp_path_factory.mktemp("prop-grid-rc")
+    (figs / "rc_grid.py").write_text(_RC_GRID_SCRIPT, encoding="utf-8")
+
+    def _worker():
+        w = pool.one_shot("rc_grid.py", str(figs), "main")
+        w.ensure_built()
+        return w
+
+    first = [{"gid": "axes_0", "prop": prop, "value": _GRID_EDITS[prop]}]
+    final = []
+    if then != "nothing":
+        final.append({"gid": "axes_0", "prop": "grid_y", "value": True})
+    if then == "grid_x_off_y_on":
+        final.append({"gid": "axes_0", "prop": "grid_x", "value": False})
+    hot_w, fresh_w = _worker(), _worker()
+    try:
+        hot_w.override("RcGrid", first)
+        hot = _reading(hot_w, "RcGrid", final, "hot")
+        fresh = _reading(fresh_w, "RcGrid", final, "fresh")
+    finally:
+        pool.discard(hot_w)
+        pool.discard(fresh_w)
+    assert hot == fresh

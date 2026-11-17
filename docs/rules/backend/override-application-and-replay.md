@@ -76,7 +76,7 @@ order: 70
   setter 一次写两条轴 × major / minor，getter 若只读「第一根画着的线」当原样，还原时没画的那一向
   （脚本只开了 x 网格时的 y 向）就被写成 x 的样式，之后再打开它与全新重放不同。原样是
   `_GridOriginal`（轴 × 档 → tick kw 里的值 / 「脚本没表态」），还原走 `_RESTORE`、逐处写回，
-  没表态的把 kw 键拿掉并把已建刻度线写回 rcParams 默认。manifest 的读数（`_grid_prop`）不是原样，别拿来还原。
+  没表态的把 kw 键拿掉，已建刻度线写回**首次捕获时的实际值**（不回头读 rcParams：脚本在 `rc_context` 里建的网格，退出上下文后 kw 里没键、线上却带着当时的值）。manifest 的读数（`_grid_prop`）不是原样，别拿来还原。
   看护 `tests/test_prop_override_idempotent.py::test_removing_a_grid_style_edit_restores_the_original_hot_vs_fresh`；
   随机域已含 2D `axes`（`tests/support/overridesample._editable_targets`）。
 - **应用顺序规范化 + figure 锚定 prop 的重放（2026-08-17，数据损坏级）**：
