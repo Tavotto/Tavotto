@@ -685,9 +685,6 @@
       "from": "用 {{file}} 画的",
       "again": "换个画法",
       "undo": "撤销"
-    },
-    "note": {
-      "unplotted": "有 {{count}} 行没画出来。"
     }
   }
 }

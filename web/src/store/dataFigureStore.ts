@@ -48,10 +48,8 @@ export type OverviewState =
 
 export type { Candidate }
 
-/** 提交之后要让用户知道的几件事（不是失败：图已经画出来了） */
+/** 提交之后要让用户知道的一件事（不是失败：图已经画出来了）：核对没有「已核对」 */
 export interface DrawNotes {
-  /** 没画出来的行（文件里的行号，最多 50 条） */
-  unplotted: { count: number; rows: number[] } | null
   /** 没有「已核对」：`unverifiable` = 这类图没法逐项核对；`unknown` = 核对没能完成 / 没给结论。只有明确的 verified 才是 null——绝不把缺失写成已核对 */
   check: 'unverifiable' | 'unknown' | null
 }
@@ -373,13 +371,9 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   }
 
   const notesOf = (res: AiDataCommitResult): DrawNotes => {
-    const un = res.unplotted
     const check = res.data_check
-    return {
-      unplotted: un && un.count > 0 ? { count: un.count, rows: [...new Set((un.rows ?? []).map((r) => r.row))] } : null,
-      // 只有明确说「核对过」才不提；缺失 / unknown / unverifiable 都不能写成已核对
-      check: check === 'verified' ? null : check === 'unverifiable' ? 'unverifiable' : 'unknown',
-    }
+    // 只有明确说「核对过」才不提；缺失 / unknown / unverifiable 都不能写成已核对
+    return { check: check === 'verified' ? null : check === 'unverifiable' ? 'unverifiable' : 'unknown' }
   }
 
   /** 进编辑器（宿主那一头做刷新与「打开并运行」）：临时标签先收掉，新图在真画布里打开，再记下这张图好给「换个画法」认 */
@@ -427,10 +421,10 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         showOutcome({ problem: { kind: 'mismatch', script: res.script } })
         return
       }
-      // 有行没画出来 / 这类图没法逐项核对：照样打开图，说明走浮动通知（一句话，没有按钮）；缺 data_check 不写成已核对
+      // 这类图没法逐项核对：照样打开图，说明走浮动通知（一句话，没有按钮）；缺 data_check 不写成已核对。
+      // 「有 N 行没画出来」不再通知（用户拍板 11-17）
       const notes = notesOf(res)
-      if (notes.unplotted) host.notify(msg('dataFigureV2.note.unplotted', { count: notes.unplotted.count }, 'ai'))
-      else if (notes.check === 'unverifiable') host.notify(msg('dataFigureV2.result.unverifiable', undefined, 'ai'))
+      if (notes.check === 'unverifiable') host.notify(msg('dataFigureV2.result.unverifiable', undefined, 'ai'))
       else if (notes.check) host.notify(msg('dataFigureV2.result.unknown', undefined, 'ai'))
       await goEditor(res.script)
     } catch (e) {

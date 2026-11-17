@@ -142,9 +142,6 @@ export default interface Resources {
         "unsure": "没认准",
         "unsureTitle": "没认准，先不用"
       },
-      "note": {
-        "unplotted": "有 {{count}} 行没画出来。"
-      },
       "nothing": {
         "generic": "这张表没能画出图。"
       },

@@ -167,14 +167,19 @@ describe('出图的各结局', () => {
     expect(prepOpen).toHaveBeenCalled()
     expect(st()).toMatchObject({ draftOpen: false, drawingId: null, fresh: { file: ref('a.csv') } })
   })
-  it('有行没画出来 / 没法逐项核对：照样打开图，一句话走浮动通知，不留在临时标签里；缺 data_check 不写成已核对', async () => {
+  it('有行没画出来：照样打开图，不再弹通知（用户拍板）', async () => {
     await ready()
     commit.mockResolvedValueOnce(committed({ data_check: 'verified', unplotted: { count: 3, rows: [{ row: 3, column: 'x', reason: 'x' }], code: 'rows_not_plotted' } }))
     await st().draw('i1')
     expect(prepOpen).toHaveBeenCalled()
-    expect(notify).toHaveBeenCalledTimes(1)
-    expect(notify.mock.calls[0]![0]).toMatchObject({ key: 'dataFigureV2.note.unplotted', values: { count: 3 } })
+    expect(notify).not.toHaveBeenCalled()
     expect(st().draftOpen).toBe(false)
+  })
+  it('这类图没法逐项核对：一句话走浮动通知', async () => {
+    await ready()
+    commit.mockResolvedValueOnce(committed({ data_check: 'unverifiable' }))
+    await st().draw('i1')
+    expect(notify.mock.calls[0]![0]).toMatchObject({ key: 'dataFigureV2.result.unverifiable' })
   })
   it('缺 data_check = 没核对过：通知说「核对没能完成」，绝不静默当成已核对', async () => {
     await ready()
@@ -313,7 +318,7 @@ describe('单位行与横轴列夹文字', () => {
     expect(st().unitsRow).toBe(false)
   })
 
-  it('横轴列夹 2 格文字：右栏 mixed 正常；切「只用里面的数字」后仍取不出数，界面不出错，画出来后说「有 2 行没画出来」', async () => {
+  it('横轴列夹 2 格文字：右栏 mixed 正常；切「只用里面的数字」后仍取不出数，界面不出错，画出来后照样进画布', async () => {
     withNumbers()
     const m = (mode: 'skip' | 'extract') => [{ column: 'day', non_numeric: 2, rows: 18, mode }]
     const base = (sess: string, mode: 'skip' | 'extract') => ({ ...(cands(sess) as Extract<AiDataProposeResponse, { kind: 'candidates' }>), mixed_cells: m(mode) })
@@ -326,7 +331,7 @@ describe('单位行与横轴列夹文字', () => {
     expect(st()).toMatchObject({ phase: 'ready', mixed: { mode: 'extract' } })
     commit.mockResolvedValueOnce(committed({ unplotted: { count: 2, rows: [{ row: 3, column: 'day', reason: 'x' }, { row: 4, column: 'day', reason: 'x' }], code: 'rows_not_plotted' } }))
     await st().draw('i1')
-    expect(notify.mock.calls.at(-1)![0]).toMatchObject({ key: 'dataFigureV2.note.unplotted', values: { count: 2 } })
+    expect(notify).not.toHaveBeenCalled() // 「有 N 行没画出来」不再通知
     expect(prepOpen).toHaveBeenCalled()
   })
 

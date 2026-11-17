@@ -692,9 +692,6 @@
       "from": "Drawn from {{file}}",
       "again": "Try another style",
       "undo": "Undo"
-    },
-    "note": {
-      "unplotted": "{{count}} rows were not drawn."
     }
   }
 }
