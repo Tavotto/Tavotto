@@ -346,19 +346,22 @@ def test_parent_traversal_in_the_authority_root_is_refused(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_explicit_schema4_entry_preserves_chart_data_and_requires_a_source():
+def test_schema4_dispatch_preserves_chart_data_and_requires_a_source():
     raw = document(reference())
     before = atomicio.dumps_json(raw)
+    # 公开入口按 schema 号分派：schema 4 → validate_chart_document，原样返回。
+    assert documents.validate_document(raw) is raw
     assert documents.validate_chart_document(raw) is raw
     assert atomicio.dumps_json(raw) == before
     pending = document()
+    assert documents.validate_document(pending, require_sources=False) is pending
     assert documents.validate_chart_document(pending, require_sources=False) is pending
     with pytest.raises(documents.DocumentError, match="无效的计算图表来源引用"):
-        documents.validate_chart_document(pending)
+        documents.validate_document(pending)
 
 
 @pytest.mark.parametrize("bad", [2, 3, 4.0, True, 5, None])
-def test_chart_entry_requires_its_own_exact_schema(bad):
+def test_chart_validator_requires_its_own_exact_schema(bad):
     with pytest.raises(documents.DocumentError):
         documents.validate_chart_document({**document(reference()), "schema": bad})
 
@@ -378,15 +381,16 @@ def test_schema4_rejects_a_reference_or_chart_that_does_not_describe_its_panel(c
     else:
         panel["type"] = "text"
     with pytest.raises(documents.DocumentError):
-        documents.validate_chart_document(raw)
+        documents.validate_document(raw)
 
 
-def test_legacy_entry_still_refuses4_and_never_normalizes_old_payloads():
-    assert documents.SCHEMA_CURRENT == documents.SCHEMA_PROJECT == 3
-    assert documents.SUPPORTED_SCHEMAS == (2, 3)
-    with pytest.raises(documents.DocumentError) as raised:
-        documents.validate_document(document(reference()))
-    assert raised.value.code == "schema_too_new"
+def test_schema4_is_accepted_and_old_payloads_are_never_normalized():
+    assert documents.SCHEMA_CURRENT == documents.SCHEMA_CHART_PROJECT == 4
+    assert documents.SUPPORTED_SCHEMAS == (2, 3, 4)
+    accepted = document(reference())
+    before = atomicio.dumps_json(accepted)
+    assert documents.validate_document(accepted) is accepted
+    assert atomicio.dumps_json(accepted) == before
     for raw in ({"schema": 2, "objects": None}, {"schema": 3, "canvases": [None]}):
         # 旧2/3有意只查骨架；不能因本批给旧用户加逐字段门。
         before = json.dumps(raw)

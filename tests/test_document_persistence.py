@@ -4,15 +4,24 @@
 收纳目录里 Tavotto 自己的文件不是用户文档、修订号能给外部修改检测当基线。
 """
 
+import hashlib
 import json
 import os
 import stat
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from tavotto import app as m
-from tavotto.engine import atomicio, documents
+from tavotto.engine import atomicio, documentassets, documents, versionstore as engine_versionstore
+from test_chart_document_assets import (
+    SCENE_DIGEST,
+    SOURCE,
+    SOURCE_ID,
+    chart as chart_state,
+    reference as chart_reference,
+)
 
 
 @pytest.fixture
@@ -151,6 +160,33 @@ def test_validate_rejects_non_documents(raw):
     assert e.value.code == "invalid_document"
 
 
+def test_schema5_is_too_new_and_current_schema_is_four():
+    """schema 4 是本构建能读写的最高版本；schema 5 走同一个 `schema_too_new` 出口。"""
+    assert documents.SCHEMA_CURRENT == documents.SCHEMA_CHART_PROJECT == 4
+    assert documents.SUPPORTED_SCHEMAS == (2, 3, 4)
+    with pytest.raises(documents.DocumentError) as e:
+        documents.validate_document({"schema": 5, "canvases": []})
+    assert e.value.code == "schema_too_new"
+
+
+def test_validate_document_dispatches_schema4_to_the_chart_validator(monkeypatch):
+    """分派在 `validate_document` 里：六个调用点一次覆盖，不另设入口端点。"""
+    calls = []
+
+    def authoritative(raw, *, require_sources=True):
+        calls.append((raw, require_sources))
+        return raw
+
+    monkeypatch.setattr(documents, "validate_chart_document", authoritative)
+    chart = {"schema": 4, "canvases": [{"objects": []}]}
+    assert documents.validate_document(chart) is chart
+    assert documents.validate_document(chart, require_sources=False) is chart
+    # schema 2 / 3 不走图表校验器（判据与返回值逐字不变）
+    for raw in ({"schema": 2, "objects": []}, PD):
+        assert documents.validate_document(raw) is raw
+    assert calls == [(chart, True), (chart, False)]
+
+
 def test_reserved_stems_are_derived_from_the_real_filenames():
     """枚举而不是前缀规则：画布名净化后可能以 `_` 开头（`（图一）` → `_图一_`），
     前缀规则会把用户的文档藏起来。"""
@@ -222,6 +258,198 @@ def test_layout_save_round_trips_a_project_document(client, tmp_path):
     got = client.get("/api/layouts/主图").get_json()
     assert got == PD
     assert "主图" in client.get("/api/layouts").get_json()["layouts"]
+
+
+#: 一条已存 Figure 快照引用（形状由 `svgstore.validate_reference` 定义；这里只考验搬运）。
+FIGURE_SNAPSHOT = {
+    "version": 1,
+    "sourceId": "panel.svg",
+    "patchHash": "sha256:" + "a" * 64,
+    "receiptId": "sha256:" + "b" * 64,
+    "snapshotId": "c" * 64,
+}
+
+CHART_PROJECT = {
+    "schema": 4,
+    "project": {"id": "p", "name": "n"},
+    "canvases": [
+        {
+            "id": "c1",
+            "name": "Fig 1",
+            "page": {"w": 10, "h": 10},
+            "objects": [
+                {
+                    "id": "panel",
+                    "type": "panel",
+                    "fileId": "panel.svg",
+                    "figureSnapshot": FIGURE_SNAPSHOT,
+                }
+            ],
+            "guides": [],
+        }
+    ],
+    "activeCanvasId": "c1",
+    "createdAt": 0,
+    "updatedAt": 1,
+}
+
+
+def test_schema3_and_schema4_share_one_directory_and_one_list(client, tmp_path):
+    """同一套存储：没有按 schema 分的子目录，也没有第二份列表。"""
+    assert client.post("/api/layouts/排版三", json=PD).status_code == 200
+    saved = client.post("/api/layouts/图表排版", json=CHART_PROJECT)
+    assert saved.status_code == 200, saved.get_json()
+    assert sorted(p.name for p in tmp_path.glob("*.json")) == sorted(
+        ["排版三.json", "图表排版.json"]
+    )
+    assert not (tmp_path / "documents").exists(), "出现了按格式分的第二套目录"
+    listed = client.get("/api/layouts").get_json()
+    assert {"排版三", "图表排版"} <= set(listed["layouts"])
+    assert "document_format" not in listed and "document_dir" not in listed
+    assert client.get("/api/layouts/图表排版").get_json() == CHART_PROJECT
+    # 同一条版本历史：schema 3 / 4 都落在同一个 VERSIONS_DIR 里
+    three = client.post("/api/versions/doc-three", json={"doc": PD})
+    four = client.post("/api/versions/doc-four", json={"doc": CHART_PROJECT})
+    assert three.status_code == 200, three.get_json()
+    assert four.status_code == 200, four.get_json()
+    versions_dir = tmp_path / documents.VERSIONS_DIRNAME
+    for doc_id in ("doc-three", "doc-four"):
+        assert (versions_dir / f"{doc_id}{engine_versionstore.STORE_SUFFIX}").is_dir()
+
+
+def test_schema4_save_reports_figure_snapshots_from_its_canvases(client):
+    """schema 4 的保存响应带上面板的 `figure_snapshots` 与 `chart_sources`；
+    同一份正文改成 schema 3 时 `figure_snapshots` 一样（同一套存储），只少图表附加字段。"""
+    resp = client.post("/api/layouts/图表排版", json=CHART_PROJECT)
+    assert resp.status_code == 200, resp.get_json()
+    body = resp.get_json()
+    assert body["figure_snapshots"] == {"panel": FIGURE_SNAPSHOT}
+    assert body["chart_sources"] == []
+    assert "document_format" not in body
+    same_as_three = client.post("/api/layouts/排版三", json={**CHART_PROJECT, "schema": 3})
+    assert same_as_three.status_code == 200, same_as_three.get_json()
+    assert same_as_three.get_json()["figure_snapshots"] == {"panel": FIGURE_SNAPSHOT}
+    assert "chart_sources" not in same_as_three.get_json(), "schema 3 不该带图表附加字段"
+
+
+def _chart_panel():
+    return {
+        "id": "panel",
+        "type": "panel",
+        "fileId": SOURCE_ID,
+        "fileKind": "svg",
+        "chart": chart_state(),
+        "chartSource": chart_reference(),
+        "overrides": [],
+    }
+
+
+def _chart_document(panel=None):
+    return {
+        "schema": documents.SCHEMA_CHART_PROJECT,
+        "project": {"id": "p", "name": "n"},
+        "canvases": [
+            {
+                "id": "c1",
+                "name": "Fig 1",
+                "page": {"w": 10, "h": 10},
+                "objects": [panel if panel is not None else _chart_panel()],
+                "guides": [],
+            }
+        ],
+        "activeCanvasId": "c1",
+        "createdAt": 0,
+        "updatedAt": 1,
+    }
+
+
+def _fake_chart_snapshot(tmp_path):
+    """不 spawn worker：只提供 `_freeze_document_sources` 需要的三片（输入字节 / 场景 / 校验路径）。"""
+    digest = hashlib.sha256(SOURCE).hexdigest()
+
+    def snapshot(file_id, chart, **kwargs):
+        return SimpleNamespace(
+            input_svg=SOURCE,
+            scene={"scene_digest": SCENE_DIGEST},
+            path=tmp_path / "chart_sources" / f"{digest}.svg",
+            source_sha256=digest,
+        )
+
+    return snapshot
+
+
+def test_schema4_named_save_freezes_the_chart_source_at_the_document_root(
+    client, tmp_path, monkeypatch
+):
+    """未打开项目也是合法保存路径：来源附件落到文档同根 `layouts/chart_sources/`，
+    保存响应的 `chart_sources` 说得出它是哪一张画布、哪一个面板的哪一份来源。"""
+    monkeypatch.setattr(m, "_render_chart_snapshot", _fake_chart_snapshot(tmp_path))
+    doc = _chart_document()
+    resp = client.post("/api/layouts/图表", json=doc)
+    assert resp.status_code == 200, resp.get_json()
+    digest = hashlib.sha256(SOURCE).hexdigest()
+    frozen = tmp_path / "chart_sources" / f"{digest}.svg"
+    assert frozen.read_bytes() == SOURCE
+    assert resp.get_json()["chart_sources"] == [
+        {
+            "canvas_index": 0,
+            "object_index": 0,
+            "canvas_id": "c1",
+            "panel_id": "panel",
+            "chart_source": chart_reference(),
+        }
+    ]
+    # 正文里写的就是冻结后的闭集引用；读回来相同。
+    saved = client.get("/api/layouts/图表").get_json()
+    assert saved["canvases"][0]["objects"][0]["chartSource"] == chart_reference()
+
+
+def test_schema4_autosave_freezes_the_chart_source_before_the_body(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(m, "_render_chart_snapshot", _fake_chart_snapshot(tmp_path))
+    resp = client.put("/api/autosave/d_chart", json=_chart_document())
+    assert resp.status_code == 200, resp.get_json()
+    assert resp.get_json()["chart_sources"][0]["chart_source"] == chart_reference()
+    assert (tmp_path / "chart_sources" / (hashlib.sha256(SOURCE).hexdigest() + ".svg")).is_file()
+
+
+def test_schema3_with_stray_chart_state_never_enters_the_chart_path(client, tmp_path):
+    """schema 2 / 3 的 `validate_document` 只查骨架。正文里夹带 `chart`（还缺 `fileId`）
+    时若按**内容**判据送进图表路径，`obj["fileId"]` / `panel["chart"]` 抛的是 KeyError
+    → 500。判据必须是 schema 号：旧文档仍按旧文档保存，图表机制不碰它。"""
+    doc = {
+        "schema": 3,
+        "project": {"id": "p", "name": "n"},
+        "canvases": [
+            {
+                "id": "c1",
+                "name": "Fig 1",
+                "page": {"w": 10, "h": 10},
+                "objects": [{"id": "panel", "type": "panel", "chart": {"model": {}}}],
+                "guides": [],
+            }
+        ],
+        "activeCanvasId": "c1",
+        "createdAt": 0,
+        "updatedAt": 1,
+    }
+    resp = client.post("/api/layouts/旧文档", json=doc)
+    assert resp.status_code == 200, resp.get_json()
+    assert "chart_sources" not in resp.get_json()
+    assert not (tmp_path / "chart_sources").exists()
+    assert client.get("/api/layouts/旧文档").get_json() == doc
+
+    auto = client.put("/api/autosave/d_old", json=doc)
+    assert auto.status_code == 200, auto.get_json()
+    assert "chart_sources" not in auto.get_json()
+
+
+def test_read_chart_input_reads_the_archived_source_without_a_project(client, tmp_path):
+    """读侧与写侧同一根：未打开项目时 `_read_chart_input` 从 `layouts/chart_sources/`
+    取已有来源，而不是 `current_ctx()` 直接抛 409。"""
+    ref = documentassets.freeze_source(tmp_path, SOURCE_ID, SOURCE, scene_digest=SCENE_DIGEST)
+    path, data = m._read_chart_input(SOURCE_ID, chart_source=ref, scene_digest=SCENE_DIGEST)
+    assert data == SOURCE
+    assert path == tmp_path / "chart_sources" / f"{ref['bytesSha256']}.svg"
 
 
 def test_canvas_style_binding_with_owned_overrides_round_trips(client):
