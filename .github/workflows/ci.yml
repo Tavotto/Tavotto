@@ -835,7 +835,7 @@ jobs:
       # 判据路径（observe，docs/rules/ci/judge-guard.md）：改到 .github/judge-paths.json 里的路径
       # 就打 notice，入队前交维护者确认。分类器与名单都取默认分支；只看见、不判红——
       # continue-on-error 让这一步无论如何都不会把 docs-scope（fast gate 必需）带红。
-      - name: 标出改到的判据路径（只观察）
+      - name: 校验 判据路径（只观察）
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
