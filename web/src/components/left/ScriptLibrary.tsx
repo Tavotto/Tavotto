@@ -43,7 +43,16 @@ import {
 import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
-import { MiddleEllipsis } from '../ui/MiddleEllipsis'
+
+/** 脚本显示名：列表里优先展示干净的文件名（不让长目录前缀挤占），同名冲突时才附父目录消歧 */
+function scriptBaseName(path: string): string {
+  return path.split(/[/\\]/).pop() || path
+}
+function scriptParentHint(path: string): string | null {
+  const parts = path.split(/[/\\]/)
+  if (parts.length <= 1) return null
+  return parts.slice(0, -1).join('/')
+}
 import { ScriptArgvEditor } from '../ScriptArgvEditor'
 import { TaskDiagnostic } from '../TaskDiagnostic'
 import { EmptyState } from '../ui/EmptyState'
@@ -193,27 +202,34 @@ export function ScriptLibrary({ query }: { query: string }) {
     )
   }
 
+  const baseCounts = new Map<string, number>()
+  for (const s of scripts) {
+    const b = scriptBaseName(s.script)
+    baseCounts.set(b, (baseCounts.get(b) ?? 0) + 1)
+  }
+
   return (
-    <div className="flex flex-col px-2 pb-2">
-      {/* 五个组同一种组头：名字 + meta 数字（2026-09-15 打磨批次 G）。「工具与配置脚本」
-          此前是可折叠的 Details——同一列表两种组头；它已排最后、通常只有一两项，不值得一副
-          折叠骨架（左栏审计 L07）。组名 `px-1` 与卡片、搜索框落在同一条竖线上（L05） */}
+    <div className="flex flex-col gap-2 px-2 pb-2 pt-0.5">
+      {/* 五个组同一种组头：名字 + meta 数字（2026-09-15 打磨批次 G）。每组列表收进干净的白色微边卡槽，显示清爽文件名 */}
       {GROUP_ORDER.filter((g) => groups.has(g)).map((g) => {
         const label = g === 'infra' ? sc('groupInfraName') : sc(`group_${g}`)
         return (
-          <section key={g} className="mt-2 first:mt-0.5">
-            {/* 子组头比上级「脚本」折叠区头退后半档（11/500/ink-3 + 缩进），消除三级同权堆叠的杂乱感 */}
-            <h4 className="flex h-6 items-center gap-1.5 pl-2.5 pr-1 text-xs font-medium text-ink-3" data-script-group={g}>
-              <span>{label}</span>
+          <section key={g} className="flex flex-col gap-0.5">
+            <h4 className="flex h-7 items-center gap-1.5 px-1" data-script-group={g}>
+              <span className="type-section text-ink-2">{label}</span>
               <span className="type-meta">{groups.get(g)!.length}</span>
             </h4>
-            <ul aria-label={label}>
+            <ul
+              aria-label={label}
+              className="flex flex-col overflow-hidden rounded-md bg-surface p-0.5 inset-ring inset-ring-border/60 divide-y divide-border/45"
+            >
               {groups.get(g)!.map((entry) => (
                 <ScriptRow
                   key={entry.script}
                   entry={entry}
                   stems={view.scripts[entry.script]?.stems ?? []}
                   repairCard={repairCards.has(entry.script)}
+                  disambiguate={(baseCounts.get(scriptBaseName(entry.script)) ?? 0) > 1}
                 />
               ))}
             </ul>
@@ -221,12 +237,15 @@ export function ScriptLibrary({ query }: { query: string }) {
         )
       })}
       {notebooks.length > 0 && (
-        <section className="mt-2 first:mt-0.5">
-          <h4 className="flex h-6 items-center gap-1.5 pl-2.5 pr-1 text-xs font-medium text-ink-3" data-script-group="notebook">
-            <span>{sc('group_notebook')}</span>
+        <section className="flex flex-col gap-0.5">
+          <h4 className="flex h-7 items-center gap-1.5 px-1" data-script-group="notebook">
+            <span className="type-section text-ink-2">{sc('group_notebook')}</span>
             <span className="type-meta">{notebooks.length}</span>
           </h4>
-          <ul aria-label={sc('group_notebook')}>
+          <ul
+            aria-label={sc('group_notebook')}
+            className="flex flex-col overflow-hidden rounded-md bg-surface p-0.5 inset-ring inset-ring-border/60 divide-y divide-border/45"
+          >
             {notebooks.map((n) => (
               <NotebookRow key={n.notebook} source={n} />
             ))}
@@ -234,12 +253,15 @@ export function ScriptLibrary({ query }: { query: string }) {
         </section>
       )}
       {foreign.length > 0 && (
-        <section className="mt-2 first:mt-0.5">
-          <h4 className="flex h-6 items-center gap-1.5 pl-2.5 pr-1 text-xs font-medium text-ink-3" data-script-group="foreign">
-            <span>{sc('group_foreign')}</span>
+        <section className="flex flex-col gap-0.5">
+          <h4 className="flex h-7 items-center gap-1.5 px-1" data-script-group="foreign">
+            <span className="type-section text-ink-2">{sc('group_foreign')}</span>
             <span className="type-meta">{foreign.length}</span>
           </h4>
-          <ul aria-label={sc('group_foreign')}>
+          <ul
+            aria-label={sc('group_foreign')}
+            className="flex flex-col overflow-hidden rounded-md bg-surface p-0.5 inset-ring inset-ring-border/60 divide-y divide-border/45"
+          >
             {foreign.map((f) => (
               <ForeignScriptRow key={f.script} source={f} />
             ))}
@@ -266,7 +288,7 @@ function NotebookRow({ source }: { source: NotebookSource }) {
     <li data-notebook-row={source.notebook}>
       <div className={cn(listRowClass(), 'gap-1.5 pl-3 pr-0.5')}>
         <span className="min-w-0 flex-1 truncate text-sm text-ink" title={source.notebook}>
-          {source.notebook}
+          {scriptBaseName(source.notebook)}
         </span>
         <IconButton
           iconSize="sm"
@@ -297,8 +319,8 @@ function ForeignScriptRow({ source }: { source: ForeignSource }) {
         onClick={() => offerForeignConvert(source)}
         className={cn(listRowClass(), 'w-full gap-1.5 pl-3 pr-2 text-left')}
       >
-        <span className="min-w-0 flex-1 truncate font-mono text-sm text-ink" title={source.script}>
-          {source.script}
+        <span className="min-w-0 flex-1 truncate text-sm text-ink" title={source.script}>
+          {scriptBaseName(source.script)}
         </span>
         <span className="shrink-0 type-meta text-ink-3">{sc(`foreignLang.${source.language}`)}</span>
       </button>
@@ -352,11 +374,14 @@ function ScriptRow({
   entry,
   stems,
   repairCard,
+  disambiguate = false,
 }: {
   entry: ScriptInventoryEntry
   stems: string[]
   /** 这一行挂修复卡（同一个包缺在几行上时只有一行挂，见 `ScriptLibrary`） */
   repairCard: boolean
+  /** 存在同名不同目录的脚本时补充父目录后缀消歧 */
+  disambiguate?: boolean
 }) {
   useTranslation('workspace')
   const run = useScriptRunStore((s) => s.byScript[entry.script])
@@ -405,13 +430,13 @@ function ScriptRow({
             与右侧 11px 的状态一句话差一个台阶（左栏审计 L02）。状态点与脚本名同属一个基线组
             （items-baseline）：点用 `vertical-align: middle`（= 基线上抬半个 x 高）对准小写字母
             的视觉中心，不靠 margin 凑，换字体 / 字号也跟着走 */}
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm">
+        <span className="flex min-w-0 flex-1 items-baseline gap-1.5 text-sm">
           <StatusDot entry={entry} run={run} prep={prep} />
-          <span className="min-w-0 flex-1 text-ink" title={entry.script}>
-            <MiddleEllipsis
-              text={entry.script}
-              tail={Math.min(18, Math.max(10, entry.script.split('/').pop()?.length ?? 12))}
-            />
+          <span className="min-w-0 flex-1 truncate text-ink" title={entry.script}>
+            {scriptBaseName(entry.script)}
+            {disambiguate && scriptParentHint(entry.script) && (
+              <span className="ml-1 type-meta">{scriptParentHint(entry.script)}</span>
+            )}
           </span>
         </span>
         <StatusLine

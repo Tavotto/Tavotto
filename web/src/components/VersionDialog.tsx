@@ -868,36 +868,36 @@ function TimelineRow({
                   {named && <Bookmark size={ICON_SIZE.sm} filled className="shrink-0 text-accent" aria-hidden />}
                   {/* 自动节点的名字由后端按时间生成，与这里的时间重复，所以只显示
                       **用户起的**名字（`versionDisplayName`）；命名节点的名字加重 */}
-                  {!renaming && (
-                    <span
-                      className={cn(
-                        'min-w-0 flex-1 truncate text-sm',
-                        named ? 'font-medium text-ink' : 'text-ink-2',
-                      )}
-                      data-timeline-name
-                    >
-                      {versionDisplayName(v)}
+                    {!renaming && (
+                      <span
+                        className={cn(
+                          'min-w-0 flex-1 truncate text-sm',
+                          named ? 'font-medium text-ink' : 'text-ink-2',
+                        )}
+                        data-timeline-name
+                      >
+                        {versionDisplayName(v)}
+                      </span>
+                    )}
+                    {renaming && <span className="flex-1" />}
+                  </span>
+                  <span className="text-xs text-ink-3">
+                    {versionSummaryText(versionSummary(v, comparableEarlier(all, index)))
+                      .map(formatMessage)
+                      .join(' · ')}
+                  </span>
+                  {/* 这一版拍的是哪张画布（R-03）。旧节点没有这个字段，**照实说「不知道」**，
+                      不猜成当前画布（左栏审计 L21）。 */}
+                  {showCanvas && (
+                    <span className="truncate type-meta">
+                      {v.canvasId
+                        ? vd('fromCanvas', { name: v.canvasName || v.canvasId })
+                        : vd('fromUnknownCanvas')}
                     </span>
                   )}
-                  {renaming && <span className="flex-1" />}
-                  <KindMark meta={v} />
                 </span>
-                <span className="text-xs text-ink-3">
-                  {versionSummaryText(versionSummary(v, comparableEarlier(all, index)))
-                    .map(formatMessage)
-                    .join(' · ')}
-                </span>
-                {/* 这一版拍的是哪张画布（R-03）。旧节点没有这个字段，**照实说「不知道」**，
-                    不猜成当前画布（左栏审计 L21）。 */}
-                {showCanvas && (
-                  <span className="truncate type-meta">
-                    {v.canvasId
-                      ? vd('fromCanvas', { name: v.canvasName || v.canvasId })
-                      : vd('fromUnknownCanvas')}
-                  </span>
-                )}
-              </span>
-            </button>
+                <KindMark meta={v} />
+              </button>
           }
         >
           <CompareCard

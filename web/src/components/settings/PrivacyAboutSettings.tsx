@@ -69,7 +69,7 @@ export function PrivacyAboutSettings() {
 function ProductBlock({ version }: { version?: string }) {
   return (
     <div
-      className="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-lg bg-group px-4 py-3.5 inset-ring inset-ring-border/70"
+      className="flex flex-wrap items-center gap-x-5 gap-y-3 py-1.5"
       data-settings-anchor="about.support"
     >
       <div className="flex min-w-0 flex-[1_1_18rem] items-center gap-4" data-about-product>

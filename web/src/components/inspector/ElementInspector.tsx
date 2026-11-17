@@ -2517,9 +2517,9 @@ function FieldRow({
           <Select className="gap-0.5 pl-2 pr-1.5" value={fm.value} onChange={fm.onChange} options={fm.options} title={fm.title ?? (fm.value ? fontFamilyOptionLabel(fm.value, merged?.option_labels, fontOpts) : undefined)} ariaLabel={translate('textBar.latinFont', { ns: 'inspector' })} />
         </div>
         <span className="contents" data-prop={propertyPathOf('figureText', 'fontFallback') ?? undefined}>
-          <div data-font-fallback-cell className="w-[70px] shrink-0">
+          <div data-font-fallback-cell className="w-[66px] shrink-0">
             <Select
-              className="gap-0.5 pl-1.5 pr-1"
+              className="gap-0.5 px-1"
               ariaLabel={cjkLabel}
               prefix={translate('textBar.cjkPrefix', { ns: 'inspector' })}
               disabled={shadowed}

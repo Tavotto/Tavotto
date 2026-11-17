@@ -365,11 +365,11 @@ function FontFamilyRowView({
     : undefined
   const cjkCell = fallback && (
     <span className="contents" data-prop={fallback.anchor ?? undefined}>
-      <div data-font-fallback-cell className="w-[70px] shrink-0">
+      <div data-font-fallback-cell className="w-[66px] shrink-0">
         <SearchSelect
           searchLabel={tc('fontSearch')}
           emptyLabel={tc('fontNoMatch')}
-          className="min-w-0 gap-0.5 pl-1.5 pr-1"
+          className="min-w-0 gap-0.5 px-1"
           ariaLabel={tb('cjkFallback')}
           prefix={tb('cjkPrefix')}
           value={cjkMixed ? '' : fallback.value || '__auto__'}

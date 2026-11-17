@@ -415,11 +415,11 @@ export function SaveStateLabel() {
           if (!nothingToSave) void runManualSave()
         }}
         className={cn(
-          'group/save relative z-0 flex h-6 min-w-0 shrink items-center gap-1.5 rounded-full pl-2.5 max-[899px]:px-1.5 text-xs text-ink-3 outline-none focus-visible:focus-ring',
+          'group/save relative flex h-6 min-w-0 shrink items-center gap-1.5 rounded-full pl-2.5 max-[899px]:px-1.5 text-xs text-ink-3 outline-none focus-visible:focus-ring',
           !nothingToSave && 'hover:text-ink-2 max-[899px]:hover:bg-surface-hover',
         )}
       >
-        <span aria-hidden className="relative z-10 flex size-4 shrink-0 items-center justify-center">
+        <span aria-hidden className="flex size-4 shrink-0 items-center justify-center">
           {revealPending ? (
             <span className="size-1.5 rounded-full bg-ink-3 min-[900px]:hidden" />
           ) : (
@@ -432,7 +432,7 @@ export function SaveStateLabel() {
             className={cn(
               'relative col-start-1 row-start-1 inline-flex h-6 w-fit max-w-full items-center pr-2.5 max-[899px]:sr-only',
               !nothingToSave &&
-                'min-[900px]:before:pointer-events-none min-[900px]:before:absolute min-[900px]:before:inset-y-0 min-[900px]:before:-left-8 min-[900px]:before:right-0 min-[900px]:before:-z-10 min-[900px]:before:rounded-full min-[900px]:before:transition-colors min-[900px]:before:duration-fast min-[900px]:group-hover/save:before:bg-surface-hover',
+                'min-[900px]:before:pointer-events-none min-[900px]:before:absolute min-[900px]:before:inset-y-0 min-[900px]:before:-left-8 min-[900px]:before:right-0 min-[900px]:before:rounded-full min-[900px]:before:transition-colors min-[900px]:before:duration-fast min-[900px]:group-hover/save:before:bg-surface-hover',
             )}
           >
             <span className="min-[900px]:truncate">{text}</span>
