@@ -203,7 +203,7 @@ def test_tools_list_shape():
         "tavotto_close_session",
         "tavotto_guide",
         "tavotto_fix_to_journal",  # 同受期刊库总开关管（ADR 0180）
-        "tavotto_make_journal_ready",  # 同上（ADR 0189 §1）
+        "tavotto_make_journal_ready",  # 同上（ADR 0192 §1）
         "tavotto_list_journals",  # 期刊库开关已打开（ADR 0155 §11）
         "tavotto_get_journal_facts",
     ]

@@ -43,7 +43,7 @@ order: 55
 - **失败回包的 `next`** 由 `nextstep.fix_next` 在 `_call_fix_to_journal` 里加：`column_choice_required` / `font_unavailable` 要用户决定（`ask_user`，
   栏位候选来自 `columns`），其余没改成的（含图幅步骤出界）必须回脚本改（`edit_script`，`why` 指向 `conflicts`）。成功的回包不带 `next` 与 `conflicts`。
 
-## 一步交付 `tavotto_make_journal_ready`（ADR 0189 第 1 条）
+## 一步交付 `tavotto_make_journal_ready`（ADR 0192 第 1 条）
 
 - **只编排、不新写逻辑，编排放在 server 层**（`server._call_make_journal_ready`）：打开 = `_call_open`、改 = `bridge.fix_to_journal`（**不带 `formats`**）、
   导出 = `_call_export`。理由：参数校验与结果整形（含草稿带回说明、产物核验行、更新提醒、proof）本来就在这三个工具处理器里，

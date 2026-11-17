@@ -1,4 +1,4 @@
-"""`tavotto_make_journal_ready`（ADR 0189 第 1 条）的**真链路**：真 matplotlib、真 worker、真产物。
+"""`tavotto_make_journal_ready`（ADR 0192 第 1 条）的**真链路**：真 matplotlib、真 worker、真产物。
 
 只编排不新写逻辑，所以这里盯的是编排本身：
 

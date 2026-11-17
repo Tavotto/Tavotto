@@ -854,7 +854,7 @@ MJR_OPEN_KEYS = (
 
 
 def _make_journal_ready_tool(open_tool: dict) -> dict:
-    """`tavotto_make_journal_ready`（ADR 0189 第 1 条）：与 tavotto_fix_to_journal 同一处置，
+    """`tavotto_make_journal_ready`（ADR 0192 第 1 条）：与 tavotto_fix_to_journal 同一处置，
     只在期刊库总开关开着、且引擎带修复事务时出现。"""
     open_props = open_tool["inputSchema"]["properties"]
     props = {k: open_props[k] for k in MJR_OPEN_KEYS if k in open_props}
@@ -1592,7 +1592,7 @@ def _mjr_remaining(items: list) -> list[dict]:
 
 
 def _call_make_journal_ready(args: dict) -> dict:
-    """ADR 0189 第 1 条：只编排，不新写逻辑。打开 = `_call_open`、改 = `bridge.fix_to_journal`、
+    """ADR 0192 第 1 条：只编排，不新写逻辑。打开 = `_call_open`、改 = `bridge.fix_to_journal`、
     导出 = `_call_export`——参数校验与结果整形都是那三条路自己的；这里只管顺序、停在哪步、回包长相。"""
     if not (args.get("journal_id") or args.get("profile_id") or args.get("journal")):
         raise RpcError(
@@ -2268,7 +2268,7 @@ HANDLERS = {
     # 同样受期刊库总开关管（`bridge.fix_to_journal_available()`）；**不进** `usage.TOOLS` / 遥测闭集
     # （加进去要升 CONSENT_VERSION，与 `tavotto_guide` 同一处置：走 `other` 桶，ADR 0180）
     "tavotto_fix_to_journal": _call_fix_to_journal,
-    # 一步交付（ADR 0189 §1）：与 fix_to_journal 同一处置，同样**不进** `usage.TOOLS`
+    # 一步交付（ADR 0192 §1）：与 fix_to_journal 同一处置，同样**不进** `usage.TOOLS`
     "tavotto_make_journal_ready": _call_make_journal_ready,
 }
 
