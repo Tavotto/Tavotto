@@ -13,9 +13,17 @@ def _fields(man, gid):
     return {f["prop"]: f for f in hits[0]["editable"]}
 
 
+#: 字段类型是 text、取值域却是**有限的合法字面量**的那几条（`aspect` 只认 auto / equal / 正数）。
+#: 随机文字喂进去只会量到「非法值被拒」（warning），不是热态 / 重放。
+TEXT_DOMAINS: dict[str, tuple[str, ...]] = {"aspect": ("auto", "equal", "0.5", "2")}
+
+
 def _sample_value(field):
     """按字段类型挑一个**不同**的值；挑不出来（结构化类型）返回 None。"""
     kind, cur = field.get("type"), field.get("value")
+    if kind == "text" and field.get("prop") in TEXT_DOMAINS:
+        opts = [o for o in TEXT_DOMAINS[field["prop"]] if o != cur]
+        return opts[0] if opts else None
     if kind == "color":
         return "#123456" if str(cur).lower() != "#123456" else "#654321"
     if kind == "bool":
@@ -74,10 +82,13 @@ def _patch_for(gid, field, advertised):
     return enablers, enablers + [{"gid": gid, "prop": prop, "value": value}]
 
 
-def _editable_targets(man):
-    """(gid, field) —— 跳过整块结构性的角色，它们各有各的专用用例。"""
+def _editable_targets(man, *, include_axes=False):
+    """(gid, field) —— 跳过整块结构性的角色，它们各有各的专用用例。`include_axes=True` 把 2D `axes`
+    也纳入（随机序列用：网格 / 边框 / 轴范围这类还原逻辑最容易出「只还原了画着的那一部分」的分岔；
+    不是默认——能力真实 / 逐字还原那几条扫描里 axes 的一些字段有各自登记的口径）。"""
+    skipped = ("figure", "axes3d", "ticks", "ticklabel") + (() if include_axes else ("axes",))
     for el in man["elements"]:
-        if el["role"] in ("figure", "axes", "axes3d", "ticks", "ticklabel"):
+        if el["role"] in skipped:
             continue
         for f in el["editable"]:
             yield el["gid"], f

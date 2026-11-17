@@ -72,6 +72,13 @@ order: 70
   旧实现无条件 pop，图永久停在半改状态且此后再无 warning——safe 能靠作废 worker 兜，native
   会话（用户自己的 Python）兜不了。看护 `tests/test_restore_failure_retry.py`（含热态 == 冷
   启动重放的逐字节不变量；把 `continue` 改回落到 pop，五条全红）。
+- **「一次写多处」的 setter，原样必须逐处记（`axes.grid_color` / `grid_linestyle` / `grid_linewidth` / `grid_alpha`）**：
+  setter 一次写两条轴 × major / minor，getter 若只读「第一根画着的线」当原样，还原时没画的那一向
+  （脚本只开了 x 网格时的 y 向）就被写成 x 的样式，之后再打开它与全新重放不同。原样是
+  `_GridOriginal`（轴 × 档 → tick kw 里的值 / 「脚本没表态」），还原走 `_RESTORE`、逐处写回，
+  没表态的把 kw 键拿掉并把已建刻度线写回 rcParams 默认。manifest 的读数（`_grid_prop`）不是原样，别拿来还原。
+  看护 `tests/test_prop_override_idempotent.py::test_removing_a_grid_style_edit_restores_the_original_hot_vs_fresh`；
+  随机域已含 2D `axes`（`tests/support/overridesample._editable_targets`）。
 - **应用顺序规范化 + figure 锚定 prop 的重放（2026-08-17，数据损坏级）**：
   `overrides.apply` 按**七档规范顺序**应用（`_apply_rank` 是唯一出处；ADR 0098 在最前面加了
   一档 `figure.frame`（`_RANK_FRAME = -1`：图幅按 figsize 还是按脚本存盘的裁切框——之后每一档

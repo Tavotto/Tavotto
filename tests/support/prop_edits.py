@@ -12,7 +12,7 @@ from collections.abc import Callable
 
 from hypothesis import strategies as st
 
-from support.overridesample import _ENABLERS
+from support.overridesample import _ENABLERS, TEXT_DOMAINS
 
 #: 前景色只给彼此分得开的几种；文字只给字体一定有的字形（`$` / 反斜杠会进数学文字解析，另有专用用例）。
 COLORS = ("#d62728", "#1f77b4", "#2ca02c", "#9467bd", "#ff7f0e", "#17becf")
@@ -30,6 +30,8 @@ def value_strategy(field: dict):
         opts = list(field.get("options") or [])
         return st.sampled_from(opts) if opts else None
     if kind == "text":
+        if field.get("prop") in TEXT_DOMAINS:
+            return st.sampled_from(TEXT_DOMAINS[field["prop"]])
         return TEXT
     if kind == "number":
         if cur is None:

@@ -2784,11 +2784,69 @@ def _grid_visible(ax: Axes, which: str) -> bool:
 
 
 def _grid_prop(read, default):
+    """manifest 的**读数**（x 优先、取第一根线）；还原不许用它当「原样」，见 `_GridOriginal`。"""
+
     def g(ax):
         gl = _gridline0(ax)
         return read(gl) if gl is not None else default
 
     return g
+
+
+#: 网格线样式四键 → (tick kw 键, rcParams 键)。网格线的样式活在每根轴、每档（major / minor）
+#: 各自的 tick kw 里：`ax.grid(axis="x", linewidth=…)` 只写 x 轴的那一份。
+_GRID_KW = {
+    "grid_color": "grid.color",
+    "grid_linestyle": "grid.linestyle",
+    "grid_linewidth": "grid.linewidth",
+    "grid_alpha": "grid.alpha",
+}
+_GRID_ABSENT = object()
+
+
+class _GridOriginal(dict):
+    """`{(轴名 "x"/"y", "major"/"minor"): 当时 tick kw 里的值 | _GRID_ABSENT}`。只活在 `originals` 里。
+
+    为什么不读 `gridlines[0]` 一根线当「原样」：setter 一次写**两条轴 × 两档**（`tick_params(axis="both",
+    which="both")`），还原却只拿到第一条**画着**的那根线的值写回去——没画的那一向（脚本只开了
+    x 网格，y 的线宽 / 颜色 / 线型 / 透明度是 rcParams 默认）被写成 x 的样式，之后再打开 y 网格
+    就带着 x 的样式出来，与全新重放不同。所以逐轴逐档各记各的，含「脚本没表态」（ABSENT）。"""
+
+
+def _grid_original(kw_key):
+    def g(ax):
+        snap = _GridOriginal()
+        for name, axis in (("x", ax.xaxis), ("y", ax.yaxis)):
+            for which, attr in (("major", "_major_tick_kw"), ("minor", "_minor_tick_kw")):
+                snap[(name, which)] = getattr(axis, attr, {}).get(kw_key, _GRID_ABSENT)
+        return snap
+
+    return g
+
+
+def _grid_restore(kw_key):
+    def r(ax, orig):
+        for (name, which), value in orig.items():
+            axis = ax.xaxis if name == "x" else ax.yaxis
+            if value is not _GRID_ABSENT:
+                ax.tick_params(axis=name, which=which, **{kw_key: value})
+                continue
+            # 脚本没表态：把 kw 里的键拿掉（以后新建的刻度回 rcParams），已建的刻度线写回默认
+            getattr(axis, "_major_tick_kw" if which == "major" else "_minor_tick_kw").pop(
+                kw_key, None
+            )
+            default = mpl.rcParams[_GRID_KW[kw_key]]
+            ticks = axis.majorTicks if which == "major" else axis.minorTicks
+            for t in ticks:
+                setter = {
+                    "grid_color": t.gridline.set_color,
+                    "grid_linestyle": t.gridline.set_linestyle,
+                    "grid_linewidth": t.gridline.set_linewidth,
+                    "grid_alpha": t.gridline.set_alpha,
+                }[kw_key]
+                setter(default)
+
+    return r
 
 
 # ---------------------------------------------------------------------------
@@ -5208,19 +5266,19 @@ HANDLERS: dict[tuple[str, str], tuple] = {
         lambda a, v: a.grid(visible=bool(v), axis="y"),
     ),
     ("axes", "grid_color"): (
-        _grid_prop(lambda g: g.get_color(), "#b0b0b0"),
+        _grid_original("grid_color"),
         lambda a, v: a.tick_params(axis="both", which="both", grid_color=v),
     ),
     ("axes", "grid_linestyle"): (
-        _grid_prop(lambda g: g.get_linestyle(), ":"),
+        _grid_original("grid_linestyle"),
         lambda a, v: a.tick_params(axis="both", which="both", grid_linestyle=str(v)),
     ),
     ("axes", "grid_linewidth"): (
-        _grid_prop(lambda g: float(g.get_linewidth()), 0.5),
+        _grid_original("grid_linewidth"),
         lambda a, v: a.tick_params(axis="both", which="both", grid_linewidth=float(v)),
     ),
     ("axes", "grid_alpha"): (
-        _grid_prop(lambda g: g.get_alpha(), None),
+        _grid_original("grid_alpha"),
         lambda a, v: a.tick_params(
             axis="both", which="both", grid_alpha=(None if v is None else float(v))
         ),
@@ -5498,6 +5556,8 @@ _RESTORE[("collection", "cmap")] = _restore_member_cmap
 _RESTORE[("image", "cmap")] = _restore_member_cmap
 _RESTORE.update(legendmodel.RESTORE)
 _RESTORE.update(spinemodel.RESTORE)
+for _gk in _GRID_KW:
+    _RESTORE[("axes", _gk)] = _grid_restore(_gk)
 
 
 # 图例拖动（`loc_frac`）挂进布局引擎那张 pin 表（ADR 0100）：条目模型本身在
