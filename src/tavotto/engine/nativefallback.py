@@ -169,6 +169,24 @@ def _ended_error(session) -> pool.WorkerError:
     )
 
 
+def _stem_missing(resp: dict, stem: str) -> pool.WorkerError:
+    """这张图不在 build 结果里：脚本截下了却没能出图（`figure_facts` 里有失败）就把那条真实原因交出去，
+    别吞成「没画出」——agent 照「没画出」去改脚本是白改。"""
+    for fact in resp.get("figure_facts") or []:
+        failure = fact.get("failure") if isinstance(fact, dict) else None
+        if fact.get("stem") == stem and isinstance(failure, dict) and failure.get("message"):
+            err = pool.WorkerError(
+                f"真实 Python 运行完了，可 {stem} 没能出图：{failure['message']}",
+                code=CODE_STEM_MISSING,
+            )
+            err.extra["capture_failure"] = {
+                "code": str(failure.get("code") or ""),
+                "message": str(failure["message"])[:500],
+            }
+            return err
+    return pool.WorkerError(f"真实 Python 运行完了，却没有画出 {stem}", code=CODE_STEM_MISSING)
+
+
 def launch(
     project: str,
     script: str,
@@ -215,9 +233,7 @@ def launch(
         except RunError as exc:
             raise _as_worker_error(exc) from exc
         if stem not in (resp.get("stems") or {}):
-            raise pool.WorkerError(
-                f"真实 Python 运行完了，却没有画出 {stem}", code=CODE_STEM_MISSING
-            )
+            raise _stem_missing(resp, stem)
     except BaseException:
         end(session)
         raise
