@@ -2,21 +2,21 @@
 name: Tavotto
 description: matplotlib 科研图的可视化编辑器——Paper × Instrument，紧凑的桌面工具
 colors:
-  bg: "#efefed"
-  canvas: "#f5f5f3"
+  bg: "#f0efec"
+  canvas: "#f6f5f3"
   surface: "#ffffff"
-  surface-2: "#f7f7f5"
+  surface-2: "#f7f7f8"
   paper: "#ffffff"
   paper-ink: "#1b1b18"
   paper-highlight: "#fff3a3"
   highlighter: "#fff3a3"
-  field: "#f2f2f0"
-  field-hover: "#eeeeec"
-  border-control: "#84847c"
-  ink: "#1b1b18"
-  ink-2: "#4a4a45"
-  ink-3: "#6c6c66"
-  ink-faint: "#a3a39a"
+  field: "#f3f3f5"
+  field-hover: "#ececef"
+  border-control: "#848178"
+  ink: "#1c1b18"
+  ink-2: "#4a4842"
+  ink-3: "#6b6860"
+  ink-faint: "#a39f95"
   accent: "#2c73de"
   accent-subtle: "#ebf2fc"
   danger: "#c4442a"
@@ -29,10 +29,10 @@ colors:
   syntax-function: "#5b45a8"
   syntax-string: "#7a5a2b"
   syntax-number: "#2868b7"
-  syntax-comment: "#6c6c66"
+  syntax-comment: "#6b6860"
   syntax-type: "#2a6b5b"
   syntax-builtin: "#86520a"
-  shadow: "#1b1b18"
+  shadow: "#1c1b18"
 typography:
   hero:
     fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', system-ui, sans-serif"
@@ -108,19 +108,19 @@ components:
   button-primary:
     backgroundColor: "{colors.ink}"
     textColor: "{colors.surface}"
-    rounded: "9999px"
+    rounded: "{rounded.md}"
     height: "{spacing.control}"
   button-secondary:
     textColor: "{colors.ink}"
-    rounded: "9999px"
+    rounded: "{rounded.md}"
     height: "{spacing.control}"
   button-ghost:
     textColor: "{colors.ink}"
-    rounded: "9999px"
+    rounded: "{rounded.md}"
     height: "{spacing.control}"
   button-danger:
     textColor: "{colors.danger}"
-    rounded: "9999px"
+    rounded: "{rounded.md}"
     height: "{spacing.control}"
   button-danger-tinted:
     rounded: "9999px"
@@ -136,11 +136,11 @@ components:
   input:
     backgroundColor: "{colors.field}"
     textColor: "{colors.ink}"
-    rounded: "{rounded.md}"
+    rounded: "{rounded.sm}"
     height: "{spacing.control}"
   badge:
     rounded: "9999px"
-    height: "16px"
+    height: "20px"
   card:
     backgroundColor: "{colors.surface}"
     rounded: "{rounded.lg}"
@@ -164,33 +164,33 @@ components:
 
 **Creative North Star: "Paper × Instrument"**
 
-一件用于科研图制作与论文排版的精密仪器：灰色桌面（`#efefed`）上放导航，作品放进一块白色圆角的工作面板（2026-09-30 重设计，参照 OpenBitFun）、
+一件用于科研图制作与论文排版的精密仪器：暖石桌面（`#efede8`）上放导航，作品放进一块纯白圆角的工作面板（2026-09-30 重设计，参照 OpenBitFun）、
 工程工具的精确（28px 控件、单位排成竖线的数字框、毫米制）、桌面软件的成熟。极简但不空洞，
 克制但有设计——精致来自比例、对齐、间距、字体层级、图标与状态，**不来自装饰**。
-2026-10-07 设计刷新（审计 `docs/ux/DESIGN_AUDIT_2026-10-07_vs_OpenBitFun.md`，用户拍板）的基础层：墨阶拉开、中性面降黄、
+2026-10-07 设计刷新（审计 `docs/ux/DESIGN_AUDIT_2026-10-07_vs_OpenBitFun.md`，用户拍板）的基础层：墨阶拉开、暖石亚麻中性面、
 圆角族、复合字体角色、状态色锚点派生、z-index token、Card / Notice / StatusPill / FormSection / FieldGroup / RowMenu 原语、
 Dialog 页脚三槽——全文在 **宪法第二十六节**。
 
 **Key Characteristics:**
 - 一套字体（系统 sans）、十个字体角色（display 24 / heading 17 / title 15 / reading 13 / 12 档四个 / meta 11）；字重 400 / 500 / 600——600 只在角色（标题）与原语（选中态、表单分区标题、危险浅底胶囊）里
-- 持久表面里只有卡有投影（`ui/Card`）；分层靠极轻的明度差与 ink 半透明的 hairline（边框 / hover / selected 都是 ink 的 5%～18% 叠加）
+- 持久表面里只有卡（`ui/Card`）与画布纸面（`--shadow-page`）有投影；分层靠极轻的明度差与 ink 半透明的 hairline（边框 / hover / selected 都是 ink 的 5%～18% 叠加）
 - 蓝色只做小面积：焦点环、AI、画布选择框；主按钮是近黑；链接是灰字
-- 密度是「紧凑工具」那一档：控件 28px；对话框页脚 / 页面 CTA 32px（`size="lg"`）
+- 密度是「紧凑工具」那一档：控件 28px（`rounded-md` 工具栅格）；对话框页脚 / 页面 CTA 32px（`size="lg"`，`rounded-full` 胶囊）
 - 动效只是点缀：opacity + ≤4px 位移 + scale 0.97~1，关掉不损失信息；回弹只有 `--ease-spring` 一条曲线（峰值 5%，只给落位收尾）
 
 ## Colors
 
-中性灰桌面 + 白面板 + 近黑墨 + 一枚小面积品牌蓝；语义色（danger / warn / ok / info）各是**一个锚点**，底 / 描边 / 字由公式派生。
+暖石桌面 + 纯白面板 + 暖黑墨 + 一枚小面积品牌蓝；语义色（danger / warn / ok / info）各是**一个锚点**，底 / 描边 / 字由公式派生。
 表在 **宪法第一节**（工具类名 ↔ 值 ↔ 用途），派生公式在 **宪法第二十六节**。
 
 ### Primary
-- **Ink（近黑）** (`#1b1b18`)：主文字、主按钮填色。不是纯黑。主按钮上的字是 `surface` 色（不写死白）。
+- **Ink（近黑）** (`#1c1b18`)：主文字、主按钮填色。不是纯黑。主按钮上的字是 `surface` 色（不写死白）。
 - **Tavotto Blue（品牌蓝）**：色相取自用户定的 `#5A92E5`（2026-09-30）。它本身对白只有 3.14:1，所以焦点环 / 蓝字用同色相压深的 `#2c73de`（≥4.5:1），画布选择框用 `#4685e2`（≥3:1）；浅底 `#ebf2fc`。只给选择、焦点、AI——链接是灰字（`ink-2` + 悬停下划线）；唯一的例外是改图助手回答里的链接（accent + 1px 下划线，宪法第十八节）。
 
 ### Neutral
-- **Desk（桌面）** (`#efefed`) 应用底：顶栏、左轨、停靠的抽屉坐在它上面 · **Canvas（画布灰）** (`#f5f5f3`) 工作面板里画布那一块 · **Surface（白）** (`#ffffff`) 工作面板 / 浮层 / 卡 · **Surface-2** (`#f7f7f5`) 只读值与徽章底 · **Field** (`#f2f2f0`，hover `#eeeeec`) 所有可编辑框的底（比面板深一级、无边；参考 Codex） · **Selected**（ink 12% 叠加：hover 4% < active 8% < selected 12%，selected 是 hover 的三倍） · **Group**（ink 3%：设置页字段组的底）
-- **Ink-2 / Ink-3 / Ink-faint** (`#4a4a45` / `#6c6c66` / `#a3a39a`)：标签 / 元数据与说明 / 禁用。Ink-2 白上 8.9:1；Ink-3 白 / 桌面 / 画布灰 5.28 / 4.59 / 4.84，**所有底色都过 4.5:1**（拍板值 `#74746e` 在桌面上只有 4.08，按「不过就最小幅度压深」收到这一档；`index.css` 里 `--color-ink-3` 上方的注释是这条的权威）；faint 不用于要读的字
-- **Border / Border-strong**（ink 12% / 18% 叠加）：hairline 只给区域边界 · **可编辑框静态没有边**：Field 底就是「框」，聚焦 / 打开才是不透明 accent 边——有框 = 能改，3:1 由聚焦态承担（宪法第二十二节） · **Border-control** (`#84847c`)：未选中复选框 / 单选、关态开关轨道，≥3:1
+- **Desk（桌面）** (`#efede8`) 应用底：顶栏、左轨、停靠的抽屉坐在它上面 · **Canvas（画布灰）** (`#f6f4ef`) 工作面板里画布那一块暖亚麻底 · **Surface（白）** (`#ffffff`) 工作面板 / 浮层 / 卡 · **Surface-2** (`#f8f7f3`) 只读值与徽章底 · **Field** (`#f3f1ec`，hover `#edeae4`) 所有可编辑框的底（比面板深一级、无边；参考 Codex） · **Selected**（ink 12% 叠加：hover 4% < active 8% < selected 12%，selected 是 hover 的三倍） · **Group**（ink 3%：设置页字段组的底）
+- **Ink-2 / Ink-3 / Ink-faint** (`#4a4842` / `#6b6860` / `#a39f95`)：标签 / 元数据与说明 / 禁用。Ink-2 白上 9.14:1；Ink-3 白 / 桌面 / 画布灰 5.56 / 4.76 / 5.06，**所有底色都过 4.5:1**（`index.css` 里 `--color-ink-3` 上方的注释是这条的权威）；faint 不用于要读的字
+- **Border / Border-strong**（ink 12% / 18% 叠加）：hairline 只给区域边界 · **可编辑框静态没有边**：Field 底就是「框」，聚焦 / 打开才是不透明 accent 边——有框 = 能改，3:1 由聚焦态承担（宪法第二十二节） · **Border-control** (`#848178`)：未选中复选框 / 单选、关态开关轨道，≥3:1
 
 ### Status
 - **锚点** danger `#c4442a` · warn `#b07400` · ok `#2b7649` · info = accent。**派生**：`-surface` = 锚点 10% 混白、`-border` = 30%、`-content` = 锚点 70% 压黑（字，≥4.5:1）。新增一种状态色只写一个锚点；旧名 `*-subtle` 是 `-surface` 的别名，迁完删除。
@@ -208,17 +208,17 @@ Dialog 页脚三槽——全文在 **宪法第二十六节**。
 
 | token | 暗色 |
 | --- | --- |
-| `bg` | `#161615` |
-| `canvas` | `#1b1b1a` |
-| `surface` | `#222220` |
-| `surface-2` | `#282826` |
-| `field` | `#2c2c2a` |
-| `field-hover` | `#323230` |
-| `border-control` | `#7b7b74` |
-| `ink` | `#ececea` |
-| `ink-2` | `#c2c2bc` |
-| `ink-3` | `#9b9b94` |
-| `ink-faint` | `#6a6a64` |
+| `bg` | `#171614` |
+| `canvas` | `#1c1b18` |
+| `surface` | `#23221f` |
+| `surface-2` | `#292824` |
+| `field` | `#2e2c28` |
+| `field-hover` | `#34322d` |
+| `border-control` | `#7d7a72` |
+| `ink` | `#efeee9` |
+| `ink-2` | `#c5c2b9` |
+| `ink-3` | `#9d9a90` |
+| `ink-faint` | `#6c6961` |
 | `accent` | `#5a92e5` |
 | `accent-subtle` | `#1d2a3d` |
 | `dim` | `#7db6f5` |
@@ -230,10 +230,10 @@ Dialog 页脚三槽——全文在 **宪法第二十六节**。
 | `syntax-function` | `#ad9cf0` |
 | `syntax-string` | `#d6ad72` |
 | `syntax-number` | `#74abf2` |
-| `syntax-comment` | `#9b9b94` |
+| `syntax-comment` | `#9d9a90` |
 | `syntax-type` | `#6fc7ad` |
 | `syntax-builtin` | `#e3a457` |
-| `thumb` | `#3a3a37` |
+| `thumb` | `#3c3a35` |
 | `shadow` | `#000000` |
 | `shadow-edge` | `#ffffff` |
 
@@ -268,14 +268,14 @@ Dialog 页脚三槽——全文在 **宪法第二十六节**。
 
 ## Elevation & Depth
 
-**The Flat-By-Default Rule.** 持久表面不用投影——**只有「真的是一张卡」的东西例外**，而且只经 `ui/Card` 一处（`appearance="raised"`，门禁守着）：`--shadow-card`（环 6% + 0 1px 2px 4% + 0 4px 12px 4%）；分区、列表行、输入框、分段控件仍是平的。改图助手的输入框是浮在对话流上的玻璃（`--color-glass` field 90% + 16px 背景模糊 + `--shadow-composer`，参考 Codex）。浮层是「1px 半透明环 + 贴边接触阴影 + 一层大模糊」，不画实色边；所有投影都写成 `color-mix(var(--color-shadow) N%)`（1px 环读 `--color-shadow-edge`，浅色里它就是 shadow），暗色只换这两种颜色（模糊层纯黑、环换白——Tailwind 把投影串内联进工具类，只有 `var()` 是活的；**宪法第二十八节**）：
+**The Flat-By-Default Rule.** 持久表面不用投影——**只有「真的是一张卡」的东西（只经 `ui/Card` 一处：`--shadow-card`）与画布上的白色纸面（`--shadow-page`，极轻漫射纸影）例外**；分区、列表行、输入框、分段控件仍是平的。改图助手的输入框是浮在对话流上的玻璃（`--color-glass` field 90% + 16px 背景模糊 + `--shadow-composer`，参考 Codex）。浮层是「1px 半透明环 + 贴边接触阴影 + 一层大模糊」，不画实色边；所有投影都写成 `color-mix(var(--color-shadow) N%)`（1px 环读 `--color-shadow-edge`，浅色里它就是 shadow），暗色只换这两种颜色（模糊层纯黑、环换白——Tailwind 把投影串内联进工具类，只有 `var()` 是活的；**宪法第二十八节**）：
 `--shadow-pop: 0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 8%, transparent), 0 2px 6px color-mix(in srgb, var(--color-shadow) 6%, transparent), 0 8px 24px color-mix(in srgb, var(--color-shadow) 8%, transparent)`（菜单 / popover / 浮条），对话框与命令面板用更深一档的 `--shadow-dialog`；Tooltip 是 ink 底白字，不带投影。
 
 ## Shapes
 
-圆角族，Tailwind 自带的 xl / 2xl 已清空：xs 4（16px 高以下的小片）、sm 6（tooltip、行内小片）、md 8（行、可编辑框、菜单项、小卡 / 缩略图、说明条）、
-lg 12（卡片、菜单 / popover 外壳、多行浮动面板）、panel 16（对话框、工作面板、助手输入框、命令面板）、full（带字的按钮、图标钮、分段控件、chip、toast、单行浮动条）。
-**外层圆角 = 内层圆角 + 内边距**。浮动外观三档：单行浮动条 = 胶囊、多行浮动面板 = 12、模态 = 16。**宪法第二节、第二十六节**。
+圆角族，Tailwind 自带的 xl / 2xl 已清空：xs 4（16px 高以下的小片）、sm 6（tooltip、行内小片、分段内层滑块）、md 8（28px 紧凑按钮、分段外槽、行、可编辑框、菜单项、小卡 / 缩略图、说明条）、
+lg 12（卡片、菜单 / popover 外壳、多行浮动面板）、panel 16（对话框、工作面板、助手输入框、命令面板）、full（32px 仪式性主动作按钮、圆形图标钮、chip、toast、单行浮动条）。
+**外层圆角 = 内层圆角 + 内边距**（菜单 12 = 项 8 + 4；分段 8 = 滑块 6 + 2）。浮动外观三档：单行浮动条 = 胶囊、多行浮动面板 = 12、模态 = 16。**宪法第二节、第二十六节**。
 
 ## Components
 

@@ -207,10 +207,7 @@ export function StyleToggle({
         className={cn(
           // 宽度不随状态变：mixed 的提示画在按钮内部，不挤走后面的控件
           'relative',
-          // 按下时字形自己跟着变重：B 真的加粗。状态不只写在底色上——
-          // 图标就是它所描述的那件事，低对比屏与色觉差异下也读得出来。
-          // 文字子节点走 font-bold，lucide 图标走 stroke-width（CSS 覆盖
-          // SVG 的表现属性），按钮尺寸由 icon-sm 固定，不会因此位移。
+          'in-[[data-glyph-group]]:h-6 in-[[data-glyph-group]]:flex-1 in-[[data-glyph-group]]:rounded-xs in-[[data-glyph-group]]:data-[active]:bg-thumb in-[[data-glyph-group]]:data-[active]:shadow-thumb',
           state === 'on' && PRESSED_GLYPH,
         )}
       >
@@ -342,15 +339,12 @@ function FontFamilyRowView({
     <SearchSelect
       searchLabel={tc('fontSearch')}
       emptyLabel={tc('fontNoMatch')}
-      // 一行两格时收紧左右内边距与箭头间距（只动这一行的两格），12px 的「Times New Roman」要放得下
-      className={cn('min-w-0 flex-1', fallback && 'gap-0.5 px-1')}
+      className={cn('min-w-0 flex-1', fallback && 'gap-0.5 pl-2 pr-1.5')}
       ariaLabel={fallback ? tb('latinFont') : label}
-      // Radix 的 value 必须是选项之一才会显示；mixed 传空串走 placeholder
       value={fm.value}
       placeholder={mixed ? translate('element.mixedValues', { ns: 'inspector' }) : undefined}
       onChange={fm.onChange}
       options={fm.options}
-      // 一行两格时英文格窄，名字会被省略号截断：悬停给完整名
       title={fm.title ?? (fallback && !mixed && fm.value ? optionLabelOf(fm.value) : undefined)}
     />
   )
@@ -371,11 +365,11 @@ function FontFamilyRowView({
     : undefined
   const cjkCell = fallback && (
     <span className="contents" data-prop={fallback.anchor ?? undefined}>
-      <div data-font-fallback-cell className="w-[66px] shrink-0">
+      <div data-font-fallback-cell className="w-[70px] shrink-0">
         <SearchSelect
           searchLabel={tc('fontSearch')}
           emptyLabel={tc('fontNoMatch')}
-          className="min-w-0 gap-0.5 px-1"
+          className="min-w-0 gap-0.5 pl-1.5 pr-1"
           ariaLabel={tb('cjkFallback')}
           prefix={tb('cjkPrefix')}
           value={cjkMixed ? '' : fallback.value || '__auto__'}
@@ -579,8 +573,11 @@ export function FontSizeRow({
         onScrubEnd={onScrubEnd}
       />
       {children != null && (
-        // 字形钮一组：12px 间距之内是同一组，图标钮 28 圆
-        <span data-glyph-group className="flex min-w-0 items-center gap-0.5">
+        // 字形钮成组收进与输入框同高同圆角的轨槽里，左右边界与上下行对齐
+        <span
+          data-glyph-group
+          className="flex h-7 min-w-0 flex-1 items-center gap-0.5 rounded-sm border border-border/65 bg-field p-0.5"
+        >
           {children}
         </span>
       )}

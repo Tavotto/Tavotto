@@ -39,6 +39,7 @@ export function Notice({
   icon,
   detail,
   detailKey,
+  detailPlain = false,
   className,
   children,
   ...rest
@@ -50,8 +51,10 @@ export function Notice({
   action?: ReactNode
   /** 换图标；false = 不画图标 */
   icon?: IconComponent | false
-  /** 技术细节：默认折叠，「详情 ›」展开，带「复制」（复制的是它渲染出来的文字） */
+  /** 折叠详情：默认按技术日志渲染（等宽灰底块 +「复制」）；结构化清单可传 `detailPlain` 去内层灰盒与复制钮 */
   detail?: ReactNode
+  /** 结构化详情（如导出成稿文件清单）：用细分隔线直接承载内容，不套内层等宽灰底框、不画「复制」钮 */
+  detailPlain?: boolean
   /**
    * 详情的身份：同一个槽位换成另一条提示时，展开 / 「已复制」状态不许沿用上一条。默认取 `title` + `detail`（都是字符串时）；
    * 它们是节点、又会被复用时由调用方传一个稳定标识。身份一变，原语自己把详情收起并清掉复制回执。
@@ -129,7 +132,13 @@ export function Notice({
       </div>
       {hasDetail && (
         <Reveal open={open}>
-          <NoticeDetail key={identity}>{detail}</NoticeDetail>
+          {detailPlain ? (
+            <div key={identity} data-notice-detail className="mx-2.5 border-t border-border pb-2.5 pt-2 text-sm text-ink-2">
+              {detail}
+            </div>
+          ) : (
+            <NoticeDetail key={identity}>{detail}</NoticeDetail>
+          )}
         </Reveal>
       )}
     </div>

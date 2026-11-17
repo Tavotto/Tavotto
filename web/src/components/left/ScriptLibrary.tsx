@@ -43,6 +43,7 @@ import {
 import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
+import { MiddleEllipsis } from '../ui/MiddleEllipsis'
 import { ScriptArgvEditor } from '../ScriptArgvEditor'
 import { TaskDiagnostic } from '../TaskDiagnostic'
 import { EmptyState } from '../ui/EmptyState'
@@ -200,10 +201,10 @@ export function ScriptLibrary({ query }: { query: string }) {
       {GROUP_ORDER.filter((g) => groups.has(g)).map((g) => {
         const label = g === 'infra' ? sc('groupInfraName') : sc(`group_${g}`)
         return (
-          <section key={g} className="mt-1">
-            {/* 组头与左栏其它子节头同一种写法：28px · type-section 名字 + type-meta 计数（审计 §10.3） */}
-            <h4 className="flex h-7 items-center gap-1.5 px-1" data-script-group={g}>
-              <span className="type-section">{label}</span>
+          <section key={g} className="mt-2 first:mt-0.5">
+            {/* 子组头比上级「脚本」折叠区头退后半档（11/500/ink-3 + 缩进），消除三级同权堆叠的杂乱感 */}
+            <h4 className="flex h-6 items-center gap-1.5 pl-2.5 pr-1 text-xs font-medium text-ink-3" data-script-group={g}>
+              <span>{label}</span>
               <span className="type-meta">{groups.get(g)!.length}</span>
             </h4>
             <ul aria-label={label}>
@@ -220,9 +221,9 @@ export function ScriptLibrary({ query }: { query: string }) {
         )
       })}
       {notebooks.length > 0 && (
-        <section className="mt-1">
-          <h4 className="flex h-7 items-center gap-1.5 px-1" data-script-group="notebook">
-            <span className="type-section">{sc('group_notebook')}</span>
+        <section className="mt-2 first:mt-0.5">
+          <h4 className="flex h-6 items-center gap-1.5 pl-2.5 pr-1 text-xs font-medium text-ink-3" data-script-group="notebook">
+            <span>{sc('group_notebook')}</span>
             <span className="type-meta">{notebooks.length}</span>
           </h4>
           <ul aria-label={sc('group_notebook')}>
@@ -233,9 +234,9 @@ export function ScriptLibrary({ query }: { query: string }) {
         </section>
       )}
       {foreign.length > 0 && (
-        <section className="mt-1">
-          <h4 className="flex h-7 items-center gap-1.5 px-1" data-script-group="foreign">
-            <span className="type-section">{sc('group_foreign')}</span>
+        <section className="mt-2 first:mt-0.5">
+          <h4 className="flex h-6 items-center gap-1.5 pl-2.5 pr-1 text-xs font-medium text-ink-3" data-script-group="foreign">
+            <span>{sc('group_foreign')}</span>
             <span className="type-meta">{foreign.length}</span>
           </h4>
           <ul aria-label={sc('group_foreign')}>
@@ -404,10 +405,13 @@ function ScriptRow({
             与右侧 11px 的状态一句话差一个台阶（左栏审计 L02）。状态点与脚本名同属一个基线组
             （items-baseline）：点用 `vertical-align: middle`（= 基线上抬半个 x 高）对准小写字母
             的视觉中心，不靠 margin 凑，换字体 / 字号也跟着走 */}
-        <span className="flex min-w-0 flex-1 items-baseline gap-1.5 text-sm">
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm">
           <StatusDot entry={entry} run={run} prep={prep} />
-          <span className="min-w-0 flex-1 truncate text-ink" title={entry.script}>
-            {entry.script}
+          <span className="min-w-0 flex-1 text-ink" title={entry.script}>
+            <MiddleEllipsis
+              text={entry.script}
+              tail={Math.min(18, Math.max(10, entry.script.split('/').pop()?.length ?? 12))}
+            />
           </span>
         </span>
         <StatusLine

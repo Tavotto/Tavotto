@@ -575,7 +575,7 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
         title={rt(latex ? 'modeToRichTitle' : 'modeToLatexTitle')}
         aria-label={rt('modeLatex')}
         className={cn(
-          'mr-1 mt-[3px] h-5 shrink-0 select-none rounded-sm px-1.5 font-mono text-xs leading-none outline-none',
+          'mr-1 mt-[2px] inline-flex h-5 shrink-0 select-none items-center justify-center rounded-xs px-1.5 font-mono text-xs outline-none',
           'transition-colors duration-fast focus-visible:focus-ring',
           latex ? 'bg-ink text-surface' : 'text-ink-3 hover:bg-surface-hover hover:text-ink-2',
         )}

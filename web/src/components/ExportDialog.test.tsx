@@ -468,7 +468,7 @@ describe('信息架构：删掉的东西不许回来', () => {
       'checks',
     ])
     expect(group('checks').textContent).toContain('样式检查报告')
-    expect(group('checks').querySelector('[aria-label="严格核验产物"]')).not.toBeNull()
+    expect(group('checks').querySelector('[aria-label="导出后逐项复核成稿"]')).not.toBeNull()
     // 两个开关收进唯一一个默认折叠的「高级」（2026-10-31 UI 审计）；开关仍在「检查」组里、请求字段不变。
     // 严格核验已开 / 报告被规范强制时它默认展开，已生效的设置不会被藏起来
     const adv = [...document.body.querySelectorAll('details')].filter((d) => d.textContent!.includes('样式检查报告'))
@@ -1654,7 +1654,7 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     await setup(9)
     await click(button('开始导出')!)
     expect('inspection' in exportBodies[0]).toBe(false)
-    const toggle = document.body.querySelector<HTMLElement>('[aria-label="严格核验产物"]')
+    const toggle = document.body.querySelector<HTMLElement>('[aria-label="导出后逐项复核成稿"]')
     expect(toggle, '高级选项里缺少严格核验开关').toBeTruthy()
     await click(toggle!)
     await click(document.body.querySelector<HTMLButtonElement>('[data-export-again]')!)
@@ -4411,5 +4411,20 @@ describe('按期刊检查时导出初值跟着期刊走（2026-11-11）', () => 
     expect(formatBox('PNG').checked).toBe(true)
     expect(document.body.querySelector('[data-export-format-journal-unlisted]')).toBeNull()
     expect(document.body.querySelector('[data-export-journal-dpi]')).toBeNull()
+  })
+
+  it('预览台底栏签发印记与交付清单明细：干净完成时在尺寸行右侧亮出中性墨色格式印记（无绿色、零位移），状态槽对齐右栏、详情里带格式标签与体积且不带日志复制钮', async () => {
+    await setup(9)
+    expect(document.body.querySelector('[data-export-signoff]')).toBeNull()
+    await click(button('开始导出')!)
+    const signoff = document.body.querySelector('[data-export-signoff]')
+    expect(signoff).not.toBeNull()
+    expect(signoff!.textContent).toContain('已导出 ·')
+    expect(signoff!.className).not.toContain('text-ok')
+    expect(document.body.querySelector('[data-export-status]')?.className).toContain('md:w-[500px]')
+    await openResultDetail()
+    expect(document.body.querySelector('[data-export-format-tag]')?.textContent).toBe('PDF')
+    expect(document.body.querySelector('[data-export-output-meta]')?.textContent).toContain('80 × 60 mm · 1.2 KB')
+    expect(document.body.querySelector('[data-export-result] [data-notice-copy]')).toBeNull()
   })
 })

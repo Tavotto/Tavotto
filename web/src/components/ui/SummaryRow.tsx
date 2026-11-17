@@ -55,14 +55,14 @@ export function SummaryRow({
         {...triggerProps}
         onClick={onToggle}
         aria-expanded={open}
-        className="grid h-8 w-full grid-cols-[minmax(40%,1fr)_minmax(0,auto)_1.25rem] items-center gap-x-2 rounded-sm text-left text-sm text-ink outline-none hover:text-ink focus-visible:focus-ring"
+        className="-mx-1.5 grid h-8 w-[calc(100%+0.75rem)] grid-cols-[minmax(40%,1fr)_minmax(0,auto)_1.25rem] items-center gap-x-2 rounded-sm px-1.5 text-left text-sm text-ink transition-colors duration-fast outline-none hover:bg-surface-hover focus-visible:focus-ring"
       >
         <span className="min-w-0 truncate">{label}</span>
         {showValue ? (
           <span className="flex min-w-0 justify-end">
             {/* 名字按内容取：标签与值之间没有分隔时读屏念成「背景#FFFFFF」 */}
             <span className="sr-only">, </span>
-            <span data-summary-value className="min-w-0 truncate text-right text-sm text-ink-3">
+            <span data-summary-value className="min-w-0 truncate text-right text-sm tabular-nums text-ink-3">
               {value}
             </span>
           </span>

@@ -198,8 +198,8 @@
     "textMenu": "文字"
   },
   "unexpectedError": {
-    "text": "Tavotto 出了点意外",
-    "body": "发一份诊断给我们，能帮我们更快找到原因、修好它。"
+    "text": "Tavotto 遇到了意外状况",
+    "body": "你的项目文件完好无损。方便的话发一份脱敏诊断，帮我们尽快定位原因。"
   },
   "exitNotice": {
     "engine": {
@@ -1524,7 +1524,7 @@
       "worker_chain_failed": "{{product}} 的渲染组件在 {{label}} 里启动不了，所以没用它。",
       "activation_failed": "{{label}} 是 Conda 环境，但激活它时出错了，所以没用它。",
       "probe_timeout": "检查 {{label}} 花的时间太长了，这次没用它。",
-      "unusable": "{{label}} 起不来，所以没用它。",
+      "unusable": "{{label}} 无法正常启动，已跳过。",
       "cache_denied": "{{label}} 没法在 {{product}} 的缓存里新建文件夹，所以没用它。",
       "not_checked": "{{label}} 要等到运行时才能确认，这次没用它。",
       "outranked": "{{label}} 也能用，只是有更合适的环境排在前面。",

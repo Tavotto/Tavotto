@@ -548,6 +548,9 @@ function Newcomer({ importer, dragging }: { importer: Importer; dragging: boolea
       <header className="flex flex-col items-center gap-(--home-gap-tight) text-center">
         <Wordmark size="sm" />
         <h1 className="type-display">{t('home.newcomer.title')}</h1>
+        <p data-home-newcomer-subtitle className="max-w-[46ch] type-reading text-ink-2">
+          {t('home.newcomer.subtitle')}
+        </p>
       </header>
 
       <DropZone importer={importer} dragging={dragging} />

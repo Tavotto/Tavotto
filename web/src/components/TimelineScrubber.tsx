@@ -353,7 +353,7 @@ export function TimelineScrubber({
           }
         }}
       >
-        <div ref={trackRef} aria-hidden className="absolute inset-x-0 rounded-full bg-field" />
+        <div ref={trackRef} aria-hidden className="absolute inset-x-0 rounded-full border border-border/60 bg-field" />
         {versions.map((v, i) => (
           <div
             key={v.id}

@@ -195,13 +195,13 @@ describe('DESIGN.md 的 frontmatter 是 index.css @theme 的镜像', () => {
     expect(m![1]).toBe(vars['shadow-pop'])
   })
 
-  it('ink-3 的对比度说明与 index.css 的实测一致：2026-10-07 起所有底色都过 4.5:1（画布灰 4.84），两边写的数相同', () => {
-    // index.css 的注释是权威（数由 tokenContrast.test 量）：白 5.28 / 桌面 4.59 / 画布灰 4.84
-    expect(INDEX_CSS).toMatch(/白 5\.28 \/ 桌面 4\.59 \/ surface-2 4\.93 \/\s*画布灰 4\.84/)
+  it('ink-3 的对比度说明与 index.css 的实测一致：所有底色都过 4.5:1（画布灰 5.06），两边写的数相同', () => {
+    // index.css 的注释是权威（数由 tokenContrast.test 量）：白 5.56 / 桌面 4.76 / 画布灰 5.06
+    expect(INDEX_CSS).toMatch(/白 5\.56 \/ 桌面 4\.76 \/ surface-2 5\.19 \/\s*画布灰 5\.06/)
     expect(INDEX_CSS).toMatch(/所有底色都过 4\.5:1/)
     const line = DESIGN_MD.split('\n').find((l) => l.includes('Ink-3') && l.includes('Ink-faint'))!
     expect(line, '正文里没有 Ink-3 那一行').toBeTruthy()
-    expect(line).toMatch(/5\.28 \/ 4\.59 \/ 4\.84/)
+    expect(line).toMatch(/5\.56 \/ 4\.76 \/ 5\.06/)
     // 旧说法（画布灰上不达标）不许留在索引里
     expect(line).not.toMatch(/4\.45:1/)
   })

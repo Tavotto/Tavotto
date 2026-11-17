@@ -120,6 +120,19 @@ describe('Notice：一行中性提示', () => {
     expect(writeText).toHaveBeenCalledWith('HTTP 500request 3f9a')
     expect(copy.textContent).toBe('已复制')
   })
+
+  it('结构化详情（detailPlain）：展开后不套内层日志灰框，也不画无意义的「复制」按钮', async () => {
+    await render(
+      <Notice tone="ok" detailPlain detail={<div data-structured-list>Figure_1.pdf</div>}>
+        已导出 1 个文件
+      </Notice>,
+    )
+    await act(async () => q<HTMLButtonElement>('[data-notice-detail-toggle]')!.click())
+    const detail = q('[data-notice-detail]')!
+    expect(detail.querySelector('[data-structured-list]')?.textContent).toBe('Figure_1.pdf')
+    expect(q('[data-notice-copy]')).toBeNull()
+    expect(detail.innerHTML).not.toContain('bg-surface-2')
+  })
 })
 
 describe('NoticeReveal：退场保活期间旧子树不可交互', () => {

@@ -54,7 +54,8 @@ import {
 import { ICON_SIZE, IconSlot } from "@/components/ui/Icon";
 import { CanvasThumb } from "./CanvasThumb";
 import { ExportZoomStage } from "./ExportZoomStage";
-import { ExportLocationRow, useExportLocationPicker } from "./ExportLocationRow";
+import { ExportLocationRow, projectRelativeLocation, useExportLocationPicker } from "./ExportLocationRow";
+import { abbreviateHome } from "@/lib/pathDisplay";
 import { RASTER_TOO_LARGE, isLocationFailure, largestDpiWithinLimit, missingSourceFigure } from "@/lib/exportRecovery";
 import { requestRelinkSource, useClipboardStore } from "@/lib/clipboard";
 import { useProjectSettingsPending } from "@/lib/projectSettingsPatch";
@@ -1636,13 +1637,25 @@ export function ExportDialog() {
   const failureIsPath = failure?.kind === "reveal-error";
   // 干净地全部成功：结果块不插进对话框（不位移），胶囊在对话框上面说「已导出 …」
   const cleanDone = !!job && !busy && exportResultClean(job, editedDuringExport);
+  // 预览台底栏的终稿就绪印记（不推挤，零位移）：不区分桌面 / 浏览器，只要本次全部写出且零警告 / 零核验失败 / 零中途编辑才亮出
+  const signoffClean =
+    finished &&
+    job?.status === "done" &&
+    !editedDuringExport &&
+    doneOutputs.length === job.outputs.length &&
+    (job.warnings?.length ?? 0) === 0 &&
+    !doneOutputs.some(svgTextOutlined) &&
+    !doneOutputs.some((o) => inspectionState(o.manifest).tone === "failed");
+  const signoffFormats = signoffClean
+    ? [...new Set(doneOutputs.map((o) => (o.format === "script" ? ".py" : o.format.toUpperCase())).filter(Boolean))].join(" · ")
+    : null;
   const statusVisible =
     busy ||
     conflicts.length > 0 ||
     !!failure ||
     (!!job && job.status !== "conflict" && !cleanDone);
   const statusBlock = statusVisible ? (
-    <div data-export-status className="flex flex-col gap-2">
+    <div data-export-status className="flex flex-col gap-2 md:ml-auto md:w-[500px] md:max-w-full">
       {busy && <ProgressRow job={running ? storeJob : null} batch={batchActive ? batch : null} />}
       {!!conflicts.length && (
         // 撞名：一句话说清是哪几个文件；两条出路在脚部（另存一份 / 覆盖），不在这里另摆一排小按钮
@@ -1830,6 +1843,7 @@ export function ExportDialog() {
         transparent={transparent && transparentApplies}
         flaggedObjectIds={flaggedObjectIds}
         pageFlagged={pageFlagged}
+        signoffFormats={signoffFormats}
         onShow={showPreview}
       />
       {/* 点「导出」之后的冻结阶段（逐张摆好、生成请求输入）里表单整块禁用：这几百毫秒里改动不会只落进一部分图 */}
@@ -2370,6 +2384,7 @@ function ExportPreviewPane({
   transparent,
   flaggedObjectIds,
   pageFlagged,
+  signoffFormats,
   onShow,
 }: {
   single: boolean;
@@ -2388,6 +2403,8 @@ function ExportPreviewPane({
   transparent: boolean;
   flaggedObjectIds: ReadonlySet<string>;
   pageFlagged: boolean;
+  /** 干净完成时的格式签发摘要（如 "PDF · PNG"）；未完成或有任何瑕疵时为 null */
+  signoffFormats?: string | null;
   onShow: (id: string) => void;
 }) {
   useTranslation("dialogs");
@@ -2417,8 +2434,8 @@ function ExportPreviewPane({
     // 预览框：画布灰（bg-canvas）+ md 圆角 + 12px 内边距，纸面（白）在里面按图幅比例 contain；缩略卡一排与尺寸标签都在框外
     <div data-export-preview className="relative min-h-[320px] min-w-0 md:min-h-0">
      <div className="md:sticky md:top-0">
-      {/* 缩略卡直接放在对话框白面上（无底带、无分隔线），与下方预览左缘对齐；放不下横向滚动 + 两端渐隐 */}
-        {!single && (
+      {/* 缩略卡直接放在对话框白面上（无底带、无分隔线），与下方预览左缘对齐；只有存在单张图可切换时才画（零张图时整版已在下方大预览中，不重复画一张空卡片） */}
+        {!single && figures.length > 0 && (
           <div
             role="tablist"
             aria-label={ex("previewTabs")}
@@ -2480,7 +2497,7 @@ function ExportPreviewPane({
                 <CanvasThumb
                   page={pageSize}
                   objects={fallbackCrop?.objects ?? doc.objects}
-                  className="h-full w-full"
+                  className="h-full w-full shadow-page"
                   transparent={transparent}
                   flush
                   pxWidth={px || undefined}
@@ -2503,9 +2520,17 @@ function ExportPreviewPane({
           )}
         </div>
       </div>
-      {/* 尺寸标在预览框外、左对齐的灰色小字：不叠在图上（不加「示意」之类的说明，用户 10-24：别加字） */}
-      <p data-export-preview-size className="type-meta mt-1.5 truncate tabular-nums text-ink-3">
-        {sizeMm ? ex("mmSize", { w: round1(sizeMm[0]), h: round1(sizeMm[1]) }) : ex("sizeUnknownShort")}
+      {/* 尺寸标在预览框外、左对齐的灰色小字；干净导完时右侧并排亮出中性墨色导出印记（遵守 ADR 0068 未核验不画绿、不叠图、不推挤） */}
+      <p data-export-preview-size className="type-meta mt-1.5 flex items-center justify-between gap-2 tabular-nums text-ink-3">
+        <span className="min-w-0 truncate">
+          {sizeMm ? ex("mmSize", { w: round1(sizeMm[0]), h: round1(sizeMm[1]) }) : ex("sizeUnknownShort")}
+        </span>
+        {signoffFormats && (
+          <span data-export-signoff className="inline-flex shrink-0 items-center gap-1 font-medium text-ink-2">
+            <Check size={ICON_SIZE.xs} className="shrink-0 text-ink-2" aria-hidden />
+            <span>{ex("signoffReady", { formats: signoffFormats })}</span>
+          </span>
+        )}
       </p>
      </div>
     </div>
@@ -2586,7 +2611,7 @@ function PreviewStageArt({ figure, ratio }: { figure: ExportableFigure; ratio: n
           return (
             <span
               data-export-thumb="svg"
-              className="block h-full w-full bg-paper"
+              className="block h-full w-full bg-paper shadow-page"
               dangerouslySetInnerHTML={source.svgMarkup}
             />
           );
@@ -2599,7 +2624,7 @@ function PreviewStageArt({ figure, ratio }: { figure: ExportableFigure; ratio: n
               src={src}
               alt=""
               draggable={false}
-              className="block h-full w-full bg-paper object-contain"
+              className="block h-full w-full bg-paper object-contain shadow-page"
             />
           );
         }
@@ -2936,11 +2961,14 @@ function ProgressRow({ job, batch }: { job: ExportJob | null; batch: ExportBatch
       })
     : ex(`phase.${phase}`, { step, total });
   return (
-    <div data-export-progress className="flex flex-col gap-1.5">
-      <p role="status" aria-live="polite" className="text-shimmer text-sm text-ink-2">
+    <div
+      data-export-progress
+      className="flex items-center justify-between gap-4 rounded-md bg-surface-hover px-3 py-1.5"
+    >
+      <p role="status" aria-live="polite" className="text-shimmer min-w-0 truncate text-sm text-ink-2">
         {text}
       </p>
-      <ProgressBar pct={null} label={text} />
+      <ProgressBar pct={null} label={text} className="w-40 shrink-0" />
     </div>
   );
 }
@@ -3124,11 +3152,18 @@ export function ResultBlock({
   ].filter((x): x is string => x !== null);
   const note = noteParts.length ? noteParts.join("；") : undefined;
   const clean = failedCount === 0 && !note;
-  // 摘要一句话 + 至多一个动作；逐个文件、核验、警告、诊断都在默认折叠的「详情」里（卡片一句话读懂）
+  const project = useProjectStore.getState().project;
+  const rawDir = job.export_dir ?? project?.export_dir ?? "exports/";
+  const displayDir =
+    projectRelativeLocation(rawDir, project?.figures_dir, project?.name) ??
+    abbreviateHome(rawDir, project?.home_dir);
+  // 摘要一句话 + 至多一个动作；逐个文件、核验、警告、诊断都在默认折叠的「详情」里（detailPlain：不套内层日志灰框、不画无意义的「复制」钮）
   return (
     <>
     <Notice
       tone={failedCount > 0 ? (savedCount > 0 ? "warn" : "danger") : clean ? "ok" : "warn"}
+      icon={clean ? Check : undefined}
+      detailPlain
       data-export-result
       title={
         failedCount > 0 ? (
@@ -3151,23 +3186,20 @@ export function ResultBlock({
         ) : undefined
       }
       detail={
-        <div className="flex flex-col gap-1 whitespace-normal font-sans text-sm">
-          <p className="break-all text-ink-3">
-            {ex("savedTo", {
-              dir:
-                job.export_dir ??
-                useProjectStore.getState().project?.export_dir ??
-                "exports/",
-            })}
-          </p>
+        <div className="flex flex-col gap-2 whitespace-normal font-sans text-sm">
           {edited && <p className="text-warn-content">{ex("editedDuringExport")}</p>}
-          {job.outputs.map((o) => (
-            <OutputRow
-              key={`${o.format}-${o.name ?? "x"}`}
-              out={o}
-              dir={job.export_dir ?? ""}
-            />
-          ))}
+          <div className="flex flex-col gap-1.5">
+            {job.outputs.map((o) => (
+              <OutputRow
+                key={`${o.format}-${o.name ?? "x"}`}
+                out={o}
+                dir={job.export_dir ?? ""}
+              />
+            ))}
+          </div>
+          <p className="truncate text-xs text-ink-3" title={rawDir}>
+            {ex("savedTo", { dir: displayDir })}
+          </p>
           {/* 部分失败 / 每一件产物都失败（此时 outputs 非空，进不了上面的无产物分支）：同一个折叠入口（T04）；全部成功时不出现 */}
           {(job.status === "partial" || job.status === "failed") && job.job_id && (
             <TaskDiagnostic key={job.job_id} kind="export" refId={job.job_id} />
@@ -3175,7 +3207,7 @@ export function ResultBlock({
           {/* 引擎重渲染的警告：图已经出来了，但可能与画布不完全一致
               （元素不存在 = 脚本改过了）。不吞——用户投出去之前得知道 */}
           {!!job.warnings?.length && (
-            <div className="mt-1 flex flex-col gap-0.5 border-t border-border pt-1">
+            <div className="flex flex-col gap-0.5 border-t border-border pt-1.5">
               <p className="text-ink-2">{ex("warningsIntro")}</p>
               {job.warnings.map((w) => (
                 <p key={w} className="break-all text-ink-3">
@@ -3232,6 +3264,12 @@ export function exportResultClean(job: ExportJob, edited: boolean): boolean {
   return !saved.some((o) => inspectionState(o.manifest).tone === "failed");
 }
 
+function formatOutputBytes(n: number): string {
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(n >= 10 * 1024 ? 0 : 1)} KB`;
+  return `${n} B`;
+}
+
 function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
   useTranslation(["dialogs", "errors"]);
   const [revealError, setRevealError] = useState<string | null>(null);
@@ -3249,6 +3287,7 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
       </p>
     );
   }
+  const formatTag = out.format === "script" ? "PY" : out.format.toUpperCase();
   const dims =
     out.dimensions.px?.[0] && out.dimensions.px?.[1]
       ? translate("measure.pxSize", {
@@ -3261,9 +3300,20 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
             h: round1(out.dimensions.mm[1]),
           })
         : "";
+  const sizeText = typeof out.bytes === "number" && out.bytes > 0 ? formatOutputBytes(out.bytes) : "";
+  const meta = [dims, sizeText].filter(Boolean).join(" · ");
   return (
-    <div className="flex flex-col gap-0.5">
-      <div className="flex items-baseline gap-2">
+    <div
+      data-export-output-row={out.format}
+      className="flex flex-col gap-1 rounded-md bg-surface px-2.5 py-1.5 shadow-thumb"
+    >
+      <div className="flex items-center gap-2">
+        <span
+          data-export-format-tag
+          className="shrink-0 rounded-xs bg-surface-hover px-1.5 py-0.5 font-mono text-xs font-medium text-ink-2"
+        >
+          {formatTag}
+        </span>
         {isDesktop() ? (
           // 桌面里不开浏览器式文件标签页：在系统文件管理器中显示。
           // reveal 失败绝不静默——把完整路径告诉用户
@@ -3278,7 +3328,7 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
                   );
               });
             }}
-            className="min-w-0 truncate rounded-md font-mono text-sm text-ink-2 outline-none hover:underline focus-visible:focus-ring"
+            className="min-w-0 truncate rounded-md font-mono text-sm text-ink outline-none hover:underline focus-visible:focus-ring"
           >
             {out.name}
           </button>
@@ -3289,12 +3339,16 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
             href={apiUrl(out.url ?? "")}
             target="_blank"
             rel="noreferrer"
-            className="min-w-0 truncate font-mono text-sm text-ink-2 hover:underline"
+            className="min-w-0 truncate font-mono text-sm text-ink hover:underline"
           >
             {out.name}
           </a>
         )}
-        <span className="shrink-0 text-xs tabular-nums text-ink-3">{dims}</span>
+        {meta && (
+          <span data-export-output-meta className="ml-auto shrink-0 text-xs tabular-nums text-ink-3">
+            {meta}
+          </span>
+        )}
       </div>
       {out.script_report ? (
         <ScriptSkipped report={out.script_report} />

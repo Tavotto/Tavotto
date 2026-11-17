@@ -270,9 +270,10 @@ export function CanvasPage() {
       {single ? (
         // 单图编辑按原图尺寸导出，页面尺寸这时不生效：降成一行摘要，点开仍能改（加第二张图后用得上）
         <>
-          <p data-single-export-note className="type-caption mx-3 mb-1">
+          <p data-single-export-note className="type-caption mx-3 mb-2">
             {cv('singleNote')}
           </p>
+          <div aria-hidden className="mx-3 mb-1 h-px bg-border" />
           <SummaryRow
             label={cv('layoutPage')}
             open={open('page')}
@@ -314,6 +315,8 @@ export function CanvasPage() {
           </Row>
         </div>
       </SummaryRow>
+
+      <div aria-hidden className="mx-3 my-1 h-px bg-border/70" />
 
       <SummaryRow
         label={cv('viewAids')}
@@ -485,6 +488,8 @@ export function CanvasPage() {
         </div>
       </SummaryRow>
 
+      <div aria-hidden className="mx-3 my-1 h-px bg-border/70" />
+
       {/* 只读的导出摘要：说的是导出对话框此刻的默认（格式 · ppi），点它打开同一个导出对话框——
           这里不是第二个导出入口，没有第二条导出管线 */}
       <div className="mx-3" data-summary-row>
@@ -492,10 +497,10 @@ export function CanvasPage() {
           type="button"
           data-canvas-export-summary
           onClick={() => useUiStore.getState().setExportOpen(true)}
-          className="grid h-8 w-full grid-cols-[minmax(40%,1fr)_minmax(0,auto)_1.25rem] items-center gap-x-2 rounded-sm text-left text-sm text-ink outline-none focus-visible:focus-ring"
+          className="-mx-1.5 grid h-8 w-[calc(100%+0.75rem)] grid-cols-[minmax(40%,1fr)_minmax(0,auto)_1.25rem] items-center gap-x-2 rounded-sm px-1.5 text-left text-sm text-ink transition-colors duration-fast outline-none hover:bg-surface-hover focus-visible:focus-ring"
         >
           <span className="min-w-0 truncate">{cv('export')}</span>
-          <span className="min-w-0 truncate text-right text-ink-3">
+          <span className="min-w-0 truncate text-right tabular-nums text-ink-3">
             <span className="sr-only">, </span>
             {/* ppi 只对位图格式有意义：默认只有 PDF / EPS 时不报 ppi（与设置页、导出对话框同一判据 hasRaster，Codex #829 P2） */}
             {hasRaster(exportDefaults.formats)

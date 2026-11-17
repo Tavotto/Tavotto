@@ -192,9 +192,16 @@ describe('顶栏按钮', () => {
     resetStore({ unread: { total: 2, latest: { share_id: 'sh_1', author: '林老师', count: 2 } } })
     await render(<ReviewButton />)
     expect(q('[data-review-dot]')).not.toBeNull()
+    expect(q('[data-review-button]')?.dataset.variant).toBe('secondary')
     await click(q('[data-review-button]'))
     expect(useReviewStore.getState().dialogOpen).toBe(true)
     expect(shareReview).not.toHaveBeenCalled()
+  })
+  it('空画布无目标时退为无框 ghost 减噪，有目标时升为次按钮 secondary', async () => {
+    resetStore({ target: null })
+    await render(<ReviewButton />)
+    expect(q('[data-review-button]')?.dataset.variant).toBe('ghost')
+    expect(q('[data-review-button]')?.hasAttribute('disabled')).toBe(true)
   })
 })
 

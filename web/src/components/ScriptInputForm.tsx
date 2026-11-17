@@ -106,7 +106,7 @@ export function ScriptInputFields({
           <pre
             ref={outRef}
             data-script-input-output=""
-            className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-surface-2 px-3 py-2 font-mono text-sm leading-[1.5] text-ink"
+            className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-field px-3 py-2 font-mono text-sm leading-[1.5] text-ink"
           >
             {head.stdout_tail}
           </pre>
