@@ -8,6 +8,11 @@ import { useTafFlagStore } from '@/store/tafFlagStore'
  */
 export function useHasDataFiles(): boolean {
   const taf = useTafFlagStore((s) => s.enabled)
+  // 开关的权威值只有后端知道：后端已有打开的项目时直接进工作区、不挂首页，首页那一处刷新就走不到——
+  // 工作区这边的使用者（左轨、空画布）挂上时也问一次（`refresh` 幂等：问过 / 在问就不再问；读不到当没变）
+  useEffect(() => {
+    void useTafFlagStore.getState().refresh()
+  }, [])
   const status = useDataFigureStore((s) => s.files.status)
   const has = useDataFigureStore((s) => {
     const f = s.files

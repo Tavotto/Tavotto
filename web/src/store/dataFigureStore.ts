@@ -96,7 +96,7 @@ export interface DataFigureHost {
   /** 打开左栏「数据」抽屉（首页左卡进项目后用） */
   openDrawer: () => void
   /** 把项目刷新到新脚本已经在的状态，然后用「打开并运行」那条现有路径进编辑器（准备会话检查 → 运行 → 放进画布进单图快速编辑） */
-  openScript: (script: string) => Promise<void>
+  openScript: (script: string, still: () => boolean) => Promise<void>
   /** 项目文件夹可不可写（后端给的 `writable`）；不知道回 undefined */
   projectWritable: () => boolean | undefined
   /** 此刻激活的画布 id（打开新图之后记下来，给「换个画法」胶囊认） */
@@ -106,7 +106,7 @@ export interface DataFigureHost {
   /** 「已在新画布里打开 · 撤销」那条说明不再有意义（用户回去换画法了）：清掉 */
   dismissAddedNote: () => void
 }
-let host: DataFigureHost = { openDrawer: () => {}, openScript: async () => {}, projectWritable: () => undefined, activeCanvasId: () => null, notify: () => {}, dismissAddedNote: () => {} }
+let host: DataFigureHost = { openDrawer: () => {}, openScript: async (_script, _still) => {}, projectWritable: () => undefined, activeCanvasId: () => null, notify: () => {}, dismissAddedNote: () => {} }
 export const configureDataFigureHost = (h: DataFigureHost): void => {
   host = h
 }
@@ -382,7 +382,8 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     const file = get().selected
     set({ draftOpen: false, draftActive: false, drawingId: null, problem: null, phase: 'idle', session: null, candidates: [], fresh: file ? { file, from: host.activeCanvasId(), canvasId: null } : null })
     if (ep !== epoch) return
-    await host.openScript(script).catch(() => undefined)
+    // `still`：换过项目 / 清过状态就不许再打开（A 项目的相对路径不能拿到 B 项目里去跑）
+    await host.openScript(script, () => ep === epoch).catch(() => undefined)
     if (ep !== epoch) return
     // 一直没认下新图所在的画布（打开失败 / 画布没换）：不留着，免得之后不相干的画布切换被当成它
     const pending = get().fresh

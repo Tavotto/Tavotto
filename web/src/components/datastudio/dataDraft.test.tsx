@@ -426,7 +426,7 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     release({ task: { outcome: 'completed' }, script: 'tavotto_figures/g.py', stem: 'g', data_check: 'verified' })
     await flush()
     await flush()
-    expect(openScript).toHaveBeenCalledWith('tavotto_figures/g.py')
+    expect(openScript).toHaveBeenCalledWith('tavotto_figures/g.py', expect.any(Function))
     expect(useDataFigureStore.getState()).toMatchObject({ draftOpen: false, fresh: { from: 'c0', canvasId: null } })
     expect(q('[data-redraw-pill]')).toBeNull() // 新图还没放上去（激活的画布还是旧的）
     act(() => useDocumentStore.setState({ activeCanvasId: 'c9' }))
