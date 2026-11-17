@@ -173,4 +173,4 @@ D1 的授权边界（桌面用户发起）原本只拦「路由选的 native」�
 **不变的**：不新增 `native_run` MCP 工具、`tavotto_open_figure` 不加 `execution` 参数（agent 不能直接要 native，只能经 safe 被拦这一条证据）；CLI `tavotto run` 的确认合同不变；
 HTTP 显式 `execution: "native"` 的非桌面来源仍 403 `native_requires_desktop`；native 会话不进 safe 池的 LRU（淘汰 = 杀用户进程）。
 
-**实现分步**：本修订先落策略参数与看护；MCP 桥起 native 进程、会话字段与回包、关闭 / 驱逐 / 退出清理、会话恢复分后续 PR，各自更新 `docs/rules/plugin/` 与 `docs/rules/backend/preparation-and-receipts.md`。
+**实现**：策略参数与看护先落（#1985）；MCP 桥的接线（`engine/nativefallback.py` + `bridge._native_fallback`）、会话字段与回包、关闭 / 驱逐 / 退出清理随后一个 PR，细则 `docs/rules/plugin/sessions-and-batch-open.md`。会话恢复不另做：`Session.native` 不落盘，恢复时 `_render` 按同一条证据重新回退。

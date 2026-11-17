@@ -158,6 +158,7 @@ OPTIONAL_ENGINE_MODULES = (
     "journalremote",
     "journalfacts_remote",
     "journals",
+    "nativefallback",
     "runconfig",
     "scriptargs",
     "specfix",
@@ -1125,6 +1126,9 @@ class Session:
     #: 最近一次导出出了文件时那一版的 `patch_hash`；None = 还没导出过。关会话时据此说出
     #: 「改过还没导出」——修改只活在会话里，关掉就没了（评测里 agent 改好就关、文件没出）。
     exported_hash: str | None = None
+    #: safe 被自身守卫拦下后换成的 native 活图（`nativefallback.NativeWorker`，ADR 0127 修订 2026-11-17）；
+    #: None = 这条会话走 safe 池。不落盘：进程换了之后恢复时 `_render` 会按同一条证据重新回退。
+    native: object | None = None
 
     def patch_hash(self) -> str:
         return patchspec.patch_hash(self.patches)
@@ -1138,7 +1142,17 @@ class Session:
         「开着」——用户看到的是「会话明明还在，一 apply 就说 worker 死了」，
         而且没有任何办法恢复。`pool.get()` 本来就负责「死了就重建」，
         每次问它一遍即可，代价是一次字典查找。
+
+        回退到 native 的会话（`self.native`）**不进池**：真实 Python 进程停在屏障上，就是这张图本身；
+        进程已经不在了（脚本被结束、崩溃）就如实说，不悄悄换回 safe（那会又被同一个守卫拦下）。
         """
+        if self.native is not None:
+            if self.native.alive():
+                return self.native
+            raise BridgeError(
+                "这张图改用真实 Python 运行的那个进程已经结束了，请重新调 tavotto_open_figure 打开它",
+                code=NATIVE_SESSION_ENDED,
+            )
         try:
             return _spawn_worker(self, one_shot=False)
         except engine_pool.WorkerError as exc:
@@ -1147,6 +1161,60 @@ class Session:
     @property
     def run_config_id(self) -> str | None:
         return getattr(self.run, "config_id", None)
+
+
+#: 回退到 native 的会话，真实 Python 进程已经不在
+NATIVE_SESSION_ENDED = "native_session_ended"
+#: native 会话做不了的事（冷重放 = 再起一个真实进程，不在 MCP 里静默做）
+NATIVE_UNSUPPORTED = "native_session_unsupported"
+#: safe 守卫拦下的终局码（`pool.FILE_OPERATION_BLOCKED_CODE` 的镜像）
+FILE_OPERATION_BLOCKED = "safe_file_operation_blocked"
+
+
+def _end_native(session: "Session") -> None:
+    """关掉 / 淘汰 / 退出时收掉这条会话的 native 进程（放行到脚本跑完，放不了就终止）。"""
+    native, session.native = session.native, None
+    if native is not None:
+        try:
+            native.end()
+        except Exception as exc:  # noqa: BLE001 — 收尾不许连累关闭
+            sys.stderr.write(f"tavotto-mcp: 结束会话 {session.id} 的真实 Python 进程失败：{exc}\n")
+
+
+def _native_fallback(session: "Session", worker, exc) -> object | None:
+    """safe 以 `safe_file_operation_blocked` 收场：按 ADR 0127 修订 2026-11-17 换 native 一次。
+
+    返回 `NativeWorker`（已停在屏障上、build 过）；判定不许回退返回 None，并把理由记进 `exc.extra`。
+    起进程失败抛 `engine_pool.WorkerError`（native 自己的真实错误，不回 safe）。"""
+    fallback = _optional_engine("nativefallback")
+    if fallback is None or getattr(exc, "code", None) != FILE_OPERATION_BLOCKED:
+        return None
+    python = str(getattr(worker, "python", "") or "")
+    verdict = fallback.decide(session.project, exc.code, python=python)
+    if not verdict.ok:
+        exc.extra["native_fallback_declined"] = verdict.reason
+        return None
+    _recheck_run(session.run, session.project, session.script)
+    return fallback.launch(
+        session.project,
+        session.script,
+        session.stem,
+        python=python,
+        run=session.run,
+        heavy=session.cost == "heavy",
+    )
+
+
+def _execution_fields(session: "Session") -> dict:
+    """回包里如实说这条会话是怎么跑的：只有回退到 native 才带（safe 是默认，不多加字段）。"""
+    if session.native is None:
+        return {}
+    fallback = _optional_engine("nativefallback")
+    return {
+        "execution": "native",
+        "fallback": {"from": "safe", "reason": FILE_OPERATION_BLOCKED},
+        "execution_note": getattr(fallback, "NOTE", ""),
+    }
 
 
 def _spawn_worker(session: "Session", *, one_shot: bool):
@@ -1818,6 +1886,8 @@ def close_session(session_id: str) -> dict:
             "note": f"会话 {session_id} 已经不在了（重复关闭不算错）",
         }
     s.apply_receipt = None
+    # native 活图归这条会话独占：关会话 = 放行脚本跑完（或终止），不留进程
+    _end_native(s)
     # worker 归 pool 管（同一个脚本可能还有别的用户）：这里只丢引用与会话账本。
     # 用户的项目数据一个字节都不动。
     out = {
@@ -1844,6 +1914,7 @@ def _evict_if_needed() -> list[str]:
         oldest = min(_SESSIONS.values(), key=lambda s: s.last_used)
         _SESSIONS.pop(oldest.id, None)
         oldest.apply_receipt = None
+        _end_native(oldest)
         # 淘汰也是明确的释放（open 的文字里会点名）：不许在下一次调用里悄悄复活
         _forget(oldest.id)
         evicted.append(oldest.id)
@@ -1873,6 +1944,7 @@ def _live_session_for(project: str, stem: str, run_config: str | None = None) ->
         and s.stem == stem
         and s.run_config_id == run_config
         and not s.patches
+        and (s.native is None or s.native.alive())
     ]
     return max(live, key=lambda s: s.last_used) if live else None
 
@@ -1899,6 +1971,7 @@ def shutdown_all() -> None:
     """进程退出前收摊：会话账本清空 + 关掉 worker 子进程（不留孤儿）。"""
     for session in _SESSIONS.values():
         session.apply_receipt = None
+        _end_native(session)
     _SESSIONS.clear()
     try:
         engine_pool.shutdown_all(wait=True)
@@ -2574,13 +2647,27 @@ def refresh_project(
 def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict:
     worker = session.acquire()
     try:
-        resp = worker.override(session.stem, patches, preview_dpi, inline_svg=True)
+        try:
+            resp = worker.override(session.stem, patches, preview_dpi, inline_svg=True)
+        except engine_pool.WorkerError as exc:
+            # safe 被自身守卫拦下（savefig 后又读回）：换真实 Python 跑一次（ADR 0127 修订 2026-11-17）
+            native = None if session.native is not None else _native_fallback(session, worker, exc)
+            if native is None:
+                raise
+            session.native = worker = native
+            try:
+                resp = worker.override(session.stem, patches, preview_dpi, inline_svg=True)
+            except engine_pool.WorkerError:
+                _end_native(session)
+                raise
     except engine_pool.WorkerError as exc:
         # build 期间的「需要输入」（缺参数 / 运行中要输入 / 缺包）在这里冒出来：与跑前的门同一份结构化投影（T10）
         err = _bridge_error_from_worker(
             exc, project=session.project, script=session.script, default_code="render_failed"
         )
         err.extra.setdefault("module", getattr(exc, "module", ""))
+        if "native_fallback_declined" in exc.extra:
+            err.extra["native_fallback_declined"] = exc.extra["native_fallback_declined"]
         raise err from exc
     session.patches = list(patches)
     session.manifest = resp["manifest"]
@@ -2604,6 +2691,7 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
         "render_revision": session.rev,
         "warnings": session.warnings,
         "timings": resp.get("timings", {}),
+        **_execution_fields(session),
     }
     if session.preview is not None:
         out["preview"] = session.preview
@@ -2797,6 +2885,7 @@ def session_state(session_id: str) -> dict:
         "svg": session.svg,
         "warnings": list(session.warnings),
         "restored": _take_restored(session),
+        **_execution_fields(session),
     }
     if session.apply_receipt is not None:
         out["last_apply"] = session.apply_receipt
@@ -4211,7 +4300,11 @@ def _preview_width_px(size_mm) -> int:
 
 def _retire_session_worker(session: Session) -> bool:
     """作废这个会话的热 worker（与桌面 `_retire_hot_worker` 同一个原语 `pool.invalidate`）：
-    只让它过期，下一次 `session.acquire()` 冷起、`_render` 按全量列表重放。"""
+    只让它过期，下一次 `session.acquire()` 冷起、`_render` 按全量列表重放。
+
+    native 会话没有「冷起」（那是再跑一遍真实脚本）：不作废，回 False，回滚照样在活图上按全量列表重放。"""
+    if session.native is not None:
+        return False
     # 池里的键带着写入根绊线的授权根（`_spawn_worker` 取 worker 时传的那一份）：不一起给，
     # 对不上键，作废就落空（worker 还在、热态仍不可信）
     context = {}
@@ -4698,6 +4791,11 @@ def verify_replay(session_id: str) -> dict:
     session = get_session(session_id)
     if session.manifest is None:
         raise BridgeError("会话还没有 manifest", code="no_manifest")
+    if session.native is not None:
+        raise BridgeError(
+            "这张图改用真实 Python 运行，从零重放要再执行一遍脚本，MCP 里不做这件事",
+            code=NATIVE_UNSUPPORTED,
+        )
     worker = _spawn_worker(session, one_shot=True)
     try:
         resp = worker.override(session.stem, session.patches, None, inline_svg=False)
