@@ -1964,6 +1964,10 @@ def _translate(
             continue
         first[stmt] = len(out)
         out.append((what, stmt))
+    # 留作重放的 patch **一律按原始列表顺序**交出去：引擎重放同档按列表序（`overrides._apply_rank` 是稳定排序），而上面
+    # 各条「跟着留下」的规则是逐轮追加的，追加次序不是用户做这些修改的次序（拖 A → 反转 → 拖 B，级联后会变成 A、B、反转）
+    order = {id(p): k for k, p in enumerate(patches)}
+    residual.sort(key=lambda r: order.get(id(r), len(patches)))
     return out, residual
 
 

@@ -1884,6 +1884,20 @@ def test_placed_drag_keeps_its_order_with_later_coordinate_edits(aspect_project,
     assert {s["prop"] for s in _script_output(body)["script_report"]["skipped"]} == held
 
 
+def test_residual_keeps_the_original_order():
+    """留作重放的 patch 按原始列表顺序交出去（引擎同档按列表序），不按各条规则追加的次序。"""
+    man = {
+        "elements": [
+            {"gid": "axes_0", "role": "axes", "editable": [{"prop": "aspect", "value": "equal"}]},
+            {"gid": _NOTE, "role": "text", "editable": []},
+            {"gid": "axes_0.title", "role": "title", "editable": []},
+        ]
+    }
+    patches = [_NOTE_DRAG, _INVERT_X, _TITLE_DRAG]
+    out = scriptadjust.build(b"import os\n", "Fig1", patches, man, version="9.9")
+    assert out.residual == patches
+
+
 _YTICKS_FIXED = {"gid": "axes_0.yticks", "prop": "major_mode", "value": "fixed"}
 
 
