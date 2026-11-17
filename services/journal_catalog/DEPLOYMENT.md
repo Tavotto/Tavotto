@@ -102,7 +102,7 @@ $A top --n 10                                              # 当天不同设备�
 
 ## 海外入口：tavotto.com 上的 Vercel 反代（一个后端、两个入口）
 
-海外用户先走 `https://tavotto.com/v1/journal-catalog/`，它只是转到中国站（`tavotto.cn`）上的同一个服务；
+海外用户先走 `https://www.tavotto.com/v1/journal-catalog/`（v2 同理 `/v2/`；裸域 308 到 www），它只是转到中国站（`tavotto.cn`）上的同一个服务；
 **计数只在中国站那份 sqlite 里**，反代不存任何状态。代码在 `services/journal_catalog/vercel_proxy/`。
 
 1. **共享密钥**：`openssl rand -hex 32` 生成一份，**同时**配在两边（都走环境变量，不进仓库、不进日志）：
