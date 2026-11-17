@@ -11,7 +11,7 @@ import type { ProblemCursor, ProblemDrill, ProblemScope, ProblemView } from '@/l
 import { drillKey } from '@/lib/drillKey'
 import { applyTheme, isThemePref, type ThemePref } from '@/lib/theme'
 
-export type LeftTab = 'workspace' | 'assets' | 'outline' | 'elements' | 'style' | 'problems'
+export type LeftTab = 'workspace' | 'assets' | 'data' | 'outline' | 'elements' | 'style' | 'problems'
 /** 2026-10 审计 A3：画布 + 图层合成一棵「大纲」（图内元素仍是独立的「图内」页签）；旧版本机偏好里的 canvases / layers 落到它上面 */
 const LEGACY_OUTLINE_TABS: readonly string[] = ['canvases', 'layers']
 /** 右栏三模式：属性 / 改图助手 / 画布设置 */
@@ -252,7 +252,8 @@ function readPersisted(): Persisted {
     ...state,
     // 手改过 / 未来版本写进来的未知外观值当「跟随系统」
     theme: isThemePref(state.theme) ? state.theme : DEFAULTS.theme,
-    leftTab: LEGACY_OUTLINE_TABS.includes(state.leftTab as string) ? 'outline' : state.leftTab,
+    // 「数据」抽屉是实验功能、依赖项目里的数据清单：重启后不带着它启动（落回素材）
+    leftTab: LEGACY_OUTLINE_TABS.includes(state.leftTab as string) ? 'outline' : state.leftTab === 'data' ? 'assets' : state.leftTab,
     leftPinned: typeof state.leftPinned === 'boolean' ? state.leftPinned : null,
     rightPinned: typeof state.rightPinned === 'boolean' ? state.rightPinned : null,
     rightWidth: Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, state.rightWidth)),

@@ -126,6 +126,13 @@
       "dropTitle": "把 Python 脚本拖到这里",
       "sample": "使用示例脚本试试看",
       "sampleHint": "{{product}} 会读取脚本画出的图，并直接进入工作台。"
+    },
+    "entry": {
+      "dataTitle": "只有数据，还没有图",
+      "dataHint": "选数据文件夹，让助手帮你画出来。",
+      "scriptTitle": "已有画图脚本，想精修",
+      "scriptHint": "把 .py 拖到这里，或点击选择。",
+      "scriptHintPicker": "点击选择脚本所在的文件夹。"
     }
   },
   "switcher": {

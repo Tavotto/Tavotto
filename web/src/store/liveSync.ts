@@ -19,6 +19,7 @@ import { refreshProject } from '@/lib/api'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { msg } from '@/i18n'
 import { useAssetStore } from './assetStore'
+import { useDataFigureStore } from './dataFigureStore'
 import { useDocumentStore } from './documentStore'
 import { syncPanelSourceMetadata, type PanelSyncResult } from './panelSourceSync'
 import { useProjectReadinessStore } from './projectReadinessStore'
@@ -127,6 +128,8 @@ export async function refreshAssetsAndSync(opts?: {
   // `force` 与素材那一侧同义——用户刚按过刷新 / 刚写过盘时绝不复用一个
   // **在那之前**就发出的在途请求。
   void useProjectReadinessStore.getState().load({ force: opts?.force })
+  // 数据出图的数据文件清单也是磁盘的一个投影：读过就跟着重读（外部加了 CSV、点项目刷新后「数据」入口要出现）；没读过什么都不做
+  useDataFigureStore.getState().invalidateFiles()
   const data = await useAssetStore.getState().load({ force: opts?.force })
   if (!data) return null
   const result = syncPanelSourceMetadata(

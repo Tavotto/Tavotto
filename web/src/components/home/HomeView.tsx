@@ -47,6 +47,7 @@ import {
 } from '@/lib/scriptImport'
 import { cn } from '@/lib/utils'
 import { useOnboardingStore } from '@/store/onboardingStore'
+import { useTafFlagStore } from '@/store/tafFlagStore'
 import { useForeignScriptStore } from '@/store/foreignScriptStore'
 import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useProjectStore } from '@/store/projectStore'
@@ -91,6 +92,7 @@ export function HomeView({
   busyPath,
   openPath,
   onShowAll,
+  onOpenData,
 }: {
   variant: HomeVariant
   error: string | null
@@ -98,12 +100,20 @@ export function HomeView({
   /** 打开一个项目目录；成功回 true（失败的话错误已经摆在这一屏上） */
   openPath: (path: string, entry?: ProjectEntry) => Promise<boolean>
   onShowAll: () => void
+  /** 左卡「只有数据，还没有图」：选一个数据文件夹并进数据页（只在实验开关开着时画这张卡） */
+  onOpenData?: () => void
 }) {
   const { t } = useTranslation('project')
   const importer = useScriptImport(openPath)
   const [dragging, setDragging] = useState(false)
   const currentOpen = useProjectStore((s) => s.project?.open === true)
   const switching = useProjectStore((s) => s.switching)
+  // 实验开关 `ai.taf.enabled`（「从数据到图」）：先按本机记的上一次画，后台问一次、不一样才换版（见 `tafFlagStore`）
+  const taf = useTafFlagStore((s) => s.enabled)
+  useEffect(() => {
+    void useTafFlagStore.getState().refresh()
+  }, [])
+  const hasRecent = useProjectStore((s) => s.recent.some((r) => r.exists))
 
   // 整页都收拖放（两版都画着拖放区）；只认带文件的拖动
   const dropHandlers = {
@@ -173,7 +183,9 @@ export function HomeView({
           {...dragRegionProps('self')}
         >
           {variant === 'newcomer' ? (
-            <Newcomer importer={importer} dragging={dragging} />
+            <Newcomer importer={importer} dragging={dragging} onOpenData={taf ? onOpenData : undefined} />
+          ) : taf && onOpenData ? (
+            <ReturningWithData importer={importer} dragging={dragging} onOpenData={onOpenData} showSample={!hasRecent} />
           ) : (
             <Returning importer={importer} dragging={dragging} openPath={openPath} />
           )}
@@ -188,6 +200,7 @@ export function HomeView({
             openPath={openPath}
             onShowAll={onShowAll}
           />
+          {taf && onOpenData && variant === 'returning' && hasRecent && <SampleLink />}
         </div>
       </div>
       {importer.dialogs}
@@ -539,21 +552,35 @@ function DropZone({ importer, dragging }: { importer: Importer; dragging: boolea
 
 /* --------------------------------- 新手版 ---------------------------------- */
 
-function Newcomer({ importer, dragging }: { importer: Importer; dragging: boolean }) {
+function Newcomer({ importer, dragging, onOpenData }: { importer: Importer; dragging: boolean; onOpenData?: () => void }) {
   const { t } = useTranslation('project')
   const entry = useOnboardingStore((s) => tutorialEntry(s.status))
   const switching = useProjectStore((s) => s.switching)
   return (
     <>
-      <header className="flex flex-col items-center gap-(--home-gap-tight) text-center">
-        <Wordmark size="sm" />
-        <h1 className="type-display">{t('home.newcomer.title')}</h1>
-        <p data-home-newcomer-subtitle className="max-w-[46ch] type-reading text-ink-2">
-          {t('home.newcomer.subtitle')}
-        </p>
-      </header>
+      {onOpenData ? (
+        // 实验开关开着：和老手版一样是品牌标 + 两张入口卡（大问题那句让位给卡片自己的标题）
+        <>
+          <header className="flex flex-col items-center gap-(--home-gap-tight) text-center">
+            <h1>
+              <Wordmark />
+            </h1>
+          </header>
+          <EntryCards importer={importer} dragging={dragging} onOpenData={onOpenData} />
+        </>
+      ) : (
+        <>
+          <header className="flex flex-col items-center gap-(--home-gap-tight) text-center">
+            <Wordmark size="sm" />
+            <h1 className="type-display">{t('home.newcomer.title')}</h1>
+            <p data-home-newcomer-subtitle className="max-w-[46ch] type-reading text-ink-2">
+              {t('home.newcomer.subtitle')}
+            </p>
+          </header>
 
-      <DropZone importer={importer} dragging={dragging} />
+          <DropZone importer={importer} dragging={dragging} />
+        </>
+      )}
       {importer.noticeView}
 
       {/* 这一屏唯一的填色主动作（EmptyState v2 的约定：一屏一颗、32px） */}
@@ -632,6 +659,106 @@ function Returning({
         </div>
       )}
     </>
+  )
+}
+
+/* ----------------------- 老手版 · 实验开关开着（从数据到图） ----------------------- */
+
+/**
+ * 实验开关 `ai.taf.enabled` 开着时的老手版：品牌标 + 两张并排的入口卡（左「只有数据，还没有图」、右是原来的拖放 / 选择脚本），
+ * 没有叙事句；示例脚本退成灰字链接（没有最近项目时在卡下面，有则在页面最底部）。**关着时走 `Returning`，一个字不变。**
+ */
+function ReturningWithData({
+  importer,
+  dragging,
+  onOpenData,
+  showSample,
+}: {
+  importer: Importer
+  dragging: boolean
+  onOpenData: () => void
+  showSample: boolean
+}) {
+  return (
+    <>
+      <header className="flex flex-col items-center gap-(--home-gap-tight) text-center">
+        <h1>
+          <Wordmark />
+        </h1>
+      </header>
+      <EntryCards importer={importer} dragging={dragging} onOpenData={onOpenData} />
+      {importer.noticeView}
+      {showSample && <SampleLink />}
+    </>
+  )
+}
+
+/**
+ * 双入口：原来那张大拖放卡拆成并排两张，结构、内边距、线稿盒（96×72）完全一致，整卡可点，没有主按钮。
+ * 左卡只做点击（选一个数据文件夹），**不收拖入**——整页的拖放处理照旧只认脚本 / 项目文件夹；右卡就是原来的拖放区（拖入态只画在右卡）。
+ */
+function EntryCards({ importer, dragging, onOpenData }: { importer: Importer; dragging: boolean; onOpenData: () => void }) {
+  const { t } = useTranslation('project')
+  const switching = useProjectStore((s) => s.switching)
+  const body = 'flex w-full flex-col items-center rounded-lg px-5 py-(--home-dz-pad) disabled:cursor-not-allowed disabled:opacity-40'
+  const art = 'flex h-18 w-24 items-center justify-center'
+  return (
+    <div className="mx-auto grid w-full max-w-[720px] grid-cols-1 gap-3 min-[560px]:grid-cols-2">
+      <Card interactive={!switching} padding="none">
+        <button type="button" data-home-entry="data" disabled={switching} onClick={onOpenData} aria-describedby="home-entry-data-hint" className={cn(body, dropZoneClass(false))}>
+          <span aria-hidden className={cn(art, 'text-ink-faint')}>
+            <Sketch name="sheet" className="block" />
+          </span>
+          <span className="type-heading mt-4">{t('home.entry.dataTitle')}</span>
+          <span id="home-entry-data-hint" className="mt-2 text-base text-ink-2">
+            {t('home.entry.dataHint')}
+          </span>
+        </button>
+      </Card>
+      <Card interactive={!switching} padding="none">
+        <button
+          type="button"
+          data-home-dropzone
+          data-home-entry="script"
+          data-dragging={dragging || undefined}
+          disabled={switching}
+          onClick={importer.start}
+          aria-describedby="home-entry-script-hint"
+          className={cn(body, dropZoneClass(dragging))}
+        >
+          <span aria-hidden className={cn(art, dragging ? 'text-ink-3' : 'text-ink-faint')}>
+            <Sketch name="drop" className="block" />
+          </span>
+          <span className="type-heading mt-4">{dragging ? t('home.returning.dropRelease') : t('home.entry.scriptTitle')}</span>
+          <span id="home-entry-script-hint" className="mt-2 text-base text-ink-2">
+            {t(importer.native ? 'home.entry.scriptHint' : 'home.entry.scriptHintPicker')}
+          </span>
+        </button>
+      </Card>
+    </div>
+  )
+}
+
+/** 示例脚本：一行居中的灰字链接，行为同原来的示例脚本按钮——只打开示例项目、不带引导 */
+function SampleLink() {
+  const { t } = useTranslation('project')
+  const sample = useSampleAvailability()
+  if (sample.hidden) return null
+  return (
+    <div className="flex flex-col items-center">
+      <button
+        type="button"
+        data-home-sample
+        disabled={sample.disabled}
+        aria-busy={sample.opening || undefined}
+        title={sample.unavailable ? t('picker.tutorialUnavailable') : undefined}
+        onClick={() => void openSampleProject()}
+        className="type-caption rounded-sm underline-offset-2 outline-none hover:text-ink hover:underline focus-visible:focus-ring disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        {sample.opening ? t('picker.tutorialOpening') : t('home.returning.sample')}
+      </button>
+      <SampleFailure failure={sample.failure} />
+    </div>
   )
 }
 

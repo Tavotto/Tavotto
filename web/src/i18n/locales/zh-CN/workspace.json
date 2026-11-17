@@ -580,11 +580,13 @@
       "problems": "问题",
       "settings": "设置",
       "style": "样式",
-      "workspace": "项目"
+      "workspace": "项目",
+      "data": "数据"
     },
     "style": "样式",
     "workspace": "项目",
-    "problemsBlocking_other": "问题 · {{count}} 项阻断（共 {{total}}）"
+    "problemsBlocking_other": "问题 · {{count}} 项阻断（共 {{total}}）",
+    "data": "数据"
   },
   "readiness": {
     "foreign": {
@@ -755,7 +757,8 @@
     "tryTutorial": "试用示例",
     "rulerUnit": "mm",
     "rulerUnitTitle": "标尺单位：毫米",
-    "textPlaceholder": "输入文字"
+    "textPlaceholder": "输入文字",
+    "emptyFromData": "用数据画一张"
   },
   "stylePanel": {
     "emptyTitle": "在画布上选中一张图，这里显示它的样式",
@@ -1699,5 +1702,8 @@
     "fitContent": "贴合内容",
     "clearPad": "去掉留白",
     "notWrittenBack": "留白只在 Tavotto 导出时生效，不写回脚本"
+  },
+  "dataDrawer": {
+    "count": "{{count}} 个数据文件"
   }
 }

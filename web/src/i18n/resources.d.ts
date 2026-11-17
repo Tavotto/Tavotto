@@ -99,6 +99,10 @@ export default interface Resources {
           "title": "每个对象一条线",
           "why": "同一对象的重复测量连成线，看每个对象各自怎么变。"
         },
+        "other": {
+          "title": "这种画法",
+          "why": "用这份数据画出来的一种样子。"
+        },
         "points_mean": {
           "title": "原始点 + 均值",
           "why": "每个点都画出来，再标出各组均值，能同时看到差别和离散程度。"
@@ -116,32 +120,67 @@ export default interface Resources {
           "why": "看每组数值分布的形状，点保留了每个观测。"
         }
       },
-      "mixedCells": {
-        "cannotExtract": "取不出数字，会被忽略",
-        "extracted": "取数字后是 {{value}}",
-        "more": "还有 {{count}} 行",
-        "placeholder": "说说这些格子该怎么算，比如「ND 记为 0」",
-        "previewRow": "第 {{row}} 行：{{text}}"
+      "draft": {
+        "allText": "这张表里都是文字，没有能画的数字。",
+        "collapse": "收起",
+        "expand": "展开",
+        "failed": "这次没画出来，数据没问题。",
+        "guessRow": "把第 {{n}} 行当作列名。不对就点对的那一行。",
+        "pickLead": "点一张，放进画布接着改。",
+        "stripInfo": "前 {{shown}} 行，共 {{total}} 行 · {{columns}} 列",
+        "unreadable": "这个文件不是表格，读不了。"
+      },
+      "list": {
+        "empty": "这个文件夹里没找到数据文件。",
+        "fileMeta": "{{rows}} 行 · {{columns}} 列",
+        "heading": "数据",
+        "loadFailed": "没能看清这个文件夹里有什么。",
+        "rows": "{{rows}} 行",
+        "sheets": "{{count}} 张工作表",
+        "unread": "没读",
+        "unreadable": "读不了",
+        "unsure": "没认准",
+        "unsureTitle": "没认准，先不用"
+      },
+      "nothing": {
+        "generic": "这张表没能画出图。"
       },
       "option": {
-        "column": "{{column}}",
-        "describe": "我来说明",
-        "design_independent": "每一行是不同的对象",
-        "design_repeated": "同一个对象被重复测了好几次",
-        "extract": "取出里面的数字",
-        "skip": "忽略这些行",
-        "table": "{{file}}：{{rows}} 行，{{groups}} 组",
-        "table_sheet": "{{file}} 的「{{sheet}}」：{{rows}} 行，{{groups}} 组",
-        "unsure": "不确定"
+        "extract": "只用里面的数字",
+        "skip": "不画这 {{count}} 行"
       },
-      "question": {
-        "mixed_cells": "「{{column}}」里有 {{count}} 个格子不是数字（共 {{rows}} 行有数据），怎么处理？",
-        "pick_design": "这些数据是同一个对象被重复测量的吗？",
-        "pick_group": "按哪一列分组比较？",
-        "pick_table": "用哪张表画？",
-        "pick_unit": "哪一列标出了是哪个对象？",
-        "pick_value": "要画的是哪一列的数值？",
-        "pick_x": "横轴用哪一列？"
+      "panel": {
+        "group": "分组",
+        "mixed": "{{count}} 格不是数字",
+        "noGroup": "不分组",
+        "noX": "不要横轴",
+        "note": "原文件不会改。",
+        "x": "横轴",
+        "y": "纵轴"
+      },
+      "pick": {
+        "recommended": "推荐"
+      },
+      "preview": {
+        "headerPick": "哪一行是每列的名字",
+        "headerTag": "列名",
+        "lineN": "第 {{n}} 行",
+        "pickHint": "点一下每列名字所在的那一行。",
+        "type": {
+          "date": "日期",
+          "id": "编号",
+          "mixed": "混有文字",
+          "numeric": "数值",
+          "text": "文字"
+        }
+      },
+      "problem": {
+        "mismatchNext": "它的脚本还留在项目里：可以换一种画法重画，或者去文件夹里把这份脚本删掉。",
+        "otherFolder": "换个文件夹",
+        "otherWay": "换一种画法",
+        "retry": "再试一次",
+        "reveal": "在文件夹中显示",
+        "unwritable": "这个文件夹写不进，图放不下。"
       },
       "reason": {
         "all_candidates_rejected": "备选都没通过检查。",
@@ -161,17 +200,26 @@ export default interface Resources {
         "no_renderable_family": "这张表暂时没有能画的画法。",
         "no_usable_table": "这个文件夹里没有能画的数据表。",
         "register_failed": "没能把新图登记进项目，新建的文件已撤回。",
-        "rows_not_plotted": "有 {{count}} 行不是数字或缺横轴的值，没有画出来。",
         "stem_taken": "这个图名刚被占用了，请再试一次。",
         "table_not_found": "找不到你选的那张表。",
         "target_exists": "同名脚本已经存在，没有覆盖它。",
         "value_column_mixed": "数值列里混着文字（比如「<0.1」），先整理一下再画。"
       },
+      "redraw": {
+        "again": "换个画法",
+        "from": "用 {{file}} 画的",
+        "undo": "撤销"
+      },
       "result": {
-        "mismatch": "图里的数据和文件对不上；不对的话可以删掉这份新脚本。",
+        "mismatch": "画出来的图和你的数据对不上，所以没有打开它。",
         "unknown": "图画好了，数据核对没能完成。",
         "unverifiable": "图画好了，但这类图没法逐项核对数据。",
         "verified": "图画好了，数据和文件逐项对上。"
+      },
+      "working": {
+        "drawing": "正在画…",
+        "reading": "正在读…",
+        "slow": "还在画，数据多会久一点。"
       }
     },
     "dependency": {
@@ -5931,6 +5979,13 @@ export default interface Resources {
     "home": {
       "backHome": "返回主页",
       "browseMore": "浏览更多项目",
+      "entry": {
+        "dataHint": "选数据文件夹，让助手帮你画出来。",
+        "dataTitle": "只有数据，还没有图",
+        "scriptHint": "把 .py 拖到这里，或点击选择。",
+        "scriptHintPicker": "点击选择脚本所在的文件夹。",
+        "scriptTitle": "已有画图脚本，想精修"
+      },
       "import": {
         "dropNoPath": "请在接下来的窗口里确认「{{name}}」所在的文件夹，以便 {{product}} 一并读取同目录的数据与模块。",
         "dropNotScript": "「{{name}}」打不开。主页可以拖入脚本（.py、.R、.m）、笔记本（.ipynb）或项目文件夹。",
@@ -6315,6 +6370,9 @@ export default interface Resources {
       "body": "排版已自动保存在本机，刷新后从最后一次快照继续。仍然出错可选「打开空白排版」，原排版不会删除。",
       "details": "详情",
       "title": "界面出错了"
+    },
+    "dataDrawer": {
+      "count": "{{count}} 个数据文件"
     },
     "docBanner": {
       "checkUpdate": "检查更新",
@@ -7314,6 +7372,7 @@ export default interface Resources {
     },
     "rail": {
       "assets": "素材",
+      "data": "数据",
       "elements": "图内元素",
       "navLabel": "工作区侧栏",
       "outline": "大纲",
@@ -7323,6 +7382,7 @@ export default interface Resources {
       "settings": "设置",
       "short": {
         "assets": "素材",
+        "data": "数据",
         "elements": "图内",
         "outline": "大纲",
         "problems": "问题",
@@ -7532,6 +7592,7 @@ export default interface Resources {
       "backToCanvas": "返回画布",
       "contextBarLabel": "工作区位置",
       "crumbsLabel": "当前对象",
+      "emptyFromData": "用数据画一张",
       "emptyHint": "从素材库选一张图放到画布上。",
       "emptyHintNoAssets": "把 PDF/PNG 或绘图脚本放进项目目录，就会出现在素材库。",
       "emptyTitle": "画布是空的",

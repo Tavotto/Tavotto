@@ -1,0 +1,88 @@
+import { useEffect, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
+import { Button } from '@/components/ui/Button'
+import { Notice } from '@/components/ui/Notice'
+import { ProgressBar } from '@/components/ui/ProgressBar'
+import type { AiDataOverview } from '@/lib/api'
+import { fileRows, sameTable } from '@/lib/dataFigure'
+import '@/lib/dataFigureHost' // 注册宿主（开抽屉 / 刷新 / 打开并运行 / 项目可写性），见该文件头
+import { overviewKeyOf, useDataFigureStore } from '@/store/dataFigureStore'
+import { useProjectStore } from '@/store/projectStore'
+import { DataList } from './DataList'
+
+/**
+ * 左栏「数据」抽屉（`LeftTab` 'data'，和「素材」「大纲」一样走 `railClick`）：这个文件夹里的数据文件树。
+ * 点一个文件 = 在画布标签栏开（或复用）一个临时标签（`DataDraft`）并开始出候选，抽屉与画布文档都不动。抽屉里不加说明文字。
+ */
+export function DataDrawer() {
+  const { t } = useTranslation('ai')
+  const files = useDataFigureStore((s) => s.files)
+  const selected = useDataFigureStore((s) => s.selected)
+  const overviews = useDataFigureStore((s) => s.overviews)
+  const headerRows = useDataFigureStore((s) => s.headerRows)
+
+  // 抽屉开着时清单没读过就读一次（`LeftRail` 为了决定「数据」项出不出现已经读过的话这里什么都不做）
+  useEffect(() => {
+    if (useDataFigureStore.getState().files.status === 'idle') void useDataFigureStore.getState().loadFiles()
+  }, [])
+
+  const entries = files.status === 'ready' || files.status === 'error' || files.status === 'loading' ? files.entries : null
+  const rows = useMemo(() => (entries ? fileRows(entries) : []), [entries])
+  // 用户改过表头行的那几个文件：清单里这一行说重读后的行数
+  const listOverviews = useMemo(() => {
+    const out: Record<string, AiDataOverview | undefined> = {}
+    for (const [path] of Object.entries(headerRows)) {
+      const sheet = rows.find((r) => r.path === path)?.workbook ? selected?.sheet ?? null : null
+      const ov = overviews[overviewKeyOf({ path, sheet }, headerRows)]
+      if (ov?.data) out[path] = ov.data
+    }
+    return out
+  }, [headerRows, overviews, rows, selected])
+
+  if (files.status === 'error' && !entries)
+    return (
+      <div className="p-3" data-studio-data>
+        <Notice
+          tone="neutral"
+          title={t('dataFigureV2.list.loadFailed')}
+          action={
+            <Button variant="ghost" size="sm" onClick={() => void useDataFigureStore.getState().loadFiles()}>
+              {t('dataFigureV2.problem.retry')}
+            </Button>
+          }
+        />
+      </div>
+    )
+  if (files.status === 'ready' && rows.length === 0)
+    return (
+      <div className="flex flex-col items-start gap-3 p-3" data-studio-data data-studio-no-files>
+        <p className="text-base text-ink-2">{t('dataFigureV2.list.empty')}</p>
+        <Button variant="primary" size="md" onClick={() => useProjectStore.getState().showPicker()}>
+          {t('dataFigureV2.problem.otherFolder')}
+        </Button>
+      </div>
+    )
+  if (!entries) return <ProgressBar pct={null} label={t('dataFigureV2.working.reading')} className="m-3 w-40" />
+  return (
+    <div data-studio-data className="flex min-h-0 flex-1 flex-col">
+      <DataList
+        rows={rows}
+        selected={selected}
+        overviews={listOverviews}
+        onSelect={(ref) => useDataFigureStore.getState().select(ref)}
+        onFocusRow={(ref) => {
+          // 临时标签激活着：方向键走到哪个文件，标签就换成哪个（像访达的快速查看）；出图中不动
+          const st = useDataFigureStore.getState()
+          if (st.draftActive && !st.drawingId && !sameTable(st.selected, ref)) st.select(ref)
+        }}
+        onConfirm={() => {
+          // Enter：焦点交给候选网格（方向键移动、Enter 选）；还没有候选就不处理
+          const first = document.querySelector<HTMLElement>('[data-data-draft] [data-candidate]')
+          if (!first || first.hasAttribute('disabled')) return false
+          first.focus()
+          return true
+        }}
+      />
+    </div>
+  )
+}

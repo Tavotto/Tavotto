@@ -74,6 +74,7 @@ import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { usePackageStore } from '@/store/packageStore'
 import { useEnvStore } from '@/store/envStore'
+import { useDataFigureStore } from '@/store/dataFigureStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
@@ -261,6 +262,8 @@ async function resetForNewProject(pj: string | null): Promise<RestoreToken> {
   // 脚本运行状态机换代（在途 probe 响应作废，绝不落进新项目）+ 脚本清单清空
   useScriptRunStore.getState().clear()
   useScriptLibraryStore.getState().clear()
+  // 「从数据到图」的页面状态（清单 / 概览 / 备选会话）属于旧项目：换代，在飞请求作废（后端的候选会话自己过期）
+  useDataFigureStore.getState().clear()
   // 脚本 input() 的问答与记住的答案都属于旧项目（ADR 0099）：换代清空。**后端那一问不取消**——
   // A 的脚本照样在等，切回 A 时 `loadAnswers()` 从 pending 把对话框接回来
   useScriptInputStore.getState().clear()
