@@ -10,7 +10,7 @@ sheet: codex-plugin/AGENTS.md
 order: 100
 改到: `tavotto_mcp/` 的分层、`rpc.hijack_stdout()`、`RootAuthority` / `roots.WORKSPACE_FAILURES`
 主题: MCP server：只翻译、stdout、路径范围 → `server-core-and-roots.md`
-必守要点: 只翻译不实现；先存 `_REAL_STDOUT` 再改道；授权失败分档、「没弹框」绝不报成用户拒绝；越界一律拒；失败回包的 `next` 只在 `nextstep.py` 集中映射
+必守要点: 只翻译不实现；先存 `_REAL_STDOUT` 再改道；授权失败分档、「没弹框」绝不报成用户拒绝；越界一律拒
 -->
 
 ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推翻**
