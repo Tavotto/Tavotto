@@ -20,30 +20,35 @@
 
 ### L-011 对拍的两侧必须独立；换输入不等于换方法
 - 类: 别这样
+- 触发: docs/rules/repo/same-origin-pairs.md, docs/rules/repo/predicate-subject.md, scripts/dev/third_path_review.py
 - Seen: 2026-08-27, 2026-08-29
 - 为什么: 两侧同源的对拍在故障时照样相等，形式上与真对拍一样却一文不值；三棵树上跑同一静态判据，只会一致地漏掉同一个盲区。静态分析要配一次真跑的行为验证。
 - 证据: （迁移自维护者记录，无编号）
 
 ### L-012 对拍前先问：模型错 500 倍时这把尺子读数会变吗
 - 类: 别这样
+- 触发: src/tavotto/engine/previewbudget.py, src/tavotto/engine/preview_complexity.py, tests/test_preview_complexity.py, tests/support/preview_complexity_probe.py
 - Seen: 2026-08-29
 - 为什么: 用路径里 M/L 指令数量顶点数，散点的贝塞尔圆写的是 C，读数恒定，那一格判据是空的；把估值改错 500 倍整套仍绿。换尺子，别放宽容差。
 - 证据: #181
 
 ### L-013 全量套件在跑时别动工作树，变异和重建产物放在开跑之前
 - 类: 别这样
+- 触发: *
 - Seen: 2026-08-30, 2026-11-06
 - 为什么: 全量跑读的是磁盘上的树；中途做变异反证或重建受管产物会得到与被测无关的红，离改动很远，排查先怀疑错对象。中途动过树的那一遍不算数。11-06 导出分片运行中改源码，inspect.getsource 读到新字节，与进程已加载的旧实现不一致，再次假红。
 - 证据: （迁移自维护者记录，无编号）, #1790
 
 ### L-014 失败信息本身是断言，成功分支要打出观测值
 - 类: 照这样
+- 触发: scripts/ci/, docs/rules/ci/gate-discipline.md
 - Seen: 2026-08-27, 2026-08-28
 - 为什么: 判据修对后又在新措辞里写「根本不存在」，而对象只是在没 fetch 的分支上；成功分支只写「通过」则假绿与真绿同形，打出「41 / 41」才能被外部复核。
 - 证据: （迁移自维护者记录，无编号）
 
 ### L-016 叠栈并 main 的显式合并基必须是本层已含的树
 - 类: 别这样
+- 触发: *
 - Seen: 2026-10-09
 - 为什么: 用「下层定稿加旧 main」作基，本层从没并过的 main 改动被三方合并当成本侧删除而静默回退，零冲突、门禁全绿，靠评审才发现。合完核与 main 的差异只落在本层改过的文件。
 - 证据: #816
@@ -56,18 +61,21 @@
 
 ### L-025 本该相等的两个量，把相等写成断言
 - 类: 照这样
+- 触发: src/tavotto/engine/previewbudget.py, src/tavotto/engine/preview_hybrid.py, tests/test_preview_budget.py, tests/support/preview_guard_probe.py
 - Seen: 2026-08-29
 - 为什么: savefig(路径) 走文本模式使磁盘 CRLF 比内存 LF 多字节，而字节数是 vector/raster 的判定量，Windows 上同图显大 3.8%。两条断言各自在某平台绿，只有一对同时成立才暴露。行为级门禁在 POSIX 恒绿，要源码级。
 - 证据: #193
 
 ### L-026 判「是不是我引入的」：基线绿要交替 A/B，基线红可单跑
 - 类: 照这样
+- 触发: *
 - Seen: 2026-08-26
 - 为什么: 不同时刻各跑一次只是两个样本，负载敏感的用例忙红闲绿。结论压在「基线绿」上必须 main×2 与分支×2 交替连跑；压在「干净基线出现同签名红」上则单跑即成立，别不加区分套严格方法。
 - 证据: #131, #138
 
 ### L-029 把「记得回来改」的纪律换成不允许半对的结构
 - 类: 照这样
+- 触发: docs/rules/repo/invariants-detail.md, docs/rules/repo/same-origin-pairs.md
 - Seen: 2026-08-28, 2026-09-04
 - 为什么: 枚举取代手写白名单、派生取代复制、顺序块取代散句；半更新比全陈旧更坏，因为它销毁自洽性却继承「刚改过」的可信度。能钉在可识别动作（跑变异前、推送前）上的才做成非 0 退出，否则别硬做 checklist。
 - 证据: #187, #188
@@ -78,6 +86,7 @@
 
 ### L-032 批量改 N 项的验收，对拍标识符集合与内容，不只数 count
 - 类: 照这样
+- 触发: *
 - Seen: 2026-08-27
 - 为什么: 还原 4 条 CodeQL dismissal 用「27→31」验收，错改 4 条不该动的、漏掉该动的 4 条总数照样 31。要取操作前快照，断言差集逐位等于目标、removed 为空，非目标的 updated_at 不变。
 - 证据: （迁移自维护者记录，无编号）
@@ -86,18 +95,21 @@
 
 ### L-035 兼容性问题从产品侧解决，不提议改用户的脚本
 - 类: 别这样
+- 触发: docs/compatibility/, tests/compat/
 - Seen: 2026-09-26
 - 为什么: 维护者自己的脚本形状就是典型用户的写法，脚本要改才能出图等于产品不兼容。方向只有改 Tavotto（cwd、回退覆盖面、读取器策略）并把该脚本形状做成回归用例；用户主动 opt-in 的写回功能不在此限。
 - 证据: （迁移自维护者记录，无编号）
 
 ### L-036 完成通知不是结论，说「合了/绿了」前用独立事实复核
 - 类: 别这样
+- 触发: *
 - Seen: 2026-09-05, 2026-09-07
 - 为什么: 两次「已合入」通知是假的，其中一个 SHA 在仓库里不存在；包装子 shell 的退出码也不是命令的。子代理报告点名的文件与常量全仓零命中。
 - 证据: #291
 
 ### L-037 状态块整段重写，不要只往里加一行
 - 类: 别这样
+- 触发: docs/compatibility/COMPATIBILITY_BRIDGE_HANDOFF.md, docs/compatibility/COMPATIBILITY_BRIDGE_MASTER_PLAN.md
 - Seen: 2026-08-28
 - 为什么: 交接文档只加一行「已合入」，同段里基线、PR 状态三处互相矛盾；半更新比完全陈旧更误导。段首注明快照时点，并扫一遍全文时态。
 - 证据: #186, #188
@@ -106,6 +118,7 @@
 
 ### L-039 正向用例要确认没被文档级前置校验抢先抛异常
 - 类: 别这样
+- 触发: scripts/ci/compat_corpus.py, tests/compat/manifest.json, tests/test_compat_manifest.py, tests/test_compat_product_routes.py
 - Seen: 2026-09-03
 - 为什么: 只放一条 case 的正向用例先被 smoke_empty 炸掉，被测规则根本没走到，证明的不是它。负向用例断言异常 code，正向用例让前置条件成立，并做反证。
 - 证据: #234
@@ -114,6 +127,7 @@
 
 ### L-041 撤提交用 revert 或 reset --soft，别用 reset --hard
 - 类: 别这样
+- 触发: *
 - Seen: 2026-10-28
 - 为什么: reset --hard 不分要撤的提交和工作区里别的未提交改动，半天的 README、文档、测试改动全丢，只能按对话重放；动 HEAD 前先看 git status。
 - 证据: （迁移自维护者记录，无编号）
@@ -124,60 +138,70 @@
 
 ### L-045 覆盖「默认值」的用例会真走默认路径，先给工具加只读模式
 - 类: 别这样
+- 触发: scripts/build_frontend.py, scripts/build_mcp_widget.py
 - Seen: 2026-09-03
 - 为什么: 默认值指向维护者机器上真实的邻居工作区时，用例会拷贝陈旧产物，自己触发要防的缺陷；CI 上路径不存在永远绿。别用 skipIf 绕过。
 - 证据: （迁移自维护者记录，无编号）
 
 ### L-046 测试里的假密钥运行时拼接，源码不留完整形状
 - 类: 照这样
+- 触发: tests/test_fixtools.py, src/tavotto/engine/agent_runner/redact.py
 - Seen: 2026-10-23
 - 为什么: 脱敏用例里形似云厂商密钥的夹具被推送保护拦下，整次推送被拒；被拒后要改写未推出的提交，只追加修复提交没用。
 - 证据: #1353
 
 ### L-047 造测试变体先把源归一到已知形状，判据枚举概念而非本机形状
 - 类: 照这样
+- 触发: scripts/ci/artifact_manifest.py, scripts/make_plugin_manifest.py, tests/test_codex_plugin.py
 - Seen: 2026-09-07
 - 为什么: Windows 检出本已是 CRLF，再替换成 \r\r\n；判据只枚举 POSIX 顶级目录，在 Windows 上恒假。跨平台断言用相等，别用含/不含。
 - 证据: #289
 
 ### L-124 分配 UNRELEASED 锚点或豁免表行位前先本地模拟合并，别看 @@ 行号
 - 类: 别这样
+- 触发: docs/release-notes/UNRELEASED.md, docs/release-notes/unreleased/, docs/1.0-release-readiness.md, docs/RELEASING.md
 - Seen: 2026-11-01, 2026-11-03
 - 为什么: 凭 git diff -U0 的行号推断插入点错了一位（表格上方有空行），两个 PR 被指到同一位置，对方白推一轮。拟定行位后在一次性 worktree 里把 main、在飞 PR、挪完的 PR 依次 merge，零冲突再发。
 - 证据: #1671, #1693
 
 ### L-125 共用仓库的 worktree 里不用 git stash，改临时提交或单独 worktree
 - 类: 别这样
+- 触发: *
 - Seen: 2026-11-03
 - 为什么: stash 列表所有 worktree 共享，一个子代理 pop 到了别的会话在别的分支存的内容，引发冲突，靠悬空提交才核实没丢。
 - 证据: #1659
 
 ### L-127 跑过会写缓存的工具后，提交前逐行核 git status 的新增文件
 - 类: 别这样
+- 触发: *
 - Seen: 2026-11-03
 - 为什么: wrangler 本地命令在包目录写 .wrangler/cache/cf.json，内含本机出口的地理与网络信息，git add -A 把它带进了公开仓库 PR 的首次推送，只能改写分支移除。
 - 证据: #1679
 
 ### L-146 跨仓库多行命令先设失败即停，写入前核工作树与远端身份
 - 类: 别这样
+- 触发: *
 - Seen: 2026-11-06
 - 为什么: 临时克隆消失后 cd 失败，后续分号后的 git 命令仍在主工作区切分支、提交探针，险些推到产品仓库；前面的 && 没罩住整段。多行脚本先 set -euo pipefail，或让整段受 cd 成功保护；任何改写与推送前核 git rev-parse --show-toplevel 和 git remote get-url origin。
 - 证据: （会话记录，无编号）
 
 ### L-162 解析跨平台输入的 golden 向量按平台分段，每个平台至少一条它特有的写法
 - 类: 别这样
+- 触发: tests/golden/argv_paste_vectors.json, web/src/lib/argvPaste.ts, web/src/lib/argvPaste.golden.test.ts, tests/test_script_args.py, scripts/dev/gen_script_args_vectors.py
 - Seen: 2026-11-14
 - 为什么: 粘贴命令的分词真值只取 POSIX 的 shlex，golden 里一条 Windows 路径都没有；引号外的反斜杠被当转义吃掉，两侧对拍一直绿，门禁和评审都没发现，一份用户反馈才暴露。真值只来自一个平台的实现，另一个平台的行为就没人看护。
 - 证据: #1900
 
 ### L-165 新写一条做同一件事的路径，先把旧路径已有的防护列出来逐条搬过去
 - 类: 别这样
+- 触发: src/tavotto/engine/ai_convert.py, tests/test_convert_output_content.py, src/tavotto/engine/ai_connections.py, src/tavotto/engine/ai_probe.py
 - Seen: 2026-11-16
 - 为什么: 为了不让轮询看到候选消失，把 rmtree + copytree 的还原换成手写逐文件覆盖，丢了不跟随符号链接与 Windows 联接点的保护，评审连报两条 P1（#1960）；保存时新加的协议探测把旧密钥直接发往改过的地址，而拉型号清单那条路早有「改了地址不带旧密钥」（#1965）。替换或新增之前把旧路径的防护列成清单，新路径上每条各写一个反证用例。
 - 证据: #1960, #1965
 
 ### L-167 新解析器或转换器：认得的输入要么兑现、要么报 issue，不许静默丢
 - 类: 别这样
+- 触发: src/tavotto/svg*, src/tavotto/engine/chart*, src/tavotto/chartbundle.py, tests/support/svg_corpus/
 - Seen: 2026-11-16
 - 为什么: SVG 场景转换器认得嵌套 clip-path 与 textLength，转换时却当没写，画出来不裁、字宽不对（#1879）；粘贴表格分词滤掉空串，`1,,3` 的空格悄悄消失，重名表头后者覆盖前者且 issues 为空，TS 镜像校验只查样式键不查值（#1880）。两个 PR 评审共 7 条 P1。每个认得的属性或格式写一条「兑现」或「报 issue」的用例；镜像校验与权威实现共用一份含拒绝样例的向量。
 - 证据: #1879, #1880
