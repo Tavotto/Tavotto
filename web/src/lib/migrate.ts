@@ -6,7 +6,7 @@ import type {
   ProjectDocument,
   TextObject,
 } from '@/types/document'
-import { emptyDocument, migrateToProject } from '@/types/document'
+import { SCHEMA_CURRENT, emptyDocument, migrateToProject } from '@/types/document'
 
 type Unknown = Record<string, unknown>
 
@@ -60,6 +60,16 @@ function migrateObject(raw: Unknown): CanvasObject | null {
   }
 
   return null
+}
+
+/**
+ * 这份载荷是不是来自更新的 Tavotto：`schema` 是数字且大于本构建的 `SCHEMA_CURRENT` 时返回它，
+ * 否则 null。与恢复列表 / 自动保存的判据同一条（`recoveryCandidates`、`documentStore`）。
+ */
+export function tooNewSchema(payload: unknown): number | null {
+  if (!payload || typeof payload !== 'object') return null
+  const schema = (payload as { schema?: unknown }).schema
+  return typeof schema === 'number' && Number.isFinite(schema) && schema > SCHEMA_CURRENT ? schema : null
 }
 
 /**
