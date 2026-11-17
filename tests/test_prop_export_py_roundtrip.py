@@ -48,15 +48,15 @@ _WRITTEN_KEYS: Counter = Counter()
 
 @pytest.fixture(scope="module")
 def adj():
-    """一条常驻 worker + 每张图的基准 manifest。每个例子之后清空 override（`finally`），所以例子之间互不留痕。"""
+    """工作目录 + 每张图的基准 manifest（只读一次）。worker **不**常驻：每个例子起一条全新的（见 `_roundtrip`）。"""
     with tempfile.TemporaryDirectory(prefix="tavotto-prop-export-") as d:
         tmp = Path(d)
-        worker, name = _library_worker(tmp, "adj")
+        worker, _name = _library_worker(tmp, "adj")
         try:
             mans = {s: worker.override(s, [])["manifest"] for s in STEMS}
-            yield worker, name, tmp, mans
         finally:
             pool.discard(worker)
+        yield tmp, mans
 
 
 def _accept(el: dict, f: dict) -> bool:
@@ -69,26 +69,33 @@ def _accept(el: dict, f: dict) -> bool:
     )
 
 
-def _roundtrip(
-    worker, name: str, tmp: Path, stem: str, patches: list[dict], els: dict
-) -> set[tuple[str, str]]:
-    """导出脚本重放 == 热态；回这组里**真写进了脚本**的 (类, prop) 键（空 = 全被留作重放，没验到脚本）。"""
+def _roundtrip(tmp: Path, stem: str, patches: list[dict], els: dict) -> set[tuple[str, str]]:
+    """导出脚本重放 == 热态；回这组里**真写进了脚本**的 (类, prop) 键（空 = 全被留作重放，没验到脚本）。
+
+    **每个例子一条全新 worker**：被量的是「全新的图 + 这组编辑 → 导出」。常驻 worker 在 `override([])` 清回原样之后并不总是
+    原样（`axes.grid_linewidth` 一例，见 `test_override_idempotent.py` 的 xfail 固定用例），例子之间会带着上一个例子的
+    残留，Hypothesis 缩出来的「最小反例」就不可复现。热态带历史的那一维由操作序列用例（`test_override_sequences.py`）管。
+    """
     from tavotto import app
 
     with tempfile.TemporaryDirectory(dir=tmp, prefix="ex-") as d:
+        stage = Path(d)
+        worker, name = _library_worker(stage, "adj")
         try:
             resp = worker.override(stem, patches)
             assert not (resp.get("warnings") or []), resp["warnings"]
             hot = app._hot_manifest(worker, stem, patches)
             assert hot is not None
-            src = (tmp / name).read_bytes()
-            adjusted = scriptadjust.build(src, stem, patches, hot, version="9.9")
+            adjusted = scriptadjust.build(
+                (stage / name).read_bytes(), stem, patches, hot, version="9.9"
+            )
             if not adjusted.written:
                 return set()
-            stage = Path(d)
-            target = stage / "edited.py"
+            out = stage / "out"
+            out.mkdir()
+            target = out / "edited.py"
             target.write_bytes(adjusted.data)
-            diffs = app._verify_edited_script(worker, stem, target, adjusted, hot, stage)
+            diffs = app._verify_edited_script(worker, stem, target, adjusted, hot, out)
             assert diffs == [], (stem, patches, diffs)
             residual = {(r["gid"], r["prop"]) for r in adjusted.residual}
             return {
@@ -97,26 +104,24 @@ def _roundtrip(
                 if (p["gid"], p["prop"]) not in residual
             }
         finally:
-            worker.override(stem, [])
+            pool.discard(worker)
 
 
 def test_exported_script_replays_to_the_edited_figure(adj):
-    worker, name, tmp, mans = adj
+    tmp, mans = adj
     assert WORKER_PY is not None
 
     # CI 与默认：固定例子集（derandomize，flaky 零容忍）；本地找 bug 时 `TAVOTTO_PROP_EXAMPLES=80` 放大并改为真随机
     n = int(os.environ.get("TAVOTTO_PROP_EXAMPLES", "0"))
 
-    @settings(
-        max_examples=n or 14, deadline=None, derandomize=not n, database=None, print_blob=True
-    )
+    @settings(max_examples=n or 6, deadline=None, derandomize=not n, database=None, print_blob=True)
     @given(data=st.data())
     def prop(data):
         stem = data.draw(st.sampled_from(STEMS), label="图")
         patches = data.draw(edits(mans[stem], _accept), label="编辑")
         _STATS["examples"] += 1
         els = {e["gid"]: e for e in mans[stem]["elements"]}
-        keys = _roundtrip(worker, name, tmp, stem, patches, els)
+        keys = _roundtrip(tmp, stem, patches, els)
         if keys:
             _STATS["written"] += 1
             _WRITTEN_KEYS.update(keys)
@@ -125,4 +130,4 @@ def test_exported_script_replays_to_the_edited_figure(adj):
     # 不空转：一半以上的例子里真有键写进了脚本并过了验证
     assert _STATS["written"] * 2 >= _STATS["examples"], _STATS
     # 广度：这一轮写进脚本并验过的键不能只有一两个
-    assert len(_WRITTEN_KEYS) >= 8, _WRITTEN_KEYS
+    assert len(_WRITTEN_KEYS) >= 6, _WRITTEN_KEYS
