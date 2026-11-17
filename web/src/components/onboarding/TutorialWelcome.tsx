@@ -167,6 +167,7 @@ function FigureCard() {
     >
       <FigureStage
         className="h-full min-w-0 flex-1"
+        frameClassName="rounded-xs shadow-page"
         overlay={(size) => <Callouts size={size} />}
       >
         <DemoFigure demo={DEMO_EDITS_EMPTY} label={t('onboarding.welcome.figureLabel')} className="block h-full w-full" />

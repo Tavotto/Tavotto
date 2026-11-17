@@ -15,28 +15,28 @@
 
 | 语义 | 工具类 | 值 | 用途 |
 | --- | --- | --- | --- |
-| surface-app | `bg` | `#efefed` | 桌面：顶栏、左轨、停靠的抽屉坐在它上面；作品在白色工作面板里（2026-09-30 重设计，第二十五节；2026-10-07 降黄，第二十六节） |
+| surface-app | `bg` | `#f0efec` | 暖石桌面：顶栏、左轨、停靠的抽屉坐在它上面；作品在纯白工作面板里 |
 | surface-panel | `surface` | `#ffffff` | 面板 / 输入框 / 浮层 |
-| surface-subtle | `surface-2` | `#f7f7f5` | 只读值、徽章底、禁用框的底（数字框不再用它做静态底，S8） |
+| surface-subtle | `surface-2` | `#f7f7f8` | 只读值、徽章底、禁用框的底（数字框不再用它做静态底，S8） |
 | surface-hover | `surface-hover` | ink 4% | hover。三档里最弱 |
 | surface-active | `surface-active` | ink 8% | 按下、小 chip 的静态底 |
 | surface-selected | `selected` | ink 12% | 选中：hover 的三倍（2026-10-15 G10 起；此前 10%、两倍），白面板与纸底上都成立（2026-09-15 打磨批次 A，此前固定 #ebebe6 在纸底上只有 1.07:1）；配字重 / 对勾再说一遍 |
-| ink-1 | `ink` | `#1b1b18` | 主文字，不是纯黑 |
-| ink-2 | `ink-2` | `#4a4a45` | 次级文字、标签（2026-10-07 拉深：此前与 ink-3 几乎同色） |
-| ink-3 | `ink-3` | `#6c6c66` | 元数据、单位、占位、说明（type-caption / type-meta）。所有底色上 ≥4.5:1（画布灰 4.84） |
-| ink-disabled | `ink-faint` | `#a3a39a` | 禁用 / 装饰。不用于要读的字 |
+| ink-1 | `ink` | `#1c1b18` | 主文字，暖黑，不是纯黑 |
+| ink-2 | `ink-2` | `#4a4842` | 次级文字、标签（2026-10-07 拉深：此前与 ink-3 几乎同色） |
+| ink-3 | `ink-3` | `#6b6860` | 元数据、单位、占位、说明（type-caption / type-meta）。所有底色上 ≥4.5:1（画布灰 5.06） |
+| ink-disabled | `ink-faint` | `#a39f95` | 禁用 / 装饰。不用于要读的字 |
 | border | `border` | ink 12% | hairline。只给区域边界、次级按钮；浮层不再画边（环在投影里） |
 | border-strong | `border-strong` | ink 18% | hover 中的区域边界 |
-| border-control | `border-control` | `#84847c` | 未选中的复选框 / 单选、开关关态轨道：边界就是控件的全部识别信息，≥3:1（2026-09-14 审计 S10） |
-| field | `field` / `field-hover` | `#f2f2f0` / `#eeeeec` | 所有可编辑框的**底**（`ui/fieldBox.ts`）：比面板深一级、静态无边线，聚焦 / 打开才是不透明 accent 边（2026-09-15 参考 Codex，第二十二节）。**有框 = 能改**不变，「框」是一块底；此前是 ink 16% 的边（批次 A T1，已作废） |
-| canvas | `canvas` | `#f5f5f3` | 工作面板里画布那一块的底，比桌面浅一档，纸放在它上面 |
+| border-control | `border-control` | `#848178` | 未选中的复选框 / 单选、开关关态轨道：边界就是控件的全部识别信息，≥3:1（2026-09-14 审计 S10） |
+| field | `field` / `field-hover` | `#f3f3f5` / `#ececef` | 所有可编辑框的**底**（`ui/fieldBox.ts`）：清透冷瓷灰底 + 微细描边，聚焦 / 打开才是不透明 accent 边。**有框 = 能改**不变 |
+| canvas | `canvas` | `#f6f5f3` | 工作面板里画布那一块中性浅底，比桌面浅一档，纯白纸面浮在它上面 |
 | group | `group` | ink 3% | 设置页字段组（`FieldGroup`）的底，比 hover 还淡一档 |
 | accent | `accent` / `accent-subtle` | `#2c73de` | **小面积**：焦点环（`focus-ring`，**不透明** 2px + 2px offset（2026-10-07 从 1 改 2）——45% 透明那一版对所有底色只有 1.9:1，2026-09-14 审计 S2）、AI。色相取自品牌蓝 #5A92E5，压深到蓝字 4.5:1（第二十五节）；链接不再用蓝 |
 | danger | `danger`（锚点） | `#c4442a` | 只表达语义。派生 `-surface` / `-border` / `-content`（第二十六节） |
 | warning | `warn`（锚点） | `#b07400` | 同上。锚点对白只有 3.9:1——只给图标 / 圆点，字一律 `warn-content` |
 | success | `ok`（锚点） | `#2b7649` | 同上 |
 | info | `info` | = accent | 同上（锚点就是 accent） |
-| shadow | `shadow`（投影 token、遮罩） | `#1b1b18` | 所有投影模糊层与遮罩的底色（`color-mix(shadow N%)`；`bg-shadow/N` 是对话框 / 覆盖抽屉的遮罩） |
+| shadow | `shadow`（投影 token、遮罩） | `#1c1b18` | 所有投影模糊层与遮罩的底色（`color-mix(shadow N%)`；`bg-shadow/N` 是对话框 / 覆盖抽屉的遮罩） |
 | shadow-edge | `shadow-edge`（只在投影 token 里） | = shadow | 投影的 1px 环；暗色换白（暗底上的黑环看不见，第二十八节） |
 | paper | `paper` | `#ffffff` | **纸**：画布上的页面、图的缩略图底。文档内容的颜色，两套主题同值（第二十八节） |
 | paper-ink | `paper-ink` | `#1b1b18` | 界面画在纸上的记号（网格、透明棋盘格、占位框的字）。同上，不跟主题走 |
@@ -45,7 +45,7 @@
 工具类名沿用旧名（不为了改名动七百处调用），对照表也写在 index.css 顶部。
 
 规矩：蓝色不做任何大块背景、不做按钮填色（主按钮是近黑 `bg-ink`、字是 `surface` 色）；持久表面里只有「真的是一张卡」的
-东西有投影（`shadow-card`，**只经 `ui/Card` 一处**：素材卡 / 诊断与修复卡，第二十二节、第二十六节；助手的会话卡与任务行 2026-10-07 撤了，见第十八节），分区 / 列表行 / 输入框仍是平的；
+东西（`shadow-card`，**只经 `ui/Card` 一处**）与画布上的白色纸面（`shadow-page`，柔和漫射纸影，不含 1px 环）有投影，分区 / 列表行 / 输入框仍是平的；
 浮层只有 `shadow-pop`（菜单 / popover / 浮条）与 `shadow-dialog`（对话框 / 命令面板）两种，都是
 「1px 半透明环 + 一层大模糊」（`shadow-pop` 另加一层贴边接触阴影），浮层**不再画实色 border**；Tooltip 是 ink 底白字；surface 之间靠极轻的
 明度差与半透明 hairline 分层，不靠框。
@@ -57,16 +57,14 @@
 | 档 | 值 | 给谁 |
 | --- | --- | --- |
 | `rounded-xs` | 4 | 16px 高以下的小片：kbd、计数角标、缩略图上的标签、复选框 |
-| `rounded-sm` | 6 | tooltip、20px 行内小片 |
-| `rounded-md` | 8 | 行（列表 / 树 / 菜单项 / select 项）、可编辑框、小卡 / 缩略图、说明条（`Notice`） |
+| `rounded-sm` | 6 | tooltip、20px 行内小片、分段选择器的内层滑块 |
+| `rounded-md` | 8 | 28px 紧凑按钮、分段选择器外槽、行（列表 / 树 / 菜单项 / select 项）、可编辑框、小卡 / 缩略图、说明条（`Notice`） |
 | `rounded-lg` | 12 | 卡片（`Card`）、菜单 / popover / select 弹层的外壳、多行浮动面板、空态图标底座 |
 | `rounded-panel` | 16 | 对话框、工作面板、改图助手输入框、命令面板 |
-| `rounded-full` | | 带字的按钮、**图标钮**、分段控件、chip、toast、单行浮动条、圆点、开关、徽章 |
+| `rounded-full` | | 32px 仪式性主动作（对话框页脚 / 页面 CTA / 顶栏导出）、**圆形图标钮**、chip、toast、单行浮动条、圆点、开关、徽章 |
 
-**外层圆角 = 内层圆角 + 内边距**（菜单 lg 12 = 项 md 8 + 内边距 4；卡 12 包 8 的封面）。
+**外层圆角 = 内层圆角 + 内边距**（菜单 lg 12 = 项 md 8 + 内边距 4；卡 12 包 8 的封面；分段 md 8 = 滑块 sm 6 + 内边距 2）。
 **浮动外观三档**：单行（≤36px）的浮动条 = 胶囊；多行浮动面板 = 12；模态 / 面板 / 命令面板 = 16。
-2026-09-30 重设计的改动（第二十五节）：带字的按钮 / 分段控件 `sm` → `full`。2026-10-07（第二十六节）：圆角族
-4 / 6 / 8 / 12 / 16（此前 3 / 6 / 10 / 14 / 16），图标钮 → `full`，对话框 → `panel`，菜单 / popover 外壳 → `lg`。
 门禁：`rounded-*-[…]` 任意值与内联 `borderRadius` 都不许出现。
 
 ## 三、密度
@@ -1095,9 +1093,9 @@ reduced-motion 契约）；68/85 命中 `foundation.test`（533 处）；弹簧 
   `lib/theme.applyTheme`（system = 不挂 `data-theme`，交给媒体查询，系统切外观当场跟着变；light / dark = 挂上）。首帧之前的落点是
   `index.html` `<head>` 里一段同步内联脚本（入口是延迟执行的 module，等它就晚了一帧）：读同一个 `tavotto.ui`、只认 light / dark、存储抛错就不挂；
   它与 uiStore + `applyTheme` 的读法由 `lib/themeBoot.test` 拿原文逐例对拍。入口在 React 挂载之前再调一次 `applyTheme` 对账。没有 CSP 拦内联脚本（Tauri `security.csp` 为 null，后端不发 CSP）——将来加 CSP 要给这段脚本放 hash。「界面看起来不对？」那颗重置**不动外观**。/try 与 Codex 画布没有这个设置，跟随系统。
-- **值表**（暗色）：桌面 `#161615` < 画布灰 `#1b1b1a` < 面板 `#222220` < surface-2 `#282826`；可编辑框 `#2c2c2a` / hover `#323230`（暗底上「深一级」是更亮一级）；
-  墨 `#ececea` / ink-2 `#c2c2bc` / ink-3 `#9b9b94` / faint `#6a6a64`；控件边界 `#7b7b74`；accent 就是品牌蓝 `#5a92e5`（暗底上它本身就够 4.5:1）、浅底 `#1d2a3d`；
-  锚点 danger `#ef6e55` · warn `#d9a23a` · ok `#4fb37a`，`-content` 改成锚点 70% 混**白**；语法色七档提亮一档、comment 仍 = ink-3；thumb `#3a3a37`；
+- **值表**（暗色）：暖黑曜桌面 `#171614` < 画布灰 `#1c1b18` < 面板 `#23221f` < surface-2 `#292824`；可编辑框 `#2e2c28` / hover `#34322d`（暗底上「深一级」是更亮一级）；
+  墨 `#efeee9` / ink-2 `#c5c2b9` / ink-3 `#9d9a90` / faint `#6c6961`；控件边界 `#7d7a72`；accent 就是品牌蓝 `#5a92e5`（暗底上它本身就够 4.5:1）、浅底 `#1d2a3d`；
+  锚点 danger `#ef6e55` · warn `#d9a23a` · ok `#4fb37a`，`-content` 改成锚点 70% 混**白**；语法色七档提亮一档、comment 仍 = ink-3；thumb `#3c3a35`；
   shadow 纯黑、shadow-edge 白。
 - **纸不变**：`--color-paper` / `--color-paper-ink` 不在暗色表里。画布上的页面、图、图的缩略图底是印刷品，**不反相、不变暗**；暗色只改它周围的界面。
   界面画在纸上的东西用纸上的墨（网格、透明棋盘格、运行时占位框、文字框的占位），世界层里没写颜色的字继承 paper-ink。

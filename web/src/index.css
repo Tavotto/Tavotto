@@ -35,14 +35,14 @@
      danger / warning = warn / success = ok / info（锚点 + 派生的 -surface / -border / -content）
    --------------------------------------------------------------------------- */
 @theme {
-  /* 中性面（2026-09-30 重设计 + 2026-10-07 设计审计 §1 收敛，用户拍板）：灰色桌面放导航（顶栏 / 左轨 / 抽屉），
-     作品放进白色圆角的工作面板（画布标签 + 画布 + 属性栏）。黄度降低、合成三档 + 可编辑框：
-     bg 桌面 < canvas 工作面板里画布那一块（比桌面浅一档，纸（白）放在它上面）< surface 白；
-     surface-2 只读值 / 徽章底。「纸感」只留在画布上的那张纸本身。 */
-  --color-bg: #efefed;
-  --color-canvas: #f5f5f3;
+  /* 中性面（2026-09-30 重设计 + 2026-10-07 审计 + Phase 2 暖石亚麻微调）：暖石桌面放导航（顶栏 / 左轨 / 抽屉），
+     作品放进纯白圆角的工作面板（画布标签 + 画布 + 属性栏）。OKLCH 极低色度暖石阶梯，温润而不发黄：
+     bg 暖石桌面 < canvas 暖亚麻画布（比桌面浅一档，纯白纸面浮在它上面）< surface 纯白；
+     surface-2 只读值 / 徽章底。纸面（--color-paper）保持纯白，与暖亚麻画布自然拉开层次。 */
+  --color-bg: #f0efec;
+  --color-canvas: #f6f5f3;
   --color-surface: #ffffff;
-  --color-surface-2: #f7f7f5;
+  --color-surface-2: #f7f7f8;
   /* 纸（2026-10-07 暗色主题，审计 P2 #14）：画布上的页面、图的缩略图底——**文档内容的颜色**，不是界面色，
      所以两套主题同值（图是印刷品，暗色里也不反相）。paper-ink 是界面画在纸上的记号（网格、透明棋盘格、
      占位框的字）用的墨：纸不变，它也不变。 */
@@ -87,32 +87,31 @@
   /* 控件边界：未选中的复选框 / 单选的方框圆圈、开关关态的轨道——它们的边界就是
      控件的全部识别信息，要过非文字对比 3:1（WCAG 1.4.11）。border-strong 对白只有约 1.5:1，
      2026-09-14 审计（S10）量到关态开关在 48px 设置行里几乎看不见。
-     #84847c：白 3.77 / 桌面 3.27 / surface-2 3.51（tokenContrast.test 守着 ≥3）。
+     #848178：白 3.89 / 桌面 3.33 / surface-2 3.63（tokenContrast.test 守着 ≥3）。
      border / border-strong 继续给 hairline 分隔、hover 中的输入框与区域边界。 */
-  --color-border-control: #84847c;
-  /* 可编辑框的**底**（fieldBox，S8 甲「有框 = 能改」不变；2026-09-15 参考 Codex 设置页的输入框）：比面板深一级的灰
-     （对白 1.12:1）、静态无边线、无内阴影；hover 再深一档；聚焦才是不透明 accent 边——3:1 由它承担。
-     ink-3 落在 field 上 4.71:1、hover 底 4.55:1（tokenContrast.test 守着 ≥4.5），占位 / 单位 / 前缀都还能读。 */
-  --color-field: #f2f2f0;
-  --color-field-hover: #eeeeec;
+  --color-border-control: #848178;
+  /* 可编辑框的**底**（fieldBox，S8 甲「有框 = 能改」不变；2026-09-15 参考 Codex 设置页的输入框）：比面板深一级的暖石凹槽
+     （对白 1.13:1）、静态无边线、无内阴影；hover 再深一档；聚焦才是不透明 accent 边——3:1 由它承担。
+     ink-3 落在 field 上 4.93:1、hover 底 4.63:1（tokenContrast.test 守着 ≥4.5），占位 / 单位 / 前缀都还能读。 */
+  --color-field: #f3f3f5;
+  --color-field-hover: #ececef;
   /* 桌面子树里框的 hover 底（LeftPanel / WidgetHeader 把 --color-field-hover 重定向到它；静态底重定向成 surface）：
-     浅色里 field-hover（#eeeeec）比灰桌面（#efefed）还深，surface-2（#f7f7f5）对桌面只有 ≈1.07:1，都低于「框看得见」的 1.1:1 线。
+     浅色里 field-hover（#edeae4）比桌面（#efede8）还深，surface-2（#f8f7f3）对桌面只有 ≈1.09:1，都低于「框看得见」的 1.1:1 线。
      白面（surface）已经是浅色的天花板，hover 只能在它与桌面之间往下走一小步：surface 混 ink 2% = #fafafa，
-     对桌面 1.103:1（≥1.1）、对静态白框 1.044:1（仍有可感差异）；暗色里同一公式落在 surface 之上一点（#262624），对桌面 1.19:1。
+     对桌面 1.121:1（≥1.1）、对静态白框 1.044:1（仍有可感差异）；暗色里同一公式落在 surface 之上一点，对桌面 ≥1.18:1。
      tokenContrast.test 守着两套主题下静态与 hover 对桌面都 ≥1.1:1。 */
   --color-field-hover-desk: color-mix(in srgb, var(--color-ink) 2%, var(--color-surface));
 
-  /* 墨阶（2026-10-07 设计审计 §1.1，用户拍板 ink-2 #4a4a45 / ink-3 #74746e）：此前 ink-2 #5c5c55 与 ink-3 #6b6b64
-     几乎同色，次级与元信息分不开。ink-2 压深到 8.9:1（白）；ink-3 的拍板值 #74746e 在桌面上只有 4.08:1、
-     可编辑框 hover 底上 3.98:1，按「不过就最小幅度压深」收到 #6c6c66——白 5.28 / 桌面 4.59 / surface-2 4.93 /
-     画布灰 4.84 / field 4.71 / field-hover 4.55，**所有底色都过 4.5:1**（此前画布灰上不达标的那条限制随之取消）。 */
-  --color-ink: #1b1b18;
+  /* 墨阶（2026-10-07 设计审计 §1.1 + Phase 2 暖墨微调）：此前 ink-2 与 ink-3 几乎同色，次级与元信息分不开。
+     ink-2 压深到 9.14:1（白）；ink-3 落在暖石墨 #6b6860——白 5.56 / 桌面 4.76 / surface-2 5.19 /
+     画布灰 5.06 / field 4.93 / field-hover 4.63，**所有底色都过 4.5:1**（此前画布灰上不达标的那条限制随之取消）。 */
+  --color-ink: #1c1b18;
   /* 次级正文：标签、说明里要读的字 */
-  --color-ink-2: #4a4a45;
+  --color-ink-2: #4a4842;
   /* 三级正文：元数据、单位、占位、说明（type-caption / type-meta） */
-  --color-ink-3: #6c6c66;
+  --color-ink-3: #6b6860;
   /* faint：仅装饰、禁用态、非必要信息；不用于需要阅读的文字 */
-  --color-ink-faint: #a3a39a;
+  --color-ink-faint: #a39f95;
 
   /* 品牌蓝：2026-09-30 用户定的 #5A92E5（色相 216°）。它本身对白只有 3.14:1、对桌面 2.7:1，
      当焦点环 / 蓝字不够格（焦点环 ≥3:1、字 ≥4.5:1，tokenContrast.test 守着）——所以焦点环、AI 与少数蓝字
@@ -174,19 +173,19 @@
   --color-syntax-function: #5b45a8;
   --color-syntax-string: #7a5a2b;
   --color-syntax-number: #2868b7;
-  --color-syntax-comment: #6c6c66;
+  --color-syntax-comment: #6b6860;
   --color-syntax-type: #2a6b5b;
   --color-syntax-builtin: #86520a;
 
-  /* 圆角族（2026-10-07 设计审计 §3.1，用户拍板）。先把 Tailwind 自带的 xl / 2xl…
-     整个清掉，rounded-xl 这种写了也不生效，随机圆角就没有来路。
-       xs 4     ——16px 高以下的小片：kbd、计数角标、缩略图上的标签、分段 thumb
-       sm 6     ——小控件：tooltip、20px 行内片、复选框以外的小块
-       md 8     ——行、可编辑框、菜单项、小卡片 / 缩略图、说明条
+  /* 圆角族（2026-10-07 设计审计 §3.1 + Phase 2 精密仪器圆角分层）。先把 Tailwind 自带的更高档位
+     整个清掉，随机圆角就没有来路。
+       xs 4     ——16px 高以下的小片：kbd、计数角标、缩略图上的标签、复选框
+       sm 6     ——小控件：tooltip、20px 行内片、分段选择器内层滑块（外层 8 = 内层 6 + 内边距 2）
+       md 8     ——28px 工具栅格：紧凑按钮、分段选择器外槽、行、可编辑框、菜单项、小卡片 / 缩略图、说明条
        lg 12    ——卡片、菜单 / popover / select 弹层的外壳、多行浮动面板、列表里的说明块
        panel 16 ——对话框、工作面板、助手输入框、命令面板
-       full     ——带字的按钮、图标钮、分段控件、chip、toast、单行浮动条
-     规则：外层圆角 = 内层圆角 + 内边距（菜单 lg 12 = 项 md 8 + 内边距 4）。 */
+       full     ——32px 仪式性主动作（对话框页脚 / 页面 CTA / 顶栏导出）、圆形图标钮、chip、toast、单行浮动条
+     规则：外层圆角 = 内层圆角 + 内边距（菜单 lg 12 = 项 md 8 + 内边距 4；分段 md 8 = 滑块 sm 6 + 内边距 2）。 */
   --radius-*: initial;
   --radius-xs: 4px;
   --radius-sm: 6px;
@@ -196,15 +195,19 @@
 
   /* 投影（2026-10-07 设计审计 §1：阶梯化 + 去 rgba 化）：全部写成 `color-mix(var(--color-shadow) N%)`，
      暗色只换 --color-shadow 一处。浮层是「1px 环 + 一层大模糊」，不画实色 border。
+       page     画布上的白色纸面（PageSheet / 单图背纸）：柔和接触影 + 漫射影，不带 1px 环（1px 边由屏幕空间遮罩画，缩放不变粗）
        card     真的是一张卡（ui/Card；门禁：只在 Card.tsx 里写）：环 6% + 0 1px 2px 4% + 0 4px 12px 4%
        pop      菜单 / popover / 浮条：环 8% + 0 2px 6px 6%（接触阴影）+ 0 8px 24px 8%
        dialog   对话框 / 命令面板：更深一档
        thumb    分段选择器的白色 thumb、开关的滑块
        composer 改图助手输入框（玻璃，参考 Codex 的三层）
      Tooltip 是 ink 底白字，不带投影。 */
-  --color-shadow: #1b1b18;
+  --color-shadow: #1c1b18;
   /* 1px 环的颜色：浅色里就是 shadow；暗色换成白（暗底上的黑环看不见） */
   --color-shadow-edge: var(--color-shadow);
+  --shadow-page:
+    0 1px 3px color-mix(in srgb, var(--color-shadow) 6%, transparent),
+    0 8px 24px -6px color-mix(in srgb, var(--color-shadow) 7%, transparent);
   --shadow-card:
     0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 6%, transparent),
     0 1px 2px color-mix(in srgb, var(--color-shadow) 4%, transparent),
@@ -591,11 +594,15 @@
    所以发丝与排线用纸上的墨（--color-paper-ink，两套主题同值），不用界面的 ink（暗色里会变浅、落在白纸上看不见） */
 .paper-sheet {
   background: var(--color-paper);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-paper-ink) 16%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--color-paper-ink) 16%, transparent),
+    var(--shadow-page);
 }
 @media (min-resolution: 2dppx) {
   .paper-sheet {
-    box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-paper-ink) 30%, transparent);
+    box-shadow:
+      inset 0 0 0 0.5px color-mix(in srgb, var(--color-paper-ink) 30%, transparent),
+      var(--shadow-page);
   }
 }
 .hatch-box.hatch-box-paper {
@@ -1283,20 +1290,20 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
     color-scheme: dark;
-    --color-bg: #161615;
-    --color-canvas: #1b1b1a;
-    --color-surface: #222220;
-    --color-surface-2: #282826;
-    --color-field: #2c2c2a;
-    --color-field-hover: #323230;
-    --color-border-control: #7b7b74;
-    --color-ink: #ececea;
-    --color-ink-2: #c2c2bc;
-    --color-ink-3: #9b9b94;
-    --color-ink-faint: #6a6a64;
+    --color-bg: #171614;
+    --color-canvas: #1c1b18;
+    --color-surface: #23221f;
+    --color-surface-2: #292824;
+    --color-field: #2e2c28;
+    --color-field-hover: #34322d;
+    --color-border-control: #7d7a72;
+    --color-ink: #efeee9;
+    --color-ink-2: #c5c2b9;
+    --color-ink-3: #9d9a90;
+    --color-ink-faint: #6c6961;
     --color-accent: #5a92e5;
     --color-accent-subtle: #1d2a3d;
-  --color-dim: #7db6f5;
+    --color-dim: #7db6f5;
     --color-danger: #ef6e55;
     --color-warn: #d9a23a;
     --color-highlighter: #5a5226;
@@ -1309,10 +1316,10 @@
     --color-syntax-function: #ad9cf0;
     --color-syntax-string: #d6ad72;
     --color-syntax-number: #74abf2;
-    --color-syntax-comment: #9b9b94;
+    --color-syntax-comment: #9d9a90;
     --color-syntax-type: #6fc7ad;
     --color-syntax-builtin: #e3a457;
-    --color-thumb: #3a3a37;
+    --color-thumb: #3c3a35;
     --color-shadow: #000000;
     --color-shadow-edge: #ffffff;
     --color-scrim: color-mix(in srgb, var(--color-shadow) 50%, transparent);
@@ -1321,17 +1328,17 @@
 
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --color-bg: #161615;
-  --color-canvas: #1b1b1a;
-  --color-surface: #222220;
-  --color-surface-2: #282826;
-  --color-field: #2c2c2a;
-  --color-field-hover: #323230;
-  --color-border-control: #7b7b74;
-  --color-ink: #ececea;
-  --color-ink-2: #c2c2bc;
-  --color-ink-3: #9b9b94;
-  --color-ink-faint: #6a6a64;
+  --color-bg: #171614;
+  --color-canvas: #1c1b18;
+  --color-surface: #23221f;
+  --color-surface-2: #292824;
+  --color-field: #2e2c28;
+  --color-field-hover: #34322d;
+  --color-border-control: #7d7a72;
+  --color-ink: #efeee9;
+  --color-ink-2: #c5c2b9;
+  --color-ink-3: #9d9a90;
+  --color-ink-faint: #6c6961;
   --color-accent: #5a92e5;
   --color-accent-subtle: #1d2a3d;
   --color-dim: #7db6f5;
@@ -1347,10 +1354,10 @@
   --color-syntax-function: #ad9cf0;
   --color-syntax-string: #d6ad72;
   --color-syntax-number: #74abf2;
-  --color-syntax-comment: #9b9b94;
+  --color-syntax-comment: #9d9a90;
   --color-syntax-type: #6fc7ad;
   --color-syntax-builtin: #e3a457;
-  --color-thumb: #3a3a37;
+  --color-thumb: #3c3a35;
   --color-shadow: #000000;
   --color-shadow-edge: #ffffff;
   --color-scrim: color-mix(in srgb, var(--color-shadow) 50%, transparent);
@@ -1372,6 +1379,11 @@
   --color-surface-hover: color-mix(in srgb, var(--color-paper-ink) 4%, transparent);
   --color-surface-active: color-mix(in srgb, var(--color-paper-ink) 8%, transparent);
   --color-selected: color-mix(in srgb, var(--color-paper-ink) 12%, transparent);
+  --color-border: color-mix(in srgb, var(--color-paper-ink) 12%, transparent);
+  --color-border-strong: color-mix(in srgb, var(--color-paper-ink) 18%, transparent);
+  --color-thumb: var(--color-paper);
+  --color-shadow: var(--color-paper-ink);
+  --color-shadow-edge: var(--color-paper-ink);
 }
 
 /* 字面数据不做中西文自动留白：输入框 / 代码 / 等宽（脚本名、路径、matplotlib 取值代号）。

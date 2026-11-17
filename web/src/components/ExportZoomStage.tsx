@@ -12,6 +12,7 @@ import { IconButton } from './ui/Button'
 import { ICON_SIZE } from './ui/Icon'
 import { Maximize2 } from './ui/icons'
 import { bucketFor } from '@/lib/previewBuckets'
+import { cn } from '@/lib/utils'
 import { t as translate } from '@/i18n'
 
 const MAX_SCALE = 12
@@ -43,10 +44,13 @@ function clampView(v: View, box: { w: number; h: number }, fit: { w: number; h: 
 
 export function ExportZoomStage({
   ratio,
+  framed = true,
   children,
 }: {
   /** 内容宽高比 */
   ratio: number
+  /** 是否在内容盒外围画 1px 内缩发丝边（纸张越界外扩取景时关掉，由内部纸面自己画边） */
+  framed?: boolean
   children: (px: number) => ReactNode
 }) {
   const boxRef = useRef<HTMLDivElement>(null)
@@ -138,7 +142,7 @@ export function ExportZoomStage({
       <div
         data-export-preview-content
         // 内缩的发丝边（不占位、不留边距）：页面白与舞台灰很接近，没有它看不出页面边界
-        className="shrink-0 outline outline-1 -outline-offset-1 outline-border"
+        className={cn('shrink-0', framed && 'outline outline-1 -outline-offset-1 outline-border')}
         style={contentStyle}
       >
         {children(fit ? px : 0)}

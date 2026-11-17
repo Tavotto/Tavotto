@@ -61,7 +61,7 @@ export function HomeButton({ children }: { children?: ReactNode } = {}) {
           aria-label={t('switcher.home')}
           disabled={switching}
           onClick={go}
-          className="shrink-0 gap-2 px-2 text-ink"
+          className="shrink-0 gap-2 rounded-full px-2.5 text-ink"
         >
           {children}
         </Button>
