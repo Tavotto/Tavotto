@@ -3,8 +3,11 @@
 
 这里只放**判据**，不放 I/O：落盘一律走 `atomicio`，HTTP 形状留在 `app.py`。
 前端的同一套判据在 `web/src/types/document.ts`（`migrateToProject`）与
-`web/src/lib/migrate.ts`（`normalizeLayout`）——两侧都只认 schema 2 / 3，
+`web/src/lib/migrate.ts`（`normalizeLayout`）——两侧都只认 schema 2 / 3 / 4，
 新增版本必须同时改，否则新版本写出去的文档旧构建打不开。
+
+schema 4 与 schema 3 落在**同一套存储**（同一组目录、同一个列表、同一条版本
+历史），只由文档里的 schema 号区分；`validate_document` 按号分派，不另设入口。
 """
 
 from __future__ import annotations
@@ -18,12 +21,14 @@ from typing import Any
 SCHEMA_FIGURE = 2
 #: 项目文档（`ProjectDocument`，一个项目多张画布）。见 docs/adr/0001。
 SCHEMA_PROJECT = 3
-#: 声明式来源附件的项目格式；只经显式入口读取，旧布局写入端仍只收 2/3。
+#: 含计算图表的项目文档：结构与 3 相同，多出 `chart` / `chartSource` 及其校验。
 SCHEMA_CHART_PROJECT = 4
 #: 能读能写的 schema 版本。**更高的版本一律拒绝**——旧构建对新字段的语义一无所知，
 #: 「尽力打开」等于用旧规则重写用户的新数据。
-SUPPORTED_SCHEMAS = (SCHEMA_FIGURE, SCHEMA_PROJECT)
-SCHEMA_CURRENT = SCHEMA_PROJECT
+SUPPORTED_SCHEMAS = (SCHEMA_FIGURE, SCHEMA_PROJECT, SCHEMA_CHART_PROJECT)
+#: 本构建能读写的最高版本，与 `SCHEMA_CHART_PROJECT` 严格同源（前端同一判据写
+#: `schema > SCHEMA_CURRENT` 判「来自更新的 Tavotto」）。
+SCHEMA_CURRENT = SCHEMA_CHART_PROJECT
 
 CHART_SOURCE_SCHEMA = 1
 CHART_SOURCE_KEYS = frozenset({"schema", "sourceId", "bytesSha256", "sizeBytes", "sceneDigest"})
@@ -137,7 +142,7 @@ def loads_document(data: str | bytes) -> Any:
     return json.loads(data, parse_constant=_reject_non_finite)
 
 
-def validate_document(raw: Any) -> dict:
+def validate_document(raw: Any, *, require_sources: bool = True) -> dict:
     """校验并原样返回文档载荷；不合法时抛 `DocumentError`。
 
     **只查骨架，不查每个字段。** 判据要挡住的是「这不是一份 Tavotto 文档」
@@ -146,6 +151,10 @@ def validate_document(raw: Any) -> dict:
 
     唯一的例外是非有限数，它由序列化那一步（`atomicio.dumps_json`）挡下：
     那不是"有点怪"，那是写出去谁都读不回来。
+
+    schema 4 那一支由 `validate_chart_document` 校验（`require_sources` 原样转交）；
+    schema 2 / 3 的判据与返回值不变。分派放在这里，保存、自动保存、槽位探测、
+    恢复候选、版本节点、教程校验六个调用点一次覆盖，不另设端点或命名空间。
     """
     if not isinstance(raw, dict):
         raise DocumentError("invalid_document", "无效的排版（需要一个 JSON 对象）")
@@ -161,6 +170,9 @@ def validate_document(raw: Any) -> dict:
             "invalid_document",
             f"无效的排版（需要 schema {' 或 '.join(str(s) for s in SUPPORTED_SCHEMAS)}）",
         )
+
+    if schema == SCHEMA_CHART_PROJECT:
+        return validate_chart_document(raw, require_sources=require_sources)
 
     if schema == SCHEMA_PROJECT:
         canvases = raw.get("canvases")
@@ -204,7 +216,7 @@ def validate_chart_source(
 
 
 def validate_chart_document(raw: Any, *, require_sources: bool = True) -> dict:
-    """显式校验 schema 4；旧 ``validate_document`` 的准入及返回值保持不变。
+    """校验 schema 4；由 ``validate_document`` 按 schema 号分派调用。
 
     捕获附件前可用 ``require_sources=False`` 校验待保存编辑；最终提交必须使用
     缺省值。这里只有格式与来源身份判据，不碰存储、不计算、不选择保存目录。
