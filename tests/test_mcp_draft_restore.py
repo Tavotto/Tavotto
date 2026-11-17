@@ -495,3 +495,72 @@ def test_discard_draft_reaches_the_batch_path_through_the_server(tmp_path):
     entry = res["structuredContent"]["opened"][0]
     assert "restored_draft" not in entry
     assert _draft_files() == []
+
+
+# --------------------- 进程直接退出（没经 close）的会话记录 --------------------
+def _orphan(figures: Path, value: float = 23.0) -> str:
+    out = bridge.open_figure(str(figures), stem="fig")
+    bridge.apply_overrides(out["session_id"], _fontsize(value))
+    bridge.shutdown_all()  # 进程退出：没 close，活会话记录还在 mcp-sessions/
+    assert bridge.sessionjournal.load(bridge._journal_dir(), out["session_id"]) is not None
+    assert _draft_files() == []
+    return out["session_id"]
+
+
+def test_a_session_lost_without_close_is_brought_back_by_open(tmp_path):
+    figures = _project(tmp_path)
+    old = _orphan(figures)
+    again = bridge.open_figure(str(figures), stem="fig")
+    assert again["restored_draft"]["from_session"] == old
+    assert _prop(again["manifest"], TITLE, "fontsize") == 23.0
+    # 旧记录删了：旧 id 不会再复活出第二份
+    assert bridge.sessionjournal.load(bridge._journal_dir(), old) is None
+    with pytest.raises(bridge.BridgeError) as gone:
+        bridge.get_session(old)
+    assert gone.value.code == "unknown_session"
+
+
+def test_an_unedited_or_exported_orphan_record_is_not_brought_back(tmp_path):
+    figures = _project(tmp_path)
+    out = bridge.open_figure(str(figures), stem="fig")
+    bridge.apply_overrides(out["session_id"], _fontsize(19.0))
+    session = bridge.get_session(out["session_id"])
+    session.exported_hash = session.patch_hash()
+    bridge.commit_export(out["session_id"])
+    bridge.shutdown_all()
+    assert "restored_draft" not in bridge.open_figure(str(figures), stem="fig")
+
+
+def test_discard_draft_also_drops_an_orphan_record(tmp_path):
+    figures = _project(tmp_path)
+    old = _orphan(figures)
+    out = bridge.open_figure(str(figures), stem="fig", discard_draft=True)
+    assert "restored_draft" not in out and out["discarded_draft"] is True
+    assert bridge.sessionjournal.load(bridge._journal_dir(), old) is None
+
+
+def test_a_session_alive_in_this_process_is_never_taken_as_an_orphan(tmp_path):
+    figures = _project(tmp_path)
+    live = bridge.open_figure(str(figures), stem="fig")
+    bridge.apply_overrides(live["session_id"], _fontsize(12.0))
+    other = bridge.open_figure(str(figures), stem="fig")
+    assert "restored_draft" not in other
+    assert bridge.sessionjournal.load(bridge._journal_dir(), live["session_id"]) is not None
+
+
+def test_an_expired_orphan_record_is_not_brought_back(tmp_path):
+    figures = _project(tmp_path)
+    old = _orphan(figures)
+    path = bridge._journal_dir() / f"{old}.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["saved_at"] -= sessionjournal.TTL_SECONDS + 10
+    path.write_text(json.dumps(record), encoding="utf-8")
+    assert "restored_draft" not in bridge.open_figure(str(figures), stem="fig")
+
+
+def test_discard_draft_never_deletes_the_record_of_a_session_alive_here(tmp_path):
+    figures = _project(tmp_path)
+    live = bridge.open_figure(str(figures), stem="fig")
+    bridge.apply_overrides(live["session_id"], _fontsize(12.0))
+    bridge.open_figure(str(figures), stem="fig", discard_draft=True)
+    assert bridge.sessionjournal.load(bridge._journal_dir(), live["session_id"]) is not None

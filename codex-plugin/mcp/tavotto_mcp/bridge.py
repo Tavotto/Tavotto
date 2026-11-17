@@ -2136,7 +2136,25 @@ def _find_draft(project: str, stem: str, run_config: str | None) -> dict | None:
     if not roots or _judge_path(project, roots)[1] is not None:
         return None
     drafts = sessionjournal.find_drafts(_drafts_dir(), project, stem, run_config)
-    return drafts[0] if drafts else None
+    if drafts:
+        return drafts[0]
+    orphans = _orphan_records(project, stem, run_config)
+    return orphans[0] if orphans else None
+
+
+def _orphan_records(project: str, stem: str, run_config: str | None) -> list[dict]:
+    """没经 close 就丢了的会话记录（进程直接退出 / 宿主断开）：这张图的活会话记录里，**不在本进程内存**、
+    且有没导出改动的，最新的在前。open 找不到草稿时把它当草稿带回（带回后删掉旧记录，不会再按旧 id 复活出第二份）。
+
+    只靠记录分不出「别的 MCP 进程里还活着」的会话（不存 pid：跨平台判进程存活不可靠，Windows 的 `os.kill`
+    会真的结束进程）。取舍：别的进程正开着同一张图且改过没导出时，后开的会话会带上那份改动（拷贝，不影响它那边继续用），
+    它的记录被删，下一次提交点（apply / 导出）会重新落盘——可接受：与「同一张图开两个会话」同一个量级。
+    """
+    return [
+        r
+        for r in sessionjournal.find_drafts(_journal_dir(), project, stem, run_config)
+        if r["id"] not in _SESSIONS and _record_unexported(r)
+    ]
 
 
 def _unapplied_patches(patches: list, warnings: list) -> list[dict]:
@@ -2284,6 +2302,8 @@ def open_figure(
     discarded = 0
     if discard_draft:
         discarded = sessionjournal.delete_drafts(_drafts_dir(), project, chosen, run_config_id)
+        for orphan in _orphan_records(project, chosen, run_config_id):
+            discarded += int(sessionjournal.delete(_journal_dir(), orphan["id"]))
     session = _live_session_for(project, chosen, run_config_id)
     reused = session is not None
     evicted: list[str] = []
@@ -2342,6 +2362,9 @@ def open_figure(
     if restored_draft is not None:
         # 草稿已经并进这条活会话（它的记录刚落盘）：草稿完成使命，删掉
         sessionjournal.delete_drafts(_drafts_dir(), project, chosen, run_config_id)
+        if restored_draft["from_session"] != session.id:
+            # 带回的若是没经 close 就丢了的活会话记录：旧记录删掉，别再按旧 id 复活出第二份
+            sessionjournal.delete(_journal_dir(), restored_draft["from_session"])
     out = {
         "ok": True,
         "session_id": session.id,

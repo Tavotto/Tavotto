@@ -40,6 +40,12 @@ order: 70
   - **清草稿**：带回成功（已并进活会话记录）、`discard_draft`、导出成功（`_persist` 里 `exported_hash == patch_hash()`）。
   - **批量打开**逐张走 `open_figure`，每张各自带回，摘要里对应那条带 `restored_draft`；会话预算用光而没尝试的不动草稿。
   - **native 会话**：草稿只存 patches，不存进程；带回走正常 open，safe 被拦后同样回退 native（`execution: native`）。
-  - 没做：进程退出（`shutdown_all`）不经 close 的会话仍只留活会话记录（ADR 0078 按 id 接力），不转草稿。
+  - **没经 close 就丢的会话**（进程退出 `shutdown_all` / 宿主断开）：它的活会话记录还在 `mcp-sessions/`。`_find_draft` 找不到草稿时，
+    取同一（项目、stem、运行配置）里**不在本进程内存**、`_record_unexported` 为真的记录当草稿（`_orphan_records`，多份取最新），
+    同样的越界校验、过期口径、先渲染成功再登记、`dropped`；带回成功后旧记录删掉（不会按旧 id 再复活出第二份）；
+    `discard_draft` 也删这类记录（本进程内存里的活会话记录绝不动）。
+  - **取舍：不存 pid 判别「别的 MCP 进程里还活着」**——跨平台判进程存活不可靠（Windows 的 `os.kill` 会真结束进程），所以别的进程正开着
+    同一张图且改过没导出时，后开的会话会带上那份改动（拷贝，对方继续用），对方的记录被删、下次提交点（apply / 导出）重新落盘。
+    可接受：与「同一张图开两个会话」同一个量级，且宁可多带回也不丢改动。
 - 落盘失败不让工具调用失败，但写 stderr。`sessionjournal` 只用标准库——不动 `_BRIDGE_IMPORT` 三处同源。
 - 看护：`tests/test_mcp_session_journal.py`、`tests/test_mcp_roundtrip.py` 的两进程接力；`tests/test_mcp_draft_restore.py`（真 matplotlib 真链路）。
