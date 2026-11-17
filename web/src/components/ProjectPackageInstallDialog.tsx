@@ -55,6 +55,8 @@ export function ProjectPackageInstallDialog() {
     && row.attemptId !== unknown?.attemptId)
   const error = flow.error ?? browseError
   const inspection = flow.inspection
+  const remapWarnings = (inspection?.warnings ?? []).filter(w => w.reason === 'snapshot_remap_requires_relink')
+  const publishedRemapWarnings = (published?.warnings ?? []).filter(w => w.reason === 'snapshot_remap_requires_relink')
   const reviewConfiguration = () => {
     if (!flow.saved || currentProjectId() !== flow.saved.address.projectId) return
     flow.cancel()
@@ -121,6 +123,15 @@ export function ProjectPackageInstallDialog() {
                 <Notice tone="warn" detail={inspection.missing.join('\n')}>{t('packageInstall.missing', { count: inspection.missing.length })}</Notice>
               )}
               {inspection.execution_coverage?.state === 'incomplete' && <Notice>{t('packageInstall.dependencies')}</Notice>}
+              {remapWarnings.length > 0 && (
+                <Notice
+                  tone="warn"
+                  data-project-package-remap-relink
+                  detail={remapWarnings.map(w => w.id).join('\n')}
+                >
+                  {t('packageInstall.remapRelink')}
+                </Notice>
+              )}
             </>
           )}
           {published && (
@@ -128,6 +139,15 @@ export function ProjectPackageInstallDialog() {
               <p>{t('packageInstall.installedAt')}</p>
               <TailPath path={published.path} />
               {!flow.saved && <p className="type-caption">{t('packageInstall.documentPending')}</p>}
+              {publishedRemapWarnings.length > 0 && (
+                <Notice
+                  tone="warn"
+                  data-project-package-remap-relink
+                  detail={publishedRemapWarnings.map(w => w.id).join('\n')}
+                >
+                  {t('packageInstall.remapRelink')}
+                </Notice>
+              )}
             </>
           )}
           {unknown && !published && (

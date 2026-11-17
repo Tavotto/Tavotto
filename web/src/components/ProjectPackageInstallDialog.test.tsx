@@ -354,4 +354,21 @@ describe('项目包安装对话框（真实store及HTTP包装，打开动作单�
     expect(dialog().querySelector('[data-notice="warn"]')).not.toBeNull()
     expect(installRequests()).toHaveLength(0); expect(forbiddenRequests()).toEqual([])
   })
+
+  it('他机改指快照在检视时提示重链，不自动安装或改写本机映射', async () => {
+    inspected.warnings = [{ reason: 'snapshot_remap_requires_relink', id: '图.pdf' }]
+    await inspect()
+    expect(dialog().textContent).toContain(dt('remapRelink'))
+    expect(dialog().querySelector('[data-project-package-remap-relink]')).not.toBeNull()
+    expect(dialog().querySelector('[data-notice="warn"]')).not.toBeNull()
+    expect(installRequests()).toHaveLength(0); expect(forbiddenRequests()).toEqual([])
+  })
+
+  it('安装回执里的他机改指警告在已安装状态仍显示', async () => {
+    installed.warnings = [{ reason: 'snapshot_remap_requires_relink', id: '图.pdf' }]
+    await publish()
+    expect(dialog().textContent).toContain(dt('remapRelink'))
+    expect(dialog().querySelector('[data-project-package-remap-relink]')).not.toBeNull()
+    expect(installRequests()).toHaveLength(1)
+  })
 })

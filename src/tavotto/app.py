@@ -6286,6 +6286,10 @@ def api_package_open():
         # `/api/package/inspect`、`/api/package/install` 做。
         return jsonify({"document_format": engine_documentformat.CHART4})
     schema = doc.get("schema")
+    # 跟踪点（#1921）：#1920 把 `SCHEMA_CURRENT` 提到 4 之后，schema 4 但没有
+    # `document_format` 的包不再落到下面的 too_new；届时须在这里为它单独定
+    # 落点，别让旧包路径静默接管。`tests/test_package.py` 的同名用例带一条
+    # `SCHEMA_CURRENT` 闸，常量变化时会提醒。
     if type(schema) is int and schema > engine_documents.SCHEMA_CURRENT:
         # 更新的 Tavotto 打出的包：与排版的 `schema_too_new` 同一结局（界面给「检查更新」），
         # 不说成「不是项目包」——这份包本身没坏，是这个版本读不了（#1921）

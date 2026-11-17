@@ -8,6 +8,7 @@ import pymupdf
 import pytest
 
 from tavotto import app as m
+from tavotto.engine import documents as engine_documents
 
 
 @pytest.fixture
@@ -302,7 +303,17 @@ def test_v4_envelope_mismatch_is_not_installed(env, envelope):
 
 
 def test_schema_4_without_the_v4_document_format_is_too_new(env):
-    """只有 schema 4 不够：没有 `document_format = "v4"` 时按 schema 太新处理，不进 v4 路径。"""
+    """只有 schema 4 不够：没有 `document_format = "v4"` 时按 schema 太新处理，不进 v4 路径。
+
+    跟踪点（#1921）：这条落点只在 `SCHEMA_CURRENT == 3` 时成立。#1920 把
+    `SCHEMA_CURRENT` 提到 4 之后，schema 4 但没有 `document_format` 的包会
+    走出另一种结局，须先在 `app.py` 的 `/api/package/open` 分流处单独裁定，
+    再更新本用例；下面的闸让常量变化时显式变红，而不是静默换行为。
+    """
+    assert engine_documents.SCHEMA_CURRENT == 3, (
+        "SCHEMA_CURRENT 已变化：#1920 落地后须重新裁定 schema 4 但没有 "
+        "document_format 的包落点（见 app.py /api/package/open 的跟踪点注释）"
+    )
     client, _, _ = env
     resp = client.post(
         "/api/package/open",

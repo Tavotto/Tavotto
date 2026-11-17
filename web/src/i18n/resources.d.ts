@@ -1386,6 +1386,7 @@ export default interface Resources {
       "previous": "其他安装记录",
       "publicationUnconfirmed": "目录已发布，但安装核对尚未全部确认；打开后请检查资源。",
       "receivedResult": "已收到这次安装的结果，可以查看后继续。",
+      "remapRelink": "包内 Figure 快照来自另一台机器的数据改指表；打开项目后请重新找到这些图的原始文件，旧路径不会被沿用。",
       "resultPending": "结果未确认",
       "reviewConfiguration": "检查本机运行设置",
       "saved": "工作副本已保存，可以继续编辑。",

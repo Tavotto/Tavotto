@@ -2627,6 +2627,7 @@
     "missing_one": "The package is missing {{count}} resource. Add it and export the package again.",
     "missing_other": "The package is missing {{count}} resources. Add them and export the package again.",
     "dependencies": "Run dependencies are not fully confirmed. Installation will not run scripts from the package.",
+    "remapRelink": "Some Figure snapshots were captured under another machine's input mapping. After opening the project, relink those figures to their original files; the old paths will not be reused.",
     "installedAt": "Resources installed in",
     "documentPending": "Saving the layout is not confirmed yet. Opening the project saves a working copy through the existing save process.",
     "previous": "Other installation attempts",
