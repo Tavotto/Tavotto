@@ -631,3 +631,37 @@ def test_batch_open_reports_a_draft_that_could_not_be_restored(tmp_path, monkeyp
     assert "restored_draft" not in entry
     assert "草稿没能带回" in res["content"][0]["text"]
     assert len(_draft_files()) == 1
+
+
+# --------------------- Codex 复审（#2007）两条 P1 ----------------------------
+def test_a_failed_new_draft_leaves_the_older_draft_and_the_session_record(tmp_path, monkeypatch):
+    figures = _project(tmp_path)
+    live, session = _stale_draft_beside_a_live_session(figures)  # 已有一份旧草稿
+    (old_draft,) = _draft_files()
+    real = bridge.sessionjournal.save
+
+    def save(base, record, **kw):
+        if Path(base) == _drafts():
+            raise OSError("disk full")
+        return real(base, record, **kw)
+
+    monkeypatch.setattr(bridge.sessionjournal, "save", save)
+    bridge.apply_overrides(live["session_id"], _fontsize(5.0))
+    closed = bridge.close_session(live["session_id"])
+    assert closed["draft_saved"] is False and closed["note"] == bridge.UNEXPORTED_LOST_NOTE
+    assert old_draft.is_file(), "新草稿没写成，旧草稿不能丢"
+    assert (bridge._journal_dir() / f"{live['session_id']}.json").is_file(), "会话记录也要留着"
+
+
+def test_the_newer_of_a_draft_and_an_orphan_record_wins(tmp_path):
+    figures = _project(tmp_path)
+    out = bridge.open_figure(str(figures), stem="fig")
+    bridge.apply_overrides(out["session_id"], _fontsize(9.0))
+    bridge.shutdown_all()  # 孤儿记录（较新）：9.0
+    record = json.loads((bridge._journal_dir() / f"{out['session_id']}.json").read_text("utf-8"))
+    older = {**record, "id": "s-aaaaaaaaaaaa", "patches": _fontsize(23.0), "exported_hash": None}
+    sessionjournal.save(_drafts(), older, now=record["saved_at"] - 100)  # 较旧的显式草稿：23.0
+    again = bridge.open_figure(str(figures), stem="fig")
+    assert again["restored_draft"]["from_session"] == out["session_id"]
+    assert _prop(again["manifest"], TITLE, "fontsize") == 9.0
+    assert _draft_files() == []  # 被取代的旧草稿一并清掉

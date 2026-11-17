@@ -1725,10 +1725,15 @@ def _save_draft(record: dict) -> bool:
     """把一条没导出改动的记录存成草稿（ADR 0192 第 2 条）；同一张图只留最新的一份。失败返回 False 并写 stderr。"""
     draft = {**record, "exported_hash": None}
     try:
-        sessionjournal.delete_drafts(
+        older = sessionjournal.find_drafts(
             _drafts_dir(), draft["project"], draft["stem"], draft.get("run_config")
         )
+        # **先把新草稿写成功（`save` 是临时文件 + 原子 rename），再删同图别的草稿**：
+        # 写失败（磁盘满）时旧草稿一份不动，它可能是这批改动唯一的持久副本
         sessionjournal.save(_drafts_dir(), draft)
+        for old in older:
+            if old["id"] != draft["id"]:
+                sessionjournal.delete(_drafts_dir(), old["id"])
         return True
     except (OSError, ValueError, TypeError, KeyError) as exc:
         sys.stderr.write(f"tavotto-mcp: 会话 {record.get('id')} 的草稿存不下来，修改会丢：{exc}\n")
@@ -1741,6 +1746,10 @@ def _retire(session: Session) -> bool:
     saved = False
     if unexported_changes(session):
         saved = _save_draft(_session_record(session))
+        if not saved:
+            return (
+                False  # 草稿没写成：会话记录是这批改动唯一的持久副本，不删（重开时当孤儿记录带回）
+            )
     _forget(session.id)
     return saved
 
@@ -1910,7 +1919,8 @@ UNEXPORTED_NOTE = (
 )
 #: 草稿也存不下来时（磁盘错误）：修改确实丢了，如实说
 UNEXPORTED_LOST_NOTE = (
-    "注意：这个会话里的修改还没导出，草稿也没能存下来，修改已丢掉，用户的文件没变。"
+    "注意：这个会话里的修改还没导出，草稿没能存下来（磁盘问题）；会话记录先留着，"
+    "重新打开这张图仍会尝试带回，但不保证。用户的文件没变。"
 )
 
 
@@ -1932,13 +1942,14 @@ def close_session(session_id: str) -> dict:
     if s is None and record is not None:
         # 关闭是明确的释放：落盘记录一起删，别的进程里也不能再把它恢复出来
         saved = _save_draft(record) if _record_unexported(record) else False
-        _forget(session_id)
+        if saved or not _record_unexported(record):
+            _forget(session_id)  # 草稿没写成就留着记录（唯一的持久副本）
         out = {"ok": True, "closed": True, "session_id": session_id, "stem": record.get("stem")}
         if _record_unexported(record):
             _unexported_out(out, saved)
         return out
-    _forget(session_id)
     if s is None:
+        _forget(session_id)  # 没有这个会话（含已清掉的记录）：幂等
         return {
             "ok": True,
             "closed": False,
@@ -2142,11 +2153,10 @@ def _find_draft(project: str, stem: str, run_config: str | None) -> dict | None:
     roots = allowed_roots()
     if not roots or _judge_path(project, roots)[1] is not None:
         return None
-    drafts = sessionjournal.find_drafts(_drafts_dir(), project, stem, run_config)
-    if drafts:
-        return drafts[0]
-    orphans = _orphan_records(project, stem, run_config)
-    return orphans[0] if orphans else None
+    # 显式草稿与没经 close 就丢的会话记录合在一起，取 saved_at 最新的那份：较新的改动不能被较旧的草稿盖掉
+    found = sessionjournal.find_drafts(_drafts_dir(), project, stem, run_config)
+    found += _orphan_records(project, stem, run_config)
+    return max(found, key=lambda r: float(r["saved_at"])) if found else None
 
 
 def _orphan_records(project: str, stem: str, run_config: str | None) -> list[dict]:
@@ -2370,6 +2380,9 @@ def open_figure(
         # 草稿已经并进这条活会话（它的记录确实落盘了）：草稿完成使命，删掉。
         # 落盘没成功就一律不删——源草稿 / 旧记录可能是这批改动唯一的持久副本
         sessionjournal.delete_drafts(_drafts_dir(), project, chosen, run_config_id)
+        for orphan in _orphan_records(project, chosen, run_config_id):
+            # 没被选中的较旧孤儿记录已被更新的改动取代：一并删，免得导出清了草稿后它又被当成未导出的改动带回
+            sessionjournal.delete(_journal_dir(), orphan["id"])
         if restored_draft["from_session"] != session.id:
             # 带回的若是没经 close 就丢了的活会话记录：旧记录删掉，别再按旧 id 复活出第二份
             sessionjournal.delete(_journal_dir(), restored_draft["from_session"])
