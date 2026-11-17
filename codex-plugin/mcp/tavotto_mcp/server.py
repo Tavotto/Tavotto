@@ -213,6 +213,8 @@ def _tools() -> list[dict]:
                 "一次全开，拿回 N 个各自可编辑的会话：某一张失败**不影响其余**，"
                 "失败那张带自己的 code 与 stem 名；结局看 status"
                 "（done / partial / failed 三档）。"
+                "脚本存完图又读回那个文件时，安全模式跑不通，Tavotto 会自动改用真实 Python "
+                '再跑一次，回包带 execution="native"：此后脚本写的文件真的落盘，不受授权目录限制。'
                 "若宿主支持 MCP elicitation 且没有传工作区根，第一次请传绝对路径；"
                 "Tavotto 会让宿主显示精确目录并请用户确认，本次连接内有效。"
             ),
