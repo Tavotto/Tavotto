@@ -2540,6 +2540,8 @@
     "formatsAccepted": "Accepted: {{list}}",
     "source": "Source",
     "sourceOf": "Source of {{name}}",
+    "snapshotZoom": "Click to enlarge",
+    "snapshotAlt": "Screenshot of the source text",
     "picked": "Now checking against {{name}}",
     "pickedWidth": "Now checking against {{name}}; page width set to {{w}} mm",
     "card": {

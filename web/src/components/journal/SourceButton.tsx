@@ -5,6 +5,7 @@ import { t as translate } from '@/i18n'
 import { ArrowUpRight, BookOpen } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Button, IconButton } from '../ui/Button'
+import { SnapshotThumb } from './SnapshotThumb'
 import { Popover } from '../ui/Popover'
 import type { JournalFieldSource } from '@/lib/journals'
 import {
@@ -130,9 +131,12 @@ function SourceLinks({ source, name }: { source: JournalFieldSource; name?: stri
 export function SourceCardBody({
   journal,
   entries,
+  thumb,
 }: {
   journal: string
   entries: [string, JournalFieldSource][]
+  /** v2 事实的原文截图缩略图地址（已验签）；v1 条目自带 `snapshot`，不走这里。不给就不画 */
+  thumb?: string
 }) {
   const advice = adviceSentence(journal, Object.fromEntries(entries))
   const multi = entries.length > 1
@@ -187,6 +191,7 @@ export function SourceCardBody({
         </div>
         {!multi && <SourceLinks source={entries[0][1]} />}
       </div>
+      {thumb && <SnapshotThumb src={thumb} alt={entries[0][1].quote} className="px-3.5 pb-3" />}
     </div>
   )
 }

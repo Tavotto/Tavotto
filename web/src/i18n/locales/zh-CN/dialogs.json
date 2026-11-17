@@ -2514,6 +2514,8 @@
     "formatsAccepted": "可接受 {{list}}",
     "source": "出处",
     "sourceOf": "{{name}}的出处",
+    "snapshotZoom": "点击放大",
+    "snapshotAlt": "原文截图",
     "picked": "已按「{{name}}」检查",
     "pickedWidth": "已按「{{name}}」检查，页宽改为 {{w}} mm",
     "card": {
