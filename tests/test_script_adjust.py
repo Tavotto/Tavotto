@@ -1,4 +1,4 @@
-"""导出里的「修改后的 .py」（ADR 0171）。
+"""导出里的「修改后的 .py」（ADR 0171）：生成器单测与走真 `/api/export` 的用例。
 
 判据的主语分三段：
 
@@ -6,6 +6,9 @@
 * 导出链路（真 worker + 真 `/api/export`）：原脚本逐字节不变，项目里不冒新文件，验证过不了就不交付，
   图片格式不受牵连；
 * **用户拿到的那个文件**：不带 Tavotto 的纯 matplotlib 子进程跑它，画出来的 PDF 与导出的 PDF 逐像素一致。
+
+整图扫描与覆盖断言在 `test_script_adjust_sweep.py`，扫描放不下的键按组单独扫在 `test_script_adjust_heldout_*.py`；
+共用的夹具与辅助在 `support/scriptadjust_harness.py`。
 """
 
 from __future__ import annotations
@@ -22,18 +25,10 @@ from pathlib import Path
 import pymupdf
 import pytest
 
-from support.invariant_figures import (
-    ENTRY as INV_ENTRY,
-    LIBRARY as INV_LIBRARY,
-    SCRIPT_NAME as INV_SCRIPT,
-    STEMS,
-)
-from support.overridesample import _ENABLERS, _SAMPLE_OVERRIDE, _sample_value
-from support.scriptadjust_figures import (
-    ENTRY as ADJ_ENTRY,
-    LIBRARY as ADJ_LIBRARY,
-    SCRIPT_NAME as ADJ_SCRIPT,
-    STEMS as ADJ_STEMS,
+from support.scriptadjust_harness import (
+    WORKER_PY,
+    _library_worker,
+    real_worker,
 )
 from tavotto.engine import (
     exportjob,
@@ -45,14 +40,8 @@ from tavotto.engine import (
     scriptadjust,
 )
 
-try:
-    WORKER_PY = pool.find_worker_python()
-except pool.WorkerError:
-    WORKER_PY = None
+pytest_plugins = ("support.scriptadjust_harness",)
 
-real_worker = pytest.mark.skipif(
-    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
-)
 
 MAN = {
     "elements": [
@@ -60,6 +49,8 @@ MAN = {
         {"gid": "axes_0", "role": "axes", "label": "子图 1", "editable": []},
     ]
 }
+
+
 COLOR = {"gid": "axes_0.title", "prop": "color", "value": "#123456"}
 
 
@@ -266,6 +257,8 @@ def test_narrow_entry_stays_with_its_residual_broadcast():
 
 
 _AX0 = "axes_0"
+
+
 _FRAME_MAN = {"elements": [{"gid": _AX0, "role": "axes", "editable": []}]}
 
 
@@ -578,403 +571,6 @@ def test_every_override_key_has_taken_a_side():
     assert not (refused - keys), "NOT_WRITABLE 里有引擎不认识的键"
 
 
-#: `visible` 关掉之后别的字段量不到；翻转坐标轴 + 改图像 + 改色条标签 va 三者同时才会偏（真出现时是
-#: `script_export_diverged`，不交付），翻转单独一条用例（`test_inverted_axes_replay_identically`）。
-#: 对数轴 + 改刻度字体同理：`tick_params` 没有公式字体的键，`10^4` 这种标签的字体只盖得住已有的那几条。
-_NOT_IN_THE_SWEEP = {"visible", "invert_x", "invert_y", "xscale", "yscale"}
-#: 3D 图逐字段单独都等价，所有字段一次全改才超像素阈值（max 22 / 255），同样由验证拦下。
-_FLAT_STEMS = [s for s in STEMS if not s.startswith("Inv3D")]
-
-#: 扫描的图：(图库, stem)。`invariant_figures` 是全套不变式共用的那份（不往里加图，别的用例写死了编号），
-#: 导出脚本自己要的图（箭头、带框文字、多列图例……）加在 `scriptadjust_figures` 里。
-_LIBRARIES = {
-    "inv": (INV_LIBRARY, INV_SCRIPT, INV_ENTRY),
-    "adj": (ADJ_LIBRARY, ADJ_SCRIPT, ADJ_ENTRY),
-}
-#: 色条的三张图（`invariant_figures` 里有、但不在它的 `STEMS` 里：别的用例按编号写死，不往那里加）：
-#: 同一个 mappable 两条色条 + 独立 `ScalarMappable` 的色条、映射的线组、两块网格共用 norm。
-_CBAR_STEMS = ("InvCbar2", "InvCbarLC", "InvShared", "InvShared3")
-_SWEEP = (
-    [("inv", s) for s in _FLAT_STEMS]
-    + [("inv", s) for s in _CBAR_STEMS]
-    + [("adj", s) for s in ADJ_STEMS]
-)
-
-
-#: 结构化字段（pair / order / number_list）`_sample_value` 挑不出值，在这里按 prop 给一个明显不同的值。
-#: 写进 `WRITES` 的结构化键要么在这里有采样，要么在 `_DEDICATED` 里点名专用用例。
-def _widen(field):
-    lo, hi = (float(v) for v in field["value"])
-    return [lo - (hi - lo) * 0.25, hi + (hi - lo) * 0.1]
-
-
-_STRUCTURED: dict[str, object] = {
-    "xlim": _widen,
-    "ylim": _widen,
-    # 锚点：图例的右上角钉在子图里的一个点上（预设 loc 是 upper right / left，两种都看得出挪动）
-    "loc_anchor": [0.8, 0.7],
-    # 网格透明度：默认 1.0，`_sample_value` 只挑 0.9，细网格线上低于像素阈值，看不出写没写
-    "grid_alpha": 0.25,
-    # 线型默认 "-" 与 `_sample_value` 挑的第一个选项相同，给一个看得出的
-    "grid_linestyle": "--",
-}
-
-#: 按 (cls, prop) 给的采样值（同名 prop 在不同类里要不同的值才看得出）。层次（zorder）默认采 `原值 + 5.5`，
-#: 整张图的元素都同样往上挪，相对次序几乎不变，箭头 / 锚定框的层次改了也不动一个像素：箭头抬到最上层、
-#: 锚定框沉到最下层，夹具里二者叠在一起（`AdjText` 左下角），次序一翻像素就变（各自单独扫，见 `_HELD_OUT`）。
-_SAMPLE_BY_KEY: dict[tuple[str, str], object] = {
-    # 箭头样式默认采第一个不同的选项 "-"（无头）：线型改成虚线时头保持实线这件事就没有东西可看
-    ("arrowpatch", "arrowstyle"): "<|-|>",
-    # 箭头帽大小：默认采 原值 + 3.9，帽子只大两成，像素差在阈值边上（变异实测可以溜过去）
-    ("arrowpatch", "mutation_scale"): 36.0,
-}
-
-#: **颜色采样不能全用同一个值**：`_sample_value` 对每个颜色字段都给 `#123456`，于是图底、子图底和所有前景
-#: 一个颜色，前景色译错了（甚至写死成一个常量）像素比对也看不出来。底色给两个浅色，前景按序号轮一组
-#: 彼此分得开的饱和色，并且避开字段当前值。
-_BACKGROUND = {("figure", "facecolor"): "#f6f2dc", ("axes", "facecolor"): "#e6eefb"}
-_FOREGROUND = (
-    "#d62728",
-    "#1f77b4",
-    "#2ca02c",
-    "#9467bd",
-    "#ff7f0e",
-    "#17becf",
-    "#e377c2",
-    "#8c564b",
-)
-
-
-def _sample_color(key, field, k: int) -> str:
-    if key in _BACKGROUND:
-        return _BACKGROUND[key]
-    cur = str(field.get("value")).lower()
-    for i in range(len(_FOREGROUND)):
-        c = _FOREGROUND[(k + i) % len(_FOREGROUND)]
-        if c != cur:
-            return c
-    return "#000000"
-
-
-#: 不进整图扫描的键（`_NOT_IN_THE_SWEEP`），按组单独扫：同组一起改，组与组之间不叠。
-#: 坐标范围（pair）放进整图扫描会被 scale 的副作用搅乱，所以也自成一组。
-_HELD_OUT = {
-    "visible": {"visible"},
-    "scale": {"xscale", "yscale"},
-    "lim": {"xlim", "ylim"},
-    # 边框颜色 / 线宽：整图扫描里四条边同时被关掉、画不出来，所以单独扫；「全部」与四边各自分开两组，
-    # 否则四边各自的设定把「全部」整个盖住，广播那条等于没验
-    "spine_all": {"spine_color", "spine_linewidth"},
-    "spine_sides": {
-        f"spine_{s}_{k}" for s in ("top", "right", "bottom", "left") for k in ("color", "linewidth")
-    },
-}
-_HELD_OUT_PROPS = set().union(*_HELD_OUT.values())
-
-
-def _every_other(field):
-    """固定刻度：现有主刻度隔一个取一个（视区内的位置，少几条、看得出变了）。"""
-    vals = [float(v) for v in field["value"]]
-    return vals[::2] if len(vals) > 2 else None
-
-
-#: 按 **(cls, prop)** 划的组，整图扫描里放不下：值是这一组里的采样值（None = 照常采，函数吃 manifest 字段）。
-#: - 单条刻度文字冻结整条轴，序号按定位**之后**的刻度认——与 `major_*` 同扫，序号会越界；
-#: - `major_values` 只在 `major_mode=fixed` 时生效，整图扫描里 mode 采到的是 step，它在那里是空转。
-_HELD_OUT_KEYED: dict[str, dict[tuple[str, str], object]] = {
-    "tick_text": {("ticklabel", "text"): None},
-    "tick_fixed": {("ticks", "major_mode"): "fixed", ("ticks", "major_values"): _every_other},
-    # 色条（ADR 0171 修订 ④）。整图扫描里它们都是隐形的，各自拆出来：
-    # · 标签：色条轴的 ylabel 元素（`text`）采到同一个值，两条写的是同一个 Text，谁错了看不出来；
-    # · 刻度字号 / 颜色是广播，被色条轴刻度组自己的窄条目（`ticks.fontsize` / `ticks.color`）盖住；
-    # · vmin / vmax 是广播，被图像自己的窄条目盖住；cmap 与图像的 cmap 互相广播，两条都采第一个选项；
-    # · 轮廓关掉之后轮廓线宽看不见。
-    "cb_label": {("colorbar", "label"): None},
-    "cb_ticks": {("colorbar", "tick_fontsize"): None, ("colorbar", "tick_color"): None},
-    "cb_clim": {("colorbar", "vmin"): None, ("colorbar", "vmax"): None},
-    "cb_cmap": {("colorbar", "cmap"): None},
-    "cb_outline": {("colorbar", "outline_visible"): None},
-    # 柱系列（广播）与单根柱（窄条目，ADR 0171 修订 ⑤）：同扫的话每根柱自己的设定把系列的同名键整个盖住，广播那条等于没验；
-    # 显隐再各拆一组（隐藏时两边一样什么都画不出来）
-    "bar_series": {("bar_series", p): None for p in scriptadjust._BAR_BROADCAST if p != "visible"},
-    "bar_each": {("bar", p): None for p in scriptadjust._BAR_BROADCAST if p != "visible"},
-    "bar_series_visible": {("bar_series", "visible"): None},
-    "bar_each_visible": {("bar", "visible"): None},
-    # 层次（zorder，ADR 0171 修订 ⑥）：箭头抬到最上、锚定框沉到最下，夹具 `AdjText` 里二者叠在一起；同扫时谁的翻译是
-    # 常量，另一个的变化已经把像素带到同一个结果，所以各自单独扫
-    "arrow_zorder": {("arrowpatch", "zorder"): 30.0},
-    "artist_zorder": {("artist", "zorder"): -3.0},
-}
-_HELD_OUT_KEYS = {("ticklabel", "text"), ("ticks", "major_values")} | {
-    k
-    for g, d in _HELD_OUT_KEYED.items()
-    if g.startswith(("cb_", "bar_", "arrow_", "artist_"))
-    for k in d
-}
-_GROUPS: dict[str, tuple[set[str] | None, dict | None]] = {
-    **{g: (props, None) for g, props in _HELD_OUT.items()},
-    **{g: (None, keyed) for g, keyed in _HELD_OUT_KEYED.items()},
-}
-#: 整图扫描里采样值要换的 prop：次刻度格式默认的下一档是 auto（= 脚本原样，空转），换成真改格式的那一档；
-#: 次刻度显隐钉成 True：脚本原样已有次刻度的图上「取反」会把它关掉，随后的次刻度模式 / 步长就是空转。
-_LOCAL_SAMPLES = {"minor_format": "%.1f", "minor_visible": True}
-
-#: 扫描采不到（或刻意不进扫描）的写得进脚本的键 → 证明它等价的专用用例名。
-#: 覆盖断言（`test_every_writable_key_is_swept_or_named`）要求 `WRITES` 的每个键二者居一。
-_DEDICATED: dict[tuple[str, str], str] = {
-    ("text", "pos_frac"): "test_moves_on_a_tight_cropped_figure_land_where_the_editor_shows",
-    ("legend", "loc_frac"): "test_moves_on_a_tight_cropped_figure_land_where_the_editor_shows",
-    ("text", "fontfamily"): "test_font_edits_replay_identically",
-    ("legend_text", "fontfamily"): "test_font_edits_replay_identically",
-    ("ticks", "fontfamily"): "test_font_edits_replay_identically",
-    ("axes", "invert_x"): "test_inverted_axes_replay_identically",
-    ("axes", "invert_y"): "test_inverted_axes_replay_identically",
-    # 改名不动像素也不动几何（脚本的图例在 savefig 之前就建好了），整图扫描对它是隐形的：变异实测写成常量仍然绿
-    **{
-        (cls, "label"): "test_renames_reach_the_objects"
-        for cls in ("line", "collection", "bar_series", "stem_series")
-    },
-    ("arrowpatch", "endpoints_frac"): "test_arrow_endpoints_replay_identically",
-}
-
-
-def _sweep_patches(
-    man: dict,
-    only: set[tuple[str, str]] | None = None,
-    props: set[str] | None = None,
-    keyed: dict | None = None,
-):
-    """(patches, 采到的 (cls, prop))：图上每个写得进脚本的字段挑一个不同的值，带上它的使能项。
-
-    `only` 只采这几个键（定位用：`TAVOTTO_SWEEP_ONLY=legend.ncol,axes.grid_color`）；
-    `props` 给了就只采这些 prop（`_HELD_OUT` 的一组），`keyed` 给了就只采这些 (cls, prop)
-    并用它给的采样值（`_HELD_OUT_KEYED` 的一组），都不给就采整图扫描的全部。
-    """
-    patches, covered = [], set()
-    for el in man["elements"]:
-        cls = scriptadjust._cls_of(el["gid"], el)
-        advertised = {f["prop"] for f in el.get("editable") or []}
-        for field in el.get("editable") or []:
-            key = (cls, field["prop"])
-            if key not in scriptadjust.WRITES:
-                continue
-            if keyed is not None:
-                if key not in keyed:
-                    continue
-            elif props is None:
-                if field["prop"] in (_NOT_IN_THE_SWEEP | _HELD_OUT_PROPS) or key in _HELD_OUT_KEYS:
-                    continue
-            elif field["prop"] not in props:
-                continue
-            if only is not None and key not in only:
-                continue
-            prop = field["prop"]
-            if keyed is not None and keyed[key] is not None:
-                value = keyed[key]
-                value = value(field) if callable(value) else value
-            elif key in _SAMPLE_BY_KEY:
-                value = _SAMPLE_BY_KEY[key]
-            elif prop in _STRUCTURED:
-                value = _STRUCTURED[prop]
-                value = value(field) if callable(value) else value
-            elif field.get("type") == "color":
-                value = _sample_color(key, field, len(patches))
-            else:
-                value = _LOCAL_SAMPLES.get(prop, _SAMPLE_OVERRIDE.get(prop, _sample_value(field)))
-            if value is None:
-                continue
-            for ep, ev in _ENABLERS.get(prop, ()):
-                if ep != prop and ep in advertised:
-                    patches.append({"gid": el["gid"], "prop": ep, "value": ev})
-            patches.append({"gid": el["gid"], "prop": prop, "value": value})
-            covered.add(key)
-    return patches, covered
-
-
-def _sweep_only() -> set[tuple[str, str]] | None:
-    raw = os.environ.get("TAVOTTO_SWEEP_ONLY", "").strip()
-    if not raw:
-        return None
-    return {tuple(k.strip().split(".", 1)) for k in raw.split(",") if k.strip()}
-
-
-def _library_worker(tmp_path: Path, lib: str):
-    text, name, entry = _LIBRARIES[lib]
-    (tmp_path / name).write_text(text, encoding="utf-8")
-    worker = pool.one_shot(name, str(tmp_path), entry)
-    worker.ensure_built()
-    return worker, name
-
-
-def _replays_identically(
-    worker, name: str, tmp_path: Path, stem: str, patches: list[dict], *, must_write: bool = True
-) -> bool:
-    """新脚本重放与热态一致。`must_write=False`：这张图上这组键全被挡下留作重放时不算错，回 False。"""
-    from tavotto import app
-
-    assert not (worker.override(stem, patches).get("warnings") or [])
-    hot = app._hot_manifest(worker, stem, patches)
-    src = (tmp_path / name).read_bytes()
-    adjusted = scriptadjust.build(src, stem, patches, hot, version="9.9")
-    if not adjusted.written and not must_write:
-        worker.override(stem, [])
-        return False
-    assert adjusted.written
-    stage = tmp_path / f"_stage_{stem}"
-    stage.mkdir()
-    target = stage / "edited.py"
-    target.write_bytes(adjusted.data)
-    assert app._verify_edited_script(worker, stem, target, adjusted, hot, stage) == [], stem
-    worker.override(stem, [])
-    return True
-
-
-@real_worker
-@pytest.mark.parametrize(("lib", "stem"), _SWEEP, ids=[f"{lib}-{s}" for lib, s in _SWEEP])
-def test_every_writable_field_replays_identically(tmp_path, lib, stem):
-    """夹具里每张图上所有写得进脚本的字段**一起**改，新脚本重放必须与热态几何 + 像素一致。"""
-    worker, name = _library_worker(tmp_path, lib)
-    try:
-        man = worker.override(stem, [])["manifest"]
-        patches, _covered = _sweep_patches(man, _sweep_only())
-        if not patches:
-            pytest.skip("这张图上没有写得进脚本的字段")
-        _replays_identically(worker, name, tmp_path, stem, patches)
-    finally:
-        pool.discard(worker)
-
-
-#: 对数轴要严格为正的数据，那张图不在整图扫描里（其余几张的 y 轴跨 0，log 会被夹住）。
-_HELD_OUT_STEMS = {"scale": [("inv", "InvScale")]}
-
-
-@real_worker
-@pytest.mark.parametrize("group", sorted(_GROUPS))
-def test_held_out_fields_replay_identically(tmp_path, group):
-    """整图扫描里刻意不放的键（`_HELD_OUT` / `_HELD_OUT_KEYED`）：每张图上这一组一起改，照样要等价。"""
-    props, keyed = _GROUPS[group]
-    seen = False
-    for lib in _LIBRARIES:
-        stems = [s for lb, s in _SWEEP + _HELD_OUT_STEMS.get(group, []) if lb == lib]
-        if not stems:
-            continue
-        sub = tmp_path / lib
-        sub.mkdir()
-        worker, name = _library_worker(sub, lib)
-        try:
-            for stem in stems:
-                man = worker.override(stem, [])["manifest"]
-                patches, _covered = _sweep_patches(man, _sweep_only(), props, keyed)
-                # 这张图上整组都被挡下（比如 3D 轴的单条刻度文字）不算错，但至少要有一张图真写进去并验过
-                if patches and _replays_identically(
-                    worker, name, sub, stem, patches, must_write=False
-                ):
-                    seen = True
-        finally:
-            pool.discard(worker)
-    assert seen, f"{group} 这一组在任何图上都没真写进脚本"
-
-
-@real_worker
-@pytest.mark.parametrize(
-    "gid",
-    ["axes_0.collections_0", "axes_1.colorbar", "axes_2.colorbar"],
-    ids=["mesh", "own", "alone"],
-)
-def test_cmap_of_a_group_with_a_standalone_colorbar_replays_identically(tmp_path, gid):
-    """登记网格 + 它的色条 + 共用 norm 的独立 `ScalarMappable` 色条（`InvShared3`）：引擎换其中任一条的 cmap，
-    组里另一条色条也跟着换；脚本里 `set_cmap` 只换得了一个对象，所以这一组的 cmap 整体留给重放。
-    只改一条（整图扫描里每个键都采同一个值，两条色条一起改，掩盖了这一点）。"""
-    worker, name = _library_worker(tmp_path, "inv")
-    try:
-        patches = [{"gid": gid, "prop": "cmap", "value": "viridis"}]
-        _replays_identically(worker, name, tmp_path, "InvShared3", patches, must_write=False)
-    finally:
-        pool.discard(worker)
-
-
-@real_worker
-def test_standalone_mappable_colorbar_replays_identically(tmp_path):
-    """独立 `ScalarMappable` 的 3D 色条（`Inv3D` 整图全改超像素阈值，不在整图扫描里）：只改色条自己的键。
-    落在色条轴上的写进脚本，cmap / vmin / vmax 公开 API 够不着 mappable，留作重放，两边合起来要等价。"""
-    worker, name = _library_worker(tmp_path, "inv")
-    try:
-        man = worker.override("Inv3D", [])["manifest"]
-        keys = {k for k in scriptadjust.WRITES if k[0] == "colorbar"} - {("colorbar", "visible")}
-        patches, covered = _sweep_patches(man, keys, keyed={k: None for k in keys})
-        assert {p for c, p in covered if c == "colorbar"} >= {"label", "cmap", "tick_color"}
-        assert _replays_identically(worker, name, tmp_path, "Inv3D", patches)
-    finally:
-        pool.discard(worker)
-
-
-def _written_keys(
-    worker, script: Path, stem: str, man: dict, props, keyed=None
-) -> set[tuple[str, str]]:
-    """这张图上采到、而且**真写进了脚本**的键（被 `_Unsupported` 挡下留作重放的不算验证过）。"""
-    from tavotto import app
-
-    patches, _covered = _sweep_patches(man, props=props, keyed=keyed)
-    if not patches:
-        return set()
-    worker.override(stem, patches)
-    hot = app._hot_manifest(worker, stem, patches)
-    worker.override(stem, [])
-    assert hot is not None, stem
-    adjusted = scriptadjust.build(script.read_bytes(), stem, patches, hot, version="9.9")
-    residual = {(p["gid"], p["prop"]) for p in adjusted.residual}
-    els = {e["gid"]: e for e in man["elements"]}
-    return {
-        (scriptadjust._cls_of(p["gid"], els.get(p["gid"])), p["prop"])
-        for p in patches
-        if (p["gid"], p["prop"]) not in residual
-    }
-
-
-#: prop → 它依赖的公开 API（`模块:类.方法`）。引擎同样按 `hasattr` 判（`overrides` 的 hatchcolor 一族：
-#: `set_hatchcolor` 3.11 起才有），旧版 matplotlib 上 manifest 不发这条字段，扫描采不到不算漏验。
-_NEEDS_API = {"hatchcolor": "matplotlib.patches:Patch.set_hatchcolor"}
-
-
-def _worker_has(api: str) -> bool:
-    mod, attr = api.split(":")
-    cls, meth = attr.split(".")
-    code = f"import importlib; print(hasattr(getattr(importlib.import_module({mod!r}), {cls!r}), {meth!r}))"
-    out = subprocess.run(
-        [WORKER_PY, "-c", code], capture_output=True, encoding="utf-8", check=True, timeout=60
-    )
-    return out.stdout.strip().splitlines()[-1] == "True"
-
-
-@real_worker
-def test_every_writable_key_is_swept_or_named(tmp_path):
-    """`WRITES` 的每个键都在某张图上真被采样验证过，或者点名了证明它的专用用例。
-
-    没有这一条，进了 `WRITES` 却在任何夹具上都采不到值的键（结构化字段、夹具里没有的元素）
-    会被扫描静默放过，「逐键验证过」就是一句空话。
-    """
-    covered: set[tuple[str, str]] = set()
-    for lib in _LIBRARIES:
-        stems = {s for lb, s in _SWEEP + _HELD_OUT_STEMS["scale"] if lb == lib}
-        sub = tmp_path / lib
-        sub.mkdir()
-        worker, _name = _library_worker(sub, lib)
-        try:
-            for stem in stems:
-                man = worker.override(stem, [])["manifest"]
-                for props, keyed in [(None, None), *_GROUPS.values()]:
-                    covered |= _written_keys(worker, sub / _name, stem, man, props, keyed)
-        finally:
-            pool.discard(worker)
-    missing = set(scriptadjust.WRITES) - covered - set(_DEDICATED)
-    # 要较新 matplotlib 才有的 prop：引擎按同一条公开 API 是否存在决定发不发字段，这一档没有就采不到
-    missing -= {k for k in missing if k[1] in _NEEDS_API and not _worker_has(_NEEDS_API[k[1]])}
-    assert not missing, f"写进了脚本、却既没被扫描采到也没点名专用用例：{sorted(missing)}"
-    for key, test in _DEDICATED.items():
-        assert callable(globals().get(test)), f"{key} 点名的用例 {test} 不存在"
-        assert key in scriptadjust.WRITES, f"{key} 已不在 WRITES，从 _DEDICATED 删掉"
-
-
 # ---------------------------------------------------------------------- 请求
 def _spec(**over) -> dict:
     return {
@@ -1062,12 +658,16 @@ def main():
 if __name__ == "__main__":
     main()
 """
+
+
 REGISTRY = json.dumps(
     {
         "version": 1,
         "scripts": {"fig1.py": {"entry": "main", "cost": "light", "notes": "", "stems": ["Fig1"]}},
     }
 )
+
+
 EDITS = [
     {"gid": "axes_0.lines_0", "prop": "color", "value": "#d6278f"},
     {"gid": "axes_0.lines_0", "prop": "linewidth", "value": 3.0},
@@ -1187,6 +787,8 @@ ARROW_SCRIPT = SCRIPT.replace(
     '    ax.legend(loc="upper left")\n',
     1,
 )
+
+
 assert "FancyArrowPatch((3.5" in ARROW_SCRIPT and "annotate" in ARROW_SCRIPT
 
 
@@ -1199,6 +801,8 @@ ASPECT_SCRIPT = SCRIPT.replace(
     '    ax.legend(loc="upper left")\n',
     1,
 )
+
+
 assert "set_aspect(1)" in ASPECT_SCRIPT
 
 
@@ -1374,6 +978,8 @@ def test_font_edits_replay_identically(project, patch):
 
 
 _LEG = "axes_0.legend"
+
+
 _ENTRY = "axes_0.legend.texts_0"
 
 
@@ -1464,9 +1070,17 @@ def test_grid_and_spine_edits_combine_like_the_editor(project, patches):
 
 
 _CB, _IM, _CB_YTICKS = "axes_1.colorbar", "axes_0.images_0", "axes_1.yticks"
+
+
 _BARS = "axes_0.barseries_0"
+
+
 _ERR = "axes_0.errorbar_1"
+
+
 _STEMS = "axes_0.stemseries_2"
+
+
 _DOTS = "axes_0.scatter_2"  # 误差棒的竖线、茎的竖线也在 ax.collections 里，占了 0、1 号
 
 
@@ -1653,7 +1267,11 @@ def test_series_edits_combine_like_the_editor(series_project, patches):
 
 
 _TITLE = "axes_0.title"
+
+
 _ARR_ANN = "axes_0.texts_0.arrow"
+
+
 _ARR_ALONE = "axes_0.arrows_0"
 
 
@@ -1847,10 +1465,20 @@ _NOTE, _NOTE_ARR = "axes_0.texts_0", "axes_0.texts_1.arrow"
 
 
 _TITLE_DRAG = {"gid": "axes_0.title", "prop": "pos_frac", "value": [0.5, 0.2]}
+
+
 _NOTE_DRAG = {"gid": _NOTE, "prop": "pos_frac", "value": [0.5, 0.4]}
+
+
 _ARR_DRAG = {"gid": _NOTE_ARR, "prop": "endpoints_frac", "value": [0.4, 0.6, 0.6, 0.4]}
+
+
 _INVERT_X = {"gid": "axes_0", "prop": "invert_x", "value": True}
+
+
 _YLIM = {"gid": "axes_0", "prop": "ylim", "value": [-3.0, 14.0]}
+
+
 _MOVE = {"gid": "axes_0", "prop": "position", "value": [0.3, 0.35, 0.55, 0.5]}
 
 
@@ -1948,35 +1576,6 @@ def test_replayed_position_keeps_the_order_of_a_title_drag_and_ylim(project, pat
     body = _export(client, patches, formats=[])
     assert body["status"] == "done", body
     assert {s["prop"] for s in _script_output(body)["script_report"]["skipped"]} == held
-
-
-@real_worker
-def test_arrow_endpoints_replay_identically(tmp_path):
-    """`endpoints_frac` 不在 manifest 的可编辑字段里（端点另发 `arrow_endpoints`），扫描采不到：
-    这里按 manifest 的端点逐根箭头挪一遍（注释箭头改的是注释的锚点、独立箭头 `set_positions`），
-    再与热态比。"""
-    worker, name = _library_worker(tmp_path, "adj")
-    try:
-        man = worker.override("AdjText", [])["manifest"]
-        arrows = [e for e in man["elements"] if e.get("arrow_endpoints")]
-        assert len(arrows) == 4, [e["gid"] for e in arrows]  # 纯箭头注释两根 + 独立箭头两根
-        patches = [
-            {
-                "gid": e["gid"],
-                "prop": "endpoints_frac",
-                "value": [
-                    min(0.95, a[0] + 0.07 * (k + 1)),
-                    max(0.05, a[1] - 0.06),
-                    max(0.05, b[0] - 0.05),
-                    min(0.95, b[1] + 0.08 * (k + 1)),
-                ],
-            }
-            for k, e in enumerate(arrows)
-            for a, b in [e["arrow_endpoints"]]
-        ]
-        _replays_identically(worker, name, tmp_path, "AdjText", patches)
-    finally:
-        pool.discard(worker)
 
 
 def test_one_rebuild_per_legend():
