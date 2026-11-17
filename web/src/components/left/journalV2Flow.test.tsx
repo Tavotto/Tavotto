@@ -84,6 +84,21 @@ describe('refreshJournalV2（打开项目自动更新）', () => {
 })
 
 describe('useJournalV2Sync', () => {
+  it('已经叠过同一份 v2 的项目再打开：不写历史、不置脏（每次打开都不变的项目不能每次都变脏）', async () => {
+    selectJournal('fx-beta')
+    refreshJournalV2('fx-beta', patch())
+    // 模拟存盘 → 重新打开：换一份内容相同、键序不同的文档
+    const saved = JSON.parse(
+      JSON.stringify(useDocumentStore.getState().doc, (_k, v) => (v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).reverse()) : v)),
+    )
+    await useDocumentStore.getState().switchDocument(saved, 'd_v2_reopen')
+    useJournalV2Store.setState({ byJournal: {} })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(patch()), { status: 200 }))
+    await act(async () => root.render(<Probe />))
+    await act(async () => { await Promise.resolve() })
+    expect(pastCount()).toBe(0)
+    expect(useDocumentStore.getState().dirty).toBe(false)
+  })
   it('打开已按期刊检查的项目：取到 v2 就自动叠上；取不到不动', async () => {
     selectJournal('fx-beta')
     useJournalV2Store.setState({ byJournal: {} })

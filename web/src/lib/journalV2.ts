@@ -36,9 +36,10 @@ export const isV2Source = (s: Pick<JournalFieldSource, 'src'> | undefined): bool
 export interface V2ConfirmRow {
   id: string
   subject: string
-  relation: 'gte' | 'lte' | 'eq'
-  value: number
-  unit: string
+  relation: 'gte' | 'lte' | 'eq' | 'in'
+  /** 数值要求是数；色彩模式 / 文件格式是名单 */
+  value: number | string[]
+  unit: string | null
   /** 原文条件，逐字（没有 condition_text 时是名称条件的原样拼接） */
   condition: string
   quote: string
@@ -84,9 +85,9 @@ function checkPatch(raw: unknown): V2Patch | null {
       isObj(r) &&
       typeof r.id === 'string' &&
       typeof r.subject === 'string' &&
-      ['gte', 'lte', 'eq'].includes(r.relation as string) &&
-      typeof r.value === 'number' &&
-      typeof r.unit === 'string' &&
+      (r.relation === 'in'
+        ? Array.isArray(r.value) && r.value.length > 0 && r.value.every((x) => typeof x === 'string') && r.unit == null
+        : ['gte', 'lte', 'eq'].includes(r.relation as string) && typeof r.value === 'number' && typeof r.unit === 'string') &&
       typeof r.condition === 'string' &&
       typeof r.quote === 'string' &&
       isObj(r.source) &&
@@ -116,6 +117,19 @@ export async function fetchJournalV2(journalId: string, signal?: AbortSignal): P
 /** 本地端点：已验签的原文截图（只回该刊事实引用过的图） */
 export const journalFactSnapshotUrl = (journalId: string, file: string): string =>
   `/api/journal-facts/snapshot?${new URLSearchParams({ journal_id: journalId, file })}`
+
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => sameValue(x, b[i]))
+  }
+  if (isObj(a) && isObj(b)) {
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)])
+    for (const key of keys) if (!sameValue(a[key], b[key])) return false
+    return true
+  }
+  return false
+}
 
 function deepMerge(into: Obj, from: Obj): void {
   for (const [key, value] of Object.entries(from)) {
@@ -175,14 +189,13 @@ export function applyV2(binding: Binding, patch: V2Patch | null): Binding {
   if (Object.keys(journal).length) next.journal = journal
   else delete next.journal
   next.journalSources = sources
-  return JSON.stringify([next.journal, next.journalSources]) === JSON.stringify([binding.journal, binding.journalSources])
-    ? binding
-    : next
+  // 逐键相同（不看键序：项目文件经 Python 往返后键序可能变）就原样返回——每次打开都不变的项目不能每次都变脏
+  return sameValue(next.journal, binding.journal) && sameValue(next.journalSources, binding.journalSources) ? binding : next
 }
 
 /** 「需要你确认」的一行 → 出处卡条目。路径是合成的 `v2.<主语>_<单位>`（词表 `journal.field.v2_*`），不是 v1 规则路径。 */
 export function confirmEntries(row: V2ConfirmRow): [string, JournalFieldSource] {
-  const qualifier = row.relation === 'gte' ? 'min' : row.relation === 'lte' ? 'max' : 'exact'
+  const qualifier = row.relation === 'gte' ? 'min' : row.relation === 'lte' ? 'max' : 'exact' // 名单（in）与「恰好」都是 exact
   const source: JournalFieldSource = {
     value: row.value,
     value_alt: null,
@@ -208,5 +221,5 @@ export function confirmEntries(row: V2ConfirmRow): [string, JournalFieldSource] 
     archive_url: '',
     overrides: null,
   }
-  return [`v2.${row.subject}_${row.unit}`, source]
+  return [row.unit ? `v2.${row.subject}_${row.unit}` : `v2.${row.subject}`, source]
 }

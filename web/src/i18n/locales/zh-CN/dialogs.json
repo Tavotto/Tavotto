@@ -2531,7 +2531,7 @@
       },
       "open": "打开原网页",
       "archive": "存档",
-      "fromV2": "新版数据",
+      "fromV2": "新版",
       "aria": "出处"
     },
     "confirm": {
@@ -2542,6 +2542,8 @@
     "field": {
       "page_columns": "栏宽",
       "v2_raster_dpi_dpi": "位图",
+      "v2_file_format": "文件格式",
+      "v2_color_mode": "色彩模式",
       "v2_min_line_width_pt": "线宽",
       "v2_width_mm": "图宽",
       "v2_width_in": "图宽",

@@ -657,51 +657,6 @@
    "bundle": {
     "facts": [
      {
-      "id": "a",
-      "origin": "journal",
-      "quote": "Quote a",
-      "relation": "in",
-      "source": "s1",
-      "stage": "unknown",
-      "strength": "required",
-      "subject": "color_mode",
-      "value": [
-       "RGB"
-      ]
-     },
-     {
-      "id": "b",
-      "origin": "journal",
-      "quote": "Quote b",
-      "relation": "in",
-      "source": "s1",
-      "stage": "unknown",
-      "strength": "required",
-      "subject": "file_format",
-      "value": [
-       "tiff"
-      ]
-     }
-    ],
-    "sources": {
-     "s1": {
-      "kind": "html",
-      "retrieved": "2026-11-15",
-      "url": "https://example.invalid/guide"
-     }
-    }
-   },
-   "expected": {
-    "confirm": [],
-    "rules": {},
-    "sources": {}
-   },
-   "id": "color-mode-and-format-are-not-preflight"
-  },
-  {
-   "bundle": {
-    "facts": [
-     {
       "condition_text": "One column width figures",
       "id": "a",
       "origin": "journal",
@@ -796,6 +751,95 @@
     "sources": {}
    },
    "id": "unspecified-strength-is-listed-not-folded"
+  },
+  {
+   "bundle": {
+    "facts": [
+     {
+      "id": "a",
+      "origin": "journal",
+      "quote": "Quote a",
+      "relation": "in",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "required",
+      "subject": "color_mode",
+      "value": [
+       "RGB",
+       "CMYK"
+      ]
+     },
+     {
+      "condition_text": "Line art only",
+      "id": "b",
+      "origin": "journal",
+      "quote": "Quote b",
+      "relation": "in",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "required",
+      "subject": "file_format",
+      "value": [
+       "tiff",
+       "eps"
+      ]
+     }
+    ],
+    "sources": {
+     "s1": {
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "expected": {
+    "confirm": [
+     {
+      "condition": "",
+      "id": "a",
+      "quote": "Quote a",
+      "relation": "in",
+      "source": {
+       "coverage": "journal_specific",
+       "kind": "html",
+       "retrieved": "2026-11-15",
+       "url": "https://example.invalid/guide"
+      },
+      "stage": "any",
+      "strength": "required",
+      "subject": "color_mode",
+      "unit": null,
+      "value": [
+       "RGB",
+       "CMYK"
+      ]
+     },
+     {
+      "condition": "Line art only",
+      "id": "b",
+      "quote": "Quote b",
+      "relation": "in",
+      "source": {
+       "coverage": "journal_specific",
+       "kind": "html",
+       "retrieved": "2026-11-15",
+       "url": "https://example.invalid/guide"
+      },
+      "stage": "any",
+      "strength": "required",
+      "subject": "file_format",
+      "unit": null,
+      "value": [
+       "tiff",
+       "eps"
+      ]
+     }
+    ],
+    "rules": {},
+    "sources": {}
+   },
+   "id": "color-mode-and-format-are-listed-for-confirmation"
   }
  ]
 }

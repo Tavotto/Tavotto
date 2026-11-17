@@ -1062,7 +1062,7 @@ export default interface Resources {
           "sample": "此来源的范围标记：单刊样本。标记可能是默认值或已过时，是否适用于本刊未核实。",
           "unknown": "来源范围和适用性未核实。"
         },
-        "fromV2": "新版数据",
+        "fromV2": "新版",
         "open": "打开原网页"
       },
       "cleared": "已不按期刊检查",
@@ -1113,10 +1113,12 @@ export default interface Resources {
         "page_columns": "栏宽",
         "preferred_formats_export_default": "默认导出格式",
         "text_weight_policy": "字重",
+        "v2_color_mode": "色彩模式",
         "v2_figure_piece_width_in": "单图宽",
         "v2_figure_piece_width_mm": "单图宽",
         "v2_figure_size_max_in": "图幅上限",
         "v2_figure_size_max_mm": "图幅上限",
+        "v2_file_format": "文件格式",
         "v2_min_line_width_pt": "线宽",
         "v2_raster_dpi_dpi": "位图",
         "v2_width_in": "图宽",

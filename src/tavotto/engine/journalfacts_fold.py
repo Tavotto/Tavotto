@@ -39,6 +39,8 @@ CONFIRM_UNITS: dict[str, tuple[str, ...]] = {
     "figure_size_max": ("mm", "in"),
 }
 CONFIRM_RELATIONS = ("gte", "lte", "eq")
+#: 名单型要求（色彩模式、文件格式）：预检没有对应判据，只列出来给人看（用户 2026-11-17 批准的方案原文：先只进「需要你确认」）。
+CONFIRM_LISTS = ("color_mode", "file_format")
 
 #: v1 只有三档阶段；v2 的 unknown 等同 any，revision / accepted 没有对应档，不折叠。
 _STAGE = {"unknown": "any", "any": "any", "submission": "submission", "production": "production"}
@@ -50,6 +52,17 @@ def _unconditional(fact: dict) -> bool:
 
 def _number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _listable(fact: dict) -> bool:
+    value = fact["value"]
+    return (
+        fact["subject"] in CONFIRM_LISTS
+        and fact["relation"] == "in"
+        and isinstance(value, list)
+        and bool(value)
+        and all(isinstance(x, str) and x.strip() for x in value)
+    )
 
 
 def _source_id(fact: dict) -> str:
@@ -139,7 +152,7 @@ def fold(bundle: dict) -> dict:
             fact.get("unit") in CONFIRM_UNITS.get(fact["subject"], ())
             and fact["relation"] in CONFIRM_RELATIONS
             and _number(fact["value"])
-        ):
+        ) or _listable(fact):
             confirm.append(_confirm_item(bundle, fact))
     rules: dict[str, dict] = {}
     sources: dict[str, dict] = {}

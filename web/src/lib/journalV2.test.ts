@@ -3,7 +3,7 @@
  * 叠上去的结果与「把同样的规则直接写进 v1 目录」逐键相同（同一条判据路径）、取不到 / 不合法 = 当没有 v2、叠加幂等可退。
  * 夹具期刊（fx-*，example.invalid），无真实数据。
  */
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import vectors from '../../../tests/golden/journal_vectors.json'
 import foldVectors from '../../../tests/golden/journal_v2_fold_vectors.json'
 import { setLocale } from '@/i18n'
@@ -21,6 +21,10 @@ const patch = (over: Partial<V2Patch> = {}): V2Patch => ({
   ...over,
 })
 const bind = () => pickJournal('fx-beta', catalog, { pageW: 85 }).binding
+
+beforeEach(async () => {
+  await setLocale('zh-CN')
+})
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -71,6 +75,13 @@ describe('applyV2', () => {
     expect(applyV2(once, patch())).toBe(once)
   })
 
+  it('逐键相同就原样返回，不看键序（项目文件经 Python 往返后键序会变；每次打开都不变的项目不能每次都变脏）', () => {
+    const once = applyV2(bind(), patch())
+    const shuffled = JSON.parse(JSON.stringify(once, (_k, v) => (v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).reverse()) : v)))
+    expect(Object.keys(shuffled.journal)).not.toEqual(Object.keys(once.journal!))
+    expect(applyV2(shuffled, patch())).toBe(shuffled)
+  })
+
   it('v2 后来没有这一项了：退回 v1 的值与出处', () => {
     const before = bind()
     const done = applyV2(before, patch())
@@ -113,6 +124,12 @@ describe('fetchJournalV2：取不到、被拒、不合法都是 null（预检照
 })
 
 describe('confirmEntries', () => {
+  it('名单型（色彩模式 / 文件格式）：路径不带单位，值是名单', () => {
+    const [path, s] = confirmEntries({ id: 'a', subject: 'color_mode', relation: 'in', value: ['RGB', 'CMYK'], unit: null, condition: '', quote: 'q', stage: 'unknown', source: V2_SRC })
+    expect(path).toBe('v2.color_mode')
+    expect(valueText(path, s)).toBe('RGB / CMYK')
+    expect(fieldLabel(path)).toBe('色彩模式')
+  })
   it('合成路径带主语与单位；qualifier 按比较词；出处标 v2；原文条件原样在 condition', () => {
     const [path, s] = confirmEntries({
       id: 'a', subject: 'width', relation: 'gte', value: 4, unit: 'in', condition: 'One column width figures',
@@ -137,7 +154,7 @@ describe('后端折叠向量（tests/golden/journal_v2_fold_vectors.json）过�
     for (const row of got!.confirm) {
       const [path, source] = confirmEntries(row)
       expect(fieldLabel(path)).not.toMatch(/_/)
-      expect(valueText(path, source)).toMatch(/\d/)
+      expect(valueText(path, source)).toMatch(/[\dA-Za-z]/)
     }
     for (const rule of Object.values(got!.rules)) expect(rule.src.startsWith('v2:')).toBe(true)
     if (Object.keys(got!.rules).length) {

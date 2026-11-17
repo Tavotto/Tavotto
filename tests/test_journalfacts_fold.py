@@ -65,7 +65,6 @@ def test_confirm_row_keeps_the_original_condition_verbatim():
         "font-family-example-is-not-an-allowlist",
         "permitted-and-typical-are-not-requirements",
         "unknown-origin-is-ignored",
-        "color-mode-and-format-are-not-preflight",
     ],
 )
 def test_non_requirements_are_ignored_entirely(name):
@@ -144,3 +143,11 @@ def test_preflight_endpoint_switch_session_and_shape(http_client, isolated, monk
         "/api/journal-facts/preflight", json={"journal_id": "fx-journal"}, headers=headers
     )
     assert off.status_code == 403 and off.json["code"] == "journal_catalog_disabled"
+
+
+def test_color_mode_and_file_format_are_listed_never_folded():
+    out = _case("color-mode-and-format-are-listed-for-confirmation")
+    assert out["rules"] == {}
+    rows = {r["subject"]: r for r in out["confirm"]}
+    assert rows["color_mode"]["value"] == ["RGB", "CMYK"] and rows["color_mode"]["condition"] == ""
+    assert rows["file_format"]["condition"] == "Line art only"

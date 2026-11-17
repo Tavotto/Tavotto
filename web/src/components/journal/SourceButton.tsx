@@ -76,11 +76,12 @@ function Evidence({ source }: { source: JournalFieldSource }) {
 
 /** 一条来源的域名、采集日期与类型，不暗示期刊归属。 */
 function SourceMeta({ source }: { source: JournalFieldSource }) {
+  const v2 = isV2Source(source)
   const parts = [
-    sourceHost(source.url),
+    v2 ? sourceHost(source.url).replace(/^www\./, '') : sourceHost(source.url),
     source.retrieved,
     source.kind === 'pdf' ? 'PDF' : '',
-    isV2Source(source) ? jt('card.fromV2') : '',
+    v2 ? jt('card.fromV2') : '',
   ].filter(Boolean)
   return (
     <p data-journal-meta className="type-caption flex flex-wrap gap-x-1">
@@ -96,6 +97,8 @@ function SourceMeta({ source }: { source: JournalFieldSource }) {
 
 /** 来源范围可能来自目录默认值；它不能证明该期刊采用了这条指南。 */
 function SourceCoverage({ source }: { source: JournalFieldSource }) {
+  // v2 事实已逐条复核、带摘录与截图：「范围未核实」那句既矛盾又堆字，不画
+  if (isV2Source(source)) return null
   const coverage = source.coverage
   const key = coverage === 'publisher_general' ? 'publisher'
     : coverage === 'journal_specific' ? 'journal'
