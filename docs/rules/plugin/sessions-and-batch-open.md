@@ -48,3 +48,6 @@ order: 120
 - **会话不抱 worker 引用**：池的上限（`pool.max_alive()`）与桥的 `MAX_SESSIONS` 是两个数，
   必然打架——每次操作前 `pool.get()` 重新取（`Session.acquire()`）。
   会话**渲染成功之后**才登记，否则失败的 open 会堆满账本并挤掉在用的会话。
+- **草稿带回（ADR 0192 第 2 条，全文在 `session-journal.md`）**：`open_figure` 新建会话时按（项目、stem、运行配置）带回没导出的草稿；
+  `_live_session_for` 的沿用规则不变（只沿用没改过的会话）。批量 `open_figures` 逐张走 `open_figure`，每张各自带回，
+  `_batch_entry` 带 `restored_draft`；`discard_draft` 批量同样认。淘汰（`_evict_if_needed`）经 `_retire` 把没导出的改动存成草稿。

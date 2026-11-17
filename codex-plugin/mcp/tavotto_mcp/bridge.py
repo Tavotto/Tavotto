@@ -1674,12 +1674,11 @@ def _journal_dir() -> Path:
     return Path(engine_config.data_dir()) / sessionjournal.DIRNAME
 
 
-def _persist(session: Session) -> None:
-    """把会话**已提交**的状态落盘（ADR 0078）。只在提交点调：open / apply / 规范化收尾 / 导出出了文件。
+def _drafts_dir() -> Path:
+    return Path(engine_config.data_dir()) / sessionjournal.DRAFTS_DIRNAME
 
-    落盘失败不让这次工具调用失败——图已经改好了；但要说出来（stderr 归日志，stdout
-    归协议），因为后果是「server 进程换了之后这个会话恢复不了」。
-    """
+
+def _session_record(session: Session) -> dict:
     record = {
         "id": session.id,
         "project": session.project,
@@ -1697,10 +1696,62 @@ def _persist(session: Session) -> None:
         # 旧插件读到它当作不存在（`unknown_session`），不会把它当成无参数会话复活（C26）
         record["run_config"] = session.run_config_id
         record["run_source"] = (session.run_info or {}).get("source")
+    return record
+
+
+def _persist(session: Session) -> bool:
+    """把会话**已提交**的状态落盘（ADR 0078）。只在提交点调：open / apply / 规范化收尾 / 导出出了文件。
+
+    落盘失败不让这次工具调用失败——图已经改好了；但要说出来（stderr 归日志，stdout
+    归协议），因为后果是「server 进程换了之后这个会话恢复不了」。
+
+    这一版已经导出出了文件时，这张图的草稿（ADR 0192 第 2 条）一并清掉：修改已经落到文件里了。
+    """
+    record = _session_record(session)
+    written = True
     try:
         sessionjournal.save(_journal_dir(), record)
     except (OSError, ValueError, TypeError) as exc:
+        written = False
         sys.stderr.write(f"tavotto-mcp: 会话 {session.id} 落盘失败，进程换了之后恢复不了：{exc}\n")
+    if session.patches and session.exported_hash == session.patch_hash():
+        sessionjournal.delete_drafts(
+            _drafts_dir(), session.project, session.stem, session.run_config_id
+        )
+    return written
+
+
+def _save_draft(record: dict) -> bool:
+    """把一条没导出改动的记录存成草稿（ADR 0192 第 2 条）；同一张图只留最新的一份。失败返回 False 并写 stderr。"""
+    draft = {**record, "exported_hash": None}
+    try:
+        older = sessionjournal.find_drafts(
+            _drafts_dir(), draft["project"], draft["stem"], draft.get("run_config")
+        )
+        # **先把新草稿写成功（`save` 是临时文件 + 原子 rename），再删同图别的草稿**：
+        # 写失败（磁盘满）时旧草稿一份不动，它可能是这批改动唯一的持久副本
+        sessionjournal.save(_drafts_dir(), draft)
+        for old in older:
+            if old["id"] != draft["id"]:
+                sessionjournal.delete(_drafts_dir(), old["id"])
+        return True
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        sys.stderr.write(f"tavotto-mcp: 会话 {record.get('id')} 的草稿存不下来，修改会丢：{exc}\n")
+        return False
+
+
+def _retire(session: Session) -> bool:
+    """明确释放（关闭 / 淘汰）一条内存会话：有没导出的改动就先存成草稿，再连记录一起删。
+    返回是否存下了草稿。草稿不会被 `get_session(旧 id)` 复活，只经 `open_figure` 带回。"""
+    saved = False
+    if unexported_changes(session):
+        saved = _save_draft(_session_record(session))
+        if not saved:
+            return (
+                False  # 草稿没写成：会话记录是这批改动唯一的持久副本，不删（重开时当孤儿记录带回）
+            )
+    _forget(session.id)
+    return saved
 
 
 def _forget(session_id: str) -> None:
@@ -1861,31 +1912,44 @@ def commit_export(session_id: str) -> None:
         _persist(s)
 
 
-#: 关掉一个改过却没导出的会话时的提醒（`close_session` 的 note；`fix_to_journal` 成功文字同一个意思）
+#: 关掉（或被淘汰）一个改过却没导出的会话时的提醒（ADR 0192 第 2 条）：改动存成了草稿
 UNEXPORTED_NOTE = (
-    "注意：这个会话里的修改还没导出，已随会话一起丢掉，用户的文件没变。"
-    "要保留修改，请重新打开这张图、改好后先 tavotto_export 再关。"
+    "修改还没导出，已存为草稿：重新打开这张图会自动带回（不要草稿就带 discard_draft=true 打开）。"
+    "用户的文件没变。"
 )
+#: 草稿也存不下来时（磁盘错误）：修改确实丢了，如实说
+UNEXPORTED_LOST_NOTE = (
+    "注意：这个会话里的修改还没导出，草稿没能存下来（磁盘问题）；会话记录先留着，"
+    "重新打开这张图仍会尝试带回，但不保证。用户的文件没变。"
+)
+
+
+def _unexported_out(out: dict, saved: bool) -> None:
+    out["unexported_changes"] = True
+    out["draft_saved"] = saved
+    out["note"] = UNEXPORTED_NOTE if saved else UNEXPORTED_LOST_NOTE
 
 
 def close_session(session_id: str) -> dict:
     s = _SESSIONS.pop(session_id, None)
-    # 进程换过时会话只在落盘记录里：删之前先看一眼，丢掉的修改照样要说出来
+    # 进程换过时会话只在落盘记录里：删之前先看一眼，没导出的修改照样要存成草稿
     record = None
     if s is None and sessionjournal.valid_id(session_id):
         try:
             record = sessionjournal.load(_journal_dir(), session_id)
         except Exception:  # noqa: BLE001 — 读不出来就按「不在了」处理，关闭本身不失败
             record = None
-    # 关闭是明确的释放：落盘记录一起删，别的进程里也不能再把它恢复出来
-    _forget(session_id)
     if s is None and record is not None:
+        # 关闭是明确的释放：落盘记录一起删，别的进程里也不能再把它恢复出来
+        saved = _save_draft(record) if _record_unexported(record) else False
+        if saved or not _record_unexported(record):
+            _forget(session_id)  # 草稿没写成就留着记录（唯一的持久副本）
         out = {"ok": True, "closed": True, "session_id": session_id, "stem": record.get("stem")}
         if _record_unexported(record):
-            out["unexported_changes"] = True
-            out["note"] = UNEXPORTED_NOTE
+            _unexported_out(out, saved)
         return out
     if s is None:
+        _forget(session_id)  # 没有这个会话（含已清掉的记录）：幂等
         return {
             "ok": True,
             "closed": False,
@@ -1894,6 +1958,8 @@ def close_session(session_id: str) -> dict:
     s.apply_receipt = None
     # native 活图归这条会话独占：关会话 = 放行脚本跑完（或终止），不留进程
     _end_native(s)
+    pending = unexported_changes(s)
+    saved = _retire(s)
     # worker 归 pool 管（同一个脚本可能还有别的用户）：这里只丢引用与会话账本。
     # 用户的项目数据一个字节都不动。
     out = {
@@ -1903,9 +1969,8 @@ def close_session(session_id: str) -> dict:
         "project": s.project,
         "stem": s.stem,
     }
-    if unexported_changes(s):
-        out["unexported_changes"] = True
-        out["note"] = UNEXPORTED_NOTE
+    if pending:
+        _unexported_out(out, saved)
     return out
 
 
@@ -1921,8 +1986,9 @@ def _evict_if_needed() -> list[str]:
         _SESSIONS.pop(oldest.id, None)
         oldest.apply_receipt = None
         _end_native(oldest)
-        # 淘汰也是明确的释放（open 的文字里会点名）：不许在下一次调用里悄悄复活
-        _forget(oldest.id)
+        # 淘汰也是明确的释放（open 的文字里会点名）：不许在下一次调用里悄悄复活；
+        # 没导出的改动存成草稿，重开这张图时带回（ADR 0192 第 2 条）
+        _retire(oldest)
         evicted.append(oldest.id)
     return evicted
 
@@ -2074,6 +2140,104 @@ def _resolve_project(target: str, stem: str | None) -> _ProjectCtx:
     )
 
 
+def _find_draft(project: str, stem: str, run_config: str | None) -> dict | None:
+    """这张图（项目、stem、运行配置）可带回的草稿；已经有活会话（不管改没改过）就不带回，免得出现第二个会话。
+
+    草稿与记录同一套越界校验：项目不在**当前连接**允许根内的草稿当作没有（不渲染、不执行脚本）。
+    """
+    if any(
+        s.project == project and s.stem == stem and s.run_config_id == run_config
+        for s in _SESSIONS.values()
+    ):
+        return None
+    roots = allowed_roots()
+    if not roots or _judge_path(project, roots)[1] is not None:
+        return None
+    # 显式草稿与没经 close 就丢的会话记录合在一起，取 saved_at 最新的那份：较新的改动不能被较旧的草稿盖掉
+    found = sessionjournal.find_drafts(_drafts_dir(), project, stem, run_config)
+    found += _orphan_records(project, stem, run_config)
+    return max(found, key=lambda r: float(r["saved_at"])) if found else None
+
+
+def _orphan_records(project: str, stem: str, run_config: str | None) -> list[dict]:
+    """没经 close 就丢了的会话记录（进程直接退出 / 宿主断开）：这张图的活会话记录里，**不在本进程内存**、
+    且有没导出改动的，最新的在前。open 找不到草稿时把它当草稿带回（带回后删掉旧记录，不会再按旧 id 复活出第二份）。
+
+    只靠记录分不出「别的 MCP 进程里还活着」的会话（不存 pid：跨平台判进程存活不可靠，Windows 的 `os.kill`
+    会真的结束进程）。取舍：别的进程正开着同一张图且改过没导出时，后开的会话会带上那份改动（拷贝，不影响它那边继续用），
+    它的记录被删，下一次提交点（apply / 导出）会重新落盘——可接受：与「同一张图开两个会话」同一个量级。
+    """
+    return [
+        r
+        for r in sessionjournal.find_drafts(_journal_dir(), project, stem, run_config)
+        if r["id"] not in _SESSIONS and _record_unexported(r)
+    ]
+
+
+def _unapplied_patches(patches: list, warnings: list) -> list[dict]:
+    """worker 渲染完后哪些 patch 没落上（脚本改过、gid 不在了、属性不支持）。
+
+    只读 worker 自己给的 warning（`engine/overrides.py::_apply` 的四种措辞，按 `gid` / `gid.prop` 精确认），不另猜。
+    """
+    texts = [str(w).rstrip() for w in warnings]
+    out = []
+    for p in patches:
+        gid, prop = str(p["gid"]), str(p["prop"])
+        key = f"{gid}.{prop}"
+        reason = None
+        for t in texts:
+            if t.startswith("编辑的对象已找不到") and t.endswith(f": {key}"):
+                reason = "identity_mismatch"
+            elif t.startswith("元素不存在") and t.endswith(f": {gid}"):
+                reason = "element_missing"
+            elif t.startswith("属性不支持") and t.endswith(f": {key}"):
+                reason = "property_unsupported"
+            elif t.startswith(f"应用失败 {key}:"):
+                reason = "apply_failed"
+            if reason:
+                out.append({"gid": gid, "prop": prop, "reason": reason})
+                break
+    return out
+
+
+def _render_draft(make_session, draft: dict) -> tuple[Session, dict, dict]:
+    """按草稿的 patches 渲染（先渲染成功才交出会话，调用方再登记）。部分 patch 用不了就带能用的，
+    用不了的逐条进 `dropped`；渲染失败抛 BridgeError（草稿不动）。"""
+    canonical, bad = patchspec.canonicalize_with_diagnostics(draft["patches"])
+    dropped: list[dict] = [
+        {"reason": d["reason"], "entry": d.get("entry", "")} for d in bad if d["index"] != -1
+    ]
+    session = make_session()
+    render = _render(session, canonical, preview_dpi=None)
+    miss = _unapplied_patches(canonical, session.warnings)
+    if miss:
+        gone = {(m["gid"], m["prop"]) for m in miss}
+        dropped.extend(miss)
+        canonical = [p for p in canonical if (str(p["gid"]), str(p["prop"])) not in gone]
+        # 用不了的不留在会话里：会话的 patches 要等于画面上真落下的那一组，同一个会话再渲染一次让两边配对
+        try:
+            render = _render(session, canonical, preview_dpi=None)
+        except BridgeError:
+            _end_native(session)  # 会话不登记了，别留着 native 进程
+            raise
+    if not dropped:
+        # 没丢任何一条：规范化合同跟着带回（挡板不因为换了进程 / 重开而消失，ADR 0051）；丢过就不再对得上，不带
+        session.contract = draft.get("contract")
+        session.normalized = draft.get("normalized")
+    if isinstance(draft.get("created"), (int, float)):
+        session.created = float(draft["created"])
+    info = {"patches": len(canonical), "from_session": draft["id"]}
+    if dropped:
+        info["dropped"] = dropped
+        info["note"] = (
+            f"已带回上次没导出的 {len(canonical)} 条修改；另有 {len(dropped)} 条因脚本改动用不了，"
+            "已跳过（见 dropped）。"
+        )
+    else:
+        info["note"] = f"已带回上次没导出的 {len(canonical)} 条修改，用户的脚本和文件没变。"
+    return session, render, info
+
+
 def open_figure(
     target: str,
     *,
@@ -2089,8 +2253,12 @@ def open_figure(
     adopt_environment: str | None = None,
     expected_environment_generation: str | None = None,
     prepare_impact_digest: str | None = None,
+    discard_draft: bool = False,
 ) -> dict:
     """解析 → 登记 → 起会话 → 渲染一次。返回给 Codex 的第一份快照。
+
+    `discard_draft`（ADR 0192 第 2 条）：不带回这张图没导出的草稿，并把草稿删掉，从脚本原样打开。
+    不给时，同一（项目、stem、运行配置）没有活会话、又有草稿，就按草稿的 patches 渲染（`restored_draft`）。
 
     `argv` / `run_config`（T10）：这次按哪份运行配置跑（`_choose_run`）。引擎不会就拒绝，绝不无参数先试；
     回包 `run_config` 只有引用 / 个数 / 来源。`adopt_environment`（T10，ADR 0114）：对环境建议的回答——
@@ -2147,9 +2315,17 @@ def open_figure(
     if journal_ref:
         profile = {**profile, "journal_ref": journal_ref}
 
-    session = _live_session_for(project, chosen, getattr(run, "config_id", None))
+    run_config_id = getattr(run, "config_id", None)
+    discarded = 0
+    if discard_draft:
+        discarded = sessionjournal.delete_drafts(_drafts_dir(), project, chosen, run_config_id)
+        for orphan in _orphan_records(project, chosen, run_config_id):
+            discarded += int(sessionjournal.delete(_journal_dir(), orphan["id"]))
+    session = _live_session_for(project, chosen, run_config_id)
     reused = session is not None
     evicted: list[str] = []
+    restored_draft: dict | None = None
+    draft_failed: dict | None = None
     if session is not None:
         # 沿用时**照样重渲染一次**（`patches` 按定义是空的）：open 的返回里
         # manifest / SVG / 位图必须与会话此刻的状态配对（ADR 0022 不变量 5），
@@ -2164,24 +2340,52 @@ def open_figure(
         session.cost = str(info.get("cost", "") or "")
         render = _render(session, list(session.patches), preview_dpi=None)
     else:
-        session = Session(
-            id="s-" + uuid.uuid4().hex[:12],
-            project=project,
-            stem=chosen,
-            script=info["script"],
-            entry=info["entry"],
-            profile=profile,
-            cost=str(info.get("cost", "") or ""),
-            run=run,
-            run_info=_run_projection(run, run_source),
-        )
-        # **先渲染成功，再登记会话**：脚本 build 阶段抛异常时调用方只拿到一个
-        # 错误，永远拿不到 session_id，也就永远关不掉它。反复失败的 open 会把
-        # 账本堆满，再靠 `_evict_if_needed()` 把**真正在用的**会话挤出去。
-        render = _render(session, [], preview_dpi=None)
+
+        def _fresh() -> Session:
+            return Session(
+                id="s-" + uuid.uuid4().hex[:12],
+                project=project,
+                stem=chosen,
+                script=info["script"],
+                entry=info["entry"],
+                profile=profile,
+                cost=str(info.get("cost", "") or ""),
+                run=run,
+                run_info=_run_projection(run, run_source),
+            )
+
+        session = None
+        draft = None if discard_draft else _find_draft(project, chosen, run_config_id)
+        if draft is not None:
+            # 草稿与记录同一套越界校验，拒在渲染之前（越界的草稿当作没有，不渲染、不执行脚本）
+            try:
+                session, render, restored_draft = _render_draft(_fresh, draft)
+            except BridgeError as exc:
+                # 草稿带不回来不能让这张图打不开：按脚本原样开，草稿留着，如实回报原因
+                draft_failed = {
+                    "from_session": draft["id"],
+                    "code": exc.code or "render_failed",
+                    "error": str(exc),
+                }
+        if session is None:
+            # **先渲染成功，再登记会话**：脚本 build 阶段抛异常时调用方只拿到一个
+            # 错误，永远拿不到 session_id，也就永远关不掉它。反复失败的 open 会把
+            # 账本堆满，再靠 `_evict_if_needed()` 把**真正在用的**会话挤出去。
+            session = _fresh()
+            render = _render(session, [], preview_dpi=None)
         _SESSIONS[session.id] = session
         evicted = _evict_if_needed()
-    _persist(session)
+    persisted = _persist(session)
+    if restored_draft is not None and persisted:
+        # 草稿已经并进这条活会话（它的记录确实落盘了）：草稿完成使命，删掉。
+        # 落盘没成功就一律不删——源草稿 / 旧记录可能是这批改动唯一的持久副本
+        sessionjournal.delete_drafts(_drafts_dir(), project, chosen, run_config_id)
+        for orphan in _orphan_records(project, chosen, run_config_id):
+            # 没被选中的较旧孤儿记录已被更新的改动取代：一并删，免得导出清了草稿后它又被当成未导出的改动带回
+            sessionjournal.delete(_journal_dir(), orphan["id"])
+        if restored_draft["from_session"] != session.id:
+            # 带回的若是没经 close 就丢了的活会话记录：旧记录删掉，别再按旧 id 复活出第二份
+            sessionjournal.delete(_journal_dir(), restored_draft["from_session"])
     out = {
         "ok": True,
         "session_id": session.id,
@@ -2205,6 +2409,17 @@ def open_figure(
     }
     if profile.get("journal_ref"):
         out["journal_ref"] = profile["journal_ref"]
+    if restored_draft is not None:
+        out["restored_draft"] = restored_draft
+        # 内嵌画布用这个字段 seed 它的 override 账本（`web/src/mcp/session.ts::seedSession`）：不带的话账本是空的，
+        # 画布下一次编辑发全量列表就把带回的改动抹掉
+        out["patches"] = list(session.patches)
+        if not persisted:
+            restored_draft["note"] += "（注意：这次没能落盘，草稿保留着。）"
+    if draft_failed is not None:
+        out["draft_restore_failed"] = draft_failed
+    if discarded:
+        out["discarded_draft"] = True
     if session.run_info is not None:
         out["run_config"] = session.run_info
     if adopted is not None:
@@ -2228,7 +2443,7 @@ def open_figure(
         # 让 #181 那种图多画一遍不划算。
         if "preview_png_base64" not in out:
             try:
-                out["preview_png_base64"] = preview_png(session, [], 1600)
+                out["preview_png_base64"] = preview_png(session, list(session.patches), 1600)
             except BridgeError as exc:
                 out["preview_png_error"] = exc.code or "preview_failed"
     return out
@@ -2293,6 +2508,7 @@ def open_figures(
     journal: dict | None = None,
     journal_id: str | None = None,
     workdir: str | None = None,
+    discard_draft: bool = False,
 ) -> dict:
     """一次调用打开 N 张独立的图，拿回 N 个**各自可编辑**的会话。
 
@@ -2355,6 +2571,7 @@ def open_figures(
                 profile_id=profile_id,
                 journal=journal,
                 journal_id=journal_id,
+                discard_draft=discard_draft,
             )
         except BridgeError as exc:
             failed.append(_failure_entry(stem, exc))
@@ -2431,6 +2648,12 @@ def _batch_entry(one: dict) -> dict:
         "parameterizable": (one.get("registry") or {}).get("parameterizable"),
         "preview_mode": (one.get("preview") or {}).get("mode"),
         "warnings": one.get("warnings", []),
+        **({"restored_draft": one["restored_draft"]} if "restored_draft" in one else {}),
+        **(
+            {"draft_restore_failed": one["draft_restore_failed"]}
+            if "draft_restore_failed" in one
+            else {}
+        ),
     }
 
 

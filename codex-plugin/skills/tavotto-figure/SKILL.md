@@ -119,7 +119,7 @@ tavotto_open_figure { "project_path": "/absolute/path/to/figures", "stem": "Fig1
 * **导出** `tavotto_export { session_id, formats: ["pdf","png"] }`。有 `errors`
   时它会拒绝——**先修或问用户**；用户明确说「就这样导出」才带
   `explicit_confirm: true`（这次会记进 proof report）。
-* **收尾** 导出后再 `tavotto_close_session { session_id }`。
+* **收尾** 导出后 `tavotto_close_session`，没导出也不丢。
 用户说要投某本期刊：先 `tavotto_list_journals { "query": "期刊名" }` 查 id，之后 open / preflight /
 export / normalize 都带 `journal_id`，别再手写尺寸；查不到才手写 `journal`（见 `references/publication-style.md`「按期刊」）。
 **改到合规先 `tavotto_fix_to_journal`**：`column_choice_required` 就问用户栏位，`fix.kind=manual` 才改脚本。
