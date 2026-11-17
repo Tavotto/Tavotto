@@ -1163,23 +1163,29 @@ class _TickSet:
         self.ax.tick_params(axis=self.which, which=which, **kw)
 
     def show_labels(self):
-        # Labels already on at either side stay where the script put them (a colorbar or
-        # twinx has them on the right); only when no side has them do they go bottom / left.
+        # Each side keeps what the axis had (a colorbar or twinx has its labels on the
+        # right); only when no major side has them do they go bottom / left. A tick the
+        # script hid on its own does not switch a whole side off, and is shown again.
         import matplotlib as mpl
 
         axis = getattr(self.ax, self.which + "axis")
         sides = ("bottom", "top") if self.which == "x" else ("left", "right")
-        ticks = axis.get_major_ticks()
-        if ticks:
-            on = ticks[0].label1.get_visible() or ticks[0].label2.get_visible()
-        else:
-            kw = axis._major_tick_kw
-            on = any(
-                kw.get("label%dOn" % n, mpl.rcParams.get("%stick.label%s" % (self.which, s), n == 1))
-                for n, s in ((1, sides[0]), (2, sides[1]))
-            )
-        if not on:
-            self.params(**{"label" + sides[0]: True, "label" + sides[1]: False})
+
+        def side_on(minor, n):
+            kw = axis._minor_tick_kw if minor else axis._major_tick_kw
+            v = kw.get("label%dOn" % n)
+            if v is not None:
+                return bool(v)
+            ticks = axis.get_minor_ticks() if minor else axis.get_major_ticks()
+            if ticks:
+                return any(getattr(t, "label%d" % n).get_visible() for t in ticks)
+            return bool(mpl.rcParams.get("%stick.label%s" % (self.which, sides[n - 1]), n == 1))
+
+        on = [(side_on(m, 1), side_on(m, 2)) for m in (False, True)]
+        if not any(on[0]):
+            on = [(True, False), (True, False)]
+        for which, (s1, s2) in zip(("major", "minor"), on):
+            self.params(which=which, **{"label" + sides[0]: s1, "label" + sides[1]: s2})
 
 
 def _tick_formatter(name):

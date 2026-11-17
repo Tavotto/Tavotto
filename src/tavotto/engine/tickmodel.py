@@ -413,7 +413,8 @@ _LABEL_SIDE_KW = {
 
 
 class LabelSides(tuple):
-    """刻度组 `visible` 的「脚本原样」：`((主1, 主2), (次1, 次2))`，每侧文字开没开。
+    """刻度组 `visible` 的「脚本原样」：`((主1, 主2), (次1, 次2), (主逐条, 次逐条))`——
+    前两项是每侧文字开没开（轴级），第三项是每条刻度 `(label1, label2)` 的显隐。
 
     独立类型而不是裸元组：setter 双形态（bool 是界面的开关，`LabelSides` 是还原），
     裸元组和 `_mk_tick_side` 那种 (主, 次) 二元组长得一样，判形状会认错。
@@ -423,19 +424,26 @@ class LabelSides(tuple):
 
 
 def _tick_label_state(axis, which: str, line: int, minor: bool) -> bool:
-    """一档刻度在某一侧**文字**的开关，与 `_tick_side_state` 同一条三级真值链：
-    Tick 对象（`label1` / `label2`）→ 轴的 `_major/_minor_tick_kw`（`label1On`）→ rcParams。"""
-    ticks = axis.get_minor_ticks() if minor else axis.get_major_ticks()
-    if ticks:
-        return bool(getattr(ticks[0], f"label{line}").get_visible())
+    """一档刻度在某一侧**文字**的开关（轴级）：轴的 `_major/_minor_tick_kw`（`label1On`）→
+    这档有任何一条刻度的文字开着 → rcParams。不看「第一条」：脚本单独藏了边上那条
+    （`get_major_ticks()[0].label1.set_visible(False)` 防重叠）不等于整侧关了。
+    单条刻度的显隐另记在 `LabelSides` 第三项里，撤销时逐条写回。"""
     kw = axis._minor_tick_kw if minor else axis._major_tick_kw  # noqa: SLF001
     v = kw.get(f"label{line}On")
     if v is not None:
         return bool(v)
+    ticks = axis.get_minor_ticks() if minor else axis.get_major_ticks()
+    if ticks:
+        return any(getattr(t, f"label{line}").get_visible() for t in ticks)
     try:
         return bool(mpl.rcParams[f"{which}tick.{_LABEL_SIDE_KW[(which, line)]}"])
     except KeyError:
         return line == 1
+
+
+def _per_tick_labels(axis, minor: bool) -> tuple:
+    ticks = axis.get_minor_ticks() if minor else axis.get_major_ticks()
+    return tuple((t.label1.get_visible(), t.label2.get_visible()) for t in ticks)
 
 
 def _get_ticks_visible(ts: "TickSet"):
@@ -445,17 +453,30 @@ def _get_ticks_visible(ts: "TickSet"):
     axis = getattr(ts.ax, f"{ts.which}axis", None)
     if ts.which not in ("x", "y") or axis is None:
         return bool(ts._first(lambda t: t.get_visible(), True))  # noqa: SLF001
-    return LabelSides(
+    sides = [
         tuple(_tick_label_state(axis, ts.which, line, minor) for line in (1, 2))
         for minor in (False, True)
-    )
+    ]
+    per_tick = tuple(_per_tick_labels(axis, minor) for minor in (False, True))
+    return LabelSides((*sides, per_tick))
 
 
 def _put_label_sides(ts: "TickSet", sides) -> None:
-    (maj1, maj2), (min1, min2) = sides
+    (maj1, maj2), (min1, min2) = sides[0], sides[1]
     k1, k2 = _LABEL_SIDE_KW[(ts.which, 1)], _LABEL_SIDE_KW[(ts.which, 2)]
     ts.tick_params(which="major", **{k1: bool(maj1), k2: bool(maj2)})
     ts.tick_params(which="minor", **{k1: bool(min1), k2: bool(min2)})
+
+
+def _restore_per_tick_labels(ts: "TickSet", per_tick) -> None:
+    """撤销：tick_params 把整档刷成一样之后，逐条写回脚本单独设过的显隐（按位置对齐；
+    之后新长出来的刻度照 matplotlib 的规矩从第一条抄，与全量重放同一条路）。"""
+    axis = getattr(ts.ax, f"{ts.which}axis")
+    for minor, vis in zip((False, True), per_tick):
+        ticks = axis.get_minor_ticks() if minor else axis.get_major_ticks()
+        for t, (l1, l2) in zip(ticks, vis):
+            t.label1.set_visible(bool(l1))
+            t.label2.set_visible(bool(l2))
 
 
 def _set_ticks_visible(ts: "TickSet", v, state: EditState | None = None) -> None:
@@ -468,6 +489,8 @@ def _set_ticks_visible(ts: "TickSet", v, state: EditState | None = None) -> None
         return
     if isinstance(v, LabelSides):
         _put_label_sides(ts, v)
+        if len(v) > 2:
+            _restore_per_tick_labels(ts, v[2])
         return
     if not v:
         _put_label_sides(ts, ((False, False), (False, False)))

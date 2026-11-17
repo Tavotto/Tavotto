@@ -64,6 +64,13 @@ def main():
     ax.tick_params(axis="x", labelbottom=False)
     fig.savefig("Hidden.pdf")
 
+    # 脚本只藏了边上那一条（防重叠的常见写法）：整侧仍算开着，撤销要逐条回到原样
+    fig, ax = plt.subplots(figsize=(4, 3))
+    ax.plot([0, 1], [0, 1])
+    fig.canvas.draw()
+    ax.xaxis.get_major_ticks()[0].label1.set_visible(False)
+    fig.savefig("Edge.pdf")
+
     fig, ax = plt.subplots(figsize=(4, 3))
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
@@ -154,6 +161,14 @@ SEQUENCES = {
         "Hidden",
         [[_vis("axes_0.xticks", True)], [], [_vis("axes_0.xticks", False)], []],
     ),
+    "edge-hide-undo": (
+        "Edge",
+        [[_vis("axes_0.xticks", False)], [], [_font("axes_0.xticks", 12.0)]],
+    ),
+    "edge-hide-show-undo": (
+        "Edge",
+        [[_vis("axes_0.xticks", False)], [_vis("axes_0.xticks", True)], []],
+    ),
     "arrow-annotation": ("Arrow", [[_color(ANN, "#00ff00")], []]),
     "arrow-patch": ("Arrow", [[_color(PATCH, "#00ff00")], []]),
     "arrow-alpha-order": (
@@ -207,8 +222,9 @@ def test_hiding_right_side_labels_really_hides_them(library, stem):
         ("Sides", [_vis("axes_0.xticks", False), _vis("axes_0.yticks", False)]),
         ("Hidden", [_vis("axes_0.xticks", True)]),
         ("Twin", [_vis("axes_1.yticks", True), _font("axes_1.yticks", 12.0)]),
+        ("Edge", [_vis("axes_0.xticks", True)]),
     ],
-    ids=["cbar-hide", "twin-hide", "sides-hide", "hidden-show", "twin-show"],
+    ids=["cbar-hide", "twin-hide", "sides-hide", "hidden-show", "twin-show", "edge-show"],
 )
 def test_exported_script_hides_and_shows_the_same_sides(tmp_path, stem, patches):
     """导出修改后的 .py（`scriptadjust._tick_statement`）与引擎同口径：隐藏关两侧，显示保留脚本原样那几侧。"""
