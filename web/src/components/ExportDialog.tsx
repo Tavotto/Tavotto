@@ -53,7 +53,10 @@ import {
 } from "@/components/ui/icons";
 import { ICON_SIZE, IconSlot } from "@/components/ui/Icon";
 import { CanvasThumb } from "./CanvasThumb";
+import { ExportManuscriptPreview } from "./ExportManuscriptPreview";
 import { ExportZoomStage } from "./ExportZoomStage";
+import { computeManuscriptLayout, type ManuscriptLayout } from "@/lib/manuscriptPreview";
+import { columnName } from "@/lib/pageColumns";
 import { ExportLocationRow, projectRelativeLocation, useExportLocationPicker } from "./ExportLocationRow";
 import { abbreviateHome } from "@/lib/pathDisplay";
 import { RASTER_TOO_LARGE, isLocationFailure, largestDpiWithinLimit, missingSourceFigure } from "@/lib/exportRecovery";
@@ -353,6 +356,7 @@ export function ExportDialog() {
   const single = mode === "fast_edit";
   /** 多图时左栏预览挑的那一项（"page" = 整版，否则是 figureId）；null = 跟着导出内容走。只换预览，不改导出内容 */
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const [previewMode, setPreviewMode] = useState<ExportPreviewMode>("figure");
   const parked = useRef<ParkedState | null>(null);
   const [withReport, setWithReport] = useState(
     () => readExportDefaults().withProof,
@@ -651,6 +655,7 @@ export function ExportDialog() {
      */
     const snap = useDocumentStore.getState().doc;
     setPreviewId(null);
+    setPreviewMode("figure");
     const prior = useExportStore.getState();
     setSettledJobId(prior.job && !prior.running ? prior.job.job_id : null);
     setRevealError(null);
@@ -1844,6 +1849,10 @@ export function ExportDialog() {
         flaggedObjectIds={flaggedObjectIds}
         pageFlagged={pageFlagged}
         signoffFormats={signoffFormats}
+        previewMode={previewMode}
+        onPreviewModeChange={setPreviewMode}
+        profile={profile}
+        specName={checkSpecName}
         onShow={showPreview}
       />
       {/* 点「导出」之后的冻结阶段（逐张摆好、生成请求输入）里表单整块禁用：这几百毫秒里改动不会只落进一部分图 */}
@@ -2372,6 +2381,8 @@ function FigureThumbArt({
  * 点缩略图只是换预览（`onShow`）；是否同时改要导的那张由对话框按导出内容决定。
  * 预览不是最终文件（位图格式的像素、图内修改的合成不在这里），但不另加文字说明。
  */
+type ExportPreviewMode = "figure" | "manuscript";
+
 function ExportPreviewPane({
   single,
   fallbackPage,
@@ -2385,6 +2396,10 @@ function ExportPreviewPane({
   flaggedObjectIds,
   pageFlagged,
   signoffFormats,
+  previewMode,
+  onPreviewModeChange,
+  profile,
+  specName,
   onShow,
 }: {
   single: boolean;
@@ -2405,6 +2420,10 @@ function ExportPreviewPane({
   pageFlagged: boolean;
   /** 干净完成时的格式签发摘要（如 "PDF · PNG"）；未完成或有任何瑕疵时为 null */
   signoffFormats?: string | null;
+  previewMode: ExportPreviewMode;
+  onPreviewModeChange: (mode: ExportPreviewMode) => void;
+  profile: PublicationProfile;
+  specName: string;
   onShow: (id: string) => void;
 }) {
   useTranslation("dialogs");
@@ -2418,24 +2437,62 @@ function ExportPreviewPane({
   const sizeMm = showPage
     ? ([(fallbackCrop?.page ?? doc.page).w, (fallbackCrop?.page ?? doc.page).h] as const)
     : (specMm ?? shownFigure?.sizeMm ?? null);
+  const sizeW = sizeMm?.[0] ?? 0;
+  const sizeH = sizeMm?.[1] ?? 0;
+  const hasContent = showPage || !!shownFigure;
+  const canPreviewManuscript = hasContent && sizeW > 0 && sizeH > 0;
+  const effectiveMode: ExportPreviewMode =
+    previewMode === "manuscript" && canPreviewManuscript ? "manuscript" : "figure";
+  const manuscriptLayout = useMemo(
+    () =>
+      effectiveMode === "manuscript" && sizeW > 0 && sizeH > 0
+        ? computeManuscriptLayout([sizeW, sizeH], profile)
+        : null,
+    [effectiveMode, sizeW, sizeH, profile],
+  );
   const flagged = (f: ExportableFigure) => !!f.panel && flaggedObjectIds.has(f.panel.id);
   const pageSize = fallbackCrop?.page ?? doc.page;
   // 预览按图幅比例定高（舞台内仍是 contain，不改导出几何）：灰底面板只包住图，不再被右栏的高度撑出上下大块空白；
-  // 比例未知（读不到图幅）才退回铺满整列的旧做法
-  const stageRatio = showPage
-    ? pageSize.w / pageSize.h
-    : sizeMm && sizeMm[1] > 0
-      ? sizeMm[0] / sizeMm[1]
-      : null;
+  // 比例未知（读不到图幅）才退回铺满整列的旧做法；切到「版面预览」时按论文整页取景比例立起纸面
+  const stageRatio = manuscriptLayout
+    ? manuscriptLayout.viewportW / manuscriptLayout.viewportH
+    : showPage
+      ? pageSize.w / pageSize.h
+      : sizeMm && sizeMm[1] > 0
+        ? sizeMm[0] / sizeMm[1]
+        : null;
   const strip = useRef<HTMLDivElement>(null);
   const { fade } = useScrollFade(strip, "x");
   const fitted = stageRatio !== null && stageRatio > 0 && Number.isFinite(stageRatio);
+  const hasTabs = !single && figures.length > 0;
+  const maxStageHeight = hasTabs ? "calc(86vh - 15.5rem)" : "calc(86vh - 13rem)";
+  const sizeLabel = (() => {
+    if (!sizeMm) return ex("sizeUnknownShort");
+    const w = round1(sizeMm[0]);
+    const h = round1(sizeMm[1]);
+    if (!manuscriptLayout) return ex("mmSize", { w, h });
+    if (manuscriptLayout.widthOverflow) {
+      const maxW = round1(manuscriptLayout.textBlockW);
+      return manuscriptLayout.hasExplicitColumns
+        ? ex("previewLayoutOverflowSpec", { w, h, spec: specName, maxW })
+        : ex("previewLayoutOverflowGeneric", { w, h, maxW });
+    }
+    if (manuscriptLayout.heightOverflow) {
+      const maxH = round1(manuscriptLayout.textBlockBottom - manuscriptLayout.textBlockTop - 10);
+      return ex("previewLayoutTall", { w, h, maxH });
+    }
+    const column = columnName(manuscriptLayout.targetColumn);
+    const colW = round1(manuscriptLayout.targetColumn.w);
+    return manuscriptLayout.hasExplicitColumns
+      ? ex("previewLayoutSlotSpec", { w, h, spec: specName, column, colW })
+      : ex("previewLayoutSlotGeneric", { w, h, column, colW });
+  })();
   return (
     // 预览框：画布灰（bg-canvas）+ md 圆角 + 12px 内边距，纸面（白）在里面按图幅比例 contain；缩略卡一排与尺寸标签都在框外
     <div data-export-preview className="relative min-h-[320px] min-w-0 md:min-h-0">
      <div className="md:sticky md:top-0">
       {/* 缩略卡直接放在对话框白面上（无底带、无分隔线），与下方预览左缘对齐；只有存在单张图可切换时才画（零张图时整版已在下方大预览中，不重复画一张空卡片） */}
-        {!single && figures.length > 0 && (
+        {hasTabs && (
           <div
             role="tablist"
             aria-label={ex("previewTabs")}
@@ -2477,6 +2534,28 @@ function ExportPreviewPane({
           </div>
         )}
       <div
+        data-export-preview-toolbar
+        data-export-preview-mode={effectiveMode}
+        className="mb-2 flex items-center justify-between gap-2"
+      >
+        <Segmented<ExportPreviewMode>
+          value={effectiveMode}
+          onChange={onPreviewModeChange}
+          ariaLabel={ex("previewModeLabel")}
+          data-testid="export-preview-mode"
+          className="w-auto shrink-0"
+          items={[
+            { value: "figure", label: ex("previewModeFigure") },
+            {
+              value: "manuscript",
+              label: ex("previewModeLayout"),
+              disabled: !canPreviewManuscript,
+              title: canPreviewManuscript ? undefined : ex("previewLayoutUnavailable"),
+            },
+          ]}
+        />
+      </div>
+      <div
         className={cn(
           "flex flex-col overflow-hidden rounded-md bg-canvas p-3",
           !fitted && "h-full max-h-[calc(86vh-13rem)] min-h-[320px]",
@@ -2487,11 +2566,37 @@ function ExportPreviewPane({
           className={cn("relative min-h-0", !fitted && "flex-1")}
           style={
             fitted
-              ? { aspectRatio: String(stageRatio), maxHeight: "calc(86vh - 13rem)", minHeight: 160 }
+              ? { aspectRatio: String(stageRatio), maxHeight: maxStageHeight, minHeight: 160 }
               : undefined
           }
         >
-          {showPage ? (
+          {manuscriptLayout ? (
+            showPage ? (
+              <ExportManuscriptPreview
+                stageKey="manuscript-page"
+                layout={manuscriptLayout}
+                renderFigure={(px) => (
+                  <CanvasThumb
+                    page={pageSize}
+                    objects={fallbackCrop?.objects ?? doc.objects}
+                    className="h-full w-full"
+                    transparent={false}
+                    flush
+                    pxWidth={px || undefined}
+                    editedPanel={editedPanelOf}
+                    exportedText={exportedTextOf}
+                    exportedShape={exportedShapeOf}
+                  />
+                )}
+              />
+            ) : shownFigure ? (
+              <ManuscriptFigureStage
+                key={`manuscript-${shownFigure.figureId}`}
+                figure={shownFigure}
+                layout={manuscriptLayout}
+              />
+            ) : null
+          ) : showPage ? (
             <ExportZoomStage key="page" ratio={pageSize.w / pageSize.h}>
               {(px) => (
                 <CanvasThumb
@@ -2523,7 +2628,7 @@ function ExportPreviewPane({
       {/* 尺寸标在预览框外、左对齐的灰色小字；干净导完时右侧并排亮出中性墨色导出印记（遵守 ADR 0068 未核验不画绿、不叠图、不推挤） */}
       <p data-export-preview-size className="type-meta mt-1.5 flex items-center justify-between gap-2 tabular-nums text-ink-3">
         <span className="min-w-0 truncate">
-          {sizeMm ? ex("mmSize", { w: round1(sizeMm[0]), h: round1(sizeMm[1]) }) : ex("sizeUnknownShort")}
+          {sizeLabel}
         </span>
         {signoffFormats && (
           <span data-export-signoff className="inline-flex shrink-0 items-center gap-1 font-medium text-ink-2">
@@ -2602,35 +2707,66 @@ function PreviewTabArt({ figure }: { figure: ExportableFigure }) {
  * 只对磁盘原图那条换档：按 overrides 出的变体 / runtime 按状态取的预览原样挂，换档会退回「最近一次渲染」；
  * 引擎 SVG / 矢量源是矢量，放大本来就清晰。
  */
+function PreviewFigureSurface({
+  figure,
+  source,
+  px,
+  shadow,
+}: {
+  figure: ExportableFigure;
+  source: FigureThumbSource;
+  px: number;
+  shadow: boolean;
+}) {
+  if (source.svgMarkup) {
+    return (
+      <span
+        data-export-thumb="svg"
+        className={cn("block h-full w-full bg-paper", shadow && "shadow-page")}
+        dangerouslySetInnerHTML={source.svgMarkup}
+      />
+    );
+  }
+  const src = px && source.plain ? figureThumbSrc(figure, px) : source.src;
+  if (src) {
+    return (
+      <RetryImg
+        data-export-thumb="file"
+        src={src}
+        alt=""
+        draggable={false}
+        className={cn("block h-full w-full bg-paper object-contain", shadow && "shadow-page")}
+      />
+    );
+  }
+  return <span data-export-thumb="none" className="block h-full w-full bg-surface-2" />;
+}
+
 function PreviewStageArt({ figure, ratio }: { figure: ExportableFigure; ratio: number | undefined }) {
   const source = useFigureThumbSource(figure, 480);
   return (
     <ExportZoomStage ratio={ratio ?? source.ratio}>
-      {(px) => {
-        if (source.svgMarkup) {
-          return (
-            <span
-              data-export-thumb="svg"
-              className="block h-full w-full bg-paper shadow-page"
-              dangerouslySetInnerHTML={source.svgMarkup}
-            />
-          );
-        }
-        const src = px && source.plain ? figureThumbSrc(figure, px) : source.src;
-        if (src) {
-          return (
-            <RetryImg
-              data-export-thumb="file"
-              src={src}
-              alt=""
-              draggable={false}
-              className="block h-full w-full bg-paper object-contain shadow-page"
-            />
-          );
-        }
-        return <span data-export-thumb="none" className="block h-full w-full bg-surface-2" />;
-      }}
+      {(px) => <PreviewFigureSurface figure={figure} source={source} px={px} shadow />}
     </ExportZoomStage>
+  );
+}
+
+function ManuscriptFigureStage({
+  figure,
+  layout,
+}: {
+  figure: ExportableFigure;
+  layout: ManuscriptLayout;
+}) {
+  const source = useFigureThumbSource(figure, 480);
+  return (
+    <ExportManuscriptPreview
+      stageKey={`manuscript-${figure.figureId}`}
+      layout={layout}
+      renderFigure={(px) => (
+        <PreviewFigureSurface figure={figure} source={source} px={px} shadow={false} />
+      )}
+    />
   );
 }
 
