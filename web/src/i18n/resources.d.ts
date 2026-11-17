@@ -4649,8 +4649,6 @@ export default interface Resources {
       "guidesLockedSuffix": " · 已锁定",
       "guidesNone": "无",
       "landscape": "横向",
-      "layoutPage": "多图排版页面",
-      "layoutPageNote": "加第二张图后生效",
       "lock": "锁定",
       "margin": "页边距",
       "marginSummary": "页边距 {{margin}} mm",

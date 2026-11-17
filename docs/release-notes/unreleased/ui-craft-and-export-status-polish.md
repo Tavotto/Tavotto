@@ -1,3 +1,5 @@
 ## Refined workspace surfaces, non-intrusive export receipts, and modal toast isolation
 
 Light and dark themes now use calibrated porcelain and warm-obsidian surfaces with diffuse page shadows (`--shadow-page`) and crisp 28 px control geometry, while keeping white paper sheets free of dark-mode backdrop slabs. In the export dialog, progress and completion notices align to the right-hand form column with plain file-card receipts and project-relative folder paths instead of spanning across the preview stage, and canvas notifications shown before opening a modal stay beneath the modal scrim rather than floating over the dialog.
+
+In single-figure editing, the Canvas tab no longer shows the multi-figure page settings (preset, size, orientation); they appear once a second figure turns the canvas into a layout.

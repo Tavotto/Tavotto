@@ -103,12 +103,6 @@ export function CanvasPage() {
   useEffect(() => {
     if (!specsLoaded) void useProfileStore.getState().load()
   }, [specsLoaded])
-  const pageSummary = [
-    cv('sizeMeta', { w: formatMm(page.w), h: formatMm(page.h) }),
-    active && (active.label ?? cv(`presets.${active.id}.label`)),
-  ]
-    .filter(Boolean)
-    .join(' · ')
   // 摘要行互不排斥、各记各的（键 `canvas:<组>`）；开合跨会话记在 inspectorPrefs
   const foldOpen = useInspectorPrefs((s) => s.foldOpen)
   const setFoldOpen = useInspectorPrefs((s) => s.setFoldOpen)
@@ -268,22 +262,13 @@ export function CanvasPage() {
       </header>
 
       {single ? (
-        // 单图编辑按原图尺寸导出，页面尺寸这时不生效：降成一行摘要，点开仍能改（加第二张图后用得上）
+        // 单图编辑按原图尺寸导出，多图排版的页面尺寸这时不生效，整组不显示（用户 11-17：单图别出现多图排版设置）；
+        // 加第二张图进入排版后页面尺寸照常是主角
         <>
           <p data-single-export-note className="type-caption mx-3 mb-2">
             {cv('singleNote')}
           </p>
           <div aria-hidden className="mx-3 mb-1 h-px bg-border" />
-          <SummaryRow
-            label={cv('layoutPage')}
-            open={open('page')}
-            onToggle={() => toggle('page')}
-            data-fold="canvas-page"
-            value={pageSummary}
-          >
-            <p className="type-caption mb-1.5">{cv('layoutPageNote')}</p>
-            {pageControls}
-          </SummaryRow>
         </>
       ) : (
         <Section title={cv('pageSize')}>{pageControls}</Section>

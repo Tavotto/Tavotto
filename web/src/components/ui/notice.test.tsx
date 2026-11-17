@@ -122,8 +122,9 @@ describe('Notice：一行中性提示', () => {
   })
 
   it('结构化详情（detailPlain）：展开后不套内层日志灰框，也不画无意义的「复制」按钮', async () => {
+    const fileName = 'Figure_1.pdf'
     await render(
-      <Notice tone="ok" detailPlain detail={<div data-structured-list>Figure_1.pdf</div>}>
+      <Notice tone="ok" detailPlain detail={<div data-structured-list>{fileName}</div>}>
         已导出 1 个文件
       </Notice>,
     )
