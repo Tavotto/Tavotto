@@ -3420,6 +3420,9 @@ def test_apply_summary_bounds_worker_errors_without_changing_state_or_legacy(
     after = _body(_call("tavotto_session_state", {"session_id": sid}))
     assert after == before
     legacy = _call("tavotto_apply_overrides", {**args, **legacy_args})
+    # `next` 是增量字段（ADR 0189 §3）：去掉它，旧调用方看到的失败回包一字不变
+    assert _body(legacy)["next"]["action"] == "edit_script"
+    del legacy["structuredContent"]["next"]
     assert legacy == {
         "isError": True,
         "content": [{"type": "text", "text": message}],
