@@ -2083,3 +2083,66 @@ def test_header_row_picking_still_handles_notes_names_units_and_hash_headers(tmp
         f"{-1 + i * 0.025}\t{i * 1e-6}\n" for i in range(10)
     )
     assert adf._detect(scan, ".dat").header_line == 3
+
+
+# =========================================================================== 提交还没渲染的懒候选：先走取图同一条路径，失败什么都不落盘
+def _registry_scripts(figs: Path) -> dict:
+    return json.loads((figs / "tavotto_registry.json").read_text(encoding="utf-8"))["scripts"]
+
+
+def _nothing_written(figs: Path):
+    assert not (figs / "data" / "tavotto_figures").exists()
+    assert _registry_scripts(figs) == {}
+
+
+def test_committing_a_pending_candidate_whose_render_fails_is_refused_and_writes_nothing(
+    project, fake_render
+):
+    m, client, figs, _ = project
+    calls, behave = fake_render
+    behave["cand_1"] = "candidate_thumbnail_failed"
+    put(figs, "data/g.csv", simple_rows())
+    body = propose(client, render="lazy").get_json()
+    first = body["items"][0]
+    assert first["thumbnail_status"] == "pending" and calls == []
+    r = commit(client, body["session"], first["id"])
+    assert r.status_code == 404 and r.get_json()["code"] == "propose_candidate_unknown"
+    assert calls == ["cand_1"]  # 提交走了同一条渲染路径
+    _nothing_written(figs)
+    # 与取图一致：该项已记成失败，取图 422、再提交仍 404，不重画
+    assert client.get(first["thumbnail_url"]).status_code == 422
+    assert commit(client, body["session"], first["id"]).status_code == 404
+    assert calls == ["cand_1"]
+    _nothing_written(figs)
+
+
+def test_committing_a_pending_candidate_whose_fingerprint_mismatches_is_refused_and_writes_nothing(
+    project, fake_render, monkeypatch
+):
+    m, client, figs, _ = project
+    put(figs, "data/g.csv", simple_rows())
+    body = propose(client, render="lazy").get_json()
+    bad = type("C", (), {"verdict": "failed"})()
+    monkeypatch.setattr(figureverify, "data_matches_expected", lambda *a, **k: [bad])
+    first = body["items"][0]
+    r = commit(client, body["session"], first["id"])
+    assert r.status_code == 404 and r.get_json()["code"] == "propose_candidate_unknown"
+    _nothing_written(figs)
+    r2 = client.get(first["thumbnail_url"])
+    assert r2.status_code == 422 and r2.get_json()["params"] == {
+        "reason": "candidate_fingerprint_mismatch"
+    }
+
+
+@needs_worker
+def test_committing_a_pending_candidate_renders_and_checks_it_first_then_commits(project):
+    m, client, figs, _ = project
+    put(figs, "data/g.csv", simple_rows())
+    body = propose(client, render="lazy").get_json()
+    first = body["items"][0]
+    assert first["thumbnail_status"] == "pending"  # 用户没取过图就直接提交
+    out = commit(client, body["session"], first["id"]).get_json()
+    assert out["task"]["outcome"] == "completed" and out["data_check"] == "verified", out
+    # 提交前那一遍渲染 + 指纹核对已把它落成 ready：缩略图直接可取
+    assert client.get(first["thumbnail_url"]).status_code == 200
+    assert (figs / out["script"]).is_file()

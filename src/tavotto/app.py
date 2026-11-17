@@ -15678,9 +15678,17 @@ def api_ai_data_figure_commit():
             return jsonify(out)
     try:
         sess, item = engine_ai_data_propose.get_item(project, session_id, item_id)
+        if item.state == "pending":
+            # 懒渲染里还没画的备选：提交前先同步走一遍取图同一条路径（`ensure_thumbnail`：同一个渲染 + 指纹核对、同一把单项锁与并发上限），
+            # 不能绕过它——否则指纹对不上的备选会先落盘（脚本 + 注册表条目）、随后缩略图才 422
+            try:
+                engine_ai_data_propose.ensure_thumbnail(project, session_id, item_id)
+            except engine_ai_data_propose.ProposeError as exc:
+                if exc.code != "propose_thumbnail_failed":
+                    raise
         if (
             item.state == "failed"
-        ):  # 懒渲染里画不出来 / 数据对不上的备选：与旧模式「不进列表」同一保证，不许提交
+        ):  # 懒渲染里画不出来 / 数据对不上的备选：与旧模式「不进列表」同一保证，不许提交（此时什么都没写）
             raise engine_ai_data_propose.ProposeError("propose_candidate_unknown")
         sel = engine_ai_data_task.Selection(
             folder_rel=sess.folder_rel,
