@@ -51,6 +51,7 @@ import { runMenuAction } from '@/hooks/menuActions'
 import { useKeyboard } from '@/hooks/useKeyboard'
 import { useWorkspaceLayout } from '@/hooks/useWorkspaceLayout'
 import { useServerEvents } from '@/hooks/useServerEvents'
+import { useJournalV2Sync } from '@/hooks/useJournalV2Sync'
 import { usePickerHistory } from '@/hooks/usePickerHistory'
 import { subscribePruneSelection } from '@/hooks/usePruneSelection'
 import { ProjectPicker } from '@/components/ProjectPicker'
@@ -169,6 +170,7 @@ function Workspace() {
   const { t } = useTranslation('workspace')
   useKeyboard()
   useServerEvents()
+  useJournalV2Sync()
   // 同步器的渲染态一侧挂在树尾的叶子 <EngineRenderSync /> 上：新图到达时渲染态要变
   // 两三回，挂在这里的话每一回都把整个工作区重画一遍（见 useEngineDocumentSync）
   useEngineDocumentSync()

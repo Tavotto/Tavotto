@@ -2543,6 +2543,7 @@
     "snapshotZoom": "Click to enlarge",
     "snapshotAlt": "Screenshot of the source text",
     "picked": "Now checking against {{name}}",
+    "v2Updated": "{{name}} has newer requirements; checking against them",
     "pickedWidth": "Now checking against {{name}}; page width set to {{w}} mm",
     "card": {
       "adviceBoth": "Text size records: see source text",
@@ -2556,10 +2557,24 @@
       },
       "open": "Open original page",
       "archive": "Archive",
+      "fromV2": "Newer data",
       "aria": "Source"
+    },
+    "confirm": {
+      "title": "Needs your check ({{count}})",
+      "condition": "Condition in the source: {{text}}",
+      "aria": "Requirements to check yourself"
     },
     "field": {
       "page_columns": "Column widths",
+      "v2_raster_dpi_dpi": "Bitmap",
+      "v2_min_line_width_pt": "Line width",
+      "v2_width_mm": "Figure width",
+      "v2_width_in": "Figure width",
+      "v2_figure_piece_width_mm": "Piece width",
+      "v2_figure_piece_width_in": "Piece width",
+      "v2_figure_size_max_mm": "Max figure size",
+      "v2_figure_size_max_in": "Max figure size",
       "widths_mm_single": "Single column",
       "widths_mm_double": "Double column",
       "widths_mm_tolerance_mm": "Width tolerance",

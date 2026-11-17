@@ -6,6 +6,7 @@ import { ArrowUpRight, BookOpen } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Button, IconButton } from '../ui/Button'
 import { SnapshotThumb } from './SnapshotThumb'
+import { isV2Source, journalFactSnapshotUrl } from '@/lib/journalV2'
 import { Popover } from '../ui/Popover'
 import type { JournalFieldSource } from '@/lib/journals'
 import {
@@ -68,13 +69,19 @@ function Snapshot({ source, onFail }: { source: JournalFieldSource; onFail: () =
 /** 一条出处的「证据」：快照图优先，没有或加载失败退回摘录 */
 function Evidence({ source }: { source: JournalFieldSource }) {
   const [failed, setFailed] = useState(false)
-  if (source.snapshot && !failed) return <Snapshot source={source} onFail={() => setFailed(true)} />
+  // v2 的截图不在随包资产里：它只以缩略图出现在卡片底部（`SnapshotThumb`），顶上仍是摘录
+  if (source.snapshot && !failed && !isV2Source(source)) return <Snapshot source={source} onFail={() => setFailed(true)} />
   return <Quote source={source} />
 }
 
 /** 一条来源的域名、采集日期与类型，不暗示期刊归属。 */
 function SourceMeta({ source }: { source: JournalFieldSource }) {
-  const parts = [sourceHost(source.url), source.retrieved, source.kind === 'pdf' ? 'PDF' : ''].filter(Boolean)
+  const parts = [
+    sourceHost(source.url),
+    source.retrieved,
+    source.kind === 'pdf' ? 'PDF' : '',
+    isV2Source(source) ? jt('card.fromV2') : '',
+  ].filter(Boolean)
   return (
     <p data-journal-meta className="type-caption flex flex-wrap gap-x-1">
       {parts.map((part, i) => (
@@ -131,12 +138,12 @@ function SourceLinks({ source, name }: { source: JournalFieldSource; name?: stri
 export function SourceCardBody({
   journal,
   entries,
-  thumb,
+  journalId,
 }: {
   journal: string
   entries: [string, JournalFieldSource][]
-  /** v2 事实的原文截图缩略图地址（已验签）；v1 条目自带 `snapshot`，不走这里。不给就不画 */
-  thumb?: string
+  /** 期刊 id：v2 条目的原文截图经本地 `/api/journal-facts/snapshot` 取，要靠它；不给就不画缩略图 */
+  journalId?: string
 }) {
   const advice = adviceSentence(journal, Object.fromEntries(entries))
   const multi = entries.length > 1
@@ -191,7 +198,17 @@ export function SourceCardBody({
         </div>
         {!multi && <SourceLinks source={entries[0][1]} />}
       </div>
-      {thumb && <SnapshotThumb src={thumb} alt={entries[0][1].quote} className="px-3.5 pb-3" />}
+      {journalId &&
+        entries.map(([path, source]) =>
+          isV2Source(source) && source.snapshot ? (
+            <SnapshotThumb
+              key={path}
+              src={journalFactSnapshotUrl(journalId, source.snapshot.file)}
+              alt={source.quote}
+              className="px-3.5 pb-3"
+            />
+          ) : null,
+        )}
     </div>
   )
 }
@@ -205,9 +222,12 @@ export function SourceButton({
   entries,
   name,
   compact = false,
+  journalId,
 }: {
   journal: string
   entries: [string, JournalFieldSource][]
+  /** 期刊 id（v2 条目取原文截图用） */
+  journalId?: string
   /** 这个值叫什么（可达名「<名>的出处」） */
   name: string
   /** 窄处（问题树的尾随格）：只画一枚小图标，文字「出处」留给可达名与悬停提示 */
@@ -246,7 +266,7 @@ export function SourceButton({
         )
       }
     >
-      <SourceCardBody journal={journal} entries={entries} />
+      <SourceCardBody journal={journal} entries={entries} journalId={journalId} />
     </Popover>
   )
 }

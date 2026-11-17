@@ -1062,9 +1062,15 @@ export default interface Resources {
           "sample": "此来源的范围标记：单刊样本。标记可能是默认值或已过时，是否适用于本刊未核实。",
           "unknown": "来源范围和适用性未核实。"
         },
+        "fromV2": "新版数据",
         "open": "打开原网页"
       },
       "cleared": "已不按期刊检查",
+      "confirm": {
+        "aria": "需要你确认的要求",
+        "condition": "原文条件：{{text}}",
+        "title": "需要你确认（{{count}}）"
+      },
       "current": "按「{{name}}」检查",
       "field": {
         "absolute_min_font_size_pt": "字号下限",
@@ -1107,6 +1113,14 @@ export default interface Resources {
         "page_columns": "栏宽",
         "preferred_formats_export_default": "默认导出格式",
         "text_weight_policy": "字重",
+        "v2_figure_piece_width_in": "单图宽",
+        "v2_figure_piece_width_mm": "单图宽",
+        "v2_figure_size_max_in": "图幅上限",
+        "v2_figure_size_max_mm": "图幅上限",
+        "v2_min_line_width_pt": "线宽",
+        "v2_raster_dpi_dpi": "位图",
+        "v2_width_in": "图宽",
+        "v2_width_mm": "图宽",
         "widths_mm_double": "双栏",
         "widths_mm_single": "单栏",
         "widths_mm_tolerance_mm": "栏宽容差"
@@ -1146,6 +1160,7 @@ export default interface Resources {
       "title": "期刊",
       "unset": "本刊不适用",
       "unspecified": "当前快照未记录",
+      "v2Updated": "「{{name}}」有新的期刊要求，已按它检查",
       "yes": "是"
     },
     "layout": {
@@ -6517,6 +6532,7 @@ export default interface Resources {
       "playgroundOpenFigure": "打开图",
       "playgroundResetEdits": "重置修改",
       "reflowLayoutGroup": "重新排列布局组",
+      "refreshJournalV2": "更新期刊要求",
       "relinkAssets_other": "重新链接 {{count}} 个素材",
       "renameCanvas": "重命名画布",
       "renameObject": "重命名对象",

@@ -64,7 +64,7 @@ import { DrawerHeaderActions, DrawerTitleMeta } from './DrawerHeader'
 import { runBatchFix, useBatchable } from './IssueFixButton'
 import { CategoryCards, FigureCards, UnverifiableEntry } from './ProblemCards'
 import { ProblemTreeContext, type ProblemTreeCtx } from './problemTree'
-import { GroupNode } from './ProblemTreeRows'
+import { ConfirmEntry, GroupNode } from './ProblemTreeRows'
 import { useScopedProblems } from './useProblemScope'
 import { JperProblemStageNotice } from './JperProblemStageNotice'
 import { LeukosProblemScopeNotice } from './LeukosProblemScopeNotice'
@@ -512,6 +512,7 @@ export function ProblemPanel() {
               <CategoryCards categories={categories} />
             )}
             {unverifiable.length > 0 && <UnverifiableEntry issues={unverifiable} />}
+            <ConfirmEntry />
           </ul>
         </ProblemTreeContext.Provider>
       )}

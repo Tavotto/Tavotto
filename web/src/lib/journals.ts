@@ -24,7 +24,7 @@ import {
 
 /** 期刊覆盖叠在它上面（不是叠在课题组规范上）。同源对：`journals.py` 的 `BASE_PROFILE_ID`。 */
 export const JOURNAL_BASE_PROFILE_ID = 'journal-base-v1'
-const SCHEMA = 1
+export const SCHEMA = 1
 const SOURCE_KINDS = ['html', 'pdf']
 export const COVERAGES = ['publisher_general', 'journal_specific', 'single_journal_sample'] as const
 export { QUALIFIERS }
@@ -132,6 +132,10 @@ function advisoryRole(path: string, rule: JournalRule): 'body_min' | 'script_min
   if (role === 'script_min') return role
   if (role === 'body_min' && ADVISORY_QUALIFIERS.includes(rule.qualifier ?? 'exact')) return role
   return null
+}
+/** 某条规则（路径 + qualifier）会不会折进 override（v2 叠加退回 v1 值时复用）。 */
+export function ruleFolds(path: string, rule: Pick<JournalRule, 'qualifier'>): boolean {
+  return folds(path, rule as JournalRule)
 }
 function folds(path: string, rule: JournalRule): boolean {
   const q = rule.qualifier ?? 'exact'
@@ -525,6 +529,11 @@ function effectiveRules(cat: JournalCatalog, journalId: string): Map<string, Eff
     }
   }
   return out
+}
+
+/** 把一个规则值写进嵌套覆盖（`a.b` 路径）。v2 叠加（`journalV2.ts`）复用，不另写第二份。 */
+export function foldInto(path: string, value: unknown, into: Record<string, unknown>): void {
+  fold(path, value, into)
 }
 
 function fold(path: string, value: unknown, into: Obj): void {

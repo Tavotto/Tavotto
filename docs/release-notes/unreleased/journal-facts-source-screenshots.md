@@ -1,3 +1,3 @@
-## The journal source viewer shows a screenshot of the original text
+## Journal checks use newer guideline data, with the original text screenshot on source cards
 
-When a journal's source fact comes with a screenshot of the guideline page (the sentence highlighted), the source viewer in Settings now shows it as a small thumbnail under the quoted text. Click it to see it larger. Facts without a screenshot look the same as before, and the screenshot is checked against its signed name before it is shown.
+For journals that have newer guideline data, Tavotto now also checks the plain requirements it can judge (a minimum bitmap resolution, an accepted font list) and, when both old and new data state the same item, uses the newer one. Projects already set to a journal pick this up when you open them. Requirements that depend on a condition in the guideline, or that Tavotto cannot check yet, are listed in a collapsed "Needs your check" group at the end of the problem list; they are not counted as problems. Source cards show a screenshot of the guideline text with the sentence highlighted. If the newer data cannot be loaded, checks work as before.

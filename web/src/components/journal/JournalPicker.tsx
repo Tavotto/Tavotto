@@ -13,6 +13,7 @@ import { listJournals } from '@/lib/journals'
 import { groupByPublisher, searchJournals } from '@/lib/journalPick'
 import { ensureJournalReady } from '@/lib/journalCatalogSync'
 import { clearJournal, selectJournal } from '@/store/actions'
+import { fetchJournalV2 } from '@/lib/journalV2'
 import { useDocumentStore } from '@/store/documentStore'
 import { useJournalCatalogStore } from '@/store/journalCatalogStore'
 import { useUiStore } from '@/store/uiStore'
@@ -62,7 +63,11 @@ export function JournalPicker() {
       setOpen(false)
       return
     }
-    selectJournal(id)
+    // v2 事实（取不到就是 null，照 v1 选）：同样要防「等的时候被取代 / 文档换了」
+    // 最多等 2 秒：慢就先按 v1 选，v2 到了由「打开项目自动更新」那条路叠上去（useJournalV2Sync）
+    const v2 = await Promise.race([fetchJournalV2(id), new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000))])
+    if (seq !== pickSeq || useDocumentStore.getState().documentId !== docId) return
+    selectJournal(id, v2)
     setOpen(false)
     setQuery('')
   }

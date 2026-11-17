@@ -19,10 +19,10 @@ export function SnapshotThumb({ src, alt, className }: { src: string; alt?: stri
         onClick={() => setZoom(true)}
         className="block w-60 max-w-full cursor-zoom-in overflow-hidden rounded-md border border-border"
       >
-        <img src={src} alt={label} onError={() => setFailed(true)} className="block h-auto w-full bg-white" />
+        <img src={src} alt={label} onError={() => setFailed(true)} className="block h-auto w-full bg-paper" />
       </button>
       <Dialog open={zoom} onOpenChange={setZoom} title={translate('journal.snapshotAlt', { ns: 'dialogs' })} size="lg">
-        <img data-journal-thumb-zoom src={src} alt={label} className="block h-auto w-full rounded-md border border-border bg-white" />
+        <img data-journal-thumb-zoom src={src} alt={label} className="block h-auto w-full rounded-md border border-border bg-paper" />
       </Dialog>
     </div>
   )

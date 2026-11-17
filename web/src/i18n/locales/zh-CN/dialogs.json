@@ -2517,6 +2517,7 @@
     "snapshotZoom": "点击放大",
     "snapshotAlt": "原文截图",
     "picked": "已按「{{name}}」检查",
+    "v2Updated": "「{{name}}」有新的期刊要求，已按它检查",
     "pickedWidth": "已按「{{name}}」检查，页宽改为 {{w}} mm",
     "card": {
       "adviceBoth": "字号记录，请参阅来源原文",
@@ -2530,10 +2531,24 @@
       },
       "open": "打开原网页",
       "archive": "存档",
+      "fromV2": "新版数据",
       "aria": "出处"
+    },
+    "confirm": {
+      "title": "需要你确认（{{count}}）",
+      "condition": "原文条件：{{text}}",
+      "aria": "需要你确认的要求"
     },
     "field": {
       "page_columns": "栏宽",
+      "v2_raster_dpi_dpi": "位图",
+      "v2_min_line_width_pt": "线宽",
+      "v2_width_mm": "图宽",
+      "v2_width_in": "图宽",
+      "v2_figure_piece_width_mm": "单图宽",
+      "v2_figure_piece_width_in": "单图宽",
+      "v2_figure_size_max_mm": "图幅上限",
+      "v2_figure_size_max_in": "图幅上限",
       "widths_mm_single": "单栏",
       "widths_mm_double": "双栏",
       "widths_mm_tolerance_mm": "栏宽容差",

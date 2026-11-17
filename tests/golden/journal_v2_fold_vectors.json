@@ -1,0 +1,752 @@
+{
+ "_about": "v2 事实折叠向量；tests/test_journalfacts_fold.py 驱动。改折叠规则后重生成并人工读 diff。",
+ "cases": [
+  {
+   "bundle": {
+    "facts": [
+     {
+      "anchor": "#:~:text=Quote",
+      "id": "a",
+      "mark": "Quote",
+      "origin": "journal",
+      "quote": "Quote a",
+      "relation": "gte",
+      "snapshot": {
+       "file": "snapshots/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp",
+       "height": 10,
+       "width": 10
+      },
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "required",
+      "subject": "raster_dpi",
+      "unit": "dpi",
+      "value": 300
+     }
+    ],
+    "sources": {
+     "s1": {
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "expected": {
+    "confirm": [],
+    "rules": {
+     "min_raster_dpi": {
+      "anchor": "#:~:text=Quote",
+      "mark": "Quote",
+      "qualifier": "min",
+      "quote": "Quote a",
+      "snapshot": {
+       "file": "snapshots/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp",
+       "height": 10,
+       "width": 10
+      },
+      "src": "v2:s1:journal",
+      "stage": "any",
+      "strength": "required",
+      "value": 300
+     }
+    },
+    "sources": {
+     "v2:s1:journal": {
+      "coverage": "journal_specific",
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "id": "dpi-min-folds"
+  },
+  {
+   "bundle": {
+    "facts": [
+     {
+      "condition_text": "All images at final size",
+      "id": "a",
+      "origin": "journal",
+      "quote": "Quote a",
+      "relation": "gte",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "required",
+      "subject": "raster_dpi",
+      "unit": "dpi",
+      "value": 300
+     }
+    ],
+    "sources": {
+     "s1": {
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "expected": {
+    "confirm": [
+     {
+      "condition": "All images at final size",
+      "id": "a",
+      "quote": "Quote a",
+      "relation": "gte",
+      "source": {
+       "coverage": "journal_specific",
+       "kind": "html",
+       "retrieved": "2026-11-15",
+       "url": "https://example.invalid/guide"
+      },
+      "stage": "any",
+      "strength": "required",
+      "subject": "raster_dpi",
+      "unit": "dpi",
+      "value": 300
+     }
+    ],
+    "rules": {},
+    "sources": {}
+   },
+   "id": "dpi-with-condition-text-confirms"
+  },
+  {
+   "bundle": {
+    "facts": [
+     {
+      "conditions": {
+       "figure_kind": "line_art"
+      },
+      "id": "a",
+      "origin": "journal",
+      "quote": "Quote a",
+      "relation": "gte",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "required",
+      "subject": "raster_dpi",
+      "unit": "dpi",
+      "value": 600
+     }
+    ],
+    "sources": {
+     "s1": {
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "expected": {
+    "confirm": [
+     {
+      "condition": "figure_kind=line_art",
+      "id": "a",
+      "quote": "Quote a",
+      "relation": "gte",
+      "source": {
+       "coverage": "journal_specific",
+       "kind": "html",
+       "retrieved": "2026-11-15",
+       "url": "https://example.invalid/guide"
+      },
+      "stage": "any",
+      "strength": "required",
+      "subject": "raster_dpi",
+      "unit": "dpi",
+      "value": 600
+     }
+    ],
+    "rules": {},
+    "sources": {}
+   },
+   "id": "dpi-with-named-condition-confirms"
+  },
+  {
+   "bundle": {
+    "facts": [
+     {
+      "id": "a",
+      "origin": "journal",
+      "quote": "Quote a",
+      "relation": "eq",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "required",
+      "subject": "raster_dpi",
+      "unit": "dpi",
+      "value": 300
+     }
+    ],
+    "sources": {
+     "s1": {
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "expected": {
+    "confirm": [
+     {
+      "condition": "",
+      "id": "a",
+      "quote": "Quote a",
+      "relation": "eq",
+      "source": {
+       "coverage": "journal_specific",
+       "kind": "html",
+       "retrieved": "2026-11-15",
+       "url": "https://example.invalid/guide"
+      },
+      "stage": "any",
+      "strength": "required",
+      "subject": "raster_dpi",
+      "unit": "dpi",
+      "value": 300
+     }
+    ],
+    "rules": {},
+    "sources": {}
+   },
+   "id": "dpi-eq-is-not-a-minimum"
+  },
+  {
+   "bundle": {
+    "facts": [
+     {
+      "id": "a",
+      "origin": "journal",
+      "quote": "Quote a",
+      "relation": "gte",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "required",
+      "subject": "raster_dpi",
+      "unit": "dpi",
+      "value": 300
+     },
+     {
+      "id": "b",
+      "origin": "journal",
+      "quote": "Quote b",
+      "relation": "gte",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "required",
+      "subject": "raster_dpi",
+      "unit": "dpi",
+      "value": 600
+     }
+    ],
+    "sources": {
+     "s1": {
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "expected": {
+    "confirm": [
+     {
+      "condition": "",
+      "id": "a",
+      "quote": "Quote a",
+      "relation": "gte",
+      "source": {
+       "coverage": "journal_specific",
+       "kind": "html",
+       "retrieved": "2026-11-15",
+       "url": "https://example.invalid/guide"
+      },
+      "stage": "any",
+      "strength": "required",
+      "subject": "raster_dpi",
+      "unit": "dpi",
+      "value": 300
+     },
+     {
+      "condition": "",
+      "id": "b",
+      "quote": "Quote b",
+      "relation": "gte",
+      "source": {
+       "coverage": "journal_specific",
+       "kind": "html",
+       "retrieved": "2026-11-15",
+       "url": "https://example.invalid/guide"
+      },
+      "stage": "any",
+      "strength": "required",
+      "subject": "raster_dpi",
+      "unit": "dpi",
+      "value": 600
+     }
+    ],
+    "rules": {},
+    "sources": {}
+   },
+   "id": "dpi-two-different-values-not-guessed"
+  },
+  {
+   "bundle": {
+    "facts": [
+     {
+      "id": "a",
+      "origin": "journal",
+      "quote": "Quote a",
+      "relation": "gte",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "required",
+      "subject": "raster_dpi",
+      "unit": "dpi",
+      "value": 300
+     },
+     {
+      "id": "b",
+      "origin": "journal",
+      "quote": "Quote b",
+      "relation": "gte",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "required",
+      "subject": "raster_dpi",
+      "unit": "dpi",
+      "value": 300
+     }
+    ],
+    "sources": {
+     "s1": {
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "expected": {
+    "confirm": [],
+    "rules": {
+     "min_raster_dpi": {
+      "qualifier": "min",
+      "quote": "Quote a",
+      "src": "v2:s1:journal",
+      "stage": "any",
+      "strength": "required",
+      "value": 300
+     }
+    },
+    "sources": {
+     "v2:s1:journal": {
+      "coverage": "journal_specific",
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "id": "dpi-two-equal-values-fold-once"
+  },
+  {
+   "bundle": {
+    "facts": [
+     {
+      "id": "a",
+      "origin": "journal",
+      "quote": "Quote a",
+      "relation": "in",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "recommended",
+      "subject": "font_family",
+      "value": [
+       "Times",
+       "Helvetica"
+      ]
+     }
+    ],
+    "sources": {
+     "s1": {
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "expected": {
+    "confirm": [],
+    "rules": {
+     "font_family.latin_accepted": {
+      "qualifier": "exact",
+      "quote": "Quote a",
+      "src": "v2:s1:journal",
+      "stage": "any",
+      "strength": "recommended",
+      "value": [
+       "Times",
+       "Helvetica"
+      ]
+     }
+    },
+    "sources": {
+     "v2:s1:journal": {
+      "coverage": "journal_specific",
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "id": "font-family-recommended-folds"
+  },
+  {
+   "bundle": {
+    "facts": [
+     {
+      "id": "a",
+      "origin": "journal",
+      "quote": "Quote a",
+      "relation": "in",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "example",
+      "subject": "font_family",
+      "value": [
+       "Helvetica"
+      ]
+     }
+    ],
+    "sources": {
+     "s1": {
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "expected": {
+    "confirm": [],
+    "rules": {},
+    "sources": {}
+   },
+   "id": "font-family-example-is-not-an-allowlist"
+  },
+  {
+   "bundle": {
+    "facts": [
+     {
+      "id": "a",
+      "origin": "journal",
+      "quote": "Quote a",
+      "relation": "gte",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "recommended",
+      "subject": "min_line_width",
+      "unit": "pt",
+      "value": 2
+     }
+    ],
+    "sources": {
+     "s1": {
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "expected": {
+    "confirm": [
+     {
+      "condition": "",
+      "id": "a",
+      "quote": "Quote a",
+      "relation": "gte",
+      "source": {
+       "coverage": "journal_specific",
+       "kind": "html",
+       "retrieved": "2026-11-15",
+       "url": "https://example.invalid/guide"
+      },
+      "stage": "any",
+      "strength": "recommended",
+      "subject": "min_line_width",
+      "unit": "pt",
+      "value": 2
+     }
+    ],
+    "rules": {},
+    "sources": {}
+   },
+   "id": "line-width-minimum-goes-to-confirm"
+  },
+  {
+   "bundle": {
+    "facts": [
+     {
+      "id": "a",
+      "origin": "journal",
+      "quote": "Quote a",
+      "relation": "gte",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "permitted",
+      "subject": "raster_dpi",
+      "unit": "dpi",
+      "value": 300
+     },
+     {
+      "id": "b",
+      "origin": "journal",
+      "quote": "Quote b",
+      "relation": "gte",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "typical",
+      "subject": "min_line_width",
+      "unit": "pt",
+      "value": 2
+     }
+    ],
+    "sources": {
+     "s1": {
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "expected": {
+    "confirm": [],
+    "rules": {},
+    "sources": {}
+   },
+   "id": "permitted-and-typical-are-not-requirements"
+  },
+  {
+   "bundle": {
+    "facts": [
+     {
+      "id": "a",
+      "origin": "unknown",
+      "quote": "Quote a",
+      "relation": "gte",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "required",
+      "subject": "raster_dpi",
+      "unit": "dpi",
+      "value": 300
+     }
+    ],
+    "sources": {
+     "s1": {
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "expected": {
+    "confirm": [],
+    "rules": {},
+    "sources": {}
+   },
+   "id": "unknown-origin-is-ignored"
+  },
+  {
+   "bundle": {
+    "facts": [
+     {
+      "id": "a",
+      "origin": "journal",
+      "quote": "Quote a",
+      "relation": "gte",
+      "source": "s1",
+      "stage": "revision",
+      "strength": "required",
+      "subject": "raster_dpi",
+      "unit": "dpi",
+      "value": 300
+     }
+    ],
+    "sources": {
+     "s1": {
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "expected": {
+    "confirm": [
+     {
+      "condition": "",
+      "id": "a",
+      "quote": "Quote a",
+      "relation": "gte",
+      "source": {
+       "coverage": "journal_specific",
+       "kind": "html",
+       "retrieved": "2026-11-15",
+       "url": "https://example.invalid/guide"
+      },
+      "stage": "any",
+      "strength": "required",
+      "subject": "raster_dpi",
+      "unit": "dpi",
+      "value": 300
+     }
+    ],
+    "rules": {},
+    "sources": {}
+   },
+   "id": "stage-revision-does-not-fold"
+  },
+  {
+   "bundle": {
+    "facts": [
+     {
+      "id": "a",
+      "origin": "journal",
+      "quote": "Quote a",
+      "relation": "gte",
+      "source": "s1",
+      "stage": "production",
+      "strength": "required",
+      "subject": "raster_dpi",
+      "unit": "dpi",
+      "value": 300
+     }
+    ],
+    "sources": {
+     "s1": {
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "expected": {
+    "confirm": [],
+    "rules": {
+     "min_raster_dpi": {
+      "qualifier": "min",
+      "quote": "Quote a",
+      "src": "v2:s1:journal",
+      "stage": "production",
+      "strength": "required",
+      "value": 300
+     }
+    },
+    "sources": {
+     "v2:s1:journal": {
+      "coverage": "journal_specific",
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "id": "stage-production-maps"
+  },
+  {
+   "bundle": {
+    "facts": [
+     {
+      "id": "a",
+      "origin": "journal",
+      "quote": "Quote a",
+      "relation": "in",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "required",
+      "subject": "color_mode",
+      "value": [
+       "RGB"
+      ]
+     },
+     {
+      "id": "b",
+      "origin": "journal",
+      "quote": "Quote b",
+      "relation": "in",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "required",
+      "subject": "file_format",
+      "value": [
+       "tiff"
+      ]
+     }
+    ],
+    "sources": {
+     "s1": {
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "expected": {
+    "confirm": [],
+    "rules": {},
+    "sources": {}
+   },
+   "id": "color-mode-and-format-are-not-preflight"
+  },
+  {
+   "bundle": {
+    "facts": [
+     {
+      "condition_text": "One column width figures",
+      "id": "a",
+      "origin": "journal",
+      "quote": "Quote a",
+      "relation": "gte",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "recommended",
+      "subject": "width",
+      "unit": "in",
+      "value": 4
+     }
+    ],
+    "sources": {
+     "s1": {
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "expected": {
+    "confirm": [
+     {
+      "condition": "One column width figures",
+      "id": "a",
+      "quote": "Quote a",
+      "relation": "gte",
+      "source": {
+       "coverage": "journal_specific",
+       "kind": "html",
+       "retrieved": "2026-11-15",
+       "url": "https://example.invalid/guide"
+      },
+      "stage": "any",
+      "strength": "recommended",
+      "subject": "width",
+      "unit": "in",
+      "value": 4
+     }
+    ],
+    "rules": {},
+    "sources": {}
+   },
+   "id": "width-in-with-text-condition-confirms"
+  }
+ ]
+}
