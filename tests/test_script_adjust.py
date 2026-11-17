@@ -1806,7 +1806,7 @@ print(json.dumps([overrides._apply_rank(p, a, g) for p, a, g in items]))
 
 
 def test_label_visibility_of_a_tick_set_the_manifest_dropped_is_still_written():
-    """标签全关掉之后这一组量不出几何，manifest 里没有它：按 gid 形状认出是刻度组，x 管下边、y 管左边。"""
+    """标签全关掉之后这一组量不出几何，manifest 里没有它：按 gid 形状认出是刻度组，两侧一起关（色条 / twinx 的字在右边）。"""
     els = [{"gid": "axes_0", "role": "axes", "editable": []}]
     edits = [
         {"gid": "axes_0.xticks", "prop": "visible", "value": False},
@@ -1815,8 +1815,8 @@ def test_label_visibility_of_a_tick_set_the_manifest_dropped_is_still_written():
     out = scriptadjust.build(b"import os\n", "Fig1", edits, {"elements": els}, version="9.9")
     text = out.data.decode()
     assert out.written == 2 and not out.residual
-    assert "_TickSet(_ax(fig, 0), 'x').params(labelbottom=False)" in text
-    assert "_TickSet(_ax(fig, 0), 'y').params(labelleft=False)" in text
+    assert "_TickSet(_ax(fig, 0), 'x').params(labelbottom=False, labeltop=False)" in text
+    assert "_TickSet(_ax(fig, 0), 'y').params(labelleft=False, labelright=False)" in text
 
 
 def test_class_of_a_tick_set_the_manifest_dropped_is_ticks():
