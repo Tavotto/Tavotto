@@ -29,7 +29,11 @@ def _mod():
 
 
 L = _mod()
+#: 通用条目（触发: *）条数上限；要加先问是不是真的「任何改动都适用」。
+MAX_UNIVERSAL = 8
 TODAY = dt.date(2026, 11, 2)
+#: 假仓库的 `git ls-files`：触发路径要在这里匹配到至少一个文件。
+TRACKED = ["tests/test_a.py", "tests/test_b.py", "scripts/dev/x.py", "scripts/dev/sub/y.py"]
 
 GOOD = """# 错题本 · ci
 
@@ -37,6 +41,7 @@ GOOD = """# 错题本 · ci
 
 ### L-001 测试与提交之间判退出码，不接 grep
 - 类: 别这样
+- 触发: tests/test_a*, scripts/dev/
 - Seen: 2026-10-31, 2026-11-01, 2026-11-02
 - 为什么: 管道后的 grep 匹配到汇总行就返回 0，
   红了照样提交。
@@ -56,11 +61,29 @@ def root(tmp_path):
 
 
 def _problems(text, root):
-    return L.problems(text, "ci", root=root, today=TODAY)
+    return L.problems(text, "ci", root=root, today=TODAY, tracked=TRACKED)
 
 
 def test_the_real_book_passes():
     assert L.check_all() == []
+
+
+def test_the_real_book_triggers_are_backed_by_git_ls_files():
+    """真文件：每条未升级条目都有触发，每个路径条目匹配至少一个已跟踪文件（空条目 = 空转）。"""
+    tracked = L.tracked_files(ROOT)
+    active = [x for x in L.load() if x.status == "active"]
+    assert active, "错题本里一条未升级的都没有：这条检查在空集上恒真"
+    for x in active:
+        assert x.triggers, x.id
+        for t in x.triggers:
+            if t != L.UNIVERSAL:
+                assert any(L.trigger_matches(t, p) for p in tracked), (x.id, t)
+
+
+def test_universal_triggers_stay_rare():
+    """「*」= 每次都适用的通用纪律；多了就等于没有触发，评审照样得整篇读。"""
+    universal = [x.id for x in L.load() if x.universal]
+    assert len(universal) <= MAX_UNIVERSAL, universal
 
 
 def test_the_real_book_is_routed_from_root_agents():
@@ -85,6 +108,8 @@ def test_good_sample_parses_with_continuation_and_due(root):
     assert lessons[1].rule == "只在 Windows 生效的改动入队前整文件跑 Lab"
     assert lessons[1].promoted_to == "docs/rules/ci/windows-lab.md"
     assert lessons[1].due is False
+    assert lessons[0].triggers == ("tests/test_a*", "scripts/dev/")
+    assert lessons[1].triggers == ()
     assert _problems(GOOD, root) == []
 
 
@@ -130,6 +155,68 @@ def test_each_book_rule_goes_red(root, old, new, needle):
     assert any(needle in e for e in errs), errs
 
 
+@pytest.mark.parametrize(
+    ("new", "needle"),
+    [
+        ("", "缺「触发」"),  # 删掉触发字段
+        ("- 触发: no/such/dir/", "没匹配到"),
+        ("- 触发: scripts/dev/nope.py", "没匹配到"),
+        ("- 触发: tests/test_zzz*", "没匹配到"),
+        ("- 触发: tests/*.py", "不支持别的通配"),
+        ("- 触发: scripts/**/x.py", "不支持别的通配"),
+        ("- 触发: /scripts/dev/", "相对"),
+        ("- 触发: ../x", "相对"),
+        ("- 触发: *, scripts/dev/", "单独"),
+        ("- 触发: scripts/dev/, scripts/dev/", "重复"),
+        ("- 触发: scripts/dev/,, tests/test_a.py", None),  # 空段被忽略，不算错
+    ],
+)
+def test_each_trigger_rule_goes_red(root, new, needle):
+    old = "- 触发: tests/test_a*, scripts/dev/\n"
+    bad = GOOD.replace(old, (new + "\n") if new else "", 1)
+    assert bad != GOOD
+    errs = _problems(bad, root)
+    if needle is None:
+        assert errs == []
+    else:
+        assert any(needle in e for e in errs), errs
+
+
+def test_universal_trigger_is_accepted_alone(root):
+    ok = GOOD.replace("- 触发: tests/test_a*, scripts/dev/", "- 触发: *", 1)
+    assert _problems(ok, root) == []
+    assert L.parse(ok, "ci")[0].universal
+
+
+def test_promoted_pointer_needs_no_trigger(root):
+    """已升级的条目只留标题一行，不要求也不接受触发字段。"""
+    assert [x.id for x in L.parse(GOOD, "ci") if x.status == "promoted"] == ["L-002"]
+    assert _problems(GOOD, root) == []
+
+
+@pytest.mark.parametrize(
+    ("entry", "path", "hit"),
+    [
+        ("scripts/dev/", "scripts/dev/x.py", True),
+        ("scripts/dev/", "scripts/dev/sub/y.py", True),  # 目录前缀含子目录
+        ("scripts/dev/", "scripts/devx/x.py", False),  # 不是子串匹配
+        ("scripts/dev", "scripts/dev/x.py", False),  # 无斜杠 = 精确路径
+        ("scripts/dev/", "other/scripts/dev/x.py", False),  # 前缀从路径开头算，不是子串
+        ("scripts/dev/x.py", "scripts/dev/x.py", True),
+        ("scripts/dev/x.py", "scripts/dev/x.pyc", False),
+        ("tests/test_a*", "tests/test_a.py", True),
+        ("tests/test_a*", "tests/test_abc.py", True),
+        ("tests/test_a*", "tests/sub/test_a.py", False),  # 前缀只在同一目录
+        ("tests/test_a*", "tests/test_b.py", False),
+        ("tests/*", "tests/test_b.py", True),
+        ("tests/*", "tests/sub/test_b.py", False),
+        ("*", "tests/test_a.py", False),  # 通用条目不按路径命中
+    ],
+)
+def test_trigger_matching_semantics(entry, path, hit):
+    assert L.trigger_matches(entry, path) is hit
+
+
 def test_promoted_target_must_name_the_lesson(root):
     """指针留下、规则却没写进细则：这条教训就丢了。"""
     (root / "docs" / "rules" / "ci" / "windows-lab.md").write_text("别的规则\n", encoding="utf-8")
@@ -172,19 +259,21 @@ def _write_books(directory, ci):
 def test_numbers_are_unique_across_files(root, tmp_path):
     books = tmp_path / "lessons"
     _write_books(books, GOOD)
-    assert L.check_all(books, root=root, today=TODAY) == []
+    assert L.check_all(books, root=root, today=TODAY, tracked=TRACKED) == []
     (books / "repo.md").write_text(GOOD.split("### L-002")[0], encoding="utf-8")
-    assert any("编号重复" in e for e in L.check_all(books, root=root, today=TODAY))
+    assert any("编号重复" in e for e in L.check_all(books, root=root, today=TODAY, tracked=TRACKED))
 
 
 def test_stray_or_missing_book_goes_red(root, tmp_path):
     books = tmp_path / "lessons"
     _write_books(books, GOOD)
     (books / "misc.md").write_text("# 没人读\n", encoding="utf-8")
-    assert any("misc.md" in e for e in L.check_all(books, root=root, today=TODAY))
+    assert any("misc.md" in e for e in L.check_all(books, root=root, today=TODAY, tracked=TRACKED))
     (books / "misc.md").unlink()
     (books / "desktop.md").unlink()
-    assert any("desktop.md" in e for e in L.check_all(books, root=root, today=TODAY))
+    assert any(
+        "desktop.md" in e for e in L.check_all(books, root=root, today=TODAY, tracked=TRACKED)
+    )
 
 
 def test_cli_exit_codes_and_stats(tmp_path, capsys):
