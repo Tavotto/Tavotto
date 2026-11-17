@@ -690,17 +690,17 @@ export interface CanvasData {
 }
 
 /**
- * 本构建能写出来的 schema 版本。**比它更高的文档一律不打开**——旧构建对新
+ * 本构建能读写的最高版本。**比它更高的文档一律不打开**——旧构建对新
  * 字段的语义一无所知，「尽力打开」等于用旧规则重写用户的新数据。
  *
  * 严格同源：`src/tavotto/engine/documents.py` 的 `SCHEMA_CURRENT`。
  */
-export const SCHEMA_CURRENT = 3
-/** 显式计算项目格式；engine/documents.SCHEMA_CHART_PROJECT 的镜像，旧缺省仍为3。 */
-export const SCHEMA_CHART_PROJECT = 4
+export const SCHEMA_CURRENT = 4
+/** 项目文档（一个项目多张画布）；schema 4 在同一结构上多出计算图表状态。 */
+export const SCHEMA_PROJECT = 3
 
 export interface ProjectDocument {
-  schema: typeof SCHEMA_CURRENT | typeof SCHEMA_CHART_PROJECT
+  schema: typeof SCHEMA_PROJECT | typeof SCHEMA_CURRENT
   project: { id: string; name: string }
   /** 数组序 = 画布显示顺序 */
   canvases: CanvasData[]
@@ -754,12 +754,12 @@ function withFigureFrames(pd: ProjectDocument): ProjectDocument {
 
 /**
  * 读档统一入口：schema 2 迁移为单画布项目（内容逐字段搬运、不改值），
- * schema 3 原样校验通过。不认识的负载返回 null。
+ * schema 3 / 4 原样校验通过。不认识的负载返回 null。
  */
 export function migrateToProject(raw: unknown): ProjectDocument | null {
   const d = raw as Record<string, unknown> | null
   if (!d || typeof d !== 'object') return null
-  if ((d.schema === SCHEMA_CURRENT || d.schema === SCHEMA_CHART_PROJECT) && Array.isArray(d.canvases) && d.canvases.length > 0) {
+  if ((d.schema === SCHEMA_PROJECT || d.schema === SCHEMA_CURRENT) && Array.isArray(d.canvases) && d.canvases.length > 0) {
     const pd = withFigureFrames(d as unknown as ProjectDocument)
     const active = pd.canvases.some((c) => c.id === pd.activeCanvasId)
     return active ? pd : { ...pd, activeCanvasId: pd.canvases[0].id }
@@ -768,7 +768,7 @@ export function migrateToProject(raw: unknown): ProjectDocument | null {
     const legacy = d as unknown as FigureDocument
     const canvas = docToCanvas({ ...legacy, objects: migrateFigureFrames(legacy.objects) }, newId('c'))
     return {
-      schema: 3,
+      schema: SCHEMA_PROJECT,
       project: { id: newId('p'), name: canvas.name },
       canvases: [canvas],
       activeCanvasId: canvas.id,
