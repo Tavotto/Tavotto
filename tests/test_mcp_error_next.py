@@ -112,6 +112,41 @@ def test_unregistered_code_falls_back_to_structured_input_only_and_never_invents
     assert step["action"] == "ask_user"
 
 
+def test_catalog_changed_restarts_from_page_one_without_the_stale_rev():
+    step = _next(
+        "journal_catalog_changed",
+        tool="tavotto_get_journal_facts",
+        args={"journal_id": "j", "offset": 20, "limit": 10, "expected_catalog_rev": 7},
+    )
+    assert step["tool"] == "tavotto_get_journal_facts"
+    assert step["args"] == {"journal_id": "j", "limit": 10, "offset": 0}
+
+
+def test_page_too_large_keeps_offset_and_rev_and_halves_limit():
+    step = _next(
+        "journal_facts_page_too_large",
+        tool="tavotto_get_journal_facts",
+        args={"journal_id": "j", "offset": 20, "limit": 10, "expected_catalog_rev": 7},
+    )
+    assert step["args"] == {"journal_id": "j", "offset": 20, "limit": 5, "expected_catalog_rev": 7}
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{"profile_id": "p1"}, {"journal": {"widths_mm": {"single": 80}}}, {"journal_id": "nature"}],
+)
+def test_preflight_next_forwards_the_export_profile_arguments(extra):
+    step = _next(
+        "preflight_blocked",
+        tool="tavotto_export",
+        args={"session_id": "s", "formats": ["pdf"], **extra},
+    )
+    assert step["tool"] == "tavotto_preflight"
+    assert step["args"] == {"session_id": "s", **extra}
+    bare = _next("preflight_blocked", tool="tavotto_export", args={"session_id": "s"})
+    assert bare["args"] == {"session_id": "s"}
+
+
 def test_a_confirmation_without_options_gives_no_next():
     # 旧调用方 / 其它码带的 confirmation 形状五花八门：没有可选项就不编一个 ask_user
     payload = {"confirmation": {"option": "project"}, "dependency_preparation": {"targets": []}}

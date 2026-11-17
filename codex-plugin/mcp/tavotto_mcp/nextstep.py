@@ -180,25 +180,30 @@ def _retry_dpi(ctx: Ctx) -> dict:
 def _halve_limit(ctx: Ctx) -> dict:
     raw = ctx.args.get("limit")
     limit = max(1, int(raw) // 2) if isinstance(raw, int) and raw > 1 else 5
-    args = {k: v for k, v in ctx.args.items() if k != "expected_rev"}
+    # 同一页重读：offset / expected_catalog_rev 原样保留（后续页缺了它会被拒）
     return tool_step(
         "tavotto_get_journal_facts",
-        {**args, "limit": limit},
+        {**ctx.args, "limit": limit},
         "这一页超出体积预算：缩小 limit 重读。",
     )
 
 
 def _restart_page(ctx: Ctx) -> dict:
-    args = {k: v for k, v in ctx.args.items() if k not in ("expected_rev", "offset")}
+    args = {k: v for k, v in ctx.args.items() if k not in ("expected_catalog_rev", "offset")}
     return tool_step(
         "tavotto_get_journal_facts", {**args, "offset": 0}, "期刊目录版本变了：从第一页重新读取。"
     )
 
 
+def _forward(ctx: Ctx, *keys: str) -> dict:
+    """原调用带了的规范参数原样转发（否则预检按会话自己的规范判，与导出那次不是同一份）。"""
+    return {k: ctx.args[k] for k in keys if ctx.args.get(k) not in (None, "", {})}
+
+
 def _preflight_first(ctx: Ctx) -> dict:
     return tool_step(
         "tavotto_preflight",
-        ctx.session_args(),
+        {**ctx.session_args(), **_forward(ctx, "profile_id", "journal", "journal_id")},
         "先看有哪些阻断项并修掉；用户明确要求照样导出时再带 explicit_confirm=true。",
     )
 
