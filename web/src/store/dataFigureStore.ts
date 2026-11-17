@@ -12,6 +12,7 @@ import {
   type AiDataFileEntry,
   type AiDataOverview,
 } from '@/lib/api'
+import { setCanvasCovered } from '@/store/canvasCover'
 import { currentProjectId } from '@/lib/session'
 import { candidatesFromResponse, headerRowFromResponse, mixedFromResponse, rolesFromResponse, unitsRowFromResponse, type Candidate, type ColumnRoles, type MixedColumn, type ThumbState } from '@/lib/dataFigureAdapter'
 import { fileRows, hasNumericColumn, isStaleProposeCode, sameTable, tableKey, type CellMode, type TableRef } from '@/lib/dataFigure'
@@ -319,7 +320,8 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     const header = get().headerRows[ref.path] ?? null
     const key = overviewKey(ref, header)
     const prev = get().overviews[key]
-    if (prev && prev.status === 'ready') return prev.data
+    // 每次（重新）打开都重新请求：键里没有文件版本，外部改了文件之后缓存会是旧的（数据条旧内容、全是文字的文件一直「画不了」）。
+    // 先显示缓存（下面 `loading` 带着 `prev.data`，不闪），新结果回来替换；序号保证只认最新一次
     const mine = (overviewSeq.get(key) ?? 0) + 1
     overviewSeq.set(key, mine)
     const ep = epoch
@@ -617,4 +619,9 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       set({ ...initial })
     },
   }
+})
+
+// 「数据」临时标签激活 = 画布被盖住：同步给画布动作的让位判据（`store/canvasCover`），键盘 / 系统菜单 / 剪贴板 / 顶栏撤销都读它
+useDataFigureStore.subscribe((s, prev) => {
+  if (s.draftActive !== prev.draftActive) setCanvasCovered(s.draftActive)
 })

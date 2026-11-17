@@ -83,6 +83,7 @@ beforeEach(() => {
 })
 
 const numeric = [{ name: 'x', kind: 'numeric' as const, numeric: 3, text: 0, empty: 0, nan: 0, id_like: false }]
+const numericFields = () => numeric
 const withNumbers = () => overview.mockResolvedValue(ov({ fields: numeric, preview_rows: [{ line: 2, cells: ['1'] }] }))
 const run = async (r = ref('a.csv')) => {
   st().select(r)
@@ -366,5 +367,40 @@ describe('单位行与横轴列夹文字', () => {
     commit.mockRejectedValueOnce(apiError(404, 'propose_candidate_unknown'))
     await st().draw('i2')
     expect(st()).toMatchObject({ drawingId: null, phase: 'failed' })
+  })
+
+  it('重新打开同一个文件总是重新请求概览：数据条用新结果，原来全是文字、现在有数字的文件能出候选', async () => {
+    const textOnly = ov({ rows: 3, fields: [{ name: 'label', kind: 'text', numeric: 0, text: 3, empty: 0, nan: 0, id_like: false }], preview_rows: [{ line: 2, cells: ['a'] }] })
+    overview.mockResolvedValueOnce(textOnly)
+    await run(ref('a.csv'))
+    expect(st().phase).toBe('text')
+    expect(propose).not.toHaveBeenCalled()
+    st().closeDraft()
+    // 用户在外部把文件改了：多了一列数字、行数变了
+    const numeric = ov({ rows: 7, fields: numericFields(), preview_rows: [{ line: 2, cells: ['5'] }] })
+    overview.mockResolvedValueOnce(numeric)
+    propose.mockResolvedValueOnce(cands('S1'))
+    await run(ref('a.csv'))
+    expect(overview).toHaveBeenCalledTimes(2)
+    expect(st().phase).toBe('ready')
+    const shown = Object.values(st().overviews).find((o) => o.status === 'ready')
+    expect(shown?.data?.rows).toBe(7)
+  })
+
+  it('重新打开时先显示缓存里的旧概览（不闪），新结果回来替换', async () => {
+    withNumbers()
+    propose.mockResolvedValue(cands('S1'))
+    await run(ref('a.csv'))
+    st().closeDraft()
+    let release!: (v: AiDataOverview) => void
+    overview.mockReturnValueOnce(new Promise<AiDataOverview>((r) => (release = r)))
+    st().select(ref('a.csv'))
+    await flush()
+    const key = Object.keys(st().overviews)[0]!
+    expect(st().overviews[key]).toMatchObject({ status: 'loading', data: { rows: 3 } }) // 旧的还在
+    release(ov({ rows: 9, fields: numericFields(), preview_rows: [{ line: 2, cells: ['1'] }] }))
+    await flush()
+    await flush()
+    expect(st().overviews[key]).toMatchObject({ status: 'ready', data: { rows: 9 } })
   })
 })
