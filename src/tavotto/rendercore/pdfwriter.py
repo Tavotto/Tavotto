@@ -676,7 +676,7 @@ class PdfWriter:
         local = ir.compose(node.transform, ctm)
         bbox = _page_bbox_in(ctm, self.page)
         transform = " ".join(_num(v) for v in node.transform) + " cm"
-        content = _Recorder(ops=["q", transform])
+        content = _Recorder(ops=["q", transform], base=ctm)
         for child in node.children:
             self._emit(child, content, local, depth + 1)
         content.ops.append("Q")

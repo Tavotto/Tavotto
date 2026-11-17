@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import json
 import re
@@ -316,3 +317,20 @@ def test_png_rotated_object_and_stroke_gradient_in_a_transparency_group(provider
     left, mid = px(6, 60), px(30, 60)
     assert left[0] > 200 and left[2] < 60, left
     assert abs(mid[0] - mid[2]) < 60, mid
+
+
+@needs_rc
+def test_png_gradient_inside_a_clip_union_group(provider, tmp_path):
+    """剪切并集（ClipUnion，SVG 的多成员 clipPath）的内容画进单独的 Form：里面的渐变 Pattern 矩阵也要相对
+    form 的空间（Do 那一刻的 CTM）——算错的话颜色整体错位。外面再套一层平移，量的是同一个矩形的两端与中点。"""
+    page = _compiled(_obj())
+
+    def rect(x: float, w: float) -> ir.Path:
+        return ir.Path((("M", x, 0), ("L", x + w, 0), ("L", x + w, 200), ("L", x, 200), ("Z",)))
+
+    union = ir.Group(page.children, clip=ir.ClipUnion((rect(0, 80), rect(80, 200))))
+    shifted = ir.Group((union,), transform=ir.translate(10 * 72 / 25.4, 0))  # 整体右移 10 mm
+    px = _render(dataclasses.replace(page, children=(shifted,)), provider, tmp_path)
+    _near(px(15.2, 15), (255, 0, 0), 6)
+    _near(px(64.8, 15), (0, 0, 255), 6)
+    _near(px(40, 15), (128, 0, 128), 4)
