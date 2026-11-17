@@ -18,7 +18,7 @@
 
 ### L-070 自动派生状态与用户偏好分开存，响应式让位不写偏好
 - 类: 别这样
-- 触发: web/src/store/uiStore.ts
+- 触发: web/src/store/uiStore.ts, web/src/store/uiStore.test.ts, web/e2e/narrow-window-layout.spec.ts
 - Seen: 2026-08-29
 - 为什么: 侧栏开关同时当偏好和生效值，窗口拖窄一次后任何无关的持久化都把「关」写成偏好，回大屏重启常驻左栏再也回不来，而用户从没关过。
 - 证据: （迁移自维护者记录，无编号）
@@ -34,14 +34,14 @@
 
 ### L-073 浮层、定位、画布内反馈类改动，jsdom 全绿后必须跑真浏览器
 - 类: 照这样
-- 触发: web/src/canvas/, web/src/components/ui/
+- 触发: web/src/canvas/, web/src/components/
 - Seen: 2026-09-02
 - 为什么: jsdom 里 offsetWidth 恒为 0；fixed 盒子会被可用宽度压扁，量到的不是自然宽度（要 max-content）；聚焦触发的 tooltip 连 Radix 外壳一起拦点击。
 - 证据: 无编号）
 
 ### L-074 别拿 elementsFromPoint 判「这点下面画着什么」
 - 类: 别这样
-- 触发: web/e2e/a11y.spec.ts, web/e2e/scannedNodes.ts
+- 触发: web/e2e/contrast.ts, web/e2e/a11y.spec.ts, web/e2e/scannedNodes.ts
 - Seen: 2026-09-03
 - 为什么: 命中测试受 pointer-events 与 overflow 影响；Radix 开 Dialog 时 body 变 pointer-events:none，同一采样点从 13 个元素塌成 2 个，同批节点在有无模态下给出两个结论。要按几何自己排绘制顺序。
 - 证据: #210
@@ -139,7 +139,7 @@
 
 ### L-088 用了淡色档文字的新 UI，写完跑一次真浏览器 a11y spec
 - 类: 照这样
-- 触发: web/e2e/a11y.spec.ts, web/src/index.css, web/src/tokenContrast.test.ts
+- 触发: web/src/components/, web/src/canvas/, web/src/index.css, web/e2e/a11y.spec.ts
 - Seen: 2026-08-31
 - 为什么: jsdom 没有计算样式，六条 a11y 单测全绿而 axe 报 color-contrast serious×2（ink-faint 只有 2.54:1，却用在真控件 summary 上）。
 - 证据: （迁移自维护者记录，无编号）

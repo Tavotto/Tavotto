@@ -18,9 +18,9 @@
 
 ### L-049 路径守卫的相等分支返回可信 root，别返回候选算出的值
 - 类: 照这样
-- 触发: src/tavotto/app.py
+- 触发: src/tavotto/app.py, src/tavotto/engine/projectenv.py
 - Seen: 2026-09-21
-- 为什么: realpath 加 startswith 的净化器逻辑本就对，CodeQL 仍报 14 条 py/path-injection；条件要拆成两段，相等分支 return root，污点才断。先改形状拉 SARIF 看流，不要先 dismiss。
+- 为什么: realpath 加 startswith 的净化器逻辑本就对，CodeQL 仍报 14 条 py/path-injection；条件要拆成两段，相等分支 return root，污点才断。先改形状看 SARIF 流。
 - 证据: #456
 
 ### L-050 预计算查找表的裁剪条件照抄前面每一步的否定
@@ -81,9 +81,9 @@
 
 ### L-062 测试宽限项的量纲要与被测量同源，单跑和全量各跑一次
 - 类: 照这样
-- 触发: tests/test_layout_timeline.py
+- 触发: tests/test_layout_timeline.py, src/tavotto/engine/versionstore.py
 - Seen: 2026-09-03
-- 为什么: 版本时间线字节预算只累加条目，漏记 JSON 外壳，用例的 11 字节宽限掩盖了差额，整模块跑绿、单跑红。上限的主语是磁盘文件大小而不是条目之和；两个方向都跑才知道判据有没有被邻居撑着。
+- 为什么: 版本时间线字节预算只累加条目，漏记 JSON 外壳，用例的 11 字节宽限掩盖了差额，整模块跑绿、单跑红。上限的主语是磁盘文件大小而不是条目之和；两个方向都跑。
 - 证据: （迁移自维护者记录，无编号）
 
 ### L-063 后台探测写缓存要带世代，reset 后丢弃旧探测结果
@@ -125,7 +125,7 @@
 - 类: 别这样
 - 触发: src/tavotto/engine/migrate.py, src/tavotto/engine/msixmigrate.py
 - Seen: 2026-11-02
-- 为什么: 启动时迁移旧数据的 8 秒预算只在步骤之间查剩余，SQLite backup 遇源库独占锁会一直等，应用打不开；预算耗尽跳过的历史库随后被启动流程新建成空库，下次迁移见目标已存在就跳过，旧数据永久丢失。评审连报两条 P1。
+- 为什么: 启动时迁移旧数据的 8 秒预算只在步骤之间查剩余，SQLite backup 遇源库独占锁会一直等，应用打不开；预算耗尽跳过的历史库随后被启动流程新建成空库，下次迁移见目标已存在就跳过，旧数据永久丢失。评审报两条 P1。
 - 证据: #1603
 
 ### L-126 新 worktree 先补齐 gitignore 的内置字体，大片同类红先单跑看 stderr
@@ -214,7 +214,7 @@
 - 类: 别这样
 - 触发: src/tavotto/rendercore/svgcheck.py, src/tavotto/engine/artifactinspect.py
 - Seen: 2026-11-13, 2026-11-16
-- 为什么: SVG 闸的 id 语法比 matplotlib 能写出的窄，用例只用不带 gid 的示例图，脚本 set_gid 中文名的图整条导出失败，一份用户反馈才暴露。修复初版只按一个错误码触发、对全文替换 #token，评审连报两条 P1（改坏十六进制颜色、重复 id 选择器失配）。性质测试喂 set_gid 的中文、空格、数字名与重复 id；修复按闸可能先报的任一错误码触发，引用只在 href / url(#…) / 选择器 id 这些结构位置改写。
+- 为什么: SVG 闸的 id 语法比 matplotlib 能写出的窄，用例只用无 gid 的示例图，脚本 set_gid 中文名的图整条导出失败，一份用户反馈才暴露。修复初版只按一个错误码触发、对全文替换 #token，评审连报两条 P1（改坏十六进制颜色、重复 id 选择器失配）。性质测试喂 set_gid 的中文、空格、数字名与重复 id；修复按闸可能先报的任一错误码触发，引用只在 href / url(#…) / 选择器 id 这些结构位置改写。
 - 证据: #1893, #1962
 
 ### L-164 新加安装或修复路径时，写「这条刚确定性失败过再打开卡片」的用例

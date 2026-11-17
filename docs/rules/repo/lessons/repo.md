@@ -48,7 +48,7 @@
 
 ### L-016 叠栈并 main 的显式合并基必须是本层已含的树
 - 类: 别这样
-- 触发: docs/ci/parallel-prs.md, docs/ci/pr-review-tiers.md
+- 触发: *
 - Seen: 2026-10-09
 - 为什么: 用「下层定稿加旧 main」作基，本层从没并过的 main 改动被三方合并当成本侧删除而静默回退，零冲突、门禁全绿，靠评审才发现。合完核与 main 的差异只落在本层改过的文件。
 - 证据: #816
@@ -61,7 +61,7 @@
 
 ### L-025 本该相等的两个量，把相等写成断言
 - 类: 照这样
-- 触发: src/tavotto/engine/exportjob.py, src/tavotto/engine/exportroute.py, src/tavotto/rendercore/job.py
+- 触发: src/tavotto/engine/previewbudget.py, src/tavotto/engine/preview_hybrid.py, tests/test_preview_budget.py, tests/support/preview_guard_probe.py
 - Seen: 2026-08-29
 - 为什么: savefig(路径) 走文本模式使磁盘 CRLF 比内存 LF 多字节，而字节数是 vector/raster 的判定量，Windows 上同图显大 3.8%。两条断言各自在某平台绿，只有一对同时成立才暴露。行为级门禁在 POSIX 恒绿，要源码级。
 - 证据: #193
@@ -86,7 +86,7 @@
 
 ### L-032 批量改 N 项的验收，对拍标识符集合与内容，不只数 count
 - 类: 照这样
-- 触发: .github/codeql/codeql-config.yml, .github/workflows/codeql.yml
+- 触发: *
 - Seen: 2026-08-27
 - 为什么: 还原 4 条 CodeQL dismissal 用「27→31」验收，错改 4 条不该动的、漏掉该动的 4 条总数照样 31。要取操作前快照，断言差集逐位等于目标、removed 为空，非目标的 updated_at 不变。
 - 证据: （迁移自维护者记录，无编号）

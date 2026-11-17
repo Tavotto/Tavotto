@@ -4,7 +4,7 @@
 
 ### L-015 豁免要写下它依赖的前提，并让前提失效时自动到期
 - 类: 别这样
-- 触发: .github/workflows/nightly.yml, .github/workflows/lab-ci.yml, docs/1.0-release-readiness.md
+- 触发: .github/cla-policy.json, scripts/ci/cla_gate.py, tests/test_legal_contribution_policy.py, .github/workflows/nightly.yml
 - Seen: 2026-08-21, 2026-08-28
 - 为什么: 写下时正确的「预期红不报警」在前提消失后继续沉默，外观与一切正常相同，还遮住了本该是验收信号的红转绿。复查豁免问「前提今天还成立吗」。
 - 证据: #184, #185
@@ -39,14 +39,14 @@
 
 ### L-027 台账别用绝对行号钉调用点，用符号名
 - 类: 别这样
-- 触发: tests/test_private_python_transaction.py, tests/test_foundation_harness.py
+- 触发: docs/implementation/tavotto-foundation/U00_FACADE_LEDGER.json, docs/implementation/tavotto-foundation/tools/generate_facade_ledger.py, tests/test_foundation_facade_ledger.py
 - Seen: 2026-09-21
 - 为什么: 清单断言「第 N 行含 export 名」，一天内三个无关 PR 因插行变红，叠栈每合一层行号再漂一次。行号是布局细节；记 file+symbol，用 AST 找函数体，line 只作信息。
 - 证据: #454, #462, #469, #475
 
 ### L-034 以「已登记清单」为主语的门禁，先给清单机器可读的边界
 - 类: 别这样
-- 触发: docs/features/registry.json, docs/rules/ci/feature-registry.md
+- 触发: docs/features/registry.json, scripts/ci/feature_registry.py, tests/test_feature_registry.py
 - Seen: 2026-09-07
 - 为什么: 同一份散文清单被三个会话抽出 19/15/12/24 个名字，换人重写门禁覆盖面静默变窄，表现与一直正确一样。要有明确起止标记的块或数据文件，并双向校验：清单项在源码出现，e2e 用的锚点在清单里。
 - 证据: #320
@@ -60,21 +60,21 @@
 
 ### L-091 浅克隆里 git 返回 128 是「看不见」，不是「不是祖先」
 - 类: 别这样
-- 触发: scripts/ci/cla_gate.py, tests/test_cla_workflow_contract.py, tests/test_legal_contribution_policy.py
+- 触发: tests/test_legal_contribution_policy.py
 - Seen: 2026-08-27, 2026-08-28
 - 为什么: 断言基线是 HEAD 祖先的用例在完整克隆恒绿、CI 浅克隆恒红，差点锁死仓库。历史关系只能 --unshallow，--depth=1 只给存在性；验收必须在真浅克隆里跑，错误措辞也要复核。
 - 证据: #184
 
 ### L-092 PR 上没有 CI run，先看是不是 CONFLICTING，再用全长 SHA 查
 - 类: 别这样
-- 触发: .github/workflows/ci.yml, docs/ci/parallel-prs.md
+- 触发: *
 - Seen: 2026-08-27, 2026-09-07
 - 为什么: 冲突中的 PR 不派发 workflow，重推无用；我却开了 30 分钟计时实验去测一个 O(1) 字段能答的问题。head_sha 传缩写会静默返回 0。
 - 证据: #177, #299, #300
 
 ### L-093 判 CI 卡死前先看 steps 进度，runnerName 为 null 不算数
 - 类: 别这样
-- 触发: .github/workflows/ci.yml, docs/rules/ci/ci-lanes.md
+- 触发: *
 - Seen: 2026-10-08
 - 为什么: runnerName 在 job 跑完前恒为 null；把进行中的 backend-fast 判成卡死取消重跑，白丢约 40 分钟。单片 40 至 50 分钟是正常的。
 - 证据: #811
@@ -173,7 +173,7 @@
 
 ### L-110 延迟 rerun 前先核 PR head 仍等于该 run 的 headSha
 - 类: 照这样
-- 触发: .github/workflows/ci.yml, docs/ci/parallel-prs.md
+- 触发: *
 - Seen: 2026-09-28
 - 为什么: 后台等旧 run 结束再 rerun，期间 PR 已推新 head，重跑按 concurrency 取消了新 head 的 CI，PR 显示一排红。
 - 证据: #695
@@ -194,7 +194,7 @@
 
 ### L-113 入队前验按队列次序累积 merge 出的树，不只是分支
 - 类: 照这样
-- 触发: docs/ci/parallel-prs.md, .github/workflows/ci.yml
+- 触发: *
 - Seen: 2026-08-27
 - 为什么: 并行 PR 的 hunk 原样插进重排后的文件，合并态可能不合规；两两验过不等于组合验过，新增文件也不在全仓格式化的覆盖集里。
 - 证据: #175, #177, #186
@@ -222,7 +222,7 @@
 
 ### L-149 验字段未泄漏先解析结构，别在整个 JSON 里搜短数字或随机片段
 - 类: 别这样
-- 触发: tests/test_script_adjust*, tests/test_error_codes.py
+- 触发: tests/native/test_native_handoff.py, tests/native/test_native_api.py, tests/test_telemetry_invariants.py
 - Seen: 2026-11-06
 - 为什么: 端口未泄漏的判据在整个序列化 JSON 里搜五位数字，随机 native_id 偶然含相同片段，误红把无关导出 PR 踢出队列。断言公开字段集合与敏感字段缺席；若必须比内容，构造可区分的夹具，别让随机合法值决定结论。
 - 证据: #1790

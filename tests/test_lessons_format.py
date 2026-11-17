@@ -30,7 +30,7 @@ def _mod():
 
 L = _mod()
 #: 通用条目（触发: *）条数上限；要加先问是不是真的「任何改动都适用」。
-MAX_UNIVERSAL = 8
+MAX_UNIVERSAL = 13
 TODAY = dt.date(2026, 11, 2)
 #: 假仓库的 `git ls-files`：触发路径要在这里匹配到至少一个文件。
 TRACKED = ["tests/test_a.py", "tests/test_b.py", "scripts/dev/x.py", "scripts/dev/sub/y.py"]

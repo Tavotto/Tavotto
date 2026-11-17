@@ -25,7 +25,7 @@
 
 ### L-144 新增冻结入口或子命令，在产物上真起一次，源码绿不算
 - 类: 别这样
-- 触发: scripts/smoke_desktop.py, packaging/tavotto.spec, tests/test_frozen_entrypoints.py
+- 触发: src/tavotto/engine/cli.py, src/tavotto/engine/agent_runner/, scripts/smoke_desktop.py, packaging/tavotto.spec, tests/test_frozen_entrypoints.py
 - Seen: 2026-10-31
 - 为什么: cli.py 从 agent_runner 导入 __main__，PyInstaller 不收这个子模块，0.19.0 到 0.19.2 用 Key 连接的内置 AI 每次启动就 ImportError；源码测试和冒烟一直绿，没人在产物上起过它。现在 smoke_desktop 起 agent-run 与 fix-mcp，新子命令加进去。
 - 证据: #1570
