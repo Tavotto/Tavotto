@@ -297,6 +297,7 @@ const FAILURE_STATES = new Set([
   'file_ops_blocked',
   'folder_unreadable',
   'folder_abi',
+  'image_format',
   'no_figure',
   'no_figure_raster',
   'not_registered',
@@ -852,6 +853,14 @@ function needsSomething(report: PreparationReport, script: string, ctx: PrepCont
           const values = { script, folder: String(params?.folder ?? ''), abi: String(params?.abi ?? ''), current: String(params?.current ?? '') }
           return view('folder_abi', 'folderAbi', values, { kind: 'skip_folder', token }, { tone: 'bad', step: 1 })
         }
+      }
+      if (code === 'image_format_mismatch') {
+        // 图片内容与扩展名不符（TVD-3MWS）：直接用 Python 跑同样失败，与运行方式 / 环境无关。一句话点名文件（没有文件名就说「这张图片」），
+        // 主按钮沿用「再试一次」（用户换好文件后重跑）；不新增入口，AI 修复保持在详情菜单里
+        const params = report.result?.error?.params
+        const textKey = params?.file ? 'backend.image_format_mismatch_file' : 'backend.image_format_mismatch'
+        // 独立的状态：remedy 的「AI 修复」不顶掉主按钮（换个文件才是出路），只留作次入口
+        return view('image_format', 'errorText', { ...v, ...params, textKey }, runPrimary(report, 'retry') ?? fallback, { tone: 'bad', step: 1 })
       }
       if (TEX_CODES.has(code)) {
         // TeX 工具链失败（缺命令 / 缺宏包或字体 / 编译错误 / 原因不明）：说 errors:backend.<code> 那句针对性说明，

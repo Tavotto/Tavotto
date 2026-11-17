@@ -1184,6 +1184,93 @@ def _script_frame_line(exc: BaseException, script) -> int | None:
     return lines[-1] if lines else None
 
 
+def _argv_failure_site(exc: BaseException, script, supplied: list[str], expected_argv: list[str]):
+    """The failing instruction of the entry script, while this run's argv is untouched.
+
+    Returns ``(frame, instructions, pos)`` or None. Shared by the argv classifiers
+    below: argv must still be the very list the worker installed, with the same
+    contents; the innermost frame must be the entry script, stopped exactly at the
+    failing instruction (a finally block that ran since would move it), and no
+    unwound script frame may have executed after the failure either.
+    """
+    if type(sys.argv) is not list or sys.argv is not expected_argv:
+        return None
+    if not all(type(value) is str for value in sys.argv):
+        return None
+    if sys.argv != [str(script), *supplied]:
+        return None
+    tb = exc.__traceback__
+    if tb is None:
+        return None
+    wanted = os.path.normcase(os.path.realpath(str(script)))
+    reached_script = False
+    while tb.tb_next is not None:
+        # A finally block can change argv and restore it after the failing
+        # instruction, even in a helper called by the script. Reject any
+        # unwound frame after entering the script if it has since executed.
+        reached_script |= (
+            os.path.normcase(os.path.realpath(tb.tb_frame.f_code.co_filename)) == wanted
+        )
+        if reached_script and tb.tb_frame.f_lasti != tb.tb_lasti:
+            return None
+        tb = tb.tb_next
+    frame = tb.tb_frame
+    if (
+        os.path.normcase(os.path.realpath(frame.f_code.co_filename)) != wanted
+        or frame.f_lasti != tb.tb_lasti
+    ):
+        return None
+    instructions = list(dis.get_instructions(frame.f_code))
+    pos = next((i for i, op in enumerate(instructions) if op.offset == tb.tb_lasti), -1)
+    if pos < 1:
+        return None
+    return frame, instructions, pos
+
+
+def _loads_run_argv(frame, instructions, base: int, pos: int) -> bool:
+    """`instructions[base]` pushes this run's argv list and nothing jumps into `base..pos`.
+
+    Two shapes: `sys.argv` (`LOAD_ATTR argv` on a load bound to the `sys` module) and
+    an imported alias (`from sys import argv as args`: a load bound to the argv list).
+    Another branch may jump straight to the attribute or a later instruction with a
+    different object already on the stack, so any jump target there is ambiguous.
+    """
+
+    def binding(load):
+        name = load.argval
+        if not isinstance(name, str):
+            return None
+        if load.opname in (
+            "LOAD_NAME",
+            "LOAD_FAST",
+            "LOAD_FAST_CHECK",
+            "LOAD_FAST_BORROW",
+            "LOAD_DEREF",
+        ):
+            if name in frame.f_locals:
+                return frame.f_locals[name]
+            if load.opname != "LOAD_NAME":
+                return None
+        if load.opname in ("LOAD_NAME", "LOAD_GLOBAL"):
+            return frame.f_globals.get(name)
+        return None
+
+    load = instructions[base]
+    if load.opname == "LOAD_ATTR" and load.argval == "argv" and base >= 1:
+        if any(op.is_jump_target for op in instructions[base : pos + 1]):
+            return False
+        return binding(instructions[base - 1]) is sys
+    # For an imported argv alias, the base load must likewise be executed;
+    # a jump to a later instruction makes the operand ambiguous.
+    if any(op.is_jump_target for op in instructions[base + 1 : pos + 1]):
+        return False
+    return binding(load) is sys.argv
+
+
+def _is_const_load(op) -> bool:
+    return op.opname in ("LOAD_CONST", "LOAD_SMALL_INT")
+
+
 def _direct_argv_index_error(
     exc: BaseException, script, supplied: list[str], expected_argv: list[str]
 ) -> bool:
@@ -1195,85 +1282,122 @@ def _direct_argv_index_error(
     ordinary script errors. Nothing evaluates the user's source or arguments.
     """
     try:
-        if (
-            type(exc) is not IndexError
-            or type(sys.argv) is not list
-            or sys.argv is not expected_argv
-        ):
+        if type(exc) is not IndexError:
             return False
-        if not all(type(value) is str for value in sys.argv):
+        site = _argv_failure_site(exc, script, supplied, expected_argv)
+        if site is None:
             return False
-        if sys.argv != [str(script), *supplied]:
-            return False
-        tb = exc.__traceback__
-        if tb is None:
-            return False
-        wanted = os.path.normcase(os.path.realpath(str(script)))
-        reached_script = False
-        while tb.tb_next is not None:
-            # A finally block can change argv and restore it after the failing
-            # instruction, even in a helper called by the script. Reject any
-            # unwound frame after entering the script if it has since executed.
-            reached_script |= (
-                os.path.normcase(os.path.realpath(tb.tb_frame.f_code.co_filename)) == wanted
-            )
-            if reached_script and tb.tb_frame.f_lasti != tb.tb_lasti:
-                return False
-            tb = tb.tb_next
-        frame = tb.tb_frame
-        if (
-            os.path.normcase(os.path.realpath(frame.f_code.co_filename)) != wanted
-            or frame.f_lasti != tb.tb_lasti
-        ):
-            return False
-        instructions = list(dis.get_instructions(frame.f_code))
-        pos = next((i for i, op in enumerate(instructions) if op.offset == tb.tb_lasti), -1)
+        frame, instructions, pos = site
         if pos < 2:
             return False
         op = instructions[pos]
         if op.opname != "BINARY_SUBSCR" and not (op.opname == "BINARY_OP" and op.argrepr == "[]"):
             return False
         index_op = instructions[pos - 1]
-        if (
-            index_op.opname not in ("LOAD_CONST", "LOAD_SMALL_INT")
-            or type(index_op.argval) is not int
-        ):
+        if not _is_const_load(index_op) or type(index_op.argval) is not int:
             return False
         index = index_op.argval
         if -len(sys.argv) <= index < len(sys.argv):
             return False
+        return _loads_run_argv(frame, instructions, pos - 2, pos)
+    except Exception:  # noqa: BLE001 — failure to classify must preserve the original error
+        return False
 
-        def binding(load):
-            name = load.argval
-            if not isinstance(name, str):
-                return None
-            if load.opname in (
-                "LOAD_NAME",
-                "LOAD_FAST",
-                "LOAD_FAST_CHECK",
-                "LOAD_FAST_BORROW",
-                "LOAD_DEREF",
-            ):
-                if name in frame.f_locals:
-                    return frame.f_locals[name]
-                if load.opname != "LOAD_NAME":
-                    return None
-            if load.opname in ("LOAD_NAME", "LOAD_GLOBAL"):
-                return frame.f_globals.get(name)
+
+def _argv_unpack_operand(instructions, pos: int):
+    """Where `UNPACK_SEQUENCE` at `pos` got its operand: `(base, slice | None)` or None.
+
+    Only `sys.argv` itself or one constant two-bound slice of it (`sys.argv[1:4]`,
+    `[1:]`, `[-2:]`) — the bytecode shapes of CPython 3.10/3.11 (`BUILD_SLICE` +
+    `BINARY_SUBSCR`), 3.12/3.13 (`BINARY_SLICE`) and 3.14 (folded constant slice +
+    `BINARY_OP []`). `base` is the index of the instruction that pushes the list.
+    """
+    prev = instructions[pos - 1]
+
+    def bound(op):
+        return _is_const_load(op) and (op.argval is None or type(op.argval) is int)
+
+    # 3.14: LOAD_CONST slice(a, b, None); BINARY_OP []
+    if prev.opname == "BINARY_OP" and prev.argrepr == "[]" and pos >= 3:
+        const = instructions[pos - 2]
+        if _is_const_load(const) and type(const.argval) is slice:
+            s = const.argval
+            if s.step is None and all(v is None or type(v) is int for v in (s.start, s.stop)):
+                return pos - 3, s
             return None
+    # 3.12 / 3.13: LOAD_CONST a; LOAD_CONST b; BINARY_SLICE
+    if prev.opname == "BINARY_SLICE" and pos >= 4:
+        lo, hi = instructions[pos - 3], instructions[pos - 2]
+        if bound(lo) and bound(hi):
+            return pos - 4, slice(lo.argval, hi.argval)
+        return None
+    # 3.10 / 3.11: LOAD_CONST a; LOAD_CONST b; BUILD_SLICE 2; BINARY_SUBSCR
+    if (
+        prev.opname == "BINARY_SUBSCR" or (prev.opname == "BINARY_OP" and prev.argrepr == "[]")
+    ) and pos >= 5:
+        build = instructions[pos - 2]
+        lo, hi = instructions[pos - 4], instructions[pos - 3]
+        if build.opname == "BUILD_SLICE" and build.argval == 2 and bound(lo) and bound(hi):
+            return pos - 5, slice(lo.argval, hi.argval)
+        return None
+    if prev.opname in ("BINARY_OP", "BINARY_SLICE", "BINARY_SUBSCR"):
+        return None
+    # `script, a, b = sys.argv`
+    return pos - 1, None
 
-        base = instructions[pos - 2]
-        if base.opname == "LOAD_ATTR" and base.argval == "argv" and pos >= 3:
-            # Another branch may jump directly to the attribute, index or
-            # subscription with a different object already on the stack.
-            if any(op.is_jump_target for op in instructions[pos - 2 : pos + 1]):
-                return False
-            return binding(instructions[pos - 3]) is sys
-        # For an imported argv alias, the base load must likewise be executed;
-        # a jump to the index or subscription makes the operand ambiguous.
-        if any(op.is_jump_target for op in instructions[pos - 1 : pos + 1]):
+
+def _direct_argv_unpack_error(
+    exc: BaseException, script, supplied: list[str], expected_argv: list[str]
+) -> bool:
+    """Prove the failing unpack took too few values straight from this run's argv.
+
+    `data, work, out = sys.argv[1:4]` without arguments raises ValueError, not
+    IndexError. Same evidence rules as `_direct_argv_index_error`: the actual
+    failing `UNPACK_SEQUENCE` of the entry script, its operand `sys.argv` (or one
+    constant slice of it) loaded on a straight path, argv untouched. "Too few" is
+    recomputed from argv and the unpack count, never parsed from the message, and
+    it only counts when more arguments can fix it (a slice whose bounds can never
+    hold that many values, or too many values, stays an ordinary script error).
+    """
+    try:
+        if type(exc) is not ValueError:
             return False
-        return binding(base) is sys.argv
+        site = _argv_failure_site(exc, script, supplied, expected_argv)
+        if site is None:
+            return False
+        frame, instructions, pos = site
+        op = instructions[pos]
+        if op.opname != "UNPACK_SEQUENCE" or type(op.arg) is not int:
+            return False
+        count = op.arg
+        operand = _argv_unpack_operand(instructions, pos)
+        if operand is None:
+            return False
+        base, window = operand
+        if base < 0:
+            return False
+        if window is None:
+            got = len(sys.argv)
+        else:
+            got = len(sys.argv[window])
+            # Would some longer argv give exactly `count` values? The length is not
+            # monotonic (`[-2:2]` grows, then shrinks), but each bound only changes
+            # behaviour where argv length equals its magnitude, so between those
+            # breakpoints the length is monotone and moves by at most one per added
+            # argument: every value between the lengths at two consecutive points is
+            # reached. Past the last breakpoint it is monotone for good: constant,
+            # growing by one per argument, or shrinking to zero within `max(bounds)`
+            # more — so one far point `max(bounds) + count + 1` beyond settles it.
+            bounds = [abs(v) for v in (window.start, window.stop) if v is not None]
+            first = len(sys.argv) + 1
+            last = max([first, *bounds]) + max(bounds, default=0) + count + 1
+            points = sorted({first, last, *(b for b in bounds if first <= b <= last)})
+            sizes = [len(range(*window.indices(n))) for n in points]
+            if not any(min(a, b) <= count <= max(a, b) for a, b in zip(sizes, sizes[1:] or sizes)):
+                return False
+        if got >= count:
+            return False
+        return _loads_run_argv(frame, instructions, base, pos)
     except Exception:  # noqa: BLE001 — failure to classify must preserve the original error
         return False
 
@@ -1670,6 +1794,7 @@ class Worker(wireproto.V1Handler):
                     "missing_module",
                     "missing_dependency",
                     "missing_command",
+                    "image_format_mismatch",
                     "execution_id",
                 )
                 if k in err
@@ -2273,13 +2398,17 @@ class Worker(wireproto.V1Handler):
                     raise _blocked_operations_error(
                         ledger.material(), cause=exc, fidelity=ledger.summary()
                     ) from exc
-                if _direct_argv_index_error(exc, self.script, self.script_argv, run_argv):
+                indexed = _direct_argv_index_error(exc, self.script, self.script_argv, run_argv)
+                if indexed or _direct_argv_unpack_error(
+                    exc, self.script, self.script_argv, run_argv
+                ):
                     count = len(self.script_argv)
+                    what = "发生下标越界" if indexed else "按个数拆分，数量不够"
                     message = (
-                        f"脚本读取命令行参数时发生下标越界；Tavotto 已按原样传入 {count} 个参数。"
+                        f"脚本读取命令行参数时{what}；Tavotto 已按原样传入 {count} 个参数。"
                         "请检查是否还缺少脚本需要的参数。"
                         if count
-                        else "脚本读取命令行参数时发生下标越界；这次运行没有提供参数。请在运行参数中填写脚本需要的值。"
+                        else f"脚本读取命令行参数时{what}；这次运行没有提供参数。请在运行参数中填写脚本需要的值。"
                     )
                     raise ProtocolError(
                         SCRIPT_NEEDS_ARGUMENTS,
@@ -2760,6 +2889,7 @@ class Worker(wireproto.V1Handler):
             facts.update(self._missing_module_fact(exc))
             facts.update(self._unreadable_folder_fact(exc))
             facts.update(self._foreign_abi_fact(exc))
+            facts.update(self._image_format_fact(exc))
             facts.update(self._missing_command_fact(exc))
             raise ProtocolError(
                 "script_error",
@@ -2840,6 +2970,23 @@ class Worker(wireproto.V1Handler):
         except Exception:  # noqa: BLE001 — 绝不盖掉原来的脚本错误
             return {}
         return {"foreign_abi_folder": fact, "foreign_abi_folder_private": private} if fact else {}
+
+    def _image_format_fact(self, exc: BaseException) -> dict:
+        """失败是「图片内容与扩展名不符」（JPEG 存成 `.png`，TVD-3MWS）：`{"image_format_mismatch": {...}}`。
+        判据在 `bridgeboot.image_format_facts`（native 同一份）；只认项目根 / 脚本目录之内的文件；敏感运行里与 argv token
+        有关的文件名不带。只读文件前 16 字节，任何意外都当没有，绝不盖掉原来的脚本错误。"""
+        try:
+            fact = bridgeboot.image_format_facts(
+                exc,
+                (str(self.figures_dir), str(self.script.parent)),
+                self.script_argv if self.sensitive_argv else (),
+                # 只有沙盒 cwd 才有只读回退可镜像；「在脚本目录里运行」时相对路径本来就指向项目
+                sandbox_dir=str(self.sandbox) if self.workdir is None else None,
+                script_dir=str(self.script.parent),
+            )
+        except Exception:  # noqa: BLE001
+            return {}
+        return {"image_format_mismatch": fact} if fact else {}
 
     def _missing_command_fact(self, exc: BaseException) -> dict:
         """脚本拉起外部命令却找不到可执行文件：`{"missing_command": {...}}`（`cmddiag.collect`，用本 worker 的 env）。

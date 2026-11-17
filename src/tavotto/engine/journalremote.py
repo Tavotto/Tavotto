@@ -37,6 +37,7 @@ import json
 import logging
 import os
 import re
+import stat
 import threading
 import time
 import urllib.error
@@ -807,3 +808,29 @@ def snapshot_path(file: str) -> Path | None:
                 LOG.info("快照未取到（%s）", exc.code)
         _SNAPSHOT_FAILED[file] = now
         return None
+
+
+def snapshot_bytes(file: str) -> bytes | None:
+    """Return the bounded, hash-verified bytes used by the snapshot HTTP endpoint.
+
+    ``snapshot_path`` retains its existing cache and path behavior; the HTTP
+    response must not reopen that path after checking it, since it may change.
+    """
+    match = _SNAPSHOT_RE.fullmatch(file) if isinstance(file, str) else None
+    if match is None:
+        return None
+    try:
+        path = snapshot_path(file)
+        if path is None or path.is_symlink():
+            return None
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        fd = os.open(path, flags)
+        with os.fdopen(fd, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                return None
+            data = stream.read(MAX_SNAPSHOT_BYTES + 1)
+    except OSError:
+        return None
+    if len(data) > MAX_SNAPSHOT_BYTES or hashlib.sha256(data).hexdigest() != match.group(1):
+        return None
+    return data

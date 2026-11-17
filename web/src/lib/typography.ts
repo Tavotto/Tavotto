@@ -87,6 +87,14 @@ export type WritingMode = (typeof WRITING_MODES)[number]
 export const WRITING_MODE_VERTICAL = 'vertical' as const
 
 /**
+ * 横排文字的行盒（ADR 0073 修订，2026-11-16）：基线落在行盒中线下面多少（千分之一 em），与字体度量无关——
+ * 中文、拉丁、单行公式在文字框里都上下居中。导出（`rendercore/typography.BASELINE_BELOW_CENTER_PER_MILLE`）
+ * 同一个数（严格同源对，`tests/test_text_line_box.py`）；浏览器按自己的字体度量摆基线，
+ * 画布预览量出差值补齐（`lib/lineBox.horizontalBaselineFixPx`）。
+ */
+export const TEXT_BASELINE_BELOW_CENTER_PER_MILLE = 350
+
+/**
  * matplotlib 字重名 → 数值（`font_manager.weight_dict`）。从图里提取的样式可能写着
  * `semibold` / `600` 这类非规范字重，引擎与后端都原样保留。
  */

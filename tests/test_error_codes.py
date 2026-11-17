@@ -66,6 +66,8 @@ _CODE_REGISTRIES = (
     "tavotto.engine.preparation",
     "tavotto.engine.deprepair",
     "tavotto.engine.envadvice",
+    # U10（ADR 0072）：`TAVOTTO_RENDER_BACKEND` 指着退役 / 不认识的后端——`BackendSelectionError.code`
+    "tavotto.pdfbackend",
     "tavotto.engine.inputremap",
     "tavotto.engine.ai_data_figure",
     "tavotto.engine.xlsxread",
@@ -230,6 +232,11 @@ def test_declared_codes_keep_literal_response_and_legacy_assignment_shapes(sourc
 # code——审计 P1-02：错误尾部不许泄漏中文，所以每个 code 都要有两种语言的
 # 文案，且占位符与 params 对得上）
 USER_VISIBLE_CODES = {
+    # Journal facts inspection may return a bounded result error.
+    "result_too_large": set(),
+    "journal_catalog_disabled": set(),
+    "svg_scene_invalid": set(),
+    # --- ADR 0175：改图助手附文件（`POST /api/ai/attachments`）；固定文案 ---
     "attachment_too_large": set(),
     "attachment_empty": set(),
     "attachment_invalid": set(),
@@ -251,7 +258,6 @@ USER_VISIBLE_CODES = {
     "chart_render_unsupported": set(),
     "chart_source_changed": set(),
     "svg_resource_limit": set(),
-    "svg_scene_invalid": set(),
     "no_project": set(),
     "missing_path": set(),
     "mkdir_failed": {"reason"},
@@ -263,6 +269,9 @@ USER_VISIBLE_CODES = {
     "permission_denied": {"path"},
     "read_failed": {"reason"},
     "internal_error": {"reason"},
+    # U10（ADR 0072）：退役 / 不认识的渲染后端名，params 带原始取值
+    "backend_retired": {"value"},
+    "backend_unknown": {"value"},
     "backend_unavailable": {"reason"},
     "export_render_failed": {"id", "reason"},
     "invalid_document": set(),
@@ -287,6 +296,8 @@ USER_VISIBLE_CODES = {
     "write_outside_roots": set(),
     "import_folder_unreadable": {"folder"},
     "import_folder_abi_mismatch": {"abi", "current", "folder"},
+    # TVD-3MWS：图片内容与扩展名不符；参数来自 `pool.recovery_params`（格式名 + 扩展名 + 可选的项目相对显示名）
+    "image_format_mismatch": {"claimed", "actual", "ext"},
     "path_ignore_token_invalid": set(),
     "path_ignore_rejected": set(),
     "repair_unsupported": set(),

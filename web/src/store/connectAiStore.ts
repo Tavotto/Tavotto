@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { effectiveConnection, hasConnectionView } from '@/lib/api'
+import { checkAiConnection, effectiveConnection, hasConnectionView, type AiConnection } from '@/lib/api'
 import { useAiStore } from '@/store/aiStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -23,8 +23,12 @@ interface ConnectAiState {
   close: () => void
   /** 正在编辑的已存 Key 连接 id（「检查连接」打开它的地址 / 密钥 / 型号表单）；null = 没在编辑 */
   editing: string | null
+  /** 编辑表单打开时先聚焦哪一格（「重填密钥」→ key，「改模型」→ model，「改地址」→ url）；null = 不特意聚焦 */
+  editFocus: EditFocus | null
   closeEditor: () => void
 }
+
+export type EditFocus = 'key' | 'model' | 'url'
 
 export const useConnectAiStore = create<ConnectAiState>((set) => ({
   open: false,
@@ -35,7 +39,8 @@ export const useConnectAiStore = create<ConnectAiState>((set) => ({
     set({ open: true, reason: opts?.reason ?? 'general', onConnected: opts?.onConnected ?? null, name: opts?.name ?? null }),
   close: () => set({ open: false, onConnected: null, name: null }),
   editing: null,
-  closeEditor: () => set({ editing: null }),
+  editFocus: null,
+  closeEditor: () => set({ editing: null, editFocus: null }),
 }))
 
 /**
@@ -52,13 +57,56 @@ export function requestConnectAi(opts?: { reason?: ConnectAiReason; onConnected?
  * 地址已填好——自定义中转站不在厂商列表里（`listedVendors` 排除了 custom），通用的「连接 AI」弹窗只能再新建一条，
  * 看不到也改不了出错的地址（Codex #1523 P2）。那条连接不是 Key 类（没有接口记录）→ 退回通用弹窗。
  */
-export function requestCheckConnection(): void {
-  const { caps, connection } = useAiStore.getState()
+export function requestCheckConnection(focus?: EditFocus): void {
   // 用户选中的那条优先（即使它此刻不算 ready——凭据被拒的就是要改它的那条），否则与发送同一个 `effectiveConnection`
-  const conn = hasConnectionView(caps)
-    ? (caps?.connections?.find((c) => c.id === connection) ?? effectiveConnection(connection, caps))
-    : null
-  const endpoint = conn ? caps?.endpoints?.find((e) => e.id === conn.id) : undefined
-  if (endpoint) useConnectAiStore.setState({ editing: endpoint.id })
+  const conn = currentConnection()
+  const endpoint = conn ? useAiStore.getState().caps?.endpoints?.find((e) => e.id === conn.id) : undefined
+  if (endpoint) useConnectAiStore.setState({ editing: endpoint.id, editFocus: focus ?? null })
   else requestConnectAi()
+}
+
+/** 失败卡此刻指的那条连接（与 `requestCheckConnection` 同一个判据：用户选中的优先，否则与发送同一个 `effectiveConnection`） */
+export function currentConnection(): AiConnection | null {
+  const { caps, connection } = useAiStore.getState()
+  if (!hasConnectionView(caps)) return null
+  return caps?.connections?.find((c) => c.id === connection) ?? effectiveConnection(connection, caps)
+}
+
+/** 一次「检查连接」的结局：`ok` = 现在是 ready；否则 `reason` 是探测原因闭集 / 连接的 error 码（没有 = 通用一句） */
+export interface ConnectionCheckResult {
+  ok: boolean
+  reason: string | null
+}
+
+/**
+ * 重新探测一条 Key 连接（`POST /api/ai/connections/<id>/check`），再重读能力表（通过了界面才跟着变）。
+ * 永远有结局：请求没到后端 / 404（不是 Key 类）都落成 `{ok:false}`，由调用方给「修改连接」。
+ */
+export async function runConnectionCheck(id: string): Promise<ConnectionCheckResult> {
+  let res
+  try {
+    res = await checkAiConnection(id)
+  } catch {
+    return { ok: false, reason: 'network' }
+  }
+  try {
+    await useAiStore.getState().loadCaps(true)
+  } catch {
+    /* 重读失败：下面照常按这次响应里的连接视图下结论 */
+  }
+  const conn = res.connection
+  const probe = res.probe
+  // 断网 / 缺型号时记录没动（checked=false），返回的还是旧的 ready 视图：不算通了，说「连不上」
+  if (probe && !probe.checked) return { ok: false, reason: 'network' }
+  // 有探测结论：以它为准（协议有值或没有失败原因才算通）；老后端没给 probe 才看连接状态
+  const passed = probe ? probe.protocol != null || probe.reason == null : conn?.state === 'ready'
+  if (passed) return { ok: true, reason: null }
+  return { ok: false, reason: probe?.reason ?? conn?.error_reason ?? conn?.error ?? null }
+}
+
+/** 连接卡上的「改地址 / 改模型 / 重填密钥」：打开**这一条**连接的编辑表单；它没有接口记录（目录厂商没存过）→ 返回 false，由调用方就地处理 */
+export function requestEditConnection(id: string, focus?: EditFocus): boolean {
+  if (!useAiStore.getState().caps?.endpoints?.some((e) => e.id === id)) return false
+  useConnectAiStore.setState({ editing: id, editFocus: focus ?? null })
+  return true
 }

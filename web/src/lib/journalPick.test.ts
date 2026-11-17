@@ -148,15 +148,24 @@ describe('出处卡：一句话与高亮', () => {
     const entries = Object.fromEntries(sourcesForCheck('font-size-recommended', journalSources('fx-adv', CAT)))
     expect(Object.keys(entries).sort()).toEqual(['min_effective_font_size_pt', 'min_script_font_size_pt'])
     expect(adviceSentence('Elsevier', entries)).toBe(
-      'Elsevier 说明 7 pt 为正文最小字号，6 pt 为上下标最小字号',
+      '字号记录，请参阅来源原文',
     )
+  })
+
+  it('字号反例：图件 8 pt 并非正文限定，6 pt 是下界；卡标题不编造语气或角色', () => {
+    const src = journalSources('fx-adv', CAT)
+    const general = { ...src.min_effective_font_size_pt, value: 8, quote: 'Make sure you use uniform lettering and sizing of your original artwork(usually 8 pt).' }
+    const subscript = { ...src.min_script_font_size_pt, value: 6, quote: 'As a general rule, the lettering on the artwork should have a finished, printed size of 7 pt for normal text and no smaller than 6 pt for subscript and superscript characters.' }
+    expect(adviceSentence('Journal', { min_effective_font_size_pt: general, min_script_font_size_pt: subscript })).toBe('字号记录，请参阅来源原文')
+    expect(adviceSentence('Journal', { min_effective_font_size_pt: general })).toBe('字号记录，请参阅来源原文')
+    expect(adviceSentence('Journal', { min_script_font_size_pt: subscript })).toBe('字号记录，请参阅来源原文')
   })
 
   it('英文界面：同一张卡换成英文句子', async () => {
     await setLocale('en-US')
     const entries = Object.fromEntries(sourcesForCheck('font-size-recommended', journalSources('fx-adv', CAT)))
     expect(adviceSentence('Elsevier', entries)).toBe(
-      'Elsevier states 7 pt as the minimum for body text and 6 pt for sub/superscripts',
+      'Text size records: see source text',
     )
   })
 })

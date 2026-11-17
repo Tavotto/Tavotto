@@ -59,7 +59,7 @@ CLI 的写入面（任意 shell、网络、绝对路径写）也比「改一个�
 
 AI 修复（ADR 0149）的内置循环同样改为取连接视图里第一个可用的 Key 连接。
 
-这里的 CLI 回退发生在派发前；任务中途失败不会自动换执行器重放。`openai-chat` 是 runner 层协议，当前应用连接只开放 `anthropic` 与 `openai-responses`；验收必须分别标注 runner 测试、应用连接测试和真实服务测试。当前证据及定向试用记录见 [协议验收报告](../implementation/agent-external-corpus-2026-10-25/PROTOCOL-ROLLOUT.md)。
+这里的 CLI 回退发生在派发前；任务中途失败不会自动换执行器重放。`openai-chat` 是 runner 层协议（2026-11-15 起应用连接也开放，见文末「修订：自定义连接开放 openai-chat 与保存时探测协议」）；验收必须分别标注 runner 测试、应用连接测试和真实服务测试。当前证据及定向试用记录见 [协议验收报告](../implementation/agent-external-corpus-2026-10-25/PROTOCOL-ROLLOUT.md)。
 
 ### 六、仍然不做
 
@@ -151,3 +151,37 @@ Conversion output recovery remains within the existing budget: create/append sho
 [OpenAI reasoning 状态回传](https://developers.openai.com/api/docs/guides/reasoning)。看护 `test_agent_runner`、`test_agent_runner_convert` 与 `test_ai_connections`；真实服务证据独立记录，合成接收端测试不冒充真模型结果。
 
 转换写入守卫反馈同时保留原错误的有界现场与权限指导，不能把所有写入失败只解释成 mkdir。实际文件写入与目录创建的真实 worker 反例验证模型能看到失败位置；没有放宽写入根。
+
+### 修订：runner 层换协议与非必需字段降级（2026-11-15）
+
+背景：用户自填的第三方接口多是 new-api / one-api 类中转，常见「能列型号、跑不了任务」：同一地址上 chat 通而 responses 不通（或反过来），或不认我们带的 `store` / `include` / `max_tokens`。
+上文「不因 401/402、拒答或任意 400 错误自动切换接口」**继续成立**；本修订只在 runner 层加两个闭集例外，且都不重放副作用：
+
+- **第一轮换协议**：`--fallback WIRE=BASE_URL`（可重复）。只在从未收到过成功回复时（没执行过工具、没有原生回放项）才换；信号是 404 / 405，或 400 / 404 / 503 且响应体含闭集短语
+  （`fallback.WRONG_PROTOCOL_PHRASES`，出自 magpie 的 WrongEndpoint / NoChannel 两张表）。401 / 403 / 429 / 其余 5xx、任意其他 400 不换。备选地址必须与主地址同源——密钥与提示词不因此流向别的主机，也不放宽「不跟随重定向」。
+  工具执行之后再失败，绝不换协议重放：那是「任务中途自动重放」，仍禁止。
+- **非必需字段降级**：400 / 422 明确点名 `include` / `max_output_tokens` / chat 长度字段为不被接受（值非法不算）→ 剥掉或换名后重发一次，同一字段不重复。
+  **`store: false` 不属于可降级字段**：它是故意的（提示词里有用户未发表的脚本，不让服务端留存），绝不自动剥。responses 上 `store` 被点名拒绝按「协议不对」信号处理——有 `--fallback` 就换到 chat（chat 没有 store 字段），没有备选照常失败；同样只在第一轮、从未成功过时。
+  剥 `include` 时回放里无加密内容的 `reasoning` 条目一并剥掉，否则第二轮（工具已执行之后）才被拒。
+- **回报**：仅 `done` 事件的四个闭集字段 `wire_used` / `wire_switched_from` / `dropped_fields` / `token_field`；响应体原文只在内存里匹配，不进事件、日志、诊断包。
+
+同时核对 `OpenAIChatWire`：多轮工具调用、`reasoning_content` 回放、长度字段、`finish_reason`、usage（含 DeepSeek 的 `prompt_cache_hit_tokens`）逐条对照官方 / DeepSeek 文档写进类注释；
+无工具调用且无文字的续写轮 `content` 改为 `""`（`null` 会被官方端点拒收）。**真服务验收见 `docs/implementation/agent-external-corpus-2026-10-25/PROTOCOL-ROLLOUT.md` 覆盖表，未跑通之前不得写成已验证。**
+本文「`openai-chat` 是 runner 层协议，应用连接只开放 anthropic 与 openai-responses」一句已被下一节修订取代。看护 `tests/test_agent_runner_fallback.py`。
+
+### 修订：自定义连接开放 openai-chat 与保存时探测协议（2026-11-15，1.0 豁免已给）
+
+起因（反馈 TVD-HN4B）：用户自填的中转站（new-api 类）「能列型号、跑不了任务」——型号清单只证明地址通，不证明对话协议对（该网关的 Responses 每次第一轮被拒）。
+此前应用连接只开放 `anthropic` 与 `openai-responses`，保存时只核型号清单与 `/v1`，不真发对话。本次：
+
+- **开放 `openai-chat`**：记录新增字段 `protocol`（闭集 `anthropic | openai-responses | openai-chat`，缺省 = 家族默认：claude → anthropic、codex → openai-responses）。
+  **不复用 `wire_api`**（`wire_api="chat"` 是被 Codex 移除的旧记录标记，`incompatibility()` 仍判 `codex_chat_removed`，旧记录不自动改）。chat 记录的 `agent` 属 openai 家族（`codex`），
+  但**只走内置循环**：`ai_providers.builtin_only(rec)` 是唯一判据，`route_for` 的三个 CLI 出口、`spawn_overrides` 的 codex 分支、`resolve`（当前选中）、`ai_bridge.run`（显式指到）全部关死，永远不注入 Codex。
+- **保存时探测**（`engine/ai_probe.py`）：对 (地址, Key, 型号) 每种协议发一条带一个工具定义、`max_tokens ≤ 16` 的最小请求，复用 `agent_runner.wires` 的请求构造 / `parse` / `post_json`（不新增出站点）；
+  通过 = 回复体解析成合法 `Turn`（200 的网页 / 错误对象判失败）。按优先级排序、第一个通过的就停：Claude 型号 → anthropic；api.openai.com 上的 gpt / o 系列 → responses；其余 → chat；用户明确给的协议先试。
+  目录里的已知厂商只核自己那一种协议、不换协议与地址。结论写 `protocol` / `protocol_ok`（地址 + 型号 + 协议指纹，地址或型号变了失效）；全不通仍保存，`last_error = endpoint_unusable` + `probe_reason`（Key 被拒仍记 `unauthorized`）。
+- **`POST /api/ai/connections/<id>/check`** 重新探测并更新记录；失败卡 / 连接卡的「检查连接」调它。
+- 旧的「其他兼容接口」表单（`PUT /api/ai/endpoints`）存完也补一次探测（只对自填地址、且还没有结论的那一条；只改名称不重探）。
+  探测对 Responses 上被点名拒收的非必需字段（`include` / `max_output_tokens`）与 runner 同一套判据剥掉重发一次（`store` 永不剥），runner 跑得通的中转站不会在保存时被记成不可用。
+
+看护 `tests/test_ai_probe.py`。真实服务验证与 runner / 应用连接测试分开记录（见协议验收报告）。

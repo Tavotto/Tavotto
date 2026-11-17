@@ -202,10 +202,11 @@ test('黄金路径：案例库 → 查看代码 → 启动 → 真 Pyodide → �
   await expect(page.getByText(/"prop":\s*"fontsize"/)).toBeVisible()
   await page.getByRole('button', { name: /1 条修改/ }).click()
 
-  // 完成提示：图变了 + 源文件一个字也没动——后半句必须来自真核对
-  // （verifySourceIntegrity 跑完且 unchanged 才显示；核对中只说「正在核对」）
+  // 完成提示：图变了 + 源文件未改动——后半句必须来自真核对
+  // （verifySourceIntegrity 跑完且 unchanged 才显示；核对中只说「正在核对」）。
+  // 文案随 #344 重写（taskDoneBody：图已更新，{{filename}} 未改动。）。
   await expect(task).toHaveAttribute('data-guided-task', 'done', { timeout: 60_000 })
-  await expect(task.getByText(/kinetics\.py 一个字也没动/)).toBeVisible({ timeout: 60_000 })
+  await expect(task.getByText(/kinetics\.py 未改动/)).toBeVisible({ timeout: 60_000 })
 
   // 撤销 = 空 patch 列表全量重放 = 标题回到 9pt；源码仍未改动
   await page.getByRole('button', { name: '撤销' }).first().click()

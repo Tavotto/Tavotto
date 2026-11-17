@@ -72,6 +72,7 @@ export function VendorKeyForm({
           autoComplete="off"
           spellCheck={false}
           data-connect-key-input
+          autoFocus
           aria-label={cx('keyLabel')}
           placeholder={cx('keyPlaceholder')}
           value={key}

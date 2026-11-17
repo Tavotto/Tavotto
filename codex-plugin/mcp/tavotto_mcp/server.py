@@ -640,7 +640,7 @@ def _tools() -> list[dict]:
 
 
 #: 只在期刊库总开关打开时才出现在 tools/list 的工具（处理器在 HANDLERS，关着时调用回 `journal_catalog_disabled`）
-JOURNAL_CATALOG_TOOLS = ("tavotto_list_journals",)
+JOURNAL_CATALOG_TOOLS = ("tavotto_list_journals", "tavotto_get_journal_facts")
 #: 带手写 `journal` 覆盖、因而也认 `journal_id` 的工具
 JOURNAL_ID_TOOLS = (
     "tavotto_open_figure",
@@ -683,6 +683,66 @@ def _add_journal_catalog_tools(tools: list[dict], by_name: dict) -> None:
             },
         }
     )
+
+    if bridge.journal_facts_enabled():
+        tools.append(
+            {
+                "name": "tavotto_get_journal_facts",
+                "title": "读取期刊来源事实",
+                "description": (
+                    "只读 v2：按 query 搜索期刊，或按 journal_id 分页读取已收录的来源事实。"
+                    "收录条数不代表全刊规范已核完；事实带条件、阶段和要求强度，不能忽略条件当成通用预检；不可用时不冒充 v1 数据。"
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "搜索刊名、ISSN、别名或出版社"},
+                        "journal_id": {
+                            "type": "string",
+                            "description": "读取指定期刊的事实，与 query 二选一",
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "大于 0 时必须同时传 expected_catalog_rev。",
+                        },
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                        "expected_catalog_rev": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9999999999,
+                            "description": "后续页必须传第一页 catalog_rev；目录变化时须重读。",
+                        },
+                        "inspection": {
+                            "type": "object",
+                            "description": "只对本次读取声明一个对象；不写项目，也不证明语义审校。",
+                            "properties": {
+                                "object_label": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                },
+                                "figure_kind": {
+                                    "enum": ["unknown", "line_art", "halftone", "combination"]
+                                },
+                                "stage": {
+                                    "enum": [
+                                        "unknown",
+                                        "submission",
+                                        "revision",
+                                        "accepted",
+                                        "production",
+                                    ]
+                                },
+                            },
+                            "required": ["object_label"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+            }
+        )
 
 
 def _fix_to_journal_tool() -> dict:
@@ -1290,6 +1350,65 @@ def _call_list_journals(args: dict) -> dict:
     }
 
 
+def _inspection_result_size(result: dict, rid: object = None) -> int:
+    """Measure actual UTF-8 JSON with the same encoder as the stdio transport."""
+    value = result if rid is None else {"jsonrpc": "2.0", "id": rid, "result": result}
+    # Stdio frames also include the terminating newline.
+    return len(json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")) + (
+        rid is not None
+    )
+
+
+def _inspection_too_large(result: dict, rid: object = None) -> bool:
+    body = result.get("structuredContent")
+    if not isinstance(body, dict) or "inspection" not in body:
+        return False
+    return _inspection_result_size(result, rid) > bridge.journal_facts_inspection_budget()
+
+
+def _inspection_size_error() -> bridge.BridgeError:
+    return bridge.BridgeError(
+        "期刊事实查看结果超出安全大小；请减小 limit 并从同一 offset 重试。"
+        "若 limit 为 1 仍超限，该条暂无法读取。",
+        code="journal_facts_page_too_large",
+    )
+
+
+def _call_journal_facts(args: dict) -> dict:
+    query = args.get("query", "")
+    journal_id = args.get("journal_id")
+    offset, limit = args.get("offset", 0), args.get("limit", 20)
+    expected_rev = args.get("expected_catalog_rev")
+    inspection = args.get("inspection")
+    if (
+        not isinstance(query, str)
+        or (journal_id is not None and (not isinstance(journal_id, str) or not journal_id))
+        or (journal_id is not None and "query" in args)
+        or type(offset) is not int
+        or type(limit) is not int
+        or (
+            expected_rev is not None
+            and (type(expected_rev) is not int or not 1 <= expected_rev <= 9999999999)
+        )
+        or (inspection is not None and journal_id is None)
+        or set(args)
+        - {"query", "journal_id", "offset", "limit", "expected_catalog_rev", "inspection"}
+    ):
+        raise RpcError(INVALID_PARAMS, "查询、期刊 ID 或分页参数不正确")
+    if offset > 0 and expected_rev is None:
+        raise RpcError(
+            INVALID_PARAMS, "读取后续页须传入第一页的 catalog_rev 作为 expected_catalog_rev"
+        )
+    if inspection is None:
+        out = bridge.journal_facts(query, journal_id, offset, limit, expected_rev)
+    else:
+        out = bridge.journal_facts(query, journal_id, offset, limit, expected_rev, inspection)
+    result = {"content": _text(json.dumps(out, ensure_ascii=False)), "structuredContent": out}
+    if inspection is not None and _inspection_too_large(result):
+        raise _inspection_size_error()
+    return result
+
+
 def _call_fix_to_journal(args: dict) -> dict:
     raw_dpi = args.get("dpi")
     out = bridge.fix_to_journal(
@@ -1317,6 +1436,44 @@ def _call_fix_to_journal(args: dict) -> dict:
     return {"content": content, "structuredContent": out}
 
 
+FIX_BLOCKING_SHOWN = 6
+
+
+def _fix_failure_lines(out: dict) -> list[str]:
+    """没修成时说清卡在哪一步、卡住的是哪几个元素、下一步怎么走——只给 exit 码，Agent 只能去猜。"""
+    stage = out.get("stage")
+    detail = out.get("detail") or {}
+    if stage == "recheck":
+        items = (out.get("issues") or {}).get("introduced") or []
+    else:
+        items = list(detail.get("blocking") or []) + list(detail.get("unresolved") or [])
+    lines: list[str] = []
+    if stage == "size":
+        target = (out.get("size") or {}).get("target") or {}
+        want = " × ".join(
+            f"{'宽' if k == 'width_mm' else '高'} {v:g} mm" for k, v in target.items()
+        )
+        lines.append(f"卡在改图幅这一步（目标 {want or '期刊栏宽'}），改完下面这些会出界或重叠：")
+    elif stage == "panel":
+        lines.append("图幅改好了，但面板内的字号 / 线宽改不到合规，卡住的是：")
+    elif stage == "recheck":
+        lines.append("改完复检时新出了下面这些问题，所以整步撤回：")
+    for i in items[:FIX_BLOCKING_SHOWN]:
+        gids = "、".join((i.get("gids") or ([i["gid"]] if i.get("gid") else []))[:3])
+        text = i.get("text") or i.get("rule") or i.get("id")
+        lines.append(f"  ✗ {text}" + (f"［{gids}］" if gids else ""))
+    if len(items) > FIX_BLOCKING_SHOWN:
+        lines.append(f"  ……共 {len(items)} 条，全部在 detail 里。")
+    if stage == "size":
+        lines.append(
+            "Tavotto 改图幅时挪不动这些元素（常见于 fig.add_axes 摆的内嵌图、手写坐标的文字）。"
+            '下一步：回脚本把 figsize 直接设成目标尺寸（mm ÷ 25.4 = 英寸），用 layout="constrained" '
+            "或 tight_layout 重排；跑一遍脚本，tavotto_refresh_project 后重新打开再调本工具。"
+            "图幅不要用 tavotto_apply_overrides 硬改。"
+        )
+    return lines
+
+
 def fix_report_lines(out: dict) -> list[str]:
     """念给用户听的那一份：结局、图幅、改了什么、还剩什么、没修的与原因、导出。"""
     exit_code = out.get("exit")
@@ -1337,6 +1494,7 @@ def fix_report_lines(out: dict) -> list[str]:
             f"一步改到合规**未完成**（{exit_code}{'/' + out['reason'] if out.get('reason') else ''}）："
             "会话已回到修改前，没有写出任何文件。"
         )
+        lines.extend(_fix_failure_lines(out))
     elif exit_code == "nothing_to_do":
         lines.append("没有需要改的地方；会话未变。" + dry)
     else:
@@ -1774,6 +1932,7 @@ HANDLERS = {
     # 受期刊库总开关管：关着时不在 tools/list，直接调用回 `journal_catalog_disabled`（ADR 0155 §9）。
     # 开关打开（ADR 0155 §11）后与遥测的工具名闭集（`usage.TOOLS`）一一对应
     "tavotto_list_journals": _call_list_journals,
+    "tavotto_get_journal_facts": _call_journal_facts,
     # 同样受期刊库总开关管（`bridge.fix_to_journal_available()`）；**不进** `usage.TOOLS` / 遥测闭集
     # （加进去要升 CONSENT_VERSION，与 `tavotto_guide` 同一处置：走 `other` 桶，ADR 0180）
     "tavotto_fix_to_journal": _call_fix_to_journal,
@@ -2045,7 +2204,22 @@ class Server:
                 arguments = params.get("arguments")
                 if isinstance(arguments, dict):
                     self._confirm_workspace_for_open(arguments)
-            self.conn.result(rid, self.dispatch(method, params))
+            result = self.dispatch(method, params)
+            call_args = params.get("arguments")
+            if (
+                method == "tools/call"
+                and params.get("name") == "tavotto_get_journal_facts"
+                and isinstance(call_args, dict)
+                and call_args.get("inspection") is not None
+                and _inspection_too_large(result, rid)
+            ):
+                payload = _inspection_size_error().payload()
+                result = {
+                    "isError": True,
+                    "content": _text(_human_error(payload)),
+                    "structuredContent": payload,
+                }
+            self.conn.result(rid, result)
         except RpcError as exc:
             self.conn.error(rid, exc)
         except Exception as exc:  # noqa: BLE001 — 任何异常都不许打死连接
@@ -2232,7 +2406,9 @@ class Server:
         from_canvas = (
             args.pop(ORIGIN_ARG, None) == ORIGIN_CANVAS if isinstance(args, dict) else False
         )
-        if from_canvas:
+        # v2 fact lookups intentionally emit no telemetry event: their new tool
+        # name is outside the current consent scope, including the generic bucket.
+        if from_canvas or name == "tavotto_get_journal_facts":
             return call_tool(name, args)
         started = time.monotonic()
         outcome = "internal_error"
