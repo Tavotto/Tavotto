@@ -21,7 +21,7 @@ import {
   type JournalSource,
   type JournalSnapshot,
 } from '@/lib/journals'
-import { currentLocale } from '@/i18n'
+import { currentLocale, t as translate } from '@/i18n'
 import type { FigureDocument } from '@/types/document'
 
 type Binding = NonNullable<FigureDocument['profile']>
@@ -223,4 +223,11 @@ export function confirmEntries(row: V2ConfirmRow): [string, JournalFieldSource] 
     overrides: null,
   }
   return [row.unit ? `v2.${row.subject}_${row.unit}` : `v2.${row.subject}`, source]
+}
+
+/** v2 事实的语气里 v1 不显示的两种：只举例（example）/ 约数（typical）。其余沿用 `journalPick.strengthLabel`。 */
+export function v2StrengthNote(strength: string | undefined): string | null {
+  if (strength === 'example') return translate('journal.strengthExample', { ns: 'dialogs' })
+  if (strength === 'typical') return translate('journal.strengthTypical', { ns: 'dialogs' })
+  return null
 }

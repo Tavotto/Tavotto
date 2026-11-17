@@ -62,7 +62,6 @@ def test_confirm_row_keeps_the_original_condition_verbatim():
 @pytest.mark.parametrize(
     "name",
     [
-        "font-family-example-is-not-an-allowlist",
         "permitted-and-typical-are-not-requirements",
         "unknown-origin-is-ignored",
     ],
@@ -151,3 +150,14 @@ def test_color_mode_and_file_format_are_listed_never_folded():
     rows = {r["subject"]: r for r in out["confirm"]}
     assert rows["color_mode"]["value"] == ["RGB", "CMYK"] and rows["color_mode"]["condition"] == ""
     assert rows["file_format"]["condition"] == "Line art only"
+
+
+def test_example_font_and_typical_size_are_listed_never_folded():
+    out = _case("font-example-and-typical-size-are-listed-not-folded")
+    assert out["rules"] == {}
+    rows = {r["subject"]: r for r in out["confirm"]}
+    assert (
+        rows["font_family"]["value"] == ["Helvetica"]
+        and rows["font_family"]["strength"] == "example"
+    )
+    assert rows["font_size"]["value"] == 8 and rows["font_size"]["strength"] == "typical"

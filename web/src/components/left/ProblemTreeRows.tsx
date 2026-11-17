@@ -27,7 +27,7 @@ import { Popover } from '../ui/Popover'
 import { FixButton, runBatchFix, useBatchable } from './IssueFixButton'
 import { SourceButton, SourceCardBody } from '../journal/SourceButton'
 import { dpiSourceMatches, fieldLabel, sourcesForCheck, valueText } from '@/lib/journalPick'
-import { confirmEntries, type V2ConfirmRow } from '@/lib/journalV2'
+import { confirmEntries, v2StrengthNote, type V2ConfirmRow } from '@/lib/journalV2'
 import { useJournalV2Store } from '@/store/journalV2Store'
 import { journalCatalogUi } from '@/lib/journalUi'
 
@@ -485,6 +485,8 @@ export function ConfirmGroup({
             const entry = confirmEntries(row)
             const requirement = `${fieldLabel(entry[0])} ${valueText(entry[0], entry[1])}`
             const condition = translate('journal.confirm.condition', { ns: 'dialogs', text: row.condition })
+            // 只举例 / 约数的，语气写在行里（举例 / 约），免得被当成硬要求
+            const note = v2StrengthNote(row.strength)
             return (
               <li key={row.id}>
                 <Popover
@@ -502,6 +504,7 @@ export function ConfirmGroup({
                       <TreeChevron />
                       <span className="min-w-0 flex-1 truncate" title={row.condition ? `${requirement} · ${condition}` : requirement}>
                         {requirement}
+                        {note && <span className="text-ink-3">{` · ${note}`}</span>}
                         {row.condition && <span className="text-ink-3">{` · ${condition}`}</span>}
                       </span>
                     </button>

@@ -23,6 +23,8 @@ V2_SOURCE_PREFIX = "v2:"
 PRESCRIPTIVE = ("required", "recommended", "preferred")
 #: 「需要你确认」另收原文没说清语气的（`unspecified`）：它仍是写在指南里的数值要求，只是不拿它报警。
 LISTABLE = (*PRESCRIPTIVE, "unspecified")
+#: 字体 / 字号的「举例」「约」也列出来（用户 2026-11-17 裁决：只举例的字体、约数字号放进「需要你确认」，不进预检报警）。
+EXTRA_LISTABLE = {"font_family": ("example", "typical"), "font_size": ("example", "typical")}
 
 #: (subject, relation, unit) → (v1 规则路径, v1 qualifier)。方向相符才折叠（同 `QUALIFIER_DIRECTION`）。
 FOLDABLE: dict[tuple[str, str, str | None], tuple[str, str]] = {
@@ -37,10 +39,11 @@ CONFIRM_UNITS: dict[str, tuple[str, ...]] = {
     "width": ("mm", "in"),
     "figure_piece_width": ("mm", "in"),
     "figure_size_max": ("mm", "in"),
+    "font_size": ("pt",),
 }
 CONFIRM_RELATIONS = ("gte", "lte", "eq")
 #: 名单型要求（色彩模式、文件格式）：预检没有对应判据，只列出来给人看（用户 2026-11-17 批准的方案原文：先只进「需要你确认」）。
-CONFIRM_LISTS = ("color_mode", "file_format")
+CONFIRM_LISTS = ("color_mode", "file_format", "font_family")
 
 #: v1 只有三档阶段；v2 的 unknown 等同 any，revision / accepted 没有对应档，不折叠。
 _STAGE = {"unknown": "any", "any": "any", "submission": "submission", "production": "production"}
@@ -125,7 +128,11 @@ def fold(bundle: dict) -> dict:
     facts = [
         f
         for f in bundle.get("facts", [])
-        if f.get("origin") in ("journal", "publisher") and f.get("strength") in LISTABLE
+        if f.get("origin") in ("journal", "publisher")
+        and (
+            f.get("strength") in LISTABLE
+            or f.get("strength") in EXTRA_LISTABLE.get(f.get("subject"), ())
+        )
     ]
     candidates: dict[str, list[tuple[dict, str]]] = {}
     confirm: list[dict] = []

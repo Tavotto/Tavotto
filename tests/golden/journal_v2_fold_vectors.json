@@ -409,38 +409,6 @@
       "id": "a",
       "origin": "journal",
       "quote": "Quote a",
-      "relation": "in",
-      "source": "s1",
-      "stage": "unknown",
-      "strength": "example",
-      "subject": "font_family",
-      "value": [
-       "Helvetica"
-      ]
-     }
-    ],
-    "sources": {
-     "s1": {
-      "kind": "html",
-      "retrieved": "2026-11-15",
-      "url": "https://example.invalid/guide"
-     }
-    }
-   },
-   "expected": {
-    "confirm": [],
-    "rules": {},
-    "sources": {}
-   },
-   "id": "font-family-example-is-not-an-allowlist"
-  },
-  {
-   "bundle": {
-    "facts": [
-     {
-      "id": "a",
-      "origin": "journal",
-      "quote": "Quote a",
       "relation": "gte",
       "source": "s1",
       "stage": "unknown",
@@ -840,6 +808,87 @@
     "sources": {}
    },
    "id": "color-mode-and-format-are-listed-for-confirmation"
+  },
+  {
+   "bundle": {
+    "facts": [
+     {
+      "id": "a",
+      "origin": "journal",
+      "quote": "Quote a",
+      "relation": "in",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "example",
+      "subject": "font_family",
+      "value": [
+       "Helvetica"
+      ]
+     },
+     {
+      "id": "b",
+      "origin": "journal",
+      "quote": "Quote b",
+      "relation": "eq",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "typical",
+      "subject": "font_size",
+      "unit": "pt",
+      "value": 8
+     }
+    ],
+    "sources": {
+     "s1": {
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "expected": {
+    "confirm": [
+     {
+      "condition": "",
+      "id": "a",
+      "quote": "Quote a",
+      "relation": "in",
+      "source": {
+       "coverage": "journal_specific",
+       "kind": "html",
+       "retrieved": "2026-11-15",
+       "url": "https://example.invalid/guide"
+      },
+      "stage": "any",
+      "strength": "example",
+      "subject": "font_family",
+      "unit": null,
+      "value": [
+       "Helvetica"
+      ]
+     },
+     {
+      "condition": "",
+      "id": "b",
+      "quote": "Quote b",
+      "relation": "eq",
+      "source": {
+       "coverage": "journal_specific",
+       "kind": "html",
+       "retrieved": "2026-11-15",
+       "url": "https://example.invalid/guide"
+      },
+      "stage": "any",
+      "strength": "typical",
+      "subject": "font_size",
+      "unit": "pt",
+      "value": 8
+     }
+    ],
+    "rules": {},
+    "sources": {}
+   },
+   "id": "font-example-and-typical-size-are-listed-not-folded"
   }
  ]
 }

@@ -6,7 +6,7 @@ import { ArrowUpRight, BookOpen } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Button, IconButton } from '../ui/Button'
 import { SnapshotThumb } from './SnapshotThumb'
-import { isV2Source, journalFactSnapshotUrl } from '@/lib/journalV2'
+import { isV2Source, journalFactSnapshotUrl, v2StrengthNote } from '@/lib/journalV2'
 import { Popover } from '../ui/Popover'
 import type { JournalFieldSource } from '@/lib/journals'
 import {
@@ -152,7 +152,7 @@ export function SourceCardBody({
   const multi = entries.length > 1
   // 语气标签跟在结论后面（同一行、小号灰字）：建议性字号那一句取第一条的语气，其余每条各带各的
   const tag = (s: JournalFieldSource) => {
-    const label = strengthLabel(s)
+    const label = strengthLabel(s) ?? (isV2Source(s) ? v2StrengthNote(s.strength) : null)
     return label ? (
       <>
         {' '}

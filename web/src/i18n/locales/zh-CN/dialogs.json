@@ -2502,6 +2502,8 @@
     "hasRequirement": "有要求",
     "strengthRequired": "必须",
     "strengthRecommended": "建议",
+    "strengthExample": "举例",
+    "strengthTypical": "约",
     "unset": "本刊不适用",
     "noJournal": "不按期刊",
     "cleared": "已不按期刊检查",
@@ -2542,6 +2544,8 @@
     "field": {
       "page_columns": "栏宽",
       "v2_raster_dpi_dpi": "位图",
+      "v2_font_family": "字体",
+      "v2_font_size_pt": "字号",
       "v2_file_format": "文件格式",
       "v2_color_mode": "色彩模式",
       "v2_min_line_width_pt": "线宽",

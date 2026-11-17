@@ -160,6 +160,20 @@ describe('「需要你确认」组', () => {
     expect(card.textContent).toContain('建议')
     expect(card.querySelector('[data-journal-thumb] img')?.getAttribute('src')).toContain('/api/journal-facts/snapshot?journal_id=fx-beta')
   })
+  it('只举例的字体 / 约数字号：列在这里，语气写在行里（举例 / 约），出处卡标同一个字', async () => {
+    selectJournal('fx-beta')
+    const rows = [
+      { id: 'f1', subject: 'font_family', relation: 'in' as const, value: ['Helvetica'], unit: null, condition: '', quote: 'preferably a sans serif typeface like Helvetica', strength: 'example', stage: 'unknown', source: SRC },
+      { id: 'f2', subject: 'font_size', relation: 'eq' as const, value: 8, unit: 'pt', condition: '', quote: 'of sufficient size (ca. 8 pt.)', strength: 'typical', stage: 'unknown', source: SRC },
+    ]
+    await act(async () => useJournalV2Store.getState().remember('fx-beta', patch({ confirm: rows })))
+    await mount()
+    await act(async () => host.querySelector<HTMLElement>('[data-confirm-group-toggle]')!.click())
+    const list = [...host.querySelectorAll<HTMLElement>('[data-confirm-row]')]
+    expect(list.map((r) => r.textContent)).toEqual(['字体 Helvetica · 举例', '字号 8 pt · 约'])
+    await act(async () => list[1].click())
+    expect(document.body.querySelector('[data-journal-card] [data-journal-strength]')?.textContent).toBe('约')
+  })
   it('v2 取不到（null）/ 没有要确认的：不出现', async () => {
     selectJournal('fx-beta')
     await act(async () => useJournalV2Store.getState().remember('fx-beta', null))
