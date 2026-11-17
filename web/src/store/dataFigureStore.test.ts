@@ -353,4 +353,18 @@ describe('单位行与横轴列夹文字', () => {
     await run(ref('b.csv'))
     expect(st().mixed).toBeNull()
   })
+
+  it('提交时后端说这张候选不在了（懒渲染当场渲染失败，404 propose_candidate_unknown）：磁贴去掉、回到候选、不卡住；全没了走「没画出来」', async () => {
+    withNumbers()
+    propose.mockResolvedValueOnce(cands('S1'))
+    await run()
+    commit.mockRejectedValueOnce(apiError(404, 'propose_candidate_unknown'))
+    await st().draw('i1')
+    expect(st()).toMatchObject({ drawingId: null, phase: 'ready', thumbs: { i1: 'failed', i2: 'pending' } })
+    expect(st().problem).toBeNull()
+    expect(propose).toHaveBeenCalledTimes(1) // 不重新出候选
+    commit.mockRejectedValueOnce(apiError(404, 'propose_candidate_unknown'))
+    await st().draw('i2')
+    expect(st()).toMatchObject({ drawingId: null, phase: 'failed' })
+  })
 })

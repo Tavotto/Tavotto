@@ -361,6 +361,20 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     expect(qa('[data-candidate]')).toHaveLength(3)
   })
 
+  it('只有说明行、没有单位行（猜不出表头）：不出候选，只一句「点一下每列名字所在的那一行。」，数据条里没有猜的那一行；点一行才出', async () => {
+    files.mockResolvedValue({ files: [{ path: 'r.txt', size: 1, table: { status: 'unreadable', code: 'data_ragged', delimiter: null, header_row: null, columns: null, rows: null, preview: [{ line: 1, text: 'row 1' }] } }], truncated: false })
+    const raw = [1, 2, 3].map((n) => ({ line: n, text: `row ${n}` }))
+    overview.mockResolvedValue(ov({ status: 'unreadable', code: 'data_ragged', header_row: 1, raw_lines: raw, fields: [], preview_rows: [] }))
+    propose.mockResolvedValue(cands())
+    await start()
+    await open(0)
+    expect(propose).not.toHaveBeenCalled()
+    expect(q('[data-studio-pickrow]')!.textContent).toBe('点一下每列名字所在的那一行。')
+    expect(q('[data-data-strip-info]')!.textContent).toBe('点一下每列名字所在的那一行。')
+    expect(qa('label[data-checked]')).toHaveLength(0)
+    expect(qa('[data-candidate]')).toHaveLength(0)
+  })
+
   it('读不了：一句话、没有数据条，抽屉里该行置灰；全是文字：一句话、不出候选、数据条展开', async () => {
     await start()
     await open(1)

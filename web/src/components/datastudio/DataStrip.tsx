@@ -14,7 +14,7 @@ export function DataStrip({
   onHeaderRow,
 }: {
   ov: AiDataOverview | null
-  /** 这次出候选实际用的表头行（响应的 `header_row`）；没有就用概览里猜的那一行 */
+  /** 这次出候选实际用的表头行（响应的 `header_row`）；没有就用概览里猜的那一行；0 = 明确没有（要用户点一行，不显示猜的） */
   guessRow?: number | null
   unitsRow?: boolean
   loading: boolean
@@ -31,7 +31,7 @@ export function DataStrip({
   let info: string | null = null
   if (ov && raw) {
     const n = guessRow ?? ov.header_row
-    info = n != null ? t('dataFigureV2.draft.guessRow', { n }) : t('dataFigureV2.preview.pickHint')
+    info = n != null && n > 0 ? t('dataFigureV2.draft.guessRow', { n }) : t('dataFigureV2.preview.pickHint')
   } else if (ov?.status === 'ok' && ov.rows != null) {
     info = t('dataFigureV2.draft.stripInfo', { shown, total: ov.rows, columns: ov.columns ?? ov.fields.length })
   }

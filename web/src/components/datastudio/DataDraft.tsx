@@ -177,7 +177,8 @@ export function DataDraft() {
         <DataStrip
           key={`strip|${selected.path}|${selected.sheet}`}
           ov={ov}
-          guessRow={headerRowUsed}
+          // 要用户点一行（没出候选）时不显示概览里猜的那一行：0 = 明确没有
+          guessRow={phase === 'pickrow' ? 0 : headerRowUsed}
           unitsRow={unitsRow}
           loading={ovState?.status === 'loading'}
           forceOpen={phase === 'text' || phase === 'pickrow' || (ov != null && (ov.status === 'unsure' || ov.status === 'unreadable') && ov.raw_lines.length > 0)}

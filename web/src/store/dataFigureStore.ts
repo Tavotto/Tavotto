@@ -430,6 +430,15 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     } catch (e) {
       if (!still()) return
       const code = codeOf(e)
+      if (code === 'propose_candidate_unknown' && get().session === sessionId && get().thumbs[itemId] !== undefined) {
+        // 懒渲染：这一张提交时后端当场渲染 + 核对没过（取图本来就 422 的也一样）→ 这张不许落盘。
+        // 把这张磁贴去掉、回到候选；一张都不剩就是「这次没画出来」。不重新出候选（同一张还是画不出）
+        commitRid = null
+        const thumbs = { ...get().thumbs, [itemId]: 'failed' as ThumbState }
+        const allFailed = get().candidates.every((c) => thumbs[c.id] === 'failed')
+        set(allFailed ? { thumbs, drawingId: null, phase: 'failed', error: null } : { thumbs, drawingId: null })
+        return
+      }
       if (isStaleProposeCode(code) && !retried) {
         // 备选过期 / 数据变了：不是用户的错，静默重新出备选；原来选的画法还在就接着画，没有就让用户看新的
         const wanted = items.find((i) => i.id === itemId)
