@@ -1476,6 +1476,32 @@ def _restore_arrow_linestyle(a, orig) -> None:
             a.draw = prev
 
 
+class _ArrowPaint(tuple):
+    """箭头 `color` 的「脚本原样」：`(边色规格, 填充规格)`。
+
+    setter 用 `set_color` 一次写两色，原样却不能只记边色：脚本常把杆与帽配成两种颜色
+    （`arrowprops=dict(fc=…, ec=…)`），撤销时拿边色 `set_color` 回去，填充就被盖成了边色。
+    记的是 matplotlib 自己留着的**请求规格**（`_original_edgecolor` / `_original_facecolor`），
+    不是烘过 alpha 的 RGBA：与 alpha override 谁先撤谁后撤，还原出来都是同一个颜色。
+    """
+
+    __slots__ = ()
+
+
+def _get_arrow_paint(a) -> _ArrowPaint:
+    return _ArrowPaint(
+        (
+            getattr(a, "_original_edgecolor", a.get_edgecolor()),
+            getattr(a, "_original_facecolor", a.get_facecolor()),
+        )
+    )
+
+
+def _restore_arrow_paint(a, orig: _ArrowPaint) -> None:
+    a.set_edgecolor(orig[0])
+    a.set_facecolor(orig[1])
+
+
 def _linestyle_name(a) -> str:
     ls = a.get_linestyle()
     named = {"solid": "-", "dashed": "--", "dashdot": "-.", "dotted": ":"}
@@ -5106,8 +5132,8 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ),
     # 图内独立箭头（FancyArrowPatch：脚本 add_patch 的与 annotate 的 arrow_patch
     # 同一个类）。set_color 同时写 edge+face——"-|>" 这类实心帽两者必须一致，
-    # 分开暴露只会做出「帽黑杆红」的半成品
-    ("arrowpatch", "color"): (lambda a: a.get_edgecolor(), lambda a, v: a.set_color(v)),
+    # 分开暴露只会做出「帽黑杆红」的半成品。原样两色都记，撤销走 `_restore_arrow_paint`
+    ("arrowpatch", "color"): (_get_arrow_paint, lambda a, v: a.set_color(v)),
     ("arrowpatch", "linewidth"): (
         lambda a: a.get_linewidth(),
         lambda a, v: a.set_linewidth(float(v)),
@@ -5482,6 +5508,7 @@ _RESTORE: dict[tuple[str, str], object] = {
     ("artist", "pos_frac"): _restore_offsetbox_pos,
     ("arrowpatch", "arrowstyle"): lambda a, orig: a.set_arrowstyle(orig),
     ("arrowpatch", "linestyle"): _restore_arrow_linestyle,
+    ("arrowpatch", "color"): _restore_arrow_paint,
     ("text", "pos_frac"): _restore_text_pos,
     ("text", "fontfamily"): _restore_text_fontfamily,
     ("ticks", "fontfamily"): _restore_ticks_fontfamily,

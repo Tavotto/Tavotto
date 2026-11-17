@@ -561,6 +561,15 @@ def _rebuild(gid: str, patches, manifest: dict, encoding: str) -> str:
     )
 
 
+def _has_axis_label_text(manifest: dict, ax: str) -> bool:
+    """这根轴（色条轴）有带字的轴标签：色条整根藏起来时那一种留作重放的判据，刻度文字的隐藏同用它。"""
+    return any(
+        e["gid"] in (f"{ax}.xlabel", f"{ax}.ylabel")
+        and any(f.get("prop") == "text" and f.get("value") for f in e.get("editable") or [])
+        for e in manifest.get("elements", [])
+    )
+
+
 def _is_3d(manifest: dict, i: int) -> bool:
     return any(
         e["gid"] == f"axes_{i}" and e.get("role") == "axes3d" for e in manifest.get("elements", [])
@@ -575,8 +584,20 @@ def _tick_statement(
     if m is None:
         raise _Unsupported(gid)
     i, which = int(m.group(1)), m.group(2)
-    if prop == "visible":  # 引擎只动标签的显隐（`tickmodel.HANDLERS_TEXT`），刻度线不管
-        return f"{obj}.params(label{'bottom' if which == 'x' else 'left'}={bool(value)!r})"
+    if prop == "visible":  # 引擎只动标签的显隐（`tickmodel._set_ticks_visible`），刻度线不管
+        # 与引擎同口径按侧：隐藏关两侧（色条 / twinx 的字在右边）；显示保留脚本原样那几侧
+        if value:
+            return f"{obj}.show_labels()"
+        if any(
+            p["gid"] == f"axes_{i}.colorbar" and p["prop"] == "visible" and p["value"] is False
+            for p in patches
+        ) and _has_axis_label_text(manifest, f"axes_{i}"):
+            # 带标签的色条整根藏起来时它留作重放（见 `_statement` 的 colorbar.visible），刻度文字的
+            # 隐藏跟它走：脚本里先藏字的话 savefig 按「没字」排了轴标签，热态是同一轮一起藏、
+            # 标签没重排——看不见的标签几何两边对不上
+            raise _Unsupported(prop)
+        a, b = ("bottom", "top") if which == "x" else ("left", "right")
+        return f"{obj}.params(label{a}=False, label{b}=False)"
     if prop == "width":
         # 3D 轴每次 draw 都用 `_axinfo`（私有）盖回刻度线宽，公开 API 留不住
         if _is_3d(manifest, i):
@@ -799,12 +820,8 @@ def _statement(
         # 带标签的色条藏起来之后，标签的几何在热态与重放里不是同一个值（热态在藏起来之前画过一次、
         # 位置已排定；重放里轴一开始就不可见，轴不画、标签就没排过位置）：画面一样，验证比几何比不过，
         # 所以这一种不写，留作重放
-        ax = gid[: -len(".colorbar")]
-        for e in manifest.get("elements", []):
-            if e["gid"] in (f"{ax}.xlabel", f"{ax}.ylabel") and any(
-                f.get("prop") == "text" and f.get("value") for f in e.get("editable") or []
-            ):
-                raise _Unsupported(prop)
+        if _has_axis_label_text(manifest, gid[: -len(".colorbar")]):
+            raise _Unsupported(prop)
     if cls == "colorbar" and prop in ("cmap", *_CLIM):
         if prop == "cmap" and _cmap_group_reaches_beyond(el, manifest, el.get("mappable_gid")):
             # 组里还有写不到的对象（独立 `ScalarMappable` 的色条：共用 norm 不传播色图，引擎经 `scale_colorbars`
@@ -1144,6 +1161,31 @@ class _TickSet:
 
     def params(self, which="both", **kw):
         self.ax.tick_params(axis=self.which, which=which, **kw)
+
+    def show_labels(self):
+        # Each side keeps what the axis had (a colorbar or twinx has its labels on the
+        # right); only when no major side has them do they go bottom / left. A tick the
+        # script hid on its own does not switch a whole side off, and is shown again.
+        import matplotlib as mpl
+
+        axis = getattr(self.ax, self.which + "axis")
+        sides = ("bottom", "top") if self.which == "x" else ("left", "right")
+
+        def side_on(minor, n):
+            kw = axis._minor_tick_kw if minor else axis._major_tick_kw
+            v = kw.get("label%dOn" % n)
+            if v is not None:
+                return bool(v)
+            ticks = axis.get_minor_ticks() if minor else axis.get_major_ticks()
+            if ticks:
+                return any(getattr(t, "label%d" % n).get_visible() for t in ticks)
+            return bool(mpl.rcParams.get("%stick.label%s" % (self.which, sides[n - 1]), n == 1))
+
+        on = [(side_on(m, 1), side_on(m, 2)) for m in (False, True)]
+        if not any(on[0]):
+            on = [(True, False), (True, False)]
+        for which, (s1, s2) in zip(("major", "minor"), on):
+            self.params(which=which, **{"label" + sides[0]: s1, "label" + sides[1]: s2})
 
 
 def _tick_formatter(name):
