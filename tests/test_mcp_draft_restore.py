@@ -612,3 +612,22 @@ def test_include_png_draws_the_restored_patches_not_the_plain_script(tmp_path, m
     out = bridge.open_figure(str(figures), stem="fig", include_png=True)
     assert out["restored_draft"]["patches"] == 1
     assert seen and seen[-1] == _fontsize(23.0)
+
+
+def test_batch_open_reports_a_draft_that_could_not_be_restored(tmp_path, monkeypatch):
+    figures = _project(tmp_path)
+    _edit_and_close(figures)
+    real = bridge._render
+
+    def flaky(session, patches, **kw):
+        if patches:
+            raise bridge.BridgeError("boom", code="render_failed")
+        return real(session, patches, **kw)
+
+    monkeypatch.setattr(bridge, "_render", flaky)
+    res = server.call_tool("tavotto_open_figure", {"project_path": str(figures), "stems": ["fig"]})
+    entry = res["structuredContent"]["opened"][0]
+    assert entry["draft_restore_failed"]["code"] == "render_failed"
+    assert "restored_draft" not in entry
+    assert "草稿没能带回" in res["content"][0]["text"]
+    assert len(_draft_files()) == 1

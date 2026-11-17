@@ -952,6 +952,11 @@ def _call_open_batch(target: str, args: dict, plan: dict, *, workdir: str | None
         )
         if entry.get("restored_draft"):
             lines.append(f"    {entry['restored_draft']['note']}")
+        if entry.get("draft_restore_failed"):
+            lines.append(
+                f"    ! 上次没导出的草稿没能带回（{entry['draft_restore_failed']['code']}），"
+                "已按脚本原样打开；草稿还留着，关掉这个会话后重新打开会再试。"
+            )
     # **code 只进 `structuredContent`**：这几行是念给用户听的那一份。念一个
     # `session_budget_exhausted` 出来，用户既不知道发生了什么也不知道下一步。
     for entry in out["failed"]:

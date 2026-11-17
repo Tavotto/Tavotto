@@ -2632,6 +2632,11 @@ def _batch_entry(one: dict) -> dict:
         "preview_mode": (one.get("preview") or {}).get("mode"),
         "warnings": one.get("warnings", []),
         **({"restored_draft": one["restored_draft"]} if "restored_draft" in one else {}),
+        **(
+            {"draft_restore_failed": one["draft_restore_failed"]}
+            if "draft_restore_failed" in one
+            else {}
+        ),
     }
 
 
