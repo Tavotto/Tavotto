@@ -9,7 +9,15 @@ from __future__ import annotations
 
 SCRIPT_NAME = "fig_scriptadjust.py"
 ENTRY = "main"
-STEMS: tuple[str, ...] = ("AdjLegend", "AdjProxy", "AdjGrid", "AdjGrid3D", "AdjSeries")
+STEMS: tuple[str, ...] = (
+    "AdjLegend",
+    "AdjProxy",
+    "AdjGrid",
+    "AdjGrid3D",
+    "AdjSeries",
+    "AdjText",
+    "AdjLabel3D",
+)
 
 LIBRARY = """\\
 import numpy as np
@@ -68,4 +76,47 @@ def main():
     ax.set_ylim(0.0, 3.7)
     ax.legend(loc="upper right")
     fig.savefig("AdjSeries.pdf")
+
+    # ---- AdjText：多行文字、带字的注释箭头、三种纯箭头（有 arrowstyle / 默认样式）、独立箭头、锚定文字 ----
+    # 文字描边 / 底框 / 行距、箭头样式与端点（引擎里纯箭头注释改的是注释的锚点）。图例项也带两行字，
+    # 它的行距才看得出。几根箭头散在不同位置、互不相交，哪一根画错了像素比对都看得出。
+    from matplotlib.offsetbox import AnchoredText
+    from matplotlib.patches import FancyArrowPatch
+
+    fig, ax = plt.subplots(figsize=(4.8, 3.6))
+    ax.plot(x, np.sin(x), label="sin\\nwave")
+    ax.plot(x, np.cos(x), label="cos")
+    ax.set_ylim(-1.9, 2.1)
+    ax.text(0.8, 1.45, "first line\\nsecond line", fontsize=9)
+    ax.annotate("peak", xy=(1.6, 1.0), xytext=(2.8, 1.6), arrowprops=dict(arrowstyle="->"))
+    ax.annotate(
+        "", xy=(4.2, 0.1), xytext=(5.4, 1.1), arrowprops=dict(arrowstyle="-|>", color="#555555")
+    )
+    ax.annotate(
+        "", xy=(3.4, -1.2), xytext=(2.2, -1.7), arrowprops=dict(width=1.5, headwidth=7, color="#777777")
+    )
+    # 右下角这根独立箭头什么也不压：帽子大小、线型这些只有它看得出，不能被别的元素遮住
+    ax.add_patch(
+        FancyArrowPatch(
+            (4.4, -1.0), (6.0, -1.7), arrowstyle="->", mutation_scale=18, linewidth=2.0, color="#335588"
+        )
+    )
+    # 左下角这根箭头的箭头落在锚定文字里：层次（zorder）一翻，谁压谁就变（这两个键各自单独扫，见 `_HELD_OUT`）
+    ax.add_patch(
+        FancyArrowPatch(
+            (2.0, -0.9), (0.95, -1.62), arrowstyle="-|>", mutation_scale=28, linewidth=3.0, color="#aa3377"
+        )
+    )
+    ax.add_artist(AnchoredText("(a)", loc="lower left", prop=dict(size=16)))
+    ax.legend(loc="upper right", fontsize=8)
+    fig.savefig("AdjText.pdf")
+
+    # ---- AdjLabel3D：3D 轴标签（labelpad 只有它们有；Inv3D 一族不进整图扫描） ----
+    fig = plt.figure(figsize=(4.0, 3.4))
+    ax3 = fig.add_subplot(projection="3d")
+    ax3.plot(x, np.sin(x), np.cos(x), color="#336699")
+    ax3.set_xlabel("X axis")
+    ax3.set_ylabel("Y axis")
+    ax3.set_zlabel("Z axis")
+    fig.savefig("AdjLabel3D.pdf")
 """

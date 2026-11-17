@@ -83,7 +83,9 @@ order: 80
     一起加虚线，`->` 的头被切碎。`("arrowpatch", "linestyle")` 的 setter 装一个实例级 draw 钩子
     （`_SolidHeadRenderer`：一次 draw 里第二个起的不同 path 对象用实线画），restore 拆钩子；
     脚本自己画的虚线箭头不碰。`simple` / `fancy` / `wedge` 只有一条轮廓，照旧整体虚线。
-    这个键在 `scriptadjust.NOT_WRITABLE` 里，导出 .py 时作为剩余调整由引擎重放，与热态同一份代码。
+    导出 .py 时脚本用同一画法的公共 API 版复现（`scriptadjust._arrow_dashes` / `_SolidHead`：实例级 draw 钩子 + 包一层
+    renderer，间隙色那一遍按前景色认而不是私有的 `_dash_pattern`）；改这里的判据要两边一起改，`tests/test_script_adjust.py`
+    的整图扫描（`AdjText`，箭头样式采 `<|-|>`）盯着头是不是实线。
     看护：`tests/test_arrow_dashed_solid_head.py`。
   * **纯箭头注释同样可拖（2026-09-24，用户的流程图：10 根箭头全是
     `ax.annotate("", xy=…, xytext=…)`，一根都拖不动）**。annotate 的 arrow_patch 每次

@@ -52,6 +52,8 @@ _ROLE_CLS = {
     "axes": "axes",
     "axes3d": "axes",  # 3D 轴的字段在 manifest 里自成一族，写得进的只有 grid_visible
     "colorbar": "colorbar",
+    "arrow_patch": "arrowpatch",  # 独立箭头与 annotate 的 arrow_patch 同一族
+    "artist": "artist",  # `ax.add_artist` 放进来的（AnchoredText……）与表格
     "ticks": "ticks",
     "ticklabel": "ticklabel",
     "figure": "figure",
@@ -80,6 +82,17 @@ _TEXT = {
     "ha": "{o}.set_ha({v})",
     "va": "{o}.set_va({v})",
     "zorder": "{o}.set_zorder({v})",
+}
+#: 文字的行距、描边与底框。`legend_text` 一样有（图例项的文字也是 Text），`labelpad` 只有 3D 轴标签。
+#: 描边三条合成一条 `_stroke(...)`（见 `_stroke`），底框每条一句 `_bbox(...)`，都在 `_statement` 里生成。
+_TEXT_LOOK = {
+    "linespacing": "{o}.set_linespacing({v})",
+    "stroke_enabled": None,
+    "stroke_color": None,
+    "stroke_width": None,
+    **{f"bbox_{p}": None for p in ("visible", "facecolor", "edgecolor", "linewidth", "alpha")},
+    "bbox_pad": None,
+    "bbox_rounded": None,
 }
 _SHAPE = {
     "facecolor": "{o}.set_facecolor({v})",
@@ -155,6 +168,11 @@ _HANDLE_PROPS = (
 #: （`_apply_rank` 的 0 / 1 / 2 / 3 档）。自动刻度的个数跟轴有多长、字有多大有关，所以只要其中一条留作重放，
 #: 靠「落笔那一刻的刻度」算出来的那几条（`_snapshots_ticks`）也留给重放，免得两边在不同的轴长上各算各的。
 _RESHAPES_AXES = ("size_mm", "frame", "position", "orientation", "extend")
+#: 值是 figure 分数、按落笔那一刻的几何换算成数据 / 轴坐标的几条（文字 / 标题 / 轴标签 / 图例拖动，箭头端点）：
+#: 几何键留作重放时它们也留给重放（`_translate` 的 `places_by_geometry`），否则重放再改几何，点就离开用户放的位置
+_PLACED_BY_FRACTION = ("pos_frac", "loc_frac", "endpoints_frac")
+#: 引擎里和 `_PLACED_BY_FRACTION` 同在 `_RANK_REST` 档、会改变数据坐标 ↔ 屏幕换算的键（`_apply_rank` 里没有单列的）
+_MOVES_COORDS = ("xlim", "ylim", "invert_x", "invert_y")
 _TICK_MODEL = (
     "major_mode",
     "major_step",
@@ -171,6 +189,10 @@ _TICK_MODEL = (
 WRITES: dict[tuple[str, str], str | None] = {
     **{("text", p): t for p, t in _TEXT.items()},
     **{("legend_text", p): t for p, t in _TEXT.items() if p != "visible"},
+    **{("text", p): t for p, t in _TEXT_LOOK.items()},
+    **{("legend_text", p): t for p, t in _TEXT_LOOK.items()},
+    # 3D 轴标签沿投影轴推远 / 拉近（2D 的轴标签 manifest 不发这条）
+    ("text", "labelpad"): "{o}.axis.labelpad = {v}",
     ("text", "pos_frac"): None,
     ("text", "fontfamily"): None,
     ("legend_text", "fontfamily"): None,
@@ -202,6 +224,18 @@ WRITES: dict[tuple[str, str], str | None] = {
     **{("legend", p): None for p in _LEGEND_REBUILD if p != "fontsize"},
     ("legend_text", "binding"): None,
     **{("legend_text", p): None for p in _HANDLE_PROPS},
+    # 图内箭头：样式与引擎同一句公开 API；端点落在**注释本身**的锚点上（`_ann_to`），独立箭头 `set_positions`
+    ("arrowpatch", "color"): "{o}.set_color({v})",
+    ("arrowpatch", "linewidth"): "{o}.set_linewidth({v})",
+    ("arrowpatch", "mutation_scale"): "{o}.set_mutation_scale({v})",
+    ("arrowpatch", "alpha"): "{o}.set_alpha({v})",
+    ("arrowpatch", "visible"): "{o}.set_visible({v})",
+    ("arrowpatch", "zorder"): "{o}.set_zorder({v})",
+    ("arrowpatch", "arrowstyle"): "{o}.set_arrowstyle({v})",
+    ("arrowpatch", "linestyle"): "_arrow_dashes({o}, {v})",
+    ("arrowpatch", "endpoints_frac"): None,
+    ("artist", "visible"): "{o}.set_visible({v})",
+    ("artist", "zorder"): "{o}.set_zorder({v})",
     ("axes", "xlim"): "{o}.set_xlim({x})",
     ("axes", "ylim"): "{o}.set_ylim({x})",
     ("axes", "xscale"): "{o}.set_xscale({v})",
@@ -326,18 +360,16 @@ WRITES: dict[tuple[str, str], str | None] = {
 #: 键忘了表态时用例会红。其中色条 `orientation` / `extend`、3D `axis_arrows` 一族只能靠私有 API，
 #: 永远不写（ADR 0094 Q10）；其余是公开 API 走得通、但这一版没逐键验证等价。
 NOT_WRITABLE: dict[str, str] = {
-    "text": "linespacing labelpad stroke_enabled stroke_color stroke_width "
-    "bbox_visible bbox_facecolor bbox_edgecolor bbox_linewidth bbox_alpha bbox_pad bbox_rounded",
     # 条目顺序 / 条目显隐：脚本重建出来的图例按**显示顺序**编号（第几项就是 texts_几），引擎的条目
     # 模型按脚本原样的序号认、隐藏的项留在编号里。两边认的不是同一项，验证逐项比对必然对不上。
     "legend": "entry_order",
-    "legend_text": "visible pos_frac linespacing labelpad stroke_enabled stroke_color "
-    "stroke_width bbox_visible bbox_facecolor bbox_edgecolor bbox_linewidth bbox_alpha bbox_pad "
-    "bbox_rounded",
-    "arrowpatch": "color linewidth mutation_scale alpha visible zorder endpoints_frac arrowstyle "
-    "linestyle",
+    # `visible`（条目级的隐藏整项）与 `pos_frac` 沿用 ① 的结论，不在文字描边与底框这一族里；
+    # `labelpad` 只有 3D 轴标签有，图例项的文字从来不发这条，写进表里也永远采不到、验不了
+    "legend_text": "visible pos_frac labelpad",
     "patch": "pos_frac size_frac",
-    "artist": "pos_frac visible zorder",
+    # artist = `ax.add_artist` 放进来的锚定框 / 插框（AnchoredText、比例尺……）与表格。显隐、层次写得进；
+    # 位置要改锚框的 loc / bbox_to_anchor / xybox，各类各一套（引擎 `_place_offsetbox`），不写
+    "artist": "pos_frac",
     "line": "pos_frac",
     "axes": "visible position aspect elev azim roll "
     "proj_type axis_arrows arrow_color arrow_width arrow_head axline_color "
@@ -368,6 +400,9 @@ _INDEXED = {
     "fill": "{ax}.collections",
     "collection": "{ax}.collections",
     "linecoll": "{ax}.collections",
+    "arrows": "{ax}.patches",  # 独立箭头（`ax.add_patch(FancyArrowPatch)`）
+    "artists": "{ax}.artists",
+    "tables": "{ax}.tables",
 }
 
 
@@ -389,7 +424,7 @@ def _selector(gid: str, el: dict | None) -> str:
     ax, rest = f"_ax(fig, {int(m.group(1))})", m.group(2)
     if rest is None:
         return ax
-    if rest in ("xlabel", "ylabel"):
+    if rest in ("xlabel", "ylabel", "zlabel"):
         return f"_AxisLabel({ax}, {rest[0]!r})"
     if rest == "title":
         return f"{ax}.title"
@@ -401,6 +436,8 @@ def _selector(gid: str, el: dict | None) -> str:
         return f"_legend({ax})"
     if rest == "colorbar":
         return ax  # 色条轴本身
+    if mm := re.fullmatch(r"texts_(\d+)\.arrow", rest):  # annotate 的箭头，从注释本身取
+        return f"_at({ax}.texts, {int(mm.group(1))}).arrow_patch"
     if mm := re.fullmatch(r"legend\.texts_(\d+)", rest):
         return f"_at(_legend({ax}).get_texts(), {int(mm.group(1))})"
     if mm := re.fullmatch(r"lines_(\d+)", rest):
@@ -674,6 +711,25 @@ def _cls_of(gid: str, el: dict | None) -> str | None:
     return _ROLE_CLS.get(role)
 
 
+def _stroke_statement(el: dict | None, gid: str, obj: str, patches, encoding: str) -> str:
+    """描边三条（开关 / 颜色 / 线宽）合成**一条** `_stroke(...)`（`_translate` 按语句去重）。
+
+    引擎把三者存在 artist 上、每条改动都按三元组重排一遍路径效果；脚本里读不到 `withStroke` 的参数
+    （私有），所以三个值都在这里定死：改过的取改的，没改的取 manifest 里的脚本原样（脚本自带
+    `withStroke` 时引擎已把它读成这三个值）。
+    """
+    fields = {f["prop"]: f.get("value") for f in (el or {}).get("editable", [])}
+    edited = {p["prop"]: p["value"] for p in patches if p["gid"] == gid}
+    got = {
+        k: edited.get(k, fields.get(k, d))
+        for k, d in (("stroke_enabled", False), ("stroke_color", "#FFFFFF"), ("stroke_width", 1.5))
+    }
+    return (
+        f"_stroke({obj}, {bool(got['stroke_enabled'])!r}, "
+        f"{_literal(got['stroke_color'], encoding)}, {float(got['stroke_width'])!r})"
+    )
+
+
 def _statement(
     el: dict | None, gid: str, prop: str, value, patches, encoding: str, manifest: dict
 ) -> str:
@@ -758,6 +814,21 @@ def _statement(
             # 色阶兄弟（共用 norm 的别的图元）：引擎的 setter 逐个给它们换色图，公开 API 写不出这个「谁是兄弟」
             raise _Unsupported(prop)
         obj = _mappable({e["gid"]: e for e in manifest.get("elements", [])}, gid, prop)
+    if cls in ("text", "legend_text") and prop.startswith("stroke_"):
+        return _stroke_statement(el, gid, obj, patches, encoding)
+    if cls in ("text", "legend_text") and prop.startswith("bbox_"):
+        return f"_bbox({obj}, {prop[len('bbox_') :]!r}, {_literal(value, encoding)})"
+    if cls == "arrowpatch" and prop == "arrowstyle" and value == "custom":
+        raise _Unsupported(prop)  # 占位项：脚本用了带参数的自定义样式，选它就是不动
+    if cls == "arrowpatch" and prop == "endpoints_frac":
+        f = [float(x) for x in value]
+        # 端点只对「此刻是纯箭头」的注释与独立箭头生效：有字的注释上它是失效的（引擎放回脚本原样、manifest 不再发
+        # `arrow_endpoints`），脚本里照落就会把还在的文字箭头拖走——留给引擎按同一个裁决重放
+        if len(f) != 4 or not (el or {}).get("arrow_endpoints"):
+            raise _Unsupported(prop)
+        if gid.endswith(".arrow"):  # annotate 的箭头：落在注释本身的锚点上，不是 patch
+            return f"_ann_to({_selector(gid.removesuffix('.arrow'), None)}, fig, {f!r})"
+        return f"_arrow_to({obj}, fig, {f!r})"
     tmpl = WRITES[(cls, prop)]
     assert tmpl is not None
     return tmpl.format(
@@ -786,6 +857,10 @@ def _rank(prop: str, kind: str | None) -> float:
     6. 单条刻度文字：引擎的第 7 档，把整条轴冻成固定刻度，必须在定位之后；
     7. 示意线样式：写在「脚本原样 + 这几条」上；
     8. 改名（`label`）：最后落。
+
+    箭头端点**不单列一档**：figure 分数换成数据坐标用的是落那一刻的坐标范围，引擎也是这样（端点排在 `ylim` 前，
+    箭头钉在数据位置、随后范围一改就跟着数据走；排在后面才钉在屏幕上），同档按列表顺序，两边一致
+    （`test_arrow_edits_combine_like_the_editor` 的两种顺序）。
     """
     if kind == "rename":
         return 8  # 曲线靠原 label 认（`_line`）、图例色块靠 label 对（`_with_legend`、重排）：改名要在所有别的语句之后
@@ -820,6 +895,8 @@ def _kind(cls: str, prop: str) -> str | None:
         return "tick_model"
     if cls == "ticklabel" and prop == "text":
         return "tick_text"
+    if cls in ("text", "legend_text") and prop.startswith("stroke_"):
+        return "stroke"  # 三条合成一句 `_stroke(...)`，只落一回（档位是普通属性）
     return None
 
 
@@ -1402,6 +1479,145 @@ def _tick_font_pick(ts, primary, fallback):
             t.set_math_fontfamily("custom")
 
 
+def _stroke(t, enabled, color, width):
+    # Same as the editor: one withStroke in front, other path effects left alone.
+    from matplotlib import patheffects as pe
+
+    rest = [e for e in (t.get_path_effects() or []) if not isinstance(e, pe.withStroke)]
+    if enabled:
+        rest = [pe.withStroke(linewidth=width, foreground=color)] + rest
+    t.set_path_effects(rest)
+
+
+def _bbox(t, prop, value):
+    # Same as the editor: a box made here starts out invisible, only "visible" shows it.
+    from matplotlib.patches import BoxStyle
+
+    patch = t.get_bbox_patch()
+    if patch is None:
+        if prop == "visible" and not value:
+            return
+        t.set_bbox(
+            dict(
+                visible=False,
+                boxstyle="square,pad=0.3",
+                facecolor="#ffffff",
+                edgecolor="#000000",
+                linewidth=0.0,
+                alpha=1.0,
+            )
+        )
+        patch = t.get_bbox_patch()
+    if prop in ("pad", "rounded"):
+        style = patch.get_boxstyle()
+        pad = float(getattr(style, "pad", 0.3))
+        rounded = isinstance(style, BoxStyle.Round)
+        if prop == "pad":
+            pad = max(0.0, float(value))
+        else:
+            rounded = bool(value)
+        patch.set_boxstyle(("round" if rounded else "square") + ",pad=%s" % pad)
+    elif prop == "visible":
+        patch.set_visible(bool(value))
+    elif prop == "linewidth":
+        patch.set_linewidth(float(value))
+    else:
+        getattr(patch, "set_" + prop)(value)
+
+
+class _SolidHead:
+    # Renderer wrapper: from the second path of one arrow on, strokes are solid.
+    def __init__(self, renderer, arrow):
+        self._renderer, self._arrow, self._paths = renderer, arrow, []
+
+    def __getattr__(self, name):
+        return getattr(self._renderer, name)
+
+    def draw_path(self, gc, path, transform, rgbFace=None):
+        if not any(p is path for p in self._paths):
+            self._paths.append(path)
+        offset, dashes = gc.get_dashes()
+        if self._paths[0] is path or dashes is None:
+            return self._renderer.draw_path(gc, path, transform, rgbFace)
+        gap = getattr(self._arrow, "get_edgegapcolor", lambda: None)()
+        if gap is not None and tuple(gc.get_rgb())[:3] == tuple(gap)[:3]:
+            return None  # the pass in the gap colour: a solid head has no gaps
+        gc.set_dashes(0, None)
+        try:
+            return self._renderer.draw_path(gc, path, transform, rgbFace)
+        finally:
+            gc.set_dashes(offset, dashes)
+
+
+def _arrow_dashes(a, style):
+    # A dashed arrow dashes the shaft only; the head stays solid (the editor's look).
+    a.set_linestyle(style)
+    if getattr(a, "_tavotto_solid_head", False):
+        return
+    a._tavotto_solid_head = True
+    native = a.draw
+
+    def draw(renderer, *args, **kwargs):
+        return native(_SolidHead(renderer, a), *args, **kwargs)
+
+    a.draw = draw
+
+
+def _arrow_to(a, fig, f):
+    if a.axes is not None:
+        a.axes.get_xlim()  # the view limits are only brought up to date on demand
+    inv = a.get_transform().inverted()
+    a.set_positions(
+        tuple(inv.transform(_disp(fig, f[0], f[1]))), tuple(inv.transform(_disp(fig, f[2], f[3])))
+    )
+
+
+def _ann_tr(ann, coords, origin):
+    # An annotation coordinate system -> display, for the systems the editor can invert.
+    from matplotlib.transforms import Affine2D, blended_transform_factory
+
+    if isinstance(coords, tuple):
+        return blended_transform_factory(
+            _ann_tr(ann, coords[0], origin), _ann_tr(ann, coords[1], origin)
+        )
+    if coords == "data":
+        return ann.axes.transData
+    base, unit = coords.split()
+    try:
+        host = ann.get_figure(root=False)
+    except TypeError:
+        host = ann.get_figure()
+    box = {"figure": host.figbbox, "subfigure": host.bbox, "axes": ann.axes.bbox}.get(base)
+    x0, y0 = (box.p0 if box is not None else origin)
+    if unit == "points":
+        tr = Affine2D().scale(host.dpi / 72)
+    else:
+        tr = Affine2D().scale(*box.size)
+    return tr.translate(x0, y0)
+
+
+def _ann_xy(ann, xy, coords):
+    x, y = xy
+    xc, yc = coords if isinstance(coords, tuple) else (coords, coords)
+    if xc == "data":
+        x = float(ann.convert_xunits(x))
+    if yc == "data":
+        y = float(ann.convert_yunits(y))
+    return _ann_tr(ann, coords, None).transform((x, y))
+
+
+def _ann_to(ann, fig, f):
+    # The arrow of an annotation is placed from its two anchors on every draw, so the
+    # anchors are what moves (head first: an offset tail is measured from it).
+    ann.axes.get_xlim()  # the view limits are only brought up to date on demand
+    head = _ann_tr(ann, ann.xycoords, None).inverted().transform(_disp(fig, f[2], f[3]))
+    ann.xy = (float(head[0]), float(head[1]))
+    origin = _ann_xy(ann, ann.xy, ann.xycoords)
+    tail = _ann_tr(ann, ann.anncoords, origin).inverted().transform(_disp(fig, f[0], f[1]))
+    ann.xyann = (float(tail[0]), float(tail[1]))
+    ann.set_annotation_clip(False)
+
+
 def _stem(fname):
     if not isinstance(fname, (str, bytes, _os.PathLike)):
         return ""
@@ -1603,8 +1819,35 @@ def _translate(
     # 画出来才定的（`_sized_at_draw`）也一样
     reshaped = any(r["prop"] in _RESHAPES_AXES for r in residual)
 
+    def coords_held(gid: str) -> bool:
+        """这条轴的坐标范围 / 翻转留作重放了：引擎里它们排在刻度定位之前（REST < 刻度模型），脚本里写进去的刻度
+        却先于重放，按旧范围冻结。"""
+        m = re.match(r"(axes_\d+)(?:\.|$)", gid)
+        return m is not None and any(
+            r["prop"] in _MOVES_COORDS and r["gid"] == m.group(1) for r in residual
+        )
+
     def late(p: dict) -> bool:
-        return _snapshots_ticks(p, patches) and (reshaped or _sized_at_draw(p["gid"], els))
+        return _snapshots_ticks(p, patches) and (
+            reshaped or _sized_at_draw(p["gid"], els) or coords_held(p["gid"])
+        )
+
+    def reshaped_for(gid: str) -> bool:
+        """留作重放的几何键会不会动到这个 gid 所在的子图：`position` 只动它自己的子图，别的（整页大小、图幅、
+        色条的方向 / 延伸会挤宿主轴）动全图。"""
+        m = re.match(r"(axes_\d+)(?:\.|$)", gid)
+        return any(
+            r["prop"] in _RESHAPES_AXES
+            and (r["prop"] != "position" or m is None or r["gid"] == m.group(1))
+            for r in residual
+        )
+
+    def places_by_geometry(p: dict) -> bool:
+        """figure 分数换算成别的坐标（数据坐标、轴分数）的语句：落笔那一刻的几何与热态里画完之后的几何不同时，
+        换算出来的点就落错。引擎里几何先于它们（`_apply_rank` 前几档）。"""
+        if p["prop"] not in _PLACED_BY_FRACTION:
+            return False
+        return reshaped_for(p["gid"]) or _sized_at_draw(p["gid"], els)
 
     # 图元自己的色阶（cmap / vmin / vmax）留作重放时，挂在它上面的色条跟着重画（`_draw_all` 重置色条轴的刻度定位、
     # 轴线与刻度样式）：写在那条色条轴上的修改（轴本身、刻度、色条自己的字段）也一起留下，重放时排在这次重画之后。
@@ -1628,12 +1871,35 @@ def _translate(
         if on_colorbar_axis(p):
             steps.remove((p, stmt))
             residual.append(p)
-    # 一条轴上的定位与格式是一整套：其中一条留下，这条轴的其余几条也留下（不然写进脚本的那一份缺了它）
-    held = {p["gid"] for p, _s in steps if late(p) and p["prop"] != "text"}
-    for p, stmt in list(steps):
-        if late(p) or (p["gid"] in held and p["prop"] in _TICK_MODEL):
-            steps.remove((p, stmt))
-            residual.append(p)
+    order = {id(p): k for k, p in enumerate(patches)}
+    changed = True
+    while (
+        changed
+    ):  # 留下一条会牵出另一条（坐标范围留下 -> 同轴的刻度语句留下，反之亦然）：迭代到不再变化
+        n = len(residual)
+        # 一条轴上的定位与格式是一整套：其中一条留下，这条轴的其余几条也留下（不然写进脚本的那一份缺了它）
+        held = {p["gid"] for p, _s in steps if late(p) and p["prop"] != "text"}
+        for p, stmt in list(steps):
+            if late(p) or places_by_geometry(p) or (p["gid"] in held and p["prop"] in _TICK_MODEL):
+                steps.remove((p, stmt))
+                residual.append(p)
+        # 按 figure 分数定位的语句留作重放时，同一子图上在引擎应用顺序里排在它**之后**的改坐标的修改也留下：重放永远排在
+        # 脚本之后，写进脚本的会变成「先改坐标、后定位」，引擎里同档按列表序，文字 / 箭头会随反转、换范围镜像。引擎里
+        # 位置 / 比例 / 刻度类型等排在 `_RANK_REST` 之前，它们写进脚本照旧排在重放之前，不受影响；
+        # 排在 REST 档里的只有这几条改坐标的键，按列表序比
+        placed = [
+            (order[id(r)], m.group(1))
+            for r in residual
+            if r["prop"] in _PLACED_BY_FRACTION and id(r) in order
+            if (m := re.match(r"(axes_\d+)(?:\.|$)", r["gid"]))
+        ]
+        for p, stmt in list(steps):
+            if p["prop"] in _MOVES_COORDS and any(
+                p["gid"] == ax and order[id(p)] > k for k, ax in placed
+            ):
+                steps.remove((p, stmt))
+                residual.append(p)
+        changed = len(residual) != n
     # 留作 override 的「广播」条目在重放时排在窄条目之前、会盖掉写进脚本的窄条目：
     # 同一 prop、gid 是它子孙的，一起留下（ADR 0094 §五.3）
     # 色条与它的 mappable 的 cmap 是互相广播的一组（ADR 0135：组里任一条改 cmap = 整组改，文档序靠后的赢）：
@@ -1689,8 +1955,8 @@ def _translate(
     first: dict[str, int] = {}
     for p, stmt in kept:
         what = f"{p['gid']}.{p['prop']}"
-        dedup = tags.get(id(p)) in ("rebuild", "detach", "tick_model")
-        # 同一条重建 / 同一次脱开 / 同一轴的刻度模型：只落一回，名字记在一起（别的语句不合并：色条的 cmap 与图像的 cmap 写出
+        dedup = tags.get(id(p)) in ("rebuild", "detach", "tick_model", "stroke")
+        # 同一条重建 / 同一次脱开 / 同一轴的刻度模型 / 同一段文字的描边：只落一回，名字记在一起（别的语句不合并：色条的 cmap 与图像的 cmap 写出
         # 同一句，中间隔着另一个值时合并会让后一句落空）
         if dedup and stmt in first:
             k = first[stmt]
@@ -1698,6 +1964,10 @@ def _translate(
             continue
         first[stmt] = len(out)
         out.append((what, stmt))
+    # 留作重放的 patch **一律按原始列表顺序**交出去：引擎重放同档按列表序（`overrides._apply_rank` 是稳定排序），而上面
+    # 各条「跟着留下」的规则是逐轮追加的，追加次序不是用户做这些修改的次序（拖 A → 反转 → 拖 B，级联后会变成 A、B、反转）
+    order = {id(p): k for k, p in enumerate(patches)}
+    residual.sort(key=lambda r: order.get(id(r), len(patches)))
     return out, residual
 
 
