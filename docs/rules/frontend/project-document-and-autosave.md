@@ -37,7 +37,7 @@ order: 200
   迟到的已核保存事实只晋升原scope的记录，不让已关闭窗口重新认领当前界面。
   已保存的安装记录继续编辑时，同项目保当前稿与undo，跨项目沿原restore读目标最新稿，不能重套旧package正文；
   取消/ABA只使本次精确恢复token失权，不撤销另一个项目的token。配置检查仅在已采用项目当前认领时打开原project设置。
-  看护：`lib/projectPackageApi.test.ts`、`lib/projectPackageEntry.test.ts`、`store/projectPackageInstallStore.test.ts`、
+  看护：`lib/projectPackageApi.test.ts`、`store/projectPackageInstallStore.test.ts`、
   `components/ProjectPackageInstallDialog.test.tsx`及原`store/workingDocumentReceipt.test.ts`。
 - **附件保存回执**：`chart_sources`是五字段位置数组`{canvas_index,object_index,canvas_id,panel_id,chart_source}`。发送上下文捕获实际深拷贝正文、pj/workingId/loadSeq/format，响应只在同上下文按数组位置和原id核对后合入，并比较完整来源/模型/原序overrides/旧ref。重复位置整份拒合入；位置重排或请求后输入改变只跳过受影响项。不按可重复panelId建Map、不新增旧文档ID唯一约束。回执更新沿派生入口，不加undo、不触发循环autosave；正文成功但回执过期不伪造I/O失败。
 - **跨格式冷发现**：两格式的显式GET `include_open_intent=1`须得到同一snapshot，才依共享latest自动恢复；有界重读后仍混代、stale或不可用则沿恢复门needs_user，不能按at/mtime选新旧。所有格式的明确打开/repair共用一条发送队列；自动确认用repair，只确认/晋升现意图而不分新sequence，superseded/unconfirmed不假ack。旧3含计算字段升级fork只在成功安装且令牌仍当前时记新v4意图一次。备选项以(format,id)寻址，不合并同id不同格式。

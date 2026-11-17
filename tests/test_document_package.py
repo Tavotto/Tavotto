@@ -177,10 +177,11 @@ def test_paths_are_rejected_before_any_project_write(tmp_path, monkeypatch, budg
     marker.write_bytes(b"unchanged")
     raw = _zip(extra=[(name, b"untrusted")])
     if "\\" in name:
-        # Windows ZipInfo 写出时先规范化 os.sep；反例必须落进 ZIP 的真实名字。
+        # Windows 的 ZipInfo 写出时会把 os.sep 规范成 `/`；反例必须落进 ZIP 的真实名字。
+        # POSIX 上它本来就按原样写，不需要（也不能）替换。
         encoded = name.replace("\\", "/").encode()
-        assert raw.count(encoded) == 2
-        raw = raw.replace(encoded, name.encode())
+        if raw.count(encoded) == 2:
+            raw = raw.replace(encoded, name.encode())
     with pytest.raises(packages.PackageError):
         with packages.open_package(raw, budget=budget):
             pytest.fail("unsafe path was admitted")
