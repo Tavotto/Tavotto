@@ -17884,6 +17884,7 @@ _PROPOSE_STATUS = {
     "propose_input_invalid": 400,
     "propose_cells_invalid": 400,
     "propose_cells_need_rule": 409,
+    "propose_thumbnail_failed": 422,
 }
 
 
@@ -17896,7 +17897,8 @@ def _propose_error(exc: "engine_ai_data_propose.ProposeError"):
 
 @app.post("/api/ai/data-figure/propose")
 def api_ai_data_figure_propose():
-    """出备选（不调模型）。body：`{folder?, table?, sheet?, hint?, answers?, header_rows?, client_request_id?}`（`folder` 项目相对、缺省项目根；
+    """出备选（不调模型）。body：`{folder?, table?, sheet?, hint?, answers?, header_rows?, client_request_id?, render?}`
+    （`render: "lazy"` = 文字先到、不问问题、缩略图在取图时画，见 `ai_data_propose.propose`）（`folder` 项目相对、缺省项目根；
     `header_rows` = `{表的路径（相对 folder，同 `table`）: 每列名字所在的物理行号}`，按文件指定，生成的脚本读表用同一个行号）。
 
     回三选一：`{kind: "ask", question_code, options, unsure}`（决定科学含义的事只能用户定；选项里的 `answer` 原样并进下一次的
@@ -17923,6 +17925,7 @@ def api_ai_data_figure_propose():
             answers=body.get("answers"),
             header_rows=body.get("header_rows"),
             client_request_id=rid,
+            render=body.get("render"),
         )
     except engine_ai_data_propose.ProposeError as exc:
         return _propose_error(exc)
@@ -17935,12 +17938,13 @@ def api_ai_data_figure_propose():
 
 @app.get("/api/ai/data-figure/thumbnail/<session>/<item>")
 def api_ai_data_figure_thumbnail(session, item):
-    """候选缩略图（只读缓存里我们自己写的那份 PNG）。`session` / `item` 是服务端登记的不透明 id，路径不由请求拼出来。"""
+    """候选缩略图（只读缓存里我们自己写的那份 PNG；懒渲染的备选在这里画并等它画完，画不出 → 422 `propose_thumbnail_failed`，
+    `params.reason` 是 `DROP_REASONS` 里的码）。`session` / `item` 是服务端登记的不透明 id，路径不由请求拼出来。"""
     if not engine_ai_figure_edit.enabled():
         return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
     ctx = current_ctx()
     try:
-        path = engine_ai_data_propose.thumbnail_path(str(ctx.path.resolve()), session, item)
+        path = engine_ai_data_propose.ensure_thumbnail(str(ctx.path.resolve()), session, item)
     except engine_ai_data_propose.ProposeError as exc:
         return _propose_error(exc)
     resp = send_file(path, mimetype="image/png", conditional=False)
@@ -17997,6 +18001,18 @@ def api_ai_data_figure_commit():
             return jsonify(out)
     try:
         sess, item = engine_ai_data_propose.get_item(project, session_id, item_id)
+        if item.state == "pending":
+            # 懒渲染里还没画的备选：提交前先同步走一遍取图同一条路径（`ensure_thumbnail`：同一个渲染 + 指纹核对、同一把单项锁与并发上限），
+            # 不能绕过它——否则指纹对不上的备选会先落盘（脚本 + 注册表条目）、随后缩略图才 422
+            try:
+                engine_ai_data_propose.ensure_thumbnail(project, session_id, item_id)
+            except engine_ai_data_propose.ProposeError as exc:
+                if exc.code != "propose_thumbnail_failed":
+                    raise
+        if (
+            item.state == "failed"
+        ):  # 懒渲染里画不出来 / 数据对不上的备选：与旧模式「不进列表」同一保证，不许提交（此时什么都没写）
+            raise engine_ai_data_propose.ProposeError("propose_candidate_unknown")
         sel = engine_ai_data_task.Selection(
             folder_rel=sess.folder_rel,
             table=sess.table,

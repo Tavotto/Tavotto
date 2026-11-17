@@ -1033,17 +1033,13 @@ def test_errorbars_hold_the_declared_summary_independently_of_the_template_helpe
 
 
 @needs_worker
-def test_bars_include_zero_and_show_the_summary_and_n(shapes):
+def test_bars_include_zero_and_show_n_in_tick_labels_but_no_footnote(shapes):
     ax = shapes["cmp_eb"]["axes"][0]
     assert ax["ylim"][0] <= 0
-    texts = shapes["cmp_eb"]["texts"]
-    assert (
-        texts and "mean ± SD" in texts[0] and "n per group in tick labels" in texts[0]
-    )  # 各格 n 不同
-    assert any("(n = " in t for t in ax["xticks"])
-    # n 一致时写进说明里
-    # （uni.csv 每格 6 个）
-    assert "星" not in "".join(texts) and "*" not in "".join(texts) and "P =" not in "".join(texts)
+    assert shapes["cmp_eb"]["texts"] == []  # 图里没有任何脚注（2026-11-17 用户决定）
+    assert any(
+        "(n = " in t for t in ax["xticks"]
+    )  # 各格 n 不同：n 在刻度标签里，那是坐标轴文字不是脚注
 
 
 @needs_worker
@@ -1592,7 +1588,7 @@ def test_hostile_file_and_sheet_names_stay_string_literals(folder, profile):
 
 
 @needs_worker
-def test_uniform_n_goes_into_the_note_and_trend_notes_n_per_point(folder, profile, tmp_path):
+def test_uniform_comparison_layout_and_trend_have_no_footnote(folder, profile, tmp_path):
     for f in folder.iterdir():
         (tmp_path / f.name).write_bytes(f.read_bytes())
     r = mk(
@@ -1607,7 +1603,7 @@ def test_uniform_n_goes_into_the_note_and_trend_notes_n_per_point(folder, profil
         tmp_path,
         T.render_recipe_script(entry_of(profile, "uni.csv"), r, data_rel="uni.csv", stem="fig"),
     )
-    assert got["texts"] == ["mean ± SD; horizontal lines: mean; n = 6"]
+    assert got["texts"] == []
     assert got["size"][0] == pytest.approx(150 / 25.4) and got["size"][1] == pytest.approx(
         got["size"][0] * 9 / 16
     )  # 多面板：双栏、16:9
@@ -1621,7 +1617,7 @@ def test_uniform_n_goes_into_the_note_and_trend_notes_n_per_point(folder, profil
         tmp_path,
         T.render_recipe_script(entry_of(profile, "trend.csv"), t, data_rel="trend.csv", stem="fig"),
     )
-    assert got["texts"][0].startswith("mean ± SD; n = ")
+    assert got["texts"] == []
     plain = mk("trend.csv", "trend", ["points"], ["signal"], x="time_s")
     got = introspect(
         tmp_path,
@@ -1629,7 +1625,7 @@ def test_uniform_n_goes_into_the_note_and_trend_notes_n_per_point(folder, profil
             entry_of(profile, "trend.csv"), plain, data_rel="trend.csv", stem="fig"
         ),
     )
-    assert got["texts"] == []  # 没有汇总就不写汇总说明
+    assert got["texts"] == []
 
 
 def test_template_module_is_parent_side_stdlib_only():
@@ -1791,16 +1787,6 @@ def test_fit_line_matches_numpy_polyfit_including_log_axes():
     )  # x 全相同 / 点不够
 
 
-def test_n_note_wording():
-    assert T.n_note({("", "a"): 5, ("", "b"): 5}, ["a", "b"], [""]) == "n = 5"
-    assert T.n_note({("", "a"): 5, ("", "b"): 7}, ["a", "b"], [""]) == "n = 5 / 7 (group order)"
-    assert (
-        T.n_note({("s1", "a"): 5, ("s2", "a"): 7}, ["a"], ["s1", "s2"])
-        == "n = 5-7 per group and panel"
-    )
-    assert T.n_note({}, [""], [""]) == ""
-
-
 def test_relationship_data_skips_rows_without_both_numbers(folder):
     v = adf.inspect_data_source(folder / "rel.csv")
     d = T.relationship_data(v.columns, v.rows, "dose_mg", "response_mV", "arm", "site")
@@ -1888,24 +1874,10 @@ def test_relationship_and_distribution_marks_are_plain_editable_artists(shapes_b
 
 
 @needs_worker
-def test_notes_state_the_binning_bandwidth_and_fit_rules_and_n(shapes_b):
-    assert shapes_b["rel"]["texts"] == [
-        "dash-dot line: least-squares fit (descriptive); n = 16"
-    ]  # 每组 16 个有效点（缺 y 与 x 为 nan 的行不画）
-    assert "fitted on log10 of the log axes" in shapes_b["rel_log"]["texts"][0]
-    note = shapes_b["hist_density"]["texts"][0]
-    assert (
-        "bins: Freedman-Diaconis rule, shared by all groups" in note
-        and "density: Gaussian kernel, Scott bandwidth" in note
-    )
-    assert shapes_b["hist"]["texts"][0].startswith("bins: Freedman-Diaconis") and shapes_b["hist"][
-        "texts"
-    ][0].endswith("n = 60")
-    assert shapes_b["ecdf"]["texts"][0] == "ECDF: step function of the sorted values; n = 60"
-    assert shapes_b["box_x"]["texts"][0].startswith("box: median, quartiles, whiskers to 1.5 IQR")
-    assert "P =" not in "".join(shapes_b["rel"]["texts"]) and "R²" not in "".join(
-        shapes_b["rel"]["texts"]
-    )  # 不报显著性、不放 R²
+def test_no_figure_carries_a_footnote_but_the_fit_and_summaries_are_still_drawn(shapes_b):
+    """2026-11-17 用户决定：生成的图里没有任何自动加的脚注（画法说明 / 汇总定义 / n / 没画的行）。拟合线、汇总等画法本身不变。"""
+    for name, shape in shapes_b.items():
+        assert shape["texts"] == [], (name, shape["texts"])
 
 
 @needs_worker
@@ -2232,85 +2204,12 @@ def _span(ns: set[int]) -> str:
     return str(min(ns)) if len(ns) == 1 else f"{min(ns)}–{max(ns)}"
 
 
-def _note_of(tmp: Path, layers, **kw) -> str:
-    r = mk("n.csv", "trend", layers, ["y"], x="x", **kw)
-    rendered, _ = _render_in(tmp, "n.csv", r, allow=("column_type_mismatch",))
-    (text,) = probe(tmp, rendered, "result = [t.get_text() for t in fig.texts]")
-    return text
-
-
 def _v(k, base=1.0):
     return [round(base + i * 0.7, 3) for i in range(k)]
 
 
 @needs_worker
-def test_trend_note_counts_the_population_each_summary_actually_summarizes(tmp_path):
-    full = {x: _v(3, x) for x in range(1, 6)}
-    uneven = {1: _v(3), 2: _v(2, 2), 3: _v(3, 3), 4: _v(1, 4), 5: _v(3, 5)}
-    singles = {x: _v(1, x) for x in range(1, 6)}
-    dirty = {
-        1: [1.0, 2.0, 3.0],
-        2: ["", "nan", "<LOD"],  # 整个位置没有有效值：线在这里断开，不计 n
-        3: [2.0, "<LOD", 3.0, ""],
-        4: [5.0, 6.0, 7.0, 8.0],
-        5: [1.0, "NaN", 2.0],
-    }
-    PP = [("line", "mean_sd"), ("band", "mean_sd", Q)]
-    SER = ["points", ("hline_summary", "mean_sd", Q)]
-    MIX = [("line", "mean_sd"), ("hline_summary", "median_iqr", Q)]
-    two_pos = [
-        ("line", "mean_sd"),
-        ("errorbar", "mean_sem", Q),
-        ("hline_summary", "mean_sd", "reference"),
-    ]
-    grouped = {
-        ("a", "s1"): full,
-        ("b", "s1"): uneven,
-        ("a", "s2"): dirty,
-        ("b", "s2"): {x: _v(2, x) for x in range(1, 4)},
-    }
-    cases = [
-        ("pp-uniform", {("", ""): full}, PP, {}),
-        ("pp-uneven", {("", ""): uneven}, PP, {}),
-        ("series-singles", {("", ""): singles}, SER, {}),  # 五个位置各一个观测：n 是 5 不是 1
-        ("mixed-uniform", {("", ""): full}, MIX, {}),
-        ("mixed-uneven", {("", ""): uneven}, MIX, {}),
-        ("mixed-dirty", {("", ""): dirty}, MIX, {}),
-        ("mixed-grouped-faceted", grouped, MIX, {"group": "arm", "facet": "site"}),
-        ("series-grouped", grouped, SER, {"group": "arm", "facet": "site"}),
-        ("pp-grouped", grouped, PP, {"group": "arm", "facet": "site"}),
-        ("pos-and-series", grouped, two_pos, {"group": "arm", "facet": "site"}),
-    ]
-    for cid, cells, layers, kw in cases:
-        work = _n_table(tmp_path / cid, cells)
-        per_point, per_series = _independent_ns(cells)
-        has_pos = any(
-            ly[0] in ("line", "step", "band", "errorbar") for ly in layers if isinstance(ly, tuple)
-        )
-        has_ser = any(ly[0] == "hline_summary" for ly in layers if isinstance(ly, tuple))
-        got = _note_of(work, layers, **kw)
-        stat = "median" if layers is MIX else "mean"
-        dotted = f"; dotted line: whole-series {stat}" if has_ser else ""
-        if has_pos and has_ser:
-            names = {
-                "mixed": "line: mean ± SD; horizontal lines: median with IQR",
-                "two_pos": "line: mean ± SD; error bars: mean ± SEM; horizontal lines: mean ± SD",
-            }
-            summ = names["mixed" if layers is MIX else "two_pos"]
-            want = f"{summ}{dotted}; n = {_span(per_point)} per point; n = {_span(per_series)} per series"
-        elif has_ser:
-            want = f"mean ± SD{dotted}; n = {_span(per_series)}" + (
-                " per series" if len(per_series) > 1 else ""
-            )
-        else:
-            want = f"mean ± SD; n = {_span(per_point)}" + (
-                " per point" if len(per_point) > 1 else ""
-            )
-        assert got == want, (cid, got, want)
-
-
-@needs_worker
-def test_comparison_note_and_tick_n_match_each_category_by_group_cell(tmp_path):
+def test_comparison_tick_n_matches_each_category_by_group_cell_and_no_footnote(tmp_path):
     """比较图：每个（分面, 类别, 分组）格子的 n 与独立数出来的一致（缺失 / NaN / 文字行不算）；各格相同 → 说明里一个 n。"""
     rows = [["cond", "arm", "site", "y"]]
     spec = {  # (cond, arm, site) -> y 原文
@@ -2338,7 +2237,7 @@ def test_comparison_note_and_tick_n_match_each_category_by_group_cell(tmp_path):
     rendered, _ = _render_in(work, "n.csv", r, allow=("column_type_mismatch",))
     body = "result = [[t.get_text() for t in fig.texts], [[t.get_text() for t in ax.get_xticklabels()] for ax in fig.axes]]"
     texts, ticks = probe(work, rendered, body)
-    assert texts == ["mean ± SD; n per group in tick labels"]
+    assert texts == []  # 没有脚注；各格 n 不同时 n 在刻度标签里（下面逐格核对）
     n = {k: sum(1 for y in ys if _finite(y)) for k, ys in spec.items()}
     for ax_ticks, site in zip(ticks, ("s1", "s2")):
         want = [
@@ -2346,16 +2245,14 @@ def test_comparison_note_and_tick_n_match_each_category_by_group_cell(tmp_path):
             for c in ("c1", "c2")
         ]
         assert ax_ticks == want, (site, ax_ticks, want)
-    # 各格 n 相同：说明里只写一个 n
+    # 各格 n 相同：图里也没有脚注（n 不写进图）
     even = [["cond", "y"]] + [[c, v] for c in "ab" for v in (1, 2, 3, "")]
     work2 = tmp_path / "w2"
     work2.mkdir()
     (work2 / "n.csv").write_text(_csv(even), encoding="utf-8")
     r2 = mk("n.csv", "comparison", ["jitter", ("hline_summary", "mean_sd", Q)], ["y"], x="cond")
     rendered, _ = _render_in(work2, "n.csv", r2)
-    assert probe(work2, rendered, "result = [t.get_text() for t in fig.texts]") == [
-        "mean ± SD; horizontal lines: mean; n = 3"
-    ]
+    assert probe(work2, rendered, "result = [t.get_text() for t in fig.texts]") == []
 
 
 def _iso_folder(tmp: Path) -> Path:
@@ -2475,7 +2372,7 @@ _REL_BODY = (
 
 
 @needs_worker
-def test_relationship_draws_fits_and_counts_only_finite_pairs(tmp_path):
+def test_relationship_draws_fits_over_only_finite_pairs_and_no_footnote(tmp_path):
     work = _rel_folder(tmp_path / "w")
     r = mk(
         "rel.csv", "relationship", ["points", "fit_line"], ["y"], x="x", group="arm", facet="site"
@@ -2496,9 +2393,7 @@ def test_relationship_draws_fits_and_counts_only_finite_pairs(tmp_path):
             slope, icpt = statistics.linear_regression([p[0] for p in pts], [p[1] for p in pts])
             for x, y in fit:
                 assert y == pytest.approx(icpt + slope * x)
-    note = got["texts"][0]
-    assert note.endswith("n = 6-8 per group and panel"), note
-    assert "dash-dot line: least-squares fit" in note
+    assert got["texts"] == []  # 拟合线照画，但图里不写「least-squares fit」之类的脚注
     one = _rel_folder(tmp_path / "w1")
     only_s1 = [["x", "y", "arm"]] + [
         [i + 1, i * 1.5, a] for a, k in (("a", 7), ("b", 6)) for i in range(k)
@@ -2506,7 +2401,7 @@ def test_relationship_draws_fits_and_counts_only_finite_pairs(tmp_path):
     (one / "rel.csv").write_text(_csv(only_s1), encoding="utf-8")
     r1 = mk("rel.csv", "relationship", ["points", "fit_line"], ["y"], x="x", group="arm")
     rendered, _ = _render_in(one, "rel.csv", r1)
-    assert probe(one, rendered, _REL_BODY)["texts"][0].endswith("n = 7 / 6 (group order)")
+    assert probe(one, rendered, _REL_BODY)["texts"] == []
 
 
 def _dist_folder(tmp: Path, seps=False) -> Path:
@@ -2547,7 +2442,7 @@ def test_distribution_hist_ecdf_density_all_use_the_counted_n(tmp_path):
                     assert sum(data) == k  # 各箱个数之和 = 这一格的有效值个数
                 elif mark == "ecdf":
                     assert len(data) == k + 1 and data[-1][1] == pytest.approx(1.0)
-        assert got["texts"][0].endswith("n = 5-9 per group and panel"), (mark, got["texts"])
+        assert got["texts"] == [], (mark, got["texts"])
 
 
 @needs_worker
@@ -2584,35 +2479,6 @@ def test_two_layers_of_one_mark_and_separator_names_keep_labels_unique_and_verif
         assert expected and len(labels) == len(set(labels)), labels
         res = fv.data_matches_expected(man, expected)
         assert all(c.verdict == fv.VERIFIED for c in res), [(c.id, c.verdict) for c in res]
-
-
-@needs_worker
-def test_note_names_which_mark_shows_which_summary(tmp_path):
-    work = _gap_folder(tmp_path / "w")
-    r = mk(
-        "gap.csv",
-        "comparison",
-        [("bar", "mean_sd"), ("errorbar", "median_iqr", Q)],
-        ["y"],
-        x="arm",
-    )
-    rendered, _ = _render_in(work, "gap.csv", r)
-    (text,) = probe(work, rendered, "result = [t.get_text() for t in fig.texts]")
-    assert text.startswith("bars: mean ± SD; error bars: median with IQR; n")
-    one = mk(
-        "gap.csv", "comparison", [("bar", "mean_sd"), ("errorbar", "mean_sd", Q)], ["y"], x="arm"
-    )
-    rendered, _ = _render_in(work, "gap.csv", one)
-    (text,) = probe(work, rendered, "result = [t.get_text() for t in fig.texts]")
-    assert text.startswith("mean ± SD; n")  # 只有一种汇总：简短写法
-    t = mk(
-        "gap.csv", "trend", ["points", "fit_line", ("hline_summary", "mean_sd", Q)], ["y"], x="x"
-    )
-    rendered, _ = _render_in(work, "gap.csv", t)
-    (text,) = probe(work, rendered, "result = [t.get_text() for t in fig.texts]")
-    assert "dash-dot line: least-squares fit" in text and "dotted line: whole-series mean" in text
-    n = sum(1 for ln in _csv_rows(work / "gap.csv")[1:] if _finite(ln[3]))
-    assert text.endswith(f"n = {n}"), text  # 拟合线与整系列水平线汇总的都是全部有限观测
 
 
 def _csv_rows(path: Path):
@@ -2686,40 +2552,12 @@ def test_fit_line_has_its_own_linestyle_distinct_from_the_y_linestyles(tmp_path)
     assert fit == {"-."} and not fit & ys and ys == {"-", "--"}, got["lines"]
     assert "-." not in got["legend_styles"]  # 图例里的线型都是 y 列的
     assert got["legend"] == ["a", "b", "sig (mV)", "cur (mV)"]
-    assert "dash-dot line: least-squares fit" in got["texts"][0]
+    assert got["texts"] == []  # 拟合线的线型说明不进图
     rel = _rel_folder(tmp_path / "wr")
     rr = mk("rel.csv", "relationship", ["points", "fit_line"], ["y"], x="x")
     rendered, _ = _render_in(rel, "rel.csv", rr, allow=("column_type_mismatch",))
     lines = probe(rel, rendered, "result = [l.get_linestyle() for l in fig.axes[0].lines]")
     assert lines == ["-."]  # relationship 的拟合线同一专用线型
-
-
-@needs_worker
-@pytest.mark.parametrize(
-    "summary, stat",
-    [("mean_sd", "mean"), ("mean_sem", "mean"), ("mean_ci95", "mean"), ("median_iqr", "median")],
-)
-def test_horizontal_line_note_names_the_statistic_from_its_summary(summary, stat, tmp_path):
-    work = _gap_folder(tmp_path / "w")
-    c = mk("gap.csv", "comparison", ["points", ("hline_summary", summary, Q)], ["y"], x="arm")
-    rendered, _ = _render_in(work, "gap.csv", c)
-    (text,) = probe(work, rendered, "result = [t.get_text() for t in fig.texts]")
-    assert f"horizontal lines: {stat}" in text and "center" not in text, text
-    t = mk("gap.csv", "trend", ["points", ("hline_summary", summary, Q)], ["y"], x="x")
-    rendered, _ = _render_in(work, "gap.csv", t)
-    (text,) = probe(work, rendered, "result = [t.get_text() for t in fig.texts]")
-    assert f"dotted line: whole-series {stat}" in text and "center" not in text, text
-    # 一张图里两种统计量的水平线各写各的
-    both = mk(
-        "gap.csv",
-        "comparison",
-        ["points", ("hline_summary", "mean_sd", Q), ("hline_summary", "median_iqr", "reference")],
-        ["y"],
-        x="arm",
-    )
-    rendered, _ = _render_in(work, "gap.csv", both)
-    (text,) = probe(work, rendered, "result = [t.get_text() for t in fig.texts]")
-    assert "horizontal lines: mean" in text and "horizontal lines: median" in text, text
 
 
 @needs_worker
@@ -2770,22 +2608,12 @@ def _box_folder(tmp: Path, equal: bool, with_site: bool) -> tuple[Path, dict]:
     return tmp, cells
 
 
-def _n_text(counts: dict, groups, panels) -> str:
-    """独立写出的 n 文字（与 `n_note` 同一约定：各格相同 → n = k；单分面逐组；多分面写范围）。"""
-    ns = list(counts.values())
-    if len(set(ns)) == 1:
-        return f"n = {ns[0]}"
-    if len(panels) == 1:
-        return "n = " + " / ".join(str(counts[(panels[0], g)]) for g in groups) + " (group order)"
-    return f"n = {min(ns)}-{max(ns)} per group and panel"
-
-
 @needs_worker
 @pytest.mark.parametrize("mark", ["box", "violin"])
 @pytest.mark.parametrize("with_x", [True, False], ids=["x", "no-x"])
 @pytest.mark.parametrize("equal", [True, False], ids=["equal-n", "uneven-n"])
 @pytest.mark.parametrize("with_site", [True, False], ids=["facet", "no-facet"])
-def test_note_never_points_at_tick_labels_that_do_not_exist(
+def test_box_violin_tick_labels_carry_n_only_when_uneven_and_there_is_no_footnote(
     mark, with_x, equal, with_site, tmp_path
 ):
     work, cells = _box_folder(tmp_path / "w", equal, with_site)
@@ -2805,29 +2633,77 @@ def test_note_never_points_at_tick_labels_that_do_not_exist(
         "          'ticks': [[t.get_text() for t in ax.get_xticklabels()] for ax in fig.axes]}\n"
     )
     got = probe(work, rendered, body)
-    note = got["texts"][0]
+    assert got["texts"] == []  # 图里没有脚注
     panels = ["s1", "s2"] if with_site else ["s1"]
-    if with_x:
-        if len({*cells.values()}) == 1:
-            assert note.endswith(f"n = {next(iter(cells.values()))}"), note
-        else:
-            assert "tick labels" in note, note
-            for site, ticks in zip(panels, got["ticks"]):
-                want = [
-                    f"c{ci}\n(n = "
-                    + "/".join(str(cells[(site, f"c{ci}", a)]) for a in ("a", "b"))
-                    + ")"
-                    for ci in range(3)
-                ]
-                assert ticks == want, (site, ticks, want)
-    else:
-        assert "tick labels" not in note, note
-        pooled = {
-            (site, arm): sum(cells[(site, f"c{ci}", arm)] for ci in range(3))
-            for site in panels
-            for arm in ("a", "b")
-        }
-        assert note.endswith(_n_text(pooled, ["a", "b"], panels)), (note, pooled)
-        assert all(
-            t == "" for ticks in got["ticks"] for t in ticks
-        )  # 没有刻度，所以 n 只能在说明里
+    if with_x and not equal:  # 各格 n 不同：n 写在刻度标签里（坐标轴文字，不是脚注）
+        for site, ticks in zip(panels, got["ticks"]):
+            want = [
+                f"c{ci}\n(n = "
+                + "/".join(str(cells[(site, f"c{ci}", a)]) for a in ("a", "b"))
+                + ")"
+                for ci in range(3)
+            ]
+            assert ticks == want, (site, ticks, want)
+    if not with_x:
+        assert all(t == "" for ticks in got["ticks"] for t in ticks)  # 没有刻度，n 也不写进图
+
+
+@pytest.mark.parametrize(
+    "table, family, layers, y, kw",
+    [
+        (
+            "uni.csv",
+            "comparison",
+            [("bar", "mean_sd"), ("errorbar", "mean_sd", Q)],
+            ["响应_mV"],
+            {"x": "组别"},
+        ),
+        (
+            "uni.csv",
+            "comparison",
+            ["jitter", ("hline_summary", "mean_sd", Q)],
+            ["响应_mV"],
+            {"x": "组别"},
+        ),
+        (
+            "trend.csv",
+            "trend",
+            [("line", "mean_sd"), ("band", "mean_sd", Q)],
+            ["signal"],
+            {"x": "time_s"},
+        ),
+        (
+            "trend.csv",
+            "trend",
+            ["points", "fit_line", ("hline_summary", "mean_sd", Q)],
+            ["signal"],
+            {"x": "time_s"},
+        ),
+        ("rel.csv", "relationship", ["points", "fit_line"], ["response_mV"], {"x": "dose_mg"}),
+        ("dist.csv", "distribution", ["hist", ("density", "none", Q)], ["latency_ms"], {}),
+        ("dist.csv", "distribution", ["box", ("jitter", "none", Q)], ["latency_ms"], {"x": "arm"}),
+    ],
+)
+def test_generated_scripts_write_no_footnote_of_any_kind(
+    table, family, layers, y, kw, folder, profile
+):
+    """2026-11-17 用户决定：图里不写任何自动加的脚注（画法 / 汇总定义 / n / 没画的行）；脚本里没有 `fig.text`，没有那些说明文字，图幅不为脚注留白。"""
+    script = T.render_recipe_script(
+        entry_of(profile, table), mk(table, family, layers, y, **kw), data_rel=table, stem="fig"
+    ).script
+    for needle in (
+        "fig.text(",
+        "least-squares",
+        "Freedman",
+        "whole-series",
+        "non-numeric",
+        "per group and panel",
+        "n per group",
+        "per point",
+        "per series",
+        "in tick labels",
+        "note = ",
+        "rect=(",
+    ):
+        assert needle not in script, needle
+    assert "fig.tight_layout()" in script

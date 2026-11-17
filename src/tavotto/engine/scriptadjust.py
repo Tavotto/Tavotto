@@ -41,7 +41,7 @@ class _Unsupported(Exception):
 
 # -------------------------- 哪些 override 写得进脚本 --------------------------
 #: manifest 的 role → `overrides._cls_key` 的键。`WRITES` / `NOT_WRITABLE` 都按后者记，
-#: 这样「`HANDLERS` 的每个键都表过态」才是一句能断言的话（`tests/test_script_adjust.py`）。
+#: 这样「`HANDLERS` 的每个键都表过态」才是一句能断言的话（`tests/test_script_adjust*.py`）。
 _ROLE_CLS = {
     "title": "text",
     "axis_label": "text",
@@ -840,7 +840,7 @@ def _statement(
 
 def _rank(prop: str, kind: str | None) -> float:
     """步骤顺序（`kind` 是生成语句时按 (cls, prop) 定的标记 `_kind`，**不看语句文本**：用户的文字写进语句里，
-    标题 / 图例文字 / 刻度文字里带着 `_legend_rebuild(` 之类的子串不能影响排序）：与 `overrides._apply_rank` 同序的那几档（对账见 `tests/test_script_adjust.py`）。
+    标题 / 图例文字 / 刻度文字里带着 `_legend_rebuild(` 之类的子串不能影响排序）：与 `overrides._apply_rank` 同序的那几档（对账见 `tests/test_script_adjust*.py`）。
 
     引擎的函数要看 artist 类型、父进程 import 不了，而写得进脚本的键里只有坐标轴刻度类型这一档
     排在普通属性之前。其余几档是脚本这一侧自己的先后：
