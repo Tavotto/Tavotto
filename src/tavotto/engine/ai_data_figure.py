@@ -526,8 +526,14 @@ def _detect(text: str, suffix: str) -> TextLayout | RaggedLayout | None:
             cands = [r for r in block[:k] if not _is_hash(r[1])] or block[
                 :k
             ]  # 与表头同列数的 `#` 行是注释
-            # 紧挨着数据（或单位行）的那一条像名字的是列名：前面同列数的说明行（`operator: lab`）也「像名字」，不能因它排在前面就被选中
-            pick = next((r for r in reversed(cands) if _name_like(r[1])), cands[0])
+            # 默认取第一条像名字的（老读法）。例外：候选里有**单位行**（`nm  a.u.`）时，列名是紧挨在它前面的那一行——更前面同列数的说明行
+            # （`operator: lab`）也「像名字」，不能因它排在前面被选中。没有单位行时不往后挪：`group,value` 后面紧跟一条夹着文字标记的观测
+            # （`control,<0.1`）也「像名字」，那是数据不是表头。
+            u = next((i for i, r in enumerate(cands) if _is_units_row(r[1], width)), None)
+            if u is not None and u >= 1 and _name_like(cands[u - 1][1]):
+                pick = cands[u - 1]
+            else:
+                pick = next((r for r in cands if _name_like(r[1])), cands[0])
             return TextLayout(d, pick[0], len(cands) == 1, _units_follow(block, pick, k, width))
         first_line = block[0][0]
         prev = next((r for r in reversed(recs) if r[0] < first_line), None)
@@ -540,19 +546,22 @@ def _detect(text: str, suffix: str) -> TextLayout | RaggedLayout | None:
     return _ragged_hint(sample)
 
 
+def _is_units_row(cells, width: int) -> bool:
+    """整行都是裸写的单位（`nm  a.u.`）：括号包着的（`(a) (b)`、`[mV] [s]`）既可能是单位也可能就是列名，仍交给用户在两行里点（`unsure`），不当单位行。"""
+    return (
+        len(cells) == width
+        and _units_like(cells)
+        and not any(_numlike(c) or _UNITS_CELL.match(c.strip()) for c in cells)
+    )
+
+
 def _units_follow(block, pick, k: int, width: int) -> bool:
     """`pick`（表头记录）的**下一条**记录是单位行，且它正好是第一条数据行（块里下标 `k`）之前的最后一条：`Wavelength  Intensity` / `nm  a.u.` / 数据。
     只认「整行都是单位写法、没有一格像数」的行（`_units_like`）；表头与数据之间还有别的记录、或下一条就是数据，都不是。"""
     i = next((n for n, r in enumerate(block) if r is pick), None)
     if i is None or i + 1 != k - 1:
         return False
-    cells = block[i + 1][1]
-    # 括号包着的（`(a) (b)`、`[mV] [s]`）既可能是单位也可能就是列名，仍交给用户在两行里点（`unsure`）：不自动切；只认裸写的单位（`nm  a.u.`）
-    return (
-        len(cells) == width
-        and _units_like(cells)
-        and not any(_numlike(c) or _UNITS_CELL.match(c.strip()) for c in cells)
-    )
+    return _is_units_row(block[i + 1][1], width)
 
 
 def _clip_line(t: str) -> str:

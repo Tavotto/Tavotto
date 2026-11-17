@@ -2042,3 +2042,44 @@ def test_mixed_x_commits_and_the_script_reads_the_same_table(project):
     assert (
         "fig.text(" not in script and "ignored" not in script
     )  # 图里没有脚注（没画的行只在响应里报）
+
+
+def lod_first_obs_rows():
+    """普通 CSV：表头 `group,value`，第一条观测的值是检出限标记 `<0.1`，之后才是数。"""
+    rows = [["group", "value"], ["control", "<0.1"]]
+    for g, base in (("control", 0.5), ("drug", 1.5)):
+        rows += [[g, round(base + i * 0.2, 2)] for i in range(7)]
+    return rows
+
+
+def test_a_csv_whose_first_observation_is_a_lod_marker_keeps_its_real_header(tmp_path):
+    p = tmp_path / "lod.csv"
+    p.write_text("\n".join(",".join(map(str, r)) for r in lod_first_obs_rows()) + "\n", "utf-8")
+    t = adf.read_text_table(p)
+    assert t.header_line == 1 and t.summary.columns == ["group", "value"]
+    assert t.summary.units_row is False  # 仍是「猜的」（候选两条），与此前一致
+    assert t.summary.rows[0] == [
+        "control",
+        "<0.1",
+    ]  # 那条观测还是数据（`<0.1` 进 mixed_cells 由用户处理）
+
+
+def test_that_csv_proposes_with_header_row_1_and_the_lod_cell_in_mixed_cells(project, fake_render):
+    m, client, figs, _ = project
+    put(figs, "data/lod.csv", lod_first_obs_rows())
+    body = propose(client, table="lod.csv", render="lazy").get_json()
+    assert body["kind"] == "candidates" and body["header_row"] == 1
+    assert body["roles"]["y"] == ["value"]
+    assert body["mixed_cells"] == [
+        {"column": "value", "non_numeric": 1, "rows": 15, "mode": "skip"}
+    ]
+
+
+def test_header_row_picking_still_handles_notes_names_units_and_hash_headers(tmp_path):
+    # 说明行 + 列名行 + 单位行（calibration）：列名是紧挨单位行的那行
+    assert adf._detect(instrument_text(), ".txt").header_line == 3
+    # `#` 说明行 + 列名行（scan_01 型）
+    scan = "# export\n# date: x\nVoltage (V)\tCurrent (A)\n" + "".join(
+        f"{-1 + i * 0.025}\t{i * 1e-6}\n" for i in range(10)
+    )
+    assert adf._detect(scan, ".dat").header_line == 3
