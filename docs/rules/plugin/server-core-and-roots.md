@@ -3,14 +3,14 @@
 > 2026-09-25 迁自 `codex-plugin/AGENTS.md`「MCP server 与内嵌画布（2026-08-18）」（#608：Codex 自动拼接的 32 KiB 上限），
 > 正文一字未改。速查行在 `codex-plugin/AGENTS.md` 的「按改动路径找细则」表里；这里是这一主题的**唯一全文**，
 > 改规则改这里，并同步那一行。
-> 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_mcp_roundtrip.py`、`tests/test_mcp_roots.py`、`tests/test_mcp_stdio.py`、`tests/test_mcp_local_scope.py`
+> 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_mcp_roundtrip.py`、`tests/test_mcp_roots.py`、`tests/test_mcp_stdio.py`、`tests/test_mcp_local_scope.py`、`tests/test_mcp_error_next.py`（失败回包的 `next`）
 
 <!-- agents-route
 sheet: codex-plugin/AGENTS.md
 order: 100
 改到: `tavotto_mcp/` 的分层、`rpc.hijack_stdout()`、`RootAuthority` / `roots.WORKSPACE_FAILURES`
 主题: MCP server：只翻译、stdout、路径范围 → `server-core-and-roots.md`
-必守要点: 只翻译不实现；先存 `_REAL_STDOUT` 再改道；授权失败分档、「没弹框」绝不报成用户拒绝；越界一律拒
+必守要点: 只翻译不实现；先存 `_REAL_STDOUT` 再改道；授权失败分档、「没弹框」绝不报成用户拒绝；越界一律拒；失败回包的 `next` 只在 `nextstep.py` 集中映射
 -->
 
 ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推翻**
@@ -47,3 +47,25 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
   「就近找一个能用的」**。看护 `tests/test_mcp_roots.py`、双向协议用例与
   `tests/test_mcp_stdio.py`。**没装 Tavotto 时降级而不是退出**（降级 server 握手正常、每个工具说人话）
   ——静默退出在 Codex 里表现为「插件没有工具」。
+
+## 失败回包的 `next`（ADR 0189 第 3 条）
+
+- **`next` 是增量字段**：每个 `BridgeError` 的失败回包可带 `next`，**不改任何 `code` 的取值与含义**（老调用方照旧按 `code` 分诊）。
+  只进 `structuredContent`，**不进念给用户听的 `content`**（与 `code` 同一条纪律）。`next` 在 `ERROR_PROTECTED_KEYS` 里：
+  错误预算要整键删字段时它与 `code` 一样留下，所以它必须短（一句 `why`，候选 / 选项最多 `nextstep.MAX_OPTIONS` 个）。
+- **三种形状**：`{tool, args, why}`（直接再调一个工具）、`{action: "edit_script", why}`（必须回代码改）、
+  `{action: "ask_user", question, options}`（要用户决定，Agent 不替用户猜、不替用户授权）。
+- **码 → `next` 的映射只在 `tavotto_mcp/nextstep.py`**，挂接点只有一处：`server.call_tool` 把 `BridgeError` 变成结果的地方
+  （`nextstep.attach`）；不散在各个 raise 点。`BridgeError` 自己显式带了 `next` 的不覆盖。
+- **参数能补全就补全**：重新 open 带当次调用的 `project_path` / `script_path` / `stem`；期刊不认识带 `query` 去 `tavotto_list_journals`；
+  栏位 / stem / 会话候选直接来自错误的 extra。补不全就写 `<...>` 占位，**不编造值**；拿不到足够上下文时宁可不给 `next`。
+- **每个码要么有映射（`BUILDERS`），要么在显式的「没有可行下一步」清单（`NO_NEXT`，每项一句理由）里**。看护用例按 AST 收集
+  `bridge.py` / `server.py` / `roots.py` 里出现的全部码（`code=` / `error_code=` / `default_code=` 关键字、模块级常量、引擎常量、
+  `code ==` 比较、`fail("...")` 结局码、`WORKSPACE_FAILURES`），新增一个码而没登记会红；清单里有桥里已不存在的码也红。
+  **不用子串断言源码。** 守卫有自检（喂一段故意漏登记的源码必须被抓到）。
+- 未登记的码（多半是 worker 新增）只按「需要输入」的结构化载荷兜底（`confirmation` / `dependency_preparation` / `missing_input` /
+  `explicit`），其余不给 `next`。
+- `fix_to_journal` 的没改成**不是** `BridgeError`（回包 `ok: false` + `exit`），它的 `next` 由 `nextstep.fix_next` 在 `_call_fix_to_journal`
+  里挂；冲突点名见 `fix-to-journal.md`。
+- `nextstep.py` 是纯 Python、不 import `tavotto.engine`，不在桥的三处同源约束里；它是运行时文件，进 `configure.RUNTIME_FILES`。
+- server `instructions` 写明「失败结果带 `next` 时照它做」。

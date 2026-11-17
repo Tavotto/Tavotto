@@ -2,7 +2,7 @@
 
 > 2026-11-12 新增（ADR 0180 第 2、3 步）。速查行在 `codex-plugin/AGENTS.md` 的「按改动路径找细则」表里；这里是这一主题的**唯一全文**，
 > 改规则改这里，并同步那一行。
-> 看护用例：`tests/test_mcp_fix_to_journal.py`（真 matplotlib）、`tests/test_specfix_real.py`（事务本体，搬家后不改即过）、`tests/test_mcp_server.py`（工具清单 / 开关）、`tests/test_codex_plugin.py`（技能文字）。
+> 看护用例：`tests/test_mcp_fix_to_journal.py`（真 matplotlib）、`tests/test_mcp_error_next.py`（冲突点名与 `next`）、`tests/test_specfix_real.py`（事务本体，搬家后不改即过）、`tests/test_mcp_server.py`（工具清单 / 开关）、`tests/test_codex_plugin.py`（技能文字）。
 
 <!-- agents-route
 sheet: codex-plugin/AGENTS.md
@@ -34,3 +34,11 @@ order: 55
   靠 golden vectors 对齐。`auto` 的集合就是 `specfix.FIXABLE_RULES`，不在别处抄第二份清单；`size` 是 `page-width` / `page-aspect`；
   `verify` 是 `not_verifiable` 档；其余 `manual` 带一句 `hint`。
 - 提交后若会话上有旧的规范化合同，视同用户的明确要求：合同与验收解除（`contract_released: true`）；没提交则原样留着。
+- **没改成要点名冲突（ADR 0189 第 3 条）**：`constraint_conflict` / `unsupported` / `not_resolved` / `font_unavailable` 的回包带 `conflicts`
+  （最多 `FIX_CONFLICTS_CAP` 条、每个约束短句最多 `FIX_CONFLICT_TEXT_CAP` 字）：`{rule, gid, gids?, constraints: [甲, 乙], prop?, repair?, want?}`——
+  哪条规则、哪个元素、哪两个约束冲突，有 override 属性名就给。**只拼现成结果，不新写判据**（ADR 0180）：
+  图幅步骤 = 目标图幅 ↔ normalize 的 `blocking` 里不许新增 / 恶化的那条（带 `repair`）；面板步骤 = specfix `changes` 里要写的那条 override
+  （`prop` 取自它）↔ `blocking` 的新增问题，`unresolved` 与 `skipped` 单独点名（缺字体带 `want`）；复检 = 本次改动 ↔ `introduced` 里的 error / warn；
+  基准图没能完整重放（`unsupported`）没有元素可指，点名渲染告警原文。拿不到的字段不给、不编；`exit` / `stage` / `detail` 的取值不变。
+- **失败回包的 `next`** 由 `nextstep.fix_next` 在 `_call_fix_to_journal` 里加：`column_choice_required` / `font_unavailable` 要用户决定（`ask_user`，
+  栏位候选来自 `columns`），其余没改成的（含图幅步骤出界）必须回脚本改（`edit_script`，`why` 指向 `conflicts`）。成功的回包不带 `next` 与 `conflicts`。

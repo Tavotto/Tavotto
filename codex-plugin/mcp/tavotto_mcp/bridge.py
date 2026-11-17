@@ -4355,6 +4355,126 @@ def _aspect_height(profile: dict, w_mm: float, h_mm: float, w_final: float) -> f
     return None if best is None else round(w_final / best[1], 2)
 
 
+#: 点名冲突的回包里最多列几条、每个约束短句最多多长（`conflicts` 进错误 / 结果预算，要短）。
+FIX_CONFLICTS_CAP = 6
+FIX_CONFLICT_TEXT_CAP = 100
+#: 带 `conflicts` 的结局码（ADR 0189 §3）：没改成时必须点名「哪条规则、哪个元素、哪两个约束」。
+FIX_CONFLICT_EXITS = ("constraint_conflict", "unsupported", "not_resolved", "font_unavailable")
+_SKIP_REASON_TEXT = {
+    "no_safe_value": "算不出安全的目标值",
+    "element_missing": "这个元素在当前图里已不存在",
+}
+
+
+def _clip(text, cap: int = FIX_CONFLICT_TEXT_CAP) -> str:
+    text = str(text or "").strip()
+    return text if len(text) <= cap else text[: cap - 1] + "…"
+
+
+def _fix_conflicts(
+    result: dict, *, stage: str | None, changes: list, detail: dict | None
+) -> list[dict]:
+    """没改成时把「谁和谁冲突」点名：`{rule, gid, constraints: [甲, 乙], prop?, repair?}`。
+
+    **只拼现成结果，不新写判据**（ADR 0180）：规则 id / gid / bucket / repair 来自 normalize 与 specfix 的
+    `blocking` / `unresolved` / `skipped`，prop 来自 specfix 的 `changes`（真的要写的那条 override），复检新增的问题
+    来自 `result["issues"]["introduced"]`。拿不到的字段就不给，不编。
+    """
+    detail = detail or {}
+    items: list[dict] = []
+
+    def change_for(gids, rule=None) -> dict | None:
+        gids = [g for g in gids if g]
+        for c in changes:
+            if c.get("gid") in gids and (rule is None or c.get("rule") == rule):
+                return c
+        return None
+
+    def made(c: dict | None) -> str:
+        if c is None:
+            return "本次要做的规范修复"
+        return f"规范修复 {c.get('rule')} → 改 {c.get('prop')}"
+
+    def add(rule, gids, a, b, **more) -> None:
+        gids = [g for g in (gids or []) if g]
+        items.append(
+            {
+                "rule": rule,
+                "gid": gids[0] if gids else None,
+                **({"gids": gids[:3]} if len(gids) > 1 else {}),
+                "constraints": [_clip(a), _clip(b)],
+                **{k: v for k, v in more.items() if v},
+            }
+        )
+
+    if stage == "size":
+        target = (result.get("size") or {}).get("target") or {}
+        want = "、".join(
+            f"{'宽' if k == 'width_mm' else '高'} {float(v):g} mm" for k, v in target.items()
+        )
+        for b in detail.get("blocking") or []:
+            gids = b.get("gids") or []
+            add(
+                b.get("id"),
+                gids,
+                f"目标图幅 {want or '期刊栏宽'}",
+                f"{b.get('id')} 不得{'恶化' if b.get('bucket') == 'worsened' else '新增'}"
+                + (f"（{b['text']}）" if b.get("text") else ""),
+                repair=b.get("repair"),
+            )
+    elif stage == "panel":
+        for b in detail.get("blocking") or []:
+            gids = b.get("gids") or []
+            c = change_for(gids) or (changes[0] if changes else None)
+            add(
+                b.get("id"),
+                gids,
+                made(c),
+                f"{b.get('id')} 不得{'恶化' if b.get('bucket') == 'worsened' else '新增'}",
+                prop=(c or {}).get("prop"),
+            )
+        for u in detail.get("unresolved") or []:
+            c = change_for([u.get("gid")], u.get("rule"))
+            add(
+                u.get("rule"),
+                [u.get("gid")],
+                f"规范要求 {u.get('rule')}",
+                "改完复检仍未消除",
+                prop=(c or {}).get("prop"),
+            )
+    elif stage == "recheck":
+        for i in (result.get("issues") or {}).get("introduced") or []:
+            if i.get("severity") not in ("error", "warn"):
+                continue
+            gids = i.get("gids") or []
+            c = change_for(gids) or (changes[0] if changes else None)
+            add(
+                i.get("id"),
+                gids,
+                made(c),
+                f"{i.get('id')}（{i.get('severity')}）不得新增"
+                + (f"：{i['text']}" if i.get("text") else ""),
+                prop=(c or {}).get("prop"),
+            )
+    for s in result.get("skipped") or []:
+        reason = s.get("reason")
+        if reason == "font_unavailable":
+            why = f"本机没有字体 {s.get('want') or '（规范要求的）'}"
+        else:
+            why = _SKIP_REASON_TEXT.get(str(reason), str(reason))
+        add(
+            s.get("rule"),
+            [s.get("gid")],
+            f"规范要求 {s.get('rule')}",
+            why,
+            want=s.get("want"),
+        )
+    for w in (detail.get("warnings") or [])[:2]:
+        # 基准图自己没能完整重放（unsupported）：没有元素可指，但要说清是哪个告警
+        add(None, [], "基准图要能完整重放", f"渲染告警：{_clip(w)}")
+    return items[:FIX_CONFLICTS_CAP]
+
+
 def fix_to_journal(
     session_id: str,
     *,
@@ -4572,8 +4692,16 @@ def _fix_run(
             return rule in named
         return include_suggestions or item["severity"] != "suggestion"
 
-    def fail(exit_code: str, **extra) -> bool:
+    def fail(exit_code: str, *, _changes: list | None = None, **extra) -> bool:
         result.update({"ok": False, "exit": exit_code, **extra})
+        if exit_code in FIX_CONFLICT_EXITS:
+            # 点名谁和谁冲突（ADR 0189 §3）：评测里 agent 只拿到一个 exit 码，只好去猜属性名
+            result["conflicts"] = _fix_conflicts(
+                result,
+                stage=extra.get("stage"),
+                changes=_changes if _changes is not None else list(result.get("changes") or []),
+                detail=extra.get("detail"),
+            )
         return False
 
     if previews:
@@ -4682,6 +4810,7 @@ def _fix_run(
                 "unresolved": (tx.get("unresolved") or [])[:10],
                 "warnings": tx.get("warnings") or [],
             },
+            _changes=list(tx.get("changes") or []),
         )
     final = list(tx["patches"]) if tx["ok"] else base1
     if session.patch_hash() != patchspec.patch_hash(final):
