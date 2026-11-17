@@ -76,6 +76,8 @@ export function guideBox(
   const ax = elements.find((e) => e.gid === ref.base)
   if (!ax) return null
   const pts: [number, number][] = []
+  // 能落墨的范围：整张图，网格线再加它自己的裁剪框（与上传侧 `_visible_geometry` 同一口径）
+  let lim: [number, number, number, number] = [0, 0, 1, 1]
   if (ref.kind === 'spine') {
     const sp = ax.spines?.[ref.key as 'left']
     // 线宽 0 / 透明（引擎记 stroke_pt: 0）与不可见一样：审阅侧不出这个目标，旧意见也不再挂上去
@@ -84,14 +86,21 @@ export function guideBox(
   } else {
     const g: ElementGeometry | undefined = ax[ref.kind]?.[ref.key as 'x' | 'y']
     for (const path of g?.paths ?? []) pts.push(...path.points)
+    if (g?.clip) {
+      const [cx, cy, cw, ch] = g.clip
+      lim = [Math.max(0, cx), Math.max(0, cy), Math.min(1, cx + cw), Math.min(1, cy + ch)]
+    }
   }
   if (pts.length === 0) return null
   const xs = pts.map((q) => q[0])
   const ys = pts.map((q) => q[1])
-  let x0 = Math.min(...xs)
-  let x1 = Math.max(...xs)
-  let y0 = Math.min(...ys)
-  let y1 = Math.max(...ys)
+  // 挪到图外（如 `set_position(('outward', 100))`）的线上传侧已经不出，这里也不能再认，
+  // 否则旧意见会落到面板框上一个不相干的位置
+  let x0 = Math.max(Math.min(...xs), lim[0])
+  let x1 = Math.min(Math.max(...xs), lim[2])
+  let y0 = Math.max(Math.min(...ys), lim[1])
+  let y1 = Math.min(Math.max(...ys), lim[3])
+  if (!(x1 >= x0 && y1 >= y0)) return null
   if (x1 - x0 < GUIDE_MIN_THICK) [x0, x1] = [x0 - GUIDE_MIN_THICK / 2, x1 + GUIDE_MIN_THICK / 2]
   if (y1 - y0 < GUIDE_MIN_THICK) [y0, y1] = [y0 - GUIDE_MIN_THICK / 2, y1 + GUIDE_MIN_THICK / 2]
   return [x0, y0, x1 - x0, y1 - y0]

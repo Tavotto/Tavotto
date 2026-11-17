@@ -27,8 +27,8 @@ describe('边框线 / 网格线 / 刻度线的合成 gid', () => {
   const els = [
     {
       gid: 'axes_0',
-      spines: { left: { visible: true, ticks: true, from: [0.1, 0.9], to: [0.1, 0.1] }, top: { visible: false, ticks: false, from: [0.1, 0.1], to: [0.9, 0.1] }, right: { visible: true, ticks: false, from: [0.9, 0.9], to: [0.9, 0.1], stroke_pt: 0 } },
-      grid: { x: line([[0.3, 0.9], [0.3, 0.1], [0.6, 0.1]]) },
+      spines: { left: { visible: true, ticks: true, from: [0.1, 0.9], to: [0.1, 0.1] }, top: { visible: false, ticks: false, from: [0.1, 0.1], to: [0.9, 0.1] }, right: { visible: true, ticks: false, from: [0.9, 0.9], to: [0.9, 0.1], stroke_pt: 0 }, bottom: { visible: true, ticks: true, from: [0.1, 1.2], to: [0.9, 1.2] } },
+      grid: { x: line([[0.3, 0.9], [0.3, 0.1], [0.6, 0.1]]), y: { ...(line([[0.95, 0.5], [0.99, 0.5]]) as object), clip: [0.1, 0.1, 0.8, 0.8] } },
       tickmarks: { y: line([[0.1, 0.5], [0.09, 0.5]]) },
     },
   ] as never
@@ -52,7 +52,8 @@ describe('边框线 / 网格线 / 刻度线的合成 gid', () => {
   it('数据没了 = null：隐藏的边、没开的网格、不存在的子图', () => {
     expect(guideBox(els, 'axes_0.spine_top')).toBeNull()
     expect(guideBox(els, 'axes_0.spine_right')).toBeNull() // visible 但线宽 0 / 透明：旧意见不再挂在看不见的线上
-    expect(guideBox(els, 'axes_0.ygrid')).toBeNull()
+    expect(guideBox(els, 'axes_0.spine_bottom')).toBeNull() // 挪到图外：上传侧已不出，这里也不认
+    expect(guideBox(els, 'axes_0.ygrid')).toBeNull() // 全在自己的裁剪框外
     expect(guideBox(els, 'axes_0.xtickmarks')).toBeNull()
     expect(guideBox(els, 'axes_9.spine_left')).toBeNull()
   })
