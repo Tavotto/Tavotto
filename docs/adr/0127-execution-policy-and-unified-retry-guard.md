@@ -151,3 +151,26 @@ D1 的授权边界（桌面用户发起）原本只拦「路由选的 native」�
 **决定（用户批准修法 A）**：把守卫原本「跳过」的项目内写 / 改名 / 删除改道进**本次运行的暂存覆盖层**（worker 会话目录下，运行结束丢弃），Python 层的读看到覆盖后的视图；用户项目一个字节不改。能一致呈现的操作不再算 material、不再触发回退。
 **不变**：覆盖层够不着的观察（`os.stat` / `listdir` / `scandir` / C 层读 / 子进程）仍按守卫账本的老规矩命中；覆盖层模拟不了的操作交回原守卫（跳过并记账）；`open('w')` 改写已有文件不拦的契约不变；0106 的数据改指、只读回退、输入观察器的安装顺序语义不变；native 的契约不变。
 细则：`docs/rules/backend/worker-protocol-and-lifecycle.md`「暂存覆盖层」；实现 `writetripwire.install_overlay`（复用 ADR 0143 改道层的视图实现）；看护 `tests/test_worker_overlay.py`。
+
+## 修订（2026-11-17）：MCP 打开图时同样静默回退 native 一次
+
+**起因**：agent 评测（opencode + DeepSeek v4.1 Flash，`tavotto_open_figure`）里，脚本先 `savefig("fig.png")` 再 `Image.open("fig.png")` 读回，safe 守卫拦下不落盘的 savefig，MCP 恒报
+`safe_file_operation_blocked`；同一个脚本在桌面上点「打开并运行」会静默换 native 出图。MCP 是 D1 明确排除的来源（`not_desktop_initiated`），agent 只能自己改脚本绕开。
+
+**裁决（维护者 2026-11-17）**：MCP 照桌面版做——`tavotto_open_figure`（含会话恢复时的重开）的 safe 渲染以 `safe_file_operation_blocked` 收场时，**静默**换 native 再跑一次，
+之后这条 MCP 会话的编辑 / 预览 / 导出都在那张 native 活图上。维护者已知并接受：native 没有 MCP 的写入根绊线（`writetripwire`，#898），回退之后脚本可写任意位置。
+
+**授权来源**：`execpolicy.decide_fallback(mcp_initiated=True)`。这个事实不来自任何请求体或模型参数：只有 MCP 桥在**自己的进程里**打开图时由桥的代码传入（HTTP 端点从不传它）。
+它与 `desktop_initiated` / `user_confirmed` 一样**只顶替第一道来源判据**；运维开关 `TAVOTTO_EXECUTION_FALLBACK`、项目的「只用安全运行」(`safe_only`)、取消 / 过期、
+「原因必须是 `blocked`」、单向、同一次运行至多一次、`MAX_ATTEMPTS_PER_RUN`——一道不少。解释器沿用 safe 当时那一个。
+
+**为什么可以放行**：safe 不是沙盒，绊线也不是（`writetripwire` 自己写明盲区）：MCP 的 safe 运行本来就以用户权限执行 agent 指向的任意 Python，`subprocess` / C 扩展都能写授权根之外。
+回退改变的是文件语义（savefig 真落盘、读得回来），不是权限边界。浏览器修订里「这道闸防的是模型给的参数 / MCP」那一条，针对的是**经 HTTP 替用户点确认**；本修订不开放那条路——HTTP 端点照旧 `not_desktop_initiated`，
+`confirm_native_run` 照旧只认页面 cookie。
+
+**如实告诉 agent**：回包带 `execution: "native"` 与回退原因；工具说明写明 native 运行没有写入范围限制。
+
+**不变的**：不新增 `native_run` MCP 工具、`tavotto_open_figure` 不加 `execution` 参数（agent 不能直接要 native，只能经 safe 被拦这一条证据）；CLI `tavotto run` 的确认合同不变；
+HTTP 显式 `execution: "native"` 的非桌面来源仍 403 `native_requires_desktop`；native 会话不进 safe 池的 LRU（淘汰 = 杀用户进程）。
+
+**实现分步**：本修订先落策略参数与看护；MCP 桥起 native 进程、会话字段与回包、关闭 / 驱逐 / 退出清理、会话恢复分后续 PR，各自更新 `docs/rules/plugin/` 与 `docs/rules/backend/preparation-and-receipts.md`。

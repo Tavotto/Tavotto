@@ -183,6 +183,40 @@ def test_desktop_initiation_defaults_to_false_and_wins_over_everything():
     assert execpolicy.decide_fallback(**{**kw, "enabled": False}).reason == "not_desktop_initiated"
 
 
+def test_mcp_origin_only_replaces_the_origin_gate():
+    """ADR 0127 修订 2026-11-17：MCP 桥自己打开图时可以回退，但开关 / 策略 / 原因 / 账本一道不少。"""
+    base = dict(
+        mode="compatible",
+        enabled=True,
+        ledger=_ledger_with_safe(),
+        cause_code=BLOCKED,
+        nxt=NATIVE,
+        mcp_initiated=True,
+    )
+    assert execpolicy.decide_fallback(**base).ok
+    for kw, reason in (
+        ({"enabled": False}, "fallback_disabled"),
+        ({"mode": "safe_only"}, "policy_safe_only"),
+        ({"cancelled": True}, "cancelled"),
+        ({"stale": True}, "plan_stale"),
+        ({"cause_code": "script_error"}, "not_blocked"),
+        ({"cause_code": "write_outside_roots"}, "not_blocked"),
+        ({"nxt": SAFE}, "native_to_safe"),
+    ):
+        d = execpolicy.decide_fallback(**{**base, **kw})
+        assert (d.ok, d.reason) == (False, reason), kw
+    ledger = _ledger_with_safe()
+    ledger.record("a2", NATIVE, cause=BLOCKED)
+    again = execpolicy.decide_fallback(**{**base, "ledger": ledger})
+    assert again.ok is False and again.reason in ("no_new_root_cause", "already_fell_back")
+
+
+def test_http_and_session_layers_never_claim_the_mcp_origin():
+    """`mcp_initiated` 只能由 MCP 桥在自己进程里传：sidecar 的 HTTP / 准备会话层一处都不许出现。"""
+    for rel in ("src/tavotto/app.py", "src/tavotto/engine/prepsession.py"):
+        assert "mcp_initiated" not in (ROOT / rel).read_text("utf-8"), rel
+
+
 def test_kill_switch_and_safe_only_win_over_everything_else():
     assert _decide(enabled=False, mode="safe_only", cancelled=True).reason == "fallback_disabled"
     assert _decide(mode="safe_only", cancelled=True).reason == "policy_safe_only"

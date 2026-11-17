@@ -439,6 +439,7 @@ def decide_fallback(
     stale: bool = False,
     desktop_initiated: bool = False,
     user_confirmed: bool = False,
+    mcp_initiated: bool = False,
 ) -> Decision:
     """safe 尝试以 `cause_code` 收场之后，要不要立刻用 `nxt`（native）再来一次。纯函数（读账本快照）。
 
@@ -447,8 +448,11 @@ def decide_fallback(
     `user_confirmed`（ADR 0127 修订 2026-10-30）：浏览器模式里用户在失败卡上点了「允许并运行」——调用方（prepsession）
     只在服务端核到「会话 cookie 认证 + 一次性确认 token 对得上」之后才传 True。它**只**顶替第一道来源判据，
     其余（开关 / 策略 / 取消 / 过期 / 原因 / 账本闸门）一道不少：「只用安全运行」与运维开关照样否决，
-    与桌面回退共用同一本账，所以一次运行里 native 回退至多一次。"""
-    if not (desktop_initiated or user_confirmed):
+    与桌面回退共用同一本账，所以一次运行里 native 回退至多一次。
+
+    `mcp_initiated`（ADR 0127 修订 2026-11-17）：MCP 桥在**自己的进程里**打开图（`tavotto_open_figure` / 会话恢复），由桥的代码传入，
+    不来自请求体、不经 HTTP。同样**只**顶替第一道来源判据，其余闸门一道不少。"""
+    if not (desktop_initiated or user_confirmed or mcp_initiated):
         return Decision(
             False, REASON_NOT_DESKTOP
         )  # D1 只授权桌面用户主动发起的运行：默认 fail closed
