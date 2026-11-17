@@ -705,3 +705,28 @@ describe('project saves return immutable Figure references', () => {
     expect(written).toHaveLength(1)
   })
 })
+
+
+describe('保存目标确认后的恢复出口', () => {
+  it('同一文档改绑后打开载入流程，保留当前内容与较晚绑定', async () => {
+    const { captureSaveContext, openSavedDocumentAction } = await import('./saveContext')
+    bind(); edit('t1')
+    const ctx = captureSaveContext(), before = s().doc
+    bind({ name: '排版二', file: 'tavottofile/排版二.json', revision: 'rev-b' })
+    useUiStore.getState().setLayoutOpen(false)
+    openSavedDocumentAction(ctx).run()
+    expect(useUiStore.getState().layoutOpen).toBe(true)
+    expect(useUiStore.getState().layoutIntent).toBe('load')
+    expect(s().doc).toBe(before)
+    expect(s().projectFile?.file).toBe('tavottofile/排版二.json')
+  })
+  it('切项目后不把旧通知的恢复动作施加到新项目', async () => {
+    const { captureSaveContext, openSavedDocumentAction } = await import('./saveContext')
+    bind()
+    const ctx = captureSaveContext(), before = s().doc
+    setCurrentProjectId('pjB'); useUiStore.getState().setLayoutOpen(false)
+    openSavedDocumentAction(ctx).run()
+    expect(useUiStore.getState().layoutOpen).toBe(false)
+    expect(s().doc).toBe(before)
+  })
+})

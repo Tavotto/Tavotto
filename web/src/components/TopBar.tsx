@@ -679,6 +679,7 @@ export function DocumentMenu() {
   const { t } = useTranslation('workspace')
   const name = useDocumentStore((s) => s.projectMeta.name)
   const documentId = useDocumentStore((s) => s.documentId)
+  const format = useDocumentStore((s) => s.documentFormat)
   const recentDocs = useDocumentStore((s) => s.recentDocs)
   const projectFile = useActiveProjectFile()
   const [editing, setEditing] = useState(false)
@@ -690,8 +691,8 @@ export function DocumentMenu() {
   useEffect(() => setDraft(name), [name])
 
   const recent = useMemo(
-    () => recentDocs.filter((r) => r.id !== documentId),
-    [recentDocs, documentId],
+    () => recentDocs.filter((r) => r.id !== documentId || (r.format ?? 'legacy') !== format),
+    [recentDocs, documentId, format],
   )
 
   if (editing) {
@@ -774,7 +775,7 @@ export function DocumentMenu() {
       <MenuItem onSelect={() => useUiStore.getState().setLayoutOpen(true, 'load')}>
         {t('topbar.openDocument')}
       </MenuItem>
-      <MenuItem onSelect={() => void exportPackage()}>{t('topbar.exportPackage')}</MenuItem>
+      <MenuItem data-export-package onSelect={() => void exportPackage()}>{t('topbar.exportPackage')}</MenuItem>
       <MenuItem onSelect={importPackage}>{t('topbar.importPackage')}</MenuItem>
 
       <MenuSeparator />
@@ -784,7 +785,7 @@ export function DocumentMenu() {
       ) : (
         recent.map((r) => (
           <MenuItem
-            key={r.id}
+            key={JSON.stringify([r.format ?? 'legacy', r.id])}
             onSelect={() => void openRecentEntry(r)}
             shortcut={formatTime(r.savedAt)}
           >

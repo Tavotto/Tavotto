@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { formatMessage, msg } from '@/i18n'
 import { usePalette } from '@/components/CommandPalette'
+import { canEditPanel } from '@/lib/panelEditability'
 import { handleCopyEvent, handlePasteEvent } from '@/lib/clipboard'
 import {
   beginCrop,
@@ -353,7 +354,7 @@ export function useKeyboard() {
             ui.setEditingText(obj.id)
           } else if (obj?.type === 'panel') {
             e.preventDefault()
-            if (obj.script) enterElementEdit(obj.id)
+            if (canEditPanel(obj)) enterElementEdit(obj.id)
             else beginCrop(obj.id)
           }
         }

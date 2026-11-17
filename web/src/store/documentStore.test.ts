@@ -1,7 +1,7 @@
 import { formatMessage, literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { emptyProject } from '@/types/document'
-import type { TextObject } from '@/types/document'
+import type { PanelObject, ProjectDocument, TextObject } from '@/types/document'
 import { setTelemetryEnabled } from '@/lib/telemetry'
 import {
   discardLocalCopy,
@@ -105,6 +105,83 @@ describe('多画布数据层', () => {
     expect(pd.schema).toBe(3)
     expect(pd.canvases[0].objects).toHaveLength(1)
     expect(pd.activeCanvasId).toBe(s().activeCanvasId)
+  })
+
+  it('来源file/scene变化清ref并与同一笔撤销重做往返，无关编辑和坏ref不降legacy', () => {
+    const s = () => useDocumentStore.getState()
+    const source = { schema: 1, sourceId: 'saved.svg', bytesSha256: 'a'.repeat(64), sizeBytes: 100, sceneDigest: 'd'.repeat(64) }
+    const p = { id: 'chart', type: 'panel', fileId: 'saved.svg', fileKind: 'svg',
+      x: 0, y: 0, w: 80, h: 60, nativeW: 80, nativeH: 60, overrides: [], chartSource: source,
+      chart: { model: { scene_digest: source.sceneDigest }, binding: { scene_digest: source.sceneDigest } } } as unknown as PanelObject
+    s().commit(literal('装来源'), (d) => { d.objects.push(p) })
+    s().commit(literal('改样式'), (d) => { (d.objects[0] as PanelObject).overrides.push({ gid: 's', prop: 'color', value: '#f00' }) })
+    expect(s().doc.objects[0]).toHaveProperty('chartSource', source)
+    s().commit(literal('换文件'), (d) => { (d.objects[0] as PanelObject).fileId = 'other.svg' })
+    expect(s().doc.objects[0]).not.toHaveProperty('chartSource')
+    s().undo()
+    expect(s().doc.objects[0]).toHaveProperty('chartSource', source)
+    s().redo()
+    expect(s().doc.objects[0]).not.toHaveProperty('chartSource')
+    s().undo()
+    s().commit(literal('坏引用原样恢复'), (d) => { (d.objects[0] as PanelObject).chartSource = null as unknown as PanelObject['chartSource'] }, { overrides: 'restored' })
+    s().commit(literal('挪页面'), (d) => { d.objects[0].x += 2 })
+    expect(s().doc.objects[0]).toHaveProperty('chartSource', null)
+  })
+
+  it.each([
+    { name: '重复canvasId', id: 'same-canvas' },
+    { name: '缺失canvasId', id: undefined },
+    { name: '空canvasId', id: '' },
+  ])('buildProject只替换安装时的首个活动位置：$name不覆盖另一张已有画布', async ({ id }) => {
+    const pd = emptyProject()
+    const base = pd.canvases[0]
+    pd.canvases = [
+      { ...base, id, name: 'A', objects: [text('same-object', 'A')] },
+      { ...base, id, name: 'B', objects: [text('same-object', 'B')], guides: [{ axis: 'x', pos: 12 }] },
+    ] as unknown as ProjectDocument['canvases']
+    pd.activeCanvasId = id as string
+    const original = structuredClone(pd)
+    const s = () => useDocumentStore.getState()
+    expect(await s().switchDocument(pd, 'd_repeated_canvas')).toBe(true)
+    expect((s().doc.objects[0] as TextObject).text, '安装权威本来就是首个find的位置').toBe('A')
+    s().commit(literal('编辑活动A'), (d) => {
+      const activeText = d.objects[0] as TextObject
+      activeText.text = 'A edited'
+      d.name = 'A edited'
+    })
+    const nonActive = s().canvases[1]
+    const saved = s().buildProject()
+    expect(saved.canvases.map((c) => c.name)).toEqual(['A edited', 'B'])
+    expect(saved.canvases.map((c) => (c.objects[0] as TextObject).text)).toEqual(['A edited', 'B'])
+    expect(saved.canvases.map((c) => c.id)).toEqual([id, id])
+    expect(saved.canvases.map((c) => c.objects[0].id)).toEqual(['same-object', 'same-object'])
+    expect(saved.canvases[1]).toBe(nonActive)
+    expect(pd).toEqual(original)
+    await saveNow()
+    const disk = JSON.parse(diskSlots.get('d_repeated_canvas')!) as ProjectDocument
+    expect(disk.canvases.map((c) => (c.objects[0] as TextObject).text)).toEqual(['A edited', 'B'])
+    expect(disk.canvases[1]).toEqual(JSON.parse(JSON.stringify(original.canvases[1])))
+  })
+
+  it('正常唯一ID文档仍在原顺序汇总中间活动画布，其他画布保持原引用与内容', async () => {
+    const pd = emptyProject()
+    const base = pd.canvases[0]
+    pd.canvases = ['A', 'B', 'C'].map((name) => ({
+      ...base, id: name, name, objects: [text(`text-${name}`, name)],
+    }))
+    pd.activeCanvasId = 'B'
+    const s = () => useDocumentStore.getState()
+    expect(await s().switchDocument(pd, 'd_normal_canvas')).toBe(true)
+    s().commit(literal('编辑B'), (d) => { (d.objects[0] as TextObject).text = 'B edited' })
+    const before = s().canvases
+    const saved = s().buildProject()
+    expect(saved.schema).toBe(3)
+    expect(saved.project).toEqual(pd.project)
+    expect(saved.activeCanvasId).toBe('B')
+    expect(saved.canvases.map((c) => c.id)).toEqual(['A', 'B', 'C'])
+    expect(saved.canvases.map((c) => (c.objects[0] as TextObject).text)).toEqual(['A', 'B edited', 'C'])
+    expect(saved.canvases[0]).toBe(before[0])
+    expect(saved.canvases[2]).toBe(before[2])
   })
 
   it('duplicateCanvas 换新全部对象/成组 id', () => {

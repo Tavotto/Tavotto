@@ -38,7 +38,8 @@ import {
   unhideElement,
 } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
-import { renderKeyOf, usePanelDisplayManifest, usePanelRender } from '@/store/renderStore'
+import { canEditPanel } from '@/lib/panelEditability'
+import { renderKeyOf, usePanelDisplayManifest, usePanelRender, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { pngRefusalOf, usePngAdmissionMemory } from '@/store/pngAdmissionMemory'
 import { rebuildEditableFromScript } from '@/store/pngRebuild'
@@ -264,12 +265,15 @@ export function ElementTree({ chrome = 'drawer' }: { chrome?: 'drawer' | 'bare' 
   const elementPanelId = useUiStore((s) => s.elementPanelId)
   const selectedIds = useSelectionStore((s) => s.ids)
   const objects = useDocumentStore((s) => s.doc.objects)
+  const editableKey = useRenderStore(s => JSON.stringify(objects.filter(
+    (o): o is PanelObject => o.type === 'panel' && canEditPanel(o, s),
+  ).map(o => o.id)))
 
   // 目标面板：正在图内编辑的优先，其次画布上选中的 可参数化面板
   const panel = useMemo(() => {
     const byId = (id: string | null) => {
       const o = id ? objects.find((x) => x.id === id) : undefined
-      return o?.type === 'panel' && o.script ? o : null
+      return o?.type === 'panel' && (o.script || o.chart) ? o : null
     }
     return byId(elementPanelId) ?? byId(selectedIds.at(-1) ?? null)
   }, [objects, elementPanelId, selectedIds])
@@ -285,7 +289,8 @@ export function ElementTree({ chrome = 'drawer' }: { chrome?: 'drawer' | 'bare' 
      * 对象，把人送去素材。此前不分这两种、也不给下一步，只有一句「选中一个可参数
      * 化面板」——「参数化」是实现词，用户读不出该做什么。
      */
-    const editable = objects.filter((o): o is PanelObject => o.type === 'panel' && !!o.script)
+    const ids = new Set<string>(JSON.parse(editableKey))
+    const editable = objects.filter((o): o is PanelObject => o.type === 'panel' && ids.has(o.id))
     if (editable.length === 0) {
       return (
         // 画布上一张可编辑的图都没有：纯占位，不配动作（起步动作只有画布中央的「添加图」，审计 T03）

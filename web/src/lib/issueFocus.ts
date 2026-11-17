@@ -29,6 +29,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { cancelArtifactEntry } from '@/lib/artifactValidation'
+import { canEditPanel } from '@/lib/panelEditability'
 import { useWorkspaceStore } from '@/store/workspace'
 import { problemContextNow } from './problemContext'
 import {
@@ -134,7 +135,7 @@ function focusObjectInner(ref: ObjectRef, propertyPath?: string | null): FocusOu
   if (!obj) return { ok: false, reason: 'object_deleted' }
 
   if (ref.gid) {
-    if (obj.type !== 'panel' || !obj.script) return { ok: false, reason: 'not_editable' }
+    if (obj.type !== 'panel' || !canEditPanel(obj)) return { ok: false, reason: 'not_editable' }
     // 图内元素：图内编辑是单图 / 排版两条工作流共有的子状态；模式不在这里定（画布上只有这一张就是单图编辑，
     // 有别的图就留在排版里进图内编辑），由图数推出（ADR 0028）
     ui.setTool('select')

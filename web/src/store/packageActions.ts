@@ -14,16 +14,41 @@ import { useUiStore } from './uiStore'
  * 不是一张图，和「导出这张图」放在同一个弹窗里让两件事互相冒充。搬走
  * 不等于砍掉——导入就在下面一行，一进一出终于在同一个菜单里。
  */
+/** 同一份文档连点两次导出：先发回执不许覆盖后发那次的结局。 */
+let packageExportSequence = 0
+
 export async function exportPackage(attempt = 0): Promise<void> {
   const ui = useUiStore.getState()
   const doc = useDocumentStore.getState()
   // 「再试一次」只重做**这一份**排版的导出：点的时候换了项目 / 排版就只收提示，不把别的东西打成包
+  const sequence = ++packageExportSequence
   const documentId = doc.documentId
+  const documentFormat = doc.documentFormat
+  const loadSeq = doc.loadSeq
   const projectId = currentProjectId()
+  const stillHere = () => {
+    const now = useDocumentStore.getState()
+    return sequence === packageExportSequence
+      && now.documentId === documentId && now.documentFormat === documentFormat
+      && now.loadSeq === loadSeq && currentProjectId() === projectId
+  }
   try {
-    const res = await createPackage(doc.projectMeta.name || doc.doc.name, doc.buildProject(), {})
-    ui.setStatus(msg('status.packaged', { name: res.name, count: res.assets }, 'workspace'), 'done')
+    const document = structuredClone(doc.buildProject())
+    const stem = doc.projectMeta.name || doc.doc.name
+    // v4 文档写计算图表包；旧排版写 schema 2/3 的包。同一个端点，按提交文档的 schema 分流。
+    const res = doc.documentFormat === 'v4'
+      ? await createPackage(stem, document, {}, { format: 'v4', pj: projectId })
+      : await createPackage(stem, document, {})
+    if (!stillHere()) return
+    const executionIncomplete = doc.documentFormat === 'v4' && res.execution_coverage?.state === 'incomplete'
+    const message = doc.documentFormat === 'v4' && res.missing.length > 0
+      ? msg(executionIncomplete ? 'status.packagedIncompleteWithExecution' : 'status.packagedIncomplete', { name: res.name, count: res.missing.length }, 'workspace')
+      : executionIncomplete
+        ? msg('status.packagedExecutionIncomplete', { name: res.name }, 'workspace')
+        : msg('status.packaged', { name: res.name, count: res.assets }, 'workspace')
+    ui.setStatus(message, 'done')
   } catch (e) {
+    if (!stillHere()) return
     ui.setStatus(
       msg(
         'status.packageFailed',

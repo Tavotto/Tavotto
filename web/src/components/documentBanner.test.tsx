@@ -130,4 +130,16 @@ describe('文档冲突的三个出口', () => {
     await answer(true)
     expect(overwriteDisk).not.toHaveBeenCalled()
   })
+
+  it.each(['format', 'loadSeq'] as const)('旧确认框期间同id的%s已变，不能覆盖后来的安装', async field => {
+    const before = useDocumentStore.getState()
+    const item = await overwrite()
+    await act(async () => item.click())
+    act(() => useDocumentStore.setState(field === 'format'
+      ? { documentFormat: before.documentFormat === 'v4' ? 'legacy' : 'v4' }
+      : { loadSeq: before.loadSeq + 1 }))
+    await answer(true)
+    expect(overwriteDisk).not.toHaveBeenCalled()
+    act(() => useDocumentStore.setState({ documentFormat: before.documentFormat, loadSeq: before.loadSeq }))
+  })
 })

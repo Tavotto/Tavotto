@@ -679,6 +679,44 @@ def test_frontend_and_backend_agree_on_the_current_schema():
     assert int(match.group(1)) == documents.SCHEMA_CURRENT
 
 
+def test_frontend_and_backend_agree_on_the_chart_schema():
+    """`documents.SCHEMA_CHART_PROJECT` ↔ `web/src/types/document.ts` 同名常量（#1921）。"""
+    import re
+
+    src = Path(__file__).resolve().parents[1] / "web" / "src" / "types" / "document.ts"
+    match = re.search(r"export const SCHEMA_CHART_PROJECT = (\d+)", src.read_text(encoding="utf-8"))
+    assert match, "web/src/types/document.ts 里找不到 SCHEMA_CHART_PROJECT"
+    assert int(match.group(1)) == documents.SCHEMA_CHART_PROJECT
+
+
+def test_frontend_and_backend_agree_on_the_chart_document_format():
+    """`documentformat.CHART4` ↔ `web/src/lib/documentFormat.ts` 的 `DocumentFormat` 联合。"""
+    import re
+
+    from tavotto.engine import documentformat
+
+    src = Path(__file__).resolve().parents[1] / "web" / "src" / "lib" / "documentFormat.ts"
+    match = re.search(r"export type DocumentFormat = ([^\n]+)", src.read_text(encoding="utf-8"))
+    assert match, "web/src/lib/documentFormat.ts 里找不到 DocumentFormat"
+    members = set(re.findall(r"'([^']+)'", match.group(1)))
+    assert members == {documentformat.LEGACY, documentformat.CHART4}
+
+
+def test_frontend_and_backend_agree_on_the_package_envelope():
+    """`brand.PACKAGE_KIND` / `PACKAGE_EXT` ↔ `web/src/lib/brand.ts` 同名常量（#1921）。"""
+    import re
+
+    from tavotto.engine import brand
+
+    src = Path(__file__).resolve().parents[1] / "web" / "src" / "lib" / "brand.ts"
+    text = src.read_text(encoding="utf-8")
+    kind = re.search(r"export const PACKAGE_KIND = '([^']+)'", text)
+    ext = re.search(r"export const PACKAGE_EXT = '([^']+)'", text)
+    assert kind and ext, "web/src/lib/brand.ts 里找不到 PACKAGE_KIND / PACKAGE_EXT"
+    assert kind.group(1) == brand.PACKAGE_KIND
+    assert ext.group(1) == brand.PACKAGE_EXT
+
+
 # ------------------- 「另存为」的外部修改检测（issue #222 §1） ----------------
 #
 # 改造前 `POST /api/layouts/<name>` 只有 `validate_document` + 原子写：两个窗口

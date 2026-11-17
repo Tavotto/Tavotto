@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button'
 import { ColorField, NumberField } from '@/components/ui/Input'
 import { Tip } from '@/components/ui/Tooltip'
 import { isContentFit, fitContentCrop } from '@/lib/panelEdgeCrop'
+import { useCanEditPanel } from '@/lib/panelEditability'
 import {
   beginCrop,
   enterElementEdit,
@@ -84,6 +85,7 @@ export function CanvasTextQuick({ objs, compact }: { objs: TextObject[]; compact
 }
 
 function PanelObjectActions({ obj }: { obj: PanelObject }) {
+  const editable = useCanEditPanel(obj)
   // 这张图在**项目里**的接入状态（`/api/panels` 的投影，与就绪度同一次计算）。
   // runtime 面板不在就绪度的 id 空间里（ADR 0013），拿不到也不该有。
   const cap = useAssetStore((s) => s.byId[obj.fileId]?.capability)
@@ -91,12 +93,12 @@ function PanelObjectActions({ obj }: { obj: PanelObject }) {
   // 编辑入口（文档记着的），`cap.status !== 'editable'` = 项目里它确实还没连上
   // （后端说的）。只看后者的话，派生同步还没跑完的那一瞬间会同时出现
   // 「编辑图内元素」与「为什么不能编辑？」两个按钮。
-  const explainable = !obj.script && !!cap && cap.status !== 'editable'
+  const explainable = !editable && !!cap && cap.status !== 'editable'
   return (
     <div className="flex items-center gap-1">
       {/* 单图编辑：画布尺寸与留白（ADR 0161）；排版里不挂 */}
       <FrameQuick obj={obj} />
-      {obj.script && (
+      {editable && (
         <Button size="md" onClick={() => { void enterElementEdit(obj.id) }}>
           <Pencil size={ICON_SIZE.sm} />
           {translate('panel.editElements', { ns: 'inspector' })}

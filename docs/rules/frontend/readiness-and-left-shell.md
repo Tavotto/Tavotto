@@ -342,6 +342,8 @@ order: 240
   `envStore.setWorkdirMode(mode, {confirmed:true})`（与原对话框同一次 PATCH），会话随 `envStore` 订阅只读地 `recheck`，**不运行**；
   按钮说「用项目根目录」之类，不说「运行」（原对话框同改为「用这个目录」）。缺数据仍交 `envStore.requestMissingInput`；
   确认模式下的环境候选用 `envStore.adoptCandidate`。作答后**绝不认领 `run`**。
+- **随图输入选择也沿原卡**：`InputDeclarationControls` 放在准备卡折叠详情，仅显式展开时读取冻结声明 scope、整库 CAS 和已批准输入位置。参数草稿变化先用原检查流程得到新 scope，前端不算 rc_ID/cwd。picker/精确路径经后端核项目相对 ID，外部 file/prefix 只勾选原批准规则，不为临时选择调用立即生效的 addInputRemap。草稿不写文档/历史；取消零设置写，保存只沿原 recheck，不创建运行意图。409/503、同 scope 重查保留本地增删，异 scope 保稿但失去保存资格；项目代际、会话/配置及请求序号挡迟到。封存摘要只读后端实际 capture，草稿变化或保存后不能沿用旧摘要表示新选择已执行。看护 `InputDeclarationControls.test.tsx`、`api.inputDeclarations.test.ts` 及原 `PreparationCard.test.tsx`。
+  原脚本菜单的输入入口用 `open(..., {run:false})`，已确认运行目录、无准备条目的项目也能先设置输入。原“继续”改参数会暂时令 report=null，卡体以局部 checkpoint 保临时输入草稿，不保旧 report 作新事实；恢复后旧 scope 保稿且禁写，显式重读后才可采用新范围。取消/明确折叠清 checkpoint，项目代际失效不恢复。显示封存摘要还须同次声明行的非空 selection_revision 与冻结 context 相等，且 context 的已知 input_remap_generation 与实际读取批准表的 generation 相等；仅草稿等于当前行不足以证明当前选择及目标执行过。看护 `ScriptLibrary.inputDeclarations.test.tsx` 及原卡的 report=null 集成路径。
 - **自动进入编辑 + 只开一个标签页**（V2 PR4）：认领过「打开并运行」的条目带 `armed` 记号（只是这个窗口里的用户意图记号，不是后端事实）；会话
   `completed` 且恰好捕获一张图时由 `store/prepEnterEdit.enterEdit` 自动进入编辑（与卡片上「进入编辑」是同一份实现）；**只在用户正看着这张卡时**（聚焦且展开）——
   放到后台（角标）/ 收起 / 切去看别的卡之后他可能正在编辑别的图，不抢工作区，角标上仍有「进入编辑」；多张图要用户挑、这次替换掉了旧图名（`unlinked_stems`，恢复提示要看见）、

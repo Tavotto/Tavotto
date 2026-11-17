@@ -1,5 +1,7 @@
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
+
+import { useChartBindStore } from '@/store/chartBindStore'
 import {
   ArrowDownToLine,
   ArrowLeftRight,
@@ -88,6 +90,7 @@ import { openArrangeInInspector } from './context-bar/openArrange'
 import type { CanvasObject, PanelObject } from '@/types/document'
 import { objectLabel, panelRotation } from '@/types/document'
 import { isAdoptedPanel } from '@/lib/artifactValidation'
+import { useCanEditPanel } from '@/lib/panelEditability'
 
 /**
  * 画布对象的右键菜单（Prompt 18）。
@@ -133,11 +136,12 @@ export function ObjectContextMenu({
   at: { x: number; y: number }
   close: () => void
 }) {
-  useTranslation('workspace')
+  const { t } = useTranslation('workspace')
   useTranslation('inspector')
   const objects = useDocumentStore((s) => s.doc.objects)
   const ids = useSelectionStore((s) => s.ids)
   const obj = objects.find((o) => o.id === id)
+  const editable = useCanEditPanel(obj?.type === 'panel' ? obj : null)
   // 顺序 = 选择顺序（末位主选），与浮动栏 / OverlaySvg 同一份判据
   const selected = ids
     .map((sid) => objects.find((o) => o.id === sid))
@@ -153,7 +157,7 @@ export function ObjectContextMenu({
     : multi
       ? 'multi'
       : obj.type === 'panel'
-        ? obj.script
+        ? editable
           ? 'panel'
           : 'panel-layout-only'
         : obj.type === 'text'
@@ -203,6 +207,17 @@ export function ObjectContextMenu({
 
       {kind === 'panel' && <EditablePanelItems panel={obj as PanelObject} run={run} runAsync={runAsync} />}
       {kind === 'panel-layout-only' && <LayoutOnlyPanelItems panel={obj as PanelObject} run={run} />}
+      {(obj as PanelObject).fileKind === 'svg' && (
+        <MenuItem
+          icon={Pencil}
+          data-quick-item="bind-chart"
+          onSelect={run(() =>
+            useChartBindStore.getState().openFor(obj as PanelObject),
+          )}
+        >
+          {t('workspace:chartBind.menu')}
+        </MenuItem>
+      )}
       {kind === 'text' && (
         <MenuItem
           icon={Pencil}
@@ -244,9 +259,9 @@ function EditablePanelItems({
       <MenuItem icon={Pencil} data-quick-item="edit-elements" onSelect={run(() => enterElementEdit(panel.id))}>
         {qe('editElements')}
       </MenuItem>
-      <MenuItem icon={RefreshCw} data-quick-item="rebuild" onSelect={runAsync(() => rebuildPanel(panel.id))}>
+      {panel.script && <MenuItem icon={RefreshCw} data-quick-item="rebuild" onSelect={runAsync(() => rebuildPanel(panel.id))}>
         {qe('rebuild')}
-      </MenuItem>
+      </MenuItem>}
       <CropItem panelId={panel.id} rotated={rotated} run={run} />
       <FitItem panelId={panel.id} run={run} />
       {(edits > 0 || isAdoptedPanel(panel)) && (

@@ -91,31 +91,41 @@ export function DirBrowser({
    * 以前下一帧就挪，响应慢于一帧时焦点落在旧目录的行上，随后那一行被换掉，焦点掉出清单）。
    */
   const focusFirstOnLand = useRef(false)
+  const navSequence = useRef(0)
+  const [readySequence, setReadySequence] = useState<number | null>(null)
 
-  const nav = async (path?: string, opts?: { focusFirst?: boolean }): Promise<boolean> => {
+  const nav = async (path?: string, opts?: { focusFirst?: boolean }): Promise<'landed' | 'failed' | 'superseded'> => {
+    const mine = ++navSequence.current
+    setReadySequence(null)
     try {
       const next = await browseDirs(path)
+      if (mine !== navSequence.current) return 'superseded'
       if (opts?.focusFirst) focusFirstOnLand.current = true
       setState(next)
       setActive(0)
       setError(null)
       setNearest(null)
       if (!editingPath.current) setPathText(next.is_roots ? '' : next.path)
-      return true
+      setReadySequence(mine)
+      return 'landed'
     } catch (e) {
+      if (mine !== navSequence.current) return 'superseded'
       setError(backendErrorText(e))
       // 后端在「路径不存在」时附带最近的存在祖先，给一个一键跳转——
       // 手输路径打错一个字符不该只换来一句死报错
       const hint = e instanceof ApiError ? e.body.nearest : null
       setNearest(typeof hint === 'string' ? hint : null)
-      return false
+      return 'failed'
     }
   }
 
   useEffect(() => {
-    void nav(initialPath).then((ok) => {
-      if (!ok && fallbackPath) void nav(fallbackPath)
+    const opening = nav(initialPath)
+    const openingSequence = navSequence.current
+    void opening.then(result => {
+      if (result === 'failed' && openingSequence === navSequence.current && fallbackPath) void nav(fallbackPath)
     })
+    return () => { navSequence.current += 1 }
     // 只在打开时定位一次：之后的位置由用户的导航决定，不该被 props 拉回去
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -124,6 +134,7 @@ export function DirBrowser({
   // 上面那个目录之外（评审 #299-2）。判据只有 `checkProjectName` 一份。
   const nameProblem = mode === 'create' ? checkProjectName(name) : null
   const createDisabled = mode === 'create' && nameProblem !== null
+  const navigationReady = readySequence !== null && readySequence === navSequence.current
   const target = state?.is_roots ? '' : (state?.path ?? '')
   const dirs = state?.dirs ?? []
   const isCurrent = (d: DirEntry) => {
@@ -200,9 +211,9 @@ export function DirBrowser({
             variant="primary"
             size="lg"
             data-dir-browser-confirm
-            disabled={!target || createDisabled}
+            disabled={!target || createDisabled || !navigationReady}
             onClick={() => {
-              if (!target) return
+              if (!target || !navigationReady || readySequence !== navSequence.current) return
               onPick(mode === 'create' ? `${target}/${name}` : target, mode === 'create')
             }}
           >
@@ -251,6 +262,8 @@ export function DirBrowser({
           <TextInput
             value={pathText}
             onChange={(e) => {
+              navSequence.current += 1
+              setReadySequence(null)
               editingPath.current = true
               setPathText(e.target.value)
             }}

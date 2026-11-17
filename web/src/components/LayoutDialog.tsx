@@ -1,3 +1,4 @@
+import { documentAddressKey, type DocumentFormat } from '@/lib/documentFormat'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { literal, msg } from '@/i18n'
@@ -21,12 +22,13 @@ import {
 import { normalizeLayout, tooNewSchema } from '@/lib/migrate'
 import { cn } from '@/lib/utils'
 import { openLayoutDocument } from '@/store/actions'
-import { captureFigureSnapshotSave, mergeSavedFigureSnapshots, projectFileSnapshot, getWindowHold, setProjectFile, suspendAutosaveFor, useDocumentStore } from '@/store/documentStore'
+import { captureChartSourceSave, mergeSavedChartSources, captureFigureSnapshotSave, mergeSavedFigureSnapshots, projectFileSnapshot, getWindowHold, setProjectFile, suspendAutosaveFor, useDocumentStore, prepareProjectFileSave, finishProjectFileSave, cancelPreparedProjectFile, retryProjectFileConfirmation } from '@/store/documentStore'
 import { installFork, resumeAutosaveAfterFork } from '@/store/documentFork'
 import { useProjectStore } from '@/store/projectStore'
-import { captureSaveContext, ifStillCurrent, stillCurrent } from '@/store/saveContext'
+import { captureSaveContext, ifStillCurrent, openSavedDocumentAction, stillCurrent } from '@/store/saveContext'
 import { useUiStore } from '@/store/uiStore'
 import { dirTail } from '@/lib/pathDisplay'
+import { currentProjectId } from '@/lib/session'
 import { FormRow } from './FormRow'
 import { emitLayoutSaved } from '@/lib/layoutSaved'
 import { LayoutRecover } from './LayoutRecover'
@@ -66,6 +68,7 @@ export function LayoutDialog() {
    * 存成 `tavottofile/Figure 1.json` 的话项目里每一份排版都叫这个。⌘S 写回撞上冲突时
    * 预填绑定的那个文件名（`layoutName`）。
    */
+  const format = useDocumentStore((s) => s.documentFormat)
   const layoutName = useDocumentStore((s) => s.projectMeta.name)
   const presetName = useUiStore((s) => s.layoutName)
   const presetConflict = useUiStore((s) => s.layoutConflict)
@@ -76,7 +79,10 @@ export function LayoutDialog() {
    * 界面自己拼一个路径就是把它抄成了第二份，而「旧位置只读兼容」「没打开
    * 项目时退回数据目录」这两条分支抄不过去。
    */
-  const documentDir = useProjectStore((s) => s.project?.document_dir)
+  const legacyDocumentDir = useProjectStore((s) => s.project?.document_dir)
+  const projectKey = useProjectStore((s) => s.project?.id ?? null)
+  const [chartDocumentDir, setChartDocumentDir] = useState<string | null>(null)
+  const documentDir = format === 'v4' ? chartDocumentDir : legacyDocumentDir
 
   const intent = useUiStore((s) => s.layoutIntent)
   const toProject = intent === 'saveToProject'
@@ -84,6 +90,7 @@ export function LayoutDialog() {
   /** 另存为 = 分叉成一份新排版（新 documentId） */
   const fork = intent === 'save'
   const [names, setNames] = useState<string[]>([])
+  const [entries, setEntries] = useState<{ name: string; format: DocumentFormat; modified?: number }[]>([])
   /** 每份的修改时间（epoch 秒）；老后端没有这个字段 = 空表，行上不写日期 */
   const [modified, setModified] = useState<Record<string, number>>({})
   /** 清单取不回来：加载错误放在正文顶部（与保存失败分开，那个放在页脚上方） */
@@ -115,13 +122,28 @@ export function LayoutDialog() {
     setConflict(presetConflict)
     // 另存那一屏也要这份清单：撞名的裁决在后端，但「这个名字已经有了」
     // 要在用户按下按钮之前就说
-    fetchLayoutList()
-      .then((r) => {
-        setNames(r.names)
-        setModified(r.modified)
+    let live = true
+    const listPj = currentProjectId()
+    setChartDocumentDir(null)
+    const wanted: DocumentFormat[] = saving ? [format] : ['legacy', 'v4']
+    void Promise.allSettled(wanted.map((f) => f === 'v4' ? fetchLayoutList(f) : fetchLayoutList())).then((results) => {
+      if (!live || listPj !== currentProjectId()) return
+      const rows: typeof entries = []
+      const failures: unknown[] = []
+      results.forEach((r, i) => {
+        if (r.status === 'fulfilled') {
+          rows.push(...r.value.names.map((name) => ({ name, format: wanted[i], modified: r.value.modified[name] })))
+          if (wanted[i] === 'v4' && typeof r.value.documentDir === 'string') setChartDocumentDir(r.value.documentDir)
+        }
+        else if (!(wanted[i] === 'v4' && r.reason instanceof ApiError && r.reason.status === 404)) failures.push(r.reason)
       })
-      .catch((e) => setListError(backendErrorText(e)))
-  }, [open, docName, presetConflict])
+      setEntries(rows)
+      setNames(rows.filter((r) => r.format === format).map((r) => r.name))
+      setModified(Object.fromEntries(rows.map((r) => [documentAddressKey(r.name, r.format), r.modified]).filter((r) => r[1] !== undefined)) as Record<string, number>)
+      setListError(failures.length ? backendErrorText(failures[0]) : null)
+    })
+    return () => { live = false }
+  }, [open, docName, presetConflict, format, saving, projectKey])
 
   // 从菜单进来时焦点直接落在用户选的那件事上。
   // 要等一帧：弹窗自己的焦点陷阱在挂载后也会抢焦点，抢早了会被它覆盖。
@@ -164,49 +186,80 @@ export function LayoutDialog() {
     setConflict(null)
     // 点下另存为那一刻的上下文：await 之后的一切落账（修订号、绑定、冲突岔口）都记在它名下
     // （`saveContext.ts`）。改名只动文档名，不换排版、不换载入代次，先取后取一样
-    const ctx = captureSaveContext()
+    let ctx = captureSaveContext()
     const pj = ctx.pj
+    let prepared: Awaited<ReturnType<typeof prepareProjectFileSave>> = null
     /** 已经换成了新排版：之后哪一步再出错都不是「这次另存没成」，不再拿旧上下文去判（它已不是当前了） */
     let forkedDone = false
     try {
+      if (pj) {
+        const retry = await retryProjectFileConfirmation(canonicalLayoutName(stem, ...(ctx.format === 'v4' ? [ctx.format] : [])), ctx)
+        if (retry.state === 'confirmed') {
+          const next = captureSaveContext()
+          if (next.documentId !== ctx.documentId || next.format !== ctx.format || next.loadSeq !== ctx.loadSeq
+            || next.pj !== ctx.pj || next.file !== retry.file || next.bindingSequence !== retry.sequence) return
+          ctx = next
+          if (!retry.dirty) {
+            setOpen(false)
+            useUiStore.getState().setStatus(msg('save.doneProject', { file: retry.file }, 'workspace'), 'done')
+            return
+          }
+        } else if (retry.state !== 'none') {
+          setError(t('save.projectBindingUnavailable', { ns: 'workspace' }))
+          return
+        }
+      }
       // 保存整份文档（schema 3，含全部画布）；文件名即文档名
       // 另存为（`save`）是真分叉：写好这个名字下的文件，再换成一份新排版（新 documentId），**原排版一个字节不动**——
       // 所以不在原排版上改名。存进项目（`saveToProject`，⌘S 第一次）仍是给当前排版起名并绑定
       if (!overwrite && !fork) useDocumentStore.getState().renameProject(stem)
       const edited = projectFileSnapshot()
-      const baseRevision = overwrite?.revision ?? knownLayoutRevision(stem, pj) ?? REVISION_ABSENT
-      const built = useDocumentStore.getState().buildProject()
+      const baseRevision = overwrite?.revision ?? knownLayoutRevision(stem, pj, ...(ctx.format === 'v4' ? [ctx.format] : [])) ?? REVISION_ABSENT
+      // 另存为（fork）不绑项目文件：绑定意图只属于「存进项目」这一路
+      if (pj && !fork) prepared = await prepareProjectFileSave(stem, ctx)
+      if (!stillCurrent(ctx)) return
+      const built = prepared?.document ?? useDocumentStore.getState().buildProject()
       const forkTitle = overwrite ? name.trim() || stem : stem
       const pd = fork ? { ...built, project: { ...built.project, name: forkTitle } } : built
-      const snapshots = captureFigureSnapshotSave(pd, pj)
+      const sources = ctx.format === 'v4' ? captureChartSourceSave(pd, pj) : null
+      const sent = sources?.document ?? pd
+      const snapshots = captureFigureSnapshotSave(sent, pj)
       // 分叉：写文件这段 await 里原排版就摘出自动保存（原排版的本机槽位 / 磁盘一个字节不动）；没成就在 catch 里接回去
       if (fork) suspendAutosaveFor(ctx.documentId)
       const res = await saveLayout(
         stem,
-        pd,
+        sent,
         baseRevision,
-        toProject ? { target: 'project' } : undefined,
+        prepared ? { ...(ctx.format === 'v4' ? { format: ctx.format, pj } : {}),
+          ...(toProject ? { target: 'project' as const } : {}), workingDocId: ctx.documentId, bindingIntent: prepared.ticket.sequence }
+          : ctx.format === 'v4' ? { format: ctx.format, pj, ...(toProject ? { target: 'project' as const } : {}) } : toProject ? { target: 'project' } : undefined,
       )
       // 分叉时合并留到换走之前、且先把原排版摘出自动保存（见下）：这次合并不能把原排版写回盘
-      if (!fork) mergeSavedFigureSnapshots(snapshots, res.figure_snapshots)
+      if (!fork) {
+        mergeSavedFigureSnapshots(snapshots, res.figure_snapshots)
+        if (sources) mergeSavedChartSources(sources, res.chart_sources)
+      }
       // 写成了：立刻说「排版写成了」，时间线打「保存」点（ADR 0101 §7）——在后面任何一步
       // （关对话框、记账、状态条）之前，与它们的成败无关（Codex #679）；点属于点下另存为的
       // 那一份（`ctx.moment`：入口取的快照，与上面序列化的是同一刻）。存进项目的是项目文件，
       // 另存为画布文件的是画布文件
-      emitLayoutSaved(toProject ? 'project_file' : 'layout_file', { moment: ctx.moment })
+      emitLayoutSaved(toProject ? 'project_file' : 'layout_file', { moment: prepared?.moment ?? ctx.moment })
       // await 之后（清单见 saveContext.ts）：对话框是此刻界面上的东西，切走了就不替别人关——
       // 先判，下面记账会改绑定，改完之后 ctx 本来就不再「当前」
       ifStillCurrent(ctx, () => setOpen(false))
       // 写成了是事实：照样记在 ctx 名下
       // 后端净化过的名字（空格 → `_`）：之后按输入名查修订号也要落到同一份上
-      rememberLayoutName(stem, res.name)
-      rememberLayoutRevision(res.name ?? stem, res.revision, pj)
+      rememberLayoutName(stem, res.name, ...(ctx.format === 'v4' ? [ctx.format] : []))
+      rememberLayoutRevision(res.name ?? stem, res.revision, pj, ...(ctx.format === 'v4' ? [ctx.format] : []))
+      // 存进了项目（后端交回了项目里的相对路径）→ 绑定，之后 ⌘S 写回这个文件
+      const associated = prepared ? finishProjectFileSave(prepared, res.project_file, res.revision) : true
       // 分叉：换成新排版，绑定记在**新排版**名下（原排版保留它原来的绑定与槽位）；切走了就不动此刻开着的那份
       let boundId = ctx.documentId
       let forked = false
       if (fork && stillCurrent(ctx)) {
         suspendAutosaveFor(ctx.documentId)
         mergeSavedFigureSnapshots(snapshots, res.figure_snapshots)
+        if (sources) mergeSavedChartSources(sources, res.chart_sources)
         const latest = useDocumentStore.getState().buildProject()
         const id = await installFork({ ...latest, project: { ...latest.project, name: forkTitle } })
         if (id) {
@@ -215,8 +268,7 @@ export function LayoutDialog() {
           forkedDone = true
         }
       }
-      // 存进了项目（后端交回了项目里的相对路径）→ 绑定，之后 ⌘S 写回这个文件
-      if (pj && res.file && (!fork || forked)) {
+      if (!prepared && pj && res.file && (!fork || forked)) {
         setProjectFile(
           {
             projectId: pj,
@@ -226,16 +278,18 @@ export function LayoutDialog() {
             dirty: forked ? false : edited(),
           },
           boundId,
+          ...(ctx.format === 'v4' ? [ctx.format] : []),
         )
       }
       // 状态条是全局通知、话里点名了写到哪：切走了也照说（结果要说出来）
       useUiStore
         .getState()
         .setStatus(
-          res.file
+          !associated && res.file ? msg('save.projectBindingSuperseded', { file: res.file }, 'workspace') : res.file
             ? msg('save.doneProject', { file: res.file }, 'workspace')
             : msg('layout.saved', { name: stem }, 'dialogs'),
-          'done',
+          associated ? 'done' : 'error',
+          { action: associated ? undefined : openSavedDocumentAction(ctx) },
         )
     } catch (e) {
       if (forkedDone) return
@@ -268,12 +322,13 @@ export function LayoutDialog() {
           )
       }
     } finally {
+      if (prepared) await cancelPreparedProjectFile(prepared)
       inFlight.current = false
       setBusy(false)
     }
   }
 
-  const doLoad = async (target: string) => {
+  const doLoad = async (target: string, targetFormat: DocumentFormat = 'legacy') => {
     setBusy(true)
     setError(null)
     setConflict(null)
@@ -281,7 +336,7 @@ export function LayoutDialog() {
     const ctx = captureSaveContext()
     const pj = ctx.pj
     try {
-      const { doc, revision, file } = await fetchLayout(target)
+      const { doc, revision, file } = await (targetFormat === 'v4' ? fetchLayout(target, targetFormat, pj) : fetchLayout(target))
       // 来自更新的 Tavotto（schema 比本构建认得的新）：**不打开、不记基线**，挂「来自更新的 Tavotto」
       // 横条（桌面主按钮「检查更新」）。必须在 normalizeLayout 之前判：它认不出的形状会落成一份
       // 空白文档，打开后 ⌘S 就拿空白把磁盘上那份新格式盖掉（#1920 合同「打开排版」那一格）。
@@ -293,7 +348,7 @@ export function LayoutDialog() {
         return
       }
       // 读到了就记下基线：之后覆盖这个名字不必再打扰用户一次（事实，记在 ctx 名下）
-      rememberLayoutRevision(target, revision, pj)
+      rememberLayoutRevision(target, revision, pj, ...(targetFormat === 'v4' ? [targetFormat] : []))
       // 切走了就不打开、不碰此刻的对话框，在状态条上说出来
       if (!stillCurrent(ctx)) {
         useUiStore.getState().setStatus(msg('layout.openSkipped', { name: target }, 'dialogs'), 'error')
@@ -424,38 +479,39 @@ export function LayoutDialog() {
                 `dirTail` 判据，完整路径在 title 里） */}
             {documentDir && (
               <FormRow label={t('dialogs:layout.savesIntoLabel')}>
-                <span className="min-w-0 flex-1 truncate font-mono text-sm text-ink-3" title={documentDir}>
+                <span className="min-w-0 flex-1 truncate font-mono text-sm text-ink-3" title={documentDir} data-layout-document-dir>
                   {dirTail(documentDir)}
                 </span>
               </FormRow>
             )}
-            {!conflict && names.includes(canonicalLayoutName(name.trim())) && (
+            {!conflict && names.includes(canonicalLayoutName(name.trim(), ...(format === 'v4' ? [format] : []))) && (
               <p className="text-sm text-ink-2">{t('dialogs:layout.nameTaken')}</p>
             )}
             {toProject && !conflict && <p className="text-sm text-ink-3">{t('dialogs:layout.saveToProjectHint')}</p>}
           </div>
-        ) : names.length === 0 ? (
+        ) : entries.length === 0 ? (
           !listError && <p className="py-2 text-ink-3">{t('dialogs:layout.empty')}</p>
         ) : (
           /* 40px 的列表行（listRowClass）：名字 + 修改时间，hover / 聚焦时行尾浮出「打开」；↑↓ 走行、Enter 打开 */
           <ul ref={listRef} className="-mx-1 flex max-h-80 flex-col gap-0.5 overflow-y-auto" onKeyDown={onListKey}>
-            {names.map((n) => (
-              <li key={n} className="flex">
+            {entries.map(({ name: n, format: rowFormat }) => (
+              <li key={documentAddressKey(n, rowFormat)} className="flex">
                 <button
                   type="button"
                   data-layout-row={n}
+                  data-document-format={rowFormat}
                   disabled={busy}
-                  onClick={() => doLoad(n)}
+                  onClick={() => doLoad(n, rowFormat)}
                   className={cn(
                     listRowClass({ size: 'md' }),
                     'min-h-10 w-full gap-2.5 px-2 text-left disabled:opacity-40',
                   )}
                 >
                   <FolderOpen size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
-                  <span className="min-w-0 flex-1 truncate">{n}</span>
-                  {modified[n] !== undefined && (
+                  <span className="min-w-0 flex-1 truncate">{n}{rowFormat === 'v4' && <span className="ml-2 type-meta">{t('dialogs:layout.computationalFormat')}</span>}</span>
+                  {modified[documentAddressKey(n, rowFormat)] !== undefined && (
                     <span className={cn(rowMetaClass(), 'shrink-0 group-hover:hidden group-focus-visible:hidden')}>
-                      {formatRelativeTime(modified[n] * 1000)}
+                      {formatRelativeTime(modified[documentAddressKey(n, rowFormat)] * 1000)}
                     </span>
                   )}
                   <span className="hidden shrink-0 text-sm text-ink-2 group-hover:inline group-focus-visible:inline">

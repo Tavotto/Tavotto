@@ -18,6 +18,7 @@ import {
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { useExactPanelManifest, usePanelRender } from '@/store/renderStore'
 import { frameSwitchAvailable, frameSwitchPatch } from '@/lib/figureFrame'
+import { useCanEditPanel } from '@/lib/panelEditability'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { formatQuantity } from '@/i18n/format'
 import { BASE_FONT_PT, effectiveDpi, effectivePt, formatCm, formatMm, round1 } from '@/lib/units'
@@ -76,13 +77,14 @@ function sharedPanel<T>(objs: PanelObject[], pick: (o: PanelObject) => T): T | u
 
 export function PanelSection({ objs }: { objs: PanelObject[] }) {
   const one = objs.length === 1 ? objs[0] : null
+  const editable = useCanEditPanel(one)
   if (!objs.length) return null
 
   return (
     <>
       {/* 头部之下先是进图内编辑的紧凑入口（参数化面板的核心动作），然后
           变换 → 内容适配 → 排列 → 更多 → 源文件（2026-09-13 审计 B09 的固定顺序） */}
-      {one?.script && <ElementEditEntry panel={one} />}
+      {one && editable && <ElementEditEntry panel={one} />}
       {one && <PanelCapabilityNote panel={one} />}
       {one && <PanelFrameNote panel={one} />}
       <GeometrySection objs={objs} />
@@ -109,9 +111,10 @@ export function PanelSection({ objs }: { objs: PanelObject[] }) {
  * （「这一轮还不知道」不是一种状态）。
  */
 export function PanelCapabilityNote({ panel }: { panel: PanelObject }) {
+  const editable = useCanEditPanel(panel)
   useTranslation('inspector')
   const cap = useAssetStore((s) => s.byId[panel.fileId]?.capability)
-  const show = !panel.script && !!cap && cap.status !== 'editable'
+  const show = !editable && !!cap && cap.status !== 'editable'
   return (
     // 能力是异步到的：事后才出现的说明条不硬插，包 NoticeReveal（下面的控件顺着滑下去，不瞬间跳一格）
     <NoticeReveal open={show}>
@@ -839,7 +842,7 @@ export function SourceSection({
       }
     >
       {panel?.script && runtime && <RuntimeSourceArea panel={panel} />}
-      {panel?.script && !runtime && (
+      {(panel?.script || panel?.figureOrigin) && !runtime && (
         <>
           {/* 两页同一份动作行（打磨 O2） */}
           <OriginalFileActions panel={panel} />

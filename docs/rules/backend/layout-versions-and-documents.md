@@ -7,7 +7,7 @@
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 200
-改到: `/api/versions`、`/api/styles`、`/api/package`、`tavottofile/`、`atomicio.py`、`documents.loads_document`、自动保存槽位、`engine/layoutsession.py`、`/api/layout-session`
+改到: `/api/versions`、`/api/styles`、`/api/package`、`/api/package/inspect`、`/api/package/install`、`tavottofile/`、`atomicio.py`、`documents.loads_document`、自动保存槽位、`engine/layoutsession.py`、`engine/packageinstall.py`、`/api/layout-session`
 主题: 布局版本、项目文件收纳与文档落盘 → `layout-versions-and-documents.md`
 必守要点: `atomicio` / `project_layout_dir()` 唯一权威（ADR 0120）
 -->
@@ -78,6 +78,13 @@ order: 200
   override / 标注属性一次 commit 应用，绝不写回源文件。
 - **项目包**：`POST /api/package` 打 zip（layout+素材+脚本+sha1 清单）；
   `POST /api/package/open` 检视（缺失/sha1 漂移），素材永不自动写入图库。
+  计算图表便携包（schema 4 + 清单 `document_format = "v4"`）走**同一族端点**
+  （#1921）：`POST /api/package` 按提交文档的 schema 决定写旧格式还是 v4 包；
+  `POST /api/package/open` 按包内容分流，v4 判据排在 `schema > SCHEMA_CURRENT`
+  之前，v4 响应带 `document_format: "v4"`；`POST /api/package/inspect` 只读核验
+  资源关系，`POST /api/package/install` 先核预算与成员身份、再经
+  `atomicio.publish_directory_if_absent` 单点发布到用户选定的新目录（不覆盖、
+  不执行包内脚本）。不提供 `/api/documents/v4/package*` 别名。
 - **文档显式引用全质量 Figure 配对（X03，2026-10-15）**：面板 `figureSnapshot` 是版本 1 的闭集
   `{version, sourceId, patchHash, receiptId, snapshotId}`，可选 `executionOwner={script, run_config}`；
   owner 只从已验归档派生、纳入内容 ID，不信客户端自报。导出 wire 字段为 `figure_snapshot`。
@@ -109,7 +116,12 @@ order: 200
   磁盘写入沿用锁、受限路径与 `atomicio`，只读项目副本也可核验不可变引用，不因读档创建写锁文件。
   自动捕获 / 保存 / 导出不暗中运行脚本。旧项目无明确引用时，执行源需当前进程已观察的回执，
   否则由用户明确再运行并接纳，不能借 current marker 或 preview metadata 猜旧配对仍是当前版本。
-  无 override 静态源的精确 hash 配对授权另见 `export-pipeline.md`；项目包打开仍只检视、不自动安装资产。
+  无明确引用的静态源仍按当前原件精确 hash 授权，见 `export-pipeline.md`；明确文档引用由
+  `load_document_snapshot`核原archive完整ref、source/patch、历史静态hash及实际当前remap指纹，
+  不要求一份当前原件同时等于所有历史版本。原`load_snapshot`的逐维精确查询不变。
+  原图、画布、保存和打包必须消费同一历史PDF/SVG配对；当前普通file资源仍独立核SHA，
+  不因历史渲染对存在而声称历史磁盘原件已恢复。项目包打开仍只检视、不自动安装资产；
+  计算图表包的安装是另一个显式端点，只在用户选定新目录后发布（#1921）。
   看护：`tests/test_svgstore.py`、`tests/test_export_svg.py`、`tests/test_export_request.py`、
   `web/src/store/figureSnapshot.test.ts`、`web/src/store/figureSnapshotInvalidation.test.ts`、
   `web/src/store/projectSave.test.ts`、`web/src/lib/autosave/diskWriter.test.ts`。
@@ -134,6 +146,11 @@ order: 200
   收纳目录里 Tavotto 自己的文件（现只有 `_styles.json`）由
   `RESERVED_DOCUMENT_FILENAMES` **枚举**——不要改成「`_` 开头」的前缀规则，
   画布名净化会把 `（图一）` 变成 `_图一_`，前缀规则会把用户的文档藏起来。
+- **排他目录发布**：`atomicio.publish_directory_if_absent`仅接同父不同名的真实自有目录，
+  拒symlink/reparse；调用方先受检复制并同步各文件/子目录，叶子再同步stage、复核源身份，
+  委托原排他rename，最后同步parent。默认文件发布调用/IO不变；POSIX目录不尝试硬链接，
+  不回退覆盖式rename。碰撞保原FileExistsError，真实故障沿AtomicWriteError；parent同步失败
+  可能已发布，调用方须依目录身份保留目标/回执，不能递归伪回滚。该叶子不复制或清理目录。
 - **读侧也有一道非有限数闸：`documents.loads_document()`**（2026-09-03，
   issue #222）。写侧挡住的只是**我们自己写出去的**那份；外部工具往
   `tavottofile/*.json` 写一个 `NaN` 之后，Python 的 `json.loads` 照读不误，而

@@ -24,6 +24,8 @@ import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { emptyProject, type CanvasObject, type PanelObject, type TextObject } from '@/types/document'
+import chartVectors from '../../../tests/golden/chart_model_vectors.json'
+import type { PanelChartState } from '@/types/document'
 
 const engineRender = vi.fn()
 const engineInvalidate = vi.fn()
@@ -105,6 +107,23 @@ afterEach(() => {
   useSelectionStore.getState().clear()
   setEngineTransport(null)
   setCurrentProjectId(null)
+})
+
+it('chart重建复用原生render并携INPUT附件与全量edits，不要求script或执行失效脚本', async () => {
+  const v = chartVectors.vectors.find(v => v.expect === 'ok')!
+  const chart = structuredClone({ model: v.model, binding: v.binding }) as unknown as PanelChartState
+  const p = panel('chart-ref', { script: null, fileId: 'gone.svg', fileKind: 'svg', chart,
+    chartSource: { schema: 1, sourceId: 'gone.svg', bytesSha256: 'a'.repeat(64), sizeBytes: 100, sceneDigest: chart.model.scene_digest },
+    overrides: [{ gid: 's', prop: 'color', value: '#00f' }],
+  })
+  await seed([p])
+  engineRender.mockResolvedValue({ rev: 1, chart_revision: 'paired', manifest: { stem: 'chart', size_mm: [40, 30], elements: [] }, svg: '<svg/>' })
+  expect(await rebuildPanel(p.id)).toBe('rerendered')
+  expect(engineInvalidate).not.toHaveBeenCalled()
+  expect(engineRender).toHaveBeenCalledWith(p.fileId, p.overrides,
+    expect.objectContaining({ chart, chart_source: p.chartSource }))
+  expect(past()).toHaveLength(0)
+  expect(byId<PanelObject>(p.id).chartSource).toEqual(p.chartSource)
 })
 
 /* -------------------------------------------------------------------------- */
