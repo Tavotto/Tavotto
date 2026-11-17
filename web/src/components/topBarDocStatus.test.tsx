@@ -170,6 +170,10 @@ describe('出事：锚点色胶囊 + 说明块', () => {
       })
       const pop = (await openPill())!
       expect(pop.querySelector('[data-docbanner-check-update]')).toBeNull()
+      // 能力是启动后异步读到的：说明块已经开着时才读到，按钮也要出来
+      await act(async () => useDiagSendStore.setState({ capability: null }))
+      expect(pop.querySelector('[data-docbanner-feedback]')).toBeNull()
+      await act(async () => useDiagSendStore.setState({ capability: { enabled: true } as never }))
       const btn = pop.querySelector<HTMLButtonElement>('[data-docbanner-feedback]')!
       expect(btn.dataset.variant).toBe('primary')
       await act(async () => btn.click())
