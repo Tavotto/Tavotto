@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -41,6 +42,8 @@ STEMS = ("AdjLegend", "AdjText", "AdjGrid")
 
 #: 本进程已验过的例子里：这张图上真有键写进了脚本的次数 / 总次数（防「全被留作重放而空转」）。
 _STATS = {"examples": 0, "written": 0}
+#: 真写进了脚本并验过的 (类, prop) 键的累计次数：断言广度（只写同一两个键的「通过」说明不了什么），也是变异反证选锚点的依据。
+_WRITTEN_KEYS: Counter = Counter()
 
 
 @pytest.fixture(scope="module")
@@ -66,8 +69,10 @@ def _accept(el: dict, f: dict) -> bool:
     )
 
 
-def _roundtrip(worker, name: str, tmp: Path, stem: str, patches: list[dict]) -> bool:
-    """导出脚本重放 == 热态；回「这组里有键真写进了脚本」。"""
+def _roundtrip(
+    worker, name: str, tmp: Path, stem: str, patches: list[dict], els: dict
+) -> set[tuple[str, str]]:
+    """导出脚本重放 == 热态；回这组里**真写进了脚本**的 (类, prop) 键（空 = 全被留作重放，没验到脚本）。"""
     from tavotto import app
 
     with tempfile.TemporaryDirectory(dir=tmp, prefix="ex-") as d:
@@ -79,13 +84,18 @@ def _roundtrip(worker, name: str, tmp: Path, stem: str, patches: list[dict]) -> 
             src = (tmp / name).read_bytes()
             adjusted = scriptadjust.build(src, stem, patches, hot, version="9.9")
             if not adjusted.written:
-                return False
+                return set()
             stage = Path(d)
             target = stage / "edited.py"
             target.write_bytes(adjusted.data)
             diffs = app._verify_edited_script(worker, stem, target, adjusted, hot, stage)
             assert diffs == [], (stem, patches, diffs)
-            return True
+            residual = {(r["gid"], r["prop"]) for r in adjusted.residual}
+            return {
+                (scriptadjust._cls_of(p["gid"], els.get(p["gid"])), p["prop"])
+                for p in patches
+                if (p["gid"], p["prop"]) not in residual
+            }
         finally:
             worker.override(stem, [])
 
@@ -98,16 +108,21 @@ def test_exported_script_replays_to_the_edited_figure(adj):
     n = int(os.environ.get("TAVOTTO_PROP_EXAMPLES", "0"))
 
     @settings(
-        max_examples=n or 10, deadline=None, derandomize=not n, database=None, print_blob=True
+        max_examples=n or 14, deadline=None, derandomize=not n, database=None, print_blob=True
     )
     @given(data=st.data())
     def prop(data):
         stem = data.draw(st.sampled_from(STEMS), label="图")
         patches = data.draw(edits(mans[stem], _accept), label="编辑")
         _STATS["examples"] += 1
-        if _roundtrip(worker, name, tmp, stem, patches):
+        els = {e["gid"]: e for e in mans[stem]["elements"]}
+        keys = _roundtrip(worker, name, tmp, stem, patches, els)
+        if keys:
             _STATS["written"] += 1
+            _WRITTEN_KEYS.update(keys)
 
     prop()
     # 不空转：一半以上的例子里真有键写进了脚本并过了验证
     assert _STATS["written"] * 2 >= _STATS["examples"], _STATS
+    # 广度：这一轮写进脚本并验过的键不能只有一两个
+    assert len(_WRITTEN_KEYS) >= 8, _WRITTEN_KEYS
