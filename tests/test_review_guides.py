@@ -55,6 +55,23 @@ def main():
     ax.tick_params(axis="y", direction="inout", length=10)
     fig.savefig("Dirs.pdf")
 """,
+    "fig_unpainted.py": """\
+import matplotlib.pyplot as plt
+
+
+def main():
+    fig, axs = plt.subplots(1, 3, figsize=(9.0, 3.0))
+    axs[0].grid(True, alpha=0)
+    axs[1].grid(True, color="none")
+    axs[2].grid(True, linestyle="None")
+    for ax in axs:
+        ax.plot([0, 1, 2], [0, 1, 0.5])
+    axs[0].tick_params(axis="x", color="none")
+    axs[0].spines["left"].set_edgecolor("none")
+    axs[0].spines["left"].set_alpha(0.8)
+    axs[1].spines["top"].set_alpha(0)
+    fig.savefig("Unpainted.pdf")
+""",
     "fig_polar.py": """\
 import matplotlib.pyplot as plt
 
@@ -146,6 +163,30 @@ def test_no_grid_no_guides_and_polar_has_none(library):
     assert set(ax["tickmarks"]) == {"x", "y"}
     pol = _axes(_render(library, "fig_polar.py", "Polar"))
     assert "grid" not in pol and "tickmarks" not in pol
+
+
+@needs_worker
+def test_guides_that_paint_nothing_are_not_targets(library):
+    """visible 仍是 True、线宽 > 0，但画面上没有像素：透明 / color='none' / 不画线型。"""
+    man = _render(library, "fig_unpainted.py", "Unpainted")
+    axes = sorted(
+        (e for e in man["elements"] if e.get("role") == "axes"), key=lambda e: e["bbox"][0]
+    )
+    assert len(axes) == 3
+    for ax in axes:
+        assert "grid" not in ax
+    assert set(axes[0]["tickmarks"]) == {"y"}  # x 刻度线颜色 none
+    assert set(axes[1]["tickmarks"]) == {"x", "y"}
+    assert axes[0]["spines"]["left"]["stroke_pt"] == 0  # alpha 不能把 'none' 救回来
+    assert axes[1]["spines"]["top"]["stroke_pt"] == 0
+    assert axes[0]["spines"]["bottom"]["stroke_pt"] > 0
+    items = {
+        i["gid"].split(".", 1)[-1]
+        for i in reviewshare.manifest_elements(man)
+        if i["gid"].startswith(axes[0]["gid"] + ".")
+    }
+    assert "spine_left" not in items and "spine_bottom" in items
+    assert "xtickmarks" not in items and "ytickmarks" in items
 
 
 # ---------------------------------------------------------------------------

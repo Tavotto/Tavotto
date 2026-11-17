@@ -4117,6 +4117,8 @@ def spine_geometry(ax, W: float, H: float, paint_ranks: dict | None = None) -> d
         # 加字段协议，画布不读
         try:
             lw = float(sp.get_linewidth())
+            if not _stroke_paints(sp, sp.get_edgecolor(), sp.get_linestyle()):
+                lw = 0.0  # 透明 / 不画线型：审阅页按 0 宽跳过；画布不读这个字段
             if math.isfinite(lw) and lw >= 0:
                 out[side]["stroke_pt"] = round(lw, 3)
         except Exception:  # noqa: BLE001
@@ -4154,6 +4156,21 @@ def _guide_geometry(segs: list, widths: list, W: float, H: float, order, clip) -
     if order is not None:
         geom["paint_order"] = order
     return geom
+
+
+def _stroke_paints(artist, color, linestyle=None) -> bool:
+    """这条线 / marker 边真的落墨吗：颜色（含 artist 自己的 alpha）不透明且线型不是「不画」。
+    `ax.grid(True, alpha=0)`、`color='none'`、`linestyle='None'` 时 matplotlib 里 visible 仍是
+    True、线宽也 > 0，但画面上一个像素都没有——外部审阅页不能把它们当成可点的目标（Codex #1993）。
+    判不出来就当画了（宁可多一个目标，也不吞掉真画出来的线）。"""
+    try:
+        if linestyle is not None and str(linestyle) in ("None", "none", " ", ""):
+            return False
+        # 不能把 alpha 传给 to_rgba：那会把 'none' 的 0 覆盖成 artist 的 alpha
+        a = artist.get_alpha()
+        return mcolors.to_rgba(color)[3] * (1.0 if a is None else float(a)) > 0
+    except Exception:  # noqa: BLE001
+        return True
 
 
 def axes_guides(ax, W: float, H: float, paint_ranks: dict) -> dict:
@@ -4199,7 +4216,11 @@ def axes_guides(ax, W: float, H: float, paint_ranks: dict) -> dict:
                 if not t.get_visible():
                     continue
                 g = t.gridline
-                if g.get_visible() and g.get_linewidth() > 0:
+                if (
+                    g.get_visible()
+                    and g.get_linewidth() > 0
+                    and _stroke_paints(g, g.get_color(), g.get_linestyle())
+                ):
                     pts = g.get_transform().transform(g.get_xydata())
                     grid_segs.append(pts)
                     grid_w.append(g.get_linewidth())
@@ -4209,6 +4230,8 @@ def axes_guides(ax, W: float, H: float, paint_ranks: dict) -> dict:
                     if not ln.get_visible() or ln.get_markersize() <= 0:
                         continue
                     if ln.get_markeredgewidth() <= 0:
+                        continue
+                    if not _stroke_paints(ln, ln.get_markeredgecolor()):
                         continue
                     mk = ln._marker  # noqa: SLF001
                     mpath = mk.get_path()
