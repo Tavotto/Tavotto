@@ -1818,6 +1818,8 @@ def get_session(session_id: str) -> Session:
     ):
         _SESSIONS.pop(session_id, None)
         s.apply_receipt = None
+        # 摘出账本后 close / shutdown 都看不到它了：native 进程要在这里一并收掉
+        _end_native(s)
         raise BridgeError(
             f"会话 {session_id} 的项目已不在当前工作区根内，请重新打开。",
             code="workspace_root_changed",
@@ -4527,6 +4529,7 @@ def _fix_settle(session: Session, base: list, state: dict, *, restore: bool, res
     if failed:
         # 会话上的状态已经对不上 B0：从账本里摘掉，下一次调用按落盘记录（只在提交点写，所以就是 B0）重建
         _SESSIONS.pop(session.id, None)
+        _end_native(session)
     if result is not None:
         result["worker_retired"] = bool(retired)
 

@@ -226,3 +226,20 @@ def test_the_native_wrapper_keeps_method_signatures():
     wrapped = nativefallback.NativeWorker(Fake(), python=WORKER_PY)
     assert "svg_path" in inspect.signature(wrapped.export).parameters
     assert wrapped.export("a.pdf", svg_path="a.svg") == {"pdf": "a.pdf", "svg": "a.svg"}
+
+
+def test_a_session_dropped_for_leaving_the_workspace_ends_its_native_process(tmp_path, monkeypatch):
+    figures = _project(tmp_path, READBACK)
+    out = bridge.open_figure(str(figures), stem="fig")
+    session = bridge.sessions()[out["session_id"]]
+    native = session.native
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.setenv(bridge.ROOTS_ENV, str(elsewhere))
+    bridge.reset_root_authority()
+    with pytest.raises(bridge.BridgeError) as err:
+        bridge.session_state(out["session_id"])
+    assert err.value.code == "workspace_root_changed"
+    assert out["session_id"] not in bridge.sessions()
+    assert session.native is None
+    assert native.session.wait_for_state((), 20) in ("ended", "detached", "failed")
