@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/Button'
 import { Select } from '@/components/ui/Select'
+import { SnapshotThumb } from './SnapshotThumb'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
-import { readJournalFacts, type FactRecord, type FactsPage, type FactSource, type FigureKind, type SubmissionStage } from '@/lib/journalFactsView'
+import { journalFactSnapshotUrl, readJournalFacts, type FactRecord, type FactsPage, type FactSource, type FigureKind, type SubmissionStage } from '@/lib/journalFactsView'
 import { useDocumentStore } from '@/store/documentStore'
 
 /** Volatile source viewer: does not change a document, profile, or preflight. */
@@ -180,6 +181,7 @@ function JournalFactsSession({ journalId, journalLabel }: { journalId: string; j
             {fact.condition_text && <p>{text('conditionText')}: {fact.condition_text}</p>}
             {fact.derivation && <p>{text('derivation')}: {fact.derivation}</p>}
             <p>{text('quote')}: {fact.quote}</p>
+            {fact.snapshot && <SnapshotThumb src={journalFactSnapshotUrl(page.journal_id, fact.snapshot.file)} alt={fact.quote} />}
             {source(page.sources[fact.source], fact.anchor)}
             {fact.context?.map((context, i) => <div key={i}><p>{text('context')}: {context.quote}</p>{source(page.sources[context.source])}</div>)}
             {comparison && <p>{text('comparison')}: {text(comparison === 'match' ? 'match' : comparison === 'mismatch' ? 'mismatch' : 'unresolved')}</p>}

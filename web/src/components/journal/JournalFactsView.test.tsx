@@ -103,6 +103,50 @@ describe('source facts viewer', () => {
     expect(links).toEqual(['https://example.invalid/guide#:~:text=Original%20quote', 'https://example.invalid/guide.pdf#page=7'])
   })
 
+  const SNAP = `snapshots/${'a'.repeat(64)}.webp`
+  it('shows the source screenshot under the quote when the fact has one', async () => {
+    const item = { ...page().facts[0], snapshot: { file: SNAP, width: 480, height: 120 } }
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(page({ facts: [item] })), { status: 200 }))
+    await click(buttonWith('View source facts'))
+    await click(buttonWith('Read sources'))
+    const img = host.querySelector('[data-fact-id="f1"] [data-journal-thumb] img') as HTMLImageElement
+    expect(img).not.toBeNull()
+    const url = new URL(img.getAttribute('src')!, 'http://localhost')
+    expect(url.pathname).toBe('/api/journal-facts/snapshot')
+    expect(url.searchParams.get('journal_id')).toBe('fx-one')
+    expect(url.searchParams.get('file')).toBe(SNAP)
+  })
+
+  it('draws nothing (no placeholder) for a fact without a screenshot', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(page()), { status: 200 }))
+    await click(buttonWith('View source facts'))
+    await click(buttonWith('Read sources'))
+    expect(host.querySelector('[data-fact-id="f1"]')).not.toBeNull()
+    expect(host.querySelector('[data-journal-thumb]')).toBeNull()
+    expect(host.textContent).not.toMatch(/screenshot/i)
+  })
+
+  it('rejects a page whose snapshot path is not content-addressed', async () => {
+    const item = { ...page().facts[0], snapshot: { file: '../x.webp', width: 1, height: 1 } }
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(page({ facts: [item] })), { status: 200 }))
+    await click(buttonWith('View source facts'))
+    await click(buttonWith('Read sources'))
+    expect(host.querySelector('[data-fact-id="f1"]')).toBeNull()
+    expect(host.querySelector('[data-journal-thumb]')).toBeNull()
+  })
+
+  it('removes the thumbnail when the image fails to load and enlarges it on click', async () => {
+    const item = { ...page().facts[0], snapshot: { file: SNAP, width: 480, height: 120 } }
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(page({ facts: [item] })), { status: 200 }))
+    await click(buttonWith('View source facts'))
+    await click(buttonWith('Read sources'))
+    await click('[data-journal-thumb] button')
+    expect(document.body.querySelector('[data-journal-thumb-zoom]')).not.toBeNull()
+    const img = host.querySelector('[data-journal-thumb] img')!
+    await act(async () => { img.dispatchEvent(new Event('error')) })
+    expect(host.querySelector('[data-journal-thumb]')).toBeNull()
+  })
+
   it('opens scoped-coverage PDFs at their recorded page', async () => {
     const coverage = [{ id: 'c', subject: 'font_size', result: 'not_stated', scope: 'Captured section', sources: ['pdf'] }]
     const sources = { pdf: { url: 'https://example.invalid/guide.pdf', kind: 'pdf', page: 7, retrieved: '2026-01-01' } }

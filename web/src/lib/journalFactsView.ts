@@ -6,6 +6,7 @@ export interface FactRecord {
   id: string; subject: string; relation: string; value: unknown; unit?: string
   strength: string; stage: string; origin: string; source: string; quote: string
   conditions?: Record<string, unknown>; condition_text?: string; derivation?: string; anchor?: string
+  snapshot?: { file: string; width: number; height: number }
   context?: { source: string; quote: string }[]
 }
 export interface CoverageRecord { id: string; subject: string; result: 'not_stated'; scope: string; sources: string[] }
@@ -32,6 +33,15 @@ function validAnchor(value: unknown): boolean {
   })
 }
 
+export function validSnapshot(value: unknown): boolean {
+  return record(value) && typeof value.file === 'string' && /^snapshots\/[0-9a-f]{64}\.webp$/.test(value.file) &&
+    Number.isSafeInteger(value.width) && Number.isSafeInteger(value.height)
+}
+
+/** 本地端点：已验签的原文截图（只回该刊事实引用过的图） */
+export const journalFactSnapshotUrl = (journalId: string, file: string): string =>
+  `/api/journal-facts/snapshot?${new URLSearchParams({ journal_id: journalId, file })}`
+
 function validPageContents(page: FactsPage, pageLiterals: WeakMap<object, string | null>): boolean {
   if (!record(page.sources)) return false
   for (const source of Object.values(page.sources)) {
@@ -54,6 +64,7 @@ function validPageContents(page: FactsPage, pageLiterals: WeakMap<object, string
     if (fact.condition_text !== undefined && typeof fact.condition_text !== 'string') return false
     if (fact.derivation !== undefined && typeof fact.derivation !== 'string') return false
     if (fact.anchor !== undefined && !validAnchor(fact.anchor)) return false
+    if (fact.snapshot !== undefined && !validSnapshot(fact.snapshot)) return false
     if (fact.unit !== undefined && typeof fact.unit !== 'string') return false
   }
   for (const coverage of page.coverage) {

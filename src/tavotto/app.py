@@ -14354,6 +14354,38 @@ def api_journal_facts_journal():
     return _journal_facts_request("journal")
 
 
+@app.get("/api/journal-facts/snapshot")
+def api_journal_facts_snapshot():
+    """已验签的原文截图（v2 事实的 `snapshot.file`，内容寻址 webp）。同一个总开关；只回该刊事实引用过的图。"""
+    from .engine import journals as engine_journals
+
+    if not engine_journals.agents_enabled():
+        return _journal_facts_response(
+            {"code": "journal_catalog_disabled", "error": "期刊标准库入口尚未开放"}, 403
+        )
+    jid = request.args.get("journal_id")
+    file = request.args.get("file")
+    locale = request.args.get("locale")
+    if (
+        not isinstance(jid, str)
+        or not isinstance(file, str)
+        or (locale is not None and len(locale) > 64)
+    ):
+        return _journal_facts_error(engine_journalfacts_remote.FactsError("bad_request"))
+    try:
+        path = engine_journalfacts_remote.snapshot(jid, file, ui_locale=locale)
+    except engine_journalfacts_remote.FactsError as exc:
+        if exc.code == "unknown_snapshot":
+            return _journal_facts_response(
+                {"code": "unknown_snapshot", "error": "期刊事实不可用；请检查错误状态后重试。"}, 404
+            )
+        return _journal_facts_error(exc)
+    digest = file[len("snapshots/") : -len(".webp")]
+    resp = send_file(path, mimetype="image/webp", max_age=31536000, etag=digest)
+    resp.headers["Cache-Control"] = "private, max-age=31536000, immutable"
+    return resp
+
+
 # ------------------------- 卸载后重装 → 新手态（Windows，ADR 0136 修订） -----
 # 只读 + 一次性消费：GET 只回布尔（记号内容、路径都不出去），前端处理完才 POST ack 删除记号。
 @app.get("/api/onboarding/reinstall")
