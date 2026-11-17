@@ -1131,7 +1131,7 @@ def test_open_apply_preflight_export_close_without_any_ui(project, fake_pool, tm
 
 
 def test_closing_a_session_with_unexported_changes_says_they_are_gone(project, fake_pool, tmp_path):
-    """改过没导出就关：照关（不卡住），但结果与文字都要说修改丢了、用户文件没变。"""
+    """改过没导出就关：照关（不卡住），结果与文字都要说修改已存为草稿、用户文件没变。"""
     sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
     plain = _body(_call("tavotto_close_session", {"session_id": sid}))
     assert plain["closed"] is True and "unexported_changes" not in plain  # 没改过不提醒
@@ -1158,7 +1158,8 @@ def test_closing_a_session_with_unexported_changes_says_they_are_gone(project, f
     res = _call("tavotto_close_session", {"session_id": sid})
     body = _body(res)
     assert body["closed"] is True and body["unexported_changes"] is True
-    assert "tavotto_export" in res["content"][0]["text"]
+    assert body["draft_saved"] is True  # ADR 0189：没导出的修改存成草稿，不再「已丢」
+    assert "草稿" in res["content"][0]["text"] and "重新打开" in res["content"][0]["text"]
 
 
 def test_closing_after_a_process_switch_still_reports_unexported_changes(project, fake_pool):
@@ -1170,7 +1171,8 @@ def test_closing_after_a_process_switch_still_reports_unexported_changes(project
     res = _call("tavotto_close_session", {"session_id": sid})
     body = _body(res)
     assert body["closed"] is True and body["unexported_changes"] is True
-    assert "tavotto_export" in res["content"][0]["text"]
+    assert body["draft_saved"] is True  # ADR 0189：没导出的修改存成草稿，不再「已丢」
+    assert "草稿" in res["content"][0]["text"] and "重新打开" in res["content"][0]["text"]
     assert bridge.sessionjournal.load(bridge._journal_dir(), sid) is None  # 记录照样删了
     assert _body(_call("tavotto_close_session", {"session_id": sid}))["closed"] is False
 

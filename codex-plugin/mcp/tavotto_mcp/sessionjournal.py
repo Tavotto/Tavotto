@@ -30,6 +30,9 @@ import time
 from pathlib import Path
 
 DIRNAME = "mcp-sessions"
+#: 草稿（ADR 0189 第 2 条）：关闭 / 淘汰时带着没导出改动的会话记录。**另一个目录、同一套记录形状**——
+#: 旧插件只扫 `DIRNAME`，永远读不到草稿，草稿也就不会被当成活会话按 id 复活。
+DRAFTS_DIRNAME = "mcp-drafts"
 VERSION = 1
 #: 带运行配置引用（`run_config`，T10）的记录。旧读者只认 `VERSION`：读到它当作不存在（会话报 `unknown_session`、
 #: 重新打开），而不是把一个带参数的会话当成无参数会话复活。不带配置的记录照旧写 `VERSION`，旧插件仍能恢复。
@@ -126,6 +129,33 @@ def delete(base: Path, session_id: str) -> bool:
         return False
 
 
+def find_drafts(
+    base: Path, project: str, stem: str, run_config: str | None, *, now: float | None = None
+) -> list[dict]:
+    """草稿目录里（项目、stem、运行配置）都对得上的记录，最新保存的在前。读不了的当作不存在。"""
+    try:
+        names = [p.stem for p in base.iterdir() if p.suffix == ".json" and valid_id(p.stem)]
+    except OSError:
+        return []
+    found = []
+    for name in names:
+        record = load(base, name, now=now)
+        if (
+            record is not None
+            and record["project"] == project
+            and record["stem"] == stem
+            and record.get("run_config") == run_config
+        ):
+            found.append(record)
+    found.sort(key=lambda r: float(r["saved_at"]), reverse=True)
+    return found
+
+
+def delete_drafts(base: Path, project: str, stem: str, run_config: str | None) -> int:
+    """删掉这张图（项目、stem、运行配置）的全部草稿，返回删了几个。"""
+    return sum(1 for r in find_drafts(base, project, stem, run_config) if delete(base, r["id"]))
+
+
 def prune(base: Path, *, now: float | None = None) -> list[str]:
     """删过期的与超额的（按保存时间，最旧的先走）。返回删掉的 id。"""
     stamp = time.time() if now is None else now
@@ -161,6 +191,9 @@ def prune(base: Path, *, now: float | None = None) -> list[str]:
 
 __all__ = [
     "DIRNAME",
+    "DRAFTS_DIRNAME",
+    "delete_drafts",
+    "find_drafts",
     "MAX_RECORDS",
     "SESSION_ID_RE",
     "TTL_SECONDS",
