@@ -2372,6 +2372,18 @@ describe('P02 · 检查的是哪份产物（对象头不再复述文件名清单
 describe('T33 · 检查摘要按导出目标取范围', () => {
   const second: PanelObject = { ...panel, id: 'p2', fileId: 'Fig2.pdf', x: 0, y: 60, script: 'fig2.py' }
 
+  it('期刊底旧绑定的导出结论用中性名称', async () => {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) } })
+    await act(async () => useDocumentStore.getState().commit(literal('期刊底'), (d) => { d.profile = { id: 'journal-base-v1' } }))
+    const before = structuredClone(useDocumentStore.getState().doc.profile)
+    await mountDialogs()
+    await openDialog()
+    const ok = document.body.querySelector('[data-export-check-ok]')
+    expect(ok?.textContent).toContain('期刊检查基础')
+    expect(ok?.textContent).not.toContain('期刊未规定的项一律不判')
+    expect(useDocumentStore.getState().doc.profile).toEqual(before)
+  })
+
   it('按原图：别的图的阻断项与页面级警告都不算进来；按画布：都算', async () => {
     // 80×40 的页面：page-aspect 一条 warn（页面级）；Fig2 上 7.5pt：一条 error（别的图）
     await stage({
@@ -3113,6 +3125,17 @@ describe('每张图单独导出：依次发多个作业（后端协议不变）'
     expect(useExportStore.getState().batch?.aggregate?.status).toBe('done')
     expect(document.body.querySelector('[data-export-again]')).toBeTruthy()
     expect(document.body.querySelector('[data-export-finish]')).toBeTruthy()
+  })
+
+  it('画布上有更新的构建写进来的对象：逐张导出也灰着，并说清原因（Codex #1913）', async () => {
+    await setupTwo({ select: [] })
+    const doc = useDocumentStore.getState().doc
+    const newer = { id: 'n1', type: 'path', x: 5, y: 5, w: 10, h: 10, subpaths: [] } as never
+    useDocumentStore.setState({ doc: { ...doc, objects: [...doc.objects, newer] } } as never)
+    await click(originalRadio())
+    expect(document.body.querySelector('[data-export-batch-names]')).toBeTruthy()
+    expect(document.body.querySelector('[data-export-newer-objects]')?.textContent).toContain('1')
+    expect((button('开始导出') as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('QA-WIN-24：store 里留着上一回（整版）的终局，逐张导出的汇总只含本批实际写出的文件，且每张都发出去', async () => {

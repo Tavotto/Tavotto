@@ -63,6 +63,7 @@ from matplotlib import (
     _tight_bbox,
     artist as martist,
     backend_bases,
+    contour as mcontour,
     figure as mfigure,
     ticker,
     transforms,
@@ -974,6 +975,10 @@ def _svg_pair_artist_blocker(artist, cache: dict) -> str | None:
     for name, value in (getattr(artist, "__dict__", None) or {}).items():
         if name == "_remove_method" and _is_list_remove(value):
             continue  # matplotlib 自己放进实例字典的唯一 C bound method（`Artist.remove` 时才调用，绘制不调用）
+        if name == "labelFmt" and isinstance(artist, mcontour.ContourLabeler):
+            # `clabel(fmt=<函数 / Formatter>)` 存下的标签格式：只在 `clabel` / `add_label_near` 生成标签文字时调用，
+            # 产出的是普通 Text；`ContourSet.draw` 不调用它（ADR 0150 §4 封闭例外）
+            continue
         if any(not _svg_pair_owned(part, 0, cache) for part in _svg_pair_callable_parts(value)):
             return f"custom instance attribute {type(artist).__qualname__}.{name}"
     # path effect 对象不是可调用属性，但它们的 draw_path 拿着 renderer：按类核

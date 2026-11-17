@@ -441,6 +441,21 @@ def _probe_error(err) -> HandoffError:
             "在 Tavotto 界面里打开这张图并选“跳过这个文件夹重跑”即可，不需要换 Python"
         )
         return HandoffError(message, "import_folder_abi_mismatch", **{**extra, "probe_code": code})
+    if code == "image_format_mismatch" and isinstance(params.get("actual"), str):
+        # 图片内容与扩展名不符（TVD-3MWS）：直接用 Python 跑同样失败，换环境 / 换运行方式都没用
+        extra.update(
+            {
+                k: params[k]
+                for k in ("file", "claimed", "actual", "ext")
+                if isinstance(params.get(k), str)
+            }
+        )
+        shown = params.get("file") if isinstance(params.get("file"), str) else "这张图片"
+        message = (
+            f"{shown} 其实是 {params['actual']} 图片，只是扩展名写成了 .{params.get('ext', '')}。"
+            f"换成真正的 {params.get('claimed', '')} 文件后再运行；这与运行方式或环境无关"
+        )
+        return HandoffError(message, "image_format_mismatch", **{**extra, "probe_code": code})
     tb = err.get("traceback")
     if tb:
         extra["traceback"] = str(tb)[-2000:]

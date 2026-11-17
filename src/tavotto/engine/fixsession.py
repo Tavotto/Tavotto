@@ -32,7 +32,7 @@ from . import cli_failure, exectrace, fixtools, folderrepair, pool
 from .agent_runner import loop
 from .agent_runner.redact import NO_REDACTION, Redactor
 from .agent_runner.tools import Limits, RunEnvelope, Tool
-from .agent_runner.wires import WIRES, AnthropicWire, Turn
+from .agent_runner.wires import WIRES, AnthropicWire, OpenAIChatWire, Turn
 from .fixtools.audit import AuditLog
 from .fixtools.observe import read_run_report
 
@@ -151,6 +151,16 @@ packages inside were built for a different Python version, so they hide the work
 the Python version (change_python cannot help: that folder is always for another version) and do not install packages over it. \
 Call ignore_import_folder (it needs no path and asks the user itself), then try_run. If a package turns out to be missing \
 afterwards, install it into the managed environment as usual. Never edit the script and never touch that folder.
+3i. IMAGE FILE WHOSE CONTENT DOES NOT MATCH ITS EXTENSION. If the report error code is `image_format_mismatch` (its params: \
+`claimed` is the format the file extension promises, `actual` is the format the file's own first bytes show, `ext` is the \
+extension as written, and `file` is the project-relative name when it can be shown): the script reads an image whose \
+content is `actual` but whose name ends in `.ext` (typically a JPEG photo saved as `.png`). The image reader picks its decoder \
+from the extension and does not sniff the content, so running the same script directly with Python fails the same way: this is \
+NOT caused by the safe run, the environment, the Python version or a missing package, so do not suspect any of them and do \
+not switch execution mode, change_python or install packages. Do NOT edit the script, do NOT rename, convert or overwrite the \
+user's image. Say in one plain sentence that the file is really an `actual` image saved with a `.ext` name and ask the user to \
+replace it with a real `claimed` file (or point the script at the right file), then finish `not_fixed`. If `file` is absent, say \
+"this image" instead of naming it.
 4. If you need something only the user knows, use ask_user (a multiple-choice question) or pick_file (the system file \
 chooser). Never ask for a password, key or token.
 5. If you cannot fix it, distinguish missing user inputs/environment failures from a product defect. If evidence \
@@ -296,6 +306,10 @@ class _FinishAware:
     def release_recovery_state(self, history) -> int:
         return getattr(self.inner, "release_recovery_state", lambda history: 0)(history)
 
+    def report(self) -> dict:
+        # 内层模型的自救回报（换协议 / 字段降级，见 `HttpModel.report`）原样交出，`loop.run` 写进 done 事件
+        return getattr(self.inner, "report", lambda: {})()
+
 
 @dataclass
 class _Pending:
@@ -331,6 +345,8 @@ class FixSession:
     scope: str  # 项目 id
     script: str
     prep_session_id: str
+    #: 这次修复用的连接 `(provider id, 型号)`：结束后把 runner 的自救回报落进这条记录（没有 = 不落）
+    endpoint: tuple[str, str, str] | None = None
     state: str = STATE_RUNNING
     card: dict | None = None
     outcome: str | None = None
@@ -544,6 +560,7 @@ class FixSessions:
         script_path: Path | None = None,
         background: bool = True,
         locale: object = None,
+        endpoint: tuple[str, str, str] | None = None,
     ) -> FixSession:
         with self._lock:
             cur = self.active()
@@ -556,6 +573,7 @@ class FixSessions:
                 scope=scope,
                 script=script,
                 prep_session_id=prep_session_id,
+                endpoint=endpoint,
                 token=secrets.token_urlsafe(32) if cli is not None else "",
                 tool_timeout=min(TOOL_TIMEOUT, (limits or FIX_LIMITS).max_seconds),
                 deadline=time.monotonic() + (limits or FIX_LIMITS).max_seconds,
@@ -654,7 +672,22 @@ class FixSessions:
             LOG.exception("fix session crashed")
             done.setdefault("ok", False)
             done.setdefault("reason", "internal")
+        self._persist_runtime_report(s, done)
         self._settle(s, str(done.get("reason") or "internal"))
+
+    @staticmethod
+    def _persist_runtime_report(s: FixSession, done: dict) -> None:
+        """循环结束后（不在执行中途）把 runner 自救回报落进连接记录：换协议 / 长度字段 / 被剥字段下次直接用。失败不影响修复结局。"""
+        if s.endpoint is None or not done.get("wire_used"):
+            return
+        try:
+            from . import ai_providers
+
+            pid, model, base_url = s.endpoint
+            # 带上起跑时的地址：运行期间用户改了地址，回报说的是旧地址，不写（与 ai_bridge.run 同一道闸）
+            ai_providers.apply_runtime_report(pid, model=model, report=done, base_url=base_url)
+        except Exception:  # noqa: BLE001
+            LOG.warning("修复会话的自救回报落盘失败", exc_info=True)
 
     def _settle(self, s: FixSession, failed_reason: str) -> None:
         """会话收尾：`finish` 交来了结论就采用，取消就是 cancelled，否则 failed（原因码是闭集，界面按它选一句话）。"""
@@ -1185,18 +1218,24 @@ def cli_launcher(
     return build
 
 
+def _wire_for(name: str, conn: dict):
+    """协议名 → Wire 对象（账号登录的 anthropic 只发 Bearer；chat 带探测 / 目录给的长度字段）。"""
+    if name == "anthropic" and conn.get("auth") == "bearer":
+        return AnthropicWire(bearer_only=True)
+    if name == "openai-chat":
+        return OpenAIChatWire(token_field=conn.get("token_field") or "max_tokens")
+    return WIRES[name]
+
+
 def build_model(conn: dict):
-    """连接 → `HttpModel`。密钥只放进模型对象（`repr` 不含），返回的 `Redactor` 用于过滤卡片里的回显。"""
-    wire = (
-        AnthropicWire(bearer_only=True)
-        if conn.get("auth") == "bearer" and conn["wire"] == "anthropic"
-        else WIRES[conn["wire"]]
-    )
+    """连接 → `HttpModel`。密钥只放进模型对象（`repr` 不含），返回的 `Redactor` 用于过滤卡片里的回显。
+    自填地址带备选协议（`conn["fallbacks"]`，与改图的 `--fallback` 同一份）：第一轮「协议不对」时换。"""
     model = loop.HttpModel(
-        wire,
+        _wire_for(conn["wire"], conn),
         base_url=conn["base_url"],
         api_key=conn["api_key"],
         model=conn["model"],
+        fallbacks=[(_wire_for(w, conn), u) for w, u in conn.get("fallbacks") or ()],
     )
     return model, Redactor(conn["api_key"])
 

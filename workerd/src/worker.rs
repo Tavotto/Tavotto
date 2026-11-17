@@ -14,7 +14,7 @@
 
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
@@ -39,6 +39,7 @@ pub struct SpawnSpec {
     pub handshake_timeout_ms: u64,
     /// 只用于日志与诊断，不参与身份。
     pub label: String,
+    pub max_frame_bytes: Option<usize>,
 }
 
 /// 握手期限的兜底：解释器冷启动 + import matplotlib 在慢盘上真能到十几秒。
@@ -72,6 +73,11 @@ impl SpawnSpec {
             }
         }
         Ok(SpawnSpec {
+            max_frame_bytes: payload
+                .get("max_frame_bytes")
+                .and_then(Value::as_u64)
+                .and_then(|n| usize::try_from(n).ok())
+                .filter(|n| *n > 0),
             argv,
             env,
             cwd: payload
@@ -103,12 +109,15 @@ impl SpawnSpec {
     /// 观测用的附属信息，改它不该让会话重建）。
     pub fn hash(&self) -> String {
         let mut text = String::new();
-        let value = serde_json::json!({
+        let mut value = serde_json::json!({
             "argv": self.argv,
             "env": self.env.iter().map(|(k, v)| (k.clone(), Value::String(v.clone())))
                 .collect::<serde_json::Map<_, _>>(),
             "cwd": self.cwd,
         });
+        if let Some(limit) = self.max_frame_bytes {
+            value["max_frame_bytes"] = serde_json::json!(limit);
+        }
         patchspec::write_value(&value, &mut text);
         patchspec::sha256_hex(text.as_bytes())
     }
@@ -127,6 +136,7 @@ pub enum WorkerEvent {
     Garbage(u64, String),
     /// stdout 到了 EOF：这一代的 worker 已经没了。
     Eof(u64),
+    Limit(u64),
 }
 
 /// 管道 EOF 之后子进程的下场——随 `session_dead` 的信封带出去。
@@ -263,6 +273,7 @@ impl WorkerProc {
                 }
             })?;
 
+        let max_frame_bytes = spec.max_frame_bytes;
         std::thread::Builder::new()
             .name(format!("workerd-read-{pid}"))
             .spawn(move || {
@@ -284,9 +295,19 @@ impl WorkerProc {
                     // 解析成功、request_id 也对得上——一条被篡改过的响应就这么当成
                     // 正常结果收下了。lossy 的形态只用来把那一行带给人看。
                     // 与 Python 池同一口径：那边是 `surrogateescape` + 解析前查残留。
-                    match reader.read_until(b'\n', &mut buf) {
+                    let read = match max_frame_bytes {
+                        Some(limit) => (&mut reader)
+                            .take(limit.saturating_add(1) as u64)
+                            .read_until(b'\n', &mut buf),
+                        None => reader.read_until(b'\n', &mut buf),
+                    };
+                    match read {
                         Ok(0) | Err(_) => break,
                         Ok(_) => {}
+                    }
+                    if max_frame_bytes.is_some_and(|limit| buf.len() > limit) {
+                        let _ = events.send(WorkerEvent::Limit(generation));
+                        return;
                     }
                     let event = match std::str::from_utf8(&buf) {
                         Ok(text) => {
@@ -445,6 +466,17 @@ mod tests {
                 assert_ne!(hashes[i], hashes[j], "{i} vs {j}");
             }
         }
+    }
+
+    #[test]
+    fn frame_budget_is_part_of_session_identity() {
+        let base = json!({"argv": ["python", "worker.py"]});
+        let a = SpawnSpec::from_payload(&base).unwrap();
+        let mut bounded = base.clone();
+        bounded["max_frame_bytes"] = json!(1024);
+        let b = SpawnSpec::from_payload(&bounded).unwrap();
+        assert_eq!(b.max_frame_bytes, Some(1024));
+        assert_ne!(a.hash(), b.hash());
     }
 
     #[test]

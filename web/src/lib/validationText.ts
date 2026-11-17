@@ -125,10 +125,15 @@ const VALUES: Record<
 }
 
 export function issueValues(issue: ValidationIssue): IssueValues {
-  const spec = VALUES[issue.ruleCode]
-  if (!spec) return { current: null, expected: null, expectedHead: null }
+  const base = VALUES[issue.ruleCode]
+  if (!base) return { current: null, expected: null, expectedHead: null }
   // 画布标注那两条用的是 `size` 而不是 `effective`（同一条规则、两种主语）
   const params = (issue.message.values ?? {}) as Record<string, unknown>
+  // 页宽超过期刊写的最大宽度（`pageWidthMax`）：要求是「≤ 最大宽度」，不是「等于某个栏宽」
+  const spec =
+    issue.ruleCode === 'page-width' && params.max != null
+      ? { current: 'actual', expected: 'max', unit: 'mm', cmp: 'atMost' as Comparator }
+      : base
   const read = (key: string | undefined): string | null => {
     if (!key) return null
     const raw = params[key] ?? (key === 'effective' ? params.size : undefined)
@@ -292,7 +297,9 @@ export function issueAriaLabel(issue: ValidationIssue): string {
     severityLabel(issue.severity),
     subjectName(issue),
     issueTitle(issue),
-    v.current && v.expected ? pr('ariaValues', { current: v.current, expected: v.expected }) : null,
+    v.current && v.expected
+      ? pr(issue.ruleCode === 'raster-dpi' ? 'ariaThresholdValues' : 'ariaValues', { current: v.current, expected: v.expected })
+      : null,
     pr('ariaLocate'),
   ]
     .filter(Boolean)

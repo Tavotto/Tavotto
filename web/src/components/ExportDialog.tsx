@@ -119,8 +119,9 @@ import { buildBatchInput, buildMergedPdfInput, type BatchShared } from "@/lib/ex
 import { mergePdfPlan } from "@/lib/pdfPagesMerge";
 import { useScriptRunStore } from "@/store/scriptRunStore";
 import type { OverwritePolicy } from "@/lib/exportRequest";
+import { newerObjectCount } from "@/lib/exportPayload";
 import { DEFAULT_PROFILE_ID, type PublicationProfile } from "@/lib/profile";
-import { profileName } from "@/lib/profileText";
+import { profileName, profileOutputName } from "@/lib/profileText";
 import { useLocale } from "@/i18n/react";
 import { journalCatalogUi } from "@/lib/journalUi";
 import { applyJournalExport, journalExportAdvice } from "@/lib/journalExport";
@@ -612,7 +613,7 @@ export function ExportDialog() {
     const record = resolved.profileId
       ? specRecords.find((r) => r.id === resolved.profileId)
       : undefined;
-    return record ? profileName(record) : resolved.profile.label;
+    return profileOutputName(resolved.profile, record);
     // 内置规范的名字（`profileName`）在调用时按当前语言成文：换语言要重算，否则结论行换了语言、
     // 规范名还是旧的（#1194 评审 P2；问题面板 NoneEvidence 同一条，Codex #832）
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -981,6 +982,9 @@ export function ExportDialog() {
   const exportDirNow = useProjectStore((s) => s.project?.export_dir ?? null);
   const prepared = prepareExport(inputOf());
   const filenameIssue = prepared.filenameProblem;
+  // 本构建画不出来的对象（更新的构建写进来的，`isKnownObject`）：导出会少画它们，开始之前就拦下。
+  // 「每张图单独导出」逐张带的标注出自同一张画布，按整张画布数
+  const newerObjects = !single && scope === "original" ? newerObjectCount(exportDoc.objects) : prepared.newerObjects;
   const names = prepared.names;
   // 数的是**这次真会发出去的**格式（`names` 由 `buildExportRequest` 来，画布范围下
   // 勾着的 EPS 不在其中）：只勾 EPS 又切到画布，按钮得灰，不能发一个空格式列表
@@ -989,6 +993,7 @@ export function ExportDialog() {
     !figureChecking &&
     names.length > 0 &&
     !filenameIssue &&
+    newerObjects === 0 &&
     !locationUpdating &&
     (scope !== "original" || availability.ok);
 
@@ -1020,7 +1025,8 @@ export function ExportDialog() {
   const [mergePdfChoice, setMergePdfChoice] = useState(true);
   const mergeOn = mergePlan !== null && mergePdfChoice;
   const canStartBatch =
-    batchMode && canvasFigures.length > 0 && (formats.length > 0 || withScript) && !busy && !locationUpdating;
+    batchMode && canvasFigures.length > 0 && (formats.length > 0 || withScript) && !busy && !locationUpdating &&
+    newerObjects === 0;
   /**
    * 「每张图单独导出」的**冻结**：点「导出」之后分两步，且两步之间没有任何交错——
    * ① 先 await 拿齐每张图的 export route（只取后端的回答，不读文档、不生成请求输入；用户这几秒里改了什么，
@@ -1923,6 +1929,14 @@ export function ExportDialog() {
                 </FormRow>
               )}
             </section>
+            )}
+            {/* 两种导出方式都要说清按钮为什么灰（「每张图单独导出」也会被它拦下） */}
+            {newerObjects > 0 && (
+              <FormRow>
+                <p data-export-newer-objects className="text-sm text-danger-content">
+                  {ex("newerObjects", { count: newerObjects })}
+                </p>
+              </FormRow>
             )}
 
             {/* 2. 位置 —— 导出之前就看得见文件会落到哪（审计 §10.2 P0）；「更改…」直接弹选择文件夹 */}

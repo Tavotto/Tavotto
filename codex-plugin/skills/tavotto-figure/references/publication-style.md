@@ -106,7 +106,12 @@ Tavotto 内置了期刊标准库（每条数值都带原文出处）。用户说
 4. `journal_unknown`：库里没有这本（关了期刊同步、本机又没有缓存时，种子以外的刊也会这样报）。告诉用户，请用户给期刊的
    作图要求原文（栏宽、最小字号、dpi），再按下面手写 `journal` 覆盖——并说明这次是按用户给的数值判的，不是期刊库。
    **不要凭记忆编期刊规范。**
-5. 列表里带 `downloaded: false` 的刊，标准还在服务端：第一次带它的 `journal_id` 时才下载（之后就在本机，不再下载）。
+5. 要把图改到这本期刊合规：`tavotto_fix_to_journal { session_id, journal_id }`（ADR 0180）——图幅、字号、字体、线宽、
+   刻度朝向、图例边框、封闭轴一步改完，每步在真实渲染上裁决，修复引入新的 error / warn 就整体回到修改前。
+   `column_choice_required`：现宽与几个栏位都接近（或都不接近），什么都没改——念出 `columns` 问用户单栏还是双栏，再带 `column`。
+   结果 `remaining` 每条带 `fix`：`manual`（配色、数据、子图结构……）才回脚本改；`verify` 要用户确认；`skipped`
+   里的 `font_unavailable` 说明这台机器没有规范要的字体（`want`），不要自己换相近字体。给了 `formats` 才导出，被预检挡也会整体回到修改前。
+6. 列表里带 `downloaded: false` 的刊，标准还在服务端：第一次带它的 `journal_id` 时才下载（之后就在本机，不再下载）。
    下不来时会明确报错，不会悄悄换成别的数据：
    - `journal_quota_exceeded`：下载额度用完了。照 `error` 里的时间告诉用户「约 N 分钟后再试」（`retry_after_s` 是秒数），
      期间别重试，也别想办法换设备令牌。
@@ -115,3 +120,17 @@ Tavotto 内置了期刊标准库（每条数值都带原文出处）。用户说
    这三种都**不要**改成手写 `journal` 继续判，除非用户给了期刊要求原文（按第 4 步）。
 
 手写覆盖只写点名的键：`{"journal": {"widths_mm": {"double": 178}}}`。
+
+### 逐条来源事实（v2，工具可用时）
+
+`tavotto_get_journal_facts` 可用时，`{"query":"期刊名"}` 搜索 v2 目录；确认期刊后
+`{"journal_id":"<v2 id>"}` 读取事实与来源。分页时记住第一页的 `catalog_rev`，每个后续请求同时传 `next_offset` 和
+`expected_catalog_rev`；后续页省略它会被拒绝。若返回 `journal_catalog_changed`，丢弃已读页并从第一页重读。每页的
+`facts` / `coverage` 各自带来源，`coverage.result=not_stated` 只表示指定来源和范围内未见，
+不能扩大成整个期刊未规定。`catalog_completeness=unknown` 表示全刊覆盖情况未知；事实总数只是刊包
+已收录数量，未出现的主题不能推定已核完或未规定。读取失败或目录不可用时如实告知，不用 v1 / 种子冒充 v2 事实。
+
+每条事实的图类、其他条件、投稿阶段、比较符和要求强度都要一起理解：修稿、录用后与生产阶段不互换；`example` 不是封闭的
+字体白名单；`preferred` 是首选，`permitted` 是允许而非完整允许列表；`not_in` 是禁止项，`condition_text` 或无法判断的条件需要人工核对。**v2 是
+来源信息，不会自动进入预检。** 如要用画布预检，仍单独通过 `tavotto_list_journals` 确认
+v1 中对应的刊和 ID；不把 v2 ID 当作自动兼容，也不暗示 v1 能判 v2 的所有条件。

@@ -202,6 +202,12 @@ order: 50
     （`probe_kind` 照旧），只有 `import_file` 问过的仍是 `probe`；`rule_for_choice` 对 glob / 文件夹条目走 `derive_location`。
     没救回的探路记进 `InputMisses.probes`（绝对路径总记、相对的只在 cwd 不是沙盒时记）；对不上只读打开时，脚本构造的
     `FileNotFoundError`（无 errno、单个字符串）按路径段点了名某条、且它此刻不在 → `missing_input`，与只读打开同形。
+    脚本自己调 `parser.error(...)`（调 `ArgumentParser.error` 的那一帧不在 argparse 里，`worker._script_parser_error_message`）
+    且消息点了名某条没救回的探路（整路径或只写文件名，`figcapture.parser_error_missing_input`）、它此刻不在 → 同样
+    `missing_input`，不再是 `script_needs_arguments`（ADR 0106 修订 2026-11-14）；argparse 解析时自己报的照旧。
+    会抛的探路（`os.stat|lstat|listdir|scandir`、`Path.stat|lstat`，getsize / getmtime 经它们）没救回时给**那一个**系统
+    ENOENT 打标（`_tavotto_probe_miss`），它到了终局（含被包一层的异常链）同样 → `missing_input`（ADR 0106 修订 2026-11-14）；
+    认的是异常对象上的标、不按路径比——同一路径随后写进不存在的目录抛的 ENOENT 没有标，不认领。
     数据在脚本目录里找得到、只是沙盒 cwd 下 C++ 读取器看不见时，静态证据里它不是「哪儿都找不到」的候选：
     不挂 native 载荷，错误仍是 `script_error` + `extra.enoent`（诊断，行为不变）。
     ④ **代次 + 按项目的一把互斥锁**（ADR 0106 §五，`inputremap.project_mutex`，可重入）：改指表按项目一个代次（跨重启单调）。
@@ -431,6 +437,12 @@ order: 50
   中途使实际容器不确定，均保留 `script_error`；
   绝不靠同一行出现 `argv` 推断。确认时复用 `script_needs_arguments` 和既有运行参数入口，不猜 `parse_kind`，
   敏感参数仍不进入消息、回溯或日志。看护：`tests/test_worker_exit_report.py` / `tests/test_run_argv_privacy.py`。
+- **拆包时参数个数不够的未捕获 `ValueError`（一份用户反馈，`data, work, out = sys.argv[1:4]`）**：
+  `worker._direct_argv_unpack_error` 与上一条共用 `_argv_failure_site` / `_loads_run_argv` 的证据规则（列表身份与内容未改、
+  失败点就是入口脚本那条 `UNPACK_SEQUENCE`、进入脚本后没有帧在异常期间继续执行、加载序列中途无跳转汇入），操作数只认
+  `sys.argv` 本身或它的**一个常量两端切片**（3.10/3.11 `BUILD_SLICE`+`BINARY_SUBSCR`、3.12/3.13 `BINARY_SLICE`、3.14 折叠的
+  常量 `slice` + `BINARY_OP []`）。「不够」由 argv 与拆包个数重算，不解析异常文字；只有补参数修得好时才算——值太多、
+  切片上限本身装不下、带步长 / 动态边界、`*rest` 拆包（`UNPACK_EX`）均保留 `script_error`。看护同上。
 - **登记**（`engine/runconfig.py`）：本机 Tavotto 数据目录 `runconfigs/<项目摘要>.json`，不写用户项目（只读项目照样能用）。
   同 (脚本, argv, 敏感标记) 复用引用，改任一 token = 新引用（"编辑 = 新修订"，在途 spec 与旧产物不变）。`sensitive=True` 只活在进程内存，
   文件里只有占位；格式版本高于本读者 → `run_config_unsupported`。错误码：`invalid_argv`(400) / `run_config_missing` /

@@ -70,7 +70,11 @@ _CODE_REGISTRIES = (
     "tavotto.engine.ai_data_figure",
     "tavotto.engine.xlsxread",
     "tavotto.engine.ai_data_recipe",
+    # 数据出图 v2 的出备选 / 落盘流水（ADR 0178）：`ProposeError(code)` 由 app 的 `_propose_error` 漏斗转成 JSON
+    "tavotto.engine.ai_data_propose",
+    # ADR 0110：改写脚本里的数据路径与共享的备份底座——`ScriptEditError(code)` 由 app 的 409 漏斗转出
     "tavotto.engine.scriptbackup",
+
     "tavotto.engine.scriptedit",
     "tavotto.engine.runconfig",
     "tavotto.tiffprobe",
@@ -227,6 +231,11 @@ def test_declared_codes_keep_literal_response_and_legacy_assignment_shapes(sourc
 # code——审计 P1-02：错误尾部不许泄漏中文，所以每个 code 都要有两种语言的
 # 文案，且占位符与 params 对得上）
 USER_VISIBLE_CODES = {
+    # Journal facts inspection may return a bounded result error.
+    "result_too_large": set(),
+    "journal_catalog_disabled": set(),
+    "svg_scene_invalid": set(),
+    # --- ADR 0175：改图助手附文件（`POST /api/ai/attachments`）；固定文案 ---
     "attachment_too_large": set(),
     "attachment_empty": set(),
     "attachment_invalid": set(),
@@ -268,6 +277,7 @@ USER_VISIBLE_CODES = {
     "package_schema_unsupported": set(),
     "package_source_outside_project": set(),
     "figure_snapshot_unavailable": set(),
+    "package_schema_too_new": {"schema"},
     "scan_failed": {"reason"},
     "perf_report_rejected": {"reason"},
     "perf_report_write_failed": set(),
@@ -283,20 +293,18 @@ USER_VISIBLE_CODES = {
     "engine_files_incomplete": set(),
     "write_outside_roots": set(),
     "import_folder_unreadable": {"folder"},
-    "import_folder_abi_mismatch": {"abi", "current", "folder"},
-    "path_ignore_token_invalid": set(),
-    "path_ignore_rejected": set(),
-    "repair_unsupported": set(),
-    "repair_token_invalid": set(),
-    "repair_target_rejected": set(),
-    "repair_in_progress": set(),
-    "repair_not_confirmed": set(),
-    "repair_cancelled": set(),
-    "repair_not_elevated": set(),
-    "repair_failed": set(),
-    "repair_has_links": set(),
-    "repair_too_large": set(),
-    "export_raster_too_large": {"height", "max_pixels", "width"},
+    # ADR 0154：私有依赖目录里的编译扩展是为别的 Python 小版本编的；参数来自 `pool.recovery_params`（显示名 + 两个版本）
+    "import_folder_abi_mismatch": {"folder", "abi", "current"},
+    # TVD-3MWS：图片内容与扩展名不符；参数来自 `pool.recovery_params`（格式名 + 扩展名 + 可选的项目相对显示名）
+    "image_format_mismatch": {"claimed", "actual", "ext"},
+    # 「跳过这个文件夹」（ADR 0154，`engine/pathignore`）：固定文案、不带参数——路径不进响应
+    **{code: set() for code in pathignore.ERROR_CODES},
+    # 「修复权限」（ADR 0153 修订 2026-10-30，`engine/folderrepair`）：全是固定文案、不带参数——路径不进响应
+    **{code: set() for code in folderrepair.ERROR_CODES},
+    # worker 直出位图超像素预算（`figcapture.check_export_raster`）；参数来自 `pool.recovery_params`
+    "export_raster_too_large": {"width", "height", "max_pixels"},
+    # TeX 工具链（`texdiag`）：参数来自错误转换合同 `pool.recovery_params`；`tex_failed` 的 `{{error}}`
+    # 与 `script_error` 同一来源（traceback 末行，前端 `engineErrorMsg` 填）
     "tex_command_missing": {"command"},
     "tex_package_missing": {"file"},
     "tex_compile_failed": {"line"},
@@ -414,6 +422,14 @@ USER_VISIBLE_CODES = {
     "ai_pending_unresolved": set(),
     "taf_disabled": set(),
     "data_figure_input_missing": set(),
+    # 数据出图 v2（ADR 0178）：候选会话过期 / 备选不存在 / 数据在出备选后变了 / 请求字段不对；提交时配方与数据不再相容
+    "propose_session_expired": set(),
+    "propose_candidate_unknown": set(),
+    "propose_data_changed": set(),
+    "propose_input_invalid": set(),
+    "propose_cells_invalid": set(),
+    "propose_cells_need_rule": set(),
+    "data_figure_recipe_invalid": set(),
     "data_path_outside_project": set(),
     "data_not_found": set(),
     "data_not_csv": set(),
@@ -426,6 +442,11 @@ USER_VISIBLE_CODES = {
     "data_empty": set(),
     "data_header_invalid": set(),
     "data_ragged": set(),
+    # 数据出图 v2 的文本表格（`.txt` / `.dat` / `.asc`、嗅探分隔符与表头行）：像二进制 / 没有成列的数据 / 指定的表头行不对
+    "data_binary": set(),
+    "data_not_table": set(),
+    "data_header_row_invalid": set(),
+    # 数据出图 v2（数据文件夹 / TSV / XLSX，`xlsxread`）
     "data_format_unsupported": set(),
     "data_excel_unsupported": set(),
     "data_xlsx_invalid": set(),
@@ -475,6 +496,10 @@ USER_VISIBLE_CODES = {
     "recipe_unknown_value": set(),
     "recipe_layer_count": set(),
     "recipe_why_invalid": set(),
+    "cell_rule_invalid": set(),
+    "cell_map_too_large": set(),
+    "cell_map_value_invalid": set(),
+    "cell_map_key_unknown": set(),
     "figure_name_exhausted": set(),
     "ai_request_unresolved": set(),
     "ai_panel_file_missing": set(),
@@ -772,6 +797,8 @@ SCANNED = [n for n in _SOURCE_FILES if (SRC_DIR / n).is_file()]
 #: 分诊）。会话 guard 那几个的拒绝对象是攻击页面/畸形请求，正常界面路径由
 #: main.tsx 的专用启动页兜住；401 的 session_auth_required 另有 backend 文案。
 NON_UI_CODES = {
+    # 视图范围加脚本（ADR 0184）：前端只在后台顺手发、名字已是项目相对路径，失败不出界面
+    "invalid_script_name",
     # Conversion-run diagnostics are mapped by ai_convert._failure_check to the
     # existing UI reason run_failed; they are not HTTP response codes.
     "capture_incomplete",

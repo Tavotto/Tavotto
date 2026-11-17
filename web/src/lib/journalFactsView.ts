@@ -1,0 +1,118 @@
+/** Read one v2 source page. It never changes a publication profile. */
+export type FigureKind = 'unknown' | 'line_art' | 'halftone' | 'combination'
+export type SubmissionStage = 'unknown' | 'submission' | 'revision' | 'accepted' | 'production'
+export interface FactSource { url: string; retrieved: string; kind?: 'html' | 'pdf'; page?: number; pageExactUnavailable?: boolean }
+export interface FactRecord {
+  id: string; subject: string; relation: string; value: unknown; unit?: string
+  strength: string; stage: string; origin: string; source: string; quote: string
+  conditions?: Record<string, unknown>; condition_text?: string; derivation?: string; anchor?: string
+  context?: { source: string; quote: string }[]
+}
+export interface CoverageRecord { id: string; subject: string; result: 'not_stated'; scope: string; sources: string[] }
+export interface FactsPage {
+  journal_id: string; journal: { label: string; publisher_id: string; issn?: string; eissn?: string }; catalog_rev: number; next_offset: number | null
+  sync_state: string; sync_code: string | null; facts: FactRecord[]; coverage: CoverageRecord[]
+  sources: Record<string, FactSource>; catalog_completeness: 'unknown'; semantic_review: 'not_authenticated'
+  inspection?: { status: string; facts: { id: string; structured_conditions: { status: string } }[] }
+}
+export type FactSelection = { object_label: string; figure_kind: FigureKind; stage: SubmissionStage }
+export type FactsResponse = { ok: true; page: FactsPage } | { ok: false; code: string }
+
+function record(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function validAnchor(value: unknown): boolean {
+  const prefix = '#:~:text='
+  if (typeof value !== 'string' || !value.startsWith(prefix) || [...value].length > 4096) return false
+  const text = value.slice(prefix.length)
+  return !!text && [...text].every((char) => {
+    const code = char.codePointAt(0)!
+    return code > 32 && code !== 127 && !(code >= 0xd800 && code <= 0xdfff)
+  })
+}
+
+function validPageContents(page: FactsPage, pageLiterals: WeakMap<object, string | null>): boolean {
+  if (!record(page.sources)) return false
+  for (const source of Object.values(page.sources)) {
+    if (!record(source) || typeof source.url !== 'string' || typeof source.retrieved !== 'string') return false
+    if (source.kind !== undefined && source.kind !== 'html' && source.kind !== 'pdf') return false
+    if (source.page !== undefined) {
+      if (source.kind !== 'pdf' || typeof source.page !== 'number' || !(source.page > 0) || (Number.isFinite(source.page) && !Number.isInteger(source.page))) return false
+      const literal = pageLiterals.get(source)
+      // The backend emits positive Python integers as decimal digits. Use the
+      // parser's token, not the rounded JS value, to reject fractions/exponents.
+      // Older runtimes lack reviver context: retain safe pages but fail closed
+      // for inexact values whose original token cannot be verified.
+      if (literal == null ? !Number.isSafeInteger(source.page) : !/^[1-9][0-9]*$/.test(literal)) return false
+    }
+  }
+  for (const fact of page.facts) {
+    if (!record(fact) || ['id', 'subject', 'relation', 'strength', 'stage', 'origin', 'source', 'quote'].some((key) => typeof fact[key] !== 'string') || !(fact.source in page.sources)) return false
+    if (fact.context !== undefined && (!Array.isArray(fact.context) || fact.context.some((ctx) => !record(ctx) || typeof ctx.source !== 'string' || typeof ctx.quote !== 'string' || !(ctx.source in page.sources)))) return false
+    if (fact.conditions !== undefined && !record(fact.conditions)) return false
+    if (fact.condition_text !== undefined && typeof fact.condition_text !== 'string') return false
+    if (fact.derivation !== undefined && typeof fact.derivation !== 'string') return false
+    if (fact.anchor !== undefined && !validAnchor(fact.anchor)) return false
+    if (fact.unit !== undefined && typeof fact.unit !== 'string') return false
+  }
+  for (const coverage of page.coverage) {
+    if (!record(coverage) || typeof coverage.id !== 'string' || typeof coverage.subject !== 'string' || typeof coverage.scope !== 'string' || coverage.result !== 'not_stated' || !Array.isArray(coverage.sources) || coverage.sources.some((id) => typeof id !== 'string' || !(id in page.sources))) return false
+  }
+  if (page.inspection && (!record(page.inspection) || !Array.isArray(page.inspection.facts) || page.inspection.facts.some((item) => !record(item) || typeof item.id !== 'string' || !record(item.structured_conditions) || typeof item.structured_conditions.status !== 'string'))) return false
+  return true
+}
+
+export async function readJournalFacts(
+  journalId: string, offset: number, revision: number | null, selection: FactSelection | null, signal: AbortSignal,
+): Promise<FactsResponse> {
+  const body = {
+    journal_id: journalId, offset, limit: 1,
+    ...(revision !== null ? { expected_catalog_rev: revision } : {}),
+    ...(selection ? { inspection: selection } : {}),
+  }
+  try {
+    const response = await fetch('/api/journal-facts/journal', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal,
+    })
+    const pageLiterals = new WeakMap<object, string | null>()
+    type SourceReviver = (this: object, key: string, value: unknown, context?: { source?: string }) => unknown
+    const parse = JSON.parse as (text: string, reviver: SourceReviver) => unknown
+    const data = parse(await response.text(), function (key, value, context) {
+      if (key === 'page') pageLiterals.set(this, typeof context?.source === 'string' ? context.source : null)
+      return value
+    })
+    if (!response.ok) {
+      const error = data as { code?: unknown } | null
+      return { ok: false, code: typeof error?.code === 'string' ? error.code : 'unknown' }
+    }
+    const page = data as FactsPage | null
+    if (!page || page.journal_id !== journalId || !page.journal || typeof page.journal.label !== 'string' || typeof page.journal.publisher_id !== 'string' ||
+      (page.journal.issn !== undefined && typeof page.journal.issn !== 'string') ||
+      (page.journal.eissn !== undefined && typeof page.journal.eissn !== 'string') ||
+      !Number.isSafeInteger(page.catalog_rev) || page.catalog_rev < 1 ||
+      (revision !== null && page.catalog_rev !== revision) ||
+      (page.next_offset !== null && (!Number.isSafeInteger(page.next_offset) || page.next_offset <= offset)) ||
+      !Array.isArray(page.facts) || !Array.isArray(page.coverage) || !page.sources ||
+      page.catalog_completeness !== 'unknown' || page.semantic_review !== 'not_authenticated' ||
+      (selection && (!page.inspection || page.inspection.status !== 'not_verifiable' || !Array.isArray(page.inspection.facts))) ||
+      (!selection && page.inspection !== undefined) ||
+      !validPageContents(page, pageLiterals)) {
+      return { ok: false, code: 'invalid_response' }
+    }
+    // JSON.parse may already have rounded an integer (or converted a very long
+    // integer to Infinity). Remove it rather than expose a false page number.
+    const sources = Object.fromEntries(Object.entries(page.sources).map(([id, original]) => {
+      const source = { ...original }
+      delete source.pageExactUnavailable
+      if (source.page !== undefined && !Number.isSafeInteger(source.page)) {
+        delete source.page
+        source.pageExactUnavailable = true
+      }
+      return [id, source]
+    }))
+    return { ok: true, page: { ...page, sources } }
+  } catch {
+    return { ok: false, code: 'network' }
+  }
+}

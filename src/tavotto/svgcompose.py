@@ -229,7 +229,10 @@ def compose_scene(
         if chain and chain[-1] is not edited:
             chain.append(edited)
         m = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
-        for el in reversed(chain[:-1]):  # 根 → 父（不含 target 自身）
+        # chain = target → … → edited。被替换的 target 自身不在存活父链里：
+        # 它的 transform 随节点一起删除，不能参与逆变换（否则会把已不存在的
+        # 变换再补偿一次）。只用 target 的父到 edited 之前这一段。
+        for el in reversed(chain[1:-1]):
             tr = el.attrib.get("transform")
             if tr:
                 m = sc_compose(m, parse_transform(tr))
@@ -748,7 +751,8 @@ def compose_native_scene(source_svg: bytes, binding: dict, scaffold: dict, model
             node.set("id", value)
             source_ids.add(value)
     resolver = svgir._Translator(scene, *size, None, None)
-    render_frame = scaffold.get("render_frame")
+    # 只读 manifest 内那一份（#1919）：产物顶层不再复制 render_frame。
+    render_frame = (scaffold.get("manifest") or {}).get("render_frame")
     source_nodes = None
     viewport_clip = None
     if render_frame is not None:

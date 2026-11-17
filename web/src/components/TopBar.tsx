@@ -23,9 +23,6 @@ import {
   setDocumentName,
 } from '@/store/actions'
 import { runUndoRedo } from '@/hooks/useKeyboard'
-import { createPackage } from '@/lib/api'
-import { chooseProjectPackage } from '@/lib/projectPackageEntry'
-import { openPackageFile } from '@/lib/packageImport'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { dragRegionProps, isDesktop, TRAFFIC_LIGHTS_INSET, WINDOW_CONTROLS_INSET, windowChrome } from '@/lib/desktop'
 import { keyOf } from '@/lib/keymap'
@@ -33,6 +30,7 @@ import { foreignProjectLabel } from '@/lib/projectLabel'
 import { currentProjectId } from '@/lib/session'
 import { bindingForProject } from '@/lib/projectFile'
 import { useProjectStore } from '@/store/projectStore'
+import { useAssetStore } from '@/store/assetStore'
 import { AppMenuButton } from './AppMenuButton'
 import { HomeButton, ProjectSwitcher } from './ProjectSwitcher'
 import { useWriteBackMenuEntry } from './inspector/UpdateSourceButton'
@@ -40,7 +38,8 @@ import { usePalette } from '@/components/CommandPalette'
 import { runTutorialEntry, tutorialEntry } from '@/lib/onboarding/tutorial'
 import { refreshProjectNow } from '@/store/liveSync'
 import { bannerReport, useProjectReadinessStore } from '@/store/projectReadinessStore'
-import { pendingCount } from '@/lib/readinessText'
+import { allEditable, pendingCount } from '@/lib/readinessText'
+import { scopeReadiness } from '@/lib/figureGroup'
 import {
   discardLocalCopy,
   dismissDocNotice,
@@ -50,8 +49,10 @@ import {
 } from '@/store/documentStore'
 import { runManualSave } from '@/store/actions'
 import { useOnboardingStore } from '@/store/onboardingStore'
+import { checkNewerBuild } from '@/store/failureExit'
+import { exportPackage, openPackageWithRetry } from '@/store/packageActions'
 import { useUiStore } from '@/store/uiStore'
-import { fetchNewerDesktopBuild, useUpdateStore } from '@/store/updateStore'
+import { useUpdateStore } from '@/store/updateStore'
 import { BrandMark } from './ui/BrandMark'
 import { Button } from './ui/Button'
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from './ui/Menu'
@@ -64,12 +65,13 @@ import { BuildMismatchChip } from './BuildMismatchChip'
 import { DesktopUpdateChip } from './DesktopUpdateChip'
 import { TutorialChip, useTutorialChipVisible } from './onboarding/TutorialChip'
 import { ContactButton } from './contact/ContactButton'
-import { ConflictActions, ConflictDetail } from './DocumentBanner'
+import { ReviewButton } from './review/ReviewButton'
+import { ConflictActions, ConflictDetail, hasDiskSummary } from './DocumentBanner'
 import { RestoreIssueBody, RestoreMetaBody } from './RestoreIssueBody'
 import { useWindowFullscreen } from '@/hooks/useWindowChrome'
 import { MOD, cn } from '@/lib/utils'
 import { journalCatalogUi } from '@/lib/journalUi'
-import { msg, t as translate } from '@/i18n'
+import { t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
 import { useFormatMessage } from '@/i18n/react'
 
@@ -134,59 +136,14 @@ export function TopBar() {
         {/* 联系作者（ADR 0145）：撤销重做与导出之间的次级胶囊，不抢导出这颗主按钮；窄于 900 只留图标。
             引擎说关着（`TAVOTTO_NO_CONTACT=1`）就不渲染 */}
         <ContactButton placement="topbar" />
+        {/* 分享审阅（ADR 0187）：导出左边的次级胶囊；功能关着不渲染 */}
+        <ReviewButton />
         <ExportButton />
         <MoreMenu writeBackItem={writeBack.item} />
         {writeBack.dialog}
       </div>
     </header>
   )
-}
-
-/**
- * 导出可复现项目包（.tavotto）：布局 + 引用素材 + 源脚本 + 清单。
- *
- * **它从导出对话框搬到了这里**（Prompt 12 §五）：打包出的是一个"项目"，
- * 不是一张图，和「导出这张图」放在同一个弹窗里让两件事互相冒充。搬走
- * 不等于砍掉——导入就在下面一行，一进一出终于在同一个菜单里。
- */
-let packageExportSequence = 0
-
-async function exportPackage() {
-  const ui = useUiStore.getState()
-  const doc = useDocumentStore.getState()
-  const sequence = ++packageExportSequence
-  const pj = currentProjectId()
-  const current = () => {
-    const state = useDocumentStore.getState()
-    return sequence === packageExportSequence && pj === currentProjectId()
-      && state.documentFormat === doc.documentFormat && state.documentId === doc.documentId
-      && state.loadSeq === doc.loadSeq
-  }
-  try {
-    const document = structuredClone(doc.buildProject())
-    const stem = doc.projectMeta.name || doc.doc.name
-    const res = doc.documentFormat === 'v4'
-      ? await createPackage(stem, document, {}, { format: 'v4', pj })
-      : await createPackage(stem, document, {})
-    if (!current()) return
-    const executionIncomplete = doc.documentFormat === 'v4' && res.execution_coverage?.state === 'incomplete'
-    const message = doc.documentFormat === 'v4' && res.missing.length > 0
-      ? msg(executionIncomplete ? 'status.packagedIncompleteWithExecution' : 'status.packagedIncomplete', { name: res.name, count: res.missing.length }, 'workspace')
-      : executionIncomplete
-        ? msg('status.packagedExecutionIncomplete', { name: res.name }, 'workspace')
-        : msg('status.packaged', { name: res.name, count: res.assets }, 'workspace')
-    ui.setStatus(message, 'done')
-  } catch (e) {
-    if (!current()) return
-    ui.setStatus(
-      msg(
-        'status.packageFailed',
-        { error: e instanceof Error ? e.message : String(e) },
-        'workspace',
-      ),
-      'error',
-    )
-  }
 }
 
 /**
@@ -202,22 +159,9 @@ function importPackage() {
   // 本来就打得开，只有这个文件选择器会把它滤掉——所以列进来。写出永远是
   // .tavotto，这不是运行时兼容层回潮。
   input.accept = '.tavotto,.magplot,.zip,application/zip'
-  input.onchange = async () => {
+  input.onchange = () => {
     const file = input.files?.[0]
-    if (!file) return
-    const ui = useUiStore.getState()
-    try {
-      await openPackageFile(file)
-    } catch (e) {
-      ui.setStatus(
-        msg(
-          'status.packageOpenFailed',
-          { error: e instanceof Error ? e.message : String(e) },
-          'workspace',
-        ),
-        'error',
-      )
-    }
+    if (file) void openPackageWithRetry(file, 0)
   }
   input.click()
 }
@@ -624,7 +568,7 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
       <>
         {head(
           t(saveIssue?.kind === 'stale' ? 'docBanner.conflictStale' : 'docBanner.conflictExternal'),
-          <ConflictDetail disk={saveIssue?.disk} />,
+          hasDiskSummary(saveIssue?.disk) ? <ConflictDetail disk={saveIssue?.disk} /> : undefined,
         )}
         {row(<ConflictActions onAction={close} />)}
       </>
@@ -717,27 +661,6 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
     )
   }
   return null
-}
-
-/** 「检查更新」之后用一条 toast 说结果；有新版但没下好时，toast 上的动作直接下载并更新 */
-async function checkNewerBuild(): Promise<void> {
-  const ui = useUiStore.getState()
-  const outcome = await fetchNewerDesktopBuild()
-  if (outcome === 'ready') {
-    ui.setStatus(msg('docBanner.updateReady', undefined, 'workspace'), 'info')
-  } else if (outcome === 'found') {
-    const version = useUpdateStore.getState().desktopUpdate?.version ?? ''
-    ui.setStatus(msg('docBanner.updateFound', { version }, 'workspace'), 'info', {
-      action: {
-        label: msg('docBanner.updateInstall', undefined, 'workspace'),
-        run: () => void useUpdateStore.getState().installDesktop(),
-      },
-    })
-  } else if (outcome === 'none') {
-    ui.setStatus(msg('docBanner.updateNone', undefined, 'workspace'), 'info')
-  } else {
-    ui.setStatus(msg('docBanner.updateCheckFailed', undefined, 'workspace'), 'error')
-  }
 }
 
 export function DocumentMenu() {
@@ -842,7 +765,6 @@ export function DocumentMenu() {
       </MenuItem>
       <MenuItem data-export-package onSelect={() => void exportPackage()}>{t('topbar.exportPackage')}</MenuItem>
       <MenuItem onSelect={importPackage}>{t('topbar.importPackage')}</MenuItem>
-      <MenuItem data-install-project-package onSelect={() => chooseProjectPackage()}>{t('packageInstall.entry', { ns: 'dialogs' })}</MenuItem>
 
       <MenuSeparator />
       <MenuLabel>{t('topbar.recentDocuments')}</MenuLabel>
@@ -1039,10 +961,17 @@ export function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
  */
 export function ProjectStatusPill() {
   const { t } = useTranslation(['workspace', 'common'])
-  const report = useProjectReadinessStore(bannerReport)
+  const fullReport = useProjectReadinessStore(bannerReport)
+  const assetPanels = useAssetStore((s) => s.panels)
+  const viewScope = useAssetStore((s) => s.viewScope)
   const centerOpen = useUiStore((s) => s.registryOpen)
   const [open, setOpen] = useState(false)
-  if (!report || centerOpen) return null
+  // 按看得见的图计数（ADR 0184）：同一张图的几份文件算一张；从脚本进来时范围外的散图不算、也不出胶囊
+  const report = useMemo(
+    () => (fullReport ? scopeReadiness(fullReport, assetPanels, viewScope) : null),
+    [fullReport, assetPanels, viewScope],
+  )
+  if (!report || centerOpen || report.summary.total <= 0 || allEditable(report.summary)) return null
   const { total, editable, layout_only: layoutOnly } = report.summary
   const pending = pendingCount(report.summary)
   const tone: StatusTone = pending > 0 ? 'warn' : 'neutral'

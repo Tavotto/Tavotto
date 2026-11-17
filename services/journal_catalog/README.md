@@ -1,5 +1,7 @@
 # 期刊目录服务（线协议 v1）
 
+来源事实 v2 的独立路径、数据结构、审核门禁与部署前提见 [FACTS-V2.md](FACTS-V2.md)；v1 仍按本文运行。
+
 纯标准库、与平台无关的小服务：把「已签名的期刊目录」分发给 Tavotto 客户端与 Agent。
 **不属于 Tavotto 包**：`pyproject.toml` 已把 `services/**` 排除出 wheel/sdist。
 设计依据：`docs/adr/0155-journal-catalog.md` §4b。结构照 `services/telemetry_proxy/`。

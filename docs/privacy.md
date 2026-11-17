@@ -129,6 +129,12 @@ releases until its data is ready). It works in two steps:
   kept on your computer afterwards. Reading a journal you already downloaded sends
   nothing.
 
+The separate v2 source-facts API is requested only when an assistant searches or
+reads those facts. It uses the same device token and quota as v1, but a separate
+local `journal-catalog-v2/` cache. The `tavotto_get_journal_facts` tool does not
+emit an anonymous usage event. An unavailable v2 catalog is not replaced with
+v1 facts.
+
 What the server receives: the journal id, a random anonymous **device token**
 issued by the server the first time it is needed, the catalog version number, a
 client type (`app`, or `agent-<name>` when an AI coding assistant's plugin on your
@@ -199,7 +205,10 @@ AI the user chose, in one of two ways:
   may carry the call with the user's key handed to it; otherwise Tavotto's built-in
   agent sends it directly. Either way the destination is the provider's API address
   the user connected, and the key is not sent anywhere else. Plain `http` addresses
-  are accepted only on the local machine or a private network.
+  are accepted only on the local machine or a private network. When you save such a
+  connection (or press "Check connection"), Tavotto also sends that address a few very short test
+  messages (a one-word prompt, at most 16 tokens of reply) to find out which chat protocol it
+  speaks; this uses a tiny amount of your quota, and the replies are not stored or logged.
 
 What is sent is the user's instruction plus whatever the assistant reads from the
 project to do the job, which can include the script and files in the project folder,
@@ -412,7 +421,7 @@ Offering the option uploads nothing; sending does:
   checkboxes that start unticked every time it opens: *script source* (the scripts
   registered in the open project, the scripts of recent test runs and of recent "generate editable
   version" conversions — including R and MATLAB scripts — and the unadopted candidate script such
-  a conversion left in Tavotto's local cache, attached as they are — **secret removal in scripts is best
+  a conversion left in Tavotto's local cache, and the local Python modules those scripts loaded from outside the project folder when they last ran — only `.py` modules that were really loaded from a folder the script itself added to Python's search path, never third-party packages or Python's own; never files sitting directly in your home folder or at the root of a drive, never anything under the credential folders Tavotto's AI helpers are also barred from (such as `.ssh`), never through a symbolic link; at most 20 per script, each cut at 1 MiB and counted in the same 100-file limit as the scripts; Tavotto remembers only the paths of these modules, in its own data folder for 30 days, and reads their contents only when you tick this box — attached as they are — **secret removal in scripts is best
   effort and cannot be guaranteed, so do not tick it if your scripts contain secrets**;
   without it the bundle contains no script source at all, including the source lines normally
   printed inside tracebacks), *system crash
@@ -546,6 +555,51 @@ cancelled, closed or failed send is never resumed on its own.
   period. To have a letter deleted earlier, email `feedback@tavotto.com` quoting
   its number (`TVM-…`).
 * **Switch.** `TAVOTTO_NO_CONTACT=1` removes the feature (no button, no network).
+
+## External review links
+
+*Share for review* (top bar, next to *Export*) turns the figure or layout you are
+looking at into a link that other people can open in a browser and comment on,
+without installing Tavotto or signing in. It uploads **only when you press
+*Create link* or *Update this link***; opening the window uploads nothing, and a
+cancelled or failed upload is never resumed on its own.
+
+* **What is uploaded.** A rendered picture of the current figure or layout (PNG,
+  at most 3000 px on the long side), a list of the elements on that picture —
+  where each one is, what kind it is (curve, tick label, legend…), the text you
+  can already see on it (axis labels, legend entries), and the outline of curves
+  and shapes as they are drawn, cut to the part that is visible in the picture —
+  the title, and the note to reviewers if you wrote one. The outlines let a
+  reviewer click a curve or a single tick label precisely; they contain nothing
+  that is not already visible in the picture. **Your scripts, data, project
+  files, file paths and computer details are never uploaded.**
+* **Who can see it.** Anyone who has the link. Links are not listed or indexed.
+  Reviewers type a display name of their choice; it is not verified.
+  Seeing the pictures needs no sign-in. Each picture also has its own web
+  address. It cannot be guessed, but it is not encrypted or password-protected:
+  anyone who gets hold of it (for example, a reviewer who copies it) can open
+  that picture directly, without the link. When you stop sharing or the link
+  expires, the pictures are deleted at once; an address someone already opened
+  may keep working for up to about 10 minutes.
+* **Where it is stored.** A service operated by the Tavotto maintainers on
+  Tencent Cloud CloudBase (mainland China), reached at `review.tavotto.cn`. No
+  other host is contacted for this feature.
+* **How long it is kept.** 30 days after the last update. *Stop sharing* deletes
+  the pictures, comments and verdicts at once; expired links are deleted the same
+  way.
+* **Daily limit.** To count the free daily limit (1 new link per device per
+  day; updating an existing link is not limited) the app creates a random device key on first
+  use and signs its requests with it. The key identifies this installation only,
+  is not linked to usage statistics and is not used for anything else.
+* **What stays on your computer.** The link's number, a secret management token,
+  thumbnails of the versions you shared and a copy of the comments, in the app's
+  data folder (readable by your user only, where the platform supports it), so
+  you can still read the comments after the link expires. While you have an
+  unexpired link, the app asks the service for new comments every 30 minutes, and
+  every minute while the *Review* tab is open; with no such link it makes no
+  request at all.
+* **Turning it off.** `TAVOTTO_NO_REVIEW_SHARE=1` removes the feature and all of
+  its network requests.
 
 ## Local service
 

@@ -22,12 +22,19 @@ order: 60
   golden vectors 在 `tests/golden/patch_vectors.json`——Rust supervisor 要
   逐字节复现，改任一侧必须同步另一侧。cancel 只是尽力而为的 no-op，硬取消 =
   kill + 重启。完整契约见 `docs/adr/0003-worker-protocol-v1.md`，改协议前先读。
+- **固定 chart 任务（ADR 0182，#1877）**：`pool.acquire_chart()` 与用户脚本共用池、LRU/租约、环境代次和退役围栏；
+  池键含独立任务身份，`execspec.safe_spec(task="chart")` 只产生固定 safe/module 目标，`worker_argv` 只发 `--task chart`。
+  v1 `chart` 在 build 之前分派；probe、脚手架、EPS 都不读取用户脚本，不发 execution fact；native 不接受该命令。
+  task 固定沙盒 cwd，与 build 共用文件操作守卫。业务字节/结构预算唯一出处是 `chartwire`，共享传输负责有界读写与超时，
+  workerd 消费 Python 提供的 `max_frame_bytes` 并以 `bounded_chart_tasks` 声明支持；旧 supervisor 走 Python 池。
+  kill 未确认不得复用或销账，Python 与 workerd 都保留同一池的围栏。看护 `tests/test_chart_process.py`（真实两条控制面）。
 - **转换校验的写入线索**：只有带项目改道写入根的 worker，v1 build 响应才带
   `redirected_write_attempts`；它是既有 `writetripwire.redirected()` 中至多 64 条项目相对路径，
   在文件真正打开前记录，可能包含失败或后来删除的写入，不能用作文件存在或内容一致的证明。
   Python 池和 workerd 池均记录同次 build 的值，失败清空，旧 worker 缺字段为 unknown；
   legacy 响应不加字段。只有转换层消费并先去路径、脱敏、限量才展示，不进遥测。看护
   `tests/test_convert_output_evidence.py`。
+- **`external_modules`（诊断包「脚本源码」，ADR 0118 修订 2026-11-15）**：v1 build 成功响应与 `script_error` 等脚本失败的错误 `extra`（`V1Handler` 在 `ensure_built` 抛 `ProtocolError` 时并入）可选带脚本自己加进 `sys.path` 的项目外目录里加载过的本地 `.py` 绝对路径（≤ 20 条）；没有就不带键，响应形状不变，加字段不升版本，workerd 原样透传，敏感运行的错误白名单剥掉它。判据与父进程持久化见 `diagnostics.md` 的 optional-source。看护 `tests/test_diag_external_modules.py`。
 - **转换校验的沙盒文件回报（#1809）**：与 `redirected_write_attempts` 同条件（只有带改道根的 worker）的 v1 build 响应另带
   `sandbox_files: {names: [会话沙盒里此刻还在的文件相对名，≤200], truncated: bool}`，排除 `__pycache__` / `*.pyc` / `_tavotto_*`
   引擎内部文件。只给名字不给内容，仅供 `ai_convert` 比对「来源里能确定的写出」有没有被写出（沙盒 cwd 的相对写入校验后即销毁，
@@ -83,6 +90,7 @@ order: 60
 - **会话池上限 = `pool.max_alive()`，不是常数（ADR 0159）**：`clamp(3, (可用内存 + 池内活会话×500MiB)×0.5÷500MiB, 8)`（池自己会话占的内存算回预算，否则上限随会话增多而自降、振荡），读不到内存回 3，下降不足 `MAX_ALIVE_HYSTERESIS`（2）沿用旧值，`TAVOTTO_MAX_ALIVE` 覆盖；淘汰只在 `acquire()` 且活会话数 > 上限时发生；
   淘汰、冷启动容量、未确认退役的拒绝线、发布账本**只问这一个函数**（`tests/test_pool_adaptive_cap.py` 用 AST 钉「别处不许读 `MAX_ALIVE`」；
   测试里 `pool.MAX_ALIVE` 是覆盖钩子，conftest 默认钉成 3）。读内存的 `engine/sysmem.py` 纯标准库，读不到一律下限，且不许在持 `_lock` 时调。
+  workerd 的 `max_sessions` 只是兜底，渲染池拿到客户端时写进 `session_cap = pool.workerd_session_cap()`（池能取到的上界 + 一次性会话余量），**绝不比池紧**——比池紧时它悄悄杀掉池以为还活着的会话，`require_built` 导出直接 `svg_source_unavailable`。
   取会话带闭集意图 `purpose`（`foreground` 缺省 / `neighbour`，`acquire_purpose()` 上下文，请求体可选字段）：`neighbour` 命中热会话不刷新 `last_used`；
   需要冷启动而别的活会话已满上限 → `background_render_deferred`（HTTP 409，不是失败，前端保留旧画面）；淘汰时「仅后台用过」的会话先走。
 - **LRU 淘汰不收「刚取到、还没发请求」的会话（Python 池）**：`acquire` 给会话打 `ACQUIRE_LEASE`（30 秒）租约，
@@ -116,8 +124,8 @@ order: 60
   safe 档不带参数，出路是默认值或 `tavotto run`；argparse 的 usage 打在 stderr，
   `pool._attach_script_output` 把 worker.log 尾巴接到 traceback 前面，两条控制面
   同一处拼），否则 `script_exited`——都不再把 worker 带走。`ensure_built` 放行
-  `ProtocolError`。裸 `Exception` 通常归 `script_error`；入口脚本直接读取本次运行的 `sys.argv` 时下标越界，
-  且实际失败的字节码、列表身份与回溯能共同确认这个事实，才归 `script_needs_arguments`（详见
+  `ProtocolError`。裸 `Exception` 通常归 `script_error`；入口脚本直接读取本次运行的 `sys.argv` 时下标越界、
+  或把它（或它的一个常量切片）拆包时个数不够，且实际失败的字节码、列表身份与回溯能共同确认这个事实，才归 `script_needs_arguments`（详见
   `figure-capture-and-execution.md`；不能确认时保留原错误）。probe 原样透传错误码。
   **守卫拦下的关键文件操作不洗成完整成功（P01a，`safe_file_operation_blocked`，AC-02）**：safe 的删除 /
   改名 / `write_text` 守卫与 savefig 拦截靠「悄悄跳过」工作，脚本看不到异常——脚本 `os.replace` 缓存后读它，

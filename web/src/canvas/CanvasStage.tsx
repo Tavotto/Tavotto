@@ -1,3 +1,4 @@
+import { visibleFigureCards } from '@/lib/figureGroup'
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { perfCount } from '@/perf/core'
 import { useTranslation } from 'react-i18next'
@@ -7,6 +8,7 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { EmptyPickCards } from './EmptyPickCards'
 import { RestoreIssueBody } from '@/components/RestoreIssueBody'
 import { Card } from '@/components/ui/Card'
+import { DocWindowCard } from '@/components/DocWindowCard'
 import { heldEntryCount, subscribeHeldEntries } from '@/store/documentRestore'
 import { runTutorialEntry } from '@/lib/onboarding/tutorial'
 import { useAssetStore } from '@/store/assetStore'
@@ -83,6 +85,7 @@ export function CanvasStage() {
   const page = useDocumentStore((s) => s.doc.page)
   const documentState = useDocumentStore((s) => s.restoreGate.state)
   const objects = useDocumentStore((s) => s.doc.objects)
+  const windowHeld = useDocumentStore((s) => s.windowHold !== null)
   const dragging = useInteractionStore((s) => s.kind !== 'none')
   /** 空白画布上的右键菜单落点（client 坐标）；null = 没开 */
   const [canvasMenu, setCanvasMenu] = useState<{ x: number; y: number } | null>(null)
@@ -352,7 +355,9 @@ export function CanvasStage() {
         {/* 贴着选区的尺寸芯片：与选框同一个视口坐标系（2026-10-07 设计审计 §10.1） */}
         <MeasureChip />
 
-        {!fastEdit && objects.length === 0 && <EmptyHint />}
+        {!fastEdit && objects.length === 0 && !windowHeld && <EmptyHint />}
+        {/* 同一份排版在两个窗口开着：选择之前画布只读，选项在这张卡上（ADR 0181） */}
+        <DocWindowCard />
       </div>
 
       {/* 「这张图是刚为编辑加进文档的」这条提示的**读屏播报**（UI 审计 T06）。
@@ -563,7 +568,9 @@ function EmptyHint() {
   const page = useDocumentStore((s) => s.doc.page)
   const assetsLoaded = useAssetStore((s) => s.loaded)
   const panels = useAssetStore((s) => s.panels)
-  const hasAssets = panels.length > 0
+  const viewScope = useAssetStore((s) => s.viewScope)
+  // 有没有可摆的图按「看得见的图」算（ADR 0184）：从脚本进来、脚本还没出图时是空状态，不是一块空的选图卡
+  const hasAssets = visibleFigureCards(panels, viewScope).length > 0
   const inTutorial = useProjectStore((s) => s.project?.tutorial === true)
   const restoreIssue = useDocumentStore((s) => (s.restoreGate.state === 'needs_user' ? s.restoreIssue : null))
   const held = useSyncExternalStore(subscribeHeldEntries, heldEntryCount) > 0

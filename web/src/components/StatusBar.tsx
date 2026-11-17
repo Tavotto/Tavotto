@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, type FocusEvent, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { perfCount } from '@/perf/core'
 import { useTranslation } from 'react-i18next'
-import { Check, CircleAlert, Copy, Info, Lightbulb, X } from '@/components/ui/icons'
+import { Check, CircleAlert, Copy, Info, Lightbulb, MessageSquare, X } from '@/components/ui/icons'
 import { Button } from '@/components/ui/Button'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Spinner } from '@/components/ui/Spinner'
@@ -31,6 +31,9 @@ import { useNoticeRailStore } from '@/store/noticeRailStore'
 import { useDialogLayerStore } from '@/store/dialogLayerStore'
 import { restartEngineFromCard } from '@/lib/exitNotices'
 import { useContactStore } from '@/store/contactStore'
+import { useReviewStore } from '@/store/reviewStore'
+import { openReviewShare } from '@/store/reviewNav'
+import { reviewCapsuleShown } from '@/lib/reviewPlacement'
 
 /**
  * 底部不再有常驻状态栏。这里是两块按需出现的浮层：
@@ -50,6 +53,20 @@ const RAIL_MAX = 3
 const HUD_BOX =
   'inline-flex min-h-7 max-w-full items-center rounded-full bg-surface px-3 py-1 text-sm text-ink-2 shadow-pop'
 
+/** 工具提示与它上方 / 下方那条通知之间留的缝（px） */
+export const HUD_NOTICE_GAP = 6
+
+/**
+ * 工具提示要不要为底部通知轨让位、让多少：轨上有在场通知（`noticeTop` = 最上面那条的顶边，窗口坐标）时，提示整块抬到
+ * 那条通知的上方——两者同在画布底边、一个靠左一个居中，画布一窄（左右栏都开着）长一点的提示就伸进通知底下
+ * （2026-11-14 实测：文字工具 300px、钢笔 388px 的提示在 708px 宽的画布里都被「问题」提示卡压住）。
+ * 回的是 `bottom`（px，相对提示所在的定位容器）；没有通知 / 量不到容器 = null（按工具条位置的缺省落）。纯函数，用例直接喂数。
+ */
+export function hudLift(noticeTop: number | null, containerBottom: number | null): number | null {
+  if (noticeTop == null || containerBottom == null) return null
+  return Math.max(0, containerBottom - noticeTop + HUD_NOTICE_GAP)
+}
+
 export function CanvasHud() {
   perfCount('render.CanvasHud')
   const { t } = useTranslation('workspace')
@@ -57,20 +74,40 @@ export function CanvasHud() {
   const nudge = useInteractionStore((s) => s.nudge)
   const tool = useUiStore((s) => s.tool)
   const toolbarUp = useCanvasToolbarVisible()
+  const noticeTop = useNoticeRailStore((s) => s.top)
+  const ref = useRef<HTMLDivElement>(null)
+  // 定位容器的底边（窗口坐标）：通知轨的顶边是窗口坐标，换成相对容器的 bottom 要它。窗口尺寸变了重量
+  const [containerBottom, setContainerBottom] = useState<number | null>(null)
 
   // 拖动 / 微调进行中不说工具提示：那时读数在选区旁边（MeasureChip），左下角安静
   const interacting = kind !== 'none' || !!nudge
   const hint = !interacting && tool !== 'select' ? t(`toolHint.${tool}`) : null
+
+  useLayoutEffect(() => {
+    const measure = () => {
+      const parent = ref.current?.offsetParent
+      setContainerBottom(parent ? Math.round(parent.getBoundingClientRect().bottom) : null)
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [hint, noticeTop])
+
   if (!hint) return null
+  const lift = hudLift(noticeTop, containerBottom)
 
   return (
     <div
+      ref={ref}
       data-canvas-hud
-      // 左下角位：12px 内距；画布底部有浮动工具条时抬到它上面去（读数 / 提示与工具条同在底边会叠在一起）
+      data-hud-lifted={lift != null || undefined}
+      // 左下角位：12px 内距；画布底部有浮动工具条时抬到它上面去（读数 / 提示与工具条同在底边会叠在一起）；
+      // 底部通知轨有通知时再抬到通知上方（`hudLift`）。窄画布里长提示折行，不越过画布右边
       className={cn(
         'pointer-events-none absolute left-3 z-sticky flex max-w-[calc(100%-1.5rem)] flex-col items-start',
-        toolbarUp ? 'bottom-16' : 'bottom-3',
+        lift == null && (toolbarUp ? 'bottom-16' : 'bottom-3'),
       )}
+      style={lift != null ? { bottom: lift } : undefined}
       aria-hidden
     >
       <p className={HUD_BOX}>{hint}</p>
@@ -283,12 +320,22 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   // 压上去的只有对话框自己动作的结果（状态 / 引擎退出 / 带一次性出口的环境与答案提示）；背景性的几条
   // （加入说明、操作提示、作者回信胶囊）在模态期间不画——它们与对话框里的事无关，浮在遮罩上只会打岔，关掉对话框后照常回来
   const overModal = useDialogLayerStore((s) => s.open > 0)
-  useEffect(() => {
+  const measureRailTop = () => {
     const tops = [...(overModal ? [] : (railRef.current?.querySelectorAll('[data-toast-layout][data-state="open"]') ?? []))].map((e) =>
       Math.round(e.getBoundingClientRect().top),
     )
     useNoticeRailStore.getState().setTop(tops.length ? Math.min(...tops) : null)
-  })
+  }
+  useEffect(measureRailTop)
+  // 顶边是窗口坐标：窗口变高 / 变矮时通知跟着 CSS 底边锚走，渲染却不一定重来——只在渲染后量会留下旧值，
+  // 读它的浮动胶囊（工具提示、上下文栏、拖动读数、提示卡）就按旧位置避让、又叠上去。尺寸一变就重量
+  const measureRef = useRef(measureRailTop)
+  measureRef.current = measureRailTop
+  useEffect(() => {
+    const onResize = () => measureRef.current()
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
   useEffect(() => () => useNoticeRailStore.getState().setTop(null), [])
   const { t } = useTranslation('workspace')
   const fmt = useFormatMessage()
@@ -420,9 +467,31 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const lastContactUnread = useRef(0)
   if (contactUnread > 0) lastContactUnread.current = contactUnread
 
+  // 「审阅者留了意见」胶囊（ADR 0187）：同一套规则——有未读、没被 × 掉过更大的数、分享弹窗没开着、轨上有位置才出现；
+  // 点「查看」切到那张图 / 排版并打开「审阅」页签；× 之后只有未读总数再增加才重现
+  const reviewEnabled = useReviewStore((s) => s.enabled)
+  const reviewUnread = useReviewStore((s) => s.unread)
+  const reviewDismissedAt = useReviewStore((s) => s.capsuleDismissedAt)
+  const reviewDialogOpen = useReviewStore((s) => s.dialogOpen)
+  const reviewSlots =
+    [!!engineExit, justAdded, !!adopted || !!autofilled, !!status, !!hint, contactPresence.mounted].filter(Boolean).length < RAIL_MAX
+  const reviewPresence = usePresence(
+    reviewCapsuleShown({
+      enabled: reviewEnabled,
+      total: reviewUnread.total,
+      dismissedAt: reviewDismissedAt,
+      dialogOpen: reviewDialogOpen,
+      slotsFree: reviewSlots && !!reviewUnread.latest,
+    }),
+    DURATION.fast,
+  )
+  const lastReviewUnread = useRef<NonNullable<typeof reviewUnread.latest> & { total: number } | null>(null)
+  if (reviewUnread.latest) lastReviewUnread.current = { ...reviewUnread.latest, total: reviewUnread.total }
+
   // 出现的先后：最新的一条最靠近底边（见 useArrivalOrder）
   const arrival = useArrivalOrder()
   const contactOrder = arrival('contact', contactPresence.mounted && lastContactUnread.current)
+  const reviewOrder = arrival('review', reviewPresence.mounted && lastReviewUnread.current?.total)
   const addedOrder = arrival('added', addedPresence.mounted && `added:${addedDepth}`)
   const adoptedOrder = arrival('adopted', adoptedPresence.mounted && adoptedShown?.token)
   const autofillOrder = arrival('autofill', autofillPresence.mounted && autofillShown?.token)
@@ -505,6 +574,29 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
           }}
           onClose={() => useContactStore.getState().dismissCapsule()}
           closeLabel={translate('contact.capsuleClose', { ns: 'dialogs' })}
+        />
+      )}
+      {!overModal && reviewPresence.mounted && lastReviewUnread.current && (
+        <Toast
+          order={reviewOrder}
+          tone="info"
+          state={reviewPresence.state}
+          data-review-capsule={String(lastReviewUnread.current.total)}
+          icon={<MessageSquare size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />}
+          text={translate('review.capsule', {
+            ns: 'dialogs',
+            author: lastReviewUnread.current.author,
+            count: lastReviewUnread.current.count,
+          })}
+          action={{
+            label: translate('review.capsuleOpen', { ns: 'dialogs' }),
+            onClick: () => {
+              const id = lastReviewUnread.current?.share_id
+              if (id) void openReviewShare(id)
+            },
+          }}
+          onClose={() => useReviewStore.getState().dismissCapsule()}
+          closeLabel={translate('review.capsuleClose', { ns: 'dialogs' })}
         />
       )}
       {!overModal && hintPresence.mounted && hint && (

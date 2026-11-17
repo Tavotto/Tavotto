@@ -252,6 +252,7 @@ def _error_from_worker(
         *texdiag.ERROR_CODES,
         pool.IMPORT_FOLDER_UNREADABLE_CODE,
         pool.IMPORT_FOLDER_ABI_CODE,
+        pool.IMAGE_FORMAT_MISMATCH_CODE,
     ):
         # TeX / 项目外文件夹读不了（ADR 0153） 工具链（缺命令 / 缺宏包或字体 / 编译错误）：码与参数原样带出，与渲染端点同一份
         # （`pool.recovery_params`）——素材库这条入口不能退化成一句「试运行失败」，更不能落成缺 Python 包

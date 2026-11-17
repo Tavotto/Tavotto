@@ -2,16 +2,42 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「诊断与排障」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_diagnostics_bundle.py`、`test_diag_send.py`、`test_diag_send_api.py`、`test_diagnostics_worker_evidence.py`、`test_diagnostics_worker_structure.py`、`test_diagnostics_log_privacy.py`、`test_task_diagnostics.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_review_share.py`、`test_review_api.py`、`tests/test_diagnostics_bundle.py`、`test_diag_send.py`、`test_diag_send_api.py`、`test_diagnostics_worker_evidence.py`、`test_diagnostics_worker_structure.py`、`test_diagnostics_log_privacy.py`、`test_task_diagnostics.py`
 > `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：先脱敏再交出；report.json 换形必升 bundle schema；不写盘不进 telemetry；不自动上传（唯一例外：用户逐次确认的「发送问题反馈」，默认开启，ADR 0118）；日志只读出门版；导出包严格脱敏不变，仅发送包多 `detail/`（schema 8）
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 280
-改到: `engine/diagnostics.py`、`diagnostictext.py`、`diagnostics_frontend.py`、`diagdetail.py`、`taskdiag.py`、`diagsend.py`、`contact*.py`、`/api/diagnostics/*`
+改到: `engine/diagnostics.py`、`diagnostictext.py`、`diagnostics_frontend.py`、`diagdetail.py`、`taskdiag.py`、`diagsend.py`、`contact*.py`、`review*.py`、`/api/diagnostics/*`、`/api/review/*`
 主题: 诊断包与任务绑定诊断 → `diagnostics.md`
 必守要点: 先脱敏再交出；report.json 换形必升 bundle schema；不写盘不进 telemetry；不自动上传（唯一例外是用户逐次确认）
 -->
+
+## 外部审阅（[ADR 0187](../../adr/0187-external-review-share.md)；1.0 纪律下已由维护者豁免的新能力）
+
+`engine/reviewshare.py`（出站、设备签名、分享 / 更新 / 停止 / 回复 / 标记已处理、feed 轮询）与 `engine/reviewinbox.py`（本机分享记录）是 `contactsend` / `contactinbox` 的同形状兄弟：
+把当前这张图 / 这份排版的**画面**分享成链接。线上格式 v1 的唯一出处是 ADR 0187 §六；本机接口 `/api/review/*` 全部在会话认证之内（ADR 0008，`test_browser_auth` 从 url_map 枚举）。
+
+- **上线开关 `PRODUCTION_LIVE`**：线上服务部署并验通（建链接、更新、审阅页、额度计数）之前为 `False`——不设 `TAVOTTO_REVIEW_ENDPOINT` 时入口不出现、零网络；2026-11-16 验通后为 `True`。再关掉（服务下线 / 换域名）同样单独一个 PR，先报合并大队长。
+- **只上传画面**：每个版本只有 `snapshot.png`（走现有导出管线，长边 ≤ 3000 px、≤ 8 MiB，超了降分辨率重出）、元素表（≤ 4000 项 / 256 KiB；带角色、绘制次序与**裁到画面可见部分**的曲线 / 形状轮廓，隐藏元素不传；超了先去形状、再按面积从小到大丢，只在日志记个数）与标题 / 给审阅者的话。脚本、数据、路径、本机信息一律不传。
+  出图与元素表由 `app._review_render` 注册给引擎（`reviewshare.set_renderer`）：父进程这里不碰 `manifest` / `figsession`；只调 `_export_produce`（不经 `exportjob.run`），中间文件在 `data_dir()/review/tmp/` 的私有目录、用完即删，**不写项目导出目录**。
+  出图描述 `render` 由前端带来（图 `{"original": …}`、排版 `{"canvas": {page_w_mm, page_h_mm, objects}}`，与 `POST /api/export` 同名段一致）：排版文档是前端 schema、worker 热会话只记 patch 哈希，引擎无法自己反推；缺 `render` = 同步 422。
+- **元素 label 只有两种来源**（`reviewshare.manifest_elements`）：画在图上的文字（manifest 里按 `artist.get_text()` 现算的 title / axis_label / text / legend_text / ticklabel）或按角色的结构性名字 + 序号（曲线 1 / 散点 2 / 图例 …）。**artist 自己的 `label`（脚本里随便写，没进图例就不在画面上，可能是路径 / 文件名）、url、文件名一律不传。**
+- **元素 gid**：单图就是 manifest 的 gid；排版里面板外框 gid = 面板键（`reviewshare.panel_keys`：前端在出图描述的对象上带 `object_id`——文档对象自己的不透明 id——就用它，缺 / 不合规 / 重复就用 `p<第几个面板>`），面板内元素 gid = `<面板键>::<manifest gid>`。**绝不用导出请求里对象的 `id`**（那是图的项目内相对路径，路径不许出机，同一张图的两个面板也会撞）；`object_id` 只给元素表用、不进导出请求；面板显示名只认 `label` / `name` 且含 `/` 或 `\\` 的当没有；面板内元素按面板的裁剪 → 顺时针 90° 旋转 → 翻转（与 `rendercore/plan._panel_node` 同序）换算到页面比例坐标。manifest 里 `gid == "figure"` 不进表（「整体意见」另有锚点）。
+- **目的地钉死**：`REVIEW_HOSTS = {review.tavotto.cn}`；`TAVOTTO_REVIEW_ENDPOINT` 设了就必须合规（或回环开发模式 `TAVOTTO_DIAG_DEV_LOOPBACK=1`），不合规整个功能关闭、**不回退内置端点**；`TAVOTTO_NO_REVIEW_SHARE=1` 整个功能不出现、不联网（测试进程由 conftest 硬关，生产主机被会话级探针兜底）。
+  出站只经 `diagsend._send`；直传存储地址不复用 `diagsend.validate_upload_url`（它拒收查询串，而预签名 PUT 带签名查询串），另有 `reviewshare._upload_spec`：https、主机必须匹配 `UPLOAD_HOST_PATTERNS`（COS 桶域名 + CloudBase 存储域名）或（回环开发）与端点同源，头部有禁用名单，不带任何 Tavotto 签名 / 令牌头。
+- **回环开发模式**（`TAVOTTO_DIAG_DEV_LOOPBACK=1`，只此一种）额外放宽：端点可以是 `http://127.0.0.1|localhost[:端口]`，`review_url` 与上传地址允许任意回环端口 / 路径、http 也行（`_DevTarget`）；非回环主机照旧拒。生产规则（`REVIEW_HOSTS`、https、`UPLOAD_HOST_SUFFIXES`）不变，`test_production_rules_are_untouched_by_the_dev_relaxation` 钉。
+- **设备签名**：Ed25519（PyNaCl，延后 import）私钥 32 字节 0600 存 `data_dir()/review/device.key`；签名消息 `tavotto-review-v1\nMETHOD\nPATH(含 query)\nTS\nsha256(body)`，签的就是发出去的那份字节。写不下去密钥 = `client_error`，**不用一次性密钥**（那等于每次新设备、绕额度）。
+- **逐次授权与零网络**：上传只由 `start_share` / `start_update`（一次点击）触发；失败后不自己重试。**没有未到期且未停止的记录就一次网络都不发**（后台轮询每 30 分钟，`/api/review/refresh` 手动）。
+- **重试幂等**：`client_share_id` / `client_version_id` 与渲染好的 PNG、元素表跟着失败的尝试留在内存（`_REUSE`，指纹 = 模式 / 目标 / 标题 / 说明 / 出图描述），内容没变的重试逐字节相同、不重复扣额度；init 一拿到管理令牌就写本机记录（`delivered=False`，留 24 小时——与服务端幂等重放窗口一致，期间用户重试能补投递、不会连管理令牌一起丢掉已发布的链接；不出现在列表、不被轮询），complete 之后转正。**远端 complete 成功后本机记录落盘失败（`reviewinbox._save_locked(strict=True)` 抛 `OSError`）= 这次分享失败**（`server`，可再试），绝不报 done；重试复用同一个 id 与同一份字节，init / complete 都是幂等重放。**complete 的重试退避可被取消打断**（`_sleep(cancel, s)`），取消后不再发送。
+- **直传存储**：review-api 签发的是 COS 的 `POST` multipart（签名在 `fields`、url 无查询串），也认 `PUT`；主机只认后缀 `UPLOAD_HOST_SUFFIXES`（`.myqcloud.com` / `.tcb.qcloud.la` / `.tcloudbaseapp.com`，环境开通后收紧）+ 回环同源。版本记录带 `frame`（排版 `page` = 快照只含页面范围，单图 `figure`）；update 可带 `target` 改指别的图 / 排版（同 kind）。
+- **分享记录按项目分开**：记录带发起时的项目 id（`ProjectCtx.id`，没开项目 = 空串），`/api/review/for` 与更新都按它匹配——图 id / 排版 id 在不同项目里会重名，不分开就会把 B 项目的画面推到 A 的链接上。
+- **位图素材不认 ppi**（`scope=original` 保源像素网格）：降分辨率重出仍是同样尺寸就在本机把 PNG 等比缩小（`shrink_png`：stdlib 解本引擎自己编的 PNG + `rendercore.raster.resample_area` 面积平均，bbox 是比例坐标不受影响）；缩完仍超限 / 解不了才 `too_large`。
+- **单图元素表**取用户画布上那份热会话 manifest（`app._review_manifest`：热态不是这组 overrides 就先按它们重放再取），拿不到（没有脚本）= 空表 + 日志，不失败。
+- **额度**：免费版只限每台设备每天新建 1 个链接；更新同一链接不限次数（服务端只有每链接每小时 30 次的兜底，回 `rate_limited`，可再试），所以没有 `quota_update_exhausted`，`/api/review/quota` 的 `update_left` 恒为 null。
+- **失败码闭集** `reviewshare.FAILURES`（与前端 `review.failure.*` 对拍）：服务端错误体是嵌套的 `{"error": {"code"}}`；`quota_new_exhausted` / `share_gone` / `too_large` / `rate_limited` 直通（**只认服务端明说的 code**：裸 404 多半是网关，归 `server`，不标 revoked、停止分享也不当成功），`bad_signature` / `clock_skew` / `invalid` 一律 `client_error`，5xx / 坏响应 `server`，传输失败（含 TLS）`network`。
+- **秘密不落地**：`owner_token` 只在 `reviewinbox` 的 0600 文件里，`status()` / `summary` / `detail` / 日志都没有；日志模板是字面量、参数只有闭集里的阶段名与结果码（不记 URL、令牌、标题、意见文字）。意见文字来自网络：逐项形状清洗、文字封顶（500 / 20 字）、按纯文本存。
+- **本机保留**：到期后意见副本仍在，到期 + 30 天或用户删除（只有已停止 / 已到期的才许删）才清；`for` 只回「这个 target 有没有未删除的记录」，「审阅」页签出现与否只看它。
 
 ## 受管环境作业的披露例外（2026-10-31 用户授权）
 
@@ -26,6 +52,10 @@ Windows 上诊断缓存原子替换若遇共享冲突（WinError 5 / 32 / 33）�
 该进程的最新缓存；等待不持写锁。长时间占用耗尽重试后记为待写，下次访问该项目记录时再尝试；
 其他写盘错误不重试，进程退出后待写标记不保留。看护 `tests/test_windows_regressions.py` 的诊断缓存用例。
 诊断包 README 和发送前说明必须明确披露包名与版本。此例外由用户在 2026-10-31 明确授权，见 ADR 0016 修订。
+装好后 worker 自检没过时，该条另带 `selftest`（2026-11-15 维护者批准，ADR 0016 修订）：失败阶段闭集
+（`deprepair.SELFTEST_STAGES` ↔ `envdiag._SELFTEST_STAGES` 同源，测试钉住相等）、退出码、worker 稳定错误码、
+`diagnostics.failure_shape` 给出的 `[structure]` 摘要与最深一帧引擎源码位置；报错文字与路径不进记录。
+看护 `tests/test_selftest_failure_shape.py`。
 
 - 文本脱敏的唯一实现下沉在 `engine/diagnostictext.py`；`diagnostics.redact_text` 保留公开入口，
   `fixtools.readscope.scrub` 共用同一实现，避免转换上下文反向依赖整份诊断采集器。
@@ -223,7 +253,7 @@ Windows 上诊断缓存原子替换若遇共享冲突（WinError 5 / 32 / 33）�
 - report.json 换形必升 bundle schema（现 15；15 = `project.missing_commands`（脚本拉起外部命令找不到可执行文件的闭集事实，见下，TVD-1FCJ）；14 = 顶层 `render_pool`（渲染池健康摘要，见上，TVM-Y37X）；13 = `system.msix_data_migration`（MSIX 私有区旧数据补回结果，闭集 state + 计数，#1574 善后）；10 = `ai_probe`；11 = 受管环境作业；12 = MSIX 包身份三个 bool 与壳兜底结果 `system.has_package_identity` / `system.msix_breakaway`（闭集字符串）/ `paths.data_dir_under_packages` / `paths.config_dir_under_packages`，#1574，不带用户名与包名；9；5 = 新增 task-diagnostics.json；6 = project 段新增 `recent_runs`；7 = 网址只留 origin，见下；8 = 发送包的 detail 条目；9 = 新增 `exec-traces.json` 执行追踪，ADR 0151 PR4、出门投影在 `engine/exectrace_diag.py`）
 - 服务端第二道校验刻意与前端判据不同
 - 坏载荷退化成不带前端文件的包、不 400
-- 不写盘不上传不进 telemetry（层级执行追踪 `exectrace` 的本地有界存储是另一条数据、经维护者裁决的登记例外，诊断包今天不带它；要带走 PR4 另做导出投影并升 schema，见 `execution-trace.md` / ADR 0151）
+- 不写盘不上传不进 telemetry（层级执行追踪 `exectrace` 的本地有界存储是另一条数据、经维护者裁决的登记例外，诊断包今天不带它；要带走 PR4 另做导出投影并升 schema，见 `execution-trace.md` / ADR 0151；`engine/diagexternal.py` 的「脚本运行时从项目外加载的本地模块」候选路径表是第二条登记例外：只在应用数据目录、只有路径没有内容、有界 30 天，出门仍要用户勾「脚本源码」且收集时父进程重新校验，ADR 0118 修订 2026-11-15）
 - traceback 配收尾异常行、worker.log 只带证据行（#435）
 
 ## 脚本运行失败进全局报告（bundle schema 6）
@@ -402,7 +432,7 @@ Windows 上诊断缓存原子替换若遇共享冲突（WinError 5 / 32 / 33）�
   5 `detail-overrides.zip`（内层 zip；前端送来的**正在编辑 / 选中面板**的 overrides 热态 + 该面板 stem 在 `baked_overrides/<项目>.json` 的写回基线）；6 `detail-render-env.json`（`pool.find_worker_python()` 的解释器上跑**一次** ≤10 s 的只读子进程；失败如实记 `reason`，不让备包失败）；
   7 `detail-runs.json`（`taskdiag.bundle_section(limit=24)` + app.log 里渲染 / 导出 / 试运行相关记录原文）；8 `detail-shell.json`（版本 / 安装方式 / 系统 / 架构 / Rosetta / 渠道（按版本串推断）/ 前端送来的壳版本与**本窗口会话内**最近一次应用内更新结果；取不到的写 `unknown`，**不改 Rust**）；
   9 `detail-storage.json`（数据目录与项目目录所在盘剩余空间、可写、云同步目录、Windows `LongPathsEnabled`）；10 `detail-frontend-console.json`（console.error/warn 环 40 条，全局不随切项目清）；11 `detail-display.json`；12 `detail-network.json`（代理去 userinfo，`NO_PROXY` / `no_proxy` 的主机名与 IP **一律不写、只记条目数 `no_proxy_entries`**；两个域名的系统解析（线程里做、≤2 s，超时记 unknown；超时的线程还活着时同一主机不再起新的，`reason: previous_lookup_pending`，遗留线程以主机数为上界）是否落在 `198.18.0.0/15`、时区）。
-  勾选：13 A `optional-source.zip`（内层 zip；判据 = ① 最近**失败 / 尝试**过的脚本排最前——来自 `taskdiag.STORE.attempted_scripts`（运行 / 依赖准备 / 依赖修复登记的私有 `subject`，**不要求在登记表里**：桌面当项目时出错的脚本常常没登记，TVD-5JJY 的 fit_mass.py）② 当前面板的脚本 ③ 项目登记的其余脚本按 mtime；**本项目最近的转换任务（`ai_history` 的 `convert_to_editable` 会话，`taskdiag.RETENTION_S` 内、至多 24 个，`ai_convert.recent_attempts`）的原脚本（`.py` / `.R` / `.r` / `.m`，R / MATLAB 只能从这里进来）并入 ①/②（失败的转换算 `failing_attempt`），其候选目录里留着的候选 `.py` 另收（`reason: convert_candidate`，只收该任务自己候选目录里 `meta.json` 指名、project / sid 对得上、未采用的那一个常规文件，不跟随符号链接，成员名用虚拟写法 `convert-candidate/<sid>/<名>`；失败 / 超时的会话候选目录保留 6 小时 `failed_kept`，专为这一路，不可采用 / 续跑，取消的立即删，ADR 0143 2026-10-30 修订）**；项目内的脚本全部解析后必须仍在项目目录内，指到项目外的符号链接 / `..` / 外部绝对路径一律不收，同一文件被几种写法点名只收一次，绝对路径的记录落成项目相对写法。`index.json` 的每个脚本条目带 `reason`（`failing_attempt` > `panel` > `recent`）；同一勾选项还附 `declarations`：`depresolve.declared_intents(no_follow=True)` 实际读到的requirements*.txt / constraints.txt / pyproject.toml（含 `-r` / `-c` 跟进到的；脚本自己的 PEP 723 与管理器锁文件不收，最多 20 份），成员名 `declared-NN-…`，原样附件、与脚本同一套清理与单文件上限。看护 `tests/test_diag_foreign_source.py`（转换来源、候选目录边界、R / MATLAB 脱敏）、`tests/test_diag_send_detail.py::TestOptionalContent` 的`test_failing_script_outside_registry_*` / `test_panel_script_outranks_*` / `test_declaration_files_*` / `test_attempted_scripts_come_from_the_task_store_*`）；14 B `optional-crash-reports.zip`（内层 zip；macOS `DiagnosticReports` / Windows `CrashDumps` 与 WER `ReportArchive`，7 天内，进程名 Tavotto/workerd，python/sidecar 只在报告点名 tavotto 时收；文本报告过脱敏；**Windows 崩溃转储 `.dmp` 原样收、没法脱敏**（用户裁决，确认框写明），python 的转储靠内容里点名 tavotto（UTF-8/UTF-16LE）认归属，WER 含 ReportQueue；按文件整份取舍、新的优先、不截半个，放不下的进索引与 `truncated`（`Item.dropped_bytes`）；没勾零字节）；15 C `optional-corrupt-sessions.zip`（内层 zip；损坏副本内容）。
+  勾选：13 A `optional-source.zip`（内层 zip；判据 = ① 最近**失败 / 尝试**过的脚本排最前——来自 `taskdiag.STORE.attempted_scripts`（运行 / 依赖准备 / 依赖修复登记的私有 `subject`，**不要求在登记表里**：桌面当项目时出错的脚本常常没登记，TVD-5JJY 的 fit_mass.py）② 当前面板的脚本 ③ 项目登记的其余脚本按 mtime；**本项目最近的转换任务（`ai_history` 的 `convert_to_editable` 会话，`taskdiag.RETENTION_S` 内、至多 24 个，`ai_convert.recent_attempts`）的原脚本（`.py` / `.R` / `.r` / `.m`，R / MATLAB 只能从这里进来）并入 ①/②（失败的转换算 `failing_attempt`），其候选目录里留着的候选 `.py` 另收（`reason: convert_candidate`，只收该任务自己候选目录里 `meta.json` 指名、project / sid 对得上、未采用的那一个常规文件，不跟随符号链接，成员名用虚拟写法 `convert-candidate/<sid>/<名>`；失败 / 超时的会话候选目录保留 6 小时 `failed_kept`，专为这一路，不可采用 / 续跑，取消的立即删，ADR 0143 2026-10-30 修订）**；**已收脚本运行时从项目外加载的本地 `.py` 模块另收（`reason: imported_external`，ADR 0118 修订 2026-11-15）**：判据的主语是跑用户脚本的 worker 进程、这一次运行——`figcapture.observed_external_modules`（`sys.modules` 里 `__file__` 为 `.py` 的常规文件 + 失败时异常链 traceback 帧里的文件：导入到一半抛错的模块会被摘出 `sys.modules`），真身不在项目内、不在引擎目录 / 解释器前缀 / sysconfig 与 site 目录 / 路径段含 `site-packages`·`dist-packages` 内，且**它所在的 sys.path 根（此刻包含它的最深一项）不在脚本运行前的 `sys.path` 快照 `_path_baseline` 里**（只认脚本自己加进去的目录），≤ 20 条。成功走 build 响应可选字段 `external_modules`（`build_result`），失败由 `wireproto` 在 `ensure_built` 抛 `ProtocolError` 时并进 `extra`（敏感运行成功与失败两条路都不带）；父进程 `_note_external_modules` **取走即丢**，不留在 `err.extra` / 响应里（项目外绝对路径只进持久记录）——加字段不升协议、Rust 原样透传；父进程 `pool._note_external_modules` 经 `engine/diagexternal.py` 记进**应用数据目录**的 `diag-external-modules.json`（按项目 + 脚本项目相对路径，原子写、每项目 ≤ 64 脚本 / 每脚本 ≤ 20 模块 / 30 天、读失败当没有、永不抛、绝不写项目文件夹；用户常重启后才发包，所以必须持久）。收集时 `diagdetail.external_candidates` **在父进程重新校验**（绝对路径、`.py`、`lstat` 常规文件、`realpath` 与记录一致即路径里无符号链接、不在项目内、`readscope.ReadScope.is_denied` 敏感目录、不直接放在主目录根 / 盘符根下、同一文件只收一次、与脚本共用 `SOURCE_FILES` 总条数与 `SOURCE_FILE_CAP` 单文件上限），成员名 `ext-NN-external__<父目录短哈希>__<名>`、`index.json` 条目 `script` 经 `Scrubber`（`~` / `<user>`）、带 `imported_by`（导入它的脚本的 id）。原规则不变：项目里登记 / 尝试过但解析到项目外的**脚本本身**仍一律不收。没勾 A = 零字节（模块内容、路径、名字都不出现）。看护 `tests/test_diag_external_modules.py`（纯函数 / 真 worker 成功与失败 / 持久化 / 收集 / `TestBundleEndToEnd` 没勾零字节）。项目内的脚本全部解析后必须仍在项目目录内，指到项目外的符号链接 / `..` / 外部绝对路径一律不收，同一文件被几种写法点名只收一次，绝对路径的记录落成项目相对写法。`index.json` 的每个脚本条目带 `reason`（`failing_attempt` > `panel` > `recent`）；同一勾选项还附 `declarations`：`depresolve.declared_intents(no_follow=True)` 实际读到的requirements*.txt / constraints.txt / pyproject.toml（含 `-r` / `-c` 跟进到的；脚本自己的 PEP 723 与管理器锁文件不收，最多 20 份），成员名 `declared-NN-…`，原样附件、与脚本同一套清理与单文件上限。看护 `tests/test_diag_foreign_source.py`（转换来源、候选目录边界、R / MATLAB 脱敏）、`tests/test_diag_send_detail.py::TestOptionalContent` 的`test_failing_script_outside_registry_*` / `test_panel_script_outranks_*` / `test_declaration_files_*` / `test_attempted_scripts_come_from_the_task_store_*`）；14 B `optional-crash-reports.zip`（内层 zip；macOS `DiagnosticReports` / Windows `CrashDumps` 与 WER `ReportArchive`，7 天内，进程名 Tavotto/workerd，python/sidecar 只在报告点名 tavotto 时收；文本报告过脱敏；**Windows 崩溃转储 `.dmp` 原样收、没法脱敏**（用户裁决，确认框写明），python 的转储靠内容里点名 tavotto（UTF-8/UTF-16LE）认归属，WER 含 ReportQueue；按文件整份取舍、新的优先、不截半个，放不下的进索引与 `truncated`（`Item.dropped_bytes`）；没勾零字节）；15 C `optional-corrupt-sessions.zip`（内层 zip；损坏副本内容）。
 - **选项只认字面 `true`**（`parse_options`），默认全 false、服务端不记忆；载荷被整份丢弃（超 `MAX_SEND_REQUEST_BYTES` = 1 MiB）时退回全 false。前端 `detail` 子对象由 `diagnostics_frontend.sanitize_detail` 只按类型 / 长度 / 条数限界，**不按形状拒绝文字**（与老字段的判据刻意不同），导出路径根本不读它。
 - **始终处理 `Scrubber`**（发送包每个新文件）：家目录各写法（正反斜杠、JSON 转义）→ `~`、用户名（≥3 且非 user/root/admin 等通用名）→ `<user>`、`key=…` / `token=…` / `Authorization:` / Cookie 行 / URL userinfo / JWT / 复用 `_SECRET_VALUE`；结构化数据按键名（`api_key`、`token`、`secret`、`password`、`auth`、`cookie`、`nonce`、`credential`、`signature`……）整体换。
   **正则必须线性**：键名前后通配有上界 40、起点锚在标识符开头、URL scheme 有上界（`test_scrubber_is_linear_on_long_tokens`——无界版本在 80 万字符的十六进制串上跑了数十秒）。**不做**邮箱 / 云盘账号替换（会把装饰器 `@app.route` 之类整词吞掉；维护者要看原文）；**例外：`.R` / `.r` / `.m`** 的邮箱（`local@域名.tld`，域名含点）换成 `<email>`——这两类语言没有装饰器，作者邮箱常在头注释里；`obj@slot`、`@(x)`、`@myfun` 不命中，正则 `_EMAIL` 线性（`test_email_regex_is_linear`）。非 `.py` 的源码（R / MATLAB）整份走完整模式，注释与代码不分区。源码文件用 `source_mode`：只换带引号的字面量，`token = self._next()` 这类表达式原样。
@@ -485,4 +515,8 @@ Windows 上诊断缓存原子替换若遇共享冲突（WinError 5 / 32 / 33）�
 加失败码或失败分支时同时问：包里这条记录分得清哪几种原因？带闭集事实（步骤、错误类别、退出码、`winerror`），不带原文
 和路径。为什么：六个 PR 都是读反馈包时才发现缺字段，下一份反馈才看得到。分不出杀软隔离还是安装不完整（#1508），分不出
 spawn 失败是哪一种（#1520），分不出卡在哪个启动阶段（#1550），AI 失败不知道停在哪一步（#1534），13 次失败只有
-`status=failed`（#1571），只有 code、没有底层 `OSError`，根因只能写「推测」（#1633）。
+`status=failed`（#1571），只有 code、没有底层 `OSError`，根因只能写「推测」（#1633）。认不出的那一档也要留闭集证据：
+外部 CLI 失败分类只收 401/403/429/5xx，其余状态只剩计数，一份用户反馈（中转每次几秒就失败）定不了根因，补成只留三位
+状态码（#1901，2026-11-14）。受管环境装完自检没过的终局码只带错误码，detail 只给界面、出门时整段丢弃，一份用户反馈里
+十次失败全是同一个码、根因查不出；会让用户反复重试的终局码，在加它的同一个 PR 里就带上阶段 / 退出码 / 异常类型并断言
+进得了 `report.json`（#1932，2026-11-15）。

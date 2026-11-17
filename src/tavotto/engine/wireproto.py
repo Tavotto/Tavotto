@@ -54,9 +54,6 @@ V1_COMMANDS = frozenset(
         "ping",
         "build",
         "render",
-        "render_existing",
-        "export_existing",
-        "preview_png_existing",
         "render_png",
         "preview_png",
         "export",
@@ -197,6 +194,10 @@ class V1Handler:
     def commands(self) -> frozenset:
         return V1_COMMANDS
 
+    def unbuilt_commands(self) -> frozenset:
+        """Fixed task commands that have no user-code build phase."""
+        return frozenset()
+
     def ensure_built(self, timings: dict | None = None) -> None:
         return None
 
@@ -206,18 +207,6 @@ class V1Handler:
 
     def build_result(self, timings: dict) -> dict:
         raise NotImplementedError
-
-    def require_existing_execution(self, expected) -> None:
-        """Only an entry with an actual execution fact may grant this request."""
-        raise ProtocolError(
-            "svg_source_unavailable", "This entry cannot prove the existing execution."
-        )
-
-    def require_existing_figure(self, stem) -> None:
-        if not getattr(self, "built", False) or stem not in self.session.states:
-            raise ProtocolError(
-                "svg_source_unavailable", "The existing Figure is no longer available."
-            )
 
     def select_artifact(self, context) -> None:
         if context is not None:
@@ -273,17 +262,8 @@ class V1Handler:
         if cmd == "cancel":
             return self.cancel(payload)
 
-        existing_command = {
-            "render_existing": "render",
-            "export_existing": "export",
-            "preview_png_existing": "preview_png",
-        }.get(cmd)
-        existing = existing_command is not None
-        if existing:
-            self.require_existing_execution(payload.get("expected_execution_id"))
-            self.require_existing_figure(req.get("stem"))
-            # Reuse the same renderer, patch validation, timings and response shape.
-            cmd = existing_command
+        if cmd in self.unbuilt_commands():
+            return self.handle_extra(cmd, req, payload)
 
         patches = payload.get("patches", [])
         if cmd in PATCH_COMMANDS and not isinstance(patches, list):
@@ -292,7 +272,6 @@ class V1Handler:
         snapshot_only = payload.get("snapshot_only", False) if cmd == "export" else False
         if not isinstance(require_built, bool) or not isinstance(snapshot_only, bool):
             raise ProtocolError("bad_request", "require_built 与 snapshot_only 必须是布尔值")
-        require_built = existing or require_built
 
         # 阶段计时（毫秒）。**只在 v1 出现**，legacy 信封的形状一字不改。
         timings: dict[str, float] = {}
@@ -311,14 +290,20 @@ class V1Handler:
                 )
             except figcapture.ArtifactContextError as exc:
                 raise ProtocolError(exc.code, str(exc), extra={"reason": exc.reason}) from exc
-        if require_built or snapshot_only:
+        if cmd == "export" and (require_built or snapshot_only):
             if not getattr(self, "built", True) or req.get("stem") not in self.session.states:
                 raise ProtocolError(
                     "svg_source_unavailable",
                     "An already built Figure session is required for SVG capture.",
                 )
         else:
-            self.ensure_built(timings)
+            try:
+                self.ensure_built(timings)
+            except ProtocolError as exc:
+                # 脚本失败时它从项目外加载过的本地模块也带回去（诊断包「脚本源码」用；已有的键不覆盖）
+                for key, value in getattr(self, "external_module_facts", lambda: {})().items():
+                    exc.extra.setdefault(key, value)
+                raise
         if cmd == "build":
             return {**self.build_result(timings), "timings": timings}
         if cmd not in V1_COMMANDS:

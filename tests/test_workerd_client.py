@@ -161,6 +161,27 @@ def test_hello_negotiates_the_protocol_version(client):
     }
 
 
+@pytest.mark.parametrize("env_cap", [None, "12"])
+def test_default_hello_never_caps_sessions_below_the_python_pool(client, monkeypatch, env_cap):
+    """会话上限只归 Python 池（`pool.max_alive()`，ADR 0159，自适应 3–8 或环境变量覆盖）。
+
+    workerd 若按自己的默认 3 条淘汰，池以为还活着的第 4、5 条会被它悄悄杀掉：普通渲染只是
+    多一次冷启动（`workerd 会话已失效，重开`），导出要用已建好的那张图（`require_built`）时
+    就直接失败（`svg_source_unavailable`）——一份用户反馈里 9 张图的项目每次导出都这样。
+    所以默认 hello 给 workerd 的上限必须盖住池能取到的最大值，外加一次性会话的余量。"""
+    from tavotto.engine import pool
+
+    if env_cap is None:
+        monkeypatch.delenv(pool.MAX_ALIVE_ENV, raising=False)
+    else:
+        monkeypatch.setenv(pool.MAX_ALIVE_ENV, env_cap)
+    ceiling = max(pool.MAX_ALIVE_CEILING, int(env_cap or 0))
+    # 池是唯一取 workerd 客户端的地方：建 WorkerdWorker 时把上限写给客户端，之后的 hello 就带着它
+    client.session_cap = max(client.session_cap, pool.workerd_session_cap())
+    client.ensure_started()
+    assert client.hello["payload"]["max_sessions"] > ceiling
+
+
 def test_the_workerd_lease_is_the_python_pool_lease():
     """两条控制面的「刚交出去、还没发第一条请求」租约是同一件事、同一个数（ADR 0004 §7）。"""
     from tavotto.engine import pool

@@ -182,6 +182,51 @@ def test_clean_figure_reports_nothing():
     assert preflight.run(spec, p) == []
 
 
+@pytest.mark.parametrize(
+    ("roles", "key"),
+    [
+        (("body_min",), "fontSizeAdvisedBody"),
+        (("script_min",), "fontSizeAdvisedScript"),
+        (("body_min", "script_min"), "fontSizeAdvisedBoth"),
+    ],
+)
+def test_approximate_font_advice_is_not_described_as_a_journal_minimum(roles, key):
+    profile = profiles.load("journal-base-v1")
+    profile["advisories"] = [
+        {
+            "check": "font-size-recommended",
+            "role": role,
+            "value_pt": 7 if len(roles) == 2 and role == "script_min" else 9,
+            "qualifier": "recommended",
+            "journal": "Synthetic Journal",
+            "quote": "Text should be approximately 9 pt.",
+        }
+        for role in roles
+    ]
+    issues = preflight.run(preflight.spec_from_manifest(_manifest(tick_pt=8.8)), profile)
+    advice = next(issue for issue in issues if issue["id"] == "font-size-recommended")
+    assert advice["severity"] == "suggestion"
+    assert advice["message"]["key"] == key
+    assert advice["message"]["params"]["quote"] == " … ".join(
+        "Text should be approximately 9 pt." for _ in roles
+    )
+    assert "不一定是期刊规定的下限" in advice["text"]
+    if len(roles) == 2:
+        assert "预检以正文数值比较，未区分文字类型" in advice["text"]
+    else:
+        assert "预检未区分文字类型" in advice["text"]
+    assert "期刊规定的最小字号" not in advice["text"]
+    # Existing threshold and issue shape remain unchanged; no conclusion is made
+    # about whether a value above the comparison point satisfies the source.
+    assert advice["detail"]["body_min_pt"] == (9 if "body_min" in roles else None)
+    assert advice["detail"]["script_min_pt"] == (
+        (7 if len(roles) == 2 else 9) if "script_min" in roles else None
+    )
+    assert "font-size-recommended" not in _ids(
+        preflight.run(preflight.spec_from_manifest(_manifest(tick_pt=9.1)), profile)
+    )
+
+
 def test_width_check_uses_the_profile_not_a_hardcoded_number():
     p = profiles.load("lab-publication-v1")
     spec = preflight.spec_from_manifest(_manifest())
@@ -190,6 +235,79 @@ def test_width_check_uses_the_profile_not_a_hardcoded_number():
     # 期刊覆盖之后同一张图必须放行
     p85 = profiles.load("lab-publication-v1", {"widths_mm": {"single": 85.0}})
     assert "page-width" not in _ids(preflight.run(spec, p85))
+
+
+def _width_issue(columns, width, tol=None):
+    """给 journal-base-v1 套上 `page_columns`，在 `width` mm 的页宽上跑预检，返回 page-width 条目（或 None）。"""
+    journal = {"page_columns": columns, "widths_mm": {"single": None, "double": None}}
+    if tol is not None:
+        journal["widths_mm"]["tolerance_mm"] = tol
+    p = profiles.load("journal-base-v1", journal)
+    spec = preflight.spec_from_manifest(_manifest())
+    spec["page"]["w_mm"] = width
+    return next((i for i in preflight.run(spec, p) if i["id"] == "page-width"), None)
+
+
+def _col(cid, w, q="exact"):
+    return {"id": cid, "label": {"zh": cid, "en": cid}, "width_mm": w, "qualifier": q}
+
+
+_JACS = [_col("single", 84.7, "max"), _col("double", 177.8, "max")]
+
+
+def test_max_only_columns_flag_a_page_wider_than_the_largest_max():
+    issue = _width_issue(_JACS, 228.6)
+    assert issue is not None
+    assert issue["message"] == {
+        "key": "pageWidthMax",
+        "params": {"actual": "228.6", "max": "177.8"},
+    }
+    assert issue["detail"]["columns"] == [
+        {"id": "single", "width_mm": 84.7, "qualifier": "max"},
+        {"id": "double", "width_mm": 177.8, "qualifier": "max"},
+    ]
+
+
+def test_max_only_columns_accept_anything_up_to_the_max_plus_tolerance():
+    assert _width_issue(_JACS, 60.0) is None
+    assert _width_issue(_JACS, 177.8) is None
+    assert _width_issue(_JACS, 178.3) is None  # 默认容差 0.5 恰在边上
+    assert _width_issue(_JACS, 178.4) is not None
+
+
+def test_exact_and_max_columns_both_count_as_a_pass():
+    cols = [_col("c1", 90.0), _col("cap", 140.0, "max"), _col("typ", 200.0, "typical")]
+    assert _width_issue(cols, 90.0) is None  # 命中 exact
+    assert _width_issue(cols, 120.0) is None  # 没命中 exact，但不超 max
+    assert _width_issue(cols, 150.0) is not None
+    assert _width_issue(cols, 200.0) is not None  # typical 不参与
+
+
+def test_judged_page_columns_match_the_golden_vectors_and_the_ts_helper():
+    """与前端 `judgedPageColumns` 同口径：按向量里记录的期望（detail.columns 的 id 集合）断言。"""
+    cases = {c["name"]: c for c in json.loads(GOLDEN.read_text(encoding="utf-8"))["cases"]}
+    for name in ("journal-max-over", "journal-exact-and-max-over"):
+        c = cases[name]
+        got = preflight.judged_page_columns(profiles.load(c["profile_id"], c["journal"]))
+        want = next(i for i in c["expected"] if i["id"] == "page-width")["detail"]["columns"]
+        assert [x["id"] for x in got] == [x["id"] for x in want]
+        assert [x["qualifier"] for x in got] == [x.get("qualifier", "exact") for x in want]
+    mixed = preflight.judged_page_columns(
+        profiles.load(
+            cases["journal-exact-and-max-over"]["profile_id"],
+            cases["journal-exact-and-max-over"]["journal"],
+        )
+    )
+    assert [c["id"] for c in mixed] == ["col1", "cap"]  # typical 不进
+
+
+def test_exact_only_columns_keep_the_old_message_and_detail_shape():
+    issue = _width_issue([_col("a", 90.0), _col("b", 180.0)], 100.0)
+    assert issue["message"]["key"] == "pageWidth"
+    assert issue["detail"]["columns"] == [
+        {"id": "a", "width_mm": 90.0},
+        {"id": "b", "width_mm": 180.0},
+    ]
 
 
 def test_aspect_ratio_check():

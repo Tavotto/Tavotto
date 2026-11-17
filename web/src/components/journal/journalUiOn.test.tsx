@@ -8,7 +8,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import vectors from '../../../../tests/golden/journal_vectors.json'
 import { TooltipProvider } from '@/components/ui/Tooltip'
-import { literal } from '@/i18n'
+import { literal, msg } from '@/i18n'
 import { JOURNAL_CATALOG_UI, JOURNAL_UI_DEV_KEY, journalCatalogUi } from '@/lib/journalUi'
 import { loadCatalog } from '@/lib/journals'
 import { pickJournal } from '@/lib/journalPick'
@@ -140,7 +140,7 @@ describe('期刊入口已打开', () => {
   it('问题面板行尾有「出处」图标（文档带着期刊绑定）', async () => {
     const issue = {
       ruleCode: 'raster-dpi',
-      message: literal('x'),
+      message: msg('preflight.rasterDpi', { dpi: '299', min: '300' }, 'errors'),
       objectRef: { canvasId: useDocumentStore.getState().activeCanvasId },
     } as unknown as ValidationIssue
     await act(async () => {

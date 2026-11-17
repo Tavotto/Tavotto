@@ -204,6 +204,7 @@ _CLI_FACT_ATTRS = {
     },
     "endpoint": "endpoint_kind",
     "sandbox_mode": "cli_sandbox_mode",
+    "fail_status": "cli_fail_status",
 }
 
 
@@ -349,13 +350,13 @@ def _run_facts(agent: str, cwd: str, cand, script: str):
 
 
 def _cli_log_facts(sess: dict) -> tuple:
-    """「AI 会话结束」日志里 CLI 运行事实的部分，**逐项**返回（与模板里 `cli_events=` … `endpoint=` 一一对应，共 21 项）。
+    """「AI 会话结束」日志里 CLI 运行事实的部分，**逐项**返回（与模板里 `cli_events=` … `endpoint=` 一一对应，共 22 项）。
     数字 / 布尔 / None 本来就明文；两个事件类别与接口类别经 `logsafe.known` 对 `ai_agents.CLI_*` 常量集合放行。
     没有事实（内置执行器 / 没起 CLI）→ 数字槽位是 None、码槽位是 `-`。"""
     f = ai_agents.merge_run_facts(sess.get("cli_runs") or [])
     if f is None:
         dash = _code("", _NO_FACT)
-        return (None,) * 13 + (dash, dash, None, None, None, dash, None, dash)
+        return (None,) * 13 + (dash, dash, None, None, None, dash, None, dash, None)
     return (
         f["events"],
         f["commands"],
@@ -378,6 +379,7 @@ def _cli_log_facts(sess: dict) -> tuple:
         _code(f["endpoint"], ai_agents.ENDPOINT_KINDS),
         f.get("target_tool_ok"),  # 仅转换会话的 Codex 有；其余 None
         _code(f.get("sandbox_mode"), ai_agents.SANDBOX_MODES),
+        f.get("fail_status"),  # 三位 HTTP 状态码（Codex 自拼前缀里取的数字），没有就 None
     )
 
 
@@ -1850,6 +1852,13 @@ def run(
                 "ai_endpoint_incompatible",
                 {"endpoint": chosen.get("label") or chosen.get("id") or ""},
             )
+        if (
+            chosen is not None
+            and agent != ai_agents.BUILTIN_ID
+            and ai_providers.builtin_only(chosen)
+        ):
+            # Chat Completions 的连接 Codex 不认：显式指到它也绝不起 CLI（注入是空的，CLI 会悄悄改用官方登录）
+            raise AgentError("ai_agent_not_usable", {"agent": agent})
         if needs_login is not None:
             raise AgentError("ai_endpoint_needs_login", needs_login)
         if agent == ai_agents.BUILTIN_ID:
@@ -2322,6 +2331,18 @@ def run(
                         sess["transcript"].append({"kind": kind, "text": text})
                     emit("ai.delta", {"session": sid, "kind": kind, "text": text})
             _await_exit(sess)
+            if agent == ai_agents.BUILTIN_ID and endpoint and st.get("runner_report"):
+                # 进程已退出：把 runner 的自救回报（换协议 / 长度字段 / 被剥字段）落进记录，下次直接用；失败不影响会话
+                try:
+                    ai_providers.apply_runtime_report(
+                        str(endpoint.get("id") or ""),
+                        model=str(model or endpoint.get("default_model") or ""),
+                        report=st["runner_report"],
+                        base_url=str(endpoint.get("base_url") or ""),
+                    )
+                    invalidate_capabilities()
+                except Exception:  # noqa: BLE001
+                    LOG.warning("runner 自救回报落盘失败", exc_info=True)
             if st.get("runner_error"):  # 内置执行器与 Codex / Claude 适配器都可能写
                 sess["runner_error"] = st["runner_error"]
                 sess["runner_detail"] = st.get("runner_detail")
@@ -2476,7 +2497,7 @@ def run(
                 "cli_events=%s cli_cmds=%s cli_cmds_failed=%s cli_cmds_declined=%s cli_cmds_open=%s "
                 "cli_file_changes=%s cli_files_in=%s cli_files_out=%s cli_target_touched=%s cli_target_on_disk=%s cli_target_bytes=%s "
                 "cli_errors=%s cli_turns_failed=%s cli_last_event=%s cli_last_item=%s "
-                "cli_first_event_ms=%s cli_max_gap_ms=%s cli_idle_end_ms=%s endpoint=%s cli_target_tool_ok=%s sandbox_mode=%s",
+                "cli_first_event_ms=%s cli_max_gap_ms=%s cli_idle_end_ms=%s endpoint=%s cli_target_tool_ok=%s sandbox_mode=%s cli_fail_status=%s",
                 agent,
                 script,
                 sess["status"],

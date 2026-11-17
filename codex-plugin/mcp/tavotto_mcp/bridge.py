@@ -156,9 +156,11 @@ OPTIONAL_ENGINE_MODULES = (
     "execspec",
     "fixtools.readscope",
     "journalremote",
+    "journalfacts_remote",
     "journals",
     "runconfig",
     "scriptargs",
+    "specfix",
 )
 
 
@@ -203,6 +205,115 @@ def _remember_mcp_client_name(client_info) -> None:
     if isinstance(name, str):
         slug = _AGENT_HOST_RE.sub("-", name.strip().lower()).strip("-")[:31].strip("-")
         _MCP_CLIENT_NAME = slug or None
+
+
+def journal_facts_enabled() -> bool:
+    """v2 facts require the journal switch and a compatible engine; older engines stay usable."""
+    module = _optional_engine("journalfacts_remote")
+    return (
+        journal_catalog_enabled()
+        and module is not None
+        and callable(getattr(module, "search", None))
+        and callable(getattr(module, "get_facts", None))
+        and isinstance(getattr(module, "FactsError", None), type)
+    )
+
+
+def journal_facts(
+    query: str,
+    journal_id: str | None,
+    offset: int,
+    limit: int,
+    expected_catalog_rev: int | None = None,
+    inspection: dict | None = None,
+) -> dict:
+    """Only translates the engine's read-only v2 facts; never produces a v1 override."""
+    if not journal_catalog_enabled():
+        raise BridgeError("期刊目录入口当前不可用。", code="journal_catalog_disabled")
+    if not journal_facts_enabled():
+        raise BridgeError(
+            "当前引擎还不能读取期刊事实，请升级 Tavotto。", code="engine_capability_missing"
+        )
+    module = _optional_engine("journalfacts_remote")
+    _journal_remote()  # report agent client type through the existing shared channel
+    try:
+        method = module.get_facts if journal_id is not None else module.search
+        options = {"offset": offset, "limit": limit}
+        if expected_catalog_rev is not None:
+            if "expected_catalog_rev" not in inspect.signature(method).parameters:
+                raise BridgeError(
+                    "当前引擎不支持安全分页，请升级 Tavotto。", code="engine_capability_missing"
+                )
+            options["expected_catalog_rev"] = expected_catalog_rev
+        if inspection is not None:
+            inspector = getattr(module, "inspect_facts_page", None)
+            if journal_id is None or not callable(inspector):
+                raise BridgeError(
+                    "当前引擎不能检查这组来源事实，请升级 Tavotto。",
+                    code="engine_capability_missing",
+                )
+            # Validate user selection before any network request.
+            inspector({"facts": []}, inspection)
+        result = method(journal_id if journal_id is not None else query, **options)
+        return inspector(result, inspection) if inspection is not None else result
+    except module.FactsError as exc:
+        if exc.code == "result_too_large" and inspection is not None:
+            raise BridgeError(
+                "期刊事实单条记录超出安全大小，当前无法通过查看入口读取。",
+                code="journal_facts_page_too_large",
+            ) from exc
+        if exc.code in ("quota_hour", "quota_day", "ip_day", "ip_tokens"):
+            raise BridgeError(
+                "期刊目录下载额度已用完，请稍后再试；不要更换设备令牌绕过额度。",
+                code="journal_quota_exceeded",
+                retry_after_s=exc.retry_after_s,
+            ) from exc
+        if exc.code in ("offline", "disabled", "network", "server_error"):
+            raise BridgeError(
+                "v2 期刊事实当前不可用；已有 v1 规范不能冒充 v2 事实。",
+                code="journal_offline",
+                sync_state=getattr(exc, "sync_state", None),
+                sync_code=getattr(exc, "sync_code", None),
+            ) from exc
+        if exc.code in (
+            "index_invalid",
+            "signature_invalid",
+            "key_unknown",
+            "rev_rollback",
+            "index_conflict",
+            "bundle_invalid",
+            "cache_invalid",
+            "invalid_json",
+        ):
+            raise BridgeError(
+                "期刊事实未通过签名或完整性校验，不能使用。",
+                code="journal_verification_failed",
+                sync_state=getattr(exc, "sync_state", None),
+                sync_code=getattr(exc, "sync_code", None),
+            ) from exc
+        if exc.code == "catalog_changed":
+            raise BridgeError(
+                "期刊目录版本与上一页不一致，请从第一页重新读取。",
+                code="journal_catalog_changed",
+                expected_catalog_rev=exc.expected_catalog_rev,
+                current_catalog_rev=exc.current_catalog_rev,
+            ) from exc
+        if exc.code == "unknown_journal":
+            raise BridgeError("期刊事实目录中没有这本刊。", code="journal_unknown") from exc
+        if exc.code == "bad_request":
+            raise BridgeError("查询、期刊 ID 或分页参数不正确。", code="bad_request") from exc
+        raise BridgeError(
+            "期刊事实暂不可用；请稍后重试。", code="journal_facts_unavailable"
+        ) from exc
+
+
+def journal_facts_inspection_budget() -> int:
+    """Use the v2 client's page budget; don't guess for an older engine."""
+    module = _optional_engine("journalfacts_remote")
+    budget = getattr(module, "MAX_PAGE_BYTES", None)
+    if type(budget) is not int or budget <= 0:
+        raise BridgeError("当前引擎不支持安全的期刊事实查看。", code="engine_capability_missing")
+    return budget
 
 
 def _journal_remote():
@@ -276,6 +387,21 @@ def _journal_module():
             code="journal_catalog_disabled",
         )
     return journals
+
+
+def _profile_stamp(profile: dict) -> dict:
+    """Use the engine stamp, correcting the exact legacy label even with an older engine.
+
+    The copy avoids mutating engine-owned state. The vectors shared with both
+    profile implementations guard the compatibility mapping.
+    """
+    stamp = dict(engine_profiles.stamp(profile))
+    if (
+        stamp.get("profile_id") == "journal-base-v1"
+        and stamp.get("label") == "期刊底（期刊未规定的项一律不判）"
+    ):
+        stamp["label"] = "期刊检查基础"
+    return stamp
 
 
 def journal_selection(
@@ -996,6 +1122,9 @@ class Session:
     run: object | None = None
     #: 回包用的公开投影（`_run_projection`：引用 / 个数 / 来源）。
     run_info: dict | None = None
+    #: 最近一次导出出了文件时那一版的 `patch_hash`；None = 还没导出过。关会话时据此说出
+    #: 「改过还没导出」——修改只活在会话里，关掉就没了（评测里 agent 改好就关、文件没出）。
+    exported_hash: str | None = None
 
     def patch_hash(self) -> str:
         return patchspec.patch_hash(self.patches)
@@ -1474,7 +1603,7 @@ def _journal_dir() -> Path:
 
 
 def _persist(session: Session) -> None:
-    """把会话**已提交**的状态落盘（ADR 0078）。只在提交点调：open / apply / 规范化收尾。
+    """把会话**已提交**的状态落盘（ADR 0078）。只在提交点调：open / apply / 规范化收尾 / 导出出了文件。
 
     落盘失败不让这次工具调用失败——图已经改好了；但要说出来（stderr 归日志，stdout
     归协议），因为后果是「server 进程换了之后这个会话恢复不了」。
@@ -1489,6 +1618,7 @@ def _persist(session: Session) -> None:
         "normalized": session.normalized,
         "cost": session.cost,
         "created": session.created,
+        "exported_hash": session.exported_hash,
     }
     if session.run_config_id is not None:
         # 只存不透明引用（参数原文在本机运行配置登记里，敏感值从不落盘）；带配置的记录用新版本号：
@@ -1581,6 +1711,8 @@ def _restore_session(session_id: str) -> Session | None:
     )
     if isinstance(record.get("created"), (int, float)):
         session.created = float(record["created"])
+    if isinstance(record.get("exported_hash"), str):
+        session.exported_hash = record["exported_hash"]
     # 先渲染成功，再登记（与 open 同一条纪律）；渲染失败时记录留着，下次还能再试
     _render(session, list(record["patches"]), preview_dpi=None)
     session.restored = True
@@ -1630,10 +1762,55 @@ def get_session(session_id: str) -> Session:
     return s
 
 
+def unexported_changes(session: Session) -> bool:
+    """会话改过（patches 非空）而这一版还没导出过文件。"""
+    return bool(session.patches) and session.exported_hash != session.patch_hash()
+
+
+def _record_unexported(record: dict) -> bool:
+    """落盘记录（只在记录里、不在本进程内存里的会话）是否改过却没导出。"""
+    patches = record.get("patches") or []
+    return bool(patches) and record.get("exported_hash") != patchspec.patch_hash(list(patches))
+
+
+def _settle_export_mark(session: Session, prev: str | None, *, committed: bool) -> None:
+    """事务收尾时对导出标记做与 patches 同样的「提交或回 B0」：没提交、或会话已不在导出的那一版，
+    就撤回到事务开始前的标记（回退时文件也已撤回，那一版不算导出过）。"""
+    if not committed or session.exported_hash != session.patch_hash():
+        session.exported_hash = prev
+
+
+def commit_export(session_id: str) -> None:
+    """单独一次 `tavotto_export` 出了文件：这是提交点，把导出标记落盘（进程接力后关会话照样说得准）。"""
+    s = _SESSIONS.get(session_id)
+    if s is not None and s.exported_hash == s.patch_hash():
+        _persist(s)
+
+
+#: 关掉一个改过却没导出的会话时的提醒（`close_session` 的 note；`fix_to_journal` 成功文字同一个意思）
+UNEXPORTED_NOTE = (
+    "注意：这个会话里的修改还没导出，已随会话一起丢掉，用户的文件没变。"
+    "要保留修改，请重新打开这张图、改好后先 tavotto_export 再关。"
+)
+
+
 def close_session(session_id: str) -> dict:
     s = _SESSIONS.pop(session_id, None)
+    # 进程换过时会话只在落盘记录里：删之前先看一眼，丢掉的修改照样要说出来
+    record = None
+    if s is None and sessionjournal.valid_id(session_id):
+        try:
+            record = sessionjournal.load(_journal_dir(), session_id)
+        except Exception:  # noqa: BLE001 — 读不出来就按「不在了」处理，关闭本身不失败
+            record = None
     # 关闭是明确的释放：落盘记录一起删，别的进程里也不能再把它恢复出来
     _forget(session_id)
+    if s is None and record is not None:
+        out = {"ok": True, "closed": True, "session_id": session_id, "stem": record.get("stem")}
+        if _record_unexported(record):
+            out["unexported_changes"] = True
+            out["note"] = UNEXPORTED_NOTE
+        return out
     if s is None:
         return {
             "ok": True,
@@ -1643,13 +1820,17 @@ def close_session(session_id: str) -> dict:
     s.apply_receipt = None
     # worker 归 pool 管（同一个脚本可能还有别的用户）：这里只丢引用与会话账本。
     # 用户的项目数据一个字节都不动。
-    return {
+    out = {
         "ok": True,
         "closed": True,
         "session_id": session_id,
         "project": s.project,
         "stem": s.stem,
     }
+    if unexported_changes(s):
+        out["unexported_changes"] = True
+        out["note"] = UNEXPORTED_NOTE
+    return out
 
 
 def _evict_if_needed() -> list[str]:
@@ -1940,7 +2121,7 @@ def open_figure(
             "dynamic_names": reg_info.get("dynamic_names", []),
             "stems": _all_stems(registry),
         },
-        "profile": engine_profiles.stamp(profile),
+        "profile": _profile_stamp(profile),
         **render,
     }
     if profile.get("journal_ref"):
@@ -2608,7 +2789,7 @@ def session_state(session_id: str) -> dict:
         "script": session.script,
         "entry": session.entry,
         "cost": session.cost,
-        "profile": engine_profiles.stamp(session.profile),
+        "profile": _profile_stamp(session.profile),
         "patches": list(session.patches),
         "patch_hash": session.patch_hash(),
         "render_revision": session.rev,
@@ -2732,6 +2913,18 @@ def run_preflight(
     # 分开是因为它量的是「画出来撞没撞上」，不是「该长什么样」；形状同一份，
     # 进同一份报告（ADR 0051）。
     issues += engine_interference.detect(session.manifest, profile, panel_id=session.stem)
+    if profile.get("journal_ref"):
+        for issue in issues:
+            if issue.get("id") != "raster-dpi":
+                continue
+            # The session stores a profile and journal reference, not a bound
+            # per-rule source record. Do not claim that this threshold is a
+            # journal requirement, even when the catalog has changed since open.
+            issue["text"] = issue["text"].replace("低于规范的", "低于当前检查阈值 ", 1)
+            issue["text"] += "；此回执未核验该阈值的期刊出处"
+            message = issue.get("message")
+            if isinstance(message, dict) and message.get("key") in {"rasterDpi", "exportRasterDpi"}:
+                message["key"] += "JournalSourceUnverified"
     summary = engine_preflight.summarize(issues)
     # 匿名用量统计：**结果算完之后**记一次，且只记四个计数 + 一个布尔。
     # 检查项的文案、字体名、gid、对象 id、stem 一个都不发（白名单里没有这些
@@ -2752,7 +2945,7 @@ def run_preflight(
         "ok": True,
         "session_id": session.id,
         "stem": session.stem,
-        "profile": engine_profiles.stamp(profile),
+        "profile": _profile_stamp(profile),
         "size_mm": session.manifest.get("size_mm"),
         "patch_hash": session.patch_hash(),
         "errors": summary["errors"],
@@ -2791,7 +2984,7 @@ def cached_preflight(session: Session) -> dict | None:
         return None
     if cached.get("patch_hash") != session.patch_hash():
         return None
-    if cached.get("profile") != engine_profiles.stamp(session.profile):
+    if cached.get("profile") != _profile_stamp(session.profile):
         return None
     return cached
 
@@ -2799,7 +2992,8 @@ def cached_preflight(session: Session) -> dict | None:
 def format_preflight(session: Session, profile: dict, issues: list[dict], summary: dict) -> str:
     """人类可读的那一份（Codex 会把它念给用户听）。"""
     head = (
-        f"《{profile.get('label', profile['profile_id'])}》 v{profile['version']} · {session.stem}"
+        f"《{_profile_stamp(profile).get('label') or profile['profile_id']}》 "
+        f"v{profile['version']} · {session.stem}"
     )
     size = session.manifest.get("size_mm") if session.manifest else None
     lines = [head]
@@ -3190,6 +3384,10 @@ def export(
             entry["manifest"] = o.manifest
         files.append(entry)
 
+    if any(f["status"] == engine_exportjob.STATUS_DONE for f in files):
+        # 只记在内存：export 也是事务（规范化 / 改到合规）里的一步，候选状态不许在提交前落盘。
+        # 单独的 `tavotto_export` 由 `commit_export` 落盘；事务回退时由 `_settle_export_mark` 撤回
+        session.exported_hash = session.patch_hash()
     result = {
         "ok": job.status == engine_exportjob.STATUS_DONE,
         # `partial` 是**独立一档**：并进 `done` 或 `failed` 都会说谎，
@@ -3392,11 +3590,17 @@ def _better(new: dict, old: dict) -> bool:
 def normalize_figure(session_id: str, **kwargs) -> dict:
     """`_normalize_figure` 的提交点：无论提交、回退还是异常回退，事务收尾后会话
     **此刻**的状态（patches + 合同）落盘一次（ADR 0078）。事务中途的候选状态不落盘。"""
+    before = _SESSIONS.get(session_id)
+    prev = before.exported_hash if before is not None else None
+    result: dict | None = None
     try:
-        return _normalize_figure(session_id, **kwargs)
+        result = _normalize_figure(session_id, **kwargs)
+        return result
     finally:
         session = _SESSIONS.get(session_id)
         if session is not None:
+            if session is before:
+                _settle_export_mark(session, prev, committed=bool(result and result.get("ok")))
             _persist(session)
 
 
@@ -3413,6 +3617,7 @@ def _normalize_figure(
     journal_id: str | None = None,
     replay_check: bool = False,
     evidence: bool = False,
+    stage_only: bool = False,
 ) -> dict:
     """保留式规范化：B0 → 约定 → 最小编辑 → 真实渲染检测 → 有界局部修复 → 导出验收 → 提交或回退。
 
@@ -3424,6 +3629,10 @@ def _normalize_figure(
     成功的判据是四件事同时成立（ADR 0051 §8）：目标达成且无未授权变更；没有新增 /
     加重的确定性干涉或裁切；局部调整在预算内；**最终文件本身**过验收。少一条就
     退出，会话仍是 B0，并说清冲突、试过的合法调整、需要放宽的最小约束。
+
+    `stage_only=True` 是 `fix_to_journal`（ADR 0180）的第一段：只跑到「裁决通过」就停——
+    **不导出、不挂合同、不提交**，会话留在候选状态由调用方接着做第二段、最后统一
+    提交或回到 B0；没通过时仍照旧自己回到 B0。其余路径一个字不变。
     """
     session = get_session(session_id)
     if session.manifest is None:
@@ -3463,7 +3672,7 @@ def _normalize_figure(
             "patch_hash": b0_hash,
             "worker_generation": getattr(session, "rev", None),
             "original_artifact": original,
-            "profile": engine_profiles.stamp(profile),
+            "profile": _profile_stamp(profile),
         },
     )
     plan = engine_normalize.plan_patches(contract, b0_manifest)
@@ -3686,6 +3895,19 @@ def _normalize_figure(
             )
             return result
 
+        if stage_only:
+            result.update(
+                {
+                    "ok": True,
+                    "exit": engine_normalize.EXIT_DONE,
+                    "patch_hash": session.patch_hash(),
+                    "patches": list(session.patches),
+                    "size_mm": verdict["size_mm"],
+                    "rolled_back": False,
+                }
+            )
+            return result
+
         # ---- 导出 + 最终产物验收（临时目录里验，不过不发布）----
         acceptance = {
             "contract_id": contract["contract_id"],
@@ -3833,6 +4055,637 @@ def _public_verdict(v: dict) -> dict:
 
 
 # --------------------------- 等价性自检（可选） -------------------------------
+# --------------------- 一步改到期刊合规（ADR 0180） ---------------------------
+#: `fix.kind == "size"` 的规则：改图幅，由 `tavotto_fix_to_journal` 的第一段（normalize）负责。
+FIX_SIZE_RULES = ("page-width", "page-aspect")
+#: 没给栏位时自动取栏位的门槛：只有**一个**栏位与现宽相差不超过这个比例（ADR 0180 §二）。
+FIX_AUTO_COLUMN_TOLERANCE = 0.15
+#: 预览图长边（px，ADR 0180 §四：改前 / 改后各一张，走 image 内容块、不进 structuredContent）。
+FIX_PREVIEW_LONG_EDGE_PX = 1000
+#: 结果里 `remaining` / `changes` / `adjustments` 各自最多带几条（超出写总数，预算见 ADR 0069）。
+FIX_LIST_CAP = 30
+FIX_CHANGES_CAP = 60
+EXIT_COLUMN_CHOICE_REQUIRED = "column_choice_required"
+#: `fix.kind == "manual"` 时给的一句话（没登记的规则落到默认那句，宁可笼统也不编）。
+FIX_MANUAL_HINT_DEFAULT = "Tavotto 的 override 改不了这一项，回脚本改。"
+FIX_MANUAL_HINTS = {
+    "palette-semantic": "换成规范允许的配色，回脚本改。",
+    "discouraged-colormap": "换掉不推荐的 colormap，回脚本改。",
+    "palette-line-markers": "给曲线加不同的线型或标记，回脚本改。",
+    "axis-label-format": "把轴标题改成「量名 (单位)」的写法，回脚本改。",
+    "tick-label-count": "减少刻度数，回脚本改。",
+    "bar-without-errorbar": "给柱状图加误差棒，回脚本改。",
+    "fit-without-ci": "给拟合曲线加置信区间，回脚本改。",
+    "glyph-missing": "换一个带这些字形的字体，或改文字，回脚本改。",
+    "glyph-substituted": "换一个带这些字形的字体，回脚本改。",
+    "cjk-fallback-missing": "给中文指定回退字体，回脚本改。",
+    "math-unrenderable": "改公式写法，回脚本改。",
+    "raster-dpi": "导出时把 dpi 调到规范要求以上。",
+}
+
+
+def _fix_engine():
+    """`specfix` 且带事务本体（旧引擎上没有 → None）：`fix_to_journal` 与 preflight 的 `fix` 都靠它。"""
+    engine = _optional_engine("specfix")
+    if engine is None or not all(
+        hasattr(engine, name) for name in ("transaction", "FIXABLE_RULES", "STRICT_SEVERITIES")
+    ):
+        return None
+    return engine
+
+
+def fix_to_journal_available() -> bool:
+    """`tavotto_fix_to_journal` 出现在 tools/list 的条件：期刊库总开关开着、引擎带事务。"""
+    return journal_catalog_enabled() and _fix_engine() is not None
+
+
+def _fix_columns(profile: dict) -> list[dict]:
+    """规范里能当目标的栏位：预检 `page-width` 判据认的那些（exact = 等于，max = 不超过），
+    唯一出处 `preflight.judged_page_columns`，这里不另写筛选条件。旧引擎没有它时只认 exact。"""
+    judged = getattr(engine_preflight, "judged_page_columns", None)
+    if judged is not None:
+        cols = judged(profile)
+    else:
+        cols = [
+            c
+            for c in engine_profiles.derive_page_columns(profile)
+            if c.get("qualifier", "exact") == "exact"
+        ]
+    out = []
+    for col in cols:
+        try:
+            width = float(col.get("width_mm"))
+        except (TypeError, ValueError):
+            continue
+        label = col.get("label")
+        out.append(
+            {
+                "id": str(col.get("id")),
+                "label": (label.get("zh") or label.get("en")) if isinstance(label, dict) else label,
+                "width_mm": width,
+                "qualifier": col.get("qualifier", "exact"),
+            }
+        )
+    return out
+
+
+def _column_target(col: dict, w0: float) -> float:
+    """按栏位取目标宽度：exact 就是它；max 是上限——本来不超就不动，超了才压到上限。"""
+    if col.get("qualifier") == "max":
+        return min(w0, col["width_mm"])
+    return col["width_mm"]
+
+
+def issue_fix(issue: dict, columns: list[dict] | None = None) -> dict:
+    """一条预检问题「能不能自动修」（ADR 0180 §三）。**只在 MCP 整形层用**，不进 `preflight.run()` 的输出。
+
+    `auto` 的集合就是 `specfix.FIXABLE_RULES`（唯一出处，不在这里抄第二份）。
+    """
+    rid = str(issue.get("id") or "")
+    if issue.get("severity") == "not_verifiable":
+        return {"kind": "verify"}
+    if rid in FIX_SIZE_RULES:
+        return {"kind": "size", **({"columns": columns} if columns else {})}
+    engine = _fix_engine()
+    if engine is not None and rid in engine.FIXABLE_RULES:
+        return {"kind": "auto"}
+    return {"kind": "manual", "hint": FIX_MANUAL_HINTS.get(rid, FIX_MANUAL_HINT_DEFAULT)}
+
+
+_PREFLIGHT_ISSUE_LISTS = ("errors", "warnings", "not_verifiable", "suggestions")
+
+
+def annotate_preflight_fix(out: dict) -> dict:
+    """`tavotto_preflight` 结果每条问题加 `fix`；返回**副本**（会话上缓存的那份不带）。
+    期刊库总开关关着 / 引擎没有事务时原样返回（ADR 0180 §一裁决 4：关着时不带 `fix`）。"""
+    if not fix_to_journal_available():
+        return out
+    columns = None
+    for key in _PREFLIGHT_ISSUE_LISTS:
+        for item in out.get(key) or []:
+            if item.get("id") == "page-width":
+                columns = (item.get("detail") or {}).get("columns") or None
+    shaped = dict(out)
+    for key in _PREFLIGHT_ISSUE_LISTS:
+        if isinstance(out.get(key), list):
+            shaped[key] = [{**item, "fix": issue_fix(item, columns)} for item in out[key]]
+    return shaped
+
+
+def _journal_issues(session: Session, profile: dict) -> list[dict]:
+    """与 `run_preflight` 同一组检查（规范求值 + 真实渲染几何干涉），不记遥测、不碰缓存。"""
+    issues = _profile_issues(session, profile)
+    issues += engine_interference.detect(session.manifest, profile, panel_id=session.stem)
+    return issues
+
+
+def _issue_index(issues: list[dict]) -> dict[tuple[str, str], dict]:
+    """预检按规则聚合；前后对比要按 `(规则, gid)`——只修了其中一个 gid 不该让剩下的变成「新问题」。"""
+    index: dict[tuple[str, str], dict] = {}
+    for item in issues:
+        for gid in item.get("gids") or [""]:
+            index.setdefault((str(item["id"]), str(gid)), {**item, "gids": [gid] if gid else []})
+    return index
+
+
+def _issue_row(item: dict, columns: list[dict]) -> dict:
+    return {
+        "id": item["id"],
+        "severity": item["severity"],
+        "gids": list(item.get("gids") or [])[:6],
+        "text": str(item.get("text") or "")[:200],
+        "fix": issue_fix(item, columns),
+    }
+
+
+def _preview_width_px(size_mm) -> int:
+    """长边 `FIX_PREVIEW_LONG_EDGE_PX` 的位图宽度（`preview_png` 按宽度出图）。"""
+    try:
+        w, h = float(size_mm[0]), float(size_mm[1])
+    except (TypeError, ValueError, IndexError):
+        return FIX_PREVIEW_LONG_EDGE_PX
+    if w <= 0 or h <= 0 or w >= h:
+        return FIX_PREVIEW_LONG_EDGE_PX
+    return max(1, round(FIX_PREVIEW_LONG_EDGE_PX * w / h))
+
+
+def _retire_session_worker(session: Session) -> bool:
+    """作废这个会话的热 worker（与桌面 `_retire_hot_worker` 同一个原语 `pool.invalidate`）：
+    只让它过期，下一次 `session.acquire()` 冷起、`_render` 按全量列表重放。"""
+    # 池里的键带着写入根绊线的授权根（`_spawn_worker` 取 worker 时传的那一份）：不一起给，
+    # 对不上键，作废就落空（worker 还在、热态仍不可信）
+    context = {}
+    roots = _tripwire_roots(session.project)
+    if roots is not None:
+        context["write_roots"] = roots
+    engine_pool.invalidate(session.script, session.project, session.run, only_run=True, **context)
+    return True
+
+
+def _fix_changes(specfix_changes: list[dict]) -> list[dict]:
+    """specfix 的逐条说明 → 结果里的 `changes`：页面上读者量到的 pt（字号 / 线宽）或原值。"""
+    out = []
+    for c in specfix_changes:
+        prop = str(c.get("prop"))
+        row = {"gid": c.get("gid"), "prop": prop, "rule": c.get("rule")}
+        if prop == "fontsize" or prop.endswith("linewidth"):
+            row.update(from_pt=c.get("before"), to_pt=c.get("after"))
+        else:
+            row.update({"from": c.get("before"), "to": c.get("after")})
+        out.append(row)
+    return out
+
+
+def _fix_adjustments(items: list[dict]) -> list[dict]:
+    out = []
+    for a in items:
+        kind = "legend" if a.get("reason") == "legend" or a.get("prop") == "loc" else "margins"
+        out.append({"kind": kind, **{k: v for k, v in a.items() if k != "round"}})
+    return out
+
+
+def _aspect_height(profile: dict, w_mm: float, h_mm: float, w_final: float) -> float | None:
+    """`page-aspect` 超限时的目标高度：取最接近现有长宽比的那一档允许比例。"""
+    best = None
+    for r in profile.get("allowed_aspect_ratios") or []:
+        try:
+            rw, rh = float(r.get("w")), float(r.get("h"))
+        except (TypeError, ValueError):
+            continue
+        if rw <= 0 or rh <= 0:
+            continue
+        rel = abs(w_mm / h_mm - rw / rh) / (rw / rh)
+        if best is None or rel < best[0]:
+            best = (rel, rw / rh)
+    return None if best is None else round(w_final / best[1], 2)
+
+
+def fix_to_journal(
+    session_id: str,
+    *,
+    journal_id: str | None = None,
+    profile_id: str | None = None,
+    journal: dict | None = None,
+    column: str | None = None,
+    width_mm: float | None = None,
+    only: list | None = None,
+    include_suggestions: bool = False,
+    formats: list[str] | None = None,
+    dpi: int = 600,
+    stem: str | None = None,
+    out_dir: str | None = None,
+    previews: bool = True,
+    dry_run: bool = False,
+) -> dict:
+    """`tavotto_fix_to_journal`（ADR 0180）：把当前会话的图一步改到符合规范 / 期刊，整体要么提交要么回到 B0。
+
+    两段、各用一个现成的算子：① 图幅 = `_normalize_figure(stage_only=True)`（只给 `width_mm`，
+    字号留给第二段）；② 面板内部 = `specfix.transaction`（桌面「问题」面板同一份，ADR 0080）。
+    之后对最终渲染复检：`fixed / remaining / introduced`，introduced 里有 error / warn 就整体
+    不通过；给了 `formats` 再走 `export()`（同一条预检门 + 产物核验），挡了或核验不过也整体不通过。
+
+    **`scale` 取 1.0**：MCP 的单图会话里这张图就是它自己的页面（`run_preflight` /
+    `_profile_issues` 用的也是 `spec_from_manifest(scale=1.0)`），manifest 里的 pt 就是读者量到的 pt；
+    桌面端点的 `scale`（摆放宽度 / 原生宽度）在这里恒为 1。改图幅走 normalize 是真改 figsize，不是缩放。
+
+    通过：会话停在最终列表，落盘一次（ADR 0078）；不通过 / `dry_run`：`_render(B0)`，会话与文件零改动。
+    任何一次渲染带 warning 或抛异常：worker 作废（`worker_retired: true`），回滚在新 worker 上按全量列表重放。
+    不改用户的 .py。预览图随结果的 `_previews`（`before` / `after` 的 base64 PNG）带出，由 server 层
+    转成 image 内容块，**不进 structuredContent**。
+    """
+    _journal_module()  # 期刊库总开关关着：`journal_catalog_disabled`，与工具不出现同一个门
+    engine = _fix_engine()
+    if engine is None:
+        raise BridgeError(
+            "本机安装的 Tavotto 引擎没有按规范修图的事务；这次没有改动任何设置。",
+            code="engine_too_old",
+            recovery="请用户把 Tavotto 升级到与插件相同的版本后再试。",
+        )
+    session = get_session(session_id)
+    if session.manifest is None:
+        raise BridgeError("会话还没有 manifest（先重新 open）", code="no_manifest")
+    if column is not None and width_mm is not None:
+        raise BridgeError("column 与 width_mm 只能给一个。", code="bad_arguments")
+    if column is not None and not (isinstance(column, str) and column.strip()):
+        raise BridgeError("column 必须是栏位 id（字符串）。", code="bad_arguments")
+    if width_mm is not None:
+        try:
+            width_mm = float(width_mm)
+        except (TypeError, ValueError):
+            width_mm = float("nan")
+        if not (width_mm > 0 and width_mm != float("inf")):
+            raise BridgeError("width_mm 必须是正数。", code="bad_arguments")
+    if only is not None and not (
+        isinstance(only, list) and all(isinstance(o, dict) and o.get("rule") for o in only)
+    ):
+        raise BridgeError("only 必须是 [{rule, gid?}] 列表。", code="bad_arguments")
+    fmts = [f.lower().strip() for f in (formats or []) if str(f).strip()]
+    bad = [f for f in fmts if f not in EXPORT_FORMATS]
+    if bad:
+        raise BridgeError(
+            f"不支持的导出格式: {', '.join(bad)}（支持 {', '.join(EXPORT_FORMATS)}）",
+            code="bad_format",
+        )
+    try:
+        dpi = int(dpi)
+    except (TypeError, ValueError):
+        raise BridgeError(f"dpi 必须是整数: {dpi!r}", code="bad_dpi") from None
+    if dpi <= 0:
+        raise BridgeError(f"dpi 必须为正: {dpi}", code="bad_dpi")
+    if fmts and out_dir:
+        check_scope(out_dir)  # 越界在动任何东西之前就拒（export 里同一道门）
+    profile = resolve_profile(session, profile_id, journal, journal_id)
+
+    base = list(session.patches)
+    base_hash = session.patch_hash()
+    base_exported = session.exported_hash
+    base_contract, base_normalized = session.contract, session.normalized
+    b0_manifest = session.manifest
+    state = {"clean": True}
+    result: dict = {
+        "ok": False,
+        "session_id": session.id,
+        "stem": session.stem,
+        "profile": engine_profiles.stamp(profile),
+        "dry_run": bool(dry_run),
+        "size": {"from_mm": list(b0_manifest.get("size_mm") or [])},
+        "changes": [],
+        "adjustments": [],
+        "issues": {"fixed": 0, "remaining": [], "introduced": []},
+        "skipped": [],
+        "exported": [],
+        "rolled_back": False,
+        "worker_retired": False,
+    }
+    ref = profile.get("journal_ref")
+    if ref:
+        result["journal"] = {"id": ref.get("id"), "catalog_rev": ref.get("catalog_rev")}
+    previews_out: dict[str, str] = {}
+    commit = False
+    try:
+        commit = _fix_run(
+            session,
+            profile,
+            engine,
+            result,
+            state,
+            previews_out,
+            base=base,
+            journal_args={"profile_id": profile_id, "journal": journal, "journal_id": journal_id},
+            column=column,
+            width_mm=width_mm,
+            only=only,
+            include_suggestions=bool(include_suggestions),
+            formats=fmts,
+            dpi=dpi,
+            stem=stem,
+            out_dir=out_dir,
+            previews=bool(previews),
+            dry_run=bool(dry_run),
+        )
+    except BaseException:
+        _fix_settle(session, base, state, restore=True, result=None)
+        session.exported_hash = base_exported
+        raise
+    touched = session.patch_hash() != base_hash
+    restore = ((not commit) or dry_run) and (touched or not state["clean"])
+    _fix_settle(session, base, state, restore=restore, result=result)
+    _settle_export_mark(session, base_exported, committed=bool(commit) and not dry_run)
+    if restore:
+        result["rolled_back"] = touched
+    elif commit and touched:
+        # 通过：会话停在最终列表，落盘一次（ADR 0078）。旧的规范化合同描述的是另一个状态：
+        # 这一次是用户点名期刊的明确要求，等同 `user_authorized`，合同与验收随之解除
+        if base_contract is not None or base_normalized is not None:
+            session.contract = None
+            session.normalized = None
+            result["contract_released"] = True
+        _persist(session)
+    elif commit and session.exported_hash != base_exported:
+        _persist(session)  # 图没变、只是这次导出了：导出标记也是提交的一部分
+    if previews_out:
+        result["_previews"] = previews_out
+    return result
+
+
+def _fix_settle(session: Session, base: list, state: dict, *, restore: bool, result: dict | None):
+    """收尾：需要时回到 B0；热态不可信（任何一次渲染带 warning / 抛异常）就作废 worker，
+    并在新 worker 上把 B0 重放一遍，让会话上的 manifest 是可信的。绝不抛（异常路径上不许盖住原错误）。"""
+    failed = False
+    if restore:  # 调用方已判定「动过 / 热态不可信」才需要
+        try:
+            if _render(session, base, preview_dpi=None).get("warnings"):
+                state["clean"] = False
+        except BaseException:  # noqa: BLE001 — 回滚本身失败：热态未知
+            state["clean"] = False
+            failed = True
+    retired = False
+    if not state["clean"]:
+        try:
+            retired = _retire_session_worker(session)
+        except Exception:  # noqa: BLE001
+            retired = False
+        if restore:
+            try:
+                _render(session, base, preview_dpi=None)
+                failed = False
+            except BaseException:  # noqa: BLE001
+                failed = True
+    if failed:
+        # 会话上的状态已经对不上 B0：从账本里摘掉，下一次调用按落盘记录（只在提交点写，所以就是 B0）重建
+        _SESSIONS.pop(session.id, None)
+    if result is not None:
+        result["worker_retired"] = bool(retired)
+
+
+def _fix_run(
+    session: Session,
+    profile: dict,
+    engine,
+    result: dict,
+    state: dict,
+    previews_out: dict,
+    *,
+    base: list,
+    journal_args: dict,
+    column: str | None,
+    width_mm: float | None,
+    only: list | None,
+    include_suggestions: bool,
+    formats: list[str],
+    dpi: int,
+    stem: str | None,
+    out_dir: str | None,
+    previews: bool,
+    dry_run: bool,
+) -> bool:
+    """两段事务的本体；回「是否可以提交」。不通过时**不回滚**（收尾统一在 `fix_to_journal`），
+    但每个出口都把 `ok / exit` 写进 `result`。"""
+    b0_manifest = session.manifest
+    w0, h0 = (float(v) for v in b0_manifest["size_mm"][:2])
+    columns = _fix_columns(profile)
+    b0_issues = _journal_issues(session, profile)
+    b0_index = _issue_index(b0_issues)
+    named = None if only is None else {str(o["rule"]) for o in only}
+
+    def eligible(rule: str) -> bool:
+        item = next((i for i in b0_issues if i["id"] == rule), None)
+        if item is None:
+            return False
+        if named is not None:
+            return rule in named
+        return include_suggestions or item["severity"] != "suggestion"
+
+    def fail(exit_code: str, **extra) -> bool:
+        result.update({"ok": False, "exit": exit_code, **extra})
+        return False
+
+    if previews:
+        try:
+            previews_out["before"] = preview_png(session, base, _preview_width_px([w0, h0]))
+        except BridgeError as exc:
+            result["previews_error"] = exc.code
+            state["clean"] = False  # 位图那一趟失败了，热态不再担保
+
+    # ---- 1. 图幅：normalize，只给 width_mm（可能再给 height_mm）----
+    targets: dict = {}
+    picked = None
+    auto = False
+    target_w = None
+    if column is not None:
+        col = next((c for c in columns if c["id"] == column.strip()), None)
+        if col is None:
+            raise BridgeError(
+                f"这份规范里没有栏位 {column!r}。可选：{', '.join(c['id'] for c in columns) or '（没有）'}",
+                code="unknown_column",
+                columns=columns,
+            )
+        target_w, picked = _column_target(col, w0), col["id"]
+    elif width_mm is not None:
+        target_w = width_mm
+    elif eligible("page-width"):
+        near = [c for c in columns if abs(c["width_mm"] - w0) / w0 <= FIX_AUTO_COLUMN_TOLERANCE]
+        if len(near) != 1:
+            # 不改任何东西，让 Agent 问用户（ADR 0180 §二第 1 步）
+            return fail(
+                EXIT_COLUMN_CHOICE_REQUIRED,
+                columns=[
+                    {**c, "off_percent": round(abs(c["width_mm"] - w0) / w0 * 100, 1)}
+                    for c in columns
+                ],
+            )
+        target_w, picked, auto = _column_target(near[0], w0), near[0]["id"], True
+    if target_w is not None and abs(target_w - w0) > 1e-6:
+        targets["width_mm"] = target_w
+    w_final = targets.get("width_mm", w0)
+    # 点名了栏位 / 宽度也照样修长宽比（Codex 评审 P2）：第二段改不了页面几何，这里不修就修不了
+    if eligible("page-aspect"):
+        h_target = _aspect_height(profile, w0, h0, w_final)
+        if h_target is not None and abs(h_target - h0 * w_final / w0) > 0.01:
+            targets["height_mm"] = h_target
+    size_changed = False
+    if targets:
+        norm = _normalize_figure(session.id, targets=targets, stage_only=True, **journal_args)
+        if not norm.get("ok"):
+            if norm.get("exit") == engine_normalize.EXIT_UNSUPPORTED:
+                state["clean"] = False
+            blocking = (norm.get("verdict") or {}).get("blocking") or []
+            return fail(
+                str(norm.get("exit") or "constraint_conflict"),
+                stage="size",
+                size={
+                    **result["size"],
+                    "to_mm": None,
+                    "column": picked,
+                    "target": {k: round(float(v), 2) for k, v in targets.items()},
+                },
+                detail={"blocking": blocking[:10], "warnings": norm.get("warnings") or []},
+            )
+        if norm.get("exit") != engine_normalize.EXIT_NOTHING_TO_DO:
+            size_changed = True
+            result["size"].update(
+                {"to_mm": list(norm["size_mm"]), "column": picked, "auto_picked": auto}
+            )
+            result["adjustments"].extend(_fix_adjustments(norm.get("adjustments") or []))
+    if not size_changed:
+        result["size"]["to_mm"] = result["size"]["from_mm"]
+        result["size"]["column"] = picked
+
+    # ---- 2. 面板内部：specfix 事务（ADR 0080 原样），基准是第 1 段的结果 ----
+    base1 = list(session.patches)
+
+    def render(patches: list) -> dict:
+        try:
+            resp = _render(session, patches, preview_dpi=None)
+        except BaseException:
+            state["clean"] = False
+            raise
+        if resp.get("warnings"):
+            state["clean"] = False
+        return resp
+
+    if only is not None:
+        only_spec = [o for o in only if o["rule"] not in FIX_SIZE_RULES]
+    elif include_suggestions:
+        only_spec = [{"rule": r} for r in engine.FIXABLE_RULES]
+    else:
+        only_spec = None
+    tx = engine.transaction(render, base1, 1.0, profile, only_spec)
+    skipped = list(tx.get("skipped") or [])
+    want_font = (profile.get("font_family") or {}).get("latin")
+    for s in skipped:
+        if s.get("reason") == "font_unavailable" and want_font:
+            s["want"] = want_font
+    result["skipped"] = skipped
+    if not tx["ok"] and tx.get("exit") != engine.EXIT_NOTHING_TO_DO:
+        return fail(
+            str(tx.get("exit")),
+            stage="panel",
+            detail={
+                "blocking": (tx.get("blocking") or [])[:10],
+                "unresolved": (tx.get("unresolved") or [])[:10],
+                "warnings": tx.get("warnings") or [],
+            },
+        )
+    final = list(tx["patches"]) if tx["ok"] else base1
+    if session.patch_hash() != patchspec.patch_hash(final):
+        render(final)  # 事务收尾的热态应当就是它；对不上就按最终列表落一次（防御，不应发生）
+    changes = _fix_changes(tx.get("changes") or [])
+    result["changes"] = changes[:FIX_CHANGES_CAP]
+    result["changes_total"] = len(changes)
+    result["adjustments"].extend(_fix_adjustments(tx.get("adjustments") or []))
+    result["adjustments"] = result["adjustments"][:FIX_CHANGES_CAP]
+    panel_changed = final != base1
+
+    # ---- 3. 复检：fixed / remaining / introduced ----
+    after_index = _issue_index(_journal_issues(session, profile))
+    introduced = [v for k, v in after_index.items() if k not in b0_index]
+    remaining = [v for k, v in after_index.items() if k in b0_index]
+    result["issues"] = {
+        "fixed": sum(1 for k in b0_index if k not in after_index),
+        "remaining": [_issue_row(i, columns) for i in remaining[:FIX_LIST_CAP]],
+        "remaining_total": len(remaining),
+        "introduced": [_issue_row(i, columns) for i in introduced[:FIX_LIST_CAP]],
+    }
+    if any(i.get("severity") in engine.STRICT_SEVERITIES for i in introduced):
+        return fail("constraint_conflict", stage="recheck")
+    changed = size_changed or panel_changed
+    if not changed:
+        if any(s.get("reason") == "font_unavailable" for s in skipped):
+            return fail("font_unavailable")
+        if skipped:
+            return fail("not_resolved")
+    result["size"]["to_mm"] = list(session.manifest["size_mm"])
+
+    # ---- 4. 导出（dry_run 不出文件）----
+    if formats and not dry_run:
+        try:
+            exported = export(
+                session.id,
+                formats=formats,
+                dpi=dpi,
+                stem=stem,
+                out_dir=out_dir,
+                explicit_confirm=False,
+                proof=True,
+                acceptance={"expect_mm": list(session.manifest["size_mm"]), "font_family": None},
+                **journal_args,
+            )
+        except BridgeError as exc:
+            return fail(
+                engine_normalize.EXIT_ACCEPTANCE_FAILED,
+                reason="export_blocked",
+                export_error={"code": exc.code, "error": str(exc)[:300]},
+            )
+        failed = [f for f in exported["files"] if f["status"] != engine_exportjob.STATUS_DONE]
+        if failed:
+            # 与 normalize 同一条纪律：这一次作业里已发布的其它格式与留档也撤回
+            for entry in exported["files"]:
+                if entry["status"] == engine_exportjob.STATUS_DONE and entry.get("path"):
+                    try:
+                        Path(entry["path"]).unlink()
+                    except OSError:
+                        pass
+            if exported.get("proof_path"):
+                try:
+                    Path(exported["proof_path"]).unlink()
+                except OSError:
+                    pass
+            return fail(
+                engine_normalize.EXIT_ACCEPTANCE_FAILED,
+                reason="artifact_rejected",
+                failed_files=[{"format": f.get("format"), "error": f.get("error")} for f in failed],
+            )
+        result["exported"] = [
+            {
+                "format": f.get("format"),
+                "path": f.get("path"),
+                "inspection": (f.get("manifest") or {}).get("checks"),
+            }
+            for f in exported["files"]
+        ]
+        result["export_dir"] = exported.get("export_dir")
+        if exported.get("proof_path"):
+            result["proof_path"] = exported["proof_path"]
+
+    if previews and "before" in previews_out:
+        try:
+            previews_out["after"] = preview_png(
+                session, list(session.patches), _preview_width_px(session.manifest["size_mm"])
+            )
+        except BridgeError as exc:
+            result["previews_error"] = exc.code
+            state["clean"] = False
+    result.update(
+        {
+            "ok": True,
+            "exit": "done" if changed else engine.EXIT_NOTHING_TO_DO,
+            "patch_hash": session.patch_hash(),
+        }
+    )
+    return True
+
+
 def verify_replay(session_id: str) -> dict:
     """`hot_apply(patches) == fresh_worker_replay(patches)` 的现场自检。
 

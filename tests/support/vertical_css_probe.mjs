@@ -7,9 +7,9 @@
  * 输入 `{fonts: {serif: <url>, cjk: <url>}, cases: [{text, size_pt, line_height, h_mm}]}`；输出同序的列文字数组。
  * 另有 `formula_cases: [{parts: [{t: 文字} | {m: {width, ascent, descent}}], size_pt, line_height, h_mm}]`：
  * 公式按 `MathFormula` 的竖排形态（`web/src/lib/verticalFormula.ts` + `verticalMetrics.ts`，本脚本把这两份源码
- * 转译后装进页面，读的是同一份）挂进同样的竖排容器，量每个公式的轮廓落在第几列、沿列距列首多远、
- * 横向相对列中线的左右边界，以及公式后第一个字的位置（= 公式预留的长度）。
- * 输出 `{cols: [[列文字…]…], formulas: [[{col, pos, len, left, right, next}…]…]}`，长度单位 pt（左右边界相对列中线）。
+ * 转译后装进页面，读的是同一份）挂进同样的竖排容器，量每个公式的轮廓沿列距列首多远、横向的左右边界
+ * （相对容器右边——第一列的右边；高公式撑宽一列时，后面各列的落点跟着变），以及公式后第一个字的位置（= 公式预留的长度）。
+ * 输出 `{cols: [[列文字…]…], formulas: [[{pos, len, left, right, next}…]…]}`，长度单位 pt。
  * 字体用批准字体的文件（@font-face），不用机器上碰巧装着的——预览与导出各用各的脸时本来就会有差，
  * 这里要比的是**折行规则**，不是字体度量。
  */
@@ -82,7 +82,6 @@ try {
       await page.evaluate((c) => {
         const MM = 96 / 25.4
         const sizePx = c.size_pt * (96 / 72)
-        const columnPx = sizePx * c.line_height
         const stack = 'RcSerif, RcCjk'
         const el = document.createElement('div')
         el.className = 't'
@@ -96,7 +95,6 @@ try {
             return
           }
           const g = verticalFormulaBox({
-            columnPx,
             sizePx,
             widthEm: p.m.width,
             ascentEm: p.m.ascent,
@@ -104,7 +102,7 @@ try {
             baselineShiftPx: sidewaysBaselineShift(stack, sizePx),
           })
           const wrap = document.createElement('span')
-          Object.assign(wrap.style, { display: 'inline-block', position: 'relative', width: g.wrapper.width + 'px', height: g.wrapper.height + 'px' })
+          Object.assign(wrap.style, { display: 'inline-block', position: 'relative', width: g.wrapper.width + 'px', height: g.wrapper.height + 'px', verticalAlign: g.wrapper.verticalAlign + 'px' })
           const NS = 'http://www.w3.org/2000/svg'
           const svg = document.createElementNS(NS, 'svg')
           svg.setAttribute('viewBox', `0 ${-p.m.ascent} ${p.m.width} ${p.m.ascent + p.m.descent}`)
@@ -124,8 +122,6 @@ try {
         const PT = 72 / 96
         const out = marks.map(({ path, i }) => {
           const r = path.getBoundingClientRect()
-          const col = Math.round((box.right - (r.left + r.right) / 2 - columnPx / 2) / columnPx)
-          const cx = box.right - (col + 0.5) * columnPx
           // 公式后第一个字的位置（沿列方向离列首）
           const nxt = c.parts[i + 1]
           let next = null
@@ -136,7 +132,7 @@ try {
             rg.setEnd(tn, 1)
             next = (rg.getBoundingClientRect().top - box.top) * PT
           }
-          return { col, pos: (r.top - box.top) * PT, len: r.height * PT, left: (r.left - cx) * PT, right: (r.right - cx) * PT, next }
+          return { pos: (r.top - box.top) * PT, len: r.height * PT, left: (r.left - box.right) * PT, right: (r.right - box.right) * PT, next }
         })
         el.remove()
         return out

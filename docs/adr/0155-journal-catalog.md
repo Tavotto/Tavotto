@@ -279,3 +279,16 @@ Agent 宿主（Codex / Claude Code 插件、MCP 等）与 app 走**同一套接�
 * **顶栏期刊胶囊**：文档名后一枚中性胶囊显示期刊名，点开设置 › 期刊规范；窄于 900 只留图标。
 * **不做（登记）**：图高上限（`info.max_height_mm`，种子里 5 本）仍只展示——要进判据得新增检查 id、两侧求值器与 golden 向量，并把数据从 `info` 搬进 `rules`（§3b 留的路），另起 PR；
   不在画布属性栏另起一处「超高」提示（「这份项目有什么问题」只有一条链）。
+
+## 13. 修订记录：规则带原文语气 `strength`（2026-11-15，用户拍板）
+
+* **口径**：期刊规则按原文语气记——must / required 记 `required`，should 记 `recommended`，prefer 记 `preferred`，are accepted 记 `permitted`，e.g. / such as 记 `example`，usually 记 `typical`，都没有记 `unspecified`。取代 11-06 的「should + 数值算硬性要求」。语气由两个模型独立判、一致才写入数据；不一致不写，界面就不标。
+* **字段**：每条规则可选 `strength`，闭集与 journal facts v2 的 strength 相同（`required|recommended|preferred|permitted|typical|example|unspecified`），非法值报 `journal_catalog_schema`；缺省 = 不显示标签。精简出处 `JournalFieldSource` 原样保存，已定稿项目离线也看得到。严格同源对：`journals.py` / `journals.ts` 的 `STRENGTHS`。
+* **只管显示，不管判定**：`strength` 与 `qualifier` 正交——折叠、预检判据、严重级别、导出初值、golden 提示文本都不看 `strength`（用户 2026-11-15：照旧报警 + 加标签）。旧客户端忽略未知字段，目录可以先于客户端带上它。
+* **界面**：只给 `required` 标「必须」、`recommended` 标「建议」，小号次级灰字跟在要求清单的值后面、出处卡结论后面；不加底色、不另起行。预检问题行本身不加字（行文已会截断），点开出处卡可见。其余取值暂不显示。
+
+## 14. 修订：独立的来源事实 API v2（2026-11-11）
+
+用户要求全面核对目录、适当扩展字段，为 API 保留期刊各不相同的完整要求。v1 的 path → 单项覆盖无法表达同一指标按图类、条件和阶段分别给值，也无法区分禁止项与举例；把条件字段直接加在 v1 规则上会被旧客户端忽略并错折成通用判据。因此新增独立的 v2 事实分发协议，数据、签名索引与版本水位分离；v1 不改，并只允许可忠实表达的安全投影。详见 `services/journal_catalog/FACTS-V2.md`。
+
+服务端提供 v2 事实结构和分发入口、与 v1 共用设备及首次读取额度。Python、MCP 与桌面来源查看器可读取已验签的事实及来源，但不把它们折成 v1 判据。每条事实保留来源和审校状态；validator 是结构门禁，不能证明摘录及语义已通过独立审核。**本修订不实现 v2 正式预检求值、事实到 v1 的投影或线上部署**：无可靠映射时不能对条件数据作通用判断，也不能把基础 300 dpi 写成期刊规定。上线需要经复核的数据、签名构建和客户端验签、旧版及既有项目快照兼容、真实服务链 staging 验证。此前 §3b / §11 对 v1 的裁决继续有效。

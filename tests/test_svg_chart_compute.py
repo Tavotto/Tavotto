@@ -4,15 +4,13 @@
   确定性（同输入同字节）；log/倒轴；坏模型拒绝。
 - `compose_scene`：系列节点被片段替换；轴区域节点移除并接入片段的轴子树；
   未绑定内容逐字节保留；跨区域 defs 上提；产物过 svgcheck。
-- worker 分发：真实子进程里 `svg_scaffold` 不建会话、不 import 用户脚本。
+- worker 分发：真实子进程里 `chart` 不建会话、不 import 用户脚本。
 """
 
 from __future__ import annotations
 
 import base64
 import hashlib
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -92,6 +90,28 @@ def test_fragment_is_deterministic():
     a = svgchart.scaffold_fragment(model(), FRAME)["fragment"]
     b = svgchart.scaffold_fragment(model(), FRAME)["fragment"]
     assert a == b
+
+
+def _series_stroke_width(fragment: bytes) -> str:
+    root = parse_svg(strip_matplotlib_doctype(fragment))
+    for el in root.iter():
+        style = el.get("style", "")
+        if "stroke: #1f77b4" in style:
+            return style.split("stroke-width:", 1)[1].split(";", 1)[0].strip()
+    raise AssertionError("series path not found in scaffold fragment")
+
+
+def test_line_series_forwards_linewidth_to_the_scaffold():
+    base = svgchart.scaffold_fragment(model(), FRAME)["fragment"]
+    thick_model = model()
+    thick_model["series"][0]["style"] = {"color": "#1f77b4", "linewidth": 3.0}
+    thick = svgchart.scaffold_fragment(thick_model, FRAME)["fragment"]
+    assert _series_stroke_width(base) == "2"
+    assert _series_stroke_width(thick) == "3"
+
+
+def test_safe_style_keeps_linewidth():
+    assert svgchart._safe_style({"linewidth": 3.0}) == {"linewidth": 3.0}
 
 
 def test_fragment_has_tick_labels_for_the_new_range():
@@ -175,48 +195,24 @@ def test_compose_output_passes_svgcheck_and_is_deterministic():
 # ---------------------------------------------------------------------------
 
 
-def test_worker_svg_scaffold_does_not_build_a_session(tmp_path):
-    """子进程里 svg_scaffold 不 import 用户脚本：假脚本里放哨兵，命中即失败。"""
+def test_worker_chart_does_not_build_a_session(tmp_path):
+    """The pooled v1 task never imports a user script."""
+    from tavotto.engine import chartprocess, pool
+
     script = tmp_path / "boobytrap.py"
-    script.write_text("raise RuntimeError('user script must not run')\n")
-    child = (
-        "import json,sys;"
-        "sys.path.insert(0, r'%s');"
-        "sys.argv=['worker','--script',r'%s'];"
-        "from tavotto.engine import worker;"
-        "w = worker.Worker.__new__(worker.Worker);"
-        "import types;"
-        "w.session = types.SimpleNamespace(artifact_source=None);"
-        "req = json.load(sys.stdin);"
-        "print(json.dumps(w.handle(req)))" % (REPO / "src", script)
-    )
-    req = {
-        "cmd": "svg_scaffold",
-        "model": model(),
-        "frame": FRAME,
-        "salt": "tavotto",
-    }
-    proc = subprocess.run(
-        [sys.executable, "-c", child],
-        input=__import__("json").dumps(req),
-        capture_output=True,
-        text=True,
-        timeout=120,
-        env={
-            "PYTHONPATH": str(REPO / "src"),
-            "TAVOTTO_NO_TELEMETRY": "1",
-            "SYSTEMROOT": __import__("os").environ.get("SYSTEMROOT", ""),
-            "USERPROFILE": __import__("os").environ.get("USERPROFILE", ""),
-        },
-        encoding="utf-8",
-    )
-    assert proc.returncode == 0, proc.stderr[-400:]
-    payload = __import__("json").loads(proc.stdout.strip().splitlines()[-1])
-    assert payload["ok"] is True
-    frag = base64.b64decode(payload["fragment_b64"])
-    assert b"<svg" in frag
-    # 与进程内脚手架逐字节一致（同 salt 同输入）
-    assert (
-        hashlib.sha256(frag).hexdigest()
-        == hashlib.sha256(svgchart.scaffold_fragment(model(), FRAME)["fragment"]).hexdigest()
-    )
+    script.write_text("raise RuntimeError('user script must not run')\n", encoding="utf-8")
+    try:
+        payload = chartprocess.run_request(
+            tmp_path, {"model": model(), "frame": FRAME, "salt": "tavotto"}, timeout=120
+        )
+        assert payload["ok"] is True
+        frag = base64.b64decode(payload["fragment_b64"])
+        assert b"<svg" in frag
+        assert (
+            hashlib.sha256(frag).hexdigest()
+            == hashlib.sha256(svgchart.scaffold_fragment(model(), FRAME)["fragment"]).hexdigest()
+        )
+        worker = pool.acquire_chart(tmp_path)
+        assert not worker.built and worker.execution_id is None
+    finally:
+        pool.shutdown_all(str(tmp_path), wait=True)

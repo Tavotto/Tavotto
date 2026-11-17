@@ -427,6 +427,7 @@ def _safe_style(style: dict) -> dict:
     out = {}
     allowed = {
         "color": str,
+        "linewidth": float,
         "linestyle": str,
         "marker": str,
         "markersize": float,
@@ -462,70 +463,59 @@ def _tick_facts(ax) -> dict:
     return {"x": one(ax.xaxis, True), "y": one(ax.yaxis, False)}
 
 
-def main() -> None:
-    """独立子进程入口：stdin 单个 JSON 请求 → stdout 单个 JSON 响应。
-
-    父进程用项目 worker 解释器 spawn（``python -m tavotto.engine.svgchart``），
-    不经 worker 会话、不 import 用户脚本。stderr 只写日志，协议走 stdout。
-    """
+def execute_request(req: dict) -> dict:
+    """Fixed chart computation inside a pooled safe worker; no user script."""
     import base64
-    import json
-    import sys
 
-    raw = sys.stdin.buffer.read()
-    try:
-        import matplotlib
-        import numpy
+    import matplotlib
+    import matplotlib.pyplot as plt
 
-        from tavotto import __version__
+    from . import chartwire
 
-        engine = {
-            "matplotlib": matplotlib.__version__,
-            "numpy": numpy.__version__,
-            "tavotto": __version__,
-        }
-        req = json.loads(raw.decode("utf-8"))
-        if req.get("action") is not None:
-            from tavotto.rendercore.epscontainer import SceneEPSError, pack_prepared_eps
+    # A task session is reused: success and failure must release its Figures.
+    with matplotlib.rc_context():
+        try:
+            import numpy
 
-            if set(req) != {"action", "prepared"} or req["action"] != "pack_eps":
-                raise SceneEPSError("native_eps_invalid_payload", "Unknown fixed chart action")
-            prepared = req["prepared"]
-            eps = pack_prepared_eps(prepared)
-            out = {
-                "ok": True,
-                "engine": engine,
-                "eps_b64": base64.b64encode(eps).decode("ascii"),
-                **{
-                    key: prepared[key]
-                    for key in ("source_svg_sha256", "ps_sha256", "width_pt", "height_pt")
-                },
+            from tavotto import __version__
+
+            engine = {
+                "matplotlib": matplotlib.__version__,
+                "numpy": numpy.__version__,
+                "tavotto": __version__,
             }
-        elif req.get("probe"):
-            out = {"ok": True, "engine": engine}
-        else:
-            result = scaffold_fragment(
-                req.get("model", {}),
-                req.get("frame", {}),
-                salt=str(req.get("salt", "tavotto")),
-                render_profile=req.get("render_profile", LEGACY_PROFILE),
-                patches=req.get("patches", ()),
-                legend=req.get("legend", ()),
-            )
-            out = {
-                "ok": True,
-                "fragment_b64": base64.b64encode(result["fragment"]).decode("ascii"),
-                **{key: value for key, value in result.items() if key != "fragment"},
-                "engine": engine,
-            }
-    except Exception as exc:  # noqa: BLE001 — 协议层兜底，错误以稳定 JSON 表达
-        out = {
-            "ok": False,
-            "code": getattr(exc, "code", None) or "svg_scaffold_invalid",
-            "error": str(exc),
-        }
-    sys.stdout.write(json.dumps(out))
+            if req.get("action") is not None:
+                from tavotto.rendercore.epscontainer import SceneEPSError, pack_prepared_eps
 
-
-if __name__ == "__main__":
-    main()
+                if set(req) != {"action", "prepared"} or req["action"] != "pack_eps":
+                    raise SceneEPSError("native_eps_invalid_payload", "Unknown fixed chart action")
+                prepared = req["prepared"]
+                eps = pack_prepared_eps(prepared)
+                out = {
+                    "engine": engine,
+                    "eps_b64": base64.b64encode(eps).decode("ascii"),
+                    **{
+                        key: prepared[key]
+                        for key in ("source_svg_sha256", "ps_sha256", "width_pt", "height_pt")
+                    },
+                }
+            elif req.get("probe"):
+                out = {"engine": engine}
+            else:
+                result = scaffold_fragment(
+                    req.get("model", {}),
+                    req.get("frame", {}),
+                    salt=str(req.get("salt", "tavotto")),
+                    render_profile=req.get("render_profile", LEGACY_PROFILE),
+                    patches=req.get("patches", ()),
+                    legend=req.get("legend", ()),
+                )
+                out = {
+                    "fragment_b64": base64.b64encode(result["fragment"]).decode("ascii"),
+                    **{key: value for key, value in result.items() if key != "fragment"},
+                    "engine": engine,
+                }
+            chartwire.json_bytes(out, chartwire.MAX_STDOUT_BYTES)
+            return out
+        finally:
+            plt.close("all")

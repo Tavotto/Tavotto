@@ -31,6 +31,9 @@ order: 20
   核工作区与变异前一致。
   为什么：用 `git checkout` 还原变异，把未提交的修复一起抹掉，累计十余次；变异没应用上时的红绿
   也曾被当成门禁有效的证据（#128、#162、#181、#189、#457、#550、#561、#1095、#1118、#1157）。
+  2026-11-16 再犯：变异期间开着的本地后端不受 `-B` 管，写下了改坏那份的 `.pyc`；还原在同一秒、字节数相同，
+  按 mtime + size 判没过期，后续测试与截图仍跑改坏的代码。会 import 被变异模块的每个进程都设
+  `PYTHONDONTWRITEBYTECODE=1`，每项还原后清 `__pycache__`（会话记录，无编号）。
 - **变异后不管绿还是红，都核「该跑的路径真跑了、红的是目标路径」（错题本 L-030 升级，2026-11-05）。** 绿有多种
   成因：分支从没被夹具执行、选择器缩到一条而判据在别的用例里、变异本身是语义 no-op（`set() or 推导式` 仍求值到
   后者）。先排除这些，再谈判据弱，免得去加强本来就好的判据（#181、#187、#189）。
@@ -54,4 +57,4 @@ order: 20
   归还焦点又把气泡打开，鼠标点开必现、键盘打开不现，加个 await 能让用例绿，缺陷原样留在产品里（#311、#315）；
   2026-11-02 合并组红在与本 PR 无关的桌面壳握手超时用例（实为 spawn 失败），一分钟内重新入队、没记 issue（#1603）。
   2026-11-11 合并组除两个 Gate 外全是 cancelled，被当成机器故障连排两次；
-  快速失败下先红的腿自己也显示 cancelled，Gate summary 的 `root_failures` 早已点名 posix-e2e 里一条钉旧行为的用例，check-run 注解里也有「本腿失败」（#1828）；同日另一 PR 的 summary `root_failures` 为空、被踢四次，要按 completedAt 找最早结束的非 success 腿、看它注解里有没有「本腿失败，merge_group 快速失败」（#1846）。
+  快速失败下先红的腿自己也显示 cancelled，Gate summary 的 `root_failures` 早已点名 posix-e2e 里一条钉旧行为的用例，check-run 注解里也有「本腿失败」（#1828）；同日另一 PR 的 summary `root_failures` 为空、被踢四次，要按 completedAt 找最早结束的非 success 腿、看它注解里有没有「本腿失败，merge_group 快速失败」（#1846）。2026-11-16 合并组 backend-fast / backend-platforms / windows-exe-smoke 全显示 cancelled，被判成队列侧取消；真红的是一条腿 pytest 步骤（step 结论 failure、job 结论被覆写成 cancelled），聚合判定 JSON 的 `root_failures` 早已点名（#1940）。

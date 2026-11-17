@@ -22,6 +22,7 @@ import {
   QUALIFIERS,
   SEVERITY_BUMP,
   STAGES,
+  STRENGTHS,
   catalogRev,
   journalOverride,
   journalProfile,
@@ -156,6 +157,7 @@ describe('golden 向量（与 Python 同一份）', () => {
     expect(V.constants).toEqual({
       info_ids: [...INFO_IDS],
       qualifiers: [...QUALIFIERS],
+      strengths: [...STRENGTHS],
       stages: [...STAGES],
       coverages: [...COVERAGES],
       exact_only_paths: [...EXACT_ONLY_PATHS],

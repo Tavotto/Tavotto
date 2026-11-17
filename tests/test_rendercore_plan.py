@@ -105,9 +105,9 @@ def test_text_baseline_and_shape_box_are_flipped_once_and_rotation_is_negated(pr
     want = (c, s, -s, c, cx - c * cx + s * cy, cy - s * cx - c * cy)
     assert text_grp.transform == pytest.approx(want, abs=1e-9)
     st = next(n for n in text_grp.children if isinstance(n, ir.ShapedText))
-    faces = PROVIDER.face_for("serif", False, False)
-    asc, desc = faces.ascender, faces.descender
-    baseline_down = 5 * MM + 10.0 * ((1.25 - (asc - desc)) / 2 + asc)
+    from tavotto.rendercore.typography import BASELINE_BELOW_CENTER
+
+    baseline_down = 5 * MM + 10.0 * (1.25 / 2 + BASELINE_BELOW_CENTER)
     assert st.y == pytest.approx(H - baseline_down)
     assert st.x == pytest.approx(5 * MM)
     # 形状

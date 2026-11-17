@@ -8,7 +8,7 @@
  *
  * 两类规则共用一层外壳：键是 `journal-base-v1` 字段路径的折成 `JournalOverride` 进预检；
  * 键是 `info.<id>` 的只是展示项（同样强制 src / quote），不折进 override。
- * 期刊没写的项不补（界面标「该期刊未规定」）。
+ * 期刊没写的项不补（界面标「当前快照未记录」）。
  */
 import catalogDoc from '@journals'
 import {
@@ -28,6 +28,16 @@ const SCHEMA = 1
 const SOURCE_KINDS = ['html', 'pdf']
 export const COVERAGES = ['publisher_general', 'journal_specific', 'single_journal_sample'] as const
 export { QUALIFIERS }
+/** 原文语气标签，只给人看，不参与折叠与判定。同源对：`journals.py` 的 `STRENGTHS`。 */
+export const STRENGTHS = [
+  'required',
+  'recommended',
+  'preferred',
+  'permitted',
+  'typical',
+  'example',
+  'unspecified',
+] as const
 export const STAGES = ['submission', 'production', 'any'] as const
 /** 求值器按「等于」判的路径只收 exact */
 export const EXACT_ONLY_PATHS = [
@@ -173,6 +183,7 @@ export class JournalCatalogError extends Error {
 }
 
 export type Qualifier = (typeof QUALIFIERS)[number]
+export type Strength = (typeof STRENGTHS)[number]
 export type Stage = (typeof STAGES)[number]
 export type Coverage = (typeof COVERAGES)[number]
 
@@ -194,6 +205,7 @@ export interface JournalRule {
   quote: string
   anchor?: string
   qualifier?: Qualifier
+  strength?: Strength
   stage?: Stage
   mark?: string
   derivation?: string
@@ -244,6 +256,8 @@ export interface JournalFieldSource {
   value: unknown
   value_alt: unknown
   qualifier: Qualifier
+  /** 原文语气；缺省（旧绑定 / 期刊没标）不显示标签 */
+  strength?: Strength
   stage: Stage
   mark: string
   derivation: string
@@ -434,6 +448,9 @@ function checkRules(
       ((EXACT_ONLY_PATHS as readonly string[]).includes(path) && qualifier !== 'exact')
     ) {
       fail('journal_rule_qualifier_invalid', `${w}: qualifier=${String(qualifier)} 不允许`)
+    }
+    if (has(raw, 'strength') && !inList(STRENGTHS, raw.strength)) {
+      fail('journal_catalog_schema', `${w}: strength 必须是 ${STRENGTHS.join('|')}`)
     }
     if (has(raw, 'stage') && !inList(STAGES, raw.stage)) {
       fail('journal_rule_stage_invalid', `${w}: stage 必须是 ${STAGES.join('|')}`)
@@ -705,7 +722,7 @@ function affectsOf(path: string, eff: EffectiveRule): 'preflight' | 'advice' | '
 
 function fieldSource(eff: EffectiveRule, path: string): Omit<JournalFieldSource, 'overrides'> {
   const { rule, src } = eff
-  return {
+  const item: Omit<JournalFieldSource, 'overrides'> = {
     value: structuredClone(rule.value ?? null),
     value_alt: structuredClone(rule.value_alt ?? null),
     qualifier: rule.qualifier ?? 'exact',
@@ -728,6 +745,8 @@ function fieldSource(eff: EffectiveRule, path: string): Omit<JournalFieldSource,
     retrieved: src.retrieved,
     archive_url: src.archive_url ?? '',
   }
+  if (rule.strength !== undefined) item.strength = rule.strength // 缺省不写：形状与旧绑定一致
+  return item
 }
 
 /** 每条生效字段 → 出处，按路径排序。同形：`journals.py` 的 `journal_sources`。 */
