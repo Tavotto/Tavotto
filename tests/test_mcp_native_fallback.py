@@ -206,6 +206,23 @@ def test_running_the_readback_script_directly_works(tmp_path):
     """对照：同一个脚本直接用 Python 跑是能成功的（回退的理由成立）。"""
     figures = _project(tmp_path, READBACK)
     proc = subprocess.run(
-        [WORKER_PY, str(figures / "fig.py")], capture_output=True, text=True, cwd=str(figures)
+        [WORKER_PY, str(figures / "fig.py")],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=str(figures),
     )
     assert proc.returncode == 0, proc.stderr
+
+
+def test_the_native_wrapper_keeps_method_signatures():
+    """桥按 `inspect.signature(worker.export)` 判能否一次导出 PDF+SVG：外壳不能把签名抹成 `(*args, **kwargs)`。"""
+    import inspect
+
+    class Fake:
+        def export(self, out_path, *, svg_path=None):
+            return {"pdf": out_path, "svg": svg_path}
+
+    wrapped = nativefallback.NativeWorker(Fake(), python=WORKER_PY)
+    assert "svg_path" in inspect.signature(wrapped.export).parameters
+    assert wrapped.export("a.pdf", svg_path="a.svg") == {"pdf": "a.pdf", "svg": "a.svg"}

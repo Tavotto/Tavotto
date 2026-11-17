@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import functools
 from pathlib import Path
 
 from . import (
@@ -102,6 +103,8 @@ class NativeWorker:
         if not callable(target):
             return target
 
+        # 保留原签名：桥按 `inspect.signature(worker.export)` 判能不能一次导出 PDF+SVG
+        @functools.wraps(target)
         def call(*args, **kwargs):
             try:
                 return target(*args, **kwargs)

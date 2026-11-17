@@ -211,10 +211,33 @@ def test_mcp_origin_only_replaces_the_origin_gate():
     assert again.ok is False and again.reason in ("no_new_root_cause", "already_fell_back")
 
 
+def _mcp_origin_claims(source: str) -> list[int]:
+    """源码里「声称 MCP 来源」的位置：调用带 `mcp_initiated=` 关键字参数、或代码里引用 `mcp_initiated` 名字 / 属性。
+    注释与文档字符串不算（按 AST 判，不按子串）。"""
+    hits = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Call):
+            hits += [node.lineno for kw in node.keywords if kw.arg == "mcp_initiated"]
+        elif isinstance(node, ast.Name) and node.id == "mcp_initiated":
+            hits.append(node.lineno)
+        elif isinstance(node, ast.Attribute) and node.attr == "mcp_initiated":
+            hits.append(node.lineno)
+    return hits
+
+
 def test_http_and_session_layers_never_claim_the_mcp_origin():
-    """`mcp_initiated` 只能由 MCP 桥在自己进程里传：sidecar 的 HTTP / 准备会话层一处都不许出现。"""
+    """`mcp_initiated` 只能由 MCP 桥在自己进程里传：sidecar 的 HTTP / 准备会话层代码里一处都不许出现。"""
     for rel in ("src/tavotto/app.py", "src/tavotto/engine/prepsession.py"):
-        assert "mcp_initiated" not in (ROOT / rel).read_text("utf-8"), rel
+        assert not _mcp_origin_claims((ROOT / rel).read_text("utf-8")), rel
+
+
+def test_the_mcp_origin_check_sees_calls_not_comments():
+    """自检：真调用被抓住，只在注释 / 文档字符串里解释则放过。"""
+    assert _mcp_origin_claims("execpolicy.decide_fallback(mode=m, mcp_initiated=True)\n")
+    assert _mcp_origin_claims("kw = {}\nkw['x'] = mcp_initiated\n")
+    assert not _mcp_origin_claims(
+        '"""HTTP 不许传 mcp_initiated。"""\n# 这里也不传 mcp_initiated\nx = 1\n'
+    )
 
 
 def test_kill_switch_and_safe_only_win_over_everything_else():
