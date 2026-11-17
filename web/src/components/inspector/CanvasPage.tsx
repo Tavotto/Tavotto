@@ -482,7 +482,7 @@ export function CanvasPage() {
           type="button"
           data-canvas-export-summary
           onClick={() => useUiStore.getState().setExportOpen(true)}
-          className="-mx-1.5 grid h-8 w-[calc(100%+0.75rem)] grid-cols-[minmax(40%,1fr)_minmax(0,auto)_1.25rem] items-center gap-x-2 rounded-sm px-1.5 text-left text-sm text-ink transition-colors duration-fast outline-none hover:bg-surface-hover focus-visible:focus-ring"
+          className="grid h-8 w-full grid-cols-[minmax(40%,1fr)_minmax(0,auto)_1.25rem] items-center gap-x-2 rounded-sm text-left text-sm text-ink transition-colors duration-fast outline-none hover:bg-surface-hover hover:shadow-[-6px_0_var(--color-surface-hover),6px_0_var(--color-surface-hover)] focus-visible:focus-ring"
         >
           <span className="min-w-0 truncate">{cv('export')}</span>
           <span className="min-w-0 truncate text-right tabular-nums text-ink-3">

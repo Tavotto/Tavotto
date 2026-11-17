@@ -50,12 +50,13 @@ export function SummaryRow({
       {...rest}
       className={cn('mx-3', className)}
     >
+      {/* 悬停底色左右各外扩 6px 用同色阴影画：阴影不进 scrollWidth，负 margin + 加宽会把 mx-3 容器撑破（e2e/overflow.ts） */}
       <button
         type="button"
         {...triggerProps}
         onClick={onToggle}
         aria-expanded={open}
-        className="-mx-1.5 grid h-8 w-[calc(100%+0.75rem)] grid-cols-[minmax(40%,1fr)_minmax(0,auto)_1.25rem] items-center gap-x-2 rounded-sm px-1.5 text-left text-sm text-ink transition-colors duration-fast outline-none hover:bg-surface-hover focus-visible:focus-ring"
+        className="grid h-8 w-full grid-cols-[minmax(40%,1fr)_minmax(0,auto)_1.25rem] items-center gap-x-2 rounded-sm text-left text-sm text-ink transition-colors duration-fast outline-none hover:bg-surface-hover hover:shadow-[-6px_0_var(--color-surface-hover),6px_0_var(--color-surface-hover)] focus-visible:focus-ring"
       >
         <span className="min-w-0 truncate">{label}</span>
         {showValue ? (
