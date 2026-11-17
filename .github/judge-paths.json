@@ -1,0 +1,29 @@
+{
+  "_doc": "判据路径名单（唯一出处）：改到这些路径的 PR 在改「评判 PR 的尺子」。规则全文 docs/rules/ci/judge-guard.md；分类器 scripts/ci/judge_guard.py。CI 从默认分支读这份文件，PR 自己改它不影响对自己的判定。mode: off | observe（只打 notice，不判红）。",
+  "mode": "observe",
+  "entries": [
+    {"path": ".github/judge-paths.json", "why": "名单自己"},
+    {"path": "scripts/ci/", "why": "两个 Gate 的判定器、docs-scope / release-note / CLA 判定、Guardian 与各门禁脚本"},
+    {"path": ".github/workflows/", "why": "Gate 的 needs / --required、「取默认分支判定器」那一步本身都在 workflow 里"},
+    {"path": ".github/actionlint.yaml", "why": "runner 标签闭集"},
+    {"path": ".github/cla-policy.json", "why": "CLA 豁免表：加一行等于给自己放行"},
+    {"path": ".github/conflict-domains.json", "why": "受管生成物的冲突域"},
+    {"path": ".github/CODEOWNERS", "why": "评审请求的路由"},
+    {"path": "AGENTS.md", "why": "根文件的 Review guidelines 是 Codex 评审的口径"},
+    {"path": "docs/ci/pr-review-tiers.md", "why": "风险分档、Codex 预算与入队的机械判据"},
+    {"path": "docs/rules/ci/judge-guard.md", "why": "本规则"},
+    {"path": "scripts/dev/agents_budget.py", "why": "指导文档体积棘轮"},
+    {"path": "web/scripts/e2e-skip-scan.mjs", "why": "e2e 不许 skip 的扫描"},
+    {"path": "tests/compat/", "why": "Guardian manifest、基线、schema"},
+    {"path": "tests/compat_guardian/", "why": "Guardian 声明文件与 schema"},
+    {"path": "tests/fixtures/compat_v2/", "why": "Guardian 已评审夹具"},
+    {"path": "tests/fixtures/ci_gate/", "why": "冻结的旧判定器（bootstrap 对拍）"},
+    {"path": "tests/test_merge_queue_workflows.py", "why": "CI 拓扑与 runner 信任区的看护"},
+    {"path": "tests/test_aggregate_gate.py", "why": "Gate 判定器的看护"},
+    {"path": "tests/test_docs_scope.py", "why": "docs-only 分类器的看护"},
+    {"path": "tests/test_docs_only_fast_lane.py", "why": "docs-only 快车道的看护"},
+    {"path": "tests/test_agents_rules_index.py", "why": "速查表 ↔ 细则与每份指令的棘轮上限"},
+    {"path": "tests/test_legal_contribution_policy.py", "why": "CLA 判定链的看护"},
+    {"path": "tests/test_judge_guard.py", "why": "本分类器的看护"}
+  ]
+}
