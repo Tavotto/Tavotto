@@ -1190,6 +1190,27 @@ ARROW_SCRIPT = SCRIPT.replace(
 assert "FancyArrowPatch((3.5" in ARROW_SCRIPT and "annotate" in ARROW_SCRIPT
 
 
+#: aspect=1 的子图（按纵横比在画的时候收缩）：文字（数据坐标）与纯箭头注释在上面。
+ASPECT_SCRIPT = SCRIPT.replace(
+    '    ax.legend(loc="upper left")\n',
+    "    ax.set_aspect(1)\n"
+    '    ax.text(1.0, 5.0, "note")\n'
+    '    ax.annotate("", xy=(3.0, 9.0), xytext=(1.5, 4.0), arrowprops=dict(arrowstyle="->"))\n'
+    '    ax.legend(loc="upper left")\n',
+    1,
+)
+assert "set_aspect(1)" in ASPECT_SCRIPT
+
+
+@pytest.fixture
+def aspect_project(tmp_path, monkeypatch):
+    m, figs = _open_project(tmp_path, monkeypatch, ASPECT_SCRIPT)
+    try:
+        yield m.app.test_client(), figs
+    finally:
+        _close_project(m, figs)
+
+
 @pytest.fixture
 def arrow_project(tmp_path, monkeypatch):
     m, figs = _open_project(tmp_path, monkeypatch, ARROW_SCRIPT)
@@ -1820,6 +1841,63 @@ def test_subplot_move_does_not_hold_back_a_drag_on_another_subplot():
     drag = {"gid": "axes_1.title", "prop": "pos_frac", "value": [0.5, 0.2]}
     out = scriptadjust.build(b"import os\n", "Fig1", [move, drag], man, version="9.9")
     assert out.written == 1 and [p["prop"] for p in out.residual] == ["position"]
+
+
+_NOTE, _NOTE_ARR = "axes_0.texts_0", "axes_0.texts_1.arrow"
+
+
+_TITLE_DRAG = {"gid": "axes_0.title", "prop": "pos_frac", "value": [0.5, 0.2]}
+_NOTE_DRAG = {"gid": _NOTE, "prop": "pos_frac", "value": [0.5, 0.4]}
+_ARR_DRAG = {"gid": _NOTE_ARR, "prop": "endpoints_frac", "value": [0.4, 0.6, 0.6, 0.4]}
+_INVERT_X = {"gid": "axes_0", "prop": "invert_x", "value": True}
+_YLIM = {"gid": "axes_0", "prop": "ylim", "value": [-3.0, 14.0]}
+_MOVE = {"gid": "axes_0", "prop": "position", "value": [0.3, 0.35, 0.55, 0.5]}
+
+
+@real_worker
+@pytest.mark.parametrize(
+    ("patches", "held"),
+    [
+        # 前提核对：aspect=1 的子图（画的时候才收缩）上只拖也不能写进脚本——落笔时的子图与画完之后的不同，
+        # 去掉 `_sized_at_draw` 这一支三条都 diverged（实测）
+        ([_TITLE_DRAG], {"pos_frac"}),
+        ([_NOTE_DRAG], {"pos_frac"}),
+        ([_ARR_DRAG], {"endpoints_frac"}),
+        # 拖 → 反转 / 反转 → 拖：拖动留作重放时，排在它后面的反转也一起留下，保住引擎里的先后
+        ([_NOTE_DRAG, _INVERT_X], {"pos_frac", "invert_x"}),
+        ([_INVERT_X, _NOTE_DRAG], {"pos_frac"}),
+        ([_ARR_DRAG, _INVERT_X, _YLIM], {"endpoints_frac", "invert_x", "ylim"}),
+    ],
+    ids=[
+        "title",
+        "text",
+        "arrow",
+        "drag-then-invert",
+        "invert-then-drag",
+        "arrow-then-invert-ylim",
+    ],
+)
+def test_placed_drag_keeps_its_order_with_later_coordinate_edits(aspect_project, patches, held):
+    client, _figs = aspect_project
+    body = _export(client, patches, formats=[])
+    assert body["status"] == "done", body
+    assert {s["prop"] for s in _script_output(body)["script_report"]["skipped"]} == held
+
+
+@real_worker
+@pytest.mark.parametrize(
+    ("patches", "held"),
+    [
+        ([_MOVE, _TITLE_DRAG, _YLIM], {"position", "pos_frac", "ylim"}),
+        ([_MOVE, _YLIM, _TITLE_DRAG], {"position", "pos_frac"}),
+    ],
+    ids=["move-drag-ylim", "move-ylim-drag"],
+)
+def test_replayed_position_keeps_the_order_of_a_title_drag_and_ylim(project, patches, held):
+    client, _figs = project
+    body = _export(client, patches, formats=[])
+    assert body["status"] == "done", body
+    assert {s["prop"] for s in _script_output(body)["script_report"]["skipped"]} == held
 
 
 @real_worker

@@ -171,6 +171,8 @@ _RESHAPES_AXES = ("size_mm", "frame", "position", "orientation", "extend")
 #: 值是 figure 分数、按落笔那一刻的几何换算成数据 / 轴坐标的几条（文字 / 标题 / 轴标签 / 图例拖动，箭头端点）：
 #: 几何键留作重放时它们也留给重放（`_translate` 的 `places_by_geometry`），否则重放再改几何，点就离开用户放的位置
 _PLACED_BY_FRACTION = ("pos_frac", "loc_frac", "endpoints_frac")
+#: 引擎里和 `_PLACED_BY_FRACTION` 同在 `_RANK_REST` 档、会改变数据坐标 ↔ 屏幕换算的键（`_apply_rank` 里没有单列的）
+_MOVES_COORDS = ("xlim", "ylim", "invert_x", "invert_y")
 _TICK_MODEL = (
     "major_mode",
     "major_step",
@@ -1863,6 +1865,23 @@ def _translate(
     held = {p["gid"] for p, _s in steps if late(p) and p["prop"] != "text"}
     for p, stmt in list(steps):
         if late(p) or places_by_geometry(p) or (p["gid"] in held and p["prop"] in _TICK_MODEL):
+            steps.remove((p, stmt))
+            residual.append(p)
+    # 按 figure 分数定位的语句留作重放时，同一子图上在引擎应用顺序里排在它**之后**的改坐标的修改也留下：重放永远排在脚本
+    # 之后，写进脚本的会变成「先改坐标、后定位」，引擎里同档按列表序，文字 / 箭头会随反转、换范围镜像。引擎里
+    # 位置 / 比例 / 刻度类型等排在 `_RANK_REST` 之前，它们写进脚本照旧排在重放之前，不受影响；
+    # 排在 REST 档里的只有这几条改坐标的键，按列表序比
+    order = {id(p): k for k, p in enumerate(patches)}
+    placed = [
+        (order[id(r)], m.group(1))
+        for r in residual
+        if r["prop"] in _PLACED_BY_FRACTION and id(r) in order
+        if (m := re.match(r"(axes_\d+)(?:\.|$)", r["gid"]))
+    ]
+    for p, stmt in list(steps):
+        if p["prop"] in _MOVES_COORDS and any(
+            p["gid"] == ax and order[id(p)] > k for k, ax in placed
+        ):
             steps.remove((p, stmt))
             residual.append(p)
     # 留作 override 的「广播」条目在重放时排在窄条目之前、会盖掉写进脚本的窄条目：
