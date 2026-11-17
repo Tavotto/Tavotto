@@ -7,7 +7,7 @@
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 200
-改到: `/api/versions`、`/api/styles`、`/api/package`、`tavottofile/`、`atomicio.py`、`documents.loads_document`、自动保存槽位、`engine/layoutsession.py`、`engine/packagerelocation.py`、`engine/packageinstall.py`、`/api/layout-session`
+改到: `/api/versions`、`/api/styles`、`/api/package`、`/api/package/inspect`、`/api/package/install`、`tavottofile/`、`atomicio.py`、`documents.loads_document`、自动保存槽位、`engine/layoutsession.py`、`engine/packageinstall.py`、`/api/layout-session`
 主题: 布局版本、项目文件收纳与文档落盘 → `layout-versions-and-documents.md`
 必守要点: `atomicio` / `project_layout_dir()` 唯一权威（ADR 0120）
 -->
@@ -78,6 +78,13 @@ order: 200
   override / 标注属性一次 commit 应用，绝不写回源文件。
 - **项目包**：`POST /api/package` 打 zip（layout+素材+脚本+sha1 清单）；
   `POST /api/package/open` 检视（缺失/sha1 漂移），素材永不自动写入图库。
+  计算图表便携包（schema 4 + 清单 `document_format = "v4"`）走**同一族端点**
+  （#1921）：`POST /api/package` 按提交文档的 schema 决定写旧格式还是 v4 包；
+  `POST /api/package/open` 按包内容分流，v4 判据排在 `schema > SCHEMA_CURRENT`
+  之前，v4 响应带 `document_format: "v4"`；`POST /api/package/inspect` 只读核验
+  资源关系，`POST /api/package/install` 先核预算与成员身份、再经
+  `atomicio.publish_directory_if_absent` 单点发布到用户选定的新目录（不覆盖、
+  不执行包内脚本）。不提供 `/api/documents/v4/package*` 别名。
 - **文档显式引用全质量 Figure 配对（X03，2026-10-15）**：面板 `figureSnapshot` 是版本 1 的闭集
   `{version, sourceId, patchHash, receiptId, snapshotId}`，可选 `executionOwner={script, run_config}`；
   owner 只从已验归档派生、纳入内容 ID，不信客户端自报。导出 wire 字段为 `figure_snapshot`。
@@ -113,7 +120,8 @@ order: 200
   `load_document_snapshot`核原archive完整ref、source/patch、历史静态hash及实际当前remap指纹，
   不要求一份当前原件同时等于所有历史版本。原`load_snapshot`的逐维精确查询不变。
   原图、画布、保存和打包必须消费同一历史PDF/SVG配对；当前普通file资源仍独立核SHA，
-  不因历史渲染对存在而声称历史磁盘原件已恢复。项目包打开仍只检视、不自动安装资产。
+  不因历史渲染对存在而声称历史磁盘原件已恢复。项目包打开仍只检视、不自动安装资产；
+  计算图表包的安装是另一个显式端点，只在用户选定新目录后发布（#1921）。
   看护：`tests/test_svgstore.py`、`tests/test_export_svg.py`、`tests/test_export_request.py`、
   `web/src/store/figureSnapshot.test.ts`、`web/src/store/figureSnapshotInvalidation.test.ts`、
   `web/src/store/projectSave.test.ts`、`web/src/lib/autosave/diskWriter.test.ts`。

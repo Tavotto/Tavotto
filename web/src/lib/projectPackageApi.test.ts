@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { emptyDocument, emptyProject } from '@/types/document'
 import {
   ApiError, createPackage, inspectProjectPackage, installProjectPackage, openPackage,
-  type InputRemapRule, type ProjectPackageInspection, type ProjectPackageInstallation,
+  type ProjectPackageInspection, type ProjectPackageInstallation,
 } from './api'
 import { currentProjectId, setCurrentProjectId } from './session'
 
@@ -33,8 +33,7 @@ function inspection(): ProjectPackageInspection {
 function installation(): ProjectPackageInstallation {
   return {
     state: 'resources_installed', path: 'E:/新项目/计算图表', document_format: 'v4', doc: documentV4(),
-    references: [{ old: { patchHash: 'old-patch' }, new: { patchHash: 'same-patch', sourceId: 'plot.py' } }],
-    execution: { version: 2, contexts: [], captures: [] }, remap_fingerprint: 'f'.repeat(64),
+    execution: { version: 2, contexts: [], captures: [] },
     missing: ['missing.csv'], warnings: [{ reason: 'captured_input_channels_unverified', id: 'capture-a' }],
     execution_coverage: { state: 'incomplete', issues: [{ script: 'plot.py', reason: 'inputs_unknown' }] },
     configuration: 'ready',
@@ -91,7 +90,7 @@ describe('v4项目包检视和安装的HTTP边界', () => {
     setCurrentProjectId('p_later')
     expect(await pending).toEqual(expected)
     expect(calls).toHaveLength(1)
-    expect(calls[0].url.pathname).toBe('/api/documents/v4/package/inspect')
+    expect(calls[0].url.pathname).toBe('/api/package/inspect')
     expectProject(0, pj)
     const form = requestForm()
     expect([...form.keys()]).toEqual(['package'])
@@ -108,7 +107,7 @@ describe('v4项目包检视和安装的HTTP边界', () => {
     setCurrentProjectId('p_later')
     expect(await pending).toEqual(reply)
     expect(calls).toHaveLength(1)
-    expect(calls[0].url.pathname).toBe('/api/documents/v4/package/install')
+    expect(calls[0].url.pathname).toBe('/api/package/install')
     expectProject(0, pj)
     const form = requestForm()
     expect([...form.keys()]).toEqual(['package', 'options'])
@@ -118,28 +117,10 @@ describe('v4项目包检视和安装的HTTP边界', () => {
     expect(currentProjectId()).toBe('p_later')
   })
 
-  it('安装仅发送批准规则kind/from/to，保留根prefix与原顺序，不泄漏查询事实', async () => {
+  it('安装只发送目标目录，不携带他机改指规则', async () => {
     reply = installation()
-    const rules: InputRemapRule[] = [
-      { kind: 'prefix', from: '', to: 'E:/数据集', added_at: 123, target_exists: true },
-      { kind: 'file', from: 'D:/旧数据/input.csv', to: 'E:/数据集/新 input.csv', added_at: null, target_exists: false },
-    ]
-    const original = structuredClone(rules)
-    await installProjectPackage(upload(), { destination: 'E:/目标', remap_rules: rules }, 'p_captured')
-    expect(JSON.parse(String(requestForm().get('options')))).toEqual({
-      destination: 'E:/目标', remap_rules: [
-        { kind: 'prefix', from: '', to: 'E:/数据集' },
-        { kind: 'file', from: 'D:/旧数据/input.csv', to: 'E:/数据集/新 input.csv' },
-      ],
-    })
-    expect(rules).toEqual(original)
-    expect(calls).toHaveLength(1)
-  })
-
-  it('明确空改指保留空数组，不变成省略的包默认规则', async () => {
-    reply = installation()
-    await installProjectPackage(upload(), { destination: 'E:/目标', remap_rules: [] }, null)
-    expect(JSON.parse(String(requestForm().get('options')))).toEqual({ destination: 'E:/目标', remap_rules: [] })
+    await installProjectPackage(upload(), { destination: 'E:/目标' }, 'p_captured')
+    expect(JSON.parse(String(requestForm().get('options')))).toEqual({ destination: 'E:/目标' })
     expect(calls).toHaveLength(1)
   })
 
@@ -164,7 +145,7 @@ describe('v4项目包检视和安装的HTTP边界', () => {
     expect(actual).toEqual(expected)
     expect(actual.document_saved).toBe(false)
     expect(calls).toHaveLength(1)
-    expect(calls[0].url.pathname).toBe('/api/documents/v4/package/install')
+    expect(calls[0].url.pathname).toBe('/api/package/install')
     expect(currentProjectId()).toBe('p_current')
   })
 
@@ -198,7 +179,7 @@ describe('v4项目包检视和安装的HTTP边界', () => {
     expect(error.status).toBe(503)
     expect(error.body).toEqual(reply)
     expect(calls).toHaveLength(1)
-    expect(calls[0].url.pathname).toBe('/api/documents/v4/package/install')
+    expect(calls[0].url.pathname).toBe('/api/package/install')
   })
 
   it.each([null, {}, { document_format: 'v4', doc: { schema: 3 } }])('2xx坏安装回执%j抛ApiError并保原回执', async malformed => {
@@ -215,7 +196,7 @@ describe('v4项目包检视和安装的HTTP边界', () => {
     expect(error.status).toBe(400)
     expect(error.body.code).toBe('invalid_document')
     expect(calls).toHaveLength(1)
-    expect(calls[0].url.pathname).toBe('/api/documents/v4/package/inspect')
+    expect(calls[0].url.pathname).toBe('/api/package/inspect')
   })
 
   it.each([401, 409, 422, 503])('检视%s保原ApiError事实，只发一次检视', async errorStatus => {
@@ -225,7 +206,7 @@ describe('v4项目包检视和安装的HTTP边界', () => {
     expect(error.status).toBe(errorStatus)
     expect(error.body).toEqual(reply)
     expect(calls).toHaveLength(1)
-    expect(calls[0].url.pathname).toBe('/api/documents/v4/package/inspect')
+    expect(calls[0].url.pathname).toBe('/api/package/inspect')
   })
 
   it('网络失败不自动重发可能已发布的安装', async () => {

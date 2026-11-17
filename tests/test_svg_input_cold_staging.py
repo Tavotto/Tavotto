@@ -64,8 +64,11 @@ def env(input_world, monkeypatch):
     renderhost.shutdown_shared()
 
 
-def _publish(env, archive=None, *, source=SOURCE, patch=PATCH, static=False, pair=None):
-    args = _args(source=source, patch=patch, **(pair or {}))
+def _publish(env, archive=None, *, source=SOURCE, patch=PATCH, static=False, pair=None, pdf=None):
+    overrides = dict(pair or {})
+    if pdf is not None:
+        overrides["pdf"] = pdf
+    args = _args(source=source, patch=patch, **overrides)
     if archive is not None:
         args["receipt"]["captured_inputs"] = {
             "version": 1,
@@ -144,7 +147,7 @@ def _document(panels=(), *, schema=4):
 def _helper_zip(env, doc, destination):
     """Use the production collector and atomic ZIP writer, keeping staging alive."""
     config.data_dir().mkdir(parents=True, exist_ok=True)
-    with m.app.test_request_context("/api/documents/v4/package?pj=" + m._project_id(env[0])):
+    with m.app.test_request_context("/api/package?pj=" + m._project_id(env[0])):
         with tempfile.TemporaryDirectory(
             prefix="cold-staging-", dir=config.data_dir()
         ) as temporary:
@@ -284,9 +287,9 @@ declaredinputs.payload_for=forbidden
 root=Path(sys.argv[1]); m.open_project(str(root)); m.app.config['TESTING']=True
 doc=json.loads(Path(sys.argv[2]).read_text(encoding='utf-8'))
 pid=m._project_id(root)
-response=m.app.test_client().post('/api/documents/v4/package?pj='+pid,json={'stem':'cold_parent','doc':doc,'settings':{}})
+response=m.app.test_client().post('/api/package?pj='+pid,json={'stem':'cold_parent','doc':doc,'settings':{}})
 assert response.status_code==200, (response.status_code,response.get_json())
-with m.app.test_request_context('/api/documents/v4/package?pj='+pid):
+with m.app.test_request_context('/api/package?pj='+pid):
     target=m.project_export_dir()/response.get_json()['name']
 with zipfile.ZipFile(target) as package:
     assert package.testzip() is None
@@ -370,6 +373,67 @@ def test_legacy_v1_staging_adds_no_new_save_kwargs_and_preserves_complete_zip_or
     )
 
 
+def _real_pdf() -> bytes:
+    """检视会打开包内 PDF；测试夹具里的占位字节过不了它，这里造一份真 PDF。"""
+    import pymupdf
+
+    buffer = io.BytesIO()
+    document = pymupdf.open()
+    document.new_page(width=100, height=50)
+    document.save(buffer)
+    document.close()
+    return buffer.getvalue()
+
+
+def test_http_package_open_inspect_install_round_trip(env, tmp_path):
+    """同一个入口按内容分流（#1921）：v4 包经 `/api/package` 导出，`open` 认出格式，
+    `inspect` 只读核验，`install` 发布到新目录；全程不借 v4 别名路由。"""
+    saved = _publish(env, pdf=_real_pdf())
+    document = _document([_panel(saved["snapshot_ref"])])
+    client = m.app.test_client()
+    url = "/api/package?pj=" + m._project_id(env[0])
+    response = client.post(url, json={"stem": "portable", "doc": document, "settings": {}})
+    assert response.status_code == 200, response.get_json()
+    with m.app.test_request_context(url):
+        package = m.project_export_dir() / response.get_json()["name"]
+    data = package.read_bytes()
+
+    opened = client.post(
+        "/api/package/open",
+        data={"package": (io.BytesIO(data), package.name)},
+        content_type="multipart/form-data",
+    )
+    assert opened.status_code == 200, opened.get_json()
+    assert opened.get_json() == {"document_format": "v4"}
+
+    project = m._project_id(env[0])
+    inspected = client.post(
+        "/api/package/inspect?pj=" + project,
+        data={"package": (io.BytesIO(data), package.name)},
+        content_type="multipart/form-data",
+    )
+    assert inspected.status_code == 200, inspected.get_json()
+    report = inspected.get_json()
+    assert report["document_format"] == "v4"
+    assert report["missing"] == []
+
+    destination = tmp_path / "安装后的项目"
+    installed = client.post(
+        "/api/package/install?pj=" + project,
+        data={
+            "package": (io.BytesIO(data), package.name),
+            "options": json.dumps({"destination": str(destination)}),
+        },
+        content_type="multipart/form-data",
+    )
+    assert installed.status_code in (201, 503), installed.get_json()
+    body = installed.get_json()
+    assert body["path"] == str(destination)
+    assert body["document_saved"] is False
+    assert destination.is_dir()
+    assert any(destination.rglob("*.json"))
+
+
 @pytest.mark.parametrize(
     "damage", ["missing_graph", "changed_graph", "missing_blob", "changed_blob"]
 )
@@ -377,7 +441,7 @@ def test_strict_http_rejects_bad_cold_input_reference_without_publishing_a_packa
     _, archive = _capture(env)
     saved = _publish(env, archive)
     client = m.app.test_client()
-    url = "/api/documents/v4/package?pj=" + m._project_id(env[0])
+    url = "/api/package?pj=" + m._project_id(env[0])
     response = client.post(url, json={"stem": "existing", "doc": _document(), "settings": {}})
     assert response.status_code == 200, response.get_json()
     with m.app.test_request_context(url):

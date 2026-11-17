@@ -2190,10 +2190,14 @@ export async function reloadFromDisk(opts: { keepMine?: boolean } = {}): Promise
   if (now.documentId !== id || now.documentFormat !== format || now.loadSeq !== before.loadSeq || currentProjectId() !== pj) return false
   const pd = fetched ? migrateToProject(fetched.doc) : null
   if (!pd) return false
-  // 读盘期间仍能编辑：安装前再备份最新本机稿，沿原恢复槽提供。
-  try { localStorage.setItem(slotKey(id, format), JSON.stringify(now.buildProject())) } catch { return false }
-  const latestBackup = promoteToRecovery(id, format)
-  if (!latestBackup) return false
+  // 读盘期间仍能编辑：安装前再备份最新本机稿，沿原恢复槽提供。只读窗口
+  // （`keepMine: false`）没有自己的改动要保护，不摆「未恢复的编辑」。
+  let latestBackup: ReturnType<typeof promoteToRecovery> = null
+  if (keepMine) {
+    try { localStorage.setItem(slotKey(id, format), JSON.stringify(now.buildProject())) } catch { return false }
+    latestBackup = promoteToRecovery(id, format)
+    if (!latestBackup) return false
+  }
   diskFor(format).rememberRevision(id, fetched)
   diskFor(format).setBaseline(id, pd.updatedAt)
   applyProject(pd, id, { dirty: false, format })
@@ -2201,7 +2205,7 @@ export async function reloadFromDisk(opts: { keepMine?: boolean } = {}): Promise
   // 刚才那份内存版本没有丢：它进了恢复槽位，横幅立刻把它提供出来。
   // 「重新加载」因此不是一个会丢东西的按钮。
   setDocNotice(
-    { kind: 'recovery', docId: id, summary: summarizeRecovery(latestBackup) },
+    latestBackup ? { kind: 'recovery', docId: id, summary: summarizeRecovery(latestBackup) } : null,
   )
   return true
 }

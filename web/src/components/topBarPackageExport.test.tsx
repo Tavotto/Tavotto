@@ -115,7 +115,7 @@ describe('顶部项目包入口的完整快照与迟到回执', () => {
     expect(api.createPackage).toHaveBeenCalledTimes(1)
     const [, captured, settings, opts] = vi.mocked(api.createPackage).mock.calls[0]
     expect(opts).toEqual({ format: 'v4', pj: 'p_captured' }); expect(settings).toEqual({})
-    expect(requests[0].url.pathname).toBe('/api/documents/v4/package')
+    expect(requests[0].url.pathname).toBe('/api/package')
     expect(requests[0].url.searchParams.get('pj')).toBe('p_captured')
     expect(requests[0].body.stem).toBe('Whole Project')
     expect(captured).toEqual(requests[0].body.doc)

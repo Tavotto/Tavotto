@@ -33,7 +33,7 @@ describe('项目包导出格式与项目地址', () => {
     const doc = { ...emptyProject(), schema: 4 as const }
     reply = { ...result, document_format: 'v4', chart_sources: 3 }
     expect(await createPackage('New', doc, {}, { format: 'v4', pj: 'p_captured' })).toEqual(reply)
-    expect(calls[0].url.pathname).toBe('/api/documents/v4/package')
+    expect(calls[0].url.pathname).toBe('/api/package')
     expect(calls[0].url.searchParams.get('pj')).toBe('p_captured')
     expect(new Headers(calls[0].init?.headers).get('X-Tavotto-Project')).toBe('p_captured')
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({ stem: 'New', doc, settings: {} })
@@ -51,7 +51,7 @@ describe('项目包导出格式与项目地址', () => {
     await expect(createPackage('New', { ...emptyProject(), schema: 4 }, {}, { format: 'v4', pj: 'p_captured' }))
       .rejects.toMatchObject({ body: { code: 'invalid_document' } })
     expect(calls).toHaveLength(1)
-    expect(calls[0].url.pathname).toBe('/api/documents/v4/package')
+    expect(calls[0].url.pathname).toBe('/api/package')
   })
 
   it('v4真实API拒绝沿既有ApiError传出，不降旧包保存', async () => {

@@ -44,8 +44,8 @@ const inspection = (name = 'scientific project'): ProjectPackageInspection => ({
   missing: [], warnings: [], figure_snapshots: 2, execution_coverage: null,
 })
 const installation = (path = '/new/中文项目'): ProjectPackageInstallation => ({
-  state: 'resources_installed', path, document_format: 'v4', doc: document(), references: [], execution: null,
-  remap_fingerprint: 'actual-backend-fingerprint', missing: [], warnings: [], execution_coverage: null,
+  state: 'resources_installed', path, document_format: 'v4', doc: document(), execution: null,
+  missing: [], warnings: [], execution_coverage: null,
   configuration: 'ready', configuration_review: { version: 1, existing_local_metadata: false, workdir: null, defaults: [], issues: [] },
   document_saved: false,
 })

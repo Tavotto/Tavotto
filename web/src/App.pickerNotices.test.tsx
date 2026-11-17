@@ -100,7 +100,7 @@ describe('保存错误通知', () => {
     expect(formatMessage(message)).not.toContain('无法保存的数值')
   })
 
-  it.each([['io', '没能保存到磁盘'], ['stale', '另一窗口保存了更新的版本'], ['external', '磁盘上的排版已被外部修改']])(
+  it.each([['io', '没能保存到磁盘'], ['stale', '另一个窗口保存了更新的版本'], ['external', '这份排版在别处被改过']])(
     '旧 %s 通知保持原分支', async (reason, expected) => {
       await act(async () => { root.render(<TooltipProvider><App /></TooltipProvider>) })
       await act(async () => window.dispatchEvent(new CustomEvent('tavotto:autosave-error', {

@@ -253,3 +253,61 @@ def test_package_with_a_bogus_schema_stays_unsupported(env, schema):
     )
     assert resp.status_code == 400
     assert resp.get_json()["code"] == "package_schema_unsupported"
+
+
+def _v4_package(*, document_format="v4", kind="tavotto-package", version=1) -> io.BytesIO:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("layout.json", json.dumps({"schema": 4}))
+        z.writestr(
+            "package_manifest.json",
+            json.dumps({"kind": kind, "version": version, "document_format": document_format}),
+        )
+    buf.seek(0)
+    return buf
+
+
+def test_v4_package_is_identified_by_content_and_not_opened_as_a_layout(env):
+    """同一个入口按包内容分流（#1921）：schema 4 + `document_format = "v4"` 只回答
+    「这是计算图表包」，交给检视 / 安装，不按旧排版打开。"""
+    client, _, _ = env
+    resp = client.post(
+        "/api/package/open",
+        data={"package": (_v4_package(), "chart.tavotto")},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 200, resp.get_json()
+    assert resp.get_json() == {"document_format": "v4"}
+
+
+@pytest.mark.parametrize(
+    "envelope",
+    [
+        {"kind": "magic-matplot-package"},
+        {"version": 2},
+    ],
+)
+def test_v4_envelope_mismatch_is_not_installed(env, envelope):
+    """`document_format = "v4"` 但 kind / version 不符：信封不成立，不能进入检视 / 安装。"""
+    client, _, _ = env
+    resp = client.post(
+        "/api/package/open",
+        data={"package": (_v4_package(**envelope), "odd.tavotto")},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 400
+    body = resp.get_json()
+    assert body["code"] == "package_invalid"
+    assert body["params"] == {"reason": "unsupported_envelope"}
+
+
+def test_schema_4_without_the_v4_document_format_is_too_new(env):
+    """只有 schema 4 不够：没有 `document_format = "v4"` 时按 schema 太新处理，不进 v4 路径。"""
+    client, _, _ = env
+    resp = client.post(
+        "/api/package/open",
+        data={"package": (_v4_package(document_format="legacy"), "odd.tavotto")},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 400
+    assert resp.get_json()["code"] == "package_schema_too_new"

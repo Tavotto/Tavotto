@@ -26,10 +26,10 @@ export function containsChartState(document: FigureDocument | PersistedProjectDo
     Object.hasOwn(object, 'chart') || Object.hasOwn(object, 'chartSource')))
 }
 
-/** 仅已实现的文档 API 进入 namespace；包导入/安装不借导出路由造别名。 */
+/** 仅已实现的文档 API 进入 namespace；包打开/导出/检视/安装都是同一族 `/api/package*`，不造 v4 别名。 */
 export function documentApiPath(path: string, format: DocumentFormat = 'legacy'): string {
   if (format === 'legacy') return path
-  if (path !== '/api/package' && !/^\/api\/(layouts|autosave|layout-session|versions)(?:[/?]|$)/.test(path)) {
+  if (!/^\/api\/(layouts|autosave|layout-session|versions)(?:[/?]|$)/.test(path)) {
     throw new Error('unsupported_document_route')
   }
   return `/api/documents/v4${path.slice(4)}`

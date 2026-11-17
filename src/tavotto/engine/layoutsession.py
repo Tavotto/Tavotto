@@ -159,6 +159,11 @@ class SessionStateUnavailable(OSError):
     """
 
 
+def current_namespace() -> str | None:
+    """当前上下文选中的文档格式视图；None = 旧格式（默认）。"""
+    return _NAMESPACE.get()
+
+
 @contextmanager
 def using_namespace(namespace: str | None):
     """同一文件/锁内选择文档格式视图；退出、异常和其他线程均不泄漏。"""

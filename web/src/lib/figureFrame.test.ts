@@ -179,7 +179,7 @@ describe('图幅迁移后的 Figure 配对归属', () => {
     else await createPackage('Old', migrated, {})
 
     expect(calls).toHaveLength(1)
-    expect(new URL(calls[0].url, 'http://localhost').pathname).toBe(schema === 4 ? '/api/documents/v4/package' : '/api/package')
+    expect(new URL(calls[0].url, 'http://localhost').pathname).toBe('/api/package')
     const sent = (calls[0].body as { doc: typeof migrated }).doc
     const sentPanels = sent.canvases.flatMap(c => c.objects) as PanelObject[]
     expect(sentPanels).toEqual([runtime, pdf].map(p => {

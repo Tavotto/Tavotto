@@ -2606,7 +2606,8 @@ export const createPackage = async (
     body: JSON.stringify({ stem, doc, settings }),
   }
   if (!opts) return jsonFetch<PackageResult>('/api/package', init)
-  const result = await documentJsonFetch(opts.format)<PackageResult>('/api/package', init, opts.pj)
+  // 一个端点按提交文档的 schema 分流（#1921）：v4 不再借 `/api/documents/v4/package`。
+  const result = await jsonFetch<PackageResult>('/api/package', init, opts.pj)
   if (opts.format === 'v4' && result.document_format !== 'v4') {
     throw new ApiError('Unexpected document format.', 400, { code: 'invalid_document' })
   }
@@ -2616,6 +2617,8 @@ export const createPackage = async (
 export interface PackageOpenResult {
   /** 旧包 schema 2 / 新包 schema 3；switchDocument 统一迁移 */
   doc: FigureDocument | ProjectDocument
+  /** 计算图表便携包标记：有它就不按排版打开，交给检视 / 安装流程（#1921） */
+  document_format?: 'v4'
   manifest: {
     created_at?: string
     figures_dir?: string
@@ -2709,9 +2712,7 @@ export interface ProjectPackageInstallation {
   path: string
   document_format: 'v4'
   doc: ProjectDocument
-  references: unknown[]
   execution: Record<string, unknown> | null
-  remap_fingerprint: string
   missing: string[]
   warnings: ProjectPackageWarning[]
   execution_coverage: PackageResult['execution_coverage'] | null
@@ -2730,7 +2731,6 @@ export interface ProjectPackageInstallation {
 
 export interface ProjectPackageInstallOptions {
   destination: string
-  remap_rules?: Pick<InputRemapRule, 'kind' | 'from' | 'to'>[]
 }
 
 function isProjectPackageInstallation(value: unknown): value is ProjectPackageInstallation {
@@ -2747,7 +2747,7 @@ export async function inspectProjectPackage(file: File, pj: string | null): Prom
   const form = new FormData()
   form.append('package', file)
   const result = await jsonFetch<ProjectPackageInspection>(
-    '/api/documents/v4/package/inspect', { method: 'POST', body: form }, pj, 'v4',
+    '/api/package/inspect', { method: 'POST', body: form }, pj,
   )
   if (!result || typeof result !== 'object' || result.document_format !== 'v4' || result.doc?.schema !== 4) {
     throw new ApiError('Unexpected document format.', 400, { code: 'invalid_document' })
@@ -2760,15 +2760,10 @@ export async function installProjectPackage(
 ): Promise<ProjectPackageInstallation> {
   const form = new FormData()
   form.append('package', file)
-  form.append('options', JSON.stringify({
-    destination: options.destination,
-    ...(options.remap_rules === undefined ? {} : {
-      remap_rules: options.remap_rules.map(({ kind, from, to }) => ({ kind, from, to })),
-    }),
-  }))
+  form.append('options', JSON.stringify({ destination: options.destination }))
   try {
     const result = await jsonFetch<ProjectPackageInstallation>(
-      '/api/documents/v4/package/install', { method: 'POST', body: form }, pj, 'v4',
+      '/api/package/install', { method: 'POST', body: form }, pj,
     )
     if (!isProjectPackageInstallation(result)) {
       throw new ApiError('Unexpected installation receipt.', 400, { code: 'invalid_document', receipt: result })

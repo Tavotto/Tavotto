@@ -2656,7 +2656,7 @@
     }
   },
   "packageInstall": {
-    "entry": "安装项目包到新目录…",
+    "importEntry": "导入项目包…",
     "title": "安装计算图表项目包",
     "description": "先检视资源，再安装到新项目；打开时保留原来的排版。",
     "inspecting": "正在检视项目包…",
@@ -2757,6 +2757,5 @@
     "privacyFoot": "只上传画面，脚本和数据不出本机",
     "dailyNew": "每天可新建 1 个",
     "notePlaceholder": "给审阅者的话（选填）…"
->>>>>>> upstream/main
   }
 }

@@ -2682,7 +2682,7 @@
     }
   },
   "packageInstall": {
-    "entry": "Install project package to a new folder…",
+    "importEntry": "Import project package…",
     "title": "Install computational chart package",
     "description": "Inspect resources, then install a new project. Your current layout is preserved when opening it.",
     "inspecting": "Inspecting project package…",
@@ -2785,6 +2785,5 @@
     "privacyFoot": "Only the picture is uploaded; scripts and data stay on this computer",
     "dailyNew": "1 new link per day",
     "notePlaceholder": "Note for reviewers (optional)…"
->>>>>>> upstream/main
   }
 }

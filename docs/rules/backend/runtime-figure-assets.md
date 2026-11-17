@@ -56,7 +56,9 @@ order: 140
     身份写回）；source writeback（改脚本）v1 整个不存在，码
     `runtime_source_writeback_unsupported` 先落表。**导出必须当次 live
     worker 渲染**（`_resolve_panel_source` runtime 分支），worker 起不来
-    就报错，绝不拿 cache 旧文件冒充。项目包只带描述符 + 脚本。
+    就报错，绝不拿 cache 旧文件冒充。**旧格式**项目包只带描述符 + 脚本；
+    计算图表便携包（#1921）按 ADR 0182 §4 另带已声明的实际输入字节，
+    安装端只读核验、不执行包内脚本。
   * **素材库清单（2026-08-26，Session 5）**：`runtimeasset.list_assets`
     是「图 → RuntimeFigureAsset」条目的唯一实现——注册表里**磁盘无原件**
     的 (script, stem) 各成一条（有原件的归 FileAsset/scan_panels，同一张

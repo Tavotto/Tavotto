@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import { backendErrorText } from '@/lib/api'
 import { isDesktop, pickDirectory } from '@/lib/desktop'
-import { chooseProjectPackage } from '@/lib/projectPackageEntry'
+import { pickPackageFile } from '@/lib/packageImport'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
 import { useProjectPackageInstallStore } from '@/store/projectPackageInstallStore'
@@ -91,7 +91,7 @@ export function ProjectPackageInstallDialog() {
           </div>
         }
         footer={{
-          start: <Button size="lg" disabled={busy} data-project-package-choose-another onClick={() => chooseProjectPackage(true)}>{t('packageInstall.chooseAnother')}</Button>,
+          start: <Button size="lg" disabled={busy} data-project-package-choose-another onClick={() => pickPackageFile()}>{t('packageInstall.chooseAnother')}</Button>,
           secondary: <Button variant="secondary" size="lg" data-project-package-close onClick={flow.cancel}>{t('packageInstall.close')}</Button>,
           primary: flow.saved
             ? <Button variant="primary" size="lg" data-project-package-continue loading={flow.phase === 'opening'} disabled={busy} onClick={() => void flow.continueEditing()}>{t('packageInstall.continueEditing')}</Button>

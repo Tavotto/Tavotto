@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from tavotto.engine import folderrepair, pathignore
+
 ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / "src" / "tavotto" / "app.py"
 LOCALES = ROOT / "web" / "src" / "i18n" / "locales"
@@ -74,7 +76,6 @@ _CODE_REGISTRIES = (
     "tavotto.engine.ai_data_propose",
     # ADR 0110：改写脚本里的数据路径与共享的备份底座——`ScriptEditError(code)` 由 app 的 409 漏斗转出
     "tavotto.engine.scriptbackup",
-
     "tavotto.engine.scriptedit",
     "tavotto.engine.runconfig",
     "tavotto.tiffprobe",
@@ -234,7 +235,6 @@ USER_VISIBLE_CODES = {
     # Journal facts inspection may return a bounded result error.
     "result_too_large": set(),
     "journal_catalog_disabled": set(),
-    "svg_scene_invalid": set(),
     # --- ADR 0175：改图助手附文件（`POST /api/ai/attachments`）；固定文案 ---
     "attachment_too_large": set(),
     "attachment_empty": set(),

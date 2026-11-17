@@ -2283,25 +2283,6 @@ def _export_tiff_error(exc: tiffprobe.UnsupportedTiff) -> engine_exportreq.Expor
     return engine_exportreq.ExportRequestError(exc.code, exc.message, exc.params)
 
 
-@app.get("/api/svg/chart/inspect")
-def api_svg_chart_inspect():
-    """计算图表绑定入口的只读盘点（ADR 0182）：同一份字节重新校验 + 稳定节点清单。
-
-    与 `/api/file` 同一条 `safe_resolve` 路径约束、同一个 svgcheck 边界；
-    失败 422 带稳定码，原文件零改动，无任何写入与执行。
-    """
-    from . import svgscene
-
-    path = safe_resolve(request.args.get("id", ""))
-    if path.suffix.lower() not in SVG_EXT:
-        return jsonify({"error": "not an SVG file", "code": "svg_scene_invalid"}), 422
-    try:
-        inventory = svgscene.read_scene(path)
-    except svgscene.SceneError as exc:
-        return jsonify({"code": exc.code, "error": exc.detail}), 422
-    return jsonify(inventory)
-
-
 def _serialize_figure(
     rel_id: str,
     overrides: list,
@@ -5748,10 +5729,18 @@ def api_package():
 
     清单记录每个素材的 sha1，换机器打开时据此发现缺失/内容漂移；
     打包只读 figures 目录，不写入任何源文件。
+
+    计算图表文档（schema 4）走同一条端点写 v4 便携包：按**提交文档的
+    schema** 分流，不给用户两套选择（#1921）。
     """
     root = require_project()
     body = request.get_json(force=True)
     doc = body.get("doc")
+    if isinstance(doc, dict) and doc.get("schema") == engine_documents.SCHEMA_CHART_PROJECT:
+        with engine_layoutsession.using_namespace(engine_documentformat.CHART4):
+            response = app.make_response(_api_chart_package())
+        response.headers["X-Tavotto-Document-Format"] = engine_documentformat.CHART4
+        return response
     if not isinstance(doc, dict) or doc.get("schema") not in (2, 3):
         return jsonify({"error": "无效的排版", "code": "invalid_document"}), 400
     default_stem = (
@@ -6195,30 +6184,13 @@ def _api_chart_package_install():
 
     def consume(prepared, options, work):
         if (
-            set(options) - {"destination", "remap_rules"}
+            set(options) - {"destination"}
             or not isinstance(options.get("destination"), str)
             or not options["destination"]
             or not Path(options["destination"]).is_absolute()
         ):
             raise chartpackage.PackageError("installation_invalid", "需要明确的新项目绝对路径")
         destination = Path(options["destination"])
-        canonical = destination.parent.resolve(strict=True) / destination.name
-        execution = prepared.manifest.get("execution") or {}
-        rules = options.get(
-            "remap_rules",
-            [
-                {
-                    "kind": row["kind"],
-                    "from": row["from"],
-                    "to": str(canonical / row["to_resource"]),
-                }
-                for row in execution.get("remaps", [])
-            ],
-        )
-        try:
-            engine_inputremap.fingerprint_rules(rules)
-        except (TypeError, ValueError) as exc:
-            raise chartpackage.PackageError("installation_invalid", "输入改指规则不合法") from exc
         # Rendering may use the caller's already selected environment, never an
         # interpreter or .venv arriving inside the uploaded project. With no open
         # project, the original environment resolver gets an empty owned root.
@@ -6249,7 +6221,7 @@ def _api_chart_package_install():
                     )
 
         result = packageinstall.install_project_package(
-            prepared, destination=destination, remap_rules=rules, verify=verify
+            prepared, destination=destination, verify=verify
         )
         ready = result["state"] == "resources_installed" and result["configuration"] == "ready"
         return jsonify(result), 201 if ready else 503
@@ -6292,6 +6264,29 @@ def api_package_open():
                 "params": {"reason": str(exc)},
             }
         ), 400
+    # v4 便携包：同一个入口按包内容分流（#1921）。这条判据必须排在
+    # `schema > SCHEMA_CURRENT` 之前——否则真 v4 包会被 too_new 先拦下。
+    if (
+        doc.get("schema") == engine_documents.SCHEMA_CHART_PROJECT
+        and isinstance(manifest, dict)
+        and manifest.get("document_format") == engine_documentformat.CHART4
+    ):
+        from .engine import documentpackage  # noqa: PLC0415
+
+        if (
+            manifest.get("kind") != engine_brand.PACKAGE_KIND
+            or manifest.get("version") != documentpackage.PACKAGE_VERSION
+        ):
+            return jsonify(
+                {
+                    "error": "项目包的清单不是当前版本能读的格式",
+                    "code": "package_invalid",
+                    "params": {"reason": "unsupported_envelope"},
+                }
+            ), 400
+        # 只回答「这是什么格式」：资源检视与安装分别由
+        # `/api/package/inspect`、`/api/package/install` 做。
+        return jsonify({"document_format": engine_documentformat.CHART4})
     schema = doc.get("schema")
     if type(schema) is int and schema > engine_documents.SCHEMA_CURRENT:
         # 更新的 Tavotto 打出的包：与排版的 `schema_too_new` 同一结局（界面给「检查更新」），
@@ -18378,9 +18373,16 @@ def api_ai_cancel(sid):
 
 # ------------------------- 布局的保存 / 读取 -------------------------------
 def _document_format() -> str:
-    """格式来自显式注册的路由，不从正文schema或调用方的路径参数猜。"""
+    """格式来自显式注册的路由；同一条入口按内容分流时来自调用方选中的会话视图。
+
+    不从正文 schema 或路径参数猜：`/api/package` 的 v4 分支自己进入
+    `using_namespace(CHART4)`，其余入口仍按路由上钉死的格式。
+    """
     view = app.view_functions.get(request.endpoint) if has_request_context() else None
-    return getattr(view, "_tavotto_document_format", engine_documentformat.LEGACY)
+    explicit = getattr(view, "_tavotto_document_format", None)
+    if explicit is not None:
+        return explicit
+    return engine_layoutsession.current_namespace() or engine_documentformat.LEGACY
 
 
 def _validate_storage_document(raw, *, require_sources: bool = True) -> dict:
@@ -21351,21 +21353,17 @@ def _register_chart_document_routes() -> None:
             view_func=adapt(app.view_functions[rule.endpoint]),
             methods=sorted(rule.methods - {"HEAD", "OPTIONS"}),
         )
+    # 便携包的检视 / 安装与 open、打包同族，落在 `/api/package*`（#1921）；
+    # 不再提供 `/api/documents/v4/package*` 别名。
     app.add_url_rule(
-        "/api/documents/v4/package",
-        endpoint="documents_v4_package",
-        view_func=adapt(_api_chart_package),
-        methods=["POST"],
-    )
-    app.add_url_rule(
-        "/api/documents/v4/package/inspect",
-        endpoint="documents_v4_package_inspect",
+        "/api/package/inspect",
+        endpoint="api_package_inspect",
         view_func=adapt(_api_chart_package_inspect),
         methods=["POST"],
     )
     app.add_url_rule(
-        "/api/documents/v4/package/install",
-        endpoint="documents_v4_package_install",
+        "/api/package/install",
+        endpoint="api_package_install",
         view_func=adapt(_api_chart_package_install),
         methods=["POST"],
     )
