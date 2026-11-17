@@ -204,6 +204,14 @@ describe('空画布提示坐在什么底上（宪法第二十八节）', () => {
     expect(hintBox().className).not.toContain('bg-surface')
   })
 
+  it('项目里有图（选图卡态）：默认白纸上同样走 data-on-paper 且不垫深色/面板外框（暗色下白纸正中不压黑块）', async () => {
+    useAssetStore.setState({ panels: [asset('a.pdf'), asset('b.pdf')], byId: {}, loaded: true })
+    await mount(<CanvasStage />)
+    expect(document.querySelector('[data-empty-pick]')).not.toBeNull()
+    expect(hintBox().hasAttribute('data-on-paper')).toBe(true)
+    expect(hintBox().className).not.toContain('bg-surface')
+  })
+
   it('用户把页面背景设成深色：纸上的墨压不住，退回主题面板底 + 界面墨', async () => {
     act(() => useDocumentStore.setState((st) => ({ doc: { ...st.doc, page: { ...st.doc.page, bg: '#1f2430' } } })))
     await mount(<CanvasStage />)

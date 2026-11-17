@@ -68,9 +68,10 @@ export function PrivacyAboutSettings() {
 
 function ProductBlock({ version }: { version?: string }) {
   return (
-    // 窄宽度（约 350px 或高缩放）下按钮折到产品块下面一行，而不是把产品文字挤到被裁掉：
-    // 标志 + 文字是一组、基准宽 18rem，放不下按钮时整组占满一行
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-3" data-settings-anchor="about.support">
+    <div
+      className="flex flex-wrap items-center gap-x-5 gap-y-3 py-1.5"
+      data-settings-anchor="about.support"
+    >
       <div className="flex min-w-0 flex-[1_1_18rem] items-center gap-4" data-about-product>
         {/* About 是标志唯一允许的 full 档界面位置（54px，弹窗白底用默认灰） */}
         <BrandMark size={54} />

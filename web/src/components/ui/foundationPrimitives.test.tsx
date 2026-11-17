@@ -19,6 +19,7 @@ import { dropLineClass, listRowClass, rowMetaClass } from './listRow'
 import { MenuItem } from './Menu'
 import { Notice } from './Notice'
 import { RowMenu } from './RowMenu'
+import { Segmented } from './Segmented'
 import { StatusPill } from './StatusPill'
 import { Toggle } from './Toggle'
 import { UNIT_GAP } from '@/lib/units'
@@ -297,10 +298,12 @@ describe('listRowClass / rowMetaClass / dropLineClass', () => {
   })
 })
 
-describe('Button：lg 32 / 图标钮是圆 / danger-tinted / primary 字是 surface', () => {
+describe('Button / Segmented：28px 工具栅格 md 圆角，lg 32 / 图标钮保持胶囊与圆 / danger-tinted / primary 字是 surface', () => {
   it('档位与层级落在 data-variant 与 token 类上', async () => {
     await render(
       <>
+        <Button data-b="sm" size="sm">{T}</Button>
+        <Button data-b="md" size="md">{T}</Button>
         <Button data-b="lg" size="lg" variant="primary">{T}</Button>
         <Button data-b="dt" size="lg" variant="danger-tinted">{T}</Button>
         <IconButton data-b="ic" label={T} tip={false}>
@@ -309,10 +312,23 @@ describe('Button：lg 32 / 图标钮是圆 / danger-tinted / primary 字是 surf
         <IconButton data-b="icl" label={T} tip={false} iconSize="lg">
           <Pencil />
         </IconButton>
+        <Segmented
+          data-testid="seg"
+          ariaLabel={T}
+          value="a"
+          onChange={() => {}}
+          items={[
+            { value: 'a', label: 'A' },
+            { value: 'b', label: 'B' },
+          ]}
+        />
       </>,
     )
+    expect(q('[data-b="sm"]')!.className).toMatch(/\brounded-md\b/)
+    expect(q('[data-b="md"]')!.className).toMatch(/\brounded-md\b/)
     const lg = q('[data-b="lg"]')!
     expect(lg.className).toMatch(/\bh-8\b/)
+    expect(lg.className).toMatch(/\brounded-full\b/)
     expect(lg.className).toMatch(/\btext-surface\b/)
     expect(lg.className).not.toMatch(/text-white/)
     const dt = q('[data-b="dt"]')!
@@ -323,6 +339,9 @@ describe('Button：lg 32 / 图标钮是圆 / danger-tinted / primary 字是 surf
     expect(dt.className).toMatch(/\bfont-semibold\b/)
     expect(q('[data-b="ic"]')!.className).toMatch(/\brounded-full\b/)
     expect(q('[data-b="icl"]')!.className).toMatch(/\bh-8 w-8\b/)
+    const seg = q('[data-testid="seg"]')!
+    expect(seg.className).toMatch(/\brounded-md\b/)
+    expect(seg.querySelector('[data-value="a"]')!.className).toMatch(/\brounded-sm\b/)
   })
 })
 

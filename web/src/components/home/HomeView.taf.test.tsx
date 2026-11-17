@@ -96,7 +96,7 @@ afterEach(() => {
 describe('开关关着：现有用户看到的一切逐字不变', () => {
   // 两个摘要是在**合入前的主干**（本 PR 动 HomeView / ProjectPicker 之前）上渲染同样的屏取的；开关关着时本 PR 的渲染必须与它逐字相同。
   // 摘要而不是整段 HTML 快照：src 下不放 .html（`pagePtLens` 的扩展名门禁），整段又太长；对不上时先看是不是有意改了首页。
-  const BASE_DIGEST = { returning: '3c3be2879f5551c4', newcomer: '94356a7f49e3dbbe' } as const
+  const BASE_DIGEST = { returning: '495cbf76749ad0a4', newcomer: '97c26f1076e5ead6' } as const
   it.each([['returning', 'completed'], ['newcomer', 'not_started']] as const)('%s 版：DOM 与合入前主干逐字相同（摘要）', async (name, status) => {
     await mount(status, false)
     expect(createHash('sha256').update(html()).digest('hex').slice(0, 16)).toBe(BASE_DIGEST[name])

@@ -321,6 +321,7 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   // 压上去的只有对话框自己动作的结果（状态 / 引擎退出 / 带一次性出口的环境与答案提示）；背景性的几条
   // （加入说明、操作提示、作者回信胶囊）在模态期间不画——它们与对话框里的事无关，浮在遮罩上只会打岔，关掉对话框后照常回来
   const overModal = useDialogLayerStore((s) => s.open > 0)
+  const modalEpoch = useDialogLayerStore((s) => s.epoch)
   const measureRailTop = () => {
     const tops = [...(overModal ? [] : (railRef.current?.querySelectorAll('[data-toast-layout][data-state="open"]') ?? []))].map((e) =>
       Math.round(e.getBoundingClientRect().top),
@@ -343,18 +344,23 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const status = useUiStore((s) => s.status)
   const tone = useUiStore((s) => s.statusTone)
   const statusAction = useUiStore((s) => s.statusAction)
+  const statusModalEpoch = useUiStore((s) => s.statusModalEpoch)
   // 退场那 90ms 里 status 已经是 null 了，得把最后一条文案留着播完，
   // 否则会看到一个空壳滑下去。留的是**描述符**，不是翻好的字符串：
   // 退场期间切语言也跟着换。
-  const last = useRef<{ status: UiMessage | null; tone: typeof tone; action: typeof statusAction }>({
+  const last = useRef<{ status: UiMessage | null; tone: typeof tone; action: typeof statusAction; modalEpoch: number }>({
     status: null,
     tone: 'info',
     action: null,
+    modalEpoch: 0,
   })
   useEffect(() => {
-    if (status) last.current = { status, tone, action: statusAction }
-  }, [status, tone, statusAction])
-  const shown = status ? { status, tone, action: statusAction } : last.current
+    if (status) last.current = { status, tone, action: statusAction, modalEpoch: statusModalEpoch }
+  }, [status, tone, statusAction, statusModalEpoch])
+  const shown = status ? { status, tone, action: statusAction, modalEpoch: statusModalEpoch } : last.current
+  // 弹窗打开之前画布上遗留的普通 done/info 提示（modalEpoch 落后于当前模态代际）留在画布层（遮罩之下），
+  // 只有弹窗期间新触发的提示或 error 级告警才升进 z-toast 压在弹窗之上
+  const statusInModalLayer = !overModal || shown.tone === 'error' || shown.modalEpoch >= modalEpoch
   const shownText = fmt(shown.status)
   const liveText = fmt(status)
   const statusPresence = usePresence(!!status, DURATION.fast)
@@ -502,6 +508,22 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const hintOrder = arrival('hint', hintPresence.mounted && hint && hintToken)
   const statusOrder = arrival('status', statusPresence.mounted && shown.status)
 
+  const statusToastNode = statusPresence.mounted ? (
+    <Toast
+      order={statusOrder}
+      tone={shown.tone === 'error' ? 'error' : 'info'}
+      state={statusPresence.state}
+      timer={statusDismissTimer}
+      // 语气认这个钩子（用例 / e2e），不认图标的类名
+      data-status-tone={shown.tone}
+      icon={<StatusIcon tone={shown.tone} />}
+      text={shownText}
+      action={shown.action ? { label: fmt(shown.action.label), onClick: shown.action.run } : undefined}
+      onClose={shown.tone === 'error' || shown.action ? () => useUiStore.getState().setStatus(null) : undefined}
+      closeLabel={t('status.dismissError')}
+    />
+  ) : null
+
   const toasts = (
     <>
       {/* 显示顺序 = 出现的先后（`order`），最新的最靠近底边；DOM 顺序固定 */}
@@ -616,21 +638,7 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
           closeLabel={translate('actions.close')}
         />
       )}
-      {statusPresence.mounted && (
-        <Toast
-          order={statusOrder}
-          tone={shown.tone === 'error' ? 'error' : 'info'}
-          state={statusPresence.state}
-          timer={statusDismissTimer}
-          // 语气认这个钩子（用例 / e2e），不认图标的类名
-          data-status-tone={shown.tone}
-          icon={<StatusIcon tone={shown.tone} />}
-          text={shownText}
-          action={shown.action ? { label: fmt(shown.action.label), onClick: shown.action.run } : undefined}
-          onClose={shown.tone === 'error' || shown.action ? () => useUiStore.getState().setStatus(null) : undefined}
-          closeLabel={t('status.dismissError')}
-        />
-      )}
+      {statusInModalLayer && statusToastNode}
     </>
   )
   return (
@@ -674,8 +682,10 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
       <div aria-live="assertive" role={announceRole ?? undefined} className="sr-only">
         {engineExit ? translate('exitNotice.engine.text', { ns: 'workspace' }) : ''}
       </div>
-      {overModal
-        ? createPortal(
+      {overModal ? (
+        <>
+          {!statusInModalLayer && statusToastNode}
+          {createPortal(
             <div
               ref={railRef}
               data-notification-rail
@@ -688,8 +698,11 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
               {toasts}
             </div>,
             document.body,
-          )
-        : toasts}
+          )}
+        </>
+      ) : (
+        toasts
+      )}
     </div>
   )
 }

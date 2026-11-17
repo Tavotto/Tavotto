@@ -63,7 +63,7 @@ export function ColorScaleLink({
       {partner && (
         <div
           data-color-scale-link={partner.gid}
-          className="mb-2 flex min-w-0 items-center gap-1.5 rounded-sm border border-border px-2 py-1"
+          className="mb-2 flex min-w-0 items-center gap-1.5 rounded-md bg-surface-hover px-2.5 py-1.5"
         >
           <Link2 size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
           <span className="min-w-0 flex-1 truncate text-xs text-ink-2" title={el('colorScaleTip')}>
@@ -85,7 +85,7 @@ export function ColorScaleLink({
       {unowned && (
         <Details
           data-colorbar-ownership
-          className="mb-2 rounded-sm border border-border px-2 py-1 text-xs text-ink-2"
+          className="mb-2 rounded-md bg-surface-hover px-2.5 py-1.5 text-xs text-ink-2"
         >
           <Summary>{el('colorbarOwnershipUnknown')}</Summary>
           <p className="mt-2">{el('colorbarOwnershipHelp')}</p>

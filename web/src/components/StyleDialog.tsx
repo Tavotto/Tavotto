@@ -315,22 +315,24 @@ export function StyleDialog() {
       anchor="styles"
       status={
         pendingLeave && (
-          <Notice
-            tone="warn"
-            data-style-discard
-            action={
-              <>
-                <Button variant="ghost" size="sm" data-style-discard-keep onClick={keepEditing}>
-                  {t('dialogs:draftGuard.keepEditing')}
-                </Button>
-                <Button variant="danger-tinted" size="sm" data-style-discard-confirm onClick={discardAndContinue}>
-                  {t('dialogs:draftGuard.discard')}
-                </Button>
-              </>
-            }
-          >
-            {t('dialogs:draftGuard.title')}
-          </Notice>
+          <div className="md:ml-auto md:w-[420px] md:max-w-full">
+            <Notice
+              tone="warn"
+              data-style-discard
+              action={
+                <>
+                  <Button variant="ghost" size="sm" data-style-discard-keep onClick={keepEditing}>
+                    {t('dialogs:draftGuard.keepEditing')}
+                  </Button>
+                  <Button variant="danger-tinted" size="sm" data-style-discard-confirm onClick={discardAndContinue}>
+                    {t('dialogs:draftGuard.discard')}
+                  </Button>
+                </>
+              }
+            >
+              {t('dialogs:draftGuard.title')}
+            </Notice>
+          </div>
         )
       }
       footer={{
