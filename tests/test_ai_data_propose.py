@@ -2038,3 +2038,7 @@ def test_mixed_x_commits_and_the_script_reads_the_same_table(project):
     assert out["data_check"] == "verified", out
     assert out["unplotted"]["count"] == 2
     assert [c["column"] for c in out["cells"]] == ["day"]
+    script = (figs / out["script"]).read_text(encoding="utf-8")
+    assert (
+        "fig.text(" not in script and "ignored" not in script
+    )  # 图里没有脚注（没画的行只在响应里报）

@@ -212,8 +212,9 @@ def test_the_common_module_did_not_change_so_its_hash_and_name_stay_put():
 
 
 #: 公共模块文件名；公共模块有意变更时同步更新这一行（改动前 origin/main f1aee0e8d 是 `tavotto_plot_1d525a3a.py`；
-#: 2026-11-17「表头后紧跟单位行」给 `table_from_text` / `read_delimited` 加了 `units_row` 参数，换成这一个）
-PINNED_RUNTIME_NAME = "tavotto_plot_3c540192.py"
+#: 2026-11-17「表头后紧跟单位行」给 `table_from_text` / `read_delimited` 加了 `units_row` 参数 → `tavotto_plot_3c540192.py`；
+#: 同日用户决定图里不写任何脚注，删掉只给脚注用的运行时函数（`n_note` / `n_phrase` / `trend_point_counts` / `trend_series_counts`），换成这一个）
+PINNED_RUNTIME_NAME = "tavotto_plot_86dcfebb.py"
 
 
 # =========================================================================== 接口

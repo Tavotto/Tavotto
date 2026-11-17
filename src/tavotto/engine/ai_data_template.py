@@ -480,19 +480,6 @@ def hline_segment(pool, summary):
     return [min(xs), max(xs)], [c, c]
 
 
-def trend_point_counts(pools):
-    """逐位置汇总（汇总线 / 带 / 误差线）背后的样本个数：每条序列的每个 x 位置上有效观测的个数（没有有效观测的位置不算），
-    各序列的结果并成一个有序集合。"""
-    out = set()
-    for xs, vals in pools:
-        by_x = {}
-        for a, b in zip(xs, vals):
-            if b == b:
-                by_x[a] = by_x.get(a, 0) + 1
-        out |= set(by_x.values())
-    return sorted(out)
-
-
 # ---- 看两个量的关系（relationship）
 def relationship_data(header, rows, x, y, group, facet):
     """每个（分面, 分组）里 x、y 都是有限数的点（行序）；分组 / 分面为空的行不画；x 或 y 不是数（空、NaN、文字）的行不画。"""
@@ -521,21 +508,6 @@ def relationship_pairs(d, p, g):
     return d["pairs"].get((p, g), ([], []))
 
 
-def n_note(counts, groups, panels):
-    """图下方说明里的 n：`counts` 是 `{(分面, 分组): 个数}`。各格一样写 `n = k`；不一样且只有一个分面时按分组顺序逐组写；
-    多个分面时写范围。"""
-    ns = [n for n in counts.values() if n]
-    if not ns:
-        return ""
-    if len(set(ns)) == 1:
-        return "n = %d" % ns[0]
-    if len(panels) == 1:
-        order = " / ".join(str(counts.get((panels[0], g), 0)) for g in groups)
-        return "n = " + order + (" (group order)" if len(groups) > 1 else "")
-    return "n = %d-%d per group and panel" % (min(ns), max(ns))
-
-
-# ---- 看分布（distribution）
 def all_values(d):
     """整张图里的全部有效值（各分面、各分组并起来）：直方图的分箱按它定，各组共用同一组分箱才可比。"""
     return [v for vs in d["cells"].values() for v in vs]
@@ -593,19 +565,6 @@ def ecdf_xy(vals):
     s = sorted(vals)
     n = len(s)
     return [s[0]] + s, [0.0] + [(i + 1) / n for i in range(n)]
-
-
-def trend_series_counts(pools):
-    """整系列汇总（水平线）背后的样本个数：每条序列全部有限观测的个数（没有有效观测的序列不算），并成一个有序集合。"""
-    return sorted({n for n in (sum(1 for v in vals if v == v) for _, vals in pools) if n})
-
-
-def n_phrase(counts, per, explicit):
-    """`n = 3` / `n = 2–3 per point`；`explicit` 时一律写 `per …`（一张图里有两种汇总、要分得清是哪个 n）。没有样本 → 空串。"""
-    if not counts:
-        return ""
-    core = str(counts[0]) if len(counts) == 1 else "%d–%d" % (counts[0], counts[-1])
-    return "n = %s" % core + (" per " + per if explicit or len(counts) > 1 else "")
 
 
 def pick_fonts(latin, cjk):
@@ -670,13 +629,9 @@ RUNTIME_FUNCTIONS = (
     error_xy,
     fit_segment,
     hline_segment,
-    trend_point_counts,
-    trend_series_counts,
-    n_phrase,
     scott_bandwidth,
     relationship_data,
     relationship_pairs,
-    n_note,
     all_values,
     pooled_values,
     hist_edges,
@@ -842,97 +797,10 @@ def _summary_layers(recipe: recipe_mod.FigureRecipe) -> list[str]:
     return [layer.summary for layer in recipe.layers if layer.summary != "none"]
 
 
-#: 图下方说明里各带汇总的图元的叫法
-MARK_NAMES = {
-    "line": "line",
-    "step": "step line",
-    "band": "band",
-    "errorbar": "error bars",
-    "bar": "bars",
-    "hline_summary": "horizontal lines",
-}
-
-
-def _summary_text(recipe: recipe_mod.FigureRecipe) -> str:
-    """图下方说明里的汇总名。全图只有一种汇总 → 简短写法（`mean ± SD`）；有几种不同的汇总 → 逐图元写清
-    （`bars: mean ± SD; error bars: median with IQR`；同一图元以不同 role 出现两次再带上 role）。"""
-    layers = [
-        (layer, tag)
-        for layer, tag in zip(recipe.layers, _layer_tags(recipe))
-        if layer.summary != "none"
-    ]
-    if len({layer.summary for layer, _ in layers}) <= 1:
-        return " / ".join(dict.fromkeys(SUMMARY_TEXT[layer.summary] for layer, _ in layers))
-    return "; ".join(
-        dict.fromkeys(
-            f"{MARK_NAMES.get(layer.mark, layer.mark)}"
-            + (f" ({layer.role})" if "@" in tag else "")
-            + f": {SUMMARY_TEXT[layer.summary]}"
-            for layer, tag in layers
-        )
-    )
-
-
-#: 图下方说明里对「非汇总」图元的定义（分箱 / 带宽 / 箱线须 / 拟合各一句；规则本身的唯一实现在运行时函数里）
-LAYER_NOTES = {
-    "box": "box: median, quartiles, whiskers to 1.5 IQR",
-    "violin": "violin: Gaussian kernel density, Scott bandwidth",
-    "fit_line": "dash-dot line: least-squares fit (descriptive)",
-    "hist": "bins: Freedman-Diaconis rule, shared by all groups",
-    "density": "density: Gaussian kernel, Scott bandwidth",
-    "ecdf": "ECDF: step function of the sorted values",
-}
-
-
-def _layer_notes(recipe: recipe_mod.FigureRecipe) -> list[str]:
-    notes = [LAYER_NOTES[layer.mark] for layer in recipe.layers if layer.mark in LAYER_NOTES]
-    if "fit_line" in {layer.mark for layer in recipe.layers} and recipe.scale != "linear":
-        notes = [
-            n + ", fitted on log10 of the log axes" if n.startswith("dash-dot line") else n
-            for n in notes
-        ]
-    for layer in recipe.layers:
-        if layer.mark == "hline_summary" and layer.summary != "none":
-            # 水平线画的是汇总的中心值：均值或中位数，由该层的 summary 推出
-            stat = "median" if layer.summary == "median_iqr" else "mean"
-            notes.append(
-                f"dotted line: whole-series {stat}"
-                if recipe.family == "trend"
-                else f"horizontal lines: {stat}"
-            )
-    return list(dict.fromkeys(notes))
-
-
-def _footer(recipe, style, n_lines: list[str], n_text_expr: str | None) -> list[str]:
-    """图下方的一行说明：汇总定义 + 非汇总图元的规则名 + n（`n_text_expr` 是运行时求值的表达式，None = 不写 n）。
-    没有任何内容要写就只做 `tight_layout()`。说明会换行：按字数估行数给它留出高度。"""
-    static = "; ".join([s for s in [_summary_text(recipe), *_layer_notes(recipe)] if s])
-    if not static and n_text_expr is None and not recipe.cells:
-        return ["    fig.tight_layout()"]
-    out = list(n_lines)
-    if recipe.cells:  # 处理规则的说明（做了什么、各几行）运行时才知道，和 n 一起写进图下方
-        parts = [repr(static)]
-        if n_text_expr is not None:
-            out.append(f"    n_text = {n_text_expr}")
-            parts.append("n_text")
-        parts.append("'; '.join(cell_notes)")
-        out.append(f"    note = '; '.join(s for s in ({', '.join(parts)}) if s)")
-        static = static + "x" * (60 * len(recipe.cells))  # 只用来估说明占几行
-    elif n_text_expr is None:
-        out.append(f"    note = {static!r}")
-    else:
-        out += [
-            f"    n_text = {n_text_expr}",
-            f"    note = '; '.join(s for s in ({static!r}, n_text) if s)",
-        ]
-    pt = style["min_font_pt"]
-    chars_per_line = max(20, int(style["width_single_mm"] / _MM * 72 / (pt * 0.5)))
-    lines = 1 + (len(static) + 16) // chars_per_line
-    out += [
-        f"    fig.text(0.01, 0.01, note, fontsize={pt!r}, ha='left', va='bottom', wrap=True)",
-        f"    fig.tight_layout(rect=(0, {round(lines * pt * 1.25 / 72 + 0.03, 3)!r} / fig.get_figheight(), 1, 1))",
-    ]
-    return out
+def _footer(recipe, style) -> list[str]:
+    """图的收尾排版。**图里不写任何自动加的脚注**（2026-11-17 用户决定：没画的行、汇总 / 拟合的定义、n 都不进图；这些在界面右栏与响应字段里给）。
+    只做 `tight_layout()`，不为脚注留白。"""
+    return ["    fig.tight_layout()"]
 
 
 #: 脚本头的来源注释：生产（`_source_comment`、`_header`）与解析（`parse_source_comment`）共用这两个常量
@@ -1082,10 +950,10 @@ def runtime_module() -> tuple[str, bytes]:
 
 
 def _read_lines(recipe, reader: str) -> list[str]:
-    """`main()` 里读表那几行。配方带了「夹着文字格的数值列」的处理规则时，读完紧接着套规则（内存里的副本；文件不改），说明写进图下方。"""
+    """`main()` 里读表那几行。配方带了「夹着文字格的数值列」的处理规则时，读完紧接着套规则（内存里的副本；文件不改）；图里不写说明（2026-11-17）。"""
     out = [f"    header, rows = {reader}"]
     if recipe.cells:
-        out.append("    rows, cell_notes, _cell_stats = apply_cells(header, rows, CELLS)")
+        out.append("    rows, _cell_notes, _cell_stats = apply_cells(header, rows, CELLS)")
     return out
 
 
@@ -1223,9 +1091,10 @@ def _comparison_layer_lines(layer, tag: str, lw: list[float]) -> list[str]:
 
 def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
     is_xlsx = entry.path.lower().endswith(".xlsx")
-    summ = _summary_text(recipe)
     lw = style["line_widths_pt"]
-    with_n = bool(summ) or recipe.family == "distribution"
+    with_n = (
+        any(layer.summary != "none" for layer in recipe.layers) or recipe.family == "distribution"
+    )
     L = _header(
         entry, recipe, data_rel, "比较各组" if recipe.family == "comparison" else "看分布", is_xlsx
     )
@@ -1291,24 +1160,7 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
         f"            frameon={bool(style['legend_frame'])!r},",
         "        )",
     ]
-    if recipe.x is None:  # 没有类别轴、也就没有刻度标签：各（分面, 分组）的 n 写进说明本身
-        L += _footer(
-            recipe,
-            style,
-            [
-                "    counts = {(p, g): len(d['cells'].get((p, '', g), [])) for p in panels for g in groups}"
-            ],
-            "n_note(counts, groups, panels)" if with_n else None,
-        )
-    else:
-        L += _footer(
-            recipe,
-            style,
-            ["    counts = cell_counts(d)"],
-            "('n = %d' % counts[0] if len(counts) == 1 else 'n per group in tick labels')"
-            if with_n
-            else None,
-        )
+    L += _footer(recipe, style)
     L += [
         f"    fig.savefig(Path(__file__).resolve().parent / {stem + '.pdf'!r})",
         "",
@@ -1382,7 +1234,6 @@ def _trend_layer_lines(layer, tag_m: str, lw: list[float], logs=(False, False)) 
 def _render_trend(entry, recipe, data_rel, stem, style) -> str:
     is_xlsx = entry.path.lower().endswith(".xlsx")
     x_is_date = entry.summary.per_column[recipe.x].kind == "date"
-    summ = _summary_text(recipe)
     lw = style["line_widths_pt"]
     L = _header(entry, recipe, data_rel, "变化趋势", is_xlsx)
     if is_xlsx:
@@ -1462,31 +1313,7 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
         "    if handles:",
         f"        axes[0][0].legend(handles=handles, frameon={bool(style['legend_frame'])!r})",
     ]
-    n_lines, n_parts = [], []
-    if summ or any(ly.mark == "fit_line" for ly in recipe.layers):
-        # n 取自每个汇总层**实际汇总的总体**：逐位置的 = 每个位置的有效观测数；整系列的（水平线）= 整条序列的有效观测总数；
-        # 两种都有时都写 per point / per series，分得清是哪个 n
-        pos = any(ly.mark in _PER_POINT_MARKS and ly.summary != "none" for ly in recipe.layers)
-        ser = any(
-            (ly.mark == "hline_summary" and ly.summary != "none") or ly.mark == "fit_line"
-            for ly in recipe.layers
-        )
-        if pos:
-            n_lines.append(
-                "    n_pos = n_phrase(trend_point_counts(pools), 'point', %r)" % (pos and ser)
-            )
-            n_parts.append("n_pos")
-        if ser:
-            n_lines.append(
-                "    n_ser = n_phrase(trend_series_counts(pools), 'series', %r)" % (pos and ser)
-            )
-            n_parts.append("n_ser")
-    L += _footer(
-        recipe,
-        style,
-        n_lines,
-        "'; '.join(s for s in (%s,) if s)" % ", ".join(n_parts) if n_parts else None,
-    )
+    L += _footer(recipe, style)
     L += [
         f"    fig.savefig(Path(__file__).resolve().parent / {stem + '.pdf'!r})",
         "",
@@ -1557,12 +1384,7 @@ def _render_relationship(entry, recipe, data_rel, stem, style) -> str:
     if logy:
         L.append('        ax.set_yscale("log")')
     L += _group_legend(style)
-    L += _footer(
-        recipe,
-        style,
-        ["    counts = {k: len(v[0]) for k, v in d['pairs'].items()}"],
-        "n_note(counts, groups, panels)",
-    )
+    L += _footer(recipe, style)
     L += _tail(stem)
     return "\n".join(L[:main_at] + _via_runtime(L[main_at:]))
 
@@ -1643,12 +1465,7 @@ def _render_distribution(entry, recipe, data_rel, stem, style) -> str:
         "            ax.set_ylabel(YLABEL)",
     ]
     L += _group_legend(style)
-    L += _footer(
-        recipe,
-        style,
-        ["    counts = {(p, g): len(pooled_values(d, p, g)) for p in panels for g in groups}"],
-        "n_note(counts, groups, panels)",
-    )
+    L += _footer(recipe, style)
     L += _tail(stem)
     return "\n".join(L[:main_at] + _via_runtime(L[main_at:]))
 

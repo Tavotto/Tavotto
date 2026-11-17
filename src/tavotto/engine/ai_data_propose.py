@@ -430,7 +430,7 @@ def unplotted_rows(values: adf.DataSummary, recipe) -> list[dict]:
 
 
 def cell_stats(values: adf.DataSummary, recipe) -> list[dict]:
-    """处理规则实际作用了多少格（`[{column, mode, ignored, extracted, mapped}]`），与图下方说明同一份计数（`adf.apply_cells`）。"""
+    """处理规则实际作用了多少格（`[{column, mode, ignored, extracted, mapped}]`），统计与脚本里套规则用的是同一个 `adf.apply_cells`。"""
     if not recipe.cells:
         return []
     return adf.apply_cells(values.columns, values.rows, [c.args() for c in recipe.cells])[2]

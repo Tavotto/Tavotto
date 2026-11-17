@@ -58,14 +58,14 @@ v1（ADR 0138 Phase 5）只读**一个 CSV**，只会折线 / 柱两种图，列
 脚本不改 `sys.path`：safe worker 与 native bridge 都把脚本目录放在 `sys.path[0]`。静态扫描（`discover` / `projscan`）不会把公共模块当成一张图（没有存图调用、没有 `main`），
 前缀 `tavotto_plot_` 在 `discover.SKIP_PREFIXES` 里（与 `paper_style` 同类）：脚本清单把它标成 `infrastructure`，不当成「没出图的脚本」。
 期望指纹只对父进程**能逐字节算准**、并且验证器**能按 label 匹配**的层声明：散点、Line2D、柱组可核；误差线、误差带、箱、小提琴不核（manifest 里没有 label 字段 / 由 matplotlib 拼成），
-`fingerprint_coverage` 如实列出，没有可核层就报告「这张图的数据没法核」，绝不折算成 verified。图上的诚实：汇总层必有定义与 n 的说明（`mean ± SD; n = 12`，各格 n 不同则 n 写进刻度标签），
+`fingerprint_coverage` 如实列出，没有可核层就报告「这张图的数据没法核」，绝不折算成 verified。图上的诚实：不画星号与 P 值；**图里不写任何脚注**（见下「图里不写脚注」；各格 n 不同时 n 仍写在刻度标签里，那是坐标轴文字），
 柱的轴含 0，不画星号与 P 值，抖动是确定性的。样式数字来自出版规范 profile，分类色用公开的 Okabe–Ito 色盲安全色板。
 
 ### relationship 与 distribution（批次 1 的后两族）
 
 四个批次 1 的族现在都有模板。**规则各只有一份文字定义 + 一份实现**（公共模块里的纯 Python 函数，父进程与脚本同源）：直方图分箱 = Freedman–Diaconis（箱宽 `2 × IQR × n^(-1/3)`，箱数 1–50，IQR 为 0 退到 Sturges，各组共用同一组箱边）；
 密度带宽 = Scott（`SD × n^(-1/5)`，网格取数据范围两侧各 3 个带宽）；ECDF = 排序后的逐点阶梯；拟合线 = 最小二乘直线，**在画出来的坐标里拟合**（对数轴那一维先取 log10；只有一维是对数时图上是曲线，取 50 个点）。
-这些规则名写在图下方说明里（`bins: Freedman-Diaconis rule …`、`density: Gaussian kernel, Scott bandwidth`、`dashed line: least-squares fit (descriptive)`），不报显著性、不放 R²。
+这些规则只在这里与代码里是一份定义，**不再写进图**（2026-11-17 起，见「图里不写脚注」）；不报显著性、不放 R²。
 distribution 有两种形态：值在横轴（hist / ecdf / density，不带类别 x、按颜色分组）与值在纵轴（box / violin / jitter / points，类别 x 可选）；两类不能叠在同一张图，ECDF 不与直方图 / 密度叠（纵轴含义不同），
 值在横轴的图元不用对数轴——这些组合由 `validate_recipe` 拒绝（`mark_not_allowed`），模板对同样的组合抛 `TemplateError`。可核：hist 的柱高、density 曲线、ecdf 阶梯、散点、拟合线；不核：box、violin（同 comparison）。
 
@@ -115,6 +115,12 @@ id 是服务端登记的不透明串）、`POST /api/ai/data-figure/commit`（`{
 * **缩略图懒渲染**：懒模式只写脚本与公共模块（毫秒级），不渲染；每项 `thumbnail_status: "pending"`（旧模式一律 `"ready"`）。渲染在 `GET .../thumbnail/<session>/<id>` 时做：该项没画就画并等它画完再回图（200）；**同一项并发取图只画一次**（项上的锁），画好的不重画；全进程同时在画的缩略图受 `MAX_PARALLEL = 2` 限（与旧模式同一上限，池的存活 worker 数有上限，再多会互相回收），先到先画，前端先取推荐那张。画不出（渲染失败 / 超时 / 缩略图取不到 / 被绊线拦下 / 指纹对不上）→ **422 `propose_thumbnail_failed`**，`params.reason` 是 `DROP_REASONS` 里的码，结果记在项上、不重画；唯一的重试：`candidate_render_failed`（池在内存吃紧时回收刚起的 worker 也落在这个码里，可能是瞬时的）自动再画一次。「渲染失败的备选不进列表」的保证在懒模式下落成两条：该项取图 422、**提交该项 404 `propose_candidate_unknown`**（失败的不许落盘）。列表顺序稳定（推荐标记永远在第一项），推荐落在失败项上时由前端把推荐挪给下一张可用的。模板不认的配方（`candidate_template_unsupported`）仍在 `dropped`，不进列表。
 
 **横轴列夹着少量文字格（2026-11-17）**：有序横轴与纵轴同一套规则——`numeric_like`（非数字占比 ≤ 20%、数值格 ≥ 3）的列也能进横轴候选（`_resolve_roles` 的 `xs`、`roles.options.x`）；用了就和 y 列一样进 `mixed_cells`（懒模式默认 `skip`，`answers.cells` 的 `extract` / `map` 同样生效），规则进配方并随脚本读表套用；被跳过的行计入 `unplotted`（取数字部分取出了数的行不算），统计在 `cells`。文字占多数的列仍不进横轴候选。没有混文字格的表输出逐字不变。
+
+## 修订（2026-11-17，用户决定）：图里不写脚注
+
+生成的图（缩略图与提交后的正式脚本）里**不写任何自动加的脚注**：没画的行（`day: 2 non-numeric cells ignored`）、汇总定义（`mean ± SD`、`bars: … error bars: …`）、画法规则（分箱 / 带宽 / 箱线须 / `dash-dot line: least-squares fit (descriptive)` / 整系列水平线）、样本数（`n = …`、`n per group in tick labels`）一概不进图。画法本身不变（拟合线照画、汇总层照画），图幅也不再为脚注留白——收尾只剩 `fig.tight_layout()`。这些信息改由响应字段（`unplotted`、`mixed_cells`、`cells`、`coverage`）给前端，界面右栏展示；各格 n 不同时 n 仍在刻度标签里（坐标轴文字，不是脚注）。
+
+实现：`ai_data_template._footer` 不再出说明；只给脚注用的运行时函数（`n_note` / `n_phrase` / `trend_point_counts` / `trend_series_counts`）从公共模块删掉，公共模块文件名哈希由 `3c540192` 变为 `86dcfebb`（`tests/test_ai_data_encodings.py::PINNED_RUNTIME_NAME` 同步）；`apply_cells` 的返回值不变（说明列表脚本里不再使用）。期望指纹只核数据、不含脚注，不变。已生成的老脚本带着自己的公共模块与脚注，不受影响。看护：`tests/test_ai_data_template.py::test_generated_scripts_write_no_footnote_of_any_kind` 与各形状用例的 `texts == []`。
 
 ## 文本表格：`.txt` / `.dat` / 嗅探 / 表头行覆盖 / 千分位（`ai_data_figure.read_text_table`）
 
