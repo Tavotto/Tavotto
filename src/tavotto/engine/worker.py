@@ -371,6 +371,7 @@ def _repair_incomplete_font_registry() -> bool:
 #: （safe 档不像 native 那样要分两阶段避开 matplotlib：这里 matplotlib 本来就先 import）。
 _ENGINE_MODULES = (
     "executionfact",
+    "inputdeclaration",
     "figcapture",
     "patchspec",
     "pathgeom",
@@ -412,6 +413,7 @@ scriptinput = _PKG.scriptinput
 # Windows 平台判断与 CREATE_NO_WINDOW 的唯一出处（只依赖标准库，装进私有包不拖闭包）
 runtime = _PKG.runtime
 executionfact = _PKG.executionfact
+inputdeclaration = _PKG.inputdeclaration
 # 写入根绊线（#898，ADR 0141）：只有命令行给了 `--write-roots`（MCP 来源）才装；纯标准库，不拖闭包
 writetripwire = _PKG.writetripwire
 
