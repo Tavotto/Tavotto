@@ -168,6 +168,9 @@ _HANDLE_PROPS = (
 #: （`_apply_rank` 的 0 / 1 / 2 / 3 档）。自动刻度的个数跟轴有多长、字有多大有关，所以只要其中一条留作重放，
 #: 靠「落笔那一刻的刻度」算出来的那几条（`_snapshots_ticks`）也留给重放，免得两边在不同的轴长上各算各的。
 _RESHAPES_AXES = ("size_mm", "frame", "position", "orientation", "extend")
+#: 值是 figure 分数、按落笔那一刻的几何换算成数据 / 轴坐标的几条（文字 / 标题 / 轴标签 / 图例拖动，箭头端点）：
+#: 几何键留作重放时它们也留给重放（`_translate` 的 `places_by_geometry`），否则重放再改几何，点就离开用户放的位置
+_PLACED_BY_FRACTION = ("pos_frac", "loc_frac", "endpoints_frac")
 _TICK_MODEL = (
     "major_mode",
     "major_step",
@@ -1817,6 +1820,23 @@ def _translate(
     def late(p: dict) -> bool:
         return _snapshots_ticks(p, patches) and (reshaped or _sized_at_draw(p["gid"], els))
 
+    def reshaped_for(gid: str) -> bool:
+        """留作重放的几何键会不会动到这个 gid 所在的子图：`position` 只动它自己的子图，别的（整页大小、图幅、
+        色条的方向 / 延伸会挤宿主轴）动全图。"""
+        m = re.match(r"(axes_\d+)(?:\.|$)", gid)
+        return any(
+            r["prop"] in _RESHAPES_AXES
+            and (r["prop"] != "position" or m is None or r["gid"] == m.group(1))
+            for r in residual
+        )
+
+    def places_by_geometry(p: dict) -> bool:
+        """figure 分数换算成别的坐标（数据坐标、轴分数）的语句：落笔那一刻的几何与热态里画完之后的几何不同时，
+        换算出来的点就落错。引擎里几何先于它们（`_apply_rank` 前几档）。"""
+        if p["prop"] not in _PLACED_BY_FRACTION:
+            return False
+        return reshaped_for(p["gid"]) or _sized_at_draw(p["gid"], els)
+
     # 图元自己的色阶（cmap / vmin / vmax）留作重放时，挂在它上面的色条跟着重画（`_draw_all` 重置色条轴的刻度定位、
     # 轴线与刻度样式）：写在那条色条轴上的修改（轴本身、刻度、色条自己的字段）也一起留下，重放时排在这次重画之后。
     # 色条自己的 cmap / vmin / vmax 留作重放不算（④ 的口径：色条轴上的照写）
@@ -1842,7 +1862,7 @@ def _translate(
     # 一条轴上的定位与格式是一整套：其中一条留下，这条轴的其余几条也留下（不然写进脚本的那一份缺了它）
     held = {p["gid"] for p, _s in steps if late(p) and p["prop"] != "text"}
     for p, stmt in list(steps):
-        if late(p) or (p["gid"] in held and p["prop"] in _TICK_MODEL):
+        if late(p) or places_by_geometry(p) or (p["gid"] in held and p["prop"] in _TICK_MODEL):
             steps.remove((p, stmt))
             residual.append(p)
     # 留作 override 的「广播」条目在重放时排在窄条目之前、会盖掉写进脚本的窄条目：

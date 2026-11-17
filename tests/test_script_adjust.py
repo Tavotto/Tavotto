@@ -1759,6 +1759,70 @@ def test_endpoints_of_a_text_annotation_stay_with_the_engine():
 
 
 @real_worker
+@pytest.mark.parametrize(
+    ("patches", "held"),
+    [
+        # 挪子图（`position` 留作重放）+ 拖数据坐标箭头的端点：端点按落笔时的子图换算，重放再挪子图箭头就离位
+        (
+            [
+                {"gid": "axes_0", "prop": "position", "value": [0.3, 0.35, 0.55, 0.5]},
+                {"gid": _ARR_ANN, "prop": "endpoints_frac", "value": [0.4, 0.6, 0.6, 0.4]},
+            ],
+            {"position", "endpoints_frac"},
+        ),
+        (
+            [
+                {"gid": _ARR_ALONE, "prop": "endpoints_frac", "value": [0.4, 0.6, 0.7, 0.35]},
+                {"gid": "axes_0", "prop": "position", "value": [0.3, 0.35, 0.55, 0.5]},
+            ],
+            {"position", "endpoints_frac"},
+        ),
+    ],
+    ids=["position-then-drag-arrow", "drag-arrow-then-position"],
+)
+def test_arrow_drag_follows_a_replayed_subplot_move(arrow_project, patches, held):
+    client, _figs = arrow_project
+    body = _export(client, patches, formats=[])
+    assert body["status"] == "done", body
+    report = _script_output(body)["script_report"]
+    assert {s["prop"] for s in report["skipped"]} == held
+
+
+@real_worker
+def test_title_drag_follows_a_replayed_subplot_move(project):
+    """既有版本的同一个问题：`pos_frac`（`_title_to`）也按落笔时的子图换算。"""
+    client, _figs = project
+    patches = [
+        {"gid": "axes_0", "prop": "position", "value": [0.3, 0.35, 0.55, 0.5]},
+        {"gid": "axes_0.title", "prop": "pos_frac", "value": [0.5, 0.2]},
+    ]
+    body = _export(client, patches, formats=[])
+    assert body["status"] == "done", body
+    assert {s["prop"] for s in _script_output(body)["script_report"]["skipped"]} == {
+        "position",
+        "pos_frac",
+    }
+
+
+def test_subplot_move_does_not_hold_back_a_drag_on_another_subplot():
+    """`position` 只动它自己的子图：别的子图上的拖动照写（单元：只看 `build` 的分流）。"""
+    man = {
+        "elements": [
+            {"gid": "axes_0", "role": "axes", "editable": []},
+            {
+                "gid": "axes_1.title",
+                "role": "title",
+                "editable": [],
+            },
+        ]
+    }
+    move = {"gid": "axes_0", "prop": "position", "value": [0.3, 0.3, 0.5, 0.5]}
+    drag = {"gid": "axes_1.title", "prop": "pos_frac", "value": [0.5, 0.2]}
+    out = scriptadjust.build(b"import os\n", "Fig1", [move, drag], man, version="9.9")
+    assert out.written == 1 and [p["prop"] for p in out.residual] == ["position"]
+
+
+@real_worker
 def test_arrow_endpoints_replay_identically(tmp_path):
     """`endpoints_frac` 不在 manifest 的可编辑字段里（端点另发 `arrow_endpoints`），扫描采不到：
     这里按 manifest 的端点逐根箭头挪一遍（注释箭头改的是注释的锚点、独立箭头 `set_positions`），
