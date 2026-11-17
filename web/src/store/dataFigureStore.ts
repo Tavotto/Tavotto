@@ -153,6 +153,8 @@ interface DataFigureStore {
   /** 首页左卡进项目之后：开「数据」抽屉；只有一个可读文件就直接开它的临时标签 */
   enter: () => void
   loadFiles: () => Promise<void>
+  /** 项目刷新 / 磁盘变化时：清单读过就重读（外部加了数据文件，入口要能出现）；没读过（开关关着）什么都不做 */
+  invalidateFiles: () => void
   /** 点一个数据文件：开（或复用）临时标签，读表并出候选 */
   select: (ref: TableRef) => void
   /** 关临时标签（出图中只是收起，画完照样打开） */
@@ -340,14 +342,19 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   }
 
   /** 点文件 / 改表头行之后：读表 → 判断（读不了 / 全是文字 / 要点表头行）→ 出候选 */
-  async function run(): Promise<void> {
+  /**
+   * 读表 → 判断 → 出候选。`keepChoices`：重试当前临时标签（出候选失败 / 全部缩略图画不出之后）——保留用户在右栏改过的东西
+   * （`answers` / 列角色 / 非数字格的处理），别回到后端默认；新选一张表 / 改表头行才清。
+   */
+  async function run(opts: { keepChoices?: boolean } = {}): Promise<void> {
     const sel = get().selected
     if (!sel) return
     const seq = { current: () => runSeq }
     runSeq += 1
     proposeSeq += 1
     const { pj, still } = capture(seq)
-    set({ ...idleDraft, answers: {}, phase: 'reading' })
+    const kept = opts.keepChoices ? { answers: get().answers, mixed: get().mixed, roles: get().roles } : { answers: {} as Record<string, unknown> }
+    set({ ...idleDraft, ...kept, phase: 'reading' })
     // 清单里已经说「读不了」（没有可看的原文）：不发请求
     const entries = get().files.status === 'idle' ? null : (get().files as { entries: AiDataFileEntry[] | null }).entries
     const row = entries ? fileRows(entries).flatMap((r) => r.rows).find((r) => sameTable(r.ref, sel)) : undefined
@@ -513,6 +520,10 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       }
     },
 
+    invalidateFiles: () => {
+      if (get().files.status !== 'idle') void get().loadFiles()
+    },
+
     select: (ref) => {
       // 出图中：画完再换，别让在飞的提交没人认领；标签被收起了就翻出来给他看进度
       if (get().drawingId) {
@@ -595,7 +606,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         }
       }
       set({ problem: null })
-      await run()
+      await run({ keepChoices: true })
     },
 
     dismissProblem: () => set({ problem: null }),
