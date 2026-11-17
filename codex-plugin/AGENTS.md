@@ -40,7 +40,7 @@ ADR，再动手。看护用例在细则头部。下表是生成的：改细则�
 | `tavotto_mcp/sessionjournal.py`、`_restore_session` | 会话跨进程恢复 → `session-journal.md` | 记录不能自证权限、越界拒在渲染之前；明确释放的不复活（草稿只经 open 带回）；落盘失败不让工具调用失败 |
 | `integrations/configure.py`、`HOSTS` 表、`RELOAD_HINT` / `RESTART_HOST`、`.claude-plugin/plugin.json` 与仓库根 `.claude-plugin/marketplace.json`、`package.json` 与 `dsh/`（DSH bundle） | 非 Codex 宿主 → `non-codex-hosts.md` | 同一份包 / 启动器 / Skill；不写任何文件；授权只来自 `--project-root`；不放别家自动读的 MCP 配置 |
 | `bridge.export`、`_inspection_summary`、导出前预检 | 导出：先预检与产物核验 → `export-preflight-and-inspection.md` | 有 error 或 `not_verifiable` 且没确认就一张不出；与 HTTP 导出同一份检查器接线；「未核验」永远不是「已核验」 |
-| `tavotto_mcp/` 的分层、`rpc.hijack_stdout()`、`RootAuthority` / `roots.WORKSPACE_FAILURES` | MCP server：只翻译、stdout、路径范围 → `server-core-and-roots.md` | 只翻译不实现；先存 `_REAL_STDOUT` 再改道；授权失败分档、「没弹框」绝不报成用户拒绝；越界一律拒 |
+| `tavotto_mcp/` 的分层、`rpc.hijack_stdout()`、`RootAuthority` / `roots.WORKSPACE_FAILURES` | MCP server：只翻译、stdout、路径范围 → `server-core-and-roots.md` | 只翻译不实现；先存 `_REAL_STDOUT` 再改道；授权失败分档、「没弹框」绝不报成用户拒绝；越界一律拒；失败回包的 `next` 只在 `nextstep.py` 集中映射 |
 | `_bridge_error_from_worker`、`workdir=` / `prepare_dependencies=` / `argv=` / `adopt_environment=` 参数、`requirements` | 首开的「需要输入」与跑前依赖准备 → `first-open-questions.md` | 与桌面 / HTTP 是同一份决定；不替用户猜、不替用户授权；批量 open 不接受准备参数；新模块只经 `_optional_engine` |
 | `stems` / `discover_stems`、`_safe_preflight()`、`_live_session_for()`、`Session.acquire()` | 批量打开与会话账本 → `sessions-and-batch-open.md` | 一张失败不回滚整批、「没尝试」是第三个桶；open 之后每一步都不许把已登记会话带走；渲染成功后才登记 |
 | `web/src/lib/engineTransport.ts`、`mcp/widget/canvas.html`、`scripts/build_mcp_widget.py`、画布 CSP | 内嵌画布 → `embedded-canvas.md` | 画布 = Tavotto 前端同一份代码、唯一改动是 `engineTransport` 的可选覆盖；产物不进 git；不用「开浏览器」冒充 |
