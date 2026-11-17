@@ -14398,11 +14398,19 @@ def api_journal_facts_snapshot():
     ):
         return _journal_facts_error(engine_journalfacts_remote.FactsError("bad_request"))
     try:
-        path = engine_journalfacts_remote.snapshot(jid, file, ui_locale=locale)
+        engine_journalfacts_remote.snapshot(jid, file, ui_locale=locale)
     except engine_journalfacts_remote.FactsError as exc:
         return _journal_facts_error(exc)
     digest = file[len("snapshots/") : -len(".webp")]
-    resp = send_file(path, mimetype="image/webp", max_age=31536000, etag=digest)
+    # `file` 已被 `snapshot()` 按 `snapshots/<sha256>.webp` 全匹配并核过哈希；这里仍经 `send_from_directory`
+    # （safe_join）取，让「只能落在缓存目录里」由一处公共原语保证，而不是靠上游校验。
+    resp = send_from_directory(
+        engine_journalfacts_remote.cache_dir(),
+        file,
+        mimetype="image/webp",
+        max_age=31536000,
+        etag=digest,
+    )
     resp.headers["Cache-Control"] = "private, max-age=31536000, immutable"
     return resp
 
