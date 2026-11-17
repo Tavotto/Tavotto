@@ -58,14 +58,14 @@ v1（ADR 0138 Phase 5）只读**一个 CSV**，只会折线 / 柱两种图，列
 脚本不改 `sys.path`：safe worker 与 native bridge 都把脚本目录放在 `sys.path[0]`。静态扫描（`discover` / `projscan`）不会把公共模块当成一张图（没有存图调用、没有 `main`），
 前缀 `tavotto_plot_` 在 `discover.SKIP_PREFIXES` 里（与 `paper_style` 同类）：脚本清单把它标成 `infrastructure`，不当成「没出图的脚本」。
 期望指纹只对父进程**能逐字节算准**、并且验证器**能按 label 匹配**的层声明：散点、Line2D、柱组可核；误差线、误差带、箱、小提琴不核（manifest 里没有 label 字段 / 由 matplotlib 拼成），
-`fingerprint_coverage` 如实列出，没有可核层就报告「这张图的数据没法核」，绝不折算成 verified。图上的诚实：汇总层必有定义与 n 的说明（`mean ± SD; n = 12`，各格 n 不同则 n 写进刻度标签），
+`fingerprint_coverage` 如实列出，没有可核层就报告「这张图的数据没法核」，绝不折算成 verified。图上的诚实：不画星号与 P 值；**图里不写任何脚注**（见下「图里不写脚注」；各格 n 不同时 n 仍写在刻度标签里，那是坐标轴文字），
 柱的轴含 0，不画星号与 P 值，抖动是确定性的。样式数字来自出版规范 profile，分类色用公开的 Okabe–Ito 色盲安全色板。
 
 ### relationship 与 distribution（批次 1 的后两族）
 
 四个批次 1 的族现在都有模板。**规则各只有一份文字定义 + 一份实现**（公共模块里的纯 Python 函数，父进程与脚本同源）：直方图分箱 = Freedman–Diaconis（箱宽 `2 × IQR × n^(-1/3)`，箱数 1–50，IQR 为 0 退到 Sturges，各组共用同一组箱边）；
 密度带宽 = Scott（`SD × n^(-1/5)`，网格取数据范围两侧各 3 个带宽）；ECDF = 排序后的逐点阶梯；拟合线 = 最小二乘直线，**在画出来的坐标里拟合**（对数轴那一维先取 log10；只有一维是对数时图上是曲线，取 50 个点）。
-这些规则名写在图下方说明里（`bins: Freedman-Diaconis rule …`、`density: Gaussian kernel, Scott bandwidth`、`dashed line: least-squares fit (descriptive)`），不报显著性、不放 R²。
+这些规则只在这里与代码里是一份定义，**不再写进图**（2026-11-17 起，见「图里不写脚注」）；不报显著性、不放 R²。
 distribution 有两种形态：值在横轴（hist / ecdf / density，不带类别 x、按颜色分组）与值在纵轴（box / violin / jitter / points，类别 x 可选）；两类不能叠在同一张图，ECDF 不与直方图 / 密度叠（纵轴含义不同），
 值在横轴的图元不用对数轴——这些组合由 `validate_recipe` 拒绝（`mark_not_allowed`），模板对同样的组合抛 `TemplateError`。可核：hist 的柱高、density 曲线、ecdf 阶梯、散点、拟合线；不核：box、violin（同 comparison）。
 
@@ -106,6 +106,22 @@ worker 以项目里的显示路径为 `__file__`），这里不能照搬——�
 id 是服务端登记的不透明串）、`POST /api/ai/data-figure/commit`（`{session, id, client_request_id?}`）、`POST /api/ai/data-figure/discard`（放弃会话，幂等）；`/api/ai/data-files` 扩到
 `.csv / .tsv / .tab / .xlsx`，XLSX 带 `sheets: [{name, hidden}]`。旧的 `POST /api/ai/data-figure`（v1）不变。遥测不新增事件（本 PR 不改 `CONSENT_VERSION`）。
 
+## 修订（2026-11-16）：文字先到的懒渲染、不再提问（`propose(render="lazy")` / `ensure_thumbnail`）
+
+前端改成「点一个数据文件，立刻出现候选画法的名字和说明，缩略图一张张补上；不再有选择题和弹窗，一律先按默认画出来，右侧面板显示横轴 / 纵轴 / 分组用了哪一列并允许改」。上面那条流水的**判据一字不动**（配方校验、模板出码、指纹对拍、候选目录隔离、写入根绊线、提交只新建），只换了「什么时候画」与「问题怎么处理」；旧请求（不带 `render`）行为与响应逐字不变。
+
+* **请求** `POST /api/ai/data-figure/propose` 增加可选 `render: "lazy"`（别的值 400 `propose_input_invalid`）。懒模式**永不返回 `ask`**：选表 = 发现遍历的第一张；列角色的问题用各自的「不确定」默认（y = 最后一个数值列、横轴 / 分组 / 重复测量同前）；夹着文字格的数值列 = 不画那几行（`skip`）；表头行 = 读表猜的那一行。每个替用户做的决定都写进响应：`defaults: [{question_code, answer?}]`、`mixed_cells: [{column, non_numeric, rows, mode:"skip"}]`、`header_row`（文本表；XLSX 为 null）、`table` / `sheet`。用户在面板上改了就重新出：列角色用**既有的** `answers.y / x / group`（列名；新增值 `none` = 不要有序横轴 / 不要分组）、文字格用既有的 `answers.cells`、表头行用既有的 `header_rows`——没有另造一套参数。`render` 进幂等摘要。
+* **响应的 `roles`**（懒模式在 `candidates` 与 `nothing` 里都有）：`{x, y: [..], group, facet, unit, options: {x: [..], y: [..], group: [..]}}`，`options` 是每个角色此刻可换成的列，供下拉。列角色只有一处定义（`_resolve_roles`），`options` 由它出，不在 propose 里另算。
+* **缩略图懒渲染**：懒模式只写脚本与公共模块（毫秒级），不渲染；每项 `thumbnail_status: "pending"`（旧模式一律 `"ready"`）。渲染在 `GET .../thumbnail/<session>/<id>` 时做：该项没画就画并等它画完再回图（200）；**同一项并发取图只画一次**（项上的锁），画好的不重画；全进程同时在画的缩略图受 `MAX_PARALLEL = 2` 限（与旧模式同一上限，池的存活 worker 数有上限，再多会互相回收），先到先画，前端先取推荐那张。画不出（渲染失败 / 超时 / 缩略图取不到 / 被绊线拦下 / 指纹对不上）→ **422 `propose_thumbnail_failed`**，`params.reason` 是 `DROP_REASONS` 里的码，结果记在项上、不重画；唯一的重试：`candidate_render_failed`（池在内存吃紧时回收刚起的 worker 也落在这个码里，可能是瞬时的）自动再画一次。「渲染失败的备选不进列表」的保证在懒模式下落成两条：该项取图 422、**提交该项 404 `propose_candidate_unknown`**（失败的不许落盘）。列表顺序稳定（推荐标记永远在第一项），推荐落在失败项上时由前端把推荐挪给下一张可用的。模板不认的配方（`candidate_template_unsupported`）仍在 `dropped`，不进列表。
+
+**横轴列夹着少量文字格（2026-11-17）**：有序横轴与纵轴同一套规则——`numeric_like`（非数字占比 ≤ 20%、数值格 ≥ 3）的列也能进横轴候选（`_resolve_roles` 的 `xs`、`roles.options.x`）；用了就和 y 列一样进 `mixed_cells`（懒模式默认 `skip`，`answers.cells` 的 `extract` / `map` 同样生效），规则进配方并随脚本读表套用；被跳过的行计入 `unplotted`（取数字部分取出了数的行不算），统计在 `cells`。文字占多数的列仍不进横轴候选。没有混文字格的表输出逐字不变。
+
+## 修订（2026-11-17，用户决定）：图里不写脚注
+
+生成的图（缩略图与提交后的正式脚本）里**不写任何自动加的脚注**：没画的行（`day: 2 non-numeric cells ignored`）、汇总定义（`mean ± SD`、`bars: … error bars: …`）、画法规则（分箱 / 带宽 / 箱线须 / `dash-dot line: least-squares fit (descriptive)` / 整系列水平线）、样本数（`n = …`、`n per group in tick labels`）一概不进图。画法本身不变（拟合线照画、汇总层照画），图幅也不再为脚注留白——收尾只剩 `fig.tight_layout()`。这些信息改由响应字段（`unplotted`、`mixed_cells`、`cells`、`coverage`）给前端，界面右栏展示；各格 n 不同时 n 仍在刻度标签里（坐标轴文字，不是脚注）。
+
+实现：`ai_data_template._footer` 不再出说明；只给脚注用的运行时函数（`n_note` / `n_phrase` / `trend_point_counts` / `trend_series_counts`）从公共模块删掉，公共模块文件名哈希由 `3c540192` 变为 `86dcfebb`（`tests/test_ai_data_encodings.py::PINNED_RUNTIME_NAME` 同步）；`apply_cells` 的返回值不变（说明列表脚本里不再使用）。期望指纹只核数据、不含脚注，不变。已生成的老脚本带着自己的公共模块与脚注，不受影响。看护：`tests/test_ai_data_template.py::test_generated_scripts_write_no_footnote_of_any_kind` 与各形状用例的 `texts == []`。
+
 ## 文本表格：`.txt` / `.dat` / 嗅探 / 表头行覆盖 / 千分位（`ai_data_figure.read_text_table`）
 
 第一版只做文本格式（`.mat` / `.npy` / HDF5 等二进制以后再说；`.xlsx` 读法不动）。整件事在 `ai.taf.enabled` 后面；v1（`inspect_data_source` 默认分支、v1 模板的 `_cell`）**逐字不变**——新读法只在 `v2=True` 时启用。
@@ -113,6 +129,8 @@ id 是服务端登记的不透明串）、`POST /api/ai/data-figure/commit`（`{
 **读法 = `(分隔符, 表头物理行号)`，只有一份解析实现。** 分隔符 `,` / `\t` / `;` / `ws`（连续空白）；行号是 1 起的**物理行**（与给用户看的原文预览同一口径，说明行与空行都占号）。解析（`delimited_records` / `resolve_header` / `table_from_text`）是运行时函数：父进程算摘要与期望指纹、生成的脚本里的 `read_delimited(DATA, 分隔符[, 表头行])` 调用**同一份源码**（`inspect.getsource` 进公共模块）；嗅探（`_detect`）只在父进程，读法以字面量写进脚本，脚本不嗅探。干净的 CSV / TSV 读法仍是 `read_delimited(DATA, ',')`，与此前生成的脚本逐字相同（公共模块多了函数，哈希随之换名，新旧并存）。表头行显式时：它之前的行不读；表头首格的 `#` 标记去掉；`ws` 切出的列数对不上数据时改按「两个以上空白」切（`Time (s)   Voltage (V)`）；表头之后以 `#` 开头**且列数与表头不同**的行是注释、丢掉（列数相同的 `#` 行是数据）。
 
 **嗅探规则**：`.csv` / `.tsv` / `.tab` 先只试自己的分隔符（干净老文件不变），读不成才试别的（分号 CSV）；`.txt` / `.dat` / `.asc` 四种都试。数据块 = 文件末尾连续列数一致（≥ 2 列、≥ 2 条记录）的一段；块大者胜，相同则「像数」的格子占比高者胜（欧式小数 `1,5` 也算像数，仅用于挑分隔符），再相同按 制表 / 分号 / 逗号 / 空白。`.txt` 等必须有数值列（README、清单不是表）。嗅探只看开头 256 KiB（解码后的文本）；编码判定看整份文件；整份文件仍按 `MAX_BYTES`（5 MiB）/ `MAX_ROWS` / `MAX_COLUMNS` 读。表头：块里第一条「数值列有数」的记录之前的记录是候选；1 条 = 认得准，≥ 2 条（标题 + 列名、列名 + 单位）= 猜第一条像名字的、没认准；0 条时看块外紧挨着的 `#` 行或带空格的列名行，都没有 = 没有表头、猜第一行、没认准。猜的表头读出来列名为空 / 重复也是「没认准」（不是读不了），用户点另一行即可。
+
+**表头选择与单位行（2026-11-17 修订）**。表头候选 ≥ 2 条时，取**最后一条**像名字的（紧挨单位行 / 数据），不再取第一条——仪器导出常有等宽的说明行（`operator: lab`）排在列名前面。表头记录的**下一条**若正好是第一条数据行之前的最后一条、且整行都是裸写的单位（`nm  a.u.`，`UNITS` 键或 `_UNITS_ROW_EXTRA`，没有一格像数、不带括号）就是**单位行**：读表时切掉，既不当数据也不当第二个表头。括号包着的（`(a) (b)`）仍交给用户在两行里点，不自动切。读法多一项 `units_row`（`TextLayout.units` → `DataSummary.units_row` → 脚本里 `read_delimited(DATA, 'ws', 3, True)`）：**只在读的就是嗅探认出的那一行表头时才切**（用户用 `header_rows` 另指一行 = 读法由他定，不切）；没有单位行的文件，读法与生成的脚本逐字不变。切掉后数据行的物理行号不变、被切的行不计入非数字格。`table_from_text` / `read_delimited` 是内嵌进公共模块的运行时函数，加参数使公共模块文件名哈希由 `1d525a3a` 变为 `3c540192`（`tests/test_ai_data_encodings.py::PINNED_RUNTIME_NAME` 同步）；已生成的老脚本带着自己的公共模块副本，不受影响。单位文字暂不用于标注坐标轴。
 
 **畸形行规则**（表头定下之后，数据区里列数不符的行一律拒绝，`data_ragged`，不丢表头和前面的观测、不把后缀当成新表）：数据块 = 文件末尾连续等宽的一段；块**之前**还有等宽的非注释记录就说明块不是整张表（第一行数据 / 中间 / 开头有一行畸形），整份文件报 `data_ragged`；块之前只有列数不同的行 = 仪器导出的说明行，正常。**尾部**：空行忽略、`#` 开头的行忽略（注释 / footer）；其它列数不符的尾行（如 `Total rows 3`）一律算畸形，不静默丢弃——分不清 footer 与坏行，宁可让用户看见。带引号的字段按 `csv` 规则算一个格子，引号里的逗号不是列。畸形文件的 `table` 仍是 `unreadable` + `data_ragged`，但带 `header_row`（猜的表头行）与 `preview`，用户点对表头行后按 `header_rows` 读；指定行**之后**的畸形行同样拒绝，指定行之前的说明行不管列数。已知代价：与表头等宽、但被列数不同的行隔开的说明行（如 `Temperature,25` 后面隔着一行三列说明再接表）会被当成畸形，要用户指定表头行。
 

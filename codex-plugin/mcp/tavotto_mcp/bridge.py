@@ -156,7 +156,9 @@ OPTIONAL_ENGINE_MODULES = (
     "execspec",
     "fixtools.readscope",
     "journalremote",
+    "journalfacts_remote",
     "journals",
+    "nativefallback",
     "runconfig",
     "scriptargs",
     "specfix",
@@ -204,6 +206,115 @@ def _remember_mcp_client_name(client_info) -> None:
     if isinstance(name, str):
         slug = _AGENT_HOST_RE.sub("-", name.strip().lower()).strip("-")[:31].strip("-")
         _MCP_CLIENT_NAME = slug or None
+
+
+def journal_facts_enabled() -> bool:
+    """v2 facts require the journal switch and a compatible engine; older engines stay usable."""
+    module = _optional_engine("journalfacts_remote")
+    return (
+        journal_catalog_enabled()
+        and module is not None
+        and callable(getattr(module, "search", None))
+        and callable(getattr(module, "get_facts", None))
+        and isinstance(getattr(module, "FactsError", None), type)
+    )
+
+
+def journal_facts(
+    query: str,
+    journal_id: str | None,
+    offset: int,
+    limit: int,
+    expected_catalog_rev: int | None = None,
+    inspection: dict | None = None,
+) -> dict:
+    """Only translates the engine's read-only v2 facts; never produces a v1 override."""
+    if not journal_catalog_enabled():
+        raise BridgeError("期刊目录入口当前不可用。", code="journal_catalog_disabled")
+    if not journal_facts_enabled():
+        raise BridgeError(
+            "当前引擎还不能读取期刊事实，请升级 Tavotto。", code="engine_capability_missing"
+        )
+    module = _optional_engine("journalfacts_remote")
+    _journal_remote()  # report agent client type through the existing shared channel
+    try:
+        method = module.get_facts if journal_id is not None else module.search
+        options = {"offset": offset, "limit": limit}
+        if expected_catalog_rev is not None:
+            if "expected_catalog_rev" not in inspect.signature(method).parameters:
+                raise BridgeError(
+                    "当前引擎不支持安全分页，请升级 Tavotto。", code="engine_capability_missing"
+                )
+            options["expected_catalog_rev"] = expected_catalog_rev
+        if inspection is not None:
+            inspector = getattr(module, "inspect_facts_page", None)
+            if journal_id is None or not callable(inspector):
+                raise BridgeError(
+                    "当前引擎不能检查这组来源事实，请升级 Tavotto。",
+                    code="engine_capability_missing",
+                )
+            # Validate user selection before any network request.
+            inspector({"facts": []}, inspection)
+        result = method(journal_id if journal_id is not None else query, **options)
+        return inspector(result, inspection) if inspection is not None else result
+    except module.FactsError as exc:
+        if exc.code == "result_too_large" and inspection is not None:
+            raise BridgeError(
+                "期刊事实单条记录超出安全大小，当前无法通过查看入口读取。",
+                code="journal_facts_page_too_large",
+            ) from exc
+        if exc.code in ("quota_hour", "quota_day", "ip_day", "ip_tokens"):
+            raise BridgeError(
+                "期刊目录下载额度已用完，请稍后再试；不要更换设备令牌绕过额度。",
+                code="journal_quota_exceeded",
+                retry_after_s=exc.retry_after_s,
+            ) from exc
+        if exc.code in ("offline", "disabled", "network", "server_error"):
+            raise BridgeError(
+                "v2 期刊事实当前不可用；已有 v1 规范不能冒充 v2 事实。",
+                code="journal_offline",
+                sync_state=getattr(exc, "sync_state", None),
+                sync_code=getattr(exc, "sync_code", None),
+            ) from exc
+        if exc.code in (
+            "index_invalid",
+            "signature_invalid",
+            "key_unknown",
+            "rev_rollback",
+            "index_conflict",
+            "bundle_invalid",
+            "cache_invalid",
+            "invalid_json",
+        ):
+            raise BridgeError(
+                "期刊事实未通过签名或完整性校验，不能使用。",
+                code="journal_verification_failed",
+                sync_state=getattr(exc, "sync_state", None),
+                sync_code=getattr(exc, "sync_code", None),
+            ) from exc
+        if exc.code == "catalog_changed":
+            raise BridgeError(
+                "期刊目录版本与上一页不一致，请从第一页重新读取。",
+                code="journal_catalog_changed",
+                expected_catalog_rev=exc.expected_catalog_rev,
+                current_catalog_rev=exc.current_catalog_rev,
+            ) from exc
+        if exc.code == "unknown_journal":
+            raise BridgeError("期刊事实目录中没有这本刊。", code="journal_unknown") from exc
+        if exc.code == "bad_request":
+            raise BridgeError("查询、期刊 ID 或分页参数不正确。", code="bad_request") from exc
+        raise BridgeError(
+            "期刊事实暂不可用；请稍后重试。", code="journal_facts_unavailable"
+        ) from exc
+
+
+def journal_facts_inspection_budget() -> int:
+    """Use the v2 client's page budget; don't guess for an older engine."""
+    module = _optional_engine("journalfacts_remote")
+    budget = getattr(module, "MAX_PAGE_BYTES", None)
+    if type(budget) is not int or budget <= 0:
+        raise BridgeError("当前引擎不支持安全的期刊事实查看。", code="engine_capability_missing")
+    return budget
 
 
 def _journal_remote():
@@ -277,6 +388,21 @@ def _journal_module():
             code="journal_catalog_disabled",
         )
     return journals
+
+
+def _profile_stamp(profile: dict) -> dict:
+    """Use the engine stamp, correcting the exact legacy label even with an older engine.
+
+    The copy avoids mutating engine-owned state. The vectors shared with both
+    profile implementations guard the compatibility mapping.
+    """
+    stamp = dict(engine_profiles.stamp(profile))
+    if (
+        stamp.get("profile_id") == "journal-base-v1"
+        and stamp.get("label") == "期刊底（期刊未规定的项一律不判）"
+    ):
+        stamp["label"] = "期刊检查基础"
+    return stamp
 
 
 def journal_selection(
@@ -1000,6 +1126,9 @@ class Session:
     #: 最近一次导出出了文件时那一版的 `patch_hash`；None = 还没导出过。关会话时据此说出
     #: 「改过还没导出」——修改只活在会话里，关掉就没了（评测里 agent 改好就关、文件没出）。
     exported_hash: str | None = None
+    #: safe 被自身守卫拦下后换成的 native 活图（`nativefallback.NativeWorker`，ADR 0127 修订 2026-11-17）；
+    #: None = 这条会话走 safe 池。不落盘：进程换了之后恢复时 `_render` 会按同一条证据重新回退。
+    native: object | None = None
 
     def patch_hash(self) -> str:
         return patchspec.patch_hash(self.patches)
@@ -1013,7 +1142,17 @@ class Session:
         「开着」——用户看到的是「会话明明还在，一 apply 就说 worker 死了」，
         而且没有任何办法恢复。`pool.get()` 本来就负责「死了就重建」，
         每次问它一遍即可，代价是一次字典查找。
+
+        回退到 native 的会话（`self.native`）**不进池**：真实 Python 进程停在屏障上，就是这张图本身；
+        进程已经不在了（脚本被结束、崩溃）就如实说，不悄悄换回 safe（那会又被同一个守卫拦下）。
         """
+        if self.native is not None:
+            if self.native.alive():
+                return self.native
+            raise BridgeError(
+                "这张图改用真实 Python 运行的那个进程已经结束了，请重新调 tavotto_open_figure 打开它",
+                code=NATIVE_SESSION_ENDED,
+            )
         try:
             return _spawn_worker(self, one_shot=False)
         except engine_pool.WorkerError as exc:
@@ -1022,6 +1161,60 @@ class Session:
     @property
     def run_config_id(self) -> str | None:
         return getattr(self.run, "config_id", None)
+
+
+#: 回退到 native 的会话，真实 Python 进程已经不在
+NATIVE_SESSION_ENDED = "native_session_ended"
+#: native 会话做不了的事（冷重放 = 再起一个真实进程，不在 MCP 里静默做）
+NATIVE_UNSUPPORTED = "native_session_unsupported"
+#: safe 守卫拦下的终局码（`pool.FILE_OPERATION_BLOCKED_CODE` 的镜像）
+FILE_OPERATION_BLOCKED = "safe_file_operation_blocked"
+
+
+def _end_native(session: "Session") -> None:
+    """关掉 / 淘汰 / 退出时收掉这条会话的 native 进程（放行到脚本跑完，放不了就终止）。"""
+    native, session.native = session.native, None
+    if native is not None:
+        try:
+            native.end()
+        except Exception as exc:  # noqa: BLE001 — 收尾不许连累关闭
+            sys.stderr.write(f"tavotto-mcp: 结束会话 {session.id} 的真实 Python 进程失败：{exc}\n")
+
+
+def _native_fallback(session: "Session", worker, exc) -> object | None:
+    """safe 以 `safe_file_operation_blocked` 收场：按 ADR 0127 修订 2026-11-17 换 native 一次。
+
+    返回 `NativeWorker`（已停在屏障上、build 过）；判定不许回退返回 None，并把理由记进 `exc.extra`。
+    起进程失败抛 `engine_pool.WorkerError`（native 自己的真实错误，不回 safe）。"""
+    fallback = _optional_engine("nativefallback")
+    if fallback is None or getattr(exc, "code", None) != FILE_OPERATION_BLOCKED:
+        return None
+    python = str(getattr(worker, "python", "") or "")
+    verdict = fallback.decide(session.project, exc.code, python=python)
+    if not verdict.ok:
+        exc.extra["native_fallback_declined"] = verdict.reason
+        return None
+    _recheck_run(session.run, session.project, session.script)
+    return fallback.launch(
+        session.project,
+        session.script,
+        session.stem,
+        python=python,
+        run=session.run,
+        heavy=session.cost == "heavy",
+    )
+
+
+def _execution_fields(session: "Session") -> dict:
+    """回包里如实说这条会话是怎么跑的：只有回退到 native 才带（safe 是默认，不多加字段）。"""
+    if session.native is None:
+        return {}
+    fallback = _optional_engine("nativefallback")
+    return {
+        "execution": "native",
+        "fallback": {"from": "safe", "reason": FILE_OPERATION_BLOCKED},
+        "execution_note": getattr(fallback, "NOTE", ""),
+    }
 
 
 def _spawn_worker(session: "Session", *, one_shot: bool):
@@ -1625,6 +1818,8 @@ def get_session(session_id: str) -> Session:
     ):
         _SESSIONS.pop(session_id, None)
         s.apply_receipt = None
+        # 摘出账本后 close / shutdown 都看不到它了：native 进程要在这里一并收掉
+        _end_native(s)
         raise BridgeError(
             f"会话 {session_id} 的项目已不在当前工作区根内，请重新打开。",
             code="workspace_root_changed",
@@ -1693,6 +1888,8 @@ def close_session(session_id: str) -> dict:
             "note": f"会话 {session_id} 已经不在了（重复关闭不算错）",
         }
     s.apply_receipt = None
+    # native 活图归这条会话独占：关会话 = 放行脚本跑完（或终止），不留进程
+    _end_native(s)
     # worker 归 pool 管（同一个脚本可能还有别的用户）：这里只丢引用与会话账本。
     # 用户的项目数据一个字节都不动。
     out = {
@@ -1719,6 +1916,7 @@ def _evict_if_needed() -> list[str]:
         oldest = min(_SESSIONS.values(), key=lambda s: s.last_used)
         _SESSIONS.pop(oldest.id, None)
         oldest.apply_receipt = None
+        _end_native(oldest)
         # 淘汰也是明确的释放（open 的文字里会点名）：不许在下一次调用里悄悄复活
         _forget(oldest.id)
         evicted.append(oldest.id)
@@ -1748,6 +1946,7 @@ def _live_session_for(project: str, stem: str, run_config: str | None = None) ->
         and s.stem == stem
         and s.run_config_id == run_config
         and not s.patches
+        and (s.native is None or s.native.alive())
     ]
     return max(live, key=lambda s: s.last_used) if live else None
 
@@ -1774,6 +1973,7 @@ def shutdown_all() -> None:
     """进程退出前收摊：会话账本清空 + 关掉 worker 子进程（不留孤儿）。"""
     for session in _SESSIONS.values():
         session.apply_receipt = None
+        _end_native(session)
     _SESSIONS.clear()
     try:
         engine_pool.shutdown_all(wait=True)
@@ -1996,7 +2196,7 @@ def open_figure(
             "dynamic_names": reg_info.get("dynamic_names", []),
             "stems": _all_stems(registry),
         },
-        "profile": engine_profiles.stamp(profile),
+        "profile": _profile_stamp(profile),
         **render,
     }
     if profile.get("journal_ref"):
@@ -2449,13 +2649,27 @@ def refresh_project(
 def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict:
     worker = session.acquire()
     try:
-        resp = worker.override(session.stem, patches, preview_dpi, inline_svg=True)
+        try:
+            resp = worker.override(session.stem, patches, preview_dpi, inline_svg=True)
+        except engine_pool.WorkerError as exc:
+            # safe 被自身守卫拦下（savefig 后又读回）：换真实 Python 跑一次（ADR 0127 修订 2026-11-17）
+            native = None if session.native is not None else _native_fallback(session, worker, exc)
+            if native is None:
+                raise
+            session.native = worker = native
+            try:
+                resp = worker.override(session.stem, patches, preview_dpi, inline_svg=True)
+            except engine_pool.WorkerError:
+                _end_native(session)
+                raise
     except engine_pool.WorkerError as exc:
         # build 期间的「需要输入」（缺参数 / 运行中要输入 / 缺包）在这里冒出来：与跑前的门同一份结构化投影（T10）
         err = _bridge_error_from_worker(
             exc, project=session.project, script=session.script, default_code="render_failed"
         )
         err.extra.setdefault("module", getattr(exc, "module", ""))
+        if "native_fallback_declined" in exc.extra:
+            err.extra["native_fallback_declined"] = exc.extra["native_fallback_declined"]
         raise err from exc
     session.patches = list(patches)
     session.manifest = resp["manifest"]
@@ -2479,6 +2693,7 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
         "render_revision": session.rev,
         "warnings": session.warnings,
         "timings": resp.get("timings", {}),
+        **_execution_fields(session),
     }
     if session.preview is not None:
         out["preview"] = session.preview
@@ -2664,7 +2879,7 @@ def session_state(session_id: str) -> dict:
         "script": session.script,
         "entry": session.entry,
         "cost": session.cost,
-        "profile": engine_profiles.stamp(session.profile),
+        "profile": _profile_stamp(session.profile),
         "patches": list(session.patches),
         "patch_hash": session.patch_hash(),
         "render_revision": session.rev,
@@ -2672,6 +2887,7 @@ def session_state(session_id: str) -> dict:
         "svg": session.svg,
         "warnings": list(session.warnings),
         "restored": _take_restored(session),
+        **_execution_fields(session),
     }
     if session.apply_receipt is not None:
         out["last_apply"] = session.apply_receipt
@@ -2788,6 +3004,18 @@ def run_preflight(
     # 分开是因为它量的是「画出来撞没撞上」，不是「该长什么样」；形状同一份，
     # 进同一份报告（ADR 0051）。
     issues += engine_interference.detect(session.manifest, profile, panel_id=session.stem)
+    if profile.get("journal_ref"):
+        for issue in issues:
+            if issue.get("id") != "raster-dpi":
+                continue
+            # The session stores a profile and journal reference, not a bound
+            # per-rule source record. Do not claim that this threshold is a
+            # journal requirement, even when the catalog has changed since open.
+            issue["text"] = issue["text"].replace("低于规范的", "低于当前检查阈值 ", 1)
+            issue["text"] += "；此回执未核验该阈值的期刊出处"
+            message = issue.get("message")
+            if isinstance(message, dict) and message.get("key") in {"rasterDpi", "exportRasterDpi"}:
+                message["key"] += "JournalSourceUnverified"
     summary = engine_preflight.summarize(issues)
     # 匿名用量统计：**结果算完之后**记一次，且只记四个计数 + 一个布尔。
     # 检查项的文案、字体名、gid、对象 id、stem 一个都不发（白名单里没有这些
@@ -2808,7 +3036,7 @@ def run_preflight(
         "ok": True,
         "session_id": session.id,
         "stem": session.stem,
-        "profile": engine_profiles.stamp(profile),
+        "profile": _profile_stamp(profile),
         "size_mm": session.manifest.get("size_mm"),
         "patch_hash": session.patch_hash(),
         "errors": summary["errors"],
@@ -2847,7 +3075,7 @@ def cached_preflight(session: Session) -> dict | None:
         return None
     if cached.get("patch_hash") != session.patch_hash():
         return None
-    if cached.get("profile") != engine_profiles.stamp(session.profile):
+    if cached.get("profile") != _profile_stamp(session.profile):
         return None
     return cached
 
@@ -2855,7 +3083,8 @@ def cached_preflight(session: Session) -> dict | None:
 def format_preflight(session: Session, profile: dict, issues: list[dict], summary: dict) -> str:
     """人类可读的那一份（Codex 会把它念给用户听）。"""
     head = (
-        f"《{profile.get('label', profile['profile_id'])}》 v{profile['version']} · {session.stem}"
+        f"《{_profile_stamp(profile).get('label') or profile['profile_id']}》 "
+        f"v{profile['version']} · {session.stem}"
     )
     size = session.manifest.get("size_mm") if session.manifest else None
     lines = [head]
@@ -3534,7 +3763,7 @@ def _normalize_figure(
             "patch_hash": b0_hash,
             "worker_generation": getattr(session, "rev", None),
             "original_artifact": original,
-            "profile": engine_profiles.stamp(profile),
+            "profile": _profile_stamp(profile),
         },
     )
     plan = engine_normalize.plan_patches(contract, b0_manifest)
@@ -4073,7 +4302,11 @@ def _preview_width_px(size_mm) -> int:
 
 def _retire_session_worker(session: Session) -> bool:
     """作废这个会话的热 worker（与桌面 `_retire_hot_worker` 同一个原语 `pool.invalidate`）：
-    只让它过期，下一次 `session.acquire()` 冷起、`_render` 按全量列表重放。"""
+    只让它过期，下一次 `session.acquire()` 冷起、`_render` 按全量列表重放。
+
+    native 会话没有「冷起」（那是再跑一遍真实脚本）：不作废，回 False，回滚照样在活图上按全量列表重放。"""
+    if session.native is not None:
+        return False
     # 池里的键带着写入根绊线的授权根（`_spawn_worker` 取 worker 时传的那一份）：不一起给，
     # 对不上键，作废就落空（worker 还在、热态仍不可信）
     context = {}
@@ -4296,6 +4529,7 @@ def _fix_settle(session: Session, base: list, state: dict, *, restore: bool, res
     if failed:
         # 会话上的状态已经对不上 B0：从账本里摘掉，下一次调用按落盘记录（只在提交点写，所以就是 B0）重建
         _SESSIONS.pop(session.id, None)
+        _end_native(session)
     if result is not None:
         result["worker_retired"] = bool(retired)
 
@@ -4395,7 +4629,12 @@ def _fix_run(
             return fail(
                 str(norm.get("exit") or "constraint_conflict"),
                 stage="size",
-                size={**result["size"], "to_mm": None, "column": picked},
+                size={
+                    **result["size"],
+                    "to_mm": None,
+                    "column": picked,
+                    "target": {k: round(float(v), 2) for k, v in targets.items()},
+                },
                 detail={"blocking": blocking[:10], "warnings": norm.get("warnings") or []},
             )
         if norm.get("exit") != engine_normalize.EXIT_NOTHING_TO_DO:
@@ -4555,6 +4794,11 @@ def verify_replay(session_id: str) -> dict:
     session = get_session(session_id)
     if session.manifest is None:
         raise BridgeError("会话还没有 manifest", code="no_manifest")
+    if session.native is not None:
+        raise BridgeError(
+            "这张图改用真实 Python 运行，从零重放要再执行一遍脚本，MCP 里不做这件事",
+            code=NATIVE_UNSUPPORTED,
+        )
     worker = _spawn_worker(session, one_shot=True)
     try:
         resp = worker.override(session.stem, session.patches, None, inline_svg=False)

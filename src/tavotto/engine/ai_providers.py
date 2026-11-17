@@ -56,6 +56,24 @@ def _family(agent: str) -> str | None:
     return rec.endpoint_family if rec else None
 
 
+#: 内置循环支持的三种线上协议（记录里的 `protocol` 字段，闭集）。**不复用 `wire_api`**：`wire_api` 说的是 Codex 的配置值
+#: （只剩 responses，`"chat"` 是已被 Codex 移除的旧记录，由 `incompatibility()` 判）；`protocol` 说的是内置循环怎么和服务商说话。
+PROTOCOL_ANTHROPIC = "anthropic"
+PROTOCOL_RESPONSES = "openai-responses"
+PROTOCOL_CHAT = "openai-chat"
+PROTOCOLS = (PROTOCOL_ANTHROPIC, PROTOCOL_RESPONSES, PROTOCOL_CHAT)
+#: 协议 → 它挂在哪个家族（记录的 `agent` 决定家族；chat 记录的 agent 是 openai 家族 = codex，但**只走内置**）
+_PROTOCOL_FAMILY = {
+    PROTOCOL_ANTHROPIC: "anthropic",
+    PROTOCOL_RESPONSES: "openai",
+    PROTOCOL_CHAT: "openai",
+}
+#: 路由 / 解析上「只能走内置循环」的原因码（`ai_connections.route_for` 的 `why`）
+BUILTIN_ONLY = "builtin_only"
+#: 记录上能落盘的 `last_error`：目录原因码 + 保存时探测协议全不通
+ENDPOINT_UNUSABLE = "endpoint_unusable"
+LAST_ERRORS = (*ai_catalog.REASONS, ENDPOINT_UNUSABLE)
+
 DEEPSEEK_CODEX_ID = "deepseek-codex"
 
 # 内置预设的**唯一权威是 `engine/ai_catalog.json`**（厂商目录；规则见 ai_bridge 细则「第三方 API 接入」）。
@@ -89,6 +107,42 @@ def _slug(text: str) -> str:
     return _ID_RE.sub("-", text.strip()).strip("-").lower()[:40] or "provider"
 
 
+#: runner 自救时可能剥 / 换掉的非必需字段（= `agent_runner.fallback.DROPPABLE_FIELDS`，`done.dropped_fields` 只会是它的子集）
+_DROPPABLE = ("include", "max_output_tokens", "max_tokens", "max_completion_tokens")
+#: `ai_probe.REASONS` 里的失败原因（这里不 import ai_probe：它依赖本模块）
+_PROBE_REASONS = (
+    "unauthorized",
+    "quota",
+    "no_model",
+    "wrong_protocol",
+    "network",
+    "web_page",
+    "bad_reply",
+)
+
+
+def _default_protocol(agent: str) -> str | None:
+    """家族默认的协议（没存 `protocol` 的老记录就是它）：claude → anthropic，codex → openai-responses。"""
+    return _BUILTIN_WIRE.get(str(_family(agent)))
+
+
+def protocol_of(rec: dict | None) -> str | None:
+    """这条记录内置循环实际说哪种协议：存了合法的 `protocol` 就是它，否则家族默认。"""
+    if not rec:
+        return None
+    p = rec.get("protocol")
+    agent = str(rec.get("agent") or "")
+    if p in PROTOCOLS and _PROTOCOL_FAMILY[p] == _family(agent):
+        return p
+    return _default_protocol(agent)
+
+
+def builtin_only(rec: dict | None) -> bool:
+    """这条记录**只能**走内置循环（Codex 不认 Chat Completions，注入不了）。**判据只在这一处**：
+    `ai_connections.route_for`、`spawn_overrides`、`resolve`、`ai_bridge.run` 都问它。"""
+    return bool(rec) and protocol_of(rec) == PROTOCOL_CHAT
+
+
 def _clean(rec: dict, existing_ids: set[str] = frozenset()) -> dict:
     """规范化一条供应商配置；非法值就地纠正，绝不写进配置一个坏形状。"""
     known = agents()
@@ -103,18 +157,43 @@ def _clean(rec: dict, existing_ids: set[str] = frozenset()) -> dict:
         models.insert(0, default_model)
     wire = rec.get("wire_api")
     out_extra: dict = {}
+    # 内置循环的线上协议（见 `PROTOCOLS`）：只认闭集，且必须与记录的家族对得上（claude ↔ anthropic，codex ↔ openai-*）；
+    # 对不上就丢（回到家族默认），不写一个坏组合
+    protocol = rec.get("protocol")
+    if protocol in PROTOCOLS and _PROTOCOL_FAMILY[protocol] == _family(agent):
+        out_extra["protocol"] = protocol
     # 账号登录（设备码 OAuth，engine/ai_oauth.py）的记录：令牌只存这里，且只能由 ai_oauth 的
     # `store_oauth` / `update_oauth` 写入（`save()` 会剥掉请求体里的这两个键）
     if rec.get("auth") == "oauth" and isinstance(rec.get("oauth"), dict):
         out_extra = {"auth": "oauth", "oauth": dict(rec["oauth"])}
     # 保存时试取型号清单被服务商拒绝（密钥不对）：记下稳定原因码，连接视图据此给 state="error"；
     # 只认目录里的原因码，且只有真被拒才留（断网这类暂时性失败不落盘，免得永远显示出错）
-    if rec.get("last_error") in ai_catalog.REASONS:
+    if rec.get("last_error") in LAST_ERRORS:
         out_extra = {**out_extra, "last_error": rec["last_error"]}
+        # 保存时探测全不通：主要原因（`ai_probe.REASONS` 闭集）跟着 `endpoint_unusable` 一起存
+        if rec["last_error"] == ENDPOINT_UNUSABLE and rec.get("probe_reason") in _PROBE_REASONS:
+            out_extra["probe_reason"] = rec["probe_reason"]
     base_url = str(rec.get("base_url") or "").strip().rstrip("/")
     # `ensure_api_root` 核过的地址：只在它仍等于当前地址时保留——改了地址就自然失效、下次用时重核
     if base_url and rec.get("api_root_ok") == base_url:
         out_extra = {**out_extra, "api_root_ok": base_url}
+    # 探测结论（`ai_probe.fingerprint`）：只在地址、型号、协议都还对得上时保留——改了地址 / 换了默认型号就自然失效、下次再探
+    ok = rec.get("protocol_ok")
+    if (
+        isinstance(ok, dict)
+        and ok.get("protocol") == out_extra.get("protocol", _default_protocol(agent))
+        and base_url
+        and ok.get("base_url") == base_url
+        and (default_model or (models[0] if models else ""))
+        and ok.get("model") == (default_model or models[0])
+    ):
+        keep = {k: ok[k] for k in ("base_url", "model", "protocol") if k in ok}
+        if ok.get("token_field") in ("max_tokens", "max_completion_tokens"):
+            keep["token_field"] = ok["token_field"]
+        drops = [f for f in (ok.get("dropped_fields") or []) if f in _DROPPABLE]
+        if isinstance(ok.get("dropped_fields"), list) and drops:
+            keep["dropped_fields"] = drops
+        out_extra = {**out_extra, "protocol_ok": keep}
     return {
         **out_extra,
         "id": pid,
@@ -186,6 +265,7 @@ def public(rec: dict) -> dict:
         ),
         "incompatible": incompatibility(rec),
         "migratable": migration_kind(rec),
+        "protocol": protocol_of(rec),
     }
     if rec.get("auth") == "oauth":
         o = oauth if isinstance(oauth, dict) else {}
@@ -445,6 +525,60 @@ def ensure_api_root(rec: dict | None) -> dict | None:
     return _update(tx) or rec
 
 
+#: 协议 → 记录的 `agent`（chat 与 responses 同属 openai 家族 = codex）
+_PROTOCOL_AGENT = {
+    PROTOCOL_ANTHROPIC: "claude",
+    PROTOCOL_RESPONSES: "codex",
+    PROTOCOL_CHAT: "codex",
+}
+
+
+def apply_probe(pid: str, *, base_url: str, model: str, result: dict) -> dict | None:
+    """把一次协议探测（`ai_probe.detect` 的返回，**已有结论**）写回记录 → 新记录；记录没了 / 探测期间地址或型号被改了 → None（不覆盖用户的新值）。
+
+    通过：写 `protocol` + `agent`（chat / responses 属 openai 家族，anthropic 属 claude）+ 对应的 API 根（`base_url`）+ `protocol_ok`
+    （地址 / 型号 / 协议的指纹），OpenAI 系同时记 `api_root_ok`（探测已摸过 `/v1`，`ensure_api_root` 不必再核），清掉 `last_error` / `probe_reason`。
+    全不通：`last_error` = `unauthorized`（Key 被拒）或 `endpoint_unusable`（+ `probe_reason` 主要原因）；协议 / 地址 / 型号一概不动。"""
+
+    def tx(ai: dict):
+        providers = _providers_in(ai)
+        idx = next((i for i, p in enumerate(providers) if p.get("id") == pid), -1)
+        if idx < 0:
+            return {}, None
+        cur = providers[idx]
+        cur_model = str(cur.get("default_model") or "").strip() or next(
+            iter(cur.get("models") or []), ""
+        )
+        if str(cur.get("base_url") or "").rstrip("/") != base_url.rstrip("/") or cur_model != model:
+            return {}, None
+        new = {k: v for k, v in cur.items() if k not in ("last_error", "probe_reason")}
+        proto = result.get("protocol")
+        if proto in PROTOCOLS:
+            root = str(result.get("base_url") or base_url).rstrip("/")
+            new.update(protocol=proto, agent=_PROTOCOL_AGENT[proto], base_url=root)
+            ok = {"base_url": root, "model": model, "protocol": proto}
+            if proto == PROTOCOL_CHAT and result.get("token_field") in (
+                "max_tokens",
+                "max_completion_tokens",
+            ):
+                ok["token_field"] = result["token_field"]
+            new["protocol_ok"] = ok
+            if _PROTOCOL_FAMILY[proto] == FAMILY_OPENAI:
+                new["api_root_ok"] = root
+        else:
+            reason = result.get("reason")
+            new.pop("protocol_ok", None)
+            if reason == "unauthorized":
+                new["last_error"] = "unauthorized"
+            else:
+                new["last_error"] = ENDPOINT_UNUSABLE
+                new["probe_reason"] = reason
+        providers[idx] = _clean(new)
+        return {"providers": providers}, providers[idx]
+
+    return _update(tx)
+
+
 def _harden() -> None:
     """配置目录/文件收权限（存了密钥）。Windows 上 chmod 基本无效，静默跳过。"""
     if os.name == "nt":
@@ -488,6 +622,8 @@ def resolve(agent: str, pid: str | None = None) -> dict | None:
     rec = get(pid) if pid else get(active_id(agent))
     if rec is None or rec.get("agent") != agent:
         return None
+    if not pid and builtin_only(rec):
+        return None  # 「当前选中」的只走内置的记录不是 CLI 的接口：CLI 不注入它（显式指到它由 `ai_bridge.run` 拒绝）
     return rec
 
 
@@ -540,7 +676,8 @@ def spawn_overrides(
         return [], env
 
     if family == FAMILY_OPENAI:
-        if not base_url:
+        if not base_url or builtin_only(rec):
+            # Codex 只认 Responses：Chat Completions 的记录绝不注入 Codex（空 = 不接管；调用方在 spawn 前另行拒绝）
             return [], {}
         pid = CODEX_PROVIDER_ID
         args = [
@@ -574,7 +711,7 @@ def builtin_conn(rec: dict | None, model: str | None = None) -> dict | None:
     账号登录记录的令牌可能快过期：spawn 之前由 `ai_oauth.ensure_fresh` 刷新（这里只看有没有令牌 + 刷新令牌）。"""
     if not rec or incompatibility(rec):
         return None
-    wire = _BUILTIN_WIRE.get(str(_family(str(rec.get("agent") or ""))))
+    wire = protocol_of(rec)
     chosen = (
         str(model or "").strip()
         or str(rec.get("default_model") or "").strip()
@@ -588,7 +725,123 @@ def builtin_conn(rec: dict | None, model: str | None = None) -> dict | None:
         key, auth = str(rec.get("api_key") or ""), "key"
     base = str(rec.get("base_url") or "")
     if wire and chosen and key and check_base_url(base) is None:
-        return {"wire": wire, "base_url": base, "api_key": key, "model": chosen, "auth": auth}
+        conn = {
+            "wire": wire,
+            "base_url": base,
+            "api_key": key,
+            "model": chosen,
+            "auth": auth,
+            "provider_id": str(rec.get("id") or ""),
+        }
+        fb = fallback_routes(rec, chosen)
+        if fb:
+            conn["fallbacks"] = fb
+        field = chat_token_field(rec, chosen) if wire == PROTOCOL_CHAT else None
+        if field:
+            conn["token_field"] = field
+        return conn
+    return None
+
+
+def _is_custom(rec: dict) -> bool:
+    """用户自填的地址（不在厂商目录里）：目录厂商只说自己那一种协议，自填中转站才可能换协议。"""
+    return (
+        ai_catalog.icon_for(str(rec.get("agent") or ""), str(rec.get("base_url") or ""))
+        == ai_catalog.GENERIC_ICON_KEY
+    )
+
+
+def fallback_routes(rec: dict, model: str | None = None) -> list[tuple[str, str]]:
+    """第一轮「协议不对」时 runner 按序换的备选 `[(协议, 地址)]`（`--fallback`）：只给自填地址（目录厂商 / 账号登录不给）；
+    其余两种协议，地址按协议换算（OpenAI 系带 `/v1`、Anthropic 系去 `/v1`），**同 scheme / 主机 / 端口**（runner 要求）；
+    顺序同探测（`ai_probe.order`）。"""
+    if rec.get("auth") == "oauth" or not _is_custom(rec):
+        return []
+    from . import ai_probe  # 函数内 import：ai_probe 依赖本模块
+
+    own, base = protocol_of(rec), str(rec.get("base_url") or "")
+    return [
+        (p, ai_probe.candidates(p, base)[-1])
+        for p in ai_probe.order(base, str(model or ""), None)
+        if p != own
+    ]
+
+
+def apply_runtime_report(
+    pid: str, *, model: str, report: dict, base_url: str | None = None
+) -> dict | None:
+    """一次真实运行结束后，把 runner `done` 事件的自救回报（`wire_used` / `wire_switched_from` / `dropped_fields` /
+    `token_field`）落进记录 → 新记录；没有可落的 / 记录没了 / 运行期间地址或型号被改 → None。**在运行结束之后写，不在执行中途改。**
+
+    * `wire_used` ≠ 记录的协议（换协议成功）：改 `protocol` / `agent` / `base_url`（换算后的）；
+    * 协议没换但有 `token_field` / `dropped_fields`：并进 `protocol_ok`（chat 的长度字段下次起跑就用；被剥的字段记下，
+      runner 暂不支持「起跑即不发」，所以只记录）；
+    * 有成功回复 = 对话真通了：清掉 `last_error` / `probe_reason`。"""
+    used = report.get("wire_used")
+    if used not in PROTOCOLS:
+        return None
+    drops = [f for f in (report.get("dropped_fields") or []) if f in _DROPPABLE]
+    field_ = (
+        report.get("token_field")
+        if report.get("token_field")
+        in (
+            "max_tokens",
+            "max_completion_tokens",
+        )
+        else None
+    )
+
+    def tx(ai: dict):
+        providers = _providers_in(ai)
+        idx = next((i for i, p in enumerate(providers) if p.get("id") == pid), -1)
+        if idx < 0:
+            return {}, None
+        cur = providers[idx]
+        cur_model = str(cur.get("default_model") or "").strip() or next(
+            iter(cur.get("models") or []), ""
+        )
+        if (model and cur_model != model) or cur.get("auth") == "oauth":
+            return {}, None
+        if base_url is not None and str(cur.get("base_url") or "").rstrip("/") != str(
+            base_url
+        ).rstrip("/"):
+            return {}, None  # 运行期间用户改了地址：回报说的是旧地址，不写
+        model_ = model or cur_model
+        from . import ai_probe
+
+        new = {k: v for k, v in cur.items() if k not in ("last_error", "probe_reason")}
+        base = str(cur.get("base_url") or "").rstrip("/")
+        if used != protocol_of(cur):
+            if not _is_custom(cur) or _PROTOCOL_AGENT[used] is None:
+                return {}, None  # 目录厂商不传备选，不该发生；不信就不写
+            base = ai_probe.candidates(used, base)[-1]
+            new.update(protocol=used, agent=_PROTOCOL_AGENT[used], base_url=base)
+            old = {}
+        else:
+            old = cur.get("protocol_ok") if isinstance(cur.get("protocol_ok"), dict) else {}
+        ok = {"base_url": base, "model": model_, "protocol": used}
+        if used == PROTOCOL_CHAT and (field_ or old.get("token_field")):
+            ok["token_field"] = field_ or old["token_field"]
+        merged = list(dict.fromkeys([*(old.get("dropped_fields") or []), *drops]))
+        if merged:
+            ok["dropped_fields"] = merged
+        new["protocol_ok"] = ok
+        if _PROTOCOL_FAMILY[used] == FAMILY_OPENAI:
+            new["api_root_ok"] = base
+        providers[idx] = _clean(new)
+        return {"providers": providers}, providers[idx]
+
+    return _update(tx)
+
+
+def chat_token_field(rec: dict, model: str) -> str | None:
+    """openai-chat 的长度上限字段：探测时服务商明确要 `max_completion_tokens` 才记（`protocol_ok.token_field`，地址 / 型号对得上才有效）；
+    官方 OpenAI（api.openai.com）的 o 系列只认它。其余 None = 默认 `max_tokens`（兼容网关通用）。"""
+    ok = rec.get("protocol_ok")
+    if isinstance(ok, dict) and ok.get("model") == model and ok.get("token_field"):
+        return str(ok["token_field"])
+    if _host(rec) == "api.openai.com" and re.match(r"o\d", model.strip(), re.IGNORECASE):
+        return "max_completion_tokens"
     return None
 
 
@@ -664,6 +917,10 @@ def _builtin_overrides(
     if conn is None:
         return [], {}
     args = ["--wire", conn["wire"], "--base-url", conn["base_url"], "--model", conn["model"]]
+    if conn.get("token_field"):
+        args += ["--max-tokens-field", conn["token_field"]]
+    for wire, base in conn.get("fallbacks") or ():
+        args += ["--fallback", f"{wire}={base}"]  # 第一轮「协议不对」时换（自填地址才有；同主机）
     if conn["auth"] == "bearer":
         args += ["--auth", "bearer"]
     args += builtin_effort_args(rec, effort, conn["model"])

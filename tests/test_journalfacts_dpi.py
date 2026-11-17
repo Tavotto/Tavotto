@@ -1,0 +1,482 @@
+"""Tests for isolated source-fact DPI evaluator, not v1 preflight."""
+
+import copy
+import math
+
+import pytest
+
+from tavotto.engine.journalfacts_contract import FactValidationError
+from tavotto.engine.journalfacts_dpi import evaluate_dpi_facts
+
+
+@pytest.fixture
+def fact():
+    return {
+        "id": "line",
+        "subject": "raster_dpi",
+        "relation": "gte",
+        "value": 800,
+        "unit": "dpi",
+        "strength": "required",
+        "stage": "production",
+        "source": "guide",
+        "quote": "Illustrative source quote.",
+        "origin": "journal",
+        "review": {"status": "verified", "reviewed": "2026-11-12", "method": "test fixture"},
+        "conditions": {"figure_kind": "line_art", "image_origin": "scanned", "size_basis": "final"},
+    }
+
+
+@pytest.fixture
+def context():
+    return {
+        "figure_kind": "line_art",
+        "image_origin": "scanned",
+        "size_basis": "final",
+        "stage": "production",
+    }
+
+
+def bundle(*facts):
+    return {
+        "schema": 2,
+        "journal_id": "fixture",
+        "journal": {"label": "Fixture", "publisher_id": "publisher"},
+        "sources": {
+            "guide": {
+                "url": "https://example.org/guide",
+                "kind": "html",
+                "retrieved": "2026-11-12",
+            },
+            "publisher": {
+                "url": "https://example.org/publisher",
+                "kind": "html",
+                "retrieved": "2026-11-12",
+            },
+        },
+        "facts": list(facts),
+    }
+
+
+def test_match_and_threshold_boundaries(fact, context):
+    original = bundle(fact)
+    snapshot = copy.deepcopy(original)
+    for dpi, status in [
+        (799, "violated"),
+        (800, "satisfied_evaluated_raster_dpi_facts"),
+        (801, "satisfied_evaluated_raster_dpi_facts"),
+    ]:
+        result = evaluate_dpi_facts(original, context, dpi)
+        assert result["status"] == status
+        assert result["catalog_completeness"] == "unknown"
+        assert result["facts"][0]["id"] == "line"
+    assert original == snapshot
+
+
+@pytest.mark.parametrize("field", ["figure_kind", "image_origin", "size_basis", "stage"])
+def test_missing_context_never_passes(fact, context, field):
+    context.pop(field)
+    result = evaluate_dpi_facts(bundle(fact), context, 1200)
+    assert result["status"] == "unknown"
+    assert result["facts"][0]["reason"] == "unknown_applicability"
+
+
+@pytest.mark.parametrize(
+    "field,other",
+    [("figure_kind", "halftone"), ("image_origin", "digital"), ("stage", "submission")],
+)
+def test_known_mismatch_is_not_applicable(fact, context, field, other):
+    context[field] = other
+    result = evaluate_dpi_facts(bundle(fact), context, 100)
+    assert result["status"] == "unknown"
+    assert result["facts"][0]["status"] == "not_applicable"
+
+
+def test_unknown_conditions_and_stage_are_not_unconditional(fact, context):
+    for mutation in (
+        {"stage": "unknown"},
+        {"condition_text": "only in an unstated case"},
+        {"conditions": {"paper_type": "original"}},
+        {"conditions": {"figure_kind": {"relation": "not_in", "value": ["line_art"]}}},
+    ):
+        result = evaluate_dpi_facts(bundle({**fact, **mutation}), context, 1200)
+        assert result["status"] == "unknown"
+        assert result["facts"][0]["reason"] == "unknown_applicability"
+    context["stage"] = []
+    assert evaluate_dpi_facts(bundle(fact), context, 1200)["status"] == "unknown"
+
+
+def test_all_stages_is_not_unknown_stage(fact, context):
+    context.pop("stage")
+    assert (
+        evaluate_dpi_facts(bundle({**fact, "stage": "any"}), context, 800)["status"]
+        == "satisfied_evaluated_raster_dpi_facts"
+    )
+    assert (
+        evaluate_dpi_facts(bundle({**fact, "stage": "unknown"}), context, 800)["status"]
+        == "unknown"
+    )
+
+
+@pytest.mark.parametrize(
+    "strength", ["typical", "recommended", "preferred", "permitted", "example", "unspecified"]
+)
+def test_nonmandatory_statement_is_advice_not_minimum(fact, context, strength):
+    result = evaluate_dpi_facts(bundle({**fact, "strength": strength, "value": 300}), context, 100)
+    assert result["status"] == "unknown"
+    assert result["facts"][0]["status"] == "advice"
+
+
+def test_pending_and_rejected_do_not_pass_even_with_verified_fact(fact, context):
+    for state in ("pending", "rejected"):
+        other = {**fact, "id": "other", "review": {"status": state}}
+        result = evaluate_dpi_facts(bundle(fact, other), context, 1000)
+        assert result["status"] == "unknown"
+        assert result["facts"][1]["reason"] == "unverified_review"
+
+
+def test_unknown_relevant_fact_prevents_confident_violation(fact, context):
+    unresolved = {**fact, "id": "other", "conditions": {"unrecognized": "x"}}
+    assert evaluate_dpi_facts(bundle(fact, unresolved), context, 100)["status"] == "unknown"
+
+
+def test_conflicting_publishers_are_not_auto_selected(fact, context):
+    other = {**fact, "id": "pub", "source": "publisher", "origin": "publisher", "value": 300}
+    result = evaluate_dpi_facts(bundle(fact, other), context, 500)
+    assert result["status"] == "unknown"
+    assert [item["status"] for item in result["facts"]] == ["conflict", "conflict"]
+    assert {item["source"] for item in result["facts"]} == {"guide", "publisher"}
+    identical = {**other, "value": 800}
+    assert evaluate_dpi_facts(bundle(fact, identical), context, 799)["status"] == "violated"
+
+
+def test_different_kind_never_conflicts(fact, context):
+    other = {**fact, "id": "half", "value": 300, "conditions": {"figure_kind": "halftone"}}
+    result = evaluate_dpi_facts(bundle(fact, other), context, 799)
+    assert result["status"] == "unknown"
+    assert result["evaluated_raster_dpi_status"] == "violated"
+    assert result["facts"][1]["status"] == "not_applicable"
+
+
+@pytest.mark.parametrize("dpi", [None, 0, -1, math.nan, math.inf, True, 10**1000])
+def test_bad_measurement_does_not_pass(fact, context, dpi):
+    assert evaluate_dpi_facts(bundle(fact), context, dpi)["status"] == "unknown"
+
+
+def test_empty_no_match_unsupported_or_broken_bundle(fact, context):
+    assert evaluate_dpi_facts(bundle(), context, 1000)["status"] == "unknown"
+    assert (
+        evaluate_dpi_facts(bundle({**fact, "subject": "other"}), context, 1000)["status"]
+        == "unknown"
+    )
+    assert (
+        evaluate_dpi_facts(bundle({**fact, "relation": "gt"}), context, 1000)["status"] == "unknown"
+    )
+    assert evaluate_dpi_facts(bundle({**fact, "value": 0}), context, 1000)["status"] == "unknown"
+    with pytest.raises(FactValidationError):
+        evaluate_dpi_facts(bundle({**fact, "source": "missing"}), context, 1000)
+
+
+@pytest.mark.parametrize("strength", ["required", "typical"])
+def test_unknown_fields_never_become_advice_or_not_applicable(fact, context, strength):
+    # Even a known mismatch must not erase an unsupported source qualification.
+    context["figure_kind"] = "halftone"
+    unknown_condition = {
+        **fact,
+        "strength": strength,
+        "conditions": {"figure_kind": "line_art", "other": "x"},
+    }
+    assert (
+        evaluate_dpi_facts(bundle(unknown_condition), context, 1200)["facts"][0]["status"]
+        == "unknown"
+    )
+    for change in ({"relation": "gt"}, {"unit": "ppi"}, {"value": 0}):
+        result = evaluate_dpi_facts(bundle({**fact, **change, "strength": strength}), context, 1200)
+        assert result["facts"][0]["status"] == "unknown"
+    assert (
+        evaluate_dpi_facts(bundle({**fact, "strength": strength}), context, None)["facts"][0][
+            "status"
+        ]
+        == "unknown"
+    )
+
+
+def test_missing_stage_is_invalid_not_any(fact, context):
+    del fact["stage"]
+    with pytest.raises(FactValidationError):
+        evaluate_dpi_facts(bundle(fact), context, 1000)
+
+
+def test_unknown_dpi_subject_is_unverified_even_when_generic_passes(fact, context):
+    generic = {**fact, "id": "generic", "value": 300}
+    photo = {**fact, "id": "photo", "subject": "photograph_resolution", "value": 600}
+    result = evaluate_dpi_facts(bundle(generic, photo), context, 400)
+    assert result["status"] == "unknown"
+    assert result["facts"][0]["status"] == "satisfied"
+    assert result["facts"][1] == {
+        "id": "photo",
+        "subject": "photograph_resolution",
+        "source": "guide",
+        "origin": "journal",
+        "status": "unknown",
+        "reason": "unsupported_subject",
+    }
+    assert result["unevaluated_facts"] == [
+        {"id": "photo", "subject": "photograph_resolution", "reason": "unsupported_subject"}
+    ]
+    assert result["catalog_completeness"] == "unknown"
+
+
+def test_other_subjects_and_non_numeric_results_are_listed(fact, context):
+    width = {**fact, "id": "width", "subject": "width", "unit": "mm", "value": 80}
+    advice = {**fact, "id": "typical", "strength": "typical"}
+    inapplicable = {**fact, "id": "other_kind", "conditions": {"figure_kind": "halftone"}}
+    result = evaluate_dpi_facts(bundle(fact, width, advice, inapplicable), context, 800)
+    assert result["status"] == "unknown"
+    assert result["evaluated_raster_dpi_status"] == "satisfied_evaluated_raster_dpi_facts"
+    assert {
+        item["id"]: (item["subject"], item["reason"]) for item in result["unevaluated_facts"]
+    } == {
+        "width": ("width", "unsupported_subject"),
+        "typical": ("raster_dpi", "advice"),
+        "other_kind": ("raster_dpi", "not_applicable"),
+    }
+
+
+def test_unresolved_supported_facts_listed_once(fact, context):
+    context.pop("figure_kind")
+    result = evaluate_dpi_facts(bundle(fact), context, 800)
+    assert result["status"] == "unknown"
+    assert result["unevaluated_facts"] == [
+        {"id": "line", "subject": "raster_dpi", "reason": "unknown_applicability"}
+    ]
+
+
+@pytest.mark.parametrize(
+    "unsupported",
+    [
+        {"id": "caps", "subject": "photograph_resolution", "unit": "DPI", "value": 600},
+        {"id": "ppi", "subject": "photograph_resolution", "unit": "ppi", "value": 600},
+        {"id": "width", "subject": "page_width", "unit": "mm", "value": 180},
+    ],
+)
+def test_any_unsupported_subject_keeps_overall_unknown(fact, context, unsupported):
+    generic = {**fact, "id": "generic", "value": 300}
+    extra = {**fact, **unsupported}
+    result = evaluate_dpi_facts(bundle(generic, extra), context, 400)
+    assert result["status"] == "unknown"
+    assert result["evaluated_raster_dpi_status"] == "satisfied_evaluated_raster_dpi_facts"
+    assert result["unevaluated_facts"] == [
+        {"id": extra["id"], "subject": extra["subject"], "reason": "unsupported_subject"}
+    ]
+    assert result["catalog_completeness"] == "unknown"
+
+
+def test_free_text_resolution_not_silently_ignored(fact, context):
+    generic = {**fact, "id": "generic", "value": 300}
+    extra = {
+        **fact,
+        "id": "text",
+        "subject": "photograph_resolution",
+        "relation": "text",
+        "value": "at least 600 dpi",
+    }
+    del extra["unit"]
+    result = evaluate_dpi_facts(bundle(generic, extra), context, 400)
+    assert result["status"] == "unknown"
+    assert result["evaluated_raster_dpi_status"] == "satisfied_evaluated_raster_dpi_facts"
+    assert result["unevaluated_facts"] == [
+        {"id": "text", "subject": "photograph_resolution", "reason": "unsupported_subject"}
+    ]
+
+
+@pytest.mark.parametrize("field", ["unresolved_conflict", "future_scope", None])
+@pytest.mark.parametrize("value", [True, False, "unknown"])
+def test_unrecognized_context_is_never_silently_ignored(fact, context, field, value):
+    context[field] = value
+    result = evaluate_dpi_facts(bundle(fact), context, 1200)
+    assert result["status"] == "unknown"
+    assert result["evaluated_raster_dpi_status"] == "unknown"
+    assert result["facts"][0]["reason"] == "unsupported_context_fields"
+    assert result["unevaluated_facts"] == [
+        {"id": "line", "subject": "raster_dpi", "reason": "unsupported_context_fields"}
+    ]
+
+
+def test_unrecognized_context_keeps_each_fact_unverified(fact, context):
+    context["unresolved_conflict"] = True
+    other = {**fact, "id": "width", "subject": "width", "unit": "mm", "value": 80}
+    result = evaluate_dpi_facts(bundle(fact, other), context, 100)
+    assert result["status"] == "unknown"
+    assert [item["id"] for item in result["facts"]] == ["line", "width"]
+    assert all(item["status"] == "unknown" for item in result["facts"])
+    assert [item["id"] for item in result["unevaluated_facts"]] == ["line", "width"]
+    assert result["catalog_completeness"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    "source_context",
+    [
+        [{"source": "guide", "quote": "For online colour only."}],
+        [{"source": "publisher", "quote": "For colour figures only."}],
+        [
+            {"source": "guide", "quote": "For online publication."},
+            {"source": "publisher", "quote": "Authors are encouraged to follow these guidelines."},
+        ],
+    ],
+)
+@pytest.mark.parametrize("dpi", [300, 1200])
+@pytest.mark.parametrize("kind", ["line_art", "halftone"])
+def test_source_context_never_silently_becomes_unconditional(
+    fact, context, source_context, dpi, kind
+):
+    """Verified means a label only; unknown context may change scope or strength."""
+    contextual = {**fact, "context": source_context}
+    before = copy.deepcopy(contextual)
+    context["figure_kind"] = kind
+    out = evaluate_dpi_facts(bundle(contextual), context, dpi)
+    assert out["status"] == "unknown"
+    assert out["evaluated_raster_dpi_status"] == "unknown"
+    assert out["facts"][0]["status"] == "unknown"
+    assert out["facts"][0]["reason"] == "unknown_applicability"
+    assert out["unevaluated_facts"] == [
+        {"id": "line", "subject": "raster_dpi", "reason": "unknown_applicability"}
+    ]
+    assert contextual == before
+
+
+def test_context_qualifier_does_not_change_facts_without_context(fact, context):
+    """Known supported facts remain useful; context cannot be inherited between facts."""
+    contextual = {
+        **fact,
+        "id": "qualified",
+        "context": [{"source": "guide", "quote": "Online only."}],
+    }
+    out = evaluate_dpi_facts(bundle(fact, contextual), context, 1200)
+    assert out["facts"][0]["status"] == "satisfied"
+    assert out["facts"][1]["status"] == "unknown"
+    assert out["status"] == "unknown"
+    assert out["evaluated_raster_dpi_status"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("field", "members", "matches", "mismatch"),
+    [
+        ("figure_kind", ["line_art", "halftone"], "line_art", "combination"),
+        ("image_origin", ["scanned"], "scanned", "digital"),
+        ("size_basis", ["final"], "final", None),
+    ],
+)
+def test_supported_membership_obeys_each_condition_vocabulary(
+    fact, context, field, members, matches, mismatch
+):
+    fact["conditions"][field] = {"relation": "in", "value": members}
+    context[field] = matches
+    out = evaluate_dpi_facts(bundle(fact), context, 799)
+    assert out["facts"][0]["status"] == "violated"
+    assert out["catalog_completeness"] == "unknown"
+    if mismatch is not None:
+        context[field] = mismatch
+        out = evaluate_dpi_facts(bundle(fact), context, 799)
+        assert out["facts"][0]["status"] == "not_applicable" and out["status"] == "unknown"
+    context.pop(field)
+    out = evaluate_dpi_facts(bundle(fact), context, 799)
+    assert out["facts"][0]["status"] == "unknown" and out["status"] == "unknown"
+
+
+@pytest.mark.parametrize("unknown", ["line", "Line_art", "unknown", "vector"])
+@pytest.mark.parametrize("observed", ["line_art", "combination"])
+def test_mixed_known_and_unknown_members_never_produce_verdict(fact, context, unknown, observed):
+    fact["conditions"]["figure_kind"] = {"relation": "in", "value": ["line_art", unknown]}
+    context["figure_kind"] = observed
+    out = evaluate_dpi_facts(bundle(fact), context, 799)
+    assert out["facts"][0]["status"] == "unknown"
+    assert out["facts"][0]["reason"] == "unknown_applicability"
+    assert out["status"] == "unknown"
+
+
+@pytest.mark.parametrize("field,unknown", [("image_origin", "camera"), ("size_basis", "original")])
+def test_unknown_members_in_other_vocabularies_are_not_ignored(fact, context, field, unknown):
+    current = context[field]
+    fact["conditions"][field] = {"relation": "in", "value": [current, unknown]}
+    out = evaluate_dpi_facts(bundle(fact), context, 1200)
+    assert out["status"] == "unknown" and out["facts"][0]["status"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        {"relation": "in", "value": []},
+        {"relation": "in", "value": ["line_art", "line_art"]},
+        {"relation": "in", "value": ["line_art", 7]},
+        {"relation": "in", "value": "line_art"},
+        {"relation": "in", "value": ["line_art"], "unit": "dpi"},
+        {"relation": "in", "value": ["line_art"], "extra": True},
+    ],
+)
+def test_invalid_membership_is_rejected_by_the_contract(fact, context, predicate):
+    fact["conditions"]["figure_kind"] = predicate
+    with pytest.raises(FactValidationError):
+        evaluate_dpi_facts(bundle(fact), context, 1200)
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        {"relation": "not_in", "value": ["halftone"]},
+        {"relation": "eq", "value": 3, "unit": "pt"},
+    ],
+)
+def test_other_structured_predicates_stay_unknown(fact, context, predicate):
+    fact["conditions"]["figure_kind"] = predicate
+    assert evaluate_dpi_facts(bundle(fact), context, 1200)["facts"][0]["status"] == "unknown"
+
+
+def test_known_mismatch_is_not_a_way_to_discard_unresolved_qualifications(fact, context):
+    fact["conditions"]["figure_kind"] = {"relation": "in", "value": ["line_art"]}
+    context["figure_kind"] = "halftone"
+    variants = [
+        {"condition_text": "Only when suitable."},
+        {"context": [{"source": "publisher", "quote": "For online only."}]},
+        {"stage": "unknown"},
+        {
+            "conditions": {
+                **fact["conditions"],
+                "image_origin": {"relation": "in", "value": ["scanned", "unknown_source"]},
+            }
+        },
+    ]
+    for change in variants:
+        out = evaluate_dpi_facts(bundle({**fact, **change}), context, 799)
+        assert out["facts"][0]["status"] == "unknown" and out["status"] == "unknown"
+    context.pop("image_origin")
+    assert evaluate_dpi_facts(bundle(fact), context, 799)["facts"][0]["status"] == "unknown"
+
+
+def test_multiple_memberships_conjunction_and_fact_conflicts(fact, context):
+    fact["conditions"] = {
+        "figure_kind": {"relation": "in", "value": ["line_art", "halftone"]},
+        "image_origin": {"relation": "in", "value": ["scanned", "digital"]},
+        "size_basis": {"relation": "in", "value": ["final"]},
+    }
+    snapshot = copy.deepcopy(fact)
+    assert evaluate_dpi_facts(bundle(fact), context, 800)["facts"][0]["status"] == "satisfied"
+    other = {
+        **fact,
+        "id": "conflicting",
+        "value": 300,
+        "source": "publisher",
+        "origin": "publisher",
+    }
+    out = evaluate_dpi_facts(bundle(fact, other), context, 600)
+    assert out["status"] == "unknown"
+    assert [item["status"] for item in out["facts"]] == ["conflict", "conflict"]
+    assert fact == snapshot
+
+
+def test_absent_conditions_preserve_previous_unconditional_behavior(fact, context):
+    del fact["conditions"]
+    fact["stage"] = "any"
+    for dpi, expected in [(799, "violated"), (800, "satisfied_evaluated_raster_dpi_facts")]:
+        result = evaluate_dpi_facts(bundle(fact), {}, dpi)
+        assert result["status"] == expected and result["catalog_completeness"] == "unknown"

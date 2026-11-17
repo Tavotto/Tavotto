@@ -736,6 +736,7 @@
     "title": "科研预设"
   },
   "profiles": {
+    "journalBaseOutputName": "期刊检查基础",
     "useForCanvas": "用于当前画布",
     "useForCanvasSaveFirst": "先保存这份样式的改动，再用于画布",
     "binding": {
@@ -1924,6 +1925,22 @@
         "network": "连不上服务商。",
         "timeout": "连接超时。"
       },
+      "checkConnection": "检查连接",
+      "checking": "检查中",
+      "keyMissing": "请填写密钥",
+      "probeHint": "常见是地址少了 /v1，或者填成了网页地址",
+      "action": {
+        "refillKey": "重填密钥",
+        "switchAi": "换个 AI",
+        "editModel": "改模型",
+        "editAddress": "改地址"
+      },
+      "probe": {
+        "unauthorized": "密钥不对",
+        "quota": "额度用完了",
+        "no_model": "没有这个模型",
+        "unreachable": "连不上这个地址"
+      },
       "subtitle": "连接一个 AI，用于改图或修复环境。",
       "method": {
         "subscription": "订阅登录",
@@ -2464,6 +2481,14 @@
     "imageFailed": "有一张图没加载出来，没法对照，请选「保留原图」。"
   },
   "journal": {
+    "nanophotonicsUnknownWarning": "此期刊的分辨率来源未记录或无法识别；请核对当前指南和本项目实际生效设置。",
+    "nanophotonicsLegacyWarning": "保存的 Nanophotonics De Gruyter 分辨率来源可能已过时；该刊现由 Wiley 出版。请核对当前指南、图类条件及项目实际生效设置；此提示不归因具体问题。",
+    "nanophotonicsGuide": "查看 Wiley 作者指南",
+    "leukosScopeWarning": "此排版保存的历史来源针对终稿并区分图类；当前预检未区分投稿阶段和图类，现行要求未知，请核对期刊指南。",
+    "leukosProblemScopeWarning": "所列画布保存的历史来源针对终稿并区分图类；预检未区分投稿阶段和图类，现行要求未知。此提示不能确认任何问题或阈值来自该来源。",
+    "jperStageWarning": "此排版保存的来源对应历史录用稿最终版指南；当前预检未区分投稿阶段。当前要求尚未核实，请核对期刊指南。",
+    "jperProblemGeneralWarning": "所列画布保存的历史来源针对录用后最终稿；预检未区分投稿阶段，当前指南尚未核实。此提示不能确认任何问题或阈值来自该来源。",
+    "sourceIdentityWarning": "此排版保存的一个出处关联的历史采集文本页眉为 Adult，所选期刊为 Child；来源身份待核，请核对作者指南。现有预检规则未改变。",
     "title": "期刊",
     "pick": "选择期刊",
     "search": "搜索名称、缩写或 ISSN",
@@ -2473,7 +2498,8 @@
     "noMatch": "没有匹配的期刊",
     "current": "按「{{name}}」检查",
     "requirements": "期刊要求",
-    "unspecified": "该期刊未规定",
+    "panelHistoricalNotice": "这是已保存的历史来源，涉及原则接收后的建议；现行要求未知，请核对期刊指南。",
+    "unspecified": "当前快照未记录",
     "hasRequirement": "有要求",
     "strengthRequired": "必须",
     "strengthRecommended": "建议",
@@ -2492,9 +2518,15 @@
     "picked": "已按「{{name}}」检查",
     "pickedWidth": "已按「{{name}}」检查，页宽改为 {{w}} mm",
     "card": {
-      "adviceBoth": "{{journal}} 说明 {{body}} pt 为正文最小字号，{{script}} pt 为上下标最小字号",
-      "adviceBody": "{{journal}} 说明 {{body}} pt 为正文最小字号",
-      "adviceScript": "{{journal}} 说明 {{script}} pt 为上下标最小字号",
+      "adviceBoth": "字号记录，请参阅来源原文",
+      "adviceBody": "字号记录，请参阅来源原文",
+      "adviceScript": "字号记录，请参阅来源原文",
+      "coverage": {
+        "publisher": "此来源的范围标记：出版社通用。标记可能是默认值或已过时，是否适用于本刊未核实。",
+        "journal": "此来源的范围标记：期刊专属。标记可能是默认值或已过时，是否适用于本刊未核实。",
+        "sample": "此来源的范围标记：单刊样本。标记可能是默认值或已过时，是否适用于本刊未核实。",
+        "unknown": "来源范围和适用性未核实。"
+      },
       "open": "打开原网页",
       "archive": "存档",
       "aria": "出处"
@@ -2530,6 +2562,7 @@
       "info_width_range_double_mm": "双栏宽范围",
       "info_width_single_mm": "单栏宽（仅展示）",
       "info_width_double_mm": "双栏宽（仅展示）",
+      "info_panel_max_width_aip_mm": "图版最大宽（历史 AIP 建议）",
       "info_min_width_mm": "最小宽度",
       "info_min_line_width_pt": "最小线宽",
       "info_dpi_by_kind": "分辨率（按图类）",

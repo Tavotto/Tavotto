@@ -299,7 +299,7 @@ def test_review_render_asks_the_export_pipeline_for_a_private_png_and_builds_ele
         381,
     )  # 3000 px / (200 mm / 25.4)
     assert fig.png.startswith(b"\x89PNG") and fig.elements == [
-        {"gid": "ax0.t", "label": "标题", "bbox": [0.1, 0.1, 0.2, 0.1]}
+        {"gid": "ax0.t", "label": "标题", "bbox": [0.1, 0.1, 0.2, 0.1], "role": "title"}
     ]
     assert not seen["tmp"].exists()  # 私有临时目录用完即删
     lay = m._review_render(

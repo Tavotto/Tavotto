@@ -128,6 +128,17 @@ order: 180
   用户的同名模块照旧赢，`sys.path` 不动。改名单 = `pathignore.remember`（令牌端点 `POST /api/engine/path-ignore` 与 AI 修复的 `ignore_import_folder` 工具共用）+ 关这个项目的会话。
 - 看护 `tests/test_foreign_abi_path.py`（识别的误判面、过滤器、名单与令牌、argv 同源、两条真入口端到端；变异：不装过滤器端到端必须红）。
 
+## 图片内容与扩展名不符（TVD-3MWS）
+
+用户把 JPEG 存成 `x.png`：matplotlib 对 `.png` 直接用 PNG 解码器、不嗅探内容，`plt.imread` 以 `SyntaxError: not a PNG file` 收场；直接用 Python 跑同样失败，**与安全运行 / 环境无关**。失败那一刻把这条事实交给失败卡和 AI 修复，不改脚本、不改图片、不自动转换格式。
+
+- **识别**只有一处 `bridgeboot.image_format_facts`（worker `_image_format_fact` 与 bridge `_image_format_extra` 共用）：异常链（≤16 层）里有 PIL 的解码失败（`UnidentifiedImageError`，或抛出点在 PIL 包里的 `SyntaxError`，按模块 / 帧认、不解析消息）；
+  PIL / `matplotlib.image` 帧里的 `fp` / `filename` / `fname` 一类局部变量取到被读的文件，且在项目根或脚本目录之内（项目外一律不报）；读前 16 字节嗅探真实格式，与扩展名所属格式不同才产出 `{file?, claimed, actual, ext}`。
+  一致 / 嗅探不出 / 读不了 / 任何意外 → `{}`，绝不盖掉原来的脚本错误。敏感运行：`file` 与任一 argv token 有关（casefold 子串，任一方向）就不带，只带格式；该键在 `diagnostic_response` 的敏感白名单里（值本身已按此清洗）。
+- **失败码** `pool.image_format_error` → `image_format_mismatch`（在读不了之后、缺依赖之前判；格式名 / 扩展名按闭集核对，畸形事实不信），参数来自 `pool.recovery_params`。
+  失败卡一句话 + 现成的「再试一次」主按钮（不新增端点）；AI 修复系统提示 3i 明令不怀疑安全运行 / 环境、不改脚本、不动图片，`change_python` 对它直接 `python_change_not_applicable`。
+- 看护 `tests/test_image_extension_mismatch.py`（识别的误判面、失败码转换、真 safe worker 往返、真 native bridge；变异：判据恒返回 `{}`，worker 往返必须红）。
+
 ## 写入根绊线：MCP 来源的 safe 运行（#898，ADR 0141）
 
 **绊线，不是沙盒。** 只对 **MCP 来源**的 safe 运行装（桥 `_spawn_worker` 传 `write_roots=allowed_roots()`）；GUI / native / CLI 完全不动。

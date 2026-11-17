@@ -22,6 +22,12 @@ order: 60
   golden vectors 在 `tests/golden/patch_vectors.json`——Rust supervisor 要
   逐字节复现，改任一侧必须同步另一侧。cancel 只是尽力而为的 no-op，硬取消 =
   kill + 重启。完整契约见 `docs/adr/0003-worker-protocol-v1.md`，改协议前先读。
+- **固定 chart 任务（ADR 0182，#1877）**：`pool.acquire_chart()` 与用户脚本共用池、LRU/租约、环境代次和退役围栏；
+  池键含独立任务身份，`execspec.safe_spec(task="chart")` 只产生固定 safe/module 目标，`worker_argv` 只发 `--task chart`。
+  v1 `chart` 在 build 之前分派；probe、脚手架、EPS 都不读取用户脚本，不发 execution fact；native 不接受该命令。
+  task 固定沙盒 cwd，与 build 共用文件操作守卫。业务字节/结构预算唯一出处是 `chartwire`，共享传输负责有界读写与超时，
+  workerd 消费 Python 提供的 `max_frame_bytes` 并以 `bounded_chart_tasks` 声明支持；旧 supervisor 走 Python 池。
+  kill 未确认不得复用或销账，Python 与 workerd 都保留同一池的围栏。看护 `tests/test_chart_process.py`（真实两条控制面）。
 - **转换校验的写入线索**：只有带项目改道写入根的 worker，v1 build 响应才带
   `redirected_write_attempts`；它是既有 `writetripwire.redirected()` 中至多 64 条项目相对路径，
   在文件真正打开前记录，可能包含失败或后来删除的写入，不能用作文件存在或内容一致的证明。
@@ -116,8 +122,8 @@ order: 60
   safe 档不带参数，出路是默认值或 `tavotto run`；argparse 的 usage 打在 stderr，
   `pool._attach_script_output` 把 worker.log 尾巴接到 traceback 前面，两条控制面
   同一处拼），否则 `script_exited`——都不再把 worker 带走。`ensure_built` 放行
-  `ProtocolError`。裸 `Exception` 通常归 `script_error`；入口脚本直接读取本次运行的 `sys.argv` 时下标越界，
-  且实际失败的字节码、列表身份与回溯能共同确认这个事实，才归 `script_needs_arguments`（详见
+  `ProtocolError`。裸 `Exception` 通常归 `script_error`；入口脚本直接读取本次运行的 `sys.argv` 时下标越界、
+  或把它（或它的一个常量切片）拆包时个数不够，且实际失败的字节码、列表身份与回溯能共同确认这个事实，才归 `script_needs_arguments`（详见
   `figure-capture-and-execution.md`；不能确认时保留原错误）。probe 原样透传错误码。
   **守卫拦下的关键文件操作不洗成完整成功（P01a，`safe_file_operation_blocked`，AC-02）**：safe 的删除 /
   改名 / `write_text` 守卫与 savefig 拦截靠「悄悄跳过」工作，脚本看不到异常——脚本 `os.replace` 缓存后读它，

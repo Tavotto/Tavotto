@@ -26,7 +26,7 @@ import { Button, IconButton } from '../ui/Button'
 import { Popover } from '../ui/Popover'
 import { FixButton, runBatchFix, useBatchable } from './IssueFixButton'
 import { SourceButton } from '../journal/SourceButton'
-import { sourcesForCheck } from '@/lib/journalPick'
+import { dpiSourceMatches, sourcesForCheck } from '@/lib/journalPick'
 import { journalCatalogUi } from '@/lib/journalUi'
 
 /** 组头的 6px 等级记号：要改 / 留意 = 带色实心圆，建议 / 无法核验 = 灰色空心方块——形状也说出等级（与导出检查的计数芯片同一语言） */
@@ -280,6 +280,12 @@ export function IssueRow({
   activeCanvasId: string
 }) {
   const values = issueValues(issue)
+  const binding = useDocumentStore((s) =>
+    issue.objectRef.canvasId === s.activeCanvasId ? s.doc.profile : s.canvases.find((c) => c.id === issue.objectRef.canvasId)?.profile,
+  )
+  const dpiSourceUnknown = issue.ruleCode === 'raster-dpi' && !!binding?.journalRef &&
+    !dpiSourceMatches(binding.journalSources?.min_raster_dpi, issue.message.values?.min)
+  const attribution = dpiSourceUnknown ? pr('dpiJournalSourceUnverified') : ''
   const canvasName = useDocumentStore(
     (s) => s.canvases.find((c) => c.id === issue.objectRef.canvasId)?.name ?? null,
   )
@@ -328,13 +334,14 @@ export function IssueRow({
         data-issue-object={objectId ?? undefined}
         aria-current={current ? 'true' : undefined}
         onClick={onLocate}
-        aria-label={issueAriaLabel(issue)}
-        title={issueDetailText(issue)}
+        aria-label={`${issueAriaLabel(issue)}${attribution ? `；${attribution}` : ''}`}
+        title={`${issueDetailText(issue)}${attribution ? `；${attribution}` : ''}`}
         style={treeIndent(depth)}
         className={cn(listRowClass({ size: 'sm', selected: current }), TRAIL_PAD, 'w-[calc(100%-0.5rem)] text-left')}
       >
         <TreeChevron />
         <TruncateMiddle text={subjectName(issue)} className="min-w-0 shrink" />
+        {dpiSourceUnknown && <span data-journal-dpi-source-unverified className="min-w-0 flex-1 truncate text-xs text-ink-2">{attribution}</span>}
         {/* 没有「当前 → 要求」的规则（出界、缺字体……）：说明跟在名字后面，一行截断，全文在 title 与 ⓘ 里 */}
         {!valueText && <span className={cn(rowMetaClass(current), 'min-w-0 flex-1 truncate')}>{issueDetailText(issue)}</span>}
         {elsewhere && (
@@ -388,7 +395,10 @@ export function IssueJournalSource({ issue }: { issue: ValidationIssue }) {
   )
   const ref = binding?.journalRef
   const sources = binding?.journalSources
-  const entries = sourcesForCheck(issue.ruleCode, sources)
+  const matching = sourcesForCheck(issue.ruleCode, sources)
+  const entries = issue.ruleCode === 'raster-dpi'
+    ? matching.filter(([, source]) => dpiSourceMatches(source, issue.message.values?.min))
+    : matching
   if (!journalCatalogUi() || !ref || !entries.length) return null
   return <SourceButton compact journal={ref.label} entries={entries} name={issueTitle(issue)} />
 }

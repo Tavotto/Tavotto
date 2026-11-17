@@ -28,7 +28,8 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
-const DESIGN_MD = readFileSync(path.resolve(HERE, '../../DESIGN.md'), 'utf8')
+// Windows 检出是 CRLF：归一化后再按 LF 语义解析（frontmatter 与逐行对拍都依赖 LF）
+const DESIGN_MD = readFileSync(path.resolve(HERE, '../../DESIGN.md'), 'utf8').replace(/\r\n/g, '\n')
 const INDEX_CSS = readFileSync(path.resolve(HERE, 'index.css'), 'utf8')
 
 /* ------------------------------ frontmatter ------------------------------ */
@@ -220,7 +221,9 @@ describe('DESIGN.md 的 frontmatter 是 index.css @theme 的镜像', () => {
 
 /* ------------------------- spacing / components 对拍 ------------------------- */
 
-const ui = (rel: string) => readFileSync(path.resolve(HERE, 'components', rel), 'utf8')
+// 组件源码同样按 LF 归一化：Windows 检出的 CRLF 会让 `\)\n` 一类的类串正则失配
+const ui = (rel: string) =>
+  readFileSync(path.resolve(HERE, 'components', rel), 'utf8').replace(/\r\n/g, '\n')
 
 /** Tailwind 的 4px 栅格：28px → h-7 */
 const px = (v: string): number => {

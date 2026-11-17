@@ -36,6 +36,15 @@ order: 120
   沿用带 patch 的会话会让画布账本与引擎状态对不上。这条同时堵掉「批量填满预算 →
   照指引再单独开一张看画布 → 静默挤掉这批里先开的那个」。真发生淘汰时
   `_evict_if_needed()` 返回被淘汰的 id，open 的文字里**必须说出口**。
+- **safe 被自身守卫拦下 → 同一次渲染里换 native 一次**（ADR 0127 修订 2026-11-17）：`_render` 里 safe 的
+  `override` 以 `safe_file_operation_blocked` 收场时，`_native_fallback()` 经 `nativefallback.decide`（`execpolicy.decide_fallback(mcp_initiated=True)`，
+  开关 / `safe_only` / 原因 / 账本一道不少）判定，再由 `nativefallback.launch`（`desktop_native_spec` + `desktopproc.start`，stdin 为 `null`，
+  解释器沿用 safe worker 的 `.python`）起真实 Python、等屏障、build；会话记 `Session.native`（`NativeWorker`，`RunError` 翻成 `WorkerError`）。
+  之后 `acquire()` 直接给它，**不进池、不被池 LRU 杀**；进程不在了报 `native_session_ended`，不悄悄换回 safe。回包（open / apply / session_state）
+  带 `execution: "native"`、`fallback`、一句 `execution_note`（写明不受授权目录限制）；不许回退时 BridgeError 带 `native_fallback_declined`。
+  关会话 / 淘汰 / `shutdown_all` 都经 `_end_native()` 放行到脚本跑完（放不了就终止）；`_retire_session_worker` 对 native 不作废（回 False），
+  `verify_replay` 明确拒绝（`native_session_unsupported`）；`Session.native` 不落盘，进程换了之后恢复走 `_render`，按同一条证据重新回退。
+  看护 `tests/test_mcp_native_fallback.py`（真用户 Python：脚本执行次数、`fig.png` 真落盘、`safe_only` / kill switch / 脚本异常不回退、起进程失败收进程）。
 - **会话不抱 worker 引用**：池的上限（`pool.max_alive()`）与桥的 `MAX_SESSIONS` 是两个数，
   必然打架——每次操作前 `pool.get()` 重新取（`Session.acquire()`）。
   会话**渲染成功之后**才登记，否则失败的 open 会堆满账本并挤掉在用的会话。

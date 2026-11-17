@@ -37,6 +37,7 @@ import json
 import logging
 import os
 import re
+import stat
 import threading
 import time
 import urllib.error
@@ -58,10 +59,11 @@ TRUSTED_KEYS: dict[str, str] = {"prod-1": "fYO5adiBp/EH0ug9cRcsC3bhij5l1V4Em4rcf
 
 #: 两个入口（**一个后端、计数只有一份**）：`(中国站, 海外)`。中国站 `tavotto.cn` 是后端本体（sqlite 计数在那里），
 #: 海外 `tavotto.com` 是 Vercel 上的薄反代，转到中国站（`services/journal_catalog/vercel_proxy/`）。
+#: 海外入口必须写 `www.`：裸域 `tavotto.com` 一律 308 到 www，而客户端不跟跳转（会白白回退到 .cn）。
 #: 先后顺序与更新检查、联系作者**同一个**「大陆环境」判据（`contactsend.region_is_cn`）：大陆先 .cn 后 .com，其余反过来。
 CATALOG_URLS: tuple[str, ...] = (
     "https://tavotto.cn/v1/journal-catalog/",
-    "https://tavotto.com/v1/journal-catalog/",
+    "https://www.tavotto.com/v1/journal-catalog/",
 )
 URL_ENV = "TAVOTTO_JOURNAL_CATALOG_URL"
 
@@ -807,3 +809,29 @@ def snapshot_path(file: str) -> Path | None:
                 LOG.info("快照未取到（%s）", exc.code)
         _SNAPSHOT_FAILED[file] = now
         return None
+
+
+def snapshot_bytes(file: str) -> bytes | None:
+    """Return the bounded, hash-verified bytes used by the snapshot HTTP endpoint.
+
+    ``snapshot_path`` retains its existing cache and path behavior; the HTTP
+    response must not reopen that path after checking it, since it may change.
+    """
+    match = _SNAPSHOT_RE.fullmatch(file) if isinstance(file, str) else None
+    if match is None:
+        return None
+    try:
+        path = snapshot_path(file)
+        if path is None or path.is_symlink():
+            return None
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        fd = os.open(path, flags)
+        with os.fdopen(fd, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                return None
+            data = stream.read(MAX_SNAPSHOT_BYTES + 1)
+    except OSError:
+        return None
+    if len(data) > MAX_SNAPSHOT_BYTES or hashlib.sha256(data).hexdigest() != match.group(1):
+        return None
+    return data

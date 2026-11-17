@@ -262,6 +262,8 @@ const TONE_ICON: Record<Exclude<PrepTone, null>, ReactNode> = {
 
 function toneIcon(tone: PrepTone, state: string): ReactNode {
   if (!tone) return null
+  // 图片扩展名与内容不符：一句话说清就够，不加警告图标（维护者 11-16）
+  if (state === 'image_format') return null
   // 几个状态有自己更具体的记号（设计稿 v2）
   if (state === 'no_figure' || state === 'no_figure_raster' || state === 'no_figure_copied') return <ImageOff size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
   if (state === 'offline') return <Unplug playIn size={ICON_SIZE.md} className="shrink-0 text-ink-3" />

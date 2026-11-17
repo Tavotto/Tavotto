@@ -1,6 +1,6 @@
 import { test as base, expect, type Locator, type Page } from '@playwright/test'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { copyFileSync, cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -88,6 +88,17 @@ export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
   if (!figures && !opts.noProject) {
     figures = path.join(workdir, 'figures')
     cpSync(path.join(REPO, 'examples', 'figures'), figures, { recursive: true })
+  }
+
+  // A fresh test user must not fetch a newer release and cover unrelated controls.
+  // Preserve supplied/shared settings; explicit "Check now" still uses force=1.
+  const configDir = opts.env?.TAVOTTO_CONFIG_DIR ?? path.join(workdir, 'config')
+  if (configDir) {
+    mkdirSync(configDir, { recursive: true })
+    const configFile = path.join(configDir, 'config.json')
+    if (!existsSync(configFile)) {
+      writeFileSync(configFile, JSON.stringify({ updates: { auto_check: false } }), 'utf8')
+    }
   }
 
   const port = opts.port ?? (await freePort())
