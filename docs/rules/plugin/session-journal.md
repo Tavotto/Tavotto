@@ -3,7 +3,7 @@
 > 2026-09-25 迁自 `codex-plugin/AGENTS.md`「会话跨进程恢复（2026-09-23，ADR 0078）」（#608：Codex 自动拼接的 32 KiB 上限），
 > 正文一字未改。速查行在 `codex-plugin/AGENTS.md` 的「按改动路径找细则」表里；这里是这一主题的**唯一全文**，
 > 改规则改这里，并同步那一行。
-> 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_mcp_session_journal.py`、`tests/test_mcp_roundtrip.py`、`tests/test_mcp_draft_restore.py`（草稿，ADR 0189 第 2 条）
+> 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_mcp_session_journal.py`、`tests/test_mcp_roundtrip.py`、`tests/test_mcp_draft_restore.py`（草稿，ADR 0192 第 2 条）
 
 <!-- agents-route
 sheet: codex-plugin/AGENTS.md
@@ -21,7 +21,7 @@ order: 70
   且**拒在渲染之前**；脚本 / 入口不存、从注册表重读，stem 不在了 `session_restore_failed`。
 - **明确释放的不复活**：`close_session` 与 `_evict_if_needed` 连记录一起删。结果里的
   `restored: true` 只报一次（`_take_restored`），文字带 `server.RESTORED_NOTE`。
-- **没导出的改动存成草稿（ADR 0189 第 2 条）**：导出出了文件时记下那一版的 `exported_hash`（也落盘）；
+- **没导出的改动存成草稿（ADR 0192 第 2 条）**：导出出了文件时记下那一版的 `exported_hash`（也落盘）；
   `close_session` / `_evict_if_needed` 经 `_retire` 释放会话时，`unexported_changes` 为真就先 `_save_draft`、再删活会话记录
   （进程换过、只剩记录的会话关闭同理）。结果带 `unexported_changes: true`、`draft_saved` 与 `UNEXPORTED_NOTE`
   （存成草稿、重开自动带回）；草稿也存不下来（磁盘错误）就 `draft_saved: false` + `UNEXPORTED_LOST_NOTE` 如实说丢了。

@@ -1158,7 +1158,7 @@ def test_closing_a_session_with_unexported_changes_says_they_are_gone(project, f
     res = _call("tavotto_close_session", {"session_id": sid})
     body = _body(res)
     assert body["closed"] is True and body["unexported_changes"] is True
-    assert body["draft_saved"] is True  # ADR 0189：没导出的修改存成草稿，不再「已丢」
+    assert body["draft_saved"] is True  # ADR 0192：没导出的修改存成草稿，不再「已丢」
     assert "草稿" in res["content"][0]["text"] and "重新打开" in res["content"][0]["text"]
 
 
@@ -1171,7 +1171,7 @@ def test_closing_after_a_process_switch_still_reports_unexported_changes(project
     res = _call("tavotto_close_session", {"session_id": sid})
     body = _body(res)
     assert body["closed"] is True and body["unexported_changes"] is True
-    assert body["draft_saved"] is True  # ADR 0189：没导出的修改存成草稿，不再「已丢」
+    assert body["draft_saved"] is True  # ADR 0192：没导出的修改存成草稿，不再「已丢」
     assert "草稿" in res["content"][0]["text"] and "重新打开" in res["content"][0]["text"]
     assert bridge.sessionjournal.load(bridge._journal_dir(), sid) is None  # 记录照样删了
     assert _body(_call("tavotto_close_session", {"session_id": sid}))["closed"] is False

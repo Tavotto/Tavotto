@@ -1701,7 +1701,7 @@ def _persist(session: Session) -> bool:
     落盘失败不让这次工具调用失败——图已经改好了；但要说出来（stderr 归日志，stdout
     归协议），因为后果是「server 进程换了之后这个会话恢复不了」。
 
-    这一版已经导出出了文件时，这张图的草稿（ADR 0189 第 2 条）一并清掉：修改已经落到文件里了。
+    这一版已经导出出了文件时，这张图的草稿（ADR 0192 第 2 条）一并清掉：修改已经落到文件里了。
     """
     record = _session_record(session)
     written = True
@@ -1718,7 +1718,7 @@ def _persist(session: Session) -> bool:
 
 
 def _save_draft(record: dict) -> bool:
-    """把一条没导出改动的记录存成草稿（ADR 0189 第 2 条）；同一张图只留最新的一份。失败返回 False 并写 stderr。"""
+    """把一条没导出改动的记录存成草稿（ADR 0192 第 2 条）；同一张图只留最新的一份。失败返回 False 并写 stderr。"""
     draft = {**record, "exported_hash": None}
     try:
         sessionjournal.delete_drafts(
@@ -1899,7 +1899,7 @@ def commit_export(session_id: str) -> None:
         _persist(s)
 
 
-#: 关掉（或被淘汰）一个改过却没导出的会话时的提醒（ADR 0189 第 2 条）：改动存成了草稿
+#: 关掉（或被淘汰）一个改过却没导出的会话时的提醒（ADR 0192 第 2 条）：改动存成了草稿
 UNEXPORTED_NOTE = (
     "修改还没导出，已存为草稿：重新打开这张图会自动带回（不要草稿就带 discard_draft=true 打开）。"
     "用户的文件没变。"
@@ -1972,7 +1972,7 @@ def _evict_if_needed() -> list[str]:
         oldest.apply_receipt = None
         _end_native(oldest)
         # 淘汰也是明确的释放（open 的文字里会点名）：不许在下一次调用里悄悄复活；
-        # 没导出的改动存成草稿，重开这张图时带回（ADR 0189 第 2 条）
+        # 没导出的改动存成草稿，重开这张图时带回（ADR 0192 第 2 条）
         _retire(oldest)
         evicted.append(oldest.id)
     return evicted
@@ -2243,7 +2243,7 @@ def open_figure(
 ) -> dict:
     """解析 → 登记 → 起会话 → 渲染一次。返回给 Codex 的第一份快照。
 
-    `discard_draft`（ADR 0189 第 2 条）：不带回这张图没导出的草稿，并把草稿删掉，从脚本原样打开。
+    `discard_draft`（ADR 0192 第 2 条）：不带回这张图没导出的草稿，并把草稿删掉，从脚本原样打开。
     不给时，同一（项目、stem、运行配置）没有活会话、又有草稿，就按草稿的 patches 渲染（`restored_draft`）。
 
     `argv` / `run_config`（T10）：这次按哪份运行配置跑（`_choose_run`）。引擎不会就拒绝，绝不无参数先试；

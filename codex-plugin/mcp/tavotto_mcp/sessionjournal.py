@@ -30,7 +30,7 @@ import time
 from pathlib import Path
 
 DIRNAME = "mcp-sessions"
-#: 草稿（ADR 0189 第 2 条）：关闭 / 淘汰时带着没导出改动的会话记录。**另一个目录、同一套记录形状**——
+#: 草稿（ADR 0192 第 2 条）：关闭 / 淘汰时带着没导出改动的会话记录。**另一个目录、同一套记录形状**——
 #: 旧插件只扫 `DIRNAME`，永远读不到草稿，草稿也就不会被当成活会话按 id 复活。
 DRAFTS_DIRNAME = "mcp-drafts"
 VERSION = 1

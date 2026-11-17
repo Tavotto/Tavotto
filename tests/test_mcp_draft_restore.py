@@ -1,4 +1,4 @@
-"""MCP 草稿带回（ADR 0189 第 2 条）的真链路：真 MCP 桥、真 worker、真 matplotlib。
+"""MCP 草稿带回（ADR 0192 第 2 条）的真链路：真 MCP 桥、真 worker、真 matplotlib。
 
 没导出的改动在会话关闭 / 被淘汰时存成草稿（`mcp-drafts/`，另一个目录——不会被当成活会话按 id 复活），
 重开同一张图（项目、stem、运行配置）时自动带回。独立可观测事实取自 manifest 里那个属性的真实值与磁盘上的脚本字节，
