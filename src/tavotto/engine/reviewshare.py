@@ -457,6 +457,82 @@ def manifest_elements(manifest: object) -> list[dict]:
         if geom is not None:
             item["geometry"] = geom
         out.append(item)
+        if role == "axes":
+            out.extend(_guide_items(el, item["gid"]))
+    return out
+
+
+#: 边框线 → 显示名（结构性短词，不是用户文字）
+_SPINE_NAMES = {"left": "左轴线", "right": "右轴线", "top": "上轴线", "bottom": "下轴线"}
+#: 网格线 / 刻度线按轴成组：(manifest 字段, gid 后缀, 角色, 显示名)
+_GUIDE_GROUPS = (
+    ("grid", "grid", "gridline", "网格线"),
+    ("tickmarks", "tickmarks", "tickmark", "刻度线"),
+)
+#: 水平 / 垂直的线 bbox 单边为 0：垫出的最小厚度（figure 分数）
+_GUIDE_MIN_THICK = 0.002
+
+
+def _guide_item(gid: str, label: str, role: str, geom: dict | None) -> dict | None:
+    """一条线形目标 → 元素表项（bbox = 可见几何的包围盒，垫出最小厚度）；看不见就 None。"""
+    if geom is None:
+        return None
+    xs = [q[0] for p in geom["paths"] for q in p["points"]]
+    ys = [q[1] for p in geom["paths"] for q in p["points"]]
+    x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+    pad = _GUIDE_MIN_THICK / 2
+    if x1 - x0 < _GUIDE_MIN_THICK:
+        x0, x1 = x0 - pad, x1 + pad
+    if y1 - y0 < _GUIDE_MIN_THICK:
+        y0, y1 = y0 - pad, y1 + pad
+    box = _clamp_box(x0, y0, x1, y1)
+    if box is None:
+        return None
+    item: dict = {"gid": gid[:256], "label": label, "bbox": box, "role": role, "geometry": geom}
+    if "paint_order" in geom:
+        item["paint_order"] = geom["paint_order"]
+    return item
+
+
+def _guide_items(el: dict, gid: str) -> list[dict]:
+    """子图的边框线 / 网格线 / 刻度线 → 合成元素（ADR 0187 修订 2026-11-17）。只收**画出来**的部分：
+    不可见的边、没开的网格、被关掉的刻度线都没有；几何一律经 `_visible_geometry` 裁进画面。
+    gid = `<子图 gid>.spine_left` / `.xgrid` / `.ytickmarks`，审阅页按「.」切出所属子图。"""
+    out: list[dict] = []
+    spines = el.get("spines")
+    for side, name in _SPINE_NAMES.items():
+        sp = spines.get(side) if isinstance(spines, dict) else None
+        if not isinstance(sp, dict) or sp.get("visible") is not True:
+            continue
+        a, b = reviewinbox._point_raw(sp.get("from")), reviewinbox._point_raw(sp.get("to"))
+        if a is None or b is None:
+            continue
+        raw: dict = {
+            "kind": "polyline",
+            "paths": [{"points": [a, b], "closed": False}],
+            "fill": False,
+            "stroke": True,
+        }
+        for k in ("stroke_pt", "paint_order"):
+            if k in sp:
+                raw[k] = sp[k]
+        if raw.get("stroke_pt") == 0:
+            continue
+        item = _guide_item(f"{gid}.spine_{side}", name, "spine", _visible_geometry(raw))
+        if item:
+            out.append(item)
+    for key, suffix, role, word in _GUIDE_GROUPS:
+        group = el.get(key)
+        for which in ("x", "y"):
+            raw = group.get(which) if isinstance(group, dict) else None
+            item = _guide_item(
+                f"{gid}.{which}{suffix}",
+                f"{which.upper()} {word}",
+                role,
+                _visible_geometry(raw),
+            )
+            if item:
+                out.append(item)
     return out
 
 
