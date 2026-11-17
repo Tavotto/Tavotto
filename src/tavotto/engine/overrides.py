@@ -2855,25 +2855,31 @@ def _grid_original(kw_key):
 
 
 def _grid_restore(kw_key):
+    """tick kw 与已建刻度线是**两份互相独立的状态**，各自还原（脚本可以 `ax.grid(color="red")` 之后
+    `plt.setp(gridlines, color="blue")`：kw 是 red、线是 blue）。
+
+    * kw：捕获时有值就写回那个值，没表态就删键（以后新建的刻度回到当时的 rcParams，与重放一致）。
+    * 已建的刻度线：**不管 kw 是什么**，一律写回逐根捕获的实际值。
+    * 捕获之后才建出来的刻度（setter 触发的惰性建刻度、轴范围变化多出来的）：重放里它们要到绘制时才建，
+      matplotlib 建新刻度会从第一根刻度拷贝线样式（`_copy_tick_props`）——所以沿用捕获的第一根；捕获时
+      这一档一根线都没有，新刻度按 kw 建（kw 有值用 kw 值，没表态才是 rcParams）。"""
     write = _GRID_WRITE[kw_key]
 
     def r(ax, orig):
         for (name, which), (value, actual) in orig.items():
             axis = ax.xaxis if name == "x" else ax.yaxis
-            if value is not _GRID_ABSENT:
+            kw = getattr(axis, "_major_tick_kw" if which == "major" else "_minor_tick_kw")
+            if value is _GRID_ABSENT:
+                kw.pop(kw_key, None)
+            else:
                 ax.tick_params(axis=name, which=which, **{kw_key: value})
-                continue
-            # 脚本没表态：kw 里的键拿掉（以后新建的刻度回到「当时的 rcParams」，与重放一致）；
-            # 已建的刻度线写回**首次捕获时的实际值**（见 `_GridOriginal`）。
-            getattr(axis, "_major_tick_kw" if which == "major" else "_minor_tick_kw").pop(
-                kw_key, None
-            )
-            ticks = _built_ticks(axis, which)
-            # 捕获之后才建出来的刻度（setter 触发的惰性建刻度、轴范围变化多出来的）：重放里它们要到
-            # 绘制时才建，matplotlib 建新刻度会从第一根刻度拷贝线的样式（`_copy_tick_props`）；
-            # 捕获时一根都没有的档，才用 rcParams（那时没有任何上下文把它改成别的）。
-            fallback = actual[0] if actual else mpl.rcParams[_GRID_KW[kw_key]]
-            for i, t in enumerate(ticks):
+            if actual:
+                fallback = actual[0]
+            elif value is not _GRID_ABSENT:
+                fallback = value
+            else:
+                fallback = mpl.rcParams[_GRID_KW[kw_key]]
+            for i, t in enumerate(_built_ticks(axis, which)):
                 write(t.gridline, actual[i] if i < len(actual) else fallback)
 
     return r

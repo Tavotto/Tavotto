@@ -154,16 +154,50 @@ def main():
 """
 
 
+#: 脚本先 `ax.grid(...)` 写 kw（只 x 向、major + minor 都开），再 `plt.setp` 把**已建的线**改成另一套值：
+#: kw 是 A、线是 B（x 向）；y 向 kw 没表态、线却被 setp 成 B。minor 刻度线同样（`minorticks_on` 让两档都建出来）。
+#: 撤销要把 kw 和线**各自**还原，不能拿 kw 的 A 去盖线的 B。
+_SETP_GRID_SCRIPT = """\
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def main():
+    x = np.linspace(0, 6, 40)
+    fig, ax = plt.subplots(figsize=(4.4, 3.2))
+    ax.plot(x, np.sin(x))
+    ax.minorticks_on()
+    ax.grid(True, axis="x", which="both", color="#cc2222", linewidth=1.1, linestyle="--", alpha=0.8)
+    for axis in (ax.xaxis, ax.yaxis):
+        lines = [t.gridline for t in axis.get_major_ticks() + axis.get_minor_ticks()]
+        plt.setp(lines, color="#2255dd", linewidth=2.4, linestyle=":", alpha=0.45)
+    fig.savefig("SetpGrid.pdf")
+"""
+
+#: (夹具名, 脚本, 图名, 改完之后是否先画一帧再撤销)。画一帧让「捕获之后才建出来的刻度」有机会出现。
+_GRID_SCRIPTS = {
+    "rc_context": (_RC_GRID_SCRIPT, "RcGrid", False),
+    "setp": (_SETP_GRID_SCRIPT, "SetpGrid", False),
+    "setp_drawn": (_SETP_GRID_SCRIPT, "SetpGrid", True),
+}
+
+
 @pytest.mark.parametrize("prop", sorted(_GRID_EDITS))
 @pytest.mark.parametrize("then", ["grid_y", "grid_x_off_y_on", "nothing"])
-def test_removing_a_grid_edit_restores_rc_context_values_hot_vs_fresh(tmp_path_factory, prop, then):
-    """脚本在 rc_context 里画的网格：改 `grid_*` 再撤销，热态必须回到当时解析出的值（不是撤销时的全局 rcParams）。
-    x 向画着、y 向没画——`grid_y` / `grid_x_off_y_on` 把没画的那一向打开，`nothing` 直接看 x 向。"""
-    figs = tmp_path_factory.mktemp("prop-grid-rc")
-    (figs / "rc_grid.py").write_text(_RC_GRID_SCRIPT, encoding="utf-8")
+@pytest.mark.parametrize("variant", sorted(_GRID_SCRIPTS))
+def test_removing_a_grid_edit_restores_kw_and_lines_independently_hot_vs_fresh(
+    tmp_path_factory, variant, prop, then
+):
+    """网格「原样」的两份状态各自还原：tick kw（有值 / 没表态）与已建刻度线的实际值（可与 kw 相等或不等：
+    rc_context 里建的网格 kw 没表态而线是 rc 值；`ax.grid` 之后 `plt.setp` 改线色则 kw 是 A、线是 B）。
+    x 向画着、y 向没画——`grid_y` / `grid_x_off_y_on` 把没画的那一向打开，`nothing` 直接看 x 向。
+    读数：热会话（改了又撤）与只见过最终列表的全新 worker，manifest 与预览像素。"""
+    script, stem, drawn = _GRID_SCRIPTS[variant]
+    figs = tmp_path_factory.mktemp("prop-grid-kw-lines")
+    (figs / "grid_variant.py").write_text(script, encoding="utf-8")
 
     def _worker():
-        w = pool.one_shot("rc_grid.py", str(figs), "main")
+        w = pool.one_shot("grid_variant.py", str(figs), "main")
         w.ensure_built()
         return w
 
@@ -175,9 +209,11 @@ def test_removing_a_grid_edit_restores_rc_context_values_hot_vs_fresh(tmp_path_f
         final.append({"gid": "axes_0", "prop": "grid_x", "value": False})
     hot_w, fresh_w = _worker(), _worker()
     try:
-        hot_w.override("RcGrid", first)
-        hot = _reading(hot_w, "RcGrid", final, "hot")
-        fresh = _reading(fresh_w, "RcGrid", final, "fresh")
+        hot_w.override(stem, first)
+        if drawn:
+            hot_w.preview_png(stem, list(first), 380, "between")
+        hot = _reading(hot_w, stem, final, "hot")
+        fresh = _reading(fresh_w, stem, final, "fresh")
     finally:
         pool.discard(hot_w)
         pool.discard(fresh_w)
