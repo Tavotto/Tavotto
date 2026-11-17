@@ -1136,6 +1136,8 @@ export default interface Resources {
       "requirements": "期刊要求",
       "search": "搜索名称、缩写或 ISSN",
       "searchAria": "搜索期刊",
+      "snapshotAlt": "原文截图",
+      "snapshotZoom": "点击放大",
       "source": "出处",
       "sourceIdentityWarning": "此排版保存的一个出处关联的历史采集文本页眉为 Adult，所选期刊为 Child；来源身份待核，请核对作者指南。现有预检规则未改变。",
       "sourceOf": "{{name}}的出处",
