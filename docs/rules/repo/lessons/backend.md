@@ -51,13 +51,6 @@
 - 为什么: 第二次重建时线程还没发出 preparing，轮询就读到上次留下的 done 返回，被测事务根本没被观测，探针为空而用例全绿。改用同步入口或比旧时间戳新的终态。
 - 证据: #461
 
-### L-056 桌面壳里行为与终端不一致，先比 spawn 它的进程的 PATH
-- 类: 照这样
-- 触发: src/tavotto/engine/managedcli.py, src/tavotto/engine/hostconnect.py
-- Seen: 2026-09-06
-- 为什么: 从 Finder 启动继承最小 PATH，npm shim 的 env node 解析不到而退 127，被报成「插件市场登记失败」；新增任何 spawn 外部 CLI 的模块都要走增强 PATH 的环境。
-- 证据: （迁移自维护者记录，无编号）
-
 ### L-058 别断言「被测对象会不会打印某句话」，让夹具自报状态
 - 类: 别这样
 - 触发: tests/bridge/
@@ -154,9 +147,9 @@
 ### L-131 override 不读当前合成值或残留状态，写前问冷重放读到的是否同一份
 - 类: 别这样
 - 触发: src/tavotto/engine/overrides.py, src/tavotto/engine/manifest.py
-- Seen: 2026-11-04
-- 为什么: 渐变编辑存了被全局 alpha 合成过的颜色、读了 setter 那一刻的轴方向，热态与全新重放分岔，连报两条 P1；批量写又把首个成员的方向复制给全部成员，第三条 P1。带成员事实的字段按成员算。
-- 证据: #1692
+- Seen: 2026-11-04, 2026-11-18
+- 为什么: 渐变编辑存了被全局 alpha 合成过的颜色、读了 setter 那一刻的轴方向，热态与全新重放分岔，连报两条 P1；批量写又把首个成员的方向复制给全部成员，第三条 P1。带成员事实的字段按成员算。网格撤销改读当时的 rcParams 而非抓下的原值，又两条 P1（#1997）。
+- 证据: #1692, #1997
 
 ### L-137 worker 给脚本的运行面要和 python script.py 对拍 → docs/rules/backend/worker-protocol-and-lifecycle.md
 
