@@ -60,11 +60,14 @@ import { ReviewDialog } from '@/components/review/ReviewDialog'
 import { ReviewPanel } from '@/components/review/ReviewPanel'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
+import { useRenderStore } from '@/store/renderStore'
 import { useReviewStore } from '@/store/reviewStore'
 import { useUiStore } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
-import { emptyProject } from '@/types/document'
+import { emptyProject, type PanelObject } from '@/types/document'
 import { literal } from '@/i18n'
+import { mmToPx, mmToViewX, mmToViewY } from '@/store/viewportStore'
+import { seedExactRender } from '@/test/renderFixtures'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -559,6 +562,71 @@ describe('排版的坐标基准是页面', () => {
     // 圆点在区域框右上角：x = (0.5+0.2)*页宽、y = 0.5*页高（同一换算：比例 × 页面 mm 的屏幕长度）
     const px = (mm: number) => mm * (cx / 70)
     expect(cy / px(40)).toBeCloseTo(1, 1)
+  })
+})
+
+describe('边框线 / 网格线 / 刻度线的意见（合成 gid）', () => {
+  const T = { zoom: 1, panX: 0, panY: 0, originX: 0, originY: 0 }
+  const panel = {
+    id: 'p1', type: 'panel', fileId: 'p1.pdf', fileKind: 'pdf', nativeW: 40, nativeH: 30, x: 5, y: 4, w: 40, h: 30, overrides: [],
+  } as unknown as PanelObject
+  const line = (pts: [number, number][]) => ({ kind: 'multi_path', paths: [{ points: pts, closed: false }], fill: false, stroke: true })
+  const manifestOf = (over: Record<string, unknown> = {}) =>
+    ({
+      stem: 'p1',
+      size_mm: [40, 30],
+      elements: [
+        {
+          gid: 'axes_0', role: 'axes', label: 'axes', bbox: [0.1, 0.1, 0.8, 0.8], draggable: false, editable: [],
+          spines: { left: { visible: true, ticks: true, from: [0.1, 0.9], to: [0.1, 0.1] }, top: { visible: false, ticks: false, from: [0.1, 0.1], to: [0.9, 0.1] } },
+          grid: { x: line([[0.3, 0.9], [0.3, 0.1]]) },
+          ...over,
+        },
+      ],
+    }) as never
+  afterEach(() => useRenderStore.setState({ byKey: {}, latest: {}, recent: {} }))
+  async function seed(m: never) {
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_guides')
+    useDocumentStore.getState().commit(literal('准备'), (d) => {
+      d.objects = [panel as never]
+    })
+    seedExactRender(panel, m)
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    useUiStore.setState({ rightTab: 'review', rightOpen: true })
+  }
+  const pinned = async (gid: string, box: number[], pt: number[]) => {
+    const c = cm('g1', { anchor: { kind: 'element', gid, box, pt } as never })
+    vi.mocked(fetchReviewShare).mockResolvedValue(DETAIL([c]))
+    resetStore({ share: SHARE, detail: DETAIL([c]) })
+    await render(
+      <>
+        <svg>
+          <ReviewOverlay objects={useDocumentStore.getState().doc.objects} t={T} />
+        </svg>
+        <ReviewPanel />
+      </>,
+    )
+  }
+  it('边框线：圆点落在那条线现在的位置（按上传时的点击位置换算），不退到面板角上', async () => {
+    await seed(manifestOf())
+    await pinned('axes_0.spine_left', [0.099, 0.1, 0.002, 0.8], [0.1, 0.5])
+    const c = q('[data-review-pin="g1"] circle')!
+    expect(q('[data-review-comment="g1"] [data-review-moved]')).toBeNull()
+    expect(Number(c.getAttribute('cx'))).toBeCloseTo(mmToViewX(5 + 0.1 * 40, T), 0)
+    expect(Number(c.getAttribute('cy'))).toBeCloseTo(mmToViewY(4 + 0.5 * 30, T), 0)
+  })
+  it('网格线：框是所有网格线的包围盒；挪动后跟着走', async () => {
+    await seed(manifestOf({ grid: { x: line([[0.3, 0.9], [0.3, 0.1], [0.5, 0.1], [0.5, 0.9]]) } }))
+    await pinned('axes_0.xgrid', [0.299, 0.1, 0.202, 0.8], [0.4, 0.5])
+    const c = q('[data-review-pin="g1"] circle')!
+    expect(Number(c.getAttribute('cx'))).toBeCloseTo(mmToViewX(5 + 0.4 * 40, T), 0)
+    expect(mmToPx(1, T)).toBeGreaterThan(0)
+  })
+  it('数据没了（网格关了 / 那一边隐藏）：不画圆点，列表标「原位置已变化」', async () => {
+    await seed(manifestOf({ grid: undefined }))
+    await pinned('axes_0.xgrid', [0.299, 0.1, 0.002, 0.8], [0.3, 0.5])
+    expect(q('[data-review-pin="g1"]')).toBeNull()
+    expect(q('[data-review-comment="g1"] [data-review-moved]')).not.toBeNull()
   })
 })
 
