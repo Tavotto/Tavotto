@@ -50,6 +50,7 @@ import {
 import { runManualSave } from '@/store/actions'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { checkNewerBuild } from '@/store/failureExit'
+import { feedbackAction } from '@/lib/canvasFileIntake'
 import { exportPackage, openPackageWithRetry } from '@/store/packageActions'
 import { useUiStore } from '@/store/uiStore'
 import { useUpdateStore } from '@/store/updateStore'
@@ -71,7 +72,7 @@ import { RestoreIssueBody, RestoreMetaBody } from './RestoreIssueBody'
 import { useWindowFullscreen } from '@/hooks/useWindowChrome'
 import { MOD, cn } from '@/lib/utils'
 import { journalCatalogUi } from '@/lib/journalUi'
-import { t as translate } from '@/i18n'
+import { formatMessage, t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
 import { useFormatMessage } from '@/i18n/react'
 
@@ -634,16 +635,24 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
     )
   }
   if (issue === 'too_new' && notice?.kind === 'schema_too_new') {
+    const browserFeedback = isDesktop() ? undefined : feedbackAction()
     return (
       <>
         {head(t('docBanner.tooNewTitle', { product: PRODUCT_NAME }), t('docBanner.tooNewBody', { product: PRODUCT_NAME }))}
         {row(
           <>
-          {/* 桌面版：主按钮直接去查新版（查到顺手下载）；浏览器版没有壳里的更新通道，保持「知道了」 */}
-          {isDesktop() && (
+          {/* 桌面版：主按钮直接去查新版（查到顺手下载）。浏览器版没有壳里的更新通道：主按钮是
+              「发送问题反馈」（#1920 合同裁定，ADR 0176 第 9 行的 ③），不留一个只会「知道了」的死胡同 */}
+          {isDesktop() ? (
             <Button variant="primary" size="sm" data-docbanner-check-update onClick={done(() => void checkNewerBuild())}>
               {t('docBanner.checkUpdate')}
             </Button>
+          ) : (
+            browserFeedback && (
+              <Button variant="primary" size="sm" data-docbanner-feedback onClick={done(browserFeedback.run)}>
+                {formatMessage(browserFeedback.label)}
+              </Button>
+            )
           )}
           <Button
             size="sm"

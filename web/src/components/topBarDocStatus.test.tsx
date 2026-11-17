@@ -31,6 +31,7 @@ import { emptyProject, type TextObject } from '@/types/document'
 import { recoverLocalCopy, useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
 import { fetchNewerDesktopBuild } from '@/store/updateStore'
+import { useDiagSendStore } from '@/store/diagSendStore'
 import { useUiStore } from '@/store/uiStore'
 import { formatMessage } from '@/i18n'
 import { DocumentMenu, SaveStateLabel } from './TopBar'
@@ -158,6 +159,24 @@ describe('出事：锚点色胶囊 + 说明块', () => {
     expect(useDocumentStore.getState().docNotice).toBeNull()
     expect(useProjectStore.getState().lastDocumentIssue, '同一份的「打开上次文档」只会再失败').toBeNull()
     expect(pill()).toBeNull()
+  })
+
+  it('版本过新（浏览器版）：能发反馈时主按钮是「发送问题反馈」，不只剩一句「知道了」（#1920 裁定 ③）', async () => {
+    desktop.on = false
+    useDiagSendStore.setState({ capability: { enabled: true } as never, open: false })
+    try {
+      await act(async () => {
+        useDocumentStore.setState({ docNotice: { kind: 'schema_too_new', docId: 'layout:Future', schema: 4 } })
+      })
+      const pop = (await openPill())!
+      expect(pop.querySelector('[data-docbanner-check-update]')).toBeNull()
+      const btn = pop.querySelector<HTMLButtonElement>('[data-docbanner-feedback]')!
+      expect(btn.dataset.variant).toBe('primary')
+      await act(async () => btn.click())
+      expect(useDiagSendStore.getState().open).toBe(true)
+    } finally {
+      useDiagSendStore.setState({ capability: null, open: false })
+    }
   })
 
   describe('版本过新（桌面版）：主按钮「检查更新」', () => {
