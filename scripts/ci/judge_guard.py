@@ -12,7 +12,8 @@ CLA 判定已经取自默认分支；但 workflow 自身、树内看护用例与
 * 名单与本脚本都由 ci.yml 从默认分支取（bootstrap 空窗退回本 revision 副本）。
 * `mode`：`off` 什么都不说；`observe` 打 notice + step summary，**永远退出 0**。
   未知的 mode 按 observe 处理并 warning——这一步不许因为配置问题让任何 PR 红。
-* 名单条目：以 `/` 结尾 = 目录前缀；否则 = 精确路径。不支持通配，免得一条宽模式悄悄吞掉半个仓库。
+* 名单条目：以 `/` 结尾 = 目录前缀；以 `*` 结尾 = 同一目录下的文件名前缀（不跨目录）；否则 = 精确
+  路径。不支持别的通配，免得一条宽模式悄悄吞掉半个仓库。
 
 纯标准库。stdout 恒输出一行 JSON。
 """
@@ -53,6 +54,9 @@ def load_config(path: Path) -> dict:
 def matches(entry: str, path: str) -> bool:
     if entry.endswith("/"):
         return path.startswith(entry)
+    if entry.endswith("*"):
+        stem = entry[:-1]
+        return path.startswith(stem) and "/" not in path[len(stem) :]
     return path == entry
 
 

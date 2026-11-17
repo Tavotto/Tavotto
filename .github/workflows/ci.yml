@@ -861,7 +861,8 @@ jobs:
           if [ "$EVENT" = "pull_request" ]; then
             jq -r '.[] | .filename, (.previous_filename // empty)' "$RUNNER_TEMP/pr-files.json" > "$JG/changed.txt"
           else
-            git diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA" > "$JG/changed.txt"
+            # quotepath=false：非 ASCII 路径不加引号转义，否则行首变成 `"`、前缀匹配不中
+            git -c core.quotepath=false diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA" > "$JG/changed.txt"
           fi
           python3 -I "$JG/judge_guard.py" --paths-file "$JG/changed.txt" --config "$JG/judge-paths.json"
       - name: 校验 发行说明里的相对链接（docs-only 的最小说明检查）

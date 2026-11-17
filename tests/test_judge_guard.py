@@ -62,6 +62,17 @@ class TestMatching:
         assert not judge_guard.matches("AGENTS.md", "web/AGENTS.md")
         assert not judge_guard.matches("AGENTS.md", "AGENTS.md.bak")
 
+    def test_star_entry_is_a_filename_prefix_in_one_directory(self):
+        assert judge_guard.matches(
+            "tests/test_compat_guardian*", "tests/test_compat_guardian_trend.py"
+        )
+        assert not judge_guard.matches(
+            "tests/test_compat_guardian*", "tests/test_compat_guardian/x.py"
+        )
+        assert not judge_guard.matches(
+            "tests/test_compat_guardian*", "tests/test_compat_explore.py"
+        )
+
     def test_product_change_is_not_a_judge_change(self):
         r = judge_guard.decide(["src/tavotto/engine/manifest.py", "web/src/App.tsx"], _config())
         assert r["touched"] is False and r["hits"] == {}
