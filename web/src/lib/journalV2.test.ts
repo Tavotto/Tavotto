@@ -124,6 +124,12 @@ describe('fetchJournalV2：取不到、被拒、不合法都是 null（预检照
 })
 
 describe('confirmEntries', () => {
+  it('文件格式按大写显示（TIFF / EPS），补丁里的数据不动', () => {
+    const row = { id: 'a', subject: 'file_format', relation: 'in' as const, value: ['tiff', 'eps'], unit: null, condition: '', quote: 'q', stage: 'unknown', source: V2_SRC }
+    const [path, s] = confirmEntries(row)
+    expect(valueText(path, s)).toBe('TIFF / EPS')
+    expect(row.value).toEqual(['tiff', 'eps'])
+  })
   it('名单型（色彩模式 / 文件格式）：路径不带单位，值是名单', () => {
     const [path, s] = confirmEntries({ id: 'a', subject: 'color_mode', relation: 'in', value: ['RGB', 'CMYK'], unit: null, condition: '', quote: 'q', stage: 'unknown', source: V2_SRC })
     expect(path).toBe('v2.color_mode')

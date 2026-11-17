@@ -197,7 +197,8 @@ export function applyV2(binding: Binding, patch: V2Patch | null): Binding {
 export function confirmEntries(row: V2ConfirmRow): [string, JournalFieldSource] {
   const qualifier = row.relation === 'gte' ? 'min' : row.relation === 'lte' ? 'max' : 'exact' // 名单（in）与「恰好」都是 exact
   const source: JournalFieldSource = {
-    value: row.value,
+    // 文件格式按大写显示（TIFF / EPS）；只改显示用的这一份，补丁里的数据不动
+    value: row.subject === 'file_format' && Array.isArray(row.value) ? row.value.map((v) => v.toUpperCase()) : row.value,
     value_alt: null,
     qualifier,
     ...(row.strength ? { strength: row.strength as JournalFieldSource['strength'] } : {}),
