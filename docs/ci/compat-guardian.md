@@ -43,9 +43,9 @@ Guardian 的目标一句话：让尽可能多的科研用户的 matplotlib 脚�
 **代码不能保证的（不要在任何文档、PR 描述、日志里写成保证）**
 
 - 「夹具被评审过」。上面的比对是**自洽检查**，不是评审证明：在 PR 分支上，作者可以同时改夹具和 manifest，
-  HEAD 就是新内容，检查照样通过。真正的评审边界是**合入 main 的评审**，由 `.github/CODEOWNERS` 里
-  `tests/compat/**`、`tests/fixtures/compat_v2/**`、`scripts/ci/compat_guardian*`、本文档与 Guardian
-  workflow 的显式条目提供（见 §9）。因此：PR 上的 Guardian 运行是「这个分支自己的夹具」的观察，不是
+  HEAD 就是新内容，检查照样通过。真正的评审边界是**合入 main 之前的维护者确认**：这些路径在判据名单
+  `.github/judge-paths.json` 里，改到的 PR 不自动入队、先报维护者（`docs/rules/ci/judge-guard.md`）。
+  `.github/CODEOWNERS` 的条目只发评审请求、不拦合并（ruleset 未开 code owner review，见 §9）。因此：PR 上的 Guardian 运行是「这个分支自己的夹具」的观察，不是
   「已评审夹具」的观察。
 - OS 级隔离。HOME / 配置 / 数据 / 缓存 / TMP 指向每例临时目录、环境变量白名单、进程树超时回收，**都不是
   沙盒**：同 UID 的绝对路径照读照写，网络不拦。所以 Guardian 只在 GitHub 托管的临时 runner 上跑，
@@ -284,7 +284,7 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
 `.github/CODEOWNERS` 为下列路径列出显式条目：`tests/compat/**`（manifest、基线、schema）、
 `tests/fixtures/compat_v2/**`、`scripts/ci/compat_guardian*`、`scripts/ci/guardian_exec_observer.py`、
 `scripts/ci/compat_driver.py`、`tests/test_compat_guardian*`、Guardian workflow 与本文档。
-`tests/compat_guardian/**`（声明文件与 schema）同样在列。目前只有一位维护者，条目等于默认值；它们的作用是：等有第二位维护者时，这些路径不会跟着默认规则漂走，
+`tests/compat_guardian/**`（声明文件与 schema）同样在列。目前只有一位维护者，条目等于默认值，且 ruleset 未开 `require_code_owner_review`——它们**不拦合并**，拦合并靠判据名单的入队规则（`docs/rules/ci/judge-guard.md`）；条目的作用是：等有第二位维护者时，这些路径不会跟着默认规则漂走，
 且「改夹具 = 改权利边界」在文件里写明了。
 
 ## 10. 15 个对抗验收案例的覆盖

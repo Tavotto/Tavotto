@@ -10,6 +10,8 @@
     python scripts/dev/lessons.py --json    # 解析结果（给复盘脚本）
     python scripts/dev/lessons.py --stats   # 每层体积与余量、下一个可用编号
 
+按改动文件取命中的条目见同目录 `lessons_for_diff.py`（匹配规则 `trigger_matches` 在本模块）。
+
 纯标准库。
 """
 
@@ -19,6 +21,7 @@ import argparse
 import datetime as dt
 import json
 import re
+import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -38,6 +41,10 @@ PROMOTE_AT = 3
 LAYERS = ("repo", "backend", "frontend", "ci", "plugin", "packaging", "desktop")
 KINDS = ("别这样", "照这样")
 FIELDS = ("类", "Seen", "为什么", "证据")
+#: 未升级的条目另须有「触发」（看护用例判），解析时可缺：旧格式文本仍能读。
+OPTIONAL_FIELDS = ("触发",)
+#: 触发里这个特殊值 = 任何改动都适用的通用纪律；克制：条数上限在看护用例里。
+UNIVERSAL = "*"
 #: Seen 按北京时间记（错题本「怎么用」与每日复盘约定），「不在未来」也按北京时间的今天判。
 #: 不用 runner 本地日期：CI 是 UTC，复盘 04:30（北京）开工时 UTC 还在前一天，当天的 Seen 会被判成未来。
 #: 用固定 +08:00 而不是 zoneinfo：中国不用夏令时，且 Windows 上没装 tzdata 时 zoneinfo 取不到。
@@ -69,9 +76,18 @@ class Lesson:
     status: str  # "active" 或 "promoted"
     promoted_to: str | None
     seen: tuple[str, ...]  # ISO 日期，升序、不重复
+    triggers: tuple[str, ...]  # 路径条目（语法见 `trigger_matches`）；已升级的为空
     why: str
     evidence: str
     line: int
+
+    @property
+    def universal(self) -> bool:
+        return self.triggers == (UNIVERSAL,)
+
+    def triggered_by(self, paths: list[str]) -> bool:
+        """改动文件里有没有命中这条的触发（通用条目不在此列，见 `universal`）。"""
+        return any(trigger_matches(t, p) for t in self.triggers for p in paths)
 
     @property
     def due(self) -> bool:
@@ -80,6 +96,57 @@ class Lesson:
 
 class LessonsError(ValueError):
     pass
+
+
+def trigger_syntax_error(entry: str) -> str | None:
+    """触发路径条目的语法（与 `.github/judge-paths.json` 对齐）；合法返回 None。
+
+    `/` 结尾 = 目录前缀；`*` 结尾 = 同一目录下文件名前缀；否则精确路径；不支持别的通配。
+    """
+    if not entry:
+        return "空条目"
+    if entry == UNIVERSAL:
+        return None
+    if entry != entry.strip() or re.search(r"\s", entry):
+        return "含空白"
+    if entry.startswith("/") or "\\" in entry or ".." in entry.split("/"):
+        return "须是仓库内相对的 / 分隔路径"
+    body = entry[:-1] if entry.endswith("*") else entry
+    if any(c in body for c in "*?[]{}"):
+        return "只支持结尾一个 *（文件名前缀），不支持别的通配"
+    if entry == "/":
+        return "空目录前缀"
+    return None
+
+
+def trigger_matches(entry: str, path: str) -> bool:
+    """`entry` 是否命中 `path`（POSIX 相对路径）。`*`（通用）不在这里命中：它不按路径触发。"""
+    if entry == UNIVERSAL:
+        return False
+    if entry.endswith("/"):
+        return path.startswith(entry)
+    if entry.endswith("*"):
+        prefix = entry[:-1]
+        head, _, name_prefix = prefix.rpartition("/")
+        phead, _, pname = path.rpartition("/")
+        return phead == head and pname.startswith(name_prefix)
+    return path == entry
+
+
+def tracked_files(root: Path = ROOT) -> list[str]:
+    """`git ls-files` 的结果；取不到抛 `LessonsError`（空清单会让「条目至少匹配一个文件」恒红或恒绿）。"""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z"],
+            check=True,
+            capture_output=True,
+        ).stdout.decode("utf-8", "replace")
+    except (OSError, subprocess.CalledProcessError) as e:
+        raise LessonsError(f"取不到 git ls-files：{e}") from None
+    files = [x for x in out.split("\0") if x]
+    if not files:
+        raise LessonsError("git ls-files 为空")
+    return files
 
 
 def parse(text: str, layer: str) -> list[Lesson]:
@@ -114,6 +181,7 @@ def parse(text: str, layer: str) -> list[Lesson]:
                         status="promoted",
                         promoted_to=p.group(2),
                         seen=(),
+                        triggers=(),
                         why="",
                         evidence="",
                         line=n,
@@ -134,7 +202,7 @@ def parse(text: str, layer: str) -> list[Lesson]:
                 raise LessonsError(f"第 {n} 行: 已升级的条目只留标题一行：{line[:60]}")
             continue
         f = FIELD.match(line)
-        if f and f.group(1).strip() in FIELDS:
+        if f and f.group(1).strip() in FIELDS + OPTIONAL_FIELDS:
             key = f.group(1).strip()
             if key in current["fields"]:
                 raise LessonsError(f"第 {n} 行 {current['id']}: 字段「{key}」重复")
@@ -175,6 +243,7 @@ def _build(c: dict) -> Lesson:
         status="active",
         promoted_to=None,
         seen=seen,
+        triggers=tuple(t.strip() for t in f.get("触发", "").split(",") if t.strip()),
         why=f["为什么"],
         evidence=f["证据"],
         line=c["line"],
@@ -190,9 +259,16 @@ def beijing_today(now: dt.datetime | None = None) -> dt.date:
 
 
 def problems(
-    text: str, layer: str, *, root: Path = ROOT, today: dt.date | None = None
+    text: str,
+    layer: str,
+    *,
+    root: Path = ROOT,
+    today: dt.date | None = None,
+    tracked: list[str] | None = None,
 ) -> list[str]:
-    """一层文件解析之外的检查：节内编号、体积、脱敏、升级目标、日期不在未来。"""
+    """一层文件解析之外的检查：节内编号、体积、脱敏、升级目标、日期不在未来、触发字段。
+
+    `tracked` 是 `git ls-files` 的清单；不传则取 `root` 的。"""
     out: list[str] = []
     try:
         lessons = parse(text, layer)
@@ -219,6 +295,36 @@ def problems(
                 out.append(f"{x.id}: 升级目标 {x.promoted_to} 里找不到 {x.id}")
         if x.seen and dt.date.fromisoformat(x.seen[-1]) > today:
             out.append(f"{x.id}: Seen 里有未来的日期 {x.seen[-1]}")
+    out += trigger_problems(lessons, root=root, tracked=tracked)
+    return out
+
+
+def trigger_problems(
+    lessons: list[Lesson], *, root: Path = ROOT, tracked: list[str] | None = None
+) -> list[str]:
+    """未升级的条目必须有触发；每个路径条目语法合法、至少匹配一个已跟踪文件（否则是空转）。"""
+    out: list[str] = []
+    files: list[str] | None = tracked
+    for x in lessons:
+        if x.status != "active":
+            continue
+        if not x.triggers:
+            out.append(f"{x.id}: 缺「触发」字段（路径条目，或通用的 *）")
+            continue
+        if UNIVERSAL in x.triggers and x.triggers != (UNIVERSAL,):
+            out.append(f"{x.id}: 触发里的 * 只能单独出现")
+            continue
+        if len(set(x.triggers)) != len(x.triggers):
+            out.append(f"{x.id}: 触发里有重复条目")
+        for t in x.triggers:
+            err = trigger_syntax_error(t)
+            if err:
+                out.append(f"{x.id}: 触发「{t}」不合法：{err}")
+            elif t != UNIVERSAL:
+                if files is None:
+                    files = tracked_files(root)
+                if not any(trigger_matches(t, p) for p in files):
+                    out.append(f"{x.id}: 触发「{t}」没匹配到任何已跟踪文件（空转）")
     return out
 
 
@@ -246,14 +352,26 @@ def load(directory: Path = LESSONS) -> list[Lesson]:
 
 
 def check_all(
-    directory: Path = LESSONS, *, root: Path = ROOT, today: dt.date | None = None
+    directory: Path = LESSONS,
+    *,
+    root: Path = ROOT,
+    today: dt.date | None = None,
+    tracked: list[str] | None = None,
 ) -> list[str]:
     """全部检查：逐层 `problems` + 跨文件的编号不重复。"""
     books, out = _book_paths(directory)
+    if tracked is None:
+        try:
+            tracked = tracked_files(root)
+        except LessonsError as e:
+            return out + [str(e)]
     numbers: list[int] = []
     for layer, path in books:
         text = path.read_text(encoding="utf-8")
-        out += [f"{path.name} {e}" for e in problems(text, layer, root=root, today=today)]
+        out += [
+            f"{path.name} {e}"
+            for e in problems(text, layer, root=root, today=today, tracked=tracked)
+        ]
         try:
             numbers += [x.number for x in parse(text, layer)]
         except LessonsError:

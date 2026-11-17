@@ -37,6 +37,7 @@
 | --- | --- | --- |
 | `.github/workflows/ci.yml` 的事件 / `needs` / Gate 闭集、`scripts/ci/aggregate_gate.py` | CI 分层 → `ci-lanes.md` | 时机分工与覆盖面不变；三个稳定 Gate；`cancel-in-progress` 只对 PR 开；监听 `pull_request` 的 workflow 都带 `branches: [main]` |
 | 任何新门禁 / 豁免表 / 「最近跑过没有」的判据 | 门禁纪律 → `gate-discipline.md` | 手工反证一次写进 PR；豁免要写得出理由、区分「豁免」与「使能」；数有结论的 run；别人电脑上的 bug 先写用例 |
+| `.github/judge-paths.json` 里的任一路径（workflow、`scripts/ci/`、Gate 看护用例、Guardian 夹具、根 `AGENTS.md`……） | 判据路径 → `judge-guard.md` | 不自动入队、先报维护者；新门禁 / 看护用例 / 豁免表同 PR 登记进名单；observe 不判红 |
 | `docs/features/registry.json`、`web/e2e/features.spec.ts`、任何带 `@feature:` 标签或被登记的 e2e、`scripts/ci/feature_registry.py`、`web/scripts/e2e-skip-scan.mjs` | 功能登记表（ADR 0097）→ `feature-registry.md` | 每个 active 功能至少一条真浏览器 e2e、不许带 skip / fixme / fail；下线改 `removed` + `feature:removal` 标签、不许删条目 |
 | `python-lint` job、`pyproject.toml` 的 `[tool.ruff]` | Ruff 这一格 → `ruff-lint-lane.md` | 规则与豁免只在 `pyproject.toml`，CI 不 `--fix`；check 与 format 两个独立结论；新增 sys.path 源码根要回来审 `src` |
 | `backend-fast` / `backend-platforms` 的 `--shard`、`_lab-qualification.yml` 的常规套件、`tests/support/shard.py`、`shard_weights.json` | pytest 分片（CI03a）→ `pytest-shards.md` | 选项必须 `=` 形式；进程内自验并集 == 全集；不带 `--shard` 是 no-op；权重表只影响平衡不影响覆盖；不加 `-n auto` |

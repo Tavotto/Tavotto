@@ -2648,6 +2648,9 @@ export interface SpineGeom {
   ticks: boolean
   from: [number, number]
   to: [number, number]
+  /** 线宽（pt）与真实绘制次序：只给外部审阅页把边框线当独立目标用，画布不读 */
+  stroke_pt?: number
+  paint_order?: number
 }
 
 /**
@@ -2899,6 +2902,13 @@ export interface ManifestElement {
    * `visible` 是边框线本身，`ticks` 是这一侧的主刻度线——两件事分开报。
    */
   spines?: Partial<Record<SpineSide, SpineGeom>>
+  /**
+   * 直角坐标轴上**画出来**的网格线 / 刻度线（按轴成组的描边多路径，figure 分数、y 向下）。
+   * 只给外部审阅页点选用（ADR 0187 修订 2026-11-17）：画布不据此建任何可选元素，只用来给审阅意见的圆点找落点。
+   * 没开网格 / 刻度线全关的那条轴没有对应键。
+   */
+  grid?: Partial<Record<'x' | 'y', ElementGeometry>>
+  tickmarks?: Partial<Record<'x' | 'y', ElementGeometry>>
   /**
    * 图例项的身份（ADR 0034）：原始序号、图中源对象的 gid、脚本原样的绑定。
    * 只有图例**项**有（图例标题没有）。`source_gid` 缺席 = 没有源——界面显示

@@ -1,5 +1,5 @@
 {
- "note": "Tavotto 画布点选 ↔ 审阅页点选对拍夹具（ADR 0187 修订 2026-11-16）。两个仓库各存一份、内容必须相同。元素表是引擎 reviewshare.manifest_elements 对一张真实 matplotlib 图的输出。",
+ "note": "Tavotto 画布点选 ↔ 审阅页点选对拍夹具（ADR 0187 修订 2026-11-16）。两个仓库各存一份、内容必须相同。元素表是引擎 reviewshare.manifest_elements 对一张真实 matplotlib 图的输出。 2026-11-17 起元素表里的边框线 / 网格线 / 刻度线（role spine / gridline / tickmark）由 reviewshare._guide_items 按这张图的刻度位置合成（图本身没开网格），用来对拍它们的点选。",
  "manifest": {
   "size_mm": [
    162.56,
@@ -16,6 +16,664 @@
      0.7742
     ],
     "role": "axes"
+   },
+   {
+    "gid": "axes_0.spine_left",
+    "label": "左轴线",
+    "bbox": [
+     0.1218,
+     0.0865,
+     0.002,
+     0.7742
+    ],
+    "role": "spine",
+    "geometry": {
+     "kind": "polyline",
+     "paths": [
+      {
+       "points": [
+        [
+         0.1228,
+         0.8607
+        ],
+        [
+         0.1228,
+         0.0865
+        ]
+       ],
+       "closed": false
+      }
+     ],
+     "fill": false,
+     "stroke": true,
+     "stroke_pt": 0.8,
+     "paint_order": 6,
+     "clip": [
+      0.0,
+      0.0,
+      1.0,
+      1.0
+     ]
+    },
+    "paint_order": 6
+   },
+   {
+    "gid": "axes_0.spine_right",
+    "label": "右轴线",
+    "bbox": [
+     0.9756,
+     0.0865,
+     0.002,
+     0.7742
+    ],
+    "role": "spine",
+    "geometry": {
+     "kind": "polyline",
+     "paths": [
+      {
+       "points": [
+        [
+         0.9766,
+         0.8607
+        ],
+        [
+         0.9766,
+         0.0865
+        ]
+       ],
+       "closed": false
+      }
+     ],
+     "fill": false,
+     "stroke": true,
+     "stroke_pt": 0.8,
+     "paint_order": 7,
+     "clip": [
+      0.0,
+      0.0,
+      1.0,
+      1.0
+     ]
+    },
+    "paint_order": 7
+   },
+   {
+    "gid": "axes_0.spine_top",
+    "label": "上轴线",
+    "bbox": [
+     0.1228,
+     0.0855,
+     0.8538,
+     0.002
+    ],
+    "role": "spine",
+    "geometry": {
+     "kind": "polyline",
+     "paths": [
+      {
+       "points": [
+        [
+         0.1228,
+         0.0865
+        ],
+        [
+         0.9766,
+         0.0865
+        ]
+       ],
+       "closed": false
+      }
+     ],
+     "fill": false,
+     "stroke": true,
+     "stroke_pt": 0.8,
+     "paint_order": 9,
+     "clip": [
+      0.0,
+      0.0,
+      1.0,
+      1.0
+     ]
+    },
+    "paint_order": 9
+   },
+   {
+    "gid": "axes_0.spine_bottom",
+    "label": "下轴线",
+    "bbox": [
+     0.1228,
+     0.8597,
+     0.8538,
+     0.002
+    ],
+    "role": "spine",
+    "geometry": {
+     "kind": "polyline",
+     "paths": [
+      {
+       "points": [
+        [
+         0.1228,
+         0.8607
+        ],
+        [
+         0.9766,
+         0.8607
+        ]
+       ],
+       "closed": false
+      }
+     ],
+     "fill": false,
+     "stroke": true,
+     "stroke_pt": 0.8,
+     "paint_order": 8,
+     "clip": [
+      0.0,
+      0.0,
+      1.0,
+      1.0
+     ]
+    },
+    "paint_order": 8
+   },
+   {
+    "gid": "axes_0.xgrid",
+    "label": "X 网格线",
+    "bbox": [
+     0.1616,
+     0.0865,
+     0.7761,
+     0.7742
+    ],
+    "role": "gridline",
+    "geometry": {
+     "kind": "multi_path",
+     "paths": [
+      {
+       "points": [
+        [
+         0.1616,
+         0.8607
+        ],
+        [
+         0.1616,
+         0.0865
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.3169,
+         0.8607
+        ],
+        [
+         0.3169,
+         0.0865
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.4721,
+         0.8607
+        ],
+        [
+         0.4721,
+         0.0865
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.6273,
+         0.8607
+        ],
+        [
+         0.6273,
+         0.0865
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.7825,
+         0.8607
+        ],
+        [
+         0.7825,
+         0.0865
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.9377,
+         0.8607
+        ],
+        [
+         0.9377,
+         0.0865
+        ]
+       ],
+       "closed": false
+      }
+     ],
+     "fill": false,
+     "stroke": true,
+     "stroke_pt": 0.8,
+     "clip": [
+      0.12283,
+      0.08651,
+      0.85373,
+      0.7742
+     ],
+     "paint_order": 2
+    },
+    "paint_order": 2
+   },
+   {
+    "gid": "axes_0.ygrid",
+    "label": "Y 网格线",
+    "bbox": [
+     0.1228,
+     0.1257,
+     0.8538,
+     0.7036
+    ],
+    "role": "gridline",
+    "geometry": {
+     "kind": "multi_path",
+     "paths": [
+      {
+       "points": [
+        [
+         0.1228,
+         0.8293
+        ],
+        [
+         0.9766,
+         0.8293
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.1228,
+         0.7413
+        ],
+        [
+         0.9766,
+         0.7413
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.1228,
+         0.6534
+        ],
+        [
+         0.9766,
+         0.6534
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.1228,
+         0.5655
+        ],
+        [
+         0.9766,
+         0.5655
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.1228,
+         0.4775
+        ],
+        [
+         0.9766,
+         0.4775
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.1228,
+         0.3896
+        ],
+        [
+         0.9766,
+         0.3896
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.1228,
+         0.3016
+        ],
+        [
+         0.9766,
+         0.3016
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.1228,
+         0.2137
+        ],
+        [
+         0.9766,
+         0.2137
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.1228,
+         0.1257
+        ],
+        [
+         0.9766,
+         0.1257
+        ]
+       ],
+       "closed": false
+      }
+     ],
+     "fill": false,
+     "stroke": true,
+     "stroke_pt": 0.8,
+     "clip": [
+      0.12283,
+      0.08651,
+      0.85373,
+      0.7742
+     ],
+     "paint_order": 3
+    },
+    "paint_order": 3
+   },
+   {
+    "gid": "axes_0.xtickmarks",
+    "label": "X 刻度线",
+    "bbox": [
+     0.1616,
+     0.8607,
+     0.7761,
+     0.0116
+    ],
+    "role": "tickmark",
+    "geometry": {
+     "kind": "multi_path",
+     "paths": [
+      {
+       "points": [
+        [
+         0.1616,
+         0.8607
+        ],
+        [
+         0.1616,
+         0.8723
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.3169,
+         0.8607
+        ],
+        [
+         0.3169,
+         0.8723
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.4721,
+         0.8607
+        ],
+        [
+         0.4721,
+         0.8723
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.6273,
+         0.8607
+        ],
+        [
+         0.6273,
+         0.8723
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.7825,
+         0.8607
+        ],
+        [
+         0.7825,
+         0.8723
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.9377,
+         0.8607
+        ],
+        [
+         0.9377,
+         0.8723
+        ]
+       ],
+       "closed": false
+      }
+     ],
+     "fill": false,
+     "stroke": true,
+     "stroke_pt": 0.8,
+     "paint_order": 2,
+     "clip": [
+      0.0,
+      0.0,
+      1.0,
+      1.0
+     ]
+    },
+    "paint_order": 2
+   },
+   {
+    "gid": "axes_0.ytickmarks",
+    "label": "Y 刻度线",
+    "bbox": [
+     0.1152,
+     0.1257,
+     0.0076,
+     0.7036
+    ],
+    "role": "tickmark",
+    "geometry": {
+     "kind": "multi_path",
+     "paths": [
+      {
+       "points": [
+        [
+         0.1228,
+         0.8293
+        ],
+        [
+         0.1152,
+         0.8293
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.1228,
+         0.7413
+        ],
+        [
+         0.1152,
+         0.7413
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.1228,
+         0.6534
+        ],
+        [
+         0.1152,
+         0.6534
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.1228,
+         0.5655
+        ],
+        [
+         0.1152,
+         0.5655
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.1228,
+         0.4775
+        ],
+        [
+         0.1152,
+         0.4775
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.1228,
+         0.3896
+        ],
+        [
+         0.1152,
+         0.3896
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.1228,
+         0.3016
+        ],
+        [
+         0.1152,
+         0.3016
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.1228,
+         0.2137
+        ],
+        [
+         0.1152,
+         0.2137
+        ]
+       ],
+       "closed": false
+      },
+      {
+       "points": [
+        [
+         0.1228,
+         0.1257
+        ],
+        [
+         0.1152,
+         0.1257
+        ]
+       ],
+       "closed": false
+      }
+     ],
+     "fill": false,
+     "stroke": true,
+     "stroke_pt": 0.8,
+     "paint_order": 3,
+     "clip": [
+      0.0,
+      0.0,
+      1.0,
+      1.0
+     ]
+    },
+    "paint_order": 3
    },
    {
     "gid": "axes_0.title",
@@ -665,7 +1323,7 @@
    "name": "曲线 A 的 bbox 里、离线很远的空白处 → 子图",
    "pt": [
     0.55,
-    0.75
+    0.7
    ],
    "expect": "axes_0"
   },
@@ -708,6 +1366,62 @@
     0.4736
    ],
    "expect": "axes_0.ylabel"
+  },
+  {
+   "name": "曲线与 X 网格线交叉处 → 曲线（不是网格线）",
+   "pt": [
+    0.31686,
+    0.6918
+   ],
+   "expect": "axes_0.lines_1"
+  },
+  {
+   "name": "X 网格线上、离两条曲线都远 → X 网格线",
+   "pt": [
+    0.31686,
+    0.44
+   ],
+   "expect": "axes_0.xgrid"
+  },
+  {
+   "name": "Y 网格线上、离曲线远 → Y 网格线",
+   "pt": [
+    0.8,
+    0.4775
+   ],
+   "expect": "axes_0.ygrid"
+  },
+  {
+   "name": "左边框线 → 左轴线（不是子图）",
+   "pt": [
+    0.12283,
+    0.5
+   ],
+   "expect": "axes_0.spine_left"
+  },
+  {
+   "name": "下边框线 → 下轴线",
+   "pt": [
+    0.3,
+    0.86071
+   ],
+   "expect": "axes_0.spine_bottom"
+  },
+  {
+   "name": "X 刻度线（框外那一小段）→ X 刻度线",
+   "pt": [
+    0.47208,
+    0.8665
+   ],
+   "expect": "axes_0.xtickmarks"
+  },
+  {
+   "name": "Y 刻度线 → Y 刻度线",
+   "pt": [
+    0.11903,
+    0.56545
+   ],
+   "expect": "axes_0.ytickmarks"
   },
   {
    "name": "画面外角落：什么都不是",
