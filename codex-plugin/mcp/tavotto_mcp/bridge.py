@@ -4358,7 +4358,7 @@ def _aspect_height(profile: dict, w_mm: float, h_mm: float, w_final: float) -> f
 #: 点名冲突的回包里最多列几条、每个约束短句最多多长（`conflicts` 进错误 / 结果预算，要短）。
 FIX_CONFLICTS_CAP = 6
 FIX_CONFLICT_TEXT_CAP = 100
-#: 带 `conflicts` 的结局码（ADR 0189 §3）：没改成时必须点名「哪条规则、哪个元素、哪两个约束」。
+#: 带 `conflicts` 的结局码（ADR 0192 §3）：没改成时必须点名「哪条规则、哪个元素、哪两个约束」。
 FIX_CONFLICT_EXITS = ("constraint_conflict", "unsupported", "not_resolved", "font_unavailable")
 _SKIP_REASON_TEXT = {
     "no_safe_value": "算不出安全的目标值",
@@ -4695,7 +4695,7 @@ def _fix_run(
     def fail(exit_code: str, *, _changes: list | None = None, **extra) -> bool:
         result.update({"ok": False, "exit": exit_code, **extra})
         if exit_code in FIX_CONFLICT_EXITS:
-            # 点名谁和谁冲突（ADR 0189 §3）：评测里 agent 只拿到一个 exit 码，只好去猜属性名
+            # 点名谁和谁冲突（ADR 0192 §3）：评测里 agent 只拿到一个 exit 码，只好去猜属性名
             result["conflicts"] = _fix_conflicts(
                 result,
                 stage=extra.get("stage"),

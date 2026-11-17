@@ -1,4 +1,4 @@
-"""失败回包的 `next`：错误码 → 一个可以照抄的下一步（ADR 0189 第 3 条）。
+"""失败回包的 `next`：错误码 → 一个可以照抄的下一步（ADR 0192 第 3 条）。
 
 只在 MCP 工具层把 `BridgeError` 变成结果的那一处挂（`server.call_tool` 与 `fix_to_journal` 的失败回包），
 不散在各个 raise 点。三种形状：

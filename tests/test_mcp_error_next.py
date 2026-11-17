@@ -1,4 +1,4 @@
-"""失败回包的 `next`（ADR 0189 第 3 条）与 `fix_to_journal` 的冲突点名。
+"""失败回包的 `next`（ADR 0192 第 3 条）与 `fix_to_journal` 的冲突点名。
 
 * 映射单元：码 → `next` 的三种形状、参数补全、显式带 next 的不覆盖、未登记码不编；
 * AST 守卫：桥 / server / roots 里出现的**每个**错误码，要么有 `BUILDERS` 映射，要么在 `NO_NEXT`

@@ -34,7 +34,7 @@ order: 55
   靠 golden vectors 对齐。`auto` 的集合就是 `specfix.FIXABLE_RULES`，不在别处抄第二份清单；`size` 是 `page-width` / `page-aspect`；
   `verify` 是 `not_verifiable` 档；其余 `manual` 带一句 `hint`。
 - 提交后若会话上有旧的规范化合同，视同用户的明确要求：合同与验收解除（`contract_released: true`）；没提交则原样留着。
-- **没改成要点名冲突（ADR 0189 第 3 条）**：`constraint_conflict` / `unsupported` / `not_resolved` / `font_unavailable` 的回包带 `conflicts`
+- **没改成要点名冲突（ADR 0192 第 3 条）**：`constraint_conflict` / `unsupported` / `not_resolved` / `font_unavailable` 的回包带 `conflicts`
   （最多 `FIX_CONFLICTS_CAP` 条、每个约束短句最多 `FIX_CONFLICT_TEXT_CAP` 字）：`{rule, gid, gids?, constraints: [甲, 乙], prop?, repair?, want?}`——
   哪条规则、哪个元素、哪两个约束冲突，有 override 属性名就给。**只拼现成结果，不新写判据**（ADR 0180）：
   图幅步骤 = 目标图幅 ↔ normalize 的 `blocking` 里不许新增 / 恶化的那条（带 `repair`）；面板步骤 = specfix `changes` 里要写的那条 override

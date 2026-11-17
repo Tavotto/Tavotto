@@ -2087,7 +2087,7 @@ def call_tool(name: str, args: dict) -> dict:
     try:
         result = handler(args)
     except bridge.BridgeError as exc:
-        payload = nextstep.attach(exc.payload(), name, args)  # ADR 0189 §3：失败带可照抄的 next
+        payload = nextstep.attach(exc.payload(), name, args)  # ADR 0192 §3：失败带可照抄的 next
         # 失败也要机器可读：Codex 得能据此决定下一步（改路径？装 tavotto？确认导出？）
         # 但 **`code` 只进 `structuredContent`**：`content` 是念给用户听的那一份，
         # 把机器码摆在最前面，模型多半会连着念出去——用户听到

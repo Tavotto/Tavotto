@@ -48,7 +48,7 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
   `tests/test_mcp_stdio.py`。**没装 Tavotto 时降级而不是退出**（降级 server 握手正常、每个工具说人话）
   ——静默退出在 Codex 里表现为「插件没有工具」。
 
-## 失败回包的 `next`（ADR 0189 第 3 条）
+## 失败回包的 `next`（ADR 0192 第 3 条）
 
 - **`next` 是增量字段**：每个 `BridgeError` 的失败回包可带 `next`，**不改任何 `code` 的取值与含义**（老调用方照旧按 `code` 分诊）。
   只进 `structuredContent`，**不进念给用户听的 `content`**（与 `code` 同一条纪律）。`next` 在 `ERROR_PROTECTED_KEYS` 里：
