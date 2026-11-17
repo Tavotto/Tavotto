@@ -194,10 +194,10 @@
 
 ### L-165 新写一条做同一件事的路径，先把旧路径已有的防护列出来逐条搬过去
 - 类: 别这样
-- 触发: src/tavotto/engine/ai_convert.py, tests/test_convert_output_content.py, src/tavotto/engine/ai_connections.py, src/tavotto/engine/ai_probe.py
-- Seen: 2026-11-16
-- 为什么: 为了不让轮询看到候选消失，把 rmtree + copytree 的还原换成手写逐文件覆盖，丢了不跟随符号链接与 Windows 联接点的保护，评审连报两条 P1（#1960）；保存时新加的协议探测把旧密钥直接发往改过的地址，而拉型号清单那条路早有「改了地址不带旧密钥」（#1965）。替换或新增之前把旧路径的防护列成清单，新路径上每条各写一个反证用例。
-- 证据: #1960, #1965
+- 触发: src/tavotto/engine/ai_convert.py, tests/test_convert_output_content.py, src/tavotto/engine/ai_connections.py, src/tavotto/engine/ai_probe.py, src/tavotto/engine/ai_data_propose.py
+- Seen: 2026-11-16, 2026-11-17
+- 为什么: 为了不让轮询看到候选消失，把 rmtree + copytree 的还原换成手写逐文件覆盖，丢了不跟随符号链接与 Windows 联接点的保护，评审连报两条 P1（#1960）；保存时新加的协议探测把旧密钥直接发往改过的地址，而拉型号清单那条路早有「改了地址不带旧密钥」（#1965）。替换或新增之前把旧路径的防护列成清单，新路径上每条各写一个反证用例。缩略图改按需渲染后，没渲染完的候选提交时跳过了渲染与指纹校验（#1992）。
+- 证据: #1960, #1965, #1992
 
 ### L-167 新解析器或转换器：认得的输入要么兑现、要么报 issue，不许静默丢
 - 类: 别这样
