@@ -7,8 +7,8 @@
   这里不判任何东西、不新增判据，只决定「哪些 v2 事实可以当 v1 规则用」。
 * `confirm`：带文字条件（或名称条件判不出）、程序没法自动判断的数值要求，只给人看，不报警、不计数。
 
-只收**无条件**（无 `conditions`、无 `condition_text`）、数值与方向相符、语气是必须 / 建议 / 偏好的事实；
-其余不折叠（示例、允许、通常不是约束，见 FACTS-V2.md）。同一路径有两条不同的无条件值时不猜，全部进 `confirm`。
+只折**无条件**（无 `conditions`、无 `condition_text`）、数值与方向相符、语气是必须 / 建议 / 偏好的事实；
+其余不折叠（示例、允许、通常不是约束，见 FACTS-V2.md）；语气没说清（`unspecified`）的数值要求只进 `confirm`。同一路径有两条不同的无条件值时不猜，全部进 `confirm`。
 看护：`tests/test_journalfacts_fold.py` + `tests/golden/journal_v2_fold_vectors.json`。
 """
 
@@ -19,8 +19,10 @@ from typing import Any
 #: v2 来源 id 在叠加后的目录里的前缀；前端靠它认出「这条出处来自 v2」（出处卡标版本）。
 V2_SOURCE_PREFIX = "v2:"
 
-#: 只有这几种语气是「对作者的要求」；示例 / 允许 / 通常不折叠、不进确认。
+#: 只有这几种语气是「对作者的要求」，才可能折叠；示例 / 允许 / 通常既不折叠也不进确认。
 PRESCRIPTIVE = ("required", "recommended", "preferred")
+#: 「需要你确认」另收原文没说清语气的（`unspecified`）：它仍是写在指南里的数值要求，只是不拿它报警。
+LISTABLE = (*PRESCRIPTIVE, "unspecified")
 
 #: (subject, relation, unit) → (v1 规则路径, v1 qualifier)。方向相符才折叠（同 `QUALIFIER_DIRECTION`）。
 FOLDABLE: dict[tuple[str, str, str | None], tuple[str, str]] = {
@@ -84,11 +86,9 @@ def _source(bundle: dict, fact: dict) -> dict:
 
 
 def _condition_text(fact: dict) -> str:
+    """原文条件**逐字**；只有名称条件（没有 `condition_text`）时没有原文可引，留空——不拼技术键名给人看。"""
     text = fact.get("condition_text")
-    if isinstance(text, str) and text.strip():
-        return text
-    named = fact.get("conditions") or {}
-    return "; ".join(f"{key}={named[key]}" for key in sorted(named))
+    return text if isinstance(text, str) and text.strip() else ""
 
 
 def _confirm_item(bundle: dict, fact: dict) -> dict:
@@ -112,7 +112,7 @@ def fold(bundle: dict) -> dict:
     facts = [
         f
         for f in bundle.get("facts", [])
-        if f.get("origin") in ("journal", "publisher") and f.get("strength") in PRESCRIPTIVE
+        if f.get("origin") in ("journal", "publisher") and f.get("strength") in LISTABLE
     ]
     candidates: dict[str, list[tuple[dict, str]]] = {}
     confirm: list[dict] = []
@@ -121,6 +121,7 @@ def fold(bundle: dict) -> dict:
         target = FOLDABLE.get(key)
         foldable = (
             target is not None
+            and fact["strength"] in PRESCRIPTIVE
             and _unconditional(fact)
             and fact["stage"] in _STAGE
             and (

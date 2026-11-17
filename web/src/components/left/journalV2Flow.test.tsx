@@ -16,6 +16,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useJournalCatalogStore } from '@/store/journalCatalogStore'
 import { useJournalV2Store } from '@/store/journalV2Store'
 import { emptyProject } from '@/types/document'
+import { registerGesture } from '@/store/gestureCoordinator'
 import { ConfirmEntry } from './ProblemTreeRows'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -91,6 +92,20 @@ describe('useJournalV2Sync', () => {
     await act(async () => { await Promise.resolve() })
     expect(spy).toHaveBeenCalledTimes(1)
     expect(journal()!.min_raster_dpi).toBe(450)
+  })
+  it('响应落在拖动 / 连续编辑中途：不打断它、不插进它的撤销，等手势收尾再叠', async () => {
+    selectJournal('fx-beta')
+    useJournalV2Store.setState({ byJournal: {} })
+    const before = pastCount()
+    const unregister = registerGesture(() => {})
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(patch()), { status: 200 }))
+    await act(async () => root.render(<Probe />))
+    await act(async () => { await Promise.resolve() })
+    expect(pastCount()).toBe(before)
+    expect(journal()!.min_raster_dpi).not.toBe(450)
+    await act(async () => unregister())
+    expect(journal()!.min_raster_dpi).toBe(450)
+    expect(pastCount()).toBe(before + 1)
   })
   it('离线：绑定不变、不报错', async () => {
     selectJournal('fx-beta')

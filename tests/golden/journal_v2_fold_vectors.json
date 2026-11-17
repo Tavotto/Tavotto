@@ -142,7 +142,7 @@
    "expected": {
     "confirm": [
      {
-      "condition": "figure_kind=line_art",
+      "condition": "",
       "id": "a",
       "quote": "Quote a",
       "relation": "gte",
@@ -747,6 +747,55 @@
     "sources": {}
    },
    "id": "width-in-with-text-condition-confirms"
+  },
+  {
+   "bundle": {
+    "facts": [
+     {
+      "id": "a",
+      "origin": "journal",
+      "quote": "Quote a",
+      "relation": "gte",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "unspecified",
+      "subject": "raster_dpi",
+      "unit": "dpi",
+      "value": 300
+     }
+    ],
+    "sources": {
+     "s1": {
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "expected": {
+    "confirm": [
+     {
+      "condition": "",
+      "id": "a",
+      "quote": "Quote a",
+      "relation": "gte",
+      "source": {
+       "coverage": "journal_specific",
+       "kind": "html",
+       "retrieved": "2026-11-15",
+       "url": "https://example.invalid/guide"
+      },
+      "stage": "any",
+      "strength": "unspecified",
+      "subject": "raster_dpi",
+      "unit": "dpi",
+      "value": 300
+     }
+    ],
+    "rules": {},
+    "sources": {}
+   },
+   "id": "unspecified-strength-is-listed-not-folded"
   }
  ]
 }

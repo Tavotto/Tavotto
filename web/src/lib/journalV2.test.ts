@@ -5,9 +5,10 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import vectors from '../../../tests/golden/journal_vectors.json'
+import foldVectors from '../../../tests/golden/journal_v2_fold_vectors.json'
 import { setLocale } from '@/i18n'
 import { journalOverride, loadCatalog, type JournalCatalog } from './journals'
-import { pickJournal } from './journalPick'
+import { fieldLabel, pickJournal, valueText } from './journalPick'
 import { applyV2, confirmEntries, fetchJournalV2, isV2Source, type V2Patch } from './journalV2'
 
 const catalog = loadCatalog(vectors.catalog)
@@ -122,5 +123,26 @@ describe('confirmEntries', () => {
     expect(isV2Source(s)).toBe(true)
     expect(s.affects).toBe('info')
     expect(s.link).toBe('https://example.invalid/v2/guide')
+  })
+})
+
+describe('后端折叠向量（tests/golden/journal_v2_fold_vectors.json）过前端这道门', () => {
+  it.each(foldVectors.cases.map((c) => [c.id, c.expected] as const))('%s', async (_id, expected) => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ catalog_rev: 2, ...expected }), { status: 200 }))
+    const got = await fetchJournalV2('fx-beta')
+    expect(got, '后端折出的规则 / 来源必须过 v1 校验器，否则整份被当成没有 v2').not.toBeNull()
+    expect(Object.keys(got!.rules)).toEqual(Object.keys(expected.rules))
+    expect(got!.confirm.length).toBe(expected.confirm.length)
+    // 每个确认行都认得出标签（词表里有 `journal.field.v2_<主语>_<单位>`）并带数字；每条规则的出处都带 v2 前缀并能叠上去
+    for (const row of got!.confirm) {
+      const [path, source] = confirmEntries(row)
+      expect(fieldLabel(path)).not.toMatch(/_/)
+      expect(valueText(path, source)).toMatch(/\d/)
+    }
+    for (const rule of Object.values(got!.rules)) expect(rule.src.startsWith('v2:')).toBe(true)
+    if (Object.keys(got!.rules).length) {
+      const out = applyV2(bind(), got!)
+      for (const entry of Object.keys(got!.rules).map((p) => out.journalSources![p])) expect(isV2Source(entry)).toBe(true)
+    }
   })
 })

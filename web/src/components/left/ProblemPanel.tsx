@@ -488,6 +488,10 @@ export function ProblemPanel() {
             action={{ label: pr('clearFilter'), onClick: () => useUiStore.getState().setProblemFilter(null) }}
           />
         )}
+        {/* 没有问题时「需要你确认」照样要在：带文字条件的要求正是「检查没报、但你得看一眼」的那一类 */}
+        <ul>
+          <ConfirmEntry />
+        </ul>
         </div>
       ) : (
         <ProblemTreeContext.Provider value={tree}>

@@ -46,6 +46,7 @@ def test_only_unconditional_minimum_dpi_folds_into_a_v1_shaped_rule():
         "line-width-minimum-goes-to-confirm",
         "width-in-with-text-condition-confirms",
         "stage-revision-does-not-fold",
+        "unspecified-strength-is-listed-not-folded",
     ],
 )
 def test_conditional_or_unjudgeable_never_folds_but_is_listed_for_confirmation(name):
