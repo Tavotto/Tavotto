@@ -19,11 +19,23 @@ order: 200
   SSE 事件带 `pj`，前端只处理属于本标签页项目的那些（按**此刻认领的** pj 判，不看 `project`：
   切项目的换代窗口里它还是旧值，#589）。后端语义见
   `src/tavotto/AGENTS.md`。
-- **schema 3/4**：`ProjectDocument{project, canvases[], activeCanvasId}`；
+- **schema 3/4（单一存储）**：`ProjectDocument{project, canvases[], activeCanvasId}`；
   运行时激活画布仍是 schema 2 形状的 `documentStore.doc`（画布编辑代码零改动），
-  持久化/读档统一走 `migrateToProject()`（接受 2/3/4）。画布切换换入换出
+  持久化/读档统一走 `migrateToProject()`（接受 2/3/4）。schema 4 与 3 共用同一套
+  存储、列表与版本历史，只由正文里的 `schema` 号区分；前端没有按格式分的命名空间、
+  路径、本机键或第二套文档端点。`buildProject()` 按正文内容选号：含 `chart` /
+  `chartSource` 的文档才写 4，其余仍写 3——首次给既有文档加入计算图表因此是
+  **原地升级**（同一 documentId / 文件 / 槽位 / 时间线，历史保留）。升级前**必须**用
+  `takeProjectCheckpoint()` 把整份项目文档存成时间线节点（备份未落定不得写图表）。
+  **接线状态**：把图表第一次写进正文的入口属于 7/9；接线前生产代码里没有这条调用路径
+  （`takeProjectCheckpoint` 只有「恢复前」节点在用）。`tests/test_chart_document_upgrade.py`
+  只覆盖后端能强制的边界，不覆盖这条前端备份接线——写文档 / 评审时不要把它当成已有行为。
+  恢复 schema 3/4 节点换的是整份项目，schema 2 节点仍是单画布检查点（`lib/versionDoc.ts`
+  的 `isProjectVersion` / `versionCanvasDoc`）。后端 `documents.validate_document`
+  按 schema 号分派，schema 2/3/4 走同一个入口；项目包按同一 `SUPPORTED_SCHEMAS`
+  集合准入（来源附件随包封存、检视时按摘要安装到项目 `chart_sources/`）。画布切换换入换出
   undo 栈（canvasSessions）与 UI 会话（`store/canvasSession.ts`）。
-  标签页 openTabs 按 documentId 存本机。后端 versions/package 接受 schema 2/3。
+  标签页 openTabs 按 documentId 存本机。
 - **图幅记号 `PanelObject.figureFrame`（ADR 0098 §三）**：缺席 = 升级前放上排版的面板。读档
   （`migrateToProject`）、布局版本恢复（`restoreLayoutVersion`）与剪贴板粘贴（`materializePaste`，
   负载可能出自升级前的标签页）都经

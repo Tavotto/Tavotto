@@ -26,7 +26,7 @@
 
 ### 2026-11-06 修订：关联以后端会话为权威
 
-依ADR0108，后文§一/§三中“关联只存localStorage”的原实现口径被本节替代；自动保存不写named文件、named revision基线、用户编辑dirty等语义不变。后端`layoutsession`以(project,document_format,working docId)持久化规范目标/revision、用户轴和绑定代次，本机缓存只作兼容/兜底。关联不进入可携schema3/4；首次计算fork的新working ID不继承旧目标。外改named文件时仍以原绑定revision冲突，冷恢复不能读新revision把外改洗成已保存。
+依ADR0108，后文§一/§三中“关联只存localStorage”的原实现口径被本节替代；自动保存不写named文件、named revision基线、用户编辑dirty等语义不变。后端`layoutsession`以(project,working docId)持久化规范目标/revision、用户轴和绑定代次（2026-11 单一存储后不再有`document_format`轴），本机缓存只作兼容/兜底。关联不进入可携schema3/4；首次计算fork的新working ID不继承旧目标。外改named文件时仍以原绑定revision冲突，冷恢复不能读新revision把外改洗成已保存。
 
 显式save/open预留完整服务器票据，正文实际成功或confirm核过实际named revision后CAS绑定；A→B→A按代次挡旧回执。显式打开先捕获安装时的同步基线，等待期间用户编辑必须保dirty；derived来源回执不推进用户轴。正文成功、关联元信息失败是两个事实，不让后者变成正文I/O失败或覆盖重试。后端wire/锁与看护唯一说明见[文档落盘规则](../rules/backend/layout-versions-and-documents.md)；实施/真实UI资格仅由PROGRESS记录。
 

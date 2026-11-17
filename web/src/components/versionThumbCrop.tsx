@@ -1,4 +1,3 @@
-import type { DocumentFormat } from '@/lib/documentFormat'
 import { cn } from '@/lib/utils'
 
 import { contentBox, type ThumbBox, type ThumbPageSize } from '@/lib/versionThumbBox'
@@ -65,22 +64,20 @@ export function thumbDisplayBox(meta: LayoutVersionMeta, page: ThumbPageSize): T
  */
 export function VersionThumbImage({
   docId,
-  format,
   meta,
   page,
   ...rest
 }: {
   docId: string
-  format?: DocumentFormat
   meta: LayoutVersionMeta
   page: ThumbPageSize
 } & Omit<React.ImgHTMLAttributes<HTMLImageElement>, 'src' | 'alt' | 'style' | 'className'>) {
   const b = meta.thumbBox
-  if (!b) return <img {...rest} src={versionThumbUrl(docId, meta, ...(format === 'v4' ? [format] : []))} alt="" className="block size-full max-w-none" />
+  if (!b) return <img {...rest} src={versionThumbUrl(docId, meta)} alt="" className="block size-full max-w-none" />
   return (
     <img
       {...rest}
-      src={versionThumbUrl(docId, meta, ...(format === 'v4' ? [format] : []))}
+      src={versionThumbUrl(docId, meta)}
       alt=""
       className="absolute block max-w-none"
       style={{
