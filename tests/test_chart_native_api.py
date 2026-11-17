@@ -16,7 +16,6 @@ import pytest
 
 from tavotto import app as m, chartbundle
 from tavotto.engine import (
-    chartprocess,
     chartprofile,
     envlease,
     exportjob,
@@ -115,14 +114,16 @@ def test_chart_http_entries_respect_install_lease_and_recover_without_source_cha
         ("/api/engine/preview_png", {"id": "chart.svg", "chart": chart, "patches": []}),
     ]
     with envlease.mutating("chart-http-install", python):
+        before = pool.safe_workers_using(python)
         for endpoint, body in requests:
             response = client.post(endpoint, json=body)
             assert response.status_code == 503, (endpoint, response.get_json())
             assert response.get_json()["code"] == envlease.ENVIRONMENT_MUTATING
-        assert chartprocess.active_count() == 0
+        # 计算进程已并入共享 worker 池（#1880）：租约期间不许再起 chart worker；
+        # 渲染之后热会话按设计留着，不再断言「零进程」。
+        assert pool.safe_workers_using(python) == before
         assert not envlease.native_sessions_on(python)
     _assert_line(_render(client, chart), y=0.25)
-    assert chartprocess.active_count() == 0
     assert envlease.state_of(python) == envlease.STATE_IDLE
     assert (root / "chart.svg").read_bytes() == SOURCE
 
@@ -277,8 +278,8 @@ def test_compute_default_contract_stays_legacy_and_native_returns_measured_manif
     client, root = project
     chart = _bind(client)
     legacy = _compute(client, chart)
-    # 本步起 /compute 响应统一带顶层 render_frame（稳定出口）；legacy 与 /1
-    # 都没有计算框，值恒为 None——闭集扩一项、同时钉住 /1 不冒充 /2。
+    # #1919：计算框只留 manifest 内一份，响应顶层不再复制（避免两个身份）。
+    # legacy 与 /1 都没有计算框——闭集不扩项，同时钉住 /1 不冒充 /2。
     assert set(legacy) == {
         "svg",
         "facts",
@@ -287,14 +288,14 @@ def test_compute_default_contract_stays_legacy_and_native_returns_measured_manif
         "model_digest",
         "binding_digest",
         "engine",
-        "render_frame",
     }
-    assert legacy["render_frame"] is None
+    assert "render_frame" not in legacy
+    assert "render_frame" not in (legacy.get("manifest") or {})
     native = _compute(
         client, chart, profile=chartprofile.NATIVE_PROFILE, patches=[_color("#ff0000")]
     )
     _assert_line(native, y=0.25, color="#ff0000")
-    assert native["render_frame"] is None
+    assert "render_frame" not in native
     assert native["render_revision"] != legacy["render_revision"]
     rendered = _render(client, chart, [_color("#ff0000")])
     assert native["render_revision"] == rendered["chart_revision"]

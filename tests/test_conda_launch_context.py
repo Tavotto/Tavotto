@@ -2591,6 +2591,7 @@ def test_a_pinned_decision_and_a_plan_go_stale_when_the_conda_environment_change
         binding=None,
         environment={"generation": decision.generation},
         environment_state=decision.launch_context,
+        input_declaration_state=None,
     )
     monkeypatch.setattr(preparation.workdir, "grant_for", lambda root: None)
     monkeypatch.setattr(
@@ -2646,6 +2647,7 @@ def test_a_plan_made_while_conda_was_missing_goes_stale_once_conda_is_back(tmp_p
         binding=None,
         environment={"generation": decision.generation},
         environment_state=decision.launch_context,
+        input_declaration_state=None,
     )
     monkeypatch.setattr(preparation.workdir, "grant_for", lambda root: None)
     monkeypatch.setattr(
