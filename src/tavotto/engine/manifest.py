@@ -4064,7 +4064,7 @@ def _tick_fields(ts: TickSet) -> list[dict]:
 _SPINE_AXIS = {"bottom": ("x", 1), "top": ("x", 2), "left": ("y", 1), "right": ("y", 2)}
 
 
-def spine_geometry(ax, W: float, H: float) -> dict | None:
+def spine_geometry(ax, W: float, H: float, paint_ranks: dict | None = None) -> dict | None:
     """四条边框**画出来的那条线**的两端（figure 分数、y 向下），供前端建立
     「边框内侧 / 外侧」的语义命中区（Prompt 16）。
 
@@ -4113,7 +4113,123 @@ def spine_geometry(ax, W: float, H: float) -> dict | None:
             "from": [round(float(x0 / W), 5), round(float(1.0 - y0 / H), 5)],
             "to": [round(float(x1 / W), 5), round(float(1.0 - y1 / H), 5)],
         }
+        # 绘制事实（外部审阅页把边框线当一个独立目标点选时要用）：线宽与真实 draw 次序。
+        # 加字段协议，画布不读
+        try:
+            lw = float(sp.get_linewidth())
+            if math.isfinite(lw) and lw >= 0:
+                out[side]["stroke_pt"] = round(lw, 3)
+        except Exception:  # noqa: BLE001
+            pass
+        if paint_ranks is not None:
+            order = pathgeom.paint_order_of(sp, paint_ranks)
+            if order is not None:
+                out[side]["paint_order"] = order
     return out or None
+
+
+#: 一组网格线 / 刻度线最多收多少条（对数轴的次刻度可以很多；超了整组不给）
+_GUIDE_MAX_PATHS = 400
+
+
+def _guide_geometry(segs: list, widths: list, W: float, H: float, order, clip) -> dict | None:
+    """若干条线段（display 像素）→ 一份描边型多路径 geometry（与元素 `geometry` 同形）。"""
+    paths = []
+    for pts in segs:
+        frac = [[round(float(x / W), 5), round(float(1.0 - y / H), 5)] for x, y in pts]
+        if len(frac) >= 2 and all(math.isfinite(v) for q in frac for v in q):
+            paths.append({"points": frac, "closed": False})
+    if not paths or len(paths) > _GUIDE_MAX_PATHS:
+        return None
+    geom: dict = {
+        "kind": "multi_path" if len(paths) > 1 else "polyline",
+        "paths": paths,
+        "fill": False,
+        "stroke": True,
+    }
+    if widths:
+        geom["stroke_pt"] = round(float(max(widths)), 3)
+    if clip is not None:
+        geom["clip"] = clip
+    if order is not None:
+        geom["paint_order"] = order
+    return geom
+
+
+def axes_guides(ax, W: float, H: float, paint_ranks: dict) -> dict:
+    """直角坐标轴上**真的画出来**的网格线与刻度线，每条轴各一份 geometry（figure 分数、y 向下）。
+
+    只给外部审阅页点选用（ADR 0187 修订 2026-11-17：网格线、刻度线按轴成组、各是一个目标）；
+    **画布不读、不进元素表**。取舍全部跟渲染器走：`Axis._update_ticks()` 就是 `Axis.draw`
+    要画的那些刻度（视区外的不在里面），再逐条看 `gridline` / `tick1line` / `tick2line` 自己的
+    visible。刻度线是 marker 不是路径：线段 = 刻度位置 + 该 Line2D 的 marker 路径按
+    `markersize`（pt → 像素）缩放，与 `Line2D.draw` 同一条算法，所以 in / out / inout 与
+    各侧方向天然正确。极坐标 / 3D 不给；任何一步异常这一条轴就不给（宁缺毋滥）。
+    返回 `{"grid": {x?, y?}, "tickmarks": {x?, y?}}`，没有的键不出现。
+    """
+    if getattr(ax, "name", "") != "rectilinear":
+        return {}
+    try:
+        dpi = float(pathgeom.root_figure(ax.figure).dpi)
+        bb = ax.bbox
+        clip = [
+            round(bb.x0 / W, 5),
+            round(1.0 - bb.y1 / H, 5),
+            round(bb.width / W, 5),
+            round(bb.height / H, 5),
+        ]
+    except Exception:  # noqa: BLE001
+        return {}
+    out: dict[str, dict] = {"grid": {}, "tickmarks": {}}
+    for which in ("x", "y"):
+        if not axis_drawn(ax, which):
+            continue
+        axis = getattr(ax, f"{which}axis", None)
+        try:
+            ticks = list(axis._update_ticks())  # noqa: SLF001 — Axis.draw 的同一步
+        except Exception:  # noqa: BLE001
+            continue
+        grid_segs: list = []
+        grid_w: list = []
+        mark_segs: list = []
+        mark_w: list = []
+        g_order = m_order = None
+        for t in ticks:
+            try:
+                if not t.get_visible():
+                    continue
+                g = t.gridline
+                if g.get_visible() and g.get_linewidth() > 0:
+                    pts = g.get_transform().transform(g.get_xydata())
+                    grid_segs.append(pts)
+                    grid_w.append(g.get_linewidth())
+                    if g_order is None:
+                        g_order = pathgeom.paint_order_of(g, paint_ranks)
+                for ln in (t.tick1line, t.tick2line):
+                    if not ln.get_visible() or ln.get_markersize() <= 0:
+                        continue
+                    if ln.get_markeredgewidth() <= 0:
+                        continue
+                    mk = ln._marker  # noqa: SLF001
+                    mpath = mk.get_path()
+                    if mpath is None or len(mpath.vertices) < 2:
+                        continue
+                    size = float(ln.get_markersize()) * dpi / 72.0
+                    off = mk.get_transform().scale(size).transform(mpath.vertices)
+                    for cx, cy in ln.get_transform().transform(ln.get_xydata()):
+                        mark_segs.append(off + [cx, cy])
+                    mark_w.append(ln.get_markeredgewidth())
+                    if m_order is None:
+                        m_order = pathgeom.paint_order_of(ln, paint_ranks)
+            except Exception:  # noqa: BLE001 — 自定义 Tick：这一条不给
+                continue
+        gg = _guide_geometry(grid_segs, grid_w, W, H, g_order, clip)
+        if gg is not None:
+            out["grid"][which] = gg
+        mg = _guide_geometry(mark_segs, mark_w, W, H, m_order, None)
+        if mg is not None:
+            out["tickmarks"][which] = mg
+    return {k: v for k, v in out.items() if v}
 
 
 def _axes_fields(ax, el: dict | None = None) -> list[dict]:
@@ -6091,9 +6207,11 @@ def _measure_manifest(
         # 据此建立。与 geometry 同样是**渲染派生数据**，不进文档。色条轴不给
         # ——它的刻度归色条元素管，两处各摆一套控件只会互相盖写。
         if el["role"] == "axes" and artist not in state.colorbar_axes:
-            spines = spine_geometry(artist, W, H)
+            spines = spine_geometry(artist, W, H, paint_ranks)
             if spines:
                 entry["spines"] = spines
+            # 网格线 / 刻度线（按轴成组）：外部审阅页的点选目标，画布不读
+            entry.update(axes_guides(artist, W, H, paint_ranks))
         # 路径几何（figure 分数、top-origin）：曲线 / 填充 / 独立形状的选中轮廓
         # 与命中判据。**渲染派生数据**，不进用户文档、不是 override——xlim /
         # scale / position / figsize / aspect / 色条方向一变，下一版就是新的。
