@@ -832,6 +832,39 @@ jobs:
             ARGS+=(--base-sha "$BASE_SHA" --head-sha "$HEAD_SHA")
           fi
           python3 -I "$TRUSTED/docs_scope.py" "${ARGS[@]}"
+      # 判据路径（observe，docs/rules/ci/judge-guard.md）：改到 .github/judge-paths.json 里的路径
+      # 就打 notice，入队前交维护者确认。分类器与名单都取默认分支；只看见、不判红——
+      # continue-on-error 让这一步无论如何都不会把 docs-scope（fast gate 必需）带红。
+      - name: 校验 判据路径（只观察）
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.event.repository.default_branch }}
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+          JG="$RUNNER_TEMP/trusted-judge-guard"
+          mkdir -p "$JG"
+          for f in scripts/ci/judge_guard.py .github/judge-paths.json; do
+            dest="$JG/$(basename "$f")"
+            if gh api "repos/$REPO/contents/$f?ref=$REF" --jq .content 2>/dev/null \
+                 | base64 -d > "$dest" && [ -s "$dest" ]; then
+              echo "$f 取自默认分支"
+            else
+              echo "::notice::默认分支上还没有 $f（bootstrap 空窗）——退回本仓库副本"
+              cp "$f" "$dest"
+            fi
+          done
+          if [ "$EVENT" = "pull_request" ]; then
+            jq -r '.[] | .filename, (.previous_filename // empty)' "$RUNNER_TEMP/pr-files.json" > "$JG/changed.txt"
+          else
+            # quotepath=false：非 ASCII 路径不加引号转义，否则行首变成 `"`、前缀匹配不中
+            git -c core.quotepath=false diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA" > "$JG/changed.txt"
+          fi
+          python3 -I "$JG/judge_guard.py" --paths-file "$JG/changed.txt" --config "$JG/judge-paths.json"
       - name: 校验 发行说明里的相对链接（docs-only 的最小说明检查）
         if: steps.classify.outputs.docs_only == 'true'
         env:
