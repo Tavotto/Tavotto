@@ -68,13 +68,15 @@ export function parseGuideGid(inner: string): GuideRef | null {
  * 子图不在、那一边不可见 / 网格没开 / 刻度线被关了（数据没有了）都是 null。
  */
 export function guideBox(
-  elements: readonly Pick<ManifestElement, 'gid' | 'spines' | 'grid' | 'tickmarks'>[],
+  elements: readonly (Pick<ManifestElement, 'gid' | 'spines' | 'grid' | 'tickmarks'> & Partial<Pick<ManifestElement, 'editable'>>)[],
   inner: string,
 ): [number, number, number, number] | null {
   const ref = parseGuideGid(inner)
   if (!ref) return null
   const ax = elements.find((e) => e.gid === ref.base)
   if (!ax) return null
+  // 子图被隐藏（与 `isElementHidden` / 上传侧 `_is_hidden` 同一判据）：它的线都不在画面上
+  if (ax.editable?.some((f) => f.prop === 'visible' && f.value === false)) return null
   const pts: [number, number][] = []
   // 能落墨的范围：整张图，网格线再加它自己的裁剪框（与上传侧 `_visible_geometry` 同一口径）
   let lim: [number, number, number, number] = [0, 0, 1, 1]

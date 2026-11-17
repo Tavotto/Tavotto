@@ -66,5 +66,9 @@ describe('边框线 / 网格线 / 刻度线的合成 gid', () => {
     expect(owningPanel([p], at(man({ ...(els[0] as object), grid: undefined })), 'p1::axes_0.xgrid')).toBeNull()
     expect(owningPanel([p], at(man(els[0])), 'p1::axes_0.spine_top')).toBeNull()
     expect(owningPanel([p], at(man(els[0])), 'p1::axes_0.spine_right')).toBeNull()
+    // 子图被隐藏：manifest 里还留着线的几何，但画面上没有 → 不认
+    const hidden = { ...(els[0] as object), editable: [{ prop: 'visible', value: false }] }
+    expect(guideBox([hidden] as never, 'axes_0.spine_left')).toBeNull()
+    expect(owningPanel([p], at(man(hidden)), 'p1::axes_0.xgrid')).toBeNull()
   })
 })
