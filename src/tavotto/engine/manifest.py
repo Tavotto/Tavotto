@@ -4117,7 +4117,7 @@ def spine_geometry(ax, W: float, H: float, paint_ranks: dict | None = None) -> d
         # 加字段协议，画布不读
         try:
             lw = float(sp.get_linewidth())
-            if not _stroke_paints(sp, sp.get_edgecolor(), sp.get_linestyle()):
+            if not _stroke_paints(sp, sp.get_edgecolor(), sp.get_linestyle(), alpha_applied=True):
                 lw = 0.0  # 透明 / 不画线型：审阅页按 0 宽跳过；画布不读这个字段
             if math.isfinite(lw) and lw >= 0:
                 out[side]["stroke_pt"] = round(lw, 3)
@@ -4158,17 +4158,20 @@ def _guide_geometry(segs: list, widths: list, W: float, H: float, order, clip) -
     return geom
 
 
-def _stroke_paints(artist, color, linestyle=None) -> bool:
-    """这条线 / marker 边真的落墨吗：颜色（含 artist 自己的 alpha）不透明且线型不是「不画」。
+def _stroke_paints(artist, color, linestyle=None, *, alpha_applied: bool = False) -> bool:
+    """这条线 / marker 边真的落墨吗：颜色不透明且线型不是「不画」。
     `ax.grid(True, alpha=0)`、`color='none'`、`linestyle='None'` 时 matplotlib 里 visible 仍是
     True、线宽也 > 0，但画面上一个像素都没有——外部审阅页不能把它们当成可点的目标（Codex #1993）。
-    判不出来就当画了（宁可多一个目标，也不吞掉真画出来的线）。"""
+    alpha 照 matplotlib 自己的语义：`'none'` 永远透明；其余颜色上 artist 显式 alpha **覆盖**颜色自带
+    的 alpha（`color=(1,0,0,0), alpha=1` 画得出来）。`alpha_applied`：颜色已是终值（Patch 的
+    `get_edgecolor()`）时不再套一遍。判不出来就当画了（宁可多一个目标，也不吞掉真画出来的线）。"""
     try:
         if linestyle is not None and str(linestyle) in ("None", "none", " ", ""):
             return False
-        # 不能把 alpha 传给 to_rgba：那会把 'none' 的 0 覆盖成 artist 的 alpha
-        a = artist.get_alpha()
-        return mcolors.to_rgba(color)[3] * (1.0 if a is None else float(a)) > 0
+        if isinstance(color, str) and color.lower() == "none":
+            return False
+        a = None if alpha_applied else artist.get_alpha()
+        return mcolors.to_rgba(color, a)[3] > 0
     except Exception:  # noqa: BLE001
         return True
 

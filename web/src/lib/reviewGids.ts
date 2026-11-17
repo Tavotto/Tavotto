@@ -78,7 +78,8 @@ export function guideBox(
   const pts: [number, number][] = []
   if (ref.kind === 'spine') {
     const sp = ax.spines?.[ref.key as 'left']
-    if (!sp?.visible) return null
+    // 线宽 0 / 透明（引擎记 stroke_pt: 0）与不可见一样：审阅侧不出这个目标，旧意见也不再挂上去
+    if (!sp?.visible || sp.stroke_pt === 0) return null
     pts.push(sp.from, sp.to)
   } else {
     const g: ElementGeometry | undefined = ax[ref.kind]?.[ref.key as 'x' | 'y']

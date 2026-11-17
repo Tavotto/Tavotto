@@ -70,6 +70,7 @@ def main():
     axs[0].spines["left"].set_edgecolor("none")
     axs[0].spines["left"].set_alpha(0.8)
     axs[1].spines["top"].set_alpha(0)
+    axs[1].grid(True, axis="y", color=(1, 0, 0, 0), alpha=1)  # alpha 覆盖颜色自带的 0：画得出来
     fig.savefig("Unpainted.pdf")
 """,
     "fig_polar.py": """\
@@ -173,8 +174,8 @@ def test_guides_that_paint_nothing_are_not_targets(library):
         (e for e in man["elements"] if e.get("role") == "axes"), key=lambda e: e["bbox"][0]
     )
     assert len(axes) == 3
-    for ax in axes:
-        assert "grid" not in ax
+    assert "grid" not in axes[0] and "grid" not in axes[2]
+    assert set(axes[1]["grid"]) == {"y"}
     assert set(axes[0]["tickmarks"]) == {"y"}  # x 刻度线颜色 none
     assert set(axes[1]["tickmarks"]) == {"x", "y"}
     assert axes[0]["spines"]["left"]["stroke_pt"] == 0  # alpha 不能把 'none' 救回来
