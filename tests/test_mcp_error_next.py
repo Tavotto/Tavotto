@@ -131,6 +131,29 @@ def test_page_too_large_keeps_offset_and_rev_and_halves_limit():
     assert step["args"] == {"journal_id": "j", "offset": 20, "limit": 5, "expected_catalog_rev": 7}
 
 
+def test_next_never_copies_a_huge_argument_and_the_whole_reply_stays_in_budget(_env, monkeypatch):
+    # Codex 的复现：bad_dpi + 100 KB 的自定义期刊 notes，next.args 整份拷贝会把回包撑过 64 KiB
+    big = {"widths_mm": {"single": 80}, "notes": "x" * 100_000}
+
+    def bad(args):
+        raise bridge.BridgeError("dpi 必须为正", code="bad_dpi")
+
+    monkeypatch.setitem(server.HANDLERS, "tavotto_export", bad)
+    res = server.call_tool(
+        "tavotto_export", {"session_id": "s", "dpi": -1, "formats": ["png"], "journal": big}
+    )
+    assert server._serialized_bytes(res) <= server.ERROR_RESULT_BUDGET_BYTES
+    step = res["structuredContent"].get("next")
+    assert (
+        step is None
+        or len(json.dumps(step, ensure_ascii=False).encode()) <= nextstep.MAX_NEXT_BYTES
+    )
+    assert step["args"]["journal"] == nextstep.ELIDED_ARG and step["args"]["dpi"] == 600
+    # 即使每个值都小、合起来超界，也整个不给
+    many = {f"k{i}": "y" * 200 for i in range(40)}
+    assert _next("environment_busy", tool="tavotto_open_figure", args=many) is None
+
+
 def test_page_too_large_at_limit_one_gives_no_retry_step_so_it_cannot_loop():
     args = {"journal_id": "j", "limit": 1}
     assert (
@@ -524,6 +547,27 @@ def test_recheck_conflict_names_the_introduced_issue_and_the_prop_that_caused_it
     assert len(hit["constraints"]) == 2 and "font-too-large" in hit["constraints"][1]
     assert hit["prop"] == "fontsize"
     assert out["next"]["action"] == "edit_script"
+
+
+@needs_mpl
+def test_conflict_prop_is_not_borrowed_from_an_unrelated_change():
+    result = {"issues": {"introduced": []}, "skipped": []}
+    changes = [
+        {"rule": "font-too-small", "gid": "ax0.xtick", "prop": "fontsize"},
+        {"rule": "line-width-off-preset", "gid": "ax0.line", "prop": "linewidth"},
+    ]
+    detail = {"blocking": [{"id": "text-overlap", "gids": ["ax0.xtick.label"], "bucket": "new"}]}
+    (item,) = bridge._fix_conflicts(result, stage="panel", changes=changes, detail=detail)
+    assert "prop" not in item and "fontsize" not in json.dumps(item, ensure_ascii=False)
+    result["issues"]["introduced"] = [
+        {"id": "text-overlap", "severity": "warn", "gids": ["ax0.xtick.label"], "text": "t"}
+    ]
+    (item,) = bridge._fix_conflicts(result, stage="recheck", changes=changes, detail={})
+    assert "prop" not in item
+    # 对得上 gid 的照旧给
+    detail["blocking"][0]["gids"] = ["ax0.line"]
+    (item,) = bridge._fix_conflicts({**result}, stage="panel", changes=changes, detail=detail)
+    assert item["prop"] == "linewidth"
 
 
 @needs_mpl

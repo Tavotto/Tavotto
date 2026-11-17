@@ -4429,7 +4429,7 @@ def _fix_conflicts(
     elif stage == "panel":
         for b in detail.get("blocking") or []:
             gids = b.get("gids") or []
-            c = change_for(gids) or (changes[0] if changes else None)
+            c = change_for(gids)  # 找不到对应的 change 就不给 prop：不把无关修复的属性安给它
             add(
                 b.get("id"),
                 gids,
@@ -4451,7 +4451,7 @@ def _fix_conflicts(
             if i.get("severity") not in ("error", "warn"):
                 continue
             gids = i.get("gids") or []
-            c = change_for(gids) or (changes[0] if changes else None)
+            c = change_for(gids)  # 找不到对应的 change 就不给 prop：不把无关修复的属性安给它
             add(
                 i.get("id"),
                 gids,

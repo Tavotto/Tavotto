@@ -18,10 +18,36 @@
 
 from __future__ import annotations
 
+import json
 from typing import Callable
+
+#: `next` 序列化后的字节上限、以及 args 里单个值的上限：`next` 是受保护键、错误预算不缩它，
+#: 而 builder 会把原调用参数拷进 args（可能带整份自定义期刊 / argv），不设界就能把回包撑过预算。
+MAX_NEXT_BYTES = 4096
+MAX_ARG_VALUE_BYTES = 256
+ELIDED_ARG = "<略：与原调用相同>"
 
 #: 候选 / 选项最多列几个：`next` 进错误预算，不是候选清单的存放处。
 MAX_OPTIONS = 8
+
+
+def _size(value) -> int:
+    return len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+
+
+def bound(step: dict | None) -> dict | None:
+    """给 `next` 设字节界：args 里超长的值换成占位；还放不下就整个不给。"""
+    if step is None:
+        return None
+    args = step.get("args")
+    if isinstance(args, dict):
+        step = {
+            **step,
+            "args": {
+                k: (ELIDED_ARG if _size(v) > MAX_ARG_VALUE_BYTES else v) for k, v in args.items()
+            },
+        }
+    return step if _size(step) <= MAX_NEXT_BYTES else None
 
 
 def tool_step(tool: str, args: dict, why: str) -> dict:
@@ -375,11 +401,11 @@ def next_for(code: str, tool: str, args: dict, payload: dict) -> dict | None:
         ctx = Ctx(tool, args, payload)
         builder = BUILDERS.get(code)
         if builder is not None:
-            return builder(ctx)
+            return bound(builder(ctx))
         if code in NO_NEXT:
             return None
         # 未登记的码（多半是 worker 新增的）：只按「需要输入」的结构化载荷兜底，其余不编
-        return _open_with_user_choice(ctx)
+        return bound(_open_with_user_choice(ctx))
     except Exception:  # noqa: BLE001
         return None
 
