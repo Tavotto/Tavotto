@@ -17,12 +17,18 @@ from __future__ import annotations
 
 import hashlib
 import os
+from collections import Counter
 
 import pytest
 from hypothesis import given, settings, strategies as st
 
 from support.invariant_figures import ENTRY, LIBRARY, SCRIPT_NAME
 from support.prop_edits import edits
+from support.scriptadjust_figures import (
+    ENTRY as ADJ_ENTRY,
+    LIBRARY as ADJ_LIBRARY,
+    SCRIPT_NAME as ADJ_SCRIPT,
+)
 from tavotto.engine import pool
 
 try:
@@ -35,6 +41,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 STEMS = ("InvMix", "InvCont")
+#: 例子里真被应用过的 (元素 gid, prop) 计数：断言广度，也是变异反证选锚点的依据。
+_APPLIED: Counter = Counter()
 _STRUCTURAL_ROLES = ("figure", "axes", "axes3d", "ticks", "ticklabel")
 
 
@@ -73,6 +81,7 @@ def test_applying_the_same_overrides_twice_equals_once(hot):
     def prop(data):
         stem = data.draw(st.sampled_from(STEMS), label="图")
         patches = data.draw(edits(mans[stem], _accept), label="P")
+        _APPLIED.update((p["gid"], p["prop"]) for p in patches)
         try:
             once = _reading(worker, stem, patches, "once")
             twice = _reading(worker, stem, patches, "twice")
@@ -83,3 +92,36 @@ def test_applying_the_same_overrides_twice_equals_once(hot):
         assert doubled == once, ("P + P 与 P 不同", stem, patches)
 
     prop()
+    assert len(_APPLIED) >= 8, _APPLIED
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "属性测试（导出 .py 往返，常驻 worker 一版）缩出的真缺陷：`axes.grid_linewidth` 改完又撤掉之后再打开 y 向网格，热态的线比全新重放的粗（机理未查，"
+        "疑似撤掉时没画的那一向线宽没还原）。manifest 逐字相等，只有像素不同（AdjGrid：1.5% 像素变、max 差 79）。"
+        "待维护者定：修还原还是登记成已知分岔；修好后 strict 会红，提醒摘掉。"
+    ),
+)
+def test_removing_a_grid_linewidth_edit_restores_the_original_hot_vs_fresh(tmp_path_factory):
+    """最小反例：序列 `[axes_0.grid_linewidth = 1.9]` → `[axes_0.grid_y = True]`（第二步的全量列表里已没有线宽）。
+    读数：热会话（走过两步）与只见过第二步的全新 worker，manifest 与预览像素。"""
+    figs = tmp_path_factory.mktemp("prop-grid-lw")
+    (figs / ADJ_SCRIPT).write_text(ADJ_LIBRARY, encoding="utf-8")
+
+    def _worker():
+        w = pool.one_shot(ADJ_SCRIPT, str(figs), ADJ_ENTRY)
+        w.ensure_built()
+        return w
+
+    first = [{"gid": "axes_0", "prop": "grid_linewidth", "value": 1.9}]
+    final = [{"gid": "axes_0", "prop": "grid_y", "value": True}]
+    hot_w, fresh_w = _worker(), _worker()
+    try:
+        hot_w.override("AdjGrid", first)
+        hot = _reading(hot_w, "AdjGrid", final, "hot")
+        fresh = _reading(fresh_w, "AdjGrid", final, "fresh")
+    finally:
+        pool.discard(hot_w)
+        pool.discard(fresh_w)
+    assert hot == fresh

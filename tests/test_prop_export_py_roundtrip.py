@@ -73,7 +73,7 @@ def _roundtrip(tmp: Path, stem: str, patches: list[dict], els: dict) -> set[tupl
     """导出脚本重放 == 热态；回这组里**真写进了脚本**的 (类, prop) 键（空 = 全被留作重放，没验到脚本）。
 
     **每个例子一条全新 worker**：被量的是「全新的图 + 这组编辑 → 导出」。常驻 worker 在 `override([])` 清回原样之后并不总是
-    原样（`axes.grid_linewidth` 一例，见 `test_override_idempotent.py` 的 xfail 固定用例），例子之间会带着上一个例子的
+    原样（`axes.grid_linewidth` 一例，见 `test_prop_override_idempotent.py` 的 xfail 固定用例），例子之间会带着上一个例子的
     残留，Hypothesis 缩出来的「最小反例」就不可复现。热态带历史的那一维由操作序列用例（`test_override_sequences.py`）管。
     """
     from tavotto import app
