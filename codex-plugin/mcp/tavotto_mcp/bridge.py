@@ -1498,6 +1498,10 @@ def _bridge_error_from_worker(
             "脚本想写已授权工作区之外的位置。改成写到项目内（相对路径要留意脚本里的 os.chdir），"
             "或请用户在 Tavotto 窗口里自己运行这个脚本；不要换个写法绕过，也不要把路径换成别的形状重试。"
         )
+    capture_failure = (getattr(exc, "extra", None) or {}).get("capture_failure")
+    if isinstance(capture_failure, dict):
+        # native 回退里脚本跑完、截图失败的那条真实原因（nativefallback._stem_missing）
+        extra["capture_failure"] = capture_failure
     _project_needs(code, exc, extra, project=project, script=script)
     extra["requirements"] = _requirements(code, extra)
     if not extra["requirements"]:
