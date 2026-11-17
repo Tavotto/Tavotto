@@ -177,8 +177,10 @@ def _retry_dpi(ctx: Ctx) -> dict:
     return tool_step(ctx.tool, {**ctx.args, "dpi": 600}, "dpi 必须是正整数：改成 600 重调。")
 
 
-def _halve_limit(ctx: Ctx) -> dict:
+def _halve_limit(ctx: Ctx) -> dict | None:
     raw = ctx.args.get("limit")
+    if raw == 1:
+        return None  # 单条记录都装不下：再缩无路可走（别绕回更大的 limit 形成循环），不给 next
     limit = max(1, int(raw) // 2) if isinstance(raw, int) and raw > 1 else 5
     # 同一页重读：offset / expected_catalog_rev 原样保留（后续页缺了它会被拒）
     return tool_step(
@@ -226,7 +228,11 @@ BUILDERS: dict[str, Callable[[Ctx], dict | None]] = {
     "ambiguous_project": _session_choice,
     "stem_required": _stem_choice,
     "no_figure": _refresh_after_script,
-    "no_registry": _refresh_after_script,
+    "no_registry": lambda ctx: tool_step(
+        "tavotto_open_figure",
+        _open_args(ctx),
+        "这个目录还没登记成图库：先 open 其中一张图（open 会登记），不要靠跑脚本。",
+    ),
     "stem_not_parameterizable": _script(
         "这张图没有对应脚本：把产出它的 .py 放到产物同一个目录、让产物名是脚本里的字面量，再 tavotto_refresh_project。"
     ),

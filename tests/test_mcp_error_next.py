@@ -131,6 +131,32 @@ def test_page_too_large_keeps_offset_and_rev_and_halves_limit():
     assert step["args"] == {"journal_id": "j", "offset": 20, "limit": 5, "expected_catalog_rev": 7}
 
 
+def test_page_too_large_at_limit_one_gives_no_retry_step_so_it_cannot_loop():
+    args = {"journal_id": "j", "limit": 1}
+    assert (
+        _next("journal_facts_page_too_large", tool="tavotto_get_journal_facts", args=args) is None
+    )
+    # 沿着 next 一路缩，必须在有限步内停下
+    limit, steps = 10, 0
+    while True:
+        step = _next(
+            "journal_facts_page_too_large",
+            tool="tavotto_get_journal_facts",
+            args={"journal_id": "j", "limit": limit},
+        )
+        if step is None:
+            break
+        limit, steps = step["args"]["limit"], steps + 1
+        assert steps < 10
+    assert limit == 1
+
+
+def test_no_registry_points_at_open_figure_not_at_running_the_script():
+    step = _next("no_registry", tool="tavotto_refresh_project", args={"project_path": "/p"})
+    assert step["tool"] == "tavotto_open_figure" and step["args"] == {"project_path": "/p"}
+    assert _next("no_registry", args={})["args"]["project_path"].startswith("<")
+
+
 @pytest.mark.parametrize(
     "extra",
     [{"profile_id": "p1"}, {"journal": {"widths_mm": {"single": 80}}}, {"journal_id": "nature"}],
