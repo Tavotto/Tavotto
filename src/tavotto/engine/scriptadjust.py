@@ -1819,8 +1819,18 @@ def _translate(
     # 画出来才定的（`_sized_at_draw`）也一样
     reshaped = any(r["prop"] in _RESHAPES_AXES for r in residual)
 
+    def coords_held(gid: str) -> bool:
+        """这条轴的坐标范围 / 翻转留作重放了：引擎里它们排在刻度定位之前（REST < 刻度模型），脚本里写进去的刻度
+        却先于重放，按旧范围冻结。"""
+        m = re.match(r"(axes_\d+)(?:\.|$)", gid)
+        return m is not None and any(
+            r["prop"] in _MOVES_COORDS and r["gid"] == m.group(1) for r in residual
+        )
+
     def late(p: dict) -> bool:
-        return _snapshots_ticks(p, patches) and (reshaped or _sized_at_draw(p["gid"], els))
+        return _snapshots_ticks(p, patches) and (
+            reshaped or _sized_at_draw(p["gid"], els) or coords_held(p["gid"])
+        )
 
     def reshaped_for(gid: str) -> bool:
         """留作重放的几何键会不会动到这个 gid 所在的子图：`position` 只动它自己的子图，别的（整页大小、图幅、
@@ -1861,29 +1871,35 @@ def _translate(
         if on_colorbar_axis(p):
             steps.remove((p, stmt))
             residual.append(p)
-    # 一条轴上的定位与格式是一整套：其中一条留下，这条轴的其余几条也留下（不然写进脚本的那一份缺了它）
-    held = {p["gid"] for p, _s in steps if late(p) and p["prop"] != "text"}
-    for p, stmt in list(steps):
-        if late(p) or places_by_geometry(p) or (p["gid"] in held and p["prop"] in _TICK_MODEL):
-            steps.remove((p, stmt))
-            residual.append(p)
-    # 按 figure 分数定位的语句留作重放时，同一子图上在引擎应用顺序里排在它**之后**的改坐标的修改也留下：重放永远排在脚本
-    # 之后，写进脚本的会变成「先改坐标、后定位」，引擎里同档按列表序，文字 / 箭头会随反转、换范围镜像。引擎里
-    # 位置 / 比例 / 刻度类型等排在 `_RANK_REST` 之前，它们写进脚本照旧排在重放之前，不受影响；
-    # 排在 REST 档里的只有这几条改坐标的键，按列表序比
     order = {id(p): k for k, p in enumerate(patches)}
-    placed = [
-        (order[id(r)], m.group(1))
-        for r in residual
-        if r["prop"] in _PLACED_BY_FRACTION and id(r) in order
-        if (m := re.match(r"(axes_\d+)(?:\.|$)", r["gid"]))
-    ]
-    for p, stmt in list(steps):
-        if p["prop"] in _MOVES_COORDS and any(
-            p["gid"] == ax and order[id(p)] > k for k, ax in placed
-        ):
-            steps.remove((p, stmt))
-            residual.append(p)
+    changed = True
+    while (
+        changed
+    ):  # 留下一条会牵出另一条（坐标范围留下 -> 同轴的刻度语句留下，反之亦然）：迭代到不再变化
+        n = len(residual)
+        # 一条轴上的定位与格式是一整套：其中一条留下，这条轴的其余几条也留下（不然写进脚本的那一份缺了它）
+        held = {p["gid"] for p, _s in steps if late(p) and p["prop"] != "text"}
+        for p, stmt in list(steps):
+            if late(p) or places_by_geometry(p) or (p["gid"] in held and p["prop"] in _TICK_MODEL):
+                steps.remove((p, stmt))
+                residual.append(p)
+        # 按 figure 分数定位的语句留作重放时，同一子图上在引擎应用顺序里排在它**之后**的改坐标的修改也留下：重放永远排在
+        # 脚本之后，写进脚本的会变成「先改坐标、后定位」，引擎里同档按列表序，文字 / 箭头会随反转、换范围镜像。引擎里
+        # 位置 / 比例 / 刻度类型等排在 `_RANK_REST` 之前，它们写进脚本照旧排在重放之前，不受影响；
+        # 排在 REST 档里的只有这几条改坐标的键，按列表序比
+        placed = [
+            (order[id(r)], m.group(1))
+            for r in residual
+            if r["prop"] in _PLACED_BY_FRACTION and id(r) in order
+            if (m := re.match(r"(axes_\d+)(?:\.|$)", r["gid"]))
+        ]
+        for p, stmt in list(steps):
+            if p["prop"] in _MOVES_COORDS and any(
+                p["gid"] == ax and order[id(p)] > k for k, ax in placed
+            ):
+                steps.remove((p, stmt))
+                residual.append(p)
+        changed = len(residual) != n
     # 留作 override 的「广播」条目在重放时排在窄条目之前、会盖掉写进脚本的窄条目：
     # 同一 prop、gid 是它子孙的，一起留下（ADR 0094 §五.3）
     # 色条与它的 mappable 的 cmap 是互相广播的一组（ADR 0135：组里任一条改 cmap = 整组改，文档序靠后的赢）：

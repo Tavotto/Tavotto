@@ -1884,6 +1884,42 @@ def test_placed_drag_keeps_its_order_with_later_coordinate_edits(aspect_project,
     assert {s["prop"] for s in _script_output(body)["script_report"]["skipped"]} == held
 
 
+_YTICKS_FIXED = {"gid": "axes_0.yticks", "prop": "major_mode", "value": "fixed"}
+
+
+@real_worker
+def test_fixed_ticks_follow_a_replayed_ylim_on_an_aspect_subplot(aspect_project):
+    """真导出：拖标题（留作重放）→ ylim（跟着留下）+ 同轴 y 刻度「固定」不给值（靠落笔刻度）。"""
+    client, _figs = aspect_project
+    body = _export(client, [_TITLE_DRAG, _YLIM, _YTICKS_FIXED], formats=[])
+    assert body["status"] == "done", body
+    assert {s["prop"] for s in _script_output(body)["script_report"]["skipped"]} == {
+        "pos_frac",
+        "ylim",
+        "major_mode",
+    }
+
+
+def test_ticks_that_snapshot_stay_with_a_replayed_ylim():
+    """坐标范围留作重放时，同轴靠落笔刻度的语句也留下（引擎顺序：范围 -> 刻度模型）。
+    定位留作重放的原因这里用「选择器认不出」（不依赖几何键），范围排在它后面所以跟着留下，刻度再跟着留下。"""
+    man = {
+        "elements": [
+            {"gid": "axes_0", "role": "axes", "editable": []},
+            {"gid": "axes_0.yticks", "role": "ticks", "editable": []},
+            {"gid": "axes_0.artists_0.texts_0", "role": "text", "editable": []},
+        ]
+    }
+    drag = {"gid": "axes_0.artists_0.texts_0", "prop": "pos_frac", "value": [0.5, 0.2]}
+    ylim = {"gid": "axes_0", "prop": "ylim", "value": [-3.0, 14.0]}
+    fixed = {"gid": "axes_0.yticks", "prop": "major_mode", "value": "fixed"}
+    out = scriptadjust.build(b"import os\n", "Fig1", [drag, ylim, fixed], man, version="9.9")
+    assert out.written == 0
+    assert {p["prop"] for p in out.residual} == {"pos_frac", "ylim", "major_mode"}
+    out = scriptadjust.build(b"import os\n", "Fig1", [ylim, drag, fixed], man, version="9.9")
+    assert {p["prop"] for p in out.residual} == {"pos_frac"}  # 范围排在定位之前：照写
+
+
 @real_worker
 @pytest.mark.parametrize(
     ("patches", "held"),
