@@ -23,7 +23,7 @@ import time
 import traceback
 from collections import deque
 
-from . import bridge, guide, updatenotice, usage, widget
+from . import bridge, guide, nextstep, updatenotice, usage, widget
 from .rpc import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
@@ -96,7 +96,9 @@ ERROR_ELISION_ORDER = (
     "error",
 )
 #: 失败载荷里永远不截的键：结局、稳定码与待办索引都是定长小字段。
-ERROR_PROTECTED_KEYS = frozenset({"ok", "code", "requirements", "capability", "input", "elided"})
+ERROR_PROTECTED_KEYS = frozenset(
+    {"ok", "code", "requirements", "capability", "input", "elided", "next"}
+)
 #: 超预算时省略的顺序：先省对模型没用的（SVG 它读不了），再省画布反正要另取的
 #: （manifest / 位图），最后才是预检的逐条清单（计数与阻断布尔永远留着）。
 #: 每省一步量一次，够了就停——能留给模型的尽量留。
@@ -1431,6 +1433,10 @@ def _call_fix_to_journal(args: dict) -> dict:
     )
     # 预览图走 image 内容块、**不进 structuredContent**（ADR 0180 §四 / ADR 0069：内嵌画布事件上限）
     previews = out.pop("_previews", None) or {}
+    if not out.get("ok") and "next" not in out:
+        step = nextstep.fix_next(out, args)
+        if step:
+            out["next"] = step
     content = _text(*fix_report_lines(out))
     for label in ("before", "after"):
         if previews.get(label):
@@ -1497,6 +1503,12 @@ def fix_report_lines(out: dict) -> list[str]:
             "会话已回到修改前，没有写出任何文件。"
         )
         lines.extend(_fix_failure_lines(out))
+        for c in (out.get("conflicts") or [])[:FIX_BLOCKING_SHOWN]:
+            where = f"［{c['gid']}］" if c.get("gid") else ""
+            prop = f"（属性 {c['prop']}）" if c.get("prop") else ""
+            lines.append(
+                f"  ⚔ {c.get('rule') or '渲染'}{where}：{' ↔ '.join(c.get('constraints') or [])}{prop}"
+            )
     elif exit_code == "nothing_to_do":
         lines.append("没有需要改的地方；会话未变。" + dry)
     else:
@@ -2075,7 +2087,7 @@ def call_tool(name: str, args: dict) -> dict:
     try:
         result = handler(args)
     except bridge.BridgeError as exc:
-        payload = exc.payload()
+        payload = nextstep.attach(exc.payload(), name, args)  # ADR 0192 §3：失败带可照抄的 next
         # 失败也要机器可读：Codex 得能据此决定下一步（改路径？装 tavotto？确认导出？）
         # 但 **`code` 只进 `structuredContent`**：`content` 是念给用户听的那一份，
         # 把机器码摆在最前面，模型多半会连着念出去——用户听到
@@ -2458,6 +2470,8 @@ class Server:
                 "第一次用先调 tavotto_health（健康就不要安装任何东西）；"
                 "宿主没有加载 Tavotto 技能时，开工前先调 tavotto_guide 读使用说明；项目路径必须在允许的根内，"
                 "模型传的路径不是授权。结果带 elided 时用 tavotto_session_state 取件，别猜 gid。"
+                "失败结果带 next 时照它做：{tool,args} 就是下一次调用，{action:edit_script} 回代码改，"
+                "{action:ask_user} 把 question 与 options 交给用户。"
                 "宿主没有内嵌画布时，同一组工具照样能走完打开→修改→预检→导出。"
             ),
         }
