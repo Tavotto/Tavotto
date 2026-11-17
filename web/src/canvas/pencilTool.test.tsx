@@ -17,7 +17,7 @@ import { pathDraftPreview } from '@/store/svgPreviewStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { emptyProject, type PathObject } from '@/types/document'
-import { pencilPointerDown, pencilSettled } from './pencilController'
+import { MIN_GAP_PX, pencilPointerDown, pencilSettled } from './pencilController'
 
 const WASM = path.resolve(process.cwd(), 'src/lib/vecops/vecops.wasm')
 beforeAll(() =>
@@ -72,6 +72,19 @@ describe('铅笔', () => {
     expect(p.type).toBe('path')
     expect(p.subpaths[0].closed).toBe(false)
     expect(p.subpaths[0].nodes.length).toBeLessThan(20)
+  })
+
+  it('锚点不挤：四个峰谷各一个锚点（加两端不超过 7 个），相邻锚点在屏幕上至少隔 MIN_GAP_PX', async () => {
+    await stroke(wave())
+    const nodes = (objects()[0] as PathObject).subpaths[0].nodes
+    expect(nodes.length).toBeLessThanOrEqual(7)
+    const mm = pathToMm(objects()[0] as PathObject)[0].nodes.map((q) => q.p)
+    const gapPx = Math.min(...mm.slice(1).map((q, i) => zoomPx(Math.hypot(q[0] - mm[i][0], q[1] - mm[i][1]))))
+    expect(gapPx).toBeGreaterThanOrEqual(MIN_GAP_PX)
+    for (const k of [1, 3, 5, 7]) {
+      const pk = wave()[Math.round((k * Math.PI * 10) / 2)]
+      expect(Math.min(...mm.map((q) => zoomPx(Math.hypot(q[0] - pk[0], q[1] - pk[1]))))).toBeLessThan(MIN_GAP_PX)
+    }
   })
 
   it('⌥ 松手：不简化，保留原始的点', async () => {

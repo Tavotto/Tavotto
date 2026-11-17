@@ -326,6 +326,9 @@ describe('标注菜单：一张形状列表 + 预设；钢笔单独一格', () =
       return document.body.querySelector<HTMLElement>('[role="menu"]')!
     }
     let menu = await open()
+    // 点格子只打开菜单、不换工具（与「标注 ▾」同一个做法：整颗钮是菜单的触发器）
+    expect(menu).toBeTruthy()
+    expect(useUiStore.getState().tool).toBe('select')
     const radios = [...menu.querySelectorAll<HTMLElement>('[role="menuitemradio"]')]
     expect(radios.map((r) => r.dataset.pathTool)).toEqual(['pen', 'pencil'])
     expect(radios[0].textContent).toContain('P')

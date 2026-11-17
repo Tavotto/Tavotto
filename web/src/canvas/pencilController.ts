@@ -28,10 +28,22 @@ import { candidatesFor, DRAW_COLOR, trackPointer } from './interactions'
 export const FIT_PX = 2
 export const CLOSE_PX = 8
 const STEP_PX = 0.75
+/** 拟合前平滑：每 1 px 取一个点、前后各 3 px 平均 */
+const SMOOTH_STEP_PX = 1
+const SMOOTH_HALF_PX = 3
+/** 拟合后相邻锚点至少隔 6 px（更近的合并） */
+export const MIN_GAP_PX = 6
 
 const opts = (): PencilOptions => {
   const t = getTransform()
-  return { minStepMm: pxToMm(STEP_PX, t), closeTolMm: pxToMm(CLOSE_PX, t), tolMm: pxToMm(FIT_PX, t) }
+  return {
+    minStepMm: pxToMm(STEP_PX, t),
+    closeTolMm: pxToMm(CLOSE_PX, t),
+    tolMm: pxToMm(FIT_PX, t),
+    smoothStepMm: pxToMm(SMOOTH_STEP_PX, t),
+    smoothHalfMm: pxToMm(SMOOTH_HALF_PX, t),
+    minGapMm: pxToMm(MIN_GAP_PX, t),
+  }
 }
 
 function preview(pts: readonly XY[]): void {
