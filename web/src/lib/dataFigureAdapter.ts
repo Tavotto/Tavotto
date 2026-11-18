@@ -61,6 +61,20 @@ export function headerRowFromResponse(res: AiDataProposeResponse): number | null
   return res.kind === 'ask' ? null : (res.header_row ?? null)
 }
 
+export interface GroupSource {
+  path: string
+  sheet: string | null
+  label: string
+  headerRow: number | null
+  unitsRow: boolean
+}
+
+/** 合画响应里每份文件的显示名与各自的表头行 / 单位行；单份 / 没给 = null（前端按路径自己取名） */
+export function sourcesFromResponse(res: AiDataProposeResponse): GroupSource[] | null {
+  if (res.kind === 'ask' || !Array.isArray(res.sources)) return null
+  return res.sources.map((s) => ({ path: s.path, sheet: s.sheet ?? null, label: s.label, headerRow: s.header_row ?? null, unitsRow: s.units_row === true }))
+}
+
 /** 表头后紧跟的单位行（`header_row + 1` 那一行）已被后端切掉：数据条里把它显示成次要文字色、不参与数据行；字段缺失按 false */
 export function unitsRowFromResponse(res: AiDataProposeResponse): boolean {
   return res.kind === 'ask' ? false : res.units_row === true

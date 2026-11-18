@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/Button'
+import { Segmented } from '@/components/ui/Segmented'
 import { canRevealInFileManager, revealProjectFile } from '@/lib/desktop'
 import { feedbackAction } from '@/lib/canvasFileIntake'
 import { KNOWN_NOTHING_REASONS } from '@/lib/dataFigure'
@@ -35,8 +36,20 @@ export function DataDraft() {
   const active = useDataFigureStore((s) => s.draftActive)
   const selected = useDataFigureStore((s) => s.selected)
   const group = useDataFigureStore((s) => s.group)
+  const sources = useDataFigureStore((s) => s.sources)
   const overviews = useDataFigureStore((s) => s.overviews)
   const headerRows = useDataFigureStore((s) => s.headerRows)
+  // 合画的数据条此刻看第几个文件（默认第一个）；换了一组就回到第一个
+  const [stripIdx, setStripIdx] = useState(0)
+  const groupKey = group ? group.map((r) => `${r.path}|${r.sheet}`).join('\n') : null
+  useEffect(() => setStripIdx(0), [groupKey])
+  const stripRef = group ? (group[Math.min(stripIdx, group.length - 1)] ?? selected) : selected
+  const stripKey = stripRef ? `${stripRef.path}|${stripRef.sheet}|${headerRows[stripRef.path] ?? ''}` : null
+  // 切到某个文件才读它的概览（读过的不重读；该文件的表头行换了键就变，会重读）
+  useEffect(() => {
+    if (group && stripRef) useDataFigureStore.getState().ensureOverview(stripRef)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stripKey, groupKey])
   const phase = useDataFigureStore((s) => s.phase)
   const allCandidates = useDataFigureStore((s) => s.candidates)
   const thumbs = useDataFigureStore((s) => s.thumbs)
@@ -88,9 +101,28 @@ export function DataDraft() {
   // 取不到图的（422）静默去掉；推荐标记在剩下的第一张上
   const candidates = allCandidates.filter((c) => thumbs[c.id] !== 'failed')
   const settled = candidates.length > 0 && candidates.every((c) => thumbs[c.id] === 'ready')
-  const ovState = overviews[overviewKeyOf(selected, headerRows)]
+  const shown = stripRef ?? selected
+  const ovState = overviews[overviewKeyOf(shown, headerRows)]
   const ov = ovState?.data ?? null
-  const setRow = (line: number) => st().setHeaderRow(selected.path, selected.sheet, line)
+  const setRow = (line: number) => st().setHeaderRow(shown.path, shown.sheet, line)
+  // 合画：这个文件各自的表头行 / 单位行（响应的 `sources`；没有就退回概览猜的）
+  const src = group ? sources?.find((s) => s.path === shown.path && s.sheet === shown.sheet) : undefined
+  const labelOf = (r: { path: string; sheet: string | null }): string => {
+    const hit = sources?.find((s) => s.path === r.path && s.sheet === r.sheet)
+    if (hit) return hit.label
+    const base = r.path.slice(r.path.lastIndexOf('/') + 1)
+    const name = base.includes('.') ? base.slice(0, base.lastIndexOf('.')) : base
+    return r.sheet ? `${name} · ${r.sheet}` : name
+  }
+  const stripTabs = group ? (
+    <Segmented
+      ariaLabel={t('dataFigureV2.list.heading')}
+      value={String(Math.min(stripIdx, group.length - 1))}
+      onChange={(v) => setStripIdx(Number(v))}
+      className="w-auto"
+      items={group.map((r, i) => ({ value: String(i), label: <span className="whitespace-nowrap px-1">{labelOf(r)}</span> }))}
+    />
+  ) : undefined
 
   let top: React.ReactNode
   if (problem?.kind === 'mismatch') {
@@ -193,8 +225,9 @@ export function DataDraft() {
           key={`strip|${selected.path}|${selected.sheet}`}
           ov={ov}
           // 要用户点一行（没出候选）时不显示概览里猜的那一行：0 = 明确没有
-          guessRow={phase === 'pickrow' ? 0 : headerRowUsed}
-          unitsRow={unitsRow}
+          guessRow={phase === 'pickrow' ? 0 : group ? (src?.headerRow ?? null) : headerRowUsed}
+          unitsRow={group ? (src?.unitsRow ?? false) : unitsRow}
+          tabs={stripTabs}
           loading={ovState?.status === 'loading'}
           forceOpen={phase === 'text' || phase === 'pickrow' || (ov != null && (ov.status === 'unsure' || ov.status === 'unreadable') && ov.raw_lines.length > 0)}
           onHeaderRow={setRow}

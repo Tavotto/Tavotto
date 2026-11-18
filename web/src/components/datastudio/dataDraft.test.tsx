@@ -678,6 +678,63 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     expect(p.querySelector('button')!.textContent).toBe('分别作图')
   })
 
+  const tabs = () => qa<HTMLElement>('[data-data-strip-tabs] [role=radio]')
+
+  it('合画的数据条：标题行里「数据」后面一排文件标签（没有 sources 就按路径取名去扩展名），默认第一个；单份流程没有这排标签', async () => {
+    propose.mockResolvedValue(cands())
+    overview.mockImplementation(async ({ path }) => ov({ path, rows: path === 'names.csv' ? 7 : 144, columns: 3 }))
+    await groupTwo()
+    expect(tabs().map((b) => b.textContent)).toEqual(['growth', 'names'])
+    expect(tabs()[0]!.getAttribute('aria-checked')).toBe('true')
+    // 标题行不撑高、文件名不进 data-*
+    expect(q('[data-data-strip-tabs]')!.className).toContain('overflow-x-auto')
+    for (const b of tabs()) for (const a of b.getAttributeNames()) if (a.startsWith('data-')) expect(b.getAttribute(a)).not.toMatch(/growth|names|csv/)
+    expect(q('[data-data-strip-info]')!.textContent).toBe('前 2 行，共 144 行 · 3 列')
+    // 单份流程
+    act(() => useDataFigureStore.getState().closeDraft())
+    await click(qa('[data-studio-file]')[0]!)
+    await flush()
+    await flush()
+    expect(q('[data-data-strip]')).not.toBeNull()
+    expect(q('[data-data-strip-tabs]')).toBeNull()
+  })
+
+  it('合画的数据条：标签用响应的 sources[].label；点哪个，表与「前 N 行，共 M 行」就是哪个文件的；按需读，读过的不重读', async () => {
+    propose.mockResolvedValue({ ...cands(), sources: [{ path: 'growth.csv', sheet: null, label: 'growth', header_row: 1, units_row: false }, { path: 'names.csv', sheet: null, label: 'names-x', header_row: 1, units_row: false }] })
+    overview.mockImplementation(async ({ path }) => ov({ path, rows: path === 'names.csv' ? 7 : 144, columns: path === 'names.csv' ? 2 : 3 }))
+    await groupTwo()
+    expect(tabs().map((b) => b.textContent)).toEqual(['growth', 'names-x'])
+    const reads = () => overview.mock.calls.map((c) => c[0].path)
+    expect(reads()).not.toContain('names.csv') // 没点之前不读第二个
+    await click(tabs()[1]!)
+    await flush()
+    expect(reads()).toContain('names.csv')
+    expect(tabs()[1]!.getAttribute('aria-checked')).toBe('true')
+    expect(q('[data-data-strip-info]')!.textContent).toBe('前 2 行，共 7 行 · 2 列')
+    const n = overview.mock.calls.length
+    await click(tabs()[0]!)
+    await click(tabs()[1]!)
+    await flush()
+    expect(overview.mock.calls.length).toBe(n) // 读过的不重读
+    expect(q('[data-data-strip-info]')!.textContent).toBe('前 2 行，共 7 行 · 2 列')
+  })
+
+  it('合画的数据条：展开的是当前选中的文件；在某个文件的预览里点一行指表头，只影响这个文件，重新出候选时 header_rows 只带它', async () => {
+    propose.mockResolvedValue(cands())
+    const raw = [1, 2, 3].map((n) => ({ line: n, text: `row ${n}` }))
+    overview.mockImplementation(async ({ path }) => (path === 'names.csv' ? ov({ path, status: 'unsure', header_row: 2, raw_lines: raw, fields: [], preview_rows: [] }) : ov({ path })))
+    await groupTwo()
+    await click(tabs()[1]!)
+    await flush()
+    propose.mockClear()
+    await click(q('label[data-look-line="3"] input'))
+    await flush()
+    await flush()
+    expect(propose.mock.calls.at(-1)![0]).toMatchObject({ tables: [{ path: 'growth.csv' }, { path: 'names.csv' }], header_rows: { 'names.csv': 3 } })
+    expect(propose.mock.calls.at(-1)![0].header_rows).not.toHaveProperty('growth.csv')
+    expect(tabs()[1]!.getAttribute('aria-checked')).toBe('true') // 重新出候选后仍停在这个文件
+  })
+
   it('合画里某份表不在了（200 nothing + table_not_found）：走 nothing 的话，也给「各画一张」这个出路', async () => {
     propose.mockResolvedValueOnce({ kind: 'nothing', reasons: ['table_not_found'] })
     await groupTwo()

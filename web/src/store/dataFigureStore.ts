@@ -15,7 +15,7 @@ import {
 import { setCanvasCovered } from '@/store/canvasCover'
 import { runExclusive } from '@/lib/dataCommitQueue'
 import { currentProjectId } from '@/lib/session'
-import { candidatesFromResponse, headerRowFromResponse, mixedFromResponse, rolesFromResponse, unitsRowFromResponse, type Candidate, type ColumnRoles, type MixedColumn, type ThumbState } from '@/lib/dataFigureAdapter'
+import { candidatesFromResponse, headerRowFromResponse, mixedFromResponse, rolesFromResponse, sourcesFromResponse, unitsRowFromResponse, type Candidate, type GroupSource, type ColumnRoles, type MixedColumn, type ThumbState } from '@/lib/dataFigureAdapter'
 import { fileRows, hasNumericColumn, isStaleProposeCode, sameTable, tableKey, type CellMode, type TableRef } from '@/lib/dataFigure'
 import { msg, type UiMessage } from '@/i18n'
 
@@ -123,6 +123,8 @@ interface DataFigureStore {
   selected: TableRef | null
   /** 「合画一张」：几份表合进同一张图（`selected` 是其中第一份，数据条 / 概览认它）；单份流程是 null。只由 `selectGroup` 设，`select` / `closeDraft` / `clear` 复位 */
   group: TableRef[] | null
+  /** 合画响应里每份文件的显示名与表头行 / 单位行（数据条的文件切换标签用）；单份是 null */
+  sources: GroupSource[] | null
   /** 每张表（含重读后的）概览；键 = `tableKey` + 表头行 */
   overviews: Record<string, OverviewState>
   /** 用户指了「哪一行是每列的名字」的文件：路径 → 物理行号；出图时原样带上 `header_rows` */
@@ -162,6 +164,8 @@ interface DataFigureStore {
   select: (ref: TableRef) => void
   /** 「合画一张」：开临时标签、把这几份（≥ 2）一起交给后端出候选 */
   selectGroup: (refs: TableRef[]) => void
+  /** 合画数据条切到某个文件：这份的概览还没读（或表头行换了、键变了）才读，读过的不重读 */
+  ensureOverview: (ref: TableRef) => void
   /** 关临时标签（出图中只是收起，画完照样打开） */
   closeDraft: () => void
   activateDraft: () => void
@@ -220,6 +224,7 @@ const initial = {
   files: { status: 'idle' } as FilesState,
   selected: null as TableRef | null,
   group: null as TableRef[] | null,
+  sources: null as GroupSource[] | null,
   overviews: {} as Record<string, OverviewState>,
   headerRows: {} as Record<string, number>,
   answers: {} as Record<string, unknown>,
@@ -312,6 +317,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       roles: rolesFromResponse(res) ?? get().roles,
       headerRowUsed: headerRowFromResponse(res),
       unitsRow: unitsRowFromResponse(res),
+      sources: group ? sourcesFromResponse(res) : null,
       // 用户给过 `cells` 规则之后，后端不再把这些列列进 `mixed_cells`（已经不是「替用户做的默认决定」）：右栏那一行要留着，不然切过去就切不回来
       mixed: mixedCols.length > 0 ? { columns: mixedCols, mode: mixedCols[0]!.mode } : answers.cells !== undefined ? get().mixed : null,
     }
@@ -569,8 +575,15 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       }
       discardSession()
       commitRid = null
-      set({ selected: ref, group: null, draftOpen: true, draftActive: true, fresh: null })
+      set({ selected: ref, group: null, sources: null, draftOpen: true, draftActive: true, fresh: null })
       void run()
+    },
+
+    ensureOverview: (ref) => {
+      const key = overviewKeyOf(ref, get().headerRows)
+      const cur = get().overviews[key]
+      if (cur && (cur.status === 'ready' || cur.status === 'loading')) return
+      void loadOverview(ref)
     },
 
     selectGroup: (refs) => {
@@ -581,7 +594,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       }
       discardSession()
       commitRid = null
-      set({ selected: refs[0]!, group: refs, draftOpen: true, draftActive: true, fresh: null })
+      set({ selected: refs[0]!, group: refs, sources: null, draftOpen: true, draftActive: true, fresh: null })
       void run()
     },
 
@@ -595,7 +608,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       proposeSeq += 1
       runSeq += 1
       commitRid = null
-      set({ draftOpen: false, draftActive: false, selected: null, group: null, ...idleDraft })
+      set({ draftOpen: false, draftActive: false, selected: null, group: null, sources: null, ...idleDraft })
     },
 
     activateDraft: () => {

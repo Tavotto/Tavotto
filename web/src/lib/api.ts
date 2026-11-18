@@ -4581,6 +4581,8 @@ export interface AiDataLazyInfo {
   sheet?: string | null
   /** 文本表是实际用的物理行号，XLSX 为 null */
   header_row?: number | null
+  /** 合画：每份文件一项（后端合同 `sources`）：显示名 `label`（文件名去扩展名）与各自实际用的表头行 / 单位行 */
+  sources?: { path: string; sheet: string | null; label: string; header_row: number | null; units_row: boolean }[]
   /** 真 = 表头后紧跟的单位行（`header_row + 1` 那一行）不是数据、已被切掉；缺失按 false */
   units_row?: boolean
   roles?: AiDataRoles | null
@@ -4605,7 +4607,7 @@ export interface AiDataProposeBody {
   folder?: string
   table?: string
   sheet?: string
-  /** 合画一张：≥ 2 份表（每份文件是一组），与 `table` / `sheet` 二选一；其余字段同单份。几份列名不一致回 400 `tables_columns_differ`，份数超上限回 400 `tables_too_many` */
+  /** 合画一张：≥ 2 份表（每份文件是一组），与 `table` / `sheet` 二选一；其余字段同单份。几份列名不一致回 400 `tables_columns_differ`，份数超上限（最多 8 份）回 400 `tables_limit_exceeded` */
   tables?: { path: string; sheet?: string }[]
   answers?: Record<string, unknown>
   header_rows?: Record<string, number>
