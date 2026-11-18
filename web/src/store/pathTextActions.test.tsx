@@ -234,9 +234,9 @@ describe('变换', () => {
 })
 
 describe('导出范围', () => {
-  it('「裁到内容」按字立在路径上的高度往外留：一个字号多一点', () => {
+  it('「裁到内容」按字立在路径上的高度往外留：字高一个字号多一点，再加自动离线的保守上限（线宽 / 2 + 1.2 个字号）', () => {
     const b = visibleContentBounds([pt({ sizePt: 10 })])!
-    const mm = (10 * 1.2 * 25.4) / 72
+    const mm = (10 * 2.4 * 25.4) / 72
     expect(b.y).toBeCloseTo(20 - mm, 6)
     expect(b.h).toBeCloseTo(0.5 + 2 * mm, 6)
   })
