@@ -176,6 +176,7 @@ export function toPathObject(o: ShapeObject | ArrowObject): PathObject | null {
     // 嵌套组的整条链与剪切蒙版的身份一起带过去（ADR 0191）：只带 groupId 会把对象从外层组里摘出来
     ...(o.groupPath ? { groupPath: [...o.groupPath] } : {}),
     ...(o.clipMask ? { clipMask: true as const } : {}),
+    ...(o.clipOff ? { clipOff: true as const } : {}),
     ...(o.layoutPinned ? { layoutPinned: o.layoutPinned } : {}),
     ...(o.rotationDeg ? { rotationDeg: o.rotationDeg } : {}),
     subpaths: box.subpaths,
