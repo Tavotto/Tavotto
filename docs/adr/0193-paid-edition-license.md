@@ -53,6 +53,7 @@ Tavotto 要有收入来抵持续的开销（模型调用、CloudBase、CDN），
 | `POST /v1/refresh` | `{license_id, device_pub, ts, sig}` → `{token}` 或 `{state: "revoked" \| "expired"}` |
 | `POST /v1/recover` | `{email}`：把激活码重新发到这个邮箱；不论邮箱是否存在，回答一样 |
 | `POST /v1/devices/release` | `{license_id, device_pub, ts, sig}`：本机解绑，腾出名额 |
+| `GET` · `POST /v1/devices/reset?t=<令牌>` | 电脑丢了时清空这份授权的所有设备：GET 只回确认页、不写任何东西，POST 才清空；令牌来自 `recover` 邮件 |
 
 - **webhook 处理**：
   - 用 Stripe 官方库对**原始请求体**验签（`constructEvent`），验不过回 400。
@@ -61,12 +62,12 @@ Tavotto 要有收入来抵持续的开销（模型调用、CloudBase、CDN），
   - `charge.refunded` 且全额退款、`charge.dispute.created` → 作废**对应的那一笔购买**（经 PaymentIntent 找到 Session）；部分退款不改权益。
   - 其它事件一律回 200 不处理。
 - **一份 = 一个授权 = 一个激活码**（维护者 2026-11-18 定）：一次新购买了 n 份，就开 n 个互相独立的授权，各有自己的激活码、设备名额和到期日。同一个邮箱可以持有任意多份；想在更多电脑上用就多买几份，也可以把其中一份的激活码给同门用。
-- **每份授权 = 购买台账**：一份授权下挂若干笔购买（首购 + 各次续费），每笔记 `{session_id, payment_intent, lookup_key, features, term_days, paid_at, state: paid|void}`。权益**由未作废的购买算出**：按付款时间顺序把各笔时长首尾相接得到到期日，功能键取并集。
+- **每份授权 = 购买台账**：一份授权下挂若干笔购买（首购 + 各次续费），每笔记 `{session_id, payment_intent, lookup_key, features, term_days, paid_at, state: paid|void}`。权益**由未作废的购买算出**：按付款时间顺序把各笔时长首尾相接得到各段 `[起, 止)`，到期日是整条链的末端；功能键只取**止于现在之后**的那些段的并集（已经过期的那一段买的功能不再算）。
 - **续费**只顺延指定的那一份（`checkout` 带 `renew`，由已激活的设备发起，所以知道是哪一份）；不带 `renew` 的购买一律是新的份数，不会自动挂到老授权上。
 - **退款**：全额退款或争议 → 这笔购买作废，它开出的那几份授权（续费则是被续的那一份）按台账重算，没有剩余有效购买的就失效；部分退款不改权益。
 - **激活码**：每份一个，`TVK-XXXX-XXXX-XXXX`，Crockford base32、60 位随机。服务端只存 HMAC-SHA256（服务端密钥），常数时间比较。明文只存在两处、都有期限：待发邮件记录（发出即删，最多保留 24 小时）、`claim` 用的显示槽（付款后 24 小时删除）——两处都用服务端密钥 AES-GCM 加密保存。之后谁也拿不回明文：`recover` 给这个邮箱名下每一份**换发新码**，旧码随即失效，已激活的设备不受影响。
 - **发信异步**：开通时写一条待发邮件记录，由定时函数 `license-mailer`（每分钟）发出，失败指数退避重试，最多 24 小时；超时只删明文，用户可用 `claim` 或 `recover` 拿码。webhook 本身不等发信。
-- **设备名额**：每份授权最多 2 台设备（维护者 2026-11-18 定；服务端配置项，改它不用发版），满了以后 `activate` 回 `device_limit`，邮件里附自助解绑链接（等价于 `devices/release`）。
+- **设备名额**：每份授权最多 2 台设备（维护者 2026-11-18 定；服务端配置项，改它不用发版），满了以后 `activate` 回 `device_limit`。在用的电脑上可以直接解绑（`devices/release`）；**电脑丢了或重装了**，就用 `recover`：邮件里除了新码，再附一个「清空这份授权的所有设备」链接 `GET /v1/devices/reset?t=<令牌>`（令牌由服务端密钥派生，24 小时有效、一次性）。打开链接只看到一个确认页，什么都不写（邮件扫描器会自动打开链接）；点页面上的按钮（`POST` 同一地址）才真正清空。
 - 失败码闭集：`invalid_code`、`device_limit`、`revoked`、`expired`、`price_unavailable`、`rate_limited`、`network`、`server`、`client_error`（与前端 `license.failure.*` 对拍）。
 - 限流：`activate` / `recover` / `claim` 按来源 IP 每小时 20 次、按激活码 / Session 每小时 10 次；`checkout` 按来源 IP 每小时 30 次。
 
@@ -97,7 +98,7 @@ Tavotto 要有收入来抵持续的开销（模型调用、CloudBase、CDN），
   - 验签走 PyNaCl，延后到用的时候才 import（与 `journalremote._ed25519_verify` 同一个函数，提出来共用，不复制）。
   - `has(feature)` 成立的条件：签名有效、`kid` 已知、`device` 是本机、`now < offline_until`、`now < exp`。任何一项不满足都当作免费版，不报错。
 - 联网时机：只有用户点「激活」，或本机已有令牌且过了 `refresh_after` 时（每次启动最多一次，之后每天最多一次）。**没有令牌时一次网络都不发。** 出站全走 `diagsend._send`，目的地钉死在 `LICENSE_HOSTS = {"license.tavotto.cn"}`。
-- 作者端请求（`activate` / `refresh` / `release`）带设备签名：对 `(时间戳, 请求体哈希)` 用本机设备私钥签名，时间戳偏差 > 10 分钟服务端拒收（与 ADR 0187 §三 同形，但是**另一把**设备密钥，不与审阅共用）。
+- 作者端请求（`activate` / `refresh` / `release`）带设备签名：请求体含 `op`（闭集 `activate | refresh | release | renew`，服务端核对与端点一致，防止截获的签名拿去别的端点重放）、`device_pub`、`ts`，对去掉 `sig` 的规范化请求体（键排序、紧凑 JSON、不许浮点）的 sha256 连同时间戳用本机设备私钥签名，时间戳偏差 > 10 分钟服务端拒收；被签名字节串的精确定义以 `serverless/license/README.md` 与它的固定向量测试为准（与 ADR 0187 §三 同形，但是**另一把**设备密钥，不与审阅共用）。
 - `/api/license/*`（会话认证照旧）：`status`、`activate`、`refresh`、`release`、`checkout`（返回付款页地址，由前端在系统浏览器打开）。
 - 编辑器经 MCP 接入时与桌面版共用同一个数据目录，所以应用里激活一次，编辑器那边也生效。
 - 诊断包与遥测：`license/` 目录整个排除；激活码、令牌、`email_hint` 列入脱敏规则。
