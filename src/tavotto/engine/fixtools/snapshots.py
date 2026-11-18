@@ -160,8 +160,13 @@ def take(ctx: FixContext, tool: str, env_ids: list[str] | None = None) -> str | 
             "settings": _current_settings(ctx),
             "envs": envs,
             "managed": _managed_state(ctx),
-            # `set_run_arguments`：这一刻验证运行用的参数（None = 不带参数）；回滚据此换回去
-            "run_arguments": list(ctx.run_arguments) if ctx.run_arguments else None,
+            # `set_run_arguments`：这一刻验证运行用的参数（None = 不带参数）；回滚据此换回去。
+            # 敏感参数（用户标的）的值绝不落盘：不记这个键（AI 也改不了它，回滚无事可做）
+            **(
+                {}
+                if ctx.run_arguments_sensitive
+                else {"run_arguments": list(ctx.run_arguments) if ctx.run_arguments else None}
+            ),
         }
         root = snapshot_root(ctx.session_id)
         root.mkdir(parents=True, exist_ok=True)

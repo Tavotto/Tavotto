@@ -101,6 +101,8 @@ class FixContext:
     run_arguments: tuple | None = None
     #: 本会话里 `set_run_arguments` 是否改过参数（修好后界面据此把参数填进「运行参数」再重跑）
     run_arguments_changed: bool = False
+    #: 准备会话的运行参数被用户标成敏感（密码 / 令牌）：值不进上下文、不进快照，AI 不许改（只有用户在「运行参数」里改）
+    run_arguments_sensitive: bool = False
     #: 环境 id → 叠加环境（`list_environments` 登记；`select_environment` 记住环境时要带上）
     environment_overlays: dict[str, dict] = field(default_factory=dict)
     #: 本次调用的元信息：`run_tool` 每次调用前清空，工具写 `approved_by`（"user"）与 `snapshot`（快照 id），审计读它

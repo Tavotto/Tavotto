@@ -166,3 +166,39 @@ def test_after_the_repair_open_and_run_reuses_the_arguments(
         "--data",
         "m.csv",
     )
+
+
+# ---------------------------------------------------------------- 敏感参数（Codex #2050 P1 ×2）
+def test_sensitive_arguments_are_never_changed_nor_written_to_a_snapshot(box):
+    """用户标成敏感的参数：AI 不许改（换掉会把留下的秘密写进磁盘上的运行配置），任何快照里都不记它的值。"""
+    import json
+
+    from tavotto.engine.fixtools import snapshots
+
+    seen = []
+    ctx = make_ctx(box, on_run_arguments_changed=lambda t: seen.append(t))
+    ctx.run_arguments_sensitive = True
+    r = call(ctx, "set_run_arguments", {"argv": ["--token", "x"]})
+    assert r.code == "run_arguments_sensitive" and seen == []
+    snap = snapshots.take(ctx, "probe")
+    doc = json.loads((snapshots.snapshot_root(ctx.session_id) / f"{snap}.json").read_text("utf-8"))
+    assert "run_arguments" not in doc
+
+
+def test_the_application_never_hands_sensitive_arguments_to_the_repair(
+    client, tmp_path, fake_pool, sessions
+):
+    from tavotto.engine import runconfig
+
+    _unused, project, session = _application_ctx(client, tmp_path)
+    secret = runconfig.selection_for(project.path, "fig.py", ["--token", "s3cr3t"], sensitive=True)
+    target = {**session.target, "run": secret}
+    sens, _ = prepsession.SESSIONS.check(
+        project_id=project.id, project_root=str(project.path), target=target, force=True
+    )
+    box_ = {"sess": sens}
+    hooks = app_module._fix_application_verification(project, box_, desktop=False)
+    assert hooks["run_arguments"] is None and hooks["run_arguments_sensitive"] is True
+    with pytest.raises(prepsession.SessionError):
+        hooks["on_run_arguments_changed"](("--token", "s3cr3t", "--n", "3"))
+    assert box_["sess"] is sens  # 没有换成一份非敏感的配置

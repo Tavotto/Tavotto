@@ -11226,6 +11226,13 @@ def _fix_application_verification(ctx: "ProjectCtx", box: dict, *, desktop: bool
         # 同一个脚本目标，换成带这组参数的运行配置（空 = 不带参数）；拿（或建）那条准备会话，之后的验证都在它上面
         with bound_project(ctx):
             old = current()
+            if old.target.get("run") is not None and old.target["run"].sensitive:
+                # 双保险：工具层已拒绝；这里绝不把敏感配置换成一份非敏感的（会把留下的秘密写进磁盘）
+                raise engine_prepsession.SessionError(
+                    "run_arguments_sensitive",
+                    "Sensitive run arguments are not changed by repair",
+                    409,
+                )
             script = old.target.get("script")
             run = engine_runconfig.selection_for(ctx.path, script, list(tokens) or None)
             target = {k: v for k, v in old.target.items() if k != "run"}
@@ -11239,9 +11246,13 @@ def _fix_application_verification(ctx: "ProjectCtx", box: dict, *, desktop: bool
     return {
         "application_runner": run,
         "on_run_arguments_changed": run_arguments_changed,
+        # 敏感参数（用户标的）：值不交给修复会话（不进上下文、快照），AI 也不许改
         "run_arguments": tuple(box["sess"].target["run"].argv)
-        if box["sess"].target.get("run") is not None
+        if box["sess"].target.get("run") is not None and not box["sess"].target["run"].sensitive
         else None,
+        "run_arguments_sensitive": bool(
+            box["sess"].target.get("run") is not None and box["sess"].target["run"].sensitive
+        ),
         "application_check": check,
         "on_workdir_changed": cwd_changed,
         # 「跳过这个文件夹」的名单变了（`ignore_import_folder` / 回滚）：同样要收掉这个项目的会话（ADR 0154）

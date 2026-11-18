@@ -500,6 +500,13 @@ def set_run_arguments(ctx: FixContext, args: dict) -> ToolResult:
         return err("bad_arguments", str(exc))
     if ctx.on_run_arguments_changed is None:
         return err("not_available", "Run arguments cannot be set in this session.")
+    if ctx.run_arguments_sensitive:
+        # 用户标成敏感的参数（密码 / 令牌）：值只活在内存里，AI 不碰——换掉它会把留下的秘密写进磁盘上的运行配置
+        return err(
+            "run_arguments_sensitive",
+            "The user marked this script's run arguments as sensitive, so they cannot be changed here. If they are "
+            "wrong, tell the user in one plain sentence which argument to change in the script's run-arguments box.",
+        )
     if tuple(ctx.run_arguments or ()) == tuple(tokens):
         return ok("Those are already the run arguments. Nothing changed.", "no change")
     bad = _snapshot_or_error(ctx, "set_run_arguments")
