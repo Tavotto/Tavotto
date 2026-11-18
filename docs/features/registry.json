@@ -1650,6 +1650,22 @@
           "title": "嵌套组与剪切蒙版 › 剪切蒙版：⌘7 后大矩形只在蒙版范围内点得中（画面按蒙版裁）；⌥⌘7 释放后恢复"
         }
       ]
+    },
+    {
+      "id": "canvas.svg-paste",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "粘贴一段 SVG 得到可编辑对象（而不是一张图片）",
+        "en-US": "Pasting SVG markup yields editable objects instead of a picture"
+      },
+      "entry": "画布 → ⌘V（剪贴板里是 SVG）",
+      "e2e": [
+        {
+          "spec": "vector-svg.spec.ts",
+          "title": "粘贴 SVG › 粘贴一段 SVG：落成两个可编辑对象（不是图片），点中红的那个属性栏里是它的红色；一次撤销全撤回"
+        }
+      ]
     }
   ]
 }
