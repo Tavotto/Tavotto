@@ -522,7 +522,9 @@ def resolve_module_origin(target: str) -> str:
     return getattr(spec, "origin", "") or ""
 
 
-def run_module(target: str, argv: list, on_origin=None, on_start=None) -> None:
+def run_module(
+    target: str, argv: list, on_origin=None, on_start=None, path_root: str | None = None
+) -> None:
     """等价于 `python -m <target> <argv…>`。
 
     `runpy.run_module(..., run_name="__main__", alter_sys=True)` 在
@@ -534,11 +536,14 @@ def run_module(target: str, argv: list, on_origin=None, on_start=None) -> None:
 
     `on_origin` 在**开跑之前**收到目标模块的源文件路径（见
     `resolve_module_origin`）。
+
+    `path_root`（ADR 0194，桌面拥有的 native 把包里的脚本按模块运行）：`sys.path[0]` 用它——包根的上一级，
+    而不是 cwd（桌面的 cwd 是脚本目录或项目根，那里 import 不到 `plots`）；没给 = 与真实 `-m` 一样放 cwd。
     """
     import runpy  # noqa: PLC0415 — 只有 module 目标才需要，脚本目标不必付这份 import
 
     sys.argv = [target, *argv]  # run_module(alter_sys=True) 会把 argv[0] 换成模块文件
-    sys.path.insert(0, os.getcwd())
+    sys.path.insert(0, path_root or os.getcwd())
     if on_start is not None:
         # These are run_module(alter_sys=True)'s own two operations, split at
         # the compiled-code boundary. A missing/invalid target must not report
@@ -1404,6 +1409,9 @@ def _parse_args(argv: list):
     ap = argparse.ArgumentParser(prog="tavotto-bridge-runner", allow_abbrev=False)
     ap.add_argument("--target-kind", choices=("script", "module"), required=True)
     ap.add_argument("--target", required=True)
+    # ADR 0194：桌面拥有的 native 把包里的脚本按模块运行时，`--target` 是模块名，这里给脚本路径（推 `sys.path[0]`）；
+    # 终端的 `tavotto run` 永远不带
+    ap.add_argument("--module-script", default=None)
     ap.add_argument("--out-dir", default="")
     ap.add_argument("--preview-dpi", type=int, default=200)
     ap.add_argument("--control-host", default="127.0.0.1")
@@ -1428,6 +1436,13 @@ def _parse_args(argv: list):
         mine, user_argv = argv, []
     args = ap.parse_args(mine)
     args.user_argv = user_argv
+    args.module_path_root = None
+    if args.module_script:
+        if args.target_kind == "module":
+            args.module_path_root = bridgeboot.package_path_root(args.module_script, args.target)
+        if args.module_path_root is None:
+            # 模块名与脚本路径对不上（或没给 module 目标）：不猜，照旧按脚本路径运行（失败的样子与以前一字不差）
+            args.target_kind, args.target = "script", args.module_script
     return args
 
 
@@ -1590,6 +1605,7 @@ def main(argv: list | None = None) -> int:
                 args.user_argv,
                 on_origin=_set_module_source(args),
                 on_start=run.execution_started,
+                path_root=args.module_path_root,
             )
     except SystemExit as exc:  # 用户脚本自己 sys.exit(...)：图仍然算数
         exit_code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)

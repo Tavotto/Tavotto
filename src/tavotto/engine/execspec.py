@@ -61,7 +61,7 @@ import os
 import secrets
 from pathlib import Path
 
-from . import figcapture, shadowscript
+from . import figcapture, pkgentry, shadowscript
 
 PROFILE_SAFE = figcapture.PROFILE_SAFE
 PROFILE_NATIVE = figcapture.PROFILE_NATIVE
@@ -319,6 +319,13 @@ class ExecutionSpec:
     #: （`--stem-aliases`），workerd 的 spawn 规格哈希随它变。它改变图的身份（runtime id 里的 stem），跨机器稳定，
     #: 非空时进 `stable_payload()`。空元组 = 没有别名，argv 与稳定身份逐字节不变（golden）。
     stem_aliases: tuple[tuple[str, str], ...] = ()
+    #: 按**包里的模块**运行这份脚本（ADR 0194）：点分模块名（`plots.fig`），空串 = 照旧按脚本路径运行。判据只有一处
+    #: （`pkgentry.resolve`：脚本顶层有相对导入、整条包链都有 `__init__.py`、包根仍在项目之内），由 `safe_spec` 与
+    #: `desktop_native_spec` 在构造时装配；终端的 `native_spec`（`tavotto run`）结构上不带。它**不是身份**：`target` /
+    #: `target_kind`（仍是脚本 + 项目相对路径）与 `stable_payload()` 一字不变，所以描述符 / 资产 id / 指纹 / 注册表条目都照旧；
+    #: 只多 worker 的 `--as-module` / bridge 的 `--target-kind module --module-script` 那几个 token（空 = argv 逐字节不变，golden）。
+    #: `sys.path[0]` 不存：执行侧从脚本路径往上数层得出（`bridgeboot.package_path_root`）。
+    module_name: str = ""
 
     def __post_init__(self) -> None:
         if self.profile not in PROFILES:
@@ -411,6 +418,25 @@ class ExecutionSpec:
             {b for _, b in self.stem_aliases}
         ) != len(self.stem_aliases):
             raise ValueError(f"stem_aliases 必须一对一: {self.stem_aliases!r}")
+        if not isinstance(self.module_name, str):
+            raise ValueError("module_name 必须是字符串")
+        if self.module_name:
+            parts = self.module_name.split(".")
+            tail = "/".join(parts) + ".py"
+            if self.target_kind != TARGET_SCRIPT or not all(p.isidentifier() for p in parts):
+                raise ValueError(
+                    f"module_name 只属于脚本目标、且必须是点分标识符: {self.module_name!r}"
+                )
+            if not (self.target == tail or self.target.endswith("/" + tail)):
+                raise ValueError(
+                    f"module_name 必须与脚本路径逐段对上: {self.module_name!r} / {self.target!r}"
+                )
+            if self.profile == PROFILE_SAFE and (self.entry != "__main__" or self.script_source):
+                raise ValueError("safe 只有 `__main__` 入口、且不是影子脚本时才按模块运行")
+            if self.profile == PROFILE_NATIVE and self.owner != OWNER_DESKTOP:
+                raise ValueError(
+                    "终端拥有的 native 是用户自己敲的命令，不改跑法（module_name 恒空）"
+                )
         if self.write_roots is not None:
             if not isinstance(self.write_roots, tuple) or not all(
                 isinstance(r, str) and r for r in self.write_roots
@@ -574,6 +600,7 @@ def spec_from_payload(data: dict) -> ExecutionSpec:
         script_source=data.get("script_source") or None,
         ignored_paths=tuple(data.get("ignored_paths") or ()),
         stem_aliases=_alias_pairs(data.get("stem_aliases")),
+        module_name=data.get("module_name", "") or "",
     )
 
 
@@ -679,6 +706,14 @@ def safe_spec(
     cwd = run_cwd(figures_dir, script, cwd_mode)
     if cwd is None:
         cwd = sandbox
+    script_source = (
+        shadowscript.lookup(figures_dir, script, write_roots_key(write_roots))
+        if write_roots is not None
+        else None
+    )
+    # ADR 0194：包里的脚本用相对导入时按模块运行（判据唯一出处 `pkgentry.resolve`；影子脚本项目里没有这个文件，不改）。
+    # 三条 spawn 路径、准备计划、MCP 都经本函数，所以同源；身份（target / 稳定载荷）不受影响
+    package = None if script_source else pkgentry.resolve(figures_dir, script, entry)
     return ExecutionSpec(
         profile=PROFILE_SAFE,
         interpreter=interpreter,
@@ -698,11 +733,8 @@ def safe_spec(
         write_roots=None if write_roots is None else tuple(write_roots),
         ignored_paths=tuple(ignored_paths or ()),
         stem_aliases=_registered_aliases(figures_dir, script, stem_aliases),
-        script_source=(
-            shadowscript.lookup(figures_dir, script, write_roots_key(write_roots))
-            if write_roots is not None
-            else None
-        ),
+        script_source=script_source,
+        module_name=package.module if package is not None else "",
     )
 
 
@@ -784,6 +816,7 @@ def desktop_native_spec(
         stdin=stdin,
         ignored_paths=ignored_paths,
         stem_aliases=stem_aliases,
+        package_as_module=True,
     )
 
 
@@ -802,6 +835,7 @@ def _native(
     stdin: str = STDIN_INHERIT,
     ignored_paths: tuple[str, ...] | list[str] = (),
     stem_aliases=None,
+    package_as_module: bool = False,
 ) -> ExecutionSpec:
     if target_kind == TARGET_MODULE:
         target = raw_target
@@ -813,6 +847,13 @@ def _native(
                 f"脚本与项目根不在同一个盘符上，算不出项目相对路径: "
                 f"{raw_target!r} / {project_root!r}"
             ) from exc
+    # ADR 0194：桌面拥有的 native 在「包里的脚本用相对导入」时按模块运行（`python fig.py` 在这个形状上必然 ImportError）。
+    # 终端拥有的（`tavotto run`）不传 `package_as_module`：那是用户自己敲的命令，原样。native 整份脚本运行，没有登记入口（entry=None）
+    package = (
+        pkgentry.resolve(project_root, target.replace(os.sep, "/"), None)
+        if package_as_module and target_kind == TARGET_SCRIPT
+        else None
+    )
     return ExecutionSpec(
         profile=PROFILE_NATIVE,
         interpreter=interpreter,
@@ -836,6 +877,7 @@ def _native(
             if target_kind == TARGET_MODULE
             else _registered_aliases(project_root, target.replace(os.sep, "/"), stem_aliases)
         ),
+        module_name=package.module if package is not None else "",
     )
 
 
@@ -865,9 +907,10 @@ def bridge_argv(
         spec.interpreter,
         str(runner_py),
         "--target-kind",
-        spec.target_kind,
+        # ADR 0194：包里的脚本按模块运行（`runpy.run_module`，bridge 现成的 module 目标）；身份仍是 spec.target
+        TARGET_MODULE if spec.module_name else spec.target_kind,
         "--target",
-        spec.raw_target,
+        spec.module_name or spec.raw_target,
         "--out-dir",
         str(out_dir),
         "--preview-dpi",
@@ -875,6 +918,9 @@ def bridge_argv(
         "--project-root",
         spec.project_root,
     ]
+    if spec.module_name:
+        # 脚本路径给 runner 推 `sys.path[0]`（包根的上一级）；没有按模块运行时命令行逐字节不变（golden）
+        out += ["--module-script", spec.raw_target]
     if control_port:
         out += ["--control-host", control_host or "127.0.0.1", "--control-port", str(control_port)]
     if report:
@@ -945,6 +991,10 @@ def worker_argv(
         # `project`（脚本目录）与 `project_root`（项目根）都走这两个 token——worker 只
         # 认「cwd 换到哪」，模式的名字是控制面的事。
         out += ["--cwd", spec.cwd]
+    if spec.module_name:
+        # ADR 0194：包里的脚本按模块运行。只在判据成立时多两个 token——没有相对导入的脚本 argv 逐字节不变（golden）；
+        # 进 argv 所以 workerd 的 spawn 规格哈希天然随它变
+        out += ["--as-module", spec.module_name]
     if spec.input_remap:
         # ADR 0106：只在有规则时多两个 token——没有规则的 argv 逐字节不变（golden）
         out += [

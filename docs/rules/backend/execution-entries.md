@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「两条执行入口：safe worker 与 native bridge（ADR 0014 / 0020）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_worker_roundtrip.py`、`tests/test_install_dir_bytecode_free.py`、`tests/bridge/test_bridge_namespace.py`、`tests/bridge/test_bridge_thread_model.py`、`tests/test_import_architecture.py`、`tests/test_foundation_first_open.py`、`tests/test_unreadable_import_skip.py`、`tests/test_foreign_abi_path.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_worker_roundtrip.py`、`tests/test_install_dir_bytecode_free.py`、`tests/bridge/test_bridge_namespace.py`、`tests/bridge/test_bridge_thread_model.py`、`tests/test_import_architecture.py`、`tests/test_foundation_first_open.py`、`tests/test_unreadable_import_skip.py`、`tests/test_foreign_abi_path.py`、`tests/test_package_entry.py`、`tests/test_package_entry_parity.py`、`tests/test_package_entry_e2e.py`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
@@ -89,6 +89,31 @@ order: 180
 - **spike 不是产品**：`python -m tavotto.engine.bridge_spike` 没有稳定契约、
   没有接进 `tavotto` CLI，别在文档 / 官网 / release notes 里提它。
   **产品入口是 `tavotto run`**（`docs/rules/backend/tavotto-run-control-plane.md`）。
+
+## 包里的脚本按模块运行（ADR 0194）
+
+**主语是「产品此刻怎么跑这份脚本」**：脚本在包里（`plots/__init__.py` + `plots/fig.py`）且顶层有相对导入（`from .helpers import tidy`）时，`python plots/fig.py`
+必然 `ImportError: attempted relative import with no known parent package`。这时两条入口都按 `python -m plots.fig` 的方式运行它，
+**只在原样跑必然失败的形状上生效**——所以不违背「与 `python fig.py` 一致」（维护者 2026-11-19 裁决）。
+
+- **判据唯一出处** `engine/pkgentry.resolve`（AST 零执行，判不出就不改，一律回 None）：登记入口是 `__main__`（native 没有登记入口，传 `None`）；脚本顶层**直接语句**里有
+  `ImportFrom.level > 0`（`try` / `if` / `def` 里的不算，`level` 不超过包层数）；脚本目录往上每一级都有 `__init__.py`（普通文件）；包根的上一级仍在项目根内
+  （项目文件夹本身就是包 = 越界）；路径无符号链接 / junction；包名与 stem 是合法标识符；命名空间包 / 读不了 / 语法错误 / 影子脚本都不改。
+- **装配点只有两个构造函数**：`execspec.safe_spec`（safe）与 `execspec.desktop_native_spec`（桌面拥有的 native；`_native(package_as_module=True)`）。所以池的三条 spawn 路径、
+  `preparation.plan_for`、MCP 打开图、`nativefallback.launch`（Safe→Native 回退）同源，别处不另判。**终端 `native_spec`（`tavotto run fig.py`）不改**：
+  不传 `package_as_module`，`ExecutionSpec.__post_init__` 也拒绝终端拥有的 native 带 `module_name`。
+- **身份不变（硬要求）**：`ExecutionSpec.module_name` 是正交字段，`target_kind` / `target` / `stable_payload()` 一字不变，描述符、资产 id、修订、注册表条目都照旧。
+  **不要把 `target_kind` 翻成 `module`**（那会把 `target` 变成模块名，身份就换了）。argv 只在判据成立时多 token：worker `--as-module <模块名>`；bridge
+  `--target-kind module --target <模块名> --module-script <脚本绝对路径>`；没有相对导入的脚本 argv 逐字节不变（golden）。
+- **`sys.path[0]` 不传，子进程自己推**：`bridgeboot.package_path_root(脚本路径, 模块名)`（safe worker 与 bridge 同一个）从脚本路径往上数层得出包根的上一级，
+  对不上就回 None——worker 照旧 `run_path`、bridge 回退成按脚本运行，**绝不猜**。这样 `sys.path[0]` 与 `co_filename`（`executionfact.on_user_entry`、各处 `_script_frame_line` 比的路径）同源。
+  cwd 规则不变（safe 沙盒 / 桌面脚本目录或项目根），脚本目录**不**上 `sys.path`（与 `python -m` 一致）；safe 仍把项目根追加在末尾。
+- **safe worker 保留全部守卫**：`runpy.run_module(alter_sys=True)` 在原来 `run_path` 的位置调用——守卫装好、绊线 arm 之后才 import 父包的 `__init__.py`（那是用户代码）；
+  入口脚本经 `_capture_entry_sha` 只从源码编译并记摘要（`run_module` 走 loader，不这么做会读旧 `.pyc`，`pre == post` 的括号论证不再成立）；
+  顶层包名已被别处的模块占用在 `sys.modules` 里时照旧 `run_path`。
+- 看护 `tests/test_package_entry.py`（判据 + 装配）、`tests/test_package_entry_parity.py`（真 `python -m` / bridge / safe worker 逐字段对拍，safe 不写 `__pycache__`，普通子目录脚本 argv 逐字节不变）、
+  `tests/test_package_entry_e2e.py`（真 sidecar：包里脚本 `completed`、图身份是 `plots/fig.py`、原文件不变；safe 被拦后回退 native 同样按模块运行）。
+  静态模型（`importscan` 的 `sys.path`）仍按脚本目录解析，包内**绝对**同级导入（`import helpers`）按模块运行时与 `python -m` 一样失效；改判据要同看 ADR 0188 的反查前提。
 
 ## 跳过读不了的 import 位置（ADR 0153）
 
