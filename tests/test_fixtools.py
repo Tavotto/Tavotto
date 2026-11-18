@@ -752,6 +752,8 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
         "switch_workdir",
         # TVD-CHR5：脚本被改写后登记的入口过时（细节见 tests/test_entry_fresh.py）
         "fix_entry",
+        # ADR 0194：启动脚本（细节见 tests/test_launchscript.py）
+        "write_launcher",
         "change_python",
         "select_environment",
         "convert_script",

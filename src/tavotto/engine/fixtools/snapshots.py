@@ -137,6 +137,46 @@ def _managed_state(ctx: FixContext) -> dict | None:
     return {"generation": gen} if (python and gen) else None
 
 
+def script_rel(ctx: FixContext) -> str | None:
+    """会话脚本的项目相对路径（POSIX）；没有 / 在项目外回 None。"""
+    if ctx.script_path is None:
+        return None
+    try:
+        return (
+            Path(ctx.script_path).resolve().relative_to(Path(ctx.project_root).resolve()).as_posix()
+        )
+    except (OSError, ValueError):
+        return None
+
+
+def _launcher_state(ctx: FixContext) -> dict | None:
+    """会话脚本的启动脚本（ADR 0194）此刻的内容；`code: None` = 没有。回滚据此写回或删除。"""
+    from .. import launchscript
+
+    rel = script_rel(ctx)
+    if rel is None:
+        return None
+    return {"script": rel, "code": launchscript.read(ctx.project_root, rel)}
+
+
+def _restore_launcher(ctx: FixContext, saved: object, lines: list[str]) -> bool:
+    from .. import launchscript
+
+    if not isinstance(saved, dict) or not isinstance(saved.get("script"), str):
+        return True
+    rel, code = saved["script"], saved.get("code")
+    try:
+        if isinstance(code, str):
+            launchscript.write(ctx.project_root, rel, code)
+            lines.append("launcher restored to the state of the snapshot")
+        elif launchscript.remove(ctx.project_root, rel):
+            lines.append("launcher removed (there was none at the snapshot)")
+    except (OSError, ValueError):
+        lines.append("the launcher could not be restored")
+        return False
+    return True
+
+
 def take(ctx: FixContext, tool: str, env_ids: list[str] | None = None) -> str | None:
     """打一个快照，回快照 id；写不出来回 None（调用方据此拒绝这次改动：没有退路就不改）。"""
     snap_id = f"snap_{time.strftime('%Y%m%dT%H%M%S')}_{uuid.uuid4().hex[:6]}"
@@ -160,6 +200,7 @@ def take(ctx: FixContext, tool: str, env_ids: list[str] | None = None) -> str | 
             "settings": _current_settings(ctx),
             "envs": envs,
             "managed": _managed_state(ctx),
+            "launcher": _launcher_state(ctx),
         }
         root = snapshot_root(ctx.session_id)
         root.mkdir(parents=True, exist_ok=True)
@@ -389,6 +430,7 @@ def rollback(ctx: FixContext, args: dict) -> ToolResult:
     for eid, saved in (doc.get("envs") or {}).items():
         if isinstance(saved, dict):
             good &= _restore_packages(ctx, str(eid), saved, lines)
+    good &= _restore_launcher(ctx, doc.get("launcher"), lines)
     text = "\n".join(lines)
     gone = _remembered_target_gone(ctx)
     if gone is not None:

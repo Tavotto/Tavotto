@@ -61,7 +61,7 @@ import os
 import secrets
 from pathlib import Path
 
-from . import figcapture, shadowscript
+from . import figcapture, launchscript, shadowscript
 
 PROFILE_SAFE = figcapture.PROFILE_SAFE
 PROFILE_NATIVE = figcapture.PROFILE_NATIVE
@@ -435,6 +435,9 @@ class ExecutionSpec:
                 raise ValueError(
                     f"native profile 的 entry 只能是脚本里的函数名或 None: {self.entry!r}"
                 )
+            if self.script_source and (self.entry is not None or self.target_kind != TARGET_SCRIPT):
+                # 启动脚本（ADR 0194）以 `__main__` 跑；与函数入口互斥
+                raise ValueError("native profile 的 script_source 只配脚本目标、且不带 entry")
             if not self.passthrough_savefig:
                 raise ValueError("native profile 的 savefig 必须透传（ADR 0014 §2）")
             if not self.raw_target:
@@ -708,11 +711,13 @@ def safe_spec(
         write_roots=None if write_roots is None else tuple(write_roots),
         ignored_paths=tuple(ignored_paths or ()),
         stem_aliases=_registered_aliases(figures_dir, script, stem_aliases),
+        # 影子脚本（转换校验）优先；否则 AI 修复写的启动脚本（ADR 0194 §二）：执行它的字节、身份仍是这个脚本
         script_source=(
             shadowscript.lookup(figures_dir, script, write_roots_key(write_roots))
             if write_roots is not None
             else None
-        ),
+        )
+        or launchscript.source_for(figures_dir, script),
     )
 
 
@@ -769,6 +774,7 @@ def desktop_native_spec(
     ignored_paths: tuple[str, ...] | list[str] = (),
     stem_aliases=None,
     entry: str | None = None,
+    script_source: str | None = None,
 ) -> ExecutionSpec:
     """**桌面拥有的** native 档启动身份的唯一权威构造函数（P06，ADR 0125）。
 
@@ -796,6 +802,7 @@ def desktop_native_spec(
         ignored_paths=ignored_paths,
         stem_aliases=stem_aliases,
         entry=entry,
+        script_source=script_source,
     )
 
 
@@ -815,6 +822,7 @@ def _native(
     ignored_paths: tuple[str, ...] | list[str] = (),
     stem_aliases=None,
     entry: str | None = None,
+    script_source: str | None = None,
 ) -> ExecutionSpec:
     if target_kind == TARGET_MODULE:
         target = raw_target
@@ -832,6 +840,7 @@ def _native(
         target_kind=target_kind,
         target=target,
         entry=entry,
+        script_source=script_source,
         argv=tuple(argv),
         cwd=cwd,
         env=env,
@@ -916,6 +925,9 @@ def bridge_argv(
     if spec.entry is not None:
         # ADR 0127 修订 2026-11-18：库式模块的函数入口，跑完模块再调它。没有入口的命令行逐字节不变（golden）
         out += ["--entry", spec.entry]
+    if spec.script_source:
+        # ADR 0194：AI 修复写的启动脚本——执行它的字节、身份仍是这个脚本。没有时命令行逐字节不变（golden）
+        out += ["--script-source", spec.script_source]
     out.append("--")
     out.extend(spec.argv)
     return out

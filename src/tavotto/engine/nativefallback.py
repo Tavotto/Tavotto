@@ -30,6 +30,7 @@ from . import (
     execpolicy,
     execspec,
     figcapture,
+    launchscript,
     nativesession,
     pathignore,
     pool,
@@ -88,7 +89,11 @@ def decide(
     与桌面同一个理由码 `plan_unavailable`。"""
     if not python:
         return Verdict(False, execpolicy.REASON_PLAN_UNAVAILABLE)
-    if script and _native_entry(project, script, entry)[0] == discover.NATIVE_ENTRY_UNREACHABLE:
+    if (
+        script
+        and not launchscript.source_for(project, script)
+        and _native_entry(project, script, entry)[0] == discover.NATIVE_ENTRY_UNREACHABLE
+    ):
         return Verdict(False, execpolicy.REASON_PLAN_UNAVAILABLE)
     ledger = execpolicy.AttemptLedger()
     ledger.begin_run()
@@ -234,8 +239,11 @@ def launch(
         stdin=execspec.STDIN_NULL,
         env={"PYTHONUNBUFFERED": "1"},
         ignored_paths=pathignore.paths_for(root),
-        # 库式模块：跑完模块再调 safe 当时那个函数入口（ADR 0127 修订 2026-11-18）
-        entry=_native_entry(root, script, entry)[1],
+        # 启动脚本（ADR 0194）优先：执行它的字节、身份仍是这个脚本；否则库式模块跑完模块再调函数入口（ADR 0127 修订 2026-11-18）
+        script_source=launchscript.source_for(root, script),
+        entry=None
+        if launchscript.source_for(root, script)
+        else _native_entry(root, script, entry)[1],
         **execspec.run_kwargs(run),
     )
     try:
