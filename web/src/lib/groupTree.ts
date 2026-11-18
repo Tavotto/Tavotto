@@ -190,8 +190,8 @@ export function layerTree(objects: readonly CanvasObject[]): LayerNode[] {
  * 复制对象时把组链整条换成新 id（就地改副本）：同一次复制里同一个旧组 id 换成同一个新 id（`fresh` 自己记表），
  * 副本不会和原件粘成同一组。旧构建只认 `groupId`：链失效时按一层组换。
  */
-export function remapGroupPath(copy: CanvasObject, fresh: (oldGid: string) => string): void {
+export function remapGroupPath(copy: CanvasObject, fresh: (oldGid: string, index: number) => string): void {
   const p = groupPathOf(copy)
   if (!p.length) return
-  setGroupPath(copy, p.map(fresh))
+  setGroupPath(copy, p.map((g, i) => fresh(g, i)))
 }
