@@ -111,6 +111,22 @@ describe('画布照后端的字形画', () => {
     expect(el.querySelector('[data-hit-path]')).not.toBeNull()
   })
 
+  it('字离线之后：每个字的框也接命中，不只原路径的带（Codex 线程 4614422945）；锁定不接', async () => {
+    const o = obj({ baselineOffsetPt: 40 })
+    await seed([o])
+    await mount(<ObjectView obj={o} />)
+    await settle()
+    const rects = el.querySelectorAll<SVGRectElement>('[data-path-text-glyph-hit] rect')
+    expect(rects).toHaveLength(vectors.preview.paths.length)
+    expect(rects[0].style.pointerEvents).toBe('all')
+    await act(async () => root.unmount())
+    el.remove()
+    const lk = obj({ baselineOffsetPt: 40, locked: true })
+    await mount(<ObjectView obj={lk} />)
+    await settle()
+    expect(el.querySelector('[data-path-text-glyph-hit]')).toBeNull()
+  })
+
   it('同样的字和路径只问一次：挪位置不重新问', async () => {
     const o = obj({ text: 'Cached' })
     await seed([o])

@@ -149,6 +149,14 @@ export function PathTextView({ obj, hit = 'none' }: { obj: PathTextObject; hit?:
         d && <FallbackText obj={obj} id={id} d={d} sizeW={sizeW} w={w} h={h} />
       )}
       {outline?.overflow && marked && <OverflowMark obj={obj} w={w} h={h} zoom={zoom} />}
+      {hit !== 'none' && outline && (
+        // 离线之后字不在原路径的带上：每个字的框也接命中（透明，pointer-events 不看填充），点得到看得见的字
+        <g data-path-text-glyph-hit="" transform={`scale(${s})`}>
+          {outline.paths.map((p, i) => (
+            <rect key={i} x={p.x} y={p.y} width={p.w} height={p.h} fill="transparent" style={{ pointerEvents: 'all' }} />
+          ))}
+        </g>
+      )}
       {hit !== 'none' && d && (
         <path
           data-hit-path=""
