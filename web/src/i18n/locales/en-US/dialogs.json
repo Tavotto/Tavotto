@@ -185,7 +185,7 @@
     "previewModeLayout": "In-page",
     "previewLayoutCycle": "Position",
     "previewLayoutCycleHint": "Cycle figure placement on the manuscript page",
-    "previewLayoutSampleNote": "Surrounding text is sample copy · export saves only the figure",
+    "previewLayoutSampleNote": "Layout reference only, the page preview is not exported",
     "previewLayoutUnavailable": "Figure size isn’t available yet for true-scale page preview",
     "previewLayoutSlotSpec": "{{w}} × {{h}} mm · {{spec}} · {{column}} {{colW}} mm",
     "previewLayoutSlotGeneric": "{{w}} × {{h}} mm · Two-column page · {{column}} {{colW}} mm",

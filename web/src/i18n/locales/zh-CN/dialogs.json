@@ -180,7 +180,7 @@
     "previewModeLayout": "版面预览",
     "previewLayoutCycle": "换位置",
     "previewLayoutCycleHint": "切换图表在论文版面中的排布位置",
-    "previewLayoutSampleNote": "周围文字是示例，导出只有这张图",
+    "previewLayoutSampleNote": "仅作为排版参考，版面预览不会被导出",
     "previewLayoutUnavailable": "当前无法读取图幅尺寸，暂不支持按真实比例入版预览",
     "previewLayoutSlotSpec": "{{w}} × {{h}} mm · {{spec}} · {{column}} {{colW}} mm",
     "previewLayoutSlotGeneric": "{{w}} × {{h}} mm · 双栏版面 · {{column}} {{colW}} mm",

@@ -4475,7 +4475,7 @@ describe('导出左栏「版面预览」（论文真尺寸入版预览）', () =
     expect(q('[data-export-manuscript]')?.getAttribute('data-slot-variant')).toBe('top-right')
     expect(q('[data-export-manuscript-slot]')).toBeNull()
     expect(q('[data-export-preview-size]')?.textContent).toContain('80 × 60 mm · 默认规范 · 单栏 80 mm')
-    expect(q('[data-export-manuscript-note]')?.textContent).toContain('导出只有这张图')
+    expect(q('[data-export-manuscript-note]')?.textContent).toContain('版面预览不会被导出')
 
     await click(q('[data-export-manuscript-cycle]')!)
     expect(q('[data-export-manuscript]')?.getAttribute('data-slot-variant')).toBe('mid-left')
