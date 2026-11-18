@@ -140,8 +140,6 @@
     "viewAids": "Display aids",
     "singleEdit": "Single-figure editing",
     "singleNote": "Original size, not scaled",
-    "layoutPage": "Multi-figure page",
-    "layoutPageNote": "Applies once a second figure is added",
     "sizeMeta": "{{w}} × {{h}} mm",
     "preset": "Preset",
     "presetCustom": "Custom",

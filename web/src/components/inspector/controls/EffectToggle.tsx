@@ -48,9 +48,15 @@ export function EffectToggle({
   // 是检查器里唯一一颗整行宽的钮，视觉分量高过它上面的所有属性行；低频入口不该更重。
   // 值列窄（13px 字号 + 英文 320 宽）放不下「None ＋ Add background」时，按钮折到下一行而不是撑破属性栏
   return (
-    <span className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5">
+    <span className="flex min-h-7 w-full min-w-0 flex-wrap items-center justify-between gap-x-1.5 gap-y-0.5 pl-2">
       <span className="type-control text-ink-3">{translate('text.effectNone', { ns: 'inspector' })}</span>
-      <Button variant="ghost" size="sm" className="text-ink-2 hover:text-ink" data-effect-add={anchor ?? ''} onClick={onAdd}>
+      <Button
+        variant="secondary"
+        size="sm"
+        className="h-6 rounded-sm px-2 text-xs text-ink-2 hover:text-ink"
+        data-effect-add={anchor ?? ''}
+        onClick={onAdd}
+      >
         <Plus size={ICON_SIZE.xs} aria-hidden />
         {addLabel}
       </Button>

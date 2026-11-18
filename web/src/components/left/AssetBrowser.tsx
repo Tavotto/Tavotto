@@ -1268,7 +1268,7 @@ function CardPreview({ children, empty = false }: { children: ReactNode; empty?:
   return (
     <div
       className={cn(
-        'relative flex aspect-[3/2] items-center justify-center overflow-hidden',
+        'relative flex aspect-[3/2] items-center justify-center overflow-hidden border-b border-border/55',
         empty ? 'bg-surface-2' : 'bg-paper',
       )}
     >
@@ -1303,7 +1303,7 @@ function CardMeta({
 }) {
   const shown = parts.filter((p): p is Exclude<MetaPart, null | undefined> => p != null)
   return (
-    <div className="flex flex-col px-1.5 py-1">
+    <div className="flex flex-col gap-0.5 px-1.5 py-1.5">
       <p className="flex items-center gap-1 text-sm">
         <span className={cn('min-w-0 flex-1', selected ? 'font-medium text-ink' : 'text-ink')} title={name}>
           {/* 截断时保留扩展名和结尾几位（Fig2_corr…ation.pdf）：用户靠结尾的编号与扩展名区分文件 */}

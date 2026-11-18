@@ -1,6 +1,6 @@
 # Journal facts API v2
 
-This is a separate **source-fact** protocol, not a publication-profile override. It preserves several statements about the same subject, their units, strength, conditions, stages, origins and sources. The Python and MCP v2 clients and a session-only desktop source viewer read source facts. An experimental DPI evaluator exists, but it is not wired into preflight or export. A client that cannot interpret a condition must report the fact as not evaluated; it must not drop that condition and apply the value globally. A font example is not an exhaustive allowlist. A recommendation or preference is not a mandatory constraint. A permitted value is an allowed option, not evidence that unlisted values are forbidden. Publication still requires independent source and semantic review; the structural validator does not perform it.
+This is a separate **source-fact** protocol, not a publication-profile override. It preserves several statements about the same subject, their units, strength, conditions, stages, origins and sources. The Python and MCP v2 clients read source facts. An experimental DPI evaluator exists, but it is not wired into preflight or export. A client that cannot interpret a condition must report the fact as not evaluated; it must not drop that condition and apply the value globally. A font example is not an exhaustive allowlist. A recommendation or preference is not a mandatory constraint. A permitted value is an allowed option, not evidence that unlisted values are forbidden. Publication still requires independent source and semantic review; the structural validator does not perform it.
 
 ## Routes and storage
 
@@ -57,6 +57,6 @@ The source view and the experimental DPI evaluator are distinct and must not be 
 
 For `/api/journal-facts/search`, an omitted, empty, or whitespace-only `query` browses the signed v2 index; this is still an authenticated session operation and can trigger an index network refresh. A non-string query is invalid. `/api/journal-facts/journal` requires a valid `journal_id`; invalid or missing IDs and invalid search query types are rejected before any remote request.
 
-### Desktop source viewer
+### Desktop
 
-When the active canvas has an existing journal binding, the settings view can read that journal’s signed v2 facts on demand. A user may select one existing panel and provide a figure kind and stage for the same session-only structural comparison; selections and results are not saved to the project. The viewer displays the returned journal identity, source links, excerpts, conditions, sync state and pagination, while marking source scope and semantic review as unverified. Missing, unsupported or contradictory information is not a compliance decision. It does not change the journal binding, profile snapshot, preflight, export or historical proof. Browser, native desktop and assistive-technology behavior require separate end-to-end verification.
+The desktop app has no standalone source-facts viewer (2026-11-17, user: too complex; the one in Settings was removed). The local `/api/journal-facts/*` endpoints stay for later use, and v2 facts are meant to reach users through preflight source cards.

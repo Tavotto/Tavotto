@@ -84,7 +84,7 @@ order: 80
     （`_SolidHeadRenderer`：一次 draw 里第二个起的不同 path 对象用实线画），restore 拆钩子；
     脚本自己画的虚线箭头不碰。`simple` / `fancy` / `wedge` 只有一条轮廓，照旧整体虚线。
     导出 .py 时脚本用同一画法的公共 API 版复现（`scriptadjust._arrow_dashes` / `_SolidHead`：实例级 draw 钩子 + 包一层
-    renderer，间隙色那一遍按前景色认而不是私有的 `_dash_pattern`）；改这里的判据要两边一起改，`tests/test_script_adjust.py`
+    renderer，间隙色那一遍按前景色认而不是私有的 `_dash_pattern`）；改这里的判据要两边一起改，`tests/test_script_adjust*.py`
     的整图扫描（`AdjText`，箭头样式采 `<|-|>`）盯着头是不是实线。
     看护：`tests/test_arrow_dashed_solid_head.py`。
   * **纯箭头注释同样可拖（2026-09-24，用户的流程图：10 根箭头全是

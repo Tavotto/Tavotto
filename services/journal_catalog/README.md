@@ -128,7 +128,7 @@ IP 级限额（`ip_day`、`ip_tokens`）会照样拦住，还会白白消耗签�
 
 ## 两个入口与反代信任
 
-`https://tavotto.cn/v1/journal-catalog/`（本服务）与 `https://tavotto.com/v1/journal-catalog/`（Vercel 薄反代，代码在
+`https://tavotto.cn/v1/journal-catalog/`（本服务）与 `https://www.tavotto.com/v1/journal-catalog/`（Vercel 薄反代，代码在
 `vercel_proxy/`）。反代转发时带 `X-Tavotto-Proxy-Secret`（共享密钥，`TAVOTTO_JC_PROXY_SECRET`）与
 `X-Tavotto-Client-IP`（真实客户端 IP）；**只有密钥对得上，本服务才用后者算 IP 限额**，密钥错 / 缺、或 IP 头不是合法地址，
 一律忽略声明、按连接 IP 算。Agent 与 app 走哪个入口都一样，计数、令牌、读取记录是同一份。

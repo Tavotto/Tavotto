@@ -105,9 +105,9 @@ export function Segmented<T extends string>({
       aria-label={ariaLabel}
       onKeyDown={onKeyDown}
       className={cn(
-        // 胶囊槽 + 白色胶囊 thumb（2026-09-30 重设计，与带字按钮同形）
+        // 精密仪器外槽（md 8 = 滑块 sm 6 + 内边距 2，与 OptionGrid 同心圆角法则一致）
         // min-w-fit：整组至少与各档文字一样宽——放进按内容收缩的格子里（设置行的控件格）也不把字挤出去
-        'relative flex h-7 w-full min-w-fit items-stretch rounded-full bg-surface-hover p-0.5',
+        'relative flex h-7 w-full min-w-fit items-stretch rounded-md bg-surface-hover p-0.5',
         className,
       )}
       {...rest}
@@ -117,7 +117,7 @@ export function Segmented<T extends string>({
           aria-hidden
           data-segmented-thumb
           className={cn(
-            'pointer-events-none absolute inset-y-0.5 left-0 rounded-full bg-thumb shadow-thumb',
+            'pointer-events-none absolute inset-y-0.5 left-0 rounded-sm bg-thumb shadow-thumb',
             thumb.animate && 'transition-[transform,width] duration-base ease-snap',
           )}
           style={thumb.style}
@@ -145,8 +145,8 @@ export function Segmented<T extends string>({
               // flex-auto（起点 = 自己的字宽，再分多出的空间），不用 flex-1（起点 0、硬等分）：等分时最长的一档
               // 被压到与最短的一样窄，「跟随系统」加粗后溢出格子（2026-10-13 用户截图）。图标档同宽，照旧等分
               'relative flex min-w-7 flex-auto items-center justify-center gap-1 whitespace-nowrap px-2 text-sm outline-none',
-              // 每格同形（rounded-full，与 thumb 同）：此前 first:/last: 落在 thumb 上失效，只剩键盘焦点环末格圆角、其余方角
-              'rounded-full',
+              // 每格同形（与滑块同为 sm 档圆角）：此前首尾限定落在滑块上失效，只剩键盘焦点环末格圆角、其余方角
+              'rounded-sm',
               'transition-colors duration-fast focus-visible:z-sticky focus-visible:focus-ring',
               active
                 ? 'font-semibold text-ink'

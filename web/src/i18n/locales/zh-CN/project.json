@@ -91,7 +91,7 @@
     "backHome": "返回主页",
     "browseMore": "浏览更多项目",
     "import": {
-      "dropNoPath": "系统没有告诉 {{product}}「{{name}}」在哪个文件夹，请在接下来的窗口里选中它。",
+      "dropNoPath": "请在接下来的窗口里确认「{{name}}」所在的文件夹，以便 {{product}} 一并读取同目录的数据与模块。",
       "dropNotScript": "「{{name}}」打不开。主页可以拖入脚本（.py、.R、.m）、笔记本（.ipynb）或项目文件夹。",
       "droppedMany": "拖入了 {{total}} 项，只用了「{{name}}」打开项目",
       "foreignNotFound": "这个文件夹里没找到「{{name}}」，请选它所在的文件夹。",
@@ -109,7 +109,8 @@
     },
     "newcomer": {
       "import": "导入我的脚本",
-      "title": "你的绘图脚本在哪里？",
+      "subtitle": "支持 .py、.ipynb 与 R / MATLAB 脚本；直接微调字号、图例与排版，源脚本默认只读不改。",
+      "title": "把画好的图，打磨成投稿终稿",
       "tryResume": "继续示例教程",
       "tryStart": "用示例学一遍（带引导）"
     },
@@ -124,7 +125,14 @@
       "dropRelease": "松开即可导入",
       "dropTitle": "把 Python 脚本拖到这里",
       "sample": "使用示例脚本试试看",
-      "sampleHint": "{{product}} 会自动识别脚本中生成的图片，并进入排版界面。"
+      "sampleHint": "{{product}} 会读取脚本画出的图，并直接进入工作台。"
+    },
+    "entry": {
+      "dataTitle": "只有数据，还没有图",
+      "dataHint": "选数据文件夹，让助手帮你画出来。",
+      "scriptTitle": "已有画图脚本，想精修",
+      "scriptHint": "把 .py 拖到这里，或点击选择。",
+      "scriptHintPicker": "点击选择脚本所在的文件夹。"
     }
   },
   "switcher": {

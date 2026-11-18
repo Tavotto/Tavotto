@@ -18,6 +18,7 @@ export function EmptyState({
   title,
   hint,
   action,
+  actionAlt,
   secondary,
   ...rest
 }: {
@@ -27,6 +28,8 @@ export function EmptyState({
   title: string
   hint?: string
   action?: { label: string; onClick: () => void; variant?: Extract<Variant, 'primary' | 'secondary'> }
+  /** 与主动作同级的另一个动作（同一行并排，同款按钮）：画布空态里「用数据画一张」，只在有数据文件时给 */
+  actionAlt?: { label: string; onClick: () => void }
   /** 次级入口，画成文字链接而不是第二颗按钮：一屏只有一个主要行动 */
   secondary?: { label: string; onClick: () => void }
 } & Record<`data-${string}`, string | number | boolean | undefined>) {
@@ -42,10 +45,20 @@ export function EmptyState({
       </span>
       <p className="type-title">{title}</p>
       {hint && <p className="type-caption max-w-[42ch]">{hint}</p>}
-      {action && (
+      {action && !actionAlt && (
         <Button variant={action.variant ?? 'secondary'} size="lg" className="mt-3" onClick={action.onClick}>
           {action.label}
         </Button>
+      )}
+      {action && actionAlt && (
+        <div className="mt-3 flex items-center gap-2">
+          <Button variant={action.variant ?? 'secondary'} size="lg" onClick={action.onClick}>
+            {action.label}
+          </Button>
+          <Button variant="secondary" size="lg" data-empty-from-data onClick={actionAlt.onClick}>
+            {actionAlt.label}
+          </Button>
+        </div>
       )}
       {secondary && (
         <button

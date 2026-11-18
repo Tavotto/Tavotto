@@ -8,6 +8,7 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { EmptyPickCards } from './EmptyPickCards'
 import { RestoreIssueBody } from '@/components/RestoreIssueBody'
 import { Card } from '@/components/ui/Card'
+import { useHasDataFiles } from '@/components/datastudio/useHasDataFiles'
 import { DocWindowCard } from '@/components/DocWindowCard'
 import { heldEntryCount, subscribeHeldEntries } from '@/store/documentRestore'
 import { runTutorialEntry } from '@/lib/onboarding/tutorial'
@@ -507,7 +508,7 @@ function FastEditPaper({
     <div
       aria-hidden
       data-fast-edit-paper=""
-      className="pointer-events-none absolute bg-paper"
+      className="pointer-events-none absolute bg-paper shadow-page"
       style={{
         left: 0,
         top: 0,
@@ -572,6 +573,7 @@ function EmptyHint() {
   // 有没有可摆的图按「看得见的图」算（ADR 0184）：从脚本进来、脚本还没出图时是空状态，不是一块空的选图卡
   const hasAssets = visibleFigureCards(panels, viewScope).length > 0
   const inTutorial = useProjectStore((s) => s.project?.tutorial === true)
+  const fromData = useHasDataFiles()
   const restoreIssue = useDocumentStore((s) => (s.restoreGate.state === 'needs_user' ? s.restoreIssue : null))
   const held = useSyncExternalStore(subscribeHeldEntries, heldEntryCount) > 0
   // 恢复卡不看选区：它是这时唯一的出口，选区里留着什么都不能把它收走（Codex #1839）
@@ -613,19 +615,18 @@ function EmptyHint() {
       className="pointer-events-none absolute w-max -translate-x-1/2 -translate-y-1/2"
       style={{ left: cx, top: cy }}
     >
-      {/* 提示坐在页面（纸）上。纸是浅的（默认白纸、浅色背景）：`data-on-paper` 把这一块的界面墨与按钮底换成
-          纸上的墨（index.css 末尾），两套主题都是字直接落在纸上、不垫底（2026-10-13 审计：此前暗色里垫一块深色
-          卡片，白纸正中一块黑，很突兀）。用户把页面背景设成深色时纸上的墨压不住，退回一块主题面板底、字用界面墨
-          （Codex #995）。深浅按页面的实际底色判，与纸上文字 / 选区同一个判据 `groundInkFor`（宪法第二十八节） */}
+      {/* 提示与选图卡都直接坐在页面（纸）上。纸是浅的（默认白纸、浅色背景）：`data-on-paper` 把这一块的界面墨、卡片底与边线
+          重定向到纸与纸墨（index.css 末尾），浅色与暗色都是直接落在白纸上、不再套一层深色或双层外框（2026-10-13 审计 + Phase 3 精修）。
+          用户把页面背景设成深色时纸上的墨压不住，才退回主题面板底、字用界面墨（Codex #995）。 */}
       <div
-        {...(onLightPaper && !showCards ? { 'data-on-paper': '' } : {})}
+        {...(onLightPaper ? { 'data-on-paper': '' } : {})}
         className={cn(
-          'pointer-events-auto p-4',
-          // 选图卡的底：明确的圆角 + 细边（纸上不留一块没有网格的无边界底）
-          showCards ? 'rounded-lg border border-border bg-surface' : !onLightPaper && 'rounded-lg bg-surface',
+          'pointer-events-auto',
+          !showCards && 'p-4',
+          !onLightPaper && 'rounded-lg bg-surface',
         )}
       >
-        {/* 项目里有图：直接摆选图卡（B5）。卡片是界面面（surface），不跟纸上的墨走 */}
+        {/* 项目里有图：直接在纸面上陈列选图卡（B5），单张卡用 raised 纸卡承载，外层不再套盒子 */}
         {showCards ? (
           <EmptyPickCards panels={panels} paperW={mmToWorld(page.w) * zoom} paperH={mmToWorld(page.h) * zoom} />
         ) : (
@@ -635,6 +636,7 @@ function EmptyHint() {
           // 素材清单还没回来时先按「有」说：那句「放文件进目录」是对空项目说的
           hint={sg(assetsLoaded && !hasAssets ? 'emptyHintNoAssets' : 'emptyHint')}
           action={{ label: sg('addFigure'), onClick: () => setLeftTab('assets') }}
+          actionAlt={fromData ? { label: sg('emptyFromData'), onClick: () => setLeftTab('data') } : undefined}
           secondary={
             inTutorial
               ? undefined

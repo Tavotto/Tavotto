@@ -55,7 +55,7 @@ import { renderKey, useRenderStore } from '@/store/renderStore'
 import { statusDismissTimer, useUiStore } from '@/store/uiStore'
 import { runValidation, useValidationStore } from '@/store/validationStore'
 import { bindingFor } from '@/lib/specBinding'
-import { DEFAULT_PROFILE_ID } from '@/lib/profile'
+import { DEFAULT_PROFILE_ID, loadProfile } from '@/lib/profile'
 import { profileName } from '@/lib/profileText'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { aggregateBatch, applyExportJob, cancelCurrentExport, refreshExportStatus, resetExportState, runExport, useExportStore } from '@/store/exportStore'
@@ -468,7 +468,7 @@ describe('信息架构：删掉的东西不许回来', () => {
       'checks',
     ])
     expect(group('checks').textContent).toContain('样式检查报告')
-    expect(group('checks').querySelector('[aria-label="严格核验产物"]')).not.toBeNull()
+    expect(group('checks').querySelector('[aria-label="导出后逐项复核成稿"]')).not.toBeNull()
     // 两个开关收进唯一一个默认折叠的「高级」（2026-10-31 UI 审计）；开关仍在「检查」组里、请求字段不变。
     // 严格核验已开 / 报告被规范强制时它默认展开，已生效的设置不会被藏起来
     const adv = [...document.body.querySelectorAll('details')].filter((d) => d.textContent!.includes('样式检查报告'))
@@ -1657,7 +1657,7 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     await setup(9)
     await click(button('开始导出')!)
     expect('inspection' in exportBodies[0]).toBe(false)
-    const toggle = document.body.querySelector<HTMLElement>('[aria-label="严格核验产物"]')
+    const toggle = document.body.querySelector<HTMLElement>('[aria-label="导出后逐项复核成稿"]')
     expect(toggle, '高级选项里缺少严格核验开关').toBeTruthy()
     await click(toggle!)
     await click(document.body.querySelector<HTMLButtonElement>('[data-export-again]')!)
@@ -4426,5 +4426,90 @@ describe('按期刊检查时导出初值跟着期刊走（2026-11-11）', () => 
     expect(formatBox('PNG').checked).toBe(true)
     expect(document.body.querySelector('[data-export-format-journal-unlisted]')).toBeNull()
     expect(document.body.querySelector('[data-export-journal-dpi]')).toBeNull()
+  })
+
+  it('预览台底栏签发印记与交付清单明细：干净完成时在尺寸行右侧亮出中性墨色格式印记（无绿色、零位移），状态槽对齐右栏、详情里带格式标签与体积且不带日志复制钮', async () => {
+    await setup(9)
+    expect(document.body.querySelector('[data-export-signoff]')).toBeNull()
+    await click(button('开始导出')!)
+    const signoff = document.body.querySelector('[data-export-signoff]')
+    expect(signoff).not.toBeNull()
+    expect(signoff!.textContent).toContain('已导出 ·')
+    expect(signoff!.className).not.toContain('text-ok')
+    expect(document.body.querySelector('[data-export-status]')?.className).toContain('md:w-[500px]')
+    await openResultDetail()
+    expect(document.body.querySelector('[data-export-format-tag]')?.textContent).toBe('PDF')
+    expect(document.body.querySelector('[data-export-output-meta]')?.textContent).toContain('80 × 60 mm · 1.2 KB')
+    expect(document.body.querySelector('[data-export-result] [data-notice-copy]')).toBeNull()
+  })
+})
+
+describe('导出左栏「版面预览」（论文真尺寸入版预览）', () => {
+  const q = (sel: string) => document.body.querySelector<HTMLElement>(sel)
+
+  it('默认停在「原图」，切到「版面预览」后按当前规范真实毫米比例排入单栏 / 双栏，重开对话框回到「原图」', async () => {
+    await setup(9, { w: 150, h: 100 })
+    // 默认多图整版（150 × 100 mm）：原图模式
+    expect(q('[data-export-preview-toolbar]')?.getAttribute('data-export-preview-mode')).toBe('figure')
+    expect(q('[data-export-manuscript]')).toBeNull()
+
+    const layoutRadio = q('[data-testid="export-preview-mode"] [data-value="manuscript"]')!
+    await click(layoutRadio)
+    expect(q('[data-export-preview-toolbar]')?.getAttribute('data-export-preview-mode')).toBe('manuscript')
+    const sheet = q('[data-export-manuscript]')!
+    expect(sheet).not.toBeNull()
+    expect(sheet.hasAttribute('data-on-paper')).toBe(true)
+    expect(sheet.getAttribute('data-placement')).toBe('span')
+    expect(q('[data-export-manuscript-figure] [data-canvas-thumb]')).not.toBeNull()
+    expect(q('[data-export-preview-size]')?.textContent).toContain('150 × 100 mm · 默认规范 · 双栏 150 mm')
+
+    // 预览舞台内（纸张与真图）仍严守直角印刷品纪律，不带任何圆角类
+    const stage = q('[data-export-preview-stage]')!
+    for (const el of [stage, ...stage.querySelectorAll<HTMLElement>('*')]) {
+      if (el.closest('[data-export-preview-reset]')) continue
+      if (el.className && typeof el.className === 'string' && !el.closest('.pointer-events-none')) {
+        expect(el.className).not.toMatch(/\brounded/)
+      }
+    }
+
+    // 切到单张 80 × 60 mm 图：保持「版面预览」，自动排入左上单栏（80 mm）
+    await click(q('[data-export-preview-tab="Fig1.pdf"]')!)
+    expect(q('[data-export-manuscript]')?.getAttribute('data-placement')).toBe('single')
+    expect(q('[data-export-preview-size]')?.textContent).toContain('80 × 60 mm · 默认规范 · 单栏 80 mm')
+
+    // 关闭并重开对话框：回到「原图」默认态
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await act(async () => useUiStore.getState().setExportOpen(true))
+    expect(q('[data-export-preview-toolbar]')?.getAttribute('data-export-preview-mode')).toBe('figure')
+    expect(q('[data-export-manuscript]')).toBeNull()
+  })
+
+  it('图幅超出版芯宽度时：标出越界虚线并在底栏如实提示超出版芯；期刊未规定栏宽时不冒充期刊栏宽', async () => {
+    await setup(9, { w: 185, h: 100 })
+    await click(q('[data-testid="export-preview-mode"] [data-value="manuscript"]')!)
+    expect(q('[data-export-manuscript]')?.getAttribute('data-placement')).toBe('overflow')
+    expect(q('[data-export-manuscript-overflow]')).not.toBeNull()
+    expect(q('[data-export-preview-size]')?.textContent).toContain('超出「默认规范」版芯（150 mm）')
+
+    // 绑定一份未规定栏宽的期刊（journal-base-v1 空栏位）：底栏显示通用双栏版面，不把兜底 80/150 mm 冠以期刊名
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('绑无栏宽期刊'), (d) => {
+        d.page = { w: 80, h: 60 }
+        d.profile = {
+          id: 'journal-base-v1',
+          follow: false,
+          snapshot: loadProfile('journal-base-v1'),
+          journalRef: {
+            id: 'open-journal',
+            label: 'Journal Without Widths',
+            facts: {},
+          },
+        } as never
+      })
+    })
+    expect(q('[data-export-manuscript]')?.getAttribute('data-placement')).toBe('single')
+    const sizeText = q('[data-export-preview-size]')?.textContent ?? ''
+    expect(sizeText).toContain('双栏版面 · 单栏 80 mm')
+    expect(sizeText).not.toContain('Journal Without Widths')
   })
 })

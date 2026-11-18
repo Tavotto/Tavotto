@@ -2,7 +2,7 @@
 
 `invariant_figures` 是全套不变式共用的那份，别的用例按编号写死了它的元素（`collections_6` …），
 所以导出脚本要的图（多列图例、带框文字、箭头……）**只往这里追加**，一张图一个 stem，
-加完把 stem 写进 `STEMS`。`tests/test_script_adjust.py` 的扫描与覆盖断言都读这里。
+加完把 stem 写进 `STEMS`。`tests/test_script_adjust*.py` 的扫描与覆盖断言都读这里。
 """
 
 from __future__ import annotations

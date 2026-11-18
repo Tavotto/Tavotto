@@ -21,7 +21,7 @@ export function ReviewButton() {
   return (
     <Tip label={label}>
       <Button
-        variant="secondary"
+        variant={hasTarget ? 'secondary' : 'ghost'}
         size="md"
         disabled={!hasTarget}
         data-review-button

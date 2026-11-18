@@ -482,7 +482,7 @@ export function TimelinePanel() {
       }}
       className="flex min-h-0 flex-1 flex-col outline-none"
     >
-      <div className="flex shrink-0 gap-1.5 px-3 pb-2 pt-2">
+      <div className="flex shrink-0 items-center gap-1.5 px-3 pb-1.5 pt-2">
         {naming ? (
           <>
             <TextInput
@@ -518,58 +518,73 @@ export function TimelinePanel() {
             </Button>
           </>
         ) : (
-          <Tip label={vd('nameNow')} shortcut={`${ALT}${MOD}S`}>
-            <Button
-              variant="secondary"
-              size="sm"
-              className="w-full justify-start"
-              data-timeline-name-open
-              onClick={() => setNaming(true)}
-            >
-              <Bookmark size={ICON_SIZE.sm} />
-              {vd('nameNow')}
-            </Button>
-          </Tip>
+          <>
+            <Tip label={vd('nameNow')} shortcut={`${ALT}${MOD}S`}>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="min-w-0 flex-1 justify-start text-ink-2 hover:text-ink"
+                data-timeline-name-open
+                onClick={() => setNaming(true)}
+              >
+                <Bookmark size={ICON_SIZE.sm} className="text-ink-3" />
+                <span className="truncate">{vd('nameNow')}</span>
+              </Button>
+            </Tip>
+            {!scopeKind && (
+              <Button
+                variant="ghost"
+                size="sm"
+                active={filter === 'named'}
+                aria-pressed={filter === 'named'}
+                data-timeline-filter={filter}
+                onClick={() => setFilter((f) => (f === 'named' ? 'all' : 'named'))}
+              >
+                <Bookmark size={ICON_SIZE.sm} filled={filter === 'named'} />
+                {vd('filterNamed')}
+              </Button>
+            )}
+          </>
         )}
       </div>
       {naming && <p className="type-caption shrink-0 px-3 pb-2">{vd('nameHint')}</p>}
-      {/* 范围与筛选并成一行（beta 0.19.3b3 反馈：两排整宽分段、两个「全部」难看又看混）：
-          左边范围是一颗文字下拉（只在有得分时出现），右边「命名」是一颗开关 */}
-      <div className="flex shrink-0 items-center gap-1.5 px-3 pb-1">
-        {scopeKind && (
-          <Menu
-            align="start"
-            width={160}
-            trigger={
-              <Button variant="ghost" size="sm" data-timeline-scope={scope}>
-                {vd(scope === 'current' ? SCOPE_CURRENT[scopeKind] : SCOPE_ALL[scopeKind])}
-                <ChevronDown size={ICON_SIZE.xs} className="text-ink-3" />
-              </Button>
-            }
+      {(scopeKind || naming) && (
+        <div className="flex shrink-0 items-center gap-1.5 px-3 pb-1">
+          {scopeKind && (
+            <Menu
+              align="start"
+              width={160}
+              trigger={
+                <Button variant="ghost" size="sm" data-timeline-scope={scope}>
+                  {vd(scope === 'current' ? SCOPE_CURRENT[scopeKind] : SCOPE_ALL[scopeKind])}
+                  <ChevronDown size={ICON_SIZE.xs} className="text-ink-3" />
+                </Button>
+              }
+            >
+              <MenuRadioGroup value={scope} onValueChange={(v) => setScope(v === 'all' ? 'all' : 'current')}>
+                <MenuRadioItem value="current" data-timeline-scope-option="current">
+                  {vd(SCOPE_CURRENT[scopeKind])}
+                </MenuRadioItem>
+                <MenuRadioItem value="all" data-timeline-scope-option="all">
+                  {vd(SCOPE_ALL[scopeKind])}
+                </MenuRadioItem>
+              </MenuRadioGroup>
+            </Menu>
+          )}
+          <span className="flex-1" />
+          <Button
+            variant="ghost"
+            size="sm"
+            active={filter === 'named'}
+            aria-pressed={filter === 'named'}
+            data-timeline-filter={filter}
+            onClick={() => setFilter((f) => (f === 'named' ? 'all' : 'named'))}
           >
-            <MenuRadioGroup value={scope} onValueChange={(v) => setScope(v === 'all' ? 'all' : 'current')}>
-              <MenuRadioItem value="current" data-timeline-scope-option="current">
-                {vd(SCOPE_CURRENT[scopeKind])}
-              </MenuRadioItem>
-              <MenuRadioItem value="all" data-timeline-scope-option="all">
-                {vd(SCOPE_ALL[scopeKind])}
-              </MenuRadioItem>
-            </MenuRadioGroup>
-          </Menu>
-        )}
-        <span className="flex-1" />
-        <Button
-          variant="ghost"
-          size="sm"
-          active={filter === 'named'}
-          aria-pressed={filter === 'named'}
-          data-timeline-filter={filter}
-          onClick={() => setFilter((f) => (f === 'named' ? 'all' : 'named'))}
-        >
-          <Bookmark size={ICON_SIZE.sm} filled={filter === 'named'} />
-          {vd('filterNamed')}
-        </Button>
-      </div>
+            <Bookmark size={ICON_SIZE.sm} filled={filter === 'named'} />
+            {vd('filterNamed')}
+          </Button>
+        </div>
+      )}
       {loaded && strip.length > 1 && (
         <TimelineScrubber
           docId={docId}
@@ -703,7 +718,7 @@ function RowThumb({ docId, meta }: { docId: string; meta: LayoutVersionMeta }) {
     const box = page ? thumbDisplayBox(meta, page) : null
     if (page && box) {
       return (
-        <CropFrame page={page} box={box} width={56} height={40} className="rounded-xs border border-border-strong">
+        <CropFrame page={page} box={box} width={56} height={40} className="rounded-xs bg-paper shadow-thumb">
           {() => (
             <VersionThumbImage docId={docId} meta={meta} page={page} data-timeline-thumb />
           )}
@@ -715,8 +730,7 @@ function RowThumb({ docId, meta }: { docId: string; meta: LayoutVersionMeta }) {
         src={versionThumbUrl(docId, meta)}
         alt=""
         data-timeline-thumb
-        // 一道细边：纸是白的，浅色主题里白纸落在白面板上整个看不见（2026-10-13 UI 审计）；与草图缩略图的页框同一档
-        className="h-10 w-14 shrink-0 rounded-xs border border-border-strong bg-paper object-contain"
+        className="h-10 w-14 shrink-0 rounded-xs bg-paper object-contain shadow-thumb"
       />
     )
   }
@@ -826,7 +840,7 @@ function TimelineRow({
       <div
         {...menu.rowProps}
         className={cn(
-          'group flex items-start gap-1 rounded-md pr-1.5',
+          'group flex items-center gap-1 rounded-md pr-1.5',
           selected ? 'bg-selected' : peeking ? 'bg-surface-hover' : 'hover:bg-surface-hover',
         )}
       >
@@ -848,7 +862,7 @@ function TimelineRow({
               }}
               aria-expanded={cardOpen}
               data-timeline-row
-              className="flex min-w-0 flex-1 items-start gap-2 rounded-md py-1.5 pl-3 text-left outline-none focus-visible:focus-ring"
+              className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md py-1.5 pl-3 text-left outline-none focus-visible:focus-ring"
             >
               <RowThumb docId={docId} meta={v} />
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -859,36 +873,36 @@ function TimelineRow({
                   {named && <Bookmark size={ICON_SIZE.sm} filled className="shrink-0 text-accent" aria-hidden />}
                   {/* 自动节点的名字由后端按时间生成，与这里的时间重复，所以只显示
                       **用户起的**名字（`versionDisplayName`）；命名节点的名字加重 */}
-                  {!renaming && (
-                    <span
-                      className={cn(
-                        'min-w-0 flex-1 truncate text-sm',
-                        named ? 'font-medium text-ink' : 'text-ink-2',
-                      )}
-                      data-timeline-name
-                    >
-                      {versionDisplayName(v)}
+                    {!renaming && (
+                      <span
+                        className={cn(
+                          'min-w-0 flex-1 truncate text-sm',
+                          named ? 'font-medium text-ink' : 'text-ink-2',
+                        )}
+                        data-timeline-name
+                      >
+                        {versionDisplayName(v)}
+                      </span>
+                    )}
+                    {renaming && <span className="flex-1" />}
+                  </span>
+                  <span className="text-xs text-ink-3">
+                    {versionSummaryText(versionSummary(v, comparableEarlier(all, index)))
+                      .map(formatMessage)
+                      .join(' · ')}
+                  </span>
+                  {/* 这一版拍的是哪张画布（R-03）。旧节点没有这个字段，**照实说「不知道」**，
+                      不猜成当前画布（左栏审计 L21）。 */}
+                  {showCanvas && (
+                    <span className="truncate type-meta">
+                      {v.canvasId
+                        ? vd('fromCanvas', { name: v.canvasName || v.canvasId })
+                        : vd('fromUnknownCanvas')}
                     </span>
                   )}
-                  {renaming && <span className="flex-1" />}
-                  <KindMark meta={v} />
                 </span>
-                <span className="text-xs text-ink-3">
-                  {versionSummaryText(versionSummary(v, comparableEarlier(all, index)))
-                    .map(formatMessage)
-                    .join(' · ')}
-                </span>
-                {/* 这一版拍的是哪张画布（R-03）。旧节点没有这个字段，**照实说「不知道」**，
-                    不猜成当前画布（左栏审计 L21）。 */}
-                {showCanvas && (
-                  <span className="truncate type-meta">
-                    {v.canvasId
-                      ? vd('fromCanvas', { name: v.canvasName || v.canvasId })
-                      : vd('fromUnknownCanvas')}
-                  </span>
-                )}
-              </span>
-            </button>
+                <KindMark meta={v} />
+              </button>
           }
         >
           <CompareCard
@@ -912,7 +926,6 @@ function TimelineRow({
         <RowMenu
           state={menu}
           label={vd('more')}
-          className="mt-1.5"
           data-timeline-more
           // 从菜单进改名：关菜单时不把焦点还给 ⋯（那一下就是改名框的 blur——框一出现就按「没改」提交收起了）
           onCloseAutoFocus={(e) => {

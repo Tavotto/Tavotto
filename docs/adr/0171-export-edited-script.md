@@ -83,7 +83,7 @@ ADR 0094 设计过「写回原脚本」，但它改的是用户文件，所以�
 - 结构化字段（pair / order）`_sample_value` 挑不出值，在 `_STRUCTURED` 里按 prop 给采样；使能项沿用
   `overridesample._ENABLERS`。
 - 导出脚本自己要的夹具图只追加在 `tests/support/scriptadjust_figures.py`（`invariant_figures` 别的用例按编号写死）。
-- 定位单键：`TAVOTTO_SWEEP_ONLY=legend.ncol,axes.grid_color pytest tests/test_script_adjust.py -k replays`。
+- 定位单键：`TAVOTTO_SWEEP_ONLY=legend.ncol,axes.grid_color pytest tests/test_script_adjust_sweep.py -k replays`。
 
 **① 图例**：标题 / 标题字号（脚本原样有标题时；没有时图例里凭空多一个元素）、圆角、锚点、列数、四种间距、
 示意线五种样式与「断开跟随」写进脚本。

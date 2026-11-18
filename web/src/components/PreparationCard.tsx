@@ -1111,15 +1111,15 @@ function ConvertCompare({ entry, files }: { entry: NonNullable<ReturnType<typeof
     <div data-convert-compare className="flex flex-col gap-2">
       <div className="grid grid-cols-2 gap-2">
         <figure className="m-0 flex min-w-0 flex-col gap-1">
-          <div className="flex h-32 items-center justify-center overflow-hidden rounded-xs border border-border bg-surface-2">
-            {orig ? <img data-convert-original src={convertOriginalUrl(orig)} alt={pt('convert.original')} className="max-h-full max-w-full object-contain" /> : null}
+          <div className="flex h-32 items-center justify-center overflow-hidden rounded-md bg-canvas p-2">
+            {orig ? <img data-convert-original src={convertOriginalUrl(orig)} alt={pt('convert.original')} className="max-h-full max-w-full bg-paper object-contain shadow-page" /> : null}
           </div>
           <figcaption className="text-sm text-ink-3">{pt('convert.original')}</figcaption>
         </figure>
         <figure className="m-0 flex min-w-0 flex-col gap-1">
-          <div className="flex h-32 items-center justify-center overflow-hidden rounded-xs border border-border bg-surface-2">
+          <div className="flex h-32 items-center justify-center overflow-hidden rounded-md bg-canvas p-2">
             {st?.has_preview && entry.session ? (
-              <img data-convert-new src={convertPreviewUrl(entry.session)} alt={pt('convert.redrawn')} className="max-h-full max-w-full object-contain" />
+              <img data-convert-new src={convertPreviewUrl(entry.session)} alt={pt('convert.redrawn')} className="max-h-full max-w-full bg-paper object-contain shadow-page" />
             ) : (
               <span className="px-2 text-center text-sm text-ink-3">{pt('convert.noPreview')}</span>
             )}
