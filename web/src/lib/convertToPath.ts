@@ -182,6 +182,8 @@ export function toPathObject(o: ShapeObject | ArrowObject): PathObject | null {
     ...(closedShape && !shapeStrokeOn(o as ShapeObject) ? { stroke: false } : {}),
     ...(o.strokeOpacity != null ? { strokeOpacity: o.strokeOpacity } : {}),
     ...(o.dash ? { dash: o.dash } : {}),
+    ...(o.dashPattern ? { dashPattern: o.dashPattern } : {}),
+    ...(o.miterLimit != null ? { miterLimit: o.miterLimit } : {}),
     ...(o.lineCap ? { lineCap: o.lineCap } : {}),
     ...(join !== PATH_DEFAULT_JOIN ? { lineJoin: join } : {}),
     ...(heads && heads.start !== 'none' ? { headStart: heads.start } : {}),

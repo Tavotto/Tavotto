@@ -277,6 +277,12 @@ describe('转为路径：画面逐点不动（双向 Hausdorff < 0.01 mm）', ()
     for (const n of p.subpaths[0].nodes) for (const v of n.p) expect(v >= -1e-12 && v <= 1 + 1e-12).toBe(true)
   })
 
+  it('自定义虚线与斜接限制带到路径上（Codex 线程 4614448143）', () => {
+    const p = toPathObject(shape('rect', { dashPattern: [4, 2], miterLimit: 2 }))!
+    expect(p.dashPattern).toEqual([4, 2])
+    expect(p.miterLimit).toBe(2)
+  })
+
   it('样式字段照搬、缺省不写；直线 / 大括号写明原来的尖角', () => {
     const r = toPathObject(shape('rect', { dash: 'dashdot', strokeOpacity: 0.4, lineCap: 'square', fillOpacity: 0.3, name: '框', groupId: 'g1', locked: true }))!
     expect(r).toMatchObject({ dash: 'dashdot', strokeOpacity: 0.4, lineCap: 'square', fillOpacity: 0.3, name: '框', groupId: 'g1', locked: true, fill: '#ffcc00' })
