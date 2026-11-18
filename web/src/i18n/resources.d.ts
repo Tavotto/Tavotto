@@ -3564,7 +3564,7 @@ export default interface Resources {
       "data_path_outside_project": "这份数据不在当前项目里。",
       "data_ragged": "数据里有几行的列数和表头不一致。",
       "data_sheet_not_found": "这个 Excel 文件里找不到所选的工作表。",
-      "data_too_large": "数据文件太大，没有读取。",
+      "data_too_large": "数据文件太大（超过 5 MB），没有读取。",
       "data_too_long": "数据行数太多（超过 10 万行），没有读取。",
       "data_too_wide": "数据列数太多（超过 64 列），没有读取。",
       "data_unreadable": "读不了这份数据文件。",

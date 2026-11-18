@@ -423,7 +423,7 @@
     "data_path_outside_project": "This data file isn’t in the current project.",
     "data_not_found": "The data file can’t be found.",
     "data_not_csv": "Only CSV data files are supported for now.",
-    "data_too_large": "The data file is too large and wasn’t read.",
+    "data_too_large": "The data file is too large (over 5 MB) and wasn’t read.",
     "data_too_long": "The data has too many rows (over 100,000) and wasn’t read.",
     "data_too_wide": "The data has too many columns (over 64) and wasn’t read.",
     "data_unreadable": "The data file can’t be read.",
