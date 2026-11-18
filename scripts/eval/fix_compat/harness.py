@@ -133,7 +133,9 @@ def report_of(app, sid: str) -> dict:
 
 def run_prep(app, script: str, timeout: float = 240.0, argv: list[str] | None = None) -> dict:
     """对 script 建一次准备会话、点运行（有就点）、等落定。返回 {session_id, report, ran, clicked}。"""
-    status, rep = app.call(SESSIONS, {"script": script}, timeout=120)
+    # 与界面「打开并运行」同一种打开方式（`reuse_last_success`）：修复里验证通过的运行配置（参数）会被沿用，
+    # 判分不因「没有前端回填参数草稿」而冤枉修好的那一组
+    status, rep = app.call(SESSIONS, {"script": script, "reuse_last_success": True}, timeout=120)
     sid = rep["session_id"]
     runs = [a for a in rep.get("actions", []) if a["kind"] == "run"]
     clicked = False
