@@ -1117,6 +1117,38 @@ def entry_candidates_of(tree: ast.Module) -> list[str]:
     return out
 
 
+#: `native_entry_of` 的三种答案：整份模块照 `python fig.py` 跑 / 跑完模块再调入口函数 / 原样运行够不到这个入口
+NATIVE_RUN_MODULE = "module"
+NATIVE_CALL_ENTRY = "call"
+NATIVE_ENTRY_UNREACHABLE = "unreachable"
+
+
+def native_entry_of(path: Path, entry: str | None) -> tuple[str, str | None]:
+    """native（真实 Python）要怎样才跑得到登记的入口 `entry`（ADR 0127 修订 2026-11-18，TVD-YB4Q）。
+
+    主语：**native 这一次进程**执行完会不会调用到 safe 当时调的那个入口。回 `(档, 要调的函数名或 None)`：
+
+    * `module`：入口是 `__main__`、没有入口，或脚本有 `if __name__` 守卫 / 顶层代码自己就画图——整份模块照
+      `python fig.py` 跑（原行为；守卫怎么调由用户的代码决定）；解析不了也是这一档（判不出就不改）。
+    * `call`：入口是函数，脚本没有守卫、顶层代码也不画图（库式模块：只定义了 `geography()` / `cooling()`）——
+      整份跑完什么都不会发生，跑完模块再调这个零参函数，与 safe worker `getattr(module, entry)()` 同一个语义。
+    * `unreachable`：入口是函数，但当前源码里已没有这个零参顶层函数——native 跑完必然没有图，不该白跑一次。
+    """
+    if not entry or entry == registry.INLINE_ENTRY:
+        return NATIVE_RUN_MODULE, None
+    text, problem = read_source(path)
+    tree = parse_source(text)[0] if problem is None else None
+    if tree is None:
+        return NATIVE_RUN_MODULE, None
+    funcs = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    if _has_inline_main(tree) or _toplevel_reaches_plot(tree, funcs):
+        return NATIVE_RUN_MODULE, None
+    fn = funcs.get(entry)
+    if isinstance(fn, ast.FunctionDef) and _callable_without_args(fn):
+        return NATIVE_CALL_ENTRY, entry
+    return NATIVE_ENTRY_UNREACHABLE, None
+
+
 def is_infrastructure_name(name: str) -> bool:
     """按文件名判「基础设施脚本」（测试/工具/样式模块）——SKIP 两张表的
     唯一消费口。静态起草直接跳过它们；脚本清单列出但标注 infrastructure。"""

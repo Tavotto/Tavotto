@@ -174,3 +174,32 @@ D1 的授权边界（桌面用户发起）原本只拦「路由选的 native」�
 HTTP 显式 `execution: "native"` 的非桌面来源仍 403 `native_requires_desktop`；native 会话不进 safe 池的 LRU（淘汰 = 杀用户进程）。
 
 **实现**：策略参数与看护先落（#1985）；MCP 桥的接线（`engine/nativefallback.py` + `bridge._native_fallback`）、会话字段与回包、关闭 / 驱逐 / 退出清理随后一个 PR，细则 `docs/rules/plugin/sessions-and-batch-open.md`。会话恢复不另做：`Session.native` 不落盘，恢复时 `_render` 按同一条证据重新回退。
+
+## 修订（2026-11-18）：库式模块的函数入口，native 回退跑完模块再调同一个函数（一份用户反馈，维护者批准方案 A + B）
+
+**现象**：Windows 0.21.2 一份反馈包。脚本只定义零参出图函数（`geography()` / `cooling()`），没有 `if __name__` 守卫，注册入口是函数 `geography`；
+保存辅助函数 `savefig` 之后读回自检，safe 拦下 → 换入口（`cooling`）仍拦下 → 桌面静默回退 native → 退出码 0、`no_figure_captured`。
+本 ADR「同一修订：先在 safe 下换入口」写的是「native 回退用**原来被拦的入口**」，但 native 恒 `entry=None`（`python fig.py` 跑整份模块），
+入口是函数时那句话做不到：整份模块跑完什么都不调用，回退必然白跑。
+
+**决定 A**：native 的启动身份可以带一个**函数入口**（`ExecutionSpec.entry`，只限脚本目标、合法标识符、不是 `__main__`；
+`execspec.desktop_native_spec(entry=…)`，bridge 命令行 `--entry`；没有入口时命令行逐字节不变）。带入口时 `bridge_runner.run_script_entry`
+以文件名主干为模块名执行整份模块（`__name__ != "__main__"`，与 safe worker `import_module` 的函数入口同口径），再调这个零参函数。
+**何时带**只有一份判据 `discover.native_entry_of(path, entry)`：
+* `module`：入口是 `__main__` / 没有入口 / 脚本有 `if __name__` 守卫 / 顶层代码自己够得着绘图 / 解析不了 → 原样跑整份模块（旧行为；守卫怎么调由用户的代码决定）；
+* `call`：入口是函数、没有守卫、顶层不画图 → 跑完模块再调它；
+* `unreachable`：入口是函数，但当前源码里已没有这个零参顶层函数。
+
+桌面准备会话（回退与路由直达的 native 计划，`preparation.native_entry_for`）与 MCP 回退（`nativefallback.decide` / `launch`）用同一份判据。
+回退用的仍是「原来被拦的那个入口」——换入口换到别的函数后，native 调的还是用户点的那张图的函数。
+
+**决定 B**：`unreachable` 时不起 native 白跑——桌面回退以 `plan_unavailable` 不接（不新增理由码与界面文字），停在原来的 blocked 卡上；
+MCP `decide` 同一个理由；路由直达的 native 以 `entry_unreachable` 回 safe。bridge 运行期发现入口不见了（判定之后脚本被改写）按脚本错误如实失败，不是「没有图」。
+
+**对 native 契约的偏离**：「与 `python fig.py` 逐字相同」只在 `call` 这一档让步——那一档的 `python fig.py` 本来什么都不做，用户也从不这样跑它（图是 Tavotto 按登记的函数入口画的）。
+终端 `tavotto run`（`execspec.native_spec`）不带入口，行为不变。
+
+**看护**：`tests/test_native_function_entry.py`（判据逐种写法、命令行与校验、真 bridge 子进程调函数且 savefig 透传 / 不带入口仍是旧行为 / 入口运行期不见了是脚本错误、
+桌面回退带原入口、有守卫不带、够不到不起 native、MCP 同一判据）。
+
+**另记（不在本修订内）**：safe 换入口挑的是同一份脚本里**另一张图**的函数（`geography` → `cooling`），即使成功也不是用户点的那张；待另行处理。

@@ -360,6 +360,22 @@ def _route_of(
     return route, (hashlib.sha256(raw).hexdigest() if raw is not None else None)
 
 
+#: `native_entry_for` 的「够不到」档（`discover.NATIVE_ENTRY_UNREACHABLE` 的镜像，免得模块层 import discover）
+NATIVE_ENTRY_UNREACHABLE = "unreachable"
+
+
+def native_entry_for(root: str, script: str, entry: str | None) -> tuple[str, str | None]:
+    """`discover.native_entry_of` 落到项目里的那份脚本：`(档, 要调的函数名或 None)`。读不到 / 算不出一律按原样跑整份模块。"""
+    from . import discover  # noqa: PLC0415 — 只有 native 计划付这份 import
+
+    try:
+        path = Path(root) / figcapture.normalize_relative_script(script)
+        return discover.native_entry_of(path, entry)
+    except Exception:  # noqa: BLE001 — 判不出就不改（原行为）
+        LOG.exception("native 入口判定失败 %s", script)
+        return discover.NATIVE_RUN_MODULE, None
+
+
 def plan_for(
     *,
     project_id: str,
@@ -555,6 +571,14 @@ def plan_for(
         # 路由分析之后脚本又被改写：native 的依据是旧内容，新内容没有被证明过。回 safe，下次检查再路由
         route = route.downgraded("script_changed")
         execution = route.execution
+    native_entry = None
+    if script is not None and python and execution == execspec.PROFILE_NATIVE:
+        # 原样运行要怎样才调得到登记的入口（ADR 0127 修订 2026-11-18）：库式模块跑完模块再调函数；
+        # 够不到（入口函数已不在）时路由直达的 native 回 safe——白跑一次只会「没有图」
+        native_how, native_entry = native_entry_for(root, script, entry)
+        if native_how == NATIVE_ENTRY_UNREACHABLE and route is not None:
+            route = route.downgraded("entry_unreachable")
+            execution = route.execution
     if script is not None and python and execution == execspec.PROFILE_NATIVE:
         mode = decision["mode"] if decision else workdir.mode_for(root)
         spec = execspec.desktop_native_spec(
@@ -568,6 +592,7 @@ def plan_for(
             env={"PYTHONUNBUFFERED": "1"},
             # ADR 0154：用户选了「跳过这个文件夹」的目录，native bridge 的顶层导入不再去那里找
             ignored_paths=pathignore.paths_for(root),
+            entry=native_entry,
             **execspec.run_kwargs(run),
         )
         native_spec = spec

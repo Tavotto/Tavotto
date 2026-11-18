@@ -2231,6 +2231,14 @@ class SessionService:
         if not decision:
             self._decline(sess, attempt, decision.reason)
             return None
+        how, _ = preparation.native_entry_for(
+            sess.project_root, done_plan.script, entry or done_plan.entry
+        )
+        if how == preparation.NATIVE_ENTRY_UNREACHABLE:
+            # 原样运行够不到登记的函数入口（ADR 0127 修订 2026-11-18）：起进程只会白跑一遍、以「没有图」收场，
+            # 不如如实停在原来被拦的那张卡上。不新增码：就是「没能算出原样运行」
+            self._decline(sess, attempt, execpolicy.REASON_PLAN_UNAVAILABLE)
+            return None
         try:
             target = {**sess.target, "execution": execspec.PROFILE_NATIVE}
             if entry:
