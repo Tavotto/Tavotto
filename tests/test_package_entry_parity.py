@@ -262,6 +262,8 @@ def test_native_descriptor_identity_is_the_script_not_the_module(tmp_path):
             [USER_PYTHON, "-c", "import matplotlib;print(matplotlib.__version__)"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             env=child_env(),
         ).stdout.strip()
         expected = figcapture.source_fingerprint(
@@ -294,7 +296,16 @@ def test_a_failing_package_init_still_reports_the_script_identity(tmp_path):
     argv = execspec.bridge_argv(
         spec, runner_py=bridge.RUNNER_PY, out_dir=tmp_path / "o", report=str(tmp_path / "r.json")
     )
-    r = subprocess.run(argv, cwd=proj, env=child_env(), capture_output=True, text=True, timeout=120)
+    r = subprocess.run(
+        argv,
+        cwd=proj,
+        env=child_env(),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
     assert r.returncode != 0
     report = json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))
     assert report["rel_target"] == "plots/fig.py"
