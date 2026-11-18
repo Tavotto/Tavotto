@@ -120,7 +120,12 @@ def test_reopen_after_script_edit_reruns_the_same_session(tmp_path):
     again = bridge.open_figure(str(figures), stem="fig")
 
     assert again["reused"] is True and again["session_id"] == sid
-    assert again["script_rerun"] == {"reason": "script_changed", "patches": 0, "dropped": []}
+    assert again["script_rerun"] == {
+        "reason": "script_changed",
+        "patches": 0,
+        "dropped": [],
+        "dropped_count": 0,
+    }
     # 独立事实：manifest 的真实宽度变成新脚本的（4in -> 6in），不是旧代码的重渲染
     assert _width(again["manifest"]) == pytest.approx(old_width * 6 / 4, rel=0.02)
     assert bridge.get_session(sid).manifest["size_mm"] == again["manifest"]["size_mm"]
@@ -159,7 +164,12 @@ def test_apply_after_script_edit_keeps_patches_and_reruns(tmp_path):
     _rewrite(figures, WIDER)
     out = bridge.apply_overrides(sid, [_fontsize(19.0)])
 
-    assert out["script_rerun"] == {"reason": "script_changed", "patches": 1, "dropped": []}
+    assert out["script_rerun"] == {
+        "reason": "script_changed",
+        "patches": 1,
+        "dropped": [],
+        "dropped_count": 0,
+    }
     assert out["session_id"] == sid
     assert _width(out["manifest"]) > _width(first["manifest"]) * 1.4
     assert _prop(out["manifest"], LEFT, "fontsize") == 19.0
@@ -317,3 +327,40 @@ def test_close_session_does_not_rerun(tmp_path, monkeypatch):
     assert closed["ok"] is True
     assert calls == []
     assert sid not in bridge.sessions()
+
+
+# ------------------------------ 把手定长 ----------------------------------
+def test_rerun_dropped_list_is_bounded_so_the_handle_fits_the_apply_budget():
+    """`script_rerun` 在把手里、预算收缩时不会被剔：300 条带长原因的 dropped 也必须装进 16 KiB。"""
+    miss = [
+        {
+            "gid": f"axes_0.title_{i}" + "x" * 300,
+            "prop": "fontsize",
+            "reason": "element_missing" * 40,
+        }
+        for i in range(300)
+    ]
+    rerun = {"reason": bridge.SCRIPT_RERUN_REASON, "patches": 0, **bridge._bounded_dropped(miss)}
+    assert rerun["dropped_count"] == 300 and rerun["dropped_truncated"] is True
+    assert len(rerun["dropped"]) == bridge.SCRIPT_RERUN_DROPPED_LIMIT
+    for entry in rerun["dropped"]:
+        assert all(
+            len(v.encode("utf-8")) <= bridge.SCRIPT_RERUN_FIELD_BYTES for v in entry.values()
+        )
+    result = {
+        "content": [{"type": "text", "text": "x" * 40000}],
+        "structuredContent": {
+            "ok": True,
+            "session_id": "s-1",
+            "script_rerun": rerun,
+            "svg": "<svg/>" * 5000,
+        },
+    }
+    server.fit_inline_budget(result, server.APPLY_SUMMARY_BUDGET_BYTES)
+    assert server._serialized_bytes(result) <= server.APPLY_SUMMARY_BUDGET_BYTES
+    assert result["structuredContent"]["script_rerun"]["dropped_count"] == 300
+
+
+def test_rerun_note_counts_all_dropped_not_just_the_listed_ones():
+    note = server._rerun_note("s-1", {"patches": 2, "dropped": [{}] * 8, "dropped_count": 30})
+    assert "另有 30 条用不了已跳过" in note

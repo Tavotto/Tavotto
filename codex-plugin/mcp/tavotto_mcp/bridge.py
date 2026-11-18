@@ -3165,8 +3165,33 @@ def _sync_script_render(session: Session) -> tuple[dict | None, dict | None]:
     elif session.normalized is not None:
         session.normalized["stale"] = True
     _persist(session)
-    info = {"reason": SCRIPT_RERUN_REASON, "patches": len(kept), "dropped": miss}
+    info = {"reason": SCRIPT_RERUN_REASON, "patches": len(kept), **_bounded_dropped(miss)}
     return info, render
+
+
+#: `script_rerun.dropped` 最多列几条、每个字段最多几字节：它在把手（`HANDLE_ONLY_KEYS`）里，
+#: 预算退到只剩把手时也不会被剔掉，所以必须定长（codex-plugin/AGENTS.md 紧凑结果预算）
+SCRIPT_RERUN_DROPPED_LIMIT = 8
+SCRIPT_RERUN_FIELD_BYTES = 160
+
+
+def _bounded_dropped(miss: list[dict]) -> dict:
+    """用不了的 patch：总数照实给（`dropped_count`），清单只留前几条、字段截短；截过就 `dropped_truncated`。"""
+
+    def cut(value: object) -> str:
+        raw = str(value).encode("utf-8")
+        if len(raw) <= SCRIPT_RERUN_FIELD_BYTES:
+            return str(value)
+        return raw[: SCRIPT_RERUN_FIELD_BYTES - 3].decode("utf-8", "ignore") + "…"
+
+    shown = [
+        {k: cut(v) for k, v in m.items() if k in ("gid", "prop", "reason")}
+        for m in miss[:SCRIPT_RERUN_DROPPED_LIMIT]
+    ]
+    out: dict = {"dropped": shown, "dropped_count": len(miss)}
+    if len(miss) > len(shown):
+        out["dropped_truncated"] = True
+    return out
 
 
 def _sync_script(session: Session) -> dict | None:

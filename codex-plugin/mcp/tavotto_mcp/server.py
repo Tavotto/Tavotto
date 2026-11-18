@@ -930,8 +930,8 @@ def _make_journal_ready_tool(open_tool: dict) -> dict:
 # ------------------------------- 工具实现 -----------------------------------
 def _rerun_note(sid: str, rerun: dict) -> str:
     """改过脚本后同一会话重跑的一句话（ADR 0192 修订 2026-11-18）：保留几条修改、几条因脚本改动用不了。"""
-    dropped = rerun.get("dropped") or []
-    tail = f"，另有 {len(dropped)} 条用不了已跳过" if dropped else ""
+    n = rerun.get("dropped_count", len(rerun.get("dropped") or []))
+    tail = f"，另有 {n} 条用不了已跳过" if n else ""
     return (
         f"脚本改过，已按新脚本重跑同一个会话 {sid}（保留 {rerun.get('patches', 0)} 条修改{tail}）"
     )
