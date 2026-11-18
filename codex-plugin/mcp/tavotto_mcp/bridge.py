@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import base64
 import difflib
+import functools
 import hashlib
 import importlib
 import inspect
@@ -1227,6 +1228,10 @@ class Session:
     #: safe 被自身守卫拦下后换成的 native 活图（`nativefallback.NativeWorker`，ADR 0127 修订 2026-11-17）；
     #: None = 这条会话走 safe 池。不落盘：进程换了之后恢复时 `_render` 会按同一条证据重新回退。
     native: object | None = None
+    #: 这条会话**上一次成功渲染时**跑的脚本内容 sha1（worker spawn 那一刻读进内存的那份；native 回退没有
+    #: 这个属性，渲染成功后自己算一次）。空串 = 读不到 / 引擎没有 `script_sha1`，此时不比、不重跑。
+    #: 每次 `_render` 成功更新；`_sync_script` 拿它与磁盘上此刻的脚本比（MCP 无头没有 mtime watcher）。
+    script_sha1: str = ""
 
     def patch_hash(self) -> str:
         return patchspec.patch_hash(self.patches)
@@ -2298,6 +2303,21 @@ def _unapplied_patches(patches: list, warnings: list) -> list[dict]:
     return out
 
 
+def _render_applicable(session: Session, canonical: list) -> tuple[dict, list[dict], list]:
+    """按 `canonical` 渲染；worker 报「没落上」的 patch 剔掉，再渲染一次让会话与画面配对。
+
+    返回 `(render, miss, kept)`：`miss` 是逐条 `{gid, prop, reason}`（`_unapplied_patches` 的口径）。
+    草稿带回（`_render_draft`）与改脚本后重跑（`_sync_script`）共用这一份——用不了的不留在会话里：
+    会话的 patches 要等于画面上真落下的那一组。第二次渲染抛错照旧抛（会话上 patches 不动）。"""
+    render = _render(session, canonical, preview_dpi=None)
+    miss = _unapplied_patches(canonical, session.warnings)
+    if miss:
+        gone = {(m["gid"], m["prop"]) for m in miss}
+        canonical = [p for p in canonical if (str(p["gid"]), str(p["prop"])) not in gone]
+        render = _render(session, canonical, preview_dpi=None)
+    return render, miss, canonical
+
+
 def _render_draft(make_session, draft: dict) -> tuple[Session, dict, dict]:
     """按草稿的 patches 渲染（先渲染成功才交出会话，调用方再登记）。部分 patch 用不了就带能用的，
     用不了的逐条进 `dropped`；渲染失败抛 BridgeError（草稿不动）。"""
@@ -2306,18 +2326,12 @@ def _render_draft(make_session, draft: dict) -> tuple[Session, dict, dict]:
         {"reason": d["reason"], "entry": d.get("entry", "")} for d in bad if d["index"] != -1
     ]
     session = make_session()
-    render = _render(session, canonical, preview_dpi=None)
-    miss = _unapplied_patches(canonical, session.warnings)
-    if miss:
-        gone = {(m["gid"], m["prop"]) for m in miss}
-        dropped.extend(miss)
-        canonical = [p for p in canonical if (str(p["gid"]), str(p["prop"])) not in gone]
-        # 用不了的不留在会话里：会话的 patches 要等于画面上真落下的那一组，同一个会话再渲染一次让两边配对
-        try:
-            render = _render(session, canonical, preview_dpi=None)
-        except BridgeError:
-            _end_native(session)  # 会话不登记了，别留着 native 进程
-            raise
+    try:
+        render, miss, canonical = _render_applicable(session, canonical)
+    except BridgeError:
+        _end_native(session)  # 会话不登记了，别留着 native 进程
+        raise
+    dropped.extend(miss)
     if not dropped:
         # 没丢任何一条：规范化合同跟着带回（挡板不因为换了进程 / 重开而消失，ADR 0051）；丢过就不再对得上，不带
         session.contract = draft.get("contract")
@@ -2424,6 +2438,7 @@ def open_figure(
     evicted: list[str] = []
     restored_draft: dict | None = None
     draft_failed: dict | None = None
+    script_rerun: dict | None = None
     if session is not None:
         # 沿用时**照样重渲染一次**（`patches` 按定义是空的）：open 的返回里
         # manifest / SVG / 位图必须与会话此刻的状态配对（ADR 0022 不变量 5），
@@ -2436,7 +2451,9 @@ def open_figure(
         # 画布经 `session_state` 拿到的就是旧档，渲染看门狗会按 2 分钟而不是 15 分钟
         # 掐掉一次合法的重渲染（Codex 评审）。
         session.cost = str(info.get("cost", "") or "")
-        render = _render(session, list(session.patches), preview_dpi=None)
+        script_rerun, render = _sync_script_render(session)
+        if render is None:
+            render = _render(session, list(session.patches), preview_dpi=None)
     else:
 
         def _fresh() -> Session:
@@ -2507,6 +2524,8 @@ def open_figure(
     }
     if profile.get("journal_ref"):
         out["journal_ref"] = profile["journal_ref"]
+    if script_rerun is not None:
+        out["script_rerun"] = script_rerun
     if restored_draft is not None:
         out["restored_draft"] = restored_draft
         # 内嵌画布用这个字段 seed 它的 override 账本（`web/src/mcp/session.ts::seedSession`）：不带的话账本是空的，
@@ -2967,6 +2986,8 @@ def refresh_project(
         "assets": {k: assets.get(k) for k in ("added", "removed", "changed", "baseline")},
         "readiness": _compact_readiness(readiness),
         "sessions": sorted(sid for sid, s in _SESSIONS.items() if s.project == project),
+        # 脚本已变的活会话：refresh 不运行脚本（ADR 0025），它们下一次调用会自己按新脚本重跑同一个会话
+        "stale_sessions": stale_session_ids(project),
     }
 
 
@@ -3010,6 +3031,9 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
     session.apply_receipt = None
     session.rev = getattr(worker, "rev", session.rev + 1)
     session.last_used = time.time()
+    session.script_sha1 = str(getattr(worker, "script_sha1", "") or "") or _disk_script_sha1(
+        session
+    )
     out = {
         "manifest": session.manifest,
         "svg": session.svg,
@@ -3076,6 +3100,133 @@ def _bounded_apply_receipt(out: dict) -> dict:
     raise AssertionError("apply receipt handle exceeded its budget")
 
 
+# ------------------------- 改脚本后同一会话自动重跑 -------------------------
+#: `script_rerun.reason` 的取值（ADR 0192 修订 2026-11-18）
+SCRIPT_RERUN_REASON = "script_changed"
+
+
+def _disk_script_sha1(session: Session) -> str:
+    """磁盘上这条会话的脚本**此刻**的 sha1（与 `pool.script_sha1` 同口径；读不到 / 引擎没有它回空串）。"""
+    fn = getattr(engine_pool, "script_sha1", None)
+    if fn is None:
+        return ""
+    try:
+        return str(fn(session.project, session.script) or "")
+    except Exception:  # noqa: BLE001 — 读不到就当作没法比，不重跑
+        return ""
+
+
+def script_changed(session: Session) -> bool:
+    """会话上次渲染时的脚本与磁盘上此刻的不一样（两边都读得到才算；只读，不运行脚本）。"""
+    # getattr：测试替身 / 旧会话对象可能没有这个字段——没有就当没法比
+    spawned = getattr(session, "script_sha1", "")
+    if not spawned:
+        return False
+    now = _disk_script_sha1(session)
+    return bool(now) and now != spawned
+
+
+def _retire_for_script_change(session: Session) -> None:
+    """作废这条会话**这一份运行配置**的旧 worker（native 会话收掉它的真实 Python 进程）。
+
+    桌面版靠 mtime watcher 调 `engine_pool.invalidate`；MCP 无头没有 watcher，改脚本之后同一个 worker 仍跑着
+    旧代码。参数选法：`run=session.run` + `only_run=True` 只退这一份配置（同脚本别的参数的热会话不动，它们
+    下次被调用时各自发现脚本变了），`write_roots` 必须与 `_spawn_worker` 取 worker 时同一份（绊线根是池键
+    的一段，不带就对不上键、什么都没退）；`force=True` 同步确认式退役，免得紧接着的取 worker 复用旧的。"""
+    if session.native is not None:
+        _end_native(session)
+        return
+    kwargs: dict = {"run": session.run, "only_run": True, "force": True}
+    roots = _tripwire_roots(session.project)
+    if roots is not None:
+        kwargs["write_roots"] = roots
+    try:
+        engine_pool.invalidate(session.script, session.project, **kwargs)
+    except engine_pool.WorkerError as exc:
+        raise _bridge_error_from_worker(
+            exc, project=session.project, script=session.script
+        ) from exc
+
+
+def _sync_script_render(session: Session) -> tuple[dict | None, dict | None]:
+    """脚本在会话之外被改过就按新脚本重跑**同一个会话**：回 `(script_rerun, render)`；没变回 `(None, None)`。
+
+    保留会话 id 与 patches：作废旧 worker、按会话现有 patches 重渲染；重渲染后用不了的 patch（gid 没了等）
+    剔掉并逐条进 `dropped`。有 dropped 时规范化合同与验收一并作废（与 `_render_draft` 同口径：丢过就不再
+    对得上）；没丢时合同照旧、验收标 `stale`（它验的是旧脚本的产物）。新脚本 build 报错照常抛 BridgeError
+    （带 code），会话与 patches 原样保留——`session.script_sha1` 没更新，脚本改好后下一次调用再重跑。"""
+    if not script_changed(session):
+        return None, None
+    _retire_for_script_change(session)
+    render, miss, kept = _render_applicable(session, list(session.patches))
+    if miss:
+        session.contract = None
+        session.normalized = None
+    elif session.normalized is not None:
+        session.normalized["stale"] = True
+    _persist(session)
+    info = {"reason": SCRIPT_RERUN_REASON, "patches": len(kept), **_bounded_dropped(miss)}
+    return info, render
+
+
+#: `script_rerun.dropped` 最多列几条、每个字段最多几字节：它在把手（`HANDLE_ONLY_KEYS`）里，
+#: 预算退到只剩把手时也不会被剔掉，所以必须定长（codex-plugin/AGENTS.md 紧凑结果预算）
+SCRIPT_RERUN_DROPPED_LIMIT = 8
+SCRIPT_RERUN_FIELD_BYTES = 160
+
+
+def _bounded_dropped(miss: list[dict]) -> dict:
+    """用不了的 patch：总数照实给（`dropped_count`），清单只留前几条、字段截短；截过就 `dropped_truncated`。"""
+
+    def cut(value: object) -> str:
+        raw = str(value).encode("utf-8")
+        if len(raw) <= SCRIPT_RERUN_FIELD_BYTES:
+            return str(value)
+        return raw[: SCRIPT_RERUN_FIELD_BYTES - 3].decode("utf-8", "ignore") + "…"
+
+    shown = [
+        {k: cut(v) for k, v in m.items() if k in ("gid", "prop", "reason")}
+        for m in miss[:SCRIPT_RERUN_DROPPED_LIMIT]
+    ]
+    out: dict = {"dropped": shown, "dropped_count": len(miss)}
+    if len(miss) > len(shown):
+        out["dropped_truncated"] = True
+    return out
+
+
+def _sync_script(session: Session) -> dict | None:
+    """`_sync_script_render` 只取 `script_rerun` 那份（没变回 None）。"""
+    return _sync_script_render(session)[0]
+
+
+def _synced(fn):
+    """给按 `session_id` 取会话的工具入口加上「脚本变了先重跑」：重跑信息进结果的 `script_rerun`。
+
+    装饰在 apply / session_state / preflight / export / normalize / fix_to_journal / verify_replay 上
+    （`close_session` 不装：关会话不重跑）。失败时重跑信息挂在错误的 `extra` 上，不丢。"""
+
+    @functools.wraps(fn)
+    def wrapper(session_id, *args, **kwargs):
+        rerun = _sync_script(get_session(session_id))
+        try:
+            result = fn(session_id, *args, **kwargs)
+        except BridgeError as exc:
+            if rerun is not None:
+                exc.extra.setdefault("script_rerun", rerun)
+            raise
+        if rerun is not None and isinstance(result, dict):
+            result["script_rerun"] = rerun
+        return result
+
+    return wrapper
+
+
+def stale_session_ids(project: str) -> list[str]:
+    """这个项目里脚本已变的活会话 id（只读：算一次 sha1，不运行脚本、不重渲染）。"""
+    return sorted(sid for sid, s in _SESSIONS.items() if s.project == project and script_changed(s))
+
+
+@_synced
 def apply_overrides(
     session_id: str,
     patches: object,
@@ -3178,6 +3329,7 @@ def _contract_diff(session: Session, patches: list) -> list[dict]:
     return diff
 
 
+@_synced
 def session_state(session_id: str) -> dict:
     """会话**此刻**的完整快照——manifest / SVG / 位图 / patches——**不重渲染**。
 
@@ -3305,6 +3457,7 @@ def export_raster_issues(profile: dict, formats: list[str] | None, dpi: int | No
     ]
 
 
+@_synced
 def run_preflight(
     session_id: str,
     *,
@@ -3442,6 +3595,7 @@ def format_preflight(session: Session, profile: dict, issues: list[dict], summar
 
 
 # -------------------------------- 导出 --------------------------------------
+@_synced
 def export(
     session_id: str,
     *,
@@ -4003,6 +4157,7 @@ def _better(new: dict, old: dict) -> bool:
     return engine_normalize.better_candidate(new, old)
 
 
+@_synced
 def normalize_figure(session_id: str, **kwargs) -> dict:
     """`_normalize_figure` 的提交点：无论提交、回退还是异常回退，事务收尾后会话
     **此刻**的状态（patches + 合同）落盘一次（ADR 0078）。事务中途的候选状态不落盘。"""
@@ -4815,6 +4970,7 @@ def require_fix_engine():
     return engine
 
 
+@_synced
 def fix_to_journal(
     session_id: str,
     *,
@@ -5244,6 +5400,7 @@ def _fix_run(
     return True
 
 
+@_synced
 def verify_replay(session_id: str) -> dict:
     """`hot_apply(patches) == fresh_worker_replay(patches)` 的现场自检。
 

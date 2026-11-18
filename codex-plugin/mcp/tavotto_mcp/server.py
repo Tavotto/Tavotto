@@ -135,6 +135,7 @@ HANDLE_ONLY_KEYS = frozenset(
         "render_revision",
         "worker_generation",
         "restored",
+        "script_rerun",
         "applied",
         "canonical_patch_count",
         "contract_released",
@@ -222,6 +223,8 @@ def _tools() -> list[dict]:
                 "改过没导出的修改关会话（或被挤掉）时会存成草稿：再打开同一张图（同项目、同 stem、"
                 "同运行配置）会自动带回，回包 restored_draft 写明带回几条、哪些因脚本改动用不了；"
                 "不要草稿就带 discard_draft=true 打开（草稿同时删除）。导出成功即清草稿。"
+                "改完 .py 不用 close 再 open：再调 open / preflight / export 等任一工具，"
+                "会按新脚本重跑同一个会话并保留修改（回包 script_rerun，用不了的写进 dropped）。"
                 "若宿主支持 MCP elicitation 且没有传工作区根，第一次请传绝对路径；"
                 "Tavotto 会让宿主显示精确目录并请用户确认，本次连接内有效。"
             ),
@@ -361,7 +364,8 @@ def _tools() -> list[dict]:
                 "原始值，所以每次都要发完整的一份，不要发增量。"
                 "返回新的 manifest、SVG、patch hash、warnings 与被拒条目。"
                 "图例位置 / 字号 / 线宽 / 刻度这类用它改；数据、坐标范围、加删曲线 / 子图、"
-                "colorbar 方向改不了，必须回代码改，改完调 tavotto_refresh_project 再重新打开。"
+                "colorbar 方向改不了，必须回代码改；改完 .py 不用关会话，下一次调用会按新脚本重跑同一个会话并保留修改"
+                "（回包 script_rerun），可顺手调 tavotto_refresh_project 刷新项目。"
                 "模型调用请带 summary=true：只返回有界变更摘要，完整状态与有界的最近诊断"
                 "按需用 tavotto_session_state 读取；省略或 false 保留旧客户端的完整响应。"
                 "不会改用户的 Python 源码。"
@@ -566,6 +570,7 @@ def _tools() -> list[dict]:
                 "或传一个已授权工作区内的 project_path；两者都不传时用唯一有会话的项目。"
                 "delivered=app 表示运行中的 Tavotto 已同步；local 表示 Tavotto 没开着，"
                 "刷新已在本地完成，下次打开项目时自动生效。"
+                "回包 stale_sessions 是脚本已改的活会话：它们下次调用会按新脚本自动重跑，不用关掉重开。"
             ),
             "inputSchema": {
                 "type": "object",
@@ -923,6 +928,15 @@ def _make_journal_ready_tool(open_tool: dict) -> dict:
 
 
 # ------------------------------- 工具实现 -----------------------------------
+def _rerun_note(sid: str, rerun: dict) -> str:
+    """改过脚本后同一会话重跑的一句话（ADR 0192 修订 2026-11-18）：保留几条修改、几条因脚本改动用不了。"""
+    n = rerun.get("dropped_count", len(rerun.get("dropped") or []))
+    tail = f"，另有 {n} 条用不了已跳过" if n else ""
+    return (
+        f"脚本改过，已按新脚本重跑同一个会话 {sid}（保留 {rerun.get('patches', 0)} 条修改{tail}）"
+    )
+
+
 def _text(*lines: str) -> list[dict]:
     return [{"type": "text", "text": "\n".join(ln for ln in lines if ln)}]
 
@@ -1171,7 +1185,9 @@ def _open_figure_result(args: dict) -> dict:
     if "counts" not in out["preflight"]:
         return {
             "content": _text(
-                f"已打开 {out['stem']}（会话 {out['session_id']}）",
+                _rerun_note(out["session_id"], out["script_rerun"])
+                if out.get("script_rerun")
+                else f"已打开 {out['stem']}（会话 {out['session_id']}）",
                 _brief_manifest(out.get("manifest")),
                 f"? 出版规范预检没跑出结论（{out['preflight'].get('error') or '见 code'}）"
                 "——这**不等于通过**；会话是好的，可以改图，体检重跑 tavotto_preflight。",
@@ -1180,7 +1196,9 @@ def _open_figure_result(args: dict) -> dict:
         }
     lines = [
         (
-            f"这张已经开着，沿用同一个会话 {out['session_id']}（没有新建会话，也就没有挤掉别的图）"
+            _rerun_note(out["session_id"], out["script_rerun"])
+            if out.get("script_rerun")
+            else f"这张已经开着，沿用同一个会话 {out['session_id']}（没有新建会话，也就没有挤掉别的图）"
             if out.get("reused")
             else f"已打开 {out['stem']}（会话 {out['session_id']}）"
         ),
@@ -1662,6 +1680,7 @@ def _call_make_journal_ready(args: dict) -> dict:
             "draft_restore_failed",
             "discarded_draft",
             "reused",
+            "script_rerun",
             "update",
         ):
             if body.get(key):
@@ -2208,6 +2227,10 @@ def _call_refresh(args: dict) -> dict:
             lines.append("needs_probe 的图请让用户在 Tavotto 里点「试运行并连接」，不要猜。")
         if summary.get("conflict"):
             lines.append("conflict 的图不要自动裁决，把候选脚本告诉用户。")
+    if out.get("stale_sessions"):
+        lines.append(
+            f"会话 {'、'.join(out['stale_sessions'])} 下次调用会按新脚本自动重跑，不用关掉重开"
+        )
     lines.append("不需要用户手动刷新或重启 Tavotto。")
     return {"content": _text(*lines), "structuredContent": out}
 
@@ -2498,6 +2521,22 @@ def _attach_journal_resolved(result: dict, info: dict) -> None:
         content[0]["text"] += f"\n期刊 {info['from']!r} 已解析为 id {info['id']}。"
 
 
+def _prepend_rerun_note(name: str, args: dict, result: dict) -> None:
+    """除 open（它自己把第一行换成重跑说明）外，结果带 `script_rerun` 就在文字第一行说一句。"""
+    body = result.get("structuredContent")
+    rerun = body.get("script_rerun") if isinstance(body, dict) else None
+    content = result.get("content") or []
+    if (
+        name == "tavotto_open_figure"
+        or not isinstance(rerun, dict)
+        or not content
+        or content[0].get("type") != "text"
+    ):
+        return
+    sid = str(body.get("session_id") or args.get("session_id") or "")
+    content[0]["text"] = _rerun_note(sid, rerun) + "\n" + content[0]["text"]
+
+
 def call_tool(name: str, args: dict) -> dict:
     handler = HANDLERS.get(name)
     if handler is None:
@@ -2530,6 +2569,7 @@ def call_tool(name: str, args: dict) -> dict:
         return result
     if resolved is not None:
         _attach_journal_resolved(result, resolved)
+    _prepend_rerun_note(name, args, result)
     if name in UI_TOOLS:
         if (result.get("structuredContent") or {}).get("mode") == bridge.BATCH_MODE:
             # **批量结果不挂画布，而且要把这件事说出口。**一次 tools/call 只带
@@ -2893,7 +2933,8 @@ class Server:
                 "（健康就不要安装任何东西）；遇到工具说明没写的情形再读 tavotto_guide。"
                 "期刊参数直接写名字即可（journal_id 接受 id、全名、常见缩写）。"
                 "数据本身、坐标范围、加删曲线/子图、colorbar 方向这些必须回代码改；"
-                "改完 .py 之后调 tavotto_refresh_project（不是重跑脚本），Tavotto 界面会自己更新。"
+                "改完 .py 之后调 tavotto_refresh_project（不是重跑脚本），Tavotto 界面会自己更新；"
+                "会话不用关：下一次调用（open / preflight / export…）会按新脚本重跑同一个会话并保留修改，不要 close 再 open。"
                 "要把图改到某期刊合规并导出，优先用 tavotto_make_journal_ready（一步走完，失败停在哪步会说明）。"
                 "项目路径必须在允许的根内，模型传的路径不是授权。结果带 elided 时用 tavotto_session_state 取件，别猜 gid。"
                 "失败结果带 next 时照它做：{tool,args} 就是下一次调用，{action:edit_script} 回代码改，"
