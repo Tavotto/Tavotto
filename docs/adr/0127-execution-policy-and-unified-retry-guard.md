@@ -177,7 +177,7 @@ HTTP 显式 `execution: "native"` 的非桌面来源仍 403 `native_requires_des
 
 ## 修订（2026-11-18）：库式模块的函数入口，native 回退跑完模块再调同一个函数（一份用户反馈，维护者批准方案 A + B）
 
-**现象**：Windows 0.21.2 一份反馈包。脚本只定义零参出图函数（`geography()` / `cooling()`），没有 `if __name__` 守卫，注册入口是函数 `geography`；
+**现象**：Windows 0.21.2 一份反馈包。注册入口是函数 `geography`（同一脚本还有零参出图函数 `cooling`）；包里没有脚本源码，「没有调用它的 `if __name__` 守卫」是推测（native 退出码 0、用时远短于一次出图），合成复现见看护；
 保存辅助函数 `savefig` 之后读回自检，safe 拦下 → 换入口（`cooling`）仍拦下 → 桌面静默回退 native → 退出码 0、`no_figure_captured`。
 本 ADR「同一修订：先在 safe 下换入口」写的是「native 回退用**原来被拦的入口**」，但 native 恒 `entry=None`（`python fig.py` 跑整份模块），
 入口是函数时那句话做不到：整份模块跑完什么都不调用，回退必然白跑。
@@ -199,7 +199,9 @@ MCP `decide` 同一个理由；路由直达的 native 以 `entry_unreachable` �
 **对 native 契约的偏离**：「与 `python fig.py` 逐字相同」只在 `call` 这一档让步——那一档的 `python fig.py` 本来什么都不做，用户也从不这样跑它（图是 Tavotto 按登记的函数入口画的）。
 终端 `tavotto run`（`execspec.native_spec`）不带入口，行为不变。
 
-**看护**：`tests/test_native_function_entry.py`（判据逐种写法、命令行与校验、真 bridge 子进程调函数且 savefig 透传 / 不带入口仍是旧行为 / 入口运行期不见了是脚本错误、
+**残余**：有 `if __name__` 守卫、但守卫不调登记入口的脚本仍整份运行（守卫由用户代码决定，B 也不拦）。
+
+**看护**：`tests/test_native_function_entry_e2e.py`（真 sidecar：safe 真被 stat 读回拦下 → native 带入口出图；去掉入口即 `no_figure_captured`）、`tests/test_native_function_entry.py`（判据逐种写法、命令行与校验、真 bridge 子进程调函数且 savefig 透传 / 不带入口仍是旧行为 / 入口运行期不见了是脚本错误、
 桌面回退带原入口、有守卫不带、够不到不起 native、MCP 同一判据）。
 
 **另记（不在本修订内）**：safe 换入口挑的是同一份脚本里**另一张图**的函数（`geography` → `cooling`），即使成功也不是用户点的那张；待另行处理。
