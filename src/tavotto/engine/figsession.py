@@ -448,6 +448,7 @@ def runtime_report(
     inputs: dict | None = None,
     fidelity: dict | None = None,
     import_skips: list | None = None,
+    gui_backends: list | None = None,
 ) -> dict:
     """执行侧**自报**的运行时事实（ExecutionReceipt 的 worker 半边，ADR 0053）。
 
@@ -469,6 +470,9 @@ def runtime_report(
     `import_skips`（ADR 0153）：`bridgeboot` 的查找器跳过的「找到了但读不了」的 import 位置，每条
     `{module, entry, error}`；`entry` 是机器路径，只在私有回执里出现（`receipt.import_skips` 投影成模块名）。
     safe 与 native 同一份；没发生过就是空表。
+
+    `gui_backends`（ADR 0194）：脚本想用、被 Tavotto 中和成非交互后端的 GUI 后端名（`bridgeboot.gui_backend_events`，
+    闭集小写名，没有路径）。落在 `gui_backends_neutralized`；没发生过就是空表。
     """
     if origin not in REPORT_ORIGINS:
         raise ValueError(f"report origin 非法: {origin!r}")
@@ -502,6 +506,7 @@ def runtime_report(
         "inputs": dict(inputs) if isinstance(inputs, dict) else None,
         "fidelity": dict(fidelity) if isinstance(fidelity, dict) else None,
         "import_skips": [dict(e) for e in (import_skips or []) if isinstance(e, dict)],
+        "gui_backends_neutralized": [str(n) for n in (gui_backends or []) if isinstance(n, str)],
     }
 
 

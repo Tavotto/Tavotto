@@ -289,6 +289,11 @@ def _log_import_ignore(event: dict) -> None:
     print(f"[import-ignore] {json.dumps(event, ensure_ascii=False)}", file=sys.stderr)
 
 
+def _log_gui_backend(event: dict) -> None:
+    """脚本想用 GUI 后端、被中和成非交互后端时在 worker.log 留一行结构化记录（ADR 0194）；只有后端名。"""
+    print(f"[gui-backend] {json.dumps(event, ensure_ascii=False)}", file=sys.stderr)
+
+
 #: 与 native bridge 同一个装配点（`bridgeboot.install_unreadable_import_skipper`）：用户脚本往 `sys.path` 里塞了
 #: 当前账户读不了的项目外目录时，换下一个位置继续找，而不是让整次 import 挂在 `PermissionError` 上。
 bridgeboot.install_unreadable_import_skipper(_log_import_skip)
@@ -296,6 +301,10 @@ bridgeboot.install_unreadable_import_skipper(_log_import_skip)
 import matplotlib  # noqa: E402 —— safe 档由 Tavotto 挑解释器，backend 在装引擎之前钉死
 
 matplotlib.use("Agg")
+# 脚本写死 GUI 后端（`matplotlib.use("TkAgg")` / `rcParams["backend"]`…）时不切换、记一笔（ADR 0194）：与 native bridge 同一个装配点。
+# 必须在可信方法面基线冻结（`figcapture.freeze_trusted_surface`）之前装，包装才算基线的一部分、不被判成脚本 patch 了 matplotlib
+GUI_BACKENDS = bridgeboot.install_gui_backend_neutralizer(_log_gui_backend)
+GUI_BACKENDS.patch_matplotlib(matplotlib)
 import matplotlib.backends.backend_agg as backend_agg  # noqa: E402
 import matplotlib.figure as mfigure  # noqa: E402
 
@@ -712,6 +721,9 @@ def _install_show_capture() -> None:
     _SHOWN = figcapture.ShownFigures()
 
     def wrap(plt) -> None:
+        GUI_BACKENDS.patch_pyplot(
+            plt
+        )  # 与 show 同一个时刻：pyplot 一载入就挡住 GUI 后端（ADR 0194）
         real_show = plt.show
         if getattr(real_show, "_tavotto_show_capture", False):
             return
@@ -2960,6 +2972,7 @@ class Worker(wireproto.V1Handler):
                 inputs=self._inputs_report,
                 fidelity=self._fidelity_summary(),
                 import_skips=bridgeboot.skip_events(),
+                gui_backends=bridgeboot.gui_backend_events(),
             ),
             # 沙盒里落空的相对探路调用（#1254）：只在有记录时才有这个字段，响应形状不变
             **self._probe_miss_facts(),

@@ -1103,7 +1103,9 @@ class BridgeRun:
         )
         # 与 safe worker 同一份自报（ADR 0053）：native 的 prefix / cwd 正是
         # 「用户自己的解释器、用户自己的 cwd」这两条承诺的可核对证据。
-        out["runtime"] = _PKG.figsession.runtime_report(import_skips=bridgeboot.skip_events())
+        out["runtime"] = _PKG.figsession.runtime_report(
+            import_skips=bridgeboot.skip_events(), gui_backends=bridgeboot.gui_backend_events()
+        )
         if self.inputs_report is not None:
             # 桌面拥有的运行在脚本结束后的屏障上才有（#1047）：父进程据此给 native 成功记录补上 helper / 数据依据。
             # 不放进 `runtime`：那一段进回执身份，同一会话前后两次 build 不该因为「跑没跑完」换身份
@@ -1561,9 +1563,16 @@ def main(argv: list | None = None) -> int:
     _derive_target_facts(args)
     run = BridgeRun(args)
 
+    # 脚本写死 GUI 后端时不切换（ADR 0194）：与 safe worker 同一个装配点；这里只登记回调，等用户 import 到的那一刻才装，
+    # 自己不 import matplotlib（`matplotlib.use` 在 `matplotlib` 载入完成时包，pyplot 的 `switch_backend` 在 pyplot 载入时包）
+    gui_backends = bridgeboot.install_gui_backend_neutralizer()
     callbacks = {
+        "matplotlib": gui_backends.patch_matplotlib,
         "matplotlib.figure": _install_savefig_hook,
-        "matplotlib.pyplot": lambda plt: _install_show_hook(plt, run.barrier),
+        "matplotlib.pyplot": lambda plt: (
+            gui_backends.patch_pyplot(plt),
+            _install_show_hook(plt, run.barrier),
+        ),
     }
     if args.observe_inputs and args.project_root:
         # 输入观察装在用户代码之前；numpy 那条通道等用户 import numpy 时补（观察器自己不 import 任何东西）
@@ -1751,6 +1760,8 @@ def _write_report(run, args, exit_code: int) -> None:
             if n in sys.modules
         },
         "matplotlib_backend": _backend_name(),
+        # 脚本想用、被中和成非交互后端的 GUI 后端名（ADR 0194；与回执 `runtime.gui_backends_neutralized` 同一份，只有名字）
+        "gui_backends_neutralized": bridgeboot.gui_backend_events(),
         "tavotto_importable": _tavotto_importable(),
         # `--observe-inputs` 时脚本结束那一刻定格的输入观察（与 build 响应的 `observed_inputs` 同一份，#1047）
         "observed_inputs": run.inputs_report,
