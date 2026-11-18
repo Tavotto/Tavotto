@@ -696,6 +696,22 @@
       "from": "Drawn from {{file}}",
       "again": "Try another style",
       "undo": "Undo"
+    },
+    "batch": {
+      "pick": "Select",
+      "idle": "None selected",
+      "selected": "{{count}} selected",
+      "progress": "Plotting {{done}}/{{total}}",
+      "partial": "{{done}} done, {{failed}} failed",
+      "draw": "Plot each",
+      "merge": "Plot combined",
+      "stop": "Stop",
+      "showDone": "View assets",
+      "retry": "Retry",
+      "queued": "Queued",
+      "done": "Done",
+      "failed": "Failed",
+      "groupTitle": "{{count}} files"
     }
   }
 }

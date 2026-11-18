@@ -62,6 +62,7 @@ REFUSED_BEFORE_ACTING = frozenset(
         "not_available",
         "snapshot_failed",
         "no_script",
+        "run_arguments_sensitive",
     }
 )
 

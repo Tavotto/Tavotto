@@ -40,6 +40,7 @@ from matplotlib.markers import MarkerStyle
 from matplotlib.offsetbox import AnchoredOffsetbox, AnnotationBbox, OffsetBox, TextArea
 from matplotlib.patches import ConnectionPatch, FancyArrowPatch, Patch
 from matplotlib.path import Path
+from matplotlib.table import Table
 from matplotlib.text import Text
 from matplotlib.textpath import text_to_path
 from matplotlib.transforms import Bbox, IdentityTransform
@@ -403,7 +404,7 @@ def _layout_anchored_artist(a, ax=None) -> bool:
         if ax is not None and _depends_on(tr, ax.transData):
             return False
         pos = a.get_offset_transform()
-    elif isinstance(a, (Collection, AxesImage)):
+    elif isinstance(a, (Collection, AxesImage, Table)):
         pos = tr
     else:
         return False
@@ -1195,7 +1196,15 @@ def instrument(state: FigState) -> None:
             )
             _register_offsetbox_texts(state, f"axes_{i}.artists_{j}", art)
         for j, tbl in enumerate(getattr(ax, "tables", []) or []):
-            _register(state, f"axes_{i}.tables_{j}", tbl, "artist", f"表格 {j + 1}")
+            # 表格画在子图框坐标里（`loc` / `bbox`），位置是排版：与位图同一条判据，可拖
+            _register(
+                state,
+                f"axes_{i}.tables_{j}",
+                tbl,
+                "artist",
+                f"表格 {j + 1}",
+                draggable=not is3d and _layout_anchored_artist(tbl, ax),
+            )
         leg = ax.get_legend()
         if leg is not None:
             _register_legend(state, f"axes_{i}.legend", leg)
@@ -6526,8 +6535,8 @@ def _measure_manifest(
                     bb = artist.get_window_extent()
                     dx, dy = bb.x0, bb.y0
                     drag_prop = "pos_frac"
-                elif isinstance(artist, (Collection, AxesImage)):
-                    # 位置不是数据的集合 / 位图：与 `overrides._place_translated` 同一把尺
+                elif isinstance(artist, (Collection, AxesImage, Table)):
+                    # 位置不是数据的集合 / 位图 / 表格：与 `overrides._place_translated` 同一把尺
                     bb = pathgeom.layout_extent(artist)
                     dx, dy = bb.x0, bb.y0
                     drag_prop = "pos_frac"

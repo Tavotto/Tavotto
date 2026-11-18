@@ -488,9 +488,11 @@ function AllCanvasesMenu({ activate }: { activate: (id: string) => void }) {
  */
 function DraftTabItem() {
   const { t } = useTranslation('workspace')
+  const { t: ta } = useTranslation('ai')
   const selected = useDataFigureStore((s) => s.selected)
+  const group = useDataFigureStore((s) => s.group)
   const active = useDataFigureStore((s) => s.draftActive)
-  const name = selected ? selected.path.slice(selected.path.lastIndexOf('/') + 1) : ''
+  const name = group ? ta('dataFigureV2.batch.groupTitle', { count: group.length }) : selected ? selected.path.slice(selected.path.lastIndexOf('/') + 1) : ''
   const close = () => useDataFigureStore.getState().closeDraft()
   return (
     <div
@@ -499,7 +501,7 @@ function DraftTabItem() {
       data-active={active || undefined}
       aria-selected={active}
       tabIndex={active ? 0 : -1}
-      title={selected?.path}
+      title={group ? name : selected?.path}
       onClick={() => useDataFigureStore.getState().activateDraft()}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {

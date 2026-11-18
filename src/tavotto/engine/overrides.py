@@ -42,6 +42,7 @@ from matplotlib.lines import Line2D
 from matplotlib.markers import MarkerStyle
 from matplotlib.offsetbox import AnchoredOffsetbox, AnnotationBbox
 from matplotlib.patches import BoxStyle, FancyArrowPatch, FancyBboxPatch, Patch, Rectangle
+from matplotlib.table import Table
 from matplotlib.text import Annotation, Text
 from matplotlib.transforms import ScaledTranslation
 from mpl_toolkits.mplot3d import art3d, proj3d
@@ -503,7 +504,7 @@ def _pin_put_native(a, native) -> None:
             a.set_bounds(*native)
     elif isinstance(a, Line2D):
         a.set_transform(_patch_base_transform(a))
-    elif isinstance(a, (Collection, AxesImage)):
+    elif isinstance(a, (Collection, AxesImage, Table)):
         tr, off = _translated_bases(a)
         a.set_transform(tr)
         if off is not None:
@@ -530,7 +531,7 @@ def _pin_place(a, value) -> None:
         _place_patch(a, value)
     elif isinstance(a, Line2D):
         _place_line(a, value)
-    elif isinstance(a, (Collection, AxesImage)):
+    elif isinstance(a, (Collection, AxesImage, Table)):
         _place_translated(a, value)
     elif isinstance(a, _AxesBase):
         # pin 里是根图幅（frame）的分数；SubFigure 此刻已排好，按它换算回子图幅
@@ -2209,6 +2210,27 @@ def _place_offsetbox(a, value) -> None:
         a._box_alignment = (0.0, 0.0)  # noqa: SLF001
         a.xybox = (fx, fy)
     a.stale = True
+
+
+def _set_artist_pos_frac(a, value) -> None:
+    """`artist` 角色的拖动：表格（`ax.table`）按 transform 平移，其余是锚定框 / 插框。
+
+    表格每次 draw 按 `loc` / `bbox` 在子图框坐标里重排格子（`Table._update_positions`），
+    格子与字都画在表格自己的 transform 上——平移叠在这条 transform 上，整张表连字一起走，
+    与位置不是数据的集合 / 位图同一套（`_set_translated_pos_frac`）。"""
+    if isinstance(a, Table):
+        return _set_translated_pos_frac(a, value)
+    return _set_offsetbox_pos_frac(a, value)
+
+
+def _get_artist_pos(a):
+    return _get_translated_pos(a) if isinstance(a, Table) else _get_offsetbox_pos(a)
+
+
+def _restore_artist_pos(a, orig) -> None:
+    if isinstance(a, Table):
+        return _restore_translated_pos(a, orig)
+    return _restore_offsetbox_pos(a, orig)
 
 
 def _set_offsetbox_pos_frac(a, value) -> None:
@@ -5370,7 +5392,7 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ("image", "pos_frac"): (_get_translated_pos, _set_translated_pos_frac),
     ("patch", "size_frac"): (_get_patch_size, _set_patch_size_frac),
     # 锚定框 / 插框（ADR 0100）：cls_key 仍是 `artist`，setter 自己认类型，认不出来就抛
-    ("artist", "pos_frac"): (_get_offsetbox_pos, _set_offsetbox_pos_frac),
+    ("artist", "pos_frac"): (_get_artist_pos, _set_artist_pos_frac),
     ("arrowpatch", "arrowstyle"): (lambda a: a.get_arrowstyle(), _set_arrowstyle),
     # 虚线只作用在杆上，头保持实线（`_SolidHeadRenderer`）
     ("arrowpatch", "linestyle"): (lambda a: a.get_linestyle(), _set_arrow_linestyle),
@@ -5718,7 +5740,7 @@ _RESTORE: dict[tuple[str, str], object] = {
     ("linecoll", "pos_frac"): _restore_translated_pos,
     ("image", "pos_frac"): _restore_translated_pos,
     ("patch", "size_frac"): _restore_patch_size,
-    ("artist", "pos_frac"): _restore_offsetbox_pos,
+    ("artist", "pos_frac"): _restore_artist_pos,
     ("arrowpatch", "arrowstyle"): lambda a, orig: a.set_arrowstyle(orig),
     ("arrowpatch", "linestyle"): _restore_arrow_linestyle,
     ("arrowpatch", "color"): _restore_arrow_paint,
