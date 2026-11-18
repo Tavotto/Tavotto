@@ -69,3 +69,28 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
   里挂；冲突点名见 `fix-to-journal.md`。
 - `nextstep.py` 是纯 Python、不 import `tavotto.engine`，不在桥的三处同源约束里；它是运行时文件，进 `configure.RUNTIME_FILES`。
 - server `instructions` 写明「失败结果带 `next` 时照它做」。
+
+## 开场零开销：首包 engine 摘要、期刊宽松解析、规则进工具描述（ADR 0192 §4）
+
+> 看护用例：`tests/test_mcp_zero_onboarding.py`（结构化解析 `initialize` / `tools/list`，不对源码做子串断言）。
+
+- **健康状态并进回包**：每个 MCP 进程第一次**成功**的 `tavotto_open_figure`（单图或批量非 `failed`）回包带
+  `engine: {version, update?}`，之后不再带（`server._ENGINE_REPORTED`）。数据与话术只有一份：`server._engine_digest()`，
+  `tavotto_health` 的 `update` 也从它来；`tavotto_health` 本身不变。更新检查仍不碰网络（`updatenotice` 只读缓存），
+  所以进程里第一个 open 可能还没有 `update`——这是设计，`tavotto_export` 的 `notice_once` 兜后面。
+- **期刊参数宽松解析**：`bridge.resolve_journal_id`，在 `server.call_tool` 分派前对 `JOURNAL_RESOLVE_TOOLS`
+  （`JOURNAL_ID_TOOLS` + `tavotto_fix_to_journal` + `tavotto_make_journal_ready`）做一次，处理器与桥里一律只见精确 id。目录就是 `list_journals` 读的
+  那份（引擎 `search_journals`），**不在插件里抄期刊表**。精确 id 原样放行、回包不带 `journal_resolved`；否则归一
+  （NFKC、小写、去空白标点）后先与 id / 名称 / 别名整串相等、再子串（出版社不参与）：唯一命中 → 用它，回包
+  `journal_resolved: {from, id}`；多个 → `journal_ambiguous` + `candidates`（≤ 8）；没有 → `journal_unknown` + 最接近的
+  `candidates`（≤ 8）。与手写 `profile_id` / `journal` 同给时不解析（引擎报 `journal_id_conflict`）；总开关关着 / 旧引擎 /
+  非字符串原样放行。`journal_ambiguous` / 带候选的 `journal_unknown` 的 `next` 是 `ask_user`，选项就是候选
+  （`nextstep._pick_journal` / `_journal_not_found`）；`journal_unknown` 没候选时照旧指向 `tavotto_list_journals`。
+  先只查本机（种子 + 已缓存索引，不联网）：精确 id 与唯一命中不等远程同步；本机没唯一命中才同步一次再查。
+  同步后仍没命中、且远程目录取不到（没有缓存索引）时原样放行，由 `journal_selection` 报 `journal_offline`，
+  不断言「库里没有」。
+- **规则写进工具描述**：宿主（如 opencode）不一定加载技能，只看 `initialize.instructions` 与 `tools/list` 的 description。
+  instructions 与 `tavotto_health` / `tavotto_guide` / `tavotto_open_figure` / `tavotto_apply_overrides` / `tavotto_export` 的
+  description 写明：直接开始、工具缺失或引擎报错才调 health、不必先调 guide、期刊直接写名字、patches 发全量、什么必须回代码改、
+  导出之后再关会话。**不许改回「开工前先调 health / guide」**；description 保持短，细节进技能 `references/`。
+

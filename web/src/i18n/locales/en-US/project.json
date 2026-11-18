@@ -50,7 +50,7 @@
     "panelMissing": "Figure {{stem}} not found — the script may not have produced it yet, or it belongs to another figure library",
     "projectOpened": "Opened project {{name}}",
     "restoreTimeout": "This handed-off figure is in the asset library: pick a layout on the canvas, then add it.",
-    "runtimeNeedsRun": "{{stem}} is registered as a runtime figure but has no preview yet — run it once from the Scripts section of the asset library",
+    "runtimeNeedsRun": "{{stem}} needs to be run before it can be previewed.",
     "superseded": "The project was switched, so this handoff wasn’t placed."
   },
   "picker": {
@@ -141,6 +141,10 @@
     "trigger": "Current project {{name}} — click to switch"
   },
   "workspace": {
+    "openFailed": "Couldn’t open “{{name}}”.",
+    "openMissing": "Couldn’t find the folder “{{name}}”.",
+    "createFailed": "Couldn’t create “{{name}}”.",
+    "reselectFolder": "Choose folder again",
     "current": "Current",
     "currentActions": "More actions for the current project",
     "emptyRecent": "Projects you open will show up here",

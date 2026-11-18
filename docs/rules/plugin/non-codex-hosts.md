@@ -43,7 +43,7 @@ order: 80
   （`skill_write_failed` / `skill_source_missing`），并带 `mcp_connected=true`。Codex 不走这里（技能随插件）；Claude Code
   已装 Tavotto 插件（`register` 一步 skipped）时不再复制；Claude 桌面版没有技能目录（`builtin`）。没有技能的宿主靠 MCP
   工具 **`tavotto_guide`**（可选 `section` = `references/` 里真实存在的文件名，白名单、路径穿越回 `guide_section_unknown`，
-  读不到回 `guide_unavailable`）读全文；`initialize` 的 instructions 让它开工前先调。工具名同步在 `server.HANDLERS`、启动器 `NORMAL_TOOLS`；**不进** `usage.TOOLS` 与遥测闭集（ADR 0170：进了要升 CONSENT_VERSION，等维护者），走 `other` 桶。
+  读不到回 `guide_unavailable`）读全文；`initialize` 的 instructions 只说「遇到工具说明没写的情形再读」，不再要求开工前先调（ADR 0192 §4）。工具名同步在 `server.HANDLERS`、启动器 `NORMAL_TOOLS`；**不进** `usage.TOOLS` 与遥测闭集（ADR 0170：进了要升 CONSENT_VERSION，等维护者），走 `other` 桶。
   **技能脚本在桌面版里怎么跑**：冻结版的 `sys.executable` 是 `tavotto-cli`，不是解释器，所以 `tavotto_health` 的
   `server.python` 在冻结时为 null，并给 `skill_script_command: [<tavotto-cli>, "skill-script"]`；`tavotto skill-script
   <prefs|handoff|update_check> [args…]`（`hostskills.run_script_cli`，闭集名字、不收路径）用 runpy 在进程内跑技能脚本、

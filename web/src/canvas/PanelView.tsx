@@ -84,6 +84,7 @@ import {
 import { openQuickEdit } from './quickEditStore'
 import { pageToContentVec, panelContentTransform, panelTransformCss } from '@/lib/panelTransform'
 import { Info } from '@/components/ui/icons'
+import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Spinner } from '@/components/ui/Spinner'
 
@@ -1215,6 +1216,8 @@ type BadgeInfo = {
   cold: boolean
   text: string
   hint?: string
+  /** 角标上唯一的动作钮（目前只有「运行已结束」那档的「重新运行」） */
+  rerun?: string
 }
 
 /**
@@ -1248,6 +1251,7 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
     panelKind(obj) === 'runtime' ? s.byId[obj.fileId]?.status : undefined,
   )
   const nativeState = useNativePanelState(obj)
+  const rerunScript = obj.source?.runConfig ? '' : (obj.source?.script ?? '')
   const zoom = useViewportStore((s) => s.zoom)
   // 升级前按 figsize 放上排版的 tight 图（ADR 0098 §三）：信息级，一句话 + 提示去属性里切换
   const legacyFrame = frameSwitchAvailable(obj, useExactPanelManifest(obj))
@@ -1280,7 +1284,11 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
   const slowBusy = useElapsed(quietBusy, BUSY_BADGE_DELAY_MS)
   const info = useMemo((): BadgeInfo | null => {
     if (!relevant) return null
-    const failure: BadgeInfo | null = render?.status === 'error'
+    // 出自原样运行、那次运行已经结束（软件重开过 / 脚本跑完了）：渲染被 409 `native_session_offline` 拒绝是**正常状态**，
+    // 不是故障——不显示「渲染失败」，交给下面 native 那档说「运行已结束」并给「重新运行」（一份用户反馈：
+    // 选中这张图触发的那次渲染把 offline 角标顶成了「渲染失败」）。别的失败码照旧是失败
+    const offlineRefusal = nativeState === 'offline' && render?.code === 'native_session_offline'
+    const failure: BadgeInfo | null = render?.status === 'error' && !offlineRefusal
       ? { tone: 'error', cold: false, text: badge('error'),
           hint: render.code === 'artifact_source_unavailable' && render.error ? formatMessage(render.error) : undefined }
       : null
@@ -1317,7 +1325,11 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
       return {
         tone: 'stale',
         cold: false,
-        text: badge(NATIVE_BADGE[nativeState]),
+        // 运行已结束且能重跑：角标就是「重新运行」四个字（整枚是按钮，用户拍板），不再另写一句状态。
+        // 参数配置变体（`runConfig`）不给按钮：「打开并运行」沿用的是上次成功的配置，不一定是这一张的那份——那时照旧说「运行已结束」
+        ...(nativeState === 'offline' && rerunScript
+          ? { text: '', rerun: rerunScript }
+          : { text: badge(NATIVE_BADGE[nativeState]) }),
       }
     }
     if (render?.stale) return { tone: 'stale', cold: false, text: badge('stale') }
@@ -1357,7 +1369,7 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
       }
     }
     return null
-  }, [render, relevant, building, runtimeBadge, nativeState, rasterEditing, approx, retainedAfterFailure, quietBusy, slowBusy, frameLegacy, frameBlocked, framePending])
+  }, [render, relevant, building, runtimeBadge, nativeState, rerunScript, rasterEditing, approx, retainedAfterFailure, quietBusy, slowBusy, frameLegacy, frameBlocked, framePending])
 
   // 退场那 90ms 里 info 已经是 null 了，留住最后一版才播得完
   const last = useRef(info)
@@ -1415,6 +1427,26 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
             用户点不到自己的标题。实测撞见过。 */}
         {/* 说明钮是一颗真按钮（2026-10-07 设计审计 §10.1）：键盘能 Tab 到、读屏念得出那句说明；
             图标走图标集（此前是字符 ⓘ）。按下不冒到画布（不选中、不起拖） */}
+        {shown.rerun && (
+          // 与脚本库的「打开并运行」同一个入口：检查 → 认领 run_when_ready（原样运行照样先确认），跑完这张图回到可编辑。
+          // 目标**明确不带参数**：有按钮的只有无参数配置的那张图（`runConfig` 为空）；不读参数草稿、也不沿用上次成功的参数——
+          // 带参数跑出的是另一个资产 id，进入编辑会打开别的图，点的这张仍是「运行已结束」（Codex #2020）
+          <button
+            type="button"
+            data-badge-rerun
+            title={badge('nativeRerunHint')}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              void useProjectPreparationStore
+                .getState()
+                .open({ script: shown.rerun! }, { run: true })
+            }}
+            className="pointer-events-auto -mx-1.5 -my-0.5 rounded-full px-1.5 py-0.5 outline-none hover:opacity-80 focus-visible:focus-ring"
+          >
+            {badge('nativeRerun')}
+          </button>
+        )}
         {shown.hint && (
           <button
             type="button"

@@ -127,6 +127,7 @@ from .engine import (
     inputcopy as engine_inputcopy,
     inputremap as engine_inputremap,
     inputtranscript as engine_inputtranscript,
+    journalfacts_fold as engine_journalfacts_fold,
     journalfacts_remote as engine_journalfacts_remote,
     journalremote as engine_journalremote,
     launchctx as engine_launchctx,
@@ -14271,6 +14272,7 @@ def _journal_facts_error(exc: engine_journalfacts_remote.FactsError):
     statuses = {
         "bad_request": 400,
         "unknown_journal": 404,
+        "unknown_snapshot": 404,
         "catalog_changed": 409,
         "result_too_large": 413,
         "quota_hour": 429,
@@ -14359,6 +14361,65 @@ def api_journal_facts_search():
 @app.post("/api/journal-facts/journal")
 def api_journal_facts_journal():
     return _journal_facts_request("journal")
+
+
+@app.post("/api/journal-facts/preflight")
+def api_journal_facts_preflight():
+    """v2 事实折成预检能用的 v1 同形规则 + 「需要你确认」清单（ADR 0155 §14）。不改任何项目，只读。"""
+    from .engine import journals as engine_journals
+
+    if not engine_journals.agents_enabled():
+        return _journal_facts_response(
+            {"code": "journal_catalog_disabled", "error": "期刊标准库入口尚未开放"}, 403
+        )
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or set(body) - {"journal_id", "locale"}:
+        return _journal_facts_error(engine_journalfacts_remote.FactsError("bad_request"))
+    locale = body.get("locale")
+    if locale is not None and (not isinstance(locale, str) or len(locale) > 64):
+        return _journal_facts_error(engine_journalfacts_remote.FactsError("bad_request"))
+    try:
+        result = engine_journalfacts_remote.get_journal(body.get("journal_id"), ui_locale=locale)
+    except engine_journalfacts_remote.FactsError as exc:
+        return _journal_facts_error(exc)
+    folded = engine_journalfacts_fold.fold(result["bundle"])
+    return _journal_facts_response({"catalog_rev": result["catalog_rev"], **folded})
+
+
+@app.get("/api/journal-facts/snapshot")
+def api_journal_facts_snapshot():
+    """已验签的原文截图（v2 事实的 `snapshot.file`，内容寻址 webp）。同一个总开关；只回该刊事实引用过的图。"""
+    from .engine import journals as engine_journals
+
+    if not engine_journals.agents_enabled():
+        return _journal_facts_response(
+            {"code": "journal_catalog_disabled", "error": "期刊标准库入口尚未开放"}, 403
+        )
+    jid = request.args.get("journal_id")
+    file = request.args.get("file")
+    locale = request.args.get("locale")
+    if (
+        not isinstance(jid, str)
+        or not isinstance(file, str)
+        or (locale is not None and len(locale) > 64)
+    ):
+        return _journal_facts_error(engine_journalfacts_remote.FactsError("bad_request"))
+    try:
+        engine_journalfacts_remote.snapshot(jid, file, ui_locale=locale)
+    except engine_journalfacts_remote.FactsError as exc:
+        return _journal_facts_error(exc)
+    digest = file[len("snapshots/") : -len(".webp")]
+    # `file` 已被 `snapshot()` 按 `snapshots/<sha256>.webp` 全匹配并核过哈希；这里仍经 `send_from_directory`
+    # （safe_join）取，让「只能落在缓存目录里」由一处公共原语保证，而不是靠上游校验。
+    resp = send_from_directory(
+        engine_journalfacts_remote.cache_dir(),
+        file,
+        mimetype="image/webp",
+        max_age=31536000,
+        etag=digest,
+    )
+    resp.headers["Cache-Control"] = "private, max-age=31536000, immutable"
+    return resp
 
 
 # ------------------------- 卸载后重装 → 新手态（Windows，ADR 0136 修订） -----
@@ -15581,7 +15642,9 @@ def _propose_error(exc: "engine_ai_data_propose.ProposeError"):
 
 @app.post("/api/ai/data-figure/propose")
 def api_ai_data_figure_propose():
-    """出备选（不调模型）。body：`{folder?, table?, sheet?, hint?, answers?, header_rows?, client_request_id?, render?}`
+    """出备选（不调模型）。body：`{folder?, table?, sheet?, tables?, hint?, answers?, header_rows?, client_request_id?, render?}`
+    （`tables` = `[{path, sheet?}]`：2 到 8 份列名相同的数据合画、每份文件是一组，与 `table` 互斥；列名不一致 400 `tables_columns_differ`，
+    份数超限 400 `tables_limit_exceeded`；响应另有 `sources` 与 `group_column`，见 `ai_data_propose.propose`）
     （`render: "lazy"` = 文字先到、不问问题、缩略图在取图时画，见 `ai_data_propose.propose`）（`folder` 项目相对、缺省项目根；
     `header_rows` = `{表的路径（相对 folder，同 `table`）: 每列名字所在的物理行号}`，按文件指定，生成的脚本读表用同一个行号）。
 
@@ -15610,6 +15673,7 @@ def api_ai_data_figure_propose():
             header_rows=body.get("header_rows"),
             client_request_id=rid,
             render=body.get("render"),
+            tables=body.get("tables"),
         )
     except engine_ai_data_propose.ProposeError as exc:
         return _propose_error(exc)
@@ -15670,6 +15734,40 @@ def api_ai_data_figure_commit():
     if rid is not None and not _valid_client_request_id(rid):
         abort(400)
     project = str(ctx.path.resolve())
+    if rid and not _claim_commit_rid(project, rid):
+        # 同一请求号的首次提交还在进行中（可能还在 `prepare_v2` 里、任务尚未登记）：不取会话、不另起一份，回「任务未完成」，客户端保留请求号继续查
+        return jsonify(
+            {"task": {"task_id": None, "outcome": None, "final": False, "deduped": True}}
+        )
+    try:
+        return _data_figure_commit(ctx, project, session_id, item_id, rid)
+    finally:
+        if rid:
+            _release_commit_rid(project, rid)
+
+
+#: 数据出图提交的「请求号已受理」在途表（进程内）：`(项目, 请求号)`。**占位发生在任何可能耗时的步骤之前**（取会话、`ensure_thumbnail`、`prepare_v2`、
+#: `run_task`），所以客户端在 prepare 期间断线后用同一请求号重试，查得到「已受理、未完成」，不会掉进「会话已放弃 → `propose_session_expired` →
+#: 客户端以为什么都没写、换号重画」而与原 handler 随后写出的脚本重复。`finally` 里一定清（成功登记 / 失败 / 抛异常都清），所以不会有「永远在途」；
+#: 进程重启占位随之消失——此时原 handler 线程也没了、不会再写，同一请求号重来是一次全新的提交（任务若已登记，`find_request` 查得到，照旧去重）。
+_COMMIT_INFLIGHT: set[tuple[str, str]] = set()
+_COMMIT_INFLIGHT_LOCK = threading.Lock()
+
+
+def _claim_commit_rid(project: str, rid: str) -> bool:
+    with _COMMIT_INFLIGHT_LOCK:
+        if (project, rid) in _COMMIT_INFLIGHT:
+            return False
+        _COMMIT_INFLIGHT.add((project, rid))
+        return True
+
+
+def _release_commit_rid(project: str, rid: str) -> None:
+    with _COMMIT_INFLIGHT_LOCK:
+        _COMMIT_INFLIGHT.discard((project, rid))
+
+
+def _data_figure_commit(ctx, project: str, session_id: str, item_id: str, rid):
     if rid:
         # 先去重、后取会话（同 v1）：首次请求已提交、响应丢了（或会话已过期 / 被放弃），同 id 重发只回既有任务的结局，不再取会话
         known = engine_ai.find_request(str(ctx.path.resolve()), rid)
@@ -15706,6 +15804,7 @@ def api_ai_data_figure_commit():
             recipe=item.recipe,
             title_code=item.code,
             header_line=sess.header_line,
+            merge=sess.merge,
         )
         prepared = engine_ai_data_task.prepare_v2(ctx.path, sel)
         env = engine_ai_data_task.envelope_for_v2(project_key=project, prepared=prepared, rid=rid)
@@ -18802,6 +18901,12 @@ def main():
                 )
         except (RuntimeError, OSError) as exc:
             print(f"* 无法打开项目 {candidate}: {exc}")
+            print(f"* 请在{where}中选择或新建项目")
+        except Exception:  # noqa: BLE001 —— 打开上次项目的任何失败都不挡启动
+            # 注册表 / 状态文件坏了会引出 RuntimeError / OSError 以外的异常（ValueError、KeyError、
+            # UnicodeDecodeError、AtomicWriteError……）：冒出去就是进程在握手前退出、救援页「重新启动」
+            # 永远同一个结果（TVD-MHQJ）。照样起服务，界面里的项目选择页接手。
+            LOG.error("启动时打开项目失败，改由项目选择页接手", exc_info=True)
             print(f"* 请在{where}中选择或新建项目")
     else:
         print(f"* 尚未选择项目：请在{where}中新建或打开一个项目")

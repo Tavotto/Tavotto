@@ -2,7 +2,7 @@
  * 数据页的 store（ADR 0178）：临时标签的开 / 关 / 复用、项目代际 / 请求序号 / 发起时的项目、出图的各结局（verified / unverifiable /
  * unplotted / mismatch / 缺 data_check）、静默重新出备选、提交请求号的复用。界面走一遍在 `components/datastudio/dataDraft.test.tsx`。
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ApiError,
   aiDataFigureCommit,
@@ -15,6 +15,7 @@ import {
   type AiDataProposeResponse,
 } from '@/lib/api'
 import { resetCommitQueue } from '@/lib/dataCommitQueue'
+import { commitPollConfig } from '@/lib/dataCommitPoll'
 import { setCurrentProjectId } from '@/lib/session'
 import { useProjectStore } from '@/store/projectStore'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
@@ -209,6 +210,47 @@ describe('出图的各结局', () => {
     expect(st().problem).toMatchObject({ kind: 'commit' })
     await st().retry()
     expect(commit.mock.calls[1]![0].client_request_id).toBe(commit.mock.calls[0]![0].client_request_id)
+  })
+  describe('同一请求号重发时原任务还在处理中（后端去重回 final:false）', () => {
+    const running = (): AiDataCommitResult => ({ task: { task_id: null, outcome: null, final: false, deduped: true } })
+    beforeEach(() => {
+      commitPollConfig.intervalMs = 1
+      commitPollConfig.maxMs = 40
+    })
+    afterEach(() => {
+      commitPollConfig.intervalMs = 1500
+      commitPollConfig.maxMs = 60_000
+    })
+    it('不清请求号、不当成画失败：有界地重问同一个请求号，final 之后正常进编辑器；超时则这次没成但请求号保留，再点「再试一次」仍是同一个', async () => {
+      await ready()
+      commit.mockRejectedValueOnce(new Error('network'))
+      await st().draw('i1')
+      expect(st().problem).toMatchObject({ kind: 'commit' })
+      const rid = commit.mock.calls[0]![0].client_request_id
+      // 一直未完成直到超时
+      commit.mockResolvedValue(running())
+      await st().retry()
+      expect(st().problem).toMatchObject({ kind: 'commit', retryable: true })
+      expect(propose).toHaveBeenCalledTimes(1) // 没有重新出候选
+      // 再点一次：同一个请求号，这次 final
+      commit.mockReset()
+      commit.mockResolvedValueOnce(running()).mockResolvedValueOnce(committed())
+      await st().retry()
+      await flush()
+      expect(new Set(commit.mock.calls.map((c) => c[0].client_request_id))).toEqual(new Set([rid]))
+      expect(prepOpen).toHaveBeenCalledWith(expect.stringContaining('a_figure.py'))
+    })
+    it('轮询中途换项目（clear）：不再重问', async () => {
+      await ready()
+      commit.mockResolvedValue(running())
+      const p = st().draw('i1')
+      await flush()
+      st().clear()
+      await p
+      const n = commit.mock.calls.length
+      await new Promise((r) => setTimeout(r, 15))
+      expect(commit.mock.calls.length).toBe(n)
+    })
   })
   it('同名的图占满：不可重试（只留后端那句话）；别的失败仍可重试', async () => {
     await ready()
