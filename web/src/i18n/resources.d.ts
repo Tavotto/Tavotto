@@ -3865,6 +3865,7 @@ export default interface Resources {
       "sync_different_scripts": "两张图不属于同一个脚本，无法同步",
       "table_not_found": "这张表不在所选文件夹里。",
       "tables_columns_differ": "列名不一致，无法合并作图。",
+      "tables_labels_collide": "这几个文件的名字分不开，没法合并作图。",
       "tables_limit_exceeded": "一次最多合并 {{max}} 个文件。",
       "taf_disabled": "这个实验功能还没有开启。",
       "tex_command_missing": "这张图用了 LaTeX 排版（text.usetex），但当前渲染环境的 PATH 上找不到 {{command}}。这是系统里的 TeX 工具，不是 Python 包；装好 TeX 发行版后，如果刚装完，请重启 Tavotto 让它拿到新的 PATH，再重试。",

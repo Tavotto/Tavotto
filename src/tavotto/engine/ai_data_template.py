@@ -91,11 +91,21 @@ def read_xlsx(path, sheet):
     return [h.strip() for h in table[0]], table[1:]
 
 
+def group_key(label):
+    """一个分组列的单元格在分组时的键：去首尾空白、区分大小写、不做 Unicode 规范化——`comparison_data` / `trend_data` / `relationship_data` 与
+    `ai_data_figure._summarize` 的取值集合都是这个写法（`cell.strip()`）。合画的文件标签是否「分得开」就按它判（`merge_tables` 与父进程同一个函数）。"""
+    return label.strip()
+
+
 def merge_tables(tables, labels, column):
     """几份列名与顺序都相同的表 → 一张表（合画）：按给定顺序逐份拼行，表头末尾多一列 `column`，值是该份的 `labels[i]`。
     `tables` 是 `[(表头, 数据行), …]`（各份读法与单份一样，由调用方先读好）；某份表头与第一份不同直接 `ValueError`——数据在生成之后变了，
-    不悄悄错位拼接。只拼内存里的副本，数据文件不动。"""
+    不悄悄错位拼接；标签按 `group_key` 有重复也直接 `ValueError("tables_labels_collide")`。只拼内存里的副本，数据文件不动。"""
     header = list(tables[0][0])
+    if len({group_key(lab) for lab in labels}) != len(labels):
+        raise ValueError(
+            "tables_labels_collide"
+        )  # 两个文件的标签在分组时会被并成一组：绝不静默并组
     out = []
     for (head, rows), label in zip(tables, labels):
         if list(head) != header:
@@ -609,6 +619,7 @@ RUNTIME_FUNCTIONS = (
     read_delimited,
     read_xlsx,
     apply_cells,
+    group_key,
     merge_tables,
     distinct,
     make_label,

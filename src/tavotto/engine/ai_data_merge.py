@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import unicodedata
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 
@@ -35,7 +36,7 @@ _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 
 class MergeError(ValueError):
-    """合画的结构化失败（`ai_data_propose` 转成 `ProposeError`）：`code` 是 `tables_columns_differ` / `tables_limit_exceeded` / `tables_changed`。"""
+    """合画的结构化失败（`ai_data_propose` 转成 `ProposeError`）：`code` 是 `tables_columns_differ` / `tables_labels_collide` / `tables_changed`。"""
 
     def __init__(self, code: str, params: dict | None = None):
         super().__init__(code)
@@ -112,6 +113,12 @@ def rebase(path: str, landing: str) -> str:
     return path if not landing else PurePosixPath(path).relative_to(landing).as_posix()
 
 
+def unique_key(label: str) -> str:
+    """标签「分得开」的判据：先是分组键（`ai_data_template.group_key`，脚本与分组逻辑用的同一个），再收紧——Unicode 规范化（NFC）与不区分大小写
+    （大小写不敏感的文件系统上 `a.csv` / `A.csv` 不能共存，用户眼里也是一个名字）。比分组键严，所以通过它的标签一定也是不同的分组。"""
+    return unicodedata.normalize("NFC", tpl.group_key(label)).casefold()
+
+
 def _clean(text: str) -> str:
     t = _CONTROL.sub(" ", text).strip()
     return t[:_LABEL_MAX]
@@ -145,8 +152,8 @@ def unique_labels(items: list[tuple[str, str | None]]) -> list[str]:
     def conflicts() -> list[int]:
         count: dict[str, int] = {}
         for lab in labels:
-            count[lab.casefold()] = count.get(lab.casefold(), 0) + 1
-        return [i for i, lab in enumerate(labels) if count[lab.casefold()] > 1]
+            count[unique_key(lab)] = count.get(unique_key(lab), 0) + 1
+        return [i for i, lab in enumerate(labels) if count[unique_key(lab)] > 1]
 
     stages = (
         [(k, True) for k in range(1, depth + 1)]
@@ -159,14 +166,24 @@ def unique_labels(items: list[tuple[str, str | None]]) -> list[str]:
             break
         for i in bad:
             labels[i] = cand(i, k, ext)
-    bad = conflicts()
-    if bad:  # 兜底：同一标签的按出现顺序加 #2、#3 …
-        seen: dict[str, int] = {}
-        for i, lab in enumerate(labels):
-            n = seen.get(lab.casefold(), 0) + 1
-            seen[lab.casefold()] = n
-            if n > 1 and i in bad:
-                labels[i] = f"{lab} #{n}"
+    # 兜底：同一标签的第一份保留，其余加 ` #n`，n 从 2 递增到与**全部**已占用的标签（含别的文件本来的标签）都不撞为止
+    used = {unique_key(lab) for lab in labels}
+    seen: set[str] = set()
+    for i, lab in enumerate(labels):
+        key = unique_key(lab)
+        if key not in seen:
+            seen.add(key)
+            continue
+        n = 2
+        while unique_key(f"{lab} #{n}") in used:
+            n += 1
+        labels[i] = f"{lab} #{n}"
+        used.add(unique_key(labels[i]))
+        seen.add(unique_key(labels[i]))
+    if len({tpl.group_key(lab) for lab in labels}) != len(
+        labels
+    ):  # 不可能走到：上面保证唯一；留作自检
+        raise MergeError("tables_labels_collide")
     return labels
 
 
@@ -300,9 +317,16 @@ def build(
         replace(src, entry=_entry_of(src, vals), sheet=vals.sheet)
         for src, vals in zip(sources, summaries, strict=True)
     )
-    header, rows = tpl.merge_tables(
-        [(v.columns, v.rows) for v in summaries], [s.label for s in filled], column
-    )
+    try:
+        header, rows = tpl.merge_tables(
+            [(v.columns, v.rows) for v in summaries], [s.label for s in filled], column
+        )
+    except ValueError as exc:  # 标签在分组时会并成一组：明确失败，绝不静默并组
+        raise MergeError("tables_labels_collide") from exc
+    if len({tpl.group_key(r[-1]) for r in rows}) != len(
+        filled
+    ):  # 拼好之后再按分组键数一遍：组数必须等于文件数
+        raise MergeError("tables_labels_collide")
     numbers = [0] + [v.row_number(i) for v in summaries for i in range(len(v.rows))]
     values = adf._summarize(
         [header, *rows],

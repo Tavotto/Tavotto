@@ -21,6 +21,7 @@ import pytest
 from tavotto.engine import (
     ai_data_figure as adf,
     ai_data_merge as M,
+    ai_data_propose as P,
     ai_data_template as tpl,
     ai_history,
     discover,
@@ -847,3 +848,121 @@ def test_classify_groups_by_values_inside_each_file(tmp_path):
     assert (
         "tag" not in values.groups and "tag" not in entry.summary.groups and "mix" in values.groups
     )
+
+
+# =========================================================================== 标签撞车（Codex P1）：绝不静默并组
+def _groups_of(labels):
+    """合画后按分组键数出来的组数（模板里 `comparison_data` 的分组键）。"""
+    header = ["v"]
+    tables = [(header, [["1"], ["2"]]) for _ in labels]
+    h, rows = tpl.merge_tables(tables, labels, "file")
+    d = tpl.comparison_data(h, rows, None, "v", "file", None, "as_given")
+    return len(d["groups"])
+
+
+def _assert_apart(labels, n):
+    assert len(labels) == n
+    assert len({tpl.group_key(x) for x in labels}) == n, labels
+    assert len({M.unique_key(x) for x in labels}) == n, labels
+    assert _groups_of(labels) == n
+
+
+def test_codex_example_a_A_and_a_label_equal_to_the_fallback_form():
+    items = [("a.csv", None), ("A.csv", None), ("A.csv #2.csv", None)]
+    labels = M.unique_labels(items)
+    _assert_apart(labels, 3)
+    # 第一次的兜底形态不许撞上第三个文件本来的名字
+    assert labels.count("A.csv #2") <= 1
+
+
+@pytest.mark.parametrize(
+    "items",
+    [
+        # 大小写不敏感口径：不同文件夹里的 a.csv / A.csv
+        [("x/a.csv", None), ("y/A.csv", None)],
+        [("a.csv", None), ("A.csv", None), ("A.csv #2.csv", None), ("A.csv #3.csv", None)],
+        [("a.csv", None), ("a.csv #2.csv", None), ("d/a.csv", None), ("e/a.csv", None)],
+        # 标签恰好等于别的文件的「兜底形态」
+        [("p/run.csv", None), ("q/run.csv", None), ("p/run #2.csv", None)],
+        [("run.csv", None), ("RUN.csv", None), ("run #2.csv", None), ("Run #2.csv", None)],
+        # 全数字名、带首尾 / 内部空白、Unicode 规范化等价（é 两种写法）
+        [("1.csv", None), ("01.csv", None), ("1.0.csv", None), ("d/1.csv", None)],
+        [(" a .csv", None), ("a.csv", None), ("a  .csv", None)],
+        [("café.csv", None), ("café.csv", None)],
+        # 同一个工作簿的几张表、表名只差大小写
+        [("w.xlsx", "S"), ("w.xlsx", "s"), ("w.xlsx", "S ")],
+        # 8 个文件全同名、不同文件夹
+        [(f"d{i}/data.csv", None) for i in range(8)],
+        [("data.csv", None), *[(f"d{i}/data.csv", None) for i in range(7)]],
+    ],
+)
+def test_labels_never_collide_under_the_grouping_key(items):
+    _assert_apart(M.unique_labels(items), len(items))
+
+
+def test_long_names_that_truncate_to_the_same_label_stay_apart():
+    items = [(f"{'x' * 150}{i}.csv", None) for i in range(4)]
+    _assert_apart(M.unique_labels(items), 4)
+
+
+try:
+    from hypothesis import given, settings, strategies as st
+except ImportError:  # pragma: no cover
+    given = None
+
+if given is not None:
+    _seg = st.text(alphabet="aAbB1 _-.é", min_size=1, max_size=5).filter(
+        lambda t: t.strip(" .") != ""
+    )
+    _path = st.builds(
+        lambda dirs, stem, ext: "/".join([*dirs, stem + ext]),
+        st.lists(_seg, max_size=2),
+        _seg,
+        st.sampled_from([".csv", ".tsv", ".CSV", ".txt"]),
+    )
+
+    @settings(max_examples=300, deadline=None)
+    @given(st.lists(_path, min_size=2, max_size=8, unique=True))
+    def test_any_distinct_paths_get_pairwise_distinct_labels(paths):
+        items = [(p, None) for p in paths]
+        labels = M.unique_labels(items)
+        _assert_apart(labels, len(items))
+        assert all(adf.parse_cell(x)[0] == "text" or "/" in x or "." in x for x in labels)
+
+
+def test_the_runtime_function_refuses_labels_that_would_merge_into_one_group():
+    t = (["v"], [["1"]])
+    with pytest.raises(ValueError, match="tables_labels_collide"):
+        tpl.merge_tables([t, t], ["a", " a "], "file")  # 去首尾空白后相同
+    tpl.merge_tables([t, t], ["a", "A"], "file")  # 区分大小写：分组时是两组，运行时函数不替用户收紧
+    assert tpl.group_key in tpl.RUNTIME_FUNCTIONS
+
+
+def test_build_fails_loudly_instead_of_merging_colliding_labels(tmp_path):
+    def summary(name):
+        p = tmp_path / name
+        p.write_text("dose,resp\n1,2\n2,3\n3,4\n", encoding="utf-8")
+        return adf.inspect_data_source(p, v2=True)
+
+    a, b = summary("a.csv"), summary("b.csv")
+    srcs = [
+        M.Source("a.csv", "a.csv", None, "same", a.sha256, a.size, a.header_line),
+        M.Source("b.csv", "b.csv", None, "same ", b.sha256, b.size, b.header_line),
+    ]
+    with pytest.raises(M.MergeError) as e:
+        M.build(srcs, [a, b], "")
+    assert e.value.code == "tables_labels_collide"
+    ok = [replace_label(srcs[0], "one"), replace_label(srcs[1], "two")]
+    entry, values = M.build(ok, [a, b], "")
+    assert len({r[-1].strip() for r in values.rows}) == 2
+
+
+def replace_label(src, label):
+    import dataclasses
+
+    return dataclasses.replace(src, label=label)
+
+
+def test_the_collide_code_is_a_registered_propose_error():
+    assert "tables_labels_collide" in P.ERROR_CODES
+    P.ProposeError("tables_labels_collide")

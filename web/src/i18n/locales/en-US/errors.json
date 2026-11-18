@@ -419,6 +419,7 @@
     "propose_cells_need_rule": "This description first has to be turned into a rule by the assistant, so it can’t be used directly yet.",
     "tables_columns_differ": "Columns don’t match, so these can’t be combined.",
     "tables_limit_exceeded": "Combine up to {{max}} files at a time.",
+    "tables_labels_collide": "These files’ names can’t be told apart, so they can’t be combined.",
     "data_figure_recipe_invalid": "This option no longer fits the data. Please generate the options again.",
     "data_path_outside_project": "This data file isn’t in the current project.",
     "data_not_found": "The data file can’t be found.",

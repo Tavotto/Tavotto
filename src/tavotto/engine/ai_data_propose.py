@@ -68,6 +68,7 @@ ERROR_CODES = (
     "propose_thumbnail_failed",  # 懒渲染（`render="lazy"`）：这一张缩略图画不出来（`params.reason` 是 `DROP_REASONS` 里的码）
     "tables_columns_differ",  # 合画（`tables`）：这几份的列名集合或顺序不一样，拼不成一张表（`params.index` = 第一个与第一份不同的下标）
     "tables_limit_exceeded",  # 合画：份数超过上限（`params.max`）
+    "tables_labels_collide",  # 合画：两个文件的标签在分组时会被并成一组（内部保险，正常不会出现；绝不静默并组）
 )
 #: 一个备选没能出现在结果里的原因（`dropped[].reason_code` / `nothing.reasons`；文案在前端 `dataFigure.reason.<码>`）
 DROP_REASONS = (
