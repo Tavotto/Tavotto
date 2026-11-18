@@ -49,7 +49,7 @@
     "panelMissing": "没找到图 {{stem}}——脚本可能还没产出，或它在别的图库里",
     "projectOpened": "已打开项目 {{name}}",
     "restoreTimeout": "这次交接的图在素材库里：先在画布上选一份排版，再把它加进来。",
-    "runtimeNeedsRun": "{{stem}} 已登记为运行时图，但还没有预览——到素材库的「脚本」区运行一次。",
+    "runtimeNeedsRun": "{{stem}} 需要在运行后预览。",
     "superseded": "项目已切换，这次交接没有放入。"
   },
   "picker": {
@@ -140,6 +140,10 @@
     "trigger": "当前项目 {{name}}，点击切换"
   },
   "workspace": {
+    "openFailed": "没能打开「{{name}}」。",
+    "openMissing": "无法找到「{{name}}」文件夹。",
+    "createFailed": "未成功新建「{{name}}」。",
+    "reselectFolder": "重新选择文件夹",
     "current": "当前",
     "currentActions": "当前项目的更多操作",
     "emptyRecent": "打开过的项目会出现在这里",
