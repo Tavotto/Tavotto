@@ -343,6 +343,45 @@ def _register_figure_level(state: FigState, owner, prefix: str, counts: dict[str
         _register_figure_level(state, sub, f"{prefix}.subfigs_{k}", counts)
 
 
+def _depends_on(t, node) -> bool:
+    """`t` 是不是 `node`、或经 matplotlib 的 transform 依赖图挂在 `node` 上。
+
+    沿 `node._parents` 往上走：`a + b`（Composite）、`blended_transform_factory`（Blended）、
+    `TransformWrapper` 构造时都 `set_children`，依赖 `node` 的 transform 一律在这张图里。"""
+    seen: set[int] = set()
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if n is t:
+            return True
+        if id(n) in seen:
+            continue
+        seen.add(id(n))
+        for ref in list(getattr(n, "_parents", {}).values()):
+            parent = ref()
+            if parent is not None:
+                stack.append(parent)
+    return False
+
+
+def _layout_anchored_line(ln, ax) -> bool:
+    """子图里这条线的位置是不是排版而不是数据（ADR 0100 修订 2026-11-18）。
+
+    两条都要成立：x、y 都不经过 `transData`（`axhline` 一边是数据、`transData + 平移`
+    整条是数据，都不算）；并且落在认得的排版坐标系上（子图框 / 图幅 / 英寸）——
+    没登记依赖关系的自定义 transform 判不出来，按数据处理、不宣称可拖。"""
+    t = ln.get_transform()
+    if _depends_on(t, ax.transData):
+        return False
+    fig = ax.get_figure()
+    roots = [ax.transAxes]
+    if fig is not None:
+        roots.append(fig.transSubfigure)
+        root = pathgeom.root_figure(fig)
+        roots.extend((root.transFigure, root.dpi_scale_trans))
+    return any(_depends_on(t, r) for r in roots)
+
+
 def _snippet(text: str, n: int = 18) -> str:
     text = " ".join(text.split())
     return text if len(text) <= n else text[: n - 1] + "…"
@@ -971,7 +1010,16 @@ def instrument(state: FigState) -> None:
             if not lab or lab.startswith("_"):
                 lab = proxy_names.get(id(ln), "")  # 图例代理句柄借来的显示名
             nice = f"曲线 “{_snippet(lab)}”" if lab and not lab.startswith("_") else f"曲线 {j + 1}"
-            _register(state, f"axes_{i}.lines_{j}", ln, "line", nice)
+            # 位置不是数据的线（`transform=ax.transAxes` 画的引线 / 标注线）是排版，与图级的线
+            # 同一套 `("line", "pos_frac")` 可拖；数据坐标的曲线（含 axhline / 数据 + 平移）照旧不拖
+            _register(
+                state,
+                f"axes_{i}.lines_{j}",
+                ln,
+                "line",
+                nice,
+                draggable=not is3d and ax not in cbar_of_ax and _layout_anchored_line(ln, ax),
+            )
         if not is3d:
             for j, im in enumerate(ax.images):
                 _register(state, f"axes_{i}.images_{j}", im, "image", f"图像 {j + 1}")
@@ -2024,7 +2072,7 @@ def _text_fields(t) -> list[dict]:
             "type": "number",
             "value": round(float(t.get_fontsize()), 2),
             "min": 3,
-            "max": 36,
+            "max": 200,
             "step": 0.5,
             "unit": "pt",
         },
@@ -3525,7 +3573,7 @@ def _colorbar_fields(p, state: FigState, gid: str) -> list[dict]:
             "type": "number",
             "value": round(_cb_tick_fontsize(p), 2),
             "min": 3,
-            "max": 24,
+            "max": 200,
             "step": 0.5,
             "unit": "pt",
             "group": "刻度",
@@ -3573,7 +3621,7 @@ def _legend_fields(leg) -> list[dict]:
             "type": "number",
             "value": round(size, 2) if size > 0 else 8,
             "min": 3,
-            "max": 24,
+            "max": 200,
             "step": 0.5,
             "unit": "pt",
         },
@@ -3585,7 +3633,7 @@ def _legend_fields(leg) -> list[dict]:
             "type": "number",
             "value": round(float(leg.get_title().get_fontsize()), 2),
             "min": 3,
-            "max": 24,
+            "max": 200,
             "step": 0.5,
             "unit": "pt",
             "group": "样式",
@@ -3909,7 +3957,7 @@ def _tick_fields(ts: TickSet) -> list[dict]:
             "type": "number",
             "value": round(float(ts._first(lambda t: t.get_fontsize(), 8.5)), 2),
             "min": 3,
-            "max": 24,
+            "max": 200,
             "step": 0.5,
             "unit": "pt",
         },
@@ -6403,7 +6451,7 @@ def _measure_manifest(
                     dx, dy = bb.x0, bb.y0
                     drag_prop = "pos_frac"
                 elif isinstance(artist, Line2D):
-                    # 图级的线（只有它们宣称可拖）：包围盒左下角，与 `overrides._place_line` 同一把尺
+                    # 图级的线与子图里位置不是数据的线：包围盒左下角，与 `overrides._place_line` 同一把尺
                     bb = artist.get_window_extent()
                     dx, dy = bb.x0, bb.y0
                     drag_prop = "pos_frac"

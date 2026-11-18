@@ -187,6 +187,8 @@ interface DataFigureStore {
 
 let epoch = 0
 let filesSeq = 0
+/** 清单在途时又来了磁盘变化：只记一个标记，在途那次结束后恰好补一次尾随重读（保证最后一个事件之后的磁盘状态一定被读到） */
+let filesDirty = false
 let proposeSeq = 0
 let runSeq = 0
 let commitSeq = 0
@@ -489,7 +491,8 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       }
       // 后端明确拒绝了：这次请求号作废；没收到结果（断网 / 网关）：保留请求号，「再试一次」复用，不会画出第二份
       if (isDefiniteRunFailure(e)) commitRid = null
-      showOutcome({ problem: { kind: 'commit', error: reasonOf(e), retryable: true } })
+      // 同名的图占满了：后端的结论是确定的，再试一次永远一样，只留后端那句话
+      showOutcome({ problem: { kind: 'commit', error: reasonOf(e), retryable: code !== 'figure_name_exhausted' } })
     }
   }
 
@@ -508,6 +511,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     ...initial,
 
     enter: () => {
+      filesDirty = false
       set({ ...initial })
       host.openDrawer()
       void get()
@@ -536,10 +540,21 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         if (ep !== epoch || mine !== filesSeq) return
         set({ files: { status: 'error', entries: keep, error: reasonOf(e) } })
       }
+      // 只有最新的那次在途读完才补尾随（旧的被取代时，取代它的那次读完会补）
+      if (filesDirty) {
+        filesDirty = false
+        void get().loadFiles()
+      }
     },
 
     invalidateFiles: () => {
-      if (get().files.status !== 'idle') void get().loadFiles()
+      const st = get().files.status
+      if (st === 'idle') return
+      if (st === 'loading') {
+        filesDirty = true
+        return
+      }
+      void get().loadFiles()
     },
 
     select: (ref) => {
@@ -658,6 +673,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
 
     clear: () => {
       epoch += 1
+      filesDirty = false
       commitRid = null
       overviewSeq.clear()
       set({ ...initial })

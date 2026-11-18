@@ -120,9 +120,9 @@ tavotto_open_figure { "project_path": "/absolute/path/to/figures", "stem": "Fig1
   时它会拒绝——**先修或问用户**；用户明确说「就这样导出」才带
   `explicit_confirm: true`（这次会记进 proof report）。
 * **收尾** 导出后 `tavotto_close_session`，没导出也不丢。
-用户说要投某本期刊：先 `tavotto_list_journals { "query": "期刊名" }` 查 id，之后 open / preflight /
-export / normalize 都带 `journal_id`，别再手写尺寸；查不到才手写 `journal`（见 `references/publication-style.md`「按期刊」）。
-**改到合规先 `tavotto_fix_to_journal`**：`column_choice_required` 就问用户栏位，`fix.kind=manual` 才改脚本。
+要投期刊：先 `tavotto_list_journals { "query": "期刊名" }` 查 id，之后 open / preflight /
+export / normalize 都带 `journal_id`；查不到才手写 `journal`（见 `references/publication-style.md`「按期刊」）。
+改到合规：`tavotto_make_journal_ready` 一步导出，分步 `tavotto_fix_to_journal`（`column_choice_required` 问栏位，`fix.kind=manual` 改脚本）。
 
 **这些工具不会动用户的 .py 源码。** 数据、坐标范围、加删曲线/子图、colorbar
 方向仍然只能回代码改（清单见 `references/compatibility.md`）。

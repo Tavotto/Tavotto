@@ -456,6 +456,18 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     expect(commit.mock.calls[1]![0].client_request_id).toBe(rid)
   })
 
+  it('同名的图占满（figure_name_exhausted）：不出「再试一次」', async () => {
+    propose.mockResolvedValue(cands())
+    commit.mockRejectedValueOnce(new ApiError('figure_name_exhausted', 422, { code: 'figure_name_exhausted' }))
+    await start()
+    await open(0)
+    await allThumbs()
+    await click(qa('[data-candidate]')[0]!)
+    await flush()
+    expect(q('[data-studio-problem]')).not.toBeNull()
+    expect(q('[data-studio-retry]')).toBeNull()
+  })
+
   it('出图中关掉临时标签只是收起；没成的结局再把它翻出来', async () => {
     propose.mockResolvedValue(cands())
     let release!: (v: AiDataCommitResult) => void

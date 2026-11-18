@@ -488,7 +488,9 @@ class SvgWriter:
                 jpeg = rasterio.jpeg_passthrough(
                     data, res.kind, max_pixels=raster.SOURCE_MAX_PIXELS
                 )
-                if jpeg is not None:
+                # 带方向标记的 JPEG 不直通：各家 SVG 阅读器对 `<image>` 里 Exif 方向照不照办不一致，解码成摆正后的 PNG
+                # 才在哪儿都一样（`width` / `height` 已是摆正后的，与解码结果一致）
+                if jpeg is not None and jpeg["orientation"] == 1:
                     mime, encoded, channels = "image/jpeg", data, jpeg["components"]
                 else:
                     buf = rasterio.decode(data, res.kind, max_pixels=raster.SOURCE_MAX_PIXELS)

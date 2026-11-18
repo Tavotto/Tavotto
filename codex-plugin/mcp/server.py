@@ -1379,6 +1379,7 @@ NORMAL_TOOLS = (
     "tavotto_list_journals",
     "tavotto_get_journal_facts",
     "tavotto_fix_to_journal",
+    "tavotto_make_journal_ready",
 )
 
 
