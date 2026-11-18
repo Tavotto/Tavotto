@@ -24,7 +24,7 @@ const BAR = 9
 function dragStart(e: ReactPointerEvent, o: PathTextObject) {
   e.stopPropagation()
   e.preventDefault()
-  if (e.button !== 0) return
+  if (e.button !== 0 || o.locked) return
   const store = useDocumentStore.getState()
   useInteractionStore.getState().begin('pathTextStart')
   store.beginTxn(msg('history.pathTextStart', undefined, 'workspace'))
@@ -55,7 +55,7 @@ function dragStart(e: ReactPointerEvent, o: PathTextObject) {
 function dragGap(e: ReactPointerEvent, o: PathTextObject, start: [number, number], up: [number, number]) {
   e.stopPropagation()
   e.preventDefault()
-  if (e.button !== 0) return
+  if (e.button !== 0 || o.locked) return
   const store = useDocumentStore.getState()
   const auto = autoOffsetOf(o.id)
   useInteractionStore.getState().begin('pathTextGap')
@@ -87,7 +87,7 @@ export function PathTextHandles({ t }: { t: ViewTransform }) {
   const anchorEdit = useActivePathEdit()
   if (ids.length !== 1 || tool !== 'select' || anchorEdit) return null
   const o = objects.find((x) => x.id === ids[0])
-  if (!o || o.type !== 'pathText' || o.hidden) return null
+  if (!o || o.type !== 'pathText' || o.hidden || o.locked) return null
   const a = arcPathOf(o, o.w, o.h)
   if (a.pts.length < 2) return null
   const view = (q: [number, number]) => {
