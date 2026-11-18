@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { ArrowLeftRight, GradientLinear, GradientRadial, Square } from '@/components/ui/icons'
@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils'
 import { updateObjects } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useGradientEditStore } from '@/store/gradientEditStore'
+import { registerGesture, tryRegisterPointerCancel } from '@/store/gestureCoordinator'
 import type { CanvasObject, Gradient, PathObject, ShapeObject } from '@/types/document'
 import { INSPECTOR_LABEL_W } from '../layout'
 
@@ -146,7 +147,12 @@ export function GradientTools({ objs, target }: { objs: readonly Mark[]; target:
           max={360}
           precision={0}
           unit="°"
-          onChange={(v) => commit(withLinearAngle(g, v, first.w, first.h))}
+          onChange={(v) =>
+            // 每个对象按自己的宽高换算端点（宽高比不同时同一个角度才是同一个角度）
+            write(live, target, hist('setGradient'), (o) => {
+              return withLinearAngle(g, v, o.w, o.h)
+            })
+          }
         />
       )}
       <IconButton label={gk('reverse')} side="left" onClick={() => commit(reverseStops({ ...g, stops: sortedStops(g) }))}>
@@ -169,7 +175,21 @@ export function GradientEditor({ objs, target }: { objs: readonly Mark[]; target
   const [removing, setRemoving] = useState(false)
   const barRef = useRef<HTMLDivElement | null>(null)
   const rowRef = useRef<HTMLDivElement | null>(null)
-  const drag = useRef<{ i: number } | null>(null)
+  const drag = useRef<{ i: number; release: () => void } | null>(null)
+  /** 结束拖动色标（只认 ref，不依赖闭包）：discard = 放弃这一拖（Esc / 指针被系统取消），否则收成一条历史 */
+  const endDrag = (discard: boolean) => {
+    const d = drag.current
+    drag.current = null
+    if (!d) return false
+    d.release()
+    setRemoving(false)
+    useDocumentStore.getState().endTxn(discard ? { discard: true } : undefined)
+    return true
+  }
+  const endDragRef = useRef(endDrag)
+  endDragRef.current = endDrag
+  // 拖到一半组件卸载（选区变了等）：事务不能悬着
+  useEffect(() => () => void endDragRef.current(false), [])
   if (!first || !g) return null
   const sel = edit.objectId === first.id && edit.target === target ? edit.stop : 0
   const setSel = (i: number) => edit.set(first.id, { target, stop: i })
@@ -221,8 +241,18 @@ export function GradientEditor({ objs, target }: { objs: readonly Mark[]; target
     setSel(i)
     e.currentTarget.focus()
     e.currentTarget.setPointerCapture?.(e.pointerId)
-    drag.current = { i }
+    endDrag(false)
     useDocumentStore.getState().beginTxn(hist('setGradient'))
+    // 与手势协调器登记：保存 / 离散动作前会把这一拖收成一条历史；Esc 走指针取消出口放弃这一拖
+    const offFinish = registerGesture(() => void endDragRef.current(false))
+    const offCancel = tryRegisterPointerCancel(() => void endDragRef.current(true))
+    drag.current = {
+      i,
+      release: () => {
+        offFinish()
+        offCancel?.()
+      },
+    }
   }
   const onStopPointerMove = (e: ReactPointerEvent<HTMLButtonElement>) => {
     const d = drag.current
@@ -236,7 +266,6 @@ export function GradientEditor({ objs, target }: { objs: readonly Mark[]; target
   }
   const onStopPointerUp = (e: ReactPointerEvent<HTMLButtonElement>) => {
     const d = drag.current
-    drag.current = null
     if (!d) return
     const cur = current()
     const r = barRef.current!.getBoundingClientRect()
@@ -244,8 +273,7 @@ export function GradientEditor({ objs, target }: { objs: readonly Mark[]; target
       liveUpdate(removeStop({ ...cur, stops: sortedStops(cur) }, d.i))
       setSel(Math.max(0, d.i - 1))
     }
-    setRemoving(false)
-    useDocumentStore.getState().endTxn()
+    endDrag(false)
   }
   const onStopKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
     const step = e.shiftKey ? 0.1 : 0.01
@@ -308,7 +336,7 @@ export function GradientEditor({ objs, target }: { objs: readonly Mark[]; target
                 onPointerDown={(e) => onStopPointerDown(e, i)}
                 onPointerMove={onStopPointerMove}
                 onPointerUp={onStopPointerUp}
-                onPointerCancel={onStopPointerUp}
+                onPointerCancel={() => void endDrag(true)}
                 onFocus={() => setSel(i)}
                 onKeyDown={(e) => onStopKey(e, i)}
                 className={cn(
