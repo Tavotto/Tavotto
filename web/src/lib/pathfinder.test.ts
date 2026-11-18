@@ -295,6 +295,20 @@ it('偏移路径：原对象不动，紧挨着在上面多一个外扩的', asyn
   expect(useSelectionStore.getState().ids).toEqual([p.id])
 })
 
+it('偏移奇偶填充的复合路径：洞跟着缩小，不会被填上（Codex 线程 4614423962）', async () => {
+  await seed([rect('r', 10, 10, 40, 40), rect('h', 20, 20, 20, 20)], ['r', 'h'])
+  makeCompoundPath()
+  useSelectionStore.getState().set(['r'])
+  await offsetSelected(2)
+  const o = objs().find((x) => x.id !== 'r') as PathObject
+  expect(o.subpaths).toHaveLength(2)
+  // 外框 40 外扩 2（圆角拐角）、洞 20 内缩 2 → 洞边长 16
+  const holeW = Math.min(...o.subpaths.map((sp) => Math.max(...sp.nodes.map((n) => n.p[0])) - Math.min(...sp.nodes.map((n) => n.p[0]))))
+  near(holeW * o.w, 16, 0.02)
+  // 非零填充下洞要与外轮廓反向绕：净面积 = 外框（圆角拐角）− 洞，而不是两者相加
+  near(area(o), 44 * 44 - (4 - Math.PI) * 4 - 16 * 16, 0.01)
+})
+
 describe('轮廓化描边', () => {
   it('没有填充：轮廓换掉原对象（同 id），填充色 = 原描边色、无描边', async () => {
     await seed([rect('r', 10, 10, 20, 10, { fill: null, strokePt: 2, color: '#aa0000', strokeAlign: undefined })], ['r'])

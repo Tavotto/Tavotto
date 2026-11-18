@@ -235,6 +235,18 @@ const JOIN_CODE = { miter: 0, round: 1, bevel: 2 } as const
 const CAP_CODE = { butt: 0, round: 1, square: 2 } as const
 
 /**
+ * 内核的偏移只认非零环绕。奇偶填充且多子路径（复合路径）的对象先过一遍内核的「合并」：单个对象的合并
+ * 会按它的填充规则算出真实的填充区域，输出的洞与外轮廓反向、非零下同样成立。算不出就退回原几何。
+ */
+function nonzeroInput(kernel: VecopsKernel, o: PathObject): number[] {
+  const enc = encodeSubpaths(worldSubpaths(o))
+  if (o.fillRule !== 'evenodd' || o.subpaths.length < 2) return enc
+  const out = kernel.pathfinder(OP_CODE.unite, [1, 1, 0, ...enc])
+  const d = out && out[0] === 1 ? decodeSubpaths(out, 2) : null
+  return d ? encodeSubpaths(d.subs) : enc
+}
+
+/**
  * 偏移路径：每个选中的对象旁边**多一个**偏移后的新对象（原对象不动），紧挨着放在它上面。
  * `deltaMm` 正 = 往外扩、负 = 往里缩。拐角跟原对象的拐角。
  */
@@ -249,7 +261,7 @@ export function offsetPaths(
   const out: { after: string; add: PathObject }[] = []
   for (const o of src) {
     const join = JOIN_CODE[o.lineJoin ?? 'round']
-    const r = kernel.offset(encodeSubpaths(worldSubpaths(o)), deltaMm * PT_PER_MM, join, o.miterLimit ?? 10)
+    const r = kernel.offset(nonzeroInput(kernel, o), deltaMm * PT_PER_MM, join, o.miterLimit ?? 10)
     const d = r && decodeSubpaths(r)
     if (!d) continue
     const base = styleBase(o, o.groupId)
