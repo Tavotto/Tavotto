@@ -240,6 +240,11 @@ class DataSummary:
     units_row: bool = False
     #: 文本表格实际用的编码（`TEXT_ENCODINGS`；父进程定下、脚本照抄 codec 名，不自己探测）；XLSX / v1 是 None
     encoding: str | None = None
+    #: 合画（几份列名相同的表拼成一张）时与 `rows` 逐项对应的「这一行来自哪一份」（该份的分组值）；单份 = 空。`row_numbers` 是各份自己的文件行号
+    row_sources: list[str] = field(default_factory=list)
+
+    def row_source(self, i: int) -> str | None:
+        return self.row_sources[i] if i < len(self.row_sources) else None
 
     def row_number(self, i: int) -> int:
         return self.row_numbers[i] if i < len(self.row_numbers) else i + 2

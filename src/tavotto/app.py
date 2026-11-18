@@ -15642,7 +15642,9 @@ def _propose_error(exc: "engine_ai_data_propose.ProposeError"):
 
 @app.post("/api/ai/data-figure/propose")
 def api_ai_data_figure_propose():
-    """出备选（不调模型）。body：`{folder?, table?, sheet?, hint?, answers?, header_rows?, client_request_id?, render?}`
+    """出备选（不调模型）。body：`{folder?, table?, sheet?, tables?, hint?, answers?, header_rows?, client_request_id?, render?}`
+    （`tables` = `[{path, sheet?}]`：2 到 8 份列名相同的数据合画、每份文件是一组，与 `table` 互斥；列名不一致 400 `tables_columns_differ`，
+    份数超限 400 `tables_limit_exceeded`；响应另有 `sources` 与 `group_column`，见 `ai_data_propose.propose`）
     （`render: "lazy"` = 文字先到、不问问题、缩略图在取图时画，见 `ai_data_propose.propose`）（`folder` 项目相对、缺省项目根；
     `header_rows` = `{表的路径（相对 folder，同 `table`）: 每列名字所在的物理行号}`，按文件指定，生成的脚本读表用同一个行号）。
 
@@ -15671,6 +15673,7 @@ def api_ai_data_figure_propose():
             header_rows=body.get("header_rows"),
             client_request_id=rid,
             render=body.get("render"),
+            tables=body.get("tables"),
         )
     except engine_ai_data_propose.ProposeError as exc:
         return _propose_error(exc)
@@ -15731,6 +15734,40 @@ def api_ai_data_figure_commit():
     if rid is not None and not _valid_client_request_id(rid):
         abort(400)
     project = str(ctx.path.resolve())
+    if rid and not _claim_commit_rid(project, rid):
+        # 同一请求号的首次提交还在进行中（可能还在 `prepare_v2` 里、任务尚未登记）：不取会话、不另起一份，回「任务未完成」，客户端保留请求号继续查
+        return jsonify(
+            {"task": {"task_id": None, "outcome": None, "final": False, "deduped": True}}
+        )
+    try:
+        return _data_figure_commit(ctx, project, session_id, item_id, rid)
+    finally:
+        if rid:
+            _release_commit_rid(project, rid)
+
+
+#: 数据出图提交的「请求号已受理」在途表（进程内）：`(项目, 请求号)`。**占位发生在任何可能耗时的步骤之前**（取会话、`ensure_thumbnail`、`prepare_v2`、
+#: `run_task`），所以客户端在 prepare 期间断线后用同一请求号重试，查得到「已受理、未完成」，不会掉进「会话已放弃 → `propose_session_expired` →
+#: 客户端以为什么都没写、换号重画」而与原 handler 随后写出的脚本重复。`finally` 里一定清（成功登记 / 失败 / 抛异常都清），所以不会有「永远在途」；
+#: 进程重启占位随之消失——此时原 handler 线程也没了、不会再写，同一请求号重来是一次全新的提交（任务若已登记，`find_request` 查得到，照旧去重）。
+_COMMIT_INFLIGHT: set[tuple[str, str]] = set()
+_COMMIT_INFLIGHT_LOCK = threading.Lock()
+
+
+def _claim_commit_rid(project: str, rid: str) -> bool:
+    with _COMMIT_INFLIGHT_LOCK:
+        if (project, rid) in _COMMIT_INFLIGHT:
+            return False
+        _COMMIT_INFLIGHT.add((project, rid))
+        return True
+
+
+def _release_commit_rid(project: str, rid: str) -> None:
+    with _COMMIT_INFLIGHT_LOCK:
+        _COMMIT_INFLIGHT.discard((project, rid))
+
+
+def _data_figure_commit(ctx, project: str, session_id: str, item_id: str, rid):
     if rid:
         # 先去重、后取会话（同 v1）：首次请求已提交、响应丢了（或会话已过期 / 被放弃），同 id 重发只回既有任务的结局，不再取会话
         known = engine_ai.find_request(str(ctx.path.resolve()), rid)
@@ -15767,6 +15804,7 @@ def api_ai_data_figure_commit():
             recipe=item.recipe,
             title_code=item.code,
             header_line=sess.header_line,
+            merge=sess.merge,
         )
         prepared = engine_ai_data_task.prepare_v2(ctx.path, sel)
         env = engine_ai_data_task.envelope_for_v2(project_key=project, prepared=prepared, rid=rid)

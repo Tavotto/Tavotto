@@ -216,6 +216,10 @@ export default interface Resources {
         "unverifiable": "图画好了，但这类图没法逐项核对数据。",
         "verified": "图画好了，数据和文件逐项对上。"
       },
+      "variant": {
+        "by_file": "只按文件比较",
+        "split": "按「{{column}}」再分开"
+      },
       "working": {
         "drawing": "正在画…",
         "reading": "正在读…",
@@ -3886,6 +3890,9 @@ export default interface Resources {
       "svg_source_unsupported": "{{id}} 的当前来源无法安全转换为 SVG。请改用 PDF 格式导出。",
       "sync_different_scripts": "两张图不属于同一个脚本，无法同步",
       "table_not_found": "这张表不在所选文件夹里。",
+      "tables_columns_differ": "列名不一致，无法合并作图。",
+      "tables_labels_collide": "这几个文件的名字分不开，没法合并作图。",
+      "tables_limit_exceeded": "一次最多合并 {{max}} 个文件。",
       "taf_disabled": "这个实验功能还没有开启。",
       "tex_command_missing": "这张图用了 LaTeX 排版（text.usetex），但当前渲染环境的 PATH 上找不到 {{command}}。这是系统里的 TeX 工具，不是 Python 包；装好 TeX 发行版后，如果刚装完，请重启 Tavotto 让它拿到新的 PATH，再重试。",
       "tex_compile_failed": "LaTeX 编译这张图里的文字时出错：{{line}}。这是 TeX 自己报的错，请检查文字或导言区（text.latex.preamble）。",
