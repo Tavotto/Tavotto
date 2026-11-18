@@ -10,6 +10,7 @@
  */
 import {
   SCHEMA,
+  SEVERITY_BUMP,
   foldInto,
   journalOverride,
   journalSources,
@@ -152,6 +153,12 @@ function unsetLeaf(path: string, into: Obj): void {
 function stripV2(journal: Obj, sources: Record<string, JournalFieldSource>): void {
   for (const [path, entry] of Object.entries(sources)) {
     if (!isV2Source(entry)) continue
+    // 这一项当初抬出来的严重级别（不是用户写的）一并撤掉
+    const bumped = entry.v2Severity?.check
+    if (bumped && isObj(journal.severity)) {
+      delete (journal.severity as Obj)[bumped]
+      if (!Object.keys(journal.severity as Obj).length) delete journal.severity
+    }
     const prev = entry.overrides
     if (prev) {
       sources[path] = { ...prev, overrides: null }
@@ -177,11 +184,27 @@ export function applyV2(binding: Binding, patch: V2Patch | null): Binding {
     const mini = miniCatalog(patch)
     const fragment = journalOverride('v2', mini) as unknown as Obj
     const fresh = journalSources('v2', mini)
+    // 绑定里已显式写的严重级别（含降级）优先：v2 只在用户没写过时才抬，与 `journals.overrideOf` 同一口径
+    const sev = isObj(fragment.severity) ? (fragment.severity as Obj) : null
+    const explicit = isObj(journal.severity) ? (journal.severity as Obj) : {}
+    const derived = new Set<string>()
+    if (sev) {
+      for (const check of Object.keys(sev)) {
+        if (Object.prototype.hasOwnProperty.call(explicit, check)) delete sev[check]
+        else derived.add(check)
+      }
+      if (!Object.keys(sev).length) delete fragment.severity
+    }
     for (const path of Object.keys(patch.rules)) {
       const prev = sources[path]
       const { overrides: _drop, ...previous } = prev ?? ({} as JournalFieldSource)
       void _drop
-      sources[path] = { ...fresh[path], overrides: prev ? previous : null }
+      const check = SEVERITY_BUMP[path]
+      sources[path] = {
+        ...fresh[path],
+        overrides: prev ? previous : null,
+        ...(check && derived.has(check) ? { v2Severity: { check } } : {}),
+      }
     }
     deepMerge(journal, fragment)
   }

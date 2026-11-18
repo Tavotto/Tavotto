@@ -282,6 +282,8 @@ export interface JournalFieldSource {
   archive_url: string
   /** 期刊改写了出版社的值时，出版社原条目；否则 null */
   overrides: Omit<JournalFieldSource, 'overrides'> | null
+  /** v2 叠加时由这一项抬出来的检查项严重级别（用户没显式写过才抬）；去掉这一项时据此把抬的那一档撤掉 */
+  v2Severity?: { check: string }
 }
 
 type Obj = Record<string, unknown>

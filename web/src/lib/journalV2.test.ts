@@ -61,6 +61,30 @@ describe('applyV2', () => {
     expect(((out.journal as Record<string, Record<string, unknown>>).font_family).latin_accepted).toEqual(['Helvetica'])
   })
 
+  it('绑定里已显式写的严重级别不被 v2 的自动抬升盖掉（含降级）；没写过才抬，去掉 v2 项时撤回', () => {
+    const fontPatch = patch({
+      rules: { 'font_family.latin_accepted': { value: ['Helvetica'], src: 'v2:s1:journal', quote: 'Use Helvetica.', qualifier: 'exact', strength: 'recommended', stage: 'any' } },
+    })
+    const before = bind()
+    for (const level of ['error', 'suggestion']) {
+      const explicit = structuredClone(before)
+      explicit.journal = { ...(explicit.journal as object), severity: { 'font-family-substituted': level } }
+      const out = applyV2(explicit, fontPatch)
+      expect((out.journal as Record<string, Record<string, unknown>>).severity['font-family-substituted']).toBe(level)
+      const back = applyV2(out, patch({ rules: {}, sources: {} }))
+      expect((back.journal as Record<string, Record<string, unknown>>).severity['font-family-substituted']).toBe(level)
+    }
+    // 没写过：抬到 warn，去掉后撤回
+    const plain = structuredClone(before)
+    const sev = (plain.journal as Record<string, Record<string, unknown>>).severity
+    if (sev) delete sev['font-family-substituted']
+    const up = applyV2(plain, fontPatch)
+    expect((up.journal as Record<string, Record<string, unknown>>).severity?.['font-family-substituted']).toBe('warn')
+    expect(applyV2(up, fontPatch)).toBe(up)
+    const down = applyV2(up, patch({ rules: {}, sources: {} }))
+    expect((down.journal as Record<string, Record<string, unknown>>).severity?.['font-family-substituted']).toBeUndefined()
+  })
+
   it('取不到（null）/ 没按期刊选过：原样返回同一个对象，不清掉已叠过的项', () => {
     const before = bind()
     expect(applyV2(before, null)).toBe(before)

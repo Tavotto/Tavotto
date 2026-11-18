@@ -16,7 +16,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useJournalCatalogStore } from '@/store/journalCatalogStore'
 import { useJournalV2Store } from '@/store/journalV2Store'
 import { emptyProject } from '@/types/document'
-import { registerGesture } from '@/store/gestureCoordinator'
+import { registerGesture, registerPointerCancel } from '@/store/gestureCoordinator'
 import { ConfirmEntry } from './ProblemTreeRows'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -119,6 +119,25 @@ describe('useJournalV2Sync', () => {
     expect(pastCount()).toBe(before)
     expect(journal()!.min_raster_dpi).not.toBe(450)
     await act(async () => unregister())
+    expect(journal()!.min_raster_dpi).toBe(450)
+    expect(pastCount()).toBe(before + 1)
+  })
+  it('响应落在指针拖动中途（只登记了指针取消、文档事务开着）：不并进拖动的撤销，事务收口后再叠', async () => {
+    selectJournal('fx-beta')
+    useJournalV2Store.setState({ byJournal: {} })
+    const before = pastCount()
+    const doc = useDocumentStore.getState()
+    doc.beginTxn({ key: 'test.drag' } as never)
+    const unregister = registerPointerCancel(() => {})
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(patch()), { status: 200 }))
+    await act(async () => root.render(<Probe />))
+    await act(async () => { await Promise.resolve() })
+    expect(useDocumentStore.getState().txn?.patches.length).toBe(0)
+    expect(journal()!.min_raster_dpi).not.toBe(450)
+    // 登记先注销、事务还开着：仍不能叠
+    await act(async () => unregister())
+    expect(journal()!.min_raster_dpi).not.toBe(450)
+    await act(async () => useDocumentStore.getState().endTxn({ discard: true }))
     expect(journal()!.min_raster_dpi).toBe(450)
     expect(pastCount()).toBe(before + 1)
   })
