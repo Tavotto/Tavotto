@@ -608,16 +608,19 @@ _LAST: dict[str, float] = {"attempt": 0.0}
 
 
 def refresh(*, force: bool = False) -> dict:
-    """刷新令牌。**只在有令牌、未失效且过了 `refresh_after` 时联网**（`force` 只跳过 `refresh_after`，不跳过前两条）；
-    服务端回 `revoked` / `expired` 时本地令牌标记失效（`has` 变假），设备密钥不动。网络 / 服务端失败令牌原样留着。"""
+    """刷新令牌。**只在有令牌、没被作废且过了 `refresh_after` 时联网**（`force` 只跳过 `refresh_after`）；
+    服务端回 `revoked` / `expired` 时本地令牌标记失效（`has` 变假），设备密钥不动。网络 / 服务端失败令牌原样留着。
+    标记为 `expired` 的令牌**仍然可以刷新**（不看 `refresh_after`）：续费正是在过期之后发生的，付款后刷新才拿得到新令牌；
+    拿到新令牌之前 `has` 照旧为假。`revoked` 只能重新激活恢复。"""
     target = _target()
     with _OP_LOCK:
         env, state = _load()
         payload = _open_token(env) if env is not None else None
-        if payload is None or state != "ok":
+        if payload is None or state not in ("ok", "expired"):
             return {"ok": True, "refreshed": False, **status()}
         now = _now()
-        if (not force and now < payload["refresh_after"]) or now - _LAST["attempt"] < REFRESH_MIN_S:
+        due = state == "expired" or force or now >= payload["refresh_after"]
+        if not due or now - _LAST["attempt"] < REFRESH_MIN_S:
             return {"ok": True, "refreshed": False, **status()}
         _LAST["attempt"] = now
         try:
@@ -643,7 +646,7 @@ def maybe_refresh() -> None:
         if not enabled():
             return
         env, state = _load()
-        if env is None or state != "ok":
+        if env is None or state not in ("ok", "expired"):
             return
         if _now() - _LAST["attempt"] < DAY_S and _LAST["attempt"] > 0:
             return

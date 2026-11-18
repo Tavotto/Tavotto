@@ -542,12 +542,33 @@ def test_revoked_or_expired_from_server_kills_the_token_but_keeps_the_device_key
     assert lic.has("review-plus") is False
     assert lic.status()["state"] == verdict and lic.status()["licensed"] is False
     assert lic._key_path().read_bytes() == key_before
-    # 作废后不再联网刷新
     n = len(server.calls)
     clock["now"] += 3 * 86400
-    lic.maybe_refresh()
-    lic.refresh(force=True)
-    assert len(server.calls) == n
+    if verdict == "revoked":
+        # 作废后不再联网刷新，只能重新激活
+        lic.maybe_refresh()
+        lic.refresh(force=True)
+        assert len(server.calls) == n
+    else:
+        # 过期后仍每天试一次刷新（续费后要靠它拿新令牌），没拿到之前权益照旧关着
+        server.script = [(200, {"state": "expired"})]
+        lic.maybe_refresh()
+        assert len(server.calls) == n + 1
+        assert lic.has("review-plus") is False
+
+
+def test_expired_then_renewed_then_refresh_restores_the_license(server, clock):
+    """过期 → 续费付款（服务端顺延）→ 刷新：不用重新输激活码就拿回权益。"""
+    activated(server)
+    clock["now"] += 86400 + 10
+    server.script = [(200, {"state": "expired"})]
+    lic.refresh()
+    assert lic.has("review-plus") is False and lic.status()["state"] == "expired"
+    # 续费付款完成后，服务端给出新令牌（fake 默认签一张新的）
+    clock["now"] += 61
+    out = lic.refresh(force=True)
+    assert out["refreshed"] is True
+    assert lic.has("review-plus") is True and lic.status()["state"] == "active"
 
 
 def test_reactivating_after_revoked_works(server, clock):
