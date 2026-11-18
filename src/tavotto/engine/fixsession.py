@@ -108,16 +108,28 @@ work around.
 3c2. STALE ENTRY. If the report has `entry_stale` (or the error code is `script_entry_missing`): the script was rewritten \
 and the function Tavotto registered as its entry no longer exists. Call fix_entry (it re-detects the entry and updates \
 only the registry), then try_run. Never edit the script.
-3c3. GLUE IS MISSING: WRITE A LAUNCHER. If the script itself is fine but nothing (or the wrong thing) runs when it is run \
-as is — its drawing functions are only defined and never called, they need inputs loaded first, or it needs an \
-environment variable, a working folder, an extra sys.path entry or argv before it runs — read the script, then call \
-write_launcher with a few lines that do that glue and call the user's own code (for example \
-`from figure_climate import geography; geography()`). Tavotto runs the launcher as the script itself, the figures \
-belong to the script, and the user's file is never changed. Then try_run; if it still fails, read the result, adjust \
-the launcher once or twice, or rollback. Prefer this over reporting a product defect whenever a launcher can make \
-the figure appear; report a defect (step 5) as well when Tavotto itself behaved wrongly. If you finish `fixed` with \
-a launcher, the finish sentence must say that Tavotto now runs this script through a small launcher saved in its own \
-folder, and that the script itself was not changed.
+3c3. GLUE IS MISSING: WRITE A LAUNCHER. When the script is fine but cannot produce its figure as Tavotto runs it, and \
+you know why (you read the script and the report), write_launcher instead of reporting a defect or asking the user \
+to change anything. The launcher runs AS the script (`__file__` is the script, the figure belongs to it); \
+`open(__file__)` inside it reads the user's real script. Use exactly one of these shapes, adapted:
+  (a) Drawing functions are only defined, never called: `from <script module> import plot; plot()`.
+  (b) Something must be set BEFORE the script runs, then run the script's own code unchanged — end the launcher with
+      `with open(__file__, "rb") as _f: _code = compile(_f.read(), __file__, "exec")` and `exec(_code, globals())`, and
+      before those lines put the glue:
+      - environment variable it reads (os.environ["X"] / KeyError): `os.environ.setdefault("X", <real folder or value>)`;
+      - it asks with input() (EOFError / script_needs_input): `import builtins; _a = iter(["<answer>"]); \
+        builtins.input = lambda prompt="": next(_a)` with a sensible answer taken from the script or the data (ask_user \
+        only if no sensible value exists);
+      - it forces an interactive backend (matplotlib.use("TkAgg"/"Qt5Agg"/...), tkinter or Qt missing): \
+        `import matplotlib; matplotlib.use = lambda *a, **k: None`;
+      - relative imports (`from .helpers import x`, "attempted relative import with no known parent package"): \
+        `sys.path.insert(0, <folder above the package>)` and `__package__ = "<package name>"`;
+      - an extra folder on sys.path or a working folder (os.chdir) it expects.
+Never copy the script's plotting code into the launcher. Then try_run; if it still fails, read the result and adjust \
+the launcher once or twice, or rollback. For command-line arguments use set_run_arguments, not a launcher. Report a \
+product defect (step 5) only in addition, when Tavotto itself behaved wrongly. If you finish `fixed` with a launcher, the \
+finish sentence must say that Tavotto now runs this script through a small launcher saved in its own folder, and that \
+the script itself was not changed.
 3d. THE SCRIPT RUNS BUT DRAWS WITH ANOTHER LIBRARY. If the script itself runs but its figure is drawn with Pillow, \
 OpenCV, imageio, scikit-image, plotly or ROOT (so Tavotto cannot edit it), call convert_script, then finish with \
 outcome `convert`. Do not install matplotlib or change the environment for this.
@@ -236,16 +248,19 @@ You are running inside a command-line AI tool. Your repair tools are the MCP too
 Your own shell and editor are read-only here and anything done with them is neither recorded nor undoable. \
 What you write in your reply is not shown to the user: the only way to report the result is the `finish` tool.
 """
-#: 提示词进命令行（Windows 约 32 KB 上限）：准备报告太长就截断，让模型自己调 read_run_report 读全文
-CLI_PROMPT_MAX = 12000
+#: 提示词进命令行（Windows 约 32 K 字符上限，其余参数另占）：准备报告太长就截断，让模型自己调 read_run_report 读全文
+CLI_PROMPT_MAX = 20000
+_TRUNCATED = "\n[truncated; call read_run_report for the full report]"
 
 
 def cli_prompt(ctx: fixtools.FixContext, script: str, language: str = "") -> str:
-    # 语言那一段放在准备报告之前：报告太长被截断时它不跟着丢
-    text = SYSTEM_PROMPT + language + CLI_ADDENDUM + "\n" + _first_message(ctx, script)
-    if len(text) > CLI_PROMPT_MAX:
-        text = text[:CLI_PROMPT_MAX] + "\n[truncated; call read_run_report for the full report]"
-    return text
+    # 只截准备报告：规则、语言那一段与 CLI 说明一个字都不丢（规则变长时截断也不会落进规则里）
+    head = SYSTEM_PROMPT + language + CLI_ADDENDUM + "\n"
+    report = _first_message(ctx, script)
+    room = max(CLI_PROMPT_MAX - len(head), 0)
+    if len(report) > room:
+        report = report[: max(room - len(_TRUNCATED), 0)] + _TRUNCATED
+    return head + report
 
 
 class FixToolset:

@@ -587,7 +587,11 @@ CHANGE_TOOLS: tuple[FixTool, ...] = (
         "AS this script: `__file__`, `sys.argv[0]` and tracebacks show the script, `sys.path[0]` is the script's "
         "folder (so `import <script name>` gets the user's real file), and captured figures belong to this script. "
         "Keep it to the glue: import from the user's files and call their code; do not copy their plotting code into "
-        "it. Takes a snapshot (rollback restores the previous launcher or removes it). Then call try_run.",
+        "it. To run the script's own code after some set-up (environment variable, answers for input(), neutralising a "
+        "hard-coded interactive backend, `__package__` for relative imports), end the launcher with "
+        "`with open(__file__, 'rb') as _f: _code = compile(_f.read(), __file__, 'exec')` and `exec(_code, globals())`: "
+        "`open(__file__)` reads the user's real script. Takes a snapshot (rollback restores the previous launcher or "
+        "removes it). Then call try_run.",
         obj(
             {
                 "code": {
