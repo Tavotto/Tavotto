@@ -35,7 +35,7 @@ Tavotto 要有收入来抵持续的开销（模型调用、CloudBase、CDN），
 
 ### 三、服务端：腾讯云 CloudBase（维护者 2026-11-18 选定）
 
-- 代码在 `Tavotto/infra` 的 `serverless/license/`，与 `serverless/review/` 分开。**部署在哪个环境待维护者定**（§十）：默认提案是外部审阅同一个环境，但**函数、集合、密钥都独立**（集合前缀 `lic_`），不读写审阅的任何数据，也不改环境级设置。
+- 代码在 `Tavotto/infra` 的 `serverless/license/`，与 `serverless/review/` 分开。部署在外部审阅同一个环境（维护者 2026-11-18 同意），但**函数、集合、密钥都独立**（集合前缀 `lic_`），不读写审阅的任何数据，也不改环境级设置。
 - 域名：`license.tavotto.cn`（客户端钉死，见 §五 `LICENSE_HOSTS`）。绑定是生产动作，先报合并大队长、维护者批准。
 - **测试模式与正式模式彻底隔离**：
   - 两套函数各带 `STRIPE_MODE=test|live`，`event.livemode` 与之不符的事件一律 400 拒收；
@@ -46,8 +46,8 @@ Tavotto 要有收入来抵持续的开销（模型调用、CloudBase、CDN），
 
 | 方法 · 路径 | 用途 |
 | --- | --- |
-| `POST /v1/checkout` | `{lookup_key, locale, email?}` → `{url}`：建 Checkout Session，返回付款页地址。`lookup_key` 不在 Stripe 里或 metadata 不合规 → `price_unavailable` |
-| `POST /v1/claim` | `{session_id}` → `{code}`：付款成功页（`success_url` 带 `{CHECKOUT_SESSION_ID}`）直接显示激活码，填错邮箱也拿得到；只在付款后 24 小时内、只对已开通的购买有效 |
+| `POST /v1/checkout` | `{lookup_key, locale, email?, renew?}` → `{url}`：建 Checkout Session，返回付款页地址。新购时付款页上数量可调（1–20 份）；`renew = {license_id, device_pub, ts, sig}` 时是给本机这一份续费，数量固定 1。`lookup_key` 不在 Stripe 里或 metadata 不合规 → `price_unavailable` |
+| `POST /v1/claim` | `{session_id}` → `{codes: [...]}`：付款成功页（`success_url` 带 `{CHECKOUT_SESSION_ID}`）直接显示这次买到的每一份的激活码，填错邮箱也拿得到；只在付款后 24 小时内、只对已开通的购买有效 |
 | `POST /v1/stripe/webhook` | Stripe 事件入口，见下 |
 | `POST /v1/activate` | `{code, device_pub, ts, sig}` → `{token}`：激活码换授权令牌，绑定这台设备 |
 | `POST /v1/refresh` | `{license_id, device_pub, ts, sig}` → `{token}` 或 `{state: "revoked" \| "expired"}` |
@@ -60,11 +60,13 @@ Tavotto 要有收入来抵持续的开销（模型调用、CloudBase、CDN），
   - `checkout.session.completed` 且 `payment_status == "paid"`，或 `checkout.session.async_payment_succeeded` → 开通这笔购买。
   - `charge.refunded` 且全额退款、`charge.dispute.created` → 作废**对应的那一笔购买**（经 PaymentIntent 找到 Session）；部分退款不改权益。
   - 其它事件一律回 200 不处理。
-- **授权 = 购买台账**：一个授权下挂若干笔购买，每笔记 `{session_id, payment_intent, lookup_key, features, term_days, paid_at, state: paid|void}`。权益**由未作废的购买算出**：按付款时间顺序把各笔时长首尾相接得到到期日，功能键取并集。退哪笔就去掉哪笔，不整条撤销。
-- **一个授权对应什么**：默认按 Checkout 收集的 `customer_details.email` 归并（同一邮箱再买就挂到同一授权下）。这是待维护者定的默认（§十）。
-- **激活码**：`TVK-XXXX-XXXX-XXXX`，Crockford base32、60 位随机。服务端只存 HMAC-SHA256（服务端密钥），常数时间比较。明文只存在两处、都有期限：待发邮件记录（发出即删，最多保留 24 小时）、`claim` 用的显示槽（付款后 24 小时删除）——两处都用服务端密钥 AES-GCM 加密保存。之后谁也拿不回明文：`recover` **换发新码**，旧码随即失效，已激活的设备不受影响。
+- **一份 = 一个授权 = 一个激活码**（维护者 2026-11-18 定）：一次新购买了 n 份，就开 n 个互相独立的授权，各有自己的激活码、设备名额和到期日。同一个邮箱可以持有任意多份；想在更多电脑上用就多买几份，也可以把其中一份的激活码给同门用。
+- **每份授权 = 购买台账**：一份授权下挂若干笔购买（首购 + 各次续费），每笔记 `{session_id, payment_intent, lookup_key, features, term_days, paid_at, state: paid|void}`。权益**由未作废的购买算出**：按付款时间顺序把各笔时长首尾相接得到到期日，功能键取并集。
+- **续费**只顺延指定的那一份（`checkout` 带 `renew`，由已激活的设备发起，所以知道是哪一份）；不带 `renew` 的购买一律是新的份数，不会自动挂到老授权上。
+- **退款**：全额退款或争议 → 这笔购买作废，它开出的那几份授权（续费则是被续的那一份）按台账重算，没有剩余有效购买的就失效；部分退款不改权益。
+- **激活码**：每份一个，`TVK-XXXX-XXXX-XXXX`，Crockford base32、60 位随机。服务端只存 HMAC-SHA256（服务端密钥），常数时间比较。明文只存在两处、都有期限：待发邮件记录（发出即删，最多保留 24 小时）、`claim` 用的显示槽（付款后 24 小时删除）——两处都用服务端密钥 AES-GCM 加密保存。之后谁也拿不回明文：`recover` 给这个邮箱名下每一份**换发新码**，旧码随即失效，已激活的设备不受影响。
 - **发信异步**：开通时写一条待发邮件记录，由定时函数 `license-mailer`（每分钟）发出，失败指数退避重试，最多 24 小时；超时只删明文，用户可用 `claim` 或 `recover` 拿码。webhook 本身不等发信。
-- **设备名额**：默认每个授权最多 3 台设备（服务端配置项，待定，§十），满了以后 `activate` 回 `device_limit`，邮件里附自助解绑链接（等价于 `devices/release`）。
+- **设备名额**：每份授权最多 2 台设备（维护者 2026-11-18 定；服务端配置项，改它不用发版），满了以后 `activate` 回 `device_limit`，邮件里附自助解绑链接（等价于 `devices/release`）。
 - 失败码闭集：`invalid_code`、`device_limit`、`revoked`、`expired`、`price_unavailable`、`rate_limited`、`network`、`server`、`client_error`（与前端 `license.failure.*` 对拍）。
 - 限流：`activate` / `recover` / `claim` 按来源 IP 每小时 20 次、按激活码 / Session 每小时 10 次；`checkout` 按来源 IP 每小时 30 次。
 
@@ -82,7 +84,7 @@ Tavotto 要有收入来抵持续的开销（模型调用、CloudBase、CDN），
 | `iat` | 签发时刻 |
 | `device` | 绑定设备公钥的 sha256 |
 | `refresh_after` | `iat + 1 天`：过了这个时刻客户端才去刷新 |
-| `offline_until` | `min(exp, iat + 断网宽限)`：断网时最多用到这里。宽限天数是服务端配置项（默认 14 天，待定，§十），改它不用发版 |
+| `offline_until` | `min(exp, iat + 断网宽限)`：断网时最多用到这里。宽限 14 天（维护者 2026-11-18 定；服务端配置项，改它不用发版） |
 | `email_hint` | 打码后的邮箱（`m***@gmail.com`），只用于界面显示 |
 
 - 签名密钥是**新的一对**，不与期刊目录共用。私钥只在函数环境变量里，由维护者本人放进去。公钥按 `kid` 内置在应用里（`license.PUBLIC_KEYS`），换密钥 = 发版加新 `kid`，旧 `kid` 保留到它签出的令牌全部过期。
@@ -133,15 +135,15 @@ Tavotto 要有收入来抵持续的开销（模型调用、CloudBase、CDN），
 - 应用侧只在激活和刷新时发送：激活码或授权号、设备公钥、签名、时间戳。不发项目、脚本、数据、路径、本机信息。
 - `docs/privacy.md` 新增「Paid edition and license activation」一节，具体措辞由维护者本人确认后才合入。
 
-### 十、待维护者定（本 ADR 里写成默认值，都不是定论）
+### 十、维护者 2026-11-18 定的参数
 
-| 项 | 默认提案 | 改它要不要发版 |
+| 项 | 定为 | 改它要不要发版 |
 | --- | --- | --- |
-| 每个授权的设备数 | 3 | 不要（服务端配置） |
+| 每份授权的设备数 | 2 | 不要（服务端配置） |
 | 断网宽限 | 14 天 | 不要（服务端配置，写进令牌） |
-| 一个授权对应什么 | 按付款邮箱归并 | 不要（服务端逻辑） |
+| 一份对应什么 | 一份 = 一个激活码；一次可买多份，同一邮箱可持有多份 | 不要（服务端逻辑） |
 | 部署环境 | 与外部审阅同一个 CloudBase 环境，函数 / 集合 / 密钥独立 | 不要 |
-| 价格、档位、名额、各档含哪些功能键、时长 | 不在代码里，全在 Stripe Price | 不要 |
+| 价格、档位、名额、各档含哪些功能键、时长 | 未定；不在代码里，全在 Stripe Price | 不要 |
 
 ## 后果
 
