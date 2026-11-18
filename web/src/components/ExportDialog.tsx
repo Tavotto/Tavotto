@@ -2572,7 +2572,7 @@ function ExportPreviewPane({
             onClick={onCycleSlot}
             className="absolute right-0 gap-1 px-2 text-xs text-ink-3 hover:text-ink"
           >
-            <RefreshCw size={ICON_SIZE.sm} aria-hidden />
+            <RefreshCw size={ICON_SIZE.xs} aria-hidden />
             <span>{ex("previewLayoutCycle")}</span>
           </Button>
         )}
