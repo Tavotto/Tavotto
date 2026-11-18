@@ -1634,6 +1634,10 @@ def _call_make_journal_ready(args: dict) -> dict:
             # 草稿没带回就接着改、导出：导出成功会清掉这张图的草稿，没带回的改动就再也找不回了。
             # 停在 open，让用户决定（之后重试，或明确 discard_draft 丢掉草稿再一步交付）
             failed = body["draft_restore_failed"]
+            # 按脚本原样打开的那个会话**当场关掉**：留着的话，下次调用会复用它（复用不再尝试带回草稿），
+            # 一路改到导出、把没带回的草稿清掉。它没有改动，关掉只删它自己的记录，草稿不受影响
+            bridge.close_session(sid)
+            out["session_closed"] = True
             out["next"] = nextstep.ask_user(
                 f"这张图上次没导出的草稿没能带回（{failed.get('code')}），所以没有接着改和导出，"
                 "草稿还留着。要怎么处理？",
@@ -1647,7 +1651,7 @@ def _call_make_journal_ready(args: dict) -> dict:
                 _text(
                     f"上次没导出的草稿没能带回（{failed.get('code')}），为了不让导出把它清掉，"
                     "这次没有改、也没有导出；草稿还留着。",
-                    "会话 " + sid + " 是按脚本原样打开的，还开着。",
+                    "按脚本原样打开的会话已经关掉，下次调用会重新尝试带回草稿。",
                 ),
                 {},
             )

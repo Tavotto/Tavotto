@@ -266,7 +266,17 @@ def test_a_draft_that_cannot_be_restored_stops_at_open_and_keeps_the_draft(
     assert any("discard_draft=true" in o for o in body["next"]["options"])
     assert "changes" not in body and _exported_files(out_dir) == []
     assert sorted((tmp_path / "data" / "mcp-drafts").glob("*.json")) == drafts  # 草稿还在
-    assert bridge.get_session(body["session_id"]).patches == []
+    # 按脚本原样打开的会话当场关掉：重试不会复用它绕过带回（复用分支不尝试带回草稿）
+    assert body["session_closed"] is True
+    with pytest.raises(bridge.BridgeError):
+        bridge.get_session(body["session_id"])
+    again = _body(_run(figures, formats=["pdf"], out_dir=str(out_dir)))  # 仍然带不回：照样停
+    assert again["stage"] == "open" and again.get("reused") is not True
+    assert sorted((tmp_path / "data" / "mcp-drafts").glob("*.json")) == drafts
+    assert _exported_files(out_dir) == []
+    monkeypatch.setattr(bridge, "_render", real)  # 能渲染了：重试真的带回草稿再导出
+    done = _body(_run(figures, formats=["pdf"], out_dir=str(out_dir)))
+    assert done["ok"] and done["restored_draft"]["patches"] == 1
 
 
 def test_a_partial_export_is_not_reported_as_done(figures, tmp_path, monkeypatch):
