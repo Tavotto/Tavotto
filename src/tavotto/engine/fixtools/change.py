@@ -487,14 +487,6 @@ def _hinted_path(ctx: FixContext, rel: str) -> str | None:
 
 
 # --------------------------------------------------------------------------- set_run_arguments
-def apply_run_arguments(ctx: FixContext, tokens: tuple) -> None:
-    """把验证运行换到带 `tokens` 的准备会话上，并记进上下文（工具与回滚共用）。"""
-    assert ctx.on_run_arguments_changed is not None
-    ctx.on_run_arguments_changed(tokens)
-    ctx.run_arguments = tokens or None
-    ctx.run_arguments_changed = True
-
-
 def set_run_arguments(ctx: FixContext, args: dict) -> ToolResult:
     """给脚本填运行参数（与界面「运行参数」框同一份运行配置，T03）。原脚本不动。"""
     from .. import runconfig
@@ -514,7 +506,7 @@ def set_run_arguments(ctx: FixContext, args: dict) -> ToolResult:
     if bad is not None:
         return bad
     try:
-        apply_run_arguments(ctx, tuple(tokens))
+        snapshots.apply_run_arguments(ctx, tuple(tokens))
     except Exception:  # noqa: BLE001 — 应用侧换会话失败：如实说做不了
         return err("run_arguments_not_set", "The run arguments could not be applied.")
     shown = " ".join(tokens) if tokens else "(none)"

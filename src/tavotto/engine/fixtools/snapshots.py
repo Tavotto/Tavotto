@@ -362,6 +362,14 @@ def _remembered_target_gone(ctx: FixContext) -> ToolResult | None:
     return None
 
 
+def apply_run_arguments(ctx: FixContext, tokens: tuple) -> None:
+    """把验证运行换到带 `tokens` 的准备会话上，并记进上下文（`set_run_arguments` 与回滚共用）。"""
+    assert ctx.on_run_arguments_changed is not None
+    ctx.on_run_arguments_changed(tokens)
+    ctx.run_arguments = tokens or None
+    ctx.run_arguments_changed = True
+
+
 def _restore_run_arguments(ctx: FixContext, doc: dict, lines: list[str]) -> bool:
     if "run_arguments" not in doc or ctx.on_run_arguments_changed is None:
         return True
@@ -369,8 +377,6 @@ def _restore_run_arguments(ctx: FixContext, doc: dict, lines: list[str]) -> bool
     want = tuple(saved) if isinstance(saved, list) else ()
     if tuple(ctx.run_arguments or ()) == want:
         return True
-    from .change import apply_run_arguments
-
     try:
         apply_run_arguments(ctx, want)
     except Exception:  # noqa: BLE001
