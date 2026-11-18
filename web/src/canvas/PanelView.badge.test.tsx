@@ -24,6 +24,7 @@ import { PanelView } from '@/canvas/PanelView'
 import { renderKeyOf } from '@/store/renderStore'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
+import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import type { PanelObject } from '@/types/document'
@@ -230,16 +231,19 @@ describe('运行已结束的图', () => {
     expect(host.querySelector('[data-badge-rerun]')).toBeNull()
   })
 
-  it('「重新运行」走脚本库同一个「打开并运行」入口，沿用上次成功的运行配置', () => {
+  it('「重新运行」走「打开并运行」入口，明确不带参数：不读参数草稿、不沿用上次参数（Codex #2020）', () => {
     const open = vi.fn(async () => {})
     const prev = useProjectPreparationStore.getState().open
     useProjectPreparationStore.setState({ open } as never)
+    // 脚本此刻有参数草稿：按钮也不能带上它（带参数跑出的是另一张图）
+    useScriptArgvStore.setState({ drafts: { 'fig.py': { tokens: ['--n', '3'], sensitive: false } } } as never)
     try {
       render()
       act(() => host.querySelector<HTMLButtonElement>('[data-badge-rerun]')!.click())
-      expect(open).toHaveBeenCalledWith({ script: 'fig.py', reuse_last_success: true }, { run: true })
+      expect(open).toHaveBeenCalledWith({ script: 'fig.py' }, { run: true })
     } finally {
       useProjectPreparationStore.setState({ open: prev } as never)
+      useScriptArgvStore.setState({ drafts: {} } as never)
     }
   })
 

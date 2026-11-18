@@ -84,7 +84,7 @@ import {
 import { openQuickEdit } from './quickEditStore'
 import { pageToContentVec, panelContentTransform, panelTransformCss } from '@/lib/panelTransform'
 import { Info } from '@/components/ui/icons'
-import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
+import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Spinner } from '@/components/ui/Spinner'
 
@@ -1428,7 +1428,9 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
         {/* 说明钮是一颗真按钮（2026-10-07 设计审计 §10.1）：键盘能 Tab 到、读屏念得出那句说明；
             图标走图标集（此前是字符 ⓘ）。按下不冒到画布（不选中、不起拖） */}
         {shown.rerun && (
-          // 与脚本库的「打开并运行」同一个入口：检查 → 认领 run_when_ready（原样运行照样先确认），跑完这张图回到可编辑
+          // 与脚本库的「打开并运行」同一个入口：检查 → 认领 run_when_ready（原样运行照样先确认），跑完这张图回到可编辑。
+          // 目标**明确不带参数**：有按钮的只有无参数配置的那张图（`runConfig` 为空）；不读参数草稿、也不沿用上次成功的参数——
+          // 带参数跑出的是另一个资产 id，进入编辑会打开别的图，点的这张仍是「运行已结束」（Codex #2020）
           <button
             type="button"
             data-badge-rerun
@@ -1438,7 +1440,7 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
               e.stopPropagation()
               void useProjectPreparationStore
                 .getState()
-                .open(scriptTarget(shown.rerun!, { reuse: true }), { run: true })
+                .open({ script: shown.rerun! }, { run: true })
             }}
             className="pointer-events-auto -mx-1.5 -my-0.5 rounded-full px-1.5 py-0.5 outline-none hover:opacity-80 focus-visible:focus-ring"
           >
