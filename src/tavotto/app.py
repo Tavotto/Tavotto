@@ -15461,7 +15461,7 @@ _DATA_FILES_SHEET_COUNT_BYTES = 32 * 1024 * 1024
 @app.get("/api/ai/data-files")
 def api_ai_data_files():
     """TAF 数据出图的数据文件列表（**实验开关后面**，只读）：**默认只列 `.csv`**（v1 表单走 `/api/ai/data-figure`，只认 CSV）；
-    带 `?formats=all` 才列 `.csv` / `.tsv` / `.tab` / `.txt` / `.dat` / `.asc` / `.xlsx`（v2 出备选用），后缀大小写不敏感。
+    带 `?formats=all` 才列 `.csv` / `.tsv` / `.tab` / `.txt` / `.dat` / `.asc` / `.xvg` / `.xlsx`（v2 出备选用），后缀大小写不敏感。
 
     walk 剪枝与隐藏目录规则同 `discover.PRUNE_DIRS`；不跟随链接；最多 500 个，按项目相对 POSIX 路径排序；最多看
     `_DATA_FILES_SCAN_MAX` 个目录项，超了停下并标 `truncated`。`formats=all` 时 XLSX 带 `sheets: [{name, hidden, rows, columns, status, code}]`（读不了 / 超过
