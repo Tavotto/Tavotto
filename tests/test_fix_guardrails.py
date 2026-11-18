@@ -77,6 +77,20 @@ def test_only_real_change_attempts_are_counted(box):
     assert ctx.changes_attempted == 0  # 参数都不对的调用不算
     call(ctx, "switch_execution", {"mode": "safe"})
     assert ctx.changes_attempted == 1
+    # 已经是这样、什么都没改的调用不算（Codex #2053 P2）：否则一次空操作就能绕过闸门
+    call(ctx, "switch_execution", {"mode": "safe"})
+    assert ctx.changes_attempted == 1
+
+
+def test_a_no_op_does_not_unlock_the_defect_report(box):
+    from tavotto.engine import execpolicy
+
+    execpolicy.set_mode(str(box.proj), "safe_only")  # 项目本来就是「只用安全运行」
+    ctx, cards = make_ctx(box, report=_report("script_needs_arguments"))
+    assert call(ctx, "switch_execution", {"mode": "safe"}).summary == "no change"
+    assert ctx.changes_attempted == 0
+    r = call(ctx, "prepare_diagnostics", {"summary": "s", "issue": ISSUE})
+    assert r.code == "not_a_product_defect" and cards == []
 
 
 def test_the_repair_loop_gets_a_budget_reminder():
