@@ -4800,6 +4800,21 @@ def _fix_conflicts(
     return items[:FIX_CONFLICTS_CAP]
 
 
+def require_fix_engine():
+    """`tavotto_fix_to_journal` / `tavotto_make_journal_ready` 共用的门：期刊库总开关关着回
+    `journal_catalog_disabled`（与工具不出现同一个门），引擎没有修复事务回 `engine_too_old`。
+    返回 specfix 模块。一步交付工具在**打开会话之前**先过这道门，免得开了会话才发现用不了。"""
+    _journal_module()
+    engine = _fix_engine()
+    if engine is None:
+        raise BridgeError(
+            "本机安装的 Tavotto 引擎没有按规范修图的事务；这次没有改动任何设置。",
+            code="engine_too_old",
+            recovery="请用户把 Tavotto 升级到与插件相同的版本后再试。",
+        )
+    return engine
+
+
 def fix_to_journal(
     session_id: str,
     *,
@@ -4833,14 +4848,7 @@ def fix_to_journal(
     不改用户的 .py。预览图随结果的 `_previews`（`before` / `after` 的 base64 PNG）带出，由 server 层
     转成 image 内容块，**不进 structuredContent**。
     """
-    _journal_module()  # 期刊库总开关关着：`journal_catalog_disabled`，与工具不出现同一个门
-    engine = _fix_engine()
-    if engine is None:
-        raise BridgeError(
-            "本机安装的 Tavotto 引擎没有按规范修图的事务；这次没有改动任何设置。",
-            code="engine_too_old",
-            recovery="请用户把 Tavotto 升级到与插件相同的版本后再试。",
-        )
+    engine = require_fix_engine()
     session = get_session(session_id)
     if session.manifest is None:
         raise BridgeError("会话还没有 manifest（先重新 open）", code="no_manifest")

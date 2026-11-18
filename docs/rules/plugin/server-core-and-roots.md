@@ -79,7 +79,7 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
   `tavotto_health` 的 `update` 也从它来；`tavotto_health` 本身不变。更新检查仍不碰网络（`updatenotice` 只读缓存），
   所以进程里第一个 open 可能还没有 `update`——这是设计，`tavotto_export` 的 `notice_once` 兜后面。
 - **期刊参数宽松解析**：`bridge.resolve_journal_id`，在 `server.call_tool` 分派前对 `JOURNAL_RESOLVE_TOOLS`
-  （`JOURNAL_ID_TOOLS` + `tavotto_fix_to_journal`）做一次，处理器与桥里一律只见精确 id。目录就是 `list_journals` 读的
+  （`JOURNAL_ID_TOOLS` + `tavotto_fix_to_journal` + `tavotto_make_journal_ready`）做一次，处理器与桥里一律只见精确 id。目录就是 `list_journals` 读的
   那份（引擎 `search_journals`），**不在插件里抄期刊表**。精确 id 原样放行、回包不带 `journal_resolved`；否则归一
   （NFKC、小写、去空白标点）后先与 id / 名称 / 别名整串相等、再子串（出版社不参与）：唯一命中 → 用它，回包
   `journal_resolved: {from, id}`；多个 → `journal_ambiguous` + `candidates`（≤ 8）；没有 → `journal_unknown` + 最接近的

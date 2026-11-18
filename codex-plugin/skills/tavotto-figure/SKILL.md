@@ -105,7 +105,7 @@ python3 scripts/prefs.py --json
 用户说要投某本期刊：`journal_id` 直接写期刊名（id / 全名 / 常见缩写都行，回包 `journal_resolved` 说解析到哪个 id；
 `journal_ambiguous` 就从候选里选），之后 open / preflight / export / normalize 都带它，别再手写尺寸；
 库里没有才手写 `journal`（见 `references/publication-style.md`「按期刊」）。
-**改到合规先 `tavotto_fix_to_journal`**：`column_choice_required` 就问用户栏位，`fix.kind=manual` 才改脚本。
+改到合规：`tavotto_make_journal_ready` 一步导出，分步 `tavotto_fix_to_journal`（`column_choice_required` 问栏位，`fix.kind=manual` 改脚本）。
 这些工具不会动用户的 .py 源码；数据、坐标范围、加删曲线 / 子图、colorbar 方向只能回代码改。
 
 ## 交接给 Tavotto 桌面窗口
