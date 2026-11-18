@@ -183,6 +183,19 @@ describe('起点柄', () => {
     expect(past()).toBe(1)
   })
 
+  it('锁定的路径文字不出起点柄与间隙柄，也拖不动（Codex 线程 4614422968）', async () => {
+    await seed([obj({ locked: true })])
+    useSelectionStore.getState().set(['pt'])
+    await mount(
+      <svg>
+        <PathTextHandles t={getTransform()} />
+      </svg>,
+    )
+    expect(el.querySelector('[data-path-text-handles]')).toBeNull()
+    expect(el.querySelector('[data-path-text-start-handle]')).toBeNull()
+    expect(el.querySelector('[data-path-text-gap-handle]')).toBeNull()
+  })
+
   it('编辑锚点、别的工具、多选时不出现', async () => {
     await seed([obj(), obj({ id: 'other' })])
     useSelectionStore.getState().set(['pt', 'other'])
