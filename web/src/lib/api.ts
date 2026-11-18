@@ -4439,6 +4439,8 @@ export interface AiDataFigureResult {
     verification?: { unmet?: { constraint_id: string; reason_code: string }[]; [k: string]: unknown }
     error?: string | null
     deduped?: boolean
+    /** 去重分支回的快照：原任务还在处理中是 false（此时 `outcome` 为 null、没有 `script`） */
+    final?: boolean | null
     [k: string]: unknown
   }
   script?: string

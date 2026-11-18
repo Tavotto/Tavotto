@@ -1,12 +1,13 @@
 /**
  * 一次选多份数据、各画一张（`dataBatchStore`）：逐份顺序、串行锁、取第一张候选、各终态、项目代际中止、状态按 tableKey 存。
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, aiDataFigureCommit, aiDataFigureDiscard, aiDataFigurePropose, aiDataFilesAll, type AiDataCommitResult, type AiDataProposeResponse } from '@/lib/api'
 import { resetCommitQueue } from '@/lib/dataCommitQueue'
+import { commitPollConfig } from '@/lib/dataCommitPoll'
 import { setCurrentProjectId } from '@/lib/session'
 import { configureDataBatchHost, useDataBatchStore } from './dataBatchStore'
-import { useDataFigureStore } from './dataFigureStore'
+import { configureDataFigureHost, useDataFigureStore } from './dataFigureStore'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
@@ -745,5 +746,87 @@ describe('不确定的行不占后端会话（至多 6 个）', () => {
     await st().run('failed')
     expect(propose).not.toHaveBeenCalled()
     expect(commit.mock.calls.map((c) => c[0].client_request_id)).toEqual(first)
+  })
+})
+
+describe('同一请求号重发时原任务还在处理中（Codex 第二轮 P2）', () => {
+  const net = () => new TypeError('Failed to fetch')
+  const running = (): AiDataCommitResult => ({ task: { outcome: null, final: false, deduped: true, task_id: 't1' } })
+  beforeEach(() => {
+    commitPollConfig.intervalMs = 1
+    commitPollConfig.maxMs = 40
+  })
+  afterEach(() => {
+    commitPollConfig.intervalMs = 1500
+    commitPollConfig.maxMs = 60_000
+  })
+
+  it('批量：去重回「未完成」→ 不 propose、不删请求号、不算失败；之后回 final 成功 → 算画成', async () => {
+    select('a')
+    commit.mockRejectedValueOnce(net())
+    await st().run()
+    const first = commit.mock.calls[0]![0]
+    propose.mockClear()
+    commit.mockResolvedValueOnce(running()).mockResolvedValueOnce(running()).mockResolvedValueOnce(ok())
+    await st().run('failed')
+    expect(propose).not.toHaveBeenCalled()
+    expect(commit).toHaveBeenCalledTimes(4)
+    expect(new Set(commit.mock.calls.map((c) => c[0].client_request_id))).toEqual(new Set([first.client_request_id]))
+    expect(showAssets).toHaveBeenCalledTimes(1) // 画成
+  })
+
+  it('批量：一直未完成到超时 → 这一份失败，但请求号仍保留，下次重试继续问同一个（不换号重画）', async () => {
+    select('a')
+    commit.mockRejectedValueOnce(net())
+    await st().run()
+    const first = commit.mock.calls[0]![0]
+    propose.mockClear()
+    commit.mockResolvedValue(running())
+    await st().run('failed')
+    expect(Object.values(st().rows).map((r) => r.state)).toEqual(['failed'])
+    expect(propose).not.toHaveBeenCalled()
+    commit.mockReset()
+    commit.mockResolvedValue(ok())
+    await st().run('failed')
+    expect(propose).not.toHaveBeenCalled()
+    expect(commit.mock.calls[0]![0].client_request_id).toBe(first.client_request_id)
+    expect(showAssets).toHaveBeenCalledTimes(1)
+  })
+
+  it('批量：轮询中途换项目（clear）→ 不再重问', async () => {
+    select('a')
+    commit.mockRejectedValueOnce(net())
+    await st().run()
+    commit.mockClear()
+    commit.mockResolvedValue(running())
+    const p = st().run('failed')
+    while (commit.mock.calls.length < 1) await flush()
+    st().clear()
+    await p
+    const n = commit.mock.calls.length
+    await new Promise((r) => setTimeout(r, 15))
+    expect(commit.mock.calls.length).toBe(n)
+  })
+
+  it('单份流程：重试同一请求号时回「未完成」→ 有界地重问同一个，final 后正常进编辑器；超时则这次没成但请求号保留、再点「再试一次」仍是同一个', async () => {
+    const f = () => useDataFigureStore.getState()
+    const open = vi.fn(async () => {})
+    configureDataFigureHost({ openDrawer: () => {}, openScript: open, projectWritable: () => true, activeCanvasId: () => null, notify: () => {}, dismissAddedNote: () => {} })
+    useDataFigureStore.setState({ selected: ref('z.csv'), phase: 'ready', session: 'SZ', candidates: [{ ...item('z1', true), thumb: '/t/z1' }], thumbs: { z1: 'ready' }, draftOpen: true, draftActive: true })
+    commit.mockRejectedValueOnce(net())
+    await f().draw('z1')
+    expect(f().problem?.kind).toBe('commit')
+    const rid = commit.mock.calls[0]![0].client_request_id
+    // 超时：仍未完成
+    commit.mockResolvedValue(running())
+    await f().retry()
+    expect(f().problem?.kind).toBe('commit')
+    expect(open).not.toHaveBeenCalled()
+    // 再点一次：同一个请求号，这次 final
+    commit.mockReset()
+    commit.mockResolvedValueOnce(running()).mockResolvedValueOnce({ ...ok(), script: 'tavotto_figures/z.py' })
+    await f().retry()
+    expect(new Set(commit.mock.calls.map((c) => c[0].client_request_id))).toEqual(new Set([rid]))
+    expect(open).toHaveBeenCalledWith('tavotto_figures/z.py', expect.any(Function))
   })
 })

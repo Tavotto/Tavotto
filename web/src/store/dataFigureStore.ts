@@ -14,6 +14,7 @@ import {
 } from '@/lib/api'
 import { setCanvasCovered } from '@/store/canvasCover'
 import { runExclusive } from '@/lib/dataCommitQueue'
+import { isCommitInProgress, pollCommit } from '@/lib/dataCommitPoll'
 import { currentProjectId } from '@/lib/session'
 import { candidatesFromResponse, headerRowFromResponse, mixedFromResponse, rolesFromResponse, sourcesFromResponse, unitsRowFromResponse, type Candidate, type GroupSource, type ColumnRoles, type MixedColumn, type ThumbState } from '@/lib/dataFigureAdapter'
 import { fileRows, hasNumericColumn, isStaleProposeCode, sameTable, tableKey, type CellMode, type TableRef } from '@/lib/dataFigure'
@@ -125,6 +126,8 @@ interface DataFigureStore {
   group: TableRef[] | null
   /** 合画响应里每份文件的显示名与表头行 / 单位行（数据条的文件切换标签用）；单份是 null */
   sources: GroupSource[] | null
+  /** 合并标签里的概览失效代数：磁盘事件（`invalidateFiles`）之后加一，数据条据此重读当前显示的文件 */
+  overviewGen: number
   /** 每张表（含重读后的）概览；键 = `tableKey` + 表头行 */
   overviews: Record<string, OverviewState>
   /** 用户指了「哪一行是每列的名字」的文件：路径 → 物理行号；出图时原样带上 `header_rows` */
@@ -197,6 +200,8 @@ let proposeSeq = 0
 let runSeq = 0
 let commitSeq = 0
 const overviewSeq = new Map<string, number>()
+/** 当前合并标签里「本标签内已读过 / 在读」的概览键：新开标签清空，磁盘事件清空；`ensureOverview` 不重复读 */
+const groupFresh = new Set<string>()
 /** 同一个 (会话, 备选) 的提交请求号：一次点击一个，不确定的重试复用它（换号 = 后端当成新的一次、会建 `_2`） */
 let commitRid: { for: string; rid: string } | null = null
 let ridCounter = 0
@@ -224,6 +229,7 @@ const initial = {
   files: { status: 'idle' } as FilesState,
   selected: null as TableRef | null,
   group: null as TableRef[] | null,
+  overviewGen: 0,
   sources: null as GroupSource[] | null,
   overviews: {} as Record<string, OverviewState>,
   headerRows: {} as Record<string, number>,
@@ -377,6 +383,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     set({ ...idleDraft, ...kept, phase: 'reading' })
     // 合画：几份表一起交给后端判断（第一份的「全是文字 / 要点表头行」不代表整组），只读第一份的概览给数据条
     if (get().group) {
+      groupFresh.add(overviewKeyOf(sel, get().headerRows))
       void loadOverview(sel)
       await propose(still, pj)
       return
@@ -447,8 +454,19 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     const rid = commitRid.rid
     set({ drawingId: itemId, problem: null })
     try {
-      const res = await aiDataFigureCommit({ session: sessionId, id: itemId, client_request_id: rid }, pj)
+      const body = { session: sessionId, id: itemId, client_request_id: rid }
+      let res = await aiDataFigureCommit(body, pj)
       if (!still()) return
+      // 同一个请求号重发时原任务还在处理中：不是失败也不是画成，请求号留着，有界地重问同一个直到 final；超时仍未完成 = 这次没成，但请求号还在，「再试一次」继续问它
+      if (isCommitInProgress(res)) {
+        const waited = await pollCommit(() => aiDataFigureCommit(body, pj), still)
+        if (!still()) return
+        if (!waited) {
+          showOutcome({ problem: { kind: 'commit', error: null, retryable: true } })
+          return
+        }
+        res = waited
+      }
       commitRid = null
       const outcome = res.task?.outcome
       if (!res.script || !res.stem) {
@@ -563,6 +581,11 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     invalidateFiles: () => {
       const st = get().files.status
       if (st === 'idle') return
+      // 磁盘变了：合并标签里读过的概览都作废，当前显示的那个文件由数据条的 effect 随 `overviewGen` 重读
+      if (get().group) {
+        groupFresh.clear()
+        set((s) => ({ overviewGen: s.overviewGen + 1 }))
+      }
       if (st === 'loading') {
         filesDirty = true
         return
@@ -588,13 +611,15 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
 
     ensureOverview: (ref) => {
       const key = overviewKeyOf(ref, get().headerRows)
-      const cur = get().overviews[key]
-      if (cur && (cur.status === 'ready' || cur.status === 'loading')) return
+      // 这个标签里读过 / 在读的不重读（来回切不重复请求）；新开的合并标签里还没读过的，哪怕缓存里有也重读一次（先显示缓存）——外部改过文件，旧预览不能一直挂着
+      if (groupFresh.has(key)) return
+      groupFresh.add(key)
       void loadOverview(ref)
     },
 
     selectGroup: (refs) => {
       if (refs.length < 2) return
+      groupFresh.clear() // 新开的合并标签：每个文件的概览至少重读一次
       if (get().drawingId) {
         set({ draftOpen: true, draftActive: true })
         return
@@ -695,6 +720,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
 
     clear: () => {
       epoch += 1
+      groupFresh.clear()
       filesDirty = false
       commitRid = null
       overviewSeq.clear()

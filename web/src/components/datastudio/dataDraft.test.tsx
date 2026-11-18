@@ -762,6 +762,51 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     expect(qa('[data-candidate-variant]')).toHaveLength(0)
   })
 
+  it('合并标签的概览新鲜度：看过第二个文件 → 关标签 → 外部改了文件 → 再合并，切到它会重新读并显示新内容；同一标签内来回切不重复请求', async () => {
+    propose.mockResolvedValue(cands())
+    overview.mockImplementation(async ({ path }) => ov({ path, rows: path === 'names.csv' ? 7 : 144, columns: 3 }))
+    await groupTwo()
+    const reads = (p: string) => overview.mock.calls.filter((c) => c[0].path === p).length
+    await click(tabs()[1]!)
+    await flush()
+    expect(q('[data-data-strip-info]')!.textContent).toBe('前 2 行，共 7 行 · 3 列')
+    const n1 = reads('names.csv')
+    await click(tabs()[0]!)
+    await click(tabs()[1]!)
+    await flush()
+    expect(reads('names.csv')).toBe(n1) // 同一标签内来回切不重复
+    // 关标签；外部改了 names.csv（现在 99 行）；清单重读之后再合并
+    act(() => useDataFigureStore.getState().closeDraft())
+    overview.mockImplementation(async ({ path }) => ov({ path, rows: path === 'names.csv' ? 99 : 144, columns: 3 }))
+    const cmd = (el: Element) => act(async () => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true })))
+    await click(q('[data-studio-pick-mode]'))
+    await cmd(qa('[data-studio-file]')[0]!)
+    await cmd(qa('[data-studio-file]')[2]!)
+    await click(q('[data-studio-batch-merge]'))
+    await flush()
+    await flush()
+    await click(tabs()[1]!)
+    await flush()
+    expect(reads('names.csv')).toBeGreaterThan(n1) // 重新请求了
+    expect(q('[data-data-strip-info]')!.textContent).toBe('前 2 行，共 99 行 · 3 列')
+  })
+
+  it('合并标签里磁盘事件（invalidateFiles）之后，当前显示的那个文件的概览重读', async () => {
+    propose.mockResolvedValue(cands())
+    overview.mockImplementation(async ({ path }) => ov({ path, rows: 144, columns: 3 }))
+    await groupTwo()
+    await click(tabs()[1]!)
+    await flush()
+    const reads = () => overview.mock.calls.filter((c) => c[0].path === 'names.csv').length
+    const before = reads()
+    overview.mockImplementation(async ({ path }) => ov({ path, rows: 5, columns: 3 }))
+    await act(async () => useDataFigureStore.getState().invalidateFiles())
+    await flush()
+    await flush()
+    expect(reads()).toBeGreaterThan(before)
+    expect(q('[data-data-strip-info]')!.textContent).toBe('前 2 行，共 5 行 · 3 列')
+  })
+
   it('合画里某份表不在了（200 nothing + table_not_found）：走 nothing 的话，也给「各画一张」这个出路', async () => {
     propose.mockResolvedValueOnce({ kind: 'nothing', reasons: ['table_not_found'] })
     await groupTwo()

@@ -10,6 +10,7 @@ import {
   type AiDataProposeResponse,
 } from '@/lib/api'
 import { runExclusive } from '@/lib/dataCommitQueue'
+import { isCommitInProgress, pollCommit } from '@/lib/dataCommitPoll'
 import { KNOWN_NOTHING_REASONS, MAX_MERGE_TABLES, isStaleProposeCode, sameTable, tableKey, type TableRef } from '@/lib/dataFigure'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { msg, type UiMessage } from '@/i18n'
@@ -140,8 +141,16 @@ async function drawOne(ref: TableRef, still: () => boolean, pj: string | null): 
   const pend = pendingCommits.get(key)
   if (pend && pend.pj === pj) {
     try {
-      const done = await aiDataFigureCommit({ session: pend.session, id: pend.id, client_request_id: pend.rid }, pj)
+      const body = { session: pend.session, id: pend.id, client_request_id: pend.rid }
+      let done = await aiDataFigureCommit(body, pj)
       if (!still()) return { ok: false, reason: null }
+      // 原任务还在处理中（去重回的是当前快照）：既不算失败也不算画成，请求号留着，按有界间隔重问同一个直到 final
+      if (isCommitInProgress(done)) {
+        const waited = await pollCommit(() => aiDataFigureCommit(body, pj), still)
+        if (!still()) return { ok: false, reason: null }
+        if (!waited) return { ok: false, reason: null } // 超时仍未完成：这一份标失败，请求号仍保留（下次重试继续问同一个）
+        done = waited
+      }
       pendingCommits.delete(key)
       return outcomeOf(done)
     } catch (e) {

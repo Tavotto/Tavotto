@@ -37,6 +37,7 @@ export function DataDraft() {
   const selected = useDataFigureStore((s) => s.selected)
   const group = useDataFigureStore((s) => s.group)
   const sources = useDataFigureStore((s) => s.sources)
+  const overviewGen = useDataFigureStore((s) => s.overviewGen)
   const overviews = useDataFigureStore((s) => s.overviews)
   const headerRows = useDataFigureStore((s) => s.headerRows)
   // 合画的数据条此刻看第几个文件（默认第一个）；换了一组就回到第一个
@@ -49,7 +50,7 @@ export function DataDraft() {
   useEffect(() => {
     if (group && stripRef) useDataFigureStore.getState().ensureOverview(stripRef)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stripKey, groupKey])
+  }, [stripKey, groupKey, overviewGen])
   const phase = useDataFigureStore((s) => s.phase)
   const allCandidates = useDataFigureStore((s) => s.candidates)
   const thumbs = useDataFigureStore((s) => s.thumbs)
