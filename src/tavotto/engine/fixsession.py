@@ -532,8 +532,8 @@ class FixSessions:
             ),
             #: 仅 outcome == fixed 且本会话 `set_run_arguments` 改过参数：AI 定下的运行参数（界面填进「运行参数」框再重跑；空列表 = 清掉）
             **(
-                {"run_argv": list(s.ctx.run_arguments or ())}
-                if s.outcome == OUTCOME_FIXED and s.ctx is not None and s.ctx.run_arguments_changed
+                {"run_argv": list(getattr(s.ctx, "run_arguments", None) or ())}
+                if s.outcome == OUTCOME_FIXED and getattr(s.ctx, "run_arguments_changed", False)
                 else {}
             ),
             "steps": s.steps,
