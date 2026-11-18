@@ -18,6 +18,8 @@ import tempfile
 import time
 from pathlib import Path
 
+import pytest
+
 MARK = "TAVOTTO_STARTUP_PHASE="
 BUDGET_S = 75
 
@@ -108,7 +110,7 @@ def _launch(exe: Path, kill_at_phase: str | None = None) -> dict:
         "windows": windows,
         "hello_write_error": hello_err,
         "killed": killed,
-        "tail": text[-1200:],
+        "tail": " ".join(text[-400:].split()),
     }
 
 
@@ -120,7 +122,7 @@ def _pick_pyd(internal: Path) -> Path:
     raise AssertionError("no startup .pyd found")
 
 
-def test_av_like_damage_probe():
+def _collect() -> dict:
     sd = _sidecar_dir()
     exe = sd / "Tavotto.exe"
     internal = sd / "_internal"
@@ -168,4 +170,26 @@ def test_av_like_damage_probe():
         "internal_dir": internal.is_dir(),
         "exe": exe.is_file(),
     }
-    raise AssertionError("AVPROBE_JSON " + json.dumps(facts, ensure_ascii=False))
+    return facts
+
+
+CHUNK = 170
+N_CHUNKS = 60
+
+
+@pytest.fixture(scope="module")
+def facts_text() -> str:
+    try:
+        facts = _collect()
+    except Exception as e:  # noqa: BLE001 - lab probe: report whatever broke
+        facts = {"probe_error": f"{type(e).__name__}: {e}"}
+    facts.pop("sidecar_dir", None)
+    return json.dumps(facts, ensure_ascii=True, separators=(",", ":"))
+
+
+@pytest.mark.parametrize("i", range(N_CHUNKS))
+def test_av_like_damage_probe(facts_text, i):
+    """The Lab report keeps 200 chars per failure: ship the JSON back in numbered chunks."""
+    part = facts_text[i * CHUNK : (i + 1) * CHUNK]
+    if part:
+        raise AssertionError(f"C{i:02d}|{part}")
