@@ -10,9 +10,14 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from tavotto.rendercore import plan
+
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 PAGE_H_MM = 120.0
 MM_PER_PT = 25.4 / 72.0
