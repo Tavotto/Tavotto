@@ -233,6 +233,10 @@ export default interface Resources {
         "unverifiable": "图画好了，但这类图没法逐项核对数据。",
         "verified": "图画好了，数据和文件逐项对上。"
       },
+      "variant": {
+        "by_file": "只按文件比较",
+        "split": "按「{{column}}」再分开"
+      },
       "working": {
         "drawing": "正在画…",
         "reading": "正在读…",
