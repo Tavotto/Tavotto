@@ -11,8 +11,8 @@ import {
   type RectCorner,
 } from '@/lib/liveCorners'
 import { liveCornerRecord, makeLiveCorners } from '@/lib/liveCornerRecord'
-import { parseAnchorKey, pathFromMm, pathToMm, type AnchorRef, type MmSubpath } from '@/lib/pathEdit'
-import { rotateAbout } from '@/lib/pathGeom'
+import { parseAnchorKey, pathFromMm, pathToMm, toPathSubpaths, type AnchorRef, type MmSubpath } from '@/lib/pathEdit'
+import { fitPathBox, rotateAbout } from '@/lib/pathGeom'
 import { useDocumentStore } from '@/store/documentStore'
 import { canEditAnchors, useActivePathEdit, usePathEditStore } from '@/store/pathEditStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -123,12 +123,18 @@ function startPath(e: ReactPointerEvent, o: PathObject, grabbed: CornerInfo, ref
         const key = `${a.sp}:${a.i}`
         radii.set(key, Math.min(r, maxR.get(key) ?? r))
       }
-      const next = pathFromMm(o, roundCornersEach(base, radii))
+      const rounded = roundCornersEach(base, radii)
+      const next = pathFromMm(o, rounded)
       if (!next) return
       // 记下圆之前的尖角与每个角的半径：之后还能接着当圆角调（对不上的时候 `liveCornerRecord` 当没有）
       if (useRecord) {
+        // 已旋转的路径换框会连带整体平移（fitPathBox 保旋转中心）：尖角记录跟圆后的几何同一个平移，否则对不上被清掉
+        const raw = fitPathBox(toPathSubpaths(rounded.filter((sp) => sp.nodes.length >= 2)), 0, [0, 0])
+        const d: XY = raw ? [next.x - raw.x, next.y - raw.y] : [0, 0]
+        const shift = (q: XY): XY => [q[0] + d[0], q[1] + d[1]]
+        const sharp = base.map((sp) => ({ ...sp, nodes: sp.nodes.map((n) => ({ ...n, p: shift(n.p), in: shift(n.in), out: shift(n.out) })) }))
         next.subpaths = next.subpaths.map((sp, si) => {
-          const rec = base[si] ? makeLiveCorners(next, base[si], base[si].nodes.map((_n, i) => radii.get(`${si}:${i}`) ?? 0)) : undefined
+          const rec = base[si] ? makeLiveCorners(next, sharp[si], base[si].nodes.map((_n, i) => radii.get(`${si}:${i}`) ?? 0)) : undefined
           return rec ? { ...sp, liveCorners: rec } : sp
         })
       }

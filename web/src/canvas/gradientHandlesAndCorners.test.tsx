@@ -11,6 +11,7 @@ import { liveCornerRecord } from '@/lib/liveCornerRecord'
 import { roundCorners } from '@/lib/liveCorners'
 import { reflectObject, rotateObjectAbout, scaleObject } from '@/lib/transform'
 import { pathToMm } from '@/lib/pathEdit'
+import { rotateAbout } from '@/lib/pathGeom'
 import { useDocumentStore } from '@/store/documentStore'
 import { useGradientEditStore } from '@/store/gradientEditStore'
 import { editAnchors } from '@/store/pathActions'
@@ -239,6 +240,29 @@ describe('实时圆角', () => {
     const p3 = objects()[0] as PathObject
     expect(pathToMm(p3)[0].nodes).toHaveLength(4)
     expect(p3.subpaths[0].liveCorners).toBeUndefined()
+  })
+
+  it('已旋转的不对称路径（三角形转 30°）圆角：圆完记录还在、能接着调半径（换框的整体平移也要落进尖角记录）', async () => {
+    const tri = square({
+      rotationDeg: 30,
+      subpaths: [{ closed: true, nodes: [{ p: [0, 0] }, { p: [1, 0.2] }, { p: [0.3, 1] }] }],
+    })
+    await seed([tri], ['p'])
+    const turn = (q: [number, number]): [number, number] => {
+      const o = objects()[0] as PathObject
+      return rotateAbout(q, [o.x + o.w / 2, o.y + o.h / 2], 30)
+    }
+    const from = dotAt('0:0')
+    await drag(cornerDot('0:0'), turn(from), turn([from[0] + 5, from[1] + 4]))
+    const p1 = objects()[0] as PathObject
+    expect(pathToMm(p1)[0].nodes.length).toBeGreaterThan(3)
+    expect(p1.subpaths[0].liveCorners).toBeDefined()
+    expect(liveCornerRecord(p1, 0)).not.toBeNull()
+    const r1 = liveCornerRecord(p1, 0)!.radii[0]
+    expect(r1).toBeGreaterThan(0)
+    // 接着再拖：改的是同一个角的半径，记录仍有效
+    await drag(cornerDot('0:0'), turn(dotAt('0:0')), turn([dotAt('0:0')[0] + 2, dotAt('0:0')[1] + 1]))
+    expect(liveCornerRecord(objects()[0] as PathObject, 0)).not.toBeNull()
   })
 
   it('移动、等比缩放、旋转、镜像、复制、阵列之后记录还在；非等比缩放之后圆弧变成椭圆，对不上，提交时就丢', async () => {
