@@ -24,6 +24,26 @@ beforeEach(() => {
   useProjectStore.setState({ recent: recent(true), refreshRecent } as never)
 })
 
+describe('重读最近列表期间换了项目', () => {
+  it('旧失败不落进新项目的通知（换 id 与 A→B→A 同 id 代际变了都一样）', async () => {
+    let release!: () => void
+    refreshRecent.mockImplementation(() => new Promise<void>((r) => { release = r }))
+    const p = report()
+    setCurrentProjectId('B')
+    release()
+    await p
+    expect(ui().status).toBeNull()
+
+    const { useScriptRunStore } = await import('./scriptRunStore')
+    setCurrentProjectId('A')
+    const q = report()
+    useScriptRunStore.setState({ epoch: useScriptRunStore.getState().epoch + 1 } as never)
+    release()
+    await q
+    expect(ui().status).toBeNull()
+  })
+})
+
 describe('文件夹找不到（后端的 exists=false）', () => {
   beforeEach(() => { useProjectStore.setState({ recent: recent(false) } as never) })
 

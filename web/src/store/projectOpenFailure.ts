@@ -11,6 +11,7 @@ import { backendErrorText } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
 import { retryOrFeedback } from './failureExit'
 import { useProjectStore } from './projectStore'
+import { scriptRunEpoch } from './scriptRunStore'
 import { useUiStore } from './uiStore'
 
 const OWNER = 'project.openFailure'
@@ -30,7 +31,11 @@ export async function reportProjectOpenFailure(o: {
   reselect: () => void
 }): Promise<void> {
   const pj = currentProjectId()
+  // 项目代际（A → B → A 同 id 也变）：重读最近列表的这段路上用户可能已打开了别的项目，旧失败不许落进新项目的通知
+  const epoch = scriptRunEpoch()
+  const stale = () => currentProjectId() !== pj || scriptRunEpoch() !== epoch
   await useProjectStore.getState().refreshRecent().catch(() => {})
+  if (stale()) return
   const row = useProjectStore.getState().recent.find((r) => trimSep(r.path) === trimSep(o.path))
   const name = row?.name || nameOf(o.path)
   const ui = useUiStore.getState()
@@ -57,7 +62,7 @@ export async function reportProjectOpenFailure(o: {
       attempt: o.attempt,
       run: (next) => {
         // 点的时候已经打开了别的项目：只收提示，不替用户再去打开一个旧的
-        if (currentProjectId() !== pj) return
+        if (stale()) return
         return o.retry(next)
       },
     }),
