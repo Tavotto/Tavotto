@@ -800,6 +800,43 @@ def test_a_trusted_module_is_still_prompted_before_running_even_if_the_script_ed
     assert plan.deferred_unverified == ()
 
 
+@pytest.mark.parametrize("gap", ["names_incomplete", "uncovered_pth"])
+def test_an_incompletely_read_environment_still_defers_instead_of_asking(tmp_path, gap):
+    """目标环境的静态索引读不全（名字层没读全 / site 层有没跟进的 `.pth` 路径行）：不预填包名，但「改了 sys.path
+    就先跑一次」照样成立——以前跟着预填一起被挡，向上找目录导入的本地 `figure_style` 每次都要点「仍然运行」（TVD-VQ8H）。"""
+    from tavotto.engine import depplan, distmeta
+
+    (tmp_path / "plot.py").write_text(
+        "import sys\nfrom pathlib import Path\n"
+        "sys.path.insert(0, str(next(p for p in Path(__file__).resolve().parents"
+        " if (p / 'figure_style.py').is_file())))\n"
+        "import figure_style\n",
+        encoding="utf-8",
+    )
+    dists = distmeta.Index((), [], [])
+    if gap == "names_incomplete":
+        dists.complete = dists.names_complete = False
+    else:
+        dists.uncovered_paths = 1
+    plan = depplan.plan(
+        str(tmp_path), "plot.py", facts=None, target_kind=depplan.TARGET_MANAGED, dists=dists
+    )
+    assert "figure_style" not in _names(plan)
+    assert plan.deferred_unverified == ("figure_style",)
+    # 运行时真缺了 → 进确认流程，此时仍不预填（索引读不全）
+    plan = depplan.plan(
+        str(tmp_path),
+        "plot.py",
+        facts=None,
+        target_kind=depplan.TARGET_MANAGED,
+        dists=dists,
+        extra_imports=("figure_style",),
+    )
+    assert _names(plan) == ["figure_style"]
+    assert plan.deferred_unverified == ()
+    assert not plan.origins[0].get("suggested_distribution")
+
+
 def test_once_the_run_really_misses_the_module_it_goes_to_the_confirm_flow(tmp_path):
     """运行时 `ModuleNotFoundError` 点名了它（`extra_imports`）→ 不再延后，进现有的确认包名流程。"""
     (tmp_path / "plot.py").write_text(_SYSPATH + "import fangsensor_utils\n", encoding="utf-8")

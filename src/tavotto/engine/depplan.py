@@ -1532,7 +1532,9 @@ def plan(
     literal_dirs = [
         str(r.get("path") or ".") for r in scan.search_roots if r.get("tag") == "sys_path_literal"
     ]
-    specifiable = {
+    # 「纯粹的表外名」：没有可信安装名、没有任何证据说环境里已有提供者。`specifiable` 是它再加上「静态索引读全了」——
+    # 读不全时「没查到」不等于「没装」，不预填包名；但这不影响下面「先跑一次」的延后（见那里）
+    pure_unknown = {
         c.module
         for c in origin_classes
         if not literal_dirs
@@ -1541,17 +1543,21 @@ def plan(
             c,
             _effective_reason(c, open_classes.get(c.module, ORIGIN_UNRESOLVED)),
             states.get(c.module, ""),
-            index_incomplete,
+            False,
         )
     }
+    specifiable = set() if index_incomplete else set(pure_unknown)
     # 脚本会在运行时改 `sys.path`（`importscan` 的 AST 判据 `sys_path_modified`）：表外、没有可信映射的未装模块静态上找不到不等于
     # 没有——它可能就在脚本运行时才加进路径的目录里。不在运行前问包名，先跑一次（`deferred_unverified`）；运行时真的
-    # `ModuleNotFoundError` 点名它了（`extra_imports`）才走确认包名。用户已经指定过包名的不延后（他们已经答了）
+    # `ModuleNotFoundError` 点名它了（`extra_imports`）才走确认包名。用户已经指定过包名的不延后（他们已经答了）。
+    # 延后按 `pure_unknown` 判、不看静态索引读没读全：读不全只说明「没查到」更不等于「没装」，正该先跑一次——以前跟着
+    # `specifiable` 一起被索引读不全（如 site 层有未建模的 `.pth` 钩子）挡掉，脚本向上找目录加进 `sys.path` 的本地模块
+    # 每次都弹「有 1 个库的来源还没法确定」，要点「仍然运行」（TVM-22EE / TVD-VQ8H）
     deferred: tuple[str, ...] = ()
     if any(w.get("code") == "sys_path_modified" for w in scan.warnings):
         observed = set(extra_imports)
         asked = set(user_specified or {})
-        deferred = tuple(sorted(m for m in specifiable if m not in observed and m not in asked))
+        deferred = tuple(sorted(m for m in pure_unknown if m not in observed and m not in asked))
         origin_classes = [c for c in origin_classes if c.module not in deferred]
         specifiable -= set(deferred)
     chosen: dict[str, tuple[depresolve.DependencyIntent, importscan.ImportClass]] = {}
