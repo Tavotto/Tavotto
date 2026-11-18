@@ -241,6 +241,13 @@ pub fn safe_start_applies(code: &str) -> bool {
     code == code::SIDECAR_TIMEOUT
 }
 
+/// shell 报告带 `startup_phase`（sidecar 走到启动的哪一步，闭集）的失败码。判据只有这一个出处。
+/// 握手超时（卡在哪一步，TVD-DT76）与握手前提前退出（崩在哪一步，TVD-MHQJ）：两者都是 sidecar 起来了、
+/// 往日志写过阶段标记；别的失败码 sidecar 没跑起来或已握手，阶段没有意义。
+pub fn startup_phase_applies(code: &str) -> bool {
+    code == code::SIDECAR_TIMEOUT || code == code::SIDECAR_EXITED
+}
+
 /// 纯判据：在 [`decide`]（可信页面 + 从未进入编辑态）之上再要求当前失败码满足 [`reinstall_applies`]。
 /// 同版本安装的放行点只有这一处。
 pub fn decide_reinstall(
