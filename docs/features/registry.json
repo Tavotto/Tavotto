@@ -1566,6 +1566,22 @@
           "title": "功能：只定义了画图函数的文件，「运行它」在当前项目里运行调用它的脚本"
         }
       ]
+    },
+    {
+      "id": "canvas.vector-path",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "形状 / 箭头可「转为路径」：画面不动、变成自由路径对象，一次撤销回到形状；路径沿真实轮廓命中",
+        "en-US": "Shapes and arrows can be converted to paths: the picture stays put, the object becomes a free path, one undo restores the shape; paths are hit along their real outline"
+      },
+      "entry": "画布 → 右键形状 →「转为路径」",
+      "e2e": [
+        {
+          "spec": "vector-path.spec.ts",
+          "title": "矢量路径 › 右键「转为路径」：画面不动、矩形变成 path、一次撤销回到矩形；空心路径沿轮廓点得中"
+        }
+      ]
     }
   ]
 }
