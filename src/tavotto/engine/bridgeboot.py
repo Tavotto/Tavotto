@@ -153,7 +153,7 @@ def drop_script_dir_from_sys_path(here: str) -> bool:
 
 
 def package_path_root(script: str, module: str) -> str | None:
-    """按模块运行一份包里的脚本时的 `sys.path[0]`：包根的上一级目录（ADR 0194，与 `python -m 包.模块` 一致）。
+    """按模块运行一份包里的脚本时的 `sys.path[0]`：包根的上一级目录（ADR 0196，与 `python -m 包.模块` 一致）。
 
     子进程只收模块名（`plots.fig`）与脚本路径，这里从脚本路径往上数层得出：脚本文件名必须是模块名最后一段 + `.py`、
     往上每一级目录名必须与模块名的各段逐一对上（Windows 不分大小写），否则回 None——**绝不猜**，由调用方大声失败或照旧按脚本运行。

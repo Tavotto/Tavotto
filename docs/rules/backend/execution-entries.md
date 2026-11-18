@@ -90,7 +90,7 @@ order: 180
   没有接进 `tavotto` CLI，别在文档 / 官网 / release notes 里提它。
   **产品入口是 `tavotto run`**（`docs/rules/backend/tavotto-run-control-plane.md`）。
 
-## 包里的脚本按模块运行（ADR 0194）
+## 包里的脚本按模块运行（ADR 0196）
 
 **主语是「产品此刻怎么跑这份脚本」**：脚本在包里（`plots/__init__.py` + `plots/fig.py`）且顶层有相对导入（`from .helpers import tidy`）时，`python plots/fig.py`
 必然 `ImportError: attempted relative import with no known parent package`。这时两条入口都按 `python -m plots.fig` 的方式运行它，

@@ -1,4 +1,4 @@
-"""包里的脚本按模块运行（ADR 0194）：真进程对拍——safe worker 与 native bridge 的世界必须与真实 `python -m 包.模块` 一致。
+"""包里的脚本按模块运行（ADR 0196）：真进程对拍——safe worker 与 native bridge 的世界必须与真实 `python -m 包.模块` 一致。
 
 同一个解释器、同一份夹具跑三遍再逐字段比：
 

@@ -537,7 +537,7 @@ def run_module(
     `on_origin` 在**开跑之前**收到目标模块的源文件路径（见
     `resolve_module_origin`）。
 
-    `path_root`（ADR 0194，桌面拥有的 native 把包里的脚本按模块运行）：`sys.path[0]` 用它——包根的上一级，
+    `path_root`（ADR 0196，桌面拥有的 native 把包里的脚本按模块运行）：`sys.path[0]` 用它——包根的上一级，
     而不是 cwd（桌面的 cwd 是脚本目录或项目根，那里 import 不到 `plots`）；没给 = 与真实 `-m` 一样放 cwd。
     """
     import runpy  # noqa: PLC0415 — 只有 module 目标才需要，脚本目标不必付这份 import
@@ -1409,7 +1409,7 @@ def _parse_args(argv: list):
     ap = argparse.ArgumentParser(prog="tavotto-bridge-runner", allow_abbrev=False)
     ap.add_argument("--target-kind", choices=("script", "module"), required=True)
     ap.add_argument("--target", required=True)
-    # ADR 0194：包里的脚本按模块运行（`python -m 包.模块`）。身份参数仍是脚本（`--target-kind script --target <脚本>`：
+    # ADR 0196：包里的脚本按模块运行（`python -m 包.模块`）。身份参数仍是脚本（`--target-kind script --target <脚本>`：
     # 描述符 / 资产 id / 指纹从一开始就与按脚本运行相同），这里只换执行那一步；终端的 `tavotto run` 永远不带
     ap.add_argument("--as-module", default=None)
     ap.add_argument("--out-dir", default="")

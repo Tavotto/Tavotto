@@ -1,9 +1,9 @@
-# ADR 0194：包里的脚本用相对导入时，按包里的模块来运行（等同 `python -m 包.子包.脚本`）
+# ADR 0196：包里的脚本用相对导入时，按包里的模块来运行（等同 `python -m 包.子包.脚本`）
 
 日期：2026-11-19 · 状态：**Accepted**（维护者 2026-11-19 裁决）
 相关：[0014 safe / native 执行档](0014-safe-native-execution-profiles.md)、[0020 native bridge](0020-native-matplotlib-bridge.md)、[0127 执行策略与回退](0127-execution-policy-and-unified-retry-guard.md)、
 [0188 库模块入口](0188-library-module-entry.md)（§二「只有按 `python -m` 才解析得到的不当入口」的前提随本 ADR 改变，见「后续」）；
-规则全文：`docs/rules/backend/execution-entries.md`「包里的脚本按模块运行（ADR 0194）」。
+规则全文：`docs/rules/backend/execution-entries.md`「包里的脚本按模块运行（ADR 0196）」。
 
 ## 问题
 

@@ -319,7 +319,7 @@ class ExecutionSpec:
     #: （`--stem-aliases`），workerd 的 spawn 规格哈希随它变。它改变图的身份（runtime id 里的 stem），跨机器稳定，
     #: 非空时进 `stable_payload()`。空元组 = 没有别名，argv 与稳定身份逐字节不变（golden）。
     stem_aliases: tuple[tuple[str, str], ...] = ()
-    #: 按**包里的模块**运行这份脚本（ADR 0194）：点分模块名（`plots.fig`），空串 = 照旧按脚本路径运行。判据只有一处
+    #: 按**包里的模块**运行这份脚本（ADR 0196）：点分模块名（`plots.fig`），空串 = 照旧按脚本路径运行。判据只有一处
     #: （`pkgentry.resolve`：脚本顶层有相对导入、整条包链都有 `__init__.py`、包根仍在项目之内），由 `safe_spec` 与
     #: `desktop_native_spec` 在构造时装配；终端的 `native_spec`（`tavotto run`）结构上不带。它**不是身份**：`target` /
     #: `target_kind`（仍是脚本 + 项目相对路径）与 `stable_payload()` 一字不变，所以描述符 / 资产 id / 指纹 / 注册表条目都照旧；
@@ -711,7 +711,7 @@ def safe_spec(
         if write_roots is not None
         else None
     )
-    # ADR 0194：包里的脚本用相对导入时按模块运行（判据唯一出处 `pkgentry.resolve`；影子脚本项目里没有这个文件，不改）。
+    # ADR 0196：包里的脚本用相对导入时按模块运行（判据唯一出处 `pkgentry.resolve`；影子脚本项目里没有这个文件，不改）。
     # 三条 spawn 路径、准备计划、MCP 都经本函数，所以同源；身份（target / 稳定载荷）不受影响
     package = None if script_source else pkgentry.resolve(figures_dir, script, entry)
     return ExecutionSpec(
@@ -803,7 +803,7 @@ def desktop_native_spec(
       恢复了 conda 激活 / IDE / 内核环境；
     * `stdin` 由桌面持有（`pipe` 或 `null`），不再是「继承终端」。
 
-    `registered_entry`（ADR 0194）：注册表登记的入口，只给「包里的脚本按模块运行」的判据用（`pkgentry.resolve`：函数入口不改，
+    `registered_entry`（ADR 0196）：注册表登记的入口，只给「包里的脚本按模块运行」的判据用（`pkgentry.resolve`：函数入口不改，
     与 safe 一致）；native 自己恒整份脚本运行（spec.entry 仍是 None）。调用方不知道登记入口就不给（None = 整份脚本，判据照常）。
     """
     return _native(
@@ -853,7 +853,7 @@ def _native(
                 f"脚本与项目根不在同一个盘符上，算不出项目相对路径: "
                 f"{raw_target!r} / {project_root!r}"
             ) from exc
-    # ADR 0194：桌面拥有的 native 在「包里的脚本用相对导入」时按模块运行（`python fig.py` 在这个形状上必然 ImportError）。
+    # ADR 0196：桌面拥有的 native 在「包里的脚本用相对导入」时按模块运行（`python fig.py` 在这个形状上必然 ImportError）。
     # 终端拥有的（`tavotto run`）不传 `package_as_module`：那是用户自己敲的命令，原样。native 整份脚本运行（entry=None）；登记入口只给判据用（函数入口不改，与 safe 一致）
     package = (
         pkgentry.resolve(project_root, target.replace(os.sep, "/"), registered_entry)
@@ -924,7 +924,7 @@ def bridge_argv(
         spec.project_root,
     ]
     if spec.module_name:
-        # ADR 0194：包里的脚本按模块运行（`runpy.run_module`）。runner 的**身份参数仍是脚本**（`--target-kind script
+        # ADR 0196：包里的脚本按模块运行（`runpy.run_module`）。runner 的**身份参数仍是脚本**（`--target-kind script
         # --target <脚本>`：描述符 / 资产 id / 指纹都由它派生，与不按模块运行时一字不差），只在执行那一步换跑法；
         # `sys.path[0]` 由脚本路径往上数层得出。没有按模块运行时命令行逐字节不变（golden）
         out += ["--as-module", spec.module_name]
@@ -999,7 +999,7 @@ def worker_argv(
         # 认「cwd 换到哪」，模式的名字是控制面的事。
         out += ["--cwd", spec.cwd]
     if spec.module_name:
-        # ADR 0194：包里的脚本按模块运行。只在判据成立时多两个 token——没有相对导入的脚本 argv 逐字节不变（golden）；
+        # ADR 0196：包里的脚本按模块运行。只在判据成立时多两个 token——没有相对导入的脚本 argv 逐字节不变（golden）；
         # 进 argv 所以 workerd 的 spawn 规格哈希天然随它变
         out += ["--as-module", spec.module_name]
     if spec.input_remap:

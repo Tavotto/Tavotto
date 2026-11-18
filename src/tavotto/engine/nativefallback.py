@@ -212,7 +212,7 @@ def launch(
         stdin=execspec.STDIN_NULL,
         env={"PYTHONUNBUFFERED": "1"},
         ignored_paths=pathignore.paths_for(root),
-        registered_entry=entry,  # ADR 0194：不给 = 整份脚本，判据照常
+        registered_entry=entry,  # ADR 0196：不给 = 整份脚本，判据照常
         **execspec.run_kwargs(run),
     )
     try:

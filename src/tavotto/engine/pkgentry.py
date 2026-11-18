@@ -1,4 +1,4 @@
-"""包里的脚本用相对导入时，按包里的模块来运行（ADR 0194，维护者 2026-11-19 裁决）。
+"""包里的脚本用相对导入时，按包里的模块来运行（ADR 0196，维护者 2026-11-19 裁决）。
 
 `plots/__init__.py` + `plots/helpers.py` + `plots/fig.py`（`from .helpers import tidy`）：直接 `python plots/fig.py` 必然
 `ImportError: attempted relative import with no known parent package`——**原样跑必然失败**，所以这里改跑法不违背

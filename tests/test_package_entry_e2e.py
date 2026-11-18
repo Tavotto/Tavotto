@@ -1,4 +1,4 @@
-"""包里的脚本用相对导入时按模块运行（ADR 0194）：真 sidecar + 真用户 Python + 真文件，穿过公共入口（准备会话）。
+"""包里的脚本用相对导入时按模块运行（ADR 0196）：真 sidecar + 真用户 Python + 真文件，穿过公共入口（准备会话）。
 
 `plots/__init__.py` + `plots/helpers.py` + `plots/fig.py`（`from .helpers import tidy`）：直接 `python plots/fig.py`
 必然 `ImportError: attempted relative import with no known parent package`，Tavotto 以前同样失败（`script_error`）。

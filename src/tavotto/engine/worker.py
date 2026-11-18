@@ -1652,7 +1652,7 @@ class Worker(wireproto.V1Handler):
         #: 自己所在的目录。写入边界的**参照**始终是沙盒 / 图库目录，守卫不变。
         self.workdir = Path(args.cwd).resolve() if getattr(args, "cwd", None) else None
         self.entry = args.entry
-        #: 按模块运行这份脚本的模块名（`--as-module`，ADR 0194）；build 开头核对后才真正生效（`_package_module`）。
+        #: 按模块运行这份脚本的模块名（`--as-module`，ADR 0196）；build 开头核对后才真正生效（`_package_module`）。
         self.as_module = getattr(args, "as_module", None) or None
         self.preview_dpi = args.preview_dpi
         self.built = False
@@ -2044,7 +2044,7 @@ class Worker(wireproto.V1Handler):
             ) from exc
 
     def _package_module(self) -> tuple[str | None, str | None]:
-        """`--as-module`（ADR 0194）在子进程这一侧的最后一道核对：`(模块名, sys.path[0])`；不按模块运行 = `(None, None)`。
+        """`--as-module`（ADR 0196）在子进程这一侧的最后一道核对：`(模块名, sys.path[0])`；不按模块运行 = `(None, None)`。
 
         父进程的判据（`pkgentry.resolve`）已经定了「该按模块跑」，这里只验**执行前提仍然成立**，不成立就照旧 `run_path`
         （脚本失败的样子与以前一字不差，绝不猜）：模块名必须与脚本路径逐段对上（`bridgeboot.package_path_root`，`sys.path[0]`
@@ -2102,7 +2102,7 @@ class Worker(wireproto.V1Handler):
         # 文件夹（比如整份库源码 `celerite/`，里面缺构建时才生成的文件）不会再盖住环境里装好的那个发行包。
         # 静态侧同一个模型：`importscan._search_roots`（project_root 排在标准库 / site 之后）与
         # `importshadow.detect(late_roots=…)`；改这里要一起改（tests/test_syspath_order.py 锁住三者一致）。
-        # 按模块运行（ADR 0194）时 `sys.path[0]` 是包根的上一级（与 `python -m` 一致），脚本目录不上 path；其余不变
+        # 按模块运行（ADR 0196）时 `sys.path[0]` 是包根的上一级（与 `python -m` 一致），脚本目录不上 path；其余不变
         package_module, package_root = self._package_module()
         _put_project_on_path(package_root or self.script.parent, self.figures_dir)
         #: 脚本运行前的 `sys.path`：之后新加进来的项目外目录读不了时，失败卡点名它（`_unreadable_folder_fact`）
@@ -3094,7 +3094,7 @@ def main() -> None:
     # ADR 0162：图名别名表（JSON `[[原图名, 登记图名], …]`）；没有别名时不出现
     ap.add_argument("--stem-aliases", default=None)
     ap.add_argument("--entry", default="main")
-    # ADR 0194：包里的脚本用相对导入时按模块运行（`python -m 包.模块`）；只在判据成立时出现，没有它 = 照旧 `run_path`
+    # ADR 0196：包里的脚本用相对导入时按模块运行（`python -m 包.模块`）；只在判据成立时出现，没有它 = 照旧 `run_path`
     ap.add_argument("--as-module", default=None)
     ap.add_argument("--preview-dpi", type=int, default=200)
 

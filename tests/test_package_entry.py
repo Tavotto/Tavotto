@@ -1,4 +1,4 @@
-"""包里的脚本用相对导入时按模块运行（ADR 0194）：判据与 spec / argv 的模型契约。
+"""包里的脚本用相对导入时按模块运行（ADR 0196）：判据与 spec / argv 的模型契约。
 
 不起任何子进程——验的是 AST 判据（`engine/pkgentry.resolve`）与它在 `execspec` 里的装配：
 
