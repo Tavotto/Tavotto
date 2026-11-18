@@ -71,10 +71,10 @@ export function visibleBounds(objs: readonly CanvasObject[], all: readonly Canva
 
 /* ------------------------------------- 缩放 ------------------------------------- */
 
-/** 「缩放描边和效果」：线宽、圆角、文字边框 / 内边距跟着 √(kx·ky) 走 */
+/** 「缩放描边和效果」：线宽、圆角、文字边框 / 内边距、路径文字的手动离线跟着 √(kx·ky) 走 */
 function scaleStrokes<T extends CanvasObject>(o: T, k: number): T {
   const c = o as unknown as Record<string, number | undefined>
-  for (const f of ['strokePt', 'cornerRadius', 'borderPt', 'padding'] as const) {
+  for (const f of ['strokePt', 'cornerRadius', 'borderPt', 'padding', 'baselineOffsetPt'] as const) {
     if (typeof c[f] === 'number') c[f] = (c[f] as number) * k
   }
   return o
