@@ -18803,6 +18803,12 @@ def main():
         except (RuntimeError, OSError) as exc:
             print(f"* 无法打开项目 {candidate}: {exc}")
             print(f"* 请在{where}中选择或新建项目")
+        except Exception:  # noqa: BLE001 —— 打开上次项目的任何失败都不挡启动
+            # 注册表 / 状态文件坏了会引出 RuntimeError / OSError 以外的异常（ValueError、KeyError、
+            # UnicodeDecodeError、AtomicWriteError……）：冒出去就是进程在握手前退出、救援页「重新启动」
+            # 永远同一个结果（TVD-MHQJ）。照样起服务，界面里的项目选择页接手。
+            LOG.error("启动时打开项目失败，改由项目选择页接手", exc_info=True)
+            print(f"* 请在{where}中选择或新建项目")
     else:
         print(f"* 尚未选择项目：请在{where}中新建或打开一个项目")
 

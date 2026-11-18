@@ -206,9 +206,12 @@ fn fill2(template: &str, path: &str, err: &str) -> String {
 const EXIT_GRACE: Duration = Duration::from_secs(2);
 
 /// 握手阶段发现 sidecar 已退出：带退出码，stderr 尾巴只进 message。
+/// 握手前 sidecar 自己退出了。`log_start` 是 spawn 前日志的长度：只在本次新增部分里找最后一个启动阶段标记，
+/// 分清崩在导入之前（装坏了 / 杀软）还是打开项目时（TVD-MHQJ）。
 fn exited_error(
     status: std::process::ExitStatus,
     log_path: &Path,
+    log_start: u64,
     m: &crate::i18n::ShellText,
 ) -> StartError {
     use crate::rescue::{code, stage};
@@ -221,7 +224,7 @@ fn exited_error(
             .replace("{tail}", &tail),
     );
     e.info.exit_code = status.code();
-    e
+    e.with_startup_phase(startup_phase::from_log(log_path, log_start))
 }
 
 /// 把 hello 行写进 sidecar 的 stdin。
@@ -234,6 +237,7 @@ fn send_hello(
     stdin: &mut ChildStdin,
     line: &str,
     log_path: &Path,
+    log_start: u64,
     m: &crate::i18n::ShellText,
 ) -> Result<(), StartError> {
     use crate::rescue::{code, stage};
@@ -248,7 +252,7 @@ fn send_hello(
     let deadline = Instant::now() + EXIT_GRACE;
     loop {
         if let Ok(Some(status)) = child.try_wait() {
-            return Err(exited_error(status, log_path, m));
+            return Err(exited_error(status, log_path, log_start, m));
         }
         if Instant::now() >= deadline {
             break;
@@ -434,7 +438,14 @@ impl Sidecar {
         if safe {
             hello[safe_start::HELLO_FIELD] = serde_json::json!(true);
         }
-        send_hello(&mut child, &mut stdin, &format!("{hello}\n"), &log_path, m)?;
+        send_hello(
+            &mut child,
+            &mut stdin,
+            &format!("{hello}\n"),
+            &log_path,
+            log_start,
+            m,
+        )?;
 
         let deadline = Instant::now() + handshake_timeout;
         let port = loop {
@@ -463,7 +474,7 @@ impl Sidecar {
                 }
             }
             if let Ok(Some(status)) = child.try_wait() {
-                return Err(exited_error(status, &log_path, m));
+                return Err(exited_error(status, &log_path, log_start, m));
             }
             if Instant::now() >= deadline {
                 let _ = child.kill();
@@ -755,6 +766,39 @@ mod tests {
         assert!(!facts.contains("SECRET_STDERR_TEXT"));
     }
 
+    /// 握手前提前退出（TVD-MHQJ）也记本次启动的最后一个阶段：分清是没跑到导入完（装坏了 / 杀软）还是在打开项目时崩了。
+    #[cfg(unix)]
+    #[test]
+    fn a_sidecar_that_exits_during_the_handshake_records_the_last_startup_phase_of_this_launch() {
+        let res = scratch("res");
+        let logs = scratch("logs");
+        // 上一次启动留在日志里的标记不算本次
+        std::fs::write(
+            logs.join("sidecar.log"),
+            "TAVOTTO_STARTUP_PHASE=serving\nold run\n",
+        )
+        .unwrap();
+        bundled(
+            &res,
+            b"#!/bin/sh\nIFS= read -r hello\necho TAVOTTO_STARTUP_PHASE=imports_done >&2\necho TAVOTTO_STARTUP_PHASE=project_open >&2\necho 'Traceback /home/u/secret' >&2\nexit 1\n",
+        );
+        let e = start_in(&res, &logs);
+        assert_eq!(
+            (
+                e.info.stage,
+                e.info.code,
+                e.info.exit_code,
+                e.info.startup_phase
+            ),
+            ("handshake", "sidecar_exited", Some(1), Some("project_open"))
+        );
+        let facts = serde_json::to_string(&e.info).unwrap();
+        assert!(
+            !facts.contains("secret"),
+            "no log text in the structured facts"
+        );
+    }
+
     /// 起一个 `sh -c body` 子进程，返回 (child, stdin)。
     #[cfg(unix)]
     fn spawn_sh(body: &str) -> (Child, ChildStdin) {
@@ -780,7 +824,7 @@ mod tests {
         let log = scratch("log").join("sidecar.log");
         std::fs::write(&log, b"SECRET_STDERR_TEXT\n").unwrap();
         let m = crate::i18n::text(crate::i18n::DEFAULT_LOCALE);
-        let e = send_hello(&mut child, &mut stdin, "{}\n", &log, m).unwrap_err();
+        let e = send_hello(&mut child, &mut stdin, "{}\n", &log, 0, m).unwrap_err();
         assert_eq!(
             (e.info.stage, e.info.code, e.info.exit_code),
             ("handshake", "sidecar_exited", Some(3))
@@ -798,7 +842,7 @@ mod tests {
         // 等 sh 真把 stdin 关掉：写到失败为止（sh 启动前管道缓冲区能吃下小写入）
         let mut last = Ok(());
         for _ in 0..200 {
-            last = send_hello(&mut child, &mut stdin, "{}\n", &log, m);
+            last = send_hello(&mut child, &mut stdin, "{}\n", &log, 0, m);
             if last.is_err() {
                 break;
             }

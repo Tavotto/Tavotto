@@ -67,7 +67,7 @@ pub struct ReportInput {
     pub install_files: Option<crate::rescue::InstallFiles>,
     /// launch 阶段 spawn 失败时的系统错误类别（`rescue::SPAWN_ERRORS` 闭集）；其余为 `None`（报告里是 `null`）。
     pub spawn_error: Option<&'static str>,
-    /// 握手超时时 sidecar 卡在启动的哪一步（`sidecar::startup_phase` 闭集 + `none`）；其余为 `None`（报告里是 `null`）。
+    /// 握手超时 / 握手前提前退出时 sidecar 走到启动的哪一步（`sidecar::startup_phase` 闭集 + `none`，`rescue::startup_phase_applies`）；其余为 `None`（报告里是 `null`）。
     pub startup_phase: Option<&'static str>,
     pub created_at: String,
 }
@@ -97,8 +97,8 @@ impl ReportInput {
         {
             s.spawn_error = Some("other");
         }
-        // 启动阶段只属于握手超时；别的失败码带了也丢掉，闭集外的值归 `none`
-        if s.code != crate::rescue::code::SIDECAR_TIMEOUT {
+        // 启动阶段只属于握手超时 / 握手前提前退出；别的失败码带了也丢掉，闭集外的值归 `none`
+        if !crate::rescue::startup_phase_applies(&s.code) {
             s.startup_phase = None;
         } else if s
             .startup_phase
@@ -1085,28 +1085,36 @@ mod tests {
     }
 
     #[test]
-    fn the_startup_phase_is_a_closed_set_name_only_for_a_handshake_timeout() {
+    fn the_startup_phase_is_a_closed_set_name_only_for_a_handshake_timeout_or_an_early_exit() {
         let c = contract();
         let mut input = sample_input(&c);
         input.stage = "handshake".into();
-        input.code = "sidecar_timeout".into();
-        let phases = crate::sidecar::startup_phase::PHASES
-            .iter()
-            .chain([&crate::sidecar::startup_phase::NONE]);
-        for phase in phases {
-            input.startup_phase = Some(phase);
+        // 握手超时（TVD-DT76）与握手前提前退出（TVD-MHQJ）都带阶段
+        for code in ["sidecar_timeout", "sidecar_exited"] {
+            input.code = code.into();
+            let phases = crate::sidecar::startup_phase::PHASES
+                .iter()
+                .chain([&crate::sidecar::startup_phase::NONE]);
+            for phase in phases {
+                input.startup_phase = Some(phase);
+                let (_, r) = build_documents(&input);
+                assert_eq!(r["failure"]["startup_phase"], json!(phase), "{code}");
+            }
+            // 闭集外的值不进报告（归 none）
+            input.startup_phase = Some("/home/someone/secret");
             let (_, r) = build_documents(&input);
-            assert_eq!(r["failure"]["startup_phase"], json!(phase));
+            assert_eq!(r["failure"]["startup_phase"], json!("none"), "{code}");
         }
-        // 闭集外的值不进报告（归 none）
-        input.startup_phase = Some("/home/someone/secret");
-        let (_, r) = build_documents(&input);
-        assert_eq!(r["failure"]["startup_phase"], json!("none"));
         // 别的失败码带了阶段也丢掉
-        input.code = "sidecar_exited".into();
-        input.startup_phase = Some("serving");
-        let (_, r) = build_documents(&input);
-        assert_eq!(r["failure"]["startup_phase"], Value::Null);
+        for code in crate::rescue::CODES
+            .iter()
+            .filter(|c| !matches!(**c, "sidecar_timeout" | "sidecar_exited"))
+        {
+            input.code = (*code).into();
+            input.startup_phase = Some("serving");
+            let (_, r) = build_documents(&input);
+            assert_eq!(r["failure"]["startup_phase"], Value::Null, "{code}");
+        }
     }
 
     #[test]
