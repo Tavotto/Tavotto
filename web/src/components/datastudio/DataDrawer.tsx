@@ -23,6 +23,7 @@ export function DataDrawer() {
   const { t: tc } = useTranslation('common')
   const files = useDataFigureStore((s) => s.files)
   const selected = useDataFigureStore((s) => s.selected)
+  const group = useDataFigureStore((s) => s.group)
   const overviews = useDataFigureStore((s) => s.overviews)
   const headerRows = useDataFigureStore((s) => s.headerRows)
 
@@ -119,8 +120,8 @@ export function DataDrawer() {
       <DataBatchActions open={pickMode} />
       <DataList
         rows={rows}
-        // 多选态下清单里只有「已选」这一种高亮：单份流程选中的那一行不再亮（也让漫游 tabindex 回到第一行）
-        selected={pickMode ? null : selected}
+        // 多选态下清单里只有「已选」这一种高亮；合画的临时标签开着时也不单独亮第一份（也让漫游 tabindex 回到第一行）
+        selected={pickMode || group ? null : selected}
         overviews={listOverviews}
         multi={multi}
         onSelect={(ref) => {
