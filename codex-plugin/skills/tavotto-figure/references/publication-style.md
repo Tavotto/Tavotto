@@ -97,9 +97,11 @@ python3 scripts/prefs.py --set font="Times New Roman" --set legend_frame=off --j
 
 Tavotto 内置了期刊标准库（每条数值都带原文出处）。用户说「投 Nature」「按 ACS 的要求」时：
 
-1. `tavotto_list_journals { "query": "nature" }` 按名字 / 别名 / 出版社查，拿到 `id`。查到多本就把候选念给用户选，**不要猜**。
-2. 之后 `tavotto_open_figure` / `tavotto_preflight` / `tavotto_export` / `tavotto_normalize_figure` 都带
-   `"journal_id": "<id>"`。它等于「中性底规范 + 这本期刊的覆盖」：期刊写了的项才判，没写的不判，也不套课题组规范。
+1. `journal_id` **直接写期刊名**（id、全名、常见缩写都行，不分大小写与标点，如 `"Nature"`、`"Nat Commun"`）：
+   唯一命中就用，回包的 `journal_resolved: {from, id}` 说解析到哪个 id；多本命中回 `journal_ambiguous` + 候选，
+   把候选念给用户选，**不要猜**。想先浏览 / 确认候选才用 `tavotto_list_journals { "query": "nature" }`。
+2. `tavotto_open_figure` / `tavotto_preflight` / `tavotto_export` / `tavotto_normalize_figure` 都带
+   `"journal_id": "<名字或 id>"`。它等于「中性底规范 + 这本期刊的覆盖」：期刊写了的项才判，没写的不判，也不套课题组规范。
    结果里的 `journal_ref`（id / 目录版本 / 出处日期）照实告诉用户这是按哪本期刊、哪一版判的。
 3. `journal_id` **不能**和 `profile_id` / `journal` 同时给（`journal_id_conflict`）。开工三问的「图例加框」在这里不用带：
    期刊规范不判图例框。

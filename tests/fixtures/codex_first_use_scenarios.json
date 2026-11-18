@@ -4,9 +4,9 @@
     {
       "id": "healthy-zero-install",
       "given": "插件已安装，tavotto_health 回 ok: true",
-      "expect": "只调一次 health，然后直接干活；本会话零安装、零联网",
+      "expect": "直接开始干活（不先调 health）；只有工具缺失或报引擎错误才调一次 health；本会话零安装、零联网",
       "anchors": [
-        {"doc": "codex-plugin/skills/tavotto-figure/SKILL.md", "must": ["优先调用 `tavotto_health`，只调用一次", "绝不执行插件安装、升级、pip/pipx", "一次联网安装都不该发生"]}
+        {"doc": "codex-plugin/skills/tavotto-figure/SKILL.md", "must": ["只有两种情况才调 `tavotto_health`（一次）", "绝不执行插件安装、升级、pip/pipx", "一次联网安装都不该发生"]}
       ]
     },
     {

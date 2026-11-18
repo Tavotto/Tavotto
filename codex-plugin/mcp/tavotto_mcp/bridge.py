@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import base64
+import difflib
 import hashlib
 import importlib
 import inspect
@@ -377,6 +378,81 @@ def list_journals(query: str | None = None) -> dict:
         loaded = set(remote.loaded_ids())
         for item in out["journals"]:
             item["downloaded"] = item["id"] in loaded
+    return out
+
+
+#: 宽松解析的候选上限（歧义 / 未命中都不超过它，别把整本目录倒给 Agent）
+JOURNAL_CANDIDATE_LIMIT = 8
+_JOURNAL_KEY_DROP = re.compile(r"[\W_]+", re.UNICODE)
+
+
+def _journal_key(text: object) -> str:
+    """宽松比较的归一：NFKC、小写、去掉空白与标点（保留字母数字与 CJK）。"""
+    return _JOURNAL_KEY_DROP.sub("", unicodedata.normalize("NFKC", str(text)).lower())
+
+
+def _journal_names(item: dict) -> list[str]:
+    return [item["id"], item["label"], *item.get("aliases", [])]
+
+
+def resolve_journal_id(raw: object) -> tuple[object, dict | None]:
+    """宽松期刊参数（ADR 0192 §4）：id / 全名 / 别名（大小写、空格、标点不敏感）→ `(期刊 id, journal_resolved)`。
+
+    目录就是 `list_journals` 读的那份（引擎 `search_journals` 的种子 + 缓存索引），这里不抄第二份期刊表。
+    精确 id 原样放行（`journal_resolved` 为 None，旧行为一字不变）；两档：先归一后与 id / 名称 / 别名**整串相等**，
+    再归一后**子串**命中（出版社不参与）。唯一命中就用；多个 = `journal_ambiguous`（候选 ≤ 8）；
+    没有 = `journal_unknown`（最接近的候选）。非字符串 / 空串 / 总开关关着 / 旧引擎原样放行，交给原有的报错。
+    `journal_ambiguous` 需要在 `nextstep` 登记（`docs/rules/plugin/journal-resolve.md`）。
+    """
+    if not isinstance(raw, str) or not raw.strip() or _journal_agent_module() is None:
+        return raw, None
+    items = list_journals()["journals"]
+    if any(item["id"] == raw for item in items):
+        return raw, None
+    key = _journal_key(raw)
+    if not key:
+        return raw, None
+
+    def hits(match) -> list[dict]:
+        return [
+            item
+            for item in items
+            if any((k := _journal_key(n)) and match(k) for n in _journal_names(item))
+        ]
+
+    found = hits(lambda k: k == key) or hits(lambda k: key in k)
+    if len(found) == 1:
+        return found[0]["id"], {"from": raw, "id": found[0]["id"]}
+    if found:
+        raise BridgeError(
+            f"{raw!r} 对应多本期刊，请从候选里选一个 id 再调（不要猜）。",
+            code="journal_ambiguous",
+            journal=raw,
+            candidates=_journal_candidates(found),
+        )
+    near = [i for i in items if key in _journal_key(i.get("publisher", ""))]
+    raise BridgeError(
+        f"期刊库里没有 {raw!r}；用 tavotto_list_journals 查，或从候选里选。不要凭记忆编这本期刊的规范。",
+        code="journal_unknown",
+        journal=raw,
+        candidates=_journal_candidates(near or _journal_close_matches(key, items)),
+    )
+
+
+def _journal_candidates(items: list[dict]) -> list[dict]:
+    return [{"id": i["id"], "label": i["label"]} for i in items[:JOURNAL_CANDIDATE_LIMIT]]
+
+
+def _journal_close_matches(key: str, items: list[dict]) -> list[dict]:
+    keyed: dict[str, dict] = {}
+    for item in items:
+        for name in _journal_names(item):
+            keyed.setdefault(_journal_key(name), item)
+    close = difflib.get_close_matches(key, list(keyed), n=JOURNAL_CANDIDATE_LIMIT, cutoff=0.5)
+    out: list[dict] = []
+    for k in close:
+        if keyed[k] not in out:
+            out.append(keyed[k])
     return out
 
 
