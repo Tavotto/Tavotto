@@ -31,6 +31,9 @@ MM_PER_PX = 25.4 / 96.0
 MM_PER_PT = 25.4 / 72.0
 MAX_BYTES = 8 * 1024 * 1024
 MAX_ELEMENTS = 50_000
+#: 一次导入里所有路径的锚点总数上限，与单条 `d` 的字符上限（防一条路径塞满 8 MB）
+MAX_ANCHORS = 100_000
+MAX_PATH_D_CHARS = 2 * 1024 * 1024
 KAPPA_ARC_MAX = math.pi / 2
 
 #: 原因码（前端按它说一句原因）
@@ -324,9 +327,18 @@ def _arc_to_cubics(x1, y1, rx, ry, phi, fa, fs, x2, y2):
 _CMD = re.compile(rf"([MmZzLlHhVvCcSsQqTtAa])|({_NUM})")
 
 
-def parse_path_d(d: str) -> list[dict]:
-    """`d` → 子路径 [{closed, nodes: [{p, in, out}]}]（用户坐标，绝对；二次曲线精确升三次，弧换成三次）。"""
+def parse_path_d(
+    d: str, *, max_anchors: int = MAX_ANCHORS, deadline: float = math.inf
+) -> list[dict]:
+    """`d` → 子路径 [{closed, nodes: [{p, in, out}]}]（用户坐标，绝对；二次曲线精确升三次，弧换成三次）。
+
+    单条路径自己带预算：锚点数超 `max_anchors` 抛 `too_many_elements`，墙钟过了 `deadline` 抛 `timeout`
+    （元素级的预算管不到塞在一个 `d` 里的几十万段）。"""
+    if len(d or "") > MAX_PATH_D_CHARS:
+        raise SvgImportError("too_many_elements", "单条路径过长")
     toks = _CMD.findall(d or "")
+    anchors = 0
+    ticks = 0
     subs: list[dict] = []
     cur: dict | None = None
     x = y = 0.0
@@ -363,14 +375,25 @@ def parse_path_d(d: str) -> list[dict]:
         cur = {"closed": False, "nodes": [{"p": (px, py), "in": (px, py), "out": (px, py)}]}
         subs.append(cur)
 
+    def spend(n=1):
+        nonlocal anchors
+        anchors += n
+        if anchors > max_anchors:
+            raise SvgImportError("too_many_elements", "路径锚点超出上限")
+
     def line_to(px, py):
+        spend()
         cur["nodes"].append({"p": (px, py), "in": (px, py), "out": (px, py)})
 
     def curve_to(c1, c2, p):
+        spend()
         cur["nodes"][-1]["out"] = c1
         cur["nodes"].append({"p": p, "in": c2, "out": p})
 
     while i < len(toks):
+        ticks += 1
+        if not ticks & 0x3FF and time.monotonic() > deadline:
+            raise SvgImportError("timeout", f"超过 {DEADLINE_S:g} 秒")
         if toks[i][0]:
             cmd = toks[i][0]
             i += 1
@@ -612,6 +635,7 @@ class _Ctx:
     gseq: int = 0
     count: int = 0
     use_depth: int = 0
+    anchors: int = 0
     deadline: float = math.inf
 
     def note(self, code: str) -> None:
@@ -862,10 +886,17 @@ def _emit_shape(subs_user, st, ctm, ctx: _Ctx, path: list[str], opacity: float) 
     return obj
 
 
-def _geometry(el, tag: str) -> list[dict] | None:
+def _geometry(el, tag: str, ctx: _Ctx | None = None) -> list[dict] | None:
     g = el.get
     if tag == "path":
-        return parse_path_d(g("d") or "")
+        if ctx is None:
+            return parse_path_d(g("d") or "")
+        # 总锚点预算跨整次导入共享（`<use>` 反复引用同一条路径会反复展开）；单条再带墙钟
+        subs = parse_path_d(
+            g("d") or "", max_anchors=MAX_ANCHORS - ctx.anchors, deadline=ctx.deadline
+        )
+        ctx.anchors += sum(len(sp["nodes"]) for sp in subs)
+        return subs
     if tag == "rect":
         w, h = _length(g("width")), _length(g("height"))
         if w <= 0 or h <= 0:
@@ -1060,11 +1091,11 @@ def _clip_mask(cid: str, ctm: Matrix, ctx: _Ctx, bbox_ctm: Matrix) -> list[dict]
                 mul(m, parse_transform(child.get("transform"))),
                 (1, 0, 0, 1, _length(child.get("x")), _length(child.get("y"))),
             )
-            g = _geometry(target, _local(target.tag))
+            g = _geometry(target, _local(target.tag), ctx)
             if g:
                 subs += _transform_subs(g, mul(cm, parse_transform(target.get("transform"))))
             continue
-        g = _geometry(child, tag)
+        g = _geometry(child, tag, ctx)
         if g:
             subs += _transform_subs(g, mul(m, parse_transform(child.get("transform"))))
     return subs or None
@@ -1188,7 +1219,7 @@ def _walk_inner(el, tag: str, st: dict, m: Matrix, path: list[str], ctx: _Ctx, o
     if tag == "text":
         _emit_text(el, st, m, ctx, path, op)
         return
-    geom = _geometry(el, tag)
+    geom = _geometry(el, tag, ctx)
     if geom is None:
         return
     obj = _emit_shape(geom, st, to_mm, ctx, path, op)

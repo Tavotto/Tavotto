@@ -435,3 +435,60 @@ def test_outline_text_length_is_bounded():
     c = _client()
     r = c.post("/api/text/outline", json={"objects": [_text("x" * (m.SVG_COPY_MAX_TEXT + 1))]})
     assert r.status_code == 413
+
+
+# ---- Codex 线程 4614436889 / 4614436909：CSS 清理的回溯正则、单条路径内的预算 ----
+
+
+def test_iter_rules_matches_regex_semantics():
+    """线性扫描与原来的 `_RULE.finditer` 同一语义（随机花括号串对照）"""
+    import random
+
+    rng = random.Random(7)
+    for _ in range(3000):
+        css = "".join(rng.choice("ab {};:\n") for _ in range(rng.randint(0, 24)))
+        want = [(m.start(), m.end(), m.group(1), m.group(2)) for m in svgcheck._RULE.finditer(css)]
+        assert list(svgcheck._iter_rules(css)) == want, css
+
+
+def test_style_without_braces_is_linear_time():
+    """`<style>` 里一大段没有花括号的文字：以前 `_RULE.sub` 平方级回溯（4 万字符超 15 秒），现在线性"""
+    for n in (40_000, 400_000):
+        text = SVG.format("<style>" + "a" * n + "</style>")
+        t0 = time.monotonic()
+        outcome(text)
+        assert time.monotonic() - t0 < 2.0, n
+
+
+def test_style_stripped_inert_still_works_after_linear_scan():
+    out = svgcheck.parse_svg(
+        SVG.format("<style>.a{overflow:hidden;fill:red}</style>").encode(), tolerant=True
+    )
+    css = next(el.text for el in out.iter() if el.tag.endswith("style"))
+    assert css == ".a{fill:red}"
+
+
+def test_single_path_anchor_budget():
+    """一条 `d` 塞几十万段：超锚点上限就拒绝，而且耗时有界"""
+    d = "M0 0" + " L1 1" * (svgimport.MAX_ANCHORS + 10)
+    t0 = time.monotonic()
+    assert outcome(SVG.format(f'<path d="{d}" fill="red"/>')) == ("rejected", "too_many_elements")
+    assert time.monotonic() - t0 < svgimport.DEADLINE_S
+
+
+def test_anchor_budget_shared_across_use_references(monkeypatch):
+    """重复引用同一条路径不能绕过预算：总锚点跨整次导入共享"""
+    monkeypatch.setattr(svgimport, "DEADLINE_S", 120.0)  # 机器忙时别让墙钟抢在锚点预算前面
+    n = svgimport.MAX_ANCHORS // 8
+    d = "M0 0" + " L1 1" * n
+    uses = "".join('<use href="#p"/>' for _ in range(10))
+    text = SVG.format(f'<defs><path id="p" d="{d}" fill="red"/></defs>{uses}')
+    assert outcome(text) == ("rejected", "too_many_elements")
+
+
+def test_single_path_deadline(monkeypatch):
+    """deadline 已过时，单条路径内部也会中断（不只在进入元素时查）"""
+    d = "M0 0" + " L1 1" * 5000
+    with pytest.raises(svgimport.SvgImportError) as e:
+        svgimport.parse_path_d(d, deadline=time.monotonic() - 1)
+    assert e.value.code == "timeout"
