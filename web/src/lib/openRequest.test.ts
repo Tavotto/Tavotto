@@ -384,6 +384,20 @@ describe('applyOpenRequest', () => {
       await vi.waitFor(() => expect(run).toHaveBeenCalledWith('show.py', null))
     })
 
+    it('清单请求复用了运行前的旧快照：再取一次，仍能把跑出的图落上画布', async () => {
+      await uncached()
+      let calls = 0
+      useRuntimeAssetStore.setState({
+        loadAssets: vi.fn(async () => {
+          calls += 1
+          if (calls >= 2) setRuntimeAssets([runtimeAsset('show.py', 'show')])
+        }),
+      } as never)
+      run.mockImplementation(async () => {})
+      useUiStore.getState().statusAction!.run()
+      await vi.waitFor(() => expect(useDocumentStore.getState().doc.objects).toHaveLength(1))
+    })
+
     it('脚本失败：打开素材库，让失败原因与重试入口看得见', async () => {
       await uncached()
       useUiStore.setState({ leftOpen: false, leftTab: 'outline' } as never)

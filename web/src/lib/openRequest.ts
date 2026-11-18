@@ -189,11 +189,19 @@ async function runThenLand(asset: RuntimeAssetInfo, pj: string | null): Promise<
   if (stale()) return
   // 与 applyOpenRequest 同一套解析：先刷新文件素材与 runtime 清单，再按完整身份（id）找 runtime 条目，
   // 找不到再按磁盘路径找——savefig 的图跑成功后原件已在磁盘上，清单不再返回它的 runtime 条目
+  const resolve = (): string | undefined => {
+    const fresh = (useRuntimeAssetStore.getState().assets ?? []).find((a) => a.id === asset.id && a.descriptor)
+    return fresh?.id ?? findByStem(useAssetStore.getState().panels, asset.stem)?.id
+  }
   await Promise.all([useAssetStore.getState().load(), useRuntimeAssetStore.getState().loadAssets()])
   if (stale()) return
-  const fresh = (useRuntimeAssetStore.getState().assets ?? []).find((a) => a.id === asset.id && a.descriptor)
-  const disk = fresh ? undefined : findByStem(useAssetStore.getState().panels, asset.stem)
-  const landId = fresh?.id ?? disk?.id
+  let landId = resolve()
+  if (!landId) {
+    // `loadAssets` 对在途请求是复用的：运行开始前就发出的那次可能带着旧快照回来——再取一次（此刻已无在途）
+    await useRuntimeAssetStore.getState().loadAssets()
+    if (stale()) return
+    landId = resolve()
+  }
   if (!landId) {
     // 没跑出图：失败原因与重试入口在素材库的脚本卡片上——把它打开，别让提示凭空消失
     useUiStore.setState({ leftTab: 'assets', leftOpen: true })
