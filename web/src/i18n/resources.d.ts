@@ -1043,7 +1043,7 @@ export default interface Resources {
       "previewLayoutCycleHint": "切换图表在论文版面中的排布位置",
       "previewLayoutOverflowGeneric": "{{w}} × {{h}} mm · 超出版芯宽度（{{maxW}} mm）",
       "previewLayoutOverflowSpec": "{{w}} × {{h}} mm · 超出「{{spec}}」版芯（{{maxW}} mm）",
-      "previewLayoutSampleNote": "周围论文文字与公式系排版示例；实际导出仅保存图表本身，不会导出整页文章。",
+      "previewLayoutSampleNote": "周围文字是示例，导出只有这张图",
       "previewLayoutSlotGeneric": "{{w}} × {{h}} mm · 双栏版面 · {{column}} {{colW}} mm",
       "previewLayoutSlotSpec": "{{w}} × {{h}} mm · {{spec}} · {{column}} {{colW}} mm",
       "previewLayoutTall": "{{w}} × {{h}} mm · 超出单页版芯高度（{{maxH}} mm）",

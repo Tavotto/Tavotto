@@ -4469,13 +4469,13 @@ describe('导出左栏「版面预览」（论文真尺寸入版预览）', () =
       }
     }
 
-    // 切到单张 80 × 60 mm 图：保持「版面预览」，默认落右上单栏且可点「换位置」轮换版位，周围无灰块或定位角标，底部附示例说明
+    // 切到单张 80 × 60 mm 图：保持「版面预览」，默认落右上单栏且可点「换位置」轮换版位，周围无灰块或定位角标，预览上悬浮示例说明胶囊
     await click(q('[data-export-preview-tab="Fig1.pdf"]')!)
     expect(q('[data-export-manuscript]')?.getAttribute('data-placement')).toBe('single')
     expect(q('[data-export-manuscript]')?.getAttribute('data-slot-variant')).toBe('top-right')
     expect(q('[data-export-manuscript-slot]')).toBeNull()
     expect(q('[data-export-preview-size]')?.textContent).toContain('80 × 60 mm · 默认规范 · 单栏 80 mm')
-    expect(q('[data-export-manuscript-note]')?.textContent).toContain('实际导出仅保存图表本身')
+    expect(q('[data-export-manuscript-note]')?.textContent).toContain('导出只有这张图')
 
     await click(q('[data-export-manuscript-cycle]')!)
     expect(q('[data-export-manuscript]')?.getAttribute('data-slot-variant')).toBe('mid-left')

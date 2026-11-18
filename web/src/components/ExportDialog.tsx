@@ -2645,6 +2645,15 @@ function ExportPreviewPane({
               <ImageOff size={ICON_SIZE.md} className="text-ink-3" aria-hidden />
             </div>
           )}
+          {/* 版面预览：周围正文只是示例——悬浮小胶囊说一句，不占预览框外的行、不撑高左栏 */}
+          {manuscriptLayout && (
+            <span
+              data-export-manuscript-note
+              className="pointer-events-none absolute bottom-2 left-1/2 max-w-[calc(100%-1rem)] -translate-x-1/2 truncate rounded-full border border-border bg-surface/85 px-2.5 py-0.5 type-meta text-ink-2 shadow-thumb backdrop-blur"
+            >
+              {ex("previewLayoutSampleNote")}
+            </span>
+          )}
         </div>
       </div>
       {/* 尺寸标在预览框外、左对齐的灰色小字；干净导完时右侧并排亮出中性墨色导出印记（遵守 ADR 0068 未核验不画绿、不叠图、不推挤） */}
@@ -2659,11 +2668,6 @@ function ExportPreviewPane({
           </span>
         )}
       </p>
-      {manuscriptLayout && (
-        <p data-export-manuscript-note className="mt-1 text-xs leading-relaxed text-ink-3">
-          {ex("previewLayoutSampleNote")}
-        </p>
-      )}
      </div>
     </div>
   );
