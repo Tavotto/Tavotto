@@ -299,7 +299,7 @@ describe('applyOpenRequest', () => {
       expect(formatMessage(useUiStore.getState().statusAction?.label ?? null)).toBe('运行')
       useUiStore.getState().statusAction!.run()
       await vi.waitFor(() => expect(useDocumentStore.getState().doc.objects).toHaveLength(1))
-      expect(run).toHaveBeenCalledWith('show.py', undefined)
+      expect(run).toHaveBeenCalledWith('show.py', null)
       expect((useDocumentStore.getState().doc.objects[0] as { fileId: string }).fileId).toBe('runtime:show.py#show')
       expect(useUiStore.getState().status).toMatchObject({ key: 'handoff.added' })
     })
@@ -356,6 +356,20 @@ describe('applyOpenRequest', () => {
       useUiStore.getState().statusAction!.run()
       await vi.waitFor(() => expect(useDocumentStore.getState().doc.objects).toHaveLength(1))
       expect((useDocumentStore.getState().doc.objects[0] as { fileId: string }).fileId).toBe('show.pdf')
+      expect(useUiStore.getState().leftOpen).toBe(false)
+    })
+
+    it('运行途中 A → B → A（同 id、代际已变）：不落图、不开素材库', async () => {
+      await uncached()
+      useUiStore.setState({ leftOpen: false, leftTab: 'outline' } as never)
+      run.mockImplementation(async () => {
+        useScriptRunStore.setState({ epoch: useScriptRunStore.getState().epoch + 1 } as never)
+        setRuntimeAssets([runtimeAsset('show.py', 'show')])
+      })
+      useUiStore.getState().statusAction!.run()
+      await vi.waitFor(() => expect(run).toHaveBeenCalled())
+      await new Promise((r) => setTimeout(r, 10))
+      expect(useDocumentStore.getState().doc.objects).toHaveLength(0)
       expect(useUiStore.getState().leftOpen).toBe(false)
     })
 

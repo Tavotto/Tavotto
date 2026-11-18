@@ -177,14 +177,17 @@ const RUNTIME_RUN_OWNER = 'handoff.runtimeNeedsRun'
  */
 async function runThenLand(asset: RuntimeAssetInfo, pj: string | null): Promise<void> {
   if (currentProjectId() !== pj) return
-  // 带配置的素材按它自己的配置跑（不读当前参数草稿）；没有配置 = 无参数那张，照旧
-  await useScriptRunStore.getState().run(asset.script, asset.run_config)
+  // 项目代际：A → B → A 回到同一个项目 id 时 pj 对得上、代际已变——每个 await 之后都要一并核
+  const epoch = useScriptRunStore.getState().epoch
+  const stale = () => currentProjectId() !== pj || useScriptRunStore.getState().epoch !== epoch
+  // 素材按它自己的配置跑（不读当前参数草稿）：无参数那张是显式的 null，不是 undefined
+  await useScriptRunStore.getState().run(asset.script, asset.run_config ?? null)
   await whenScriptIdle(asset.script)
-  if (currentProjectId() !== pj) return
+  if (stale()) return
   // 与 applyOpenRequest 同一套解析：先刷新文件素材与 runtime 清单，再按完整身份（id）找 runtime 条目，
   // 找不到再按磁盘路径找——savefig 的图跑成功后原件已在磁盘上，清单不再返回它的 runtime 条目
   await Promise.all([useAssetStore.getState().load(), useRuntimeAssetStore.getState().loadAssets()])
-  if (currentProjectId() !== pj) return
+  if (stale()) return
   const fresh = (useRuntimeAssetStore.getState().assets ?? []).find((a) => a.id === asset.id && a.descriptor)
   const disk = fresh ? undefined : findByStem(useAssetStore.getState().panels, asset.stem)
   const landId = fresh?.id ?? disk?.id
@@ -193,7 +196,7 @@ async function runThenLand(asset: RuntimeAssetInfo, pj: string | null): Promise<
     useUiStore.setState({ leftTab: 'assets', leftOpen: true })
     return
   }
-  if ((await whenDocumentSettledForEntry(pj)) !== 'ready' || currentProjectId() !== pj) return
+  if ((await whenDocumentSettledForEntry(pj)) !== 'ready' || stale()) return
   const ui = useUiStore.getState()
   const landed = landFigure(landId)
   if (landed === 'missing') {
