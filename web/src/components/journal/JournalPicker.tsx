@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
 import { ChevronDown } from '@/components/ui/icons'
@@ -12,8 +12,10 @@ import { cn } from '@/lib/utils'
 import { listJournals } from '@/lib/journals'
 import { groupByPublisher, searchJournals } from '@/lib/journalPick'
 import { ensureJournalReady } from '@/lib/journalCatalogSync'
-import { clearJournal, selectJournal } from '@/store/actions'
-import { fetchJournalV2 } from '@/lib/journalV2'
+import { journalCatalogUi } from '@/lib/journalUi'
+import { clearJournal, selectJournal, selectV2OnlyJournal } from '@/store/actions'
+import { fetchJournalV2, fetchJournalV2Index, fetchJournalV2Outcome, v2OnlySummaries } from '@/lib/journalV2'
+import { useJournalV2Store } from '@/store/journalV2Store'
 import { useDocumentStore } from '@/store/documentStore'
 import { useJournalCatalogStore } from '@/store/journalCatalogStore'
 import { useUiStore } from '@/store/uiStore'
@@ -38,11 +40,51 @@ export function JournalPicker() {
   const ref = useDocumentStore((s) => s.doc.profile?.journalRef)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const all = useMemo(() => listJournals(catalog), [catalog])
+  const v2Index = useJournalV2Store((s) => s.index)
+  const v1 = useMemo(() => listJournals(catalog), [catalog])
+  // 只在 v2 里有的刊（v1 目录没有）并进同一个列表；index 取不到就是没有这些行，别的照旧
+  const v2Only = useMemo(() => v2OnlySummaries(v2Index, catalog), [v2Index, catalog])
+  const all = useMemo(() => [...v1, ...v2Only], [v1, v2Only])
   const groups = useMemo(() => groupByPublisher(searchJournals(all, query)), [all, query])
   const first = groups[0]?.journals[0]
 
+  // 打开选择器时取一次已签名的 v2 index（只读公开 index：不逐刊拉包、不占额度）；上次没取到的下次打开再试
+  useEffect(() => {
+    if (!open || !journalCatalogUi() || useJournalV2Store.getState().index) return
+    const controller = new AbortController()
+    void fetchJournalV2Index(controller.signal).then((entries) => {
+      if (!controller.signal.aborted && entries) useJournalV2Store.getState().setIndex(entries)
+    })
+    return () => controller.abort()
+  }, [open])
+
+  const chooseV2Only = async (id: string) => {
+    const entry = v2Only.find((j) => j.journal_id === id)
+    if (!entry) return
+    const seq = ++pickSeq
+    const docId = useDocumentStore.getState().documentId
+    // 这本刊只有 v2：没有 v2 内容就没有东西可绑，所以不设 2 秒上限，等到有结果
+    const out = await fetchJournalV2Outcome(id)
+    if (seq !== pickSeq || useDocumentStore.getState().documentId !== docId) return
+    if (out.state !== 'ready' || !out.patch) {
+      // 终态与 v1 远程刊同一套：额度用完 → 暂按「不按期刊」；没网 / 被拒 / 开关关 → 保持现状。都只一条胶囊
+      if (out.state === 'quota') clearJournal()
+      useUiStore
+        .getState()
+        .setStatus(
+          out.state === 'quota' ? msg('journal.quotaLater', undefined, 'dialogs') : msg('journal.needsNetwork', undefined, 'dialogs'),
+          'info',
+        )
+      setOpen(false)
+      return
+    }
+    selectV2OnlyJournal({ id, label: entry.label }, out.patch)
+    setOpen(false)
+    setQuery('')
+  }
+
   const choose = async (id: string) => {
+    if (v2Only.some((j) => j.journal_id === id)) return chooseV2Only(id)
     // 远程目录里还没下载的刊：先向服务端取这一本的标准（种子 / 已下载的不发请求）。
     // 额度用完 → 这本刊暂时按「不按期刊」；没网又没缓存 → 保持现状。两种都只用一条胶囊提示。
     const seq = ++pickSeq
