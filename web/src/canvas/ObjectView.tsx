@@ -23,10 +23,13 @@ import { TextView } from './TextView'
 export const ObjectView = memo(function ObjectView({
   obj,
   preview = false,
+  outside = false,
 }: {
   obj: CanvasObject
   /** 科研预设缩略图不是文档对象，不触发文字高度回写。 */
   preview?: boolean
+  /** 组内编辑时组外的对象（ADR 0191）：命中线写的是显式 pointer-events，压得过祖先的 none，所以要在这里一并交掉 */
+  outside?: boolean
 }) {
   perfCount('render.ObjectView')
   const editing = useUiStore((s) => s.editingTextId === obj.id)
@@ -51,9 +54,10 @@ export const ObjectView = memo(function ObjectView({
   const pathHitShape = (obj.type === 'shape' && PATH_HIT_SHAPES.has(obj.shape)) || obj.type === 'path'
   // 更新的构建写进来的对象：只画占位框，不接指针（不能选中 / 拖动 / 删除），文档里原样保留（`isKnownObject`）
   const known = isKnownObject(obj)
-  const hit = obj.locked || drawing || spaceDown ? 'none' : 'stroke'
+  const hit = obj.locked || drawing || spaceDown || outside ? 'none' : 'stroke'
 
   const onPointerDown = (e: React.PointerEvent) => {
+    if (outside) return
     if (e.button !== 0 || editing || cropping) return
     e.stopPropagation()
 
@@ -96,7 +100,7 @@ export const ObjectView = memo(function ObjectView({
    * 标注已经在选区里，右键它不退编辑态。
    */
   const onContextMenu = (e: React.MouseEvent) => {
-    if (editing || cropping) return
+    if (outside || editing || cropping) return
     e.preventDefault()
     e.stopPropagation()
     const sel = useSelectionStore.getState()
@@ -110,6 +114,7 @@ export const ObjectView = memo(function ObjectView({
 
   const onDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation()
+    if (outside) return
     // 组里的对象：双击先进到组里（组内编辑，ADR 0191），进到它是直接成员的那一层后，双击才改字 / 编辑锚点 / 进图内编辑
     if (enterGroupAt(obj.id)) return
     if (obj.type === 'text') useUiStore.getState().setEditingText(obj.id)
