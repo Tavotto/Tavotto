@@ -257,7 +257,7 @@ class TestSpecAssembly:
         target = str(Path(root) / script)
         desktop = execspec.desktop_native_spec(
             target,
-            interpreter="/usr/bin/python3",
+            interpreter=str(Path(root) / "py"),
             cwd=root,
             project_root=root,
             env={"PYTHONUNBUFFERED": "1"},
@@ -271,13 +271,13 @@ class TestSpecAssembly:
         assert argv[argv.index("--as-module") + 1] == "plots.fig"
         # 终端（`tavotto run fig.py`）：用户自己敲的命令，结构上拿不到这个字段
         terminal = execspec.native_spec(
-            target, interpreter="/usr/bin/python3", cwd=root, project_root=root
+            target, interpreter=str(Path(root) / "py"), cwd=root, project_root=root
         )
         assert terminal.module_name == ""
         # 登记入口是函数：与 safe 一样不改
         fn = execspec.desktop_native_spec(
             target,
-            interpreter="/usr/bin/python3",
+            interpreter=str(Path(root) / "py"),
             cwd=root,
             project_root=root,
             env={"PYTHONUNBUFFERED": "1"},
@@ -294,7 +294,10 @@ class TestSpecAssembly:
 
         root, script = self._project(tmp_path)
         terminal = execspec.native_spec(
-            str(Path(root) / script), interpreter="/usr/bin/python3", cwd=root, project_root=root
+            str(Path(root) / script),
+            interpreter=str(Path(root) / "py"),
+            cwd=root,
+            project_root=root,
         )
         with pytest.raises(ValueError):
             dataclasses.replace(terminal, module_name="plots.fig")
