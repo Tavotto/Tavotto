@@ -69,11 +69,19 @@ function startPoint(clientX: number, clientY: number): XY {
   return s.p
 }
 
-async function commit(pts: readonly XY[], raw: boolean): Promise<string | null> {
+/** 这一笔发起时所在的文档与画布：等内核期间切了画布 / 项目，这一笔就作废（不落进新画布、不动它的选区） */
+const originOf = () => {
+  const s = useDocumentStore.getState()
+  return { documentId: s.documentId, canvasId: s.activeCanvasId }
+}
+
+async function commit(pts: readonly XY[], raw: boolean, origin: ReturnType<typeof originOf>): Promise<string | null> {
   const o = opts()
   const kernel = raw ? null : await loadVecops()
   const sp = pencilSubpath(pts, o, { raw, kernel })
   previewPathDraft(null)
+  const now = originOf()
+  if (now.documentId !== origin.documentId || now.canvasId !== origin.canvasId) return null
   if (!sp) return null
   const box = fitPathBox(toPathSubpaths([sp]), 0, [0, 0])
   if (!box) return null
@@ -104,6 +112,7 @@ export const pencilSettled = (): Promise<string | null> => pending ?? Promise.re
 
 export function pencilPointerDown(e: ReactPointerEvent): void {
   e.preventDefault()
+  const origin = originOf()
   let pts: XY[] = [startPoint(e.clientX, e.clientY)]
   useInteractionStore.getState().setSnap([], [])
   // 预取内核：松手时多半已经编译好了
@@ -122,7 +131,7 @@ export function pencilPointerDown(e: ReactPointerEvent): void {
       }
       const p = clientToMm(ev.clientX, ev.clientY)
       pts = addPoint(pts, [p.x, p.y], opts().minStepMm)
-      pending = commit(pts, ev.altKey)
+      pending = commit(pts, ev.altKey, origin)
     },
   })
 }

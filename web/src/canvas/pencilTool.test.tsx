@@ -12,6 +12,7 @@ import { literal } from '@/i18n'
 import { pathToMm, rotatePoint } from '@/lib/pathEdit'
 import { setVecopsSource } from '@/lib/vecops/kernel'
 import { useDocumentStore } from '@/store/documentStore'
+import { useSelectionStore } from '@/store/selectionStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { pathDraftPreview } from '@/store/svgPreviewStore'
 import { useUiStore } from '@/store/uiStore'
@@ -135,6 +136,26 @@ describe('铅笔', () => {
     await stroke(bumpy(1).map(([x, y]) => [x, y]))
     const n4paper = (objects()[2] as PathObject).subpaths[0].nodes.length
     expect(n4paper).toBeGreaterThan(n1)
+  })
+
+  it('等内核期间切了画布：这一笔作废，不落进新画布、不动新画布的选区', async () => {
+    useSelectionStore.getState().clear()
+    const pts = wave()
+    await act(async () => {
+      pencilPointerDown(down(...pts[0]))
+      for (const p of pts.slice(1)) fire('pointermove', ...p)
+    })
+    const origin = useDocumentStore.getState().activeCanvasId
+    await act(async () => {
+      fire('pointerup', ...pts[pts.length - 1])
+      useDocumentStore.getState().addCanvas() // 松手之后、内核回来之前切走
+      await pencilSettled()
+    })
+    const s = useDocumentStore.getState()
+    expect(s.activeCanvasId).not.toBe(origin)
+    expect(s.doc.objects).toHaveLength(0)
+    expect(useSelectionStore.getState().ids).toEqual([])
+    expect(pathDraftPreview()).toBeNull()
   })
 
   it('原地点一下：什么都不画、不进历史', async () => {
