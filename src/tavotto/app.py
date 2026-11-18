@@ -133,6 +133,7 @@ from .engine import (
     launchctx as engine_launchctx,
     launcher as engine_launcher,
     layoutsession as engine_layoutsession,
+    license as engine_license,
     locate as engine_locate,
     logsafe as engine_logsafe,
     managedenv as engine_managedenv,
@@ -6137,6 +6138,65 @@ def api_contact_forget(mid: str):
     """从本机记录里删掉一封信（只删本机记录；服务端按保留期自行清理）。"""
     engine_contactinbox.forget(mid)
     return _contact_json({"unread": engine_contactinbox.unread_count()})
+
+
+# --------------------- 高级版授权（ADR 0193）---------------------
+# 全部在会话认证之内（ADR 0008，全局 before_request guard，没有旁路；`test_browser_auth` 从 url_map 枚举）。逻辑在
+# `engine/license.py`（出站、设备签名、令牌验签 / 落盘）。**只有 `POST /api/license/{activate,refresh,release,checkout}` 会引出远程请求**
+# （启动后的后台刷新另在 `engine_license.start_background_refresh`，没有令牌就一次网络都不发）；`GET /api/license/status` 纯本机、
+# 不含令牌原文与设备密钥。`TAVOTTO_NO_LICENSE=1`、端点不合规或 `PRODUCTION_LIVE = False` 且没设端点：status 回 `{"enabled": false}`，其余 404。
+
+
+def _license_json(payload: dict, status: int = 200):
+    resp = jsonify(payload)
+    resp.status_code = status
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _license_error(exc: engine_license.LicenseError):
+    body = {"ok": False, "error": exc.code, "code": f"license_{exc.code}"}
+    if exc.code == "disabled":
+        body["enabled"] = False
+    return _license_json(body, exc.status)
+
+
+def _license_result(fn, *args, **kwargs):
+    try:
+        return _license_json(fn(*args, **kwargs))
+    except engine_license.LicenseError as exc:
+        return _license_error(exc)
+
+
+@app.get("/api/license/status")
+def api_license_status():
+    return _license_json(engine_license.status())
+
+
+@app.post("/api/license/activate")
+def api_license_activate():
+    return _license_result(engine_license.activate, _review_body().get("code"))
+
+
+@app.post("/api/license/refresh")
+def api_license_refresh():
+    return _license_result(engine_license.refresh, force=True)
+
+
+@app.post("/api/license/release")
+def api_license_release():
+    return _license_result(engine_license.release)
+
+
+@app.post("/api/license/checkout")
+def api_license_checkout():
+    body = _review_body()
+    return _license_result(
+        engine_license.checkout,
+        body.get("lookup_key"),
+        body.get("locale", "zh"),
+        body.get("renew") is True,
+    )
 
 
 # --------------------- 外部审阅（ADR 0187）---------------------
@@ -18879,6 +18939,7 @@ def main():
         # 桌面模式的升级由 Tauri 层负责，Python updater 连后台检查都不跑
         engine_updater.check_in_background()  # 默认每天一次；设置里可关，关了不联网
     engine_contactsend.start_poller()  # 联系作者的回信：启动时 + 每 6 小时；没有已发的信就一次网络都不发
+    engine_license.start_background_refresh()  # 高级版授权：启动后一次 + 每天一次；没有令牌就一次网络都不发
     engine_reviewshare.start_poller()  # 外部审阅的意见：启动时 + 每 30 分钟；没有未到期的分享就一次网络都不发
 
     # --figures 最高优先；否则恢复最近项目；都没有（或无效）→ 界面里的
