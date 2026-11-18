@@ -275,7 +275,7 @@ def test_tool_descriptions_state_the_rules_where_hosts_without_skills_see_them()
     assert "全量列表" in desc["tavotto_apply_overrides"]
     assert "必须回代码改" in desc["tavotto_apply_overrides"]
     assert "先导出再关会话" in desc["tavotto_export"]
-    assert "先 tavotto_export 再关" in desc["tavotto_close_session"]
+    assert "存成草稿" in desc["tavotto_close_session"]  # #2007：关会话不再丢改动
     for name in ("tavotto_open_figure", "tavotto_preflight", "tavotto_export"):
         props = _journal_id_description(name)
         assert "全名" in props and "journal_ambiguous" in props

@@ -31,8 +31,9 @@
 
 # ───────────────────────────────────────────────────────────────
 # Compatibility Guardian —— "只执行已评审夹具"的"评审"就是这几行：夹具、期望、runner
-# 与它的 workflow 的改动都经过代码所有者。脚本自己无法证明 HEAD 被评审过（它只核
-# 夹具字节 == HEAD 提交字节）；评审是合入 main 时 CODEOWNERS 给的。
+# 与它的 workflow 的改动都请求代码所有者评审。脚本自己无法证明 HEAD 被评审过（它只核
+# 夹具字节 == HEAD 提交字节）。注意：ruleset 未开 require_code_owner_review，本文件只
+# 发评审请求、不拦合并；拦合并靠 .github/judge-paths.json 的入队规则（docs/rules/ci/judge-guard.md）。
 # ───────────────────────────────────────────────────────────────
 /tests/compat/**                        @erwanjun
 /tests/fixtures/compat_v2/**            @erwanjun

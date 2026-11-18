@@ -101,7 +101,7 @@ function Panel({
         {heading}
       </h2>
       <FigureBoundary>
-        <FigureStage className="flex-1" frameClassName="rounded-xs inset-ring inset-ring-border">
+        <FigureStage className="flex-1" frameClassName="rounded-xs shadow-page">
           <DemoFigure demo={demo} label={label} className="block h-full w-full" />
         </FigureStage>
       </FigureBoundary>

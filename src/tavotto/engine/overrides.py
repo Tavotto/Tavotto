@@ -1476,6 +1476,32 @@ def _restore_arrow_linestyle(a, orig) -> None:
             a.draw = prev
 
 
+class _ArrowPaint(tuple):
+    """箭头 `color` 的「脚本原样」：`(边色规格, 填充规格)`。
+
+    setter 用 `set_color` 一次写两色，原样却不能只记边色：脚本常把杆与帽配成两种颜色
+    （`arrowprops=dict(fc=…, ec=…)`），撤销时拿边色 `set_color` 回去，填充就被盖成了边色。
+    记的是 matplotlib 自己留着的**请求规格**（`_original_edgecolor` / `_original_facecolor`），
+    不是烘过 alpha 的 RGBA：与 alpha override 谁先撤谁后撤，还原出来都是同一个颜色。
+    """
+
+    __slots__ = ()
+
+
+def _get_arrow_paint(a) -> _ArrowPaint:
+    return _ArrowPaint(
+        (
+            getattr(a, "_original_edgecolor", a.get_edgecolor()),
+            getattr(a, "_original_facecolor", a.get_facecolor()),
+        )
+    )
+
+
+def _restore_arrow_paint(a, orig: _ArrowPaint) -> None:
+    a.set_edgecolor(orig[0])
+    a.set_facecolor(orig[1])
+
+
 def _linestyle_name(a) -> str:
     ls = a.get_linestyle()
     named = {"solid": "-", "dashed": "--", "dashdot": "-.", "dotted": ":"}
@@ -2784,11 +2810,105 @@ def _grid_visible(ax: Axes, which: str) -> bool:
 
 
 def _grid_prop(read, default):
+    """manifest 的**读数**（x 优先、取第一根线）；还原不许用它当「原样」，见 `_GridOriginal`。"""
+
     def g(ax):
         gl = _gridline0(ax)
         return read(gl) if gl is not None else default
 
     return g
+
+
+#: 网格线样式四键 → (tick kw 键, rcParams 键)。网格线的样式活在每根轴、每档（major / minor）
+#: 各自的 tick kw 里：`ax.grid(axis="x", linewidth=…)` 只写 x 轴的那一份。
+_GRID_KW = {
+    "grid_color": "grid.color",
+    "grid_linestyle": "grid.linestyle",
+    "grid_linewidth": "grid.linewidth",
+    "grid_alpha": "grid.alpha",
+}
+_GRID_ABSENT = object()
+
+
+class _GridOriginal(dict):
+    """`{(轴名 "x"/"y", "major"/"minor"): (kw 里的值 | _GRID_ABSENT, [已建刻度线的实际值…])}`。只活在 `originals` 里。
+
+    为什么不读 `gridlines[0]` 一根线当「原样」：setter 一次写**两条轴 × 两档**（`tick_params(axis="both",
+    which="both")`），还原却只拿到第一条**画着**的那根线的值写回去——没画的那一向（脚本只开了
+    x 网格，y 的线宽 / 颜色 / 线型 / 透明度是 rcParams 默认）被写成 x 的样式，之后再打开 y 网格
+    就带着 x 的样式出来，与全新重放不同。所以逐轴逐档各记各的，含「脚本没表态」（ABSENT）。
+
+    **ABSENT 时不能回头查 rcParams**：脚本在 `rc_context` / 临时 style 里建图，上下文退出后已建的
+    刻度线带着当时解析出的值（红色网格），kw 里却没有这个键；还原时再读 rcParams 读到的是 worker 的
+    全局默认，与全新重放（同一段脚本、同一个上下文）不同。所以**首次捕获时**就把已建刻度线逐根的
+    实际值记下，还原时写回这些值。"""
+
+
+_GRID_READ = {
+    "grid_color": lambda ln: ln.get_color(),
+    "grid_linestyle": lambda ln: ln.get_linestyle(),
+    "grid_linewidth": lambda ln: float(ln.get_linewidth()),
+    "grid_alpha": lambda ln: ln.get_alpha(),
+}
+_GRID_WRITE = {
+    "grid_color": lambda ln, v: ln.set_color(v),
+    "grid_linestyle": lambda ln, v: ln.set_linestyle(v),
+    "grid_linewidth": lambda ln, v: ln.set_linewidth(v),
+    "grid_alpha": lambda ln, v: ln.set_alpha(v),
+}
+
+
+def _built_ticks(axis, which):
+    """已经建出来的刻度。**不碰** `axis.majorTicks` / `minorTicks`：它们是惰性列表，一访问就现建一根，
+    而全新重放里那根要到绘制时才建（用当时的 kw / rcParams）。没建过 = 空。"""
+    return list(axis.__dict__.get("majorTicks" if which == "major" else "minorTicks") or [])
+
+
+def _grid_original(kw_key):
+    read = _GRID_READ[kw_key]
+
+    def g(ax):
+        snap = _GridOriginal()
+        for name, axis in (("x", ax.xaxis), ("y", ax.yaxis)):
+            for which, attr in (("major", "_major_tick_kw"), ("minor", "_minor_tick_kw")):
+                snap[(name, which)] = (
+                    getattr(axis, attr, {}).get(kw_key, _GRID_ABSENT),
+                    [read(t.gridline) for t in _built_ticks(axis, which)],
+                )
+        return snap
+
+    return g
+
+
+def _grid_restore(kw_key):
+    """tick kw 与已建刻度线是**两份互相独立的状态**，各自还原（脚本可以 `ax.grid(color="red")` 之后
+    `plt.setp(gridlines, color="blue")`：kw 是 red、线是 blue）。
+
+    * kw：捕获时有值就写回那个值，没表态就删键（以后新建的刻度回到当时的 rcParams，与重放一致）。
+    * 已建的刻度线：**不管 kw 是什么**，一律写回逐根捕获的实际值。
+    * 捕获之后才建出来的刻度（setter 触发的惰性建刻度、轴范围变化多出来的）：重放里它们要到绘制时才建，
+      matplotlib 建新刻度会从第一根刻度拷贝线样式（`_copy_tick_props`）——所以沿用捕获的第一根；捕获时
+      这一档一根线都没有，新刻度按 kw 建（kw 有值用 kw 值，没表态才是 rcParams）。"""
+    write = _GRID_WRITE[kw_key]
+
+    def r(ax, orig):
+        for (name, which), (value, actual) in orig.items():
+            axis = ax.xaxis if name == "x" else ax.yaxis
+            kw = getattr(axis, "_major_tick_kw" if which == "major" else "_minor_tick_kw")
+            if value is _GRID_ABSENT:
+                kw.pop(kw_key, None)
+            else:
+                ax.tick_params(axis=name, which=which, **{kw_key: value})
+            if actual:
+                fallback = actual[0]
+            elif value is not _GRID_ABSENT:
+                fallback = value
+            else:
+                fallback = mpl.rcParams[_GRID_KW[kw_key]]
+            for i, t in enumerate(_built_ticks(axis, which)):
+                write(t.gridline, actual[i] if i < len(actual) else fallback)
+
+    return r
 
 
 # ---------------------------------------------------------------------------
@@ -5106,8 +5226,8 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ),
     # 图内独立箭头（FancyArrowPatch：脚本 add_patch 的与 annotate 的 arrow_patch
     # 同一个类）。set_color 同时写 edge+face——"-|>" 这类实心帽两者必须一致，
-    # 分开暴露只会做出「帽黑杆红」的半成品
-    ("arrowpatch", "color"): (lambda a: a.get_edgecolor(), lambda a, v: a.set_color(v)),
+    # 分开暴露只会做出「帽黑杆红」的半成品。原样两色都记，撤销走 `_restore_arrow_paint`
+    ("arrowpatch", "color"): (_get_arrow_paint, lambda a, v: a.set_color(v)),
     ("arrowpatch", "linewidth"): (
         lambda a: a.get_linewidth(),
         lambda a, v: a.set_linewidth(float(v)),
@@ -5208,19 +5328,19 @@ HANDLERS: dict[tuple[str, str], tuple] = {
         lambda a, v: a.grid(visible=bool(v), axis="y"),
     ),
     ("axes", "grid_color"): (
-        _grid_prop(lambda g: g.get_color(), "#b0b0b0"),
+        _grid_original("grid_color"),
         lambda a, v: a.tick_params(axis="both", which="both", grid_color=v),
     ),
     ("axes", "grid_linestyle"): (
-        _grid_prop(lambda g: g.get_linestyle(), ":"),
+        _grid_original("grid_linestyle"),
         lambda a, v: a.tick_params(axis="both", which="both", grid_linestyle=str(v)),
     ),
     ("axes", "grid_linewidth"): (
-        _grid_prop(lambda g: float(g.get_linewidth()), 0.5),
+        _grid_original("grid_linewidth"),
         lambda a, v: a.tick_params(axis="both", which="both", grid_linewidth=float(v)),
     ),
     ("axes", "grid_alpha"): (
-        _grid_prop(lambda g: g.get_alpha(), None),
+        _grid_original("grid_alpha"),
         lambda a, v: a.tick_params(
             axis="both", which="both", grid_alpha=(None if v is None else float(v))
         ),
@@ -5482,6 +5602,7 @@ _RESTORE: dict[tuple[str, str], object] = {
     ("artist", "pos_frac"): _restore_offsetbox_pos,
     ("arrowpatch", "arrowstyle"): lambda a, orig: a.set_arrowstyle(orig),
     ("arrowpatch", "linestyle"): _restore_arrow_linestyle,
+    ("arrowpatch", "color"): _restore_arrow_paint,
     ("text", "pos_frac"): _restore_text_pos,
     ("text", "fontfamily"): _restore_text_fontfamily,
     ("ticks", "fontfamily"): _restore_ticks_fontfamily,
@@ -5498,6 +5619,8 @@ _RESTORE[("collection", "cmap")] = _restore_member_cmap
 _RESTORE[("image", "cmap")] = _restore_member_cmap
 _RESTORE.update(legendmodel.RESTORE)
 _RESTORE.update(spinemodel.RESTORE)
+for _gk in _GRID_KW:
+    _RESTORE[("axes", _gk)] = _grid_restore(_gk)
 
 
 # 图例拖动（`loc_frac`）挂进布局引擎那张 pin 表（ADR 0100）：条目模型本身在

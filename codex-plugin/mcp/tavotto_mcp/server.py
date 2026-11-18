@@ -23,7 +23,7 @@ import time
 import traceback
 from collections import deque
 
-from . import bridge, guide, updatenotice, usage, widget
+from . import bridge, guide, nextstep, updatenotice, usage, widget
 from .rpc import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
@@ -96,7 +96,9 @@ ERROR_ELISION_ORDER = (
     "error",
 )
 #: 失败载荷里永远不截的键：结局、稳定码与待办索引都是定长小字段。
-ERROR_PROTECTED_KEYS = frozenset({"ok", "code", "requirements", "capability", "input", "elided"})
+ERROR_PROTECTED_KEYS = frozenset(
+    {"ok", "code", "requirements", "capability", "input", "elided", "next"}
+)
 #: 超预算时省略的顺序：先省对模型没用的（SVG 它读不了），再省画布反正要另取的
 #: （manifest / 位图），最后才是预检的逐条清单（计数与阻断布尔永远留着）。
 #: 每省一步量一次，够了就停——能留给模型的尽量留。
@@ -217,6 +219,9 @@ def _tools() -> list[dict]:
                 "（done / partial / failed 三档）。"
                 "脚本存完图又读回那个文件时，安全模式跑不通，Tavotto 会自动改用真实 Python "
                 '再跑一次，回包带 execution="native"：此后脚本写的文件真的落盘，不受授权目录限制。'
+                "改过没导出的修改关会话（或被挤掉）时会存成草稿：再打开同一张图（同项目、同 stem、"
+                "同运行配置）会自动带回，回包 restored_draft 写明带回几条、哪些因脚本改动用不了；"
+                "不要草稿就带 discard_draft=true 打开（草稿同时删除）。导出成功即清草稿。"
                 "若宿主支持 MCP elicitation 且没有传工作区根，第一次请传绝对路径；"
                 "Tavotto 会让宿主显示精确目录并请用户确认，本次连接内有效。"
             ),
@@ -249,6 +254,13 @@ def _tools() -> list[dict]:
                         "description": (
                             "从注册表自动发现可参数化且产物在磁盘上的图，全部打开。"
                             "与 stem / stems 互斥；不猜没登记的产物，也不跑脚本"
+                        ),
+                    },
+                    "discard_draft": {
+                        "type": "boolean",
+                        "description": (
+                            "不带回这张图上次没导出的草稿，并把草稿删掉，从脚本原样打开。"
+                            "不传 = 有草稿就自动带回（restored_draft）；批量打开同样认。"
                         ),
                     },
                     "profile_id": {
@@ -493,7 +505,7 @@ def _tools() -> list[dict]:
             "title": "导出成图（先预检）",
             "description": (
                 "导出当前会话的图。**先跑一遍预检**：有 error 且没有 explicit_confirm 时"
-                "一张图都不出。**改完图先导出再关会话**，没导出的修改关掉就没了。PDF/SVG/EPS 是真矢量（EPS 不支持透明度），"
+                "一张图都不出。**改完图先导出再关会话**（没导出就关会存成草稿，重开自动带回）。PDF/SVG/EPS 是真矢量（EPS 不支持透明度），"
                 "PNG/TIFF 按给定 dpi 栅格化（TIFF 无损压缩）。"
                 "同时写一份 proof report（规范身份 + 全部检查结果 + 是否强制导出）。"
                 "不会用浏览器打开文件，也不会改用户的源码。"
@@ -598,7 +610,8 @@ def _tools() -> list[dict]:
             "title": "关闭会话",
             "description": (
                 "释放引擎会话。用户的项目数据一个字节都不动。"
-                "会话里改过却没导出的修改关掉就没了：要文件先 tavotto_export 再关。"
+                "会话里改过却没导出的修改会存成草稿，重新打开同一张图会自动带回（回包 draft_saved）；"
+                "要文件仍然要 tavotto_export。"
             ),
             "inputSchema": {
                 "type": "object",
@@ -896,6 +909,7 @@ def _call_open_batch(target: str, args: dict, plan: dict, *, workdir: str | None
         journal=args.get("journal"),
         journal_id=args.get("journal_id"),
         workdir=workdir,
+        discard_draft=bool(args.get("discard_draft")),
     )
     detailed = bool(args.get("preflight"))
     total: dict = {}
@@ -944,6 +958,13 @@ def _call_open_batch(target: str, args: dict, plan: dict, *, workdir: str | None
             f"  ✓ {entry['stem']}  会话 {entry['session_id']}  "
             f"{size[0]}×{size[1]} mm，{entry['elements']} 个可编辑元素"
         )
+        if entry.get("restored_draft"):
+            lines.append(f"    {entry['restored_draft']['note']}")
+        if entry.get("draft_restore_failed"):
+            lines.append(
+                f"    ! 上次没导出的草稿没能带回（{entry['draft_restore_failed']['code']}），"
+                "已按脚本原样打开；草稿还留着，关掉这个会话后重新打开会再试。"
+            )
     # **code 只进 `structuredContent`**：这几行是念给用户听的那一份。念一个
     # `session_budget_exhausted` 出来，用户既不知道发生了什么也不知道下一步。
     for entry in out["failed"]:
@@ -1051,6 +1072,7 @@ def _open_figure_result(args: dict) -> dict:
         adopt_environment=adopt,
         expected_environment_generation=generation,
         prepare_impact_digest=digest,
+        discard_draft=bool(args.get("discard_draft")),
     )
     # **打开与预检分离**（issue #102）：噪声在**给 agent 读的那段文字**里——
     # 每开一张图糊一屏重复的规范建议，还挤掉了 manifest 摘要那几行真正有用的东西。
@@ -1099,6 +1121,15 @@ def _open_figure_result(args: dict) -> dict:
         # `str + dict` 炸掉。渲染好的那一份是 `report`，与 tavotto_preflight 用的
         # 是同一个——不在这里造第二份。
         lines.append(checks["report"])
+    if out.get("restored_draft"):
+        lines.append(out["restored_draft"]["note"])
+    if out.get("draft_restore_failed"):
+        lines.append(
+            f"! 上次没导出的草稿没能带回（{out['draft_restore_failed']['code']}），已按脚本原样打开；"
+            "草稿还留着，关掉这个会话后重新打开会再试。"
+        )
+    if out.get("discarded_draft"):
+        lines.append("已按要求丢掉这张图的草稿，从脚本原样打开。")
     if out.get("evicted_sessions"):
         # 静默淘汰的表现是「我的 session_id 突然不认识了，而我什么都没做」。
         lines.append(
@@ -1467,6 +1498,10 @@ def _call_fix_to_journal(args: dict) -> dict:
     )
     # 预览图走 image 内容块、**不进 structuredContent**（ADR 0180 §四 / ADR 0069：内嵌画布事件上限）
     previews = out.pop("_previews", None) or {}
+    if not out.get("ok") and "next" not in out:
+        step = nextstep.fix_next(out, args)
+        if step:
+            out["next"] = step
     content = _text(*fix_report_lines(out))
     for label in ("before", "after"):
         if previews.get(label):
@@ -1533,6 +1568,12 @@ def fix_report_lines(out: dict) -> list[str]:
             "会话已回到修改前，没有写出任何文件。"
         )
         lines.extend(_fix_failure_lines(out))
+        for c in (out.get("conflicts") or [])[:FIX_BLOCKING_SHOWN]:
+            where = f"［{c['gid']}］" if c.get("gid") else ""
+            prop = f"（属性 {c['prop']}）" if c.get("prop") else ""
+            lines.append(
+                f"  ⚔ {c.get('rule') or '渲染'}{where}：{' ↔ '.join(c.get('constraints') or [])}{prop}"
+            )
     elif exit_code == "nothing_to_do":
         lines.append("没有需要改的地方；会话未变。" + dry)
     else:
@@ -1568,7 +1609,7 @@ def fix_report_lines(out: dict) -> list[str]:
     elif out.get("ok") and not out.get("dry_run") and exit_code != "nothing_to_do":
         lines.append(
             "修改只在 Tavotto 会话里，用户的文件还没变：要拿到文件请调 tavotto_export，"
-            "导出前别关会话（关掉修改就没了）。"
+            "没导出就关会话也不会丢：修改存成草稿，重新打开这张图会自动带回。"
         )
     if out.get("worker_retired"):
         lines.append("注意：渲染进程途中状态不可信，已作废重起；会话按全量列表重放，结果不受影响。")
@@ -2142,7 +2183,7 @@ def call_tool(name: str, args: dict) -> dict:
             args, resolved = _resolve_journal_arg(args)
         result = handler(args)
     except bridge.BridgeError as exc:
-        payload = exc.payload()
+        payload = nextstep.attach(exc.payload(), name, args)  # ADR 0192 §3：失败带可照抄的 next
         # 失败也要机器可读：Codex 得能据此决定下一步（改路径？装 tavotto？确认导出？）
         # 但 **`code` 只进 `structuredContent`**：`content` 是念给用户听的那一份，
         # 把机器码摆在最前面，模型多半会连着念出去——用户听到
@@ -2527,6 +2568,8 @@ class Server:
                 "数据本身、坐标范围、加删曲线/子图、colorbar 方向这些必须回代码改；"
                 "改完 .py 之后调 tavotto_refresh_project（不是重跑脚本），Tavotto 界面会自己更新。"
                 "项目路径必须在允许的根内，模型传的路径不是授权。结果带 elided 时用 tavotto_session_state 取件，别猜 gid。"
+                "失败结果带 next 时照它做：{tool,args} 就是下一次调用，{action:edit_script} 回代码改，"
+                "{action:ask_user} 把 question 与 options 交给用户。"
                 "宿主没有内嵌画布时，同一组工具照样能走完打开→修改→预检→导出。"
             ),
         }

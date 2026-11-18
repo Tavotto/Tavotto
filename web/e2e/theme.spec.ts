@@ -10,11 +10,11 @@ import type { Locator, Page } from '@playwright/test'
  *     画布上的纸（`data-page-sheet`）仍是白——纸是文档内容，不跟主题走；
  *   - 刷新之后还是深色（偏好写在本机，挂载之前就落到 `<html>` 上）；
  *   - 「跟随系统」：`<html>` 不挂 data-theme，颜色跟着 `prefers-color-scheme` 走（emulateMedia 切两次）。
- * 颜色值从 index.css 两张值表手抄（e2e 不 import src）：浅色桌面 #efefed、暗色桌面 #161615、暗色面板 #222220。
+ * 颜色值从 index.css 两张值表手抄（e2e 不 import src）：浅色桌面 #f0efec、暗色桌面 #171614、暗色面板 #23221f。
  */
-const LIGHT_DESK = 'rgb(239, 239, 237)'
-const DARK_DESK = 'rgb(22, 22, 21)'
-const DARK_PANEL = 'rgb(34, 34, 32)'
+const LIGHT_DESK = 'rgb(240, 239, 236)'
+const DARK_DESK = 'rgb(23, 22, 20)'
+const DARK_PANEL = 'rgb(35, 34, 31)'
 const PAPER = 'rgb(255, 255, 255)'
 
 const bg = (loc: Locator) => loc.evaluate((el) => getComputedStyle(el).backgroundColor)

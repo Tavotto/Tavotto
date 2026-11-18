@@ -302,8 +302,8 @@ const darkApplied = async (page: Page) => {
   // 切主题 / 开对话框后颜色还在过渡：先等静止，否则下面量到的是插值色
   await waitForStillUi(page)
   expect(await page.evaluate(() => document.documentElement.getAttribute('data-theme'))).toBe('dark')
-  // 不是「扫了个浅色页」：body 的计算底色确实是暗色桌面（#161615），否则这两条是恒真的
-  expect(await page.locator('body').evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgb(22, 22, 21)')
+  // 不是「扫了个浅色页」：body 的计算底色确实是暗色桌面（#171614），否则这两条是恒真的
+  expect(await page.locator('body').evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgb(23, 22, 20)')
 }
 
 test('暗色主题 · 主页：axe 无违规、无未定性的「查不了」、自算对比度达标', async ({ app, page }) => {

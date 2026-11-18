@@ -465,23 +465,21 @@ export function NumberField({
             }
           }}
           className={cn(
-            // 框里只剩它一个（标签、单位都在框外）。宽度 = 等宽字体 4 个字符
-            // （12 / 1000 / 12.5 这类常见值刚好放下）+ 左右内边距 0.75rem——Tailwind 的
-            // 盒模型是 border-box，只写 4ch 的话内边距会吃掉两个字符，「100」就只剩「10」
-            // （2026-09-11 真项目里量到）。框只比数字大一圈，不再按文本框默认的 20 字符
-            // 固有宽度（≈170px）撑开；数字居中。调用方要更宽时覆盖 input 的宽度即可。
             'type-number h-full min-w-0 bg-transparent text-ink outline-none',
-            prefix != null && prefixInside ? 'pl-1 pr-1.5' : 'px-1.5',
+            prefix != null && prefixInside ? 'pl-1 pr-1.5' : fill || half ? 'pl-2 pr-1' : 'px-1.5',
             fill || half ? 'w-full' : 'w-[calc(4ch+0.75rem)]',
             'placeholder:font-sans placeholder:text-ink-3',
-            // 框内有单位时数字右对齐、贴着单位；没有单位时居中（框只比数字大一圈）
-            unit != null ? 'pr-0.5 text-right' : 'text-center',
+            // 栏内定宽框（fill / half 且无框内前缀）左对齐，与同列文字框 / 下拉 / 色号严格共线；紧凑 4ch 小框保留右对齐或居中
+            (fill || half) && !(prefix != null && prefixInside)
+              ? 'text-left'
+              : unit != null
+                ? 'pr-0.5 text-right'
+                : 'text-center',
           )}
         />
         {unit != null && (
-          /* 单位列至少 2 个字符宽：pt / mm / px / ° / % 的框在同一列里才一样宽、右缘对齐
-             （二审 A5：此前 `0 °` 的框比 `3.5 pt` 的窄 5px）；ppi 三个字符自然更宽 */
-          <span className="type-number min-w-[2ch] shrink-0 select-none whitespace-nowrap pr-1.5 text-ink-3">
+          /* 单位列至少 2 个字符宽：pt / mm / px / ° / % 的框在同一列里才一样宽、右缘对齐 */
+          <span className="type-number min-w-[2ch] shrink-0 select-none whitespace-nowrap pr-2 text-right text-ink-3">
             {unit}
           </span>
         )}
@@ -599,7 +597,7 @@ export function ColorField({
         className={cn(
           // 只剩色块时取色盘是**透明盖在色块上的真控件**；带面板时盖着的是面板触发钮。
           // 两种都在这一层画焦点环（overflow-hidden 只裁子元素，不吃这一层自己的 outline）
-          'relative h-5 w-8 shrink-0 overflow-hidden rounded-sm border border-border transition-colors has-[:focus-visible]:focus-ring',
+          'relative h-7 w-7 shrink-0 overflow-hidden rounded-sm border border-border transition-colors has-[:focus-visible]:focus-ring',
           // 坐在胶囊（浮动工具条，祖先带 data-capsule）里是一枚与控件同高的圆：胶囊左端是半圆，28 的圆在 p-1 里与它同心
           // （2026-10-13 用户：「左侧的颜色可以改成圆形了」；输入框同一条规则在 fieldBox）
           'in-data-capsule:size-7 in-data-capsule:rounded-full',

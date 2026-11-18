@@ -174,6 +174,18 @@ id 是服务端登记的不透明串）、`POST /api/ai/data-figure/commit`（`{
 
 出口：`GET /api/registry` 的 `all_scripts[]`（素材库 / 脚本库本来就按脚本名 join 它；面板条目带 `script`，前端用它找到来源）。**只在认出来源的条目上加** `generated_from: {data, sheet}`，其余条目一个键都不加。开关关着时整个不读、不加，`/api/registry` 的响应与没有这个功能时**逐字相同**（用例比较开 / 关两份响应去掉该键后相等）。读脚本只读开头 16 KiB、不跟随链接、钉在项目内、最多读 2000 个脚本、基础设施脚本（`tavotto_plot_*`）不读；伪造的注释最坏结果是「某张脚本被标成来自某个项目内的表格路径」，路径只作前端的匹配键、从不被后端打开。
 
+## 前端：首页入口与数据页（第一个前端 PR：一张表的整条链；`web/src/components/datastudio/`、`store/dataFigureStore.ts`）
+
+整件事在 `ai.taf.enabled` 后面；**开关关着时首页、左轨与全部文案逐字不变**（`HomeView.taf.test.tsx` 把关着时的 DOM 与合入前主干上取的摘要逐字对拍）。前端只翻译后端的话，不判断、不编造读取进度 / 步骤。
+
+* **开关怎么拿**：后端只有 `GET /api/ai/capabilities` 带 `taf_enabled`，它第一次调用要探测本机编码助手、可能很慢。首页不等它：`tafFlagStore` 先按本机记的上一次（`localStorage`，读写都不假设可用）画，后台问一次，回来不一样才换版；读不到当没变。助手面板已探测过就直接用它的结果。
+* **首页**：开关开着时，大拖放卡拆成并排两张入口卡——左「只有数据，还没有图」只做点击（`useProjectEntry` 选一个文件夹，`entry:'folder'` 打开，成功后进数据页；打开期间 `view: 'entering'` 先占住数据页，不闪一帧画布），不收拖入（整页的拖放处理仍只认脚本 / 项目文件夹）；右卡就是原来的拖放 / 选脚本入口。老手版没有叙事句、示例脚本退成灰字链接；新手版同样换成两张卡（否则新用户没有入口）。
+* **数据在左栏抽屉里，不是一个独立的页**：点左轨「数据」只开抽屉（`LeftTab` `'data'`，一棵文件树：`/api/ai/data-files?formats=all`，行尾 行数 / 没认准 / 读不了 / 没读；`table: null`、`sheets: null` 与工作表四项全空都是「没读」，不是「读不了」），画布与文档原样不动，没有任何东西盖在画布上。
+* **点一个数据文件 = 在画布标签栏开（或复用）一个「临时标签」**（`DraftTabItem`，标题是文件名、斜体、带关闭）。它**不是画布**：不进 `documentStore.openTabs`、不进项目文件 / 导出 / 撤销栈，状态只在 `dataFigureStore`（`draftOpen` / `draftActive`），关掉即没；点真画布标签时它只是退到后台。内容区 `DataDraft` 盖在画布位置上（画布与文档不动，画布快捷键让位），右栏换成 `DataPanel`。点文件那一刻就读表并出候选，没有「开始」按钮；Esc 关临时标签，抽屉里 ↑↓ 换文件、临时标签跟着换。
+* **一轮的流程**（`dataFigureStore`）：`propose` 带 `render: "lazy"`，**文字先到**——候选的名字 / 说明 / 推荐、列角色（`roles` + 每个角色可换成的列 `roles.options`）、实际用的表头行（`header_row`）、单位行（`units_row`，数据条里置灰）、非数字格（`mixed_cells`，默认不画）一次回来；懒模式不会返回 `ask`（万一返回，按失败处理，不替用户答）。四张缩略图由 `<img>` 各自取（后端取到才画，画不出 422，该项之后提交 404 `propose_candidate_unknown`）：到了淡入，422 的静默去掉、推荐标记挪给剩下的第一张，全部画不出走「这次没画出来」；图没到的磁贴不可点。右栏的横轴 / 纵轴 / 分组下拉与「N 格不是数字」下拉改任何一项都带着 `answers`（`y` / `x` / `group` 的列名或 `none`、`cells`）重新出候选，下拉不卸载；表头猜错就点原始行视图里对的那一行，带 `header_rows` 重来。后端与前端之间只隔一层 `lib/dataFigureAdapter.ts`。点一张 = 出图：被点的带扫光、其余淡掉，临时标签原地变成正式的图（`projectPreparationStore.open(scriptTarget(script), {run: true})`，即素材库里「打开并运行」那条现有路径，自动进单图快速编辑），画布工具条上方出一枚「用 X 画的 · 换个画法 · 撤销」（只在这一次会话里，`fresh` 不持久化）。
+* **结局**：没落盘且项目 `writable === false`（或 `figures_dir_unusable`）是「换个文件夹」，其余「这次没画出来，数据没问题。」+「再试一次」；`mismatch` 留在临时标签里（脚本已落盘；Tavotto 不替用户删文件，写明脚本路径，桌面壳里给「在文件夹中显示」）；`unverifiable` / `unknown` / 缺字段（去重的回应）照样打开图，一句话走浮动通知（绝不写成已核对）；没画出来的行不再通知。`propose_session_expired` / `propose_data_changed` / `propose_candidate_unknown` 静默重新出候选、按 `title_code` 对号再提交一次，对不上就让用户看新的。一次点击一个 `client_request_id`，没收到结果的重试复用它。
+* **store 规矩**：项目代际（`clear()` 在 `resetForNewProject` 里调，在飞请求按 `epoch` 作废）、每类请求一个序号、请求带发起那一刻的项目；键是 `tableKey({path, sheet})`（项目相对路径 + 工作表名的结构化键），`data-*` 里不放文件名（诊断轨迹会记 data 属性）。
+
 ## 注入分析：Agent 能读整个文件，表里的文字能影响模型
 
 表里的文字（列名、单元格、工作表名）可以诱导模型，但**模型能交出的只有一份闭集配方**：未知键、未知取值、层数不对、`why` 含换行都在 `from_dict` 当场拒收；

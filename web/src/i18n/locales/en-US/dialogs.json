@@ -87,7 +87,7 @@
       "network": "Can't reach the server. Check your network and try again.",
       "timeout": "The server didn't answer in time. Try again later.",
       "tls": "The secure connection to the server couldn't be set up (certificate check failed). Check your system clock and network proxy.",
-      "bad_response": "The server's reply couldn't be understood. Try again later.",
+      "bad_response": "Received an unexpected response from the service. Please try again later.",
       "api_incompatible": "This version of Tavotto isn't compatible with the server. Please update first.",
       "rate_limited": "You've sent too many in a short time. Try again later.",
       "storage_unavailable": "The server can't take messages right now. Try again later.",
@@ -101,9 +101,9 @@
       "upload_missing": "An attachment didn't finish uploading. Please try again.",
       "upload_url_rejected": "The server gave an upload address that isn't safe, so nothing was uploaded.",
       "redirect_blocked": "The server tried to redirect the request elsewhere, so it was refused.",
-      "client_error": "The server thinks there is a problem with this message. Check it and try again.",
-      "unexpected_response": "The server gave an unexpected reply. Try again later.",
-      "internal": "An internal error happened and nothing was sent.",
+      "client_error": "This message didn't pass validation. Check your text or attachments and try again.",
+      "unexpected_response": "The service returned an unexpected response. Please try again later.",
+      "internal": "Something went wrong while sending — your message wasn't sent.",
       "invalid_email": "That email address doesn't look right. Check it, or leave it empty.",
       "attachment_invalid": "The server's check of an attachment failed. Try a different file.",
       "report_not_found": "The diagnostics bundle didn't reach the server. Untick Attach diagnostic info and try again."
@@ -180,6 +180,15 @@
     "resultWarnings_other": "{{count}} notes; see details",
     "partialSummary": "{{ok}} succeeded, {{failed}} failed",
     "previewFit": "Fit to view",
+    "previewModeLabel": "Preview mode",
+    "previewModeFigure": "Figure",
+    "previewModeLayout": "In-page",
+    "previewLayoutUnavailable": "Figure size isn’t available yet for true-scale page preview",
+    "previewLayoutSlotSpec": "{{w}} × {{h}} mm · {{spec}} · {{column}} {{colW}} mm",
+    "previewLayoutSlotGeneric": "{{w}} × {{h}} mm · Two-column page · {{column}} {{colW}} mm",
+    "previewLayoutOverflowSpec": "{{w}} × {{h}} mm · Exceeds {{spec}} print width ({{maxW}} mm)",
+    "previewLayoutOverflowGeneric": "{{w}} × {{h}} mm · Exceeds print width ({{maxW}} mm)",
+    "previewLayoutTall": "{{w}} × {{h}} mm · Exceeds page text height ({{maxH}} mm)",
     "previewTabs": "Preview",
     "previewWhole": "Whole page",
     "previewFlagged": "Has items to fix",
@@ -229,6 +238,7 @@
       "no_script": "This figure has no script to re-run. EPS can only come from the script."
     },
     "exported": "Exported: {{files}}",
+    "signoffReady": "Exported · {{formats}}",
     "filenameError": {
       "control_char": "That file name contains invisible characters. Type it again.",
       "dot_only": "“.” and “..” can’t be used as a file name.",
@@ -242,7 +252,7 @@
     "filenameLabel": "File name",
     "filenamePlaceholder": "Figure 1",
     "formatLabel": "Format",
-    "jobLost": "This export job is no longer on the server. The files may have been written; check the folder or export again.",
+    "jobLost": "This export was interrupted. Some files may already be saved — check the export folder or export again.",
     "mmSize": "{{w}} × {{h}} mm",
     "openProblems": "Open problems panel",
     "operationFailed": "Couldn’t finish: {{error}}",
@@ -258,9 +268,9 @@
       "queued": "Queued…",
       "rendering": "Composing…",
       "report": "Generating the style check report…",
-      "unknown": "The job is no longer on the server",
+      "unknown": "This export was interrupted",
       "writing": "Writing files ({{step}}/{{total}})…",
-      "inspecting": "Checking the files…"
+      "inspecting": "Verifying exported files…"
     },
     "pngHint": "Raster",
     "ppiLabel": "Resolution",
@@ -303,7 +313,7 @@
     "transparentNotForRaster": "This figure is exported as-is, so its own background is kept.",
     "warningsIntro": "These edits couldn’t be applied to the re-rendered figures, so the output may differ from the canvas:",
     "advancedLabel": "Advanced",
-    "strictToggle": "Strict file check",
+    "strictToggle": "Verify exported files against spec",
     "strictTitle": "Reopens each finished file and checks it against the selected profile. A file that fails or can’t be checked is not saved. EPS is not checked.",
     "inspection": {
       "failedItems": "Check failed: {{items}}",
@@ -323,7 +333,7 @@
     "cancelRequested": "Cancellation requested",
     "cancelFailed": "Cancellation was not confirmed; the export may still be running",
     "failTitle": "The export didn’t finish",
-    "cancelNotAccepted": "The server did not accept cancellation. Check the export status and output folder before retrying.",
+    "cancelNotAccepted": "Couldn’t cancel this export. Check the export status and output folder first.",
     "statusFailed": "Export status is unavailable; the job may still finish",
     "retryStatus": "Retry status check",
     "connectionFailed": "Couldn’t reach the export service. Check the connection and that {{app}} is running, then retry. Check the output folder before starting another export.",
@@ -2038,7 +2048,7 @@
         "host_not_installed": "{{host}} was not found. Install it and open it once, then try again.",
         "mcp_server_not_bundled": "This version of Tavotto has no MCP server. Update the desktop app.",
         "project_root_rejected": "Choose a specific project folder, not your whole home folder or a drive root.",
-        "config_unreadable": "Tavotto could not read the {{host}} config file (it may contain comments), so it left it unchanged. Open Details to see which file.",
+        "config_unreadable": "Couldn’t parse the {{host}} config file (it may contain comments), so it was left untouched. Open Details to see the file path.",
         "config_write_failed": "Tavotto could not write the {{host}} config file. Open Details to see which file.",
         "host_cli_failed": "The {{host}} command line did not finish the registration. Open Details for its output.",
         "server_health_failed": "The config is written, but the Tavotto server did not start. Open Details for the reason.",
@@ -2346,7 +2356,7 @@
     },
     "welcome": {
       "title": "Edit right on the figure",
-      "subtitle": "Import a plotting script, then click and drag to adjust what’s in the figure.",
+      "subtitle": "Import a plotting script or existing figure, then click and drag to refine elements and layout right on the page.",
       "features": "Legends, axes, colorbars, text, alignment and layout can all be edited directly",
       "demoLabel": "From a plotting script to a figure you can edit directly",
       "codeLabel": "Excerpt of the sample script {{name}}",
@@ -2377,7 +2387,7 @@
       "renderProgress": "Sample figure rendering progress",
       "builtin": "Built-in sample",
       "figureLabel": "The reaction-kinetics figure drawn by {{name}}",
-      "success": "Compiled"
+      "success": "Figure ready — click any element"
     },
     "legend": {
       "task": "Drag the legend somewhere else",
@@ -2389,7 +2399,7 @@
       "cancelled": "Cancelled. The legend is back in place.",
       "farther": "Try dragging it a little farther.",
       "figureLabel": "Reaction-kinetics figure with a draggable legend",
-      "success": "Nice! Elements in the figure can be dragged directly."
+      "success": "Position updated — elements in the figure move directly."
     },
     "title": {
       "task": "Click the title and make it a little bigger",
@@ -2403,7 +2413,7 @@
       "increase": "Increase font size",
       "titleLabel": "Figure title “{{text}}”, {{size}} pt. Click to select it and change the size",
       "figureLabel": "Reaction-kinetics figure with a selectable title",
-      "success": "Great! You changed the text without touching the code."
+      "success": "Updated on the figure — your script stays untouched."
     },
     "finish": {
       "title": "{{product}}: edit right on the figure",
@@ -2413,7 +2423,7 @@
       "beforeAlt": "Before: the figure exactly as the script draws it, legend at the lower right, title {{size}} pt",
       "afterAlt": "Your edits: the same data with the legend moved and the title at {{size}} pt",
       "afterAltUnmoved": "Your edits: the same data with the title at {{size}} pt",
-      "nextHint": "You’ve learned to edit a scientific figure directly. Now try your own Python plotting script.",
+      "nextHint": "Now try it on your own Python plotting script.",
       "demoNote": "Edits in the tutorial stay in this demo and aren’t written to any file.",
       "start": "Start using {{product}}",
       "replay": "Replay"

@@ -210,8 +210,8 @@
     "textMenu": "Text"
   },
   "unexpectedError": {
-    "text": "Something went wrong in Tavotto",
-    "body": "Sending us the diagnostics helps us find the cause and fix it faster."
+    "text": "Tavotto ran into an unexpected issue",
+    "body": "Your project files are untouched. Sending redacted diagnostics helps us track down the cause."
   },
   "exitNotice": {
     "engine": {
@@ -604,12 +604,14 @@
       "problems": "Issues",
       "settings": "Settings",
       "style": "Style",
-      "workspace": "Project"
+      "workspace": "Project",
+      "data": "Data"
     },
     "style": "Style",
     "workspace": "Projects",
     "problemsBlocking_one": "Problems · {{count}} blocking (of {{total}})",
-    "problemsBlocking_other": "Problems · {{count}} blocking (of {{total}})"
+    "problemsBlocking_other": "Problems · {{count}} blocking (of {{total}})",
+    "data": "Data"
   },
   "readiness": {
     "foreign": {
@@ -787,7 +789,8 @@
     "tryTutorial": "Try the sample project",
     "rulerUnit": "mm",
     "rulerUnitTitle": "Ruler unit: millimetres",
-    "textPlaceholder": "Type text"
+    "textPlaceholder": "Type text",
+    "emptyFromData": "Draw from data"
   },
   "stylePanel": {
     "emptyTitle": "Select a figure on the canvas to see its style here",
@@ -1593,7 +1596,7 @@
       "worker_chain_failed": "{{product}}'s rendering component would not start in {{label}}, so it was not used.",
       "activation_failed": "{{label}} is a Conda environment, but activating it failed, so it was not used.",
       "probe_timeout": "Checking {{label}} took too long, so it was not used this time.",
-      "unusable": "{{label}} would not start, so it was not used.",
+      "unusable": "{{label}} couldn’t start, so it was skipped.",
       "cache_denied": "{{label}} can’t create folders in {{product}}’s cache, so it was not used.",
       "not_checked": "{{label}} can only be confirmed when the script runs, so it was not used this time.",
       "outranked": "{{label}} works too, but a better environment came first.",
@@ -1768,5 +1771,8 @@
     "fitContent": "Fit to content",
     "clearPad": "Remove margin",
     "notWrittenBack": "Margins apply to Tavotto exports only and are not written back to the script"
+  },
+  "dataDrawer": {
+    "count": "{{count}} data files"
   }
 }
