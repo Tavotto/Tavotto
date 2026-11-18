@@ -17,6 +17,10 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 from tavotto.rendercore import geometry  # noqa: E402
 
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 DASH = [
     [4, 2],
     [4, 2, 1, 2],
