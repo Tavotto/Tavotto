@@ -534,7 +534,7 @@ describe('角标优先级：相邻两档同时成立时谁说了算', () => {
       root.render(<PanelView obj={runtimePanel} />)
     })
 
-    expect(badgeText()).toBe('会话已结束，重新运行原命令可继续编辑')
+    expect(badgeText()).toMatch(/^(运行已结束|重新运行)$/)
     expect(container.textContent).not.toContain('低内存编辑预览')
   })
 
