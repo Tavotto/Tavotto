@@ -331,6 +331,15 @@ describe('applyOpenRequest', () => {
       await new Promise((r) => setTimeout(r, 10))
       expect(useDocumentStore.getState().doc.objects).toHaveLength(0)
     })
+
+    it('脚本失败：打开素材库，让失败原因与重试入口看得见', async () => {
+      await uncached()
+      useUiStore.setState({ leftOpen: false, leftTab: 'outline' } as never)
+      run.mockImplementation(async () => {})
+      useUiStore.getState().statusAction!.run()
+      await vi.waitFor(() => expect(useUiStore.getState().leftOpen).toBe(true))
+      expect(useUiStore.getState().leftTab).toBe('assets')
+    })
   })
 
   it('多 Figure（pick）：打开 Figure 选择器，绝不静默选第一张', async () => {

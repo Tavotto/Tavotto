@@ -173,7 +173,7 @@ const RUNTIME_RUN_OWNER = 'handoff.runtimeNeedsRun'
 
 /**
  * 「运行」：跑这张图的脚本，跑出预览后接着完成原来的交接（把图放上画布）。
- * 点的时候已换了项目就什么都不做；跑失败 / 停在确认门上，由脚本运行自己的卡片说话，这里不再补一句。
+ * 点的时候已换了项目就什么都不做；跑失败 / 停在确认门上，由脚本运行自己的卡片说话——这里只负责把素材库打开让它看得见，不再补一句。
  */
 async function runThenLand(asset: RuntimeAssetInfo, pj: string | null): Promise<void> {
   if (currentProjectId() !== pj) return
@@ -182,7 +182,11 @@ async function runThenLand(asset: RuntimeAssetInfo, pj: string | null): Promise<
   if (currentProjectId() !== pj) return
   await useRuntimeAssetStore.getState().loadAssets()
   const fresh = (useRuntimeAssetStore.getState().assets ?? []).find((a) => a.stem === asset.stem)
-  if (!fresh?.descriptor) return
+  if (!fresh?.descriptor) {
+    // 没跑出图：失败原因与重试入口在素材库的脚本卡片上——把它打开，别让提示凭空消失
+    if (currentProjectId() === pj) useUiStore.setState({ leftTab: 'assets', leftOpen: true })
+    return
+  }
   if ((await whenDocumentSettledForEntry(pj)) !== 'ready' || currentProjectId() !== pj) return
   const ui = useUiStore.getState()
   const landed = landFigure(fresh.id)
