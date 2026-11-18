@@ -18,6 +18,27 @@ class _Exited(Exception):
     pass
 
 
+@pytest.fixture(autouse=True)
+def _never_really_exit(monkeypatch):
+    """钩子会跑退出清理并结束进程：在 pytest 进程里两样都必须是假的。
+
+    真跑 `atexit._run_exitfuncs()` 会把整个测试进程登记的清理提前执行（关掉渲染子进程、删掉临时配置目录），
+    同一分片里后面的用例随之崩溃——CI 上实际发生过。
+    """
+    import atexit
+    import os
+
+    calls: list[str] = []
+
+    def fake_exit(code):
+        calls.append(f"exit:{code}")
+        raise _Exited
+
+    monkeypatch.setattr(os, "_exit", fake_exit)
+    monkeypatch.setattr(atexit, "_run_exitfuncs", lambda: calls.append("atexit"))
+    return calls
+
+
 def _run_hook(monkeypatch, *, platform: str, frozen: bool):
     monkeypatch.setattr(sys, "platform", platform)
     if frozen:
@@ -28,21 +49,11 @@ def _run_hook(monkeypatch, *, platform: str, frozen: bool):
     runpy.run_path(str(HOOK))
 
 
-def test_windows_frozen_unhandled_exception_logs_runs_exit_funcs_and_exits_1(monkeypatch):
-    import atexit
-    import os
-
+def test_windows_frozen_unhandled_exception_logs_runs_exit_funcs_and_exits_1(
+    monkeypatch, _never_really_exit
+):
     _run_hook(monkeypatch, platform="win32", frozen=True)
     assert sys.excepthook is not sys.__excepthook__
-    codes: list[int] = []
-    ran: list[str] = []
-
-    def fake_exit(code):
-        codes.append(code)
-        raise _Exited
-
-    monkeypatch.setattr(os, "_exit", fake_exit)
-    monkeypatch.setattr(atexit, "_run_exitfuncs", lambda: ran.append("atexit"))
     err = io.StringIO()
     monkeypatch.setattr(sys, "stderr", err)
     try:
@@ -51,8 +62,9 @@ def test_windows_frozen_unhandled_exception_logs_runs_exit_funcs_and_exits_1(mon
         exc_info = sys.exc_info()
     with pytest.raises(_Exited):
         sys.excepthook(*exc_info)
-    assert codes == [1], "与 bootloader 原本的退出码一致"
-    assert ran == ["atexit"], "已登记的退出清理照跑（如 Conda 激活结果文件）"
+    assert _never_really_exit == ["atexit", "exit:1"], (
+        "先跑已登记的退出清理（如 Conda 激活结果文件），再以 bootloader 原本的退出码 1 退出"
+    )
     assert "ModuleNotFoundError: No module named '_socket'" in err.getvalue()
 
 
@@ -62,7 +74,6 @@ def test_with_no_stderr_stream_the_traceback_goes_to_fd_2(monkeypatch):
     _run_hook(monkeypatch, platform="win32", frozen=True)
     written: list[tuple[int, bytes]] = []
     monkeypatch.setattr(os, "write", lambda fd, b: written.append((fd, b)) or len(b))
-    monkeypatch.setattr(os, "_exit", lambda code: (_ for _ in ()).throw(_Exited()))
     monkeypatch.setattr(sys, "stderr", None)
     with pytest.raises(_Exited):
         sys.excepthook(ValueError, ValueError("boom"), None)
