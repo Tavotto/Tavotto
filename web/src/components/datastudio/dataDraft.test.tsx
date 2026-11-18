@@ -6,7 +6,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/Tooltip'
-import { aiDataFigureCommit, aiDataFigurePropose, aiDataFilesAll, aiDataOverview, type AiDataCommitResult, type AiDataFileEntry, type AiDataOverview } from '@/lib/api'
+import { ApiError, aiDataFigureCommit, aiDataFigurePropose, aiDataFilesAll, aiDataOverview, type AiDataCommitResult, type AiDataFileEntry, type AiDataOverview } from '@/lib/api'
 import { fileRows } from '@/lib/dataFigure'
 import { setCurrentProjectId } from '@/lib/session'
 import { useDataFigureStore } from '@/store/dataFigureStore'
@@ -453,6 +453,18 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     await click(q('[data-studio-retry]'))
     await flush()
     expect(commit.mock.calls[1]![0].client_request_id).toBe(rid)
+  })
+
+  it('同名的图占满（figure_name_exhausted）：不出「再试一次」', async () => {
+    propose.mockResolvedValue(cands())
+    commit.mockRejectedValueOnce(new ApiError('figure_name_exhausted', 422, { code: 'figure_name_exhausted' }))
+    await start()
+    await open(0)
+    await allThumbs()
+    await click(qa('[data-candidate]')[0]!)
+    await flush()
+    expect(q('[data-studio-problem]')).not.toBeNull()
+    expect(q('[data-studio-retry]')).toBeNull()
   })
 
   it('出图中关掉临时标签只是收起；没成的结局再把它翻出来', async () => {

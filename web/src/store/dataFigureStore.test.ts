@@ -208,6 +208,15 @@ describe('出图的各结局', () => {
     await st().retry()
     expect(commit.mock.calls[1]![0].client_request_id).toBe(commit.mock.calls[0]![0].client_request_id)
   })
+  it('同名的图占满：不可重试（只留后端那句话）；别的失败仍可重试', async () => {
+    await ready()
+    commit.mockRejectedValueOnce(apiError(422, 'figure_name_exhausted'))
+    await st().draw('i1')
+    expect(st().problem).toMatchObject({ kind: 'commit', retryable: false })
+    commit.mockRejectedValueOnce(apiError(500, 'something_else'))
+    await st().draw('i1')
+    expect(st().problem).toMatchObject({ kind: 'commit', retryable: true })
+  })
   it('备选过期：静默重新出候选，原来选的画法还在就接着画', async () => {
     await ready()
     commit.mockRejectedValueOnce(apiError(409, 'propose_session_expired')).mockResolvedValueOnce(committed())
@@ -461,5 +470,52 @@ describe('单位行与横轴列夹文字', () => {
     st().invalidateFiles()
     await flush()
     expect(files).not.toHaveBeenCalled()
+  })
+
+  describe('清单重读在途合并', () => {
+    const held = () => {
+      const rel: Array<() => void> = []
+      files.mockImplementation(() => new Promise((r) => rel.push(() => r({ files: [], truncated: false }))))
+      return rel
+    }
+    it('连续 5 次失效 → 恰好 2 次请求（在途 1 次 + 尾随 1 次）', async () => {
+      files.mockResolvedValueOnce({ files: [], truncated: false })
+      await st().loadFiles()
+      files.mockClear()
+      const rel = held()
+      for (let i = 0; i < 5; i++) st().invalidateFiles()
+      expect(files).toHaveBeenCalledTimes(1)
+      rel[0]!()
+      await flush()
+      expect(files).toHaveBeenCalledTimes(2)
+      rel[1]!()
+      await flush()
+      expect(files).toHaveBeenCalledTimes(2)
+      expect(st().files.status).toBe('ready')
+    })
+    it('单次失效 → 1 次请求；清单没读过（idle）→ 0 次', async () => {
+      st().invalidateFiles()
+      await flush()
+      expect(files).not.toHaveBeenCalled()
+      files.mockResolvedValueOnce({ files: [], truncated: false })
+      await st().loadFiles()
+      files.mockClear()
+      files.mockResolvedValue({ files: [], truncated: false })
+      st().invalidateFiles()
+      await flush()
+      expect(files).toHaveBeenCalledTimes(1)
+    })
+    it('在途时 clear()（换项目）：脏标记作废，不补尾随', async () => {
+      files.mockResolvedValueOnce({ files: [], truncated: false })
+      await st().loadFiles()
+      files.mockClear()
+      const rel = held()
+      st().invalidateFiles()
+      st().invalidateFiles()
+      st().clear()
+      rel[0]!()
+      await flush()
+      expect(files).toHaveBeenCalledTimes(1)
+    })
   })
 })

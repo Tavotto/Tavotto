@@ -128,13 +128,16 @@ export function DataDraft() {
     )
   } else if (problem?.kind === 'commit' || phase === 'failed') {
     const err = problem?.kind === 'commit' ? problem.error : error
+    const canRetry = problem?.kind !== 'commit' || problem.retryable
     top = (
       <div data-studio-problem className="flex flex-col items-start gap-2">
         <Line>{t('dataFigureV2.draft.failed')}</Line>
         {err && <p className="text-sm text-ink-2">{fm(err)}</p>}
-        <Button variant="primary" size="lg" className="mt-1" data-studio-primary data-studio-retry onClick={() => void st().retry()}>
-          {t('dataFigureV2.problem.retry')}
-        </Button>
+        {canRetry && (
+          <Button variant="primary" size="lg" className="mt-1" data-studio-primary data-studio-retry onClick={() => void st().retry()}>
+            {t('dataFigureV2.problem.retry')}
+          </Button>
+        )}
       </div>
     )
   } else if (phase === 'unreadable') {

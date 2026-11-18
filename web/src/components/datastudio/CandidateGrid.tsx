@@ -82,7 +82,7 @@ export function CandidateGrid({
     >
       {pending
         ? [0, 1, 2, 3].map((i) => (
-            <div key={i} data-candidate-skeleton className="flex flex-col rounded-panel bg-field p-2 pb-3">
+            <div key={i} data-candidate-skeleton className="flex flex-col rounded-panel bg-surface-hover p-2 pb-3">
               <FigureThumb src={null} alt="" className="aspect-16/10" />
               <span aria-hidden className="mx-1.5 mt-3 block h-4 w-2/5 rounded-sm bg-surface-active" />
               <span aria-hidden className="mx-1.5 mt-2 block h-3 w-4/5 rounded-sm bg-surface-active" />
@@ -103,8 +103,8 @@ export function CandidateGrid({
                 disabled={drawingId != null || !ready}
                 onClick={() => onPick(it.id)}
                 className={cn(
-                  'flex animate-fade-in flex-col rounded-panel bg-field p-2 pb-3 text-left outline-none transition-colors duration-fast ease-standard',
-                  'enabled:hover:bg-field-hover focus-visible:focus-ring disabled:cursor-default',
+                  'flex animate-fade-in flex-col rounded-panel bg-surface-hover p-2 pb-3 text-left outline-none transition-colors duration-fast ease-standard',
+                  'enabled:hover:bg-surface-active focus-visible:focus-ring disabled:cursor-default',
                   dim && 'opacity-35',
                 )}
               >
