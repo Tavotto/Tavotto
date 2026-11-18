@@ -15574,7 +15574,9 @@ def _propose_error(exc: "engine_ai_data_propose.ProposeError"):
 
 @app.post("/api/ai/data-figure/propose")
 def api_ai_data_figure_propose():
-    """出备选（不调模型）。body：`{folder?, table?, sheet?, hint?, answers?, header_rows?, client_request_id?, render?}`
+    """出备选（不调模型）。body：`{folder?, table?, sheet?, tables?, hint?, answers?, header_rows?, client_request_id?, render?}`
+    （`tables` = `[{path, sheet?}]`：2 到 8 份列名相同的数据合画、每份文件是一组，与 `table` 互斥；列名不一致 400 `tables_columns_differ`，
+    份数超限 400 `tables_too_many`；响应另有 `sources` 与 `group_column`，见 `ai_data_propose.propose`）
     （`render: "lazy"` = 文字先到、不问问题、缩略图在取图时画，见 `ai_data_propose.propose`）（`folder` 项目相对、缺省项目根；
     `header_rows` = `{表的路径（相对 folder，同 `table`）: 每列名字所在的物理行号}`，按文件指定，生成的脚本读表用同一个行号）。
 
@@ -15603,6 +15605,7 @@ def api_ai_data_figure_propose():
             header_rows=body.get("header_rows"),
             client_request_id=rid,
             render=body.get("render"),
+            tables=body.get("tables"),
         )
     except engine_ai_data_propose.ProposeError as exc:
         return _propose_error(exc)
@@ -15699,6 +15702,7 @@ def api_ai_data_figure_commit():
             recipe=item.recipe,
             title_code=item.code,
             header_line=sess.header_line,
+            merge=sess.merge,
         )
         prepared = engine_ai_data_task.prepare_v2(ctx.path, sel)
         env = engine_ai_data_task.envelope_for_v2(project_key=project, prepared=prepared, rid=rid)

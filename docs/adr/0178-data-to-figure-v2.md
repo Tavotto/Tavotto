@@ -122,6 +122,29 @@ id 是服务端登记的不透明串）、`POST /api/ai/data-figure/commit`（`{
 
 实现：`ai_data_template._footer` 不再出说明；只给脚注用的运行时函数（`n_note` / `n_phrase` / `trend_point_counts` / `trend_series_counts`）从公共模块删掉，公共模块文件名哈希由 `3c540192` 变为 `86dcfebb`（`tests/test_ai_data_encodings.py::PINNED_RUNTIME_NAME` 同步）；`apply_cells` 的返回值不变（说明列表脚本里不再使用）。期望指纹只核数据、不含脚注，不变。已生成的老脚本带着自己的公共模块与脚注，不受影响。看护：`tests/test_ai_data_template.py::test_generated_scripts_write_no_footnote_of_any_kind` 与各形状用例的 `texts == []`。
 
+## 修订（2026-11-18）：合画——几份列名相同的数据画进同一张图，每份文件是一组（`ai_data_merge.py`）
+
+**动机**：重复实验常按条件各存一份文件（`ctrl.csv` / `drugA.csv` / `drugB.csv`，列名一样），用户要的是「这几份画进同一张图、一份一组」。不改配方的闭集，也不让用户先去手工合表：**只在内存里把几份拼成一张逻辑表**，再走原来的出备选流水。
+
+**合同**（`POST /api/ai/data-figure/propose`；功能仍在 `ai.taf.enabled` 后面；单份请求的请求、响应、生成的脚本逐字不变——公共模块文件名里的哈希除外，见下「公共模块」）：
+
+* 请求：把 `table` 换成 `tables: [{path, sheet?}]`，**2 到 8 份**（`path` 与 `table` 同口径：相对所选 `folder` 的 POSIX 路径；`sheet` 只对 XLSX）。`table` 与 `tables` 同时给 → 400 `propose_input_invalid`（都不给 = 原来的文件夹流程）；不是列表、不足 2 份、项形状不对、同一份（同文件同工作表）给了两次 → 400 `propose_input_invalid`；超过 8 份 → 400 `tables_too_many`（`params.max`）。其余字段（`render` / `answers` / `header_rows` / `hint` / `client_request_id`）同单份；`header_rows` 的键是各份的路径，**每份各管各的**。
+* **上限取 8 的理由**：合成的文件列做颜色分组，配方里颜色分组上限是 `MAX_GROUP_LEVELS = 8`；实测 9 份起趋势 / 关系 / ECDF 的备选全部 `group_limit_exceeded` 被剔除，只剩分组比较。恰好 8 份时四个备选一个都不丢。
+* **逐份读**：每份各按单份读法（`inspect_data_source(v2=True)`：编码 / 分隔符 / 表头行 / 单位行 / 千分位 / XLSX 工作表）。某份不是所选文件夹里发现遍历认得的表 → 200 `{kind:"nothing", reasons:["table_not_found"]}`（与单份指名一张不存在的表同形）；读不了 / 没认准表头 / 路径出界沿用单份对应的 400 稳定码。各份**列名集合与顺序**必须一致，否则 400 `tables_columns_differ`（`params.index` = 第一个与第一份不同的下标）。合计字节超 `MAX_TOTAL_BYTES`（4 × 5 MiB = 20 MiB）→ 沿用 400 `data_too_large`；拼后行数 / 列数超限沿用 `data_too_long` / `data_too_wide`。
+* **拼表**（**一份实现**：运行时函数 `ai_data_template.merge_tables`，脚本与父进程调同一个；拼好的摘要仍由 `adf._summarize` 判，没有第二套分类器）：按给定顺序逐份拼行，**表头末尾**加一列合成的分组列。列名 `file`，与现有列重名（不区分大小写）加数字后缀 `file_2` …（字母后缀会被当成单位后缀、`_id` 会被当成编号列）。值 = 文件标签：文件名去扩展名；同名时依次带上工作表名（同一工作簿的几张表：`book (Sheet1)`）、父文件夹（逐级往上，`exp1/data`）、完整文件名（`a.csv` / `a.tsv`），最后兜底 `#2`；标签是数 / 日期 / `nan`（`1.csv`、`2025-01-03.csv`）会让这一列不再是「分组」，这时整批改用完整文件名。不区分大小写唯一。
+* **分组角色默认是这一列**：用户没在 `answers.group` 里指定时 `picks.group = 合成列`（用户换列或写 `none` 就用他的；这一列成不了分组——如每份只有一行——按原规则）。懒模式下，若原本要问「按哪一列分组」（文件里还有别的分组列），`defaults` 里记 `{question_code:"pick_group", answer:{group:<合成列>}}`；`roles.group` 即此列。
+* **响应**与单份同形，另加：`sources: [{path, sheet, label, header_row, units_row}]`（`path` 与请求一致，`sheet` 是实际用的工作表，`header_row` 是文本表格实际用的表头物理行号）、`group_column`（合成列名）。`items[].values.table` = 第一份的 `path`；懒模式响应的 `table` 同。没画的行（`unplotted` 与提交结果里的 `rows`）与「夹着文字格」预览里的行号是**那一份自己的文件行号**，条目多一个 `file`（该份标签）；单份没有这个键。
+* **夹着文字格的规则**在拼好之后套（`apply_cells` 逐格独立，等于各份各自套再拼；类型与 `numeric_like` 按拼好的表判）；单位行、用户指定的表头行都是「各份各自按单份规则处理后再拼」。
+* **缩略图 / 提交端点不变**（按 session）。候选目录里同一会话放这几份的字节副本（布局 = 落点相对路径；同一工作簿只复制一次），磁盘上界按 `MAX_TOTAL_BYTES` 算；`MAX_SESSIONS`、TTL、放弃即删不变。
+
+**脚本与落点**：落在这几份的**最近公共父文件夹**（相对所选 `folder`、仍在项目内）下的 `tavotto_figures/`——几份在同一文件夹就是那个文件夹，不在同一文件夹就是它们共同的祖先（可能是 `folder` 本身）；这与单份不同（单份永远是所选 `folder` 下），因为合画的数据是用户逐份点选出来的、没有「所选文件夹」这个整体。名字 = 第一份的 stem + `_merged`（`ctrl_merged_figure.py`），重名走现有的 `_2` 递增。脚本顶部 `DATAS = [Path(__file__).resolve().parent / '../<相对落点的路径>', …]`、`SHEETS`、`LABELS`、`FILE_COLUMN`，`main()` 里 `tp.merge_tables([每份各自的读表表达式…], LABELS, FILE_COLUMN)`——每份的读法（分隔符 / 表头行 / 单位行 / 编码 codec / 工作表）与单份脚本里同一个 `_reader_expr`，脚本不探测。只**新建**：脚本与公共模块都经 `scriptlock.create_script`；原件一字节不动。来源注释的 `generator` 是 `data_to_figure/v2-merge`，`parse_source_comment` 只认 `data_to_figure/v2`，所以合画脚本不会被数据概览当成「来自某一份数据」（不放宽严格解析器）。
+
+**提交**：`Selection` 多一个 `merge`（各份、合成列、落点）；`prepare_v2` 对落点下每份各自钉在项目内（`contained_path`）、sha256 必须还是出备选时那一份（任何一份变了 → 409 `propose_data_changed`，什么都不写），再用同一组标签与列名重新拼；期望指纹与 `unplotted_rows` / `cell_stats` 用拼好的摘要（与脚本同源）。任务契约 `input_refs` 每份一条 `data_file`（1 到 8 条；单份仍 1 条），`plan` 与提交前 `project.data` 对每份各核一遍 sha256。
+
+**公共模块**：`merge_tables` 进 `RUNTIME_FUNCTIONS`，内容哈希由 `86dcfebb` 变为 `76e4a6f6`（`tests/test_ai_data_encodings.py::PINNED_RUNTIME_NAME` 同步）；已生成的老脚本继续 import 它们当时的那一版。82 个单份脚本（四族 × CSV / TSV / XLSX / GB18030 / UTF-16 / 单位行 × 多种列角色）在改动前后逐字比对，只差 `tavotto_plot_<8 位>` 这个名字。
+
+**错误码**：新增 `tables_columns_differ`、`tables_too_many`（`ai_data_propose.ERROR_CODES`、`test_error_codes.py`、前端 `errors.json` 两种语言）。**没做**：合画脚本在脚本清单里不显示「来自哪份数据」；`generated_from` 对它返回 None。
+
 ## 文本表格：`.txt` / `.dat` / 嗅探 / 表头行覆盖 / 千分位（`ai_data_figure.read_text_table`）
 
 第一版只做文本格式（`.mat` / `.npy` / HDF5 等二进制以后再说；`.xlsx` 读法不动）。整件事在 `ai.taf.enabled` 后面；v1（`inspect_data_source` 默认分支、v1 模板的 `_cell`）**逐字不变**——新读法只在 `v2=True` 时启用。
