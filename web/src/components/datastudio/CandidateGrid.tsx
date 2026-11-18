@@ -30,7 +30,7 @@ export function useDrawingLine(active: boolean): string {
  * 候选画法网格：1–2 个画法一行，其余一律两列；尺寸随可用高度收放（容器查询：内容区高度减去文字与间距，按缩略图 16:10 反算宽度），
  * 四张要一屏放得下。每张 = 白底缩略图 + 名字 + 「推荐」+ 一句说明，整张可点，没有单独的「画这张」按钮。
  * 出图期间：被点的那张带扫光，其余淡到 35% 不可点。方向键在网格里移动，Enter 选。
- * 候选没出来之前（`items` 为空、`pending`）画骨架：尺寸与最终的一致，换上去不跳。
+ * 候选没出来之前（`items` 为空、`pending`）画骨架（固定 4 张；合画最多 8 张候选，名称到了再按实际数量排，网格在容器里滚动）：尺寸与最终的一致，换上去不跳。
  */
 export function CandidateGrid({
   items,
@@ -56,6 +56,7 @@ export function CandidateGrid({
   const known = (c: string) => KNOWN_CANDIDATES.includes(c)
   const title = (c: string) => (known(c) ? t(`dataFigureV2.candidate.${c}.title`) : t('dataFigureV2.candidate.other.title'))
   const why = (c: string) => (known(c) ? t(`dataFigureV2.candidate.${c}.why`) : t('dataFigureV2.candidate.other.why'))
+  const variantText = (v: NonNullable<Candidate['variant']>) => (v.kind === 'split' ? t('dataFigureV2.variant.split', { column: v.column }) : t('dataFigureV2.variant.by_file'))
   const count = pending ? 4 : items.length
   const oneRow = count <= 2
 
@@ -116,6 +117,12 @@ export function CandidateGrid({
                   <span className="min-w-0 text-base font-medium text-ink">{title(it.title_code)}</span>
                   {i === 0 && <Badge>{t('dataFigureV2.pick.recommended')}</Badge>}
                 </span>
+                {/* 成对的候选（同名同说明）靠这一行分清；列名是用户数据，只当文本显示 */}
+                {it.variant && (
+                  <span data-candidate-variant={it.variant.kind} className="mx-1.5 mt-1 truncate text-sm font-medium text-ink-2" title={variantText(it.variant)}>
+                    {variantText(it.variant)}
+                  </span>
+                )}
                 <span className="mx-1.5 mt-1 text-sm text-ink-2">{why(it.why_code)}</span>
               </button>
             )

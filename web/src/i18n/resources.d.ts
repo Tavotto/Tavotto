@@ -58,6 +58,22 @@ export default interface Resources {
       "unconfirmedHint": "上一次的结果还没确认，请先在对话里查询结果。"
     },
     "dataFigureV2": {
+      "batch": {
+        "done": "已完成",
+        "draw": "分别作图",
+        "failed": "失败",
+        "groupTitle": "{{count}} 个文件",
+        "idle": "未选择",
+        "merge": "合并作图",
+        "partial": "已完成 {{done}} 张，{{failed}} 张失败",
+        "pick": "多选",
+        "progress": "作图中 {{done}}/{{total}}",
+        "queued": "排队中",
+        "retry": "重试",
+        "selected": "已选 {{count}} 个",
+        "showDone": "查看素材",
+        "stop": "停止"
+      },
       "candidate": {
         "bar_error": {
           "title": "柱 + 误差线",
