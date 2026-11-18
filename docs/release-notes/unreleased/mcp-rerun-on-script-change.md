@@ -1,3 +1,3 @@
-## Agent 改完脚本不用关掉重开图了
+## Agents no longer need to close and reopen a figure after editing its script
 
-通过 MCP 用 Tavotto 的 agent 改完画图脚本后，下一次调用（打开、体检、导出等）会按新脚本重跑同一个会话，已做的修改都保留；新脚本里用不了的修改会逐条说明。以前会话一直跑着旧脚本，agent 只能关掉再开，评测里平均每张图要开 4 次以上。
+When an AI agent using Tavotto over MCP edits the plotting script, its next call (open, preflight, export and so on) now reruns the same session with the new script and keeps the edits it already made; any edit that no longer fits the new script is skipped and listed. Previously the session kept running the old script, so agents had to close and reopen the figure — more than four opens per figure on average in our evaluation.
