@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
+
+REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO / "scripts"))
 
 GOLDEN = json.loads(
     (Path(__file__).parent / "golden" / "desktop_install_manifest.json").read_text("utf-8")
