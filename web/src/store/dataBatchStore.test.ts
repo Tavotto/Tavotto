@@ -513,6 +513,13 @@ describe('合画一张', () => {
     expect(f.selected).toEqual(ref('a'))
   })
 
+  it('merge：超过 8 份不开（按钮也禁用，这里是第二道）', () => {
+    select(...Array.from({ length: 9 }, (_, i) => `f${i}`))
+    st().merge()
+    expect(useDataFigureStore.getState().draftOpen).toBe(false)
+    expect(st().selection).toHaveLength(9)
+  })
+
   it('请求体是 tables（≥2 份，xlsx 带 sheet，其余不带），render 仍是 lazy，没有 table；表头行照带', async () => {
     useDataFigureStore.setState({ headerRows: { 'a.csv': 2 } })
     useDataFigureStore.getState().selectGroup([ref('a.csv'), ref('b.xlsx', 'P1'), ref('b.xlsx', 'P2')])
@@ -536,17 +543,17 @@ describe('合画一张', () => {
     expect(useDataFigureStore.getState().group).toBeNull()
   })
 
-  it('400 tables_columns_differ / tables_too_many：各有自己的状态（不是「再试一次」的失败）；别的错照旧', async () => {
+  it('400 tables_columns_differ / tables_limit_exceeded：各有自己的状态（不是「再试一次」的失败）；别的错照旧', async () => {
     const f = () => useDataFigureStore.getState()
     propose.mockRejectedValueOnce(apiError(400, 'tables_columns_differ'))
     f().selectGroup([ref('a'), ref('b')])
     while (f().phase === 'reading' || f().phase === 'loading') await flush()
     expect(f().phase).toBe('columnsDiffer')
-    propose.mockRejectedValueOnce(apiError(400, 'tables_too_many'))
+    propose.mockRejectedValueOnce(apiError(400, 'tables_limit_exceeded'))
     f().closeDraft()
     f().selectGroup([ref('a'), ref('b')])
     while (f().phase === 'reading' || f().phase === 'loading') await flush()
-    expect(f().phase).toBe('tooMany')
+    expect(f().phase).toBe('limitExceeded')
     propose.mockRejectedValueOnce(apiError(500, 'x'))
     f().closeDraft()
     f().selectGroup([ref('a'), ref('b')])

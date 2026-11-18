@@ -115,6 +115,9 @@ export const cellModeOf = (o: AiDataOption): CellMode | null => {
 export const isStaleProposeCode = (code: unknown): boolean => code === 'propose_session_expired' || code === 'propose_data_changed' || code === 'propose_candidate_unknown'
 
 /** 备选没出来的原因码里，界面认得的（其余走通用一句） */
+/** 「合画一张」一次最多几份（后端合同：2–8 份，超过回 400 `tables_limit_exceeded`）；前端的禁用与后端的上限是同一个数，只在这里写 */
+export const MAX_MERGE_TABLES = 8
+
 export const KNOWN_NOTHING_REASONS: readonly string[] = [
   'no_usable_table',
   'value_column_mixed',

@@ -658,11 +658,19 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     expect(propose.mock.calls.slice(-2).map((c) => c[0].table)).toEqual(['growth.csv', 'names.csv'])
   })
 
-  it('tables_too_many：一句话说没画出来 + 同一个出路「各画一张」', async () => {
-    propose.mockRejectedValueOnce(new ApiError('tables_too_many', 400, { code: 'tables_too_many' }))
+  it('tables_limit_exceeded：后端那句话 + 同一个出路「各画一张」', async () => {
+    propose.mockRejectedValueOnce(new ApiError('tables_limit_exceeded', 400, { code: 'tables_limit_exceeded', params: { max: 8 } }))
     await groupTwo()
-    const p = q('[data-studio-group-problem="tooMany"]')!
-    expect(p.textContent).toContain('这次没画出来')
+    const p = q('[data-studio-group-problem="limitExceeded"]')!
+    expect(p.textContent).toContain('一次最多合画 8 份。')
+    expect(p.querySelector('button')!.textContent).toBe('各画一张')
+  })
+
+  it('合画里某份表不在了（200 nothing + table_not_found）：走 nothing 的话，也给「各画一张」这个出路', async () => {
+    propose.mockResolvedValueOnce({ kind: 'nothing', reasons: ['table_not_found'] })
+    await groupTwo()
+    const p = q('[data-studio-group-problem]')!
+    expect(p.textContent).toContain('找不到你选的那张表。')
     expect(p.querySelector('button')!.textContent).toBe('各画一张')
   })
 

@@ -8,7 +8,7 @@ import {
   type AiDataProposeResponse,
 } from '@/lib/api'
 import { runExclusive } from '@/lib/dataCommitQueue'
-import { KNOWN_NOTHING_REASONS, isStaleProposeCode, sameTable, tableKey, type TableRef } from '@/lib/dataFigure'
+import { KNOWN_NOTHING_REASONS, MAX_MERGE_TABLES, isStaleProposeCode, sameTable, tableKey, type TableRef } from '@/lib/dataFigure'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { currentProjectId } from '@/lib/session'
 import { msg, type UiMessage } from '@/i18n'
@@ -275,7 +275,7 @@ export const useDataBatchStore = create<BatchStore>((set, get) => ({
 
   merge: () => {
     const refs = [...get().selection]
-    if (get().running || refs.length < 2) return
+    if (get().running || refs.length < 2 || refs.length > MAX_MERGE_TABLES) return
     get().clearSelection()
     useDataFigureStore.getState().selectGroup(refs)
   },

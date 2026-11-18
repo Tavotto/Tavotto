@@ -2,6 +2,9 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/Button'
 import { Reveal } from '@/components/ui/Field'
 import { useDataBatchStore } from '@/store/dataBatchStore'
+import { MAX_MERGE_TABLES } from '@/lib/dataFigure'
+import { backendCodeMsg } from '@/lib/api'
+import { useFormatMessage } from '@/i18n/react'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -21,6 +24,7 @@ export function DataBatchActions({ open }: { open: boolean }) {
 
 function Zone() {
   const { t } = useTranslation('ai')
+  const fm = useFormatMessage()
   const count = useDataBatchStore((s) => s.selection.length)
   const running = useDataBatchStore((s) => s.running)
   const stopRequested = useDataBatchStore((s) => s.stopRequested)
@@ -72,7 +76,14 @@ function Zone() {
         <Button variant="primary" size="md" data-studio-batch-run disabled={count < 2} onClick={() => void b().run('all')}>
           {t('dataFigureV2.batch.draw')}
         </Button>
-        <Button variant="secondary" size="md" data-studio-batch-merge disabled={count < 2} onClick={() => b().merge()}>
+        <Button
+          variant="secondary"
+          size="md"
+          data-studio-batch-merge
+          disabled={count < 2 || count > MAX_MERGE_TABLES}
+          // 超过上限：禁用，title 用后端那一句（errors 里 `tables_limit_exceeded`，带 max）
+          title={count > MAX_MERGE_TABLES ? fm(backendCodeMsg('tables_limit_exceeded', { max: MAX_MERGE_TABLES }, '')) : undefined}
+          onClick={() => b().merge()}>
           {t('dataFigureV2.batch.merge')}
         </Button>
       </>

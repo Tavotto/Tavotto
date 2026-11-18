@@ -328,6 +328,17 @@ describe('动作区 DataBatchActions', () => {
     expect(cls).toContain('pr-1.5')
   })
 
+  it('超过 8 份：「合画一张」禁用、title 是后端那一句（带 max = 8），「各画一张」仍可用；8 份还可以', async () => {
+    await mount(<DataBatchActions open />)
+    act(() => sel(8))
+    expect(btns()[1]!.disabled).toBe(false)
+    expect(btns()[1]!.hasAttribute('title')).toBe(false)
+    act(() => sel(9))
+    expect(btns()[0]!.disabled).toBe(false)
+    expect(btns()[1]!.disabled).toBe(true)
+    expect(btns()[1]!.getAttribute('title')).toBe('一次最多合画 8 份。')
+  })
+
   it('进行中：「正在画 2 / 3」，两个按钮换成一个次按钮「停下」，点它 = stopRun；点过之后禁用', async () => {
     await mount(<DataBatchActions open />)
     act(() => {
