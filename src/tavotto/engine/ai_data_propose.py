@@ -67,7 +67,7 @@ ERROR_CODES = (
     "propose_cells_need_rule",  # 用户只用文字说明了怎么处理（`describe`）：要先由助手整理成规则，不猜
     "propose_thumbnail_failed",  # 懒渲染（`render="lazy"`）：这一张缩略图画不出来（`params.reason` 是 `DROP_REASONS` 里的码）
     "tables_columns_differ",  # 合画（`tables`）：这几份的列名集合或顺序不一样，拼不成一张表（`params.index` = 第一个与第一份不同的下标）
-    "tables_too_many",  # 合画：份数超过上限（`params.max`）
+    "tables_limit_exceeded",  # 合画：份数超过上限（`params.max`）
 )
 #: 一个备选没能出现在结果里的原因（`dropped[].reason_code` / `nothing.reasons`；文案在前端 `dataFigure.reason.<码>`）
 DROP_REASONS = (
@@ -341,14 +341,14 @@ def parse_header_row(v) -> int:
 
 def parse_tables(raw) -> list[tuple[str, str | None]] | None:
     """`tables`：合画的几份数据 `[{path, sheet?}]`（`path` 与 `table` 同口径：相对所选文件夹的 POSIX 路径）。不给 = None（走单份流程）；
-    不是列表 / 不足 2 份 / 项的形状不对 → `propose_input_invalid`；超过 `merge_mod.MAX_TABLES` 份 → `tables_too_many`（`params.max`）。
+    不是列表 / 不足 2 份 / 项的形状不对 → `propose_input_invalid`；超过 `merge_mod.MAX_TABLES` 份 → `tables_limit_exceeded`（`params.max`）。
     只校验形状：路径对不对由遍历结果逐字比对。"""
     if raw is None:
         return None
     if not isinstance(raw, list):
         raise ProposeError("propose_input_invalid", "tables")
     if len(raw) > merge_mod.MAX_TABLES:
-        raise ProposeError("tables_too_many", params={"max": merge_mod.MAX_TABLES})
+        raise ProposeError("tables_limit_exceeded", params={"max": merge_mod.MAX_TABLES})
     if len(raw) < 2:
         raise ProposeError("propose_input_invalid", "tables")
     out: list[tuple[str, str | None]] = []
@@ -799,8 +799,11 @@ def _read_merged(
         )
         if (rel, values.sheet) in seen:  # 同一份（同文件同工作表）给了两次
             raise ProposeError("propose_input_invalid", "tables")
+        if not any(
+            r == rel for r in rels
+        ):  # 同一个工作簿的几张表只算一次（候选目录里也只有一份副本）
+            total += values.size
         seen.add((rel, values.sheet))
-        total += values.size
         if total > merge_mod.MAX_TOTAL_BYTES:
             raise adf.DataSourceError("data_too_large", str(total))
         rels.append(rel)

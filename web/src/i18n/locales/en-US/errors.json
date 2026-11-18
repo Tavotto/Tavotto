@@ -418,7 +418,7 @@
     "propose_cells_invalid": "That handling rule can’t be used. Please choose again.",
     "propose_cells_need_rule": "This description first has to be turned into a rule by the assistant, so it can’t be used directly yet.",
     "tables_columns_differ": "These files don’t share the same columns, so they can’t go in one figure.",
-    "tables_too_many": "At most {{max}} files can go in one figure.",
+    "tables_limit_exceeded": "At most {{max}} files can go in one figure.",
     "data_figure_recipe_invalid": "This option no longer fits the data. Please generate the options again.",
     "data_path_outside_project": "This data file isn’t in the current project.",
     "data_not_found": "The data file can’t be found.",

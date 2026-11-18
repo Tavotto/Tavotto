@@ -12,7 +12,7 @@
 * 文件标签：文件名去扩展名；同名时依次带上工作表名、父文件夹（逐级往上）、完整文件名（含扩展名）区分，最后兜底 `#2`；标签本身是数 / 日期 / `nan`
   会让合成列不再是「分组」，这时整批改用完整文件名（含扩展名）。保证唯一（不区分大小写）。
 * 脚本落点：这几份的**最近公共父文件夹**（相对所选数据文件夹；仍在项目内）下的 `tavotto_figures/`；脚本里的数据路径是 `../<相对落点>`。
-* 上限：至多 `MAX_TABLES` 份（超了 `tables_too_many`）；合计字节 ≤ `MAX_TOTAL_BYTES`（超了沿用 `data_too_large`）；拼后行数 / 列数沿用单份的上限。
+* 上限：至多 `MAX_TABLES` 份（超了 `tables_limit_exceeded`）；合计字节 ≤ `MAX_TOTAL_BYTES`（超了沿用 `data_too_large`）；拼后行数 / 列数沿用单份的上限。
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 
 class MergeError(ValueError):
-    """合画的结构化失败（`ai_data_propose` 转成 `ProposeError`）：`code` 是 `tables_columns_differ` / `tables_too_many` / `tables_changed`。"""
+    """合画的结构化失败（`ai_data_propose` 转成 `ProposeError`）：`code` 是 `tables_columns_differ` / `tables_limit_exceeded` / `tables_changed`。"""
 
     def __init__(self, code: str, params: dict | None = None):
         super().__init__(code)
@@ -74,7 +74,8 @@ class MergeSpec:
 
     @property
     def size(self) -> int:
-        return sum(s.size for s in self.sources)
+        """各份文件字节数之和；同一个工作簿的几张表只算一次（磁盘上只有一份副本）。"""
+        return distinct_size(self.sources)
 
 
 @dataclass(frozen=True)
@@ -85,6 +86,11 @@ class MergedEntry(adf.TableEntry):
 
 
 # --------------------------------------------------------------------------- 纯函数：落点、标签、列名
+def distinct_size(sources) -> int:
+    """同一个文件（`rel` 相同，如一个工作簿的多张表）只算一次的字节总和。"""
+    return sum({s.rel: s.size for s in sources}.values())
+
+
 def common_parent(paths: list[str]) -> str:
     """几个相对 POSIX 路径的最近公共父文件夹（相对同一个根；没有公共部分 = 根 = `""`）。"""
     dirs = [PurePosixPath(p).parent.parts for p in paths]
@@ -206,7 +212,7 @@ def build(
         [header, *rows],
         path_name=summaries[0].path_name,
         sha256=hashlib.sha256("\n".join(s.sha256 for s in filled).encode("ascii")).hexdigest(),
-        size=sum(s.size for s in filled),
+        size=distinct_size(filled),
         sheet=None,
         row_numbers=numbers,
         parse=adf.parse_cell,

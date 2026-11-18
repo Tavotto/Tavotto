@@ -388,7 +388,7 @@ USER_VISIBLE_CODES = {
     "propose_cells_need_rule": set(),
     # 合画（ADR 0178 2026-11-18）：几份列名不一样拼不成一张 / 份数超上限
     "tables_columns_differ": set(),
-    "tables_too_many": {"max"},
+    "tables_limit_exceeded": {"max"},
     "data_figure_recipe_invalid": set(),
     "data_path_outside_project": set(),
     "data_not_found": set(),

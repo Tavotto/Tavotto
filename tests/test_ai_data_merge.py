@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -193,13 +192,13 @@ def test_different_columns_or_order_is_tables_columns_differ(project):
         assert r.get_json()["params"] == {"index": index}
 
 
-def test_too_many_files_is_tables_too_many_and_the_cap_itself_is_fine(project):
+def test_too_many_files_is_tables_limit_exceeded_and_the_cap_itself_is_fine(project):
     m, client, figs, _ = project
     n = M.MAX_TABLES
     for i in range(n + 1):
         put(figs, f"data/f{i:02d}.csv", dose_rows(i))
     over = mp(client, [{"path": f"f{i:02d}.csv"} for i in range(n + 1)])
-    assert over.status_code == 400 and over.get_json()["code"] == "tables_too_many"
+    assert over.status_code == 400 and over.get_json()["code"] == "tables_limit_exceeded"
     assert over.get_json()["params"] == {"max": n}
     ok = mp(client, [{"path": f"f{i:02d}.csv"} for i in range(n)], render="lazy")
     got = ok.get_json()
@@ -614,9 +613,40 @@ def test_rows_that_cannot_be_plotted_name_their_file(project):
 
 
 def test_the_runtime_module_name_changed_with_merge_tables_and_is_content_addressed():
-    name, data = tpl.runtime_module()
     import hashlib
 
+    name, data = tpl.runtime_module()
     assert name == f"tavotto_plot_{hashlib.sha256(data).hexdigest()[:8]}.py"
-    assert sys.version_info >= (3, 10)
-    assert os.sep  # 占位：运行环境健全
+
+
+def test_one_workbook_with_many_sheets_counts_its_bytes_once(project, monkeypatch):
+    m, client, figs, _ = project
+    (figs / "data").mkdir()
+    book = figs / "data" / "w.xlsx"
+    make_xlsx(book, {f"S{i}": dose_rows(i) for i in range(1, 7)})
+    size = book.stat().st_size
+    monkeypatch.setattr(M, "MAX_TOTAL_BYTES", size + 10)
+    tables = [{"path": "w.xlsx", "sheet": f"S{i}"} for i in range(1, 7)]
+    ok = mp(client, tables, render="lazy")
+    assert ok.status_code == 200 and ok.get_json()["kind"] == "candidates", ok.get_json()
+    assert [s["label"] for s in ok.get_json()["sources"]] == [f"w (S{i})" for i in range(1, 7)]
+    # 另一个同样大的文件就超了
+    other = figs / "data" / "w2.xlsx"
+    make_xlsx(other, {"S1": dose_rows(1)})
+    over = mp(client, [*tables[:2], {"path": "w2.xlsx", "sheet": "S1"}], render="lazy")
+    assert over.status_code == 400 and over.get_json()["code"] == "data_too_large"
+
+
+@needs_worker
+def test_commit_at_the_cap_carries_eight_data_refs_through_the_task(project):
+    m, client, figs, _ = project
+    n = M.MAX_TABLES
+    for i in range(n):
+        put(figs, f"data/f{i}.csv", dose_rows(i))
+    body = mp(client, [{"path": f"f{i}.csv"} for i in range(n)]).get_json()
+    assert body["kind"] == "candidates" and len(body["items"]) == 4, body
+    out = commit(client, body["session"], body["items"][0]["id"]).get_json()
+    assert out["task"]["outcome"] == "completed" and out["data_check"] == "verified", out
+    row = json.dumps(ai_history.get(out["task"]["task_id"]), default=str)
+    for i in range(n):
+        assert f"data/f{i}.csv" in row
