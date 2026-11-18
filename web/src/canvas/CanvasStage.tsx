@@ -531,7 +531,8 @@ export function LayerObjects({ objects, isolation }: { objects: readonly CanvasO
     <>
       {objects.map((o) => {
         if (isActiveMask(o, masks)) return null
-        let node = <ObjectView key={o.id} obj={o} />
+        const outside = !!isolation && !inScope(o, isolation)
+        let node = <ObjectView key={o.id} obj={o} outside={outside} />
         const chain = clipChainOf(o, masks)
         for (let i = chain.length - 1; i >= 0; i--) {
           node = (
@@ -540,7 +541,7 @@ export function LayerObjects({ objects, isolation }: { objects: readonly CanvasO
             </div>
           )
         }
-        if (isolation && !inScope(o, isolation)) {
+        if (outside) {
           node = (
             <div key={o.id} data-isolation-outside className="absolute left-0 top-0 opacity-35" style={{ pointerEvents: 'none' }}>
               {node}
