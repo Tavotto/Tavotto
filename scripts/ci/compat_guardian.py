@@ -859,7 +859,7 @@ def v2_stages(
 
 
 #: Layers the V2 session adapter does not drive (docs/ci/compat-guardian.md, "Coverage").
-V2_UNCOVERED = ("edit", "replay", "export", "fidelity")
+V2_UNCOVERED = ("edit", "replay", "export", "drag", "fidelity")
 
 
 def _trim_native(result: dict) -> dict:

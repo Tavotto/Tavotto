@@ -332,7 +332,10 @@ def refresh_accounting(data: dict) -> None:
             "passed": sum(p["stages"].get(stage) == "passed" for p in qualified),
             "denominator": len(qualified),
         }
+        # 只数这份快照的行里真有的阶段：行按产生它的那一版 `STAGES` 带齐各阶段，后加的阶段
+        # （2026-11-18 的 drag）不出现在更早的快照里——给它记个 0/N 等于改写已归档的证据
         for stage in cc.STAGES
+        if any(stage in p["stages"] for p in data["projects"])
     }
     clusters = defaultdict(list)
     for project in data["projects"]:

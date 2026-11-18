@@ -142,7 +142,7 @@ expected_cases, corpus_sha256, cases[], evidence[], verdict, coverage, unverifie
 
 - `not_run`：这一层**在范围内但没有执行**（前序失败、被跳过）。
 - `not_covered`：这个 adapter **根本不驱动**这一层。V2 会话 adapter 只走「扫描 → 检查 → 运行 → 捕获 →
-  渲染 → 标题语义」，所以它的 `edit / replay / export / fidelity` 恒为 `not_covered`，且判据写
+  渲染 → 标题语义」，所以它的 `edit / replay / export / drag / fidelity` 恒为 `not_covered`，且判据写
   `layer not exercised by the V2 session adapter`。
 - `partial_coverage`（行/报告）：**同时满足**——原生参照 `passed`；两侧执行次数均为独立计数且 > 0；环境可比；
   所有被驱动的层都 `passed`；其余层全是 `not_covered`，且至少有一个。它**不是通过**：不进「通过」分子，
@@ -220,7 +220,7 @@ invalid_fixture, unknown`。映射表只把**已存在的码**指向类别，表
 
 | 来源 | 类别 |
 | --- | --- |
-| 阶段失败（原生通过的前提下）discover / execute / capture / open·semantic / edit / replay / export·fidelity | product_entry_reachability / safe_execution_divergence / figure_capture（捕获数 0 < n < 原生数则 partial_capture）/ manifest_semantics / editing_capability / replay_inconsistency / export_or_fidelity |
+| 阶段失败（原生通过的前提下）discover / execute / capture / open·semantic / edit·drag / replay / export·fidelity | product_entry_reachability / safe_execution_divergence / figure_capture（捕获数 0 < n < 原生数则 partial_capture）/ manifest_semantics / editing_capability / replay_inconsistency / export_or_fidelity |
 | `native_script_error`、`native_render_failed`、原生退出码非 0 | invalid_fixture |
 | `driver_timeout`、`driver_crashed`、adapter 超时 | timeout_or_process_crash |
 | `driver_no_output`、`driver_bad_output`、**runner 崩溃** | unknown（runner 崩溃永不记到产品头上） |

@@ -272,6 +272,9 @@
             "export": {
               "$ref": "#/$defs/stage"
             },
+            "drag": {
+              "$ref": "#/$defs/stage"
+            },
             "fidelity": {
               "$ref": "#/$defs/stage"
             }
@@ -285,6 +288,7 @@
             "edit",
             "replay",
             "export",
+            "drag",
             "fidelity"
           ],
           "additionalProperties": false
@@ -503,6 +507,13 @@
                   ],
                   "minimum": 0
                 },
+                "drag": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0
+                },
                 "fidelity": {
                   "type": [
                     "number",
@@ -520,6 +531,7 @@
                 "edit",
                 "replay",
                 "export",
+                "drag",
                 "fidelity"
               ],
               "additionalProperties": false
