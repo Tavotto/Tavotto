@@ -434,14 +434,24 @@ def layout_ink_extent(artist):
     bb = layout_extent(artist)
     if bb is None or not isinstance(artist, Collection) or not collection_uses_offsets(artist):
         return bb
+    # marker 的像素大小在逐点变换 `get_transforms()` 里（`set_sizes` 写的 √s·dpi/72 缩放矩阵），
+    # 整体 transform 只是接在后面的仿射——与 `_marker_subpaths` 同一个渲染顺序
     try:
-        tr = artist.get_transform()
-        parts = [tr.transform(p.vertices) for p in artist.get_paths() if len(p.vertices)]
+        master = artist.get_transform()
+        if not master.is_affine:
+            return bb
+        m = np.asarray(master.get_matrix(), dtype=float)
+        per = np.asarray(artist.get_transforms(), dtype=float).reshape(-1, 3, 3)
+        if not len(per):
+            per = np.eye(3)[None]
+        verts = [np.asarray(p.vertices, dtype=float) for p in artist.get_paths() if len(p.vertices)]
     except Exception:  # noqa: BLE001
         return bb
-    if not parts:
+    if not verts:
         return bb
-    pts = np.concatenate(parts)
+    v = np.concatenate(verts)
+    stamped = np.einsum("nij,kj->nki", per[:, :2, :2], v) + per[:, None, :2, 2]
+    pts = stamped.reshape(-1, 2) @ m[:2, :2].T + m[:2, 2]
     pts = pts[np.isfinite(pts).all(axis=1)]
     if not len(pts):
         return bb

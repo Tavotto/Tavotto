@@ -6120,8 +6120,9 @@ def _measure_manifest(
                     **({"peers": peers} if peers else {}),
                     **({"expected": expected} if expected else {}),
                 }
-        elif (el["role"] == "image" and not el["draggable"]) or _is_area_field(artist):
-            # 可拖的位图（子图框里的图片）不铺满宿主：几何编辑归它自己，不代理回子图
+        elif not el["draggable"] and (el["role"] == "image" or _is_area_field(artist)):
+            # 可拖的位图 / 集合（位置不是数据，不铺满宿主）：几何编辑归它自己，不代理回子图——
+            # 前端 `inFigureMoveOf` 先看 `resizable`，代理着的话拖它会拖走整个子图
             # imshow 位图铺满宿主 axes，会在命中测试里盖住它——把几何编辑
             # 代理回宿主 axes（前端对 geom_gid 发 position override）。
             # **面状的色图集合同理**（2026-09-24，用户的 PRB 三联图 (b)(c)：

@@ -40,7 +40,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.collections import LineCollection, PatchCollection
+from matplotlib.collections import LineCollection, PatchCollection, PolyCollection
 from matplotlib.patches import Circle
 
 
@@ -59,6 +59,8 @@ def _draw(stem, **kw):
     bx.set_xlim(0, 4); bx.set_ylim(0, 4)
     fig.add_artist(LineCollection([[(0.45, 0.1), (0.55, 0.1)]], transform=fig.transFigure))  # fig.artists_0
     ax.scatter([0.1], [0.5], transform=ax.transAxes, s=80, marker="^")      # scatter_5 单点图例点
+    ax.add_collection(PolyCollection([[(0.75, 0.3), (0.9, 0.3), (0.9, 0.45)]], array=[1.0],
+                                     transform=ax.transAxes))             # fill_6 着色面片
     ax.set_ylabel("y")
     fig.savefig(stem + ".pdf")
     plt.close(fig)
@@ -86,6 +88,7 @@ EXPECT = {
     "axes_1.images_1": ("image", False),
     "fig.artists_0": ("linecoll", True),
     "axes_0.scatter_5": ("scatter", True),
+    "axes_0.fill_6": ("fill", True),
 }
 DRAGGABLE = [g for g, (_r, d) in EXPECT.items() if d]
 STEMS = ("Plain", "Con")
@@ -148,6 +151,9 @@ def test_only_layout_anchored_collections_claim_drag(hot, stem):
             assert man[gid]["drag_prop"] == "pos_frac", gid
     # 子图框里的图片不铺满子图：几何编辑归它自己；数据坐标的 imshow 照旧代理回宿主子图
     assert "geom_gid" not in man["axes_1.images_0"]
+    # 着色的面片（`_is_area_field`）可拖时同样不代理：代理着的话前端先看 resizable，拖走整个子图
+    for gid in ("axes_0.fill_6", "axes_0.collections_2"):
+        assert "geom_gid" not in man[gid] and not man[gid].get("resizable"), gid
     assert man["axes_1.images_1"].get("geom_gid") == "axes_1"
 
 
@@ -168,7 +174,11 @@ def test_initial_positions_match_an_independent_computation(hot, stem):
     # 单点散点：选中框是 marker 那一块（不是零面积退回整块子图），锚点是那个点
     one = man["axes_0.scatter_5"]
     assert one["anchor"] == pytest.approx(_axes_frac(ax0, 0.1, 0.5), abs=tol)
-    assert 0 < one["bbox"][2] < 0.05 and 0 < one["bbox"][3] < 0.1, one["bbox"]
+    # 选中框 = marker 的真实大小：s=80 pt² 的三角形边长约 √80 pt，图幅 8×4 in（Codex #2024：
+    # 只用整体 transform 量的话是单位路径 ≈ 1 像素）
+    side = 80**0.5 / 72
+    assert 0.6 * side / 8 < one["bbox"][2] < 1.6 * side / 8, one["bbox"]
+    assert 0.6 * side / 4 < one["bbox"][3] < 1.6 * side / 4, one["bbox"]
     for gid in ("axes_0.scatter_0", "axes_0.linecoll_1", "axes_0.collections_2"):
         bb = man[gid]["bbox"]
         assert bb[2] < 0.5 * ax0[2] and bb[3] < 0.5 * ax0[3], f"{gid} 的框还是整块子图: {bb}"
