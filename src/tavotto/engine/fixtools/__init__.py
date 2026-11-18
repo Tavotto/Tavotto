@@ -49,6 +49,11 @@ def _approved_by(result: ToolResult, ctx: FixContext) -> str:
     return "user" if ctx.call_meta.get("approved_by") == "user" else "policy"
 
 
+#: 会改变执行的档；其中报告 / 收尾类工具不算「尝试过修复」
+CHANGE_TIERS = frozenset({"tavotto", "listed", "user_env"})
+NOT_A_CHANGE = frozenset({"prepare_diagnostics", "rollback"})
+
+
 def run_tool(
     tool: FixTool, ctx: FixContext, args: object, audit: AuditLog | None = None
 ) -> ToolResult:
@@ -96,6 +101,13 @@ def run_tool(
     result.content = scrub(result.content)
     ctx.trace_tool_span = None
     approved_by = _approved_by(result, ctx)
+    if (
+        tool.tier in CHANGE_TIERS
+        and tool.name not in NOT_A_CHANGE
+        and approved_by != "blocked"
+        and result.code not in ("tier_not_allowed", "bad_arguments")
+    ):
+        ctx.changes_attempted += 1
     # 等用户的那张卡已经有了决定（批准 / 拒绝）：工具这一层与它的 user_wait 说同一句话（审计的 approved_by 不动）
     decided = getattr(ctx, "trace_wait_decision", None)
     ctx.trace_wait_decision = None
