@@ -45,7 +45,7 @@ from .ai_tasks import FAILED, UNKNOWN, VERIFIED, CheckResult, TaskError
 
 TASK_TYPE = "data_to_figure"
 #: 同一个 stem 已被占用时最多试几个后缀（`_2` … `_N`）
-MAX_SUFFIX = 50
+MAX_SUFFIX = 999
 
 
 def _sha256(data: bytes) -> str:

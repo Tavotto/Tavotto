@@ -690,11 +690,18 @@ def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
                         {"id": rel, "name": p.name, "folder": folder, "code": exc.code}
                     )
                 continue
+        try:
+            mtime = int(p.stat().st_mtime)
+        except FileNotFoundError:
+            # 枚举之后、stat 之前被删 / 改名（脚本正在重新出图）：跳过这一个，别让整张列表 500；
+            # 下一次扫描看到的是新文件
+            LOG.info("素材扫描: %s 在扫描途中消失，跳过", p.name)
+            continue
         entry = {
             "id": rel,
             "name": p.stem,
             "folder": folder,
-            "mtime": int(p.stat().st_mtime),
+            "mtime": mtime,
         }
         try:
             probe, spec = _asset_probe(p, kind)

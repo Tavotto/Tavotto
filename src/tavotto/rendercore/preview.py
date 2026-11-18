@@ -73,6 +73,10 @@ class PreviewError(RuntimeError):
         self.code = code
 
 
+#: 位图素材解码口径的版本（进缓存键）：同一份字节、同一个后端版本，`rasterio` 解出来的像素变了就加一，旧预览自然
+#: 失效、不必动 `BACKEND_VERSION`（它还进导出身份与证据）。2 = 照办 JPEG / TIFF 的方向标记（TVM-22EE）
+RASTER_DECODE_REVISION = 2
+
 #: 字体政策版本：与 `identity.render_identity` 同一份（U09）——缓存键与 render fingerprint 认的是同一个数
 fonts_policy_version = _fonts_policy_version
 
@@ -96,6 +100,7 @@ def cache_key(
         f"{BACKEND_NAME}-{BACKEND_VERSION}",
         f"pdfium-{renderer_version}",
         f"fonts-{fonts_version}",
+        f"raster-{RASTER_DECODE_REVISION}",
     )
     return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
 
