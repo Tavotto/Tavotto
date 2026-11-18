@@ -42,12 +42,14 @@ export interface BatchHost {
   runScript: (script: string) => Promise<void>
   /** 全部画成之后 / 「看已画的」：左栏切到素材抽屉（图卡在那里） */
   showAssets: () => void
+  /** 一轮开画之前：别让「发现绘图脚本」的准备卡把我们自己刚生成、自己会运行的脚本当成外来的新脚本弹出来（项目刷新会顺带重扫） */
+  quietGuideCard: () => void
   /** 合画列名不一致的出路：回到数据抽屉（窄屏临时标签激活时抽屉是收起的） */
   showData: () => void
   /** 项目文件夹可不可写；不知道回 undefined */
   projectWritable: () => boolean | undefined
 }
-let host: BatchHost = { refreshProject: async () => {}, runScript: async () => {}, showAssets: () => {}, showData: () => {}, projectWritable: () => undefined }
+let host: BatchHost = { refreshProject: async () => {}, runScript: async () => {}, showAssets: () => {}, showData: () => {}, quietGuideCard: () => {}, projectWritable: () => undefined }
 export const configureDataBatchHost = (h: BatchHost): void => {
   host = h
 }
@@ -211,6 +213,7 @@ export const useDataBatchStore = create<BatchStore>((set, get) => ({
     const failedKeys = new Set(Object.entries(get().rows).filter(([, v]) => v.state === 'failed').map(([k]) => k))
     const todo = get().selection.filter((r) => mode === 'all' || failedKeys.has(tableKey(r)))
     if (todo.length === 0) return
+    host.quietGuideCard()
     const ep = epoch
     const guard = captureProjectEpoch(() => epoch)
     // 清掉这几份上一轮的标记（没画成的重做）；还没轮到的没有记录

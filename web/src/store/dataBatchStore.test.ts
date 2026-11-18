@@ -23,6 +23,7 @@ const files = vi.mocked(aiDataFilesAll)
 const refresh = vi.fn(async () => {})
 const showAssets = vi.fn()
 const showData = vi.fn()
+const quietGuideCard = vi.fn()
 const runScript = vi.fn(async (_s: string) => {})
 let writable: boolean | undefined = true
 
@@ -38,7 +39,7 @@ const select = (...names: string[]) => names.forEach((n) => st().toggle(ref(n)))
 
 beforeEach(() => {
   resetCommitQueue()
-  for (const f of [propose, commit, discard, files, refresh, showAssets, showData, runScript]) f.mockReset()
+  for (const f of [propose, commit, discard, files, refresh, showAssets, showData, quietGuideCard, runScript]) f.mockReset()
   runScript.mockResolvedValue(undefined)
   discard.mockResolvedValue({ ok: true })
   refresh.mockResolvedValue(undefined)
@@ -46,7 +47,7 @@ beforeEach(() => {
   setCurrentProjectId('pa')
   useDataBatchStore.getState().clear()
   useDataFigureStore.getState().clear()
-  configureDataBatchHost({ refreshProject: refresh, runScript, showAssets, showData, projectWritable: () => writable })
+  configureDataBatchHost({ refreshProject: refresh, runScript, showAssets, showData, quietGuideCard, projectWritable: () => writable })
   propose.mockImplementation(async (b) => cands(`S-${b.table}`))
   commit.mockResolvedValue(ok())
 })
@@ -574,5 +575,15 @@ describe('合画一张', () => {
     while (st().running) await flush()
     expect(propose.mock.calls.slice(-2).map((c) => c[0].table)).toEqual(['a', 'b'])
     expect(showAssets).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('准备卡', () => {
+  it('每一轮开画之前先让准备引导卡别自动弹（项目刷新重扫会把我们自己生成的脚本当成新发现）；没有要画的不动它', async () => {
+    await st().run()
+    expect(quietGuideCard).not.toHaveBeenCalled()
+    select('a', 'b')
+    await st().run()
+    expect(quietGuideCard).toHaveBeenCalledTimes(1)
   })
 })

@@ -228,7 +228,7 @@ describe('数据抽屉：多选', () => {
     const f = failed.querySelector('[data-studio-row-state=failed]')!
     expect(f.textContent).toBe('没画出来')
     expect(f.querySelector('svg')).not.toBeNull()
-    expect(f.className).toContain('text-ink')
+    expect(f.className).toContain('text-ink-2') // 比普通灰字（ink-3）深一档
     expect(f.className).not.toContain('text-ink-3')
     expect(f.className).not.toMatch(/danger|red|bg-/)
     expect(f.getAttribute('title')).toBe('这张表没能画出图。')

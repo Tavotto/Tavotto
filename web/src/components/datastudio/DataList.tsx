@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, CircleAlert, File, FileExclamationPoint, Folder, Layers2, LayoutGrid } from '@/components/ui/icons'
+import { Check, OctagonAlert, File, FileExclamationPoint, Folder, Layers2, LayoutGrid } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Spinner } from '@/components/ui/Spinner'
 import { listRowClass, rowMetaClass } from '@/components/ui/listRow'
@@ -203,11 +203,11 @@ export function DataList({
     if (rs?.state === 'failed')
       return (
         <span
-          className="flex shrink-0 items-center gap-1 pr-1 text-xs font-normal text-ink"
+          className="flex shrink-0 items-center gap-1 pr-1 text-xs font-normal text-ink-2"
           data-studio-row-state="failed"
           title={rs.reason ? fm(rs.reason) : undefined}
         >
-          <CircleAlert size={ICON_SIZE.sm} aria-hidden />
+          <OctagonAlert size={ICON_SIZE.sm} aria-hidden />
           {t('dataFigureV2.batch.failed')}
         </span>
       )
