@@ -343,7 +343,12 @@ export function rdp(pts: readonly XY[], tol: number): XY[] {
   let farD = -1
   for (let i = 1; i < pts.length - 1; i++) {
     const p = pts[i]
-    const d = len > 0 ? Math.abs((b[0] - a[0]) * (a[1] - p[1]) - (a[0] - p[0]) * (b[1] - a[1])) / len : dist(a, p)
+    // 到有限线段 ab 的距离（投影夹进两端）：折回去的笔画不会被当成贴着无限直线
+    let d = dist(a, p)
+    if (len > 0) {
+      const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1])) / (len * len)))
+      d = dist(p, [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])])
+    }
     if (d > farD) {
       farD = d
       far = i

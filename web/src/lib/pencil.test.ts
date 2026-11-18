@@ -112,6 +112,9 @@ describe('拟合', () => {
     expect(maxDev(raw, sp)).toBeLessThanOrEqual(OPTS.tolMm + 1e-9)
     expect(rdp([[0, 0], [1, 0.01], [2, 0]], 0.1)).toEqual([[0, 0], [2, 0]])
   })
+  it('RDP 量的是到有限线段的距离：沿直线折回去的笔画不会被当成贴着直线抹掉', () => {
+    expect(rdp([[0, 0], [20, 0], [10, 0]], 0.1)).toEqual([[0, 0], [20, 0], [10, 0]])
+  })
   it('原地点一下（太短）不画东西', () => {
     expect(pencilSubpath([[0, 0], [0.1, 0]], OPTS, { raw: false, kernel })).toBeNull()
     expect(strokeLength([[0, 0], [3, 4]])).toBe(5)
