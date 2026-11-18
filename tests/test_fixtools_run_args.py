@@ -134,3 +134,35 @@ def test_application_callback_switches_the_verified_session(client, tmp_path, fa
     hooks["on_run_arguments_changed"](())
     assert box_["sess"].target.get("run") is None
     assert prepsession.SESSIONS.session(box_["sess"].session_id, project.id) is box_["sess"]
+
+
+def test_after_the_repair_open_and_run_reuses_the_arguments(
+    client, tmp_path, fake_pool, sessions, monkeypatch
+):
+    """修好之后再点「打开并运行」（`reuse_last_success`）沿用 AI 验证通过的那组参数——不靠前端回填：
+    AI 的验证运行走的是正常的成功收口，最近一次成功记下的正是它的运行配置。"""
+    _unused, project, session = _application_ctx(client, tmp_path)
+    box_ = {"sess": session}
+    ctx = FixContext.for_fix_session(
+        "repair-args-reuse",
+        project.path,
+        home=tmp_path,
+        environments={"e": session.plan.interpreter},
+        script_path=project.path / "fig.py",
+        report=lambda: app_module._session_report(project, box_["sess"]),
+        **app_module._fix_application_verification(project, box_, desktop=False),
+    )
+    ctx.ask = lambda _card: {"answer": "yes"}
+    monkeypatch.setattr(engine_pool, "peek", lambda *_a, **_k: fake_pool["peek"])
+    assert not call(ctx, "set_run_arguments", {"argv": ["--data", "m.csv"]}).is_error
+    assert not call(ctx, "try_run", {"env": "e"}).is_error
+    from tavotto.engine import runconfig
+
+    # 「打开并运行」沿用的依据：最近一次成功记下的就是 AI 验证用的那份运行配置（依据核对另由 #982 的用例看护；
+    # 这里的替身 pool 回执不带真实脚本摘要，核对那一步在替身上判不了）
+    rec = runconfig.launch_record(project.path, "fig.py")
+    assert rec is not None and rec["run_config"] == box_["sess"].target["run"].config_id
+    assert tuple(runconfig.get(project.path, rec["run_config"], script="fig.py").argv) == (
+        "--data",
+        "m.csv",
+    )
