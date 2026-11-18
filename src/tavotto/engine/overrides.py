@@ -1998,8 +1998,8 @@ def _restore_patch_pos(p, orig) -> None:
 
 def _set_line_pos_frac(ln, value) -> None:
     """拖动挂在整张图（或 SubFigure）上的线：分隔线、跨子图的连线（`fig.add_artist(Line2D(...,
-    transform=fig.transFigure))`）。子图里的曲线位置是数据，不宣称可拖（manifest 只给图级的线
-    `draggable`）。
+    transform=fig.transFigure))`），以及子图里位置不是数据的线（`transform=ax.transAxes` 的引线，
+    `manifest._layout_anchored_line`）。数据坐标的曲线不宣称可拖。
 
     与形状同一套：值是包围盒左下角的 figure 分数（top-origin），平移以英寸叠在 artist 级
     transform 上（导出换 dpi 不变），基准 transform 记在 `_mm_pos_base`，每次先回基准再量，
