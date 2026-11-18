@@ -127,6 +127,8 @@ class FixContext:
     #: 本次调用里用户对卡片的决定（`user` / `denied`），只给执行追踪用；`run_tool` 读完即清
     trace_wait_decision: str | None = None
     step: int = 0
+    #: 本会话里真正尝试过的改动次数（会改变执行的档、且没被策略挡下；`prepare_diagnostics` 的闸门读它）
+    changes_attempted: int = 0
     case_insensitive: bool | None = None
     extra_deny: list[Path] | None = None
 

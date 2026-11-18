@@ -248,6 +248,12 @@ class FixToolset:
 
     task_type = "fix_environment"
     default_limits = FIX_LIMITS
+    #: 预算过半 / 过四分之三时循环追加的一句（`loop.run` 读它）：弱模型最常见的失败是巡视到预算耗尽
+    budget_hint = (
+        "Stop exploring: act on what you already know. Make the one change that best matches the cause, then "
+        "try_run. If nothing applicable is left, finish with outcome not_fixed and one plain sentence. "
+        "These reminders do not extend any limit."
+    )
 
     def __init__(
         self,
