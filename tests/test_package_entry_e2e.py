@@ -72,7 +72,9 @@ def _package_project(tmp_path: Path, body: str):
 
 def _snapshot(proj: Path) -> dict:
     return {
-        str(p.relative_to(proj)): p.read_bytes() for p in sorted(proj.rglob("*")) if p.is_file()
+        p.relative_to(proj).as_posix(): p.read_bytes()
+        for p in sorted(proj.rglob("*"))
+        if p.is_file()
     }
 
 
