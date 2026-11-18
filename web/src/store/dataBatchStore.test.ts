@@ -155,6 +155,42 @@ describe('逐份顺序做', () => {
   })
 })
 
+describe('多选态 pickMode', () => {
+  it('手势（toggle / selectRange）选中即进入；setPickMode(false) / clearSelection 退出并清掉选择；进行中不动', () => {
+    expect(st().pickMode).toBe(false)
+    st().setPickMode(true)
+    expect(st().pickMode).toBe(true)
+    st().setPickMode(false)
+    expect(st().pickMode).toBe(false)
+    select('a')
+    expect(st().pickMode).toBe(true)
+    st().setPickMode(false)
+    expect(st()).toMatchObject({ pickMode: false, selection: [] })
+    st().selectRange(ref('c'), tables('a', 'b', 'c'))
+    expect(st().pickMode).toBe(true)
+    st().clearSelection()
+    expect(st().pickMode).toBe(false)
+    select('a', 'b')
+    useDataBatchStore.setState({ running: true })
+    st().setPickMode(false)
+    st().clearSelection()
+    expect(st()).toMatchObject({ pickMode: true, running: true })
+    expect(st().selection).toHaveLength(2)
+  })
+
+  it('全部画成 → 退出；部分没画成 → 保持；clear（切项目）复位', async () => {
+    select('a', 'b')
+    commit.mockResolvedValueOnce(ok()).mockRejectedValueOnce(apiError(500, 'x'))
+    await st().run()
+    expect(st().pickMode).toBe(true)
+    await st().run()
+    expect(st().pickMode).toBe(false)
+    st().setPickMode(true)
+    st().clear()
+    expect(st().pickMode).toBe(false)
+  })
+})
+
 describe('终态', () => {
   it('a) 全部画成：清多选、清进行态、左栏切到素材抽屉，不弹通知', async () => {
     select('a', 'b')

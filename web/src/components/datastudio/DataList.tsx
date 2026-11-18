@@ -22,6 +22,8 @@ import type { UiMessage } from '@/i18n'
  */
 export interface DataListMulti {
   selected: ReadonlySet<string>
+  /** 多选态（「选多份」按下）：每个表行行尾常显「＋」/ 对勾，灰字行数不显示 */
+  pickMode?: boolean
   rowStates: Record<string, { state: 'running' | 'done' | 'failed'; reason?: UiMessage | null }>
   onToggle: (ref: TableRef) => void
   onRange: (ref: TableRef, visible: TableRef[]) => void
@@ -147,6 +149,11 @@ export function DataList({
     return out
   }
   const isTable = (r: DataRow) => statusOf(r).kind === 'table'
+  /** 普通激活（单击 / Enter / 空格）：多选态下表行 = 加选 / 取消、不开临时标签；其余照旧（再点已选中的行 = 确认） */
+  const activate = (r: DataRow, on: boolean) => {
+    if (multi?.pickMode && isTable(r)) multi.onToggle(r.ref)
+    else if (!(on && onConfirm?.(r.ref))) onSelect(r.ref)
+  }
   /** 点一行：⌘ / Ctrl / Shift 是多选（不可选的行没有反应），其余是原来的单击 */
   const clickRow = (e: MouseEvent, r: DataRow) => {
     if (multi && (e.metaKey || e.ctrlKey || e.shiftKey)) {
@@ -155,7 +162,7 @@ export function DataList({
       else multi.onToggle(r.ref)
       return
     }
-    onSelect(r.ref)
+    activate(r, false)
   }
   /** 行尾：这一份的出图进度 > 已选的对勾 > 悬停 / 聚焦时的「＋」（原位替换灰字，同一格，不撑宽） */
   const metaCell = (r: DataRow, text: string, on: boolean) => {
@@ -184,7 +191,7 @@ export function DataList({
     const picked = multi.selected.has(key)
     return (
       <span className={cn(cls, 'grid')}>
-        <span className={cn('col-start-1 row-start-1 text-right', picked ? 'invisible' : 'group-hover:invisible group-focus-visible:invisible')}>{text}</span>
+        <span className={cn('col-start-1 row-start-1 text-right', picked || multi.pickMode ? 'invisible' : 'group-hover:invisible group-focus-visible:invisible')}>{text}</span>
         <button
           type="button"
           tabIndex={-1}
@@ -196,7 +203,7 @@ export function DataList({
           }}
           className={cn(
             'col-start-1 row-start-1 flex items-center justify-end text-ink-2 outline-none hover:text-ink',
-            picked ? 'visible' : 'invisible group-hover:visible group-focus-visible:visible',
+            picked || multi.pickMode ? 'visible' : 'invisible group-hover:visible group-focus-visible:visible',
           )}
         >
           {picked ? <Check size={ICON_SIZE.xs} /> : <Plus size={ICON_SIZE.xs} />}
@@ -334,7 +341,7 @@ export function DataList({
                     title={`${sh.ref.sheet} · ${m.title}`}
                     onClick={(e) => clickRow(e, sh)}
                     onFocus={(e) => e.target === e.currentTarget && onFocusRow?.(sh.ref)}
-                    onKeyDown={(e) => onKeyDown(e, () => (on && onConfirm?.(sh.ref)) || onSelect(sh.ref), undefined, multi && s.kind === 'table' ? () => multi.onToggle(sh.ref) : undefined)}
+                    onKeyDown={(e) => onKeyDown(e, () => activate(sh, on), undefined, multi && s.kind === 'table' ? () => multi.onToggle(sh.ref) : undefined)}
                     className={cn(rowShell(on || (multi?.selected.has(tableKey(sh.ref)) ?? false)), sst.className)}
                     style={{ paddingLeft: 8 + (n.depth + 1) * 12, ...sst.style }}
                   >
@@ -368,7 +375,7 @@ export function DataList({
         title={`${baseName(f.path)} · ${m.title}`}
         onClick={(e) => clickRow(e, only)}
         onFocus={(e) => e.target === e.currentTarget && onFocusRow?.(only.ref)}
-        onKeyDown={(e) => onKeyDown(e, () => (on && onConfirm?.(only.ref)) || onSelect(only.ref), undefined, multi && s.kind === 'table' ? () => multi.onToggle(only.ref) : undefined)}
+        onKeyDown={(e) => onKeyDown(e, () => activate(only, on), undefined, multi && s.kind === 'table' ? () => multi.onToggle(only.ref) : undefined)}
         className={cn(rowShell(on || (multi?.selected.has(tableKey(only.ref)) ?? false)), st.className)}
         style={{ paddingLeft: 8 + n.depth * 12, ...st.style }}
       >
@@ -389,7 +396,7 @@ export function DataList({
       onKeyDown={(e) => {
         // Esc 清掉多选
         // （有多选时这一下 Esc 归它：别再冒到临时标签的「Esc 关标签」）
-        if (multi && e.key === 'Escape' && !e.defaultPrevented && multi.selected.size > 0) {
+        if (multi && e.key === 'Escape' && !e.defaultPrevented && (multi.selected.size > 0 || multi.pickMode)) {
           e.preventDefault()
           multi.onClear()
         }

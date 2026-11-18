@@ -529,21 +529,55 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     expect(qa('[data-data-strip] tbody tr')).toHaveLength(3)
   })
 
-  it('抽屉里多选：⌘ 点两份 → 底部出现「各画一张」；普通单击开临时标签并清掉多选；单份时那一条不存在', async () => {
+  it('抽屉里多选：⌘ 点两份 → 底部出现「各画一张」、进入多选态；多选态下单击是加选 / 取消；点「选多份」退出（清选择）后单击才开临时标签', async () => {
     propose.mockResolvedValue(cands())
     useDataBatchStore.getState().clear()
     await start(<><DataDrawer /><DataDraft /></>)
     const meta = (i: number) => qa('[data-studio-file]')[i]!
     const cmdClick = (el: Element) => act(async () => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true })))
+    const btn = () => q<HTMLButtonElement>('[data-studio-pick-mode]')!
+    expect(btn().getAttribute('aria-pressed')).toBe('false')
     await cmdClick(meta(0))
+    expect(btn().getAttribute('aria-pressed')).toBe('true') // 手势选中第一份 = 进入多选态，按钮同步
     expect(q('[data-studio-batch-bar]')).toBeNull() // 1 份：没有这一条
     await cmdClick(meta(2))
     expect(q('[data-studio-batch-run]')!.textContent).toBe('各画一张')
     expect(q('[data-data-draft]')).toBeNull() // 多选不开临时标签
+    await click(meta(0)) // 多选态下普通单击 = 取消这一份，不开临时标签
+    await flush()
+    expect(useDataBatchStore.getState().selection).toHaveLength(1)
+    expect(useDataFigureStore.getState().draftOpen).toBe(false)
+    await click(btn()) // 再点一次：退出并清掉选择
+    expect(btn().getAttribute('aria-pressed')).toBe('false')
+    expect(useDataBatchStore.getState()).toMatchObject({ pickMode: false, selection: [] })
     await click(meta(0))
     await flush()
-    expect(useDataBatchStore.getState().selection).toHaveLength(0)
-    expect(q('[data-studio-batch-bar]')).toBeNull()
     expect(useDataFigureStore.getState().draftOpen).toBe(true)
+  })
+
+  it('「选多份」按钮：至少 2 份表才出现；点它进入多选态、表行常显「＋」；批量进行中禁用；多选态下读不了的行单击不进选择', async () => {
+    propose.mockResolvedValue(cands())
+    useDataBatchStore.getState().clear()
+    files.mockResolvedValue({ files: [tbl('growth.csv'), tbl('run42.dat', 'unreadable')], truncated: false })
+    await start(<><DataDrawer /><DataDraft /></>)
+    expect(q('[data-studio-pick-mode]')).toBeNull() // 只有 1 份表
+    useDataFigureStore.getState().clear()
+    files.mockResolvedValue({ files: [tbl('growth.csv'), tbl('run42.dat', 'unreadable'), tbl('names.csv')], truncated: false })
+    await act(async () => useDataFigureStore.getState().loadFiles())
+    await flush()
+    const btn = () => q<HTMLButtonElement>('[data-studio-pick-mode]')!
+    expect(btn().textContent).toBe('选多份')
+    await click(btn())
+    expect(btn().getAttribute('aria-pressed')).toBe('true')
+    expect(qa('[data-studio-pick-toggle]')).toHaveLength(2) // 两个表行各一枚，读不了的行没有
+    await click(qa('[data-studio-file]')[1]!) // 读不了的行
+    expect(useDataBatchStore.getState().selection).toHaveLength(0)
+    expect(useDataBatchStore.getState().pickMode).toBe(true)
+    act(() => useDataBatchStore.setState({ running: true }))
+    expect(btn().disabled).toBe(true)
+    act(() => useDataBatchStore.setState({ running: false }))
+    // 切项目 / clear：复位
+    act(() => useDataBatchStore.getState().clear())
+    expect(btn().getAttribute('aria-pressed')).toBe('false')
   })
 })

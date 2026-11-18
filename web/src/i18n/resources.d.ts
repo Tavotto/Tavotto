@@ -62,6 +62,7 @@ export default interface Resources {
         "done": "已画",
         "draw": "各画一张",
         "failed": "没画出来",
+        "pick": "选多份",
         "progress": "正在画 {{done}} / {{total}}"
       },
       "candidate": {

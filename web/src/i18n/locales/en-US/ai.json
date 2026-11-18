@@ -697,7 +697,8 @@
       "draw": "Draw one each",
       "progress": "Drawing {{done}} / {{total}}",
       "done": "Drawn",
-      "failed": "Didn't draw"
+      "failed": "Didn't draw",
+      "pick": "Select several"
     }
   }
 }

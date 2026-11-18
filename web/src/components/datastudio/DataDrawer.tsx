@@ -9,6 +9,8 @@ import '@/lib/dataFigureHost' // 注册宿主（开抽屉 / 刷新 / 打开并�
 import { overviewKeyOf, useDataFigureStore } from '@/store/dataFigureStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useDataBatchStore } from '@/store/dataBatchStore'
+import { DrawerHeaderActions } from '../left/DrawerHeader'
+import { withOverview } from '@/lib/dataFigure'
 import { DataBatchBar } from './DataBatchBar'
 import { DataList } from './DataList'
 
@@ -44,15 +46,20 @@ export function DataDrawer() {
   // 多选（一次选多份、各画一张）：选了哪几份 / 每份的进度，状态按 tableKey 存在 `dataBatchStore`
   const picked = useDataBatchStore((s) => s.selection)
   const rowStates = useDataBatchStore((s) => s.rows)
+  const pickMode = useDataBatchStore((s) => s.pickMode)
+  const running = useDataBatchStore((s) => s.running)
+  // 「选多份」按钮：至少有 2 份能画的表（状态是 table）才出现
+  const tableCount = useMemo(() => rows.reduce((n, f) => n + f.rows.filter((r) => withOverview(r, listOverviews[r.ref.path]).kind === 'table').length, 0), [rows, listOverviews])
   const multi = useMemo(
     () => ({
       selected: new Set(picked.map(tableKey)),
+      pickMode,
       rowStates,
       onToggle: (ref: TableRef) => useDataBatchStore.getState().toggle(ref),
       onRange: (ref: TableRef, visible: TableRef[]) => useDataBatchStore.getState().selectRange(ref, visible),
       onClear: () => useDataBatchStore.getState().clearSelection(),
     }),
-    [picked, rowStates],
+    [picked, pickMode, rowStates],
   )
 
   if (files.status === 'error' && !entries)
@@ -81,14 +88,34 @@ export function DataDrawer() {
   if (!entries) return <ProgressBar pct={null} label={t('dataFigureV2.working.reading')} className="m-3 w-40" />
   return (
     <div data-studio-data className="flex min-h-0 flex-1 flex-col">
+      {tableCount >= 2 && (
+        <DrawerHeaderActions>
+          <Button
+            variant="ghost"
+            size="sm"
+            active={pickMode}
+            aria-pressed={pickMode}
+            disabled={running}
+            data-studio-pick-mode
+            onClick={() => useDataBatchStore.getState().setPickMode(!pickMode)}
+          >
+            {t('dataFigureV2.batch.pick')}
+          </Button>
+        </DrawerHeaderActions>
+      )}
       <DataList
         rows={rows}
         selected={selected}
         overviews={listOverviews}
         multi={multi}
         onSelect={(ref) => {
-          // 普通单击：开临时标签，并清掉多选（进行中不清）；它也是 Shift+点选一段的起点
+          // 多选态下不清选择；否则开临时标签，并清掉多选（进行中不清），它也是 Shift+点选一段的起点
           const b = useDataBatchStore.getState()
+          if (b.pickMode) {
+            // 多选态下只有读不了的行会走到这里（表行由 DataList 当加选）：看一眼它的说明，不动选择
+            useDataFigureStore.getState().select(ref)
+            return
+          }
           b.clearSelection()
           b.setAnchor(ref)
           useDataFigureStore.getState().select(ref)

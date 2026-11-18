@@ -159,6 +159,32 @@ describe('数据抽屉：多选', () => {
     expect(row('b.csv').querySelector('[data-studio-row-state=done]')).not.toBeNull()
   })
 
+  it('多选态（pickMode）：每个表行行尾常显「＋」、灰字行数不显示（同一格）；单击 / Enter = 加选 / 取消、不开临时标签；读不了的行照旧', async () => {
+    await mountList({ pickMode: true })
+    for (const n of ['a.csv', 'b.csv']) {
+      const r = row(n)
+      expect(r.querySelector('[data-studio-pick-toggle]')!.className).toContain('visible')
+      expect(r.querySelector('[data-studio-pick-toggle]')!.className).not.toContain('invisible')
+      expect(r.querySelector('.invisible')!.textContent).toMatch(/行/) // 灰字被占位隐藏
+    }
+    await click(row('a.csv'))
+    expect(m.onToggle).toHaveBeenLastCalledWith({ path: 'a.csv', sheet: null })
+    expect(onSelect).not.toHaveBeenCalled()
+    key(row('b.csv'), 'Enter')
+    expect(m.onToggle).toHaveBeenCalledTimes(2)
+    expect(onSelect).not.toHaveBeenCalled()
+    await click(row('bad.dat'))
+    expect(m.onToggle).toHaveBeenCalledTimes(2)
+    expect(onSelect).toHaveBeenCalledWith({ path: 'bad.dat', sheet: null })
+  })
+
+  it('多选态下 Esc 退出（即使还没选任何一份）', async () => {
+    await mountList({ pickMode: true })
+    row('a.csv').focus()
+    expect(key(row('a.csv'), 'Escape').defaultPrevented).toBe(true)
+    expect(m.onClear).toHaveBeenCalledTimes(1)
+  })
+
   it('不给 multi：行为与没有这个功能时相同（⌘ 点就是单击，没有「＋」）', async () => {
     await mount(<DataList rows={fileRows(entries)} selected={null} overviews={{}} onSelect={onSelect} />)
     await click(row('a.csv'), { metaKey: true })

@@ -53,6 +53,8 @@ interface BatchStore {
   selection: TableRef[]
   /** Shift+点选一段的起点：最近一次点的那一行 */
   anchor: TableRef | null
+  /** 「选多份」多选态：每个表行行尾常显「＋」，普通单击 = 加选 / 取消。手势（⌘ 点 / Shift 点 / 悬停「＋」）选中第一份时自动进入，两条路是同一个状态 */
+  pickMode: boolean
   rows: Record<string, RowState>
   running: boolean
   progress: { done: number; total: number }
@@ -66,6 +68,7 @@ interface BatchStore {
   setAnchor: (ref: TableRef | null) => void
   /** 普通单击 / Esc：清掉多选（进行中不清） */
   clearSelection: () => void
+  setPickMode: (on: boolean) => void
   /** 整批进行中 / 有没画成的 / 多选 ≥ 2：底部那一条要不要出现 */
   barVisible: () => boolean
   run: () => Promise<void>
@@ -84,6 +87,7 @@ type One = { ok: true; script: string } | { ok: false; reason: UiMessage | null;
 const initial = {
   selection: [] as TableRef[],
   anchor: null as TableRef | null,
+  pickMode: false,
   rows: {} as Record<string, RowState>,
   running: false,
   progress: { done: 0, total: 0 },
@@ -154,6 +158,7 @@ export const useDataBatchStore = create<BatchStore>((set, get) => ({
   toggle: (ref) => {
     set((s) => ({
       anchor: ref,
+      pickMode: true,
       selection: s.selection.some((r) => sameTable(r, ref)) ? s.selection.filter((r) => !sameTable(r, ref)) : [...s.selection, ref],
     }))
   },
@@ -169,15 +174,22 @@ export const useDataBatchStore = create<BatchStore>((set, get) => ({
     const [lo, hi] = from <= to ? [from, to] : [to, from]
     set((s) => {
       const keep = s.selection.filter((r) => !visible.slice(lo, hi + 1).some((v) => sameTable(v, r)))
-      return { selection: [...keep, ...visible.slice(lo, hi + 1)] }
+      return { pickMode: true, selection: [...keep, ...visible.slice(lo, hi + 1)] }
     })
   },
 
   setAnchor: (ref) => set({ anchor: ref }),
 
+  /** 进入 / 退出多选态；退出 = 清掉选择（进行中不动） */
+  setPickMode: (on) => {
+    if (get().running) return
+    if (on) set({ pickMode: true })
+    else get().clearSelection()
+  },
+
   clearSelection: () => {
     if (get().running) return
-    set({ selection: [], rows: Object.fromEntries(Object.entries(get().rows).filter(([, v]) => v.state === 'done')), stop: null })
+    set({ pickMode: false, selection: [], rows: Object.fromEntries(Object.entries(get().rows).filter(([, v]) => v.state === 'done')), stop: null })
   },
 
   barVisible: () => {
@@ -232,7 +244,7 @@ export const useDataBatchStore = create<BatchStore>((set, get) => ({
     const failed = Object.values(get().rows).some((v) => v.state === 'failed')
     if (!failed && !stopped) {
       // 全部画成：清多选，左栏切到素材抽屉（图卡在那里）；不弹任何通知
-      set({ selection: [], rows: {}, anchor: null })
+      set({ selection: [], rows: {}, anchor: null, pickMode: false })
       host.showAssets()
     }
   },
