@@ -230,7 +230,7 @@ def test_a_plain_subdirectory_script_is_byte_for_byte_unchanged(tmp_path):
     ]
     native = execspec.desktop_native_spec(
         str(proj / "paper" / "fig.py"),
-        interpreter="/py",
+        interpreter=str(tmp_path / "py"),  # 桌面 native 要绝对路径（Windows 上 "/py" 不是）
         cwd=str(proj),
         project_root=str(proj),
         env={"PYTHONUNBUFFERED": "1"},
