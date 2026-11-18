@@ -30,12 +30,7 @@
 - 为什么: urlopen 默认跟随 302：绕过认证的路由跳到受保护 URL，最终拿到 401，「全部返回 401」的枚举用例照绿。跟随重定向、重试、连接复用都会把观测点挪走，要另写用例钉观测点本身。
 - 证据: #187
 
-### L-024 肯定式判据只看代码，注释/文案不算兑现的证据
-- 类: 别这样
-- 触发: tests/test_source_hygiene.py, scripts/winlab/winlab.py, tests/test_winlab.py
-- Seen: 2026-08-28, 2026-11-03
-- 为什么: 判据扫源码时把注释算进去，一行「这里会先弹确认屏」就满足了它，实现删掉后仍报绿。否定式被注释咬到是误红，肯定式被注释满足是误绿，更坏；要补一条用构造输入的自看护用例。11-03 PowerShell 同类 P1。
-- 证据: #189, #1652
+### L-024 肯定式判据只看代码，注释/文案不算兑现的证据 → docs/rules/repo/predicate-subject.md
 
 ### L-027 台账别用绝对行号钉调用点，用符号名
 - 类: 别这样
@@ -201,10 +196,10 @@
 
 ### L-114 合并组里裸 cancelled 先核 job 时长是否贴 timeout-minutes
 - 类: 照这样
-- 触发: .github/workflows/ci.yml, .github/workflows/desktop-tauri.yml, docs/rules/ci/ci-lanes.md
-- Seen: 2026-09-13
-- 为什么: Windows 腿 32 到 42 分钟顶着 45 分钟上限，被取消后聚合门禁红、被踢出队列，易误读为 flaky；套件变长要回头量时长再定上限。快速失败会取消其余腿（ci-lanes.md）：summary 有 `root_failures` 时 cancelled 是收尾，无 failure 才按本条核。
-- 证据: #340, #345, #346
+- 触发: .github/workflows/ci.yml, .github/workflows/desktop-tauri.yml, docs/rules/ci/ci-lanes.md, scripts/ci/aggregate_gate.py
+- Seen: 2026-09-13, 2026-11-17
+- 为什么: Windows 腿 32 到 42 分钟顶着 45 分钟上限，被取消后聚合门禁红、被踢出队列，易误读为 flaky；套件变长要回头量时长再定上限。快速失败会取消其余腿（ci-lanes.md）：summary 有 `root_failures` 时 cancelled 是收尾，无 failure 才按本条核。fast gate 的 `root_failures` 可能为空、根因只在 integration gate 里，两个 gate 都读（#1991）。
+- 证据: #340, #345, #346, #1991
 
 ### L-134 碰上游私有 API 写成新旧都认，CI 装的是当天最新版
 - 类: 别这样
