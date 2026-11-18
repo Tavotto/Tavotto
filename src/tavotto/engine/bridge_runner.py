@@ -470,7 +470,7 @@ def run_script(target: str, argv: list, on_start=None, source: str | None = None
     sys.path.insert(0, os.path.dirname(abspath))
     # `source`（ADR 0194 启动脚本）：字节来自它，身份（`__file__` / 编译文件名 / argv[0]）仍是 target
     with io.open_code(os.path.abspath(source) if source else abspath) as f:
-        source = f.read()
+        code_bytes = f.read()
     # `dont_inherit=True` **是必须的**：本文件自己有 `from __future__ import
     # annotations`，而 `compile()` 默认会把**调用处生效的** future 语句一并
     # 传给被编译的代码。于是用户脚本会在不知情的情况下拿到 PEP 563 语义——
@@ -481,7 +481,7 @@ def run_script(target: str, argv: list, on_start=None, source: str | None = None
     # 这正是 native 最不能出的那类错：脚本在 Tavotto 里的行为与他自己敲
     # `python fig.py` 不一样，而且是**朝着"更宽松"的方向**静默不一样。
     # 脚本自己写的 `from __future__ import ...` 不受影响（它在源码里）。
-    code = compile(source, abspath, "exec", dont_inherit=True)
+    code = compile(code_bytes, abspath, "exec", dont_inherit=True)
     main_mod = types.ModuleType("__main__")
     main_mod.__file__ = abspath
     main_mod.__builtins__ = builtins
@@ -490,6 +490,9 @@ def run_script(target: str, argv: list, on_start=None, source: str | None = None
     main_mod.__loader__ = None
     main_mod.__cached__ = None
     main_mod.__doc__ = None
+    if source:
+        # 启动脚本（ADR 0194）：与 safe worker 同一个 `run_original()`，跑用户原件
+        main_mod.run_original = bridgeboot.make_run_original(abspath)
     sys.modules["__main__"] = main_mod
     if on_start is not None:
         on_start(abspath)

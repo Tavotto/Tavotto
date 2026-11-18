@@ -133,3 +133,39 @@ def test_write_launcher_rejects_bad_code_without_touching_anything(box):  # noqa
     assert call(ctx, "write_launcher", {"code": "def (:"}).code == "launcher_syntax_error"
     assert call(ctx, "write_launcher", {"code": ""}).code == "bad_arguments"
     assert launchscript.source_for(box.proj, "fig.py") is None
+
+
+# ---------------------------------------------------------------- run_original()（safe / native 同一份）
+def test_run_original_runs_the_real_script_in_the_callers_globals(tmp_path):
+    from tavotto.engine import bridgeboot
+
+    script = tmp_path / "fig.py"
+    script.write_text("value = SEED * 2\n", encoding="utf-8")
+    g = {"SEED": 21}
+    bridgeboot.make_run_original(str(script))(g)
+    assert g["value"] == 42
+
+
+def test_native_run_script_injects_run_original_only_for_a_launcher(tmp_path, monkeypatch):
+    """普通脚本的 `__main__` 里不许多出 `run_original`（与 `python fig.py` 一致）；只有带启动脚本时才注入。"""
+    import sys
+
+    from tavotto.engine import bridge_runner
+
+    script = tmp_path / "fig.py"
+    script.write_text(
+        "import sys\nsys.modules[__name__].seen = 'run_original' in globals()\n", encoding="utf-8"
+    )
+    launcher = tmp_path / "launcher.py"
+    launcher.write_text("value = 1\nrun_original()\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setattr(sys, "argv", list(sys.argv))
+    saved_main = sys.modules["__main__"]
+    try:
+        bridge_runner.run_script(str(script), [])
+        assert sys.modules["__main__"].seen is False
+        bridge_runner.run_script(str(script), [], source=str(launcher))
+        main = sys.modules["__main__"]
+        assert main.seen is True and main.value == 1
+    finally:
+        sys.modules["__main__"] = saved_main

@@ -111,17 +111,15 @@ only the registry), then try_run. Never edit the script.
 3c3. GLUE IS MISSING: WRITE A LAUNCHER. When the script is fine but cannot produce its figure as Tavotto runs it, and \
 you know why (you read the script and the report), write_launcher instead of reporting a defect or asking the user \
 to change anything. The launcher runs AS the script (`__file__` is the script, the figure belongs to it); \
-`open(__file__)` inside it reads the user's real script. Use exactly one of these shapes, adapted:
+`run_original()` inside it runs the user's real script. Use exactly one of these shapes, adapted:
   (a) Drawing functions are only defined, never called: `from <script module> import plot; plot()`.
-  (b) Something must be set BEFORE the script runs, then run the script's own code unchanged — end the launcher with
-      `with open(__file__, "rb") as _f: _code = compile(_f.read(), __file__, "exec")` and `exec(_code, globals())`, and
-      before those lines put the glue:
+  (b) Something must be set BEFORE the script runs, then run the script's own code unchanged: put the glue first and
+      end the launcher with `run_original()` (Tavotto provides it; it runs the user's real script in the launcher's
+      globals — never use runpy.run_path(__file__)). The glue:
       - environment variable it reads (os.environ["X"] / KeyError): `os.environ.setdefault("X", <real folder or value>)`;
       - it asks with input() (EOFError / script_needs_input): `import builtins; _a = iter(["<answer>"]); \
         builtins.input = lambda prompt="": next(_a)` with a sensible answer taken from the script or the data (ask_user \
         only if no sensible value exists);
-      - it forces an interactive backend (matplotlib.use("TkAgg"/"Qt5Agg"/...), tkinter or Qt missing): \
-        `import matplotlib; matplotlib.use = lambda *a, **k: None`;
       - relative imports (`from .helpers import x`, "attempted relative import with no known parent package"): \
         `sys.path.insert(0, <folder above the package>)` and `__package__ = "<package name>"`;
       - an extra folder on sys.path or a working folder (os.chdir) it expects.

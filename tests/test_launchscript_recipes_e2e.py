@@ -1,6 +1,6 @@
 """启动脚本的四种范式（ADR 0194 §二）：真 sidecar + 真用户 Python，对照评测里内置 AI 修不好的四类（`scripts/eval/fix_compat`）。
 
-每个启动脚本都用同一个骨架：先做胶水（中和写死的交互后端 / 预先回答 `input()` / 设环境变量 / 声明所在的包），
+每个启动脚本都用同一个骨架：先做胶水（预先回答 `input()` / 设环境变量 / 声明所在的包；写死的交互后端由产品自己中和，不靠启动脚本），
 再用 `open(__file__)` 读**原脚本**的字节、在同一份全局里 `exec`——safe 只把「装载主脚本」那一次换成启动脚本的字节，
 `open()` 读到的是用户的原件；native 同理。原脚本一个字节不动、图挂在原脚本名下。
 """
@@ -18,22 +18,10 @@ from test_execution_fallback_e2e import ENV, SESSIONS, _run, _settled
 pytestmark = nativekit.needs_user_python
 sidecar_app = fa.sidecar_app
 
-RUN_ORIGINAL = """
-with open(__file__, "rb") as _f:
-    _code = compile(_f.read(), __file__, "exec")
-exec(_code, globals())
-"""
+#: Tavotto 往启动脚本的全局里注入的 `run_original()`（safe / native 同一份，`bridgeboot.make_run_original`）
+RUN_ORIGINAL = "\nrun_original()\n"
 
 CASES = {
-    "backend": (
-        {
-            "fig.py": 'import matplotlib\nmatplotlib.use("TkAgg")\nimport matplotlib.pyplot as plt\n\n'
-            "fig, ax = plt.subplots(figsize=(4, 3))\nax.plot([0, 1, 2], [0, 1, 4])\nplt.show()\n"
-        },
-        "fig.py",
-        "import matplotlib\n\nmatplotlib.use = lambda *args, **kwargs: None  # 写死的交互后端：保留 Tavotto 的\n"
-        + RUN_ORIGINAL,
-    ),
     "stdin": (
         {
             "fig.py": 'import matplotlib\nmatplotlib.use("Agg")\nimport matplotlib.pyplot as plt\n\n'
@@ -106,11 +94,9 @@ def test_recipe_makes_the_original_scripts_figure_appear(tmp_path, case):
     assert {k: v for k, v in after.items() if k in before} == before  # 原有文件一个字节不动
 
 
-@pytest.mark.parametrize("case", sorted(set(CASES) - {"backend"}))
+@pytest.mark.parametrize("case", sorted(CASES))
 def test_without_the_launcher_the_case_really_fails(tmp_path, case):
-    """对照：同一份项目不写启动脚本，不出图（证明上面的成功来自启动脚本）。
-
-    `backend` 不在对照里：写死 TkAgg 只在没有 tkinter 的环境里失败（评测机上报 `missing_dependency`），装了 tkinter 的开发机照样出图。"""
+    """对照：同一份项目不写启动脚本，不出图（证明上面的成功来自启动脚本）。"""
     files, script, _ = CASES[case]
     final, _, _ = _run_case(tmp_path, files, script, None)
     assert final["facts"].get("figure_captured") is not True, case
