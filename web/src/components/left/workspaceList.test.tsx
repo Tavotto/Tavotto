@@ -186,6 +186,25 @@ describe('WorkspaceList', () => {
     await vi.waitFor(() => expect(formatMessage(useUiStore.getState().statusAction?.label ?? null)).toBe('发送问题反馈'))
   })
 
+  it('打开失败后抽屉卸载了，点「重新选择文件夹」：把项目抽屉打开，由重新挂上的那份弹出选择器', async () => {
+    open.mockImplementationOnce(async () => {
+      useProjectStore.setState({ recent: [entryOf('/work/p-3', { exists: false })] })
+      throw new Error('gone')
+    })
+    await mount()
+    const btn = section('recent')!.querySelector<HTMLButtonElement>('button[title="/work/p-3"]')!
+    await act(async () => btn.click())
+    await vi.waitFor(() => expect(useUiStore.getState().status).toMatchObject({ key: 'workspace.openMissing' }))
+    await act(async () => root.unmount())
+    host.remove()
+    useUiStore.setState({ leftOpen: false, leftTab: 'assets' } as never)
+    await act(async () => useUiStore.getState().statusAction!.run())
+    expect(useUiStore.getState().leftOpen).toBe(true)
+    expect(useUiStore.getState().leftTab).toBe('workspace')
+    await mount()
+    await vi.waitFor(() => expect(document.querySelector('[data-dir-browser-path]')).not.toBeNull())
+  })
+
   it('收藏开关按路径发一个操作，界面以回来的那份为准', async () => {
     await mount()
     await act(async () => pinButton('/work/p-0').click())

@@ -373,6 +373,17 @@ describe('applyOpenRequest', () => {
       expect(useUiStore.getState().leftOpen).toBe(false)
     })
 
+    it('同脚本正忙（别的配置在跑）：等它结束再提交这一份，不被 run() 的闸吞掉', async () => {
+      await uncached()
+      const busy = { phase: 'running', gen: 1, error: null, descriptors: [] }
+      useScriptRunStore.setState({ byScript: { 'show.py': busy } } as never)
+      useUiStore.getState().statusAction!.run()
+      await new Promise((r) => setTimeout(r, 10))
+      expect(run).not.toHaveBeenCalled()
+      useScriptRunStore.setState({ byScript: {} } as never)
+      await vi.waitFor(() => expect(run).toHaveBeenCalledWith('show.py', null))
+    })
+
     it('脚本失败：打开素材库，让失败原因与重试入口看得见', async () => {
       await uncached()
       useUiStore.setState({ leftOpen: false, leftTab: 'outline' } as never)

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { create } from 'zustand'
 import { t as translate } from '@/i18n'
 import { Bookmark, ClipboardList, ExternalLink, FolderOpen, FolderPlus, Info } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -26,6 +27,12 @@ import { useRovingList } from './rovingList'
 /** 本组文案在 project:workspace.* 下 */
 const ws = (key: string, values?: Record<string, unknown>) =>
   translate(`workspace.${key}`, { ns: 'project', ...(values ?? {}) })
+
+/**
+ * 「重新选择文件夹」的请求：持久提示的回调不能抓着某次挂载的 `entry`（抽屉关了 / 切了页签组件就卸载，
+ * 浏览器版的目录选择器只是它的本地状态）。回调只登记请求并把项目抽屉打开，由挂着的那份 `WorkspaceList` 认领。
+ */
+const useReselectRequest = create<{ pending: boolean }>(() => ({ pending: false }))
 
 /**
  * 左栏「项目」抽屉：当前项目 + 收藏 + 最近，切项目一次点击。
@@ -70,7 +77,10 @@ export function WorkspaceList() {
         create,
         attempt,
         retry: (next) => go(path, create, via, next),
-        reselect: () => entry.startOpen(),
+        reselect: () => {
+          useUiStore.setState({ leftTab: 'workspace', leftOpen: true })
+          useReselectRequest.setState({ pending: true })
+        },
       })
     } finally {
       setBusyPath(null)
@@ -78,6 +88,14 @@ export function WorkspaceList() {
   }
   // 选目录 / 新建 = 明确打开整个文件夹（ADR 0184 §三）；列表里的最近 / 收藏重开不带，沿用上次的范围
   const entry = useProjectEntry((path, create) => void go(path, create, { entry: 'folder' }), project?.figures_dir ?? undefined)
+
+  const reselectPending = useReselectRequest((r) => r.pending)
+  useEffect(() => {
+    if (!reselectPending) return
+    useReselectRequest.setState({ pending: false })
+    entry.startOpen()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reselectPending])
 
   const currentPath = project?.open ? (project.figures_dir ?? null) : null
   const pinnedPaths = useMemo(() => new Set(pinned.map((p) => p.path)), [pinned])

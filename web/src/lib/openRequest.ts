@@ -180,6 +180,9 @@ async function runThenLand(asset: RuntimeAssetInfo, pj: string | null): Promise<
   // 项目代际：A → B → A 回到同一个项目 id 时 pj 对得上、代际已变——每个 await 之后都要一并核
   const epoch = useScriptRunStore.getState().epoch
   const stale = () => currentProjectId() !== pj || useScriptRunStore.getState().epoch !== epoch
+  // 同脚本正忙（别的配置在跑）时 run() 是 no-op：先等它离开忙态，再提交这一份
+  await whenScriptIdle(asset.script)
+  if (stale()) return
   // 素材按它自己的配置跑（不读当前参数草稿）：无参数那张是显式的 null，不是 undefined
   await useScriptRunStore.getState().run(asset.script, asset.run_config ?? null)
   await whenScriptIdle(asset.script)
