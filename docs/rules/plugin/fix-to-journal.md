@@ -58,6 +58,9 @@ order: 55
   任一步的 `BridgeError` 照常变 isError，只是 `stage` / `session_id`（已打开时）写进载荷，`next` 由 `call_tool` 挂。
 - **回包要短**（result-budget）：改动按规则合并成 `changes:[{rule,count}]` + `changes_total`，`remaining` 按规则合并（`count`，最多 `MJR_REMAINING_SHOWN` 行）+
   `remaining_total`，导出只留 `{format,path,status,verdict}`；没有 manifest / patches，要明细用 `tavotto_session_state`。预览图沿用 image 内容块（`previews:false` 不附）。
+- **草稿没带回就停在 open**：open 回 `draft_restore_failed` 时不改、不导出（`ok:false, stage:"open"`，`next={action:ask_user}`：保留草稿稍后再试，或带 `discard_draft=true` 重来）。
+  理由：导出成功会清掉这张图的草稿，接着走下去等于替用户丢掉没带回的改动。
+- **以导出作业的结论为准**：文件都 `done` 但回执 `ok:false` / 有 `proof_error`（作业 `partial`，留档没写成）→ `ok:false, stage:"export"`，不报 `done`。
 - **会话不关**，成功也不关；草稿带回（`restored_draft`）、`discard_draft` 与 open 同一条路。入参：期刊三选一（`journal_id` / `profile_id` / `journal`，必给，与 fix 同名）、
   `stem`、`column`、`formats` / `out_dir`（缺省与 `tavotto_export` 一致）、`dpi`、`previews`、`dry_run`，加 open 的运行参数（workdir / argv 等）；不接受 `stems`。
 - **开关与遥测**：与 `tavotto_fix_to_journal` 同一处置（总开关 + 引擎有 specfix 才出现；关着调用回 `journal_catalog_disabled`）；不进 `usage.TOOLS`；

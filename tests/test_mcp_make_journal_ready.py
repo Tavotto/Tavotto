@@ -69,7 +69,11 @@ def figures(tmp_path) -> Path:
         encoding="utf-8",
     )
     proc = subprocess.run(
-        [WORKER_PY, str(d / "fig.py")], capture_output=True, text=True, cwd=str(d)
+        [WORKER_PY, str(d / "fig.py")],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=str(d),
     )
     assert proc.returncode == 0, proc.stderr
     return d
@@ -232,6 +236,55 @@ def test_restored_draft_is_reported(figures, tmp_path):
     body = _body(_run(figures, formats=["pdf"], out_dir=str(tmp_path / "out")))
     assert body["ok"] and body["restored_draft"]["patches"] == 1
     assert body["restored_draft"]["from_session"] == first["session_id"]
+
+
+def test_a_draft_that_cannot_be_restored_stops_at_open_and_keeps_the_draft(
+    figures, tmp_path, monkeypatch
+):
+    # 草稿没带回就接着改、导出的话，导出成功会把草稿清掉——没带回的改动就再也找不回了
+    first = bridge.open_figure(str(figures), stem="Kin")
+    session = bridge.get_session(first["session_id"])
+    gid = next(el["gid"] for el in session.manifest["elements"] if el.get("role") == "title")
+    bridge.apply_overrides(first["session_id"], [{"gid": gid, "prop": "fontsize", "value": 11.0}])
+    bridge.close_session(first["session_id"])
+    drafts = sorted((tmp_path / "data" / "mcp-drafts").glob("*.json"))
+    assert len(drafts) == 1
+    real = bridge._render
+
+    def flaky(session, patches, **kw):
+        if patches:
+            raise bridge.BridgeError("boom", code="render_failed")
+        return real(session, patches, **kw)
+
+    monkeypatch.setattr(bridge, "_render", flaky)
+    out_dir = tmp_path / "out"
+    res = _run(figures, formats=["pdf"], out_dir=str(out_dir))
+    body = _body(res)
+    assert body["ok"] is False and body["stage"] == "open"
+    assert body["draft_restore_failed"]["code"] == "render_failed"
+    assert body["next"]["action"] == "ask_user"
+    assert any("discard_draft=true" in o for o in body["next"]["options"])
+    assert "changes" not in body and _exported_files(out_dir) == []
+    assert sorted((tmp_path / "data" / "mcp-drafts").glob("*.json")) == drafts  # 草稿还在
+    assert bridge.get_session(body["session_id"]).patches == []
+
+
+def test_a_partial_export_is_not_reported_as_done(figures, tmp_path, monkeypatch):
+    # 图都出了、留档没写成：导出作业是 partial、回执 ok:false——一步交付不能报成 done
+    real = server._call_export
+
+    def partial(args):
+        res = real(args)
+        res["structuredContent"]["ok"] = False
+        res["structuredContent"]["proof_error"] = {"code": "proof_write_failed", "params": {}}
+        return res
+
+    monkeypatch.setattr(server, "_call_export", partial)
+    body = _body(_run(figures, formats=["pdf"], out_dir=str(tmp_path / "out")))
+    assert body["ok"] is False and body["stage"] == "export"
+    assert body["proof_error"]["code"] == "proof_write_failed"
+    assert body["exported"] and all(e["status"] == "done" for e in body["exported"])
+    assert body["next"]["action"] == "edit_script" and "proof" in body["next"]["why"]
 
 
 # ------------------------------ 开关 / 遥测 / 参数 -----------------------------

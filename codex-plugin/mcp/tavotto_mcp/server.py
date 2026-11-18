@@ -1630,6 +1630,27 @@ def _call_make_journal_ready(args: dict) -> dict:
         ):
             if body.get(key):
                 out[key] = body[key]
+        if body.get("draft_restore_failed"):
+            # 草稿没带回就接着改、导出：导出成功会清掉这张图的草稿，没带回的改动就再也找不回了。
+            # 停在 open，让用户决定（之后重试，或明确 discard_draft 丢掉草稿再一步交付）
+            failed = body["draft_restore_failed"]
+            out["next"] = nextstep.ask_user(
+                f"这张图上次没导出的草稿没能带回（{failed.get('code')}），所以没有接着改和导出，"
+                "草稿还留着。要怎么处理？",
+                [
+                    "先保留草稿：回脚本看看为什么带不回，之后再调一次 tavotto_make_journal_ready",
+                    "丢掉草稿、从脚本原样开始（再调一次 tavotto_make_journal_ready，带 discard_draft=true）",
+                ],
+            )
+            return _mjr_result(
+                out,
+                _text(
+                    f"上次没导出的草稿没能带回（{failed.get('code')}），为了不让导出把它清掉，"
+                    "这次没有改、也没有导出；草稿还留着。",
+                    "会话 " + sid + " 是按脚本原样打开的，还开着。",
+                ),
+                {},
+            )
 
         stage = "fix"
         raw_dpi = args.get("dpi")
@@ -1741,9 +1762,20 @@ def _call_make_journal_ready(args: dict) -> dict:
     if body.get("size_mm"):
         out["size_mm"] = body["size_mm"]
     done = [f for f in files if f.get("status") == "done"]
-    out["ok"] = bool(done) and len(done) == len(files)
+    # 以导出作业的结论为准：图都出了但留档没写成，作业是 `partial`、回执 `ok:false`——不能报成交付完成
+    out["ok"] = (
+        bool(done)
+        and len(done) == len(files)
+        and body.get("ok") is not False
+        and not body.get("proof_error")
+    )
     out["stage"] = "done" if out["ok"] else "export"
-    if not out["ok"]:
+    if not out["ok"] and done and len(done) == len(files):
+        out["next"] = nextstep.edit_script(
+            "图都导出了，但留档（proof）没写成（见 proof_error）；"
+            "检查导出目录能不能写、空间够不够，再用 tavotto_export 重导这一版。"
+        )
+    elif not out["ok"]:
         out["next"] = nextstep.edit_script(
             "有格式没导出成功（见 exported 里 status 不是 done 的项与 tavotto_export 的错误码）；"
             "改动还在会话里，可以换格式 / 换 out_dir 用 tavotto_export 再导，或按原因回脚本改。"
