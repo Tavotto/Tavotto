@@ -67,3 +67,16 @@ Tavotto 用 main `93e2696c4` 打的 wheel，含 ADR 0192 四条：错误带 `nex
 - 开场的三次调用基本没了：`tavotto_health` / `tavotto_guide` / `tavotto_list_journals` 从 61 / 56 / 51 次降到 5 / 7 / 6 次。
 - `tavotto_make_journal_ready` 被调了 42 次；`tavotto_fix_to_journal` 从 139 次降到 91 次。
 - 工具调用少了 13%，但用时多了 17%、输入 token 多了 18%。主要是 agent 还在反复开关会话：`tavotto_open_figure` 241 次、`tavotto_close_session` 133 次，紧挨着的 close→open 有 113 次（第二轮 91 次）。原因是 agent 改完 `fig.py` 后会话还跑着旧脚本，只能关掉重开；#2046（ADR 0192 修订 §5）让同一会话按新脚本自动重跑，合入后再跑一轮对比。
+
+## 第四轮结果（2026-11-19，DeepSeek v4.1-flash，#2046 合入后只重跑 B 组）
+
+Tavotto 用 main `d63575f65` 打的 wheel，比第三轮多了 #2046（ADR 0192 修订 §5）：改完脚本后同一会话自动按新脚本重跑，不用 close 再 open。提示词不变（`prompt_rev` 2），结果在 `results/flash-rerun/`。
+
+| B 组 | 期刊合规 | 连通用提示也全过 | 平均工具调用 | 平均用时 | 平均输入 token | 超时 | close→open |
+|---|---|---|---|---|---|---|---|
+| 第三轮 | 60/60 | 41/60 | 27.2 | 386 s | 45.3k | 5 | 113 |
+| 第四轮（#2046 后） | 60/60 | 42/60 | 18.4 | 234 s | 30.0k | 0 | 1 |
+
+- 反复开关会话基本没了：`tavotto_open_figure` 从 241 次降到 95 次，`tavotto_close_session` 从 133 次降到 5 次，紧挨着的 close→open 从 113 次降到 1 次。
+- 工具调用少 32%、用时少 39%、输入 token 少 34%；用时和输入 token 也都低于第二轮（329 s、38.4k）。
+- agent 报错与写到项目外的文件都是 0。
