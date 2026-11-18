@@ -157,7 +157,7 @@ def package_path_root(script: str, module: str) -> str | None:
 
     子进程只收模块名（`plots.fig`）与脚本路径，这里从脚本路径往上数层得出：脚本文件名必须是模块名最后一段 + `.py`、
     往上每一级目录名必须与模块名的各段逐一对上（Windows 不分大小写），否则回 None——**绝不猜**，由调用方大声失败或照旧按脚本运行。
-    safe worker（`--as-module`）与 native bridge（`--module-script`）共用这一个，两侧的 `sys.path[0]` 与 `co_filename` 因而同源。
+    safe worker（`--as-module`）与 native bridge（`--as-module`）共用这一个，两侧的 `sys.path[0]` 与 `co_filename` 因而同源。
     """
     parts = module.split(".") if isinstance(module, str) else []
     if not parts or not all(p.isidentifier() for p in parts):

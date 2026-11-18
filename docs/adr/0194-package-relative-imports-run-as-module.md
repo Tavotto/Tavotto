@@ -17,7 +17,7 @@
 
 全部成立才按模块运行：
 
-1. 脚本目标的登记入口是 `__main__`（native 整份脚本运行、没有登记入口，同样算）——函数入口走 `import_module`，不在此列；
+1. 脚本目标的登记入口是 `__main__`（桌面 native 由准备计划传入登记入口，函数入口同样不改；回退路径不知道登记入口时按整份脚本算）——函数入口走 `import_module`，不在此列；
 2. 脚本顶层的**直接语句**里有相对导入（`ImportFrom.level > 0`）；嵌在 `try` / `if` / `def` 里的不算（`try: from .h import x / except ImportError: from h import x`
    今天能跑，按模块跑会丢掉脚本目录这个 `sys.path[0]`）；所有顶层相对导入的 `level` 都不超过包的层数；
 3. 从脚本所在目录往上每一级都有 `__init__.py`；包根 = 最上面那个带 `__init__.py` 的目录；包根的上一级（= `sys.path[0]`）仍在项目根之内
@@ -29,11 +29,11 @@
 
 `__name__ == "__main__"`、`__package__` 正确、`sys.path[0]` 是包根的上一级，与 `python -m` 一致；**cwd 规则不变**（safe 沙盒 / 桌面的脚本目录或项目根）。
 
-- native bridge：复用现成的 `--target-kind module`（`runpy.run_module`），只多一个 `sys.path[0]` 来源（`--module-script`，由脚本路径往上数层得出）；
+- native bridge：身份参数仍是 `--target-kind script --target <脚本>`（描述符 / 资产 id / 指纹从一开始就不变），另加 `--as-module`，执行那一步复用现成的 `runpy.run_module`，`sys.path[0]` 由脚本路径往上数层得出；
 - safe worker：`--as-module`，在原来 `runpy.run_path` 的位置调 `runpy.run_module(alter_sys=True)`，所有守卫（savefig 拦截、写入绊线、字节码不写项目目录、输入观察……）
   照旧；入口脚本的字节只从源码编译并记摘要（`_capture_entry_sha`，不读 `.pyc`）；`sys.path` 是 包根的上一级 + 项目根（追加在末尾，与以前一致）；
   子进程里再核一遍「模块名与脚本路径对得上、顶层包名没被别的模块占用」，对不上就照旧按脚本运行，绝不猜；
-- 子进程只收模块名；`sys.path[0]` 由脚本路径推（`bridgeboot.package_path_root`，两侧同一个）。
+- 子进程只收模块名（worker 与 bridge 同名参数 `--as-module`）；`sys.path[0]` 由脚本路径推（`bridgeboot.package_path_root`，两侧同一个）。
 
 ### 三、身份不变（硬要求）
 

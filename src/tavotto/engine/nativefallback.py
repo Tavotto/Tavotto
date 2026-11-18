@@ -196,6 +196,7 @@ def launch(
     run=None,
     heavy: bool = False,
     start=None,
+    entry: str | None = None,
 ) -> NativeWorker:
     """起一个真实 Python 跑 `script`，等它停在屏障上并 build 一次；返回 Worker-like 的 `NativeWorker`。
 
@@ -211,6 +212,7 @@ def launch(
         stdin=execspec.STDIN_NULL,
         env={"PYTHONUNBUFFERED": "1"},
         ignored_paths=pathignore.paths_for(root),
+        registered_entry=entry,  # ADR 0194：不给 = 整份脚本，判据照常
         **execspec.run_kwargs(run),
     )
     try:

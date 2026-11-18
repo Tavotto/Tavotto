@@ -1409,9 +1409,9 @@ def _parse_args(argv: list):
     ap = argparse.ArgumentParser(prog="tavotto-bridge-runner", allow_abbrev=False)
     ap.add_argument("--target-kind", choices=("script", "module"), required=True)
     ap.add_argument("--target", required=True)
-    # ADR 0194：桌面拥有的 native 把包里的脚本按模块运行时，`--target` 是模块名，这里给脚本路径（推 `sys.path[0]`）；
-    # 终端的 `tavotto run` 永远不带
-    ap.add_argument("--module-script", default=None)
+    # ADR 0194：包里的脚本按模块运行（`python -m 包.模块`）。身份参数仍是脚本（`--target-kind script --target <脚本>`：
+    # 描述符 / 资产 id / 指纹从一开始就与按脚本运行相同），这里只换执行那一步；终端的 `tavotto run` 永远不带
+    ap.add_argument("--as-module", default=None)
     ap.add_argument("--out-dir", default="")
     ap.add_argument("--preview-dpi", type=int, default=200)
     ap.add_argument("--control-host", default="127.0.0.1")
@@ -1437,12 +1437,13 @@ def _parse_args(argv: list):
     args = ap.parse_args(mine)
     args.user_argv = user_argv
     args.module_path_root = None
-    if args.module_script:
-        if args.target_kind == "module":
-            args.module_path_root = bridgeboot.package_path_root(args.module_script, args.target)
+    if args.as_module:
+        if args.target_kind == "script":
+            args.module_path_root = bridgeboot.package_path_root(args.target, args.as_module)
         if args.module_path_root is None:
-            # 模块名与脚本路径对不上（或没给 module 目标）：不猜，照旧按脚本路径运行（失败的样子与以前一字不差）
-            args.target_kind, args.target = "script", args.module_script
+            args.as_module = (
+                None  # 模块名与脚本路径对不上：不猜，照旧按脚本运行（失败的样子与以前一字不差）
+            )
     return args
 
 
@@ -1597,7 +1598,14 @@ def main(argv: list | None = None) -> int:
 
     exit_code = 0
     try:
-        if args.target_kind == "script":
+        if args.as_module:
+            run_module(
+                args.as_module,
+                args.user_argv,
+                on_start=run.execution_started,
+                path_root=args.module_path_root,
+            )
+        elif args.target_kind == "script":
             run_script(args.target, args.user_argv, on_start=run.execution_started)
         else:
             run_module(

@@ -96,7 +96,7 @@ order: 180
 必然 `ImportError: attempted relative import with no known parent package`。这时两条入口都按 `python -m plots.fig` 的方式运行它，
 **只在原样跑必然失败的形状上生效**——所以不违背「与 `python fig.py` 一致」（维护者 2026-11-19 裁决）。
 
-- **判据唯一出处** `engine/pkgentry.resolve`（AST 零执行，判不出就不改，一律回 None）：登记入口是 `__main__`（native 没有登记入口，传 `None`）；脚本顶层**直接语句**里有
+- **判据唯一出处** `engine/pkgentry.resolve`（AST 零执行，判不出就不改，一律回 None）：登记入口是 `__main__`（桌面 native 由 `plan_for` 传登记入口、函数入口同样不改；`nativefallback.launch` 不知道登记入口时传 `None` = 整份脚本，判据照常——safe 对函数入口的包脚本本来就是 ImportError 而不是被拦，不会走到回退）；脚本顶层**直接语句**里有
   `ImportFrom.level > 0`（`try` / `if` / `def` 里的不算，`level` 不超过包层数）；脚本目录往上每一级都有 `__init__.py`（普通文件）；包根的上一级仍在项目根内
   （项目文件夹本身就是包 = 越界）；路径无符号链接 / junction；包名与 stem 是合法标识符；命名空间包 / 读不了 / 语法错误 / 影子脚本都不改。
 - **装配点只有两个构造函数**：`execspec.safe_spec`（safe）与 `execspec.desktop_native_spec`（桌面拥有的 native；`_native(package_as_module=True)`）。所以池的三条 spawn 路径、
@@ -104,7 +104,7 @@ order: 180
   不传 `package_as_module`，`ExecutionSpec.__post_init__` 也拒绝终端拥有的 native 带 `module_name`。
 - **身份不变（硬要求）**：`ExecutionSpec.module_name` 是正交字段，`target_kind` / `target` / `stable_payload()` 一字不变，描述符、资产 id、修订、注册表条目都照旧。
   **不要把 `target_kind` 翻成 `module`**（那会把 `target` 变成模块名，身份就换了）。argv 只在判据成立时多 token：worker `--as-module <模块名>`；bridge
-  `--target-kind module --target <模块名> --module-script <脚本绝对路径>`；没有相对导入的脚本 argv 逐字节不变（golden）。
+  `--as-module <模块名>`（`--target-kind script --target <脚本>` 不变：runner 的描述符 / 资产 id / 指纹由它派生，翻成 module 会让指纹里的 `target_kind` 变）；没有相对导入的脚本 argv 逐字节不变（golden）。
 - **`sys.path[0]` 不传，子进程自己推**：`bridgeboot.package_path_root(脚本路径, 模块名)`（safe worker 与 bridge 同一个）从脚本路径往上数层得出包根的上一级，
   对不上就回 None——worker 照旧 `run_path`、bridge 回退成按脚本运行，**绝不猜**。这样 `sys.path[0]` 与 `co_filename`（`executionfact.on_user_entry`、各处 `_script_frame_line` 比的路径）同源。
   cwd 规则不变（safe 沙盒 / 桌面脚本目录或项目根），脚本目录**不**上 `sys.path`（与 `python -m` 一致）；safe 仍把项目根追加在末尾。

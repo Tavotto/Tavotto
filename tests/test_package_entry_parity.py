@@ -3,7 +3,7 @@
 同一个解释器、同一份夹具跑三遍再逐字段比：
 
     python -m plots.fig A B                     （cwd = 包根的上一级）
-    bridge  --target-kind module --target plots.fig --module-script <脚本> -- A B   （cwd 故意是别处）
+    bridge  --target-kind script --target <脚本> --as-module plots.fig -- A B   （cwd 故意是别处）
     safe worker  --script <脚本> --as-module plots.fig                              （cwd = 沙盒）
 
 比的是脚本真的会读的字段：`__name__` / `__package__` / `__spec__` / `__file__` / `sys.argv[0]` / `sys.path[0]` /
@@ -196,6 +196,11 @@ def test_safe_worker_keeps_its_guards_and_writes_no_bytecode_into_the_project(tm
     assert ids and all(i == "runtime:plots/fig.py#fig_out" for i in ids), (ids, list(resp))
     assert not list(proj.rglob("__pycache__")), "safe 不往项目目录写字节码"
     assert not list(proj.rglob("*.png")), "savefig 仍被拦截捕获，没有落盘"
+    # 源码摘要换了来源（`_capture_entry_sha`）：必须等于脚本字节的 sha256
+    import hashlib
+
+    shas = {k: v for k, v in resp.items() if "sha" in k}
+    assert hashlib.sha256((proj / script).read_bytes()).hexdigest() in shas.values(), shas
     assert {p: p.read_bytes() for p in proj.rglob("*") if p.is_file()} == before
 
 
@@ -231,4 +236,66 @@ def test_a_plain_subdirectory_script_is_byte_for_byte_unchanged(tmp_path):
         env={"PYTHONUNBUFFERED": "1"},
     )
     bargv = execspec.bridge_argv(native, runner_py="/r.py", out_dir="/o")
-    assert "--module-script" not in bargv and bargv[bargv.index("--target-kind") + 1] == "script"
+    assert "--as-module" not in bargv and bargv[bargv.index("--target-kind") + 1] == "script"
+
+
+def test_native_descriptor_identity_is_the_script_not_the_module(tmp_path):
+    """硬要求：按模块运行时，native 的描述符（script / asset id / 指纹）与「按脚本」的身份算法给出的一字不差。
+    指纹里有 `target_kind`：runner 的身份参数若被翻成 module，指纹就变了。"""
+    from tavotto.engine import figcapture
+
+    proj = tmp_path / "proj"
+    script = _project(proj, body=FIGURE_BODY.replace('fig.savefig("fig_out.png")', "pass"))
+    spec = execspec.desktop_native_spec(
+        str(proj / script),
+        interpreter=USER_PYTHON,
+        cwd=str(proj),
+        project_root=str(proj),
+        env={"PYTHONUNBUFFERED": "1"},
+    )
+    assert spec.module_name == "plots.fig"
+    sess = bridge.BridgeSession(spec, out_dir=tmp_path / "bridge-out")
+    sess.start()
+    try:
+        desc = next(iter(sess.ensure_built()["descriptors"]))
+        version = subprocess.run(
+            [USER_PYTHON, "-c", "import matplotlib;print(matplotlib.__version__)"],
+            capture_output=True,
+            text=True,
+            env=child_env(),
+        ).stdout.strip()
+        expected = figcapture.source_fingerprint(
+            (proj / script).read_bytes(),
+            script="plots/fig.py",
+            entry="__main__",
+            profile=figcapture.PROFILE_NATIVE,
+            target_kind="script",
+            passthrough_savefig=True,
+            matplotlib_version=version,
+        )
+        assert desc["script"] == "plots/fig.py"
+        assert desc["asset_id"] == f"runtime:plots/fig.py#{desc['stem']}"
+        assert desc["source_fingerprint"] == expected
+    finally:
+        sess.close()
+
+
+def test_a_failing_package_init_still_reports_the_script_identity(tmp_path):
+    proj = tmp_path / "proj"
+    script = _project(proj)
+    _write(proj / "plots" / "__init__.py", "raise RuntimeError('boom')\n")
+    spec = execspec.desktop_native_spec(
+        str(proj / script),
+        interpreter=USER_PYTHON,
+        cwd=str(proj),
+        project_root=str(proj),
+        env={"PYTHONUNBUFFERED": "1"},
+    )
+    argv = execspec.bridge_argv(
+        spec, runner_py=bridge.RUNNER_PY, out_dir=tmp_path / "o", report=str(tmp_path / "r.json")
+    )
+    r = subprocess.run(argv, cwd=proj, env=child_env(), capture_output=True, text=True, timeout=120)
+    assert r.returncode != 0
+    report = json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))
+    assert report["rel_target"] == "plots/fig.py"
+    assert report["target_kind"] == "script"

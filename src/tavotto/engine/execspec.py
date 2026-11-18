@@ -323,7 +323,7 @@ class ExecutionSpec:
     #: （`pkgentry.resolve`：脚本顶层有相对导入、整条包链都有 `__init__.py`、包根仍在项目之内），由 `safe_spec` 与
     #: `desktop_native_spec` 在构造时装配；终端的 `native_spec`（`tavotto run`）结构上不带。它**不是身份**：`target` /
     #: `target_kind`（仍是脚本 + 项目相对路径）与 `stable_payload()` 一字不变，所以描述符 / 资产 id / 指纹 / 注册表条目都照旧；
-    #: 只多 worker 的 `--as-module` / bridge 的 `--target-kind module --module-script` 那几个 token（空 = argv 逐字节不变，golden）。
+    #: 只多 worker 的 `--as-module` / bridge 的 `--as-module` 那几个 token（空 = argv 逐字节不变，golden）。
     #: `sys.path[0]` 不存：执行侧从脚本路径往上数层得出（`bridgeboot.package_path_root`）。
     module_name: str = ""
 
@@ -790,6 +790,7 @@ def desktop_native_spec(
     stdin: str = STDIN_NULL,
     ignored_paths: tuple[str, ...] | list[str] = (),
     stem_aliases=None,
+    registered_entry: str | None = None,
 ) -> ExecutionSpec:
     """**桌面拥有的** native 档启动身份的唯一权威构造函数（P06，ADR 0125）。
 
@@ -801,6 +802,9 @@ def desktop_native_spec(
     * `env` 是叠在 sidecar 环境上的**增量**，来源恒为 `sidecar_inherited`：没有证据就不声称
       恢复了 conda 激活 / IDE / 内核环境；
     * `stdin` 由桌面持有（`pipe` 或 `null`），不再是「继承终端」。
+
+    `registered_entry`（ADR 0194）：注册表登记的入口，只给「包里的脚本按模块运行」的判据用（`pkgentry.resolve`：函数入口不改，
+    与 safe 一致）；native 自己恒整份脚本运行（spec.entry 仍是 None）。调用方不知道登记入口就不给（None = 整份脚本，判据照常）。
     """
     return _native(
         raw_target,
@@ -817,6 +821,7 @@ def desktop_native_spec(
         ignored_paths=ignored_paths,
         stem_aliases=stem_aliases,
         package_as_module=True,
+        registered_entry=registered_entry,
     )
 
 
@@ -836,6 +841,7 @@ def _native(
     ignored_paths: tuple[str, ...] | list[str] = (),
     stem_aliases=None,
     package_as_module: bool = False,
+    registered_entry: str | None = None,
 ) -> ExecutionSpec:
     if target_kind == TARGET_MODULE:
         target = raw_target
@@ -848,9 +854,9 @@ def _native(
                 f"{raw_target!r} / {project_root!r}"
             ) from exc
     # ADR 0194：桌面拥有的 native 在「包里的脚本用相对导入」时按模块运行（`python fig.py` 在这个形状上必然 ImportError）。
-    # 终端拥有的（`tavotto run`）不传 `package_as_module`：那是用户自己敲的命令，原样。native 整份脚本运行，没有登记入口（entry=None）
+    # 终端拥有的（`tavotto run`）不传 `package_as_module`：那是用户自己敲的命令，原样。native 整份脚本运行（entry=None）；登记入口只给判据用（函数入口不改，与 safe 一致）
     package = (
-        pkgentry.resolve(project_root, target.replace(os.sep, "/"), None)
+        pkgentry.resolve(project_root, target.replace(os.sep, "/"), registered_entry)
         if package_as_module and target_kind == TARGET_SCRIPT
         else None
     )
@@ -907,10 +913,9 @@ def bridge_argv(
         spec.interpreter,
         str(runner_py),
         "--target-kind",
-        # ADR 0194：包里的脚本按模块运行（`runpy.run_module`，bridge 现成的 module 目标）；身份仍是 spec.target
-        TARGET_MODULE if spec.module_name else spec.target_kind,
+        spec.target_kind,
         "--target",
-        spec.module_name or spec.raw_target,
+        spec.raw_target,
         "--out-dir",
         str(out_dir),
         "--preview-dpi",
@@ -919,8 +924,10 @@ def bridge_argv(
         spec.project_root,
     ]
     if spec.module_name:
-        # 脚本路径给 runner 推 `sys.path[0]`（包根的上一级）；没有按模块运行时命令行逐字节不变（golden）
-        out += ["--module-script", spec.raw_target]
+        # ADR 0194：包里的脚本按模块运行（`runpy.run_module`）。runner 的**身份参数仍是脚本**（`--target-kind script
+        # --target <脚本>`：描述符 / 资产 id / 指纹都由它派生，与不按模块运行时一字不差），只在执行那一步换跑法；
+        # `sys.path[0]` 由脚本路径往上数层得出。没有按模块运行时命令行逐字节不变（golden）
+        out += ["--as-module", spec.module_name]
     if control_port:
         out += ["--control-host", control_host or "127.0.0.1", "--control-port", str(control_port)]
     if report:

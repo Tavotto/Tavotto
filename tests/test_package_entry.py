@@ -265,18 +265,29 @@ class TestSpecAssembly:
         assert desktop.module_name == "plots.fig"
         assert (desktop.target_kind, desktop.target) == (execspec.TARGET_SCRIPT, "plots/fig.py")
         argv = execspec.bridge_argv(desktop, runner_py="/r/bridge_runner.py", out_dir="/o")
-        assert argv[argv.index("--target-kind") + 1] == "module"
-        assert argv[argv.index("--target") + 1] == "plots.fig"
-        assert argv[argv.index("--module-script") + 1] == target
+        # runner 的身份参数仍是脚本；只多 `--as-module`
+        assert argv[argv.index("--target-kind") + 1] == "script"
+        assert argv[argv.index("--target") + 1] == target
+        assert argv[argv.index("--as-module") + 1] == "plots.fig"
         # 终端（`tavotto run fig.py`）：用户自己敲的命令，结构上拿不到这个字段
         terminal = execspec.native_spec(
             target, interpreter="/usr/bin/python3", cwd=root, project_root=root
         )
         assert terminal.module_name == ""
+        # 登记入口是函数：与 safe 一样不改
+        fn = execspec.desktop_native_spec(
+            target,
+            interpreter="/usr/bin/python3",
+            cwd=root,
+            project_root=root,
+            env={"PYTHONUNBUFFERED": "1"},
+            registered_entry="main",
+        )
+        assert fn.module_name == ""
         targv = execspec.bridge_argv(terminal, runner_py="/r/bridge_runner.py", out_dir="/o")
         assert targv[targv.index("--target-kind") + 1] == "script"
         assert targv[targv.index("--target") + 1] == target
-        assert "--module-script" not in targv
+        assert "--as-module" not in targv
 
     def test_a_terminal_spec_cannot_carry_a_module_name(self, tmp_path):
         import dataclasses
