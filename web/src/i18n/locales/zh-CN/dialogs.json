@@ -2577,6 +2577,7 @@
       "max_font_size_pt": "最大字号",
       "min_script_font_size_pt": "上下标最小字号",
       "min_raster_dpi": "位图分辨率",
+      "min_line_width_pt": "最小线宽",
       "line_widths_pt": "线宽",
       "font_family_latin_accepted": "字体",
       "preferred_formats_export_default": "默认导出格式",

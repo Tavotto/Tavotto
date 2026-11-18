@@ -486,6 +486,65 @@ def cases() -> list[dict]:
             }
         )
 
+    # 9j. 数据线线宽下限（`min_line_width_pt`，ADR 0155 §14 修订）：只判数据线——折线 / 线集 / 误差棒 /
+    #     有可见描边的柱；坐标轴脊线、刻度、图例示意线、只画点的线、散点 / 填充（manifest 分不出有没有描边）不判。
+    #     按最终有效值（线宽 × 面板缩放）比，等于下限不报
+    def _lw_case(name: str, floor, manifest: dict, *, scale: float = 1.0) -> dict:
+        return {
+            "name": name,
+            "profile_id": "journal-base-v1",
+            "journal": {} if floor is None else {"min_line_width_pt": floor},
+            "spec": _spec([_panel("p1", manifest=manifest, scale=scale)]),
+        }
+
+    def _el_with(manifest: dict, gid: str, **props) -> None:
+        el = next(e for e in manifest["elements"] if e["gid"] == gid)
+        for k, v in props.items():
+            for f in el["editable"]:
+                if f["prop"] == k:
+                    f["value"] = v
+                    break
+            else:
+                el["editable"].append({"prop": k, "type": "number", "value": v})
+
+    out.append(_lw_case("journal-min-line-width-thin-lines-reported", 2.0, _clean_manifest()))
+    out.append(_lw_case("journal-min-line-width-not-set-no-report", None, _clean_manifest()))
+    out.append(_lw_case("journal-min-line-width-zero-no-report", 0, _clean_manifest()))
+    m = _clean_manifest()  # 脊线 0.75、刻度、图例都细，数据线够粗：不报
+    _el_with(m, "axes_0.lines_0", linewidth=2.5)
+    _el_with(m, "axes_0.lines_1", linewidth=3.0)
+    m["elements"][-1]["editable"].append(
+        {"prop": "handle_linewidth", "type": "number", "value": 0.5}
+    )
+    out.append(_lw_case("journal-min-line-width-only-axes-and-ticks-thin", 2.0, m))
+    m = _clean_manifest()
+    _el_with(m, "axes_0.lines_0", linewidth=2.0)  # 正好等于下限
+    _el_with(m, "axes_0.lines_1", linewidth=2.0)
+    out.append(_lw_case("journal-min-line-width-equal-to-floor", 2.0, m))
+    m = _clean_manifest()
+    _el_with(m, "axes_0.lines_0", linewidth=1.25)  # 1.25 x 0.4 = 0.5，缩放后正好等于下限
+    _el_with(m, "axes_0.lines_1", linewidth=1.0)  # 1.0 x 0.4 = 0.4，低于
+    out.append(_lw_case("journal-min-line-width-judged-after-scale", 0.5, m, scale=0.4))
+    m = _clean_manifest()
+    _el_with(m, "axes_0.lines_0", linestyle="None")  # 只画点：线宽是设置器，不判
+    out.append(_lw_case("journal-min-line-width-marker-only-line-skipped", 2.0, m))
+    bar_manifest = _clean_manifest()
+    bar_manifest["elements"] += [
+        _el("axes_0.barseries_0", "bar_series", linewidth=0.5, edgecolor="#000000"),
+        _el("axes_0.barseries_0.bar_0", "bar", linewidth=0.5, edgecolor="#000000"),
+        _el("axes_0.barseries_1", "bar_series", linewidth=1.0, edgecolor="none"),
+        _el("axes_0.barseries_1.bar_0", "bar", linewidth=1.0, edgecolor="none"),
+        _el("axes_0.scatter_0", "scatter", linewidth=0.5, edgecolor="#000000"),
+        _el("axes_0.fill_0", "fill", linewidth=0.5, edgecolor="#000000"),
+        _el("axes_0.errorbar_0", "errorbar", linewidth=0.5),
+        _el("axes_0.linecoll_0", "linecoll", linewidth=0.5),
+        _el("axes_0.annotation_0", "arrow_patch", linewidth=0.5),
+    ]
+    for e in bar_manifest["elements"]:  # 两条折线先放粗，只看后加的图元
+        if e["gid"] in ("axes_0.lines_0", "axes_0.lines_1"):
+            e["editable"][0]["value"] = 3.0
+    out.append(_lw_case("journal-min-line-width-bar-scatter-errorbar-linecoll", 2.0, bar_manifest))
+
     # 10. free-form profile：同一份输入，等级整体降一档（severity 表说了算）。
     #     4pt 才低于它的 6pt 下限——同样一张图在严格 profile 下是 error。
     m = _clean_manifest()

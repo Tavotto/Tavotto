@@ -641,6 +641,27 @@ def _check_panel_fonts(panel: dict, profile: dict, sink: _Sink) -> None:
                 )
 
 
+#: 「数据线」线宽下限判的图元（`min_line_width_pt`）。严格同源对：`preflight.ts` 的 `DATA_LINE_ROLES`。
+#: 只收**确实画出描边**的数据图元：折线 / 线集（hlines、等值线…）/ 误差棒；柱要边色不是 `none`。
+#: 不判：坐标轴脊线、刻度、网格、图例框与图例示意线、标注箭头——它们不是数据；
+#: 散点与填充区域的描边——manifest 的 `edgecolor` 把「无边」与「黑边」都写成 `#000000`，分不出画没画。
+DATA_LINE_ROLES = ("line", "linecoll", "errorbar", "bar_series", "bar")
+
+
+def _is_data_line(el: dict, role: str) -> bool:
+    if role not in DATA_LINE_ROLES:
+        return False
+    if role == "line":
+        # 只画点不画线（`plot(x, y, "o")`）：线宽是设置器，墨迹里没有这条线
+        ls = _field(el, "linestyle")
+        return not (isinstance(ls, str) and ls.strip().lower() in ("none", ""))
+    if role in ("bar_series", "bar"):
+        # 柱的描边：`none` / 空 = 没画；字段缺席按有描边（宁可多报，同本文件一贯口径）
+        ec = _field(el, "edgecolor")
+        return not (isinstance(ec, str) and ec.strip().lower() in ("none", ""))
+    return True
+
+
 def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
     manifest = panel.get("manifest")
     if not isinstance(manifest, dict):
@@ -651,6 +672,8 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
     legend = profile.get("legend_policy") or {}
     presets = [float(v) for v in (profile.get("line_widths_pt") or [])]
     tol = _num_or(profile.get("line_width_tolerance_pt"), 0.08)
+    # 数据线宽下限：缺席 / 0 = 不判（旧快照、课题组规范都没有这个键）
+    min_lw = _num(profile.get("min_line_width_pt")) or 0.0
     want_dir = axis.get("tick_direction")
     enclosed = bool(axis.get("enclosed_spines"))
     max_labels = int(axis.get("max_tick_labels") or 0)
@@ -814,6 +837,27 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
                         gids=[gid],
                         detail={"effective_pt": _r2(eff)},
                         worse=min(abs(eff - v) for v in presets),
+                    )
+        if (
+            min_lw > 0
+            and _is_data_line(el, role)
+            and not (role == "bar_series" and gid in barred_series)
+        ):
+            lw = _num(_field(el, "linewidth"))
+            if lw is not None and lw > 0:
+                eff = lw * scale
+                if eff < min_lw - 1e-9:
+                    sink.add(
+                        "line-width-below-min",
+                        f"数据线宽最终有效值 {eff:.2f}pt，规范要求至少 {min_lw:g}pt",
+                        message=(
+                            "lineWidthBelowMin",
+                            {"effective": f"{eff:.2f}", "min": f"{min_lw:g}"},
+                        ),
+                        object_ids=[pid],
+                        gids=[gid],
+                        detail={"effective_pt": _r2(eff)},
+                        worse=min_lw - eff,
                     )
         if role == "legend_text" and _is_drawn(el, hidden_legends):
             # 图例项的示意线（ADR 0034）：**自定义**的那些自己是一份状态，宽度
