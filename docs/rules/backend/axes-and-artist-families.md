@@ -148,6 +148,12 @@ order: 80
   transform 平移；子图里的曲线不宣称）。`ConnectionPatch` 不出端点（两端归 xyA / xyB）。SubFigure 里的图例按
   `transSubfigure` 换算。SubFigure 子图的 `position` 仍是局部分数（兼容取舍，见 ADR）。
   看护：`tests/test_figure_level_artists.py`。
+- **子图里位置不是数据的线可拖（2026-11-18，ADR 0100 修订）**：`ax.lines` 里的线按 **transform** 判，不按所在
+  列表判。`manifest._layout_anchored_line`：x、y 都不经过 `transData`（沿 matplotlib 依赖图 `_parents` 找），并且挂在
+  `transAxes` / `transSubfigure` / `transFigure` / `dpi_scale_trans` 上 → `draggable=True`，与图级的线同一套
+  `("line", "pos_frac")`。数据曲线、`axhline` / `axvline`、`get_[xy]axis_transform()`、`transData + 平移`、
+  认不出依赖的自定义 transform 都不拖；3D 与色条轴不拖。
+  看护：`tests/test_axes_layout_lines_drag.py`。
 - 散点 marker 可整体替换（set_paths，首改前缓存原始路径，"original" 还原）；
   散点/扁平线的 bbox 走 `_padded_bbox`（PathCollection 用 datalim 换算，零厚度边
   垫 4px，否则进不了 manifest）。

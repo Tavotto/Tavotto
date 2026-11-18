@@ -205,3 +205,29 @@ tight 布局下子图仍由 `PinnedTightLayoutEngine`（ADR 0042）钉住，不�
 - 看护：`tests/test_subfigure_axes_position.py`（普通 / constrained / `bbox_inches="tight"` / 嵌套
   四种 SubFigure：`position` 与 `bbox` 同一矩形、拖到写下的位置、再画不漂、撤销回基线、全量重放
   == 热态）。修前 8 条红。
+
+## 修订（2026-11-18）：子图里位置不是数据的线可拖
+
+用户来图（世界地图上 30 条震中 → 标签的虚线折线引线）：引线是
+`Line2D(..., transform=ax.transAxes)` + `ax.add_line`，带白色描边路径效果。它们进 `ax.lines`，
+`instrument` 按「子图里的曲线位置是数据」一律 `draggable=False`：只能改颜色粗细，拖了只提示数据系列不能拖。
+这是按**所在列表**推断能力，和 2026-11-12 修订之前图级元素的漏网是同一类问题。
+
+裁决：
+
+- **按 transform 判**（`manifest._layout_anchored_line`）。两条都满足才可拖：
+  1. x、y 都不经过 `ax.transData`。沿 matplotlib 依赖图（`_parents`）找：`a + b`、
+     `blended_transform_factory`、`TransformWrapper` 都会登记依赖。`axhline` / `axvline` /
+     `get_[xy]axis_transform()` 有一边是数据，`transData + ScaledTranslation` 整条是数据，都不拖；
+  2. 挂在认得的排版坐标系上（`transAxes` / `transSubfigure` / `transFigure` / `dpi_scale_trans`）。
+     没登记依赖的自定义 transform 判不出来，按数据处理、不宣称可拖。
+- 可拖的线与图级的线**同一套** `("line", "pos_frac")`：基准 transform、英寸平移、pin 表、原样 = 基准
+  transform（`overrides._set_line_pos_frac` / `_restore_line_pos`，没有新机制）。前端只看
+  `draggable` + `anchor`，不用改。
+- 3D 子图与色条轴上的线照旧不拖。gid 不变，存量文档里对这些线的样式 override 照常生效。
+- 落位是**整条平移**、钉在图幅上：之后挪子图，拖过的线留在写下的位置，与独立形状相同。逐顶点
+  编辑（拖引线的拐点 / 一端）另议。
+
+看护：`tests/test_axes_layout_lines_drag.py`（数据 / 一边数据 / 数据 + 平移 / 子图框 / 图幅 /
+子图框 + 英寸八种线的判定；拖动落点、再画不漂、撤销回基线、不挤动子图与别的线；拖动与样式共存；
+constrained；一次性 worker 全量重放 == 热态）。修前 3 条红。
