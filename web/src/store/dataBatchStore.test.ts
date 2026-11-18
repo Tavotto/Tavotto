@@ -22,6 +22,7 @@ const discard = vi.mocked(aiDataFigureDiscard)
 const files = vi.mocked(aiDataFilesAll)
 const refresh = vi.fn(async () => {})
 const showAssets = vi.fn()
+const runScript = vi.fn(async (_s: string) => {})
 let writable: boolean | undefined = true
 
 const st = () => useDataBatchStore.getState()
@@ -36,14 +37,15 @@ const select = (...names: string[]) => names.forEach((n) => st().toggle(ref(n)))
 
 beforeEach(() => {
   resetCommitQueue()
-  for (const f of [propose, commit, discard, files, refresh, showAssets]) f.mockReset()
+  for (const f of [propose, commit, discard, files, refresh, showAssets, runScript]) f.mockReset()
+  runScript.mockResolvedValue(undefined)
   discard.mockResolvedValue({ ok: true })
   refresh.mockResolvedValue(undefined)
   writable = true
   setCurrentProjectId('pa')
   useDataBatchStore.getState().clear()
   useDataFigureStore.getState().clear()
-  configureDataBatchHost({ refreshProject: refresh, showAssets, projectWritable: () => writable })
+  configureDataBatchHost({ refreshProject: refresh, runScript, showAssets, projectWritable: () => writable })
   propose.mockImplementation(async (b) => cands(`S-${b.table}`))
   commit.mockResolvedValue(ok())
 })
@@ -114,6 +116,9 @@ describe('逐份顺序做', () => {
     refresh.mockImplementation(async () => {
       log.push('refresh')
     })
+    runScript.mockImplementation(async () => {
+      log.push('run')
+    })
     await st().run()
     expect(propose.mock.calls.map((c) => c[0])).toEqual([
       { table: 'a.csv', render: 'lazy' },
@@ -122,9 +127,9 @@ describe('逐份顺序做', () => {
     ])
     expect(maxInFlight).toBe(1)
     expect(log).toEqual([
-      'propose:a.csv', 'commit:S-a.csv:S-a.csv-a', 'discard:S-a.csv', 'refresh',
-      'propose:b.csv', 'commit:S-b.csv:S-b.csv-a', 'discard:S-b.csv', 'refresh',
-      'propose:c.csv', 'commit:S-c.csv:S-c.csv-a', 'discard:S-c.csv', 'refresh',
+      'propose:a.csv', 'commit:S-a.csv:S-a.csv-a', 'discard:S-a.csv', 'refresh', 'run',
+      'propose:b.csv', 'commit:S-b.csv:S-b.csv-a', 'discard:S-b.csv', 'refresh', 'run',
+      'propose:c.csv', 'commit:S-c.csv:S-c.csv-a', 'discard:S-c.csv', 'refresh', 'run',
     ])
     expect(commit.mock.calls.every((c) => typeof c[0].client_request_id === 'string')).toBe(true)
   })
@@ -331,5 +336,40 @@ describe('和单份流程共用一把串行锁', () => {
     await Promise.all([batch, single])
     expect(maxInFlight).toBe(1)
     expect(commit).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('画完只运行、不打开（素材卡才有预览）', () => {
+  it('每份提交成功后按顺序运行一次它的新脚本，运行排在串行锁里不并发；运行失败不算没画出来、不加提示', async () => {
+    select('a', 'b')
+    commit.mockResolvedValueOnce({ ...ok(), script: 'tavotto_figures/a.py' }).mockResolvedValueOnce({ ...ok(), script: 'tavotto_figures/b.py' })
+    let inFlight = 0
+    let maxInFlight = 0
+    runScript.mockImplementationOnce(async () => {
+      inFlight++
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      await flush()
+      inFlight--
+      throw new Error('boom')
+    })
+    await st().run()
+    expect(runScript.mock.calls.map((c) => c[0])).toEqual(['tavotto_figures/a.py', 'tavotto_figures/b.py'])
+    expect(maxInFlight).toBe(1)
+    expect(st().rows).toEqual({}) // 全部算画成 → 清空并切到素材抽屉
+    expect(showAssets).toHaveBeenCalledTimes(1)
+  })
+
+  it('没落盘 / 对不上的不运行；运行期间这一行仍是「正在画」，运行完才是「已画」', async () => {
+    select('a', 'b')
+    commit.mockResolvedValueOnce({ ...ok(), data_check: 'mismatch' }).mockResolvedValueOnce(ok())
+    let release!: () => void
+    runScript.mockReturnValueOnce(new Promise<void>((r) => (release = r)))
+    const p = st().run()
+    while (runScript.mock.calls.length === 0) await flush()
+    const states = Object.values(st().rows).map((r) => r.state)
+    expect(states).toEqual(['failed', 'running'])
+    release()
+    await p
+    expect(runScript).toHaveBeenCalledTimes(1)
   })
 })

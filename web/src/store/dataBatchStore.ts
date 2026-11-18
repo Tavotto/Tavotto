@@ -36,12 +36,14 @@ export type BatchStop = 'unwritable' | null
 export interface BatchHost {
   /** 刷新项目（新脚本进素材清单、图卡陆续出现）；不打开任何东西 */
   refreshProject: () => Promise<void>
+  /** 只运行这份新脚本（不打开、不放进画布），好让素材卡有预览；跑不成不算没画出来，卡片自己会显示脚本的状态 */
+  runScript: (script: string) => Promise<void>
   /** 全部画成之后：左栏切到素材抽屉（图卡在那里） */
   showAssets: () => void
   /** 项目文件夹可不可写；不知道回 undefined */
   projectWritable: () => boolean | undefined
 }
-let host: BatchHost = { refreshProject: async () => {}, showAssets: () => {}, projectWritable: () => undefined }
+let host: BatchHost = { refreshProject: async () => {}, runScript: async () => {}, showAssets: () => {}, projectWritable: () => undefined }
 export const configureDataBatchHost = (h: BatchHost): void => {
   host = h
 }
@@ -77,7 +79,7 @@ const newRid = (): string => `df2b-${Date.now().toString(36)}-${(ridCounter++).t
 const reasonOf = (e: unknown): UiMessage | null => (e instanceof ApiError ? backendErrorMsg(e) : null)
 const codeOf = (e: unknown): string => (e instanceof ApiError && typeof e.body?.code === 'string' ? e.body.code : '')
 
-type One = { ok: true } | { ok: false; reason: UiMessage | null; unwritable?: boolean }
+type One = { ok: true; script: string } | { ok: false; reason: UiMessage | null; unwritable?: boolean }
 
 const initial = {
   selection: [] as TableRef[],
@@ -122,7 +124,7 @@ async function drawOne(ref: TableRef, still: () => boolean, pj: string | null): 
           }
           // 脚本已经落盘（普通脚本，留着）但数据与图对不上：这一份算没画成，原因照单份流程那句
           if (done.data_check === 'mismatch' || done.task?.outcome === 'failed') return { ok: false, reason: msg('dataFigureV2.result.mismatch', undefined, 'ai') }
-          return { ok: true }
+          return { ok: true, script: done.script }
         } catch (e) {
           // 懒渲染：这一张提交时当场渲染 / 核对没过（404）→ 试下一张；一张都不行就是没画成
           if (codeOf(e) === 'propose_candidate_unknown') continue
@@ -207,13 +209,16 @@ export const useDataBatchStore = create<BatchStore>((set, get) => ({
       const r = await runExclusive(() => drawOne(ref, guard.still, guard.pj))
       if (!guard.still() || ep !== epoch) return
       if (r.ok) {
+        await host.refreshProject().catch(() => undefined) // 图卡出现；不打开
+        if (!guard.still() || ep !== epoch) return
+        // 只运行、不打开：素材卡才有预览。排进同一条队列，三份不会同时渲染；跑不成不算没画出来、不加提示
+        await runExclusive(() => host.runScript(r.script).catch(() => undefined))
+        if (!guard.still() || ep !== epoch) return
         set((s) => ({
           rows: { ...s.rows, [key]: { state: 'done' } },
           selection: s.selection.filter((x) => !sameTable(x, ref)),
           progress: { done: i + 1, total: todo.length },
         }))
-        await host.refreshProject().catch(() => undefined) // 图卡陆续出现；不打开
-        if (!guard.still() || ep !== epoch) return
       } else {
         set((s) => ({ rows: { ...s.rows, [key]: { state: 'failed', reason: r.reason } }, progress: { done: i + 1, total: todo.length } }))
         if (r.unwritable) {
