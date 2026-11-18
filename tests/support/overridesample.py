@@ -82,11 +82,10 @@ def _patch_for(gid, field, advertised):
     return enablers, enablers + [{"gid": gid, "prop": prop, "value": value}]
 
 
-def _editable_targets(man, *, include_axes=False):
-    """(gid, field) —— 跳过整块结构性的角色，它们各有各的专用用例。`include_axes=True` 把 2D `axes`
-    也纳入（随机序列用：网格 / 边框 / 轴范围这类还原逻辑最容易出「只还原了画着的那一部分」的分岔；
-    不是默认——能力真实 / 逐字还原那几条扫描里 axes 的一些字段有各自登记的口径）。"""
-    skipped = ("figure", "axes3d", "ticks", "ticklabel") + (() if include_axes else ("axes",))
+def _editable_targets(man):
+    """(gid, field) —— 跳过整块结构性的角色，它们各有各的专用用例。2D `axes` 在扫描里（#2005）：
+    网格 / 边框 / 轴范围这类还原逻辑最容易出「只还原了画着的那一部分」的分岔。"""
+    skipped = ("figure", "axes3d", "ticks", "ticklabel")
     for el in man["elements"]:
         if el["role"] in skipped:
             continue
@@ -156,6 +155,17 @@ _ENABLERS: dict[str, tuple[tuple[str, object], ...]] = {
     "linespacing": (("text", "line one\nline two"),),
     "ha": (("text", "line one\nline two"),),
     "va": (("text", "line one\nline two"),),
+    # 子图网格的样式画在网格线上：网格关着（脚本默认）就没有线可染。开一侧就够量
+    "grid_color": (("grid_x", True),),
+    "grid_linestyle": (("grid_x", True),),
+    "grid_linewidth": (("grid_x", True),),
+    "grid_alpha": (("grid_x", True),),
+    # 单边边框的颜色 / 线宽要那条边画着：脚本藏掉的边（寄生轴宿主的右边）上改了看不见
+    **{
+        f"spine_{side}_{k}": ((f"spine_{side}", True),)
+        for side in ("top", "right", "bottom", "left")
+        for k in ("color", "linewidth")
+    },
 }
 
 #: 按 **(role, prop)** 划的豁免：同一条 prop 在不同容器里未必都画得出来。

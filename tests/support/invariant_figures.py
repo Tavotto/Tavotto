@@ -7,7 +7,7 @@ from __future__ import annotations
 
 SCRIPT_NAME = "fig_invariants.py"
 ENTRY = "main"
-STEMS = ("InvMix", "InvCont", "InvCbar", "InvPar", "Inv3D", "Inv3DP", "Inv3DS")
+STEMS = ("InvMix", "InvCont", "InvCbar", "InvCbarH", "InvPar", "Inv3D", "Inv3DP", "Inv3DS")
 
 #: 一个脚本出三张图，一次 build 全捕获（build 是这套用例里唯一慢的一步）。
 #: 每张图都刻意做得**元素互相重叠**——`zorder` 想被验出效果就得有东西挡；
@@ -116,6 +116,9 @@ def main():
     # 意义：放大时 matplotlib 的 antialiased 本来就退化成 nearest，拿
     # 8×8 去验这条属性，测出来的只会是「改了没反应」
     im = ax.imshow(rng.rand(512, 512), cmap="magma")
+    # 右边让出一条：图像盖满整个轴的话，子图底色（`facecolor`）一个像素都露不出来——
+    # 那是这张图挡住了它，不是这条 prop 不画（#2005）
+    ax.set_xlim(-0.5, 575.5)
     cb = fig.colorbar(im, ax=ax, extend="both")
     cb.set_label("signal")
     fig.savefig("InvCbar.pdf")
@@ -257,4 +260,18 @@ def main():
         a.set_ylabel("y label")
     axs[0].legend(loc="upper left")
     fig.savefig("InvTight.pdf")
+
+    # ---- InvCbarH：**横向色条**（#2005） ----
+    # 横色条把长 / 短轴对调：色条轴上哪条 axes 字段是死开关随方向变，竖的 InvCbar 量不到这一半。
+    # 用散点不用 imshow：图像盖满整个轴的话子图底色无处可见。InvCbar2 也有横色条，但它的几何是
+    # scriptadjust 那组「落笔刻度 ≠ 画完刻度」用例的实测夹具，不在这里改它。
+    fig, ax = plt.subplots(figsize=(3.4, 2.8))
+    # 方块标记 + 两条图例项：圆点是 marker 的采样值、单项图例上列数 / 间距没处显形——都是图挡住了，不是 prop 不画
+    sc = ax.scatter(
+        rng.rand(30), rng.rand(30), c=rng.rand(30), cmap="viridis", marker="s", label="pts"
+    )
+    ax.plot([0, 1], [0.2, 0.8], color="C1", label="fit")
+    ax.legend(loc="upper left")
+    fig.colorbar(sc, ax=ax, location="bottom", fraction=0.05)
+    fig.savefig("InvCbarH.pdf")
 """
