@@ -299,7 +299,7 @@ describe('applyOpenRequest', () => {
       expect(formatMessage(useUiStore.getState().statusAction?.label ?? null)).toBe('运行')
       useUiStore.getState().statusAction!.run()
       await vi.waitFor(() => expect(useDocumentStore.getState().doc.objects).toHaveLength(1))
-      expect(run).toHaveBeenCalledWith('show.py')
+      expect(run).toHaveBeenCalledWith('show.py', undefined)
       expect((useDocumentStore.getState().doc.objects[0] as { fileId: string }).fileId).toBe('runtime:show.py#show')
       expect(useUiStore.getState().status).toMatchObject({ key: 'handoff.added' })
     })
@@ -330,6 +330,33 @@ describe('applyOpenRequest', () => {
       await vi.waitFor(() => expect(run).toHaveBeenCalled())
       await new Promise((r) => setTimeout(r, 10))
       expect(useDocumentStore.getState().doc.objects).toHaveLength(0)
+    })
+
+    it('带配置的素材：按它自己的配置跑，按完整 id 找回结果', async () => {
+      useAssetStore.setState({ load: vi.fn(async () => setPanels([])) } as never)
+      const cfg = { ...runtimeAsset('show.py', 'show', false), run_config: 'cfg-1' }
+      const other = { ...runtimeAsset('show.py', 'show'), id: 'runtime:show.py#show@other' }
+      setRuntimeAssets([cfg])
+      setCurrentProjectId('p1')
+      expect(await applyOpenRequest({ stem: 'show' })).toBe('runtime-uncached')
+      run.mockImplementation(async () => { setRuntimeAssets([other, { ...runtimeAsset('show.py', 'show'), run_config: 'cfg-1' }]) })
+      useUiStore.getState().statusAction!.run()
+      await vi.waitFor(() => expect(useDocumentStore.getState().doc.objects).toHaveLength(1))
+      expect(run).toHaveBeenCalledWith('show.py', 'cfg-1')
+      expect((useDocumentStore.getState().doc.objects[0] as { fileId: string }).fileId).toBe('runtime:show.py#show')
+    })
+
+    it('savefig 的图跑成功后原件在磁盘上、runtime 条目消失：按磁盘路径落图，不误开素材库', async () => {
+      await uncached()
+      useUiStore.setState({ leftOpen: false, leftTab: 'outline' } as never)
+      run.mockImplementation(async () => {
+        setRuntimeAssets([])
+        useAssetStore.setState({ load: vi.fn(async () => setPanels([panel('show.pdf')])) } as never)
+      })
+      useUiStore.getState().statusAction!.run()
+      await vi.waitFor(() => expect(useDocumentStore.getState().doc.objects).toHaveLength(1))
+      expect((useDocumentStore.getState().doc.objects[0] as { fileId: string }).fileId).toBe('show.pdf')
+      expect(useUiStore.getState().leftOpen).toBe(false)
     })
 
     it('脚本失败：打开素材库，让失败原因与重试入口看得见', async () => {

@@ -177,25 +177,31 @@ const RUNTIME_RUN_OWNER = 'handoff.runtimeNeedsRun'
  */
 async function runThenLand(asset: RuntimeAssetInfo, pj: string | null): Promise<void> {
   if (currentProjectId() !== pj) return
-  await useScriptRunStore.getState().run(asset.script)
+  // 带配置的素材按它自己的配置跑（不读当前参数草稿）；没有配置 = 无参数那张，照旧
+  await useScriptRunStore.getState().run(asset.script, asset.run_config)
   await whenScriptIdle(asset.script)
   if (currentProjectId() !== pj) return
-  await useRuntimeAssetStore.getState().loadAssets()
-  const fresh = (useRuntimeAssetStore.getState().assets ?? []).find((a) => a.stem === asset.stem)
-  if (!fresh?.descriptor) {
+  // 与 applyOpenRequest 同一套解析：先刷新文件素材与 runtime 清单，再按完整身份（id）找 runtime 条目，
+  // 找不到再按磁盘路径找——savefig 的图跑成功后原件已在磁盘上，清单不再返回它的 runtime 条目
+  await Promise.all([useAssetStore.getState().load(), useRuntimeAssetStore.getState().loadAssets()])
+  if (currentProjectId() !== pj) return
+  const fresh = (useRuntimeAssetStore.getState().assets ?? []).find((a) => a.id === asset.id && a.descriptor)
+  const disk = fresh ? undefined : findByStem(useAssetStore.getState().panels, asset.stem)
+  const landId = fresh?.id ?? disk?.id
+  if (!landId) {
     // 没跑出图：失败原因与重试入口在素材库的脚本卡片上——把它打开，别让提示凭空消失
-    if (currentProjectId() === pj) useUiStore.setState({ leftTab: 'assets', leftOpen: true })
+    useUiStore.setState({ leftTab: 'assets', leftOpen: true })
     return
   }
   if ((await whenDocumentSettledForEntry(pj)) !== 'ready' || currentProjectId() !== pj) return
   const ui = useUiStore.getState()
-  const landed = landFigure(fresh.id)
+  const landed = landFigure(landId)
   if (landed === 'missing') {
     ui.setStatus(msg('handoff.panelMissing', { stem: asset.stem }, 'project'), 'error')
     return
   }
-  ui.setStatus(msg(landed === 'selected' ? 'handoff.located' : 'handoff.added', { name: fresh.stem }, 'project'), 'done')
-  if (landed === 'selected') ackRepeatHandoff(fresh.id)
+  ui.setStatus(msg(landed === 'selected' ? 'handoff.located' : 'handoff.added', { name: asset.stem }, 'project'), 'done')
+  if (landed === 'selected') ackRepeatHandoff(landId)
 }
 
 /** 执行一次交接。返回值给测试与调用方看，用户看到的是选中的面板或一条 toast。 */
