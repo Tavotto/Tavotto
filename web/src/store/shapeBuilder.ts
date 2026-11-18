@@ -4,7 +4,7 @@ import { builderFaces, builderPlan, mergeFaces, type BuilderFace } from '@/lib/p
 import { loadVecops } from '@/lib/vecops/kernel'
 import type { CanvasObject, PathObject } from '@/types/document'
 import { useDocumentStore } from './documentStore'
-import { finishActiveGesture } from './gestureCoordinator'
+import { finishActiveGesture, registerGesture } from './gestureCoordinator'
 import { useSelectionStore } from './selectionStore'
 import { useUiStore } from './uiStore'
 
@@ -35,6 +35,13 @@ export const useShapeBuilderStore = create<ShapeBuilderState>(() => ({ ...IDLE }
 
 const say = (key: string) => useUiStore.getState().setStatus(msg(`status.${key}`, undefined, 'workspace'), 'info')
 
+/** 在手势协调器里的登记（保存前 / 离散动作前 `finishActiveGesture()` 会把这一轮落地）；null = 没登记 */
+let unregisterGesture: (() => void) | null = null
+function dropGesture() {
+  unregisterGesture?.()
+  unregisterGesture = null
+}
+
 export const shapeBuilderActive = () => useShapeBuilderStore.getState().active
 
 /** 进入：选中两个以上能参与的对象（与路径查找器同一判据）。内核加载不了 = 说一句 */
@@ -55,6 +62,7 @@ export async function enterShapeBuilder(): Promise<boolean> {
   const want = new Set(r.sources.map((o) => o.id))
   const originals = useDocumentStore.getState().doc.objects.filter((o) => want.has(o.id))
   useShapeBuilderStore.setState({ active: true, sources: r.sources, originals, faces: r.faces, gesture: null, hover: null, changed: false })
+  unregisterGesture = registerGesture(finishShapeBuilder)
   return true
 }
 
@@ -98,6 +106,7 @@ export async function endBuilderGesture(): Promise<void> {
 
 /** 不落地地退出（原对象在别处被改了：撤销、别的命令——拿旧样子去落地会把那次改动吞掉） */
 export function cancelShapeBuilder(): void {
+  dropGesture()
   if (useShapeBuilderStore.getState().active) useShapeBuilderStore.setState({ ...IDLE })
 }
 
@@ -105,6 +114,7 @@ export function cancelShapeBuilder(): void {
 export function finishShapeBuilder(): void {
   const st = useShapeBuilderStore.getState()
   if (!st.active) return
+  dropGesture()
   useShapeBuilderStore.setState({ ...IDLE })
   if (!st.changed) return
   const doc = useDocumentStore.getState()

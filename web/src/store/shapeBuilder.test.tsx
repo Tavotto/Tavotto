@@ -14,10 +14,12 @@ import { setVecopsSource } from '@/lib/vecops/kernel'
 import { ShapeBuilderOverlay } from '@/canvas/ShapeBuilderOverlay'
 import { emptyProject, type CanvasObject, type PathObject, type ShapeObject } from '@/types/document'
 import { useDocumentStore } from './documentStore'
+import { finishActiveGesture, hasActiveGesture, resetGestureCoordinator } from './gestureCoordinator'
 import { blockedReason, pathfinderCommand } from './pathfinderActions'
 import { useSelectionStore } from './selectionStore'
 import {
   beginBuilderGesture,
+  cancelShapeBuilder,
   endBuilderGesture,
   enterShapeBuilder,
   extendBuilderGesture,
@@ -167,6 +169,28 @@ describe('会话', () => {
     expect(objs()).toHaveLength(2)
     expect(objs().every((o) => o.type === 'path')).toBe(true)
     expect(past()).toBe(1)
+  })
+})
+
+describe('手势协调器', () => {
+  beforeEach(() => resetGestureCoordinator())
+  it('保存前 finishActiveGesture() 把会话落地；退出后不再留登记（Codex 线程 4614459822）', async () => {
+    await two()
+    await enterShapeBuilder()
+    expect(hasActiveGesture()).toBe(true)
+    beginBuilderGesture(0, true)
+    await endBuilderGesture()
+    finishActiveGesture()
+    expect(useShapeBuilderStore.getState().active).toBe(false)
+    expect(past()).toBe(1)
+    expect(objs().every((o) => o.type === 'path')).toBe(true)
+    expect(hasActiveGesture()).toBe(false)
+  })
+  it('取消退出也注销登记', async () => {
+    await two()
+    await enterShapeBuilder()
+    cancelShapeBuilder()
+    expect(hasActiveGesture()).toBe(false)
   })
 })
 
