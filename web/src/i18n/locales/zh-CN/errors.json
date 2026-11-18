@@ -417,7 +417,7 @@
     "cell_map_key_unknown": "映射里写的原文在这一列里找不到。",
     "propose_cells_invalid": "这条处理规则没法用，请重新选一次。",
     "propose_cells_need_rule": "这段说明要先交给助手整理成规则，暂时不能直接用。",
-    "tables_limit_exceeded": "一次最多合画 {{max}} 份。",
+    "tables_limit_exceeded": "一次最多合并 {{max}} 个文件。",
     "data_figure_recipe_invalid": "这个备选和现在的数据对不上了，请重新生成。",
     "data_path_outside_project": "这份数据不在当前项目里。",
     "data_not_found": "找不到这份数据文件。",

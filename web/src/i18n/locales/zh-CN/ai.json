@@ -687,20 +687,21 @@
       "undo": "撤销"
     },
     "batch": {
-      "pick": "选多份",
-      "idle": "点要画的文件",
-      "selected": "已选 {{count}} 份",
-      "progress": "正在画 {{done}} / {{total}}",
-      "partial": "{{done}} 张已画，{{failed}} 张没画出来",
-      "draw": "各画一张",
-      "merge": "合画一张",
-      "stop": "停下",
-      "showDone": "看已画的",
-      "queued": "等着",
-      "done": "已画",
-      "failed": "没画出来",
-      "groupTitle": "{{count}} 份数据",
-      "columnsDiffer": "这几份的列名不一样，画不进一张图。"
+      "pick": "多选",
+      "idle": "未选择",
+      "selected": "已选 {{count}} 个",
+      "progress": "作图中 {{done}}/{{total}}",
+      "partial": "已完成 {{done}} 张，{{failed}} 张失败",
+      "draw": "分别作图",
+      "merge": "合并作图",
+      "stop": "停止",
+      "showDone": "查看素材",
+      "retry": "重试",
+      "queued": "排队中",
+      "done": "已完成",
+      "failed": "失败",
+      "groupTitle": "{{count}} 个文件",
+      "columnsDiffer": "列名不一致，无法合并作图。"
     }
   }
 }

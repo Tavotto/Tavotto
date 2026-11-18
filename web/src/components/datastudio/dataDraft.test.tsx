@@ -536,21 +536,21 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     const meta = (i: number) => qa('[data-studio-file]')[i]!
     const cmdClick = (el: Element) => act(async () => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true })))
     const btn = () => q<HTMLButtonElement>('[data-studio-pick-mode]')!
-    expect(btn().textContent).toBe('选多份')
+    expect(btn().textContent).toBe('多选')
     await cmdClick(meta(0))
     expect(btn().textContent).toBe('取消') // 手势选中第一份 = 进入多选态，按钮同步成「取消」
     expect(q<HTMLButtonElement>('[data-studio-batch-run]')!.disabled).toBe(true) // 1 份：两个按钮都禁用
     await cmdClick(meta(2))
     expect(q<HTMLButtonElement>('[data-studio-batch-run]')!.disabled).toBe(false)
-    expect(q('[data-studio-batch-run]')!.textContent).toBe('各画一张')
-    expect(q('[data-studio-batch-merge]')!.textContent).toBe('合画一张')
+    expect(q('[data-studio-batch-run]')!.textContent).toBe('分别作图')
+    expect(q('[data-studio-batch-merge]')!.textContent).toBe('合并作图')
     expect(q('[data-data-draft]')).toBeNull() // 多选不开临时标签
     await click(meta(0)) // 多选态下普通单击 = 取消这一份，不开临时标签
     await flush()
     expect(useDataBatchStore.getState().selection).toHaveLength(1)
     expect(useDataFigureStore.getState().draftOpen).toBe(false)
     await click(btn()) // 点「取消」：退出并清掉选择
-    expect(btn().textContent).toBe('选多份')
+    expect(btn().textContent).toBe('多选')
     expect(useDataBatchStore.getState()).toMatchObject({ pickMode: false, selection: [] })
     await click(meta(0))
     await flush()
@@ -568,10 +568,10 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     await act(async () => useDataFigureStore.getState().loadFiles())
     await flush()
     const btn = () => q<HTMLButtonElement>('[data-studio-pick-mode]')!
-    expect(btn().textContent).toBe('选多份')
+    expect(btn().textContent).toBe('多选')
     await click(btn())
     expect(btn().textContent).toBe('取消')
-    expect(q('[data-studio-batch-zone]')!.textContent).toContain('点要画的文件')
+    expect(q('[data-studio-batch-zone]')!.textContent).toContain('未选择')
     // 行尾灰字行数在多选态下仍在（不再有「＋」）
     expect(qa('[data-studio-file]')[0]!.textContent).toMatch(/行/)
     expect(q('[data-studio-pick-toggle]')).toBeNull()
@@ -583,7 +583,7 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     act(() => useDataBatchStore.setState({ running: false }))
     // 切项目 / clear：复位
     act(() => useDataBatchStore.getState().clear())
-    expect(btn().textContent).toBe('选多份')
+    expect(btn().textContent).toBe('多选')
     await act(async () => void (await new Promise((r) => setTimeout(r, 200)))) // 动作区走完退场过渡
     expect(q('[data-studio-batch-zone]')).toBeNull()
   })
@@ -625,8 +625,8 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     expect(useDataBatchStore.getState()).toMatchObject({ pickMode: false, selection: [] })
     expect(propose.mock.calls.at(-1)![0]).toEqual({ tables: [{ path: 'growth.csv' }, { path: 'names.csv' }], render: 'lazy' })
     expect(qa('[data-candidate]')).toHaveLength(4)
-    expect(q('[data-data-draft]')!.getAttribute('aria-label')).toBe('2 份数据')
-    expect(q('[data-data-panel] h2')!.textContent).toBe('2 份数据')
+    expect(q('[data-data-draft]')!.getAttribute('aria-label')).toBe('2 个文件')
+    expect(q('[data-data-panel] h2')!.textContent).toBe('2 个文件')
     expect(q('[data-data-panel-meta]')).toBeNull() // 第一份的行列数不代表整组
     expect(q('[data-data-roles]')).not.toBeNull()
     expect(q('[data-data-strip]')).not.toBeNull()
@@ -646,8 +646,8 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     propose.mockRejectedValueOnce(new ApiError('tables_columns_differ', 400, { code: 'tables_columns_differ' }))
     await groupTwo()
     const p = q('[data-studio-group-problem]')!
-    expect(p.textContent).toContain('这几份的列名不一样，画不进一张图。')
-    expect(p.querySelector('button')!.textContent).toBe('各画一张')
+    expect(p.textContent).toContain('列名不一致，无法合并作图。')
+    expect(p.querySelector('button')!.textContent).toBe('分别作图')
     expect(q('[data-studio-retry]')).toBeNull() // 再试一次不是出路
     propose.mockImplementation(async (b) => ({ ...cands(1), session: `S-${b.table}` }))
     commit.mockResolvedValue({ task: { outcome: 'completed' }, script: 'tavotto_figures/x.py', stem: 'x', data_check: 'verified' })
@@ -662,8 +662,8 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     propose.mockRejectedValueOnce(new ApiError('tables_limit_exceeded', 400, { code: 'tables_limit_exceeded', params: { max: 8 } }))
     await groupTwo()
     const p = q('[data-studio-group-problem="limitExceeded"]')!
-    expect(p.textContent).toContain('一次最多合画 8 份。')
-    expect(p.querySelector('button')!.textContent).toBe('各画一张')
+    expect(p.textContent).toContain('一次最多合并 8 个文件。')
+    expect(p.querySelector('button')!.textContent).toBe('分别作图')
   })
 
   it('合画里某份表不在了（200 nothing + table_not_found）：走 nothing 的话，也给「各画一张」这个出路', async () => {
@@ -671,7 +671,7 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     await groupTwo()
     const p = q('[data-studio-group-problem]')!
     expect(p.textContent).toContain('找不到你选的那张表。')
-    expect(p.querySelector('button')!.textContent).toBe('各画一张')
+    expect(p.querySelector('button')!.textContent).toBe('分别作图')
   })
 
   it('动作区：多选态下在标题行正下方、清单上方；高度类名从「已选 0 份」到进行中、没画成全程不变；退出后消失', async () => {
@@ -689,14 +689,14 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     // 固定高度：同一个类名贯穿所有状态（jsdom 没有排版，真浏览器里的行位置另用截图脚本量）
     const cls = zone().className
     const lines = () => zone().querySelector('p')!.textContent
-    expect(lines()).toBe('点要画的文件')
+    expect(lines()).toBe('未选择')
     await click(qa('[data-studio-file]')[0]!)
     await click(qa('[data-studio-file]')[2]!)
-    expect(lines()).toBe('已选 2 份')
+    expect(lines()).toBe('已选 2 个')
     act(() => useDataBatchStore.setState({ running: true, progress: { done: 1, total: 2 } }))
-    expect(lines()).toBe('正在画 2 / 2')
+    expect(lines()).toBe('作图中 2/2')
     act(() => useDataBatchStore.setState({ running: false, rows: { k: { state: 'done' }, j: { state: 'failed', reason: null } } }))
-    expect(lines()).toBe('1 张已画，1 张没画出来')
+    expect(lines()).toBe('已完成 1 张，1 张失败')
     expect(zone().className).toBe(cls)
     act(() => useDataBatchStore.getState().clear())
     await act(async () => void (await new Promise((r) => setTimeout(r, 200))))

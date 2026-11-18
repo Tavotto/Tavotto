@@ -694,20 +694,21 @@
       "undo": "Undo"
     },
     "batch": {
-      "pick": "Select several",
-      "idle": "Click the files to draw",
+      "pick": "Select",
+      "idle": "None selected",
       "selected": "{{count}} selected",
-      "progress": "Drawing {{done}} / {{total}}",
-      "partial": "{{done}} drawn, {{failed}} didn't draw",
-      "draw": "Draw one each",
-      "merge": "Draw as one",
+      "progress": "Plotting {{done}}/{{total}}",
+      "partial": "{{done}} done, {{failed}} failed",
+      "draw": "Plot each",
+      "merge": "Plot combined",
       "stop": "Stop",
-      "showDone": "See what's drawn",
-      "queued": "Waiting",
-      "done": "Drawn",
-      "failed": "Didn't draw",
-      "groupTitle": "{{count}} data files",
-      "columnsDiffer": "These files have different column names, so they can't go in one figure."
+      "showDone": "View assets",
+      "retry": "Retry",
+      "queued": "Queued",
+      "done": "Done",
+      "failed": "Failed",
+      "groupTitle": "{{count}} files",
+      "columnsDiffer": "Columns don’t match, so these can’t be combined."
     }
   }
 }

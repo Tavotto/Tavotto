@@ -66,7 +66,7 @@ function Zone() {
           </Button>
         )}
         <Button variant="secondary" size="md" data-studio-batch-retry onClick={() => void b().run(stop === 'unwritable' ? 'all' : 'failed')}>
-          {t('dataFigureV2.problem.retry')}
+          {t('dataFigureV2.batch.retry')}
         </Button>
       </>
     )

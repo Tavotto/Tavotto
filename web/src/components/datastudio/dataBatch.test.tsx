@@ -160,9 +160,9 @@ describe('数据抽屉：多选', () => {
     }
     await mountList({ rowStates })
     expect(row('a.csv').querySelector('[data-studio-row-state=running] svg')).not.toBeNull()
-    expect(row('b.csv').querySelector('[data-studio-row-state=done]')!.textContent).toBe('已画')
+    expect(row('b.csv').querySelector('[data-studio-row-state=done]')!.textContent).toBe('已完成')
     const failed = row('d.csv').querySelector('[data-studio-row-state=failed]')!
-    expect(failed.textContent).toBe('没画出来')
+    expect(failed.textContent).toBe('失败')
     expect(failed.getAttribute('title')).toBe('这张表没能画出图。')
     // 清单重读：换一份新的 rows
     await act(async () => root.render(<TooltipProvider><DataList rows={fileRows(entries.map((e) => ({ ...e })))} selected={null} overviews={{}} onSelect={onSelect} multi={{ selected: new Set(), rowStates, ...m }} /></TooltipProvider>))
@@ -216,17 +216,17 @@ describe('数据抽屉：多选', () => {
         }}
       />,
     )
-    expect(row('a.csv').querySelector('[data-studio-row-state=queued]')!.textContent).toBe('等着')
+    expect(row('a.csv').querySelector('[data-studio-row-state=queued]')!.textContent).toBe('排队中')
     expect(row('a.csv').className).toContain('inset-ring') // 等着仍是选中的卡片
     expect(row('b.csv').querySelector('[data-studio-row-state=running] svg')).not.toBeNull()
     expect(row('b.csv').className).toContain('inset-ring')
-    expect(row('c.csv').querySelector('[data-studio-row-state=done]')!.textContent).toBe('已画')
+    expect(row('c.csv').querySelector('[data-studio-row-state=done]')!.textContent).toBe('已完成')
     expect(row('c.csv').className).not.toContain('inset-ring')
     const failed = row('d.csv')
     expect(failed.className).not.toContain('inset-ring')
     expect(failed.getAttribute('aria-selected')).toBe('false')
     const f = failed.querySelector('[data-studio-row-state=failed]')!
-    expect(f.textContent).toBe('没画出来')
+    expect(f.textContent).toBe('失败')
     expect(f.querySelector('svg')).not.toBeNull()
     expect(f.className).toContain('text-ink-2') // 比普通灰字（ink-3）深一档
     expect(f.className).not.toContain('text-ink-3')
@@ -299,13 +299,13 @@ describe('动作区 DataBatchActions', () => {
 
   it('0 份：一句灰字「点要画的文件」，「各画一张」「合画一张」都禁用；1 份「已选 1 份」仍禁用；≥2 份启用', async () => {
     await mount(<DataBatchActions open />)
-    expect(line()).toBe('点要画的文件')
-    expect(btns().map((b) => [b.textContent, b.disabled])).toEqual([['各画一张', true], ['合画一张', true]])
+    expect(line()).toBe('未选择')
+    expect(btns().map((b) => [b.textContent, b.disabled])).toEqual([['分别作图', true], ['合并作图', true]])
     act(() => sel(1))
-    expect(line()).toBe('已选 1 份')
+    expect(line()).toBe('已选 1 个')
     expect(btns().every((b) => b.disabled)).toBe(true)
     act(() => sel(3))
-    expect(line()).toBe('已选 3 份')
+    expect(line()).toBe('已选 3 个')
     expect(btns().every((b) => !b.disabled)).toBe(true)
     // 主按钮 + 次按钮，等宽并排（两列等分的网格）
     expect(zone().querySelector('.grid-cols-2')!.children).toHaveLength(2)
@@ -336,7 +336,7 @@ describe('动作区 DataBatchActions', () => {
     act(() => sel(9))
     expect(btns()[0]!.disabled).toBe(false)
     expect(btns()[1]!.disabled).toBe(true)
-    expect(btns()[1]!.getAttribute('title')).toBe('一次最多合画 8 份。')
+    expect(btns()[1]!.getAttribute('title')).toBe('一次最多合并 8 个文件。')
   })
 
   it('进行中：「正在画 2 / 3」，两个按钮换成一个次按钮「停下」，点它 = stopRun；点过之后禁用', async () => {
@@ -345,8 +345,8 @@ describe('动作区 DataBatchActions', () => {
       sel(3)
       useDataBatchStore.setState({ running: true, progress: { done: 1, total: 3 } })
     })
-    expect(line()).toBe('正在画 2 / 3')
-    expect(btns().map((b) => b.textContent)).toEqual(['停下'])
+    expect(line()).toBe('作图中 2/3')
+    expect(btns().map((b) => b.textContent)).toEqual(['停止'])
     await act(async () => btns()[0]!.click())
     expect(useDataBatchStore.getState().stopRequested).toBe(true)
     expect(btns()[0]!.disabled).toBe(true)
@@ -357,8 +357,8 @@ describe('动作区 DataBatchActions', () => {
     useDataBatchStore.setState({ run })
     await mount(<DataBatchActions open />)
     act(() => useDataBatchStore.setState({ pickMode: true, rows: { a: { state: 'done' }, b: { state: 'failed', reason: null } } }))
-    expect(line()).toBe('1 张已画，1 张没画出来')
-    expect(btns().map((b) => b.textContent)).toEqual(['看已画的', '再试一次'])
+    expect(line()).toBe('已完成 1 张，1 张失败')
+    expect(btns().map((b) => b.textContent)).toEqual(['查看素材', '重试'])
     await act(async () => btns()[1]!.click())
     expect(run).toHaveBeenCalledWith('failed')
     // 一张都没画成：「看已画的」无处可去，禁用
@@ -371,7 +371,7 @@ describe('动作区 DataBatchActions', () => {
     useDataBatchStore.setState({ run })
     await mount(<DataBatchActions open />)
     act(() => useDataBatchStore.setState({ pickMode: true, stop: 'unwritable', rows: { b: { state: 'failed', reason: null } } }))
-    expect(btns().map((b) => b.textContent)).toEqual(['换个文件夹', '再试一次'])
+    expect(btns().map((b) => b.textContent)).toEqual(['换个文件夹', '重试'])
     await act(async () => btns()[1]!.click())
     expect(run).toHaveBeenCalledWith('all')
   })
