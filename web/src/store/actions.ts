@@ -107,6 +107,8 @@ import {
 } from '@/types/document'
 import { contentToPageVec, panelContentTransform } from '@/lib/panelTransform'
 import { emitLayoutSaved } from '@/lib/layoutSaved'
+import { applyV2, type V2Patch } from '@/lib/journalV2'
+import { useJournalV2Store } from './journalV2Store'
 import { useTimelineStore } from './timelineStore'
 import { hasPendingStyleWork } from './styleWork'
 import { fitStageNow } from '@/store/zoomToSelection'
@@ -905,7 +907,7 @@ export function setPageSize(w: number, h: number) {
  * 选一本期刊（ADR 0155）：**一次提交**写绑定（中性底 + 该期刊的覆盖 + 出处）并把页宽跟到该期刊最近的一栏——
  * 撤销一步全回去。期刊没规定栏宽就只写绑定，页宽不动。确认只用胶囊 toast（不推挤版面）。
  */
-export function selectJournal(journalId: string): void {
+export function selectJournal(journalId: string, v2: V2Patch | null = null): void {
   const d0 = doc()
   // 退路只记「选期刊之前」那一份：从一本期刊换到另一本时沿用最初的，不把上一本期刊当成「之前」
   const p0 = d0.profile
@@ -922,6 +924,9 @@ export function selectJournal(journalId: string): void {
     follow: p0?.follow,
     prev,
   })
+  // v2 事实（取到了才有）按项叠上去，v2 优先；预检求值器不变（ADR 0155 §14）
+  pick.binding = applyV2(pick.binding, v2)
+  useJournalV2Store.getState().remember(journalId, v2)
   // 期刊把页宽设成了多少：「不按期刊」只在页宽仍是它时才退回原页宽
   // 新期刊没给页宽（pageW = null）时沿用已记的 setW：当前页宽可能是用户手改的，不能把它当成「期刊设的」
   if (pick.binding.journalPrev) {
@@ -939,6 +944,23 @@ export function selectJournal(journalId: string): void {
         : msg('journal.picked', { name: pick.label }, 'dialogs'),
       'done',
     )
+}
+
+/**
+ * 打开项目 / 切画布后，已按期刊检查的画布按该刊的 v2 事实自动更新（2026-11-17 用户拍板：自动，不要确认）。
+ * 只叠 v2 那几项；v1 的部分原样不动（库更新不改已定稿项目的 v1 结论）。叠完没变化就什么都不写。
+ * 取不到 v2（离线 / 被拒 / 开关关）= 什么都不做，预检照绑定里存着的判。
+ */
+export function refreshJournalV2(journalId: string, v2: V2Patch | null): void {
+  useJournalV2Store.getState().remember(journalId, v2)
+  const p = doc().profile
+  if (!v2 || !p?.journalRef || p.journalRef.id !== journalId) return
+  const next = applyV2(p, v2)
+  if (next === p) return
+  commit(hist('refreshJournalV2'), (d) => {
+    d.profile = next
+  })
+  useUiStore.getState().setStatus(msg('journal.v2Updated', { name: p.journalRef.label }, 'dialogs'), 'done')
 }
 
 /**

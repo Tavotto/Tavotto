@@ -514,8 +514,10 @@ describe('远程目录里还没下载的刊：选中时的胶囊提示', () => {
   /** 可手动放行的下载：返回 release(body)，在它被调用之前 fetch 一直挂着 */
   const deferred = () => {
     const releases: ((body: unknown) => void)[] = []
-    globalThis.fetch = (() =>
-      new Promise<Response>((resolve) => {
+    globalThis.fetch = ((input: RequestInfo | URL) =>
+      String(input).includes('/api/journal-facts/')
+        ? Promise.resolve(new Response('{}', { status: 404 })) // v2 取不到：照 v1 选
+        : new Promise<Response>((resolve) => {
         releases.push((body) => resolve(new Response(JSON.stringify(body), { status: 200 })))
       })) as typeof fetch
     return releases
@@ -549,7 +551,8 @@ describe('远程目录里还没下载的刊：选中时的胶囊提示', () => {
     await click(q('[data-journal-picker]'))
     await click(q('[data-journal-option="fx-beta"]')) // 要下载，挂起
     expect(releases).toHaveLength(1)
-    await click(q('[data-journal-option="fx-alpha"]')) // 已在本地：立刻绑定
+    await click(q('[data-journal-option="fx-alpha"]')) // 已在本地：取 v2（取不到 = null）后绑定
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)) })
     expect(useDocumentStore.getState().doc.profile?.journalRef?.id).toBe('fx-alpha')
     await act(async () => releases[0]({ state: 'ready', bundle: bundleOf('fx-beta') }))
     expect(useDocumentStore.getState().doc.profile?.journalRef?.id).toBe('fx-alpha')

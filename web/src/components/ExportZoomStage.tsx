@@ -45,12 +45,19 @@ function clampView(v: View, box: { w: number; h: number }, fit: { w: number; h: 
 export function ExportZoomStage({
   ratio,
   framed = true,
+  logicalSize,
   children,
 }: {
   /** 内容宽高比 */
   ratio: number
   /** 是否在内容盒外围画 1px 内缩发丝边（纸张越界外扩取景时关掉，由内部纸面自己画边） */
   framed?: boolean
+  /**
+   * 固定物理排版坐标系（如 96 DPI 下 A4 纸面 793.7 × 1122.5 px）：
+   * 传入时由舞台用**单层** 2D scale 把物理坐标盒等比缩放到视口，避免双层嵌套 scale 导致浏览器先低清光栅化再放大发虚，
+   * 同时保证纸面 pt 字号与图内 pt 字号严格 1:1 物理对齐。
+   */
+  logicalSize?: { w: number; h: number }
   children: (px: number) => ReactNode
 }) {
   const boxRef = useRef<HTMLDivElement>(null)
@@ -121,12 +128,34 @@ export function ExportZoomStage({
   }, [])
 
   const zoomed = view.s > 1.001
-  const contentStyle: CSSProperties = {
-    ...(fit
-      ? { width: fit.w, height: fit.h }
-      : { aspectRatio: String(ratio), width: '100%', maxHeight: '100%' }),
-    transform: `translate(${view.x}px, ${view.y}px) scale(${view.s})`,
-  }
+  const useLogical = !!logicalSize && logicalSize.w > 0 && logicalSize.h > 0
+  const baseScale = useLogical && fit ? fit.w / logicalSize.w : 1
+  const totalScale = baseScale * view.s
+  const contentStyle: CSSProperties =
+    useLogical && fit
+      ? {
+          position: 'absolute',
+          left: (box.w - logicalSize.w) / 2,
+          top: (box.h - logicalSize.h) / 2,
+          width: logicalSize.w,
+          height: logicalSize.h,
+          transformOrigin: 'center center',
+          transform: `translate(${view.x}px, ${view.y}px) scale(${totalScale})`,
+          ...(framed
+            ? {
+                outlineStyle: 'solid',
+                outlineWidth: `${1 / totalScale}px`,
+                outlineOffset: `${-1 / totalScale}px`,
+                outlineColor: 'var(--color-border)',
+              }
+            : undefined),
+        }
+      : {
+          ...(fit
+            ? { width: fit.w, height: fit.h }
+            : { aspectRatio: String(ratio), width: '100%', maxHeight: '100%' }),
+          transform: `translate(${view.x}px, ${view.y}px) scale(${view.s})`,
+        }
   return (
     <div
       ref={boxRef}
@@ -142,7 +171,10 @@ export function ExportZoomStage({
       <div
         data-export-preview-content
         // 内缩的发丝边（不占位、不留边距）：页面白与舞台灰很接近，没有它看不出页面边界
-        className={cn('shrink-0', framed && 'outline outline-1 -outline-offset-1 outline-border')}
+        className={cn(
+          'shrink-0',
+          framed && !(useLogical && fit) && 'outline outline-1 -outline-offset-1 outline-border',
+        )}
         style={contentStyle}
       >
         {children(fit ? px : 0)}
