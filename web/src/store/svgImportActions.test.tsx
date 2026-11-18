@@ -11,6 +11,7 @@ import { emptyProject, type CanvasObject } from '@/types/document'
 import { useDocumentStore } from './documentStore'
 import { useSelectionStore } from './selectionStore'
 import { canExplodeSvg, explodeSvgPanel, pasteSvgText } from './svgImportActions'
+import { setCurrentProjectId } from '@/lib/session'
 import { useUiStore } from './uiStore'
 
 const intake = vi.hoisted(() => vi.fn(async () => ({ placed: ['pasted.svg'], problems: [], aborted: false })))
@@ -139,6 +140,70 @@ const svgPanel = (extra: Partial<CanvasObject> = {}): CanvasObject =>
     id: 'p', type: 'panel', fileId: 'art.svg', fileKind: 'svg', nativeW: 52.9, nativeH: 26.5, overrides: [],
     x: 100, y: 50, w: illustrator.size_mm[0] * 2, h: illustrator.size_mm[1] * 2, ...extra,
   }) as CanvasObject
+
+describe('异步返回后核对发起时的项目与画布（Codex 线程 4614436916）', () => {
+  /** 让解析请求悬着，返回放行它的函数 */
+  function holdImport() {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((r) => (release = r))
+    const base = globalThis.fetch
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url).includes('/api/svg/import')) await gate
+      return base(url, init)
+    }) as typeof fetch
+    return release
+  }
+  afterEach(() => setCurrentProjectId(null))
+
+  it('粘贴：解析期间切到别的项目 → 不 commit 进新项目、也不走图片回退', async () => {
+    setCurrentProjectId('A')
+    await seed()
+    const release = holdImport()
+    const p = pasteSvgText(SVG)
+    setCurrentProjectId('B')
+    release()
+    expect(await p).toBe('aborted')
+    expect(objs()).toHaveLength(0)
+    expect(past()).toBe(0)
+    expect(intake).not.toHaveBeenCalled()
+  })
+
+  it('粘贴：做不准要走图片回退时，换了项目也不上传', async () => {
+    setCurrentProjectId('A')
+    await seed()
+    reply = { ok: true, objects: [], size_mm: [1, 1], unsupported: { image: 2 } }
+    const release = holdImport()
+    const p = pasteSvgText(SVG)
+    setCurrentProjectId('B')
+    release()
+    expect(await p).toBe('aborted')
+    expect(intake).not.toHaveBeenCalled()
+  })
+
+  it('粘贴：解析期间换了画布标签 → 放弃', async () => {
+    setCurrentProjectId('A')
+    await seed()
+    const release = holdImport()
+    const p = pasteSvgText(SVG)
+    useDocumentStore.setState({ activeCanvasId: 'other_canvas' })
+    release()
+    expect(await p).toBe('aborted')
+    expect(objs()).toHaveLength(0)
+    expect(intake).not.toHaveBeenCalled()
+  })
+
+  it('拆成对象：解析期间切了项目 → 图不动、不进历史', async () => {
+    setCurrentProjectId('A')
+    await seed([{ id: 'p', type: 'panel', fileId: 'f.svg', fileKind: 'svg', x: 0, y: 0, w: 10, h: 10 } as CanvasObject])
+    const release = holdImport()
+    const p = explodeSvgPanel('p')
+    setCurrentProjectId('B')
+    release()
+    expect(await p).toBe(false)
+    expect(objs().map((o) => o.id)).toEqual(['p'])
+    expect(past()).toBe(0)
+  })
+})
 
 describe('拆成可编辑对象', () => {
   it('静态 SVG 图：按画布上的大小缩放、原位替换、接着待在原来的组里；一条历史', async () => {

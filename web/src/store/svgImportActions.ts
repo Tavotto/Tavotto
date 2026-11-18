@@ -7,6 +7,7 @@ import { groupPathOf, setGroupPath } from '@/lib/groupTree'
 import { scaleObject } from '@/lib/transform'
 import type { CanvasObject, PanelObject } from '@/types/document'
 import { panelRotation } from '@/types/document'
+import { currentProjectId } from '@/lib/session'
 import { useDocumentStore } from './documentStore'
 import { finishActiveGesture } from './gestureCoordinator'
 import { useSelectionStore } from './selectionStore'
@@ -44,10 +45,22 @@ async function runImport(svg: string): Promise<{ res: SvgImportResult | null; re
   }
 }
 
-/** 粘贴进来的 SVG 标记 → 可编辑对象；做不准就整个当图片放。返回落成了什么 */
-export async function pasteSvgText(svg: string): Promise<'objects' | 'image'> {
+/**
+ * 发起那一刻的项目 + 画布；异步回来（解析 / 读文件）时核对，换了就放弃结果：A 项目粘贴的对象不许 commit 进 B，
+ * 也不许把 A 的 SVG 当素材上传进 B 的项目目录（`importAndPlace` 是在响应之后才捕获项目的，所以必须在它之前拦）
+ */
+const originNow = () => ({ pj: currentProjectId(), canvasId: useDocumentStore.getState().activeCanvasId })
+const stillAtOrigin = (o: ReturnType<typeof originNow>) => {
+  const n = originNow()
+  return n.pj === o.pj && n.canvasId === o.canvasId
+}
+
+/** 粘贴进来的 SVG 标记 → 可编辑对象；做不准就整个当图片放。返回落成了什么（`aborted` = 等结果时换了项目 / 画布，什么都没放） */
+export async function pasteSvgText(svg: string): Promise<'objects' | 'image' | 'aborted'> {
   finishActiveGesture()
+  const origin = originNow()
   const { res, reason } = await runImport(svg)
+  if (!stillAtOrigin(origin)) return 'aborted'
   const doc = useDocumentStore.getState().doc
   const size = res?.size_mm ?? [0, 0]
   const placed =
@@ -62,7 +75,7 @@ export async function pasteSvgText(svg: string): Promise<'objects' | 'image'> {
     const why = reasonText(res?.ok ? reason : (reason ?? 'unreadable'))
     const nameOf = (f: File, i: number) => pastedImageName({ name: '', type: f.type }, now, i)
     const r = await importAndPlace([file], { nameOf })
-    if (r.aborted) return 'image'
+    if (r.aborted) return 'aborted'
     if (r.placed.length) {
       svgStatus('svgAsImage', { reason: why }, 'info')
       return 'image'
@@ -70,6 +83,7 @@ export async function pasteSvgText(svg: string): Promise<'objects' | 'image'> {
     // 项目里的 SVG 素材检查也不收（滤镜、外链……RenderCore 画不准）：按浏览器画出来的样子栅格化成 PNG 放进来
     const code = res?.ok ? reason : (res?.error ?? reason ?? 'unreadable')
     const png = code && NO_RASTER.has(code) ? null : await rasterizeSvg(svg, res?.size_mm ?? [0, 0])
+    if (!stillAtOrigin(origin)) return 'aborted'
     const r2 = png ? await importAndPlace([new File([png], 'pasted.png', { type: 'image/png' })], { nameOf }) : null
     if (r2?.placed.length) svgStatus('svgAsRaster', { reason: why, dpi: RASTER_DPI }, 'info')
     else reportImageResult(r2 && !r2.aborted ? r2 : r)
@@ -95,6 +109,7 @@ export async function explodeSvgPanel(id: string): Promise<boolean> {
   const panel = useDocumentStore.getState().doc.objects.find((o) => o.id === id)
   if (!canExplodeSvg(panel)) return false
   finishActiveGesture()
+  const origin = originNow()
   let svg = ''
   try {
     const r = await fetch(fileUrl(panel.fileId))
@@ -102,7 +117,9 @@ export async function explodeSvgPanel(id: string): Promise<boolean> {
   } catch {
     svg = ''
   }
+  if (!stillAtOrigin(origin)) return false
   const { res, reason } = svg ? await runImport(svg) : { res: null, reason: null }
+  if (!stillAtOrigin(origin)) return false
   const placed = res?.ok && !reason && res.objects ? placeImported(res.objects, { x: 0, y: 0 }) : null
   const size = res?.size_mm
   if (!placed || !size || !(size[0] > 0) || !(size[1] > 0)) {
