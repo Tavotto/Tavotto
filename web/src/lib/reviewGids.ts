@@ -1,3 +1,4 @@
+import type { ElementGeometry, ManifestElement } from '@/lib/api'
 import { exactPanelManifest, structuralPanelManifest, type RenderState } from '@/store/renderStore'
 import type { CanvasObject, PanelObject } from '@/types/document'
 
@@ -22,7 +23,7 @@ export function owningPanel(
     if (objId !== null && o.id !== objId) continue
     if (o.id === gid) return o
     const m = exactPanelManifest(render, o) ?? structuralPanelManifest(render, o)
-    if (m?.elements.some((e) => e.gid === inner)) return o
+    if (m && (m.elements.some((e) => e.gid === inner) || guideBox(m.elements, inner))) return o
   }
   return null
 }
@@ -35,4 +36,74 @@ export function manifestsPending(
   return objects.filter(
     (o): o is PanelObject => o.type === 'panel' && !(exactPanelManifest(render, o) ?? structuralPanelManifest(render, o)),
   )
+}
+
+/**
+ * 外部审阅页把子图的边框线 / 网格线 / 刻度线当独立目标点选（ADR 0187 修订 2026-11-17）：它们不是画布元素，
+ * gid 是引擎上传时合成的 `<子图 gid>.spine_left` / `.xgrid` / `.ytickmarks`，数据在子图那一项的
+ * `spines` / `grid` / `tickmarks` 里。画布不据此建任何可选目标，只给审阅意见的圆点找落点。
+ */
+const GUIDE_GID = /^(.+)\.(?:spine_(left|right|top|bottom)|([xy])(grid|tickmarks))$/
+
+/** 与引擎 `reviewshare._GUIDE_MIN_THICK` 同值：水平 / 垂直线的框垫出的最小厚度（figure 分数） */
+const GUIDE_MIN_THICK = 0.002
+
+export interface GuideRef {
+  /** 所属子图的 manifest gid */
+  base: string
+  kind: 'spine' | 'grid' | 'tickmarks'
+  /** 边框线 = 哪一边；网格线 / 刻度线 = 哪条轴 */
+  key: 'left' | 'right' | 'top' | 'bottom' | 'x' | 'y'
+}
+
+export function parseGuideGid(inner: string): GuideRef | null {
+  const m = GUIDE_GID.exec(inner)
+  if (!m) return null
+  if (m[2]) return { base: m[1], kind: 'spine', key: m[2] as GuideRef['key'] }
+  return { base: m[1], kind: m[4] as 'grid' | 'tickmarks', key: m[3] as 'x' | 'y' }
+}
+
+/**
+ * 合成 gid 现在在子图里的框（figure 分数 `[x, y, w, h]`、y 向下，与上传时同一口径）；
+ * 子图不在、那一边不可见 / 网格没开 / 刻度线被关了（数据没有了）都是 null。
+ */
+export function guideBox(
+  elements: readonly (Pick<ManifestElement, 'gid' | 'spines' | 'grid' | 'tickmarks'> & Partial<Pick<ManifestElement, 'editable'>>)[],
+  inner: string,
+): [number, number, number, number] | null {
+  const ref = parseGuideGid(inner)
+  if (!ref) return null
+  const ax = elements.find((e) => e.gid === ref.base)
+  if (!ax) return null
+  // 子图被隐藏（与 `isElementHidden` / 上传侧 `_is_hidden` 同一判据）：它的线都不在画面上
+  if (ax.editable?.some((f) => f.prop === 'visible' && f.value === false)) return null
+  const pts: [number, number][] = []
+  // 能落墨的范围：整张图，网格线再加它自己的裁剪框（与上传侧 `_visible_geometry` 同一口径）
+  let lim: [number, number, number, number] = [0, 0, 1, 1]
+  if (ref.kind === 'spine') {
+    const sp = ax.spines?.[ref.key as 'left']
+    // 线宽 0 / 透明（引擎记 stroke_pt: 0）与不可见一样：审阅侧不出这个目标，旧意见也不再挂上去
+    if (!sp?.visible || sp.stroke_pt === 0) return null
+    pts.push(sp.from, sp.to)
+  } else {
+    const g: ElementGeometry | undefined = ax[ref.kind]?.[ref.key as 'x' | 'y']
+    for (const path of g?.paths ?? []) pts.push(...path.points)
+    if (g?.clip) {
+      const [cx, cy, cw, ch] = g.clip
+      lim = [Math.max(0, cx), Math.max(0, cy), Math.min(1, cx + cw), Math.min(1, cy + ch)]
+    }
+  }
+  if (pts.length === 0) return null
+  const xs = pts.map((q) => q[0])
+  const ys = pts.map((q) => q[1])
+  // 挪到图外（如 `set_position(('outward', 100))`）的线上传侧已经不出，这里也不能再认，
+  // 否则旧意见会落到面板框上一个不相干的位置
+  let x0 = Math.max(Math.min(...xs), lim[0])
+  let x1 = Math.min(Math.max(...xs), lim[2])
+  let y0 = Math.max(Math.min(...ys), lim[1])
+  let y1 = Math.min(Math.max(...ys), lim[3])
+  if (!(x1 >= x0 && y1 >= y0)) return null
+  if (x1 - x0 < GUIDE_MIN_THICK) [x0, x1] = [x0 - GUIDE_MIN_THICK / 2, x1 + GUIDE_MIN_THICK / 2]
+  if (y1 - y0 < GUIDE_MIN_THICK) [y0, y1] = [y0 - GUIDE_MIN_THICK / 2, y1 + GUIDE_MIN_THICK / 2]
+  return [x0, y0, x1 - x0, y1 - y0]
 }

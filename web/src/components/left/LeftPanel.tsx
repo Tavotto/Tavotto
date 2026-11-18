@@ -9,11 +9,13 @@ import { ResizeHandle } from '@/components/ui/ResizeHandle'
 import { tryRegisterPointerCancel } from '@/store/gestureCoordinator'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
+import { useDataFigureStore } from '@/store/dataFigureStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { LEFT_DEFAULT, LEFT_MAX, LEFT_MIN, RAIL_W, isLeftPinned, useUiStore } from '@/store/uiStore'
 import { IconButton } from '../ui/Button'
 import { DESK_FIELD_SCOPE } from '../ui/fieldBox'
 import { AssetBrowser } from './AssetBrowser'
+import { DataDrawer } from '../datastudio/DataDrawer'
 import { DrawerCount } from './DrawerCount'
 import { DrawerSlotsContext } from './drawerSlots'
 import { ElementTree } from './ElementTree'
@@ -80,6 +82,7 @@ export function LeftPanel({
       <div className="flex h-9 shrink-0 items-center gap-1.5 pl-3 pr-1.5">
         <h2 className="type-section shrink-0">{t(`rail.${tab}`)}</h2>
         {tab === 'elements' && <ElementCount />}
+        {tab === 'data' && <DataFileCount />}
         {/* meta 槽：抽屉自己的计数 / 范围（问题面板的「当前图 13 ▾」胶囊，审计 §9.4：范围并入标题行） */}
         <span ref={setMetaSlot} data-drawer-meta className="flex min-w-0 items-center gap-1.5 empty:hidden" />
         <span className="flex-1" />
@@ -103,6 +106,8 @@ export function LeftPanel({
         <WorkspaceList />
       ) : tab === 'assets' ? (
         <AssetBrowser />
+      ) : tab === 'data' ? (
+        <DataDrawer />
       ) : tab === 'elements' ? (
         <ElementTree />
       ) : tab === 'style' ? (
@@ -117,6 +122,17 @@ export function LeftPanel({
       <WidthHandle />
     </aside>
   )
+}
+
+/** 数据文件个数进标题（和「图内」的元素计数同一种写法：名字 + 灰字个数） */
+function DataFileCount() {
+  const { t } = useTranslation('workspace')
+  const n = useDataFigureStore((s) => {
+    const f = s.files
+    return f.status === 'idle' ? 0 : (f.entries?.length ?? 0)
+  })
+  if (!n) return null
+  return <DrawerCount value={n} label={t('dataDrawer.count', { count: n })} />
 }
 
 /** 元素计数进标题：树里不再重复统计行 */

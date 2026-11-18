@@ -322,6 +322,47 @@ def test_nested_parent_transform_not_applied_twice():
     )
 
 
+def test_replaced_nodes_own_transform_does_not_join_the_parent_inverse():
+    """N2：目标自身也有 transform 时，逆变换只能用**存活父链**。
+
+    被替换的节点连同它的 transform 一起删除；把 (20,10) 与 (5,3) 都逆进去
+    会让 wrapper 补偿一个已不存在的变换，世界端点变成 (15,67)/(75,7)。
+    """
+    scene = (
+        b'<svg xmlns="http://www.w3.org/2000/svg" width="100pt" height="100pt" '
+        b'viewBox="0 0 100 100"><g transform="translate(20 10)">'
+        b'<path id="curve" transform="translate(5 3)" d="M0 100L100 0" '
+        b'fill="none" stroke="blue"/></g></svg>'
+    )
+    out, frame = bind(
+        scene, dataset="x,y\n0,0\n1,1\n", rect=[20.0, 10.0, 60.0, 60.0], xlim=(0, 1), ylim=(0, 1)
+    )
+    frag = svgchart.scaffold_fragment(out["model"], frame)
+    result = compose_scene(scene, out["binding"], frag["fragment"], out["model"], origin=(0.0, 0.0))
+    root = parse(result)
+    wrapper = next(
+        (e for e in root.iter() if e.get("data-tavotto", "").startswith("series:")), None
+    )
+    assert wrapper is not None
+
+    from tavotto.svgcoord import apply as c_apply, parse_transform as c_parse
+
+    wt = c_parse(wrapper.get("transform", ""))
+    path_d = wrapper.find(f".//{SVG_NS}path").get("d")
+    nums = [float(v) for v in re.findall(r"[-+]?(?:\d*\.)?\d+(?:e[-+]?\d+)?", path_d)]
+    inner = [c_apply(wt, nums[i], nums[i + 1]) for i in (0, 2)]
+    world = [c_apply((1.0, 0.0, 0.0, 1.0, 20.0, 10.0), pt[0], pt[1]) for pt in inner]
+    got = [
+        round(world[0][0], 6),
+        round(world[0][1], 6),
+        round(world[1][0], 6),
+        round(world[1][1], 6),
+    ]
+    assert got == pytest.approx([20, 70, 80, 10], abs=1e-6), (
+        f"world endpoints expected [20,70,80,10], got {got}"
+    )
+
+
 def test_bar_error_members_survive_composition():
     """N4：柱 + 误差 → 组合后误差集合/端帽成员完整（角色 gid 全在最终 SVG）。"""
     scene = SCENE

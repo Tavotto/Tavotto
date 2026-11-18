@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import { useDataFigureStore } from '@/store/dataFigureStore'
 import { ArrowLeft } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
@@ -36,6 +37,8 @@ import type { PanelObject } from '@/types/document'
  * `engineLabel`。这里只排版。原图规格**不在这条上说**——它属于导出对话框。
  */
 export function WorkspaceContextBar() {
+  // 「数据」临时标签盖住画布时这条上下文条没有意义（它说的是画布上的对象），不画
+  const dataDraftActive = useDataFigureStore((s) => s.draftActive)
   const { t } = useTranslation('workspace')
   const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
   const activePanelId = useWorkspaceStore((s) => s.activePanelId)
@@ -57,7 +60,7 @@ export function WorkspaceContextBar() {
   )
   const editingHere = !!panel && elementPanelId === panel.id
   const manifest = usePanelDisplayManifest(editingHere ? panel : null)
-  if (!panel) return null
+  if (!panel || dataDraftActive) return null
 
   const name = panel.name ?? panel.fileId
   const editable = !!panel.script

@@ -132,6 +132,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^6.0.4
         version: 6.0.5(vite@8.2.4(@types/node@24.13.3)(jiti@2.7.0)(yaml@2.9.0))
+      fast-check:
+        specifier: ^4.10.2
+        version: 4.10.2
       i18next-cli:
         specifier: ^1.69.2
         version: 1.69.2(@types/node@24.13.3)(react-dom@19.2.8(react@19.2.8))(typescript@6.0.3)
@@ -1531,6 +1534,10 @@ packages:
   extend@3.0.2:
     resolution: {integrity: sha512-fjquC59cD7CyW6urNXK0FBufkZcoiGG80wTuPujX590cB5Ttln20E2UB4S/WARVqhXffZl2LNgS+gQdPIIim/g==}
 
+  fast-check@4.10.2:
+    resolution: {integrity: sha512-iK2f+YrcmoeGqk6fA0ea2bptcu/itMIm4NfEozq6N25+aG6h7s5HZbB/k1aV7b5w5sFLMCbbtRUsTVR+BgC3xw==}
+    engines: {node: '>=12.17.0'}
+
   fast-string-truncated-width@3.0.3:
     resolution: {integrity: sha512-0jjjIEL6+0jag3l2XWWizO64/aZVtpiGE3t0Zgqxv0DPuxiMjvB3M24fCyhZUO4KomJQPj3LTSUnDP3GpdwC0g==}
 
@@ -2114,6 +2121,9 @@ packages:
   punycode@2.3.1:
     resolution: {integrity: sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==}
     engines: {node: '>=6'}
+
+  pure-rand@8.4.2:
+    resolution: {integrity: sha512-vvuOGgcuPJAirlHvuQw1TrOiw7ptaIXXmIbNuiNOY6lNGJJH49PQ1Kj4nd783nPdQhQdicgOjVI2yI/9BD6/Ng==}
 
   react-dom@19.2.8:
     resolution: {integrity: sha512-rVprimfGBG3DR+Tq0IQG2DT5PxKth1WIGDmj5yPmlzr4YBe7uyE+Du4oVqTDXZSHGGGXRtTJEGSSePyQCMBglQ==}
@@ -3702,6 +3712,10 @@ snapshots:
 
   extend@3.0.2: {}
 
+  fast-check@4.10.2:
+    dependencies:
+      pure-rand: 8.4.2
+
   fast-string-truncated-width@3.0.3: {}
 
   fast-string-width@3.0.2:
@@ -4499,6 +4513,8 @@ snapshots:
       prosemirror-transform: 1.12.4
 
   punycode@2.3.1: {}
+
+  pure-rand@8.4.2: {}
 
   react-dom@19.2.8(react@19.2.8):
     dependencies:

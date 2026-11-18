@@ -307,13 +307,17 @@ export function ContactDialog() {
   let statusNode = null
   if (busy) {
     statusNode = (
-      <div className="flex flex-col gap-1.5" data-contact-status="sending">
-        <p className="text-sm text-ink-2">
+      <div
+        className="flex items-center justify-between gap-4 rounded-md bg-surface-hover px-3 py-1.5"
+        data-contact-status="sending"
+      >
+        <p className="min-w-0 truncate text-sm text-ink-2">
           {cs(`stage.${stageKey}`, { pct: Math.min(100, Math.max(0, progress ?? 0)) })}
         </p>
         <ProgressBar
           pct={stageKey === 'upload' && progress !== null ? progress : null}
           label={cs(`stage.${stageKey}`, { pct: progress ?? 0 })}
+          className="w-36 shrink-0"
         />
       </div>
     )

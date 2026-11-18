@@ -87,7 +87,7 @@
       "network": "连不上服务器。请检查网络后再试。",
       "timeout": "服务器没有及时回应。请稍后再试。",
       "tls": "和服务器的加密连接没建立起来（证书校验失败）。请检查系统时间与网络代理。",
-      "bad_response": "服务器的回复读不懂。请稍后再试。",
+      "bad_response": "收信服务响应异常，请稍后再试。",
       "api_incompatible": "这个版本的 Tavotto 与服务器不兼容，请先更新。",
       "rate_limited": "发得太频繁了，请稍后再试。",
       "storage_unavailable": "服务器暂时收不了信，请稍后再试。",
@@ -101,9 +101,9 @@
       "upload_missing": "附件没有传完，请再试一次。",
       "upload_url_rejected": "服务器给的上传地址不安全，已拒绝上传。",
       "redirect_blocked": "服务器想把请求转到别处，已拒绝。",
-      "client_error": "服务器认为这封信有问题。请检查内容后再试。",
-      "unexpected_response": "服务器给了意外的回复。请稍后再试。",
-      "internal": "出了点内部错误，没有发送。",
+      "client_error": "信件内容未通过格式校验，请检查附件或邮箱后再试。",
+      "unexpected_response": "收信服务暂时响应异常，请稍后再试。",
+      "internal": "发送服务暂时出错，信件尚未发出。",
       "invalid_email": "回信邮箱的格式不对，请检查，或者留空。",
       "attachment_invalid": "服务器检查附件没通过，请换一个文件再试。",
       "report_not_found": "诊断包没有送到服务器，请取消勾选「附上诊断信息」后再试。"
@@ -175,6 +175,15 @@
     "resultWarnings_other": "有 {{count}} 条提示，见详情",
     "partialSummary": "{{ok}} 个成功，{{failed}} 个失败",
     "previewFit": "适合大小",
+    "previewModeLabel": "预览方式",
+    "previewModeFigure": "原图",
+    "previewModeLayout": "版面预览",
+    "previewLayoutUnavailable": "当前无法读取图幅尺寸，暂不支持按真实比例入版预览",
+    "previewLayoutSlotSpec": "{{w}} × {{h}} mm · {{spec}} · {{column}} {{colW}} mm",
+    "previewLayoutSlotGeneric": "{{w}} × {{h}} mm · 双栏版面 · {{column}} {{colW}} mm",
+    "previewLayoutOverflowSpec": "{{w}} × {{h}} mm · 超出「{{spec}}」版芯（{{maxW}} mm）",
+    "previewLayoutOverflowGeneric": "{{w}} × {{h}} mm · 超出版芯宽度（{{maxW}} mm）",
+    "previewLayoutTall": "{{w}} × {{h}} mm · 超出单页版芯高度（{{maxH}} mm）",
     "previewTabs": "预览",
     "previewWhole": "整版",
     "previewFlagged": "有要改的项",
@@ -218,6 +227,7 @@
       "no_script": "此图没有可重新运行的脚本。EPS 只能由脚本生成。"
     },
     "exported": "导出完成：{{files}}",
+    "signoffReady": "已导出 · {{formats}}",
     "filenameError": {
       "control_char": "文件名里有不可见字符，请重新输入。",
       "dot_only": "「.」和「..」不能用作文件名。",
@@ -231,7 +241,7 @@
     "filenameLabel": "文件名",
     "filenamePlaceholder": "图 1",
     "formatLabel": "格式",
-    "jobLost": "找不到这次导出的作业。文件可能已写出，请检查导出目录或重新导出。",
+    "jobLost": "这次导出在中途中断。部分文件可能已写出，请检查导出文件夹或重新导出。",
     "mmSize": "{{w}} × {{h}} mm",
     "openProblems": "在问题面板中查看",
     "operationFailed": "无法完成：{{error}}",
@@ -247,9 +257,9 @@
       "queued": "排队中…",
       "rendering": "正在合成…",
       "report": "正在生成样式检查报告…",
-      "unknown": "作业在服务器上找不到了",
+      "unknown": "这次导出已中断",
       "writing": "正在写入文件（{{step}}/{{total}}）…",
-      "inspecting": "正在核验产物…"
+      "inspecting": "正在复核导出文件…"
     },
     "pngHint": "位图",
     "ppiLabel": "分辨率",
@@ -292,7 +302,7 @@
     "transparentNotForRaster": "这张图是照原样导出的，背景由它自己决定。",
     "warningsIntro": "以下修改未能应用到重渲染的图上，成图可能与画布不一致：",
     "advancedLabel": "高级",
-    "strictToggle": "严格核验产物",
+    "strictToggle": "导出后逐项复核成稿",
     "strictTitle": "按所选规范重新打开写好的文件核对；不合格或无法核验的文件不会保存。EPS 不核验。",
     "inspection": {
       "failedItems": "核验未通过：{{items}}",
@@ -312,7 +322,7 @@
     "cancelRequested": "已请求取消",
     "cancelFailed": "尚未确认取消，导出可能仍在继续",
     "failTitle": "导出没有完成",
-    "cancelNotAccepted": "服务器未接受取消请求。请先检查导出状态和输出文件夹，再重试。",
+    "cancelNotAccepted": "未能取消这次导出。请先查看导出状态与输出文件夹，再决定是否重试。",
     "statusFailed": "暂时无法获取导出状态，作业仍可能完成",
     "retryStatus": "重试获取状态",
     "connectionFailed": "无法连接导出服务。请检查连接并确认 {{app}} 正在运行，再重试。重新导出前请先检查输出文件夹。",
@@ -735,6 +745,7 @@
     "title": "科研预设"
   },
   "profiles": {
+    "journalBaseOutputName": "期刊检查基础",
     "useForCanvas": "用于当前画布",
     "useForCanvasSaveFirst": "先保存这份样式的改动，再用于画布",
     "binding": {
@@ -1397,7 +1408,7 @@
       "healthTitle": "健康状态",
       "hidePreview": "收起",
       "nextStep": {
-        "engine": "渲染引擎起不来。下面的渲染环境卡片可安装或更换 Python 环境。",
+        "engine": "渲染引擎未能启动。可在下方的渲染环境卡片中安装或切换 Python 环境。",
         "project_open": "先打开一个项目，才能检查项目。",
         "project_readable": "这个目录暂时读不到。重新打开这个项目，或在「全部项目」里换一个。",
         "project_writable": "「写回原始文件」需要这个目录可写。调整权限后，回来点「重新获取」。"
@@ -1923,6 +1934,22 @@
         "network": "连不上服务商。",
         "timeout": "连接超时。"
       },
+      "checkConnection": "检查连接",
+      "checking": "检查中",
+      "keyMissing": "请填写密钥",
+      "probeHint": "常见是地址少了 /v1，或者填成了网页地址",
+      "action": {
+        "refillKey": "重填密钥",
+        "switchAi": "换个 AI",
+        "editModel": "改模型",
+        "editAddress": "改地址"
+      },
+      "probe": {
+        "unauthorized": "密钥不对",
+        "quota": "额度用完了",
+        "no_model": "没有这个模型",
+        "unreachable": "连不上这个地址"
+      },
       "subtitle": "连接一个 AI，用于改图或修复环境。",
       "method": {
         "subscription": "订阅登录",
@@ -1999,7 +2026,7 @@
         "host_not_installed": "没检测到 {{host}}。装好并至少打开一次后再试。",
         "mcp_server_not_bundled": "这一版 Tavotto 不带 MCP 服务，请升级桌面版。",
         "project_root_rejected": "不能选整个主目录或磁盘根目录，请选一个具体的项目文件夹。",
-        "config_unreadable": "{{host}} 的配置文件读不懂（可能带注释），为免弄坏，没有改它。展开详情看是哪个文件。",
+        "config_unreadable": "无法解析 {{host}} 的配置文件（可能含有注释或非标准格式）；为保护原文件，未做修改。展开详情查看文件路径。",
         "config_write_failed": "写不进 {{host}} 的配置文件。展开详情看是哪个文件。",
         "host_cli_failed": "{{host}} 的命令行没能完成登记。展开详情看原文。",
         "server_health_failed": "配置已写好，但 Tavotto 的服务没能启动。展开详情看原因。",
@@ -2303,7 +2330,7 @@
     },
     "welcome": {
       "title": "直接在图上改",
-      "subtitle": "导入绘图脚本，点选、拖动，直观调整图中元素与布局。",
+      "subtitle": "导入绘图脚本或已有图表，点选、拖动，在纸面上从容微调元素与版式。",
       "features": "图例、坐标轴、色条、文字、对齐、整体布局都能直接改",
       "demoLabel": "从绘图脚本到可以直接调整的科研图",
       "codeLabel": "示例脚本 {{name}}（节选）",
@@ -2334,7 +2361,7 @@
       "renderProgress": "示例图渲染进度",
       "builtin": "内置示例",
       "figureLabel": "{{name}} 画出的反应动力学图",
-      "success": "编译完成"
+      "success": "图已就绪，点任意元素试试"
     },
     "legend": {
       "task": "拖动图例，换个位置",
@@ -2346,7 +2373,7 @@
       "cancelled": "已取消，图例回到原处。",
       "farther": "再拖远一点试试。",
       "figureLabel": "反应动力学图，图例可以拖动",
-      "success": "漂亮！图里的元素能直接拖动。"
+      "success": "位置已更新，图内元素可直接拖动。"
     },
     "title": {
       "task": "点击标题，把文字调大一点",
@@ -2360,7 +2387,7 @@
       "increase": "增大字号",
       "titleLabel": "图标题「{{text}}」，{{size}} pt。点击选中后可以改字号",
       "figureLabel": "反应动力学图，标题可以选中",
-      "success": "太棒了！不用改代码，也能调整文字。"
+      "success": "字号已更新，源脚本一字未动。"
     },
     "finish": {
       "title": "{{product}}，直接在图上改",
@@ -2370,7 +2397,7 @@
       "beforeAlt": "调整前：脚本原样画出的图，图例在右下角，标题 {{size}} pt",
       "afterAlt": "你的调整成果：同一组数据，图例换了位置，标题 {{size}} pt",
       "afterAltUnmoved": "你的调整成果：同一组数据，标题 {{size}} pt",
-      "nextHint": "已经学会直接编辑科研图。现在可以试试自己的 Python 绘图脚本。",
+      "nextHint": "现在，导入你自己的 Python 绘图脚本试试看。",
       "demoNote": "教程里的改动只在这个演示中，不会写进任何文件。",
       "start": "开始使用 {{product}}",
       "replay": "重新体验"
@@ -2463,6 +2490,14 @@
     "imageFailed": "有一张图没加载出来，没法对照，请选「保留原图」。"
   },
   "journal": {
+    "nanophotonicsUnknownWarning": "此期刊的分辨率来源未记录或无法识别；请核对当前指南和本项目实际生效设置。",
+    "nanophotonicsLegacyWarning": "保存的 Nanophotonics De Gruyter 分辨率来源可能已过时；该刊现由 Wiley 出版。请核对当前指南、图类条件及项目实际生效设置；此提示不归因具体问题。",
+    "nanophotonicsGuide": "查看 Wiley 作者指南",
+    "leukosScopeWarning": "此排版保存的历史来源针对终稿并区分图类；当前预检未区分投稿阶段和图类，现行要求未知，请核对期刊指南。",
+    "leukosProblemScopeWarning": "所列画布保存的历史来源针对终稿并区分图类；预检未区分投稿阶段和图类，现行要求未知。此提示不能确认任何问题或阈值来自该来源。",
+    "jperStageWarning": "此排版保存的来源对应历史录用稿最终版指南；当前预检未区分投稿阶段。当前要求尚未核实，请核对期刊指南。",
+    "jperProblemGeneralWarning": "所列画布保存的历史来源针对录用后最终稿；预检未区分投稿阶段，当前指南尚未核实。此提示不能确认任何问题或阈值来自该来源。",
+    "sourceIdentityWarning": "此排版保存的一个出处关联的历史采集文本页眉为 Adult，所选期刊为 Child；来源身份待核，请核对作者指南。现有预检规则未改变。",
     "title": "期刊",
     "pick": "选择期刊",
     "search": "搜索名称、缩写或 ISSN",
@@ -2472,7 +2507,8 @@
     "noMatch": "没有匹配的期刊",
     "current": "按「{{name}}」检查",
     "requirements": "期刊要求",
-    "unspecified": "该期刊未规定",
+    "panelHistoricalNotice": "这是已保存的历史来源，涉及原则接收后的建议；现行要求未知，请核对期刊指南。",
+    "unspecified": "当前快照未记录",
     "hasRequirement": "有要求",
     "strengthRequired": "必须",
     "strengthRecommended": "建议",
@@ -2491,9 +2527,15 @@
     "picked": "已按「{{name}}」检查",
     "pickedWidth": "已按「{{name}}」检查，页宽改为 {{w}} mm",
     "card": {
-      "adviceBoth": "{{journal}} 说明 {{body}} pt 为正文最小字号，{{script}} pt 为上下标最小字号",
-      "adviceBody": "{{journal}} 说明 {{body}} pt 为正文最小字号",
-      "adviceScript": "{{journal}} 说明 {{script}} pt 为上下标最小字号",
+      "adviceBoth": "字号记录，请参阅来源原文",
+      "adviceBody": "字号记录，请参阅来源原文",
+      "adviceScript": "字号记录，请参阅来源原文",
+      "coverage": {
+        "publisher": "此来源的范围标记：出版社通用。标记可能是默认值或已过时，是否适用于本刊未核实。",
+        "journal": "此来源的范围标记：期刊专属。标记可能是默认值或已过时，是否适用于本刊未核实。",
+        "sample": "此来源的范围标记：单刊样本。标记可能是默认值或已过时，是否适用于本刊未核实。",
+        "unknown": "来源范围和适用性未核实。"
+      },
       "open": "打开原网页",
       "archive": "存档",
       "aria": "出处"
@@ -2529,6 +2571,7 @@
       "info_width_range_double_mm": "双栏宽范围",
       "info_width_single_mm": "单栏宽（仅展示）",
       "info_width_double_mm": "双栏宽（仅展示）",
+      "info_panel_max_width_aip_mm": "图版最大宽（历史 AIP 建议）",
       "info_min_width_mm": "最小宽度",
       "info_min_line_width_pt": "最小线宽",
       "info_dpi_by_kind": "分辨率（按图类）",

@@ -61,7 +61,7 @@ export function TabList({
       className={cn(
         'pointer-events-none absolute left-0',
         variant === 'segmented'
-          ? 'inset-y-0.5 rounded-full bg-thumb shadow-thumb'
+          ? 'inset-y-0.5 rounded-sm bg-thumb shadow-thumb'
           : 'bottom-0 h-0.5 rounded-full bg-ink',
         indicator.animate && 'transition-[transform,width] duration-base ease-snap',
       )}
@@ -79,8 +79,8 @@ export function TabList({
       // tablist 只有 230 可用——两段 12 刚好 229；原语打磨那轮改成 16（两家参照都没量到这一格）多出的 8px 恰好撑破 7px
       className={cn(
         variant === 'segmented'
-          ? // 等宽列（minmax(0,1fr)）：英文再长也不撑开槽，超出的字在格内省略号截断
-            'relative grid h-7 auto-cols-fr grid-flow-col items-stretch rounded-full bg-surface-hover p-0.5'
+          ? // 等宽列（minmax(0,1fr)）：英文再长也不撑开槽，超出的字在格内省略号截断；外槽 md 8 = 内滑块 sm 6 + 内边距 2
+            'relative grid h-7 auto-cols-fr grid-flow-col items-stretch rounded-md bg-surface-hover p-0.5'
           : 'relative flex h-full items-center gap-3',
         className,
       )}

@@ -244,6 +244,34 @@ describe('带动作的状态 toast（导出关窗后的结果等）', () => {
     }
   })
 
+  it('打开模态前画布上遗留的普通状态留在遮罩下，不穿透弹窗；弹窗期间新发的与错误仍浮在弹窗上', () => {
+    act(() => useUiStore.getState().setStatus(literal('已放入画布'), 'done'))
+    expect(container.querySelector('[data-toast-layout]')).toBeTruthy()
+    let off = () => {}
+    act(() => {
+      off = registerDialogOpen()
+    })
+    try {
+      expect(document.body.querySelector('body > [data-notification-rail] [data-toast-layout]')).toBeNull()
+      expect(container.querySelector('[data-toast-layout]')).toBeTruthy()
+      act(() => useUiStore.getState().setStatus(literal('导出已完成'), 'done'))
+      expect(document.body.querySelector('body > [data-notification-rail] [data-toast-layout]')).toBeTruthy()
+    } finally {
+      act(() => off())
+    }
+
+    act(() => useUiStore.getState().setStatus(literal('保存失败'), 'error'))
+    let offErr = () => {}
+    act(() => {
+      offErr = registerDialogOpen()
+    })
+    try {
+      expect(document.body.querySelector('body > [data-notification-rail] [data-toast-layout]')).toBeTruthy()
+    } finally {
+      act(() => offErr())
+    }
+  })
+
   it('对照：不带动作的非错误 toast 照旧自己走', () => {
     act(() => useUiStore.getState().setStatus(literal('好了'), 'info'))
     tick(STATUS_AUTO_DISMISS_MS + 10)

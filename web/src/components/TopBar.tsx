@@ -50,6 +50,8 @@ import {
 import { runManualSave } from '@/store/actions'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { checkNewerBuild } from '@/store/failureExit'
+import { feedbackAction } from '@/lib/canvasFileIntake'
+import { useDiagSendStore } from '@/store/diagSendStore'
 import { exportPackage, openPackageWithRetry } from '@/store/packageActions'
 import { useUiStore } from '@/store/uiStore'
 import { useUpdateStore } from '@/store/updateStore'
@@ -71,7 +73,7 @@ import { RestoreIssueBody, RestoreMetaBody } from './RestoreIssueBody'
 import { useWindowFullscreen } from '@/hooks/useWindowChrome'
 import { MOD, cn } from '@/lib/utils'
 import { journalCatalogUi } from '@/lib/journalUi'
-import { t as translate } from '@/i18n'
+import { formatMessage, t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
 import { useFormatMessage } from '@/i18n/react'
 
@@ -396,7 +398,6 @@ export function SaveStateLabel() {
   )
   // 已经存进项目且最新：点它没有事可做（不禁用——禁用钮会退出 Tab 顺序、气泡也更难出），点击空操作 + aria-disabled
   const nothingToSave = !!bound && !bound.dirty && settled && !revealPending
-  const textShown = 'max-[899px]:sr-only min-[900px]:truncate'
   return (
     // 根仍是 span（与出事分支同种元素：播报区 `live` 是早已挂着的同一个节点，Codex #947），里面一颗整枚芯片大的按钮：
     // 点击 = ⌘S（`runManualSave`：本机那份先写、绑了项目文件就写回、开着项目没文件就弹「存进项目」命名框）。
@@ -416,28 +417,33 @@ export function SaveStateLabel() {
           if (!nothingToSave) void runManualSave()
         }}
         className={cn(
-          'flex h-6 min-w-0 shrink items-center gap-1 rounded-full px-2 text-xs text-ink-3 outline-none focus-visible:focus-ring',
-          !nothingToSave && 'hover:bg-surface-hover hover:text-ink-2',
+          'group/save relative flex h-6 min-w-0 shrink items-center gap-1.5 rounded-full pl-2.5 max-[899px]:px-1.5 text-xs text-ink-3 outline-none focus-visible:focus-ring',
+          !nothingToSave && 'hover:text-ink-2 max-[899px]:hover:bg-surface-hover',
         )}
       >
-        {/* 图标位常驻：落定 = ✓ / 硬盘；进行中留空位（不转圈：它本来就只在慢的那一轮出现），窄于 900 时
-            进行中画一颗墨点代替那句字 */}
-        <span aria-hidden className="flex size-3.5 shrink-0 items-center justify-center">
+        <span aria-hidden className="flex size-4 shrink-0 items-center justify-center">
           {revealPending ? (
             <span className="size-1.5 rounded-full bg-ink-3 min-[900px]:hidden" />
           ) : (
             <SettledIcon size={ICON_SIZE.sm} />
           )}
         </span>
-        <span className="grid min-w-0 text-left">
-          <span data-save-text className={cn('col-start-1 row-start-1', textShown)}>
-            {text}
+        <span className="grid min-w-0 items-center text-left">
+          <span
+            data-save-text
+            className={cn(
+              'relative col-start-1 row-start-1 inline-flex h-6 w-fit max-w-full items-center pr-2.5 max-[899px]:sr-only',
+              !nothingToSave &&
+                'min-[900px]:before:pointer-events-none min-[900px]:before:absolute min-[900px]:before:inset-y-0 min-[900px]:before:-left-8 min-[900px]:before:right-0 min-[900px]:before:rounded-full min-[900px]:before:transition-colors min-[900px]:before:duration-fast min-[900px]:group-hover/save:before:bg-surface-hover',
+            )}
+          >
+            <span className="min-[900px]:truncate">{text}</span>
           </span>
           {reserve.map((r) => (
             <span
               key={r}
               aria-hidden
-              className="invisible col-start-1 row-start-1 hidden truncate min-[900px]:block"
+              className="invisible col-start-1 row-start-1 hidden truncate pr-2.5 min-[900px]:block"
             >
               {r}
             </span>
@@ -551,6 +557,8 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
   const saveIssue = useDocumentStore((s) => s.saveIssue)
   const lastDoc = useProjectStore((s) => s.lastDocumentIssue)
   const restoreIssue = useDocumentStore((s) => s.restoreIssue)
+  // 订阅「能不能发反馈」：能力是启动后异步读到的，说明块先渲染的话不能漏掉这颗按钮
+  const canSendFeedback = useDiagSendStore((s) => s.capability !== null)
   const done = (fn: () => unknown) => () => {
     close()
     void fn()
@@ -634,16 +642,24 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
     )
   }
   if (issue === 'too_new' && notice?.kind === 'schema_too_new') {
+    const browserFeedback = isDesktop() || !canSendFeedback ? undefined : feedbackAction()
     return (
       <>
         {head(t('docBanner.tooNewTitle', { product: PRODUCT_NAME }), t('docBanner.tooNewBody', { product: PRODUCT_NAME }))}
         {row(
           <>
-          {/* 桌面版：主按钮直接去查新版（查到顺手下载）；浏览器版没有壳里的更新通道，保持「知道了」 */}
-          {isDesktop() && (
+          {/* 桌面版：主按钮直接去查新版（查到顺手下载）。浏览器版没有壳里的更新通道：主按钮是
+              「发送问题反馈」（#1920 合同裁定，ADR 0176 第 9 行的 ③），不留一个只会「知道了」的死胡同 */}
+          {isDesktop() ? (
             <Button variant="primary" size="sm" data-docbanner-check-update onClick={done(() => void checkNewerBuild())}>
               {t('docBanner.checkUpdate')}
             </Button>
+          ) : (
+            browserFeedback && (
+              <Button variant="primary" size="sm" data-docbanner-feedback onClick={done(browserFeedback.run)}>
+                {formatMessage(browserFeedback.label)}
+              </Button>
+            )
           )}
           <Button
             size="sm"
@@ -862,6 +878,7 @@ function ExportButton() {
       <Button
         variant="primary"
         size="md"
+        className="rounded-full px-3.5"
         data-onboarding-anchor="export"
         onClick={() => useUiStore.getState().setExportOpen(true)}
       >

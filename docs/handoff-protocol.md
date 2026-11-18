@@ -203,6 +203,7 @@ CLI 过去会白等满 `--render-wait`（默认 20 秒）再报 `unverified/time
 | `native_run_required` | 缺依赖（extra 带 `module` 与原始 `probe_code`）——safe 档修不了「项目要自己的环境」 | 引导换渲染环境；native 运行（`tavotto run`）是后续版本 |
 | `import_folder_unreadable` | 脚本加载的项目外文件夹当前账户读不了（ADR 0153；extra 带 `folder`、`probe_code`，有 `module` 时也带） | 在 Tavotto 界面里按提示安装缺少的依赖，或开放该文件夹的读取权限 |
 | `import_folder_abi_mismatch` | 脚本自带的私有依赖文件夹里的编译扩展是为别的 Python 版本装的（ADR 0154；extra 带 `folder`、`abi`、`current`、`probe_code`） | 在 Tavotto 界面里打开这张图并选「跳过这个文件夹重跑」，不要换 Python |
+| `image_format_mismatch` | 脚本读的图片内容与扩展名不符，例如 JPEG 存成了 `.png`（TVD-3MWS；extra 带 `claimed`、`actual`、`ext`、`probe_code`，能显示时带 `file`）；直接用 Python 跑同样失败 | 让用户换成真正的 `claimed` 格式文件；与运行方式、环境无关，不要换 Python 或改脚本 |
 | `probe_in_progress` | 同一脚本已有一次试运行在进行中（素材库/另一个调用方） | `retryable: true`，稍后重试 |
 
 ### `tavotto doctor --json`

@@ -562,17 +562,23 @@ test(
     // 选中末尾一个字，点「斜体（选中的字）」：只有那个字变斜体
     const key0 = await waitExact(page)
     await field.click()
-    // 编辑器在 mouseup 之后还会异步落一次点击处的选区（ProseMirror），紧跟着按的 End 可能被它盖回点击处——
-    // CI 上慢机器选中的就是框正中那个字。按到光标真在末尾、选区真是末字为止，再点斜体
+    // ProseMirror 在编辑框拿到焦点 20ms 后有一次定时器（handlers.focus），把**编辑器状态里**的选区写回 DOM。
+    // 慢机器上（CI 合并组偶发）它排在紧随点击的 End / ⇧← 之后才跑：这时 DOM 里已经是末字选区、
+    // 编辑器状态还停在点击处（或 End 之后的空光标），被它冲回光标——此前的 poll 在冲之前读到末字就放行了，
+    // 点斜体时选区已空，「I」按下但字没变（失败截图：斜体钮按下、光标折叠、没有 <em>）。
+    // 定时器只在这一次聚焦后跑一回：每一轮都重新选末字、点斜体、等 <em> 出现，没出现就整轮重来
+    // （选区一变编辑器就清掉空选区上挂的待用斜体，重来不会把它反着再切一次）。
     const selected = () => page.evaluate(() => window.getSelection()?.toString() ?? '')
-    await expect
-      .poll(async () => {
-        await page.keyboard.press('End')
-        await page.keyboard.press('Shift+ArrowLeft')
-        return selected()
-      })
-      .toBe(title.slice(-1))
-    await page.locator('[data-rich-pill] [data-rich-action="italic"]').click()
+    const italic = page.locator('[data-rich-pill] [data-rich-action="italic"]')
+    await expect(async () => {
+      // 上一轮其实点上了、只是 <em> 来得晚：不再点，免得把它切掉
+      if ((await field.locator('em').count()) > 0) return
+      await page.keyboard.press('End')
+      await page.keyboard.press('Shift+ArrowLeft')
+      expect(await selected()).toBe(title.slice(-1))
+      await italic.click()
+      await expect(field.locator('em')).toHaveText(title.slice(-1), { timeout: 3_000 })
+    }).toPass({ timeout: 45_000 })
     await expect(field.locator('em')).toHaveText(title.slice(-1))
     await expect(field).toHaveText(title)
     await page.keyboard.press('Enter') // Enter 提交（失焦结束编辑事务）

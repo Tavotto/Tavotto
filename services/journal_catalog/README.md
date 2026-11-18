@@ -1,5 +1,7 @@
 # 期刊目录服务（线协议 v1）
 
+来源事实 v2 的独立路径、数据结构、审核门禁与部署前提见 [FACTS-V2.md](FACTS-V2.md)；v1 仍按本文运行。
+
 纯标准库、与平台无关的小服务：把「已签名的期刊目录」分发给 Tavotto 客户端与 Agent。
 **不属于 Tavotto 包**：`pyproject.toml` 已把 `services/**` 排除出 wheel/sdist。
 设计依据：`docs/adr/0155-journal-catalog.md` §4b。结构照 `services/telemetry_proxy/`。
@@ -126,7 +128,7 @@ IP 级限额（`ip_day`、`ip_tokens`）会照样拦住，还会白白消耗签�
 
 ## 两个入口与反代信任
 
-`https://tavotto.cn/v1/journal-catalog/`（本服务）与 `https://tavotto.com/v1/journal-catalog/`（Vercel 薄反代，代码在
+`https://tavotto.cn/v1/journal-catalog/`（本服务）与 `https://www.tavotto.com/v1/journal-catalog/`（Vercel 薄反代，代码在
 `vercel_proxy/`）。反代转发时带 `X-Tavotto-Proxy-Secret`（共享密钥，`TAVOTTO_JC_PROXY_SECRET`）与
 `X-Tavotto-Client-IP`（真实客户端 IP）；**只有密钥对得上，本服务才用后者算 IP 限额**，密钥错 / 缺、或 IP 头不是合法地址，
 一律忽略声明、按连接 IP 算。Agent 与 app 走哪个入口都一样，计数、令牌、读取记录是同一份。

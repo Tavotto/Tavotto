@@ -34,7 +34,7 @@ import shutil
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 
 from . import (
@@ -61,6 +61,7 @@ ERROR_CODES = (
     "propose_input_invalid",  # 请求体的字段类型不对 / 超长
     "propose_cells_invalid",  # 数值列里夹着的文字格的处理规则不合格（`params.reason` 是拒绝码，`params.key` 点名哪一项）
     "propose_cells_need_rule",  # 用户只用文字说明了怎么处理（`describe`）：要先由助手整理成规则，不猜
+    "propose_thumbnail_failed",  # 懒渲染（`render="lazy"`）：这一张缩略图画不出来（`params.reason` 是 `DROP_REASONS` 里的码）
 )
 #: 一个备选没能出现在结果里的原因（`dropped[].reason_code` / `nothing.reasons`；文案在前端 `dataFigure.reason.<码>`）
 DROP_REASONS = (
@@ -77,8 +78,12 @@ MAX_SESSIONS = 6
 #: 缩略图宽度（像素）与单张字节上限
 THUMB_WIDTH_PX = 640
 MAX_THUMB_BYTES = 4 * 1024 * 1024
-#: 同时渲染几个备选（每个一条 worker；池自己还有上限）
+#: 同时渲染几个备选（每个一条 worker；池自己还有上限）。懒渲染下是「全进程同时在画的缩略图」上限（`_RENDER_SLOTS`）
 MAX_PARALLEL = 2
+#: `propose(render=...)` 认的取值：`None` / `"eager"` = 一次画完再返回（旧行为）；`"lazy"` = 先返回文字，缩略图在取图时画
+RENDER_MODES = ("eager", "lazy")
+#: 懒模式下替用户做的默认决定最多迭代几轮（每轮消掉一个问题；问题种类有限，防御性上界）
+MAX_AUTO_ROUNDS = 8
 #: 幂等表：同一 `(项目, client_request_id)` 在 TTL 内回同一份响应
 MAX_REQUESTS = 64
 #: 有行没画出来时的稳定码（备选卡 `unplotted.code` 与提交结果；文案 `ai:dataFigureV2.reason.rows_not_plotted`）
@@ -152,6 +157,16 @@ class Item:
     thumb: Path | None = None
     unplotted: int = 0  # 有多少行因为横轴没有值而没画（稳定码 `rows_not_plotted` + 计数）
     cells: list | None = None  # 处理规则作用的统计（没有规则 = None）
+    #: 缩略图状态：`ready`（已有 PNG；旧模式一律如此）/ `pending`（懒模式，还没画）/ `failed`（`reason` 是 `DROP_REASONS` 里的码）
+    state: str = "ready"
+    reason: str | None = None
+    fallback: bool = False  # 画这张时项目解释器没画成、回退过（诊断标记）
+    # 懒渲染的素材：候选脚本在会话目录里，这里记下渲染一张要的最少东西
+    stem: str | None = None
+    n: int = 0
+    expected: list = field(default_factory=list)
+    #: 同一张并发取图只画一次：渲染在这把锁里做，后来的在锁外等到状态落定
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
 
 @dataclass
@@ -169,6 +184,9 @@ class Session:
     touched: float = 0.0
     #: 出备选时实际用的「每列名字」所在的物理行号（文本表格；XLSX 是 None）。提交时按它重读，不重新嗅探
     header_line: int | None = None
+    root: Path | None = None  # 项目目录（懒渲染取项目解释器用）
+    #: 懒渲染：画哪些备选（`items` 的插入顺序就是推荐顺序）
+    lazy: bool = False
 
     def item(self, item_id: str) -> Item | None:
         return self.items.get(item_id)
@@ -389,9 +407,15 @@ def unplotted_rows(values: adf.DataSummary, recipe) -> list[dict]:
     idx = {c: i for i, c in enumerate(values.columns)}
     x = recipe.x if recipe.family in ("trend", "relationship") else None
     covered = {c.column for c in recipe.cells}
+    # 横轴列有处理规则时按**规则作用之后**的格子判：「取数字部分」取出了数的行画得出来，不算；「不画那几行」之后是空格，算没画
+    applied = (
+        adf.apply_cells(values.columns, values.rows, [c.args() for c in recipe.cells])[0]
+        if x in covered
+        else values.rows
+    )
     for n, row in enumerate(values.rows):
         if x is not None:
-            cell = row[idx[x]]
+            cell = applied[n][idx[x]]
             if values.per_column[x].kind == "date":
                 ok = adf.parse_date(cell) is not None
             else:
@@ -406,7 +430,7 @@ def unplotted_rows(values: adf.DataSummary, recipe) -> list[dict]:
 
 
 def cell_stats(values: adf.DataSummary, recipe) -> list[dict]:
-    """处理规则实际作用了多少格（`[{column, mode, ignored, extracted, mapped}]`），与图下方说明同一份计数（`adf.apply_cells`）。"""
+    """处理规则实际作用了多少格（`[{column, mode, ignored, extracted, mapped}]`），统计与脚本里套规则用的是同一个 `adf.apply_cells`。"""
     if not recipe.cells:
         return []
     return adf.apply_cells(values.columns, values.rows, [c.args() for c in recipe.cells])[2]
@@ -506,6 +530,55 @@ def _stage_table(sdir: Path, source: Path, table_rel: str) -> None:
     shutil.copyfile(source, dest)
 
 
+@dataclass
+class _Planned:
+    """一个备选的渲染素材（脚本与公共模块已写进候选目录）；`bad` 非空 = 模板不认这个配方，不渲染。"""
+
+    n: int
+    stem: str
+    recipe: recipe_mod.FigureRecipe
+    bad: str | None
+    expected: list
+
+
+def _plan_candidates(
+    sdir: Path,
+    entry: adf.TableEntry,
+    values: adf.DataSummary,
+    recipes: list[recipe_mod.FigureRecipe],
+) -> list[_Planned]:
+    """每个备选出脚本 + 公共模块写进候选目录、算期望指纹。**不渲染**（便宜，毫秒级）。"""
+    figures = sdir / "tavotto_figures"
+    figures.mkdir(parents=True, exist_ok=True)
+    data_rel = script_data_rel(entry.path)
+    plan: list[_Planned] = []
+    for n, recipe in enumerate(recipes, start=1):
+        stem = f"cand_{n}"
+        try:
+            rendered = tpl.render_recipe_script(entry, recipe, data_rel=data_rel, stem=stem)
+            expected = tpl.expected_fingerprints(values, recipe)
+        except tpl.TemplateError:
+            plan.append(_Planned(n, stem, recipe, "candidate_template_unsupported", []))
+            continue
+        (figures / rendered.runtime_name).write_bytes(rendered.runtime)
+        (figures / f"{stem}.py").write_text(rendered.script, encoding="utf-8")
+        plan.append(_Planned(n, stem, recipe, None, expected))
+    return plan
+
+
+def _render_planned(
+    sdir: Path, stem: str, n: int, expected: list, pin=None
+) -> tuple[str | None, Path | None, bool]:
+    """画一个备选 → `(剔除原因 | None, 缩略图, 是否回退过解释器)`：真渲染 + 数据指纹对拍（画出来的数据与文件对不上就剔除）。"""
+    out = _render_one(sdir, f"tavotto_figures/{stem}.py", stem, sdir / "thumbs" / f"{n}.png", pin)
+    reason = out.reason
+    if reason is None and out.manifest is not None:
+        checks = figureverify.data_matches_expected(out.manifest, expected, stage="precommit")
+        if any(c.verdict == "failed" for c in checks):
+            reason = "candidate_fingerprint_mismatch"
+    return reason, out.png, out.fallback
+
+
 def _render_candidates(
     sdir: Path,
     entry: adf.TableEntry,
@@ -514,38 +587,103 @@ def _render_candidates(
     pin=None,
 ) -> list[tuple[recipe_mod.FigureRecipe, dict | None, str | None, Path | None, bool]]:
     """每个备选 → `(配方, 覆盖情况, 剔除原因 | None, 缩略图, 是否回退过解释器)`。覆盖情况 = `fingerprint_coverage`；剔除原因在 `DROP_REASONS` 里。"""
-    figures = sdir / "tavotto_figures"
-    figures.mkdir(parents=True, exist_ok=True)
-    data_rel = script_data_rel(entry.path)
-    plan: list[tuple[int, str, recipe_mod.FigureRecipe, str | None, list]] = []
-    for n, recipe in enumerate(recipes, start=1):
-        stem = f"cand_{n}"
-        try:
-            rendered = tpl.render_recipe_script(entry, recipe, data_rel=data_rel, stem=stem)
-            expected = tpl.expected_fingerprints(values, recipe)
-        except tpl.TemplateError:
-            plan.append((n, stem, recipe, "candidate_template_unsupported", []))
-            continue
-        (figures / rendered.runtime_name).write_bytes(rendered.runtime)
-        (figures / f"{stem}.py").write_text(rendered.script, encoding="utf-8")
-        plan.append((n, stem, recipe, None, expected))
+    plan = _plan_candidates(sdir, entry, values, recipes)
 
-    def work(item):
-        n, stem, recipe, bad, expected = item
-        if bad:
-            return recipe, None, bad, None, False
-        out = _render_one(
-            sdir, f"tavotto_figures/{stem}.py", stem, sdir / "thumbs" / f"{n}.png", pin
-        )
-        reason = out.reason
-        if reason is None and out.manifest is not None:
-            checks = figureverify.data_matches_expected(out.manifest, expected, stage="precommit")
-            if any(c.verdict == "failed" for c in checks):
-                reason = "candidate_fingerprint_mismatch"
-        return recipe, tpl.fingerprint_coverage(recipe).to_dict(), reason, out.png, out.fallback
+    def work(p: _Planned):
+        if p.bad:
+            return p.recipe, None, p.bad, None, False
+        reason, png, fb = _render_planned(sdir, p.stem, p.n, p.expected, pin)
+        return p.recipe, tpl.fingerprint_coverage(p.recipe).to_dict(), reason, png, fb
 
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as ex:
         return list(ex.map(work, plan))
+
+
+class _PriorityGate:
+    """限流的闸：同时最多 `slots` 个在里面；空位出现时，等着的里**序号最小的先进**（同序号先到先进）。
+    懒渲染用它让推荐那张（序号 1）永远排在前面，不被同时发出的别的取图抢走空位。"""
+
+    def __init__(self, slots: int):
+        self._cv = threading.Condition()
+        self._free = slots
+        self._waiting: list[tuple[int, int]] = []
+        self._seq = 0
+
+    def __call__(self, priority: int):
+        return _GateSlot(self, priority)
+
+    def acquire(self, priority: int) -> None:
+        with self._cv:
+            self._seq += 1
+            me = (priority, self._seq)
+            self._waiting.append(me)
+            while not (self._free > 0 and min(self._waiting) == me):
+                self._cv.wait()
+            self._waiting.remove(me)
+            self._free -= 1
+            self._cv.notify_all()
+
+    def release(self) -> None:
+        with self._cv:
+            self._free += 1
+            self._cv.notify_all()
+
+
+class _GateSlot:
+    def __init__(self, gate: _PriorityGate, priority: int):
+        self._gate, self._priority = gate, priority
+
+    def __enter__(self):
+        self._gate.acquire(self._priority)
+
+    def __exit__(self, *exc):
+        self._gate.release()
+
+
+#: 懒渲染时全进程同时在画的缩略图上限（取图请求各占一条 Flask 线程；超出的排队，推荐那张优先）
+_RENDER_SLOTS = _PriorityGate(MAX_PARALLEL)
+
+
+def ensure_thumbnail(project: str, session_id: str, item_id: str) -> Path:
+    """取图（懒渲染的唯一画图入口）：该项还没画就在这里画并等它画完；同一项并发取图只画一次（项上的锁），后来的等到状态落定。
+    画失败 → `ProposeError("propose_thumbnail_failed", params={"reason": 码})`（结果记在项上，再取不重画）。
+    已画好（含旧模式出的）直接回路径。"""
+    sess, item = get_item(project, session_id, item_id)
+    if item.state == "pending":
+        with item.lock:
+            if item.state == "pending":
+                _finish_lazy_item(sess, item)
+    if item.state == "failed":
+        raise ProposeError("propose_thumbnail_failed", params={"reason": item.reason})
+    return thumbnail_path(project, session_id, item_id)
+
+
+def _finish_lazy_item(sess: Session, item: Item) -> None:
+    with _RENDER_SLOTS(item.n):
+        pin = _project_pin(sess.root) if sess.root is not None else None
+        reason, png, fb = "candidate_render_failed", None, False
+        # 失败结果会记在项上、不再重画，所以 `candidate_render_failed` 这种可能是瞬时的（池在内存吃紧时回收了刚起的 worker）失败先重试一次；
+        # 超时 / 写入被拦 / 指纹对不上是确定的结论，不重试
+        for _attempt in range(2):
+            try:
+                reason, png, fb = _render_planned(
+                    sess.dir, item.stem or "", item.n, item.expected, pin
+                )
+            except Exception:  # noqa: BLE001 —— 任何意外都只是这一张画不出
+                LOG.info("数据出图候选懒渲染意外失败", exc_info=True)
+                reason, png, fb = "candidate_render_failed", None, False
+            if reason != "candidate_render_failed":
+                break
+    item.fallback = fb
+    if reason is None and png is not None:
+        item.thumb = png
+        item.state = "ready"
+    else:
+        item.reason = reason or "candidate_render_failed"
+        item.state = "failed"
+        LOG.info(
+            "数据出图候选缩略图失败：%s（%s）", item.reason, item.code
+        )  # 只记稳定码与画法码，不记列名 / 路径
 
 
 # =========================================================================== 出备选
@@ -617,6 +755,7 @@ def item_to_dict(sess: Session, item: Item, recommended: bool) -> dict:
             "code": UNPLOTTED_CODE if item.unplotted else None,
         },
         "thumbnail_url": f"/api/ai/data-figure/thumbnail/{sess.id}/{item.id}",
+        "thumbnail_status": item.state,
     }
 
 
@@ -631,12 +770,22 @@ def propose(
     answers=None,
     header_rows=None,
     client_request_id: str | None = None,
+    render: str | None = None,
 ) -> dict:
     """出备选。返回三选一：`{"kind": "ask", question_code, options, unsure}` / `{"kind": "candidates", session, items, dropped}` /
     `{"kind": "nothing", reasons}`。数据读不了（文件夹不存在 / 不在项目内）抛 `DataSourceError`（app 转 400 + 稳定码）。
 
+    `render`：不给 / `"eager"` = 旧行为（缩略图在这一次里画完，渲染失败的备选不进列表，可能返回 `ask`）；`"lazy"` = **文字先到**：
+    不渲染，每项 `thumbnail_status: "pending"`，缩略图在取图（`ensure_thumbnail`）时画；**永不返回 `ask`**——每个问题都用它的默认答案继续
+    （选表 = 第一张、列角色 = 各问题的「不确定」默认、夹着文字格的数值列 = 不画那几行、表头行 = 读表猜的那一行），响应里说清用了什么
+    （`defaults` / `header_row` / `roles` / `mixed_cells`），用户在面板上改了就把改动放进 `answers`（`y` / `x` / `group` 的列名或 `none`、
+    `cells`）与 `header_rows` 重来。
+
     **不往用户文件夹写任何东西**（候选目录在 `data_dir()/cache/`，见模块说明）；幂等：同一 `(项目, client_request_id)` 在 TTL 内回同一份响应。"""
     sweep()
+    if render is not None and render not in RENDER_MODES:
+        raise ProposeError("propose_input_invalid", "render")
+    auto = render == "lazy"
     folder = _text(folder, "folder", 1024)
     hint = _text(hint, "hint", _HINT_MAX)
     table = _text(table, "table")
@@ -644,12 +793,11 @@ def propose(
     ans = parse_answers(answers)
     hrows = parse_header_rows(header_rows)
     # 幂等键 = (项目, 请求号, 请求内容的摘要)：同一请求号带了不同的回答（换了处理方式）必须重新出图，不回旧的
+    digest_parts = [folder, table, sheet, hint, _answers_digest(ans), hrows]
+    if auto:
+        digest_parts.append("lazy")
     digest = hashlib.sha256(
-        json.dumps(
-            [folder, table, sheet, hint, _answers_digest(ans), hrows],
-            ensure_ascii=False,
-            sort_keys=True,
-        ).encode("utf-8")
+        json.dumps(digest_parts, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
     if client_request_id is not None:
         with _LOCK:
@@ -679,69 +827,147 @@ def propose(
         if bad.path in hrows:  # 用户指定了表头行、按它读不出来：直说原因（不是悄悄「没有可画的」）
             raise adf.DataSourceError(bad.code)
     profile = with_explicit_table(folder_profile, folder_path, table, sheet, hrows)
-    confirmed, picks = confirmed_from(ans)
-    chosen = recipe_mod.pick_table(profile, table, sheet, hint)
-    if isinstance(chosen, recipe_mod.NeedsChoice):
-        return remember({"kind": "ask", **chosen.to_dict()})
-    if isinstance(chosen, str):
-        return remember({"kind": "nothing", "reasons": [chosen], "dropped": []})
-    values = _table_for_values(folder_path, chosen)
-    rules = ans.get("cells") or {}
-    if rules:
-        bad = recipe_mod.check_cell_rules(list(rules.values()), chosen.summary, values)
-        if bad:
-            raise ProposeError(
-                "propose_cells_invalid", params={"reason": bad[0].code, "key": bad[0].detail}
-            )
-    res = recipe_mod.default_candidates(
-        profile,
-        table=chosen.path,
-        sheet=chosen.sheet,
-        confirmed=confirmed,
-        hint=hint,
-        values=values,
-        picks=picks,
-        cells=rules,
-    )
-    if isinstance(res, (recipe_mod.NeedsChoice, recipe_mod.MixedCells)):
-        return remember({"kind": "ask", **res.to_dict()})
+    rules: dict[str, recipe_mod.CellRule] = dict(ans.get("cells") or {})
+    defaults: list[dict] = []
+    mixed_auto: list[dict] = []
+    values: adf.DataSummary | None = None
+    values_key: tuple | None = None
+    res = None
+    chosen = None
+    for _round in range(MAX_AUTO_ROUNDS if auto else 1):
+        confirmed, picks = confirmed_from(ans)
+        chosen = recipe_mod.pick_table(profile, table, sheet, hint)
+        if isinstance(chosen, recipe_mod.NeedsChoice):
+            if auto and chosen.options:  # 懒模式：不问，用第一张（发现遍历的顺序）
+                ans_pick = chosen.options[0].answer
+                table, sheet = ans_pick["table"], ans_pick.get("sheet")
+                defaults.append({"question_code": chosen.question_code, "answer": dict(ans_pick)})
+                continue
+            return remember({"kind": "ask", **chosen.to_dict()})
+        if isinstance(chosen, str):
+            return remember({"kind": "nothing", "reasons": [chosen], "dropped": []})
+        if values_key != (chosen.path, chosen.sheet):
+            values = _table_for_values(folder_path, chosen)
+            values_key = (chosen.path, chosen.sheet)
+        if rules:
+            bad = recipe_mod.check_cell_rules(list(rules.values()), chosen.summary, values)
+            if bad:
+                raise ProposeError(
+                    "propose_cells_invalid", params={"reason": bad[0].code, "key": bad[0].detail}
+                )
+        res = recipe_mod.default_candidates(
+            profile,
+            table=chosen.path,
+            sheet=chosen.sheet,
+            confirmed=confirmed,
+            hint=hint,
+            values=values,
+            picks=picks,
+            cells=rules,
+        )
+        if not isinstance(res, (recipe_mod.NeedsChoice, recipe_mod.MixedCells)):
+            break
+        if not auto:
+            return remember({"kind": "ask", **res.to_dict()})
+        if isinstance(
+            res, recipe_mod.MixedCells
+        ):  # 默认「不画那几行」（用户点「取数字部分」等再带 `cells` 重来）
+            for col in res.columns:
+                rules[col["column"]] = recipe_mod.CellRule.from_dict(
+                    {"column": col["column"], "mode": "skip"}
+                )
+                mixed_auto.append(
+                    {
+                        "column": col["column"],
+                        "non_numeric": col["non_numeric"],
+                        "rows": col["rows"],
+                        "mode": "skip",
+                    }
+                )
+            defaults.append({"question_code": res.question_code})
+            continue
+        opt = res.unsure or (res.options[0] if res.options else None)
+        if opt is None:  # 没有任何选项可替用户选：不会发生（每个问题都有「不确定」），防御
+            break
+        ans.update(opt.answer)
+        defaults.append({"question_code": res.question_code, "answer": dict(opt.answer)})
+    if (
+        res is None
+        or isinstance(res, (recipe_mod.NeedsChoice, recipe_mod.MixedCells))
+        or not isinstance(chosen, adf.TableEntry)
+    ):
+        # 懒模式迭代用尽仍没落定（防御）：不出 ask，当「没有可画的」
+        return remember({"kind": "nothing", "reasons": ["no_renderable_family"], "dropped": []})
+
+    def basics() -> dict:
+        """懒模式响应里**说清这次用了什么**：表 / 表头行 / 列角色与可换的列 / 默认决定 / 自动跳过的文字格。"""
+        if not auto:
+            return {}
+        return {
+            "render": "lazy",
+            "table": chosen.path,
+            "sheet": chosen.sheet,
+            "header_row": values.header_line,
+            "units_row": values.units_row,  # 表头后紧跟的单位行已被切掉（它是 `header_row + 1` 行）；没有 = False
+            "roles": res.roles,
+            "defaults": defaults,
+            "mixed_cells": mixed_auto,
+        }
+
     if not res.items:
         return remember(
             {
                 "kind": "nothing",
                 "reasons": list(res.reasons),
                 "dropped": [{"reason_code": p.code} for d in res.dropped for p in d.problems[:1]],
+                **basics(),
             }
         )
     sid = secrets.token_hex(12)
     sdir = CANDIDATE_ROOT / sid
     sdir.mkdir(parents=True, exist_ok=False)
+    dropped: list[dict] = [{"reason_code": p.code} for d in res.dropped for p in d.problems[:1]]
+    fallback = False
+    # 每个备选 → (配方, 剔除原因, 缩略图, 覆盖情况, 懒渲染素材)
+    ready: list[
+        tuple[recipe_mod.Candidate, dict | None, str | None, Path | None, _Planned | None]
+    ] = []
     try:
         _stage_table(sdir, folder_path / PurePosixPath(chosen.path), chosen.path)
-        rendered = _render_candidates(
-            sdir, chosen, values, [c.recipe for c in res.items], _project_pin(root)
-        )
+        if auto:
+            plan = _plan_candidates(sdir, chosen, values, [c.recipe for c in res.items])
+            for cand, p in zip(res.items, plan, strict=True):
+                cov = None if p.bad else tpl.fingerprint_coverage(p.recipe).to_dict()
+                ready.append((cand, cov, p.bad, None, p))
+        else:
+            rendered = _render_candidates(
+                sdir, chosen, values, [c.recipe for c in res.items], _project_pin(root)
+            )
+            for cand, (_recipe, coverage, reason, png, fb) in zip(res.items, rendered, strict=True):
+                fallback = fallback or fb
+                ready.append((cand, coverage, reason, png, None))
     except BaseException:
         _rmtree(sdir)
         raise
     items: dict[str, Item] = {}
     order: list[str] = []
-    dropped: list[dict] = [{"reason_code": p.code} for d in res.dropped for p in d.problems[:1]]
-    fallback = False
-    for cand, (recipe, coverage, reason, png, fb) in zip(res.items, rendered, strict=True):
-        fallback = fallback or fb
-        if reason is not None or png is None:
+    for cand, coverage, reason, png, planned in ready:
+        if reason is not None or (png is None and planned is None):
             dropped.append({"reason_code": reason or "candidate_render_failed"})
             continue
         iid = secrets.token_hex(6)
         items[iid] = Item(
             iid,
             cand.code,
-            recipe,
+            cand.recipe,
             coverage or {},
             png,
-            len(unplotted_rows(values, recipe)),
-            cell_stats(values, recipe) or None,
+            len(unplotted_rows(values, cand.recipe)),
+            cell_stats(values, cand.recipe) or None,
+            state="pending" if planned is not None else "ready",
+            stem=planned.stem if planned is not None else None,
+            n=planned.n if planned is not None else 0,
+            expected=planned.expected if planned is not None else [],
         )
         order.append(iid)
     if not items:
@@ -751,6 +977,7 @@ def propose(
                 "kind": "nothing",
                 "reasons": sorted({d["reason_code"] for d in dropped}) or ["no_renderable_family"],
                 "dropped": dropped,
+                **basics(),
             }
         )
     sess = Session(
@@ -766,6 +993,8 @@ def propose(
         items=items,
         dir=sdir,
         touched=time.time(),
+        root=Path(root),
+        lazy=auto,
     )
     with _LOCK:
         _SESSIONS[sid] = sess
@@ -776,6 +1005,7 @@ def propose(
         "dropped": dropped,
         # 诊断标记：至少有一张小图是项目解释器没画成、回退到默认链条画的
         "interpreter_fallback": fallback,
+        **basics(),
     }
     return remember(out, sid)
 
@@ -801,9 +1031,11 @@ __all__ = [
     "DROP_REASONS",
     "ERROR_CODES",
     "Item",
+    "RENDER_MODES",
     "ProposeError",
     "Session",
     "discard",
+    "ensure_thumbnail",
     "get_item",
     "get_session",
     "normalize_rel",

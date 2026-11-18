@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, Plus, X } from '@/components/ui/icons'
+import { ChevronDown, LayoutGrid, Plus, X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { keyOf } from '@/lib/keymap'
 import { useFlip } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 import { activateCanvas, createCanvasAndActivate } from '@/store/canvasSession'
+import { useDataFigureStore } from '@/store/dataFigureStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Input'
@@ -123,7 +124,13 @@ export function CanvasTabs() {
   const nameOf = (id: string) =>
     id === activeId ? activeName : (canvases.find((c) => c.id === id)?.name ?? '')
 
-  const activate = (id: string) => activateCanvas(id)
+  const draftOpen = useDataFigureStore((s) => s.draftOpen)
+  const draftActive = useDataFigureStore((s) => s.draftActive)
+  // 临时标签激活时，真画布标签都不是「当前」；点任何一个真标签（含画布没变的那一个）先让临时标签退到后台
+  const activate = (id: string) => {
+    useDataFigureStore.getState().deactivateDraft()
+    activateCanvas(id)
+  }
 
   /** 把键盘焦点挪到第 i 个页签（roving tabindex）；i 按**这一次渲染**的 `openTabs` 算 */
   const focusTab = (i: number) => {
@@ -195,7 +202,7 @@ export function CanvasTabs() {
             id={id}
             index={i}
             name={nameOf(id)}
-            active={id === activeId}
+            active={id === activeId && !draftActive}
             roving={id === rovingId}
             closable={openTabs.length > 1}
             renaming={renaming === id}
@@ -222,6 +229,7 @@ export function CanvasTabs() {
             setDragOver={setDragOver}
           />
         ))}
+        {draftOpen && <DraftTabItem />}
       </div>
 
       {/* 「+」紧跟最后一个标签（2026-09-11 用户反馈），画布总览菜单仍靠右 */}
@@ -239,7 +247,8 @@ export function CanvasTabs() {
 
       {menuPinned || overflowing ? <AllCanvasesMenu activate={activate} /> : null}
       {/* 缩放菜单住在标签行最右（2026-09-30 重设计 A1；此前在顶栏右段） */}
-      <ZoomControls />
+      {/* 临时标签激活时没有画布可缩放：缩放菜单没有作用对象，先藏起来 */}
+      {!draftActive && <ZoomControls />}
     </div>
   )
 }
@@ -470,5 +479,58 @@ function AllCanvasesMenu({ activate }: { activate: (id: string) => void }) {
         </>
       )}
     </Menu>
+  )
+}
+
+/**
+ * 「数据」临时标签：点抽屉里的数据文件时开在真标签后面，标题是文件名（斜体，说明它不是画布），带关闭。
+ * 它不是画布：不在 `openTabs` 里、不进项目 / 导出 / 撤销，状态只在 `dataFigureStore`（见那里的文件头）。
+ */
+function DraftTabItem() {
+  const { t } = useTranslation('workspace')
+  const selected = useDataFigureStore((s) => s.selected)
+  const active = useDataFigureStore((s) => s.draftActive)
+  const name = selected ? selected.path.slice(selected.path.lastIndexOf('/') + 1) : ''
+  const close = () => useDataFigureStore.getState().closeDraft()
+  return (
+    <div
+      role="tab"
+      data-draft-tab
+      data-active={active || undefined}
+      aria-selected={active}
+      tabIndex={active ? 0 : -1}
+      title={selected?.path}
+      onClick={() => useDataFigureStore.getState().activateDraft()}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          e.stopPropagation()
+          useDataFigureStore.getState().activateDraft()
+        } else if (e.key === 'Delete' || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'w')) {
+          e.preventDefault()
+          e.stopPropagation()
+          close()
+        }
+      }}
+      className={cn(tabClass(active), 'group flex max-w-52 shrink-0 cursor-default items-center gap-1.5 pr-0')}
+    >
+      <LayoutGrid size={ICON_SIZE.sm} aria-hidden className="shrink-0 text-ink-3" />
+      <span className={cn('relative flex h-full min-w-0 items-center', active && cn(TAB_UNDERLINE, 'after:inset-x-0'))}>
+        <span className="truncate italic">{name}</span>
+      </span>
+      <button
+        type="button"
+        tabIndex={-1}
+        data-draft-tab-close
+        aria-label={t('tabs.closeTab', { name })}
+        onClick={(e) => {
+          e.stopPropagation()
+          close()
+        }}
+        className="flex size-5 shrink-0 items-center justify-center rounded-full text-ink-3 outline-none hover:bg-surface-hover hover:text-ink"
+      >
+        <X size={ICON_SIZE.xs} />
+      </button>
+    </div>
   )
 }

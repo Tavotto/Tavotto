@@ -1,0 +1,3 @@
+## Style settings made in `if __name__ == "__main__":` now reach the figure
+
+A script that sets `plt.style.use(...)`, `plt.rcParams[...]`, a theme or a random seed inside its `if __name__ == "__main__":` block before calling `main()` used to open in Tavotto with default colours, line widths and fonts, because Tavotto called `main()` directly and the block never ran. Tavotto now runs such scripts the way `python script.py` does, so the figure matches. Projects opened before keep working; their registered entry is updated the next time the script runs. Scripts whose block only calls `main()` are unchanged.

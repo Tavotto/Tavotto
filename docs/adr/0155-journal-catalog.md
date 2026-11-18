@@ -192,7 +192,7 @@ IP 不存明文，存 HMAC（IPv6 取 /64），只留 48 小时；读取记录�
 
 **超限的表现。** 客户端回 `quota`；界面不弹错，用一句话胶囊提示（文案待用户过目），这本刊暂时按「不按期刊」处理。断网又没缓存的刊在选择器里可见，选中时提示需要联网（同为胶囊）。
 **拉取时机**：启动时同步一次索引，之后每 24 小时至多一次，失败 1 小时后再试；刊包只在选中时下载。**开关**：只认 `TAVOTTO_NO_JOURNAL_SYNC=1`，设了一个字节都不发（有缓存仍可用）；`TAVOTTO_NO_TELEMETRY` 只管遥测，与 `updater` 同一先例，不代管（用户 2026-11-04 定）；
-不要求遥测同意（请求不带 install_id）。入口常量 `JOURNAL_CATALOG_UI` 关着时前端不发任何请求。**公钥**：生产代码里只有 `prod-1`（私钥在维护者本机 `~/.config/tavotto-journal-catalog.key`，不进仓库），测试钥只在测试里注入（`test_production_code_does_not_trust_the_test_key` 看护）。**两个入口、一个后端、计数只有一份**：`https://tavotto.cn/v1/journal-catalog/`（中国站，后端本体，sqlite 计数在这里）与 `https://tavotto.com/v1/journal-catalog/`（海外，tavotto.com 的 Vercel 函数薄反代到中国站）。反代把真实客户端 IP 放进 `X-Tavotto-Client-IP` 并附共享密钥头 `X-Tavotto-Proxy-Secret`；**后端只在密钥对得上时才采信这个 IP**，否则按连接 IP 算（所以伪造头绕不过 IP 限额；密钥走环境变量，不进仓库）。边缘只缓存签名索引（`s-maxage=300`）；令牌签发、刊包、快照每次回源（首次读取的计数与令牌校验在源站，刊包被边缘缓存就绕过了计数）。客户端先后顺序与更新检查、联系作者**同一个**「大陆环境」判据（`contactsend.region_is_cn`：壳的 `TAVOTTO_NETWORK_REGION=cn` 或界面语言 zh-CN）：大陆先 .cn 后 .com，其余先 .com 后 .cn；传输失败换另一个入口，额度用完（429）不换（两个入口是同一份计数）。读取记录因此不区分入口，同一份、保留 1 年。限额窗口用滚动 24 小时 / 60 分钟。
+不要求遥测同意（请求不带 install_id）。入口常量 `JOURNAL_CATALOG_UI` 关着时前端不发任何请求。**公钥**：生产代码里只有 `prod-1`（私钥在维护者本机 `~/.config/tavotto-journal-catalog.key`，不进仓库），测试钥只在测试里注入（`test_production_code_does_not_trust_the_test_key` 看护）。**两个入口、一个后端、计数只有一份**：`https://tavotto.cn/v1/journal-catalog/`（中国站，后端本体，sqlite 计数在这里）与 `https://www.tavotto.com/v1/journal-catalog/`（海外，tavotto.com 的 Vercel 函数薄反代到中国站；必须写 www：裸域 308 到 www，客户端拒跟跳转）。反代把真实客户端 IP 放进 `X-Tavotto-Client-IP` 并附共享密钥头 `X-Tavotto-Proxy-Secret`；**后端只在密钥对得上时才采信这个 IP**，否则按连接 IP 算（所以伪造头绕不过 IP 限额；密钥走环境变量，不进仓库）。边缘只缓存签名索引（`s-maxage=300`）；令牌签发、刊包、快照每次回源（首次读取的计数与令牌校验在源站，刊包被边缘缓存就绕过了计数）。客户端先后顺序与更新检查、联系作者**同一个**「大陆环境」判据（`contactsend.region_is_cn`：壳的 `TAVOTTO_NETWORK_REGION=cn` 或界面语言 zh-CN）：大陆先 .cn 后 .com，其余先 .com 后 .cn；传输失败换另一个入口，额度用完（429）不换（两个入口是同一份计数）。读取记录因此不区分入口，同一份、保留 1 年。限额窗口用滚动 24 小时 / 60 分钟。
 
 **线协议 v1**（基址 `https://<host>/v1/journal-catalog/`；服务端静态内容由发布工具生成）：
 
@@ -286,3 +286,9 @@ Agent 宿主（Codex / Claude Code 插件、MCP 等）与 app 走**同一套接�
 * **字段**：每条规则可选 `strength`，闭集与 journal facts v2 的 strength 相同（`required|recommended|preferred|permitted|typical|example|unspecified`），非法值报 `journal_catalog_schema`；缺省 = 不显示标签。精简出处 `JournalFieldSource` 原样保存，已定稿项目离线也看得到。严格同源对：`journals.py` / `journals.ts` 的 `STRENGTHS`。
 * **只管显示，不管判定**：`strength` 与 `qualifier` 正交——折叠、预检判据、严重级别、导出初值、golden 提示文本都不看 `strength`（用户 2026-11-15：照旧报警 + 加标签）。旧客户端忽略未知字段，目录可以先于客户端带上它。
 * **界面**：只给 `required` 标「必须」、`recommended` 标「建议」，小号次级灰字跟在要求清单的值后面、出处卡结论后面；不加底色、不另起行。预检问题行本身不加字（行文已会截断），点开出处卡可见。其余取值暂不显示。
+
+## 14. 修订：独立的来源事实 API v2（2026-11-11）
+
+用户要求全面核对目录、适当扩展字段，为 API 保留期刊各不相同的完整要求。v1 的 path → 单项覆盖无法表达同一指标按图类、条件和阶段分别给值，也无法区分禁止项与举例；把条件字段直接加在 v1 规则上会被旧客户端忽略并错折成通用判据。因此新增独立的 v2 事实分发协议，数据、签名索引与版本水位分离；v1 不改，并只允许可忠实表达的安全投影。详见 `services/journal_catalog/FACTS-V2.md`。
+
+服务端提供 v2 事实结构和分发入口、与 v1 共用设备及首次读取额度。Python 与 MCP 可读取已验签的事实及来源，但不把它们折成 v1 判据。桌面端暂不提供独立的来源查看器（2026-11-17 用户：太复杂，设置页那个已去掉；本地 `/api/journal-facts/*` 保留），v2 之后经预检出处卡呈现。每条事实保留来源和审校状态；validator 是结构门禁，不能证明摘录及语义已通过独立审核。**本修订不实现 v2 正式预检求值、事实到 v1 的投影或线上部署**：无可靠映射时不能对条件数据作通用判断，也不能把基础 300 dpi 写成期刊规定。上线需要经复核的数据、签名构建和客户端验签、旧版及既有项目快照兼容、真实服务链 staging 验证。此前 §3b / §11 对 v1 的裁决继续有效。

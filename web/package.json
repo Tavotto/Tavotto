@@ -61,6 +61,7 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.4",
+    "fast-check": "^4.10.2",
     "i18next-cli": "^1.69.2",
     "jsdom": "^30.0.1",
     "oxlint": "^1.75.0",

@@ -427,6 +427,7 @@ def _safe_style(style: dict) -> dict:
     out = {}
     allowed = {
         "color": str,
+        "linewidth": float,
         "linestyle": str,
         "marker": str,
         "markersize": float,

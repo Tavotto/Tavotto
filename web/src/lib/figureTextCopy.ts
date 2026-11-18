@@ -21,10 +21,12 @@
  *
  * ## 竖直方向的一个常数
  *
- * 标注的第一行基线在框内的位置取决于字体度量：导出按 OS/2 的 `sTypoAscender / sTypoDescender`
- * （`rendercore/typography.layout_text`：`基线 = 框顶 + size × ((行高 − (asc − desc)) / 2 + asc)`），
- * 基线比行盒中线低 `size × (asc + desc) / 2`（desc 取负）。前端没有字体度量，批准的三族各取一个常数（千分之一 em），
- * 看护 `tests/test_figure_text_copy_metrics.py` 从字体文件反推它们。用户字体（`sourceFont`）与批准族的差在 0.02 em 内。
+ * 标注的第一行基线在行盒中线下固定 `TEXT_BASELINE_BELOW_CENTER_PER_MILLE`（千分之一 em），与字体无关
+ * （`rendercore/typography.line_box`，ADR 0073 修订 2026-11-16；预览补齐到同一条基线）。三族、用户字体（`sourceFont`）同一个数。
+ * 第一行里有撑高行盒的公式时基线还要再往下（公式的上伸超出普通行盒的那一截，`line_box`）。复制是同步的（⌘C 的
+ * `copy` 事件里写剪贴板），等不到公式排版结果；公式在原图里也是 matplotlib mathtext 排的，`text_block.asc` 就是那一行
+ * 真实的上伸，超出普通行盒的部分记作撑高量：框高加上它、框顶往上让出它，第一行基线仍落在原处。只在第一行有公式时
+ * 这样算——普通文字（尤其中文、小行距）的 `asc` 可能略高于行盒上半，那不是撑高。
  */
 import type { ManifestElement, ManifestTextBlock } from '@/lib/api'
 import { fitWidthMm } from '@/canvas/textFit'
@@ -36,23 +38,21 @@ import { serializeRuns, type TextRun } from '@/lib/richText'
 import { sourceFontFromElement } from '@/lib/sourceFont'
 import { genericFamilyOf } from '@/lib/styleSample'
 import { pagePtLens } from '@/lib/stylePresets'
-import { styleIsItalic, weightIsBold, type CanvasTextFamily } from '@/lib/typography'
+import { styleIsItalic, TEXT_BASELINE_BELOW_CENTER_PER_MILLE, weightIsBold } from '@/lib/typography'
 import { MM_PER_PT } from '@/lib/units'
 import type { PanelObject, TextObject } from '@/types/document'
 
-/** 批准的三族：基线比行盒中线低多少（千分之一 em）= `(sTypoAscender + sTypoDescender) / 2 × 1000`。 */
-export const BASELINE_SANS_PER_MILLE = 259
-export const BASELINE_SERIF_PER_MILLE = 239
-export const BASELINE_MONO_PER_MILLE = 212
-
-const BASELINE_BELOW_MIDLINE_EM: Record<CanvasTextFamily, number> = {
-  'sans-serif': BASELINE_SANS_PER_MILLE / 1000,
-  serif: BASELINE_SERIF_PER_MILLE / 1000,
-  monospace: BASELINE_MONO_PER_MILLE / 1000,
-}
+/** 标注的基线比行盒中线低多少 em：与字体无关的同一个数（`TEXT_BASELINE_BELOW_CENTER_PER_MILLE`） */
+const BASELINE_BELOW_MIDLINE_EM = TEXT_BASELINE_BELOW_CENTER_PER_MILLE / 1000
 
 /** 标注的默认行高（`TextView` / `typography.layout_text` 的缺省）；单行文字不写 `lineHeight`。 */
 const DEFAULT_LINE_HEIGHT = 1.25
+
+/** 第一行里有没有一对未转义的 `$`（matplotlib 的公式开合规则，与 `annotationTextOf` 同一条） */
+function firstLineHasMath(text: string): boolean {
+  const first = text.split('\n')[0]
+  return (first.match(/(?<!\\)\$/g)?.length ?? 0) >= 2
+}
 
 /** 这个元素能不能复制成标注：有 `text_block` 就是一段单独的文字（刻度组、曲线、色块……都没有）。 */
 export const isCopyableText = (el: Pick<ManifestElement, 'text_block'>): boolean => !!el.text_block
@@ -141,9 +141,11 @@ export function figureTextToAnnotation(panel: PanelObject, el: ManifestElement):
   const align = swapped ? flipAlign(ha) : ha
 
   const wBox = fitWidthMm(wText, sizePt)
-  const hBox = lines * lineHeight * sizeMm
-  // 框中心相对文字块中心：竖直 = 让第一行基线重合；水平 = 让对齐的那条边 / 中线重合
-  const dv = ascText - hText / 2 - sizeMm * (BASELINE_BELOW_MIDLINE_EM[family] - ((lines - 1) * lineHeight) / 2)
+  const upEm = lineHeight / 2 + BASELINE_BELOW_MIDLINE_EM // 普通行盒在基线以上的高（em）
+  const grow = tb.math && firstLineHasMath(tb.text) ? Math.max(0, ascText - upEm * sizeMm) : 0
+  const hBox = lines * lineHeight * sizeMm + grow
+  // 框中心相对文字块中心：竖直 = 让第一行基线（框顶 + 行盒上半 + 撑高量）重合；水平 = 让对齐的那条边 / 中线重合
+  const dv = ascText - hText / 2 - (upEm * sizeMm + grow) + hBox / 2
   const slack = (wBox - wText) / 2
   const du = align === 'left' ? slack : align === 'right' ? -slack : 0
   const [cx, cy] = toPage(tb.center[0], tb.center[1])

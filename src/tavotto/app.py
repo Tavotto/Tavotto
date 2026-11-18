@@ -64,6 +64,7 @@ from . import pdfbackend, richtext, tiffprobe
 from .engine import (
     ai_attachments as engine_ai_attachments,
     ai_bridge as engine_ai,
+    ai_catalog as engine_ai_catalog,
     ai_connections as engine_ai_connections,
     ai_convert as engine_ai_convert,
     ai_data_figure as engine_ai_data_figure,
@@ -126,6 +127,7 @@ from .engine import (
     inputcopy as engine_inputcopy,
     inputremap as engine_inputremap,
     inputtranscript as engine_inputtranscript,
+    journalfacts_remote as engine_journalfacts_remote,
     journalremote as engine_journalremote,
     launchctx as engine_launchctx,
     launcher as engine_launcher,
@@ -857,6 +859,7 @@ def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=
         *engine_texdiag.ERROR_CODES,
         engine_pool.IMPORT_FOLDER_UNREADABLE_CODE,
         engine_pool.IMPORT_FOLDER_ABI_CODE,
+        engine_pool.IMAGE_FORMAT_MISMATCH_CODE,
         engine_figcapture.EXPORT_RASTER_TOO_LARGE_CODE,
     ):
         # 脚本要输入（ADR 0099：提示原文 + 为什么没人能答，T08）/ 参数解析器退出（T03：个数与类别）：
@@ -6209,7 +6212,8 @@ def _review_render(target: dict, render: dict, long_edge: int):
         if png is None:
             raise ValueError("render_no_png")
         data = Path(png.tmp_path).read_bytes()
-        return engine_reviewshare.Rendered(data, _review_elements(kind, job.request, seg))
+        elements, size_mm = _review_elements(kind, job.request, seg)
+        return engine_reviewshare.Rendered(data, elements, size_mm)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -6241,10 +6245,11 @@ def _review_manifest(figure_id: str, overrides: list):
         return None
 
 
-def _review_elements(kind: str, req, seg: dict) -> list:
+def _review_elements(kind: str, req, seg: dict) -> tuple[list, list | None]:
+    """(元素表, 图幅 mm)；图幅给审阅页按 mm 算点选容差（与画布同一口径），拿不到 None。"""
     if kind == "figure":
         man = _review_manifest(req.original.figure_id, req.original.overrides)
-        return engine_reviewshare.manifest_elements(man)
+        return engine_reviewshare.manifest_elements(man), engine_reviewshare.manifest_size_mm(man)
     # 前端原样的对象（带 `object_id`）与规范化后的请求对象一一对齐；面板键（`panel_keys`）是不透明的：
     # 导出请求里对象的 `id` 是图的项目内路径，不许进元素表
     src = [o for o in (seg.get("objects") or []) if isinstance(o, dict)]
@@ -6254,8 +6259,11 @@ def _review_elements(kind: str, req, seg: dict) -> list:
         obj = objects[i]
         if not obj.get("hidden") and isinstance(obj.get("id"), str):
             manifests[key] = _review_manifest(obj["id"], obj.get("overrides") or [])
-    return engine_reviewshare.layout_elements(
+    els = engine_reviewshare.layout_elements(
         seg.get("page_w_mm"), seg.get("page_h_mm"), src, manifests
+    )
+    return els, engine_reviewshare.manifest_size_mm(
+        {"size_mm": [seg.get("page_w_mm"), seg.get("page_h_mm")]}
     )
 
 
@@ -11269,6 +11277,9 @@ def api_ai_fix():
             project_root=ctx.path,
             model=model,
             cli=cli,
+            endpoint=(conn["provider_id"], conn["model"], conn["base_url"])
+            if conn is not None
+            else None,
             report=lambda: _session_report(ctx, sess),
             redactor=redactor,
             audit=engine_fixsession.AuditLog(),
@@ -12414,6 +12425,13 @@ def _native_preparation_runner(pl, before_retry=None):
         )
         if unreadable is not None:
             raise unreadable
+        image_mismatch = engine_pool.image_format_error(
+            str(error.get("message") or "脚本运行出错"),
+            str(error.get("traceback") or ""),
+            error,
+        )
+        if image_mismatch is not None:
+            raise image_mismatch
         failure = engine_pool.WorkerError(
             str(error.get("message") or "脚本运行出错"),
             traceback_text=str(error.get("traceback") or ""),
@@ -12483,6 +12501,15 @@ def _native_run_error(session):
         traceback_text=tail,
         code=engine_pool.SCRIPT_ERROR_CODE if session.exit_code else "no_figure_captured",
     )
+    if failure.code == engine_pool.SCRIPT_ERROR_CODE:
+        # 脚本在建第一张图之前就读图失败（没到屏障）：图片内容与扩展名不符的事实随 exit 带来，与屏障出口同一个稳定码
+        getter = getattr(session, "image_format_mismatch", None)
+        fact = getter() if callable(getter) else None
+        mismatch = engine_pool.image_format_error(
+            str(failure), tail, {"image_format_mismatch": fact} if fact else None
+        )
+        if mismatch is not None:
+            return mismatch
     category = getattr(session, "exception_category", None)
     if failure.code == engine_pool.SCRIPT_ERROR_CODE and category:
         failure.extra["exception_category"] = category
@@ -14289,12 +14316,135 @@ def api_journal_catalog_journal():
 @app.get("/api/journal-catalog/assets/<path:file>")
 def api_journal_catalog_asset(file: str):
     """出处卡的高亮短图。`file` 必须是 `snapshots/<sha256>.webp`（内容寻址）；本地没有就带令牌拉一次。"""
-    path = engine_journalremote.snapshot_path(file)
-    if path is None:
+    data = engine_journalremote.snapshot_bytes(file)
+    if data is None:
         return jsonify({"error": "snapshot unavailable", "code": "snapshot_unavailable"}), 404
-    resp = send_file(path, mimetype="image/webp", max_age=31536000)
+    digest = file[len("snapshots/") : -len(".webp")]
+    resp = send_file(io.BytesIO(data), mimetype="image/webp", max_age=31536000, etag=digest)
     resp.headers["Cache-Control"] = "private, max-age=31536000, immutable"
     return resp
+
+
+# v2 source facts are separate from publication profiles and never feed preflight.
+def _journal_facts_payload(payload: dict) -> dict:
+    return {**payload, "semantic_review": "not_authenticated", "catalog_completeness": "unknown"}
+
+
+def _journal_facts_page_fits(payload: dict) -> bool:
+    # Use Flask's actual configured serializer, including the fields added to
+    # every successful HTTP response and its trailing newline.
+    response = jsonify(_journal_facts_payload(payload))
+    return len(response.get_data()) <= engine_journalfacts_remote.MAX_PAGE_BYTES
+
+
+def _journal_facts_response(payload: dict, status: int = 200):
+    response = jsonify(payload)
+    response.status_code = status
+    response.headers["Cache-Control"] = "no-store"
+    # Flask's actual JSON encoding may differ from the engine's compact encoding.
+    if status == 200 and len(response.get_data()) > engine_journalfacts_remote.MAX_PAGE_BYTES:
+        return _journal_facts_response(
+            {
+                "code": "result_too_large",
+                "error": "期刊事实结果过大，请减小 limit 并从同一 offset 重试；单条超限时无法读取。",
+            },
+            413,
+        )
+    return response
+
+
+def _journal_facts_error(exc: engine_journalfacts_remote.FactsError):
+    statuses = {
+        "bad_request": 400,
+        "unknown_journal": 404,
+        "catalog_changed": 409,
+        "result_too_large": 413,
+        "quota_hour": 429,
+        "quota_day": 429,
+        "ip_day": 429,
+        "ip_tokens": 429,
+    }
+    status = statuses.get(exc.code, 503)
+    body = {"code": exc.code, "error": "期刊事实不可用；请检查错误状态后重试。"}
+    for name in (
+        "sync_state",
+        "sync_code",
+        "retry_after_s",
+        "expected_catalog_rev",
+        "current_catalog_rev",
+    ):
+        value = getattr(exc, name, None)
+        if value is not None:
+            body[name] = value
+    return _journal_facts_response(body, status)
+
+
+def _journal_facts_request(kind: str):
+    from .engine import journals as engine_journals
+
+    # Same master switch as the MCP tool and the settings viewer (ADR 0155 section 9).
+    if not engine_journals.agents_enabled():
+        return _journal_facts_response(
+            {"code": "journal_catalog_disabled", "error": "期刊标准库入口尚未开放"}, 403
+        )
+    body = request.get_json(silent=True)
+    common = {"offset", "limit", "locale", "expected_catalog_rev"}
+    extra = {"query"} if kind == "search" else {"journal_id", "inspection"}
+    if not isinstance(body, dict) or set(body) - common - extra:
+        return _journal_facts_error(engine_journalfacts_remote.FactsError("bad_request"))
+    offset = body.get("offset", 0)
+    limit = body.get("limit", 20)
+    revision = body.get("expected_catalog_rev")
+    locale = body.get("locale")
+    if (
+        type(offset) is not int
+        or offset < 0
+        or type(limit) is not int
+        or not 1 <= limit <= 20
+        or (revision is not None and (type(revision) is not int or not 1 <= revision <= 9999999999))
+        or (offset > 0 and revision is None)
+        or (locale is not None and (not isinstance(locale, str) or len(locale) > 64))
+    ):
+        return _journal_facts_error(engine_journalfacts_remote.FactsError("bad_request"))
+    try:
+        options = {
+            "offset": offset,
+            "limit": limit,
+            "ui_locale": locale,
+            "expected_catalog_rev": revision,
+        }
+        if kind == "search":
+            result = engine_journalfacts_remote.search(
+                body.get("query", ""), response_fits=_journal_facts_page_fits, **options
+            )
+        else:
+            selection = body.get("inspection")
+            if "inspection" in body:
+                engine_journalfacts_remote.inspect_facts_page({"facts": []}, selection)
+
+            def page_fits(page):
+                if "inspection" in body:
+                    page = engine_journalfacts_remote.inspect_facts_page(page, selection)
+                return _journal_facts_page_fits(page)
+
+            result = engine_journalfacts_remote.get_facts(
+                body.get("journal_id"), response_fits=page_fits, **options
+            )
+            if "inspection" in body:
+                result = engine_journalfacts_remote.inspect_facts_page(result, selection)
+        return _journal_facts_response(_journal_facts_payload(result))
+    except engine_journalfacts_remote.FactsError as exc:
+        return _journal_facts_error(exc)
+
+
+@app.post("/api/journal-facts/search")
+def api_journal_facts_search():
+    return _journal_facts_request("search")
+
+
+@app.post("/api/journal-facts/journal")
+def api_journal_facts_journal():
+    return _journal_facts_request("journal")
 
 
 # ------------------------- 卸载后重装 → 新手态（Windows，ADR 0136 修订） -----
@@ -14369,12 +14519,29 @@ def api_ai_endpoint_save():
     body = request.get_json(force=True)
     if not str(body.get("label") or body.get("id") or "").strip():
         return jsonify({"error": "缺少名称", "code": "name_missing"}), 400
+    before = engine_ai_providers.list_providers()
+    prev = next((p for p in before if p.get("id") == str(body.get("id") or "")), None)
+    if (
+        prev is not None
+        and not str(body.get("api_key") or "").strip()
+        and body.get("base_url") is not None
+        and engine_ai_catalog.origin_of(str(body.get("base_url") or ""))
+        != engine_ai_catalog.origin_of(str(prev.get("base_url") or ""))
+    ):
+        # Key 留空 = 沿用已存的 Key：换了来源就不许沿用（否则存完的探测 / 之后每次任务都把旧 Key 发给新主机；
+        # 与 POST /api/ai/connections、型号清单同一条 key_origin_mismatch 规矩，Codex #1965 P1）
+        return _connection_error(engine_ai_connections._invalid("key_origin_mismatch"))
     try:
-        engine_ai_providers.save(body)
+        after = engine_ai_providers.save(body)
     except (ValueError, OSError) as exc:
         return jsonify(
             {"error": str(exc), "code": "endpoint_save_failed", "params": {"reason": str(exc)}}
         ), 400
+    # 自填地址：存完补一次对话协议探测（与 POST /api/ai/connections 同一套）；失败照样已保存
+    engine_ai_connections.probe_after_endpoint_save(
+        before, after, key_sent=bool(str(body.get("api_key") or "").strip())
+    )
+    engine_ai.invalidate_capabilities()
     return jsonify(engine_ai.capabilities(refresh=True))
 
 
@@ -14472,25 +14639,46 @@ def _apply_connection(body: dict, agent: str, model: str | None, endpoint_id):
     return agent, model, endpoint_id, None
 
 
+def _connection_view(cid: str, fetch_error: str | None = None) -> dict:
+    """一条 Key 连接的当前视图（重新读能力表）；试取型号清单失败的那次原因码叠在 `ready` 上变成 `error`（对话探测已通过时，只有 Key 被拒才算）。"""
+    engine_ai.invalidate_capabilities()
+    conn = next(c for c in engine_ai.capabilities(refresh=True)["connections"] if c["id"] == cid)
+    return engine_ai_connections.overlay_fetch_error(conn, fetch_error)
+
+
 @app.post("/api/ai/connections")
 def api_ai_connection_add():
-    """连一个 Key 类 AI。body：`{vendor, api_key, base_url?, model?, label?}`（`custom` 另需 `wire`：`anthropic` | `openai-responses`；
-    带已存在的 `id` = 换这条的 Key / 型号）。保存前试取一次型号清单，失败也保存，但返回的连接 `state="error"` 并带原因码 `error`。
-    返回 `{ok, connection}`；**密钥不回传**。"""
+    """连一个 Key 类 AI。body：`{vendor, api_key, base_url?, model?, models?, label?, wire?, id?}`（`models` = 额外型号列表，≤50 项；`custom` 必须有 `base_url`；`wire` 可选：
+    缺省 / `auto` = 保存时探测对话协议，`anthropic` | `openai-responses` | `openai-chat` 也会探测，没通过就换探测到能通的；带已存在的 `id` = 换这条的 Key / 型号）。
+    保存前试取一次型号清单、保存后探测一次对话协议（一条很短的测试请求），都失败也保存，但返回的连接 `state="error"` 并带原因码 `error`
+    （探测全不通 = `endpoint_unusable` + `error_reason`）。返回 `{ok, connection, probe}`；**密钥不回传**。"""
     body = request.get_json(silent=True)
     try:
-        cid, fetch_error = engine_ai_connections.add_connection(body)
+        cid, fetch_error, probe = engine_ai_connections.add_connection(body)
     except engine_ai_connections.ConnectionRefused as exc:
         return _connection_error(exc)
     except (ValueError, OSError) as exc:
         return jsonify(
             {"error": str(exc), "code": "endpoint_save_failed", "params": {"reason": str(exc)}}
         ), 400
-    engine_ai.invalidate_capabilities()
-    conn = next(c for c in engine_ai.capabilities(refresh=True)["connections"] if c["id"] == cid)
-    if fetch_error and conn["state"] == "ready":
-        conn = {**conn, "state": "error", "error": fetch_error}
-    resp = jsonify({"ok": True, "connection": conn})
+    resp = jsonify({"ok": True, "connection": _connection_view(cid, fetch_error), "probe": probe})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/ai/connections/<cid>/check")
+def api_ai_connection_check(cid):
+    """重新检查一条 Key 连接：再探测一次对话协议（会联网，≤ 30 s），更新记录。返回 `{ok, connection, probe}`；
+    订阅 / 账号登录类或不存在 → 404 `connection_not_found`。"""
+    try:
+        probe = engine_ai_connections.check_connection(cid)
+    except engine_ai_connections.ConnectionRefused as exc:
+        return _connection_error(exc)
+    except (ValueError, OSError) as exc:
+        return jsonify(
+            {"error": str(exc), "code": "endpoint_save_failed", "params": {"reason": str(exc)}}
+        ), 400
+    resp = jsonify({"ok": True, "connection": _connection_view(cid), "probe": probe})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -15466,6 +15654,7 @@ _PROPOSE_STATUS = {
     "propose_input_invalid": 400,
     "propose_cells_invalid": 400,
     "propose_cells_need_rule": 409,
+    "propose_thumbnail_failed": 422,
 }
 
 
@@ -15478,7 +15667,8 @@ def _propose_error(exc: "engine_ai_data_propose.ProposeError"):
 
 @app.post("/api/ai/data-figure/propose")
 def api_ai_data_figure_propose():
-    """出备选（不调模型）。body：`{folder?, table?, sheet?, hint?, answers?, header_rows?, client_request_id?}`（`folder` 项目相对、缺省项目根；
+    """出备选（不调模型）。body：`{folder?, table?, sheet?, hint?, answers?, header_rows?, client_request_id?, render?}`
+    （`render: "lazy"` = 文字先到、不问问题、缩略图在取图时画，见 `ai_data_propose.propose`）（`folder` 项目相对、缺省项目根；
     `header_rows` = `{表的路径（相对 folder，同 `table`）: 每列名字所在的物理行号}`，按文件指定，生成的脚本读表用同一个行号）。
 
     回三选一：`{kind: "ask", question_code, options, unsure}`（决定科学含义的事只能用户定；选项里的 `answer` 原样并进下一次的
@@ -15505,6 +15695,7 @@ def api_ai_data_figure_propose():
             answers=body.get("answers"),
             header_rows=body.get("header_rows"),
             client_request_id=rid,
+            render=body.get("render"),
         )
     except engine_ai_data_propose.ProposeError as exc:
         return _propose_error(exc)
@@ -15517,12 +15708,13 @@ def api_ai_data_figure_propose():
 
 @app.get("/api/ai/data-figure/thumbnail/<session>/<item>")
 def api_ai_data_figure_thumbnail(session, item):
-    """候选缩略图（只读缓存里我们自己写的那份 PNG）。`session` / `item` 是服务端登记的不透明 id，路径不由请求拼出来。"""
+    """候选缩略图（只读缓存里我们自己写的那份 PNG；懒渲染的备选在这里画并等它画完，画不出 → 422 `propose_thumbnail_failed`，
+    `params.reason` 是 `DROP_REASONS` 里的码）。`session` / `item` 是服务端登记的不透明 id，路径不由请求拼出来。"""
     if not engine_ai_figure_edit.enabled():
         return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
     ctx = current_ctx()
     try:
-        path = engine_ai_data_propose.thumbnail_path(str(ctx.path.resolve()), session, item)
+        path = engine_ai_data_propose.ensure_thumbnail(str(ctx.path.resolve()), session, item)
     except engine_ai_data_propose.ProposeError as exc:
         return _propose_error(exc)
     resp = send_file(path, mimetype="image/png", conditional=False)
@@ -15579,6 +15771,18 @@ def api_ai_data_figure_commit():
             return jsonify(out)
     try:
         sess, item = engine_ai_data_propose.get_item(project, session_id, item_id)
+        if item.state == "pending":
+            # 懒渲染里还没画的备选：提交前先同步走一遍取图同一条路径（`ensure_thumbnail`：同一个渲染 + 指纹核对、同一把单项锁与并发上限），
+            # 不能绕过它——否则指纹对不上的备选会先落盘（脚本 + 注册表条目）、随后缩略图才 422
+            try:
+                engine_ai_data_propose.ensure_thumbnail(project, session_id, item_id)
+            except engine_ai_data_propose.ProposeError as exc:
+                if exc.code != "propose_thumbnail_failed":
+                    raise
+        if (
+            item.state == "failed"
+        ):  # 懒渲染里画不出来 / 数据对不上的备选：与旧模式「不进列表」同一保证，不许提交（此时什么都没写）
+            raise engine_ai_data_propose.ProposeError("propose_candidate_unknown")
         sel = engine_ai_data_task.Selection(
             folder_rel=sess.folder_rel,
             table=sess.table,

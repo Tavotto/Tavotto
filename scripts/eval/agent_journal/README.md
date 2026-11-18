@@ -38,3 +38,19 @@ python3 scripts/eval/agent_journal/harness.py report
 
 B 组按提示词版本分开：`prompt_rev` 1 是 27/32（5 组都是改完关了会话，修改没导出就丢了，后来由 #1903 修）；`prompt_rev` 2 是 24/28。
 没合规的 9 组剩下的都是页宽。`prompt_rev` 2 里 18-inset 三本刊全挂：两组是 `tavotto_fix_to_journal` 已经改到合规，agent 又回脚本修文字重叠、重新打开图，会话里的改动没导出就没了；JMST 那组 `fix_to_journal` 只回 `constraint_conflict` / `unsupported`，没说哪条约束冲突，agent 只好去猜 override 的属性名。
+
+## 第二轮结果（2026-11，DeepSeek v4.1-flash，同样 20 张图 × 3 本刊）
+
+被测模型改为 `opencode-go/deepseek-v4.1-flash`；B 组全部是 `prompt_rev` 2，Tavotto 用的是 #1963 分支打出的 wheel（含 #1903）。结果在 `results/flash/`。
+
+| 组 | 期刊合规 | 连通用提示也全过 | 平均工具调用 | 平均用时 |
+|---|---|---|---|---|
+| 原图 | 4/60 | 1/60 | – | – |
+| A：agent 单独 | 49/60 | 28/60 | 22.2 | 178 s |
+| B：agent + Tavotto | 60/60 | 38/60 | 31.1 | 329 s |
+
+表里的判分是用 main（含 #1985）+ #2003 的 wheel 重判的（`rejudge`，没有重跑 agent）。当初跑完时用的旧 wheel 判 A 组只有 33/60：27 组 Tavotto 打不开改后的图，原因是 Flash 改完脚本习惯先 `savefig` 再用 PIL 读回转成 RGB，旧版安全模式拒绝这类脚本。#1985 让它们回退到真实 Python，#2003 补上真实 Python 那一路的 Helvetica 小字兜底；重判后 A 组有 16 组结论变了，B 组不变。
+
+- A 组还剩 1 组打不开（`02-bar-errorbars` × JMST）：agent 把输出改成先存 `_fig_tmp.*` 再转存 `fig.tif` / `fig.png`，脚本里已经没有叫 `fig` 的图，注册表的 stem 对不上，属于判分口径，不是 Tavotto 的问题。
+- A 组能判但没合规的 10 组剩下的都是页宽（Nature 3、JMST 7）；B 组 60 组全部合规。
+- B 组代价：工具调用多 40%、用时多 85%。`tavotto_open_figure` 247 次（每次运行约 4 次）、`tavotto_close_session` 119 次，`tavotto_health` / `tavotto_guide` / `tavotto_list_journals` 61 / 56 / 51 次——ADR 0189 针对的就是这些。

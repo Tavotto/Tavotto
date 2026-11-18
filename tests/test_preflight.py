@@ -182,6 +182,51 @@ def test_clean_figure_reports_nothing():
     assert preflight.run(spec, p) == []
 
 
+@pytest.mark.parametrize(
+    ("roles", "key"),
+    [
+        (("body_min",), "fontSizeAdvisedBody"),
+        (("script_min",), "fontSizeAdvisedScript"),
+        (("body_min", "script_min"), "fontSizeAdvisedBoth"),
+    ],
+)
+def test_approximate_font_advice_is_not_described_as_a_journal_minimum(roles, key):
+    profile = profiles.load("journal-base-v1")
+    profile["advisories"] = [
+        {
+            "check": "font-size-recommended",
+            "role": role,
+            "value_pt": 7 if len(roles) == 2 and role == "script_min" else 9,
+            "qualifier": "recommended",
+            "journal": "Synthetic Journal",
+            "quote": "Text should be approximately 9 pt.",
+        }
+        for role in roles
+    ]
+    issues = preflight.run(preflight.spec_from_manifest(_manifest(tick_pt=8.8)), profile)
+    advice = next(issue for issue in issues if issue["id"] == "font-size-recommended")
+    assert advice["severity"] == "suggestion"
+    assert advice["message"]["key"] == key
+    assert advice["message"]["params"]["quote"] == " … ".join(
+        "Text should be approximately 9 pt." for _ in roles
+    )
+    assert "不一定是期刊规定的下限" in advice["text"]
+    if len(roles) == 2:
+        assert "预检以正文数值比较，未区分文字类型" in advice["text"]
+    else:
+        assert "预检未区分文字类型" in advice["text"]
+    assert "期刊规定的最小字号" not in advice["text"]
+    # Existing threshold and issue shape remain unchanged; no conclusion is made
+    # about whether a value above the comparison point satisfies the source.
+    assert advice["detail"]["body_min_pt"] == (9 if "body_min" in roles else None)
+    assert advice["detail"]["script_min_pt"] == (
+        (7 if len(roles) == 2 else 9) if "script_min" in roles else None
+    )
+    assert "font-size-recommended" not in _ids(
+        preflight.run(preflight.spec_from_manifest(_manifest(tick_pt=9.1)), profile)
+    )
+
+
 def test_width_check_uses_the_profile_not_a_hardcoded_number():
     p = profiles.load("lab-publication-v1")
     spec = preflight.spec_from_manifest(_manifest())

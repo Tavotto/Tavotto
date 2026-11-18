@@ -3666,6 +3666,56 @@ describe('打开并运行 + 后端会话内回退的呈现（V2 PR4）', () => {
     })
   })
 
+  describe('图片内容与扩展名不符：一句话点名真实格式，主按钮是现成的「再试一次」（TVD-3MWS）', () => {
+    const mismatch = (params: Record<string, string> = { file: 'photos/cell.png', claimed: 'PNG', actual: 'JPEG', ext: 'png' }) =>
+      report({
+        phase: 'action_required',
+        outcome: { kind: 'failed', code: 'image_format_mismatch' },
+        actions: [action('run'), action('recheck')],
+        provider: { plan_id: 'p', attempt_id: 'prep-1', attempts: 1, dependency: null },
+        result: { status: 'error', error: { code: 'image_format_mismatch', message: 'x', params, traceback: 'Traceback\nSyntaxError: not a PNG file' } },
+      })
+
+    it('一句话：文件名 + 真实格式 + 扩展名 + 该换成的格式；一个主按钮「再试一次」，不堆说明', async () => {
+      await mount()
+      await openWith(mismatch())
+      expect(panel().dataset.prepState).toBe('image_format')
+      const line = panel().querySelector('[data-prep-line]')!.textContent ?? ''
+      expect(line).toBe('photos/cell.png 其实是 JPEG 图片，只是扩展名写成了 .png，换成真正的 PNG 文件后再运行。')
+      expect(visiblePrimaryButtons(panel())).toBe(1)
+      expect(primary()?.textContent).toBe('再试一次')
+      expect(visibleSentenceCount(panel(), 'zh-CN')).toBeLessThanOrEqual(1)
+      // 不说成运行方式 / 环境的问题
+      expect(panel().textContent).not.toMatch(/安全运行|原样运行|环境|沙盒/)
+      // 不带警告图标：标题行前面没有图标槽
+      expect(panel().querySelector('[data-prep-line]')!.parentElement!.querySelector('svg')).toBeNull()
+    })
+
+    it('后端建议 AI 修复时：主按钮仍是「再试一次」，AI 修复只是次入口', async () => {
+      await mount()
+      await openWith({ ...mismatch(), remedy: { kind: 'ai_fix' } } as never)
+      expect(primary()?.dataset.prepPrimary).not.toBe('ai_fix')
+      expect(primary()?.textContent).toBe('再试一次')
+    })
+
+    it('没有文件名（敏感运行里被省掉）：说「这张图片」', async () => {
+      await mount()
+      await openWith(mismatch({ claimed: 'PNG', actual: 'JPEG', ext: 'png' }))
+      expect(panel().querySelector('[data-prep-line]')!.textContent).toBe(
+        '这张图片其实是 JPEG 图片，只是扩展名写成了 .png，换成真正的 PNG 文件后再运行。',
+      )
+    })
+
+    it('英文界面同样一句话、没有泄漏中文', async () => {
+      await i18n.changeLanguage('en-US')
+      await mount()
+      await openWith(mismatch())
+      const line = panel().querySelector('[data-prep-line]')!.textContent ?? ''
+      expect(line).toBe('photos/cell.png is really a JPEG image that was saved with a .png name. Replace it with a real PNG file and run again.')
+      expect(line + (primary()?.textContent ?? '')).not.toMatch(/[一-鿿]/)
+    })
+  })
+
   describe('TeX 工具链失败：卡片说针对性的那句，不是笼统的「运行出错了」（QA-WIN-29）', () => {
     const tex = (code: string, params: Record<string, string>, remedy: unknown = { kind: 'ai_fix' }) =>
       report({

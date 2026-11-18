@@ -1,5 +1,6 @@
 import { adoptionGuardOf, adoptionOf, clearAdoption, isAdoptedPanel, SCRIPT_BACKED_SOURCE_POLICY, sourceBackedGuard, verdictFromResponse, verifiedSource, type AdoptionGuard, type SourceBackedFigure, type SourceBackedVerdict, artifactBackgroundOriginal, artifactRequestFields, isUnadoptedPngSource, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
 import { currentProjectId } from '@/lib/session'
+import { isCanvasCovered } from '@/store/canvasCover'
 import '@/store/figureSnapshotInvalidation'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { requestRender, type RenderPolicy } from '@/store/renderScheduler'
@@ -489,6 +490,7 @@ export function deleteSelected() {
 }
 
 export function duplicateSelected() {
+  if (isCanvasCovered()) return // 画布被「数据」临时标签盖住：不改看不见的文档
   // ⌘D、系统菜单「创建副本」、对象右键菜单、属性页「⋯」都到这里。单图编辑里也允许（2026-10-21）：副本是一张图 =
   // 第二张图，画布变两张，模式订阅切到多图排版；副本是标注就留在单图编辑
   const ids = useSelectionStore.getState().ids

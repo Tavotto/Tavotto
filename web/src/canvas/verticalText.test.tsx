@@ -335,24 +335,29 @@ describe('TextView 预览：公式在竖排里整块侧躺、沿列占公式宽�
   const formula = () => container.querySelector<HTMLElement>('[data-math-src]')!
   const sizePx = mmToWorld(10 * (25.4 / 72))
 
-  it('竖排：公式盒 = 列宽 × 公式宽，SVG 顺时针转 90°，上升线在基线右侧', () => {
+  it('竖排：公式盒恰好包住墨迹（横向 = 上升 + 下降、沿列 = 公式宽），坐在侧躺基线两侧；SVG 顺时针转 90°', () => {
     act(() => root.render(<TextView obj={textObj({ writingMode: 'vertical', text: '弹性 $x^2$ 段', textFormat: 'latex' })} />))
     const box = formula()
     expect(box.hasAttribute('data-math-vertical')).toBe(true)
-    expect(box.style.width).toBe(`${sizePx * 1.25}px`) // 占满一整列
+    // 横向：中线左 (下降 + 偏移) … 中线右 (上升 − 偏移)，jsdom 无 canvas：偏移取退路 0.35 em
+    const left = (0.2 + 0.35) * sizePx
+    const right = (0.8 - 0.35) * sizePx
+    expect(parseFloat(box.style.width)).toBeCloseTo(left + right, 3)
+    // 浏览器把它按中线对齐，再往右（line-over）挪 (右 − 左) / 2：盒子落在基线两侧
+    expect(parseFloat(box.style.verticalAlign)).toBeCloseTo((right - left) / 2, 3)
     expect(parseFloat(box.style.height)).toBeCloseTo(2 * sizePx, 3) // 沿列方向 = 公式宽
     const svg = box.querySelector('svg')!
     expect(svg.style.transform).toBe('rotate(90deg)')
     expect(svg.style.transformOrigin).toBe('0 0')
-    // 基线 x = 列中线 − 偏移（jsdom 无 canvas：退路 0.35 em）；左上角 = 基线 + 上升
-    expect(parseFloat(svg.style.left)).toBeCloseTo((sizePx * 1.25) / 2 - 0.35 * sizePx + 0.8 * sizePx, 3)
+    // 盒内基线 x = 左边到基线 = 下降；SVG 左上角 = 基线 + 上升
+    expect(parseFloat(svg.style.left)).toBeCloseTo(0.2 * sizePx + 0.8 * sizePx, 3)
   })
 
-  it('横排：仍是零高、基线上的原样（旧文档预览逐字不变）', () => {
+  it('横排：不侧躺，真高的盒子坐在基线上、撑开所在行（ADR 0152 修订）', () => {
     act(() => root.render(<TextView obj={textObj({ text: '弹性 $x^2$ 段', textFormat: 'latex' })} />))
     const box = formula()
     expect(box.hasAttribute('data-math-vertical')).toBe(false)
-    expect(box.style.height).toBe('0px')
+    expect(box.style.height).not.toBe('0px')
     expect(box.querySelector('svg')!.style.transform).toBe('')
   })
 })

@@ -53,8 +53,12 @@ import {
 } from "@/components/ui/icons";
 import { ICON_SIZE, IconSlot } from "@/components/ui/Icon";
 import { CanvasThumb } from "./CanvasThumb";
+import { ExportManuscriptPreview } from "./ExportManuscriptPreview";
 import { ExportZoomStage } from "./ExportZoomStage";
-import { ExportLocationRow, useExportLocationPicker } from "./ExportLocationRow";
+import { computeManuscriptLayout, type ManuscriptLayout } from "@/lib/manuscriptPreview";
+import { columnName } from "@/lib/pageColumns";
+import { ExportLocationRow, projectRelativeLocation, useExportLocationPicker } from "./ExportLocationRow";
+import { abbreviateHome } from "@/lib/pathDisplay";
 import { RASTER_TOO_LARGE, isLocationFailure, largestDpiWithinLimit, missingSourceFigure } from "@/lib/exportRecovery";
 import { requestRelinkSource, useClipboardStore } from "@/lib/clipboard";
 import { useProjectSettingsPending } from "@/lib/projectSettingsPatch";
@@ -121,7 +125,7 @@ import { useScriptRunStore } from "@/store/scriptRunStore";
 import type { OverwritePolicy } from "@/lib/exportRequest";
 import { newerObjectCount } from "@/lib/exportPayload";
 import { DEFAULT_PROFILE_ID, type PublicationProfile } from "@/lib/profile";
-import { profileName } from "@/lib/profileText";
+import { profileName, profileOutputName } from "@/lib/profileText";
 import { useLocale } from "@/i18n/react";
 import { journalCatalogUi } from "@/lib/journalUi";
 import { applyJournalExport, journalExportAdvice } from "@/lib/journalExport";
@@ -352,6 +356,7 @@ export function ExportDialog() {
   const single = mode === "fast_edit";
   /** 多图时左栏预览挑的那一项（"page" = 整版，否则是 figureId）；null = 跟着导出内容走。只换预览，不改导出内容 */
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const [previewMode, setPreviewMode] = useState<ExportPreviewMode>("figure");
   const parked = useRef<ParkedState | null>(null);
   const [withReport, setWithReport] = useState(
     () => readExportDefaults().withProof,
@@ -613,7 +618,7 @@ export function ExportDialog() {
     const record = resolved.profileId
       ? specRecords.find((r) => r.id === resolved.profileId)
       : undefined;
-    return record ? profileName(record) : resolved.profile.label;
+    return profileOutputName(resolved.profile, record);
     // 内置规范的名字（`profileName`）在调用时按当前语言成文：换语言要重算，否则结论行换了语言、
     // 规范名还是旧的（#1194 评审 P2；问题面板 NoneEvidence 同一条，Codex #832）
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -650,6 +655,7 @@ export function ExportDialog() {
      */
     const snap = useDocumentStore.getState().doc;
     setPreviewId(null);
+    setPreviewMode("figure");
     const prior = useExportStore.getState();
     setSettledJobId(prior.job && !prior.running ? prior.job.job_id : null);
     setRevealError(null);
@@ -1636,13 +1642,25 @@ export function ExportDialog() {
   const failureIsPath = failure?.kind === "reveal-error";
   // 干净地全部成功：结果块不插进对话框（不位移），胶囊在对话框上面说「已导出 …」
   const cleanDone = !!job && !busy && exportResultClean(job, editedDuringExport);
+  // 预览台底栏的终稿就绪印记（不推挤，零位移）：不区分桌面 / 浏览器，只要本次全部写出且零警告 / 零核验失败 / 零中途编辑才亮出
+  const signoffClean =
+    finished &&
+    job?.status === "done" &&
+    !editedDuringExport &&
+    doneOutputs.length === job.outputs.length &&
+    (job.warnings?.length ?? 0) === 0 &&
+    !doneOutputs.some(svgTextOutlined) &&
+    !doneOutputs.some((o) => inspectionState(o.manifest).tone === "failed");
+  const signoffFormats = signoffClean
+    ? [...new Set(doneOutputs.map((o) => (o.format === "script" ? ".py" : o.format.toUpperCase())).filter(Boolean))].join(" · ")
+    : null;
   const statusVisible =
     busy ||
     conflicts.length > 0 ||
     !!failure ||
     (!!job && job.status !== "conflict" && !cleanDone);
   const statusBlock = statusVisible ? (
-    <div data-export-status className="flex flex-col gap-2">
+    <div data-export-status className="flex flex-col gap-2 md:ml-auto md:w-[500px] md:max-w-full">
       {busy && <ProgressRow job={running ? storeJob : null} batch={batchActive ? batch : null} />}
       {!!conflicts.length && (
         // 撞名：一句话说清是哪几个文件；两条出路在脚部（另存一份 / 覆盖），不在这里另摆一排小按钮
@@ -1830,6 +1848,11 @@ export function ExportDialog() {
         transparent={transparent && transparentApplies}
         flaggedObjectIds={flaggedObjectIds}
         pageFlagged={pageFlagged}
+        signoffFormats={signoffFormats}
+        previewMode={previewMode}
+        onPreviewModeChange={setPreviewMode}
+        profile={profile}
+        specName={checkSpecName}
         onShow={showPreview}
       />
       {/* 点「导出」之后的冻结阶段（逐张摆好、生成请求输入）里表单整块禁用：这几百毫秒里改动不会只落进一部分图 */}
@@ -2358,6 +2381,8 @@ function FigureThumbArt({
  * 点缩略图只是换预览（`onShow`）；是否同时改要导的那张由对话框按导出内容决定。
  * 预览不是最终文件（位图格式的像素、图内修改的合成不在这里），但不另加文字说明。
  */
+type ExportPreviewMode = "figure" | "manuscript";
+
 function ExportPreviewPane({
   single,
   fallbackPage,
@@ -2370,6 +2395,11 @@ function ExportPreviewPane({
   transparent,
   flaggedObjectIds,
   pageFlagged,
+  signoffFormats,
+  previewMode,
+  onPreviewModeChange,
+  profile,
+  specName,
   onShow,
 }: {
   single: boolean;
@@ -2388,6 +2418,12 @@ function ExportPreviewPane({
   transparent: boolean;
   flaggedObjectIds: ReadonlySet<string>;
   pageFlagged: boolean;
+  /** 干净完成时的格式签发摘要（如 "PDF · PNG"）；未完成或有任何瑕疵时为 null */
+  signoffFormats?: string | null;
+  previewMode: ExportPreviewMode;
+  onPreviewModeChange: (mode: ExportPreviewMode) => void;
+  profile: PublicationProfile;
+  specName: string;
   onShow: (id: string) => void;
 }) {
   useTranslation("dialogs");
@@ -2401,24 +2437,62 @@ function ExportPreviewPane({
   const sizeMm = showPage
     ? ([(fallbackCrop?.page ?? doc.page).w, (fallbackCrop?.page ?? doc.page).h] as const)
     : (specMm ?? shownFigure?.sizeMm ?? null);
+  const sizeW = sizeMm?.[0] ?? 0;
+  const sizeH = sizeMm?.[1] ?? 0;
+  const hasContent = showPage || !!shownFigure;
+  const canPreviewManuscript = hasContent && sizeW > 0 && sizeH > 0;
+  const effectiveMode: ExportPreviewMode =
+    previewMode === "manuscript" && canPreviewManuscript ? "manuscript" : "figure";
+  const manuscriptLayout = useMemo(
+    () =>
+      effectiveMode === "manuscript" && sizeW > 0 && sizeH > 0
+        ? computeManuscriptLayout([sizeW, sizeH], profile)
+        : null,
+    [effectiveMode, sizeW, sizeH, profile],
+  );
   const flagged = (f: ExportableFigure) => !!f.panel && flaggedObjectIds.has(f.panel.id);
   const pageSize = fallbackCrop?.page ?? doc.page;
   // 预览按图幅比例定高（舞台内仍是 contain，不改导出几何）：灰底面板只包住图，不再被右栏的高度撑出上下大块空白；
-  // 比例未知（读不到图幅）才退回铺满整列的旧做法
-  const stageRatio = showPage
-    ? pageSize.w / pageSize.h
-    : sizeMm && sizeMm[1] > 0
-      ? sizeMm[0] / sizeMm[1]
-      : null;
+  // 比例未知（读不到图幅）才退回铺满整列的旧做法；切到「版面预览」时按论文整页取景比例立起纸面
+  const stageRatio = manuscriptLayout
+    ? manuscriptLayout.viewportW / manuscriptLayout.viewportH
+    : showPage
+      ? pageSize.w / pageSize.h
+      : sizeMm && sizeMm[1] > 0
+        ? sizeMm[0] / sizeMm[1]
+        : null;
   const strip = useRef<HTMLDivElement>(null);
   const { fade } = useScrollFade(strip, "x");
   const fitted = stageRatio !== null && stageRatio > 0 && Number.isFinite(stageRatio);
+  const hasTabs = !single && figures.length > 0;
+  const maxStageHeight = hasTabs ? "calc(86vh - 15.5rem)" : "calc(86vh - 13rem)";
+  const sizeLabel = (() => {
+    if (!sizeMm) return ex("sizeUnknownShort");
+    const w = round1(sizeMm[0]);
+    const h = round1(sizeMm[1]);
+    if (!manuscriptLayout) return ex("mmSize", { w, h });
+    if (manuscriptLayout.widthOverflow) {
+      const maxW = round1(manuscriptLayout.textBlockW);
+      return manuscriptLayout.hasExplicitColumns
+        ? ex("previewLayoutOverflowSpec", { w, h, spec: specName, maxW })
+        : ex("previewLayoutOverflowGeneric", { w, h, maxW });
+    }
+    if (manuscriptLayout.heightOverflow) {
+      const maxH = round1(manuscriptLayout.textBlockBottom - manuscriptLayout.textBlockTop - 10);
+      return ex("previewLayoutTall", { w, h, maxH });
+    }
+    const column = columnName(manuscriptLayout.targetColumn);
+    const colW = round1(manuscriptLayout.targetColumn.w);
+    return manuscriptLayout.hasExplicitColumns
+      ? ex("previewLayoutSlotSpec", { w, h, spec: specName, column, colW })
+      : ex("previewLayoutSlotGeneric", { w, h, column, colW });
+  })();
   return (
     // 预览框：画布灰（bg-canvas）+ md 圆角 + 12px 内边距，纸面（白）在里面按图幅比例 contain；缩略卡一排与尺寸标签都在框外
     <div data-export-preview className="relative min-h-[320px] min-w-0 md:min-h-0">
      <div className="md:sticky md:top-0">
-      {/* 缩略卡直接放在对话框白面上（无底带、无分隔线），与下方预览左缘对齐；放不下横向滚动 + 两端渐隐 */}
-        {!single && (
+      {/* 缩略卡直接放在对话框白面上（无底带、无分隔线），与下方预览左缘对齐；只有存在单张图可切换时才画（零张图时整版已在下方大预览中，不重复画一张空卡片） */}
+        {hasTabs && (
           <div
             role="tablist"
             aria-label={ex("previewTabs")}
@@ -2460,6 +2534,28 @@ function ExportPreviewPane({
           </div>
         )}
       <div
+        data-export-preview-toolbar
+        data-export-preview-mode={effectiveMode}
+        className="mb-2 flex items-center justify-between gap-2"
+      >
+        <Segmented<ExportPreviewMode>
+          value={effectiveMode}
+          onChange={onPreviewModeChange}
+          ariaLabel={ex("previewModeLabel")}
+          data-testid="export-preview-mode"
+          className="w-auto shrink-0"
+          items={[
+            { value: "figure", label: ex("previewModeFigure") },
+            {
+              value: "manuscript",
+              label: ex("previewModeLayout"),
+              disabled: !canPreviewManuscript,
+              title: canPreviewManuscript ? undefined : ex("previewLayoutUnavailable"),
+            },
+          ]}
+        />
+      </div>
+      <div
         className={cn(
           "flex flex-col overflow-hidden rounded-md bg-canvas p-3",
           !fitted && "h-full max-h-[calc(86vh-13rem)] min-h-[320px]",
@@ -2470,17 +2566,43 @@ function ExportPreviewPane({
           className={cn("relative min-h-0", !fitted && "flex-1")}
           style={
             fitted
-              ? { aspectRatio: String(stageRatio), maxHeight: "calc(86vh - 13rem)", minHeight: 160 }
+              ? { aspectRatio: String(stageRatio), maxHeight: maxStageHeight, minHeight: 160 }
               : undefined
           }
         >
-          {showPage ? (
+          {manuscriptLayout ? (
+            showPage ? (
+              <ExportManuscriptPreview
+                stageKey="manuscript-page"
+                layout={manuscriptLayout}
+                renderFigure={(px) => (
+                  <CanvasThumb
+                    page={pageSize}
+                    objects={fallbackCrop?.objects ?? doc.objects}
+                    className="h-full w-full"
+                    transparent={false}
+                    flush
+                    pxWidth={px || undefined}
+                    editedPanel={editedPanelOf}
+                    exportedText={exportedTextOf}
+                    exportedShape={exportedShapeOf}
+                  />
+                )}
+              />
+            ) : shownFigure ? (
+              <ManuscriptFigureStage
+                key={`manuscript-${shownFigure.figureId}`}
+                figure={shownFigure}
+                layout={manuscriptLayout}
+              />
+            ) : null
+          ) : showPage ? (
             <ExportZoomStage key="page" ratio={pageSize.w / pageSize.h}>
               {(px) => (
                 <CanvasThumb
                   page={pageSize}
                   objects={fallbackCrop?.objects ?? doc.objects}
-                  className="h-full w-full"
+                  className="h-full w-full shadow-page"
                   transparent={transparent}
                   flush
                   pxWidth={px || undefined}
@@ -2503,9 +2625,17 @@ function ExportPreviewPane({
           )}
         </div>
       </div>
-      {/* 尺寸标在预览框外、左对齐的灰色小字：不叠在图上（不加「示意」之类的说明，用户 10-24：别加字） */}
-      <p data-export-preview-size className="type-meta mt-1.5 truncate tabular-nums text-ink-3">
-        {sizeMm ? ex("mmSize", { w: round1(sizeMm[0]), h: round1(sizeMm[1]) }) : ex("sizeUnknownShort")}
+      {/* 尺寸标在预览框外、左对齐的灰色小字；干净导完时右侧并排亮出中性墨色导出印记（遵守 ADR 0068 未核验不画绿、不叠图、不推挤） */}
+      <p data-export-preview-size className="type-meta mt-1.5 flex items-center justify-between gap-2 tabular-nums text-ink-3">
+        <span className="min-w-0 truncate">
+          {sizeLabel}
+        </span>
+        {signoffFormats && (
+          <span data-export-signoff className="inline-flex shrink-0 items-center gap-1 font-medium text-ink-2">
+            <Check size={ICON_SIZE.xs} className="shrink-0 text-ink-2" aria-hidden />
+            <span>{ex("signoffReady", { formats: signoffFormats })}</span>
+          </span>
+        )}
       </p>
      </div>
     </div>
@@ -2577,35 +2707,66 @@ function PreviewTabArt({ figure }: { figure: ExportableFigure }) {
  * 只对磁盘原图那条换档：按 overrides 出的变体 / runtime 按状态取的预览原样挂，换档会退回「最近一次渲染」；
  * 引擎 SVG / 矢量源是矢量，放大本来就清晰。
  */
+function PreviewFigureSurface({
+  figure,
+  source,
+  px,
+  shadow,
+}: {
+  figure: ExportableFigure;
+  source: FigureThumbSource;
+  px: number;
+  shadow: boolean;
+}) {
+  if (source.svgMarkup) {
+    return (
+      <span
+        data-export-thumb="svg"
+        className={cn("block h-full w-full bg-paper", shadow && "shadow-page")}
+        dangerouslySetInnerHTML={source.svgMarkup}
+      />
+    );
+  }
+  const src = px && source.plain ? figureThumbSrc(figure, px) : source.src;
+  if (src) {
+    return (
+      <RetryImg
+        data-export-thumb="file"
+        src={src}
+        alt=""
+        draggable={false}
+        className={cn("block h-full w-full bg-paper object-contain", shadow && "shadow-page")}
+      />
+    );
+  }
+  return <span data-export-thumb="none" className="block h-full w-full bg-surface-2" />;
+}
+
 function PreviewStageArt({ figure, ratio }: { figure: ExportableFigure; ratio: number | undefined }) {
   const source = useFigureThumbSource(figure, 480);
   return (
     <ExportZoomStage ratio={ratio ?? source.ratio}>
-      {(px) => {
-        if (source.svgMarkup) {
-          return (
-            <span
-              data-export-thumb="svg"
-              className="block h-full w-full bg-paper"
-              dangerouslySetInnerHTML={source.svgMarkup}
-            />
-          );
-        }
-        const src = px && source.plain ? figureThumbSrc(figure, px) : source.src;
-        if (src) {
-          return (
-            <RetryImg
-              data-export-thumb="file"
-              src={src}
-              alt=""
-              draggable={false}
-              className="block h-full w-full bg-paper object-contain"
-            />
-          );
-        }
-        return <span data-export-thumb="none" className="block h-full w-full bg-surface-2" />;
-      }}
+      {(px) => <PreviewFigureSurface figure={figure} source={source} px={px} shadow />}
     </ExportZoomStage>
+  );
+}
+
+function ManuscriptFigureStage({
+  figure,
+  layout,
+}: {
+  figure: ExportableFigure;
+  layout: ManuscriptLayout;
+}) {
+  const source = useFigureThumbSource(figure, 480);
+  return (
+    <ExportManuscriptPreview
+      stageKey={`manuscript-${figure.figureId}`}
+      layout={layout}
+      renderFigure={(px) => (
+        <PreviewFigureSurface figure={figure} source={source} px={px} shadow={false} />
+      )}
+    />
   );
 }
 
@@ -2936,11 +3097,14 @@ function ProgressRow({ job, batch }: { job: ExportJob | null; batch: ExportBatch
       })
     : ex(`phase.${phase}`, { step, total });
   return (
-    <div data-export-progress className="flex flex-col gap-1.5">
-      <p role="status" aria-live="polite" className="text-shimmer text-sm text-ink-2">
+    <div
+      data-export-progress
+      className="flex items-center justify-between gap-4 rounded-md bg-surface-hover px-3 py-1.5"
+    >
+      <p role="status" aria-live="polite" className="text-shimmer min-w-0 truncate text-sm text-ink-2">
         {text}
       </p>
-      <ProgressBar pct={null} label={text} />
+      <ProgressBar pct={null} label={text} className="w-40 shrink-0" />
     </div>
   );
 }
@@ -3124,11 +3288,18 @@ export function ResultBlock({
   ].filter((x): x is string => x !== null);
   const note = noteParts.length ? noteParts.join("；") : undefined;
   const clean = failedCount === 0 && !note;
-  // 摘要一句话 + 至多一个动作；逐个文件、核验、警告、诊断都在默认折叠的「详情」里（卡片一句话读懂）
+  const project = useProjectStore.getState().project;
+  const rawDir = job.export_dir ?? project?.export_dir ?? "exports/";
+  const displayDir =
+    projectRelativeLocation(rawDir, project?.figures_dir, project?.name) ??
+    abbreviateHome(rawDir, project?.home_dir);
+  // 摘要一句话 + 至多一个动作；逐个文件、核验、警告、诊断都在默认折叠的「详情」里（detailPlain：不套内层日志灰框、不画无意义的「复制」钮）
   return (
     <>
     <Notice
       tone={failedCount > 0 ? (savedCount > 0 ? "warn" : "danger") : clean ? "ok" : "warn"}
+      icon={clean ? Check : undefined}
+      detailPlain
       data-export-result
       title={
         failedCount > 0 ? (
@@ -3151,23 +3322,20 @@ export function ResultBlock({
         ) : undefined
       }
       detail={
-        <div className="flex flex-col gap-1 whitespace-normal font-sans text-sm">
-          <p className="break-all text-ink-3">
-            {ex("savedTo", {
-              dir:
-                job.export_dir ??
-                useProjectStore.getState().project?.export_dir ??
-                "exports/",
-            })}
-          </p>
+        <div className="flex flex-col gap-2 whitespace-normal font-sans text-sm">
           {edited && <p className="text-warn-content">{ex("editedDuringExport")}</p>}
-          {job.outputs.map((o) => (
-            <OutputRow
-              key={`${o.format}-${o.name ?? "x"}`}
-              out={o}
-              dir={job.export_dir ?? ""}
-            />
-          ))}
+          <div className="flex flex-col gap-1.5">
+            {job.outputs.map((o) => (
+              <OutputRow
+                key={`${o.format}-${o.name ?? "x"}`}
+                out={o}
+                dir={job.export_dir ?? ""}
+              />
+            ))}
+          </div>
+          <p className="truncate text-xs text-ink-3" title={rawDir}>
+            {ex("savedTo", { dir: displayDir })}
+          </p>
           {/* 部分失败 / 每一件产物都失败（此时 outputs 非空，进不了上面的无产物分支）：同一个折叠入口（T04）；全部成功时不出现 */}
           {(job.status === "partial" || job.status === "failed") && job.job_id && (
             <TaskDiagnostic key={job.job_id} kind="export" refId={job.job_id} />
@@ -3175,7 +3343,7 @@ export function ResultBlock({
           {/* 引擎重渲染的警告：图已经出来了，但可能与画布不完全一致
               （元素不存在 = 脚本改过了）。不吞——用户投出去之前得知道 */}
           {!!job.warnings?.length && (
-            <div className="mt-1 flex flex-col gap-0.5 border-t border-border pt-1">
+            <div className="flex flex-col gap-0.5 border-t border-border pt-1.5">
               <p className="text-ink-2">{ex("warningsIntro")}</p>
               {job.warnings.map((w) => (
                 <p key={w} className="break-all text-ink-3">
@@ -3232,6 +3400,12 @@ export function exportResultClean(job: ExportJob, edited: boolean): boolean {
   return !saved.some((o) => inspectionState(o.manifest).tone === "failed");
 }
 
+function formatOutputBytes(n: number): string {
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(n >= 10 * 1024 ? 0 : 1)} KB`;
+  return `${n} B`;
+}
+
 function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
   useTranslation(["dialogs", "errors"]);
   const [revealError, setRevealError] = useState<string | null>(null);
@@ -3249,6 +3423,7 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
       </p>
     );
   }
+  const formatTag = out.format === "script" ? "PY" : out.format.toUpperCase();
   const dims =
     out.dimensions.px?.[0] && out.dimensions.px?.[1]
       ? translate("measure.pxSize", {
@@ -3261,9 +3436,20 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
             h: round1(out.dimensions.mm[1]),
           })
         : "";
+  const sizeText = typeof out.bytes === "number" && out.bytes > 0 ? formatOutputBytes(out.bytes) : "";
+  const meta = [dims, sizeText].filter(Boolean).join(" · ");
   return (
-    <div className="flex flex-col gap-0.5">
-      <div className="flex items-baseline gap-2">
+    <div
+      data-export-output-row={out.format}
+      className="flex flex-col gap-1 rounded-md bg-surface px-2.5 py-1.5 shadow-thumb"
+    >
+      <div className="flex items-center gap-2">
+        <span
+          data-export-format-tag
+          className="shrink-0 rounded-xs bg-surface-hover px-1.5 py-0.5 font-mono text-xs font-medium text-ink-2"
+        >
+          {formatTag}
+        </span>
         {isDesktop() ? (
           // 桌面里不开浏览器式文件标签页：在系统文件管理器中显示。
           // reveal 失败绝不静默——把完整路径告诉用户
@@ -3278,7 +3464,7 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
                   );
               });
             }}
-            className="min-w-0 truncate rounded-md font-mono text-sm text-ink-2 outline-none hover:underline focus-visible:focus-ring"
+            className="min-w-0 truncate rounded-md font-mono text-sm text-ink outline-none hover:underline focus-visible:focus-ring"
           >
             {out.name}
           </button>
@@ -3289,12 +3475,16 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
             href={apiUrl(out.url ?? "")}
             target="_blank"
             rel="noreferrer"
-            className="min-w-0 truncate font-mono text-sm text-ink-2 hover:underline"
+            className="min-w-0 truncate font-mono text-sm text-ink hover:underline"
           >
             {out.name}
           </a>
         )}
-        <span className="shrink-0 text-xs tabular-nums text-ink-3">{dims}</span>
+        {meta && (
+          <span data-export-output-meta className="ml-auto shrink-0 text-xs tabular-nums text-ink-3">
+            {meta}
+          </span>
+        )}
       </div>
       {out.script_report ? (
         <ScriptSkipped report={out.script_report} />

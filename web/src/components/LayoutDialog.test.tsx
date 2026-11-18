@@ -438,6 +438,39 @@ describe('存进项目与绑定', () => {
 })
 
 /** ADR 0096 评审第 1 轮：await 之后的落账属于发请求那一刻的项目；回车连按不并发写 */
+describe('打开来自更新的 Tavotto 的排版（#1920 合同「打开排版」那一格）', () => {
+  it('schema 比本构建新：不打开成空白、不记基线、不绑定文件，挂「来自更新的 Tavotto」横条', async () => {
+    useDocumentStore.setState({ documentId: 'd_before', docNotice: null })
+    const before = useDocumentStore.getState().documentId
+    mockFetch.mockResolvedValue({
+      doc: { ...LAYOUT, schema: 4, canvases: [{ ...LAYOUT.canvases[0], objects: [{ id: 'x', type: 'chart' }] }] },
+      revision: 'rev-future',
+      file: 'tavottofile/Future.json',
+    })
+    await open(['Future'], 'load')
+    await act(async () => {
+      loadRow()!.click()
+    })
+    const s = useDocumentStore.getState()
+    // 当前文档没被换掉：⌘S 没有任何东西能写回那份新格式文件
+    expect(s.documentId).toBe(before)
+    expect(s.projectFile?.name).not.toBe('Future')
+    expect(knownLayoutRevision('Future')).toBeUndefined()
+    expect(s.docNotice).toEqual({ kind: 'schema_too_new', docId: 'layout:Future', schema: 4 })
+    expect(useUiStore.getState().layoutOpen).toBe(false)
+  })
+
+  it('本构建认得的 schema 照常打开（闸只拦更新的）', async () => {
+    useDocumentStore.setState({ docNotice: null })
+    await open(['Fig 1'], 'load')
+    await act(async () => {
+      loadRow()!.click()
+    })
+    expect(useDocumentStore.getState().docNotice).toBeNull()
+    expect(knownLayoutRevision('Fig 1')).toBe('rev-disk')
+  })
+})
+
 describe('保存 / 打开途中切项目、连按回车', () => {
   beforeEach(async () => {
     setCurrentProjectId('p1')

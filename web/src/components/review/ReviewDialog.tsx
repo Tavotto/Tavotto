@@ -127,9 +127,12 @@ export function ReviewDialog() {
   let status: React.ReactNode = null
   if (busy) {
     status = (
-      <div className="flex flex-col gap-1.5" data-review-status="working">
-        <p className="text-sm text-ink-2">{rs(`stage.${s.stage}`)}</p>
-        <ProgressBar pct={null} label={rs(`stage.${s.stage}`)} />
+      <div
+        className="flex items-center justify-between gap-4 rounded-md bg-surface-hover px-3 py-1.5"
+        data-review-status="working"
+      >
+        <p className="min-w-0 truncate text-sm text-ink-2">{rs(`stage.${s.stage}`)}</p>
+        <ProgressBar pct={null} label={rs(`stage.${s.stage}`)} className="w-36 shrink-0" />
       </div>
     )
   } else if (s.stage === 'failed' && s.failure) {

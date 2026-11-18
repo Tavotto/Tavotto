@@ -241,12 +241,19 @@ export function severityOf(profile: PublicationProfile, checkId: string): Severi
   return SEVERITIES.includes(value as Severity) ? (value as Severity) : DEFAULT_SEVERITY
 }
 
+/** Only replace the exact historical built-in label in newly generated output. */
+export function profileDisplayLabel(profile: Pick<PublicationProfile, 'profile_id' | 'label'>): string {
+  return profile.profile_id === 'journal-base-v1' && profile.label === '期刊底（期刊未规定的项一律不判）'
+    ? '期刊检查基础'
+    : profile.label
+}
+
 /** proof report / 界面标题里的身份戳（与 Python 的 profiles.stamp 同形）。 */
 export function profileStamp(profile: PublicationProfile) {
   return {
     profile_id: profile.profile_id,
     profile_version: profile.version,
-    label: profile.label,
+    label: profileDisplayLabel(profile),
     ...(profile.journal ? { journal: profile.journal, derived_from: profile.derived_from } : {}),
   }
 }

@@ -184,15 +184,15 @@ function VersionRow({
   return (
     <div
       className={cn(
-        'flex items-stretch gap-2 rounded-sm border p-1',
-        isCurrent ? 'border-border-strong bg-selected' : 'border-border',
+        'flex items-stretch gap-2.5 rounded-md p-1.5 transition-colors',
+        isCurrent ? 'bg-selected inset-ring inset-ring-border-strong' : 'bg-surface shadow-thumb',
       )}
     >
       <img
         loading="lazy"
         src={historyPreviewUrl(panel.fileId, version.n, 320)}
         alt=""
-        className="h-14 w-[92px] shrink-0 rounded-xs border border-border bg-paper object-contain"
+        className="h-14 w-[92px] shrink-0 rounded-xs bg-paper object-contain shadow-thumb"
       />
       <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
         <p className={cn('truncate text-xs', isCurrent ? 'text-ink' : 'text-ink-2')}>
@@ -299,25 +299,25 @@ function RestoreDialog({
       busy={busy}
       footer={
         <>
-          <Button variant="secondary" size="md" disabled={busy} onClick={onClose}>
+          <Button variant="secondary" size="lg" disabled={busy} onClick={onClose}>
             {translate('actions.cancel')}
           </Button>
           <Button
             variant="primary"
-            size="md"
+            size="lg"
             loading={busy}
             loadingLabel={vh('rewriting')}
             onClick={run}
           >
-            <RotateCcw size={ICON_SIZE.md} />
+            <RotateCcw size={ICON_SIZE.sm} />
             {vh('confirmRestore')}
           </Button>
         </>
       }
     >
-      <div className="flex flex-col gap-2">
-        <div className="flex items-start gap-1.5 rounded-sm border border-border bg-surface-2 p-2">
-          <IconSlot className="text-xs leading-relaxed"><TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" /></IconSlot>
+      <div className="flex flex-col gap-2.5">
+        <div className="flex items-start gap-2 rounded-md bg-surface-hover p-3">
+          <IconSlot className="text-xs leading-relaxed"><TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-ink-3" /></IconSlot>
           <p className="text-xs leading-relaxed text-ink-2">
             {vh('warnBody', { dir: backupDirShown })}
             <span className="mt-1 block text-ink-3">{vh('warnForward')}</span>
@@ -325,7 +325,7 @@ function RestoreDialog({
         </div>
 
         {version?.n === -1 && (
-          <div className="flex items-start gap-1.5 rounded-sm bg-danger-surface p-2">
+          <div className="flex items-start gap-2 rounded-md bg-danger-surface p-3">
             <IconSlot className="text-xs leading-relaxed"><TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" /></IconSlot>
             <p className="text-xs leading-relaxed text-danger-content">
               {/* 句中有 <b> 强调，走 Trans 保留标签而不是把句子切三段 */}

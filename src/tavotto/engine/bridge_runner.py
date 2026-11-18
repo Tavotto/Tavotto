@@ -196,6 +196,11 @@ def _install_savefig_hook(mfigure) -> None:
         return
     _REAL_SAVEFIG = mfigure.Figure.savefig
     figcapture.install_colorbar_capture(mfigure)
+    # 与 safe worker 同一处兜底（#1872）：macOS 系统 Helvetica 小字号带 hinting 载字形失败时只对那一次按无 hinting
+    # 重试。native 截图同样走 Agg（预览 / 活图），缺了它 safe→native 回退后照样起不来。
+    from matplotlib.backends import backend_agg
+
+    figcapture.install_agg_unhinted_glyph_fallback(backend_agg)
     _SAVEFIG_OBSERVATIONS.metadata = figcapture.savefig_metadata_reader(mfigure)
 
     def _patched_savefig(self, fname, *args, **kwargs):
@@ -1511,6 +1516,18 @@ def _foreign_abi_extra(exc: BaseException, args) -> dict:
     return {"foreign_abi_folder": fact, "foreign_abi_folder_private": private} if fact else {}
 
 
+def _image_format_extra(exc: BaseException, args) -> dict:
+    """脚本失败是不是「图片内容与扩展名不符」（JPEG 存成 `.png`，TVD-3MWS）。判据在 `bridgeboot.image_format_facts`
+    （与 safe worker 同一份）；带参数运行时文件名可能由 argv 变形而来，口径同 worker 的敏感运行；任何意外都当没有。"""
+    try:
+        script_dir = os.path.dirname(args.source_path or "")
+        roots = [r for r in (args.project_root or os.getcwd(), script_dir) if r]
+        fact = bridgeboot.image_format_facts(exc, roots, list(args.user_argv or ()))
+    except Exception:  # noqa: BLE001
+        return {}
+    return {"image_format_mismatch": fact} if fact else {}
+
+
 def _parse_ignore_paths(raw) -> list:
     """`--ignore-paths` 的 JSON 数组；没给 / 坏了就当没有。"""
     if not raw:
@@ -1588,6 +1605,7 @@ def main(argv: list | None = None) -> int:
             # 跳过之后仍失败、而失败是脚本加进 sys.path 的项目外目录读不了（ADR 0153）：只带目录名
             **_unreadable_folder_extra(exc, args),
             **_foreign_abi_extra(exc, args),
+            **_image_format_extra(exc, args),
             **_missing_command_extra(exc, args),
         }
         traceback.print_exc()
@@ -1644,6 +1662,12 @@ def main(argv: list | None = None) -> int:
             figures=figures,
             **({"exception_category": category} if category else {}),
             **({"missing_read": run.missing_read} if run.missing_read else {}),
+            # 没到 script_end 屏障就退出（脚本在建第一张图之前就读图失败）：这条事实只能随 exit 带走（#1966 Codex P2）
+            **(
+                {"image_format_mismatch": run.script_error["image_format_mismatch"]}
+                if run.script_error and run.script_error.get("image_format_mismatch")
+                else {}
+            ),
         )
         run.control.close()
     return exit_code
