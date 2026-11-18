@@ -122,6 +122,19 @@ id 是服务端登记的不透明串）、`POST /api/ai/data-figure/commit`（`{
 
 实现：`ai_data_template._footer` 不再出说明；只给脚注用的运行时函数（`n_note` / `n_phrase` / `trend_point_counts` / `trend_series_counts`）从公共模块删掉，公共模块文件名哈希由 `3c540192` 变为 `86dcfebb`（`tests/test_ai_data_encodings.py::PINNED_RUNTIME_NAME` 同步）；`apply_cells` 的返回值不变（说明列表脚本里不再使用）。期望指纹只核数据、不含脚注，不变。已生成的老脚本带着自己的公共模块与脚注，不受影响。看护：`tests/test_ai_data_template.py::test_generated_scripts_write_no_footnote_of_any_kind` 与各形状用例的 `texts == []`。
 
+## 修订（2026-11-18）：认 GROMACS / Grace 的 `.xvg`（`ai_data_figure.xvg_text` / `xvg_label`）
+
+**为什么**：分子动力学的 `gmx energy` / `gmx rms` / `gmx gyrate` … 全是 `.xvg`——`#` 开头是注释、`@` 开头是 Grace 指令、数据是空白分隔的数值列，**没有表头行**，列名写在指令里。用户要把它们直接拖进数据出图。
+
+**做法：把 xvg 改写成「带表头行的制表符文本」，再走同一条读表流水。** `read_text_table` 对 `.xvg`（`XVG_SUFFIXES`，进 `TABLE_SUFFIXES`，所以发现遍历、数据概览、`/api/ai/data-files?formats=all`、propose、提交都认）解码之后先调 `xvg_text`，其余（嗅探、`table_from_text`、摘要、行号、编码、`header_rows` 覆盖）一字不动。`xvg_text` 输出**行数与原文一致**，所以物理行号照旧：
+
+* **只读第一个数据集**。数据集在一行 `&` 处、或数据开始之后再出现 `@target` / `@type`（Grace 的新数据集指令）处结束，其后的行一律清空。**不把多个数据集当成多张表**：「表」在整条链路里是 `(path, sheet)`，多数据集要新造一种 sheet 标识并让配方 / 脚本 / 提交都认，不便宜；需要时用户可以先用 `gmx` 或脚本拆开。多条曲线（`gmx energy` 选了多项）本来就是一个数据集里的多列，不受影响。
+* `#` 注释行与 `@` 指令行读完即清空（留着的话，列数碰巧与数据列数相同的注释会被嗅探当成表头）；这意味着 xvg 在数据概览里没有「表头前的说明行」。数据行按空白切开、用制表符连。
+* **列名**：`@ xaxis label "…"` → 第 1 列；`@ s0 legend "…"`、`@ s1 legend "…"` … → 第 2、3 … 列；**只有两列**（x + 一条 y）且没有 `s0 legend` 时用 `@ yaxis label`；缺的列叫 `col<N>`（N 从 1 数）；一个名字都没有就**不写表头行**，交给既有的「没有表头」流程（猜第一行当表头、状态 `unsure`、用户点一下确认）。表头写在第一条数据行的**前一行**（原来那一行指令 / 注释被它替换）；数据从第 1 行起就没有地方放，同样不写表头。重名列沿用既有规则（`data_header_invalid`，不另起一套去重）。
+* **Grace 标签清洗**（`xvg_label`，保守；规则逐条有用例）：去掉上 / 下标与回正常的标记 `\S` `\s` `\N` 和字体切换 `\f{…}`，**文字留着**（`nm\S2\N` → `nm2`，`H\s2\NO` → `H2O`）；`\x` 加一个字母按 Symbol 字体换成希腊字母（`\xl\f{}` → `λ`，`\xD\f{}` → `Δ`，小写 a b c d e f g h i k l m n o p q r s t u w x y z → α β χ δ ε φ γ η ι κ λ μ ν ο π θ ρ σ τ υ ω ξ ψ ζ，大写 D F G L P Q S U W X Y → Δ Φ Γ Λ Π Θ Σ Υ Ω Ξ Ψ）；认不出的（`\q`、`\x` 后不是字母）**原样保留**；空白折叠。只认文件里的单个反斜杠写法（`\S`），不猜双反斜杠。
+* 读不了的稳定码都是既有的：空文件 `data_empty`、只有注释 / 指令 `data_not_table`、数据行列数不齐 `data_ragged`、含 NUL `data_binary`、重名列 `data_header_invalid`。
+
+**同源**：`xvg_text` / `xvg_label` 是运行时函数，进 `RUNTIME_FUNCTIONS`、被内嵌进公共模块（与合画的 `merge_tables` / `group_key` 一起，公共模块哈希由 `86dcfebb` 变为 `8dccb037`（`tests/test_ai_data_encodings.py::PINNED_RUNTIME_NAME` 同步）；已生成的老脚本继续 import 它们当时的那一版）。生成的 xvg 脚本读表是 `table_from_text(xvg_text(DATA.read_bytes().decode('utf-8-sig')), '\t', <表头行>)[:2]`（编码非 UTF-8 时 codec 照旧写字面量），父进程读出来的是同一张表；其它格式的脚本除公共模块名外逐字不变。原文件只读。
 ## 修订（2026-11-18）：合画——几份列名相同的数据画进同一张图，每份文件是一组（`ai_data_merge.py`）
 
 **动机**：重复实验常按条件各存一份文件（`ctrl.csv` / `drugA.csv` / `drugB.csv`，列名一样），用户要的是「这几份画进同一张图、一份一组」。不改配方的闭集，也不让用户先去手工合表：**只在内存里把几份拼成一张逻辑表**，再走原来的出备选流水。
