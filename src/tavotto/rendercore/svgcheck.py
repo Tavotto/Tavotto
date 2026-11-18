@@ -108,6 +108,29 @@ _ID = re.compile(r"[A-Za-z_][A-Za-z0-9_.:-]*\Z")
 _URL = re.compile(r"url\(\s*(['\"]?)(#[A-Za-z_][A-Za-z0-9_.:-]*)\1\s*\)", re.I)
 _SELECTOR = re.compile(r"[A-Za-z0-9_.*#\s,>\-]+\Z")
 _RULE = re.compile(r"([^{}]+)\{([^{}]*)\}")
+_BRACE = re.compile(r"[{}]")
+
+
+def _iter_rules(css: str):
+    """线性扫描 `选择器{声明}`，产出 (start, end, selector, body)，与 `_RULE.finditer` 同一语义。
+
+    不能直接 `_RULE.finditer` / `.sub`：`[^{}]+` 无锚点，遇到「一大段没有花括号的文字」会在每个起点重试，平方级回溯（ReDoS）。
+    这里只按花括号切一遍：选择器 = 上一个花括号之后的、非空的无花括号一段，后面紧跟 `{`、无花括号的声明、`}`。"""
+    prev_end = 0  # 上一个花括号之后
+    sel_start = open_at = -1  # 当前候选规则的起点 / `{` 的位置（-1 = 没有）
+    sel = ""
+    for m in _BRACE.finditer(css):
+        if m.group() == "{":
+            if m.start() > prev_end:
+                sel_start, open_at, sel = prev_end, m.start(), css[prev_end : m.start()]
+            else:
+                open_at = -1
+        elif open_at >= 0:
+            yield sel_start, m.end(), sel, css[open_at + 1 : m.start()]
+            open_at = -1
+        prev_end = m.end()
+
+
 _DECLARATION = re.compile(r"\s*([a-z][a-z-]*)\s*:\s*(.*)\Z", re.S | re.I)
 _MATPLOTLIB_DOCTYPE = (
     b'<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"\n'
@@ -223,10 +246,10 @@ def repair_worker_ids(data: bytes, *, budget: SVGBudget | None = None) -> bytes:
         out = []
         last = 0
         try:
-            for rule in _RULE.finditer(css):
-                head = _REPAIR_SELECTOR_ID.sub(token, rule.group(1))
-                out.append(css[last : rule.start()] + head + "{" + url(rule.group(2)) + "}")
-                last = rule.end()
+            for start, end, sel, body in _iter_rules(css):
+                head = _REPAIR_SELECTOR_ID.sub(token, sel)
+                out.append(css[last:start] + head + "{" + url(body) + "}")
+                last = end
         except LookupError:
             return None
         out.append(css[last:])
@@ -475,9 +498,12 @@ def _tolerate(root: ET.Element) -> None:
         if "style" in node.attrib:
             node.set("style", _drop_inert(node.get("style") or ""))
         if _name(node.tag)[1] == "style" and node.text:
-            node.text = _RULE.sub(
-                lambda m: m.group(1) + "{" + _drop_inert(m.group(2)) + "}", node.text
-            )
+            text, out, last = node.text, [], 0
+            for start, end, sel, body in _iter_rules(text):
+                out.append(text[last:start] + sel + "{" + _drop_inert(body) + "}")
+                last = end
+            out.append(text[last:])
+            node.text = "".join(out)
 
 
 def parse_svg(
