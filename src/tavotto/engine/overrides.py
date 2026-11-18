@@ -503,6 +503,11 @@ def _pin_put_native(a, native) -> None:
             a.set_bounds(*native)
     elif isinstance(a, Line2D):
         a.set_transform(_patch_base_transform(a))
+    elif isinstance(a, (Collection, AxesImage)):
+        tr, off = _translated_bases(a)
+        a.set_transform(tr)
+        if off is not None:
+            a.set_offset_transform(off)
     elif isinstance(a, _AxesBase):
         # 子图的「原样」：参与排版，色条轴还有被解开的长宽比。constrained 按网格算位置、
         # 按装饰物的大小算边距，与它此刻摆在哪无关——两样放回去，排出来的就与「没拖过」
@@ -525,6 +530,8 @@ def _pin_place(a, value) -> None:
         _place_patch(a, value)
     elif isinstance(a, Line2D):
         _place_line(a, value)
+    elif isinstance(a, (Collection, AxesImage)):
+        _place_translated(a, value)
     elif isinstance(a, _AxesBase):
         # pin 里是根图幅（frame）的分数；SubFigure 此刻已排好，按它换算回子图幅
         a.set_position(pathgeom.axes_rect_to_figsize(a.get_figure(), value))
@@ -2030,6 +2037,67 @@ def _restore_line_pos(ln, orig) -> None:
     ln.__dict__.pop("_mm_pos_base", None)
 
 
+def _translated_bases(a):
+    """集合 / 位图**没被我们挪过**时的 (artist transform, offset transform)；offset 只有集合有。
+
+    与 `_patch_base_transform` 同一个用意（每次从基准重算，热态与全量重放不各叠各的），但要记
+    两条：散点的落位在 offset transform 上（路径 transform 是 marker 的像素尺），线组 / 图形集合
+    的落位在路径 transform 上。另起属性名，不与形状 / 线的 `_mm_pos_base`（单个 transform）混用。"""
+    bases = getattr(a, "_mm_pos_bases", None)
+    if bases is None:
+        off = a.get_offset_transform() if isinstance(a, Collection) else None
+        bases = (Artist.get_transform(a), off)
+        a._mm_pos_bases = bases  # noqa: SLF001
+    return bases
+
+
+def _place_translated(a, value) -> None:
+    fig = pathgeom.root_figure(a.get_figure())
+    tr, off = _translated_bases(a)
+    a.set_transform(tr)  # 先回到基准再量：幂等
+    if off is not None:
+        a.set_offset_transform(off)
+    bb = pathgeom.layout_extent(a)
+    if bb is None:
+        raise ValueError("这个元素量不出位置，没法挪")
+    tx, ty = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
+    dpi = float(fig.dpi)
+    shift = ScaledTranslation((tx - bb.x0) / dpi, (ty - bb.y0) / dpi, fig.dpi_scale_trans)
+    if off is not None and pathgeom.collection_uses_offsets(a):
+        a.set_offset_transform(off + shift)
+    else:
+        a.set_transform(tr + shift)
+
+
+def _set_translated_pos_frac(a, value) -> None:
+    """拖动子图里 / 图上位置不是数据的集合与位图（ADR 0100 修订 2026-11-18）：`transform=ax.transAxes`
+    手画的图例点、线组、图形集合、贴在子图框里的图片。
+
+    与形状 / 线同一套：值是包围盒左下角的 figure 分数（top-origin），平移以英寸叠在落位用的那条
+    transform 上（导出换 dpi 不变），布局引擎下挂 pin 表、排完再落一次。量框只有
+    `pathgeom.layout_extent` 一处，manifest 的 anchor 用的是同一个函数。"""
+    value = _drag_value(value, 2)
+    _place_translated(a, value)
+    _text_pins(a.get_figure())[a] = (tuple(value), None)
+    _ensure_text_pin_hook(a.get_figure())
+
+
+def _get_translated_pos(a):
+    """原样 = 两条基准 transform。"""
+    return _translated_bases(a)
+
+
+def _restore_translated_pos(a, orig) -> None:
+    fig = a.get_figure()
+    if fig is not None:
+        _text_pins(fig).pop(a, None)
+    tr, off = orig
+    a.set_transform(tr)
+    if off is not None:
+        a.set_offset_transform(off)
+    a.__dict__.pop("_mm_pos_bases", None)
+
+
 # ---------------------------------------------------------------------------
 # 锚定框与图片 / 文字插框的拖动（ADR 0100）
 #
@@ -3171,6 +3239,26 @@ def _mk_set_invert(which: str):
 def _set_aspect(a: Axes, v) -> None:
     v = str(v)
     a.set_aspect(v if v in ("auto", "equal") else float(v))
+    # matplotlib 把 "equal" 存成 1.0，`get_aspect()` 再也分不出「等比例」与「自定义 1」：记下
+    # 这一次是不是 equal，manifest 的显示值靠它（`aspect_text`）。撤销走 getter 回的数字，记号随之清掉
+    if v == "equal":
+        a.__dict__["_mm_aspect_equal"] = True
+    else:
+        a.__dict__.pop("_mm_aspect_equal", None)
+
+
+def aspect_text(a: Axes) -> str:
+    """`aspect` 字段的显示值：要能原样喂回 `_set_aspect`，且与前端 `AspectControl` 的三档对得上。
+
+    写进 "equal" 就读回 "equal"（#2005：以前读回 "1.0"，控件从「等比例」跳成「自定义 1.0」）。
+    其余照旧——脚本原样里的 equal 与 `set_aspect(1)` 本来就分不开，不在这里猜，基线一个字节不动；
+    用户选「自定义」起点 1 也照旧是数字，数字框不会被收成「等比例」。"""
+    aspect = a.get_aspect()
+    if isinstance(aspect, str):
+        return aspect
+    if a.__dict__.get("_mm_aspect_equal") and float(aspect) == 1.0:
+        return "equal"
+    return str(round(float(aspect), 3))
 
 
 def _set_image_origin(im: AxesImage, v) -> None:
@@ -3805,12 +3893,37 @@ def _restore_axes_position(a, orig) -> None:
 _SCALE_CHOICES = ("linear", "log", "symlog", "logit")
 
 
-def scale_options(current: str) -> list[str]:
+def scale_options(current: str, ax=None, which: str = "") -> list[str]:
+    """`ax` / `which` 给了的话，再按**这根轴此刻的范围**筛一遍（见 `_logit_fits`）。"""
     import matplotlib.scale as mscale  # noqa: PLC0415 — worker 侧才有科学栈
 
     have = set(mscale.get_scale_names())
     opts = [s for s in _SCALE_CHOICES if s in have]
+    if ax is not None and str(current) != "logit" and not _logit_fits(ax, which):
+        opts = [s for s in opts if s != "logit"]
     return ([str(current)] if str(current) not in opts else []) + opts
+
+
+def _logit_fits(ax, which: str) -> bool:
+    """这根轴换成 logit 之后**画得出来**吗。
+
+    logit 只定义在 (0, 1) 上。范围越界时 matplotlib 不报在 `set_[xy]scale` 上，而是炸在下一次
+    draw 的 `LogitLocator.tick_values`（`log10(1 - vmax)` 出 NaN / inf，`int()` 抛 ValueError /
+    OverflowError）——一次渲染失败，不是一条 warning。实测（3.11）：`imshow` 的固定范围
+    `-0.5..511.5`、自动缩放的折线 `-2..3` 都炸。两种情况看的范围不同：
+
+    * 自动缩放开着：matplotlib 按 `limit_range_for_scale` 把**数据范围**夹进 (0, 1)，数据落在
+      [0, 1] 里才夹得出一个正常区间；
+    * 范围是定死的（脚本 `set_xlim`、`imshow`）：范围原样留着，两端都得严格落在 (0, 1) 里。
+    """
+    try:
+        if getattr(ax, f"get_autoscale{which}_on")():
+            lo, hi = getattr(ax.dataLim, f"interval{which}")
+            return bool(0.0 <= min(lo, hi) and max(lo, hi) <= 1.0 and lo != hi)
+        lo, hi = getattr(ax, f"get_{which}lim")()
+        return bool(0.0 < min(lo, hi) and max(lo, hi) < 1.0)
+    except Exception:  # noqa: BLE001 — 判不了就不给，宁可少一个选项也不给一次渲染失败
+        return False
 
 
 def _mk_set_scale(which: str):
@@ -5252,6 +5365,9 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     # **不给 `bar`**：柱是数据，位置由 x 与宽度决定，挪一根柱等于改数据。
     ("patch", "pos_frac"): (_get_patch_pos, _set_patch_pos_frac),
     ("line", "pos_frac"): (_get_patch_pos, _set_line_pos_frac),
+    ("collection", "pos_frac"): (_get_translated_pos, _set_translated_pos_frac),
+    ("linecoll", "pos_frac"): (_get_translated_pos, _set_translated_pos_frac),
+    ("image", "pos_frac"): (_get_translated_pos, _set_translated_pos_frac),
     ("patch", "size_frac"): (_get_patch_size, _set_patch_size_frac),
     # 锚定框 / 插框（ADR 0100）：cls_key 仍是 `artist`，setter 自己认类型，认不出来就抛
     ("artist", "pos_frac"): (_get_offsetbox_pos, _set_offsetbox_pos_frac),
@@ -5598,6 +5714,9 @@ _RESTORE: dict[tuple[str, str], object] = {
     ("arrowpatch", "endpoints_frac"): _restore_arrow_endpoints,
     ("patch", "pos_frac"): _restore_patch_pos,
     ("line", "pos_frac"): _restore_line_pos,
+    ("collection", "pos_frac"): _restore_translated_pos,
+    ("linecoll", "pos_frac"): _restore_translated_pos,
+    ("image", "pos_frac"): _restore_translated_pos,
     ("patch", "size_frac"): _restore_patch_size,
     ("artist", "pos_frac"): _restore_offsetbox_pos,
     ("arrowpatch", "arrowstyle"): lambda a, orig: a.set_arrowstyle(orig),

@@ -50,6 +50,7 @@ export function JournalRequirements() {
           {r.source && (
             <SourceButton
               journal={ref.label}
+              journalId={ref.id}
               // 建议性字号：正文 / 上下标两条说的是同一句话，一张卡里一起给
               entries={
                 r.source.affects === 'advice'

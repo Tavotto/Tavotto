@@ -64,7 +64,7 @@ import { DrawerHeaderActions, DrawerTitleMeta } from './DrawerHeader'
 import { runBatchFix, useBatchable } from './IssueFixButton'
 import { CategoryCards, FigureCards, UnverifiableEntry } from './ProblemCards'
 import { ProblemTreeContext, type ProblemTreeCtx } from './problemTree'
-import { GroupNode } from './ProblemTreeRows'
+import { ConfirmEntry, GroupNode } from './ProblemTreeRows'
 import { useScopedProblems } from './useProblemScope'
 import { JperProblemStageNotice } from './JperProblemStageNotice'
 import { LeukosProblemScopeNotice } from './LeukosProblemScopeNotice'
@@ -488,6 +488,10 @@ export function ProblemPanel() {
             action={{ label: pr('clearFilter'), onClick: () => useUiStore.getState().setProblemFilter(null) }}
           />
         )}
+        {/* 没有问题时「需要你确认」照样要在：带文字条件的要求正是「检查没报、但你得看一眼」的那一类 */}
+        <ul>
+          <ConfirmEntry />
+        </ul>
         </div>
       ) : (
         <ProblemTreeContext.Provider value={tree}>
@@ -512,6 +516,7 @@ export function ProblemPanel() {
               <CategoryCards categories={categories} />
             )}
             {unverifiable.length > 0 && <UnverifiableEntry issues={unverifiable} />}
+            <ConfirmEntry />
           </ul>
         </ProblemTreeContext.Provider>
       )}

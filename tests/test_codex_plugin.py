@@ -189,7 +189,11 @@ def test_skill_no_longer_reinstalls_the_plugin_every_session():
 def test_skill_entry_checks_health_first_and_never_installs_when_healthy():
     text = _skill_text()
     assert "会话入口：先检查，不安装" in text
-    assert "优先调用 `tavotto_health`，只调用一次" in text
+    # ADR 0192 §4：直接开始，只有工具缺失 / 报引擎错误才调 health（一次）；不再「优先调用」
+    assert "优先调用 `tavotto_health`" not in text
+    assert "直接开始" in text
+    assert "不必先调 `tavotto_health`" in text
+    assert "只有两种情况才调 `tavotto_health`（一次）" in text
     # ok: true = 本会话零安装
     assert "`ok: true`" in text
     assert "绝不执行插件安装、升级、pip/pipx" in text
@@ -283,6 +287,7 @@ def test_skill_routes_each_reference_explicitly():
         "desktop-handoff.md",
         "issue-reporting.md",
         "compatibility.md",
+        "normalize-existing.md",
     ):
         assert ref in text, f"SKILL.md 没写什么时候读 {ref}"
         assert (SKILL_DIR / "references" / ref).is_file(), f"references/{ref} 不存在"
@@ -2234,26 +2239,32 @@ def test_shipped_skill_docs_never_reference_repo_relative_docs():
 
 
 # ------------------- 已有图的保留式规范化（ADR 0051）在技能里的落点 -------------------
+def _normalize_ref_text() -> str:
+    return (SKILL_DIR / "references" / "normalize-existing.md").read_text(encoding="utf-8")
+
+
 def test_skill_routes_existing_figure_normalization_to_the_transaction_tool():
     """用户拿来一张画好的图要改宽度 / 字体 / 字号下限：技能必须把它路由到
     `tavotto_normalize_figure`，而不是让模型自己拼 apply、重写脚本或重画。"""
     text = _skill_text()
     assert "tavotto_normalize_figure" in text
     assert "已有图的规范化" in text
+    assert "references/normalize-existing.md" in text
+    # 全文 2026-11-17 迁进 references/normalize-existing.md（SKILL 瘦身）
+    text = _normalize_ref_text()
     # 「最小字号」与「统一字号」是两回事：技能必须点名区分
     assert "min_font_pt" in text and "font_size_pt" in text
     assert "不是** `font_size_pt`" in text or "不是 `font_size_pt`" in text
     # 只指定宽度时高度按原长宽比
     assert "原长宽比" in text
     # 完成判据表里有这一行
-    assert "`tavotto_normalize_figure`，按 `exit` 说话" in text
+    assert "`tavotto_normalize_figure`，按 `exit` 说话" in _skill_text()
 
 
 def test_skill_forbids_every_bypass_around_the_protected_edit_path():
     """后端只守得住它管辖的那条路；旁路（改源码、另写脚本、整份换 SVG、Pillow /
     OpenCV 重建、套主题、删内容）只能在这里禁。少写一条就是给模型留一条后门。"""
-    text = _skill_text()
-    section = text.split("## 已有图的规范化")[1].split("## 交接给")[0]
+    section = _normalize_ref_text()
     for phrase in (
         "不改用户的 .py 源码",
         "不另写一份绘图脚本",
@@ -2269,8 +2280,7 @@ def test_skill_forbids_every_bypass_around_the_protected_edit_path():
 def test_skill_decides_completion_by_the_verdict_not_by_the_tool_call():
     """工具被调用成功 / 文件生成了都不是「任务完成」：每个退出码都要有对应的说法，
     装不下时列最小放宽约束让用户选、字体没装不自动替代、约定外的改动要用户明确要求。"""
-    text = _skill_text()
-    section = text.split("## 已有图的规范化")[1].split("## 交接给")[0]
+    section = _normalize_ref_text()
     for code in (
         "done",
         "constraint_conflict",

@@ -27,6 +27,7 @@ import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectStore } from '@/store/projectStore'
 import { exactPanelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { useScriptRunStore, whenScriptIdle } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
 import { backendErrorText, postHandoffDisplayAck } from '@/lib/api'
 import type { HandoffDisplayAck } from '@/lib/api'
@@ -56,7 +57,7 @@ export type OpenOutcome =
   | 'placed'           // 面板已加入画布并选中
   | 'selected'         // 画布上本来就有，只是选中
   | 'picker'           // 多 Figure：已打开 Figure 选择器
-  | 'runtime-uncached' // 运行时图已登记但还没有预览，引导去素材库运行
+  | 'runtime-uncached' // 运行时图已登记但还没有预览：提示带「运行」
   | 'project-only'     // 只交接了项目，没指定面板
   | 'native-pending'   // `tavotto run` 的确认已排队，没有别的面板要落
   | 'missing'          // 项目里找不到这个 stem
@@ -165,6 +166,56 @@ function ackRepeatHandoff(fileId: string): void {
       : { id: fileId, status: 'displayed' }
   }
   void postHandoffDisplayAck(ack)
+}
+
+/** 「还没运行过」那条提示的主人：点「运行」先收掉自己那一条 */
+const RUNTIME_RUN_OWNER = 'handoff.runtimeNeedsRun'
+
+/**
+ * 「运行」：跑这张图的脚本，跑出预览后接着完成原来的交接（把图放上画布）。
+ * 点的时候已换了项目就什么都不做；跑失败 / 停在确认门上，由脚本运行自己的卡片说话——这里只负责把素材库打开让它看得见，不再补一句。
+ */
+async function runThenLand(asset: RuntimeAssetInfo, pj: string | null): Promise<void> {
+  if (currentProjectId() !== pj) return
+  // 项目代际：A → B → A 回到同一个项目 id 时 pj 对得上、代际已变——每个 await 之后都要一并核
+  const epoch = useScriptRunStore.getState().epoch
+  const stale = () => currentProjectId() !== pj || useScriptRunStore.getState().epoch !== epoch
+  // 同脚本正忙（别的配置在跑）时 run() 是 no-op：先等它离开忙态，再提交这一份
+  await whenScriptIdle(asset.script)
+  if (stale()) return
+  // 素材按它自己的配置跑（不读当前参数草稿）：无参数那张是显式的 null，不是 undefined
+  await useScriptRunStore.getState().run(asset.script, asset.run_config ?? null)
+  await whenScriptIdle(asset.script)
+  if (stale()) return
+  // 与 applyOpenRequest 同一套解析：先刷新文件素材与 runtime 清单，再按完整身份（id）找 runtime 条目，
+  // 找不到再按磁盘路径找——savefig 的图跑成功后原件已在磁盘上，清单不再返回它的 runtime 条目
+  const resolve = (): string | undefined => {
+    const fresh = (useRuntimeAssetStore.getState().assets ?? []).find((a) => a.id === asset.id && a.descriptor)
+    return fresh?.id ?? findByStem(useAssetStore.getState().panels, asset.stem)?.id
+  }
+  await Promise.all([useAssetStore.getState().load(), useRuntimeAssetStore.getState().loadAssets()])
+  if (stale()) return
+  let landId = resolve()
+  if (!landId) {
+    // `loadAssets` 对在途请求是复用的：运行开始前就发出的那次可能带着旧快照回来——再取一次（此刻已无在途）
+    await useRuntimeAssetStore.getState().loadAssets()
+    if (stale()) return
+    landId = resolve()
+  }
+  if (!landId) {
+    // 没跑出图：失败原因与重试入口在素材库的脚本卡片上——把它打开，别让提示凭空消失
+    useUiStore.setState({ leftTab: 'assets', leftOpen: true })
+    return
+  }
+  if ((await whenDocumentSettledForEntry(pj)) !== 'ready' || stale()) return
+  const ui = useUiStore.getState()
+  const landed = landFigure(landId)
+  if (landed === 'missing') {
+    ui.setStatus(msg('handoff.panelMissing', { stem: asset.stem }, 'project'), 'error')
+    return
+  }
+  ui.setStatus(msg(landed === 'selected' ? 'handoff.located' : 'handoff.added', { name: asset.stem }, 'project'), 'done')
+  if (landed === 'selected') ackRepeatHandoff(landId)
 }
 
 /** 执行一次交接。返回值给测试与调用方看，用户看到的是选中的面板或一条 toast。 */
@@ -281,7 +332,18 @@ export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
     if (!asset.descriptor && !findFigurePanel(asset.id)) {
       // 已登记但从没跑出过预览（cache 物化失败/被清理）：不造假值，
       // 引导去素材库跑一次
-      ui.setStatus(msg('handoff.runtimeNeedsRun', { stem }, 'project'), 'error')
+      // 一句话 +「运行」：直接跑这张图的脚本（与素材库卡片同一个 `scriptRunStore.run`），跑出来接着把图放上画布
+      const pj = targetPj
+      ui.setStatus(msg('handoff.runtimeNeedsRun', { stem }, 'project'), 'error', {
+        owner: RUNTIME_RUN_OWNER,
+        action: {
+          label: msg('prep.btn.run', undefined, 'workspace'),
+          run: () => {
+            useUiStore.getState().clearStatusOwnedBy(RUNTIME_RUN_OWNER)
+            void runThenLand(asset, pj)
+          },
+        },
+      })
       return 'runtime-uncached'
     }
     const landed = landFigure(asset.id)

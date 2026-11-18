@@ -249,3 +249,71 @@ def test_xvg_proposes_commits_and_the_script_runs_on_its_own(project, tmp_path):
     )
     assert r.returncode == 0, r.stderr[-600:]
     assert list((work / "data" / "tavotto_figures").glob("*.pdf"))
+
+
+# =========================================================================== 与合画的交叉
+def _xvg(n: int, offset: float, names=("Time (ps)", "RMSD (nm)")) -> str:
+    rows = "".join(f"  {k * 10.0:.1f}  {0.1 * k + offset:.4f}\n" for k in range(6))
+    return f'# run {n}\n@    xaxis  label "{names[0]}"\n@    yaxis  label "{names[1]}"\n@TYPE xy\n{rows}'
+
+
+def _merge_propose(client, tables, **kw):
+    return propose(client, tables=tables, render="lazy", **kw)
+
+
+@needs_worker
+def test_xvg_files_merge_into_one_figure_grouped_by_file_and_the_script_runs_alone(
+    project, tmp_path
+):
+    m, client, figs, _ = project
+    d = figs / "data"
+    d.mkdir()
+    for n, name in enumerate(("rms_ctrl", "rms_drugA", "rms_drugB")):
+        (d / f"{name}.xvg").write_text(_xvg(n, n * 0.05), encoding="utf-8")
+    tables = [{"path": f"{n}.xvg"} for n in ("rms_ctrl", "rms_drugA", "rms_drugB")]
+    body = _merge_propose(client, tables).get_json()
+    assert body["kind"] == "candidates", body
+    assert [s["label"] for s in body["sources"]] == ["rms_ctrl", "rms_drugA", "rms_drugB"]
+    assert body["group_column"] == "file" and body["roles"]["group"] == "file"
+    assert body["roles"]["x"] == "Time (ps)" and body["roles"]["y"] == ["RMSD (nm)"]
+    out = commit(client, body["session"], body["items"][0]["id"]).get_json()
+    assert out["task"]["outcome"] == "completed" and out["data_check"] == "verified", out
+    assert out["script"] == "data/tavotto_figures/rms_RMSD_nm_by_file.py"
+    script = (figs / out["script"]).read_text(encoding="utf-8")
+    assert script.count("tp.xvg_text(") == 3 and "tp.merge_tables(" in script
+    import shutil
+
+    work = tmp_path / "rerun"
+    shutil.copytree(d, work / "data")
+    env = {**os.environ, "MPLBACKEND": "Agg", "MPLCONFIGDIR": str(tmp_path / "mpl")}
+    r = subprocess.run(
+        [WORKER_PY, str(work / "data" / "tavotto_figures" / Path(out["script"]).name)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, timeout=120, cwd=str(tmp_path),
+    )  # fmt: skip
+    assert r.returncode == 0, r.stderr[-600:]
+    assert list((work / "data" / "tavotto_figures").glob("*.pdf"))
+
+
+@needs_worker
+def test_xvg_and_csv_merge_when_the_column_names_match_and_refuse_when_they_do_not(project):
+    m, client, figs, _ = project
+    d = figs / "data"
+    d.mkdir()
+    (d / "a.xvg").write_text(_xvg(0, 0.0), encoding="utf-8")
+    (d / "b.csv").write_text(
+        "Time (ps),RMSD (nm)\n" + "".join(f"{k * 10.0},{0.1 * k + 0.2}\n" for k in range(6)),
+        encoding="utf-8",
+    )
+    (d / "c.csv").write_text("Time (ps),other\n0,1\n10,2\n20,3\n", encoding="utf-8")
+    same = _merge_propose(client, [{"path": "a.xvg"}, {"path": "b.csv"}]).get_json()
+    assert same["kind"] == "candidates", same
+    assert [s["label"] for s in same["sources"]] == ["a", "b"]
+    out = commit(client, same["session"], same["items"][0]["id"]).get_json()
+    assert out["task"]["outcome"] == "completed" and out["data_check"] == "verified", out
+    diff = _merge_propose(client, [{"path": "a.xvg"}, {"path": "c.csv"}])
+    assert diff.status_code == 400 and diff.get_json()["code"] == "tables_columns_differ"
+    assert diff.get_json()["params"] == {"index": 1}
+    # xvg 之间列名不同（legend 不同）同样拒绝
+    (d / "e.xvg").write_text(_xvg(1, 0.0, ("Time (ps)", "Rg (nm)")), encoding="utf-8")
+    r = _merge_propose(client, [{"path": "a.xvg"}, {"path": "e.xvg"}])
+    assert r.status_code == 400 and r.get_json()["code"] == "tables_columns_differ"

@@ -13,6 +13,7 @@ import { expect, test } from './fixtures'
  * - 插图（`ax.inset_axes`）：以前不宣称可拖；
  * - constrained 图上的色条：以前拖完整张图画不出来；
  * - 圆角框（`FancyBboxPatch`）与图例：对照组（以前就能拖），同一把尺子量一遍；
+ * - `transform=ax.transAxes` 手画的图例点与贴在子图框里的图片：以前不宣称可拖（2026-11-18 修订）；
  * - 曲线（按设计不能拖）：以前拖了什么都不说，现在说出为什么。
  *
  * 独立尺：鼠标在屏幕上走了 (DX, DY) 像素，元素的 SVG 组（matplotlib 输出的 gid）在屏幕上
@@ -61,6 +62,7 @@ function dragLibrary(): string {
       '    ax.set_title("Drag audit")',
       '    ax.legend(loc="upper right")',
       '    ax.add_artist(AnchoredText("(a)", loc="upper left"))',
+      '    ax.scatter([0.45], [0.88], transform=ax.transAxes, s=90, marker="s", color="#C51E30")',
       '    ax.add_patch(FancyBboxPatch((0.4, -1.2), 2.0, 0.35, boxstyle="round,pad=0.08",',
       '                                facecolor="#E8F2FA", edgecolor="#8BB7DA"))',
       '    ins = ax.inset_axes([0.62, 0.06, 0.3, 0.26])',
@@ -68,6 +70,10 @@ function dragLibrary(): string {
       '    ins.set_xticks([])',
       '    ins.set_yticks([])',
       '    im = ax2.imshow(np.arange(64.0).reshape(8, 8))',
+      '    ax2.imshow(np.ones((4, 4)), extent=(0.05, 0.3, 0.7, 0.95), transform=ax2.transAxes,',
+      '               cmap="gray", vmin=0, vmax=2)',
+      '    ax2.set_xlim(-0.5, 7.5)  # imshow 按自己的 extent 改了范围：放回第一张图的',
+      '    ax2.set_ylim(7.5, -0.5)',
       '    fig.colorbar(im, ax=ax2)',
       '    ax2.add_artist(AnnotationBbox(TextArea("note"), (2, 2), xybox=(4.5, 1.2)))',
       '    fig.savefig("Fig_drag.pdf")',
@@ -155,6 +161,9 @@ const TARGETS: { name: string; gid: string; measure: string; at: [number, number
   { name: 'constrained 色条', gid: 'axes_2', measure: 'axes_2', at: [0.12, 0.5], dir: [-1, 0] },
   { name: '圆角框 FancyBboxPatch', gid: 'axes_0.patches_0', measure: 'axes_0.patches_0', at: [0.5, 0.5] },
   { name: '图例', gid: 'axes_0.legend', measure: 'axes_0.legend', at: [0.3, 0.5] },
+  // 位置不是数据的集合 / 位图（ADR 0100 修订 2026-11-18）：以前不宣称可拖，选中框还是整块子图
+  { name: '手画图例点（transAxes 散点）', gid: 'axes_0.scatter_0', measure: 'axes_0.scatter_0', at: [0.5, 0.5] },
+  { name: '子图框里的图片（transAxes 位图）', gid: 'axes_1.images_1', measure: 'axes_1.images_1', at: [0.5, 0.5] },
 ]
 
 /** 不相干的子图：左边那张的对象被拖时量右边那张，反之亦然 */

@@ -13,6 +13,7 @@ import {
   type AiDataOverview,
 } from '@/lib/api'
 import { setCanvasCovered } from '@/store/canvasCover'
+import { isCommitInProgress, pollCommit } from '@/lib/dataCommitPoll'
 import { currentProjectId } from '@/lib/session'
 import { candidatesFromResponse, headerRowFromResponse, mixedFromResponse, rolesFromResponse, unitsRowFromResponse, type Candidate, type ColumnRoles, type MixedColumn, type ThumbState } from '@/lib/dataFigureAdapter'
 import { fileRows, hasNumericColumn, isStaleProposeCode, sameTable, tableKey, type CellMode, type TableRef } from '@/lib/dataFigure'
@@ -416,8 +417,19 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     const rid = commitRid.rid
     set({ drawingId: itemId, problem: null })
     try {
-      const res = await aiDataFigureCommit({ session: sessionId, id: itemId, client_request_id: rid }, pj)
+      const body = { session: sessionId, id: itemId, client_request_id: rid }
+      let res = await aiDataFigureCommit(body, pj)
       if (!still()) return
+      // 同一个请求号重发时原任务还在处理中：不是失败也不是画成，请求号留着，有界地重问同一个直到 final；超时仍未完成 = 这次没成，但请求号还在，「再试一次」继续问它
+      if (isCommitInProgress(res)) {
+        const waited = await pollCommit(() => aiDataFigureCommit(body, pj), still)
+        if (!still()) return
+        if (!waited) {
+          showOutcome({ problem: { kind: 'commit', error: null, retryable: true } })
+          return
+        }
+        res = waited
+      }
       commitRid = null
       const outcome = res.task?.outcome
       if (!res.script || !res.stem) {

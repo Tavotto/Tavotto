@@ -119,6 +119,33 @@ def _find_journal(ctx: Ctx) -> dict:
     )
 
 
+def _journal_options(ctx: Ctx) -> list[str]:
+    return [
+        f"{c.get('id')}（{c.get('label') or c.get('id')}）"
+        for c in (ctx.payload.get("candidates") or [])
+        if isinstance(c, dict) and c.get("id")
+    ]
+
+
+def _pick_journal(ctx: Ctx) -> dict:
+    """`journal_ambiguous`：名字对上了好几本——让用户从候选里选，选定后带准确的 id 再调同一个工具。"""
+    return ask_user(
+        f"「{_journal_query(ctx)}」对应好几本期刊，要投的是哪一本？选定后把 journal_id 换成它的 id 再调一次。",
+        _journal_options(ctx),
+    )
+
+
+def _journal_not_found(ctx: Ctx) -> dict:
+    """`journal_unknown`：宽松解析带了最接近的候选就让用户挑；没候选照旧去 list_journals 查。"""
+    options = _journal_options(ctx)
+    if not options:
+        return _find_journal(ctx)
+    return ask_user(
+        f"期刊库里没有「{_journal_query(ctx)}」。是下面哪一本？都不是就如实告诉用户库里没有，不要凭记忆编规范。",
+        options,
+    )
+
+
 def _column_choice(ctx: Ctx) -> dict:
     columns = ctx.payload.get("columns") or []
     options = [
@@ -272,7 +299,8 @@ BUILDERS: dict[str, Callable[[Ctx], dict | None]] = {
         "引擎没有这项能力：看 health 里的版本与更新提醒，请用户升级 Tavotto 后新开会话。"
     ),
     # 期刊
-    "journal_unknown": _find_journal,
+    "journal_unknown": _journal_not_found,
+    "journal_ambiguous": _pick_journal,
     "unknown_profile": _find_journal,
     "journal_catalog_changed": _restart_page,
     "journal_facts_page_too_large": _halve_limit,

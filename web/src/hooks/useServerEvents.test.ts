@@ -53,6 +53,7 @@ import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { formatMessage, literal } from '@/i18n'
+import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { act, createElement } from 'react'
@@ -388,6 +389,44 @@ describe('降级', () => {
     expect(useSelectionStore.getState().ids).toEqual(['o1'])
     expect(statusKey()).toBe('status.sourceLostEditing')
     expect(useUiStore.getState().statusTone).toBe('error')
+  })
+
+  describe('「重新关联脚本」按钮', () => {
+    const lose = async () => {
+      seed([panelObj('o1', 'Fig1.pdf', { script: 'fig1.py' })])
+      enterEditing()
+      mockPanels.mockResolvedValue(panels([info('Fig1.pdf')]))
+      handleServerEvent(ev({ kind: 'registry.changed', pj: 'p1', scripts: ['fig1.py'] }))
+      await tick()
+    }
+    const readiness = () => useProjectReadinessStore.getState()
+    beforeEach(() => { useUiStore.setState({ registryOpen: false }); readiness().closeCenter() })
+
+    it('提示带「重新关联脚本」，点下去打开项目接入状态并聚焦这张图，提示收掉', async () => {
+      await lose()
+      expect(formatMessage(useUiStore.getState().statusAction?.label ?? null)).toBe('重新关联脚本')
+      useUiStore.getState().statusAction!.run()
+      expect(useUiStore.getState().registryOpen).toBe(true)
+      expect(readiness().focusId).toBe('Fig1.pdf')
+      expect(useUiStore.getState().status).toBeNull()
+    })
+
+    it('点的时候已换了项目：只收提示，不打开别的项目的接入状态', async () => {
+      await lose()
+      const click = useUiStore.getState().statusAction!
+      project = 'p2'
+      click.run()
+      expect(useUiStore.getState().registryOpen).toBe(false)
+      expect(useUiStore.getState().status).toBeNull()
+    })
+
+    it('点的时候这张图已不在文档里：只收提示', async () => {
+      await lose()
+      const click = useUiStore.getState().statusAction!
+      useDocumentStore.getState().commit(literal('删'), (d) => { d.objects = [] })
+      click.run()
+      expect(useUiStore.getState().registryOpen).toBe(false)
+    })
   })
 
   it('overrides 与排版一个都不删', async () => {

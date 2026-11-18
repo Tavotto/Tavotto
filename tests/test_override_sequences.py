@@ -307,7 +307,7 @@ def _candidates(base: dict) -> tuple[list[list[dict]], dict[tuple[str, str], dic
     advertised = {el["gid"]: {f["prop"] for f in el["editable"]} for el in base["elements"]}
     fields = {(el["gid"], f["prop"]): f for el in base["elements"] for f in el["editable"]}
     out = []
-    for gid, field in _editable_targets(base, include_axes=True):
+    for gid, field in _editable_targets(base):
         _enablers, full = _patch_for(gid, field, advertised)
         if full:
             out.append(full)

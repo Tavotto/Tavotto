@@ -133,6 +133,7 @@ function Toast({
   tone,
   icon,
   text,
+  copyDetail,
   action,
   onClose,
   closeLabel,
@@ -146,6 +147,8 @@ function Toast({
   tone: 'info' | 'error' | 'hint'
   icon: ReactNode
   text: string
+  /** 错误胶囊「复制详情」在句子后多带的一行 */
+  copyDetail?: string
   action?: { label: string; onClick: () => void; loading?: boolean }
   onClose?: () => void
   closeLabel?: string
@@ -197,13 +200,13 @@ function Toast({
       className={cn(
         // 浮层不画实色 border（宪法第一节）：环在 shadow-pop 里。字 12 / ink（2026-09-15 打磨 N2）。
         // 一种高度 36：带动作的那条由 28 的按钮 + py 4 撑到 36，不带动作的靠 min-h 补齐（N3）
-        'pointer-events-auto relative flex min-h-9 max-w-[360px] items-center gap-2 rounded-full bg-surface py-1 pl-3.5 pr-1.5 text-sm text-ink shadow-pop',
+        'pointer-events-auto relative flex min-h-9 min-w-0 max-w-[min(560px,100%)] items-center gap-2 rounded-full bg-surface py-1 pl-3.5 pr-1.5 text-sm text-ink shadow-pop',
         'data-[state=open]:animate-rise-in data-[state=closed]:animate-rise-out',
       )}
     >
       <span className="flex shrink-0">{icon}</span>
       {error && !plain ? (
-        <ErrorBody text={text} />
+        <ErrorBody text={text} copyDetail={copyDetail} />
       ) : (
         /* 同一条 toast 换文字时原位换（旧字退、新字进），不硬切 */
         <SwapText className="min-w-0 flex-1" text={text} />
@@ -235,7 +238,7 @@ function Toast({
 }
 
 /** 错误 toast 的正文（胶囊里的一行）：只有原因那一句，不加前缀（红色图标已经说了「没成」）；放不下才截断，全文在 title 与「复制详情」里 */
-function ErrorBody({ text }: { text: string }) {
+function ErrorBody({ text, copyDetail }: { text: string; copyDetail?: string }) {
   const { t } = useTranslation('workspace')
   const [copied, setCopied] = useState(false)
   useEffect(() => {
@@ -254,7 +257,7 @@ function ErrorBody({ text }: { text: string }) {
         data-copy-details
         className="shrink-0 text-ink-3 hover:text-ink"
         onClick={() => {
-          void navigator.clipboard?.writeText(text).then(
+          void navigator.clipboard?.writeText(copyDetail ? `${text}\n${copyDetail}` : text).then(
             () => setCopied(true),
             () => {},
           )
@@ -344,20 +347,22 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const status = useUiStore((s) => s.status)
   const tone = useUiStore((s) => s.statusTone)
   const statusAction = useUiStore((s) => s.statusAction)
+  const statusCopyDetail = useUiStore((s) => s.statusCopyDetail)
   const statusModalEpoch = useUiStore((s) => s.statusModalEpoch)
   // 退场那 90ms 里 status 已经是 null 了，得把最后一条文案留着播完，
   // 否则会看到一个空壳滑下去。留的是**描述符**，不是翻好的字符串：
   // 退场期间切语言也跟着换。
-  const last = useRef<{ status: UiMessage | null; tone: typeof tone; action: typeof statusAction; modalEpoch: number }>({
+  const last = useRef<{ status: UiMessage | null; tone: typeof tone; action: typeof statusAction; modalEpoch: number; detail: string | null }>({
     status: null,
     tone: 'info',
     action: null,
     modalEpoch: 0,
+    detail: null,
   })
   useEffect(() => {
-    if (status) last.current = { status, tone, action: statusAction, modalEpoch: statusModalEpoch }
-  }, [status, tone, statusAction, statusModalEpoch])
-  const shown = status ? { status, tone, action: statusAction, modalEpoch: statusModalEpoch } : last.current
+    if (status) last.current = { status, tone, action: statusAction, modalEpoch: statusModalEpoch, detail: statusCopyDetail }
+  }, [status, tone, statusAction, statusModalEpoch, statusCopyDetail])
+  const shown = status ? { status, tone, action: statusAction, modalEpoch: statusModalEpoch, detail: statusCopyDetail } : last.current
   // 弹窗打开之前画布上遗留的普通 done/info 提示（modalEpoch 落后于当前模态代际）留在画布层（遮罩之下），
   // 只有弹窗期间新触发的提示或 error 级告警才升进 z-toast 压在弹窗之上
   const statusInModalLayer = !overModal || shown.tone === 'error' || shown.modalEpoch >= modalEpoch
@@ -518,6 +523,7 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
       data-status-tone={shown.tone}
       icon={<StatusIcon tone={shown.tone} />}
       text={shownText}
+      copyDetail={shown.detail ?? undefined}
       action={shown.action ? { label: fmt(shown.action.label), onClick: shown.action.run } : undefined}
       onClose={shown.tone === 'error' || shown.action ? () => useUiStore.getState().setStatus(null) : undefined}
       closeLabel={t('status.dismissError')}
