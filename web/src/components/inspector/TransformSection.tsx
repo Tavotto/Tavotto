@@ -97,6 +97,13 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
     </IconButton>
   )
 
+  /** 拖动数字（scrub）会反复调用起手时的闭包：整组变换是对「当前文档」施加增量，所以每次按此刻的范围算，不用渲染时的 `box`（否则会累加） */
+  const liveBox = () => {
+    const doc = useDocumentStore.getState().doc.objects
+    const idSet = new Set(ids)
+    return visibleBounds(doc.filter((o) => idSet.has(o.id)), doc) ?? box
+  }
+
   const body = unit && box ? (
     <>
       <GeometryGrid>
@@ -105,7 +112,10 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
           dataProp="transform.x"
           historyLabel={hist('setX')}
           value={box.x + fx * box.w}
-          onChange={(v) => transformSelection({ kind: 'move', dx: v - (box.x + fx * box.w), dy: 0 })}
+          onChange={(v) => {
+            const b = liveBox()
+            if (b) transformSelection({ kind: 'move', dx: v - (b.x + fx * b.w), dy: 0 })
+          }}
         />
         <RefPointGrid value={refPoint} onChange={(rp) => setPrefs({ refPoint: rp })} />
         <MmField
@@ -113,7 +123,10 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
           dataProp="transform.y"
           historyLabel={hist('setY')}
           value={box.y + fy * box.h}
-          onChange={(v) => transformSelection({ kind: 'move', dx: 0, dy: v - (box.y + fy * box.h) })}
+          onChange={(v) => {
+            const b = liveBox()
+            if (b) transformSelection({ kind: 'move', dx: 0, dy: v - (b.y + fy * b.h) })
+          }}
         />
         <MmField
           label="W"
@@ -122,7 +135,9 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
           min={0.1}
           value={box.w}
           onChange={(v) => {
-            const k = v / box.w
+            const b = liveBox()
+            if (!b) return
+            const k = v / b.w
             transformSelection({ kind: 'scale', kx: k, ky: ratioLocked ? k : 1, rp: refPoint })
           }}
         />
@@ -134,7 +149,9 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
           min={0.1}
           value={box.h}
           onChange={(v) => {
-            const k = v / box.h
+            const b = liveBox()
+            if (!b) return
+            const k = v / b.h
             transformSelection({ kind: 'scale', kx: ratioLocked ? k : 1, ky: k, rp: refPoint })
           }}
         />
