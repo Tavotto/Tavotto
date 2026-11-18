@@ -9,6 +9,7 @@
 //! - 端口：stdin 首行同时带上次记住的 `preferred_port`，sidecar 优先绑它，让窗口的
 //!   origin（进而 localStorage）跨重启稳定；记忆策略在 [`port_memory`]（ADR 0108）。
 
+pub mod install_check;
 mod port_memory;
 pub mod safe_start;
 pub mod startup_phase;
@@ -56,6 +57,11 @@ impl StartError {
 
     fn with_startup_phase(mut self, phase: &'static str) -> Self {
         self.info = self.info.with_startup_phase(phase);
+        self
+    }
+
+    fn with_install_check(mut self, verdict: &'static str) -> Self {
+        self.info = self.info.with_install_check(verdict);
         self
     }
 
@@ -310,8 +316,45 @@ impl Sidecar {
     }
 
     /// [`Sidecar::start`] 的本体；握手超时可注入，测试不必真等 60 秒。
+    /// 引擎起来了却没握手（[`crate::rescue::install_check_applies`]）时，再核一遍安装文件（[`install_check`]）。
     #[allow(clippy::too_many_arguments)]
     fn start_with(
+        resource_dir: Option<PathBuf>,
+        log_dir: &Path,
+        nonce: &str,
+        project: Option<&str>,
+        config_dir: Option<&Path>,
+        locale: crate::i18n::Locale,
+        safe: bool,
+        handshake_timeout: Duration,
+    ) -> Result<(Sidecar, u16), StartError> {
+        let dir = resource_dir
+            .as_deref()
+            .map(|r| r.join("sidecar").join("Tavotto"));
+        Self::launch(
+            resource_dir,
+            log_dir,
+            nonce,
+            project,
+            config_dir,
+            locale,
+            safe,
+            handshake_timeout,
+        )
+        .map_err(|e| {
+            if crate::rescue::install_check_applies(e.info.code) {
+                let verdict = dir.as_deref().map_or(install_check::UNKNOWN, |d| {
+                    install_check::check(d, install_check::BUDGET)
+                });
+                e.with_install_check(verdict)
+            } else {
+                e
+            }
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn launch(
         resource_dir: Option<PathBuf>,
         log_dir: &Path,
         nonce: &str,
@@ -796,6 +839,57 @@ mod tests {
         assert!(
             !facts.contains("secret"),
             "no log text in the structured facts"
+        );
+    }
+
+    /// 引擎没握手就退出 / 超时：再核一遍安装文件，结论进失败事实（TVD-MHQJ：杀软隔离了 `_internal` 里的文件，三个布尔值看不出来）。
+    #[cfg(unix)]
+    #[test]
+    fn an_engine_that_never_shook_hands_gets_an_install_check_and_others_do_not() {
+        let body = b"#!/bin/sh\nIFS= read -r hello\nexit 1\n";
+        let manifest = |res: &Path, files: &[&str]| {
+            let dir = res.join("sidecar").join("Tavotto");
+            std::fs::create_dir_all(dir.join("_internal")).unwrap();
+            let mut text = format!("{}\n", install_check::HEADER);
+            for f in files {
+                text.push_str(f);
+                text.push('\n');
+            }
+            std::fs::write(dir.join(install_check::MANIFEST_NAME), text).unwrap();
+        };
+        // 清单里列的 .pyd 不在了 → missing
+        let res = scratch("res");
+        bundled(&res, body);
+        manifest(&res, &["Tavotto", "_internal/_socket.pyd"]);
+        let e = start_in(&res, &scratch("logs"));
+        assert_eq!(
+            (e.info.code, e.info.install_check),
+            ("sidecar_exited", Some(install_check::MISSING))
+        );
+        // 都在 → intact（崩溃不是文件的事，不放行重装）
+        let res = scratch("res");
+        bundled(&res, body);
+        manifest(&res, &["Tavotto", "_internal/_socket.pyd"]);
+        std::fs::write(res.join("sidecar/Tavotto/_internal/_socket.pyd"), b"x").unwrap();
+        let e = start_in(&res, &scratch("logs"));
+        assert_eq!(e.info.install_check, Some(install_check::INTACT));
+        // 没有清单（旧包 / 开发构建）→ unknown
+        let res = scratch("res");
+        bundled(&res, body);
+        let e = start_in(&res, &scratch("logs"));
+        assert_eq!(e.info.install_check, Some(install_check::UNKNOWN));
+        // 起都没起来（spawn 失败）的不核：那条路有自己的事实
+        let res = scratch("res");
+        bundled(&res, b"x");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let exe = res.join("sidecar").join("Tavotto").join("Tavotto");
+            std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        let e = start_in(&res, &scratch("logs"));
+        assert_eq!(
+            (e.info.code, e.info.install_check),
+            ("sidecar_spawn_failed", None)
         );
     }
 
