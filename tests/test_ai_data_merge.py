@@ -364,7 +364,7 @@ def test_commit_creates_one_script_reads_the_originals_and_verifies_the_data(pro
     out = c.get_json()
     assert out["task"]["outcome"] == "completed", out
     assert out["data_check"] == "verified" and out["can_delete_script"] is False
-    stem = "ctrl_merged_figure"
+    stem = "ctrl_response_mV_by_file"
     assert out["script"] == f"data/tavotto_figures/{stem}.py" and out["stem"] == stem
     figures = figs / "data" / "tavotto_figures"
     assert sorted(p.name for p in figures.iterdir()) == sorted(
@@ -404,7 +404,8 @@ def test_commit_creates_one_script_reads_the_originals_and_verifies_the_data(pro
     second = commit(client, body["session"], body["items"][1]["id"]).get_json()
     assert second["task"]["outcome"] == "completed"
     assert (
-        second["script"].endswith("ctrl_merged_figure_2.py") and second["module"] == out["module"]
+        second["script"].endswith("ctrl_response_mV_by_file_2.py")
+        and second["module"] == out["module"]
     )
 
 
@@ -429,7 +430,7 @@ def test_files_in_different_folders_land_in_their_nearest_common_parent(project)
     assert len(set(labels)) == 3 and labels[0] != labels[1], labels
     out = commit(client, body["session"], body["items"][0]["id"]).get_json()
     assert out["task"]["outcome"] == "completed" and out["data_check"] == "verified", out
-    assert out["script"] == "data/tavotto_figures/a_merged_figure.py"
+    assert out["script"] == "data/tavotto_figures/a_response_mV_by_file.py"
     script = (figs / out["script"]).read_text(encoding="utf-8")
     for rel in ("exp1/a.csv", "exp2/a.csv", "exp2/deep/c.csv"):
         assert f"'../{rel}'" in script
@@ -449,7 +450,7 @@ def test_files_in_the_same_subfolder_land_in_that_subfolder(project):
     ).get_json()
     out = commit(client, body["session"], body["items"][0]["id"]).get_json()
     assert out["task"]["outcome"] == "completed", out
-    assert out["script"] == "data/sub/tavotto_figures/a_merged_figure.py"
+    assert out["script"] == "data/sub/tavotto_figures/a_response_mV_by_file.py"
     assert "'../a.csv'" in (figs / out["script"]).read_text(encoding="utf-8")
 
 
@@ -563,12 +564,12 @@ def test_an_existing_script_of_that_name_is_never_overwritten(project):
     tables = three(figs)
     figures = figs / "data" / "tavotto_figures"
     figures.mkdir()
-    (figures / "ctrl_merged_figure.py").write_text("# mine\n", encoding="utf-8")
+    (figures / "ctrl_response_mV_by_file.py").write_text("# mine\n", encoding="utf-8")
     body = mp(client, tables).get_json()
     out = commit(client, body["session"], body["items"][0]["id"]).get_json()
     assert out["task"]["outcome"] == "completed"
-    assert out["script"].endswith("ctrl_merged_figure_2.py")
-    assert (figures / "ctrl_merged_figure.py").read_text(encoding="utf-8") == "# mine\n"
+    assert out["script"].endswith("ctrl_response_mV_by_file_2.py")
+    assert (figures / "ctrl_response_mV_by_file.py").read_text(encoding="utf-8") == "# mine\n"
 
 
 @needs_worker
@@ -650,3 +651,199 @@ def test_commit_at_the_cap_carries_eight_data_refs_through_the_task(project):
     row = json.dumps(ai_history.get(out["task"]["task_id"]), default=str)
     for i in range(n):
         assert f"data/f{i}.csv" in row
+
+
+# =========================================================================== 脚本名（规则 + 留给模型的接缝）
+@pytest.mark.parametrize(
+    ("paths", "y", "name"),
+    [
+        # 例子：公共前缀 growth + 纵轴列名 + _by_file
+        (
+            ["growth_control.csv", "growth_drugA.csv", "growth_drugB.csv"],
+            "tumor_volume",
+            "growth_tumor_volume_by_file",
+        ),
+        # 前缀以分隔符结尾：去掉尾部分隔符
+        (["sample1_ctrl.csv", "sample1_treat.csv"], "od600", "sample1_od600_by_file"),
+        # 字母 / 数字交界是词边界
+        (["sample1.csv", "sample2.csv"], "value", "sample_value_by_file"),
+        # 前缀把一串数字切断：先去掉尾部数字
+        (["exp10.csv", "exp11.csv"], "value", "exp_value_by_file"),
+        # 前缀把一个词切断：退到最后一个分隔符
+        (["growth_ctrl.csv", "growth_cell.csv"], "y", "growth_y_by_file"),
+        # 没有公共前缀 / 太短（< 3 字符）：用第一份的 stem
+        (["ctrl.csv", "drug.csv"], "response_mV", "ctrl_response_mV_by_file"),
+        (["ab_1.csv", "ab_2.csv"], "v", "ab_1_v_by_file"),
+        # 目录不参与；扩展名不参与
+        (["a/run_x.csv", "b/run_y.tsv"], "v", "run_v_by_file"),
+        # 列名安全化：只留 [A-Za-z0-9_-]
+        (["m1.csv", "m2.csv"], "Response (mV)", "m1_Response_mV_by_file"),
+        (["数据一.csv", "数据二.csv"], "测量", "data_value_by_file"),
+    ],
+)
+def test_rule_stem_branches(paths, y, name):
+    assert M.rule_stem(paths, y) == name
+
+
+def test_rule_stem_caps_the_length_and_keeps_the_suffix():
+    long_y = "very_long_column_name_" * 6
+    name = M.rule_stem(["growth_a.csv", "growth_b.csv"], long_y)
+    assert (
+        name.endswith("_by_file")
+        and len(name) <= M.STEM_MAX
+        and name.startswith("growth_very_long")
+    )
+    huge = M.rule_stem(["g" * 200 + "_a.csv", "g" * 200 + "_b.csv"], long_y)
+    assert len(huge) <= M.STEM_MAX and huge.endswith("_by_file")
+    import re
+
+    assert re.fullmatch(r"[A-Za-z0-9_-]+", huge)
+
+
+def test_the_model_seam_uses_a_valid_suggestion_and_falls_back_otherwise(monkeypatch):
+    paths = ["growth_a.csv", "growth_b.csv"]
+    rule = M.rule_stem(paths, "v")
+    assert M.merged_stem(paths, "v") == rule
+    assert (
+        M.merged_stem(paths, "v", suggest=lambda p, y: "tumor_growth_by_drug")
+        == "tumor_growth_by_drug"
+    )
+    seen = {}
+    M.merged_stem(paths, "v", suggest=lambda p, y: seen.update(args=(p, y)))
+    assert seen["args"] == (paths, "v")
+    for bad in (None, "", "has space", "../x", "x" * 200, 5, "中文"):
+        assert M.merged_stem(paths, "v", suggest=lambda p, y, b=bad: b) == rule
+
+    def boom(p, y):
+        raise RuntimeError("model down")
+
+    assert M.merged_stem(paths, "v", suggest=boom) == rule
+    monkeypatch.setattr(M, "STEM_SUGGESTER", lambda p, y: "from_the_seam")
+    assert M.merged_stem(paths, "v") == "from_the_seam"
+
+
+@needs_worker
+def test_the_script_name_follows_the_chosen_candidates_column_and_repeats_get_a_suffix(project):
+    m, client, figs, _ = project
+    for n in ("growth_control", "growth_drugA", "growth_drugB"):
+        put(
+            figs,
+            f"data/{n}.csv",
+            [["day", "tumor_volume"], *[[d, d * 1.5 + len(n)] for d in range(1, 7)]],
+        )
+    tables = [{"path": f"{n}.csv"} for n in ("growth_control", "growth_drugA", "growth_drugB")]
+    names = []
+    for _ in range(2):
+        body = propose(client, tables=tables, render="lazy").get_json()
+        out = commit(client, body["session"], body["items"][0]["id"]).get_json()
+        assert out["task"]["outcome"] == "completed", out
+        names.append(Path(out["script"]).name)
+    assert names == ["growth_tumor_volume_by_file.py", "growth_tumor_volume_by_file_2.py"]
+
+
+# =========================================================================== 文件里原本就有分组列
+def _arms(batch_of):
+    """每份 6 行：`batch` 列由 `batch_of(文件序号, 行号)` 给；`dose` 横轴、`resp` 纵轴。"""
+
+    def rows(i):
+        return [
+            ["batch", "dose_uM", "resp_mV"],
+            *[[batch_of(i, k), k + 1, 1 + i + k * 0.5] for k in range(6)],
+        ]
+
+    return rows
+
+
+def test_a_group_column_that_is_constant_inside_each_file_is_ignored(project):
+    m, client, figs, _ = project
+    rows = _arms(lambda i, k: f"arm{i}")  # 每个文件里只有一个取值：与「文件」是同一件事
+    for i, n in enumerate(("a", "b")):
+        put(figs, f"data/{n}.csv", rows(i))
+    body = propose(
+        client,
+        tables=[{"path": "a.csv"}, {"path": "b.csv"}],
+        render="lazy",
+        answers={"y": "resp_mV"},
+    ).get_json()
+    assert body["kind"] == "candidates", body
+    assert body["roles"]["group"] == "file" and body["roles"]["facet"] is None
+    assert body["roles"]["options"]["group"] == ["file"], "被忽略的列不在可换的分组列里"
+    assert not any("variant" in it for it in body["items"]), "没有成对的两种画法"
+    for it in body["items"]:
+        assert "batch" not in (it["values"]["group"], it["values"]["facet"], it["values"]["x"])
+    assert not any(d["question_code"] == "pick_group" for d in body["defaults"]), (
+        "忽略的列本来就不是问题"
+    )
+
+
+def test_a_group_column_with_several_values_inside_a_file_gives_both_ways(project):
+    m, client, figs, _ = project
+    rows = _arms(lambda i, k: "p" if k % 2 == 0 else "q")
+    for i, n in enumerate(("a", "b")):
+        put(figs, f"data/{n}.csv", rows(i))
+    body = propose(
+        client,
+        tables=[{"path": "a.csv"}, {"path": "b.csv"}],
+        render="lazy",
+        answers={"y": "resp_mV"},
+    ).get_json()
+    assert body["kind"] == "candidates", body
+    items = body["items"]
+    marked = [(it["variant"], it["values"]) for it in items if it.get("variant")]
+    kinds = [v["kind"] for v, _ in marked]
+    assert "split" in kinds and "by_file" in kinds
+    assert all(v.get("column") == "batch" for v, _ in marked if v["kind"] == "split")
+    # 现状的画法排在前（推荐仍是它的第一张），它后面紧跟只按文件比较的那张
+    assert items[0]["recommended"] and items[0]["variant"] == {"kind": "split", "column": "batch"}
+    assert items[1]["variant"] == {"kind": "by_file"}
+    assert items[0]["title_code"] == items[1]["title_code"]
+    # 只按文件比较的：配方里没有 batch；按它拆的：batch 在分面 / 颜色里
+    for variant, values in marked:
+        used = {values["group"], values["facet"], values["x"]}
+        assert ("batch" in used) == (variant["kind"] == "split"), (variant, values)
+        if variant["kind"] == "by_file":
+            assert values["group"] in ("file", None) or values["x"] == "file"
+    # 两种画法画出来一样的（散点只用一个分组）不成对、不加标记
+    for it in items:
+        if it["title_code"] in ("scatter_fit", "scatter"):
+            assert it["variant"] is None
+
+
+def test_the_user_choosing_a_group_column_turns_the_pairing_off(project):
+    m, client, figs, _ = project
+    rows = _arms(lambda i, k: "p" if k % 2 == 0 else "q")
+    for i, n in enumerate(("a", "b")):
+        put(figs, f"data/{n}.csv", rows(i))
+    body = propose(
+        client,
+        tables=[{"path": "a.csv"}, {"path": "b.csv"}],
+        render="lazy",
+        answers={"y": "resp_mV", "group": "batch"},
+    ).get_json()
+    assert body["kind"] == "candidates" and not any(it.get("variant") for it in body["items"])
+
+
+def test_a_single_file_response_has_no_variant_keys(project):
+    m, client, figs, _ = project
+    put(figs, "data/a.csv", _arms(lambda i, k: "p" if k % 2 == 0 else "q")(0))
+    body = propose(client, table="a.csv", render="lazy", answers={"y": "resp_mV"}).get_json()
+    assert body["kind"] == "candidates" and not any("variant" in it for it in body["items"])
+
+
+def test_classify_groups_by_values_inside_each_file(tmp_path):
+    def summary(rows):
+        p = tmp_path / "x.csv"
+        p.write_text("\n".join(",".join(map(str, r)) for r in rows) + "\n", encoding="utf-8")
+        return adf.inspect_data_source(p, v2=True)
+
+    a = summary([["tag", "mix", "v"], *[["t0", "p" if k % 2 else "q", k] for k in range(6)]])
+    b = summary([["tag", "mix", "v"], *[["t1", "p" if k % 2 else "q", k] for k in range(6)]])
+    srcs = [
+        M.Source("a.csv", "a.csv", None, "a", a.sha256, a.size, a.header_line),
+        M.Source("b.csv", "b.csv", None, "b", b.sha256, b.size, b.header_line),
+    ]
+    entry, values = M.build(srcs, [a, b], "")
+    assert entry.merge.ignored == ("tag",) and entry.merge.splittable == ("mix",)
+    assert (
+        "tag" not in values.groups and "tag" not in entry.summary.groups and "mix" in values.groups
+    )

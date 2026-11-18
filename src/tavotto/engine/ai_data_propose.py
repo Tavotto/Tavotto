@@ -167,6 +167,9 @@ class Item:
     state: str = "ready"
     reason: str | None = None
     fallback: bool = False  # 画这张时项目解释器没画成、回退过（诊断标记）
+    #: 合画且文件里原本有可再拆的分组列时，成对出现的两种画法各自的标记：`{"kind": "split", "column": 列名}`（按它再拆开）/
+    #: `{"kind": "by_file"}`（不拆、只按文件比较）；没有成对的另一张（两种画法画出来一样）就是 None
+    variant: dict | None = None
     # 懒渲染的素材：候选脚本在会话目录里，这里记下渲染一张要的最少东西
     stem: str | None = None
     n: int = 0
@@ -769,6 +772,52 @@ def _table_for_values(root_folder: Path, entry: adf.TableEntry) -> adf.DataSumma
     )
 
 
+def _recipe_key(rec: recipe_mod.FigureRecipe) -> str:
+    return json.dumps({k: v for k, v in rec.to_dict().items() if k != "why"}, sort_keys=True)
+
+
+def _with_file_only_variants(
+    res, merged, values, confirmed, hint, picks, rules
+) -> tuple[recipe_mod.Candidates, dict[int, dict]]:
+    """合画且文件里**原本就有**在文件内取多个值的分组列（`MergeSpec.splittable`）：除了现状的画法（按文件上色、再按那一列拆开 / 分面），
+    再给一份**只按文件比较**的（把那些列当不存在重新出一遍备选）。两份各自走完整的 `default_candidates`（同一套校验与排序），这里只负责并起来：
+    现状的顺序不变（推荐仍是它的第一张），每张后面紧跟它只按文件比较的那一张；两种画法画出来一样的（配方除 `why` 外逐项相同）只留一张、不加标记。
+    返回 `(并好的 Candidates, {id(配方): 标记})`。"""
+    keep = {k: n for k, n in merged.summary.groups.items() if k not in merged.merge.splittable}
+    entry_b = replace(merged, summary=replace(merged.summary, groups=keep))
+    res_b = recipe_mod.default_candidates(
+        adf.FolderProfile((entry_b,), (), False, None),
+        table=entry_b.path,
+        sheet=entry_b.sheet,
+        confirmed=confirmed,
+        hint=hint,
+        values=replace(values, groups=keep),
+        picks=picks,
+        cells=rules,
+    )
+    if not isinstance(res_b, recipe_mod.Candidates) or not res_b.items:
+        return res, {}
+    seen = {_recipe_key(c.recipe) for c in res.items}
+    only_b = [c for c in res_b.items if _recipe_key(c.recipe) not in seen]
+    by_code = {c.code: c for c in only_b}
+    column = merged.merge.splittable[0]
+    out: list[recipe_mod.Candidate] = []
+    marks: dict[int, dict] = {}
+    used: set[str] = set()
+    for cand in res.items:
+        out.append(cand)
+        twin = by_code.get(cand.code)
+        if twin is not None:
+            marks[id(cand.recipe)] = {"kind": "split", "column": column}
+            marks[id(twin.recipe)] = {"kind": "by_file"}
+            out.append(twin)
+            used.add(cand.code)
+    out += [
+        c for c in only_b if c.code not in used
+    ]  # 只有「只按文件」才画得出来的（现状那一边被剔除了）排在最后
+    return replace(res, items=tuple(out)), marks
+
+
 def _read_merged(
     root: Path,
     folder_path: Path,
@@ -860,6 +909,7 @@ def item_to_dict(sess: Session, item: Item, recommended: bool) -> dict:
         },
         "thumbnail_url": f"/api/ai/data-figure/thumbnail/{sess.id}/{item.id}",
         "thumbnail_status": item.state,
+        **({"variant": item.variant} if sess.merge is not None and sess.merge.splittable else {}),
     }
 
 
@@ -1039,6 +1089,15 @@ def propose(
     ):
         # 懒模式迭代用尽仍没落定（防御）：不出 ask，当「没有可画的」
         return remember({"kind": "nothing", "reasons": ["no_renderable_family"], "dropped": []})
+    variants: dict[int, dict] = {}
+    if (
+        merged is not None
+        and file_group is not None
+        and merged.merge.splittable
+        and "group" not in ans
+        and res.items
+    ):
+        res, variants = _with_file_only_variants(res, merged, values, confirmed, hint, picks, rules)
 
     def merged_info() -> dict:
         """合画：各份是哪几份（路径与请求里一致）、各自的标签、合成的分组列名；单份没有这两项。"""
@@ -1129,6 +1188,7 @@ def propose(
             len(unplotted_rows(values, cand.recipe)),
             cell_stats(values, cand.recipe) or None,
             state="pending" if planned is not None else "ready",
+            variant=variants.get(id(cand.recipe)),
             stem=planned.stem if planned is not None else None,
             n=planned.n if planned is not None else 0,
             expected=planned.expected if planned is not None else [],

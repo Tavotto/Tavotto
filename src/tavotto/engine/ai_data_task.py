@@ -481,11 +481,11 @@ class PlacementV2:
 
 
 def place_v2(
-    root: Path, folder_rel: str, table_rel: str, module_name: str, stem_name: str | None = None
+    root: Path, folder_rel: str, table_rel: str, module_name: str, stem_base: str | None = None
 ) -> PlacementV2:
     """把数据文件夹与数据文件钉在项目内（`contained_path`，realpath 之后判；不跟随指到项目外的链接）并选一个空闲的 stem。
     stem 规则沿用 v1（避开已登记的、同名脚本、同名产物，casefold 比较），只是在 `tavotto_figures/` 里找。
-    `stem_name`（合画用）：stem 的主干取它而不是数据文件名（合画的是第一份的名字加 `_merged`）；`folder_rel` 在合画时是落点目录。"""
+    `stem_base`（合画用）：stem 的主干**原样**取它（不加 `_figure`；名字见 `ai_data_merge.merged_stem`）而不是数据文件名；`folder_rel` 在合画时是落点目录。"""
     try:
         folder_norm = ai_data_propose.normalize_rel(folder_rel)
         table_norm = ai_data_propose.normalize_rel(table_rel)
@@ -505,7 +505,7 @@ def place_v2(
     if not data_path.is_file():
         raise ai_data_figure.DataSourceError("data_not_found")
     figures_dir = folder / FIGURES_DIR
-    base = ai_data_figure.stem_for(stem_name or Path(table_norm).name)
+    base = stem_base or ai_data_figure.stem_for(Path(table_norm).name)
     taken = _registered_stems(root)
     for n in range(1, MAX_SUFFIX + 1):
         stem = base if n == 1 else f"{base}_{n}"
@@ -629,7 +629,7 @@ def _prepare_merged(root: Path, sel: Selection) -> PreparedV2:
         sel.folder_rel,
         first.rel,
         module_name,
-        stem_name=f"{PurePosixPath(first.rel).stem}_merged.csv",
+        stem_base=ai_data_merge.merged_stem([s.path for s in spec.sources], sel.recipe.y[0]),
     )
     root_real = Path(os.path.realpath(root))
     refs: list[dict] = []

@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
@@ -66,6 +67,10 @@ class MergeSpec:
     sources: tuple[Source, ...]
     column: str
     landing: str  # 落点目录，相对所选数据文件夹（"" = 数据文件夹本身）
+    #: 文件里原本就有的分组列：`ignored` = 每个文件内只有一个取值（与「文件」是同一件事，从分组候选里去掉）；
+    #: `splittable` = 在某个文件内有多个取值（可以再按它拆小图，也可以只按文件比较）
+    ignored: tuple[str, ...] = ()
+    splittable: tuple[str, ...] = ()
 
     @property
     def sha256(self) -> str:
@@ -175,11 +180,103 @@ def column_name(columns: list[str]) -> str:
     return name
 
 
+# --------------------------------------------------------------------------- 脚本名
+STEM_MIN_PREFIX = 3  # 公共前缀短于这个就不用，退回第一份的 stem
+STEM_Y_MAX = 40
+STEM_MAX = 80
+_STEM_SAFE = re.compile(r"[^A-Za-z0-9_-]+")
+_SEPARATORS = "_- "
+
+
+def _safe(text: str) -> str:
+    """文件名 / 列名 → 脚本名里能用的字符（与 `adf.stem_for` 同一条字符规则：只留 `[A-Za-z0-9_-]`，其余折成 `_`，去掉首尾分隔符）。"""
+    return _STEM_SAFE.sub("_", text).strip("_-")
+
+
+def common_stem_prefix(stems: list[str]) -> str:
+    """几个文件名（去扩展名）的最长公共前缀，按词边界截断、去掉尾部分隔符；没有或短于 `STEM_MIN_PREFIX` 返回 `""`。
+    词边界 = 前缀以分隔符（`_` `-` 空格）结尾，或前缀与各文件名下一个字符之间是字母 / 数字的交界（`sample1` / `sample2` → `sample`）；
+    前缀把一个词或一串数字切断了（`growth_ctrl` / `growth_cell` → `growth_c`、`exp10` / `exp11` → `exp1`）就先去掉尾部数字，不行再退到最后一个分隔符。"""
+    prefix = os.path.commonprefix(stems)
+
+    def whole(pre: str) -> bool:
+        if not pre:
+            return False
+        if pre[-1] in _SEPARATORS:
+            return True
+        for st in stems:
+            if len(st) == len(pre):
+                continue
+            nxt = st[len(pre)]
+            if nxt in _SEPARATORS:
+                continue
+            alpha_digit = pre[-1].isalpha() and nxt.isdigit()
+            digit_alpha = pre[-1].isdigit() and nxt.isalpha()
+            if not (alpha_digit or digit_alpha):
+                return False
+        return True
+
+    if not whole(prefix):
+        trimmed = prefix.rstrip("0123456789")
+        if trimmed != prefix and whole(trimmed):
+            prefix = trimmed
+        else:
+            cut = max((prefix.rfind(c) for c in _SEPARATORS), default=-1)
+            prefix = prefix[:cut] if cut > 0 else ""
+    prefix = prefix.rstrip(_SEPARATORS)
+    return prefix if len(prefix) >= STEM_MIN_PREFIX else ""
+
+
+def rule_stem(paths: list[str], y: str) -> str:
+    """规则命名：`<文件名公共前缀（没有就取第一份的 stem）>_<纵轴列名>_by_file`，字符按 `_safe`，纵轴最多 `STEM_Y_MAX` 字符、总长不超过 `STEM_MAX`。
+    例：growth_control / growth_drugA / growth_drugB + tumor_volume → `growth_tumor_volume_by_file`。重名的 `_2` 递增由落盘处加。"""
+    stems = [PurePosixPath(p).stem for p in paths]
+    base = _safe(common_stem_prefix(stems) or stems[0]) or "data"
+    ycol = _safe(y)[:STEM_Y_MAX].rstrip("_-") or "value"
+    tail = f"_{ycol}_by_file"
+    base = base[: max(1, STEM_MAX - len(tail))].rstrip("_-") or "data"
+    return f"{base}{tail}"
+
+
+#: 以后接模型时由模型建议名字的接缝：`(paths, y) -> str | None`；返回的名字不合格（字符、长度）或抛异常 / 返回 None 都退回规则名。现在不接模型（None）。
+STEM_SUGGESTER = None
+_STEM_OK = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,%d}" % (STEM_MAX - 1))
+
+
+def merged_stem(paths: list[str], y: str, suggest=None) -> str:
+    """合画脚本名（不含 `.py`）。先问建议者（`suggest`，缺省取 `STEM_SUGGESTER`），建议不合格或失败就用规则名。**名字只由这里定**。"""
+    suggest = suggest or STEM_SUGGESTER
+    if suggest is not None:
+        try:
+            got = suggest(list(paths), y)
+        except Exception:  # noqa: BLE001 —— 建议者出任何问题都只是退回规则名
+            got = None
+        if isinstance(got, str) and _STEM_OK.fullmatch(got):
+            return got
+    return rule_stem(paths, y)
+
+
 # --------------------------------------------------------------------------- 拼
 def _entry_of(source: Source, values: adf.DataSummary) -> adf.TableEntry:
     """这一份自己的读法（不带行数据）。`path` 取相对落点的路径（只用它的后缀判 XLSX）。"""
     slim = replace(values, rows=[], row_numbers=[], row_count=len(values.rows))
     return adf.TableEntry(source.rel, values.sheet, False, slim)
+
+
+def classify_groups(values: adf.DataSummary, column: str) -> tuple[list[str], list[str]]:
+    """拼好的表里**原本就有**的分组列（不含合成列、不含编号列）按「在每个文件内有几个取值」分两类：最多 1 个 = `ignored`（与文件是同一件事，再拿它分组
+    只会把每个文件当成一组再重复一遍）；某个文件内有多个 = `splittable`（既可以按它再拆开，也可以只按文件比较）。"""
+    ignored: list[str] = []
+    splittable: list[str] = []
+    for col in values.groups:
+        if col == column or col in values.id_like:
+            continue
+        i = values.columns.index(col)
+        seen: dict[str, set[str]] = {}
+        for row, label in zip(values.rows, values.row_sources, strict=True):
+            seen.setdefault(label, set()).add(row[i].strip())
+        (ignored if max(len(v) for v in seen.values()) <= 1 else splittable).append(col)
+    return ignored, splittable
 
 
 def check_same_columns(summaries: list[adf.DataSummary]) -> None:
@@ -207,7 +304,6 @@ def build(
         [(v.columns, v.rows) for v in summaries], [s.label for s in filled], column
     )
     numbers = [0] + [v.row_number(i) for v in summaries for i in range(len(v.rows))]
-    spec = MergeSpec(filled, column, landing)
     values = adf._summarize(
         [header, *rows],
         path_name=summaries[0].path_name,
@@ -220,6 +316,12 @@ def build(
     values = replace(
         values, row_sources=[s.label for s, v in zip(filled, summaries) for _ in v.rows]
     )
+    ignored, splittable = classify_groups(values, column)
+    if ignored:  # 与文件是同一件事的分组列：不当分组（颜色 / 分面 / 比较的横轴）候选
+        values = replace(
+            values, groups={k: n for k, n in values.groups.items() if k not in ignored}
+        )
+    spec = MergeSpec(filled, column, landing, tuple(ignored), tuple(splittable))
     slim = replace(values, rows=[], row_numbers=[], row_count=len(values.rows), row_sources=[])
     first = filled[0]
     return MergedEntry(first.rel, first.sheet, False, slim, spec), values
@@ -250,7 +352,11 @@ __all__ = [
     "build",
     "check_same_columns",
     "column_name",
+    "classify_groups",
     "common_parent",
+    "common_stem_prefix",
+    "merged_stem",
+    "rule_stem",
     "load",
     "rebase",
     "unique_labels",
