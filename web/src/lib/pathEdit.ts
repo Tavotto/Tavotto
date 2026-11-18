@@ -411,6 +411,9 @@ export function joinSubpaths(a: MmSubpath, aEnd: 'start' | 'end', b: MmSubpath, 
     head[head.length - 1] = { p: x.p, in: x.in, out: y.out, smooth: false }
     return { closed: false, nodes: [...head, ...tail.slice(1)] }
   }
+  // 不重合：接上的是一段直线，两个端点上没用到的手柄（钢笔拖出来的）收回锚点，免得直线被拉弯
+  head[head.length - 1] = { ...x, out: [...x.p] as XY, smooth: false }
+  tail[0] = { ...y, in: [...y.p] as XY, smooth: false }
   return { closed: false, nodes: [...head, ...tail] }
 }
 

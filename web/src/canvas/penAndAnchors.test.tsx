@@ -640,3 +640,32 @@ describe('钢笔工具下不画选中路径的缩放手柄', () => {
     expect(host.querySelectorAll('[data-handle]')).toHaveLength(0)
   })
 })
+
+describe('Codex 评审回归（M1）', () => {
+  it('钢笔画到一半切画布：草稿落在原画布，不进切过去的那张（线程 4614448133）', async () => {
+    const { activateCanvas } = await import('@/store/canvasSession')
+    const st = () => useDocumentStore.getState()
+    const a = st().activeCanvasId
+    const b = st().addCanvas('B')
+    activateCanvas(a)
+    useUiStore.setState({ tool: 'pen' })
+    await penClick(10, 10)
+    await penClick(40, 40)
+    expect(penDrawing()).toBe(true)
+    await act(async () => activateCanvas(b))
+    await key('Enter')
+    expect(objects()).toHaveLength(0) // 此刻是 B
+    await act(async () => activateCanvas(a))
+    expect(objects().filter((o) => o.type === 'path')).toHaveLength(1)
+  })
+
+  it('换成钢笔工具后锚点编辑不再生效，别拦钢笔点端点（线程 4614448153）', async () => {
+    await seedPath()
+    editAnchors('p1')
+    expect(activePathEdit()).not.toBeNull()
+    await act(async () => useUiStore.setState({ tool: 'pen' }))
+    expect(activePathEdit()).toBeNull()
+    await act(async () => useUiStore.setState({ tool: 'select' }))
+    expect(activePathEdit()).not.toBeNull()
+  })
+})

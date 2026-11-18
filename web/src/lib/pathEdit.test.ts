@@ -263,6 +263,16 @@ describe('连接 / 平均', () => {
   const a: MmSubpath = { closed: false, nodes: nodesOf([[0, 0], [1, 0]]) }
   const b: MmSubpath = { closed: false, nodes: nodesOf([[3, 0], [2, 0]]) }
 
+  it('端点没重合：钢笔拖出来没用到的手柄收回锚点，接上的是真直线（Codex 线程 4614448163）', () => {
+    const pa: MmSubpath = { closed: false, nodes: [{ p: [0, 0], in: [0, 0], out: [0, 0], smooth: false }, { p: [10, 0], in: [8, 3], out: [12, 3], smooth: true }] }
+    const pb: MmSubpath = { closed: false, nodes: [{ p: [20, 0], in: [18, -3], out: [22, -3], smooth: true }, { p: [30, 0], in: [30, 0], out: [30, 0], smooth: false }] }
+    const r = joinSubpaths(pa, 'end', pb, 'start').nodes
+    expect(r[1].out).toEqual([10, 0])
+    expect(r[2].in).toEqual([20, 0])
+    expect(r[1].in).toEqual([8, 3]) // 原曲线用到的那一侧留着
+    expect(r[2].out).toEqual([22, -3])
+  })
+
   it('两条开放子路径：端点没重合补一段直线；方向随 a', () => {
     expect(joinSubpaths(a, 'end', b, 'end').nodes.map((n) => n.p)).toEqual([[0, 0], [1, 0], [2, 0], [3, 0]])
     expect(joinSubpaths(a, 'start', b, 'start').nodes.map((n) => n.p)).toEqual([[1, 0], [0, 0], [3, 0], [2, 0]])
