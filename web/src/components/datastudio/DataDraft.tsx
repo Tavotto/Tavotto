@@ -175,11 +175,11 @@ export function DataDraft() {
         )}
       </div>
     )
-  } else if (group && (phase === 'columnsDiffer' || phase === 'limitExceeded' || (phase === 'nothing' && reasons.includes('table_not_found')))) {
-    // 合画的出路（两个稳定码，以及某份表不在了的 `nothing`）：一句话 + 回到「各画一张」（它的出路）——恢复刚才的选择、回数据抽屉、直接开始
+  } else if (group && (phase === 'mergeFailed' || (phase === 'nothing' && reasons.includes('table_not_found')))) {
+    // 合画的出路（`MERGE_FAILURE_CODES` 里的稳定码，以及某份表不在了的 `nothing`）：一句话 + 回到「各画一张」（它的出路）——恢复刚才的选择、回数据抽屉、直接开始
     top = (
       <div data-studio-problem data-studio-group-problem={phase} className="flex flex-col items-start gap-2">
-        <Line>{phase === 'columnsDiffer' ? t('dataFigureV2.batch.columnsDiffer') : phase === 'limitExceeded' ? (error ? fm(error) : t('dataFigureV2.draft.failed')) : t('dataFigureV2.reason.table_not_found')}</Line>
+        <Line>{phase === 'mergeFailed' ? (error ? fm(error) : t('dataFigureV2.draft.failed')) : t('dataFigureV2.reason.table_not_found')}</Line>
         <Button variant="primary" size="lg" className="mt-1" data-studio-primary data-studio-group-each onClick={() => useDataBatchStore.getState().drawEach(group)}>
           {t('dataFigureV2.batch.draw')}
         </Button>

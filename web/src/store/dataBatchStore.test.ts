@@ -549,17 +549,25 @@ describe('合画一张', () => {
     propose.mockRejectedValueOnce(apiError(400, 'tables_columns_differ'))
     f().selectGroup([ref('a'), ref('b')])
     while (f().phase === 'reading' || f().phase === 'loading') await flush()
-    expect(f().phase).toBe('columnsDiffer')
+    expect(f().phase).toBe('mergeFailed')
     propose.mockRejectedValueOnce(apiError(400, 'tables_limit_exceeded'))
     f().closeDraft()
     f().selectGroup([ref('a'), ref('b')])
     while (f().phase === 'reading' || f().phase === 'loading') await flush()
-    expect(f().phase).toBe('limitExceeded')
+    expect(f().phase).toBe('mergeFailed')
     propose.mockRejectedValueOnce(apiError(500, 'x'))
     f().closeDraft()
     f().selectGroup([ref('a'), ref('b')])
     while (f().phase === 'reading' || f().phase === 'loading') await flush()
     expect(f().phase).toBe('failed')
+  })
+
+  it('tables_labels_collide 与另两个码同属合并失败的出路集合', async () => {
+    const f = () => useDataFigureStore.getState()
+    propose.mockRejectedValueOnce(apiError(400, 'tables_labels_collide'))
+    f().selectGroup([ref('a'), ref('b')])
+    while (f().phase === 'reading' || f().phase === 'loading') await flush()
+    expect(f().phase).toBe('mergeFailed')
   })
 
   it('单份流程里同一个码不会走合画的出路', async () => {
@@ -574,7 +582,7 @@ describe('合画一张', () => {
     propose.mockRejectedValueOnce(apiError(400, 'tables_columns_differ'))
     const refs = [ref('a'), ref('b')]
     useDataFigureStore.getState().selectGroup(refs)
-    while (useDataFigureStore.getState().phase !== 'columnsDiffer') await flush()
+    while (useDataFigureStore.getState().phase !== 'mergeFailed') await flush()
     propose.mockImplementation(async (b) => cands(`S-${b.table}`))
     st().drawEach(useDataFigureStore.getState().group!)
     expect(useDataFigureStore.getState()).toMatchObject({ draftOpen: false, group: null })

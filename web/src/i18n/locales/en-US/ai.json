@@ -711,8 +711,7 @@
       "queued": "Queued",
       "done": "Done",
       "failed": "Failed",
-      "groupTitle": "{{count}} files",
-      "columnsDiffer": "Columns don’t match, so these can’t be combined."
+      "groupTitle": "{{count}} files"
     }
   }
 }

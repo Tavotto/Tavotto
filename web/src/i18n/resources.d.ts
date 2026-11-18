@@ -59,7 +59,6 @@ export default interface Resources {
     },
     "dataFigureV2": {
       "batch": {
-        "columnsDiffer": "列名不一致，无法合并作图。",
         "done": "已完成",
         "draw": "分别作图",
         "failed": "失败",

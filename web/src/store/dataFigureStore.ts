@@ -17,7 +17,7 @@ import { runExclusive } from '@/lib/dataCommitQueue'
 import { isCommitInProgress, pollCommit } from '@/lib/dataCommitPoll'
 import { currentProjectId } from '@/lib/session'
 import { candidateIdentity, candidatesFromResponse, headerRowFromResponse, mixedFromResponse, rolesFromResponse, sourcesFromResponse, unitsRowFromResponse, type Candidate, type GroupSource, type ColumnRoles, type MixedColumn, type ThumbState } from '@/lib/dataFigureAdapter'
-import { fileRows, hasNumericColumn, isStaleProposeCode, sameTable, tableKey, type CellMode, type TableRef } from '@/lib/dataFigure'
+import { MERGE_FAILURE_CODES, fileRows, hasNumericColumn, isStaleProposeCode, sameTable, tableKey, type CellMode, type TableRef } from '@/lib/dataFigure'
 import { msg, type UiMessage } from '@/i18n'
 
 /**
@@ -70,7 +70,7 @@ export type ProblemKind =
  *  - `reading` 读表中；`unreadable` 不是表格；`text` 全是文字、没有能画的数字；`pickrow` 表头行没认出来、要用户点一行
  *  - `loading` 候选还在出；`ready` 候选好了；`nothing` 后端说这张表画不出；`failed` 出候选这一步没成
  */
-export type DraftPhase = 'idle' | 'reading' | 'unreadable' | 'text' | 'pickrow' | 'loading' | 'ready' | 'nothing' | 'failed' | 'columnsDiffer' | 'limitExceeded'
+export type DraftPhase = 'idle' | 'reading' | 'unreadable' | 'text' | 'pickrow' | 'loading' | 'ready' | 'nothing' | 'failed' | 'mergeFailed'
 
 /** 这次画图用到的、数值列里混着文字的列（后端 `mixed_cells`）：默认「不画这几行」，右栏可改成「只用里面的数字」；多列时 `mode` 是它们共用的处理方式 */
 export interface MixedInfo {
@@ -305,10 +305,9 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       )
     } catch (e) {
       if (!still()) return
-      // 合画的两个稳定码各有出路（临时标签里一句话 + 「各画一张」），不当成「再试一次就行」的失败
+      // 合画失败的稳定码（`MERGE_FAILURE_CODES`）各有出路：临时标签里显示后端那一句 + 「分别作图」，不当成「再试一次就行」的失败
       const code = e instanceof ApiError && typeof e.body?.code === 'string' ? e.body.code : ''
-      if (group && code === 'tables_columns_differ') set({ phase: 'columnsDiffer', error: null })
-      else if (group && code === 'tables_limit_exceeded') set({ phase: 'limitExceeded', error: reasonOf(e) }) // 后端那句「一次最多合画 {{max}} 份。」
+      if (group && MERGE_FAILURE_CODES.includes(code)) set({ phase: 'mergeFailed', error: reasonOf(e) })
       else set({ phase: 'failed', error: reasonOf(e) })
       return
     }

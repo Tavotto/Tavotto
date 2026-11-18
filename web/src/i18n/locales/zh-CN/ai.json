@@ -704,8 +704,7 @@
       "queued": "排队中",
       "done": "已完成",
       "failed": "失败",
-      "groupTitle": "{{count}} 个文件",
-      "columnsDiffer": "列名不一致，无法合并作图。"
+      "groupTitle": "{{count}} 个文件"
     }
   }
 }

@@ -673,7 +673,7 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
   it('tables_limit_exceeded：后端那句话 + 同一个出路「各画一张」', async () => {
     propose.mockRejectedValueOnce(new ApiError('tables_limit_exceeded', 400, { code: 'tables_limit_exceeded', params: { max: 8 } }))
     await groupTwo()
-    const p = q('[data-studio-group-problem="limitExceeded"]')!
+    const p = q('[data-studio-group-problem="mergeFailed"]')!
     expect(p.textContent).toContain('一次最多合并 8 个文件。')
     expect(p.querySelector('button')!.textContent).toBe('分别作图')
   })
@@ -805,6 +805,15 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     await flush()
     expect(reads()).toBeGreaterThan(before)
     expect(q('[data-data-strip-info]')!.textContent).toBe('前 2 行，共 5 行 · 3 列')
+  })
+
+  it('tables_labels_collide：同一条出路——后端那一句 + 「分别作图」，不给「再试一次」', async () => {
+    propose.mockRejectedValueOnce(new ApiError('tables_labels_collide', 400, { code: 'tables_labels_collide' }))
+    await groupTwo()
+    const p = q('[data-studio-group-problem="mergeFailed"]')!
+    expect(p.textContent).toContain('这几个文件的名字分不开，没法合并作图。')
+    expect(p.querySelector('button')!.textContent).toBe('分别作图')
+    expect(q('[data-studio-retry]')).toBeNull()
   })
 
   it('合画里某份表不在了（200 nothing + table_not_found）：走 nothing 的话，也给「各画一张」这个出路', async () => {
