@@ -580,4 +580,25 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     act(() => useDataBatchStore.getState().clear())
     expect(btn().getAttribute('aria-pressed')).toBe('false')
   })
+
+  it('「选多份」：焦点在按钮上按 Esc 退出多选态；清单变到少于 2 份能画的表时自动退出并清选择', async () => {
+    propose.mockResolvedValue(cands())
+    useDataBatchStore.getState().clear()
+    await start(<><DataDrawer /><DataDraft /></>)
+    const btn = () => q<HTMLButtonElement>('[data-studio-pick-mode]')!
+    await click(btn())
+    await click(qa('[data-studio-file]')[0]!)
+    expect(useDataBatchStore.getState()).toMatchObject({ pickMode: true })
+    btn().focus()
+    act(() => void btn().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })))
+    expect(useDataBatchStore.getState()).toMatchObject({ pickMode: false, selection: [] })
+    // 清单变化：只剩 1 份能画的表
+    await click(btn())
+    await click(qa('[data-studio-file]')[0]!)
+    files.mockResolvedValue({ files: [tbl('growth.csv'), tbl('run42.dat', 'unreadable')], truncated: false })
+    await act(async () => useDataFigureStore.getState().loadFiles())
+    await flush()
+    expect(q('[data-studio-pick-mode]')).toBeNull()
+    expect(useDataBatchStore.getState()).toMatchObject({ pickMode: false, selection: [] })
+  })
 })

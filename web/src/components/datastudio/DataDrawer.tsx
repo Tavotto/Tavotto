@@ -62,6 +62,11 @@ export function DataDrawer() {
     [picked, pickMode, rowStates],
   )
 
+  // 清单变化后能画的表少于 2 份（按钮随之消失）：退出多选态并清选择，别让状态挂着；进行中不动（store 里 running 时不处理），清单没读好时不判
+  useEffect(() => {
+    if (files.status === 'ready' && tableCount < 2 && pickMode) useDataBatchStore.getState().setPickMode(false)
+  }, [files.status, tableCount, pickMode])
+
   if (files.status === 'error' && !entries)
     return (
       <div className="p-3" data-studio-data>
@@ -97,6 +102,13 @@ export function DataDrawer() {
             aria-pressed={pickMode}
             disabled={running}
             data-studio-pick-mode
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' && pickMode && !running) {
+                e.preventDefault()
+                e.stopPropagation()
+                useDataBatchStore.getState().setPickMode(false)
+              }
+            }}
             onClick={() => useDataBatchStore.getState().setPickMode(!pickMode)}
           >
             {t('dataFigureV2.batch.pick')}
