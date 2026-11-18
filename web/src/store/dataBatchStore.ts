@@ -25,6 +25,8 @@ import { useDataFigureStore } from '@/store/dataFigureStore'
  */
 
 export type RowState =
+  /** 这一轮要画、还没轮到 */
+  | { state: 'queued' }
   | { state: 'running' }
   | { state: 'done' }
   /** `reason` = 后端给的（或这份表画不出的）原因句，放行的 title 里；没有就只有「没画出来」 */
@@ -38,12 +40,14 @@ export interface BatchHost {
   refreshProject: () => Promise<void>
   /** 只运行这份新脚本（不打开、不放进画布），好让素材卡有预览；跑不成不算没画出来，卡片自己会显示脚本的状态 */
   runScript: (script: string) => Promise<void>
-  /** 全部画成之后：左栏切到素材抽屉（图卡在那里） */
+  /** 全部画成之后 / 「看已画的」：左栏切到素材抽屉（图卡在那里） */
   showAssets: () => void
+  /** 合画列名不一致的出路：回到数据抽屉（窄屏临时标签激活时抽屉是收起的） */
+  showData: () => void
   /** 项目文件夹可不可写；不知道回 undefined */
   projectWritable: () => boolean | undefined
 }
-let host: BatchHost = { refreshProject: async () => {}, runScript: async () => {}, showAssets: () => {}, projectWritable: () => undefined }
+let host: BatchHost = { refreshProject: async () => {}, runScript: async () => {}, showAssets: () => {}, showData: () => {}, projectWritable: () => undefined }
 export const configureDataBatchHost = (h: BatchHost): void => {
   host = h
 }
@@ -53,12 +57,14 @@ interface BatchStore {
   selection: TableRef[]
   /** Shift+点选一段的起点：最近一次点的那一行 */
   anchor: TableRef | null
-  /** 「选多份」多选态：每个表行行尾常显「＋」，普通单击 = 加选 / 取消。手势（⌘ 点 / Shift 点 / 悬停「＋」）选中第一份时自动进入，两条路是同一个状态 */
+  /** 「选多份」多选态：抽屉里出现固定高度的动作区，普通单击 = 加选 / 取消。手势（⌘ 点 / Shift 点）选中第一份时自动进入，两条路是同一个状态 */
   pickMode: boolean
   rows: Record<string, RowState>
   running: boolean
   progress: { done: number; total: number }
   stop: BatchStop
+  /** 点了「停下」：画完当前这一份就停，后面的不画、仍留在选择里；已画的留着 */
+  stopRequested: boolean
 
   isSelected: (ref: TableRef) => boolean
   /** ⌘/Ctrl+点：加进 / 移出多选 */
@@ -69,9 +75,14 @@ interface BatchStore {
   /** 普通单击 / Esc：清掉多选（进行中不清） */
   clearSelection: () => void
   setPickMode: (on: boolean) => void
-  /** 整批进行中 / 有没画成的 / 多选 ≥ 2：底部那一条要不要出现 */
-  barVisible: () => boolean
-  run: () => Promise<void>
+  /** `all` = 各画一张（整个选择，含写不进文件夹时没轮到的）；`failed` = 再试一次（只重做没画成的） */
+  run: (mode?: 'all' | 'failed') => Promise<void>
+  /** 停下：画完当前这一份就停 */
+  stopRun: () => void
+  /** 合画一张：退出多选态，把选中的几份交给临时标签 */
+  merge: () => void
+  /** 合画列名不一致的出路：恢复刚才的选择、回数据抽屉、直接各画一张 */
+  drawEach: (refs: TableRef[]) => void
   clear: () => void
 }
 
@@ -92,6 +103,7 @@ const initial = {
   running: false,
   progress: { done: 0, total: 0 },
   stop: null as BatchStop,
+  stopRequested: false,
 }
 
 /** 一份表：出候选 → 提交第一张（它渲染不出来就依次试后面的）→ 放弃会话。不打开。 */
@@ -160,6 +172,8 @@ export const useDataBatchStore = create<BatchStore>((set, get) => ({
       anchor: ref,
       pickMode: true,
       selection: s.selection.some((r) => sameTable(r, ref)) ? s.selection.filter((r) => !sameTable(r, ref)) : [...s.selection, ref],
+      // 取消选一份没画成的 = 把它的「没画出来」也撤掉（不留无主的标记）
+      rows: s.rows[tableKey(ref)]?.state === 'failed' ? Object.fromEntries(Object.entries(s.rows).filter(([k]) => k !== tableKey(ref))) : s.rows,
     }))
   },
 
@@ -192,30 +206,32 @@ export const useDataBatchStore = create<BatchStore>((set, get) => ({
     set({ pickMode: false, selection: [], rows: Object.fromEntries(Object.entries(get().rows).filter(([, v]) => v.state === 'done')), stop: null })
   },
 
-  barVisible: () => {
-    const s = get()
-    return s.running || s.selection.length >= 2 || Object.values(s.rows).some((r) => r.state === 'failed') || s.stop != null
-  },
-
-  run: async () => {
+  run: async (mode = 'all') => {
     if (get().running) return
-    // 写不进的整批停下之后，按钮是「换个文件夹」，不是再来一遍
-    const todo = [...get().selection]
+    const failedKeys = new Set(Object.entries(get().rows).filter(([, v]) => v.state === 'failed').map(([k]) => k))
+    const todo = get().selection.filter((r) => mode === 'all' || failedKeys.has(tableKey(r)))
     if (todo.length === 0) return
     const ep = epoch
     const guard = captureProjectEpoch(() => epoch)
     // 清掉这几份上一轮的标记（没画成的重做）；还没轮到的没有记录
     const keys = new Set(todo.map(tableKey))
+    // 全新一轮（没有没画成的在等重试）：上一批留下的「已画」标记不再属于这一批，免得「N 张已画」把它们算进来
+    const fresh = failedKeys.size === 0
     set((s) => ({
       running: true,
       stop: null,
+      stopRequested: false,
       progress: { done: 0, total: todo.length },
-      rows: Object.fromEntries(Object.entries(s.rows).filter(([k]) => !keys.has(k))),
+      rows: {
+        ...Object.fromEntries(Object.entries(s.rows).filter(([k, v]) => !keys.has(k) && !(fresh && v.state === 'done'))),
+        ...Object.fromEntries([...keys].map((k) => [k, { state: 'queued' } as RowState])),
+      },
     }))
     let stopped: BatchStop = null
     for (let i = 0; i < todo.length; i++) {
       const ref = todo[i]!
       if (!guard.still() || ep !== epoch) return // 换了项目：静默中止，已写出的就是普通脚本
+      if (get().stopRequested) break // 「停下」：后面的不画
       const key = tableKey(ref)
       set((s) => ({ rows: { ...s.rows, [key]: { state: 'running' } } }))
       const r = await runExclusive(() => drawOne(ref, guard.still, guard.pj))
@@ -240,13 +256,33 @@ export const useDataBatchStore = create<BatchStore>((set, get) => ({
         }
       }
     }
-    set({ running: false, stop: stopped })
+    // 没轮到的（停下 / 写不进文件夹）：不标成功也不标失败，撤掉「等着」，原样留在选择里
+    set((s) => ({ running: false, stop: stopped, stopRequested: false, rows: Object.fromEntries(Object.entries(s.rows).filter(([, v]) => v.state !== 'queued')) }))
     const failed = Object.values(get().rows).some((v) => v.state === 'failed')
-    if (!failed && !stopped) {
+    if (!failed && !stopped && get().selection.length === 0) {
       // 全部画成：清多选，左栏切到素材抽屉（图卡在那里）；不弹任何通知
       set({ selection: [], rows: {}, anchor: null, pickMode: false })
       host.showAssets()
     }
+  },
+
+  stopRun: () => {
+    if (get().running) set({ stopRequested: true })
+  },
+
+  merge: () => {
+    const refs = [...get().selection]
+    if (get().running || refs.length < 2) return
+    get().clearSelection()
+    useDataFigureStore.getState().selectGroup(refs)
+  },
+
+  drawEach: (refs) => {
+    if (get().running || refs.length === 0) return
+    useDataFigureStore.getState().closeDraft()
+    set({ pickMode: true, selection: [...refs], anchor: null, rows: {}, stop: null })
+    host.showData()
+    void get().run('all')
   },
 
   clear: () => {

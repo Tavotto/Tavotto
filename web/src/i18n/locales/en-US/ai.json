@@ -694,11 +694,20 @@
       "undo": "Undo"
     },
     "batch": {
-      "draw": "Draw one each",
+      "pick": "Select several",
+      "idle": "Click the files to draw",
+      "selected": "{{count}} selected",
       "progress": "Drawing {{done}} / {{total}}",
+      "partial": "{{done}} drawn, {{failed}} didn't draw",
+      "draw": "Draw one each",
+      "merge": "Draw as one",
+      "stop": "Stop",
+      "showDone": "See what's drawn",
+      "queued": "Waiting",
       "done": "Drawn",
       "failed": "Didn't draw",
-      "pick": "Select several"
+      "groupTitle": "{{count}} data files",
+      "columnsDiffer": "These files have different column names, so they can't go in one figure."
     }
   }
 }

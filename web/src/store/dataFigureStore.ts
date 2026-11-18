@@ -69,7 +69,7 @@ export type ProblemKind =
  *  - `reading` 读表中；`unreadable` 不是表格；`text` 全是文字、没有能画的数字；`pickrow` 表头行没认出来、要用户点一行
  *  - `loading` 候选还在出；`ready` 候选好了；`nothing` 后端说这张表画不出；`failed` 出候选这一步没成
  */
-export type DraftPhase = 'idle' | 'reading' | 'unreadable' | 'text' | 'pickrow' | 'loading' | 'ready' | 'nothing' | 'failed'
+export type DraftPhase = 'idle' | 'reading' | 'unreadable' | 'text' | 'pickrow' | 'loading' | 'ready' | 'nothing' | 'failed' | 'columnsDiffer' | 'tooMany'
 
 /** 这次画图用到的、数值列里混着文字的列（后端 `mixed_cells`）：默认「不画这几行」，右栏可改成「只用里面的数字」；多列时 `mode` 是它们共用的处理方式 */
 export interface MixedInfo {
@@ -121,6 +121,8 @@ interface DataFigureStore {
   files: FilesState
   /** 用户点中的那一张表 */
   selected: TableRef | null
+  /** 「合画一张」：几份表合进同一张图（`selected` 是其中第一份，数据条 / 概览认它）；单份流程是 null。只由 `selectGroup` 设，`select` / `closeDraft` / `clear` 复位 */
+  group: TableRef[] | null
   /** 每张表（含重读后的）概览；键 = `tableKey` + 表头行 */
   overviews: Record<string, OverviewState>
   /** 用户指了「哪一行是每列的名字」的文件：路径 → 物理行号；出图时原样带上 `header_rows` */
@@ -158,6 +160,8 @@ interface DataFigureStore {
   invalidateFiles: () => void
   /** 点一个数据文件：开（或复用）临时标签，读表并出候选 */
   select: (ref: TableRef) => void
+  /** 「合画一张」：开临时标签、把这几份（≥ 2）一起交给后端出候选 */
+  selectGroup: (refs: TableRef[]) => void
   /** 关临时标签（出图中只是收起，画完照样打开） */
   closeDraft: () => void
   activateDraft: () => void
@@ -213,6 +217,7 @@ const initial = {
   draftActive: false,
   files: { status: 'idle' } as FilesState,
   selected: null as TableRef | null,
+  group: null as TableRef[] | null,
   overviews: {} as Record<string, OverviewState>,
   headerRows: {} as Record<string, number>,
   answers: {} as Record<string, unknown>,
@@ -268,6 +273,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   async function propose(still: () => boolean, pj: string | null): Promise<void> {
     const sel = get().selected
     if (!sel) return
+    const group = get().group
     set({ phase: 'loading', error: null, candidates: [], session: null, thumbs: {} })
     const answers = get().answers
     const hasHeaders = Object.keys(get().headerRows).length > 0
@@ -275,8 +281,9 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     try {
       res = await aiDataFigurePropose(
         {
-          table: sel.path,
-          ...(sel.sheet == null ? {} : { sheet: sel.sheet }),
+          ...(group
+            ? { tables: group.map((r) => ({ path: r.path, ...(r.sheet == null ? {} : { sheet: r.sheet }) })) }
+            : { table: sel.path, ...(sel.sheet == null ? {} : { sheet: sel.sheet }) }),
           render: 'lazy',
           ...(Object.keys(answers).length ? { answers } : {}),
           ...(hasHeaders ? { header_rows: get().headerRows } : {}),
@@ -285,7 +292,11 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       )
     } catch (e) {
       if (!still()) return
-      set({ phase: 'failed', error: reasonOf(e) })
+      // 合画的两个稳定码各有出路（临时标签里一句话 + 「各画一张」），不当成「再试一次就行」的失败
+      const code = e instanceof ApiError && typeof e.body?.code === 'string' ? e.body.code : ''
+      if (group && code === 'tables_columns_differ') set({ phase: 'columnsDiffer', error: null })
+      else if (group && code === 'tables_too_many') set({ phase: 'tooMany', error: null })
+      else set({ phase: 'failed', error: reasonOf(e) })
       return
     }
     if (!still()) return
@@ -356,6 +367,12 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     const { pj, still } = capture(seq)
     const kept = opts.keepChoices ? { answers: get().answers, mixed: get().mixed, roles: get().roles } : { answers: {} as Record<string, unknown> }
     set({ ...idleDraft, ...kept, phase: 'reading' })
+    // 合画：几份表一起交给后端判断（第一份的「全是文字 / 要点表头行」不代表整组），只读第一份的概览给数据条
+    if (get().group) {
+      void loadOverview(sel)
+      await propose(still, pj)
+      return
+    }
     // 清单里已经说「读不了」（没有可看的原文）：不发请求
     const entries = get().files.status === 'idle' ? null : (get().files as { entries: AiDataFileEntry[] | null }).entries
     const row = entries ? fileRows(entries).flatMap((r) => r.rows).find((r) => sameTable(r.ref, sel)) : undefined
@@ -390,7 +407,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   async function goEditor(script: string): Promise<void> {
     const ep = epoch
     const file = get().selected
-    set({ draftOpen: false, draftActive: false, drawingId: null, problem: null, phase: 'idle', session: null, candidates: [], fresh: file ? { file, from: host.activeCanvasId(), canvasId: null } : null })
+    set({ draftOpen: false, draftActive: false, drawingId: null, problem: null, phase: 'idle', session: null, candidates: [], fresh: file && !get().group ? { file, from: host.activeCanvasId(), canvasId: null } : null })
     if (ep !== epoch) return
     // `still`：换过项目 / 清过状态就不许再打开（A 项目的相对路径不能拿到 B 项目里去跑）
     await host.openScript(script, () => ep === epoch).catch(() => undefined)
@@ -531,13 +548,25 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         set({ draftOpen: true, draftActive: true })
         return
       }
-      if (sameTable(get().selected, ref) && get().draftOpen) {
+      if (!get().group && sameTable(get().selected, ref) && get().draftOpen) {
         set({ draftActive: true })
         return
       }
       discardSession()
       commitRid = null
-      set({ selected: ref, draftOpen: true, draftActive: true, fresh: null })
+      set({ selected: ref, group: null, draftOpen: true, draftActive: true, fresh: null })
+      void run()
+    },
+
+    selectGroup: (refs) => {
+      if (refs.length < 2) return
+      if (get().drawingId) {
+        set({ draftOpen: true, draftActive: true })
+        return
+      }
+      discardSession()
+      commitRid = null
+      set({ selected: refs[0]!, group: refs, draftOpen: true, draftActive: true, fresh: null })
       void run()
     },
 
@@ -551,7 +580,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       proposeSeq += 1
       runSeq += 1
       commitRid = null
-      set({ draftOpen: false, draftActive: false, selected: null, ...idleDraft })
+      set({ draftOpen: false, draftActive: false, selected: null, group: null, ...idleDraft })
     },
 
     activateDraft: () => {

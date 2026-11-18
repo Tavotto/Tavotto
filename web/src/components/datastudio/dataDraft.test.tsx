@@ -6,7 +6,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/Tooltip'
-import { aiDataFigureCommit, aiDataFigurePropose, aiDataFilesAll, aiDataOverview, type AiDataCommitResult, type AiDataFileEntry, type AiDataOverview } from '@/lib/api'
+import { ApiError, aiDataFigureCommit, aiDataFigurePropose, aiDataFilesAll, aiDataOverview, type AiDataCommitResult, type AiDataFileEntry, type AiDataOverview } from '@/lib/api'
 import { fileRows } from '@/lib/dataFigure'
 import { setCurrentProjectId } from '@/lib/session'
 import { useDataFigureStore } from '@/store/dataFigureStore'
@@ -536,26 +536,28 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     const meta = (i: number) => qa('[data-studio-file]')[i]!
     const cmdClick = (el: Element) => act(async () => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true })))
     const btn = () => q<HTMLButtonElement>('[data-studio-pick-mode]')!
-    expect(btn().getAttribute('aria-pressed')).toBe('false')
+    expect(btn().textContent).toBe('选多份')
     await cmdClick(meta(0))
-    expect(btn().getAttribute('aria-pressed')).toBe('true') // 手势选中第一份 = 进入多选态，按钮同步
-    expect(q('[data-studio-batch-bar]')).toBeNull() // 1 份：没有这一条
+    expect(btn().textContent).toBe('取消') // 手势选中第一份 = 进入多选态，按钮同步成「取消」
+    expect(q<HTMLButtonElement>('[data-studio-batch-run]')!.disabled).toBe(true) // 1 份：两个按钮都禁用
     await cmdClick(meta(2))
+    expect(q<HTMLButtonElement>('[data-studio-batch-run]')!.disabled).toBe(false)
     expect(q('[data-studio-batch-run]')!.textContent).toBe('各画一张')
+    expect(q('[data-studio-batch-merge]')!.textContent).toBe('合画一张')
     expect(q('[data-data-draft]')).toBeNull() // 多选不开临时标签
     await click(meta(0)) // 多选态下普通单击 = 取消这一份，不开临时标签
     await flush()
     expect(useDataBatchStore.getState().selection).toHaveLength(1)
     expect(useDataFigureStore.getState().draftOpen).toBe(false)
-    await click(btn()) // 再点一次：退出并清掉选择
-    expect(btn().getAttribute('aria-pressed')).toBe('false')
+    await click(btn()) // 点「取消」：退出并清掉选择
+    expect(btn().textContent).toBe('选多份')
     expect(useDataBatchStore.getState()).toMatchObject({ pickMode: false, selection: [] })
     await click(meta(0))
     await flush()
     expect(useDataFigureStore.getState().draftOpen).toBe(true)
   })
 
-  it('「选多份」按钮：至少 2 份表才出现；点它进入多选态、表行常显「＋」；批量进行中禁用；多选态下读不了的行单击不进选择', async () => {
+  it('「选多份」按钮：至少 2 份表才出现；点它进入多选态（文字变「取消」、出现动作区）；批量进行中禁用；多选态下读不了的行单击不进选择', async () => {
     propose.mockResolvedValue(cands())
     useDataBatchStore.getState().clear()
     files.mockResolvedValue({ files: [tbl('growth.csv'), tbl('run42.dat', 'unreadable')], truncated: false })
@@ -568,8 +570,11 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     const btn = () => q<HTMLButtonElement>('[data-studio-pick-mode]')!
     expect(btn().textContent).toBe('选多份')
     await click(btn())
-    expect(btn().getAttribute('aria-pressed')).toBe('true')
-    expect(qa('[data-studio-pick-toggle]')).toHaveLength(2) // 两个表行各一枚，读不了的行没有
+    expect(btn().textContent).toBe('取消')
+    expect(q('[data-studio-batch-zone]')!.textContent).toContain('点要画的文件')
+    // 行尾灰字行数在多选态下仍在（不再有「＋」）
+    expect(qa('[data-studio-file]')[0]!.textContent).toMatch(/行/)
+    expect(q('[data-studio-pick-toggle]')).toBeNull()
     await click(qa('[data-studio-file]')[1]!) // 读不了的行
     expect(useDataBatchStore.getState().selection).toHaveLength(0)
     expect(useDataBatchStore.getState().pickMode).toBe(true)
@@ -578,7 +583,9 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     act(() => useDataBatchStore.setState({ running: false }))
     // 切项目 / clear：复位
     act(() => useDataBatchStore.getState().clear())
-    expect(btn().getAttribute('aria-pressed')).toBe('false')
+    expect(btn().textContent).toBe('选多份')
+    await act(async () => void (await new Promise((r) => setTimeout(r, 200)))) // 动作区走完退场过渡
+    expect(q('[data-studio-batch-zone]')).toBeNull()
   })
 
   it('「选多份」：焦点在按钮上按 Esc 退出多选态；清单变到少于 2 份能画的表时自动退出并清选择', async () => {
@@ -602,25 +609,89 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     expect(useDataBatchStore.getState()).toMatchObject({ pickMode: false, selection: [] })
   })
 
-  it('批量那一条是浮条：绝对定位不占位；出现时清单容器加底部留白、行不动，消失后留白撤掉', async () => {
-    propose.mockResolvedValue(cands())
-    useDataBatchStore.getState().clear()
-    await start(<><DataDrawer /><DataDraft /></>)
-    const list = () => q('[role=tree]')!
-    const order = () => qa('[data-studio-file]').map((r) => r.textContent)
-    const before = order()
-    const pb0 = list().style.paddingBottom
-    expect(pb0).toBe('')
+  const groupTwo = async () => {
+    await start(<><DataDrawer /><DataDraft /><DataPanel /></>)
     const cmd = (el: Element) => act(async () => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true })))
     await cmd(qa('[data-studio-file]')[0]!)
     await cmd(qa('[data-studio-file]')[2]!)
-    const bar = q('[data-studio-batch-bar]')!
-    expect(bar.className).toContain('absolute')
-    expect(list().contains(bar)).toBe(false) // 不在清单的流里
-    expect(list().style.paddingBottom).not.toBe('')
-    expect(order()).toEqual(before) // 行没动
-    await cmd(qa('[data-studio-file]')[2]!)
-    expect(q('[data-studio-batch-bar]')).toBeNull()
-    expect(list().style.paddingBottom).toBe('')
+    await click(q('[data-studio-batch-merge]'))
+    await flush()
+    await flush()
+  }
+
+  it('合画一张：点「合画一张」退出多选态、开临时标签（标签名「2 份数据」），请求带 tables，候选与单份同形；右栏标题也是「2 份数据」、角色下拉照常；数据条显示第一份', async () => {
+    propose.mockResolvedValue(cands())
+    await groupTwo()
+    expect(useDataBatchStore.getState()).toMatchObject({ pickMode: false, selection: [] })
+    expect(propose.mock.calls.at(-1)![0]).toEqual({ tables: [{ path: 'growth.csv' }, { path: 'names.csv' }], render: 'lazy' })
+    expect(qa('[data-candidate]')).toHaveLength(4)
+    expect(q('[data-data-draft]')!.getAttribute('aria-label')).toBe('2 份数据')
+    expect(q('[data-data-panel] h2')!.textContent).toBe('2 份数据')
+    expect(q('[data-data-panel-meta]')).toBeNull() // 第一份的行列数不代表整组
+    expect(q('[data-data-roles]')).not.toBeNull()
+    expect(q('[data-data-strip]')).not.toBeNull()
+  })
+
+  it('合画：点一张 → 和单份一样提交；右栏改角色仍带 tables 重来', async () => {
+    propose.mockResolvedValue(cands())
+    commit.mockResolvedValue({ task: { outcome: 'completed' }, script: 'tavotto_figures/g.py', stem: 'g', data_check: 'verified' })
+    await groupTwo()
+    await allThumbs()
+    await click(qa('[data-candidate]')[0]!)
+    await flush()
+    expect(commit).toHaveBeenCalledWith(expect.objectContaining({ session: 'S1', id: 'i1' }), expect.anything())
+  })
+
+  it('tables_columns_differ：临时标签里一句话 + 主按钮「各画一张」；点它回到抽屉、恢复选择并直接开始各画一张', async () => {
+    propose.mockRejectedValueOnce(new ApiError('tables_columns_differ', 400, { code: 'tables_columns_differ' }))
+    await groupTwo()
+    const p = q('[data-studio-group-problem]')!
+    expect(p.textContent).toContain('这几份的列名不一样，画不进一张图。')
+    expect(p.querySelector('button')!.textContent).toBe('各画一张')
+    expect(q('[data-studio-retry]')).toBeNull() // 再试一次不是出路
+    propose.mockImplementation(async (b) => ({ ...cands(1), session: `S-${b.table}` }))
+    commit.mockResolvedValue({ task: { outcome: 'completed' }, script: 'tavotto_figures/x.py', stem: 'x', data_check: 'verified' })
+    await click(p.querySelector('button'))
+    await flush()
+    expect(q('[data-data-draft]')).toBeNull()
+    for (let i = 0; i < 20 && useDataBatchStore.getState().running; i++) await flush()
+    expect(propose.mock.calls.slice(-2).map((c) => c[0].table)).toEqual(['growth.csv', 'names.csv'])
+  })
+
+  it('tables_too_many：一句话说没画出来 + 同一个出路「各画一张」', async () => {
+    propose.mockRejectedValueOnce(new ApiError('tables_too_many', 400, { code: 'tables_too_many' }))
+    await groupTwo()
+    const p = q('[data-studio-group-problem="tooMany"]')!
+    expect(p.textContent).toContain('这次没画出来')
+    expect(p.querySelector('button')!.textContent).toBe('各画一张')
+  })
+
+  it('动作区：多选态下在标题行正下方、清单上方；高度类名从「已选 0 份」到进行中、没画成全程不变；退出后消失', async () => {
+    propose.mockResolvedValue(cands())
+    useDataBatchStore.getState().clear()
+    await start(<><DataDrawer /><DataDraft /></>)
+    expect(q('[data-studio-batch-zone]')).toBeNull()
+    await click(q('[data-studio-pick-mode]'))
+    const zone = () => q('[data-studio-batch-zone]')!
+    const tree = q('[role=tree]')!
+    // 在清单之前、不在清单里、不是浮层
+    expect(zone().compareDocumentPosition(tree) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(tree.contains(zone())).toBe(false)
+    expect(zone().className).not.toContain('absolute')
+    // 固定高度：同一个类名贯穿所有状态（jsdom 没有排版，真浏览器里的行位置另用截图脚本量）
+    const cls = zone().className
+    const lines = () => zone().querySelector('p')!.textContent
+    expect(lines()).toBe('点要画的文件')
+    await click(qa('[data-studio-file]')[0]!)
+    await click(qa('[data-studio-file]')[2]!)
+    expect(lines()).toBe('已选 2 份')
+    act(() => useDataBatchStore.setState({ running: true, progress: { done: 1, total: 2 } }))
+    expect(lines()).toBe('正在画 2 / 2')
+    act(() => useDataBatchStore.setState({ running: false, rows: { k: { state: 'done' }, j: { state: 'failed', reason: null } } }))
+    expect(lines()).toBe('1 张已画，1 张没画出来')
+    expect(zone().className).toBe(cls)
+    act(() => useDataBatchStore.getState().clear())
+    await act(async () => void (await new Promise((r) => setTimeout(r, 200))))
+    expect(q('[data-studio-batch-zone]')).toBeNull()
   })
 })

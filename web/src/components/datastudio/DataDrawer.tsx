@@ -11,7 +11,7 @@ import { useProjectStore } from '@/store/projectStore'
 import { useDataBatchStore } from '@/store/dataBatchStore'
 import { DrawerHeaderActions } from '../left/DrawerHeader'
 import { withOverview } from '@/lib/dataFigure'
-import { BATCH_BAR_RESERVE, DataBatchBar, useBatchBarVisible } from './DataBatchBar'
+import { DataBatchActions } from './DataBatchActions'
 import { DataList } from './DataList'
 
 /**
@@ -20,6 +20,7 @@ import { DataList } from './DataList'
  */
 export function DataDrawer() {
   const { t } = useTranslation('ai')
+  const { t: tc } = useTranslation('common')
   const files = useDataFigureStore((s) => s.files)
   const selected = useDataFigureStore((s) => s.selected)
   const overviews = useDataFigureStore((s) => s.overviews)
@@ -48,7 +49,6 @@ export function DataDrawer() {
   const rowStates = useDataBatchStore((s) => s.rows)
   const pickMode = useDataBatchStore((s) => s.pickMode)
   const running = useDataBatchStore((s) => s.running)
-  const barVisible = useBatchBarVisible()
   // 「选多份」按钮：至少有 2 份能画的表（状态是 table）才出现
   const tableCount = useMemo(() => rows.reduce((n, f) => n + f.rows.filter((r) => withOverview(r, listOverviews[r.ref.path]).kind === 'table').length, 0), [rows, listOverviews])
   const multi = useMemo(
@@ -56,11 +56,12 @@ export function DataDrawer() {
       selected: new Set(picked.map(tableKey)),
       pickMode,
       rowStates,
+      running,
       onToggle: (ref: TableRef) => useDataBatchStore.getState().toggle(ref),
       onRange: (ref: TableRef, visible: TableRef[]) => useDataBatchStore.getState().selectRange(ref, visible),
       onClear: () => useDataBatchStore.getState().clearSelection(),
     }),
-    [picked, pickMode, rowStates],
+    [picked, pickMode, rowStates, running],
   )
 
   // 清单变化后能画的表少于 2 份（按钮随之消失）：退出多选态并清选择，别让状态挂着；进行中不动（store 里 running 时不处理），清单没读好时不判
@@ -96,11 +97,10 @@ export function DataDrawer() {
     <div data-studio-data className="relative flex min-h-0 flex-1 flex-col">
       {tableCount >= 2 && (
         <DrawerHeaderActions>
+          {/* 与右侧图钉同高（28px）的次按钮：进入多选态后文字换成「取消」（点它退出并清掉选择，Esc 同） */}
           <Button
-            variant="ghost"
+            variant="secondary"
             size="sm"
-            active={pickMode}
-            aria-pressed={pickMode}
             disabled={running}
             data-studio-pick-mode
             onKeyDown={(e) => {
@@ -112,16 +112,17 @@ export function DataDrawer() {
             }}
             onClick={() => useDataBatchStore.getState().setPickMode(!pickMode)}
           >
-            {t('dataFigureV2.batch.pick')}
+            {pickMode ? tc('actions.cancel') : t('dataFigureV2.batch.pick')}
           </Button>
         </DrawerHeaderActions>
       )}
+      <DataBatchActions open={pickMode} />
       <DataList
         rows={rows}
-        selected={selected}
+        // 多选态下清单里只有「已选」这一种高亮：单份流程选中的那一行不再亮（也让漫游 tabindex 回到第一行）
+        selected={pickMode ? null : selected}
         overviews={listOverviews}
         multi={multi}
-        bottomInset={barVisible ? BATCH_BAR_RESERVE : undefined}
         onSelect={(ref) => {
           // 多选态下不清选择；否则开临时标签，并清掉多选（进行中不清），它也是 Shift+点选一段的起点
           const b = useDataBatchStore.getState()
@@ -147,7 +148,6 @@ export function DataDrawer() {
           return true
         }}
       />
-      <DataBatchBar />
     </div>
   )
 }

@@ -22,6 +22,7 @@ const discard = vi.mocked(aiDataFigureDiscard)
 const files = vi.mocked(aiDataFilesAll)
 const refresh = vi.fn(async () => {})
 const showAssets = vi.fn()
+const showData = vi.fn()
 const runScript = vi.fn(async (_s: string) => {})
 let writable: boolean | undefined = true
 
@@ -37,7 +38,7 @@ const select = (...names: string[]) => names.forEach((n) => st().toggle(ref(n)))
 
 beforeEach(() => {
   resetCommitQueue()
-  for (const f of [propose, commit, discard, files, refresh, showAssets, runScript]) f.mockReset()
+  for (const f of [propose, commit, discard, files, refresh, showAssets, showData, runScript]) f.mockReset()
   runScript.mockResolvedValue(undefined)
   discard.mockResolvedValue({ ok: true })
   refresh.mockResolvedValue(undefined)
@@ -45,7 +46,7 @@ beforeEach(() => {
   setCurrentProjectId('pa')
   useDataBatchStore.getState().clear()
   useDataFigureStore.getState().clear()
-  configureDataBatchHost({ refreshProject: refresh, runScript, showAssets, projectWritable: () => writable })
+  configureDataBatchHost({ refreshProject: refresh, runScript, showAssets, showData, projectWritable: () => writable })
   propose.mockImplementation(async (b) => cands(`S-${b.table}`))
   commit.mockResolvedValue(ok())
 })
@@ -80,14 +81,6 @@ describe('选法', () => {
     expect(st().selection).toHaveLength(2) // 进行中不清
     release(ok())
     await p
-  })
-
-  it('底部那一条：<2 份又没有要说的就不在；≥2 份、进行中、有没画成的、写不进都在', () => {
-    expect(st().barVisible()).toBe(false)
-    select('a')
-    expect(st().barVisible()).toBe(false)
-    select('b')
-    expect(st().barVisible()).toBe(true)
   })
 })
 
@@ -208,9 +201,8 @@ describe('终态', () => {
     const keys = Object.fromEntries(Object.entries(st().rows).map(([k, v]) => [JSON.parse(k)[0], v.state]))
     expect(keys).toEqual({ a: 'done', b: 'failed', c: 'done' })
     expect(st().selection.map((r) => r.path)).toEqual(['b'])
-    expect(st().barVisible()).toBe(true) // 只剩 1 份没成，这一条也在
     propose.mockClear()
-    await st().run()
+    await st().run('failed')
     expect(propose.mock.calls.map((c) => c[0].table)).toEqual(['b']) // 只重做没成的
     expect(showAssets).toHaveBeenCalledTimes(1)
     expect(st().rows).toEqual({})
@@ -248,7 +240,6 @@ describe('终态', () => {
     expect(propose).toHaveBeenCalledTimes(2)
     expect(st().selection.map((r) => r.path)).toEqual(['b', 'c'])
     expect(showAssets).not.toHaveBeenCalled()
-    expect(st().barVisible()).toBe(true)
     // 项目只读（后端没给码）同样
     useDataBatchStore.getState().clear()
     select('a', 'b')
@@ -407,5 +398,181 @@ describe('画完只运行、不打开（素材卡才有预览）', () => {
     release()
     await p
     expect(runScript).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('开画后每一行的状态：等着 / 正在画 / 已画 / 没画出来', () => {
+  it('开始时这一轮要画的都是「等着」，轮到谁谁变「正在画」，画完变「已画」；没轮到的不留标记', async () => {
+    select('a', 'b', 'c')
+    const seen: string[] = []
+    commit.mockImplementation(async () => {
+      seen.push(Object.entries(st().rows).map(([k, v]) => `${JSON.parse(k)[0]}:${v.state}`).join(' '))
+      return ok()
+    })
+    await st().run()
+    expect(seen).toEqual(['a:running b:queued c:queued', 'a:done b:running c:queued', 'a:done b:done c:running'])
+  })
+
+  it('停下：画完当前这一份就停，后面的不画、仍在选择里、不留「等着」；已画的留着；不切抽屉', async () => {
+    select('a', 'b', 'c')
+    let release!: (v: AiDataCommitResult) => void
+    commit.mockReturnValueOnce(new Promise((r) => (release = r)))
+    const p = st().run()
+    await flush()
+    st().stopRun()
+    expect(st().stopRequested).toBe(true)
+    release(ok())
+    await p
+    expect(propose).toHaveBeenCalledTimes(1)
+    expect(st()).toMatchObject({ running: false, stopRequested: false, pickMode: true })
+    expect(Object.fromEntries(Object.entries(st().rows).map(([k, v]) => [JSON.parse(k)[0], v.state]))).toEqual({ a: 'done' })
+    expect(st().selection.map((r) => r.path)).toEqual(['b', 'c'])
+    expect(showAssets).not.toHaveBeenCalled()
+  })
+
+  it('停下点在最后一份上：它画完 = 全部画成，照常切到素材抽屉', async () => {
+    select('a', 'b')
+    let release!: (v: AiDataCommitResult) => void
+    commit.mockResolvedValueOnce(ok()).mockReturnValueOnce(new Promise((r) => (release = r)))
+    const p = st().run()
+    while (commit.mock.calls.length < 2) await flush()
+    st().stopRun()
+    release(ok())
+    await p
+    expect(showAssets).toHaveBeenCalledTimes(1)
+  })
+
+  it('不在进行中时 stopRun 不留下标记（不会让下一轮一开始就停）', async () => {
+    select('a', 'b')
+    st().stopRun()
+    expect(st().stopRequested).toBe(false)
+    await st().run()
+    expect(commit).toHaveBeenCalledTimes(2)
+  })
+
+  it('再试一次（failed）只重做没画成的；停下留下的没轮到的不跟着画，仍选着', async () => {
+    select('a', 'b', 'c', 'd')
+    let fail!: (e: unknown) => void
+    commit.mockResolvedValueOnce(ok()).mockReturnValueOnce(new Promise((_, rej) => (fail = rej)))
+    const p = st().run()
+    while (commit.mock.calls.length < 2) await flush()
+    st().stopRun()
+    fail(apiError(500, 'x'))
+    await p
+    expect(st().selection.map((r) => r.path)).toEqual(['b', 'c', 'd'])
+    propose.mockClear()
+    commit.mockResolvedValue(ok())
+    await st().run('failed')
+    expect(propose.mock.calls.map((c) => c[0].table)).toEqual(['b'])
+    // 没成的画成了，但 c、d 还选着：不算「全部画成」，留在抽屉、已画的 a b 都在
+    expect(showAssets).not.toHaveBeenCalled()
+    expect(st().selection.map((r) => r.path)).toEqual(['c', 'd'])
+    expect(Object.values(st().rows).map((r) => r.state)).toEqual(['done', 'done'])
+  })
+
+  it('新一轮开始时，上一批留下的「已画」标记不再算数（没有没画成的在等重试时）', async () => {
+    select('a', 'b')
+    let release!: (v: AiDataCommitResult) => void
+    commit.mockResolvedValueOnce(ok()).mockReturnValueOnce(new Promise((r) => (release = r)))
+    const p = st().run()
+    while (commit.mock.calls.length < 2) await flush()
+    st().stopRun()
+    release(ok())
+    await p
+    expect(showAssets).toHaveBeenCalledTimes(1) // 两份都画成（停下点在最后一份）
+    // 上一批完成后：下一批只看自己的
+    select('c', 'd')
+    commit.mockResolvedValueOnce(ok()).mockRejectedValueOnce(apiError(500, 'x'))
+    await st().run()
+    expect(Object.values(st().rows).map((r) => r.state).sort()).toEqual(['done', 'failed'])
+  })
+
+  it('取消选一份没画成的 = 把它的「没画出来」一并撤掉', async () => {
+    select('a', 'b')
+    commit.mockRejectedValue(apiError(500, 'x'))
+    await st().run()
+    st().toggle(ref('a'))
+    expect(st().selection.map((r) => r.path)).toEqual(['b'])
+    expect(Object.keys(st().rows).map((k) => JSON.parse(k)[0])).toEqual(['b'])
+  })
+})
+
+describe('合画一张', () => {
+  it('merge：退出多选态并清掉选择，把选中的几份（按选的顺序）交给临时标签；少于 2 份 / 进行中不动', () => {
+    select('a')
+    st().merge()
+    expect(useDataFigureStore.getState().draftOpen).toBe(false)
+    select('b', 'c')
+    propose.mockResolvedValue({ kind: 'nothing', reasons: [] })
+    st().merge()
+    expect(st()).toMatchObject({ pickMode: false, selection: [] })
+    const f = useDataFigureStore.getState()
+    expect(f).toMatchObject({ draftOpen: true, draftActive: true })
+    expect(f.group?.map((r) => r.path)).toEqual(['a', 'b', 'c'])
+    expect(f.selected).toEqual(ref('a'))
+  })
+
+  it('请求体是 tables（≥2 份，xlsx 带 sheet，其余不带），render 仍是 lazy，没有 table；表头行照带', async () => {
+    useDataFigureStore.setState({ headerRows: { 'a.csv': 2 } })
+    useDataFigureStore.getState().selectGroup([ref('a.csv'), ref('b.xlsx', 'P1'), ref('b.xlsx', 'P2')])
+    propose.mockResolvedValue(cands('G'))
+    await flush()
+    await flush()
+    const body = propose.mock.calls.at(-1)![0]
+    expect(body).toEqual({ tables: [{ path: 'a.csv' }, { path: 'b.xlsx', sheet: 'P1' }, { path: 'b.xlsx', sheet: 'P2' }], render: 'lazy', header_rows: { 'a.csv': 2 } })
+    expect(body).not.toHaveProperty('table')
+  })
+
+  it('少于 2 份不开；单份 select 之后 group 复位；换项目（clear）复位', () => {
+    propose.mockResolvedValue({ kind: 'nothing', reasons: [] })
+    useDataFigureStore.getState().selectGroup([ref('a')])
+    expect(useDataFigureStore.getState().draftOpen).toBe(false)
+    useDataFigureStore.getState().selectGroup([ref('a'), ref('b')])
+    useDataFigureStore.getState().select(ref('a')) // 同一份第一表，也不能当成「已经开着」而保留组
+    expect(useDataFigureStore.getState().group).toBeNull()
+    useDataFigureStore.getState().selectGroup([ref('a'), ref('b')])
+    useDataFigureStore.getState().clear()
+    expect(useDataFigureStore.getState().group).toBeNull()
+  })
+
+  it('400 tables_columns_differ / tables_too_many：各有自己的状态（不是「再试一次」的失败）；别的错照旧', async () => {
+    const f = () => useDataFigureStore.getState()
+    propose.mockRejectedValueOnce(apiError(400, 'tables_columns_differ'))
+    f().selectGroup([ref('a'), ref('b')])
+    while (f().phase === 'reading' || f().phase === 'loading') await flush()
+    expect(f().phase).toBe('columnsDiffer')
+    propose.mockRejectedValueOnce(apiError(400, 'tables_too_many'))
+    f().closeDraft()
+    f().selectGroup([ref('a'), ref('b')])
+    while (f().phase === 'reading' || f().phase === 'loading') await flush()
+    expect(f().phase).toBe('tooMany')
+    propose.mockRejectedValueOnce(apiError(500, 'x'))
+    f().closeDraft()
+    f().selectGroup([ref('a'), ref('b')])
+    while (f().phase === 'reading' || f().phase === 'loading') await flush()
+    expect(f().phase).toBe('failed')
+  })
+
+  it('单份流程里同一个码不会走合画的出路', async () => {
+    const f = () => useDataFigureStore.getState()
+    propose.mockRejectedValueOnce(apiError(400, 'tables_columns_differ'))
+    f().select(ref('a'))
+    while (f().phase === 'reading' || f().phase === 'loading') await flush()
+    expect(f().phase).toBe('failed')
+  })
+
+  it('各画一张（合画的出路）：关掉临时标签、恢复这几份的选择、回数据抽屉、直接开始', async () => {
+    propose.mockRejectedValueOnce(apiError(400, 'tables_columns_differ'))
+    const refs = [ref('a'), ref('b')]
+    useDataFigureStore.getState().selectGroup(refs)
+    while (useDataFigureStore.getState().phase !== 'columnsDiffer') await flush()
+    propose.mockImplementation(async (b) => cands(`S-${b.table}`))
+    st().drawEach(useDataFigureStore.getState().group!)
+    expect(useDataFigureStore.getState()).toMatchObject({ draftOpen: false, group: null })
+    expect(showData).toHaveBeenCalledTimes(1)
+    expect(st()).toMatchObject({ pickMode: true, running: true })
+    while (st().running) await flush()
+    expect(propose.mock.calls.slice(-2).map((c) => c[0].table)).toEqual(['a', 'b'])
+    expect(showAssets).toHaveBeenCalledTimes(1)
   })
 })

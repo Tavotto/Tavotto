@@ -37,5 +37,6 @@ configureDataBatchHost({
   refreshProject: () => refreshProjectNow(),
   runScript: (script) => useScriptRunStore.getState().run(script),
   showAssets: () => useUiStore.getState().setLeftTab('assets'),
+  showData: () => useUiStore.getState().setLeftTab('data'),
   projectWritable: () => useProjectStore.getState().project?.writable,
 })

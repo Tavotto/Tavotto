@@ -59,11 +59,20 @@ export default interface Resources {
     },
     "dataFigureV2": {
       "batch": {
+        "columnsDiffer": "这几份的列名不一样，画不进一张图。",
         "done": "已画",
         "draw": "各画一张",
         "failed": "没画出来",
+        "groupTitle": "{{count}} 份数据",
+        "idle": "点要画的文件",
+        "merge": "合画一张",
+        "partial": "{{done}} 张已画，{{failed}} 张没画出来",
         "pick": "选多份",
-        "progress": "正在画 {{done}} / {{total}}"
+        "progress": "正在画 {{done}} / {{total}}",
+        "queued": "等着",
+        "selected": "已选 {{count}} 份",
+        "showDone": "看已画的",
+        "stop": "停下"
       },
       "candidate": {
         "bar_error": {

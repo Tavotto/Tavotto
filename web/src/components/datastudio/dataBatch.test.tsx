@@ -1,5 +1,5 @@
 /**
- * 一次选多份、各画一张：数据抽屉里的多选（⌘ / Ctrl / Shift / 「＋」/ 键盘 / Esc / 不可选的行）与底部那一条。
+ * 一次选多份、各画一张：数据抽屉里的多选（⌘ / Ctrl / Shift / 键盘 / Esc / 不可选的行）、已选卡片与各状态的行尾、纯平铺的对齐，以及标题行下的动作区。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -9,7 +9,7 @@ import { msg } from '@/i18n'
 import type { AiDataFileEntry } from '@/lib/api'
 import { fileRows, tableKey, type TableRef } from '@/lib/dataFigure'
 import { useDataBatchStore } from '@/store/dataBatchStore'
-import { DataBatchBar } from './DataBatchBar'
+import { DataBatchActions } from './DataBatchActions'
 import { DataList, type DataListMulti } from './DataList'
 
 declare global {
@@ -96,18 +96,28 @@ describe('数据抽屉：多选', () => {
     expect(row('bad.dat').querySelector('[data-studio-pick-toggle]')).toBeNull()
   })
 
-  it('「＋」：表行行尾灰字原位换成按钮（同一格、不撑宽），点它 = ⌘ 点，不开临时标签；已选的是对勾', async () => {
-    await mountList({ selected: new Set([tableKey({ path: 'b.csv', sheet: null })]) })
-    const plus = row('a.csv').querySelector<HTMLElement>('[data-studio-pick-toggle="off"]')!
-    expect(plus).not.toBeNull()
-    // 灰字和按钮在同一个格子里（grid 同格叠放），所以行不会变宽变高
-    expect(plus.parentElement!.className).toContain('grid')
-    expect(plus.className).toContain('col-start-1')
-    await click(plus)
-    expect(m.onToggle).toHaveBeenCalledWith({ path: 'a.csv', sheet: null })
-    expect(onSelect).not.toHaveBeenCalled()
-    expect(row('b.csv').querySelector('[data-studio-pick-toggle="on"]')).not.toBeNull()
-    expect(row('b.csv').getAttribute('aria-selected')).toBe('true')
+  it('已选的行是白底卡片（surface 底 + 细描边、medium 字重，不是 selected 灰底 + 粗体），行尾行数换成对勾；没选的行仍是灰字行数；没有「＋」', async () => {
+    await mountList({ pickMode: true, selected: new Set([tableKey({ path: 'b.csv', sheet: null })]) })
+    const b = row('b.csv')
+    expect(b.className).toContain('bg-surface')
+    expect(b.className).toContain('inset-ring')
+    expect(b.className).toContain('font-medium')
+    expect(b.className).not.toContain('bg-selected')
+    expect(b.className).not.toContain('font-semibold')
+    expect(b.className).not.toContain('shadow')
+    expect(b.querySelector('[data-studio-row-state=picked] svg')).not.toBeNull()
+    expect(b.textContent).not.toMatch(/行/)
+    const a = row('a.csv')
+    expect(a.className).not.toContain('inset-ring')
+    expect(a.textContent).toMatch(/10 行/)
+    expect(qa('[data-studio-pick-toggle]')).toHaveLength(0)
+    // 相邻两行都选上：各是各的卡片，行高与行间距（gap-0.5 在列表上）不变
+    act(() => root.unmount())
+    host.remove()
+    await mountList({ pickMode: true, selected: new Set([tableKey({ path: 'a.csv', sheet: null }), tableKey({ path: 'b.csv', sheet: null })]) })
+    expect(row('a.csv').className).toContain('h-7')
+    expect(row('b.csv').className).toContain('h-7')
+    expect(q('[role=tree]')!.className).toContain('gap-0.5')
   })
 
   it('aria：树是 aria-multiselectable；选中的行 aria-selected', async () => {
@@ -159,14 +169,8 @@ describe('数据抽屉：多选', () => {
     expect(row('b.csv').querySelector('[data-studio-row-state=done]')).not.toBeNull()
   })
 
-  it('多选态（pickMode）：每个表行行尾常显「＋」、灰字行数不显示（同一格）；单击 / Enter = 加选 / 取消、不开临时标签；读不了的行照旧', async () => {
+  it('多选态（pickMode）：单击 / Enter = 加选 / 取消、不开临时标签；读不了的行照旧开说明', async () => {
     await mountList({ pickMode: true })
-    for (const n of ['a.csv', 'b.csv']) {
-      const r = row(n)
-      expect(r.querySelector('[data-studio-pick-toggle]')!.className).toContain('visible')
-      expect(r.querySelector('[data-studio-pick-toggle]')!.className).not.toContain('invisible')
-      expect(r.querySelector('.invisible')!.textContent).toMatch(/行/) // 灰字被占位隐藏
-    }
     await click(row('a.csv'))
     expect(m.onToggle).toHaveBeenLastCalledWith({ path: 'a.csv', sheet: null })
     expect(onSelect).not.toHaveBeenCalled()
@@ -176,6 +180,87 @@ describe('数据抽屉：多选', () => {
     await click(row('bad.dat'))
     expect(m.onToggle).toHaveBeenCalledTimes(2)
     expect(onSelect).toHaveBeenCalledWith({ path: 'bad.dat', sheet: null })
+  })
+
+  it('整批进行中：点行不再加选 / 取消（⌘ 点、空格也一样），点表行 = 开它的临时标签看候选', async () => {
+    await mountList({ pickMode: true, running: true })
+    await click(row('a.csv'))
+    expect(m.onToggle).not.toHaveBeenCalled()
+    expect(onSelect).toHaveBeenCalledWith({ path: 'a.csv', sheet: null })
+    await click(row('b.csv'), { metaKey: true })
+    key(row('b.csv'), ' ', { ctrlKey: true })
+    expect(m.onToggle).not.toHaveBeenCalled()
+  })
+
+  it('开画后的行尾：等着（灰字）/ 转圈 / 已画（普通行，不是卡片）；没画出来 = 深一档的字 + 小感叹号、普通行、原因在 title', async () => {
+    const sel = new Set(['a.csv', 'b.csv', 'c.csv', 'sub/d.csv'].map((p) => tableKey({ path: p, sheet: null })))
+    const k = (p: string) => tableKey({ path: p, sheet: null })
+    const four: AiDataFileEntry[] = [...entries, { path: 'c.csv', size: 1, table: okT(7) }]
+    await mount(
+      <DataList
+        rows={fileRows(four)}
+        selected={null}
+        overviews={{}}
+        onSelect={onSelect}
+        multi={{
+          ...m,
+          pickMode: true,
+          running: false,
+          selected: sel,
+          rowStates: {
+            [k('a.csv')]: { state: 'queued' },
+            [k('b.csv')]: { state: 'running' },
+            [k('c.csv')]: { state: 'done' },
+            [k('sub/d.csv')]: { state: 'failed', reason: msg('dataFigureV2.nothing.generic', undefined, 'ai') },
+          },
+        }}
+      />,
+    )
+    expect(row('a.csv').querySelector('[data-studio-row-state=queued]')!.textContent).toBe('等着')
+    expect(row('a.csv').className).toContain('inset-ring') // 等着仍是选中的卡片
+    expect(row('b.csv').querySelector('[data-studio-row-state=running] svg')).not.toBeNull()
+    expect(row('b.csv').className).toContain('inset-ring')
+    expect(row('c.csv').querySelector('[data-studio-row-state=done]')!.textContent).toBe('已画')
+    expect(row('c.csv').className).not.toContain('inset-ring')
+    const failed = row('d.csv')
+    expect(failed.className).not.toContain('inset-ring')
+    expect(failed.getAttribute('aria-selected')).toBe('false')
+    const f = failed.querySelector('[data-studio-row-state=failed]')!
+    expect(f.textContent).toBe('没画出来')
+    expect(f.querySelector('svg')).not.toBeNull()
+    expect(f.className).toContain('text-ink')
+    expect(f.className).not.toContain('text-ink-3')
+    expect(f.className).not.toMatch(/danger|red|bg-/)
+    expect(f.getAttribute('title')).toBe('这张表没能画出图。')
+  })
+
+  it('单击没画成的行 = 开它的临时标签（不是加选 / 取消）；Enter 同', async () => {
+    const k = tableKey({ path: 'a.csv', sheet: null })
+    await mountList({ pickMode: true, selected: new Set([k]), rowStates: { [k]: { state: 'failed', reason: null } } })
+    await click(row('a.csv'))
+    expect(onSelect).toHaveBeenCalledWith({ path: 'a.csv', sheet: null })
+    expect(m.onToggle).not.toHaveBeenCalled()
+    onSelect.mockClear()
+    key(row('a.csv'), 'Enter')
+    expect(onSelect).toHaveBeenCalledWith({ path: 'a.csv', sheet: null })
+    expect(m.onToggle).not.toHaveBeenCalled()
+  })
+
+  it('纯平铺（没有文件夹 / 工作簿）：文件行没有树形箭头的空占位，图标左沿与标题文字左沿对齐；有文件夹 / 工作簿时保持原样', async () => {
+    const flat: AiDataFileEntry[] = [
+      { path: 'a.csv', size: 1, table: okT(10) },
+      { path: 'b.csv', size: 1, table: okT(20) },
+    ]
+    await mount(<DataList rows={fileRows(flat)} selected={null} overviews={{}} onSelect={onSelect} />)
+    const r = row('a.csv')
+    const emptyCols = (el: Element) => [...el.children].filter((c) => c.tagName === 'SPAN' && c.className.includes('w-4') && c.children.length === 0)
+    expect(emptyCols(r)).toHaveLength(0) // 没有 16px 的空箭头列
+    expect((r as HTMLElement).style.paddingLeft).toBe('4px')
+    act(() => root.unmount())
+    host.remove()
+    await mount(<DataList rows={fileRows(entries)} selected={null} overviews={{}} onSelect={onSelect} />)
+    expect(emptyCols(row('a.csv'))).toHaveLength(1)
+    expect((row('a.csv') as HTMLElement).style.paddingLeft).toBe('8px')
   })
 
   it('多选态下 Esc 退出（即使还没选任何一份）', async () => {
@@ -194,34 +279,107 @@ describe('数据抽屉：多选', () => {
   })
 })
 
-describe('抽屉底部那一条 DataBatchBar', () => {
-  const sel = (n: number) => useDataBatchStore.setState({ selection: Array.from({ length: n }, (_, i) => ({ path: `f${i}.csv`, sheet: null })) })
+describe('动作区 DataBatchActions', () => {
+  const sel = (n: number) => useDataBatchStore.setState({ pickMode: true, selection: Array.from({ length: n }, (_, i) => ({ path: `f${i}.csv`, sheet: null })) })
+  const zone = () => q('[data-studio-batch-zone]')!
+  const line = () => zone().querySelector('p')!.textContent
+  const btns = () => qa<HTMLButtonElement>('[data-studio-batch-zone] button')
   beforeEach(() => useDataBatchStore.getState().clear())
 
-  it('<2 份：这一条不存在；≥2 份：主按钮「各画一张」+ 灰字份数', async () => {
-    sel(1)
-    await mount(<DataBatchBar />)
-    expect(q('[data-studio-batch-bar]')).toBeNull()
+  it('不在多选态：不存在；退出多选态时走完退场过渡（Reveal）后卸载', async () => {
+    await mount(<DataBatchActions open={false} />)
+    expect(q('[data-studio-batch-zone]')).toBeNull()
+    await act(async () => root.render(<TooltipProvider><DataBatchActions open /></TooltipProvider>))
+    expect(q('[data-studio-batch-zone]')).not.toBeNull()
+    expect(q('[data-reveal]')).not.toBeNull() // 用现有的高度过渡 primitive
+    await act(async () => root.render(<TooltipProvider><DataBatchActions open={false} /></TooltipProvider>))
+    await act(async () => void (await new Promise((r) => setTimeout(r, 200))))
+    expect(q('[data-studio-batch-zone]')).toBeNull()
+  })
+
+  it('0 份：一句灰字「点要画的文件」，「各画一张」「合画一张」都禁用；1 份「已选 1 份」仍禁用；≥2 份启用', async () => {
+    await mount(<DataBatchActions open />)
+    expect(line()).toBe('点要画的文件')
+    expect(btns().map((b) => [b.textContent, b.disabled])).toEqual([['各画一张', true], ['合画一张', true]])
+    act(() => sel(1))
+    expect(line()).toBe('已选 1 份')
+    expect(btns().every((b) => b.disabled)).toBe(true)
     act(() => sel(3))
-    expect(q('[data-studio-batch-run]')!.textContent).toBe('各画一张')
-    expect(q('[data-studio-batch-bar]')!.textContent).toContain('3')
-    expect(q<HTMLButtonElement>('[data-studio-batch-run]')!.disabled).toBe(false)
+    expect(line()).toBe('已选 3 份')
+    expect(btns().every((b) => !b.disabled)).toBe(true)
+    // 主按钮 + 次按钮，等宽并排（两列等分的网格）
+    expect(zone().querySelector('.grid-cols-2')!.children).toHaveLength(2)
   })
 
-  it('进行中：按钮禁用、写「正在画 2 / 3」', async () => {
-    sel(3)
-    await mount(<DataBatchBar />)
+  it('高度全程不变：同一个固定高度的类名，从 0 份、已选、进行中、没画成到停下后都一样；透明底、底部一条细分割线', async () => {
+    await mount(<DataBatchActions open />)
+    const cls = zone().className
+    expect(cls).toContain('h-[4.75rem]')
+    expect(cls).toContain('border-b')
+    expect(cls).not.toMatch(/(^|\s)bg-/)
+    act(() => sel(3))
+    expect(zone().className).toBe(cls)
     act(() => useDataBatchStore.setState({ running: true, progress: { done: 1, total: 3 } }))
-    expect(q('[data-studio-batch-run]')!.textContent).toBe('正在画 2 / 3')
-    expect(q<HTMLButtonElement>('[data-studio-batch-run]')!.disabled).toBe(true)
+    expect(zone().className).toBe(cls)
+    act(() => useDataBatchStore.setState({ running: false, rows: { a: { state: 'done' }, b: { state: 'failed', reason: null } } }))
+    expect(zone().className).toBe(cls)
+    // 左右边缘：左 12px 与标题文字对齐、右 6px 与图钉右沿对齐（标题行 pl-3 pr-1.5）
+    expect(cls).toContain('pl-3')
+    expect(cls).toContain('pr-1.5')
   })
 
-  it('有没画成的（只剩 1 份也在）：按钮是「再试一次」；写不进文件夹：按钮是「换个文件夹」', async () => {
-    sel(1)
-    await mount(<DataBatchBar />)
-    act(() => useDataBatchStore.setState({ rows: { k: { state: 'failed', reason: null } } }))
-    expect(q('[data-studio-batch-run]')!.textContent).toBe('再试一次')
-    act(() => useDataBatchStore.setState({ stop: 'unwritable' }))
-    expect(q('[data-studio-batch-run]')!.textContent).toBe('换个文件夹')
+  it('进行中：「正在画 2 / 3」，两个按钮换成一个次按钮「停下」，点它 = stopRun；点过之后禁用', async () => {
+    await mount(<DataBatchActions open />)
+    act(() => {
+      sel(3)
+      useDataBatchStore.setState({ running: true, progress: { done: 1, total: 3 } })
+    })
+    expect(line()).toBe('正在画 2 / 3')
+    expect(btns().map((b) => b.textContent)).toEqual(['停下'])
+    await act(async () => btns()[0]!.click())
+    expect(useDataBatchStore.getState().stopRequested).toBe(true)
+    expect(btns()[0]!.disabled).toBe(true)
+  })
+
+  it('部分没画成：「1 张已画，1 张没画出来」，按钮是「看已画的」（主，切到素材抽屉）+「再试一次」（次，只重做没成的）', async () => {
+    const run = vi.spyOn(useDataBatchStore.getState(), 'run').mockResolvedValue(undefined)
+    useDataBatchStore.setState({ run })
+    await mount(<DataBatchActions open />)
+    act(() => useDataBatchStore.setState({ pickMode: true, rows: { a: { state: 'done' }, b: { state: 'failed', reason: null } } }))
+    expect(line()).toBe('1 张已画，1 张没画出来')
+    expect(btns().map((b) => b.textContent)).toEqual(['看已画的', '再试一次'])
+    await act(async () => btns()[1]!.click())
+    expect(run).toHaveBeenCalledWith('failed')
+    // 一张都没画成：「看已画的」无处可去，禁用
+    act(() => useDataBatchStore.setState({ rows: { b: { state: 'failed', reason: null } } }))
+    expect(btns()[0]!.disabled).toBe(true)
+  })
+
+  it('写不进文件夹、整批停下：主按钮是「换个文件夹」，「再试一次」= 接着画整个选择', async () => {
+    const run = vi.fn(async () => {})
+    useDataBatchStore.setState({ run })
+    await mount(<DataBatchActions open />)
+    act(() => useDataBatchStore.setState({ pickMode: true, stop: 'unwritable', rows: { b: { state: 'failed', reason: null } } }))
+    expect(btns().map((b) => b.textContent)).toEqual(['换个文件夹', '再试一次'])
+    await act(async () => btns()[1]!.click())
+    expect(run).toHaveBeenCalledWith('all')
+  })
+
+  it('「各画一张」= run(all)；「合画一张」= merge', async () => {
+    const run = vi.fn(async () => {})
+    const merge = vi.fn()
+    useDataBatchStore.setState({ run, merge })
+    await mount(<DataBatchActions open />)
+    act(() => sel(2))
+    await act(async () => btns()[0]!.click())
+    expect(run).toHaveBeenCalledWith('all')
+    await act(async () => btns()[1]!.click())
+    expect(merge).toHaveBeenCalledTimes(1)
+  })
+
+  it('不把文件名 / 列名放进 data-*', async () => {
+    await mount(<DataBatchActions open />)
+    act(() => sel(2))
+    for (const el of zone().querySelectorAll('*')) for (const a of el.getAttributeNames()) if (a.startsWith('data-')) expect(el.getAttribute(a)).not.toMatch(/csv|xlsx/)
   })
 })

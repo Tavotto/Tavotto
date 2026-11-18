@@ -687,11 +687,20 @@
       "undo": "撤销"
     },
     "batch": {
-      "draw": "各画一张",
+      "pick": "选多份",
+      "idle": "点要画的文件",
+      "selected": "已选 {{count}} 份",
       "progress": "正在画 {{done}} / {{total}}",
+      "partial": "{{done}} 张已画，{{failed}} 张没画出来",
+      "draw": "各画一张",
+      "merge": "合画一张",
+      "stop": "停下",
+      "showDone": "看已画的",
+      "queued": "等着",
       "done": "已画",
       "failed": "没画出来",
-      "pick": "选多份"
+      "groupTitle": "{{count}} 份数据",
+      "columnsDiffer": "这几份的列名不一样，画不进一张图。"
     }
   }
 }

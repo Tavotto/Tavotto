@@ -4605,6 +4605,8 @@ export interface AiDataProposeBody {
   folder?: string
   table?: string
   sheet?: string
+  /** 合画一张：≥ 2 份表（每份文件是一组），与 `table` / `sheet` 二选一；其余字段同单份。几份列名不一致回 400 `tables_columns_differ`，份数超上限回 400 `tables_too_many` */
+  tables?: { path: string; sheet?: string }[]
   answers?: Record<string, unknown>
   header_rows?: Record<string, number>
   client_request_id?: string

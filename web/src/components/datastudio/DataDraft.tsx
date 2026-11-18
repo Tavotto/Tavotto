@@ -5,6 +5,7 @@ import { canRevealInFileManager, revealProjectFile } from '@/lib/desktop'
 import { feedbackAction } from '@/lib/canvasFileIntake'
 import { KNOWN_NOTHING_REASONS } from '@/lib/dataFigure'
 import { useFormatMessage } from '@/i18n/react'
+import { useDataBatchStore } from '@/store/dataBatchStore'
 import '@/lib/dataFigureHost'
 import { overviewKeyOf, useDataFigureStore } from '@/store/dataFigureStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -33,6 +34,7 @@ export function DataDraft() {
   const open = useDataFigureStore((s) => s.draftOpen)
   const active = useDataFigureStore((s) => s.draftActive)
   const selected = useDataFigureStore((s) => s.selected)
+  const group = useDataFigureStore((s) => s.group)
   const overviews = useDataFigureStore((s) => s.overviews)
   const headerRows = useDataFigureStore((s) => s.headerRows)
   const phase = useDataFigureStore((s) => s.phase)
@@ -137,6 +139,16 @@ export function DataDraft() {
         </Button>
       </div>
     )
+  } else if (group && (phase === 'columnsDiffer' || phase === 'tooMany')) {
+    // 合画的两个稳定码：一句话 + 回到「各画一张」（它的出路）——恢复刚才的选择、回数据抽屉、直接开始
+    top = (
+      <div data-studio-problem data-studio-group-problem={phase} className="flex flex-col items-start gap-2">
+        <Line>{phase === 'columnsDiffer' ? t('dataFigureV2.batch.columnsDiffer') : t('dataFigureV2.draft.failed')}</Line>
+        <Button variant="primary" size="lg" className="mt-1" data-studio-primary data-studio-group-each onClick={() => useDataBatchStore.getState().drawEach(group)}>
+          {t('dataFigureV2.batch.draw')}
+        </Button>
+      </div>
+    )
   } else if (phase === 'unreadable') {
     top = <Line anchor="data-studio-unreadable">{t('dataFigureV2.draft.unreadable')}</Line>
   } else if (phase === 'text') {
@@ -166,7 +178,7 @@ export function DataDraft() {
       ref={root}
       data-data-draft
       role="tabpanel"
-      aria-label={selected.path.slice(selected.path.lastIndexOf('/') + 1)}
+      aria-label={group ? t('dataFigureV2.batch.groupTitle', { count: group.length }) : selected.path.slice(selected.path.lastIndexOf('/') + 1)}
       // z-sticky：盖住画布，但压在通知轨（z-canvas-chrome）与准备卡（z-drawer）下面，出图期间的通知不会被盖住
       className="absolute inset-0 z-sticky flex flex-col bg-surface"
     >

@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, File, FileExclamationPoint, Folder, Layers2, LayoutGrid, Plus } from '@/components/ui/icons'
+import { Check, CircleAlert, File, FileExclamationPoint, Folder, Layers2, LayoutGrid } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Spinner } from '@/components/ui/Spinner'
 import { listRowClass, rowMetaClass } from '@/components/ui/listRow'
@@ -16,15 +16,19 @@ import type { UiMessage } from '@/i18n'
 
 /**
  * 一次选多份、各画一张（ADR 0178 多选一节）：⌘ / Ctrl + 点加进 / 移出，Shift + 点选一段（按当前可见的表行顺序），
- * ⌘ / Ctrl + 空格切换，Esc 清掉；表行悬停 / 聚焦时行尾那段灰字原位换成一枚「＋」（已选的是对勾），点它 = ⌘ 点。
+ * ⌘ / Ctrl + 空格切换，Esc 清掉；「选多份」多选态下普通单击 / Enter / 空格也是加选 / 取消。
+ * 已选的行是白底浮起的卡片（`bg-surface` + 细描边，字重 medium），行尾行数换成对勾；行数任何时候都在。
  * 只有状态是 `table` 的行（含 xlsx 的工作表行）能进多选，别的行 ⌘ / Shift 点没有反应。
- * 行尾也说这一份此刻的出图进度（转圈 / 已画 / 没画出来，原因放 title）；状态按 `tableKey` 给，清单重读不丢。
+ * 开画之后行尾说这一份此刻的进度：等着（灰字）/ 转圈 / 已画（普通行）/ 没画出来（深一档的字 + 小感叹号，原因放 title；
+ * 普通行，单击 = 开它的临时标签，单份流程自己会说清楚为什么）；状态按 `tableKey` 给，清单重读不丢。
  */
 export interface DataListMulti {
   selected: ReadonlySet<string>
-  /** 多选态（「选多份」按下）：每个表行行尾常显「＋」/ 对勾，灰字行数不显示 */
+  /** 多选态（「选多份」按下）：普通单击 = 加选 / 取消、不开临时标签 */
   pickMode?: boolean
-  rowStates: Record<string, { state: 'running' | 'done' | 'failed'; reason?: UiMessage | null }>
+  /** 整批进行中：不再响应加选 / 取消（点行 = 开它的临时标签看候选） */
+  running?: boolean
+  rowStates: Record<string, { state: 'queued' | 'running' | 'done' | 'failed'; reason?: UiMessage | null }>
   onToggle: (ref: TableRef) => void
   onRange: (ref: TableRef, visible: TableRef[]) => void
   onClear: () => void
@@ -82,15 +86,12 @@ export function DataList({
   onFocusRow,
   onConfirm,
   multi,
-  bottomInset,
 }: {
   rows: DataFileRow[]
   selected: TableRef | null
   /** 用户改过表头行后，这一行说重读后的行数（键 = 路径） */
   overviews: Record<string, AiDataOverview | undefined>
   onSelect: (ref: TableRef) => void
-  /** 浮在清单底部的东西（批量那一条）占的高度：只是滚动留白，加在滚动容器底部内边距上，不改变已有行的位置 */
-  bottomInset?: string
   /** 键盘移到某个文件行（↑↓ / Tab）：卡片开着时预览跟着换（像访达的快速查看） */
   onFocusRow?: (ref: TableRef) => void
   /** 在已经选中的文件行上按 Enter：= 卡片的主按钮；返回 true 表示处理了 */
@@ -101,6 +102,8 @@ export function DataList({
   const { t } = useTranslation('ai')
   const fm = useFormatMessage()
   const tree = useMemo(() => buildTree(rows), [rows])
+  /** 纯平铺（没有文件夹也没有工作簿）：文件行不留树形箭头的空占位，图标左沿与标题文字左沿对齐 */
+  const flat = useMemo(() => tree.every((n) => n.kind === 'file' && !n.file.workbook), [tree])
   /** 用户点过的展开态；没点过的按默认规则 */
   const [toggled, setToggled] = useState<Record<string, boolean>>({})
   /** 用户展开 / 收起过的（只有它们的子项做错峰淡入：首屏默认展开的不演一遍） */
@@ -152,26 +155,39 @@ export function DataList({
     return out
   }
   const isTable = (r: DataRow) => statusOf(r).kind === 'table'
-  /** 普通激活（单击 / Enter / 空格）：多选态下表行 = 加选 / 取消、不开临时标签；其余照旧（再点已选中的行 = 确认） */
+  const stateOf = (r: DataRow) => multi?.rowStates[tableKey(r.ref)]?.state
+  /** 此刻这一行点一下是加选 / 取消：多选态、表行、整批没在画、不是没画成的那几行（它们的出路是开临时标签） */
+  const pickable = (r: DataRow) => !!multi?.pickMode && !multi.running && isTable(r) && stateOf(r) !== 'failed'
+  /** 普通激活（单击 / Enter / 空格）：多选态下可选的表行 = 加选 / 取消、不开临时标签；其余照旧（再点已选中的行 = 确认） */
   const activate = (r: DataRow, on: boolean) => {
-    if (multi?.pickMode && isTable(r)) multi.onToggle(r.ref)
+    if (pickable(r)) multi!.onToggle(r.ref)
     else if (!(on && onConfirm?.(r.ref))) onSelect(r.ref)
   }
-  /** 点一行：⌘ / Ctrl / Shift 是多选（不可选的行没有反应），其余是原来的单击 */
+  /** 点一行：⌘ / Ctrl / Shift 是多选（不可选的行没有反应；整批进行中也没有），其余是原来的单击 */
   const clickRow = (e: MouseEvent, r: DataRow) => {
     if (multi && (e.metaKey || e.ctrlKey || e.shiftKey)) {
-      if (!isTable(r)) return
+      if (!isTable(r) || multi.running) return
       if (e.shiftKey && !(e.metaKey || e.ctrlKey)) multi.onRange(r.ref, visibleTables())
       else multi.onToggle(r.ref)
       return
     }
     activate(r, false)
   }
-  /** 行尾：这一份的出图进度 > 已选的对勾 > 悬停 / 聚焦时的「＋」（原位替换灰字，同一格，不撑宽） */
+  /** 这一行此刻是「已选的卡片」：在选择里，且不是已画 / 没画成的（它们回到普通行） */
+  const isCard = (r: DataRow) => {
+    const st = stateOf(r)
+    return !!multi?.selected.has(tableKey(r.ref)) && st !== 'done' && st !== 'failed'
+  }
+  /** 行尾：这一份的出图进度 > 已选的对勾 > 灰字（行数 / 没认准 / 读不了） */
   const metaCell = (r: DataRow, text: string, on: boolean) => {
-    const key = tableKey(r.ref)
-    const rs = multi?.rowStates[key]
+    const rs = multi?.rowStates[tableKey(r.ref)]
     const cls = cn(rowMetaClass(on), 'shrink-0 pr-1')
+    if (rs?.state === 'queued')
+      return (
+        <span className={cls} data-studio-row-state="queued">
+          {t('dataFigureV2.batch.queued')}
+        </span>
+      )
     if (rs?.state === 'running')
       return (
         <span className={cn(cls, 'flex items-center')} data-studio-row-state="running">
@@ -186,33 +202,22 @@ export function DataList({
       )
     if (rs?.state === 'failed')
       return (
-        <span className={cls} data-studio-row-state="failed" title={rs.reason ? fm(rs.reason) : undefined}>
+        <span
+          className="flex shrink-0 items-center gap-1 pr-1 text-xs font-normal text-ink"
+          data-studio-row-state="failed"
+          title={rs.reason ? fm(rs.reason) : undefined}
+        >
+          <CircleAlert size={ICON_SIZE.sm} aria-hidden />
           {t('dataFigureV2.batch.failed')}
         </span>
       )
-    if (!multi || !isTable(r)) return <span className={cls}>{text}</span>
-    const picked = multi.selected.has(key)
-    return (
-      <span className={cn(cls, 'grid')}>
-        <span className={cn('col-start-1 row-start-1 text-right', picked || multi.pickMode ? 'invisible' : 'group-hover:invisible group-focus-visible:invisible')}>{text}</span>
-        <button
-          type="button"
-          tabIndex={-1}
-          aria-hidden
-          data-studio-pick-toggle={picked ? 'on' : 'off'}
-          onClick={(e) => {
-            e.stopPropagation()
-            multi.onToggle(r.ref)
-          }}
-          className={cn(
-            'col-start-1 row-start-1 flex items-center justify-end text-ink-2 outline-none hover:text-ink',
-            picked || multi.pickMode ? 'visible' : 'invisible group-hover:visible group-focus-visible:visible',
-          )}
-        >
-          {picked ? <Check size={ICON_SIZE.xs} /> : <Plus size={ICON_SIZE.xs} />}
-        </button>
-      </span>
-    )
+    if (isCard(r))
+      return (
+        <span className={cn(cls, 'flex items-center text-ink-2')} data-studio-row-state="picked">
+          <Check size={ICON_SIZE.xs} aria-hidden />
+        </span>
+      )
+    return <span className={cls}>{text}</span>
   }
 
   /** 键盘：从 DOM 取当前可见行（收起中的子树 inert 不算）的层级与展开态，交给 `treeKeyAction`（图层树 / 元素树同一份） */
@@ -242,7 +247,13 @@ export function DataList({
     else toggleSelf?.(action.type === 'collapse' ? true : false)
   }
 
-  const rowShell = (selectedRow: boolean) => cn(listRowClass({ size: 'sm', selected: selectedRow }), 'mx-2 gap-1 pr-0.5')
+  const rowShell = (selectedRow: boolean, card = false) =>
+    cn(
+      listRowClass({ size: 'sm', selected: selectedRow }),
+      'mx-2 gap-1 pr-0.5',
+      // 已选 = 白底浮起的卡片（与素材抽屉里的激活项同一种语言）：surface 底 + 细描边，字重 medium；相邻两行之间仍是原来的行间距
+      card && 'bg-surface font-medium inset-ring inset-ring-border hover:bg-surface',
+    )
 
   /** 子项错峰：前 STAGGER_MAX 个按序延后，之后一起；只在用户刚展开 / 收起的那一枝上 */
   const stagger = (parentKey: string, i: number) =>
@@ -335,7 +346,7 @@ export function DataList({
                     key={sh.ref.sheet}
                     role="treeitem"
                     aria-level={n.depth + 2}
-                    aria-selected={on || (multi?.selected.has(tableKey(sh.ref)) ?? false)}
+                    aria-selected={on || isCard(sh)}
                     tabIndex={tabIndexFor(on)}
                     data-studio-sheet
                     data-studio-nav
@@ -344,8 +355,8 @@ export function DataList({
                     title={`${sh.ref.sheet} · ${m.title}`}
                     onClick={(e) => clickRow(e, sh)}
                     onFocus={(e) => e.target === e.currentTarget && onFocusRow?.(sh.ref)}
-                    onKeyDown={(e) => onKeyDown(e, () => activate(sh, on), undefined, multi && s.kind === 'table' ? () => multi.onToggle(sh.ref) : undefined)}
-                    className={cn(rowShell(on || (multi?.selected.has(tableKey(sh.ref)) ?? false)), sst.className)}
+                    onKeyDown={(e) => onKeyDown(e, () => activate(sh, on), undefined, multi && !multi.running && s.kind === 'table' ? () => multi.onToggle(sh.ref) : undefined)}
+                    className={cn(rowShell(on, isCard(sh)), sst.className)}
                     style={{ paddingLeft: 8 + (n.depth + 1) * 12, ...sst.style }}
                   >
                     <TreeChevron />
@@ -369,7 +380,7 @@ export function DataList({
         key={key}
         role="treeitem"
         aria-level={n.depth + 1}
-        aria-selected={on || (multi?.selected.has(tableKey(only.ref)) ?? false)}
+        aria-selected={on || isCard(only)}
         tabIndex={tabIndexFor(on)}
         data-studio-file
         data-studio-nav
@@ -378,11 +389,11 @@ export function DataList({
         title={`${baseName(f.path)} · ${m.title}`}
         onClick={(e) => clickRow(e, only)}
         onFocus={(e) => e.target === e.currentTarget && onFocusRow?.(only.ref)}
-        onKeyDown={(e) => onKeyDown(e, () => activate(only, on), undefined, multi && s.kind === 'table' ? () => multi.onToggle(only.ref) : undefined)}
-        className={cn(rowShell(on || (multi?.selected.has(tableKey(only.ref)) ?? false)), st.className)}
-        style={{ paddingLeft: 8 + n.depth * 12, ...st.style }}
+        onKeyDown={(e) => onKeyDown(e, () => activate(only, on), undefined, multi && !multi.running && s.kind === 'table' ? () => multi.onToggle(only.ref) : undefined)}
+        className={cn(rowShell(on, isCard(only)), st.className)}
+        style={{ paddingLeft: flat ? 4 : 8 + n.depth * 12, ...st.style }}
       >
-        <TreeChevron />
+        {!flat && <TreeChevron />}
         <TreeIcon icon={iconOf(s)} />
         <MiddleEllipsis text={baseName(f.path)} tail={8} className={cn('min-w-0 flex-1', s.kind === 'unreadable' && 'text-ink-3')} />
         {metaCell(only, m.text, on)}
@@ -404,8 +415,8 @@ export function DataList({
           multi.onClear()
         }
       }}
-      style={bottomInset ? { paddingBottom: bottomInset } : undefined}
-      className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto pb-3">
+      className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto pb-3"
+    >
       {tree.map((n, i) => renderNode(n, '', i))}
     </ul>
   )
