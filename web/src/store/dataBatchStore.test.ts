@@ -659,12 +659,12 @@ describe('排队的回调轮到时先核项目（Codex P1）', () => {
 describe('不确定的提交结果：重试用同一个请求号（Codex P2）', () => {
   const net = () => new TypeError('Failed to fetch')
 
-  it('commit 抛网络错：这份算没画出来、会话不放弃；重试先用同一个会话和请求号重发 commit，不再 propose，回来的结果算画成', async () => {
+  it('commit 抛网络错：这份算没画出来、会话照常放弃（不占后端的 6 个会话名额），只留请求号；重试用同一个请求号重发 commit，不再 propose，回来的结果算画成', async () => {
     select('a')
     commit.mockRejectedValueOnce(net())
     await st().run()
     expect(Object.values(st().rows).map((r) => r.state)).toEqual(['failed'])
-    expect(discard).not.toHaveBeenCalled() // 会话留着
+    expect(discard).toHaveBeenCalledTimes(1) // 会话已放弃，不为不确定的行占会话
     const first = commit.mock.calls[0]![0]
     propose.mockClear()
     commit.mockResolvedValueOnce(ok())
@@ -672,7 +672,7 @@ describe('不确定的提交结果：重试用同一个请求号（Codex P2）',
     expect(propose).not.toHaveBeenCalled()
     expect(commit).toHaveBeenCalledTimes(2)
     expect(commit.mock.calls[1]![0]).toMatchObject({ session: first.session, id: first.id, client_request_id: first.client_request_id })
-    expect(discard).toHaveBeenCalledWith(first.session, expect.anything())
+    expect(discard).toHaveBeenCalledTimes(1) // 重试成功不再多放弃
     expect(showAssets).toHaveBeenCalledTimes(1) // 全部画成
   })
 
@@ -694,19 +694,18 @@ describe('不确定的提交结果：重试用同一个请求号（Codex P2）',
     expect(propose).toHaveBeenCalledTimes(1)
   })
 
-  it('后端明确拒绝（有状态码 / 稳定码）：请求号作废，会话放弃，重试重新 propose、换新的请求号', async () => {
+  it('后端明确拒绝（有状态码 / 稳定码）：请求号作废，重试重新 propose、换新的请求号', async () => {
     select('a')
     commit.mockRejectedValueOnce(apiError(500, 'x'))
     await st().run()
     const first = commit.mock.calls[0]![0]
-    expect(discard).toHaveBeenCalledWith(first.session, expect.anything())
     commit.mockResolvedValueOnce(ok())
     await st().run('failed')
     expect(propose).toHaveBeenCalledTimes(2)
     expect(commit.mock.calls[1]![0].client_request_id).not.toBe(first.client_request_id)
   })
 
-  it('重试时会话已过期（同一个请求号被明确拒绝，如 404 / 409）：后端的去重表也不在了，只能重新出候选，换新请求号（接受）', async () => {
+  it('重试时同一个请求号被明确拒绝（首次请求没到后端、会话又已放弃 → 404 / 409）：什么都没写过，重新出候选，换新请求号', async () => {
     select('a')
     commit.mockRejectedValueOnce(net()).mockRejectedValueOnce(apiError(409, 'propose_session_expired')).mockResolvedValueOnce(ok())
     await st().run()
@@ -719,7 +718,7 @@ describe('不确定的提交结果：重试用同一个请求号（Codex P2）',
     expect(showAssets).toHaveBeenCalledTimes(1)
   })
 
-  it('换项目（clear）：留着的会话与请求号一并丢掉，不会带到新项目', async () => {
+  it('换项目（clear）：留着的请求号丢掉，不会带到新项目', async () => {
     select('a')
     commit.mockRejectedValueOnce(net())
     await st().run()
@@ -729,5 +728,22 @@ describe('不确定的提交结果：重试用同一个请求号（Codex P2）',
     propose.mockClear()
     await st().run()
     expect(propose).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('不确定的行不占后端会话（至多 6 个）', () => {
+  it('四份都「结果不确定」：每份的会话都已放弃，没有一个留在后端；四个请求号都留着，重试各自沿用', async () => {
+    select('a', 'b', 'c', 'd')
+    commit.mockRejectedValue(new TypeError('Failed to fetch'))
+    await st().run()
+    expect(discard.mock.calls.map((c) => c[0]).sort()).toEqual(['S-a', 'S-b', 'S-c', 'S-d'])
+    const first = commit.mock.calls.map((c) => c[0].client_request_id)
+    expect(new Set(first).size).toBe(4)
+    propose.mockClear()
+    commit.mockReset()
+    commit.mockResolvedValue(ok())
+    await st().run('failed')
+    expect(propose).not.toHaveBeenCalled()
+    expect(commit.mock.calls.map((c) => c[0].client_request_id)).toEqual(first)
   })
 })

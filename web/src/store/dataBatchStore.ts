@@ -110,9 +110,12 @@ const initial = {
 }
 
 /**
- * 提交结果不确定（断网 / 网关错：后端可能已经写出了脚本）的那一行：留着它的会话与请求号（按 `tableKey` 存），
- * 「重试」先用**同一个**请求号重发这一次提交——后端按请求号去重，回的是同一份结果，不会多画出一份（同单份流程的 `commitRid`）。
- * 只有后端明确拒绝（`isDefiniteRunFailure`）才作废请求号、重新出候选。会话已经过期（后端 404 / 409，去重表也不在了）时也只能重新出，接受。
+ * 提交结果不确定（断网 / 网关错：后端可能已经写出了脚本）的那一行：只留着请求号（和重发要带的会话 / 备选 id 两个字符串，按 `tableKey` 存），
+ * 会话照常放弃——后端同时至多留 6 个候选会话，批量不能为每个不确定的行占一个、把用户正开着的临时标签的会话挤掉。
+ * 「重试」用**同一个**请求号重发这一次提交：后端（`/api/ai/data-figure/commit`）**先按请求号去重、后取会话**，首次提交已落盘而响应丢了时，
+ * 会话已不在也照样回原来那份结果（只回既有任务的结局），不会多画出一份（同单份流程的 `commitRid`）。
+ * 首次请求根本没到后端（没有记录）时，重发会因会话不在回 404 `propose_session_expired`：什么都没写过，就重新出候选、换新请求号。
+ * 其余明确拒绝（`isDefiniteRunFailure`）同样作废请求号重新出；仍没拿到结果就继续留着。
  */
 const pendingCommits = new Map<string, { session: string; id: string; rid: string; pj: string | null }>()
 
@@ -140,7 +143,6 @@ async function drawOne(ref: TableRef, still: () => boolean, pj: string | null): 
       const done = await aiDataFigureCommit({ session: pend.session, id: pend.id, client_request_id: pend.rid }, pj)
       if (!still()) return { ok: false, reason: null }
       pendingCommits.delete(key)
-      void aiDataFigureDiscard(pend.session, pj).catch(() => undefined)
       return outcomeOf(done)
     } catch (e) {
       if (!still()) return { ok: false, reason: null }
@@ -148,7 +150,6 @@ async function drawOne(ref: TableRef, still: () => boolean, pj: string | null): 
       if (!isDefiniteRunFailure(e)) return { ok: false, reason: reasonOf(e) }
       // 后端明确拒绝（含会话 / 备选已过期、去重表也不在了）：请求号作废，下面重新出候选；写不进文件夹是项目级的，不再重来
       pendingCommits.delete(key)
-      void aiDataFigureDiscard(pend.session, pj).catch(() => undefined)
       const code = codeOf(e)
       if (code === 'figures_dir_unusable' || code === 'common_module_conflict') return { ok: false, reason: reasonOf(e), unwritable: true }
     }
@@ -173,7 +174,6 @@ async function drawOne(ref: TableRef, still: () => boolean, pj: string | null): 
     }
     if (res.kind !== 'candidates' || res.items.length === 0) return { ok: false, reason: null }
     const session = res.session
-    let keep = false // 结果不确定：会话留着给「重试」
     try {
       for (const item of res.items) {
         if (!still()) return { ok: false, reason: null }
@@ -185,12 +185,9 @@ async function drawOne(ref: TableRef, still: () => boolean, pj: string | null): 
         } catch (e) {
           // 懒渲染：这一张提交时当场渲染 / 核对没过（404）→ 试下一张；一张都不行就是没画成
           if (codeOf(e) === 'propose_candidate_unknown') continue
-          // 没收到结果（断网 / 网关）：后端可能已写出脚本。留着会话与请求号，不试下一张（会多画一份），重试时同一个请求号重发
+          // 没收到结果（断网 / 网关）：后端可能已写出脚本。留着请求号，不试下一张（会多画一份），重试时同一个请求号重发
           if (!isDefiniteRunFailure(e)) {
-            if (still()) {
-              pendingCommits.set(key, { session, id: item.id, rid, pj })
-              keep = true
-            }
+            if (still()) pendingCommits.set(key, { session, id: item.id, rid, pj })
             return { ok: false, reason: reasonOf(e) }
           }
           throw e
@@ -206,7 +203,7 @@ async function drawOne(ref: TableRef, still: () => boolean, pj: string | null): 
       }
       return { ok: false, reason: reasonOf(e) }
     } finally {
-      if (!keep) void aiDataFigureDiscard(session, pj).catch(() => undefined)
+      void aiDataFigureDiscard(session, pj).catch(() => undefined)
     }
   }
 }
