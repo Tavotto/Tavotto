@@ -1,0 +1,3 @@
+## AI assistants can start working on a figure without the usual warm-up calls
+
+AI assistants using Tavotto no longer need to run a health check, read the usage guide and look up the journal before doing any work: the first figure they open already reports the Tavotto version and any available update, and the tool descriptions state the rules directly. A journal can now be given by name (for example "Nature" or "Nat Commun", ignoring case and punctuation): a single match is used and reported back, several matches are returned as candidates to choose from, and an unknown name returns the closest suggestions.
