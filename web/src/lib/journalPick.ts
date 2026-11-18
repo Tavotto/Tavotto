@@ -140,6 +140,7 @@ function unitOf(path: string): string {
   const last = path.split('.').at(-1) ?? ''
   if (/_mm$/.test(last)) return 'mm'
   if (/_pt$/.test(last)) return 'pt'
+  if (/_in$/.test(last)) return 'in'
   if (/dpi/.test(last)) return 'dpi'
   return ''
 }

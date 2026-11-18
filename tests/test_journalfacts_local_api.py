@@ -666,3 +666,76 @@ def test_invalid_search_types_and_missing_journal_do_not_request_network(
     assert search.status_code == 400 and search.json["code"] == "bad_request"
     missing = client.post("/api/journal-facts/journal", json={}, headers=headers)
     assert missing.status_code == 400 and missing.json["code"] == "bad_request"
+
+
+def _snapshot_http(monkeypatch, key, snap=b"fixture snapshot", served=None):
+    bundle = fact_bundle(snap)
+    raw = json.dumps(bundle).encode()
+    envelope = signed(key, index_for(raw))
+
+    def request(method, url, cap, headers):
+        if url.endswith("index.signed.json"):
+            return 200, envelope
+        if "/snapshots/" in url:
+            return 200, snap if served is None else served
+        return 200, raw
+
+    monkeypatch.setattr(facts, "_request", request)
+    return bundle["facts"][0]["snapshot"]["file"]
+
+
+def test_snapshot_endpoint_follows_the_master_switch(http_client, monkeypatch):
+    from tavotto.engine import journals
+
+    client, headers = http_client
+    monkeypatch.setattr(
+        facts, "snapshot", lambda *args, **kwargs: pytest.fail("read while the switch is off")
+    )
+    monkeypatch.setattr(journals, "JOURNAL_CATALOG_AGENTS", False)
+    res = client.get(
+        "/api/journal-facts/snapshot?journal_id=fx-journal&file=snapshots/" + "a" * 64 + ".webp",
+        headers=headers,
+    )
+    assert res.status_code == 403 and res.json["code"] == "journal_catalog_disabled"
+
+
+def test_snapshot_endpoint_requires_session(http_client, monkeypatch):
+    client, headers = http_client
+    monkeypatch.setattr(facts, "snapshot", lambda *a, **k: pytest.fail("unauthenticated read"))
+    res = client.get("/api/journal-facts/snapshot", headers={"Host": headers["Host"]})
+    assert res.status_code == 401 and res.json["code"] == "session_auth_required"
+
+
+def test_snapshot_endpoint_serves_verified_webp(http_client, isolated, monkeypatch):
+    client, headers = http_client
+    key, _ = isolated
+    file = _snapshot_http(monkeypatch, key)
+    res = client.get(
+        f"/api/journal-facts/snapshot?journal_id=fx-journal&file={file}", headers=headers
+    )
+    assert res.status_code == 200 and res.mimetype == "image/webp"
+    assert res.data == b"fixture snapshot"
+    assert "immutable" in res.headers["Cache-Control"]
+
+
+def test_snapshot_endpoint_rejects_unknown_malformed_and_mismatched(
+    http_client, isolated, monkeypatch
+):
+    client, headers = http_client
+    key, _ = isolated
+    file = _snapshot_http(monkeypatch, key)
+    unknown = "snapshots/" + "b" * 64 + ".webp"
+    res = client.get(
+        f"/api/journal-facts/snapshot?journal_id=fx-journal&file={unknown}", headers=headers
+    )
+    assert res.status_code == 404 and res.json["code"] == "unknown_snapshot"
+    for query in ("", "?journal_id=fx-journal", "?journal_id=fx-journal&file=../x.webp"):
+        res = client.get("/api/journal-facts/snapshot" + query, headers=headers)
+        assert res.status_code == 400 and res.json["code"] == "bad_request"
+    # Served bytes whose hash does not match the content-addressed name are never returned.
+    _snapshot_http(monkeypatch, key, served=b"tampered")
+    res = client.get(
+        f"/api/journal-facts/snapshot?journal_id=fx-journal&file={file}", headers=headers
+    )
+    assert res.status_code == 503 and res.json["code"] == "snapshot_invalid"
+    assert b"tampered" not in res.data
