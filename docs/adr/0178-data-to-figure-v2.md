@@ -146,6 +146,16 @@ id 是服务端登记的不透明串）、`POST /api/ai/data-figure/commit`（`{
 
 **错误码**：新增 `tables_columns_differ`、`tables_labels_collide`、`tables_limit_exceeded`（份数超限不叫 `tables_too_many`：`_many` 是 i18next 的复数后缀，`scripts/i18n-check.mjs` 会把 `errors:backend.tables_too_many` 当成 `tables_too` 的复数形态而拒绝；`ai_data_propose.ERROR_CODES`、`test_error_codes.py`、前端 `errors.json` 两种语言）。**没做**：合画脚本在脚本清单里不显示「来自哪份数据」；`generated_from` 对它返回 None。
 
+## 修订（2026-11-18）：提交的请求号在耗时步骤之前先占位（`app._COMMIT_INFLIGHT`）
+
+**窗口**：`/api/ai/data-figure/commit` 原先先取会话、`ensure_thumbnail`、`prepare_v2`，到 `run_task` 才把请求号登记进任务台账（ADR 0132 的 `engine_ai.find_request` 查的就是它）。客户端在 prepare 期间断线、放弃会话后用**同一请求号**重试：`find_request` 还查不到 → 去取会话 → `propose_session_expired`，客户端据此认为「什么都没写过」而换号重画；但原 handler 还在 prepare，随后照样写出脚本——两份。
+
+**做法**：handler 校验完参数、**在任何可能耗时的步骤之前**，对 `(项目, 请求号)` 在进程内的在途表（带锁的集合）做原子占位。同一请求号的第二个请求进来发现在途，**不取会话、不 prepare**，回与「任务未完成」同形的响应：200 `{task: {task_id: null, outcome: null, final: false, deduped: true}}`（前端对这种响应本来就保留请求号并轮询）。占位在 `finally` 里清——成功登记 / 失败（`DataSourceError` 等 4xx）/ 未处理异常（500）都清，所以不存在「永远在途」；清了之后同一请求号再来：任务已登记 → `find_request` 去重回最终结果（`deduped: true`，带既有脚本）；没登记（原请求在登记前就失败了）→ 一次确定的新提交（会话还在就完成，不在就 `propose_session_expired`，此时原 handler 已结束、确实什么都没写）。不同请求号、不同项目互不影响；不带请求号的提交不占位（行为不变）。
+
+**进程重启**：占位只在内存里，随进程消失；此时原 handler 的线程也没了、不会再写，同一请求号重来要么 `find_request` 查到已登记的任务（照旧去重），要么是一次全新的提交——没有重复写入的路径。
+
+**没改**：v1 `POST /api/ai/data-figure`（`prepare` 先于 `run_task` 登记，同样有「两个 handler 同时 prepare」的窗口，但它没有候选会话，不会走到「会话已放弃 → 过期 → 换号重画」那条把重复变成必然的路径）与改图提交（ADR 0132）只在这里说明，不改。看护：`tests/test_ai_data_commit_inflight.py`（在 `prepare_v2` 上打桩卡住第一个请求：同号重试得到未完成、第二个请求不碰会话、放行后只有一份脚本、第三次查询得到最终结果；prepare 抛 `DataSourceError` / 未处理异常都清占位、同号再来得到确定答案；不同请求号不互相阻塞）。
+
 ## 文本表格：`.txt` / `.dat` / 嗅探 / 表头行覆盖 / 千分位（`ai_data_figure.read_text_table`）
 
 第一版只做文本格式（`.mat` / `.npy` / HDF5 等二进制以后再说；`.xlsx` 读法不动）。整件事在 `ai.taf.enabled` 后面；v1（`inspect_data_source` 默认分支、v1 模板的 `_cell`）**逐字不变**——新读法只在 `v2=True` 时启用。
