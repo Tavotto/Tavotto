@@ -79,3 +79,20 @@ describe('轮廓化描边的像素对拍样本', () => {
     expect(JSON.parse(JSON.stringify(cases))).toEqual(golden.cases)
   })
 })
+
+describe('闭合路径的虚线接缝', () => {
+  const sq = (over: Partial<PathObject>): PathObject => ({
+    id: 'sq', type: 'path', x: 0, y: 0, w: 10, h: 10,
+    subpaths: [{ closed: true, nodes: [{ p: [0, 0] }, { p: [1, 0] }, { p: [1, 1] }, { p: [0, 1] }] }],
+    strokePt: 4, color: '#000000', fill: null, lineJoin: 'miter', ...over,
+  })
+  const area = (o: PathObject) => {
+    const made = outlineStrokes(kernel, [o], [o.id])!
+    return made.flatMap((m) => [m.replace, ...(m.extra ? [m.extra] : [])])
+  }
+  it('一段画段盖满整圈（[200, 5]）：与实线轮廓化的结果相同（起点拐角保持斜接，不出笔帽）', () => {
+    const solid = JSON.stringify(round(toExportObjects(area(sq({})))))
+    const dashed = JSON.stringify(round(toExportObjects(area(sq({ dashPattern: [200, 5] })))))
+    expect(dashed.replace(/"id":"[^"]*",?/g, '')).toBe(solid.replace(/"id":"[^"]*",?/g, ''))
+  })
+})

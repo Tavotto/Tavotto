@@ -181,6 +181,7 @@ export function dashSubpaths(subs: readonly MmSubpath[], dash: readonly number[]
     let left = dash[0] // 这一段还剩多长
     let on = true
     let cur: MmSubpath | null = null
+    let first: MmSubpath | null = null // 从起点就在画的那一段（闭合路径要与末段接上）
     for (const s of segs) {
       const tab = arcTable(s)
       let pos = 0
@@ -191,6 +192,7 @@ export function dashSubpaths(subs: readonly MmSubpath[], dash: readonly number[]
           if (!cur) {
             cur = { closed: false, nodes: [{ p: piece.a, in: piece.a, out: piece.b, smooth: false }] }
             out.push(cur)
+            if (!first && out.length && k === 0 && pos === 0 && s === segs[0]) first = cur
           } else cur.nodes[cur.nodes.length - 1].out = piece.b
           cur.nodes.push({ p: piece.d, in: piece.c, out: piece.d, smooth: false })
         }
@@ -210,6 +212,21 @@ export function dashSubpaths(subs: readonly MmSubpath[], dash: readonly number[]
             on = !on
           }
         }
+      }
+    }
+    // 闭合路径：横跨起点的画段被切成首尾两截，接回一段（别让它们各自出笔帽、丢掉起点处的拐角）；一段盖满整圈 = 保持闭合
+    if (sp.closed && first && cur && on) {
+      if (cur === first) {
+        const nodes = first.nodes
+        if (nodes.length >= 3) {
+          nodes[0].in = nodes[nodes.length - 1].in
+          nodes.pop()
+          first.closed = true
+        }
+      } else {
+        cur.nodes[cur.nodes.length - 1].out = first.nodes[0].out
+        cur.nodes.push(...first.nodes.slice(1))
+        out.splice(out.indexOf(first), 1)
       }
     }
   }
