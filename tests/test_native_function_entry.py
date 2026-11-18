@@ -101,6 +101,23 @@ def _tree_path(tmp_path, text, name="s.py"):
         (LIBRARY, "gone", (discover.NATIVE_ENTRY_UNREACHABLE, None)),  # 脚本被改写，入口没了
         (NEEDS_ARGS, "geography", (discover.NATIVE_ENTRY_UNREACHABLE, None)),
         ("def geography(:\n", "geography", (discover.NATIVE_RUN_MODULE, None)),  # 判不出就不改
+        # Codex P1（#2044）：入口是 import 进来的函数、顶层调用它——整份跑就会调到，不许判「够不到」
+        ("from helpers import main\nmain()\n", "main", (discover.NATIVE_RUN_MODULE, None)),
+        ("from helpers import main\n", "main", (discover.NATIVE_RUN_MODULE, None)),
+        # 要参数的本地函数在顶层带参调用（画图在别的模块里，顶层够不着 PLOT_FUNCS）
+        (
+            "from helpers import load, draw\n\ndef plot(rows):\n    draw(rows)\n\nplot(load())\n",
+            "plot",
+            (discover.NATIVE_RUN_MODULE, None),
+        ),
+        # 零参函数在顶层被调用：整份跑已会调它，不另调（免得跑两遍）
+        ("def plot():\n    pass\n\nplot()\n", "plot", (discover.NATIVE_RUN_MODULE, None)),
+        # 交给别人跑（`fire.Fire(plot)`）也算提到
+        (
+            "import fire\n\ndef plot():\n    pass\n\nfire.Fire(plot)\n",
+            "plot",
+            (discover.NATIVE_RUN_MODULE, None),
+        ),
     ],
 )
 def test_native_entry_of(tmp_path, text, entry, want):

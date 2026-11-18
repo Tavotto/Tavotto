@@ -1143,10 +1143,34 @@ def native_entry_of(path: Path, entry: str | None) -> tuple[str, str | None]:
     funcs = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
     if _has_inline_main(tree) or _toplevel_reaches_plot(tree, funcs):
         return NATIVE_RUN_MODULE, None
+    if _toplevel_mentions(tree, entry):
+        # 顶层代码提到了这个名字（`from helpers import main; main()`、`plot(load())`、`fire.Fire(plot)`）：
+        # 整份跑可能就会调到它，静态判不出——原样跑整份模块，既不另调（免得跑两遍）也不拒绝
+        return NATIVE_RUN_MODULE, None
     fn = funcs.get(entry)
     if isinstance(fn, ast.FunctionDef) and _callable_without_args(fn):
         return NATIVE_CALL_ENTRY, entry
     return NATIVE_ENTRY_UNREACHABLE, None
+
+
+def _toplevel_mentions(tree: ast.Module, name: str) -> bool:
+    """模块顶层代码（不含函数 / 类的函数体）里有没有提到 `name`：读取它、import 绑定它、赋值给它都算。"""
+    for st in tree.body:
+        if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            nodes = [*st.decorator_list, *st.args.defaults, *st.args.kw_defaults]
+        elif isinstance(st, ast.ClassDef):
+            nodes = [*st.decorator_list, *st.bases, *st.keywords]
+        else:
+            nodes = [st]
+        for top in nodes:
+            if top is None:
+                continue
+            for node in ast.walk(top):
+                if isinstance(node, ast.Name) and node.id == name:
+                    return True
+                if isinstance(node, ast.alias) and (node.asname or node.name.split(".")[0]) == name:
+                    return True
+    return False
 
 
 def is_infrastructure_name(name: str) -> bool:
