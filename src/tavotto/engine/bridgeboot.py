@@ -558,7 +558,7 @@ def skip_events() -> list[dict]:
 
 
 class GuiBackendNeutralizer:
-    """脚本写死「交互（GUI）后端」时不切换，保持非交互后端（ADR 0194，维护者 2026-11-19 裁决）。
+    """脚本写死「交互（GUI）后端」时不切换，保持非交互后端（ADR 0195，维护者 2026-11-19 裁决）。
 
     Tavotto 永远不弹窗口：`matplotlib.use("TkAgg")` / `"Qt5Agg"` / `"MacOSX"` 之类在没有对应 GUI 库的环境里只会以
     `missing_dependency` 失败，有的环境里还会进 GUI 主循环。**只对 GUI 后端**这样做（与 ADR 0153 同类的有意偏离，
@@ -688,7 +688,7 @@ _GUI_NEUTRALIZER: GuiBackendNeutralizer | None = None
 
 
 def install_gui_backend_neutralizer(on_event=None) -> GuiBackendNeutralizer:
-    """safe worker 与 native bridge 的**同一个**装配点（ADR 0194）。重复调用回同一个实例；**不 import matplotlib**。"""
+    """safe worker 与 native bridge 的**同一个**装配点（ADR 0195）。重复调用回同一个实例；**不 import matplotlib**。"""
     global _GUI_NEUTRALIZER
     if _GUI_NEUTRALIZER is None:
         _GUI_NEUTRALIZER = GuiBackendNeutralizer(on_event)

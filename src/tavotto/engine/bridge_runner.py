@@ -1563,7 +1563,7 @@ def main(argv: list | None = None) -> int:
     _derive_target_facts(args)
     run = BridgeRun(args)
 
-    # 脚本写死 GUI 后端时不切换（ADR 0194）：与 safe worker 同一个装配点；这里只登记回调，等用户 import 到的那一刻才装，
+    # 脚本写死 GUI 后端时不切换（ADR 0195）：与 safe worker 同一个装配点；这里只登记回调，等用户 import 到的那一刻才装，
     # 自己不 import matplotlib（`matplotlib.use` 在 `matplotlib` 载入完成时包，pyplot 的 `switch_backend` 在 pyplot 载入时包）
     gui_backends = bridgeboot.install_gui_backend_neutralizer()
     callbacks = {
@@ -1760,7 +1760,7 @@ def _write_report(run, args, exit_code: int) -> None:
             if n in sys.modules
         },
         "matplotlib_backend": _backend_name(),
-        # 脚本想用、被中和成非交互后端的 GUI 后端名（ADR 0194；与回执 `runtime.gui_backends_neutralized` 同一份，只有名字）
+        # 脚本想用、被中和成非交互后端的 GUI 后端名（ADR 0195；与回执 `runtime.gui_backends_neutralized` 同一份，只有名字）
         "gui_backends_neutralized": bridgeboot.gui_backend_events(),
         "tavotto_importable": _tavotto_importable(),
         # `--observe-inputs` 时脚本结束那一刻定格的输入观察（与 build 响应的 `observed_inputs` 同一份，#1047）

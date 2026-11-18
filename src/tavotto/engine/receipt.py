@@ -148,7 +148,7 @@ _GUI_BACKEND_NAME = re.compile(r"[a-z0-9]{1,16}\Z")
 
 
 def project_gui_backends(raw) -> list[str]:
-    """worker 自报的 `gui_backends_neutralized`（ADR 0194：被中和的 GUI 后端名）→ 投影。
+    """worker 自报的 `gui_backends_neutralized`（ADR 0195：被中和的 GUI 后端名）→ 投影。
     自报是不可信输入：只收短小写字母数字名（登记表里的后端名都是这个形状）、去重、最多 8 条；其余丢弃，不抛。"""
     out: list[str] = []
     if not isinstance(raw, list):

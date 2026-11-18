@@ -290,7 +290,7 @@ def _log_import_ignore(event: dict) -> None:
 
 
 def _log_gui_backend(event: dict) -> None:
-    """脚本想用 GUI 后端、被中和成非交互后端时在 worker.log 留一行结构化记录（ADR 0194）；只有后端名。"""
+    """脚本想用 GUI 后端、被中和成非交互后端时在 worker.log 留一行结构化记录（ADR 0195）；只有后端名。"""
     print(f"[gui-backend] {json.dumps(event, ensure_ascii=False)}", file=sys.stderr)
 
 
@@ -301,7 +301,7 @@ bridgeboot.install_unreadable_import_skipper(_log_import_skip)
 import matplotlib  # noqa: E402 —— safe 档由 Tavotto 挑解释器，backend 在装引擎之前钉死
 
 matplotlib.use("Agg")
-# 脚本写死 GUI 后端（`matplotlib.use("TkAgg")` / `rcParams["backend"]`…）时不切换、记一笔（ADR 0194）：与 native bridge 同一个装配点。
+# 脚本写死 GUI 后端（`matplotlib.use("TkAgg")` / `rcParams["backend"]`…）时不切换、记一笔（ADR 0195）：与 native bridge 同一个装配点。
 # 必须在可信方法面基线冻结（`figcapture.freeze_trusted_surface`）之前装，包装才算基线的一部分、不被判成脚本 patch 了 matplotlib
 GUI_BACKENDS = bridgeboot.install_gui_backend_neutralizer(_log_gui_backend)
 GUI_BACKENDS.patch_matplotlib(matplotlib)
@@ -723,7 +723,7 @@ def _install_show_capture() -> None:
     def wrap(plt) -> None:
         GUI_BACKENDS.patch_pyplot(
             plt
-        )  # 与 show 同一个时刻：pyplot 一载入就挡住 GUI 后端（ADR 0194）
+        )  # 与 show 同一个时刻：pyplot 一载入就挡住 GUI 后端（ADR 0195）
         real_show = plt.show
         if getattr(real_show, "_tavotto_show_capture", False):
             return

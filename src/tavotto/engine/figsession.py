@@ -471,7 +471,7 @@ def runtime_report(
     `{module, entry, error}`；`entry` 是机器路径，只在私有回执里出现（`receipt.import_skips` 投影成模块名）。
     safe 与 native 同一份；没发生过就是空表。
 
-    `gui_backends`（ADR 0194）：脚本想用、被 Tavotto 中和成非交互后端的 GUI 后端名（`bridgeboot.gui_backend_events`，
+    `gui_backends`（ADR 0195）：脚本想用、被 Tavotto 中和成非交互后端的 GUI 后端名（`bridgeboot.gui_backend_events`，
     闭集小写名，没有路径）。落在 `gui_backends_neutralized`；没发生过就是空表。
     """
     if origin not in REPORT_ORIGINS:

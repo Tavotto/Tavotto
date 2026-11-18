@@ -1,4 +1,4 @@
-# ADR 0194：脚本写死交互（GUI）后端时，safe 与 native 都中和它
+# ADR 0195：脚本写死交互（GUI）后端时，safe 与 native 都中和它
 
 日期：2026-11-19 · 状态：**Accepted**（维护者 2026-11-19 裁决）
 相关：[0014 safe / native 执行档](0014-safe-native-execution-profiles.md)、[0020 native matplotlib bridge](0020-native-matplotlib-bridge.md)、

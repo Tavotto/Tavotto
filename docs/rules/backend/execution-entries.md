@@ -115,7 +115,7 @@ order: 180
   提权前 `scan_for_links` 不跟随地拒绝子孙里的重解析点 / 超限，一次 UAC 提权跑 `icacls <目录> /setowner *S-1-5-32-544 /T /C /L /Q` + `icacls <目录> /reset /T /C /L /Q`（argv 由 `build_commands` 唯一给出；不用 takeown，其确认值随语言变；提权脚本内先以备份语义（SeBackupPrivilege + `FILE_FLAG_BACKUP_SEMANTICS | OPEN_REPARSE_POINT`，`folderrepair._WALK_SOURCE`）遍历整棵树再动手：201 链接 / 203 超限 / 202 遍历失败；Windows 真机手动用例 `scripts/dev/verify_folder_repair_windows.ps1`）、事后复核仍读不了算失败。
   不放宽任何一条验证；加新的拒绝条件加在 `validate_target` 并配用例。 静态关卡：脚本会改 `sys.path`（`importscan` 的 `sys_path_modified`）时，表外无可信映射的未装模块不在运行前问包名，记入 `JointPlan.deferred_unverified` 先跑一次（`depplan.plan`）；延后不看目标环境静态索引读没读全（那只决定预填，ADR 0153 补记 2026-11-18）。看护 `tests/test_folder_repair.py`。
 
-## 中和写死的 GUI 后端（ADR 0194）
+## 中和写死的 GUI 后端（ADR 0195）
 
 **safe 与 native 同装一个包装，这是对 native「与 `python fig.py` 一致」的有意偏离**（维护者 2026-11-19 裁决）：Tavotto 永远不弹窗口，脚本写死 `matplotlib.use("TkAgg")` / `"Qt5Agg"` / `"MacOSX"`
 之类时，没有对应 GUI 库的环境只会 `missing_dependency`，换 Python 救不了。

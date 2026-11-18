@@ -1,4 +1,4 @@
-"""脚本写死交互（GUI）后端时，safe 与 native 两条入口都中和它（ADR 0194，维护者 2026-11-19 裁决）。
+"""脚本写死交互（GUI）后端时，safe 与 native 两条入口都中和它（ADR 0195，维护者 2026-11-19 裁决）。
 
 主张：`matplotlib.use("TkAgg")` / `rcParams["backend"] = "TkAgg"` / `MPLBACKEND=TkAgg` / `plt.switch_backend("TkAgg")`
 这类写死 GUI 后端的写法不再切换后端：在**没有 tkinter** 的环境里也照样捕获到图、不以 `missing_dependency` 失败、
