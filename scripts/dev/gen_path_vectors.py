@@ -21,6 +21,10 @@ sys.path.insert(0, str(ROOT / "src"))
 from tavotto.rendercore import geometry, plan  # noqa: E402 — 先把仓库的 src 放上 sys.path
 from tavotto.rendercore.ir import mm2pt  # noqa: E402
 
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 PAGE_H_MM = 200.0
 K = 0.2238576251  # 0.5 − κ/2：单位框里内切圆的手柄位置
 
