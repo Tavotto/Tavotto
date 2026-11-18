@@ -640,7 +640,7 @@ export function canvasFieldOf(prop: TypographyProp): EditableField | undefined {
     case 'fontFamily':
       return { prop: path, type: 'enum', value: null, options: [...CANVAS_TEXT_FAMILIES] }
     case 'sizePt':
-      return { prop: path, type: 'number', value: null, min: 3, max: 96, step: 0.5, unit: 'pt' }
+      return { prop: path, type: 'number', value: null, min: 3, max: 200, step: 0.5, unit: 'pt' }
     case 'weight':
       return { prop: path, type: 'enum', value: null, options: [...WEIGHTS] }
     case 'style':
