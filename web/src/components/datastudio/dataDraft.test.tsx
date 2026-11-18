@@ -16,6 +16,7 @@ import { DataDrawer } from './DataDrawer'
 import { DataDraft } from './DataDraft'
 import { DataPanel } from './DataPanel'
 import { RedrawPill } from './RedrawPill'
+import { useDataBatchStore } from '@/store/dataBatchStore'
 import { TablePreview } from './TablePreview'
 import { useDocumentStore } from '@/store/documentStore'
 
@@ -526,5 +527,23 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     expect(q('[data-data-strip-toggle]')!.textContent).toBe('收起')
     await click(q('[data-data-strip-toggle]'))
     expect(qa('[data-data-strip] tbody tr')).toHaveLength(3)
+  })
+
+  it('抽屉里多选：⌘ 点两份 → 底部出现「各画一张」；普通单击开临时标签并清掉多选；单份时那一条不存在', async () => {
+    propose.mockResolvedValue(cands())
+    useDataBatchStore.getState().clear()
+    await start(<><DataDrawer /><DataDraft /></>)
+    const meta = (i: number) => qa('[data-studio-file]')[i]!
+    const cmdClick = (el: Element) => act(async () => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true })))
+    await cmdClick(meta(0))
+    expect(q('[data-studio-batch-bar]')).toBeNull() // 1 份：没有这一条
+    await cmdClick(meta(2))
+    expect(q('[data-studio-batch-run]')!.textContent).toBe('各画一张')
+    expect(q('[data-data-draft]')).toBeNull() // 多选不开临时标签
+    await click(meta(0))
+    await flush()
+    expect(useDataBatchStore.getState().selection).toHaveLength(0)
+    expect(q('[data-studio-batch-bar]')).toBeNull()
+    expect(useDataFigureStore.getState().draftOpen).toBe(true)
   })
 })

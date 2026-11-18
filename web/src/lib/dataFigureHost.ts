@@ -4,6 +4,7 @@
  * 数据页（`DataPage`）一挂上就 import 本模块完成注册。
  */
 import { currentProjectId } from '@/lib/session'
+import { configureDataBatchHost } from '@/store/dataBatchStore'
 import { configureDataFigureHost } from '@/store/dataFigureStore'
 import { refreshProjectNow } from '@/store/liveSync'
 import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
@@ -28,4 +29,11 @@ configureDataFigureHost({
   activeCanvasId: () => useDocumentStore.getState().activeCanvasId ?? null,
   notify: (message) => useUiStore.getState().setStatus(message, 'info'),
   dismissAddedNote: () => useWorkspaceStore.setState({ addedForEdit: null }),
+})
+
+// 批量出图（一次选多份、各画一张）：只刷新素材清单、不打开；全部画成后左栏切到素材抽屉
+configureDataBatchHost({
+  refreshProject: () => refreshProjectNow(),
+  showAssets: () => useUiStore.getState().setLeftTab('assets'),
+  projectWritable: () => useProjectStore.getState().project?.writable,
 })

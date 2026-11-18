@@ -13,6 +13,7 @@ import {
   type AiDataOverview,
 } from '@/lib/api'
 import { setCanvasCovered } from '@/store/canvasCover'
+import { runExclusive } from '@/lib/dataCommitQueue'
 import { currentProjectId } from '@/lib/session'
 import { candidatesFromResponse, headerRowFromResponse, mixedFromResponse, rolesFromResponse, unitsRowFromResponse, type Candidate, type ColumnRoles, type MixedColumn, type ThumbState } from '@/lib/dataFigureAdapter'
 import { fileRows, hasNumericColumn, isStaleProposeCode, sameTable, tableKey, type CellMode, type TableRef } from '@/lib/dataFigure'
@@ -591,7 +592,9 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     draw: async (id) => {
       const sid = get().session
       if (!sid || get().drawingId || get().phase !== 'ready') return // 没有候选 / 正在画：不重复提交
-      await commit(sid, get().candidates, id, false)
+      // 先把「正在画」摆出来（可能要排在批量出图的一份后面）；真正的提交在串行锁里做
+      set({ drawingId: id, problem: null })
+      await runExclusive(() => commit(sid, get().candidates, id, false))
     },
 
     retry: async () => {
@@ -601,7 +604,8 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         const last = commitRid
         if (last) {
           const [session, id] = last.for.split('/')
-          await commit(session!, [], id!, false)
+          set({ drawingId: id!, problem: null })
+          await runExclusive(() => commit(session!, [], id!, false))
           return
         }
       }

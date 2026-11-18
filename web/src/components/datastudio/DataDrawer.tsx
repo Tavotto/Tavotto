@@ -4,10 +4,12 @@ import { Button } from '@/components/ui/Button'
 import { Notice } from '@/components/ui/Notice'
 import { ProgressBar } from '@/components/ui/ProgressBar'
 import type { AiDataOverview } from '@/lib/api'
-import { fileRows, sameTable } from '@/lib/dataFigure'
+import { fileRows, sameTable, tableKey, type TableRef } from '@/lib/dataFigure'
 import '@/lib/dataFigureHost' // 注册宿主（开抽屉 / 刷新 / 打开并运行 / 项目可写性），见该文件头
 import { overviewKeyOf, useDataFigureStore } from '@/store/dataFigureStore'
 import { useProjectStore } from '@/store/projectStore'
+import { useDataBatchStore } from '@/store/dataBatchStore'
+import { DataBatchBar } from './DataBatchBar'
 import { DataList } from './DataList'
 
 /**
@@ -39,6 +41,20 @@ export function DataDrawer() {
     return out
   }, [headerRows, overviews, rows, selected])
 
+  // 多选（一次选多份、各画一张）：选了哪几份 / 每份的进度，状态按 tableKey 存在 `dataBatchStore`
+  const picked = useDataBatchStore((s) => s.selection)
+  const rowStates = useDataBatchStore((s) => s.rows)
+  const multi = useMemo(
+    () => ({
+      selected: new Set(picked.map(tableKey)),
+      rowStates,
+      onToggle: (ref: TableRef) => useDataBatchStore.getState().toggle(ref),
+      onRange: (ref: TableRef, visible: TableRef[]) => useDataBatchStore.getState().selectRange(ref, visible),
+      onClear: () => useDataBatchStore.getState().clearSelection(),
+    }),
+    [picked, rowStates],
+  )
+
   if (files.status === 'error' && !entries)
     return (
       <div className="p-3" data-studio-data>
@@ -69,7 +85,14 @@ export function DataDrawer() {
         rows={rows}
         selected={selected}
         overviews={listOverviews}
-        onSelect={(ref) => useDataFigureStore.getState().select(ref)}
+        multi={multi}
+        onSelect={(ref) => {
+          // 普通单击：开临时标签，并清掉多选（进行中不清）；它也是 Shift+点选一段的起点
+          const b = useDataBatchStore.getState()
+          b.clearSelection()
+          b.setAnchor(ref)
+          useDataFigureStore.getState().select(ref)
+        }}
         onFocusRow={(ref) => {
           // 临时标签激活着：方向键走到哪个文件，标签就换成哪个（像访达的快速查看）；出图中不动
           const st = useDataFigureStore.getState()
@@ -83,6 +106,7 @@ export function DataDrawer() {
           return true
         }}
       />
+      <DataBatchBar />
     </div>
   )
 }

@@ -1,14 +1,32 @@
-import { Fragment, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { Fragment, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { File, FileExclamationPoint, Folder, Layers2, LayoutGrid } from '@/components/ui/icons'
+import { Check, File, FileExclamationPoint, Folder, Layers2, LayoutGrid, Plus } from '@/components/ui/icons'
+import { ICON_SIZE } from '@/components/ui/Icon'
+import { Spinner } from '@/components/ui/Spinner'
 import { listRowClass, rowMetaClass } from '@/components/ui/listRow'
 import { MiddleEllipsis } from '@/components/ui/MiddleEllipsis'
 import { TreeBranch } from '@/components/ui/TreeBranch'
 import { TreeChevron, TreeCount, TreeIcon } from '@/components/ui/TreeRow'
 import { isTreeNavKey, treeKeyAction } from '@/components/ui/treeKeys'
 import { cn } from '@/lib/utils'
-import { sameTable, withOverview, type DataFileRow, type DataRow, type RowStatus, type TableRef } from '@/lib/dataFigure'
+import { sameTable, tableKey, withOverview, type DataFileRow, type DataRow, type RowStatus, type TableRef } from '@/lib/dataFigure'
 import type { AiDataOverview } from '@/lib/api'
+import { useFormatMessage } from '@/i18n/react'
+import type { UiMessage } from '@/i18n'
+
+/**
+ * 一次选多份、各画一张（ADR 0178 多选一节）：⌘ / Ctrl + 点加进 / 移出，Shift + 点选一段（按当前可见的表行顺序），
+ * ⌘ / Ctrl + 空格切换，Esc 清掉；表行悬停 / 聚焦时行尾那段灰字原位换成一枚「＋」（已选的是对勾），点它 = ⌘ 点。
+ * 只有状态是 `table` 的行（含 xlsx 的工作表行）能进多选，别的行 ⌘ / Shift 点没有反应。
+ * 行尾也说这一份此刻的出图进度（转圈 / 已画 / 没画出来，原因放 title）；状态按 `tableKey` 给，清单重读不丢。
+ */
+export interface DataListMulti {
+  selected: ReadonlySet<string>
+  rowStates: Record<string, { state: 'running' | 'done' | 'failed'; reason?: UiMessage | null }>
+  onToggle: (ref: TableRef) => void
+  onRange: (ref: TableRef, visible: TableRef[]) => void
+  onClear: () => void
+}
 
 /** 子文件夹默认展开的数据文件总数上限：总数少于它全展开，多了只展开顶层（上百个文件时不一屏铺满） */
 export const AUTO_EXPAND_BELOW = 30
@@ -61,6 +79,7 @@ export function DataList({
   onSelect,
   onFocusRow,
   onConfirm,
+  multi,
 }: {
   rows: DataFileRow[]
   selected: TableRef | null
@@ -71,8 +90,11 @@ export function DataList({
   onFocusRow?: (ref: TableRef) => void
   /** 在已经选中的文件行上按 Enter：= 卡片的主按钮；返回 true 表示处理了 */
   onConfirm?: (ref: TableRef) => boolean
+  /** 多选（不给 = 没有这个功能，行为与单选时逐字相同） */
+  multi?: DataListMulti
 }) {
   const { t } = useTranslation('ai')
+  const fm = useFormatMessage()
   const tree = useMemo(() => buildTree(rows), [rows])
   /** 用户点过的展开态；没点过的按默认规则 */
   const [toggled, setToggled] = useState<Record<string, boolean>>({})
@@ -106,9 +128,92 @@ export function DataList({
   }
   const iconOf = (s: RowStatus) => (s.kind === 'unreadable' ? FileExclamationPoint : s.kind === 'table' ? LayoutGrid : File)
 
+  /** 此刻可见的表行（展开着的文件夹 / 工作簿里、状态是 `table` 的），按画面顺序——Shift+点选一段按它 */
+  const visibleTables = (): TableRef[] => {
+    const out: TableRef[] = []
+    const walk = (nodes: Node[]) => {
+      for (const n of nodes) {
+        if (n.kind === 'dir') {
+          if (isOpen(n)) walk(n.children)
+        } else if (n.file.workbook) {
+          if (isOpen(n)) for (const sh of n.file.rows) if (statusOf(sh).kind === 'table') out.push(sh.ref)
+        } else {
+          const only = n.file.rows[0]
+          if (only && statusOf(only).kind === 'table') out.push(only.ref)
+        }
+      }
+    }
+    walk(tree)
+    return out
+  }
+  const isTable = (r: DataRow) => statusOf(r).kind === 'table'
+  /** 点一行：⌘ / Ctrl / Shift 是多选（不可选的行没有反应），其余是原来的单击 */
+  const clickRow = (e: MouseEvent, r: DataRow) => {
+    if (multi && (e.metaKey || e.ctrlKey || e.shiftKey)) {
+      if (!isTable(r)) return
+      if (e.shiftKey && !(e.metaKey || e.ctrlKey)) multi.onRange(r.ref, visibleTables())
+      else multi.onToggle(r.ref)
+      return
+    }
+    onSelect(r.ref)
+  }
+  /** 行尾：这一份的出图进度 > 已选的对勾 > 悬停 / 聚焦时的「＋」（原位替换灰字，同一格，不撑宽） */
+  const metaCell = (r: DataRow, text: string, on: boolean) => {
+    const key = tableKey(r.ref)
+    const rs = multi?.rowStates[key]
+    const cls = cn(rowMetaClass(on), 'shrink-0 pr-1')
+    if (rs?.state === 'running')
+      return (
+        <span className={cn(cls, 'flex items-center')} data-studio-row-state="running">
+          <Spinner size={ICON_SIZE.xs} />
+        </span>
+      )
+    if (rs?.state === 'done')
+      return (
+        <span className={cls} data-studio-row-state="done">
+          {t('dataFigureV2.batch.done')}
+        </span>
+      )
+    if (rs?.state === 'failed')
+      return (
+        <span className={cls} data-studio-row-state="failed" title={rs.reason ? fm(rs.reason) : undefined}>
+          {t('dataFigureV2.batch.failed')}
+        </span>
+      )
+    if (!multi || !isTable(r)) return <span className={cls}>{text}</span>
+    const picked = multi.selected.has(key)
+    return (
+      <span className={cn(cls, 'grid')}>
+        <span className={cn('col-start-1 row-start-1 text-right', picked ? 'invisible' : 'group-hover:invisible group-focus-visible:invisible')}>{text}</span>
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-hidden
+          data-studio-pick-toggle={picked ? 'on' : 'off'}
+          onClick={(e) => {
+            e.stopPropagation()
+            multi.onToggle(r.ref)
+          }}
+          className={cn(
+            'col-start-1 row-start-1 flex items-center justify-end text-ink-2 outline-none hover:text-ink',
+            picked ? 'visible' : 'invisible group-hover:visible group-focus-visible:visible',
+          )}
+        >
+          {picked ? <Check size={ICON_SIZE.xs} /> : <Plus size={ICON_SIZE.xs} />}
+        </button>
+      </span>
+    )
+  }
+
   /** 键盘：从 DOM 取当前可见行（收起中的子树 inert 不算）的层级与展开态，交给 `treeKeyAction`（图层树 / 元素树同一份） */
-  const onKeyDown = (e: KeyboardEvent<HTMLElement>, activate: () => void, toggleSelf?: (open: boolean) => void) => {
+  const onKeyDown = (e: KeyboardEvent<HTMLElement>, activate: () => void, toggleSelf?: (open: boolean) => void, pick?: () => void) => {
     if (e.target !== e.currentTarget) return
+    // ⌘ / Ctrl + 空格：把这一行加进 / 移出多选（只有表行传了 `pick`）
+    if (e.key === ' ' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault()
+      pick?.()
+      return
+    }
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
       activate()
@@ -220,23 +325,23 @@ export function DataList({
                     key={sh.ref.sheet}
                     role="treeitem"
                     aria-level={n.depth + 2}
-                    aria-selected={on}
+                    aria-selected={on || (multi?.selected.has(tableKey(sh.ref)) ?? false)}
                     tabIndex={tabIndexFor(on)}
                     data-studio-sheet
                     data-studio-nav
                     data-studio-level={n.depth + 1}
                     data-kind={s.kind}
                     title={`${sh.ref.sheet} · ${m.title}`}
-                    onClick={() => onSelect(sh.ref)}
+                    onClick={(e) => clickRow(e, sh)}
                     onFocus={(e) => e.target === e.currentTarget && onFocusRow?.(sh.ref)}
-                    onKeyDown={(e) => onKeyDown(e, () => (on && onConfirm?.(sh.ref)) || onSelect(sh.ref))}
-                    className={cn(rowShell(on), sst.className)}
+                    onKeyDown={(e) => onKeyDown(e, () => (on && onConfirm?.(sh.ref)) || onSelect(sh.ref), undefined, multi && s.kind === 'table' ? () => multi.onToggle(sh.ref) : undefined)}
+                    className={cn(rowShell(on || (multi?.selected.has(tableKey(sh.ref)) ?? false)), sst.className)}
                     style={{ paddingLeft: 8 + (n.depth + 1) * 12, ...sst.style }}
                   >
                     <TreeChevron />
                     <TreeIcon icon={LayoutGrid} />
                     <span className="min-w-0 flex-1 truncate">{sh.ref.sheet}</span>
-                    <span className={cn(rowMetaClass(on), 'shrink-0 pr-1')}>{m.text}</span>
+                    {metaCell(sh, m.text, on)}
                   </li>
                 )
               })}
@@ -254,29 +359,42 @@ export function DataList({
         key={key}
         role="treeitem"
         aria-level={n.depth + 1}
-        aria-selected={on}
+        aria-selected={on || (multi?.selected.has(tableKey(only.ref)) ?? false)}
         tabIndex={tabIndexFor(on)}
         data-studio-file
         data-studio-nav
         data-studio-level={n.depth}
         data-kind={s.kind}
         title={`${baseName(f.path)} · ${m.title}`}
-        onClick={() => onSelect(only.ref)}
+        onClick={(e) => clickRow(e, only)}
         onFocus={(e) => e.target === e.currentTarget && onFocusRow?.(only.ref)}
-        onKeyDown={(e) => onKeyDown(e, () => (on && onConfirm?.(only.ref)) || onSelect(only.ref))}
-        className={cn(rowShell(on), st.className)}
+        onKeyDown={(e) => onKeyDown(e, () => (on && onConfirm?.(only.ref)) || onSelect(only.ref), undefined, multi && s.kind === 'table' ? () => multi.onToggle(only.ref) : undefined)}
+        className={cn(rowShell(on || (multi?.selected.has(tableKey(only.ref)) ?? false)), st.className)}
         style={{ paddingLeft: 8 + n.depth * 12, ...st.style }}
       >
         <TreeChevron />
         <TreeIcon icon={iconOf(s)} />
         <MiddleEllipsis text={baseName(f.path)} tail={8} className={cn('min-w-0 flex-1', s.kind === 'unreadable' && 'text-ink-3')} />
-        <span className={cn(rowMetaClass(on), 'shrink-0 pr-1')}>{m.text}</span>
+        {metaCell(only, m.text, on)}
       </li>
     )
   }
 
   return (
-    <ul ref={nav} role="tree" aria-label={t('dataFigureV2.list.heading')} className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto pb-3">
+    <ul
+      ref={nav}
+      role="tree"
+      aria-multiselectable={multi ? true : undefined}
+      aria-label={t('dataFigureV2.list.heading')}
+      onKeyDown={(e) => {
+        // Esc 清掉多选
+        // （有多选时这一下 Esc 归它：别再冒到临时标签的「Esc 关标签」）
+        if (multi && e.key === 'Escape' && !e.defaultPrevented && multi.selected.size > 0) {
+          e.preventDefault()
+          multi.onClear()
+        }
+      }}
+      className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto pb-3">
       {tree.map((n, i) => renderNode(n, '', i))}
     </ul>
   )

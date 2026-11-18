@@ -58,6 +58,12 @@ export default interface Resources {
       "unconfirmedHint": "上一次的结果还没确认，请先在对话里查询结果。"
     },
     "dataFigureV2": {
+      "batch": {
+        "done": "已画",
+        "draw": "各画一张",
+        "failed": "没画出来",
+        "progress": "正在画 {{done}} / {{total}}"
+      },
       "candidate": {
         "bar_error": {
           "title": "柱 + 误差线",

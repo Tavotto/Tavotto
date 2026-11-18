@@ -186,6 +186,16 @@ id 是服务端登记的不透明串）、`POST /api/ai/data-figure/commit`（`{
 * **结局**：没落盘且项目 `writable === false`（或 `figures_dir_unusable`）是「换个文件夹」，其余「这次没画出来，数据没问题。」+「再试一次」；`mismatch` 留在临时标签里（脚本已落盘；Tavotto 不替用户删文件，写明脚本路径，桌面壳里给「在文件夹中显示」）；`unverifiable` / `unknown` / 缺字段（去重的回应）照样打开图，一句话走浮动通知（绝不写成已核对）；没画出来的行不再通知。`propose_session_expired` / `propose_data_changed` / `propose_candidate_unknown` 静默重新出候选、按 `title_code` 对号再提交一次，对不上就让用户看新的。一次点击一个 `client_request_id`，没收到结果的重试复用它。
 * **store 规矩**：项目代际（`clear()` 在 `resetForNewProject` 里调，在飞请求按 `epoch` 作废）、每类请求一个序号、请求带发起那一刻的项目；键是 `tableKey({path, sheet})`（项目相对路径 + 工作表名的结构化键），`data-*` 里不放文件名（诊断轨迹会记 data 属性）。
 
+## 修订（2026-11-18，用户决定）：一次选多份数据、各画一张（前端，`store/dataBatchStore.ts`）
+
+用户定死的：不要勾选框；每份数据只取一种画法；一次出多张图后都进素材库的卡片、**不自动打开任何一张、不自动拼排版**；画完不提示少画行；点「数据」只开抽屉。
+
+* **选法**（`DataList` 的 `multi`）：⌘ / Ctrl + 点加进 / 移出，Shift + 点选一段（按当前可见的表行顺序，起点是最近点的那一行），⌘ / Ctrl + 空格切换，Esc 清掉；表行悬停 / 聚焦时行尾灰字（`32 行`）在**同一格**里原位换成一枚「＋」（已选的是对勾），点它等于 ⌘ 点。只有状态是 `table` 的行（含 xlsx 的工作表行）能进多选，别的行 ⌘ / Shift 点没有反应。普通单击保持原样（开临时标签）并清掉多选。`aria-multiselectable` + `aria-selected`。
+* **动作**：多选 ≥ 2 份时抽屉底部出现一条（`DataBatchBar`）：主按钮「各画一张」+ 灰字份数；进行中按钮禁用、写「正在画 2 / 3」；有没画成的（少于 2 份时这一条也在）按钮是「再试一次」，只重做没成的；写不进文件夹时整批停下、按钮是「换个文件夹」。
+* **一份的做法**：`propose`（`render: "lazy"`，不带 `answers`；用户在单份流程里改过的表头行带 `header_rows`）→ 取第一张候选（**合同：推荐永远在第一项**，`ai_data_propose.item_to_dict(…, k == 0)`；它提交时渲染 / 核对不过回 404 `propose_candidate_unknown`，就依次试后面的）→ `commit` → `discard` 会话（后端同时至多 `MAX_SESSIONS = 6`）→ 刷新项目（`refreshProjectNow`，新脚本进素材清单，**不打开**）。不取缩略图。逐份**顺序**做，不并发：后端每次提交重算可用文件名，并发会抢同一个名字；单份出图与批量共用一把串行锁（`lib/dataCommitQueue.ts`，一条 promise 队列），任何时刻只有一个提交在飞。批量进行中用户仍可点别的文件看候选、切画布标签。
+* **状态**：批量有自己的一组（选了哪几份、每份的进行态、整批进度），不借单份流程的 `commitRid` / `drawingId` / `fresh`；每份的状态按 `tableKey` 存（清单重读时行对象会换，状态不能丢）；文件名不进 `data-*`。
+* **终态**：全部画成 → 清多选、左栏切到素材抽屉，不弹任何通知；部分 / 全部没画成 → 留在数据抽屉，画成的「已画」、没成的「没画出来」（原因句放 title：`nothing` 用 `dataFigureV2.reason.*`，数据与图对不上用 `result.mismatch`，后端给的错误用 `backendErrorMsg`）并保持选中；表没有可画的（`nothing` / 全是文字 / 表头没认准）算没画成；项目文件夹写不进（`figures_dir_unusable` / `common_module_conflict` / 项目只读）立刻停整批；中途切项目 / 关项目（`captureProjectEpoch` + store `epoch`）静默中止，已写出的就是普通脚本；脚本已落盘但数据与图对不上算没画成（脚本留着，Tavotto 不替用户删文件），核对没完成 / 没法逐项核对算画成、不弹提示；会话过期 / 数据变了静默重新出一次。
+
 ## 注入分析：Agent 能读整个文件，表里的文字能影响模型
 
 表里的文字（列名、单元格、工作表名）可以诱导模型，但**模型能交出的只有一份闭集配方**：未知键、未知取值、层数不对、`why` 含换行都在 `from_dict` 当场拒收；

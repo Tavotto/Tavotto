@@ -1,0 +1,3 @@
+## Data to figure: draw several data files at once (experimental, off by default)
+
+In the "Data" section of the left rail you can now select several data files with Cmd/Ctrl+click (Shift+click selects a range, or use the + button that appears at the end of a row on hover). With two or more files selected, "Draw one each" draws one figure per file using the recommended way to draw it. The new figures show up as cards in the asset library and none of them is opened for you, so you pick which one to edit. A file that can't be drawn is marked and can be retried on its own. Nothing changes while the experimental `ai.taf.enabled` switch is off.

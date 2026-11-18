@@ -685,6 +685,12 @@
       "from": "用 {{file}} 画的",
       "again": "换个画法",
       "undo": "撤销"
+    },
+    "batch": {
+      "draw": "各画一张",
+      "progress": "正在画 {{done}} / {{total}}",
+      "done": "已画",
+      "failed": "没画出来"
     }
   }
 }
