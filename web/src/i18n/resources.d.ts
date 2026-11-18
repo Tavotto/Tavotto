@@ -6804,6 +6804,7 @@ export default interface Resources {
           "rollback": "正在撤销刚才的改动",
           "run_command": "正在运行命令…",
           "select_environment": "正在切换环境",
+          "set_run_arguments": "正在填写运行参数",
           "switch_execution": "正在调整运行方式",
           "thePackages": "需要的包",
           "try_import": "正在尝试导入",

@@ -11170,7 +11170,7 @@ def _fix_remap_notifier(ctx: "ProjectCtx"):
     return notify
 
 
-def _fix_application_verification(ctx: "ProjectCtx", sess, *, desktop: bool) -> dict:
+def _fix_application_verification(ctx: "ProjectCtx", box: dict, *, desktop: bool) -> dict:
     """Bind repair verification to the same preparation session and run action API.
 
     These callbacks run off the request thread. The original desktop identity is
@@ -11179,13 +11179,15 @@ def _fix_application_verification(ctx: "ProjectCtx", sess, *, desktop: bool) -> 
     """
     from .engine import fixverification
 
+    # `box["sess"]` 是这次修复验证所用的准备会话；`set_run_arguments` 会把它换成带新参数的那一条（T03 运行配置）
+
     def current():
         if PROJECTS.get(ctx.id) is not ctx:
             raise engine_prepsession.SessionError(
                 "fix_project_closed", "The project was closed or reopened", 409
             )
-        found = engine_prepsession.SESSIONS.session(sess.session_id, ctx.id)
-        if found is not sess:
+        found = engine_prepsession.SESSIONS.session(box["sess"].session_id, ctx.id)
+        if found is not box["sess"]:
             raise engine_prepsession.SessionError(
                 "fix_session_changed", "Repair session changed", 409
             )
@@ -11197,20 +11199,20 @@ def _fix_application_verification(ctx: "ProjectCtx", sess, *, desktop: bool) -> 
             checked, _ = engine_prepsession.SESSIONS.check(
                 project_id=ctx.id,
                 project_root=str(ctx.path),
-                target=sess.target,
+                target=box["sess"].target,
                 force=True,
             )
-            if checked is not sess:
+            if checked is not box["sess"]:
                 raise engine_prepsession.SessionError(
                     "fix_session_changed", "Repair session changed", 409
                 )
-            return _session_report(ctx, sess)
+            return _session_report(ctx, box["sess"])
 
     def claim(action_id, revision):
         with bound_project(ctx):
             current()
             _, claimed, kind = engine_prepsession.SESSIONS.act(
-                sess.session_id,
+                box["sess"].session_id,
                 ctx.id,
                 action_id,
                 revision,
@@ -11222,27 +11224,27 @@ def _fix_application_verification(ctx: "ProjectCtx", sess, *, desktop: bool) -> 
 
     def owned(action_id):
         current()
-        if not sess.attempts or sess.attempts[-1].action_id != action_id:
+        if not box["sess"].attempts or box["sess"].attempts[-1].action_id != action_id:
             raise engine_prepsession.SessionError(
                 "fix_run_superseded", "Another run replaced this repair's run", 409
             )
 
     def read(action_id):
-        with bound_project(ctx), sess.lock:
+        with bound_project(ctx), box["sess"].lock:
             owned(action_id)
-            return _session_report(ctx, sess)
+            return _session_report(ctx, box["sess"])
 
     def stop(action_id):
-        with bound_project(ctx), sess.lock:
+        with bound_project(ctx), box["sess"].lock:
             owned(action_id)
-            report = _session_report(ctx, sess)
+            report = _session_report(ctx, box["sess"])
             action = next(
                 (a for a in report["actions"] if a["kind"] == engine_prepsession.ACTION_CANCEL),
                 None,
             )
             if action is not None:
                 engine_prepsession.SESSIONS.act(
-                    sess.session_id,
+                    box["sess"].session_id,
                     ctx.id,
                     action["id"],
                     report["config_revision"],
@@ -11260,7 +11262,7 @@ def _fix_application_verification(ctx: "ProjectCtx", sess, *, desktop: bool) -> 
                     cancel=cancel,
                     approve=approve,
                     check=check,
-                    selected_python=lambda: sess.plan.interpreter,
+                    selected_python=lambda: box["sess"].plan.interpreter,
                     claim=claim,
                     read=read,
                     stop=stop,
@@ -11280,8 +11282,37 @@ def _fix_application_verification(ctx: "ProjectCtx", sess, *, desktop: bool) -> 
             except engine_refresh.RefreshError:
                 pass
 
+    def run_arguments_changed(tokens):
+        # 同一个脚本目标，换成带这组参数的运行配置（空 = 不带参数）；拿（或建）那条准备会话，之后的验证都在它上面
+        with bound_project(ctx):
+            old = current()
+            if old.target.get("run") is not None and old.target["run"].sensitive:
+                # 双保险：工具层已拒绝；这里绝不把敏感配置换成一份非敏感的（会把留下的秘密写进磁盘）
+                raise engine_prepsession.SessionError(
+                    "run_arguments_sensitive",
+                    "Sensitive run arguments are not changed by repair",
+                    409,
+                )
+            script = old.target.get("script")
+            run = engine_runconfig.selection_for(ctx.path, script, list(tokens) or None)
+            target = {k: v for k, v in old.target.items() if k != "run"}
+            if run is not None:
+                target["run"] = run
+            new, _ = engine_prepsession.SESSIONS.check(
+                project_id=ctx.id, project_root=str(ctx.path), target=target, force=True
+            )
+            box["sess"] = new
+
     return {
         "application_runner": run,
+        "on_run_arguments_changed": run_arguments_changed,
+        # 敏感参数（用户标的）：值不交给修复会话（不进上下文、快照），AI 也不许改
+        "run_arguments": tuple(box["sess"].target["run"].argv)
+        if box["sess"].target.get("run") is not None and not box["sess"].target["run"].sensitive
+        else None,
+        "run_arguments_sensitive": bool(
+            box["sess"].target.get("run") is not None and box["sess"].target["run"].sensitive
+        ),
         "application_check": check,
         "on_workdir_changed": cwd_changed,
         # 「跳过这个文件夹」的名单变了（`ignore_import_folder` / 回滚）：同样要收掉这个项目的会话（ADR 0154）
@@ -11326,6 +11357,7 @@ def api_ai_fix():
     if os.path.isabs(script) or os.path.commonpath([root_real, cand]) != root_real:
         return _fix_error(engine_fixsession.FixError("fix_script_outside_project", 400))
     script_path = Path(cand) if os.path.isfile(cand) else None
+    fix_box = {"sess": sess}
     if conn is not None:
         model, redactor = engine_fixsession.build_model(conn)
         cli = None
@@ -11348,14 +11380,14 @@ def api_ai_fix():
             endpoint=(conn["provider_id"], conn["model"], conn["base_url"])
             if conn is not None
             else None,
-            report=lambda: _session_report(ctx, sess),
+            report=lambda: _session_report(ctx, fix_box["sess"]),
             redactor=redactor,
             audit=engine_fixsession.AuditLog(),
             script_path=script_path,
             locale=body.get("locale"),
             ctx_kwargs={
                 **_fix_session_env(sess),
-                **_fix_application_verification(ctx, sess, desktop=_desktop_initiated()),
+                **_fix_application_verification(ctx, fix_box, desktop=_desktop_initiated()),
                 "on_input_remap_changed": _fix_remap_notifier(ctx),
             },
         )

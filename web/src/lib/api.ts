@@ -3964,6 +3964,8 @@ export interface AiFixState {
   outcome: 'fixed' | 'not_fixed' | 'convert' | 'cancelled' | 'failed' | null
   /** 仅 `outcome === 'convert'`：要生成可编辑版本的脚本（项目相对路径）、画图用的位图库与报告里的原输出图（项目相对，可缺；ADR 0143 / 0149 §七） */
   handoff?: { kind: 'convert'; script: string; library: string; path: string | null }
+  /** 仅 `outcome === 'fixed'` 且 AI 改过运行参数：它定下的参数（填进脚本的「运行参数」再重跑验证；空数组 = 清掉） */
+  run_argv?: string[]
   summary: string
   /** 没修好、而最后的错误是「项目外文件夹读不了」（仅 Windows）：结果卡上「修复权限」的一次性不透明令牌（ADR 0153 修订）；没有就不出 */
   repair_token?: string

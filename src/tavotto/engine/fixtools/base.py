@@ -94,6 +94,15 @@ class FixContext:
     on_ignored_paths_changed: Callable[[], None] | None = None
     #: 登记的入口被 `fix_entry` 纠正后 `(脚本项目相对路径) -> None`：应用侧据此刷新项目（重载注册表、作废旧 worker）。None = 没有应用
     on_registry_changed: Callable[[str], None] | None = None
+    #: 换运行参数 `(argv 元组) -> None`（`set_run_arguments`）：应用侧把这次修复的验证运行换到带这组参数的准备会话上。
+    #: 空元组 = 不带参数。None = 没有应用（测试 / 无界面），工具如实报做不了
+    on_run_arguments_changed: Callable[[tuple], None] | None = None
+    #: 这次修复的验证运行此刻用的参数（会话开始时取自准备会话；`set_run_arguments` / 回滚更新）。None = 不带参数
+    run_arguments: tuple | None = None
+    #: 本会话里 `set_run_arguments` 是否改过参数（修好后界面据此把参数填进「运行参数」再重跑）
+    run_arguments_changed: bool = False
+    #: 准备会话的运行参数被用户标成敏感（密码 / 令牌）：值不进上下文、不进快照，AI 不许改（只有用户在「运行参数」里改）
+    run_arguments_sensitive: bool = False
     #: 环境 id → 叠加环境（`list_environments` 登记；`select_environment` 记住环境时要带上）
     environment_overlays: dict[str, dict] = field(default_factory=dict)
     #: 本次调用的元信息：`run_tool` 每次调用前清空，工具写 `approved_by`（"user"）与 `snapshot`（快照 id），审计读它
