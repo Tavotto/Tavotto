@@ -1325,9 +1325,11 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
       return {
         tone: 'stale',
         cold: false,
-        text: badge(NATIVE_BADGE[nativeState]),
-        // 参数配置变体（`runConfig`）不给：「打开并运行」沿用的是上次成功的配置，不一定是这一张的那份
-        ...(nativeState === 'offline' && rerunScript ? { rerun: rerunScript } : {}),
+        // 运行已结束且能重跑：角标就是「重新运行」四个字（整枚是按钮，用户拍板），不再另写一句状态。
+        // 参数配置变体（`runConfig`）不给按钮：「打开并运行」沿用的是上次成功的配置，不一定是这一张的那份——那时照旧说「运行已结束」
+        ...(nativeState === 'offline' && rerunScript
+          ? { text: '', rerun: rerunScript }
+          : { text: badge(NATIVE_BADGE[nativeState]) }),
       }
     }
     if (render?.stale) return { tone: 'stale', cold: false, text: badge('stale') }
@@ -1438,7 +1440,7 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
                 .getState()
                 .open(scriptTarget(shown.rerun!, { reuse: true }), { run: true })
             }}
-            className="pointer-events-auto -my-0.5 rounded-full px-1 underline underline-offset-2 outline-none hover:opacity-80 focus-visible:focus-ring"
+            className="pointer-events-auto -mx-1.5 -my-0.5 rounded-full px-1.5 py-0.5 outline-none hover:opacity-80 focus-visible:focus-ring"
           >
             {badge('nativeRerun')}
           </button>

@@ -155,13 +155,13 @@ describe('面板角标的优先级', () => {
     expect(text()).not.toContain('脚本已更新')
   })
 
-  it('会话结束 + 脚本已更新 → 显示"运行已结束"', () => {
+  it('会话结束 + 脚本已更新 → 显示"重新运行"', () => {
     // offline 同样是**阻塞性**的：这张图出自一条已经结束的会话，对象级编辑
     // 与权威导出都要重新跑原命令才回得来（`enginesession.resolve` 会拒）。
     // 所以它和 running 用同一条规则，不需要第二套理由。
     useNativeSessionStore.setState({ sessions: {} }) // 没有活会话，profile 仍是 native
     render()
-    expect(text()).toContain('运行已结束')
+    expect(text()).toContain('重新运行')
     expect(text()).not.toContain('脚本已更新')
   })
 
@@ -206,12 +206,21 @@ describe('运行已结束的图', () => {
       tracked: {},
     } as never)
 
-  it('409 native_session_offline 不算渲染失败：说「运行已结束」并给「重新运行」', () => {
+  it('409 native_session_offline 不算渲染失败：角标只有「重新运行」四个字', () => {
     failWith('native_session_offline')
     render()
-    expect(text()).toContain('运行已结束')
     expect(text()).not.toContain('渲染失败')
+    expect(host.querySelector('[data-panel-badge]')?.textContent).toBe('重新运行')
     expect(host.querySelector('[data-badge-rerun]')?.textContent).toBe('重新运行')
+  })
+
+  it('参数配置变体给不了按钮：照旧说「运行已结束」', () => {
+    failWith('native_session_offline')
+    const p = panel()
+    ;(p.source as { runConfig?: string }).runConfig = 'cfg-1'
+    act(() => root.render(<PanelView obj={p} />))
+    expect(text()).toContain('运行已结束')
+    expect(host.querySelector('[data-badge-rerun]')).toBeNull()
   })
 
   it('别的失败码照旧是「渲染失败」（负对照）', () => {
