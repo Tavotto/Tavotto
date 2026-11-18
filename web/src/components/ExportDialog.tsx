@@ -48,6 +48,7 @@ import {
   FileExclamationPoint,
   ImageOff,
   Info,
+  RefreshCw,
   TriangleAlert,
   X,
 } from "@/components/ui/icons";
@@ -357,6 +358,7 @@ export function ExportDialog() {
   /** 多图时左栏预览挑的那一项（"page" = 整版，否则是 figureId）；null = 跟着导出内容走。只换预览，不改导出内容 */
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [previewMode, setPreviewMode] = useState<ExportPreviewMode>("figure");
+  const [slotStep, setSlotStep] = useState(0);
   const parked = useRef<ParkedState | null>(null);
   const [withReport, setWithReport] = useState(
     () => readExportDefaults().withProof,
@@ -656,6 +658,7 @@ export function ExportDialog() {
     const snap = useDocumentStore.getState().doc;
     setPreviewId(null);
     setPreviewMode("figure");
+    setSlotStep(0);
     const prior = useExportStore.getState();
     setSettledJobId(prior.job && !prior.running ? prior.job.job_id : null);
     setRevealError(null);
@@ -1851,6 +1854,8 @@ export function ExportDialog() {
         signoffFormats={signoffFormats}
         previewMode={previewMode}
         onPreviewModeChange={setPreviewMode}
+        slotStep={slotStep}
+        onCycleSlot={() => setSlotStep((s) => s + 1)}
         profile={profile}
         specName={checkSpecName}
         onShow={showPreview}
@@ -2398,6 +2403,8 @@ function ExportPreviewPane({
   signoffFormats,
   previewMode,
   onPreviewModeChange,
+  slotStep,
+  onCycleSlot,
   profile,
   specName,
   onShow,
@@ -2422,6 +2429,8 @@ function ExportPreviewPane({
   signoffFormats?: string | null;
   previewMode: ExportPreviewMode;
   onPreviewModeChange: (mode: ExportPreviewMode) => void;
+  slotStep: number;
+  onCycleSlot: () => void;
   profile: PublicationProfile;
   specName: string;
   onShow: (id: string) => void;
@@ -2446,9 +2455,9 @@ function ExportPreviewPane({
   const manuscriptLayout = useMemo(
     () =>
       effectiveMode === "manuscript" && sizeW > 0 && sizeH > 0
-        ? computeManuscriptLayout([sizeW, sizeH], profile)
+        ? computeManuscriptLayout([sizeW, sizeH], profile, slotStep)
         : null,
-    [effectiveMode, sizeW, sizeH, profile],
+    [effectiveMode, sizeW, sizeH, profile, slotStep],
   );
   const flagged = (f: ExportableFigure) => !!f.panel && flaggedObjectIds.has(f.panel.id);
   const pageSize = fallbackCrop?.page ?? doc.page;
@@ -2536,14 +2545,14 @@ function ExportPreviewPane({
       <div
         data-export-preview-toolbar
         data-export-preview-mode={effectiveMode}
-        className="mb-2 flex items-center justify-between gap-2"
+        className="relative mb-2.5 flex items-center justify-center"
       >
         <Segmented<ExportPreviewMode>
           value={effectiveMode}
           onChange={onPreviewModeChange}
           ariaLabel={ex("previewModeLabel")}
           data-testid="export-preview-mode"
-          className="w-auto shrink-0"
+          className="grid w-44 shrink-0 grid-cols-2"
           items={[
             { value: "figure", label: ex("previewModeFigure") },
             {
@@ -2554,6 +2563,19 @@ function ExportPreviewPane({
             },
           ]}
         />
+        {manuscriptLayout && manuscriptLayout.placement !== "overflow" && (
+          <Button
+            variant="ghost"
+            size="sm"
+            data-export-manuscript-cycle
+            title={ex("previewLayoutCycleHint")}
+            onClick={onCycleSlot}
+            className="absolute right-0 gap-1 px-2 text-xs text-ink-3 hover:text-ink"
+          >
+            <RefreshCw size={ICON_SIZE.sm} aria-hidden />
+            <span>{ex("previewLayoutCycle")}</span>
+          </Button>
+        )}
       </div>
       <div
         className={cn(
@@ -2637,6 +2659,11 @@ function ExportPreviewPane({
           </span>
         )}
       </p>
+      {manuscriptLayout && (
+        <p data-export-manuscript-note className="mt-1 text-xs leading-relaxed text-ink-3">
+          {ex("previewLayoutSampleNote")}
+        </p>
+      )}
      </div>
     </div>
   );

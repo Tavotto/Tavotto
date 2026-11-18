@@ -1,75 +1,71 @@
 import { describe, expect, it } from 'vitest'
-import { computeManuscriptLayout } from './manuscriptPreview'
+import {
+  computeManuscriptLayout,
+  PX_PER_MM,
+  SINGLE_SLOT_VARIANTS,
+  SPAN_SLOT_VARIANTS,
+} from './manuscriptPreview'
 import { loadProfile, mergeJournalInto } from './profile'
 
 describe('computeManuscriptLayout', () => {
-  it('课题组规范（80 / 150 mm）下的 80 × 60 mm 单图：排入左上单栏，右栏从顶流式绕排', () => {
+  it('课题组规范（80 / 150 mm）下的 80 × 60 mm 单图：默认落右上单栏，并支持四档期刊常见单栏版位轮换', () => {
     const profile = loadProfile('lab-publication-v1')
-    const layout = computeManuscriptLayout([80, 60], profile)
+    const layout0 = computeManuscriptLayout([80, 60], profile, 0)
 
-    expect(layout.sheetW).toBe(210)
-    expect(layout.sheetH).toBe(297)
-    expect(layout.viewportW).toBe(210)
-    expect(layout.viewportH).toBe(297)
-    expect(layout.marginX).toBe(30)
-    expect(layout.textBlockW).toBe(150)
-    expect(layout.placement).toBe('single')
-    expect(layout.targetColumn.id).toBe('single')
-    expect(layout.targetColumn.w).toBe(80)
-    expect(layout.figX).toBe(30)
-    expect(layout.figW).toBe(80)
-    expect(layout.figH).toBe(60)
-    expect(layout.showSlotGuide).toBe(false)
-    expect(layout.hasExplicitColumns).toBe(true)
-    expect(layout.caption).not.toBeNull()
+    expect(PX_PER_MM).toBeCloseTo(96 / 25.4, 6)
+    expect(layout0.sheetW).toBe(210)
+    expect(layout0.sheetH).toBe(297)
+    expect(layout0.marginX).toBe(30)
+    expect(layout0.textBlockW).toBe(150)
+    expect(layout0.placement).toBe('single')
+    expect(layout0.slotVariant).toBe('top-right')
+    expect(layout0.targetColumn.id).toBe('single')
+    expect(layout0.slotW).toBe(80)
+    expect(layout0.oppositeColW).toBe(64)
+    expect(layout0.hasExplicitColumns).toBe(true)
+    expect(layout0.showCaption).toBe(true)
 
-    // 右栏从版芯顶部起步绕排，左栏在图注之后才开始
-    const rightTopLines = layout.bodyLines.filter(
-      (l) => l.x > layout.slotX + layout.slotW && l.y < layout.figY + layout.figH,
+    const cycled = SINGLE_SLOT_VARIANTS.map(
+      (_, i) => computeManuscriptLayout([80, 60], profile, i).slotVariant,
     )
-    const leftOverlappingLines = layout.bodyLines.filter(
-      (l) => l.x < layout.slotX + layout.slotW && l.y < layout.figY + layout.figH,
-    )
-    expect(rightTopLines.length).toBeGreaterThan(5)
-    expect(leftOverlappingLines).toHaveLength(0)
+    expect(cycled).toEqual(['top-right', 'mid-left', 'bottom-right', 'top-left'])
+    expect(computeManuscriptLayout([80, 60], profile, 1).leadLines).toBeGreaterThanOrEqual(4)
   })
 
-  it('课题组规范下的 150 × 100 mm 通栏图：跨双栏版芯顶置，下方双栏正文并排', () => {
+  it('课题组规范下的 150 × 100 mm 通栏图：支持顶置 / 版中嵌排 / 底置三档通栏版位轮换', () => {
     const profile = loadProfile('lab-publication-v1')
-    const layout = computeManuscriptLayout([150, 100], profile)
-
-    expect(layout.placement).toBe('span')
-    expect(layout.targetColumn.id).toBe('double')
-    expect(layout.figX).toBe(30)
-    expect(layout.figW).toBe(150)
-    expect(layout.showSlotGuide).toBe(false)
-    expect(layout.bodyLines.every((l) => l.y > layout.figY + layout.figH)).toBe(true)
+    const variants = SPAN_SLOT_VARIANTS.map(
+      (_, i) => computeManuscriptLayout([150, 100], profile, i).slotVariant,
+    )
+    expect(variants).toEqual(['top-span', 'mid-span', 'bottom-span'])
+    const mid = computeManuscriptLayout([150, 100], profile, 1)
+    expect(mid.placement).toBe('span')
+    expect(mid.leadLines).toBeGreaterThanOrEqual(4)
   })
 
-  it('介于单栏与双栏之间的尴尬图幅（115 × 80 mm）：跨栏居中并亮出栏位参考底衬', () => {
+  it('介于单栏与双栏之间的宽图（115 × 80 mm）：在纯白通栏版芯中水平居中，不附加灰块', () => {
     const profile = loadProfile('lab-publication-v1')
     const layout = computeManuscriptLayout([115, 80], profile)
 
     expect(layout.placement).toBe('span')
     expect(layout.slotW).toBe(150)
     expect(layout.figX).toBeCloseTo(30 + (150 - 115) / 2, 5)
-    expect(layout.showSlotGuide).toBe(true)
   })
 
-  it('Nature 双栏规格（89 / 183 mm）放入 80 × 60 mm 图：居中在 89 mm 左栏槽内并保持 5 mm 栏距', () => {
+  it('Nature 双栏规格（89 / 183 mm）放入 80 × 60 mm 图：保持 89 mm 栏宽与 5 mm 栏距', () => {
     const nature = mergeJournalInto(loadProfile('journal-base-v1'), {
       page_columns: [
         { id: 'single', label: { zh: '单栏', en: 'Single column' }, width_mm: 89, qualifier: 'max' },
         { id: 'double', label: { zh: '通栏', en: 'Double column' }, width_mm: 183, qualifier: 'max' },
       ],
     })
-    const layout = computeManuscriptLayout([80, 60], nature)
+    const layout = computeManuscriptLayout([80, 60], nature, 0)
 
     expect(layout.placement).toBe('single')
     expect(layout.marginX).toBeCloseTo(13.5, 5)
     expect(layout.slotW).toBe(89)
-    expect(layout.figX).toBeCloseTo(13.5 + (89 - 80) / 2, 5)
-    expect(layout.showSlotGuide).toBe(true)
+    expect(layout.gutterMm).toBeCloseTo(5, 5)
+    expect(layout.oppositeColW).toBeCloseTo(89, 5)
     expect(layout.hasExplicitColumns).toBe(true)
   })
 
@@ -86,6 +82,7 @@ describe('computeManuscriptLayout', () => {
     const layout = computeManuscriptLayout([250, 160], profile)
 
     expect(layout.placement).toBe('overflow')
+    expect(layout.slotVariant).toBe('overflow')
     expect(layout.widthOverflow).toBe(true)
     expect(layout.sheetW).toBe(210)
     expect(layout.viewportW).toBeGreaterThan(250)

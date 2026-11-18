@@ -4469,16 +4469,25 @@ describe('导出左栏「版面预览」（论文真尺寸入版预览）', () =
       }
     }
 
-    // 切到单张 80 × 60 mm 图：保持「版面预览」，自动排入左上单栏（80 mm）
+    // 切到单张 80 × 60 mm 图：保持「版面预览」，默认落右上单栏且可点「换位置」轮换版位，周围无灰块或定位角标，底部附示例说明
     await click(q('[data-export-preview-tab="Fig1.pdf"]')!)
     expect(q('[data-export-manuscript]')?.getAttribute('data-placement')).toBe('single')
+    expect(q('[data-export-manuscript]')?.getAttribute('data-slot-variant')).toBe('top-right')
+    expect(q('[data-export-manuscript-slot]')).toBeNull()
     expect(q('[data-export-preview-size]')?.textContent).toContain('80 × 60 mm · 默认规范 · 单栏 80 mm')
+    expect(q('[data-export-manuscript-note]')?.textContent).toContain('实际导出仅保存图表本身')
 
-    // 关闭并重开对话框：回到「原图」默认态
+    await click(q('[data-export-manuscript-cycle]')!)
+    expect(q('[data-export-manuscript]')?.getAttribute('data-slot-variant')).toBe('mid-left')
+    await click(q('[data-export-manuscript-cycle]')!)
+    expect(q('[data-export-manuscript]')?.getAttribute('data-slot-variant')).toBe('bottom-right')
+
+    // 关闭并重开对话框：回到「原图」默认态，示例说明随之收起
     await act(async () => useUiStore.getState().setExportOpen(false))
     await act(async () => useUiStore.getState().setExportOpen(true))
     expect(q('[data-export-preview-toolbar]')?.getAttribute('data-export-preview-mode')).toBe('figure')
     expect(q('[data-export-manuscript]')).toBeNull()
+    expect(q('[data-export-manuscript-note]')).toBeNull()
   })
 
   it('图幅超出版芯宽度时：标出越界虚线并在底栏如实提示超出版芯；期刊未规定栏宽时不冒充期刊栏宽', async () => {
