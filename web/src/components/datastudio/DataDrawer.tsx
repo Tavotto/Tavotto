@@ -11,7 +11,7 @@ import { useProjectStore } from '@/store/projectStore'
 import { useDataBatchStore } from '@/store/dataBatchStore'
 import { DrawerHeaderActions } from '../left/DrawerHeader'
 import { withOverview } from '@/lib/dataFigure'
-import { DataBatchBar } from './DataBatchBar'
+import { BATCH_BAR_RESERVE, DataBatchBar, useBatchBarVisible } from './DataBatchBar'
 import { DataList } from './DataList'
 
 /**
@@ -48,6 +48,7 @@ export function DataDrawer() {
   const rowStates = useDataBatchStore((s) => s.rows)
   const pickMode = useDataBatchStore((s) => s.pickMode)
   const running = useDataBatchStore((s) => s.running)
+  const barVisible = useBatchBarVisible()
   // 「选多份」按钮：至少有 2 份能画的表（状态是 table）才出现
   const tableCount = useMemo(() => rows.reduce((n, f) => n + f.rows.filter((r) => withOverview(r, listOverviews[r.ref.path]).kind === 'table').length, 0), [rows, listOverviews])
   const multi = useMemo(
@@ -92,7 +93,7 @@ export function DataDrawer() {
     )
   if (!entries) return <ProgressBar pct={null} label={t('dataFigureV2.working.reading')} className="m-3 w-40" />
   return (
-    <div data-studio-data className="flex min-h-0 flex-1 flex-col">
+    <div data-studio-data className="relative flex min-h-0 flex-1 flex-col">
       {tableCount >= 2 && (
         <DrawerHeaderActions>
           <Button
@@ -120,6 +121,7 @@ export function DataDrawer() {
         selected={selected}
         overviews={listOverviews}
         multi={multi}
+        bottomInset={barVisible ? BATCH_BAR_RESERVE : undefined}
         onSelect={(ref) => {
           // 多选态下不清选择；否则开临时标签，并清掉多选（进行中不清），它也是 Shift+点选一段的起点
           const b = useDataBatchStore.getState()

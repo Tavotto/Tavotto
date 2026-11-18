@@ -601,4 +601,26 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     expect(q('[data-studio-pick-mode]')).toBeNull()
     expect(useDataBatchStore.getState()).toMatchObject({ pickMode: false, selection: [] })
   })
+
+  it('批量那一条是浮条：绝对定位不占位；出现时清单容器加底部留白、行不动，消失后留白撤掉', async () => {
+    propose.mockResolvedValue(cands())
+    useDataBatchStore.getState().clear()
+    await start(<><DataDrawer /><DataDraft /></>)
+    const list = () => q('[role=tree]')!
+    const order = () => qa('[data-studio-file]').map((r) => r.textContent)
+    const before = order()
+    const pb0 = list().style.paddingBottom
+    expect(pb0).toBe('')
+    const cmd = (el: Element) => act(async () => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true })))
+    await cmd(qa('[data-studio-file]')[0]!)
+    await cmd(qa('[data-studio-file]')[2]!)
+    const bar = q('[data-studio-batch-bar]')!
+    expect(bar.className).toContain('absolute')
+    expect(list().contains(bar)).toBe(false) // 不在清单的流里
+    expect(list().style.paddingBottom).not.toBe('')
+    expect(order()).toEqual(before) // 行没动
+    await cmd(qa('[data-studio-file]')[2]!)
+    expect(q('[data-studio-batch-bar]')).toBeNull()
+    expect(list().style.paddingBottom).toBe('')
+  })
 })

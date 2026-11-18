@@ -82,12 +82,15 @@ export function DataList({
   onFocusRow,
   onConfirm,
   multi,
+  bottomInset,
 }: {
   rows: DataFileRow[]
   selected: TableRef | null
   /** 用户改过表头行后，这一行说重读后的行数（键 = 路径） */
   overviews: Record<string, AiDataOverview | undefined>
   onSelect: (ref: TableRef) => void
+  /** 浮在清单底部的东西（批量那一条）占的高度：只是滚动留白，加在滚动容器底部内边距上，不改变已有行的位置 */
+  bottomInset?: string
   /** 键盘移到某个文件行（↑↓ / Tab）：卡片开着时预览跟着换（像访达的快速查看） */
   onFocusRow?: (ref: TableRef) => void
   /** 在已经选中的文件行上按 Enter：= 卡片的主按钮；返回 true 表示处理了 */
@@ -401,6 +404,7 @@ export function DataList({
           multi.onClear()
         }
       }}
+      style={bottomInset ? { paddingBottom: bottomInset } : undefined}
       className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto pb-3">
       {tree.map((n, i) => renderNode(n, '', i))}
     </ul>
