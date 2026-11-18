@@ -192,6 +192,28 @@ describe('嵌套组', () => {
     expect(groupPathOf(cc)).toEqual([pa[0]])
   })
 
+  it('组内编辑里复制成员：副本仍留在正在编辑的组里；子组才换新 id（Codex 线程 4614452885）', async () => {
+    await seed(
+      [
+        rect('a', 0, { groupId: 'g1', groupPath: ['g0', 'g1'] }),
+        rect('b', 30, { groupId: 'g1', groupPath: ['g0', 'g1'] }),
+        rect('c', 60, { groupId: 'g0' }),
+      ],
+      [],
+    )
+    enterGroupAt('c')
+    useSelectionStore.getState().set(['c'])
+    duplicateSelected()
+    expect(groupPathOf(objs()[3])).toEqual(['g0'])
+    // 复制里面的子组：外层 g0 保留，g1 换新
+    useSelectionStore.getState().set(['a', 'b'])
+    duplicateSelected()
+    const [ca, cb] = objs().slice(4)
+    expect(groupPathOf(ca)[0]).toBe('g0')
+    expect(groupPathOf(ca)[1]).not.toBe('g1')
+    expect(groupPathOf(cb)).toEqual(groupPathOf(ca))
+  })
+
   it('旧构建改过 groupId（链对不上）：按一层组读，对象一个不丢', async () => {
     await seed([rect('a', 0, { groupId: 'gOld', groupPath: ['g0', 'g1'] }), rect('b', 30, { groupId: 'gOld' })])
     expect(groupMates('a')).toEqual(['a', 'b'])

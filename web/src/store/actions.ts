@@ -522,6 +522,7 @@ export function duplicateSelected() {
   const regroup = new Map<string, string>()
   const sources = doc().objects.filter((o) => ids.includes(o.id))
   const step = duplicateStep(sources)
+  const scope = isolationScope()
   const clones: CanvasObject[] = sources
     .map((o) => {
       const copy = structuredClone(o)
@@ -535,7 +536,10 @@ export function duplicateSelected() {
         else delete copy.rotationDeg
       }
       // 组要跟着复制成新的一份，否则副本会和原件粘成同一组（嵌套组整条链一起换）
-      remapGroupPath(copy, (g) => {
+      // 组内编辑里复制：正在编辑的那一层及其外层祖先原样保留（副本仍留在这个组里），只换它下面的子组
+      const keep = scope ? groupPathOf(copy).indexOf(scope) + 1 : 0
+      remapGroupPath(copy, (g, i) => {
+        if (i < keep) return g
         const next = regroup.get(g) ?? newId('g')
         regroup.set(g, next)
         return next
