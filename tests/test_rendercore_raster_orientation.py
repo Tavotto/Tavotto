@@ -252,3 +252,26 @@ def test_svg_embeds_an_upright_image(provider, tmp_path: Path, orientation):
     assert embedded.size == truth.size
     for name, (u, v) in CENTERS.items():
         assert _close(_at(embedded, u, v), _at(truth, u, v)), name
+
+
+# ================================================================ 物理尺寸：密度轴跟着摆正
+
+
+@pytest.mark.parametrize("orientation", [1, 6])
+def test_unequal_density_axes_follow_the_upright_pixels(tmp_path: Path, orientation):
+    """x≠y 密度的照片：宽高互换时密度的 x / y 也要换，否则原图毫米尺寸错（Codex #2015 P1）。
+    存储 1200×600、密度 (300, 150) → 物理上 101.6×101.6 mm，摆不摆正都是这个正方形。"""
+    from tavotto.engine import originalspec
+    from tavotto.rendercore import facade
+
+    exif = Image.Exif()
+    exif[0x0112] = orientation
+    path = tmp_path / "photo.jpg"
+    Image.new("RGB", (1200, 600), (120, 120, 120)).save(
+        path, "JPEG", dpi=(300, 150), exif=exif.tobytes()
+    )
+    probe = facade.probe_asset(path, "raster")
+    spec = originalspec.asset_spec(path, "raster", probe)
+    assert (spec["logical_w_mm"], spec["logical_h_mm"]) == (101.6, 101.6)
+    want_axes = (300.0, 150.0) if orientation == 1 else (150.0, 300.0)
+    assert originalspec.raster_dpi(path) == want_axes
