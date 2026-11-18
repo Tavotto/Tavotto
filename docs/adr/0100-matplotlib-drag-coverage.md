@@ -231,3 +231,35 @@ tight 布局下子图仍由 `PinnedTightLayoutEngine`（ADR 0042）钉住，不�
 看护：`tests/test_axes_layout_lines_drag.py`（数据 / 一边数据 / 数据 + 平移 / 子图框 / 图幅 /
 子图框 + 英寸八种线的判定；拖动落点、再画不漂、撤销回基线、不挤动子图与别的线；拖动与样式共存；
 constrained；一次性 worker 全量重放 == 热态）。修前 3 条红。
+
+## 修订（2026-11-18，续）：位置不是数据的集合与位图可拖
+
+接上一条（线）。同一类问题还在集合与位图上：`ax.scatter(..., transform=ax.transAxes)` 手画的图例点、
+`transAxes` 的线组 / 图形集合（`LineCollection` / `PatchCollection`）、`imshow(..., transform=ax.transAxes)`
+贴在子图框里的图片、`fig.add_artist(LineCollection(..., transform=fig.transFigure))`，全部 `draggable=False`。
+子图里的那几种**选中框还是整块子图**：`get_datalim(transData)` 对它们是空框，退回 tightbbox，点子图里
+任何地方都选中它们。
+
+裁决：
+
+- **同一条判据**（`manifest._layout_anchored_artist`，与线共用 `_layout_anchored_transform`）：落位用的那条
+  transform 是排版坐标才可拖。散点看 offset transform（路径 transform 是 marker 的像素尺，也不许经过数据）；
+  线组 / 图形集合 / 位图看自己的 transform。`ContourSet` 不拖（`clabel` 文字是另外的元素，不会跟着走）；
+  3D 与色条轴不拖；`FigureImage` 照旧不拖。图上的集合（没有 transData）也可拖——
+  `test_figure_level_artists` 里 `fig.artists_3` 随之从不可拖改成可拖。
+- **一把尺**：`pathgeom.layout_extent` 量落位（offsets 决定落位的量 offset 点，否则量路径顶点；位图用
+  window extent），manifest 的 `anchor` 与 setter 都只用它。集合的 `get_window_extent()` 在 transform 不含
+  transData 时是 ±inf，不能用。选中框用 `layout_ink_extent`：散点再算上 marker 自己的大小，单点散点
+  （手画图例点最常见的写法）不至于零面积退回整块子图。
+- **平移**：`overrides._set_translated_pos_frac`，与形状 / 线同一套（基准记在 `_mm_pos_bases`、英寸平移、
+  pin 表、布局引擎排版前放回原样）；散点平移 offset transform，其余平移 artist transform。
+  `("collection" | "linecoll" | "image", "pos_frac")` 三个键，导出修改后的 .py 列入不写（与线 / 形状同一结论）。
+- **位图的预览组**：matplotlib 的 SVG 后端不给 `<image>` 写 gid，矢量后端还会把同一子图里相邻的位图合成一张、
+  不调各自的 draw——拖动时前端找不到要平移的 `<g>`。可拖的位图包一层 SVG 组并退出合成
+  （`manifest._own_svg_image`）：画面相同，矢量文件里是两张图而不是合成的一张；Agg（PNG）本来就不合成。
+  可拖的位图的几何编辑不再代理回宿主子图（`geom_gid`）——它不铺满子图。
+
+看护：`tests/test_axes_layout_collections_drag.py`（判定；初始位置等于按子图框独立算的值；拖动后**画出来的
+几何**外接框 / 位图框整体走同一位移；再画不漂；撤销回基线；不挤动子图与别的元素；拖出子图框仍可选中；
+与样式共存；constrained；全量重放 == 热态），浏览器腿 `web/e2e/drag-coverage.spec.ts` 加散点与位图两格。
+
