@@ -102,6 +102,7 @@ from overrides import (
     annotation_arrow_owner,
     annotation_text_draggable,
     artist_identity,
+    aspect_text,
     cjk_fallback_candidates,
     collection_caps,
     collection_edge_rgba,
@@ -844,6 +845,7 @@ def instrument(state: FigState) -> None:
             label,
             position_locked=position_locked,
             limits_slaved=secondary,
+            colorbar_owned=ax in cbar_of_ax,
             inset_of=(gid_of_ax.get(parent_of.get(id(ax))) if is_child and not secondary else None),
             # 寄生轴的 `set_visible(False)` 同样是个死开关：宿主的 draw 无条件
             # 把 `ax.get_children()` 接过去画，**从不看寄生轴自己的 visible**
@@ -4328,12 +4330,18 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
 
     两条标记的**理由不同**，所以是两个字段而不是一个「这是子 axes」：
     插图的 xlim / scale 是真能改的，只有落位不能。
+
+    * `colorbar_owned` —— 色条轴：范围、刻度、外框归 `Colorbar` 管（色条元素的 vmin / vmax /
+      orientation / 刻度字号 / outline_*）。实测（#2005）这根轴上其余的 axes 字段几乎全是死开关：
+      spines 被色条藏起来、外框是另一条 `outline`，网格、底色被色块盖住；`invert_x`、短轴那侧的
+      刻度开关、`grid_x` 读回来就不是写进去的值；长轴 `xscale` / `aspect` 撤销后刻度回不到原样；
+      长轴的 `ylim` / `yscale` 改得动，却是在色标与数据的对应关系之外另开一条通道。只留落位与显隐
+      ——界面选中色条轴本来就换成色条元素（`ElementInspector`），这里与它对齐，MCP / 预检 / 样式
+      预设也就不会把一根色条轴当子图去「补全边框」。
     """
     flags = el or {}
-    x0, x1 = ax.get_xlim()
-    y0, y1 = ax.get_ylim()
-    aspect = ax.get_aspect()
-    fields = [
+    # 落位与显隐：色条轴也只留这两条
+    frame = [
         *(
             []
             if flags.get("position_locked")
@@ -4356,6 +4364,13 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
             if flags.get("visible_locked")
             else [{"prop": "visible", "type": "bool", "value": bool(ax.get_visible())}]
         ),
+    ]
+    if flags.get("colorbar_owned"):
+        return frame
+    x0, x1 = ax.get_xlim()
+    y0, y1 = ax.get_ylim()
+    fields = [
+        *frame,
         *(
             []
             if flags.get("limits_slaved")
@@ -4378,14 +4393,14 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
                     "prop": "xscale",
                     "type": "enum",
                     "value": str(ax.get_xscale()),
-                    "options": scale_options(ax.get_xscale()),
+                    "options": scale_options(ax.get_xscale(), ax, "x"),
                     "group": "数据范围",
                 },
                 {
                     "prop": "yscale",
                     "type": "enum",
                     "value": str(ax.get_yscale()),
-                    "options": scale_options(ax.get_yscale()),
+                    "options": scale_options(ax.get_yscale(), ax, "y"),
                     "group": "数据范围",
                 },
                 {
@@ -4403,7 +4418,7 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
                 {
                     "prop": "aspect",
                     "type": "text",
-                    "value": aspect if isinstance(aspect, str) else str(round(float(aspect), 3)),
+                    "value": aspect_text(ax),
                     "group": "数据范围",
                 },
             ]

@@ -69,9 +69,9 @@ ACL 之外 Rust 端再查一道（`rescue::decide`）：窗口 label 必须是 `
   不在闭集里的值写 `unknown`——**自由文本没有任何路径进包**。locate 阶段失败时 `failure.install_files` 记 `sidecar_dir` / `internal_dir` / `exe` 三个布尔值
   （资源目录拿不到整体为 `null`），区分「exe 被隔离」与「安装不完整」；非 locate 失败为 `null`。launch 阶段 spawn 失败时 `failure.spawn_error`
   记系统错误的类别（闭集 `rescue::SPAWN_ERRORS`：`access_denied` / `virus_detected` / `blocked_by_policy` / `bad_executable` / `file_in_use` / `not_found` / `other`，
-  由 `rescue::spawn_error_kind` 按平台错误号归类；不记错误号以外的任何原文），其余为 `null`。握手超时时 `failure.startup_phase` 记 sidecar 卡在启动的哪一步（闭集 `sidecar::startup_phase::PHASES`：
+  由 `rescue::spawn_error_kind` 按平台错误号归类；不记错误号以外的任何原文），其余为 `null`。握手超时与握手前提前退出（`sidecar_exited`，TVD-MHQJ 2026-11-18；判据 `rescue::startup_phase_applies`）时 `failure.startup_phase` 记 sidecar 卡在 / 崩在启动的哪一步（闭集 `sidecar::startup_phase::PHASES`：
   `interpreter` / `imports_done` / `housekeeping` / `pdf_backend` / `project_open` / `serving`，加 `none` = 本次启动没留下任何标记，多半是解释器根本没跑起来、杀软在扫 / 拦）：
-  sidecar 往 fd 2（= `sidecar.log`）写独占一行的 `TAVOTTO_STARTUP_PHASE=<阶段>`，壳 spawn 前记下日志长度，超时后只读**本次新增**的末尾至多 64 KiB、取最后一个合法标记；
+  sidecar 往 fd 2（= `sidecar.log`）写独占一行的 `TAVOTTO_STARTUP_PHASE=<阶段>`，壳 spawn 前记下日志长度，超时或发现退出后只读**本次新增**的末尾至多 64 KiB、取最后一个合法标记；
   其余失败码为 `null`，闭集外的值归 `none`。error.html 的 `msg` / `log` 只显示、不进任何 invoke 参数；
   不读项目目录、不依赖 Python；stderr、日志路径、nonce、token、环境变量、堆栈都不在。
 * **协议**：与引擎 `diagsend.py` 同一套外层协议——`init`（`client_request_id` = 每次新生成的 UUIDv4）→ multipart 上传（字段按服务端顺序、文件字段最后）→ `complete`

@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import base64
+import difflib
 import hashlib
 import importlib
 import inspect
@@ -377,6 +378,103 @@ def list_journals(query: str | None = None) -> dict:
         loaded = set(remote.loaded_ids())
         for item in out["journals"]:
             item["downloaded"] = item["id"] in loaded
+    return out
+
+
+#: 宽松解析的候选上限（歧义 / 未命中都不超过它，别把整本目录倒给 Agent）
+JOURNAL_CANDIDATE_LIMIT = 8
+_JOURNAL_KEY_DROP = re.compile(r"[\W_]+", re.UNICODE)
+
+
+def _journal_key(text: object) -> str:
+    """宽松比较的归一：NFKC、小写、去掉空白与标点（保留字母数字与 CJK）。"""
+    return _JOURNAL_KEY_DROP.sub("", unicodedata.normalize("NFKC", str(text)).lower())
+
+
+def _journal_names(item: dict) -> list[str]:
+    return [item["id"], item["label"], *item.get("aliases", [])]
+
+
+def resolve_journal_id(raw: object) -> tuple[object, dict | None]:
+    """宽松期刊参数（ADR 0192 §4）：id / 全名 / 别名（大小写、空格、标点不敏感）→ `(期刊 id, journal_resolved)`。
+
+    目录就是 `list_journals` 读的那份（引擎 `search_journals` 的种子 + 缓存索引），这里不抄第二份期刊表。
+    精确 id 原样放行（`journal_resolved` 为 None，旧行为一字不变）；两档：先归一后与 id / 名称 / 别名**整串相等**，
+    再归一后**子串**命中（出版社不参与）。唯一命中就用；多个 = `journal_ambiguous`（候选 ≤ 8）；
+    没有 = `journal_unknown`（最接近的候选）。非字符串 / 空串 / 总开关关着 / 旧引擎原样放行，交给原有的报错。
+    `journal_ambiguous` / `journal_unknown` 的 `next` 在 `nextstep` 里带候选（`docs/rules/plugin/server-core-and-roots.md`）。
+    """
+    journals = _journal_agent_module()
+    if not isinstance(raw, str) or not raw.strip() or journals is None:
+        return raw, None
+    key = _journal_key(raw)
+    remote = _journal_remote()
+    # 先只看本机（种子 + 已缓存索引，不联网）：精确 id 与唯一命中不必等同步，断网也不多等一次超时
+    try:
+        cached = remote.load_cached() if remote is not None else None
+        local = journals.search_journals(None, cached.catalog if cached else None)["journals"]
+    except Exception:  # noqa: BLE001 — 本机这一档只是捷径，读不出来就走下面的同步路径
+        local = []
+    if any(item["id"] == raw for item in local):
+        return raw, None
+    if not key:
+        return raw, None
+    found = _journal_hits(key, local)
+    if len(found) == 1:
+        return found[0]["id"], {"from": raw, "id": found[0]["id"]}
+    items = list_journals()["journals"]  # 本机没唯一命中，再同步一次（节流、不计数）
+    if any(item["id"] == raw for item in items):
+        return raw, None
+    found = _journal_hits(key, items)
+    if len(found) == 1:
+        return found[0]["id"], {"from": raw, "id": found[0]["id"]}
+    if not found and remote is not None and not remote.disabled() and remote.load_cached() is None:
+        # 远程目录取不到（断网 / 服务不可用）：不能断言「库里没有」，原样交给 journal_selection，
+        # 由 agent_resolve 报 journal_offline 让用户联网再试
+        return raw, None
+    if found:
+        raise BridgeError(
+            f"{raw!r} 对应多本期刊，请从候选里选一个 id 再调（不要猜）。",
+            code="journal_ambiguous",
+            journal=raw,
+            candidates=_journal_candidates(found),
+        )
+    near = [i for i in items if key in _journal_key(i.get("publisher", ""))]
+    raise BridgeError(
+        f"期刊库里没有 {raw!r}；用 tavotto_list_journals 查，或从候选里选。不要凭记忆编这本期刊的规范。",
+        code="journal_unknown",
+        journal=raw,
+        candidates=_journal_candidates(near or _journal_close_matches(key, items)),
+    )
+
+
+def _journal_hits(key: str, items: list[dict]) -> list[dict]:
+    """两档：归一后与 id / 名称 / 别名整串相等；没有再看子串。"""
+
+    def hits(match) -> list[dict]:
+        return [
+            item
+            for item in items
+            if any((k := _journal_key(n)) and match(k) for n in _journal_names(item))
+        ]
+
+    return hits(lambda k: k == key) or hits(lambda k: key in k)
+
+
+def _journal_candidates(items: list[dict]) -> list[dict]:
+    return [{"id": i["id"], "label": i["label"]} for i in items[:JOURNAL_CANDIDATE_LIMIT]]
+
+
+def _journal_close_matches(key: str, items: list[dict]) -> list[dict]:
+    keyed: dict[str, dict] = {}
+    for item in items:
+        for name in _journal_names(item):
+            keyed.setdefault(_journal_key(name), item)
+    close = difflib.get_close_matches(key, list(keyed), n=JOURNAL_CANDIDATE_LIMIT, cutoff=0.5)
+    out: list[dict] = []
+    for k in close:
+        if keyed[k] not in out:
+            out.append(keyed[k])
     return out
 
 

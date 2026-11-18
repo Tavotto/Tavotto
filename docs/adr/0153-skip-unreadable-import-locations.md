@@ -116,3 +116,8 @@ AI 修复：`fixsession.SYSTEM_PROMPT` 的 3g 写明——装进 Tavotto 受管�
 `JointPlan.deferred_unverified`（检查项的来源事实里也有，诊断可见），先跑一次：成功 → 没有卡；读不了 → 修复权限卡；运行时真的
 `ModuleNotFoundError`（`extra_imports`）→ 不再延后，走原来的确认包名。curated 里的模块（pandas、tzdata）与不改 `sys.path` 的脚本一字不变。
 
+**补记 2026-11-18（TVD-VQ8H）**：「没有可信映射」按纯粹的表外名判，**不再连带要求目标环境的静态索引读全**。以前延后集合就是
+「可预填包名」的集合，后者还要求索引读全（`_specifiable` 的 `index_incomplete`）；用户自配的 Windows Python 的 site 层只要有一个
+未建模的 `.pth` 钩子，延后就失效——脚本向上找目录加进 `sys.path` 的本地 `figure_style` 每次都弹「有 1 个库的来源还没法确定」、
+要点「仍然运行」。索引读不全只影响预填（照旧不预填），不影响「先跑一次」：读不全时「没查到」更不等于「没装」。
+
