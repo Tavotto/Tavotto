@@ -15,6 +15,16 @@ export interface Candidate extends AiDataProposeItem {
   thumb: string
 }
 
+/**
+ * 一张候选的身份：`title_code` + `variant`（kind；`split` 还要比 `column`）。合并作图成对的两张 `title_code` / `why_code` 故意相同，
+ * 光比 `title_code` 会把「只按文件比较」认成「再分开」。会话过期 / 数据变了、刷新候选后按画法找回「原来点的那张」时只许用它；
+ * 单份流程没有 `variant`，与只比 `title_code` 等价。
+ */
+export function candidateIdentity(c: Pick<AiDataProposeItem, 'title_code' | 'variant'>): string {
+  const v = c.variant
+  return JSON.stringify([c.title_code, v?.kind ?? null, v?.kind === 'split' ? v.column : null])
+}
+
 /** 响应里的候选 → 界面用的候选（地址钉在发起那一刻的项目上；就绪状态在 store 里按张记） */
 export function candidatesFromResponse(items: AiDataProposeItem[], pj: string | null): Candidate[] {
   return items.map((it) => ({ ...it, thumb: aiDataThumbnailUrl(it.thumbnail_url, pj) }))

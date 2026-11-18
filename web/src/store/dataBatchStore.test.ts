@@ -830,3 +830,69 @@ describe('同一请求号重发时原任务还在处理中（Codex 第二轮 P2�
     expect(open).toHaveBeenCalledWith('tavotto_figures/z.py', expect.any(Function))
   })
 })
+
+describe('会话过期后按身份找回原来点的那张（Codex 第三轮 P1）', () => {
+  type Item = ReturnType<typeof item> & { variant: { kind: 'split'; column: string } | { kind: 'by_file' } }
+  const pair = (prefix: string, kinds: ('split' | 'by_file')[]): Item[] =>
+    kinds.map((k, i) => ({
+      ...item(`${prefix}${i}`, i === 0),
+      title_code: 'line_band',
+      why_code: 'line_band',
+      variant: k === 'split' ? { kind: 'split', column: 'group' } : { kind: 'by_file' },
+    }))
+  const asResponse = (session: string, items: Item[]): AiDataProposeResponse => ({ kind: 'candidates', session, dropped: [], render: 'lazy', items })
+  const setup = () => {
+    const old = pair('o', ['split', 'by_file'])
+    useDataFigureStore.setState({
+      selected: ref('a'),
+      group: [ref('a'), ref('b')],
+      phase: 'ready',
+      session: 'OLD',
+      candidates: old.map((c) => ({ ...c, thumb: `/t/${c.id}` })),
+      thumbs: Object.fromEntries(old.map((c) => [c.id, 'ready' as const])),
+      draftOpen: true,
+      draftActive: true,
+    })
+  }
+  const f = () => useDataFigureStore.getState()
+
+  it('成对候选里点第二张（by_file）→ 会话过期 → 刷新 → 提交的是新一批里 by_file 那张，不是第一张', async () => {
+    setup()
+    commit.mockRejectedValueOnce(apiError(409, 'propose_session_expired')).mockResolvedValueOnce({ ...ok(), script: 'tavotto_figures/g.py' })
+    propose.mockResolvedValueOnce(asResponse('NEW', pair('n', ['split', 'by_file'])))
+    await f().draw('o1')
+    await flush()
+    expect(commit.mock.calls.map((c) => c[0].id)).toEqual(['o1', 'n1'])
+  })
+
+  it('刷新后那一张不在了（只剩 split）→ 不自动提交，回到候选网格让用户重选', async () => {
+    setup()
+    commit.mockRejectedValueOnce(apiError(409, 'propose_session_expired'))
+    propose.mockResolvedValueOnce(asResponse('NEW', pair('n', ['split'])))
+    await f().draw('o1')
+    await flush()
+    expect(commit).toHaveBeenCalledTimes(1)
+    expect(f()).toMatchObject({ phase: 'ready', drawingId: null, session: 'NEW' })
+    expect(f().candidates.map((c) => c.id)).toEqual(['n0'])
+  })
+
+  it('split 还要比列名：列名变了的 split 不算同一张', async () => {
+    setup()
+    commit.mockRejectedValueOnce(apiError(409, 'propose_session_expired'))
+    const other = pair('n', ['split', 'by_file']).map((c) => (c.variant?.kind === 'split' ? { ...c, variant: { kind: 'split' as const, column: 'other' } } : c))
+    propose.mockResolvedValueOnce(asResponse('NEW', other.slice(0, 1)))
+    await f().draw('o0')
+    await flush()
+    expect(commit).toHaveBeenCalledTimes(1)
+  })
+
+  it('单份流程（没有 variant）与只比 title_code 等价：过期后仍按画法接着画', async () => {
+    const old = [item('o0', true), { ...item('o1'), title_code: 'scatter_fit' }]
+    useDataFigureStore.setState({ selected: ref('a'), group: null, phase: 'ready', session: 'OLD', candidates: old.map((c) => ({ ...c, thumb: '/t' })), thumbs: { o0: 'ready', o1: 'ready' }, draftOpen: true, draftActive: true })
+    commit.mockRejectedValueOnce(apiError(409, 'propose_session_expired')).mockResolvedValueOnce(ok())
+    propose.mockResolvedValueOnce({ kind: 'candidates', session: 'NEW', dropped: [], render: 'lazy', items: [item('n0', true), { ...item('n1'), title_code: 'scatter_fit' }] })
+    await f().draw('o1')
+    await flush()
+    expect(commit.mock.calls.map((c) => c[0].id)).toEqual(['o1', 'n1'])
+  })
+})

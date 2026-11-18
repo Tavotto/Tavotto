@@ -16,7 +16,7 @@ import { setCanvasCovered } from '@/store/canvasCover'
 import { runExclusive } from '@/lib/dataCommitQueue'
 import { isCommitInProgress, pollCommit } from '@/lib/dataCommitPoll'
 import { currentProjectId } from '@/lib/session'
-import { candidatesFromResponse, headerRowFromResponse, mixedFromResponse, rolesFromResponse, sourcesFromResponse, unitsRowFromResponse, type Candidate, type GroupSource, type ColumnRoles, type MixedColumn, type ThumbState } from '@/lib/dataFigureAdapter'
+import { candidateIdentity, candidatesFromResponse, headerRowFromResponse, mixedFromResponse, rolesFromResponse, sourcesFromResponse, unitsRowFromResponse, type Candidate, type GroupSource, type ColumnRoles, type MixedColumn, type ThumbState } from '@/lib/dataFigureAdapter'
 import { fileRows, hasNumericColumn, isStaleProposeCode, sameTable, tableKey, type CellMode, type TableRef } from '@/lib/dataFigure'
 import { msg, type UiMessage } from '@/i18n'
 
@@ -511,7 +511,8 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         await propose(cap.still, cap.pj)
         if (!cap.still()) return
         const sid = get().session
-        const same = get().candidates.find((i) => wanted && i.title_code === wanted.title_code)
+        // 身份完全相同（画法 + 合并作图的 variant）才接着画；找不到就不自动提交，让用户看新的候选重选
+        const same = wanted ? get().candidates.find((i) => candidateIdentity(i) === candidateIdentity(wanted)) : undefined
         if (sid && same) await commit(sid, get().candidates, same.id, true)
         return
       }
