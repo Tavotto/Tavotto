@@ -5,12 +5,13 @@ import {
   aiDataFigureDiscard,
   aiDataFigurePropose,
   backendErrorMsg,
+  isDefiniteRunFailure,
+  type AiDataCommitResult,
   type AiDataProposeResponse,
 } from '@/lib/api'
 import { runExclusive } from '@/lib/dataCommitQueue'
 import { KNOWN_NOTHING_REASONS, MAX_MERGE_TABLES, isStaleProposeCode, sameTable, tableKey, type TableRef } from '@/lib/dataFigure'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
-import { currentProjectId } from '@/lib/session'
 import { msg, type UiMessage } from '@/i18n'
 import { useDataFigureStore } from '@/store/dataFigureStore'
 
@@ -108,9 +109,52 @@ const initial = {
   stopRequested: false,
 }
 
-/** 一份表：出候选 → 提交第一张（它渲染不出来就依次试后面的）→ 放弃会话。不打开。 */
+/**
+ * 提交结果不确定（断网 / 网关错：后端可能已经写出了脚本）的那一行：留着它的会话与请求号（按 `tableKey` 存），
+ * 「重试」先用**同一个**请求号重发这一次提交——后端按请求号去重，回的是同一份结果，不会多画出一份（同单份流程的 `commitRid`）。
+ * 只有后端明确拒绝（`isDefiniteRunFailure`）才作废请求号、重新出候选。会话已经过期（后端 404 / 409，去重表也不在了）时也只能重新出，接受。
+ */
+const pendingCommits = new Map<string, { session: string; id: string; rid: string; pj: string | null }>()
+
+/** 一次提交的结果 → 这一份的结局 */
+function outcomeOf(done: AiDataCommitResult): One {
+  if (!done.script || !done.stem) {
+    // 没落盘：写不进文件夹是项目级的事实（停整批），其余算这一份没画成
+    const unwritable = done.reason_code === 'figures_dir_unusable' || host.projectWritable() === false
+    return { ok: false, reason: null, unwritable }
+  }
+  // 脚本已经落盘（普通脚本，留着）但数据与图对不上：这一份算没画成，原因照单份流程那句
+  if (done.data_check === 'mismatch' || done.task?.outcome === 'failed') return { ok: false, reason: msg('dataFigureV2.result.mismatch', undefined, 'ai') }
+  return { ok: true, script: done.script }
+}
+
+/** 一份表：（上次提交结果不确定就先用同一个请求号重发）出候选 → 提交第一张（它渲染不出来就依次试后面的）→ 放弃会话。不打开。 */
 async function drawOne(ref: TableRef, still: () => boolean, pj: string | null): Promise<One> {
+  // 排队的回调轮到时先核一遍：这期间换过项目就什么都不发（A 的相对路径不能拿到 B 里去）
+  if (!still()) return { ok: false, reason: null }
+  const key = tableKey(ref)
   const headers = useDataFigureStore.getState().headerRows
+  const pend = pendingCommits.get(key)
+  if (pend && pend.pj === pj) {
+    try {
+      const done = await aiDataFigureCommit({ session: pend.session, id: pend.id, client_request_id: pend.rid }, pj)
+      if (!still()) return { ok: false, reason: null }
+      pendingCommits.delete(key)
+      void aiDataFigureDiscard(pend.session, pj).catch(() => undefined)
+      return outcomeOf(done)
+    } catch (e) {
+      if (!still()) return { ok: false, reason: null }
+      // 还是没拿到结果：原样留着，下次重试再用这个请求号
+      if (!isDefiniteRunFailure(e)) return { ok: false, reason: reasonOf(e) }
+      // 后端明确拒绝（含会话 / 备选已过期、去重表也不在了）：请求号作废，下面重新出候选；写不进文件夹是项目级的，不再重来
+      pendingCommits.delete(key)
+      void aiDataFigureDiscard(pend.session, pj).catch(() => undefined)
+      const code = codeOf(e)
+      if (code === 'figures_dir_unusable' || code === 'common_module_conflict') return { ok: false, reason: reasonOf(e), unwritable: true }
+    }
+  } else if (pend) {
+    pendingCommits.delete(key)
+  }
   let retried = false
   for (;;) {
     let res: AiDataProposeResponse
@@ -129,23 +173,26 @@ async function drawOne(ref: TableRef, still: () => boolean, pj: string | null): 
     }
     if (res.kind !== 'candidates' || res.items.length === 0) return { ok: false, reason: null }
     const session = res.session
+    let keep = false // 结果不确定：会话留着给「重试」
     try {
       for (const item of res.items) {
         if (!still()) return { ok: false, reason: null }
+        const rid = newRid()
         try {
-          const done = await aiDataFigureCommit({ session, id: item.id, client_request_id: newRid() }, pj)
+          const done = await aiDataFigureCommit({ session, id: item.id, client_request_id: rid }, pj)
           if (!still()) return { ok: false, reason: null }
-          if (!done.script || !done.stem) {
-            // 没落盘：写不进文件夹是项目级的事实（停整批），其余算这一份没画成
-            const unwritable = done.reason_code === 'figures_dir_unusable' || host.projectWritable() === false
-            return { ok: false, reason: null, unwritable }
-          }
-          // 脚本已经落盘（普通脚本，留着）但数据与图对不上：这一份算没画成，原因照单份流程那句
-          if (done.data_check === 'mismatch' || done.task?.outcome === 'failed') return { ok: false, reason: msg('dataFigureV2.result.mismatch', undefined, 'ai') }
-          return { ok: true, script: done.script }
+          return outcomeOf(done)
         } catch (e) {
           // 懒渲染：这一张提交时当场渲染 / 核对没过（404）→ 试下一张；一张都不行就是没画成
           if (codeOf(e) === 'propose_candidate_unknown') continue
+          // 没收到结果（断网 / 网关）：后端可能已写出脚本。留着会话与请求号，不试下一张（会多画一份），重试时同一个请求号重发
+          if (!isDefiniteRunFailure(e)) {
+            if (still()) {
+              pendingCommits.set(key, { session, id: item.id, rid, pj })
+              keep = true
+            }
+            return { ok: false, reason: reasonOf(e) }
+          }
           throw e
         }
       }
@@ -159,7 +206,7 @@ async function drawOne(ref: TableRef, still: () => boolean, pj: string | null): 
       }
       return { ok: false, reason: reasonOf(e) }
     } finally {
-      void aiDataFigureDiscard(session, currentProjectId()).catch(() => undefined)
+      if (!keep) void aiDataFigureDiscard(session, pj).catch(() => undefined)
     }
   }
 }
@@ -243,7 +290,11 @@ export const useDataBatchStore = create<BatchStore>((set, get) => ({
         await host.refreshProject().catch(() => undefined) // 图卡出现；不打开
         if (!guard.still() || ep !== epoch) return
         // 只运行、不打开：素材卡才有预览。排进同一条队列，三份不会同时渲染；跑不成不算没画出来、不加提示
-        await runExclusive(() => host.runScript(r.script).catch(() => undefined))
+        // 排队期间换过项目：回调轮到时什么都不做（`runScript` 取的是此刻的项目，A 的相对路径会在 B 里被运行）
+        await runExclusive(async () => {
+          if (!guard.still()) return
+          await host.runScript(r.script).catch(() => undefined)
+        })
         if (!guard.still() || ep !== epoch) return
         set((s) => ({
           rows: { ...s.rows, [key]: { state: 'done' } },
@@ -290,6 +341,7 @@ export const useDataBatchStore = create<BatchStore>((set, get) => ({
 
   clear: () => {
     epoch += 1
+    pendingCommits.clear()
     set({ ...initial })
   },
 }))

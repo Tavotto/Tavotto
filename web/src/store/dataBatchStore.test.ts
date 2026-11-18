@@ -594,3 +594,140 @@ describe('准备卡', () => {
     expect(quietGuideCard).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('排队的回调轮到时先核项目（Codex P1）', () => {
+  /** 占住串行队列：单份流程放一个候选、点一张，它的提交按住不放 */
+  const holdQueue = async () => {
+    let release!: (v: AiDataCommitResult) => void
+    commit.mockReturnValueOnce(new Promise((r) => (release = r)))
+    useDataFigureStore.setState({ selected: ref('z.csv'), phase: 'ready', session: 'SZ', candidates: [{ ...item('z1', true), thumb: '/t/z1' }], thumbs: { z1: 'ready' }, draftOpen: true, draftActive: true })
+    const single = useDataFigureStore.getState().draw('z1')
+    await flush()
+    return { release, single }
+  }
+
+  it('批量某一份的 propose / commit 排在被占的队列后面，期间换了项目：轮到时什么都不发', async () => {
+    const q = await holdQueue()
+    select('a', 'b')
+    const p = st().run()
+    await flush()
+    expect(propose).not.toHaveBeenCalled()
+    setCurrentProjectId('pb')
+    q.release(ok())
+    await p
+    await q.single
+    expect(propose).not.toHaveBeenCalled()
+    expect(commit).toHaveBeenCalledTimes(1) // 只有按住的那一次
+    expect(runScript).not.toHaveBeenCalled()
+  })
+
+  it('批量「只运行」排在被占的队列后面，期间换了项目：runScript 不被调用（B 里同名脚本不会被误跑）', async () => {
+    select('a')
+    let releaseRefresh!: () => void
+    refresh.mockReturnValueOnce(new Promise<void>((r) => (releaseRefresh = r)))
+    const p = st().run()
+    while (refresh.mock.calls.length === 0) await flush()
+    const q = await holdQueue()
+    releaseRefresh() // 批量接着把 runScript 排进队列，排在单份提交后面
+    await flush()
+    setCurrentProjectId('pb')
+    q.release(ok())
+    await p
+    await q.single
+    expect(runScript).not.toHaveBeenCalled()
+    expect(showAssets).not.toHaveBeenCalled()
+  })
+
+  it('单份流程的提交排在被占的队列后面，期间换了项目：轮到时不发，不拿 A 的会话去 B 提交', async () => {
+    select('a')
+    let release!: (v: AiDataCommitResult) => void
+    commit.mockReturnValueOnce(new Promise((r) => (release = r)))
+    const batch = st().run()
+    while (commit.mock.calls.length === 0) await flush()
+    useDataFigureStore.setState({ selected: ref('z.csv'), phase: 'ready', session: 'SZ', candidates: [{ ...item('z1', true), thumb: '/t/z1' }], thumbs: { z1: 'ready' }, draftOpen: true, draftActive: true })
+    const single = useDataFigureStore.getState().draw('z1')
+    await flush()
+    setCurrentProjectId('pb')
+    release(ok())
+    await batch
+    await single
+    expect(commit).toHaveBeenCalledTimes(1)
+    expect(commit.mock.calls.some((c) => c[0].session === 'SZ')).toBe(false)
+  })
+})
+
+describe('不确定的提交结果：重试用同一个请求号（Codex P2）', () => {
+  const net = () => new TypeError('Failed to fetch')
+
+  it('commit 抛网络错：这份算没画出来、会话不放弃；重试先用同一个会话和请求号重发 commit，不再 propose，回来的结果算画成', async () => {
+    select('a')
+    commit.mockRejectedValueOnce(net())
+    await st().run()
+    expect(Object.values(st().rows).map((r) => r.state)).toEqual(['failed'])
+    expect(discard).not.toHaveBeenCalled() // 会话留着
+    const first = commit.mock.calls[0]![0]
+    propose.mockClear()
+    commit.mockResolvedValueOnce(ok())
+    await st().run('failed')
+    expect(propose).not.toHaveBeenCalled()
+    expect(commit).toHaveBeenCalledTimes(2)
+    expect(commit.mock.calls[1]![0]).toMatchObject({ session: first.session, id: first.id, client_request_id: first.client_request_id })
+    expect(discard).toHaveBeenCalledWith(first.session, expect.anything())
+    expect(showAssets).toHaveBeenCalledTimes(1) // 全部画成
+  })
+
+  it('不确定的失败不试下一张候选（那样会多画一份）', async () => {
+    select('a')
+    commit.mockRejectedValueOnce(net())
+    await st().run()
+    expect(commit).toHaveBeenCalledTimes(1)
+  })
+
+  it('重试时同一个请求号仍没拿到结果：继续留着，下一次还是这个请求号', async () => {
+    select('a')
+    commit.mockRejectedValueOnce(net()).mockRejectedValueOnce(net()).mockResolvedValueOnce(ok())
+    await st().run()
+    await st().run('failed')
+    await st().run('failed')
+    const rids = commit.mock.calls.map((c) => c[0].client_request_id)
+    expect(new Set(rids).size).toBe(1)
+    expect(propose).toHaveBeenCalledTimes(1)
+  })
+
+  it('后端明确拒绝（有状态码 / 稳定码）：请求号作废，会话放弃，重试重新 propose、换新的请求号', async () => {
+    select('a')
+    commit.mockRejectedValueOnce(apiError(500, 'x'))
+    await st().run()
+    const first = commit.mock.calls[0]![0]
+    expect(discard).toHaveBeenCalledWith(first.session, expect.anything())
+    commit.mockResolvedValueOnce(ok())
+    await st().run('failed')
+    expect(propose).toHaveBeenCalledTimes(2)
+    expect(commit.mock.calls[1]![0].client_request_id).not.toBe(first.client_request_id)
+  })
+
+  it('重试时会话已过期（同一个请求号被明确拒绝，如 404 / 409）：后端的去重表也不在了，只能重新出候选，换新请求号（接受）', async () => {
+    select('a')
+    commit.mockRejectedValueOnce(net()).mockRejectedValueOnce(apiError(409, 'propose_session_expired')).mockResolvedValueOnce(ok())
+    await st().run()
+    await st().run('failed')
+    expect(propose).toHaveBeenCalledTimes(2)
+    expect(commit).toHaveBeenCalledTimes(3)
+    const [c1, c2, c3] = commit.mock.calls.map((c) => c[0])
+    expect(c2!.client_request_id).toBe(c1!.client_request_id)
+    expect(c3!.client_request_id).not.toBe(c1!.client_request_id)
+    expect(showAssets).toHaveBeenCalledTimes(1)
+  })
+
+  it('换项目（clear）：留着的会话与请求号一并丢掉，不会带到新项目', async () => {
+    select('a')
+    commit.mockRejectedValueOnce(net())
+    await st().run()
+    st().clear()
+    setCurrentProjectId('pb')
+    select('a')
+    propose.mockClear()
+    await st().run()
+    expect(propose).toHaveBeenCalledTimes(1)
+  })
+})

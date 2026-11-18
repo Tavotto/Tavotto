@@ -431,10 +431,17 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   /** 没成 / 要说话的结局：把临时标签翻出来（出图期间用户可能已经把它收起了） */
   const showOutcome = (patch: Partial<typeof initial>) => set({ draftOpen: true, draftActive: true, drawingId: null, ...patch })
 
-  async function commit(sessionId: string, items: Candidate[], itemId: string, retried: boolean): Promise<void> {
+  /**
+   * `owner`：点「画这一张」/「再试一次」那一刻的项目与代际。提交排在共用串行队列里，轮到时可能已换了项目：
+   * 此时 `capture` 抓到的是**现在**的项目（B），拿 A 的会话去发等于串了项目——所以快照必须在排队之前取，轮到时先核，对不上就什么都不发。
+   */
+  async function commit(sessionId: string, items: Candidate[], itemId: string, retried: boolean, owner?: { ep: number; pj: string | null }): Promise<void> {
+    if (owner && (owner.ep !== epoch || owner.pj !== currentProjectId())) return
     const seq = { current: () => commitSeq }
     commitSeq += 1
-    const { pj, still } = capture(seq)
+    const cap = capture(seq)
+    const pj = owner ? owner.pj : cap.pj
+    const still = cap.still
     const forKey = `${sessionId}/${itemId}`
     if (!commitRid || commitRid.for !== forKey) commitRid = { for: forKey, rid: newRid() }
     const rid = commitRid.rid
@@ -651,7 +658,8 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       if (!sid || get().drawingId || get().phase !== 'ready') return // 没有候选 / 正在画：不重复提交
       // 先把「正在画」摆出来（可能要排在批量出图的一份后面）；真正的提交在串行锁里做
       set({ drawingId: id, problem: null })
-      await runExclusive(() => commit(sid, get().candidates, id, false))
+      const owner = { ep: epoch, pj: currentProjectId() }
+      await runExclusive(() => commit(sid, get().candidates, id, false, owner))
     },
 
     retry: async () => {
@@ -662,7 +670,8 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         if (last) {
           const [session, id] = last.for.split('/')
           set({ drawingId: id!, problem: null })
-          await runExclusive(() => commit(session!, [], id!, false))
+          const owner = { ep: epoch, pj: currentProjectId() }
+          await runExclusive(() => commit(session!, [], id!, false, owner))
           return
         }
       }
