@@ -6769,6 +6769,7 @@ export default interface Resources {
           "inspect_environment": "正在检查 Python 环境",
           "install_packages": "正在安装 {{detail}}",
           "link_data_file": "正在接入数据文件",
+          "set_run_arguments": "正在填写运行参数",
           "list_dir": "正在查看文件夹",
           "list_environments": "正在查看 Python 环境",
           "lookup_package": "正在查询包名",

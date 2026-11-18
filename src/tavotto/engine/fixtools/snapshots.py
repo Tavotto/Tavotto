@@ -160,6 +160,8 @@ def take(ctx: FixContext, tool: str, env_ids: list[str] | None = None) -> str | 
             "settings": _current_settings(ctx),
             "envs": envs,
             "managed": _managed_state(ctx),
+            # `set_run_arguments`：这一刻验证运行用的参数（None = 不带参数）；回滚据此换回去
+            "run_arguments": list(ctx.run_arguments) if ctx.run_arguments else None,
         }
         root = snapshot_root(ctx.session_id)
         root.mkdir(parents=True, exist_ok=True)
@@ -360,6 +362,24 @@ def _remembered_target_gone(ctx: FixContext) -> ToolResult | None:
     return None
 
 
+def _restore_run_arguments(ctx: FixContext, doc: dict, lines: list[str]) -> bool:
+    if "run_arguments" not in doc or ctx.on_run_arguments_changed is None:
+        return True
+    saved = doc.get("run_arguments")
+    want = tuple(saved) if isinstance(saved, list) else ()
+    if tuple(ctx.run_arguments or ()) == want:
+        return True
+    from .change import apply_run_arguments
+
+    try:
+        apply_run_arguments(ctx, want)
+    except Exception:  # noqa: BLE001
+        lines.append("run arguments could not be restored")
+        return False
+    lines.append("run arguments restored to the state of the snapshot")
+    return True
+
+
 def rollback(ctx: FixContext, args: dict) -> ToolResult:
     snap_id = args.get("snapshot")
     doc = load(ctx, snap_id)
@@ -389,6 +409,7 @@ def rollback(ctx: FixContext, args: dict) -> ToolResult:
     for eid, saved in (doc.get("envs") or {}).items():
         if isinstance(saved, dict):
             good &= _restore_packages(ctx, str(eid), saved, lines)
+    good &= _restore_run_arguments(ctx, doc, lines)
     text = "\n".join(lines)
     gone = _remembered_target_gone(ctx)
     if gone is not None:
