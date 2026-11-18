@@ -27,6 +27,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { emptyProject, readPath, type CanvasObject, type PathObject, type ShapeObject, type TextObject } from '@/types/document'
 import { encodeSubpaths, PATHFINDER_UI_OPS, worldSubpaths } from './pathfinder'
+import { registerGesture } from '@/store/gestureCoordinator'
 import { loadVecops, setVecopsSource, useVecopsStore } from './vecops/kernel'
 
 // vitest 的 cwd 是 web/
@@ -307,6 +308,31 @@ it('偏移奇偶填充的复合路径：洞跟着缩小，不会被填上（Code
   near(holeW * o.w, 16, 0.02)
   // 非零填充下洞要与外轮廓反向绕：净面积 = 外框（圆角拐角）− 洞，而不是两者相加
   near(area(o), 44 * 44 - (4 - Math.PI) * 4 - 16 * 16, 0.01)
+})
+
+it('等内核加载期间开始的手势，在动作落笔前被收掉，不并进同一条历史（Codex 线程 4614423974）', async () => {
+  await seed([ellipse('c', 30, 30, 10)], ['c'])
+  let release!: () => void
+  const gate = new Promise<void>((r) => (release = r))
+  setVecopsSource(async () => {
+    await gate
+    return realSource()
+  })
+  const pending = offsetSelected(2)
+  // 内核还在下载：用户开始拖一轮连续编辑
+  const doc = useDocumentStore.getState()
+  doc.beginTxn(literal('拖动'))
+  const unregister = registerGesture(() => {
+    unregister()
+    useDocumentStore.getState().endTxn()
+  })
+  const before = useDocumentStore.getState().past.length
+  release()
+  await pending
+  expect(useDocumentStore.getState().txn).toBeNull()
+  // 拖动那一轮自己是一条（可能为空被丢弃），偏移是另一条：不能被压成一条
+  expect(useDocumentStore.getState().past.length).toBeGreaterThan(before)
+  expect(objs().map((o) => o.type)).toEqual(['shape', 'path'])
 })
 
 describe('轮廓化描边', () => {

@@ -61,6 +61,8 @@ async function withKernel(fn: (k: VecopsKernel) => void): Promise<void> {
     say('pathfinderUnavailable')
     return
   }
+  // 等内核下载期间用户可能又开了一轮手势（拖动、连续改属性）：落笔前再收一次，否则本次 commit 会并进它的事务
+  finishActiveGesture()
   fn(k)
 }
 
