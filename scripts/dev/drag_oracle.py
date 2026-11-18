@@ -89,7 +89,18 @@ def audit_cases(case_ids: list[str] | None) -> dict:
     return report
 
 
+def _utf8_streams() -> None:
+    """输出里有中文（元素名、错误说明）：Windows 上被重定向时按 UTF-8 写，画不出的字符换成 `?`，
+    不让一个诊断工具自己崩掉（同 `matplotlib_artist_census.py`）。"""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
+
+
 def main(argv=None) -> int:
+    _utf8_streams()
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--case", action="append", help="只扫这些 corpus case（可重复）")
     ap.add_argument("--script", help="直接扫一份脚本（不走 corpus）")
