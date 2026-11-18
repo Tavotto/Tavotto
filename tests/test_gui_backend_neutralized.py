@@ -90,6 +90,8 @@ def test_the_simulation_bites(no_tk):
         env=bridgekit.child_env({"PYTHONPATH": no_tk}),
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=120,
     )
     assert "NO_TK" in r.stdout and "TK_BACKEND_FAILS" in r.stdout, r.stdout + r.stderr
@@ -294,6 +296,8 @@ def test_judgement_comes_from_matplotlibs_own_registry():
         env=bridgekit.child_env(),
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=120,
     )
     assert r.returncode == 0, r.stderr
