@@ -161,3 +161,19 @@ def test_example_font_and_typical_size_are_listed_never_folded():
         and rows["font_family"]["strength"] == "example"
     )
     assert rows["font_size"]["value"] == 8 and rows["font_size"]["strength"] == "typical"
+
+
+def test_conflicting_font_lists_all_stay_available_for_confirmation():
+    """同一项两份不同的无条件字体名单：不猜、也不吞——两条都进「需要你确认」（Codex #1996）。"""
+    base = next(c for c in VECTORS["cases"] if c["id"] == "font-family-recommended-folds")["bundle"]
+    template = base["facts"][0]
+    bundle = {
+        **base,
+        "facts": [
+            {**template, "id": "a", "value": ["Helvetica"], "strength": "required"},
+            {**template, "id": "b", "value": ["Arial"], "strength": "required"},
+        ],
+    }
+    out = fold_mod.fold(bundle)
+    assert out["rules"] == {} and out["sources"] == {}
+    assert [r["value"] for r in out["confirm"]] == [["Helvetica"], ["Arial"]]

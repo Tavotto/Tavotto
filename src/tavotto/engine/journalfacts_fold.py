@@ -68,6 +68,15 @@ def _listable(fact: dict) -> bool:
     )
 
 
+def _confirmable(fact: dict) -> bool:
+    """能进「需要你确认」清单的事实：单位在表里的数值要求，或名单型（色彩模式 / 文件格式 / 字体）。"""
+    return (
+        fact.get("unit") in CONFIRM_UNITS.get(fact["subject"], ())
+        and fact["relation"] in CONFIRM_RELATIONS
+        and _number(fact["value"])
+    ) or _listable(fact)
+
+
 def _source_id(fact: dict) -> str:
     return f"{V2_SOURCE_PREFIX}{fact['source']}:{fact['origin']}"
 
@@ -155,11 +164,7 @@ def fold(bundle: dict) -> dict:
         if foldable and target is not None:
             candidates.setdefault(target[0], []).append((fact, target[1]))
             continue
-        if (
-            fact.get("unit") in CONFIRM_UNITS.get(fact["subject"], ())
-            and fact["relation"] in CONFIRM_RELATIONS
-            and _number(fact["value"])
-        ) or _listable(fact):
+        if _confirmable(fact):
             confirm.append(_confirm_item(bundle, fact))
     rules: dict[str, dict] = {}
     sources: dict[str, dict] = {}
@@ -167,9 +172,9 @@ def fold(bundle: dict) -> dict:
         items = candidates[path]
         values = {repr(f["value"]) for f, _ in items}
         if len(values) > 1:
-            # 同一项两个不同的无条件值：不猜，全交给人确认（有数值的才进）
+            # 同一项两个不同的无条件值：不猜，全交给人确认（数值型与名单型——字体——都进；形状进不了清单的才丢）
             for fact, _ in items:
-                if _number(fact["value"]):
+                if _listable(fact) or _number(fact["value"]):
                     confirm.append(_confirm_item(bundle, fact))
             continue
         fact, qualifier = items[0]
