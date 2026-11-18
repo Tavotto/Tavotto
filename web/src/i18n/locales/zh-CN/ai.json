@@ -527,6 +527,10 @@
       "skip": "不画这 {{count}} 行",
       "extract": "只用里面的数字"
     },
+    "variant": {
+      "split": "按「{{column}}」再分开",
+      "by_file": "只按文件比较"
+    },
     "candidate": {
       "points_mean": {
         "title": "原始点 + 均值",

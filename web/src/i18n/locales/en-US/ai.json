@@ -534,6 +534,10 @@
       "skip": "Don’t plot these {{count}} rows",
       "extract": "Use only the numbers inside"
     },
+    "variant": {
+      "split": "Split further by “{{column}}”",
+      "by_file": "Compared by file only"
+    },
     "candidate": {
       "points_mean": {
         "title": "Points + mean",

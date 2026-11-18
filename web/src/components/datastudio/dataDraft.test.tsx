@@ -735,6 +735,33 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     expect(tabs()[1]!.getAttribute('aria-checked')).toBe('true') // 重新出候选后仍停在这个文件
   })
 
+  it('合画的成对候选：响应里 items[].variant 不同的两张同名候选，磁贴上各有一句小字（按「列」再分开 / 只按文件比较）；列名只当文本、不进 data-*；最多 8 张照常排', async () => {
+    const col = '组别<b>x</b>'
+    const eight = Array.from({ length: 8 }, (_, i) => ({
+      ...items(1)[0]!,
+      id: `v${i}`,
+      recommended: i === 0,
+      thumbnail_url: `/t/v${i}`,
+      variant: i % 2 === 0 ? { kind: 'split' as const, column: col } : { kind: 'by_file' as const },
+    }))
+    propose.mockResolvedValue({ ...cands(), items: eight })
+    await groupTwo()
+    const tiles = qa('[data-candidate]')
+    expect(tiles).toHaveLength(8)
+    expect(tiles[0]!.querySelector('[data-candidate-variant]')!.textContent).toBe(`按「${col}」再分开`)
+    expect(tiles[1]!.querySelector('[data-candidate-variant]')!.textContent).toBe('只按文件比较')
+    expect(tiles[0]!.querySelector('b')).toBeNull() // 文本渲染，不当 HTML
+    for (const el of document.querySelectorAll('[data-candidate-grid] *')) for (const a of el.getAttributeNames()) if (a.startsWith('data-')) expect(el.getAttribute(a)).not.toContain('组别')
+    expect(tiles[0]!.textContent).toContain('推荐') // 推荐小标仍在第一张
+    // 单份响应没有 variant：磁贴上没有这一行
+    act(() => useDataFigureStore.getState().closeDraft())
+    propose.mockResolvedValue(cands())
+    await click(qa('[data-studio-file]')[0]!)
+    await flush()
+    await flush()
+    expect(qa('[data-candidate-variant]')).toHaveLength(0)
+  })
+
   it('合画里某份表不在了（200 nothing + table_not_found）：走 nothing 的话，也给「各画一张」这个出路', async () => {
     propose.mockResolvedValueOnce({ kind: 'nothing', reasons: ['table_not_found'] })
     await groupTwo()

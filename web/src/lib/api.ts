@@ -4562,6 +4562,8 @@ export interface AiDataProposeItem {
   thumbnail_url: string
   /** 懒模式 `pending`（缩略图在取图时才画）；旧模式 `ready` */
   thumbnail_status?: 'pending' | 'ready'
+  /** 合画且文件里原本有分组列、文件内有多个取值时，候选成对出现（同一个 `title_code` / `why_code`）：`split` = 再按那一列分开，`by_file` = 只按文件比较；单份响应和没有这种列的合画没有这个键。`column` 是用户数据里的列名：只做文本渲染 */
+  variant?: { kind: 'split'; column: string } | { kind: 'by_file' } | null
 }
 
 /** 懒模式（`render: "lazy"`）响应里说清这次用了什么：列角色与每个角色可换成的列 */
