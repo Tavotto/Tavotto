@@ -3171,6 +3171,26 @@ def _mk_set_invert(which: str):
 def _set_aspect(a: Axes, v) -> None:
     v = str(v)
     a.set_aspect(v if v in ("auto", "equal") else float(v))
+    # matplotlib 把 "equal" 存成 1.0，`get_aspect()` 再也分不出「等比例」与「自定义 1」：记下
+    # 这一次是不是 equal，manifest 的显示值靠它（`aspect_text`）。撤销走 getter 回的数字，记号随之清掉
+    if v == "equal":
+        a.__dict__["_mm_aspect_equal"] = True
+    else:
+        a.__dict__.pop("_mm_aspect_equal", None)
+
+
+def aspect_text(a: Axes) -> str:
+    """`aspect` 字段的显示值：要能原样喂回 `_set_aspect`，且与前端 `AspectControl` 的三档对得上。
+
+    写进 "equal" 就读回 "equal"（#2005：以前读回 "1.0"，控件从「等比例」跳成「自定义 1.0」）。
+    其余照旧——脚本原样里的 equal 与 `set_aspect(1)` 本来就分不开，不在这里猜，基线一个字节不动；
+    用户选「自定义」起点 1 也照旧是数字，数字框不会被收成「等比例」。"""
+    aspect = a.get_aspect()
+    if isinstance(aspect, str):
+        return aspect
+    if a.__dict__.get("_mm_aspect_equal") and float(aspect) == 1.0:
+        return "equal"
+    return str(round(float(aspect), 3))
 
 
 def _set_image_origin(im: AxesImage, v) -> None:
@@ -3805,12 +3825,37 @@ def _restore_axes_position(a, orig) -> None:
 _SCALE_CHOICES = ("linear", "log", "symlog", "logit")
 
 
-def scale_options(current: str) -> list[str]:
+def scale_options(current: str, ax=None, which: str = "") -> list[str]:
+    """`ax` / `which` 给了的话，再按**这根轴此刻的范围**筛一遍（见 `_logit_fits`）。"""
     import matplotlib.scale as mscale  # noqa: PLC0415 — worker 侧才有科学栈
 
     have = set(mscale.get_scale_names())
     opts = [s for s in _SCALE_CHOICES if s in have]
+    if ax is not None and str(current) != "logit" and not _logit_fits(ax, which):
+        opts = [s for s in opts if s != "logit"]
     return ([str(current)] if str(current) not in opts else []) + opts
+
+
+def _logit_fits(ax, which: str) -> bool:
+    """这根轴换成 logit 之后**画得出来**吗。
+
+    logit 只定义在 (0, 1) 上。范围越界时 matplotlib 不报在 `set_[xy]scale` 上，而是炸在下一次
+    draw 的 `LogitLocator.tick_values`（`log10(1 - vmax)` 出 NaN / inf，`int()` 抛 ValueError /
+    OverflowError）——一次渲染失败，不是一条 warning。实测（3.11）：`imshow` 的固定范围
+    `-0.5..511.5`、自动缩放的折线 `-2..3` 都炸。两种情况看的范围不同：
+
+    * 自动缩放开着：matplotlib 按 `limit_range_for_scale` 把**数据范围**夹进 (0, 1)，数据落在
+      [0, 1] 里才夹得出一个正常区间；
+    * 范围是定死的（脚本 `set_xlim`、`imshow`）：范围原样留着，两端都得严格落在 (0, 1) 里。
+    """
+    try:
+        if getattr(ax, f"get_autoscale{which}_on")():
+            lo, hi = getattr(ax.dataLim, f"interval{which}")
+            return bool(0.0 <= min(lo, hi) and max(lo, hi) <= 1.0 and lo != hi)
+        lo, hi = getattr(ax, f"get_{which}lim")()
+        return bool(0.0 < min(lo, hi) and max(lo, hi) < 1.0)
+    except Exception:  # noqa: BLE001 — 判不了就不给，宁可少一个选项也不给一次渲染失败
+        return False
 
 
 def _mk_set_scale(which: str):
