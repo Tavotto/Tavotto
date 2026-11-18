@@ -86,6 +86,9 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
   `candidates`（≤ 8）。与手写 `profile_id` / `journal` 同给时不解析（引擎报 `journal_id_conflict`）；总开关关着 / 旧引擎 /
   非字符串原样放行。`journal_ambiguous` / 带候选的 `journal_unknown` 的 `next` 是 `ask_user`，选项就是候选
   （`nextstep._pick_journal` / `_journal_not_found`）；`journal_unknown` 没候选时照旧指向 `tavotto_list_journals`。
+  先只查本机（种子 + 已缓存索引，不联网）：精确 id 与唯一命中不等远程同步；本机没唯一命中才同步一次再查。
+  同步后仍没命中、且远程目录取不到（没有缓存索引）时原样放行，由 `journal_selection` 报 `journal_offline`，
+  不断言「库里没有」。
 - **规则写进工具描述**：宿主（如 opencode）不一定加载技能，只看 `initialize.instructions` 与 `tools/list` 的 description。
   instructions 与 `tavotto_health` / `tavotto_guide` / `tavotto_open_figure` / `tavotto_apply_overrides` / `tavotto_export` 的
   description 写明：直接开始、工具缺失或引擎报错才调 health、不必先调 guide、期刊直接写名字、patches 发全量、什么必须回代码改、

@@ -182,6 +182,51 @@ def test_catalog_switched_off_passes_through(monkeypatch):
     assert bridge.resolve_journal_id("Nature") == ("Nature", None)
 
 
+class _FakeRemote:
+    """远程目录的替身：没有缓存索引；`agent_catalog`（会联网同步）被调到就记一笔。"""
+
+    def __init__(self, *, disabled=False):
+        self._disabled = disabled
+        self.synced = 0
+
+    def disabled(self):
+        return self._disabled
+
+    def load_cached(self):
+        return None
+
+    def agent_catalog(self, **_):
+        self.synced += 1
+        return None  # 同步失败 / 断网：仍然没有缓存
+
+    def loaded_ids(self):
+        return []
+
+
+def test_local_hits_resolve_without_syncing_the_remote_catalog(monkeypatch):
+    """精确 id 与本机唯一命中不等同步：断网时不白等一次 HTTP 超时。"""
+    remote = _FakeRemote()
+    monkeypatch.setattr(bridge, "_journal_remote", lambda: remote)
+    assert bridge.resolve_journal_id("nature") == ("nature", None)
+    assert bridge.resolve_journal_id("Nat Commun")[0] == "nature-communications"
+    assert remote.synced == 0
+
+
+def test_unreachable_remote_catalog_passes_the_id_through_for_journal_offline(monkeypatch):
+    """取不到远程目录时不能断言「库里没有」：原样放行，由 journal_selection 报 journal_offline。"""
+    remote = _FakeRemote()
+    monkeypatch.setattr(bridge, "_journal_remote", lambda: remote)
+    assert bridge.resolve_journal_id("zzzzqqqq") == ("zzzzqqqq", None)
+    assert remote.synced == 1
+
+
+def test_remote_switched_off_still_reports_journal_unknown(monkeypatch):
+    monkeypatch.setattr(bridge, "_journal_remote", lambda: _FakeRemote(disabled=True))
+    with pytest.raises(bridge.BridgeError) as err:
+        bridge.resolve_journal_id("zzzzqqqq")
+    assert err.value.code == "journal_unknown"
+
+
 # 分派层：解析发生在处理器之前，处理器只见精确 id，回包带 journal_resolved
 @pytest.fixture
 def spy_handler(monkeypatch):
