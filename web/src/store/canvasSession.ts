@@ -3,6 +3,7 @@ import { useSelectionStore } from './selectionStore'
 import { useUiStore } from './uiStore'
 import { type FitFrame, useViewportStore } from './viewportStore'
 import { fitStageNow } from '@/store/zoomToSelection'
+import { finishActiveGesture } from './gestureCoordinator'
 
 /**
  * 每画布的 UI 会话：selection / 视口 / 图内编辑上下文 / 左右栏。
@@ -92,6 +93,8 @@ export function activateCanvas(id: string, opts?: { open?: boolean }): void {
     return
   }
   if (!store.canvases.some((c) => c.id === id)) return
+  // 画到一半的钢笔草稿等进行中的手势先在原画布落定，免得落进切过去的那张
+  finishActiveGesture()
   capture(store.activeCanvasId)
   if (opts?.open) store.openCanvasTab(id)
   else store.switchCanvas(id)
@@ -100,6 +103,7 @@ export function activateCanvas(id: string, opts?: { open?: boolean }): void {
 
 /** 新建画布并切换过去（旧画布会话先捕捉） */
 export function createCanvasAndActivate(name?: string): string {
+  finishActiveGesture()
   const store = useDocumentStore.getState()
   capture(store.activeCanvasId)
   const id = store.addCanvas(name) // addCanvas 内部完成数据层切换
@@ -109,6 +113,7 @@ export function createCanvasAndActivate(name?: string): string {
 
 /** 删除画布（数据层守卫最后一张）；删的是激活画布时恢复邻居会话 */
 export function deleteCanvasWithSession(id: string): boolean {
+  finishActiveGesture()
   const store = useDocumentStore.getState()
   const wasActive = id === store.activeCanvasId
   const ok = store.deleteCanvas(id)
