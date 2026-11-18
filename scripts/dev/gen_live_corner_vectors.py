@@ -12,7 +12,12 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 from pathlib import Path
+
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = Path(__file__).resolve().parents[2]
 

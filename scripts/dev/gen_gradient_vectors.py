@@ -17,6 +17,10 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 from tavotto.rendercore import geometry, ir  # noqa: E402
 
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 S2 = [{"offset": 0, "color": "#ff0000"}, {"offset": 1, "color": "#0000ff"}]
 CASES = [
     {"kind": "linear", "stops": S2, "from": [0, 0.5], "to": [1, 0.5]},
