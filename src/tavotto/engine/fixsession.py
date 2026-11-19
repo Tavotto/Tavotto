@@ -1267,15 +1267,17 @@ def _wire_for(name: str, conn: dict):
     return WIRES[name]
 
 
-def build_model(conn: dict):
+def build_model(conn: dict, **model_kwargs):
     """连接 → `HttpModel`。密钥只放进模型对象（`repr` 不含），返回的 `Redactor` 用于过滤卡片里的回显。
-    自填地址带备选协议（`conn["fallbacks"]`，与改图的 `--fallback` 同一份）：第一轮「协议不对」时换。"""
+    自填地址带备选协议（`conn["fallbacks"]`，与改图的 `--fallback` 同一份）：第一轮「协议不对」时换。
+    `model_kwargs` 原样交给 `HttpModel`（重试次数 / 超时 / 注入的 `post`；`ai_structured` 的单轮调用用）；默认不传 = 行为不变。"""
     model = loop.HttpModel(
         _wire_for(conn["wire"], conn),
         base_url=conn["base_url"],
         api_key=conn["api_key"],
         model=conn["model"],
         fallbacks=[(_wire_for(w, conn), u) for w, u in conn.get("fallbacks") or ()],
+        **model_kwargs,
     )
     return model, Redactor(conn["api_key"])
 
