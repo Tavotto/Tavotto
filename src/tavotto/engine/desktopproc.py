@@ -66,6 +66,7 @@ from . import (
     envlease,
     execspec,
     launcher,
+    nativeggplot,
     nativerelay,
     nativesession,
     runcodes,
@@ -120,6 +121,7 @@ class OwnedLaunch:
     cancelled: object | None = None
     #: Private exact-scope metadata observed by preparation; never argv or public state.
     input_declaration_state: dict | None = dataclasses.field(default=None, repr=False)
+    ggplot_target: nativeggplot.GgplotTarget | None = None
 
     def __post_init__(self) -> None:
         spec = self.spec
@@ -668,7 +670,7 @@ def start(
     registry: nativesession.NativeSessionRegistry | None = None,
     on_output=None,
 ) -> nativesession.NativeSession:
-    """按不可变启动身份起一个桌面拥有的用户 Python，握手成功后返回已登记的 `NativeSession`。
+    """按不可变启动身份起一个桌面拥有的用户进程，握手成功后返回已登记的 `NativeSession`。
 
     顺序是契约的一部分：**取租约 → spawn → 认证握手 → 单 reader 接管 → 登记**。
     租约先于第一行用户代码（环境正在被安装改动时 `envlease.EnvironmentBusy` 原样抛给调用方）；
@@ -680,18 +682,23 @@ def start(
         raise RunError(runcodes.DESKTOP_RUN_LAUNCH_INVALID, reason="cwd 不是一个目录")
     if not os.path.isfile(spec.interpreter):
         raise RunError(runcodes.INTERPRETER_NOT_EXECUTABLE, interpreter=spec.interpreter)
-    try:
-        input_payload = declaredinputs.payload_for_native(
-            spec, expected_selection=launch.input_declaration_state
+    input_payload = {}
+    if launch.ggplot_target is None:
+        try:
+            input_payload = declaredinputs.payload_for_native(
+                spec, expected_selection=launch.input_declaration_state
+            )
+        except declaredinputs.DeclaredInputsConflict:
+            raise
+        except declaredinputs.DeclaredInputsError as exc:
+            if launch.input_declaration_state is not None:
+                raise declaredinputs.DeclaredInputsConflict(
+                    "Input declaration is no longer available for this launch"
+                ) from exc
+    elif launch.input_declaration_state is not None:
+        raise declaredinputs.DeclaredInputsConflict(
+            "This R adapter cannot verify the declared inputs."
         )
-    except declaredinputs.DeclaredInputsConflict:
-        raise
-    except declaredinputs.DeclaredInputsError as exc:
-        if launch.input_declaration_state is not None:
-            raise declaredinputs.DeclaredInputsConflict(
-                "Input declaration is no longer available for this launch"
-            ) from exc
-        input_payload = {}
     # 租约键 = 会话 id：每次启动唯一（launch_id + 随机后缀），不同所有者之间互相删不掉对方的租约
     # 完整 128 位随机（不截断）：同一 launch_id 反复复用时也不会生日碰撞回到旧目录 / 旧回执身份
     session_id = f"native-owned-{launch.launch_id}-{uuid.uuid4().hex}"
@@ -751,14 +758,17 @@ def start(
         except launcher.LauncherUnavailable as exc:
             raise RunError(runcodes.CONDA_LAUNCHER_UNAVAILABLE, reason=str(exc)[:200]) from exc
         relay = nativerelay.NativeRelay()
-        argv = execspec.bridge_argv(
-            spec,
-            runner_py=bridge.RUNNER_PY,
-            out_dir=out_dir,
-            preview_dpi=launch.preview_dpi,
-            control_host=relay.host,
-            control_port=relay.child_port,
-        )
+        if launch.ggplot_target is not None:
+            argv = launch.ggplot_target.command(spec, host=relay.host, port=relay.child_port)
+        else:
+            argv = execspec.bridge_argv(
+                spec,
+                runner_py=bridge.RUNNER_PY,
+                out_dir=out_dir,
+                preview_dpi=launch.preview_dpi,
+                control_host=relay.host,
+                control_port=relay.child_port,
+            )
         env = merged_env(base_env, spec.env or {}, {bridge.TOKEN_ENV: relay.child_token})
         registry.check_start(ticket)  # Popen 之前的最后检查点：关停已开始就不再 spawn
         try:

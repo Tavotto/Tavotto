@@ -133,6 +133,14 @@ order: 190
 
 同一次finish在自有out_dir封存原输入字节时，barrier私有帧可另携`captured_input_archive` opaque descriptor，与fact一起冻结在同一epoch slot。两个getter共享原资格判据、不读磁盘；重复barrier不能追加/替换附件，缺字段的新epoch不继承旧slot。同lineage未变时可复用同一cache键，键不作为执行身份；真实新屏障仍需显式同版传递。回执从父已知缓存根核每份字节，并在IO后再核epoch/execution/fact/descriptor，EOF或release使当前附件失效，已保存历史不重写。封存详情与预算只有`preparation-and-receipts.md`一份权威。看护`tests/native/test_native_input_archive.py`、`tests/test_declared_input_archive_receipt.py`。
 
+## ggplot2 原生适配器
+
+适配器通过 `OwnedLaunch.ggplot_target` 在现有拥有者、注册表、认证传输和环境租约中启动 R。调用方指定项目内的 R 脚本、脚本生成的对象名和 SVG 点数尺寸。R 在完成控制握手、确认绘制包可用后执行脚本。用户标准输出仍由拥有者排空。
+
+当前适配器支持普通文本标题的 RGB 颜色。它保留单次 `ggplot_build()` 和 gtable 的结果，按全量修改列表从原始 gtable 生成 SVG 预览或 Cairo PDF。两种设备分别绘制。更改画笔颜色不重跑统计图层与随机位置计算。显式输入声明仍须由来源适配器取得证据，现有 R 启动入口会拒绝这种声明。
+
+`tests/test_native_ggplot_capture.py` 使用真实 R 核对颜色变化、其它 SVG 内容、统计调用次数、随机数状态及撤销结果。用例也核对桌面拥有者取消后由原注册表与租约完成收尾。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
