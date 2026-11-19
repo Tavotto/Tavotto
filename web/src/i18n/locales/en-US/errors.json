@@ -33,7 +33,7 @@
     "chart_model_unsupported": "This chart model or editing mode is not supported.",
     "chart_render_unsupported": "This chart cannot currently be rendered in full.",
     "chart_source_changed": "The chart's source file has changed. This operation was not applied. Restore the matching source or import it again.",
-    "chart_source_mismatch": "The chart source is missing or does not match the saved document.",
+    "chart_source_mismatch": "The chart source is missing or does not match the saved layout.",
     "svg_resource_limit": "The SVG or chart exceeds the resource budget. This operation could not be completed.",
     "svg_scene_invalid": "The SVG's drawing content could not be read. Check that the file is a valid self-contained SVG.",
     "chart_render_pair_missing": "The chart response did not include paired image and geometry. This render was not applied.",
