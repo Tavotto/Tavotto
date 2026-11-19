@@ -154,6 +154,11 @@ order: 80
   `("line", "pos_frac")`。数据曲线、`axhline` / `axvline`、`get_[xy]axis_transform()`、`transData + 平移`、
   认不出依赖的自定义 transform 都不拖；3D 与色条轴不拖。
   看护：`tests/test_axes_layout_lines_drag.py`。
+  集合与位图同一条判据（`_layout_anchored_artist`：散点看 offset transform，线组 / 图形集合 / 位图看自己的
+  transform；`ContourSet`、`FigureImage` 不拖）；量框只有 `pathgeom.layout_extent`（锚点与 setter），选中框
+  `layout_ink_extent`；平移 `overrides._set_translated_pos_frac`；可拖的位图包 SVG 组、退出合成、不代理回宿主。
+  看护：`tests/test_axes_layout_collections_drag.py`。
+  `ax.table` 同一套（`artist` 角色，`("artist", "pos_frac")` 按类型分派到平移）；看护 `tests/test_axes_table_drag.py`。
 - 散点 marker 可整体替换（set_paths，首改前缓存原始路径，"original" 还原）；
   散点/扁平线的 bbox 走 `_padded_bbox`（PathCollection 用 datalim 换算，零厚度边
   垫 4px，否则进不了 manifest）。

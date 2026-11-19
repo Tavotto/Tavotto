@@ -522,6 +522,45 @@ def write_launcher(ctx: FixContext, args: dict) -> ToolResult:
     )
 
 
+# --------------------------------------------------------------------------- set_run_arguments
+def set_run_arguments(ctx: FixContext, args: dict) -> ToolResult:
+    """给脚本填运行参数（与界面「运行参数」框同一份运行配置，T03）。原脚本不动。"""
+    from .. import runconfig
+
+    raw = args.get("argv")
+    if not isinstance(raw, list):
+        return err("bad_arguments", "`argv` must be a list of strings (one item per argument).")
+    try:
+        tokens = runconfig.validate_argv(raw)
+    except runconfig.RunConfigError as exc:
+        return err("bad_arguments", str(exc))
+    if ctx.on_run_arguments_changed is None:
+        return err("not_available", "Run arguments cannot be set in this session.")
+    if ctx.run_arguments_sensitive:
+        # 用户标成敏感的参数（密码 / 令牌）：值只活在内存里，AI 不碰——换掉它会把留下的秘密写进磁盘上的运行配置
+        return err(
+            "run_arguments_sensitive",
+            "The user marked this script's run arguments as sensitive, so they cannot be changed here. If they are "
+            "wrong, tell the user in one plain sentence which argument to change in the script's run-arguments box.",
+        )
+    if tuple(ctx.run_arguments or ()) == tuple(tokens):
+        return ok("Those are already the run arguments. Nothing changed.", "no change")
+    bad = _snapshot_or_error(ctx, "set_run_arguments")
+    if bad is not None:
+        return bad
+    try:
+        snapshots.apply_run_arguments(ctx, tuple(tokens))
+    except Exception:  # noqa: BLE001 — 应用侧换会话失败：如实说做不了
+        return err("run_arguments_not_set", "The run arguments could not be applied.")
+    shown = " ".join(tokens) if tokens else "(none)"
+    return _done(
+        ctx,
+        f"Run arguments set to: {shown}. try_run now runs the script with them; when the repair succeeds the "
+        "application fills them into the script's run-arguments box so later runs use them too. The script is unchanged.",
+        f"{len(tokens)} run argument(s) set",
+    )
+
+
 def convert_script(ctx: FixContext, args: dict) -> ToolResult:
     """不写任何文件：只在 `ctx.handoff` 记一笔，会话收尾后界面把它交给「生成可编辑版本」（ADR 0143）。"""
     from .. import ai_convert
@@ -602,6 +641,27 @@ CHANGE_TOOLS: tuple[FixTool, ...] = (
             ["code"],
         ),
         write_launcher,
+        tier="tavotto",
+    ),
+    FixTool(
+        "set_run_arguments",
+        "Set the command-line arguments Tavotto passes to this script (`sys.argv[1:]`), exactly as the user would "
+        "type them in the script's run-arguments box: one list item per argument, no shell quoting. Use when the "
+        "report says `script_needs_arguments`, the script unpacks `sys.argv`, or argparse has required options. "
+        "Read the script first to learn what it expects, and use files that really exist (paths are relative to the "
+        "script's working folder). An empty list removes them. The script is never edited. Takes a snapshot "
+        "(rollback restores the previous arguments). Then call try_run.",
+        obj(
+            {
+                "argv": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": 'For example ["--data", "measurements.csv", "--out", "fig.pdf"].',
+                }
+            },
+            ["argv"],
+        ),
+        set_run_arguments,
         tier="tavotto",
     ),
     FixTool(

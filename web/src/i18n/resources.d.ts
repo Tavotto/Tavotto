@@ -58,6 +58,22 @@ export default interface Resources {
       "unconfirmedHint": "上一次的结果还没确认，请先在对话里查询结果。"
     },
     "dataFigureV2": {
+      "batch": {
+        "done": "已完成",
+        "draw": "分别作图",
+        "failed": "失败",
+        "groupTitle": "{{count}} 个文件",
+        "idle": "未选择",
+        "merge": "合并作图",
+        "partial": "已完成 {{done}} 张，{{failed}} 张失败",
+        "pick": "多选",
+        "progress": "作图中 {{done}}/{{total}}",
+        "queued": "排队中",
+        "retry": "重试",
+        "selected": "已选 {{count}} 个",
+        "showDone": "查看素材",
+        "stop": "停止"
+      },
       "candidate": {
         "bar_error": {
           "title": "柱 + 误差线",
@@ -215,6 +231,10 @@ export default interface Resources {
         "unknown": "图画好了，数据核对没能完成。",
         "unverifiable": "图画好了，但这类图没法逐项核对数据。",
         "verified": "图画好了，数据和文件逐项对上。"
+      },
+      "variant": {
+        "by_file": "只按文件比较",
+        "split": "按「{{column}}」再分开"
       },
       "working": {
         "drawing": "正在画…",
@@ -3886,6 +3906,9 @@ export default interface Resources {
       "svg_source_unsupported": "{{id}} 的当前来源无法安全转换为 SVG。请改用 PDF 格式导出。",
       "sync_different_scripts": "两张图不属于同一个脚本，无法同步",
       "table_not_found": "这张表不在所选文件夹里。",
+      "tables_columns_differ": "列名不一致，无法合并作图。",
+      "tables_labels_collide": "这几个文件的名字分不开，没法合并作图。",
+      "tables_limit_exceeded": "一次最多合并 {{max}} 个文件。",
       "taf_disabled": "这个实验功能还没有开启。",
       "tex_command_missing": "这张图用了 LaTeX 排版（text.usetex），但当前渲染环境的 PATH 上找不到 {{command}}。这是系统里的 TeX 工具，不是 Python 包；装好 TeX 发行版后，如果刚装完，请重启 Tavotto 让它拿到新的 PATH，再重试。",
       "tex_compile_failed": "LaTeX 编译这张图里的文字时出错：{{line}}。这是 TeX 自己报的错，请检查文字或导言区（text.latex.preamble）。",
@@ -5999,7 +6022,7 @@ export default interface Resources {
       "panelMissing": "没找到图 {{stem}}——脚本可能还没产出，或它在别的图库里",
       "projectOpened": "已打开项目 {{name}}",
       "restoreTimeout": "这次交接的图在素材库里：先在画布上选一份排版，再把它加进来。",
-      "runtimeNeedsRun": "{{stem}} 已登记为运行时图，但还没有预览——到素材库的「脚本」区运行一次。",
+      "runtimeNeedsRun": "{{stem}} 需要在运行后预览。",
       "superseded": "项目已切换，这次交接没有放入。"
     },
     "home": {
@@ -6098,6 +6121,7 @@ export default interface Resources {
       "trigger": "当前项目 {{name}}，点击切换"
     },
     "workspace": {
+      "createFailed": "未成功新建「{{name}}」。",
       "current": "当前",
       "currentActions": "当前项目的更多操作",
       "emptyRecent": "打开过的项目会出现在这里",
@@ -6110,8 +6134,10 @@ export default interface Resources {
       "moveUp": "上移",
       "newProject": "新建项目…",
       "noMatch": "没有匹配的项目",
+      "openFailed": "没能打开「{{name}}」。",
       "openFolder": "打开文件夹…",
       "openInNewTab": "在新标签页打开",
+      "openMissing": "无法找到「{{name}}」文件夹。",
       "openedElsewhere": "已打开",
       "pin": "收藏",
       "pinLabel": "收藏 {{name}}",
@@ -6121,6 +6147,7 @@ export default interface Resources {
       "registry": "项目接入状态…",
       "removeFromList": "从最近列表移除",
       "removeMissing_other": "移除 {{count}} 个已不存在的",
+      "reselectFolder": "重新选择文件夹",
       "revealFailed": "无法在文件管理器中打开，项目在：{{path}}",
       "revealInExplorer": "在文件资源管理器中打开",
       "revealInFileManager": "在文件管理器中打开",
@@ -6777,6 +6804,7 @@ export default interface Resources {
           "rollback": "正在撤销刚才的改动",
           "run_command": "正在运行命令…",
           "select_environment": "正在切换环境",
+          "set_run_arguments": "正在填写运行参数",
           "switch_execution": "正在调整运行方式",
           "thePackages": "需要的包",
           "try_import": "正在尝试导入",
@@ -7719,7 +7747,8 @@ export default interface Resources {
       "renderFailedWithError": "无法渲染 {{name}}。{{error}}",
       "scriptChanged_other": "脚本已更新，{{count}} 张图已重新渲染",
       "sourceLinked_other": "已找到源脚本（{{count}} 张）",
-      "sourceLostEditing": "源脚本关系已失效，已返回画布。图片和它在画布上的摆放都保留着。",
+      "sourceLostEditing": "你可能移动了该图脚本，需要重新关联。",
+      "sourceLostRelink": "重新关联脚本",
       "sourceLost_other": "源脚本关系已失效，{{count}} 张图已改为普通图片。图片和它们在画布上的摆放都保留着。",
       "styleCopiedArrow": "已复制箭头样式",
       "styleCopiedPanel": "已复制图的样式",

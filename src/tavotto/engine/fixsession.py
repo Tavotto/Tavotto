@@ -99,7 +99,7 @@ unless you know one is needed), then install_packages for anything still missing
 change_python returned, then try_run to check, then finish with outcome `fixed`. Only if that path fails call \
 prepare_diagnostics and finish with `not_fixed`.
 3c. ARBITRARY COMMANDS. Prefer the dedicated tools: install_packages, change_python, select_environment, \
-switch_execution, switch_workdir, fix_entry, write_launcher, convert_script. Only when none of them can do it, use run_command. By default it runs in a \
+switch_execution, switch_workdir, fix_entry, set_run_arguments, write_launcher, convert_script. Only when none of them can do it, use run_command. By default it runs in a \
 protective sandbox (the project is read-only for it; it can write only to its own scratch folder, this project's \
 Python environment and pip/conda caches; it has network access). Only if the command must write somewhere else, \
 call it again with `outside_sandbox: true` and a one-sentence `reason` in plain words: the user is asked in a \
@@ -128,6 +128,11 @@ the launcher once or twice, or rollback. For command-line arguments use set_run_
 product defect (step 5) only in addition, when Tavotto itself behaved wrongly. If you finish `fixed` with a launcher, the \
 finish sentence must say that Tavotto now runs this script through a small launcher saved in its own folder, and that \
 the script itself was not changed.
+3c4. RUN ARGUMENTS. If the report says `script_needs_arguments`, or the script reads `sys.argv` / has required argparse \
+options: read the script to learn what each argument means, find real files for any paths (relative to the script's \
+working folder), then call set_run_arguments with the exact list and try_run. Do not ask the user to type them and \
+never suggest editing the script to add defaults. Only if a value cannot be inferred (a name only the user knows), \
+ask_user for it, then set it. When it works, finish `fixed` and say which arguments you set.
 3d. THE SCRIPT RUNS BUT DRAWS WITH ANOTHER LIBRARY. If the script itself runs but its figure is drawn with Pillow, \
 OpenCV, imageio, scikit-image, plotly or ROOT (so Tavotto cannot edit it), call convert_script, then finish with \
 outcome `convert`. Do not install matplotlib or change the environment for this.
@@ -266,6 +271,12 @@ class FixToolset:
 
     task_type = "fix_environment"
     default_limits = FIX_LIMITS
+    #: 预算过半 / 过四分之三时循环追加的一句（`loop.run` 读它）：弱模型最常见的失败是巡视到预算耗尽
+    budget_hint = (
+        "Stop exploring: act on what you already know. Make the one change that best matches the cause, then "
+        "try_run. If nothing applicable is left, finish with outcome not_fixed and one plain sentence. "
+        "These reminders do not extend any limit."
+    )
 
     def __init__(
         self,
@@ -546,6 +557,12 @@ class FixSessions:
                     }
                 }
                 if s.outcome == OUTCOME_CONVERT and s.ctx is not None and s.ctx.handoff
+                else {}
+            ),
+            #: 仅 outcome == fixed 且本会话 `set_run_arguments` 改过参数：AI 定下的运行参数（界面填进「运行参数」框再重跑；空列表 = 清掉）
+            **(
+                {"run_argv": list(getattr(s.ctx, "run_arguments", None) or ())}
+                if s.outcome == OUTCOME_FIXED and getattr(s.ctx, "run_arguments_changed", False)
                 else {}
             ),
             "steps": s.steps,

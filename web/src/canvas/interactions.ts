@@ -1761,7 +1761,7 @@ export function guardStale<E extends { type: string; stopPropagation(): void; pr
  * - `axisLabel3d`：3D 轴标题的位置由视角算，属性页调它离轴的距离；
  * - `pixelCoords`：按像素 / 字号单位或别的对象定位的文字，换分辨率导出时会漂，不宣称可拖；
  * - `hostPlaced`：次坐标轴 / 寄生轴，落位由宿主子图决定（引擎给了 `position` 的理由码）；
- * - `unsupported`：其余（表格、认不出来的 Artist）——暂不支持，说实话。
+ * - `unsupported`：其余（认不出来的 Artist）——暂不支持，说实话。
  */
 export type ImmovableReason =
   | 'series'

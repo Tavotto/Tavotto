@@ -69,6 +69,8 @@ pub struct ReportInput {
     pub spawn_error: Option<&'static str>,
     /// 握手超时 / 握手前提前退出时 sidecar 走到启动的哪一步（`sidecar::startup_phase` 闭集 + `none`，`rescue::startup_phase_applies`）；其余为 `None`（报告里是 `null`）。
     pub startup_phase: Option<&'static str>,
+    /// 引擎起来了却没握手时安装文件核对的结论（`sidecar::install_check` 闭集，`rescue::install_check_applies`）；其余为 `None`（报告里是 `null`）。
+    pub install_check: Option<&'static str>,
     pub created_at: String,
 }
 
@@ -105,6 +107,15 @@ impl ReportInput {
             .is_some_and(|p| !crate::sidecar::startup_phase::is_known(p))
         {
             s.startup_phase = Some(crate::sidecar::startup_phase::NONE);
+        }
+        // 安装文件核对同理：只属于没握手的那两种失败码；闭集外的值归 `unknown`
+        if !crate::rescue::install_check_applies(&s.code) {
+            s.install_check = None;
+        } else if s
+            .install_check
+            .is_some_and(|v| !crate::sidecar::install_check::is_known(v))
+        {
+            s.install_check = Some(crate::sidecar::install_check::UNKNOWN);
         }
         s
     }
@@ -167,6 +178,8 @@ pub fn build_documents(input: &ReportInput) -> (Value, Value) {
             "spawn_error": i.spawn_error,
             // 闭集阶段名（或 `none`），不是日志原文
             "startup_phase": i.startup_phase,
+            // 闭集结论（intact / missing / unreadable / unknown），不带路径
+            "install_check": i.install_check,
         },
     });
     (manifest, report)
@@ -983,6 +996,12 @@ mod tests {
                     .find(|e| **e == k)
                     .expect("样例里的 startup_phase 在闭集里")
             }),
+            install_check: i["install_check"].as_str().map(|k| {
+                *crate::sidecar::install_check::CHECKS
+                    .iter()
+                    .find(|e| **e == k)
+                    .expect("样例里的 install_check 在闭集里")
+            }),
             created_at: i["created_at"].as_str().unwrap().into(),
         }
     }
@@ -1082,6 +1101,33 @@ mod tests {
         input.spawn_error = None;
         let (_, r) = build_documents(&input);
         assert_eq!(r["failure"]["spawn_error"], Value::Null);
+    }
+
+    #[test]
+    fn the_install_check_is_a_closed_set_value_only_when_the_engine_never_shook_hands() {
+        let c = contract();
+        let mut input = sample_input(&c);
+        input.stage = "handshake".into();
+        for code in ["sidecar_exited", "sidecar_timeout"] {
+            input.code = code.into();
+            for v in crate::sidecar::install_check::CHECKS {
+                input.install_check = Some(v);
+                let (_, r) = build_documents(&input);
+                assert_eq!(r["failure"]["install_check"], json!(v), "{code}");
+            }
+            input.install_check = Some("C:/Users/someone/secret.pyd");
+            let (_, r) = build_documents(&input);
+            assert_eq!(r["failure"]["install_check"], json!("unknown"), "{code}");
+        }
+        for code in crate::rescue::CODES
+            .iter()
+            .filter(|c| !crate::rescue::install_check_applies(c))
+        {
+            input.code = (*code).into();
+            input.install_check = Some("missing");
+            let (_, r) = build_documents(&input);
+            assert_eq!(r["failure"]["install_check"], Value::Null, "{code}");
+        }
     }
 
     #[test]

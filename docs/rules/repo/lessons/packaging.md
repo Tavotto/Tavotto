@@ -29,3 +29,10 @@
 - Seen: 2026-10-31
 - 为什么: cli.py 从 agent_runner 导入 __main__，PyInstaller 不收这个子模块，0.19.0 到 0.19.2 用 Key 连接的内置 AI 每次启动就 ImportError；源码测试和冒烟一直绿，没人在产物上起过它。现在 smoke_desktop 起 agent-run 与 fix-mcp，新子命令加进去。
 - 证据: #1570
+
+### L-170 测试调用退出路径，os._exit 与 atexit._run_exitfuncs 在模块级 autouse fixture 里一起换掉
+- 类: 别这样
+- 触发: packaging/rthooks/, tests/test_no_crash_dialog_rthook.py
+- Seen: 2026-11-18
+- 为什么: 两条 excepthook 用例只有一条换了 atexit._run_exitfuncs，另一条在 pytest 进程里真跑了全部退出清理（关渲染子进程、删临时配置目录），同分片后面的 rendercore 用例段错误；本机缺渲染依赖、那批用例跳过，本地全绿，评审也看不出。逐条打补丁必漏一条；带进程级副作用的新用例先按 CI 分片顺序放在大套件前跑一次。
+- 证据: #2027

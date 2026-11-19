@@ -161,6 +161,10 @@ SAME_NAME: frozenset[str] = frozenset(
         "mplcursors",
         "squarify",
         "joypy",
+        # pygal 与它拆出去的世界地图包（同一上游 Kozea）。`pygal_maps_world` 不在 `pygal` 里：
+        # 不登记时用户只能手填包名，常填成 `pygal`——装完还是 import 不到（一份用户反馈）
+        "pygal",
+        "pygal_maps_world",
         "pyvista",
         "trimesh",
         "meshio",

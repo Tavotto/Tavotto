@@ -187,8 +187,9 @@ HTTP 显式 `execution: "native"` 的非桌面来源仍 403 `native_requires_des
 以文件名主干为模块名执行整份模块（`__name__ != "__main__"`，与 safe worker `import_module` 的函数入口同口径），再调这个零参函数。
 **何时带**只有一份判据 `discover.native_entry_of(path, entry)`：
 * `module`：入口是 `__main__` / 没有入口 / 脚本有 `if __name__` 守卫 / 顶层代码自己够得着绘图 / 解析不了 → 原样跑整份模块（旧行为；守卫怎么调由用户的代码决定）；
-* `call`：入口是函数、没有守卫、顶层不画图 → 跑完模块再调它；
-* `unreachable`：入口是函数，但当前源码里已没有这个零参顶层函数。
+* `call`：入口是函数、没有守卫、顶层不画图、顶层代码也没提到这个名字 → 跑完模块再调它；
+* 顶层代码提到了入口名（`from helpers import main; main()`、`plot(load())`、`fire.Fire(plot)`，含 import 绑定）→ 归 `module`：整份跑可能就会调到它，静态判不出，不另调也不拒绝（Codex #2044 P1）；
+* `unreachable`：入口是函数，顶层代码没提到它，且当前源码里已没有这个零参顶层函数。
 
 桌面准备会话（回退与路由直达的 native 计划，`preparation.native_entry_for`）与 MCP 回退（`nativefallback.decide` / `launch`）用同一份判据。
 回退用的仍是「原来被拦的那个入口」——换入口换到别的函数后，native 调的还是用户点的那张图的函数。

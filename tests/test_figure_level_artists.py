@@ -107,8 +107,8 @@ TOL = 1e-6
 CONSTRAINED_TOL = 5e-5
 
 DRAGGABLE = {
-    "Root": ["fig.artists_0", "fig.artists_1", "fig.artists_2", "fig.patches_0"],
-    "RootC": ["fig.artists_0", "fig.artists_1", "fig.artists_2", "fig.patches_0"],
+    "Root": ["fig.artists_0", "fig.artists_1", "fig.artists_2", "fig.artists_3", "fig.patches_0"],
+    "RootC": ["fig.artists_0", "fig.artists_1", "fig.artists_2", "fig.artists_3", "fig.patches_0"],
     "Sub": ["fig.subfigs_0.texts_0", "fig.subfigs_1.artists_0", "fig.subfigs_0.legend_0"],
 }
 
@@ -161,7 +161,8 @@ def test_root_figure_artists_are_registered(hot):
         "fig.artists_0": ("patch", True),
         "fig.artists_1": ("line", True),
         "fig.artists_2": ("text", True),
-        "fig.artists_3": ("linecoll", False),
+        # 图上的线组位置是排版：可拖（ADR 0100 修订 2026-11-18）
+        "fig.artists_3": ("linecoll", True),
         "fig.artists_4": ("arrow_patch", False),
         "fig.artists_5": ("arrow_patch", False),
         "fig.patches_0": ("patch", True),

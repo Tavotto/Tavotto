@@ -22,3 +22,10 @@
 - Seen: 2026-11-06, 2026-11-07
 - 为什么: 更新试探用例原用 150 个定时片发假下载，CI 调度一拉长来源就从 Github 变成 Mirror，挡了别的 PR 两次；修法又在每次 Pending 时重置检查点，额外唤醒能让夹具一直扣住尾字节，直到生产代码正确判停滞，再挡一个 PR。稳定区间以已收字节不变为准；反证时在原驱动里注入额外轮询，须仍绿，撤掉修复须红。
 - 证据: #1798, #1801
+
+### L-171 给壳诊断包加闭集事实，按「sidecar 已跑过」列全适用的失败码，各写一条用例
+- 类: 别这样
+- 触发: src-tauri/src/shell_report.rs, src-tauri/src/sidecar/startup_phase.rs, tests/golden/desktop_startup_phase.json, tests/test_app_main_startup.py
+- Seen: 2026-11-18
+- 为什么: 启动阶段只挂在握手超时一个码上，用例还断言「别的码带了阶段要丢掉」，把缺口钉成了规则；打开上次项目只接 RuntimeError / OSError，桩也只抛 RuntimeError，其余异常让引擎在握手前退出，没有用例碰到，一份用户反馈的包因此看不出原因。启动期只接部分异常的 try/except，用参数化用例喂 ValueError、KeyError、UnicodeDecodeError。
+- 证据: #2014
