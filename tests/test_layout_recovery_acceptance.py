@@ -231,6 +231,19 @@ def test_project_file_binding_checks_the_same_slot_across_schema_upgrade(client,
     assert client.get("/api/layouts/Paper", headers=headers).get_json() == document
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX 文件符号链接夹具")
+def test_project_file_binding_rejects_a_redirected_slot(client, tmp_path):
+    project = _project(client, tmp_path, "mixed")
+    _save(client, project["id"])
+    slot = m._autosave_path(DOC_ID)
+    external = tmp_path / "outside.json"
+    slot.rename(external)
+    slot.symlink_to(external)
+
+    response = client.get(f"/api/layout-session/project-file/{DOC_ID}", headers=_pj(project["id"]))
+    assert response.get_json() == {"version": 1, "status": "unavailable"}
+
+
 # ================================ R3 / A29：last 只指向可恢复正文 ================================
 
 

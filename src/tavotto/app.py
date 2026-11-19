@@ -19382,8 +19382,14 @@ def _project_file_query_sequence(value: object) -> int:
 
 def _project_file_actual_slot_revision(doc_id: str) -> str | None:
     # 只读sink取目录枚举的实际路径，不用客户端值拼文件系统路径。
-    slot = _file_named(_autosave_directory(), doc_id)
-    return engine_atomicio.existing_revision(slot) if slot is not None else None
+    directory = _autosave_directory()
+    slot = _file_named(directory, doc_id)
+    if slot is None:
+        return None
+    owned = engine_projectenv.contained_path(directory, slot)
+    if owned is None or slot.is_symlink():
+        raise OSError("自动保存槽位通过链接重定向")
+    return engine_atomicio.existing_revision(Path(owned))
 
 
 @app.get("/api/layout-session/project-file/<doc_id>")
