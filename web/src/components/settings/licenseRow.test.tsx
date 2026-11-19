@@ -70,6 +70,18 @@ describe('授权行', () => {
     expect(q('[data-license-action="release"]')).not.toBeNull()
   })
 
+  it('购买：只在系统浏览器打开官网价格页，不调 checkout', async () => {
+    const fetchMock = vi.fn((_u: string) => json(NONE))
+    const open = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('open', open)
+    await render()
+    await act(async () => q('[data-license-action="buy"]')!.click())
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(String(open.mock.calls[0][0])).toMatch(/\/premium\/$/)
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('/checkout'))).toBe(false)
+  })
+
   it('device_limit：一句话，输入态按钮保持「激活」，不弹窗', async () => {
     vi.stubGlobal(
       'fetch',

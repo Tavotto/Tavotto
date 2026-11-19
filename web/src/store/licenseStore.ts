@@ -3,22 +3,19 @@ import {
   ApiError,
   activateLicense,
   fetchLicenseStatus,
-  licenseCheckout,
   refreshLicense,
   releaseLicense,
   type LicenseFailureCode,
   type LicenseStatus,
 } from '@/lib/api'
 import { currentLocale } from '@/i18n'
+import { premiumPageUrl } from '@/lib/brand'
 
 /**
  * 高级版授权的前端状态（ADR 0193 §八）。**前端不碰远程**：激活 / 刷新 / 解绑 / 建付款页都是本机引擎做，这里只遥控。
  * `status === null` = 还没问过；`{enabled:false}` = 入口整个不出现（`PRODUCTION_LIVE = False` 且没设测试端点）。
  * 失败只存稳定的码，一码一句话在界面层翻（`license.failure.*`）。
  */
-/** 购买用的 Stripe Price lookup key，按界面语言选（与官网一致）；价格改在 Stripe、不改代码，常量只在这一处 */
-export const LICENSE_LOOKUP_KEYS = { zh: 'founding_year_cny', other: 'founding_year_usd' } as const
-
 const FAILURE_CODES: ReadonlySet<string> = new Set([
   'invalid_code',
   'device_limit',
@@ -44,8 +41,8 @@ interface LicenseState {
   activate: (code: string) => Promise<boolean>
   refresh: () => Promise<boolean>
   release: () => Promise<boolean>
-  /** 建付款页并在系统浏览器打开；`renew` = 给本机这一份续费 */
-  buy: (renew?: boolean) => Promise<boolean>
+  /** 在系统浏览器打开官网价格页（购买 / 续费共用） */
+  buy: () => Promise<boolean>
   clearFailure: () => void
 }
 
@@ -77,13 +74,11 @@ export const useLicenseStore = create<LicenseState>((set, get) => {
     activate: (code) => run(() => activateLicense(code.trim())),
     refresh: () => run(() => refreshLicense()),
     release: () => run(() => releaseLicense()),
-    buy: (renew = false) =>
-      run(async () => {
-        const zh = currentLocale() === 'zh-CN'
-        const r = await licenseCheckout(LICENSE_LOOKUP_KEYS[zh ? 'zh' : 'other'], zh ? 'zh' : 'en', renew)
-        window.open(r.url, '_blank', 'noopener,noreferrer')
-        return null
-      }),
+    buy: async () => {
+      // 档位在官网价格页选，应用里不指定某一档（购买 / 续费都一样）；点了才出网，由系统浏览器打开
+      window.open(premiumPageUrl(currentLocale()), '_blank', 'noopener,noreferrer')
+      return true
+    },
     clearFailure: () => set({ failure: null }),
   }
 })

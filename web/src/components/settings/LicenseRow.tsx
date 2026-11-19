@@ -71,7 +71,7 @@ export function LicenseRow() {
   }
   const act = (kind: 'retry' | 'buy' | 'renew') => {
     if (kind === 'retry') return entering ? submit() : refresh()
-    return buy(kind === 'renew')
+    return buy()
   }
 
   const state = status.state
@@ -139,7 +139,7 @@ export function LicenseRow() {
     )
   } else if (state === 'expired' || state === 'revoked') {
     control = (
-      <Button variant="secondary" loading={busy} onClick={() => void buy(state === 'expired')} data-license-action="buy">
+      <Button variant="secondary" loading={busy} onClick={() => void buy()} data-license-action="buy">
         {st(state === 'expired' ? 'action.renew' : 'action.buy')}
       </Button>
     )
