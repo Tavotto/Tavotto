@@ -1,0 +1,53 @@
+name: Core v0.2 Windows capture comparison
+
+on:
+  push:
+    branches: [codex/tavotto-core-v02-intel-ci]
+    paths: [.github/workflows/core-v02-windows-compat-repro.yml]
+
+permissions:
+  contents: read
+
+env:
+  TAVOTTO_NO_TELEMETRY: "1"
+  TAVOTTO_NO_UPDATE_CHECK: "1"
+
+jobs:
+  partial-capture:
+    name: Partial capture (${{ matrix.revision.role }})
+    runs-on: windows-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        revision:
+          - {role: main, sha: 4b7a8d6ca175442fe924ac31914e28a4ecd6a9df}
+          - {role: candidate, sha: 1b429e3542c82edf69d8f9e18fe488a4a415c8a9}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ matrix.revision.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13.17"
+          architecture: x64
+      - name: Install the CI test environment
+        run: |
+          python -m pip install -e ".[dev]"
+          python -m pip install --only-binary=matplotlib matplotlib==3.11.2
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check
+      - name: Run scenario with a fresh app and project
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          git log -1 --format='%H %s'
+          python -m pytest -vv --basetemp="$env:RUNNER_TEMP/partial-capture" "tests/test_compat_v2_baseline.py::test_scenario_baseline[s25_partial_capture]"
+      - name: Read app logs for the failed fixture
+        if: failure()
+        shell: pwsh
+        run: |
+          Get-ChildItem -LiteralPath "$env:RUNNER_TEMP/partial-capture" -Recurse -File |
+            Where-Object { $_.Name -match 'app\.log$|app-stdout\.log$|app-stderr\.log$' } |
+            ForEach-Object { Get-Content -LiteralPath $_.FullName -Tail 100 }
