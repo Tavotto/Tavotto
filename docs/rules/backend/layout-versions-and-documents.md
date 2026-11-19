@@ -109,7 +109,11 @@ order: 200
   磁盘写入沿用锁、受限路径与 `atomicio`，只读项目副本也可核验不可变引用，不因读档创建写锁文件。
   自动捕获 / 保存 / 导出不暗中运行脚本。旧项目无明确引用时，执行源需当前进程已观察的回执，
   否则由用户明确再运行并接纳，不能借 current marker 或 preview metadata 猜旧配对仍是当前版本。
-  无 override 静态源的精确 hash 配对授权另见 `export-pipeline.md`；项目包打开仍只检视、不自动安装资产。
+  无明确引用的静态源仍按当前原件精确 hash 授权，见 `export-pipeline.md`；明确文档引用由
+  `load_document_snapshot`核原archive完整ref、source/patch、历史静态hash及实际当前remap指纹，
+  不要求一份当前原件同时等于所有历史版本。原`load_snapshot`的逐维精确查询不变。
+  原图、画布、保存和打包必须消费同一历史PDF/SVG配对；当前普通file资源仍独立核SHA，
+  不因历史渲染对存在而声称历史磁盘原件已恢复。项目包打开仍只检视、不自动安装资产。
   看护：`tests/test_svgstore.py`、`tests/test_export_svg.py`、`tests/test_export_request.py`、
   `web/src/store/figureSnapshot.test.ts`、`web/src/store/figureSnapshotInvalidation.test.ts`、
   `web/src/store/projectSave.test.ts`、`web/src/lib/autosave/diskWriter.test.ts`。
@@ -124,6 +128,29 @@ order: 200
   合并列出，重名以 tavottofile 为准；**素材扫描的 EXCLUDE_DIRS 必须含
   tavottofile**，否则导出成图会混进素材面板。autosave / styles 等
   跨项目或内部机制仍留在数据目录。
+- **单一存储：schema 4 与 schema 3 同一套目录 / 列表 / 版本历史（#1920 合同，ADR 0182 §3）**：
+  正文 `schema` 号是唯一区分——命名保存、自动保存槽位、版本时间线、项目包与「打开」列表
+  都不按格式分叉，没有 `documents/v4` 命名空间、没有第二套文档端点或会话域。schema 4 只表示
+  「这份项目里有计算图表」：没有图表状态时仍写 3（前端 `buildProject()` 按正文内容选号）。
+  `documents.validate_document` 按号分派——2 / 3 走原骨架判据，4 交给
+  `validate_chart_document`（来源附件身份在同一入口校验）；保存、自动保存、槽位探测、
+  恢复候选、版本节点与教程校验都调这一个入口，不另设判据；项目包按同一
+  `SUPPORTED_SCHEMAS` 集合准入，schema 4 的 `chartSource` 随包封存、
+  检视导入时按摘要装回目标项目的 `chart_sources/`。首次给既有文档加入计算图表是
+  **原地升级**：同一 documentId、同一文件 / 槽位 / 时间线，正文提交为 schema 4，既有历史节点保留；
+  升级前用整份项目时间线节点做备份（`takeProjectCheckpoint` 原语已就位），备份没落定不得继续写图表。
+  **接线状态**：把图表第一次写进正文的入口属于 7/9；接线前生产代码里没有这条「先备份再升级」的
+  执行路径。`tests/test_chart_document_upgrade.py` 只覆盖后端能强制的边界（同一时间线、来源冻结失败
+  不写正文），不冒充前端备份接线——不要把它读成那条行为已有看护。
+  版本节点正文按 schema 分派：
+  2 是单画布检查点，3 / 4 是整份项目；恢复整份项目节点换的是同一 documentId 的全部画布。
+- **目录派生唯一权威 `engine/documentformat.py`，守卫收紧到每一级**：`named_dir` / `autosave_dir` /
+  `versions_dir` 是命名文档、自动保存槽位与版本时间线路径的唯一出处；调用方传
+  `project_layout_dir()`（项目 `tavottofile/`）或数据目录 `layouts/`，不得自己拼。schema 3 / 4
+  共用同一组派生（函数已无格式参数）。从权威根开始，根本身及每个自有子目录都过 `_directory`——
+  不是目录、`is_symlink()`、`resolve()` 与「父目录 + 名字」对不上（符号链接 / 目录联接，包括仍指向
+  同一项目内部的）一律 `layout_outside_project`；未打开项目时的 `layouts/_versions` 旧派生同样过
+  这道守卫，不再有绕过守卫的旧分支。读侧不建目录，只有 `create=True` 才逐级创建。
 - **文档类落盘只有一份实现：`engine/atomicio.py`（ADR 0023，2026-08-29 定版）**。
   tmp → flush → **fsync 文件** → `os.replace` → fsync 目录 → 失败清 tmp +
   抛 `AtomicWriteError(code, …)`；序列化走 `allow_nan=False`，
@@ -134,6 +161,11 @@ order: 200
   收纳目录里 Tavotto 自己的文件（现只有 `_styles.json`）由
   `RESERVED_DOCUMENT_FILENAMES` **枚举**——不要改成「`_` 开头」的前缀规则，
   画布名净化会把 `（图一）` 变成 `_图一_`，前缀规则会把用户的文档藏起来。
+- **排他目录发布**：`atomicio.publish_directory_if_absent`仅接同父不同名的真实自有目录，
+  拒symlink/reparse；调用方先受检复制并同步各文件/子目录，叶子再同步stage、复核源身份，
+  委托原排他rename，最后同步parent。默认文件发布调用/IO不变；POSIX目录不尝试硬链接，
+  不回退覆盖式rename。碰撞保原FileExistsError，真实故障沿AtomicWriteError；parent同步失败
+  可能已发布，调用方须依目录身份保留目标/回执，不能递归伪回滚。该叶子不复制或清理目录。
 - **读侧也有一道非有限数闸：`documents.loads_document()`**（2026-09-03，
   issue #222）。写侧挡住的只是**我们自己写出去的**那份；外部工具往
   `tavottofile/*.json` 写一个 `NaN` 之后，Python 的 `json.loads` 照读不误，而

@@ -1,9 +1,19 @@
 """布局版本时间线 API：创建 / 去重 / 列表 / 重命名 / 复制 / 删除 / 裁剪。"""
 
+import hashlib
+from types import SimpleNamespace
+
 import pytest
 
 from tavotto import app as m
 from tavotto.engine import versionstore as vs
+from test_chart_document_assets import (
+    SCENE_DIGEST,
+    SOURCE,
+    SOURCE_ID,
+    chart as chart_state,
+    reference as chart_reference,
+)
 from tests.support import versionfiles
 
 
@@ -383,6 +393,73 @@ def test_a_schema3_snapshot_sketches_the_canvas_the_checkpoint_came_from(client)
     ]
     assert sketch["page"] == {"w": 200.0, "h": 120.0}
     assert [o.get("text") for o in sketch["objects"] if o["type"] == "text"] == ["第二张"]
+
+
+def test_version_meta_tells_project_from_canvas_even_without_a_schema_number():
+    """入口确认问「盖当前画布」还是「换整份项目」只看列表元数据。可读正文即使没有
+    整数的 schema 号，也按骨架发出 2 / 3：项目节点不能先被问成单画布节点。"""
+    assert m._version_meta({"id": "v", "doc": {"canvases": [{}]}})["schema"] == 3
+    assert m._version_meta({"id": "v", "doc": {"objects": []}})["schema"] == 2
+    # 正文读不出来：不发这个键（取正文那一步会失败，不会写盘）
+    assert "schema" not in m._version_meta({"id": "v", "doc": None})
+
+
+def test_a_schema4_node_has_both_figures_and_a_sketch(client, monkeypatch):
+    """schema 4 版本节点与 schema 3 走同一条时间线：`figures` 从正文派生，
+    `sketch` 取节点记录的那张画布；图表来源在节点落盘前先冻结。"""
+    digest = hashlib.sha256(SOURCE).hexdigest()
+
+    def fake_snapshot(file_id, chart, **kwargs):
+        return SimpleNamespace(
+            input_svg=SOURCE,
+            scene={"scene_digest": SCENE_DIGEST},
+            path=m.project_layout_dir() / "chart_sources" / f"{digest}.svg",
+            source_sha256=digest,
+        )
+
+    monkeypatch.setattr(m, "_render_chart_snapshot", fake_snapshot)
+    panel = {
+        "id": "p0",
+        "type": "panel",
+        "fileId": SOURCE_ID,
+        "fileKind": "svg",
+        "nativeW": 40,
+        "nativeH": 30,
+        "x": 0.0,
+        "y": 2.0,
+        "w": 40.0,
+        "h": 30.0,
+        "chart": chart_state(),
+        "chartSource": chart_reference(),
+    }
+    pd = {
+        "schema": 4,
+        "project": {"id": "p", "name": "n"},
+        "canvases": [
+            {
+                "id": "c1",
+                "name": "A",
+                "page": {"w": 150, "h": 100},
+                "objects": [panel],
+                "guides": [],
+            }
+        ],
+        "activeCanvasId": "c1",
+        "createdAt": 0,
+        "updatedAt": 0,
+    }
+    created = client.post("/api/versions/d4", json={"doc": pd, "canvasId": "c1", "canvasName": "A"})
+    assert created.status_code == 200, created.get_json()
+    assert created.get_json()["version"]["schema"] == 4
+
+    meta = client.get("/api/versions/d4?sketch=40&sketchText=24").get_json()["versions"][0]
+    assert meta["schema"] == 4
+    assert meta["figures"] == [SOURCE_ID]
+    assert meta["sketch"]["page"] == {"w": 150.0, "h": 100.0}
+    assert [o["type"] for o in meta["sketch"]["objects"]] == ["panel"]
+    # 正文仍取得到，来源引用原样
+    got = client.get(f"/api/versions/d4/{meta['id']}").get_json()
+    assert got["doc"]["canvases"][0]["objects"][0]["chartSource"] == chart_reference()
 
 
 def test_a_broken_document_costs_one_thumbnail_not_the_whole_list(client):
