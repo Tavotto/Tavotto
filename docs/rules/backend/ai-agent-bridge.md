@@ -2,13 +2,13 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「编码 Agent 桥」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_ai_data_recipe.py`、`tests/test_ai_data_template.py`、`tests/test_ai_data_propose.py`、`tests/test_ai_data_merge.py`、`tests/test_ai_data_text_tables.py`、`tests/test_ai_agents.py`、`test_ai_login.py`、`test_ai_bridge.py`、`tests/test_ai_probe.py`、`test_ai_capabilities.py`、`test_ai_refresh.py`、`test_ai_history.py`、`test_ai_idempotency.py`、`test_ai_revert_stale.py`、`test_codex_install_cli.py`、`test_managed_cli.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_ai_data_recipe.py`、`tests/test_ai_data_template.py`、`tests/test_ai_data_propose.py`、`tests/test_ai_data_merge.py`、`tests/test_ai_structured.py`、`tests/test_ai_data_model.py`、`tests/test_data_figure_bench.py`、`tests/test_ai_data_text_tables.py`、`tests/test_ai_agents.py`、`test_ai_login.py`、`test_ai_bridge.py`、`tests/test_ai_probe.py`、`test_ai_capabilities.py`、`test_ai_refresh.py`、`test_ai_history.py`、`test_ai_idempotency.py`、`test_ai_revert_stale.py`、`test_codex_install_cli.py`、`test_managed_cli.py`
 > `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml；revert 只回滚本次 AI 那一版（细则见 `ai-agent-bridge.md`）
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 240
-改到: `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`ai_data_recipe.py`、`ai_data_template.py`、`ai_data_propose.py`、`ai_data_merge.py`、`ai_data_task.py`、`codexinstall.py`、`managedcli.py`、`resources/managed_cli_lock.json`、`/api/ai/*`
+改到: `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`ai_structured.py`、`ai_data_model.py`、`ai_data_recipe.py`、`ai_data_template.py`、`ai_data_propose.py`、`ai_data_merge.py`、`ai_data_task.py`、`codexinstall.py`、`managedcli.py`、`resources/managed_cli_lock.json`、`/api/ai/*`
 主题: 编码 Agent 桥 → `ai-agent-bridge.md`
 必守要点: 「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml
 -->
@@ -717,7 +717,6 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
   `list_environments` 列满 30 条时如实报 `[showing 30 of N …]`，本项目当前 / 选过的环境排前，`match` 参数按名字 / 来源 / 路径片段筛（被列出的才登记 id）；`_copy_project(…, reads)` 回传实际复制了内容的链接目标，`try_run` 逐个 `ctx.note_read(…, "try_run")`。
 - **freeze 的「可用」按成败判（#1371 P1）**：`default_freezer` 成功回文本（全新空环境是 `""`）、失败回 `None`；快照的 `freeze_available` = 拿到了没有，不按输出是否为空。
 
-
 ### `run_command`：任意命令，两档（`fixtools/command.py` / `fixtools/cmdsandbox.py`，#1374，ADR 0149 §七修订）
 
 `tier=user_env`、`waits_for_user`。看护 `tests/test_fixtools_command.py`。参数：`argv`（列表）或 `command`（字符串，`shlex` 拆，**不经 shell**）二选一；`timeout_s`（默认 60、上限 300）；`outside_sandbox`（布尔，第②档开关，必须配 `reason`）；`reason`（一句给用户看的话，≤300 字，没沙盒的机器上可不给）；`cwd`（`scratch` 默认 / `project`，`project` 只给第②档）。
@@ -797,6 +796,14 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
   `os.environ` 的 KeyError / 无父包的相对导入 / `input(` 的 EOFError）→ 回 `not_a_product_defect` 并指向对应动作，不弹「发送」卡。只交摘要（不带 `issue`）不拦。
 - `FixToolset.budget_hint`：预算过半 / 过四分之三时 `loop.run` 追加「别再巡视，做最匹配原因的那一个改动再 try_run，没有可做的就 not_fixed」。
 - 看护：`tests/test_fix_guardrails.py`。
+
+### `write_launcher`：启动脚本（`engine/launchscript.py`、`fixtools/change.py`，ADR 0194 §二，2026-11-18）
+
+- 启动脚本放 `tavottofile/launchers/<stem>-<路径摘要>.py`，每个脚本至多一份，只认普通文件（符号链接 / 链接目录一律当没有、拒写）；64 KiB 上限、写前本机 `compile` 校验。
+- 有启动脚本的脚本：safe 经 `--script-source`、native 经 bridge 同名参数执行启动脚本的字节，身份（`__file__` / `argv[0]` / 描述符）仍是原脚本；入口恒 `__main__`、
+  不做运行前路由、不换入口；`preparation._script_revision` 末尾加 `:L<摘要>`（改 / 删启动脚本 = 计划过期；第一段仍是原脚本摘要）。
+- 工具 `tavotto` 档（只写 Tavotto 自己的目录），写前打快照，`rollback` 写回旧内容或删除。原脚本与用户代码文件夹一个字节不动。
+- 看护：`tests/test_launchscript.py`、`tests/test_launchscript_e2e.py`（真 sidecar：无启动脚本没有图 / 有启动脚本出图且原文件不变 / safe 被拦 native 也执行启动脚本）。
 
 ### D2b：「问与报」组 + 修复会话 + `POST /api/ai/fix`（`fixtools/ask.py`、`engine/fixsession.py`）
 
@@ -878,7 +885,6 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
   快照多存 `managed = {generation}`；`rollback` 先核旧代解释器真的在（不在 = `rollback_target_gone`，**一个字不改**），再恢复设置、`managedenv.activate` 指回旧代并让池 / 缓存放弃新一代，恢复后核设置里记着的解释器在不在（不在同样 `rollback_target_gone`，不报成功）。
   `FixContext.cancel`（= 会话的 `s.cancel`）同样传给 pip 安装/卸载执行器（含逐项执行前复查），并传给缺省换 Python 执行器 `_default_python_changer(req, cancel)`，规划完、动手前先看一眼（与 #1381 同一件事）。看护 `tests/test_fixrollback_managed.py`。
 
-
 ### 2026-10-25 补充参考与会话期限
 
 转换缺少输入时，用户在原因卡补充项目相对路径，显式重试提交 `reference_files`；原因中的多行代码完整保留在卡片正文，超限不截断命令；全流程见 ADR 0143。
@@ -959,3 +965,16 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 - `sessions.attachment_count` 只存个数；`SESSION_DTO_KEYS` 带 `attachment_count`。文件不进历史、遥测、诊断包。
 - 能力清单的 `no_vision`（执行器与连接上的可选字段）来自 `ai_attachments.known_text_only`：只列**确定**看不了图的型号，判不出的不列、照常发送；前端不镜像名单。
 - 看护：`tests/test_ai_attachments.py`。
+
+## 无工具单轮结构化调用（`engine/ai_structured.py` + `ai_data_model.py`，ADR 0178 修订 2026-11-19，第 0 步地基，无调用点）
+
+给「模型只回答一次、只交一个 JSON」的场景用（现在只有数据出图的配方）。看护 `tests/test_ai_structured.py`、`tests/test_ai_data_model.py`、`tests/test_data_figure_bench.py`。
+
+- **不另写 HTTP**：`call_structured` 驱动内置执行器的 `loop.HttpModel.complete(tools=[], max_attempts=1)`（经 `fixsession.build_model(conn, **model_kwargs)`）。出站约束仍只在 `wires.post_json` / `_opener()`（`test_outbound_https_trust.py` 钉的那一处）；本模块不碰 opener、不 import 网络库。
+- **永不抛**：任何异常落成 `transport/internal`；失败只有 `REASONS` 闭集（`no_connection` / `unsupported_connection` / `over_budget` / `timeout` / `refused` / `invalid_output` / `auth` / `quota` / `transport`），`detail` 只是短代码，**不含**响应原文、提示词、地址、密钥。`map_failure` 对 `loop.REASONS` 每个值都有结局（加新 reason 时 `test_failure_mapping_is_total_over_the_runner_reasons` 会红）。两种超时都要映射到 `timeout`：总时限是 `budget/time`，套接字读超时是 `network` + 异常类型名。
+- **重试只有一种**：回复不是合法 JSON（含没有文字）→ 追加固定的一句话重发，至多 1 次；形状不过校验、传输失败、拒答、鉴权失败、被截断都**不重发**。总时限两次共用，从解析连接起算；挑连接不联网，只在剩余预算 ≥ `REFRESH_NEEDS_S` 时才对挑中的那一条刷新令牌 / 核地址（没法传时限，不放线程里超时，免得留半截写入）。**请求数在传输层数**（`StructuredResult.requests`；换协议 / 字段降级不消耗尝试，一次 `complete()` 可发多个请求），`max_requests` 硬拦、到顶 `over_budget/requests`；手动脚本的 `--max-calls` 按它算。`stop == max_tokens` 是 `over_budget`。
+- **连接**：只用内置执行器能直接用的连接（`ai_providers.builtin_conn` 形状：API Key / 自填地址 / 账号登录令牌）；只有订阅登录（Codex / Claude Code CLI）→ `unsupported_connection`，**不硬凑**——CLI 没有无工具单次调用的入口。适配方向见 ADR 0178 修订节。
+- **不记录**：不写日志、不发遥测、不进诊断包；`StructuredResult` 里没有提示词与回复原文。新增遥测事件要等下次 `CONSENT_VERSION` 升版，且仍不收列名、路径、指令、图里文字。
+- **数据出图调用点 `ai_data_model.propose_recipes`**：受控摘要只含 路径 / 工作表 / 行数 / 布局 / 分组 / 编号线索 / 每列名字、类型、计数、≤ 20 条文字样本（不含行数据、哈希、大小）；表里的文字当数据：JSON 字符串放进 `<data>`、`<` 转义，提示词明说不是指令。模型交的每份配方先过 `FigureRecipe.from_dict` 再 `enforce_order`（`validate_recipe` 的闭集校验），丢弃只记原序号 + 拒绝码。`confirmed` 默认什么都没确认：模型不能凭列名当个体编号 / 配对。
+- **没有调用点是被钉住的**：`test_nothing_in_the_product_calls_the_model_yet`（AST）要求产品里没有任何 import 指向 `ai_data_model` / `ai_structured`。接进 `propose` 的那个 PR 要有意改这条测试，并先过 ADR 0178 的开关与用户可见行为评审。
+- **固定用例集**：`tests/fixtures/data_figure_cases/cases.json`（格式与判定器见 `tests/support/data_figure_cases.py` 文档串）；每条自带 `reference`（好回答）与 `trap`（踩坑），用例自证。手动入口 `scripts/dev/data_figure_bench.py`：默认假回答；`--real` 才连真模型，必须 `--max-calls` ≥ 用例数 × 2，**真实跑分花额度，开跑前先报预算**。

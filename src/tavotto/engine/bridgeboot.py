@@ -137,6 +137,23 @@ _TOPLEVEL_TO_RESTORE = (
 )
 
 
+def make_run_original(path: str):
+    """启动脚本（ADR 0194 §二）里可直接调用的 `run_original()`：在调用方那份全局里执行**用户原脚本**的代码。
+
+    safe（worker）与 native（bridge）同一份：启动脚本按「执行另一份字节、身份仍是原脚本」装载，`__file__` 是原脚本；
+    `runpy.run_path(__file__)` 在 safe 下会被「换字节」那一层再次指回启动脚本（无限递归），手写 `exec(compile(open(...)))`
+    又容易写错——由 Tavotto 注入这个函数，模型只写前置的几行。读原件用内置 `open`（不经 `io.open_code` 的换字节），
+    编译带 `dont_inherit=True`（不把引擎自己的 `from __future__` 传给用户代码）。"""
+
+    def run_original(globals_=None):
+        g = globals_ if globals_ is not None else sys._getframe(1).f_globals
+        with open(path, "rb") as fh:
+            code = compile(fh.read(), path, "exec", dont_inherit=True)
+        exec(code, g)
+
+    return run_original
+
+
 def drop_script_dir_from_sys_path(here: str) -> bool:
     """把「脚本自己的目录」从 `sys.path[0]` 摘掉，返回是否真的摘了。
 

@@ -85,6 +85,7 @@ from overrides import (
     _FONT_PRESENT as _FONT_PRESENT,  # 测试要清的那张探测缓存（显式再导出）
     BBOX_DEFAULTS,
     HATCHES,
+    LINE_POINTS_MAX,
     FigState,
     SeriesGroup,
     _arrow_style,
@@ -411,6 +412,21 @@ def _layout_anchored_artist(a, ax=None) -> bool:
     if not _layout_anchored_transform(pos, fig, ax):
         return False
     return pathgeom.layout_extent(a) is not None
+
+
+def _line_points_frac(ln, W: float, H: float) -> list[list[float]] | None:
+    """可拖的线的每个顶点此刻落在哪（figure 分数、top-origin）：前端按段 / 按点拖它们，写
+    `("line", "points_frac")`（ADR 0100 修订 2026-11-19）。2 到 `LINE_POINTS_MAX` 个、全是有限值才给；
+    更长的是曲线，只整条平移。坐标与 `anchor` 同一套换算（显示像素 / 图幅）。"""
+    try:
+        disp = ln.get_transform().transform(ln.get_xydata())
+    except Exception:  # noqa: BLE001
+        return None
+    if not 2 <= len(disp) <= LINE_POINTS_MAX or not all(
+        math.isfinite(v) for row in disp for v in row
+    ):
+        return None
+    return [[float(x) / W, 1.0 - float(y) / H] for x, y in disp]
 
 
 def _snippet(text: str, n: int = 18) -> str:
@@ -6557,6 +6573,10 @@ def _measure_manifest(
                     raise ValueError("anchor 不是有限值")
                 entry["anchor"] = anchor
                 entry["drag_prop"] = drag_prop
+                if isinstance(artist, Line2D):
+                    pts = _line_points_frac(artist, W, H)
+                    if pts is not None:
+                        entry["line_points"] = pts
             except Exception:
                 entry["draggable"] = False
         # 缺字形：判据的主语是**真正会被画出来的那个 Text**。

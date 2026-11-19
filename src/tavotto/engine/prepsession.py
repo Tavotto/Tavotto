@@ -51,6 +51,7 @@ from . import (
     execpolicy,
     execspec,
     fixrouter,
+    launchscript,
     libmodule,
     nativesession,
     pool,
@@ -2312,6 +2313,9 @@ class SessionService:
         if sess.entry_retry_run == sess.ledger.run or sess.cancel_requested:
             return None
         if done_result.cancel_requested_at is not None or not done_plan.script:
+            return None
+        if launchscript.source_for(sess.project_root, done_plan.script):
+            # 有启动脚本（ADR 0194）：执行的是它，原脚本的函数入口不是候选
             return None
         from . import probe  # 延迟：probe 依赖面大，只在需要换入口时才拉
 

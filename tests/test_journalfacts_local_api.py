@@ -739,3 +739,91 @@ def test_snapshot_endpoint_rejects_unknown_malformed_and_mismatched(
     )
     assert res.status_code == 503 and res.json["code"] == "snapshot_invalid"
     assert b"tampered" not in res.data
+
+
+def test_index_endpoint_lists_signed_index_labels_without_any_bundle_read(
+    http_client, isolated, monkeypatch
+):
+    """选刊列表只读已签名的 v2 index（label / 出版社 / ISSN / 别名）——不逐刊拉包，不碰每设备每小时的额度。"""
+    client, headers = http_client
+    key, _ = isolated
+    raw = json.dumps(fact_bundle()).encode()
+    index = index_for(raw, 4)
+    index["journals"]["fx-journal"]["aliases"] = ["FX J."]
+    index["journals"]["fx-journal"]["issn"] = "1111-2222"
+    calls = []
+
+    def request(method, url, cap, request_headers):
+        calls.append(url)
+        if url.endswith("index.signed.json"):
+            return 200, signed(key, index)
+        pytest.fail("the listing must not read a bundle")
+
+    monkeypatch.setattr(facts, "_request", request)
+    res = client.post("/api/journal-facts/index", json={"locale": "zh-CN"}, headers=headers)
+    assert res.status_code == 200 and res.headers["Cache-Control"] == "no-store"
+    assert res.json["catalog_rev"] == 4
+    assert res.json["journals"] == [
+        {
+            "id": "fx-journal",
+            "label": "Fixture",
+            "publisher": "fx-pub",
+            "publisher_label": "Fixture Publisher",
+            "issn": "1111-2222",
+            "eissn": "1234-5678",
+            "aliases": ["FX J."],
+        }
+    ]
+    assert len(calls) == 1 and calls[0].endswith("index.signed.json")
+
+
+def test_index_endpoint_keeps_listing_from_verified_cache_when_offline(
+    http_client, isolated, monkeypatch
+):
+    client, headers = http_client
+    key, _ = isolated
+    raw = json.dumps(fact_bundle()).encode()
+    envelope = signed(key, index_for(raw, 2))
+    state = {"online": True}
+
+    def request(method, url, cap, request_headers):
+        if not state["online"]:
+            raise facts.journalremote.RemoteCatalogError("network", "down")
+        return 200, envelope
+
+    monkeypatch.setattr(facts, "_request", request)
+    assert client.post("/api/journal-facts/index", json={}, headers=headers).status_code == 200
+    state["online"] = False
+    res = client.post("/api/journal-facts/index", json={}, headers=headers)
+    assert res.status_code == 200 and res.json["journals"][0]["id"] == "fx-journal"
+    assert res.json["sync_state"] == "offline"
+
+
+def test_index_endpoint_without_any_verified_index_is_an_error_not_a_list(
+    http_client, isolated, monkeypatch
+):
+    client, headers = http_client
+
+    def request(method, url, cap, request_headers):
+        raise facts.journalremote.RemoteCatalogError("network", "down")
+
+    monkeypatch.setattr(facts, "_request", request)
+    res = client.post("/api/journal-facts/index", json={}, headers=headers)
+    assert res.status_code == 503 and "journals" not in res.json
+
+
+def test_index_endpoint_follows_switch_and_rejects_unknown_fields(http_client, monkeypatch):
+    from tavotto.engine import journals
+
+    client, headers = http_client
+    monkeypatch.setattr(
+        facts, "listing", lambda *a, **k: pytest.fail("read while the switch is off")
+    )
+    monkeypatch.setattr(journals, "JOURNAL_CATALOG_AGENTS", False)
+    res = client.post("/api/journal-facts/index", json={}, headers=headers)
+    assert res.status_code == 403 and res.json["code"] == "journal_catalog_disabled"
+    monkeypatch.setattr(journals, "JOURNAL_CATALOG_AGENTS", True)
+    res = client.post("/api/journal-facts/index", json={"query": "x"}, headers=headers)
+    assert res.status_code == 400
+    res = client.post("/api/journal-facts/index", json={}, headers={"Host": headers["Host"]})
+    assert res.status_code == 401

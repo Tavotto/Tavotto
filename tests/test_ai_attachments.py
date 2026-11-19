@@ -159,6 +159,8 @@ def test_stage_takes_any_file_and_keeps_its_name(env):
         ),
         (b"x" * (ai_attachments.MAX_FILE_BYTES + 1), "attachment_too_large"),
     ],
+    # 不给 ids 时 pytest 把整段字节当用例 id（26 MB），Windows 上撑爆环境变量上限
+    ids=["empty", "image-too-large", "file-too-large"],
 )
 def test_stage_refuses_empty_and_oversized(env, raw, code):
     with pytest.raises(ai_attachments.AttachmentError) as exc:

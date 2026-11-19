@@ -170,6 +170,8 @@ const RULES: Record<
   'tick-direction': { category: 'lines', context: 'document', fix: 'safe_auto' },
   'spines-not-enclosed': { category: 'lines', context: 'document', fix: 'safe_auto' },
   'line-width-off-preset': { category: 'lines', context: 'document', fix: 'safe_auto' },
+  // 数据线比期刊要求的下限细：线宽是脚本里的数，没有安全的自动加粗（会改变图的外观与重叠），回脚本 / 属性里改
+  'line-width-below-min': { category: 'lines', context: 'document', fix: 'none' },
   'axis-label-format': { category: 'text', context: 'document', fix: 'none' },
   'discouraged-colormap': { category: 'color', context: 'document', fix: 'none' },
   'palette-semantic': { category: 'color', context: 'document', fix: 'none' },
