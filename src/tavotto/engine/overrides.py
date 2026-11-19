@@ -2557,13 +2557,16 @@ class _AutoscaleAt(_Autoscale):
     `_AUTOSCALE` 那条理由仍然成立。与 `_AUTOSCALE` 一样只活在 `state.originals` 里，不进 patch、不过 JSON。
     """
 
-    __slots__ = ("lim",)
+    __slots__ = ("lim", "scale")
 
-    def __init__(self, lim) -> None:
+    def __init__(self, lim, scale: str) -> None:
         self.lim = (float(lim[0]), float(lim[1]))
+        #: 记下时这条轴的刻度类型。撤销时轴已经换了 scale（「ylim → 再换 log → 撤掉 ylim」）的话，当时的范围在新
+        #: scale 下没有意义——全新重放是「脚本范围 → 换 log 时自动缩放」，这时照 `_AUTOSCALE` 重新缩放才相同
+        self.scale = scale
 
     def __repr__(self) -> str:
-        return f"<autoscale at {self.lim}>"
+        return f"<autoscale at {self.lim} ({self.scale})>"
 
 
 class _PatchEdge:
@@ -2764,7 +2767,10 @@ def _get_axes_lim(axis: str):
         on = getattr(ax, f"get_autoscale{axis}_on", None)
         if on is not None and on():
             # 模式与当时的范围都记：见 `_AutoscaleAt`（seaborn 分类轴是「开着自动缩放的显式范围」）
-            return _AutoscaleAt(ax.get_xlim() if axis == "x" else ax.get_ylim())
+            return _AutoscaleAt(
+                ax.get_xlim() if axis == "x" else ax.get_ylim(),
+                ax.get_xscale() if axis == "x" else ax.get_yscale(),
+            )
         return ax.get_xlim() if axis == "x" else ax.get_ylim()
 
     return get
@@ -2848,6 +2854,13 @@ def _set_axes_lim(axis: str):
 
     def put(ax, v, state=None):
         if v is _AUTOSCALE:
+            ax.autoscale(enable=True, axis=axis)
+            ax.autoscale_view()
+            return
+        if isinstance(v, _AutoscaleAt) and v.scale != (
+            ax.get_xscale() if axis == "x" else ax.get_yscale()
+        ):
+            # 撤销时 scale 已经换过：当时的范围在新 scale 下不成立，照「只记模式」那样重新自动缩放
             ax.autoscale(enable=True, axis=axis)
             ax.autoscale_view()
             return
