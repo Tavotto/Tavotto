@@ -43,16 +43,53 @@ test('chart binding backs up the project and reopens the frozen source', async (
     await page.goto(first.baseURL)
     await openLayout()
     const panel = page.locator('[data-canvas-stage] [data-object-id="chart-panel"]')
-    await panel.click({ button: 'right' })
-    await page.locator('[data-quick-item="bind-chart"]').click()
     const dialog = page.locator('[data-chart-bind-dialog]')
-    for (const [index, value] of [10, 10, 80, 80].entries()) {
-      await dialog.locator(`[data-chart-rect="${index}"]`).fill(String(value))
+    const enterBinding = async () => {
+      await panel.click({ button: 'right' })
+      await page.locator('[data-quick-item="bind-chart"]').click()
+      for (const [index, value] of [10, 10, 80, 80].entries()) {
+        await dialog.locator(`[data-chart-rect="${index}"]`).fill(String(value))
+      }
+      await dialog.locator('[data-chart-axes-nodes]').fill('old_axis')
+      await dialog.locator('[data-chart-series-field="node"]').fill('curve')
+      await dialog.locator('[data-chart-series-field="x"]').fill('x')
+      await dialog.locator('[data-chart-series-field="y"]').fill('y')
+      await dialog.locator('[data-chart-data]').fill('x,y\n0,25\n10,25\n')
     }
-    await dialog.locator('[data-chart-axes-nodes]').fill('old_axis')
-    await dialog.locator('[data-chart-series-field="node"]').fill('curve')
-    await dialog.locator('[data-chart-series-field="x"]').fill('x')
-    await dialog.locator('[data-chart-series-field="y"]').fill('y')
+
+    // Deliver a real render into a session that has already opened a different binding draft.
+    const renderRoute = '**/api/svg/chart/compute?*'
+    let intercepted = false
+    let release!: () => void
+    const pending = new Promise<void>(resolve => { release = resolve })
+    await page.route(renderRoute, async route => {
+      intercepted = true
+      await pending
+      await route.continue()
+    }, { times: 1 })
+    await enterBinding()
+    const bound = page.waitForResponse(res => new URL(res.url()).pathname === '/api/svg/chart/bind', { timeout: 60_000 })
+    const late = page.waitForResponse(res => new URL(res.url()).pathname === '/api/svg/chart/compute', { timeout: 90_000 })
+    try {
+      await page.locator('[data-chart-bind-action="preview"]').click()
+      const binding = await bound
+      expect(binding.ok(), await binding.text()).toBe(true)
+      await expect.poll(() => intercepted, { timeout: 60_000 }).toBe(true)
+      await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click()
+      await expect(dialog).toBeHidden()
+      await enterBinding()
+      await dialog.locator('[data-chart-data]').fill('x,y\n0,50\n10,50\n')
+    } finally {
+      release()
+    }
+    const discarded = await late
+    expect(discarded.ok(), await discarded.text()).toBe(true)
+    await page.evaluate(() => new Promise<void>(resolve =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    await expect(dialog.locator('[data-chart-comparison]')).toHaveCount(0)
+    await expect(dialog.locator('[data-chart-data]')).toHaveValue('x,y\n0,50\n10,50\n')
+    await expect(panel.locator('[data-display="exact"]')).toHaveCount(0)
+
     await dialog.locator('[data-chart-data]').fill('x,y\n0,25\n10,25\n')
     await page.locator('[data-chart-bind-action="preview"]').click()
     await expect(dialog.locator('[data-chart-comparison] img')).toHaveCount(2, { timeout: 60_000 })
