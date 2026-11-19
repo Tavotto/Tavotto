@@ -302,14 +302,27 @@ export function arrowEndpointsOf(
   return el.arrow_endpoints
 }
 
-/** 可逐段编辑的线此刻的顶点：文档里写下的 `points_frac` 优先（个数对得上才认），否则取 manifest 的 */
+/** 逐点编辑的顶点上限——与引擎 `overrides.LINE_POINTS_MAX` 同一个数（超过它的线引擎不出 `line_points`） */
+export const LINE_POINTS_MAX = 64
+
+/**
+ * 可逐段编辑的线此刻的顶点：文档里写下的 `points_frac` 优先（加 / 删拐点会改个数：2 到上限个、
+ * 偶数个有限数才认），否则取 manifest 的。
+ */
 export function linePointsOf(panel: PanelObject, el: ManifestElement): [number, number][] | null {
   const pts = el.line_points
   if (!pts || pts.length < 2) return null
   const ov = effectiveOverride(panel.overrides, el.gid, 'points_frac')
-  if (ov && Array.isArray(ov.value) && ov.value.length === pts.length * 2) {
-    const v = ov.value as number[]
-    return pts.map((_, i) => [v[2 * i], v[2 * i + 1]] as [number, number])
+  const v = ov?.value
+  if (
+    Array.isArray(v) &&
+    v.length >= 4 &&
+    v.length % 2 === 0 &&
+    v.length <= LINE_POINTS_MAX * 2 &&
+    v.every((n) => typeof n === 'number' && Number.isFinite(n))
+  ) {
+    const nums = v as number[]
+    return Array.from({ length: nums.length / 2 }, (_, i) => [nums[2 * i], nums[2 * i + 1]] as [number, number])
   }
   return pts
 }

@@ -79,6 +79,7 @@ import {
   startElementGroupMove,
   startDeferredInFigureDrag,
   startInFigureDrag,
+  insertLineBend,
   nearestLineSegment,
   startLineEdit,
   resumeDeferredInFigureDrag,
@@ -997,6 +998,12 @@ function ElementHitLayer({
         if (e.altKey && !e.shiftKey) return
         const { fx, fy } = frac(e)
         const hit = pickElement(manifest, fx, fy, obj.lockedGids)
+        // 双击引线的一段 = 在那里加一个拐点（拐点上的双击归覆盖层的手柄：删掉它）
+        if (hit?.draggable && hit.line_points) {
+          useUiStore.getState().setSelectedGid(hit.gid)
+          insertLineBend(obj, hit, fx, fy, layout)
+          return
+        }
         // 双击带文字内容的元素 = 快速改字：弹层聚焦内容输入框
         if (!hit?.editable.some((f) => f.prop === 'text' && f.type === 'text')) return
         useUiStore.getState().setSelectedGid(hit.gid)

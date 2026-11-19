@@ -87,7 +87,7 @@ async function settleAfter(page: Page, action: () => Promise<void>) {
 }
 
 for (const scheme of ['light', 'dark'] as const) {
-  test(`引线：选中出顶点手柄，按在一段上拖 = 那一段走、相邻段伸缩；撤销回原处、重做回落点（${scheme}）`, async ({
+  test(`引线：选中出顶点手柄，按在一段上拖 = 那一段走、相邻段伸缩；撤销回原处、重做回落点；双击加 / 删拐点（${scheme}）`, async ({
     app,
     page,
   }, testInfo) => {
@@ -164,5 +164,40 @@ for (const scheme of ['light', 'dark'] as const) {
         { timeout: 60_000, message: '重做一次回到落下的位置' },
       )
       .toBeLessThanOrEqual(BUDGET_PX)
+
+    // 加拐点：双击竖段（顶点 1 → 2）的中间 = 在那里插一个拐点，手柄 4 → 5；画面先不变
+    const center = async (i: number) => {
+      const r = (await page.locator(`[data-line-vertex="${i}"]`).boundingBox())!
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+    }
+    const v1 = await center(1)
+    const v2 = await center(2)
+    const midX = (v1.x + v2.x) / 2
+    const midY = (v1.y + v2.y) / 2
+    const before = (await boxOf(page, GID))!
+    await settleAfter(page, () => page.mouse.dblclick(midX, midY))
+    await expect(page.locator('[data-line-vertex]')).toHaveCount(5)
+    const same = (await boxOf(page, GID))!
+    expect(Math.abs(same.w - before.w) + Math.abs(same.h - before.h), '加拐点画面先不变').toBeLessThanOrEqual(BUDGET_PX)
+    await shot('lineseg-bend-added')
+    // 拖新拐点往左折出一个弯
+    const nb = await center(2)
+    await page.mouse.move(nb.x, nb.y)
+    await page.mouse.down()
+    for (let i = 1; i <= 8; i++) await page.mouse.move(nb.x - (40 * i) / 8, nb.y)
+    await page.waitForTimeout(200)
+    await settleAfter(page, () => page.mouse.up())
+    await shot('lineseg-bend-dragged')
+    // 新拐点落在拉到的位置（权威重画之后的手柄 = 引擎回的 line_points）；左右两侧的拐点不动
+    const moved = await center(2)
+    expect(Math.abs(moved.x - (nb.x - 40)), '新拐点落在往左 40 px 处').toBeLessThanOrEqual(1.5)
+    expect(Math.abs(moved.y - nb.y), '新拐点只左右挪').toBeLessThanOrEqual(1.5)
+    expect(Math.abs((await center(1)).x - v1.x), '上一个拐点不动').toBeLessThanOrEqual(1.5)
+    // 删拐点：双击它的手柄，手柄 5 → 4
+    const nb2 = await center(2)
+    await settleAfter(page, () => page.mouse.dblclick(nb2.x, nb2.y))
+    await expect(page.locator('[data-line-vertex]')).toHaveCount(4)
+    const removed = (await boxOf(page, GID))!
+    expect(Math.abs(removed.x - before.x), '删掉拐点回到之前的形状').toBeLessThanOrEqual(BUDGET_PX)
   })
 }

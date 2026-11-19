@@ -2060,7 +2060,11 @@ def _line_native_points(ln):
 
 
 def _points_value(ln, value) -> list[tuple[float, float]]:
-    n = len(_line_native_points(ln))
+    """2 到 `LINE_POINTS_MAX` 个顶点（加 / 删拐点会改个数，2026-11-19），每个两个有限数。"""
+    _line_native_points(ln)  # 第一次逐点编辑前记下脚本原样（撤销、排版前放回都靠它）
+    n = len(value) // 2 if isinstance(value, (list, tuple)) else 0
+    if not 2 <= n <= LINE_POINTS_MAX or len(value) != 2 * n:
+        raise ValueError(f"顶点要 2 到 {LINE_POINTS_MAX} 个（每个两个数）: {value!r}")
     flat = _drag_value(value, 2 * n)
     return [(flat[2 * i], flat[2 * i + 1]) for i in range(n)]
 
@@ -2082,8 +2086,9 @@ def _place_points(ln, pts) -> None:
 def _set_line_points_frac(ln, value) -> None:
     """逐点 / 逐段编辑位置不是数据的线（引线、分隔线；ADR 0100 修订 2026-11-19）。
 
-    值是**全部**顶点的 figure 分数（top-origin），摊平成 [x0, y0, x1, y1, …]，个数与脚本原样相同
-    （拖一段 = 那一段的两个端点一起走，相邻段跟着伸缩；拖一个点 = 只动那一个）。整条平移也写它
+    值是**全部**顶点的 figure 分数（top-origin），摊平成 [x0, y0, x1, y1, …]，2 到 `LINE_POINTS_MAX` 个
+    （拖一段 = 那一段的两个端点一起走，相邻段跟着伸缩；拖一个点 = 只动那一个；双击一段加拐点、双击拐点
+    删掉它会改个数）。线的 marker 跟着顶点走；逐点的样式（markevery 之类）按新个数由 matplotlib 照常处理。整条平移也写它
     （所有点同一位移），所以一条线只会有这一条位置 override——与 `pos_frac` 混写时后写的 setter
     把前一条的效果放回基准，热态与重放落在同一处。布局引擎下挂进 pin 表，排完按排好的子图再落一次。"""
     pts = _points_value(ln, value)

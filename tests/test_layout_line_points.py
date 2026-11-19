@@ -182,12 +182,14 @@ def test_whole_line_move_through_points_and_figure_level_line(hot, stem):
     _man(hot, stem)
 
 
-def test_wrong_vertex_count_is_rejected_without_moving_anything(hot):
+@pytest.mark.parametrize(
+    "bad", [[0.1, 0.2], [0.1, 0.2, 0.3], [0.1, 0.2] * 65, [0.1, 0.2, None, 0.4]]
+)
+def test_bad_vertex_lists_are_rejected_without_moving_anything(hot, bad):
+    """少于 2 个点、奇数个数、超过上限、不是数（前端 JSON 里的 null）：报出来、什么都不动。"""
     base = _man(hot, "Plain")
-    resp = hot.override(
-        "Plain", [{"gid": LEADER, "prop": "points_frac", "value": [0.1, 0.2, 0.3, 0.4]}]
-    )
-    assert resp.get("warnings"), "顶点个数不对必须报出来"
+    resp = hot.override("Plain", [{"gid": LEADER, "prop": "points_frac", "value": bad}])
+    assert resp.get("warnings"), "顶点列表不对必须报出来"
     got = {e["gid"]: e for e in resp["manifest"]["elements"]}
     assert got[LEADER]["line_points"] == base[LEADER]["line_points"]
     _man(hot, "Plain")
@@ -222,3 +224,33 @@ def test_move_then_segment_edit_replays_the_same(hot, figs):
             )
     finally:
         pool.discard(fresh)
+
+
+@pytest.mark.parametrize("stem", STEMS)
+def test_adding_and_removing_bends_changes_the_vertex_count(hot, figs, stem):
+    """双击一段加拐点 / 双击拐点删掉（2026-11-19）：顶点个数变了照样落位、画出来的线跟着走、
+    撤销回到脚本原样的 4 个点、全量重放 == 热态。"""
+    tol = _tol(stem)
+    base = _man(hot, stem)
+    pts = base[LEADER]["line_points"]
+    mid = [(pts[0][0] + pts[1][0]) / 2, pts[0][1] + 0.05]  # 第 0 段中间加一个拐点、往下拉一点
+    added = [pts[0], mid, *pts[1:]]
+    removed = [pts[0], pts[1], pts[3]]  # 删掉第 2 个拐点
+    for target in (added, removed):
+        patch = [{"gid": LEADER, "prop": "points_frac", "value": _flat(target)}]
+        got = _man(hot, stem, patch)
+        assert len(got[LEADER]["line_points"]) == len(target)
+        assert _flat(got[LEADER]["line_points"]) == pytest.approx(_flat(target), abs=tol)
+        again = _man(hot, stem, patch)
+        assert again[LEADER]["bbox"] == pytest.approx(got[LEADER]["bbox"], abs=tol)
+        fresh = pool.one_shot(SCRIPT_NAME, str(figs), "main")
+        try:
+            fresh.ensure_built()
+            replay = _man(fresh, stem, patch)
+            assert _flat(replay[LEADER]["line_points"]) == pytest.approx(
+                _flat(got[LEADER]["line_points"]), abs=CONSTRAINED_TOL if stem == "Con" else 1e-9
+            )
+        finally:
+            pool.discard(fresh)
+    back = _man(hot, stem)
+    assert _flat(back[LEADER]["line_points"]) == pytest.approx(_flat(pts), abs=1e-9)

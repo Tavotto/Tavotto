@@ -24,7 +24,7 @@ import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { OverlaySvg } from './OverlaySvg'
-import { inFigureMoveOf, nearestLineSegment, startLineEdit } from './interactions'
+import { inFigureMoveOf, insertLineBend, nearestLineSegment, removeLineBend, startLineEdit } from './interactions'
 
 const figureEl: ManifestElement = {
   gid: 'figure',
@@ -242,3 +242,60 @@ describe('覆盖层：选中引线出每个顶点的方块手柄', () => {
     expect(container.querySelectorAll('[data-line-vertex]').length).toBe(4)
   })
 })
+
+describe('加 / 删拐点（双击）', () => {
+  it('双击一段：点投影到那一段上、插在它两端之间，画面先不变', () => {
+    // 点在第 1 段（竖段 x=0.5）旁边、略偏右：投影回 x=0.5
+    expect(insertLineBend(livePanel(), leadEl, 0.52, 0.45, layout)).toBe(true)
+    const v = pairs(overrideOf(leadEl.gid, 'points_frac')!)
+    expect(v.length).toBe(5)
+    expect(v[0]).toEqual(LEAD[0])
+    expect(v[1]).toEqual(LEAD[1])
+    expect(v[2][0]).toBeCloseTo(0.5, 4)
+    expect(v[2][1]).toBeCloseTo(0.45, 4)
+    expect(v[3]).toEqual(LEAD[2])
+    expect(v[4]).toEqual(LEAD[3])
+    // 新顶点立刻能被拖（linePointsOf 认得 5 个点的 override）
+    expect(linePointsOf(livePanel(), leadEl)!.length).toBe(5)
+    startLineEdit(down(0, 0), livePanel(), leadEl, layout, { kind: 'vertex', index: 2 })
+    fire('pointermove', px(-10), 0)
+    fire('pointerup', px(-10), 0)
+    const w = pairs(overrideOf(leadEl.gid, 'points_frac')!)
+    expect(w.length).toBe(5)
+    expect(w[2][0]).toBeCloseTo(0.4, 4)
+  })
+
+  it('双击拐点删掉它；只剩两个点时不再删', () => {
+    expect(removeLineBend(livePanel(), leadEl, 1)).toBe(true)
+    let v = pairs(overrideOf(leadEl.gid, 'points_frac')!)
+    expect(v).toEqual([LEAD[0], LEAD[2], LEAD[3]])
+    expect(removeLineBend(livePanel(), leadEl, 1)).toBe(true)
+    v = pairs(overrideOf(leadEl.gid, 'points_frac')!)
+    expect(v).toEqual([LEAD[0], LEAD[3]])
+    const before = livePanel().overrides.length
+    expect(removeLineBend(livePanel(), leadEl, 0)).toBe(false)
+    expect(livePanel().overrides.length).toBe(before)
+  })
+
+  it('到上限（64 个点）不再加', () => {
+    const many = Array.from({ length: 64 }, (_, i) => [0.1 + i * 0.01, 0.5] as [number, number])
+    useDocumentStore.getState().commit(literal('种 64 个点'), (d) => {
+      const p = d.objects[0] as PanelObject
+      p.overrides.push({ gid: leadEl.gid, prop: 'points_frac', value: many.flat() })
+    })
+    expect(insertLineBend(livePanel(), leadEl, 0.3, 0.5, layout)).toBe(false)
+  })
+
+  it('覆盖层：双击拐点手柄删掉它', () => {
+    act(() => {
+      useUiStore.setState({ elementPanelId: 'p1', selectedGids: [leadEl.gid] })
+    })
+    act(() => root.render(<OverlaySvg />))
+    const handle = container.querySelector('[data-line-vertex="2"]')!
+    act(() => {
+      handle.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    })
+    expect(pairs(overrideOf(leadEl.gid, 'points_frac')!)).toEqual([LEAD[0], LEAD[1], LEAD[3]])
+  })
+})
+

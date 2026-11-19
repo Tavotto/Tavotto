@@ -32,6 +32,7 @@ import type { CanvasObject, LinearObject, PanelObject } from '@/types/document'
 import { isLinear, lineEndpoints, objectRotation } from '@/types/document'
 import {
   guardStale,
+  removeLineBend,
   startArrowDrag,
   startLineEdit,
   startAxesDrag,
@@ -1160,6 +1161,11 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
                   onPointerDown={guarded((e) =>
                     startLineEdit(e, panel, lineEl, layout, { kind: 'vertex', index: i }),
                   )}
+                  // 双击拐点 = 删掉它（至少留两个点）；不冒到命中层，免得又在原处加回一个
+                  onDoubleClick={guardStale(panel, (e: React.MouseEvent) => {
+                    e.stopPropagation()
+                    removeLineBend(panel, lineEl, i)
+                  })}
                 />
               )
             })}

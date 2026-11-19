@@ -40,6 +40,7 @@ import { contentToPageVec, pageToContentVec, panelContentTransform } from '@/lib
 import {
   anchorOf,
   arrowEndpointsOf,
+  LINE_POINTS_MAX,
   linePointsOf,
   axesCompanions,
   companionPatchesFor,
@@ -2285,6 +2286,44 @@ export function nearestLineSegment(
     }
   }
   return best
+}
+
+/**
+ * 双击引线的一段 = 在双击处加一个拐点（用户 2026-11-19「做一下加拐点」）。
+ * 点投影到那一段上再插进去：画面先不变，接着拖这个新拐点就能折出新的弯。到上限（64）不加。
+ * 回 true = 写了一条 override（一条撤销）。
+ */
+export function insertLineBend(
+  panel: PanelObject,
+  element: ManifestElement,
+  fx: number,
+  fy: number,
+  layout: { width: number; height: number },
+): boolean {
+  const pts = linePointsOf(panel, element)
+  if (!pts || pts.length >= LINE_POINTS_MAX) return false
+  const i = nearestLineSegment(pts, fx, fy, layout)
+  const [a, b] = [pts[i], pts[i + 1]]
+  const W = layout.width
+  const H = layout.height
+  const dx = (b[0] - a[0]) * W
+  const dy = (b[1] - a[1]) * H
+  const len2 = dx * dx + dy * dy
+  const t =
+    len2 > 0 ? Math.max(0, Math.min(1, ((fx - a[0]) * W * dx + (fy - a[1]) * H * dy) / len2)) : 0.5
+  const at: [number, number] = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]
+  const next = [...pts.slice(0, i + 1), at, ...pts.slice(i + 1)]
+  setOverride(panel.id, element.gid, 'points_frac', next.flat().map(round4), true)
+  return true
+}
+
+/** 双击引线的一个拐点 = 删掉它（至少留两个点）。回 true = 写了一条 override。 */
+export function removeLineBend(panel: PanelObject, element: ManifestElement, index: number): boolean {
+  const pts = linePointsOf(panel, element)
+  if (!pts || pts.length <= 2 || index < 0 || index >= pts.length) return false
+  const next = pts.filter((_, k) => k !== index)
+  setOverride(panel.id, element.gid, 'points_frac', next.flat().map(round4), true)
+  return true
 }
 
 /**
