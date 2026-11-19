@@ -286,19 +286,21 @@ constrained；一次性 worker 全量重放 == 热态）。修前 3 条红。
 - **按下拖的是离指针最近的一段**（按内容像素量）；整条平移走方向键、与标签一起多选拖、对齐——都写同一条 override。
 - **⇧ 锁水平 / 垂直**（看起手以来哪个方向走得多），直角引线拖完仍横平竖直。
 - **拐点方块只在选中时出现**（7 px，手柄同色）；拖方块只动那一个点。
-- **不加 / 删拐点**：顶点个数保持脚本原样。
+- **加 / 删拐点**（用户 2026-11-19 追加「做一下加拐点」，审阅页 ⑦–⑨ 全按推荐）：双击线上的一段 = 在双击处加一个拐点
+  （点投影到那一段上，画面先不变，接着拖它折弯）；双击拐点方块 = 删掉它（最少留两个点，首尾也能删）；到上限不再加。
 - **超过 `LINE_POINTS_MAX`（64）个顶点的线不出拐点**，只整条平移；数据曲线仍不可拖。
 
 实现：
 
 - 引擎：可拖的线在 manifest 里出 `line_points`（每个顶点的 figure 分数、top-origin，与 `anchor` 同一套换算）。
-  新 override `("line", "points_frac")`：**全部顶点**摊平 `[x0, y0, x1, y1, …]`，个数必须与脚本原样相同（不对就报 warning、
-  什么都不动）。setter 先把线放回基准 transform（整条平移叠的英寸平移一并去掉），再按基准 transform 的逆把显示坐标换回线
+  新 override `("line", "points_frac")`：**全部顶点**摊平 `[x0, y0, x1, y1, …]`，2 到 `LINE_POINTS_MAX` 个（加 / 删拐点会改个数；
+  少于 2 个、奇数个数、超过上限、不是数就报 warning、什么都不动）。setter 先把线放回基准 transform（整条平移叠的英寸平移一并去掉），再按基准 transform 的逆把显示坐标换回线
   自己的坐标系写进数据；布局引擎下挂进 pin 表（与 `pos_frac` 同一张表、带 `points` 标记），排版前放回脚本原样的顶点、排完再落。
   原样 = （基准 transform, 脚本原样顶点）。`points_frac` 进 `_FRAC_ANCHORED`，每次重放。
 - 一条线只写一种位置 override：前端对出 `line_points` 的线，整条平移（`inFigureMoveOf` → `lineMove`、`alignEntries`）也写
   `points_frac`；存量文档里 #2018 写下的 `pos_frac` 照常生效，之后再逐段编辑时 setter 把平移放回基准，热态与重放一致。
-- 前端：`elementGeom.linePointsOf`（文档里写下的 `points_frac` 优先）；`interactions.startLineEdit`（段 / 点、⇧ 锁向、覆盖层
+- 前端：`elementGeom.linePointsOf`（文档里写下的 `points_frac` 优先，个数可变）；`interactions.insertLineBend` / `removeLineBend`
+  （`PanelView` 双击一段、`OverlaySvg` 双击拐点手柄）；`interactions.startLineEdit`（段 / 点、⇧ 锁向、覆盖层
   虚线预览 `linePreview`、拖回原处不写）；`PanelView` 按下分派到最近一段；`OverlaySvg` 拐点手柄；拖子图时改过的引线随行
   （`FRAC_ANCHORED_PROPS` 认 `points_frac`，任意偶数长度按 x、y 交替平移）。导出修改后的 .py 不写 `points_frac`（与 `pos_frac` 同一结论）。
 
