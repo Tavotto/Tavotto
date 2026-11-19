@@ -194,6 +194,10 @@ def resolve_connection(budget_s: float | None = None) -> tuple[dict | None, str,
 
 def _effort_kwargs(conn: dict, effort: str | None) -> dict:
     """想要的强度 → `HttpModel` 的 `effort` / `thinking`（经 `builtin_effort_args` 核过才有）；任何一步不确定 = 空（不发）。"""
+    if conn.get(
+        "effort"
+    ):  # 只有手动基准的临时连接带（存储里的连接没有这个键）；协议层仍按自己认的取值过滤
+        return {"effort": conn["effort"]}
     if not effort:
         return {}
     try:
