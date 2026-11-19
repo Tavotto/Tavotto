@@ -122,25 +122,14 @@ _GUARDED_SRC = r"""
 import sys
 # 守卫装好之前只从解释器自己的标准库导入（Codex #2064 P1）：`-c` 让当前目录（''）排在最前、PYTHONPATH 也在标准库前面，
 # 当前目录或 PYTHONPATH 里的 json.py / tempfile.py 会在任何守卫之前执行。先只留标准库位置，守卫与 site 装好后再还原（'' 不还原）
-_saved_path = [p for p in sys.path if p]
-# 只留解释器自己算出来的默认位置（标准库 zip、标准库目录、lib-dynload）：去掉 PYTHONPATH 的每一项——按精确条目去，不按前缀猜
-# （Codex #2064 复核 P1：安装前缀下的任意目录也会被前缀判据放过）。环境变量从内建的 posix / nt 读，此刻不导入任何文件里的模块
+# 守卫装好之前只从解释器自己的默认位置导入（Codex #2064 P1 ×3）：父进程起子进程时把 PYTHONPATH 挪到私有变量里，解释器启动时
+# 根本看不到它，所以这里的 sys.path 只有解释器自己算出的位置——不必猜哪些条目来自环境（猜不全：CPython 会把条目展开、规范化）。
+# 再去掉 ''（`-c` 的当前目录）与启动目录（试跑目录）下的条目作纵深；PYTHONPATH 等守卫与 site 装好后才按解释器的方式放回
 _osmod = __import__("nt" if sys.platform == "win32" else "posix")
-_env = _osmod.environ
-# 相对的 PYTHONPATH 条目被解释器按启动目录展开成了绝对路径：启动目录（试跑目录，诊断副本就在里面）及其下一律不在守卫前的路径上
 _cwd = _osmod.getcwd().rstrip("/\\")
-_pp = _env.get("PYTHONPATH" if sys.platform == "win32" else b"PYTHONPATH")
-if isinstance(_pp, bytes):
-    _pp = _pp.decode(sys.getfilesystemencoding(), "surrogateescape")
-_pp_entries = {e.rstrip("/\\") for e in (_pp or "").split(";" if sys.platform == "win32" else ":") if e}
-# 另外只留绝对路径：解释器默认位置都是绝对的，相对条目只可能来自环境
-_abs = (lambda q: q[1:3] in (":\\", ":/") or q.startswith("\\\\")) if sys.platform == "win32" else (lambda q: q.startswith("/"))
-sys.path[:] = [
-    p for p in _saved_path
-    if p.rstrip("/\\") not in _pp_entries and _abs(p)
-    and not (p.rstrip("/\\") == _cwd or p.startswith(_cwd + ("\\" if sys.platform == "win32" else "/")))
-]
-del _osmod, _env, _pp, _pp_entries, _abs, _cwd
+_sep = "\\" if sys.platform == "win32" else "/"
+sys.path[:] = [p for p in sys.path if p and not (p.rstrip("/\\") == _cwd or p.startswith(_cwd + _sep))]
+del _osmod, _cwd, _sep
 import json, os
 guard, root, out, target = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 # 先把后面要用的标准库导进来，再装守卫：守卫只管「写」，读不受限
@@ -206,7 +195,13 @@ try:
     # 两个守卫都装好之后才做 site 初始化：site-packages、.pth、sitecustomize / usercustomize 都在守卫之下执行
     import site
     site.main()
-    sys.path[:] = _saved_path + [p for p in sys.path if p not in _saved_path]
+    # 用户环境里的 PYTHONPATH：守卫与 site 都装好之后才放回，位置与解释器原本一致（标准库之前），相对条目按启动目录展开
+    _pp = os.environ.pop("TAVOTTO_TRIAL_PYTHONPATH", None)
+    if _pp:
+        _extra = [os.path.abspath(e) for e in _pp.split(os.pathsep) if e]
+        sys.path[:] = [e for e in _extra if e not in sys.path] + sys.path
+        os.environ["PYTHONPATH"] = _pp  # 被测代码看到的环境与原来一致
+    del _pp
     # 数据改指（ADR 0106）：项目里记着的规则要在试跑里也生效，否则接上的数据在这里读不到、验证不了。
     # 与 worker 同一份实现（`figcapture.install_input_remap`，纯标准库，按文件加载）；加载不了如实标 unavailable，不静默当没有
     remap = "none"
@@ -503,6 +498,10 @@ def _run_guarded(
         return {"status": "env_unavailable", **empty}
     env = dict(os.environ if env is None else env)
     env.update(MPLBACKEND="Agg", TMPDIR=tmp, TEMP=tmp, TMP=tmp, MPLCONFIGDIR=str(trial_dir / "mpl"))
+    # PYTHONPATH 不让解释器在启动时看到：守卫前导装好守卫之后才把它放回（Codex #2064 P1：启动阶段的执行窗口）
+    pythonpath = env.pop("PYTHONPATH", None)
+    if pythonpath:
+        env["TAVOTTO_TRIAL_PYTHONPATH"] = pythonpath
     if extra_env:
         env.update(extra_env)
     sandbox, sandbox_prefix = _os_sandbox_prefix(trial_dir, strict_deny)

@@ -287,3 +287,38 @@ def test_a_diagnostic_copy_still_imports_the_scripts_sibling_modules(box):
     ctx = make_ctx(box, environments={"e": sys.executable}, script_path=box.proj / "fig.py")
     r = call(ctx, "try_run", {"env": "e", "mode": "diagnostic"})
     assert "ModuleNotFoundError" not in r.content, r.content
+
+
+@pytest.mark.parametrize("shape", ["{d}/./evil", "{d}/evil/", "{d}/x/../evil"])
+def test_no_pythonpath_spelling_runs_before_the_guard(box, monkeypatch, tmp_path, shape):
+    """Codex #2064 第三轮 P1：解释器会把 PYTHONPATH 条目展开、规范化（`/x/./evil` → `/x/evil`），按条目猜总会漏。
+    结构性修法：解释器启动时根本看不到 PYTHONPATH，守卫装好后才放回——任何写法都进不了守卫前的路径。"""
+    _no_os_sandbox(monkeypatch)
+    marker = tmp_path / "PWNED"
+    evil = tmp_path / "evil"
+    evil.mkdir()
+    (evil / "json.py").write_text(f"open({str(marker)!r}, 'w').write('x')\n", encoding="utf-8")
+    (tmp_path / "x").mkdir()
+    monkeypatch.setenv("PYTHONPATH", shape.format(d=tmp_path))
+    r = call(_ctx(box), "run_snippet", {"env": "e", "code": "print('hello')"})
+    assert not marker.exists(), shape
+    assert not r.is_error and "hello" in r.content, r.content
+
+
+def test_pythonpath_modules_still_import_once_the_guard_is_up(box, monkeypatch, tmp_path):
+    """放回之后与原来一致：用户 PYTHONPATH 里的模块照常能 import，环境里也看得到 PYTHONPATH。"""
+    lib = tmp_path / "userlib"
+    lib.mkdir()
+    (lib / "labtools.py").write_text("ANSWER = 7\n", encoding="utf-8")
+    monkeypatch.setenv("PYTHONPATH", str(lib))
+    r = call(
+        _ctx(box),
+        "run_snippet",
+        {
+            "env": "e",
+            "code": "import os, labtools\nprint('answer', labtools.ANSWER)\nprint('pp', bool(os.environ.get('PYTHONPATH')))\nprint('private', 'TAVOTTO_TRIAL_PYTHONPATH' in os.environ)\n",
+        },
+    )
+    assert "answer 7" in r.content and "pp True" in r.content and "private False" in r.content, (
+        r.content
+    )
