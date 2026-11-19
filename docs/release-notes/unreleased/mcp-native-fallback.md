@@ -1,3 +1,0 @@
-## AI agents can open scripts that read back the figure they just saved
-
-When a script saves a figure and then reads that file back (for example `savefig("fig.png")` followed by `Image.open("fig.png")`), `tavotto_open_figure` used to stop with `safe_file_operation_blocked`. It now runs the script once more in a real Python, the same way the desktop app already did, and the result says `execution: "native"`. Files the script writes then go to disk for real and are not limited to the authorized folders. Choosing "safe mode only" in the project, or setting `TAVOTTO_EXECUTION_FALLBACK=0`, turns this off.

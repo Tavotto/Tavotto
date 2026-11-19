@@ -1,3 +1,0 @@
-## In-page preview shows a realistic journal page and lets you try other float positions
-
-The export dialog's **In-page** preview now draws a sharp two-column journal page around your figure, with serif body text, equations and a `Fig. 1` caption at true scale, so you can judge font sizes against real print. A **Position** button (`换位置`) moves the figure between common journal placements: top, middle or bottom of a column for single-column figures, and top, middle or bottom of the page for full-width figures. The surrounding text is sample copy for scale only; exporting still saves just the figure.
