@@ -7,9 +7,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import vectors from '../../../tests/golden/journal_vectors.json'
 import foldVectors from '../../../tests/golden/journal_v2_fold_vectors.json'
 import { setLocale } from '@/i18n'
-import { journalOverride, loadCatalog, type JournalCatalog } from './journals'
+import { journalOverride, listJournals, loadCatalog, type JournalCatalog } from './journals'
 import { fieldLabel, pickJournal, valueText } from './journalPick'
-import { applyV2, confirmEntries, fetchJournalV2, isV2Source, type V2Patch } from './journalV2'
+import {
+  applyV2,
+  confirmEntries,
+  fetchJournalV2,
+  fetchJournalV2Index,
+  fetchJournalV2Outcome,
+  isV2Source,
+  pickV2OnlyJournal,
+  v2OnlySummaries,
+  type V2Patch,
+} from './journalV2'
 
 const catalog = loadCatalog(vectors.catalog)
 const V2_SRC = { url: 'https://example.invalid/v2/guide', kind: 'html' as const, retrieved: '2026-11-15', coverage: 'journal_specific' as const }
@@ -28,6 +38,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
   void setLocale('zh-CN')
 })
 
@@ -191,5 +202,95 @@ describe('后端折叠向量（tests/golden/journal_v2_fold_vectors.json）过�
       const out = applyV2(bind(), got!)
       for (const entry of Object.keys(got!.rules).map((p) => out.journalSources![p])) expect(isV2Source(entry)).toBe(true)
     }
+  })
+})
+
+describe('v2-only 期刊（选刊列表，ADR 0155 §14）', () => {
+  const entry = (id: string, over: Record<string, unknown> = {}) => ({
+    id,
+    label: `Label ${id}`,
+    publisher: 'fx-pub',
+    publisher_label: 'Fixture Publisher',
+    issn: '',
+    eissn: '',
+    aliases: [] as string[],
+    ...over,
+  })
+
+  it('列表只收 v1 目录里没有的刊（按 id）；字段补成选刊列表认得的形状，eissn 在没有 issn 时顶上', () => {
+    const v1 = listJournals(catalog)[0].journal_id
+    const out = v2OnlySummaries([entry(v1), entry('zz-only', { eissn: '1234-5678', aliases: ['ZZ'] })], catalog)
+    expect(out.map((j) => j.journal_id)).toEqual(['zz-only'])
+    expect(out[0]).toMatchObject({ label: 'Label zz-only', publisher: 'fx-pub', publisher_label: 'Fixture Publisher', issn: '1234-5678', aliases: ['ZZ'] })
+  })
+
+  it('index 取不到 / 形状不对 = null（列表里就没有这些刊，不报错）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })))
+    expect(await fetchJournalV2Index()).toBeNull()
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ journals: 'x' }), { status: 200 })))
+    expect(await fetchJournalV2Index()).toBeNull()
+    vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new Error('offline'))))
+    expect(await fetchJournalV2Index()).toBeNull()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ catalog_rev: 3, journals: [entry('a'), { id: 1 }] }), { status: 200 })),
+    )
+    expect((await fetchJournalV2Index())?.map((j) => j.id)).toEqual(['a'])
+  })
+
+  it('取单刊 v2 的结果分终态：ready / 额度 / 其余都当没网（不抛）', async () => {
+    const reply = (status: number, body: unknown) => vi.fn(async () => new Response(JSON.stringify(body), { status }))
+    vi.stubGlobal('fetch', reply(200, patch()))
+    expect((await fetchJournalV2Outcome('zz-only')).state).toBe('ready')
+    vi.stubGlobal('fetch', reply(429, { code: 'quota_hour', retry_after_s: 60 }))
+    expect(await fetchJournalV2Outcome('zz-only')).toEqual({ state: 'quota', patch: null })
+    for (const status of [403, 404, 409, 503]) {
+      vi.stubGlobal('fetch', reply(status, { code: 'x' }))
+      expect(await fetchJournalV2Outcome('zz-only')).toEqual({ state: 'offline', patch: null })
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new Error('offline'))))
+    expect(await fetchJournalV2Outcome('zz-only')).toEqual({ state: 'offline', patch: null })
+    // 200 但补丁不合法：同样当取不到
+    vi.stubGlobal('fetch', reply(200, { rules: 1 }))
+    expect(await fetchJournalV2Outcome('zz-only')).toEqual({ state: 'offline', patch: null })
+  })
+
+  it('选 v2-only 刊：绑定只含 v2 无条件事实折出的规则，v1 没有的项不补默认；带条件的只在「需要你确认」', () => {
+    const row = {
+      id: 'c1',
+      subject: 'raster_resolution',
+      relation: 'gte' as const,
+      value: 1200,
+      unit: 'dpi',
+      condition: 'line art',
+      quote: 'Line art: 1200 dpi.',
+      stage: 'production',
+      source: V2_SRC,
+    }
+    const p = patch({ confirm: [row] })
+    const { binding, label } = pickV2OnlyJournal(entry('zz-only'), p, { pageW: 85 })
+    expect(label).toBe('Label zz-only')
+    expect(binding.journalRef).toEqual({ id: 'zz-only', catalogRev: 2, retrieved: '2026-11-15', label: 'Label zz-only' })
+    // 只有 v2 那一项；没有别的规则被补上
+    expect(binding.journal).toEqual({ min_raster_dpi: 450 })
+    expect(Object.keys(binding.journalSources!)).toEqual(['min_raster_dpi'])
+    expect(isV2Source(binding.journalSources!.min_raster_dpi)).toBe(true)
+    expect(binding.journalSources!.min_raster_dpi.overrides).toBeNull()
+    // 带条件的行不进绑定
+    expect(JSON.stringify(binding)).not.toContain('Line art')
+  })
+
+  it('v2 没有任何无条件事实：绑定照样建（只有中性底），不编造规则', () => {
+    const { binding } = pickV2OnlyJournal(entry('zz-only'), patch({ rules: {}, sources: {}, confirm: [] }), { pageW: 85 })
+    expect(binding.journalRef?.id).toBe('zz-only')
+    expect(binding.journal).toBeUndefined()
+    expect(binding.journalSources ?? {}).toEqual({})
+  })
+
+  it('离线重开：取不到 v2 时 applyV2 原样返回，已存的绑定照判', () => {
+    const { binding } = pickV2OnlyJournal(entry('zz-only'), patch(), { pageW: 85 })
+    expect(applyV2(binding, null)).toBe(binding)
+    // 联网后再叠同一份 = 幂等，不变脏
+    expect(applyV2(binding, patch())).toBe(binding)
   })
 })

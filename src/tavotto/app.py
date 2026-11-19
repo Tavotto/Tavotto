@@ -14455,6 +14455,29 @@ def api_journal_facts_journal():
     return _journal_facts_request("journal")
 
 
+@app.post("/api/journal-facts/index")
+def api_journal_facts_index():
+    """选刊列表用：已签名 v2 index 的全部刊（名称 / 出版社 / ISSN / 别名）。只读公开 index，不拉任何刊包、不占额度（ADR 0155 §14）。"""
+    from .engine import journals as engine_journals
+
+    if not engine_journals.agents_enabled():
+        return _journal_facts_response(
+            {"code": "journal_catalog_disabled", "error": "期刊标准库入口尚未开放"}, 403
+        )
+    body = request.get_json(silent=True)
+    if body is None:
+        body = {}
+    if not isinstance(body, dict) or set(body) - {"locale"}:
+        return _journal_facts_error(engine_journalfacts_remote.FactsError("bad_request"))
+    locale = body.get("locale")
+    if locale is not None and (not isinstance(locale, str) or len(locale) > 64):
+        return _journal_facts_error(engine_journalfacts_remote.FactsError("bad_request"))
+    try:
+        return _journal_facts_response(engine_journalfacts_remote.listing(ui_locale=locale))
+    except engine_journalfacts_remote.FactsError as exc:
+        return _journal_facts_error(exc)
+
+
 @app.post("/api/journal-facts/preflight")
 def api_journal_facts_preflight():
     """v2 事实折成预检能用的 v1 同形规则 + 「需要你确认」清单（ADR 0155 §14）。不改任何项目，只读。"""
