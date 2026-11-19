@@ -140,7 +140,7 @@ export interface RuntimePanelSource {
   script: string
   entry: string
   stem: string
-  captureSource: 'savefig' | 'pyplot'
+  captureSource: 'savefig' | 'pyplot' | 'ggplot2'
   fingerprint: string
   sizeMm: [number, number]
   /**

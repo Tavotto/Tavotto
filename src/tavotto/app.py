@@ -553,6 +553,8 @@ def _reconcile_registered_entry(script: str) -> bool:
         return False  # 没有当前项目（指名的项目已关闭）：不纠偏，调用方的原行为不变
     if ctx is None:
         return False
+    if Path(script).suffix.lower() == ".r":
+        return False
     try:
         changed = engine_entryfresh.reconcile(ctx.path, script)
     except Exception:  # noqa: BLE001 —— 运行前的纠偏不许让请求失败
@@ -9791,6 +9793,54 @@ def _native_session_event(session, entry: dict) -> None:
 engine_nativesession.REGISTRY.on_change = _native_session_event
 
 
+@app.post("/api/native/ggplot2")
+def api_native_ggplot2_start():
+    """Start a project R script only on explicit request from the desktop page."""
+    from .engine import nativeggplot
+
+    if not _desktop_initiated() or not _page_authenticated():
+        return _native_error(engine_runcodes.RunError(engine_runcodes.NATIVE_DESKTOP_REQUIRED))
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or set(body) - {"script", "object", "frame_pt", "rscript"}:
+        return jsonify({"code": "bad_request", "error": "Invalid ggplot2 capture request."}), 400
+    root = str(require_project())
+    epoch = engine_nativesession.REGISTRY.project_epoch(root)
+    relative = body.get("script")
+    script = engine_projectenv.contained_path(root, relative) if isinstance(relative, str) else None
+    if script is None or Path(script).suffix.lower() != ".r" or not Path(script).is_file():
+        return jsonify({"code": "bad_request", "error": "Select a project R script."}), 400
+    interpreter = body.get("rscript")
+    if interpreter is None:
+        interpreter = shutil.which("Rscript")
+    if (
+        not isinstance(interpreter, str)
+        or not os.path.isabs(interpreter)
+        or Path(interpreter).name.lower() not in {"rscript", "rscript.exe"}
+        or not Path(interpreter).is_file()
+    ):
+        return _native_error(
+            engine_runcodes.RunError(
+                engine_runcodes.INTERPRETER_NOT_EXECUTABLE, interpreter="Rscript"
+            )
+        )
+    try:
+        target = nativeggplot.GgplotTarget(body.get("object"), tuple(body.get("frame_pt") or ()))
+        spec = engine_execspec.desktop_native_spec(
+            script, interpreter=interpreter, cwd=os.fspath(Path(script).parent), project_root=root
+        )
+    except (TypeError, ValueError) as exc:
+        return jsonify({"code": "bad_request", "error": str(exc)}), 400
+    try:
+        session = engine_desktopproc.start(
+            engine_desktopproc.OwnedLaunch(spec, project_epoch=epoch, ggplot_target=target)
+        )
+    except engine_envlease.EnvironmentBusy as exc:
+        return _environment_busy(exc)
+    except engine_runcodes.RunError as exc:
+        return _native_error(exc)
+    return jsonify({"ok": True, "session": session.public_state()}), 202
+
+
 @app.get("/api/native/pending/<native_id>")
 def api_native_pending(native_id: str):
     """待确认的一条 native 交接。**返回的 metadata 里没有 token、没有端口。**"""
@@ -9895,6 +9945,33 @@ def api_native_session_build(session_id: str):
     """
     try:
         session = engine_nativesession.REGISTRY.get(session_id)
+    except engine_runcodes.RunError as exc:
+        return _native_error(exc)
+    ggplot = getattr(session, "ggplot_target", None)
+    if ggplot is None:
+        return _build_native_session(session)
+    if Path(session.project_root).resolve() != require_project().resolve():
+        abort(404)
+    with session._figure_lock:
+        # The completed route identifies the baseline which already passed
+        # through registration and materialization. A second window must not
+        # publish the current edited SVG under the empty-patch cache key.
+        stem = ggplot.stem(session.spec.target)
+        published = engine_nativesession.REGISTRY.route_for(
+            session.project_root, session.spec.target, stem
+        )
+        if published is session and session.descriptors:
+            return jsonify(
+                ok=True,
+                session=session.public_state(),
+                stems=session.last_build["stems"],
+                descriptors=session.descriptors,
+            )
+        return _build_native_session(session, register_ggplot=True)
+
+
+def _build_native_session(session, *, register_ggplot=False):
+    try:
         resp = session.ensure_built()
     except engine_runcodes.RunError as exc:
         return _native_error(exc)
@@ -9908,12 +9985,21 @@ def api_native_session_build(session_id: str):
         return jsonify(_worker_error_payload(exc)), 500
     _note_native_inputs(session)
     rejected = engine_nativesession.REGISTRY.bind_assets(session)
-    if not rejected:
-        _svg_native_execution_update(session)
     # 发布决定只有这一处,且全有或全无:任一张图的路由被另一条活会话占着,这一轮 build 的图一张都不物化、不回给前端、
     # 不绑路由——否则预览是这次运行的、编辑 / 导出却仍落在旧会话上（静默错图,ADR 0021 §9.2），而准备 runner 对同一结果
     # 判的是整体失败。准备 runner 的 native 分支问的是同一个 `bind_assets`
     if not rejected:
+        if register_ggplot:
+            try:
+                ctx = current_ctx()
+                engine_discover.register(
+                    ctx.path, session.spec.target, session.stems, entry="__main__", append=True
+                )
+                refresh_project(ctx, reason="probe", allow_static_merge=False)
+            except (OSError, ValueError, engine_refresh.RefreshError):
+                session.cancel_owned()
+                raise
+        _svg_native_execution_update(session)
         _materialize_native(session)
     out = {
         "ok": True,
@@ -10684,13 +10770,18 @@ def _resolve_engine_worker(
             abort(_runtime_asset_unknown(rel_id))
         # T03：这张图当初的运行配置（资产 id 里冻结的引用）——不是项目此刻的任何配置。本机没有就显式拒绝
         run = engine_runtimeasset.run_selection(root, info)
+        profile = (
+            engine_enginesession.PROFILE_NATIVE
+            if Path(info["script"]).suffix.lower() == ".r"
+            else engine_enginesession.profile_of(root, rel_id)
+        )
         return (
             engine_enginesession.resolve(
                 project_root=root,
                 script=info["script"],
                 entry=info["entry"],
                 stem=info["stem"],
-                execution_profile=engine_enginesession.profile_of(root, rel_id),
+                execution_profile=profile,
                 **({"existing_only": True} if existing_only else {}),
                 **({"run": run} if run is not None else {}),
             ),

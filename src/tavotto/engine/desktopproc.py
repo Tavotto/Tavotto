@@ -714,6 +714,7 @@ def start(
 
     session = nativesession.NativeSession(
         session_id=session_id,
+        **({"ggplot_target": launch.ggplot_target} if launch.ggplot_target is not None else {}),
         descriptor={
             "native_id": launch.launch_id,
             "out_dir": out_dir,

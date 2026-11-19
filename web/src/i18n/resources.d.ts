@@ -7776,6 +7776,18 @@ export default interface Resources {
       "linkedCount_other": "{{count}} 张图",
       "loadFailed": "无法读取脚本清单",
       "loading": "正在读取脚本清单…",
+      "nativeGgplot": {
+        "browse": "浏览",
+        "description": "在本机 R 中以你的账户权限执行 {{script}}。脚本需要创建指定名称的 ggplot 对象。",
+        "failed": "R 脚本未能启动。",
+        "height": "高度（mm）",
+        "object": "图形对象名",
+        "open": "用 R 运行",
+        "run": "运行并捕获",
+        "runtime": "Rscript 路径（可选）",
+        "title": "捕获 ggplot2 图形",
+        "width": "宽度（mm）"
+      },
       "noMatch": "没有符合条件的脚本",
       "notRunNote": "没跑过",
       "notebookRun": "转成脚本并运行",

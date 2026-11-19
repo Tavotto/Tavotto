@@ -141,6 +141,8 @@ order: 190
 
 `tests/test_native_ggplot_capture.py` 使用真实 R 核对颜色变化、其它 SVG 内容、统计调用次数、随机数状态及撤销结果。用例也核对桌面拥有者取消后由原注册表与租约完成收尾。
 
+桌面显式启动和保存恢复的使用边界见[原生 ggplot2](../../implementation/tavotto-core-v02-ggplot2.md)。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。

@@ -213,6 +213,7 @@ __all__ = [
     "adopt_pdf_pages",
     "SOURCE_SAVEFIG",
     "SOURCE_PYPLOT",
+    "SOURCE_GGPLOT2",
     "PROFILE_SAFE",
     "PROFILE_NATIVE",
     "ARTIFACT_EXTS",
@@ -254,6 +255,7 @@ SOURCE_SAVEFIG = "savefig"
 #: 捕获来源：脚本跑完还活在 pyplot 里、从未存过盘的 Figure。
 #: 它**没有原始产物**——渲染 / 编辑 / 导出都成立，写回无从谈起。
 SOURCE_PYPLOT = "pyplot"
+SOURCE_GGPLOT2 = "ggplot2"  # An explicitly selected R plot object with no original artifact.
 
 #: 执行 profile（ADR 0014）。常量放在这里而不是 execspec：worker 与 browser
 #: 平铺 import 本模块（execspec 是包内模块，它们够不着），而描述符必须说清
@@ -261,7 +263,7 @@ SOURCE_PYPLOT = "pyplot"
 PROFILE_SAFE = "safe"
 PROFILE_NATIVE = "native"
 _PROFILES = (PROFILE_SAFE, PROFILE_NATIVE)
-_SOURCES = (SOURCE_SAVEFIG, SOURCE_PYPLOT)
+_SOURCES = (SOURCE_SAVEFIG, SOURCE_PYPLOT, SOURCE_GGPLOT2)
 
 #: 一个 stem 最多记几次 savefig 调用。同一张图存 pdf + png（+ svg）是常态，循环里
 #: 反复存同一个名字也见过；再多的调用对「产物长什么样」不再有新信息，记下来只是
@@ -1112,7 +1114,7 @@ class CapturedFigureDescriptor:
     script: str  # 项目相对路径，POSIX 分隔
     entry: str
     stem: str
-    capture_source: str  # SOURCE_SAVEFIG | SOURCE_PYPLOT
+    capture_source: str  # SOURCE_SAVEFIG | SOURCE_PYPLOT | SOURCE_GGPLOT2
     execution_profile: str  # PROFILE_SAFE | PROFILE_NATIVE
     original_artifact: str | None  # 项目相对路径；pyplot 捕获恒 None
     size_mm: tuple[float, float]
@@ -1189,6 +1191,10 @@ def build_descriptor(
         raise ValueError(f"capture_source 非法: {capture_source!r}（可选 {_SOURCES}）")
     if execution_profile not in _PROFILES:
         raise ValueError(f"execution_profile 非法: {execution_profile!r}（可选 {_PROFILES}）")
+    if capture_source == SOURCE_GGPLOT2 and (
+        execution_profile != PROFILE_NATIVE or original_artifact is not None or artifacts
+    ):
+        raise ValueError("ggplot2 capture requires a native object without an original artifact")
     if capture_source == SOURCE_PYPLOT and original_artifact is not None:
         raise ValueError(
             "pyplot 捕获的 Figure 没有原始产物，"

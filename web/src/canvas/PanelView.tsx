@@ -11,6 +11,7 @@ import { useHtmlMarkup } from '@/lib/useHtmlMarkup'
 import { useRetryingSrc } from '@/lib/imgRetry'
 import { engineTransport } from '@/lib/engineTransport'
 import { chartRenderFields } from '@/lib/chartSource'
+import { figureSnapshotFor } from '@/lib/figureSnapshot'
 import {
   alignEntries,
   blockedGroupsIn,
@@ -253,14 +254,19 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // runtime 面板的 cache 预览**按此刻的 overrides 取**（QA-WIN-21）：后端 GET 版给的是「最近一次渲染」，
   // 撤销回一个前端已画过的变体时它停在撤销前，冷画布就会显示撤销前的图。内嵌画布（transport）没有
   // 这条 HTTP 路，照旧。取到之前 / 没命中这个状态时见 `approxPreview`。
-  const runtimePreview = useRuntimePreview(obj.fileId, obj.overrides, runtime && !transport && !!runtimeState?.cached, previewNonce)
+  const archivedRuntime = runtime && obj.source?.captureSource === 'ggplot2' ? figureSnapshotFor(obj) : undefined
+  const runtimePreview = useRuntimePreview(
+    obj.fileId, obj.overrides, runtime && !transport && (!!runtimeState?.cached || !!archivedRuntime),
+    previewNonce, archivedRuntime,
+  )
   const fileSrc =
-    kind === 'unknown' || (runtime && !runtimeState?.cached)
+    kind === 'unknown'
       ? null
       : transport
-        ? transport.panelSrc(obj.fileId, kind, bucket, mtime)
+        ? runtime && !runtimeState?.cached ? null : transport.panelSrc(obj.fileId, kind, bucket, mtime)
         : runtime
-          ? (runtimePreview.url ?? (runtimePreview.failed ? panelSrc(obj.fileId, kind, bucket, mtime) : null))
+          ? (runtimePreview.url ?? (!archivedRuntime && runtimeState?.cached && runtimePreview.failed
+            ? panelSrc(obj.fileId, kind, bucket, mtime) : null))
           : panelSrc(obj.fileId, kind, bucket, mtime)
   const src = (useEnginePng && enginePng) || fileSrc || ''
   // `/api/render` 在候选后端下会以 503 表达背压（child 队列满）；<img> 只看得到「失败」，
@@ -1220,7 +1226,9 @@ const RUNTIME_BADGE: Record<string, { key: string; tone: 'error' | 'stale' }> = 
  */
 function useNativePanelState(obj: PanelObject): NativePanelState {
   const profile = useRuntimeAssetStore((s) =>
-    panelKind(obj) === 'runtime' ? s.byId[obj.fileId]?.profile : undefined,
+    panelKind(obj) === 'runtime'
+      ? obj.source?.captureSource === 'ggplot2' ? 'native' : s.byId[obj.fileId]?.profile
+      : undefined,
   )
   const sessions = useNativeSessionStore((s) => s.sessions)
   const inconsistent = useRenderStore((s) => !!s.inconsistent[obj.fileId])

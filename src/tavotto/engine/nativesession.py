@@ -378,7 +378,7 @@ class NativeSession:
     #: 回执 / 准备路径按它认控制面（`pool.control_plane_of` 读这个属性；值与 `receipt.CONTROL_PLANE_NATIVE` 同）
     control_plane = "native"
 
-    def __init__(self, *, session_id: str, descriptor: dict):
+    def __init__(self, *, session_id: str, descriptor: dict, ggplot_target=None):
         meta = descriptor.get("metadata") or {}
         self.session_id = session_id
         self.native_id = descriptor.get("native_id", "")
@@ -393,6 +393,7 @@ class NativeSession:
         self.permission_key = str(meta.get("permission_key") or "")
         self.python_version = str(meta.get("python_version") or "")
         self.out_dir = Path(str(descriptor.get("out_dir") or ""))
+        self.ggplot_target = ggplot_target
         #: 桌面拥有的进程所有者（`desktopproc.DesktopProcess`，鸭子类型：`finished` / `cancel()` /
         #: `pid`）。None = 进程是终端的——本模块绝不去结束它。
         self.owned = None
@@ -471,7 +472,7 @@ class NativeSession:
         #: 检查，第二个（换了列表的渲染 / 导出 / continue）就在不一致的 Figure 上执行了，
         #: 晚到的响应还会把标记改回旧的那一次。bridge 本来就串行执行，这把锁只是让检查与
         #: 执行同序。会话粒度（不是 stem）：continue / detach 看的是**所有** stem。
-        self._figure_lock = threading.Lock()
+        self._figure_lock = threading.RLock()
         #: 每张图最近一次渲染的那份全量列表（canonical hash）——即会话此刻的列表。export /
         #: preview 临时套用别的列表、还原回它时失败，被标「不一致」的是**它**：之后放行的
         #: 重渲染是这一份（重试还原）。没渲染过就记空串，任何渲染都不放行（只能重跑）
@@ -601,6 +602,8 @@ class NativeSession:
                     self._image_format_mismatch = dict(mismatch)
             with self._lock:
                 self._barrier_snapshot_epoch = None
+                if self.ggplot_target is not None and isinstance(frame.get("script_error"), dict):
+                    self.script_error = frame["script_error"]
             self._release_lease()
             self._set_state(
                 ENDED,
@@ -1063,10 +1066,15 @@ class NativeSession:
 
     def ensure_built(self) -> dict:
         with self._figure_lock:
+            if self.ggplot_target is not None and self.built:
+                self._require_barrier()
+                return self.last_build
             with self._lock:
                 epoch, execution_id = self.snapshot_epoch, self.execution_id
                 script = self.execution_script
             resp = self._request({"cmd": "build"}, BUILD_TIMEOUT)
+            if self.ggplot_target is not None:
+                resp = self.ggplot_target.publish_preview(self, resp, build=True)
             fact = self.captured_inputs_for_receipt(script=script or "")
             with self._lock:
                 if (
@@ -1137,10 +1145,14 @@ class NativeSession:
             if owed is not None and owed != want:
                 raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT)
             proof = self._proof_context() if include_figure_execution else None
+            if self.ggplot_target is not None:
+                self.ggplot_target.validate_edit_targets(self, patches)
             self.rev += 1
             resp = self._request(
                 payload, REQUEST_TIMEOUT, **({"existing": existing} if existing is not None else {})
             )
+            if self.ggplot_target is not None:
+                resp = self.ggplot_target.publish_preview(self, resp, build=False)
             if proof is not None:
                 resp = self._proof_response(resp, proof)
             self._session_list[stem] = want
@@ -1245,9 +1257,13 @@ class NativeSession:
                 payload, expected_execution_id, expected_snapshot_epoch
             )
             self._require_consistent(stem)
+            if self.ggplot_target is not None:
+                self.ggplot_target.validate_edit_targets(self, patches)
             resp = self._request(
                 payload, EXPORT_TIMEOUT, **({"existing": existing} if existing is not None else {})
             )
+            if self.ggplot_target is not None:
+                resp = self.ggplot_target.acknowledge_export(resp, svg_path)
             self._note_temporary(stem, resp)
             return resp
 
@@ -1452,6 +1468,7 @@ class NativeSession:
             "sequence": self.sequence,
             "editable": self.state == BARRIER,
             "pending_input": self.pending_input,
+            **({"capture_source": "ggplot2"} if self.ggplot_target is not None else {}),
             **(
                 {"figure_snapshot_invalidation": copy.deepcopy(self.figure_snapshot_invalidation)}
                 if self.figure_snapshot_invalidation is not None

@@ -7737,7 +7737,7 @@ export interface CapturedFigureDescriptor {
   script: string
   entry: string
   stem: string
-  capture_source: 'savefig' | 'pyplot'
+  capture_source: 'savefig' | 'pyplot' | 'ggplot2'
   execution_profile: 'safe' | 'native'
   original_artifact: string | null
   size_mm: [number, number]
@@ -8648,7 +8648,7 @@ export interface RuntimeAssetInfo {
   status: RuntimeStaleStatus
   cached: boolean
   size_mm: [number, number] | null
-  capture_source: 'savefig' | 'pyplot' | null
+  capture_source: CapturedFigureDescriptor['capture_source'] | null
   descriptor: CapturedFigureDescriptor | null
   /** 按参数配置跑出的变体素材才有（本机不透明引用，不含参数值）；无参数的那张没有 */
   run_config?: string
@@ -8732,6 +8732,7 @@ export interface NativePending {
 
 /** 一条 native 会话对外的全部状态（`NativeSession.public_state()` 原样）。 */
 export interface NativeSessionInfo {
+  capture_source?: 'ggplot2'
   figure_snapshot_invalidation?: FigureSnapshotInvalidation
   session_id: string
   project_root: string
@@ -8844,6 +8845,17 @@ export const buildNativeSession = (sessionId: string) =>
     `/api/native/sessions/${encodeURIComponent(sessionId)}/build`,
     { method: 'POST' },
   )
+
+export const startNativeGgplot = (target: {
+  script: string
+  object: string
+  frame_pt: [number, number]
+  rscript?: string
+}) => jsonFetch<{ session: NativeSessionInfo }>('/api/native/ggplot2', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(target),
+})
 
 const nativeAction = (sessionId: string, action: string) =>
   jsonFetch<{ session: NativeSessionInfo }>(
