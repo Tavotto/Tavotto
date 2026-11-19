@@ -54,7 +54,7 @@ for (const scheme of ['light', 'dark'] as const) {
         status: 409,
         contentType: 'application/json',
         body: JSON.stringify({
-          error: '这张图里有更新版本的 Tavotto 做的修改，这一版写不回去，原文件没动。',
+          error: '这张图里有用更新版本做的修改，这一版写不回去，原文件没动。',
           code: 'write_back_future_props',
           props: ['axes_0.lines_0.bend_magic'],
         }),
