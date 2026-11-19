@@ -14,6 +14,7 @@ import {
   type AiDataOverview,
   type AiDataProposeResponse,
 } from '@/lib/api'
+import { resetCommitQueue } from '@/lib/dataCommitQueue'
 import { commitPollConfig } from '@/lib/dataCommitPoll'
 import { setCurrentProjectId } from '@/lib/session'
 import { useProjectStore } from '@/store/projectStore'
@@ -62,6 +63,7 @@ const committed = (extra: Partial<AiDataCommitResult> = {}): AiDataCommitResult 
 const flush = () => new Promise((r) => setTimeout(r, 0))
 
 beforeEach(() => {
+  resetCommitQueue()
   for (const f of [files, overview, propose, commit, discard, refresh, prepOpen, notify]) f.mockReset()
   discard.mockResolvedValue({ ok: true })
   setCurrentProjectId('pa')
@@ -276,6 +278,7 @@ describe('出图的各结局', () => {
     st().closeDraft()
     st().select(ref('b.csv'))
     expect(st()).toMatchObject({ draftOpen: true, selected: ref('a.csv'), drawingId: 'i1' })
+    await flush()
     expect(commit).toHaveBeenCalledTimes(1)
     release(committed())
     await p

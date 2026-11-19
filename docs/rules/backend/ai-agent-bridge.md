@@ -779,6 +779,21 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
 - **同一条路径**：写入只经 `pathignore.remember`（失败卡主按钮的令牌端点调的也是它）；名单变了才调 `FixContext.on_ignored_paths_changed`（应用侧 = 收掉这个项目的会话，`--ignore-paths` 是 spawn 时交的）。
   快照 `settings_keys()` 含 `ignored_import_paths`，回滚精确恢复（含「原来没有」），名单变了同样通知。
 
+### `set_run_arguments`：AI 填运行参数（`fixtools/change.py`，T03 运行配置，2026-11-19）
+
+- 与界面「运行参数」框**同一份**运行配置（`runconfig.selection_for`）：原样 token、`validate_argv` 校验、不拆空格；空列表 = 不带参数。原脚本不动，`tavotto` 档。
+- 应用侧（`app._fix_application_verification` 的 `on_run_arguments_changed`）把修复会话的验证换到「同一脚本目标 + 这组参数」的准备会话（`SESSIONS.check`）；
+  修复会话持有的是 `{"sess": …}` 盒子，`try_run`、`read_run_report` 都跟着盒子走。快照记下当时的参数，`rollback` 换回去。
+- 修好（`fixed`）且本会话改过参数：状态带 `run_argv`，前端（`aiFixStore`）把它写进这个脚本的「运行参数」草稿再按它重跑验证——用户看得见、改得了。
+- 看护：`tests/test_fixtools_run_args.py`（工具 / 回滚 / 真准备会话登记表里 build 拿到参数且报告换到新会话 / 只有 fixed 且改过才带 `run_argv`）、`web/src/store/aiFixStore.test.ts`。
+### 两道护栏：用户侧失败不当缺陷报、预算过半要动手（ADR 0149 修订，2026-11-19，兼容性评测的发现）
+
+- `prepare_diagnostics` 带产品缺陷草稿（`issue`）时：本会话**一个改动都没试过**（`FixContext.changes_attempted == 0`，由 `run_tool` 计数：
+  `tavotto` / `listed` / `user_env` 档、未被策略挡下、参数合法；报告 / 回滚不算），且失败属于用户侧（码在 `ask.USER_SIDE_CODES`，或 traceback 是
+  `os.environ` 的 KeyError / 无父包的相对导入 / `input(` 的 EOFError）→ 回 `not_a_product_defect` 并指向对应动作，不弹「发送」卡。只交摘要（不带 `issue`）不拦。
+- `FixToolset.budget_hint`：预算过半 / 过四分之三时 `loop.run` 追加「别再巡视，做最匹配原因的那一个改动再 try_run，没有可做的就 not_fixed」。
+- 看护：`tests/test_fix_guardrails.py`。
+
 ### D2b：「问与报」组 + 修复会话 + `POST /api/ai/fix`（`fixtools/ask.py`、`engine/fixsession.py`）
 
 - **五个工具都 `waits_for_user=True`**：`propose_fix`（`approve` 卡，详情列 `ctx.reads` 的 `~/…` 写法与「没读：敏感目录」）、`ask_user`（`choice` 卡，回选项 id；`other` / `skip` 是保留 id）、

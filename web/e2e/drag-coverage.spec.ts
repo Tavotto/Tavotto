@@ -63,6 +63,7 @@ function dragLibrary(): string {
       '    ax.legend(loc="upper right")',
       '    ax.add_artist(AnchoredText("(a)", loc="upper left"))',
       '    ax.scatter([0.45], [0.88], transform=ax.transAxes, s=90, marker="s", color="#C51E30")',
+      '    ax.table(cellText=[["a", "b"], ["c", "d"]], bbox=[0.3, 0.6, 0.25, 0.14])',
       '    ax.add_patch(FancyBboxPatch((0.4, -1.2), 2.0, 0.35, boxstyle="round,pad=0.08",',
       '                                facecolor="#E8F2FA", edgecolor="#8BB7DA"))',
       '    ins = ax.inset_axes([0.62, 0.06, 0.3, 0.26])',
@@ -164,6 +165,7 @@ const TARGETS: { name: string; gid: string; measure: string; at: [number, number
   // 位置不是数据的集合 / 位图（ADR 0100 修订 2026-11-18）：以前不宣称可拖，选中框还是整块子图
   { name: '手画图例点（transAxes 散点）', gid: 'axes_0.scatter_0', measure: 'axes_0.scatter_0', at: [0.5, 0.5] },
   { name: '子图框里的图片（transAxes 位图）', gid: 'axes_1.images_1', measure: 'axes_1.images_1', at: [0.5, 0.5] },
+  { name: '表格 ax.table', gid: 'axes_0.tables_0', measure: 'axes_0.tables_0', at: [0.5, 0.5] },
 ]
 
 /** 不相干的子图：左边那张的对象被拖时量右边那张，反之亦然 */

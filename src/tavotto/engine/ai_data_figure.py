@@ -274,8 +274,10 @@ CSV_SUFFIXES = (".csv",)
 TSV_SUFFIXES = (".tsv", ".tab")
 #: 纯文本的数据导出（仪器 / 数值软件常见）：分隔符与表头行靠嗅探（`read_text_table`）；`.dat` 是二进制时归「读不了」
 TEXT_SUFFIXES = (".txt", ".dat", ".asc")
+#: GROMACS / Grace 的 `.xvg`：`#` 注释、`@` 指令、空白分隔的数值列；没有表头行，列名在指令里（`xvg_text` 把它改写成带表头行的制表符文本再走同一条读表流水）
+XVG_SUFFIXES = (".xvg",)
 XLSX_SUFFIXES = (".xlsx",)
-TABLE_SUFFIXES = CSV_SUFFIXES + TSV_SUFFIXES + TEXT_SUFFIXES + XLSX_SUFFIXES
+TABLE_SUFFIXES = CSV_SUFFIXES + TSV_SUFFIXES + TEXT_SUFFIXES + XVG_SUFFIXES + XLSX_SUFFIXES
 LEGACY_EXCEL_SUFFIXES = xlsxread.LEGACY_SUFFIXES
 
 
@@ -326,6 +328,83 @@ def resolve_header(cells, raw, delimiter, width):
     if out and out[0].startswith("#"):
         out[0] = out[0][1:].strip()
     return out
+
+
+def xvg_label(text):
+    """Grace 标签里的转义 → 纯文字（保守）：去掉上 / 下标与回正常的标记（`\\S` `\\s` `\\N`）和字体切换（`\\f{...}`），`\\x` + 一个字母按 Symbol 字体
+    换成对应的希腊字母（`\\xl` → λ）；**认不出的原样保留**，不猜。上 / 下标的文字留着（`nm\\S2\\N` → `nm2`）。**运行时函数**。"""
+    greek = dict(
+        zip(
+            "abcdefghiklmnopqrstuwxyzDFGLPQSUWXY",
+            "αβχδεφγηικλμνοπθρστυωξψζΔΦΓΛΠΘΣΥΩΞΨ",
+        )
+    )
+
+    def one(m):
+        tok = m.group(0)
+        if tok.startswith("\\x"):
+            return greek.get(tok[2:], tok)
+        return ""
+
+    out = re.sub(r"\\x[A-Za-z]|\\[SsN]|\\f\{[^}]*\}", one, text)
+    return " ".join(out.split())
+
+
+def xvg_text(text):
+    """`.xvg`（GROMACS / Grace）全文 → 制表符分隔、带表头行的文本，**行数与原文一致**（物理行号照旧）：
+    只读第一个数据集（数据集在一行 `&` 处、或数据之后再出现 `@target` / `@type` 处结束，其后的行清空）；`#` 注释行与 `@` 指令行读完即清空（留着的话，列数碰巧与数据相同的注释会被嗅探当成表头）；
+    数据行按空白切开改用制表符连。列名取自指令：`xaxis label` → 第 1 列，`s<N> legend`（N 从 0 起）→ 第 N+2 列，只有一条数据列且没有 legend 时用
+    `yaxis label`（经 `xvg_label` 清洗）；缺的列叫 `col<N>`；一个名字都没有就不写表头行（交给既有的「没有表头」流程）。表头写在第一条数据行的**前一行**
+    （原来那一行指令 / 注释被它替换；数据从第 1 行起就没有地方放，同样不写表头）。**运行时函数**。"""
+    lines = re.split(r"\r\n|\r|\n", text)
+    first = None
+    end = len(lines)
+    labels = {}
+    for i, line in enumerate(lines):
+        t = line.strip()
+        if not t or t[0] == "#":
+            continue
+        if t[0] == "&":
+            if first is not None:
+                end = i
+                break
+            continue
+        if t[0] == "@":
+            if first is not None and re.match(r"@\s*(target|type)\b", t, re.I):
+                end = i
+                break
+            m = re.match(r'@\s*(xaxis|yaxis)\s+label\s+"(.*)"\s*$', t, re.I)
+            if m:
+                labels.setdefault(m.group(1).lower(), m.group(2))
+            m = re.match(r'@\s*s(\d+)\s+legend\s+"(.*)"\s*$', t, re.I)
+            if m:
+                labels.setdefault("s" + m.group(1), m.group(2))
+            continue
+        if first is None:
+            first = i
+    out = []
+    for i, line in enumerate(lines):
+        t = line.strip()
+        if i >= end or (first is not None and i >= first and t[:1] in ("@", "&")):
+            out.append("")
+        elif first is not None and i >= first and t and t[0] != "#":
+            out.append("\t".join(t.split()))
+        elif t[:1] in ("@", "#"):
+            out.append("")
+        else:
+            out.append(line)
+    if first is not None and first >= 1:
+        width = len(lines[first].split())
+        names = [labels.get("xaxis")] + [labels.get(f"s{k}") for k in range(width - 1)]
+        if width == 2 and names[1] is None:
+            names[1] = labels.get("yaxis")
+        if any(n is not None for n in names):
+            cells = []
+            for k, n in enumerate(names):
+                n = xvg_label(n) if n is not None else ""
+                cells.append(n.replace('"', "'") or f"col{k + 1}")
+            out[first - 1] = "\t".join(cells)
+    return "\n".join(out)
 
 
 def table_from_text(text, delimiter, header_row=None, units_row=False):
@@ -714,6 +793,8 @@ def read_text_table(
         return _unreadable("data_binary")  # 控制字符占 2% 以上：不是文本
     if not text.strip():
         return _unreadable("data_empty")
+    if suffix in XVG_SUFFIXES:
+        text = xvg_text(text)  # 脚本里调用的是同一个函数（见 `ai_data_template._reader_expr`）
     if text.count("\n") + text.count("\r") > 2 * MAX_ROWS + 1000:
         return _unreadable("data_too_long")
     sha = hashlib.sha256(raw).hexdigest()

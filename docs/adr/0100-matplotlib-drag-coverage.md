@@ -51,7 +51,7 @@
 | 文字 / 标题 / 轴标签 / sup* / 注释（非像素坐标）/ 纯箭头 / 图例 / Patch 全族 / 子图（各种布局）/ twinx / 极坐标 / 3D 子图 / 色条 / 等比子图 | 已可拖、误差 ≤ 0.008 mm | 不变 |
 | 数据系列、标注箭头、图例项、刻度、3D 轴标题、次坐标轴 / 寄生轴、像素坐标的注释 | 按设计不拖，**拖了什么都不说** | 仍不拖；拖起来 toast 说为什么（见下） |
 | SubFigure 里的子图 | 落点只走一半（2.3 mm） | 已修（见「修订（2026-11-13）」）：误差 ≤ 1e-6 图幅分数 |
-| `ax.table` | 不宣称可拖 | **未修**：拖起来说「暂不支持」 |
+| `ax.table` | 不宣称可拖 | **已修（2026-11-18 修订，见文末）** |
 | `fig.add_artist(...)` 加在图幅上的框 | 不登记（点不中） | **已修（2026-11-12 修订，见文末）** |
 
 ## 裁决
@@ -262,4 +262,17 @@ constrained；一次性 worker 全量重放 == 热态）。修前 3 条红。
 看护：`tests/test_axes_layout_collections_drag.py`（判定；初始位置等于按子图框独立算的值；拖动后**画出来的
 几何**外接框 / 位图框整体走同一位移；再画不漂；撤销回基线；不挤动子图与别的元素；拖出子图框仍可选中；
 与样式共存；constrained；全量重放 == 热态），浏览器腿 `web/e2e/drag-coverage.spec.ts` 加散点与位图两格。
+
+## 修订（2026-11-18，续二）：`ax.table` 可拖
+
+结论表里「`ax.table` 未修」那一行。表格每次 draw 按 `loc` / `bbox` 在子图框坐标里重排格子
+（`Table._update_positions`），格子与字都画在表格自己的 transform 上（实测：平移叠在表格 transform 上，
+格子框与格内文字走同一位移）。所以表格与位置不是数据的集合 / 位图同一套：判据
+`manifest._layout_anchored_artist` 认 `Table`，平移 `overrides._set_translated_pos_frac`。表格仍是 `artist`
+角色（存量文档的 visible / zorder 不动），`("artist", "pos_frac")` 按类型分派：表格走平移，锚定框 / 插框照旧。
+`Table.get_window_extent` 量之前先排一次格子，所以全量重放（apply 在第一次 draw 之前）量到的与热态相同。
+`loc="bottom"` 的表格参与 constrained 排版：布局引擎排版前放回原样，拖它不挤动子图。
+
+看护：`tests/test_axes_table_drag.py`（判定；显式 `bbox` 的表格初始框 == 按子图框独立算的矩形；拖动落点、
+再画不漂、撤销回基线、不挤动子图；constrained；全量重放 == 热态），浏览器腿 `drag-coverage.spec.ts` 加表格一格。
 

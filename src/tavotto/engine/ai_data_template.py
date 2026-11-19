@@ -48,6 +48,8 @@ from .ai_data_figure import (
     parse_date,
     resolve_header,
     table_from_text,
+    xvg_label,
+    xvg_text,
 )
 
 # --------------------------------------------------------------------------- 错误
@@ -615,6 +617,8 @@ RUNTIME_FUNCTIONS = (
     date_number,
     delimited_records,
     resolve_header,
+    xvg_label,
+    xvg_text,
     table_from_text,
     read_delimited,
     read_xlsx,
@@ -1555,6 +1559,10 @@ def _reader_expr(entry, is_xlsx: bool, data: str = "DATA", sheet: str = "SHEET")
     if s.units_row:  # 只在嗅探到单位行时多写这一项：其余脚本逐字不变
         args = [*args[:1], repr(s.header_row), "True"]
     codec = adf.script_codec(s.encoding)
+    if entry.path.lower().endswith(adf.XVG_SUFFIXES):
+        # `.xvg`：列名在 `@` 指令里，先经运行时函数 `xvg_text` 改写成带表头行的制表符文本（父进程读表是同一个函数），再按嗅探出的读法读
+        text = f"{data}.read_bytes().decode({(codec or 'utf-8-sig')!r})"
+        return f"table_from_text(xvg_text({text}), {', '.join(args)})[:2]"
     if codec is not None:
         # 非 UTF-8（GB18030 / 有 BOM 的 UTF-16）：编码由父进程定下、以字面量写进脚本，脚本不探测。字节原样 `decode`（不经平台换行转换），
         # 再交给公共模块里同一个 `table_from_text`——与父进程读出的是同一张表；公共模块不变（哈希不换）。
