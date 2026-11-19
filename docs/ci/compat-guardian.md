@@ -5,7 +5,7 @@ S0 的取样与观测见 [S0_BASELINE.md](../implementation/script-compat/S0_BAS
 时才加载科研登记。上游源文件按完整提交 SHA 拉取到仓库外，并逐文件核对 `research-cohort.json` 的
 SHA-256。Guardian 同时核验登记与 HEAD 一致、缓存字节一致，之后复用已有 worker 测量路径。
 
-`compat_guardian_research.py verify` 只核验元数据；`fetch --case ... --cache ...` 显式下载，不执行脚本。
+冻结任务的 `required_stages` 与 CompatBench 的 `STAGES` 一致：2026-11-18 起含「拖动」（`drag`，用户拍板科研项目也按它判）；已归档的快照按行里真有的阶段投影与计数，逐字复现不变。`compat_guardian_research.py verify` 只核验元数据；`fetch --case ... --cache ...` 显式下载，不执行脚本。
 每个项目的依赖在独立 hosted job 中准备。原始 `research-baseline.json` 保留，完整证据由 Actions
 artifact / 外部归档保存；`verify-snapshot --evidence-directory ...` 可从归档重算快照。
 `runner_error` 保留为 unknown 观测及原始异常，不进入产品六分类；SVG 校验使用标准库 XML。

@@ -279,7 +279,9 @@ def project_reports(cohort: dict, reports: list[dict], expected_sha: str) -> dic
         native = row["native"]
         eligible = cg.native_eligible(row)
         failure = row["failure_category"]
-        cells = {s: row["stages"][s]["status"] for s in cc.STAGES}
+        # 行里有哪些阶段就投影哪些：后加的阶段（2026-11-18 的 drag）不在更早的报告里，
+        # 已归档的报告必须还能逐字复现（同 `workflow` 字段的做法）
+        cells = {s: row["stages"][s]["status"] for s in cc.STAGES if s in row["stages"]}
         item = {
             "project_id": p["project_id"],
             "case_id": cid,
