@@ -1,3 +1,0 @@
-## The exported `_edited.py` now carries your tick edits
-
-Tick changes made in Tavotto are now written into the `_edited.py` file you get by ticking **PY** on export: fixed tick values or a fixed step, minor ticks and their step, tick label format (including scientific notation), tick label visibility, major and minor tick width and length, and edited single tick labels. Before, these edits were left out and the script drew the ticks as it originally did. On 3D axes, tick width and single tick labels are still left out, and when the export also changes the figure or axes size, tick edits that depend on where the ticks fall are left out too; the export says how many edits were left out.
