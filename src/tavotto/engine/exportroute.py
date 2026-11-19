@@ -30,6 +30,7 @@ KIND_RASTER, KIND_PDF, KIND_SVG, KIND_RUNTIME = "raster", "pdf", "svg", "runtime
 SOURCE_DISK, SOURCE_REDRAW, SOURCE_UNAVAILABLE = "disk", "redraw", "unavailable"
 #: 面板带保存时的 Figure 快照引用且本来要现画：不跑脚本，加载持久化的快照；引用过期则拒绝导出。
 SOURCE_SNAPSHOT = "snapshot"
+SOURCE_DECLARATIVE = "declarative"
 
 #: 一种格式的做法。
 HOW_COPY, HOW_CONVERT, HOW_REDRAW, HOW_UNAVAILABLE = "copy", "convert", "redraw", "unavailable"
@@ -86,6 +87,7 @@ def panel_route(
     overrides: Sequence[Any] | None,
     has_script: bool,
     has_snapshot: bool = False,
+    has_chart: bool = False,
 ) -> dict:
     """一个面板的 route：`{source, embeds_disk_bitmap, formats: {fmt: {how, reason?, conditions?}}}`。
 
@@ -96,9 +98,11 @@ def panel_route(
     svg_asset = file_kind == KIND_SVG
     rerender = (not canvas) and original_rerender(formats)
     executes = wants_execution(runtime=runtime, overrides=overrides, rerender=rerender)
-    can_draw = runtime or has_script
+    can_draw = (runtime or has_script) and not has_chart
     edits = wants_execution(runtime=runtime, overrides=overrides)
-    if edits and executes_from_snapshot(has_reference=has_snapshot):
+    if has_chart:
+        source = SOURCE_DECLARATIVE
+    elif edits and executes_from_snapshot(has_reference=has_snapshot):
         source = SOURCE_SNAPSHOT
     elif not executes:
         source = SOURCE_DISK
@@ -179,6 +183,12 @@ def _format_route(
     has_snapshot: bool,
     wants_svg: bool,
 ) -> dict:
+    if source == SOURCE_DECLARATIVE:
+        if fmt == "eps":
+            return _unavailable(
+                REASON_EPS_NOT_FOR_CANVAS if canvas else REASON_SVG_ASSET_UNSUPPORTED
+            )
+        return {"how": HOW_CONVERT}
     if fmt == "eps":
         if canvas:
             return _unavailable(REASON_EPS_NOT_FOR_CANVAS)
@@ -223,7 +233,7 @@ def build_route(
 ) -> dict:
     """整次导出的 route：`{scope, formats, panels: {panel_id: panel_route}}`。
 
-    `panels` 每项 `{id, file_kind, overrides, has_script, has_snapshot?}`。同 id 的多个实例（画布上同一张图
+    `panels` 每项 `{id, file_kind, overrides, has_script, has_snapshot?, has_chart?}`。同 id 的多个实例（画布上同一张图
     摆了几次）只在它们 route 相同时合并；不同就各自带 `#n` 后缀留下来，不替它们裁决。
     """
     result: dict[str, dict] = {}
@@ -235,6 +245,7 @@ def build_route(
             overrides=panel.get("overrides"),
             has_script=bool(panel.get("has_script")),
             has_snapshot=bool(panel.get("has_snapshot")),
+            has_chart=bool(panel.get("has_chart")),
         )
         key = str(panel["id"])
         n = 1

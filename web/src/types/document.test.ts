@@ -65,6 +65,12 @@ describe('schema 2 → 3 迁移', () => {
     expect(migrateToProject(broken)!.activeCanvasId).toBe(pd.canvases[0].id)
   })
 
+  it('schema 4 也原样通过（本构建能读写的最高版本）', () => {
+    const pd = { ...emptyProject(), schema: 4 as const }
+    expect(migrateToProject(pd)).toBe(pd)
+    expect(migrateToProject({ ...pd, schema: 5 } as unknown)).toBeNull()
+  })
+
   it('不认识的负载返回 null', () => {
     expect(migrateToProject(null)).toBeNull()
     expect(migrateToProject({ schema: 1 })).toBeNull()

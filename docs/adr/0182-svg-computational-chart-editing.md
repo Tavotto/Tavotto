@@ -63,12 +63,24 @@ HTTP 响应与 TS 镜像在 4e（[#1927](https://github.com/Tavotto/Tavotto/pull
 
 ### 3. schema 4、附件与保存
 
-schema 4 显式表达计算状态及不可变 SVG 来源附件；旧 `SCHEMA_CURRENT` 和 legacy 命名空间保持。
+schema 4 显式表达计算状态及不可变 SVG 来源附件。**维护者已确认（[#1920](https://github.com/Tavotto/Tavotto/issues/1920)）单一存储合同**：
+schema 4 与 schema 3 落在**同一套目录、同一个文档列表、同一条版本历史**里，只由正文里的 schema 号区分；
+不设第二套命名空间、不复制目录、不另开列表或版本链。
+`documents.validate_document` 按 schema 号分派（4 走 `validate_chart_document`）；保存、自动保存、
+槽位探测、恢复候选、版本节点与教程校验共用这一个入口，不按格式加端点或会话域；
+项目包按同一 `SUPPORTED_SCHEMAS` 集合准入。
 附件先按精确字节和摘要保存，正文仍通过原 writer 单次提交。缺失或篡改的附件明确报错，
 不回退到同名路径。项目文件身份、保存回执、恢复选择和预览归属沿同一文档代际与事务链传递。
 
-**维护者要求修改，待独立落实**（[#1920](https://github.com/Tavotto/Tavotto/issues/1920)）：schema 必须升号，但使用同一套存储、列表与历史；首次加入计算图表原地升级并保留版本历史。上面的隔离命名空间是候选现状，不是已批准合同。
-本草案不重定义现役保存 writer，也不预先宣称该格式已成为现役标准。
+**首次加入计算图表是原地升级**：同一 documentId、同一文件 / 自动保存槽位与版本时间线，正文在提交时写成
+schema 4，既有版本历史保留。**升级前必须先**把整份项目文档存成时间线节点作为可退回的备份
+（`takeProjectCheckpoint` 原语已就位），备份没落定不得继续写图表。版本节点按正文 schema 分派：2 是单画布检查点，
+3 / 4 是整份项目，恢复整份项目节点换的是同一 documentId 的全部画布。
+**接线状态（勿读成已实现）**：把图表第一次写进正文的入口属于 7/9；在它接线之前，
+`takeProjectCheckpoint` 在生产代码里只有「恢复前」节点一个调用方，本层没有「先备份再升级」的
+执行路径。`tests/test_chart_document_upgrade.py` 只覆盖后端能强制的边界（同一文件 / 时间线、
+来源冻结失败时正文零改动），**不覆盖**前端那条备份接线。
+本草案不重定义现役保存 writer；ADR 整体仍为 Proposed，不因这一合同成立而宣称已取得合入或发布资格。
 
 ### 4. 项目包封存、检视与安装
 
