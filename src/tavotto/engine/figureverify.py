@@ -6,7 +6,7 @@
 断言类型与 FigureBench 同名（`tests/fixtures/figurebench/`，闭集 `ASSERTION_KINDS`）；FigureBench 的探针从原生 matplotlib
 读同一组事实，`tests/test_figure_verifier.py` 在全部探针场景上对拍：参考解 → verified、反例 → failed。
 
-**看不见就是 unknown**（`03-contracts.md` §四）：manifest 里没有这个事实（共享轴、误差棒线宽）、数据指纹超预算 / 量不了、
+**看不见就是 unknown**（`03-contracts.md` §四）：manifest 里没有这个事实（例如误差棒线宽）、数据指纹超预算 / 量不了、
 断言指名的对象改前就不存在 → unknown；对象改前在、改后没了 → failed（被删）。unknown 永不折算成 verified。
 
 L3 的「这次修改新引入的版式问题」只复用 `interference.detect` 与 `preflight.run`，不复写判据；只报改后新出现的问题
@@ -56,7 +56,6 @@ KINDS: dict[str, str] = {
 
 #: manifest 说不出的事实：判 unknown，并写明为什么（不是验证器偷懒，是证据不在 manifest 里）
 NOT_OBSERVABLE: dict[str, str] = {
-    "shared_x": "manifest 不带 axes 之间的共享关系",
     "errorbar_linewidth": "manifest 的误差棒 linewidth 字段取的是数据线，不是误差线（elinewidth）",
 }
 
@@ -152,6 +151,27 @@ def _edge(bbox: list, edge: str) -> float:
     return {"x0": x0, "x1": x0 + w, "y0": 1.0 - (top + h), "y1": 1.0 - top}[edge]
 
 
+def _shared_x_subjects(a: dict, man: dict) -> list[dict]:
+    axes = a["axes"]
+    if (
+        not isinstance(axes, list)
+        or len(axes) < 2
+        or any(type(i) is not int or i < 0 for i in axes)
+        or len(set(axes)) != len(axes)
+    ):
+        raise _Missing("shared_x 需要至少两个不同的轴序号")
+    return [_el(man, f"axes_{i}") for i in axes]
+
+
+def _axis_peers(el: dict, axis: str) -> list[str] | None:
+    autoscale = el.get("autoscale")
+    peers = autoscale.get("peers") if isinstance(autoscale, dict) else None
+    members = peers.get(axis) if isinstance(peers, dict) else None
+    if isinstance(members, list) and all(isinstance(gid, str) for gid in members):
+        return members
+    return None
+
+
 def _subject_gids(a: dict, man: dict) -> list[str]:
     """断言指名的对象在这张 manifest 里是哪些 gid（只用来判「改前在不在」，判不出就空）。"""
     try:
@@ -173,6 +193,8 @@ def _subject_gids(a: dict, man: dict) -> list[str]:
         # 只按轴 / 图定位的断言：主语就是 `_holds` 里 `_el` 查的那个元素，同一个查找函数
         if k in ("axis_scale", "axis_scale_unchanged"):
             return [_el(man, f"axes_{a['axes']}")["gid"]]
+        if k == "shared_x":
+            return [el["gid"] for el in _shared_x_subjects(a, man)]
         if k in ("fig_size", "fig_size_unchanged"):
             return [_el(man, "figure")["gid"]]
         if k == "label_alignment":
@@ -335,6 +357,12 @@ def _holds(a: dict, after: dict, before: dict) -> bool:
             a["expected"] if k == "axis_scale" else _field(_el(before, f"axes_{a['axes']}"), prop)
         )
         return got == want
+    if k == "shared_x":
+        first, *others = _shared_x_subjects(a, after)
+        peers = _axis_peers(first, "x")
+        if peers is None:
+            raise _Unobservable("缺少指定轴的共享 X 轴观测")
+        return all(el["gid"] in peers for el in others)
     if k == "label_alignment":
         vals = [
             _edge(_el(after, f"axes_{i}.{_WHICH[a['which']]}")["bbox"], a["edge"])
@@ -749,8 +777,8 @@ def _range_cause_axes(gid: str, axis: str | None, els: dict[str, dict]) -> set[s
     ax = els.get(m.group(0)) or {}
     if ax.get("is_colorbar"):
         return None
-    peers = ((ax.get("autoscale") or {}).get("peers") or {}).get(axis or "", [])
-    return {m.group(0), *(p for p in peers if isinstance(p, str))}
+    peers = _axis_peers(ax, axis or "") or []
+    return {m.group(0), *peers}
 
 
 def _in_target(gid: str, *, scope: str, target: str | None) -> bool:
