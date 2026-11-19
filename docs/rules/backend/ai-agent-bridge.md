@@ -667,7 +667,8 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
 - **小实验 `run_snippet`**（ADR 0197）：模型写的一小段 Python 经 `run_python(strict_deny=ctx.scope.deny_roots(), cwd=项目根)` 跑——
   在试跑的守卫之上**断网、凭据位置不可读**（进程内第二个 audit hook + 操作系统沙盒同一份清单；实验口径的沙盒单独探测），当前目录是项目根、项目根在 `sys.path` 上（经守卫前导，不改模型代码）。
   不弹卡（维护者 11-19 裁决）；≤ 30 s、≤ 20 000 字符、先 `compile`；输出各路尾部 6 000 字符过 `scrub`；结果带 `blocked_network` / `blocked_reads`。
-  `run` 不在 `CHANGE_TIERS`，实验不解开「先动手才能起草缺陷」的闸；Windows 没有操作系统沙盒，C 扩展可绕过进程内拦截（ADR 0197「盲区」）。
+  `run` 不在 `CHANGE_TIERS`，实验不解开「先动手才能起草缺陷」的闸。没有操作系统沙盒（Windows、无 bwrap 的 Linux）时进程内守卫只是尽力而为，普通 Python 也能绕开，维护者接受（ADR 0197「盲区」）；
+  守卫前导在守卫装好之前只从标准库位置导入（`''` 与 PYTHONPATH 之后才还原、`''` 不还原），子进程一律从试跑目录起——试跑副本与探 import 同一条。
   看护：`tests/test_fixtools_snippet.py`。不带 `strict_deny` 的调用（试跑 / 探 import / 体检）守卫前导与沙盒参数逐字不变。
 - **读取范围**（`readscope.py`，判据只有 `ReadScope.check`）：主目录 + 项目根 + 环境前缀内可读，其余 `outside_scope`；`DENY_HOME_RELATIVE` / `DENY_NAME_PATTERNS` 命中
   `denied`（**文件名表只列明确的凭据文件形状**：整名或固定后缀，不用 `*token*` / `*secret*` 子串通配；**目录不按名拦**，`ReadScope._path_denied` 对目录只比固定位置表）（词法与 `realpath` 后各判一次；大小写不敏感于 macOS / Windows；Tavotto 自己的 `config.json` 在内）。单次读 ≤ 256 KiB（**按 64 KiB 块读、自己切行，当前行只留前 256 KiB**，所以任何文件大小下内存都有界；单行超限就截断该行并说明；截断给说明，`start_line` / `max_lines` 续读），

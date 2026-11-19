@@ -119,7 +119,13 @@ def _kill_own(proc: subprocess.Popen) -> None:
 
 GUARD_EXIT_CODE = 97
 _GUARDED_SRC = r"""
-import json, os, sys
+import sys
+# 守卫装好之前只从解释器自己的标准库导入（Codex #2064 P1）：`-c` 让当前目录（''）排在最前、PYTHONPATH 也在标准库前面，
+# 当前目录或 PYTHONPATH 里的 json.py / tempfile.py 会在任何守卫之前执行。先只留标准库位置，守卫与 site 装好后再还原（'' 不还原）
+_saved_path = [p for p in sys.path if p]
+_std = tuple(p for p in {sys.base_prefix, sys.base_exec_prefix, sys.prefix, sys.exec_prefix} if p)
+sys.path[:] = [p for p in _saved_path if p.startswith(_std)]
+import json, os
 guard, root, out, target = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 # 先把后面要用的标准库导进来，再装守卫：守卫只管「写」，读不受限
 import runpy, traceback, importlib.util, tempfile, re, threading, errno
@@ -143,28 +149,48 @@ try:
     _blocked_net, _blocked_reads = [], []
     _strict = os.environ.pop("TAVOTTO_TRIAL_STRICT", None)
     if _strict:
+        # 判据的数据与要用的函数全部在装 hook 时以默认参数捕获，hook 自己不读任何全局：被执行的代码改模块属性、改已结束帧的
+        # 局部变量都动不到它（Codex #2064 P1）。装好后删掉所有名字；拿到函数对象只剩 gc 一条路，一并拦下
+        def _make(deny, fold, realpath, isdir, fsdecode, pathlike, sep, net_log, read_log):
+            _NET = ("socket.connect", "socket.bind", "socket.sendto", "socket.sendmsg", "socket.getaddrinfo", "socket.gethostbyname", "socket.gethostbyaddr")
+            _INTROSPECT = ("gc.get_objects", "gc.get_referrers", "gc.get_referents")
+            _FUNC_ATTRS = ("__code__", "__defaults__", "__kwdefaults__", "__globals__")
+            def _hook(event, args, _deny=deny, _fold=fold, _realpath=realpath, _isdir=isdir, _fsdecode=fsdecode,
+                      _pathlike=pathlike, _sep=sep, _net=_NET, _intro=_INTROSPECT, _fattrs=_FUNC_ATTRS,
+                      _nlog=net_log, _rlog=read_log, _str=str, _bytes=bytes, _isinst=isinstance, _any=any, _type=type):
+                if event in _net:
+                    _nlog.append(event)
+                    raise PermissionError("Tavotto experiment: network access is not allowed")
+                if event in _intro:
+                    raise PermissionError("Tavotto experiment: inspecting the interpreter's objects is not allowed")
+                if event == "object.__setattr__" and args and _type(args[0]).__name__ == "function" and len(args) > 1 and args[1] in _fattrs:
+                    raise PermissionError("Tavotto experiment: rewriting functions is not allowed")
+                if event in ("open", "os.listdir", "os.scandir") and args and _isinst(args[0], (_str, _bytes, _pathlike)):
+                    try:
+                        rp = _fold(_realpath(_fsdecode(args[0])))
+                    except Exception:
+                        return
+                    if _any(rp == d or rp.startswith(d.rstrip(_sep) + _sep) for d in _deny):
+                        _rlog.append(event)
+                        raise PermissionError("Tavotto experiment: this location holds credentials and cannot be read")
+                    # 文件夹不许当成文件打开：拿不到目录描述符，也就没法 `dir_fd=` 相对它去读（审计事件里看不到 dir_fd，Codex #2064 P1）
+                    if event == "open" and _isdir(rp):
+                        _rlog.append(event)
+                        raise PermissionError("Tavotto experiment: opening a folder as a file is not allowed")
+            return _hook
         # macOS / Windows 的默认文件系统不分大小写：`~/.SSH/id_rsa` 打开的就是 `~/.ssh/id_rsa`，比较前一律 casefold
-        _fold = (lambda p: os.path.normcase(p).casefold()) if sys.platform in ("darwin", "win32") else os.path.normcase
-        _deny = [_fold(os.path.realpath(p)) for p in json.loads(_strict)]
-        _NET_EVENTS = ("socket.connect", "socket.bind", "socket.sendto", "socket.sendmsg", "socket.getaddrinfo", "socket.gethostbyname", "socket.gethostbyaddr")
-        def _denied(p):
-            try:
-                rp = _fold(os.path.realpath(os.fsdecode(p)))
-            except Exception:
-                return False
-            return any(rp == d or rp.startswith(d.rstrip(os.sep) + os.sep) for d in _deny)
-        def _strict_hook(event, args):
-            if event in _NET_EVENTS:
-                _blocked_net.append(event)
-                raise PermissionError("Tavotto experiment: network access is not allowed")
-            if event in ("open", "os.listdir", "os.scandir") and args and isinstance(args[0], (str, bytes, os.PathLike)) and _denied(args[0]):
-                _blocked_reads.append(event)
-                raise PermissionError("Tavotto experiment: this location holds credentials and cannot be read")
-        sys.addaudithook(_strict_hook)
+        _fold = (lambda p, _n=os.path.normcase: _n(p).casefold()) if sys.platform in ("darwin", "win32") else os.path.normcase
+        sys.addaudithook(_make(
+            tuple(_fold(os.path.realpath(p)) for p in json.loads(_strict)), _fold, os.path.realpath, os.path.isdir,
+            os.fsdecode, os.PathLike, os.sep, _blocked_net, _blocked_reads,
+        ))
+        del _make, _fold
+    del _strict
     _path0 = os.environ.pop("TAVOTTO_TRIAL_PATH0", None)
     # 两个守卫都装好之后才做 site 初始化：site-packages、.pth、sitecustomize / usercustomize 都在守卫之下执行
     import site
     site.main()
+    sys.path[:] = _saved_path + [p for p in sys.path if p not in _saved_path]
     # 数据改指（ADR 0106）：项目里记着的规则要在试跑里也生效，否则接上的数据在这里读不到、验证不了。
     # 与 worker 同一份实现（`figcapture.install_input_remap`，纯标准库，按文件加载）；加载不了如实标 unavailable，不静默当没有
     remap = "none"
@@ -203,7 +229,9 @@ sys.modules.pop("_tavotto_trial_guard", None)
 code = 0
 sys.argv = [target] + sys.argv[5:]
 if _path0:
-    sys.path.insert(0, _path0)  # 项目根：实验里能 `import` 项目自己的模块（run_path 再把目标所在目录放到它前面）
+    # 项目根：守卫装好之后才进去——当前目录换成项目根（相对路径读数据），项目能 import（run_path 再把目标所在目录放到它前面）
+    os.chdir(_path0)
+    sys.path.insert(0, _path0)
 try:
     runpy.run_path(target, run_name="__main__")
 except SystemExit as exc:
@@ -478,7 +506,7 @@ def _run_guarded(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL,
-            cwd=cwd or work,
+            cwd=work,  # 一律从试跑目录起；实验要的项目根由守卫前导在守卫装好后才切过去（Codex #2064 P1）
             env=env,
             creationflags=runtime.CREATE_NO_WINDOW,
             start_new_session=(os.name != "nt"),

@@ -198,3 +198,58 @@ def test_a_differently_cased_credential_path_is_still_blocked_without_an_os_sand
     variant = str(box.home / ".SSH" / "ID_RSA")
     r = call(_ctx(box), "run_snippet", {"env": "e", "code": f"print(open({variant!r}).read())"})
     assert "blocked_reads" in r.content and "SECRET-KEY-MATERIAL" not in r.content
+
+
+# ---------------------------------------------------------------- Codex #2064 三条 P1（都在没有操作系统沙盒时复现）
+def _no_os_sandbox(monkeypatch):
+    monkeypatch.setattr(trial, "_find_tool", lambda _kind: None)
+
+
+def test_project_modules_named_like_stdlib_never_run_before_the_guard(box, monkeypatch, tmp_path):
+    """项目里的 `json.py` / `tempfile.py` 不能在守卫装好之前被前导 import 执行（P1 ①）。试跑的诊断副本同一条前导，一并看护。"""
+    _no_os_sandbox(monkeypatch)
+    marker = tmp_path / "PWNED"
+    for name in ("json.py", "tempfile.py"):
+        put(box.proj / name, f"open({str(marker)!r}, 'w').write('x')\n")
+    put(box.proj / "fig.py", "print('fig ran')\n")
+    ctx = make_ctx(box, environments={"e": sys.executable}, script_path=box.proj / "fig.py")
+    r = call(ctx, "run_snippet", {"env": "e", "code": "print('hello')"})
+    assert not r.is_error and "hello" in r.content, r.content
+    assert not marker.exists()
+    call(ctx, "try_run", {"env": "e", "mode": "diagnostic"})
+    assert not marker.exists()
+
+
+def test_credentials_cannot_be_read_through_a_directory_descriptor(box, monkeypatch):
+    """`os.open(home)` 再 `os.open('.ssh/id_rsa', dir_fd=…)`：审计事件看不到 dir_fd，所以不许把文件夹当文件打开（P1 ②）。"""
+    _no_os_sandbox(monkeypatch)
+    put(box.home / ".ssh" / "id_rsa", "SECRET-KEY-MATERIAL")
+    code = (
+        "import os\n"
+        f"d = os.open({str(box.home)!r}, os.O_RDONLY)\n"
+        "fd = os.open('.ssh/id_rsa', os.O_RDONLY, dir_fd=d)\n"
+        "print(os.read(fd, 100))\n"
+    )
+    r = call(_ctx(box), "run_snippet", {"env": "e", "code": code})
+    assert "SECRET-KEY-MATERIAL" not in r.content and "blocked_reads" in r.content
+
+
+@pytest.mark.parametrize(
+    "attack",
+    [
+        # 沿调用栈找到前导，把拒读清单清空
+        "import sys\nf = sys._getframe()\nwhile f is not None:\n    for k in list(f.f_globals):\n        if 'deny' in k.lower():\n            f.f_globals[k] = []\n    f = f.f_back\n",
+        # 经 gc 找到装着拒读清单的对象，清空它
+        "import gc\nfor o in gc.get_objects():\n    if isinstance(o, list) and any('.ssh' in str(x) for x in o):\n        o.clear()\n",
+    ],
+)
+def test_the_code_under_test_cannot_switch_the_guard_off(box, monkeypatch, attack):
+    """判据状态不在可改的全局里、函数对象拿不到（P1 ③）：改完照样读不到凭据。"""
+    _no_os_sandbox(monkeypatch)
+    put(box.home / ".ssh" / "id_rsa", "SECRET-KEY-MATERIAL")
+    code = (
+        attack
+        + f"try:\n    print(open({str(box.home / '.ssh' / 'id_rsa')!r}).read())\nexcept Exception as e:\n    print('blocked', type(e).__name__)\n"
+    )
+    r = call(_ctx(box), "run_snippet", {"env": "e", "code": code})
+    assert "SECRET-KEY-MATERIAL" not in r.content, r.content
