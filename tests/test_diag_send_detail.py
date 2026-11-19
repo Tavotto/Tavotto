@@ -2715,7 +2715,10 @@ class TestNativePanelRenderEnv:
         interpreter_fingerprint = "fp123"
         python_version = "3.11.9"
 
-        def last_build_runtime(self):
+        @property
+        def last_build_runtime(
+            self,
+        ):  # 与 `NativeSession.last_build_runtime` 同形：只读属性，不是方法
             return {"prefix": "/conda", "cwd": "/p"}
 
         def diagnostics(self):
@@ -2752,6 +2755,34 @@ class TestNativePanelRenderEnv:
             doc["native_receipt"]["prefix"] == "/conda"
             and doc["native_session"]["state"] == "ready"
         )
+
+    def test_a_real_native_session_with_a_build_receipt_is_collected(self, monkeypatch, tmp_path):
+        """真 `NativeSession`（不是替身）：`last_build_runtime` 是只读属性，采集不能把它当方法调。
+
+        一份用户反馈里这一项整个变成 `collection_error: TypeError: 'dict' object is not callable`——
+        替身把它写成了方法，测试一直是绿的。"""
+        from tavotto.engine import nativesession
+
+        session = nativesession.NativeSession(
+            session_id="s-1",
+            descriptor={
+                "native_id": "n",
+                "out_dir": str(tmp_path),
+                "metadata": {"interpreter": "/conda/bin/python", "cwd": str(tmp_path)},
+            },
+        )
+        session.last_build = {"runtime": {"prefix": "/conda", "cwd": "/p"}}
+        monkeypatch.setattr(session, "alive", lambda: True)
+        seen = self._patch(monkeypatch, profile="native", session=session)
+        doc = json.loads(
+            diagdetail.collect_render_env(
+                self._src(object()), diagdetail.DetailOptions(), diagdetail.Scrubber()
+            )[0].data
+        )
+        assert "collection_error" not in doc
+        assert doc["inspected"] == "native_session" and seen["py"] == "/conda/bin/python"
+        assert doc["native_receipt"]["prefix"] == "/conda"
+        assert doc["native_session"]["execution_profile"] == "native"
 
     def test_native_panel_without_a_live_session_is_honest_about_it(self, monkeypatch):
         seen = self._patch(monkeypatch, profile="native", session=None)

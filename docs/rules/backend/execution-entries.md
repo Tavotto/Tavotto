@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「两条执行入口：safe worker 与 native bridge（ADR 0014 / 0020）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_worker_roundtrip.py`、`tests/test_install_dir_bytecode_free.py`、`tests/bridge/test_bridge_namespace.py`、`tests/bridge/test_bridge_thread_model.py`、`tests/test_import_architecture.py`、`tests/test_foundation_first_open.py`、`tests/test_unreadable_import_skip.py`、`tests/test_foreign_abi_path.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_worker_roundtrip.py`、`tests/test_install_dir_bytecode_free.py`、`tests/bridge/test_bridge_namespace.py`、`tests/bridge/test_bridge_thread_model.py`、`tests/test_import_architecture.py`、`tests/test_foundation_first_open.py`、`tests/test_unreadable_import_skip.py`、`tests/test_foreign_abi_path.py`、`tests/test_gui_backend_neutralized.py`、`tests/test_package_entry.py`、`tests/test_package_entry_parity.py`、`tests/test_package_entry_e2e.py`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
@@ -82,6 +82,9 @@ order: 180
   site-packages 小模块不写缓存）；`-B` 会经 `sys.flags` 传给用户脚本用 multiprocessing 起的子进程（它们不写字节码，
   结果不变）。内置 runtime 没有标记，`-B` 一路有效。看护同一文件的
   `test_project_code_imported_at_interpreter_startup_writes_no_bytecode`（项目里的 sitecustomize 当传感器、先证明它活着）。
+- **native 的函数入口只有一种来源**（ADR 0127 修订 2026-11-18）：库式模块（没有守卫、顶层不画图）由 `discover.native_entry_of` 判 `call`，
+  桌面 / MCP 的 native 启动带 `--entry`，`bridge_runner.run_script_entry` 跑完模块再调它；别的场合 native 仍是 `python fig.py` 原样。
+  够不到入口（`unreachable`）不起 native。终端 `tavotto run` 不带入口。看护 `tests/test_native_function_entry.py`。
 - **`bridge_runner` / `bridgeboot` 启动阶段不许 import matplotlib**，
   钩子挂在 `sys.meta_path` 的后置 import 回调上。
 - **native 侧不许起后台线程**：Figure 归主线程，`LiveFigureSession` 有线程
@@ -89,6 +92,31 @@ order: 180
 - **spike 不是产品**：`python -m tavotto.engine.bridge_spike` 没有稳定契约、
   没有接进 `tavotto` CLI，别在文档 / 官网 / release notes 里提它。
   **产品入口是 `tavotto run`**（`docs/rules/backend/tavotto-run-control-plane.md`）。
+
+## 包里的脚本按模块运行（ADR 0196）
+
+**主语是「产品此刻怎么跑这份脚本」**：脚本在包里（`plots/__init__.py` + `plots/fig.py`）且顶层有相对导入（`from .helpers import tidy`）时，`python plots/fig.py`
+必然 `ImportError: attempted relative import with no known parent package`。这时两条入口都按 `python -m plots.fig` 的方式运行它，
+**只在原样跑必然失败的形状上生效**——所以不违背「与 `python fig.py` 一致」（维护者 2026-11-19 裁决）。
+
+- **判据唯一出处** `engine/pkgentry.resolve`（AST 零执行，判不出就不改，一律回 None）：登记入口是 `__main__`（桌面 native 由 `plan_for` 传登记入口、函数入口同样不改；`nativefallback.launch` 不知道登记入口时传 `None` = 整份脚本，判据照常——safe 对函数入口的包脚本本来就是 ImportError 而不是被拦，不会走到回退）；脚本顶层**直接语句**里有
+  `ImportFrom.level > 0`（`try` / `if` / `def` 里的不算，`level` 不超过包层数）；脚本目录往上每一级都有 `__init__.py`（普通文件）；包根的上一级仍在项目根内
+  （项目文件夹本身也是包时，包链含项目文件夹名、`sys.path[0]` 是项目上一级，不再往外爬；ADR 0196 修订 2026-11-19）；路径无符号链接 / junction；包名与 stem 是合法标识符；命名空间包 / 读不了 / 语法错误 / 影子脚本都不改。
+- **装配点只有两个构造函数**：`execspec.safe_spec`（safe）与 `execspec.desktop_native_spec`（桌面拥有的 native；`_native(package_as_module=True)`）。所以池的三条 spawn 路径、
+  `preparation.plan_for`、MCP 打开图、`nativefallback.launch`（Safe→Native 回退）同源，别处不另判。**终端 `native_spec`（`tavotto run fig.py`）不改**：
+  不传 `package_as_module`，`ExecutionSpec.__post_init__` 也拒绝终端拥有的 native 带 `module_name`。
+- **身份不变（硬要求）**：`ExecutionSpec.module_name` 是正交字段，`target_kind` / `target` / `stable_payload()` 一字不变，描述符、资产 id、修订、注册表条目都照旧。
+  **不要把 `target_kind` 翻成 `module`**（那会把 `target` 变成模块名，身份就换了）。argv 只在判据成立时多 token：worker `--as-module <模块名>`；bridge
+  `--as-module <模块名>`（`--target-kind script --target <脚本>` 不变：runner 的描述符 / 资产 id / 指纹由它派生，翻成 module 会让指纹里的 `target_kind` 变）；没有相对导入的脚本 argv 逐字节不变（golden）。
+- **`sys.path[0]` 不传，子进程自己推**：`bridgeboot.package_path_root(脚本路径, 模块名)`（safe worker 与 bridge 同一个）从脚本路径往上数层得出包根的上一级，
+  对不上就回 None——worker 照旧 `run_path`、bridge 回退成按脚本运行，**绝不猜**。这样 `sys.path[0]` 与 `co_filename`（`executionfact.on_user_entry`、各处 `_script_frame_line` 比的路径）同源。
+  cwd 规则不变（safe 沙盒 / 桌面脚本目录或项目根），脚本目录**不**上 `sys.path`（与 `python -m` 一致）；safe 仍把项目根追加在末尾。
+- **safe worker 保留全部守卫**：`runpy.run_module(alter_sys=True)` 在原来 `run_path` 的位置调用——守卫装好、绊线 arm 之后才 import 父包的 `__init__.py`（那是用户代码）；
+  入口脚本经 `_capture_entry_sha` 只从源码编译并记摘要（`run_module` 走 loader，不这么做会读旧 `.pyc`，`pre == post` 的括号论证不再成立）；
+  顶层包名已被别处的模块占用在 `sys.modules` 里时照旧 `run_path`。
+- 看护 `tests/test_package_entry.py`（判据 + 装配）、`tests/test_package_entry_parity.py`（真 `python -m` / bridge / safe worker 逐字段对拍，safe 不写 `__pycache__`，普通子目录脚本 argv 逐字节不变）、
+  `tests/test_package_entry_e2e.py`（真 sidecar：包里脚本 `completed`、图身份是 `plots/fig.py`、原文件不变；safe 被拦后回退 native 同样按模块运行）。
+  静态模型（`importscan` 的 `sys.path`）仍按脚本目录解析，包内**绝对**同级导入（`import helpers`）按模块运行时与 `python -m` 一样失效；改判据要同看 ADR 0188 的反查前提。
 
 ## 跳过读不了的 import 位置（ADR 0153）
 
@@ -113,7 +141,21 @@ order: 180
   `pool.unreadable_folder_error` 换成服务端令牌就地丢弃（**不进 `err.extra` / 公开投影 / 遥测 / 日志**）；`params.repair_token` 是前端按钮的唯一入口。
   `POST /api/engine/folder-repair {token}`：只收令牌、要 `_page_authenticated()`、路径动手前 `validate_target` 对真实路径再验（每一条拒绝一个用例）、
   提权前 `scan_for_links` 不跟随地拒绝子孙里的重解析点 / 超限，一次 UAC 提权跑 `icacls <目录> /setowner *S-1-5-32-544 /T /C /L /Q` + `icacls <目录> /reset /T /C /L /Q`（argv 由 `build_commands` 唯一给出；不用 takeown，其确认值随语言变；提权脚本内先以备份语义（SeBackupPrivilege + `FILE_FLAG_BACKUP_SEMANTICS | OPEN_REPARSE_POINT`，`folderrepair._WALK_SOURCE`）遍历整棵树再动手：201 链接 / 203 超限 / 202 遍历失败；Windows 真机手动用例 `scripts/dev/verify_folder_repair_windows.ps1`）、事后复核仍读不了算失败。
-  不放宽任何一条验证；加新的拒绝条件加在 `validate_target` 并配用例。 静态关卡：脚本会改 `sys.path`（`importscan` 的 `sys_path_modified`）时，表外无可信映射的未装模块不在运行前问包名，记入 `JointPlan.deferred_unverified` 先跑一次（`depplan.plan`）。看护 `tests/test_folder_repair.py`。
+  不放宽任何一条验证；加新的拒绝条件加在 `validate_target` 并配用例。 静态关卡：脚本会改 `sys.path`（`importscan` 的 `sys_path_modified`）时，表外无可信映射的未装模块不在运行前问包名，记入 `JointPlan.deferred_unverified` 先跑一次（`depplan.plan`）；延后不看目标环境静态索引读没读全（那只决定预填，ADR 0153 补记 2026-11-18）。看护 `tests/test_folder_repair.py`。
+
+## 中和写死的 GUI 后端（ADR 0195）
+
+**safe 与 native 同装一个包装，这是对 native「与 `python fig.py` 一致」的有意偏离**（维护者 2026-11-19 裁决）：Tavotto 永远不弹窗口，脚本写死 `matplotlib.use("TkAgg")` / `"Qt5Agg"` / `"MacOSX"`
+之类时，没有对应 GUI 库的环境只会 `missing_dependency`，换 Python 救不了。
+
+- **只对 GUI 后端**：判据唯一出处 `bridgeboot.GuiBackendNeutralizer.is_gui_backend`，以 matplotlib 自己的后端登记表（`backend_registry` INTERACTIVE / 旧版 `rcsetup.interactive_bk`）为准、大小写不敏感，判不出 = 不动。
+  Agg / pdf / svg / ps / cairo / `module://…` 原样尊重；用户先选了显式非交互后端（`use("pdf")`）再要 GUI 时不换掉它。
+- **唯一装配点** `bridgeboot.install_gui_backend_neutralizer()`：包 `matplotlib.use` 与 `pyplot.switch_backend`（pyplot 首次建图按 `rcParams["backend"]` 切后端也经它，故 `rcParams["backend"]` / `MPLBACKEND` / matplotlibrc 也被挡）。
+  `worker.py` 在 `matplotlib.use("Agg")` 之后、`figcapture.freeze_trusted_surface` 之前装 `patch_matplotlib`，pyplot 载入时（与 show 捕获同一时刻）装 `patch_pyplot`；`bridge_runner.py` 只在 `PostImportHook` 回调表里登记（`matplotlib` / `matplotlib.pyplot`），**不提前 import matplotlib**。别另写第二份。
+- **`matplotlib_patched` 不许被触发**：已基线的 `matplotlib` 模块里，包装必须先于基线冻结（safe 在冻结之前；native 基线首次存盘才拍，晚于 import 钩子）；pyplot 是首次见到的模块，`figcapture._module_origin_ok` 认引擎目录来源。基线之后才替换会被 `_changed_entries_are_library` 判成被 patch——别把装配挪到冻结之后。
+- **native 的 `plt.show()`** 本来就不调用真 show（进屏障 / `block=False` 立即返回），不进 GUI 主循环。
+- **留痕**：worker.log `[gui-backend] {"backend": "tkagg"}`（safe）+ 回执 `runtime.gui_backends_neutralized`（两条入口；native `--report` 同名字段）；只有登记表里的后端名，公开投影唯一出处 `receipt.project_gui_backends`。
+- 看护 `tests/test_gui_backend_neutralized.py`（模拟无 tkinter 的真子进程：safe / native 各七种写法、`MPLBACKEND`、非 GUI 对照、`save_moment` 仍 `restored`；变异：去掉装配，端到端必须红）。
 
 ## 跳过外来 ABI 的私有依赖文件夹（ADR 0154）
 

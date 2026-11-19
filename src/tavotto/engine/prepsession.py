@@ -51,6 +51,7 @@ from . import (
     execpolicy,
     execspec,
     fixrouter,
+    launchscript,
     libmodule,
     nativesession,
     pool,
@@ -2231,6 +2232,14 @@ class SessionService:
         if not decision:
             self._decline(sess, attempt, decision.reason)
             return None
+        how, _ = preparation.native_entry_for(
+            sess.project_root, done_plan.script, entry or done_plan.entry
+        )
+        if how == preparation.NATIVE_ENTRY_UNREACHABLE:
+            # 原样运行够不到登记的函数入口（ADR 0127 修订 2026-11-18）：起进程只会白跑一遍、以「没有图」收场，
+            # 不如如实停在原来被拦的那张卡上。不新增码：就是「没能算出原样运行」
+            self._decline(sess, attempt, execpolicy.REASON_PLAN_UNAVAILABLE)
+            return None
         try:
             target = {**sess.target, "execution": execspec.PROFILE_NATIVE}
             if entry:
@@ -2304,6 +2313,9 @@ class SessionService:
         if sess.entry_retry_run == sess.ledger.run or sess.cancel_requested:
             return None
         if done_result.cancel_requested_at is not None or not done_plan.script:
+            return None
+        if launchscript.source_for(sess.project_root, done_plan.script):
+            # 有启动脚本（ADR 0194）：执行的是它，原脚本的函数入口不是候选
             return None
         from . import probe  # 延迟：probe 依赖面大，只在需要换入口时才拉
 

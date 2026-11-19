@@ -59,6 +59,34 @@ def test_journal_unknown_lists_journals_with_the_query_from_the_call():
     assert _next("journal_unknown", args={})["args"] == {}
 
 
+def test_an_ambiguous_journal_name_asks_the_user_to_pick_from_the_candidates():
+    cands = [
+        {"id": "nature-chemistry", "label": "Nature Chemistry"},
+        {"id": "nature-communications", "label": "Nature Communications"},
+    ]
+    step = _next(
+        "journal_ambiguous",
+        tool="tavotto_open_figure",
+        args={"journal_id": "nature c"},
+        candidates=cands,
+    )
+    assert step["action"] == "ask_user" and "nature c" in step["question"]
+    assert [o.split("（")[0] for o in step["options"]] == [
+        "nature-chemistry",
+        "nature-communications",
+    ]
+
+
+def test_journal_unknown_with_close_candidates_asks_without_them_lists_journals():
+    cands = [{"id": "nature-communications", "label": "Nature Communications"}]
+    step = _next("journal_unknown", args={"journal_id": "Natrue Communcations"}, candidates=cands)
+    assert step["action"] == "ask_user"
+    assert step["options"] == ["nature-communications（Nature Communications）"]
+    assert _next("journal_unknown", args={"journal_id": "x"}, candidates=[])["tool"] == (
+        "tavotto_list_journals"
+    )
+
+
 def test_column_choice_and_unknown_column_ask_the_user_with_the_candidates():
     cols = [
         {"id": "single", "label": "单栏", "width_mm": 110.0},

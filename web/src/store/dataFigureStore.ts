@@ -13,9 +13,11 @@ import {
   type AiDataOverview,
 } from '@/lib/api'
 import { setCanvasCovered } from '@/store/canvasCover'
+import { runExclusive } from '@/lib/dataCommitQueue'
+import { isCommitInProgress, pollCommit } from '@/lib/dataCommitPoll'
 import { currentProjectId } from '@/lib/session'
-import { candidatesFromResponse, headerRowFromResponse, mixedFromResponse, rolesFromResponse, unitsRowFromResponse, type Candidate, type ColumnRoles, type MixedColumn, type ThumbState } from '@/lib/dataFigureAdapter'
-import { fileRows, hasNumericColumn, isStaleProposeCode, sameTable, tableKey, type CellMode, type TableRef } from '@/lib/dataFigure'
+import { candidateIdentity, candidatesFromResponse, headerRowFromResponse, mixedFromResponse, rolesFromResponse, sourcesFromResponse, unitsRowFromResponse, type Candidate, type GroupSource, type ColumnRoles, type MixedColumn, type ThumbState } from '@/lib/dataFigureAdapter'
+import { MERGE_FAILURE_CODES, fileRows, hasNumericColumn, isStaleProposeCode, sameTable, tableKey, type CellMode, type TableRef } from '@/lib/dataFigure'
 import { msg, type UiMessage } from '@/i18n'
 
 /**
@@ -68,7 +70,7 @@ export type ProblemKind =
  *  - `reading` 读表中；`unreadable` 不是表格；`text` 全是文字、没有能画的数字；`pickrow` 表头行没认出来、要用户点一行
  *  - `loading` 候选还在出；`ready` 候选好了；`nothing` 后端说这张表画不出；`failed` 出候选这一步没成
  */
-export type DraftPhase = 'idle' | 'reading' | 'unreadable' | 'text' | 'pickrow' | 'loading' | 'ready' | 'nothing' | 'failed'
+export type DraftPhase = 'idle' | 'reading' | 'unreadable' | 'text' | 'pickrow' | 'loading' | 'ready' | 'nothing' | 'failed' | 'mergeFailed'
 
 /** 这次画图用到的、数值列里混着文字的列（后端 `mixed_cells`）：默认「不画这几行」，右栏可改成「只用里面的数字」；多列时 `mode` 是它们共用的处理方式 */
 export interface MixedInfo {
@@ -120,6 +122,12 @@ interface DataFigureStore {
   files: FilesState
   /** 用户点中的那一张表 */
   selected: TableRef | null
+  /** 「合画一张」：几份表合进同一张图（`selected` 是其中第一份，数据条 / 概览认它）；单份流程是 null。只由 `selectGroup` 设，`select` / `closeDraft` / `clear` 复位 */
+  group: TableRef[] | null
+  /** 合画响应里每份文件的显示名与表头行 / 单位行（数据条的文件切换标签用）；单份是 null */
+  sources: GroupSource[] | null
+  /** 合并标签里的概览失效代数：磁盘事件（`invalidateFiles`）之后加一，数据条据此重读当前显示的文件 */
+  overviewGen: number
   /** 每张表（含重读后的）概览；键 = `tableKey` + 表头行 */
   overviews: Record<string, OverviewState>
   /** 用户指了「哪一行是每列的名字」的文件：路径 → 物理行号；出图时原样带上 `header_rows` */
@@ -157,6 +165,10 @@ interface DataFigureStore {
   invalidateFiles: () => void
   /** 点一个数据文件：开（或复用）临时标签，读表并出候选 */
   select: (ref: TableRef) => void
+  /** 「合画一张」：开临时标签、把这几份（≥ 2）一起交给后端出候选 */
+  selectGroup: (refs: TableRef[]) => void
+  /** 合画数据条切到某个文件：这份的概览还没读（或表头行换了、键变了）才读，读过的不重读 */
+  ensureOverview: (ref: TableRef) => void
   /** 关临时标签（出图中只是收起，画完照样打开） */
   closeDraft: () => void
   activateDraft: () => void
@@ -182,10 +194,14 @@ interface DataFigureStore {
 
 let epoch = 0
 let filesSeq = 0
+/** 清单在途时又来了磁盘变化：只记一个标记，在途那次结束后恰好补一次尾随重读（保证最后一个事件之后的磁盘状态一定被读到） */
+let filesDirty = false
 let proposeSeq = 0
 let runSeq = 0
 let commitSeq = 0
 const overviewSeq = new Map<string, number>()
+/** 当前合并标签里「本标签内已读过 / 在读」的概览键：新开标签清空，磁盘事件清空；`ensureOverview` 不重复读 */
+const groupFresh = new Set<string>()
 /** 同一个 (会话, 备选) 的提交请求号：一次点击一个，不确定的重试复用它（换号 = 后端当成新的一次、会建 `_2`） */
 let commitRid: { for: string; rid: string } | null = null
 let ridCounter = 0
@@ -212,6 +228,9 @@ const initial = {
   draftActive: false,
   files: { status: 'idle' } as FilesState,
   selected: null as TableRef | null,
+  group: null as TableRef[] | null,
+  overviewGen: 0,
+  sources: null as GroupSource[] | null,
   overviews: {} as Record<string, OverviewState>,
   headerRows: {} as Record<string, number>,
   answers: {} as Record<string, unknown>,
@@ -267,6 +286,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   async function propose(still: () => boolean, pj: string | null): Promise<void> {
     const sel = get().selected
     if (!sel) return
+    const group = get().group
     set({ phase: 'loading', error: null, candidates: [], session: null, thumbs: {} })
     const answers = get().answers
     const hasHeaders = Object.keys(get().headerRows).length > 0
@@ -274,8 +294,9 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     try {
       res = await aiDataFigurePropose(
         {
-          table: sel.path,
-          ...(sel.sheet == null ? {} : { sheet: sel.sheet }),
+          ...(group
+            ? { tables: group.map((r) => ({ path: r.path, ...(r.sheet == null ? {} : { sheet: r.sheet }) })) }
+            : { table: sel.path, ...(sel.sheet == null ? {} : { sheet: sel.sheet }) }),
           render: 'lazy',
           ...(Object.keys(answers).length ? { answers } : {}),
           ...(hasHeaders ? { header_rows: get().headerRows } : {}),
@@ -284,7 +305,10 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       )
     } catch (e) {
       if (!still()) return
-      set({ phase: 'failed', error: reasonOf(e) })
+      // 合画失败的稳定码（`MERGE_FAILURE_CODES`）各有出路：临时标签里显示后端那一句 + 「分别作图」，不当成「再试一次就行」的失败
+      const code = e instanceof ApiError && typeof e.body?.code === 'string' ? e.body.code : ''
+      if (group && MERGE_FAILURE_CODES.includes(code)) set({ phase: 'mergeFailed', error: reasonOf(e) })
+      else set({ phase: 'failed', error: reasonOf(e) })
       return
     }
     if (!still()) return
@@ -298,6 +322,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       roles: rolesFromResponse(res) ?? get().roles,
       headerRowUsed: headerRowFromResponse(res),
       unitsRow: unitsRowFromResponse(res),
+      sources: group ? sourcesFromResponse(res) : null,
       // 用户给过 `cells` 规则之后，后端不再把这些列列进 `mixed_cells`（已经不是「替用户做的默认决定」）：右栏那一行要留着，不然切过去就切不回来
       mixed: mixedCols.length > 0 ? { columns: mixedCols, mode: mixedCols[0]!.mode } : answers.cells !== undefined ? get().mixed : null,
     }
@@ -355,6 +380,13 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     const { pj, still } = capture(seq)
     const kept = opts.keepChoices ? { answers: get().answers, mixed: get().mixed, roles: get().roles } : { answers: {} as Record<string, unknown> }
     set({ ...idleDraft, ...kept, phase: 'reading' })
+    // 合画：几份表一起交给后端判断（第一份的「全是文字 / 要点表头行」不代表整组），只读第一份的概览给数据条
+    if (get().group) {
+      groupFresh.add(overviewKeyOf(sel, get().headerRows))
+      void loadOverview(sel)
+      await propose(still, pj)
+      return
+    }
     // 清单里已经说「读不了」（没有可看的原文）：不发请求
     const entries = get().files.status === 'idle' ? null : (get().files as { entries: AiDataFileEntry[] | null }).entries
     const row = entries ? fileRows(entries).flatMap((r) => r.rows).find((r) => sameTable(r.ref, sel)) : undefined
@@ -389,7 +421,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   async function goEditor(script: string): Promise<void> {
     const ep = epoch
     const file = get().selected
-    set({ draftOpen: false, draftActive: false, drawingId: null, problem: null, phase: 'idle', session: null, candidates: [], fresh: file ? { file, from: host.activeCanvasId(), canvasId: null } : null })
+    set({ draftOpen: false, draftActive: false, drawingId: null, problem: null, phase: 'idle', session: null, candidates: [], fresh: file && !get().group ? { file, from: host.activeCanvasId(), canvasId: null } : null })
     if (ep !== epoch) return
     // `still`：换过项目 / 清过状态就不许再打开（A 项目的相对路径不能拿到 B 项目里去跑）
     await host.openScript(script, () => ep === epoch).catch(() => undefined)
@@ -405,17 +437,35 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   /** 没成 / 要说话的结局：把临时标签翻出来（出图期间用户可能已经把它收起了） */
   const showOutcome = (patch: Partial<typeof initial>) => set({ draftOpen: true, draftActive: true, drawingId: null, ...patch })
 
-  async function commit(sessionId: string, items: Candidate[], itemId: string, retried: boolean): Promise<void> {
+  /**
+   * `owner`：点「画这一张」/「再试一次」那一刻的项目与代际。提交排在共用串行队列里，轮到时可能已换了项目：
+   * 此时 `capture` 抓到的是**现在**的项目（B），拿 A 的会话去发等于串了项目——所以快照必须在排队之前取，轮到时先核，对不上就什么都不发。
+   */
+  async function commit(sessionId: string, items: Candidate[], itemId: string, retried: boolean, owner?: { ep: number; pj: string | null }): Promise<void> {
+    if (owner && (owner.ep !== epoch || owner.pj !== currentProjectId())) return
     const seq = { current: () => commitSeq }
     commitSeq += 1
-    const { pj, still } = capture(seq)
+    const cap = capture(seq)
+    const pj = owner ? owner.pj : cap.pj
+    const still = cap.still
     const forKey = `${sessionId}/${itemId}`
     if (!commitRid || commitRid.for !== forKey) commitRid = { for: forKey, rid: newRid() }
     const rid = commitRid.rid
     set({ drawingId: itemId, problem: null })
     try {
-      const res = await aiDataFigureCommit({ session: sessionId, id: itemId, client_request_id: rid }, pj)
+      const body = { session: sessionId, id: itemId, client_request_id: rid }
+      let res = await aiDataFigureCommit(body, pj)
       if (!still()) return
+      // 同一个请求号重发时原任务还在处理中：不是失败也不是画成，请求号留着，有界地重问同一个直到 final；超时仍未完成 = 这次没成，但请求号还在，「再试一次」继续问它
+      if (isCommitInProgress(res)) {
+        const waited = await pollCommit(() => aiDataFigureCommit(body, pj), still)
+        if (!still()) return
+        if (!waited) {
+          showOutcome({ problem: { kind: 'commit', error: null, retryable: true } })
+          return
+        }
+        res = waited
+      }
       commitRid = null
       const outcome = res.task?.outcome
       if (!res.script || !res.stem) {
@@ -460,7 +510,8 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         await propose(cap.still, cap.pj)
         if (!cap.still()) return
         const sid = get().session
-        const same = get().candidates.find((i) => wanted && i.title_code === wanted.title_code)
+        // 身份完全相同（画法 + 合并作图的 variant）才接着画；找不到就不自动提交，让用户看新的候选重选
+        const same = wanted ? get().candidates.find((i) => candidateIdentity(i) === candidateIdentity(wanted)) : undefined
         if (sid && same) await commit(sid, get().candidates, same.id, true)
         return
       }
@@ -471,7 +522,8 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       }
       // 后端明确拒绝了：这次请求号作废；没收到结果（断网 / 网关）：保留请求号，「再试一次」复用，不会画出第二份
       if (isDefiniteRunFailure(e)) commitRid = null
-      showOutcome({ problem: { kind: 'commit', error: reasonOf(e), retryable: true } })
+      // 同名的图占满了：后端的结论是确定的，再试一次永远一样，只留后端那句话
+      showOutcome({ problem: { kind: 'commit', error: reasonOf(e), retryable: code !== 'figure_name_exhausted' } })
     }
   }
 
@@ -490,6 +542,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     ...initial,
 
     enter: () => {
+      filesDirty = false
       set({ ...initial })
       host.openDrawer()
       void get()
@@ -518,10 +571,26 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         if (ep !== epoch || mine !== filesSeq) return
         set({ files: { status: 'error', entries: keep, error: reasonOf(e) } })
       }
+      // 只有最新的那次在途读完才补尾随（旧的被取代时，取代它的那次读完会补）
+      if (filesDirty) {
+        filesDirty = false
+        void get().loadFiles()
+      }
     },
 
     invalidateFiles: () => {
-      if (get().files.status !== 'idle') void get().loadFiles()
+      const st = get().files.status
+      if (st === 'idle') return
+      // 磁盘变了：合并标签里读过的概览都作废，当前显示的那个文件由数据条的 effect 随 `overviewGen` 重读
+      if (get().group) {
+        groupFresh.clear()
+        set((s) => ({ overviewGen: s.overviewGen + 1 }))
+      }
+      if (st === 'loading') {
+        filesDirty = true
+        return
+      }
+      void get().loadFiles()
     },
 
     select: (ref) => {
@@ -530,13 +599,34 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         set({ draftOpen: true, draftActive: true })
         return
       }
-      if (sameTable(get().selected, ref) && get().draftOpen) {
+      if (!get().group && sameTable(get().selected, ref) && get().draftOpen) {
         set({ draftActive: true })
         return
       }
       discardSession()
       commitRid = null
-      set({ selected: ref, draftOpen: true, draftActive: true, fresh: null })
+      set({ selected: ref, group: null, sources: null, draftOpen: true, draftActive: true, fresh: null })
+      void run()
+    },
+
+    ensureOverview: (ref) => {
+      const key = overviewKeyOf(ref, get().headerRows)
+      // 这个标签里读过 / 在读的不重读（来回切不重复请求）；新开的合并标签里还没读过的，哪怕缓存里有也重读一次（先显示缓存）——外部改过文件，旧预览不能一直挂着
+      if (groupFresh.has(key)) return
+      groupFresh.add(key)
+      void loadOverview(ref)
+    },
+
+    selectGroup: (refs) => {
+      if (refs.length < 2) return
+      groupFresh.clear() // 新开的合并标签：每个文件的概览至少重读一次
+      if (get().drawingId) {
+        set({ draftOpen: true, draftActive: true })
+        return
+      }
+      discardSession()
+      commitRid = null
+      set({ selected: refs[0]!, group: refs, sources: null, draftOpen: true, draftActive: true, fresh: null })
       void run()
     },
 
@@ -550,7 +640,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       proposeSeq += 1
       runSeq += 1
       commitRid = null
-      set({ draftOpen: false, draftActive: false, selected: null, ...idleDraft })
+      set({ draftOpen: false, draftActive: false, selected: null, group: null, sources: null, ...idleDraft })
     },
 
     activateDraft: () => {
@@ -591,7 +681,10 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     draw: async (id) => {
       const sid = get().session
       if (!sid || get().drawingId || get().phase !== 'ready') return // 没有候选 / 正在画：不重复提交
-      await commit(sid, get().candidates, id, false)
+      // 先把「正在画」摆出来（可能要排在批量出图的一份后面）；真正的提交在串行锁里做
+      set({ drawingId: id, problem: null })
+      const owner = { ep: epoch, pj: currentProjectId() }
+      await runExclusive(() => commit(sid, get().candidates, id, false, owner))
     },
 
     retry: async () => {
@@ -601,7 +694,9 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         const last = commitRid
         if (last) {
           const [session, id] = last.for.split('/')
-          await commit(session!, [], id!, false)
+          set({ drawingId: id!, problem: null })
+          const owner = { ep: epoch, pj: currentProjectId() }
+          await runExclusive(() => commit(session!, [], id!, false, owner))
           return
         }
       }
@@ -625,6 +720,8 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
 
     clear: () => {
       epoch += 1
+      groupFresh.clear()
+      filesDirty = false
       commitRid = null
       overviewSeq.clear()
       set({ ...initial })

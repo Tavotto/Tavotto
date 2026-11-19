@@ -2,7 +2,7 @@
  * 数据页的 store（ADR 0178）：临时标签的开 / 关 / 复用、项目代际 / 请求序号 / 发起时的项目、出图的各结局（verified / unverifiable /
  * unplotted / mismatch / 缺 data_check）、静默重新出备选、提交请求号的复用。界面走一遍在 `components/datastudio/dataDraft.test.tsx`。
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ApiError,
   aiDataFigureCommit,
@@ -14,6 +14,8 @@ import {
   type AiDataOverview,
   type AiDataProposeResponse,
 } from '@/lib/api'
+import { resetCommitQueue } from '@/lib/dataCommitQueue'
+import { commitPollConfig } from '@/lib/dataCommitPoll'
 import { setCurrentProjectId } from '@/lib/session'
 import { useProjectStore } from '@/store/projectStore'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
@@ -61,6 +63,7 @@ const committed = (extra: Partial<AiDataCommitResult> = {}): AiDataCommitResult 
 const flush = () => new Promise((r) => setTimeout(r, 0))
 
 beforeEach(() => {
+  resetCommitQueue()
   for (const f of [files, overview, propose, commit, discard, refresh, prepOpen, notify]) f.mockReset()
   discard.mockResolvedValue({ ok: true })
   setCurrentProjectId('pa')
@@ -208,6 +211,56 @@ describe('出图的各结局', () => {
     await st().retry()
     expect(commit.mock.calls[1]![0].client_request_id).toBe(commit.mock.calls[0]![0].client_request_id)
   })
+  describe('同一请求号重发时原任务还在处理中（后端去重回 final:false）', () => {
+    const running = (): AiDataCommitResult => ({ task: { task_id: null, outcome: null, final: false, deduped: true } })
+    beforeEach(() => {
+      commitPollConfig.intervalMs = 1
+      commitPollConfig.maxMs = 40
+    })
+    afterEach(() => {
+      commitPollConfig.intervalMs = 1500
+      commitPollConfig.maxMs = 60_000
+    })
+    it('不清请求号、不当成画失败：有界地重问同一个请求号，final 之后正常进编辑器；超时则这次没成但请求号保留，再点「再试一次」仍是同一个', async () => {
+      await ready()
+      commit.mockRejectedValueOnce(new Error('network'))
+      await st().draw('i1')
+      expect(st().problem).toMatchObject({ kind: 'commit' })
+      const rid = commit.mock.calls[0]![0].client_request_id
+      // 一直未完成直到超时
+      commit.mockResolvedValue(running())
+      await st().retry()
+      expect(st().problem).toMatchObject({ kind: 'commit', retryable: true })
+      expect(propose).toHaveBeenCalledTimes(1) // 没有重新出候选
+      // 再点一次：同一个请求号，这次 final
+      commit.mockReset()
+      commit.mockResolvedValueOnce(running()).mockResolvedValueOnce(committed())
+      await st().retry()
+      await flush()
+      expect(new Set(commit.mock.calls.map((c) => c[0].client_request_id))).toEqual(new Set([rid]))
+      expect(prepOpen).toHaveBeenCalledWith(expect.stringContaining('a_figure.py'))
+    })
+    it('轮询中途换项目（clear）：不再重问', async () => {
+      await ready()
+      commit.mockResolvedValue(running())
+      const p = st().draw('i1')
+      await flush()
+      st().clear()
+      await p
+      const n = commit.mock.calls.length
+      await new Promise((r) => setTimeout(r, 15))
+      expect(commit.mock.calls.length).toBe(n)
+    })
+  })
+  it('同名的图占满：不可重试（只留后端那句话）；别的失败仍可重试', async () => {
+    await ready()
+    commit.mockRejectedValueOnce(apiError(422, 'figure_name_exhausted'))
+    await st().draw('i1')
+    expect(st().problem).toMatchObject({ kind: 'commit', retryable: false })
+    commit.mockRejectedValueOnce(apiError(500, 'something_else'))
+    await st().draw('i1')
+    expect(st().problem).toMatchObject({ kind: 'commit', retryable: true })
+  })
   it('备选过期：静默重新出候选，原来选的画法还在就接着画', async () => {
     await ready()
     commit.mockRejectedValueOnce(apiError(409, 'propose_session_expired')).mockResolvedValueOnce(committed())
@@ -225,6 +278,7 @@ describe('出图的各结局', () => {
     st().closeDraft()
     st().select(ref('b.csv'))
     expect(st()).toMatchObject({ draftOpen: true, selected: ref('a.csv'), drawingId: 'i1' })
+    await flush()
     expect(commit).toHaveBeenCalledTimes(1)
     release(committed())
     await p
@@ -461,5 +515,52 @@ describe('单位行与横轴列夹文字', () => {
     st().invalidateFiles()
     await flush()
     expect(files).not.toHaveBeenCalled()
+  })
+
+  describe('清单重读在途合并', () => {
+    const held = () => {
+      const rel: Array<() => void> = []
+      files.mockImplementation(() => new Promise((r) => rel.push(() => r({ files: [], truncated: false }))))
+      return rel
+    }
+    it('连续 5 次失效 → 恰好 2 次请求（在途 1 次 + 尾随 1 次）', async () => {
+      files.mockResolvedValueOnce({ files: [], truncated: false })
+      await st().loadFiles()
+      files.mockClear()
+      const rel = held()
+      for (let i = 0; i < 5; i++) st().invalidateFiles()
+      expect(files).toHaveBeenCalledTimes(1)
+      rel[0]!()
+      await flush()
+      expect(files).toHaveBeenCalledTimes(2)
+      rel[1]!()
+      await flush()
+      expect(files).toHaveBeenCalledTimes(2)
+      expect(st().files.status).toBe('ready')
+    })
+    it('单次失效 → 1 次请求；清单没读过（idle）→ 0 次', async () => {
+      st().invalidateFiles()
+      await flush()
+      expect(files).not.toHaveBeenCalled()
+      files.mockResolvedValueOnce({ files: [], truncated: false })
+      await st().loadFiles()
+      files.mockClear()
+      files.mockResolvedValue({ files: [], truncated: false })
+      st().invalidateFiles()
+      await flush()
+      expect(files).toHaveBeenCalledTimes(1)
+    })
+    it('在途时 clear()（换项目）：脏标记作废，不补尾随', async () => {
+      files.mockResolvedValueOnce({ files: [], truncated: false })
+      await st().loadFiles()
+      files.mockClear()
+      const rel = held()
+      st().invalidateFiles()
+      st().invalidateFiles()
+      st().clear()
+      rel[0]!()
+      await flush()
+      expect(files).toHaveBeenCalledTimes(1)
+    })
   })
 })

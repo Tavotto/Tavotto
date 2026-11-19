@@ -2250,3 +2250,43 @@ describe('LEUKOS saved scope notice', () => {
     expect(notice()).toBeNull()
   })
 })
+
+describe('「需要你确认」在问题面板里（v2 事实，ADR 0155 §14）', () => {
+  const SRC = { url: 'https://example.invalid/v2/guide', kind: 'html' as const, retrieved: '2026-11-15', coverage: 'journal_specific' as const }
+  const v2 = {
+    catalog_rev: 2,
+    rules: {},
+    sources: {},
+    confirm: [
+      { id: 'c1', subject: 'min_line_width', relation: 'gte' as const, value: 2, unit: 'pt', condition: '', quote: 'Lines should be at least 2 pt wide', strength: 'recommended', stage: 'unknown', source: SRC },
+    ],
+  }
+  const bindJournal = async () => {
+    const vectors = (await import('../../../../tests/golden/journal_vectors.json')).default
+    const { loadCatalog } = await import('@/lib/journals')
+    const { useJournalCatalogStore } = await import('@/store/journalCatalogStore')
+    const { useJournalV2Store } = await import('@/store/journalV2Store')
+    const { selectJournal } = await import('@/store/actions')
+    useJournalCatalogStore.setState({ catalog: loadCatalog(vectors.catalog) })
+    selectJournal('fx-beta')
+    useJournalV2Store.setState({ byJournal: { 'fx-beta': v2 } })
+  }
+  it('一个问题都没有时也在（带条件的要求正是「检查没报、但要看一眼」的那一类），不计数、不是问题', async () => {
+    await seed()
+    await bindJournal()
+    useValidationStore.setState({ issues: [], results: [], ready: true, failed: false, queued: false, running: false })
+    useUiStore.setState({ problemScope: 'document' })
+    await mount(<ProblemPanel />)
+    expect(container.querySelector('[data-issue-row]')).toBeNull()
+    expect(container.querySelector('[data-confirm-group-toggle]')?.textContent).toBe('需要你确认（1）')
+  })
+  it('有问题时在树的末尾，且不进问题计数', async () => {
+    await seed()
+    await bindJournal()
+    useUiStore.setState({ problemScope: 'document' })
+    await mount(<ProblemPanel />)
+    const tree = container.querySelector('[data-problem-tree]')!
+    expect(tree.lastElementChild?.hasAttribute('data-confirm-group')).toBe(true)
+    expect(container.querySelector('[data-problem-summary]')?.textContent).not.toContain('需要你确认')
+  })
+})

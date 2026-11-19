@@ -1560,6 +1560,7 @@ def mixed_cells_question(
             preview.append(
                 {
                     "row": values.row_number(n),
+                    **({"file": src} if (src := values.row_source(n)) is not None else {}),
                     "text": _shown(r[i]),
                     "others": {
                         o: _shown(r[values.columns.index(o)])

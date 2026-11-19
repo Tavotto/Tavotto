@@ -21,6 +21,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -35,6 +36,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -49,6 +51,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -63,6 +66,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -77,6 +81,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -91,6 +96,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -105,6 +111,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -119,6 +126,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -133,6 +141,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -147,6 +156,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -161,6 +171,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -175,6 +186,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -189,6 +201,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -203,6 +216,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -217,6 +231,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       },
       "reason": "等值线是 QuadContourSet（内部一族 LineCollection/PathCollection），Tavotto 不认——线本身选不中。渲染与导出正确。"
@@ -232,6 +247,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -246,6 +262,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       },
       "reason": "填充等值线同 art_contour：QuadContourSet 不被识别，色条可编辑。"
@@ -261,6 +278,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -275,6 +293,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -289,6 +308,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -303,6 +323,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -317,6 +338,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -331,6 +353,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -345,6 +368,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -359,6 +383,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -373,6 +398,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -387,6 +413,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -401,6 +428,22 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
+        "fidelity": true
+      }
+    },
+    "art_layout_annotations": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -415,6 +458,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -429,6 +473,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -443,6 +488,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -457,6 +503,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -471,6 +518,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -485,6 +533,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -499,6 +548,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -513,6 +563,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -527,6 +578,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -541,6 +593,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -555,6 +608,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -569,6 +623,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -583,6 +638,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -597,6 +653,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -611,6 +668,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -625,6 +683,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -639,6 +698,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -653,6 +713,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -667,6 +728,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -681,6 +743,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -695,6 +758,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -709,6 +773,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -723,6 +788,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -737,6 +803,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -750,7 +817,8 @@
         "semantic": true,
         "edit": true,
         "replay": true,
-        "export": true
+        "export": true,
+        "drag": true
       }
     },
     "ax_custom_formatter": {
@@ -764,6 +832,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -778,6 +847,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -792,6 +862,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -806,6 +877,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -820,6 +892,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -834,6 +907,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -848,6 +922,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -862,6 +937,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -876,6 +952,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -890,6 +967,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -904,6 +982,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -918,6 +997,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -932,6 +1012,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -946,6 +1027,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       },
       "reason": "次坐标轴自身与它的子元素（轴标签、刻度组）**都可编辑**——容器级的 visible / grid / spines / facecolor 一应俱全。仍然不给的只有两组，都是实测出来的产品边界而不是缺口：**落位**（position）由父轴的 `_TransformedBoundsLocator` 每帧重算，设了 draw 一次就被顶回原值；**数据范围**（xlim / invert / aspect / xscale）由主轴经函数映射决定，同样设了会被顶回去，其中 aspect 还会让 matplotlib 直接发 UserWarning。开放它们只会得到「设了但下一帧被顶回去」，那比不给更坏。"
@@ -961,6 +1043,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       },
       "reason": "次坐标轴自身与它的子元素（轴标签、刻度组）**都可编辑**——容器级的 visible / grid / spines / facecolor 一应俱全。仍然不给的只有两组，都是实测出来的产品边界而不是缺口：**落位**（position）由父轴的 `_TransformedBoundsLocator` 每帧重算，设了 draw 一次就被顶回原值；**数据范围**（xlim / invert / aspect / xscale）由主轴经函数映射决定，同样设了会被顶回去，其中 aspect 还会让 matplotlib 直接发 UserWarning。开放它们只会得到「设了但下一帧被顶回去」，那比不给更坏。"
@@ -976,6 +1059,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -990,6 +1074,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1004,6 +1089,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1018,6 +1104,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1032,6 +1119,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1046,6 +1134,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1060,6 +1149,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1074,6 +1164,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1088,6 +1179,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1102,6 +1194,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1116,6 +1209,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1130,6 +1224,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1144,6 +1239,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1158,6 +1254,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1172,6 +1269,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1186,6 +1284,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1200,6 +1299,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1214,6 +1314,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1228,6 +1329,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1242,6 +1344,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1256,6 +1359,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1270,6 +1374,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1284,6 +1389,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1298,6 +1404,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1312,6 +1419,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1326,6 +1434,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1340,6 +1449,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1354,6 +1464,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1368,6 +1479,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1382,6 +1494,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1396,6 +1509,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1410,6 +1524,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1424,6 +1539,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1438,6 +1554,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1452,6 +1569,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1466,6 +1584,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1480,6 +1599,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1494,6 +1614,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1508,6 +1629,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1522,6 +1644,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1536,6 +1659,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1550,6 +1674,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1564,6 +1689,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1577,7 +1703,8 @@
         "semantic": true,
         "edit": true,
         "replay": true,
-        "export": true
+        "export": true,
+        "drag": true
       }
     },
     "sci_mathtext": {
@@ -1591,6 +1718,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1605,6 +1733,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1661,6 +1790,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1785,6 +1915,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       },
       "reason": "usetex 需要系统 TeX 工具链（latex 及 dvipng / dvips），托管 CI runner 与普通开发机未必装。缺它时 execute 阶段就失败，那是环境前提不是引擎缺陷；装了的机器上按全阶段正常判定。真实 TeX 路径另有 tests/test_tex_toolchain_real.py 看护。",
@@ -1801,6 +1932,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1815,6 +1947,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1829,6 +1962,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1843,6 +1977,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1857,6 +1992,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1871,6 +2007,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1885,6 +2022,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1899,6 +2037,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1913,6 +2052,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1927,6 +2067,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1941,6 +2082,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1955,6 +2097,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1969,6 +2112,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1983,6 +2127,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -1997,6 +2142,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -2011,6 +2157,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -2025,6 +2172,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -2039,6 +2187,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -2053,6 +2202,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -2067,6 +2217,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -2081,6 +2232,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -2095,6 +2247,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -2109,6 +2262,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -2123,6 +2277,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -2137,6 +2292,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -2151,6 +2307,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -2165,6 +2322,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -2179,6 +2337,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -2193,6 +2352,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -2207,6 +2367,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -2221,6 +2382,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -2235,6 +2397,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -2249,6 +2412,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     },
@@ -2263,6 +2427,7 @@
         "edit": true,
         "replay": true,
         "export": true,
+        "drag": true,
         "fidelity": true
       }
     }

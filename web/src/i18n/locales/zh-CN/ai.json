@@ -527,6 +527,10 @@
       "skip": "不画这 {{count}} 行",
       "extract": "只用里面的数字"
     },
+    "variant": {
+      "split": "按「{{column}}」再分开",
+      "by_file": "只按文件比较"
+    },
     "candidate": {
       "points_mean": {
         "title": "原始点 + 均值",
@@ -685,6 +689,22 @@
       "from": "用 {{file}} 画的",
       "again": "换个画法",
       "undo": "撤销"
+    },
+    "batch": {
+      "pick": "多选",
+      "idle": "未选择",
+      "selected": "已选 {{count}} 个",
+      "progress": "作图中 {{done}}/{{total}}",
+      "partial": "已完成 {{done}} 张，{{failed}} 张失败",
+      "draw": "分别作图",
+      "merge": "合并作图",
+      "stop": "停止",
+      "showDone": "查看素材",
+      "retry": "重试",
+      "queued": "排队中",
+      "done": "已完成",
+      "failed": "失败",
+      "groupTitle": "{{count}} 个文件"
     }
   }
 }

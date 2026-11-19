@@ -6,7 +6,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/Tooltip'
-import { aiDataFigureCommit, aiDataFigurePropose, aiDataFilesAll, aiDataOverview, type AiDataCommitResult, type AiDataFileEntry, type AiDataOverview } from '@/lib/api'
+import { ApiError, aiDataFigureCommit, aiDataFigurePropose, aiDataFilesAll, aiDataOverview, type AiDataCommitResult, type AiDataFileEntry, type AiDataOverview } from '@/lib/api'
 import { fileRows } from '@/lib/dataFigure'
 import { setCurrentProjectId } from '@/lib/session'
 import { useDataFigureStore } from '@/store/dataFigureStore'
@@ -16,6 +16,7 @@ import { DataDrawer } from './DataDrawer'
 import { DataDraft } from './DataDraft'
 import { DataPanel } from './DataPanel'
 import { RedrawPill } from './RedrawPill'
+import { useDataBatchStore } from '@/store/dataBatchStore'
 import { TablePreview } from './TablePreview'
 import { useDocumentStore } from '@/store/documentStore'
 
@@ -455,6 +456,18 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     expect(commit.mock.calls[1]![0].client_request_id).toBe(rid)
   })
 
+  it('同名的图占满（figure_name_exhausted）：不出「再试一次」', async () => {
+    propose.mockResolvedValue(cands())
+    commit.mockRejectedValueOnce(new ApiError('figure_name_exhausted', 422, { code: 'figure_name_exhausted' }))
+    await start()
+    await open(0)
+    await allThumbs()
+    await click(qa('[data-candidate]')[0]!)
+    await flush()
+    expect(q('[data-studio-problem]')).not.toBeNull()
+    expect(q('[data-studio-retry]')).toBeNull()
+  })
+
   it('出图中关掉临时标签只是收起；没成的结局再把它翻出来', async () => {
     propose.mockResolvedValue(cands())
     let release!: (v: AiDataCommitResult) => void
@@ -526,5 +539,317 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     expect(q('[data-data-strip-toggle]')!.textContent).toBe('收起')
     await click(q('[data-data-strip-toggle]'))
     expect(qa('[data-data-strip] tbody tr')).toHaveLength(3)
+  })
+
+  it('抽屉里多选：⌘ 点两份 → 底部出现「各画一张」、进入多选态；多选态下单击是加选 / 取消；点「选多份」退出（清选择）后单击才开临时标签', async () => {
+    propose.mockResolvedValue(cands())
+    useDataBatchStore.getState().clear()
+    await start(<><DataDrawer /><DataDraft /></>)
+    const meta = (i: number) => qa('[data-studio-file]')[i]!
+    const cmdClick = (el: Element) => act(async () => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true })))
+    const btn = () => q<HTMLButtonElement>('[data-studio-pick-mode]')!
+    expect(btn().textContent).toBe('多选')
+    await cmdClick(meta(0))
+    expect(btn().textContent).toBe('取消') // 手势选中第一份 = 进入多选态，按钮同步成「取消」
+    expect(q<HTMLButtonElement>('[data-studio-batch-run]')!.disabled).toBe(true) // 1 份：两个按钮都禁用
+    await cmdClick(meta(2))
+    expect(q<HTMLButtonElement>('[data-studio-batch-run]')!.disabled).toBe(false)
+    expect(q('[data-studio-batch-run]')!.textContent).toBe('分别作图')
+    expect(q('[data-studio-batch-merge]')!.textContent).toBe('合并作图')
+    expect(q('[data-data-draft]')).toBeNull() // 多选不开临时标签
+    await click(meta(0)) // 多选态下普通单击 = 取消这一份，不开临时标签
+    await flush()
+    expect(useDataBatchStore.getState().selection).toHaveLength(1)
+    expect(useDataFigureStore.getState().draftOpen).toBe(false)
+    await click(btn()) // 点「取消」：退出并清掉选择
+    expect(btn().textContent).toBe('多选')
+    expect(useDataBatchStore.getState()).toMatchObject({ pickMode: false, selection: [] })
+    await click(meta(0))
+    await flush()
+    expect(useDataFigureStore.getState().draftOpen).toBe(true)
+  })
+
+  it('「选多份」按钮：至少 2 份表才出现；点它进入多选态（文字变「取消」、出现动作区）；批量进行中禁用；多选态下读不了的行单击不进选择', async () => {
+    propose.mockResolvedValue(cands())
+    useDataBatchStore.getState().clear()
+    files.mockResolvedValue({ files: [tbl('growth.csv'), tbl('run42.dat', 'unreadable')], truncated: false })
+    await start(<><DataDrawer /><DataDraft /></>)
+    expect(q('[data-studio-pick-mode]')).toBeNull() // 只有 1 份表
+    useDataFigureStore.getState().clear()
+    files.mockResolvedValue({ files: [tbl('growth.csv'), tbl('run42.dat', 'unreadable'), tbl('names.csv')], truncated: false })
+    await act(async () => useDataFigureStore.getState().loadFiles())
+    await flush()
+    const btn = () => q<HTMLButtonElement>('[data-studio-pick-mode]')!
+    expect(btn().textContent).toBe('多选')
+    await click(btn())
+    expect(btn().textContent).toBe('取消')
+    expect(q('[data-studio-batch-zone]')!.textContent).toContain('未选择')
+    // 行尾灰字行数在多选态下仍在（不再有「＋」）
+    expect(qa('[data-studio-file]')[0]!.textContent).toMatch(/行/)
+    expect(q('[data-studio-pick-toggle]')).toBeNull()
+    await click(qa('[data-studio-file]')[1]!) // 读不了的行
+    expect(useDataBatchStore.getState().selection).toHaveLength(0)
+    expect(useDataBatchStore.getState().pickMode).toBe(true)
+    act(() => useDataBatchStore.setState({ running: true }))
+    expect(btn().disabled).toBe(true)
+    act(() => useDataBatchStore.setState({ running: false }))
+    // 切项目 / clear：复位
+    act(() => useDataBatchStore.getState().clear())
+    expect(btn().textContent).toBe('多选')
+    await act(async () => void (await new Promise((r) => setTimeout(r, 200)))) // 动作区走完退场过渡
+    expect(q('[data-studio-batch-zone]')).toBeNull()
+  })
+
+  it('「选多份」：焦点在按钮上按 Esc 退出多选态；清单变到少于 2 份能画的表时自动退出并清选择', async () => {
+    propose.mockResolvedValue(cands())
+    useDataBatchStore.getState().clear()
+    await start(<><DataDrawer /><DataDraft /></>)
+    const btn = () => q<HTMLButtonElement>('[data-studio-pick-mode]')!
+    await click(btn())
+    await click(qa('[data-studio-file]')[0]!)
+    expect(useDataBatchStore.getState()).toMatchObject({ pickMode: true })
+    btn().focus()
+    act(() => void btn().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })))
+    expect(useDataBatchStore.getState()).toMatchObject({ pickMode: false, selection: [] })
+    // 清单变化：只剩 1 份能画的表
+    await click(btn())
+    await click(qa('[data-studio-file]')[0]!)
+    files.mockResolvedValue({ files: [tbl('growth.csv'), tbl('run42.dat', 'unreadable')], truncated: false })
+    await act(async () => useDataFigureStore.getState().loadFiles())
+    await flush()
+    expect(q('[data-studio-pick-mode]')).toBeNull()
+    expect(useDataBatchStore.getState()).toMatchObject({ pickMode: false, selection: [] })
+  })
+
+  const groupTwo = async () => {
+    await start(<><DataDrawer /><DataDraft /><DataPanel /></>)
+    const cmd = (el: Element) => act(async () => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true })))
+    await cmd(qa('[data-studio-file]')[0]!)
+    await cmd(qa('[data-studio-file]')[2]!)
+    await click(q('[data-studio-batch-merge]'))
+    await flush()
+    await flush()
+  }
+
+  it('合画一张：点「合画一张」退出多选态、开临时标签（标签名「2 份数据」），请求带 tables，候选与单份同形；右栏标题也是「2 份数据」、角色下拉照常；数据条显示第一份', async () => {
+    propose.mockResolvedValue(cands())
+    await groupTwo()
+    expect(useDataBatchStore.getState()).toMatchObject({ pickMode: false, selection: [] })
+    expect(propose.mock.calls.at(-1)![0]).toEqual({ tables: [{ path: 'growth.csv' }, { path: 'names.csv' }], render: 'lazy' })
+    expect(qa('[data-candidate]')).toHaveLength(4)
+    expect(q('[data-data-draft]')!.getAttribute('aria-label')).toBe('2 个文件')
+    expect(q('[data-data-panel] h2')!.textContent).toBe('2 个文件')
+    expect(q('[data-data-panel-meta]')).toBeNull() // 第一份的行列数不代表整组
+    expect(q('[data-data-roles]')).not.toBeNull()
+    expect(q('[data-data-strip]')).not.toBeNull()
+  })
+
+  it('合画：点一张 → 和单份一样提交；右栏改角色仍带 tables 重来', async () => {
+    propose.mockResolvedValue(cands())
+    commit.mockResolvedValue({ task: { outcome: 'completed' }, script: 'tavotto_figures/g.py', stem: 'g', data_check: 'verified' })
+    await groupTwo()
+    await allThumbs()
+    await click(qa('[data-candidate]')[0]!)
+    await flush()
+    expect(commit).toHaveBeenCalledWith(expect.objectContaining({ session: 'S1', id: 'i1' }), expect.anything())
+  })
+
+  it('tables_columns_differ：临时标签里一句话 + 主按钮「各画一张」；点它回到抽屉、恢复选择并直接开始各画一张', async () => {
+    propose.mockRejectedValueOnce(new ApiError('tables_columns_differ', 400, { code: 'tables_columns_differ' }))
+    await groupTwo()
+    const p = q('[data-studio-group-problem]')!
+    expect(p.textContent).toContain('列名不一致，无法合并作图。')
+    expect(p.querySelector('button')!.textContent).toBe('分别作图')
+    expect(q('[data-studio-retry]')).toBeNull() // 再试一次不是出路
+    propose.mockImplementation(async (b) => ({ ...cands(1), session: `S-${b.table}` }))
+    commit.mockResolvedValue({ task: { outcome: 'completed' }, script: 'tavotto_figures/x.py', stem: 'x', data_check: 'verified' })
+    await click(p.querySelector('button'))
+    await flush()
+    expect(q('[data-data-draft]')).toBeNull()
+    for (let i = 0; i < 20 && useDataBatchStore.getState().running; i++) await flush()
+    expect(propose.mock.calls.slice(-2).map((c) => c[0].table)).toEqual(['growth.csv', 'names.csv'])
+  })
+
+  it('tables_limit_exceeded：后端那句话 + 同一个出路「各画一张」', async () => {
+    propose.mockRejectedValueOnce(new ApiError('tables_limit_exceeded', 400, { code: 'tables_limit_exceeded', params: { max: 8 } }))
+    await groupTwo()
+    const p = q('[data-studio-group-problem="mergeFailed"]')!
+    expect(p.textContent).toContain('一次最多合并 8 个文件。')
+    expect(p.querySelector('button')!.textContent).toBe('分别作图')
+  })
+
+  const tabs = () => qa<HTMLElement>('[data-data-strip-tabs] [role=radio]')
+
+  it('合画的数据条：标题行里「数据」后面一排文件标签（没有 sources 就按路径取名去扩展名），默认第一个；单份流程没有这排标签', async () => {
+    propose.mockResolvedValue(cands())
+    overview.mockImplementation(async ({ path }) => ov({ path, rows: path === 'names.csv' ? 7 : 144, columns: 3 }))
+    await groupTwo()
+    expect(tabs().map((b) => b.textContent)).toEqual(['growth', 'names'])
+    expect(tabs()[0]!.getAttribute('aria-checked')).toBe('true')
+    // 标题行不撑高、文件名不进 data-*
+    expect(q('[data-data-strip-tabs]')!.className).toContain('overflow-x-auto')
+    for (const b of tabs()) for (const a of b.getAttributeNames()) if (a.startsWith('data-')) expect(b.getAttribute(a)).not.toMatch(/growth|names|csv/)
+    expect(q('[data-data-strip-info]')!.textContent).toBe('前 2 行，共 144 行 · 3 列')
+    // 单份流程
+    act(() => useDataFigureStore.getState().closeDraft())
+    await click(qa('[data-studio-file]')[0]!)
+    await flush()
+    await flush()
+    expect(q('[data-data-strip]')).not.toBeNull()
+    expect(q('[data-data-strip-tabs]')).toBeNull()
+  })
+
+  it('合画的数据条：标签用响应的 sources[].label；点哪个，表与「前 N 行，共 M 行」就是哪个文件的；按需读，读过的不重读', async () => {
+    propose.mockResolvedValue({ ...cands(), sources: [{ path: 'growth.csv', sheet: null, label: 'growth', header_row: 1, units_row: false }, { path: 'names.csv', sheet: null, label: 'names-x', header_row: 1, units_row: false }] })
+    overview.mockImplementation(async ({ path }) => ov({ path, rows: path === 'names.csv' ? 7 : 144, columns: path === 'names.csv' ? 2 : 3 }))
+    await groupTwo()
+    expect(tabs().map((b) => b.textContent)).toEqual(['growth', 'names-x'])
+    const reads = () => overview.mock.calls.map((c) => c[0].path)
+    expect(reads()).not.toContain('names.csv') // 没点之前不读第二个
+    await click(tabs()[1]!)
+    await flush()
+    expect(reads()).toContain('names.csv')
+    expect(tabs()[1]!.getAttribute('aria-checked')).toBe('true')
+    expect(q('[data-data-strip-info]')!.textContent).toBe('前 2 行，共 7 行 · 2 列')
+    const n = overview.mock.calls.length
+    await click(tabs()[0]!)
+    await click(tabs()[1]!)
+    await flush()
+    expect(overview.mock.calls.length).toBe(n) // 读过的不重读
+    expect(q('[data-data-strip-info]')!.textContent).toBe('前 2 行，共 7 行 · 2 列')
+  })
+
+  it('合画的数据条：展开的是当前选中的文件；在某个文件的预览里点一行指表头，只影响这个文件，重新出候选时 header_rows 只带它', async () => {
+    propose.mockResolvedValue(cands())
+    const raw = [1, 2, 3].map((n) => ({ line: n, text: `row ${n}` }))
+    overview.mockImplementation(async ({ path }) => (path === 'names.csv' ? ov({ path, status: 'unsure', header_row: 2, raw_lines: raw, fields: [], preview_rows: [] }) : ov({ path })))
+    await groupTwo()
+    await click(tabs()[1]!)
+    await flush()
+    propose.mockClear()
+    await click(q('label[data-look-line="3"] input'))
+    await flush()
+    await flush()
+    expect(propose.mock.calls.at(-1)![0]).toMatchObject({ tables: [{ path: 'growth.csv' }, { path: 'names.csv' }], header_rows: { 'names.csv': 3 } })
+    expect(propose.mock.calls.at(-1)![0].header_rows).not.toHaveProperty('growth.csv')
+    expect(tabs()[1]!.getAttribute('aria-checked')).toBe('true') // 重新出候选后仍停在这个文件
+  })
+
+  it('合画的成对候选：响应里 items[].variant 不同的两张同名候选，磁贴上各有一句小字（按「列」再分开 / 只按文件比较）；列名只当文本、不进 data-*；最多 8 张照常排', async () => {
+    const col = '组别<b>x</b>'
+    const eight = Array.from({ length: 8 }, (_, i) => ({
+      ...items(1)[0]!,
+      id: `v${i}`,
+      recommended: i === 0,
+      thumbnail_url: `/t/v${i}`,
+      variant: i % 2 === 0 ? { kind: 'split' as const, column: col } : { kind: 'by_file' as const },
+    }))
+    propose.mockResolvedValue({ ...cands(), items: eight })
+    await groupTwo()
+    const tiles = qa('[data-candidate]')
+    expect(tiles).toHaveLength(8)
+    expect(tiles[0]!.querySelector('[data-candidate-variant]')!.textContent).toBe(`按「${col}」再分开`)
+    expect(tiles[1]!.querySelector('[data-candidate-variant]')!.textContent).toBe('只按文件比较')
+    expect(tiles[0]!.querySelector('b')).toBeNull() // 文本渲染，不当 HTML
+    for (const el of document.querySelectorAll('[data-candidate-grid] *')) for (const a of el.getAttributeNames()) if (a.startsWith('data-')) expect(el.getAttribute(a)).not.toContain('组别')
+    expect(tiles[0]!.textContent).toContain('推荐') // 推荐小标仍在第一张
+    // 单份响应没有 variant：磁贴上没有这一行
+    act(() => useDataFigureStore.getState().closeDraft())
+    propose.mockResolvedValue(cands())
+    await click(qa('[data-studio-file]')[0]!)
+    await flush()
+    await flush()
+    expect(qa('[data-candidate-variant]')).toHaveLength(0)
+  })
+
+  it('合并标签的概览新鲜度：看过第二个文件 → 关标签 → 外部改了文件 → 再合并，切到它会重新读并显示新内容；同一标签内来回切不重复请求', async () => {
+    propose.mockResolvedValue(cands())
+    overview.mockImplementation(async ({ path }) => ov({ path, rows: path === 'names.csv' ? 7 : 144, columns: 3 }))
+    await groupTwo()
+    const reads = (p: string) => overview.mock.calls.filter((c) => c[0].path === p).length
+    await click(tabs()[1]!)
+    await flush()
+    expect(q('[data-data-strip-info]')!.textContent).toBe('前 2 行，共 7 行 · 3 列')
+    const n1 = reads('names.csv')
+    await click(tabs()[0]!)
+    await click(tabs()[1]!)
+    await flush()
+    expect(reads('names.csv')).toBe(n1) // 同一标签内来回切不重复
+    // 关标签；外部改了 names.csv（现在 99 行）；清单重读之后再合并
+    act(() => useDataFigureStore.getState().closeDraft())
+    overview.mockImplementation(async ({ path }) => ov({ path, rows: path === 'names.csv' ? 99 : 144, columns: 3 }))
+    const cmd = (el: Element) => act(async () => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true })))
+    await click(q('[data-studio-pick-mode]'))
+    await cmd(qa('[data-studio-file]')[0]!)
+    await cmd(qa('[data-studio-file]')[2]!)
+    await click(q('[data-studio-batch-merge]'))
+    await flush()
+    await flush()
+    await click(tabs()[1]!)
+    await flush()
+    expect(reads('names.csv')).toBeGreaterThan(n1) // 重新请求了
+    expect(q('[data-data-strip-info]')!.textContent).toBe('前 2 行，共 99 行 · 3 列')
+  })
+
+  it('合并标签里磁盘事件（invalidateFiles）之后，当前显示的那个文件的概览重读', async () => {
+    propose.mockResolvedValue(cands())
+    overview.mockImplementation(async ({ path }) => ov({ path, rows: 144, columns: 3 }))
+    await groupTwo()
+    await click(tabs()[1]!)
+    await flush()
+    const reads = () => overview.mock.calls.filter((c) => c[0].path === 'names.csv').length
+    const before = reads()
+    overview.mockImplementation(async ({ path }) => ov({ path, rows: 5, columns: 3 }))
+    await act(async () => useDataFigureStore.getState().invalidateFiles())
+    await flush()
+    await flush()
+    expect(reads()).toBeGreaterThan(before)
+    expect(q('[data-data-strip-info]')!.textContent).toBe('前 2 行，共 5 行 · 3 列')
+  })
+
+  it('tables_labels_collide：同一条出路——后端那一句 + 「分别作图」，不给「再试一次」', async () => {
+    propose.mockRejectedValueOnce(new ApiError('tables_labels_collide', 400, { code: 'tables_labels_collide' }))
+    await groupTwo()
+    const p = q('[data-studio-group-problem="mergeFailed"]')!
+    expect(p.textContent).toContain('这几个文件的名字分不开，没法合并作图。')
+    expect(p.querySelector('button')!.textContent).toBe('分别作图')
+    expect(q('[data-studio-retry]')).toBeNull()
+  })
+
+  it('合画里某份表不在了（200 nothing + table_not_found）：走 nothing 的话，也给「各画一张」这个出路', async () => {
+    propose.mockResolvedValueOnce({ kind: 'nothing', reasons: ['table_not_found'] })
+    await groupTwo()
+    const p = q('[data-studio-group-problem]')!
+    expect(p.textContent).toContain('找不到你选的那张表。')
+    expect(p.querySelector('button')!.textContent).toBe('分别作图')
+  })
+
+  it('动作区：多选态下在标题行正下方、清单上方；高度类名从「已选 0 份」到进行中、没画成全程不变；退出后消失', async () => {
+    propose.mockResolvedValue(cands())
+    useDataBatchStore.getState().clear()
+    await start(<><DataDrawer /><DataDraft /></>)
+    expect(q('[data-studio-batch-zone]')).toBeNull()
+    await click(q('[data-studio-pick-mode]'))
+    const zone = () => q('[data-studio-batch-zone]')!
+    const tree = q('[role=tree]')!
+    // 在清单之前、不在清单里、不是浮层
+    expect(zone().compareDocumentPosition(tree) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(tree.contains(zone())).toBe(false)
+    expect(zone().className).not.toContain('absolute')
+    // 固定高度：同一个类名贯穿所有状态（jsdom 没有排版，真浏览器里的行位置另用截图脚本量）
+    const cls = zone().className
+    const lines = () => zone().querySelector('p')!.textContent
+    expect(lines()).toBe('未选择')
+    await click(qa('[data-studio-file]')[0]!)
+    await click(qa('[data-studio-file]')[2]!)
+    expect(lines()).toBe('已选 2 个')
+    act(() => useDataBatchStore.setState({ running: true, progress: { done: 1, total: 2 } }))
+    expect(lines()).toBe('作图中 2/2')
+    act(() => useDataBatchStore.setState({ running: false, rows: { k: { state: 'done' }, j: { state: 'failed', reason: null } } }))
+    expect(lines()).toBe('已完成 1 张，1 张失败')
+    expect(zone().className).toBe(cls)
+    act(() => useDataBatchStore.getState().clear())
+    await act(async () => void (await new Promise((r) => setTimeout(r, 200))))
+    expect(q('[data-studio-batch-zone]')).toBeNull()
   })
 })

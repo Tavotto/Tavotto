@@ -5,7 +5,7 @@ S0 的取样与观测见 [S0_BASELINE.md](../implementation/script-compat/S0_BAS
 时才加载科研登记。上游源文件按完整提交 SHA 拉取到仓库外，并逐文件核对 `research-cohort.json` 的
 SHA-256。Guardian 同时核验登记与 HEAD 一致、缓存字节一致，之后复用已有 worker 测量路径。
 
-`compat_guardian_research.py verify` 只核验元数据；`fetch --case ... --cache ...` 显式下载，不执行脚本。
+冻结任务的 `required_stages` 与 CompatBench 的 `STAGES` 一致：2026-11-18 起含「拖动」（`drag`，用户拍板科研项目也按它判）；已归档的快照按行里真有的阶段投影与计数，逐字复现不变。`compat_guardian_research.py verify` 只核验元数据；`fetch --case ... --cache ...` 显式下载，不执行脚本。
 每个项目的依赖在独立 hosted job 中准备。原始 `research-baseline.json` 保留，完整证据由 Actions
 artifact / 外部归档保存；`verify-snapshot --evidence-directory ...` 可从归档重算快照。
 `runner_error` 保留为 unknown 观测及原始异常，不进入产品六分类；SVG 校验使用标准库 XML。
@@ -142,7 +142,7 @@ expected_cases, corpus_sha256, cases[], evidence[], verdict, coverage, unverifie
 
 - `not_run`：这一层**在范围内但没有执行**（前序失败、被跳过）。
 - `not_covered`：这个 adapter **根本不驱动**这一层。V2 会话 adapter 只走「扫描 → 检查 → 运行 → 捕获 →
-  渲染 → 标题语义」，所以它的 `edit / replay / export / fidelity` 恒为 `not_covered`，且判据写
+  渲染 → 标题语义」，所以它的 `edit / replay / export / drag / fidelity` 恒为 `not_covered`，且判据写
   `layer not exercised by the V2 session adapter`。
 - `partial_coverage`（行/报告）：**同时满足**——原生参照 `passed`；两侧执行次数均为独立计数且 > 0；环境可比；
   所有被驱动的层都 `passed`；其余层全是 `not_covered`，且至少有一个。它**不是通过**：不进「通过」分子，
@@ -220,7 +220,7 @@ invalid_fixture, unknown`。映射表只把**已存在的码**指向类别，表
 
 | 来源 | 类别 |
 | --- | --- |
-| 阶段失败（原生通过的前提下）discover / execute / capture / open·semantic / edit / replay / export·fidelity | product_entry_reachability / safe_execution_divergence / figure_capture（捕获数 0 < n < 原生数则 partial_capture）/ manifest_semantics / editing_capability / replay_inconsistency / export_or_fidelity |
+| 阶段失败（原生通过的前提下）discover / execute / capture / open·semantic / edit·drag / replay / export·fidelity | product_entry_reachability / safe_execution_divergence / figure_capture（捕获数 0 < n < 原生数则 partial_capture）/ manifest_semantics / editing_capability / replay_inconsistency / export_or_fidelity |
 | `native_script_error`、`native_render_failed`、原生退出码非 0 | invalid_fixture |
 | `driver_timeout`、`driver_crashed`、adapter 超时 | timeout_or_process_crash |
 | `driver_no_output`、`driver_bad_output`、**runner 崩溃** | unknown（runner 崩溃永不记到产品头上） |

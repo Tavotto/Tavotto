@@ -28,6 +28,7 @@ from pathlib import Path, PurePosixPath
 
 from . import (
     ai_data_figure,
+    ai_data_merge,
     ai_data_propose,
     ai_data_recipe,
     ai_data_template,
@@ -44,7 +45,7 @@ from .ai_tasks import FAILED, UNKNOWN, VERIFIED, CheckResult, TaskError
 
 TASK_TYPE = "data_to_figure"
 #: 同一个 stem 已被占用时最多试几个后缀（`_2` … `_N`）
-MAX_SUFFIX = 50
+MAX_SUFFIX = 999
 
 
 def _sha256(data: bytes) -> str:
@@ -479,9 +480,12 @@ class PlacementV2:
     module_rel: str
 
 
-def place_v2(root: Path, folder_rel: str, table_rel: str, module_name: str) -> PlacementV2:
+def place_v2(
+    root: Path, folder_rel: str, table_rel: str, module_name: str, stem_base: str | None = None
+) -> PlacementV2:
     """把数据文件夹与数据文件钉在项目内（`contained_path`，realpath 之后判；不跟随指到项目外的链接）并选一个空闲的 stem。
-    stem 规则沿用 v1（避开已登记的、同名脚本、同名产物，casefold 比较），只是在 `tavotto_figures/` 里找。"""
+    stem 规则沿用 v1（避开已登记的、同名脚本、同名产物，casefold 比较），只是在 `tavotto_figures/` 里找。
+    `stem_base`（合画用）：stem 的主干**原样**取它（不加 `_figure`；名字见 `ai_data_merge.merged_stem`）而不是数据文件名；`folder_rel` 在合画时是落点目录。"""
     try:
         folder_norm = ai_data_propose.normalize_rel(folder_rel)
         table_norm = ai_data_propose.normalize_rel(table_rel)
@@ -501,7 +505,7 @@ def place_v2(root: Path, folder_rel: str, table_rel: str, module_name: str) -> P
     if not data_path.is_file():
         raise ai_data_figure.DataSourceError("data_not_found")
     figures_dir = folder / FIGURES_DIR
-    base = ai_data_figure.stem_for(Path(table_norm).name)
+    base = stem_base or ai_data_figure.stem_for(Path(table_norm).name)
     taken = _registered_stems(root)
     for n in range(1, MAX_SUFFIX + 1):
         stem = base if n == 1 else f"{base}_{n}"
@@ -554,6 +558,8 @@ class Selection:
     title_code: str
     #: 出备选时用的表头物理行号（文本表格）：提交按同一读法重读
     header_line: int | None = None
+    #: 合画：各份与合成列（`table` / `sheet` / `data_sha256` 此时是第一份的路径 / 工作表与拼后的数据身份，`folder_rel` 是落点目录）；单份 = None
+    merge: ai_data_merge.MergeSpec | None = None
 
 
 @dataclass
@@ -568,11 +574,18 @@ class PreparedV2:
     coverage: ai_data_template.Coverage
     not_plotted: list[dict]
     cell_stats: list[dict] = field(default_factory=list)
+    #: 合画：每一份的数据引用（契约里的 `input_refs`，项目相对路径 + sha256 + 大小）；单份 = 空（用 `placement.data_rel` 与 `values`）
+    source_refs: list[dict] = field(default_factory=list)
+    source_paths: list[Path] = field(
+        default_factory=list
+    )  # 与 `source_refs` 逐项对应的项目内真实路径（提交前再核一遍 sha256 用）
 
 
 def prepare_v2(root: Path, sel: Selection) -> PreparedV2:
     """重读数据（sha256 必须还是出备选时那一份，否则 `propose_data_changed`）→ 重新校验配方 → 选落点 → 模板出脚本与公共模块 →
     期望数据指纹与覆盖情况。纯读，不写任何东西。"""
+    if sel.merge is not None:
+        return _prepare_merged(root, sel)
     module_name, module_bytes = ai_data_template.runtime_module()
     pl = place_v2(root, sel.folder_rel, sel.table, module_name)
     values = ai_data_figure.inspect_data_source(
@@ -601,6 +614,70 @@ def prepare_v2(root: Path, sel: Selection) -> PreparedV2:
         coverage=ai_data_template.fingerprint_coverage(sel.recipe),
         not_plotted=unplotted_rows(values, sel.recipe),
         cell_stats=ai_data_propose.cell_stats(values, sel.recipe),
+    )
+
+
+def _prepare_merged(root: Path, sel: Selection) -> PreparedV2:
+    """合画的 `prepare_v2`：落点是这几份的最近公共父文件夹，每一份都钉在项目内（`contained_path`）、sha256 必须还是出备选时那一份
+    （任何一份变了 → `propose_data_changed`），按同一组标签与列名重新拼（`ai_data_merge.load`），其余与单份同一条流水。纯读。"""
+    spec = sel.merge
+    assert spec is not None
+    module_name, module_bytes = ai_data_template.runtime_module()
+    first = spec.sources[0]
+    pl = place_v2(
+        root,
+        sel.folder_rel,
+        first.rel,
+        module_name,
+        stem_base=ai_data_merge.merged_stem([s.path for s in spec.sources], sel.recipe.y[0]),
+    )
+    root_real = Path(os.path.realpath(root))
+    refs: list[dict] = []
+    paths: list[Path] = []
+    for src in spec.sources:
+        real = projectenv.contained_path(root, (pl.folder / PurePosixPath(src.rel)).as_posix())
+        if real is None:
+            raise ai_data_figure.DataSourceError("data_path_outside_project")
+        if not Path(real).is_file():
+            raise ai_data_figure.DataSourceError("data_not_found")
+        paths.append(Path(real))
+        refs.append(
+            {
+                "kind": "data_file",
+                "path_rel": Path(real).relative_to(root_real).as_posix(),
+                "sha256": src.sha256,
+                "size": src.size,
+            }
+        )
+    try:
+        entry, values = ai_data_merge.load(pl.folder, spec)
+    except ai_data_merge.MergeError as exc:
+        code = "propose_data_changed" if exc.code == "tables_changed" else exc.code
+        raise ai_data_propose.ProposeError(code, params=exc.params) from None
+    if values.sha256 != sel.data_sha256:
+        raise ai_data_propose.ProposeError("propose_data_changed")
+    profile = ai_data_figure.FolderProfile((entry,), (), False, None)
+    problems = ai_data_recipe.validate_recipe(
+        profile, sel.recipe, confirmed=sel.confirmed, values=values
+    )
+    if problems:
+        raise TaskError("recipe_invalid", problems[0].code)
+    rendered = ai_data_template.render_recipe_script(
+        entry, sel.recipe, data_rel=ai_data_propose.script_data_rel(first.rel), stem=pl.stem
+    )
+    return PreparedV2(
+        selection=sel,
+        values=values,
+        entry=entry,
+        placement=pl,
+        script=rendered.script,
+        module=module_bytes,
+        expected=ai_data_template.expected_fingerprints(values, sel.recipe),
+        coverage=ai_data_template.fingerprint_coverage(sel.recipe),
+        not_plotted=unplotted_rows(values, sel.recipe),
+        cell_stats=ai_data_propose.cell_stats(values, sel.recipe),
+        source_refs=refs,
+        source_paths=paths,
     )
 
 
@@ -641,19 +718,24 @@ class DataFigureV2Adapter:
             problems.append("executor_must_be_deterministic")
         if not envelope.new_figures or not 1 <= len(envelope.allowed_writes) <= 2:
             problems.append("one_script_and_optional_module")
-        if [r.get("kind") for r in envelope.input_refs] != ["data_file"]:
+        kinds = [r.get("kind") for r in envelope.input_refs]
+        if not kinds or any(k != "data_file" for k in kinds):
             problems.append("exactly_one_data_file")
+        elif len(kinds) > ai_data_merge.MAX_TABLES:  # 单份 1 个，合画 2 到上限个
+            problems.append("too_many_data_files")
         return problems
 
     def plan(self, envelope):
-        """数据自出备选后变了就不执行（`data_changed`）；其余判定都在 `execute` 里（配方在执行器手里，不在契约里）。"""
-        ref = envelope.input_refs[0]
-        try:
-            now = _sha256(projectenv_path(Path(envelope.project_key), ref["path_rel"]).read_bytes())
-        except (OSError, ai_data_figure.DataSourceError):
-            raise TaskError("data_changed", ref["path_rel"]) from None
-        if now != ref.get("sha256"):
-            raise TaskError("data_changed", ref["path_rel"])
+        """数据自出备选后变了就不执行（`data_changed`；合画时每一份都核）；其余判定都在 `execute` 里（配方在执行器手里，不在契约里）。"""
+        for ref in envelope.input_refs:
+            try:
+                now = _sha256(
+                    projectenv_path(Path(envelope.project_key), ref["path_rel"]).read_bytes()
+                )
+            except (OSError, ai_data_figure.DataSourceError):
+                raise TaskError("data_changed", ref["path_rel"]) from None
+            if now != ref.get("sha256"):
+                raise TaskError("data_changed", ref["path_rel"])
         return ai_tasks.Plan(steps=("execute",))
 
     def verify(self, stage: str, run, cand: CandidateV2) -> list[CheckResult]:
@@ -684,12 +766,18 @@ class DataFigureV2Adapter:
             else _check("project.target", st, "integrity", FAILED, "target_exists")
         )
         try:
-            now = _sha256(pl.data_path.read_bytes())
+            if prep.source_refs:  # 合画：每一份都还是出备选时那一份
+                same = all(
+                    _sha256(p.read_bytes()) == r["sha256"]
+                    for p, r in zip(prep.source_paths, prep.source_refs, strict=True)
+                )
+            else:
+                same = _sha256(pl.data_path.read_bytes()) == prep.selection.data_sha256
         except OSError:
-            now = None
+            same = False
         out.append(
             _check("project.data", st, "integrity", VERIFIED)
-            if now == prep.selection.data_sha256
+            if same
             else _check("project.data", st, "integrity", FAILED, "data_changed")
         )
         fdir = pl.figures_dir
@@ -832,7 +920,11 @@ class TemplateExecutorV2:
     def execute(self, run) -> CandidateV2:
         ref = run.envelope.input_refs[0]
         prep = prepare_v2(self.root, self.selection)
-        if prep.values.sha256 != ref.get("sha256"):
+        if prep.source_refs:  # 合画：契约里每一份的 sha256 都对得上
+            now = [r.get("sha256") for r in run.envelope.input_refs]
+            if now != [r["sha256"] for r in prep.source_refs]:
+                raise TaskError("data_changed", ref["path_rel"])
+        elif prep.values.sha256 != ref.get("sha256"):
             raise TaskError("data_changed", ref["path_rel"])
         if prep.placement.script_rel != run.envelope.allowed_writes[0]:
             raise TaskError("placement_changed", prep.placement.script_rel)
@@ -941,7 +1033,8 @@ def envelope_for_v2(
             "project_ref": {"project_key": project_key},
             "client_request_id": rid,
             "user_intent": f"data_figure_v2:{prepared.selection.title_code}",
-            "input_refs": [
+            "input_refs": prepared.source_refs
+            or [
                 {
                     "kind": "data_file",
                     "path_rel": pl.data_rel,

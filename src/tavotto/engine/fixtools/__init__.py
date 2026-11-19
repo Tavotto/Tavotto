@@ -49,6 +49,29 @@ def _approved_by(result: ToolResult, ctx: FixContext) -> str:
     return "user" if ctx.call_meta.get("approved_by") == "user" else "policy"
 
 
+#: 会改变执行的档；其中报告 / 收尾类工具不算「尝试过修复」
+CHANGE_TIERS = frozenset({"tavotto", "listed", "user_env"})
+NOT_A_CHANGE = frozenset({"prepare_diagnostics", "rollback"})
+#: 动手之前就拒绝的结果码：参数 / 档位 / 同意 / 环境 id / 无快照 / 无脚本——什么都没试
+REFUSED_BEFORE_ACTING = frozenset(
+    {
+        "bad_arguments",
+        "tier_not_allowed",
+        "needs_approval",
+        "env_unknown",
+        "not_available",
+        "snapshot_failed",
+        "no_script",
+        "run_arguments_sensitive",
+        # write_launcher 写之前的校验（ADR 0194）：启动脚本不合格就什么都没写
+        "launcher_syntax_error",
+        "launcher_too_large",
+        "launcher_not_text",
+        "launcher_unsafe_dir",
+    }
+)
+
+
 def run_tool(
     tool: FixTool, ctx: FixContext, args: object, audit: AuditLog | None = None
 ) -> ToolResult:
@@ -96,6 +119,14 @@ def run_tool(
     result.content = scrub(result.content)
     ctx.trace_tool_span = None
     approved_by = _approved_by(result, ctx)
+    if (
+        tool.tier in CHANGE_TIERS
+        and tool.name not in NOT_A_CHANGE
+        and approved_by != "blocked"
+        # 真改了（`mutated`），或真去做了而失败（装包失败之类）；「已经是这样，没改」与动手前的拒绝都不算（Codex #2053 P2）
+        and (result.mutated or (result.is_error and result.code not in REFUSED_BEFORE_ACTING))
+    ):
+        ctx.changes_attempted += 1
     # 等用户的那张卡已经有了决定（批准 / 拒绝）：工具这一层与它的 user_wait 说同一句话（审计的 approved_by 不动）
     decided = getattr(ctx, "trace_wait_decision", None)
     ctx.trace_wait_decision = None

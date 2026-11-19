@@ -20,7 +20,7 @@ import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geomet
 import { clamp, DUPLICATE_OFFSET_MM } from '@/lib/units'
 import { PAGE_MM_MAX, PAGE_MM_MIN } from '@/lib/pageRange'
 import { pickJournal } from '@/lib/journalPick'
-import { bindingFor, builtinEntryById, type JournalPrev } from '@/lib/specBinding'
+import { bindingFor, builtinEntryById, type JournalPrev, type SpecBinding } from '@/lib/specBinding'
 import { DEFAULT_PROFILE_ID } from '@/lib/profile'
 import { useJournalCatalogStore } from './journalCatalogStore'
 import { placePanelInPage } from '@/lib/panelPlacement'
@@ -107,6 +107,8 @@ import {
 } from '@/types/document'
 import { contentToPageVec, panelContentTransform } from '@/lib/panelTransform'
 import { emitLayoutSaved } from '@/lib/layoutSaved'
+import { applyV2, pickV2OnlyJournal, type V2IndexEntry, type V2Patch } from '@/lib/journalV2'
+import { useJournalV2Store } from './journalV2Store'
 import { useTimelineStore } from './timelineStore'
 import { hasPendingStyleWork } from './styleWork'
 import { fitStageNow } from '@/store/zoomToSelection'
@@ -905,11 +907,35 @@ export function setPageSize(w: number, h: number) {
  * 选一本期刊（ADR 0155）：**一次提交**写绑定（中性底 + 该期刊的覆盖 + 出处）并把页宽跟到该期刊最近的一栏——
  * 撤销一步全回去。期刊没规定栏宽就只写绑定，页宽不动。确认只用胶囊 toast（不推挤版面）。
  */
-export function selectJournal(journalId: string): void {
+export function selectJournal(journalId: string, v2: V2Patch | null = null): void {
   const d0 = doc()
-  // 退路只记「选期刊之前」那一份：从一本期刊换到另一本时沿用最初的，不把上一本期刊当成「之前」
+  const prev = journalPrevOf(d0)
+  const pick = pickJournal(journalId, useJournalCatalogStore.getState().catalog, {
+    pageW: d0.page.w,
+    follow: d0.profile?.follow,
+    prev,
+  })
+  // v2 事实（取到了才有）按项叠上去，v2 优先；预检求值器不变（ADR 0155 §14）
+  pick.binding = applyV2(pick.binding, v2)
+  useJournalV2Store.getState().remember(journalId, v2)
+  commitJournalPick(pick)
+}
+
+/**
+ * 选一本只在 v2 里有的刊（v1 目录没有；2026-11-17 用户拍板进选刊列表）：绑定只含 v2 无条件事实折出的规则，
+ * 其余一律不补。补丁必须已经在手（没有 v2 就没有内容可绑——调用方先判终态，取不到不调这里）。
+ */
+export function selectV2OnlyJournal(entry: Pick<V2IndexEntry, 'id' | 'label'>, v2: V2Patch): void {
+  const d0 = doc()
+  const pick = pickV2OnlyJournal(entry, v2, { pageW: d0.page.w, follow: d0.profile?.follow, prev: journalPrevOf(d0) })
+  useJournalV2Store.getState().remember(entry.id, v2)
+  commitJournalPick(pick)
+}
+
+/** 退路只记「选期刊之前」那一份：从一本期刊换到另一本时沿用最初的，不把上一本期刊当成「之前」 */
+function journalPrevOf(d0: ReturnType<typeof doc>): JournalPrev | undefined {
   const p0 = d0.profile
-  const prev: JournalPrev | undefined = p0?.journalRef
+  return p0?.journalRef
     ? p0.journalPrev
     : {
         profile: p0
@@ -917,11 +943,11 @@ export function selectJournal(journalId: string): void {
           : null,
         pageW: d0.page.w,
       }
-  const pick = pickJournal(journalId, useJournalCatalogStore.getState().catalog, {
-    pageW: d0.page.w,
-    follow: p0?.follow,
-    prev,
-  })
+}
+
+function commitJournalPick(pick: { binding: SpecBinding; pageW: number | null; label: string }): void {
+  const d0 = doc()
+  const p0 = d0.profile
   // 期刊把页宽设成了多少：「不按期刊」只在页宽仍是它时才退回原页宽
   // 新期刊没给页宽（pageW = null）时沿用已记的 setW：当前页宽可能是用户手改的，不能把它当成「期刊设的」
   if (pick.binding.journalPrev) {
@@ -939,6 +965,23 @@ export function selectJournal(journalId: string): void {
         : msg('journal.picked', { name: pick.label }, 'dialogs'),
       'done',
     )
+}
+
+/**
+ * 打开项目 / 切画布后，已按期刊检查的画布按该刊的 v2 事实自动更新（2026-11-17 用户拍板：自动，不要确认）。
+ * 只叠 v2 那几项；v1 的部分原样不动（库更新不改已定稿项目的 v1 结论）。叠完没变化就什么都不写。
+ * 取不到 v2（离线 / 被拒 / 开关关）= 什么都不做，预检照绑定里存着的判。
+ */
+export function refreshJournalV2(journalId: string, v2: V2Patch | null): void {
+  useJournalV2Store.getState().remember(journalId, v2)
+  const p = doc().profile
+  if (!v2 || !p?.journalRef || p.journalRef.id !== journalId) return
+  const next = applyV2(p, v2)
+  if (next === p) return
+  commit(hist('refreshJournalV2'), (d) => {
+    d.profile = next
+  })
+  useUiStore.getState().setStatus(msg('journal.v2Updated', { name: p.journalRef.label }, 'dialogs'), 'done')
 }
 
 /**
@@ -2750,12 +2793,15 @@ export function startLayoutAutoReflow(): () => void {
 /*  成组                                                                       */
 /* ========================================================================== */
 
-/** 该对象所在组的全部成员 id（无组则只有它自己），保持文档顺序 */
+/**
+ * 该对象所在组的全部成员 id（无组则只有它自己），保持文档顺序。
+ * 不含更新的构建写进来的组员（`isKnownObject`）：点中组里认识的成员不会把它们带进选区。
+ */
 export function groupMates(id: string): string[] {
   const objs = doc().objects
   const self = objs.find((o) => o.id === id)
   if (!self?.groupId) return self ? [id] : []
-  return objs.filter((o) => o.groupId === self.groupId).map((o) => o.id)
+  return objs.filter((o) => o.groupId === self.groupId && (o.id === id || isKnownObject(o))).map((o) => o.id)
 }
 
 /**
@@ -2796,7 +2842,10 @@ export function warnBlockedGroups(blockedGroups: number, movedAny: boolean) {
   )
 }
 
-/** 选区补齐成整组：点中组里任意一个 = 选中整组 */
+/**
+ * 选区补齐成整组：点中组里任意一个 = 选中整组。
+ * 更新的构建写进来的组员（`isKnownObject`）不补进来：它们不能选中、不能移动，原样留在文档里（与图层树选组一致）。
+ */
 export function expandGroups(ids: string[]): string[] {
   const objs = doc().objects
   const gids = new Set(
@@ -2805,7 +2854,7 @@ export function expandGroups(ids: string[]): string[] {
   if (!gids.size) return ids
   const out = [...ids]
   for (const o of objs) {
-    if (o.groupId && gids.has(o.groupId) && !out.includes(o.id)) out.push(o.id)
+    if (o.groupId && gids.has(o.groupId) && isKnownObject(o) && !out.includes(o.id)) out.push(o.id)
   }
   return out
 }

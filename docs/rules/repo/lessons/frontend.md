@@ -198,3 +198,17 @@
 - Seen: 2026-11-13
 - 为什么: 两窗口接管时让出方保存失败，「拿回来编辑」仍按 dirty 为假、摘要相同判成没有改动，重新加载把这个窗口没存进去的改动丢掉、也不进恢复；自动保存写完本地兜底就清 dirty，磁盘请求还没成功。评审报 P1。丢弃前的保护判断带上 save_error / conflict 这类未成功的持久化状态，用例先摆一次保存失败再走丢弃路径。
 - 证据: #1870
+
+### L-172 设计内的拒绝码（如会话已结束的 409）显式排除出失败档，角标相邻两档写排序用例
+- 类: 别这样
+- 触发: web/src/canvas/PanelView.tsx, web/src/canvas/PanelView.badge.test.tsx
+- Seen: 2026-11-18
+- 为什么: 角标优先级用例只量了 native 与 stale 的排序，没量 failure 与 native；选中面板会发渲染、拿到设计内的 409，失败档排在前面，把「运行已结束」顶成「渲染失败」，一份用户反馈才暴露。每档各自有用例，两档同时成立没人测；再补一条「该码不落失败档」的负向用例。
+- 证据: #2020
+
+### L-173 新增或改 e2e spec 后跑 cd web && npx tsc -b，build 红时不信 e2e 结论
+- 类: 别这样
+- 触发: web/e2e/, web/tsconfig.e2e.json
+- Seen: 2026-11-18
+- 为什么: Playwright 用 esbuild 不查类型，新 spec 在 playwright 里跑得过；pnpm build 的 tsc -b 把 web/e2e 一起类型检查，在 SVGElement | HTMLElement 上取 ownerSVGElement 报 TS2339，整层前端构建红；之后跑的 e2e 用的是旧前端产物，假红一片。逐层跑 e2e 先看 build 的退出码。
+- 证据: （会话记录，无编号）

@@ -486,6 +486,81 @@ def _hinted_path(ctx: FixContext, rel: str) -> str | None:
     return path if said_rel.as_posix() == rel else None
 
 
+# --------------------------------------------------------------------------- write_launcher（ADR 0194 §二）
+def write_launcher(ctx: FixContext, args: dict) -> ToolResult:
+    """为会话脚本写（或替换）启动脚本：放在 Tavotto 自己的目录，执行它的字节、身份仍是原脚本。原脚本一个字节不动。"""
+    from .. import launchscript
+    from .snapshots import script_rel
+
+    code = args.get("code")
+    if not isinstance(code, str) or not code.strip():
+        return err("bad_arguments", "`code` must be the launcher's Python source.")
+    rel = script_rel(ctx)
+    if rel is None:
+        return err("no_script", "There is no script in this session to write a launcher for.")
+    try:
+        launchscript.validate(code)
+    except launchscript.LauncherError as exc:
+        return err(f"launcher_{exc.code}", str(exc))
+    bad = _snapshot_or_error(ctx, "write_launcher")
+    if bad is not None:
+        return bad
+    try:
+        path, previous = launchscript.write(ctx.project_root, rel, code)
+    except launchscript.LauncherError as exc:
+        return err(f"launcher_{exc.code}", str(exc))
+    except OSError:
+        return err("launcher_not_saved", "The launcher could not be saved.")
+    what = "replaced" if previous is not None else "created"
+    return _done(
+        ctx,
+        f"Launcher {what} in Tavotto's folder ({path.relative_to(ctx.project_root).as_posix()}). From now on, running "
+        f"`{rel}` in Tavotto executes this launcher as if it were `{rel}` (same __file__, sys.argv[0] and folder on "
+        "sys.path), and the figures it makes belong to that script. The user's script is unchanged. Call try_run to "
+        "verify.",
+        f"launcher {what}",
+    )
+
+
+# --------------------------------------------------------------------------- set_run_arguments
+def set_run_arguments(ctx: FixContext, args: dict) -> ToolResult:
+    """给脚本填运行参数（与界面「运行参数」框同一份运行配置，T03）。原脚本不动。"""
+    from .. import runconfig
+
+    raw = args.get("argv")
+    if not isinstance(raw, list):
+        return err("bad_arguments", "`argv` must be a list of strings (one item per argument).")
+    try:
+        tokens = runconfig.validate_argv(raw)
+    except runconfig.RunConfigError as exc:
+        return err("bad_arguments", str(exc))
+    if ctx.on_run_arguments_changed is None:
+        return err("not_available", "Run arguments cannot be set in this session.")
+    if ctx.run_arguments_sensitive:
+        # 用户标成敏感的参数（密码 / 令牌）：值只活在内存里，AI 不碰——换掉它会把留下的秘密写进磁盘上的运行配置
+        return err(
+            "run_arguments_sensitive",
+            "The user marked this script's run arguments as sensitive, so they cannot be changed here. If they are "
+            "wrong, tell the user in one plain sentence which argument to change in the script's run-arguments box.",
+        )
+    if tuple(ctx.run_arguments or ()) == tuple(tokens):
+        return ok("Those are already the run arguments. Nothing changed.", "no change")
+    bad = _snapshot_or_error(ctx, "set_run_arguments")
+    if bad is not None:
+        return bad
+    try:
+        snapshots.apply_run_arguments(ctx, tuple(tokens))
+    except Exception:  # noqa: BLE001 — 应用侧换会话失败：如实说做不了
+        return err("run_arguments_not_set", "The run arguments could not be applied.")
+    shown = " ".join(tokens) if tokens else "(none)"
+    return _done(
+        ctx,
+        f"Run arguments set to: {shown}. try_run now runs the script with them; when the repair succeeds the "
+        "application fills them into the script's run-arguments box so later runs use them too. The script is unchanged.",
+        f"{len(tokens)} run argument(s) set",
+    )
+
+
 def convert_script(ctx: FixContext, args: dict) -> ToolResult:
     """不写任何文件：只在 `ctx.handoff` 记一笔，会话收尾后界面把它交给「生成可编辑版本」（ADR 0143）。"""
     from .. import ai_convert
@@ -541,6 +616,54 @@ def convert_script(ctx: FixContext, args: dict) -> ToolResult:
 _ENV = {"type": "string", "description": "Environment id from list_environments."}
 
 CHANGE_TOOLS: tuple[FixTool, ...] = (
+    FixTool(
+        "write_launcher",
+        "Write (or replace) a small launcher for this script when the script cannot produce its figure when run as "
+        "is, but would with a little glue: its drawing functions are never called (`from mymodule import plot; "
+        "plot()`), they need inputs prepared first, or it needs an environment variable, working folder, extra "
+        "sys.path entry or argv set before it runs. The launcher lives in Tavotto's own folder inside the project, "
+        "never in the user's code folders, and the user's script is never modified. Tavotto then runs the launcher "
+        "AS this script: `__file__`, `sys.argv[0]` and tracebacks show the script, `sys.path[0]` is the script's "
+        "folder (so `import <script name>` gets the user's real file), and captured figures belong to this script. "
+        "Keep it to the glue: import from the user's files and call their code; do not copy their plotting code into "
+        "it. To run the script's own code after some set-up (environment variable, answers for input(), `__package__` "
+        "for relative imports), end the launcher with `run_original()`: "
+        "Tavotto provides it and it runs the user's real script in the launcher's globals (never runpy.run_path(__file__)). "
+        "Takes a snapshot (rollback restores the previous launcher or "
+        "removes it). Then call try_run.",
+        obj(
+            {
+                "code": {
+                    "type": "string",
+                    "description": "The launcher's complete Python source (at most 64 KiB).",
+                }
+            },
+            ["code"],
+        ),
+        write_launcher,
+        tier="tavotto",
+    ),
+    FixTool(
+        "set_run_arguments",
+        "Set the command-line arguments Tavotto passes to this script (`sys.argv[1:]`), exactly as the user would "
+        "type them in the script's run-arguments box: one list item per argument, no shell quoting. Use when the "
+        "report says `script_needs_arguments`, the script unpacks `sys.argv`, or argparse has required options. "
+        "Read the script first to learn what it expects, and use files that really exist (paths are relative to the "
+        "script's working folder). An empty list removes them. The script is never edited. Takes a snapshot "
+        "(rollback restores the previous arguments). Then call try_run.",
+        obj(
+            {
+                "argv": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": 'For example ["--data", "measurements.csv", "--out", "fig.pdf"].',
+                }
+            },
+            ["argv"],
+        ),
+        set_run_arguments,
+        tier="tavotto",
+    ),
     FixTool(
         "install_packages",
         "Install packages into one environment (wheels only, through Tavotto's own installer). Packages on "

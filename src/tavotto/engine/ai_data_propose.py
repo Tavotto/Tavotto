@@ -17,6 +17,9 @@ Flask 父进程 import；**不调模型**（模型工具集是下一个 PR，复
 同时至多 `MAX_SESSIONS` 个（超了先删最老的）；提交后**不**删（用户可以接着出同一批里的另一个备选），放弃（`discard`）立刻删；同一会话里数据文件只有**一份**副本（所有备选共用，≤ 5 MiB，`data_too_large` 上限），整个会话目录随会话删，磁盘上界 ≈ `MAX_SESSIONS` × （5 MiB + 每张缩略图 ≤ 4 MiB × 4）、常态每会话只有「数据文件 + 几十 KB 的小图」；每次出备选 / 提交前 `sweep()` 把过期会话与上一个进程留下的
 孤儿目录（`mtime` 超过 TTL）一并删。删除一律不用 `ignore_errors=True`：删不掉记日志并留给下一次 sweep，不假装删了。
 
+**合画**（`propose(tables=[…])`，`ai_data_merge.py`）：几份列名相同的数据在内存里拼成一张逻辑表再走同一条流水；候选目录里放的是**每一份**的字节副本（布局 = 相对落点目录的路径，落点 = 这几份的最近公共父文件夹），
+总大小受 `ai_data_merge.MAX_TOTAL_BYTES` 约束（不是 5 MiB），其余（`MAX_SESSIONS`、TTL、写入根绊线、用户文件夹零写入）不变。
+
 会话只在内存里：进程重启 = 会话过期（`propose_session_expired`），前端据此重新出备选。会话属于项目：别的项目拿同一个 id 也是过期。
 """
 
@@ -39,6 +42,7 @@ from pathlib import Path, PurePosixPath
 
 from . import (
     ai_data_figure as adf,
+    ai_data_merge as merge_mod,
     ai_data_recipe as recipe_mod,
     ai_data_template as tpl,
     ai_figure_edit,
@@ -62,6 +66,9 @@ ERROR_CODES = (
     "propose_cells_invalid",  # 数值列里夹着的文字格的处理规则不合格（`params.reason` 是拒绝码，`params.key` 点名哪一项）
     "propose_cells_need_rule",  # 用户只用文字说明了怎么处理（`describe`）：要先由助手整理成规则，不猜
     "propose_thumbnail_failed",  # 懒渲染（`render="lazy"`）：这一张缩略图画不出来（`params.reason` 是 `DROP_REASONS` 里的码）
+    "tables_columns_differ",  # 合画（`tables`）：这几份的列名集合或顺序不一样，拼不成一张表（`params.index` = 第一个与第一份不同的下标）
+    "tables_limit_exceeded",  # 合画：份数超过上限（`params.max`）
+    "tables_labels_collide",  # 合画：两个文件的标签在分组时会被并成一组（内部保险，正常不会出现；绝不静默并组）
 )
 #: 一个备选没能出现在结果里的原因（`dropped[].reason_code` / `nothing.reasons`；文案在前端 `dataFigure.reason.<码>`）
 DROP_REASONS = (
@@ -161,6 +168,9 @@ class Item:
     state: str = "ready"
     reason: str | None = None
     fallback: bool = False  # 画这张时项目解释器没画成、回退过（诊断标记）
+    #: 合画且文件里原本有可再拆的分组列时，成对出现的两种画法各自的标记：`{"kind": "split", "column": 列名}`（按它再拆开）/
+    #: `{"kind": "by_file"}`（不拆、只按文件比较）；没有成对的另一张（两种画法画出来一样）就是 None
+    variant: dict | None = None
     # 懒渲染的素材：候选脚本在会话目录里，这里记下渲染一张要的最少东西
     stem: str | None = None
     n: int = 0
@@ -187,6 +197,8 @@ class Session:
     root: Path | None = None  # 项目目录（懒渲染取项目解释器用）
     #: 懒渲染：画哪些备选（`items` 的插入顺序就是推荐顺序）
     lazy: bool = False
+    #: 合画（几份拼一张）：各份与合成列；单份 = None（`table` / `sheet` / `data_sha256` 在合画时是第一份的 / 拼后的身份，`folder_rel` 是落点目录）
+    merge: merge_mod.MergeSpec | None = None
 
     def item(self, item_id: str) -> Item | None:
         return self.items.get(item_id)
@@ -331,6 +343,29 @@ def parse_header_row(v) -> int:
     return v
 
 
+def parse_tables(raw) -> list[tuple[str, str | None]] | None:
+    """`tables`：合画的几份数据 `[{path, sheet?}]`（`path` 与 `table` 同口径：相对所选文件夹的 POSIX 路径）。不给 = None（走单份流程）；
+    不是列表 / 不足 2 份 / 项的形状不对 → `propose_input_invalid`；超过 `merge_mod.MAX_TABLES` 份 → `tables_limit_exceeded`（`params.max`）。
+    只校验形状：路径对不对由遍历结果逐字比对。"""
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise ProposeError("propose_input_invalid", "tables")
+    if len(raw) > merge_mod.MAX_TABLES:
+        raise ProposeError("tables_limit_exceeded", params={"max": merge_mod.MAX_TABLES})
+    if len(raw) < 2:
+        raise ProposeError("propose_input_invalid", "tables")
+    out: list[tuple[str, str | None]] = []
+    for item in raw:
+        if not isinstance(item, dict) or not set(item) <= {"path", "sheet"}:
+            raise ProposeError("propose_input_invalid", "tables")
+        path = _text(item.get("path"), "tables", 1024)
+        if not path:
+            raise ProposeError("propose_input_invalid", "tables")
+        out.append((path, _text(item.get("sheet"), "tables")))
+    return out
+
+
 def _text(value, what: str, limit: int = _ANSWER_MAX) -> str | None:
     if value is None:
         return None
@@ -421,12 +456,20 @@ def unplotted_rows(values: adf.DataSummary, recipe) -> list[dict]:
             else:
                 ok = adf.parse_cell(cell)[0] == "numeric"
             if not ok:
-                out.append({"row": values.row_number(n), "column": x, "reason": "x_not_a_value"})
+                out.append(_unplotted(values, n, x, "x_not_a_value"))
                 continue
         for y in recipe.y:
             if y not in covered and adf.parse_cell(row[idx[y]])[0] == "text":
-                out.append({"row": values.row_number(n), "column": y, "reason": "not_a_number"})
+                out.append(_unplotted(values, n, y, "not_a_number"))
     return out
+
+
+def _unplotted(values: adf.DataSummary, n: int, column: str, reason: str) -> dict:
+    item = {"row": values.row_number(n), "column": column, "reason": reason}
+    src = values.row_source(n)
+    if src is not None:  # 合画：行号是那一份自己的文件行号，要带上是哪一份
+        item["file"] = src
+    return item
 
 
 def cell_stats(values: adf.DataSummary, recipe) -> list[dict]:
@@ -730,6 +773,117 @@ def _table_for_values(root_folder: Path, entry: adf.TableEntry) -> adf.DataSumma
     )
 
 
+def _recipe_key(rec: recipe_mod.FigureRecipe) -> str:
+    return json.dumps({k: v for k, v in rec.to_dict().items() if k != "why"}, sort_keys=True)
+
+
+def _with_file_only_variants(
+    res, merged, values, confirmed, hint, picks, rules
+) -> tuple[recipe_mod.Candidates, dict[int, dict]]:
+    """合画且文件里**原本就有**在文件内取多个值的分组列（`MergeSpec.splittable`）：除了现状的画法（按文件上色、再按那一列拆开 / 分面），
+    再给一份**只按文件比较**的（把那些列当不存在重新出一遍备选）。两份各自走完整的 `default_candidates`（同一套校验与排序），这里只负责并起来：
+    现状的顺序不变（推荐仍是它的第一张），每张后面紧跟它只按文件比较的那一张；两种画法画出来一样的（配方除 `why` 外逐项相同）只留一张、不加标记。
+    返回 `(并好的 Candidates, {id(配方): 标记})`。"""
+    keep = {k: n for k, n in merged.summary.groups.items() if k not in merged.merge.splittable}
+    entry_b = replace(merged, summary=replace(merged.summary, groups=keep))
+    res_b = recipe_mod.default_candidates(
+        adf.FolderProfile((entry_b,), (), False, None),
+        table=entry_b.path,
+        sheet=entry_b.sheet,
+        confirmed=confirmed,
+        hint=hint,
+        values=replace(values, groups=keep),
+        picks=picks,
+        cells=rules,
+    )
+    if not isinstance(res_b, recipe_mod.Candidates) or not res_b.items:
+        return res, {}
+    seen = {_recipe_key(c.recipe) for c in res.items}
+    only_b = [c for c in res_b.items if _recipe_key(c.recipe) not in seen]
+    by_code = {c.code: c for c in only_b}
+    column = merged.merge.splittable[0]
+    out: list[recipe_mod.Candidate] = []
+    marks: dict[int, dict] = {}
+    used: set[str] = set()
+    for cand in res.items:
+        out.append(cand)
+        twin = by_code.get(cand.code)
+        if twin is not None:
+            marks[id(cand.recipe)] = {"kind": "split", "column": column}
+            marks[id(twin.recipe)] = {"kind": "by_file"}
+            out.append(twin)
+            used.add(cand.code)
+    out += [
+        c for c in only_b if c.code not in used
+    ]  # 只有「只按文件」才画得出来的（现状那一边被剔除了）排在最后
+    return replace(res, items=tuple(out)), marks
+
+
+def _read_merged(
+    root: Path,
+    folder_path: Path,
+    folder_rel: str,
+    tables: list[tuple[str, str | None]],
+    hrows: dict[str, int],
+) -> tuple[merge_mod.MergedEntry, adf.DataSummary, Path, str] | str:
+    """合画：逐份按单份的读法读（用户指定的表头行按文件各管各的）→ 要求列名集合与顺序一致 → 拼成一张逻辑表。
+    返回 `(拼好的条目, 带行数据的摘要, 落点目录, 落点的项目相对路径)`；某份不是所选文件夹里发现遍历认得的表 → 原因码 `table_not_found`
+    （与单份指名一张不存在的表同一形状）；读不了 / 没认准表头沿用单份的 `DataSourceError`；列名不一致 `tables_columns_differ`；
+    合计字节超 `MAX_TOTAL_BYTES` 沿用 `data_too_large`。只读，不往任何地方写。"""
+    # 与 `with_explicit_table` 同一条规则：只认发现遍历实际列得出的文件，路径取自遍历结果（隐藏 / 剪枝 / 链接 / 非表格后缀都落不进来）
+    found, _ = discover.walk_files(folder_path, adf.TABLE_SUFFIXES, scan_max=adf.PROFILE_SCAN_MAX)
+    known = {f[0] for f in found if not Path(f[0]).name.startswith("~$")}
+    rels: list[str] = []
+    summaries: list[adf.DataSummary] = []
+    seen: set[tuple[str, str | None]] = set()
+    total = 0
+    for path, sheet in tables:
+        try:
+            rel = normalize_rel(path)
+        except ValueError:
+            raise adf.DataSourceError("data_path_outside_project") from None
+        if rel not in known:
+            return "table_not_found"
+        values = adf.inspect_data_source(
+            folder_path / PurePosixPath(rel), sheet, v2=True, header_row=hrows.get(rel)
+        )
+        if (rel, values.sheet) in seen:  # 同一份（同文件同工作表）给了两次
+            raise ProposeError("propose_input_invalid", "tables")
+        if not any(
+            r == rel for r in rels
+        ):  # 同一个工作簿的几张表只算一次（候选目录里也只有一份副本）
+            total += values.size
+        seen.add((rel, values.sheet))
+        if total > merge_mod.MAX_TOTAL_BYTES:
+            raise adf.DataSourceError("data_too_large", str(total))
+        rels.append(rel)
+        summaries.append(values)
+    try:
+        merge_mod.check_same_columns(summaries)
+        landing = merge_mod.common_parent(rels)
+        labels = merge_mod.unique_labels([(r, v.sheet) for r, v in zip(rels, summaries)])
+        sources = [
+            merge_mod.Source(
+                path=r,
+                rel=merge_mod.rebase(r, landing),
+                sheet=v.sheet,
+                label=lab,
+                sha256=v.sha256,
+                size=v.size,
+                header_line=v.header_line,
+            )
+            for r, v, lab in zip(rels, summaries, labels, strict=True)
+        ]
+        entry, values = merge_mod.build(sources, summaries, landing)
+    except merge_mod.MergeError as exc:
+        raise ProposeError(exc.code, params=exc.params) from None
+    landing_rel = "/".join(p for p in (folder_rel, landing) if p)
+    real = projectenv.contained_path(root, landing_rel)
+    if real is None or not Path(real).is_dir():
+        raise adf.DataSourceError("data_path_outside_project")
+    return entry, values, Path(real), landing_rel
+
+
 def item_to_dict(sess: Session, item: Item, recommended: bool) -> dict:
     r = item.recipe
     return {
@@ -737,7 +891,7 @@ def item_to_dict(sess: Session, item: Item, recommended: bool) -> dict:
         "title_code": item.code,
         "why_code": item.code,
         "values": {
-            "table": r.table,
+            "table": sess.merge.sources[0].path if sess.merge is not None else r.table,
             "sheet": r.sheet,
             "family": r.family,
             "x": r.x,
@@ -756,6 +910,7 @@ def item_to_dict(sess: Session, item: Item, recommended: bool) -> dict:
         },
         "thumbnail_url": f"/api/ai/data-figure/thumbnail/{sess.id}/{item.id}",
         "thumbnail_status": item.state,
+        **({"variant": item.variant} if sess.merge is not None and sess.merge.splittable else {}),
     }
 
 
@@ -771,6 +926,7 @@ def propose(
     header_rows=None,
     client_request_id: str | None = None,
     render: str | None = None,
+    tables=None,
 ) -> dict:
     """出备选。返回三选一：`{"kind": "ask", question_code, options, unsure}` / `{"kind": "candidates", session, items, dropped}` /
     `{"kind": "nothing", reasons}`。数据读不了（文件夹不存在 / 不在项目内）抛 `DataSourceError`（app 转 400 + 稳定码）。
@@ -780,6 +936,10 @@ def propose(
     （选表 = 第一张、列角色 = 各问题的「不确定」默认、夹着文字格的数值列 = 不画那几行、表头行 = 读表猜的那一行），响应里说清用了什么
     （`defaults` / `header_row` / `roles` / `mixed_cells`），用户在面板上改了就把改动放进 `answers`（`y` / `x` / `group` 的列名或 `none`、
     `cells`）与 `header_rows` 重来。
+
+    `tables`（合画，`[{path, sheet?}]`，2 到 `merge_mod.MAX_TABLES` 份；与 `table` 互斥）：几份列名相同的数据拼成一张逻辑表（`ai_data_merge`），
+    加一列合成的分组列（值是各份的文件标签），分组角色默认就是这一列；响应另有 `sources`（各份的路径 / 工作表 / 标签）与 `group_column`；
+    单份请求的响应逐字不变。
 
     **不往用户文件夹写任何东西**（候选目录在 `data_dir()/cache/`，见模块说明）；幂等：同一 `(项目, client_request_id)` 在 TTL 内回同一份响应。"""
     sweep()
@@ -792,10 +952,15 @@ def propose(
     sheet = _text(sheet, "sheet")
     ans = parse_answers(answers)
     hrows = parse_header_rows(header_rows)
+    tabs = parse_tables(tables)
+    if tabs is not None and table is not None:  # `table` 与 `tables` 只能给一个
+        raise ProposeError("propose_input_invalid", "tables")
     # 幂等键 = (项目, 请求号, 请求内容的摘要)：同一请求号带了不同的回答（换了处理方式）必须重新出图，不回旧的
     digest_parts = [folder, table, sheet, hint, _answers_digest(ans), hrows]
     if auto:
         digest_parts.append("lazy")
+    if tabs is not None:
+        digest_parts.append(["tables", tabs])
     digest = hashlib.sha256(
         json.dumps(digest_parts, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
@@ -808,8 +973,9 @@ def propose(
     def remember(response: dict, session_id: str | None = None) -> dict:
         return _remember(project, client_request_id, response, session_id, digest)
 
-    table = table or ans.get("table")
-    sheet = sheet or ans.get("sheet")
+    if tabs is None:
+        table = table or ans.get("table")
+        sheet = sheet or ans.get("sheet")
     try:
         folder_rel = normalize_rel(folder)
     except ValueError:
@@ -822,11 +988,23 @@ def propose(
         raise adf.DataSourceError("data_not_found")
     root_real = Path(os.path.realpath(root))
     folder_rel = folder_path.relative_to(root_real).as_posix() if folder_path != root_real else ""
-    folder_profile = adf.profile_folder(folder_path, hrows)
-    for bad in folder_profile.skipped:
-        if bad.path in hrows:  # 用户指定了表头行、按它读不出来：直说原因（不是悄悄「没有可画的」）
-            raise adf.DataSourceError(bad.code)
-    profile = with_explicit_table(folder_profile, folder_path, table, sheet, hrows)
+    merged: merge_mod.MergedEntry | None = None
+    merged_values: adf.DataSummary | None = None
+    if tabs is not None:
+        got = _read_merged(root, folder_path, folder_rel, tabs, hrows)
+        if isinstance(got, str):
+            return remember({"kind": "nothing", "reasons": [got], "dropped": []})
+        merged, merged_values, folder_path, folder_rel = got  # 落点目录成了这一次的「数据文件夹」
+        profile = adf.FolderProfile((merged,), (), False, None)
+        table, sheet = merged.path, merged.sheet
+    else:
+        folder_profile = adf.profile_folder(folder_path, hrows)
+        for bad in folder_profile.skipped:
+            if (
+                bad.path in hrows
+            ):  # 用户指定了表头行、按它读不出来：直说原因（不是悄悄「没有可画的」）
+                raise adf.DataSourceError(bad.code)
+        profile = with_explicit_table(folder_profile, folder_path, table, sheet, hrows)
     rules: dict[str, recipe_mod.CellRule] = dict(ans.get("cells") or {})
     defaults: list[dict] = []
     mixed_auto: list[dict] = []
@@ -834,8 +1012,22 @@ def propose(
     values_key: tuple | None = None
     res = None
     chosen = None
+    # 合画：分组角色默认是合成的那一列（用户在右栏换了 / 选「无」就用他的；这一列成不了分组——如每份只有一行——就按原规则）
+    file_group = None
+    if merged is not None and merged_values is not None:
+        col = merged.merge.column
+        if col in merged_values.groups and col not in merged_values.id_like:
+            file_group = col
+            if auto and "group" not in ans:
+                others = [
+                    c for c in merged_values.groups if c != col and c not in merged_values.id_like
+                ]
+                if others:  # 原本要问「按哪一列分组」：记下替用户选了合成列
+                    defaults.append({"question_code": "pick_group", "answer": {"group": col}})
     for _round in range(MAX_AUTO_ROUNDS if auto else 1):
         confirmed, picks = confirmed_from(ans)
+        if file_group is not None and "group" not in picks:
+            picks["group"] = file_group
         chosen = recipe_mod.pick_table(profile, table, sheet, hint)
         if isinstance(chosen, recipe_mod.NeedsChoice):
             if auto and chosen.options:  # 懒模式：不问，用第一张（发现遍历的顺序）
@@ -847,7 +1039,7 @@ def propose(
         if isinstance(chosen, str):
             return remember({"kind": "nothing", "reasons": [chosen], "dropped": []})
         if values_key != (chosen.path, chosen.sheet):
-            values = _table_for_values(folder_path, chosen)
+            values = merged_values if merged is not None else _table_for_values(folder_path, chosen)
             values_key = (chosen.path, chosen.sheet)
         if rules:
             bad = recipe_mod.check_cell_rules(list(rules.values()), chosen.summary, values)
@@ -898,14 +1090,42 @@ def propose(
     ):
         # 懒模式迭代用尽仍没落定（防御）：不出 ask，当「没有可画的」
         return remember({"kind": "nothing", "reasons": ["no_renderable_family"], "dropped": []})
+    variants: dict[int, dict] = {}
+    if (
+        merged is not None
+        and file_group is not None
+        and merged.merge.splittable
+        and "group" not in ans
+        and res.items
+    ):
+        res, variants = _with_file_only_variants(res, merged, values, confirmed, hint, picks, rules)
+
+    def merged_info() -> dict:
+        """合画：各份是哪几份（路径与请求里一致）、各自的标签、合成的分组列名；单份没有这两项。"""
+        if merged is None:
+            return {}
+        return {
+            "sources": [
+                {
+                    "path": src.path,
+                    "sheet": src.sheet,
+                    "label": src.label,
+                    "header_row": src.header_line,
+                    "units_row": bool(src.entry and src.entry.summary.units_row),
+                }
+                for src in merged.merge.sources
+            ],
+            "group_column": merged.merge.column,
+        }
 
     def basics() -> dict:
         """懒模式响应里**说清这次用了什么**：表 / 表头行 / 列角色与可换的列 / 默认决定 / 自动跳过的文字格。"""
         if not auto:
-            return {}
+            return merged_info()
         return {
+            **merged_info(),
             "render": "lazy",
-            "table": chosen.path,
+            "table": merged.merge.sources[0].path if merged is not None else chosen.path,
             "sheet": chosen.sheet,
             "header_row": values.header_line,
             "units_row": values.units_row,  # 表头后紧跟的单位行已被切掉（它是 `header_row + 1` 行）；没有 = False
@@ -933,7 +1153,11 @@ def propose(
         tuple[recipe_mod.Candidate, dict | None, str | None, Path | None, _Planned | None]
     ] = []
     try:
-        _stage_table(sdir, folder_path / PurePosixPath(chosen.path), chosen.path)
+        if merged is not None:
+            for src in merged.merge.sources:
+                _stage_table(sdir, folder_path / PurePosixPath(src.rel), src.rel)
+        else:
+            _stage_table(sdir, folder_path / PurePosixPath(chosen.path), chosen.path)
         if auto:
             plan = _plan_candidates(sdir, chosen, values, [c.recipe for c in res.items])
             for cand, p in zip(res.items, plan, strict=True):
@@ -965,6 +1189,7 @@ def propose(
             len(unplotted_rows(values, cand.recipe)),
             cell_stats(values, cand.recipe) or None,
             state="pending" if planned is not None else "ready",
+            variant=variants.get(id(cand.recipe)),
             stem=planned.stem if planned is not None else None,
             n=planned.n if planned is not None else 0,
             expected=planned.expected if planned is not None else [],
@@ -989,6 +1214,7 @@ def propose(
         data_sha256=values.sha256,
         data_size=values.size,
         header_line=values.header_line,
+        merge=merged.merge if merged is not None else None,
         confirmed=res.confirmed,
         items=items,
         dir=sdir,

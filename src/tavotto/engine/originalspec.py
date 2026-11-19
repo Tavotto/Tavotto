@@ -182,12 +182,29 @@ def _jpeg_dpi(data: bytes) -> tuple[float, float] | None:
 
 
 def raster_dpi(path: Path) -> tuple[float, float] | None:
-    """位图文件自己写下的物理密度 (x, y)，没写就回 None。
+    """位图文件自己写下的物理密度 (x, y)，没写就回 None。按方向标记**摆正后**的轴：JPEG / TIFF 带 5–8 的方向时
+    像素宽高互换（`rendercore.rasterio.header_info`），密度的 x / y 也跟着换，否则 x≠y 的照片算出的毫米尺寸是错的。
 
     **读不动不等于没有**：本函数把 I/O 失败一并回成 None，调用方因此会退到
     `assumed`——那是能给出的最诚实的降级（我们确实不知道），并且它在 spec
     里说得出自己是假定的。
     """
+    measured = _stored_axis_dpi(path)
+    if measured is None or measured[0] == measured[1]:
+        return measured
+    from ..rendercore import rasterio
+
+    try:
+        swapped = rasterio.swaps_axes(
+            rasterio.orientation(path.read_bytes(), rasterio.kind_of(path))
+        )
+    except (OSError, rasterio.RasterDecodeError):
+        swapped = False
+    return (measured[1], measured[0]) if swapped else measured
+
+
+def _stored_axis_dpi(path: Path) -> tuple[float, float] | None:
+    """`raster_dpi` 的文件原样一读：存储像素的 x / y 轴。"""
     try:
         with path.open("rb") as fh:
             head = fh.read(4096)

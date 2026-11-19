@@ -391,6 +391,10 @@ USER_VISIBLE_CODES = {
     "propose_input_invalid": set(),
     "propose_cells_invalid": set(),
     "propose_cells_need_rule": set(),
+    # 合画（ADR 0178 2026-11-18）：几份列名不一样拼不成一张 / 份数超上限
+    "tables_columns_differ": set(),
+    "tables_limit_exceeded": {"max"},
+    "tables_labels_collide": set(),
     "data_figure_recipe_invalid": set(),
     "data_path_outside_project": set(),
     "data_not_found": set(),
@@ -518,6 +522,7 @@ USER_VISIBLE_CODES = {
     "dir_fsync_failed": {"reason"},
     "write_back_disabled": set(),
     "write_back_warnings": set(),
+    "write_back_future_props": set(),
     # issue #252 / QA 2026-09-24 SCI-05-B1：commit 的落盘准备（备份 + fsync）没过，
     # 任何 replace 之前，原件零改动
     "write_back_persist_failed": {"reason"},

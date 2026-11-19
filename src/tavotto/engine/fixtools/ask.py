@@ -276,6 +276,59 @@ def pick_file(ctx: FixContext, args: dict) -> ToolResult:
 
 
 # --------------------------------------------------------------------------- prepare_diagnostics
+#: 用户这一侧就能补上的失败：在没尝试过任何改动之前，不许当成产品缺陷报给维护者（评测里两份误报都是这一类）
+USER_SIDE_CODES = frozenset(
+    {
+        "script_needs_arguments",
+        "script_needs_input",
+        "missing_input",
+        "missing_dependency",
+        "workdir_confirmation_required",
+    }
+)
+#: traceback 里一眼可认的用户侧形状（不靠模型自律）
+_USER_SIDE_TRACE = (
+    ("KeyError", "os.environ"),
+    ("ImportError", "attempted relative import"),
+    ("EOFError", "input("),
+)
+
+
+def _report_error(ctx: FixContext) -> tuple[str, str]:
+    """当前运行报告里的 (错误码, traceback 文本)；拿不到回空串。"""
+    try:
+        rep = ctx.report() if ctx.report is not None else None
+    except Exception:  # noqa: BLE001 — 报告读不到就不判
+        return "", ""
+    if not isinstance(rep, dict):
+        return "", ""
+    outcome = rep.get("outcome") if isinstance(rep.get("outcome"), dict) else {}
+    result = rep.get("result") if isinstance(rep.get("result"), dict) else {}
+    error = result.get("error") if isinstance(result.get("error"), dict) else {}
+    code = str(outcome.get("code") or error.get("code") or "")
+    trace = " ".join(str(error.get(k) or "") for k in ("message", "traceback"))
+    return code, trace
+
+
+def _user_side_without_attempt(ctx: FixContext) -> ToolResult | None:
+    """还一个改动都没试过、而失败明显是用户这一侧能补的：拒绝起草产品缺陷，告诉模型该试什么。"""
+    if ctx.changes_attempted:
+        return None
+    code, trace = _report_error(ctx)
+    shape = code in USER_SIDE_CODES or any(
+        all(part in trace for part in pair) for pair in _USER_SIDE_TRACE
+    )
+    if not shape:
+        return None
+    return err(
+        "not_a_product_defect",
+        f"This failure ({code or 'see the traceback'}) is something the user's side can supply, and no fix has "
+        "been tried yet, so it is not a product defect. Try the matching action first (run arguments, a launcher "
+        "that sets the environment variable / answers input() / declares the package, linking the data file, "
+        "installing the package), then try_run. Report a defect only if Tavotto itself misbehaves after that.",
+    )
+
+
 def prepare_diagnostics(ctx: FixContext, args: dict) -> ToolResult:
     summary = _text(args.get("summary"), DIAG_SUMMARY_MAX)
     include_source = args.get("include_source", False)
@@ -305,6 +358,9 @@ def prepare_diagnostics(ctx: FixContext, args: dict) -> ToolResult:
                 "bad_arguments",
                 f"Issue draft is {len(summary)} characters; the reviewed feedback note supports {NOTE_MAX_CHARS}. Shorten prose, retain reproduction, errors, attempted commands and evidence. Full logs are in the diagnostics package.",
             )
+        refused = _user_side_without_attempt(ctx)
+        if refused is not None:
+            return refused
     res = _ask(
         ctx,
         {

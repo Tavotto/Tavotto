@@ -73,11 +73,13 @@ from . import (
     inputremap,
     launchctx,
     launcher,
+    launchscript,
     nativesession,
     pathignore,
     pool,
     projectenv,
     receipt,
+    registry,
     rootenv,
     runconfig,
     runroute,
@@ -360,6 +362,22 @@ def _route_of(
     return route, (hashlib.sha256(raw).hexdigest() if raw is not None else None)
 
 
+#: `native_entry_for` 的「够不到」档（`discover.NATIVE_ENTRY_UNREACHABLE` 的镜像，免得模块层 import discover）
+NATIVE_ENTRY_UNREACHABLE = "unreachable"
+
+
+def native_entry_for(root: str, script: str, entry: str | None) -> tuple[str, str | None]:
+    """`discover.native_entry_of` 落到项目里的那份脚本：`(档, 要调的函数名或 None)`。读不到 / 算不出一律按原样跑整份模块。"""
+    from . import discover  # noqa: PLC0415 — 只有 native 计划付这份 import
+
+    try:
+        path = Path(root) / figcapture.normalize_relative_script(script)
+        return discover.native_entry_of(path, entry)
+    except Exception:  # noqa: BLE001 — 判不出就不改（原行为）
+        LOG.exception("native 入口判定失败 %s", script)
+        return discover.NATIVE_RUN_MODULE, None
+
+
 def plan_for(
     *,
     project_id: str,
@@ -535,8 +553,19 @@ def plan_for(
             root,
             decision["mode"] if decision else workdir.mode_for(root),
         )
+    # ADR 0194：AI 修复为这个脚本写过启动脚本——执行它的字节（入口恒 `__main__`），身份仍是这个脚本
+    launch_src = (
+        launchscript.source_for(root, script)
+        if script is not None and target == TARGET_SCRIPT
+        else None
+    )
+    if launch_src is not None:
+        entry = registry.INLINE_ENTRY
     route = None
-    if execution == EXECUTION_AUTO:
+    if execution == EXECUTION_AUTO and launch_src is not None:
+        # 运行前路由读的是原脚本的源码；真正执行的是启动脚本，证据不成立——先 safe，被拦再按回退闸门走 native
+        execution = execspec.PROFILE_SAFE
+    elif execution == EXECUTION_AUTO:
         # 运行前路由（V2 PR2，ADR 0133）：只在用户发起的桌面运行里由准备会话要 `auto`；CLI / MCP 永远是显式 safe
         execution = execspec.PROFILE_SAFE
         if script is not None and target == TARGET_SCRIPT:
@@ -555,6 +584,18 @@ def plan_for(
         # 路由分析之后脚本又被改写：native 的依据是旧内容，新内容没有被证明过。回 safe，下次检查再路由
         route = route.downgraded("script_changed")
         execution = route.execution
+    native_entry = None
+    if script is not None and python and execution == execspec.PROFILE_NATIVE:
+        # 原样运行要怎样才调得到登记的入口（ADR 0127 修订 2026-11-18）：库式模块跑完模块再调函数；
+        # 够不到（入口函数已不在）时路由直达的 native 回 safe——白跑一次只会「没有图」
+        native_how, native_entry = (
+            native_entry_for(root, script, entry)
+            if launch_src is None
+            else ("module", None)  # 启动脚本恒整份执行（`discover.NATIVE_RUN_MODULE`）
+        )
+        if native_how == NATIVE_ENTRY_UNREACHABLE and route is not None:
+            route = route.downgraded("entry_unreachable")
+            execution = route.execution
     if script is not None and python and execution == execspec.PROFILE_NATIVE:
         mode = decision["mode"] if decision else workdir.mode_for(root)
         spec = execspec.desktop_native_spec(
@@ -568,6 +609,11 @@ def plan_for(
             env={"PYTHONUNBUFFERED": "1"},
             # ADR 0154：用户选了「跳过这个文件夹」的目录，native bridge 的顶层导入不再去那里找
             ignored_paths=pathignore.paths_for(root),
+            # ADR 0196：登记入口是函数的脚本不按模块运行（与 safe 同一个判据）
+            registered_entry=entry,
+            # ADR 0127 修订：库式模块跑完模块再调函数入口
+            entry=native_entry,
+            script_source=launch_src,
             **execspec.run_kwargs(run),
         )
         native_spec = spec
@@ -727,7 +773,10 @@ def _binding_sans_mode(binding: dict | None) -> dict | None:
 def _script_revision(root: str, script: str | None) -> str | None:
     if script is None:
         return None
-    return scriptargs.source_revision(Path(root) / figcapture.normalize_relative_script(script))
+    rev = scriptargs.source_revision(Path(root) / figcapture.normalize_relative_script(script))
+    # 启动脚本（ADR 0194）的字节一并进修订：改 / 删它 = 计划过期。第一段仍是原脚本的字节摘要（路由比对只看它）
+    salt = launchscript.revision_of(root, script)
+    return f"{rev}:L{salt}" if salt else rev
 
 
 def _captured_stems(build_resp) -> list[str] | None:

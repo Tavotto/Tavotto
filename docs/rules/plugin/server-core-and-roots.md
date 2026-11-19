@@ -69,3 +69,52 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
   里挂；冲突点名见 `fix-to-journal.md`。
 - `nextstep.py` 是纯 Python、不 import `tavotto.engine`，不在桥的三处同源约束里；它是运行时文件，进 `configure.RUNTIME_FILES`。
 - server `instructions` 写明「失败结果带 `next` 时照它做」。
+
+## 开场零开销：首包 engine 摘要、期刊宽松解析、规则进工具描述（ADR 0192 §4）
+
+> 看护用例：`tests/test_mcp_zero_onboarding.py`（结构化解析 `initialize` / `tools/list`，不对源码做子串断言）。
+
+- **健康状态并进回包**：每个 MCP 进程第一次**成功**的 `tavotto_open_figure`（单图或批量非 `failed`）回包带
+  `engine: {version, update?}`，之后不再带（`server._ENGINE_REPORTED`）。数据与话术只有一份：`server._engine_digest()`，
+  `tavotto_health` 的 `update` 也从它来；`tavotto_health` 本身不变。更新检查仍不碰网络（`updatenotice` 只读缓存），
+  所以进程里第一个 open 可能还没有 `update`——这是设计，`tavotto_export` 的 `notice_once` 兜后面。
+- **期刊参数宽松解析**：`bridge.resolve_journal_id`，在 `server.call_tool` 分派前对 `JOURNAL_RESOLVE_TOOLS`
+  （`JOURNAL_ID_TOOLS` + `tavotto_fix_to_journal` + `tavotto_make_journal_ready`）做一次，处理器与桥里一律只见精确 id。目录就是 `list_journals` 读的
+  那份（引擎 `search_journals`），**不在插件里抄期刊表**。精确 id 原样放行、回包不带 `journal_resolved`；否则归一
+  （NFKC、小写、去空白标点）后先与 id / 名称 / 别名整串相等、再子串（出版社不参与）：唯一命中 → 用它，回包
+  `journal_resolved: {from, id}`；多个 → `journal_ambiguous` + `candidates`（≤ 8）；没有 → `journal_unknown` + 最接近的
+  `candidates`（≤ 8）。与手写 `profile_id` / `journal` 同给时不解析（引擎报 `journal_id_conflict`）；总开关关着 / 旧引擎 /
+  非字符串原样放行。`journal_ambiguous` / 带候选的 `journal_unknown` 的 `next` 是 `ask_user`，选项就是候选
+  （`nextstep._pick_journal` / `_journal_not_found`）；`journal_unknown` 没候选时照旧指向 `tavotto_list_journals`。
+  先只查本机（种子 + 已缓存索引，不联网）：精确 id 与唯一命中不等远程同步；本机没唯一命中才同步一次再查。
+  同步后仍没命中、且远程目录取不到（没有缓存索引）时原样放行，由 `journal_selection` 报 `journal_offline`，
+  不断言「库里没有」。
+- **规则写进工具描述**：宿主（如 opencode）不一定加载技能，只看 `initialize.instructions` 与 `tools/list` 的 description。
+  instructions 与 `tavotto_health` / `tavotto_guide` / `tavotto_open_figure` / `tavotto_apply_overrides` / `tavotto_export` 的
+  description 写明：直接开始、工具缺失或引擎报错才调 health、不必先调 guide、期刊直接写名字、patches 发全量、什么必须回代码改、
+  导出之后再关会话。**不许改回「开工前先调 health / guide」**；description 保持短，细节进技能 `references/`。
+
+
+## 改脚本之后同一会话自动重跑（ADR 0192 修订 2026-11-18）
+
+> 看护用例：`tests/test_mcp_rerun_on_script_change.py`
+
+- **问题**：MCP 会话的 worker 在 spawn 时把用户脚本读进内存；桌面版靠 mtime watcher 调 `engine_pool.invalidate`，
+  MCP 无头没有 watcher。agent 改完 `.py` 再调工具只会按旧代码重渲染，只好 close 再 open（评测 36 组里 84 次 close→open 紧挨着）。
+- **判据**：`Session.script_sha1` = 上一次成功渲染时跑的脚本内容 sha1（取 worker 的 `script_sha1`，即 spawn 那一刻读进内存的那份；
+  native 回退没有这个属性，渲染成功后用 `engine_pool.script_sha1` 现算）。与磁盘此刻的比，不同才算变（不看 mtime，没有假阳性）；
+  读不到 / 引擎没有 `script_sha1` 时不比、不重跑。**只读，不运行脚本**（`tavotto_refresh_project` 仍按 ADR 0025 不跑用户脚本，
+  只在回包 `stale_sessions` 里列出脚本已变的活会话）。
+- **动作**（`bridge._sync_script_render`）：作废这条会话**这一份运行配置**的旧 worker——`invalidate(script, project, run=session.run,
+  only_run=True, force=True, write_roots=<与 _spawn_worker 同一份绊线根>)`（绊线根是池键的一段，不带就对不上键；`force` 同步确认式退役，
+  免得紧接着的取 worker 复用旧的；native 会话改为 `_end_native`）→ 按会话现有 patches 重渲染，用不了的 patch（gid 没了、属性不支持）
+  经 `_render_applicable` 剔掉并逐条记进 `dropped`（与草稿带回 `_render_draft` 共用一份）→ `_persist`。回包 `script_rerun =
+  {"reason": "script_changed", "patches": 保留条数, "dropped": [...]}`；没变时**不出现**这个字段。
+- **合同 / 验收**：有 dropped → 合同与 `normalized` 一并作废（与草稿带回同口径，丢过就不再对得上）；没丢 → 合同照旧，`normalized.stale = True`
+  （验的是旧脚本的产物，导出时如实说）。
+- **新脚本报错**：照常抛 `BridgeError`（带 code，`next` 的 `edit_script` 照常生效），会话与 patches 原样保留；`script_sha1` 不更新，
+  脚本改好后下一次调用再重跑。
+- **调用点**：`open_figure` 的复用分支、`@_synced` 装饰的 `apply_overrides` / `session_state` / `run_preflight` / `export` /
+  `normalize_figure` / `fix_to_journal` / `verify_replay`（`make_journal_ready` 由 server 组合 open + fix_to_journal，已覆盖）。
+  **`close_session` 不重跑。** 结果文字：open 第一行换成「脚本改过，已按新脚本重跑同一个会话 …」，其它工具在文字第一行加同样意思的短句。
+- **不许**：为这件事在 MCP 里加 watcher / 后台线程；在 `tavotto_refresh_project` 里顺手重渲染会话；把 `script_rerun` 当成错误。

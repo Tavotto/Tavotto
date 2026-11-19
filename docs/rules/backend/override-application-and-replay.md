@@ -18,6 +18,13 @@ order: 70
   期刊也拒收。改回 3 的前提是先让 `tests/test_scientific_text_matrix.py` 有别的办法绿。
 - override 是**全量列表**语义：worker 维护 applied/originals 两表，缺失的 key 自动
   恢复原值（undo 的基础）。前端永远发完整 `o.overrides`。
+- **认不出的 prop 名跳过、不报 warning（2026-11-19，向前兼容）**：这一版**任何一类元素都没有 handler** 的 prop
+  名（`overrides.known_props()`，从 `HANDLERS` 收）是更新的 Tavotto 写下的新编辑方式，`apply` 不应用、不进
+  `applied`、不算 warning，记进 `FigState.future_props`；`override` / `export` 响应带 `future_props`。旧版本打开
+  新项目因此不再满屏「属性不支持」。三条照旧：认得这个名字、只是这一类元素没有的仍报「属性不支持」；认得的键
+  值不对仍报应用失败；元素不存在仍报「元素不存在」（这一版判不出是新版本才登记的元素还是脚本改了）。跳过的键
+  原样留在项目里——`patchspec` 不按 prop 名筛、前端整份保存、引擎只读不写 override 列表。写回遇到它们拒绝，见
+  `writeback-transaction.md`。看护：`tests/test_future_override_keys.py`。
 - **刻度组有 `fontfamily`、文字元素报真正画字的脸（2026-09-13，ADR 0051）**：
   `("ticks", "fontfamily")` 走 `tick_params(labelfontfamily=…)`（matplotlib ≥ 3.7）
   + 已有标签逐条 `set_math_fontfamily("custom")`——刻度**数量增长**后新建的标签里的

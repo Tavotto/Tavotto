@@ -289,6 +289,11 @@ def _log_import_ignore(event: dict) -> None:
     print(f"[import-ignore] {json.dumps(event, ensure_ascii=False)}", file=sys.stderr)
 
 
+def _log_gui_backend(event: dict) -> None:
+    """脚本想用 GUI 后端、被中和成非交互后端时在 worker.log 留一行结构化记录（ADR 0195）；只有后端名。"""
+    print(f"[gui-backend] {json.dumps(event, ensure_ascii=False)}", file=sys.stderr)
+
+
 #: 与 native bridge 同一个装配点（`bridgeboot.install_unreadable_import_skipper`）：用户脚本往 `sys.path` 里塞了
 #: 当前账户读不了的项目外目录时，换下一个位置继续找，而不是让整次 import 挂在 `PermissionError` 上。
 bridgeboot.install_unreadable_import_skipper(_log_import_skip)
@@ -296,6 +301,10 @@ bridgeboot.install_unreadable_import_skipper(_log_import_skip)
 import matplotlib  # noqa: E402 —— safe 档由 Tavotto 挑解释器，backend 在装引擎之前钉死
 
 matplotlib.use("Agg")
+# 脚本写死 GUI 后端（`matplotlib.use("TkAgg")` / `rcParams["backend"]`…）时不切换、记一笔（ADR 0195）：与 native bridge 同一个装配点。
+# 必须在可信方法面基线冻结（`figcapture.freeze_trusted_surface`）之前装，包装才算基线的一部分、不被判成脚本 patch 了 matplotlib
+GUI_BACKENDS = bridgeboot.install_gui_backend_neutralizer(_log_gui_backend)
+GUI_BACKENDS.patch_matplotlib(matplotlib)
 import matplotlib.backends.backend_agg as backend_agg  # noqa: E402
 import matplotlib.figure as mfigure  # noqa: E402
 
@@ -712,6 +721,9 @@ def _install_show_capture() -> None:
     _SHOWN = figcapture.ShownFigures()
 
     def wrap(plt) -> None:
+        GUI_BACKENDS.patch_pyplot(
+            plt
+        )  # 与 show 同一个时刻：pyplot 一载入就挡住 GUI 后端（ADR 0195）
         real_show = plt.show
         if getattr(real_show, "_tavotto_show_capture", False):
             return
@@ -1652,6 +1664,8 @@ class Worker(wireproto.V1Handler):
         #: 自己所在的目录。写入边界的**参照**始终是沙盒 / 图库目录，守卫不变。
         self.workdir = Path(args.cwd).resolve() if getattr(args, "cwd", None) else None
         self.entry = args.entry
+        #: 按模块运行这份脚本的模块名（`--as-module`，ADR 0196）；build 开头核对后才真正生效（`_package_module`）。
+        self.as_module = getattr(args, "as_module", None) or None
         self.preview_dpi = args.preview_dpi
         self.built = False
         self.execution_id: str | None = None
@@ -2041,6 +2055,35 @@ class Worker(wireproto.V1Handler):
                 getattr(exc, "code", "svg_scaffold_invalid"), str(exc), extra={"chart_error": True}
             ) from exc
 
+    def _package_module(self) -> tuple[str | None, str | None]:
+        """`--as-module`（ADR 0196）在子进程这一侧的最后一道核对：`(模块名, sys.path[0])`；不按模块运行 = `(None, None)`。
+
+        父进程的判据（`pkgentry.resolve`）已经定了「该按模块跑」，这里只验**执行前提仍然成立**，不成立就照旧 `run_path`
+        （脚本失败的样子与以前一字不差，绝不猜）：模块名必须与脚本路径逐段对上（`bridgeboot.package_path_root`，`sys.path[0]`
+        因此与 `co_filename` 同源）、不是影子脚本、顶层包名没有被别的模块占在 `sys.modules` 里（否则 `run_module` 会 import
+        到别人的包）。**不 import 任何用户代码**：`sys.modules` 只读。"""
+        name = self.as_module
+        if not name or self.script is None or self.script_source != self.script:
+            return None, None
+        root = bridgeboot.package_path_root(str(self.script), name)
+        if root is None:
+            print(
+                f"[package-run] 模块名 {name} 与脚本路径对不上，照旧按脚本路径运行", file=sys.stderr
+            )
+            return None, None
+        top = name.split(".")[0]
+        held = sys.modules.get(top)
+        if held is not None:
+            want = _norm_path(os.path.join(root, top))
+            places = [_norm_path(p) for p in list(getattr(held, "__path__", None) or ())]
+            if want not in places:
+                print(
+                    f"[package-run] 顶层包 {top} 已被别处的模块占用，照旧按脚本路径运行",
+                    file=sys.stderr,
+                )
+                return None, None
+        return name, root
+
     def build(self, timings: dict | None = None) -> dict:
         """跑一次用户脚本，把产出的 Figure 全部收进内存。
 
@@ -2071,7 +2114,9 @@ class Worker(wireproto.V1Handler):
         # 文件夹（比如整份库源码 `celerite/`，里面缺构建时才生成的文件）不会再盖住环境里装好的那个发行包。
         # 静态侧同一个模型：`importscan._search_roots`（project_root 排在标准库 / site 之后）与
         # `importshadow.detect(late_roots=…)`；改这里要一起改（tests/test_syspath_order.py 锁住三者一致）。
-        _put_project_on_path(self.script.parent, self.figures_dir)
+        # 按模块运行（ADR 0196）时 `sys.path[0]` 是包根的上一级（与 `python -m` 一致），脚本目录不上 path；其余不变
+        package_module, package_root = self._package_module()
+        _put_project_on_path(package_root or self.script.parent, self.figures_dir)
         #: 脚本运行前的 `sys.path`：之后新加进来的项目外目录读不了时，失败卡点名它（`_unreadable_folder_fact`）
         self._path_baseline = list(sys.path)
         # 项目目录里的源码（脚本本身按模块 import 时、它 import 的本地模块）不写 .pyc——
@@ -2210,7 +2255,10 @@ class Worker(wireproto.V1Handler):
         #   从不查 `__pycache__`，读的就是源码本身。故沿用执行前后括号：读源码那一刻必落在 pre 与 post 之间，
         #   两端 (mtime_ns, size, inode, sha) 完全相同 ⇒ 期间没被写过（刻意 utime 回拨属对抗性，不设防）；不同 → None。
         #   `_source_stamp` 只给这条路径用。
-        pre = _source_stamp(self.script_source) if self.entry == "__main__" else None
+        run_path = (
+            self.entry == "__main__" and package_module is None
+        )  # `runpy.run_path`：执行前后括号
+        pre = _source_stamp(self.script_source) if run_path else None
         entry_shas: list[str] = []
         # `SystemExit` 不是 `Exception`：脚本末尾的 `sys.exit(main())` / `exit()` /
         # `quit()` 会一路穿过 `ensure_built` 的 `except Exception`，落到主循环
@@ -2245,12 +2293,27 @@ class Worker(wireproto.V1Handler):
                     pass
                 else:
                     paper_style.save = _wrap_paper_style_save(paper_style.save)
-                if self.entry == "__main__":
+                if package_module is not None:
+                    import runpy  # noqa: PLC0415 — 包里的脚本（相对导入）按模块运行
+
+                    # 等价于 `python -m 包.模块`（`__name__ == "__main__"`、`__package__` 正确、`sys.path[0]` 是包根的上一级）。
+                    # 与 `run_path` 不同，`run_module` 走 loader 会读旧的 `.pyc`：入口脚本一律经 `_capture_entry_sha`
+                    # 只从源码编译并记摘要（与函数入口同一个办法），父包 `__init__` 与帮手模块照常走 import 系统
+                    with _capture_entry_sha(self.script, entry_shas):
+                        runpy.run_module(package_module, run_name="__main__", alter_sys=True)
+                elif self.entry == "__main__":
                     import runpy  # noqa: PLC0415 — 内联脚本（fig4c / fig_models）
 
                     if self.script_source != self.script:
+                        # 执行另一份字节（启动脚本 / 影子脚本）：注入 `run_original()`，启动脚本用它跑用户原件（ADR 0194）
                         with _redirect_open_code(self.script, self.script_source):
-                            runpy.run_path(str(self.script), run_name="__main__")
+                            runpy.run_path(
+                                str(self.script),
+                                run_name="__main__",
+                                init_globals={
+                                    "run_original": bridgeboot.make_run_original(str(self.script))
+                                },
+                            )
                     else:
                         runpy.run_path(str(self.script), run_name="__main__")
                 else:
@@ -2354,7 +2417,7 @@ class Worker(wireproto.V1Handler):
                 ledger.stop()
                 restore_spawn()
                 # 无论正常结束 / SystemExit / 异常都在这里收括号（finally 不改变原有异常传播）
-                if self.entry == "__main__":
+                if run_path:
                     post = _source_stamp(self.script_source)
                     self._source_sha256 = pre[3] if pre is not None and pre == post else None
                 else:
@@ -2960,6 +3023,7 @@ class Worker(wireproto.V1Handler):
                 inputs=self._inputs_report,
                 fidelity=self._fidelity_summary(),
                 import_skips=bridgeboot.skip_events(),
+                gui_backends=bridgeboot.gui_backend_events(),
             ),
             # 沙盒里落空的相对探路调用（#1254）：只在有记录时才有这个字段，响应形状不变
             **self._probe_miss_facts(),
@@ -3050,6 +3114,8 @@ def main() -> None:
     # ADR 0162：图名别名表（JSON `[[原图名, 登记图名], …]`）；没有别名时不出现
     ap.add_argument("--stem-aliases", default=None)
     ap.add_argument("--entry", default="main")
+    # ADR 0196：包里的脚本用相对导入时按模块运行（`python -m 包.模块`）；只在判据成立时出现，没有它 = 照旧 `run_path`
+    ap.add_argument("--as-module", default=None)
     ap.add_argument("--preview-dpi", type=int, default=200)
 
     # 协议管道钉死 UTF-8。Windows 的默认 stdio 编码跟着系统区域走（常是

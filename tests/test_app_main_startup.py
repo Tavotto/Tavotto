@@ -311,6 +311,31 @@ def test_safe_start_does_not_touch_the_last_project_setting(startup, monkeypatch
     assert calls == [], "安全启动既不读也不改 last_project"
 
 
+@pytest.mark.parametrize(
+    "exc",
+    [
+        ValueError("bad registry"),
+        KeyError("figures"),
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad"),
+        TypeError("bad shape"),
+    ],
+)
+def test_a_last_project_that_fails_to_open_in_any_way_still_starts_the_sidecar(
+    startup, monkeypatch, exc
+):
+    """打开上次项目抛的不只是 RuntimeError / OSError（注册表 / 状态文件坏了引出的别的异常）：照样起服务，
+    界面里的项目选择页接手；否则每次启动都死在同一处、救援页「重新启动」永远同一个结果（TVD-MHQJ）。"""
+
+    def boom(*a, **k):
+        startup.append("open_project")
+        raise exc
+
+    monkeypatch.setattr(appmod, "open_project", boom)
+    seen = _desktop_with_hello(startup, monkeypatch, {"nonce": "n"})
+    assert "open_project" in startup
+    assert seen == [{"nonce": "n"}], "打开失败后照样进 desktop.run 起服务"
+
+
 def test_startup_phases_are_marked_in_order_for_the_sidecar_only(startup, monkeypatch):
     marks: list[str] = []
     monkeypatch.setattr(appmod.engine_startupphase, "mark", marks.append)

@@ -17,6 +17,7 @@ const NONE = '\u0000none'
 export function DataPanel() {
   const { t } = useTranslation('ai')
   const selected = useDataFigureStore((s) => s.selected)
+  const group = useDataFigureStore((s) => s.group)
   const overviews = useDataFigureStore((s) => s.overviews)
   const headerRows = useDataFigureStore((s) => s.headerRows)
   const mixed = useDataFigureStore((s) => s.mixed)
@@ -24,8 +25,9 @@ export function DataPanel() {
   const busy = useDataFigureStore((s) => s.drawingId != null)
   if (!selected) return null
   const ov = overviews[overviewKeyOf(selected, headerRows)]?.data ?? null
-  const rows = ov?.status === 'ok' ? ov.rows : null
-  const cols = ov?.status === 'ok' ? ov.columns : null
+  // 合画：概览只有第一份的，行列数不代表整组，不显示
+  const rows = !group && ov?.status === 'ok' ? ov.rows : null
+  const cols = !group && ov?.status === 'ok' ? ov.columns : null
   const count = mixed ? mixed.columns.reduce((n, c) => n + c.nonNumeric, 0) : 0
   const pick = (key: RoleKey) => (v: string) => useDataFigureStore.getState().setRole(key, v === NONE ? 'none' : v)
   const asOptions = (list: string[], none?: string) => [...(none ? [{ value: NONE, label: none }] : []), ...list.map((c) => ({ value: c, label: c }))]
@@ -33,9 +35,9 @@ export function DataPanel() {
     <div data-data-panel className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-3 pt-2">
       <header className="flex flex-col">
         <p className="flex h-6 items-center type-caption">{t('dataFigureV2.list.heading')}</p>
-        <h2 className="type-heading min-w-0 break-words py-1" title={selected.path}>
-          {baseName(selected.path)}
-          {selected.sheet ? <span className="font-normal text-ink-3"> · {selected.sheet}</span> : null}
+        <h2 className="type-heading min-w-0 break-words py-1" title={group ? undefined : selected.path}>
+          {group ? t('dataFigureV2.batch.groupTitle', { count: group.length }) : baseName(selected.path)}
+          {!group && selected.sheet ? <span className="font-normal text-ink-3"> · {selected.sheet}</span> : null}
         </h2>
         {rows != null && cols != null && (
           <p data-data-panel-meta className="mb-3 text-sm text-ink-2 tabular-nums">
