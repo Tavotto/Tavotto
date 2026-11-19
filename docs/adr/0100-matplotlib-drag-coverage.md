@@ -302,6 +302,10 @@ constrained；一次性 worker 全量重放 == 热态）。修前 3 条红。
   虚线预览 `linePreview`、拖回原处不写）；`PanelView` 按下分派到最近一段；`OverlaySvg` 拐点手柄；拖子图时改过的引线随行
   （`FRAC_ANCHORED_PROPS` 认 `points_frac`，任意偶数长度按 x、y 交替平移）。导出修改后的 .py 不写 `points_frac`（与 `pos_frac` 同一结论）。
 
+兼容：不认识 `points_frac` 的旧版本打开这样的项目——图照常打开，引线落在脚本原位，引擎报「属性不支持」、写回脚本被挡
+（与此前每个新 override 键同一行为，#2024 / #2049 的集合 / 位图 / 表格 `pos_frac` 亦然；已发出的版本改不了）。导出修改后的 .py
+不写这个键（列入 `NOT_WRITABLE`，进 skipped，由 verify 证明「新脚本 + 这条 override == 用户看到的图」）。
+
 看护：`tests/test_layout_line_points.py`（只有短的排版线出顶点；初始顶点 == 按子图框独立算的位置；拖每一段落点与画出来的
 几何一致；整条平移；图上的线；顶点个数不对报错不动；constrained；先整条平移再逐段编辑的全量重放 == 热态）、
 `web/src/canvas/lineSegmentEditing.test.tsx`、浏览器腿 `web/e2e/line-segment-drag.spec.ts`（浅 / 深各一次：拖段落点、撤销）。

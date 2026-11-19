@@ -87,7 +87,7 @@ async function settleAfter(page: Page, action: () => Promise<void>) {
 }
 
 for (const scheme of ['light', 'dark'] as const) {
-  test(`引线：选中出顶点手柄，按在一段上拖 = 那一段走、相邻段伸缩；撤销回原处（${scheme}）`, async ({
+  test(`引线：选中出顶点手柄，按在一段上拖 = 那一段走、相邻段伸缩；撤销回原处、重做回落点（${scheme}）`, async ({
     app,
     page,
   }, testInfo) => {
@@ -150,6 +150,18 @@ for (const scheme of ['light', 'dark'] as const) {
           return Math.max(Math.abs(b.y - b0.y), Math.abs(b.h - b0.h))
         },
         { timeout: 60_000, message: '撤销一次回原处' },
+      )
+      .toBeLessThanOrEqual(BUDGET_PX)
+
+    // 重做一次回到落下的位置
+    await page.keyboard.press('Control+Shift+z')
+    await expect
+      .poll(
+        async () => {
+          const b = (await boxOf(page, GID))!
+          return Math.max(Math.abs(b.y - b1.y), Math.abs(b.h - b1.h))
+        },
+        { timeout: 60_000, message: '重做一次回到落下的位置' },
       )
       .toBeLessThanOrEqual(BUDGET_PX)
   })
