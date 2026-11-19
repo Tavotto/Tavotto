@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import os
 import stat
 import sys
 import threading
@@ -27,6 +28,17 @@ def _link(target, path):
         path.symlink_to(target, target_is_directory=True)
     except OSError as exc:
         pytest.skip(f"Creating a symlink is not permitted on this host: {exc}")
+
+
+def _link_target(path):
+    r"""链接的原始目标；Windows 上 ``os.readlink`` 返回带 ``\\?\``（UNC 为
+    ``\\?\UNC\``）扩展前缀的替代路径，不去前缀就永远和普通路径对不上。"""
+    target = os.readlink(path)
+    if target.startswith("\\\\?\\UNC\\"):
+        target = "\\\\" + target[8:]
+    elif target.startswith(("\\\\?\\", "\\\\.\\", "\\??\\")):
+        target = target[4:]
+    return Path(target)
 
 
 def test_real_directory_is_published_complete_without_removing_its_empty_children(tmp_path):
@@ -64,7 +76,8 @@ def test_existing_target_is_never_overwritten_and_source_remains_owned(tmp_path,
     elif kind == "directory":
         assert (target / "sentinel").read_bytes() == b"keep target"
     else:
-        assert target.is_symlink() and target.readlink() == referent
+        assert target.is_symlink()
+        assert _link_target(target) == referent
         if kind == "symlink":
             assert (referent / "sentinel").read_bytes() == b"keep target"
         else:
