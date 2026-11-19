@@ -4659,6 +4659,7 @@ FIX_MANUAL_HINTS = {
     "cjk-fallback-missing": "给中文指定回退字体，回脚本改。",
     "math-unrenderable": "改公式写法，回脚本改。",
     "raster-dpi": "导出时把 dpi 调到规范要求以上。",
+    "line-width-below-min": "把数据线加粗到期刊要求的线宽以上，回脚本改。",
 }
 
 

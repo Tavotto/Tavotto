@@ -195,6 +195,10 @@ def _validate(profile: dict, pid: str) -> None:
             continue
         if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
             raise ProfileError(f"profile {pid} 的 preferred_formats.{key} 必须是字符串数组")
+    # 可选键：缺席 / null = 没规定；写了就得是数（数据线最细线宽，journal-base-v1 才带 0）
+    lw_floor = profile.get("min_line_width_pt")
+    if lw_floor is not None and not _is_number(lw_floor):
+        raise ProfileError(f"profile {pid} 的 min_line_width_pt 必须是数字或缺席")
     dpi = fmts.get("export_dpi_default")
     if dpi is not None and not _is_number(dpi):
         raise ProfileError(f"profile {pid} 的 preferred_formats.export_dpi_default 必须是数字")

@@ -37,13 +37,24 @@ def test_only_unconditional_minimum_dpi_folds_into_a_v1_shaped_rule():
     assert rule["snapshot"]["file"].startswith("snapshots/")
 
 
+def test_unconditional_minimum_line_width_folds_into_a_v1_shaped_rule():
+    """用户 2026-11-17 拍板：无条件的线宽下限也折成判据（只判数据线，见 preflight 的 `DATA_LINE_ROLES`）。"""
+    out = _case("line-width-minimum-folds")
+    assert list(out["rules"]) == ["min_line_width_pt"] and out["confirm"] == []
+    rule = out["rules"]["min_line_width_pt"]
+    assert rule["qualifier"] == "min" and rule["value"] == 2 and rule["stage"] == "any"
+    assert rule["src"] == "v2:s1:journal"
+
+
 @pytest.mark.parametrize(
     "name",
     [
         "dpi-with-condition-text-confirms",
         "dpi-with-named-condition-confirms",
         "dpi-eq-is-not-a-minimum",
-        "line-width-minimum-goes-to-confirm",
+        "line-width-with-condition-text-confirms",
+        "line-width-eq-is-not-a-minimum",
+        "line-width-unspecified-listed-not-folded",
         "width-in-with-text-condition-confirms",
         "stage-revision-does-not-fold",
         "unspecified-strength-is-listed-not-folded",
@@ -94,6 +105,61 @@ def test_folded_rules_are_accepted_by_the_v1_catalog_validator():
     }
     journals.validate_catalog(cat)
     assert journals.journal_override("j", cat)["min_raster_dpi"] == 300
+
+
+def test_folded_line_width_floor_reaches_the_preflight_as_a_warn():
+    """v2 折出的线宽下限进目录后：覆盖里有 `min_line_width_pt`，严重级别从建议抬到警告，预检真的报。"""
+    from tavotto.engine import preflight, profiles
+
+    out = _case("line-width-minimum-folds")
+    cat = {
+        "schema": journals.SCHEMA,
+        "catalog_rev": 1,
+        "publishers": {"p": {"label": "P"}},
+        "journals": {
+            "j": {"label": "J", "publisher": "p", "sources": out["sources"], "rules": out["rules"]}
+        },
+    }
+    journals.validate_catalog(cat)
+    override = journals.journal_override("j", cat)
+    assert override["min_line_width_pt"] == 2
+    assert override["severity"]["line-width-below-min"] == "warn"
+    profile = profiles.load("journal-base-v1", override)
+    manifest = {
+        "stem": "F",
+        "size_mm": [80.0, 60.0],
+        "elements": [
+            {
+                "gid": "axes_0.lines_0",
+                "role": "line",
+                "bbox": [0.1, 0.1, 0.2, 0.2],
+                "editable": [{"prop": "linewidth", "type": "number", "value": 1.0}],
+            }
+        ],
+    }
+    spec = {
+        "page": {"w_mm": 80.0, "h_mm": 60.0, "margin_mm": 0.0},
+        "panels": [
+            {
+                "id": "p1",
+                "name": "p1",
+                "kind": "pdf",
+                "rect_mm": [0, 0, 80.0, 60.0],
+                "scale": 1.0,
+                "manifest": manifest,
+                "px_w": None,
+                "missing": False,
+                "stale": False,
+                "render_error": None,
+                "unapplied_overrides": 0,
+                "hidden": False,
+            }
+        ],
+        "texts": [],
+        "objects": [{"id": "p1", "type": "panel", "rect_mm": [0, 0, 80.0, 60.0], "hidden": False}],
+    }
+    hits = [i for i in preflight.run(spec, profile) if i["id"] == "line-width-below-min"]
+    assert [(i["severity"], i["gids"]) for i in hits] == [("warn", ["axes_0.lines_0"])]
 
 
 @pytest.fixture
