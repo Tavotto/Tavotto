@@ -752,6 +752,8 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
         "switch_workdir",
         # TVD-CHR5：脚本被改写后登记的入口过时（细节见 tests/test_entry_fresh.py）
         "fix_entry",
+        # 填运行参数（与「运行参数」框同一份运行配置，T03；细节见 tests/test_fixtools_run_args.py）
+        "set_run_arguments",
         "change_python",
         "select_environment",
         "convert_script",

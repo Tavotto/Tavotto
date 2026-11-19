@@ -84,3 +84,17 @@ agent 只好去猜 override 的属性名。
 - 不把改动写回用户的原脚本（导出修改后的 `.py` 仍只写导出目录，ADR 0171）。
 - 不去掉任何现有工具、不改现有错误码的含义。
 - 不在 MCP 进程里自动安装 / 升级任何东西（首次使用契约不变）。
+
+## 修订 2026-11-18：§5 改脚本后同一会话自动重跑
+
+**动机**：评测 B 组里，agent 改完 `fig.py` 再调 `tavotto_open_figure`，得到的是「这张已经开着，沿用同一个会话」——worker 仍跑着 spawn 时读进内存的旧脚本，
+重渲染与预检都是旧结论（桌面版靠 mtime watcher 作废旧 worker，MCP 无头没有）。agent 只好 close_session 再 open：36 组里出现 84 次 close→open 紧挨着，平均每组 open 4.5 次。
+
+**决定**：
+1. 会话记下上次成功渲染时的脚本 sha1；open（复用分支）/ apply / session_state / preflight / export / normalize / fix_to_journal / verify_replay 入口先比一次，
+   不同就作废这条会话这一份运行配置的旧 worker、按会话现有 patches 重渲染**同一个会话**（id 与 patches 保留，用不了的逐条进 `dropped`），回包 `script_rerun`。
+2. 新脚本报错照常抛带 code 的错，会话与 patches 保留，脚本改好后再调即恢复。
+3. `tavotto_refresh_project` 仍不运行用户脚本（ADR 0025），只回 `stale_sessions`。
+4. 工具描述、`instructions` 与技能写明「改完 .py 不用关会话，不要 close 再 open」。细则见 `docs/rules/plugin/server-core-and-roots.md`。
+
+不扩大产品能力范围，只去掉一次无谓的 close→open；不改任何错误码的含义。

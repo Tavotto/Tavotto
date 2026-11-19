@@ -427,9 +427,57 @@
     }
    },
    "expected": {
+    "confirm": [],
+    "rules": {
+     "min_line_width_pt": {
+      "qualifier": "min",
+      "quote": "Quote a",
+      "src": "v2:s1:journal",
+      "stage": "any",
+      "strength": "recommended",
+      "value": 2
+     }
+    },
+    "sources": {
+     "v2:s1:journal": {
+      "coverage": "journal_specific",
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "id": "line-width-minimum-folds"
+  },
+  {
+   "bundle": {
+    "facts": [
+     {
+      "condition_text": "Line art figures only",
+      "id": "a",
+      "origin": "journal",
+      "quote": "Quote a",
+      "relation": "gte",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "recommended",
+      "subject": "min_line_width",
+      "unit": "pt",
+      "value": 2
+     }
+    ],
+    "sources": {
+     "s1": {
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "expected": {
     "confirm": [
      {
-      "condition": "",
+      "condition": "Line art figures only",
       "id": "a",
       "quote": "Quote a",
       "relation": "gte",
@@ -449,7 +497,105 @@
     "rules": {},
     "sources": {}
    },
-   "id": "line-width-minimum-goes-to-confirm"
+   "id": "line-width-with-condition-text-confirms"
+  },
+  {
+   "bundle": {
+    "facts": [
+     {
+      "id": "a",
+      "origin": "journal",
+      "quote": "Quote a",
+      "relation": "eq",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "recommended",
+      "subject": "min_line_width",
+      "unit": "pt",
+      "value": 2
+     }
+    ],
+    "sources": {
+     "s1": {
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "expected": {
+    "confirm": [
+     {
+      "condition": "",
+      "id": "a",
+      "quote": "Quote a",
+      "relation": "eq",
+      "source": {
+       "coverage": "journal_specific",
+       "kind": "html",
+       "retrieved": "2026-11-15",
+       "url": "https://example.invalid/guide"
+      },
+      "stage": "any",
+      "strength": "recommended",
+      "subject": "min_line_width",
+      "unit": "pt",
+      "value": 2
+     }
+    ],
+    "rules": {},
+    "sources": {}
+   },
+   "id": "line-width-eq-is-not-a-minimum"
+  },
+  {
+   "bundle": {
+    "facts": [
+     {
+      "id": "a",
+      "origin": "journal",
+      "quote": "Quote a",
+      "relation": "gte",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "unspecified",
+      "subject": "min_line_width",
+      "unit": "pt",
+      "value": 2
+     }
+    ],
+    "sources": {
+     "s1": {
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "expected": {
+    "confirm": [
+     {
+      "condition": "",
+      "id": "a",
+      "quote": "Quote a",
+      "relation": "gte",
+      "source": {
+       "coverage": "journal_specific",
+       "kind": "html",
+       "retrieved": "2026-11-15",
+       "url": "https://example.invalid/guide"
+      },
+      "stage": "any",
+      "strength": "unspecified",
+      "subject": "min_line_width",
+      "unit": "pt",
+      "value": 2
+     }
+    ],
+    "rules": {},
+    "sources": {}
+   },
+   "id": "line-width-unspecified-listed-not-folded"
   },
   {
    "bundle": {

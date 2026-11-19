@@ -29,6 +29,7 @@
     {"path": "tests/test_compat_explore*", "why": "Guardian 探索的看护"},
     {"path": "tests/test_compat_triage*", "why": "Guardian 分诊的看护"},
     {"path": "tests/test_compat_minimize*", "why": "Guardian 最小化的看护"},
+    {"path": "tests/test_compat_drag.py", "why": "CompatBench 拖动阶段判据的看护"},
     {"path": "docs/ci/compat-guardian.md", "why": "Guardian 比对口径与评审边界"}
   ]
 }

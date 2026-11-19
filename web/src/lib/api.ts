@@ -3964,6 +3964,8 @@ export interface AiFixState {
   outcome: 'fixed' | 'not_fixed' | 'convert' | 'cancelled' | 'failed' | null
   /** 仅 `outcome === 'convert'`：要生成可编辑版本的脚本（项目相对路径）、画图用的位图库与报告里的原输出图（项目相对，可缺；ADR 0143 / 0149 §七） */
   handoff?: { kind: 'convert'; script: string; library: string; path: string | null }
+  /** 仅 `outcome === 'fixed'` 且 AI 改过运行参数：它定下的参数（填进脚本的「运行参数」再重跑验证；空数组 = 清掉） */
+  run_argv?: string[]
   summary: string
   /** 没修好、而最后的错误是「项目外文件夹读不了」（仅 Windows）：结果卡上「修复权限」的一次性不透明令牌（ADR 0153 修订）；没有就不出 */
   repair_token?: string
@@ -4434,11 +4436,13 @@ export interface AiDataFile {
 /** `POST /api/ai/data-figure` 的回应：`task` 是任务结局（同 `ai.done` 里的 task） */
 export interface AiDataFigureResult {
   task: {
-    task_id?: string
+    task_id?: string | null
     outcome: AiTaskSummary['outcome']
     verification?: { unmet?: { constraint_id: string; reason_code: string }[]; [k: string]: unknown }
     error?: string | null
     deduped?: boolean
+    /** 去重分支回的快照：原任务还在处理中是 false（此时 `outcome` 为 null、`task_id` 可为 null、没有 `script`） */
+    final?: boolean | null
     [k: string]: unknown
   }
   script?: string
@@ -4562,6 +4566,8 @@ export interface AiDataProposeItem {
   thumbnail_url: string
   /** 懒模式 `pending`（缩略图在取图时才画）；旧模式 `ready` */
   thumbnail_status?: 'pending' | 'ready'
+  /** 合画且文件里原本有分组列、文件内有多个取值时，候选成对出现（同一个 `title_code` / `why_code`）：`split` = 再按那一列分开，`by_file` = 只按文件比较；单份响应和没有这种列的合画没有这个键。`column` 是用户数据里的列名：只做文本渲染 */
+  variant?: { kind: 'split'; column: string } | { kind: 'by_file' } | null
 }
 
 /** 懒模式（`render: "lazy"`）响应里说清这次用了什么：列角色与每个角色可换成的列 */
@@ -4581,6 +4587,8 @@ export interface AiDataLazyInfo {
   sheet?: string | null
   /** 文本表是实际用的物理行号，XLSX 为 null */
   header_row?: number | null
+  /** 合画：每份文件一项（后端合同 `sources`）：显示名 `label`（文件名去扩展名）与各自实际用的表头行 / 单位行 */
+  sources?: { path: string; sheet: string | null; label: string; header_row: number | null; units_row: boolean }[]
   /** 真 = 表头后紧跟的单位行（`header_row + 1` 那一行）不是数据、已被切掉；缺失按 false */
   units_row?: boolean
   roles?: AiDataRoles | null
@@ -4605,6 +4613,8 @@ export interface AiDataProposeBody {
   folder?: string
   table?: string
   sheet?: string
+  /** 合画一张：≥ 2 份表（每份文件是一组），与 `table` / `sheet` 二选一；其余字段同单份。几份列名不一致回 400 `tables_columns_differ`，份数超上限（最多 8 份）回 400 `tables_limit_exceeded` */
+  tables?: { path: string; sheet?: string }[]
   answers?: Record<string, unknown>
   header_rows?: Record<string, number>
   client_request_id?: string

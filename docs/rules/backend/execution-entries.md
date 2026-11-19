@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「两条执行入口：safe worker 与 native bridge（ADR 0014 / 0020）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_worker_roundtrip.py`、`tests/test_install_dir_bytecode_free.py`、`tests/bridge/test_bridge_namespace.py`、`tests/bridge/test_bridge_thread_model.py`、`tests/test_import_architecture.py`、`tests/test_foundation_first_open.py`、`tests/test_unreadable_import_skip.py`、`tests/test_foreign_abi_path.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_worker_roundtrip.py`、`tests/test_install_dir_bytecode_free.py`、`tests/bridge/test_bridge_namespace.py`、`tests/bridge/test_bridge_thread_model.py`、`tests/test_import_architecture.py`、`tests/test_foundation_first_open.py`、`tests/test_unreadable_import_skip.py`、`tests/test_foreign_abi_path.py`、`tests/test_gui_backend_neutralized.py`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
@@ -82,6 +82,9 @@ order: 180
   site-packages 小模块不写缓存）；`-B` 会经 `sys.flags` 传给用户脚本用 multiprocessing 起的子进程（它们不写字节码，
   结果不变）。内置 runtime 没有标记，`-B` 一路有效。看护同一文件的
   `test_project_code_imported_at_interpreter_startup_writes_no_bytecode`（项目里的 sitecustomize 当传感器、先证明它活着）。
+- **native 的函数入口只有一种来源**（ADR 0127 修订 2026-11-18）：库式模块（没有守卫、顶层不画图）由 `discover.native_entry_of` 判 `call`，
+  桌面 / MCP 的 native 启动带 `--entry`，`bridge_runner.run_script_entry` 跑完模块再调它；别的场合 native 仍是 `python fig.py` 原样。
+  够不到入口（`unreachable`）不起 native。终端 `tavotto run` 不带入口。看护 `tests/test_native_function_entry.py`。
 - **`bridge_runner` / `bridgeboot` 启动阶段不许 import matplotlib**，
   钩子挂在 `sys.meta_path` 的后置 import 回调上。
 - **native 侧不许起后台线程**：Figure 归主线程，`LiveFigureSession` 有线程
@@ -114,6 +117,20 @@ order: 180
   `POST /api/engine/folder-repair {token}`：只收令牌、要 `_page_authenticated()`、路径动手前 `validate_target` 对真实路径再验（每一条拒绝一个用例）、
   提权前 `scan_for_links` 不跟随地拒绝子孙里的重解析点 / 超限，一次 UAC 提权跑 `icacls <目录> /setowner *S-1-5-32-544 /T /C /L /Q` + `icacls <目录> /reset /T /C /L /Q`（argv 由 `build_commands` 唯一给出；不用 takeown，其确认值随语言变；提权脚本内先以备份语义（SeBackupPrivilege + `FILE_FLAG_BACKUP_SEMANTICS | OPEN_REPARSE_POINT`，`folderrepair._WALK_SOURCE`）遍历整棵树再动手：201 链接 / 203 超限 / 202 遍历失败；Windows 真机手动用例 `scripts/dev/verify_folder_repair_windows.ps1`）、事后复核仍读不了算失败。
   不放宽任何一条验证；加新的拒绝条件加在 `validate_target` 并配用例。 静态关卡：脚本会改 `sys.path`（`importscan` 的 `sys_path_modified`）时，表外无可信映射的未装模块不在运行前问包名，记入 `JointPlan.deferred_unverified` 先跑一次（`depplan.plan`）；延后不看目标环境静态索引读没读全（那只决定预填，ADR 0153 补记 2026-11-18）。看护 `tests/test_folder_repair.py`。
+
+## 中和写死的 GUI 后端（ADR 0195）
+
+**safe 与 native 同装一个包装，这是对 native「与 `python fig.py` 一致」的有意偏离**（维护者 2026-11-19 裁决）：Tavotto 永远不弹窗口，脚本写死 `matplotlib.use("TkAgg")` / `"Qt5Agg"` / `"MacOSX"`
+之类时，没有对应 GUI 库的环境只会 `missing_dependency`，换 Python 救不了。
+
+- **只对 GUI 后端**：判据唯一出处 `bridgeboot.GuiBackendNeutralizer.is_gui_backend`，以 matplotlib 自己的后端登记表（`backend_registry` INTERACTIVE / 旧版 `rcsetup.interactive_bk`）为准、大小写不敏感，判不出 = 不动。
+  Agg / pdf / svg / ps / cairo / `module://…` 原样尊重；用户先选了显式非交互后端（`use("pdf")`）再要 GUI 时不换掉它。
+- **唯一装配点** `bridgeboot.install_gui_backend_neutralizer()`：包 `matplotlib.use` 与 `pyplot.switch_backend`（pyplot 首次建图按 `rcParams["backend"]` 切后端也经它，故 `rcParams["backend"]` / `MPLBACKEND` / matplotlibrc 也被挡）。
+  `worker.py` 在 `matplotlib.use("Agg")` 之后、`figcapture.freeze_trusted_surface` 之前装 `patch_matplotlib`，pyplot 载入时（与 show 捕获同一时刻）装 `patch_pyplot`；`bridge_runner.py` 只在 `PostImportHook` 回调表里登记（`matplotlib` / `matplotlib.pyplot`），**不提前 import matplotlib**。别另写第二份。
+- **`matplotlib_patched` 不许被触发**：已基线的 `matplotlib` 模块里，包装必须先于基线冻结（safe 在冻结之前；native 基线首次存盘才拍，晚于 import 钩子）；pyplot 是首次见到的模块，`figcapture._module_origin_ok` 认引擎目录来源。基线之后才替换会被 `_changed_entries_are_library` 判成被 patch——别把装配挪到冻结之后。
+- **native 的 `plt.show()`** 本来就不调用真 show（进屏障 / `block=False` 立即返回），不进 GUI 主循环。
+- **留痕**：worker.log `[gui-backend] {"backend": "tkagg"}`（safe）+ 回执 `runtime.gui_backends_neutralized`（两条入口；native `--report` 同名字段）；只有登记表里的后端名，公开投影唯一出处 `receipt.project_gui_backends`。
+- 看护 `tests/test_gui_backend_neutralized.py`（模拟无 tkinter 的真子进程：safe / native 各七种写法、`MPLBACKEND`、非 GUI 对照、`save_moment` 仍 `restored`；变异：去掉装配，端到端必须红）。
 
 ## 跳过外来 ABI 的私有依赖文件夹（ADR 0154）
 

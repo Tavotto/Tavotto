@@ -94,3 +94,27 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
   description 写明：直接开始、工具缺失或引擎报错才调 health、不必先调 guide、期刊直接写名字、patches 发全量、什么必须回代码改、
   导出之后再关会话。**不许改回「开工前先调 health / guide」**；description 保持短，细节进技能 `references/`。
 
+
+## 改脚本之后同一会话自动重跑（ADR 0192 修订 2026-11-18）
+
+> 看护用例：`tests/test_mcp_rerun_on_script_change.py`
+
+- **问题**：MCP 会话的 worker 在 spawn 时把用户脚本读进内存；桌面版靠 mtime watcher 调 `engine_pool.invalidate`，
+  MCP 无头没有 watcher。agent 改完 `.py` 再调工具只会按旧代码重渲染，只好 close 再 open（评测 36 组里 84 次 close→open 紧挨着）。
+- **判据**：`Session.script_sha1` = 上一次成功渲染时跑的脚本内容 sha1（取 worker 的 `script_sha1`，即 spawn 那一刻读进内存的那份；
+  native 回退没有这个属性，渲染成功后用 `engine_pool.script_sha1` 现算）。与磁盘此刻的比，不同才算变（不看 mtime，没有假阳性）；
+  读不到 / 引擎没有 `script_sha1` 时不比、不重跑。**只读，不运行脚本**（`tavotto_refresh_project` 仍按 ADR 0025 不跑用户脚本，
+  只在回包 `stale_sessions` 里列出脚本已变的活会话）。
+- **动作**（`bridge._sync_script_render`）：作废这条会话**这一份运行配置**的旧 worker——`invalidate(script, project, run=session.run,
+  only_run=True, force=True, write_roots=<与 _spawn_worker 同一份绊线根>)`（绊线根是池键的一段，不带就对不上键；`force` 同步确认式退役，
+  免得紧接着的取 worker 复用旧的；native 会话改为 `_end_native`）→ 按会话现有 patches 重渲染，用不了的 patch（gid 没了、属性不支持）
+  经 `_render_applicable` 剔掉并逐条记进 `dropped`（与草稿带回 `_render_draft` 共用一份）→ `_persist`。回包 `script_rerun =
+  {"reason": "script_changed", "patches": 保留条数, "dropped": [...]}`；没变时**不出现**这个字段。
+- **合同 / 验收**：有 dropped → 合同与 `normalized` 一并作废（与草稿带回同口径，丢过就不再对得上）；没丢 → 合同照旧，`normalized.stale = True`
+  （验的是旧脚本的产物，导出时如实说）。
+- **新脚本报错**：照常抛 `BridgeError`（带 code，`next` 的 `edit_script` 照常生效），会话与 patches 原样保留；`script_sha1` 不更新，
+  脚本改好后下一次调用再重跑。
+- **调用点**：`open_figure` 的复用分支、`@_synced` 装饰的 `apply_overrides` / `session_state` / `run_preflight` / `export` /
+  `normalize_figure` / `fix_to_journal` / `verify_replay`（`make_journal_ready` 由 server 组合 open + fix_to_journal，已覆盖）。
+  **`close_session` 不重跑。** 结果文字：open 第一行换成「脚本改过，已按新脚本重跑同一个会话 …」，其它工具在文字第一行加同样意思的短句。
+- **不许**：为这件事在 MCP 里加 watcher / 后台线程；在 `tavotto_refresh_project` 里顺手重渲染会话；把 `script_rerun` 当成错误。

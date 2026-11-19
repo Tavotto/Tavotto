@@ -20,6 +20,7 @@ import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { emptyProject, type ShapeObject } from '@/types/document'
 import { startMoveDrag } from './interactions'
+import { expandGroups, groupMates } from '@/store/actions'
 
 /** 方向键微调一段：⇧→ 一下（5 mm）然后收尾 */
 function nudgeRight5() {
@@ -173,5 +174,34 @@ describe('组内含锁定成员 → 整组不可移动', () => {
     expect(byId('c').x).toBe(40)
     expect(byId('d').x).toBe(60)
     expect(status()).toContain('已跳过 1 个组')
+  })
+})
+
+describe('组里夹着更新的构建写进来的对象（#2037）', () => {
+  /** 本构建不认识的类型：原样留在文档里，不能选中、不能移动 */
+  function addFutureMember(gid: string, id: string, x: number) {
+    useDocumentStore.getState().commit(literal('加未知对象'), (d) => {
+      d.objects.push({ ...rect(id, x, { groupId: gid }), type: 'futureThing' } as unknown as ShapeObject)
+    })
+  }
+
+  it('点中 / 框选补齐整组都不把它带进选区', () => {
+    makeGroup('g1', [{ id: 'a', x: 0 }, { id: 'b', x: 20 }])
+    addFutureMember('g1', 'u', 40)
+
+    expect(groupMates('a')).toEqual(['a', 'b'])
+    expect(expandGroups(['a'])).toEqual(['a', 'b'])
+  })
+
+  it('拖动整组时它原地不动，认识的成员照常走', () => {
+    makeGroup('g1', [{ id: 'a', x: 0 }, { id: 'b', x: 20 }])
+    addFutureMember('g1', 'u', 40)
+    useSelectionStore.getState().set(groupMates('a'))
+
+    drag('a', 30)
+
+    expect(byId('a').x).toBe(30)
+    expect(byId('b').x).toBe(50)
+    expect(byId('u').x).toBe(40)
   })
 })

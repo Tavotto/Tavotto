@@ -337,7 +337,8 @@ a = Analysis(
         *MCP_SERVER_MODULES,
     ],
     hookspath=[],
-    runtime_hooks=[],
+    # 第一个执行（自定义钩子先于 PyInstaller 自带的）：Windows 上未处理的异常不弹英文报错框，写日志后直接退出（TVD-MHQJ）
+    runtime_hooks=[str(ROOT / "packaging" / "rthooks" / "pyi_rth_tavotto_no_crash_dialog.py")],
     # 科学栈刻意排除（见文件头说明 2）：主进程不需要，打包机上装了也不要进包。
     # 内置 runtime 里的那一套在 Analysis 之后以 DATA 加入，与这里互不影响。**PIL 不在这张表上**（U10 起）：
     # Pillow 是 RenderCore 的直接依赖（rasterio 解码位图素材、pikepdf 的硬依赖，ADR 0066），

@@ -72,6 +72,9 @@ __all__ = [
     "UnreadableImportSkipper",
     "install_unreadable_import_skipper",
     "skip_events",
+    "GuiBackendNeutralizer",
+    "install_gui_backend_neutralizer",
+    "gui_backend_events",
     "unreadable_folder_fact",
     "unreadable_folder_facts",
     "IgnoredImportPaths",
@@ -552,6 +555,149 @@ def install_unreadable_import_skipper(on_skip=None) -> UnreadableImportSkipper:
 def skip_events() -> list[dict]:
     """此刻为止的跳过记录（没装 / 没发生都是空表）。"""
     return list(_SKIPPER.events) if _SKIPPER is not None else []
+
+
+class GuiBackendNeutralizer:
+    """脚本写死「交互（GUI）后端」时不切换，保持非交互后端（ADR 0195，维护者 2026-11-19 裁决）。
+
+    Tavotto 永远不弹窗口：`matplotlib.use("TkAgg")` / `"Qt5Agg"` / `"MacOSX"` 之类在没有对应 GUI 库的环境里只会以
+    `missing_dependency` 失败，有的环境里还会进 GUI 主循环。**只对 GUI 后端**这样做（与 ADR 0153 同类的有意偏离，
+    native 「与 `python fig.py` 一致」的契约在此一点上让位）；Agg / pdf / svg / ps / cairo / `module://…` 等
+    非交互或判不出的后端名原样交给 matplotlib。
+
+    * **判据只有一处** `is_gui_backend`：以 matplotlib 自己的后端登记表（3.9+ `backend_registry` 的 INTERACTIVE 过滤，
+      旧版 `rcsetup.interactive_bk`）为准，大小写不敏感；登记表读不到 / 为空 = 判不出 = 不动。
+    * **两处入口**：`matplotlib.use`（`patch_matplotlib`）与 `pyplot.switch_backend`（`patch_pyplot`；pyplot 首次建图时
+      自己也经它按 `rcParams["backend"]` 切后端，所以 `rcParams["backend"] = GUI`、`MPLBACKEND=GUI`、matplotlibrc 里写
+      GUI 后端也一并被它挡住）。safe worker 装在 `import matplotlib` 之后、可信方法面基线冻结之前；native 经
+      `PostImportHook` 在用户 import 到的那一刻装——**自己不 import matplotlib**。
+    * **只在需要时动手**：当前后端若已是显式的非交互名（用户先 `use("pdf")`）就什么都不切；否则（safe 的 Agg、native
+      未定的 auto、或已经是 GUI 名）切到 `agg`。
+    * **留痕**：`events` 只含后端名（落在 GUI 登记表这个闭集里，不含路径），随回执 `runtime.gui_backends_neutralized`。
+    * 包装函数定义在引擎目录里：`figcapture` 的方法面指纹对已基线的模块要求包装先于基线冻结，对首次才见到的模块
+      认引擎目录来源（见 `figcapture._module_origin_ok`）——所以不会被判成「脚本 patch 了 matplotlib」。
+    """
+
+    MARK = "_tavotto_gui_backend_neutralizer"
+
+    def __init__(self, on_event=None):
+        self._on_event = on_event
+        self._gui = (
+            None  # frozenset | None：首次用到时才问 matplotlib（不在装钩子时 import 任何东西）
+        )
+        self.events: list[str] = []
+
+    # ---- 判据（唯一出处） ----
+    def _gui_names(self) -> frozenset:
+        if self._gui is None:
+            names: set = set()
+            try:
+                from matplotlib.backends import BackendFilter, backend_registry  # noqa: PLC0415
+
+                names = {
+                    str(n).lower() for n in backend_registry.list_builtin(BackendFilter.INTERACTIVE)
+                }
+            except Exception:  # noqa: BLE001 —— 旧版 matplotlib：回到 rcsetup 的老清单
+                try:
+                    from matplotlib import rcsetup  # noqa: PLC0415
+
+                    names = {str(n).lower() for n in rcsetup.interactive_bk}
+                except Exception:  # noqa: BLE001
+                    names = set()
+            self._gui = frozenset(names)
+        return self._gui
+
+    def is_gui_backend(self, name) -> bool:
+        """`name` 是不是 matplotlib 登记的交互后端名（判不出一律 False）。"""
+        return isinstance(name, str) and name.lower() in self._gui_names()
+
+    def _current_raw(self, mpl):
+        """rcParams 里**还没解析**的后端设置：显式名（str）或 None（auto / 读不到）。不触发后端解析。"""
+        try:
+            rc = mpl.rcParams
+            raw = rc._get_backend_or_none()
+        except Exception:  # noqa: BLE001
+            try:
+                raw = dict.__getitem__(mpl.rcParams, "backend")
+            except Exception:  # noqa: BLE001
+                return None
+        return raw if isinstance(raw, str) else None
+
+    def _note(self, name: str) -> None:
+        key = name.lower()
+        if key not in self.events:
+            self.events.append(key)
+        if self._on_event is not None:
+            try:
+                self._on_event({"backend": key})
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _neutralize(self, mpl, name: str, real) -> bool:
+        """脚本要 GUI 后端：记一笔；当前不是显式非交互名就切 `agg`。返回 True = 已处理（调用方不再转给原函数）。"""
+        self._note(name)
+        cur = self._current_raw(mpl)
+        if cur is not None and not self.is_gui_backend(cur):
+            return True
+        try:
+            real("agg")
+        except Exception:  # noqa: BLE001 —— 切 agg 失败也不让 GUI 名漏过去
+            pass
+        return True
+
+    # ---- 装配 ----
+    def patch_matplotlib(self, mpl) -> None:
+        real = getattr(mpl, "use", None)
+        if real is None or getattr(real, self.MARK, False):
+            return
+        this = self
+
+        def use(backend, *args, **kwargs):
+            if this.is_gui_backend(backend):
+                this._neutralize(mpl, backend, real)
+                return None
+            return real(backend, *args, **kwargs)
+
+        setattr(use, self.MARK, True)
+        use.__name__ = getattr(real, "__name__", "use")
+        use.__doc__ = getattr(real, "__doc__", None)
+        mpl.use = use
+
+    def patch_pyplot(self, plt) -> None:
+        real = getattr(plt, "switch_backend", None)
+        if real is None or getattr(real, self.MARK, False):
+            return
+        this = self
+        mpl = sys.modules.get("matplotlib")
+        if mpl is None:
+            return
+
+        def switch_backend(newbackend, *args, **kwargs):
+            if this.is_gui_backend(newbackend):
+                this._neutralize(mpl, newbackend, real)
+                return None
+            return real(newbackend, *args, **kwargs)
+
+        setattr(switch_backend, self.MARK, True)
+        switch_backend.__name__ = getattr(real, "__name__", "switch_backend")
+        switch_backend.__doc__ = getattr(real, "__doc__", None)
+        plt.switch_backend = switch_backend
+
+
+_GUI_NEUTRALIZER: GuiBackendNeutralizer | None = None
+
+
+def install_gui_backend_neutralizer(on_event=None) -> GuiBackendNeutralizer:
+    """safe worker 与 native bridge 的**同一个**装配点（ADR 0195）。重复调用回同一个实例；**不 import matplotlib**。"""
+    global _GUI_NEUTRALIZER
+    if _GUI_NEUTRALIZER is None:
+        _GUI_NEUTRALIZER = GuiBackendNeutralizer(on_event)
+    return _GUI_NEUTRALIZER
+
+
+def gui_backend_events() -> list[str]:
+    """此刻为止被中和的 GUI 后端名（没装 / 没发生都是空表）。"""
+    return list(_GUI_NEUTRALIZER.events) if _GUI_NEUTRALIZER is not None else []
 
 
 def _top_module(rel: str) -> str:

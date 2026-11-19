@@ -40,6 +40,7 @@ from matplotlib.markers import MarkerStyle
 from matplotlib.offsetbox import AnchoredOffsetbox, AnnotationBbox, OffsetBox, TextArea
 from matplotlib.patches import ConnectionPatch, FancyArrowPatch, Patch
 from matplotlib.path import Path
+from matplotlib.table import Table
 from matplotlib.text import Text
 from matplotlib.textpath import text_to_path
 from matplotlib.transforms import Bbox, IdentityTransform
@@ -331,10 +332,12 @@ def _register_figure_level(state: FigState, owner, prefix: str, counts: dict[str
         elif isinstance(art, Line2D):
             register_line(gid, art)
         elif isinstance(art, Collection):
+            # 图上的集合位置都是排版（没有 transData）：与图级的形状、线一样可拖
+            drag = _layout_anchored_artist(art)
             if is_linecoll_family(art):
-                _register(state, gid, art, "linecoll", f"线组 {nth('linecoll')}")
+                _register(state, gid, art, "linecoll", f"线组 {nth('linecoll')}", draggable=drag)
             else:
-                _register(state, gid, art, "collection", _coll_label(art, j))
+                _register(state, gid, art, "collection", _coll_label(art, j), draggable=drag)
         elif isinstance(art, (AxesImage, FigureImage)):
             _register(state, gid, art, "image", f"图像 {nth('image')}")
         else:
@@ -365,22 +368,49 @@ def _depends_on(t, node) -> bool:
     return False
 
 
+def _layout_anchored_transform(t, fig, ax=None) -> bool:
+    """这条 transform 落的是不是排版坐标：不经过 `ax.transData`（有 ax 时），并且挂在认得的排版
+    坐标系上（子图框 / 子图幅 / 图幅 / 英寸）。没登记依赖的自定义 transform 判不出来，按数据处理。"""
+    if ax is not None and _depends_on(t, ax.transData):
+        return False
+    roots = [] if ax is None else [ax.transAxes]
+    if fig is not None:
+        roots.append(fig.transSubfigure)
+        root = pathgeom.root_figure(fig)
+        roots.extend((root.transFigure, root.dpi_scale_trans))
+    return any(_depends_on(t, r) for r in roots)
+
+
 def _layout_anchored_line(ln, ax) -> bool:
     """子图里这条线的位置是不是排版而不是数据（ADR 0100 修订 2026-11-18）。
 
     两条都要成立：x、y 都不经过 `transData`（`axhline` 一边是数据、`transData + 平移`
     整条是数据，都不算）；并且落在认得的排版坐标系上（子图框 / 图幅 / 英寸）——
     没登记依赖关系的自定义 transform 判不出来，按数据处理、不宣称可拖。"""
-    t = ln.get_transform()
-    if _depends_on(t, ax.transData):
+    return _layout_anchored_transform(ln.get_transform(), ax.get_figure(), ax)
+
+
+def _layout_anchored_artist(a, ax=None) -> bool:
+    """集合 / 位图的位置是不是排版（同一修订）。落位用的那条 transform 判排版坐标：散点是 offset
+    transform（路径 transform 只是 marker 的像素尺，但也不许经过数据），线组 / 图形集合 / 位图是
+    artist 自己的 transform；还要量得出位置（`pathgeom.layout_extent`，与拖动同一把尺）。
+
+    等值线（`ContourSet`）不拖：它的 `clabel` 文字是另外的元素，不会跟着走。"""
+    if isinstance(a, ContourSet):
         return False
-    fig = ax.get_figure()
-    roots = [ax.transAxes]
-    if fig is not None:
-        roots.append(fig.transSubfigure)
-        root = pathgeom.root_figure(fig)
-        roots.extend((root.transFigure, root.dpi_scale_trans))
-    return any(_depends_on(t, r) for r in roots)
+    fig = a.get_figure()
+    tr = a.get_transform()
+    if isinstance(a, Collection) and pathgeom.collection_uses_offsets(a):
+        if ax is not None and _depends_on(tr, ax.transData):
+            return False
+        pos = a.get_offset_transform()
+    elif isinstance(a, (Collection, AxesImage, Table)):
+        pos = tr
+    else:
+        return False
+    if not _layout_anchored_transform(pos, fig, ax):
+        return False
+    return pathgeom.layout_extent(a) is not None
 
 
 def _snippet(text: str, n: int = 18) -> str:
@@ -427,6 +457,19 @@ def _svg_group(art) -> None:
 
     art.draw = draw
     art._mm_svg_group = True  # noqa: SLF001
+
+
+def _own_svg_image(im) -> None:
+    """可拖的位图（贴在子图框里的图片）在预览 SVG 里要有自己的 `<g id=gid>`：拖动时前端平移的是它。
+
+    两件事：`_svg_group` 包一层 draw（matplotlib 的 SVG 后端不给 `<image>` 写 gid）；
+    不参与合成——矢量后端把同一子图里相邻的位图合成一张、根本不调各自的 draw（底图也是位图时，
+    比如地图上贴照片，就是这样），组包了也开不出来。不合成时每张照原样各画各的，画面相同；
+    矢量文件里是两张图而不是合成的一张。Agg（PNG）本来就不合成。"""
+    _svg_group(im)
+    if not im.__dict__.get("_mm_no_composite"):
+        im.can_composite = lambda: False
+        im._mm_no_composite = True  # noqa: SLF001
 
 
 def _register(
@@ -1024,7 +1067,12 @@ def instrument(state: FigState) -> None:
             )
         if not is3d:
             for j, im in enumerate(ax.images):
-                _register(state, f"axes_{i}.images_{j}", im, "image", f"图像 {j + 1}")
+                im_drag = ax not in cbar_of_ax and _layout_anchored_artist(im, ax)
+                if im_drag:
+                    _own_svg_image(im)
+                _register(
+                    state, f"axes_{i}.images_{j}", im, "image", f"图像 {j + 1}", draggable=im_drag
+                )
         # Collection family：三条 gid 分支的**唯一理由是向后兼容**——
         # `axes_i.scatter_j` 与 `axes_i.fill_j` 是已经发出去的名字，历史
         # 文档里有针对它们的 override，不能换。序号 j 是 `ax.collections`
@@ -1044,6 +1092,8 @@ def instrument(state: FigState) -> None:
             # 叫什么」，两边分开写会让历史 override 悄悄变成孤儿。
             prefix = _collection_gid_prefix(coll)
             gid = f"axes_{i}.{prefix}_{j}"
+            # 位置不是数据的集合（`transform=ax.transAxes` 手画的图例点、线组）是排版，可拖
+            coll_drag = not is3d and _layout_anchored_artist(coll, ax)
             if prefix == "scatter":
                 lab = str(coll.get_label())
                 if not lab or lab.startswith("_"):
@@ -1053,9 +1103,9 @@ def instrument(state: FigState) -> None:
                     if lab and not lab.startswith("_")
                     else f"散点系列 {j + 1}"
                 )
-                _register(state, gid, coll, "scatter", nice)
+                _register(state, gid, coll, "scatter", nice, draggable=coll_drag)
             elif prefix == "fill":
-                _register(state, gid, coll, "fill", _coll_label(coll, j))
+                _register(state, gid, coll, "fill", _coll_label(coll, j), draggable=coll_drag)
             elif prefix == "linecoll":
                 # 线组：`hlines`/`vlines` 的参考线、`stem` 的竖线、
                 # `eventplot` 的事件线（EventCollection 是它的子类）、
@@ -1081,9 +1131,9 @@ def instrument(state: FigState) -> None:
                     if lab and not lab.startswith("_")
                     else f"线组 {j + 1}"
                 )
-                _register(state, gid, coll, "linecoll", nice)
+                _register(state, gid, coll, "linecoll", nice, draggable=coll_drag)
             else:
-                _register(state, gid, coll, "collection", _coll_label(coll, j))
+                _register(state, gid, coll, "collection", _coll_label(coll, j), draggable=coll_drag)
         if not is3d:
             # 脚本直接 add_patch 的独立箭头（XPS 峰位标注这类画法）与独立形状。
             # 形状按 **Patch family** 认，不逐个列类名：`ax.fill()` 的 Polygon、
@@ -1146,7 +1196,15 @@ def instrument(state: FigState) -> None:
             )
             _register_offsetbox_texts(state, f"axes_{i}.artists_{j}", art)
         for j, tbl in enumerate(getattr(ax, "tables", []) or []):
-            _register(state, f"axes_{i}.tables_{j}", tbl, "artist", f"表格 {j + 1}")
+            # 表格画在子图框坐标里（`loc` / `bbox`），位置是排版：与位图同一条判据，可拖
+            _register(
+                state,
+                f"axes_{i}.tables_{j}",
+                tbl,
+                "artist",
+                f"表格 {j + 1}",
+                draggable=not is3d and _layout_anchored_artist(tbl, ax),
+            )
         leg = ax.get_legend()
         if leg is not None:
             _register_legend(state, f"axes_{i}.legend", leg)
@@ -5180,6 +5238,11 @@ def _collection_datalim(artist):
                 return None
             own = artist.get_transform()
             bb = own.transform_bbox(artist.get_datalim(own))
+        elif _layout_anchored_artist(artist, ax):
+            # 子图里位置不是数据的集合（transAxes 手画的图例点、线组）：`get_datalim(transData)`
+            # 是空框，从前退回 tightbbox = 整块子图，点子图里任何地方都选中它。量它自己的落位，
+            # 与拖动同一把尺；散点再算上 marker 的大小（单点散点不至于零面积）
+            bb = pathgeom.layout_ink_extent(artist)
         else:
             bb = ax.transData.transform_bbox(artist.get_datalim(ax.transData))
     except Exception:  # noqa: BLE001
@@ -6081,7 +6144,9 @@ def _measure_manifest(
                     **({"peers": peers} if peers else {}),
                     **({"expected": expected} if expected else {}),
                 }
-        elif el["role"] == "image" or _is_area_field(artist):
+        elif not el["draggable"] and (el["role"] == "image" or _is_area_field(artist)):
+            # 可拖的位图 / 集合（位置不是数据，不铺满宿主）：几何编辑归它自己，不代理回子图——
+            # 前端 `inFigureMoveOf` 先看 `resizable`，代理着的话拖它会拖走整个子图
             # imshow 位图铺满宿主 axes，会在命中测试里盖住它——把几何编辑
             # 代理回宿主 axes（前端对 geom_gid 发 position override）。
             # **面状的色图集合同理**（2026-09-24，用户的 PRB 三联图 (b)(c)：
@@ -6468,6 +6533,11 @@ def _measure_manifest(
                 elif isinstance(artist, Line2D):
                     # 图级的线与子图里位置不是数据的线：包围盒左下角，与 `overrides._place_line` 同一把尺
                     bb = artist.get_window_extent()
+                    dx, dy = bb.x0, bb.y0
+                    drag_prop = "pos_frac"
+                elif isinstance(artist, (Collection, AxesImage, Table)):
+                    # 位置不是数据的集合 / 位图 / 表格：与 `overrides._place_translated` 同一把尺
+                    bb = pathgeom.layout_extent(artist)
                     dx, dy = bb.x0, bb.y0
                     drag_prop = "pos_frac"
                 elif isinstance(artist, Patch):

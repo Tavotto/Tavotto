@@ -107,6 +107,7 @@ python3 scripts/prefs.py --json
 库里没有才手写 `journal`（见 `references/publication-style.md`「按期刊」）。
 改到合规：`tavotto_make_journal_ready` 一步导出，分步 `tavotto_fix_to_journal`（`column_choice_required` 问栏位，`fix.kind=manual` 改脚本）。
 这些工具不会动用户的 .py 源码；数据、坐标范围、加删曲线 / 子图、colorbar 方向只能回代码改。
+**改完 .py 不用关会话**：下一次调用（open / preflight / export…）会按新脚本重跑同一个会话并保留修改（回包 `script_rerun`），不要 close 再 open。
 
 ## 交接给 Tavotto 桌面窗口
 

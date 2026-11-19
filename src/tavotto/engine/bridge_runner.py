@@ -495,6 +495,40 @@ def run_script(target: str, argv: list, on_start=None) -> None:
     exec(code, main_mod.__dict__)
 
 
+def run_script_entry(target: str, argv: list, entry: str, on_start=None) -> None:
+    """库式模块的函数入口（ADR 0127 修订 2026-11-18，TVD-YB4Q）：整份模块执行完再调零参函数 `entry`。
+
+    只在 `discover.native_entry_of` 判 `call` 时由父进程经 `--entry` 要：脚本没有 `if __name__` 守卫、顶层代码也不画图，
+    `python fig.py` 跑完什么都不会发生，而 safe worker 调的正是 `getattr(module, entry)()`。装载口径与 safe worker 的
+    函数入口一致：模块名是文件名主干（`__name__ != "__main__"`）、登记进 `sys.modules`、绝对 `__file__`、
+    `sys.path[0]` = 脚本目录；argv 与 `run_script` 相同。编译同样 `dont_inherit=True`（理由见 `run_script`）。
+    """
+    abspath = os.path.abspath(target)
+    sys.argv = [target, *argv]
+    sys.path.insert(0, os.path.dirname(abspath))
+    with io.open_code(abspath) as f:
+        source = f.read()
+    code = compile(source, abspath, "exec", dont_inherit=True)
+    name = os.path.splitext(os.path.basename(abspath))[0]
+    mod = types.ModuleType(name)
+    mod.__file__ = abspath
+    mod.__builtins__ = builtins
+    mod.__package__ = ""
+    mod.__spec__ = None
+    mod.__loader__ = None
+    mod.__cached__ = None
+    mod.__doc__ = None
+    sys.modules[name] = mod
+    if on_start is not None:
+        on_start(abspath)
+    exec(code, mod.__dict__)
+    fn = mod.__dict__.get(entry)
+    if not callable(fn):
+        # 父进程按静态判据才会要这个入口；运行期又没有了（脚本在判定之后被改写）：如实失败，不静默「没有图」
+        raise RuntimeError(f"脚本里没有入口函数 {entry}（脚本可能被改写过）")
+    fn()
+
+
 def resolve_module_origin(target: str) -> str:
     """`python -m <target>` 真正会执行的那个文件（runpy 的解析口径）。
 
@@ -1103,7 +1137,9 @@ class BridgeRun:
         )
         # 与 safe worker 同一份自报（ADR 0053）：native 的 prefix / cwd 正是
         # 「用户自己的解释器、用户自己的 cwd」这两条承诺的可核对证据。
-        out["runtime"] = _PKG.figsession.runtime_report(import_skips=bridgeboot.skip_events())
+        out["runtime"] = _PKG.figsession.runtime_report(
+            import_skips=bridgeboot.skip_events(), gui_backends=bridgeboot.gui_backend_events()
+        )
         if self.inputs_report is not None:
             # 桌面拥有的运行在脚本结束后的屏障上才有（#1047）：父进程据此给 native 成功记录补上 helper / 数据依据。
             # 不放进 `runtime`：那一段进回执身份，同一会话前后两次 build 不该因为「跑没跑完」换身份
@@ -1421,6 +1457,8 @@ def _parse_args(argv: list):
     ap.add_argument("--ignore-paths", default=None)
     # ADR 0162：图名别名表（JSON `[[原图名, 登记图名], …]`）；没有别名时不出现
     ap.add_argument("--stem-aliases", default=None)
+    # ADR 0127 修订 2026-11-18：库式模块的函数入口（只有脚本目标、桌面拥有的启动才会带）；没有时整份模块照原样跑
+    ap.add_argument("--entry", default=None)
     if "--" in argv:
         cut = argv.index("--")
         mine, user_argv = argv[:cut], argv[cut + 1 :]
@@ -1445,7 +1483,9 @@ def _derive_target_facts(args) -> None:
         args.source_path = ""
         stem = args.target.rpartition(".")[2] or args.target
     _SCRIPT_STEM[0] = stem
-    args.entry = "__main__"
+    args.call_entry = args.entry if args.target_kind == "script" else None
+    # 描述符 / 指纹里的 entry：与 safe 调同一个函数入口时就写那个函数名（同一张图同一份身份口径）
+    args.entry = args.call_entry or "__main__"
     root = args.project_root or os.getcwd()
     try:
         rel = os.path.relpath(args.source_path or os.path.join(root, stem + ".py"), root)
@@ -1561,9 +1601,16 @@ def main(argv: list | None = None) -> int:
     _derive_target_facts(args)
     run = BridgeRun(args)
 
+    # 脚本写死 GUI 后端时不切换（ADR 0195）：与 safe worker 同一个装配点；这里只登记回调，等用户 import 到的那一刻才装，
+    # 自己不 import matplotlib（`matplotlib.use` 在 `matplotlib` 载入完成时包，pyplot 的 `switch_backend` 在 pyplot 载入时包）
+    gui_backends = bridgeboot.install_gui_backend_neutralizer()
     callbacks = {
+        "matplotlib": gui_backends.patch_matplotlib,
         "matplotlib.figure": _install_savefig_hook,
-        "matplotlib.pyplot": lambda plt: _install_show_hook(plt, run.barrier),
+        "matplotlib.pyplot": lambda plt: (
+            gui_backends.patch_pyplot(plt),
+            _install_show_hook(plt, run.barrier),
+        ),
     }
     if args.observe_inputs and args.project_root:
         # 输入观察装在用户代码之前；numpy 那条通道等用户 import numpy 时补（观察器自己不 import 任何东西）
@@ -1582,7 +1629,11 @@ def main(argv: list | None = None) -> int:
 
     exit_code = 0
     try:
-        if args.target_kind == "script":
+        if args.target_kind == "script" and args.call_entry:
+            run_script_entry(
+                args.target, args.user_argv, args.call_entry, on_start=run.execution_started
+            )
+        elif args.target_kind == "script":
             run_script(args.target, args.user_argv, on_start=run.execution_started)
         else:
             run_module(
@@ -1751,6 +1802,8 @@ def _write_report(run, args, exit_code: int) -> None:
             if n in sys.modules
         },
         "matplotlib_backend": _backend_name(),
+        # 脚本想用、被中和成非交互后端的 GUI 后端名（ADR 0195；与回执 `runtime.gui_backends_neutralized` 同一份，只有名字）
+        "gui_backends_neutralized": bridgeboot.gui_backend_events(),
         "tavotto_importable": _tavotto_importable(),
         # `--observe-inputs` 时脚本结束那一刻定格的输入观察（与 build 响应的 `observed_inputs` 同一份，#1047）
         "observed_inputs": run.inputs_report,

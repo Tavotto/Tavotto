@@ -29,6 +29,7 @@ EXTRA_LISTABLE = {"font_family": ("example", "typical"), "font_size": ("example"
 #: (subject, relation, unit) → (v1 规则路径, v1 qualifier)。方向相符才折叠（同 `QUALIFIER_DIRECTION`）。
 FOLDABLE: dict[tuple[str, str, str | None], tuple[str, str]] = {
     ("raster_dpi", "gte", "dpi"): ("min_raster_dpi", "min"),
+    ("min_line_width", "gte", "pt"): ("min_line_width_pt", "min"),
     ("font_family", "in", None): ("font_family.latin_accepted", "exact"),
 }
 

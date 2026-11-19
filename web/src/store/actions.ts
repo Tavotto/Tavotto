@@ -2793,12 +2793,15 @@ export function startLayoutAutoReflow(): () => void {
 /*  成组                                                                       */
 /* ========================================================================== */
 
-/** 该对象所在组的全部成员 id（无组则只有它自己），保持文档顺序 */
+/**
+ * 该对象所在组的全部成员 id（无组则只有它自己），保持文档顺序。
+ * 不含更新的构建写进来的组员（`isKnownObject`）：点中组里认识的成员不会把它们带进选区。
+ */
 export function groupMates(id: string): string[] {
   const objs = doc().objects
   const self = objs.find((o) => o.id === id)
   if (!self?.groupId) return self ? [id] : []
-  return objs.filter((o) => o.groupId === self.groupId).map((o) => o.id)
+  return objs.filter((o) => o.groupId === self.groupId && (o.id === id || isKnownObject(o))).map((o) => o.id)
 }
 
 /**
@@ -2839,7 +2842,10 @@ export function warnBlockedGroups(blockedGroups: number, movedAny: boolean) {
   )
 }
 
-/** 选区补齐成整组：点中组里任意一个 = 选中整组 */
+/**
+ * 选区补齐成整组：点中组里任意一个 = 选中整组。
+ * 更新的构建写进来的组员（`isKnownObject`）不补进来：它们不能选中、不能移动，原样留在文档里（与图层树选组一致）。
+ */
 export function expandGroups(ids: string[]): string[] {
   const objs = doc().objects
   const gids = new Set(
@@ -2848,7 +2854,7 @@ export function expandGroups(ids: string[]): string[] {
   if (!gids.size) return ids
   const out = [...ids]
   for (const o of objs) {
-    if (o.groupId && gids.has(o.groupId) && !out.includes(o.id)) out.push(o.id)
+    if (o.groupId && gids.has(o.groupId) && isKnownObject(o) && !out.includes(o.id)) out.push(o.id)
   }
   return out
 }

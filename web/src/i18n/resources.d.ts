@@ -58,6 +58,22 @@ export default interface Resources {
       "unconfirmedHint": "上一次的结果还没确认，请先在对话里查询结果。"
     },
     "dataFigureV2": {
+      "batch": {
+        "done": "已完成",
+        "draw": "分别作图",
+        "failed": "失败",
+        "groupTitle": "{{count}} 个文件",
+        "idle": "未选择",
+        "merge": "合并作图",
+        "partial": "已完成 {{done}} 张，{{failed}} 张失败",
+        "pick": "多选",
+        "progress": "作图中 {{done}}/{{total}}",
+        "queued": "排队中",
+        "retry": "重试",
+        "selected": "已选 {{count}} 个",
+        "showDone": "查看素材",
+        "stop": "停止"
+      },
       "candidate": {
         "bar_error": {
           "title": "柱 + 误差线",
@@ -215,6 +231,10 @@ export default interface Resources {
         "unknown": "图画好了，数据核对没能完成。",
         "unverifiable": "图画好了，但这类图没法逐项核对数据。",
         "verified": "图画好了，数据和文件逐项对上。"
+      },
+      "variant": {
+        "by_file": "只按文件比较",
+        "split": "按「{{column}}」再分开"
       },
       "working": {
         "drawing": "正在画…",
@@ -1169,6 +1189,7 @@ export default interface Resources {
         "line_widths_pt": "线宽",
         "max_font_size_pt": "最大字号",
         "min_effective_font_size_pt": "最小字号",
+        "min_line_width_pt": "最小线宽",
         "min_raster_dpi": "位图分辨率",
         "min_script_font_size_pt": "上下标最小字号",
         "page_columns": "栏宽",
@@ -3886,6 +3907,9 @@ export default interface Resources {
       "svg_source_unsupported": "{{id}} 的当前来源无法安全转换为 SVG。请改用 PDF 格式导出。",
       "sync_different_scripts": "两张图不属于同一个脚本，无法同步",
       "table_not_found": "这张表不在所选文件夹里。",
+      "tables_columns_differ": "列名不一致，无法合并作图。",
+      "tables_labels_collide": "这几个文件的名字分不开，没法合并作图。",
+      "tables_limit_exceeded": "一次最多合并 {{max}} 个文件。",
       "taf_disabled": "这个实验功能还没有开启。",
       "tex_command_missing": "这张图用了 LaTeX 排版（text.usetex），但当前渲染环境的 PATH 上找不到 {{command}}。这是系统里的 TeX 工具，不是 Python 包；装好 TeX 发行版后，如果刚装完，请重启 Tavotto 让它拿到新的 PATH，再重试。",
       "tex_compile_failed": "LaTeX 编译这张图里的文字时出错：{{line}}。这是 TeX 自己报的错，请检查文字或导言区（text.latex.preamble）。",
@@ -4398,6 +4422,7 @@ export default interface Resources {
       "legendFrame": "图例带边框，规范要求图例无框",
       "legendOverData": "图例压住了数据（{{count}} 项：{{targets}}）",
       "legendOverDataRisk": "图例可能压住数据——只有包围盒相交，量不到几何（{{count}} 项：{{targets}}）",
+      "lineWidthBelowMin": "数据线的有效线宽 {{effective}} pt，要求至少 {{min}} pt。",
       "lineWidthOffPreset": "线宽的有效值 {{effective}} pt 不在规范档位 {{presets}} pt 上。",
       "missingAsset": "图引用的素材文件不在当前图库中，导出会失败或出空白。",
       "outOfPage": "对象超出页面范围，超出部分不会出现在成图里",
@@ -4576,6 +4601,7 @@ export default interface Resources {
         "legend-font-size": "图例字号超出区间",
         "legend-frame": "图例带边框",
         "legend-over-data": "图例压住数据",
+        "line-width-below-min": "数据线太细",
         "line-width-off-preset": "线宽不在规范档位上",
         "missing-asset": "素材文件缺失",
         "out-of-page": "超出页面范围",
@@ -6781,6 +6807,7 @@ export default interface Resources {
           "rollback": "正在撤销刚才的改动",
           "run_command": "正在运行命令…",
           "select_environment": "正在切换环境",
+          "set_run_arguments": "正在填写运行参数",
           "switch_execution": "正在调整运行方式",
           "thePackages": "需要的包",
           "try_import": "正在尝试导入",

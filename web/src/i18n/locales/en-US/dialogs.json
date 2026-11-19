@@ -2603,6 +2603,7 @@
       "max_font_size_pt": "Maximum font size",
       "min_script_font_size_pt": "Minimum sub/superscript size",
       "min_raster_dpi": "Raster resolution",
+      "min_line_width_pt": "Minimum line width",
       "line_widths_pt": "Line widths",
       "font_family_latin_accepted": "Fonts",
       "preferred_formats_export_default": "Default export format",

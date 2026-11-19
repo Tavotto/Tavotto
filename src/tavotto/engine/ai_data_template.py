@@ -48,6 +48,8 @@ from .ai_data_figure import (
     parse_date,
     resolve_header,
     table_from_text,
+    xvg_label,
+    xvg_text,
 )
 
 # --------------------------------------------------------------------------- 错误
@@ -89,6 +91,29 @@ def read_xlsx(path, sheet):
     with XlsxBook(path) as book:  # noqa: F821 - 由内嵌的 xlsxread 源码提供
         table = [r for r in book.read(sheet) if any(c.strip() for c in r)]
     return [h.strip() for h in table[0]], table[1:]
+
+
+def group_key(label):
+    """一个分组列的单元格在分组时的键：去首尾空白、区分大小写、不做 Unicode 规范化——`comparison_data` / `trend_data` / `relationship_data` 与
+    `ai_data_figure._summarize` 的取值集合都是这个写法（`cell.strip()`）。合画的文件标签是否「分得开」就按它判（`merge_tables` 与父进程同一个函数）。"""
+    return label.strip()
+
+
+def merge_tables(tables, labels, column):
+    """几份列名与顺序都相同的表 → 一张表（合画）：按给定顺序逐份拼行，表头末尾多一列 `column`，值是该份的 `labels[i]`。
+    `tables` 是 `[(表头, 数据行), …]`（各份读法与单份一样，由调用方先读好）；某份表头与第一份不同直接 `ValueError`——数据在生成之后变了，
+    不悄悄错位拼接；标签按 `group_key` 有重复也直接 `ValueError("tables_labels_collide")`。只拼内存里的副本，数据文件不动。"""
+    header = list(tables[0][0])
+    if len({group_key(lab) for lab in labels}) != len(labels):
+        raise ValueError(
+            "tables_labels_collide"
+        )  # 两个文件的标签在分组时会被并成一组：绝不静默并组
+    out = []
+    for (head, rows), label in zip(tables, labels):
+        if list(head) != header:
+            raise ValueError("tables_columns_differ")
+        out.extend([*r, label] for r in rows)
+    return [*header, column], out
 
 
 def distinct(values):
@@ -592,10 +617,14 @@ RUNTIME_FUNCTIONS = (
     date_number,
     delimited_records,
     resolve_header,
+    xvg_label,
+    xvg_text,
     table_from_text,
     read_delimited,
     read_xlsx,
     apply_cells,
+    group_key,
+    merge_tables,
     distinct,
     make_label,
     mean_of,
@@ -806,6 +835,8 @@ def _footer(recipe, style) -> list[str]:
 #: 脚本头的来源注释：生产（`_source_comment`、`_header`）与解析（`parse_source_comment`）共用这两个常量
 SOURCE_COMMENT_PREFIX = "# tavotto-source: "
 SOURCE_GENERATOR = "data_to_figure/v2"
+#: 合画（几份数据拼成一张图）的脚本用另一个 `generator`：`parse_source_comment` 只认 `SOURCE_GENERATOR`，所以合画脚本不会被当成「来自某一份数据」
+SOURCE_GENERATOR_MERGE = "data_to_figure/v2-merge"
 #: 解析来源注释只看脚本开头这么多行 / 字符，注释本身最长这么多字符（脚本是不可信输入）
 SOURCE_SCAN_LINES = 64
 SOURCE_SCAN_CHARS = 16 * 1024
@@ -817,12 +848,15 @@ def _source_comment(entry: adf.TableEntry, recipe: recipe_mod.FigureRecipe, data
     body = {
         k: v for k, v in recipe.to_dict().items() if k != "why"
     }  # why 只显示给用户，不进脚本（ADR 0178）
+    merge = _merge_of(entry)
+    if merge is not None:
+        body["tables"] = [s.data_rel for s in merge.sources]
     return json.dumps(
         {
             "data": data_rel,
             "sha256": entry.summary.sha256,
             "recipe": body,
-            "generator": SOURCE_GENERATOR,
+            "generator": SOURCE_GENERATOR if merge is None else SOURCE_GENERATOR_MERGE,
         },
         ensure_ascii=True,
         sort_keys=True,
@@ -957,6 +991,29 @@ def _read_lines(recipe, reader: str) -> list[str]:
     return out
 
 
+def _merge_of(entry):
+    """合画的条目（`ai_data_merge.MergedEntry`）带 `merge`；单份条目没有这个属性。"""
+    return getattr(entry, "merge", None)
+
+
+def _is_xlsx(entry) -> bool:
+    return _merge_of(entry) is None and entry.path.lower().endswith(".xlsx")
+
+
+def _data_lines(entry, data_rel) -> list[str]:
+    merge = _merge_of(entry)
+    if merge is None:
+        return [f"DATA = Path(__file__).resolve().parent / {data_rel!r}"]
+    return [
+        "DATAS = [",
+        *[f"    Path(__file__).resolve().parent / {s.data_rel!r}," for s in merge.sources],
+        "]",
+        f"SHEETS = {[s.entry.sheet for s in merge.sources]!r}",
+        f"LABELS = {[s.label for s in merge.sources]!r}",
+        f"FILE_COLUMN = {merge.column!r}",
+    ]
+
+
 def _header(entry, recipe, data_rel, title, is_xlsx):
     name = runtime_module()[0][: -len(".py")]
     cells = [f"CELLS = {[c.args() for c in recipe.cells]!r}"] if recipe.cells else []
@@ -973,7 +1030,7 @@ def _header(entry, recipe, data_rel, title, is_xlsx):
         "",
         f"import {name} as {RUNTIME_ALIAS}",
         "",
-        f"DATA = Path(__file__).resolve().parent / {data_rel!r}",
+        *_data_lines(entry, data_rel),
         *cells,
     ]
 
@@ -1090,7 +1147,7 @@ def _comparison_layer_lines(layer, tag: str, lw: list[float]) -> list[str]:
 
 
 def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
-    is_xlsx = entry.path.lower().endswith(".xlsx")
+    is_xlsx = _is_xlsx(entry)
     lw = style["line_widths_pt"]
     with_n = (
         any(layer.summary != "none" for layer in recipe.layers) or recipe.family == "distribution"
@@ -1232,7 +1289,7 @@ def _trend_layer_lines(layer, tag_m: str, lw: list[float], logs=(False, False)) 
 
 
 def _render_trend(entry, recipe, data_rel, stem, style) -> str:
-    is_xlsx = entry.path.lower().endswith(".xlsx")
+    is_xlsx = _is_xlsx(entry)
     x_is_date = entry.summary.per_column[recipe.x].kind == "date"
     lw = style["line_widths_pt"]
     L = _header(entry, recipe, data_rel, "变化趋势", is_xlsx)
@@ -1327,7 +1384,7 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
 
 # --------------------------------------------------------------------------- relationship
 def _render_relationship(entry, recipe, data_rel, stem, style) -> str:
-    is_xlsx = entry.path.lower().endswith(".xlsx")
+    is_xlsx = _is_xlsx(entry)
     lw = style["line_widths_pt"]
     mid = lw[min(1, len(lw) - 1)]
     logx, logy = recipe.scale in ("log_x", "log_xy"), recipe.scale in ("log_y", "log_xy")
@@ -1394,7 +1451,7 @@ def _render_distribution(entry, recipe, data_rel, stem, style) -> str:
     marks = {layer.mark for layer in recipe.layers}
     if not marks & VALUE_ON_X:  # 值在纵轴：与 comparison 同一套布局（类别 x 可选）
         return _render_comparison(entry, recipe, data_rel, stem, style)
-    is_xlsx = entry.path.lower().endswith(".xlsx")
+    is_xlsx = _is_xlsx(entry)
     lw = style["line_widths_pt"]
     thin, thick = lw[0], lw[-1]
     density_units = "density" in marks
@@ -1470,23 +1527,47 @@ def _render_distribution(entry, recipe, data_rel, stem, style) -> str:
     return "\n".join(L[:main_at] + _via_runtime(L[main_at:]))
 
 
-def _reader_expr(entry, is_xlsx: bool) -> str:
+def _merged_reader_expr(merge) -> str:
+    """合画：每一份各按自己的读法（分隔符 / 表头行 / 单位行 / 编码 / 工作表）读，再经公共模块的 `merge_tables` 拼成一张表。"""
+    parts = [
+        "            "
+        + _reader_expr(
+            s.entry, s.entry.path.lower().endswith(".xlsx"), f"DATAS[{i}]", f"SHEETS[{i}]"
+        )
+        + ","
+        for i, s in enumerate(merge.sources)
+    ]
+    return (
+        "merge_tables(\n        [\n"
+        + "\n".join(parts)
+        + "\n        ],\n        LABELS,\n        FILE_COLUMN,\n    )"
+    )
+
+
+def _reader_expr(entry, is_xlsx: bool, data: str = "DATA", sheet: str = "SHEET") -> str:
     """脚本里读表那一句。文本表格的读法（编码 + 分隔符 + 显式表头行）取自摘要（`read_text_table` 嗅探 / 调用方指定的结果），以字面量写进脚本——
     脚本不嗅探；Tavotto 算期望值读表用的是同一组参数（同一个 `table_from_text`），所以脚本读出来的和预览 / 资格判定读出来的是同一张表。
     老读法（首行表头、按后缀分隔）写成 `read_delimited(DATA, ',')`，与此前生成的脚本逐字相同。"""
+    merge = _merge_of(entry)
+    if merge is not None:
+        return _merged_reader_expr(merge)
     if is_xlsx:
-        return "read_xlsx(DATA, SHEET)"
+        return f"read_xlsx({data}, {sheet})"
     s = entry.summary
     delim = s.delimiter or ("\t" if entry.path.lower().endswith((".tsv", ".tab")) else ",")
     args = [repr(delim)] + ([repr(s.header_row)] if s.header_row is not None else [])
     if s.units_row:  # 只在嗅探到单位行时多写这一项：其余脚本逐字不变
         args = [*args[:1], repr(s.header_row), "True"]
     codec = adf.script_codec(s.encoding)
+    if entry.path.lower().endswith(adf.XVG_SUFFIXES):
+        # `.xvg`：列名在 `@` 指令里，先经运行时函数 `xvg_text` 改写成带表头行的制表符文本（父进程读表是同一个函数），再按嗅探出的读法读
+        text = f"{data}.read_bytes().decode({(codec or 'utf-8-sig')!r})"
+        return f"table_from_text(xvg_text({text}), {', '.join(args)})[:2]"
     if codec is not None:
         # 非 UTF-8（GB18030 / 有 BOM 的 UTF-16）：编码由父进程定下、以字面量写进脚本，脚本不探测。字节原样 `decode`（不经平台换行转换），
         # 再交给公共模块里同一个 `table_from_text`——与父进程读出的是同一张表；公共模块不变（哈希不换）。
-        return f"table_from_text(DATA.read_bytes().decode({codec!r}), {', '.join(args)})[:2]"
-    return f"read_delimited(DATA, {', '.join(args)})"
+        return f"table_from_text({data}.read_bytes().decode({codec!r}), {', '.join(args)})[:2]"
+    return f"read_delimited({data}, {', '.join(args)})"
 
 
 def _group_legend(style) -> list[str]:

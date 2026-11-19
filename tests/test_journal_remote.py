@@ -748,8 +748,12 @@ def test_nacl_is_imported_only_inside_the_verify_function():
                 assert not any(m.split(".")[0] == "nacl" for m in mods), path
     # 外部审阅（ADR 0187）的设备签名同样延后 import，只在用户点「生成链接 / 更新」时才加载
     assert set(offenders) == {
-        ("src/tavotto/engine/journalremote.py", "_ed25519_verify"),
+        (
+            "src/tavotto/engine/ed25519util.py",
+            "verify",
+        ),  # 期刊目录与高级版授权共用的验签（ADR 0193）
         ("src/tavotto/engine/reviewshare.py", "_signing_key"),
+        ("src/tavotto/engine/license.py", "_signing_key"),  # 授权的设备密钥（另一把，不与审阅共用）
     }, offenders
 
 

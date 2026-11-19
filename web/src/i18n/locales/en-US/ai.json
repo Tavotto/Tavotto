@@ -534,6 +534,10 @@
       "skip": "Don’t plot these {{count}} rows",
       "extract": "Use only the numbers inside"
     },
+    "variant": {
+      "split": "Split further by “{{column}}”",
+      "by_file": "Compared by file only"
+    },
     "candidate": {
       "points_mean": {
         "title": "Points + mean",
@@ -692,6 +696,22 @@
       "from": "Drawn from {{file}}",
       "again": "Try another style",
       "undo": "Undo"
+    },
+    "batch": {
+      "pick": "Select",
+      "idle": "None selected",
+      "selected": "{{count}} selected",
+      "progress": "Plotting {{done}}/{{total}}",
+      "partial": "{{done}} done, {{failed}} failed",
+      "draw": "Plot each",
+      "merge": "Plot combined",
+      "stop": "Stop",
+      "showDone": "View assets",
+      "retry": "Retry",
+      "queued": "Queued",
+      "done": "Done",
+      "failed": "Failed",
+      "groupTitle": "{{count}} files"
     }
   }
 }
