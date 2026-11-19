@@ -152,6 +152,85 @@ def _state_dir() -> Path:
     return layoutsession.state_path().parent
 
 
+def test_project_file_binding_checks_the_same_slot_across_schema_upgrade(client, tmp_path):
+    project = _project(client, tmp_path, "mixed")
+    headers = _pj(project["id"])
+    slot_url = f"/api/autosave/{DOC_ID}"
+    binding_url = f"/api/layout-session/project-file/{DOC_ID}"
+    document = doc()
+    first_axis = {"editor_id": "core_fixture", "sequence": 1}
+
+    def put_slot(body, axis, base_axis, base_revision):
+        response = client.put(
+            slot_url,
+            json=body,
+            headers=headers,
+            query_string={
+                "base_revision": base_revision or "absent",
+                "project_file_edit": json.dumps(
+                    {"axis": axis, "base_axis": base_axis, "base_revision": base_revision}
+                ),
+            },
+        )
+        assert response.status_code == 200, response.get_json()
+        return response.get_json()["revision"]
+
+    def reserve(view):
+        response = client.post(
+            f"{binding_url}/reserve",
+            headers=headers,
+            json={
+                "name": "Paper",
+                "autosave_revision": view["edit"]["autosave_revision"],
+                "axis": view["edit"]["axis"],
+                "expected_binding_sequence": (
+                    view["binding"]["sequence"] if view["binding"] is not None else None
+                ),
+            },
+        )
+        assert response.status_code == 200, response.get_json()
+        return response.get_json()
+
+    initial_revision = put_slot(document, first_axis, None, None)
+    initial = client.get(binding_url, headers=headers).get_json()
+    assert initial["edit"]["known"] is True
+    ticket = reserve(initial)["ticket"]
+    saved = client.post(
+        "/api/layouts/Paper",
+        headers=headers,
+        json=document,
+        query_string={
+            "target": "project",
+            "working_doc_id": DOC_ID,
+            "binding_intent": ticket["sequence"],
+        },
+    )
+    assert saved.status_code == 200, saved.get_json()
+    bound = client.get(binding_url, headers=headers).get_json()["binding"]
+    assert bound["file"] == "tavottofile/Paper.json"
+    assert bound["dirty"] is False
+
+    upgraded = doc(x=16, updated=3)
+    upgraded["schema"] = documents.SCHEMA_CHART_PROJECT
+    second_axis = {"editor_id": "core_fixture", "sequence": 2}
+    upgraded_revision = put_slot(upgraded, second_axis, first_axis, initial_revision)
+    current = client.get(binding_url, headers=headers).get_json()
+    assert current["edit"]["known"] is True
+    assert current["edit"]["autosave_revision"] == upgraded_revision != initial_revision
+    assert current["binding"]["sequence"] == bound["sequence"]
+    assert current["binding"]["dirty"] is True
+
+    slots = list(tmp_path.rglob(f"{DOC_ID}.json"))
+    assert len(slots) == 1
+    outsider = doc(x=30, updated=4)
+    slots[0].write_text(json.dumps(outsider), encoding="utf-8")
+    assert reserve(current) == {"state": "unconfirmed"}
+    reread = client.get(binding_url, headers=headers).get_json()
+    assert reread["edit"]["known"] is False
+    assert reread["binding"]["dirty"] is True
+    assert client.get("/api/layouts/Paper", headers=headers).get_json() == document
+
+
 # ================================ R3 / A29：last 只指向可恢复正文 ================================
 
 

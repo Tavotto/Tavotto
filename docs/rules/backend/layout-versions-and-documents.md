@@ -76,6 +76,9 @@ order: 200
   看护：`tests/test_versionstore.py`、`tests/test_versions_store_wiring.py`、`tests/test_versions_migrate_on_write.py`。
 - **论文样式**：`/api/styles`（`layouts/_styles.json`）；前端按角色映射成
   override / 标注属性一次 commit 应用，绝不写回源文件。
+- **项目文件绑定**：`/api/layout-session/project-file/<doc_id>` 与其 reserve、confirm、intent 子路由使用同一工作副本。
+  读和 reserve 持自动保存槽位锁，核实际正文修订。confirm 持命名正文锁，复核保存回执和关联票据。
+  schema 3 升级到 4 保留原槽位和关联，外部改写槽位后旧修订无法预留新关联。看护 `tests/test_layout_recovery_acceptance.py`。
 - **项目包**：`POST /api/package` 打 zip（layout+素材+脚本+sha1 清单）；
   `POST /api/package/open` 检视（缺失/sha1 漂移），素材永不自动写入图库。
 - **文档显式引用全质量 Figure 配对（X03，2026-10-15）**：面板 `figureSnapshot` 是版本 1 的闭集
