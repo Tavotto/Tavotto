@@ -82,6 +82,9 @@ order: 180
   site-packages 小模块不写缓存）；`-B` 会经 `sys.flags` 传给用户脚本用 multiprocessing 起的子进程（它们不写字节码，
   结果不变）。内置 runtime 没有标记，`-B` 一路有效。看护同一文件的
   `test_project_code_imported_at_interpreter_startup_writes_no_bytecode`（项目里的 sitecustomize 当传感器、先证明它活着）。
+- **native 的函数入口只有一种来源**（ADR 0127 修订 2026-11-18）：库式模块（没有守卫、顶层不画图）由 `discover.native_entry_of` 判 `call`，
+  桌面 / MCP 的 native 启动带 `--entry`，`bridge_runner.run_script_entry` 跑完模块再调它；别的场合 native 仍是 `python fig.py` 原样。
+  够不到入口（`unreachable`）不起 native。终端 `tavotto run` 不带入口。看护 `tests/test_native_function_entry.py`。
 - **`bridge_runner` / `bridgeboot` 启动阶段不许 import matplotlib**，
   钩子挂在 `sys.meta_path` 的后置 import 回调上。
 - **native 侧不许起后台线程**：Figure 归主线程，`LiveFigureSession` 有线程

@@ -26,6 +26,7 @@ from pathlib import Path
 
 from . import (
     desktopproc,
+    discover,
     execpolicy,
     execspec,
     figcapture,
@@ -64,9 +65,30 @@ class Verdict:
     reason: str
 
 
-def decide(project: str, cause_code: str, *, python: str) -> Verdict:
-    """MCP 这一次打开（一次运行）里，safe 以 `cause_code` 收场后能不能换 native。纯判定，不起进程。"""
+def _native_entry(project: str, script: str, entry: str | None) -> tuple[str, str | None]:
+    """与桌面 `preparation.native_entry_for` 同一份判据（`discover.native_entry_of`）；算不出按原样跑整份模块。"""
+    try:
+        path = Path(project) / figcapture.normalize_relative_script(script)
+        return discover.native_entry_of(path, entry)
+    except Exception:  # noqa: BLE001 — 判不出就不改（原行为）
+        return discover.NATIVE_RUN_MODULE, None
+
+
+def decide(
+    project: str,
+    cause_code: str,
+    *,
+    python: str,
+    script: str | None = None,
+    entry: str | None = None,
+) -> Verdict:
+    """MCP 这一次打开（一次运行）里，safe 以 `cause_code` 收场后能不能换 native。纯判定，不起进程。
+
+    `script` / `entry`（ADR 0127 修订 2026-11-18）：safe 当时调的入口。原样运行够不到它（`unreachable`）就不回退，
+    与桌面同一个理由码 `plan_unavailable`。"""
     if not python:
+        return Verdict(False, execpolicy.REASON_PLAN_UNAVAILABLE)
+    if script and _native_entry(project, script, entry)[0] == discover.NATIVE_ENTRY_UNREACHABLE:
         return Verdict(False, execpolicy.REASON_PLAN_UNAVAILABLE)
     ledger = execpolicy.AttemptLedger()
     ledger.begin_run()
@@ -213,6 +235,8 @@ def launch(
         env={"PYTHONUNBUFFERED": "1"},
         ignored_paths=pathignore.paths_for(root),
         registered_entry=entry,  # ADR 0196：不给 = 整份脚本，判据照常
+        # 库式模块：跑完模块再调 safe 当时那个函数入口（ADR 0127 修订 2026-11-18）
+        entry=_native_entry(root, script, entry)[1],
         **execspec.run_kwargs(run),
     )
     try:

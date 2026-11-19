@@ -260,7 +260,10 @@ class ExecutionSpec:
     interpreter: str  # 解释器绝对路径（机器相关）
     target_kind: str  # TARGET_SCRIPT | TARGET_MODULE
     target: str  # script: 项目相对路径（POSIX）；module: 模块名
-    entry: str | None  # safe 的入口函数；native 恒 None
+    #: safe 的入口函数。native 缺省 None（`python fig.py` 跑整个模块）；只有桌面拥有的启动、且整份模块跑完
+    #: 不会调用登记的函数入口时（库式模块，`discover.native_entry_of` 判 `call`）才是那个函数名——跑完模块再调它
+    #: （ADR 0127 修订 2026-11-18）。native 永远不是 `__main__`。
+    entry: str | None
     #: 脚本看到的 sys.argv[1:]（safe 缺省空；T03 起可以是用户给的精确 token）。repr 不带值：可能是路径 / 令牌。
     argv: tuple[str, ...] = dataclasses.field(repr=False)
     cwd: str  # safe: 会话沙盒；native: 用户 cwd / 桌面显式 cwd（机器相关）
@@ -449,8 +452,15 @@ class ExecutionSpec:
                 raise ValueError("native profile 没有 cwd_mode 这个维度（cwd 是用户的）")
             if self.input_remap:
                 raise ValueError("native profile 不改指输入（ADR 0106：那是用户自己的 python）")
-            if self.entry is not None:
-                raise ValueError("native profile 没有 entry 概念（恒 None）")
+            if self.entry is not None and (
+                not self.entry.isidentifier()
+                or self.entry == "__main__"
+                or self.target_kind != TARGET_SCRIPT
+            ):
+                # 只有脚本目标的函数入口（ADR 0127 修订 2026-11-18）；`__main__` 就是 None
+                raise ValueError(
+                    f"native profile 的 entry 只能是脚本里的函数名或 None: {self.entry!r}"
+                )
             if not self.passthrough_savefig:
                 raise ValueError("native profile 的 savefig 必须透传（ADR 0014 §2）")
             if not self.raw_target:
@@ -791,6 +801,7 @@ def desktop_native_spec(
     ignored_paths: tuple[str, ...] | list[str] = (),
     stem_aliases=None,
     registered_entry: str | None = None,
+    entry: str | None = None,
 ) -> ExecutionSpec:
     """**桌面拥有的** native 档启动身份的唯一权威构造函数（P06，ADR 0125）。
 
@@ -822,6 +833,7 @@ def desktop_native_spec(
         stem_aliases=stem_aliases,
         package_as_module=True,
         registered_entry=registered_entry,
+        entry=entry,
     )
 
 
@@ -842,6 +854,7 @@ def _native(
     stem_aliases=None,
     package_as_module: bool = False,
     registered_entry: str | None = None,
+    entry: str | None = None,
 ) -> ExecutionSpec:
     if target_kind == TARGET_MODULE:
         target = raw_target
@@ -857,7 +870,8 @@ def _native(
     # 终端拥有的（`tavotto run`）不传 `package_as_module`：那是用户自己敲的命令，原样。native 整份脚本运行（entry=None）；登记入口只给判据用（函数入口不改，与 safe 一致）
     package = (
         pkgentry.resolve(project_root, target.replace(os.sep, "/"), registered_entry)
-        if package_as_module and target_kind == TARGET_SCRIPT
+        # 库式模块调函数入口（ADR 0127 修订，`entry`）与按模块运行（`module_name`）互斥：前者已定就不按模块
+        if package_as_module and target_kind == TARGET_SCRIPT and entry is None
         else None
     )
     return ExecutionSpec(
@@ -865,7 +879,7 @@ def _native(
         interpreter=interpreter,
         target_kind=target_kind,
         target=target,
-        entry=None,
+        entry=entry,
         argv=tuple(argv),
         cwd=cwd,
         env=env,
@@ -953,6 +967,9 @@ def bridge_argv(
     if spec.stem_aliases:
         # ADR 0162：分开登记过的脚本才多两个 token——没有别名的命令行逐字节不变（golden）
         out += ["--stem-aliases", _aliases_json(spec.stem_aliases)]
+    if spec.entry is not None:
+        # ADR 0127 修订 2026-11-18：库式模块的函数入口，跑完模块再调它。没有入口的命令行逐字节不变（golden）
+        out += ["--entry", spec.entry]
     out.append("--")
     out.extend(spec.argv)
     return out
