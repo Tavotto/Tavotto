@@ -2261,8 +2261,15 @@ class Worker(wireproto.V1Handler):
                     import runpy  # noqa: PLC0415 — 内联脚本（fig4c / fig_models）
 
                     if self.script_source != self.script:
+                        # 执行另一份字节（启动脚本 / 影子脚本）：注入 `run_original()`，启动脚本用它跑用户原件（ADR 0194）
                         with _redirect_open_code(self.script, self.script_source):
-                            runpy.run_path(str(self.script), run_name="__main__")
+                            runpy.run_path(
+                                str(self.script),
+                                run_name="__main__",
+                                init_globals={
+                                    "run_original": bridgeboot.make_run_original(str(self.script))
+                                },
+                            )
                     else:
                         runpy.run_path(str(self.script), run_name="__main__")
                 else:

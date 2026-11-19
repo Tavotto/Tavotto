@@ -370,7 +370,7 @@ NOT_WRITABLE: dict[str, str] = {
     # artist = `ax.add_artist` 放进来的锚定框 / 插框（AnchoredText、比例尺……）与表格。显隐、层次写得进；
     # 位置要改锚框的 loc / bbox_to_anchor / xybox，各类各一套（引擎 `_place_offsetbox`），不写
     "artist": "pos_frac",
-    "line": "pos_frac",
+    "line": "pos_frac points_frac",
     "axes": "visible position aspect elev azim roll "
     "proj_type axis_arrows arrow_color arrow_width arrow_head axline_color "
     "axline_width pane_visible pane_color",

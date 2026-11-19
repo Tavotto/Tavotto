@@ -143,11 +143,13 @@ try:
     _blocked_net, _blocked_reads = [], []
     _strict = os.environ.pop("TAVOTTO_TRIAL_STRICT", None)
     if _strict:
-        _deny = [os.path.normcase(os.path.realpath(p)) for p in json.loads(_strict)]
+        # macOS / Windows 的默认文件系统不分大小写：`~/.SSH/id_rsa` 打开的就是 `~/.ssh/id_rsa`，比较前一律 casefold
+        _fold = (lambda p: os.path.normcase(p).casefold()) if sys.platform in ("darwin", "win32") else os.path.normcase
+        _deny = [_fold(os.path.realpath(p)) for p in json.loads(_strict)]
         _NET_EVENTS = ("socket.connect", "socket.bind", "socket.sendto", "socket.sendmsg", "socket.getaddrinfo", "socket.gethostbyname", "socket.gethostbyaddr")
         def _denied(p):
             try:
-                rp = os.path.normcase(os.path.realpath(os.fsdecode(p)))
+                rp = _fold(os.path.realpath(os.fsdecode(p)))
             except Exception:
                 return False
             return any(rp == d or rp.startswith(d.rstrip(os.sep) + os.sep) for d in _deny)

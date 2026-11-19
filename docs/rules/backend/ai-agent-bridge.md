@@ -718,7 +718,6 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
   `list_environments` 列满 30 条时如实报 `[showing 30 of N …]`，本项目当前 / 选过的环境排前，`match` 参数按名字 / 来源 / 路径片段筛（被列出的才登记 id）；`_copy_project(…, reads)` 回传实际复制了内容的链接目标，`try_run` 逐个 `ctx.note_read(…, "try_run")`。
 - **freeze 的「可用」按成败判（#1371 P1）**：`default_freezer` 成功回文本（全新空环境是 `""`）、失败回 `None`；快照的 `freeze_available` = 拿到了没有，不按输出是否为空。
 
-
 ### `run_command`：任意命令，两档（`fixtools/command.py` / `fixtools/cmdsandbox.py`，#1374，ADR 0149 §七修订）
 
 `tier=user_env`、`waits_for_user`。看护 `tests/test_fixtools_command.py`。参数：`argv`（列表）或 `command`（字符串，`shlex` 拆，**不经 shell**）二选一；`timeout_s`（默认 60、上限 300）；`outside_sandbox`（布尔，第②档开关，必须配 `reason`）；`reason`（一句给用户看的话，≤300 字，没沙盒的机器上可不给）；`cwd`（`scratch` 默认 / `project`，`project` 只给第②档）。
@@ -799,6 +798,14 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
 - `FixToolset.budget_hint`：预算过半 / 过四分之三时 `loop.run` 追加「别再巡视，做最匹配原因的那一个改动再 try_run，没有可做的就 not_fixed」。
 - 看护：`tests/test_fix_guardrails.py`。
 
+### `write_launcher`：启动脚本（`engine/launchscript.py`、`fixtools/change.py`，ADR 0194 §二，2026-11-18）
+
+- 启动脚本放 `tavottofile/launchers/<stem>-<路径摘要>.py`，每个脚本至多一份，只认普通文件（符号链接 / 链接目录一律当没有、拒写）；64 KiB 上限、写前本机 `compile` 校验。
+- 有启动脚本的脚本：safe 经 `--script-source`、native 经 bridge 同名参数执行启动脚本的字节，身份（`__file__` / `argv[0]` / 描述符）仍是原脚本；入口恒 `__main__`、
+  不做运行前路由、不换入口；`preparation._script_revision` 末尾加 `:L<摘要>`（改 / 删启动脚本 = 计划过期；第一段仍是原脚本摘要）。
+- 工具 `tavotto` 档（只写 Tavotto 自己的目录），写前打快照，`rollback` 写回旧内容或删除。原脚本与用户代码文件夹一个字节不动。
+- 看护：`tests/test_launchscript.py`、`tests/test_launchscript_e2e.py`（真 sidecar：无启动脚本没有图 / 有启动脚本出图且原文件不变 / safe 被拦 native 也执行启动脚本）。
+
 ### D2b：「问与报」组 + 修复会话 + `POST /api/ai/fix`（`fixtools/ask.py`、`engine/fixsession.py`）
 
 - **五个工具都 `waits_for_user=True`**：`propose_fix`（`approve` 卡，详情列 `ctx.reads` 的 `~/…` 写法与「没读：敏感目录」）、`ask_user`（`choice` 卡，回选项 id；`other` / `skip` 是保留 id）、
@@ -878,7 +885,6 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
   （`managedenv.python_of` 与设置里记着的受管解释器）加 **保留型**租约 `envlease.acquire_retain`（`fix:<会话>`；与 native 占用在同一模块、两种用途：保留型只让 `deprepair._generation_in_use` 不清这一代，**不**被 `envlease.mutating()` 当成 native 会话拒绝——用 native 租约会把换代事务自己挡死；真正的 native 会话仍照旧拒绝换代），换成功则持到会话收尾（`_settle` → `ctx.release_leases()`，finish / 取消 / 失败 / 自动取消都走），没换成立即放（`release_retain`）。
   快照多存 `managed = {generation}`；`rollback` 先核旧代解释器真的在（不在 = `rollback_target_gone`，**一个字不改**），再恢复设置、`managedenv.activate` 指回旧代并让池 / 缓存放弃新一代，恢复后核设置里记着的解释器在不在（不在同样 `rollback_target_gone`，不报成功）。
   `FixContext.cancel`（= 会话的 `s.cancel`）同样传给 pip 安装/卸载执行器（含逐项执行前复查），并传给缺省换 Python 执行器 `_default_python_changer(req, cancel)`，规划完、动手前先看一眼（与 #1381 同一件事）。看护 `tests/test_fixrollback_managed.py`。
-
 
 ### 2026-10-25 补充参考与会话期限
 

@@ -186,3 +186,15 @@ def test_the_macos_sandbox_layer_blocks_on_its_own(tmp_path):
         )
         assert r.returncode != 0 and "Operation not permitted" in r.stderr, (code, r.stderr)
         assert "SECRET" not in r.stdout
+
+
+@pytest.mark.skipif(sys.platform not in ("darwin", "win32"), reason="不分大小写的默认文件系统")
+def test_a_differently_cased_credential_path_is_still_blocked_without_an_os_sandbox(
+    box, monkeypatch
+):
+    """`~/.SSH/id_rsa` 在 macOS / Windows 上打开的就是 `~/.ssh/id_rsa`：进程内守卫比较前 casefold（自审发现的绕过）。"""
+    monkeypatch.setattr(trial, "_find_tool", lambda _kind: None)
+    put(box.home / ".ssh" / "id_rsa", "SECRET-KEY-MATERIAL")
+    variant = str(box.home / ".SSH" / "ID_RSA")
+    r = call(_ctx(box), "run_snippet", {"env": "e", "code": f"print(open({variant!r}).read())"})
+    assert "blocked_reads" in r.content and "SECRET-KEY-MATERIAL" not in r.content
