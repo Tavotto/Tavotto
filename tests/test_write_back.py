@@ -251,7 +251,7 @@ def test_write_back_refuses_edits_from_a_newer_version_with_its_own_code(
     body = resp.get_json()
     assert body["code"] == "write_back_future_props"
     assert body["props"] == ["axes_0.lines_0.bend_magic"]  # PDF / PNG 两次导出报同一批，不重复
-    assert "更新" in body["error"]
+    assert "更新版本" in body["error"]
     assert (figs / "Fig1.pdf").read_bytes() == before_pdf
     assert (figs / "Fig1.png").read_bytes() == before_png
     assert _leftovers(figs) == []

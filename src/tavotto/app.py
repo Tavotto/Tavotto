@@ -10782,8 +10782,7 @@ def _write_back_error_response(exc):
     if isinstance(exc, WriteBackFutureError):
         return jsonify(
             {
-                "error": "这个项目里有用更新版本的 Tavotto 做的修改，这一版还认不出、也画不出来，"
-                "写回已取消（原文件没有改动，这些修改仍保存在项目里）。请更新 Tavotto 后再写回。",
+                "error": "这张图里有更新版本的 Tavotto 做的修改，这一版写不回去，原文件没动。",
                 "code": "write_back_future_props",
                 "props": exc.props,
             }
