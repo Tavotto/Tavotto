@@ -5,7 +5,7 @@ import type { Rect4 } from '@/lib/axesLayout'
 import { geomPathD, translateGeom } from '@/lib/pathGeom'
 import { PATH_HIT_SHAPES, shapeInset, shapeOutline } from '@/lib/shapeGeometry'
 import { MM_PER_PT } from '@/lib/units'
-import { arrowEndpointsOf, geomTarget, panelFullRect, resolveGroup } from '@/lib/elementGeom'
+import { arrowEndpointsOf, geomTarget, linePointsOf, panelFullRect, resolveGroup } from '@/lib/elementGeom'
 import { patchBoundsOf } from '@/lib/patchResize'
 import { ALL_DIRS, boundsOf, dirsFor, ROTATE_KNOB_GAP, visualBounds, type ResizeDir } from '@/lib/geometry'
 import { useDocumentStore } from '@/store/documentStore'
@@ -33,6 +33,7 @@ import { isLinear, lineEndpoints, objectRotation } from '@/types/document'
 import {
   guardStale,
   startArrowDrag,
+  startLineEdit,
   startAxesDrag,
   startCropDrag,
   startEndpointDrag,
@@ -843,6 +844,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   const gidDrag = useInteractionStore((s) => s.gidDrag)
   const preview = useInteractionStore((s) => s.elementPreview)
   const arrowPreview = useInteractionStore((s) => s.arrowPreview)
+  const linePreview = useInteractionStore((s) => s.linePreview)
   const snapFeedback = useInteractionStore((s) => s.snapFeedback)
   const selectedGids = useUiStore((s) => s.selectedGids)
   const selectedGid = selectedGids.at(-1) ?? null
@@ -929,6 +931,10 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   // 单选图内独立箭头 → 两个端点手柄（画布原生箭头的同款交互）
   const arrowEl = !groupBox && primary?.target.arrow_endpoints ? primary.target : null
   const arrowPts = arrowEl ? arrowEndpointsOf(panel, arrowEl) : null
+  // 单选可逐段编辑的线（引线）→ 每个顶点一个方块手柄；拖段由命中层按下分派（PanelView）
+  const lineEl = !groupBox && primary?.target.line_points && primary.target.draggable ? primary.target : null
+  const linePts = lineEl ? linePointsOf(panel, lineEl) : null
+  const linePreviewPts = lineEl && linePreview?.gid === lineEl.gid ? linePreview.pts : null
   const toPoint = (p: [number, number]) => {
     const b = toBox([p[0], p[1], 0, 0])
     return { x: b.x, y: b.y }
@@ -1002,8 +1008,11 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
           r.target.arrow_endpoints ? (
             <Fragment key={key}>{arrowOutline(r.target)}</Fragment>
           ) : r.geom ? (
-            <GeometryOutline key={key} id={`sel-${panel.id}-${key}`} geom={r.geom}
-              toPoint={toPoint} />
+            // 拖引线的一段时，下方的虚线折线（linePreview）接管选中描示
+            linePreview?.gid === r.target.gid ? null : (
+              <GeometryOutline key={key} id={`sel-${panel.id}-${key}`} geom={r.geom}
+                toPoint={toPoint} />
+            )
           ) : (
             <rect
               key={key}
@@ -1116,6 +1125,46 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
               onPointerDown={guarded((e) => startLegendScale(e, panel, primary.target, layout, dir))}
             />
           ))}
+
+        {lineEl && linePts && (
+          <>
+            {linePreviewPts && (
+              <polyline
+                data-line-preview
+                points={linePreviewPts.map((p) => {
+                  const pt = toPoint(p)
+                  return `${pt.x},${pt.y}`
+                }).join(' ')}
+                fill="none"
+                stroke="var(--color-sel)"
+                strokeWidth={1}
+                style={DASH}
+              />
+            )}
+            {(linePreviewPts ?? linePts).map((p, i) => {
+              const shifted: [number, number] =
+                gidDrag?.gid === lineEl.gid ? [p[0] + gidDrag.dfx, p[1] + gidDrag.dfy] : [p[0], p[1]]
+              const pt = toPoint(shifted)
+              const s = 7
+              return (
+                <rect
+                  key={i}
+                  data-line-vertex={i}
+                  x={pt.x - s / 2}
+                  y={pt.y - s / 2}
+                  width={s}
+                  height={s}
+                  stroke="var(--color-sel)"
+                  strokeWidth={1}
+                  style={{ fill: 'var(--handle-fill)', pointerEvents: 'all', cursor: 'crosshair' }}
+                  onPointerDown={guarded((e) =>
+                    startLineEdit(e, panel, lineEl, layout, { kind: 'vertex', index: i }),
+                  )}
+                />
+              )
+            })}
+          </>
+        )}
 
         {arrowEl && arrowPts && (
           <>

@@ -504,6 +504,9 @@ def _pin_put_native(a, native) -> None:
             a.set_bounds(*native)
     elif isinstance(a, Line2D):
         a.set_transform(_patch_base_transform(a))
+        native = getattr(a, "_mm_points_native", None)
+        if native is not None:
+            a.set_data(native[:, 0], native[:, 1])
     elif isinstance(a, (Collection, AxesImage, Table)):
         tr, off = _translated_bases(a)
         a.set_transform(tr)
@@ -530,7 +533,10 @@ def _pin_place(a, value) -> None:
     elif isinstance(a, Patch):
         _place_patch(a, value)
     elif isinstance(a, Line2D):
-        _place_line(a, value)
+        if isinstance(value, tuple) and len(value) == 2 and value[0] == _POINTS_PIN:
+            _place_points(a, value[1])
+        else:
+            _place_line(a, value)
     elif isinstance(a, (Collection, AxesImage, Table)):
         _place_translated(a, value)
     elif isinstance(a, _AxesBase):
@@ -2036,6 +2042,70 @@ def _restore_line_pos(ln, orig) -> None:
         _text_pins(fig).pop(ln, None)
     ln.set_transform(orig)
     ln.__dict__.pop("_mm_pos_base", None)
+
+
+#: 逐点编辑的上限：引线、分隔线是几个到几十个顶点；更长的是曲线，按段拖没有意义
+LINE_POINTS_MAX = 64
+#: pin 表里逐点编辑那一项的标记（与整条平移的 `pos_frac` 共用同一张表、同一个 key = 这条线）
+_POINTS_PIN = "points"
+
+
+def _line_native_points(ln):
+    """脚本原样的顶点（线自己的坐标系里）：第一次逐点编辑时记在 artist 上。"""
+    native = getattr(ln, "_mm_points_native", None)
+    if native is None:
+        native = np.array(ln.get_xydata(), dtype=float, copy=True)
+        ln._mm_points_native = native  # noqa: SLF001
+    return native
+
+
+def _points_value(ln, value) -> list[tuple[float, float]]:
+    n = len(_line_native_points(ln))
+    flat = _drag_value(value, 2 * n)
+    return [(flat[2 * i], flat[2 * i + 1]) for i in range(n)]
+
+
+def _place_points(ln, pts) -> None:
+    """顶点落到写下的 figure 分数（top-origin）上。
+
+    先放回基准 transform（整条平移叠的英寸平移一并去掉：逐点编辑写的就是每个点的最终位置），
+    再按基准 transform 的逆把显示坐标换回线自己的坐标系（transAxes / transFigure……）写进数据。
+    幂等：重放 / 二次拖动都从基准算。"""
+    fig = pathgeom.root_figure(ln.get_figure())
+    base = _patch_base_transform(ln)
+    ln.set_transform(base)
+    disp = np.array([pathgeom.frac_to_display(fig, x, y) for x, y in pts], dtype=float)
+    local = base.inverted().transform(disp)
+    ln.set_data(local[:, 0], local[:, 1])
+
+
+def _set_line_points_frac(ln, value) -> None:
+    """逐点 / 逐段编辑位置不是数据的线（引线、分隔线；ADR 0100 修订 2026-11-19）。
+
+    值是**全部**顶点的 figure 分数（top-origin），摊平成 [x0, y0, x1, y1, …]，个数与脚本原样相同
+    （拖一段 = 那一段的两个端点一起走，相邻段跟着伸缩；拖一个点 = 只动那一个）。整条平移也写它
+    （所有点同一位移），所以一条线只会有这一条位置 override——与 `pos_frac` 混写时后写的 setter
+    把前一条的效果放回基准，热态与重放落在同一处。布局引擎下挂进 pin 表，排完按排好的子图再落一次。"""
+    pts = _points_value(ln, value)
+    _place_points(ln, pts)
+    _text_pins(ln.get_figure())[ln] = ((_POINTS_PIN, tuple(pts)), None)
+    _ensure_text_pin_hook(ln.get_figure())
+
+
+def _get_line_points(ln):
+    """原样 = (基准 transform, 脚本原样的顶点)。"""
+    return (_patch_base_transform(ln), _line_native_points(ln).copy())
+
+
+def _restore_line_points(ln, orig) -> None:
+    fig = ln.get_figure()
+    if fig is not None:
+        _text_pins(fig).pop(ln, None)
+    tr, pts = orig
+    ln.set_transform(tr)
+    ln.set_data(pts[:, 0], pts[:, 1])
+    ln.__dict__.pop("_mm_pos_base", None)
+    ln.__dict__.pop("_mm_points_native", None)
 
 
 def _translated_bases(a):
@@ -5387,6 +5457,7 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     # **不给 `bar`**：柱是数据，位置由 x 与宽度决定，挪一根柱等于改数据。
     ("patch", "pos_frac"): (_get_patch_pos, _set_patch_pos_frac),
     ("line", "pos_frac"): (_get_patch_pos, _set_line_pos_frac),
+    ("line", "points_frac"): (_get_line_points, _set_line_points_frac),
     ("collection", "pos_frac"): (_get_translated_pos, _set_translated_pos_frac),
     ("linecoll", "pos_frac"): (_get_translated_pos, _set_translated_pos_frac),
     ("image", "pos_frac"): (_get_translated_pos, _set_translated_pos_frac),
@@ -5736,6 +5807,7 @@ _RESTORE: dict[tuple[str, str], object] = {
     ("arrowpatch", "endpoints_frac"): _restore_arrow_endpoints,
     ("patch", "pos_frac"): _restore_patch_pos,
     ("line", "pos_frac"): _restore_line_pos,
+    ("line", "points_frac"): _restore_line_points,
     ("collection", "pos_frac"): _restore_translated_pos,
     ("linecoll", "pos_frac"): _restore_translated_pos,
     ("image", "pos_frac"): _restore_translated_pos,
@@ -5860,7 +5932,7 @@ def to_hex(color) -> str:
 # 再变，artist 会跟着几何一起漂走，声明的 figure 位置就不再成立——所以几何
 # 一变必须重放它们，否则「写回时看到的」与「重开后重放出来的」不是同一张图
 # （FigS3 文字全体错位就是这么来的）。
-_FRAC_ANCHORED = {"pos_frac", "loc_frac", "endpoints_frac", "size_frac"}
+_FRAC_ANCHORED = {"pos_frac", "loc_frac", "endpoints_frac", "size_frac", "points_frac"}
 #: 值以图幅为基准的 prop（ADR 0098）：`figure.frame` 这一轮换了，它们的值没变也要重放——
 #: 同一个数在另一个图幅里是另一个位置 / 尺寸，跳过它们热态就与全量重放分岔
 _FRAME_RELATIVE = _FRAC_ANCHORED | {"size_mm", "position"}

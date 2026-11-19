@@ -302,6 +302,18 @@ export function arrowEndpointsOf(
   return el.arrow_endpoints
 }
 
+/** 可逐段编辑的线此刻的顶点：文档里写下的 `points_frac` 优先（个数对得上才认），否则取 manifest 的 */
+export function linePointsOf(panel: PanelObject, el: ManifestElement): [number, number][] | null {
+  const pts = el.line_points
+  if (!pts || pts.length < 2) return null
+  const ov = effectiveOverride(panel.overrides, el.gid, 'points_frac')
+  if (ov && Array.isArray(ov.value) && ov.value.length === pts.length * 2) {
+    const v = ov.value as number[]
+    return pts.map((_, i) => [v[2 * i], v[2 * i + 1]] as [number, number])
+  }
+  return pts
+}
+
 /**
  * 线段与矩形是否相交（同一坐标系即可，图内用 figure 分数）：图内独立箭头参与
  * 框选时按线本身算——斜箭头的 bbox 是一大块空白矩形，按 bbox 相交会让离线很远
@@ -533,6 +545,23 @@ export function alignEntries(
         box: flipY(pos),
         write: (box) => ({ gid: key, prop: 'position', value: flipY(box).map(round4) }),
       })
+    } else if (el.line_points) {
+      // 可逐段编辑的线：整条平移写全部顶点（与拖一段同一条 override，不混写 pos_frac）
+      const pts = linePointsOf(panel, el)
+      const box = elementBoxOf(panel, el)
+      if (!pts || !box) continue
+      seen.add(key)
+      out.push({
+        key,
+        label: el.label,
+        resizable: false,
+        box,
+        write: (next) => ({
+          gid: key,
+          prop: 'points_frac',
+          value: pts.flatMap((p) => [round4(p[0] + next[0] - box[0]), round4(p[1] + next[1] - box[1])]),
+        }),
+      })
     } else {
       const anchor = anchorOf(panel, el)
       if (!anchor || !el.anchor) continue
@@ -565,7 +594,7 @@ export function alignEntries(
  * 这是后端 `_FRAC_ANCHORED` 的位置子集：后端也重放 size_frac，但宽高不是坐标，
  * 随行平移不能把位移加进尺寸。
  */
-const FRAC_ANCHORED_PROPS = new Set(['pos_frac', 'loc_frac', 'endpoints_frac'])
+const FRAC_ANCHORED_PROPS = new Set(['pos_frac', 'loc_frac', 'endpoints_frac', 'points_frac'])
 
 /**
  * **写下去会改变元素几何落点**的属性，唯一出处。
@@ -682,7 +711,7 @@ export function axesCompanions(
       shift: (dfx, dfy) => ({
         gid: d.gid,
         prop: d.prop,
-        // pos_frac/loc_frac 是 [x, y]，endpoints_frac 是 [ax, ay, bx, by]，
+        // pos_frac/loc_frac 是 [x, y]，endpoints_frac 是 [ax, ay, bx, by]，points_frac 是逐个顶点，
         // 都是 top-origin：位移直接加
         value: d.nums.map((n, i) => round4(n + (i % 2 === 0 ? dfx : dfy))),
       }),
@@ -703,7 +732,8 @@ function movedDescendants(
     if (!isEffectiveOverrideAt(panel.overrides, i)) continue
     if (!roots.some((root) => o.gid.startsWith(`${root}.`))) continue
     const v = o.value
-    if (!Array.isArray(v) || (v.length !== 2 && v.length !== 4)) continue
+    // pos_frac / loc_frac 两个数、endpoints_frac 四个、points_frac 每个顶点两个：都是偶数个 x, y
+    if (!Array.isArray(v) || v.length < 2 || v.length % 2 !== 0) continue
     const nums = v as number[]
     if (nums.some((n) => typeof n !== 'number' || !Number.isFinite(n))) continue
     out.push({ gid: o.gid, prop: o.prop, nums })
