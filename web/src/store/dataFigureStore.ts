@@ -69,8 +69,9 @@ export type ProblemKind =
  * 临时标签里这份数据此刻在哪一步：
  *  - `reading` 读表中；`unreadable` 不是表格；`text` 全是文字、没有能画的数字；`pickrow` 表头行没认出来、要用户点一行
  *  - `loading` 候选还在出；`ready` 候选好了；`nothing` 后端说这张表画不出；`failed` 出候选这一步没成
+ *  - `cancelled` 大文件读到一半用户点了「取消」：前端不再等这次请求，回到可以重读 / 换文件的状态（后端那一头没有取消手段，见 `cancelRead`）
  */
-export type DraftPhase = 'idle' | 'reading' | 'unreadable' | 'text' | 'pickrow' | 'loading' | 'ready' | 'nothing' | 'failed' | 'mergeFailed'
+export type DraftPhase = 'idle' | 'reading' | 'cancelled' | 'unreadable' | 'text' | 'pickrow' | 'loading' | 'ready' | 'nothing' | 'failed' | 'mergeFailed'
 
 /** 这次画图用到的、数值列里混着文字的列（后端 `mixed_cells`）：默认「不画这几行」，右栏可改成「只用里面的数字」；多列时 `mode` 是它们共用的处理方式 */
 export interface MixedInfo {
@@ -181,6 +182,8 @@ interface DataFigureStore {
   /** 一张缩略图取到了 / 取不到（422）：就绪状态 + 全部都画不出来时走「没画出来」 */
   thumbSettled: (session: string, id: string, ok: boolean) => void
   draw: (id: string) => Promise<void>
+  /** 大文件读表 / 出候选到一半不想等了：放弃这次请求，回到 `cancelled`（可重读）。后端没有取消接口——它会自己跑完，结果被丢掉；已读好的概览留在后端缓存里，重读更快 */
+  cancelRead: () => void
   /** 出图中 / 出候选失败之后「再试一次」 */
   retry: () => Promise<void>
   /** 出图失败之后回到候选 */
@@ -200,6 +203,8 @@ let proposeSeq = 0
 let runSeq = 0
 let commitSeq = 0
 const overviewSeq = new Map<string, number>()
+/** 此刻这一轮「读表 + 出候选」的请求共用一个中止信号：`cancelRead` 用它让浏览器不再等（`run` / `reask` 各开新的一个，不中止上一轮） */
+let readCtl: AbortController | null = null
 /** 当前合并标签里「本标签内已读过 / 在读」的概览键：新开标签清空，磁盘事件清空；`ensureOverview` 不重复读 */
 const groupFresh = new Set<string>()
 /** 同一个 (会话, 备选) 的提交请求号：一次点击一个，不确定的重试复用它（换号 = 后端当成新的一次、会建 `_2`） */
@@ -283,7 +288,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
    * 出候选（懒模式）：文字先到——名字 / 说明 / 推荐 / 列角色 / 表头行 / 非数字格一次回来，缩略图由 `<img>` 各自取（后端当场画）。
    * 不再有选择题：后端自己用默认答案，说清用了什么；用户在右栏改了就把改动放进 `answers` 重来。
    */
-  async function propose(still: () => boolean, pj: string | null): Promise<void> {
+  async function propose(still: () => boolean, pj: string | null, signal?: AbortSignal): Promise<void> {
     const sel = get().selected
     if (!sel) return
     const group = get().group
@@ -302,6 +307,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
           ...(hasHeaders ? { header_rows: get().headerRows } : {}),
         },
         pj,
+        signal,
       )
     } catch (e) {
       if (!still()) return
@@ -343,7 +349,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     }
   }
 
-  async function loadOverview(ref: TableRef): Promise<AiDataOverview | null> {
+  async function loadOverview(ref: TableRef, signal?: AbortSignal): Promise<AiDataOverview | null> {
     const header = get().headerRows[ref.path] ?? null
     const key = overviewKey(ref, header)
     const prev = get().overviews[key]
@@ -355,7 +361,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     const pj = currentProjectId()
     set((s) => ({ overviews: { ...s.overviews, [key]: { status: 'loading', data: prev?.data ?? null } } }))
     try {
-      const data = await aiDataOverview({ path: ref.path, sheet: ref.sheet, headerRow: header }, pj)
+      const data = await aiDataOverview({ path: ref.path, sheet: ref.sheet, headerRow: header }, pj, signal)
       if (ep !== epoch || overviewSeq.get(key) !== mine) return null
       set((s) => ({ overviews: { ...s.overviews, [key]: { status: 'ready', data } } }))
       return data
@@ -379,12 +385,14 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     proposeSeq += 1
     const { pj, still } = capture(seq)
     const kept = opts.keepChoices ? { answers: get().answers, mixed: get().mixed, roles: get().roles } : { answers: {} as Record<string, unknown> }
+    const ctl = new AbortController()
+    readCtl = ctl
     set({ ...idleDraft, ...kept, phase: 'reading' })
     // 合画：几份表一起交给后端判断（第一份的「全是文字 / 要点表头行」不代表整组），只读第一份的概览给数据条
     if (get().group) {
       groupFresh.add(overviewKeyOf(sel, get().headerRows))
       void loadOverview(sel)
-      await propose(still, pj)
+      await propose(still, pj, ctl.signal)
       return
     }
     // 清单里已经说「读不了」（没有可看的原文）：不发请求
@@ -394,7 +402,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       set({ phase: 'unreadable' })
       return
     }
-    const ov = await loadOverview(sel)
+    const ov = await loadOverview(sel, ctl.signal)
     if (!still()) return
     if (!ov) {
       set({ phase: 'failed', error: null })
@@ -408,7 +416,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       set({ phase: 'text' })
       return
     }
-    await propose(still, pj)
+    await propose(still, pj, ctl.signal)
   }
 
   const notesOf = (res: AiDataCommitResult): DrawNotes => {
@@ -535,7 +543,9 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     runSeq += 1
     const { pj, still } = capture(seq)
     set({ answers: fn(get().answers), ...extra })
-    void propose(still, pj)
+    const ctl = new AbortController()
+    readCtl = ctl
+    void propose(still, pj, ctl.signal)
   }
 
   return {
@@ -599,7 +609,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         set({ draftOpen: true, draftActive: true })
         return
       }
-      if (!get().group && sameTable(get().selected, ref) && get().draftOpen) {
+      if (!get().group && sameTable(get().selected, ref) && get().draftOpen && get().phase !== 'cancelled') {
         set({ draftActive: true })
         return
       }
@@ -702,6 +712,30 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       }
       set({ problem: null })
       await run({ keepChoices: true })
+    },
+
+    cancelRead: () => {
+      const { phase, selected } = get()
+      if (phase !== 'reading' && phase !== 'loading') return
+      readCtl?.abort()
+      readCtl = null
+      runSeq += 1
+      proposeSeq += 1
+      commitRid = null
+      discardSession()
+      if (selected) {
+        // 这张表的概览还挂着「读取中」：回到取消前的样子（有旧内容就还它，没有就当没读过）
+        const key = overviewKeyOf(selected, get().headerRows)
+        overviewSeq.set(key, (overviewSeq.get(key) ?? 0) + 1)
+        const prev = get().overviews[key]
+        set((s) => {
+          const next = { ...s.overviews }
+          if (prev?.data) next[key] = { status: 'ready', data: prev.data }
+          else delete next[key]
+          return { overviews: next }
+        })
+      }
+      set({ phase: 'cancelled', candidates: [], session: null, thumbs: {}, error: null })
     },
 
     dismissProblem: () => set({ problem: null }),

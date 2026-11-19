@@ -1,0 +1,210 @@
+/**
+ * 大文件（> 5 MiB）在数据页的两样东西：读的时候一句「正在读一个大文件」+ 行内「取消」（取消之后回到可重读的状态），
+ * 以及候选上安静的一小段「N 行里取 K 个点」。小文件的界面一点不变。
+ */
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { TooltipProvider } from '@/components/ui/Tooltip'
+import { aiDataFigureDiscard, aiDataFigurePropose, aiDataFilesAll, aiDataOverview, type AiDataOverview } from '@/lib/api'
+import { LARGE_FILE_BYTES } from '@/lib/dataFigure'
+import { setCurrentProjectId } from '@/lib/session'
+import { useDataFigureStore } from '@/store/dataFigureStore'
+import { useProjectStore } from '@/store/projectStore'
+import { DataDrawer } from './DataDrawer'
+import { DataDraft } from './DataDraft'
+
+declare global {
+  // eslint-disable-next-line no-var
+  var IS_REACT_ACT_ENVIRONMENT: boolean
+}
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api')>()),
+  aiDataFilesAll: vi.fn(),
+  aiDataOverview: vi.fn(),
+  aiDataFigurePropose: vi.fn(),
+  aiDataFigureCommit: vi.fn(),
+  aiDataFigureDiscard: vi.fn(async () => ({ ok: true })),
+}))
+vi.mock('@/store/liveSync', () => ({ refreshProjectNow: vi.fn(async () => {}) }))
+
+let root: Root
+let host: HTMLDivElement
+async function mount(ui: React.ReactNode) {
+  host = document.createElement('div')
+  document.body.appendChild(host)
+  root = createRoot(host)
+  await act(async () => {
+    root.render(<TooltipProvider>{ui}</TooltipProvider>)
+  })
+}
+afterEach(() => {
+  act(() => root?.unmount())
+  host?.remove()
+  document.body.innerHTML = ''
+})
+const q = <T extends Element = HTMLElement>(sel: string) => document.querySelector<T>(sel)
+const qa = <T extends Element = HTMLElement>(sel: string) => [...document.querySelectorAll<T>(sel)]
+const click = async (el: Element | null) => {
+  expect(el).not.toBeNull()
+  await act(async () => (el as HTMLElement).click())
+}
+const flush = async () => act(async () => { await new Promise((r) => setTimeout(r, 0)) })
+
+const ov = (): AiDataOverview => ({
+  path: 'big.csv', sheet: null, status: 'ok', code: null, delimiter: 'comma', header_row: 1, rows: 6_120_000, columns: 3, layout: null,
+  fields: [
+    { name: 'time', kind: 'numeric', numeric: 6_120_000, text: 0, empty: 0, nan: 0, id_like: false },
+    { name: 'signal', kind: 'numeric', numeric: 6_120_000, text: 0, empty: 0, nan: 0, id_like: false },
+  ],
+  preview_rows: [{ line: 2, cells: ['0', '1.2'] }], truncated: true, lead_lines: [], raw_lines: [],
+})
+
+describe('大文件：读取中的一句话与「取消」', () => {
+  const files = vi.mocked(aiDataFilesAll)
+  const overview = vi.mocked(aiDataOverview)
+  const propose = vi.mocked(aiDataFigurePropose)
+  const entry = (path: string, size: number) => ({ path, size, table: { status: 'ok' as const, code: null, delimiter: 'comma' as const, header_row: 1, columns: 2, rows: 5 } })
+  const item = (id: string, code: string, reduced?: { rows: number; kept: number }) => ({ id, title_code: code, why_code: code, recommended: id === 'i1', unplotted: { count: 0, code: null }, thumbnail_url: `/t/${id}`, thumbnail_status: 'pending' as const, ...(reduced ? { reduced } : {}) })
+  const cands = (items: ReturnType<typeof item>[]) => ({ kind: 'candidates' as const, session: 'S1', items, dropped: [], render: 'lazy' as const, header_row: 1, roles: null, defaults: [], mixed_cells: [] })
+  const start = async (ui: React.ReactNode = <><DataDrawer /><DataDraft /></>) => {
+    await act(async () => useDataFigureStore.getState().loadFiles())
+    await mount(ui)
+    await flush()
+  }
+  const open = async (i: number) => {
+    await click(qa('[data-studio-file]')[i]!)
+    await flush()
+  }
+  beforeEach(() => {
+    for (const f of [files, overview, propose, vi.mocked(aiDataFigureDiscard)]) f.mockReset()
+    vi.mocked(aiDataFigureDiscard).mockResolvedValue({ ok: true })
+    setCurrentProjectId('pa')
+    useDataFigureStore.getState().clear()
+    useProjectStore.setState({ project: { open: true, name: 'proj', writable: true } })
+    files.mockResolvedValue({ files: [entry('big.csv', LARGE_FILE_BYTES + 1), entry('edge.csv', LARGE_FILE_BYTES), entry('small.csv', 1024)], truncated: false })
+  })
+
+  it('小文件（含恰好 5 MiB）：读的时候还是原来的「正在读…」，没有取消', async () => {
+    overview.mockReturnValue(new Promise(() => {}))
+    await start()
+    await open(1)
+    expect(q('[data-large-read]')).toBeNull()
+    expect(document.body.textContent).toContain('正在读…')
+    await open(2)
+    expect(q('[data-large-read]')).toBeNull()
+  })
+
+  it('大文件读概览：一句「正在读一个大文件」+ 行内取消；取消 = 中止请求、回到可重读，晚到的结果不再改界面', async () => {
+    let late!: (v: AiDataOverview) => void
+    overview.mockReturnValueOnce(new Promise((r) => (late = r)))
+    await start()
+    await open(0)
+    expect(q('[data-large-read]')!.textContent).toContain('正在读一个大文件，要一会儿…')
+    expect(q('[data-large-read-cancel]')!.getAttribute('title')).toContain('随时可以重新读')
+    const signal = overview.mock.calls[0]![2] as AbortSignal
+    expect(signal.aborted).toBe(false)
+    await click(q('[data-large-read-cancel]'))
+    expect(signal.aborted).toBe(true)
+    expect(useDataFigureStore.getState().phase).toBe('cancelled')
+    expect(q('[data-studio-cancelled]')!.textContent).toContain('已取消，这个文件没读完。')
+    expect(q('[data-data-strip]')).toBeNull() // 没有读到内容：不留永远转着的骨架
+    await act(async () => late(ov()))
+    await flush()
+    expect(useDataFigureStore.getState().phase).toBe('cancelled')
+    expect(propose).not.toHaveBeenCalled()
+    // 重新读取：回到读取中、再发一次请求，读完出候选
+    overview.mockResolvedValueOnce(ov())
+    propose.mockResolvedValueOnce(cands([item('i1', 'line_band')]))
+    await click(q('[data-studio-retry]'))
+    await flush()
+    expect(overview).toHaveBeenCalledTimes(2)
+    expect(qa('[data-candidate]')).toHaveLength(1)
+  })
+
+  it('取消之后在抽屉里再点同一个文件，也会重新读', async () => {
+    overview.mockReturnValueOnce(new Promise(() => {}))
+    await start()
+    await open(0)
+    await click(q('[data-large-read-cancel]'))
+    overview.mockResolvedValueOnce(ov())
+    propose.mockResolvedValueOnce(cands([item('i1', 'line_band')]))
+    await open(0)
+    await flush()
+    expect(overview).toHaveBeenCalledTimes(2)
+    expect(qa('[data-candidate]')).toHaveLength(1)
+  })
+
+  it('大文件出候选这一步（propose）也一样：上方一句话 + 取消；取消后候选不再上屏', async () => {
+    overview.mockResolvedValue(ov())
+    let late!: (v: ReturnType<typeof cands>) => void
+    propose.mockReturnValueOnce(new Promise((r) => (late = r)))
+    await start()
+    await open(0)
+    expect(q('[data-draft-lead][data-large-read]')!.textContent).toContain('正在读一个大文件')
+    expect(qa('[data-candidate-skeleton]')).toHaveLength(4)
+    const signal = propose.mock.calls[0]![2] as AbortSignal
+    await click(q('[data-large-read-cancel]'))
+    expect(signal.aborted).toBe(true)
+    expect(q('[data-studio-cancelled]')).not.toBeNull()
+    expect(qa('[data-candidate-skeleton]')).toHaveLength(0)
+    await act(async () => late(cands([item('i1', 'line_band')])))
+    await flush()
+    expect(qa('[data-candidate]')).toHaveLength(0)
+    expect(useDataFigureStore.getState().phase).toBe('cancelled')
+  })
+
+  it('候选一出来（文字到了）这一句就没了：不再有取消', async () => {
+    overview.mockResolvedValue(ov())
+    propose.mockResolvedValueOnce(cands([item('i1', 'line_band')]))
+    await start()
+    await open(0)
+    expect(q('[data-large-read]')).toBeNull()
+    expect(q('[data-draft-lead]')!.textContent).toBe('正在画…')
+  })
+})
+
+describe('候选上的「N 行里取 K 个点」', () => {
+  const files = vi.mocked(aiDataFilesAll)
+  const overview = vi.mocked(aiDataOverview)
+  const propose = vi.mocked(aiDataFigurePropose)
+  const item = (id: string, code: string, reduced?: { rows: number; kept: number }) => ({ id, title_code: code, why_code: code, recommended: id === 'i1', unplotted: { count: 0, code: null }, thumbnail_url: `/t/${id}`, thumbnail_status: 'pending' as const, ...(reduced ? { reduced } : {}) })
+  beforeEach(() => {
+    for (const f of [files, overview, propose]) f.mockReset()
+    setCurrentProjectId('pa')
+    useDataFigureStore.getState().clear()
+    useProjectStore.setState({ project: { open: true, name: 'proj', writable: true } })
+    files.mockResolvedValue({ files: [{ path: 'big.csv', size: LARGE_FILE_BYTES * 20, table: { status: 'ok', code: null, delimiter: 'comma', header_row: 1, columns: 2, rows: 6_120_000 } }], truncated: false })
+    overview.mockResolvedValue(ov())
+  })
+  const show = async (items: ReturnType<typeof item>[], props: { reducedAt?: 'title' | 'why'; reducedText?: 'a' | 'b' } = {}) => {
+    const { CandidateGrid } = await import('./CandidateGrid')
+    await mount(<CandidateGrid items={items.map((i) => ({ ...i, thumb: `/t/${i.id}` }))} thumbs={{}} drawingId={null} onPick={() => {}} onThumb={() => {}} {...props} />)
+  }
+
+  it('大表的候选：名字那一行右端一小段灰字（数字用「万」），悬停有整句；没有 reduced / 没少画的不显示', async () => {
+    await show([
+      item('i1', 'line_band', { rows: 6_120_000, kept: 42_113 }),
+      item('i2', 'scatter_fit', { rows: 6_120_000, kept: 8_400 }),
+      item('i3', 'points_mean'),
+      item('i4', 'box_points', { rows: 90_000, kept: 90_000 }),
+    ])
+    const tiles = qa('[data-candidate]')
+    expect(tiles[0]!.querySelector('[data-candidate-reduced]')!.textContent).toBe('612万行里取4.2万个点')
+    expect(tiles[0]!.querySelector('[data-candidate-reduced]')!.getAttribute('title')).toBe('整张表612万行，这张图画的是其中有代表性的4.2万个点，最大最小值都留着。')
+    expect(tiles[1]!.querySelector('[data-candidate-reduced]')!.textContent).toContain('8400')
+    expect(tiles[2]!.querySelector('[data-candidate-reduced]')).toBeNull()
+    expect(tiles[3]!.querySelector('[data-candidate-reduced]')).toBeNull()
+    // 名字那一行里（不另起一行）
+    expect(tiles[0]!.querySelector('[data-candidate-reduced]')!.parentElement!.className).toContain('flex')
+  })
+
+  it('另一个位置 / 另一句文案候选', async () => {
+    await show([item('i1', 'line_band', { rows: 6_120_000, kept: 42_113 })], { reducedAt: 'why', reducedText: 'b' })
+    const r = q('[data-candidate-reduced]')!
+    expect(r.textContent).toBe('画4.2万个点 · 共612万行')
+    expect(r.parentElement!.textContent).toContain('看总体趋势和波动') // 接在说明那一句后面，同一行
+  })
+})

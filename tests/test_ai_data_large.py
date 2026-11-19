@@ -701,3 +701,14 @@ def test_a_date_axis_is_reduced_in_days_since_the_epoch(tmp_path):
     days = [(dt.date.fromisoformat(r[0]) - d0).days for r in kept]
     assert days == sorted(days) and days[0] == 0 and days[-1] == 2499 and info["bins"] <= 30
     assert info["y"][0] == (2500, 0.0, 10.0) and {r[1] for r in kept} >= {"0", "10"}
+
+
+def test_front_end_large_file_threshold_is_the_backend_small_bytes():
+    """前端「读大文件时说一句并给取消」的界线（`LARGE_FILE_BYTES`）与后端大表界线 `SMALL_BYTES` 同一个数（严格同源对）。"""
+    import re
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "web/src/lib/dataFigure.ts").read_text(encoding="utf-8")
+    m = re.search(r"export const LARGE_FILE_BYTES = (\d+) \* 1024 \* 1024", src)
+    assert m is not None
+    assert int(m.group(1)) * 1024 * 1024 == adf.SMALL_BYTES

@@ -4,12 +4,13 @@ import { Button } from '@/components/ui/Button'
 import { Segmented } from '@/components/ui/Segmented'
 import { canRevealInFileManager, revealProjectFile } from '@/lib/desktop'
 import { feedbackAction } from '@/lib/canvasFileIntake'
-import { KNOWN_NOTHING_REASONS } from '@/lib/dataFigure'
+import { KNOWN_NOTHING_REASONS, isLargeFile } from '@/lib/dataFigure'
 import { useFormatMessage } from '@/i18n/react'
 import { useDataBatchStore } from '@/store/dataBatchStore'
 import '@/lib/dataFigureHost'
 import { overviewKeyOf, useDataFigureStore } from '@/store/dataFigureStore'
 import { useDocumentStore } from '@/store/documentStore'
+import { cn } from '@/lib/utils'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { CandidateGrid, useDrawingLine } from './CandidateGrid'
@@ -20,6 +21,28 @@ function Line({ children, anchor }: { children: React.ReactNode; anchor?: string
   return (
     <p {...(anchor ? { [anchor]: '' } : {})} className="text-base text-ink">
       {children}
+    </p>
+  )
+}
+
+/**
+ * 大文件（> 5 MiB）读表 / 出候选时的一句话 + 行内的「取消」：没有百分比（后端没有进度信号，不编造）；取消 = 不再等这次请求（后端没有取消接口）。
+ * 小文件不渲染它，界面与原来逐像素相同。按钮在一行里、不撑高（负外边距吃掉按钮比文字行多出的高度）。
+ */
+function LargeReadLine({ lead }: { lead?: boolean }) {
+  const { t } = useTranslation('ai')
+  return (
+    <p data-large-read {...(lead ? { 'data-draft-lead': '' } : {})} className={cn('flex items-center gap-2.5 text-base text-ink-2', lead && 'mb-3.5 h-5')} role="status">
+      <span className="min-w-0 truncate">{t('dataFigureV2.working.readingLarge')}</span>
+      <button
+        type="button"
+        data-large-read-cancel
+        title={t('dataFigureV2.working.cancelHint')}
+        onClick={() => useDataFigureStore.getState().cancelRead()}
+        className="-my-0.5 h-6 shrink-0 rounded-full px-2.5 text-sm text-ink-2 outline-none hover:bg-surface-hover hover:text-ink focus-visible:focus-ring"
+      >
+        {t('dataFigureV2.working.cancel')}
+      </button>
     </p>
   )
 }
@@ -40,6 +63,7 @@ export function DataDraft() {
   const overviewGen = useDataFigureStore((s) => s.overviewGen)
   const overviews = useDataFigureStore((s) => s.overviews)
   const headerRows = useDataFigureStore((s) => s.headerRows)
+  const files = useDataFigureStore((s) => s.files)
   // 合画的数据条此刻看第几个文件（默认第一个）；换了一组就回到第一个
   const [stripIdx, setStripIdx] = useState(0)
   const groupKey = group ? group.map((r) => `${r.path}|${r.sheet}`).join('\n') : null
@@ -102,6 +126,7 @@ export function DataDraft() {
   // 取不到图的（422）静默去掉；推荐标记在剩下的第一张上
   const candidates = allCandidates.filter((c) => thumbs[c.id] !== 'failed')
   const settled = candidates.length > 0 && candidates.every((c) => thumbs[c.id] === 'ready')
+  const large = !group && isLargeFile(files.status === 'idle' ? null : files.entries, selected)
   const shown = stripRef ?? selected
   const ovState = overviews[overviewKeyOf(shown, headerRows)]
   const ov = ovState?.data ?? null
@@ -194,21 +219,34 @@ export function DataDraft() {
   } else if (phase === 'nothing') {
     const first = reasons.find((r) => KNOWN_NOTHING_REASONS.includes(r))
     top = <Line anchor="data-studio-nothing">{first ? t(`dataFigureV2.reason.${first}`) : t('dataFigureV2.nothing.generic')}</Line>
+  } else if (phase === 'cancelled') {
+    top = (
+      <div data-studio-cancelled className="flex flex-col items-start gap-2">
+        <Line>{t('dataFigureV2.draft.cancelled')}</Line>
+        <Button variant="primary" size="lg" className="mt-1" data-studio-primary data-studio-retry onClick={() => void st().retry()}>
+          {t('dataFigureV2.draft.readAgain')}
+        </Button>
+      </div>
+    )
   } else if (phase === 'reading') {
-    top = <p className="text-base text-ink-2" role="status">{t('dataFigureV2.working.reading')}</p>
+    top = large ? <LargeReadLine /> : <p className="text-base text-ink-2" role="status">{t('dataFigureV2.working.reading')}</p>
   } else {
     const pending = phase === 'loading' || phase === 'idle'
     top = (
       <>
-        <p data-draft-lead className="mb-3.5 h-5 text-base text-ink-2" role="status">
-          {drawingId ? drawingLine : settled ? t('dataFigureV2.draft.pickLead') : t('dataFigureV2.working.drawing')}
-        </p>
+        {large && phase === 'loading' ? (
+          <LargeReadLine lead />
+        ) : (
+          <p data-draft-lead className="mb-3.5 h-5 text-base text-ink-2" role="status">
+            {drawingId ? drawingLine : settled ? t('dataFigureV2.draft.pickLead') : t('dataFigureV2.working.drawing')}
+          </p>
+        )}
         <CandidateGrid items={candidates} thumbs={thumbs} pending={pending} drawingId={drawingId} onPick={(id) => void st().draw(id)} onThumb={(id, ok) => session && st().thumbSettled(session, id, ok)} />
       </>
     )
   }
 
-  const noStrip = phase === 'unreadable' && !ov?.raw_lines?.length
+  const noStrip = (phase === 'unreadable' || phase === 'cancelled') && !ov?.raw_lines?.length
   return (
     <div
       ref={root}

@@ -644,7 +644,15 @@
     "working": {
       "reading": "Reading…",
       "drawing": "Drawing…",
-      "slow": "Still drawing. More data takes a bit longer."
+      "slow": "Still drawing. More data takes a bit longer.",
+      "readingLarge": "Reading a large file, this takes a moment…",
+      "cancel": "Cancel",
+      "cancelHint": "Stop waiting for this read. You can read it again anytime."
+    },
+    "reduced": {
+      "a": "{{kept}} points from {{rows}} rows",
+      "b": "Plots {{kept}} of {{rows}} rows",
+      "hint": "The table has {{rows}} rows. This plot draws {{kept}} representative points, with the minimum and maximum values kept."
     },
     "preview": {
       "headerPick": "Which row holds the column names",
@@ -679,6 +687,8 @@
       "allText": "This table is all text, so there is nothing numeric to draw.",
       "unreadable": "This file is not a table and can't be read.",
       "failed": "That didn't draw. Your data is fine.",
+      "cancelled": "Cancelled. This file wasn't fully read.",
+      "readAgain": "Read again",
       "stripInfo": "First {{shown}} rows of {{total}} · {{columns}} columns",
       "expand": "Expand",
       "collapse": "Collapse"

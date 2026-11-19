@@ -4536,11 +4536,12 @@ export interface AiDataOverview {
 export const aiDataOverview = (
   q: { path: string; sheet?: string | null; headerRow?: number | null },
   pj?: string | null,
+  signal?: AbortSignal,
 ) => {
   const qs = new URLSearchParams({ path: q.path })
   if (q.sheet) qs.set('sheet', q.sheet)
   if (q.headerRow != null) qs.set('header_row', String(q.headerRow))
-  return jsonFetch<AiDataOverview>(`/api/ai/data-overview?${qs}`, undefined, pj)
+  return jsonFetch<AiDataOverview>(`/api/ai/data-overview?${qs}`, signal ? { signal } : undefined, pj)
 }
 
 /** 提问里一个选项：`code` + `params` 给文案，`answer` 原样并进下一次 propose 的 `answers` */
@@ -4567,6 +4568,8 @@ export interface AiDataProposeItem {
   recommended: boolean
   coverage?: Record<string, unknown>
   unplotted: { count: number; code: string | null }
+  /** 大表（超过 5 MiB / 10 万行的文本表）才有：整表 `rows` 行，这张图实际画的是缩减后的 `kept` 行；小表没有这一项 */
+  reduced?: { rows: number; kept: number }
   /** 服务端给的相对路径；加项目标识要经 `aiDataThumbnailUrl` */
   thumbnail_url: string
   /** 懒模式 `pending`（缩略图在取图时才画）；旧模式 `ready` */
@@ -4627,10 +4630,10 @@ export interface AiDataProposeBody {
   render?: 'lazy'
 }
 
-export const aiDataFigurePropose = (body: AiDataProposeBody, pj?: string | null) =>
+export const aiDataFigurePropose = (body: AiDataProposeBody, pj?: string | null, signal?: AbortSignal) =>
   jsonFetch<AiDataProposeResponse>(
     '/api/ai/data-figure/propose',
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), ...(signal ? { signal } : {}) },
     pj,
   )
 
@@ -4648,6 +4651,8 @@ export interface AiDataCommitResult {
   can_delete_script?: boolean
   unplotted?: { count: number; rows: { row: number; column: string; reason: string }[]; code: string | null }
   cells?: unknown
+  /** 大表：画出的是缩减后的点（同候选的 `reduced`）；界面不据此弹提示 */
+  reduced?: { rows: number; kept: number }
 }
 
 export const aiDataFigureCommit = (
