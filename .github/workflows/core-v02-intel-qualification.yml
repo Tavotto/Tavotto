@@ -21,12 +21,12 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          ref: 8c35fb77b2d7fd0cfd7c7e9dcd0d64a776d996a9
+          ref: 727815b258ecb55ebefa9f6604ef2c2541bd5790
           persist-credentials: false
       - name: Verify candidate and host
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "8c35fb77b2d7fd0cfd7c7e9dcd0d64a776d996a9"
+          test "$(git rev-parse HEAD)" = "727815b258ecb55ebefa9f6604ef2c2541bd5790"
           test "$(uname -m)" = x86_64
           git log -1 --format='%H %s'
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
