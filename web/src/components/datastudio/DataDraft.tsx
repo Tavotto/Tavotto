@@ -32,7 +32,7 @@ function Line({ children, anchor }: { children: React.ReactNode; anchor?: string
 function LargeReadLine({ lead }: { lead?: boolean }) {
   const { t } = useTranslation('ai')
   return (
-    <p data-large-read {...(lead ? { 'data-draft-lead': '' } : {})} className={cn('flex items-center gap-2.5 text-base text-ink-2', lead && 'mb-3.5 h-5')} role="status">
+    <p data-large-read {...(lead ? { 'data-draft-lead': '' } : {})} className={cn('flex items-baseline gap-2.5 text-base text-ink-2', lead && 'mb-3.5 h-5')} role="status">
       <span className="min-w-0 truncate">{t('dataFigureV2.working.readingLarge')}</span>
       <button
         type="button"
@@ -52,7 +52,7 @@ function LargeReadLine({ lead }: { lead?: boolean }) {
  * 上面是候选画法网格（或一句话的说明），下面是数据条。出图中被点的那张带扫光、其余淡掉。
  * Esc 关临时标签；切到别的画布标签时临时标签留着但不激活。
  */
-export function DataDraft() {
+export function DataDraft({ reducedAt, reducedText }: { reducedAt?: 'title' | 'why'; reducedText?: 'a' | 'b' } = {}) {
   const { t } = useTranslation('ai')
   const fm = useFormatMessage()
   const open = useDataFigureStore((s) => s.draftOpen)
@@ -241,7 +241,7 @@ export function DataDraft() {
             {drawingId ? drawingLine : settled ? t('dataFigureV2.draft.pickLead') : t('dataFigureV2.working.drawing')}
           </p>
         )}
-        <CandidateGrid items={candidates} thumbs={thumbs} pending={pending} drawingId={drawingId} onPick={(id) => void st().draw(id)} onThumb={(id, ok) => session && st().thumbSettled(session, id, ok)} />
+        <CandidateGrid items={candidates} thumbs={thumbs} pending={pending} drawingId={drawingId} onPick={(id) => void st().draw(id)} onThumb={(id, ok) => session && st().thumbSettled(session, id, ok)} reducedAt={reducedAt} reducedText={reducedText} />
       </>
     )
   }
