@@ -133,6 +133,19 @@ describe('创建', () => {
     expect(groupPathOf(byId('src'))).toEqual(['G0', 'G1'])
   })
 
+  it('新建后接着打字：撤销分两步——先撤回打的字，再撤掉这段路径文字（11-19 用户定）', async () => {
+    await seed([line('src')])
+    const id = createPathText(byId('src'), 0)!
+    const placeholder = byId<PathTextObject>(id).text
+    commitPathText(id, '电流密度')
+    expect(past()).toBe(2)
+    expect(byId<PathTextObject>(id).text).toBe('电流密度')
+    useDocumentStore.getState().undo()
+    expect(byId<PathTextObject>(id).text).toBe(placeholder)
+    useDocumentStore.getState().undo()
+    expect(objs().some((o) => o.id === id)).toBe(false)
+  })
+
   it('右键目标：单选一条路径 / 形状 / 箭头才有；文字、多选没有', async () => {
     await seed([line('a'), rect('r'), pt()])
     useSelectionStore.getState().set(['r'])
