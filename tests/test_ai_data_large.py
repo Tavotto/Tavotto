@@ -342,7 +342,7 @@ def test_duplicates_and_non_monotone_x_are_reported(tmp_path):
     assert info["mono"] is False
     assert tpl.reduce_file  # 引用，避免被当成没用到的导入
     assert (
-        info["distinct_min"] >= 3 and 4 >= recipe_mod.MIN_X_TREND
+        min(info["x_counts"]) >= 3 and 4 >= recipe_mod.MIN_X_TREND
     )  # 封顶 4 ≥ `MIN_X_TREND`：判「太少」不会被封顶吃掉
 
 
@@ -362,8 +362,9 @@ def test_the_budget_keeps_the_drawn_numbers_under_the_fingerprint_budget():
                  "y": [f"y{i}" for i in range(ny)], "x": "t", "group": "g"}
             )  # fmt: skip
             spec = tpl.large_spec(s, rec)
-            per_bin = 2 + 3 * ny
-            worst = spec["bins"] * per_bin * series * ny * 2 * 2
+            per_bin = 2 + 2 * ny
+            rows = spec["bins"] * per_bin + ny * spec["gap_max"]
+            worst = rows * series * ny * 2 * 2
             assert worst <= budget, (ny, series, spec["bins"])
 
 
@@ -712,3 +713,116 @@ def test_front_end_large_file_threshold_is_the_backend_small_bytes():
     m = re.search(r"export const LARGE_FILE_BYTES = (\d+) \* 1024 \* 1024", src)
     assert m is not None
     assert int(m.group(1)) * 1024 * 1024 == adf.SMALL_BYTES
+
+
+# =========================================================================== Codex P1 / P2：断开不能被连起来；x 个数与小表同一个谓词
+def _gap_table(tmp_path, n=110_000, gaps=(11, 13), spikes=(12, 14)):
+    lines = ["t,v"]
+    for i in range(n):
+        if i in gaps:
+            lines.append(f"{i},")
+        elif i in spikes:
+            lines.append(f"{i},{-1000 if i == spikes[0] else 1000}")  # 12 是最小值、14 是最大值
+        else:
+            lines.append(f"{i},{(i % 7) * 0.1}")
+    return write(tmp_path, "g.csv", "\n".join(lines) + "\n")
+
+
+def _line_spec(bins=2000, **kw):
+    return {**_spec(["v"], bins=bins, **kw), "lines": True, "gap_max": 200}
+
+
+def test_every_gap_keeps_a_marker_so_kept_points_are_never_joined_across_it(tmp_path):
+    # Codex 的复现形状：11 万个递增 x、默认 2000 箱；x=11 与 x=13 缺 y，x=12 与 x=14 是极值
+    p = _gap_table(tmp_path)
+    _h, kept, info = tpl.reduce_file(str(p), ",", None, False, "utf-8", _line_spec())
+    xs = [int(r[0]) for r in kept]
+    assert {11, 12, 13, 14} <= set(xs), xs[:20]  # 两段断开都留着标记
+    assert info["gap_runs"] == 2 and info["gap_over"] is False
+    # 画出的线：trend_data 按 x 排序后，12 与 14 之间必有一条缺失行（折线在那里断开）
+    d = tpl.trend_data(_h, kept, "t", ["v"], None, None, None, False)
+    (key,) = d["series"]
+    sx, sv = d["series"][key]
+    i12, i14 = sx.index(12.0), sx.index(14.0)
+    assert any(v != v for v in sv[i12:i14])
+
+
+def test_the_gap_audit_is_independent_of_the_reduction_and_catches_a_lost_gap(
+    tmp_path, monkeypatch
+):
+    _gap_table(tmp_path)
+    monkeypatch.setattr(adf, "SMALL_ROWS", 100)
+    prof = adf.profile_folder(tmp_path)
+    (entry,) = prof.tables
+    rec = recipe_mod.FigureRecipe.from_dict(
+        {"table": "g.csv", "family": "trend", "why": "w",
+         "layers": [{"mark": "points"}, {"mark": "line", "role": "overlay"}], "y": ["v"], "x": "t"}
+    )  # fmt: skip
+    rows, info = tpl.large_reduce(entry.summary, rec)  # 正常：对得上
+    assert info["gap_runs"] == 2
+    real = tpl.reduce_file
+
+    def lossy(*a, **k):  # 缩减把 x=13 那段断开弄丢（行与行序号都去掉）
+        h, rs, inf = real(*a, **k)
+        keep = [i for i, r in enumerate(rs) if r[0] != "13"]
+        return h, [rs[i] for i in keep], {**inf, "ords": [inf["ords"][i] for i in keep]}
+
+    monkeypatch.setattr(tpl, "reduce_file", lossy)
+    tpl._REDUCE_CACHE.clear()
+    with pytest.raises(tpl.TemplateError):
+        tpl.large_reduce(entry.summary, rec)
+
+
+def test_too_many_gaps_refuse_the_line_but_not_the_scatter(tmp_path):
+    lines = ["t,v"] + [f"{i}," + ("" if i % 2 else "1") for i in range(3000)]
+    p = write(tmp_path, "m.csv", "\n".join(lines) + "\n")
+    spec = {**_line_spec(), "gap_max": 10}
+    _h, kept, info = tpl.reduce_file(str(p), ",", None, False, "utf-8", spec)
+    assert info["gap_over"] is True and info["gap_runs"] > 10
+    assert len([r for r in kept if r[1] == ""]) <= 10 + 2000  # 断开标记有界
+
+
+def test_distinct_x_counts_only_rows_where_x_and_the_first_y_are_finite_like_the_small_table(
+    tmp_path, monkeypatch
+):
+    # Codex P2：11 万行、y 只有两个端点非空 → 小表同样的数据拒（不同 x 不足 3 个），大表也必须拒
+    n = 110_000
+    text = "t,v\n" + "".join(f"{i},{1.0 if i in (0, n - 1) else ''}\n" for i in range(n))
+    small_text = "t,v\n" + "".join(f"{i},{1.0 if i in (0, 40) else ''}\n" for i in range(41))
+    rec = recipe_mod.FigureRecipe.from_dict(
+        {"table": "d.csv", "family": "trend", "why": "w", "layers": [{"mark": "points"}],
+         "y": ["v"], "x": "t"}
+    )  # fmt: skip
+    p = write(tmp_path, "d.csv", text)
+    monkeypatch.setattr(adf, "SMALL_ROWS", 1000)
+    (entry,) = adf.profile_folder(tmp_path).tables
+    with pytest.raises(tpl.LargeRuleError) as e:
+        tpl.large_reduce(entry.summary, rec)
+    assert e.value.code == "trend_too_few_x"
+    # 小表（同一个谓词）：同样的形状拒
+    p.write_text(small_text, encoding="utf-8")
+    monkeypatch.setattr(adf, "SMALL_ROWS", 100_000)
+    prof = adf.profile_folder(tmp_path)
+    values = adf.inspect_data_source(p, v2=True, header_row=prof.tables[0].summary.header_line)
+    probs = recipe_mod.validate_recipe(prof, rec, confirmed=recipe_mod.Confirmed(), values=values)
+    assert "trend_too_few_x" in [q.code for q in probs]
+    # 同一个谓词：不是两份拷贝
+    assert recipe_mod.trend_too_few_x([4, 2]) and not recipe_mod.trend_too_few_x([3, 4])
+    assert recipe_mod.trend_too_few_x([])
+
+
+def test_duplicate_x_is_judged_on_finite_pairs_like_the_small_table(tmp_path, monkeypatch):
+    # 同一个 x 出现两次、但其中一行 y 缺失：没有两个有限观测共用一个 x，小表不拒；大表也不该拒
+    n = 5000
+    lines = ["t,v"]
+    for i in range(n):
+        lines.append(f"{i},{i % 5}")
+        if i == 100:
+            lines.append(f"{i},")
+    p = write(tmp_path, "d.csv", "\n".join(lines) + "\n")
+    _h, _k, info = tpl.reduce_file(str(p), ",", None, False, "utf-8", _line_spec())
+    assert info["mono"] is True and info["dup"] is False
+    lines.append("200,9")  # 现在才是真的两个有限观测同 x（且不再单调）
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _h, _k, info = tpl.reduce_file(str(p), ",", None, False, "utf-8", _line_spec())
+    assert info["mono"] is False

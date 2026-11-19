@@ -913,7 +913,7 @@ def _value_problems(
         for k, xv, yv in zip(gk, v.nums(r.x), v.nums(y0)):
             if xv is not None and yv is not None:
                 xs_by.setdefault(k, set()).add(xv)
-        if not xs_by or min(len(x) for x in xs_by.values()) < MIN_X_TREND:
+        if trend_too_few_x(len(x) for x in xs_by.values()):
             P.append(Problem("trend_too_few_x", "x"))
     if spec.key == "paired" and r.x is not None and r.unit is not None:
         # 配对键含分面：每个分面格内逐个体判（同一个体在别的分面里的测量不算它的重复）
@@ -1044,6 +1044,13 @@ LARGE_MARKS: dict[str, frozenset[str]] = {
     "trend": frozenset({"line", "step", "points"}),
     "relationship": frozenset({"points"}),
 }
+
+
+def trend_too_few_x(counts) -> bool:
+    """趋势的「不同横轴取值太少」判据（小表 `_value_problems` 与大表 `ai_data_template.large_reduce` 共用这一个谓词）：`counts` 是每个（分面, 分组）里
+    **横轴与第一个 y 都有限**的观测的不同 x 个数（没有这样的观测的格子不在里面）；一个格子都没有、或最少的一个不足 `MIN_X_TREND` 就拒。"""
+    counts = list(counts)
+    return not counts or min(counts) < MIN_X_TREND
 
 
 def _large_problems(recipe: FigureRecipe, s: adf.DataSummary) -> list[Problem]:
