@@ -44,6 +44,7 @@ from pathlib import Path, PurePosixPath
 from . import (
     ai_data_figure as adf,
     ai_data_merge as merge_mod,
+    ai_data_progress as progress,
     ai_data_recipe as recipe_mod,
     ai_data_template as tpl,
     ai_figure_edit,
@@ -66,6 +67,7 @@ ERROR_CODES = (
     "propose_input_invalid",  # 请求体的字段类型不对 / 超长
     "propose_cells_invalid",  # 数值列里夹着的文字格的处理规则不合格（`params.reason` 是拒绝码，`params.key` 点名哪一项）
     "propose_cells_need_rule",  # 用户只用文字说明了怎么处理（`describe`）：要先由助手整理成规则，不猜
+    "propose_cancelled",  # 前端取消了这个读表类请求（概览 / 出备选；`/api/ai/data-progress/<rid>/cancel`）：什么都没留下
     "propose_thumbnail_failed",  # 懒渲染（`render="lazy"`）：这一张缩略图画不出来（`params.reason` 是 `DROP_REASONS` 里的码）
     "tables_columns_differ",  # 合画（`tables`）：这几份的列名集合或顺序不一样，拼不成一张表（`params.index` = 第一个与第一份不同的下标）
     "tables_limit_exceeded",  # 合画：份数超过上限（`params.max`）
@@ -203,6 +205,8 @@ class Session:
     root: Path | None = None  # 项目目录（懒渲染取项目解释器用）
     #: 懒渲染：画哪些备选（`items` 的插入顺序就是推荐顺序）
     lazy: bool = False
+    #: 大表（`DataSummary.large`）：进度只对大表有条目
+    large: bool = False
     #: 合画（几份拼一张）：各份与合成列；单份 = None（`table` / `sheet` / `data_sha256` 在合画时是第一份的 / 拼后的身份，`folder_rel` 是落点目录）
     merge: merge_mod.MergeSpec | None = None
 
@@ -611,10 +615,21 @@ def _render_attempt(sdir: Path, rel: str, stem: str, thumb: Path) -> _Rendered:
             LOG.warning("数据出图候选渲染后 worker 退役失败", exc_info=True)
 
 
-def _stage_table(sdir: Path, source: Path, table_rel: str) -> None:
+def _stage_table(sdir: Path, source: Path, table_rel: str, tracked: bool = False) -> None:
     """把选中的那一张数据文件的**字节副本**放进候选目录（布局与将来落盘后相同）。只复制不链接；源文件只读。"""
     dest = sdir.joinpath(*PurePosixPath(normalize_rel(table_rel)).parts)
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if tracked and progress.active():
+        # 大表副本按块复制：每块记字节进度并查取消（`shutil.copyfile` 一口气拷 500 MB 不能中途停）。取消 / 出错由调用方删整个会话目录
+        total = source.stat().st_size
+        done = 0
+        with source.open("rb") as src, dest.open("wb") as out:
+            for chunk in iter(lambda: src.read(8 * 1024 * 1024), b""):
+                out.write(chunk)
+                done += len(chunk)
+                progress.tick("stage", done, total)
+        shutil.copystat(source, dest)
+        return
     shutil.copyfile(source, dest)
 
 
@@ -640,6 +655,8 @@ def _plan_candidates(
     figures.mkdir(parents=True, exist_ok=True)
     data_rel = script_data_rel(entry.path)
     plan: list[_Planned] = []
+    if values.large is not None:
+        progress.set_passes("reduce", max(1, tpl.large_reduce_pending(values, recipes)))
     for n, recipe in enumerate(recipes, start=1):
         stem = f"cand_{n}"
         try:
@@ -743,6 +760,10 @@ def ensure_thumbnail(project: str, session_id: str, item_id: str) -> Path:
     if item.state == "pending":
         with item.lock:
             if item.state == "pending":
+                if sess.large:
+                    progress.enter(
+                        "render"
+                    )  # worker 里读 + 缩减 + 画图：没有字节进度，如实标「不确定」
                 _finish_lazy_item(sess, item)
     if item.state == "failed":
         raise ProposeError("propose_thumbnail_failed", params={"reason": item.reason})
@@ -1004,6 +1025,7 @@ def propose(
 
     **不往用户文件夹写任何东西**（候选目录在 `data_dir()/cache/`，见模块说明）；幂等：同一 `(项目, client_request_id)` 在 TTL 内回同一份响应。"""
     sweep()
+    progress.check()
     if render is not None and render not in RENDER_MODES:
         raise ProposeError("propose_input_invalid", "render")
     auto = render == "lazy"
@@ -1218,8 +1240,14 @@ def propose(
             for src in merged.merge.sources:
                 _stage_table(sdir, folder_path / PurePosixPath(src.rel), src.rel)
         else:
+            progress.check()
             make_room(values.size)
-            _stage_table(sdir, folder_path / PurePosixPath(chosen.path), chosen.path)
+            _stage_table(
+                sdir,
+                folder_path / PurePosixPath(chosen.path),
+                chosen.path,
+                tracked=values.large is not None,
+            )
         if auto:
             plan = _plan_candidates(sdir, chosen, values, [c.recipe for c in res.items])
             for cand, p in zip(res.items, plan, strict=True):
@@ -1292,6 +1320,7 @@ def propose(
         touched=time.time(),
         root=Path(root),
         lazy=auto,
+        large=values.large is not None,
     )
     with _LOCK:
         _SESSIONS[sid] = sess
