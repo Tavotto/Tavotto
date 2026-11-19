@@ -278,6 +278,11 @@ USER_VISIBLE_CODES = {
     "input_remap_requested_invalid": set(),
     "input_remap_rule_unknown": {"source"},
     "input_remap_changed": set(),
+    # ADR 0182 §2：显式输入声明（`/api/engine/input-declarations`，`engine/declaredinputs` 的三个异常
+    # 由 app 的漏斗转成 JSON）。全部是固定文案、不带参数——路径与脚本名不进响应
+    "input_declaration_conflict": set(),
+    "input_declaration_invalid": set(),
+    "input_declaration_unavailable": set(),
     # ADR 0110：经确认改写脚本里的数据路径（`scriptbackup` / `scriptedit` 的 `ScriptEditError(code)`
     # 由 app 的 409 漏斗转出）。`script_edit_nothing_to_change` 另带结构化的 `skipped`（对话框逐条列），
     # 不作占位符
