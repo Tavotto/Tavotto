@@ -30,6 +30,16 @@ const jt = (key: string, values?: Record<string, unknown>) =>
  */
 let pickSeq = 0
 
+/** 点选那一刻的归属：项目 + 画布（`switchCanvas` 不换 documentId，绑定却是按画布存的，只比项目会写到另一张画布上） */
+const originOf = () => {
+  const s = useDocumentStore.getState()
+  return { documentId: s.documentId, canvasId: s.activeCanvasId }
+}
+const sameOrigin = (o: ReturnType<typeof originOf>) => {
+  const now = originOf()
+  return now.documentId === o.documentId && now.canvasId === o.canvasId
+}
+
 /**
  * 期刊选择器：可搜索（名称 / 缩写 / ISSN），按出版社分组。选中 = `selectJournal`（一次提交：绑定 + 页宽跟栏，
  * 撤销一步全回去）。目录空（种子为空且没有缓存）时只有一行中性的话，不写任何解释。
@@ -62,10 +72,10 @@ export function JournalPicker() {
     const entry = v2Only.find((j) => j.journal_id === id)
     if (!entry) return
     const seq = ++pickSeq
-    const docId = useDocumentStore.getState().documentId
+    const origin = originOf()
     // 这本刊只有 v2：没有 v2 内容就没有东西可绑，所以不设 2 秒上限，等到有结果
     const out = await fetchJournalV2Outcome(id)
-    if (seq !== pickSeq || useDocumentStore.getState().documentId !== docId) return
+    if (seq !== pickSeq || !sameOrigin(origin)) return
     if (out.state !== 'ready' || !out.patch) {
       // 终态与 v1 远程刊同一套：额度用完 → 暂按「不按期刊」；没网 / 被拒 / 开关关 → 保持现状。都只一条胶囊
       if (out.state === 'quota') clearJournal()
@@ -88,10 +98,10 @@ export function JournalPicker() {
     // 远程目录里还没下载的刊：先向服务端取这一本的标准（种子 / 已下载的不发请求）。
     // 额度用完 → 这本刊暂时按「不按期刊」；没网又没缓存 → 保持现状。两种都只用一条胶囊提示。
     const seq = ++pickSeq
-    const docId = useDocumentStore.getState().documentId
+    const origin = originOf()
     const ready = await ensureJournalReady(id)
     // 等下载时被新选择取代，或文档已经换了：丢弃（下载下来的刊包已并入目录，那是目录的事，与绑定无关）
-    if (seq !== pickSeq || useDocumentStore.getState().documentId !== docId) return
+    if (seq !== pickSeq || !sameOrigin(origin)) return
     if (ready.state !== 'ready') {
       if (ready.state === 'quota') clearJournal()
       useUiStore
@@ -108,7 +118,7 @@ export function JournalPicker() {
     // v2 事实（取不到就是 null，照 v1 选）：同样要防「等的时候被取代 / 文档换了」
     // 最多等 2 秒：慢就先按 v1 选，v2 到了由「打开项目自动更新」那条路叠上去（useJournalV2Sync）
     const v2 = await Promise.race([fetchJournalV2(id), new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000))])
-    if (seq !== pickSeq || useDocumentStore.getState().documentId !== docId) return
+    if (seq !== pickSeq || !sameOrigin(origin)) return
     selectJournal(id, v2)
     setOpen(false)
     setQuery('')

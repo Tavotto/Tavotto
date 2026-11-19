@@ -210,6 +210,33 @@ describe('选刊列表里的 v2-only 刊', () => {
   })
 })
 
+describe('等待期间换了画布', () => {
+  it('成功 / 额度用完的结果都不落到另一张画布上（绑定按画布存）', async () => {
+    for (const status of [200, 429]) {
+      let release: (r: Response) => void = () => {}
+      route((url) =>
+        url === '/api/journal-facts/index'
+          ? online(url)
+          : new Promise<Response>((resolve) => {
+              release = resolve
+            }),
+      )
+      useJournalV2Store.setState({ index: null })
+      await open()
+      const a = useDocumentStore.getState().activeCanvasId
+      const b = useDocumentStore.getState().addCanvas('B')
+      useDocumentStore.getState().switchCanvas(a)
+      await click(q('[data-journal-option="zz-only"]'))
+      useDocumentStore.getState().switchCanvas(b)
+      await act(async () => release(status === 200 ? json(patch()) : json({ code: 'quota_hour' }, 429)))
+      expect(useDocumentStore.getState().doc.profile?.journalRef).toBeUndefined()
+      useDocumentStore.getState().switchCanvas(a)
+      expect(useDocumentStore.getState().doc.profile?.journalRef).toBeUndefined()
+      await act(async () => root.render(<></>))
+    }
+  })
+})
+
 describe('已绑定 v2-only 刊的项目', () => {
   function Sync() {
     useJournalV2Sync()
