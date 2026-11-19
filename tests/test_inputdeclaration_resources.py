@@ -6,6 +6,7 @@ import dataclasses
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -322,6 +323,9 @@ def test_sink_error_is_propagated_and_temporary_partial_output_is_not_published(
 def test_source_change_after_its_chunk_was_written_is_still_rejected(archive):
     resource = archive.resources[0]
     original = resource.path.read_bytes()
+    # Make the write observable even when two writes share a Windows clock tick.
+    timestamp = resource.path.stat()
+    os.utime(resource.path, ns=(timestamp.st_atime_ns, timestamp.st_mtime_ns - 10_000_000_000))
 
     class MutatingSink(io.BytesIO):
         def write(self, chunk):
