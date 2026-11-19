@@ -1,3 +1,0 @@
-## Undoing an axis range change restores the range your script set
-
-On plots whose script sets an explicit axis range while leaving autoscaling on (seaborn's categorical plots, such as bar and violin plots, do this), changing the x or y range and then undoing it recomputed the range with matplotlib's default margins instead of putting back the script's range. The bars or violins came back slightly wider, and writing back to the original file could then be refused because the figure no longer matched a clean replay. Undo now restores the exact range the script set; if you switched the axis to a log scale in between, the range is recomputed for the new scale as before.
