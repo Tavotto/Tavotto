@@ -30,7 +30,7 @@ def project(tmp_path, monkeypatch):
     root.mkdir()
     (root / "chart.svg").write_bytes((CORPUS / "line_two_series.svg").read_bytes())
     m.open_project(str(root))
-    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", str(REPO / ".venv" / "Scripts" / "python.exe"))
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", pool.find_worker_python())
     monkeypatch.setattr(
         pool, "get", lambda *a, **k: pytest.fail("chart compute built a script session")
     )

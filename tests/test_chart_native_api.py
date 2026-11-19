@@ -11,7 +11,9 @@ import copy
 import io
 import re
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
+import pypdfium2
 import pytest
 
 from tavotto import app as m, chartbundle
@@ -527,3 +529,141 @@ def test_native_visibility_hidden_then_full_list_restore_keeps_manifest_and_dom_
     assert restored_node.get("display") is None
     assert any(e.tag == NS + "path" for e in restored_node.iter())
     assert (root / "chart.svg").read_bytes() == SOURCE
+
+
+def _chart_canvas_export(chart):
+    objects = [
+        {
+            "type": "panel",
+            "id": "chart.svg",
+            "x_mm": left,
+            "y_mm": 5,
+            "w_mm": 40,
+            "h_mm": 40,
+            "chart": chart,
+            "chart_render_profile": chartprofile.NATIVE_PROFILE,
+            "overrides": [_color(color)],
+        }
+        for left, color in ((5, "#ff0000"), (55, "#00ff00"))
+    ]
+    return {
+        "scope": "canvas",
+        "filename": "Chart variants",
+        "formats": ["pdf"],
+        "canvas": {"page_w_mm": 100, "page_h_mm": 50, "objects": objects},
+    }
+
+
+def test_canvas_pdf_uses_each_instances_confirmed_chart_edits(project):
+    client, _ = project
+    spec = _chart_canvas_export(_bind(client))
+    route = client.post("/api/export/validate", json=spec).get_json()["route"]
+    assert route["panels"]["chart.svg"]["source"] == "declarative"
+    assert route["panels"]["chart.svg"]["formats"]["pdf"]["how"] == "convert"
+    response = client.post("/api/export", json=spec)
+    body = response.get_json()
+    assert response.status_code == 200 and body["status"] == "done", body
+    path = Path(body["export_dir"]) / body["outputs"][0]["name"]
+    with pypdfium2.PdfDocument(path) as pdf:
+        page = pdf[0]
+        try:
+            assert page.get_size() == pytest.approx((100 * 72 / 25.4, 50 * 72 / 25.4))
+            bitmap = page.render(scale=2)
+            try:
+                pixels = bitmap.to_pil().convert("RGB")
+            finally:
+                bitmap.close()
+        finally:
+            page.close()
+    left = pixels.crop((0, 0, pixels.width // 2, pixels.height))
+    right = pixels.crop((pixels.width // 2, 0, pixels.width, pixels.height))
+    red, green = (255, 0, 0), (0, 255, 0)
+    left_colors = {color for _, color in left.getcolors(left.width * left.height)}
+    right_colors = {color for _, color in right.getcolors(right.width * right.height)}
+    assert red in left_colors and green not in left_colors
+    assert green in right_colors and red not in right_colors
+
+
+def test_canvas_export_does_not_publish_after_the_chart_source_changes(project, monkeypatch):
+    client, root = project
+    chart = _bind(client)
+    inspect = m._export_inspect
+    changed = SOURCE.replace(b"Source keep", b"Changed after render")
+
+    def change_after_inspection(job, produced):
+        checked = inspect(job, produced)
+        assert any(p.tmp_path and p.tmp_path.is_file() for p in checked)
+        (root / "chart.svg").write_bytes(changed)
+        return checked
+
+    monkeypatch.setattr(m, "_export_inspect", change_after_inspection)
+    response = client.post("/api/export", json=_chart_canvas_export(chart))
+    body = response.get_json()
+    assert response.status_code == 409, body
+    assert body["status"] == "failed" and body["code"] == "chart_source_changed", body
+    assert not list(Path(body["export_dir"]).glob("*.pdf"))
+    assert (root / "chart.svg").read_bytes() == changed
+
+
+def test_original_chart_export_preserves_edits_and_reports_unsupported_formats(project):
+    client, _ = project
+    chart = _bind(client)
+    edits = [_color("#ff0000")]
+    rendered = _render(client, chart, edits)
+    response = client.post(
+        "/api/export",
+        json={
+            "scope": "original",
+            "filename": "Chart original",
+            "formats": ["pdf", "svg", "eps"],
+            "include_edited_script": True,
+            "original": {
+                "figure_id": "chart.svg",
+                "w_mm": 100 * 25.4 / 72,
+                "h_mm": 100 * 25.4 / 72,
+                "source_kind": "vector",
+                "chart": chart,
+                "chart_render_profile": chartprofile.NATIVE_PROFILE,
+                "overrides": edits,
+            },
+        },
+    )
+    body = response.get_json()
+    assert response.status_code == 200 and body["status"] == "partial", body
+    outputs = {output["format"]: output for output in body["outputs"]}
+    assert outputs["pdf"]["status"] == outputs["svg"]["status"] == "done", outputs
+    assert outputs["eps"]["status"] == "failed"
+    assert outputs["script"]["status"] == "failed"
+    target = Path(body["export_dir"])
+    with pypdfium2.PdfDocument(target / outputs["pdf"]["name"]) as pdf:
+        assert pdf.get_page_size(0) == pytest.approx((100, 100))
+    bundle = chartbundle.extract_chart((target / outputs["svg"]["name"]).read_bytes())
+    assert bundle is not None
+    assert bundle.overrides == edits and bundle.source_svg == SOURCE and bundle.chart == chart
+    assert bundle.rendered_svg_digest == chartbundle._visible_digest(ET.fromstring(rendered["svg"]))
+
+
+def test_padded_chart_original_uses_the_captured_size(project):
+    client, _ = project
+    response = client.post(
+        "/api/export",
+        json={
+            "scope": "original",
+            "filename": "Padded chart",
+            "formats": ["pdf"],
+            "original": {
+                "figure_id": "chart.svg",
+                "w_mm": 20,
+                "h_mm": 25,
+                "pad_mm": [3, 4, 0, 0],
+                "chart": _bind(client),
+                "chart_render_profile": chartprofile.NATIVE_PROFILE,
+                "overrides": [_color("#ff0000")],
+            },
+        },
+    )
+    body = response.get_json()
+    assert response.status_code == 200 and body["status"] == "done", body
+    path = Path(body["export_dir"]) / body["outputs"][0]["name"]
+    with pypdfium2.PdfDocument(path) as pdf:
+        assert pdf.get_page_size(0) == pytest.approx((100 + 3 * 72 / 25.4, 100 + 4 * 72 / 25.4))

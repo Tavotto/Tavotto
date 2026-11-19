@@ -3965,6 +3965,24 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
 
     req = job.request
     src = req.original
+    frozen_chart = None
+    if src.chart is not None:
+        from .engine import chartprofile
+
+        snapshot = _capture_export_chart(
+            job,
+            src.figure_id,
+            src.chart,
+            render_profile=src.chart_render_profile or chartprofile.LEGACY_PROFILE,
+            overrides=src.overrides,
+            chart_source=src.chart_source if src.chart_source is not None else _CHART_SOURCE_UNSET,
+        )
+        width, height = _chart_frame_pt(snapshot)
+        src = dataclasses.replace(
+            src, w_mm=width * 25.4 / 72, h_mm=height * 25.4 / 72, source_kind="vector"
+        )
+        frozen_chart, notes = _chart_canonical(snapshot, tmp_dir)
+        job.warnings.extend(notes)
     # 单图留白（ADR 0161 §3）：页面 = 图幅 + 留白，面板落在 (l, t)；无留白时 pad = 0，与从前逐字节相同
     pad_l, pad_t, _pad_r, _pad_b = src.pad_mm or (0.0, 0.0, 0.0, 0.0)
     panel = {
@@ -4007,6 +4025,8 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
     dir_arg = {"artifact_sources": artifact_sources} if artifact_sources else {}
     if rerender_ids:
         dir_arg["rerender_ids"] = rerender_ids
+    if frozen_chart is not None:
+        dir_arg["frozen_chart"] = frozen_chart
 
     def run(fmts, objects, w_mm, h_mm, ppi, sub, target=None):
         # 各自的子目录：两次合成都写 out.pdf，同目录会互相覆盖
@@ -4056,7 +4076,14 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
             raster_formats, stacked(list(src.objects), panel), w_mm, h_mm, ppi, "ann_ras", target
         )
     if wants_eps:
-        produced.append(_produce_annotated_eps(job, req, tmp_dir, artifact_sources))
+        if frozen_chart is None:
+            produced.append(_produce_annotated_eps(job, req, tmp_dir, artifact_sources))
+        else:
+            produced.append(
+                engine_exportjob.Produced(
+                    format=engine_exportreq.FORMAT_EPS, error_code="svg_asset_export_unsupported"
+                )
+            )
     return produced
 
 
@@ -4167,6 +4194,31 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
     )
 
 
+def _capture_export_chart(job, file_id, chart, *, render_profile, overrides, chart_source):
+    job.check_cancelled()
+    snapshot = _render_chart_snapshot(
+        file_id,
+        chart,
+        render_profile=render_profile,
+        overrides=overrides,
+        chart_source=chart_source,
+    )
+    dependencies = job._chart_source_dependencies
+    previous = dependencies.setdefault(snapshot.path, snapshot.source_sha256)
+    if previous != snapshot.source_sha256:
+        raise engine_exportreq.ExportRequestError(
+            "chart_source_changed", "source changed between chart variants", {}
+        )
+    return snapshot
+
+
+def _chart_frame_pt(snapshot: _ChartSnapshot) -> tuple[float, float]:
+    if snapshot.render_frame is not None:
+        _, _, width, height = snapshot.render_frame["rect_pt"]
+        return width, height
+    return snapshot.scene["w_pt"], snapshot.scene["h_pt"]
+
+
 def _chart_canonical(snapshot: _ChartSnapshot, tmp_dir: Path):
     """预览与导出共用同一冻结场景→RenderCore Canonical配对适配。"""
     from .rendercore import facade as rc_facade, sources as rc_sources
@@ -4177,11 +4229,7 @@ def _chart_canonical(snapshot: _ChartSnapshot, tmp_dir: Path):
     files = {}
     page, notes = svg_to_ir(
         snapshot.svg,
-        *(
-            snapshot.render_frame["rect_pt"][2:]
-            if snapshot.render_frame is not None
-            else (snapshot.scene["w_pt"], snapshot.scene["h_pt"])
-        ),
+        *_chart_frame_pt(snapshot),
         provider,
         files=files,
     )
@@ -4212,6 +4260,114 @@ def _chart_conversion_failure(exc, fmt):
     )
 
 
+def _export_produce_chart_original(job, src, tmp_dir: Path) -> list:
+    """原图格式消费同一次计算与来源冻结；SVG 保留模型、绑定与完整 edits。"""
+    from . import chartbundle
+    from .engine import chartprofile
+    from .rendercore.pdfwriter import WriterError
+    from .rendercore.renderhost import RenderChildError
+    from .rendercore.svgir import SVGIRError
+
+    req = job.request
+    snapshot = _capture_export_chart(
+        job,
+        src.figure_id,
+        src.chart,
+        render_profile=src.chart_render_profile or chartprofile.LEGACY_PROFILE,
+        overrides=src.overrides,
+        chart_source=src.chart_source if src.chart_source is not None else _CHART_SOURCE_UNSET,
+    )
+    width_mm, height_mm = (v * 25.4 / 72 for v in _chart_frame_pt(snapshot))
+    manifest = {
+        "chart_render_revision": snapshot.render_revision,
+        "scene_digest": snapshot.scene["scene_digest"],
+    }
+    basis = engine_exportjob.Basis(engine_exportjob.BASIS_CONVERT, snapshot.source_sha256)
+    canonical = None
+    canonical_error = None
+    if engine_exportreq.FORMAT_PDF in req.formats or engine_exportreq.RASTER_FORMATS.intersection(
+        req.formats
+    ):
+        try:
+            canonical, notes = _chart_canonical(snapshot, tmp_dir)
+            job.warnings.extend(notes)
+        except (SVGIRError, WriterError, RenderChildError) as exc:
+            canonical_error = exc
+
+    produced = []
+    for fmt in req.formats:
+        job.check_cancelled()
+        target = tmp_dir / f"original.{fmt}"
+        facts = {}
+        try:
+            if fmt == engine_exportreq.FORMAT_SVG:
+                native = snapshot.render_profile != chartprofile.LEGACY_PROFILE
+                target.write_bytes(
+                    chartbundle.embed_chart(
+                        snapshot.svg,
+                        snapshot.source_svg,
+                        snapshot.chart,
+                        **(
+                            {
+                                "render_profile": snapshot.render_profile,
+                                "overrides": snapshot.overrides,
+                            }
+                            if native
+                            else {}
+                        ),
+                    )
+                )
+                vector = engine_artifactinspect.svg_vector(target)
+            elif fmt == engine_exportreq.FORMAT_EPS:
+                produced.append(
+                    engine_exportjob.Produced(format=fmt, error_code="svg_asset_export_unsupported")
+                )
+                continue
+            else:
+                if canonical_error is not None:
+                    raise canonical_error
+                assert canonical is not None
+                vector = fmt == engine_exportreq.FORMAT_PDF
+                if vector:
+                    target = canonical.path
+                else:
+                    writer = (
+                        pdfbackend.original_png
+                        if fmt == engine_exportreq.FORMAT_PNG
+                        else pdfbackend.original_tiff
+                    )
+                    facts = writer(
+                        canonical.path,
+                        target,
+                        req.ppi or engine_exportreq.PPI_DEFAULT,
+                        transparent=req.background == engine_exportreq.BACKGROUND_TRANSPARENT,
+                    )
+        except (SVGIRError, chartbundle.ChartBundleError) as exc:
+            produced.append(_chart_conversion_failure(exc, fmt))
+            continue
+        except (WriterError, RenderChildError) as exc:
+            produced.append(
+                engine_exportjob.Produced(
+                    format=fmt, error_code="format_failed", error_params={"reason": exc.code}
+                )
+            )
+            continue
+        produced.append(
+            engine_exportjob.Produced(
+                format=fmt,
+                tmp_path=target,
+                width_mm=width_mm,
+                height_mm=height_mm,
+                width_px=facts.get("px_w"),
+                height_px=facts.get("px_h"),
+                vector=vector,
+                basis=basis,
+                manifest=manifest,
+            )
+        )
+    return engine_exportjob.enforce_one_basis(produced, snapshot.source_sha256)
+
+
 def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> list:
     """`scope=original`：这张图**按它自己的尺寸**出。
 
@@ -4224,6 +4380,8 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     """
     req = job.request
     src = req.original
+    if src.chart is not None and not (src.objects or src.pad_mm):
+        return _export_produce_chart_original(job, src, tmp_dir)
     if src.objects or src.pad_mm:
         return _export_produce_original_annotated(job, tmp_dir, artifact_sources=artifact_sources)
     if (
@@ -4669,7 +4827,13 @@ def _produce_svg_asset_eps(job, src, dpi: int, tmp_dir: Path, *, artifact_source
 
 
 def _export_produce_rendercore(
-    job, tmp_dir: Path, *, artifact_sources=None, rerender_ids=frozenset(), raster_target=None
+    job,
+    tmp_dir: Path,
+    *,
+    artifact_sources=None,
+    rerender_ids=frozenset(),
+    raster_target=None,
+    frozen_chart=None,
 ) -> list:
     """`scope=canvas` 的 `produce`：RenderPlan → Canonical PDF → child 栅格（U08 候选、U10 起默认，ADR 0067 / 0072）。
 
@@ -4684,6 +4848,7 @@ def _export_produce_rendercore(
     from .rendercore import facade as rc_facade, job as rc_job, sources as rc_sources
 
     dpi = job.request.ppi or engine_exportreq.PPI_DEFAULT
+    chart_sources = {}
 
     class _StaticInProject:
         """项目根在**第一个面板**要解析时才问（`require_project()`）：只有文字 / 形状的画布不需要
@@ -4728,6 +4893,36 @@ def _export_produce_rendercore(
         与 `_resolve_panel_source(rerender=True)` 同一判定）。"""
 
         def resolve(self, obj: dict):
+            if frozen_chart is not None and obj["id"] == frozen_chart.artifact.source_id:
+                return frozen_chart
+            if obj.get("chart") is not None:
+                from .engine import chartmodel, chartprofile
+
+                source_id = obj["id"]
+                # ExportRequest 已校验闭集，并保留了原序的全量覆盖列表。
+                profile = _document_panel_render_profile(obj) or chartprofile.LEGACY_PROFILE
+                overrides = obj.get("overrides", [])
+                key = (
+                    source_id,
+                    chartmodel.digest_of(
+                        [obj["chart"], profile, overrides, obj.get("chart_source")]
+                    ),
+                )
+                if key not in chart_sources:
+                    snapshot = _capture_export_chart(
+                        job,
+                        source_id,
+                        obj["chart"],
+                        render_profile=profile,
+                        overrides=overrides,
+                        chart_source=obj.get("chart_source", _CHART_SOURCE_UNSET),
+                    )
+                    canonical, notes = _chart_canonical(snapshot, tmp_dir)
+                    for note in notes:
+                        if note not in job.warnings:
+                            job.warnings.append(note)
+                    chart_sources[key] = canonical
+                return chart_sources[key]
             if str(obj.get("id", "")) in rerender_ids:
                 fs = self.execute(obj)
                 if fs.artifact.origin != engine_figcapture.ORIGIN_EXECUTION:
@@ -4974,6 +5169,8 @@ def _produce_edited_script(job, tmp_dir: Path):
         return Produced(format=key, error_code=code)
 
     src = job.request.original
+    if src.chart is not None:
+        return fail("script_export_no_script")
     patches = list(src.overrides or [])
     try:
         worker, stem = _edited_script_worker(src.figure_id)
@@ -5138,7 +5335,14 @@ def _legacy_export_response(job) -> tuple:
         code = job.error_code or "export_failed"
         status = (
             409
-            if code in ("bad_filename", "export_dir_unwritable", "artifact_source_unavailable")
+            if code
+            in (
+                "bad_filename",
+                "export_dir_unwritable",
+                "artifact_source_unavailable",
+                "chart_source_changed",
+                "chart_engine_mismatch",
+            )
             else 500
         )
         return jsonify(
@@ -5207,7 +5411,7 @@ def _export_artifact_sources(req):
     return contexts
 
 
-def _export_commit_guard(root, artifact_sources=None):
+def _export_commit_guard(root, artifact_sources=None, *, job=None):
     """Carry project/remap and selected byte identities through final publication."""
     start = engine_inputremap.generation(root) if root else None
     sources = [(_artifact_path(key), value) for key, value in (artifact_sources or {}).items()]
@@ -5217,9 +5421,12 @@ def _export_commit_guard(root, artifact_sources=None):
         with engine_inputremap.landing(root, start) if root else contextlib.nullcontext():
             for path, context in sources:
                 engine_artifactcontext.assert_current(path, context)
+            if job is not None:
+                for path, expected in job._chart_source_dependencies.items():
+                    _assert_chart_source(path, expected)
             yield
 
-    return guard if root or sources else None
+    return guard if root or sources or job is not None else None
 
 
 def _prepare_export_job(spec: dict):
@@ -5273,7 +5480,9 @@ def api_export():
         report=_style_check_report(spec),
         inspect=_export_inspect,
         classify_error=_classify_export_error,
-        commit_guard=_export_commit_guard(getattr(_request_ctx(), "path", None), artifact_sources),
+        commit_guard=_export_commit_guard(
+            getattr(_request_ctx(), "path", None), artifact_sources, job=job
+        ),
     )
     LOG.info(
         "导出[%s]: %s（scope=%s, %s, %.0fms，%d 条警告）",
@@ -5336,7 +5545,7 @@ def api_export_start():
         report=report,
         inspect=inspect,
         classify_error=_classify_export_error,
-        commit_guard=_export_commit_guard(ctx.path, artifact_sources),
+        commit_guard=_export_commit_guard(ctx.path, artifact_sources, job=job),
     )
     return jsonify(job.to_payload())
 
@@ -5570,6 +5779,7 @@ def _export_route(req) -> dict:
                 "id": req.original.figure_id,
                 "overrides": req.original.overrides,
                 "has_snapshot": req.original.figure_snapshot is not None,
+                "has_chart": req.original.chart is not None,
             }
         ]
     else:
@@ -5578,6 +5788,7 @@ def _export_route(req) -> dict:
                 "id": str(o.get("id", "")),
                 "overrides": o.get("overrides"),
                 "has_snapshot": o.get("figure_snapshot") is not None,
+                "has_chart": o.get("chart") is not None,
             }
             for o in (req.canvas.objects if req.canvas is not None else [])
             if o.get("type") == "panel" and not o.get("hidden")
