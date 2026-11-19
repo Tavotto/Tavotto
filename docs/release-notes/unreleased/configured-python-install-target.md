@@ -1,3 +1,0 @@
-## Missing packages go into the Python you chose for the project when Tavotto's own environment can't run
-
-If you picked your own Python for a project and Tavotto's managed environment installed a missing package but still failed its final "environment can't run" check, the one-click fix kept offering the same install and you waited 30–50 seconds each time for the same failure. Tavotto now offers to install the package into the Python you chose for this project instead (it asks you to confirm first, since it changes your own environment, and never does this automatically). If you have no such Python, the card no longer offers the doomed install as its main button and points you to choosing another Python.

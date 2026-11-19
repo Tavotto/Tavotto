@@ -2551,6 +2551,28 @@ class _Autoscale:
 _AUTOSCALE = _Autoscale()
 
 
+class _AutoscaleAt(_Autoscale):
+    """坐标范围的原样 = 「自动缩放开着」+ **当时的范围**（2026-11-19，CompatBench 拖动阶段在 seaborn 上抓到）。
+
+    只记「自动缩放开着」不够：seaborn 的分类轴写的是 `ax.set_xlim(-.5, n - .5, auto=None)`——范围是显式的、
+    自动缩放的开关却没关。撤销对它的 xlim 改动时按 `_AUTOSCALE` 重新自动缩放，得到的是 matplotlib 默认边距
+    的范围，不是 seaborn 写下的那个：柱 / 小提琴整体变宽，热态 ≠ 全新重放（写回会按 divergence 拦下）。
+    原样两半都记：撤销时把范围放回去、再把自动缩放打开——之后会触发重新缩放的 prop（换 log 轴）照常缩放，
+    `_AUTOSCALE` 那条理由仍然成立。与 `_AUTOSCALE` 一样只活在 `state.originals` 里，不进 patch、不过 JSON。
+    """
+
+    __slots__ = ("lim", "scale")
+
+    def __init__(self, lim, scale: str) -> None:
+        self.lim = (float(lim[0]), float(lim[1]))
+        #: 记下时这条轴的刻度类型。撤销时轴已经换了 scale（「ylim → 再换 log → 撤掉 ylim」）的话，当时的范围在新
+        #: scale 下没有意义——全新重放是「脚本范围 → 换 log 时自动缩放」，这时照 `_AUTOSCALE` 重新缩放才相同
+        self.scale = scale
+
+    def __repr__(self) -> str:
+        return f"<autoscale at {self.lim} ({self.scale})>"
+
+
 class _PatchEdge:
     """Patch 边色的**可回灌**表示（#423）：原始设定 + ≤3.10 的花纹颜色快照。
 
@@ -2748,7 +2770,11 @@ def _get_axes_lim(axis: str):
     def get(ax):
         on = getattr(ax, f"get_autoscale{axis}_on", None)
         if on is not None and on():
-            return _AUTOSCALE
+            # 模式与当时的范围都记：见 `_AutoscaleAt`（seaborn 分类轴是「开着自动缩放的显式范围」）
+            return _AutoscaleAt(
+                ax.get_xlim() if axis == "x" else ax.get_ylim(),
+                ax.get_xscale() if axis == "x" else ax.get_yscale(),
+            )
         return ax.get_xlim() if axis == "x" else ax.get_ylim()
 
     return get
@@ -2835,6 +2861,18 @@ def _set_axes_lim(axis: str):
             ax.autoscale(enable=True, axis=axis)
             ax.autoscale_view()
             return
+        if isinstance(v, _AutoscaleAt) and v.scale != (
+            ax.get_xscale() if axis == "x" else ax.get_yscale()
+        ):
+            # 撤销时 scale 已经换过：当时的范围在新 scale 下不成立，照「只记模式」那样重新自动缩放
+            ax.autoscale(enable=True, axis=axis)
+            ax.autoscale_view()
+            return
+        auto_after = isinstance(v, _AutoscaleAt)
+        if auto_after:
+            # 原样：范围放回脚本当时的那一对（方向照下面同一套判据，翻转 override 还在时不被抹掉），
+            # 再把自动缩放打开（`set_[xy]lim` 会把它关掉）
+            v = v.lim
         lo, hi = float(v[0]), float(v[1])
         lo, hi = _positive_log_range(ax, axis, lo, hi)
         # **方向由「这一次该是什么方向」说了算，端点顺序只表达「范围是这两个数」。**
@@ -2868,6 +2906,8 @@ def _set_axes_lim(axis: str):
             # 又把轴翻回去，而幸存的 patch 写着 False。
             lo, hi = hi, lo
         (ax.set_xlim if axis == "x" else ax.set_ylim)(lo, hi)
+        if auto_after:
+            getattr(ax, f"set_autoscale{axis}_on")(True)
 
     put._needs_state = True  # noqa: SLF001
     return put
