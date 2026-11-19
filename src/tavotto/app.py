@@ -11866,6 +11866,7 @@ def api_engine_update_source():
         ScriptChangedError,
         ReplayDivergenceError,
         WriteBackVerifyError,
+        WriteBackFutureError,
         WriteBackPersistError,
         FileLockedError,
         WriteBackFormatError,
@@ -12083,6 +12084,19 @@ class ReplayDivergenceError(RuntimeError):
         more = f"（另有 {len(diffs) - 3} 处）" if len(diffs) > 3 else ""
         super().__init__(f"{head}{more}")
         self.diffs = diffs
+
+
+class WriteBackFutureError(RuntimeError):
+    """写回前自检：这组 patches 里有**更新的 Tavotto 写下、这一版认不出**的修改（`future_props`）。
+
+    这一版不应用它们（项目照样打开，见 `overrides.known_props`），所以画布上看不到、重放出来的图里也没有——
+    写回的话原文件里就少了这些修改，而项目文件里它们还在，换回新版本再看又是另一张图。不静默丢、也不报成
+    「重放时出现了警告」：说清楚是新版本的修改、请更新后再写回。原文件零改动。
+    """
+
+    def __init__(self, props: list[str]):
+        super().__init__(", ".join(props))
+        self.props = props
 
 
 class WriteBackVerifyError(RuntimeError):
@@ -12563,6 +12577,7 @@ def _write_source_files(
     )
     tmps: list[tuple[Path, Path]] = []
     warnings: list[str] = []
+    future_props: list[str] = []  # 更新的 Tavotto 写下、这一版认不出的修改（WriteBackFutureError）
     try:
         resp = fresh.override(stem, patches)
         # 同一 stem 下别的图写的文件不是写回目标：按这次全量重放（一次性 worker 刚 build）的描述符收窄，
@@ -12595,6 +12610,9 @@ def _write_source_files(
             for w in eresp.get("warnings") or []:
                 if w not in warnings:  # PDF/PNG 两次导出报的是同一批
                     warnings.append(str(w))
+            for f in eresp.get("future_props") or []:
+                if f not in future_props:
+                    future_props.append(str(f))
         if annotations:
             pdf_tmp = next((t for tg, t in tmps if tg.suffix == ".pdf"), None)
             png_tmp = next((t for tg, t in tmps if tg.suffix == ".png"), None)
@@ -12609,6 +12627,8 @@ def _write_source_files(
             )
         if warnings:
             raise WriteBackVerifyError(warnings)
+        if future_props:
+            raise WriteBackFutureError(future_props)
         if diffs:
             raise ReplayDivergenceError(diffs[:REPLAY_DIFF_LIMIT])
     except BaseException:
@@ -12833,6 +12853,14 @@ def _write_back_error_response(exc):
                 f"分歧：{exc}。这属于引擎级问题，请把此信息报告给开发者。",
                 "code": "replay_divergence",
                 "diffs": exc.diffs,
+            }
+        ), 409
+    if isinstance(exc, WriteBackFutureError):
+        return jsonify(
+            {
+                "error": "这张图里有用更新版本做的修改，这一版写不回去，原文件没动。",
+                "code": "write_back_future_props",
+                "props": exc.props,
             }
         ), 409
     if isinstance(exc, WriteBackVerifyError):
@@ -13193,6 +13221,7 @@ def api_engine_history_restore():
         ScriptChangedError,
         ReplayDivergenceError,
         WriteBackVerifyError,
+        WriteBackFutureError,
         WriteBackPersistError,
         FileLockedError,
         WriteBackFormatError,
