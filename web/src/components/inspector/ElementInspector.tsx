@@ -2514,7 +2514,7 @@ function FieldRow({
         }
       ><>
         <div className="min-w-0 flex-1">
-          <Select className="gap-0.5 px-1" value={fm.value} onChange={fm.onChange} options={fm.options} title={fm.title ?? (fm.value ? fontFamilyOptionLabel(fm.value, merged?.option_labels, fontOpts) : undefined)} ariaLabel={translate('textBar.latinFont', { ns: 'inspector' })} />
+          <Select className="gap-0.5 pl-2 pr-1.5" value={fm.value} onChange={fm.onChange} options={fm.options} title={fm.title ?? (fm.value ? fontFamilyOptionLabel(fm.value, merged?.option_labels, fontOpts) : undefined)} ariaLabel={translate('textBar.latinFont', { ns: 'inspector' })} />
         </div>
         <span className="contents" data-prop={propertyPathOf('figureText', 'fontFallback') ?? undefined}>
           <div data-font-fallback-cell className="w-[66px] shrink-0">
@@ -3232,9 +3232,13 @@ function SourceAdvancedSection({
           </div>
         )}
 
-        {/* 这一组全部会覆盖用户的原件（写回）或读它的历史；组标题点名「原始文件」 */}
-        <GroupHead>{el('originalFileGroup')}</GroupHead>
-        <OriginalFileActions panel={panel} />
+        {/* 这一组全部会覆盖用户的原件（写回）或读它的历史；没有关联脚本时连同标题一起隐藏，不留空组头 */}
+        {panel.script && (
+          <>
+            <GroupHead>{el('originalFileGroup')}</GroupHead>
+            <OriginalFileActions panel={panel} />
+          </>
+        )}
 
         {gid && <TechDetails gid={gid} />}
       </div>

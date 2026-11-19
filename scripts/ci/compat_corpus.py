@@ -55,6 +55,7 @@ STAGES = (
     "edit",
     "replay",
     "export",
+    "drag",
     "fidelity",
 )
 
@@ -68,6 +69,7 @@ STAGE_LABELS = {
     "edit": "Editable targets successful",
     "replay": "Replay equivalent",
     "export": "Export successful",
+    "drag": "Layout-placed elements draggable",
     "fidelity": "Zero-patch fidelity",
 }
 

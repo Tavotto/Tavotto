@@ -24,6 +24,7 @@ ISSUE_CODES = (
     "data_non_finite",  # 该格是 Infinity 或溢出成非有限数的字面量
     "data_thousands_separator",  # 千分位（1,234.5）——需要用户清理，不猜
     "data_row_length",  # 该行列数与表头不一致
+    "data_header_invalid",  # 表头列名为空回退后仍重复（会静默吞掉前一列）
     "data_too_long",  # 数据行数超过 0178 的上限
     "data_too_wide",  # 列数超过 0178 的上限
 )
@@ -144,6 +145,7 @@ def parse_table(text: str) -> dict:
     stream = io.StringIO(text, newline="")
     reader = csv.reader(stream, delimiter=_table_delimiter(text), strict=True)
     header: list[str] | None = None
+    header_names: list[str] = []
     rows: list[tuple[int, list[str]]] = []
     issues: list[dict] = []
     data_rows = 0
@@ -179,6 +181,23 @@ def parse_table(text: str) -> dict:
                         }
                     ],
                 }
+            header_names = [name or f"col{i + 1}" for i, name in enumerate(header)]
+            seen: set[str] = set()
+            for i, col_name in enumerate(header_names):
+                if col_name in seen:
+                    return {
+                        "columns": {},
+                        "text_columns": {},
+                        "issues": [
+                            {
+                                "code": "data_header_invalid",
+                                "row": 1,
+                                "col": i + 1,
+                                "detail": f"duplicate column name {col_name!r}",
+                            }
+                        ],
+                    }
+                seen.add(col_name)
             continue
         if not record.strip():
             continue
@@ -210,8 +229,7 @@ def parse_table(text: str) -> dict:
 
     columns: dict[str, list[float]] = {}
     text_columns: dict[str, list[str]] = {}
-    for c, name in enumerate(header or []):
-        col_name = name or f"col{c + 1}"
+    for c, col_name in enumerate(header_names):
         values: list[float] = []
         texts: list[str] = []
         text_ok = True
@@ -261,8 +279,9 @@ def parse_grid(text: str) -> dict:
     """解析数值矩阵（空白/逗号分隔，无表头）→ ``{"values": [[...]], "issues": []}``。
 
     网格数据（热图/标量场）不带类别表头；任何非数值格都是带行列地址的问题，
-    绝不静默填零。NaN 记缺失、Infinity/溢出记非有限；超过 0178 的列/行上限
-    时整表拒绝。
+    绝不静默填零。NaN 记缺失、Infinity/溢出记非有限；逗号分隔的空字段是
+    缺失格（`1,,3` 的第二列），不能当分隔符吞掉；纯空白分隔时空格折叠。
+    超过 0178 的列/行上限时整表拒绝。
     """
     values: list[list[float]] = []
     issues: list[dict] = []
@@ -285,7 +304,12 @@ def parse_grid(text: str) -> dict:
                     }
                 ],
             }
-        cells = [c.strip() for c in re.split(r"[,\s]+", line.strip()) if c != ""]
+        raw_line = line.strip()
+        if "," in raw_line:
+            # 逗号是显式列分隔：空字段 = 缺失格，保留给 parse_cell 记 data_missing。
+            cells = [c.strip() for c in raw_line.split(",")]
+        else:
+            cells = [c for c in re.split(r"\s+", raw_line) if c != ""]
         if width is None:
             width = len(cells)
             if width > MAX_COLUMNS:

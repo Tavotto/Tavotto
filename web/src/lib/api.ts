@@ -291,6 +291,16 @@ function artifactErrorMsg(err: unknown): UiMessage {
   return msg(classifyArtifactFailure(err).messageKey, undefined, 'errors')
 }
 
+/**
+ * `errors:backend.<code>` 的键。`image_format_mismatch` 有文件名时用点名那一句（`_file`），没有（敏感运行里与参数有关的文件名被省掉）
+ * 用「这张图片」那一句——同一个码两句话，占位符各自对得上后端给的参数。
+ */
+export function backendTextKey(code: string, params?: Record<string, unknown>): string {
+  return code === 'image_format_mismatch' && typeof params?.file === 'string' && params.file
+    ? 'backend.image_format_mismatch_file'
+    : `backend.${code}`
+}
+
 export function engineErrorMsg(err: unknown): UiMessage {
   if (err instanceof ArtifactValidationError || (err instanceof EngineError && err.code === 'artifact_source_unavailable')) {
     return artifactErrorMsg(err)
@@ -309,7 +319,7 @@ export function engineErrorMsg(err: unknown): UiMessage {
     if (detail || !template.includes('{{error}}')) {
       // 结构化 params（错误转换合同 `pool.recovery_params`，如 TeX 缺的命令 / 文件）一并给文案；
       // `error` 永远是 traceback 末行，不让 params 里的同名键盖掉
-      return msg(`backend.${err.code}`, { ...(err.params ?? {}), error: detail }, 'errors')
+      return msg(backendTextKey(err.code, err.params), { ...(err.params ?? {}), error: detail }, 'errors')
     }
   }
   return literal(err instanceof Error ? err.message : String(err))
@@ -344,7 +354,7 @@ export function backendCodeMsg(
     return msg('backend.script_rejected_arguments', params ?? {}, 'errors')
   }
   if (code && i18n.exists(`backend.${code}`, { ns: 'errors' })) {
-    return msg(`backend.${code}`, params ?? {}, 'errors')
+    return msg(backendTextKey(code, params), params ?? {}, 'errors')
   }
   return literal(fallback)
 }
@@ -2682,6 +2692,9 @@ export interface SpineGeom {
   ticks: boolean
   from: [number, number]
   to: [number, number]
+  /** 线宽（pt）与真实绘制次序：只给外部审阅页把边框线当独立目标用，画布不读 */
+  stroke_pt?: number
+  paint_order?: number
 }
 
 /**
@@ -2922,6 +2935,11 @@ export interface ManifestElement {
    */
   arrow_endpoints?: [number, number][]
   /**
+   * 位置不是数据的线（引线、分隔线）每个顶点此刻落在哪（figure 分数、top-origin）。有它的线按段 / 按点拖，
+   * 整条平移也写 `points_frac`（全部顶点，摊平）；数据曲线与顶点太多的长线没有（ADR 0100 修订 2026-11-19）。
+   */
+  line_points?: [number, number][]
+  /**
    * 端点箭头（有 `arrow_endpoints`、不出 geometry）与按 bbox 命中的文字 / 图例类的真实绘制次序，语义同 `ElementGeometry.paint_order`。
    * 缺席 = 次序未知，不判遮挡。
    */
@@ -2933,6 +2951,13 @@ export interface ManifestElement {
    * `visible` 是边框线本身，`ticks` 是这一侧的主刻度线——两件事分开报。
    */
   spines?: Partial<Record<SpineSide, SpineGeom>>
+  /**
+   * 直角坐标轴上**画出来**的网格线 / 刻度线（按轴成组的描边多路径，figure 分数、y 向下）。
+   * 只给外部审阅页点选用（ADR 0187 修订 2026-11-17）：画布不据此建任何可选元素，只用来给审阅意见的圆点找落点。
+   * 没开网格 / 刻度线全关的那条轴没有对应键。
+   */
+  grid?: Partial<Record<'x' | 'y', ElementGeometry>>
+  tickmarks?: Partial<Record<'x' | 'y', ElementGeometry>>
   /**
    * 图例项的身份（ADR 0034）：原始序号、图中源对象的 gid、脚本原样的绑定。
    * 只有图例**项**有（图例标题没有）。`source_gid` 缺席 = 没有源——界面显示
@@ -4000,23 +4025,60 @@ export interface AiConnection {
   catalog_id?: string
   /** 连的是明文 http 的局域网模型服务器（只放行、界面提示一句） */
   insecure_lan?: boolean
-  /** state=error 时的原因码（unauthorized / network / timeout / …） */
+  /** state=error 时的原因码（unauthorized / network / timeout / endpoint_unusable / builtin_only / …） */
   error?: string
+  /** error=endpoint_unusable 时探测给出的主要原因（闭集，见 `AiProbeReason`） */
+  error_reason?: AiProbeReason
+  /** 内置循环说的对话协议；老后端没有 */
+  protocol?: AiWireProtocol | null
+  /** 保存 / 重新检查时真发过对话请求、地址与型号至今没变 */
+  protocol_checked?: boolean
   /** 只给诊断 / 测试看，界面不显示 */
   route?: 'cli:codex' | 'cli:claude' | 'builtin'
   /** 订阅类连接：背后那份 CLI 比它的模型清单旧时怎么更新（同 `AiAgentCaps.cli_update`） */
   cli_update?: AiCliUpdate | null
 }
 
+/** 对话协议（后端 `ai_providers.protocol_of`） */
+export type AiWireProtocol = 'anthropic' | 'openai-responses' | 'openai-chat'
+
+/** 协议探测的失败原因闭集（后端 `ai_probe.REASONS`）；`ok` 只出现在逐协议的结论里 */
+export type AiProbeReason =
+  | 'ok'
+  | 'unauthorized'
+  | 'quota'
+  | 'no_model'
+  | 'wrong_protocol'
+  | 'network'
+  | 'web_page'
+  | 'bad_reply'
+
+/** 保存 / 重新检查后后端给的探测摘要（没有响应体） */
+export interface AiProbeSummary {
+  /** 拿到了结论（false = 断网 / 缺型号，记录没动） */
+  checked: boolean
+  protocol: AiWireProtocol | null
+  requested: AiWireProtocol | null
+  switched: boolean
+  /** 全不通时的主要原因；通了 / 没结论 = null */
+  reason: AiProbeReason | null
+  reasons: Record<string, AiProbeReason>
+}
+
 export interface AiConnectBody {
   /** 带已有连接 id = 换 Key / 换型号 */
   id?: string
-  vendor: string
-  api_key: string
+  /** 带 `id` 时可省：按已存记录自己的连接方式处理 */
+  vendor?: string
+  /** 带 `id`（换已存连接）时可省：沿用已存的 Key */
+  api_key?: string
   base_url?: string
   model?: string
+  /** 用户自己填的全部型号（后端去重、至多 50 项）；`model` 仍给默认的那一个 */
+  models?: string[]
   label?: string
-  wire?: 'anthropic' | 'openai-responses'
+  /** 缺省或 'auto' = 保存时自动探测协议；界面不让用户选 */
+  wire?: 'auto' | AiWireProtocol
 }
 
 export interface AiConnectResult {
@@ -4024,11 +4086,16 @@ export interface AiConnectResult {
   connection?: AiConnection
   /** 稳定原因码（ok=false 或保存了但试取型号失败时） */
   reason?: string
+  probe?: AiProbeSummary | null
 }
 
 /** 连接一个 Key 类厂商（保存前后端会试取一次型号清单） */
 export const connectAi = (body: AiConnectBody) =>
   jsonFetch<AiConnectResult>('/api/ai/connections', jsonPost(body))
+
+/** 重新探测一条 Key 连接的对话协议（会联网，最长约 30 秒）；订阅 / 账号登录类 404 */
+export const checkAiConnection = (id: string) =>
+  jsonFetch<AiConnectResult>(`/api/ai/connections/${encodeURIComponent(id)}/check`, jsonPost())
 
 /** 断开一个连接（订阅类不可删，只能在命令行里退出登录） */
 export const disconnectAi = (id: string) =>
@@ -4130,6 +4197,8 @@ export interface AiFixState {
   outcome: 'fixed' | 'not_fixed' | 'convert' | 'cancelled' | 'failed' | null
   /** 仅 `outcome === 'convert'`：要生成可编辑版本的脚本（项目相对路径）、画图用的位图库与报告里的原输出图（项目相对，可缺；ADR 0143 / 0149 §七） */
   handoff?: { kind: 'convert'; script: string; library: string; path: string | null }
+  /** 仅 `outcome === 'fixed'` 且 AI 改过运行参数：它定下的参数（填进脚本的「运行参数」再重跑验证；空数组 = 清掉） */
+  run_argv?: string[]
   summary: string
   /** 没修好、而最后的错误是「项目外文件夹读不了」（仅 Windows）：结果卡上「修复权限」的一次性不透明令牌（ADR 0153 修订）；没有就不出 */
   repair_token?: string
@@ -4600,11 +4669,13 @@ export interface AiDataFile {
 /** `POST /api/ai/data-figure` 的回应：`task` 是任务结局（同 `ai.done` 里的 task） */
 export interface AiDataFigureResult {
   task: {
-    task_id?: string
+    task_id?: string | null
     outcome: AiTaskSummary['outcome']
     verification?: { unmet?: { constraint_id: string; reason_code: string }[]; [k: string]: unknown }
     error?: string | null
     deduped?: boolean
+    /** 去重分支回的快照：原任务还在处理中是 false（此时 `outcome` 为 null、`task_id` 可为 null、没有 `script`） */
+    final?: boolean | null
     [k: string]: unknown
   }
   script?: string
@@ -4625,6 +4696,202 @@ export const aiDataFigure = (
   jsonFetch<AiDataFigureResult>(
     '/api/ai/data-figure',
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    pj,
+  )
+
+/* ---------------- 数据出图 v2（ADR 0178）：数据清单 / 概览 / 出备选 / 提交 ---------------- */
+
+/** 文本表读得怎么样：`ok` 认得准、`unsure` 能读但哪一行是列名拿不准、`unreadable` 读不了（`code` 稳定码） */
+export interface AiDataTable {
+  status: 'ok' | 'unsure' | 'unreadable'
+  code: string | null
+  delimiter: 'comma' | 'tab' | 'semicolon' | 'space' | null
+  /** 「每列的名字」所在的物理行号（1 起；`unsure` 时是猜的） */
+  header_row: number | null
+  columns: number | null
+  rows: number | null
+  /** 只有 `unsure` 带：文件前若干行原文 */
+  preview?: { line: number; text: string }[]
+}
+
+/** XLSX 的一张工作表；行列数 / status / code 全是 null = 没读（超出读取预算），不是读不了 */
+export interface AiDataSheet {
+  name: string
+  hidden: boolean
+  rows: number | null
+  columns: number | null
+  status: 'ok' | 'unreadable' | null
+  code: string | null
+}
+
+/** `GET /api/ai/data-files?formats=all` 的一项。`table: null` = 超出读取预算没读；`sheets: null` = 整本没读 / 读不开 */
+export interface AiDataFileEntry {
+  path: string
+  size: number
+  table?: AiDataTable | null
+  sheets?: AiDataSheet[] | null
+}
+
+export const aiDataFilesAll = (pj?: string | null) =>
+  jsonFetch<{ files: AiDataFileEntry[]; truncated: boolean }>('/api/ai/data-files?formats=all', undefined, pj)
+
+export interface AiDataOverview {
+  path: string
+  sheet: string | null
+  status: 'ok' | 'unsure' | 'unreadable'
+  code: string | null
+  delimiter: AiDataTable['delimiter']
+  header_row: number | null
+  rows: number | null
+  columns: number | null
+  layout: string | null
+  fields: {
+    name: string
+    kind: 'numeric' | 'date' | 'text' | 'mixed'
+    numeric: number
+    text: number
+    empty: number
+    nan: number
+    id_like: boolean
+  }[]
+  preview_rows: { line: number; cells: string[] }[]
+  truncated: boolean
+  lead_lines: { line: number; text: string }[]
+  raw_lines: { line: number; text: string }[]
+}
+
+/** 一个数据文件（或 XLSX 的一张表）的概览；读不了不是 HTTP 错误（200 + `status: "unreadable"`） */
+export const aiDataOverview = (
+  q: { path: string; sheet?: string | null; headerRow?: number | null },
+  pj?: string | null,
+) => {
+  const qs = new URLSearchParams({ path: q.path })
+  if (q.sheet) qs.set('sheet', q.sheet)
+  if (q.headerRow != null) qs.set('header_row', String(q.headerRow))
+  return jsonFetch<AiDataOverview>(`/api/ai/data-overview?${qs}`, undefined, pj)
+}
+
+/** 提问里一个选项：`code` + `params` 给文案，`answer` 原样并进下一次 propose 的 `answers` */
+export interface AiDataOption {
+  code: string
+  params: Record<string, string | number>
+  answer: Record<string, unknown>
+  free_text?: boolean
+}
+
+export interface AiDataMixedColumn {
+  column: string
+  non_numeric: number
+  rows: number
+  preview: { row: number; text: string; others: Record<string, string>; extract: number | null }[]
+  more: number
+  options: AiDataOption[]
+}
+
+export interface AiDataProposeItem {
+  id: string
+  title_code: string
+  why_code: string
+  recommended: boolean
+  coverage?: Record<string, unknown>
+  unplotted: { count: number; code: string | null }
+  /** 服务端给的相对路径；加项目标识要经 `aiDataThumbnailUrl` */
+  thumbnail_url: string
+  /** 懒模式 `pending`（缩略图在取图时才画）；旧模式 `ready` */
+  thumbnail_status?: 'pending' | 'ready'
+  /** 合画且文件里原本有分组列、文件内有多个取值时，候选成对出现（同一个 `title_code` / `why_code`）：`split` = 再按那一列分开，`by_file` = 只按文件比较；单份响应和没有这种列的合画没有这个键。`column` 是用户数据里的列名：只做文本渲染 */
+  variant?: { kind: 'split'; column: string } | { kind: 'by_file' } | null
+}
+
+/** 懒模式（`render: "lazy"`）响应里说清这次用了什么：列角色与每个角色可换成的列 */
+export interface AiDataRoles {
+  x: string | null
+  y: string[]
+  group: string | null
+  facet: string | null
+  unit: string | null
+  options: { x?: string[]; y?: string[]; group?: string[] }
+}
+
+/** 懒模式响应里的公共部分（`candidates` 与 `nothing` 都有） */
+export interface AiDataLazyInfo {
+  render?: 'lazy'
+  table?: string
+  sheet?: string | null
+  /** 文本表是实际用的物理行号，XLSX 为 null */
+  header_row?: number | null
+  /** 合画：每份文件一项（后端合同 `sources`）：显示名 `label`（文件名去扩展名）与各自实际用的表头行 / 单位行 */
+  sources?: { path: string; sheet: string | null; label: string; header_row: number | null; units_row: boolean }[]
+  /** 真 = 表头后紧跟的单位行（`header_row + 1` 那一行）不是数据、已被切掉；缺失按 false */
+  units_row?: boolean
+  roles?: AiDataRoles | null
+  defaults?: { question_code: string; answer?: Record<string, unknown> }[]
+  /** 数值列里夹着文字的列：默认不画那几行（`skip`），用户可改成取数字（`extract`） */
+  mixed_cells?: { column: string; non_numeric: number; rows: number; mode: 'skip' | 'extract' }[]
+}
+
+export type AiDataProposeResponse =
+  | {
+      kind: 'ask'
+      question_code: string
+      /** 选择题的选项 + 可选的「不确定」；`mixed_cells` 没有这两项、给 `columns` */
+      options?: AiDataOption[]
+      unsure?: AiDataOption | null
+      columns?: AiDataMixedColumn[]
+    }
+  | ({ kind: 'candidates'; session: string; items: AiDataProposeItem[]; dropped: { reason_code: string }[] } & AiDataLazyInfo)
+  | ({ kind: 'nothing'; reasons: string[]; dropped?: { reason_code: string }[] } & AiDataLazyInfo)
+
+export interface AiDataProposeBody {
+  folder?: string
+  table?: string
+  sheet?: string
+  /** 合画一张：≥ 2 份表（每份文件是一组），与 `table` / `sheet` 二选一；其余字段同单份。几份列名不一致回 400 `tables_columns_differ`，份数超上限（最多 8 份）回 400 `tables_limit_exceeded` */
+  tables?: { path: string; sheet?: string }[]
+  answers?: Record<string, unknown>
+  header_rows?: Record<string, number>
+  client_request_id?: string
+  /** `lazy` = 文字先到、缩略图取图时才画、不返回选择题（列角色用 `answers.y / x / group`，`none` = 不要） */
+  render?: 'lazy'
+}
+
+export const aiDataFigurePropose = (body: AiDataProposeBody, pj?: string | null) =>
+  jsonFetch<AiDataProposeResponse>(
+    '/api/ai/data-figure/propose',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    pj,
+  )
+
+/** 缩略图是 `<img>` 要直接请求的地址：`<img>` 发不了项目请求头，项目标识走查询串（`apiUrlFor`），钉在发起那一刻 */
+export const aiDataThumbnailUrl = (thumbnailUrl: string, pj: string | null) => apiUrlFor(thumbnailUrl, pj)
+
+export interface AiDataCommitResult {
+  task: AiDataFigureResult['task']
+  script?: string
+  stem?: string
+  module?: string
+  /** 没有它（去重的回应 / 没落盘）= 没核对过，不得当成已核对 */
+  data_check?: 'verified' | 'unverifiable' | 'mismatch' | 'unknown'
+  reason_code?: string
+  can_delete_script?: boolean
+  unplotted?: { count: number; rows: { row: number; column: string; reason: string }[]; code: string | null }
+  cells?: unknown
+}
+
+export const aiDataFigureCommit = (
+  body: { session: string; id: string; client_request_id: string },
+  pj?: string | null,
+) =>
+  jsonFetch<AiDataCommitResult>(
+    '/api/ai/data-figure/commit',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    pj,
+  )
+
+export const aiDataFigureDiscard = (session: string, pj?: string | null) =>
+  jsonFetch<{ ok: boolean }>(
+    '/api/ai/data-figure/discard',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session }) },
     pj,
   )
 
@@ -7898,6 +8165,10 @@ export interface PreparationResultError {
     abi?: string
     current?: string
     ignore_token?: string
+    /** `image_format_mismatch`（TVD-3MWS）：扩展名所属格式、文件内容的真实格式、扩展名（不带点）；`file` 是项目相对显示名，敏感运行里可能没有 */
+    claimed?: string
+    actual?: string
+    ext?: string
     /** `interpreter_cache_denied`（TVD-B6MR）：一键「改用自带的 Python」要清哪一层选择；没有 = 失败的就是 Tavotto 自己的解释器，不给按钮 */
     switch?: 'global' | 'project' | 'both' | string
     /** `tex_*`（TeX 工具链，`texdiag.params_of`）：缺的命令 / 宏包文件名 / LaTeX 报错那一行，有才带 */
@@ -8530,7 +8801,8 @@ export interface ReviewShareSummary {
 }
 
 export type ReviewAnchor =
-  | { kind: 'element'; gid: string; box: ReviewBox }
+  /** `pt`：审阅者点在元素上的那一处（画面比例坐标，0.21.4 起的审阅网页才有） */
+  | { kind: 'element'; gid: string; box: ReviewBox; pt?: [number, number] }
   | { kind: 'region'; box: ReviewBox }
   | { kind: 'overall' }
 

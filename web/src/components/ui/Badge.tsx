@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils'
 type Tone = 'neutral' | 'accent' | 'danger' | 'warn' | 'ok'
 
 const TONES: Record<Tone, string> = {
-  neutral: 'bg-surface-2 text-ink-2',
+  neutral: 'bg-surface-hover text-ink-2 inset-ring inset-ring-border/60',
   accent: 'bg-accent-subtle text-accent',
   // 字用锚点派生的 -content（≥4.5:1），底用 -surface（2026-10-07 设计审计 §1 状态色锚点）
   danger: 'bg-danger-surface text-danger-content',
@@ -29,7 +29,7 @@ export function Badge({
     <span
       {...rest}
       className={cn(
-        'inline-flex h-4 shrink-0 items-center whitespace-nowrap rounded-full px-1.5 text-xs leading-none',
+        'inline-flex h-5 shrink-0 items-center justify-center whitespace-nowrap rounded-full px-2 text-xs',
         mono && 'tabular-nums',
         TONES[tone],
         className,

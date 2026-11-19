@@ -5,6 +5,8 @@ import { t as translate } from '@/i18n'
 import { ArrowUpRight, BookOpen } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Button, IconButton } from '../ui/Button'
+import { SnapshotThumb } from './SnapshotThumb'
+import { isV2Source, journalFactSnapshotUrl, v2StrengthNote } from '@/lib/journalV2'
 import { Popover } from '../ui/Popover'
 import type { JournalFieldSource } from '@/lib/journals'
 import {
@@ -67,27 +69,90 @@ function Snapshot({ source, onFail }: { source: JournalFieldSource; onFail: () =
 /** 一条出处的「证据」：快照图优先，没有或加载失败退回摘录 */
 function Evidence({ source }: { source: JournalFieldSource }) {
   const [failed, setFailed] = useState(false)
-  if (source.snapshot && !failed) return <Snapshot source={source} onFail={() => setFailed(true)} />
+  // v2 的截图不在随包资产里：它只以缩略图出现在卡片底部（`SnapshotThumb`），顶上仍是摘录
+  if (source.snapshot && !failed && !isV2Source(source)) return <Snapshot source={source} onFail={() => setFailed(true)} />
   return <Quote source={source} />
 }
 
-/**
- * 出处卡（变体 C）：上面是原文证据（快照图或摘录，白纸出血到边），下面一条底栏——
- * 左两行：结论（15 semibold）与「期刊 · 域名 · 采集日期[ · PDF]」（12 灰）；右：「打开原网页 ↗」强调色文字链接，有存档再加灰色「存档」。
- * 链接交给浏览器（桌面壳里是系统浏览器）；`link` 已带 text fragment / `#page=N`。
- * 建议性字号（Elsevier 一类）的结论用 `adviceSentence`；多条出处（单栏 + 双栏、正文 + 上下标）上面各出一块证据，底栏取第一条的来源。
- */
+/** 一条来源的域名、采集日期与类型，不暗示期刊归属。 */
+function SourceMeta({ source }: { source: JournalFieldSource }) {
+  const v2 = isV2Source(source)
+  const parts = [
+    v2 ? sourceHost(source.url).replace(/^www\./, '') : sourceHost(source.url),
+    source.retrieved,
+    source.kind === 'pdf' ? 'PDF' : '',
+    v2 ? jt('card.fromV2') : '',
+  ].filter(Boolean)
+  return (
+    <p data-journal-meta className="type-caption flex flex-wrap gap-x-1">
+      {parts.map((part, i) => (
+        <Fragment key={i}>
+          {i > 0 && ' '}
+          <span className="whitespace-nowrap">{part}{i < parts.length - 1 && ' ·'}</span>
+        </Fragment>
+      ))}
+    </p>
+  )
+}
+
+/** 来源范围可能来自目录默认值；它不能证明该期刊采用了这条指南。 */
+function SourceCoverage({ source }: { source: JournalFieldSource }) {
+  // v2 事实已逐条复核、带摘录与截图：「范围未核实」那句既矛盾又堆字，不画
+  if (isV2Source(source)) return null
+  const coverage = source.coverage
+  const key = coverage === 'publisher_general' ? 'publisher'
+    : coverage === 'journal_specific' ? 'journal'
+      : coverage === 'single_journal_sample' ? 'sample' : 'unknown'
+  return <p data-journal-coverage className="type-caption">{jt(`card.coverage.${key}`)}</p>
+}
+
+/** 多条证据时给每个链接一个带来源序号的可访问名。 */
+function SourceLinks({ source, name }: { source: JournalFieldSource; name?: string }) {
+  return (
+    <div className="flex shrink-0 items-center gap-3 pb-0.5 text-sm">
+      <a
+        href={source.link}
+        target="_blank"
+        rel="noreferrer"
+        data-journal-open
+        aria-label={name ? `${name} — ${jt('card.open')}` : undefined}
+        className="inline-flex items-center gap-0.5 font-medium text-info-content hover:underline"
+      >
+        {jt('card.open')}
+        <ArrowUpRight size={ICON_SIZE.sm} aria-hidden />
+      </a>
+      {source.archive_url && (
+        <a
+          href={source.archive_url}
+          target="_blank"
+          rel="noreferrer"
+          data-journal-archive
+          aria-label={name ? `${name} — ${jt('card.archive')}` : undefined}
+          className="text-ink-3 hover:text-ink-2 hover:underline"
+        >
+          {jt('card.archive')}
+        </a>
+      )}
+    </div>
+  )
+}
+
+/** 单条保持原布局；多条证据分别标出对应来源和链接。 */
 export function SourceCardBody({
   journal,
   entries,
+  journalId,
 }: {
   journal: string
   entries: [string, JournalFieldSource][]
+  /** 期刊 id：v2 条目的原文截图经本地 `/api/journal-facts/snapshot` 取，要靠它；不给就不画缩略图 */
+  journalId?: string
 }) {
   const advice = adviceSentence(journal, Object.fromEntries(entries))
+  const multi = entries.length > 1
   // 语气标签跟在结论后面（同一行、小号灰字）：建议性字号那一句取第一条的语气，其余每条各带各的
   const tag = (s: JournalFieldSource) => {
-    const label = strengthLabel(s)
+    const label = strengthLabel(s) ?? (isV2Source(s) ? v2StrengthNote(s.strength) : null)
     return label ? (
       <>
         {' '}
@@ -111,57 +176,42 @@ export function SourceCardBody({
       </Fragment>
     ))
   )
-  const lead = entries[0][1]
-  const metaParts = [journal, sourceHost(lead.url), lead.retrieved, lead.kind === 'pdf' ? 'PDF' : ''].filter(Boolean)
   return (
     <div data-journal-card className="flex flex-col">
-      {entries.map(([path, s]) => (
+      {entries.map(([path, source], index) => (
         <div key={path} data-journal-entry={path}>
-          <Evidence source={s} />
+          <Evidence source={source} />
+          {multi && (
+            <div className="flex items-end justify-between gap-3 px-3.5 py-2">
+              <div className="flex min-w-0 flex-col gap-0.5">
+                <p className="type-caption">{jt('card.aria')} {index + 1}/{entries.length}</p>
+                <SourceMeta source={source} />
+                <SourceCoverage source={source} />
+              </div>
+              <SourceLinks source={source} name={`${jt('card.aria')} ${index + 1}/${entries.length}`} />
+            </div>
+          )}
         </div>
       ))}
       <div className="flex items-end justify-between gap-3 border-t border-border px-3.5 py-3">
         <div className="flex min-w-0 flex-col gap-0.5">
-          <p data-journal-sentence className="type-title">
-            {conclusion}
-          </p>
-          {/* 窄了只在「 · 」处换行（圆点留在行尾），日期 / 域名不被拦腰截断；读屏与测试看到的仍是一整句 */}
-          <p data-journal-meta className="type-caption flex flex-wrap gap-x-1">
-            {metaParts.map((part, i) => (
-              <Fragment key={i}>
-                {i > 0 && ' '}
-                <span className="whitespace-nowrap">
-                  {part}
-                  {i < metaParts.length - 1 && ' ·'}
-                </span>
-              </Fragment>
-            ))}
-          </p>
+          <p data-journal-sentence className="type-title">{conclusion}</p>
+          {!multi && <SourceMeta source={entries[0][1]} />}
+          {!multi && <SourceCoverage source={entries[0][1]} />}
         </div>
-        <div className="flex shrink-0 items-center gap-3 pb-0.5 text-sm">
-          <a
-            href={lead.link}
-            target="_blank"
-            rel="noreferrer"
-            data-journal-open
-            className="inline-flex items-center gap-0.5 font-medium text-info-content hover:underline"
-          >
-            {jt('card.open')}
-            <ArrowUpRight size={ICON_SIZE.sm} aria-hidden />
-          </a>
-          {lead.archive_url && (
-            <a
-              href={lead.archive_url}
-              target="_blank"
-              rel="noreferrer"
-              data-journal-archive
-              className="text-ink-3 hover:text-ink-2 hover:underline"
-            >
-              {jt('card.archive')}
-            </a>
-          )}
-        </div>
+        {!multi && <SourceLinks source={entries[0][1]} />}
       </div>
+      {journalId &&
+        entries.map(([path, source]) =>
+          isV2Source(source) && source.snapshot ? (
+            <SnapshotThumb
+              key={path}
+              src={journalFactSnapshotUrl(journalId, source.snapshot.file)}
+              alt={source.quote}
+              className="px-3.5 pb-3"
+            />
+          ) : null,
+        )}
     </div>
   )
 }
@@ -175,9 +225,12 @@ export function SourceButton({
   entries,
   name,
   compact = false,
+  journalId,
 }: {
   journal: string
   entries: [string, JournalFieldSource][]
+  /** 期刊 id（v2 条目取原文截图用） */
+  journalId?: string
   /** 这个值叫什么（可达名「<名>的出处」） */
   name: string
   /** 窄处（问题树的尾随格）：只画一枚小图标，文字「出处」留给可达名与悬停提示 */
@@ -216,7 +269,7 @@ export function SourceButton({
         )
       }
     >
-      <SourceCardBody journal={journal} entries={entries} />
+      <SourceCardBody journal={journal} entries={entries} journalId={journalId} />
     </Popover>
   )
 }

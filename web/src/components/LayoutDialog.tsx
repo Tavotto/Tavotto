@@ -18,7 +18,7 @@ import {
   rememberLayoutName,
   rememberLayoutRevision,
 } from '@/lib/layoutRevision'
-import { normalizeLayout } from '@/lib/migrate'
+import { normalizeLayout, tooNewSchema } from '@/lib/migrate'
 import { cn } from '@/lib/utils'
 import { openLayoutDocument } from '@/store/actions'
 import { captureFigureSnapshotSave, mergeSavedFigureSnapshots, projectFileSnapshot, getWindowHold, setProjectFile, suspendAutosaveFor, useDocumentStore } from '@/store/documentStore'
@@ -282,6 +282,16 @@ export function LayoutDialog() {
     const pj = ctx.pj
     try {
       const { doc, revision, file } = await fetchLayout(target)
+      // 来自更新的 Tavotto（schema 比本构建认得的新）：**不打开、不记基线**，挂「来自更新的 Tavotto」
+      // 横条（桌面主按钮「检查更新」）。必须在 normalizeLayout 之前判：它认不出的形状会落成一份
+      // 空白文档，打开后 ⌘S 就拿空白把磁盘上那份新格式盖掉（#1920 合同「打开排版」那一格）。
+      const tooNew = tooNewSchema(doc)
+      if (tooNew !== null) {
+        if (!stillCurrent(ctx)) return
+        useDocumentStore.setState({ docNotice: { kind: 'schema_too_new', docId: `layout:${target}`, schema: tooNew } })
+        setOpen(false)
+        return
+      }
       // 读到了就记下基线：之后覆盖这个名字不必再打扰用户一次（事实，记在 ctx 名下）
       rememberLayoutRevision(target, revision, pj)
       // 切走了就不打开、不碰此刻的对话框，在状态条上说出来

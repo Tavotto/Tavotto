@@ -1,4 +1,5 @@
 import { msg } from '@/i18n'
+import { isCanvasCovered } from '@/store/canvasCover'
 import type { MenuAction } from '@/lib/desktop'
 import type { AlignMode } from '@/lib/geometry'
 import { alignSelectedTo, duplicateSelected, runManualSave } from '@/store/actions'
@@ -90,6 +91,8 @@ const PICKER_ACTIONS: ReadonlySet<MenuAction> = new Set(['menu-open-project', 'm
  */
 export function runMenuAction(action: MenuAction) {
   if (!PICKER_ACTIONS.has(action) && useProjectStore.getState().phase !== 'open') return
+  // 对齐是「应用级」（焦点在输入框里也照做），但它改的是画布上选中的对象：画布被「数据」临时标签盖住时不许碰看不见的文档
+  if (isCanvasCovered() && action.startsWith('menu-align-')) return
   if (action === 'menu-save' || action === 'menu-save-layout') finishFocusedRichText()
   runDiscreteAction(
     MENU_SCOPE[action],
@@ -101,6 +104,7 @@ export function runMenuAction(action: MenuAction) {
 
 /** 让位时交给原生的那一份：文本框里撤销 / 重做 / 删掉选中的字；其余什么都不做 */
 function yieldMenuAction(action: MenuAction) {
+  if (isCanvasCovered()) return // 画布被盖住时让位只是「什么都不做」，不去碰原生撤销栈
   if (action === 'menu-undo') document.execCommand('undo')
   else if (action === 'menu-redo') document.execCommand('redo')
   else if (action === 'menu-delete') document.execCommand('delete')

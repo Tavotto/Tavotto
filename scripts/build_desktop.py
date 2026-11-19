@@ -53,6 +53,32 @@ for _stream in (sys.stdout, sys.stderr):
 ROOT = Path(__file__).resolve().parent.parent
 
 
+#: 安装文件清单（TVD-MHQJ）：壳在引擎没握手时逐项核对，分辨「杀软隔离 / 锁住了 _internal 里的文件」。
+#: 与 `src-tauri/src/sidecar/install_check.rs` 是严格同源对，两侧各读 `tests/golden/desktop_install_manifest.json`。
+INSTALL_MANIFEST_NAME = "install-files.txt"
+INSTALL_MANIFEST_HEADER = "# tavotto-install-files v1"
+
+
+def write_install_manifest(sidecar_dir: Path) -> int:
+    """在 sidecar 目录写安装文件清单：首行 header，之后每个文件一行相对路径（/ 分隔、排序、不含清单自己）。
+
+    放在所有构建后自检之后、交给 Tauri 之前：清单记的就是要进安装包的那一份。只记路径不记大小——
+    发行链之后的签名会改 exe / dll 的字节。返回记下的文件数。
+    """
+    target = sidecar_dir / INSTALL_MANIFEST_NAME
+    rels = sorted(
+        p.relative_to(sidecar_dir).as_posix()
+        for p in sidecar_dir.rglob("*")
+        if p.is_file() and p != target
+    )
+    if not rels:
+        raise SystemExit(f"安装文件清单：{sidecar_dir} 里一个文件都没有")
+    target.write_text(
+        "\n".join([INSTALL_MANIFEST_HEADER, *rels]) + "\n", encoding="utf-8", newline="\n"
+    )
+    return len(rels)
+
+
 def run(cmd: list[str], **kw) -> None:
     print(f"$ {' '.join(cmd)}")
     subprocess.run(cmd, check=True, cwd=str(ROOT), **kw)
@@ -388,6 +414,9 @@ def main() -> None:
                 f"（issue #198）：\n{detail}"
             )
     print("* tavotto-cli run: --help（stdout/0）与用法错误（stderr/2）都对，闭包完整")
+
+    n = write_install_manifest(sidecar.parent)
+    print(f"* 安装文件清单：{n} 个文件 → {INSTALL_MANIFEST_NAME}")
 
     if args.skip_tauri:
         print("* --skip-tauri：到此为止")

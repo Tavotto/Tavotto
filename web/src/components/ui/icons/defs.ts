@@ -427,6 +427,7 @@ export const SMALL_DEFS: Partial<Record<IconName, IconDef>> = {
   Check: { s: ['M5 13L10 18L19 7'] },
   Plus: { s: ['M12 5V19', 'M5 12H19'] },
   RotateCcw: { s: ['M5 13a7 7 0 1 0 2-6', 'M7 3V7H11'] },
+  RefreshCw: { s: ['M19 13a7 7 0 1 1-2-6', 'M17 3V7H13'] },
   Download: { s: ['M5 20H19', 'M12 4V15', 'M7 10L12 15L17 10'] },
   ExternalLink: { s: ['M10 5H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V14', 'M14 5H19V10', 'M19 5L11 13'] },
   Circle: { s: [SMALL_RING] },

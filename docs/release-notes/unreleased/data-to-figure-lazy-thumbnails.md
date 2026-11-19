@@ -1,0 +1,3 @@
+## Data-to-figure candidates now appear instantly and fill in their previews one by one
+
+In the experimental data-to-figure flow (behind its experimental switch), picking a data file now lists the candidate chart types straight away, with the recommended one first, and each preview image appears as soon as it is drawn instead of the whole list waiting several seconds for all of them. The flow no longer stops to ask which column to use or what to do with text cells inside a number column: it starts from sensible defaults (the last numeric column as the measured value, text cells left out, the detected header row) and tells you which columns it used, so you can change them afterwards. A preview that cannot be drawn is simply left out and cannot be turned into a script.

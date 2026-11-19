@@ -80,6 +80,10 @@ os.environ["TAVOTTO_NO_CONTACT"] = "1"
 # 开关并指向回环模拟端，生产主机由下面的会话级探针兜底。
 os.environ["TAVOTTO_NO_REVIEW_SHARE"] = "1"
 
+# 「高级版授权」（ADR 0193）同理：内置端点是生产主机 license.tavotto.cn（且 `PRODUCTION_LIVE = False`），测试进程里硬关；
+# 它的用例（tests/test_license*.py）自己摘掉开关并打桩 `diagsend._send`，生产主机由下面的会话级探针兜底。
+os.environ["TAVOTTO_NO_LICENSE"] = "1"
+
 # macOS：出图子进程共用一份 `system_profiler SPFontsDataType` 输出。每个用例给子进程的新
 # `MPLCONFIGDIR` 都会让 matplotlib 重建字体缓存，而重建的开销几乎全在这一条命令上（单次约 12 s
 # CPU）；同样必须在 collection 之前就位，模块级 spawn 的子进程也要继承到。原理与边界见模块文档。
@@ -114,6 +118,7 @@ _DIAG_LEAKS: list[str] = []
 def _refuse_telemetry_open(self, fullurl, *args, **kwargs):
     from tavotto.engine.contactsend import CONTACT_HOSTS  # 地址唯一出处；调用时才 import
     from tavotto.engine.diagsend import PRODUCTION_ENDPOINT  # 地址唯一出处；调用时才 import
+    from tavotto.engine.license import LICENSE_HOSTS  # 地址唯一出处；调用时才 import
     from tavotto.engine.reviewshare import REVIEW_HOSTS  # 地址唯一出处；调用时才 import
     from tavotto.engine.telemetry import DEFAULT_ENDPOINT  # 地址唯一出处；调用时才 import
 
@@ -122,6 +127,7 @@ def _refuse_telemetry_open(self, fullurl, *args, **kwargs):
         urllib.parse.urlsplit(PRODUCTION_ENDPOINT).hostname,
         *CONTACT_HOSTS,
         *REVIEW_HOSTS,
+        *LICENSE_HOSTS,
     }:
         current = os.environ.get("PYTEST_CURRENT_TEST", "（不在任何用例里）")
         _DIAG_LEAKS.append(f"{threading.current_thread().name} | {current} | {target}")
@@ -222,6 +228,26 @@ def _offline_api_root_probe(monkeypatch):
     from tavotto.engine import ai_catalog
 
     monkeypatch.setattr(ai_catalog, "_probe_kind", lambda *_a, **_k: None)
+
+
+@pytest.fixture(autouse=True)
+def _offline_protocol_probe(monkeypatch):
+    """保存 / 重新检查连接时的协议探测（`ai_probe.detect`）会真往服务商发一条对话请求。默认「没拿到任何结论」（不联网、记录不改，
+    与探测上线前的行为一致）；测它本身的用例自己换成真 `detect` + 桩掉 `wires.post_json`（见 `tests/test_ai_probe.py`）。"""
+    from tavotto.engine import ai_probe
+
+    monkeypatch.setattr(
+        ai_probe,
+        "detect",
+        lambda *_a, **_k: {
+            "protocol": None,
+            "base_url": None,
+            "token_field": None,
+            "reasons": {},
+            "reason": "network",
+            "conclusive": False,
+        },
+    )
 
 
 @pytest.fixture(autouse=True)

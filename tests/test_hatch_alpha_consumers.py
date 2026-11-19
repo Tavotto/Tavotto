@@ -34,6 +34,10 @@ DIRECT_CALLS = {
         "errorbar / stem_series：成员是 Line2D 与两点线段的 LineCollection，线段没有可填充面积、花纹画不出来"
         "（3.11.2 / 3.10.9 实测 set_alpha 前后像素逐字节相同），没有可观测的分叉",
     ),
+    ("overrides.py", '"grid_alpha": lambda ln, v: ln.set_alpha(v),'): (
+        1,
+        "网格样式撤销时把捕获的 alpha 写回已建刻度的网格线：gridline 是 Line2D，没有花纹色",
+    ),
     ("overrides.py", "_with_hatch_pinned(p, lambda: p.set_fill(bool(v)))"): (
         1,
         "这就是钉住入口 `_set_patch_fill` 本身",

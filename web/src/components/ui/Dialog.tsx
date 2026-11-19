@@ -342,7 +342,11 @@ export function Dialog({
       data-floating={floating || undefined}
       data-scrolled={(floating && scrolled) || undefined}
       // 底色在 index.css 的 [data-dialog-footer] 规则里（白底 ↔ 毛玻璃两态，含 reduced-transparency）
-      className={cn('flex shrink-0 items-center gap-2 px-5 pb-4 pt-3', floating && 'relative z-sticky')}
+      className={cn(
+        'flex shrink-0 items-center gap-2 px-5 pb-4',
+        hasStatus ? 'pt-2' : 'pt-3',
+        floating && 'relative z-sticky',
+      )}
       style={floating && footerH ? { marginTop: -footerH } : undefined}
     >
       {slots ? (
@@ -493,7 +497,7 @@ export function Dialog({
           {hasStatus && (
             <div
               data-dialog-status
-              className="max-h-[30vh] shrink-0 overflow-y-auto border-t border-border px-5 pb-2 pt-3"
+              className="max-h-[28vh] shrink-0 overflow-y-auto px-5 pb-1 pt-1.5"
             >
               {status}
             </div>

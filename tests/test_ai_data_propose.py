@@ -22,6 +22,7 @@ from tavotto.engine import (
     ai_data_propose as P,
     ai_data_recipe as R,
     ai_data_task,
+    ai_data_template as tpl,
     ai_figure_edit,
     ai_history,
     ai_tasks,
@@ -1581,3 +1582,567 @@ def test_an_explicit_table_under_a_hidden_pruned_or_linked_folder_is_refused_lik
         pytest.skip("not_run：此平台不能建符号链接")
     body = propose(client, table="link/r.csv").get_json()
     assert body["kind"] == "nothing" and body["reasons"] == ["table_not_found"]
+
+
+# =========================================================================== 懒渲染（render="lazy"）：文字先到、缩略图在取图时画
+def two_value_rows():
+    """两个数值列（time_s 与 signal）+ 一个分组列：`pick_value` 要问（旧模式）；懒模式用「不确定」默认继续。"""
+    rows = [["time_s", "arm", "signal"]]
+    for a in ("a", "b"):
+        for t in range(1, 7):
+            rows.append([t, a, round(t * 1.5, 3)])
+    return rows
+
+
+@pytest.fixture
+def fake_render(monkeypatch):
+    """替掉真渲染：记每次被画的 `(stem)`，按 `behave[stem]` 决定结果；用来量「谁被画了几次」，不依赖 worker。"""
+    calls: list[str] = []
+    behave: dict = {}
+
+    def one(sdir, rel, stem, thumb, pin=None):
+        calls.append(stem)
+        time.sleep(behave.get("delay", 0))
+        reason = behave.get(stem)
+        if reason:
+            return P._Rendered(reason=reason)
+        thumb.parent.mkdir(parents=True, exist_ok=True)
+        thumb.write_bytes(PNG + b"fake")
+        return P._Rendered(png=thumb, manifest={})
+
+    monkeypatch.setattr(P, "_render_one", one)
+    monkeypatch.setattr(figureverify, "data_matches_expected", lambda *a, **k: [])
+    return calls, behave
+
+
+def test_lazy_returns_text_without_rendering_anything(project, fake_render):
+    m, client, figs, _ = project
+    calls, _ = fake_render
+    put(figs, "data/g.csv", simple_rows())
+    before = tree_state(figs)
+    r = propose(client, render="lazy")
+    assert r.status_code == 200, r.get_json()
+    body = r.get_json()
+    assert body["kind"] == "candidates" and body["render"] == "lazy"
+    assert body["units_row"] is False
+    assert calls == []  # 一张都没画
+    assert [i["thumbnail_status"] for i in body["items"]] == ["pending"] * len(body["items"])
+    assert (
+        body["items"][0]["recommended"] is True and body["items"][0]["title_code"] == "points_mean"
+    )
+    assert tree_state(figs) == before  # 用户文件夹仍一个字节没动
+    # 与旧模式同一批备选、同一顺序
+    legacy = propose(client).get_json()
+    assert [i["title_code"] for i in legacy["items"]] == [i["title_code"] for i in body["items"]]
+    assert "render" not in legacy and [i["thumbnail_status"] for i in legacy["items"]] == [
+        "ready"
+    ] * len(legacy["items"])
+
+
+def test_lazy_thumbnail_is_drawn_on_fetch_once_even_when_fetched_concurrently(project, fake_render):
+    import concurrent.futures as cf
+
+    m, client, figs, _ = project
+    calls, behave = fake_render
+    behave["delay"] = 0.3
+    put(figs, "data/g.csv", simple_rows())
+    body = propose(client, render="lazy").get_json()
+    first = body["items"][0]
+    with cf.ThreadPoolExecutor(5) as ex:
+        got = list(ex.map(lambda _: client.get(first["thumbnail_url"]), range(5)))
+    assert [g.status_code for g in got] == [200] * 5
+    assert all(g.data.startswith(PNG) for g in got)
+    assert calls == ["cand_1"]  # 五个并发只画一次
+    assert client.get(first["thumbnail_url"]).status_code == 200 and calls == [
+        "cand_1"
+    ]  # 画好的不重画
+    second = body["items"][1]
+    assert client.get(second["thumbnail_url"]).status_code == 200
+    assert calls == ["cand_1", "cand_2"]  # 只画被取的那几张
+
+
+def test_lazy_failed_thumbnail_is_a_clear_error_and_the_item_cannot_be_committed(
+    project, fake_render
+):
+    m, client, figs, _ = project
+    calls, behave = fake_render
+    behave["cand_1"] = "candidate_thumbnail_failed"
+    put(figs, "data/g.csv", simple_rows())
+    body = propose(client, render="lazy").get_json()
+    first, second = body["items"][0], body["items"][1]
+    r = client.get(first["thumbnail_url"])
+    assert r.status_code == 422
+    assert r.get_json()["code"] == "propose_thumbnail_failed"
+    assert r.get_json()["params"] == {"reason": "candidate_thumbnail_failed"}
+    assert client.get(first["thumbnail_url"]).status_code == 422 and calls == [
+        "cand_1"
+    ]  # 记在项上，不重画
+    assert (
+        commit(client, body["session"], first["id"]).status_code == 404
+    )  # 与旧模式「失败的不进列表」同一保证
+    assert client.get(second["thumbnail_url"]).status_code == 200  # 一张失败不连累别的
+    # 旧模式顺序稳定：推荐标记仍在列表第一项（前端把推荐挪给下一张可用的）
+    assert [i["id"] for i in body["items"]][:2] == [first["id"], second["id"]]
+
+
+def test_lazy_fingerprint_mismatch_fails_the_item(project, fake_render, monkeypatch):
+    m, client, figs, _ = project
+    put(figs, "data/g.csv", simple_rows())
+    body = propose(client, render="lazy").get_json()
+    bad = type("C", (), {"verdict": "failed"})()
+    monkeypatch.setattr(figureverify, "data_matches_expected", lambda *a, **k: [bad])
+    r = client.get(body["items"][0]["thumbnail_url"])
+    assert r.status_code == 422 and r.get_json()["params"] == {
+        "reason": "candidate_fingerprint_mismatch"
+    }
+
+
+def test_lazy_uses_default_answers_instead_of_asking_and_reports_roles(project, fake_render):
+    m, client, figs, _ = project
+    put(figs, "data/t.csv", two_value_rows())
+    # 旧模式：要先答题
+    assert propose(client, table="t.csv").get_json()["kind"] == "ask"
+    body = propose(client, table="t.csv", render="lazy").get_json()
+    assert body["kind"] == "candidates", body
+    assert body["table"] == "t.csv" and body["sheet"] is None and body["header_row"] == 1
+    assert [d["question_code"] for d in body["defaults"]] == ["pick_value"]
+    roles = body["roles"]
+    assert roles["y"] == ["signal"]  # 「不确定」的默认 = 最后一个数值列
+    assert roles["options"]["y"] == ["time_s", "signal"] and roles["options"]["group"] == ["arm"]
+    assert roles["x"] == "time_s" or roles["group"] == "arm"
+    # 面板上换了纵轴 = 复用 answers.y，重新出候选（不另造一套参数）
+    again = propose(client, table="t.csv", render="lazy", answers={"y": "time_s"}).get_json()
+    assert again["kind"] == "candidates" and again["roles"]["y"] == ["time_s"]
+    assert not any(d["question_code"] == "pick_value" for d in again["defaults"])
+
+
+def test_lazy_group_and_x_can_be_turned_off_from_the_panel(project, fake_render):
+    m, client, figs, _ = project
+    put(figs, "data/t.csv", two_value_rows())
+    body = propose(
+        client, table="t.csv", render="lazy", answers={"y": "signal", "group": "none"}
+    ).get_json()
+    assert body["roles"]["group"] is None
+    assert all(i["values"]["group"] is None for i in body["items"])
+    body2 = propose(
+        client, table="t.csv", render="lazy", answers={"y": "signal", "x": "none"}
+    ).get_json()
+    assert body2["roles"]["x"] is None
+    assert all(i["values"]["family"] != "trend" for i in body2["items"])
+
+
+def test_lazy_skips_mixed_cells_by_default_and_reports_counts(project, fake_render):
+    m, client, figs, _ = project
+    put(figs, "data/g.csv", lod_rows())
+    assert propose(client).get_json()["question_code"] == "mixed_cells"  # 旧模式照旧先问
+    body = propose(client, render="lazy").get_json()
+    assert body["kind"] == "candidates", body
+    assert body["mixed_cells"] == [
+        {"column": "value_mV", "non_numeric": 2, "rows": 18, "mode": "skip"}
+    ]
+    assert body["header_row"] == 1
+    assert any(d["question_code"] == "mixed_cells" for d in body["defaults"])
+    # 用户在面板上改成「取数字部分」：照旧的 answers.cells 重来，不再自动跳过
+    again = propose(client, render="lazy", answers=rule(mode="extract")).get_json()
+    assert again["kind"] == "candidates" and again["mixed_cells"] == []
+
+
+def test_lazy_picks_the_first_table_instead_of_asking(project, fake_render):
+    m, client, figs, _ = project
+    put(figs, "data/response.csv", simple_rows())
+    put(figs, "data/other.csv", dist_rows())
+    assert propose(client).get_json()["question_code"] == "pick_table"
+    body = propose(client, render="lazy").get_json()
+    assert body["kind"] == "candidates" and body["defaults"][0]["question_code"] == "pick_table"
+    assert body["table"] == body["defaults"][0]["answer"]["table"]
+
+
+def test_render_mode_is_validated_and_part_of_the_idempotency_key(project, fake_render):
+    m, client, figs, _ = project
+    put(figs, "data/g.csv", simple_rows())
+    assert propose(client, render="bogus").status_code == 400
+    a = propose(client, render="lazy", client_request_id="rid-lazy-0001").get_json()
+    b = propose(client, client_request_id="rid-lazy-0001").get_json()
+    assert a["session"] != b["session"] and "render" not in b
+    assert (
+        propose(client, render="lazy", client_request_id="rid-lazy-0001").get_json()["session"]
+        == a["session"]
+    )
+
+
+@needs_worker
+def test_lazy_end_to_end_real_worker_thumbnail_then_commit(project):
+    m, client, figs, _ = project
+    put(figs, "data/g.csv", simple_rows())
+    body = propose(client, render="lazy").get_json()
+    first = body["items"][0]
+    t = client.get(first["thumbnail_url"])
+    assert t.status_code == 200 and t.data.startswith(PNG)
+    c = commit(client, body["session"], first["id"])
+    assert c.status_code == 200 and c.get_json()["data_check"] == "verified"
+
+
+def test_lazy_retries_a_transient_render_failure_once_but_not_a_definite_one(
+    project, fake_render, monkeypatch
+):
+    m, client, figs, _ = project
+    calls, behave = fake_render
+    put(figs, "data/g.csv", simple_rows())
+    body = propose(client, render="lazy").get_json()
+    real_one = P._render_one
+    seq = {"cand_1": ["candidate_render_failed", None], "cand_2": ["candidate_timeout", None]}
+
+    def flaky(sdir, rel, stem, thumb, pin=None):
+        want = seq[stem].pop(0)
+        if want is None:
+            return real_one(sdir, rel, stem, thumb, pin)
+        calls.append(stem)
+        return P._Rendered(reason=want)
+
+    monkeypatch.setattr(P, "_render_one", flaky)
+    a, b = body["items"][0], body["items"][1]
+    assert client.get(a["thumbnail_url"]).status_code == 200  # 第一次瞬时失败，重试画成
+    r = client.get(b["thumbnail_url"])  # 超时是确定的结论：不重试
+    assert r.status_code == 422 and r.get_json()["params"] == {"reason": "candidate_timeout"}
+    assert calls == ["cand_1", "cand_1", "cand_2"] and seq["cand_2"] == [None]
+
+
+def test_render_gate_lets_the_recommended_one_in_first_and_never_exceeds_its_slots():
+    import threading
+
+    gate = P._PriorityGate(2)
+    inside, peak, order = [0], [0], []
+    lock = threading.Lock()
+    hold = threading.Event()
+
+    def run(n):
+        with gate(n):
+            with lock:
+                inside[0] += 1
+                peak[0] = max(peak[0], inside[0])
+                order.append(n)
+            hold.wait(5)
+            with lock:
+                inside[0] -= 1
+
+    blockers = [threading.Thread(target=run, args=(9,)) for _ in range(2)]
+    for t in blockers:
+        t.start()
+    while len(order) < 2:
+        time.sleep(0.01)
+    waiters = [threading.Thread(target=run, args=(n,)) for n in (4, 3, 2, 1)]  # 倒序到达
+    for t in waiters:
+        t.start()
+        time.sleep(0.05)
+    hold.set()
+    for t in blockers + waiters:
+        t.join(10)
+    assert peak[0] == 2
+    assert order[2:] == [1, 2, 3, 4]  # 空位出来后按序号小的先进，不论到达先后
+
+
+# =========================================================================== 仪器导出：标题行 + 说明行 + 列名行 + 单位行 + 数据
+def instrument_text():
+    lines = ["Sample A calibration run 3", "operator: lab", "Wavelength  Intensity", "nm  a.u."]
+    lines += [f"{400 + 5 * i}  {round(0.1 + i * 0.013 + (i % 3) * 0.004, 3)}" for i in range(20)]
+    return "\n".join(lines) + "\n"
+
+
+def test_header_guess_prefers_the_name_row_next_to_the_units_row_not_a_note_row():
+    layout = adf._detect(instrument_text(), ".txt")
+    assert layout.header_line == 3  # 不是 2（`operator: lab` 也同列数、也「像名字」）
+    assert layout.sure is False  # 仍是猜的：界面让用户可改
+    # 单位行单独也认得：`a.u.` 不在列名后缀的 UNITS 表里，但仪器单位行里常见
+    assert adf._units_like(["nm", "a.u."]) and not adf._units_like(["operator:", "lab"])
+
+
+def test_lazy_propose_on_an_instrument_export_uses_the_real_header_row(project, fake_render):
+    m, client, figs, _ = project
+    path = figs / "data" / "instrument" / "calibration.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text(instrument_text(), encoding="utf-8")
+    body = propose(client, folder="data/instrument", render="lazy").get_json()
+    assert body["kind"] == "candidates", body
+    assert body["header_row"] == 3
+    roles = body["roles"]
+    assert roles["x"] == "Wavelength" and roles["y"] == ["Intensity"]
+    assert body["units_row"] is True  # 单位行（第 4 行 = header_row + 1）已被切掉，前端可把它置灰
+    assert body["mixed_cells"] == []  # 单位行被切掉了：不是「1 个非数字格」
+    assert body["items"][0]["values"]["family"] in ("trend", "relationship")  # 不是一堆直方图
+    assert {i["values"]["family"] for i in body["items"]} & {"trend", "relationship"}
+
+
+def _read_instrument(tmp_path, **kw):
+    p = tmp_path / "calibration.txt"
+    p.write_text(instrument_text(), encoding="utf-8")
+    return p, adf.read_text_table(p, **kw)
+
+
+def test_units_row_is_cut_in_every_reader_and_counts_as_no_data(tmp_path):
+    p, t = _read_instrument(tmp_path)
+    s = t.summary
+    assert t.header_line == 3 and s.columns == ["Wavelength", "Intensity"] and s.units_row is True
+    assert t.rows == 20 and s.rows[0] == ["400", "0.1"]
+    assert s.row_numbers[:2] == [5, 6]  # 数据行的物理行号不变（单位行是第 4 行）
+    assert {c: (v.kind, v.text_count) for c, v in s.per_column.items()} == {
+        "Wavelength": ("numeric", 0),
+        "Intensity": ("numeric", 0),
+    }
+    # 概览 / 摘要 / 脚本读出同一张表
+    again = adf.inspect_data_source(p, None, v2=True, header_row=3)  # 提交时按 header_line 重读
+    assert again.rows == s.rows and again.units_row is True
+    entry = adf.TableEntry("calibration.txt", None, False, s)
+    expr = tpl._reader_expr(entry, False)
+    assert expr == "read_delimited(DATA, 'ws', 3, True)"
+    ns: dict = {}
+    exec(compile(tpl._runtime_source(), "<rt>", "exec"), ns)  # noqa: S102 - 我们自己生成的公共模块
+    ns["DATA"] = p
+    header, rows = eval(expr, ns)  # noqa: S307
+    assert header == s.columns and rows == s.rows
+
+
+def test_units_row_is_not_cut_when_the_user_names_another_header_line(tmp_path):
+    p, _ = _read_instrument(tmp_path)
+    other = adf.read_text_table(p, header_row=4)  # 用户说：单位行才是表头
+    assert other.summary.columns == ["nm", "a.u."] and other.summary.units_row is False
+    assert other.rows == 20 and other.summary.row_numbers[0] == 5
+    notes = adf.read_text_table(p, header_row=2)
+    assert notes.summary is None or notes.summary.units_row is False
+    assert (
+        tpl._reader_expr(adf.TableEntry("c.txt", None, False, other.summary), False)
+        == "read_delimited(DATA, 'ws', 4)"
+    )
+
+
+def test_units_row_detection_leaves_other_shapes_alone(tmp_path):
+    # 干净 CSV：没有单位行，读法与脚本逐字不变
+    csv_p = tmp_path / "g.csv"
+    csv_p.write_text("group,value\na,1\nb,2\n", encoding="utf-8")
+    t = adf.read_text_table(csv_p)
+    assert t.summary.units_row is False
+    assert tpl._reader_expr(adf.TableEntry("g.csv", None, False, t.summary), False) == (
+        "read_delimited(DATA, ',')"
+    )
+    # 括号包着的单位 / 列名行仍由用户在两行里点（不自动切）
+    br = tmp_path / "b.dat"
+    br.write_text("first second\n(a) (b)\n1 2\n3 4\n", encoding="utf-8")
+    assert adf.read_text_table(br).summary.units_row is False
+    # 表头后紧跟的是一行文字数据而不是单位：不切
+    txt = tmp_path / "t.txt"
+    txt.write_text("name value\nalpha 1\nbeta 2\ngamma 3\n", encoding="utf-8")
+    assert adf.read_text_table(txt).summary.units_row is False
+    assert adf.read_text_table(txt).rows == 3
+
+
+def test_units_row_first_line_header_csv(tmp_path):
+    # 表头就在第 1 行、第 2 行是单位：`header_row` 仍是 None（老读法），单位行靠第四项切
+    p = tmp_path / "w.csv"
+    p.write_text("wavelength,intensity\nnm,a.u.\n400,1\n405,2\n410,3\n", encoding="utf-8")
+    t = adf.read_text_table(p)
+    assert t.summary.units_row is True and t.summary.header_row is None and t.rows == 3
+    entry = adf.TableEntry("w.csv", None, False, t.summary)
+    assert tpl._reader_expr(entry, False) == "read_delimited(DATA, ',', None, True)"
+    ns: dict = {}
+    exec(compile(tpl._runtime_source(), "<rt>", "exec"), ns)  # noqa: S102
+    ns["DATA"] = p
+    header, rows = eval(tpl._reader_expr(entry, False), ns)  # noqa: S307
+    assert header == ["wavelength", "intensity"] and rows == t.summary.rows
+
+
+@needs_worker
+def test_instrument_export_commits_and_verifies_with_the_units_row_cut(project):
+    m, client, figs, _ = project
+    path = figs / "data" / "instrument" / "calibration.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text(instrument_text(), encoding="utf-8")
+    body = propose(client, folder="data/instrument", render="lazy").get_json()
+    first = body["items"][0]
+    assert client.get(first["thumbnail_url"]).status_code == 200
+    out = commit(client, body["session"], first["id"]).get_json()
+    assert out["task"]["outcome"] == "completed" and out["data_check"] == "verified", out
+    script = (figs / out["script"]).read_text(encoding="utf-8")
+    assert "read_delimited(DATA, 'ws', 3, True)" in script
+
+
+# =========================================================================== 横轴列夹着少量文字格：与纵轴列同一套规则
+def gap_rows(n=16, bad=("?", "?")):
+    """`day` 列 16 个数 + 末尾 2 个 `?`（占 11%，在 `numeric_like` 阈值内）；value 全是数。"""
+    rows = [["day", "value"]]
+    for d in range(n):
+        rows.append([d, round(8 + d * 1.3 + (d % 3) * 0.4, 2)])
+    for b in bad:
+        rows.append([b, 12.0])
+    return rows
+
+
+def test_a_mixed_x_column_is_offered_as_the_axis_and_its_text_rows_are_skipped_by_default(
+    project, fake_render
+):
+    m, client, figs, _ = project
+    put(figs, "data/gap.csv", gap_rows())
+    body = propose(client, table="gap.csv", render="lazy").get_json()
+    assert body["kind"] == "candidates", body
+    assert body["roles"]["x"] == "day" and body["roles"]["y"] == ["value"]
+    assert body["items"][0]["values"]["family"] == "trend"  # 折线类排第一
+    assert body["items"][0]["title_code"] in ("line_points", "line_band", "line_units")
+    assert body["mixed_cells"] == [{"column": "day", "non_numeric": 2, "rows": 18, "mode": "skip"}]
+    assert "day" in body["roles"]["options"]["x"]
+    # 被跳过的行计入「没画出来的行数」；规则统计在 cells 里
+    first = body["items"][0]
+    assert first["unplotted"] == {"count": 2, "code": "rows_not_plotted"}
+    assert first["cells"][0]["column"] == "day" and first["cells"][0]["ignored"] == 2
+    # 旧模式照旧先问（问的是 y 列，不是 x）：不带参数的行为没变
+    legacy = propose(client, table="gap.csv").get_json()
+    assert legacy["kind"] == "ask"
+
+
+def test_extract_works_on_the_x_column_and_a_row_it_rescues_is_not_unplotted(project, fake_render):
+    m, client, figs, _ = project
+    put(figs, "data/gap.csv", gap_rows(bad=("16*", "?")))
+    body = propose(
+        client, table="gap.csv", render="lazy", answers={"cells": {"day": {"mode": "extract"}}}
+    ).get_json()
+    assert body["kind"] == "candidates" and body["mixed_cells"] == []  # 用户已表态，不再自动跳过
+    first = body["items"][0]
+    assert first["unplotted"]["count"] == 1  # `16*` 取出 16 画得出；`?` 取不出
+    assert first["cells"][0]["extracted"] == 1 and first["cells"][0]["ignored"] == 1
+
+
+def test_an_x_column_that_is_mostly_text_is_still_not_an_axis(project, fake_render):
+    m, client, figs, _ = project
+    rows = [["day", "value"]] + [[f"d{i}", i * 1.5] for i in range(8)] + [[3, 4.5], [4, 6.0]]
+    put(figs, "data/txt.csv", rows)
+    body = propose(client, table="txt.csv", render="lazy").get_json()
+    assert body["kind"] == "candidates"
+    assert body["roles"]["x"] is None and "day" not in body["roles"]["options"]["x"]
+    assert all(i["values"]["family"] not in ("trend", "relationship") for i in body["items"])
+
+
+def test_clean_numeric_x_output_is_unchanged_by_the_mixed_x_rule(project, fake_render):
+    m, client, figs, _ = project
+    put(figs, "data/clean.csv", gap_rows(bad=()))
+    body = propose(client, table="clean.csv", render="lazy").get_json()
+    assert body["roles"]["x"] == "day" and body["mixed_cells"] == []
+    assert body["items"][0]["unplotted"] == {"count": 0, "code": None}
+    assert body["items"][0]["cells"] is None
+
+
+@needs_worker
+def test_mixed_x_commits_and_the_script_reads_the_same_table(project):
+    m, client, figs, _ = project
+    put(figs, "data/gap.csv", gap_rows())
+    body = propose(client, table="gap.csv", render="lazy").get_json()
+    first = body["items"][0]
+    assert client.get(first["thumbnail_url"]).status_code == 200
+    out = commit(client, body["session"], first["id"]).get_json()
+    assert out["data_check"] == "verified", out
+    assert out["unplotted"]["count"] == 2
+    assert [c["column"] for c in out["cells"]] == ["day"]
+    script = (figs / out["script"]).read_text(encoding="utf-8")
+    assert (
+        "fig.text(" not in script and "ignored" not in script
+    )  # 图里没有脚注（没画的行只在响应里报）
+
+
+def lod_first_obs_rows():
+    """普通 CSV：表头 `group,value`，第一条观测的值是检出限标记 `<0.1`，之后才是数。"""
+    rows = [["group", "value"], ["control", "<0.1"]]
+    for g, base in (("control", 0.5), ("drug", 1.5)):
+        rows += [[g, round(base + i * 0.2, 2)] for i in range(7)]
+    return rows
+
+
+def test_a_csv_whose_first_observation_is_a_lod_marker_keeps_its_real_header(tmp_path):
+    p = tmp_path / "lod.csv"
+    p.write_text("\n".join(",".join(map(str, r)) for r in lod_first_obs_rows()) + "\n", "utf-8")
+    t = adf.read_text_table(p)
+    assert t.header_line == 1 and t.summary.columns == ["group", "value"]
+    assert t.summary.units_row is False  # 仍是「猜的」（候选两条），与此前一致
+    assert t.summary.rows[0] == [
+        "control",
+        "<0.1",
+    ]  # 那条观测还是数据（`<0.1` 进 mixed_cells 由用户处理）
+
+
+def test_that_csv_proposes_with_header_row_1_and_the_lod_cell_in_mixed_cells(project, fake_render):
+    m, client, figs, _ = project
+    put(figs, "data/lod.csv", lod_first_obs_rows())
+    body = propose(client, table="lod.csv", render="lazy").get_json()
+    assert body["kind"] == "candidates" and body["header_row"] == 1
+    assert body["roles"]["y"] == ["value"]
+    assert body["mixed_cells"] == [
+        {"column": "value", "non_numeric": 1, "rows": 15, "mode": "skip"}
+    ]
+
+
+def test_header_row_picking_still_handles_notes_names_units_and_hash_headers(tmp_path):
+    # 说明行 + 列名行 + 单位行（calibration）：列名是紧挨单位行的那行
+    assert adf._detect(instrument_text(), ".txt").header_line == 3
+    # `#` 说明行 + 列名行（scan_01 型）
+    scan = "# export\n# date: x\nVoltage (V)\tCurrent (A)\n" + "".join(
+        f"{-1 + i * 0.025}\t{i * 1e-6}\n" for i in range(10)
+    )
+    assert adf._detect(scan, ".dat").header_line == 3
+
+
+# =========================================================================== 提交还没渲染的懒候选：先走取图同一条路径，失败什么都不落盘
+def _registry_scripts(figs: Path) -> dict:
+    return json.loads((figs / "tavotto_registry.json").read_text(encoding="utf-8"))["scripts"]
+
+
+def _nothing_written(figs: Path):
+    assert not (figs / "data" / "tavotto_figures").exists()
+    assert _registry_scripts(figs) == {}
+
+
+def test_committing_a_pending_candidate_whose_render_fails_is_refused_and_writes_nothing(
+    project, fake_render
+):
+    m, client, figs, _ = project
+    calls, behave = fake_render
+    behave["cand_1"] = "candidate_thumbnail_failed"
+    put(figs, "data/g.csv", simple_rows())
+    body = propose(client, render="lazy").get_json()
+    first = body["items"][0]
+    assert first["thumbnail_status"] == "pending" and calls == []
+    r = commit(client, body["session"], first["id"])
+    assert r.status_code == 404 and r.get_json()["code"] == "propose_candidate_unknown"
+    assert calls == ["cand_1"]  # 提交走了同一条渲染路径
+    _nothing_written(figs)
+    # 与取图一致：该项已记成失败，取图 422、再提交仍 404，不重画
+    assert client.get(first["thumbnail_url"]).status_code == 422
+    assert commit(client, body["session"], first["id"]).status_code == 404
+    assert calls == ["cand_1"]
+    _nothing_written(figs)
+
+
+def test_committing_a_pending_candidate_whose_fingerprint_mismatches_is_refused_and_writes_nothing(
+    project, fake_render, monkeypatch
+):
+    m, client, figs, _ = project
+    put(figs, "data/g.csv", simple_rows())
+    body = propose(client, render="lazy").get_json()
+    bad = type("C", (), {"verdict": "failed"})()
+    monkeypatch.setattr(figureverify, "data_matches_expected", lambda *a, **k: [bad])
+    first = body["items"][0]
+    r = commit(client, body["session"], first["id"])
+    assert r.status_code == 404 and r.get_json()["code"] == "propose_candidate_unknown"
+    _nothing_written(figs)
+    r2 = client.get(first["thumbnail_url"])
+    assert r2.status_code == 422 and r2.get_json()["params"] == {
+        "reason": "candidate_fingerprint_mismatch"
+    }
+
+
+@needs_worker
+def test_committing_a_pending_candidate_renders_and_checks_it_first_then_commits(project):
+    m, client, figs, _ = project
+    put(figs, "data/g.csv", simple_rows())
+    body = propose(client, render="lazy").get_json()
+    first = body["items"][0]
+    assert first["thumbnail_status"] == "pending"  # 用户没取过图就直接提交
+    out = commit(client, body["session"], first["id"]).get_json()
+    assert out["task"]["outcome"] == "completed" and out["data_check"] == "verified", out
+    # 提交前那一遍渲染 + 指纹核对已把它落成 ready：缩略图直接可取
+    assert client.get(first["thumbnail_url"]).status_code == 200
+    assert (figs / out["script"]).is_file()

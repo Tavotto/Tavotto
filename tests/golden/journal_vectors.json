@@ -65,6 +65,7 @@
    "absolute_min_font_size_pt": "font-below-absolute-floor",
    "max_font_size_pt": "font-too-large",
    "min_raster_dpi": "raster-dpi",
+   "min_line_width_pt": "line-width-below-min",
    "line_widths_pt": "line-width-off-preset",
    "font_family.latin_accepted": "font-family-substituted",
    "cjk_fallback.required": "cjk-fallback-missing",
@@ -93,6 +94,7 @@
    "min_effective_font_size_pt": "min",
    "absolute_min_font_size_pt": "min",
    "min_raster_dpi": "min",
+   "min_line_width_pt": "min",
    "legend_policy.min_font_size_pt": "min",
    "max_font_size_pt": "max",
    "legend_policy.max_font_size_pt": "max"

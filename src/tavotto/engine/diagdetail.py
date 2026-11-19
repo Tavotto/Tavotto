@@ -2099,7 +2099,8 @@ def collect_render_env(src: Sources, opts: DetailOptions, scrub: Scrubber) -> li
             "fingerprint": getattr(session, "interpreter_fingerprint", None),
             "python_version": getattr(session, "python_version", None),
         }
-        doc["native_receipt"] = session.last_build_runtime()
+        # `NativeSession.last_build_runtime` 是只读属性（与 `pool.EngineWorker` 同名的那个字段同形），不是方法
+        doc["native_receipt"] = getattr(session, "last_build_runtime", None)
         doc["native_session"] = session.diagnostics()
         native_cwd = getattr(session, "cwd", "") or None
         cwd_ok = (

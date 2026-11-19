@@ -50,7 +50,7 @@
     "panelMissing": "Figure {{stem}} not found — the script may not have produced it yet, or it belongs to another figure library",
     "projectOpened": "Opened project {{name}}",
     "restoreTimeout": "This handed-off figure is in the asset library: pick a layout on the canvas, then add it.",
-    "runtimeNeedsRun": "{{stem}} is registered as a runtime figure but has no preview yet — run it once from the Scripts section of the asset library",
+    "runtimeNeedsRun": "{{stem}} needs to be run before it can be previewed.",
     "superseded": "The project was switched, so this handoff wasn’t placed."
   },
   "picker": {
@@ -92,7 +92,7 @@
     "backHome": "Back to home",
     "browseMore": "Browse more projects",
     "import": {
-      "dropNoPath": "Your system didn’t tell {{product}} which folder “{{name}}” is in. Select it in the window that opens next.",
+      "dropNoPath": "Select the folder containing “{{name}}” next so {{product}} can load its data and local modules.",
       "dropNotScript": "“{{name}}” can’t be opened here. Drop a script (.py, .R, .m), a notebook (.ipynb) or a project folder on the home screen.",
       "droppedMany": "You dropped {{total}} items; only “{{name}}” was used to open a project",
       "foreignNotFound": "“{{name}}” isn’t in this folder. Select the folder it’s in.",
@@ -110,7 +110,8 @@
     },
     "newcomer": {
       "import": "Import my script",
-      "title": "Where is your plotting script?",
+      "subtitle": "Works with .py, .ipynb, and R / MATLAB scripts — refine typography, legends, and layout while keeping your source script untouched.",
+      "title": "Finish your figure for publication",
       "tryResume": "Resume the sample tutorial",
       "tryStart": "Learn with a sample (guided)"
     },
@@ -125,7 +126,14 @@
       "dropRelease": "Release to import",
       "dropTitle": "Drag a Python script here",
       "sample": "Try a sample script",
-      "sampleHint": "{{product}} finds the figures the script makes and opens the layout view."
+      "sampleHint": "{{product}} opens the figures drawn by the script right on the canvas."
+    },
+    "entry": {
+      "dataTitle": "I have data, no figure yet",
+      "dataHint": "Pick a data folder and let the assistant draw it for you.",
+      "scriptTitle": "I have a plotting script to polish",
+      "scriptHint": "Drop a .py here, or click to choose.",
+      "scriptHintPicker": "Click to choose the folder with your script."
     }
   },
   "switcher": {
@@ -133,6 +141,10 @@
     "trigger": "Current project {{name}} — click to switch"
   },
   "workspace": {
+    "openFailed": "Couldn’t open “{{name}}”.",
+    "openMissing": "Couldn’t find the folder “{{name}}”.",
+    "createFailed": "Couldn’t create “{{name}}”.",
+    "reselectFolder": "Choose folder again",
     "current": "Current",
     "currentActions": "More actions for the current project",
     "emptyRecent": "Projects you open will show up here",

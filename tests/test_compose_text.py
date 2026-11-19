@@ -123,13 +123,13 @@ def test_mixed_script_single_line_advances():
 
 
 def test_baseline_matches_css_line_box():
-    """基线 = y0 + size*((1.25-(asc-desc))/2 + asc)，与前端 line-height:1.25 对齐。asc / desc 是
-    主脸（Liberation Serif）的 OS/2 typo 值——D07 批准的度量（ADR 0060 §4），公式本身一字未变。"""
+    """基线 = y0 + size × (1.25 / 2 + BASELINE_BELOW_CENTER)：行盒中线下固定 0.35 em，与字体度量无关
+    （ADR 0073 修订，2026-11-16）；前端 line-height:1.25 的行盒、预览补齐到同一条基线。"""
+    from tavotto.rendercore.typography import BASELINE_BELOW_CENTER
+
     page = _draw(_base("Mg"))
     _, y, _ = _chars(page)[0]
-    face = _serif_face()
-    asc, desc = face.ascender, face.descender
-    expected = pdfbackend.mm2pt(10) + SIZE * ((1.25 - (asc - desc)) / 2 + asc)
+    expected = pdfbackend.mm2pt(10) + SIZE * (1.25 / 2 + BASELINE_BELOW_CENTER)
     assert y == pytest.approx(expected, abs=0.2)
 
 
@@ -377,7 +377,7 @@ def test_force_break_keeps_script_marks_on_each_char():
     assert sizes == pytest.approx([12 * richtext.SCRIPT_SIZE, 12.0], abs=0.01)
     # 下标字形都落在各自那行正文基线下方 SUB_DROP×size 处
     drop = 12 * richtext.SUB_DROP
-    body_ys = sorted({round(y, 1) for x, y, c in _chars(page) if c in "CaPOH()"})
+    body_ys = sorted({y for x, y, c in _chars(page) if c in "CaPOH()"})
     for size, oy, text in _spans(page):
         if size < 12.0:
             assert any(abs(oy - (by + drop)) < 0.05 for by in body_ys), text

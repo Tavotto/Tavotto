@@ -1852,6 +1852,13 @@ def run(
                 "ai_endpoint_incompatible",
                 {"endpoint": chosen.get("label") or chosen.get("id") or ""},
             )
+        if (
+            chosen is not None
+            and agent != ai_agents.BUILTIN_ID
+            and ai_providers.builtin_only(chosen)
+        ):
+            # Chat Completions 的连接 Codex 不认：显式指到它也绝不起 CLI（注入是空的，CLI 会悄悄改用官方登录）
+            raise AgentError("ai_agent_not_usable", {"agent": agent})
         if needs_login is not None:
             raise AgentError("ai_endpoint_needs_login", needs_login)
         if agent == ai_agents.BUILTIN_ID:
@@ -2324,6 +2331,18 @@ def run(
                         sess["transcript"].append({"kind": kind, "text": text})
                     emit("ai.delta", {"session": sid, "kind": kind, "text": text})
             _await_exit(sess)
+            if agent == ai_agents.BUILTIN_ID and endpoint and st.get("runner_report"):
+                # 进程已退出：把 runner 的自救回报（换协议 / 长度字段 / 被剥字段）落进记录，下次直接用；失败不影响会话
+                try:
+                    ai_providers.apply_runtime_report(
+                        str(endpoint.get("id") or ""),
+                        model=str(model or endpoint.get("default_model") or ""),
+                        report=st["runner_report"],
+                        base_url=str(endpoint.get("base_url") or ""),
+                    )
+                    invalidate_capabilities()
+                except Exception:  # noqa: BLE001
+                    LOG.warning("runner 自救回报落盘失败", exc_info=True)
             if st.get("runner_error"):  # 内置执行器与 Codex / Claude 适配器都可能写
                 sess["runner_error"] = st["runner_error"]
                 sess["runner_detail"] = st.get("runner_detail")

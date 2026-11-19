@@ -48,6 +48,8 @@ from .ai_data_figure import (
     parse_date,
     resolve_header,
     table_from_text,
+    xvg_label,
+    xvg_text,
 )
 
 # --------------------------------------------------------------------------- 错误
@@ -74,12 +76,13 @@ class TemplateError(ValueError):
 _ISO_DATE_PREAMBLE = 'import datetime as _dt\n_ISO_DATE = re.compile(r"\\d{4}-\\d{2}-\\d{2}")\n_EPOCH = _dt.date(1970, 1, 1)\n'
 
 
-def read_delimited(path, delimiter, header_row=None):
+def read_delimited(path, delimiter, header_row=None, units_row=False):
     """文本表格 → `(表头, 数据行)`：UTF-8（可带 BOM）；全空行不算数据行；表头去首尾空白。`delimiter` 是 `,` / `\t` / `;` / `ws`（连续空白）；
-    `header_row`（1 起的物理行号）不给 = 第一条非空记录是表头，给了 = 跳过它之前的说明行（读法全文在 `table_from_text`，Tavotto 读出来的是同一张表）。"""
+    `header_row`（1 起的物理行号）不给 = 第一条非空记录是表头，给了 = 跳过它之前的说明行；`units_row` 真 = 表头后紧跟的单位行不是数据、切掉
+    （读法全文在 `table_from_text`，Tavotto 读出来的是同一张表）。"""
     with open(path, newline="", encoding="utf-8-sig") as fh:
         text = fh.read()
-    header, rows, _lines = table_from_text(text, delimiter, header_row)
+    header, rows, _lines = table_from_text(text, delimiter, header_row, units_row)
     return header, rows
 
 
@@ -88,6 +91,29 @@ def read_xlsx(path, sheet):
     with XlsxBook(path) as book:  # noqa: F821 - 由内嵌的 xlsxread 源码提供
         table = [r for r in book.read(sheet) if any(c.strip() for c in r)]
     return [h.strip() for h in table[0]], table[1:]
+
+
+def group_key(label):
+    """一个分组列的单元格在分组时的键：去首尾空白、区分大小写、不做 Unicode 规范化——`comparison_data` / `trend_data` / `relationship_data` 与
+    `ai_data_figure._summarize` 的取值集合都是这个写法（`cell.strip()`）。合画的文件标签是否「分得开」就按它判（`merge_tables` 与父进程同一个函数）。"""
+    return label.strip()
+
+
+def merge_tables(tables, labels, column):
+    """几份列名与顺序都相同的表 → 一张表（合画）：按给定顺序逐份拼行，表头末尾多一列 `column`，值是该份的 `labels[i]`。
+    `tables` 是 `[(表头, 数据行), …]`（各份读法与单份一样，由调用方先读好）；某份表头与第一份不同直接 `ValueError`——数据在生成之后变了，
+    不悄悄错位拼接；标签按 `group_key` 有重复也直接 `ValueError("tables_labels_collide")`。只拼内存里的副本，数据文件不动。"""
+    header = list(tables[0][0])
+    if len({group_key(lab) for lab in labels}) != len(labels):
+        raise ValueError(
+            "tables_labels_collide"
+        )  # 两个文件的标签在分组时会被并成一组：绝不静默并组
+    out = []
+    for (head, rows), label in zip(tables, labels):
+        if list(head) != header:
+            raise ValueError("tables_columns_differ")
+        out.extend([*r, label] for r in rows)
+    return [*header, column], out
 
 
 def distinct(values):
@@ -479,19 +505,6 @@ def hline_segment(pool, summary):
     return [min(xs), max(xs)], [c, c]
 
 
-def trend_point_counts(pools):
-    """逐位置汇总（汇总线 / 带 / 误差线）背后的样本个数：每条序列的每个 x 位置上有效观测的个数（没有有效观测的位置不算），
-    各序列的结果并成一个有序集合。"""
-    out = set()
-    for xs, vals in pools:
-        by_x = {}
-        for a, b in zip(xs, vals):
-            if b == b:
-                by_x[a] = by_x.get(a, 0) + 1
-        out |= set(by_x.values())
-    return sorted(out)
-
-
 # ---- 看两个量的关系（relationship）
 def relationship_data(header, rows, x, y, group, facet):
     """每个（分面, 分组）里 x、y 都是有限数的点（行序）；分组 / 分面为空的行不画；x 或 y 不是数（空、NaN、文字）的行不画。"""
@@ -520,21 +533,6 @@ def relationship_pairs(d, p, g):
     return d["pairs"].get((p, g), ([], []))
 
 
-def n_note(counts, groups, panels):
-    """图下方说明里的 n：`counts` 是 `{(分面, 分组): 个数}`。各格一样写 `n = k`；不一样且只有一个分面时按分组顺序逐组写；
-    多个分面时写范围。"""
-    ns = [n for n in counts.values() if n]
-    if not ns:
-        return ""
-    if len(set(ns)) == 1:
-        return "n = %d" % ns[0]
-    if len(panels) == 1:
-        order = " / ".join(str(counts.get((panels[0], g), 0)) for g in groups)
-        return "n = " + order + (" (group order)" if len(groups) > 1 else "")
-    return "n = %d-%d per group and panel" % (min(ns), max(ns))
-
-
-# ---- 看分布（distribution）
 def all_values(d):
     """整张图里的全部有效值（各分面、各分组并起来）：直方图的分箱按它定，各组共用同一组分箱才可比。"""
     return [v for vs in d["cells"].values() for v in vs]
@@ -594,19 +592,6 @@ def ecdf_xy(vals):
     return [s[0]] + s, [0.0] + [(i + 1) / n for i in range(n)]
 
 
-def trend_series_counts(pools):
-    """整系列汇总（水平线）背后的样本个数：每条序列全部有限观测的个数（没有有效观测的序列不算），并成一个有序集合。"""
-    return sorted({n for n in (sum(1 for v in vals if v == v) for _, vals in pools) if n})
-
-
-def n_phrase(counts, per, explicit):
-    """`n = 3` / `n = 2–3 per point`；`explicit` 时一律写 `per …`（一张图里有两种汇总、要分得清是哪个 n）。没有样本 → 空串。"""
-    if not counts:
-        return ""
-    core = str(counts[0]) if len(counts) == 1 else "%d–%d" % (counts[0], counts[-1])
-    return "n = %s" % core + (" per " + per if explicit or len(counts) > 1 else "")
-
-
 def pick_fonts(latin, cjk):
     """从候选里各挑**第一个本机真有的**（常规与粗体字重都在）字体（拉丁文一个、中文回退一个）：整张候选清单都塞进 `font.family` 会让
     matplotlib 为每个缺字重 / 缺字体的名字各报一条 findfont 警告。"""
@@ -632,10 +617,14 @@ RUNTIME_FUNCTIONS = (
     date_number,
     delimited_records,
     resolve_header,
+    xvg_label,
+    xvg_text,
     table_from_text,
     read_delimited,
     read_xlsx,
     apply_cells,
+    group_key,
+    merge_tables,
     distinct,
     make_label,
     mean_of,
@@ -669,13 +658,9 @@ RUNTIME_FUNCTIONS = (
     error_xy,
     fit_segment,
     hline_segment,
-    trend_point_counts,
-    trend_series_counts,
-    n_phrase,
     scott_bandwidth,
     relationship_data,
     relationship_pairs,
-    n_note,
     all_values,
     pooled_values,
     hist_edges,
@@ -841,102 +826,17 @@ def _summary_layers(recipe: recipe_mod.FigureRecipe) -> list[str]:
     return [layer.summary for layer in recipe.layers if layer.summary != "none"]
 
 
-#: 图下方说明里各带汇总的图元的叫法
-MARK_NAMES = {
-    "line": "line",
-    "step": "step line",
-    "band": "band",
-    "errorbar": "error bars",
-    "bar": "bars",
-    "hline_summary": "horizontal lines",
-}
-
-
-def _summary_text(recipe: recipe_mod.FigureRecipe) -> str:
-    """图下方说明里的汇总名。全图只有一种汇总 → 简短写法（`mean ± SD`）；有几种不同的汇总 → 逐图元写清
-    （`bars: mean ± SD; error bars: median with IQR`；同一图元以不同 role 出现两次再带上 role）。"""
-    layers = [
-        (layer, tag)
-        for layer, tag in zip(recipe.layers, _layer_tags(recipe))
-        if layer.summary != "none"
-    ]
-    if len({layer.summary for layer, _ in layers}) <= 1:
-        return " / ".join(dict.fromkeys(SUMMARY_TEXT[layer.summary] for layer, _ in layers))
-    return "; ".join(
-        dict.fromkeys(
-            f"{MARK_NAMES.get(layer.mark, layer.mark)}"
-            + (f" ({layer.role})" if "@" in tag else "")
-            + f": {SUMMARY_TEXT[layer.summary]}"
-            for layer, tag in layers
-        )
-    )
-
-
-#: 图下方说明里对「非汇总」图元的定义（分箱 / 带宽 / 箱线须 / 拟合各一句；规则本身的唯一实现在运行时函数里）
-LAYER_NOTES = {
-    "box": "box: median, quartiles, whiskers to 1.5 IQR",
-    "violin": "violin: Gaussian kernel density, Scott bandwidth",
-    "fit_line": "dash-dot line: least-squares fit (descriptive)",
-    "hist": "bins: Freedman-Diaconis rule, shared by all groups",
-    "density": "density: Gaussian kernel, Scott bandwidth",
-    "ecdf": "ECDF: step function of the sorted values",
-}
-
-
-def _layer_notes(recipe: recipe_mod.FigureRecipe) -> list[str]:
-    notes = [LAYER_NOTES[layer.mark] for layer in recipe.layers if layer.mark in LAYER_NOTES]
-    if "fit_line" in {layer.mark for layer in recipe.layers} and recipe.scale != "linear":
-        notes = [
-            n + ", fitted on log10 of the log axes" if n.startswith("dash-dot line") else n
-            for n in notes
-        ]
-    for layer in recipe.layers:
-        if layer.mark == "hline_summary" and layer.summary != "none":
-            # 水平线画的是汇总的中心值：均值或中位数，由该层的 summary 推出
-            stat = "median" if layer.summary == "median_iqr" else "mean"
-            notes.append(
-                f"dotted line: whole-series {stat}"
-                if recipe.family == "trend"
-                else f"horizontal lines: {stat}"
-            )
-    return list(dict.fromkeys(notes))
-
-
-def _footer(recipe, style, n_lines: list[str], n_text_expr: str | None) -> list[str]:
-    """图下方的一行说明：汇总定义 + 非汇总图元的规则名 + n（`n_text_expr` 是运行时求值的表达式，None = 不写 n）。
-    没有任何内容要写就只做 `tight_layout()`。说明会换行：按字数估行数给它留出高度。"""
-    static = "; ".join([s for s in [_summary_text(recipe), *_layer_notes(recipe)] if s])
-    if not static and n_text_expr is None and not recipe.cells:
-        return ["    fig.tight_layout()"]
-    out = list(n_lines)
-    if recipe.cells:  # 处理规则的说明（做了什么、各几行）运行时才知道，和 n 一起写进图下方
-        parts = [repr(static)]
-        if n_text_expr is not None:
-            out.append(f"    n_text = {n_text_expr}")
-            parts.append("n_text")
-        parts.append("'; '.join(cell_notes)")
-        out.append(f"    note = '; '.join(s for s in ({', '.join(parts)}) if s)")
-        static = static + "x" * (60 * len(recipe.cells))  # 只用来估说明占几行
-    elif n_text_expr is None:
-        out.append(f"    note = {static!r}")
-    else:
-        out += [
-            f"    n_text = {n_text_expr}",
-            f"    note = '; '.join(s for s in ({static!r}, n_text) if s)",
-        ]
-    pt = style["min_font_pt"]
-    chars_per_line = max(20, int(style["width_single_mm"] / _MM * 72 / (pt * 0.5)))
-    lines = 1 + (len(static) + 16) // chars_per_line
-    out += [
-        f"    fig.text(0.01, 0.01, note, fontsize={pt!r}, ha='left', va='bottom', wrap=True)",
-        f"    fig.tight_layout(rect=(0, {round(lines * pt * 1.25 / 72 + 0.03, 3)!r} / fig.get_figheight(), 1, 1))",
-    ]
-    return out
+def _footer(recipe, style) -> list[str]:
+    """图的收尾排版。**图里不写任何自动加的脚注**（2026-11-17 用户决定：没画的行、汇总 / 拟合的定义、n 都不进图；这些在界面右栏与响应字段里给）。
+    只做 `tight_layout()`，不为脚注留白。"""
+    return ["    fig.tight_layout()"]
 
 
 #: 脚本头的来源注释：生产（`_source_comment`、`_header`）与解析（`parse_source_comment`）共用这两个常量
 SOURCE_COMMENT_PREFIX = "# tavotto-source: "
 SOURCE_GENERATOR = "data_to_figure/v2"
+#: 合画（几份数据拼成一张图）的脚本用另一个 `generator`：`parse_source_comment` 只认 `SOURCE_GENERATOR`，所以合画脚本不会被当成「来自某一份数据」
+SOURCE_GENERATOR_MERGE = "data_to_figure/v2-merge"
 #: 解析来源注释只看脚本开头这么多行 / 字符，注释本身最长这么多字符（脚本是不可信输入）
 SOURCE_SCAN_LINES = 64
 SOURCE_SCAN_CHARS = 16 * 1024
@@ -948,12 +848,15 @@ def _source_comment(entry: adf.TableEntry, recipe: recipe_mod.FigureRecipe, data
     body = {
         k: v for k, v in recipe.to_dict().items() if k != "why"
     }  # why 只显示给用户，不进脚本（ADR 0178）
+    merge = _merge_of(entry)
+    if merge is not None:
+        body["tables"] = [s.data_rel for s in merge.sources]
     return json.dumps(
         {
             "data": data_rel,
             "sha256": entry.summary.sha256,
             "recipe": body,
-            "generator": SOURCE_GENERATOR,
+            "generator": SOURCE_GENERATOR if merge is None else SOURCE_GENERATOR_MERGE,
         },
         ensure_ascii=True,
         sort_keys=True,
@@ -1081,11 +984,34 @@ def runtime_module() -> tuple[str, bytes]:
 
 
 def _read_lines(recipe, reader: str) -> list[str]:
-    """`main()` 里读表那几行。配方带了「夹着文字格的数值列」的处理规则时，读完紧接着套规则（内存里的副本；文件不改），说明写进图下方。"""
+    """`main()` 里读表那几行。配方带了「夹着文字格的数值列」的处理规则时，读完紧接着套规则（内存里的副本；文件不改）；图里不写说明（2026-11-17）。"""
     out = [f"    header, rows = {reader}"]
     if recipe.cells:
-        out.append("    rows, cell_notes, _cell_stats = apply_cells(header, rows, CELLS)")
+        out.append("    rows, _cell_notes, _cell_stats = apply_cells(header, rows, CELLS)")
     return out
+
+
+def _merge_of(entry):
+    """合画的条目（`ai_data_merge.MergedEntry`）带 `merge`；单份条目没有这个属性。"""
+    return getattr(entry, "merge", None)
+
+
+def _is_xlsx(entry) -> bool:
+    return _merge_of(entry) is None and entry.path.lower().endswith(".xlsx")
+
+
+def _data_lines(entry, data_rel) -> list[str]:
+    merge = _merge_of(entry)
+    if merge is None:
+        return [f"DATA = Path(__file__).resolve().parent / {data_rel!r}"]
+    return [
+        "DATAS = [",
+        *[f"    Path(__file__).resolve().parent / {s.data_rel!r}," for s in merge.sources],
+        "]",
+        f"SHEETS = {[s.entry.sheet for s in merge.sources]!r}",
+        f"LABELS = {[s.label for s in merge.sources]!r}",
+        f"FILE_COLUMN = {merge.column!r}",
+    ]
 
 
 def _header(entry, recipe, data_rel, title, is_xlsx):
@@ -1104,7 +1030,7 @@ def _header(entry, recipe, data_rel, title, is_xlsx):
         "",
         f"import {name} as {RUNTIME_ALIAS}",
         "",
-        f"DATA = Path(__file__).resolve().parent / {data_rel!r}",
+        *_data_lines(entry, data_rel),
         *cells,
     ]
 
@@ -1221,10 +1147,11 @@ def _comparison_layer_lines(layer, tag: str, lw: list[float]) -> list[str]:
 
 
 def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
-    is_xlsx = entry.path.lower().endswith(".xlsx")
-    summ = _summary_text(recipe)
+    is_xlsx = _is_xlsx(entry)
     lw = style["line_widths_pt"]
-    with_n = bool(summ) or recipe.family == "distribution"
+    with_n = (
+        any(layer.summary != "none" for layer in recipe.layers) or recipe.family == "distribution"
+    )
     L = _header(
         entry, recipe, data_rel, "比较各组" if recipe.family == "comparison" else "看分布", is_xlsx
     )
@@ -1290,24 +1217,7 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
         f"            frameon={bool(style['legend_frame'])!r},",
         "        )",
     ]
-    if recipe.x is None:  # 没有类别轴、也就没有刻度标签：各（分面, 分组）的 n 写进说明本身
-        L += _footer(
-            recipe,
-            style,
-            [
-                "    counts = {(p, g): len(d['cells'].get((p, '', g), [])) for p in panels for g in groups}"
-            ],
-            "n_note(counts, groups, panels)" if with_n else None,
-        )
-    else:
-        L += _footer(
-            recipe,
-            style,
-            ["    counts = cell_counts(d)"],
-            "('n = %d' % counts[0] if len(counts) == 1 else 'n per group in tick labels')"
-            if with_n
-            else None,
-        )
+    L += _footer(recipe, style)
     L += [
         f"    fig.savefig(Path(__file__).resolve().parent / {stem + '.pdf'!r})",
         "",
@@ -1379,9 +1289,8 @@ def _trend_layer_lines(layer, tag_m: str, lw: list[float], logs=(False, False)) 
 
 
 def _render_trend(entry, recipe, data_rel, stem, style) -> str:
-    is_xlsx = entry.path.lower().endswith(".xlsx")
+    is_xlsx = _is_xlsx(entry)
     x_is_date = entry.summary.per_column[recipe.x].kind == "date"
-    summ = _summary_text(recipe)
     lw = style["line_widths_pt"]
     L = _header(entry, recipe, data_rel, "变化趋势", is_xlsx)
     if is_xlsx:
@@ -1461,31 +1370,7 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
         "    if handles:",
         f"        axes[0][0].legend(handles=handles, frameon={bool(style['legend_frame'])!r})",
     ]
-    n_lines, n_parts = [], []
-    if summ or any(ly.mark == "fit_line" for ly in recipe.layers):
-        # n 取自每个汇总层**实际汇总的总体**：逐位置的 = 每个位置的有效观测数；整系列的（水平线）= 整条序列的有效观测总数；
-        # 两种都有时都写 per point / per series，分得清是哪个 n
-        pos = any(ly.mark in _PER_POINT_MARKS and ly.summary != "none" for ly in recipe.layers)
-        ser = any(
-            (ly.mark == "hline_summary" and ly.summary != "none") or ly.mark == "fit_line"
-            for ly in recipe.layers
-        )
-        if pos:
-            n_lines.append(
-                "    n_pos = n_phrase(trend_point_counts(pools), 'point', %r)" % (pos and ser)
-            )
-            n_parts.append("n_pos")
-        if ser:
-            n_lines.append(
-                "    n_ser = n_phrase(trend_series_counts(pools), 'series', %r)" % (pos and ser)
-            )
-            n_parts.append("n_ser")
-    L += _footer(
-        recipe,
-        style,
-        n_lines,
-        "'; '.join(s for s in (%s,) if s)" % ", ".join(n_parts) if n_parts else None,
-    )
+    L += _footer(recipe, style)
     L += [
         f"    fig.savefig(Path(__file__).resolve().parent / {stem + '.pdf'!r})",
         "",
@@ -1499,7 +1384,7 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
 
 # --------------------------------------------------------------------------- relationship
 def _render_relationship(entry, recipe, data_rel, stem, style) -> str:
-    is_xlsx = entry.path.lower().endswith(".xlsx")
+    is_xlsx = _is_xlsx(entry)
     lw = style["line_widths_pt"]
     mid = lw[min(1, len(lw) - 1)]
     logx, logy = recipe.scale in ("log_x", "log_xy"), recipe.scale in ("log_y", "log_xy")
@@ -1556,12 +1441,7 @@ def _render_relationship(entry, recipe, data_rel, stem, style) -> str:
     if logy:
         L.append('        ax.set_yscale("log")')
     L += _group_legend(style)
-    L += _footer(
-        recipe,
-        style,
-        ["    counts = {k: len(v[0]) for k, v in d['pairs'].items()}"],
-        "n_note(counts, groups, panels)",
-    )
+    L += _footer(recipe, style)
     L += _tail(stem)
     return "\n".join(L[:main_at] + _via_runtime(L[main_at:]))
 
@@ -1571,7 +1451,7 @@ def _render_distribution(entry, recipe, data_rel, stem, style) -> str:
     marks = {layer.mark for layer in recipe.layers}
     if not marks & VALUE_ON_X:  # 值在纵轴：与 comparison 同一套布局（类别 x 可选）
         return _render_comparison(entry, recipe, data_rel, stem, style)
-    is_xlsx = entry.path.lower().endswith(".xlsx")
+    is_xlsx = _is_xlsx(entry)
     lw = style["line_widths_pt"]
     thin, thick = lw[0], lw[-1]
     density_units = "density" in marks
@@ -1642,31 +1522,52 @@ def _render_distribution(entry, recipe, data_rel, stem, style) -> str:
         "            ax.set_ylabel(YLABEL)",
     ]
     L += _group_legend(style)
-    L += _footer(
-        recipe,
-        style,
-        ["    counts = {(p, g): len(pooled_values(d, p, g)) for p in panels for g in groups}"],
-        "n_note(counts, groups, panels)",
-    )
+    L += _footer(recipe, style)
     L += _tail(stem)
     return "\n".join(L[:main_at] + _via_runtime(L[main_at:]))
 
 
-def _reader_expr(entry, is_xlsx: bool) -> str:
+def _merged_reader_expr(merge) -> str:
+    """合画：每一份各按自己的读法（分隔符 / 表头行 / 单位行 / 编码 / 工作表）读，再经公共模块的 `merge_tables` 拼成一张表。"""
+    parts = [
+        "            "
+        + _reader_expr(
+            s.entry, s.entry.path.lower().endswith(".xlsx"), f"DATAS[{i}]", f"SHEETS[{i}]"
+        )
+        + ","
+        for i, s in enumerate(merge.sources)
+    ]
+    return (
+        "merge_tables(\n        [\n"
+        + "\n".join(parts)
+        + "\n        ],\n        LABELS,\n        FILE_COLUMN,\n    )"
+    )
+
+
+def _reader_expr(entry, is_xlsx: bool, data: str = "DATA", sheet: str = "SHEET") -> str:
     """脚本里读表那一句。文本表格的读法（编码 + 分隔符 + 显式表头行）取自摘要（`read_text_table` 嗅探 / 调用方指定的结果），以字面量写进脚本——
     脚本不嗅探；Tavotto 算期望值读表用的是同一组参数（同一个 `table_from_text`），所以脚本读出来的和预览 / 资格判定读出来的是同一张表。
     老读法（首行表头、按后缀分隔）写成 `read_delimited(DATA, ',')`，与此前生成的脚本逐字相同。"""
+    merge = _merge_of(entry)
+    if merge is not None:
+        return _merged_reader_expr(merge)
     if is_xlsx:
-        return "read_xlsx(DATA, SHEET)"
+        return f"read_xlsx({data}, {sheet})"
     s = entry.summary
     delim = s.delimiter or ("\t" if entry.path.lower().endswith((".tsv", ".tab")) else ",")
     args = [repr(delim)] + ([repr(s.header_row)] if s.header_row is not None else [])
+    if s.units_row:  # 只在嗅探到单位行时多写这一项：其余脚本逐字不变
+        args = [*args[:1], repr(s.header_row), "True"]
     codec = adf.script_codec(s.encoding)
+    if entry.path.lower().endswith(adf.XVG_SUFFIXES):
+        # `.xvg`：列名在 `@` 指令里，先经运行时函数 `xvg_text` 改写成带表头行的制表符文本（父进程读表是同一个函数），再按嗅探出的读法读
+        text = f"{data}.read_bytes().decode({(codec or 'utf-8-sig')!r})"
+        return f"table_from_text(xvg_text({text}), {', '.join(args)})[:2]"
     if codec is not None:
         # 非 UTF-8（GB18030 / 有 BOM 的 UTF-16）：编码由父进程定下、以字面量写进脚本，脚本不探测。字节原样 `decode`（不经平台换行转换），
         # 再交给公共模块里同一个 `table_from_text`——与父进程读出的是同一张表；公共模块不变（哈希不换）。
-        return f"table_from_text(DATA.read_bytes().decode({codec!r}), {', '.join(args)})[:2]"
-    return f"read_delimited(DATA, {', '.join(args)})"
+        return f"table_from_text({data}.read_bytes().decode({codec!r}), {', '.join(args)})[:2]"
+    return f"read_delimited({data}, {', '.join(args)})"
 
 
 def _group_legend(style) -> list[str]:

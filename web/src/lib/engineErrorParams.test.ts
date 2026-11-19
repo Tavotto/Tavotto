@@ -46,6 +46,17 @@ describe('engineErrorMsg 带结构化 params', () => {
     expect(text).toContain('3.14')
     expect(text).not.toContain('{{')
   })
+
+  it('图片内容与扩展名不符：有文件名点名文件，没有就说「这张图片」，不露占位符', () => {
+    const base = { claimed: 'PNG', actual: 'JPEG', ext: 'png' }
+    const named = formatMessage(engineErrorMsg(TEX('image_format_mismatch', { file: 'a/cell.png', ...base }, 'SyntaxError: not a PNG file')))
+    expect(named).toContain('a/cell.png')
+    expect(named).toContain('JPEG')
+    expect(named).not.toContain('{{')
+    const anon = formatMessage(engineErrorMsg(TEX('image_format_mismatch', base, 'SyntaxError: not a PNG file')))
+    expect(anon).toContain('这张图片')
+    expect(anon).not.toContain('{{')
+  })
 })
 
 describe('进程级失败不再把内部原话直出（SIGKILL / 退出码 / request_id）', () => {

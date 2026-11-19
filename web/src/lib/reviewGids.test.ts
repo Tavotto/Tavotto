@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { innerGid, manifestsPending, owningPanel } from './reviewGids'
+import { guideBox, innerGid, manifestsPending, owningPanel, parseGuideGid } from './reviewGids'
+import { renderKeyOf } from '@/store/renderStore'
 import type { CanvasObject } from '@/types/document'
 
 const panel = (id: string) => ({ id, type: 'panel', fileId: `${id}.pdf`, overrides: [] }) as unknown as CanvasObject
@@ -18,5 +19,56 @@ describe('元素表还没到', () => {
   it('没有任何 manifest 的面板算「待定」：不能据此判元素不在了', () => {
     expect(manifestsPending([panel('p1'), panel('p2')], render).map((p) => p.id)).toEqual(['p1', 'p2'])
     expect(manifestsPending([], render)).toEqual([])
+  })
+})
+
+describe('边框线 / 网格线 / 刻度线的合成 gid', () => {
+  const line = (pts: [number, number][]) => ({ kind: 'multi_path', paths: [{ points: pts, closed: false }], fill: false, stroke: true }) as never
+  const els = [
+    {
+      gid: 'axes_0',
+      spines: { left: { visible: true, ticks: true, from: [0.1, 0.9], to: [0.1, 0.1] }, top: { visible: false, ticks: false, from: [0.1, 0.1], to: [0.9, 0.1] }, right: { visible: true, ticks: false, from: [0.9, 0.9], to: [0.9, 0.1], stroke_pt: 0 }, bottom: { visible: true, ticks: true, from: [0.1, 1.2], to: [0.9, 1.2] } },
+      grid: { x: line([[0.3, 0.9], [0.3, 0.1], [0.6, 0.1]]), y: { ...(line([[0.95, 0.5], [0.99, 0.5]]) as object), clip: [0.1, 0.1, 0.8, 0.8] } },
+      tickmarks: { y: line([[0.1, 0.5], [0.09, 0.5]]) },
+    },
+  ] as never
+
+  it('只认「子图 gid + 后缀」', () => {
+    expect(parseGuideGid('axes_0.spine_left')).toEqual({ base: 'axes_0', kind: 'spine', key: 'left' })
+    expect(parseGuideGid('axes_1.ygrid')).toEqual({ base: 'axes_1', kind: 'grid', key: 'y' })
+    expect(parseGuideGid('axes_0.xtickmarks')).toEqual({ base: 'axes_0', kind: 'tickmarks', key: 'x' })
+    expect(parseGuideGid('axes_0.xticks')).toBeNull()
+    expect(parseGuideGid('legend')).toBeNull()
+  })
+  it('框来自子图那一项的当前数据；竖线给最小厚度', () => {
+    const left = guideBox(els, 'axes_0.spine_left')!
+    expect(left[0]).toBeCloseTo(0.099, 5)
+    expect(left[2]).toBeCloseTo(0.002, 5)
+    expect(left[3]).toBeCloseTo(0.8, 5)
+    const grid = guideBox(els, 'axes_0.xgrid')!
+    expect(grid.map((v) => Math.round(v * 1e4) / 1e4)).toEqual([0.3, 0.1, 0.3, 0.8])
+    expect(guideBox(els, 'axes_0.ytickmarks')![0]).toBeCloseTo(0.09, 5)
+  })
+  it('数据没了 = null：隐藏的边、没开的网格、不存在的子图', () => {
+    expect(guideBox(els, 'axes_0.spine_top')).toBeNull()
+    expect(guideBox(els, 'axes_0.spine_right')).toBeNull() // visible 但线宽 0 / 透明：旧意见不再挂在看不见的线上
+    expect(guideBox(els, 'axes_0.spine_bottom')).toBeNull() // 挪到图外：上传侧已不出，这里也不认
+    expect(guideBox(els, 'axes_0.ygrid')).toBeNull() // 全在自己的裁剪框外
+    expect(guideBox(els, 'axes_0.xtickmarks')).toBeNull()
+    expect(guideBox(els, 'axes_9.spine_left')).toBeNull()
+  })
+  it('owningPanel：子图还在且数据在才认；网格关了 = 找不到所属面板', () => {
+    const p = panel('p1')
+    const at = (m: unknown) => ({ byKey: { [renderKeyOf(p as never)]: { manifest: m } }, latest: {} }) as never
+    const man = (e: unknown) => ({ stem: 'p1', size_mm: [40, 30], elements: [e] })
+    expect(owningPanel([p], at(man(els[0])), 'p1::axes_0.xgrid')?.id).toBe('p1')
+    expect(owningPanel([p], at(man(els[0])), 'p1::axes_0.spine_left')?.id).toBe('p1')
+    expect(owningPanel([p], at(man({ ...(els[0] as object), grid: undefined })), 'p1::axes_0.xgrid')).toBeNull()
+    expect(owningPanel([p], at(man(els[0])), 'p1::axes_0.spine_top')).toBeNull()
+    expect(owningPanel([p], at(man(els[0])), 'p1::axes_0.spine_right')).toBeNull()
+    // 子图被隐藏：manifest 里还留着线的几何，但画面上没有 → 不认
+    const hidden = { ...(els[0] as object), editable: [{ prop: 'visible', value: false }] }
+    expect(guideBox([hidden] as never, 'axes_0.spine_left')).toBeNull()
+    expect(owningPanel([p], at(man(hidden)), 'p1::axes_0.xgrid')).toBeNull()
   })
 })

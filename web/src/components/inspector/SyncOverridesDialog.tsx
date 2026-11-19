@@ -187,13 +187,13 @@ function SyncOverridesDialog({ panel, onClose }: { panel: PanelObject; onClose: 
         footer={
           target ? (
             <>
-              <Button variant="secondary" size="md" onClick={back}>
+              <Button variant="secondary" size="lg" onClick={back}>
                 {sy('back')}
               </Button>
               {onCanvas ? (
                 <Button
                   variant="primary"
-                  size="md"
+                  size="lg"
                   data-sync="merge"
                   disabled={!mapped.length}
                   onClick={applyToCanvas}
@@ -203,7 +203,7 @@ function SyncOverridesDialog({ panel, onClose }: { panel: PanelObject; onClose: 
               ) : (
                 <Button
                   variant="primary"
-                  size="md"
+                  size="lg"
                   data-sync="write-back"
                   disabled={!mapped.length}
                   onClick={() => setWriting(true)}
@@ -213,7 +213,7 @@ function SyncOverridesDialog({ panel, onClose }: { panel: PanelObject; onClose: 
               )}
             </>
           ) : (
-            <Button variant="secondary" size="md" onClick={onClose}>
+            <Button variant="secondary" size="lg" onClick={onClose}>
               {translate('actions.cancel')}
             </Button>
           )
@@ -246,23 +246,23 @@ function SyncOverridesDialog({ panel, onClose }: { panel: PanelObject; onClose: 
         {target && error && <p className="text-xs text-danger">{sy('failed', { error })}</p>}
 
         {target && result && !busy && (
-          <div className="flex flex-col gap-2">
-            <ul className="flex flex-col gap-1 rounded-sm border border-border bg-surface-2 p-2 text-xs">
-              <li className="text-ink">
-                {sy('mappedCount')} <span className="tabular-nums">{mapped.length}</span>{' '}
+          <div className="flex flex-col gap-2.5">
+            <ul className="flex flex-col gap-1.5 rounded-lg bg-group p-2.5 text-xs">
+              <li className="rounded-md bg-surface px-2.5 py-1.5 text-ink shadow-thumb">
+                {sy('mappedCount')} <span className="font-medium tabular-nums">{mapped.length}</span>{' '}
                 {sy('itemsSuffix')}
                 {clamped > 0 && (
                   <span className="text-ink-2">{sy('clampedNote', { count: clamped })}</span>
                 )}
               </li>
               {result.skipped.length > 0 && (
-                <li className="text-ink-2">
+                <li className="rounded-md bg-surface px-2.5 py-1.5 text-ink-2 shadow-thumb">
                   {sy('skippedPrefix')} <span className="tabular-nums">{result.skipped.length}</span>{' '}
                   {sy('skippedSuffix')}
                 </li>
               )}
               {result.unmatched.length > 0 && (
-                <li className="text-ink-2">
+                <li className="rounded-md bg-surface px-2.5 py-1.5 text-ink-2 shadow-thumb">
                   {sy('unmatchedPrefix')}{' '}
                   <span className="tabular-nums">{result.unmatched.length}</span>{' '}
                   {sy('unmatchedSuffix')}
@@ -273,8 +273,8 @@ function SyncOverridesDialog({ panel, onClose }: { panel: PanelObject; onClose: 
             {!mapped.length && <p className="text-xs text-ink-3">{sy('nothingToSync')}</p>}
 
             {!!mapped.length && !onCanvas && (
-              <div className="flex items-start gap-1.5 rounded-sm border border-border bg-surface-2 p-2">
-                <IconSlot className="text-xs leading-relaxed"><TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" /></IconSlot>
+              <div className="flex items-start gap-2 rounded-md bg-surface-hover p-3">
+                <IconSlot className="text-xs leading-relaxed"><TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-ink-3" /></IconSlot>
                 <p className="text-xs leading-relaxed text-ink-2">{sy('notOnCanvas')}</p>
               </div>
             )}

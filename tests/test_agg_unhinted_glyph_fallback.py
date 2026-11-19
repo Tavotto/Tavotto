@@ -104,3 +104,43 @@ def test_still_failing_unhinted_raises_and_restores():
     with pytest.raises(RuntimeError, match="FT_Load_Glyph"):
         mod.RendererAgg().draw_text()
     assert rc["text.hinting"] == "default"
+
+
+def test_both_runners_install_the_unhinted_glyph_fallback():
+    """safe worker 与 native runner（桌面 / MCP 的 safe→native 回退）都要装：只装一边，回退后照样起不来。"""
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent / "src" / "tavotto" / "engine"
+    for name in ("worker.py", "bridge_runner.py"):
+        tree = ast.parse((root / name).read_text("utf-8"))
+        calls = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "install_agg_unhinted_glyph_fallback"
+        ]
+        assert calls, name
+
+
+def test_a_native_capture_failure_is_reported_not_swallowed():
+    from tavotto.engine import nativefallback
+
+    resp = {
+        "stems": {},
+        "figure_facts": [
+            {
+                "stem": "fig",
+                "failure": {
+                    "code": "preview_capture_failed",
+                    "message": "RuntimeError: FT_Load_Glyph",
+                },
+            }
+        ],
+    }
+    err = nativefallback._stem_missing(resp, "fig")
+    assert err.code == nativefallback.CODE_STEM_MISSING
+    assert "FT_Load_Glyph" in str(err)
+    assert err.extra["capture_failure"]["code"] == "preview_capture_failed"
+    assert "没有画出" in str(nativefallback._stem_missing({"stems": {}}, "fig"))

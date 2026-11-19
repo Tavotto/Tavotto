@@ -100,6 +100,11 @@ order: 330
   XMP /Metadata 保持明文）。
 - **位图源经 `rasterio.decode()`（Pillow，U07 起是 `rendercore` extra 的直接依赖）成 `RasterBuffer`**：8 bit RGB / RGBA、
   紧凑 stride、**alpha 一律 straight**（Pillow 报 `RGBa` / `La` 的预乘图先反预乘，不许静默丢 alpha）；写成 DeviceRGB Image XObject + /SMask；8 bit RGB / 灰度 JPEG 原字节直通 `/DCTDecode`。
+  **方向标记（JPEG Exif / TIFF 的 Orientation）一律照办**（2026-11-18，TVM-22EE）：画布上 JPEG 由浏览器 `<img>` 显示、浏览器按标记摆正，
+  所以 `header_size` / `header_info` 报摆正后的宽高、`decode` / `preview` 回摆正后的像素；直通的 JPEG 字节不动，`jpeg_passthrough` 回
+  `orientation`，PDF 写入器在裁剪之后、`Do` 之前补 `rasterio.ORIENTATION_MATRIX`（单位正方形映到自身），SVG 写入器遇方向标记改嵌摆正后的 PNG。
+  PNG 的 eXIf 不认（浏览器不一致）。TIFF：Pillow 12 加载时自己摆正并删标签，解码后标签还在才补；尺寸从标签算。位图解码口径变了就加
+  `preview.RASTER_DECODE_REVISION`（进 `/api/render` 缓存键），不动 `BACKEND_VERSION`。看护 `tests/test_rendercore_raster_orientation.py`。
   像素网格不变，缩放只在 `cm` 里。`raster.RasterBuffer` 是本包里一块像素的唯一形状（栅格输出也用它，ADR 0066）。
 - **写入器再核一次字节身份**：`files`（`job` 里是 `sources.read_frozen()` 核过 hash 的那一份）交进来的每份字节按 sha256
   与 `FileResource.sha256` 比，不符 `source_identity`、没交 `source_bytes_missing`——与 `read_frozen()` 是有意的两道（RC-014）。

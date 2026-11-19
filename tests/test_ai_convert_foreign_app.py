@@ -224,6 +224,11 @@ def test_busy_script_409_names_the_running_session(project, monkeypatch):
     monkeypatch.setattr(
         ai_bridge.ai_agents, "resolve", lambda agent, probe_readiness=True: _usable()
     )
+    # 只换 resolve 不够：`require_usable` 读的是能力缓存，前面的用例（CI 上没装 Codex）可能已把
+    # 「未安装」缓存进去，这条就先撞上 ai_agent_not_installed——本用例测的是忙检查，闸门直接放行
+    monkeypatch.setattr(
+        ai_bridge, "require_usable", lambda agent_id: {"id": agent_id, "usable": True}
+    )
     monkeypatch.setitem(
         ai_bridge.SESSIONS,
         "run-busy-01",

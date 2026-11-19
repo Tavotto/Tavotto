@@ -5,7 +5,7 @@ S0 的取样与观测见 [S0_BASELINE.md](../implementation/script-compat/S0_BAS
 时才加载科研登记。上游源文件按完整提交 SHA 拉取到仓库外，并逐文件核对 `research-cohort.json` 的
 SHA-256。Guardian 同时核验登记与 HEAD 一致、缓存字节一致，之后复用已有 worker 测量路径。
 
-`compat_guardian_research.py verify` 只核验元数据；`fetch --case ... --cache ...` 显式下载，不执行脚本。
+冻结任务的 `required_stages` 与 CompatBench 的 `STAGES` 一致：2026-11-18 起含「拖动」（`drag`，用户拍板科研项目也按它判）；已归档的快照按行里真有的阶段投影与计数，逐字复现不变。`compat_guardian_research.py verify` 只核验元数据；`fetch --case ... --cache ...` 显式下载，不执行脚本。
 每个项目的依赖在独立 hosted job 中准备。原始 `research-baseline.json` 保留，完整证据由 Actions
 artifact / 外部归档保存；`verify-snapshot --evidence-directory ...` 可从归档重算快照。
 `runner_error` 保留为 unknown 观测及原始异常，不进入产品六分类；SVG 校验使用标准库 XML。
@@ -43,9 +43,9 @@ Guardian 的目标一句话：让尽可能多的科研用户的 matplotlib 脚�
 **代码不能保证的（不要在任何文档、PR 描述、日志里写成保证）**
 
 - 「夹具被评审过」。上面的比对是**自洽检查**，不是评审证明：在 PR 分支上，作者可以同时改夹具和 manifest，
-  HEAD 就是新内容，检查照样通过。真正的评审边界是**合入 main 的评审**，由 `.github/CODEOWNERS` 里
-  `tests/compat/**`、`tests/fixtures/compat_v2/**`、`scripts/ci/compat_guardian*`、本文档与 Guardian
-  workflow 的显式条目提供（见 §9）。因此：PR 上的 Guardian 运行是「这个分支自己的夹具」的观察，不是
+  HEAD 就是新内容，检查照样通过。真正的评审边界是**合入 main 之前的维护者确认**：这些路径在判据名单
+  `.github/judge-paths.json` 里，改到的 PR 不自动入队、先报维护者（`docs/rules/ci/judge-guard.md`）。
+  `.github/CODEOWNERS` 的条目只发评审请求、不拦合并（ruleset 未开 code owner review，见 §9）。因此：PR 上的 Guardian 运行是「这个分支自己的夹具」的观察，不是
   「已评审夹具」的观察。
 - OS 级隔离。HOME / 配置 / 数据 / 缓存 / TMP 指向每例临时目录、环境变量白名单、进程树超时回收，**都不是
   沙盒**：同 UID 的绝对路径照读照写，网络不拦。所以 Guardian 只在 GitHub 托管的临时 runner 上跑，
@@ -142,7 +142,7 @@ expected_cases, corpus_sha256, cases[], evidence[], verdict, coverage, unverifie
 
 - `not_run`：这一层**在范围内但没有执行**（前序失败、被跳过）。
 - `not_covered`：这个 adapter **根本不驱动**这一层。V2 会话 adapter 只走「扫描 → 检查 → 运行 → 捕获 →
-  渲染 → 标题语义」，所以它的 `edit / replay / export / fidelity` 恒为 `not_covered`，且判据写
+  渲染 → 标题语义」，所以它的 `edit / replay / export / drag / fidelity` 恒为 `not_covered`，且判据写
   `layer not exercised by the V2 session adapter`。
 - `partial_coverage`（行/报告）：**同时满足**——原生参照 `passed`；两侧执行次数均为独立计数且 > 0；环境可比；
   所有被驱动的层都 `passed`；其余层全是 `not_covered`，且至少有一个。它**不是通过**：不进「通过」分子，
@@ -220,7 +220,7 @@ invalid_fixture, unknown`。映射表只把**已存在的码**指向类别，表
 
 | 来源 | 类别 |
 | --- | --- |
-| 阶段失败（原生通过的前提下）discover / execute / capture / open·semantic / edit / replay / export·fidelity | product_entry_reachability / safe_execution_divergence / figure_capture（捕获数 0 < n < 原生数则 partial_capture）/ manifest_semantics / editing_capability / replay_inconsistency / export_or_fidelity |
+| 阶段失败（原生通过的前提下）discover / execute / capture / open·semantic / edit·drag / replay / export·fidelity | product_entry_reachability / safe_execution_divergence / figure_capture（捕获数 0 < n < 原生数则 partial_capture）/ manifest_semantics / editing_capability / replay_inconsistency / export_or_fidelity |
 | `native_script_error`、`native_render_failed`、原生退出码非 0 | invalid_fixture |
 | `driver_timeout`、`driver_crashed`、adapter 超时 | timeout_or_process_crash |
 | `driver_no_output`、`driver_bad_output`、**runner 崩溃** | unknown（runner 崩溃永不记到产品头上） |
@@ -284,7 +284,7 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
 `.github/CODEOWNERS` 为下列路径列出显式条目：`tests/compat/**`（manifest、基线、schema）、
 `tests/fixtures/compat_v2/**`、`scripts/ci/compat_guardian*`、`scripts/ci/guardian_exec_observer.py`、
 `scripts/ci/compat_driver.py`、`tests/test_compat_guardian*`、Guardian workflow 与本文档。
-`tests/compat_guardian/**`（声明文件与 schema）同样在列。目前只有一位维护者，条目等于默认值；它们的作用是：等有第二位维护者时，这些路径不会跟着默认规则漂走，
+`tests/compat_guardian/**`（声明文件与 schema）同样在列。目前只有一位维护者，条目等于默认值，且 ruleset 未开 `require_code_owner_review`——它们**不拦合并**，拦合并靠判据名单的入队规则（`docs/rules/ci/judge-guard.md`）；条目的作用是：等有第二位维护者时，这些路径不会跟着默认规则漂走，
 且「改夹具 = 改权利边界」在文件里写明了。
 
 ## 10. 15 个对抗验收案例的覆盖
@@ -456,7 +456,10 @@ CG-02 的 27 条真实差异聚成恰好两簇：G1（show 后 close，11 条）
 周扫（run 39758109474，seed 202643）新发现的两族已登记，**行为按 ADR 0047 / 0084 有意保留、修的是诊断**，所以 explore 里仍是差异：
 `families/G4-cwd-relative-reader-zero-figures.json`（沙盒 cwd 下经 C++ 读取器读 cwd 相对数据 → 零图，issue #1253，诊断修复 #1297）与
 `families/G5-sandbox-empty-glob-empty-figure.json`（沙盒里 cwd 相对 `glob` 扫空 → 空图 / 下游报错，issue #1254，诊断修复 #1299）。
-记录里 `fix_pr` 分别是 1297 / 1299，`RealRepro` 钉的是「差异仍在」；根治（项目级「在脚本目录里运行」默认）落地时那两条会红，届时改成回归用例。
+记录里 `fix_pr` 分别是 1297 / 1299。其后 #1846（ADR 0047 修订）让没决定过工作目录的项目在沙盒里看到数据只在脚本目录时静默改在脚本目录里重跑，
+`tavotto_observe` 因此改走产品的 `pool.build`（用户真实走到的路径，默认档 = 未决定），`RealRepro` 钉的是「默认档出图、无差异」，
+并另有「用户选了沙盒」的显式可选档（`workdir_mode="sandbox"`，仍是差异 + 引导）与「数据真缺仍如实报错」的反证；不两档都默认跑，免得夜跑时长翻倍。
+两条家族记录没有删，改为这两个钉的出处。
 
 CG-08 的 `bytesio_close` 变换稳定复现的未修缺口登记为 `families/G6-bytesio-close-zero-figures.json`（`savefig(io.BytesIO())` 后 `close` → 原生一张图、
 Tavotto 零张，issue #749；已由 #749 修复，`fix_pr` 记 749，`RealRepro` 与 explore 的那条已转成回归用例）。同一批的 `same_stem_two_figs` **没有**登记：

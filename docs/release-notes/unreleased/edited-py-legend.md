@@ -1,0 +1,3 @@
+## The exported `_edited.py` now carries your legend edits
+
+When you export a figure with **PY** ticked, legend changes made in Tavotto — title and title size, number of columns, padding and spacing, rounded frame, anchor point, and the colour, line style, width and marker of each legend key — are now written into the `_edited.py` file, so running it without Tavotto draws the same legend. Before, these edits were left out and the script drew the legend as it originally was. Reordering or hiding legend entries, and restyling the keys of error-bar or stem entries, are still not written into the script; the export says how many edits were left out.

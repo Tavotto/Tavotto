@@ -10,10 +10,12 @@
   （`typography.shape_segment`），落笔时整体转 90°——与浏览器一样，转的是**整段**，不是逐字。
 * 折行与横排是**同一个算法**（`typography.break_lines`：CJK 逐字、拉丁按词、超宽单词逐字兜底），只换了
   量「行长」的尺：行长是框高 `h`（扣内边距），直立字取竖排进退，侧躺字取横排字宽。
-* 列从右往左排：第 i 列的中线在 `框右边 − 内边距 − (i + 0.5) × 字号 × 行距`；列内对齐 `align`
+* 列从右往左排：普通列宽 `字号 × 行距`，第一列的右边在 `框右边 − 内边距`；比列宽还厚的公式撑开它所在的那一列
+  （`column_box`，与横排「公式撑开所在行」同一条，ADR 0152 修订）。列内对齐 `align`
   左 / 中 / 右解释为列内的 **上 / 中 / 下**（CSS 里 vertical-rl 的 line-left 就是上边）。
-* 侧躺段的基线取**中线基线**（central baseline）：em 方框的竖直中点落在列中线上，与直立字的 em 方框中点对齐
-  ——CSS 在竖排里用的就是这条基线，所以中英混排不会一高一低。
+* 侧躺段的基线在列中线左边固定 `BASELINE_BELOW_CENTER` em（横排「基线在行盒中线下」顺时针转 90°，ADR 0073
+  修订 2026-11-16），与字体度量无关：字母的中段落在列中线上，与直立字的 em 方框中点对齐，中英混排不会一左一右。
+  CSS 的中线基线按这张脸的上升 / 下降算（批准字体的 hhea 约 0.34 em），与这个数只差百分之几 em。
 * 公式（`$…$`）是侧躺的整块：与侧躺文字同一条基线、同一个转向。
 
 落笔不动写入器：直立字一字一个单字形 `ShapedText`（笔位由本模块逐字算好），侧躺段与公式放进一个
@@ -30,6 +32,7 @@ from collections.abc import Callable
 from .. import glyphplan, richtext
 from .ir import VGlyph, mm2pt
 from .typography import (
+    BASELINE_BELOW_CENTER,
     MATH,
     Face,
     FaceSet,
@@ -161,6 +164,24 @@ def _side_len(text: str, styled: FaceSet, size: float) -> float:
     return sum(p.width for p in shape_segment(text, styled, size))
 
 
+def column_box(items: list[VItem], size: float, line_h: float) -> tuple[float, float]:
+    """一列竖排文字的列盒：`(列中线以右, 列中线以左)`，pt——横排 `typography.line_box` 顺时针转 90°。
+
+    普通列宽 `字号 × 行距`、以列中线为中；侧躺段的基线在列中线左边固定 `BASELINE_BELOW_CENTER` em
+    （与字体度量无关，横排「基线在中线下」转过来就是这一条）。这一列里的公式（上升朝右）比列宽还厚时
+    撑开这一列：取二者的并，下一列跟着往左让——与浏览器「真宽的行内块坐在中线基线上」同一个算法，
+    画布预览（`verticalFormula.ts`）照此摆。"""
+    right = left = size * line_h / 2
+    shift = size * BASELINE_BELOW_CENTER
+    for item in items:
+        if item.kind != "math" or item.math is None:
+            continue
+        box = item.math[0]
+        right = max(right, float(box.get("ascent") or 0) * size - shift)
+        left = max(left, float(box.get("descent") or 0) * size + shift)
+    return right, left
+
+
 def layout_text(t: dict, faces: FaceSet, math: dict | None = None) -> TextBlock | None:
     """竖排入口（ADR 0163），与 `typography.layout_text`（只排横排）对称：字段解析共用
     `typography.text_params`，由 `plan` 按 `writing_mode` 二选一。空白文字回 None。"""
@@ -193,8 +214,10 @@ def layout(
     cov = coverage(faces)
     columns: list[VColumn] = []
     rendered = ""
-    for i, col in enumerate(units_cols):
+    edge = bx + bw - pad  # 下一列的右边（pt）：每列按自己的列宽往左排
+    for col in units_cols:
         if not col:
+            edge -= col_w
             continue
         items: list[VItem] = []
         pos = 0.0
@@ -254,12 +277,14 @@ def layout(
         offset = (
             (length - pos) / 2 if align == "center" else length - pos if align == "right" else 0.0
         )
-        cx = bx + bw - pad - (i + 0.5) * col_w
+        right, left = column_box(items, size, line_h)
+        cx = edge - right
+        edge = cx - left
         columns.append(
             VColumn(
                 cx=cx,
-                # 侧躺段基线（转前的横排基线）：em 方框中点落在列中线上
-                side_x=cx - size * (faces.primary.ascender + faces.primary.descender) / 2,
+                # 侧躺段基线（转前的横排基线）：列中线左边固定 `BASELINE_BELOW_CENTER` em
+                side_x=cx - size * BASELINE_BELOW_CENTER,
                 top=by + pad + offset,
                 length=pos,
                 items=tuple(items),
@@ -285,4 +310,12 @@ def layout(
     )
 
 
-__all__ = ["UPRIGHT", "column_measure", "is_upright", "layout", "split_orientation", "vglyphs"]
+__all__ = [
+    "UPRIGHT",
+    "column_box",
+    "column_measure",
+    "is_upright",
+    "layout",
+    "split_orientation",
+    "vglyphs",
+]
