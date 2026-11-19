@@ -18,6 +18,12 @@ order: 70
   期刊也拒收。改回 3 的前提是先让 `tests/test_scientific_text_matrix.py` 有别的办法绿。
 - override 是**全量列表**语义：worker 维护 applied/originals 两表，缺失的 key 自动
   恢复原值（undo 的基础）。前端永远发完整 `o.overrides`。
+- **坐标范围的原样 = 模式 + 当时的范围 + 当时的 scale（2026-11-19，`_AutoscaleAt`）**：自动缩放开着时
+  `xlim` / `ylim` 的 getter 不再只回 `_AUTOSCALE`——seaborn 分类轴是 `set_xlim(-.5, n-.5, auto=None)`（范围显式、
+  开关开着），撤销时重新自动缩放会换成默认边距的另一个范围（CompatBench 拖动阶段在 `sci_sns_bar` /
+  `sci_sns_violin` 上抓到）。撤销时 scale 没变：范围放回（方向照 invert 判据）、再打开自动缩放；scale 变过
+  （「ylim → 换 log → 撤 ylim」）：照旧重新自动缩放，与全新重放一致。原样只活在 worker 的 `state.originals`，
+  不进 patch / 项目文件。看护：`tests/test_axes_lim_undo_explicit.py`、`test_invariants_engine.py` 的 `C-autoscale-*`。
 - **刻度组有 `fontfamily`、文字元素报真正画字的脸（2026-09-13，ADR 0051）**：
   `("ticks", "fontfamily")` 走 `tick_params(labelfontfamily=…)`（matplotlib ≥ 3.7）
   + 已有标签逐条 `set_math_fontfamily("custom")`——刻度**数量增长**后新建的标签里的
