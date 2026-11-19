@@ -15,6 +15,7 @@
  * 同一时刻只允许一轮：属性页里两个控件同时开手势本来就是 bug，
  * 后开的那个会先把前一个收掉（与 `beginTxn` 的语义一致）。
  */
+import { isCanvasCovered } from './canvasCover'
 
 /** 当前开着的那一轮的收尾回调；null = 没有 */
 let active: (() => void) | null = null
@@ -145,6 +146,8 @@ export function resetGestureCoordinator(): void {
  * 不经 keydown，几条路必须同一条判据，否则 ⌘D 在输入框里会被菜单变成「创建副本」。
  */
 export function yieldsCanvasShortcuts(el: EventTarget | null): boolean {
+  // 画布被盖住（「数据」临时标签激活）：不管焦点在哪，画布动作都让位——底下的文档不许被看不见的操作改动
+  if (isCanvasCovered()) return true
   if (!(el instanceof HTMLElement)) return false
   return (
     el.isContentEditable ||

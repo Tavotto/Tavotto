@@ -7,6 +7,9 @@ worker 的 `getattr(module, entry)()` 只能撞上 `AttributeError`。**登记�
 * `is_stale(path, entry)`：入口是函数名（不是 `__main__`），源码能解析，而且顶层**没有**这个名字（def / async def /
   class / 赋值 / import 进来的同名都算「还在」；`from x import *` 或模块级 `__getattr__` 说不准，也当「还在」）。
   源码读不动 / 解析不了 = 判不出 = 不过时（维持原行为，运行期的报错更有解释力）。
+  名字还在、但它被 `if __name__ == "__main__":` 守卫调用、守卫里还做了别的事（`discover.guard_does_more_than`，
+  cl-b941e8b82f）也算过时：函数入口跳过整段守卫，守卫里的样式 / rcParams / 种子全丢，重判会得到 `__main__`。
+  守卫没调到这个入口（用户手选了别的函数）不算。
 * `reconcile(figures_dir, script)`：过时就按 `probe.entry_candidates(static_only=True)`（注册表草稿与试运行同一把尺）
   重判入口，只把这一条的 `entry` 一个字段改写进注册表（经 `discover.write_config`，唯一的注册表写入函数；
   stems / cost / notes / artifacts 以及手写的其它键原样保留），返回 `{script: 新入口}`。
@@ -30,7 +33,7 @@ from . import discover, inputremap, probe, projectenv, registry
 _UNKNOWN = None
 
 _cache_lock = threading.Lock()
-#: realpath -> ((mtime_ns, size), 顶层名字集合 | None(说不准) | False(解析不了))
+#: realpath -> ((mtime_ns, size), (顶层名字集合 | None(说不准), 语法树) | False(解析不了))
 _names_cache: dict[str, tuple[tuple[int, int], object]] = {}
 _CACHE_MAX = 512
 
@@ -116,8 +119,8 @@ def top_level_names(tree: ast.Module) -> set[str] | None:
     return None if visitor.unknown else visitor.names
 
 
-def _names_of(path: Path) -> object:
-    """`path` 的顶层名字集合（按 mtime+size 缓存）；None = 说不准；False = 读不动 / 解析不了。"""
+def _parsed_of(path: Path) -> object:
+    """`(顶层名字集合 | None(说不准), 语法树)`（按 mtime+size 缓存）；False = 读不动 / 解析不了。"""
     key = str(path)
     try:
         st = path.stat()
@@ -130,7 +133,7 @@ def _names_of(path: Path) -> object:
             return hit[1]
     text, problem = discover.read_source(path)
     tree = discover.parse_source(text)[0] if problem is None and text is not None else None
-    value: object = False if tree is None else top_level_names(tree)
+    value: object = False if tree is None else (top_level_names(tree), tree)
     with _cache_lock:
         if len(_names_cache) >= _CACHE_MAX:
             _names_cache.clear()
@@ -139,13 +142,17 @@ def _names_of(path: Path) -> object:
 
 
 def is_stale(path: str | Path, entry: object) -> bool:
-    """登记的 `entry` 在 `path` 的当前源码里已经不存在？只有「能解析、且顶层确实没有这个名字」才是 True。"""
+    """登记的 `entry` 跑不出 `python script.py` 的结果？能解析、且顶层确实没有这个名字，或它被一个还做了别的事的
+    `__main__` 守卫包着（函数入口会跳过守卫），才是 True。"""
     if not isinstance(entry, str) or entry == registry.INLINE_ENTRY or not entry.isidentifier():
         return False
-    names = _names_of(Path(path))
-    if names is False or names is _UNKNOWN:
+    parsed = _parsed_of(Path(path))
+    if parsed is False:
         return False
-    return entry not in names  # type: ignore[operator]
+    names, tree = parsed  # type: ignore[misc]
+    if names is not _UNKNOWN and entry not in names:
+        return True
+    return discover.guard_calls(tree, entry) and discover.guard_does_more_than(tree, entry)
 
 
 def _script_path(figures_dir: str | Path, script: str) -> str | None:
@@ -209,7 +216,11 @@ def reconcile(figures_dir: str | Path, script: str | None = None) -> dict[str, s
             if not is_stale(real, cfg_entry.get("entry", "main")):
                 continue
             new = redetect(figures_dir, name)
-            if new is None or not registry.valid_entry(new):
+            if (
+                new is None
+                or not registry.valid_entry(new)
+                or new == cfg_entry.get("entry", "main")
+            ):
                 continue
             cfg_entry["entry"] = new
             changed[name] = new

@@ -46,6 +46,14 @@ COVERAGE_MAX_CP = 0x30000
 #: `web/src/lib/typography.ts` 的 `WRITING_MODE_VERTICAL` 同值（ADR 0163）。
 WRITING_VERTICAL = "vertical"
 
+#: 横排文字的行盒（ADR 0073 修订，2026-11-16）：基线落在行盒中线下面**这么多 em**，与字体度量无关。
+#: 拉丁大写字母高的一半（批准三族 0.33–0.34）与中文字面中心（Noto SC 0.38）之间取一个数，
+#: 中文、拉丁、单行公式在文字框里都上下居中。画布预览（`web/src/lib/typography.ts` 的
+#: `TEXT_BASELINE_BELOW_CENTER_PER_MILLE`）读同一个数：浏览器按自己的度量摆基线，预览量出差值补齐——
+#: 严格同源对，`tests/test_text_line_box.py` 看护。
+BASELINE_BELOW_CENTER_PER_MILLE = 350
+BASELINE_BELOW_CENTER = BASELINE_BELOW_CENTER_PER_MILLE / 1000
+
 #: 换行单元的判据（历史判据，只管「逐字还是按词」，不是覆盖判据；见 glyphplan）。
 _CJK_BREAK = 0x2E80
 
@@ -629,6 +637,27 @@ def text_params(
     return slots, size, line_h, pad, interp, fmt
 
 
+def line_box(
+    line: Unit, size: float, line_h: float, slots: MathSlots | None = None
+) -> tuple[float, float]:
+    """一行横排文字的行盒：`(基线以上, 基线以下)`，pt。
+
+    普通字的行盒是 `size × 行高`、基线在中线下 `BASELINE_BELOW_CENTER` em（与字体度量无关）；
+    这一行里排得出的公式比它高时撑开这一行（ADR 0152 修订）：行盒取二者的并——与浏览器里
+    「真高的行内块坐在基线上」同一个算法，画布预览（`MathFormula`）照此摆。"""
+    up = size * (line_h / 2 + BASELINE_BELOW_CENTER)
+    down = size * (line_h / 2 - BASELINE_BELOW_CENTER)
+    if slots is not None:
+        for seg_text, seg_script, _logical, _style in line:
+            if seg_script != MATH:
+                continue
+            for ch in seg_text:
+                box = slots.boxes[ch]
+                up = max(up, float(box.get("ascent") or 0) * size)
+                down = max(down, float(box.get("descent") or 0) * size)
+    return up, down
+
+
 def layout_text(t: dict, faces: FaceSet, math: dict | None = None) -> TextBlock | None:
     """画布文字对象（`text` / `size_pt` / `x_mm` … 与旧 facade 同一份字段）→ 已排版的块。**只排横排**；
     竖排（ADR 0163）走 `vertical.layout_text`，由调用方（`plan`）按 `writing_mode` 分派——本模块不依赖
@@ -647,12 +676,14 @@ def layout_text(t: dict, faces: FaceSet, math: dict | None = None) -> TextBlock 
     box_w = mm2pt(t["w_mm"]) - 2 * pad
     align = t.get("align", "left")
     units_lines = break_lines(text, faces, size, box_w, interp, fmt, slots)
-    asc, desc = faces.primary.ascender, faces.primary.descender
-    baseline0 = y0 + size * ((line_h - (asc - desc)) / 2 + asc)
     cov = coverage(faces)
+    line_top = y0  # 这一行行盒的顶（pt）：每行按自己的行盒高往下排
     out: list[LaidOutLine] = []
     rendered = ""
-    for i, line in enumerate(units_lines):
+    for line in units_lines:
+        up, down = line_box(line, size, line_h, slots)
+        baseline = line_top + up
+        line_top = baseline + down
         if not line:
             continue
         w = _unit_w(line, faces, size, slots)
@@ -715,7 +746,7 @@ def layout_text(t: dict, faces: FaceSet, math: dict | None = None) -> TextBlock 
         out.append(
             LaidOutLine(
                 x,
-                baseline0 + i * size * line_h,
+                baseline,
                 w,
                 tuple(pieces),
                 logical,

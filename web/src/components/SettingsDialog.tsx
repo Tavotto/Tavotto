@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils'
 import { dialogCovered, useUiStore } from '@/store/uiStore'
 import { askDiscardDraft } from './askDiscardDraft'
 import { Dialog } from './ui/Dialog'
+import { DESK_FIELD_SCOPE } from './ui/fieldBox'
 import { listRowClass } from './ui/listRow'
 import { ChevronRight } from './ui/icons'
 import { ICON_SIZE } from './ui/Icon'
@@ -310,10 +311,9 @@ export function SettingsDialog() {
       // roving tabindex：Tab 只落在当前项，方向键在项之间走（搜索时当前页可能被滤掉——那时第一项接手）
       tabIndex={section === id || (!visible.includes(section) && visible[0] === id) ? 0 : -1}
       className={cn(
-        // 选中 = 轻 tint + 600（宪法第二十六节：选中靠字重再说一遍），不靠大块深灰——与列表 / 树行同一份
-        // `listRowClass`；导航项 30px、13px、不缩进（行在 nav 的内边距里）
         listRowClass({ size: 'sm', selected: section === id, muted: section !== id }),
         'mx-0 h-7.5 shrink-0 whitespace-nowrap px-2.5 text-left text-base',
+        section === id && 'bg-thumb shadow-thumb',
       )}
     >
       {label(id)}
@@ -346,13 +346,13 @@ export function SettingsDialog() {
           onKeyDown={onNavKey}
           className={cn(
             // 窄窗口：一行可横滚的分区条（组名与搜索藏起来、组之间只留一点间距）；
-            // ≥640px：左侧固定 200px 一列，按组分层，与内容区之间一根 hairline
-            'flex shrink-0 gap-3 overflow-x-auto px-2 py-2',
-            'sm:w-50 sm:flex-col sm:gap-4 sm:overflow-x-visible sm:overflow-y-auto sm:px-3 sm:py-3',
-            'border-b border-border sm:border-b-0 sm:border-r',
+            // ≥640px：左侧固定侧栏底面（bg-surface-2），与右侧内容舞台形成清晰材质分层
+            'flex shrink-0 gap-3 overflow-x-auto bg-surface-2/85 px-2 py-2',
+            'sm:w-52 sm:flex-col sm:gap-4 sm:overflow-x-visible sm:overflow-y-auto sm:px-3 sm:py-3.5',
+            'border-b border-border/80 sm:border-b-0 sm:border-r',
           )}
         >
-          <div className="hidden shrink-0 sm:block">
+          <div className={cn('hidden shrink-0 sm:block', DESK_FIELD_SCOPE)}>
             <SearchInput
               type="search"
               data-settings-search
@@ -400,9 +400,7 @@ export function SettingsDialog() {
           ) : (
             NAV_GROUPS.map((g) => (
               <div key={g.id} data-nav-group={g.id} className="flex shrink-0 gap-0.5 sm:flex-col">
-                {/* 组名 12 / 500 / ink-3：比项淡一档（颜色），字重留在 500——选中项已经是 600，
-                    组名不会与它读成同一层（2026-10-07 设计审计 §9.1） */}
-                <span className="hidden px-2.5 pb-1 text-sm font-medium text-ink-3 sm:block">
+                <span className="hidden px-2.5 pb-1 pt-0.5 text-sm font-medium text-ink-3 sm:block">
                   {st(`navGroup.${g.id}`)}
                 </span>
                 {g.sections.map(navItem)}
@@ -413,20 +411,16 @@ export function SettingsDialog() {
         <div
           ref={contentRef}
           data-settings-content
-          // 常驻滚动轨道：Windows WebKit 的自定义滚动条不会靠 scrollbar-gutter 预留空间；
-          // auto 等回包撑高后才占 6px，会把居中的内容列左挪 3px，移动正在按的入口。
-          // 底部留 mb 让滚动条在圆角之前就结束，不会贴着圆角被削
-          className="mb-2 min-h-0 min-w-0 flex-1 overflow-y-scroll overflow-x-hidden px-6 py-5 [scrollbar-gutter:stable]"
+          className="mb-2 min-h-0 min-w-0 flex-1 overflow-y-scroll overflow-x-hidden px-7 py-6 [scrollbar-gutter:stable]"
         >
           <SettingsCrumbContext.Provider value={setCrumb}>
             <div
-              // key：换页时整列重挂，进场淡入一次（cross-fade 的「进」那一半；退场不保活，切页不拖泥带水）
               key={section}
               data-content-mode={CONTENT_MODE[section]}
               style={normal ? { maxWidth: CONTENT_MAX_WIDTH } : undefined}
               className={cn('flex flex-col gap-6 motion-safe:animate-fade-in', normal && 'mx-auto w-full')}
             >
-              <header data-settings-page-header className="flex min-w-0 flex-col gap-0.5">
+              <header data-settings-page-header className="flex min-w-0 flex-col gap-1 border-b border-border/70 pb-3.5">
                 {crumb ? (
                   <h2 className="type-heading flex min-w-0 items-center gap-1.5">
                     <button

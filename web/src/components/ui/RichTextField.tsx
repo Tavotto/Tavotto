@@ -65,6 +65,13 @@ function syncDomSelection(view: EditorView): void {
   }
 }
 
+interface MathChipProps {
+  family: string
+  sizePx: number
+  live: boolean
+  lineBox?: { shiftPx: number }
+}
+
 /**
  * 公式块的显示：后端排好的公式（`MathFormula`，与导出同一份结果）。只有宿主给了 `mathFamily` 时才用它：
  * 标注给三族之一，图内文字给 `face:<图上画公式的那张脸>`（ADR 0152 后续）。
@@ -74,9 +81,9 @@ class MathChipView implements NodeView {
   dom: HTMLElement
   private root: Root
   private node: PMNode
-  private get: () => { family: string; sizePx: number; live: boolean }
+  private get: () => MathChipProps
   private all: Set<MathChipView>
-  constructor(node: PMNode, get: () => { family: string; sizePx: number; live: boolean }, all: Set<MathChipView>) {
+  constructor(node: PMNode, get: () => MathChipProps, all: Set<MathChipView>) {
     this.node = node
     this.get = get
     this.all = all
@@ -89,13 +96,13 @@ class MathChipView implements NodeView {
     this.render()
   }
   render() {
-    const { family, sizePx, live } = this.get()
+    const { family, sizePx, live, lineBox } = this.get()
     // 源码模式时这份文档是隐藏的、每个键都被换一遍：不排版（否则每键一个请求），切回来再排
     if (!live) {
       this.root.render(<span>{this.node.attrs.src as string}</span>)
       return
     }
-    this.root.render(<MathFormula src={this.node.attrs.src as string} family={family} sizePx={sizePx} />)
+    this.root.render(<MathFormula src={this.node.attrs.src as string} family={family} sizePx={sizePx} lineBox={lineBox} />)
   }
   ignoreMutation() {
     return true
@@ -157,6 +164,8 @@ export interface RichTextFieldProps {
    * 标注传画布字体族（`serif` / `sans-serif` / `monospace`）；图内文字传 `face:<图上画公式的那张脸>`；不给显示源码。
    */
   mathFamily?: string
+  /** 画布文字就地编辑：公式撑开所在行，与静态渲染同一种摆法（`MathFormula` 的 `lineBox`），进出编辑态字不跳 */
+  mathLineBox?: { shiftPx: number }
   /** 工具条右侧宿主自己的按钮（大小写菜单等） */
   extra?: ReactNode
   /** 框最多长到几行再滚动（`field`） */
@@ -189,6 +198,7 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
     placeholder,
     sizePx,
     mathFamily,
+    mathLineBox,
     extra,
     maxRows = 6,
     autoFocus,
@@ -231,7 +241,7 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
   const [caret, setCaret] = useState(0)
   /** 挂着的公式块视图与它们现读的族 / 字号（见 `MathChipView`） */
   const chips = useRef(new Set<MathChipView>())
-  const mathProps = useRef({ family: mathFamily ?? '', sizePx: sizePx ?? 13, live: true })
+  const mathProps = useRef<MathChipProps>({ family: mathFamily ?? '', sizePx: sizePx ?? 13, live: true, lineBox: mathLineBox })
 
   useLayoutEffect(() => {
     if (!host.current) return
@@ -372,11 +382,11 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
     const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content)
     view.dispatch(tr.setMeta('rt-external', true).setMeta('addToHistory', false))
   }, [value, codec])
-  mathProps.current = { family: mathFamily ?? '', sizePx: sizePx ?? 13, live: mode === 'rich' }
+  mathProps.current = { family: mathFamily ?? '', sizePx: sizePx ?? 13, live: mode === 'rich', lineBox: mathLineBox }
   // 公式的族 / 字号变了（图内文字改了字体族，公式字体集跟着换）：已挂着的公式块就地重画
   useEffect(() => {
     for (const c of chips.current) c.render()
-  }, [mathFamily, sizePx, mode])
+  }, [mathFamily, sizePx, mode, mathLineBox?.shiftPx])
   // 回声只认紧接着的那次渲染（这条 effect 排在上面那条之后，同一次提交里后跑）
   useEffect(() => {
     ownEcho.current = null
@@ -575,7 +585,7 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
         title={rt(latex ? 'modeToRichTitle' : 'modeToLatexTitle')}
         aria-label={rt('modeLatex')}
         className={cn(
-          'mr-1 mt-[3px] h-5 shrink-0 select-none rounded-sm px-1.5 font-mono text-xs leading-none outline-none',
+          'mr-1 mt-[2px] inline-flex h-5 shrink-0 select-none items-center justify-center rounded-xs px-1.5 font-mono text-xs outline-none',
           'transition-colors duration-fast focus-visible:focus-ring',
           latex ? 'bg-ink text-surface' : 'text-ink-3 hover:bg-surface-hover hover:text-ink-2',
         )}

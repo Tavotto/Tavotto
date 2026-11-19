@@ -437,7 +437,7 @@ describe('单图编辑时的画布页', () => {
 
   afterEach(() => useWorkspaceStore.getState().clear())
 
-  it('头部讲单图编辑与导出尺寸，页面尺寸收成一行摘要；点开才有预设与宽高', async () => {
+  it('头部讲单图编辑与导出尺寸；多图排版的页面设置整组不显示', async () => {
     act(() =>
       useDocumentStore.getState().commit(literal('图'), (d) => {
         d.objects = [panel as CanvasObject]
@@ -447,12 +447,13 @@ describe('单图编辑时的画布页', () => {
     remount()
     expect(container.querySelector('[data-single-export-size]')?.textContent?.replace(/\s/g, ' ')).toContain('73.5 × 57.8 mm')
     expect(container.querySelector('[data-single-export-note]')).not.toBeNull()
-    expect(container.querySelector('[data-page-size-row]'), '收起时没有宽高').toBeNull()
-    act(() => fold('canvas-page').click())
-    expect(container.querySelector('[data-page-size-row]')).not.toBeNull()
+    expect(container.querySelector('[data-page-size-row]'), '单图没有页面宽高').toBeNull()
+    expect(container.querySelector('[data-page-preset-select]'), '单图没有页面预设').toBeNull()
+    expect(container.querySelector('[data-fold="canvas-page"]'), '单图没有多图排版页面摘要行').toBeNull()
+    expect(container.querySelector('[data-fold="canvas-bg"]'), '背景照旧').not.toBeNull()
   })
 
-  it('按期刊选的项目：页面摘要与下拉选中项是同一个判据，显示该期刊的栏名（只看宽度）', () => {
+  it('按期刊选的项目：排版里的预设下拉显示该期刊的栏名（只看宽度）', () => {
     useJournalCatalogStore.setState({ catalog: loadCatalog(journalVectors.catalog) })
     act(() =>
       useDocumentStore.getState().commit(literal('图'), (d) => {
@@ -460,9 +461,8 @@ describe('单图编辑时的画布页', () => {
       }),
     )
     act(() => selectJournal('fx-cols-inherit')) // 页宽 → 121，高度不动
-    act(() => useWorkspaceStore.getState().enterFastEdit('p1'))
     remount()
-    expect(fold('canvas-page').textContent).toContain('2 栏')
+    expect(container.querySelector('[data-page-preset-select] [role="combobox"]')?.textContent).toContain('2 栏')
     useJournalCatalogStore.setState({ catalog: loadCatalog() })
   })
 

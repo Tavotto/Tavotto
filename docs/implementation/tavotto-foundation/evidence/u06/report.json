@@ -35,11 +35,11 @@
  },
  "outputs": {
   "u06.pdf": {
-   "sha256": "7ae4c0bb1f0e885f611810cc8725e2948eb6b2cf39f10723d7d96884354d82e8",
-   "bytes": 14107
+   "sha256": "cf828cc32d6d5f43c507b1e3903ffaad780cadf0492f7538e60d2cb0d0159440",
+   "bytes": 14102
   },
   "u06_pdfium.png": {
-   "sha256": "41159b14f365adaf68819dff9d3328473ed70250c50c7dd31146e5ce1fc0bc3e"
+   "sha256": "0c8c4c3fe5828fa2f794912127f964a693c1e35d35088d0bf9a7a5247dabf85f"
   },
   "canvas_coverage.rendercore.json": {
    "sha256": "e4f65df2a558fce664d5e9ada02b35a5abd3ce0d1d1712f8dc212f624f7b4d9a"
@@ -218,8 +218,8 @@
   "notdef_codes": 0,
   "imported_pages": [],
   "images": [],
-  "sha256": "7ae4c0bb1f0e885f611810cc8725e2948eb6b2cf39f10723d7d96884354d82e8",
-  "bytes": 14107,
+  "sha256": "cf828cc32d6d5f43c507b1e3903ffaad780cadf0492f7538e60d2cb0d0159440",
+  "bytes": 14102,
   "versions": {
    "uharfbuzz": "0.56.2",
    "fonttools": "4.66.0",

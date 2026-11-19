@@ -230,6 +230,10 @@ def test_declared_codes_keep_literal_response_and_legacy_assignment_shapes(sourc
 # code——审计 P1-02：错误尾部不许泄漏中文，所以每个 code 都要有两种语言的
 # 文案，且占位符与 params 对得上）
 USER_VISIBLE_CODES = {
+    # Journal facts inspection may return a bounded result error.
+    "result_too_large": set(),
+    "journal_catalog_disabled": set(),
+    # --- ADR 0175：改图助手附文件（`POST /api/ai/attachments`）；固定文案 ---
     "attachment_too_large": set(),
     "attachment_empty": set(),
     "attachment_invalid": set(),
@@ -287,6 +291,8 @@ USER_VISIBLE_CODES = {
     "write_outside_roots": set(),
     "import_folder_unreadable": {"folder"},
     "import_folder_abi_mismatch": {"abi", "current", "folder"},
+    # TVD-3MWS：图片内容与扩展名不符；参数来自 `pool.recovery_params`（格式名 + 扩展名 + 可选的项目相对显示名）
+    "image_format_mismatch": {"claimed", "actual", "ext"},
     "path_ignore_token_invalid": set(),
     "path_ignore_rejected": set(),
     "repair_unsupported": set(),
@@ -300,6 +306,8 @@ USER_VISIBLE_CODES = {
     "repair_has_links": set(),
     "repair_too_large": set(),
     "export_raster_too_large": {"height", "max_pixels", "width"},
+    # TeX 工具链（`texdiag`）：参数来自错误转换合同 `pool.recovery_params`；`tex_failed` 的 `{{error}}`
+    # 与 `script_error` 同一来源（traceback 末行，前端 `engineErrorMsg` 填）
     "tex_command_missing": {"command"},
     "tex_package_missing": {"file"},
     "tex_compile_failed": {"line"},
@@ -424,6 +432,10 @@ USER_VISIBLE_CODES = {
     "propose_input_invalid": set(),
     "propose_cells_invalid": set(),
     "propose_cells_need_rule": set(),
+    # 合画（ADR 0178 2026-11-18）：几份列名不一样拼不成一张 / 份数超上限
+    "tables_columns_differ": set(),
+    "tables_limit_exceeded": {"max"},
+    "tables_labels_collide": set(),
     "data_figure_recipe_invalid": set(),
     "data_path_outside_project": set(),
     "data_not_found": set(),
@@ -532,6 +544,9 @@ USER_VISIBLE_CODES = {
     "dir_fsync_failed": {"reason"},
     "write_back_disabled": set(),
     "write_back_warnings": set(),
+    "write_back_future_props": set(),
+    # issue #252 / QA 2026-09-24 SCI-05-B1：commit 的落盘准备（备份 + fsync）没过，
+    # 任何 replace 之前，原件零改动
     "write_back_persist_failed": {"reason"},
     "profile_bad_kind": set(),
     "profile_bad_payload": set(),
@@ -792,6 +807,8 @@ SCANNED = [n for n in _SOURCE_FILES if (SRC_DIR / n).is_file()]
 #: 分诊）。会话 guard 那几个的拒绝对象是攻击页面/畸形请求，正常界面路径由
 #: main.tsx 的专用启动页兜住；401 的 session_auth_required 另有 backend 文案。
 NON_UI_CODES = {
+    # 数据出图懒渲染（ADR 0178 修订）：取某张缩略图 422——前端只据此静默去掉这一张卡，不展示文案
+    "propose_thumbnail_failed",
     # 视图范围加脚本（ADR 0184）：前端只在后台顺手发、名字已是项目相对路径，失败不出界面
     "invalid_script_name",
     # Conversion-run diagnostics are mapped by ai_convert._failure_check to the

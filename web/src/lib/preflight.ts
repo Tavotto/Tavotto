@@ -524,8 +524,8 @@ function* fontElements(
 }
 
 /**
- * 有效字号低于期刊「说明」的最小字号时给 suggestion：带期刊名与原话。上下标求值器分不出，
- * 所以按正文建议值（没有就按上下标值）统一提示。同源对：`preflight.py` 的 `_advise_font`。
+ * 有效字号低于参考记录的比较值时给 suggestion，并保留原话。该比较值由旧字段派生，
+ * 不证明原文规定了下限；上下标求值器也无法区分。同源对：`preflight.py` 的 `_advise_font`。
  */
 function adviseFont(
   profile: PublicationProfile,
@@ -688,6 +688,27 @@ function checkPanelFonts(
   }
 }
 
+/**
+ * 「数据线」线宽下限（`min_line_width_pt`）判的图元。同源对：`engine/preflight.py` 的 `DATA_LINE_ROLES`。
+ * 只收确实画出描边的数据图元；坐标轴脊线 / 刻度 / 网格 / 图例框 / 标注箭头不是数据；
+ * 散点与填充区域的描边不判（manifest 的 edgecolor 分不出「无边」与「黑边」）；误差棒不判（容器线宽不是误差线 / 帽的宽）。
+ */
+export const DATA_LINE_ROLES = ['line', 'linecoll', 'bar_series', 'bar']
+
+function isDataLine(el: ManifestElement, role: string): boolean {
+  if (!DATA_LINE_ROLES.includes(role)) return false
+  if (role === 'line') {
+    // 只画点不画线（plot(x, y, 'o')）：线宽是设置器，墨迹里没有这条线
+    const ls = field(el, 'linestyle')
+    return !(typeof ls === 'string' && ['none', ''].includes(ls.trim().toLowerCase()))
+  }
+  if (role === 'bar_series' || role === 'bar') {
+    const ec = field(el, 'edgecolor')
+    return !(typeof ec === 'string' && ['none', ''].includes(ec.trim().toLowerCase()))
+  }
+  return true
+}
+
 function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, sink: Sink): void {
   const manifest = panel.manifest
   if (!manifest) return
@@ -697,6 +718,8 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
   const legend = profile.legend_policy
   const presets = profile.line_widths_pt ?? []
   const tol = profile.line_width_tolerance_pt ?? 0.08
+  // 数据线宽下限：缺席 / 0 = 不判（旧快照、课题组规范都没有这个键）
+  const minLw = num(profile.min_line_width_pt) ?? 0
   const wantDir = axis.tick_direction
   const enclosed = !!axis.enclosed_spines
   const maxLabels = axis.max_tick_labels | 0
@@ -828,6 +851,20 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
             pf('lineWidthOffPreset', { effective: eff.toFixed(2), presets: presets.map(g).join('/') }),
             { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff) },
               worse: Math.min(...presets.map((v) => Math.abs(eff - v))), prop: 'linewidth' },
+          )
+        }
+      }
+    }
+    if (minLw > 0 && isDrawn(el, hidden) && isDataLine(el, role) && !(role === 'bar_series' && barredSeries.has(gid))) {
+      const lw = num(field(el, 'linewidth'))
+      if (lw != null && lw > 0) {
+        const eff = lw * scale
+        if (eff < minLw - 1e-9) {
+          sink.add(
+            'line-width-below-min',
+            pf('lineWidthBelowMin', { effective: eff.toFixed(2), min: g(minLw) }),
+            { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff) },
+              worse: minLw - eff, prop: 'linewidth' },
           )
         }
       }

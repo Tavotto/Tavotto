@@ -170,12 +170,6 @@
       "reason": "改字号时画布 / 文档已换，那次改动作废（不写到别的画布上）；用户在当前画布重输一次即可，句子已说作废。"
     },
     {
-      "file": "components/left/WorkspaceList.tsx",
-      "key": "backendErrorMsg()",
-      "count": 1,
-      "reason": "TODO(dead-end): 打开 / 新建项目失败只有一句后端原因；应按原因给出路：路径不见了给「从最近列表移除」/「选择别的文件夹」，其余复用 feedbackAction()。"
-    },
-    {
       "file": "components/left/queuedFontSize.ts",
       "key": "stylePanel.pendingSizeCancelled",
       "count": 1,
@@ -262,14 +256,8 @@
     {
       "file": "lib/openRequest.ts",
       "key": "handoff.panelMissing",
-      "count": 3,
-      "reason": "交接指向的图在项目里找不到；句子写了图名，用户或 Codex 重新交接一张存在的图即可（三处是同一句话的三个出口）。"
-    },
-    {
-      "file": "lib/openRequest.ts",
-      "key": "handoff.runtimeNeedsRun",
-      "count": 1,
-      "reason": "TODO(dead-end): 交接的 show-only 图还没跑出过预览，句子只是「去素材库跑一次」；应挂「运行」按钮直接跑那个脚本。"
+      "count": 4,
+      "reason": "交接指向的图在项目里找不到；句子写了图名，用户或 Codex 重新交接一张存在的图即可（四处是同一句话的四个出口，其中一处在「运行」跑完之后落图）。"
     },
     {
       "file": "lib/packageImport.ts",
@@ -312,12 +300,6 @@
       "key": "restore.entrySuperseded",
       "count": 2,
       "reason": "恢复期间用户的动作属于旧项目（已切走），被丢弃并说了一句；回到原项目重做就是原动作，两处是同一句的两个出口。"
-    },
-    {
-      "file": "store/liveSync.ts",
-      "key": "status.sourceLostEditing",
-      "count": 1,
-      "reason": "TODO(dead-end): 正在编辑的图失去了脚本来源只有一句话；应挂「重新关联」按钮（进入重新指认数据 / 脚本的流程）。"
     },
     {
       "file": "store/projectSave.ts",

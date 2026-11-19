@@ -210,12 +210,12 @@ describe('入口两处挂载', () => {
     expect(q('[data-dialog="contact"]')).toBeNull()
   })
 
-  it('编辑器顶栏：在撤销重做与导出之间，次级样式、不是主按钮', async () => {
+  it('编辑器顶栏：在撤销重做与导出之间，安静的 ghost 次要入口、不抢导出主按钮', async () => {
     await render(<TopBar />)
     const btn = q('[data-contact-button="topbar"]')!
     expect(btn).not.toBeNull()
     expect(btn.textContent).toContain(t('contact.buttonLabel', { ns: 'dialogs' }))
-    expect(btn.getAttribute('data-variant')).toBe('secondary')
+    expect(btn.getAttribute('data-variant')).toBe('ghost')
     const exportBtn = q('[data-onboarding-anchor="export"]')!
     const undo = q('[data-topbar] button[aria-label]')! // 顶栏里第一颗带名字的按钮不是它；只比与导出的先后
     expect(btn.compareDocumentPosition(exportBtn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()

@@ -103,15 +103,15 @@ export function RelinkDialog() {
               <span
                 data-relink-thumb-box
                 className={cn(
-                  'flex h-9 w-12 shrink-0 items-center justify-center overflow-hidden rounded-sm',
-                  thumb ? 'bg-surface-2 ring-1 ring-inset ring-border' : 'hatch-box',
+                  'flex h-9 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xs',
+                  thumb ? 'bg-paper shadow-thumb' : 'hatch-box',
                 )}
               >
                 {thumb && (
                   <RetryImg
                     src={thumb}
                     alt=""
-                    className="h-full w-full bg-surface object-contain"
+                    className="h-full w-full bg-paper object-contain"
                     data-relink-thumb
                   />
                 )}

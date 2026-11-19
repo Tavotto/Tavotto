@@ -16,10 +16,9 @@ import { cn } from '@/lib/utils'
  */
 export const FIELD_BOX = cn(
   // 框里的值是「要读的字」：12px（正文档），标签 / caption / meta 留 11px（2026-09-14 审计分歧 1，用户拍板试 12）。
-  // 圆角默认 md；坐在胶囊（单行浮动条，祖先带 `data-capsule`）里换成全圆——胶囊套方角框，内外圆角不配
-  // （2026-10-13 用户：「这个输入框和胶囊的圆角不匹配」）
-  'rounded-md in-data-capsule:rounded-full border border-transparent bg-field text-sm text-ink transition-colors duration-fast',
-  'hover:bg-field-hover',
+  // 圆角默认 sm（6px，28px 高输入框的精密仪器比例，避免半胶囊发泡感）；坐在胶囊（单行浮动条，祖先带 `data-capsule`）里换成全圆
+  'rounded-sm in-data-capsule:rounded-full border border-border/65 bg-field text-sm text-ink transition-colors duration-fast',
+  'hover:border-border hover:bg-field-hover',
 )
 /**
  * 灰桌面（`bg-bg`）上的侧栏 / 抽屉子树里框的两个 token 改写（桌面子树唯一出处，LeftPanel 与 `DESK_DRAWER` 都从这里取）：

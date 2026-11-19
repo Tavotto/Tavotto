@@ -40,6 +40,8 @@ import { contentToPageVec, pageToContentVec, panelContentTransform } from '@/lib
 import {
   anchorOf,
   arrowEndpointsOf,
+  LINE_POINTS_MAX,
+  linePointsOf,
   axesCompanions,
   companionPatchesFor,
   crossFigurePair,
@@ -1694,6 +1696,8 @@ export function inFigureMoveOf(
 ): InFigureMove | null {
   if (el.resizable) return axesMove(panel, geomTarget(manifest, el))
   if (el.arrow_endpoints) return arrowMove(panel, el)
+  // 可逐段编辑的线：整条平移也写 points_frac（方向键 / 多选整组走这里；按下拖的是一段，见 startLineEdit）
+  if (el.draggable && el.line_points) return lineMove(panel, el)
   if (el.draggable && el.anchor) return elementMove(panel, el)
   // 框里的文字：拖的是外框（引擎报的 `drag_host`）；外框自己拖不动（像素坐标的插框）就照旧说「拖不动」；
   // 外框在元素树里锁了就不借道拖它（文字自己没锁，指针与方向键都会走到这里，不拦就绕过了锁）
@@ -1761,7 +1765,7 @@ export function guardStale<E extends { type: string; stopPropagation(): void; pr
  * - `axisLabel3d`：3D 轴标题的位置由视角算，属性页调它离轴的距离；
  * - `pixelCoords`：按像素 / 字号单位或别的对象定位的文字，换分辨率导出时会漂，不宣称可拖；
  * - `hostPlaced`：次坐标轴 / 寄生轴，落位由宿主子图决定（引擎给了 `position` 的理由码）；
- * - `unsupported`：其余（表格、认不出来的 Artist）——暂不支持，说实话。
+ * - `unsupported`：其余（认不出来的 Artist）——暂不支持，说实话。
  */
 export type ImmovableReason =
   | 'series'
@@ -2216,6 +2220,167 @@ export function startElementDrag(
 ) {
   const mv = elementMove(panel, element)
   if (mv) trackInFigureMove(e, panel, layout, mv)
+}
+
+/**
+ * 可逐段编辑的线（manifest `line_points`）整条平移：所有顶点同走一个位移，写 points_frac。
+ * 与拖一段 / 一个点写同一条 override（全部顶点），一条线只会有这一条位置 override。
+ */
+export function lineMove(panel: PanelObject, element: ManifestElement): InFigureMove | null {
+  const pts = linePointsOf(panel, element)
+  if (!pts) return null
+  beginElementPreview(panel)
+  const at = (dfx: number, dfy: number) => pts.flatMap((p) => [p[0] + dfx, p[1] + dfy])
+  return {
+    // 线不是块，不参与吸附（与独立箭头同一取舍）
+    snapBox: null,
+    moving: underAny([element.gid]),
+    carryPreview: [],
+    preview: (dfx, dfy) => {
+      previewTransform(element.gid, dfx, dfy)
+      interaction().setGidDrag({ gid: element.gid, dfx, dfy })
+    },
+    commit: (dfx, dfy) => {
+      const v = at(dfx, dfy)
+      if (sameAfterRound4(v, pts.flat())) {
+        cancelElementPreview()
+        return false
+      }
+      setOverride(panel.id, element.gid, 'points_frac', v.map(round4), true)
+      commitElementPreview(panel.id)
+      return true
+    },
+    cancel: () => cancelElementPreview(),
+  }
+}
+
+/**
+ * 指针落点（figure 分数）离哪一段最近：按内容像素量（x、y 分别乘图宽图高），斜段与短段都公平。
+ * 返回段号 i（顶点 i → i+1）。
+ */
+export function nearestLineSegment(
+  pts: [number, number][],
+  fx: number,
+  fy: number,
+  layout: { width: number; height: number },
+): number {
+  const W = layout.width
+  const H = layout.height
+  let best = 0
+  let bestD = Infinity
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const ax = pts[i][0] * W
+    const ay = pts[i][1] * H
+    const bx = pts[i + 1][0] * W
+    const by = pts[i + 1][1] * H
+    const px = fx * W
+    const py = fy * H
+    const dx = bx - ax
+    const dy = by - ay
+    const len2 = dx * dx + dy * dy
+    const t = len2 > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)) : 0
+    const d = Math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+    if (d < bestD) {
+      bestD = d
+      best = i
+    }
+  }
+  return best
+}
+
+/**
+ * 双击引线的一段 = 在双击处加一个拐点（用户 2026-11-19「做一下加拐点」）。
+ * 点投影到那一段上再插进去：画面先不变，接着拖这个新拐点就能折出新的弯。到上限（64）不加。
+ * 回 true = 写了一条 override（一条撤销）。
+ */
+export function insertLineBend(
+  panel: PanelObject,
+  element: ManifestElement,
+  fx: number,
+  fy: number,
+  layout: { width: number; height: number },
+): boolean {
+  const pts = linePointsOf(panel, element)
+  if (!pts || pts.length >= LINE_POINTS_MAX) return false
+  const i = nearestLineSegment(pts, fx, fy, layout)
+  const [a, b] = [pts[i], pts[i + 1]]
+  const W = layout.width
+  const H = layout.height
+  const dx = (b[0] - a[0]) * W
+  const dy = (b[1] - a[1]) * H
+  const len2 = dx * dx + dy * dy
+  const t =
+    len2 > 0 ? Math.max(0, Math.min(1, ((fx - a[0]) * W * dx + (fy - a[1]) * H * dy) / len2)) : 0.5
+  const at: [number, number] = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]
+  const next = [...pts.slice(0, i + 1), at, ...pts.slice(i + 1)]
+  setOverride(panel.id, element.gid, 'points_frac', next.flat().map(round4), true)
+  return true
+}
+
+/** 双击引线的一个拐点 = 删掉它（至少留两个点）。回 true = 写了一条 override。 */
+export function removeLineBend(panel: PanelObject, element: ManifestElement, index: number): boolean {
+  const pts = linePointsOf(panel, element)
+  if (!pts || pts.length <= 2 || index < 0 || index >= pts.length) return false
+  const next = pts.filter((_, k) => k !== index)
+  setOverride(panel.id, element.gid, 'points_frac', next.flat().map(round4), true)
+  return true
+}
+
+/**
+ * 拖引线的一段或一个顶点（用户 2026-11-19：「拖动某一段，当成自由线段一样拖」）。
+ *
+ * 拖一段 = 那一段两个端点同走一个位移，相邻的段跟着伸缩、整条线不断开；拖一个顶点 = 只动它。
+ * shift 锁水平 / 垂直（按起手以来哪个方向走得多）——直角引线拖竖段左右挪、横段上下挪，
+ * 相邻段仍然横平竖直。形状变了，平移 SVG 会骗人：预览是覆盖层的虚线折线（linePreview），
+ * 松手写 points_frac（全部顶点）。拖回原处不写（GEO-07）。
+ */
+export function startLineEdit(
+  e: ReactPointerEvent,
+  panel: PanelObject,
+  element: ManifestElement,
+  layout: { width: number; height: number },
+  pick: { kind: 'segment' | 'vertex'; index: number },
+) {
+  const pts = linePointsOf(panel, element)
+  if (!pts) return
+  const moving =
+    pick.kind === 'segment' ? [pick.index, pick.index + 1] : [pick.index]
+  if (moving.some((i) => i < 0 || i >= pts.length)) return
+  e.stopPropagation()
+
+  interaction().begin('element')
+  beginElementPreview(panel)
+  const toContent = contentDelta(panel, layout)
+  const W = layout.width
+  const H = layout.height
+
+  const compute = (dfx: number, dfy: number, shift: boolean): [number, number][] => {
+    let ox = dfx
+    let oy = dfy
+    if (shift) {
+      if (Math.abs(dfx * W) >= Math.abs(dfy * H)) oy = 0
+      else ox = 0
+    }
+    return pts.map((p, i) => (moving.includes(i) ? [p[0] + ox, p[1] + oy] : [p[0], p[1]]))
+  }
+
+  let last: [number, number][] | null = null
+  trackPointer(e, {
+    onMove: (ev, dxPx, dyPx) => {
+      const [dfx, dfy] = toContent(dxPx, dyPx)
+      last = compute(dfx, dfy, ev.shiftKey)
+      interaction().setLinePreview({ gid: element.gid, pts: last })
+    },
+    onEnd: (moved, _ev, end) => {
+      interaction().end()
+      if (!moved || !last || end.cancelled || sameAfterRound4(last.flat(), pts.flat())) {
+        cancelElementPreview()
+        return
+      }
+      setOverride(panel.id, element.gid, 'points_frac', last.flat().map(round4), true)
+      commitElementPreview(panel.id)
+    },
+  })
 }
 
 /** 图内独立箭头（FancyArrowPatch）的整体平移：两个端点同走一个位移，写 endpoints_frac */

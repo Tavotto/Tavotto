@@ -29,9 +29,12 @@ TICKLABEL_GID = re.compile(r"^axes_(\d+)\.([xyz])ticklabels_(\d+)$")
 
 
 class EditState(Protocol):
-    """`_set_ticklabel_text` 对 `overrides.FigState` 的全部要求——只这两样，族模块不 import 它。"""
+    """`_set_ticklabel_text` / `_set_ticks_visible` 对 `overrides.FigState` 的全部要求，族模块不 import 它。"""
 
     applied: dict[tuple, object]
+    #: 刻度文字显隐的 setter 还要读这两样：自己的 gid（`index` 按身份反查）与那条 prop 的脚本原样
+    originals: dict[tuple, object]
+    index: dict[str, object]
 
     def resolve(self, gid: str): ...
 
@@ -398,6 +401,114 @@ def _mk_tick_side(which: str, side: str, line: int):
             a.tick_params(axis=which, which="both", **{side: bool(v)})
 
     return get, put
+
+
+#: 刻度**文字**落在哪一侧的 tick_params 键（line 1 = 下 / 左，line 2 = 上 / 右）
+_LABEL_SIDE_KW = {
+    ("x", 1): "labelbottom",
+    ("x", 2): "labeltop",
+    ("y", 1): "labelleft",
+    ("y", 2): "labelright",
+}
+
+
+class LabelSides(tuple):
+    """刻度组 `visible` 的「脚本原样」：`((主1, 主2), (次1, 次2), (主逐条, 次逐条))`——
+    前两项是每侧文字开没开（轴级），第三项是每条刻度 `(label1, label2)` 的显隐。
+
+    独立类型而不是裸元组：setter 双形态（bool 是界面的开关，`LabelSides` 是还原），
+    裸元组和 `_mk_tick_side` 那种 (主, 次) 二元组长得一样，判形状会认错。
+    """
+
+    __slots__ = ()
+
+
+def _tick_label_state(axis, which: str, line: int, minor: bool) -> bool:
+    """一档刻度在某一侧**文字**的开关（轴级）：轴的 `_major/_minor_tick_kw`（`label1On`）→
+    这档有任何一条刻度的文字开着 → rcParams。不看「第一条」：脚本单独藏了边上那条
+    （`get_major_ticks()[0].label1.set_visible(False)` 防重叠）不等于整侧关了。
+    单条刻度的显隐另记在 `LabelSides` 第三项里，撤销时逐条写回。"""
+    kw = axis._minor_tick_kw if minor else axis._major_tick_kw  # noqa: SLF001
+    v = kw.get(f"label{line}On")
+    if v is not None:
+        return bool(v)
+    ticks = axis.get_minor_ticks() if minor else axis.get_major_ticks()
+    if ticks:
+        return any(getattr(t, f"label{line}").get_visible() for t in ticks)
+    try:
+        return bool(mpl.rcParams[f"{which}tick.{_LABEL_SIDE_KW[(which, line)]}"])
+    except KeyError:
+        return line == 1
+
+
+def _per_tick_labels(axis, minor: bool) -> tuple:
+    ticks = axis.get_minor_ticks() if minor else axis.get_major_ticks()
+    return tuple((t.label1.get_visible(), t.label2.get_visible()) for t in ticks)
+
+
+def _get_ticks_visible(ts: "TickSet"):
+    """原样按侧记（`LabelSides`）。色条、twinx 的文字在**右边**，只读「画着的第一条」
+    再按 bool 写回 `labelleft` 的话，隐藏是空操作、撤销反倒把左边那排打开。
+    3D 的 z 轴没有按侧的文字开关，保持旧口径（bool）。"""
+    axis = getattr(ts.ax, f"{ts.which}axis", None)
+    if ts.which not in ("x", "y") or axis is None:
+        return bool(ts._first(lambda t: t.get_visible(), True))  # noqa: SLF001
+    sides = [
+        tuple(_tick_label_state(axis, ts.which, line, minor) for line in (1, 2))
+        for minor in (False, True)
+    ]
+    per_tick = tuple(_per_tick_labels(axis, minor) for minor in (False, True))
+    return LabelSides((*sides, per_tick))
+
+
+def _put_label_sides(ts: "TickSet", sides) -> None:
+    (maj1, maj2), (min1, min2) = sides[0], sides[1]
+    k1, k2 = _LABEL_SIDE_KW[(ts.which, 1)], _LABEL_SIDE_KW[(ts.which, 2)]
+    ts.tick_params(which="major", **{k1: bool(maj1), k2: bool(maj2)})
+    ts.tick_params(which="minor", **{k1: bool(min1), k2: bool(min2)})
+
+
+def _restore_per_tick_labels(ts: "TickSet", per_tick) -> None:
+    """撤销：tick_params 把整档刷成一样之后，逐条写回脚本单独设过的显隐（按位置对齐；
+    之后新长出来的刻度照 matplotlib 的规矩从第一条抄，与全量重放同一条路）。"""
+    axis = getattr(ts.ax, f"{ts.which}axis")
+    for minor, vis in zip((False, True), per_tick):
+        ticks = axis.get_minor_ticks() if minor else axis.get_major_ticks()
+        for t, (l1, l2) in zip(ticks, vis):
+            t.label1.set_visible(bool(l1))
+            t.label2.set_visible(bool(l2))
+
+
+def _set_ticks_visible(ts: "TickSet", v, state: EditState | None = None) -> None:
+    """bool：False 关掉**两侧**文字；True 回到脚本原样那几侧（原样主刻度一侧都没开——脚本自己
+    藏了——才落到下 / 左）。原样取 `state.originals`：首次应用前 apply 已经用 getter 采好，热会话与
+    全量重放读到的是同一份，`[False] → [True]` 才与只见过 `[True]` 的重放一致。
+    `LabelSides` 是撤销那条路：逐侧逐档写回。"""
+    if ts.which not in ("x", "y"):
+        ts.tick_params(labelleft=bool(v))
+        return
+    if isinstance(v, LabelSides):
+        _put_label_sides(ts, v)
+        if len(v) > 2:
+            _restore_per_tick_labels(ts, v[2])
+        return
+    if not v:
+        _put_label_sides(ts, ((False, False), (False, False)))
+        return
+    orig = None
+    if state is not None:
+        gid = next((g for g, a in state.index.items() if a is ts), None)
+        orig = state.originals.get((gid, "visible")) if gid is not None else None
+    if not isinstance(orig, LabelSides):
+        orig = _get_ticks_visible(ts)
+    if not any(orig[0]):
+        # 看**主刻度**：脚本 `tick_params(labelbottom=False)` 默认只动主刻度，次刻度那档还是
+        # rcParams 的开——按两档一起判会认成「有原样」，结果还是显示不出来
+        orig = ((True, False), (True, False))
+    _put_label_sides(ts, orig)
+
+
+_set_ticks_visible._needs_state = True  # noqa: SLF001
 
 
 def _set_tick_width(ts: "TickSet", v) -> None:
@@ -807,12 +918,8 @@ HANDLERS_TEXT: dict[tuple[str, str], tuple] = {
         lambda a: float(a._first(lambda t: t.get_rotation(), 0.0)),
         lambda a, v: a.tick_params(labelrotation=float(v)),
     ),
-    ("ticks", "visible"): (
-        lambda a: bool(a._first(lambda t: t.get_visible(), True)),
-        lambda a, v: a.tick_params(
-            **({"labelbottom": bool(v)} if a.which == "x" else {"labelleft": bool(v)})
-        ),
-    ),
+    # 按侧：色条 / twinx 的文字在右边，见 `_get_ticks_visible`
+    ("ticks", "visible"): (_get_ticks_visible, _set_ticks_visible),
 }
 
 #: axes 的刻度线四边开关（issue #92）——key 在 "axes" 族名下，机制在这里。

@@ -31,8 +31,8 @@ export interface OpenFigureResult {
   manifest: Manifest
   svg: string | null
   /**
-   * 这份 manifest / svg 对应的那组 patches（全量列表）。open 的结果里没有它
-   * （刚打开 = 空）；`tavotto_session_state` 一定带，画布据此种账本。
+   * 这份 manifest / svg 对应的那组 patches（全量列表）。open 的结果里通常没有它
+   * （刚打开 = 空），但带回草稿时（`restored_draft`）有；`tavotto_session_state` 一定带，画布据此种账本。
    */
   patches?: PanelOverride[]
   /** 这一版的预览表示法（ADR 0022）；老 server 不返回它。 */

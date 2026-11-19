@@ -529,6 +529,10 @@ class PdfWriter:
                 "encoding": "dct",
                 "smask": False,
             }
+            if jpeg["orientation"] != 1:
+                # 字节没动、像素还是存储方向：`_image` 按它在单位正方形里补一个摆正矩阵（解码路回来的已经摆正）；
+                # 没有方向标记就不出这个键（facts 形状与以前一字不差）
+                fact["orientation"] = jpeg["orientation"]
             hit = (self.pdf.make_indirect(obj), fact)
             self._image_objs[node.resource] = hit
             return hit
@@ -593,6 +597,13 @@ class PdfWriter:
         if node.crop not in (None, (0, 0, 1, 1)):
             cx, cy, cw, ch = pl.clip
             parts.append(f"{_num(cx)} {_num(cy)} {_num(cw)} {_num(ch)} re W n")
+        # 直通的 JPEG 带方向标记：单位正方形 → 单位正方形的摆正矩阵排在裁剪之后（裁剪框是按摆正后的图算的）、
+        # `Do` 之前，字节不重编码（`rasterio.ORIENTATION_MATRIX`）
+        orientation = int(fact.get("orientation", 1))
+        if orientation != 1:
+            parts.append(
+                " ".join(_num(v) for v in rasterio.ORIENTATION_MATRIX[orientation]) + " cm"
+            )
         parts += [f"/{name} Do", "Q"]
         rec.ops.append(" ".join(parts))
         self.facts.images.append(

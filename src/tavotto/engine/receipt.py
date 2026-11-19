@@ -149,6 +149,21 @@ def project_import_skips(raw, *, include_private: bool = False) -> list[dict]:
     return out
 
 
+_GUI_BACKEND_NAME = re.compile(r"[a-z0-9]{1,16}\Z")
+
+
+def project_gui_backends(raw) -> list[str]:
+    """worker 自报的 `gui_backends_neutralized`（ADR 0195：被中和的 GUI 后端名）→ 投影。
+    自报是不可信输入：只收短小写字母数字名（登记表里的后端名都是这个形状）、去重、最多 8 条；其余丢弃，不抛。"""
+    out: list[str] = []
+    if not isinstance(raw, list):
+        return out
+    for name in raw[:32]:
+        if isinstance(name, str) and _GUI_BACKEND_NAME.match(name) and name not in out:
+            out.append(name)
+    return out[:8]
+
+
 def project_fidelity(raw) -> dict | None:
     """worker 自报的 `fidelity` → 公开投影。**这是它进入回执公开面的唯一一处。**
 
@@ -456,6 +471,11 @@ class ExecutionReceipt:
                 "import_skips": project_import_skips(
                     rt["import_skips"], include_private=include_private
                 ),
+            }
+        if rt is not None and "gui_backends_neutralized" in rt:
+            rt = {
+                **rt,
+                "gui_backends_neutralized": project_gui_backends(rt["gui_backends_neutralized"]),
             }
         if rt is not None and not include_private:
             rt = {

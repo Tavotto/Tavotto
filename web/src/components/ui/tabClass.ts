@@ -26,6 +26,6 @@ export const tabClass = (active: boolean) =>
  */
 export const segmentedTabClass = (active: boolean) =>
   cn(
-    'relative block min-w-0 truncate rounded-full px-0.5 text-center text-sm outline-none transition-colors duration-fast focus-visible:focus-ring',
+    'relative block min-w-0 truncate rounded-sm px-0.5 text-center text-sm outline-none transition-colors duration-fast focus-visible:focus-ring',
     active ? 'font-semibold text-ink' : 'text-ink-2 hover:text-ink',
   )

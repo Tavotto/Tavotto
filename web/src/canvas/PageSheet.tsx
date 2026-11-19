@@ -24,11 +24,11 @@ interface PageSheetProps {
 }
 
 /**
- * 白色纸面：画布的视觉中心。**没有投影**——持久表面不用投影（宪法第一节）。
+ * 白色纸面：画布的视觉中心。带极轻的漫射纸影（`shadow-page`），让纯白纸面在暖亚麻画布上自然浮起。
  *
- * **也不画轮廓**（2026-10-07 设计审计 §10.1）：页面那一圈 1px 由 `PageOutsideMask` 在屏幕空间画（压在内容之上、
- * 任何缩放下都是 1px）。此前这里在世界层里再画一圈 outline：它跟着缩放变粗（400% 时 4px），而且与
- * 遮罩那一圈画了两遍。纸本身是真白（页面内容，不是界面色）；网格线是 paper-ink 的半透明 color-mix（压在不透明的纸 / 棋盘格上）；
+ * **不画轮廓**（2026-10-07 设计审计 §10.1）：页面那一圈 1px 由 `PageOutsideMask` 在屏幕空间画（压在内容之上、
+ * 任何缩放下都是 1px），纸影也不含 1px 实环，因此高倍率缩放下边缘绝不变粗。纸本身是真白（页面内容，不是界面色）；
+ * 网格线是 paper-ink 的半透明 color-mix（压在不透明的纸 / 棋盘格上）；
  * 透明棋盘格本身是不透明的 `--color-paper-checker`——页面这一层是最底下的纸，不能透出画布。
  */
 export function PageSheet({
@@ -54,7 +54,7 @@ export function PageSheet({
       // 快速编辑与画布排版的可见差别——留一个测试落点，与 CanvasStage 的
       // `data-canvas-stage` 同一条理由
       data-page-sheet=""
-      className="absolute left-0 top-0"
+      className="absolute left-0 top-0 shadow-page"
       style={{
         width: wPx,
         height: hPx,

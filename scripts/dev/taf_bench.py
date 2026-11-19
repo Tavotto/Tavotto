@@ -392,7 +392,7 @@ def run(
             connection.update(vendor="custom", wire=builtin_wire, base_url=base_url)
         # 先建连接、后覆盖设置：连接写进隔离配置目录；overlay 之后的读照常看得到它
         try:
-            conn_id, _fetch_error = ai_connections.add_connection(connection)
+            conn_id, _fetch_error, _probe = ai_connections.add_connection(connection)
         except ai_connections.ConnectionRefused as exc:  # 只报原因码，绝不带密钥
             raise RuntimeError(f"内置臂的连接建不起来：{exc.code} {exc.params}") from None
         if prefer_builtin:

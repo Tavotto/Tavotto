@@ -79,7 +79,8 @@ PR 1 不提供任何能写出 `textFormat: 'latex'` 的界面，用户看不到�
 - **一份结果两处读**：导出（`_export_produce_rendercore`、单图写回 `annotate_asset`）先把这批对象的公式排好，作为
   `math=` 交给 `plan.compile_page` → `typography.layout_text`——**RenderCore 仍是纯标准库、不起进程**；画布预览经
   `/api/mathtext`（会话认证内）取同一份，`MathFormula` 画 SVG。所以画布与 PDF 逐点相同。
-- **排版规则**：一个公式在换行单元里占一个占位字符（补充专用区 B），不可拆；只占宽度、不撑行距（画布上零高的
+- **排版规则**：一个公式在换行单元里占一个占位字符（补充专用区 B），不可拆；只占宽度、不撑行距（**2026-11-16 修订：撑开所在行**，行盒 = 普通字的行盒 ∪ 公式盒，导出
+  `typography.line_box`、画布 `MathFormula` 的 `lineBox`；竖排同理撑开所在的那一列，`vertical.column_box` ↔ `verticalFormula.ts`；见 ADR 0073「修订：文字框里上下居中」；以下为原文）（画布上零高的
   inline-block，导出里只算宽度）；公式后面的字从公式右边落笔（见下文「PDF 文本层」）。公式用文字颜色填充。
 - **排不出来**：两侧都按源码原样画（`$…$`，不吞字）；导出报 `math_unrenderable`（警告里带源码与原因），画布上带红色波浪线、
   悬停看原因。**也进问题面板**：preflight 两侧仍是纯求值器、不起排版进程，事实经规范化 spec 带进来——

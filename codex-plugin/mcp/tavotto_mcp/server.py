@@ -23,7 +23,7 @@ import time
 import traceback
 from collections import deque
 
-from . import bridge, guide, updatenotice, usage, widget
+from . import bridge, guide, nextstep, updatenotice, usage, widget
 from .rpc import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
@@ -96,7 +96,9 @@ ERROR_ELISION_ORDER = (
     "error",
 )
 #: 失败载荷里永远不截的键：结局、稳定码与待办索引都是定长小字段。
-ERROR_PROTECTED_KEYS = frozenset({"ok", "code", "requirements", "capability", "input", "elided"})
+ERROR_PROTECTED_KEYS = frozenset(
+    {"ok", "code", "requirements", "capability", "input", "elided", "next"}
+)
 #: 超预算时省略的顺序：先省对模型没用的（SVG 它读不了），再省画布反正要另取的
 #: （manifest / 位图），最后才是预检的逐条清单（计数与阻断布尔永远留着）。
 #: 每省一步量一次，够了就停——能留给模型的尽量留。
@@ -133,6 +135,7 @@ HANDLE_ONLY_KEYS = frozenset(
         "render_revision",
         "worker_generation",
         "restored",
+        "script_rerun",
         "applied",
         "canonical_patch_count",
         "contract_released",
@@ -182,9 +185,9 @@ def _tools() -> list[dict]:
             "title": "Tavotto 健康检查",
             "description": (
                 "确认 Tavotto 图形能力就绪：引擎版本、内嵌画布资源在不在、"
-                "允许的项目根。**准备出图/改图前先调它**——能力缺口在这里"
-                "暴露，比画完图才发现便宜得多。可选 probe_worker=true 顺带"
-                "探测渲染解释器（要花几秒）。"
+                "允许的项目根。**不必开工前先调**——直接 tavotto_open_figure"
+                "（第一次成功的回包带 engine 摘要）；只有 Tavotto 工具缺失、或调用报引擎错误时"
+                "才用它定位缺口。可选 probe_worker=true 顺带探测渲染解释器（要花几秒）。"
             ),
             "inputSchema": {
                 "type": "object",
@@ -203,7 +206,9 @@ def _tools() -> list[dict]:
             "description": (
                 "打开一个 Tavotto 图库里的 matplotlib figure，起一个引擎会话并渲染一次。"
                 "返回 session_id、manifest（可编辑元素清单）、预览 SVG、canonical patch "
-                "hash 与出版规范。之后用 tavotto_apply_overrides 改图、tavotto_preflight "
+                "hash 与出版规范；本进程第一次成功的回包还带 engine（版本、有更新时的 update）。"
+                "直接调它开始，不必先 tavotto_health / tavotto_guide；投稿期刊直接写 journal_id=期刊名即可。"
+                "之后用 tavotto_apply_overrides 改图、tavotto_preflight "
                 "体检、tavotto_export 出图。"
                 "路径给产物（.pdf/.png）、脚本（.py）或图库目录都行。"
                 "**默认不回预检明细**，只回一行计数——只是打开看看的时候，"
@@ -213,6 +218,13 @@ def _tools() -> list[dict]:
                 "一次全开，拿回 N 个各自可编辑的会话：某一张失败**不影响其余**，"
                 "失败那张带自己的 code 与 stem 名；结局看 status"
                 "（done / partial / failed 三档）。"
+                "脚本存完图又读回那个文件时，安全模式跑不通，Tavotto 会自动改用真实 Python "
+                '再跑一次，回包带 execution="native"：此后脚本写的文件真的落盘，不受授权目录限制。'
+                "改过没导出的修改关会话（或被挤掉）时会存成草稿：再打开同一张图（同项目、同 stem、"
+                "同运行配置）会自动带回，回包 restored_draft 写明带回几条、哪些因脚本改动用不了；"
+                "不要草稿就带 discard_draft=true 打开（草稿同时删除）。导出成功即清草稿。"
+                "改完 .py 不用 close 再 open：再调 open / preflight / export 等任一工具，"
+                "会按新脚本重跑同一个会话并保留修改（回包 script_rerun，用不了的写进 dropped）。"
                 "若宿主支持 MCP elicitation 且没有传工作区根，第一次请传绝对路径；"
                 "Tavotto 会让宿主显示精确目录并请用户确认，本次连接内有效。"
             ),
@@ -245,6 +257,13 @@ def _tools() -> list[dict]:
                         "description": (
                             "从注册表自动发现可参数化且产物在磁盘上的图，全部打开。"
                             "与 stem / stems 互斥；不猜没登记的产物，也不跑脚本"
+                        ),
+                    },
+                    "discard_draft": {
+                        "type": "boolean",
+                        "description": (
+                            "不带回这张图上次没导出的草稿，并把草稿删掉，从脚本原样打开。"
+                            "不传 = 有草稿就自动带回（restored_draft）；批量打开同样认。"
                         ),
                     },
                     "profile_id": {
@@ -344,6 +363,9 @@ def _tools() -> list[dict]:
                 "**patches 是全量列表语义**：列表里没有的 (gid, prop) 会自动恢复成脚本"
                 "原始值，所以每次都要发完整的一份，不要发增量。"
                 "返回新的 manifest、SVG、patch hash、warnings 与被拒条目。"
+                "图例位置 / 字号 / 线宽 / 刻度这类用它改；数据、坐标范围、加删曲线 / 子图、"
+                "colorbar 方向改不了，必须回代码改；改完 .py 不用关会话，下一次调用会按新脚本重跑同一个会话并保留修改"
+                "（回包 script_rerun），可顺手调 tavotto_refresh_project 刷新项目。"
                 "模型调用请带 summary=true：只返回有界变更摘要，完整状态与有界的最近诊断"
                 "按需用 tavotto_session_state 读取；省略或 false 保留旧客户端的完整响应。"
                 "不会改用户的 Python 源码。"
@@ -487,7 +509,7 @@ def _tools() -> list[dict]:
             "title": "导出成图（先预检）",
             "description": (
                 "导出当前会话的图。**先跑一遍预检**：有 error 且没有 explicit_confirm 时"
-                "一张图都不出。PDF/SVG/EPS 是真矢量（EPS 不支持透明度），"
+                "一张图都不出。**改完图先导出再关会话**（没导出就关会存成草稿，重开自动带回）。PDF/SVG/EPS 是真矢量（EPS 不支持透明度），"
                 "PNG/TIFF 按给定 dpi 栅格化（TIFF 无损压缩）。"
                 "同时写一份 proof report（规范身份 + 全部检查结果 + 是否强制导出）。"
                 "不会用浏览器打开文件，也不会改用户的源码。"
@@ -548,6 +570,7 @@ def _tools() -> list[dict]:
                 "或传一个已授权工作区内的 project_path；两者都不传时用唯一有会话的项目。"
                 "delivered=app 表示运行中的 Tavotto 已同步；local 表示 Tavotto 没开着，"
                 "刷新已在本地完成，下次打开项目时自动生效。"
+                "回包 stale_sessions 是脚本已改的活会话：它们下次调用会按新脚本自动重跑，不用关掉重开。"
             ),
             "inputSchema": {
                 "type": "object",
@@ -592,7 +615,8 @@ def _tools() -> list[dict]:
             "title": "关闭会话",
             "description": (
                 "释放引擎会话。用户的项目数据一个字节都不动。"
-                "会话里改过却没导出的修改关掉就没了：要文件先 tavotto_export 再关。"
+                "会话里改过却没导出的修改会存成草稿，重新打开同一张图会自动带回（回包 draft_saved）；"
+                "要文件仍然要 tavotto_export。"
             ),
             "inputSchema": {
                 "type": "object",
@@ -605,8 +629,8 @@ def _tools() -> list[dict]:
             "name": "tavotto_guide",
             "title": "使用说明",
             "description": (
-                "只读：取回 Tavotto 的使用说明（技能全文）。宿主没有加载 Tavotto 技能时，开工前先调一次；"
-                "section 可选，取 references 里某一节的名字（不给就是主说明，返回里列出可选节）。"
+                "只读：取回 Tavotto 的使用说明（技能全文）。**不必开工前先调**；遇到工具说明里没写的情形"
+                "（工具缺失 / 安装 / 其它宿主 / 能改什么）再读。section 可选，取 references 里某一节的名字（不给就是主说明，返回里列出可选节）。"
             ),
             "inputSchema": {
                 "type": "object",
@@ -640,7 +664,7 @@ def _tools() -> list[dict]:
 
 
 #: 只在期刊库总开关打开时才出现在 tools/list 的工具（处理器在 HANDLERS，关着时调用回 `journal_catalog_disabled`）
-JOURNAL_CATALOG_TOOLS = ("tavotto_list_journals",)
+JOURNAL_CATALOG_TOOLS = ("tavotto_list_journals", "tavotto_get_journal_facts")
 #: 带手写 `journal` 覆盖、因而也认 `journal_id` 的工具
 JOURNAL_ID_TOOLS = (
     "tavotto_open_figure",
@@ -657,18 +681,21 @@ def _add_journal_catalog_tools(tools: list[dict], by_name: dict) -> None:
         by_name[name]["inputSchema"]["properties"]["journal_id"] = {
             "type": "string",
             "description": (
-                "内置期刊库的期刊 id（先 tavotto_list_journals 查）：等于中性底规范 + 该期刊的覆盖。"
-                "不能与 profile_id / journal 同时给。"
+                "内置期刊库的期刊：直接写 id、全名或常见缩写即可（如 Nature、Nat Commun；不分大小写与标点），"
+                "唯一命中就用，回包写出解析到的 journal_resolved.id；多个命中回 journal_ambiguous + 候选。"
+                "等于中性底规范 + 该期刊的覆盖，不能与 profile_id / journal 同时给。"
             ),
         }
     if bridge.fix_to_journal_available():
         tools.append(_fix_to_journal_tool())
+        tools.append(_make_journal_ready_tool(by_name["tavotto_open_figure"]))
     tools.append(
         {
             "name": "tavotto_list_journals",
             "title": "内置期刊库",
             "description": (
                 "只读：列出内置期刊标准库里的期刊（id / 名称 / 出版社 / 别名）与库版本 catalog_rev。"
+                "只是想浏览或确认候选时用；开工不必先查，journal_id 直接写期刊名。"
                 "query 按名称、出版社、别名模糊过滤。库里没有的期刊不要凭记忆编规范，如实告诉用户。"
             ),
             "inputSchema": {
@@ -683,6 +710,66 @@ def _add_journal_catalog_tools(tools: list[dict], by_name: dict) -> None:
             },
         }
     )
+
+    if bridge.journal_facts_enabled():
+        tools.append(
+            {
+                "name": "tavotto_get_journal_facts",
+                "title": "读取期刊来源事实",
+                "description": (
+                    "只读 v2：按 query 搜索期刊，或按 journal_id 分页读取已收录的来源事实。"
+                    "收录条数不代表全刊规范已核完；事实带条件、阶段和要求强度，不能忽略条件当成通用预检；不可用时不冒充 v1 数据。"
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "搜索刊名、ISSN、别名或出版社"},
+                        "journal_id": {
+                            "type": "string",
+                            "description": "读取指定期刊的事实，与 query 二选一",
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "大于 0 时必须同时传 expected_catalog_rev。",
+                        },
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                        "expected_catalog_rev": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9999999999,
+                            "description": "后续页必须传第一页 catalog_rev；目录变化时须重读。",
+                        },
+                        "inspection": {
+                            "type": "object",
+                            "description": "只对本次读取声明一个对象；不写项目，也不证明语义审校。",
+                            "properties": {
+                                "object_label": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                },
+                                "figure_kind": {
+                                    "enum": ["unknown", "line_art", "halftone", "combination"]
+                                },
+                                "stage": {
+                                    "enum": [
+                                        "unknown",
+                                        "submission",
+                                        "revision",
+                                        "accepted",
+                                        "production",
+                                    ]
+                                },
+                            },
+                            "required": ["object_label"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+            }
+        )
 
 
 def _fix_to_journal_tool() -> dict:
@@ -761,7 +848,95 @@ def _fix_to_journal_tool() -> dict:
     }
 
 
+#: `tavotto_make_journal_ready` 原样转给 open 的参数（schema 也从 open 那份取，不抄第二份）
+MJR_OPEN_KEYS = (
+    "project_path",
+    "script_path",
+    "stem",
+    "workdir",
+    "prepare_dependencies",
+    "prepare_impact_digest",
+    "argv",
+    "run_config",
+    "adopt_environment",
+    "expected_environment_generation",
+    "discard_draft",
+)
+
+
+def _make_journal_ready_tool(open_tool: dict) -> dict:
+    """`tavotto_make_journal_ready`（ADR 0192 第 1 条）：与 tavotto_fix_to_journal 同一处置，
+    只在期刊库总开关开着、且引擎带修复事务时出现。"""
+    open_props = open_tool["inputSchema"]["properties"]
+    props = {k: open_props[k] for k in MJR_OPEN_KEYS if k in open_props}
+    props.update(
+        {
+            "journal_id": {
+                "type": "string",
+                "description": "内置期刊库的期刊 id（先 tavotto_list_journals 查）；与 profile_id / journal 三选一",
+            },
+            "profile_id": {
+                "type": "string",
+                "description": "出版规范 id；与 journal_id / journal 三选一",
+            },
+            "journal": {
+                "type": "object",
+                "description": "期刊自定义覆盖；与 journal_id / profile_id 三选一",
+            },
+            "column": {
+                "type": "string",
+                "description": "目标栏位 id（single / double / 期刊自有栏位 id）；栏位不唯一又没给时会停下来问",
+            },
+            "formats": {
+                "type": "array",
+                "items": {"type": "string", "enum": list(bridge.EXPORT_FORMATS)},
+                "description": "导出格式；不给 = 与 tavotto_export 缺省一致（取规范的默认格式）",
+            },
+            "dpi": {"type": "integer", "description": "位图格式的 dpi，默认 600"},
+            "out_dir": {
+                "type": "string",
+                "description": "输出目录；缺省与 tavotto_export 一致（<项目>/tavottofile/export/）",
+            },
+            "previews": {
+                "type": "boolean",
+                "description": "默认 true：附改前 / 改后预览图；false 不渲染、不附图",
+            },
+            "dry_run": {
+                "type": "boolean",
+                "description": "默认 false；true 只看会改什么：跑完回到修改前、不出文件",
+            },
+        }
+    )
+    return {
+        "name": "tavotto_make_journal_ready",
+        "title": "一步交付期刊合规的图",
+        "description": (
+            "用户要把一张图**交付成某期刊合规的文件**时优先用它：一次调用走完 打开 → 改到合规 → 预检 → 导出，"
+            "不必自己串 open / fix_to_journal / export。三步各自就是那三个工具的同一条路（含草稿带回、"
+            "整体提交或回到修改前、导出前预检与产物核验），不会为了「一步」放宽任何一道门。"
+            "给 project_path 或 script_path + stem + 期刊（journal_id 等三选一）。"
+            "回包 stage 说明走到了哪一步（open / fix / preflight / export / done）：任何一步没过就**停在那一步、不导出**，"
+            "回包带 conflicts（谁和谁冲突）与 next（下一步：回脚本改 / 问用户 / 换参数）；预检还有阻断项或无法核验项时"
+            "不会自己强制导出，把决定交给用户（用户明确同意后才用 tavotto_export 带 explicit_confirm=true）。"
+            "会话不关（成功也不关）：回包的 session_id 可以接着用 tavotto_apply_overrides / tavotto_preflight 等细粒度工具微调。"
+            "改动不会丢：没导出就关会话会存成草稿，重新打开自动带回。只改会话与导出目录，不改用户的 .py。"
+            "栏位不唯一又没给 column 时回 column_choice_required、什么都没改——请用户选栏位再带 column 重调。"
+            "dry_run=true 完整跑到改完为止并给出改动摘要，最后回到修改前、不出文件。"
+        ),
+        "inputSchema": {"type": "object", "properties": props, "additionalProperties": False},
+    }
+
+
 # ------------------------------- 工具实现 -----------------------------------
+def _rerun_note(sid: str, rerun: dict) -> str:
+    """改过脚本后同一会话重跑的一句话（ADR 0192 修订 2026-11-18）：保留几条修改、几条因脚本改动用不了。"""
+    n = rerun.get("dropped_count", len(rerun.get("dropped") or []))
+    tail = f"，另有 {n} 条用不了已跳过" if n else ""
+    return (
+        f"脚本改过，已按新脚本重跑同一个会话 {sid}（保留 {rerun.get('patches', 0)} 条修改{tail}）"
+    )
+
+
 def _text(*lines: str) -> list[dict]:
     return [{"type": "text", "text": "\n".join(ln for ln in lines if ln)}]
 
@@ -828,6 +1003,7 @@ def _call_open_batch(target: str, args: dict, plan: dict, *, workdir: str | None
         journal=args.get("journal"),
         journal_id=args.get("journal_id"),
         workdir=workdir,
+        discard_draft=bool(args.get("discard_draft")),
     )
     detailed = bool(args.get("preflight"))
     total: dict = {}
@@ -876,6 +1052,13 @@ def _call_open_batch(target: str, args: dict, plan: dict, *, workdir: str | None
             f"  ✓ {entry['stem']}  会话 {entry['session_id']}  "
             f"{size[0]}×{size[1]} mm，{entry['elements']} 个可编辑元素"
         )
+        if entry.get("restored_draft"):
+            lines.append(f"    {entry['restored_draft']['note']}")
+        if entry.get("draft_restore_failed"):
+            lines.append(
+                f"    ! 上次没导出的草稿没能带回（{entry['draft_restore_failed']['code']}），"
+                "已按脚本原样打开；草稿还留着，关掉这个会话后重新打开会再试。"
+            )
     # **code 只进 `structuredContent`**：这几行是念给用户听的那一份。念一个
     # `session_budget_exhausted` 出来，用户既不知道发生了什么也不知道下一步。
     for entry in out["failed"]:
@@ -917,7 +1100,7 @@ def _safe_preflight(session_id: str) -> dict:
         return {"code": "preflight_crashed", "error": f"{type(exc).__name__}: {exc}"}
 
 
-def _call_open(args: dict) -> dict:
+def _open_figure_result(args: dict) -> dict:
     target = args.get("project_path") or args.get("script_path")
     if not target:
         raise RpcError(INVALID_PARAMS, "要给 project_path 或 script_path 其中之一")
@@ -983,6 +1166,7 @@ def _call_open(args: dict) -> dict:
         adopt_environment=adopt,
         expected_environment_generation=generation,
         prepare_impact_digest=digest,
+        discard_draft=bool(args.get("discard_draft")),
     )
     # **打开与预检分离**（issue #102）：噪声在**给 agent 读的那段文字**里——
     # 每开一张图糊一屏重复的规范建议，还挤掉了 manifest 摘要那几行真正有用的东西。
@@ -1001,7 +1185,9 @@ def _call_open(args: dict) -> dict:
     if "counts" not in out["preflight"]:
         return {
             "content": _text(
-                f"已打开 {out['stem']}（会话 {out['session_id']}）",
+                _rerun_note(out["session_id"], out["script_rerun"])
+                if out.get("script_rerun")
+                else f"已打开 {out['stem']}（会话 {out['session_id']}）",
                 _brief_manifest(out.get("manifest")),
                 f"? 出版规范预检没跑出结论（{out['preflight'].get('error') or '见 code'}）"
                 "——这**不等于通过**；会话是好的，可以改图，体检重跑 tavotto_preflight。",
@@ -1010,7 +1196,9 @@ def _call_open(args: dict) -> dict:
         }
     lines = [
         (
-            f"这张已经开着，沿用同一个会话 {out['session_id']}（没有新建会话，也就没有挤掉别的图）"
+            _rerun_note(out["session_id"], out["script_rerun"])
+            if out.get("script_rerun")
+            else f"这张已经开着，沿用同一个会话 {out['session_id']}（没有新建会话，也就没有挤掉别的图）"
             if out.get("reused")
             else f"已打开 {out['stem']}（会话 {out['session_id']}）"
         ),
@@ -1031,6 +1219,15 @@ def _call_open(args: dict) -> dict:
         # `str + dict` 炸掉。渲染好的那一份是 `report`，与 tavotto_preflight 用的
         # 是同一个——不在这里造第二份。
         lines.append(checks["report"])
+    if out.get("restored_draft"):
+        lines.append(out["restored_draft"]["note"])
+    if out.get("draft_restore_failed"):
+        lines.append(
+            f"! 上次没导出的草稿没能带回（{out['draft_restore_failed']['code']}），已按脚本原样打开；"
+            "草稿还留着，关掉这个会话后重新打开会再试。"
+        )
+    if out.get("discarded_draft"):
+        lines.append("已按要求丢掉这张图的草稿，从脚本原样打开。")
     if out.get("evicted_sessions"):
         # 静默淘汰的表现是「我的 session_id 突然不认识了，而我什么都没做」。
         lines.append(
@@ -1052,6 +1249,36 @@ def _call_open(args: dict) -> dict:
     if out.get("warnings"):
         lines.append("worker 警告: " + "; ".join(out["warnings"][:5]))
     return {"content": _text(*lines), "structuredContent": out}
+
+
+#: 本 MCP 进程是否已经在某次成功的 open 回包里带过 `engine` 摘要（ADR 0192 §4：只带一次，省体积）
+_ENGINE_REPORTED = False
+
+
+def _engine_digest() -> dict:
+    """引擎摘要：版本 +（有更新时）`update`。`tavotto_health` 与 open 首包共用这一份数据与话术。"""
+    out: dict = {"version": _version()}
+    update = updatenotice.notice(_version())
+    if update is not None:
+        out["update"] = update
+    return out
+
+
+def _call_open(args: dict) -> dict:
+    """`tavotto_open_figure`：本进程第一次成功的回包带 `engine` 摘要，之后不再带。"""
+    global _ENGINE_REPORTED
+    result = _open_figure_result(args)
+    body = result.get("structuredContent")
+    if _ENGINE_REPORTED or not isinstance(body, dict) or body.get("status") == "failed":
+        return result
+    _ENGINE_REPORTED = True
+    digest = _engine_digest()
+    body["engine"] = digest
+    content = result.get("content") or []
+    update = digest.get("update")
+    if update is not None and content and content[0].get("type") == "text":
+        content[0]["text"] += "\n" + update["message"]
+    return result
 
 
 def _call_session_state(args: dict) -> dict:
@@ -1290,6 +1517,65 @@ def _call_list_journals(args: dict) -> dict:
     }
 
 
+def _inspection_result_size(result: dict, rid: object = None) -> int:
+    """Measure actual UTF-8 JSON with the same encoder as the stdio transport."""
+    value = result if rid is None else {"jsonrpc": "2.0", "id": rid, "result": result}
+    # Stdio frames also include the terminating newline.
+    return len(json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")) + (
+        rid is not None
+    )
+
+
+def _inspection_too_large(result: dict, rid: object = None) -> bool:
+    body = result.get("structuredContent")
+    if not isinstance(body, dict) or "inspection" not in body:
+        return False
+    return _inspection_result_size(result, rid) > bridge.journal_facts_inspection_budget()
+
+
+def _inspection_size_error() -> bridge.BridgeError:
+    return bridge.BridgeError(
+        "期刊事实查看结果超出安全大小；请减小 limit 并从同一 offset 重试。"
+        "若 limit 为 1 仍超限，该条暂无法读取。",
+        code="journal_facts_page_too_large",
+    )
+
+
+def _call_journal_facts(args: dict) -> dict:
+    query = args.get("query", "")
+    journal_id = args.get("journal_id")
+    offset, limit = args.get("offset", 0), args.get("limit", 20)
+    expected_rev = args.get("expected_catalog_rev")
+    inspection = args.get("inspection")
+    if (
+        not isinstance(query, str)
+        or (journal_id is not None and (not isinstance(journal_id, str) or not journal_id))
+        or (journal_id is not None and "query" in args)
+        or type(offset) is not int
+        or type(limit) is not int
+        or (
+            expected_rev is not None
+            and (type(expected_rev) is not int or not 1 <= expected_rev <= 9999999999)
+        )
+        or (inspection is not None and journal_id is None)
+        or set(args)
+        - {"query", "journal_id", "offset", "limit", "expected_catalog_rev", "inspection"}
+    ):
+        raise RpcError(INVALID_PARAMS, "查询、期刊 ID 或分页参数不正确")
+    if offset > 0 and expected_rev is None:
+        raise RpcError(
+            INVALID_PARAMS, "读取后续页须传入第一页的 catalog_rev 作为 expected_catalog_rev"
+        )
+    if inspection is None:
+        out = bridge.journal_facts(query, journal_id, offset, limit, expected_rev)
+    else:
+        out = bridge.journal_facts(query, journal_id, offset, limit, expected_rev, inspection)
+    result = {"content": _text(json.dumps(out, ensure_ascii=False)), "structuredContent": out}
+    if inspection is not None and _inspection_too_large(result):
+        raise _inspection_size_error()
+    return result
+
+
 def _call_fix_to_journal(args: dict) -> dict:
     raw_dpi = args.get("dpi")
     out = bridge.fix_to_journal(
@@ -1310,11 +1596,299 @@ def _call_fix_to_journal(args: dict) -> dict:
     )
     # 预览图走 image 内容块、**不进 structuredContent**（ADR 0180 §四 / ADR 0069：内嵌画布事件上限）
     previews = out.pop("_previews", None) or {}
+    if not out.get("ok") and "next" not in out:
+        step = nextstep.fix_next(out, args)
+        if step:
+            out["next"] = step
     content = _text(*fix_report_lines(out))
     for label in ("before", "after"):
         if previews.get(label):
             content.append({"type": "image", "data": previews[label], "mimeType": "image/png"})
     return {"content": content, "structuredContent": out}
+
+
+#: 一步交付回包里各清单的上限（结果体积守 result-budget 细则：完整明细按需用细粒度工具取）
+MJR_REMAINING_SHOWN = 8
+MJR_SKIPPED_SHOWN = 8
+MJR_BLOCKING_SHOWN = 8
+
+
+def _mjr_fail(exc: bridge.BridgeError, stage: str, sid: str | None) -> bridge.BridgeError:
+    """把阶段与会话号写进 BridgeError 再原样抛：`call_tool` 照常转成 isError 结果并挂 `next`、守错误预算。"""
+    exc.extra.setdefault("stage", stage)
+    if sid:
+        exc.extra.setdefault("session_id", sid)
+    return exc
+
+
+def _mjr_changes(changes: list) -> list[dict]:
+    """改动摘要：按规则合并成 {rule, count}（逐条明细在 tavotto_fix_to_journal / session_state 里）。"""
+    counts: dict[str, int] = {}
+    for c in changes:
+        key = str(c.get("rule") or "other")
+        counts[key] = counts.get(key, 0) + 1
+    return [{"rule": r, "count": n} for r, n in counts.items()]
+
+
+def _mjr_remaining(items: list) -> list[dict]:
+    """还剩的问题：同一条规则的多个元素合成一行（带 count），最多 MJR_REMAINING_SHOWN 行。"""
+    grouped: dict[tuple, dict] = {}
+    for i in items:
+        fix = i.get("fix") or {}
+        key = (i.get("id"), i.get("severity"), fix.get("kind"))
+        entry = grouped.get(key)
+        if entry is None:
+            entry = grouped[key] = {"id": key[0], "severity": key[1], "fix": key[2], "count": 0}
+            if fix.get("hint"):
+                entry["hint"] = fix["hint"]
+        entry["count"] += 1
+    return list(grouped.values())[:MJR_REMAINING_SHOWN]
+
+
+def _call_make_journal_ready(args: dict) -> dict:
+    """ADR 0192 第 1 条：只编排，不新写逻辑。打开 = `_call_open`、改 = `bridge.fix_to_journal`、
+    导出 = `_call_export`——参数校验与结果整形都是那三条路自己的；这里只管顺序、停在哪步、回包长相。"""
+    if not (args.get("journal_id") or args.get("profile_id") or args.get("journal")):
+        raise RpcError(
+            INVALID_PARAMS,
+            "要给期刊：journal_id（先 tavotto_list_journals 查）、profile_id 或 journal 三选一",
+        )
+    if sum(1 for k in ("journal_id", "profile_id", "journal") if args.get(k)) > 1:
+        raise RpcError(INVALID_PARAMS, "journal_id / profile_id / journal 只能给一个")
+    for key in ("stems", "discover_stems"):
+        if args.get(key):
+            raise RpcError(
+                INVALID_PARAMS, "一步交付一次只处理一张图：用 stem，不接受 stems / discover_stems"
+            )
+    bridge.require_fix_engine()  # 在打开会话之前先过门：开关关着 / 引擎太旧不留一个开着的会话
+    journal = {k: args[k] for k in ("journal_id", "profile_id", "journal") if args.get(k)}
+    sid: str | None = None
+    stage = "open"
+    try:
+        opened = _call_open({**{k: args[k] for k in MJR_OPEN_KEYS if k in args}, **journal})
+        body = opened["structuredContent"]
+        sid = str(body["session_id"])
+        out: dict = {
+            "ok": False,
+            "stage": "open",
+            "session_id": sid,
+            "stem": body.get("stem"),
+            "dry_run": bool(args.get("dry_run")),
+        }
+        for key in (
+            "restored_draft",
+            "draft_restore_failed",
+            "discarded_draft",
+            "reused",
+            "script_rerun",
+            "update",
+        ):
+            if body.get(key):
+                out[key] = body[key]
+        if body.get("draft_restore_failed"):
+            # 草稿没带回就接着改、导出：导出成功会清掉这张图的草稿，没带回的改动就再也找不回了。
+            # 停在 open，让用户决定（之后重试，或明确 discard_draft 丢掉草稿再一步交付）
+            failed = body["draft_restore_failed"]
+            # 按脚本原样打开的那个会话**当场关掉**：留着的话，下次调用会复用它（复用不再尝试带回草稿），
+            # 一路改到导出、把没带回的草稿清掉。它没有改动，关掉只删它自己的记录，草稿不受影响
+            bridge.close_session(sid)
+            out["session_closed"] = True
+            out["next"] = nextstep.ask_user(
+                f"这张图上次没导出的草稿没能带回（{failed.get('code')}），所以没有接着改和导出，"
+                "草稿还留着。要怎么处理？",
+                [
+                    "先保留草稿：回脚本看看为什么带不回，之后再调一次 tavotto_make_journal_ready",
+                    "丢掉草稿、从脚本原样开始（再调一次 tavotto_make_journal_ready，带 discard_draft=true）",
+                ],
+            )
+            return _mjr_result(
+                out,
+                _text(
+                    f"上次没导出的草稿没能带回（{failed.get('code')}），为了不让导出把它清掉，"
+                    "这次没有改、也没有导出；草稿还留着。",
+                    "按脚本原样打开的会话已经关掉，下次调用会重新尝试带回草稿。",
+                ),
+                {},
+            )
+
+        stage = "fix"
+        raw_dpi = args.get("dpi")
+        fix = bridge.fix_to_journal(
+            sid,
+            **journal,
+            column=args.get("column"),
+            dpi=600 if raw_dpi is None else raw_dpi,
+            previews=args.get("previews") is not False,
+            dry_run=bool(args.get("dry_run")),
+        )
+    except bridge.BridgeError as exc:
+        raise _mjr_fail(exc, stage, sid) from exc
+    previews = fix.pop("_previews", None) or {}
+    out["stage"] = "fix"
+    out["size"] = fix.get("size")
+    if fix.get("journal"):
+        out["journal"] = fix["journal"]
+    out["changes"] = _mjr_changes(fix.get("changes") or [])
+    out["changes_total"] = len(fix.get("changes") or [])
+    issues = fix.get("issues") or {}
+    out["fixed"] = issues.get("fixed", 0)
+    out["remaining_total"] = issues.get("remaining_total", len(issues.get("remaining") or []))
+    out["remaining"] = _mjr_remaining(issues.get("remaining") or [])
+    if fix.get("skipped"):
+        out["skipped"] = fix["skipped"][:MJR_SKIPPED_SHOWN]
+    for key in ("rolled_back", "worker_retired", "contract_released"):
+        if fix.get(key):
+            out[key] = fix[key]
+    out["fix_exit"] = fix.get("exit")
+    content = None
+    if not fix.get("ok"):
+        for key in ("conflicts", "columns"):
+            if fix.get(key):
+                out[key] = fix[key]
+        if issues.get("introduced"):
+            out["introduced"] = issues["introduced"][:MJR_BLOCKING_SHOWN]
+        if fix.get("stage"):
+            out["failed_step"] = fix["stage"]
+        step = nextstep.fix_next(fix, args)
+        if step:
+            out["next"] = step
+        content = _text(
+            *fix_report_lines(fix), "没有导出任何文件；会话 " + sid + " 还开着、内容回到了改之前。"
+        )
+    elif out["dry_run"]:
+        out["ok"] = True
+        content = _text(*fix_report_lines(fix), "dry_run：没有导出，会话已回到修改前。")
+    if content is not None:
+        return _mjr_result(out, content, previews)
+
+    # ---- 导出：与 tavotto_export 同一条路（预检门 + 产物核验 + proof）；**绝不带 explicit_confirm** ----
+    stage = "export"
+    try:
+        exp = _call_export(
+            {
+                "session_id": sid,
+                "formats": args.get("formats") or [],
+                "dpi": 600 if args.get("dpi") is None else args.get("dpi"),
+                "out_dir": args.get("out_dir"),
+                **journal,
+            }
+        )
+    except bridge.BridgeError as exc:
+        if exc.code != "preflight_blocked":
+            raise _mjr_fail(exc, stage, sid) from exc
+        pre = exc.extra.get("preflight") or {}
+        out["stage"] = "preflight"
+        out["blocking"] = [
+            {k: i.get(k) for k in ("id", "severity", "gids") if i.get(k) is not None}
+            for i in (pre.get("errors") or [])[:MJR_BLOCKING_SHOWN]
+        ]
+        out["not_verifiable"] = [
+            i.get("id") for i in (pre.get("not_verifiable") or [])[:MJR_BLOCKING_SHOWN]
+        ]
+        out["next"] = nextstep.ask_user(
+            f"改完后预检还有 {len(pre.get('errors') or [])} 类阻断项、"
+            f"{len(pre.get('not_verifiable') or [])} 类无法核验项，所以没有导出（改动已留在会话里）。"
+            "要先回脚本改掉它们，还是你明确同意带着它们导出？",
+            [
+                "回脚本改掉这些问题，再调一次 tavotto_make_journal_ready",
+                f"我明确同意带着这些问题导出（之后调 tavotto_export，session_id={sid}，explicit_confirm=true）",
+            ],
+        )
+        return _mjr_result(
+            out,
+            _text(
+                "改动已经做好，但导出前的预检没过，所以没有导出：",
+                *fix_report_lines(fix)[1:],
+                str(exc),
+                "没有导出任何文件；改动留在会话里（没关，没导出的改动关会话也会存成草稿）。",
+            ),
+            previews,
+        )
+    body = exp["structuredContent"]
+    files = body.get("files") or []
+    out["exported"] = [
+        {
+            "format": f.get("format"),
+            "path": f.get("path"),
+            "status": f.get("status"),
+            "verdict": (f.get("manifest") or {}).get("verdict"),
+        }
+        for f in files
+    ]
+    for key in ("export_dir", "proof_path", "proof_error", "update"):
+        if body.get(key):
+            out[key] = body[key]
+    if body.get("size_mm"):
+        out["size_mm"] = body["size_mm"]
+    done = [f for f in files if f.get("status") == "done"]
+    # 以导出作业的结论为准：图都出了但留档没写成，作业是 `partial`、回执 `ok:false`——不能报成交付完成
+    out["ok"] = (
+        bool(done)
+        and len(done) == len(files)
+        and body.get("ok") is not False
+        and not body.get("proof_error")
+    )
+    out["stage"] = "done" if out["ok"] else "export"
+    if not out["ok"] and done and len(done) == len(files):
+        out["next"] = nextstep.edit_script(
+            "图都导出了，但留档（proof）没写成（见 proof_error）；"
+            "检查导出目录能不能写、空间够不够，再用 tavotto_export 重导这一版。"
+        )
+    elif not out["ok"]:
+        out["next"] = nextstep.edit_script(
+            "有格式没导出成功（见 exported 里 status 不是 done 的项与 tavotto_export 的错误码）；"
+            "改动还在会话里，可以换格式 / 换 out_dir 用 tavotto_export 再导，或按原因回脚本改。"
+        )
+    export_lines = [
+        ln for ln in exp["content"][0]["text"].splitlines() if not ln.startswith("已导出：")
+    ]
+    fix_view = dict(fix, exported=[{"path": f.get("path")} for f in done])
+    return _mjr_result(out, _text(*fix_report_lines(fix_view), *export_lines), previews)
+
+
+def _mjr_result(out: dict, content: list, previews: dict) -> dict:
+    for label in ("before", "after"):
+        if previews.get(label):
+            content.append({"type": "image", "data": previews[label], "mimeType": "image/png"})
+    return {"content": content, "structuredContent": out}
+
+
+FIX_BLOCKING_SHOWN = 6
+
+
+def _fix_failure_lines(out: dict) -> list[str]:
+    """没修成时说清卡在哪一步、卡住的是哪几个元素、下一步怎么走——只给 exit 码，Agent 只能去猜。"""
+    stage = out.get("stage")
+    detail = out.get("detail") or {}
+    if stage == "recheck":
+        items = (out.get("issues") or {}).get("introduced") or []
+    else:
+        items = list(detail.get("blocking") or []) + list(detail.get("unresolved") or [])
+    lines: list[str] = []
+    if stage == "size":
+        target = (out.get("size") or {}).get("target") or {}
+        want = " × ".join(
+            f"{'宽' if k == 'width_mm' else '高'} {v:g} mm" for k, v in target.items()
+        )
+        lines.append(f"卡在改图幅这一步（目标 {want or '期刊栏宽'}），改完下面这些会出界或重叠：")
+    elif stage == "panel":
+        lines.append("图幅改好了，但面板内的字号 / 线宽改不到合规，卡住的是：")
+    elif stage == "recheck":
+        lines.append("改完复检时新出了下面这些问题，所以整步撤回：")
+    for i in items[:FIX_BLOCKING_SHOWN]:
+        gids = "、".join((i.get("gids") or ([i["gid"]] if i.get("gid") else []))[:3])
+        text = i.get("text") or i.get("rule") or i.get("id")
+        lines.append(f"  ✗ {text}" + (f"［{gids}］" if gids else ""))
+    if len(items) > FIX_BLOCKING_SHOWN:
+        lines.append(f"  ……共 {len(items)} 条，全部在 detail 里。")
+    if stage == "size":
+        lines.append(
+            "Tavotto 改图幅时挪不动这些元素（常见于 fig.add_axes 摆的内嵌图、手写坐标的文字）。"
+            '下一步：回脚本把 figsize 直接设成目标尺寸（mm ÷ 25.4 = 英寸），用 layout="constrained" '
+            "或 tight_layout 重排；跑一遍脚本，tavotto_refresh_project 后重新打开再调本工具。"
+            "图幅不要用 tavotto_apply_overrides 硬改。"
+        )
+    return lines
 
 
 def fix_report_lines(out: dict) -> list[str]:
@@ -1337,6 +1911,13 @@ def fix_report_lines(out: dict) -> list[str]:
             f"一步改到合规**未完成**（{exit_code}{'/' + out['reason'] if out.get('reason') else ''}）："
             "会话已回到修改前，没有写出任何文件。"
         )
+        lines.extend(_fix_failure_lines(out))
+        for c in (out.get("conflicts") or [])[:FIX_BLOCKING_SHOWN]:
+            where = f"［{c['gid']}］" if c.get("gid") else ""
+            prop = f"（属性 {c['prop']}）" if c.get("prop") else ""
+            lines.append(
+                f"  ⚔ {c.get('rule') or '渲染'}{where}：{' ↔ '.join(c.get('constraints') or [])}{prop}"
+            )
     elif exit_code == "nothing_to_do":
         lines.append("没有需要改的地方；会话未变。" + dry)
     else:
@@ -1372,7 +1953,7 @@ def fix_report_lines(out: dict) -> list[str]:
     elif out.get("ok") and not out.get("dry_run") and exit_code != "nothing_to_do":
         lines.append(
             "修改只在 Tavotto 会话里，用户的文件还没变：要拿到文件请调 tavotto_export，"
-            "导出前别关会话（关掉修改就没了）。"
+            "没导出就关会话也不会丢：修改存成草稿，重新打开这张图会自动带回。"
         )
     if out.get("worker_retired"):
         lines.append("注意：渲染进程途中状态不可信，已作废重起；会话按全量列表重放，结果不受影响。")
@@ -1646,6 +2227,10 @@ def _call_refresh(args: dict) -> dict:
             lines.append("needs_probe 的图请让用户在 Tavotto 里点「试运行并连接」，不要猜。")
         if summary.get("conflict"):
             lines.append("conflict 的图不要自动裁决，把候选脚本告诉用户。")
+    if out.get("stale_sessions"):
+        lines.append(
+            f"会话 {'、'.join(out['stale_sessions'])} 下次调用会按新脚本自动重跑，不用关掉重开"
+        )
     lines.append("不需要用户手动刷新或重启 Tavotto。")
     return {"content": _text(*lines), "structuredContent": out}
 
@@ -1715,7 +2300,7 @@ def _call_health(args: dict) -> dict:
             out["worker"] = {"python": python, "source": source}
         except Exception as exc:  # noqa: BLE001 — 探测失败也要如实说
             out["worker"] = {"error": str(exc)}
-    update = updatenotice.notice(_version())
+    update = _engine_digest().get("update")
     if update is not None:
         out["update"] = update
     out["timings"] = {"health_ms": int((_time.monotonic() - t0) * 1000)}
@@ -1774,9 +2359,12 @@ HANDLERS = {
     # 受期刊库总开关管：关着时不在 tools/list，直接调用回 `journal_catalog_disabled`（ADR 0155 §9）。
     # 开关打开（ADR 0155 §11）后与遥测的工具名闭集（`usage.TOOLS`）一一对应
     "tavotto_list_journals": _call_list_journals,
+    "tavotto_get_journal_facts": _call_journal_facts,
     # 同样受期刊库总开关管（`bridge.fix_to_journal_available()`）；**不进** `usage.TOOLS` / 遥测闭集
     # （加进去要升 CONSENT_VERSION，与 `tavotto_guide` 同一处置：走 `other` 桶，ADR 0180）
     "tavotto_fix_to_journal": _call_fix_to_journal,
+    # 一步交付（ADR 0192 §1）：与 fix_to_journal 同一处置，同样**不进** `usage.TOOLS`
+    "tavotto_make_journal_ready": _call_make_journal_ready,
 }
 
 #: 结果里挂 UI 的工具（与 `_tools()` 的 `_meta` 一致）
@@ -1905,16 +2493,63 @@ def _fit_error_budget(result: dict, budget: int = ERROR_RESULT_BUDGET_BYTES) -> 
     return result
 
 
+#: 接受 `journal_id` 的工具（宽松解析在分派前做一次，处理器与桥里一律只见精确 id）
+JOURNAL_RESOLVE_TOOLS = (*JOURNAL_ID_TOOLS, "tavotto_fix_to_journal", "tavotto_make_journal_ready")
+
+
+def _resolve_journal_arg(args: dict) -> tuple[dict, dict | None]:
+    """ADR 0192 §4：`journal_id` 接受全名 / 缩写；与手写 `profile_id` / `journal` 同给时不解析（引擎报冲突）。"""
+    raw = args.get("journal_id")
+    if (
+        not isinstance(raw, str)
+        or args.get("profile_id") is not None
+        or args.get("journal") is not None
+    ):
+        return args, None
+    rid, info = bridge.resolve_journal_id(raw)
+    if info is None:
+        return args, None
+    return {**args, "journal_id": rid}, info
+
+
+def _attach_journal_resolved(result: dict, info: dict) -> None:
+    body = result.get("structuredContent")
+    if isinstance(body, dict):
+        body["journal_resolved"] = info
+    content = result.get("content") or []
+    if content and content[0].get("type") == "text":
+        content[0]["text"] += f"\n期刊 {info['from']!r} 已解析为 id {info['id']}。"
+
+
+def _prepend_rerun_note(name: str, args: dict, result: dict) -> None:
+    """除 open（它自己把第一行换成重跑说明）外，结果带 `script_rerun` 就在文字第一行说一句。"""
+    body = result.get("structuredContent")
+    rerun = body.get("script_rerun") if isinstance(body, dict) else None
+    content = result.get("content") or []
+    if (
+        name == "tavotto_open_figure"
+        or not isinstance(rerun, dict)
+        or not content
+        or content[0].get("type") != "text"
+    ):
+        return
+    sid = str(body.get("session_id") or args.get("session_id") or "")
+    content[0]["text"] = _rerun_note(sid, rerun) + "\n" + content[0]["text"]
+
+
 def call_tool(name: str, args: dict) -> dict:
     handler = HANDLERS.get(name)
     if handler is None:
         raise RpcError(METHOD_NOT_FOUND, f"没有这个工具: {name}")
     if not isinstance(args, dict):
         raise RpcError(INVALID_PARAMS, "arguments 必须是对象")
+    resolved = None
     try:
+        if name in JOURNAL_RESOLVE_TOOLS:
+            args, resolved = _resolve_journal_arg(args)
         result = handler(args)
     except bridge.BridgeError as exc:
-        payload = exc.payload()
+        payload = nextstep.attach(exc.payload(), name, args)  # ADR 0192 §3：失败带可照抄的 next
         # 失败也要机器可读：Codex 得能据此决定下一步（改路径？装 tavotto？确认导出？）
         # 但 **`code` 只进 `structuredContent`**：`content` 是念给用户听的那一份，
         # 把机器码摆在最前面，模型多半会连着念出去——用户听到
@@ -1932,6 +2567,9 @@ def call_tool(name: str, args: dict) -> dict:
         else:
             _fit_error_budget(result)
         return result
+    if resolved is not None:
+        _attach_journal_resolved(result, resolved)
+    _prepend_rerun_note(name, args, result)
     if name in UI_TOOLS:
         if (result.get("structuredContent") or {}).get("mode") == bridge.BATCH_MODE:
             # **批量结果不挂画布，而且要把这件事说出口。**一次 tools/call 只带
@@ -2045,7 +2683,22 @@ class Server:
                 arguments = params.get("arguments")
                 if isinstance(arguments, dict):
                     self._confirm_workspace_for_open(arguments)
-            self.conn.result(rid, self.dispatch(method, params))
+            result = self.dispatch(method, params)
+            call_args = params.get("arguments")
+            if (
+                method == "tools/call"
+                and params.get("name") == "tavotto_get_journal_facts"
+                and isinstance(call_args, dict)
+                and call_args.get("inspection") is not None
+                and _inspection_too_large(result, rid)
+            ):
+                payload = _inspection_size_error().payload()
+                result = {
+                    "isError": True,
+                    "content": _text(_human_error(payload)),
+                    "structuredContent": payload,
+                }
+            self.conn.result(rid, result)
         except RpcError as exc:
             self.conn.error(rid, exc)
         except Exception as exc:  # noqa: BLE001 — 任何异常都不许打死连接
@@ -2232,7 +2885,9 @@ class Server:
         from_canvas = (
             args.pop(ORIGIN_ARG, None) == ORIGIN_CANVAS if isinstance(args, dict) else False
         )
-        if from_canvas:
+        # v2 fact lookups intentionally emit no telemetry event: their new tool
+        # name is outside the current consent scope, including the generic bucket.
+        if from_canvas or name == "tavotto_get_journal_facts":
             return call_tool(name, args)
         started = time.monotonic()
         outcome = "internal_error"
@@ -2271,15 +2926,19 @@ class Server:
             "serverInfo": {"name": SERVER_NAME, "title": "Tavotto", "version": _version()},
             "instructions": (
                 "Tavotto 负责结构化图表编辑：改的是 override（gid + prop + value），"
-                "**不会动用户的 Python 源码**。流程：tavotto_open_figure 打开 → "
-                "tavotto_apply_overrides 改（patches 永远发全量列表）→ "
-                "模型改图时传 summary=true，只读必要回执；完整状态按需 tavotto_session_state 取。"
-                "tavotto_preflight 体检 → tavotto_export 出图。"
+                "**不会动用户的 Python 源码**。直接开始：tavotto_open_figure 打开（第一次成功的回包带引擎版本与更新提醒）→ "
+                "tavotto_apply_overrides 改（patches 永远发全量列表；模型改图传 summary=true，完整状态按需 tavotto_session_state 取）→ "
+                "tavotto_preflight 体检 → tavotto_export 出图，**导出之后再关会话**。"
+                "不必先调 tavotto_health 或 tavotto_guide：只有 Tavotto 工具缺失、或调用报引擎错误时才调 tavotto_health"
+                "（健康就不要安装任何东西）；遇到工具说明没写的情形再读 tavotto_guide。"
+                "期刊参数直接写名字即可（journal_id 接受 id、全名、常见缩写）。"
                 "数据本身、坐标范围、加删曲线/子图、colorbar 方向这些必须回代码改；"
-                "改完 .py 之后调 tavotto_refresh_project（不是重跑脚本），Tavotto 界面会自己更新。"
-                "第一次用先调 tavotto_health（健康就不要安装任何东西）；"
-                "宿主没有加载 Tavotto 技能时，开工前先调 tavotto_guide 读使用说明；项目路径必须在允许的根内，"
-                "模型传的路径不是授权。结果带 elided 时用 tavotto_session_state 取件，别猜 gid。"
+                "改完 .py 之后调 tavotto_refresh_project（不是重跑脚本），Tavotto 界面会自己更新；"
+                "会话不用关：下一次调用（open / preflight / export…）会按新脚本重跑同一个会话并保留修改，不要 close 再 open。"
+                "要把图改到某期刊合规并导出，优先用 tavotto_make_journal_ready（一步走完，失败停在哪步会说明）。"
+                "项目路径必须在允许的根内，模型传的路径不是授权。结果带 elided 时用 tavotto_session_state 取件，别猜 gid。"
+                "失败结果带 next 时照它做：{tool,args} 就是下一次调用，{action:edit_script} 回代码改，"
+                "{action:ask_user} 把 question 与 options 交给用户。"
                 "宿主没有内嵌画布时，同一组工具照样能走完打开→修改→预检→导出。"
             ),
         }

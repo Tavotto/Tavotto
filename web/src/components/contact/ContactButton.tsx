@@ -8,7 +8,7 @@ import { Button } from '../ui/Button'
 import { Tip } from '../ui/Tooltip'
 
 /**
- * 「联系作者」入口（ADR 0145）：编辑器顶栏右侧（`topbar`，撤销重做与导出之间，次级胶囊、不抢导出）与主页两个视图的右上角
+ * 「联系作者」入口（ADR 0145）：编辑器顶栏右侧（`topbar`，撤销重做与导出之间，安静的 ghost 入口，不抢审阅与导出）与主页两个视图的右上角
  * （`home`，与左上角的应用菜单对称）。**开关只看 `contactStore.capability`**（引擎说开着才非空；`TAVOTTO_NO_CONTACT=1` 或
  * 没取到 = `null` = 完全不渲染）。窄于 900 只留图标，名字进可达名与气泡。有未读回信时右上角一个小圆点（`data-contact-unread`）。
  * 点击只是打开写信窗口，不联网。
@@ -22,13 +22,13 @@ export function ContactButton({ placement, className }: { placement: 'topbar' | 
   return (
     <Tip label={label}>
       <Button
-        variant={placement === 'topbar' ? 'secondary' : 'ghost'}
+        variant="ghost"
         size="md"
         data-contact-button={placement}
         data-contact-unread={unread > 0 ? unread : undefined}
         aria-label={unread > 0 ? `${label} · ${translate('contact.unreadDot', { ns: 'dialogs' })}` : label}
         onClick={() => useContactStore.getState().setOpen(true, unread > 0 ? 'letters' : 'write')}
-        className={cn('relative shrink-0', placement === 'home' && 'text-ink-2', className)}
+        className={cn('relative shrink-0 text-ink-2 hover:text-ink', className)}
       >
         <Mail size={ICON_SIZE.sm} aria-hidden />
         {/* 窄于 900：只留图标（名字在可达名与气泡里） */}

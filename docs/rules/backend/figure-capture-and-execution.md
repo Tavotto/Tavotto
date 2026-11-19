@@ -437,6 +437,12 @@ order: 50
   中途使实际容器不确定，均保留 `script_error`；
   绝不靠同一行出现 `argv` 推断。确认时复用 `script_needs_arguments` 和既有运行参数入口，不猜 `parse_kind`，
   敏感参数仍不进入消息、回溯或日志。看护：`tests/test_worker_exit_report.py` / `tests/test_run_argv_privacy.py`。
+- **拆包时参数个数不够的未捕获 `ValueError`（一份用户反馈，`data, work, out = sys.argv[1:4]`）**：
+  `worker._direct_argv_unpack_error` 与上一条共用 `_argv_failure_site` / `_loads_run_argv` 的证据规则（列表身份与内容未改、
+  失败点就是入口脚本那条 `UNPACK_SEQUENCE`、进入脚本后没有帧在异常期间继续执行、加载序列中途无跳转汇入），操作数只认
+  `sys.argv` 本身或它的**一个常量两端切片**（3.10/3.11 `BUILD_SLICE`+`BINARY_SUBSCR`、3.12/3.13 `BINARY_SLICE`、3.14 折叠的
+  常量 `slice` + `BINARY_OP []`）。「不够」由 argv 与拆包个数重算，不解析异常文字；只有补参数修得好时才算——值太多、
+  切片上限本身装不下、带步长 / 动态边界、`*rest` 拆包（`UNPACK_EX`）均保留 `script_error`。看护同上。
 - **登记**（`engine/runconfig.py`）：本机 Tavotto 数据目录 `runconfigs/<项目摘要>.json`，不写用户项目（只读项目照样能用）。
   同 (脚本, argv, 敏感标记) 复用引用，改任一 token = 新引用（"编辑 = 新修订"，在途 spec 与旧产物不变）。`sensitive=True` 只活在进程内存，
   文件里只有占位；格式版本高于本读者 → `run_config_unsupported`。错误码：`invalid_argv`(400) / `run_config_missing` /

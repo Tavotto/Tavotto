@@ -110,6 +110,7 @@ const VALUES: Record<
   'font-too-large': { current: 'effective', expected: 'max', unit: 'pt', cmp: 'atMost' },
   'legend-font-size': { current: 'effective', expected: 'min', unit: 'pt', cmp: 'atLeast' },
   'line-width-off-preset': { current: 'effective', expected: 'presets', unit: 'pt' },
+  'line-width-below-min': { current: 'effective', expected: 'min', unit: 'pt', cmp: 'atLeast' },
   'raster-dpi': { current: 'dpi', expected: 'min', unit: 'ppi', cmp: 'atLeast' },
   'page-width': { current: 'actual', expected: 'want', unit: 'mm' },
   'page-aspect': { current: 'ratio', expected: 'allowed' },
@@ -297,7 +298,9 @@ export function issueAriaLabel(issue: ValidationIssue): string {
     severityLabel(issue.severity),
     subjectName(issue),
     issueTitle(issue),
-    v.current && v.expected ? pr('ariaValues', { current: v.current, expected: v.expected }) : null,
+    v.current && v.expected
+      ? pr(issue.ruleCode === 'raster-dpi' ? 'ariaThresholdValues' : 'ariaValues', { current: v.current, expected: v.expected })
+      : null,
     pr('ariaLocate'),
   ]
     .filter(Boolean)

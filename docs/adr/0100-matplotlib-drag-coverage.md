@@ -51,7 +51,7 @@
 | 文字 / 标题 / 轴标签 / sup* / 注释（非像素坐标）/ 纯箭头 / 图例 / Patch 全族 / 子图（各种布局）/ twinx / 极坐标 / 3D 子图 / 色条 / 等比子图 | 已可拖、误差 ≤ 0.008 mm | 不变 |
 | 数据系列、标注箭头、图例项、刻度、3D 轴标题、次坐标轴 / 寄生轴、像素坐标的注释 | 按设计不拖，**拖了什么都不说** | 仍不拖；拖起来 toast 说为什么（见下） |
 | SubFigure 里的子图 | 落点只走一半（2.3 mm） | 已修（见「修订（2026-11-13）」）：误差 ≤ 1e-6 图幅分数 |
-| `ax.table` | 不宣称可拖 | **未修**：拖起来说「暂不支持」 |
+| `ax.table` | 不宣称可拖 | **已修（2026-11-18 修订，见文末）** |
 | `fig.add_artist(...)` 加在图幅上的框 | 不登记（点不中） | **已修（2026-11-12 修订，见文末）** |
 
 ## 裁决
@@ -205,3 +205,112 @@ tight 布局下子图仍由 `PinnedTightLayoutEngine`（ADR 0042）钉住，不�
 - 看护：`tests/test_subfigure_axes_position.py`（普通 / constrained / `bbox_inches="tight"` / 嵌套
   四种 SubFigure：`position` 与 `bbox` 同一矩形、拖到写下的位置、再画不漂、撤销回基线、全量重放
   == 热态）。修前 8 条红。
+
+## 修订（2026-11-18）：子图里位置不是数据的线可拖
+
+用户来图（世界地图上 30 条震中 → 标签的虚线折线引线）：引线是
+`Line2D(..., transform=ax.transAxes)` + `ax.add_line`，带白色描边路径效果。它们进 `ax.lines`，
+`instrument` 按「子图里的曲线位置是数据」一律 `draggable=False`：只能改颜色粗细，拖了只提示数据系列不能拖。
+这是按**所在列表**推断能力，和 2026-11-12 修订之前图级元素的漏网是同一类问题。
+
+裁决：
+
+- **按 transform 判**（`manifest._layout_anchored_line`）。两条都满足才可拖：
+  1. x、y 都不经过 `ax.transData`。沿 matplotlib 依赖图（`_parents`）找：`a + b`、
+     `blended_transform_factory`、`TransformWrapper` 都会登记依赖。`axhline` / `axvline` /
+     `get_[xy]axis_transform()` 有一边是数据，`transData + ScaledTranslation` 整条是数据，都不拖；
+  2. 挂在认得的排版坐标系上（`transAxes` / `transSubfigure` / `transFigure` / `dpi_scale_trans`）。
+     没登记依赖的自定义 transform 判不出来，按数据处理、不宣称可拖。
+- 可拖的线与图级的线**同一套** `("line", "pos_frac")`：基准 transform、英寸平移、pin 表、原样 = 基准
+  transform（`overrides._set_line_pos_frac` / `_restore_line_pos`，没有新机制）。前端只看
+  `draggable` + `anchor`，不用改。
+- 3D 子图与色条轴上的线照旧不拖。gid 不变，存量文档里对这些线的样式 override 照常生效。
+- 落位是**整条平移**、钉在图幅上：之后挪子图，拖过的线留在写下的位置，与独立形状相同。逐顶点
+  编辑（拖引线的拐点 / 一端）另议。
+
+看护：`tests/test_axes_layout_lines_drag.py`（数据 / 一边数据 / 数据 + 平移 / 子图框 / 图幅 /
+子图框 + 英寸八种线的判定；拖动落点、再画不漂、撤销回基线、不挤动子图与别的线；拖动与样式共存；
+constrained；一次性 worker 全量重放 == 热态）。修前 3 条红。
+
+## 修订（2026-11-18，续）：位置不是数据的集合与位图可拖
+
+接上一条（线）。同一类问题还在集合与位图上：`ax.scatter(..., transform=ax.transAxes)` 手画的图例点、
+`transAxes` 的线组 / 图形集合（`LineCollection` / `PatchCollection`）、`imshow(..., transform=ax.transAxes)`
+贴在子图框里的图片、`fig.add_artist(LineCollection(..., transform=fig.transFigure))`，全部 `draggable=False`。
+子图里的那几种**选中框还是整块子图**：`get_datalim(transData)` 对它们是空框，退回 tightbbox，点子图里
+任何地方都选中它们。
+
+裁决：
+
+- **同一条判据**（`manifest._layout_anchored_artist`，与线共用 `_layout_anchored_transform`）：落位用的那条
+  transform 是排版坐标才可拖。散点看 offset transform（路径 transform 是 marker 的像素尺，也不许经过数据）；
+  线组 / 图形集合 / 位图看自己的 transform。`ContourSet` 不拖（`clabel` 文字是另外的元素，不会跟着走）；
+  3D 与色条轴不拖；`FigureImage` 照旧不拖。图上的集合（没有 transData）也可拖——
+  `test_figure_level_artists` 里 `fig.artists_3` 随之从不可拖改成可拖。
+- **一把尺**：`pathgeom.layout_extent` 量落位（offsets 决定落位的量 offset 点，否则量路径顶点；位图用
+  window extent），manifest 的 `anchor` 与 setter 都只用它。集合的 `get_window_extent()` 在 transform 不含
+  transData 时是 ±inf，不能用。选中框用 `layout_ink_extent`：散点再算上 marker 自己的大小，单点散点
+  （手画图例点最常见的写法）不至于零面积退回整块子图。
+- **平移**：`overrides._set_translated_pos_frac`，与形状 / 线同一套（基准记在 `_mm_pos_bases`、英寸平移、
+  pin 表、布局引擎排版前放回原样）；散点平移 offset transform，其余平移 artist transform。
+  `("collection" | "linecoll" | "image", "pos_frac")` 三个键，导出修改后的 .py 列入不写（与线 / 形状同一结论）。
+- **位图的预览组**：matplotlib 的 SVG 后端不给 `<image>` 写 gid，矢量后端还会把同一子图里相邻的位图合成一张、
+  不调各自的 draw——拖动时前端找不到要平移的 `<g>`。可拖的位图包一层 SVG 组并退出合成
+  （`manifest._own_svg_image`）：画面相同，矢量文件里是两张图而不是合成的一张；Agg（PNG）本来就不合成。
+  可拖的位图的几何编辑不再代理回宿主子图（`geom_gid`）——它不铺满子图。
+
+看护：`tests/test_axes_layout_collections_drag.py`（判定；初始位置等于按子图框独立算的值；拖动后**画出来的
+几何**外接框 / 位图框整体走同一位移；再画不漂；撤销回基线；不挤动子图与别的元素；拖出子图框仍可选中；
+与样式共存；constrained；全量重放 == 热态），浏览器腿 `web/e2e/drag-coverage.spec.ts` 加散点与位图两格。
+
+## 修订（2026-11-18，续二）：`ax.table` 可拖
+
+结论表里「`ax.table` 未修」那一行。表格每次 draw 按 `loc` / `bbox` 在子图框坐标里重排格子
+（`Table._update_positions`），格子与字都画在表格自己的 transform 上（实测：平移叠在表格 transform 上，
+格子框与格内文字走同一位移）。所以表格与位置不是数据的集合 / 位图同一套：判据
+`manifest._layout_anchored_artist` 认 `Table`，平移 `overrides._set_translated_pos_frac`。表格仍是 `artist`
+角色（存量文档的 visible / zorder 不动），`("artist", "pos_frac")` 按类型分派：表格走平移，锚定框 / 插框照旧。
+`Table.get_window_extent` 量之前先排一次格子，所以全量重放（apply 在第一次 draw 之前）量到的与热态相同。
+`loc="bottom"` 的表格参与 constrained 排版：布局引擎排版前放回原样，拖它不挤动子图。
+
+看护：`tests/test_axes_table_drag.py`（判定；显式 `bbox` 的表格初始框 == 按子图框独立算的矩形；拖动落点、
+再画不漂、撤销回基线、不挤动子图；constrained；全量重放 == 热态），浏览器腿 `drag-coverage.spec.ts` 加表格一格。
+
+## 修订（2026-11-19）：引线逐段 / 逐点拖
+
+用户拍板（2026-11-19）：引线（位置不是数据的线）要能「拖动某一段，当成自由线段一样拖」；数据曲线暂时不支持移动。
+审阅页六处全按推荐：
+
+- **拖一段 = 那一段两个端点同走一个位移**，相邻段跟着伸缩、整条线不断开。拖第一段 / 最后一段时连着震中的那一头也跟着走
+  （与自由线段一致）；想留住起点，拖中间的段或拖拐点。
+- **按下拖的是离指针最近的一段**（按内容像素量）；整条平移走方向键、与标签一起多选拖、对齐——都写同一条 override。
+- **⇧ 锁水平 / 垂直**（看起手以来哪个方向走得多），直角引线拖完仍横平竖直。
+- **拐点方块只在选中时出现**（7 px，手柄同色）；拖方块只动那一个点。
+- **加 / 删拐点**（用户 2026-11-19 追加「做一下加拐点」，审阅页 ⑦–⑨ 全按推荐）：双击线上的一段 = 在双击处加一个拐点
+  （点投影到那一段上，画面先不变，接着拖它折弯）；双击拐点方块 = 删掉它（最少留两个点，首尾也能删）；到上限不再加。
+- **超过 `LINE_POINTS_MAX`（64）个顶点的线不出拐点**，只整条平移；数据曲线仍不可拖。
+
+实现：
+
+- 引擎：可拖的线在 manifest 里出 `line_points`（每个顶点的 figure 分数、top-origin，与 `anchor` 同一套换算）。
+  新 override `("line", "points_frac")`：**全部顶点**摊平 `[x0, y0, x1, y1, …]`，2 到 `LINE_POINTS_MAX` 个（加 / 删拐点会改个数；
+  少于 2 个、奇数个数、超过上限、不是数就报 warning、什么都不动）。setter 先把线放回基准 transform（整条平移叠的英寸平移一并去掉），再按基准 transform 的逆把显示坐标换回线
+  自己的坐标系写进数据；布局引擎下挂进 pin 表（与 `pos_frac` 同一张表、带 `points` 标记），排版前放回脚本原样的顶点、排完再落。
+  原样 = （基准 transform, 脚本原样顶点）。`points_frac` 进 `_FRAC_ANCHORED`，每次重放。
+- **两种位置 override 同在一条线上时位置只归 `points_frac`**（Codex #2060 两条 P1）：它写的是每个顶点的绝对位置，`pos_frac` 在它
+  面前不起作用、也不碰 pin 表（共用那一格）；撤掉 `points_frac` 时 `pos_frac` 被标脏重放、重新生效，撤掉 `pos_frac` 时反之。
+- 一条线只写一种位置 override：前端对出 `line_points` 的线，整条平移（`inFigureMoveOf` → `lineMove`、`alignEntries`）也写
+  `points_frac`；存量文档里 #2018 写下的 `pos_frac` 照常生效，之后再逐段编辑时 setter 把平移放回基准，热态与重放一致。
+- 前端：`elementGeom.linePointsOf`（文档里写下的 `points_frac` 优先，个数可变）；`interactions.insertLineBend` / `removeLineBend`
+  （`PanelView` 双击一段、`OverlaySvg` 双击拐点手柄）；`interactions.startLineEdit`（段 / 点、⇧ 锁向、覆盖层
+  虚线预览 `linePreview`、拖回原处不写）；`PanelView` 按下分派到最近一段；`OverlaySvg` 拐点手柄；拖子图时改过的引线随行
+  （`FRAC_ANCHORED_PROPS` 认 `points_frac`，任意偶数长度按 x、y 交替平移）。导出修改后的 .py 不写 `points_frac`（与 `pos_frac` 同一结论）。
+
+兼容：不认识 `points_frac` 的旧版本打开这样的项目——图照常打开，引线落在脚本原位，引擎报「属性不支持」、写回脚本被挡
+（与此前每个新 override 键同一行为，#2024 / #2049 的集合 / 位图 / 表格 `pos_frac` 亦然；已发出的版本改不了）。导出修改后的 .py
+不写这个键（列入 `NOT_WRITABLE`，进 skipped，由 verify 证明「新脚本 + 这条 override == 用户看到的图」）。
+
+看护：`tests/test_layout_line_points.py`（只有短的排版线出顶点；初始顶点 == 按子图框独立算的位置；拖每一段落点与画出来的
+几何一致；整条平移；图上的线；顶点个数不对报错不动；constrained；先整条平移再逐段编辑的全量重放 == 热态）、
+`web/src/canvas/lineSegmentEditing.test.tsx`、浏览器腿 `web/e2e/line-segment-drag.spec.ts`（浅 / 深各一次：拖段落点、撤销）。
+

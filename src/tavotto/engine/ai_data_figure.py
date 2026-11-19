@@ -236,8 +236,15 @@ class DataSummary:
     delimiter: str | None = None
     header_row: int | None = None
     header_line: int | None = None
+    #: 读法的一部分：表头后紧跟的一行单位已被切掉（嗅探认出来的；只在读法与嗅探的表头行一致时才切）。脚本照抄；False = 读法不变
+    units_row: bool = False
     #: 文本表格实际用的编码（`TEXT_ENCODINGS`；父进程定下、脚本照抄 codec 名，不自己探测）；XLSX / v1 是 None
     encoding: str | None = None
+    #: 合画（几份列名相同的表拼成一张）时与 `rows` 逐项对应的「这一行来自哪一份」（该份的分组值）；单份 = 空。`row_numbers` 是各份自己的文件行号
+    row_sources: list[str] = field(default_factory=list)
+
+    def row_source(self, i: int) -> str | None:
+        return self.row_sources[i] if i < len(self.row_sources) else None
 
     def row_number(self, i: int) -> int:
         return self.row_numbers[i] if i < len(self.row_numbers) else i + 2
@@ -267,8 +274,10 @@ CSV_SUFFIXES = (".csv",)
 TSV_SUFFIXES = (".tsv", ".tab")
 #: 纯文本的数据导出（仪器 / 数值软件常见）：分隔符与表头行靠嗅探（`read_text_table`）；`.dat` 是二进制时归「读不了」
 TEXT_SUFFIXES = (".txt", ".dat", ".asc")
+#: GROMACS / Grace 的 `.xvg`：`#` 注释、`@` 指令、空白分隔的数值列；没有表头行，列名在指令里（`xvg_text` 把它改写成带表头行的制表符文本再走同一条读表流水）
+XVG_SUFFIXES = (".xvg",)
 XLSX_SUFFIXES = (".xlsx",)
-TABLE_SUFFIXES = CSV_SUFFIXES + TSV_SUFFIXES + TEXT_SUFFIXES + XLSX_SUFFIXES
+TABLE_SUFFIXES = CSV_SUFFIXES + TSV_SUFFIXES + TEXT_SUFFIXES + XVG_SUFFIXES + XLSX_SUFFIXES
 LEGACY_EXCEL_SUFFIXES = xlsxread.LEGACY_SUFFIXES
 
 
@@ -321,10 +330,88 @@ def resolve_header(cells, raw, delimiter, width):
     return out
 
 
-def table_from_text(text, delimiter, header_row=None):
+def xvg_label(text):
+    """Grace 标签里的转义 → 纯文字（保守）：去掉上 / 下标与回正常的标记（`\\S` `\\s` `\\N`）和字体切换（`\\f{...}`），`\\x` + 一个字母按 Symbol 字体
+    换成对应的希腊字母（`\\xl` → λ）；**认不出的原样保留**，不猜。上 / 下标的文字留着（`nm\\S2\\N` → `nm2`）。**运行时函数**。"""
+    greek = dict(
+        zip(
+            "abcdefghiklmnopqrstuwxyzDFGLPQSUWXY",
+            "αβχδεφγηικλμνοπθρστυωξψζΔΦΓΛΠΘΣΥΩΞΨ",
+        )
+    )
+
+    def one(m):
+        tok = m.group(0)
+        if tok.startswith("\\x"):
+            return greek.get(tok[2:], tok)
+        return ""
+
+    out = re.sub(r"\\x[A-Za-z]|\\[SsN]|\\f\{[^}]*\}", one, text)
+    return " ".join(out.split())
+
+
+def xvg_text(text):
+    """`.xvg`（GROMACS / Grace）全文 → 制表符分隔、带表头行的文本，**行数与原文一致**（物理行号照旧）：
+    只读第一个数据集（数据集在一行 `&` 处、或数据之后再出现 `@target` / `@type` 处结束，其后的行清空）；`#` 注释行与 `@` 指令行读完即清空（留着的话，列数碰巧与数据相同的注释会被嗅探当成表头）；
+    数据行按空白切开改用制表符连。列名取自指令：`xaxis label` → 第 1 列，`s<N> legend`（N 从 0 起）→ 第 N+2 列，只有一条数据列且没有 legend 时用
+    `yaxis label`（经 `xvg_label` 清洗）；缺的列叫 `col<N>`；一个名字都没有就不写表头行（交给既有的「没有表头」流程）。表头写在第一条数据行的**前一行**
+    （原来那一行指令 / 注释被它替换；数据从第 1 行起就没有地方放，同样不写表头）。**运行时函数**。"""
+    lines = re.split(r"\r\n|\r|\n", text)
+    first = None
+    end = len(lines)
+    labels = {}
+    for i, line in enumerate(lines):
+        t = line.strip()
+        if not t or t[0] == "#":
+            continue
+        if t[0] == "&":
+            if first is not None:
+                end = i
+                break
+            continue
+        if t[0] == "@":
+            if first is not None and re.match(r"@\s*(target|type)\b", t, re.I):
+                end = i
+                break
+            m = re.match(r'@\s*(xaxis|yaxis)\s+label\s+"(.*)"\s*$', t, re.I)
+            if m:
+                labels.setdefault(m.group(1).lower(), m.group(2))
+            m = re.match(r'@\s*s(\d+)\s+legend\s+"(.*)"\s*$', t, re.I)
+            if m:
+                labels.setdefault("s" + m.group(1), m.group(2))
+            continue
+        if first is None:
+            first = i
+    out = []
+    for i, line in enumerate(lines):
+        t = line.strip()
+        if i >= end or (first is not None and i >= first and t[:1] in ("@", "&")):
+            out.append("")
+        elif first is not None and i >= first and t and t[0] != "#":
+            out.append("\t".join(t.split()))
+        elif t[:1] in ("@", "#"):
+            out.append("")
+        else:
+            out.append(line)
+    if first is not None and first >= 1:
+        width = len(lines[first].split())
+        names = [labels.get("xaxis")] + [labels.get(f"s{k}") for k in range(width - 1)]
+        if width == 2 and names[1] is None:
+            names[1] = labels.get("yaxis")
+        if any(n is not None for n in names):
+            cells = []
+            for k, n in enumerate(names):
+                n = xvg_label(n) if n is not None else ""
+                cells.append(n.replace('"', "'") or f"col{k + 1}")
+            out[first - 1] = "\t".join(cells)
+    return "\n".join(out)
+
+
+def table_from_text(text, delimiter, header_row=None, units_row=False):
     """`(表头, 数据行, 数据行的物理行号)`。`header_row` 为 None：第一条非空记录是表头，其余都是数据（老读法，干净的 CSV / TSV 与它逐字相同）。
     给了行号：从该行起（第一条起始行号 ≥ 它的记录）是表头，之前的行都是说明、不读；表头之后以 `#` 开头**且列数与表头不同**的行是
-    注释、丢掉（列数相同的 `#` 行是数据）。**运行时函数**：父进程与生成的脚本读出来的必然是同一张表。"""
+    注释、丢掉（列数相同的 `#` 行是数据）。`units_row` 真：表头之后的第一条记录是单位行，不是数据，切掉（嗅探认出来才由调用方给；
+    切掉后数据行的物理行号不变）。**运行时函数**：父进程与生成的脚本读出来的必然是同一张表。"""
     records = delimited_records(text, delimiter)
     if header_row is not None:
         records = [r for r in records if r[0] >= header_row]
@@ -334,6 +421,8 @@ def table_from_text(text, delimiter, header_row=None):
     rest = records[1:]
     if delimiter == ";":
         rest = [(n, [SemicolonCell(c) if "," in c else c for c in cells]) for n, cells in rest]
+    if units_row:
+        rest = rest[1:]
     if header_row is None:
         return [h.strip() for h in first], [c for _, c in rest], [n for n, _ in rest]
     probe = next((c for _, c in rest if not c[0].lstrip().startswith("#")), None)
@@ -370,9 +459,17 @@ def _numlike(cell: str) -> bool:
     return parse_cell(t)[0] in ("numeric", "nan") or bool(_DECIMAL_COMMA.fullmatch(t))
 
 
+#: 仪器导出的单位行里常见、但不属于 `UNITS`（`UNITS` 管列名后缀的显示，加了会改变列名的写法）的写法：只用来认「这一行是单位行」
+_UNITS_ROW_EXTRA = frozenset(
+    {"a.u.", "a.u", "au", "arb.u.", "arb.", "cps", "counts", "%", "deg", "rad"}
+)
+
+
 def _units_like(cells) -> bool:
     cells = [c.strip() for c in cells if c.strip()]
-    return bool(cells) and all(_UNITS_CELL.match(c) or c in UNITS for c in cells)
+    return bool(cells) and all(
+        _UNITS_CELL.match(c) or c in UNITS or c.lower() in _UNITS_ROW_EXTRA for c in cells
+    )
 
 
 def _block(records):
@@ -420,6 +517,8 @@ class TextLayout:
     delimiter: str
     header_line: int
     sure: bool
+    #: 表头行后面紧跟一行单位（`nm  a.u.`）、再往后才是数据：读表时把这一行切掉（不是数据，也不是第二个表头）
+    units: bool = False
 
 
 @dataclass(frozen=True)
@@ -511,8 +610,15 @@ def _detect(text: str, suffix: str) -> TextLayout | RaggedLayout | None:
             cands = [r for r in block[:k] if not _is_hash(r[1])] or block[
                 :k
             ]  # 与表头同列数的 `#` 行是注释
-            pick = next((r for r in cands if _name_like(r[1])), cands[0])
-            return TextLayout(d, pick[0], len(cands) == 1)
+            # 默认取第一条像名字的（老读法）。例外：候选里有**单位行**（`nm  a.u.`）时，列名是紧挨在它前面的那一行——更前面同列数的说明行
+            # （`operator: lab`）也「像名字」，不能因它排在前面被选中。没有单位行时不往后挪：`group,value` 后面紧跟一条夹着文字标记的观测
+            # （`control,<0.1`）也「像名字」，那是数据不是表头。
+            u = next((i for i, r in enumerate(cands) if _is_units_row(r[1], width)), None)
+            if u is not None and u >= 1 and _name_like(cands[u - 1][1]):
+                pick = cands[u - 1]
+            else:
+                pick = next((r for r in cands if _name_like(r[1])), cands[0])
+            return TextLayout(d, pick[0], len(cands) == 1, _units_follow(block, pick, k, width))
         first_line = block[0][0]
         prev = next((r for r in reversed(recs) if r[0] < first_line), None)
         if prev is not None:
@@ -522,6 +628,24 @@ def _detect(text: str, suffix: str) -> TextLayout | RaggedLayout | None:
                 return TextLayout(d, prev[0], True)
         return TextLayout(d, first_line, False)
     return _ragged_hint(sample)
+
+
+def _is_units_row(cells, width: int) -> bool:
+    """整行都是裸写的单位（`nm  a.u.`）：括号包着的（`(a) (b)`、`[mV] [s]`）既可能是单位也可能就是列名，仍交给用户在两行里点（`unsure`），不当单位行。"""
+    return (
+        len(cells) == width
+        and _units_like(cells)
+        and not any(_numlike(c) or _UNITS_CELL.match(c.strip()) for c in cells)
+    )
+
+
+def _units_follow(block, pick, k: int, width: int) -> bool:
+    """`pick`（表头记录）的**下一条**记录是单位行，且它正好是第一条数据行（块里下标 `k`）之前的最后一条：`Wavelength  Intensity` / `nm  a.u.` / 数据。
+    只认「整行都是单位写法、没有一格像数」的行（`_units_like`）；表头与数据之间还有别的记录、或下一条就是数据，都不是。"""
+    i = next((n for n, r in enumerate(block) if r is pick), None)
+    if i is None or i + 1 != k - 1:
+        return False
+    return _is_units_row(block[i + 1][1], width)
 
 
 def _clip_line(t: str) -> str:
@@ -669,6 +793,8 @@ def read_text_table(
         return _unreadable("data_binary")  # 控制字符占 2% 以上：不是文本
     if not text.strip():
         return _unreadable("data_empty")
+    if suffix in XVG_SUFFIXES:
+        text = xvg_text(text)  # 脚本里调用的是同一个函数（见 `ai_data_template._reader_expr`）
     if text.count("\n") + text.count("\r") > 2 * MAX_ROWS + 1000:
         return _unreadable("data_too_long")
     sha = hashlib.sha256(raw).hexdigest()
@@ -728,8 +854,14 @@ def read_text_table(
     script_header: int | None = line
     if delim != "ws" and line == first_physical and not re.search(r"(?m)^\s*#", text):
         script_header = None
+    # 单位行只在读的就是嗅探认出的那一行表头时才切：用户另指一行（`header_rows`）= 他在说「读法由我定」，不替他猜单位行
+    units = bool(layout.units and line == layout.header_line)
     try:
-        header, rows, row_lines = table_from_text(text, delim, script_header)
+        header, rows, row_lines = (
+            table_from_text(text, delim, script_header, True)
+            if units
+            else table_from_text(text, delim, script_header)
+        )
     except csv.Error:
         return _unreadable("data_malformed")
     if not header:
@@ -753,6 +885,7 @@ def read_text_table(
             header_row=script_header,
             header_line=line,
             encoding=encoding,
+            units_row=units,
         )
     except DataSourceError as exc:
         if guessed and exc.code == "data_header_invalid":
@@ -870,6 +1003,7 @@ def _summarize(
     header_row: int | None = None,
     header_line: int | None = None,
     encoding: str | None = None,
+    units_row: bool = False,
 ) -> DataSummary:
     #: 单元格规则：默认 v1 的（不认千分位）；v2 传 `parse_cell`
     parse = parse or legacy_parse_cell
@@ -935,6 +1069,7 @@ def _summarize(
         header_row=header_row,
         header_line=header_line,
         encoding=encoding,
+        units_row=units_row,
     )
 
 

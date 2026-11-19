@@ -151,6 +151,22 @@ function utf8Hex(s: string): string {
   return Array.from(new TextEncoder().encode(s), b => b.toString(16).padStart(2, '0')).join('')
 }
 
+/**
+ * Python `sorted()` 按 Unicode code point 排；JS 默认 `.sort()` 按 UTF-16
+ * code unit 排，astral 字符（如 😀）会排到 BMP 字符前面。摘要必须逐字节
+ * 同源，所以这里显式按 code point 比较。
+ */
+function compareCodePoints(a: string, b: string): number {
+  const ca = Array.from(a)
+  const cb = Array.from(b)
+  const n = Math.min(ca.length, cb.length)
+  for (let i = 0; i < n; i++) {
+    const d = ca[i].codePointAt(0)! - cb[i].codePointAt(0)!
+    if (d !== 0) return d
+  }
+  return ca.length - cb.length
+}
+
 /** 引擎侧 `identity_bytes` 的镜像：产出 ASCII 字节串，两侧逐字节一致。 */
 export function identityBytes(value: unknown): string {
   if (value === null) return 'N'
@@ -162,7 +178,7 @@ export function identityBytes(value: unknown): string {
   if (typeof value === 'string') return `s${utf8Hex(value).length / 2}:${utf8Hex(value)}`
   if (Array.isArray(value)) return `[${value.map(identityBytes).join('')}]`
   if (typeof value === 'object') {
-    const keys = Object.keys(value as Record<string, unknown>).sort()
+    const keys = Object.keys(value as Record<string, unknown>).sort(compareCodePoints)
     return `{${keys.map(k => `${identityBytes(k)}${identityBytes((value as Record<string, unknown>)[k])}`).join('')}}`
   }
   throw new Error('identity: unsupported value')
@@ -355,6 +371,17 @@ export function validateChartModel(model: unknown): ChartVerdict {
     if (sr.style !== undefined) {
       if (typeof sr.style !== 'object' || sr.style === null) return invalid()
       if (!keysAllowed(sr.style, SERIES_STYLE_KEYS)) return invalid()
+      // 与 chartmodel.validate_model 同一取值判据：数值键必须有限，
+      // alpha ∈ [0,1]，vmin/vmax 同时在场时 vmin < vmax。
+      const style = sr.style as Record<string, unknown>
+      for (const key of ['linewidth', 'markersize', 'alpha'] as const) {
+        if (key in style && !isFiniteNumber(style[key])) return invalid()
+      }
+      if ('alpha' in style && ((style.alpha as number) < 0 || (style.alpha as number) > 1)) return invalid()
+      for (const key of ['vmin', 'vmax'] as const) {
+        if (key in style && !isFiniteNumber(style[key])) return invalid()
+      }
+      if ('vmin' in style && 'vmax' in style && (style.vmin as number) >= (style.vmax as number)) return invalid()
     }
   }
 

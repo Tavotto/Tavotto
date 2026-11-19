@@ -44,9 +44,9 @@ const VARIANTS: Record<Variant, string> = {
 }
 
 export const BUTTON_SIZES: Record<Size, string> = {
-  // 带字的按钮一律胶囊（2026-09-30 重设计，参照 OpenBitFun）；图标钮是圆（2026-10-07）
-  sm: 'h-7 px-2.5 gap-1 text-sm rounded-full',
-  md: 'h-7 px-3 gap-1.5 text-sm rounded-full',
+  // 28px 紧凑工具钮与输入框 / 列表行对齐 md 栅格；32px 页面级 / 对话框主动作保持胶囊，图标钮是圆
+  sm: 'h-7 px-2.5 gap-1 text-sm rounded-md',
+  md: 'h-7 px-3 gap-1.5 text-sm rounded-md',
   lg: 'h-8 px-3.5 gap-1.5 text-base rounded-full',
   icon: 'h-7 w-7 rounded-full',
   // 图标点击区不小于 28px；两档只差图标字号

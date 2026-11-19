@@ -244,6 +244,34 @@ describe('带动作的状态 toast（导出关窗后的结果等）', () => {
     }
   })
 
+  it('打开模态前画布上遗留的普通状态留在遮罩下，不穿透弹窗；弹窗期间新发的与错误仍浮在弹窗上', () => {
+    act(() => useUiStore.getState().setStatus(literal('已放入画布'), 'done'))
+    expect(container.querySelector('[data-toast-layout]')).toBeTruthy()
+    let off = () => {}
+    act(() => {
+      off = registerDialogOpen()
+    })
+    try {
+      expect(document.body.querySelector('body > [data-notification-rail] [data-toast-layout]')).toBeNull()
+      expect(container.querySelector('[data-toast-layout]')).toBeTruthy()
+      act(() => useUiStore.getState().setStatus(literal('导出已完成'), 'done'))
+      expect(document.body.querySelector('body > [data-notification-rail] [data-toast-layout]')).toBeTruthy()
+    } finally {
+      act(() => off())
+    }
+
+    act(() => useUiStore.getState().setStatus(literal('保存失败'), 'error'))
+    let offErr = () => {}
+    act(() => {
+      offErr = registerDialogOpen()
+    })
+    try {
+      expect(document.body.querySelector('body > [data-notification-rail] [data-toast-layout]')).toBeTruthy()
+    } finally {
+      act(() => offErr())
+    }
+  })
+
   it('对照：不带动作的非错误 toast 照旧自己走', () => {
     act(() => useUiStore.getState().setStatus(literal('好了'), 'info'))
     tick(STATUS_AUTO_DISMISS_MS + 10)
@@ -371,6 +399,24 @@ describe('通知轨：外形与先后', () => {
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
     await act(async () => box.querySelector<HTMLButtonElement>('[data-copy-details]')!.click())
     expect(writeText).toHaveBeenCalledWith('写盘失败：/very/long/path/that/goes/on')
+  })
+
+  it('错误胶囊带 copyDetail 时，复制出「界面句子 + 换行 + 后端原话」，界面只显示句子', async () => {
+    act(() =>
+      useUiStore.getState().setStatus(literal('没能打开「figs」。'), 'error', { copyDetail: 'PermissionError: [Errno 13]' }),
+    )
+    const box = statusToast()!
+    expect(box.textContent).toContain('没能打开「figs」。')
+    expect(box.textContent).not.toContain('PermissionError')
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    await act(async () => box.querySelector<HTMLButtonElement>('[data-copy-details]')!.click())
+    expect(writeText).toHaveBeenCalledWith('没能打开「figs」。\nPermissionError: [Errno 13]')
+  })
+
+  it('胶囊宽度随句子、最宽 560px、窄屏不超过轨宽（挂在类上）', () => {
+    say('已导出')
+    expect(statusToast()!.className).toContain('max-w-[min(560px,100%)]')
   })
 
   it('最新的一条最靠近底边：先有状态、后来提示 → 提示排在后面；再来一条状态 → 状态又到最后', () => {

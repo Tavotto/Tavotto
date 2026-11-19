@@ -1,0 +1,3 @@
+## Font names with punctuation are kept as written, and write-back no longer overwrites outside edits
+
+Installed fonts whose family name contains Fontconfig punctuation (for example a hyphen, as in `DFYanKaiW7-B5`) are now passed to Matplotlib as literal names, so they are no longer replaced by a fallback; math text keeps the chosen weight and style, including in exported `.py` scripts. When edits are written back to a script, the source is checked again during verification, backup and replacement, so a change made in another editor in the meantime is not overwritten. (#1878, contributed by @kingside33)

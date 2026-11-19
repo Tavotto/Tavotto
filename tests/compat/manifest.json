@@ -7266,6 +7266,53 @@
       "notes": "三维曲面（plot_surface + cmap）叠三维散点（固定数组，无随机数）。数据图元在 3D 轴上只给样式字段（ADR 0135），不包装成二维可编辑对象。"
     },
     {
+      "id": "art_layout_annotations",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_layout_annotations.py",
+      "stem": "art_layout_annotations",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "scatter",
+          "image",
+          "linecoll",
+          "text",
+          "artist"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.5
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "子图框 / 图幅坐标里手画的标注（引线、手画图例点、线组、子图框里的图片、表格、图上的线组）：「拖动」阶段要求它们可拖（ADR 0100 修订 2026-11-18）"
+    },
+    {
       "id": "sci_usetex",
       "category": "scientific_stack",
       "script": "cases/scientific_stack/sci_usetex.py",

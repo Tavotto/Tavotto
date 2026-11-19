@@ -18,7 +18,9 @@
 import { refreshProject } from '@/lib/api'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { msg } from '@/i18n'
+import { currentProjectId } from '@/lib/session'
 import { useAssetStore } from './assetStore'
+import { useDataFigureStore } from './dataFigureStore'
 import { useDocumentStore } from './documentStore'
 import { syncPanelSourceMetadata, type PanelSyncResult } from './panelSourceSync'
 import { useProjectReadinessStore } from './projectReadinessStore'
@@ -31,6 +33,9 @@ import { previewSession, resetPreview } from './svgPreviewStore'
 import { useUiStore } from './uiStore'
 import { enterElementEdit } from './actions'
 import { useWorkspaceStore } from './workspace'
+
+/** 「找不到脚本了」那条提示的主人：点「重新关联脚本」先收掉自己那一条 */
+const SOURCE_LOST_OWNER = 'sync.sourceLostEditing'
 
 /**
  * 同步结果 → 渲染层 / 编辑态 / 提示。
@@ -94,7 +99,26 @@ function applyPanelSync(result: PanelSyncResult): void {
   }
 
   if (editingLost) {
-    ui.setStatus(msg('status.sourceLostEditing', undefined, 'workspace'), 'error')
+    // 「重新关联脚本」：打开项目接入状态，聚焦这张图那一行（行里的「改绑脚本」就是现成的手工关联）。
+    // 点的时候已换了项目、或这张图已不在文档里，就只收提示
+    const lostFileId = (() => {
+      const o = useDocumentStore.getState().doc.objects.find((x) => x.id === editing)
+      return o?.type === 'panel' ? o.fileId : null
+    })()
+    const pj = currentProjectId()
+    ui.setStatus(msg('status.sourceLostEditing', undefined, 'workspace'), 'error', {
+      owner: SOURCE_LOST_OWNER,
+      action: {
+        label: msg('status.sourceLostRelink', undefined, 'workspace'),
+        run: () => {
+          useUiStore.getState().clearStatusOwnedBy(SOURCE_LOST_OWNER)
+          if (currentProjectId() !== pj || lostFileId === null) return
+          // 点的时候这张图已不在文档里了：不替一张不存在的图打开接入状态
+          if (!useDocumentStore.getState().doc.objects.some((x) => x.id === editing)) return
+          useProjectReadinessStore.getState().focusPanel(lostFileId, 'quickedit')
+        },
+      },
+    })
   } else if (result.downgraded.length) {
     ui.setStatus(msg('status.sourceLost', { count: result.downgraded.length }, 'workspace'), 'info')
   } else if (result.upgraded.length) {
@@ -127,6 +151,8 @@ export async function refreshAssetsAndSync(opts?: {
   // `force` 与素材那一侧同义——用户刚按过刷新 / 刚写过盘时绝不复用一个
   // **在那之前**就发出的在途请求。
   void useProjectReadinessStore.getState().load({ force: opts?.force })
+  // 数据出图的数据文件清单也是磁盘的一个投影：读过就跟着重读（外部加了 CSV、点项目刷新后「数据」入口要出现）；没读过什么都不做
+  useDataFigureStore.getState().invalidateFiles()
   const data = await useAssetStore.getState().load({ force: opts?.force })
   if (!data) return null
   const result = syncPanelSourceMetadata(

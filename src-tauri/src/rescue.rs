@@ -122,6 +122,9 @@ pub struct FailureInfo {
     /// 只在握手超时（`sidecar_timeout`）时有值：sidecar 卡在启动的哪一步（[`crate::sidecar::startup_phase`] 的
     /// 闭集阶段名，或 `none` = 本次启动没留下任何标记）；其余为 `None`。
     pub startup_phase: Option<&'static str>,
+    /// 只在 [`install_check_applies`] 的失败码上有值：安装文件核对的结论（[`crate::sidecar::install_check::CHECKS`]）；
+    /// 其余为 `None`。
+    pub install_check: Option<&'static str>,
 }
 
 impl FailureInfo {
@@ -133,6 +136,7 @@ impl FailureInfo {
             install_files: None,
             spawn_error: None,
             startup_phase: None,
+            install_check: None,
         }
     }
 
@@ -148,6 +152,11 @@ impl FailureInfo {
 
     pub fn with_startup_phase(mut self, phase: &'static str) -> Self {
         self.startup_phase = Some(phase);
+        self
+    }
+
+    pub fn with_install_check(mut self, verdict: &'static str) -> Self {
+        self.install_check = Some(verdict);
         self
     }
 }
@@ -225,13 +234,36 @@ fn gate(app: &tauri::AppHandle, window: &tauri::WebviewWindow) -> Result<(), &'s
     )
 }
 
-/// 「重新安装」（允许同版本）适用的失败码：文件丢失（`sidecar_not_found`）与文件在但系统拒绝运行
-/// （`sidecar_spawn_failed`：杀软拦截、文件损坏、权限不对——重启都修不好，重装同一个版本最可能一下修好，TVD-JNZE）。
-/// 别的失败（握手超时、启动崩溃……）重装同一个版本修不好，也就不放行同版本安装。
+/// 「重新安装」（允许同版本）适用的失败：重启修不好、重装同一个版本最可能一下修好的那几种。
+/// - 文件丢失：`sidecar_not_found`；引擎起来了却没握手、且安装文件核对为 `missing`（TVD-MHQJ：杀软隔离了 `_internal` 里的文件）；
+/// - 系统拒绝运行 / 读取：`sidecar_spawn_failed`（TVD-JNZE）；没握手且核对为 `unreadable`（文件被锁 / 拒绝访问）。
+///
+/// 别的失败（安装文件完好的超时、启动崩溃……）重装同一个版本修不好，也就不放行同版本安装。
 pub const REINSTALL_DENY_NOT_APPLICABLE: &str = "reinstall_not_applicable";
 
-pub fn reinstall_applies(code: &str) -> bool {
-    code == code::SIDECAR_NOT_FOUND || code == code::SIDECAR_SPAWN_FAILED
+/// 重装理由：页面据此挑正文（文件丢失 / 被系统阻止）。
+pub const REASON_MISSING: &str = "missing";
+pub const REASON_BLOCKED: &str = "blocked";
+
+/// 安装文件核对（`sidecar::install_check`）适用的失败码：引擎起来了却没握手——握手前提前退出与握手超时。
+/// Windows Lab 实测：文件被隔离 / 锁住时 PyInstaller 在入口之前就导入失败，弹框挂住（= 超时）或被关掉后退出码 1（= 提前退出）。
+pub fn install_check_applies(code: &str) -> bool {
+    code == code::SIDECAR_EXITED || code == code::SIDECAR_TIMEOUT
+}
+
+/// 同版本安装的唯一判据：`None` = 不适用。
+pub fn reinstall_reason(info: &FailureInfo) -> Option<&'static str> {
+    use crate::sidecar::install_check;
+    match info.code {
+        c if c == code::SIDECAR_NOT_FOUND => Some(REASON_MISSING),
+        c if c == code::SIDECAR_SPAWN_FAILED => Some(REASON_BLOCKED),
+        c if install_check_applies(c) => match info.install_check {
+            Some(v) if v == install_check::MISSING => Some(REASON_MISSING),
+            Some(v) if v == install_check::UNREADABLE => Some(REASON_BLOCKED),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// 「重新启动」要走安全启动（这一次不恢复上次项目，TVD-DT76）的失败码。判据只有这一个出处，页面不自己猜。
@@ -241,16 +273,23 @@ pub fn safe_start_applies(code: &str) -> bool {
     code == code::SIDECAR_TIMEOUT
 }
 
-/// 纯判据：在 [`decide`]（可信页面 + 从未进入编辑态）之上再要求当前失败码满足 [`reinstall_applies`]。
+/// shell 报告带 `startup_phase`（sidecar 走到启动的哪一步，闭集）的失败码。判据只有这一个出处。
+/// 握手超时（卡在哪一步，TVD-DT76）与握手前提前退出（崩在哪一步，TVD-MHQJ）：两者都是 sidecar 起来了、
+/// 往日志写过阶段标记；别的失败码 sidecar 没跑起来或已握手，阶段没有意义。
+pub fn startup_phase_applies(code: &str) -> bool {
+    code == code::SIDECAR_TIMEOUT || code == code::SIDECAR_EXITED
+}
+
+/// 纯判据：在 [`decide`]（可信页面 + 从未进入编辑态）之上再要求当前失败满足 [`reinstall_reason`]。
 /// 同版本安装的放行点只有这一处。
 pub fn decide_reinstall(
     label: &str,
     url: Option<&url::Url>,
     entered: bool,
-    failure_code: Option<&str>,
+    failure: Option<&FailureInfo>,
 ) -> Result<(), &'static str> {
     decide(label, url, entered)?;
-    if failure_code.is_some_and(reinstall_applies) {
+    if failure.and_then(reinstall_reason).is_some() {
         Ok(())
     } else {
         Err(REINSTALL_DENY_NOT_APPLICABLE)
@@ -263,8 +302,13 @@ fn gate_reinstall(
 ) -> Result<(), &'static str> {
     let url = window.url().ok();
     let state = app.state::<RescueState>();
-    let code = state.failure().map(|f| f.code);
-    decide_reinstall(window.label(), url.as_ref(), state.entered(), code)
+    let failure = state.failure();
+    decide_reinstall(
+        window.label(),
+        url.as_ref(),
+        state.entered(),
+        failure.as_ref(),
+    )
 }
 
 /* -------------------------------------------------------------------------- */
@@ -284,9 +328,11 @@ pub struct Status {
     update: bool,
     /// 启动诊断可发送（环境变量只能关闭它，不能改地址）。
     upload: bool,
-    /// 页面主按钮该是「重新安装」：可用 + 更新通道已配置 + 失败码满足 [`reinstall_applies`]（文件丢失 /
-    /// 系统拒绝运行，重启修不好）。判据只有 [`reinstall_applies`] 这一个出处，页面不自己猜。
+    /// 页面主按钮该是「重新安装」：可用 + 更新通道已配置 + 失败满足 [`reinstall_reason`]（文件丢失 /
+    /// 系统拒绝运行，重启修不好）。判据只有 [`reinstall_reason`] 这一个出处，页面不自己猜。
     reinstall: bool,
+    /// 重装时正文说哪一种（[`REASON_MISSING`] / [`REASON_BLOCKED`]）；不重装为 `None`。
+    reinstall_reason: Option<&'static str>,
 }
 
 fn update_configured(app: &tauri::AppHandle) -> bool {
@@ -325,7 +371,8 @@ pub fn rescue_status(
         exit_code: info.exit_code,
         update: eligible && update_configured(&app),
         upload: eligible && shell_report::upload_enabled(),
-        reinstall: eligible && reinstall_applies(info.code) && update_configured(&app),
+        reinstall: eligible && reinstall_reason(&info).is_some() && update_configured(&app),
+        reinstall_reason: reinstall_reason(&info),
     })
 }
 
@@ -382,7 +429,7 @@ pub async fn rescue_update_install(
 
 /// 重新安装当前版本（文件丢失时的出路）：走同一个协调器——同一把锁、内置公钥验签、`run_install_expecting`
 /// 核对版本——但允许**同版本**。同版本放行只在这条命令里（`app_update::reinstall_builder`），且先过
-/// [`gate_reinstall`]：可信页面 + 从未进入编辑态 + 失败码满足 [`reinstall_applies`]。装完由页面调 `rescue_retry` 重启。
+/// [`gate_reinstall`]：可信页面 + 从未进入编辑态 + 失败满足 [`reinstall_reason`]。装完由页面调 `rescue_retry` 重启。
 #[tauri::command]
 pub async fn rescue_reinstall(
     app: tauri::AppHandle,
@@ -437,6 +484,7 @@ fn ensure_prepared(app: &tauri::AppHandle, state: &RescueState) -> Prepared {
         install_files: info.install_files,
         spawn_error: info.spawn_error,
         startup_phase: info.startup_phase,
+        install_check: info.install_check,
         created_at: now_iso(),
     });
     *slot = Some(p.clone());
@@ -592,26 +640,65 @@ mod tests {
         assert_eq!(decide("remote", Some(&page), true), Err(DENY_NOT_TRUSTED));
     }
 
+    fn failed(c: &'static str, check: Option<&'static str>) -> FailureInfo {
+        let mut f = FailureInfo::new("handshake", c);
+        f.install_check = check;
+        f
+    }
+
     #[test]
-    fn same_version_reinstall_needs_the_trusted_page_a_clean_window_and_a_reinstallable_code() {
+    fn same_version_reinstall_needs_the_trusted_page_a_clean_window_and_a_reinstallable_failure() {
+        use crate::sidecar::install_check::{CHECKS, INTACT, MISSING, UNKNOWN, UNREADABLE};
         let page = u("tauri://localhost/error.html");
-        let missing = Some(code::SIDECAR_NOT_FOUND);
+        let missing = failed(code::SIDECAR_NOT_FOUND, None);
         let reinstallable = [code::SIDECAR_NOT_FOUND, code::SIDECAR_SPAWN_FAILED];
         for c in reinstallable {
             assert_eq!(
-                decide_reinstall("main", Some(&page), false, Some(c)),
+                decide_reinstall("main", Some(&page), false, Some(&failed(c, None))),
                 Ok(()),
                 "{c}"
             );
         }
-        // 文件丢失 / 拒绝运行以外的码：重装同一个版本修不好，不放行（闭集里每一个别的码都拒）
-        for c in CODES.iter().filter(|c| !reinstallable.contains(c)) {
-            assert_eq!(
-                decide_reinstall("main", Some(&page), false, Some(c)),
-                Err(REINSTALL_DENY_NOT_APPLICABLE),
-                "{c}"
-            );
+        // 引擎起来了却没握手：只有安装文件核对为缺 / 读不了时才放行（TVD-MHQJ）
+        for c in [code::SIDECAR_EXITED, code::SIDECAR_TIMEOUT] {
+            for (check, want) in [
+                (Some(MISSING), Some(REASON_MISSING)),
+                (Some(UNREADABLE), Some(REASON_BLOCKED)),
+                (Some(INTACT), None),
+                (Some(UNKNOWN), None),
+                (None, None),
+            ] {
+                let f = failed(c, check);
+                assert_eq!(reinstall_reason(&f), want, "{c} {check:?}");
+                assert_eq!(
+                    decide_reinstall("main", Some(&page), false, Some(&f)).is_ok(),
+                    want.is_some(),
+                    "{c} {check:?}"
+                );
+            }
         }
+        // 其余的码：重装同一个版本修不好，不放行——带了核对结论也不放行（核对只属于没握手的那两种）
+        for c in CODES
+            .iter()
+            .filter(|c| !reinstallable.contains(c) && !install_check_applies(c))
+        {
+            for check in CHECKS {
+                assert_eq!(
+                    decide_reinstall("main", Some(&page), false, Some(&failed(c, Some(check)))),
+                    Err(REINSTALL_DENY_NOT_APPLICABLE),
+                    "{c} {check}"
+                );
+            }
+        }
+        // 重装理由都在闭集里；文件丢失 / 被阻止两种各有出处
+        assert_eq!(
+            reinstall_reason(&failed(code::SIDECAR_NOT_FOUND, None)),
+            Some(REASON_MISSING)
+        );
+        assert_eq!(
+            reinstall_reason(&failed(code::SIDECAR_SPAWN_FAILED, None)),
+            Some(REASON_BLOCKED)
+        );
         // 还没有失败事实（不该发生）也不放行
         assert_eq!(
             decide_reinstall("main", Some(&page), false, None),
@@ -619,16 +706,16 @@ mod tests {
         );
         // 进过编辑态：即使失败码对也拒（救援门禁在前）
         assert_eq!(
-            decide_reinstall("main", Some(&page), true, missing),
+            decide_reinstall("main", Some(&page), true, Some(&missing)),
             Err(DENY_EDITING_UNKNOWN)
         );
         // 不可信调用方：先于一切
         assert_eq!(
-            decide_reinstall("remote", Some(&page), false, missing),
+            decide_reinstall("remote", Some(&page), false, Some(&missing)),
             Err(DENY_NOT_TRUSTED)
         );
         assert_eq!(
-            decide_reinstall("main", None, false, missing),
+            decide_reinstall("main", None, false, Some(&missing)),
             Err(DENY_NOT_TRUSTED)
         );
     }
@@ -667,10 +754,16 @@ mod tests {
             assert_eq!(safe_start_applies(c), *c == "sidecar_timeout", "{c}");
         }
         assert!(!safe_start_applies(""));
-        // 与「重新安装」互不相交：安全启动和重装是两种不同的出路
-        assert!(CODES
-            .iter()
-            .all(|c| !(safe_start_applies(c) && reinstall_applies(c))));
+        // 安装文件完好时与「重新安装」互不相交：安全启动和重装是两种不同的出路；
+        // 超时且文件缺 / 读不了时主按钮是重装，「重新启动」退到其他选项、仍走安全启动
+        for check in [Some("intact"), Some("unknown"), None] {
+            assert!(
+                CODES
+                    .iter()
+                    .all(|c| !(safe_start_applies(c)
+                        && reinstall_reason(&failed(c, check)).is_some()))
+            );
+        }
     }
 
     /// 一段语句里的真实调用（AST，不是子串）：路径调用记「倒数两段」（`safe_start::arm`），方法调用记方法名。
@@ -854,6 +947,7 @@ mod tests {
             install_files: None,
             spawn_error: None,
             startup_phase: None,
+            install_check: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         }));
         s.set_failure(FailureInfo::new("launch", "sidecar_spawn_failed"));
