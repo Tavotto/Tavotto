@@ -18,8 +18,14 @@ def _install_id() -> str:
         return ""
 
 
-# 形如 sk-…、ghp_…、长十六进制串等，宁可多抹一点
-_SECRET_VALUE = re.compile(r"\b(sk-[A-Za-z0-9_\-]{8,}|ghp_[A-Za-z0-9]{10,}|[A-Fa-f0-9]{32,})\b")
+#: 形如 sk-…、ghp_…、长十六进制串等，宁可多抹一点。
+#: 高级版授权（ADR 0193）：激活码 `TVK-XXXX-XXXX-XXXX`（Crockford base32，大小写都抹）与授权令牌 payload 的 base64 形状
+#: （payload 一律以 `{"v":1,` 开头，base64 后固定以 `eyJ2Ijox` 起）。按**值的形状**抹，文本里偶然出现也出不了门
+#: （`license/` 目录本身整个不进诊断包）。
+_SECRET_VALUE = re.compile(
+    r"\b(sk-[A-Za-z0-9_\-]{8,}|ghp_[A-Za-z0-9]{10,}|[A-Fa-f0-9]{32,}"
+    r"|(?i:tvk)-[A-Za-z0-9]{4}-[A-Za-z0-9]{4}-[A-Za-z0-9]{4}|eyJ2Ijox[A-Za-z0-9+/_-]{16,})\b"
+)
 
 #: 云盘挂载点的目录名里带着账号：`~/Library/CloudStorage/坚果云-<邮箱>`、`GoogleDrive-<邮箱>`、
 #: `OneDrive-<机构名>`。服务商名留着（「项目在云盘里」对排障有用：同步冲突、占位文件），账号哈希

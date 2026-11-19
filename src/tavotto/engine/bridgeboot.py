@@ -72,12 +72,20 @@ __all__ = [
     "UnreadableImportSkipper",
     "install_unreadable_import_skipper",
     "skip_events",
+    "GuiBackendNeutralizer",
+    "install_gui_backend_neutralizer",
+    "gui_backend_events",
     "unreadable_folder_fact",
     "unreadable_folder_facts",
     "IgnoredImportPaths",
     "install_ignored_import_paths",
     "ignored_events",
     "foreign_abi_facts",
+    "image_format_facts",
+    "image_format_names",
+    "image_mismatch_of_file",
+    "sniff_image_format",
+    "image_format_of_extension",
     "drop_script_dir_from_sys_path",
     "load_engine_modules",
 ]
@@ -129,6 +137,23 @@ _TOPLEVEL_TO_RESTORE = (
 )
 
 
+def make_run_original(path: str):
+    """启动脚本（ADR 0194 §二）里可直接调用的 `run_original()`：在调用方那份全局里执行**用户原脚本**的代码。
+
+    safe（worker）与 native（bridge）同一份：启动脚本按「执行另一份字节、身份仍是原脚本」装载，`__file__` 是原脚本；
+    `runpy.run_path(__file__)` 在 safe 下会被「换字节」那一层再次指回启动脚本（无限递归），手写 `exec(compile(open(...)))`
+    又容易写错——由 Tavotto 注入这个函数，模型只写前置的几行。读原件用内置 `open`（不经 `io.open_code` 的换字节），
+    编译带 `dont_inherit=True`（不把引擎自己的 `from __future__` 传给用户代码）。"""
+
+    def run_original(globals_=None):
+        g = globals_ if globals_ is not None else sys._getframe(1).f_globals
+        with open(path, "rb") as fh:
+            code = compile(fh.read(), path, "exec", dont_inherit=True)
+        exec(code, g)
+
+    return run_original
+
+
 def drop_script_dir_from_sys_path(here: str) -> bool:
     """把「脚本自己的目录」从 `sys.path[0]` 摘掉，返回是否真的摘了。
 
@@ -145,6 +170,28 @@ def drop_script_dir_from_sys_path(here: str) -> bool:
         del sys.path[0]
         return True
     return False
+
+
+def package_path_root(script: str, module: str) -> str | None:
+    """按模块运行一份包里的脚本时的 `sys.path[0]`：包根的上一级目录（ADR 0196，与 `python -m 包.模块` 一致）。
+
+    子进程只收模块名（`plots.fig`）与脚本路径，这里从脚本路径往上数层得出：脚本文件名必须是模块名最后一段 + `.py`、
+    往上每一级目录名必须与模块名的各段逐一对上（Windows 不分大小写），否则回 None——**绝不猜**，由调用方大声失败或照旧按脚本运行。
+    safe worker（`--as-module`）与 native bridge（`--as-module`）共用这一个，两侧的 `sys.path[0]` 与 `co_filename` 因而同源。
+    """
+    parts = module.split(".") if isinstance(module, str) else []
+    if not parts or not all(p.isidentifier() for p in parts):
+        return None
+    path = os.path.abspath(script)
+    base, ext = os.path.splitext(os.path.basename(path))
+    if ext != ".py" or os.path.normcase(base) != os.path.normcase(parts[-1]):
+        return None
+    cur = os.path.dirname(path)
+    for name in reversed(parts[:-1]):
+        if os.path.normcase(os.path.basename(cur)) != os.path.normcase(name):
+            return None
+        cur = os.path.dirname(cur)
+    return cur
 
 
 def load_engine_modules(engine_dir: str, names) -> types.ModuleType:
@@ -549,6 +596,149 @@ def skip_events() -> list[dict]:
     return list(_SKIPPER.events) if _SKIPPER is not None else []
 
 
+class GuiBackendNeutralizer:
+    """脚本写死「交互（GUI）后端」时不切换，保持非交互后端（ADR 0195，维护者 2026-11-19 裁决）。
+
+    Tavotto 永远不弹窗口：`matplotlib.use("TkAgg")` / `"Qt5Agg"` / `"MacOSX"` 之类在没有对应 GUI 库的环境里只会以
+    `missing_dependency` 失败，有的环境里还会进 GUI 主循环。**只对 GUI 后端**这样做（与 ADR 0153 同类的有意偏离，
+    native 「与 `python fig.py` 一致」的契约在此一点上让位）；Agg / pdf / svg / ps / cairo / `module://…` 等
+    非交互或判不出的后端名原样交给 matplotlib。
+
+    * **判据只有一处** `is_gui_backend`：以 matplotlib 自己的后端登记表（3.9+ `backend_registry` 的 INTERACTIVE 过滤，
+      旧版 `rcsetup.interactive_bk`）为准，大小写不敏感；登记表读不到 / 为空 = 判不出 = 不动。
+    * **两处入口**：`matplotlib.use`（`patch_matplotlib`）与 `pyplot.switch_backend`（`patch_pyplot`；pyplot 首次建图时
+      自己也经它按 `rcParams["backend"]` 切后端，所以 `rcParams["backend"] = GUI`、`MPLBACKEND=GUI`、matplotlibrc 里写
+      GUI 后端也一并被它挡住）。safe worker 装在 `import matplotlib` 之后、可信方法面基线冻结之前；native 经
+      `PostImportHook` 在用户 import 到的那一刻装——**自己不 import matplotlib**。
+    * **只在需要时动手**：当前后端若已是显式的非交互名（用户先 `use("pdf")`）就什么都不切；否则（safe 的 Agg、native
+      未定的 auto、或已经是 GUI 名）切到 `agg`。
+    * **留痕**：`events` 只含后端名（落在 GUI 登记表这个闭集里，不含路径），随回执 `runtime.gui_backends_neutralized`。
+    * 包装函数定义在引擎目录里：`figcapture` 的方法面指纹对已基线的模块要求包装先于基线冻结，对首次才见到的模块
+      认引擎目录来源（见 `figcapture._module_origin_ok`）——所以不会被判成「脚本 patch 了 matplotlib」。
+    """
+
+    MARK = "_tavotto_gui_backend_neutralizer"
+
+    def __init__(self, on_event=None):
+        self._on_event = on_event
+        self._gui = (
+            None  # frozenset | None：首次用到时才问 matplotlib（不在装钩子时 import 任何东西）
+        )
+        self.events: list[str] = []
+
+    # ---- 判据（唯一出处） ----
+    def _gui_names(self) -> frozenset:
+        if self._gui is None:
+            names: set = set()
+            try:
+                from matplotlib.backends import BackendFilter, backend_registry  # noqa: PLC0415
+
+                names = {
+                    str(n).lower() for n in backend_registry.list_builtin(BackendFilter.INTERACTIVE)
+                }
+            except Exception:  # noqa: BLE001 —— 旧版 matplotlib：回到 rcsetup 的老清单
+                try:
+                    from matplotlib import rcsetup  # noqa: PLC0415
+
+                    names = {str(n).lower() for n in rcsetup.interactive_bk}
+                except Exception:  # noqa: BLE001
+                    names = set()
+            self._gui = frozenset(names)
+        return self._gui
+
+    def is_gui_backend(self, name) -> bool:
+        """`name` 是不是 matplotlib 登记的交互后端名（判不出一律 False）。"""
+        return isinstance(name, str) and name.lower() in self._gui_names()
+
+    def _current_raw(self, mpl):
+        """rcParams 里**还没解析**的后端设置：显式名（str）或 None（auto / 读不到）。不触发后端解析。"""
+        try:
+            rc = mpl.rcParams
+            raw = rc._get_backend_or_none()
+        except Exception:  # noqa: BLE001
+            try:
+                raw = dict.__getitem__(mpl.rcParams, "backend")
+            except Exception:  # noqa: BLE001
+                return None
+        return raw if isinstance(raw, str) else None
+
+    def _note(self, name: str) -> None:
+        key = name.lower()
+        if key not in self.events:
+            self.events.append(key)
+        if self._on_event is not None:
+            try:
+                self._on_event({"backend": key})
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _neutralize(self, mpl, name: str, real) -> bool:
+        """脚本要 GUI 后端：记一笔；当前不是显式非交互名就切 `agg`。返回 True = 已处理（调用方不再转给原函数）。"""
+        self._note(name)
+        cur = self._current_raw(mpl)
+        if cur is not None and not self.is_gui_backend(cur):
+            return True
+        try:
+            real("agg")
+        except Exception:  # noqa: BLE001 —— 切 agg 失败也不让 GUI 名漏过去
+            pass
+        return True
+
+    # ---- 装配 ----
+    def patch_matplotlib(self, mpl) -> None:
+        real = getattr(mpl, "use", None)
+        if real is None or getattr(real, self.MARK, False):
+            return
+        this = self
+
+        def use(backend, *args, **kwargs):
+            if this.is_gui_backend(backend):
+                this._neutralize(mpl, backend, real)
+                return None
+            return real(backend, *args, **kwargs)
+
+        setattr(use, self.MARK, True)
+        use.__name__ = getattr(real, "__name__", "use")
+        use.__doc__ = getattr(real, "__doc__", None)
+        mpl.use = use
+
+    def patch_pyplot(self, plt) -> None:
+        real = getattr(plt, "switch_backend", None)
+        if real is None or getattr(real, self.MARK, False):
+            return
+        this = self
+        mpl = sys.modules.get("matplotlib")
+        if mpl is None:
+            return
+
+        def switch_backend(newbackend, *args, **kwargs):
+            if this.is_gui_backend(newbackend):
+                this._neutralize(mpl, newbackend, real)
+                return None
+            return real(newbackend, *args, **kwargs)
+
+        setattr(switch_backend, self.MARK, True)
+        switch_backend.__name__ = getattr(real, "__name__", "switch_backend")
+        switch_backend.__doc__ = getattr(real, "__doc__", None)
+        plt.switch_backend = switch_backend
+
+
+_GUI_NEUTRALIZER: GuiBackendNeutralizer | None = None
+
+
+def install_gui_backend_neutralizer(on_event=None) -> GuiBackendNeutralizer:
+    """safe worker 与 native bridge 的**同一个**装配点（ADR 0195）。重复调用回同一个实例；**不 import matplotlib**。"""
+    global _GUI_NEUTRALIZER
+    if _GUI_NEUTRALIZER is None:
+        _GUI_NEUTRALIZER = GuiBackendNeutralizer(on_event)
+    return _GUI_NEUTRALIZER
+
+
+def gui_backend_events() -> list[str]:
+    """此刻为止被中和的 GUI 后端名（没装 / 没发生都是空表）。"""
+    return list(_GUI_NEUTRALIZER.events) if _GUI_NEUTRALIZER is not None else []
+
+
 def _top_module(rel: str) -> str:
     """`sys.path` 目录之下的相对路径（`/tzdata/__init__.py`、`six.py`）→ 顶层 import 名；不是标识符形状回空串。"""
     first = rel.replace("\\", "/").strip("/").split("/")[0]
@@ -759,6 +949,203 @@ def foreign_abi_facts(
             fact["module"] = module
         return fact, {"path": absentry}
     return {}, {}
+
+
+# --------------------------------------------------------------------------- 图片内容与扩展名不符（TVD-3MWS）
+#
+# 用户把 JPEG 存成了 `x.png`：matplotlib 对 .png 扩展名直接用 PNG 解码器、不嗅探内容，于是 `plt.imread("x.png")`
+# 以 `SyntaxError: not a PNG file` 收场（直接用 Python 跑同样失败）。失败那一刻把「这张图其实是 JPEG」这条事实交给失败卡和
+# AI 修复，用户不必去猜是不是运行方式的问题。判据按模块 / 帧认，不解析消息文本；只读文件前 16 字节，不改任何文件。
+
+#: 扩展名（小写、不带点）→ 格式显示名；同一格式的几种拼写归并
+_IMAGE_EXTENSIONS = {
+    "png": "PNG",
+    "jpg": "JPEG",
+    "jpeg": "JPEG",
+    "jpe": "JPEG",
+    "gif": "GIF",
+    "tif": "TIFF",
+    "tiff": "TIFF",
+    "bmp": "BMP",
+    "webp": "WebP",
+}
+#: 只在这些模块的帧里找被读的图片路径（PIL 自己与 matplotlib 的 imread）
+_IMAGE_READER_MODULES = ("PIL", "matplotlib.image")
+_IMAGE_PATH_LOCALS = ("fp", "filename", "fname", "file", "path", "fobj")
+
+
+def image_format_names() -> tuple[str, ...]:
+    """认得的图片格式显示名（闭集，给父进程核对事实用）。"""
+    return tuple(dict.fromkeys(_IMAGE_EXTENSIONS.values()))
+
+
+def image_format_of_extension(ext: str) -> str | None:
+    """扩展名（带不带点、大小写都行）→ 格式显示名；不是认得的图片格式回 None。"""
+    return _IMAGE_EXTENSIONS.get(str(ext or "").lstrip(".").lower())
+
+
+def sniff_image_format(path: str) -> str | None:
+    """读文件前 16 个字节认真实格式（PNG / JPEG / GIF / TIFF / BMP / WebP）；认不出、读不了、不是普通文件回 None。"""
+    try:
+        if not os.path.isfile(path):
+            return None
+        with open(path, "rb") as handle:
+            head = handle.read(16)
+    except Exception:  # noqa: BLE001 — 读不了就是不知道，绝不盖掉原来的脚本错误
+        return None
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "PNG"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "JPEG"
+    if head.startswith((b"GIF87a", b"GIF89a")):
+        return "GIF"
+    if head.startswith((b"II*\x00", b"MM\x00*")):
+        return "TIFF"
+    if head.startswith(b"BM"):
+        return "BMP"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "WebP"
+    return None
+
+
+def image_mismatch_of_file(path: str) -> tuple[str, str, str] | None:
+    """`(扩展名所属格式, 嗅探到的格式, 扩展名)`；一致、扩展名不认得、嗅探不出都回 None。"""
+    ext = os.path.splitext(path)[1].lstrip(".").lower()
+    claimed = image_format_of_extension(ext)
+    if claimed is None:
+        return None
+    actual = sniff_image_format(path)
+    if actual is None or actual == claimed:
+        return None
+    return claimed, actual, ext
+
+
+def _in_image_reader(frame) -> bool:
+    name = frame.f_globals.get("__name__", "")
+    return isinstance(name, str) and any(
+        name == m or name.startswith(m + ".") for m in _IMAGE_READER_MODULES
+    )
+
+
+def _is_pil_decode_failure(exc: BaseException) -> bool:
+    """`PIL.UnidentifiedImageError`，或抛出点（最内层帧）在 PIL 包里的 `SyntaxError`（如 "not a PNG file"）。"""
+    cls = type(exc)
+    if cls.__name__ == "UnidentifiedImageError" and str(cls.__module__).split(".")[0] == "PIL":
+        return True
+    if not isinstance(exc, SyntaxError):
+        return False
+    tb = exc.__traceback__
+    last = None
+    while tb is not None:
+        last = tb.tb_frame
+        tb = tb.tb_next
+    if last is None:
+        return False
+    name = last.f_globals.get("__name__", "")
+    return isinstance(name, str) and (name == "PIL" or name.startswith("PIL."))
+
+
+def _path_candidates(chain: list) -> list[str]:
+    """异常链各层 traceback 里 PIL / matplotlib.image 帧的 `fp` / `filename` / `fname` 一类局部变量 → 路径串（内层优先）。"""
+    out: list[str] = []
+    for e in chain:
+        frames = []
+        tb = e.__traceback__
+        while tb is not None:
+            frames.append(tb.tb_frame)
+            tb = tb.tb_next
+        for frame in reversed(frames):
+            if not _in_image_reader(frame):
+                continue
+            local = frame.f_locals
+            for key in _IMAGE_PATH_LOCALS:
+                value = local.get(key)
+                if value is None:
+                    continue
+                try:
+                    if not isinstance(value, (str, bytes)) and not hasattr(value, "__fspath__"):
+                        value = getattr(value, "name", None)  # 文件对象；取不到就放弃
+                    value = os.fspath(value) if value is not None else None
+                except Exception:  # noqa: BLE001
+                    continue
+                if isinstance(value, str) and value and value not in out:
+                    out.append(value)
+    return out
+
+
+def image_format_facts(
+    exc: BaseException, project_roots=(), sensitive_tokens=(), *, sandbox_dir=None, script_dir=None
+) -> dict:
+    """失败是不是「图片内容与扩展名不符」（解码器按扩展名选，文件里其实是别的格式）：是则
+    `{"file"?: 项目相对显示名, "claimed": 扩展名所属格式, "actual": 嗅探到的格式, "ext": 扩展名}`，否则 `{}`。
+
+    判据（全部成立才算）：异常链（最多 16 层）里有 PIL 的解码失败（`UnidentifiedImageError`，或抛出点在 PIL 包里的
+    `SyntaxError`）；PIL / `matplotlib.image` 帧里取得到被读的文件，且它在 `project_roots`（项目根、脚本目录）之内——
+    项目外的一律不报；读文件前 16 字节嗅探出的格式与扩展名所属格式不同。一致 / 嗅探不出 / 读不了 / 任何意外都回 `{}`，
+    绝不盖掉原来的脚本错误。敏感运行（`sensitive_tokens` 非空）里文件名与任一 token 有关（casefold 子串，任一方向）就不带
+    `file`，只带格式。
+
+    相对路径的换算只镜像 safe worker 的只读回退（`figcapture.install_relative_read_fallback`）这**一条**规则：给了
+    `sandbox_dir` / `script_dir`，相对路径按此刻的 cwd 解出来落在沙盒里、而沙盒里没有这个文件——那次 open 一定被回退换成了
+    `<脚本目录>/<相对路径>`，就看那一份。脚本切到别的目录、沙盒里有这份文件、或 native（不传 sandbox_dir）都不换算：
+    换算不出来的不猜，宁可回 `{}` 保留原来的错误，也不点名一张没被读过的图（#1966 Codex P2）。"""
+    try:
+        chain: list = []
+        cur, seen = exc, 0
+        while cur is not None and seen < 16:
+            chain.append(cur)
+            cur = cur.__cause__ or cur.__context__
+            seen += 1
+        if not any(_is_pil_decode_failure(e) for e in chain):
+            return {}
+        roots = []
+        for r in project_roots:
+            if isinstance(r, str) and r:
+                roots.append(os.path.realpath(r))
+        if not roots:
+            return {}
+
+        def inside(real: str):
+            return next(
+                (r for r in roots if real != r and real.startswith(r.rstrip(os.sep) + os.sep)),
+                None,
+            )
+
+        for candidate in _path_candidates(chain):
+            real = os.path.realpath(os.path.abspath(candidate))
+            base = inside(real)
+            if (
+                base is None
+                and not os.path.isabs(candidate)
+                and sandbox_dir
+                and script_dir
+                and not os.path.lexists(os.path.abspath(candidate))
+            ):
+                box = os.path.realpath(sandbox_dir)
+                here = os.path.realpath(os.path.abspath(candidate))
+                if here.startswith(box.rstrip(os.sep) + os.sep):
+                    alt = os.path.realpath(os.path.join(script_dir, candidate))
+                    if inside(alt) and os.path.isfile(alt):
+                        real, base = alt, inside(alt)
+            if base is None:
+                continue
+            mismatch = image_mismatch_of_file(real)
+            if mismatch is None:
+                continue
+            claimed, actual, ext = mismatch
+            fact = {"claimed": claimed, "actual": actual, "ext": ext}
+            shown = os.path.relpath(real, base).replace(os.sep, "/")
+            folded = shown.casefold()
+            related = any(
+                (t := str(token).casefold()) and (t in folded or folded in t)
+                for token in sensitive_tokens
+            )
+            if not related:
+                fact = {"file": shown, **fact}
+            return fact
+    except Exception:  # noqa: BLE001
+        return {}
+    return {}
 
 
 class _FilteredNamespacePath:

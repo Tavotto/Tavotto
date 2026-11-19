@@ -1,0 +1,3 @@
+## Journal checks use newer guideline data, with the original text screenshot on source cards
+
+For journals that have newer guideline data, Tavotto now also checks the plain requirements it can judge (a minimum bitmap resolution, an accepted font list) and, when both old and new data state the same item, uses the newer one. Projects already set to a journal pick this up when you open them. Requirements that depend on a condition in the guideline, or that Tavotto cannot check yet, are listed in a collapsed "Needs your check" group at the end of the problem list; they are not counted as problems. Source cards show a screenshot of the guideline text with the sentence highlighted. If the newer data cannot be loaded, checks work as before.

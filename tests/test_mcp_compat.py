@@ -572,6 +572,8 @@ def test_errors_within_the_budget_are_returned_unchanged(project, monkeypatch):
 
     monkeypatch.setitem(server.HANDLERS, "tavotto_open_figure", failed)
     res = server.call_tool("tavotto_open_figure", {})
+    # `next` 是增量字段（ADR 0192 §3）：去掉它，失败回包与旧版一字不变
+    assert res["structuredContent"].pop("next")["action"] == "ask_user"
     assert res == {
         "isError": True,
         "content": [{"type": "text", "text": "找不到\n下一步：换个路径"}],

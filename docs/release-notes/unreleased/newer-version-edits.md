@@ -1,0 +1,3 @@
+## Projects edited in a newer Tavotto open cleanly in this one
+
+When a project was saved by a newer version of Tavotto that added a new kind of edit (for example dragging individual segments of a leader line), opening it in an older version showed "property not supported" warnings. From this version on, edits this version doesn't recognise are skipped quietly: the figure opens normally, everything else applies, and those edits stay saved in the project so a newer version still shows them. Writing back to the original file is refused with a plain explanation instead, because the written file would be missing those edits; update Tavotto, then write back.

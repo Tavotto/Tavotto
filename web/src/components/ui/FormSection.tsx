@@ -1,4 +1,5 @@
 import type { HTMLAttributes, ReactNode } from 'react'
+import { DESK_FIELD_SCOPE } from './fieldBox'
 import { InFieldGroup } from './fieldGroupContext'
 import { cn } from '@/lib/utils'
 
@@ -53,7 +54,12 @@ export function FieldGroup({
   return (
     <InFieldGroup.Provider value>
       {/* `@container`：组里的设置行按**组的宽度**决定并排还是叠放（`settings/SettingRow` 的 SETTING_ROW_STACK_BELOW） */}
-      <div {...rest} data-ui-field-group data-ui-field-group-plain={plain ? '' : undefined} className={cn('@container flex flex-col rounded-lg bg-group', className)}>
+      <div
+        {...rest}
+        data-ui-field-group
+        data-ui-field-group-plain={plain ? '' : undefined}
+        className={cn('@container flex flex-col rounded-lg bg-group inset-ring inset-ring-border/70', DESK_FIELD_SCOPE, className)}
+      >
         {children}
       </div>
     </InFieldGroup.Provider>

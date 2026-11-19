@@ -20,7 +20,7 @@
 只认专用开关 `TAVOTTO_NO_JOURNAL_SYNC=1`（`TAVOTTO_NO_TELEMETRY` 只管遥测，与 `updater` 同一先例）。
 
 验签用 PyNaCl（libsodium；用户 2026-11-05 拍板：用成熟库，不手写加密；不用 cryptography 是 Intel Mac 轮子与告警），
-**只在 `_ed25519_verify` 里延后 import**
+**只在 `ed25519util.verify`（`_ed25519_verify` 是它的别名）里延后 import**
 （与 `tlstrust` 的 truststore 同一写法；Flask 父进程启动不加载它，`tests/test_journal_remote.py` 看护）。
 import 不了、长度不对、任何异常一律当验签失败（fail closed，目录保持种子）。
 
@@ -37,6 +37,7 @@ import json
 import logging
 import os
 import re
+import stat
 import threading
 import time
 import urllib.error
@@ -45,7 +46,7 @@ from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
-from . import atomicio, config, journals, tlstrust
+from . import atomicio, config, ed25519util, journals, tlstrust
 
 LOG = logging.getLogger(__name__)
 
@@ -58,10 +59,11 @@ TRUSTED_KEYS: dict[str, str] = {"prod-1": "fYO5adiBp/EH0ug9cRcsC3bhij5l1V4Em4rcf
 
 #: 两个入口（**一个后端、计数只有一份**）：`(中国站, 海外)`。中国站 `tavotto.cn` 是后端本体（sqlite 计数在那里），
 #: 海外 `tavotto.com` 是 Vercel 上的薄反代，转到中国站（`services/journal_catalog/vercel_proxy/`）。
+#: 海外入口必须写 `www.`：裸域 `tavotto.com` 一律 308 到 www，而客户端不跟跳转（会白白回退到 .cn）。
 #: 先后顺序与更新检查、联系作者**同一个**「大陆环境」判据（`contactsend.region_is_cn`）：大陆先 .cn 后 .com，其余反过来。
 CATALOG_URLS: tuple[str, ...] = (
     "https://tavotto.cn/v1/journal-catalog/",
-    "https://tavotto.com/v1/journal-catalog/",
+    "https://www.tavotto.com/v1/journal-catalog/",
 )
 URL_ENV = "TAVOTTO_JOURNAL_CATALOG_URL"
 
@@ -159,26 +161,8 @@ def _b64decode(text: object) -> bytes:
     return base64.b64decode(text.encode("ascii"), validate=True)
 
 
-def _ed25519_verify(public_key: object, message: object, signature: object) -> bool:
-    """Ed25519 验签；任何异常（含 `nacl` 缺失）都是 False，永不抛。公钥 32 字节、签名 64 字节。"""
-    if not (
-        isinstance(public_key, bytes | bytearray | memoryview)
-        and isinstance(message, bytes | bytearray | memoryview)
-        and isinstance(signature, bytes | bytearray | memoryview)
-    ):
-        return False
-    pk, msg, sig = bytes(public_key), bytes(message), bytes(signature)
-    if len(pk) != 32 or len(sig) != 64:
-        return False
-    try:
-        # 延后：Flask 父进程启动不为原生轮子付代价；只在拉索引验签时才加载
-        from nacl.signing import VerifyKey
-
-        # libsodium 的 crypto_sign_verify_detached：拒 S >= L 的可塑性签名与小阶 / 非规范公钥点
-        VerifyKey(pk).verify(msg, sig)
-    except Exception:  # noqa: BLE001 - BadSignatureError / ValueError / TypeError / CryptoError / ImportError 等一律验签失败
-        return False
-    return True
+# 验签本体在 `ed25519util.verify`（与高级版授权共用）；保留旧名，journalfacts_remote 与测试都经它调。
+_ed25519_verify = ed25519util.verify
 
 
 def verify_envelope(raw: bytes) -> dict:
@@ -807,3 +791,29 @@ def snapshot_path(file: str) -> Path | None:
                 LOG.info("快照未取到（%s）", exc.code)
         _SNAPSHOT_FAILED[file] = now
         return None
+
+
+def snapshot_bytes(file: str) -> bytes | None:
+    """Return the bounded, hash-verified bytes used by the snapshot HTTP endpoint.
+
+    ``snapshot_path`` retains its existing cache and path behavior; the HTTP
+    response must not reopen that path after checking it, since it may change.
+    """
+    match = _SNAPSHOT_RE.fullmatch(file) if isinstance(file, str) else None
+    if match is None:
+        return None
+    try:
+        path = snapshot_path(file)
+        if path is None or path.is_symlink():
+            return None
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        fd = os.open(path, flags)
+        with os.fdopen(fd, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                return None
+            data = stream.read(MAX_SNAPSHOT_BYTES + 1)
+    except OSError:
+        return None
+    if len(data) > MAX_SNAPSHOT_BYTES or hashlib.sha256(data).hexdigest() != match.group(1):
+        return None
+    return data

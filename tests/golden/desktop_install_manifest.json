@@ -1,0 +1,6 @@
+{
+  "_comment": "桌面 sidecar 的安装文件清单（TVD-MHQJ）。构建时在 sidecar 目录（PyInstaller onedir 根，与 Tavotto(.exe) 同级）写 file_name：首行 header，之后每行一个相对路径（/ 分隔、按字节序排序、不含清单自己）。壳在握手前提前退出 / 握手超时后逐项核对，结论写进最小诊断包 failure.install_check（checks 闭集；有缺 = missing 优先于读不了 = unreadable；清单不在 / 写坏 / 超时 = unknown），缺或读不了时救援页主按钮换成「重新安装」。只核在不在、能不能打开读，不核大小（签名会改 exe/dll 的字节）。严格同源对：生产方 scripts/build_desktop.py（INSTALL_MANIFEST_*，tests/test_install_manifest.py）与消费方 src-tauri/src/sidecar/install_check.rs（manifest_is_the_golden_pair）各读这份，不读对方源码。",
+  "file_name": "install-files.txt",
+  "header": "# tavotto-install-files v1",
+  "checks": ["intact", "missing", "unreadable", "unknown"]
+}

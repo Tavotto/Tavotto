@@ -14,7 +14,7 @@
 | 旧文档里的默认字体是什么 | 画布文字对象只存**通用族**（`font_family ∈ {serif, sans-serif, monospace}`，缺席 = 默认族 serif），从来不存 `Times-Roman` 那类具体脸名——所以**没有需要迁移的文档字段**。「Times-Roman → Liberation Serif」是实现侧的映射：族 → 批准字体集合里对应的脸（`rendercore/fonts.py::FontRegistry.record_for`），旧项目原样打开 |
 | 位置 / 内容 / 框尺寸 | **保持**：文字对象的 `x/y/w/h`、内容、字号、对齐、行距一个字节不动；面板 / 形状 / 箭头与字体无关 |
 | 换行 | 由同一套算法在新 advance 上算。Liberation 三族与对应 base-14 脸**度量兼容**（advance 相同），所以换行位置不变——这不是假设，`tests/test_compose_text.py` 21 条（含 60 mm / 30 mm 两档的整句换行期望）在切默认后**一字未改仍全过**；`tests/test_rendercore_calibration.py::text` 量墨的左右边 ≤ 1 pt |
-| 基线 | 同一条公式 `y0 + size·((line_h − (asc − desc))/2 + asc)`，asc / desc 从 bbox ascender（Times 1.053）换成 OS/2 typo（Liberation Serif 0.693 / −0.216）：12 pt 时基线上移 1.77 pt。**批准的度量变化**（D07），校准用例钉「恰好等于这个量 ±0.6 pt」，不是「差得不多」 |
+| 基线 | 同一条公式 `y0 + size·((line_h − (asc − desc))/2 + asc)`，asc / desc 从 bbox ascender（Times 1.053）换成 OS/2 typo（Liberation Serif 0.693 / −0.216）：12 pt 时基线上移 1.77 pt。**批准的度量变化**（D07），校准用例钉「恰好等于这个量 ±0.6 pt」，不是「差得不多」。**2026-11-16 修订**：基线不再读字体度量，见文末「修订：文字框里上下居中」 |
 | 静默重排 | **没有**：不改任何画布尺寸、不改用户脚本、不重写文档；换行变化若有（本轮实测为零）按 U08 / U10 的批准差异表逐例审查，不做「自动重排一遍」 |
 | 集合外的字 | 画不出的字是 `missing`：写 .notdef（画面上是方框）+ ToUnicode 回原字（文本层里字还在）+ 问题面板一条 `glyph-missing`——**不换脸冒充**（RC-037）。`auto` 解释档只救「不然就是方框」的上下标（`⁻` → 合成上标 `-`，ActualText 还原原文） |
 | 覆盖表 / 向量 / golden | 一次批准迁移（03 §6）：`canvas_coverage.json` 与 `glyph_plan_vectors.json` 重生成，旧表存档为批准资产，差异闭集钉在 `tests/test_rendercore_glyph_vectors.py`（ADR 0072 §2 那张表逐条解释） |
@@ -71,3 +71,43 @@ Liberation Serif（`FontRegistry.record_for("serif", bold, italic)`）。打开�
 | 缺省族不走衬线 | `tests/test_typography_families.py::test_the_family_reaches_the_pdf_font_resources`、`test_an_unknown_family_falls_back_to_the_default_instead_of_resolving_it` |
 | 覆盖表悄悄给 fallback 层塞码位 | `tests/test_rendercore_glyph_vectors.py::test_the_default_tables_name_the_rendercore_backend_and_have_no_fallback_layer` |
 | 换行算法在新 advance 上多断一行 | `test_compose_text.py::test_normal_words_wrap_exactly_as_before_the_force_break_fallback[60/30]` |
+
+## 修订：文字框里上下居中（2026-11-16，用户拍板）
+
+**问题**：用户反馈数学公式和普通文字在文字框（带底色 / 描边的标注）里不上下居中。实测（批准字体、行距 1.25）：导出按
+OS/2 typo 摆基线，字整体偏上——中文墨迹离框顶 0.02 em、离框底 0.31 em，`x²` 0.07 / 0.39 em；画布预览按浏览器的 hhea
+摆，比导出低约 0.1 em（#1669：预览 ≠ 导出），中文与公式在预览里也偏上；高公式（`\frac`、带上下限的 `\sum`）不撑行，
+从框的上下边伸出去且两头伸出的量不同。
+
+**裁决**（用户 2026-11-16 选推荐的两项）：
+
+1. **按字面中线居中**：横排每行的基线 = 行盒中线下固定 `BASELINE_BELOW_CENTER`（0.35 em），与字体度量无关。
+   取值在拉丁大写字母高的一半（批准三族 0.33–0.34）与中文字面中心（Noto SC 0.38）之间，两边离中线都不到 0.05 em。
+   导出 `rendercore/typography.line_box` ↔ 画布 `web/src/lib/typography.ts` 的 `TEXT_BASELINE_BELOW_CENTER_PER_MILLE`
+   严格同源；预览量出浏览器那条基线（`web/src/lib/lineBox.ts`，屏幕外一行同字体同字号同行距、行首 0×0 行内块），
+   把内容层整体挪到同一条基线上——**不按字体度量推算**：Chromium 把上升 / 下降与半行距取整到像素，推算在小字号上差近 1 px。
+   #1669 一并关闭；「图内文字复制为标注」的三族基线常数（ADR 0163）合并成这一个数。
+2. **高公式撑开所在行**（ADR 0152 修订）：行盒 = 普通字的行盒 ∪ 公式盒，只影响含高公式的那一行。
+
+**代价（已向用户说明）**：存量项目里所有横排标注导出位置下移约 0.11 em（9 pt 约 0.7 pt）；预览位置几乎不变
+（Liberation / Times 的 hhea 本来就离 0.35 em 不到 0.02 em）；含高公式的标注框高变大（预览量了写回 `h`，并进触发它的历史或静默）。
+
+**竖排同一条规则（转 90°）**：侧躺段（拉丁、公式）的基线 = 列中线左边固定同一个 `BASELINE_BELOW_CENTER`——横排「基线在行盒中线下」
+顺时针转过来就是这一条，原先按 OS/2 typo 算 `(上升 + 下降)/2`（Liberation 0.24 em），侧躺字整体偏右、预览（浏览器 hhea 的中线基线，
+批准衬线 0.34 em）≠ 导出约 0.1 em；现在两侧差约 0.01 em，存量竖排标注的侧躺段导出左移约 0.11 em。高公式撑开所在的那一列
+（`rendercore/vertical.column_box`：列盒 = 普通列宽 ∪ 公式盒，后面的列往左让）；预览的公式盒恰好包住墨迹、按中线对齐后
+`vertical-align` 挪到基线两侧（`web/src/lib/verticalFormula.ts`），浏览器的行盒自然取并。直立字（中日文）的摆法不变。
+
+**复制图里文字（ADR 0163）**：第一行有高公式时，按 `text_block.asc`（原图 matplotlib 量的那一行上伸，公式也是 mathtext 排的）
+超出普通行盒上半的部分给框加高、框顶往上让，第一行基线仍落在原处——复制是同步的（⌘C 的 `copy` 事件），等不到公式排版结果。
+
+| 变异 | 红在 |
+|---|---|
+| 基线改回读字体度量 | `tests/test_compose_text.py::test_baseline_matches_css_line_box`、`tests/test_rendercore_typography.py::test_the_baseline_does_not_depend_on_the_primary_face_metrics` |
+| 两侧常数只改一边 | `tests/test_text_line_box.py` |
+| 预览不补差 / 补差方向反了 | `tests/test_horizontal_css_parity.py`（真 Chromium 逐行对账基线、公式上下边、框高，容差 0.1 pt；手工反证：补差置零 → 11.25 对 11.7 pt 红） |
+| 公式不撑行 | `tests/test_rendercore_typography.py::test_a_tall_formula_grows_only_its_own_line_and_short_ones_change_nothing`、`tests/test_horizontal_css_parity.py`（框高） |
+| 竖排公式不撑列（导出） | `tests/test_rendercore_vertical.py::test_a_tall_formula_widens_only_its_own_column_and_short_ones_change_nothing`、`tests/test_vertical_css_parity.py`（手工反证：去掉 `column_box` 的公式项 → 第二列公式落点 −23.7 对 −29.4 pt 红） |
+| 竖排预览公式不挪到基线两侧 | `tests/test_vertical_css_parity.py`（手工反证：`verticalAlign` 置零 → 红） |
+| 竖排侧躺基线改回读字体度量 | `tests/test_rendercore_vertical.py::test_mixed_script_latin_lies_on_its_side_and_cjk_stays_upright` |
+| 复制文字不算第一行高公式 | `web/src/lib/figureTextCopy.test.ts`「第一行有高公式」（手工反证：撑高量置零 → 红） |

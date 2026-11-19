@@ -61,6 +61,9 @@ order: 300
     worker 的 warnings（元素不存在 / 编辑的对象已找不到（目标身份对不上，ADR 0083）/
     属性不支持 / 应用失败 / 还原失败）**一条即阻断**，回 409 `code=write_back_warnings`
     + warnings 列表。
+    重放导出报了 `future_props`（更新的 Tavotto 写下、这一版认不出的修改，引擎跳过不算 warning）同样阻断，回 409
+    `code=write_back_future_props` + `props`：画布与重放里都没有它们，写回的话原文件少了这些修改、项目文件里却还在，
+    换回新版本又是另一张图——说清楚请更新后再写回，原文件零改动。真 warning 与它同时出现时按 warning 报。
     staging 阶段**任何异常都要 unlink 掉所有 `.updating` 临时文件**
     （以前只有 file_locked 那条路径清理，PDF 成功 PNG 失败就留垃圾）。
     三个失败出口（verify / 落盘准备 / 替换撞锁）的清理都走 `_discard_updating`，

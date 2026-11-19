@@ -92,6 +92,28 @@ def test_fragment_is_deterministic():
     assert a == b
 
 
+def _series_stroke_width(fragment: bytes) -> str:
+    root = parse_svg(strip_matplotlib_doctype(fragment))
+    for el in root.iter():
+        style = el.get("style", "")
+        if "stroke: #1f77b4" in style:
+            return style.split("stroke-width:", 1)[1].split(";", 1)[0].strip()
+    raise AssertionError("series path not found in scaffold fragment")
+
+
+def test_line_series_forwards_linewidth_to_the_scaffold():
+    base = svgchart.scaffold_fragment(model(), FRAME)["fragment"]
+    thick_model = model()
+    thick_model["series"][0]["style"] = {"color": "#1f77b4", "linewidth": 3.0}
+    thick = svgchart.scaffold_fragment(thick_model, FRAME)["fragment"]
+    assert _series_stroke_width(base) == "2"
+    assert _series_stroke_width(thick) == "3"
+
+
+def test_safe_style_keeps_linewidth():
+    assert svgchart._safe_style({"linewidth": 3.0}) == {"linewidth": 3.0}
+
+
 def test_fragment_has_tick_labels_for_the_new_range():
     out = svgchart.scaffold_fragment(model(), FRAME)
     labels = [t["label"] for t in out["facts"]["ticks"]["x"]["ticks"]]

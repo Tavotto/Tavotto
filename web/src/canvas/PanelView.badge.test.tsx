@@ -23,6 +23,8 @@ import type { CapturedFigureDescriptor, NativeSessionInfo, NativeSessionState } 
 import { PanelView } from '@/canvas/PanelView'
 import { renderKeyOf } from '@/store/renderStore'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
+import { useProjectPreparationStore } from '@/store/projectPreparationStore'
+import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import type { PanelObject } from '@/types/document'
@@ -154,13 +156,13 @@ describe('面板角标的优先级', () => {
     expect(text()).not.toContain('脚本已更新')
   })
 
-  it('会话结束 + 脚本已更新 → 显示"会话已结束"', () => {
+  it('会话结束 + 脚本已更新 → 显示"重新运行"', () => {
     // offline 同样是**阻塞性**的：这张图出自一条已经结束的会话，对象级编辑
     // 与权威导出都要重新跑原命令才回得来（`enginesession.resolve` 会拒）。
     // 所以它和 running 用同一条规则，不需要第二套理由。
     useNativeSessionStore.setState({ sessions: {} }) // 没有活会话，profile 仍是 native
     render()
-    expect(text()).toContain('会话已结束')
+    expect(text()).toContain('重新运行')
     expect(text()).not.toContain('脚本已更新')
   })
 
@@ -189,5 +191,65 @@ describe('面板角标的语气', () => {
     expect(b.className).not.toMatch(/\bbg-ink\b/)
     // 锚点色底与 -content 字是按界面 surface 配好的一对：不挂纸面作用域（Codex #995）
     expect(b.hasAttribute('data-on-paper')).toBe(false)
+  })
+})
+
+/**
+ * 原样运行出的图，那次运行已经结束（一份用户反馈：重开软件后点这张图，角标是「渲染失败」）。
+ * 选中它会发一次渲染，后端按设计 409 `native_session_offline`——那是**正常状态**，不是故障。
+ */
+describe('运行已结束的图', () => {
+  const failWith = (code: string) =>
+    useRenderStore.setState({
+      byKey: { [renderKeyOf(panel())]: { stale: false, status: 'error', code, error: null } },
+      latest: {},
+      building: {},
+      tracked: {},
+    } as never)
+
+  it('409 native_session_offline 不算渲染失败：角标只有「重新运行」四个字', () => {
+    failWith('native_session_offline')
+    render()
+    expect(text()).not.toContain('渲染失败')
+    expect(host.querySelector('[data-panel-badge]')?.textContent).toBe('重新运行')
+    expect(host.querySelector('[data-badge-rerun]')?.textContent).toBe('重新运行')
+  })
+
+  it('参数配置变体给不了按钮：照旧说「运行已结束」', () => {
+    failWith('native_session_offline')
+    const p = panel()
+    ;(p.source as { runConfig?: string }).runConfig = 'cfg-1'
+    act(() => root.render(<PanelView obj={p} />))
+    expect(text()).toContain('运行已结束')
+    expect(host.querySelector('[data-badge-rerun]')).toBeNull()
+  })
+
+  it('别的失败码照旧是「渲染失败」（负对照）', () => {
+    failWith('script_error')
+    render()
+    expect(text()).toContain('渲染失败')
+    expect(host.querySelector('[data-badge-rerun]')).toBeNull()
+  })
+
+  it('「重新运行」走「打开并运行」入口，明确不带参数：不读参数草稿、不沿用上次参数（Codex #2020）', () => {
+    const open = vi.fn(async () => {})
+    const prev = useProjectPreparationStore.getState().open
+    useProjectPreparationStore.setState({ open } as never)
+    // 脚本此刻有参数草稿：按钮也不能带上它（带参数跑出的是另一张图）
+    useScriptArgvStore.setState({ drafts: { 'fig.py': { tokens: ['--n', '3'], sensitive: false } } } as never)
+    try {
+      render()
+      act(() => host.querySelector<HTMLButtonElement>('[data-badge-rerun]')!.click())
+      expect(open).toHaveBeenCalledWith({ script: 'fig.py' }, { run: true })
+    } finally {
+      useProjectPreparationStore.setState({ open: prev } as never)
+      useScriptArgvStore.setState({ drafts: {} } as never)
+    }
+  })
+
+  it('脚本还活着（停在屏障上）时没有「重新运行」', () => {
+    useNativeSessionStore.setState({ sessions: { 'native-1': session('barrier', true) } })
+    render()
+    expect(host.querySelector('[data-badge-rerun]')).toBeNull()
   })
 })

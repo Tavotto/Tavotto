@@ -299,11 +299,10 @@ class MissingDependency(unittest.TestCase):
             self.assertIn("read_parquet", xt.coverage([parent], [], [])["unavailable_transforms"])
 
 
-#: Tavotto 在 cwd 相对路径下读不到的数据源（沙盒 cwd 不是脚本目录，原生是）。这是**产品**差异，
-#: 不是模板 bug：由 Guardian 如实记录，这里只登记「已知、已看到」，不替产品掩盖——别处的 outcome 必须是 no_difference。
-#: parquet：`missing_input`（FileNotFoundError: cg_data.parquet）；glob：目录相对 glob 在沙盒 cwd 下为空，
-#: 之后 matplotlib 报 `x and y must be the same size` 记成 `script_error`。
-KNOWN_TAVOTTO_GAPS = {("read_parquet", "cwd"), ("glob_dir", "cwd")}
+# 曾有一张「已知 Tavotto 差异」表登记 cwd 相对路径的 read_parquet / glob_dir（沙盒 cwd 不是脚本目录，原生是）。
+# #1846 起没决定过工作目录的项目会静默改在脚本目录里重跑，Guardian 的观察也改走产品的 `pool.build`，
+# 这两种现在都和原生一致、都得是 no_difference（read_parquet 在 seed 7 下就是 cwd 样式）；
+# 「用户选了沙盒」档的差异由 tests/test_compat_guardian_families.py 的 G4 / G5 用例钉住。
 
 
 class RealExecution(unittest.TestCase):
@@ -329,16 +328,13 @@ class RealExecution(unittest.TestCase):
                 record = ex.run_one(manifest, 7, out, 200)
                 self.assertGreaterEqual(record["executions"]["parent_native"], 1)
                 self.assertEqual(record["native"]["figure_count"], 1, record)
-                if (name, style) in KNOWN_TAVOTTO_GAPS:
-                    self.assertEqual(record["judgment"]["outcome"], "difference_found", record)
-                    kinds = {d["kind"] for d in record["judgment"]["differences"]}
-                    self.assertEqual(kinds, {"zero_figures"}, record)
-                else:
-                    self.assertEqual(record["judgment"]["outcome"], "no_difference", record)
-                    # 保型 = 不改用户的图 = 数据指纹也不变：结构层真比了数据，不是空比较
-                    structure = record["stages"]["structure"]
-                    self.assertEqual(structure["status"], "passed", record["stages"])
-                    self.assertGreater(structure["data_compared"], 0, record["stages"])
+                self.assertEqual(
+                    record["judgment"]["outcome"], "no_difference", (name, style, record)
+                )
+                # 保型 = 不改用户的图 = 数据指纹也不变：结构层真比了数据，不是空比较
+                structure = record["stages"]["structure"]
+                self.assertEqual(structure["status"], "passed", record["stages"])
+                self.assertGreater(structure["data_compared"], 0, record["stages"])
 
     def test_a_value_changed_only_on_the_tavotto_side_is_a_data_structure_mismatch(self):
         """原生读到的是对的值，Tavotto 那份项目里数据被改了一个值：图数、标题都对，只有数据指纹能看出来。"""

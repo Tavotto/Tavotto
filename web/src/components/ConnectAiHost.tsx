@@ -16,6 +16,7 @@ export function ConnectAiHost() {
   const name = useConnectAiStore((s) => s.name)
   const close = useConnectAiStore((s) => s.close)
   const editing = useConnectAiStore((s) => s.editing)
+  const editFocus = useConnectAiStore((s) => s.editFocus)
   const closeEditor = useConnectAiStore((s) => s.closeEditor)
   const editingEndpoint = useAiStore((s) => (editing ? s.caps?.endpoints?.find((e) => e.id === editing) : undefined))
   useEffect(() => {
@@ -23,7 +24,7 @@ export function ConnectAiHost() {
     if (open) void refreshCaps()
   }, [open])
   useCapsWatch(open)
-  if (editingEndpoint) return <CompatibleEndpoint existing={editingEndpoint} onClose={closeEditor} onSaved={closeEditor} />
+  if (editingEndpoint) return <CompatibleEndpoint existing={editingEndpoint} focus={editFocus ?? undefined} onClose={closeEditor} onSaved={closeEditor} />
   if (!open) return null
   return <ConnectAiDialog open reason={reason} name={name ?? undefined} onClose={close} onConnected={() => onConnected?.()} />
 }

@@ -5,12 +5,13 @@ import type { UiMessage } from '@/i18n'
 import type { DiskDocumentSummary } from '@/lib/api'
 import { emitActivity } from '@/lib/activity'
 import { createDismissTimer } from '@/lib/dismissTimer'
+import { useDialogLayerStore } from './dialogLayerStore'
 import type { Severity } from '@/lib/profile'
 import type { ProblemCursor, ProblemDrill, ProblemScope, ProblemView } from '@/lib/problemList'
 import { drillKey } from '@/lib/drillKey'
 import { applyTheme, isThemePref, type ThemePref } from '@/lib/theme'
 
-export type LeftTab = 'workspace' | 'assets' | 'outline' | 'elements' | 'style' | 'problems'
+export type LeftTab = 'workspace' | 'assets' | 'data' | 'outline' | 'elements' | 'style' | 'problems'
 /** 2026-10 审计 A3：画布 + 图层合成一棵「大纲」（图内元素仍是独立的「图内」页签）；旧版本机偏好里的 canvases / layers 落到它上面 */
 const LEGACY_OUTLINE_TABS: readonly string[] = ['canvases', 'layers']
 /** 右栏三模式：属性 / 改图助手 / 画布设置 */
@@ -251,7 +252,8 @@ function readPersisted(): Persisted {
     ...state,
     // 手改过 / 未来版本写进来的未知外观值当「跟随系统」
     theme: isThemePref(state.theme) ? state.theme : DEFAULTS.theme,
-    leftTab: LEGACY_OUTLINE_TABS.includes(state.leftTab as string) ? 'outline' : state.leftTab,
+    // 「数据」抽屉是实验功能、依赖项目里的数据清单：重启后不带着它启动（落回素材）
+    leftTab: LEGACY_OUTLINE_TABS.includes(state.leftTab as string) ? 'outline' : state.leftTab === 'data' ? 'assets' : state.leftTab,
     leftPinned: typeof state.leftPinned === 'boolean' ? state.leftPinned : null,
     rightPinned: typeof state.rightPinned === 'boolean' ? state.rightPinned : null,
     rightWidth: Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, state.rightWidth)),
@@ -328,12 +330,11 @@ interface UiState extends Persisted {
    * （`clearStatusOwnedBy`），别的图、别的类别的提示碰不到它。
    */
   statusOwner: string | null
-  /**
-   * 这条 toast 的一个动作（可选，`setStatus` 的 `action`）：通知轨里的「查看」。带动作的 toast 是要用户回头处理的
-   * 一句话（导出关窗后失败 / 等你决定），所以**不自己消失**，和错误一样挂到用户点 × 或主人撤掉。
-   * 例外：声明了 `dismissMs` 的（导出全部成功的「已导出 … · 在文件夹中显示」）带动作也到点自己走，悬停 / 聚焦时暂停。
-   */
   statusAction: StatusAction | null
+  /** 发出这条状态时的模态层代际（`dialogLayerStore.epoch`）：代际落后于当前打开的模态 = 弹窗前画布遗留提示 */
+  statusModalEpoch: number
+  /** 「复制详情」额外附在界面句子后面的一行（`setStatus` 的 `copyDetail`，如后端原话）；不显示，只进剪贴板 */
+  statusCopyDetail: string | null
   /** 正在双击编辑的文字对象 */
   editingTextId: string | null
   /** 进入裁剪模式的面板 */
@@ -507,6 +508,8 @@ interface UiState extends Persisted {
       passive?: boolean
       owner?: string
       action?: StatusAction
+      /** 错误胶囊上「复制」要多带的一行（后端原话）：复制出来是「界面句子 + 换行 + 它」；界面不显示 */
+      copyDetail?: string
       /**
        * 带动作却仍自己走的那种（导出成功的「已导出 … · 在文件夹中显示」）：给了它就按这个毫秒数收起，
        * 指针停在上面 / 焦点在它的按钮上照样不走表（`statusDismissTimer`）。错误语气不受它影响，仍常驻。
@@ -633,6 +636,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   statusPassive: false,
   statusOwner: null,
   statusAction: null,
+  statusModalEpoch: 0,
+  statusCopyDetail: null,
   editingTextId: null,
   cropTargetId: null,
   cropBaseline: null,
@@ -821,12 +826,22 @@ export const useUiStore = create<UiState>((set, get) => ({
       statusPassive: passive,
       statusOwner: status ? (opts?.owner ?? null) : null,
       statusAction: status ? (opts?.action ?? null) : null,
+      statusModalEpoch: status ? useDialogLayerStore.getState().epoch : 0,
+      statusCopyDetail: status ? (opts?.copyDetail ?? null) : null,
     })
     statusDismissTimer.cancel()
     // 普通状态短暂即逝；错误与带动作的保留到用户处理（toast 上有关闭键）——带动作但声明了 `dismissMs` 的例外
     if (status && statusTone !== 'error' && (!opts?.action || opts.dismissMs)) {
       statusDismissTimer.start(opts?.dismissMs ?? STATUS_AUTO_DISMISS_MS, () =>
-        set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null, statusAction: null }),
+        set({
+          status: null,
+          statusTone: 'info',
+          statusPassive: false,
+          statusOwner: null,
+          statusAction: null,
+          statusModalEpoch: 0,
+          statusCopyDetail: null,
+        }),
       )
     }
   },
@@ -834,14 +849,14 @@ export const useUiStore = create<UiState>((set, get) => ({
   clearStatusOwnedBy: (owner) => {
     if (!get().status || get().statusOwner !== owner) return
     statusDismissTimer.cancel()
-    set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null, statusAction: null })
+    set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null, statusAction: null, statusModalEpoch: 0, statusCopyDetail: null })
   },
 
   clearStatusOwnedByPrefix: (prefix) => {
     const owner = get().statusOwner
     if (!get().status || owner === null || !owner.startsWith(prefix)) return
     statusDismissTimer.cancel()
-    set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null, statusAction: null })
+    set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null, statusAction: null, statusModalEpoch: 0, statusCopyDetail: null })
   },
 
   // 不按值短路：值相同的新对象也要换上，否则后来者拿不到主人身份，`releaseIssueHover` 会认错人

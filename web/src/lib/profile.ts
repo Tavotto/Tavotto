@@ -94,6 +94,8 @@ export interface PublicationProfile {
   min_script_font_size_pt?: number | null
   advisories?: Advisory[]
   min_raster_dpi: number
+  /** 数据线最细线宽（pt，按最终有效值判）；缺席 / 0 = 不判。只有期刊覆盖会写，不进必填键 */
+  min_line_width_pt?: number
   preferred_formats: {
     vector: string[]
     raster: string[]
@@ -138,6 +140,7 @@ export interface JournalOverride {
   min_effective_font_size_pt?: number
   absolute_min_font_size_pt?: number
   min_raster_dpi?: number
+  min_line_width_pt?: number
   allowed_aspect_ratios?: AspectRatio[]
   line_widths_pt?: number[]
   page_columns?: PageColumnSpec[]
@@ -241,12 +244,19 @@ export function severityOf(profile: PublicationProfile, checkId: string): Severi
   return SEVERITIES.includes(value as Severity) ? (value as Severity) : DEFAULT_SEVERITY
 }
 
+/** Only replace the exact historical built-in label in newly generated output. */
+export function profileDisplayLabel(profile: Pick<PublicationProfile, 'profile_id' | 'label'>): string {
+  return profile.profile_id === 'journal-base-v1' && profile.label === '期刊底（期刊未规定的项一律不判）'
+    ? '期刊检查基础'
+    : profile.label
+}
+
 /** proof report / 界面标题里的身份戳（与 Python 的 profiles.stamp 同形）。 */
 export function profileStamp(profile: PublicationProfile) {
   return {
     profile_id: profile.profile_id,
     profile_version: profile.version,
-    label: profile.label,
+    label: profileDisplayLabel(profile),
     ...(profile.journal ? { journal: profile.journal, derived_from: profile.derived_from } : {}),
   }
 }
@@ -383,6 +393,10 @@ export function validateSpecShape(profile: unknown): string | null {
     if (!Array.isArray(p[k])) return `${k} 必须是数组`
   }
   if (!(p.line_widths_pt as unknown[]).every(isNumber)) return 'line_widths_pt 必须全是数字'
+  // 可选键：缺席 / null = 没规定；同源对 profiles.py `_validate`
+  if (p.min_line_width_pt != null && !isNumber(p.min_line_width_pt)) {
+    return 'min_line_width_pt 必须是数字或缺席'
+  }
   const fmts = p.preferred_formats as Record<string, unknown>
   for (const k of ['vector', 'raster', 'export_default']) {
     const v = fmts[k]

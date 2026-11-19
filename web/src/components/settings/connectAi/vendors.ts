@@ -1,4 +1,5 @@
 import { currentLocale } from '@/i18n'
+import { isCheckableError, probeReasonText } from '@/lib/connectionCheck'
 import { ag, cx } from './copy'
 import { sortVendors, type AiCapabilities, type AiConnection, type AiVendor, type AiVendorMethod } from '@/lib/api'
 
@@ -15,6 +16,21 @@ export function listedVendors(caps: AiCapabilities | null | undefined): AiVendor
   return sortVendors(vendors, isCnFirst())
 }
 
+/** 用户自填地址保存下来的连接（vendor = custom）：每条一行，列在厂商列表末尾 */
+export const customConnections = (caps: AiCapabilities | null | undefined): AiConnection[] =>
+  (caps?.connections ?? []).filter((c) => c.vendor === 'custom')
+
+/** 给一条自填连接合成一行用的「厂商」：名字用连接名、图标是通用图标；Key 方式的目录行 id 仍是 custom（换 Key 时当厂商 id 发） */
+export const customVendorOf = (c: AiConnection): AiVendor => ({
+  id: c.id,
+  label: c.label,
+  logo: 'custom',
+  region: 'custom',
+  connect: 'key',
+  available: true,
+  methods: [{ id: 'custom:key', kind: 'key', catalog_id: 'custom', available: true }],
+})
+
 /** 这家厂商当前的连接（同厂商多条时取最该显示的：ready 优先） */
 export function connectionOf(caps: AiCapabilities | null | undefined, vendor: AiVendor): AiConnection | undefined {
   const own = (caps?.connections ?? []).filter((c) => c.vendor === vendor.id)
@@ -26,7 +42,11 @@ export const vendorName = (v: AiVendor): string => (v.label_key ? ag(v.label_key
 
 /** 连接异常的一句人话（只认几个常见原因码，其余统一一句） */
 export const connectionErrorText = (c: AiConnection): string =>
-  c.error && ['unauthorized', 'network', 'timeout'].includes(c.error) ? cx(`err.${c.error}`) : cx('error')
+  isCheckableError(c)
+    ? probeReasonText(c.error_reason) // 地址跑不了对话：按探测原因说一句（没有原因就是通用一句）
+    : c.error && ['unauthorized', 'network', 'timeout'].includes(c.error)
+      ? cx(`err.${c.error}`)
+      : cx('error')
 
 /** 这家厂商的连接方式；没有 `methods`（老后端）就按旧的 `connect` 合成唯一一种 */
 export const methodsOf = (v: AiVendor): AiVendorMethod[] =>

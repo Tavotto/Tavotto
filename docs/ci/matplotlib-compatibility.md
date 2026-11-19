@@ -50,10 +50,10 @@ tests/compat/
 ## 3. 漏斗，不是一个百分比
 
 一个「92%」会把「产品刻意不支持」「环境缺字体」「我们的 bug」揉成同一个数字，
-而这三件事的处理方式完全相反。所以报告输出**九级漏斗**：
+而这三件事的处理方式完全相反。所以报告输出**十级漏斗**：
 
 ```
-discover → execute → capture → open → semantic → edit → replay → export → fidelity
+discover → execute → capture → open → semantic → edit → replay → export → drag → fidelity
 ```
 
 | 阶段 | 判据 | 走哪条路 |
@@ -66,6 +66,7 @@ discover → execute → capture → open → semantic → edit → replay → e
 | edit | 应用 → manifest 反映 → 撤销 → 回到原值，全程无 warning | 真 worker |
 | replay | 热态 == 清空重放 == 全新 worker 重放 | `app._compare_manifests`（与写回同一把尺） |
 | export | PDF/PNG 真导出、体积合理、**解得开**、无 warning | 真 worker + pypdfium2 / Pillow（U10 起都在运行时闭包里，不再有「没装就跳过」那一档） |
+| drag | 每个子图分别平移 x、y 范围，位置相对子图框不动的「摆在图上的东西」（线、散点、集合、位图、形状、表格、文字……）与整张图上的同类元素，必须可拖 / 由外框代拖 / 有端点手柄 / 在 `unsupported_props` 里给出 `pos_frac` 的理由；每次扰动撤销后回到基线（2026-11-18，ADR 0100：transAxes 引线拖不动那一类，普查与别的阶段都看不见） | 真 worker + `scripts/ci/compat_drag.py`（按行为判，不借产品的判定函数；撤销比对用 `app._compare_manifests`） |
 | fidelity | **原生 matplotlib** vs **Tavotto 零 override** | 见 §5 |
 
 **分母是「本该跑到这一级的 case 数」**，不是全部 case：execute 就崩了的 case

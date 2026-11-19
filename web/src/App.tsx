@@ -51,6 +51,7 @@ import { runMenuAction } from '@/hooks/menuActions'
 import { useKeyboard } from '@/hooks/useKeyboard'
 import { useWorkspaceLayout } from '@/hooks/useWorkspaceLayout'
 import { useServerEvents } from '@/hooks/useServerEvents'
+import { useJournalV2Sync } from '@/hooks/useJournalV2Sync'
 import { usePickerHistory } from '@/hooks/usePickerHistory'
 import { subscribePruneSelection } from '@/hooks/usePruneSelection'
 import { ProjectPicker } from '@/components/ProjectPicker'
@@ -64,6 +65,10 @@ import { startDocumentLoadSync, syncLoadedDocument } from '@/store/liveSync'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectStore } from '@/store/projectStore'
+import '@/lib/dataFigureHost'
+import { useDataFigureStore } from '@/store/dataFigureStore'
+import { DataDraft } from '@/components/datastudio/DataDraft'
+import { RedrawPill } from '@/components/datastudio/RedrawPill'
 import { useEnvStore } from '@/store/envStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
@@ -169,6 +174,7 @@ function Workspace() {
   const { t } = useTranslation('workspace')
   useKeyboard()
   useServerEvents()
+  useJournalV2Sync()
   // 同步器的渲染态一侧挂在树尾的叶子 <EngineRenderSync /> 上：新图到达时渲染态要变
   // 两三回，挂在这里的话每一回都把整个工作区重画一遍（见 useEngineDocumentSync）
   useEngineDocumentSync()
@@ -181,7 +187,10 @@ function Workspace() {
   const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
   // 模式按画布各自判：单图编辑的这一张画布若还有别的画布，标签行要留着，否则切不走
   const multiCanvas = useDocumentStore((s) => s.canvases.length > 1)
-  const showTabs = !fastEdit || multiCanvas
+  // 「数据」临时标签开着时标签栏一定要有（快速编辑只有一张画布时本来不显示）
+  const dataDraftOpen = useDataFigureStore((s) => s.draftOpen)
+  const dataDraftActive = useDataFigureStore((s) => s.draftActive)
+  const showTabs = !fastEdit || multiCanvas || dataDraftOpen
   const leftOpen = useUiStore((s) => s.leftOpen)
   const rightOpen = useUiStore((s) => s.rightOpen)
   const layoutKind = useWorkspaceLayout()
@@ -301,7 +310,11 @@ function Workspace() {
                     底部居中 = 浮动工具条 + 通知轨；左下 = HUD（工具提示）；顶部居中 = 工作区上下文条（CanvasStage 里）；
                     右上 = 一个容器从上往下：缩放（快速编辑没有标签行时）→ `tavotto run` 会话卡 → 性能探针。
                     此前右上三者各自 absolute（right-2 / right-3、z 10 / 20 / 30）互相压 */}
-                <CanvasToolbar />
+                {/* 「数据」临时标签激活时画布被盖住：工具条 / 缩放 / 提示这些画布上的浮物不画；通知轨与准备卡照常（出图期间的通知不能被盖住） */}
+                {!dataDraftActive && <CanvasToolbar />}
+                {/* 刚用「数据」画出这张图时：工具条上方一枚「用 X 画的 · 换个画法」，只在这一次会话里出现 */}
+                <RedrawPill />
+                {!dataDraftActive && (
                 <div
                   data-canvas-corner="top-right"
                   className="pointer-events-none absolute right-3 top-3 z-canvas-chrome flex max-h-[calc(100%-1.5rem)] w-72 max-w-[calc(100%-1.5rem)] flex-col items-end gap-2"
@@ -315,13 +328,16 @@ function Workspace() {
                   <NativeSessionCards />
                   <PerfProbeHud />
                 </div>
-                <CanvasHud />
+                )}
+                {!dataDraftActive && <CanvasHud />}
                 <NotificationRail />
                 {/* 准备引导卡（T13b）：所有「准备并打开」入口共用的一张浮动卡，画布右下、浮动工具条上方；
                     不占布局（页面不下移），缩成角标 / 收起只改呈现 */}
                 <PreparationCard />
                 {/* R / MATLAB 脚本的入口卡（ADR 0143 修订）：它出现时 PreparationCard 自己让开 */}
                 <ForeignScriptCard />
+                {/* 「数据」临时标签激活时盖在画布位置上的内容区（画布与文档原样不动；不激活时不渲染任何东西） */}
+                <DataDraft />
               </div>
             </div>
             {right.mounted && <Inspector overlay={rightOverlay} state={right.state} />}

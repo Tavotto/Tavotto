@@ -87,7 +87,7 @@ worker = ["matplotlib>=3.8,<3.12", "numpy>=1.24,<3"]
 # 它只会被 twine -> keyring -> secretstorage 间接带进 dev 环境。这里显式写下界 >=50，是为了让 uv.lock 的这份间接依赖
 # 跟上已修告警的版本（48.x 的告警在 X.509 / PKCS#7，与我们无关但会一直挂着）。Intel Mac 桌面构建只装 requirements.txt，
 # 不装 dev extra，所以 49+ 没有 macOS x86_64 轮子不影响它。
-dev = ["pytest>=8", "build>=1.2", "twine>=5", "ruff>=0.16,<0.17", "cryptography>=50", "tavotto[legacy-pymupdf]"]
+dev = ["pytest>=8", "hypothesis>=6.100,<7", "build>=1.2", "twine>=5", "ruff>=0.16,<0.17", "cryptography>=50", "tavotto[legacy-pymupdf]"]
 # 实验室 CI（scripts/ci/）专用。**刻意不进 dev**：普通开发与 PR 上的
 # `pip install -e ".[dev]"` 不该被迫拖进科学栈的 numpy，而 Flask 父进程的依赖边界
 # （没有科学栈）更是一个字都不能松。视觉回归要 numpy 做像素级比较；Pillow 自 U10 起本来就在

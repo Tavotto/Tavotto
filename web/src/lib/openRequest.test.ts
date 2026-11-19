@@ -8,6 +8,8 @@ import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectStore } from '@/store/projectStore'
 import { emptyRender, renderKey, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { useScriptRunStore } from '@/store/scriptRunStore'
+import { setCurrentProjectId } from '@/lib/session'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { CapturedFigureDescriptor, PanelInfo, RuntimeAssetInfo } from '@/lib/api'
@@ -276,6 +278,134 @@ describe('applyOpenRequest', () => {
     expect(out).toBe('runtime-uncached')
     expect(useDocumentStore.getState().doc.objects).toHaveLength(0)
     expect(useUiStore.getState().statusTone).toBe('error')
+  })
+
+  describe('「还没运行过」那条提示带「运行」', () => {
+    const run = vi.fn()
+    const uncached = async () => {
+      useAssetStore.setState({ load: vi.fn(async () => setPanels([])) } as never)
+      setRuntimeAssets([runtimeAsset('show.py', 'show', false)])
+      setCurrentProjectId('p1')
+      expect(await applyOpenRequest({ stem: 'show' })).toBe('runtime-uncached')
+    }
+    beforeEach(() => {
+      run.mockReset().mockImplementation(async () => { setRuntimeAssets([runtimeAsset('show.py', 'show')]) })
+      useScriptRunStore.setState({ run } as never)
+    })
+
+    it('按钮「运行」：跑这张图的脚本，跑出来后接着把图放上画布并说一句', async () => {
+      await uncached()
+      expect(formatMessage(useUiStore.getState().status)).toContain('show')
+      expect(formatMessage(useUiStore.getState().statusAction?.label ?? null)).toBe('运行')
+      useUiStore.getState().statusAction!.run()
+      await vi.waitFor(() => expect(useDocumentStore.getState().doc.objects).toHaveLength(1))
+      expect(run).toHaveBeenCalledWith('show.py', null)
+      expect((useDocumentStore.getState().doc.objects[0] as { fileId: string }).fileId).toBe('runtime:show.py#show')
+      expect(useUiStore.getState().status).toMatchObject({ key: 'handoff.added' })
+    })
+
+    it('点的时候已换了项目：不运行、不落图', async () => {
+      await uncached()
+      const click = useUiStore.getState().statusAction!
+      setCurrentProjectId('p2')
+      click.run()
+      await Promise.resolve()
+      expect(run).not.toHaveBeenCalled()
+      expect(useDocumentStore.getState().doc.objects).toHaveLength(0)
+    })
+
+    it('运行途中换了项目：跑完也不把图放进新项目', async () => {
+      await uncached()
+      run.mockImplementation(async () => { setCurrentProjectId('p2'); setRuntimeAssets([runtimeAsset('show.py', 'show')]) })
+      useUiStore.getState().statusAction!.run()
+      await vi.waitFor(() => expect(run).toHaveBeenCalled())
+      await new Promise((r) => setTimeout(r, 10))
+      expect(useDocumentStore.getState().doc.objects).toHaveLength(0)
+    })
+
+    it('跑完仍没有预览（脚本失败）：不造假面板', async () => {
+      await uncached()
+      run.mockImplementation(async () => {})
+      useUiStore.getState().statusAction!.run()
+      await vi.waitFor(() => expect(run).toHaveBeenCalled())
+      await new Promise((r) => setTimeout(r, 10))
+      expect(useDocumentStore.getState().doc.objects).toHaveLength(0)
+    })
+
+    it('带配置的素材：按它自己的配置跑，按完整 id 找回结果', async () => {
+      useAssetStore.setState({ load: vi.fn(async () => setPanels([])) } as never)
+      const cfg = { ...runtimeAsset('show.py', 'show', false), run_config: 'cfg-1' }
+      const other = { ...runtimeAsset('show.py', 'show'), id: 'runtime:show.py#show@other' }
+      setRuntimeAssets([cfg])
+      setCurrentProjectId('p1')
+      expect(await applyOpenRequest({ stem: 'show' })).toBe('runtime-uncached')
+      run.mockImplementation(async () => { setRuntimeAssets([other, { ...runtimeAsset('show.py', 'show'), run_config: 'cfg-1' }]) })
+      useUiStore.getState().statusAction!.run()
+      await vi.waitFor(() => expect(useDocumentStore.getState().doc.objects).toHaveLength(1))
+      expect(run).toHaveBeenCalledWith('show.py', 'cfg-1')
+      expect((useDocumentStore.getState().doc.objects[0] as { fileId: string }).fileId).toBe('runtime:show.py#show')
+    })
+
+    it('savefig 的图跑成功后原件在磁盘上、runtime 条目消失：按磁盘路径落图，不误开素材库', async () => {
+      await uncached()
+      useUiStore.setState({ leftOpen: false, leftTab: 'outline' } as never)
+      run.mockImplementation(async () => {
+        setRuntimeAssets([])
+        useAssetStore.setState({ load: vi.fn(async () => setPanels([panel('show.pdf')])) } as never)
+      })
+      useUiStore.getState().statusAction!.run()
+      await vi.waitFor(() => expect(useDocumentStore.getState().doc.objects).toHaveLength(1))
+      expect((useDocumentStore.getState().doc.objects[0] as { fileId: string }).fileId).toBe('show.pdf')
+      expect(useUiStore.getState().leftOpen).toBe(false)
+    })
+
+    it('运行途中 A → B → A（同 id、代际已变）：不落图、不开素材库', async () => {
+      await uncached()
+      useUiStore.setState({ leftOpen: false, leftTab: 'outline' } as never)
+      run.mockImplementation(async () => {
+        useScriptRunStore.setState({ epoch: useScriptRunStore.getState().epoch + 1 } as never)
+        setRuntimeAssets([runtimeAsset('show.py', 'show')])
+      })
+      useUiStore.getState().statusAction!.run()
+      await vi.waitFor(() => expect(run).toHaveBeenCalled())
+      await new Promise((r) => setTimeout(r, 10))
+      expect(useDocumentStore.getState().doc.objects).toHaveLength(0)
+      expect(useUiStore.getState().leftOpen).toBe(false)
+    })
+
+    it('同脚本正忙（别的配置在跑）：等它结束再提交这一份，不被 run() 的闸吞掉', async () => {
+      await uncached()
+      const busy = { phase: 'running', gen: 1, error: null, descriptors: [] }
+      useScriptRunStore.setState({ byScript: { 'show.py': busy } } as never)
+      useUiStore.getState().statusAction!.run()
+      await new Promise((r) => setTimeout(r, 10))
+      expect(run).not.toHaveBeenCalled()
+      useScriptRunStore.setState({ byScript: {} } as never)
+      await vi.waitFor(() => expect(run).toHaveBeenCalledWith('show.py', null))
+    })
+
+    it('清单请求复用了运行前的旧快照：再取一次，仍能把跑出的图落上画布', async () => {
+      await uncached()
+      let calls = 0
+      useRuntimeAssetStore.setState({
+        loadAssets: vi.fn(async () => {
+          calls += 1
+          if (calls >= 2) setRuntimeAssets([runtimeAsset('show.py', 'show')])
+        }),
+      } as never)
+      run.mockImplementation(async () => {})
+      useUiStore.getState().statusAction!.run()
+      await vi.waitFor(() => expect(useDocumentStore.getState().doc.objects).toHaveLength(1))
+    })
+
+    it('脚本失败：打开素材库，让失败原因与重试入口看得见', async () => {
+      await uncached()
+      useUiStore.setState({ leftOpen: false, leftTab: 'outline' } as never)
+      run.mockImplementation(async () => {})
+      useUiStore.getState().statusAction!.run()
+      await vi.waitFor(() => expect(useUiStore.getState().leftOpen).toBe(true))
+      expect(useUiStore.getState().leftTab).toBe('assets')
+    })
   })
 
   it('多 Figure（pick）：打开 Figure 选择器，绝不静默选第一张', async () => {

@@ -45,7 +45,9 @@ function closure(entry: string): Set<string> {
   return seen
 }
 
-const rel = (set: Set<string>) => [...set].map((f) => f.slice(SRC.length + 1))
+// Windows 的 resolve() 产出反斜杠；期望串是 POSIX 形状，统一归一化再比
+const rel = (set: Set<string>) =>
+  [...set].map((f) => f.slice(SRC.length + 1).split('\\').join('/'))
 const TUTORIAL_LAYER = ['components/onboarding/NativeTutorial.tsx', 'components/onboarding/autoOpen.ts', 'App.tsx']
 
 describe('内嵌宿主不挂教程层', () => {

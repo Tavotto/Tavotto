@@ -119,6 +119,36 @@ def build_vectors() -> list[dict]:
         mutated("reject-empty-range", empty_range, "chart_model_invalid"),
     ]
 
+    # 跨语言身份排序：Python sorted() 按 code point，JS 默认 sort() 按 UTF-16
+    # code unit；ｘ（U+FF58）与 😀（U+1F600）足以让默认排序的 digest 分叉。
+    unicode_model = base_model()
+    unicode_model["dataset"]["columns"] = {
+        "x": [0.0, 1.0, 2.0],
+        "ｘ": [0.0, 1.0, 4.0],
+        "😀": [1.0, 2.0, 3.0],
+    }
+    unicode_model["series"][0]["y"] = "ｘ"
+    unicode_model["data_digest"] = cm.digest_of({"columns": unicode_model["dataset"]["columns"]})
+    vectors.append(case("valid-unicode-column-order", unicode_model, "ok", binding))
+
+    def style_alpha_out_of_range(m):
+        m["series"][0]["style"]["alpha"] = 2.0
+
+    def style_linewidth_not_number(m):
+        m["series"][0]["style"]["linewidth"] = "wide"
+
+    def style_vmin_not_less_than_vmax(m):
+        m["series"][0]["style"]["vmin"] = 2.0
+        m["series"][0]["style"]["vmax"] = 1.0
+
+    vectors += [
+        mutated("reject-style-alpha-out-of-range", style_alpha_out_of_range, "chart_model_invalid"),
+        mutated(
+            "reject-style-linewidth-not-number", style_linewidth_not_number, "chart_model_invalid"
+        ),
+        mutated("reject-style-vmin-order", style_vmin_not_less_than_vmax, "chart_model_invalid"),
+    ]
+
     stale = {
         "model_rev": 2,
         "scene_digest": good["scene_digest"],

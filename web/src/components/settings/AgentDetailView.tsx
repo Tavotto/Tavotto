@@ -759,7 +759,7 @@ function InstallPanel({
           <Summary className="cursor-default text-xs text-ink-3">
             {ag('install.log')}
           </Summary>
-          <pre className="mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap rounded-sm border border-border bg-surface p-1.5 font-mono text-xs text-ink-3">
+          <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-field px-2.5 py-2 font-mono text-xs text-ink-3">
             {live.log}
           </pre>
         </Details>
@@ -772,10 +772,10 @@ function InstallPanel({
           size="sm"
           footer={
             <>
-              <Button variant="secondary" size="md" onClick={() => setConfirming(false)}>
+              <Button variant="secondary" size="lg" onClick={() => setConfirming(false)}>
                 {ag('detail.cancel')}
               </Button>
-              <Button variant="primary" size="md" onClick={() => void begin()}>
+              <Button variant="primary" size="lg" onClick={() => void begin()}>
                 {ag('install.confirmAction')}
               </Button>
             </>
@@ -783,7 +783,7 @@ function InstallPanel({
         >
           <div className="flex flex-col gap-2">
             <p className="text-xs leading-relaxed text-ink-2">{ag('install.confirmBody')}</p>
-            <pre className="rounded-sm border border-border bg-surface-2 p-1.5 font-mono text-xs text-ink">
+            <pre className="rounded-md bg-field px-2.5 py-2 font-mono text-xs text-ink">
               {command}
             </pre>
           </div>

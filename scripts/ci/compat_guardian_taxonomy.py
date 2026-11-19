@@ -39,6 +39,7 @@ STAGE_TO_CATEGORY = {
     "edit": "editing_capability",
     "replay": "replay_inconsistency",
     "export": "export_or_fidelity",
+    "drag": "editing_capability",
     "fidelity": "export_or_fidelity",
 }
 

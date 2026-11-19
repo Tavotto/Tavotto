@@ -136,6 +136,18 @@
   },
   "notice": {
     "checkConnection": "检查连接",
+    "conn": {
+      "unauthorized": "{{name}} 的密钥不对",
+      "quota": "{{name}} 额度用完了",
+      "no_model": "{{name}} 没有这个模型",
+      "unreachable": "{{name}} 连不上这个地址"
+    },
+    "refillKey": "重填密钥",
+    "switchAi": "换个 AI",
+    "editModel": "改模型",
+    "editAddress": "改地址",
+    "checking": "检查中",
+    "connectionOk": "连接正常了，可以重试",
     "taskFailedChanged": "改动已写入，但核对发现数据或输出变了；不对的话可以回滚到修改前。",
     "taskPartial": "改动已写入，但有检查没能完成，结果未经完整核对。",
     "taskRejected": "改动没通过写回前检查，没有写入项目。",
@@ -155,7 +167,7 @@
     "agentModel": "执行器与模型",
     "agentNote": "直接修改脚本；每次运行前自动快照，可回滚。",
     "checkResult": "查询结果",
-    "checkUnreachable": "暂时联系不上后端，稍后再查询。",
+    "checkUnreachable": "暂时联系不上本机服务，请稍后再查。",
     "cli": "CLI：{{version}}",
     "cliPath": "路径：{{path}}",
     "draftNotSaved": "没能先保存输入框里的草稿，所以没有发出。检查连接后重试。",
@@ -172,13 +184,13 @@
     "emptyHint": "助手会直接修改脚本，改动可回滚。",
     "emptyTitle": "想怎么改这张图？",
     "inputAria": "描述要怎么改这张图",
-    "ledgerFailed": "没能保存这条指令的发送记录，所以没有发出。检查连接后重试。",
-    "ledgerUnreadable": "暂时读不到这张图有没有未结的发送记录，所以先不能发送。",
+    "ledgerFailed": "未能确认本机任务状态，这条指令尚未发出。请稍后重试。",
+    "ledgerUnreadable": "正在确认上一条指令的状态，请稍候片刻再发。",
     "noCli": "没有可用的改图助手。",
     "noPanelTitle": "选中一张可编辑的图",
     "none": "—",
     "notReceivedBody": "可以重新发送，不会重复执行。",
-    "notReceivedTitle": "后端没有收到这条指令",
+    "notReceivedTitle": "这条指令未能送达",
     "openAiSettings": "打开改图助手设置",
     "placeholder": "例如：把图例移到左上角",
     "draftLoading": "正在载入草稿…",
@@ -431,7 +443,7 @@
       "compile": "编译",
       "compose": "合成",
       "raster": "栅格化",
-      "inspect": "检查产物",
+      "inspect": "复核导出文件",
       "publish": "写出文件",
       "report": "报告"
     },
@@ -511,25 +523,13 @@
     "installing": "正在准备依赖，完成后会重新检查…"
   },
   "dataFigureV2": {
-    "question": {
-      "pick_table": "用哪张表画？",
-      "pick_value": "要画的是哪一列的数值？",
-      "pick_group": "按哪一列分组比较？",
-      "pick_x": "横轴用哪一列？",
-      "pick_design": "这些数据是同一个对象被重复测量的吗？",
-      "pick_unit": "哪一列标出了是哪个对象？",
-      "mixed_cells": "「{{column}}」里有 {{count}} 个格子不是数字（共 {{rows}} 行有数据），怎么处理？"
-    },
     "option": {
-      "table": "{{file}}：{{rows}} 行，{{groups}} 组",
-      "table_sheet": "{{file}} 的「{{sheet}}」：{{rows}} 行，{{groups}} 组",
-      "column": "{{column}}",
-      "design_independent": "每一行是不同的对象",
-      "design_repeated": "同一个对象被重复测了好几次",
-      "unsure": "不确定",
-      "skip": "忽略这些行",
-      "extract": "取出里面的数字",
-      "describe": "我来说明"
+      "skip": "不画这 {{count}} 行",
+      "extract": "只用里面的数字"
+    },
+    "variant": {
+      "split": "按「{{column}}」再分开",
+      "by_file": "只按文件比较"
     },
     "candidate": {
       "points_mean": {
@@ -587,6 +587,10 @@
       "box_points_single": {
         "title": "箱线 + 原始点",
         "why": "看中位数和分布范围，点保留了每个观测。"
+      },
+      "other": {
+        "title": "这种画法",
+        "why": "用这份数据画出来的一种样子。"
       }
     },
     "reason": {
@@ -610,21 +614,97 @@
       "register_failed": "没能把新图登记进项目，新建的文件已撤回。",
       "data_folder_not_writable": "这个数据文件夹不让写入（只读或没有权限），没有生成。",
       "disk_full": "磁盘空间不够，没有生成。",
-      "data_changed": "数据文件在生成备选之后变过了，请重新生成。",
-      "rows_not_plotted": "有 {{count}} 行不是数字或缺横轴的值，没有画出来。"
+      "data_changed": "数据文件在生成备选之后变过了，请重新生成。"
     },
     "result": {
       "verified": "图画好了，数据和文件逐项对上。",
       "unverifiable": "图画好了，但这类图没法逐项核对数据。",
-      "mismatch": "图里的数据和文件对不上；不对的话可以删掉这份新脚本。",
+      "mismatch": "画出来的图和你的数据对不上，所以没有打开它。",
       "unknown": "图画好了，数据核对没能完成。"
     },
-    "mixedCells": {
-      "previewRow": "第 {{row}} 行：{{text}}",
-      "extracted": "取数字后是 {{value}}",
-      "cannotExtract": "取不出数字，会被忽略",
-      "more": "还有 {{count}} 行",
-      "placeholder": "说说这些格子该怎么算，比如「ND 记为 0」"
+    "list": {
+      "heading": "数据",
+      "fileMeta": "{{rows}} 行 · {{columns}} 列",
+      "sheets": "{{count}} 张工作表",
+      "unsure": "没认准",
+      "unreadable": "读不了",
+      "unread": "没读",
+      "empty": "这个文件夹里没找到数据文件。",
+      "loadFailed": "没能看清这个文件夹里有什么。",
+      "rows": "{{rows}} 行",
+      "unsureTitle": "没认准，先不用"
+    },
+    "working": {
+      "reading": "正在读…",
+      "drawing": "正在画…",
+      "slow": "还在画，数据多会久一点。"
+    },
+    "preview": {
+      "headerPick": "哪一行是每列的名字",
+      "lineN": "第 {{n}} 行",
+      "headerTag": "列名",
+      "type": {
+        "numeric": "数值",
+        "date": "日期",
+        "text": "文字",
+        "mixed": "混有文字",
+        "id": "编号"
+      },
+      "pickHint": "点一下每列名字所在的那一行。"
+    },
+    "pick": {
+      "recommended": "推荐"
+    },
+    "nothing": {
+      "generic": "这张表没能画出图。"
+    },
+    "problem": {
+      "retry": "再试一次",
+      "unwritable": "这个文件夹写不进，图放不下。",
+      "otherFolder": "换个文件夹",
+      "otherWay": "换一种画法",
+      "reveal": "在文件夹中显示",
+      "mismatchNext": "它的脚本还留在项目里：可以换一种画法重画，或者去文件夹里把这份脚本删掉。"
+    },
+    "draft": {
+      "pickLead": "点一张，放进画布接着改。",
+      "guessRow": "把第 {{n}} 行当作列名。不对就点对的那一行。",
+      "allText": "这张表里都是文字，没有能画的数字。",
+      "unreadable": "这个文件不是表格，读不了。",
+      "failed": "这次没画出来，数据没问题。",
+      "stripInfo": "前 {{shown}} 行，共 {{total}} 行 · {{columns}} 列",
+      "expand": "展开",
+      "collapse": "收起"
+    },
+    "panel": {
+      "mixed": "{{count}} 格不是数字",
+      "note": "原文件不会改。",
+      "x": "横轴",
+      "y": "纵轴",
+      "group": "分组",
+      "noX": "不要横轴",
+      "noGroup": "不分组"
+    },
+    "redraw": {
+      "from": "用 {{file}} 画的",
+      "again": "换个画法",
+      "undo": "撤销"
+    },
+    "batch": {
+      "pick": "多选",
+      "idle": "未选择",
+      "selected": "已选 {{count}} 个",
+      "progress": "作图中 {{done}}/{{total}}",
+      "partial": "已完成 {{done}} 张，{{failed}} 张失败",
+      "draw": "分别作图",
+      "merge": "合并作图",
+      "stop": "停止",
+      "showDone": "查看素材",
+      "retry": "重试",
+      "queued": "排队中",
+      "done": "已完成",
+      "failed": "失败",
+      "groupTitle": "{{count}} 个文件"
     }
   }
 }

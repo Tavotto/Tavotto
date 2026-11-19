@@ -128,8 +128,24 @@ def clean_anchor(raw: object) -> dict | None:
         return {"kind": "region", "box": box}
     gid = raw.get("gid")
     if kind == "element" and isinstance(gid, str) and 0 < len(gid) <= 256:
-        return {"kind": "element", "gid": gid, "box": box}
+        out: dict = {"kind": "element", "gid": gid, "box": box}
+        pt = _point(raw.get("pt"))
+        if pt is not None:
+            out["pt"] = pt  # 审阅者点在元素上的那一处（画面比例坐标）；老网页没有
+        return out
     return None
+
+
+def _point(value: object) -> list[float] | None:
+    """画面比例坐标的一个点 `[x, y]`，夹进 [0,1]²；不是两个有限数 None。"""
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    out: list[float] = []
+    for v in value:
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+            return None
+        out.append(round(min(1.0, max(0.0, float(v))), 5))
+    return out
 
 
 def clean_reply(raw: object) -> dict | None:
@@ -219,14 +235,95 @@ def clean_verdict(raw: object) -> dict | None:
     return {"v": v, "decision": decision, "note": note, "author": author[:AUTHOR_MAX], "at": at}
 
 
+#: 元素表里的角色名（manifest `role`）：小写字母 + 下划线
+_ROLE = re.compile(r"^[a-z][a-z0-9_]{0,23}$")
+_GEOM_KINDS = frozenset({"polyline", "path", "multi_path"})
+
+
+def _order(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def clean_geometry(raw: object) -> dict | None:
+    """元素的真实形状（与 manifest `geometry` 同形，ADR 0187 修订 2026-11-16）：只认已知字段，坐标须是有限数。
+    路径少于 2 个点的丢掉；一条都不剩 None（该元素退回按 bbox 点选）。"""
+    if not isinstance(raw, dict) or raw.get("kind") not in _GEOM_KINDS:
+        return None
+    paths: list[dict] = []
+    for p in raw.get("paths") if isinstance(raw.get("paths"), list) else []:
+        if not isinstance(p, dict) or not isinstance(p.get("points"), list):
+            continue
+        pts = [q for q in (_point_raw(v) for v in p["points"]) if q is not None]
+        if len(pts) >= 2 and len(pts) == len(p["points"]):
+            paths.append({"points": pts, "closed": p.get("closed") is True})
+    if not paths:
+        return None
+    out: dict = {
+        "kind": raw["kind"],
+        "paths": paths,
+        "fill": raw.get("fill") is True,
+        "stroke": raw.get("stroke") is True,
+    }
+    sp = raw.get("stroke_pt")
+    if (
+        isinstance(sp, (int, float))
+        and not isinstance(sp, bool)
+        and math.isfinite(sp)
+        and 0 <= sp <= 100
+    ):
+        out["stroke_pt"] = round(float(sp), 3)
+    clip = _box(raw.get("clip"))
+    if clip is not None:
+        out["clip"] = [round(v, 5) for v in clip]
+    order = _order(raw.get("paint_order"))
+    if order is not None:
+        out["paint_order"] = order
+    fa = raw.get("fill_alpha")
+    if isinstance(fa, (int, float)) and not isinstance(fa, bool) and 0 <= fa <= 1:
+        out["fill_alpha"] = round(float(fa), 3)
+    return out
+
+
+def _point_raw(value: object) -> list[float] | None:
+    """不夹值的点（路径点已由上传端裁进画面）。"""
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    out: list[float] = []
+    for v in value:
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+            return None
+        out.append(float(v))
+    return out
+
+
 def clean_elements(raw: object) -> list[dict]:
+    """`[{gid, label, bbox}]` + 可选 `role` / `paint_order` / `arrow_endpoints` / `geometry`（点选细到真实形状，
+    ADR 0187 修订 2026-11-16）。多余字段一律丢。"""
     out: list[dict] = []
     for item in raw if isinstance(raw, list) else []:
         if not isinstance(item, dict):
             continue
         gid, label, box = item.get("gid"), item.get("label"), _box(item.get("bbox"))
-        if isinstance(gid, str) and gid and len(gid) <= 256 and isinstance(label, str) and box:
-            out.append({"gid": gid, "label": label[:120], "bbox": box})
+        if not (
+            isinstance(gid, str) and gid and len(gid) <= 256 and isinstance(label, str) and box
+        ):
+            continue
+        el: dict = {"gid": gid, "label": label[:120], "bbox": box}
+        role = item.get("role")
+        if isinstance(role, str) and _ROLE.match(role):
+            el["role"] = role
+        order = _order(item.get("paint_order"))
+        if order is not None:
+            el["paint_order"] = order
+        ends = item.get("arrow_endpoints")
+        if isinstance(ends, list) and len(ends) == 2:
+            pts = [_point(v) for v in ends]
+            if all(pts):
+                el["arrow_endpoints"] = pts
+        geom = clean_geometry(item.get("geometry"))
+        if geom is not None:
+            el["geometry"] = geom
+        out.append(el)
     return out
 
 

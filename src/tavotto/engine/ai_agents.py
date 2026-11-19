@@ -1855,6 +1855,15 @@ class BuiltinAgent(AgentDefinition):
             return [("message", str(ev["text"]))]
         if t == "thinking":
             return [("thinking", "思考中…")]
+        if t == "done":
+            # runner 的自救回报（闭集，见 `agent_runner.loop.DONE_REPORT_FIELDS`）：只记在状态里，会话结束后由 ai_bridge 落盘
+            rep = {
+                k: ev.get(k)
+                for k in ("wire_used", "wire_switched_from", "dropped_fields", "token_field")
+                if k in ev
+            }
+            if rep:
+                state["runner_report"] = rep
         if t == "tool":
             summary = str(ev.get("summary") or "")
             if len(summary) > 80:

@@ -18,6 +18,13 @@ order: 70
   期刊也拒收。改回 3 的前提是先让 `tests/test_scientific_text_matrix.py` 有别的办法绿。
 - override 是**全量列表**语义：worker 维护 applied/originals 两表，缺失的 key 自动
   恢复原值（undo 的基础）。前端永远发完整 `o.overrides`。
+- **认不出的 prop 名跳过、不报 warning（2026-11-19，向前兼容）**：这一版**任何一类元素都没有 handler** 的 prop
+  名（`overrides.known_props()`，从 `HANDLERS` 收）是更新的 Tavotto 写下的新编辑方式，`apply` 不应用、不进
+  `applied`、不算 warning，记进 `FigState.future_props`；`override` / `export` 响应带 `future_props`。旧版本打开
+  新项目因此不再满屏「属性不支持」。三条照旧：认得这个名字、只是这一类元素没有的仍报「属性不支持」；认得的键
+  值不对仍报应用失败；元素不存在仍报「元素不存在」（这一版判不出是新版本才登记的元素还是脚本改了）。跳过的键
+  原样留在项目里——`patchspec` 不按 prop 名筛、前端整份保存、引擎只读不写 override 列表。写回遇到它们拒绝，见
+  `writeback-transaction.md`。看护：`tests/test_future_override_keys.py`。
 - **刻度组有 `fontfamily`、文字元素报真正画字的脸（2026-09-13，ADR 0051）**：
   `("ticks", "fontfamily")` 走 `tick_params(labelfontfamily=…)`（matplotlib ≥ 3.7）
   + 已有标签逐条 `set_math_fontfamily("custom")`——刻度**数量增长**后新建的标签里的
@@ -72,6 +79,13 @@ order: 70
   旧实现无条件 pop，图永久停在半改状态且此后再无 warning——safe 能靠作废 worker 兜，native
   会话（用户自己的 Python）兜不了。看护 `tests/test_restore_failure_retry.py`（含热态 == 冷
   启动重放的逐字节不变量；把 `continue` 改回落到 pop，五条全红）。
+- **「一次写多处」的 setter，原样必须逐处记（`axes.grid_color` / `grid_linestyle` / `grid_linewidth` / `grid_alpha`）**：
+  setter 一次写两条轴 × major / minor，getter 若只读「第一根画着的线」当原样，还原时没画的那一向
+  （脚本只开了 x 网格时的 y 向）就被写成 x 的样式，之后再打开它与全新重放不同。原样是
+  `_GridOriginal`（轴 × 档 → tick kw 里的值 / 「脚本没表态」），还原走 `_RESTORE`、逐处写回，
+  tick kw 与已建刻度线是**两份独立状态**各自还原（脚本可 `ax.grid(color=red)` 后 `plt.setp(线, color=blue)`）：kw 有值写回、没表态删键；已建的线不管 kw 一律写回**首次捕获时的实际值**（不回头读 rcParams：脚本在 `rc_context` 里建的网格，退出上下文后 kw 里没键、线上却带着当时的值）。manifest 的读数（`_grid_prop`）不是原样，别拿来还原。
+  看护 `tests/test_prop_override_idempotent.py::test_removing_a_grid_style_edit_restores_the_original_hot_vs_fresh`；
+  随机域已含 2D `axes`（`tests/support/overridesample._editable_targets`）。
 - **应用顺序规范化 + figure 锚定 prop 的重放（2026-08-17，数据损坏级）**：
   `overrides.apply` 按**七档规范顺序**应用（`_apply_rank` 是唯一出处；ADR 0098 在最前面加了
   一档 `figure.frame`（`_RANK_FRAME = -1`：图幅按 figsize 还是按脚本存盘的裁切框——之后每一档

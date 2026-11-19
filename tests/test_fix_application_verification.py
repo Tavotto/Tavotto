@@ -296,7 +296,7 @@ def _application_ctx(client, tmp_path):
         environments={"e": session.plan.interpreter},
         script_path=root / "fig.py",
         report=lambda: app_module._session_report(project, session),
-        **app_module._fix_application_verification(project, session, desktop=False),
+        **app_module._fix_application_verification(project, {"sess": session}, desktop=False),
     )
     return ctx, project, session
 
@@ -503,7 +503,7 @@ def test_real_worker_project_cwd_repair_requires_approval_and_preserves_source(
             home=tmp_path,
             environments={"e": python},
             script_path=script,
-            **app_module._fix_application_verification(project, session, desktop=False),
+            **app_module._fix_application_verification(project, {"sess": session}, desktop=False),
         )
         cards = []
         ctx.ask = lambda card: cards.append(card) or {"answer": "yes"}

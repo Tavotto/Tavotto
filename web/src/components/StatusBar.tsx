@@ -25,6 +25,7 @@ import {
 } from '@/store/scriptInputStore'
 import { statusDismissTimer, useUiStore, type StatusTone } from '@/store/uiStore'
 import { userEnvironmentName } from '@/lib/userEnvironmentText'
+import { useDataFigureStore } from '@/store/dataFigureStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { useExitNoticeStore } from '@/store/exitNoticeStore'
 import { useNoticeRailStore } from '@/store/noticeRailStore'
@@ -132,6 +133,7 @@ function Toast({
   tone,
   icon,
   text,
+  copyDetail,
   action,
   onClose,
   closeLabel,
@@ -145,6 +147,8 @@ function Toast({
   tone: 'info' | 'error' | 'hint'
   icon: ReactNode
   text: string
+  /** 错误胶囊「复制详情」在句子后多带的一行 */
+  copyDetail?: string
   action?: { label: string; onClick: () => void; loading?: boolean }
   onClose?: () => void
   closeLabel?: string
@@ -196,13 +200,13 @@ function Toast({
       className={cn(
         // 浮层不画实色 border（宪法第一节）：环在 shadow-pop 里。字 12 / ink（2026-09-15 打磨 N2）。
         // 一种高度 36：带动作的那条由 28 的按钮 + py 4 撑到 36，不带动作的靠 min-h 补齐（N3）
-        'pointer-events-auto relative flex min-h-9 max-w-[360px] items-center gap-2 rounded-full bg-surface py-1 pl-3.5 pr-1.5 text-sm text-ink shadow-pop',
+        'pointer-events-auto relative flex min-h-9 min-w-0 max-w-[min(560px,100%)] items-center gap-2 rounded-full bg-surface py-1 pl-3.5 pr-1.5 text-sm text-ink shadow-pop',
         'data-[state=open]:animate-rise-in data-[state=closed]:animate-rise-out',
       )}
     >
       <span className="flex shrink-0">{icon}</span>
       {error && !plain ? (
-        <ErrorBody text={text} />
+        <ErrorBody text={text} copyDetail={copyDetail} />
       ) : (
         /* 同一条 toast 换文字时原位换（旧字退、新字进），不硬切 */
         <SwapText className="min-w-0 flex-1" text={text} />
@@ -234,7 +238,7 @@ function Toast({
 }
 
 /** 错误 toast 的正文（胶囊里的一行）：只有原因那一句，不加前缀（红色图标已经说了「没成」）；放不下才截断，全文在 title 与「复制详情」里 */
-function ErrorBody({ text }: { text: string }) {
+function ErrorBody({ text, copyDetail }: { text: string; copyDetail?: string }) {
   const { t } = useTranslation('workspace')
   const [copied, setCopied] = useState(false)
   useEffect(() => {
@@ -253,7 +257,7 @@ function ErrorBody({ text }: { text: string }) {
         data-copy-details
         className="shrink-0 text-ink-3 hover:text-ink"
         onClick={() => {
-          void navigator.clipboard?.writeText(text).then(
+          void navigator.clipboard?.writeText(copyDetail ? `${text}\n${copyDetail}` : text).then(
             () => setCopied(true),
             () => {},
           )
@@ -320,6 +324,7 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   // 压上去的只有对话框自己动作的结果（状态 / 引擎退出 / 带一次性出口的环境与答案提示）；背景性的几条
   // （加入说明、操作提示、作者回信胶囊）在模态期间不画——它们与对话框里的事无关，浮在遮罩上只会打岔，关掉对话框后照常回来
   const overModal = useDialogLayerStore((s) => s.open > 0)
+  const modalEpoch = useDialogLayerStore((s) => s.epoch)
   const measureRailTop = () => {
     const tops = [...(overModal ? [] : (railRef.current?.querySelectorAll('[data-toast-layout][data-state="open"]') ?? []))].map((e) =>
       Math.round(e.getBoundingClientRect().top),
@@ -342,18 +347,25 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const status = useUiStore((s) => s.status)
   const tone = useUiStore((s) => s.statusTone)
   const statusAction = useUiStore((s) => s.statusAction)
+  const statusCopyDetail = useUiStore((s) => s.statusCopyDetail)
+  const statusModalEpoch = useUiStore((s) => s.statusModalEpoch)
   // 退场那 90ms 里 status 已经是 null 了，得把最后一条文案留着播完，
   // 否则会看到一个空壳滑下去。留的是**描述符**，不是翻好的字符串：
   // 退场期间切语言也跟着换。
-  const last = useRef<{ status: UiMessage | null; tone: typeof tone; action: typeof statusAction }>({
+  const last = useRef<{ status: UiMessage | null; tone: typeof tone; action: typeof statusAction; modalEpoch: number; detail: string | null }>({
     status: null,
     tone: 'info',
     action: null,
+    modalEpoch: 0,
+    detail: null,
   })
   useEffect(() => {
-    if (status) last.current = { status, tone, action: statusAction }
-  }, [status, tone, statusAction])
-  const shown = status ? { status, tone, action: statusAction } : last.current
+    if (status) last.current = { status, tone, action: statusAction, modalEpoch: statusModalEpoch, detail: statusCopyDetail }
+  }, [status, tone, statusAction, statusModalEpoch, statusCopyDetail])
+  const shown = status ? { status, tone, action: statusAction, modalEpoch: statusModalEpoch, detail: statusCopyDetail } : last.current
+  // 弹窗打开之前画布上遗留的普通 done/info 提示（modalEpoch 落后于当前模态代际）留在画布层（遮罩之下），
+  // 只有弹窗期间新触发的提示或 error 级告警才升进 z-toast 压在弹窗之上
+  const statusInModalLayer = !overModal || shown.tone === 'error' || shown.modalEpoch >= modalEpoch
   const shownText = fmt(shown.status)
   const liveText = fmt(status)
   const statusPresence = usePresence(!!status, DURATION.fast)
@@ -370,8 +382,10 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const toolbarUp = useCanvasToolbarVisible()
 
   // 「编辑原图」这一次把图加进了文档（此前不在）：说出口，并给撤销；回排版 / 撤销即消失
+  // 刚用「数据」画出来的图：说明与「撤销」都并进画布上的那枚「换个画法」胶囊（`RedrawPill`），这里不再弹
+  const fromData = useDataFigureStore((s) => s.fresh !== null)
   const justAdded = useWorkspaceStore(
-    (s) => s.addedForEdit !== null && s.addedForEdit === s.activePanelId,
+    (s) => s.addedForEdit !== null && s.addedForEdit === s.activePanelId && !fromData,
   )
   const addedPresence = usePresence(justAdded, DURATION.fast)
   // 「撤销」= 撤销加入那一步；只在撤销栈还停在加入那一刻时给（之后再改了别的，撤销撤的就是
@@ -499,6 +513,23 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const hintOrder = arrival('hint', hintPresence.mounted && hint && hintToken)
   const statusOrder = arrival('status', statusPresence.mounted && shown.status)
 
+  const statusToastNode = statusPresence.mounted ? (
+    <Toast
+      order={statusOrder}
+      tone={shown.tone === 'error' ? 'error' : 'info'}
+      state={statusPresence.state}
+      timer={statusDismissTimer}
+      // 语气认这个钩子（用例 / e2e），不认图标的类名
+      data-status-tone={shown.tone}
+      icon={<StatusIcon tone={shown.tone} />}
+      text={shownText}
+      copyDetail={shown.detail ?? undefined}
+      action={shown.action ? { label: fmt(shown.action.label), onClick: shown.action.run } : undefined}
+      onClose={shown.tone === 'error' || shown.action ? () => useUiStore.getState().setStatus(null) : undefined}
+      closeLabel={t('status.dismissError')}
+    />
+  ) : null
+
   const toasts = (
     <>
       {/* 显示顺序 = 出现的先后（`order`），最新的最靠近底边；DOM 顺序固定 */}
@@ -613,21 +644,7 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
           closeLabel={translate('actions.close')}
         />
       )}
-      {statusPresence.mounted && (
-        <Toast
-          order={statusOrder}
-          tone={shown.tone === 'error' ? 'error' : 'info'}
-          state={statusPresence.state}
-          timer={statusDismissTimer}
-          // 语气认这个钩子（用例 / e2e），不认图标的类名
-          data-status-tone={shown.tone}
-          icon={<StatusIcon tone={shown.tone} />}
-          text={shownText}
-          action={shown.action ? { label: fmt(shown.action.label), onClick: shown.action.run } : undefined}
-          onClose={shown.tone === 'error' || shown.action ? () => useUiStore.getState().setStatus(null) : undefined}
-          closeLabel={t('status.dismissError')}
-        />
-      )}
+      {statusInModalLayer && statusToastNode}
     </>
   )
   return (
@@ -637,7 +654,8 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
       // 画布底部有浮动工具条时整列抬到它上面去（toast 居中、工具条也居中，不抬就叠在一起）
       className={cn(
         'pointer-events-none absolute inset-x-0 z-canvas-chrome flex flex-col items-center gap-1.5 px-4',
-        toolbarUp ? 'bottom-16' : 'bottom-3',
+        // 刚用「数据」画出图时工具条上方多一枚「换个画法」胶囊：通知再往上让一格，不压在它上面
+        toolbarUp ? (fromData ? 'bottom-24' : 'bottom-16') : 'bottom-3',
       )}
     >
       {/* aria-live 常驻在 DOM 里，读屏器才能捕捉内容变化。
@@ -670,8 +688,10 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
       <div aria-live="assertive" role={announceRole ?? undefined} className="sr-only">
         {engineExit ? translate('exitNotice.engine.text', { ns: 'workspace' }) : ''}
       </div>
-      {overModal
-        ? createPortal(
+      {overModal ? (
+        <>
+          {!statusInModalLayer && statusToastNode}
+          {createPortal(
             <div
               ref={railRef}
               data-notification-rail
@@ -684,8 +704,11 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
               {toasts}
             </div>,
             document.body,
-          )
-        : toasts}
+          )}
+        </>
+      ) : (
+        toasts
+      )}
     </div>
   )
 }
