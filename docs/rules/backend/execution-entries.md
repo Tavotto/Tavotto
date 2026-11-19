@@ -101,7 +101,7 @@ order: 180
 
 - **判据唯一出处** `engine/pkgentry.resolve`（AST 零执行，判不出就不改，一律回 None）：登记入口是 `__main__`（桌面 native 由 `plan_for` 传登记入口、函数入口同样不改；`nativefallback.launch` 不知道登记入口时传 `None` = 整份脚本，判据照常——safe 对函数入口的包脚本本来就是 ImportError 而不是被拦，不会走到回退）；脚本顶层**直接语句**里有
   `ImportFrom.level > 0`（`try` / `if` / `def` 里的不算，`level` 不超过包层数）；脚本目录往上每一级都有 `__init__.py`（普通文件）；包根的上一级仍在项目根内
-  （项目文件夹本身就是包 = 越界）；路径无符号链接 / junction；包名与 stem 是合法标识符；命名空间包 / 读不了 / 语法错误 / 影子脚本都不改。
+  （项目文件夹本身也是包时，包链含项目文件夹名、`sys.path[0]` 是项目上一级，不再往外爬；ADR 0196 修订 2026-11-19）；路径无符号链接 / junction；包名与 stem 是合法标识符；命名空间包 / 读不了 / 语法错误 / 影子脚本都不改。
 - **装配点只有两个构造函数**：`execspec.safe_spec`（safe）与 `execspec.desktop_native_spec`（桌面拥有的 native；`_native(package_as_module=True)`）。所以池的三条 spawn 路径、
   `preparation.plan_for`、MCP 打开图、`nativefallback.launch`（Safe→Native 回退）同源，别处不另判。**终端 `native_spec`（`tavotto run fig.py`）不改**：
   不传 `package_as_module`，`ExecutionSpec.__post_init__` 也拒绝终端拥有的 native 带 `module_name`。

@@ -430,7 +430,16 @@ class ExecutionSpec:
                 raise ValueError(
                     f"module_name 只属于脚本目标、且必须是点分标识符: {self.module_name!r}"
                 )
-            if not (self.target == tail or self.target.endswith("/" + tail)):
+            # 项目文件夹本身也是包时（ADR 0196 修订 2026-11-19）模块名多出最前面一段＝项目文件夹名
+            project_top = (
+                os.path.basename(os.path.abspath(self.project_root)) if self.project_root else ""
+            )
+            in_project_package = (
+                len(parts) >= 2
+                and parts[0] == project_top
+                and self.target == "/".join(parts[1:]) + ".py"
+            )
+            if not (self.target == tail or self.target.endswith("/" + tail) or in_project_package):
                 raise ValueError(
                     f"module_name 必须与脚本路径逐段对上: {self.module_name!r} / {self.target!r}"
                 )

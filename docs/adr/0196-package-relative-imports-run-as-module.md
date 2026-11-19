@@ -68,3 +68,12 @@ savefig 仍被拦；普通子目录脚本 argv 逐字节不变）、`tests/test_
   本 ADR 之后这类入口在 safe / 桌面 native 下能跑，该前提需要另行复核；
 - 静态依赖模型（`importscan`）仍把脚本当「脚本目录在 `sys.path[0]`」解析；按模块运行时 `sys.path[0]` 是包根的上一级，两者对包内相对导入无差别，
   但包内的**绝对**同级导入（`import helpers`）会随之失效（与 `python -m` 一致）。
+
+## 修订（2026-11-19）：项目文件夹本身也是包时也支持（维护者裁决）
+
+项目根里有 `__init__.py`、且从脚本往上整条链都有时，包链把**项目文件夹名**算进去（`proj/plots/fig.py` → `proj.plots.fig`），
+`sys.path[0]` 是项目的上一级目录——与在项目上一级 `python -m proj.plots.fig` 一致；脚本就在项目根（`proj/fig.py`）同理是 `proj.fig`。
+**只到项目文件夹为止**：项目上一级再有 `__init__.py` 也不往外爬；项目文件夹名不是合法标识符（`my-project`）或是符号链接时不改。
+`ExecutionSpec` 的一致性校验相应放宽一处：模块名可以比脚本的项目相对路径多出最前面一段，且必须正好是项目文件夹名。
+身份不变（`target` 仍是项目相对路径，图挂在原脚本名下）。看护：`tests/test_package_entry.py`（判据 / 不外爬 / 非标识符 / 校验）、
+`tests/test_package_entry_e2e.py::test_a_project_folder_that_is_itself_a_package`（真 sidecar：safe 与回退 native 都出图）。

@@ -91,14 +91,35 @@ class TestCriterion:
         _write(tmp_path / "plots" / "__init__.py")
         assert pkgentry.resolve(tmp_path, "plots/nope.py") is None
 
-    def test_a_package_root_that_is_the_project_root_is_out_of_bounds(self, tmp_path):
-        """项目文件夹本身就是包（里面有 `__init__.py`）：包根的上一级在项目之外，不改。"""
+    def test_the_project_folder_itself_can_be_the_top_package(self, tmp_path):
+        """项目文件夹本身就是包（维护者 2026-11-19 裁决：也支持）：包链把项目文件夹名算进去，`sys.path[0]` 是项目的上一级。"""
+        proj = tmp_path / "labproj"
+        _write(proj / "__init__.py")
+        _write(proj / "fig.py", REL)  # 脚本就在项目根
+        got = pkgentry.resolve(proj, "fig.py")
+        assert got is not None and got.module == "labproj.fig" and got.root == str(tmp_path)
+        script = _pkg(proj, "plots")  # 项目根是包、脚本在子包里，整条链都有 __init__.py
+        got = pkgentry.resolve(proj, script)
+        assert got is not None and got.module == "labproj.plots.fig" and got.root == str(tmp_path)
+
+    def test_never_climbs_above_the_project_folder(self, tmp_path):
+        """项目上一级也有 `__init__.py`：包根仍止于项目文件夹，不往外爬。"""
         _write(tmp_path / "__init__.py")
+        proj = tmp_path / "labproj"
+        _write(proj / "__init__.py")
+        script = _pkg(proj, "plots")
+        got = pkgentry.resolve(proj, script)
+        assert got is not None and got.module == "labproj.plots.fig" and got.root == str(tmp_path)
+
+    def test_a_project_folder_name_that_is_not_an_identifier_is_not_touched(self, tmp_path):
+        proj = tmp_path / "my-project"
+        _write(proj / "__init__.py")
+        _write(proj / "fig.py", REL)
+        assert pkgentry.resolve(proj, "fig.py") is None
+
+    def test_a_script_at_the_project_root_without_a_package_is_not_touched(self, tmp_path):
         _write(tmp_path / "fig.py", REL)
         assert pkgentry.resolve(tmp_path, "fig.py") is None
-        # 项目根是包、脚本在子包里，整条链都有 __init__.py：最上面的包根还是项目根 → 越界
-        script = _pkg(tmp_path, "plots")
-        assert pkgentry.resolve(tmp_path, script) is None
 
     def test_a_package_inside_a_project_root_package_stops_below_the_root_when_the_chain_breaks(
         self, tmp_path
@@ -317,3 +338,22 @@ class TestSpecAssembly:
         monkeypatch.setattr(execspec.shadowscript, "lookup", lambda *a, **k: str(tmp_path / "s.py"))
         spec = self._safe(root, script, write_roots=[str(tmp_path)])
         assert spec.script_source and spec.module_name == ""
+
+
+def test_spec_accepts_the_project_folder_prefix_and_nothing_else(tmp_path):
+    """项目文件夹本身也是包：模块名可以多出最前面一段＝项目文件夹名；换成别的名字仍拒绝。"""
+    proj = tmp_path / "labproj"
+    script = _pkg(proj, "plots")
+    _write(proj / "__init__.py")
+    spec = execspec.safe_spec(
+        script,
+        str(proj),
+        "__main__",
+        interpreter=str(tmp_path / "py"),
+        sandbox=str(tmp_path / "box"),
+    )
+    assert spec.module_name == "labproj.plots.fig" and spec.target == "plots/fig.py"
+    import dataclasses
+
+    with pytest.raises(ValueError):
+        dataclasses.replace(spec, module_name="otherproj.plots.fig")

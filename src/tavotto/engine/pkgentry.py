@@ -17,7 +17,8 @@
 3. 所有顶层相对导入的 `level` 都不超过包的层数（`plots.fig` 只有一层包，`from .. import x` 在 `python -m` 下同样失败）；
 4. 从脚本所在目录往上，每一级都有 `__init__.py`（普通文件，不是符号链接），包根 = 最上面那个带 `__init__.py` 的目录；
    命名空间包（没有 `__init__.py`）不算；
-5. 包根的上一级（= `sys.path[0]`）仍在项目根之内：项目文件夹本身就是包（项目根里有 `__init__.py` 且整条链都有）= 越界，不改；
+5. 包根最多到项目文件夹为止：项目文件夹本身就是包（项目根里有 `__init__.py` 且整条链都有）时，包链把项目文件夹名算进去、
+   `sys.path[0]` 是项目的上一级（维护者 2026-11-19 裁决：也支持）；项目上一级再有 `__init__.py` 也不往外爬；
 6. 路径上没有符号链接 / junction（脚本、每一级目录、每个 `__init__.py` 都不跟随），读脚本走有界的普通文件读法；
 7. 每一级包名与脚本 stem 都是合法标识符（`my-plots/`、`fig.v2.py` 不改），stem 不是 `__init__` / `__main__`。
 
@@ -76,7 +77,7 @@ def resolve(project_root, script: str, entry: str | None = ENTRY_MAIN) -> Packag
     except ValueError:
         return None
     parts = rel.split("/")
-    if not rel.endswith(".py") or len(parts) < 2 or any(p in ("", ".", "..") for p in parts):
+    if not rel.endswith(".py") or any(p in ("", ".", "..") for p in parts):
         return None
     dirs, stem = parts[:-1], parts[-1][:-3]
     if stem in ("__init__", "__main__"):
@@ -92,14 +93,29 @@ def resolve(project_root, script: str, entry: str | None = ENTRY_MAIN) -> Packag
     # 路径上的每一级目录都不能是符号链接 / junction（包根越界的主要途径）
     if not all(_is_plain_dir(dir_path(n)) for n in range(1, len(dirs) + 1)):
         return None
-    # 往上放宽：`n` 是「dirs[:n] 这一级带 `__init__.py`」的最小 n，包链 = dirs[n - 1:]
-    n = len(dirs)
+    # 往上放宽：`n` 是「dirs[:n] 这一级带 `__init__.py`」的最小 n，包链 = dirs[n - 1:]。
+    # 脚本就在项目根（`dirs` 为空）时，上面那次检查看的是项目根自己的 `__init__.py`：链从项目文件夹开始（下面那一支）
+    n = max(len(dirs), 1)
     while n > 1 and _is_plain_file(os.path.join(dir_path(n - 1), "__init__.py")):
         n -= 1
-    chain_start = n - 1
-    if chain_start == 0 and _is_plain_file(os.path.join(root, "__init__.py")):
-        return None  # 项目根本身也是包：最上面的包根是项目根，它的上一级在项目之外
+    chain_start = n - 1 if dirs else 0
     names = [*dirs[chain_start:], stem]
+    path_root = dir_path(chain_start)
+    if chain_start == 0 and _is_plain_file(os.path.join(root, "__init__.py")):
+        # 项目文件夹本身也是包（维护者 2026-11-19 裁决：也支持）：包链把项目文件夹名算进去，`sys.path[0]` 是项目的上一级，
+        # 与在项目上一级 `python -m <项目名>.….<脚本>` 一致。**只到项目文件夹为止**：它的上一级再有 `__init__.py` 也不往外爬
+        top = os.path.basename(root)
+        parent = os.path.dirname(root)
+        if (
+            not top
+            or not parent
+            or parent == root
+            or os.path.islink(root)
+            or not _is_plain_dir(root)
+        ):
+            return None
+        names = [top, *names]
+        path_root = parent
     if not all(part.isidentifier() for part in names):
         return None
     try:
@@ -112,4 +128,4 @@ def resolve(project_root, script: str, entry: str | None = ENTRY_MAIN) -> Packag
     levels = _relative_levels(tree)
     if not levels or max(levels) > len(names) - 1:
         return None
-    return PackageEntry(module=".".join(names), root=dir_path(chain_start))
+    return PackageEntry(module=".".join(names), root=path_root)

@@ -14,6 +14,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from support import foundation_app as fa, nativekit
 from test_execution_fallback_e2e import (
     ENV,
@@ -178,3 +180,22 @@ def test_the_relative_import_failure_is_still_reported_when_the_package_is_not_p
             final = report
         _wait(lambda: True, "占位")
         assert final["phase"] != "completed"
+
+
+@pytest.mark.parametrize("blocked", [False, True], ids=["safe", "fallback-native"])
+def test_a_project_folder_that_is_itself_a_package(tmp_path, blocked):
+    """项目文件夹本身也是包（项目根有 `__init__.py`，维护者 2026-11-19 裁决：也支持）：按 `proj.plots.fig` 运行，
+    `sys.path[0]` 是项目的上一级；safe 出图、safe 被拦回退 native 也出图，身份仍是 `plots/fig.py`，原文件不变。"""
+    proj, log = _package_project(tmp_path, BLOCKED_FIG if blocked else FIG)
+    (proj / "__init__.py").write_text("", encoding="utf-8")
+    before = _snapshot(proj)
+    with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+        final = _settled(app, _run(app, _create(app, "plots/fig.py")))
+        assert final["phase"] == "completed", final
+        assert final["facts"]["figure_captured"] is True
+        profiles = [h["profile"] for h in final["attempt_history"]]
+        assert profiles == (["safe", "native"] if blocked else ["safe"]), profiles
+        blob = json.dumps(final)
+        assert "plots/fig.py" in blob and "proj.plots.fig" not in blob
+    after = _snapshot(proj)
+    assert {k: after[k] for k in before} == before, "原文件一字节不变"
