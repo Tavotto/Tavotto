@@ -5,7 +5,6 @@ import json
 import os
 import secrets
 import subprocess
-import sys
 import tempfile
 import time
 from contextlib import contextmanager
@@ -37,7 +36,7 @@ def wait_for(predicate, seconds):
 
 
 @contextmanager
-def running_app(executable, runtime, project, stage):
+def running_app(executable, project, stage):
     stage.mkdir()
     handshake = stage / "handshake.json"
     nonce = secrets.token_urlsafe(32)
@@ -114,9 +113,12 @@ def verify(executable, runtime, folder):
     project.mkdir()
     source = project / "参考 结果.R"
     source.write_text(R_SOURCE, encoding="utf-8")
+    bundled = executable.parent / "_internal" / "runtime"
+    worker_python = bundled / "python.exe" if os.name == "nt" else bundled / "bin" / "python3.13"
+    assert worker_python.is_file(), worker_python
     subprocess.run(
         [
-            sys.executable,
+            str(worker_python),
             "-c",
             "import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt;"
             "plt.plot([1,2,3],[1,4,2]); plt.savefig('reference.pdf')",
@@ -125,7 +127,7 @@ def verify(executable, runtime, folder):
         check=True,
         timeout=60,
     )
-    with running_app(executable, runtime, project, folder / "warm") as request:
+    with running_app(executable, project, folder / "warm") as request:
         launch = request(
             "/api/native/ggplot2",
             {
@@ -215,7 +217,7 @@ def verify(executable, runtime, folder):
         assert "ggplot2" in saved["figure_snapshots"], saved
     source.rename(project / "R-source-moved")
 
-    with running_app(executable, runtime, project, folder / "cold") as request:
+    with running_app(executable, project, folder / "cold") as request:
         restored = request("/api/layouts/Native-mixed")
         panels = restored["canvases"][0]["objects"]
         archived = request(
