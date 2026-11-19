@@ -72,6 +72,25 @@ REFUSED_BEFORE_ACTING = frozenset(
 )
 
 
+#: 修复经过（诊断包用）的上限：每条工具返回只留尾部这么多字符，整个会话最多这么多条（老的先丢）
+TRANSCRIPT_ENTRY_CHARS = 2000
+TRANSCRIPT_MAX_ENTRIES = 60
+
+
+def _remember(ctx: FixContext, tool: str, result: ToolResult) -> None:
+    """工具返回（已脱敏）进内存里的修复经过；只留尾部，条数有界。不抛。"""
+    try:
+        text = result.content or ""
+        if len(text) > TRANSCRIPT_ENTRY_CHARS:
+            text = "…" + text[-TRANSCRIPT_ENTRY_CHARS:]
+        ctx.transcript.append(
+            {"step": ctx.step, "tool": tool, "code": result.code or "", "text": text}
+        )
+        del ctx.transcript[:-TRANSCRIPT_MAX_ENTRIES]
+    except Exception:  # noqa: BLE001 - 记不下不影响工具调用
+        pass
+
+
 def run_tool(
     tool: FixTool, ctx: FixContext, args: object, audit: AuditLog | None = None
 ) -> ToolResult:
@@ -117,6 +136,7 @@ def run_tool(
     if result.mutated:
         ctx.verification = None
     result.content = scrub(result.content)
+    _remember(ctx, tool.name, result)
     ctx.trace_tool_span = None
     approved_by = _approved_by(result, ctx)
     if (

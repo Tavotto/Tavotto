@@ -1456,7 +1456,7 @@
           "detail_requests": "最近的后端请求记录（只有方法、路由、状态码、耗时、错误码）",
           "detail_overrides": "正在编辑的图的样式改动",
           "detail_render_env": "渲染环境（Python、matplotlib、已装包、字体）",
-          "detail_runs": "最近的渲染、导出、脚本试运行记录",
+          "detail_runs": "最近的渲染、导出、脚本试运行记录，以及 AI 修复的经过",
           "detail_shell": "桌面壳与安装信息（版本、系统、架构、更新结果）",
           "detail_storage": "存储环境（剩余空间、可写、是否在同步目录）",
           "detail_console": "界面控制台的最近报错与警告",
@@ -1466,7 +1466,7 @@
           "detail_crash_reports": "系统崩溃报告（你勾选了）",
           "detail_corrupt_sessions": "会话损坏副本的内容（你勾选了）"
         },
-        "notIncluded": "默认不含脚本、数据文件和匿名统计标识；报错与日志里可能出现文件夹名、文件名和脚本打印出的内容。",
+        "notIncluded": "默认不含脚本文件、数据文件和匿名统计标识；报错与日志里可能出现文件夹名、文件名和脚本打印出的内容，用过 AI 修复时还会带上它读过的脚本片段。",
         "save": "保存这份诊断包",
         "saved": "已保存",
         "saveFailed": "没能保存",

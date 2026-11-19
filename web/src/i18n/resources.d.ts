@@ -2743,7 +2743,7 @@ export default interface Resources {
             "detail_overrides": "正在编辑的图的样式改动",
             "detail_render_env": "渲染环境（Python、matplotlib、已装包、字体）",
             "detail_requests": "最近的后端请求记录（只有方法、路由、状态码、耗时、错误码）",
-            "detail_runs": "最近的渲染、导出、脚本试运行记录",
+            "detail_runs": "最近的渲染、导出、脚本试运行记录，以及 AI 修复的经过",
             "detail_shell": "桌面壳与安装信息（版本、系统、架构、更新结果）",
             "detail_source": "脚本源码与依赖声明文件（你勾选了）",
             "detail_state": "会话状态文件（含损坏副本清单）",
@@ -2760,7 +2760,7 @@ export default interface Resources {
             "ui_trace": "最近的界面操作轨迹（只有操作类型）"
           },
           "listSeparator": "、",
-          "notIncluded": "默认不含脚本、数据文件和匿名统计标识；报错与日志里可能出现文件夹名、文件名和脚本打印出的内容。",
+          "notIncluded": "默认不含脚本文件、数据文件和匿名统计标识；报错与日志里可能出现文件夹名、文件名和脚本打印出的内容，用过 AI 修复时还会带上它读过的脚本片段。",
           "noteCount": "{{count}} / {{max}}",
           "noteLabel": "补充说明（可选）",
           "notePlaceholder": "发生了什么？请不要填姓名、邮箱、路径或数据。",

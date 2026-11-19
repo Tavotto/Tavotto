@@ -133,6 +133,9 @@ class FixContext:
     attempts: list = field(default_factory=list)
     #: 上一次试运行之后真做过的改动（工具名），下一次试运行把它们记进那一条
     changes_since_try: list = field(default_factory=list)
+    #: 修复经过的内容（ADR 0197 第 4 条，维护者 11-19 裁决「总是收，脱敏后」）：每次工具调用返回给模型的文字（已过 `scrub`）
+    #: 的有界尾部，**只在内存**——不落盘（ADR 0149 §六 3），会话还在时诊断包才取得到
+    transcript: list = field(default_factory=list)
     case_insensitive: bool | None = None
     extra_deny: list[Path] | None = None
 

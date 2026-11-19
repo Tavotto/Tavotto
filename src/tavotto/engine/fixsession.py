@@ -528,6 +528,43 @@ class FixSessions:
         with self._lock:
             return {s.id for s in self._by_id.values() if s.scope == scope}
 
+    def diagnostics_for(self, scope: str) -> list[dict]:
+        """诊断包「修复经过（内容）」（ADR 0197 第 4 条）：这个项目名下还在内存里的修复会话——结局、AI 的总结、用的模型
+        （只有厂商 id 与模型名，不含地址与密钥）、试运行记录、工具返回的有界尾部（已过 `scrub`）、AI 写的启动脚本。
+        出门前诊断包再整体过一遍 `Scrubber`。不抛。"""
+        from . import launchscript
+
+        with self._lock:
+            sessions = [s for s in self._by_id.values() if s.scope == scope]
+        out: list[dict] = []
+        for s in sessions:
+            ctx = s.ctx
+            launcher = None
+            if ctx is not None and s.script:
+                try:
+                    launcher = launchscript.read(ctx.project_root, s.script)
+                except Exception:  # noqa: BLE001 - 读不到就不带
+                    launcher = None
+            out.append(
+                {
+                    "fix_id": s.id,
+                    "script": s.script,
+                    "state": s.state,
+                    "outcome": s.outcome,
+                    "reason": s.reason,
+                    "summary": s.summary,
+                    "steps": s.steps,
+                    "wire": "cli" if s.cli else "builtin",
+                    "model": (
+                        {"provider": s.endpoint[0], "model": s.endpoint[1]} if s.endpoint else None
+                    ),
+                    "attempts": list(ctx.attempts) if ctx is not None else [],
+                    "transcript": list(ctx.transcript) if ctx is not None else [],
+                    "launcher": launcher,
+                }
+            )
+        return out
+
     def active(self) -> FixSession | None:
         with self._lock:
             for s in self._by_id.values():
