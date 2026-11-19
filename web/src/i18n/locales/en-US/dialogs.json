@@ -2083,6 +2083,41 @@
       "overwriteTitle": "Overwrite your edited skill in {{host}}?",
       "overwriteBody": "Your changes will be replaced with the version that ships with Tavotto.",
       "cancel": "Cancel"
+    },
+    "license": {
+      "label": "Premium",
+      "none": "Not activated",
+      "until": "Valid until {{date}}",
+      "codeLabel": "Activation code",
+      "state": {
+        "expired": "Expired on {{date}}",
+        "revoked": "This license was revoked",
+        "lapsed": "Needs a quick online check"
+      },
+      "action": {
+        "enter": "Enter code",
+        "buy": "Buy",
+        "activate": "Activate",
+        "release": "Unbind this computer",
+        "refresh": "Check now",
+        "renew": "Renew",
+        "retry": "Try again"
+      },
+      "failure": {
+        "invalid_code": "That code isn't right. Check it and try again",
+        "device_limit": "This license is already on its maximum number of computers. Unbind one of them first",
+        "revoked": "This license was revoked",
+        "expired": "This license has expired",
+        "price_unavailable": "Can't buy right now. Please try again later",
+        "rate_limited": "Too many tries. Wait a moment and try again",
+        "network": "Can't reach the license server. Check your network and try again",
+        "server": "The license service is unavailable. Please try again later",
+        "client_error": "That didn't go through. Please try again later"
+      },
+      "lock": {
+        "tip": "This is a Premium feature. Click to learn about Premium",
+        "aria": "Premium feature, learn about Premium"
+      }
     }
   },
   "style": {

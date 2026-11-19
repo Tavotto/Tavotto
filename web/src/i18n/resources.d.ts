@@ -2913,6 +2913,41 @@ export default interface Resources {
         "update": "更新",
         "updating": "更新中…"
       },
+      "license": {
+        "action": {
+          "activate": "激活",
+          "buy": "购买",
+          "enter": "输入激活码",
+          "refresh": "现在确认",
+          "release": "在这台电脑上解绑",
+          "renew": "续费",
+          "retry": "再试一次"
+        },
+        "codeLabel": "激活码",
+        "failure": {
+          "client_error": "没能完成，请稍后再试",
+          "device_limit": "这份授权的电脑数已经用满了，先在另一台上解绑",
+          "expired": "这份授权已经到期",
+          "invalid_code": "激活码不对，核对一下再试",
+          "network": "连不上授权服务器，检查网络后再试",
+          "price_unavailable": "现在还不能购买，请稍后再试",
+          "rate_limited": "试得太频繁了，过一会儿再试",
+          "revoked": "这份授权已被撤销",
+          "server": "授权服务暂时不可用，请稍后再试"
+        },
+        "label": "高级版",
+        "lock": {
+          "aria": "高级版功能，了解高级版",
+          "tip": "这是高级版的功能，点一下了解高级版"
+        },
+        "none": "还没激活",
+        "state": {
+          "expired": "已于 {{date}} 到期",
+          "lapsed": "需要联网确认一下授权",
+          "revoked": "这份授权已被撤销"
+        },
+        "until": "到期 {{date}}"
+      },
       "navGroup": {
         "general": "应用",
         "integrations": "集成",
