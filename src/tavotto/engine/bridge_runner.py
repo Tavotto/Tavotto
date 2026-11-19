@@ -578,6 +578,19 @@ def run_module(
 
     sys.argv = [target, *argv]  # run_module(alter_sys=True) 会把 argv[0] 换成模块文件
     sys.path.insert(0, path_root or os.getcwd())
+    if path_root is not None:
+        # 包里的脚本按模块运行（ADR 0196）：入口的代码一律**从当前源码编译**，不用 `.pyc`（Codex #2055 P1）——
+        # 同一秒内等长改写会让旧 `.pyc` 时间戳仍然有效，`run_module` 照用它就静默跑出改写前的图。safe 侧同样从源码编译
+        _, spec, _cached = runpy._get_module_details(target)  # noqa: SLF001
+        origin = spec.origin or ""
+        with io.open_code(origin) as fh:
+            code = compile(fh.read(), origin, "exec", dont_inherit=True)
+        if on_origin is not None:
+            on_origin(origin)
+        if on_start is not None:
+            on_start(origin)
+        runpy._run_module_code(code, None, "__main__", spec)  # noqa: SLF001
+        return
     if on_start is not None:
         # These are run_module(alter_sys=True)'s own two operations, split at
         # the compiled-code boundary. A missing/invalid target must not report

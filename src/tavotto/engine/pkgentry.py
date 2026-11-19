@@ -63,6 +63,28 @@ def _is_plain_dir(path: str) -> bool:
     return stat.S_ISDIR(st.st_mode) and not scanbudget.is_redirect(st)
 
 
+def _sets_own_package_context(tree: ast.Module) -> bool:
+    """脚本顶层代码（不进函数 / 类体）自己给 `__package__` / `__spec__` 赋值：常见的自举写法
+    （`if __name__ == "__main__" and __package__ is None: __package__ = "plots"` + 改 `sys.path`）。这种脚本按脚本跑本来就行，
+    改成按模块跑反而把脚本目录挪出 `sys.path`、它的绝对同级 import 会断（Codex #2055 P2）——判据对它一律不改。"""
+    for st in tree.body:
+        if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        for node in ast.walk(st):
+            targets = (
+                node.targets
+                if isinstance(node, ast.Assign)
+                else [node.target]
+                if isinstance(node, (ast.AugAssign, ast.AnnAssign))
+                else []
+            )
+            if any(
+                isinstance(t, ast.Name) and t.id in ("__package__", "__spec__") for t in targets
+            ):
+                return True
+    return False
+
+
 def _relative_levels(tree: ast.Module) -> list[int]:
     """脚本顶层**直接语句**里的相对导入层数（`from . import x` = 1）。"""
     return [n.level for n in tree.body if isinstance(n, ast.ImportFrom) and (n.level or 0) > 0]
@@ -127,5 +149,7 @@ def resolve(project_root, script: str, entry: str | None = ENTRY_MAIN) -> Packag
         return None
     levels = _relative_levels(tree)
     if not levels or max(levels) > len(names) - 1:
+        return None
+    if _sets_own_package_context(tree):
         return None
     return PackageEntry(module=".".join(names), root=path_root)

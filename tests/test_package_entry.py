@@ -357,3 +357,19 @@ def test_spec_accepts_the_project_folder_prefix_and_nothing_else(tmp_path):
 
     with pytest.raises(ValueError):
         dataclasses.replace(spec, module_name="otherproj.plots.fig")
+
+
+def test_a_script_that_bootstraps_its_own_package_context_is_left_as_a_script(tmp_path):
+    """Codex #2055 P2：脚本自己给 `__package__` 赋值、改 `sys.path`（常见自举写法）——按脚本跑本来就行，不改成按模块。"""
+    body = (
+        "import os, sys\n"
+        "if __name__ == '__main__' and __package__ is None:\n"
+        "    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))\n"
+        "    __package__ = 'plots'\n"
+        "from .helpers import tidy\n"
+        "import localmod\n"
+    )
+    script = _pkg(tmp_path, "plots", body=body)
+    assert pkgentry.resolve(tmp_path, script) is None
+    plain = _pkg(tmp_path / "other", "plots")  # 对照：没有自举的照样按模块
+    assert pkgentry.resolve(tmp_path / "other", plain) is not None

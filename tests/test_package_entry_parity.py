@@ -310,3 +310,45 @@ def test_a_failing_package_init_still_reports_the_script_identity(tmp_path):
     report = json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))
     assert report["rel_target"] == "plots/fig.py"
     assert report["target_kind"] == "script"
+
+
+def test_native_package_run_compiles_the_entry_from_current_source_not_a_stale_pyc(tmp_path):
+    """Codex #2055 P1：同一秒内等长改写后旧 `.pyc` 时间戳仍有效；按模块运行时 bridge 必须从当前源码编译入口，不跑旧图。"""
+    proj = tmp_path / "proj"
+    pkg = proj / "plots"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "helpers.py").write_text("X = 1\n", encoding="utf-8")
+    fig = pkg / "fig.py"
+    fig.write_text("from .helpers import X\nprint('VER-OLD')\n", encoding="utf-8")
+    st = os.stat(fig)
+    # 用用户解释器为旧版本写一份有效的 .pyc
+    subprocess.run(
+        [USER_PYTHON, "-c", f"import py_compile; py_compile.compile({str(fig)!r}, doraise=True)"],
+        check=True,
+        env=child_env(),
+    )
+    fig.write_text("from .helpers import X\nprint('VER-NEW')\n", encoding="utf-8")  # 等长改写
+    os.utime(fig, ns=(st.st_atime_ns, st.st_mtime_ns))  # 时间戳与大小都与 .pyc 记的一致
+    r = subprocess.run(
+        [
+            USER_PYTHON,
+            str(bridge.RUNNER_PY),
+            "--target-kind",
+            "script",
+            "--target",
+            str(fig),
+            "--as-module",
+            "plots.fig",
+            "--",
+        ],
+        cwd=str(proj),
+        env=child_env(),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+    assert r.returncode == 0, r.stderr
+    assert "VER-NEW" in r.stdout and "VER-OLD" not in r.stdout, r.stdout
