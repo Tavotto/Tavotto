@@ -33,6 +33,10 @@ import { bindingFor, journalCarry, resolveDocumentSpec, type SpecCatalogEntry } 
 import { journalCatalogUi } from '@/lib/journalUi'
 import { JournalPicker } from '../journal/JournalPicker'
 import { JournalRequirements } from '../journal/JournalRequirements'
+import { JournalSourceIdentityWarning } from '../journal/JournalSourceIdentityWarning'
+import { JournalJperStageWarning } from '../journal/JournalJperStageWarning'
+import { JournalLeukosScopeWarning } from '../journal/JournalLeukosScopeWarning'
+import { JournalNanophotonicsWarning } from '../journal/JournalNanophotonicsWarning'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProfileStore } from '@/store/profileStore'
 import { isLegacyBasis, withPageBasis } from '@/lib/stylePresets'
@@ -628,6 +632,10 @@ export function ProfilesSettings({
                 <JournalPicker />
               </SettingRow>
             )}
+            {journalOn && doc.profile?.journalRef && <JournalSourceIdentityWarning />}
+            {journalOn && doc.profile?.journalRef && <JournalJperStageWarning />}
+            {journalOn && doc.profile?.journalRef && <JournalLeukosScopeWarning />}
+            {journalOn && doc.profile?.journalRef && <JournalNanophotonicsWarning />}
             {journalOn && doc.profile?.journalRef && (
               <DiagnosticDisclosure variant="row" data-journal-disclosure title={translate('journal.requirements', { ns: 'dialogs' })}>
                 <JournalRequirements />

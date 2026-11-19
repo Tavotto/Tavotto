@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { t as translate } from '@/i18n'
 import { geomTarget, isElementHidden, panelFullRect } from '@/lib/elementGeom'
+import { guideBox } from '@/lib/reviewGids'
 import { openProblemAt, focusFailureMessage } from '@/lib/issueFocus'
 import { visualBounds } from '@/lib/geometry'
 import { panelContentTransform, panelTransformSvg } from '@/lib/panelTransform'
@@ -95,8 +96,10 @@ function ElementHover({ panel, gid, t }: { panel: PanelObject; gid: string; t: V
 export function useElementRect(panel: PanelObject, gid: string, t: ViewTransform, pad: number) {
   const manifest = useDisplayedExactManifest(panel)
   const el = manifest?.elements.find((e) => e.gid === gid)
-  if (!manifest || !el || el.gid === 'figure' || isElementHidden(el)) return null
-  const target = geomTarget(manifest, el)
+  // 审阅意见锚在边框线 / 网格线 / 刻度线上（合成 gid，不在元素表里）：框取自子图那一项的数据
+  const guide = manifest && !el ? guideBox(manifest.elements, gid) : null
+  if (!manifest || (!el && !guide) || el?.gid === 'figure' || (el && isElementHidden(el))) return null
+  const target = el ? geomTarget(manifest, el) : { gid, bbox: guide! }
   const full = panelFullRect(panel)
   const [bx, by, bw, bh] = target.bbox
   const x = mmToViewX(full.x + bx * full.w, t)

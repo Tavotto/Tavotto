@@ -290,6 +290,11 @@ def _log_import_ignore(event: dict) -> None:
     print(f"[import-ignore] {json.dumps(event, ensure_ascii=False)}", file=sys.stderr)
 
 
+def _log_gui_backend(event: dict) -> None:
+    """脚本想用 GUI 后端、被中和成非交互后端时在 worker.log 留一行结构化记录（ADR 0195）；只有后端名。"""
+    print(f"[gui-backend] {json.dumps(event, ensure_ascii=False)}", file=sys.stderr)
+
+
 #: 与 native bridge 同一个装配点（`bridgeboot.install_unreadable_import_skipper`）：用户脚本往 `sys.path` 里塞了
 #: 当前账户读不了的项目外目录时，换下一个位置继续找，而不是让整次 import 挂在 `PermissionError` 上。
 bridgeboot.install_unreadable_import_skipper(_log_import_skip)
@@ -297,6 +302,10 @@ bridgeboot.install_unreadable_import_skipper(_log_import_skip)
 import matplotlib  # noqa: E402 —— safe 档由 Tavotto 挑解释器，backend 在装引擎之前钉死
 
 matplotlib.use("Agg")
+# 脚本写死 GUI 后端（`matplotlib.use("TkAgg")` / `rcParams["backend"]`…）时不切换、记一笔（ADR 0195）：与 native bridge 同一个装配点。
+# 必须在可信方法面基线冻结（`figcapture.freeze_trusted_surface`）之前装，包装才算基线的一部分、不被判成脚本 patch 了 matplotlib
+GUI_BACKENDS = bridgeboot.install_gui_backend_neutralizer(_log_gui_backend)
+GUI_BACKENDS.patch_matplotlib(matplotlib)
 import matplotlib.backends.backend_agg as backend_agg  # noqa: E402
 import matplotlib.figure as mfigure  # noqa: E402
 
@@ -715,6 +724,9 @@ def _install_show_capture() -> None:
     _SHOWN = figcapture.ShownFigures()
 
     def wrap(plt) -> None:
+        GUI_BACKENDS.patch_pyplot(
+            plt
+        )  # 与 show 同一个时刻：pyplot 一载入就挡住 GUI 后端（ADR 0195）
         real_show = plt.show
         if getattr(real_show, "_tavotto_show_capture", False):
             return
@@ -1183,6 +1195,93 @@ def _script_frame_line(exc: BaseException, script) -> int | None:
     return lines[-1] if lines else None
 
 
+def _argv_failure_site(exc: BaseException, script, supplied: list[str], expected_argv: list[str]):
+    """The failing instruction of the entry script, while this run's argv is untouched.
+
+    Returns ``(frame, instructions, pos)`` or None. Shared by the argv classifiers
+    below: argv must still be the very list the worker installed, with the same
+    contents; the innermost frame must be the entry script, stopped exactly at the
+    failing instruction (a finally block that ran since would move it), and no
+    unwound script frame may have executed after the failure either.
+    """
+    if type(sys.argv) is not list or sys.argv is not expected_argv:
+        return None
+    if not all(type(value) is str for value in sys.argv):
+        return None
+    if sys.argv != [str(script), *supplied]:
+        return None
+    tb = exc.__traceback__
+    if tb is None:
+        return None
+    wanted = os.path.normcase(os.path.realpath(str(script)))
+    reached_script = False
+    while tb.tb_next is not None:
+        # A finally block can change argv and restore it after the failing
+        # instruction, even in a helper called by the script. Reject any
+        # unwound frame after entering the script if it has since executed.
+        reached_script |= (
+            os.path.normcase(os.path.realpath(tb.tb_frame.f_code.co_filename)) == wanted
+        )
+        if reached_script and tb.tb_frame.f_lasti != tb.tb_lasti:
+            return None
+        tb = tb.tb_next
+    frame = tb.tb_frame
+    if (
+        os.path.normcase(os.path.realpath(frame.f_code.co_filename)) != wanted
+        or frame.f_lasti != tb.tb_lasti
+    ):
+        return None
+    instructions = list(dis.get_instructions(frame.f_code))
+    pos = next((i for i, op in enumerate(instructions) if op.offset == tb.tb_lasti), -1)
+    if pos < 1:
+        return None
+    return frame, instructions, pos
+
+
+def _loads_run_argv(frame, instructions, base: int, pos: int) -> bool:
+    """`instructions[base]` pushes this run's argv list and nothing jumps into `base..pos`.
+
+    Two shapes: `sys.argv` (`LOAD_ATTR argv` on a load bound to the `sys` module) and
+    an imported alias (`from sys import argv as args`: a load bound to the argv list).
+    Another branch may jump straight to the attribute or a later instruction with a
+    different object already on the stack, so any jump target there is ambiguous.
+    """
+
+    def binding(load):
+        name = load.argval
+        if not isinstance(name, str):
+            return None
+        if load.opname in (
+            "LOAD_NAME",
+            "LOAD_FAST",
+            "LOAD_FAST_CHECK",
+            "LOAD_FAST_BORROW",
+            "LOAD_DEREF",
+        ):
+            if name in frame.f_locals:
+                return frame.f_locals[name]
+            if load.opname != "LOAD_NAME":
+                return None
+        if load.opname in ("LOAD_NAME", "LOAD_GLOBAL"):
+            return frame.f_globals.get(name)
+        return None
+
+    load = instructions[base]
+    if load.opname == "LOAD_ATTR" and load.argval == "argv" and base >= 1:
+        if any(op.is_jump_target for op in instructions[base : pos + 1]):
+            return False
+        return binding(instructions[base - 1]) is sys
+    # For an imported argv alias, the base load must likewise be executed;
+    # a jump to a later instruction makes the operand ambiguous.
+    if any(op.is_jump_target for op in instructions[base + 1 : pos + 1]):
+        return False
+    return binding(load) is sys.argv
+
+
+def _is_const_load(op) -> bool:
+    return op.opname in ("LOAD_CONST", "LOAD_SMALL_INT")
+
+
 def _direct_argv_index_error(
     exc: BaseException, script, supplied: list[str], expected_argv: list[str]
 ) -> bool:
@@ -1194,85 +1293,122 @@ def _direct_argv_index_error(
     ordinary script errors. Nothing evaluates the user's source or arguments.
     """
     try:
-        if (
-            type(exc) is not IndexError
-            or type(sys.argv) is not list
-            or sys.argv is not expected_argv
-        ):
+        if type(exc) is not IndexError:
             return False
-        if not all(type(value) is str for value in sys.argv):
+        site = _argv_failure_site(exc, script, supplied, expected_argv)
+        if site is None:
             return False
-        if sys.argv != [str(script), *supplied]:
-            return False
-        tb = exc.__traceback__
-        if tb is None:
-            return False
-        wanted = os.path.normcase(os.path.realpath(str(script)))
-        reached_script = False
-        while tb.tb_next is not None:
-            # A finally block can change argv and restore it after the failing
-            # instruction, even in a helper called by the script. Reject any
-            # unwound frame after entering the script if it has since executed.
-            reached_script |= (
-                os.path.normcase(os.path.realpath(tb.tb_frame.f_code.co_filename)) == wanted
-            )
-            if reached_script and tb.tb_frame.f_lasti != tb.tb_lasti:
-                return False
-            tb = tb.tb_next
-        frame = tb.tb_frame
-        if (
-            os.path.normcase(os.path.realpath(frame.f_code.co_filename)) != wanted
-            or frame.f_lasti != tb.tb_lasti
-        ):
-            return False
-        instructions = list(dis.get_instructions(frame.f_code))
-        pos = next((i for i, op in enumerate(instructions) if op.offset == tb.tb_lasti), -1)
+        frame, instructions, pos = site
         if pos < 2:
             return False
         op = instructions[pos]
         if op.opname != "BINARY_SUBSCR" and not (op.opname == "BINARY_OP" and op.argrepr == "[]"):
             return False
         index_op = instructions[pos - 1]
-        if (
-            index_op.opname not in ("LOAD_CONST", "LOAD_SMALL_INT")
-            or type(index_op.argval) is not int
-        ):
+        if not _is_const_load(index_op) or type(index_op.argval) is not int:
             return False
         index = index_op.argval
         if -len(sys.argv) <= index < len(sys.argv):
             return False
+        return _loads_run_argv(frame, instructions, pos - 2, pos)
+    except Exception:  # noqa: BLE001 — failure to classify must preserve the original error
+        return False
 
-        def binding(load):
-            name = load.argval
-            if not isinstance(name, str):
-                return None
-            if load.opname in (
-                "LOAD_NAME",
-                "LOAD_FAST",
-                "LOAD_FAST_CHECK",
-                "LOAD_FAST_BORROW",
-                "LOAD_DEREF",
-            ):
-                if name in frame.f_locals:
-                    return frame.f_locals[name]
-                if load.opname != "LOAD_NAME":
-                    return None
-            if load.opname in ("LOAD_NAME", "LOAD_GLOBAL"):
-                return frame.f_globals.get(name)
+
+def _argv_unpack_operand(instructions, pos: int):
+    """Where `UNPACK_SEQUENCE` at `pos` got its operand: `(base, slice | None)` or None.
+
+    Only `sys.argv` itself or one constant two-bound slice of it (`sys.argv[1:4]`,
+    `[1:]`, `[-2:]`) — the bytecode shapes of CPython 3.10/3.11 (`BUILD_SLICE` +
+    `BINARY_SUBSCR`), 3.12/3.13 (`BINARY_SLICE`) and 3.14 (folded constant slice +
+    `BINARY_OP []`). `base` is the index of the instruction that pushes the list.
+    """
+    prev = instructions[pos - 1]
+
+    def bound(op):
+        return _is_const_load(op) and (op.argval is None or type(op.argval) is int)
+
+    # 3.14: LOAD_CONST slice(a, b, None); BINARY_OP []
+    if prev.opname == "BINARY_OP" and prev.argrepr == "[]" and pos >= 3:
+        const = instructions[pos - 2]
+        if _is_const_load(const) and type(const.argval) is slice:
+            s = const.argval
+            if s.step is None and all(v is None or type(v) is int for v in (s.start, s.stop)):
+                return pos - 3, s
             return None
+    # 3.12 / 3.13: LOAD_CONST a; LOAD_CONST b; BINARY_SLICE
+    if prev.opname == "BINARY_SLICE" and pos >= 4:
+        lo, hi = instructions[pos - 3], instructions[pos - 2]
+        if bound(lo) and bound(hi):
+            return pos - 4, slice(lo.argval, hi.argval)
+        return None
+    # 3.10 / 3.11: LOAD_CONST a; LOAD_CONST b; BUILD_SLICE 2; BINARY_SUBSCR
+    if (
+        prev.opname == "BINARY_SUBSCR" or (prev.opname == "BINARY_OP" and prev.argrepr == "[]")
+    ) and pos >= 5:
+        build = instructions[pos - 2]
+        lo, hi = instructions[pos - 4], instructions[pos - 3]
+        if build.opname == "BUILD_SLICE" and build.argval == 2 and bound(lo) and bound(hi):
+            return pos - 5, slice(lo.argval, hi.argval)
+        return None
+    if prev.opname in ("BINARY_OP", "BINARY_SLICE", "BINARY_SUBSCR"):
+        return None
+    # `script, a, b = sys.argv`
+    return pos - 1, None
 
-        base = instructions[pos - 2]
-        if base.opname == "LOAD_ATTR" and base.argval == "argv" and pos >= 3:
-            # Another branch may jump directly to the attribute, index or
-            # subscription with a different object already on the stack.
-            if any(op.is_jump_target for op in instructions[pos - 2 : pos + 1]):
-                return False
-            return binding(instructions[pos - 3]) is sys
-        # For an imported argv alias, the base load must likewise be executed;
-        # a jump to the index or subscription makes the operand ambiguous.
-        if any(op.is_jump_target for op in instructions[pos - 1 : pos + 1]):
+
+def _direct_argv_unpack_error(
+    exc: BaseException, script, supplied: list[str], expected_argv: list[str]
+) -> bool:
+    """Prove the failing unpack took too few values straight from this run's argv.
+
+    `data, work, out = sys.argv[1:4]` without arguments raises ValueError, not
+    IndexError. Same evidence rules as `_direct_argv_index_error`: the actual
+    failing `UNPACK_SEQUENCE` of the entry script, its operand `sys.argv` (or one
+    constant slice of it) loaded on a straight path, argv untouched. "Too few" is
+    recomputed from argv and the unpack count, never parsed from the message, and
+    it only counts when more arguments can fix it (a slice whose bounds can never
+    hold that many values, or too many values, stays an ordinary script error).
+    """
+    try:
+        if type(exc) is not ValueError:
             return False
-        return binding(base) is sys.argv
+        site = _argv_failure_site(exc, script, supplied, expected_argv)
+        if site is None:
+            return False
+        frame, instructions, pos = site
+        op = instructions[pos]
+        if op.opname != "UNPACK_SEQUENCE" or type(op.arg) is not int:
+            return False
+        count = op.arg
+        operand = _argv_unpack_operand(instructions, pos)
+        if operand is None:
+            return False
+        base, window = operand
+        if base < 0:
+            return False
+        if window is None:
+            got = len(sys.argv)
+        else:
+            got = len(sys.argv[window])
+            # Would some longer argv give exactly `count` values? The length is not
+            # monotonic (`[-2:2]` grows, then shrinks), but each bound only changes
+            # behaviour where argv length equals its magnitude, so between those
+            # breakpoints the length is monotone and moves by at most one per added
+            # argument: every value between the lengths at two consecutive points is
+            # reached. Past the last breakpoint it is monotone for good: constant,
+            # growing by one per argument, or shrinking to zero within `max(bounds)`
+            # more — so one far point `max(bounds) + count + 1` beyond settles it.
+            bounds = [abs(v) for v in (window.start, window.stop) if v is not None]
+            first = len(sys.argv) + 1
+            last = max([first, *bounds]) + max(bounds, default=0) + count + 1
+            points = sorted({first, last, *(b for b in bounds if first <= b <= last)})
+            sizes = [len(range(*window.indices(n))) for n in points]
+            if not any(min(a, b) <= count <= max(a, b) for a, b in zip(sizes, sizes[1:] or sizes)):
+                return False
+        if got >= count:
+            return False
+        return _loads_run_argv(frame, instructions, base, pos)
     except Exception:  # noqa: BLE001 — failure to classify must preserve the original error
         return False
 
@@ -1534,6 +1670,8 @@ class Worker(wireproto.V1Handler):
         #: 自己所在的目录。写入边界的**参照**始终是沙盒 / 图库目录，守卫不变。
         self.workdir = Path(args.cwd).resolve() if getattr(args, "cwd", None) else None
         self.entry = args.entry
+        #: 按模块运行这份脚本的模块名（`--as-module`，ADR 0196）；build 开头核对后才真正生效（`_package_module`）。
+        self.as_module = getattr(args, "as_module", None) or None
         self.preview_dpi = args.preview_dpi
         self.built = False
         self.execution_id: str | None = None
@@ -1669,6 +1807,7 @@ class Worker(wireproto.V1Handler):
                     "missing_module",
                     "missing_dependency",
                     "missing_command",
+                    "image_format_mismatch",
                     "execution_id",
                 )
                 if k in err
@@ -1953,6 +2092,35 @@ class Worker(wireproto.V1Handler):
                 getattr(exc, "code", "svg_scaffold_invalid"), str(exc), extra={"chart_error": True}
             ) from exc
 
+    def _package_module(self) -> tuple[str | None, str | None]:
+        """`--as-module`（ADR 0196）在子进程这一侧的最后一道核对：`(模块名, sys.path[0])`；不按模块运行 = `(None, None)`。
+
+        父进程的判据（`pkgentry.resolve`）已经定了「该按模块跑」，这里只验**执行前提仍然成立**，不成立就照旧 `run_path`
+        （脚本失败的样子与以前一字不差，绝不猜）：模块名必须与脚本路径逐段对上（`bridgeboot.package_path_root`，`sys.path[0]`
+        因此与 `co_filename` 同源）、不是影子脚本、顶层包名没有被别的模块占在 `sys.modules` 里（否则 `run_module` 会 import
+        到别人的包）。**不 import 任何用户代码**：`sys.modules` 只读。"""
+        name = self.as_module
+        if not name or self.script is None or self.script_source != self.script:
+            return None, None
+        root = bridgeboot.package_path_root(str(self.script), name)
+        if root is None:
+            print(
+                f"[package-run] 模块名 {name} 与脚本路径对不上，照旧按脚本路径运行", file=sys.stderr
+            )
+            return None, None
+        top = name.split(".")[0]
+        held = sys.modules.get(top)
+        if held is not None:
+            want = _norm_path(os.path.join(root, top))
+            places = [_norm_path(p) for p in list(getattr(held, "__path__", None) or ())]
+            if want not in places:
+                print(
+                    f"[package-run] 顶层包 {top} 已被别处的模块占用，照旧按脚本路径运行",
+                    file=sys.stderr,
+                )
+                return None, None
+        return name, root
+
     def build(self, timings: dict | None = None) -> dict:
         """跑一次用户脚本，把产出的 Figure 全部收进内存。
 
@@ -2012,7 +2180,9 @@ class Worker(wireproto.V1Handler):
         # 文件夹（比如整份库源码 `celerite/`，里面缺构建时才生成的文件）不会再盖住环境里装好的那个发行包。
         # 静态侧同一个模型：`importscan._search_roots`（project_root 排在标准库 / site 之后）与
         # `importshadow.detect(late_roots=…)`；改这里要一起改（tests/test_syspath_order.py 锁住三者一致）。
-        _put_project_on_path(self.script.parent, self.figures_dir)
+        # 按模块运行（ADR 0196）时 `sys.path[0]` 是包根的上一级（与 `python -m` 一致），脚本目录不上 path；其余不变
+        package_module, package_root = self._package_module()
+        _put_project_on_path(package_root or self.script.parent, self.figures_dir)
         #: 脚本运行前的 `sys.path`：之后新加进来的项目外目录读不了时，失败卡点名它（`_unreadable_folder_fact`）
         self._path_baseline = list(sys.path)
         # 项目目录里的源码（脚本本身按模块 import 时、它 import 的本地模块）不写 .pyc——
@@ -2151,7 +2321,10 @@ class Worker(wireproto.V1Handler):
         #   从不查 `__pycache__`，读的就是源码本身。故沿用执行前后括号：读源码那一刻必落在 pre 与 post 之间，
         #   两端 (mtime_ns, size, inode, sha) 完全相同 ⇒ 期间没被写过（刻意 utime 回拨属对抗性，不设防）；不同 → None。
         #   `_source_stamp` 只给这条路径用。
-        pre = _source_stamp(self.script_source) if self.entry == "__main__" else None
+        run_path = (
+            self.entry == "__main__" and package_module is None
+        )  # `runpy.run_path`：执行前后括号
+        pre = _source_stamp(self.script_source) if run_path else None
         entry_shas: list[str] = []
         # `SystemExit` 不是 `Exception`：脚本末尾的 `sys.exit(main())` / `exit()` /
         # `quit()` 会一路穿过 `ensure_built` 的 `except Exception`，落到主循环
@@ -2192,12 +2365,27 @@ class Worker(wireproto.V1Handler):
                     pass
                 else:
                     paper_style.save = _wrap_paper_style_save(paper_style.save)
-                if self.entry == "__main__":
+                if package_module is not None:
+                    import runpy  # noqa: PLC0415 — 包里的脚本（相对导入）按模块运行
+
+                    # 等价于 `python -m 包.模块`（`__name__ == "__main__"`、`__package__` 正确、`sys.path[0]` 是包根的上一级）。
+                    # 与 `run_path` 不同，`run_module` 走 loader 会读旧的 `.pyc`：入口脚本一律经 `_capture_entry_sha`
+                    # 只从源码编译并记摘要（与函数入口同一个办法），父包 `__init__` 与帮手模块照常走 import 系统
+                    with _capture_entry_sha(self.script, entry_shas):
+                        runpy.run_module(package_module, run_name="__main__", alter_sys=True)
+                elif self.entry == "__main__":
                     import runpy  # noqa: PLC0415 — 内联脚本（fig4c / fig_models）
 
                     if self.script_source != self.script:
+                        # 执行另一份字节（启动脚本 / 影子脚本）：注入 `run_original()`，启动脚本用它跑用户原件（ADR 0194）
                         with _redirect_open_code(self.script, self.script_source):
-                            runpy.run_path(str(self.script), run_name="__main__")
+                            runpy.run_path(
+                                str(self.script),
+                                run_name="__main__",
+                                init_globals={
+                                    "run_original": bridgeboot.make_run_original(str(self.script))
+                                },
+                            )
                     else:
                         runpy.run_path(str(self.script), run_name="__main__")
                 else:
@@ -2272,13 +2460,17 @@ class Worker(wireproto.V1Handler):
                     raise _blocked_operations_error(
                         ledger.material(), cause=exc, fidelity=ledger.summary()
                     ) from exc
-                if _direct_argv_index_error(exc, self.script, self.script_argv, run_argv):
+                indexed = _direct_argv_index_error(exc, self.script, self.script_argv, run_argv)
+                if indexed or _direct_argv_unpack_error(
+                    exc, self.script, self.script_argv, run_argv
+                ):
                     count = len(self.script_argv)
+                    what = "发生下标越界" if indexed else "按个数拆分，数量不够"
                     message = (
-                        f"脚本读取命令行参数时发生下标越界；Tavotto 已按原样传入 {count} 个参数。"
+                        f"脚本读取命令行参数时{what}；Tavotto 已按原样传入 {count} 个参数。"
                         "请检查是否还缺少脚本需要的参数。"
                         if count
-                        else "脚本读取命令行参数时发生下标越界；这次运行没有提供参数。请在运行参数中填写脚本需要的值。"
+                        else f"脚本读取命令行参数时{what}；这次运行没有提供参数。请在运行参数中填写脚本需要的值。"
                     )
                     raise ProtocolError(
                         SCRIPT_NEEDS_ARGUMENTS,
@@ -2297,7 +2489,7 @@ class Worker(wireproto.V1Handler):
                 ledger.stop()
                 restore_spawn()
                 # 无论正常结束 / SystemExit / 异常都在这里收括号（finally 不改变原有异常传播）
-                if self.entry == "__main__":
+                if run_path:
                     post = _source_stamp(self.script_source)
                     self._source_sha256 = pre[3] if pre is not None and pre == post else None
                 else:
@@ -2741,6 +2933,7 @@ class Worker(wireproto.V1Handler):
             facts.update(self._missing_module_fact(exc))
             facts.update(self._unreadable_folder_fact(exc))
             facts.update(self._foreign_abi_fact(exc))
+            facts.update(self._image_format_fact(exc))
             facts.update(self._missing_command_fact(exc))
             raise ProtocolError(
                 "script_error",
@@ -2821,6 +3014,23 @@ class Worker(wireproto.V1Handler):
         except Exception:  # noqa: BLE001 — 绝不盖掉原来的脚本错误
             return {}
         return {"foreign_abi_folder": fact, "foreign_abi_folder_private": private} if fact else {}
+
+    def _image_format_fact(self, exc: BaseException) -> dict:
+        """失败是「图片内容与扩展名不符」（JPEG 存成 `.png`，TVD-3MWS）：`{"image_format_mismatch": {...}}`。
+        判据在 `bridgeboot.image_format_facts`（native 同一份）；只认项目根 / 脚本目录之内的文件；敏感运行里与 argv token
+        有关的文件名不带。只读文件前 16 字节，任何意外都当没有，绝不盖掉原来的脚本错误。"""
+        try:
+            fact = bridgeboot.image_format_facts(
+                exc,
+                (str(self.figures_dir), str(self.script.parent)),
+                self.script_argv if self.sensitive_argv else (),
+                # 只有沙盒 cwd 才有只读回退可镜像；「在脚本目录里运行」时相对路径本来就指向项目
+                sandbox_dir=str(self.sandbox) if self.workdir is None else None,
+                script_dir=str(self.script.parent),
+            )
+        except Exception:  # noqa: BLE001
+            return {}
+        return {"image_format_mismatch": fact} if fact else {}
 
     def _missing_command_fact(self, exc: BaseException) -> dict:
         """脚本拉起外部命令却找不到可执行文件：`{"missing_command": {...}}`（`cmddiag.collect`，用本 worker 的 env）。
@@ -2912,6 +3122,7 @@ class Worker(wireproto.V1Handler):
                 inputs=self._inputs_report,
                 fidelity=self._fidelity_summary(),
                 import_skips=bridgeboot.skip_events(),
+                gui_backends=bridgeboot.gui_backend_events(),
             ),
             # 沙盒里落空的相对探路调用（#1254）：只在有记录时才有这个字段，响应形状不变
             **self._probe_miss_facts(),
@@ -3002,6 +3213,8 @@ def main() -> None:
     # ADR 0162：图名别名表（JSON `[[原图名, 登记图名], …]`）；没有别名时不出现
     ap.add_argument("--stem-aliases", default=None)
     ap.add_argument("--entry", default="main")
+    # ADR 0196：包里的脚本用相对导入时按模块运行（`python -m 包.模块`）；只在判据成立时出现，没有它 = 照旧 `run_path`
+    ap.add_argument("--as-module", default=None)
     ap.add_argument("--preview-dpi", type=int, default=200)
 
     # 协议管道钉死 UTF-8。Windows 的默认 stdio 编码跟着系统区域走（常是

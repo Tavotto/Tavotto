@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ExternalLink, X } from '@/components/ui/icons'
 import { Details, Summary } from '../ui/Details'
@@ -125,6 +125,8 @@ export function EndpointDialog({
   onClose,
   onSave,
   saveError,
+  focus,
+  fieldNote,
 }: {
   agent: AiAgentId
   agentLabel: string
@@ -136,6 +138,10 @@ export function EndpointDialog({
   onSave: (rec: Parameters<typeof saveAiEndpoint>[0]) => void
   /** 保存失败的一句原因（调用方给；显示在表单底部的状态区） */
   saveError?: string | null
+  /** 打开后先聚焦哪一格（「重填密钥」「改模型」「改地址」直接落到要改的那一格） */
+  focus?: 'key' | 'model' | 'url'
+  /** 保存后探测不通的原因：一行小红字紧贴对应输入框下方（不进底栏）；`title` 是悬停时的补充说明 */
+  fieldNote?: { field: 'key' | 'model' | 'url'; text: string; title?: string } | null
 }) {
   const { t } = useTranslation(['dialogs', 'common'])
   const [label, setLabel] = useState(existing?.label ?? '')
@@ -225,6 +231,20 @@ export function EndpointDialog({
     })
   }
 
+  useEffect(() => {
+    if (!focus) return
+    // Radix 对话框打开时自己会抢一次焦点：晚一拍再落到要改的那一格
+    const id = window.setTimeout(() => document.querySelector<HTMLElement>(`[data-endpoint-field="${focus}"]`)?.focus(), 60)
+    return () => window.clearTimeout(id)
+  }, [focus])
+
+  const noteFor = (field: 'key' | 'model' | 'url') =>
+    fieldNote?.field === field ? (
+      <span data-endpoint-field-note={field} role="alert" title={fieldNote.title} className="mt-0.5 text-xs text-danger">
+        {fieldNote.text}
+      </span>
+    ) : null
+
   const connectionFields = (
     <>
       <Field label={ag('endpoint.baseUrl')}>
@@ -235,7 +255,9 @@ export function EndpointDialog({
           placeholder={wireApi ? 'https://…/v1' : 'https://…/anthropic'}
           className="w-full font-mono"
           spellCheck={false}
+          data-endpoint-field="url"
         />
+        {noteFor('url')}
         {/* 明文 http（局域网里的模型服务器）：只放行、不拦，说一句 */}
         {/^http:\/\//i.test(baseUrl.trim()) && (
           <span data-endpoint-insecure className="type-caption">
@@ -251,7 +273,7 @@ export function EndpointDialog({
           className={cn(
             FIELD_BOX,
             FIELD_FOCUS_WITHIN,
-            'flex min-h-10 w-full flex-wrap items-center gap-1.5 px-2 py-1.5',
+            'flex min-h-7 w-full flex-wrap items-center gap-1.5 px-2 py-0.5',
           )}
           data-model-list
         >
@@ -291,8 +313,9 @@ export function EndpointDialog({
             }}
             placeholder={ag('endpoint.modelPlaceholder')}
             aria-label={ag('endpoint.modelDraftAria')}
-            className="h-7 min-w-[150px] flex-1 bg-transparent px-1 font-mono text-sm text-ink outline-none placeholder:text-ink-faint"
+            className="h-6 min-w-[150px] flex-1 bg-transparent px-1 font-mono text-sm text-ink outline-none placeholder:text-ink-faint"
             spellCheck={false}
+            data-endpoint-field="model"
           />
           {modelDraft.trim() && (
             <Button variant="ghost" size="sm" onClick={addModel}>
@@ -300,10 +323,11 @@ export function EndpointDialog({
             </Button>
           )}
         </span>
+        {noteFor('model')}
         {/* 型号以服务商实时列表为准（预设里的会过时）。只在点按钮时才联网，设置页渲染不碰网络 */}
         <span className="flex flex-wrap items-center gap-1.5" data-model-fetch>
           <Button
-            variant="ghost"
+            variant="secondary"
             size="sm"
             disabled={fetching || !baseUrl.trim()}
             onClick={() => void fetchModels(fetched.length > 0 || fetchReason !== null)}
@@ -421,7 +445,9 @@ export function EndpointDialog({
                 }
                 className="w-full font-mono"
                 spellCheck={false}
+                data-endpoint-field="key"
               />
+              {noteFor('key')}
             </Field>
             {presetRec && (presetRec.key_url || presetRec.key_hint_key) && (
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-[92px] text-xs text-ink-3">

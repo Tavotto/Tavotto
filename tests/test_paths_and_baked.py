@@ -388,3 +388,26 @@ def test_tavottofile_store(figs, monkeypatch):
     ids = {p["id"] for p in client.get("/api/panels").get_json()["panels"]}
     assert not any("tavottofile" in i for i in ids), ids
     assert "real.pdf" in ids
+
+
+def test_scan_panels_skips_an_asset_that_vanished_between_listing_and_stat(
+    baked, tmp_path, monkeypatch
+):
+    """枚举出素材之后、`stat()` 之前文件被删 / 改名（用户脚本正在重新出图）：跳过这一个，
+    `/api/panels` 照常返回其余素材——不能让一个刚消失的文件把整个列表变成 500（一份用户反馈）。"""
+    ctx = _make_project(tmp_path, "pa", ["Fig1"])
+    p = ctx.path / "Fig1.pdf"
+    _real_pdf(p)
+    gone = ctx.path / "Gone.pdf"  # 列出来了，但已经不在了
+    real_iter = m.engine_refresh.iter_assets
+    monkeypatch.setattr(
+        m.engine_refresh,
+        "iter_assets",
+        lambda root, reg=None: [*real_iter(root, reg=reg), (gone, "pdf")],
+    )
+
+    m.app.config["TESTING"] = True
+    resp = m.app.test_client().get("/api/panels")
+    assert resp.status_code == 200
+    ids = [e["id"] for e in resp.get_json()["panels"]]
+    assert "Fig1.pdf" in ids and "Gone.pdf" not in ids

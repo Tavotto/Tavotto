@@ -64,6 +64,7 @@ from . import pdfbackend, richtext, tiffprobe
 from .engine import (
     ai_attachments as engine_ai_attachments,
     ai_bridge as engine_ai,
+    ai_catalog as engine_ai_catalog,
     ai_connections as engine_ai_connections,
     ai_convert as engine_ai_convert,
     ai_data_figure as engine_ai_data_figure,
@@ -126,10 +127,13 @@ from .engine import (
     inputcopy as engine_inputcopy,
     inputremap as engine_inputremap,
     inputtranscript as engine_inputtranscript,
+    journalfacts_fold as engine_journalfacts_fold,
+    journalfacts_remote as engine_journalfacts_remote,
     journalremote as engine_journalremote,
     launchctx as engine_launchctx,
     launcher as engine_launcher,
     layoutsession as engine_layoutsession,
+    license as engine_license,
     locate as engine_locate,
     logsafe as engine_logsafe,
     managedenv as engine_managedenv,
@@ -688,11 +692,18 @@ def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
                         {"id": rel, "name": p.name, "folder": folder, "code": exc.code}
                     )
                 continue
+        try:
+            mtime = int(p.stat().st_mtime)
+        except FileNotFoundError:
+            # 枚举之后、stat 之前被删 / 改名（脚本正在重新出图）：跳过这一个，别让整张列表 500；
+            # 下一次扫描看到的是新文件
+            LOG.info("素材扫描: %s 在扫描途中消失，跳过", p.name)
+            continue
         entry = {
             "id": rel,
             "name": p.stem,
             "folder": folder,
-            "mtime": int(p.stat().st_mtime),
+            "mtime": mtime,
         }
         try:
             probe, spec = _asset_probe(p, kind)
@@ -857,6 +868,7 @@ def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=
         *engine_texdiag.ERROR_CODES,
         engine_pool.IMPORT_FOLDER_UNREADABLE_CODE,
         engine_pool.IMPORT_FOLDER_ABI_CODE,
+        engine_pool.IMAGE_FORMAT_MISMATCH_CODE,
         engine_figcapture.EXPORT_RASTER_TOO_LARGE_CODE,
     ):
         # 脚本要输入（ADR 0099：提示原文 + 为什么没人能答，T08）/ 参数解析器退出（T03：个数与类别）：
@@ -6128,6 +6140,65 @@ def api_contact_forget(mid: str):
     return _contact_json({"unread": engine_contactinbox.unread_count()})
 
 
+# --------------------- 高级版授权（ADR 0193）---------------------
+# 全部在会话认证之内（ADR 0008，全局 before_request guard，没有旁路；`test_browser_auth` 从 url_map 枚举）。逻辑在
+# `engine/license.py`（出站、设备签名、令牌验签 / 落盘）。**只有 `POST /api/license/{activate,refresh,release,checkout}` 会引出远程请求**
+# （启动后的后台刷新另在 `engine_license.start_background_refresh`，没有令牌就一次网络都不发）；`GET /api/license/status` 纯本机、
+# 不含令牌原文与设备密钥。`TAVOTTO_NO_LICENSE=1`、端点不合规或 `PRODUCTION_LIVE = False` 且没设端点：status 回 `{"enabled": false}`，其余 404。
+
+
+def _license_json(payload: dict, status: int = 200):
+    resp = jsonify(payload)
+    resp.status_code = status
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _license_error(exc: engine_license.LicenseError):
+    body = {"ok": False, "error": exc.code, "code": f"license_{exc.code}"}
+    if exc.code == "disabled":
+        body["enabled"] = False
+    return _license_json(body, exc.status)
+
+
+def _license_result(fn, *args, **kwargs):
+    try:
+        return _license_json(fn(*args, **kwargs))
+    except engine_license.LicenseError as exc:
+        return _license_error(exc)
+
+
+@app.get("/api/license/status")
+def api_license_status():
+    return _license_json(engine_license.status())
+
+
+@app.post("/api/license/activate")
+def api_license_activate():
+    return _license_result(engine_license.activate, _review_body().get("code"))
+
+
+@app.post("/api/license/refresh")
+def api_license_refresh():
+    return _license_result(engine_license.refresh, force=True)
+
+
+@app.post("/api/license/release")
+def api_license_release():
+    return _license_result(engine_license.release)
+
+
+@app.post("/api/license/checkout")
+def api_license_checkout():
+    body = _review_body()
+    return _license_result(
+        engine_license.checkout,
+        body.get("lookup_key"),
+        body.get("locale", "zh"),
+        body.get("renew") is True,
+    )
+
+
 # --------------------- 外部审阅（ADR 0187）---------------------
 # 全部在会话认证之内（ADR 0008，全局 before_request guard，没有旁路）。逻辑在 `engine/reviewshare.py`（出站 / 轮询）与
 # `engine/reviewinbox.py`（本机分享记录）；这里只做 HTTP 形状与出图回调。**只有 `POST /api/review/{share,update,revoke,refresh}`、
@@ -6209,7 +6280,8 @@ def _review_render(target: dict, render: dict, long_edge: int):
         if png is None:
             raise ValueError("render_no_png")
         data = Path(png.tmp_path).read_bytes()
-        return engine_reviewshare.Rendered(data, _review_elements(kind, job.request, seg))
+        elements, size_mm = _review_elements(kind, job.request, seg)
+        return engine_reviewshare.Rendered(data, elements, size_mm)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -6241,10 +6313,11 @@ def _review_manifest(figure_id: str, overrides: list):
         return None
 
 
-def _review_elements(kind: str, req, seg: dict) -> list:
+def _review_elements(kind: str, req, seg: dict) -> tuple[list, list | None]:
+    """(元素表, 图幅 mm)；图幅给审阅页按 mm 算点选容差（与画布同一口径），拿不到 None。"""
     if kind == "figure":
         man = _review_manifest(req.original.figure_id, req.original.overrides)
-        return engine_reviewshare.manifest_elements(man)
+        return engine_reviewshare.manifest_elements(man), engine_reviewshare.manifest_size_mm(man)
     # 前端原样的对象（带 `object_id`）与规范化后的请求对象一一对齐；面板键（`panel_keys`）是不透明的：
     # 导出请求里对象的 `id` 是图的项目内路径，不许进元素表
     src = [o for o in (seg.get("objects") or []) if isinstance(o, dict)]
@@ -6254,8 +6327,11 @@ def _review_elements(kind: str, req, seg: dict) -> list:
         obj = objects[i]
         if not obj.get("hidden") and isinstance(obj.get("id"), str):
             manifests[key] = _review_manifest(obj["id"], obj.get("overrides") or [])
-    return engine_reviewshare.layout_elements(
+    els = engine_reviewshare.layout_elements(
         seg.get("page_w_mm"), seg.get("page_h_mm"), src, manifests
+    )
+    return els, engine_reviewshare.manifest_size_mm(
+        {"size_mm": [seg.get("page_w_mm"), seg.get("page_h_mm")]}
     )
 
 
@@ -9762,6 +9838,7 @@ def api_engine_update_source():
         ScriptChangedError,
         ReplayDivergenceError,
         WriteBackVerifyError,
+        WriteBackFutureError,
         WriteBackPersistError,
         FileLockedError,
         WriteBackFormatError,
@@ -9973,6 +10050,19 @@ class ReplayDivergenceError(RuntimeError):
         more = f"（另有 {len(diffs) - 3} 处）" if len(diffs) > 3 else ""
         super().__init__(f"{head}{more}")
         self.diffs = diffs
+
+
+class WriteBackFutureError(RuntimeError):
+    """写回前自检：这组 patches 里有**更新的 Tavotto 写下、这一版认不出**的修改（`future_props`）。
+
+    这一版不应用它们（项目照样打开，见 `overrides.known_props`），所以画布上看不到、重放出来的图里也没有——
+    写回的话原文件里就少了这些修改，而项目文件里它们还在，换回新版本再看又是另一张图。不静默丢、也不报成
+    「重放时出现了警告」：说清楚是新版本的修改、请更新后再写回。原文件零改动。
+    """
+
+    def __init__(self, props: list[str]):
+        super().__init__(", ".join(props))
+        self.props = props
 
 
 class WriteBackVerifyError(RuntimeError):
@@ -10443,6 +10533,7 @@ def _write_source_files(
     )
     tmps: list[tuple[Path, Path]] = []
     warnings: list[str] = []
+    future_props: list[str] = []  # 更新的 Tavotto 写下、这一版认不出的修改（WriteBackFutureError）
     try:
         resp = fresh.override(stem, patches)
         # 同一 stem 下别的图写的文件不是写回目标：按这次全量重放（一次性 worker 刚 build）的描述符收窄，
@@ -10475,6 +10566,9 @@ def _write_source_files(
             for w in eresp.get("warnings") or []:
                 if w not in warnings:  # PDF/PNG 两次导出报的是同一批
                     warnings.append(str(w))
+            for f in eresp.get("future_props") or []:
+                if f not in future_props:
+                    future_props.append(str(f))
         if annotations:
             pdf_tmp = next((t for tg, t in tmps if tg.suffix == ".pdf"), None)
             png_tmp = next((t for tg, t in tmps if tg.suffix == ".png"), None)
@@ -10489,6 +10583,8 @@ def _write_source_files(
             )
         if warnings:
             raise WriteBackVerifyError(warnings)
+        if future_props:
+            raise WriteBackFutureError(future_props)
         if diffs:
             raise ReplayDivergenceError(diffs[:REPLAY_DIFF_LIMIT])
     except BaseException:
@@ -10704,6 +10800,14 @@ def _write_back_error_response(exc):
                 f"分歧：{exc}。这属于引擎级问题，请把此信息报告给开发者。",
                 "code": "replay_divergence",
                 "diffs": exc.diffs,
+            }
+        ), 409
+    if isinstance(exc, WriteBackFutureError):
+        return jsonify(
+            {
+                "error": "这张图里有用更新版本做的修改，这一版写不回去，原文件没动。",
+                "code": "write_back_future_props",
+                "props": exc.props,
             }
         ), 409
     if isinstance(exc, WriteBackVerifyError):
@@ -10976,6 +11080,7 @@ def api_engine_history_restore():
         ScriptChangedError,
         ReplayDivergenceError,
         WriteBackVerifyError,
+        WriteBackFutureError,
         WriteBackPersistError,
         FileLockedError,
         WriteBackFormatError,
@@ -11117,7 +11222,7 @@ def _fix_remap_notifier(ctx: "ProjectCtx"):
     return notify
 
 
-def _fix_application_verification(ctx: "ProjectCtx", sess, *, desktop: bool) -> dict:
+def _fix_application_verification(ctx: "ProjectCtx", box: dict, *, desktop: bool) -> dict:
     """Bind repair verification to the same preparation session and run action API.
 
     These callbacks run off the request thread. The original desktop identity is
@@ -11126,13 +11231,15 @@ def _fix_application_verification(ctx: "ProjectCtx", sess, *, desktop: bool) -> 
     """
     from .engine import fixverification
 
+    # `box["sess"]` 是这次修复验证所用的准备会话；`set_run_arguments` 会把它换成带新参数的那一条（T03 运行配置）
+
     def current():
         if PROJECTS.get(ctx.id) is not ctx:
             raise engine_prepsession.SessionError(
                 "fix_project_closed", "The project was closed or reopened", 409
             )
-        found = engine_prepsession.SESSIONS.session(sess.session_id, ctx.id)
-        if found is not sess:
+        found = engine_prepsession.SESSIONS.session(box["sess"].session_id, ctx.id)
+        if found is not box["sess"]:
             raise engine_prepsession.SessionError(
                 "fix_session_changed", "Repair session changed", 409
             )
@@ -11144,20 +11251,20 @@ def _fix_application_verification(ctx: "ProjectCtx", sess, *, desktop: bool) -> 
             checked, _ = engine_prepsession.SESSIONS.check(
                 project_id=ctx.id,
                 project_root=str(ctx.path),
-                target=sess.target,
+                target=box["sess"].target,
                 force=True,
             )
-            if checked is not sess:
+            if checked is not box["sess"]:
                 raise engine_prepsession.SessionError(
                     "fix_session_changed", "Repair session changed", 409
                 )
-            return _session_report(ctx, sess)
+            return _session_report(ctx, box["sess"])
 
     def claim(action_id, revision):
         with bound_project(ctx):
             current()
             _, claimed, kind = engine_prepsession.SESSIONS.act(
-                sess.session_id,
+                box["sess"].session_id,
                 ctx.id,
                 action_id,
                 revision,
@@ -11169,27 +11276,27 @@ def _fix_application_verification(ctx: "ProjectCtx", sess, *, desktop: bool) -> 
 
     def owned(action_id):
         current()
-        if not sess.attempts or sess.attempts[-1].action_id != action_id:
+        if not box["sess"].attempts or box["sess"].attempts[-1].action_id != action_id:
             raise engine_prepsession.SessionError(
                 "fix_run_superseded", "Another run replaced this repair's run", 409
             )
 
     def read(action_id):
-        with bound_project(ctx), sess.lock:
+        with bound_project(ctx), box["sess"].lock:
             owned(action_id)
-            return _session_report(ctx, sess)
+            return _session_report(ctx, box["sess"])
 
     def stop(action_id):
-        with bound_project(ctx), sess.lock:
+        with bound_project(ctx), box["sess"].lock:
             owned(action_id)
-            report = _session_report(ctx, sess)
+            report = _session_report(ctx, box["sess"])
             action = next(
                 (a for a in report["actions"] if a["kind"] == engine_prepsession.ACTION_CANCEL),
                 None,
             )
             if action is not None:
                 engine_prepsession.SESSIONS.act(
-                    sess.session_id,
+                    box["sess"].session_id,
                     ctx.id,
                     action["id"],
                     report["config_revision"],
@@ -11207,7 +11314,7 @@ def _fix_application_verification(ctx: "ProjectCtx", sess, *, desktop: bool) -> 
                     cancel=cancel,
                     approve=approve,
                     check=check,
-                    selected_python=lambda: sess.plan.interpreter,
+                    selected_python=lambda: box["sess"].plan.interpreter,
                     claim=claim,
                     read=read,
                     stop=stop,
@@ -11227,8 +11334,37 @@ def _fix_application_verification(ctx: "ProjectCtx", sess, *, desktop: bool) -> 
             except engine_refresh.RefreshError:
                 pass
 
+    def run_arguments_changed(tokens):
+        # 同一个脚本目标，换成带这组参数的运行配置（空 = 不带参数）；拿（或建）那条准备会话，之后的验证都在它上面
+        with bound_project(ctx):
+            old = current()
+            if old.target.get("run") is not None and old.target["run"].sensitive:
+                # 双保险：工具层已拒绝；这里绝不把敏感配置换成一份非敏感的（会把留下的秘密写进磁盘）
+                raise engine_prepsession.SessionError(
+                    "run_arguments_sensitive",
+                    "Sensitive run arguments are not changed by repair",
+                    409,
+                )
+            script = old.target.get("script")
+            run = engine_runconfig.selection_for(ctx.path, script, list(tokens) or None)
+            target = {k: v for k, v in old.target.items() if k != "run"}
+            if run is not None:
+                target["run"] = run
+            new, _ = engine_prepsession.SESSIONS.check(
+                project_id=ctx.id, project_root=str(ctx.path), target=target, force=True
+            )
+            box["sess"] = new
+
     return {
         "application_runner": run,
+        "on_run_arguments_changed": run_arguments_changed,
+        # 敏感参数（用户标的）：值不交给修复会话（不进上下文、快照），AI 也不许改
+        "run_arguments": tuple(box["sess"].target["run"].argv)
+        if box["sess"].target.get("run") is not None and not box["sess"].target["run"].sensitive
+        else None,
+        "run_arguments_sensitive": bool(
+            box["sess"].target.get("run") is not None and box["sess"].target["run"].sensitive
+        ),
         "application_check": check,
         "on_workdir_changed": cwd_changed,
         # 「跳过这个文件夹」的名单变了（`ignore_import_folder` / 回滚）：同样要收掉这个项目的会话（ADR 0154）
@@ -11273,6 +11409,7 @@ def api_ai_fix():
     if os.path.isabs(script) or os.path.commonpath([root_real, cand]) != root_real:
         return _fix_error(engine_fixsession.FixError("fix_script_outside_project", 400))
     script_path = Path(cand) if os.path.isfile(cand) else None
+    fix_box = {"sess": sess}
     if conn is not None:
         model, redactor = engine_fixsession.build_model(conn)
         cli = None
@@ -11292,14 +11429,17 @@ def api_ai_fix():
             project_root=ctx.path,
             model=model,
             cli=cli,
-            report=lambda: _session_report(ctx, sess),
+            endpoint=(conn["provider_id"], conn["model"], conn["base_url"])
+            if conn is not None
+            else None,
+            report=lambda: _session_report(ctx, fix_box["sess"]),
             redactor=redactor,
             audit=engine_fixsession.AuditLog(),
             script_path=script_path,
             locale=body.get("locale"),
             ctx_kwargs={
                 **_fix_session_env(sess),
-                **_fix_application_verification(ctx, sess, desktop=_desktop_initiated()),
+                **_fix_application_verification(ctx, fix_box, desktop=_desktop_initiated()),
                 "on_input_remap_changed": _fix_remap_notifier(ctx),
             },
         )
@@ -12448,6 +12588,13 @@ def _native_preparation_runner(pl, before_retry=None):
         )
         if unreadable is not None:
             raise unreadable
+        image_mismatch = engine_pool.image_format_error(
+            str(error.get("message") or "脚本运行出错"),
+            str(error.get("traceback") or ""),
+            error,
+        )
+        if image_mismatch is not None:
+            raise image_mismatch
         failure = engine_pool.WorkerError(
             str(error.get("message") or "脚本运行出错"),
             traceback_text=str(error.get("traceback") or ""),
@@ -12517,6 +12664,15 @@ def _native_run_error(session):
         traceback_text=tail,
         code=engine_pool.SCRIPT_ERROR_CODE if session.exit_code else "no_figure_captured",
     )
+    if failure.code == engine_pool.SCRIPT_ERROR_CODE:
+        # 脚本在建第一张图之前就读图失败（没到屏障）：图片内容与扩展名不符的事实随 exit 带来，与屏障出口同一个稳定码
+        getter = getattr(session, "image_format_mismatch", None)
+        fact = getter() if callable(getter) else None
+        mismatch = engine_pool.image_format_error(
+            str(failure), tail, {"image_format_mismatch": fact} if fact else None
+        )
+        if mismatch is not None:
+            return mismatch
     category = getattr(session, "exception_category", None)
     if failure.code == engine_pool.SCRIPT_ERROR_CODE and category:
         failure.extra["exception_category"] = category
@@ -14334,10 +14490,216 @@ def api_journal_catalog_journal():
 @app.get("/api/journal-catalog/assets/<path:file>")
 def api_journal_catalog_asset(file: str):
     """出处卡的高亮短图。`file` 必须是 `snapshots/<sha256>.webp`（内容寻址）；本地没有就带令牌拉一次。"""
-    path = engine_journalremote.snapshot_path(file)
-    if path is None:
+    data = engine_journalremote.snapshot_bytes(file)
+    if data is None:
         return jsonify({"error": "snapshot unavailable", "code": "snapshot_unavailable"}), 404
-    resp = send_file(path, mimetype="image/webp", max_age=31536000)
+    digest = file[len("snapshots/") : -len(".webp")]
+    resp = send_file(io.BytesIO(data), mimetype="image/webp", max_age=31536000, etag=digest)
+    resp.headers["Cache-Control"] = "private, max-age=31536000, immutable"
+    return resp
+
+
+# v2 source facts are separate from publication profiles and never feed preflight.
+def _journal_facts_payload(payload: dict) -> dict:
+    return {**payload, "semantic_review": "not_authenticated", "catalog_completeness": "unknown"}
+
+
+def _journal_facts_page_fits(payload: dict) -> bool:
+    # Use Flask's actual configured serializer, including the fields added to
+    # every successful HTTP response and its trailing newline.
+    response = jsonify(_journal_facts_payload(payload))
+    return len(response.get_data()) <= engine_journalfacts_remote.MAX_PAGE_BYTES
+
+
+def _journal_facts_response(payload: dict, status: int = 200):
+    response = jsonify(payload)
+    response.status_code = status
+    response.headers["Cache-Control"] = "no-store"
+    # Flask's actual JSON encoding may differ from the engine's compact encoding.
+    if status == 200 and len(response.get_data()) > engine_journalfacts_remote.MAX_PAGE_BYTES:
+        return _journal_facts_response(
+            {
+                "code": "result_too_large",
+                "error": "期刊事实结果过大，请减小 limit 并从同一 offset 重试；单条超限时无法读取。",
+            },
+            413,
+        )
+    return response
+
+
+def _journal_facts_error(exc: engine_journalfacts_remote.FactsError):
+    statuses = {
+        "bad_request": 400,
+        "unknown_journal": 404,
+        "unknown_snapshot": 404,
+        "catalog_changed": 409,
+        "result_too_large": 413,
+        "quota_hour": 429,
+        "quota_day": 429,
+        "ip_day": 429,
+        "ip_tokens": 429,
+    }
+    status = statuses.get(exc.code, 503)
+    body = {"code": exc.code, "error": "期刊事实不可用；请检查错误状态后重试。"}
+    for name in (
+        "sync_state",
+        "sync_code",
+        "retry_after_s",
+        "expected_catalog_rev",
+        "current_catalog_rev",
+    ):
+        value = getattr(exc, name, None)
+        if value is not None:
+            body[name] = value
+    return _journal_facts_response(body, status)
+
+
+def _journal_facts_request(kind: str):
+    from .engine import journals as engine_journals
+
+    # Same master switch as the MCP tool and the settings viewer (ADR 0155 section 9).
+    if not engine_journals.agents_enabled():
+        return _journal_facts_response(
+            {"code": "journal_catalog_disabled", "error": "期刊标准库入口尚未开放"}, 403
+        )
+    body = request.get_json(silent=True)
+    common = {"offset", "limit", "locale", "expected_catalog_rev"}
+    extra = {"query"} if kind == "search" else {"journal_id", "inspection"}
+    if not isinstance(body, dict) or set(body) - common - extra:
+        return _journal_facts_error(engine_journalfacts_remote.FactsError("bad_request"))
+    offset = body.get("offset", 0)
+    limit = body.get("limit", 20)
+    revision = body.get("expected_catalog_rev")
+    locale = body.get("locale")
+    if (
+        type(offset) is not int
+        or offset < 0
+        or type(limit) is not int
+        or not 1 <= limit <= 20
+        or (revision is not None and (type(revision) is not int or not 1 <= revision <= 9999999999))
+        or (offset > 0 and revision is None)
+        or (locale is not None and (not isinstance(locale, str) or len(locale) > 64))
+    ):
+        return _journal_facts_error(engine_journalfacts_remote.FactsError("bad_request"))
+    try:
+        options = {
+            "offset": offset,
+            "limit": limit,
+            "ui_locale": locale,
+            "expected_catalog_rev": revision,
+        }
+        if kind == "search":
+            result = engine_journalfacts_remote.search(
+                body.get("query", ""), response_fits=_journal_facts_page_fits, **options
+            )
+        else:
+            selection = body.get("inspection")
+            if "inspection" in body:
+                engine_journalfacts_remote.inspect_facts_page({"facts": []}, selection)
+
+            def page_fits(page):
+                if "inspection" in body:
+                    page = engine_journalfacts_remote.inspect_facts_page(page, selection)
+                return _journal_facts_page_fits(page)
+
+            result = engine_journalfacts_remote.get_facts(
+                body.get("journal_id"), response_fits=page_fits, **options
+            )
+            if "inspection" in body:
+                result = engine_journalfacts_remote.inspect_facts_page(result, selection)
+        return _journal_facts_response(_journal_facts_payload(result))
+    except engine_journalfacts_remote.FactsError as exc:
+        return _journal_facts_error(exc)
+
+
+@app.post("/api/journal-facts/search")
+def api_journal_facts_search():
+    return _journal_facts_request("search")
+
+
+@app.post("/api/journal-facts/journal")
+def api_journal_facts_journal():
+    return _journal_facts_request("journal")
+
+
+@app.post("/api/journal-facts/index")
+def api_journal_facts_index():
+    """选刊列表用：已签名 v2 index 的全部刊（名称 / 出版社 / ISSN / 别名）。只读公开 index，不拉任何刊包、不占额度（ADR 0155 §14）。"""
+    from .engine import journals as engine_journals
+
+    if not engine_journals.agents_enabled():
+        return _journal_facts_response(
+            {"code": "journal_catalog_disabled", "error": "期刊标准库入口尚未开放"}, 403
+        )
+    body = request.get_json(silent=True)
+    if body is None:
+        body = {}
+    if not isinstance(body, dict) or set(body) - {"locale"}:
+        return _journal_facts_error(engine_journalfacts_remote.FactsError("bad_request"))
+    locale = body.get("locale")
+    if locale is not None and (not isinstance(locale, str) or len(locale) > 64):
+        return _journal_facts_error(engine_journalfacts_remote.FactsError("bad_request"))
+    try:
+        return _journal_facts_response(engine_journalfacts_remote.listing(ui_locale=locale))
+    except engine_journalfacts_remote.FactsError as exc:
+        return _journal_facts_error(exc)
+
+
+@app.post("/api/journal-facts/preflight")
+def api_journal_facts_preflight():
+    """v2 事实折成预检能用的 v1 同形规则 + 「需要你确认」清单（ADR 0155 §14）。不改任何项目，只读。"""
+    from .engine import journals as engine_journals
+
+    if not engine_journals.agents_enabled():
+        return _journal_facts_response(
+            {"code": "journal_catalog_disabled", "error": "期刊标准库入口尚未开放"}, 403
+        )
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or set(body) - {"journal_id", "locale"}:
+        return _journal_facts_error(engine_journalfacts_remote.FactsError("bad_request"))
+    locale = body.get("locale")
+    if locale is not None and (not isinstance(locale, str) or len(locale) > 64):
+        return _journal_facts_error(engine_journalfacts_remote.FactsError("bad_request"))
+    try:
+        result = engine_journalfacts_remote.get_journal(body.get("journal_id"), ui_locale=locale)
+    except engine_journalfacts_remote.FactsError as exc:
+        return _journal_facts_error(exc)
+    folded = engine_journalfacts_fold.fold(result["bundle"])
+    return _journal_facts_response({"catalog_rev": result["catalog_rev"], **folded})
+
+
+@app.get("/api/journal-facts/snapshot")
+def api_journal_facts_snapshot():
+    """已验签的原文截图（v2 事实的 `snapshot.file`，内容寻址 webp）。同一个总开关；只回该刊事实引用过的图。"""
+    from .engine import journals as engine_journals
+
+    if not engine_journals.agents_enabled():
+        return _journal_facts_response(
+            {"code": "journal_catalog_disabled", "error": "期刊标准库入口尚未开放"}, 403
+        )
+    jid = request.args.get("journal_id")
+    file = request.args.get("file")
+    locale = request.args.get("locale")
+    if (
+        not isinstance(jid, str)
+        or not isinstance(file, str)
+        or (locale is not None and len(locale) > 64)
+    ):
+        return _journal_facts_error(engine_journalfacts_remote.FactsError("bad_request"))
+    try:
+        engine_journalfacts_remote.snapshot(jid, file, ui_locale=locale)
+    except engine_journalfacts_remote.FactsError as exc:
+        return _journal_facts_error(exc)
+    digest = file[len("snapshots/") : -len(".webp")]
+    # `file` 已被 `snapshot()` 按 `snapshots/<sha256>.webp` 全匹配并核过哈希；这里仍经 `send_from_directory`
+    # （safe_join）取，让「只能落在缓存目录里」由一处公共原语保证，而不是靠上游校验。
+    resp = send_from_directory(
+        engine_journalfacts_remote.cache_dir(),
+        file,
+        mimetype="image/webp",
+        max_age=31536000,
+        etag=digest,
+    )
     resp.headers["Cache-Control"] = "private, max-age=31536000, immutable"
     return resp
 
@@ -14414,12 +14776,29 @@ def api_ai_endpoint_save():
     body = request.get_json(force=True)
     if not str(body.get("label") or body.get("id") or "").strip():
         return jsonify({"error": "缺少名称", "code": "name_missing"}), 400
+    before = engine_ai_providers.list_providers()
+    prev = next((p for p in before if p.get("id") == str(body.get("id") or "")), None)
+    if (
+        prev is not None
+        and not str(body.get("api_key") or "").strip()
+        and body.get("base_url") is not None
+        and engine_ai_catalog.origin_of(str(body.get("base_url") or ""))
+        != engine_ai_catalog.origin_of(str(prev.get("base_url") or ""))
+    ):
+        # Key 留空 = 沿用已存的 Key：换了来源就不许沿用（否则存完的探测 / 之后每次任务都把旧 Key 发给新主机；
+        # 与 POST /api/ai/connections、型号清单同一条 key_origin_mismatch 规矩，Codex #1965 P1）
+        return _connection_error(engine_ai_connections._invalid("key_origin_mismatch"))
     try:
-        engine_ai_providers.save(body)
+        after = engine_ai_providers.save(body)
     except (ValueError, OSError) as exc:
         return jsonify(
             {"error": str(exc), "code": "endpoint_save_failed", "params": {"reason": str(exc)}}
         ), 400
+    # 自填地址：存完补一次对话协议探测（与 POST /api/ai/connections 同一套）；失败照样已保存
+    engine_ai_connections.probe_after_endpoint_save(
+        before, after, key_sent=bool(str(body.get("api_key") or "").strip())
+    )
+    engine_ai.invalidate_capabilities()
     return jsonify(engine_ai.capabilities(refresh=True))
 
 
@@ -14517,25 +14896,46 @@ def _apply_connection(body: dict, agent: str, model: str | None, endpoint_id):
     return agent, model, endpoint_id, None
 
 
+def _connection_view(cid: str, fetch_error: str | None = None) -> dict:
+    """一条 Key 连接的当前视图（重新读能力表）；试取型号清单失败的那次原因码叠在 `ready` 上变成 `error`（对话探测已通过时，只有 Key 被拒才算）。"""
+    engine_ai.invalidate_capabilities()
+    conn = next(c for c in engine_ai.capabilities(refresh=True)["connections"] if c["id"] == cid)
+    return engine_ai_connections.overlay_fetch_error(conn, fetch_error)
+
+
 @app.post("/api/ai/connections")
 def api_ai_connection_add():
-    """连一个 Key 类 AI。body：`{vendor, api_key, base_url?, model?, label?}`（`custom` 另需 `wire`：`anthropic` | `openai-responses`；
-    带已存在的 `id` = 换这条的 Key / 型号）。保存前试取一次型号清单，失败也保存，但返回的连接 `state="error"` 并带原因码 `error`。
-    返回 `{ok, connection}`；**密钥不回传**。"""
+    """连一个 Key 类 AI。body：`{vendor, api_key, base_url?, model?, models?, label?, wire?, id?}`（`models` = 额外型号列表，≤50 项；`custom` 必须有 `base_url`；`wire` 可选：
+    缺省 / `auto` = 保存时探测对话协议，`anthropic` | `openai-responses` | `openai-chat` 也会探测，没通过就换探测到能通的；带已存在的 `id` = 换这条的 Key / 型号）。
+    保存前试取一次型号清单、保存后探测一次对话协议（一条很短的测试请求），都失败也保存，但返回的连接 `state="error"` 并带原因码 `error`
+    （探测全不通 = `endpoint_unusable` + `error_reason`）。返回 `{ok, connection, probe}`；**密钥不回传**。"""
     body = request.get_json(silent=True)
     try:
-        cid, fetch_error = engine_ai_connections.add_connection(body)
+        cid, fetch_error, probe = engine_ai_connections.add_connection(body)
     except engine_ai_connections.ConnectionRefused as exc:
         return _connection_error(exc)
     except (ValueError, OSError) as exc:
         return jsonify(
             {"error": str(exc), "code": "endpoint_save_failed", "params": {"reason": str(exc)}}
         ), 400
-    engine_ai.invalidate_capabilities()
-    conn = next(c for c in engine_ai.capabilities(refresh=True)["connections"] if c["id"] == cid)
-    if fetch_error and conn["state"] == "ready":
-        conn = {**conn, "state": "error", "error": fetch_error}
-    resp = jsonify({"ok": True, "connection": conn})
+    resp = jsonify({"ok": True, "connection": _connection_view(cid, fetch_error), "probe": probe})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/ai/connections/<cid>/check")
+def api_ai_connection_check(cid):
+    """重新检查一条 Key 连接：再探测一次对话协议（会联网，≤ 30 s），更新记录。返回 `{ok, connection, probe}`；
+    订阅 / 账号登录类或不存在 → 404 `connection_not_found`。"""
+    try:
+        probe = engine_ai_connections.check_connection(cid)
+    except engine_ai_connections.ConnectionRefused as exc:
+        return _connection_error(exc)
+    except (ValueError, OSError) as exc:
+        return jsonify(
+            {"error": str(exc), "code": "endpoint_save_failed", "params": {"reason": str(exc)}}
+        ), 400
+    resp = jsonify({"ok": True, "connection": _connection_view(cid), "probe": probe})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -15404,7 +15804,7 @@ _DATA_FILES_SHEET_COUNT_BYTES = 32 * 1024 * 1024
 @app.get("/api/ai/data-files")
 def api_ai_data_files():
     """TAF 数据出图的数据文件列表（**实验开关后面**，只读）：**默认只列 `.csv`**（v1 表单走 `/api/ai/data-figure`，只认 CSV）；
-    带 `?formats=all` 才列 `.csv` / `.tsv` / `.tab` / `.txt` / `.dat` / `.asc` / `.xlsx`（v2 出备选用），后缀大小写不敏感。
+    带 `?formats=all` 才列 `.csv` / `.tsv` / `.tab` / `.txt` / `.dat` / `.asc` / `.xvg` / `.xlsx`（v2 出备选用），后缀大小写不敏感。
 
     walk 剪枝与隐藏目录规则同 `discover.PRUNE_DIRS`；不跟随链接；最多 500 个，按项目相对 POSIX 路径排序；最多看
     `_DATA_FILES_SCAN_MAX` 个目录项，超了停下并标 `truncated`。`formats=all` 时 XLSX 带 `sheets: [{name, hidden, rows, columns, status, code}]`（读不了 / 超过
@@ -15511,6 +15911,7 @@ _PROPOSE_STATUS = {
     "propose_input_invalid": 400,
     "propose_cells_invalid": 400,
     "propose_cells_need_rule": 409,
+    "propose_thumbnail_failed": 422,
 }
 
 
@@ -15523,7 +15924,10 @@ def _propose_error(exc: "engine_ai_data_propose.ProposeError"):
 
 @app.post("/api/ai/data-figure/propose")
 def api_ai_data_figure_propose():
-    """出备选（不调模型）。body：`{folder?, table?, sheet?, hint?, answers?, header_rows?, client_request_id?}`（`folder` 项目相对、缺省项目根；
+    """出备选（不调模型）。body：`{folder?, table?, sheet?, tables?, hint?, answers?, header_rows?, client_request_id?, render?}`
+    （`tables` = `[{path, sheet?}]`：2 到 8 份列名相同的数据合画、每份文件是一组，与 `table` 互斥；列名不一致 400 `tables_columns_differ`，
+    份数超限 400 `tables_limit_exceeded`；响应另有 `sources` 与 `group_column`，见 `ai_data_propose.propose`）
+    （`render: "lazy"` = 文字先到、不问问题、缩略图在取图时画，见 `ai_data_propose.propose`）（`folder` 项目相对、缺省项目根；
     `header_rows` = `{表的路径（相对 folder，同 `table`）: 每列名字所在的物理行号}`，按文件指定，生成的脚本读表用同一个行号）。
 
     回三选一：`{kind: "ask", question_code, options, unsure}`（决定科学含义的事只能用户定；选项里的 `answer` 原样并进下一次的
@@ -15550,6 +15954,8 @@ def api_ai_data_figure_propose():
             answers=body.get("answers"),
             header_rows=body.get("header_rows"),
             client_request_id=rid,
+            render=body.get("render"),
+            tables=body.get("tables"),
         )
     except engine_ai_data_propose.ProposeError as exc:
         return _propose_error(exc)
@@ -15562,12 +15968,13 @@ def api_ai_data_figure_propose():
 
 @app.get("/api/ai/data-figure/thumbnail/<session>/<item>")
 def api_ai_data_figure_thumbnail(session, item):
-    """候选缩略图（只读缓存里我们自己写的那份 PNG）。`session` / `item` 是服务端登记的不透明 id，路径不由请求拼出来。"""
+    """候选缩略图（只读缓存里我们自己写的那份 PNG；懒渲染的备选在这里画并等它画完，画不出 → 422 `propose_thumbnail_failed`，
+    `params.reason` 是 `DROP_REASONS` 里的码）。`session` / `item` 是服务端登记的不透明 id，路径不由请求拼出来。"""
     if not engine_ai_figure_edit.enabled():
         return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
     ctx = current_ctx()
     try:
-        path = engine_ai_data_propose.thumbnail_path(str(ctx.path.resolve()), session, item)
+        path = engine_ai_data_propose.ensure_thumbnail(str(ctx.path.resolve()), session, item)
     except engine_ai_data_propose.ProposeError as exc:
         return _propose_error(exc)
     resp = send_file(path, mimetype="image/png", conditional=False)
@@ -15609,6 +16016,40 @@ def api_ai_data_figure_commit():
     if rid is not None and not _valid_client_request_id(rid):
         abort(400)
     project = str(ctx.path.resolve())
+    if rid and not _claim_commit_rid(project, rid):
+        # 同一请求号的首次提交还在进行中（可能还在 `prepare_v2` 里、任务尚未登记）：不取会话、不另起一份，回「任务未完成」，客户端保留请求号继续查
+        return jsonify(
+            {"task": {"task_id": None, "outcome": None, "final": False, "deduped": True}}
+        )
+    try:
+        return _data_figure_commit(ctx, project, session_id, item_id, rid)
+    finally:
+        if rid:
+            _release_commit_rid(project, rid)
+
+
+#: 数据出图提交的「请求号已受理」在途表（进程内）：`(项目, 请求号)`。**占位发生在任何可能耗时的步骤之前**（取会话、`ensure_thumbnail`、`prepare_v2`、
+#: `run_task`），所以客户端在 prepare 期间断线后用同一请求号重试，查得到「已受理、未完成」，不会掉进「会话已放弃 → `propose_session_expired` →
+#: 客户端以为什么都没写、换号重画」而与原 handler 随后写出的脚本重复。`finally` 里一定清（成功登记 / 失败 / 抛异常都清），所以不会有「永远在途」；
+#: 进程重启占位随之消失——此时原 handler 线程也没了、不会再写，同一请求号重来是一次全新的提交（任务若已登记，`find_request` 查得到，照旧去重）。
+_COMMIT_INFLIGHT: set[tuple[str, str]] = set()
+_COMMIT_INFLIGHT_LOCK = threading.Lock()
+
+
+def _claim_commit_rid(project: str, rid: str) -> bool:
+    with _COMMIT_INFLIGHT_LOCK:
+        if (project, rid) in _COMMIT_INFLIGHT:
+            return False
+        _COMMIT_INFLIGHT.add((project, rid))
+        return True
+
+
+def _release_commit_rid(project: str, rid: str) -> None:
+    with _COMMIT_INFLIGHT_LOCK:
+        _COMMIT_INFLIGHT.discard((project, rid))
+
+
+def _data_figure_commit(ctx, project: str, session_id: str, item_id: str, rid):
     if rid:
         # 先去重、后取会话（同 v1）：首次请求已提交、响应丢了（或会话已过期 / 被放弃），同 id 重发只回既有任务的结局，不再取会话
         known = engine_ai.find_request(str(ctx.path.resolve()), rid)
@@ -15624,6 +16065,18 @@ def api_ai_data_figure_commit():
             return jsonify(out)
     try:
         sess, item = engine_ai_data_propose.get_item(project, session_id, item_id)
+        if item.state == "pending":
+            # 懒渲染里还没画的备选：提交前先同步走一遍取图同一条路径（`ensure_thumbnail`：同一个渲染 + 指纹核对、同一把单项锁与并发上限），
+            # 不能绕过它——否则指纹对不上的备选会先落盘（脚本 + 注册表条目）、随后缩略图才 422
+            try:
+                engine_ai_data_propose.ensure_thumbnail(project, session_id, item_id)
+            except engine_ai_data_propose.ProposeError as exc:
+                if exc.code != "propose_thumbnail_failed":
+                    raise
+        if (
+            item.state == "failed"
+        ):  # 懒渲染里画不出来 / 数据对不上的备选：与旧模式「不进列表」同一保证，不许提交（此时什么都没写）
+            raise engine_ai_data_propose.ProposeError("propose_candidate_unknown")
         sel = engine_ai_data_task.Selection(
             folder_rel=sess.folder_rel,
             table=sess.table,
@@ -15633,6 +16086,7 @@ def api_ai_data_figure_commit():
             recipe=item.recipe,
             title_code=item.code,
             header_line=sess.header_line,
+            merge=sess.merge,
         )
         prepared = engine_ai_data_task.prepare_v2(ctx.path, sel)
         env = engine_ai_data_task.envelope_for_v2(project_key=project, prepared=prepared, rid=rid)
@@ -18707,6 +19161,7 @@ def main():
         # 桌面模式的升级由 Tauri 层负责，Python updater 连后台检查都不跑
         engine_updater.check_in_background()  # 默认每天一次；设置里可关，关了不联网
     engine_contactsend.start_poller()  # 联系作者的回信：启动时 + 每 6 小时；没有已发的信就一次网络都不发
+    engine_license.start_background_refresh()  # 高级版授权：启动后一次 + 每天一次；没有令牌就一次网络都不发
     engine_reviewshare.start_poller()  # 外部审阅的意见：启动时 + 每 30 分钟；没有未到期的分享就一次网络都不发
 
     # --figures 最高优先；否则恢复最近项目；都没有（或无效）→ 界面里的
@@ -18729,6 +19184,12 @@ def main():
                 )
         except (RuntimeError, OSError) as exc:
             print(f"* 无法打开项目 {candidate}: {exc}")
+            print(f"* 请在{where}中选择或新建项目")
+        except Exception:  # noqa: BLE001 —— 打开上次项目的任何失败都不挡启动
+            # 注册表 / 状态文件坏了会引出 RuntimeError / OSError 以外的异常（ValueError、KeyError、
+            # UnicodeDecodeError、AtomicWriteError……）：冒出去就是进程在握手前退出、救援页「重新启动」
+            # 永远同一个结果（TVD-MHQJ）。照样起服务，界面里的项目选择页接手。
+            LOG.error("启动时打开项目失败，改由项目选择页接手", exc_info=True)
             print(f"* 请在{where}中选择或新建项目")
     else:
         print(f"* 尚未选择项目：请在{where}中新建或打开一个项目")

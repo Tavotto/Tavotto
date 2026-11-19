@@ -45,3 +45,7 @@
 
 - 新错误码 `ai_script_busy`、`ai_request_not_found`、`ai_draft_too_large`（中英文案，`test_error_codes`）。
 - 运行中会话的刷新后恢复（只读占位）不在本 ADR：后端忙检查已保证不会并发双跑，占位 UI 另议。
+
+## 补充（2026-11-18）：数据出图提交的请求号占位
+
+`/api/ai/data-figure/commit` 在任何耗时步骤（取会话、prepare）之前先在进程内在途表里占 `(项目, 请求号)`，同号的第二个请求回「任务未完成」（`deduped: true, final: false, outcome: null`），而不是等任务登记之后才能被 `find_request` 查到；这样客户端在 prepare 期间断线重试不会走到「会话已放弃」而换号重画、与原 handler 的写入重复。机制与边界见 ADR 0178「提交的请求号在耗时步骤之前先占位」。

@@ -509,6 +509,14 @@ def stage_replay(worker, fresh, stem: str, patches: list) -> dict:
     return {"ok": ok, "detail": {"legs": legs}}
 
 
+def stage_drag(worker, stem: str) -> dict:
+    """位置不是数据的元素要么能拖、要么说得出为什么；扰动全部撤销回基线（判据见 `compat_drag`）。"""
+    import compat_drag
+
+    res = compat_drag.audit(worker, stem)
+    return {"ok": compat_drag.verdict(res), "detail": {**res, "criterion": compat_drag.CRITERION}}
+
+
 def stage_export(worker, stem: str, out_dir: Path, formats: list[str]) -> dict:
     """真导出、真检查。文件在、体积合理、**解得开**、无 warning。"""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1618,12 +1626,23 @@ def run_group(
             r["stages"]["export"] = exp["ok"]
             r["detail"]["export"] = exp["detail"]
 
+            # 拖动：排在导出之后，热会话此刻是零 patch；它自己的每次扰动都撤销并核对回到基线
+            try:
+                drag = stage_drag(hot, stem)
+                r["stages"]["drag"] = drag["ok"]
+                r["detail"]["drag"] = drag["detail"]
+            except Exception as exc:  # noqa: BLE001
+                r["stages"]["drag"] = False
+                r["detail"]["drag"] = {"error": str(exc)[:600]}
+
             # 还原不干净的 case 会把脏状态留给**同一个脚本的下一个 stem**
             # （一个脚本的所有 stem 共用这一条热会话）。同组里的 case 必须
             # 互相独立，否则报告会随清单顺序变——那种失败最难查。
-            if r["detail"].get("edit", {}).get("restore_failures") or r["detail"].get(
-                "edit", {}
-            ).get("restore_warnings"):
+            if (
+                r["detail"].get("edit", {}).get("restore_failures")
+                or r["detail"].get("edit", {}).get("restore_warnings")
+                or r["detail"].get("drag", {}).get("restore_errors")
+            ):
                 r["dirty"] = True
                 pool.discard(hot)
                 hot = _fresh_worker(script_rel, project, entry, run=run)

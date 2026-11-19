@@ -250,6 +250,18 @@ def test_all_sixteen_projects_have_one_fixed_stage_denominator(cohort):
     assert out["stages_fixed_denominator"]["export"]["passed"] == 15
 
 
+def test_reports_from_before_a_stage_was_added_still_project_verbatim(cohort):
+    """后加的阶段（2026-11-18 的 drag）不在更早的报告行里：投影照样成立、不凭空记一格，
+    阶段分母也只数报告里真有的阶段——已归档的证据必须还能逐字复现。"""
+    rows = [report_row(p["case_id"]) for p in cohort["development"]]
+    for row in rows:
+        row["stages"].pop("drag")
+    out = research.project_reports(cohort, [report_for(rows)], SHA)
+    assert all("drag" not in p["stages"] for p in out["projects"])
+    assert "drag" not in out["stages_fixed_denominator"]
+    assert out["stages_fixed_denominator"]["export"]["passed"] == 16
+
+
 def test_missing_reports_stay_in_raw_cohort_with_explicit_not_run_rows(cohort):
     one = report_row(cohort["development"][0]["case_id"])
     out = research.project_reports(cohort, [report_for([one])], SHA)

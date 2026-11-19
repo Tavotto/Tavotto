@@ -77,6 +77,7 @@ RUNTIME_FILES = tuple(
         "rpc.py",
         "widget.py",
         "sessionjournal.py",
+        "nextstep.py",
     )
 )
 

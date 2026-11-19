@@ -4,144 +4,140 @@
 
 ### L-028 开发脚本造假项目前先 setdefault TAVOTTO_DATA_DIR
 - 类: 别这样
+- 触发: scripts/bench_document.py, scripts/bench_render.py
 - Seen: 2026-09-22
 - 为什么: 用 mkdtemp 建假项目后直接 open_project 的脚本没设数据目录，每跑一次往用户真实最近列表塞一条，还会让 worker.python 指向别会话的路径。pytest 本身有 conftest 隔离，脚本没有。
 - 证据: #497
 
 ### L-048 用例的预期路径也要问解释器，不用 sysconfig 自算
 - 类: 别这样
+- 触发: tests/test_dependency_plan.py, tests/test_runtime_build.py
 - Seen: 2026-09-22
 - 为什么: 用 sysconfig 按 base 算出的目录在 hosted CI 存在，在 Ubuntu 系统 Python 上真目录叫 dist-packages，实验室才红；hosted CI 绿证明不了发行版布局。
 - 证据: （迁移自维护者记录，无编号）
 
 ### L-049 路径守卫的相等分支返回可信 root，别返回候选算出的值
 - 类: 照这样
+- 触发: src/tavotto/app.py, src/tavotto/engine/projectenv.py
 - Seen: 2026-09-21
-- 为什么: realpath 加 startswith 的净化器逻辑本就对，CodeQL 仍报 14 条 py/path-injection；条件要拆成两段，相等分支 return root，污点才断。先改形状拉 SARIF 看流，不要先 dismiss。
+- 为什么: realpath 加 startswith 的净化器逻辑本就对，CodeQL 仍报 14 条 py/path-injection；条件要拆成两段，相等分支 return root，污点才断。先改形状看 SARIF 流。
 - 证据: #456
 
 ### L-050 预计算查找表的裁剪条件照抄前面每一步的否定
 - 类: 别这样
+- 触发: src/tavotto/glyphplan.py, tests/test_glyph_plan.py
 - Seen: 2026-09-01
 - 为什么: 字形分层判据是分步的，按语义写「primary 与 cjk 都没有」会让下标字符前后端判成不同层；只在极少码位上发作，测试全绿。要补专挑分歧输入的用例。
 - 证据: （迁移自维护者记录，无编号）
 
 ### L-051 联调开发服务器别写用户真实数据目录的全局设置
 - 类: 别这样
+- 触发: run.sh, src/tavotto/engine/projectenv.py
 - Seen: 2026-09-21
 - 为什么: 复现时把测试 venv 写进真实 config 的全局解释器，次日正式 App 里装了包仍报缺依赖、安装未获确认。联调用独立数据目录或进程级环境变量，收工核对配置。
 - 证据: #469
 
 ### L-052 子进程管道 EOF 先取退出状态再下「崩溃」结论
 - 类: 别这样
+- 触发: src/tavotto/engine/worker.py, src/tavotto/engine/workerd_client.py
 - Seen: 2026-09-20
 - 为什么: EOF 背后至少五种事实（正常退出、致命错误、C 扩展崩溃、DLL 加载失败、关了 stdout）；读到就 kill 等于先毁证据，还把退出说成「无响应」。日志为空要说出来。
 - 证据: #435
 
 ### L-054 固定进度 id 上「异步起加轮询」读到的是上一次的终态
 - 类: 别这样
+- 触发: src/tavotto/engine/deprepair.py, src/tavotto/engine/prepsession.py
 - Seen: 2026-09-21
 - 为什么: 第二次重建时线程还没发出 preparing，轮询就读到上次留下的 done 返回，被测事务根本没被观测，探针为空而用例全绿。改用同步入口或比旧时间戳新的终态。
 - 证据: #461
 
-### L-055 老门禁挡住合法的新一类时，升级成枚举而非开白名单
-- 类: 照这样
-- Seen: 2026-08-28
-- 为什么: 全部 spawn 要带 CREATE_NO_WINDOW 的门禁，遇到必须继承终端的 CLI 子进程；白名单记位置而缺陷是类别用错地方，改成两个具名常量并断言 CLI 那类只出现一处，更严且零运行时代价。
-- 证据: （迁移自维护者记录，无编号）
-
-### L-056 桌面壳里行为与终端不一致，先比 spawn 它的进程的 PATH
-- 类: 照这样
-- Seen: 2026-09-06
-- 为什么: 从 Finder 启动继承最小 PATH，npm shim 的 env node 解析不到而退 127，被报成「插件市场登记失败」；新增任何 spawn 外部 CLI 的模块都要走增强 PATH 的环境。
-- 证据: （迁移自维护者记录，无编号）
-
-### L-057 泄漏断言只对本次操作创建的资源负责
-- 类: 别这样
-- Seen: 2026-08-26, 2026-08-27
-- 为什么: 断言「ENGINE_CACHE 里没有 _replay-*」把上一个测试文件的残留算到写回用例头上，色条的真缺陷永远绿、被诬告的用例变偶发红。按工厂记录或前后差集归属，并断言归属清单非空；不许 conftest 兜底清理。
-- 证据: #129, #186
-
 ### L-058 别断言「被测对象会不会打印某句话」，让夹具自报状态
 - 类: 别这样
+- 触发: tests/bridge/
 - Seen: 2026-08-27
 - 为什么: matplotlib 3.10.8 打印 non-interactive 警告而 3.11.1 不打，CI 捕到空串判红，看着像被测对象坏了。代理量在版本升级时无声失效；应由夹具报 RAN/HOOKED，并给基准加正向对照。
 - 证据: #186
 
 ### L-059 刻度：get_ticklabels 含视区外标签，set_ticks 会悄悄扩视区
 - 类: 别这样
+- 触发: src/tavotto/engine/tickmodel.py
 - Seen: 2026-08-31
-- 为什么: get_ticklabels 返回 locator 全部标签，LogLocator 大半在子图外，隐形孪生轴同样有文字有位置；set_ticks 对整组共享轴 set_view_interval(min,max) 只扩不缩。判「画没画」用 _update_ticks 返回加可见性；set_ticks 前快照并还回视区（见 src/tavotto/engine/tickmodel.py）。
+- 为什么: get_ticklabels 返回 locator 全部标签，LogLocator 大半在子图外，隐形孪生轴同样有文字有位置；set_ticks 对整组共享轴 set_view_interval(min,max) 只扩不缩。判「画没画」用 _update_ticks 返回加可见性；set_ticks 前快照并还回视区。
 - 证据: （迁移自维护者记录，无编号）
 
 ### L-060 依赖 matplotlib 行为的注释先用探针复测，对照只改一个变量
 - 类: 照这样
+- 触发: src/tavotto/engine/overrides.py, src/tavotto/engine/scriptadjust.py
 - Seen: 2026-08-21, 2026-11-06
-- 为什么: 两条规则建立在「update_scalarmappable 会覆盖显式颜色」的注释上，20 行探针证明不会，规则比现实更严、吞掉了能用的编辑。另一次测 Arc 不能填色，探针同时换了 fill 与类，结论也错。11-06 导出脚本沿用早期 spike 的裁切结论，实际保存链已变，现版本的自带示例真跑才暴露 tight 图幅偏差；引用旧结论前重测当前调用链。
+- 为什么: 两条规则建立在「update_scalarmappable 会覆盖显式颜色」的注释上，20 行探针证明不会，规则比现实更严、吞掉了能用的编辑；另一次测 Arc 不能填色，探针同时换了 fill 与类，结论也错。11-06 导出脚本沿用早期 spike 的裁切结论，保存链早已变，现版本自带示例真跑才暴露 tight 图幅偏差。引用旧结论前重测当前调用链。
 - 证据: （迁移自维护者记录，无编号）, #1790
-
-### L-061 要保证测试后环境变量被还原，用 setenv 不用 delenv(raising=False)
-- 类: 别这样
-- Seen: 2026-08-27
-- 为什么: 变量本来没设时 delenv(raising=False) 不记账，被测代码随后写 os.environ 就永久泄漏；一个指向不存在解释器的变量让别的文件「单跑绿、全量红」。进程级全局状态靠 conftest 的 autouse 快照还原。
-- 证据: （迁移自维护者记录，无编号）
 
 ### L-062 测试宽限项的量纲要与被测量同源，单跑和全量各跑一次
 - 类: 照这样
+- 触发: tests/test_layout_timeline.py, src/tavotto/engine/versionstore.py
 - Seen: 2026-09-03
-- 为什么: 版本时间线字节预算只累加条目，漏记 JSON 外壳，用例的 11 字节宽限掩盖了差额，整模块跑绿、单跑红。上限的主语是磁盘文件大小而不是条目之和；两个方向都跑才知道判据有没有被邻居撑着。
+- 为什么: 版本时间线字节预算只累加条目，漏记 JSON 外壳，用例的 11 字节宽限掩盖了差额，整模块跑绿、单跑红。上限的主语是磁盘文件大小而不是条目之和；两个方向都跑。
 - 证据: （迁移自维护者记录，无编号）
 
 ### L-063 后台探测写缓存要带世代，reset 后丢弃旧探测结果
 - 类: 照这样
+- 触发: src/tavotto/engine/probe.py
 - Seen: 2026-09-21
 - 为什么: 上一文件的后台探测在本文件 reset 之后才结束，把重置前答案写回，单跑绿、按 CI 顺序全量跑必红；真缺陷在产品代码，用户改设置后 reset 同样会被覆盖。
 - 证据: #475
 
 ### L-064 后台线程投递的用例，reset 要 join，复现要拖宽窗口
 - 类: 照这样
+- 触发: src/tavotto/engine/pool.py, tests/test_thread_leak_gate.py
 - Seen: 2026-09-20
 - 为什么: 线程在 fixture teardown 与 monkeypatch 撤销后才投递，调用到真函数；空闲机器量不到，CI 每个 session 漏一条。
 - 证据: #440
 
 ### L-065 按当下环境读代理用 build_opener().open，别用模块级 urlopen
 - 类: 别这样
+- 触发: src/tavotto/engine/updater.py, src/tavotto/engine/ai_probe.py
 - Seen: 2026-09-21
 - 为什么: 模块级 urlopen 首次调用就缓存 ProxyHandler，之后改代理环境变量无效；死代理对照用例单跑绿、全量红。
 - 证据: （迁移自维护者记录，无编号）
 
 ### L-066 .part 搬正式名失败时，先查正式名上是否已有校验合格的副本
 - 类: 照这样
+- 触发: src/tavotto/engine/privatepython.py, src/tavotto/engine/updater.py
 - Seen: 2026-09-21
 - 为什么: Windows 上 os.replace 到别的进程正打开的文件抛 WinError 5；两进程竞争在 POSIX 恒绿、Windows 确定性红，把并发正常结局当成 write_failed。
 - 证据: #467
 
 ### L-067 改 worker 钩子、包装 stdlib 或解析用户代码，在 3.10 与 3.14 两端各跑一遍
 - 类: 照这样
+- 触发: src/tavotto/engine/worker.py, src/tavotto/engine/importscan.py, src/tavotto/engine/notebookscript.py
 - Seen: 2026-10-14, 2026-11-11
-- 为什么: 3.10 的 Path.mkdir 内部调 is_dir，被包装当成脚本观察；本机 3.13 全绿，CI 3.10 两条豁免用例红。Windows 的 os.path 是 C 实现，不经 os.stat。11-11 symtable 在 3.14 起对顶层 await、靠后的 future 导入直接 SyntaxError（3.13 放行），3.14 分片红 4 条；ast / symtable / compile 每个小版本都在变，uv 建一个两端 venv 只要几十秒。
+- 为什么: 3.10 的 Path.mkdir 内部调 is_dir，被包装当成脚本观察；本机 3.13 全绿，CI 3.10 两条豁免用例红。11-11 symtable 在 3.14 起对顶层 await、靠后的 future 导入直接 SyntaxError（3.13 放行），3.14 分片红 4 条；ast / symtable / compile 每个小版本都在变，建两端 venv 只要几十秒。
 - 证据: #1024, #1838
 
 ### L-121 给同步步骤设时间预算，要罩住每个会阻塞的调用，超支项下次仍重试
 - 类: 别这样
+- 触发: src/tavotto/engine/migrate.py, src/tavotto/engine/msixmigrate.py
 - Seen: 2026-11-02
-- 为什么: 启动时迁移旧数据的 8 秒预算只在步骤之间查剩余，SQLite backup 遇源库独占锁会一直等，应用打不开；预算耗尽跳过的历史库随后被启动流程新建成空库，下次迁移见目标已存在就跳过，旧数据永久丢失。评审连报两条 P1。
+- 为什么: 启动时迁移旧数据的 8 秒预算只在步骤之间查剩余，SQLite backup 遇源库独占锁会一直等，应用打不开；预算耗尽跳过的历史库随后被启动流程新建成空库，下次迁移见目标已存在就跳过，旧数据永久丢失。评审报两条 P1。
 - 证据: #1603
 
 ### L-126 新 worktree 先补齐 gitignore 的内置字体，大片同类红先单跑看 stderr
 - 类: 别这样
+- 触发: scripts/fetch_fonts.py
 - Seen: 2026-11-03
 - 为什么: git worktree add 不带被忽略的 src/tavotto/resources/fonts，约 170 条导出、公式、字体用例假红（backend_unavailable、child_failed），看着像改坏了。先跑 scripts/fetch_fonts.py 或从主工作区拷。
 - 证据: （会话记录，无编号）
 
 ### L-128 带锁的不变式用确定性交错反证，多线程跑几轮没红不算证据
 - 类: 别这样
+- 触发: src/tavotto/rendercore/hbshaper.py, tests/test_rendercore_userfonts.py
 - Seen: 2026-11-04
-- 为什么: 字体 LRU 的插入与淘汰分成两段锁，子代理写明没做反证仍被接受；合入后 3.14 分片偶发 count 3，把 #1699 踢出队列，24 小时内红过 5 个 PR。查、改、维持上限放进同一临界区；用放锁钩子或 Event 强制交错，撤掉修复必红（本机跑 60 次都复现不了）。
+- 为什么: 字体 LRU 的插入与淘汰分成两段锁，子代理写明没做反证仍被接受；合入后 3.14 分片偶发 count 3，把 #1699 踢出队列，24 小时内红过 5 个 PR。查、改、维持上限放进同一临界区；用放锁钩子或 Event 强制交错，撤掉修复必红。
 - 证据: #1671, #1699, #1705
 
 ### L-129 性能压测要跨过池或缓存上限，同一对象改多少次都量不到悬崖
 - 类: 别这样
+- 触发: src/tavotto/engine/pool.py, tests/test_pool_lru_lease.py
 - Seen: 2026-11-03
 - 为什么: 同一张图编辑 400 次不变慢，于是一直没发现 4 个脚本轮流时每次都冷启动（15 倍），由一份用户反馈才暴露。凡有容量上限，压测取上限加一个并轮转；前端主动补渲染邻居也会制造这种轮转。
 - 证据: #1639
@@ -150,9 +146,10 @@
 
 ### L-131 override 不读当前合成值或残留状态，写前问冷重放读到的是否同一份
 - 类: 别这样
-- Seen: 2026-11-04
-- 为什么: 渐变编辑存了被全局 alpha 合成过的颜色、读了 setter 那一刻的轴方向，热态与全新重放分岔，连报两条 P1；批量写又把首个成员的方向复制给全部成员，第三条 P1。带成员事实的字段按成员算。
-- 证据: #1692
+- 触发: src/tavotto/engine/overrides.py, src/tavotto/engine/manifest.py
+- Seen: 2026-11-04, 2026-11-18
+- 为什么: 渐变编辑存了被全局 alpha 合成过的颜色、读了 setter 那一刻的轴方向，热态与全新重放分岔，连报两条 P1；批量写又把首个成员的方向复制给全部成员，第三条 P1。带成员事实的字段按成员算。网格撤销改读当时的 rcParams 而非抓下的原值，又两条 P1（#1997）。
+- 证据: #1692, #1997
 
 ### L-137 worker 给脚本的运行面要和 python script.py 对拍 → docs/rules/backend/worker-protocol-and-lifecycle.md
 
@@ -164,24 +161,28 @@
 
 ### L-141 看护登记表按写入点枚举，别靠造一份样本走一遍
 - 类: 别这样
+- 触发: src/tavotto/engine/diagsend.py, tests/test_diag_send.py
 - Seen: 2026-10-31
 - 为什么: 诊断包新文件没登记，确认页显示成「其他」；已有看护只造无项目的包，按条件才写的文件它看不见。改成用 AST 收全部写入点的字面名，要求都在登记表里。
 - 证据: #1543
 
 ### L-142 长操作的并发用例把窗口摆出来，别让它在测试里为零
 - 类: 别这样
+- 触发: src/tavotto/engine/probe.py, src/tavotto/engine/deprepair.py
 - Seen: 2026-10-31, 2026-11-02
 - 为什么: 首次慢启动持池锁约 10 秒，排队的探测把刚起好的会话关掉，这个窗口只在首次运行出现（#1572）；单包修复持环境锁约 3 分钟，AI 换环境 3 毫秒后就报忙（#1632）。用可控的假启动或假安装摆出重叠，撤掉修复要红。
 - 证据: #1572, #1632
 
 ### L-147 验「原文件不动」要让导出目标与输入同名、同路径或互为链接
 - 类: 别这样
+- 触发: src/tavotto/engine/scriptadjust.py, src/tavotto/engine/exportroute.py
 - Seen: 2026-11-06
 - 为什么: 导出名加后缀仍可能等于用户重新打开的旧导出脚本名，覆盖策略可把原脚本替换掉；正常命名的夹具看不见。验收对目标与所有受保护输入核文件身份，并用重名、硬链接场景断言原字节不变。
 - 证据: #1790
 
 ### L-148 生成的可编辑产物要验「导出、重开、再编辑、再导出」的第二轮
 - 类: 别这样
+- 触发: src/tavotto/engine/scriptadjust.py
 - Seen: 2026-11-06
 - 为什么: show-only 脚本首轮导出正确，重开再导出时两个调整块认同一张图，首块的完成标记使新块被跳过，重放验证拒绝交付；首轮用例全绿。第二轮改不同属性，在不加载产品的子进程核两轮修改都生效。
 - 证据: #1790
@@ -190,24 +191,35 @@
 
 ### L-156 按图分数换算位置的导出逻辑，夹具要带 bbox_inches="tight" 并覆盖每类挪位置的键
 - 类: 别这样
+- 触发: src/tavotto/engine/scriptadjust.py, tests/test_script_adjust*
 - Seen: 2026-11-11
 - 为什么: 导出 .py 的逐键普查夹具不带裁切框，tight 只测了改字号；块里按整张 figsize 换算、引擎按裁出来的那一页换算，挪过文字的图导出连续失败，靠一份用户反馈才暴露。引擎与块的坐标换算是同源对，改一边对拍另一边，有框、无框各跑一遍。
 - 证据: #1847
 
 ### L-157 统计汇总的用例要有内部缺失位置与跨位置合并的总体
 - 类: 别这样
+- 触发: src/tavotto/engine/ai_data_recipe.py, tests/test_ai_data_recipe.py
 - Seen: 2026-11-11
 - 为什么: 数据出图配方只用整齐数据测，评审连报两条 P1：中间某个 x 全缺时 fill_between 把两侧连成一片带；水平汇总跨全部 x 合并，图注的 n 却按单个 x 算。每种汇总各写一条：中间缺一格、跨位置合并、同一标记在两个角色里。
 - 证据: #1841
 
 ### L-160 给安全闸加生产者边界的规范化，先喂真实生产者的合法输出
 - 类: 别这样
-- Seen: 2026-11-13
-- 为什么: SVG 闸的 id 语法比 matplotlib 能写出的窄，用例只用不带 gid 的示例图，脚本 set_gid 中文名的图整条导出失败，靠一份用户反馈才暴露。修复初版只按一个错误码触发、对全文替换 #token，评审连报两条 P1（改坏十六进制颜色、重复 id 的选择器失配）。性质测试喂 set_gid 的中文 / 空格 / 数字名与重复 id；修复按闸可能先报的任一错误码触发，引用只在 href / url(#…) / 选择器 id 记号这些结构位置改写。
-- 证据: #1893
+- 触发: src/tavotto/rendercore/svgcheck.py, src/tavotto/engine/artifactinspect.py
+- Seen: 2026-11-13, 2026-11-16
+- 为什么: SVG 闸的 id 语法比 matplotlib 能写出的窄，用例只用无 gid 的示例图，脚本 set_gid 中文名的图整条导出失败，一份用户反馈才暴露。修复初版只按一个错误码触发、对全文替换 #token，评审连报两条 P1（改坏十六进制颜色、重复 id 选择器失配）。性质测试喂 set_gid 的中文、空格、数字名与重复 id；修复按闸可能先报的任一错误码触发，引用只在 href / url(#…) / 选择器 id 这些结构位置改写。
+- 证据: #1893, #1962
 
 ### L-164 新加安装或修复路径时，写「这条刚确定性失败过再打开卡片」的用例
 - 类: 别这样
+- 触发: src/tavotto/engine/prepsession.py, web/src/components/PreparationCard.tsx
 - Seen: 2026-11-15
-- 为什么: 推荐逻辑只看哪条路可用、不看它刚失败过，自检未通过这类重试改变不了的失败码之后，主按钮原样再推荐同一条路，一份用户反馈里点了十次、失败十次。用例都断言单次失败的结局，准备卡与修复卡各自钉死目标，评审也只看单次流程。两个入口都要有「失败一次后推荐什么」的用例。
+- 为什么: 推荐逻辑只看哪条路可用、不看它刚失败过：自检未通过这类重试改变不了的失败码之后，主按钮原样再推荐同一条路，一份用户反馈里点了十次、失败十次。用例只断言单次失败的结局，准备卡与修复卡各自钉死目标。两个入口都要有「失败一次后推荐什么」的用例。
 - 证据: #1934
+
+### L-166 判据按这次运行实际发生的事定，产品已测出的事实结构化交给失败卡与 AI
+- 类: 别这样
+- 触发: src/tavotto/engine/diagexternal.py, src/tavotto/engine/diagdetail.py
+- Seen: 2026-11-16
+- 为什么: 诊断包收源码按「在不在项目文件夹里」划界，脚本经 sys.path 引入项目外公共代码时一份都没带上，一份用户反馈才暴露。另一份里素材扫描早已测出「扩展名 png、字节是 JPEG」，运行失败却只给笼统 script_error，AI 转去怀疑安全运行；首版路径换算按同名去项目根猜文件，评审用「脚本 chdir 到外部目录」拦下（#1966）。夹具要有项目外 import、chdir 出去两种写法；换算只镜像产品已有的确定规则，换不出就回空。
+- 证据: #1953, #1966

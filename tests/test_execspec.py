@@ -263,7 +263,8 @@ class TestWorkerArgv:
     def test_native_spec_rejects_the_safe_shaped_fields(self):
         """native 的三条硬约束在构造时就拦下来（ADR 0014 §2 / 0020）。
 
-        它们不是风格问题：带 entry 的 native = 「用户没写的入口函数」被调用；
+        它们不是风格问题：native 的 entry 只能是脚本里的函数名（库式模块跑完模块再调它，ADR 0127 修订 2026-11-18），
+        `__main__` / 模块目标带 entry 都不成立；
         `passthrough_savefig=False` 的 native = 用户原命令该产出的文件没了；
         没有 `raw_target` 的 native = `sys.argv[0]` 与用户敲的那串对不上。
         """
@@ -281,7 +282,17 @@ class TestWorkerArgv:
             raw_target="fig.py",
         )
         with pytest.raises(ValueError, match="entry"):
-            execspec.ExecutionSpec(**{**base, "entry": "main"})
+            execspec.ExecutionSpec(**{**base, "entry": "__main__"})
+        with pytest.raises(ValueError, match="entry"):
+            execspec.ExecutionSpec(
+                **{
+                    **base,
+                    "entry": "main",
+                    "target_kind": execspec.TARGET_MODULE,
+                    "target": "pkg.fig",
+                }
+            )
+        assert execspec.ExecutionSpec(**{**base, "entry": "main"}).entry == "main"
         with pytest.raises(ValueError, match="savefig"):
             execspec.ExecutionSpec(**{**base, "passthrough_savefig": False})
         with pytest.raises(ValueError, match="raw_target"):

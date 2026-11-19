@@ -1,7 +1,7 @@
 import { refuseArtifactOperation } from '@/lib/artifactValidation'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { FileUp, RotateCcwClock, ShieldAlert, TriangleAlert } from '@/components/ui/icons'
+import { Check, FileUp, RotateCcwClock, ShieldAlert, TriangleAlert } from '@/components/ui/icons'
 import { Details, Summary } from '../ui/Details'
 import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import { ApiError, backendErrorMsg, updateSourceFiles, type WriteBackDiff } from '@/lib/api'
@@ -18,6 +18,7 @@ import { isJustBakedBaseline, rebuildPanel } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { deferWhileWindowHeld } from '@/store/documentRestore'
 import { useDocumentStore } from '@/store/documentStore'
+import { tooNewAction } from '@/store/failureExit'
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -184,11 +185,29 @@ function BlockedNotice({
     if (ok) onRerendered()
   }
 
+  // 项目里有更新版本的 Tavotto 做的修改、这一版认不出（后端 409 `write_back_future_props`，原文件没动）：
+  // 不用红字报错让人卡住——一行灰字说清楚 + 一个能点的出口，与「这份排版来自更新的版本」同一个动作
+  // （桌面版「检查更新」；浏览器版没有更新通道，给「发给我们看看」，入口关着就只留这行字）
+  if (body.code === 'write_back_future_props') {
+    const exit = tooNewAction()
+    return (
+      <div className="flex flex-col items-start gap-2" data-write-back-future>
+        <p className="text-sm leading-relaxed text-ink-2">
+          {formatMessage(msg('engine.writeBackFutureNotice', undefined, 'errors'))}
+        </p>
+        {exit && (
+          <Button size="sm" variant="primary" data-write-back-future-exit onClick={() => exit.run()}>
+            {formatMessage(exit.label)}
+          </Button>
+        )}
+      </div>
+    )
+  }
   if (body.code === 'replay_divergence') {
     const diffs = body.diffs ?? []
     return (
-      <div className="flex flex-col gap-1.5 rounded-sm border border-danger/40 bg-surface-2 p-2">
-        <p className="flex items-start gap-1.5 text-xs leading-relaxed text-ink">
+      <div className="flex flex-col gap-2 rounded-md bg-surface-hover p-3">
+        <p className="flex items-start gap-2 text-sm leading-relaxed text-ink">
           <IconSlot><ShieldAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" /></IconSlot>
           <span>
             <b className="font-medium">{wb('divergenceTitle')}</b>
@@ -217,8 +236,8 @@ function BlockedNotice({
   }
   if (detail) {
     return (
-      <div className="flex flex-col gap-1.5 rounded-sm border border-border bg-surface-2 p-2">
-        <p className="text-xs leading-relaxed text-ink-2">{detail}</p>
+      <div className="flex flex-col gap-2 rounded-md bg-surface-hover p-3">
+        <p className="text-sm leading-relaxed text-ink-2">{detail}</p>
         {body.code === 'script_changed' && rerenderUnavailable && <SendReportButton variant="primary" />}
         {body.code === 'script_changed' && !rerenderUnavailable && panels.some((p) => p.script) && (
           <div>
@@ -230,7 +249,7 @@ function BlockedNotice({
       </div>
     )
   }
-  return <p className="text-xs text-danger">{wb('updateFailed', { error: error.message })}</p>
+  return <p className="text-sm text-danger">{wb('updateFailed', { error: error.message })}</p>
 }
 
 /**
@@ -243,9 +262,9 @@ function BlockedNotice({
 function BackupDetails({ dir, summary }: { dir: string; summary: string }) {
   useTranslation('inspector')
   return (
-    <Details className="rounded-sm border border-border bg-surface-2 px-2 py-1.5">
+    <Details className="rounded-md bg-surface-hover px-3 py-2">
       <Summary className="cursor-default text-xs leading-relaxed text-ink-2">{summary}</Summary>
-      <div className="mt-1 flex flex-col gap-1 pl-4">
+      <div className="mt-1.5 flex flex-col gap-1 pl-4">
         <div className="flex items-start gap-1">
           <span className="min-w-0 flex-1 break-all font-mono text-xs leading-relaxed text-ink-2">
             {dir}
@@ -429,12 +448,16 @@ export function WriteBackDialog({
 
   const writeBody = (
 result ? (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2.5">
           <p className="text-xs text-ink-2">{wb('updatedIntro')}</p>
-          <ul className="flex flex-col gap-0.5 rounded-sm border border-border bg-surface-2 p-2">
+          <ul className="flex flex-col gap-1.5 rounded-lg bg-group p-2.5">
             {result.updated.map((f) => (
-              <li key={f} className="font-mono text-xs text-ink">
-                {f}
+              <li
+                key={f}
+                className="flex items-center gap-2 rounded-md bg-surface px-2.5 py-1.5 font-mono text-xs text-ink shadow-thumb"
+              >
+                <Check size={ICON_SIZE.xs} aria-hidden className="shrink-0 text-ink-3" />
+                <span className="min-w-0 truncate">{f}</span>
               </li>
             ))}
           </ul>
@@ -455,16 +478,19 @@ result ? (
           )}
         </div>
       ) : (
-        <div className="flex flex-col gap-2">
-          {/* 目标文件一眼可数：不用读段落就知道覆盖的是哪几个（审计 T34） */}
-          <div className="rounded-sm border border-danger/40 bg-surface-2 p-2">
-            <p className="flex items-center gap-1.5 text-xs font-medium text-ink">
-              <TriangleAlert size={ICON_SIZE.xs} aria-hidden className="shrink-0 text-danger" />
+        <div className="flex flex-col gap-2.5">
+          {/* 目标文件一眼可数：去彩框与硬边，改用中性凹槽托盘 + 文件卡（与导出回执同语言） */}
+          <div className="flex flex-col gap-2 rounded-lg bg-group p-3">
+            <p className="flex items-center gap-1.5 text-xs font-medium text-ink-2">
+              <TriangleAlert size={ICON_SIZE.xs} aria-hidden className="shrink-0 text-ink-3" />
               {wb('targetsLabel')}
             </p>
-            <ul className="mt-1 flex flex-col gap-0.5 pl-4.5">
+            <ul className="flex flex-col gap-1">
               {targetFiles.map((f) => (
-                <li key={f} className="break-all font-mono text-xs text-ink">
+                <li
+                  key={f}
+                  className="rounded-md bg-surface px-2.5 py-1.5 break-all font-mono text-xs text-ink shadow-thumb"
+                >
                   {f}
                 </li>
               ))}
@@ -473,7 +499,7 @@ result ? (
           <BackupDetails dir={backupDir} summary={wb('backupSummary', { dir: dirTail(backupDir) })} />
           {annCount > 0 ? (
             <label
-              className="flex items-center gap-1.5 text-xs text-ink-2"
+              className="flex items-center gap-2 text-xs text-ink-2"
               title={wb('annotationsTitle')}
             >
               <Toggle
@@ -519,25 +545,25 @@ result ? (
       busy={busy}
       footer={
         result || shownPage === 'records' ? (
-          <Button variant="secondary" size="md" onClick={() => onOpenChange(false)}>
+          <Button variant={result ? 'primary' : 'secondary'} size="lg" onClick={() => onOpenChange(false)}>
             {wb('done')}
           </Button>
         ) : (
           <>
-            <Button variant="secondary" size="md" disabled={busy} onClick={() => onOpenChange(false)}>
+            <Button variant="secondary" size="lg" disabled={busy} onClick={() => onOpenChange(false)}>
               {translate('actions.cancel')}
             </Button>
             <Button
               data-write-back="confirm"
               variant="primary"
-              size="md"
+              size="lg"
               disabled={editCount === 0 || readOnly}
               title={readOnly ? wb('readOnlyTitle') : undefined}
               loading={busy}
               loadingLabel={wb('rewriting')}
               onClick={run}
             >
-              <FileUp size={ICON_SIZE.md} />
+              <FileUp size={ICON_SIZE.sm} />
               {wb('confirm')}
             </Button>
           </>

@@ -39,11 +39,11 @@ playground / mcp / embedded / onboarding、App / main）不写 hex / `rgb()` / `
 SummaryRow / GroupToggle / Details；身份头固定两行；`ColorField` 在属性栏里带可编辑 hex 与取色面板（`ColorFieldContext`）、`disabled` 是真禁用；
 OptionGrid 与 Segmented 同皮；说明条只有 `Notice`；页签 属性 | 画布 | 助手。
 
-**2026-10-07 设计刷新 · 基础层（宪法第二十六节）**——与下文冲突处以它为准：墨阶 ink-2 `#4a4a45` / ink-3 `#6c6c66`（所有底色 ≥4.5:1）；
-中性面降黄（桌面 `#efefed` / 画布灰 `#f5f5f3` / field `#f2f2f0`）；**圆角族 xs 4 / sm 6 / md 8（行、框、菜单项、说明条）/ lg 12（卡、菜单与 popover
-外壳、多行浮动面板）/ panel 16（对话框、工作面板、助手输入框、命令面板）/ full（带字按钮、图标钮、分段、chip、toast、单行浮动条）**，外层 = 内层 + 内边距；
+**2026-10-07 设计刷新 · 基础层（宪法第二十六节）**——与下文冲突处以它为准：墨阶 ink-2 `#4a4842` / ink-3 `#6b6860`（所有底色 ≥4.5:1）；
+暖石亚麻中性面（桌面 `#efede8` / 画布灰 `#f6f4ef` / field `#f3f1ec`）；**圆角族 xs 4 / sm 6（含分段滑块）/ md 8（28px 按钮、分段外槽、行、框、菜单项、说明条）/ lg 12（卡、菜单与 popover
+外壳、多行浮动面板）/ panel 16（对话框、工作面板、助手输入框、命令面板）/ full（32px 主动作按钮、图标钮、chip、toast、单行浮动条）**，外层 = 内层 + 内边距；
 字体角色十个（新增 `type-display` 24 / `type-heading` 17 / `type-reading` 13·1.6；`type-title` 600；`type-caption` 12 / ink-3）；控件高 28 + `lg` 32
-（对话框页脚 / 页面 CTA）；投影全部 `color-mix(var(--color-shadow) N%)`，`shadow-card` **只在 `ui/Card`**；状态色一个锚点派生
+（对话框页脚 / 页面 CTA）；投影全部 `color-mix(var(--color-shadow) N%)`，`shadow-card` **只在 `ui/Card`**，画布纸面用 `--shadow-page`；状态色一个锚点派生
 `-surface` / `-border` / `-content`（字用 content），旧 `*-subtle` 是别名；z-index 只用 `z-sticky … z-onboarding` 九档 token；焦点环 offset 2、指针操作之后的程序化 focus 不画环（`lib/inputModality` 给 `<html>` 记 `data-input-modality`，`index.css` 在 `pointer` 时关 `:focus-visible` 的 outline；只有 Tab / 方向键 / Home / End / PageUp / PageDown 算键盘，Enter / Space 不算）、
 插入点 accent；滚动条 6px、只在悬停 / 内含焦点时出现；加载只有 sweep / 静态骨架 / shimmer / 转圈（禁呼吸动画——唯一例外是改图助手的思考小球，ADR 0165；`ui/ProgressBar` 是点阵（ADR 0168）：12px、未完成稀点 / 已完成密点、同色，canvas 按物理像素画，几何只在 `lib/dotProgress.ts`；不确定态一段密点来回扫）；光标一律箭头（可拖的卡用抓手）。
 新原语：`Card`、`Notice`（恢复）、`StatusPill`、`dropZoneClass`（拖放接收态：静态不画、拖入才是 1px accent 虚线 + accent-subtle + 外发光）、`FormSection` + `FieldGroup`（`SettingRow layout="balanced"`）、EmptyState v2、`listRowClass({ size })`

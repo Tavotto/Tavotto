@@ -203,7 +203,9 @@ def test_tools_list_shape():
         "tavotto_close_session",
         "tavotto_guide",
         "tavotto_fix_to_journal",  # 同受期刊库总开关管（ADR 0180）
+        "tavotto_make_journal_ready",  # 同上（ADR 0192 §1）
         "tavotto_list_journals",  # 期刊库开关已打开（ADR 0155 §11）
+        "tavotto_get_journal_facts",
     ]
     for t in tools:
         assert t["description"] and t["inputSchema"]["type"] == "object"
@@ -1130,7 +1132,7 @@ def test_open_apply_preflight_export_close_without_any_ui(project, fake_pool, tm
 
 
 def test_closing_a_session_with_unexported_changes_says_they_are_gone(project, fake_pool, tmp_path):
-    """改过没导出就关：照关（不卡住），但结果与文字都要说修改丢了、用户文件没变。"""
+    """改过没导出就关：照关（不卡住），结果与文字都要说修改已存为草稿、用户文件没变。"""
     sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
     plain = _body(_call("tavotto_close_session", {"session_id": sid}))
     assert plain["closed"] is True and "unexported_changes" not in plain  # 没改过不提醒
@@ -1157,7 +1159,8 @@ def test_closing_a_session_with_unexported_changes_says_they_are_gone(project, f
     res = _call("tavotto_close_session", {"session_id": sid})
     body = _body(res)
     assert body["closed"] is True and body["unexported_changes"] is True
-    assert "tavotto_export" in res["content"][0]["text"]
+    assert body["draft_saved"] is True  # ADR 0192：没导出的修改存成草稿，不再「已丢」
+    assert "草稿" in res["content"][0]["text"] and "重新打开" in res["content"][0]["text"]
 
 
 def test_closing_after_a_process_switch_still_reports_unexported_changes(project, fake_pool):
@@ -1169,7 +1172,8 @@ def test_closing_after_a_process_switch_still_reports_unexported_changes(project
     res = _call("tavotto_close_session", {"session_id": sid})
     body = _body(res)
     assert body["closed"] is True and body["unexported_changes"] is True
-    assert "tavotto_export" in res["content"][0]["text"]
+    assert body["draft_saved"] is True  # ADR 0192：没导出的修改存成草稿，不再「已丢」
+    assert "草稿" in res["content"][0]["text"] and "重新打开" in res["content"][0]["text"]
     assert bridge.sessionjournal.load(bridge._journal_dir(), sid) is None  # 记录照样删了
     assert _body(_call("tavotto_close_session", {"session_id": sid}))["closed"] is False
 
@@ -3419,6 +3423,9 @@ def test_apply_summary_bounds_worker_errors_without_changing_state_or_legacy(
     after = _body(_call("tavotto_session_state", {"session_id": sid}))
     assert after == before
     legacy = _call("tavotto_apply_overrides", {**args, **legacy_args})
+    # `next` 是增量字段（ADR 0192 §3）：去掉它，旧调用方看到的失败回包一字不变
+    assert _body(legacy)["next"]["action"] == "edit_script"
+    del legacy["structuredContent"]["next"]
     assert legacy == {
         "isError": True,
         "content": [{"type": "text", "text": message}],

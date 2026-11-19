@@ -195,6 +195,10 @@ def _validate(profile: dict, pid: str) -> None:
             continue
         if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
             raise ProfileError(f"profile {pid} 的 preferred_formats.{key} 必须是字符串数组")
+    # 可选键：缺席 / null = 没规定；写了就得是数（数据线最细线宽，journal-base-v1 才带 0）
+    lw_floor = profile.get("min_line_width_pt")
+    if lw_floor is not None and not _is_number(lw_floor):
+        raise ProfileError(f"profile {pid} 的 min_line_width_pt 必须是数字或缺席")
     dpi = fmts.get("export_dpi_default")
     if dpi is not None and not _is_number(dpi):
         raise ProfileError(f"profile {pid} 的 preferred_formats.export_dpi_default 必须是数字")
@@ -387,12 +391,26 @@ def severity_of(profile: dict, check_id: str) -> str:
     return value if value in SEVERITIES else DEFAULT_SEVERITY
 
 
+def display_label(profile: dict) -> str:
+    """Neutral output label for the exact historical built-in label; never mutate snapshots.
+
+    Keep in sync with web/src/lib/profile.ts and the shared label vectors.
+    """
+    label = profile.get("label", "")
+    if (
+        profile.get("profile_id") == "journal-base-v1"
+        and label == "期刊底（期刊未规定的项一律不判）"
+    ):
+        return "期刊检查基础"
+    return label
+
+
 def stamp(profile: dict) -> dict:
     """proof report / MCP 响应里的 profile 身份戳。"""
     out = {
         "profile_id": profile.get("profile_id"),
         "profile_version": profile.get("version"),
-        "label": profile.get("label", ""),
+        "label": display_label(profile),
     }
     if profile.get("journal"):
         out["journal"] = profile["journal"]

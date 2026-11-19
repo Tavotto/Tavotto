@@ -3,6 +3,12 @@
 日期：2026-11-15 · 状态：**Proposed（本 ADR 只定契约；服务端、引擎、前端各一路实现，CloudBase 环境尚未开通，真实服务与真机未验）**
 **1.0 收敛纪律：新增产品能力。维护者 2026-11-15 裁决立项并给豁免、默认开，登记在 `docs/1.0-release-readiness.md` §1.8。**
 **修订（2026-11-15，同日）**：额度改为「每天新建 1 个链接、更新不限次数」（§三）；补出图规格 / 元素键 / 「画布有新改动」等客户端约定（§七）；界面按第 4 轮定稿（§八）。
+
+**修订（2026-11-16）**：图片地址改为「不可猜、不过期」（§四）——CloudBase PG 模式环境的存储 CDN 地址不带签名也能读，且该环境改不了存储安全规则；维护者 2026-11-16 定：对象路径末段由服务端密钥派生，停止分享即删。
+
+**修订（2026-11-16，同日）**：元素表带上真实形状，审阅页点选细到曲线本身、单个刻度标签（§二、§五）。维护者 2026-11-16 试用后定：「细粒度不够、没用上对象级渲染引擎」——曲线只有外框时点它出一个大框、框里的刻度点不了。元素加可选字段 `role` / `paint_order` / `arrow_endpoints` / `geometry`（与 manifest 同形），`geometry` **上传前裁到画面上看得见的部分**（`clip ∩ 画面`；排版里再裁到面板），版本加可选 `size_mm`；审阅页的点选是画布 `pickElementStack` 的原样拷贝，两个仓库共用一份对拍夹具。元素锚点加可选 `pt`（点在元素上的那一处）。老客户端 / 老版本只有 `{gid, label, bbox}`，照旧按框点。
+
+**修订（2026-11-17）**：元素表另含子图的**边框线、网格线、刻度线**，各是一个结构性点选目标（维护者 2026-11-17 定）：边框线按边（左 / 右 / 上 / 下轴线，gid `<子图>.spine_left` 等，role `spine`）；网格线、刻度线**按轴成组**（`.xgrid` / `.ygrid`、`.xtickmarks` / `.ytickmarks`，role `gridline` / `tickmark`；刻度线含主次刻度与两侧）。只收**真画出来**的部分（隐藏的边、没开的网格、被关掉的刻度线都没有），形状同样裁到画面上看得见的部分；显示名是结构性短词，不含用户文字，隐私面不变。数据来自 manifest 子图项的 `spines`（加 `stroke_pt` / `paint_order`）与新增的 `grid` / `tickmarks`；**画布不读这些字段、不新增任何可选元素**，应用里只用它们给审阅意见的圆点找落点（这些 gid 的数据没了 = 原位置已变化）。
 相关：[0145 联系作者](0145-contact-the-maker.md)（出站形状、选路、轮询、胶囊的出处）、[0118 发送问题反馈](0118-diagnostics-send-report.md)（`diagsend` 出站笼子）、
 [0008 会话认证](0008-unified-local-session-auth.md)（新端点不得绕过）、[0096 排版保存到项目](0096-save-layout-to-project.md)（排版身份）；
 隐私声明 `docs/privacy.md`「External review links」；截图稿（维护者 11-15 过目）：外部审阅界面稿 v2。
@@ -29,10 +35,10 @@
 | 内容 | 说明 |
 | --- | --- |
 | `snapshot.png` | 当前画布的渲染结果，走现有导出管线（单图 `scope=original`、排版 `scope=canvas`），长边 ≤ 3000 px，≤ 8 MiB |
-| `elements.json` | 元素位置表 `[{gid, label, bbox}]`，bbox 是画面比例坐标 `[x, y, w, h]`（y 向下）；单图取自 `manifest.build_manifest`，排版 = 每个面板一个框 + 面板内元素按面板位置换算后的框；≤ 256 KiB |
+| `elements.json` | 元素表 `[{gid, label, bbox, role?, paint_order?, arrow_endpoints?, geometry?}]`，坐标一律是画面比例 `[x, y, w, h]`（y 向下）；单图取自 `manifest.build_manifest`，排版 = 每个面板一个框 + 面板内元素按面板位置换算后的框与形状；`geometry` 是曲线 / 填充 / 形状**画出来的轮廓**，上传前裁到画面上看得见的部分（坐标区外的数据点不出机）；隐藏元素不传；≤ 256 KiB，超了先去形状（退回按框点）再丢元素 |
 | 元数据 | 标题（默认图名 / 排版名，可改）、「给审阅者的话」（可不填，≤ 200 字） |
 
-**脚本、数据、项目文件、文件路径、本机信息一律不传。** 元素 `label` 是图里本来就看得见的文字（轴标签、图例项），不额外暴露东西。
+**脚本、数据、项目文件、文件路径、本机信息一律不传。** 元素 `label` 是图里本来就看得见的文字（轴标签、图例项）或按角色的结构性名字（「曲线 1」），artist 的 label 不传；`geometry` 只是画面上已经画出来的线和形状，不额外暴露东西。
 
 ### 三、额度（免费版，维护者 2026-11-15 改定，同日再修订）
 
@@ -48,7 +54,7 @@
 
 - 两种令牌，各 128 位随机：**审阅令牌**在链接里，**管理令牌**只在作者本机（`review/shares.json`，0600）。服务端只存两者的 HMAC-SHA256（服务端密钥），比较用常数时间；错令牌、过期、已停止一律统一 404。
 - 有效期 30 天，**每次更新顺延到更新时刻 + 30 天**。到期或停止分享后，服务端删除画面、元素表、意见与结论；存储另设生命周期规则兜底。
-- 审阅网页 `noindex`，不列目录；图片地址是短时效签名链接，由 `GET /v1/r/<令牌>` 每次现发。
+- 审阅网页 `noindex`，不列目录；图片地址由 `GET /v1/r/<令牌>` 每次现发（带短时效签名），但存储的 CDN 地址**不带签名也能读**（CloudBase PG 模式环境改不了存储安全规则，2026-11-16 实测）。因此对象路径末段由服务端密钥 HMAC 派生（`shares/<share_id>/<v>/<32 位十六进制>.png`），不能由 share_id 推出；**看过某张图地址的人在链接停止或到期前都能直接打开这张图**，停止分享 / 到期即删除对象，CDN 缓存最多约 10 分钟（维护者 2026-11-16 定）。
 
 ### 五、意见的锚点与「图改过之后」
 
@@ -72,8 +78,8 @@ verdict = { v, decision: "approved" | "changes", note, author, at }   // 每版�
 
 | 方法 · 路径 | 用途 |
 | --- | --- |
-| `POST /v1/shares` | 新建：`{client_share_id, kind: figure\|layout, title, note, png_bytes, elements}` → `{share_id, review_url, owner_token, version: 1, upload, quota}`；`client_share_id` 幂等 |
-| `POST /v1/shares/<id>/versions` | 更新到同一链接：`{png_bytes, elements, note?}` → `{version, upload, quota}` |
+| `POST /v1/shares` | 新建：`{client_share_id, kind: figure\|layout, title, note, png_bytes, elements, size_mm?}` → `{share_id, review_url, owner_token, version: 1, upload, quota}`；`client_share_id` 幂等 |
+| `POST /v1/shares/<id>/versions` | 更新到同一链接：`{png_bytes, elements, note?, size_mm?}` → `{version, upload, quota}` |
 | `POST /v1/shares/<id>/versions/<v>/complete` | 核对已上传对象的大小与 PNG 魔数后版本才可见；顺延有效期 |
 | `DELETE /v1/shares/<id>` | 停止分享 |
 | `GET /v1/shares/<id>/feed?since=<游标>` | 作者拉增量（新意见 / 回复 / 结论 / 删除） |
@@ -100,7 +106,7 @@ verdict = { v, decision: "approved" | "changes", note, author, at }   // 每版�
 - 轮询：**没有未到期的分享记录就一次网络都不发**；有记录时引擎每 30 分钟拉一次 `feed`，「审阅」页签开着时前端每 60 秒请求一次刷新。新意见 → 顶栏「分享审阅」按钮小圆点 + 通知轨胶囊（「林老师留了 2 条意见 · 查看」）。
 - 逐次授权：只有用户点「生成链接 / 更新到同一链接」才上传；失败 / 取消后不自己重试。
 - 逃生口：`TAVOTTO_NO_REVIEW_SHARE=1` 整个功能不出现、不联网。
-- **上线开关**：`reviewshare.PRODUCTION_LIVE` 在线上服务部署并验通（建链接、更新、审阅页、额度计数）之前为 `False`——不设 `TAVOTTO_REVIEW_ENDPOINT` 时入口不出现、零网络；验通后单独一个 PR 改为 `True`（发版依赖）。
+- **上线开关**：`reviewshare.PRODUCTION_LIVE` 在线上服务部署并验通（建链接、更新、审阅页、额度计数）之前为 `False`——不设 `TAVOTTO_REVIEW_ENDPOINT` 时入口不出现、零网络。2026-11-16 `review.tavotto.cn` 部署并端到端验通，改为 `True`（维护者同意随 0.21.3 发布）。
 
 ### 八、界面（维护者 2026-11-15 过目的截图稿）
 

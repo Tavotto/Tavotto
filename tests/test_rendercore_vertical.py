@@ -88,6 +88,45 @@ def test_columns_fold_by_box_height_and_run_right_to_left():
         assert col.length == pytest.approx(len(col.logical) * 10.0)
 
 
+def _vbox(asc: float, desc: float, width: float = 1.0) -> dict:
+    return {
+        "ok": True,
+        "width": width,
+        "ascent": asc,
+        "descent": desc,
+        "segments": [["M", 0.0, -desc], ["L", width, -desc], ["L", width, asc], ["Z"]],
+    }
+
+
+def test_a_tall_formula_widens_only_its_own_column_and_short_ones_change_nothing():
+    """竖排的「公式撑开所在行」（ADR 0152 修订）：列盒 = 普通列宽 ∪ 公式盒（上升朝右、下降朝左，围着侧躺基线）；
+    装得下的公式（x²）不改列宽；后面的列跟着往左让。侧躺基线在列中线左边固定 `BASELINE_BELOW_CENTER` em。"""
+    faces = _fake_faces()
+    size, lh = 10.0, 1.25
+    k = typography.BASELINE_BELOW_CENTER
+    tall, short = r"\sum_i x_i", "x^2"
+    fam = typography.latin_family(None)
+    math = {
+        typography.math_key(tall, fam): _vbox(1.45, 1.0),
+        typography.math_key(short, fam): _vbox(0.79, 0.0),
+    }
+    text = f"{HAN[:2]}${short}$\n{HAN[:2]}${tall}$\n{HAN[:2]}"
+    block = vertical.layout_text(_obj(text, text_format="latex"), faces, math)
+    assert block is not None and len(block.columns) == 3
+    c1, c2, c3 = (c.cx for c in block.columns)
+    right = 10.0 * MM + 40.0 * MM
+    half = size * lh / 2
+    assert c1 == pytest.approx(right - half)  # x² 装得下：与纯文字同一个列宽
+    assert c2 == pytest.approx(c1 - half - (1.45 - k) * size)  # 第二列右边 + 公式中线以右那一截
+    assert c3 == pytest.approx(c2 - (1.0 + k) * size - half)  # 第二列左边 = 公式的下降 + 基线偏移
+    for col in block.columns:
+        assert col.side_x == pytest.approx(col.cx - k * size)
+    # 不排公式（缩略图等）：公式按源码侧躺（源码长，可能多折一列），不撑列
+    plain = vertical.layout_text(_obj(text, text_format="latex"), faces)
+    want = [right - (i + 0.5) * 2 * half for i in range(len(plain.columns))]
+    assert [c.cx for c in plain.columns] == pytest.approx(want)
+
+
 def test_padding_shrinks_the_column_length_and_insets_the_first_column():
     faces = _fake_faces()
     block = vertical.layout_text(_obj(HAN, h_mm=30.0, padding_mm=10.0), faces)
@@ -268,10 +307,8 @@ def test_mixed_script_latin_lies_on_its_side_and_cjk_stays_upright(provider, tmp
     ly = [c[2] for c in latin]
     assert ly == sorted(ly) and min(ly) > max(c[2] for c in cjk)
     assert max(c[1] for c in latin) - min(c[1] for c in latin) < 0.01
-    # 中线基线：侧躺段的 em 方框中点与直立字的 em 方框中点落在同一条列中线上
-    # （侧躺基线 x = 中线 − (升 + 降) / 2 × 字号；Liberation Serif 的 typo 度量取自批准字体）
-    face = provider.face_for("serif", False, False)
-    mid = (face.ascender + face.descender) / 2 * 14.0
+    # 侧躺基线在列中线左边固定 `BASELINE_BELOW_CENTER` em（与字体度量无关，ADR 0073 修订）
+    mid = typography.BASELINE_BELOW_CENTER * 14.0
     cx = 60.0 * MM - 14.0 * 1.25 / 2
     assert latin[0][1] == pytest.approx(cx - mid, abs=0.2)
 

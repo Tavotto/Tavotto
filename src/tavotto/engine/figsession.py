@@ -63,6 +63,7 @@ from matplotlib import (
     _tight_bbox,
     artist as martist,
     backend_bases,
+    contour as mcontour,
     figure as mfigure,
     ticker,
     transforms,
@@ -447,6 +448,7 @@ def runtime_report(
     inputs: dict | None = None,
     fidelity: dict | None = None,
     import_skips: list | None = None,
+    gui_backends: list | None = None,
 ) -> dict:
     """执行侧**自报**的运行时事实（ExecutionReceipt 的 worker 半边，ADR 0053）。
 
@@ -468,6 +470,9 @@ def runtime_report(
     `import_skips`（ADR 0153）：`bridgeboot` 的查找器跳过的「找到了但读不了」的 import 位置，每条
     `{module, entry, error}`；`entry` 是机器路径，只在私有回执里出现（`receipt.import_skips` 投影成模块名）。
     safe 与 native 同一份；没发生过就是空表。
+
+    `gui_backends`（ADR 0195）：脚本想用、被 Tavotto 中和成非交互后端的 GUI 后端名（`bridgeboot.gui_backend_events`，
+    闭集小写名，没有路径）。落在 `gui_backends_neutralized`；没发生过就是空表。
     """
     if origin not in REPORT_ORIGINS:
         raise ValueError(f"report origin 非法: {origin!r}")
@@ -501,6 +506,7 @@ def runtime_report(
         "inputs": dict(inputs) if isinstance(inputs, dict) else None,
         "fidelity": dict(fidelity) if isinstance(fidelity, dict) else None,
         "import_skips": [dict(e) for e in (import_skips or []) if isinstance(e, dict)],
+        "gui_backends_neutralized": [str(n) for n in (gui_backends or []) if isinstance(n, str)],
     }
 
 
@@ -974,6 +980,10 @@ def _svg_pair_artist_blocker(artist, cache: dict) -> str | None:
     for name, value in (getattr(artist, "__dict__", None) or {}).items():
         if name == "_remove_method" and _is_list_remove(value):
             continue  # matplotlib 自己放进实例字典的唯一 C bound method（`Artist.remove` 时才调用，绘制不调用）
+        if name == "labelFmt" and isinstance(artist, mcontour.ContourLabeler):
+            # `clabel(fmt=<函数 / Formatter>)` 存下的标签格式：只在 `clabel` / `add_label_near` 生成标签文字时调用，
+            # 产出的是普通 Text；`ContourSet.draw` 不调用它（ADR 0150 §4 封闭例外）
+            continue
         if any(not _svg_pair_owned(part, 0, cache) for part in _svg_pair_callable_parts(value)):
             return f"custom instance attribute {type(artist).__qualname__}.{name}"
     # path effect 对象不是可调用属性，但它们的 draw_path 拿着 renderer：按类核
@@ -2038,6 +2048,10 @@ class LiveFigureSession:
             "manifest": self.render(stem, timings, preview_dpi, preview=verdict),
             "warnings": warnings,
         }
+        # 更新的 Tavotto 写下、这一版认不出的 override（不应用、不算 warning）。**有才带**：没有时响应形状与
+        # 从前逐字相同（老信封契约，`test_legacy_envelope_keeps_the_old_response_shape`）
+        if self.states[stem].future_props:
+            result["future_props"] = list(self.states[stem].future_props)
         if preview is not None:
             preview.update(verdict)
         if inline_svg and verdict["mode"] != previewbudget.MODE_RASTER:
@@ -2165,6 +2179,8 @@ class LiveFigureSession:
         try:
             t0 = time.perf_counter()
             warnings = overrides_mod.apply(state, patches)
+            # 下面 finally 里还原那一次 apply 会把它清掉：现在取（写回据此拒绝，见 app.WriteBackFutureError）
+            future_props = list(state.future_props)
             t1 = time.perf_counter()
             # 像素预算：量即将分配的栅格，超了就在 mkdir / 任何写入之前抛（finally 照常还原 patches）。
             # 放在 apply 之后，figsize / frame 类 patch 已经生效，量的是真实要画的尺寸。
@@ -2344,7 +2360,10 @@ class LiveFigureSession:
             # 还原那次的 warnings 丢弃：报给调用方的必须是「这组 patches
             # 有没有写不进去的」，混进还原噪音会让写回自检误判。
             overrides_mod.apply(state, prev)
-        return {**result, "warnings": warnings}
+        out = {**result, "warnings": warnings}
+        if future_props:  # 有才带，响应形状与从前相同（同 override）
+            out["future_props"] = future_props
+        return out
 
 
 class _NullCtx:

@@ -399,7 +399,7 @@ def test_production_code_does_not_trust_the_test_key(monkeypatch):
         assert test_pub not in f.read_text("utf-8"), f
     assert mod.CATALOG_URLS == (
         "https://tavotto.cn/v1/journal-catalog/",
-        "https://tavotto.com/v1/journal-catalog/",
+        "https://www.tavotto.com/v1/journal-catalog/",
     )
 
 
@@ -489,7 +489,7 @@ def test_stale_lock_file_does_not_block(env):
 
 # ------------------------------ 两个入口：.cn 与 .com，先后按大陆环境 ------------------------------
 CN = "https://tavotto.cn/v1/journal-catalog/"
-COM = "https://tavotto.com/v1/journal-catalog/"
+COM = "https://www.tavotto.com/v1/journal-catalog/"
 
 
 def test_two_entries_ordered_by_the_shared_region_rule(env, monkeypatch):
@@ -530,7 +530,7 @@ def test_first_entry_down_falls_over_to_the_second(env, monkeypatch):
     monkeypatch.setattr(jr, "_request", two_hosts)
     out = jr.sync(force=True, ui_locale="zh-CN")
     assert out["fetch"] == "updated"
-    assert served[0] == "https://tavotto.cn" and served[-1] == "https://tavotto.com"
+    assert served[0] == "https://tavotto.cn" and served[-1] == "https://www.tavotto.com"
     # 令牌与刊包同样按先后换入口；两个入口背后是同一个后端，所以同一枚令牌通用
     assert jr.ensure_journal("fx-beta", ui_locale="zh-CN")["state"] == "ready"
 
@@ -748,8 +748,12 @@ def test_nacl_is_imported_only_inside_the_verify_function():
                 assert not any(m.split(".")[0] == "nacl" for m in mods), path
     # 外部审阅（ADR 0187）的设备签名同样延后 import，只在用户点「生成链接 / 更新」时才加载
     assert set(offenders) == {
-        ("src/tavotto/engine/journalremote.py", "_ed25519_verify"),
+        (
+            "src/tavotto/engine/ed25519util.py",
+            "verify",
+        ),  # 期刊目录与高级版授权共用的验签（ADR 0193）
         ("src/tavotto/engine/reviewshare.py", "_signing_key"),
+        ("src/tavotto/engine/license.py", "_signing_key"),  # 授权的设备密钥（另一把，不与审阅共用）
     }, offenders
 
 
@@ -786,3 +790,14 @@ def test_sync_reply_carries_the_catalog_when_downloaded_bundles_exist_even_at_th
     assert "fx-beta" in out["loaded"]
     assert out["catalog"] is not None
     assert "rules" in out["catalog"]["journals"]["fx-beta"]
+
+
+def test_overseas_entries_use_www_host_not_the_redirecting_apex():
+    """裸域 tavotto.com 308 到 www，客户端拒跟跳转：v1 / v2 的海外入口都必须直接写 www。"""
+    from urllib.parse import urlsplit
+
+    from tavotto.engine import journalfacts_remote
+
+    for url in (*jr.CATALOG_URLS, *journalfacts_remote._FACTS_URLS):
+        host = urlsplit(url).hostname
+        assert host in ("tavotto.cn", "www.tavotto.com"), url

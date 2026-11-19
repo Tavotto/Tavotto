@@ -151,3 +151,58 @@ D1 的授权边界（桌面用户发起）原本只拦「路由选的 native」�
 **决定（用户批准修法 A）**：把守卫原本「跳过」的项目内写 / 改名 / 删除改道进**本次运行的暂存覆盖层**（worker 会话目录下，运行结束丢弃），Python 层的读看到覆盖后的视图；用户项目一个字节不改。能一致呈现的操作不再算 material、不再触发回退。
 **不变**：覆盖层够不着的观察（`os.stat` / `listdir` / `scandir` / C 层读 / 子进程）仍按守卫账本的老规矩命中；覆盖层模拟不了的操作交回原守卫（跳过并记账）；`open('w')` 改写已有文件不拦的契约不变；0106 的数据改指、只读回退、输入观察器的安装顺序语义不变；native 的契约不变。
 细则：`docs/rules/backend/worker-protocol-and-lifecycle.md`「暂存覆盖层」；实现 `writetripwire.install_overlay`（复用 ADR 0143 改道层的视图实现）；看护 `tests/test_worker_overlay.py`。
+
+## 修订（2026-11-17）：MCP 打开图时同样静默回退 native 一次
+
+**起因**：agent 评测（opencode + DeepSeek v4.1 Flash，`tavotto_open_figure`）里，脚本先 `savefig("fig.png")` 再 `Image.open("fig.png")` 读回，safe 守卫拦下不落盘的 savefig，MCP 恒报
+`safe_file_operation_blocked`；同一个脚本在桌面上点「打开并运行」会静默换 native 出图。MCP 是 D1 明确排除的来源（`not_desktop_initiated`），agent 只能自己改脚本绕开。
+
+**裁决（维护者 2026-11-17）**：MCP 照桌面版做——`tavotto_open_figure`（含会话恢复时的重开）的 safe 渲染以 `safe_file_operation_blocked` 收场时，**静默**换 native 再跑一次，
+之后这条 MCP 会话的编辑 / 预览 / 导出都在那张 native 活图上。维护者已知并接受：native 没有 MCP 的写入根绊线（`writetripwire`，#898），回退之后脚本可写任意位置。
+
+**授权来源**：`execpolicy.decide_fallback(mcp_initiated=True)`。这个事实不来自任何请求体或模型参数：只有 MCP 桥在**自己的进程里**打开图时由桥的代码传入（HTTP 端点从不传它）。
+它与 `desktop_initiated` / `user_confirmed` 一样**只顶替第一道来源判据**；运维开关 `TAVOTTO_EXECUTION_FALLBACK`、项目的「只用安全运行」(`safe_only`)、取消 / 过期、
+「原因必须是 `blocked`」、单向、同一次运行至多一次、`MAX_ATTEMPTS_PER_RUN`——一道不少。解释器沿用 safe 当时那一个。
+
+**为什么可以放行**：safe 不是沙盒，绊线也不是（`writetripwire` 自己写明盲区）：MCP 的 safe 运行本来就以用户权限执行 agent 指向的任意 Python，`subprocess` / C 扩展都能写授权根之外。
+回退改变的是文件语义（savefig 真落盘、读得回来），不是权限边界。浏览器修订里「这道闸防的是模型给的参数 / MCP」那一条，针对的是**经 HTTP 替用户点确认**；本修订不开放那条路——HTTP 端点照旧 `not_desktop_initiated`，
+`confirm_native_run` 照旧只认页面 cookie。
+
+**如实告诉 agent**：回包带 `execution: "native"` 与回退原因；工具说明写明 native 运行没有写入范围限制。
+
+**不变的**：不新增 `native_run` MCP 工具、`tavotto_open_figure` 不加 `execution` 参数（agent 不能直接要 native，只能经 safe 被拦这一条证据）；CLI `tavotto run` 的确认合同不变；
+HTTP 显式 `execution: "native"` 的非桌面来源仍 403 `native_requires_desktop`；native 会话不进 safe 池的 LRU（淘汰 = 杀用户进程）。
+
+**实现**：策略参数与看护先落（#1985）；MCP 桥的接线（`engine/nativefallback.py` + `bridge._native_fallback`）、会话字段与回包、关闭 / 驱逐 / 退出清理随后一个 PR，细则 `docs/rules/plugin/sessions-and-batch-open.md`。会话恢复不另做：`Session.native` 不落盘，恢复时 `_render` 按同一条证据重新回退。
+
+## 修订（2026-11-18）：库式模块的函数入口，native 回退跑完模块再调同一个函数（一份用户反馈，维护者批准方案 A + B）
+
+**现象**：Windows 0.21.2 一份反馈包。注册入口是函数 `geography`（同一脚本还有零参出图函数 `cooling`）；包里没有脚本源码，「没有调用它的 `if __name__` 守卫」是推测（native 退出码 0、用时远短于一次出图），合成复现见看护；
+保存辅助函数 `savefig` 之后读回自检，safe 拦下 → 换入口（`cooling`）仍拦下 → 桌面静默回退 native → 退出码 0、`no_figure_captured`。
+本 ADR「同一修订：先在 safe 下换入口」写的是「native 回退用**原来被拦的入口**」，但 native 恒 `entry=None`（`python fig.py` 跑整份模块），
+入口是函数时那句话做不到：整份模块跑完什么都不调用，回退必然白跑。
+
+**决定 A**：native 的启动身份可以带一个**函数入口**（`ExecutionSpec.entry`，只限脚本目标、合法标识符、不是 `__main__`；
+`execspec.desktop_native_spec(entry=…)`，bridge 命令行 `--entry`；没有入口时命令行逐字节不变）。带入口时 `bridge_runner.run_script_entry`
+以文件名主干为模块名执行整份模块（`__name__ != "__main__"`，与 safe worker `import_module` 的函数入口同口径），再调这个零参函数。
+**何时带**只有一份判据 `discover.native_entry_of(path, entry)`：
+* `module`：入口是 `__main__` / 没有入口 / 脚本有 `if __name__` 守卫 / 顶层代码自己够得着绘图 / 解析不了 → 原样跑整份模块（旧行为；守卫怎么调由用户的代码决定）；
+* `call`：入口是函数、没有守卫、顶层不画图、顶层代码也没提到这个名字 → 跑完模块再调它；
+* 顶层代码提到了入口名（`from helpers import main; main()`、`plot(load())`、`fire.Fire(plot)`，含 import 绑定）→ 归 `module`：整份跑可能就会调到它，静态判不出，不另调也不拒绝（Codex #2044 P1）；
+* `unreachable`：入口是函数，顶层代码没提到它，且当前源码里已没有这个零参顶层函数。
+
+桌面准备会话（回退与路由直达的 native 计划，`preparation.native_entry_for`）与 MCP 回退（`nativefallback.decide` / `launch`）用同一份判据。
+回退用的仍是「原来被拦的那个入口」——换入口换到别的函数后，native 调的还是用户点的那张图的函数。
+
+**决定 B**：`unreachable` 时不起 native 白跑——桌面回退以 `plan_unavailable` 不接（不新增理由码与界面文字），停在原来的 blocked 卡上；
+MCP `decide` 同一个理由；路由直达的 native 以 `entry_unreachable` 回 safe。bridge 运行期发现入口不见了（判定之后脚本被改写）按脚本错误如实失败，不是「没有图」。
+
+**对 native 契约的偏离**：「与 `python fig.py` 逐字相同」只在 `call` 这一档让步——那一档的 `python fig.py` 本来什么都不做，用户也从不这样跑它（图是 Tavotto 按登记的函数入口画的）。
+终端 `tavotto run`（`execspec.native_spec`）不带入口，行为不变。
+
+**残余**：有 `if __name__` 守卫、但守卫不调登记入口的脚本仍整份运行（守卫由用户代码决定，B 也不拦）。
+
+**看护**：`tests/test_native_function_entry_e2e.py`（真 sidecar：safe 真被 stat 读回拦下 → native 带入口出图；去掉入口即 `no_figure_captured`）、`tests/test_native_function_entry.py`（判据逐种写法、命令行与校验、真 bridge 子进程调函数且 savefig 透传 / 不带入口仍是旧行为 / 入口运行期不见了是脚本错误、
+桌面回退带原入口、有守卫不带、够不到不起 native、MCP 同一判据）。
+
+**另记（不在本修订内）**：safe 换入口挑的是同一份脚本里**另一张图**的函数（`geography` → `cooling`），即使成功也不是用户点的那张；待另行处理。

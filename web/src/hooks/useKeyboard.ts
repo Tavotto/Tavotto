@@ -25,6 +25,7 @@ import {
   finishFocusedRichText,
   yieldsCanvasShortcuts,
 } from '@/store/gestureCoordinator'
+import { isCanvasCovered } from '@/store/canvasCover'
 import { useInteractionStore } from '@/store/interactionStore'
 import { panelRender, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -74,6 +75,7 @@ const inEditableTarget = (e: KeyboardEvent) => yieldsCanvasShortcuts(e.target)
  * 而不是把整个面板从画布上删掉。
  */
 export function deleteSelection() {
+  if (isCanvasCovered()) return // 画布被「数据」临时标签盖住：不改看不见的文档（顶栏 / 命令面板 / 菜单 / 键盘共用这个入口）
   const ui = useUiStore.getState()
   if (ui.elementPanelId && ui.selectedGids.length) {
     hideSelectedElements(ui.elementPanelId, ui.selectedGids)
@@ -145,6 +147,7 @@ export function undoRedoBlocked() {
 
 /** ⌘Z / ⌘⇧Z 的实际动作；拖动中直接放弃（见 undoRedoBlocked） */
 export function runUndoRedo(redo: boolean) {
+  if (isCanvasCovered()) return // 同上（顶栏的撤销 / 重做钮也走这里）
   if (undoRedoBlocked()) return
   // 撤销/重做是离散动作：先把还开着的那一轮连续编辑整个收干净
   // （事务、安静计时器、预览会话、挂起的定稿渲染）。只靠 `undo()` 开头那句

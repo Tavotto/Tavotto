@@ -198,8 +198,8 @@
     "textMenu": "文字"
   },
   "unexpectedError": {
-    "text": "Tavotto 出了点意外",
-    "body": "发一份诊断给我们，能帮我们更快找到原因、修好它。"
+    "text": "Tavotto 遇到了意外状况",
+    "body": "你的项目文件完好无损。方便的话发一份脱敏诊断，帮我们尽快定位原因。"
   },
   "exitNotice": {
     "engine": {
@@ -391,7 +391,6 @@
     "restoreAspect": "恢复原始比例",
     "restoreNativeSize": "恢复原始尺寸",
     "adoptScriptFrame": "改用脚本保存时的图幅",
-    "adoptComputedFrame": "采用计算渲染外框",
     "restoreStyle": "恢复原样并解除样式跟随",
     "alignNewFigure": "按样式对齐新图",
     "alignNewText": "按样式对齐新标注",
@@ -411,6 +410,7 @@
     "setPublicationProfile": "设置出版规范",
     "clearJournal": "取消按期刊检查",
     "setJournal": "选择期刊",
+    "refreshJournalV2": "更新期刊要求",
     "showObject": "显示对象",
     "spacingX": "设置水平间距",
     "spacingY": "设置垂直间距",
@@ -437,7 +437,8 @@
     "hideObjects": "隐藏 {{count}} 个对象",
     "showObjects": "显示 {{count}} 个对象",
     "setFramePad": "修改画布留白",
-    "journalStyle": "按 {{journal}} 调整样式「{{name}}」"
+    "journalStyle": "参考 {{journal}} 的记录调整样式「{{name}}」",
+    "adoptComputedFrame": "采用计算渲染外框"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -509,7 +510,9 @@
     "memoryEfficientPreview": "低内存编辑预览",
     "memoryEfficientPreviewHint": "图形较复杂，Tavotto 已改用低内存编辑预览。导出质量不受影响。",
     "nativeInconsistent": "有改动没能还原，重新运行原命令可继续编辑",
-    "nativeOffline": "会话已结束，重新运行原命令可继续编辑",
+    "nativeOffline": "运行已结束",
+    "nativeRerun": "重新运行",
+    "nativeRerunHint": "重新运行这个脚本，之后就能继续编辑这张图",
     "nativeRunning": "脚本正在运行，停下来才能编辑",
     "rendering": "渲染中…",
     "runtimeMissingEnvironment": "找不到可用的渲染环境",
@@ -581,11 +584,13 @@
       "problems": "问题",
       "settings": "设置",
       "style": "样式",
-      "workspace": "项目"
+      "workspace": "项目",
+      "data": "数据"
     },
     "style": "样式",
     "workspace": "项目",
-    "problemsBlocking_other": "问题 · {{count}} 项阻断（共 {{total}}）"
+    "problemsBlocking_other": "问题 · {{count}} 项阻断（共 {{total}}）",
+    "data": "数据"
   },
   "readiness": {
     "foreign": {
@@ -670,11 +675,11 @@
     "projectConflict": "项目里的 {{file}} 已在别处改过，这次没有写入。请在弹出的对话框里决定。",
     "projectConflictElsewhere": "项目里的 {{file}} 已在别处改过，这次没有写入。回到那份排版再保存，就能决定怎么处理。",
     "projectFailed": "没能存进项目里的 {{file}}：{{reason}}",
-    "projectBindingUnavailable": "项目文件关联尚未确认，本次还没有写入命名文件。改动仍在本机，请重试或重新打开排版。",
-    "projectBindingSuperseded": "已写入 {{file}}，但下次保存目标尚未确认。较晚选择的目标会保留，请重新打开这份排版后继续保存。",
     "projectSkipped": "没有写入项目里的 {{file}}：按下保存之后切换了排版或项目。回到那份排版再保存一次。",
     "reloadFailed": "没能读到磁盘上的那一版",
-    "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。"
+    "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。",
+    "projectBindingUnavailable": "项目文件关联尚未确认，本次还没有写入命名文件。改动仍在本机，请重试或重新打开排版。",
+    "projectBindingSuperseded": "已写入 {{file}}，但下次保存目标尚未确认。较晚选择的目标会保留，请重新打开这份排版后继续保存。"
   },
   "scrim": {
     "collapse": "收起侧栏"
@@ -758,7 +763,8 @@
     "tryTutorial": "试用示例",
     "rulerUnit": "mm",
     "rulerUnitTitle": "标尺单位：毫米",
-    "textPlaceholder": "输入文字"
+    "textPlaceholder": "输入文字",
+    "emptyFromData": "用数据画一张"
   },
   "stylePanel": {
     "emptyTitle": "在画布上选中一张图，这里显示它的样式",
@@ -811,10 +817,10 @@
     "bindCancelled": "切换了画布，刚才选的样式没有绑上，请在那张画布上再选一次",
     "bindMissing": "要绑定的那套样式已经不在样式库里了，没有改动",
     "editCancelled": "样式或画布刚换过，刚才的改动没有生效，请再改一次",
-    "journalMismatch": "{{count}} 项不合 {{journal}}",
-    "journalAdjust": "按期刊调整",
+    "journalMismatch": "可根据 {{journal}} 的记录调整 {{count}} 项",
+    "journalAdjust": "参考记录调整",
     "journalAnnotation": "画布文字",
-    "journalAdjusted": "已按 {{journal}} 调整样式，可撤销",
+    "journalAdjusted": "已参考 {{journal}} 的记录调整样式，可撤销",
     "journalRetry": "再试一次",
     "journalProp": {
       "fontsize": "字号",
@@ -881,9 +887,6 @@
     "packageOpenFailed": "无法打开项目包。{{error}}",
     "packageTooNew": "这个项目包来自更新的 {{product}}，本版本无法打开。",
     "packageOpened": "已打开项目包（{{createdAt}}），素材全部就位",
-    "packagedIncomplete_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材。恢复前请补齐。",
-    "packagedExecutionIncomplete": "已生成项目包 {{name}}。运行依赖尚未确认完整，迁移前请检查数据与运行配置。",
-    "packagedIncompleteWithExecution_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材，运行依赖也尚未确认完整。迁移前请补齐素材并检查数据与运行配置。",
     "packaged_other": "已生成项目包 {{name}}（{{count}} 个素材）",
     "pasteNothing": "没有可粘贴的对象。缺失素材的对象已跳过。",
     "pastedWithSkips_other": "已粘贴 {{count}} 个对象，跳过 {{skipped}} 张缺失素材的图。{{undo}} 可撤销。",
@@ -899,7 +902,8 @@
     "renderFailedWithError": "无法渲染 {{name}}。{{error}}",
     "scriptChanged_other": "脚本已更新，{{count}} 张图已重新渲染",
     "sourceLinked_other": "已找到源脚本（{{count}} 张）",
-    "sourceLostEditing": "源脚本关系已失效，已返回画布。图片和它在画布上的摆放都保留着。",
+    "sourceLostEditing": "你可能移动了该图脚本，需要重新关联。",
+    "sourceLostRelink": "重新关联脚本",
     "sourceLost_other": "源脚本关系已失效，{{count}} 张图已改为普通图片。图片和它们在画布上的摆放都保留着。",
     "styleCopiedArrow": "已复制箭头样式",
     "styleCopiedPanel": "已复制图的样式",
@@ -919,7 +923,10 @@
       "incomplete": "组里有成员这一版拿不到位置，暂时不能整组移动或缩放"
     },
     "copyDetails": "复制详情",
-    "copiedDetails": "已复制"
+    "copiedDetails": "已复制",
+    "packagedIncomplete_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材。恢复前请补齐。",
+    "packagedExecutionIncomplete": "已生成项目包 {{name}}。运行依赖尚未确认完整，迁移前请检查数据与运行配置。",
+    "packagedIncompleteWithExecution_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材，运行依赖也尚未确认完整。迁移前请补齐素材并检查数据与运行配置。"
   },
   "tabs": {
     "allCanvases": "全部画布",
@@ -1530,7 +1537,7 @@
       "worker_chain_failed": "{{product}} 的渲染组件在 {{label}} 里启动不了，所以没用它。",
       "activation_failed": "{{label}} 是 Conda 环境，但激活它时出错了，所以没用它。",
       "probe_timeout": "检查 {{label}} 花的时间太长了，这次没用它。",
-      "unusable": "{{label}} 起不来，所以没用它。",
+      "unusable": "{{label}} 无法正常启动，已跳过。",
       "cache_denied": "{{label}} 没法在 {{product}} 的缓存里新建文件夹，所以没用它。",
       "not_checked": "{{label}} 要等到运行时才能确认，这次没用它。",
       "outranked": "{{label}} 也能用，只是有更合适的环境排在前面。",
@@ -1602,6 +1609,7 @@
         "select_environment": "正在切换环境",
         "convert_script": "正在生成可编辑版本",
         "link_data_file": "正在接入数据文件",
+        "set_run_arguments": "正在填写运行参数",
         "ignore_import_folder": "正在跳过这个文件夹",
         "run_command": "正在运行命令…",
         "rollback": "正在撤销刚才的改动",
@@ -1635,6 +1643,21 @@
         "other": "AI 这次没能修好"
       }
     },
+    "hint": {
+      "copyRun": "会把你指认的 {{source}} 复制一份到 {{target}}，原文件不动。",
+      "grantCopy": "会弹出系统的授权窗口，同意后再复制；原文件不动。",
+      "openPrivacy": "在“隐私与安全性 → 完全磁盘访问”里勾上 {{product}}，再回来重新运行。"
+    },
+    "folder": {
+      "desktop": "桌面",
+      "documents": "文稿",
+      "downloads": "下载",
+      "icloud": "iCloud 云盘"
+    },
+    "library": {
+      "partial": "只查了一部分文件，可能还有别的脚本调用它",
+      "openFailed": "没能打开那个文件夹"
+    },
     "inputs": {
       "title": "捕获输入",
       "hint": "选择下一次明确运行时要记录的输入。保存仅重新检查，不运行脚本。",
@@ -1663,21 +1686,6 @@
       "scopeUnknown": "当前运行范围尚未确定。",
       "notScript": "当前目标不是可声明输入的脚本。",
       "captured": "实际运行记录的输入摘要：{{revision}}"
-    },
-    "hint": {
-      "copyRun": "会把你指认的 {{source}} 复制一份到 {{target}}，原文件不动。",
-      "grantCopy": "会弹出系统的授权窗口，同意后再复制；原文件不动。",
-      "openPrivacy": "在“隐私与安全性 → 完全磁盘访问”里勾上 {{product}}，再回来重新运行。"
-    },
-    "folder": {
-      "desktop": "桌面",
-      "documents": "文稿",
-      "downloads": "下载",
-      "icloud": "iCloud 云盘"
-    },
-    "library": {
-      "partial": "只查了一部分文件，可能还有别的脚本调用它",
-      "openFailed": "没能打开那个文件夹"
     }
   },
   "canvasMenu": {
@@ -1734,6 +1742,9 @@
     "fitContent": "贴合内容",
     "clearPad": "去掉留白",
     "notWrittenBack": "留白只在 Tavotto 导出时生效，不写回脚本"
+  },
+  "dataDrawer": {
+    "count": "{{count}} 个数据文件"
   },
   "chartBind": {
     "title": "绑定数据为计算图表",

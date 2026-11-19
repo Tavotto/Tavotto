@@ -1,3 +1,5 @@
+import { DataPanel } from '../datastudio/DataPanel'
+import { useDataFigureStore } from '@/store/dataFigureStore'
 import { useTranslation } from 'react-i18next'
 import { perfCount } from '@/perf/core'
 import { useMemo, useState } from 'react'
@@ -76,7 +78,9 @@ export function Inspector({
   const rawTab = useUiStore((s) => s.rightTab)
   // 「审阅」页签只在这张图 / 排版有分享记录时存在；记录没了（删除 / 换了图）而页签还停在它上面，就落回属性页
   const reviewShare = useReviewStore((s) => reviewTabVisible(s.enabled, s.share) ? s.share : null)
-  const tab: RightTab = rawTab === 'review' && !reviewShare ? 'properties' : rawTab
+  const draftActive = useDataFigureStore((s) => s.draftActive)
+  // 「数据」临时标签激活时右栏显示这份数据：分段控件停在「属性」
+  const tab: RightTab = draftActive ? 'properties' : rawTab === 'review' && !reviewShare ? 'properties' : rawTab
   const tabs = reviewShare ? REVIEW_TABS : TABS
   const setTab = useUiStore((s) => s.setRightTab)
   const width = useUiStore((s) => s.rightWidth)
@@ -123,7 +127,11 @@ export function Inspector({
               data-inspector-tab={id}
               panelId={PANEL_ID[id]}
               active={tab === id}
-              onClick={() => setTab(id)}
+              onClick={() => {
+                // 点别的页签 = 回到画布去看那一页：临时标签退到后台（标签还在）
+                useDataFigureStore.getState().deactivateDraft()
+                setTab(id)
+              }}
               // 助手页签：可达名带上「有任务在运行」，视觉上是页签右上角的一颗点
               aria-label={
                 id === 'assistant' && runningAi
@@ -192,7 +200,10 @@ export function Inspector({
       </div>
 
       <PageBoundsHint />
-      {tab === 'assistant' ? (
+      {draftActive ? (
+        // 画布标签栏里的「数据」临时标签激活时：右栏显示这份数据（不是画布上的任何对象）
+        <DataPanel />
+      ) : tab === 'assistant' ? (
         <TabPanel id={PANEL_ID.assistant} className="flex min-h-0 flex-1 flex-col">
           <AssistantPanel />
         </TabPanel>

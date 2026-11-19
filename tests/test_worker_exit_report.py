@@ -783,6 +783,97 @@ def test_direct_argv_index_error_can_be_recovered_with_the_existing_run_config(f
     assert "Fig1" in result["stems"]
 
 
+@needs_worker
+@pytest.mark.parametrize(
+    ("source", "tokens", "expected"),
+    [
+        # 一份用户反馈：`DATA, WORK, OUT = sys.argv[1:4]` 不带参数 → ValueError，不是 IndexError
+        ("import sys\na, b, c = sys.argv[1:4]\n", [], "script_needs_arguments"),
+        ("import sys\na, b, c = sys.argv[1:4]\n", ["one"], "script_needs_arguments"),
+        ("import sys\na, b = sys.argv[1:]\n", [], "script_needs_arguments"),
+        ("import sys\na, b = sys.argv[-2:]\n", [], "script_needs_arguments"),
+        ("import sys\nscript, a, b = sys.argv\n", ["one"], "script_needs_arguments"),
+        ("from sys import argv as args\na, b = args[1:3]\n", [], "script_needs_arguments"),
+        (
+            "import sys\ndef main():\n    a, b = sys.argv[1:3]\nmain()\n",
+            [],
+            "script_needs_arguments",
+        ),
+        # 负起点 + 正终点：长度先增后减，补一个参数就够（Codex #1974 P2）
+        ("import sys\na, b = sys.argv[-2:2]\n", [], "script_needs_arguments"),
+        ("import sys\na, b = sys.argv[-3:3]\n", [], "script_needs_arguments"),
+        # 边界远在天边也照算（Codex #1974 第二条 P2）
+        ("import sys\na, b = sys.argv[5000:]\n", [], "script_needs_arguments"),
+        ("import sys\na, b = sys.argv[:-5000]\n", [], "script_needs_arguments"),
+        ("import sys\na, b = sys.argv[4999:5000]\n", [], "script_error"),
+        # 太多：补参数修不好
+        ("import sys\na, = sys.argv[1:]\n", ["one", "two"], "script_error"),
+        # 切片上限本身就不够：再多参数也拆不出三个
+        ("import sys\na, b, c = sys.argv[1:3]\n", [], "script_error"),
+        # 带步长 / 动态边界：不猜
+        ("import sys\na, b = sys.argv[1::2]\n", [], "script_error"),
+        ("import sys\nn = 3\na, b = sys.argv[1:n]\n", [], "script_error"),
+        # 同一行别的列表
+        ("import sys\nx = len(sys.argv)\na, b = [][0:1]\n", [], "script_error"),
+        ("import sys\na, b = [len(sys.argv)]\n", [], "script_error"),
+        # 分支汇入：可能根本没拆 argv
+        ("import sys\ndata = [1]\na, b = (data or sys.argv)[1:3]\n", [], "script_error"),
+        (
+            "import sys\ndata = []\na, b = (data if data is not None else sys.argv)[1:3]\n",
+            [],
+            "script_error",
+        ),
+        # 副本 / 被替换 / 被 finally 恢复
+        ("import sys\nargs = sys.argv[:]\na, b = args[1:3]\n", [], "script_error"),
+        ("import sys\nsys.argv = [sys.argv[0]]\na, b = sys.argv[1:3]\n", [], "script_error"),
+        (
+            "import sys\nsaved = sys.argv[:]\ntry:\n    sys.argv[:] = []\n"
+            "    a, b = sys.argv[0:2]\nfinally:\n    sys.argv[:] = saved\n",
+            [],
+            "script_error",
+        ),
+        ("class Fake:\n    argv = []\nsys = Fake()\na, b = sys.argv[1:3]\n", [], "script_error"),
+    ],
+)
+def test_unpacking_too_few_argv_values_is_a_script_needing_arguments(
+    figs, source, tokens, expected
+):
+    from tavotto.engine import runconfig
+
+    (figs / "argv_unpack.py").write_text(source, encoding="utf-8")
+    run = runconfig.selection_for(figs, "argv_unpack.py", tokens) if tokens else None
+    with pytest.raises(pool.WorkerError) as caught:
+        pool.build("argv_unpack.py", str(figs), "__main__", run=run)
+    error = caught.value
+    assert error.code == expected, str(error)
+    if expected == "script_needs_arguments":
+        assert "parse_kind" not in error.extra
+        assert error.extra.get("argv_count", 0) == len(tokens)
+        assert "ValueError" in error.traceback_text
+
+
+@needs_worker
+def test_unpacked_argv_can_be_recovered_with_the_existing_run_config(figs):
+    from tavotto.engine import runconfig
+
+    script = (
+        "import sys\n"
+        "data, work, out = sys.argv[1:4]\n"
+        "assert (data, work, out) == ('raw data', 'work dir', 'out dir')\n"
+        "import matplotlib.pyplot as plt\n"
+        "plt.plot([1, 2])\nplt.savefig('Fig1.png')\n"
+    )
+    (figs / "argv_unpack.py").write_text(script, encoding="utf-8")
+    with pytest.raises(pool.WorkerError) as caught:
+        pool.build("argv_unpack.py", str(figs), "__main__")
+    assert caught.value.code == "script_needs_arguments"
+    pool.invalidate("argv_unpack.py", str(figs))
+
+    run = runconfig.selection_for(figs, "argv_unpack.py", ["raw data", "work dir", "out dir"])
+    _, result = pool.build("argv_unpack.py", str(figs), "__main__", run=run)
+    assert "Fig1" in result["stems"]
+
+
 @pytest.mark.parametrize(
     "source, lines, expected",
     [

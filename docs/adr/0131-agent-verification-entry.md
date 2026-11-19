@@ -86,6 +86,10 @@ pytest 的假设进去会扩大攻击面）。纯标准库，复用 `_common.run
   - MSIX 重定向副本是否真不完整、为何缺件；
   - NSIS 安装 → 升级后的真实文件集；
   - 真 Codex（Store 版）交接。
+- **后续（11-19，同类现场缺 `ai_catalog.json`，sidecar import 即崩）**：缺件的原因是 Tavotto 曾在宿主包身份下
+  安装 / 更新，`%LOCALAPPDATA%\Tavotto` 的新文件落进 `Packages\<pfn>\LocalCache\Local\Tavotto`，成了半套副本；
+  之后从宿主拉起时壳的 `current_exe()` 就是副本。壳兜底（`src-tauri/src/msix_breakaway.rs`）现在发现自己在这种副本里、
+  且真实安装的同名文件在，就换成真实路径脱包重新拉起（同一个 guard 防循环）；副本不删。
 
 ### 六、交接三态（独立 PR 实现，见本节末「实现」）
 
