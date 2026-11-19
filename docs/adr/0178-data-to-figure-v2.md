@@ -283,6 +283,21 @@ id 是服务端登记的不透明串）、`POST /api/ai/data-figure/commit`（`{
 
 **界面文案（未改，列给用户定）**：`data_too_large` 等已上线文案里写着「5 MB」的地方；大表上被拒的汇总类画法只显示既有的「这种画法暂时画不出来」，没有说「表太大」；前端没有「正在读一个大文件」的进度与取消，也没显示 `reduced`（「画的是 N 行里的 K 个点」）。
 
+## 修订（2026-11-19）：大表的真实进度与取消（`engine/ai_data_progress.py`、`/api/ai/data-progress/<rid>`）
+
+**起因**。概览 / 出备选 / 缩略图 / 提交都是同步长请求（500 MB 读表 25–35 s、出候选 40–80 s），前端的「取消」只是不再等，后端会读完再丢掉。
+
+**进度**。请求带请求号（概览与缩略图的 query `request_id`；出备选与提交沿用 body 的 `client_request_id`），后端在读表循环里记「已读字节 / 总字节」：`_stream_check`（`validate`，sha256 + 增量解码两遍合计）、`_scan_summary`（`scan`，每 65536 行一个检查点）、候选副本复制（`stage`，8 MiB 一块）、
+缩减（`reduce`，运行时函数 `reduce_file` 的可选 `progress` 回调经 `tick_rows` 每 65536 行调一次；脚本里不传，所以公共模块里多了 `tick_rows`、哈希随之换了名）。`GET /api/ai/data-progress/<rid>` 回 `{state, kind, phase, phase_done, phase_total, pass, passes, fraction, indeterminate, cancellable, elapsed_s}`；`fraction` 按每种请求的阶段权重折算、
+**单调不减**（缩减要读几遍由候选的画法数定，`set_passes`）。缩略图与提交的 worker 阶段（读 + 缩减 + 画图）在另一个进程里、脚本不带回调，**没有字节进度**，如实标 `indeterminate: true`、`fraction: null`（提交前的重读校验仍有 `validate` / `scan` 字节进度）。
+**只有大表有条目**：条目在请求开始时登记（取消要能赶在读表之前到），结束时若从没进过大表阶段就删掉，查询读作 `none`——小表的请求与响应逐字不变（响应里多出来的只有大表才有的 `large` / `reduced` 标记）。条目有界（至多 32 条、终态留 10 分钟），只有阶段名与数字，不含路径 / 列名，不进遥测。会话认证 guard 与项目绑定同其它 `/api/ai/*` 端点（键是 `(项目, 请求号)`，别的项目查不到）。
+
+**取消**。选**取消端点** `POST /api/ai/data-progress/<rid>/cancel`，不用「请求断开即停」：Flask / werkzeug 的处理线程在读表期间不读 socket，断线检测在本仓库的 HTTP 栈里不可靠（桌面壳、本机代理、浏览器 `AbortController` 的行为也不一致）；显式端点语义确定、可幂等、可测试。
+取消是协作式的：读表循环的检查点发现标志就抛 `ai_data_progress.Cancelled`（**`BaseException` 子类**，与 `asyncio.CancelledError` 同约定：各处 `except Exception` —— `profile_folder`、概览 —— 吞不掉，不会被当成「这个文件读不了」），原请求回 409 `propose_cancelled`；清理走原有的 `except BaseException` 路径：候选目录（含半份大表副本）整个删、没有会话、幂等表不记这次响应、扫描 / 缩减缓存只在成功后才写。
+端点幂等：重复取消、取消已完成 / 不认识 / 别的项目的请求都是 200，`cancelled` 只在「这次真的把一个进行中的可取消请求标成了取消」时为真；取消与完成赛跑时**以原请求的响应为准**（最后一个检查点之后才到的取消不生效）。缩略图与提交**不可取消**（提交一旦开始就会落盘；缩略图在 worker 里画）。
+
+**大表标记**。`/api/ai/data-files` 里读过的文本表的 `table`、`/api/ai/data-overview` 的响应在大表上多一项 `large: true`（小表没有这一项）；`table` 为 null（预算内没读）的文件，前端用 `size > 5 MiB` 判断，窄表「不到 5 MiB 却超过 10 万行」要读过才知道。
+
 ## 注入分析：Agent 能读整个文件，表里的文字能影响模型
 
 表里的文字（列名、单元格、工作表名）可以诱导模型，但**模型能交出的只有一份闭集配方**：未知键、未知取值、层数不对、`why` 含换行都在 `from_dict` 当场拒收；

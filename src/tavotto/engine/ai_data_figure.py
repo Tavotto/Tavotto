@@ -34,7 +34,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import xlsxread
+from . import ai_data_progress as progress, xlsxread
 
 #: 「小表」的界线（ADR 0178 修订·大表）：不超过它就走原来的整份读进内存的路径（脚本、指纹、摘要逐字不变）；
 #: v1（CSV 同目录路径）、XLSX、合画永远只认小表。超过它的文本表格是「大表」，走流式读 + 缩减（`read_large_table` / 模板的 `*_reduced`）。
@@ -773,7 +773,7 @@ class TextTable:
     encoding: str | None = None
 
     def to_dict(self) -> dict:
-        return {
+        out = {
             "status": self.status,
             "code": self.code,
             "delimiter": DELIMITER_NAMES.get(self.delimiter) if self.delimiter else None,
@@ -783,6 +783,9 @@ class TextTable:
             "rows": self.rows,
             "preview": [{"line": n, "text": t} for n, t in self.preview],
         }
+        if self.summary is not None and self.summary.large is not None:
+            out["large"] = True  # 大表（读它要几十秒）；小表的响应没有这一项
+        return out
 
 
 #: 文本表格认的编码（稳定名，给界面显示；不外露 Python 的 codec 名）。判定规则只有这一条、确定且可解释：
@@ -1017,12 +1020,16 @@ def _stream_check(p: Path) -> tuple[str, str, str, int] | str:
     整份读逐条一致（BOM → UTF-8 BOM / UTF-16；否则严格 UTF-8，再严格 GB18030 + 合理性；NUL / 控制字符占 2% 以上 = 二进制；全空白 = 空），
     只是分块增量解码，不把整份文件读进内存。"""
     sha = hashlib.sha256()
+    total = 2 * p.stat().st_size  # 两遍：sha256 / NUL，再增量解码；进度按两遍合计
+    read = 0
     with p.open("rb") as fh:
         head = fh.read(4)
         fh.seek(0)
         nul = False
         for chunk in iter(lambda: fh.read(_CHUNK_BYTES), b""):
             sha.update(chunk)
+            read += len(chunk)
+            progress.tick("validate", read, total)
             if not nul and b"\x00" in chunk:
                 nul = True
     digest = sha.hexdigest()
@@ -1047,6 +1054,8 @@ def _stream_check(p: Path) -> tuple[str, str, str, int] | str:
                 while not last:
                     chunk = fh.read(_CHUNK_BYTES)
                     last = not chunk
+                    read += len(chunk)
+                    progress.tick("validate", min(read, total), total)
                     text = dec.decode(chunk, final=last)
                     if "\x00" in text:
                         return "data_binary"
@@ -1091,6 +1100,7 @@ def _scan_summary(
     encoding: str | None,
     units_row: bool,
     path: str | None = None,
+    pos=None,
 ) -> DataSummary:
     """大表的一遍扫描：`_summarize` 的流式版（同样的列统计、同样的错误码），行不进内存。结构线索用有界集合（`_Facts`）。
     除受控摘要外留下精确的整表统计（行数、每列有限数值的个数 / 最小 / 最大）与前 `LARGE_PREVIEW_ROWS` 行。"""
@@ -1122,6 +1132,8 @@ def _scan_summary(
         count += 1
         if count > MAX_ROWS:
             raise DataSourceError("data_too_long", str(count))
+        if not count & 0xFFFF and pos is not None:  # 每 65536 行：记已读字节、查取消
+            progress.tick("scan", pos(), size)
         if count <= LARGE_PREVIEW_ROWS:
             preview.append(r)
             pnums.append(n)
@@ -1284,7 +1296,7 @@ def _read_large_text_table(p: Path, *, header_row: int | None, size: int) -> Tex
                     summ = _scan_summary(
                         first[1], body, path_name=p.name, sha256=sha, size=size, parse=parse_cell,
                         delimiter=delim, header_row=None, header_line=1, encoding=encoding,
-                        units_row=False, path=str(p),
+                        units_row=False, path=str(p), pos=fh.buffer.tell,
                     )  # fmt: skip
             else:
                 head_cells, body = iter_table(fh, delim, script_header, units)
@@ -1293,7 +1305,7 @@ def _read_large_text_table(p: Path, *, header_row: int | None, size: int) -> Tex
                     summ = _scan_summary(
                         head_cells, body, path_name=p.name, sha256=sha, size=size, parse=parse_cell,
                         delimiter=delim, header_row=script_header, header_line=line,
-                        encoding=encoding, units_row=units, path=str(p),
+                        encoding=encoding, units_row=units, path=str(p), pos=fh.buffer.tell,
                     )  # fmt: skip
     except csv.Error:
         return _unreadable("data_malformed")

@@ -111,6 +111,10 @@ def _fill(out: dict, summ: adf.DataSummary, *, xlsx: bool = False) -> None:
         }
         for name in summ.columns
     ]
+    if summ.large is not None:
+        out["large"] = (
+            True  # 大表：前端据此在请求时带 `request_id` 显示进度（小表的响应没有这一项）
+        )
     shown, more = summ.preview(PREVIEW_ROWS)
     out["preview_rows"] = [
         {

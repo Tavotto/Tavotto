@@ -69,6 +69,7 @@ from .engine import (
     ai_convert as engine_ai_convert,
     ai_data_figure as engine_ai_data_figure,
     ai_data_overview as engine_ai_data_overview,
+    ai_data_progress as engine_ai_data_progress,
     ai_data_propose as engine_ai_data_propose,
     ai_data_task as engine_ai_data_task,
     ai_figure_edit as engine_ai_figure_edit,
@@ -15720,13 +15721,17 @@ def api_ai_data_overview():
     raw_row = request.args.get("header_row")
     if raw_row is not None:
         raw_row = int(raw_row) if re.fullmatch(r"[0-9]{1,9}", raw_row) else raw_row
+    rid = _progress_rid(request.args.get("request_id"))
     try:
-        out = engine_ai_data_overview.overview(
-            ctx.path,
-            request.args.get("path"),
-            sheet=request.args.get("sheet"),
-            header_row=raw_row,
-        )
+        with engine_ai_data_progress.track(str(ctx.path.resolve()), rid, "overview"):
+            out = engine_ai_data_overview.overview(
+                ctx.path,
+                request.args.get("path"),
+                sheet=request.args.get("sheet"),
+                header_row=raw_row,
+            )
+    except engine_ai_data_progress.Cancelled:
+        return _cancelled_response()
     except engine_ai_data_propose.ProposeError as exc:
         return _propose_error(exc)
     except engine_ai_data_figure.DataSourceError as exc:
@@ -15745,7 +15750,50 @@ _PROPOSE_STATUS = {
     "propose_cells_invalid": 400,
     "propose_cells_need_rule": 409,
     "propose_thumbnail_failed": 422,
+    "propose_cancelled": 409,
 }
+
+
+def _progress_rid(raw):
+    """进度跟踪用的请求号（可选）：没给 = 不跟踪；给了但格式不对 = 400。"""
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or engine_ai_data_progress.RID.fullmatch(raw) is None:
+        abort(400)
+    return raw
+
+
+def _cancelled_response():
+    return jsonify({"error": "已取消", "code": "propose_cancelled"}), 409
+
+
+@app.get("/api/ai/data-progress/<rid>")
+def api_ai_data_progress(rid):
+    """大表长请求的真实进度（实验开关后面、会话认证、按项目隔离）。`rid` = 发起请求时带的请求号（概览 / 缩略图的 query `request_id`，
+    出备选 / 提交的 body `client_request_id`）。回 `{state, kind, phase, phase_done, phase_total, pass, passes, fraction, indeterminate,
+    cancellable, elapsed_s}`；`state` 是 `none`（没有这个请求 / 小表请求 / 别的项目）/ `running` / `done` / `cancelled` / `failed`；
+    `fraction` 是 0–1 单调不减的总进度（`indeterminate` 为真时为 null：缩略图与提交的 worker 阶段没有字节进度）。只有数字与阶段名。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    ctx = current_ctx()
+    if engine_ai_data_progress.RID.fullmatch(rid) is None:
+        abort(400)
+    resp = jsonify(engine_ai_data_progress.snapshot(str(ctx.path.resolve()), rid))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/ai/data-progress/<rid>/cancel")
+def api_ai_data_progress_cancel(rid):
+    """取消一个进行中的读表类请求（概览 / 出备选）：后端在读表循环的下一个检查点停下，原请求回 409 `propose_cancelled`，候选目录 / 大表副本 /
+    半截缓存都不留。**幂等**：重复取消、取消已完成 / 不认识 / 别的项目的请求都是 200（`cancelled` 为真 = 这次真的标记了一个进行中的请求）。
+    缩略图与提交不可取消（`cancellable: false`）。取消与完成赛跑时以原请求的响应为准。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    ctx = current_ctx()
+    if engine_ai_data_progress.RID.fullmatch(rid) is None:
+        abort(400)
+    return jsonify(engine_ai_data_progress.cancel(str(ctx.path.resolve()), rid))
 
 
 def _propose_error(exc: "engine_ai_data_propose.ProposeError"):
@@ -15777,19 +15825,22 @@ def api_ai_data_figure_propose():
     if rid is not None and not _valid_client_request_id(rid):
         abort(400)
     try:
-        out = engine_ai_data_propose.propose(
-            ctx.path,
-            project=str(ctx.path.resolve()),
-            folder=body.get("folder"),
-            table=body.get("table"),
-            sheet=body.get("sheet"),
-            hint=body.get("hint"),
-            answers=body.get("answers"),
-            header_rows=body.get("header_rows"),
-            client_request_id=rid,
-            render=body.get("render"),
-            tables=body.get("tables"),
-        )
+        with engine_ai_data_progress.track(str(ctx.path.resolve()), rid, "propose"):
+            out = engine_ai_data_propose.propose(
+                ctx.path,
+                project=str(ctx.path.resolve()),
+                folder=body.get("folder"),
+                table=body.get("table"),
+                sheet=body.get("sheet"),
+                hint=body.get("hint"),
+                answers=body.get("answers"),
+                header_rows=body.get("header_rows"),
+                client_request_id=rid,
+                render=body.get("render"),
+                tables=body.get("tables"),
+            )
+    except engine_ai_data_progress.Cancelled:
+        return _cancelled_response()
     except engine_ai_data_propose.ProposeError as exc:
         return _propose_error(exc)
     except engine_ai_data_figure.DataSourceError as exc:
@@ -15806,8 +15857,10 @@ def api_ai_data_figure_thumbnail(session, item):
     if not engine_ai_figure_edit.enabled():
         return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
     ctx = current_ctx()
+    rid = _progress_rid(request.args.get("request_id"))
     try:
-        path = engine_ai_data_propose.ensure_thumbnail(str(ctx.path.resolve()), session, item)
+        with engine_ai_data_progress.track(str(ctx.path.resolve()), rid, "thumbnail"):
+            path = engine_ai_data_propose.ensure_thumbnail(str(ctx.path.resolve()), session, item)
     except engine_ai_data_propose.ProposeError as exc:
         return _propose_error(exc)
     resp = send_file(path, mimetype="image/png", conditional=False)
@@ -15855,7 +15908,8 @@ def api_ai_data_figure_commit():
             {"task": {"task_id": None, "outcome": None, "final": False, "deduped": True}}
         )
     try:
-        return _data_figure_commit(ctx, project, session_id, item_id, rid)
+        with engine_ai_data_progress.track(project, rid, "commit"):
+            return _data_figure_commit(ctx, project, session_id, item_id, rid)
     finally:
         if rid:
             _release_commit_rid(project, rid)
@@ -15939,6 +15993,10 @@ def _data_figure_commit(ctx, project: str, session_id: str, item_id: str, rid):
         ),
         render=lambda sha: _ai_task_hooks(ctx, pl.script_rel, "main")["after"](sha),
     )
+    if prepared.values.large is not None:
+        engine_ai_data_progress.enter(
+            "render"
+        )  # 落盘后 worker 里读原件 + 缩减 + 画图 + 核对：没有字节进度；提交不可取消
     res = engine_ai_tasks.run_task(env, executor)
     cand = executor.candidate
     out = {"task": res}
