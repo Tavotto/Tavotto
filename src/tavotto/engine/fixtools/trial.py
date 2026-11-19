@@ -201,7 +201,11 @@ try:
         _extra = [os.path.abspath(e) for e in _pp.split(os.pathsep) if e]
         sys.path[:] = [e for e in _extra if e not in sys.path] + sys.path
         os.environ["PYTHONPATH"] = _pp  # 被测代码看到的环境与原来一致
-    del _pp
+    _pc = os.environ.pop("TAVOTTO_TRIAL_PYCACHEPREFIX", None)
+    if _pc:
+        sys.pycache_prefix = os.path.abspath(_pc)  # 之后的 import 与原来一样从那里读缓存
+        os.environ["PYTHONPYCACHEPREFIX"] = _pc
+    del _pp, _pc
     # 数据改指（ADR 0106）：项目里记着的规则要在试跑里也生效，否则接上的数据在这里读不到、验证不了。
     # 与 worker 同一份实现（`figcapture.install_input_remap`，纯标准库，按文件加载）；加载不了如实标 unavailable，不静默当没有
     remap = "none"
@@ -502,6 +506,10 @@ def _run_guarded(
     pythonpath = env.pop("PYTHONPATH", None)
     if pythonpath:
         env["TAVOTTO_TRIAL_PYTHONPATH"] = pythonpath
+    # 字节码缓存前缀同理：启动时从那里读 .pyc 也是守卫之前执行的代码（Codex #2064 P1）；守卫装好后前导再放回
+    pycache = env.pop("PYTHONPYCACHEPREFIX", None)
+    if pycache:
+        env["TAVOTTO_TRIAL_PYCACHEPREFIX"] = pycache
     if extra_env:
         env.update(extra_env)
     sandbox, sandbox_prefix = _os_sandbox_prefix(trial_dir, strict_deny)

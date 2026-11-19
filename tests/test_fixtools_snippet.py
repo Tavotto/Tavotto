@@ -322,3 +322,43 @@ def test_pythonpath_modules_still_import_once_the_guard_is_up(box, monkeypatch, 
     assert "answer 7" in r.content and "pp True" in r.content and "private False" in r.content, (
         r.content
     )
+
+
+def test_the_bytecode_cache_prefix_is_not_read_before_the_guard(box, monkeypatch, tmp_path):
+    """Codex #2064 P1：`PYTHONPYCACHEPREFIX` 下的 .pyc 也会在守卫前被读；启动时挪开，守卫装好后放回（`sys.pycache_prefix` 与环境都恢复）。"""
+    prefix = tmp_path / "pyc"
+    monkeypatch.setenv("PYTHONPYCACHEPREFIX", str(prefix))
+    r = call(
+        _ctx(box),
+        "run_snippet",
+        {
+            "env": "e",
+            "code": "import os, sys\nprint('prefix', sys.pycache_prefix)\nprint('env', os.environ.get('PYTHONPYCACHEPREFIX'))\nprint('private', 'TAVOTTO_TRIAL_PYCACHEPREFIX' in os.environ)\n",
+        },
+    )
+    # 输出过了脱敏（用户名换成 <user>），只比路径尾部
+    lines = dict(
+        line.split(" ", 1)
+        for line in r.content.splitlines()
+        if line.startswith(("prefix ", "env ", "private "))
+    )
+    assert lines["prefix"].endswith("/pyc") and lines["env"].endswith("/pyc"), r.content
+    assert lines["private"] == "False"
+
+
+def test_the_interpreter_starts_without_code_location_variables(box, monkeypatch):
+    """子进程启动时环境里没有 PYTHONPATH / PYTHONPYCACHEPREFIX（它们在私有变量里，守卫装好后才放回）。"""
+    monkeypatch.setenv("PYTHONPATH", "/somewhere/lib")
+    monkeypatch.setenv("PYTHONPYCACHEPREFIX", "/somewhere/pyc")
+    seen = {}
+    real = trial.subprocess.Popen
+
+    def spy(*a, **kw):
+        seen.update(kw.get("env") or {})
+        return real(*a, **kw)
+
+    monkeypatch.setattr(trial.subprocess, "Popen", spy)
+    call(_ctx(box), "run_snippet", {"env": "e", "code": "print(1)"})
+    assert "PYTHONPATH" not in seen and "PYTHONPYCACHEPREFIX" not in seen
+    assert seen["TAVOTTO_TRIAL_PYTHONPATH"] == "/somewhere/lib"
+    assert seen["TAVOTTO_TRIAL_PYCACHEPREFIX"] == "/somewhere/pyc"
