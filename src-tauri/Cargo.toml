@@ -92,3 +92,8 @@ strip = true
 # CARGO_PROFILE_RELEASE_STRIP=none 覆盖（MSVC 的 exe 本来就不内嵌调试段，只多一条 PDB 路径）。
 debug = "line-tables-only"
 split-debuginfo = "packed"
+
+[profile.release.build-override]
+# macOS 27 dyld rejects misaligned string tables in proc-macro dylibs after
+# Rust's strip step (rust-lang/rust#157750). Keep these build-time files intact.
+strip = "none"
