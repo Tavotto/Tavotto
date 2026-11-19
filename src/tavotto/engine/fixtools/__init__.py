@@ -127,6 +127,7 @@ def run_tool(
         and (result.mutated or (result.is_error and result.code not in REFUSED_BEFORE_ACTING))
     ):
         ctx.changes_attempted += 1
+        ctx.changes_since_try.append(tool.name)
     # 等用户的那张卡已经有了决定（批准 / 拒绝）：工具这一层与它的 user_wait 说同一句话（审计的 approved_by 不动）
     decided = getattr(ctx, "trace_wait_decision", None)
     ctx.trace_wait_decision = None
@@ -155,6 +156,7 @@ def run_tool(
             approved_step=ctx.call_meta.get("approved_step"),
             sandbox=ctx.call_meta.get("sandbox"),
             command_tier=ctx.call_meta.get("command_tier"),
+            attempt=ctx.call_meta.get("attempt"),
         )
     return result
 
