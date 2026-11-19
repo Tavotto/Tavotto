@@ -1153,6 +1153,7 @@ class NativeSession:
             )
             if self.ggplot_target is not None:
                 resp = self.ggplot_target.publish_preview(self, resp, build=False)
+                resp["_published_svg_revision"] = self.rev
             if proof is not None:
                 resp = self._proof_response(resp, proof)
             self._session_list[stem] = want

@@ -11220,16 +11220,30 @@ def _api_engine_render_body(body, *, include_figure_execution=False):
     if engine_runtimeasset.is_runtime_id(rel_id):
         # 重开文档时的首帧占位从这里来：刷新 materialized cache 的预览与
         # metadata（描述符取自本会话 build 响应，只复制文件、不二次执行）。
-        _materialize_runtime(
-            info.get("script", ""),
-            info.get("entry", ""),
-            worker.last_build_descriptors,
-            remap_generation=getattr(worker, "remap_generation", None),
-            run=getattr(worker, "run", None),
-            # 这张 SVG 是按请求里的 patches 画的：按它的内容记一份变体（读端按状态取，不取「最近一次」）
-            patches_by_stem={stem: body.get("patches", [])},
-            **({"origin_session": origin_session} if origin_session is not None else {}),
-        )
+        patches = body.get("patches", [])
+        if getattr(worker, "ggplot_target", None) is not None:
+            with worker._figure_lock:
+                # Only the published revision owns the file currently named
+                # by the preview ledger. Never reopen this R source via a
+                # Python worker to populate a display cache.
+                if worker.alive() and resp.get("_published_svg_revision") == worker.rev:
+                    (descriptor,) = worker.last_build_descriptors
+                    engine_runtimeasset.materialize(
+                        worker.project_root,
+                        descriptor,
+                        worker.svg_path(stem),
+                        patch_hash=_variant_hash(patches),
+                    )
+        else:
+            _materialize_runtime(
+                info.get("script", ""),
+                info.get("entry", ""),
+                worker.last_build_descriptors,
+                remap_generation=getattr(worker, "remap_generation", None),
+                run=getattr(worker, "run", None),
+                patches_by_stem={stem: patches},
+                **({"origin_session": origin_session} if origin_session is not None else {}),
+            )
     out = {
         "rev": worker.rev,
         "manifest": resp["manifest"],

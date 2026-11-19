@@ -246,6 +246,13 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
     monkeypatch.setitem(service.app.config, "TESTING", True)
     monkeypatch.setitem(service.app.config, "TAVOTTO_DESKTOP_MODE", True)
     monkeypatch.setitem(service.app.config, security.STATE_KEY, auth)
+    original_safe_worker = service._safe_worker
+
+    def safe_worker(script, *args, **kwargs):
+        assert not script.endswith(".R"), "An R asset was dispatched to a Python worker"
+        return original_safe_worker(script, *args, **kwargs)
+
+    monkeypatch.setattr(service, "_safe_worker", safe_worker)
     client = service.app.test_client()
     service.open_project(str(root))
     session = None
@@ -281,6 +288,9 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
         assert client.post(build_url).status_code == 200
         assert session.svg_path(descriptor["stem"]).read_text(encoding="utf-8") == svg
         assert "#6C3799" in svg
+        cache = client.post("/api/runtime/preview", json={"id": source, "patches": patches})
+        assert cache.headers["X-Tavotto-Preview-Exact"] == "1"
+        assert cache.get_data(as_text=True) == svg
 
         panels = [
             {
