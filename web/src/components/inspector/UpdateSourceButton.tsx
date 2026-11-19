@@ -18,6 +18,7 @@ import { isJustBakedBaseline, rebuildPanel } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { deferWhileWindowHeld } from '@/store/documentRestore'
 import { useDocumentStore } from '@/store/documentStore'
+import { tooNewAction } from '@/store/failureExit'
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -184,6 +185,24 @@ function BlockedNotice({
     if (ok) onRerendered()
   }
 
+  // 项目里有更新版本的 Tavotto 做的修改、这一版认不出（后端 409 `write_back_future_props`，原文件没动）：
+  // 不用红字报错让人卡住——一行灰字说清楚 + 一个能点的出口，与「这份排版来自更新的版本」同一个动作
+  // （桌面版「检查更新」；浏览器版没有更新通道，给「发给我们看看」，入口关着就只留这行字）
+  if (body.code === 'write_back_future_props') {
+    const exit = tooNewAction()
+    return (
+      <div className="flex flex-col items-start gap-2" data-write-back-future>
+        <p className="text-sm leading-relaxed text-ink-2">
+          {formatMessage(msg('engine.writeBackFutureNotice', undefined, 'errors'))}
+        </p>
+        {exit && (
+          <Button size="sm" variant="primary" data-write-back-future-exit onClick={() => exit.run()}>
+            {formatMessage(exit.label)}
+          </Button>
+        )}
+      </div>
+    )
+  }
   if (body.code === 'replay_divergence') {
     const diffs = body.diffs ?? []
     return (
