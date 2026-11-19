@@ -36,6 +36,20 @@ class SummaryAndPromote(GuardianBase):
         report.update(top)
         return report
 
+    def test_report_from_before_the_drag_stage_still_loads_verbatim(self):
+        """归档报告（`drag` 阶段之前产生）原样过 `load_report`：schema 不要求后加的阶段与计时，
+        覆盖表只数行里真有的阶段（Codex #2057 P1：verify-snapshot 先经 load_report）。"""
+        old = copy.deepcopy(self.report)
+        for row in old["cases"]:
+            row["stages"].pop("drag")
+            row["timings_s"]["stages"].pop("drag")
+        old["coverage"] = cg.coverage_table(old["cases"])
+        assert "drag" not in old["coverage"]
+        loaded = sm.load_report(self.write("old.json", old))
+        assert all("drag" not in row["stages"] for row in loaded["cases"])
+        # 新报告照旧带齐：本 fixture 的覆盖表里有 drag
+        assert "drag" in cg.coverage_table(self.report["cases"])
+
     def test_same_corpus_and_env_aggregate_with_an_explicit_denominator(self):
         out = sm.summarize(
             [sm.load_report(self.write("a.json")), sm.load_report(self.write("b.json"))]

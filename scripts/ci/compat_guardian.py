@@ -731,9 +731,17 @@ def exit_code_for(outcome: str) -> int:
 
 
 def coverage_table(rows: list[dict]) -> dict:
-    """Per stage: how many cases ended in each stage status (names the uncovered)."""
+    """Per stage: how many cases ended in each stage status (names the uncovered).
+
+    Only stages the rows carry: a stage added later (`drag`, 2026-11-18) is absent from reports
+    produced before it, and `summary.load_report` recomputes this table to check an archived
+    report — counting a stage it never had would reject unchanged evidence. Fresh rows are held
+    to the full `CC.STAGES` set by `validate_report`.
+    """
     table: dict[str, dict[str, int]] = {}
     for name in CC.STAGES:
+        if rows and not any(name in row["stages"] for row in rows):
+            continue
         counts: dict[str, int] = {}
         for row in rows:
             state = row["stages"][name]["status"]
