@@ -94,9 +94,22 @@ def test_recipe_makes_the_original_scripts_figure_appear(tmp_path, case):
     assert {k: v for k, v in after.items() if k in before} == before  # 原有文件一个字节不动
 
 
-@pytest.mark.parametrize("case", sorted(CASES))
+#: 产品自己就能解决、不再需要启动脚本的范式：包里的脚本用相对导入时 Tavotto 按模块运行（ADR 0196）
+SOLVED_WITHOUT_LAUNCHER = frozenset({"relative-import"})
+
+
+@pytest.mark.parametrize("case", sorted(set(CASES) - SOLVED_WITHOUT_LAUNCHER))
 def test_without_the_launcher_the_case_really_fails(tmp_path, case):
     """对照：同一份项目不写启动脚本，不出图（证明上面的成功来自启动脚本）。"""
     files, script, _ = CASES[case]
     final, _, _ = _run_case(tmp_path, files, script, None)
     assert final["facts"].get("figure_captured") is not True, case
+
+
+@pytest.mark.parametrize("case", sorted(SOLVED_WITHOUT_LAUNCHER))
+def test_cases_the_product_now_solves_need_no_launcher(tmp_path, case):
+    """ADR 0196 之后：相对导入不写启动脚本也出图；写了启动脚本（自己声明包上下文）同样出图，两者不冲突。"""
+    files, script, _ = CASES[case]
+    final, before, after = _run_case(tmp_path, files, script, None)
+    assert final["phase"] == "completed" and final["facts"]["figure_captured"] is True, case
+    assert {k: v for k, v in after.items() if k in before} == before

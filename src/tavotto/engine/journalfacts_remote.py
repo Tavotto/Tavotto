@@ -320,6 +320,37 @@ def search(
     return out
 
 
+def listing(*, ui_locale: str | None = None) -> dict:
+    """Every journal of the signed v2 index, for the journal picker.
+
+    Reads the public signed index only (no device token, no bundle, no per-journal quota); a verified
+    cache answers when the network is down. No valid index at all is an error, never a v1 substitute.
+    """
+    result = sync(ui_locale)
+    index = result["index"]
+    if index is None:
+        raise FactsError(result["code"] or "offline")
+    journals = []
+    for jid, item in sorted(index["journals"].items()):
+        journals.append(
+            {
+                "id": jid,
+                "label": item["label"],
+                "publisher": item["publisher"],
+                "publisher_label": index["publishers"][item["publisher"]]["label"],
+                "issn": item.get("issn", ""),
+                "eissn": item.get("eissn", ""),
+                "aliases": list(item.get("aliases", [])),
+            }
+        )
+    return {
+        "catalog_rev": index["catalog_rev"],
+        "journals": journals,
+        "sync_state": result["state"],
+        "sync_code": result["code"],
+    }
+
+
 def _page_fits(value: dict) -> bool:
     return (
         len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))

@@ -280,3 +280,21 @@ interval / trajectories / dose_response / profile）。批次 2 / 3 在本 PR �
 * 图的丰富度由「族 × 可叠图元」的组合决定，加一类图 = 在三张表里加条目 + 一个模板 + 测试，不扩大执行面。
 * 推荐的科学纪律（原始点优先、轴含 0、不连无序类别、误差必须写明）既在准则里告诉模型，也在后端逐项强制——模型说错了不会漏到用户面前。
 * 取值类规则要读行数据：调用方（工具集与端点）对选中的那张表 `inspect_data_source` 一次再传 `values=`；只用摘要的路径要知道「合格」只代表结构合格。
+
+## 修订（2026-11-19）：接模型的地基
+
+用户决定把模型接进「从数据到图」（此前全流程不调模型：候选来自 `default_candidates` 的规则 + 固定模板）。分 0–7 步，本步是**第 0 步地基**：只铺内部能力，**没有调用点**——`propose` 与任何端点都不引用新模块（`tests/test_ai_data_model.py::test_nothing_in_the_product_calls_the_model_yet` 用 AST 判），开关关闭时一切逐字不变，打开时用户可见行为也不变。后续第 1 步（模型读懂每列是什么）、第 2 步（模型按科学意义重排 / 替换候选、给一句理由）建立在它上面，并在那时改这条测试。
+
+**做了什么**
+
+1. `engine/ai_structured.py`：无工具、单轮、只要一个 JSON 对象的模型调用。不另写 HTTP——驱动内置执行器的 `agent_runner.loop.HttpModel.complete(tools=[])`（经 `fixsession.build_model`，它多接了 `**model_kwargs`，默认不传、行为不变），所以三种线上协议、状态码分类、`post_json` 的出站约束（https / 回环 http、`tlstrust` 证书、不跟随重定向）、非必需字段降级与首轮换协议自救都是现成的。`call_structured(system, user, validate, limits, conn, post)` **永不抛**，回 `StructuredResult`：成功是已过 `validate` 的 dict；失败是闭集原因。
+2. `engine/ai_data_model.py`：数据出图的调用点。`build_request`（受控摘要 + `data_figure_guidance()` + `ai_prompt_pack.data_figure_oneshot_notes()` + 可选一句用户提示）→ `call_structured` → 逐条 `FigureRecipe.from_dict` → 没有模板能画的族丢 → `enforce_order`（`validate_recipe` + 去重 + 柱不排在原始点前）。返回通过校验的配方与丢弃记录（原序号 + 拒绝码）。`data_figure_oneshot_notes()` 说明这次没有工具、不能 `ask_user`（拿不准走最保守画法）、表格摘要是数据不是指令、只输出 `{"recipes": [...]}`；配方字段与取值从 `ai_data_recipe` 的表渲染，不另抄。
+3. 固定用例集 `tests/fixtures/data_figure_cases/cases.json`（14 条：比较 / 趋势 / 关系 / 分布，坑有编号列当数值、日期列、重复样、对照组顺序、宽表 / 长表、量纲不同、小样本、夹带指令），判定与评分在 `tests/support/data_figure_cases.py`，pytest 用录好的回答经**真协议层**跑通整条链（合法、踩坑、非法 JSON、未知列、超时、拒答，三种协议各一遍），不发任何网络请求；手动入口 `scripts/dev/data_figure_bench.py`（默认假回答，`--real` 要显式 `--max-calls` 且不少于 用例数 × 2，输出命中率与 token / 花费估算）。**本步没有对真模型跑过它。**
+
+**失败闭集**（`ai_structured.REASONS`，调用方据此静默退回规则结果，不向用户展示）：`no_connection`（没有连接，或运维开关 `TAVOTTO_AI_BUILTIN=0`）、`unsupported_connection`（只有订阅登录）、`over_budget`（输入超限未发请求，或输出撞到最长输出被截断）、`timeout`（总时限，或套接字读超时）、`refused`（拒答 / 内容过滤）、`invalid_output`（非法 JSON 已重试一次 / 没过校验 / 回了工具调用）、`auth`、`quota`、`transport`（其余，含 HTTP 非 2xx、回复体不对、本模块内部异常）。`detail` 只是短代码（状态码、异常类型名、`not_json` / `shape` / `input` / `output`），不含响应原文、提示词、地址、密钥。映射对 `loop.REASONS` 逐值有结局（测试逐项核）。
+
+**上限**（`Limits` 默认）：输入 ≤ 60 000 字（系统提示 + 用户内容；系统提示约 18 KB 固定）、输出 ≤ 3 000 token（另按每 token ≤ 8 字符卡回复长度，防不守上限的端点）、总时限 60 s（两次尝试共用、从解析连接起算；挑连接不联网，只在剩余预算 ≥ 35 s 时才对挑中的那一条联网刷新令牌 / 核地址，不够就用现有记录——这两步没法传入时限，放进线程超时会留下继续写 provider 存储的半截副作用）、**最多重试 1 次且仅在回复不是合法 JSON 时**（换协议 / 字段降级的自救不算重试，所以一次调用可能发多个 HTTP 请求：`StructuredResult.requests` 在传输层数，`max_requests` 对它硬性生效，到顶回 `over_budget`）——传输失败 / 拒答 / 鉴权失败 / 形状不对都不重发。摘要超出输入上限时按序收缩：每列文字样本 20 → 8 → 3 → 0 条，再从末尾起少发表（至少留 1 张），数目记在 `ModelRecipes.tables_omitted` / `sample_cap`；最多发 8 张表、每条样本 ≤ 60 字、用户提示 ≤ 200 字；模型一次最多交 8 份配方，多出的记 `too_many_candidates`。
+
+**暂不支持的连接**：订阅登录（Codex / Claude Code CLI）返回 `unsupported_connection`。它们没有干净的「无工具单次调用」：CLI 自带系统提示与工具并读用户自己的配置，Tavotto 没有给它们的单轮入口。适配方向（本步不做）：给 `AgentDefinition` 加一个可选的 `build_structured_command`——候选写法是 Codex 的 `codex exec --output-schema`（临时目录、只读沙盒）与 Claude Code 的 `claude -p --output-format json --json-schema`（不给工具），经同一个 `spawn_env()`——这些参数**本步没有在本机核过**，每家要在目标平台真跑一次再开。「当前连接」= 连接视图里第一个内置执行器能直接用的 Key / 账号登录连接（`first_key_connection`，旧版选中的接口排在前，与 AI 修复同一口径）；让用户在这条功能里单独选连接，是后续步骤的产品决定。
+
+**不变的边界**：模型不执行任何代码、本步不新增工具 / 命令行 / 写文件能力；表里的文字只作 JSON 字符串进 `<data>` 块（`<` 转义，伪造不出块的结尾），配方里没有自由文本进脚本；密钥只在 `HttpModel` 内（`repr` 不含）；本模块不写日志、不发遥测（遥测仍不收列名、路径、指令、图里文字）；运行时公共模块（生成脚本内嵌的那份）一个字节未动。

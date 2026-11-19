@@ -20,7 +20,7 @@ import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geomet
 import { clamp, DUPLICATE_OFFSET_MM } from '@/lib/units'
 import { PAGE_MM_MAX, PAGE_MM_MIN } from '@/lib/pageRange'
 import { pickJournal } from '@/lib/journalPick'
-import { bindingFor, builtinEntryById, type JournalPrev } from '@/lib/specBinding'
+import { bindingFor, builtinEntryById, type JournalPrev, type SpecBinding } from '@/lib/specBinding'
 import { DEFAULT_PROFILE_ID } from '@/lib/profile'
 import { useJournalCatalogStore } from './journalCatalogStore'
 import { placePanelInPage } from '@/lib/panelPlacement'
@@ -111,7 +111,7 @@ import {
 } from '@/types/document'
 import { contentToPageVec, panelContentTransform } from '@/lib/panelTransform'
 import { emitLayoutSaved } from '@/lib/layoutSaved'
-import { applyV2, type V2Patch } from '@/lib/journalV2'
+import { applyV2, pickV2OnlyJournal, type V2IndexEntry, type V2Patch } from '@/lib/journalV2'
 import { useJournalV2Store } from './journalV2Store'
 import { useTimelineStore } from './timelineStore'
 import { hasPendingStyleWork } from './styleWork'
@@ -945,9 +945,33 @@ export function setPageSize(w: number, h: number) {
  */
 export function selectJournal(journalId: string, v2: V2Patch | null = null): void {
   const d0 = doc()
-  // 退路只记「选期刊之前」那一份：从一本期刊换到另一本时沿用最初的，不把上一本期刊当成「之前」
+  const prev = journalPrevOf(d0)
+  const pick = pickJournal(journalId, useJournalCatalogStore.getState().catalog, {
+    pageW: d0.page.w,
+    follow: d0.profile?.follow,
+    prev,
+  })
+  // v2 事实（取到了才有）按项叠上去，v2 优先；预检求值器不变（ADR 0155 §14）
+  pick.binding = applyV2(pick.binding, v2)
+  useJournalV2Store.getState().remember(journalId, v2)
+  commitJournalPick(pick)
+}
+
+/**
+ * 选一本只在 v2 里有的刊（v1 目录没有；2026-11-17 用户拍板进选刊列表）：绑定只含 v2 无条件事实折出的规则，
+ * 其余一律不补。补丁必须已经在手（没有 v2 就没有内容可绑——调用方先判终态，取不到不调这里）。
+ */
+export function selectV2OnlyJournal(entry: Pick<V2IndexEntry, 'id' | 'label'>, v2: V2Patch): void {
+  const d0 = doc()
+  const pick = pickV2OnlyJournal(entry, v2, { pageW: d0.page.w, follow: d0.profile?.follow, prev: journalPrevOf(d0) })
+  useJournalV2Store.getState().remember(entry.id, v2)
+  commitJournalPick(pick)
+}
+
+/** 退路只记「选期刊之前」那一份：从一本期刊换到另一本时沿用最初的，不把上一本期刊当成「之前」 */
+function journalPrevOf(d0: ReturnType<typeof doc>): JournalPrev | undefined {
   const p0 = d0.profile
-  const prev: JournalPrev | undefined = p0?.journalRef
+  return p0?.journalRef
     ? p0.journalPrev
     : {
         profile: p0
@@ -955,14 +979,11 @@ export function selectJournal(journalId: string, v2: V2Patch | null = null): voi
           : null,
         pageW: d0.page.w,
       }
-  const pick = pickJournal(journalId, useJournalCatalogStore.getState().catalog, {
-    pageW: d0.page.w,
-    follow: p0?.follow,
-    prev,
-  })
-  // v2 事实（取到了才有）按项叠上去，v2 优先；预检求值器不变（ADR 0155 §14）
-  pick.binding = applyV2(pick.binding, v2)
-  useJournalV2Store.getState().remember(journalId, v2)
+}
+
+function commitJournalPick(pick: { binding: SpecBinding; pageW: number | null; label: string }): void {
+  const d0 = doc()
+  const p0 = d0.profile
   // 期刊把页宽设成了多少：「不按期刊」只在页宽仍是它时才退回原页宽
   // 新期刊没给页宽（pageW = null）时沿用已记的 setW：当前页宽可能是用户手改的，不能把它当成「期刊设的」
   if (pick.binding.journalPrev) {
