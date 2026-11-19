@@ -1293,7 +1293,13 @@ def _native_fallback(session: "Session", worker, exc) -> object | None:
     if fallback is None or getattr(exc, "code", None) != FILE_OPERATION_BLOCKED:
         return None
     python = str(getattr(worker, "python", "") or "")
-    verdict = fallback.decide(session.project, exc.code, python=python)
+    # 新引擎认 safe 当时的入口（库式模块跑完模块再调它；够不到就不回退，ADR 0127 修订 2026-11-18）；旧引擎不认这两个参数
+    entry_kw = (
+        {"script": session.script, "entry": session.entry}
+        if "entry" in inspect.signature(fallback.decide).parameters
+        else {}
+    )
+    verdict = fallback.decide(session.project, exc.code, python=python, **entry_kw)
     if not verdict.ok:
         exc.extra["native_fallback_declined"] = verdict.reason
         return None
@@ -1305,6 +1311,7 @@ def _native_fallback(session: "Session", worker, exc) -> object | None:
         python=python,
         run=session.run,
         heavy=session.cost == "heavy",
+        **({"entry": session.entry} if entry_kw else {}),
     )
 
 
