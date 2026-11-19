@@ -85,6 +85,8 @@ interface InteractionState {
   gidDrag: { gid: string; dfx: number; dfy: number } | null
   /** 图内独立箭头端点拖动中的预览端点（figure 分数、top-origin） */
   arrowPreview: { gid: string; a: [number, number]; b: [number, number] } | null
+  /** 拖引线的一段 / 一个顶点：覆盖层画的虚线折线（全部顶点，figure 分数） */
+  linePreview: { gid: string; pts: [number, number][] } | null
   /**
    * 子图拖动 / 缩放的预览框（figure 分数、top-origin），按 gid 索引。
    * 成组缩放时同时给出组框，单个子图拖动时只有 boxes 里的一项。
@@ -132,6 +134,7 @@ interface InteractionState {
   setHoverGid: (gid: string | null) => void
   setGidDrag: (d: { gid: string; dfx: number; dfy: number } | null) => void
   setArrowPreview: (p: { gid: string; a: [number, number]; b: [number, number] } | null) => void
+  setLinePreview: (p: { gid: string; pts: [number, number][] } | null) => void
   setElementPreview: (p: ElementPreview | null) => void
   setCursor: (c: { x: number; y: number } | null) => void
   setNudge: (n: { dx: number; dy: number } | null) => void
@@ -153,6 +156,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   hoverGid: null,
   gidDrag: null,
   arrowPreview: null,
+  linePreview: null,
   elementPreview: null,
   cursor: null,
   nudge: null,
@@ -182,6 +186,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
       dragStatus: null,
       gidDrag: null,
       arrowPreview: null,
+      linePreview: null,
       elementPreview: null,
     })
   },
@@ -201,6 +206,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   setHoverGid: (hoverGid) => set((s) => (s.hoverGid === hoverGid ? s : { hoverGid })),
   setGidDrag: (gidDrag) => set({ gidDrag }),
   setArrowPreview: (arrowPreview) => set({ arrowPreview }),
+  setLinePreview: (linePreview) => set({ linePreview }),
   setElementPreview: (elementPreview) => set({ elementPreview }),
   setCursor: (cursor) => set({ cursor }),
   setNudge: (nudge) => set({ nudge }),

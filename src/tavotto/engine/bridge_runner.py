@@ -451,7 +451,7 @@ def _apply_stem_aliases() -> None:
 # ---------------------------------------------------------------------------
 # 用户上下文（与真实 python 对拍，见 tests/bridge/test_bridge_invocation.py）
 # ---------------------------------------------------------------------------
-def run_script(target: str, argv: list, on_start=None) -> None:
+def run_script(target: str, argv: list, on_start=None, source: str | None = None) -> None:
     """等价于 `python <target> <argv…>`。
 
     **不用 `runpy.run_path`**：它把 `__file__` 设成传进去的原串、把
@@ -468,8 +468,9 @@ def run_script(target: str, argv: list, on_start=None) -> None:
     abspath = os.path.abspath(target)
     sys.argv = [target, *argv]
     sys.path.insert(0, os.path.dirname(abspath))
-    with io.open_code(abspath) as f:
-        source = f.read()
+    # `source`（ADR 0194 启动脚本）：字节来自它，身份（`__file__` / 编译文件名 / argv[0]）仍是 target
+    with io.open_code(os.path.abspath(source) if source else abspath) as f:
+        code_bytes = f.read()
     # `dont_inherit=True` **是必须的**：本文件自己有 `from __future__ import
     # annotations`，而 `compile()` 默认会把**调用处生效的** future 语句一并
     # 传给被编译的代码。于是用户脚本会在不知情的情况下拿到 PEP 563 语义——
@@ -480,7 +481,7 @@ def run_script(target: str, argv: list, on_start=None) -> None:
     # 这正是 native 最不能出的那类错：脚本在 Tavotto 里的行为与他自己敲
     # `python fig.py` 不一样，而且是**朝着"更宽松"的方向**静默不一样。
     # 脚本自己写的 `from __future__ import ...` 不受影响（它在源码里）。
-    code = compile(source, abspath, "exec", dont_inherit=True)
+    code = compile(code_bytes, abspath, "exec", dont_inherit=True)
     main_mod = types.ModuleType("__main__")
     main_mod.__file__ = abspath
     main_mod.__builtins__ = builtins
@@ -489,6 +490,9 @@ def run_script(target: str, argv: list, on_start=None) -> None:
     main_mod.__loader__ = None
     main_mod.__cached__ = None
     main_mod.__doc__ = None
+    if source:
+        # 启动脚本（ADR 0194）：与 safe worker 同一个 `run_original()`，跑用户原件
+        main_mod.run_original = bridgeboot.make_run_original(abspath)
     sys.modules["__main__"] = main_mod
     if on_start is not None:
         on_start(abspath)
@@ -1480,6 +1484,8 @@ def _parse_args(argv: list):
     ap.add_argument("--stem-aliases", default=None)
     # ADR 0127 修订 2026-11-18：库式模块的函数入口（只有脚本目标、桌面拥有的启动才会带）；没有时整份模块照原样跑
     ap.add_argument("--entry", default=None)
+    # ADR 0194：AI 修复写的启动脚本（字节来源）；身份仍是 --target。没有时整份按 target 原样跑
+    ap.add_argument("--script-source", default=None)
     if "--" in argv:
         cut = argv.index("--")
         mine, user_argv = argv[:cut], argv[cut + 1 :]
@@ -1670,7 +1676,12 @@ def main(argv: list | None = None) -> int:
                 args.target, args.user_argv, args.call_entry, on_start=run.execution_started
             )
         elif args.target_kind == "script":
-            run_script(args.target, args.user_argv, on_start=run.execution_started)
+            run_script(
+                args.target,
+                args.user_argv,
+                on_start=run.execution_started,
+                source=args.script_source,
+            )
         else:
             run_module(
                 args.target,

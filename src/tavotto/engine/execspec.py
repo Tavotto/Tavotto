@@ -61,7 +61,7 @@ import os
 import secrets
 from pathlib import Path
 
-from . import figcapture, pkgentry, shadowscript
+from . import figcapture, launchscript, pkgentry, shadowscript
 
 PROFILE_SAFE = figcapture.PROFILE_SAFE
 PROFILE_NATIVE = figcapture.PROFILE_NATIVE
@@ -470,6 +470,9 @@ class ExecutionSpec:
                 raise ValueError(
                     f"native profile 的 entry 只能是脚本里的函数名或 None: {self.entry!r}"
                 )
+            if self.script_source and (self.entry is not None or self.target_kind != TARGET_SCRIPT):
+                # 启动脚本（ADR 0194）以 `__main__` 跑；与函数入口互斥
+                raise ValueError("native profile 的 script_source 只配脚本目标、且不带 entry")
             if not self.passthrough_savefig:
                 raise ValueError("native profile 的 savefig 必须透传（ADR 0014 §2）")
             if not self.raw_target:
@@ -725,13 +728,20 @@ def safe_spec(
     cwd = run_cwd(figures_dir, script, cwd_mode)
     if cwd is None:
         cwd = sandbox
-    script_source = (
+    # 影子脚本（转换校验）优先；否则 AI 修复写的启动脚本（ADR 0194 §二）：执行它的字节、身份仍是这个脚本
+    shadow = (
         shadowscript.lookup(figures_dir, script, write_roots_key(write_roots))
         if write_roots is not None
         else None
     )
-    # ADR 0196：包里的脚本用相对导入时按模块运行（判据唯一出处 `pkgentry.resolve`；影子脚本项目里没有这个文件，不改）。
-    # 三条 spawn 路径、准备计划、MCP 都经本函数，所以同源；身份（target / 稳定载荷）不受影响
+    launch_src = None if shadow else launchscript.source_for(figures_dir, script)
+    if launch_src is not None:
+        # 启动脚本恒按 `__main__` 整份执行（Codex #2048 P2）：只在这里定，所有调用方（准备计划、探测、磁盘面板）同一个口径——
+        # 带着登记的函数入口去跑，worker 会把启动脚本当模块 import 再调那个函数，胶水不按设计执行
+        entry = "__main__"
+    script_source = shadow or launch_src
+    # ADR 0196：包里的脚本用相对导入时按模块运行（判据唯一出处 `pkgentry.resolve`）。影子脚本项目里没有这个文件、
+    # 启动脚本自己负责包上下文（ADR 0194），两者都不改。三条 spawn 路径、准备计划、MCP 都经本函数，所以同源
     package = None if script_source else pkgentry.resolve(figures_dir, script, entry)
     return ExecutionSpec(
         profile=PROFILE_SAFE,
@@ -811,6 +821,7 @@ def desktop_native_spec(
     stem_aliases=None,
     registered_entry: str | None = None,
     entry: str | None = None,
+    script_source: str | None = None,
 ) -> ExecutionSpec:
     """**桌面拥有的** native 档启动身份的唯一权威构造函数（P06，ADR 0125）。
 
@@ -843,6 +854,7 @@ def desktop_native_spec(
         package_as_module=True,
         registered_entry=registered_entry,
         entry=entry,
+        script_source=script_source,
     )
 
 
@@ -864,6 +876,7 @@ def _native(
     package_as_module: bool = False,
     registered_entry: str | None = None,
     entry: str | None = None,
+    script_source: str | None = None,
 ) -> ExecutionSpec:
     if target_kind == TARGET_MODULE:
         target = raw_target
@@ -879,8 +892,12 @@ def _native(
     # 终端拥有的（`tavotto run`）不传 `package_as_module`：那是用户自己敲的命令，原样。native 整份脚本运行（entry=None）；登记入口只给判据用（函数入口不改，与 safe 一致）
     package = (
         pkgentry.resolve(project_root, target.replace(os.sep, "/"), registered_entry)
-        # 库式模块调函数入口（ADR 0127 修订，`entry`）与按模块运行（`module_name`）互斥：前者已定就不按模块
-        if package_as_module and target_kind == TARGET_SCRIPT and entry is None
+        # 库式模块调函数入口（ADR 0127 修订，`entry`）与按模块运行（`module_name`）互斥：前者已定就不按模块；
+        # 有启动脚本（`script_source`，ADR 0194）时它自己负责包上下文，也不按模块
+        if package_as_module
+        and target_kind == TARGET_SCRIPT
+        and entry is None
+        and not script_source
         else None
     )
     return ExecutionSpec(
@@ -889,6 +906,7 @@ def _native(
         target_kind=target_kind,
         target=target,
         entry=entry,
+        script_source=script_source,
         argv=tuple(argv),
         cwd=cwd,
         env=env,
@@ -979,6 +997,9 @@ def bridge_argv(
     if spec.entry is not None:
         # ADR 0127 修订 2026-11-18：库式模块的函数入口，跑完模块再调它。没有入口的命令行逐字节不变（golden）
         out += ["--entry", spec.entry]
+    if spec.script_source:
+        # ADR 0194：AI 修复写的启动脚本——执行它的字节、身份仍是这个脚本。没有时命令行逐字节不变（golden）
+        out += ["--script-source", spec.script_source]
     out.append("--")
     out.extend(spec.argv)
     return out

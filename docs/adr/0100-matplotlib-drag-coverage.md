@@ -276,3 +276,41 @@ constrained；一次性 worker 全量重放 == 热态）。修前 3 条红。
 看护：`tests/test_axes_table_drag.py`（判定；显式 `bbox` 的表格初始框 == 按子图框独立算的矩形；拖动落点、
 再画不漂、撤销回基线、不挤动子图；constrained；全量重放 == 热态），浏览器腿 `drag-coverage.spec.ts` 加表格一格。
 
+## 修订（2026-11-19）：引线逐段 / 逐点拖
+
+用户拍板（2026-11-19）：引线（位置不是数据的线）要能「拖动某一段，当成自由线段一样拖」；数据曲线暂时不支持移动。
+审阅页六处全按推荐：
+
+- **拖一段 = 那一段两个端点同走一个位移**，相邻段跟着伸缩、整条线不断开。拖第一段 / 最后一段时连着震中的那一头也跟着走
+  （与自由线段一致）；想留住起点，拖中间的段或拖拐点。
+- **按下拖的是离指针最近的一段**（按内容像素量）；整条平移走方向键、与标签一起多选拖、对齐——都写同一条 override。
+- **⇧ 锁水平 / 垂直**（看起手以来哪个方向走得多），直角引线拖完仍横平竖直。
+- **拐点方块只在选中时出现**（7 px，手柄同色）；拖方块只动那一个点。
+- **加 / 删拐点**（用户 2026-11-19 追加「做一下加拐点」，审阅页 ⑦–⑨ 全按推荐）：双击线上的一段 = 在双击处加一个拐点
+  （点投影到那一段上，画面先不变，接着拖它折弯）；双击拐点方块 = 删掉它（最少留两个点，首尾也能删）；到上限不再加。
+- **超过 `LINE_POINTS_MAX`（64）个顶点的线不出拐点**，只整条平移；数据曲线仍不可拖。
+
+实现：
+
+- 引擎：可拖的线在 manifest 里出 `line_points`（每个顶点的 figure 分数、top-origin，与 `anchor` 同一套换算）。
+  新 override `("line", "points_frac")`：**全部顶点**摊平 `[x0, y0, x1, y1, …]`，2 到 `LINE_POINTS_MAX` 个（加 / 删拐点会改个数；
+  少于 2 个、奇数个数、超过上限、不是数就报 warning、什么都不动）。setter 先把线放回基准 transform（整条平移叠的英寸平移一并去掉），再按基准 transform 的逆把显示坐标换回线
+  自己的坐标系写进数据；布局引擎下挂进 pin 表（与 `pos_frac` 同一张表、带 `points` 标记），排版前放回脚本原样的顶点、排完再落。
+  原样 = （基准 transform, 脚本原样顶点）。`points_frac` 进 `_FRAC_ANCHORED`，每次重放。
+- **两种位置 override 同在一条线上时位置只归 `points_frac`**（Codex #2060 两条 P1）：它写的是每个顶点的绝对位置，`pos_frac` 在它
+  面前不起作用、也不碰 pin 表（共用那一格）；撤掉 `points_frac` 时 `pos_frac` 被标脏重放、重新生效，撤掉 `pos_frac` 时反之。
+- 一条线只写一种位置 override：前端对出 `line_points` 的线，整条平移（`inFigureMoveOf` → `lineMove`、`alignEntries`）也写
+  `points_frac`；存量文档里 #2018 写下的 `pos_frac` 照常生效，之后再逐段编辑时 setter 把平移放回基准，热态与重放一致。
+- 前端：`elementGeom.linePointsOf`（文档里写下的 `points_frac` 优先，个数可变）；`interactions.insertLineBend` / `removeLineBend`
+  （`PanelView` 双击一段、`OverlaySvg` 双击拐点手柄）；`interactions.startLineEdit`（段 / 点、⇧ 锁向、覆盖层
+  虚线预览 `linePreview`、拖回原处不写）；`PanelView` 按下分派到最近一段；`OverlaySvg` 拐点手柄；拖子图时改过的引线随行
+  （`FRAC_ANCHORED_PROPS` 认 `points_frac`，任意偶数长度按 x、y 交替平移）。导出修改后的 .py 不写 `points_frac`（与 `pos_frac` 同一结论）。
+
+兼容：不认识 `points_frac` 的旧版本打开这样的项目——图照常打开，引线落在脚本原位，引擎报「属性不支持」、写回脚本被挡
+（与此前每个新 override 键同一行为，#2024 / #2049 的集合 / 位图 / 表格 `pos_frac` 亦然；已发出的版本改不了）。导出修改后的 .py
+不写这个键（列入 `NOT_WRITABLE`，进 skipped，由 verify 证明「新脚本 + 这条 override == 用户看到的图」）。
+
+看护：`tests/test_layout_line_points.py`（只有短的排版线出顶点；初始顶点 == 按子图框独立算的位置；拖每一段落点与画出来的
+几何一致；整条平移；图上的线；顶点个数不对报错不动；constrained；先整条平移再逐段编辑的全量重放 == 热态）、
+`web/src/canvas/lineSegmentEditing.test.tsx`、浏览器腿 `web/e2e/line-segment-drag.spec.ts`（浅 / 深各一次：拖段落点、撤销）。
+

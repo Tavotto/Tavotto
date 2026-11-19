@@ -279,7 +279,9 @@ def project_reports(cohort: dict, reports: list[dict], expected_sha: str) -> dic
         native = row["native"]
         eligible = cg.native_eligible(row)
         failure = row["failure_category"]
-        cells = {s: row["stages"][s]["status"] for s in cc.STAGES}
+        # 行里有哪些阶段就投影哪些：后加的阶段（2026-11-18 的 drag）不在更早的报告里，
+        # 已归档的报告必须还能逐字复现（同 `workflow` 字段的做法）
+        cells = {s: row["stages"][s]["status"] for s in cc.STAGES if s in row["stages"]}
         item = {
             "project_id": p["project_id"],
             "case_id": cid,
@@ -332,7 +334,10 @@ def refresh_accounting(data: dict) -> None:
             "passed": sum(p["stages"].get(stage) == "passed" for p in qualified),
             "denominator": len(qualified),
         }
+        # 只数这份快照的行里真有的阶段：行按产生它的那一版 `STAGES` 带齐各阶段，后加的阶段
+        # （2026-11-18 的 drag）不出现在更早的快照里——给它记个 0/N 等于改写已归档的证据
         for stage in cc.STAGES
+        if any(stage in p["stages"] for p in data["projects"])
     }
     clusters = defaultdict(list)
     for project in data["projects"]:

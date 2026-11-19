@@ -2891,6 +2891,11 @@ export interface ManifestElement {
    */
   arrow_endpoints?: [number, number][]
   /**
+   * 位置不是数据的线（引线、分隔线）每个顶点此刻落在哪（figure 分数、top-origin）。有它的线按段 / 按点拖，
+   * 整条平移也写 `points_frac`（全部顶点，摊平）；数据曲线与顶点太多的长线没有（ADR 0100 修订 2026-11-19）。
+   */
+  line_points?: [number, number][]
+  /**
    * 端点箭头（有 `arrow_endpoints`、不出 geometry）与按 bbox 命中的文字 / 图例类的真实绘制次序，语义同 `ElementGeometry.paint_order`。
    * 缺席 = 次序未知，不判遮挡。
    */
