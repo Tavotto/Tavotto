@@ -1,0 +1,55 @@
+name: Core v0.2 native ggplot2 qualification
+
+on:
+  push:
+    branches: [codex/tavotto-core-v02-intel-ci]
+    paths: [.github/workflows/core-v02-ggplot2-qualification.yml]
+
+permissions:
+  contents: read
+
+env:
+  TAVOTTO_NO_TELEMETRY: "1"
+  TAVOTTO_NO_UPDATE_CHECK: "1"
+  TAVOTTO_NO_JOURNAL_SYNC: "1"
+  TAVOTTO_NO_CONTACT: "1"
+  PYTHONUTF8: "1"
+
+jobs:
+  owned-r:
+    name: R 4.5.3 on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, macos-26, macos-26-intel]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: 72ca19ec0527755d8672bea57954260b4c4aff1c
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13.17"
+      - uses: r-lib/actions/setup-r@f9a764fea8d5c63df6ef9a5c7795bf7deb5d7e05 # v2
+        with:
+          r-version: "4.5.3"
+          use-public-rspm: true
+      - name: Install R figure dependencies
+        shell: Rscript {0}
+        run: |
+          packages <- c("ggplot2", "svglite", "jsonlite")
+          install.packages(packages)
+          print(sessionInfo())
+          print(vapply(packages, function(name) as.character(packageVersion(name)), character(1)))
+          stopifnot(capabilities("cairo"))
+      - name: Install the Python test environment
+        run: |
+          python -m pip install -e ".[worker,dev]"
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check
+      - name: Verify the real R process and mixed-layout restoration
+        run: |
+          git log -1 --format="%H %s"
+          python -c "import os, shutil, subprocess, sys; executable=shutil.which('Rscript'); assert executable; raise SystemExit(subprocess.call([sys.executable, '-m', 'pytest', '-o', 'addopts=', '-vv', 'tests/test_native_ggplot_capture.py'], env={**os.environ, 'TAVOTTO_TEST_RSCRIPT': executable}))"
