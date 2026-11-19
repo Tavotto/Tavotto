@@ -283,6 +283,22 @@
       ]
     },
     {
+      "id": "canvas.bind-computed-svg",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "绑定 SVG 的坐标轴和数据，从项目中恢复编辑并导出 PDF",
+        "en-US": "Bind axes and data in an SVG, reopen its edits from the project, and export a PDF"
+      },
+      "entry": "画布 SVG 面板右键 → 绑定数据为计算图表",
+      "e2e": [
+        {
+          "spec": "chart-document.spec.ts",
+          "title": "chart binding backs up the project and reopens the frozen source"
+        }
+      ]
+    },
+    {
       "id": "canvas.select-and-drag",
       "status": "active",
       "platform": "both",

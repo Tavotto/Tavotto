@@ -11,7 +11,9 @@ const SOURCE = '<svg xmlns="http://www.w3.org/2000/svg" width="100pt" height="10
   '<path id="curve" d="M10 90L90 10" fill="none" stroke="#888888"/>' +
   '<text id="keep" x="3" y="7" font-size="5">Source keep</text></svg>'
 
-test('chart binding backs up the project and reopens the frozen source', async ({ app, page }) => {
+test('chart binding backs up the project and reopens the frozen source', {
+  tag: '@feature:canvas.bind-computed-svg',
+}, async ({ app, page }) => {
   test.setTimeout(180_000)
   const project = mkdtempSync(path.join(os.tmpdir(), 'tavotto-chart-document-'))
   const source = path.join(project, 'chart.svg')
