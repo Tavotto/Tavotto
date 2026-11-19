@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -253,3 +254,36 @@ def test_the_code_under_test_cannot_switch_the_guard_off(box, monkeypatch, attac
     )
     r = call(_ctx(box), "run_snippet", {"env": "e", "code": code})
     assert "SECRET-KEY-MATERIAL" not in r.content, r.content
+
+
+def test_a_pythonpath_entry_under_the_interpreter_prefix_never_runs_before_the_guard(
+    box, monkeypatch, tmp_path
+):
+    """Codex #2064 复核 P1：PYTHONPATH 指向解释器安装前缀下的目录（不是标准库），那里的 `json.py` 也不能先于守卫执行。
+    判据按 PYTHONPATH 的精确条目去，不按前缀猜。
+    注：venv 里守卫前导运行时 `sys.prefix` 还是基础解释器（site 之后才换成 venv），所以本地 venv 上旧判据碰巧也挡住了；
+    CI 与 Codex 的复现用的是不带 venv 的解释器（前缀就是它自己的目录），旧判据在那里放行。"""
+    import shutil
+    import uuid
+
+    _no_os_sandbox(monkeypatch)
+    marker = tmp_path / "PWNED"
+    evil = Path(sys.prefix) / f"_tavotto_test_{uuid.uuid4().hex[:8]}"
+    evil.mkdir()
+    try:
+        (evil / "json.py").write_text(f"open({str(marker)!r}, 'w').write('x')\n", encoding="utf-8")
+        monkeypatch.setenv("PYTHONPATH", str(evil))
+        r = call(_ctx(box), "run_snippet", {"env": "e", "code": "print('hello')"})
+        assert not marker.exists()
+        assert not r.is_error and "hello" in r.content, r.content
+    finally:
+        shutil.rmtree(evil, ignore_errors=True)
+
+
+def test_a_diagnostic_copy_still_imports_the_scripts_sibling_modules(box):
+    """Codex #2064 复核 P2：去掉 '' 之后，脚本所在目录由前导显式放回最前（与 `python fig.py` 一致），同目录的辅助模块照常 import。"""
+    put(box.proj / "helper.py", "VALUE = 42\n")
+    put(box.proj / "fig.py", "import helper\nprint('value', helper.VALUE)\n")
+    ctx = make_ctx(box, environments={"e": sys.executable}, script_path=box.proj / "fig.py")
+    r = call(ctx, "try_run", {"env": "e", "mode": "diagnostic"})
+    assert "ModuleNotFoundError" not in r.content, r.content

@@ -123,8 +123,24 @@ import sys
 # 守卫装好之前只从解释器自己的标准库导入（Codex #2064 P1）：`-c` 让当前目录（''）排在最前、PYTHONPATH 也在标准库前面，
 # 当前目录或 PYTHONPATH 里的 json.py / tempfile.py 会在任何守卫之前执行。先只留标准库位置，守卫与 site 装好后再还原（'' 不还原）
 _saved_path = [p for p in sys.path if p]
-_std = tuple(p for p in {sys.base_prefix, sys.base_exec_prefix, sys.prefix, sys.exec_prefix} if p)
-sys.path[:] = [p for p in _saved_path if p.startswith(_std)]
+# 只留解释器自己算出来的默认位置（标准库 zip、标准库目录、lib-dynload）：去掉 PYTHONPATH 的每一项——按精确条目去，不按前缀猜
+# （Codex #2064 复核 P1：安装前缀下的任意目录也会被前缀判据放过）。环境变量从内建的 posix / nt 读，此刻不导入任何文件里的模块
+_osmod = __import__("nt" if sys.platform == "win32" else "posix")
+_env = _osmod.environ
+# 相对的 PYTHONPATH 条目被解释器按启动目录展开成了绝对路径：启动目录（试跑目录，诊断副本就在里面）及其下一律不在守卫前的路径上
+_cwd = _osmod.getcwd().rstrip("/\\")
+_pp = _env.get("PYTHONPATH" if sys.platform == "win32" else b"PYTHONPATH")
+if isinstance(_pp, bytes):
+    _pp = _pp.decode(sys.getfilesystemencoding(), "surrogateescape")
+_pp_entries = {e.rstrip("/\\") for e in (_pp or "").split(";" if sys.platform == "win32" else ":") if e}
+# 另外只留绝对路径：解释器默认位置都是绝对的，相对条目只可能来自环境
+_abs = (lambda q: q[1:3] in (":\\", ":/") or q.startswith("\\\\")) if sys.platform == "win32" else (lambda q: q.startswith("/"))
+sys.path[:] = [
+    p for p in _saved_path
+    if p.rstrip("/\\") not in _pp_entries and _abs(p)
+    and not (p.rstrip("/\\") == _cwd or p.startswith(_cwd + ("\\" if sys.platform == "win32" else "/")))
+]
+del _osmod, _env, _pp, _pp_entries, _abs, _cwd
 import json, os
 guard, root, out, target = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 # 先把后面要用的标准库导进来，再装守卫：守卫只管「写」，读不受限
@@ -228,6 +244,8 @@ except BaseException:
 sys.modules.pop("_tavotto_trial_guard", None)
 code = 0
 sys.argv = [target] + sys.argv[5:]
+# 与 `python script.py` 一致：脚本所在目录排最前（`run_path` 跑普通 .py 不会替我们加；'' 已经不在了，Codex #2064 复核 P2）
+sys.path.insert(0, os.path.dirname(os.path.abspath(target)))
 if _path0:
     # 项目根：守卫装好之后才进去——当前目录换成项目根（相对路径读数据），项目能 import（run_path 再把目标所在目录放到它前面）
     os.chdir(_path0)
