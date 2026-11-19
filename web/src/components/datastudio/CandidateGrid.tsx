@@ -40,8 +40,6 @@ export function CandidateGrid({
   drawingId,
   onPick,
   onThumb,
-  reducedAt = 'title',
-  reducedText = 'a',
 }: {
   /** 还没被去掉的候选（取不到图的已经不在里面）；第一张带「推荐」 */
   items: Candidate[]
@@ -53,10 +51,6 @@ export function CandidateGrid({
   onPick: (id: string) => void
   /** 一张缩略图取到了 / 取不到 */
   onThumb: (id: string, ok: boolean) => void
-  /** 大表的「取了多少个点」写在哪一行：`title` = 名字那一行的右端，`why` = 说明那一句的后面（两个位置候选，等用户选定后只留一个） */
-  reducedAt?: 'title' | 'why'
-  /** 文案候选：`a` / `b`（同上，选定后只留一个） */
-  reducedText?: 'a' | 'b'
 }) {
   const { t, i18n } = useTranslation('ai')
   const grid = useRef<HTMLDivElement>(null)
@@ -67,7 +61,7 @@ export function CandidateGrid({
   // 大表的候选带 `reduced`（整表行数 / 画出的点数）：安静的一小段灰字 + 悬停说明；没少画（小表 / kept ≥ rows）就没有
   const reducedOf = (it: Candidate) => {
     const n = reducedNumbers(it.reduced, i18n.language)
-    return n ? { text: t(`dataFigureV2.reduced.${reducedText}`, n), hint: t('dataFigureV2.reduced.hint', n) } : null
+    return n ? { text: t('dataFigureV2.reduced.text', n), hint: t('dataFigureV2.reduced.hint', n) } : null
   }
   const count = pending ? 4 : items.length
   const oneRow = count <= 2
@@ -129,7 +123,7 @@ export function CandidateGrid({
                 <span className="mx-1.5 mt-3 flex items-center gap-2">
                   <span className="min-w-0 text-base font-medium text-ink">{title(it.title_code)}</span>
                   {i === 0 && <Badge>{t('dataFigureV2.pick.recommended')}</Badge>}
-                  {red && reducedAt === 'title' && (
+                  {red && (
                     <span data-candidate-reduced className="ml-auto shrink-0 whitespace-nowrap text-xs tabular-nums text-ink-3" title={red.hint}>
                       {red.text}
                     </span>
@@ -141,14 +135,7 @@ export function CandidateGrid({
                     {variantText(it.variant)}
                   </span>
                 )}
-                <span className="mx-1.5 mt-1 text-sm text-ink-2">
-                  {why(it.why_code)}
-                  {red && reducedAt === 'why' && (
-                    <span data-candidate-reduced className="ml-2 whitespace-nowrap text-xs tabular-nums text-ink-3" title={red.hint}>
-                      {red.text}
-                    </span>
-                  )}
-                </span>
+                <span className="mx-1.5 mt-1 text-sm text-ink-2">{why(it.why_code)}</span>
               </button>
             )
           })}

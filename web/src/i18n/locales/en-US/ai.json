@@ -650,8 +650,7 @@
       "cancelHint": "Stop waiting for this read. You can read it again anytime."
     },
     "reduced": {
-      "a": "{{kept}} points from {{rows}} rows",
-      "b": "Plots {{kept}} of {{rows}} rows",
+      "text": "{{kept}} points from {{rows}} rows",
       "hint": "The table has {{rows}} rows. This plot draws {{kept}} representative points, with the minimum and maximum values kept."
     },
     "preview": {

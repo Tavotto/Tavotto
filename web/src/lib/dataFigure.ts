@@ -31,11 +31,16 @@ export function isLargeFile(entries: AiDataFileEntry[] | null | undefined, ref: 
   return e != null && e.size > LARGE_FILE_BYTES
 }
 
+/** 行数 / 点数的呈现：小于 1 万照旧写原数字，其余用紧凑写法（中文「万」、英文 K / M）；数据条的行数与候选上的「取了多少个点」共用 */
+export function compactCount(n: number, lng: string): string {
+  if (!Number.isFinite(n) || Math.abs(n) < 10_000) return String(n)
+  return new Intl.NumberFormat(lng, { notation: 'compact', maximumFractionDigits: 1 }).format(n)
+}
+
 /** 「画的是 N 行里的 K 个点」里的两个数：`万` / `K` / `M` 紧凑写法（随界面语言）；整表没少画（kept ≥ rows）返回 null，界面不说 */
 export function reducedNumbers(r: { rows: number; kept: number } | null | undefined, lng: string): { rows: string; kept: string } | null {
   if (!r || !(r.rows > 0) || !(r.kept > 0) || r.kept >= r.rows) return null
-  const f = new Intl.NumberFormat(lng, { notation: 'compact', maximumFractionDigits: 1 })
-  return { rows: f.format(r.rows), kept: f.format(r.kept) }
+  return { rows: compactCount(r.rows, lng), kept: compactCount(r.kept, lng) }
 }
 
 /** 清单里一行（一张表）此刻怎么说 */

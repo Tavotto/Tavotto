@@ -156,6 +156,14 @@ describe('大文件：读取中的一句话与「取消」', () => {
     expect(useDataFigureStore.getState().phase).toBe('cancelled')
   })
 
+  it('数据条的行数：大表写「612万」，小表（< 1 万）原数字', async () => {
+    overview.mockResolvedValue(ov())
+    propose.mockResolvedValueOnce(cands([item('i1', 'line_band')]))
+    await start()
+    await open(0)
+    expect(q('[data-data-strip-info]')!.textContent).toBe('前 1 行，共 612万 行 · 3 列')
+  })
+
   it('候选一出来（文字到了）这一句就没了：不再有取消', async () => {
     overview.mockResolvedValue(ov())
     propose.mockResolvedValueOnce(cands([item('i1', 'line_band')]))
@@ -179,9 +187,9 @@ describe('候选上的「N 行里取 K 个点」', () => {
     files.mockResolvedValue({ files: [{ path: 'big.csv', size: LARGE_FILE_BYTES * 20, table: { status: 'ok', code: null, delimiter: 'comma', header_row: 1, columns: 2, rows: 6_120_000 } }], truncated: false })
     overview.mockResolvedValue(ov())
   })
-  const show = async (items: ReturnType<typeof item>[], props: { reducedAt?: 'title' | 'why'; reducedText?: 'a' | 'b' } = {}) => {
+  const show = async (items: ReturnType<typeof item>[]) => {
     const { CandidateGrid } = await import('./CandidateGrid')
-    await mount(<CandidateGrid items={items.map((i) => ({ ...i, thumb: `/t/${i.id}` }))} thumbs={{}} drawingId={null} onPick={() => {}} onThumb={() => {}} {...props} />)
+    await mount(<CandidateGrid items={items.map((i) => ({ ...i, thumb: `/t/${i.id}` }))} thumbs={{}} drawingId={null} onPick={() => {}} onThumb={() => {}} />)
   }
 
   it('大表的候选：名字那一行右端一小段灰字（数字用「万」），悬停有整句；没有 reduced / 没少画的不显示', async () => {
@@ -194,17 +202,10 @@ describe('候选上的「N 行里取 K 个点」', () => {
     const tiles = qa('[data-candidate]')
     expect(tiles[0]!.querySelector('[data-candidate-reduced]')!.textContent).toBe('612万行里取4.2万个点')
     expect(tiles[0]!.querySelector('[data-candidate-reduced]')!.getAttribute('title')).toBe('整张表612万行，这张图画的是其中有代表性的4.2万个点，最大最小值都留着。')
-    expect(tiles[1]!.querySelector('[data-candidate-reduced]')!.textContent).toContain('8400')
+    expect(tiles[1]!.querySelector('[data-candidate-reduced]')!.textContent).toBe('612万行里取8400个点')
     expect(tiles[2]!.querySelector('[data-candidate-reduced]')).toBeNull()
     expect(tiles[3]!.querySelector('[data-candidate-reduced]')).toBeNull()
     // 名字那一行里（不另起一行）
     expect(tiles[0]!.querySelector('[data-candidate-reduced]')!.parentElement!.className).toContain('flex')
-  })
-
-  it('另一个位置 / 另一句文案候选', async () => {
-    await show([item('i1', 'line_band', { rows: 6_120_000, kept: 42_113 })], { reducedAt: 'why', reducedText: 'b' })
-    const r = q('[data-candidate-reduced]')!
-    expect(r.textContent).toBe('画4.2万个点 · 共612万行')
-    expect(r.parentElement!.textContent).toContain('看总体趋势和波动') // 接在说明那一句后面，同一行
   })
 })

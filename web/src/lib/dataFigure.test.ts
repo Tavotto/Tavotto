@@ -120,8 +120,19 @@ describe('大文件判断与「N 行里取 K 个点」的数字', () => {
     const { reducedNumbers } = await import('@/lib/dataFigure')
     expect(reducedNumbers({ rows: 6_120_000, kept: 42_113 }, 'zh-CN')).toEqual({ rows: '612万', kept: '4.2万' })
     expect(reducedNumbers({ rows: 6_120_000, kept: 42_113 }, 'en-US')).toEqual({ rows: '6.1M', kept: '42.1K' })
+    expect(reducedNumbers({ rows: 6_120_000, kept: 8_400 }, 'en-US')).toEqual({ rows: '6.1M', kept: '8400' }) // 小于 1 万照旧写原数字
     expect(reducedNumbers({ rows: 100, kept: 100 }, 'zh-CN')).toBeNull()
     expect(reducedNumbers({ rows: 100, kept: 0 }, 'zh-CN')).toBeNull()
     expect(reducedNumbers(undefined, 'zh-CN')).toBeNull()
+  })
+})
+
+describe('compactCount（数据条行数与 reduced 共用）', () => {
+  it('小于 1 万原样；其余随语言紧凑', async () => {
+    const { compactCount } = await import('@/lib/dataFigure')
+    expect(compactCount(144, 'zh-CN')).toBe('144')
+    expect(compactCount(9999, 'en-US')).toBe('9999')
+    expect(compactCount(300000, 'zh-CN')).toBe('30万')
+    expect(compactCount(6_120_000, 'en-US')).toBe('6.1M')
   })
 })

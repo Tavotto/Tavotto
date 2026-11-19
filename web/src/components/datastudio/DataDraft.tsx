@@ -52,7 +52,7 @@ function LargeReadLine({ lead }: { lead?: boolean }) {
  * 上面是候选画法网格（或一句话的说明），下面是数据条。出图中被点的那张带扫光、其余淡掉。
  * Esc 关临时标签；切到别的画布标签时临时标签留着但不激活。
  */
-export function DataDraft({ reducedAt, reducedText }: { reducedAt?: 'title' | 'why'; reducedText?: 'a' | 'b' } = {}) {
+export function DataDraft() {
   const { t } = useTranslation('ai')
   const fm = useFormatMessage()
   const open = useDataFigureStore((s) => s.draftOpen)
@@ -241,7 +241,7 @@ export function DataDraft({ reducedAt, reducedText }: { reducedAt?: 'title' | 'w
             {drawingId ? drawingLine : settled ? t('dataFigureV2.draft.pickLead') : t('dataFigureV2.working.drawing')}
           </p>
         )}
-        <CandidateGrid items={candidates} thumbs={thumbs} pending={pending} drawingId={drawingId} onPick={(id) => void st().draw(id)} onThumb={(id, ok) => session && st().thumbSettled(session, id, ok)} reducedAt={reducedAt} reducedText={reducedText} />
+        <CandidateGrid items={candidates} thumbs={thumbs} pending={pending} drawingId={drawingId} onPick={(id) => void st().draw(id)} onThumb={(id, ok) => session && st().thumbSettled(session, id, ok)} />
       </>
     )
   }

@@ -229,9 +229,8 @@ export default interface Resources {
         "undo": "撤销"
       },
       "reduced": {
-        "a": "{{rows}}行里取{{kept}}个点",
-        "b": "画{{kept}}个点 · 共{{rows}}行",
-        "hint": "整张表{{rows}}行，这张图画的是其中有代表性的{{kept}}个点，最大最小值都留着。"
+        "hint": "整张表{{rows}}行，这张图画的是其中有代表性的{{kept}}个点，最大最小值都留着。",
+        "text": "{{rows}}行里取{{kept}}个点"
       },
       "result": {
         "mismatch": "画出来的图和你的数据对不上，所以没有打开它。",
