@@ -16,8 +16,8 @@ import { currentLocale } from '@/i18n'
  * `status === null` = 还没问过；`{enabled:false}` = 入口整个不出现（`PRODUCTION_LIVE = False` 且没设测试端点）。
  * 失败只存稳定的码，一码一句话在界面层翻（`license.failure.*`）。
  */
-/** 购买用的 Stripe Price lookup key。档位 / 价格还没定（ADR 0193 §十），先固定一个；改它不碰别处 */
-export const LICENSE_LOOKUP_KEY = 'premium'
+/** 购买用的 Stripe Price lookup key，按界面语言选（与官网一致）；价格改在 Stripe、不改代码，常量只在这一处 */
+export const LICENSE_LOOKUP_KEYS = { zh: 'founding_year_cny', other: 'founding_year_usd' } as const
 
 const FAILURE_CODES: ReadonlySet<string> = new Set([
   'invalid_code',
@@ -79,7 +79,8 @@ export const useLicenseStore = create<LicenseState>((set, get) => {
     release: () => run(() => releaseLicense()),
     buy: (renew = false) =>
       run(async () => {
-        const r = await licenseCheckout(LICENSE_LOOKUP_KEY, currentLocale() === 'zh-CN' ? 'zh' : 'en', renew)
+        const zh = currentLocale() === 'zh-CN'
+        const r = await licenseCheckout(LICENSE_LOOKUP_KEYS[zh ? 'zh' : 'other'], zh ? 'zh' : 'en', renew)
         window.open(r.url, '_blank', 'noopener,noreferrer')
         return null
       }),

@@ -70,7 +70,7 @@ describe('授权行', () => {
     expect(q('[data-license-action="release"]')).not.toBeNull()
   })
 
-  it('device_limit：一句话 + 一颗按钮，不弹窗', async () => {
+  it('device_limit：一句话，输入态按钮保持「激活」，不弹窗', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn((u: string) => (u.includes('/activate') ? json({ ok: false, error: 'device_limit' }, 409) : json(NONE))),
@@ -85,7 +85,7 @@ describe('授权行', () => {
     })
     await act(async () => q('[data-license-action="activate"]')!.click())
     expect(q('[data-license-state]')?.dataset.licenseState).toBe('failed:device_limit')
-    expect(document.querySelectorAll('[data-license-action]').length).toBe(1)
+    expect(q('[data-license-action="activate"]')).not.toBeNull()
     expect(document.querySelector('[role="dialog"]')).toBeNull()
   })
 })

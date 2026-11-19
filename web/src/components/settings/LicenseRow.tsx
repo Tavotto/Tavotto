@@ -5,6 +5,8 @@ import { formatDate } from '@/i18n/format'
 import type { LicenseFailureCode } from '@/lib/api'
 import { licenseVisible, useLicenseStore } from '@/store/licenseStore'
 import { Button } from '../ui/Button'
+import { ICON_SIZE } from '../ui/Icon'
+import { ExternalLink } from '../ui/icons'
 import { FieldGroup, FormSection } from '../ui/FormSection'
 import { TextInput } from '../ui/Input'
 import { SettingRow } from './SettingRow'
@@ -78,32 +80,54 @@ export function LicenseRow() {
   const hint = status.email_hint
 
   // 那一句灰字：失败优先，其次按状态
-  let line: string
+  let line: React.ReactNode
   if (failure) line = failureText(failure)
-  else if (active) line = [st('until', { date }), hint].filter(Boolean).join(' · ')
+  else if (active)
+    line = (
+      <>
+        {st('until', { date })}
+        {hint && <span className="font-mono text-ink-3"> · {hint}</span>}
+      </>
+    )
   else if (state === 'expired') line = st('state.expired', { date })
   else if (state === 'revoked') line = st('state.revoked')
   else if (state === 'lapsed') line = st('state.lapsed')
   else line = st('none')
 
   // 右边的那一颗按钮
+  const cancel = () => {
+    setEntering(false)
+    setCode('')
+    clearFailure()
+  }
   let control: React.ReactNode
-  if (failure) {
+  if (entering && !active) {
+    control = (
+      <div className="flex items-center gap-2">
+        <Button variant="ghost" onClick={cancel} data-license-action="cancel">
+          {st('action.cancel')}
+        </Button>
+        <Button variant="primary" loading={busy} disabled={!code.trim()} onClick={() => void submit()} data-license-action="activate">
+          {st('action.activate')}
+        </Button>
+      </div>
+    )
+  } else if (failure) {
     const kind = FAILURE_ACTION[failure]
     control = (
       <Button variant="secondary" loading={busy} onClick={() => act(kind)} data-license-action={kind}>
         {st(`action.${kind}`)}
       </Button>
     )
-  } else if (entering) {
-    control = (
-      <Button variant="primary" loading={busy} disabled={!code.trim()} onClick={() => void submit()} data-license-action="activate">
-        {st('action.activate')}
-      </Button>
-    )
   } else if (active) {
     control = (
-      <Button variant="secondary" loading={busy} onClick={() => void release()} data-license-action="release">
+      <Button
+        variant="ghost"
+        loading={busy}
+        title={st('releaseTitle')}
+        onClick={() => void release()}
+        data-license-action="release"
+      >
         {st('action.release')}
       </Button>
     )
@@ -121,9 +145,10 @@ export function LicenseRow() {
     )
   } else {
     control = (
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-2">
         <Button variant="ghost" loading={busy} onClick={() => void buy()} data-license-action="buy">
           {st('action.buy')}
+          <ExternalLink size={ICON_SIZE.xs} className="text-ink-2" aria-hidden />
         </Button>
         <Button
           variant="secondary"
@@ -158,9 +183,7 @@ export function LicenseRow() {
                   if (e.key === 'Enter') void submit()
                   if (e.key === 'Escape') {
                     e.stopPropagation()
-                    setEntering(false)
-                    setCode('')
-                    clearFailure()
+                    cancel()
                   }
                 }}
                 placeholder="TVK-XXXX-XXXX-XXXX"
@@ -168,7 +191,7 @@ export function LicenseRow() {
                 data-license-input
                 spellCheck={false}
                 autoComplete="off"
-                className="font-mono"
+                className="max-w-xs font-mono text-xs tracking-wider"
               />
             ) : undefined
           }
