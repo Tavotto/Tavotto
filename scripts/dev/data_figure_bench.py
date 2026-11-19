@@ -81,6 +81,9 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--only", default="", help="只跑这些用例 id，逗号分隔")
     p.add_argument("--out", default="", help="把 JSON 报告写到这个文件")
     args = p.parse_args(argv)
+    if args.arm == "rules" and (args.real or args.key_file):
+        # 在解析任何连接 / 读任何 key 文件之前就拒绝：`--arm rules` 的意思是「不连模型、不花钱」
+        p.error("--arm rules 不连模型，不能和 --real / --key-file 同用")
     if args.key_file:
         if not args.real:
             p.error("--key-file 只能和 --real 同用")

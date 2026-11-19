@@ -306,3 +306,63 @@ def test_scrub_and_report_writer_replace_the_key_as_a_last_line_of_defence(tmp_p
     out = tmp_path / "r.json"
     mod._write_report(types.SimpleNamespace(out=str(out), key_file=str(kf)), {"x": f"oops {KEY}"})
     assert KEY not in out.read_text(encoding="utf-8")
+
+
+def test_arm_rules_refuses_real_and_key_file_before_touching_any_credential(tmp_path):
+    missing = tmp_path / "nope.key"  # 不存在：若先读 key 文件，报错会是「读不到」而不是 arm 冲突
+    for args in (
+        ["--suite", "roles", "--arm", "rules", "--real", "--max-calls", "50"],
+        [
+            "--suite",
+            "roles",
+            "--arm",
+            "rules",
+            "--real",
+            "--key-file",
+            str(missing),
+            "--model",
+            "gpt-5",
+            "--max-calls",
+            "50",
+        ],
+    ):
+        done = bench(tmp_path, *args)
+        assert done.returncode == 2 and "--arm rules" in done.stderr, args
+        assert "没有可用的连接" not in done.stderr and "读不到" not in done.stderr
+
+
+def test_arm_rules_makes_zero_transport_calls_and_resolves_no_connection(
+    tmp_path, monkeypatch, capsys
+):
+    import sys as _sys
+
+    mod = load_bench()
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "d0"))
+    monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp_path / "c0"))
+    _sys.path.insert(0, str(ROOT / "src"))
+    from tavotto.engine import ai_data_roles, ai_structured
+
+    ai_data_roles.reset_for_tests()
+    rec = Recorder([])
+    monkeypatch.setattr(ai_structured, "post_json", rec)
+
+    def boom():
+        raise AssertionError("resolve_connection must not run")
+
+    monkeypatch.setattr(ai_structured, "resolve_connection", boom)
+    out = tmp_path / "r.json"
+    saved = (_sys.stdout, _sys.stderr)
+    try:
+        rc = mod.main(
+            ["--suite", "roles", "--arm", "rules", "--only", "RC-01,RC-02", "--out", str(out)]
+        )
+    finally:
+        _sys.stdout, _sys.stderr = saved
+    capsys.readouterr()
+    assert rc == 0 and rec.calls == []
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert (
+        report["mode"] == "rules-only"
+        and report["requests_used"] == 0
+        and report["connection"] is None
+    )

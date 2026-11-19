@@ -406,7 +406,7 @@ def test_cache_key_changes_with_data_hint_connection_and_prompt(tmp_path):
 
 
 def test_cache_ttl_entry_cap_corruption_and_atomic_files(tmp_path, monkeypatch):
-    u = R.Understanding((("a", "measure"),), {"y": "a"}, {}, None, 0)
+    u = R.Judgement({"columns": [{"name": "a", "role": "measure"}], "picks": {}, "cells": []})
     R.cache_put("k1", u, now=1000.0)
     assert R.cache_get("k1", now=1000.0 + 5) == u
     assert R.cache_get("k1", now=1000.0 + R.CACHE_TTL_S + 1) is None  # 过期
@@ -666,7 +666,10 @@ def test_diagnostics_bundle_and_telemetry_do_not_carry_the_cache_or_column_names
     files = list(R.cache_dir().glob("*.json"))
     assert files and "replicate" in files[0].read_text(encoding="utf-8")  # 缓存里确有列名
     marker = "SECRETCOLUMN_ZQ"
-    R.cache_put("marker", R.Understanding(((marker, "measure"),), {}, {}, None, 0))
+    R.cache_put(
+        "marker",
+        R.Judgement({"columns": [{"name": marker, "role": "measure"}], "picks": {}, "cells": []}),
+    )
     blob = diagnostics.build_bundle(None)
     with zipfile.ZipFile(io.BytesIO(blob)) as z:
         everything = b"".join(z.read(n) for n in z.namelist())
@@ -725,3 +728,87 @@ def test_only_propose_and_the_model_pair_reach_the_model_modules():
     assert sorted(users["ai_structured"]) == ["ai_data_model.py", "ai_data_roles.py"]
     assert sorted(users["ai_data_model"]) == ["ai_data_roles.py"]
     assert sorted(users["ai_data_roles"]) == ["ai_data_propose.py", "app.py"]
+
+
+# --------------------------------------------------------------------------- 缓存只存模型的原始判断（Codex #2068）
+def test_cache_stores_the_model_judgement_and_rederives_with_the_current_full_hint(tmp_path):
+    """两个提示前 200 字相同、之后点名的列不同：模型只看到前 200 字（同一份判断可复用），但规则读完整提示，派生的建议必须各算各的。"""
+    case = {**BY_ID["RC-01"]}
+    prefix = "a" * R.MAX_HINT_CHARS
+    hint_expr, hint_batch = prefix + " expression", prefix + " batch"
+    first = run_case(
+        {**case, "hint": hint_expr}, tmp_path, conn=D.fake_conn(), post=DR.scripted(case)
+    )
+    t2 = D.FakeTransport([])  # 第二个提示：模型看到的相同 → 命中缓存，零请求
+    second = run_case({**case, "hint": hint_batch}, tmp_path, conn=D.fake_conn(), post=t2)
+    assert t2.calls == [] and second.state == "ready"
+    # 新算的结果（清缓存、重问模型）就是第二个提示该有的建议
+    fresh()
+    truth = run_case(
+        {**case, "hint": hint_batch}, tmp_path, conn=D.fake_conn(), post=DR.scripted(case)
+    )
+    assert second.payload["answers"] == truth.payload["answers"]
+    assert second.model == truth.model
+    # Codex 复现的形状：以 expression 结尾只出 {"x": "none"}，换成 batch 多出 {"y": "expression"}
+    assert first.payload["answers"] != second.payload["answers"]
+    assert second.payload["answers"].get("y") == "expression"
+
+
+def test_the_cache_hit_is_derived_from_the_hint_in_both_directions(tmp_path):
+    case = {**BY_ID["RC-01"]}
+    prefix = "a" * R.MAX_HINT_CHARS
+    hint_expr, hint_batch = prefix + " expression", prefix + " batch"
+    run_case({**case, "hint": hint_batch}, tmp_path, conn=D.fake_conn(), post=DR.scripted(case))
+    t = D.FakeTransport([])
+    hit = run_case({**case, "hint": hint_expr}, tmp_path, conn=D.fake_conn(), post=t)
+    assert t.calls == [] and hit.payload["answers"] == {
+        "x": "none"
+    }  # 以 expression 结尾：规则按名字定了 y，只剩 x
+
+
+def test_the_cache_file_holds_only_the_validated_model_judgement(tmp_path):
+    case = BY_ID["RC-01"]
+    run_case(case, tmp_path, conn=D.fake_conn(), post=DR.scripted(case))
+    (f,) = list(R.cache_dir().glob("*.json"))
+    body = json.loads(f.read_text(encoding="utf-8"))
+    assert set(body["result"]) == {"shape", "header_row", "header_dropped"}
+    assert body["v"] == R.SCHEMA_VERSION == 2
+    assert set(body["result"]["shape"]) == {
+        "columns",
+        "picks",
+        "cells",
+    }  # 没有按提示算出的 picks / answers
+    assert "answers" not in json.dumps(body)
+
+
+def test_a_cached_header_judgement_rereads_the_table_and_a_changed_file_is_a_miss(tmp_path):
+    case = BY_ID["RC-17"]
+    t = DR.scripted(case)
+    first = run_case(case, tmp_path, conn=D.fake_conn(), post=t)
+    assert first.payload["header_rows"] == {"t.csv": 2} and len(t.calls) == 2
+    R.reset_for_tests()
+    t2 = D.FakeTransport([])
+    second = run_case(case, tmp_path, conn=D.fake_conn(), post=t2)
+    assert t2.calls == [] and second.model == first.model
+    assert {k: v for k, v in second.payload.items() if k != "id"} == {
+        k: v for k, v in first.payload.items() if k != "id"
+    }
+    # 缓存里采纳了表头行，但文件已经读不出那个表头（key 里的哈希本该变，这里直接篡改缓存验证兜底）：当未命中，重新问
+    (f,) = list(R.cache_dir().glob("*.json"))
+    body = json.loads(f.read_text(encoding="utf-8"))
+    body["result"]["header_row"] = 99
+    f.write_text(json.dumps(body), encoding="utf-8")
+    R.reset_for_tests()
+    t3 = DR.scripted(case)
+    third = run_case(case, tmp_path, conn=D.fake_conn(), post=t3)
+    assert len(t3.calls) == 2 and third.state == "ready"
+
+
+def test_a_corrupt_judgement_in_the_cache_is_a_miss():
+    R.cache_put("k", R.Judgement({"columns": [], "picks": {}, "cells": []}))
+    assert R.cache_get("k") is not None
+    p = R.cache_dir() / "k.json"
+    body = json.loads(p.read_text(encoding="utf-8"))
+    body["result"]["shape"] = {"columns": "x"}
+    p.write_text(json.dumps(body), encoding="utf-8")
+    assert R.cache_get("k") is None

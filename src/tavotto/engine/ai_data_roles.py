@@ -47,7 +47,7 @@ from . import (
 
 LOG = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 2：缓存只存模型的原始判断（`Judgement`），不再存按提示算出的建议
 #: 列角色闭集（唯一出处；提示词与校验都从这里读）。值 = 一句中文含义（只给模型看）
 ROLES: dict[str, str] = {
     "time": "时间或日期，一个有顺序的横轴（日期、第几天、时刻）",
@@ -344,31 +344,75 @@ class Understanding:
             "dropped": self.dropped,
         }
 
-    def to_json(self) -> dict:
-        return {
-            "roles": [list(x) for x in self.roles],
-            "picks": dict(self.picks),
-            "cells": {c: r.to_dict() for c, r in self.cells.items()},
-            "header_row": self.header_row,
-            "dropped": self.dropped,
-        }
-
-    @classmethod
-    def from_json(cls, data: dict) -> Understanding:
-        return cls(
-            roles=tuple((str(c), str(r)) for c, r in data.get("roles", [])),
-            picks={str(k): str(v) for k, v in dict(data.get("picks", {})).items()},
-            cells={
-                str(c): recipe_mod.CellRule.from_dict(r)
-                for c, r in dict(data.get("cells", {})).items()
-            },
-            header_row=data.get("header_row"),
-            dropped=int(data.get("dropped", 0)),
-        )
-
     @property
     def empty(self) -> bool:
         return not (self.picks or self.cells or self.header_row is not None)
+
+
+@dataclass(frozen=True)
+class Judgement:
+    """**模型的原始判断**（已过形状校验）+ 采纳了的表头行——缓存存的就是它。按提示 / 规则算出的建议（`Understanding`）每次由 `derive` 现算：
+    提示只有前 `MAX_HINT_CHARS` 字发给模型，但规则读的是完整提示；缓存键与派生结果因此不会错位（Codex #2068）。"""
+
+    shape: dict
+    header_row: int | None = None
+    #: 表头那一步被丢掉的答案个数（不在预览里 / 重读不合格）
+    header_dropped: int = 0
+
+    def to_json(self) -> dict:
+        return {
+            "shape": self.shape,
+            "header_row": self.header_row,
+            "header_dropped": self.header_dropped,
+        }
+
+    @classmethod
+    def from_json(cls, data: dict) -> Judgement:
+        shape = validate_roles_shape(data["shape"])  # 坏文件 / 手改过的 = ValueError → 当未命中
+        hr = data.get("header_row")
+        if hr is not None and (isinstance(hr, bool) or not isinstance(hr, int)):
+            raise ValueError("header_row")
+        return cls(shape, hr, int(data.get("header_dropped", 0)))
+
+
+def derive(
+    entry: adf.TableEntry,
+    values: adf.DataSummary,
+    judgement: Judgement,
+    hint: str | None,
+    *,
+    fixed: dict | None = None,
+) -> Understanding:
+    """判断 + **当前完整提示** + 规则 → 建议。`entry` / `values` 必须是采纳表头之后的那张表（见 `effective_table`）。"""
+    out = interpret(entry, values, judgement.shape, hint, fixed=fixed)
+    return Understanding(
+        out.roles,
+        out.picks,
+        out.cells,
+        judgement.header_row,
+        out.dropped + judgement.header_dropped,
+    )
+
+
+def effective_table(
+    entry: adf.TableEntry,
+    values: adf.DataSummary,
+    data_path: Path | None,
+    header_row: int | None,
+) -> tuple[adf.TableEntry, adf.DataSummary] | None:
+    """采纳了表头行时，按它重读出模型当时看的那张表；读不出（文件变了 / 不合格）= None（缓存当未命中）。"""
+    if header_row is None:
+        return entry, values
+    if data_path is None:
+        return None
+    redo = adf.read_text_table(data_path, header_row=header_row)
+    if redo.summary is None or not any(
+        recipe_mod.numeric_like(c) for c in redo.summary.per_column.values()
+    ):
+        return None
+    return adf.TableEntry(
+        entry.path, entry.sheet, entry.hidden, _no_rows(redo.summary)
+    ), redo.summary
 
 
 def _role_fits_column(s: adf.DataSummary, col: str, role: str) -> bool:
@@ -550,7 +594,7 @@ def cache_key(
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def cache_get(key: str, now: float | None = None) -> Understanding | None:
+def cache_get(key: str, now: float | None = None) -> Judgement | None:
     path = cache_dir() / f"{key}.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -558,12 +602,12 @@ def cache_get(key: str, now: float | None = None) -> Understanding | None:
             return None
         if (time.time() if now is None else now) - float(data["created"]) > CACHE_TTL_S:
             return None
-        return Understanding.from_json(data["result"])
-    except (OSError, ValueError, KeyError, TypeError, recipe_mod.RecipeError):
+        return Judgement.from_json(data["result"])
+    except (OSError, ValueError, KeyError, TypeError):
         return None
 
 
-def cache_put(key: str, result: Understanding, now: float | None = None) -> None:
+def cache_put(key: str, result: Judgement, now: float | None = None) -> None:
     """原子写；写不下去（磁盘满 / 权限）就算了——缓存只是省钱，不是正确性。"""
     d = cache_dir()
     try:
@@ -617,11 +661,13 @@ class Job:
     created: float = field(default_factory=time.time)
     #: 本次调用的用量（测试 / 手动基准看；不进响应）
     usage: dict = field(default_factory=dict)
+    #: 单飞登记键（项目、缓存键、**完整提示**的摘要）。只在 pending 期间登记：完成后复用靠磁盘缓存 + 按当前提示重新派生
+    flight: tuple = ()
 
 
 _LOCK = threading.RLock()
 _JOBS: dict[str, Job] = {}
-_BY_KEY: dict[tuple[str, str], str] = {}
+_BY_KEY: dict[tuple[str, str, str], str] = {}
 _NEGATIVE: dict[str, float] = {}
 #: 测试 / 手动基准注入（连接、传输、同步执行）；产品代码不设
 _OVERRIDES: dict = {}
@@ -681,11 +727,11 @@ def _sweep(now: float) -> None:
     for jid, j in list(_JOBS.items()):
         if now - j.created > JOB_TTL_S:
             _JOBS.pop(jid, None)
-            _BY_KEY.pop((j.project, j.key), None)
+            _BY_KEY.pop(j.flight, None)
     while len(_JOBS) > MAX_JOBS:
         oldest = min(_JOBS.values(), key=lambda j: j.created)
         _JOBS.pop(oldest.id, None)
-        _BY_KEY.pop((oldest.project, oldest.key), None)
+        _BY_KEY.pop(oldest.flight, None)
     for k, until in list(_NEGATIVE.items()):
         if until <= now:
             _NEGATIVE.pop(k, None)
@@ -745,17 +791,25 @@ def start(
     now = time.time()
     with _LOCK:
         _sweep(now)
-        jid = _BY_KEY.get((project, key))
+        flight = (project, key, hashlib.sha256((hint or "").encode("utf-8")).hexdigest())
+        jid = _BY_KEY.get(flight)
         if jid is not None and jid in _JOBS and not refresh:
             return job_view(_JOBS[jid])
         if not refresh and _NEGATIVE.get(key, 0) > now:
             return None
-        hit = None if refresh else cache_get(key)
+        cached = None if refresh else cache_get(key)
+        hit = None
+        if cached is not None:
+            eff = effective_table(entry, values, data_path, cached.header_row)
+            if eff is not None:  # 缓存里的是模型的判断：按**当前**完整提示重新派生建议
+                hit = derive(eff[0], eff[1], cached, hint, fixed=fixed)
         job = Job(secrets.token_hex(8), project, key, entry.path)
         if hit is not None:
             job.state, job.payload = "ready", _payload(hit, entry.path)
         _JOBS[job.id] = job
-        _BY_KEY[(project, key)] = job.id
+        job.flight = flight
+        if hit is None:
+            _BY_KEY[flight] = job.id
     if hit is None:
         args = (job, entry, values, hint, data_path, dict(fixed or {}))
         if _OVERRIDES.get("sync"):
@@ -780,18 +834,25 @@ def _run(
 ) -> None:
     """任务体。**永不抛**；结果写进 `job`（`ready` / `failed`），成功写缓存，失败记 60 s 负缓存。"""
     try:
-        outcome = understand(entry, values, hint, data_path=data_path, fixed=fixed, job=job)
+        judged = judge(entry, values, hint, data_path=data_path, job=job)
+        if isinstance(judged, tuple) and judged and isinstance(judged[0], Judgement):
+            outcome = derive(judged[1], judged[2], judged[0], hint, fixed=fixed)
+            judgement: Judgement | None = judged[0]
+        else:
+            outcome, judgement = judged, None
     except Exception:  # noqa: BLE001 - 后台线程：只可能是本模块缺陷
-        outcome = ("failed", "transport")
+        outcome, judgement = ("failed", "transport"), None
+    if judgement is not None:
+        cache_put(
+            job.key, judgement
+        )  # 先落缓存再放掉单飞登记：中间插进来的同 key 请求要么并入、要么命中缓存
     with _LOCK:
         if isinstance(outcome, Understanding):
             job.state, job.payload = "ready", _payload(outcome, entry.path)
         else:
             job.state, job.reason = "failed", outcome[1]
             _NEGATIVE[job.key] = time.time() + NEGATIVE_TTL_S
-            _BY_KEY.pop((job.project, job.key), None)
-    if isinstance(outcome, Understanding):
-        cache_put(job.key, outcome)
+        _BY_KEY.pop(job.flight, None)  # 完成：不再单飞（别的提示 / 之后的请求走磁盘缓存并现算）
 
 
 def _add_usage(job: Job | None, res: ai_structured.StructuredResult) -> None:
@@ -821,7 +882,23 @@ def understand(
     job: Job | None = None,
     call: Callable[..., ai_structured.StructuredResult] | None = None,
 ) -> Understanding | tuple[str, str]:
-    """同步做完整件事 → `Understanding`，或 `("failed", 闭集原因)`。**永不抛**。总时限 `TIMEOUT_S`（表头那次与列角色那次共用）。
+    """`judge` + `derive`：同步做完整件事 → `Understanding`，或 `("failed", 闭集原因)`。"""
+    judged = judge(entry, values, hint, data_path=data_path, job=job, call=call)
+    if isinstance(judged[0], Judgement):
+        return derive(judged[1], judged[2], judged[0], hint, fixed=fixed)
+    return judged
+
+
+def judge(
+    entry: adf.TableEntry,
+    values: adf.DataSummary,
+    hint: str | None,
+    *,
+    data_path: Path | None = None,
+    job: Job | None = None,
+    call: Callable[..., ai_structured.StructuredResult] | None = None,
+) -> tuple[Judgement, adf.TableEntry, adf.DataSummary] | tuple[str, str]:
+    """向模型要判断 → `(Judgement, 采纳表头之后的 entry, values)`，或 `("failed", 闭集原因)`。**永不抛**。总时限 `TIMEOUT_S`（表头那次与列角色那次共用）。
 
     1. 表头：只有文本表且嗅探 `unsure`（有预览）才问；采纳要求答案在预览行号里、按它重读合格、且与嗅探的不同。
     2. 列角色：对（可能已按新表头重读的）表问一次，`interpret` 逐字段降级。
@@ -895,8 +972,7 @@ def understand(
     _add_usage(job, res)
     if not res.ok or res.value is None:
         return ("failed", res.reason or "transport")
-    out = interpret(entry, values, res.value, hint, fixed=fixed)
-    return Understanding(out.roles, out.picks, out.cells, header_row, out.dropped + dropped)
+    return Judgement(res.value, header_row, dropped), entry, values
 
 
 def _no_rows(s: adf.DataSummary) -> adf.DataSummary:
