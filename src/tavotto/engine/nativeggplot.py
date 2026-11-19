@@ -85,12 +85,12 @@ class GgplotTarget:
         try:
             with tempfile.TemporaryDirectory(dir=session.out_dir) as temporary:
                 svg = Path(temporary) / "figure.svg"
-                description = Path(temporary) / "figure.json"
+                manifest_part = Path(temporary) / "figure.json"
                 svg.write_bytes(raw.encode("utf-8"))
                 artifactinspect.normalize_worker_svg(svg)
                 data = svg.read_bytes()
-                description.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
-                figcapture.publish_preview(session.out_dir, stem, svg, description, len(data))
+                manifest_part.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+                figcapture.publish_preview(session.out_dir, stem, svg, manifest_part, len(data))
         except (OSError, ValueError) as exc:
             raise pool.WorkerError("The R capture could not publish its preview.") from exc
         response = {**response, "svg": data.decode("utf-8")}
