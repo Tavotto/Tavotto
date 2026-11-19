@@ -224,6 +224,7 @@ def propose_recipes(
     limits: ai_structured.Limits = ai_structured.DEFAULT_LIMITS,
     conn: dict | None = None,
     post=None,
+    max_requests: int | None = None,
 ) -> ModelRecipes:
     """向模型要一组配方（**不接进 `propose`**）。永不抛：模型调用的任何失败都在 `ModelRecipes.call.reason` 里，`recipes` 为空。
 
@@ -238,6 +239,7 @@ def propose_recipes(
             limits=limits,
             conn=conn,
             post=post,
+            max_requests=max_requests,
         )
         base = {
             "tables_sent": req.tables_sent,

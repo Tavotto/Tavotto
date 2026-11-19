@@ -210,7 +210,8 @@ def summarize(runs: Sequence[CaseRun]) -> dict:
             reason: sum(1 for c in calls if c.reason == reason) for reason in ai_structured.REASONS
         },
         "dropped_recipes": sum(x.result.dropped_count for x in runs),
-        "requests": sum(c.attempts for c in calls),
+        "requests": sum(c.requests for c in calls),
+        "attempts": sum(c.attempts for c in calls),
         "input_tokens": sum(c.input_tokens for c in calls),
         "output_tokens": sum(c.output_tokens for c in calls),
         "usage_reported_all": all(c.usage_reported for c in calls),

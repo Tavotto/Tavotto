@@ -307,7 +307,7 @@ def test_default_connection_is_the_first_key_connection(monkeypatch):
     monkeypatch.setattr(ai_connections, "builtin_forced", lambda: None)
     t = D.FakeTransport([D.reply_body("openai-chat", JSON_OK)])
     res = S.call_structured(system="s", user="u", validate=validate_answer, post=t)
-    assert res.ok and res.wire == "openai-chat" and asked == [True]
+    assert res.ok and res.wire == "openai-chat" and asked == [False]  # 挑连接不联网
 
 
 def test_resolver_exceptions_stay_inside_the_never_raise_boundary(monkeypatch):
@@ -336,3 +336,107 @@ def test_resolver_exceptions_stay_inside_the_never_raise_boundary(monkeypatch):
 )
 def test_parse_json_object(text, expected):
     assert S.parse_json_object(text) == expected
+
+
+# --------------------------------------------------------------------------- 实际请求数（传输层数）
+def codex_shape(wire="openai-chat"):
+    """Codex 复现的形状：404 换协议（不消耗尝试）+ 一次非 JSON 回复（重试）= 一次 `complete()` 序列里 3 个 HTTP 请求。"""
+    conn = {**D.fake_conn(wire), "fallbacks": [("anthropic", "https://fake.invalid")]}
+    script = [404, D.reply_body("anthropic", "不是 JSON"), D.reply_body("anthropic", JSON_OK)]
+    return conn, D.FakeTransport(script)
+
+
+def test_requests_are_counted_at_the_transport_not_per_attempt():
+    conn, t = codex_shape()
+    res = S.call_structured(system="s", user="u", validate=validate_answer, conn=conn, post=t)
+    assert res.ok and res.attempts == 2 and res.requests == 3 == len(t.calls)
+
+
+def test_max_requests_is_a_hard_cap_including_recovery_requests():
+    conn, t = codex_shape()
+    res = S.call_structured(
+        system="s", user="u", validate=validate_answer, conn=conn, post=t, max_requests=2
+    )
+    assert (res.reason, res.detail) == ("over_budget", "requests")
+    assert res.requests == 2 == len(t.calls)  # 第 3 个请求没有发出
+    conn, t = codex_shape()
+    res = S.call_structured(
+        system="s", user="u", validate=validate_answer, conn=conn, post=t, max_requests=0
+    )
+    assert res.reason == "over_budget" and t.calls == []
+
+
+# --------------------------------------------------------------------------- 解析连接算进总时限
+def _stub_connection(monkeypatch, conn, *, oauth=False):
+    monkeypatch.setattr(ai_connections, "builtin_forced", lambda: None)
+    monkeypatch.setattr(ai_connections, "first_key_connection", lambda refresh=False: conn)
+    from tavotto.engine import ai_oauth, ai_providers
+
+    refreshed = []
+    rec = {"id": "p1", "auth": "oauth" if oauth else "key"}
+    monkeypatch.setattr(ai_providers, "get", lambda pid: rec)
+
+    def slow_refresh(r):
+        refreshed.append("oauth")
+        time.sleep(5)
+        return r
+
+    monkeypatch.setattr(ai_oauth, "ensure_fresh", slow_refresh)
+    monkeypatch.setattr(ai_providers, "ensure_api_root", lambda r: refreshed.append("root") or r)
+    monkeypatch.setattr(ai_providers, "builtin_conn", lambda r, model=None: conn)
+    return refreshed
+
+
+def test_small_budget_never_starts_a_network_refresh(monkeypatch):
+    conn = {**D.fake_conn("anthropic"), "provider_id": "p1"}
+    refreshed = _stub_connection(monkeypatch, conn, oauth=True)
+    started = time.monotonic()
+    t = D.FakeTransport([D.reply_body("anthropic", JSON_OK)])
+    res = S.call_structured(
+        system="s", user="u", validate=validate_answer, limits=S.Limits(timeout_s=1.0), post=t
+    )
+    assert res.ok and refreshed == [] and time.monotonic() - started < 1.0
+
+
+def test_enough_budget_refreshes_only_the_chosen_record(monkeypatch):
+    conn = {**D.fake_conn("anthropic"), "provider_id": "p1"}
+    refreshed = _stub_connection(monkeypatch, conn, oauth=False)
+    c, why, _ = S.resolve_connection(60.0)
+    assert c is conn and refreshed == ["root"]  # 非账号登录：只核地址，且只这一条
+    refreshed = _stub_connection(monkeypatch, conn, oauth=True)
+    monkeypatch.setattr(
+        "tavotto.engine.ai_oauth.ensure_fresh", lambda r: refreshed.append("oauth") or r
+    )
+    S.resolve_connection(60.0)
+    assert refreshed == ["oauth"]
+
+
+def test_a_slow_resolution_returns_timeout_near_the_budget_and_sends_nothing(monkeypatch):
+    conn = D.fake_conn("anthropic")
+
+    def slow(refresh=False):
+        time.sleep(0.4)
+        return conn
+
+    monkeypatch.setattr(ai_connections, "builtin_forced", lambda: None)
+    monkeypatch.setattr(ai_connections, "first_key_connection", slow)
+    t = D.FakeTransport([D.reply_body("anthropic", JSON_OK)])
+    started = time.monotonic()
+    res = S.call_structured(
+        system="s", user="u", validate=validate_answer, limits=S.Limits(timeout_s=0.2), post=t
+    )
+    assert (res.reason, res.detail) == ("timeout", "resolve")
+    assert t.calls == [] and time.monotonic() - started < 0.7
+
+
+def test_needs_login_on_refresh_is_no_connection(monkeypatch):
+    from tavotto.engine import ai_oauth
+
+    conn = {**D.fake_conn("anthropic"), "provider_id": "p1"}
+    _stub_connection(monkeypatch, conn, oauth=True)
+
+    def broken(r):
+        raise ai_oauth.NeedsLogin("x")
+
+    monkeypatch.setattr(ai_oauth, "ensure_fresh", broken)
+    assert S.resolve_connection(60.0) == (None, "no_connection", "needs_login")

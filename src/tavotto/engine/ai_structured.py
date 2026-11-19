@@ -25,12 +25,12 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .agent_runner.wires import Msg, RunnerFailure, Usage
+from .agent_runner.wires import Msg, RunnerFailure, Usage, post_json
 
 #: 失败的闭集原因。调用方只按这些码决定「退回规则结果」，不展示给用户。
 #: * no_connection          没有任何连接（或运维开关关了内置执行器）
 #: * unsupported_connection  只有订阅登录（Codex / Claude Code CLI）这类没有单次调用方式的连接
-#: * over_budget             输入超过上限（没发请求），或输出被截断（撞到最长输出）
+#: * over_budget             输入超过上限（没发请求）、输出被截断（撞到最长输出），或 `max_requests` 到顶
 #: * timeout                 超过总时限（含两次尝试）或网络层读超时
 #: * refused                 服务端拒答 / 内容过滤
 #: * invalid_output          回复不是合法 JSON（已重试一次）、没有文字、或没过校验函数
@@ -85,6 +85,8 @@ class StructuredResult:
     reason: str = ""
     detail: str = ""
     attempts: int = 0
+    #: 实际发出的 HTTP 请求数（在传输层数）。一次尝试里换协议 / 字段降级的恢复路径会多发请求，所以 `requests ≥ attempts`
+    requests: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
     cached_input_tokens: int = 0
@@ -111,6 +113,8 @@ def map_failure(exc: RunnerFailure) -> tuple[str, str]:
     if reason == "quota":
         return "quota", detail
     if reason == "budget":
+        if detail == "requests":
+            return "over_budget", detail
         return "timeout", detail or "time"
     if reason == "network" and _TIMEOUT_MARK in detail.lower():
         return "timeout", detail
@@ -148,22 +152,44 @@ def parse_json_object(text: str) -> dict | None:
 
 
 # --------------------------------------------------------------------------- 连接
-def resolve_connection() -> tuple[dict | None, str, str]:
+#: 联网刷新账号登录令牌（`ai_oauth.HTTP_TIMEOUT_S` = 30 s）/ 核 OpenAI 系地址少写 `/v1`（最多两次各 5 s）所需的剩余预算。
+#: 不够就**不刷新**：这两步没法传入时限，放进线程超时后会留下继续写 provider 存储的半截副作用，所以只在预算够它跑完时才做。
+REFRESH_NEEDS_S = 35.0
+
+
+def resolve_connection(budget_s: float | None = None) -> tuple[dict | None, str, str]:
     """用户当前连着的、内置执行器能直接用的连接 → `(builtin_conn 形状 | None, 原因码, detail)`。
 
     「当前」= 连接视图里第一个可用的 Key / 账号登录连接（`ai_connections.first_key_connection`，旧版选中的接口排在前，与 AI 修复同一口径）。
     没有时分两种：能经 MCP 接法修复的 CLI（订阅登录）在用 → `unsupported_connection`；什么都没有 → `no_connection`。
-    账号登录令牌快过期会联网刷新（`refresh=True`），所以本函数可能慢；调用方在自己的时限预算里算它。"""
-    from . import ai_connections, fixsession
 
+    **时限**：挑连接本身不联网（`refresh=False`）。只对挑中的**那一条**记录、且只在 `budget_s`（剩余预算，默认 `DEFAULT_LIMITS.timeout_s`）
+    ≥ `REFRESH_NEEDS_S` 时才联网刷新（账号登录令牌 `ensure_fresh` / 地址 `ensure_api_root`）；预算不够就用现有记录，令牌真过期了请求会得到 `auth`、
+    调用方退回规则结果。不会顺序刷新多条连接。令牌刷不动（需重新登录）→ `no_connection` / `needs_login`。"""
+    from . import ai_connections, ai_oauth, ai_providers, fixsession
+
+    budget = DEFAULT_LIMITS.timeout_s if budget_s is None else budget_s
     if ai_connections.builtin_forced() is False:
         return None, "no_connection", "builtin_disabled"
-    conn = ai_connections.first_key_connection(refresh=True)
-    if conn is not None:
-        return conn, "", ""
-    if fixsession.cli_agent() is not None:
-        return None, "unsupported_connection", "cli_only"
-    return None, "no_connection", "none"
+    conn = ai_connections.first_key_connection(refresh=False)
+    if conn is None:
+        if fixsession.cli_agent() is not None:
+            return None, "unsupported_connection", "cli_only"
+        return None, "no_connection", "none"
+    if budget >= REFRESH_NEEDS_S:
+        rec = ai_providers.get(conn.get("provider_id"))
+        if rec is not None:
+            try:
+                if rec.get("auth") == "oauth":
+                    rec = ai_oauth.ensure_fresh(rec) or rec
+                else:
+                    rec = ai_providers.ensure_api_root(rec) or rec
+            except ai_oauth.NeedsLogin:
+                return None, "no_connection", "needs_login"
+            fresh = ai_providers.builtin_conn(rec, conn.get("model"))
+            if fresh is not None:
+                conn = fresh
+    return conn, "", ""
 
 
 def _cost(conn: dict, usage: Usage, reported: bool) -> float | None:
@@ -189,6 +215,7 @@ def call_structured(
     limits: Limits = DEFAULT_LIMITS,
     conn: dict | None = None,
     post: Callable | None = None,
+    max_requests: int | None = None,
 ) -> StructuredResult:
     """发一次无工具的单轮请求，要回一个过了 `validate` 的 dict。**永不抛**（`Exception` 一律落成 `transport`）。
 
@@ -196,11 +223,12 @@ def call_structured(
       形状不合格**不重试**（重发大概率还是同一个错）。
     * `conn`：`builtin_conn` 形状的连接；不给就 `resolve_connection()`。`post`：注入的传输函数（`wires.post_json` 的签名），只给测试用。
     * 上限：输入字符超限不发请求（`over_budget`）；输出被截断（撞到最长输出）→ `over_budget`、不重试；总时限（`limits.timeout_s`）两次尝试共用。
+    * `max_requests`：实际 HTTP 请求数的硬上限（传输层数，含换协议 / 字段降级的恢复请求）；到顶不再发，回 `over_budget` / `requests`。
     * 重试：只在回复不是合法 JSON（含没有文字）时，最多 `limits.max_retries`（≤ 1）次；传输失败 / 拒答 / 鉴权失败都不重发。
     """
     t0 = time.monotonic()
     try:
-        return _call(system, user, validate, limits, conn, post, t0)
+        return _call(system, user, validate, limits, conn, post, t0, max_requests)
     except Exception:  # noqa: BLE001 - 契约：永不抛；原因里不放异常消息（可能含提示词 / 地址）
         return StructuredResult(False, reason="transport", detail="internal", elapsed_ms=_ms(t0))
 
@@ -217,22 +245,37 @@ def _call(
     conn: dict | None,
     post: Callable | None,
     t0: float,
+    max_requests: int | None,
 ) -> StructuredResult:
     if len(system) + len(user) > limits.max_input_chars:
         return StructuredResult(False, reason="over_budget", detail="input", elapsed_ms=_ms(t0))
     if conn is None:
-        conn, why, detail = resolve_connection()
+        conn, why, detail = resolve_connection(limits.timeout_s)
         if conn is None:
             return StructuredResult(False, reason=why, detail=detail, elapsed_ms=_ms(t0))
+        if time.monotonic() - t0 >= limits.timeout_s:  # 解析连接已经用完总时限：不发请求
+            return StructuredResult(False, reason="timeout", detail="resolve", elapsed_ms=_ms(t0))
     from . import fixsession
+
+    sent = [
+        0
+    ]  # 传输层的真实请求数（`HttpModel.complete` 在换协议 / 字段降级时一次尝试可发多个请求）
+    inner = post if post is not None else post_json
+
+    def counted(url, headers, body, *, timeout, max_bytes=None):
+        if max_requests is not None and sent[0] >= max_requests:
+            raise RunnerFailure("budget", "requests")
+        sent[0] += 1
+        if max_bytes is None:
+            return inner(url, headers, body, timeout=timeout)
+        return inner(url, headers, body, timeout=timeout, max_bytes=max_bytes)
 
     kwargs: dict = {
         "request_timeout": limits.timeout_s,
         "max_attempts": 1,
         "retry_base": 0.0,
+        "post": counted,
     }
-    if post is not None:
-        kwargs["post"] = post
     model, _redactor = fixsession.build_model(conn, **kwargs)
     deadline = t0 + limits.timeout_s  # 总时限从调用开始算：解析连接（可能联网刷新令牌）也在里面
     history = [Msg("user", user)]
@@ -247,6 +290,7 @@ def _call(
     def usage_fields() -> dict:
         return {
             "attempts": attempts,
+            "requests": sent[0],
             "input_tokens": total.input_tokens,
             "output_tokens": total.output_tokens,
             "cached_input_tokens": total.cached_input_tokens,

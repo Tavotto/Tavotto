@@ -8,8 +8,8 @@
 * **默认（假回答，不联网、不花钱）**：`--fake good|trap|mixed` 用用例里录好的回答（`reference` / 踩坑的 `trap`）经假传输跑通整条链，用来自测评分与报告；
   `--wire` 选假回答走哪种协议的回复体。数据目录与配置目录指到临时目录，不碰用户的任何配置。
 * **`--real`（真模型，要花钱）**：用你当前连着的 API 连接（连接视图里第一个内置执行器能用的，与 AI 修复同一口径；订阅登录 Codex / Claude Code 暂不支持）。
-  必须同时给 `--max-calls N`（实际请求数上限；每条用例最多 2 次请求——回复不是合法 JSON 时重试一次——所以 N 至少要 用例数 × 2，开跑前先核）；
-  运行中下一条用例可能超上限就停，并在报告里记「没跑完」。**读你本机的连接配置，可能刷新账号登录令牌；用例的表格摘要会发给该连接的服务商。**
+  必须同时给 `--max-calls N`（**实际 HTTP 请求数**上限，在传输层数——换协议 / 字段降级的恢复请求也算；每条用例至少 1 次、回复不是合法 JSON 时重试一次，
+  所以开跑前要求 N ≥ 用例数 × 2 作为下限核）；运行中到上限就不再发，并在报告里记「没跑完」（`stopped_early`），最后一条可能因此被截成 `over_budget`。**读你本机的连接配置，可能刷新账号登录令牌；用例的表格摘要会发给该连接的服务商。**
   开跑前自己先和维护者报预算——真实跑分花的是你的额度。
 
 用法：
@@ -105,17 +105,28 @@ def main(argv: list[str] | None = None) -> int:
     stopped_early = False
     with tempfile.TemporaryDirectory(prefix="data-figure-cases-") as work:
         for i, case in enumerate(cases):
+            # 上限按**实际 HTTP 请求数**硬性生效（传输层数；换协议 / 字段降级的恢复请求也算），到顶就不再发
+            remaining = args.max_calls - used if args.max_calls else None
+            if remaining is not None and remaining < 1:
+                stopped_early = True
+                break
             if args.real:
-                if used + MAX_REQUESTS_PER_CASE > args.max_calls:
-                    stopped_early = True
-                    break
-                run = D.run_case(case, Path(work), conn=conn)
+                run = D.run_case(case, Path(work), conn=conn, max_requests=remaining)
             else:
                 mode = args.fake if args.fake != "mixed" else ("good", "trap")[i % 2]
                 transport = D.scripted_for(case, args.wire, mode)
-                run = D.run_case(case, Path(work), conn=D.fake_conn(args.wire), post=transport)
-            used += run.result.call.attempts
+                run = D.run_case(
+                    case,
+                    Path(work),
+                    conn=D.fake_conn(args.wire),
+                    post=transport,
+                    max_requests=remaining,
+                )
+            used += run.result.call.requests
             runs.append(run)
+            if run.result.call.reason == "over_budget" and run.result.call.detail == "requests":
+                stopped_early = True
+                break
             s = run.score
             print(
                 f"{case['id']}  {s.outcome:12s} top1={int(s.top1)} 违规={s.violations} "
@@ -127,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
         "wire": runs[0].result.call.wire if runs else "",
         "model": runs[0].result.call.model if runs else "",
         "requests_used": used,
-        "max_calls": args.max_calls if args.real else None,
+        "max_calls": args.max_calls or None,
         "stopped_early": stopped_early,
         "summary": summary,
         "cases": [
@@ -141,6 +152,7 @@ def main(argv: list[str] | None = None) -> int:
                 "reason": x.result.call.reason,
                 "detail": x.result.call.detail,
                 "attempts": x.result.call.attempts,
+                "requests": x.result.call.requests,
                 "input_tokens": x.result.call.input_tokens,
                 "output_tokens": x.result.call.output_tokens,
                 "cost_usd": x.result.call.cost_usd,

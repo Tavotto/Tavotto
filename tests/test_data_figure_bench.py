@@ -71,3 +71,36 @@ def test_real_mode_refuses_without_an_explicit_call_cap(tmp_path):
 def test_real_mode_without_a_connection_sends_nothing(tmp_path):
     done = bench(tmp_path, "--real", "--max-calls", "100")
     assert done.returncode == 2 and "没有可用的连接" in done.stderr
+
+
+def test_max_calls_counts_real_http_requests_not_complete_calls(tmp_path):
+    """Codex 复现形状：404 换协议 + 非 JSON 重试 = 一条用例 3 个请求。上限按实际请求数硬拦，到顶如实报 stopped_early。"""
+    import sys as _sys
+
+    _sys.path.insert(0, str(ROOT / "tests" / "support"))
+    import data_figure_cases as D
+
+    from tavotto.engine import ai_data_model
+
+    case = D.load_cases()[0]
+    folder = D.materialize(case, tmp_path)
+    profile, _ = D.inputs_of(case, folder)
+    conn = {**D.fake_conn("openai-chat"), "fallbacks": [("anthropic", "https://fake.invalid")]}
+    t = D.FakeTransport(
+        [
+            404,
+            D.reply_body("anthropic", "不是 JSON"),
+            D.reply_body("anthropic", D.good_answer(case)),
+        ]
+    )
+    out = ai_data_model.propose_recipes(profile, conn=conn, post=t, max_requests=2)
+    assert out.call.reason == "over_budget" and out.call.requests == 2 == len(t.calls)
+
+
+def test_script_stops_early_when_the_request_cap_is_reached(tmp_path):
+    out = tmp_path / "r.json"
+    done = bench(tmp_path, "--fake", "good", "--max-calls", "3", "--out", str(out))
+    assert done.returncode == 0, done.stderr
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert report["stopped_early"] is True and report["requests_used"] == 3
+    assert len(report["cases"]) == 3
