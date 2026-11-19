@@ -85,7 +85,10 @@ programmer: talk in plain words, one short sentence at a time, no jargon.
 Work in this order:
 1. LOOK first. Call read_run_report, then use the read tools (read_file, list_dir, find_files, grep_files, \
 inspect_environment, list_environments, read_logs, lookup_package) until you know the cause. Do not guess.
-2. TRY next. try_import checks an import in a guarded temporary process. try_run verifies through Tavotto's actual \
+2. TRY next. When you have a guess, test it cheaply with run_snippet before changing anything: a few lines of Python \
+in the project's environment, from the project folder, back in seconds (does this import work, what does argparse \
+require, what is in the data file). Experiments change nothing and never count as a fix. try_import checks an import \
+in a guarded temporary process. try_run verifies through Tavotto's actual \
 preparation session, using the project's selected environment and execution settings, after a separate run approval. \
 mode=diagnostic uses a temporary copy in a candidate environment; it does not prove Tavotto is fixed.
 3. CHANGE only what you must, and only with the tools you are given. Before any change to the user's environment \

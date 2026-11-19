@@ -138,6 +138,28 @@ try:
             _spawns.append(event)
             raise PermissionError("Tavotto trial: starting other processes is not allowed")
     sys.addaudithook(_no_spawn)
+    # 实验（run_snippet，ADR 0197）多两道：不许联网、不许读凭据位置（与 AI 读取范围的硬拦表同一份清单，父进程给出）。
+    # 有操作系统沙盒时它在外层同样拦；没有（Windows）时只有这一层，C 扩展可绕过——如实写在 ADR 里
+    _blocked_net, _blocked_reads = [], []
+    _strict = os.environ.pop("TAVOTTO_TRIAL_STRICT", None)
+    if _strict:
+        _deny = [os.path.normcase(os.path.realpath(p)) for p in json.loads(_strict)]
+        _NET_EVENTS = ("socket.connect", "socket.bind", "socket.sendto", "socket.sendmsg", "socket.getaddrinfo", "socket.gethostbyname", "socket.gethostbyaddr")
+        def _denied(p):
+            try:
+                rp = os.path.normcase(os.path.realpath(os.fsdecode(p)))
+            except Exception:
+                return False
+            return any(rp == d or rp.startswith(d.rstrip(os.sep) + os.sep) for d in _deny)
+        def _strict_hook(event, args):
+            if event in _NET_EVENTS:
+                _blocked_net.append(event)
+                raise PermissionError("Tavotto experiment: network access is not allowed")
+            if event in ("open", "os.listdir", "os.scandir") and args and isinstance(args[0], (str, bytes, os.PathLike)) and _denied(args[0]):
+                _blocked_reads.append(event)
+                raise PermissionError("Tavotto experiment: this location holds credentials and cannot be read")
+        sys.addaudithook(_strict_hook)
+    _path0 = os.environ.pop("TAVOTTO_TRIAL_PATH0", None)
     # 两个守卫都装好之后才做 site 初始化：site-packages、.pth、sitecustomize / usercustomize 都在守卫之下执行
     import site
     site.main()
@@ -178,6 +200,8 @@ except BaseException:
 sys.modules.pop("_tavotto_trial_guard", None)
 code = 0
 sys.argv = [target] + sys.argv[5:]
+if _path0:
+    sys.path.insert(0, _path0)  # 项目根：实验里能 `import` 项目自己的模块（run_path 再把目标所在目录放到它前面）
 try:
     runpy.run_path(target, run_name="__main__")
 except SystemExit as exc:
@@ -193,7 +217,7 @@ if "matplotlib.pyplot" in sys.modules:
         figs = None
 try:
     with open(out, "w", encoding="utf-8") as f:
-        json.dump({"guarded": True, "remap": remap, "figures": figs, "blocked_writes": wt.violations(), "blocked_spawns": _spawns}, f)
+        json.dump({"guarded": True, "remap": remap, "figures": figs, "blocked_writes": wt.violations(), "blocked_spawns": _spawns, "blocked_network": len(_blocked_net), "blocked_reads": len(_blocked_reads)}, f)
 except OSError:
     pass
 sys.exit(code)
@@ -218,6 +242,8 @@ def run_python(
     trial_dir: Path | None = None,
     extra_env: dict | None = None,
     input_remap: list | None = None,
+    strict_deny: list[str] | None = None,
+    cwd: str | None = None,
 ) -> dict:
     """fixtools 唯一的起 Python 子进程的入口：目标（`code` 源码，或 `trial_dir/work` 里的 `script`）一律在写入根绊线下执行。
 
@@ -251,8 +277,16 @@ def run_python(
             "TAVOTTO_TRIAL_INPUT_REMAP": json.dumps(input_remap),
             "TAVOTTO_TRIAL_ENGINE_DIR": str(Path(figcapture.__file__).resolve().parent),
         }
+    if strict_deny is not None:
+        # 实验模式（ADR 0197）：断网 + 凭据位置不可读，进程内守卫与操作系统沙盒两层同一份清单
+        extra_env = {**(extra_env or {}), "TAVOTTO_TRIAL_STRICT": json.dumps(list(strict_deny))}
+    if cwd is not None:
+        extra_env = {**(extra_env or {}), "TAVOTTO_TRIAL_PATH0": cwd}
     try:
-        res = _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empty)
+        res = _run_guarded(
+            python, trial_dir, timeout, code, script, argv, extra_env, empty,
+            strict_deny=strict_deny, cwd=cwd,
+        )  # fmt: skip
     finally:
         pending = not _remove_tree(trial_dir) if own else False
     if own:
@@ -278,20 +312,46 @@ def _sbpl_quote(path: str) -> str:
     return '"' + path.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def macos_profile(trial_dir: str) -> str:
-    """只许写本次试跑目录（含专用 TMPDIR / mpl 配置 / 副本，均在其下）与 /dev/null、/dev/tty；其余写一律拒绝。读、网络不动。"""
+def macos_profile(trial_dir: str, deny: list[str] | None = None) -> str:
+    """只许写本次试跑目录（含专用 TMPDIR / mpl 配置 / 副本，均在其下）与 /dev/null、/dev/tty；其余写一律拒绝。
+    `deny` 为 None（试跑 / 探 import）时读、网络不动；给了清单（实验，ADR 0197）再断网并拒读清单里的位置。"""
     real = os.path.realpath(trial_dir)  # /var → /private/var
-    return (
+    profile = (
         "(version 1)(allow default)(deny file-write*)"
         f"(allow file-write* (subpath {_sbpl_quote(real)}) "
         '(literal "/dev/null") (literal "/dev/tty"))'
     )
+    if deny is not None:
+        profile += "(deny network*)"
+        for p in deny:
+            profile += f"(deny file-read* (subpath {_sbpl_quote(os.path.realpath(p))}))"
+    return profile
 
 
-def _sandbox_args(kind: str, tool: str, trial_dir: str) -> list[str]:
+def _sandbox_args(kind: str, tool: str, trial_dir: str, deny: list[str] | None = None) -> list[str]:
     real = os.path.realpath(trial_dir)
     if kind == "macos-sandbox-exec":
-        return [tool, "-p", macos_profile(trial_dir)]
+        return [tool, "-p", macos_profile(trial_dir, deny)]
+    if deny is not None:
+        # 实验（ADR 0197）：另开空网络命名空间；凭据目录盖一层空 tmpfs、凭据文件盖 /dev/null（看得见名字、读不到内容）
+        hide: list[str] = []
+        for p in deny:
+            rp = os.path.realpath(p)
+            if os.path.isdir(rp):
+                hide += ["--tmpfs", rp]
+            elif os.path.isfile(rp):
+                hide += ["--ro-bind", "/dev/null", rp]
+        return [
+            tool,
+            "--ro-bind", "/", "/",
+            "--dev", "/dev",
+            "--proc", "/proc",
+            "--tmpfs", "/tmp",
+            "--bind", real, real,
+            *hide,
+            "--unshare-net",
+            "--die-with-parent",
+        ]  # fmt: skip
     # bwrap：整盘只读，/tmp 换成空 tmpfs，仅试跑目录可写；不动网络命名空间
     return [
         tool,
@@ -326,9 +386,10 @@ def probe_command() -> list[str]:
     return [sys.executable, "-c", "pass"]  # 找不到任何固定程序：保持旧行为，探测失败即不可用
 
 
-def _probe(kind: str, tool: str) -> bool:
-    """这台机器上沙盒真能起（嵌套在别的沙盒里、用户命名空间被禁都会失败）。同一个工具只探一次。"""
-    key = (kind, tool)
+def _probe(kind: str, tool: str, strict: bool = False) -> bool:
+    """这台机器上沙盒真能起（嵌套在别的沙盒里、用户命名空间被禁都会失败）。同一个工具、同一种口径只探一次——
+    实验口径（断网，`--unshare-net` 在禁了网络命名空间的机器上会失败）单独探。"""
+    key = (kind, tool, strict)
     if key not in _PROBE_CACHE:
         # 探测目录也放 Tavotto 缓存、走同一套有重试 + 标记 + 清扫的清理（不在系统临时目录里留 tavotto-sbx-probe-*）
         try:
@@ -337,7 +398,7 @@ def _probe(kind: str, tool: str) -> bool:
             _PROBE_CACHE[key] = False
             return False
         try:
-            args = _sandbox_args(kind, tool, probe_dir)
+            args = _sandbox_args(kind, tool, probe_dir, *([[]] if strict else []))
             r = subprocess.run(  # noqa: S603 - 固定的系统沙盒命令
                 [*args, *probe_command()],
                 stdin=subprocess.DEVNULL,
@@ -353,16 +414,20 @@ def _probe(kind: str, tool: str) -> bool:
     return _PROBE_CACHE[key]
 
 
-def _os_sandbox_prefix(trial_dir: Path) -> tuple[str, list[str]]:
+def _os_sandbox_prefix(trial_dir: Path, deny: list[str] | None = None) -> tuple[str, list[str]]:
     """(名字, 命令前缀)。没有可用沙盒 → ("none", [])，调用方退回进程内绊线。"""
     for kind in ("macos-sandbox-exec", "bwrap"):
         tool = _find_tool(kind)
-        if tool and _probe(kind, tool):
-            return kind, _sandbox_args(kind, tool, str(trial_dir))
+        if tool and _probe(kind, tool, strict=deny is not None):
+            return kind, _sandbox_args(
+                kind, tool, str(trial_dir), *([deny] if deny is not None else [])
+            )
     return "none", []
 
 
-def _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empty) -> dict:
+def _run_guarded(
+    python, trial_dir, timeout, code, script, argv, extra_env, empty, *, strict_deny=None, cwd=None
+) -> dict:
     from .. import launcher, runtime
 
     out_file = str(trial_dir / "out" / "result.json")
@@ -392,7 +457,7 @@ def _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empt
     env.update(MPLBACKEND="Agg", TMPDIR=tmp, TEMP=tmp, TMP=tmp, MPLCONFIGDIR=str(trial_dir / "mpl"))
     if extra_env:
         env.update(extra_env)
-    sandbox, sandbox_prefix = _os_sandbox_prefix(trial_dir)
+    sandbox, sandbox_prefix = _os_sandbox_prefix(trial_dir, strict_deny)
     try:
         proc = subprocess.Popen(
             [
@@ -411,7 +476,7 @@ def _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empt
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL,
-            cwd=work,
+            cwd=cwd or work,
             env=env,
             creationflags=runtime.CREATE_NO_WINDOW,
             start_new_session=(os.name != "nt"),
@@ -469,6 +534,8 @@ def _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empt
         "input_remap": info.get("remap") or "none",
         "blocked_writes": info.get("blocked_writes") or [],
         "blocked_spawns": info.get("blocked_spawns") or [],
+        "blocked_network": int(info.get("blocked_network") or 0),
+        "blocked_reads": int(info.get("blocked_reads") or 0),
         "cleanup_pending": False,
     }
 
@@ -558,6 +625,71 @@ def try_import(ctx: FixContext, args: dict) -> ToolResult:
         + shadow_note(ctx, res["stderr"], project_on_path=False),
         "import failed",
     )
+
+
+# --------------------------------------------------------------------------- run_snippet（ADR 0197）
+SNIPPET_TIMEOUT_DEFAULT_S = 20.0
+SNIPPET_TIMEOUT_MAX_S = 30.0
+SNIPPET_MAX_CHARS = 20_000
+SNIPPET_OUTPUT_CHARS = 6_000
+
+
+def _clip(text: str, limit: int = SNIPPET_OUTPUT_CHARS) -> str:
+    text = text or ""
+    return text if len(text) <= limit else "…(earlier output cut)\n" + text[-limit:]
+
+
+def run_snippet(ctx: FixContext, args: dict) -> ToolResult:
+    """在一个环境里跑一小段模型写的 Python，几秒拿结果——AI 的「试错」（ADR 0197）。不改任何东西、不弹卡（维护者 11-19 裁决）：
+    与试跑同一个受保护的子进程（写入绊线 + 禁起进程 + 有就套操作系统沙盒），另加断网、凭据位置不可读、更短的时限；
+    当前目录是项目根、项目根在 `sys.path` 上，所以能读项目里的数据、能 import 项目自己的模块，但一个文件都写不进项目。"""
+    python = ctx.python_of(args.get("env"))
+    if python is None:
+        return err(
+            "env_unknown",
+            "Unknown environment id. Call list_environments first and use one of its ids.",
+        )
+    code = args.get("code")
+    if not isinstance(code, str) or not code.strip() or "\x00" in code:
+        return err("bad_arguments", "`code` must be non-empty Python source text.")
+    if len(code) > SNIPPET_MAX_CHARS:
+        return err(
+            "snippet_too_large",
+            f"Keep experiments short (at most {SNIPPET_MAX_CHARS} characters); write a launcher for real fixes.",
+        )
+    try:
+        compile(code, "<experiment>", "exec", dont_inherit=True)
+    except (SyntaxError, ValueError) as exc:
+        return err("snippet_syntax_error", f"The experiment does not parse: {exc}")
+    try:
+        timeout = float(args.get("timeout_s") or SNIPPET_TIMEOUT_DEFAULT_S)
+    except (TypeError, ValueError):
+        timeout = SNIPPET_TIMEOUT_DEFAULT_S
+    timeout = max(1.0, min(timeout, SNIPPET_TIMEOUT_MAX_S))
+    root = os.fspath(ctx.project_root)
+    res = run_python(
+        python,
+        code=code,
+        timeout=timeout,
+        session_id=ctx.session_id,
+        strict_deny=ctx.scope.deny_roots(),
+        cwd=root,
+    )
+    note = guard_note(res)
+    if res.get("blocked_network"):
+        note += "\nblocked_network: experiments cannot use the network"
+    if res.get("blocked_reads"):
+        note += "\nblocked_reads: credential locations cannot be read"
+    if res["status"] == "timeout":
+        return err("timeout", f"The experiment did not finish within {timeout:g} s.{note}")
+    if res["status"] != "ok":
+        return err(res["status"], f"The experiment did not run ({res['status']}).{note}")
+    body = f"exit {res['returncode']}"
+    if res.get("stdout"):
+        body += "\n--- stdout ---\n" + _clip(res["stdout"])
+    if res.get("stderr"):
+        body += "\n--- stderr ---\n" + _clip(res["stderr"])
+    return ok(body + note, "experiment ok" if res["returncode"] == 0 else "experiment failed")
 
 
 # --------------------------------------------------------------------------- try_run
@@ -1022,6 +1154,28 @@ TRIAL_TOOLS: tuple[FixTool, ...] = (
             ["env", "module"],
         ),
         try_import,
+        tier="run",
+    ),
+    FixTool(
+        "run_snippet",
+        "Run a short Python experiment (a few lines) in one environment and see its output within seconds. "
+        "Use it to test a guess before changing anything: does this import work, what does argparse require, "
+        "what is in the first rows of the data file, does this function exist. The working directory is the "
+        "project root and the project is importable, so relative data paths work. It cannot change anything: "
+        "writes go nowhere, other processes, the network and credential locations are blocked; at most 30 s. "
+        "An experiment never counts as a fix — verify real changes with try_run.",
+        obj(
+            {
+                "env": _ENV,
+                "code": {"type": "string", "description": "Python source to run."},
+                "timeout_s": {
+                    "type": "integer",
+                    "description": "Seconds before giving up (default 20, max 30).",
+                },
+            },
+            ["env", "code"],
+        ),
+        run_snippet,
         tier="run",
     ),
     FixTool(

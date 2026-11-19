@@ -746,6 +746,8 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
         "lookup_package",
         "try_import",
         "try_run",
+        # ADR 0197：小实验（细节见 tests/test_fixtools_snippet.py）
+        "run_snippet",
         # D2a 的「改」组（细节见 tests/test_fixtools_change.py）
         "install_packages",
         "switch_execution",
@@ -775,6 +777,7 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
         "inspect_environment",
         "try_import",
         "try_run",
+        "run_snippet",
     }
     assert {t.tier for t in REGISTRY.values()} == {
         "observe",
