@@ -63,6 +63,11 @@ REFUSED_BEFORE_ACTING = frozenset(
         "snapshot_failed",
         "no_script",
         "run_arguments_sensitive",
+        # write_launcher 写之前的校验（ADR 0194）：启动脚本不合格就什么都没写
+        "launcher_syntax_error",
+        "launcher_too_large",
+        "launcher_not_text",
+        "launcher_unsafe_dir",
     }
 )
 
