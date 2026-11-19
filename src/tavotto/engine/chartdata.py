@@ -15,7 +15,10 @@ import io
 import math
 import re
 
-from .ai_data_figure import MAX_COLUMNS, MAX_ROWS, parse_cell, parse_date
+from .ai_data_figure import MAX_COLUMNS, SMALL_ROWS, parse_cell, parse_date
+
+#: 图表数据仍是 10 万行：0178 的大表上限（流式读）不适用于这里的整份解析
+MAX_ROWS = SMALL_ROWS
 
 #: 数据问题的稳定码（前端文案落地时同步 errors.json）。
 ISSUE_CODES = (
