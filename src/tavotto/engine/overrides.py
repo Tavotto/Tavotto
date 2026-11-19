@@ -2046,6 +2046,8 @@ def _restore_line_pos(ln, orig) -> None:
 
 #: 逐点编辑的上限：引线、分隔线是几个到几十个顶点；更长的是曲线，按段拖没有意义
 LINE_POINTS_MAX = 64
+#: 同一条线上互相盖着的两种位置 override：撤掉一条，另一条要重放（`apply` 的 `_mark_restored`）
+_LINE_POSITION_PEER = {"pos_frac": "points_frac", "points_frac": "pos_frac"}
 #: pin 表里逐点编辑那一项的标记（与整条平移的 `pos_frac` 共用同一张表、同一个 key = 这条线）
 _POINTS_PIN = "points"
 
@@ -6537,6 +6539,12 @@ def _apply(state: FigState, patches: list[dict]) -> list[str]:
         nonlocal geometry_moved
         if _is_geometry_key(key[1], artist):
             geometry_moved = True
+        # 同一条线的两种位置 override 共用基准 transform 与 pin 表那一格：撤掉其中一条会把线放回脚本
+        # 原样、摘掉 pin，另一条值没变也必须重放，否则热态停在脚本原位而全量重放落在它写下的位置
+        # （Codex #2060 P1：先整条平移、再加拐点、撤销加拐点 → 线跳回脚本原位）
+        peer = _LINE_POSITION_PEER.get(key[1])
+        if peer is not None and isinstance(artist, Line2D):
+            dirty_groups.add((key[0], peer))
         ann = _annotation_anchor_owner(artist, key[1])
         if ann is not None:
             dirty_annotation_anchors.add(ann)

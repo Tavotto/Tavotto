@@ -254,3 +254,34 @@ def test_adding_and_removing_bends_changes_the_vertex_count(hot, figs, stem):
             pool.discard(fresh)
     back = _man(hot, stem)
     assert _flat(back[LEADER]["line_points"]) == pytest.approx(_flat(pts), abs=1e-9)
+
+
+@pytest.mark.parametrize("stem", STEMS)
+@pytest.mark.parametrize("undo", ["points_frac", "pos_frac"])
+def test_undoing_one_position_override_keeps_the_other(hot, figs, stem, undo):
+    """同一条线先整条平移（`pos_frac`）再加拐点（`points_frac`），撤销其中一条：剩下那条照样生效，
+    热态 == 只有剩下那条的全量重放（Codex #2060 P1：撤销加拐点后线跳回脚本原位）。"""
+    base = _man(hot, stem)
+    a = base[LEADER]["anchor"]
+    pos = {"gid": LEADER, "prop": "pos_frac", "value": [a[0] + 0.03, a[1]]}
+    moved = _man(hot, stem, [pos])[LEADER]["line_points"]
+    bent = [moved[0], [(moved[0][0] + moved[1][0]) / 2, moved[0][1] + 0.05], *moved[1:]]
+    points = {"gid": LEADER, "prop": "points_frac", "value": _flat(bent)}
+    _man(hot, stem, [pos, points])
+    survivor = [points] if undo == "pos_frac" else [pos]
+    got = _man(hot, stem, survivor)
+    fresh = pool.one_shot(SCRIPT_NAME, str(figs), "main")
+    try:
+        fresh.ensure_built()
+        want = _man(fresh, stem, survivor)
+    finally:
+        pool.discard(fresh)
+    tol = CONSTRAINED_TOL if stem == "Con" else 1e-9
+    assert _flat(got[LEADER]["line_points"]) == pytest.approx(
+        _flat(want[LEADER]["line_points"]), abs=tol
+    )
+    assert got[LEADER]["bbox"] == pytest.approx(want[LEADER]["bbox"], abs=tol)
+    if undo == "points_frac":
+        # 剩下的是整条平移：线在平移后的位置，不是脚本原位
+        assert _flat(got[LEADER]["line_points"]) == pytest.approx(_flat(moved), abs=_tol(stem))
+    _man(hot, stem)
