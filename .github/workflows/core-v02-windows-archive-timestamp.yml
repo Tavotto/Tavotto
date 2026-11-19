@@ -1,0 +1,81 @@
+name: Core v0.2 Windows archive timestamp comparison
+
+on:
+  push:
+    branches: [codex/tavotto-core-v02-intel-ci]
+    paths: [.github/workflows/core-v02-windows-archive-timestamp.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  windows-archive-timestamp:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: 5b4f478e26e83e1e7ab120be16b95c6c785a9faf
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13.17"
+          architecture: x64
+      - name: Compare file timestamps during archive streaming
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "$PWD/src"
+          @'
+          import collections
+          import hashlib
+          import io
+          import os
+          import tempfile
+          from pathlib import Path
+          from tavotto.engine import inputdeclaration as archive
+
+          original = b"# frozen source\n"
+          digest = hashlib.sha256(original).hexdigest()
+
+          def trial(root, index, deterministic):
+              folder = root / str(index)
+              folder.mkdir()
+              source = folder / "0"
+              source.write_bytes(original)
+              (folder / "1").write_bytes(bytes(range(256)) * 770 + b"tail\0\xff")
+              (folder / "2").write_bytes(b"")
+              if deterministic:
+                  timestamp = source.stat()
+                  historical_write = timestamp.st_mtime_ns - 10_000_000_000
+                  os.utime(source, ns=(timestamp.st_atime_ns, historical_write))
+              current = archive._stamp(source.stat())
+
+              class MutatingSink(io.BytesIO):
+                  def write(self, chunk):
+                      count = super().write(chunk)
+                      source.write_bytes(b"X" * len(original))
+                      return count
+
+              sink = MutatingSink()
+              try:
+                  archive.copy_resource(archive.InputResource(digest, len(original), source), sink)
+                  sign = "accepted"
+              except ValueError as error:
+                  assert "changed while reading" in str(error), str(error)
+                  sign = "rejected"
+              assert sink.getvalue() == original
+              return sign, archive._stamp(source.stat()) == current
+
+          with tempfile.TemporaryDirectory() as directory:
+              outcomes = {}
+              for offset, mode in enumerate(("original", "deterministic")):
+                  checked = collections.Counter(
+                      trial(Path(directory).resolve(), offset * 200 + i, offset > 0)
+                      for i in range(200)
+                  )
+                  outcomes[mode] = dict(checked)
+                  print(mode, checked)
+              assert outcomes["deterministic"] == {("rejected", False): 200}
+              assert all(same for (result, same) in outcomes["original"] if result == "accepted")
+          '@ | python -
+
