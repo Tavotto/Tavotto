@@ -154,6 +154,8 @@ order: 80
   `("line", "pos_frac")`。数据曲线、`axhline` / `axvline`、`get_[xy]axis_transform()`、`transData + 平移`、
   认不出依赖的自定义 transform 都不拖；3D 与色条轴不拖。
   看护：`tests/test_axes_layout_lines_drag.py`。
+  **逐段 / 逐点（2026-11-19）**：可拖且顶点 ≤ `LINE_POINTS_MAX` 的线出 `line_points`，`("line", "points_frac")` 写全部顶点
+  （个数与原样相同），整条平移也写它；pin 表与 `pos_frac` 共用、带 `points` 标记。看护 `tests/test_layout_line_points.py`。
   集合与位图同一条判据（`_layout_anchored_artist`：散点看 offset transform，线组 / 图形集合 / 位图看自己的
   transform；`ContourSet`、`FigureImage` 不拖）；量框只有 `pathgeom.layout_extent`（锚点与 setter），选中框
   `layout_ink_extent`；平移 `overrides._set_translated_pos_frac`；可拖的位图包 SVG 组、退出合成、不代理回宿主。
