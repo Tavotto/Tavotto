@@ -68,6 +68,7 @@ export default defineConfig({
         'dark-draft-arrow.spec.ts',
         'a11y.spec.ts',
         'keyboard-golden-path.spec.ts',
+        'chart-document.spec.ts',
         'twin-axes-pick.spec.ts',
         // Tree pointer selection precedes default focus; verify the WebKit sequence and touch taps.
         'tree-selection-routing.spec.ts',

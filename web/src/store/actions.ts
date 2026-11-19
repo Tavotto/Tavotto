@@ -24,12 +24,14 @@ import { bindingFor, builtinEntryById, type JournalPrev } from '@/lib/specBindin
 import { DEFAULT_PROFILE_ID } from '@/lib/profile'
 import { useJournalCatalogStore } from './journalCatalogStore'
 import { placePanelInPage } from '@/lib/panelPlacement'
+import { sourceFrameOverride } from '@/lib/chartFrame'
 import {
   FIGURE_FRAME_VERSION,
   frameSwitchAvailable,
   frameSwitchPatch,
   LEGACY_FRAME_OVERRIDE,
   migrateFigureFrames,
+  usesFigureFrame,
 } from '@/lib/figureFrame'
 import { modKey } from '@/lib/utils'
 import { captureTelemetry } from '@/lib/telemetry'
@@ -94,7 +96,7 @@ import { AUTOSAVE_FAILURE_OWNER, reloadLatestAction, retrySaveAction } from './s
 import { useInteractionStore } from './interactionStore'
 import { aliasClearPlan } from '@/lib/aliasOverrides'
 import { fitContentCrop, isContentFit } from '@/lib/panelEdgeCrop'
-import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, structuralPanelManifest, useRenderStore } from './renderStore'
+import { computedFrameAuthority, exactPanelManifest, exactPanelRender, rejectArtifactRenders, renderEpoch, renderKeyOf, structuralPanelManifest, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
 import { askConfirm, isTimelineOpen, useUiStore, type StatusAction, type StatusTone } from './uiStore'
 import { feedbackStatusAction, retryOrFeedback, tooNewAction } from './failureExit'
@@ -1236,6 +1238,17 @@ export const optionLabel = (prop: string, value: string): string => {
  * 'none' 是给假实时手势用的：拖动 / scrub / 取色期间画面由 SVG 局部预览
  * 负责，手势结束由 flushRender 定稿。
  */
+function authoredChartPatches(panel: PanelObject | undefined, patches: PanelObject['overrides']) {
+  if (!panel?.chartFrame || !patches.some(usesFigureFrame)) return patches
+  const exact = exactPanelRender(useRenderStore.getState(), panel)
+  const authority = exact && computedFrameAuthority(panel, exact)
+  if (!authority) {
+    status(msg('chartBind.geometryPending', undefined, 'workspace'), 'info')
+    return null
+  }
+  return patches.map(patch => sourceFrameOverride(patch, authority, authority.inputIdentity))
+}
+
 export function setOverride(
   panelId: string,
   gid: string,
@@ -1248,12 +1261,14 @@ export function setOverride(
   // 比的是**生效的那条**：载入的旧文档可能带重复的 (gid, prop)，引擎按 last-wins 取值
   // （engine/patchspec.py），前面的重复条目同值不代表这次写入是 no-op
   const current = findObject(panelId)
+  const authored = authoredChartPatches(current?.type === 'panel' ? current : undefined, [{ gid, prop, value }])
+  if (authored === null) return
   if (current?.type === 'panel') {
     const i = effectiveOverrideIndex(current.overrides, gid, prop)
     // 同值但另一个地址上还留着旧 override（旧文档里两条并存）时不算 no-op：这次写要把它清掉
     if (
       i >= 0 &&
-      JSON.stringify(current.overrides[i].value) === JSON.stringify(value) &&
+      JSON.stringify(current.overrides[i].value) === JSON.stringify(authored[0].value) &&
       !pendingAliasClears(current, [{ gid, prop }]).length
     ) {
       return
@@ -1262,7 +1277,7 @@ export function setOverride(
   // 原地 upsert（与批量 setOverrides 同一个 upsertOverrides）：filter + push 会把命中的
   // 那条挪到数组末尾，顺序一变变体键就变
   updateObject<PanelObject>(panelId, hist('setProp', { prop: propLabel(prop) }), (o) => {
-    upsertOverrides(o, [{ gid, prop, value }])
+    upsertOverrides(o, authored)
   })
   const panel = findObject(panelId)
   if (panel?.type === 'panel') requestRender(panel, immediate)
@@ -1674,7 +1689,7 @@ export async function rebuildPanel(panelId: string, detached?: PanelObject): Pro
   // `detached`：目标图不在文档里（「同步并写回」的临时面板，id 形如 `sync:…`）——按它自己的文件 / 脚本身份重画
   const stand = detached && detached.id === panelId ? detached : undefined
   const panel = findObject(panelId) ?? stand
-  if (panel?.type !== 'panel' || !panel.script) return 'skipped'
+  if (panel?.type !== 'panel' || !panel.script || panel.chart) return 'skipped'
   try { refuseArtifactOperation(panel) } catch (e) {
     // 这张图的采用记录 / 图幅标记对不上，或这类图不支持重新构建：重试必然还是同一句，真做不了 →「发给我们看看」
     status(engineErrorMsg(e), 'error', { action: feedbackStatusAction() })
@@ -1839,8 +1854,11 @@ export function setOverrides(
   render: boolean | RenderPolicy = true,
 ) {
   if (!patches.length) return
+  const current = findObject(panelId)
+  const authored = authoredChartPatches(current?.type === 'panel' ? current : undefined, patches)
+  if (authored === null) return
   updateObject<PanelObject>(panelId, label, (o) => {
-    upsertOverrides(o, patches)
+    upsertOverrides(o, authored)
   })
   const panel = findObject(panelId)
   if (panel?.type === 'panel') requestRender(panel, render)
@@ -1889,9 +1907,12 @@ export function applyMixedAlign(
   moves: { id: string; x: number; y: number }[],
 ) {
   if (!patches.length && !moves.length) return
+  const panel = findObject(panelId)
+  const authored = authoredChartPatches(panel?.type === 'panel' ? panel : undefined, patches)
+  if (authored === null) return
   useDocumentStore.getState().commit(label, (d) => {
     const p = d.objects.find((o) => o.id === panelId)
-    if (p?.type === 'panel') withOwnedRelease(d, p, () => upsertOverrides(p, patches))
+    if (p?.type === 'panel') withOwnedRelease(d, p, () => upsertOverrides(p, authored))
     for (const mv of moves) {
       const o = d.objects.find((x) => x.id === mv.id)
       if (o && !o.locked) {
@@ -2436,7 +2457,7 @@ export function enterElementEdit(
 function finishElementEntry(panelId: string, leftTab: 'elements' | 'keep'): boolean {
   const panel = findObject(panelId)
   if (panel?.type !== 'panel') return false
-  const seeded = isAdoptedPanel(panel) ? 0 : seedBakedOverrides(panelId)
+  const seeded = panel.chart || isAdoptedPanel(panel) ? 0 : seedBakedOverrides(panelId)
   const ui = useUiStore.getState()
   ui.setElementPanel(panelId)
   if (isAdoptedPanel(panel)) {

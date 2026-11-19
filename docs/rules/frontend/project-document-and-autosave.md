@@ -27,9 +27,8 @@ order: 200
   `chartSource` 的文档才写 4，其余仍写 3——首次给既有文档加入计算图表因此是
   **原地升级**（同一 documentId / 文件 / 槽位 / 时间线，历史保留）。升级前**必须**用
   `takeProjectCheckpoint()` 把整份项目文档存成时间线节点（备份未落定不得写图表）。
-  **接线状态**：把图表第一次写进正文的入口属于 7/9；接线前生产代码里没有这条调用路径
-  （`takeProjectCheckpoint` 只有「恢复前」节点在用）。`tests/test_chart_document_upgrade.py`
-  只覆盖后端能强制的边界，不覆盖这条前端备份接线——写文档 / 评审时不要把它当成已有行为。
+  桌面的绑定确认先保存该节点，核对备份期间文档与面板的归属，再通过现有撤销事务提交模型。
+  保存响应的 `chart_sources` 只合入与发出请求时同一项目、文档代次、画布位置和面板输入。
   恢复 schema 3/4 节点换的是整份项目，schema 2 节点仍是单画布检查点（`lib/versionDoc.ts`
   的 `isProjectVersion` / `versionCanvasDoc`）。后端 `documents.validate_document`
   按 schema 号分派，schema 2/3/4 走同一个入口；项目包按同一 `SUPPORTED_SCHEMAS`

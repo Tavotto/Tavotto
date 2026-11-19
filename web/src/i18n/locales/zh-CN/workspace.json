@@ -303,7 +303,7 @@
     "unsupportedTip": "{{title}}暂不支持：{{reason}}",
     "noPanelTitle": "选择一张可编辑的图以查看图内元素",
     "noEditableTitle": "画布上还没有可编辑的图",
-    "noEditableHint": "由脚本生成的图才能改图内对象",
+    "noEditableHint": "打开有来源脚本的图，或为 SVG 绑定数据",
     "locateEditable": "选中一张可编辑的图"
   },
   "fastEdit": {
@@ -1744,6 +1744,11 @@
     "notWrittenBack": "留白只在 Tavotto 导出时生效，不写回脚本"
   },
   "chartBind": {
+    "backupName": "绑定图表数据前",
+    "backupFailed": "排版备份未能保存。请重新预览后重试。",
+    "documentChanged": "备份期间排版已更改。请重新打开图表绑定后继续。",
+    "geometryPending": "请等当前图表预览完成后再调整图内位置或尺寸。",
+    "frameUnavailable": "计算后的图表外框与当前面板裁剪区域不相交。",
     "title": "绑定数据为计算图表",
     "fileLabel": "来源文件",
     "nodesLabel": "节点数",

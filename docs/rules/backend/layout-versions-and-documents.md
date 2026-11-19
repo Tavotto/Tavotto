@@ -142,9 +142,8 @@ order: 200
   检视导入时按摘要装回目标项目的 `chart_sources/`。首次给既有文档加入计算图表是
   **原地升级**：同一 documentId、同一文件 / 槽位 / 时间线，正文提交为 schema 4，既有历史节点保留；
   升级前用整份项目时间线节点做备份（`takeProjectCheckpoint` 原语已就位），备份没落定不得继续写图表。
-  **接线状态**：把图表第一次写进正文的入口属于 7/9；接线前生产代码里没有这条「先备份再升级」的
-  执行路径。`tests/test_chart_document_upgrade.py` 只覆盖后端能强制的边界（同一时间线、来源冻结失败
-  不写正文），不冒充前端备份接线——不要把它读成那条行为已有看护。
+  `tests/test_chart_document_upgrade.py` 看护后端的同一时间线与来源冻结失败时的写入边界。
+  `web/e2e/chart-document.spec.ts` 从桌面绑定入口验证备份拒绝和之后的保存恢复。
   版本节点正文按 schema 分派：
   2 是单画布检查点，3 / 4 是整份项目；恢复整份项目节点换的是同一 documentId 的全部画布。
 - **目录派生唯一权威 `engine/documentformat.py`，守卫收紧到每一级**：`named_dir` / `autosave_dir` /

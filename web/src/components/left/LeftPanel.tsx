@@ -143,7 +143,7 @@ function ElementCount() {
   const objects = useDocumentStore((s) => s.doc.objects)
   const byId = (id: string | null) => {
     const o = id ? objects.find((x) => x.id === id) : undefined
-    return o?.type === 'panel' && o.script ? o : null
+    return o?.type === 'panel' && (o.script || o.chart) ? o : null
   }
   const panel = byId(elementPanelId) ?? byId(selectedIds.at(-1) ?? null)
   const n = usePanelDisplayManifest(panel)?.elements.length ?? 0

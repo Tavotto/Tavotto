@@ -317,7 +317,7 @@
     "count_other": "{{count}} elements",
     "noPanelTitle": "Select an editable figure to see its elements",
     "noEditableTitle": "No editable figure on the canvas yet",
-    "noEditableHint": "Only script-generated figures expose their objects",
+    "noEditableHint": "Open a figure with a source script or bind data to an SVG",
     "locateEditable": "Select an editable figure"
   },
   "fastEdit": {
@@ -1815,6 +1815,11 @@
     "notWrittenBack": "Margins apply to Tavotto exports only and are not written back to the script"
   },
   "chartBind": {
+    "backupName": "Before binding chart data",
+    "backupFailed": "The layout backup could not be saved. Preview again to retry.",
+    "documentChanged": "The layout changed during backup. Reopen the chart binding to continue.",
+    "geometryPending": "Wait for the current chart preview before editing its geometry.",
+    "frameUnavailable": "The computed chart frame does not fit the current panel crop.",
     "title": "Bind data as computational chart",
     "fileLabel": "Source file",
     "nodesLabel": "nodes",

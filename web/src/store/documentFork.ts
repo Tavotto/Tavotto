@@ -21,7 +21,7 @@ import {
   flushAutosave,
   getWindowHold,
   isAutosaveSuspendedFor,
-  mergeSavedFigureSnapshots,
+  mergeSavedDocumentSources,
   resumeAutosave,
   setProjectFile,
   suspendAutosaveFor,
@@ -140,7 +140,7 @@ export async function forkCurrentDocument(opts: { beforeSwitch?: () => void } = 
     // 写的途中切走了：文件已经在项目里了（新名字、没覆盖任何东西），但不把此刻开着的另一份换掉
     if (!stillCurrent(ctx)) return { ok: false, reason: 'switched', file }
     // 回执里的快照引用合进内存里这份（再带进副本）；原排版已摘出自动保存，这次合并不会把它写回盘
-    mergeSavedFigureSnapshots(snapshots, written.res.figure_snapshots)
+    mergeSavedDocumentSources(snapshots, written.res)
   }
   const latest = useDocumentStore.getState().buildProject()
   const id = await installFork({ ...latest, project: { ...latest.project, name } }, opts.beforeSwitch)

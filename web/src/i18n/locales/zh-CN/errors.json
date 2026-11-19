@@ -33,6 +33,7 @@
     "chart_model_unsupported": "当前不支持这份计算图表的模型或编辑方式。",
     "chart_render_unsupported": "当前无法完整渲染这张计算图表。",
     "chart_source_changed": "计算图表的源文件已变化，本次操作未应用。请恢复匹配的源文件或重新导入。",
+    "chart_source_mismatch": "计算图表的来源缺失，或与文档保存的来源不符。",
     "svg_resource_limit": "SVG 或计算图表超过资源预算，无法完成本次操作。",
     "svg_scene_invalid": "无法读取这份 SVG 的图形内容。请检查文件是否为有效的独立 SVG。",
     "chart_render_pair_missing": "计算图表没有返回同一版的图像与几何，暂未应用本次渲染。",

@@ -1,4 +1,6 @@
 import { useEffect } from 'react'
+import { useChartBindStore } from '@/store/chartBindStore'
+import { engineTransport } from '@/lib/engineTransport'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowDownToLine,
@@ -153,7 +155,7 @@ export function ObjectContextMenu({
     : multi
       ? 'multi'
       : obj.type === 'panel'
-        ? obj.script
+        ? obj.script || obj.chart
           ? 'panel'
           : 'panel-layout-only'
         : obj.type === 'text'
@@ -203,6 +205,12 @@ export function ObjectContextMenu({
 
       {kind === 'panel' && <EditablePanelItems panel={obj as PanelObject} run={run} runAsync={runAsync} />}
       {kind === 'panel-layout-only' && <LayoutOnlyPanelItems panel={obj as PanelObject} run={run} />}
+      {!multi && obj.type === 'panel' && !obj.locked && obj.fileKind === 'svg' && !engineTransport() && (
+        <MenuItem icon={Pencil} data-quick-item="bind-chart"
+          onSelect={run(() => useChartBindStore.getState().openFor(obj))}>
+          {translate('workspace:chartBind.menu')}
+        </MenuItem>
+      )}
       {kind === 'text' && (
         <MenuItem
           icon={Pencil}
@@ -244,9 +252,9 @@ function EditablePanelItems({
       <MenuItem icon={Pencil} data-quick-item="edit-elements" onSelect={run(() => enterElementEdit(panel.id))}>
         {qe('editElements')}
       </MenuItem>
-      <MenuItem icon={RefreshCw} data-quick-item="rebuild" onSelect={runAsync(() => rebuildPanel(panel.id))}>
+      {panel.script && !panel.chart && <MenuItem icon={RefreshCw} data-quick-item="rebuild" onSelect={runAsync(() => rebuildPanel(panel.id))}>
         {qe('rebuild')}
-      </MenuItem>
+      </MenuItem>}
       <CropItem panelId={panel.id} rotated={rotated} run={run} />
       <FitItem panelId={panel.id} run={run} />
       {(edits > 0 || isAdoptedPanel(panel)) && (
@@ -260,7 +268,7 @@ function EditablePanelItems({
       )}
       {/* 同步修改（2026-10-01 设计稿 C5 / C11：原在属性栏「源文件与高级」里）：
           既要有同脚本的兄弟图可去，也要这张图有修改可搬，两个条件缺一就不摆 */}
-      {edits > 0 && hasSiblings && (
+      {edits > 0 && !panel.chart && hasSiblings && (
         <MenuItem
           icon={ArrowLeftRight}
           data-quick-item="sync-overrides"

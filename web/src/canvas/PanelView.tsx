@@ -10,6 +10,7 @@ import { useDecodedSvg } from '@/lib/useDecodedSvg'
 import { useHtmlMarkup } from '@/lib/useHtmlMarkup'
 import { useRetryingSrc } from '@/lib/imgRetry'
 import { engineTransport } from '@/lib/engineTransport'
+import { chartRenderFields } from '@/lib/chartSource'
 import {
   alignEntries,
   blockedGroupsIn,
@@ -121,6 +122,10 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 自己那份变体的渲染态（同文件的另一个副本有它自己的一份，互不相干）
   const render = usePanelRender(obj)
   const displayView = usePanelDisplayView(obj)
+  const computed = !!obj.chart || obj.chartSource !== undefined
+  const pairedSvg = computed
+    ? displayView?.kind === 'exact' ? displayView.svg : null
+    : render?.svg ?? null
   const bucketRef = useRef(0)
 
   const crop = obj.crop
@@ -166,7 +171,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 编辑态用 SVG（要 gid 命中）；退出后有 override 的用引擎 PNG（imshow 面板不发糊）。
   // 命中层不受影响，见下面的 ElementHitLayer：位图只是画法，几何权威仍是
   // exact manifest（不变量 4）。
-  const svgHtml = editing && !bitmapOnly ? (render?.svg ?? null) : null
+  const svgHtml = editing && !bitmapOnly ? pairedSvg : null
   const panelId = obj.id
 
   // 文档变了（撤销 / 重置 / 历史跳转）：已提交、还在等图的预览，它代表的正式值若已不在
@@ -194,15 +199,16 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 来源驱动采用 + 零编辑（只有结构性 FRAME）且**不在图内编辑**：显示磁盘原像素，不出引擎图（ADR 0139 §五.1）。
   // 进入图内编辑的那一刻起显示可编辑基础（重画的 SVG + 命中层），拖动预览才看得见；退出编辑且仍是零编辑就回原像素。
   // 超大图（raster / evicted 档）同理：只有编辑态才用引擎位图，编辑外一律原像素。
-  const originalPixels = isSourceBackedZeroEdit(obj) && !editing
+  const originalPixels = !computed && isSourceBackedZeroEdit(obj) && !editing
   const needsEngine = !originalPixels &&
-    ((obj.overrides.length > 0 && !isJustBakedBaseline(obj)) || tracked || runtime)
+    (computed || (obj.overrides.length > 0 && !isJustBakedBaseline(obj)) || tracked || runtime)
   // raster 档下**编辑态也要位图**——否则画布上什么都没有。复用的是同一条
   // PNG 链路（按 patches 出图、状态中立、AbortController + objectURL 生命周期），
   // 不另写第二套。
   const useEnginePng = !artifactValidationIssue(obj) && !originalPixels &&
+    (!computed || displayView?.kind === 'raster' || displayView?.kind === 'evicted') &&
     (!isAdoptedPanel(obj) || (render?.status !== 'error' && !render?.stale && !!render?.manifest)) &&
-    (bitmapOnly ? editing || needsEngine : !editing && needsEngine) && (render?.rev ?? 0) > 0
+    (bitmapOnly ? editing || needsEngine : !computed && !editing && needsEngine) && (render?.rev ?? 0) > 0
   const renderRev = render?.rev ?? 0
   const pngSource = render?.manifest ?? null
   const pngBlob = useEnginePngBlob(obj, bucket, useEnginePng, renderRev, pngSource)
@@ -272,7 +278,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 又让「近似预览」角标不出声。此时让位给 `fileSrc`（取到之前是占位，取到不是这个状态的图时带角标）。
   const foreignStandby = runtime && !editing && displayView?.kind === 'fallback'
   const engineSvgStandby =
-    needsEngine && !bitmapOnly && !foreignStandby && !(useEnginePng && enginePng) ? (render?.svg ?? null) : null
+    needsEngine && !bitmapOnly && !foreignStandby && !(useEnginePng && enginePng) ? pairedSvg : null
   // 一个可寻址地址都拿不到时**退回这一版的权威 SVG**，绝不留一个空 src。
   // Codex 内嵌画布退出图内编辑后正好落在这一格：会话把文件标成 tracked
   // → `useEnginePng` 为真 → MCP 传输拒掉每一次 `previewPngUrl()`，而它的
@@ -282,7 +288,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 内存预算清掉——这条兜底都不许把**上一版**的矢量图拿来冒充（前者正是硬闸要
   // 拦的 payload，后者会让画布显示另一个变体的图）。
   const inlineSvg =
-    svgHtml ?? engineSvgStandby ?? (src || bitmapOnly || foreignStandby ? null : (render?.svg ?? null))
+    svgHtml ?? engineSvgStandby ?? (src || bitmapOnly || foreignStandby ? null : pairedSvg)
   const showSvg = inlineSvg != null
   const loadedPngUrl = useRef<string | null>(null)
   const currentPngUrl = pngIsCurrent ? pngBlob.url : null
@@ -473,7 +479,7 @@ function useEnginePngBlob(
         ? transport.previewPngSnapshot(fileId, overrides, bucket, ctrl.signal)
         : transport.previewPngUrl(fileId, overrides, bucket, ctrl.signal)
             .then((url) => ({ url, manifest: null }))
-      : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, artifactRequestFields(obj))
+      : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, chartRenderFields(obj) ?? artifactRequestFields(obj))
     void pending
       .then((next) => {
         if (ctrl.signal.aborted) {
@@ -1284,6 +1290,8 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
   const rasterEditing = editing && render?.preview?.mode === 'raster'
   const relevant =
     editing ||
+    !!obj.chart ||
+    obj.chartSource !== undefined ||
     obj.overrides.length > 0 ||
     render?.stale ||
     !!runtimeBadge ||
@@ -1307,7 +1315,7 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
     const offlineRefusal = nativeState === 'offline' && render?.code === 'native_session_offline'
     const failure: BadgeInfo | null = render?.status === 'error' && !offlineRefusal
       ? { tone: 'error', cold: false, text: badge('error'),
-          hint: render.code === 'artifact_source_unavailable' && render.error ? formatMessage(render.error) : undefined }
+          hint: (obj.chart || render.code === 'artifact_source_unavailable') && render.error ? formatMessage(render.error) : undefined }
       : null
     if (framePending && failure) return failure
     // 图幅占位没有画面，不能像普通重绘一样等 700ms 才解释空白。
@@ -1386,7 +1394,7 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
       }
     }
     return null
-  }, [render, relevant, building, runtimeBadge, nativeState, rerunScript, rasterEditing, approx, retainedAfterFailure, quietBusy, slowBusy, frameLegacy, frameBlocked, framePending])
+  }, [render, relevant, obj.chart, building, runtimeBadge, nativeState, rerunScript, rasterEditing, approx, retainedAfterFailure, quietBusy, slowBusy, frameLegacy, frameBlocked, framePending])
 
   // 退场那 90ms 里 info 已经是 null 了，留住最后一版才播得完
   const last = useRef(info)
