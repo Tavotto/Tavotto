@@ -145,6 +145,10 @@ class FigState:
         # 下一次 apply 自动重试，每失败一次报一次 warning（写回遇 warning 即阻断）；重试成功
         # 或同一个键重新被应用成功才清掉。`snapshot` 不把它们算作「已应用」。
         self.unrestored: set[tuple] = set()
+        #: 这一轮 apply 里**这一版认不出的 prop**（`gid.prop`）：更新的 Tavotto 写下的 override。
+        #: 不应用、不报 warning（旧版本照样平稳打开项目），原样留在项目文件里；写回见 `app` 的
+        #: `WriteBackFutureError`。每次 `_apply` 开头清空重算
+        self.future_props: list[str] = []
         self.colorbar_axes: set = set()  # 承载色条的轴（manifest 标记用）
         # 宿主 axes gid -> 拖动它时应当一起走的其他 axes gid（色条轴 / 孪生轴）
         self.axes_follow: dict[str, list[str]] = {}
@@ -6429,6 +6433,20 @@ def snapshot(state: FigState) -> list[dict]:
     return out
 
 
+_KNOWN_PROPS: frozenset[str] | None = None
+
+
+def known_props() -> frozenset[str]:
+    """这一版认得的全部 prop 名（任一类元素有 handler 的）。
+
+    `HANDLERS` 在模块各处陆续登记（族能力、系列组、图例、文字底框……），所以第一次用时才收，
+    不在模块顶层冻结。判据只看名字：认得名字、只是这一类元素没有的，是「属性不支持」，照旧报。"""
+    global _KNOWN_PROPS
+    if _KNOWN_PROPS is None:
+        _KNOWN_PROPS = frozenset(prop for _cls, prop in HANDLERS)
+    return _KNOWN_PROPS
+
+
 def apply(state: FigState, patches: list[dict]) -> list[str]:
     """`_apply` 加收尾：盖上 ≤3.10 花纹色的「写完的样子」（#951）。"""
     _adopt_external_hatch_colors(state)
@@ -6460,6 +6478,8 @@ def _apply(state: FigState, patches: list[dict]) -> list[str]:
             "已经不成立。别放宽这条断言：要在 build_manifest 里改图，先把记忆表关掉。"
         )
     warnings: list[str] = []
+    future: list[str] = []
+    state.future_props = future
     new: dict[tuple, object] = {}
     # 目标身份核对（ADR 0083）：带着 `identity` 的 patch 只落在**写它时那个对象**上。
     # 脚本重排 / 插入 / 删除曲线或子图之后，同一个位置式 gid 指向了别的对象——
@@ -6681,6 +6701,13 @@ def _apply(state: FigState, patches: list[dict]) -> list[str]:
                 continue
             handler = HANDLERS.get((_cls_key(artist), prop))
             if handler is None:
+                if prop not in known_props():
+                    # 这一版没有任何一类元素认得这个 prop 名：是更新的 Tavotto 写下的（新的编辑方式），
+                    # 不是写错。不应用、不报 warning——项目照样打开，元素停在脚本 / 别的修改给的位置；
+                    # override 原样留在项目文件里，换回新版本还在（`future_props`）。认得这个名字、只是
+                    # 这一类元素不支持的，照旧报「属性不支持」
+                    future.append(f"{gid}.{prop}")
+                    continue
                 warnings.append(f"属性不支持: {gid}.{prop}")
                 continue
             # 几何组应用完、进入其余 prop 之前强制一次布局：aspect="equal" 的

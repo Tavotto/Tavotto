@@ -2048,6 +2048,10 @@ class LiveFigureSession:
             "manifest": self.render(stem, timings, preview_dpi, preview=verdict),
             "warnings": warnings,
         }
+        # 更新的 Tavotto 写下、这一版认不出的 override（不应用、不算 warning）。**有才带**：没有时响应形状与
+        # 从前逐字相同（老信封契约，`test_legacy_envelope_keeps_the_old_response_shape`）
+        if self.states[stem].future_props:
+            result["future_props"] = list(self.states[stem].future_props)
         if preview is not None:
             preview.update(verdict)
         if inline_svg and verdict["mode"] != previewbudget.MODE_RASTER:
@@ -2175,6 +2179,8 @@ class LiveFigureSession:
         try:
             t0 = time.perf_counter()
             warnings = overrides_mod.apply(state, patches)
+            # 下面 finally 里还原那一次 apply 会把它清掉：现在取（写回据此拒绝，见 app.WriteBackFutureError）
+            future_props = list(state.future_props)
             t1 = time.perf_counter()
             # 像素预算：量即将分配的栅格，超了就在 mkdir / 任何写入之前抛（finally 照常还原 patches）。
             # 放在 apply 之后，figsize / frame 类 patch 已经生效，量的是真实要画的尺寸。
@@ -2354,7 +2360,10 @@ class LiveFigureSession:
             # 还原那次的 warnings 丢弃：报给调用方的必须是「这组 patches
             # 有没有写不进去的」，混进还原噪音会让写回自检误判。
             overrides_mod.apply(state, prev)
-        return {**result, "warnings": warnings}
+        out = {**result, "warnings": warnings}
+        if future_props:  # 有才带，响应形状与从前相同（同 override）
+            out["future_props"] = future_props
+        return out
 
 
 class _NullCtx:

@@ -107,6 +107,7 @@ class _FakeWorker:
         out_dir: Path,
         *,
         warnings=(),
+        future_props=(),
         fail_on=None,
         manifest=None,
         applied=(),
@@ -120,6 +121,7 @@ class _FakeWorker:
         out_dir.mkdir(parents=True, exist_ok=True)
         self.script_sha1 = engine_pool.script_sha1(str(figs), "fig1.py")
         self.warnings = list(warnings)
+        self.future_props = list(future_props)  # 更新的 Tavotto 写下、这一版认不出的修改
         self.fail_on = fail_on  # 这个后缀的导出直接抛 WorkerError
         self.manifest = manifest if manifest is not None else _manifest()
         # render_png 出的探针图是这个颜色的纯色块：热与重放给不同颜色 = 像素分歧
@@ -145,7 +147,12 @@ class _FakeWorker:
         Path(path).write_bytes(f"NEW-{fmt}".encode())  # 半成品先落到 .updating
         if self.fail_on == fmt:
             raise engine_pool.WorkerError("导出炸了", "traceback…")
-        return {"ok": True, "path": path, "warnings": list(self.warnings)}
+        return {
+            "ok": True,
+            "path": path,
+            "warnings": list(self.warnings),
+            "future_props": list(self.future_props),
+        }
 
     def render_png(self, stem, width_px):
         """像素门的探针：出一张 16×16 的纯色 PNG（真 worker 画的是 live figure）。"""
@@ -221,6 +228,51 @@ def test_write_back_blocked_by_worker_warnings(client, tmp_path, monkeypatch):
     assert discarded == [fresh], "被阻断的写回也必须回收一次性 worker"
     # 阻断的写回不进版本历史（基线仍是空的）
     assert m.load_baked(m.PROJECTS[m._project_id(figs.resolve())]) == {}
+
+
+def test_write_back_refuses_edits_from_a_newer_version_with_its_own_code(
+    client, tmp_path, monkeypatch
+):
+    """更新的 Tavotto 写下、这一版认不出的修改（引擎不应用、不算 warning）：写回不静默把它们丢在原文件外，
+    回 409 `write_back_future_props`（说清楚请更新），原文件零改动、不进版本历史、一次性 worker 照样回收。"""
+    figs = _figs(tmp_path)
+    before_pdf = (figs / "Fig1.pdf").read_bytes()
+    before_png = (figs / "Fig1.png").read_bytes()
+    hot, fresh = _pair(figs, tmp_path, future_props=["axes_0.lines_0.bend_magic"])
+    discarded = _use(monkeypatch, hot, fresh)
+    resp = client.post(
+        "/api/engine/update_source",
+        json={
+            "id": "Fig1.pdf",
+            "patches": [{"gid": "axes_0.lines_0", "prop": "bend_magic", "value": [1, 2]}],
+        },
+    )
+    assert resp.status_code == 409
+    body = resp.get_json()
+    assert body["code"] == "write_back_future_props"
+    assert body["props"] == ["axes_0.lines_0.bend_magic"]  # PDF / PNG 两次导出报同一批，不重复
+    assert "更新" in body["error"]
+    assert (figs / "Fig1.pdf").read_bytes() == before_pdf
+    assert (figs / "Fig1.png").read_bytes() == before_png
+    assert _leftovers(figs) == []
+    assert discarded == [fresh]
+    assert m.load_baked(m.PROJECTS[m._project_id(figs.resolve())]) == {}
+
+
+def test_ordinary_warnings_still_win_over_future_props(client, tmp_path, monkeypatch):
+    """同时有真 warning（认得的键落不下去）时照旧按 `write_back_warnings` 报——那是数据级问题。"""
+    figs = _figs(tmp_path)
+    hot, fresh = _pair(
+        figs,
+        tmp_path,
+        warnings=["属性不支持: axes_0.texts_0.markersize"],
+        future_props=["axes_0.lines_0.bend_magic"],
+    )
+    _use(monkeypatch, hot, fresh)
+    body = client.post(
+        "/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []}
+    ).get_json()
+    assert body["code"] == "write_back_warnings"
 
 
 def test_write_back_dedupes_warnings_across_targets(client, tmp_path, monkeypatch):

@@ -3955,6 +3955,7 @@ export default interface Resources {
       "write_back_disabled": "项目是只读的：无法写回原始文件。可在项目设置里恢复可写。",
       "write_back_foreign_file": "{{file}} 是这个脚本里另一张图保存的，写回不会覆盖它，原文件没有改动。",
       "write_back_format_unsupported": "写回只支持 PDF 和 PNG 素材，这张是 {{format}}。",
+      "write_back_future_props": "这个项目里有用更新版本的 Tavotto 做的修改，这一版还认不出，写回已取消（原文件没有改动，这些修改仍保存在项目里）。请更新 Tavotto 后再写回。",
       "write_back_multipage_pdf": "{{file}} 是脚本用 PdfPages 写的 PDF，写回不会覆盖它，原文件没有改动。要拿到编辑后的结果，请用导出。",
       "write_back_persist_failed": "无法写回：写回前的准备失败（{{reason}}）。原文件未做任何改动，请检查文件是否可读、磁盘空间与目录权限后重试。",
       "write_back_warnings": "无法写回：重放时出现了警告。",
