@@ -605,19 +605,18 @@ def ecdf_xy(vals):
 
 
 # ---- 大表缩减（ADR 0178 修订·大表）：流式一遍，内存只与「箱数 × 系列数」有关
-def bin_update(b, r, row, yis):
-    """把一行（`row = (行序号, 单元格)`）并进箱 `b` 的 y 角色：每个 y 列记最小 / 最大值所在行与第一个非数行（断开处）。
+def bin_update(b, yv, row):
+    """把一行（`row = (行序号, 单元格)`，`yv` = 各 y 列的有限数值或 None）并进箱 `b` 的 y 角色：每个 y 列记最小 / 最大值所在行。
     严格比较、行序号递增，所以并列时先出现的赢——与 `bin_merge` 的并列规则（行序号小的赢）一致。"""
-    for j in range(len(yis)):
-        kind, v = parse_cell(r[yis[j]])
-        o = 4 + 5 * j
-        if kind == "numeric":
-            if b[o] is None or v < b[o]:
-                b[o], b[o + 1] = v, row
-            if b[o + 2] is None or v > b[o + 2]:
-                b[o + 2], b[o + 3] = v, row
-        elif b[o + 4] is None:
-            b[o + 4] = row
+    for j in range(len(yv)):
+        v = yv[j]
+        if v is None:
+            continue
+        o = 4 + 4 * j
+        if b[o] is None or v < b[o]:
+            b[o], b[o + 1] = v, row
+        if b[o + 2] is None or v > b[o + 2]:
+            b[o + 2], b[o + 3] = v, row
 
 
 def bin_merge(a, b, ny):
@@ -628,7 +627,7 @@ def bin_merge(a, b, ny):
     if b[2] > a[2] or (b[2] == a[2] and b[3][0] < a[3][0]):
         out[2], out[3] = b[2], b[3]
     for j in range(ny):
-        o = 4 + 5 * j
+        o = 4 + 4 * j
         if b[o] is not None and (
             a[o] is None or b[o] < a[o] or (b[o] == a[o] and b[o + 1][0] < a[o + 1][0])
         ):
@@ -639,17 +638,15 @@ def bin_merge(a, b, ny):
             or (b[o + 2] == a[o + 2] and b[o + 3][0] < a[o + 3][0])
         ):
             out[o + 2], out[o + 3] = b[o + 2], b[o + 3]
-        if b[o + 4] is not None and (a[o + 4] is None or b[o + 4][0] < a[o + 4][0]):
-            out[o + 4] = b[o + 4]
     return out
 
 
 def bin_rows(b, ny):
-    """一个箱要留下的行：最左 / 最右（按 x）、每个 y 列的最小 / 最大、每个 y 列第一个非数行。"""
+    """一个箱要留下的行：最左 / 最右（按 x）、每个 y 列的最小 / 最大。"""
     out = [b[1], b[3]]
     for j in range(ny):
-        o = 4 + 5 * j
-        out += [s for s in (b[o + 1], b[o + 3], b[o + 4]) if s is not None]
+        o = 4 + 4 * j
+        out += [s for s in (b[o + 1], b[o + 3]) if s is not None]
     return out
 
 
@@ -658,29 +655,41 @@ def reduce_trend(header, body, spec):
     下游的 `trend_data` 与小表一字不差地吃这些行。
 
     **做法**：行按（分面, 分组）分系列，与 `trend_data` 同口径（分组 / 分面为空的行不画；x 不是值的行不画）；每个系列在 **x 值**上分箱
-    （不是文件里的位置：未排序、多条交错的序列照样对）：箱宽是 2 的幂、起点是该系列第一行的 x，箱数超过 `spec["bins"]` 时箱宽翻倍并并箱
-    （一遍扫完，不要先知道 x 的范围）。每个箱留下 最左 / 最右 的行、每个 y 列取最小 / 最大值的行（上下包络）与每个 y 列第一个断开处，所以
-    **每个 y 的全局最小 / 最大、x 的两端、断开都原样在图上**。系列数超过 `spec["series_max"]` → `ValueError("reduce_series_overflow")`
-    （数据与出备选时不一样了，不悄悄多画）。`信息`：读到的行数、x 不是值的行数与前 100 个行号、每个 y 列的（有限数个数, 最小, 最大）——整表上
-    的独立累计，父进程拿它与概览扫描的统计对账；`mono` / `dup`：每个系列的 x 是否按文件顺序不减 / 是否有相邻相等（折线的「同一 x 多个 y」
-    规则要它）；`distinct_min`：每个系列不同 x 的个数（封顶 4）；`grid`：每个系列最终的箱（起点, 箱宽）。"""
+    （不是文件里的位置：未排序、多条交错的序列照样对）：箱宽是 2 的幂、起点是该系列第一行的 x，箱数超过 `spec["bins"]` 时箱宽翻倍并箱
+    （一遍扫完，不要先知道 x 的范围）。每个箱留下 最左 / 最右 的行与每个 y 列取最小 / 最大值的行（上下包络），所以
+    **每个 y 的全局最小 / 最大、x 的两端都原样在图上**。
+    **断开**（`spec["lines"]`，有折线 / 阶梯层时）：折线在 y 不是数的地方断开，所以每个系列每个 y 列里**每一段**缺失（夹在两个有限值之间的连续非数行）
+    各留下它的第一行——这样留下的任意两个相邻点之间，只要原数据在它们之间断开过，就一定有一条断开标记；每个系列每个 y 列至多留 `spec["gap_max"]`
+    段，更多就不再留并标 `gap_over`（调用方拒绝这张折线，不画一条会把断开连起来的线）。系列数超过 `spec["series_max"]` →
+    `ValueError("reduce_series_overflow")`（数据与出备选时不一样了，不悄悄多画）。
+    `信息`：读到的行数、x 不是值的行数与前 100 个行号、每个 y 列的（有限数个数, 最小, 最大）——整表上的独立累计，父进程拿它与概览扫描的
+    统计对账；`mono`：每个系列的 x 是否按文件顺序不减；`dup`：某个 y 列在同一系列里是否有两个有限观测的 x 相同（只数 x 与该 y 都有限的行，
+    与小表的规则同口径；只在 `mono` 时可信）；`x_counts`：每个有（x 与第一个 y 都有限的）观测的系列的不同 x 个数（封顶 4）；
+    `ords`：留下的行的行序号；`gap_runs` / `gap_over`：断开的段数 / 是否超过上限；`grid`：每个系列最终的箱（起点, 箱宽）。"""
     xi = header.index(spec["x"])
     yis = [header.index(y) for y in spec["ys"]]
     kis = [header.index(k) for k in spec["keys"]]
     x_is_date = spec["date"]
     nb = spec["bins"]
     smax = spec["series_max"]
+    lines = spec.get("lines", False)
+    gap_max = spec.get("gap_max", 0)
     ny = len(yis)
     series = {}
+    gap_rows = {}
+    gap_runs = 0
+    gap_over = False
     n_rows = 0
     x_invalid = 0
     examples = []
     ystat = [[0, None, None] for _ in yis]
     for ln, r in body:
         n_rows += 1
+        yv = [None] * ny
         for j in range(ny):
             kind, v = parse_cell(r[yis[j]])
             if kind == "numeric":
+                yv[j] = v
                 s = ystat[j]
                 s[0] += 1
                 if s[1] is None:
@@ -714,25 +723,46 @@ def reduce_trend(header, body, spec):
                 "bins": {},
                 "prev": None,
                 "mono": True,
+                "pv": [None] * ny,
                 "dup": False,
                 "xs": set(),
+                "seen": [False] * ny,
+                "ingap": [False] * ny,
+                "gaps": [0] * ny,
             }
         prev = st["prev"]
-        if prev is not None:
-            if xv < prev:
-                st["mono"] = False
-            elif xv == prev:
-                st["dup"] = True
+        if prev is not None and xv < prev:
+            st["mono"] = False
         st["prev"] = xv
-        if len(st["xs"]) < 4:
+        pv = st["pv"]
+        for j in range(ny):
+            if yv[j] is not None:
+                if pv[j] is not None and xv == pv[j]:
+                    st["dup"] = True
+                pv[j] = xv
+        if yv[0] is not None and len(st["xs"]) < 4:
             st["xs"].add(xv)
-        bins = st["bins"]
         row = (n_rows, r)
+        if lines:
+            for j in range(ny):
+                if yv[j] is None:
+                    if st["seen"][j] and not st["ingap"][j]:
+                        st["ingap"][j] = True
+                        gap_runs += 1
+                        if st["gaps"][j] < gap_max:
+                            st["gaps"][j] += 1
+                            gap_rows[n_rows] = r
+                        else:
+                            gap_over = True
+                else:
+                    st["seen"][j] = True
+                    st["ingap"][j] = False
+        bins = st["bins"]
         k = math.floor((xv - st["o"]) / st["w"])
         b = bins.get(k)
         if b is None:
-            b = bins[k] = [xv, row, xv, row] + [None] * (5 * ny)
-            bin_update(b, r, row, yis)
+            b = bins[k] = [xv, row, xv, row] + [None] * (4 * ny)
+            bin_update(b, yv, row)
             while len(bins) > nb:
                 st["w"] *= 2.0
                 merged = {}
@@ -746,24 +776,29 @@ def reduce_trend(header, body, spec):
             b[0], b[1] = xv, row
         if xv > b[2]:
             b[2], b[3] = xv, row
-        bin_update(b, r, row, yis)
-    kept = {}
+        bin_update(b, yv, row)
+    kept = dict(gap_rows)
     for st in series.values():
         for b in st["bins"].values():
             for slot in bin_rows(b, ny):
                 kept[slot[0]] = slot[1]
-    rows = [kept[i] for i in sorted(kept)]
+    ords = sorted(kept)
+    rows = [kept[i] for i in ords]
+    counts = [len(s["xs"]) for s in series.values() if s["xs"]]
     info = {
         "rows": n_rows,
         "kept": len(rows),
+        "ords": ords,
         "x_invalid": x_invalid,
         "examples": examples,
         "series": len(series),
         "y": [tuple(s) for s in ystat],
         "mono": all(s["mono"] for s in series.values()),
         "dup": any(s["dup"] for s in series.values()),
-        "distinct_min": min((len(s["xs"]) for s in series.values()), default=0),
+        "x_counts": counts,
         "bins": max((len(s["bins"]) for s in series.values()), default=0),
+        "gap_runs": gap_runs,
+        "gap_over": gap_over,
         "grid": {k: (s["o"], s["w"]) for k, s in series.items()},
     }
     return rows, info
@@ -844,10 +879,12 @@ def reduce_relationship(header, body, spec):
         for e in st["ext"]:
             if e is not None:
                 kept[e[1][0]] = e[1][1]
-    rows = [kept[i] for i in sorted(kept)]
+    ords = sorted(kept)
+    rows = [kept[i] for i in ords]
     info = {
         "rows": n_rows,
         "kept": len(rows),
+        "ords": ords,
         "x_invalid": x_invalid,
         "examples": examples,
         "series": len(series),
@@ -2010,6 +2047,8 @@ LARGE_POINT_BUDGET = 1_000_000
 #: 每个系列的箱数上限（再多就是一个像素里画几个箱，没有意义）
 LARGE_BINS_MAX = 2000
 LARGE_BINS_MIN = 20
+#: 折线每个系列每个 y 列最多保留多少段断开（见 `reduce_trend`）；更多的断开就不画折线（散点照常）
+LARGE_GAP_RUNS_MAX = 200
 #: 关系图每个系列留下的点数上限 / 下限（等距抽样的点，另加 4 个极值点）
 LARGE_POINTS_MAX = 20_000
 LARGE_POINTS_MIN = 50
@@ -2036,8 +2075,15 @@ def large_spec(summary: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> dic
             "points": max(LARGE_POINTS_MIN, points),
             "series_max": series,
         }
-    per_bin_rows = 2 + 3 * ny
-    bins = LARGE_POINT_BUDGET // (series * per_bin_rows * ny * layers * 2)
+    lines = any(
+        ly.mark in recipe_mod.POINTWISE_LINES and ly.summary == recipe_mod.SUMMARY_NONE
+        for ly in recipe.layers
+    )
+    gap_max = LARGE_GAP_RUNS_MAX if lines else 0
+    per_bin_rows = 2 + 2 * ny
+    # 每系列最多 `bins × 每箱行数 + y 列数 × 断开段数` 行，每行在每个 y 列、每层各画一个点（x、y 两个坐标）
+    rows_budget = LARGE_POINT_BUDGET // (series * ny * layers * 2) - ny * gap_max
+    bins = rows_budget // per_bin_rows
     return {
         "kind": "trend",
         "x": recipe.x,
@@ -2046,6 +2092,8 @@ def large_spec(summary: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> dic
         "date": summary.per_column[recipe.x].kind == "date",
         "bins": max(LARGE_BINS_MIN, min(LARGE_BINS_MAX, bins)),
         "series_max": series,
+        "lines": lines,
+        "gap_max": gap_max,
     }
 
 
@@ -2061,6 +2109,43 @@ def _large_reader_expr(entry) -> str:
 _REDUCE_CACHE: dict = {}
 _REDUCE_CACHE_MAX = 6
 _REDUCE_LOCK = threading.Lock()
+
+
+def gap_audit(values: adf.DataSummary, spec: dict, ords) -> int:
+    """**独立于缩减**的断开对账（只在父进程、只在折线 + 有断开时多读一遍文件）：数「某个系列某个 y 列里，夹在两个有限值之间的连续非数行（一段断开）
+    里一行都没被留下」的段数。缩减把断开弄丢（留下的点之间会被连成线）时它大于 0。不复用缩减里的任何状态，只用留下的行序号。"""
+    keep = set(ords)
+    xi = values.columns.index(spec["x"])
+    yis = [values.columns.index(y) for y in spec["ys"]]
+    kis = [values.columns.index(k) for k in spec["keys"]]
+    state: dict = {}
+    lost = 0
+    with (
+        open(values.large.path, "rb") as raw,
+        io.TextIOWrapper(raw, encoding=adf.large_codec(values.encoding), newline="") as fh,
+    ):
+        _h, body = adf.iter_table(fh, values.delimiter or ",", values.header_row, values.units_row)
+        for n, (_ln, r) in enumerate(body, start=1):
+            if spec["date"]:
+                good = adf.parse_date(r[xi]) is not None
+            else:
+                good = adf.parse_cell(r[xi])[0] == "numeric"
+            key = tuple(r[k].strip() for k in kis)
+            if not good or "" in key:
+                continue
+            sts = state.setdefault(key, [None] * len(yis))
+            for j, yi in enumerate(yis):
+                finite = adf.parse_cell(r[yi])[0] == "numeric"
+                cur = sts[j]
+                if finite:
+                    if isinstance(cur, list) and not cur[0]:
+                        lost += 1  # 这一段断开里没有任何一行被留下
+                    sts[j] = True
+                elif cur is True:
+                    sts[j] = [n in keep]
+                elif isinstance(cur, list) and n in keep:
+                    cur[0] = True
+    return lost
 
 
 def large_reduce(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> tuple[list, dict]:
@@ -2102,13 +2187,15 @@ def large_reduce(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> tu
             raise TemplateError("template_recipe_mismatch", "large_stats")
     if spec["kind"] == "relationship":
         return rows, info
-    if info["series"] == 0 or info["distinct_min"] < recipe_mod.MIN_X_TREND:
+    if info["series"] == 0 or recipe_mod.trend_too_few_x(info["x_counts"]):
         raise LargeRuleError("trend_too_few_x")
-    if any(
-        ly.mark in recipe_mod.POINTWISE_LINES and ly.summary == recipe_mod.SUMMARY_NONE
-        for ly in recipe.layers
-    ) and not (info["mono"] and not info["dup"]):
-        raise LargeRuleError("line_duplicate_x_unconfirmed")
+    if spec["lines"]:
+        if not (info["mono"] and not info["dup"]):
+            raise LargeRuleError("line_duplicate_x_unconfirmed")
+        if info["gap_over"]:
+            raise TemplateError("template_option_unsupported", "large_gaps")
+        if info["gap_runs"] and gap_audit(values, spec, info["ords"]):
+            raise TemplateError("template_recipe_mismatch", "large_gaps")
     return rows, info
 
 
