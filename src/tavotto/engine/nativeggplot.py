@@ -36,7 +36,9 @@ class GgplotTarget:
         identity = json.dumps([script, self.object_name], ensure_ascii=False).encode("utf-8")
         return "ggplot2-" + hashlib.sha256(identity).hexdigest()[:24]
 
-    def command(self, spec: execspec.ExecutionSpec, *, host: str, port: int) -> list[str]:
+    def command(
+        self, spec: execspec.ExecutionSpec, *, host: str, port: int, out_dir: str
+    ) -> list[str]:
         script = projectenv.contained_path(spec.project_root, spec.target)
         if (
             spec.target_kind != execspec.TARGET_SCRIPT
@@ -63,6 +65,7 @@ class GgplotTarget:
             self.stem(spec.target),
             executionfact.new_id(),
             spec.target,
+            out_dir,
         ]
 
     def publish_preview(self, session, response: dict, *, build: bool) -> dict:

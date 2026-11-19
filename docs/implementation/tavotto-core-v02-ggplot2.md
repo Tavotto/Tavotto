@@ -2,7 +2,7 @@
 
 在桌面版脚本库的 R 脚本旁选择「用 R 运行」。填写脚本生成的 ggplot 对象名和图幅尺寸。可指定本机 Rscript 的路径。留空时查找桌面进程 PATH 中的 Rscript。脚本在自身所在目录以当前账户的权限执行。
 
-R 运行时须安装 ggplot2、svglite 和 jsonlite。生成 PDF 还需要 R 的 Cairo 图形设备。版本与支持等级见[支持矩阵](../support-matrix.json)。
+R 运行时须安装 ggplot2、svglite 和 jsonlite，并能打开 Cairo PDF 图形设备。部分 macOS R 发行包需要 XQuartz 提供图形库。Tavotto 在执行脚本前实测 PDF 设备是否可打开。版本与支持等级见[支持矩阵](../support-matrix.json)。
 
 进入图内编辑后，在元素树中选中普通文本标题即可改色。适配器在会话内保留一次构建得到的 gtable、统计图层和范围。改色、撤销与导出只重绘这份已计算的结果。脚本通过标准输出生成的文字与会话控制分开传输。
 

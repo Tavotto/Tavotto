@@ -760,7 +760,9 @@ def start(
             raise RunError(runcodes.CONDA_LAUNCHER_UNAVAILABLE, reason=str(exc)[:200]) from exc
         relay = nativerelay.NativeRelay()
         if launch.ggplot_target is not None:
-            argv = launch.ggplot_target.command(spec, host=relay.host, port=relay.child_port)
+            argv = launch.ggplot_target.command(
+                spec, host=relay.host, port=relay.child_port, out_dir=out_dir
+            )
         else:
             argv = execspec.bridge_argv(
                 spec,

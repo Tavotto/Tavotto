@@ -99,12 +99,26 @@ render_ggplot <- function(state, title_color = NULL) {
   })$svg
 }
 
+open_ggplot_pdf <- function(frame_pt, path) {
+  if (!capabilities("cairo")) stop("The selected R cannot produce Cairo PDF.")
+  before <- grDevices::dev.cur()
+  diagnostics <- character()
+  withCallingHandlers(
+    grDevices::cairo_pdf(filename = path, width = frame_pt[[1L]] / 72,
+                         height = frame_pt[[2L]] / 72, onefile = TRUE),
+    warning = function(warning) diagnostics <<- c(diagnostics, conditionMessage(warning))
+  )
+  after <- grDevices::dev.cur()
+  if (identical(before, after)) {
+    stop(paste(c("The selected R could not open its Cairo PDF device.", diagnostics),
+               collapse = " "))
+  }
+  after
+}
+
 export_ggplot_pdf <- function(state, title_color, path) {
   table <- ggplot_table_for(state, title_color)
-  if (!capabilities("cairo")) stop("The selected R cannot produce Cairo PDF.")
-  grDevices::cairo_pdf(filename = path, width = state$frame_pt[[1L]] / 72,
-                       height = state$frame_pt[[2L]] / 72, onefile = TRUE)
-  device <- grDevices::dev.cur()
+  device <- open_ggplot_pdf(state$frame_pt, path)
   on.exit(grDevices::dev.off(which = device))
   grid::grid.newpage()
   grid::grid.draw(table)

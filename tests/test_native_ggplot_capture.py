@@ -76,6 +76,19 @@ bad_target <- tryCatch(adapter$render_ggplot(no_title$state, "#6C3799"),
                        error = conditionMessage)
 stopifnot(identical(bad_target, "A single plain-text plot title is required."),
           identical(grDevices::dev.cur(), c("null device" = 1L)))
+
+if (capabilities("cairo")) {
+  cairo_pdf <- grDevices::cairo_pdf
+  utils::assignInNamespace("cairo_pdf", function(...) warning("fixture missing Cairo"), "grDevices")
+  failed_pdf <- suppressWarnings(tryCatch(
+    adapter$export_ggplot_pdf(baseline$state, "#6C3799", "unavailable.pdf"),
+    error = conditionMessage
+  ))
+  utils::assignInNamespace("cairo_pdf", cairo_pdf, "grDevices")
+  stopifnot(grepl("fixture missing Cairo", failed_pdf, fixed = TRUE),
+            !file.exists("unavailable.pdf"), !file.exists("Rplots.pdf"),
+            identical(grDevices::dev.cur(), c("null device" = 1L)))
+}
 """
 
 

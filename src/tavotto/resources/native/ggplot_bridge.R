@@ -5,7 +5,9 @@ main <- function() {
   args <- commandArgs(trailingOnly = TRUE)
   token <- Sys.getenv("TAVOTTO_BRIDGE_TOKEN")
   Sys.unsetenv("TAVOTTO_BRIDGE_TOKEN")
-  if (!nzchar(token) || length(args) != 10L) stop("Invalid owned R launch.")
+  if (!grepl("^[A-Za-z0-9_-]+$", token) || length(args) != 11L) {
+    stop("Invalid owned R launch.")
+  }
 
   script <- args[[1L]]
   object <- args[[2L]]
@@ -15,18 +17,30 @@ main <- function() {
   control <- socketConnection(args[[5L]], as.integer(args[[6L]]),
                               blocking = TRUE, open = "r+", timeout = 3600)
   on.exit(close(control))
-  send <- function(frame) {
-    writeLines(jsonlite::toJSON(frame, auto_unbox = TRUE, null = "null",
-                                digits = NA), control, useBytes = TRUE)
+  send_raw <- function(text) {
+    writeLines(text, control, useBytes = TRUE)
     flush(control)
+  }
+  send_raw(sprintf('{"bridge_hello":1,"protocol_version":1,"token":"%s","pid":%d}',
+                   token, Sys.getpid()))
+  rm(token)
+  if (!requireNamespace("jsonlite", quietly = TRUE)) {
+    # The hello is the only request before dependency checks. The diagnostic
+    # is fixed text so it can also be reported without the JSON package.
+    ack <- readLines(control, n = 1L, warn = FALSE)
+    if (length(ack)) {
+      send_raw('{"bridge_event":"exit","code":1,"figures":0,"script_error":{"message":"The selected R needs the jsonlite package."}}')
+    }
+    quit(status = 1L)
+  }
+  send <- function(frame) {
+    send_raw(jsonlite::toJSON(frame, auto_unbox = TRUE, null = "null", digits = NA))
   }
   receive <- function() {
     line <- readLines(control, n = 1L, warn = FALSE, encoding = "UTF-8")
     if (length(line) == 0L) return(NULL)
     jsonlite::fromJSON(line, simplifyVector = FALSE)
   }
-  send(list(bridge_hello = 1L, protocol_version = 1L, token = token, pid = Sys.getpid()))
-  rm(token)
   ack <- receive()
   if (!isTRUE(ack$ok) || !identical(ack$bridge_hello, 1L)) {
     stop("Owned R control could not authenticate.")
@@ -39,6 +53,10 @@ main <- function() {
       stop("The selected R needs ggplot2 and svglite.")
     }
     sys.source(args[[7L]], envir = adapter)
+    probe <- file.path(args[[11L]], "cairo-device-check.pdf")
+    device <- adapter$open_ggplot_pdf(frame_pt, probe)
+    grDevices::dev.off(which = device)
+    unlink(probe)
     user <- new.env(parent = globalenv())
     # Bind a named native object from the current invocation only.
     program <- parse(file = script, keep.source = TRUE, encoding = "UTF-8")
