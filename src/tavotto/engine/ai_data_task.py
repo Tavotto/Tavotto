@@ -589,7 +589,7 @@ def prepare_v2(root: Path, sel: Selection) -> PreparedV2:
     module_name, module_bytes = ai_data_template.runtime_module()
     pl = place_v2(root, sel.folder_rel, sel.table, module_name)
     values = ai_data_figure.inspect_data_source(
-        pl.data_path, sel.sheet, v2=True, header_row=sel.header_line
+        pl.data_path, sel.sheet, v2=True, header_row=sel.header_line, allow_large=True
     )
     if values.sha256 != sel.data_sha256:
         raise ai_data_propose.ProposeError("propose_data_changed")
@@ -603,6 +603,12 @@ def prepare_v2(root: Path, sel: Selection) -> PreparedV2:
     rendered = ai_data_template.render_recipe_script(
         entry, sel.recipe, data_rel=ai_data_propose.script_data_rel(sel.table), stem=pl.stem
     )
+    try:
+        expected = ai_data_template.expected_fingerprints(values, sel.recipe)
+    except (
+        ai_data_template.LargeRuleError
+    ) as exc:  # 大表：缩减那一遍判出的资格问题（与小表上同一条规则同一个码）
+        raise TaskError("recipe_invalid", exc.code) from None
     return PreparedV2(
         selection=sel,
         values=values,
@@ -610,7 +616,7 @@ def prepare_v2(root: Path, sel: Selection) -> PreparedV2:
         placement=pl,
         script=rendered.script,
         module=module_bytes,
-        expected=ai_data_template.expected_fingerprints(values, sel.recipe),
+        expected=expected,
         coverage=ai_data_template.fingerprint_coverage(sel.recipe),
         not_plotted=unplotted_rows(values, sel.recipe),
         cell_stats=ai_data_propose.cell_stats(values, sel.recipe),
@@ -842,7 +848,7 @@ class DataFigureV2Adapter:
                 role="goal",
                 verdict=FAILED if rows else VERIFIED,
                 reason_code="rows_not_plotted" if rows else None,
-                observed={"rows": rows[:50], "total": len(rows)},
+                observed={"rows": rows[:50], "total": ai_data_propose.unplotted_total(rows)},
             )
         )
         out.append(
