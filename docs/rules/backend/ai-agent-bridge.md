@@ -2,13 +2,13 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「编码 Agent 桥」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_ai_data_recipe.py`、`tests/test_ai_data_template.py`、`tests/test_ai_data_propose.py`、`tests/test_ai_data_merge.py`、`tests/test_ai_structured.py`、`tests/test_ai_data_model.py`、`tests/test_data_figure_bench.py`、`tests/test_ai_data_text_tables.py`、`tests/test_ai_agents.py`、`test_ai_login.py`、`test_ai_bridge.py`、`tests/test_ai_probe.py`、`test_ai_capabilities.py`、`test_ai_refresh.py`、`test_ai_history.py`、`test_ai_idempotency.py`、`test_ai_revert_stale.py`、`test_codex_install_cli.py`、`test_managed_cli.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_ai_data_recipe.py`、`tests/test_ai_data_template.py`、`tests/test_ai_data_propose.py`、`tests/test_ai_data_merge.py`、`tests/test_ai_structured.py`、`tests/test_ai_data_model.py`、`tests/test_data_figure_bench.py`、`tests/test_ai_data_roles.py`、`tests/test_ai_data_text_tables.py`、`tests/test_ai_agents.py`、`test_ai_login.py`、`test_ai_bridge.py`、`tests/test_ai_probe.py`、`test_ai_capabilities.py`、`test_ai_refresh.py`、`test_ai_history.py`、`test_ai_idempotency.py`、`test_ai_revert_stale.py`、`test_codex_install_cli.py`、`test_managed_cli.py`
 > `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml；revert 只回滚本次 AI 那一版（细则见 `ai-agent-bridge.md`）
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 240
-改到: `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`ai_structured.py`、`ai_data_model.py`、`ai_data_recipe.py`、`ai_data_template.py`、`ai_data_propose.py`、`ai_data_merge.py`、`ai_data_task.py`、`codexinstall.py`、`managedcli.py`、`resources/managed_cli_lock.json`、`/api/ai/*`
+改到: `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`ai_structured.py`、`ai_data_*.py`、`codexinstall.py`、`managedcli.py`、`resources/managed_cli_lock.json`、`/api/ai/*`
 主题: 编码 Agent 桥 → `ai-agent-bridge.md`
 必守要点: 「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml
 -->
@@ -972,5 +972,17 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 - **连接**：只用内置执行器能直接用的连接（`ai_providers.builtin_conn` 形状：API Key / 自填地址 / 账号登录令牌）；只有订阅登录（Codex / Claude Code CLI）→ `unsupported_connection`，**不硬凑**——CLI 没有无工具单次调用的入口。适配方向见 ADR 0178 修订节。
 - **不记录**：不写日志、不发遥测、不进诊断包；`StructuredResult` 里没有提示词与回复原文。新增遥测事件要等下次 `CONSENT_VERSION` 升版，且仍不收列名、路径、指令、图里文字。
 - **数据出图调用点 `ai_data_model.propose_recipes`**：受控摘要只含 路径 / 工作表 / 行数 / 布局 / 分组 / 编号线索 / 每列名字、类型、计数、≤ 20 条文字样本（不含行数据、哈希、大小）；表里的文字当数据：JSON 字符串放进 `<data>`、`<` 转义，提示词明说不是指令。模型交的每份配方先过 `FigureRecipe.from_dict` 再 `enforce_order`（`validate_recipe` 的闭集校验），丢弃只记原序号 + 拒绝码。`confirmed` 默认什么都没确认：模型不能凭列名当个体编号 / 配对。
-- **没有调用点是被钉住的**：`test_nothing_in_the_product_calls_the_model_yet`（AST）要求产品里没有任何 import 指向 `ai_data_model` / `ai_structured`。接进 `propose` 的那个 PR 要有意改这条测试，并先过 ADR 0178 的开关与用户可见行为评审。
+- **配方调用点仍没有调用方**：`test_nothing_in_the_product_calls_propose_recipes_yet`（AST）要求产品里没有任何对 `propose_recipes` 的引用（第 2 步才接）。`ai_structured` / `ai_data_model` 的 import 关系由 `tests/test_ai_data_roles.py::test_only_propose_and_the_model_pair_reach_the_model_modules` 钉住。
 - **固定用例集**：`tests/fixtures/data_figure_cases/cases.json`（格式与判定器见 `tests/support/data_figure_cases.py` 文档串）；每条自带 `reference`（好回答）与 `trap`（踩坑），用例自证。手动入口 `scripts/dev/data_figure_bench.py`：默认假回答；`--real` 才连真模型，必须 `--max-calls` ≥ 用例数 × 2，**真实跑分花额度，开跑前先报预算**。
+
+### 读懂数据（`engine/ai_data_roles.py`，ADR 0178 修订 2026-11-19，第 1 步）
+
+模型只给**列判断**（`ROLES` 闭集：`time` / `ordered_x` / `measure` / `group` / `replicate_unit` / `row_id` / `unit_label` / `note` / `other`），翻译成 `propose` 本来就收的 `answers.y / x / group`、`header_rows`、`answers.cells`；配方仍由 `default_candidates` 生成、过 `validate_recipe` / `enforce_order`。看护 `tests/test_ai_data_roles.py`、`tests/test_data_figure_bench.py`。
+
+- **逐字段降级**：形状层严格（未知键整份拒收），取值层一个字段一个字段判（列不存在 / 角色不在枚举 / 与列类型对不上 / 选择与自己给的角色矛盾 / 规则键对不上），丢了只记个数、回规则默认。**`replicate_unit` 永不变成用户事实**（建议里没有 `design` / `unit`）。采纳策略在 `suggest`：规则会问的地方用模型的选择；规则唯一确定的角色只在模型明确否决那一列时才换。
+- **用户永远优先**：请求带 `answers.y / x / group / cells` 或 `header_rows` 就不起任务（`ai_data_propose._user_took_over`，必须在懒模式循环往 `ans` 补默认答案**之前**记下）。
+- **响应不变量**：没有可用 Key 连接（没连、订阅登录、运维关内置）或非 lazy 时，响应里**没有** `understanding` 键；有连接时只多这一个键。后台线程不碰按项目绑定的状态（只读数据文件、联网、写缓存目录），所以没用 `bound_project`——将来加了任何按项目绑定的状态要补。
+- **缓存 / 单飞 / 负缓存**：`data_dir()/cache/ai_data_roles/`（原子写、TTL 30 天、≤ 200 条）；key 含协议版本 + 系统提示哈希 + 数据字节哈希 + 表头行 + 提示摘要 + 连接身份（不含密钥 / 地址）；失败只做 60 s 内存负缓存；同 `(项目, key)` 在途单飞。缓存里有列名：**不进诊断包、不进遥测**（测试钉住）。
+- **外发清单**见 ADR 0178 本节：只发受控摘要 + 本地聚合（不同值个数 / 单调 / 全整数 / min / max）+ 仅 `unsure` 表的 ≤ 8 行 × 120 字预览；不发行数据、哈希、绝对路径。隐私说明文档开关打开前要补。
+- **时限**：总时限 25 s（含解析连接，挑连接不联网，预算 ≥ 35 s 才对挑中的那一条刷新）；`call_structured(effort=)` 只在 `builtin_effort_args` 确认支持时才发，`max_requests` 按传输层实际请求数硬拦。
+- **手动基准**：`scripts/dev/data_figure_bench.py --suite roles`（默认假回答；`--arm rules` 只跑规则；`--real` 要 `--max-calls` ≥ 用例数 × 2 且硬拦实际请求数）。**真实跑分花额度，开跑前先报预算。**

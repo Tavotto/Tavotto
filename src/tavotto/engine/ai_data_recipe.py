@@ -1793,6 +1793,16 @@ def _resolve_roles(
     )
 
 
+#: 列角色挑选的公开入口（`ai_data_roles` 用：问「规则此刻会怎么选 / 问什么」，不绕开它）；返回值同 `_resolve_roles`
+Roles = _Roles
+
+
+def resolve_roles(
+    entry: adf.TableEntry, hint: str | None, picks: dict
+) -> Roles | NeedsChoice | str:
+    return _resolve_roles(entry, hint, picks)
+
+
 def _recipe(entry: adf.TableEntry, code: str, family: str, layers, ys, **roles) -> FigureRecipe:
     return FigureRecipe(
         table=entry.path,

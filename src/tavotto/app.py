@@ -70,6 +70,7 @@ from .engine import (
     ai_data_figure as engine_ai_data_figure,
     ai_data_overview as engine_ai_data_overview,
     ai_data_propose as engine_ai_data_propose,
+    ai_data_roles as engine_ai_data_roles,
     ai_data_task as engine_ai_data_task,
     ai_figure_edit as engine_ai_figure_edit,
     ai_history as engine_ai_history,
@@ -15795,6 +15796,20 @@ def api_ai_data_figure_propose():
     except engine_ai_data_figure.DataSourceError as exc:
         return jsonify({"error": str(exc), "code": exc.code}), 400
     resp = jsonify(out)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/ai/data-figure/understanding/<understanding_id>")
+def api_ai_data_figure_understanding(understanding_id):
+    """第 1 步「读懂数据」的轮询：`propose(render="lazy")` 响应里的 `understanding.id`。回 `{id, state: "pending" | "ready" | "failed" | "off"}`；
+    `ready` 带 `answers`（可原样并进下一次 propose 的 `answers`）、`header_rows`、`roles`（每列的角色标注）、`dropped`（因不合格被丢弃的字段个数）；
+    `failed` 带闭集 `reason`（前端什么也不用做）；不存在 / 过期 / 别的项目的 = `off`（不是错误）。只读：不起任务、不联网。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    ctx = current_ctx()
+    view = engine_ai_data_roles.get(str(ctx.path.resolve()), understanding_id)
+    resp = jsonify(view if view is not None else {"id": understanding_id, "state": "off"})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

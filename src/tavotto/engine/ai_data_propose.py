@@ -44,6 +44,7 @@ from . import (
     ai_data_figure as adf,
     ai_data_merge as merge_mod,
     ai_data_recipe as recipe_mod,
+    ai_data_roles as roles_mod,
     ai_data_template as tpl,
     ai_figure_edit,
     config,
@@ -952,6 +953,9 @@ def propose(
     sheet = _text(sheet, "sheet")
     ans = parse_answers(answers)
     hrows = parse_header_rows(header_rows)
+    user_took_over = _user_took_over(
+        ans
+    )  # 懒模式的循环会往 `ans` 里补默认答案，所以在它之前记下请求原本带没带
     tabs = parse_tables(tables)
     if tabs is not None and table is not None:  # `table` 与 `tables` 只能给一个
         raise ProposeError("propose_input_invalid", "tables")
@@ -1233,7 +1237,23 @@ def propose(
         "interpreter_fallback": fallback,
         **basics(),
     }
+    if auto and not hrows and not user_took_over:
+        # 第 1 步「读懂数据」：有可用的 Key 连接才起后台任务、响应里才多这一个键；没有时响应与从前逐字相同
+        und = roles_mod.start(
+            project=project,
+            entry=chosen,
+            values=values,
+            hint=hint,
+            data_path=None if merged is not None else folder_path / PurePosixPath(chosen.path),
+        )
+        if und is not None:
+            out["understanding"] = und
     return remember(out, sid)
+
+
+def _user_took_over(ans: dict) -> bool:
+    """请求里已有用户（或前端替用户带上的模型建议）定下的列角色 / 处理规则：不再起模型任务，也避免「采纳建议 → 再来一次 → 再起任务」的循环。"""
+    return any(k in ans for k in ("y", "x", "group", "cells"))
 
 
 def _answers_digest(ans: dict) -> dict:
