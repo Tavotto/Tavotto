@@ -191,8 +191,6 @@ def test_safe_spec_always_runs_a_launcher_as_main(tmp_path):
 def test_dependency_scan_reads_the_launcher_before_the_original(tmp_path):
     """启动脚本往 `sys.path` 加目录再 `run_original()`：依赖调研（`depplan` 交给 importscan 的树）按执行顺序读两份，
     搜索路径标成不完整（不在运行前当缺包拦下）；没有启动脚本时照旧只读原件。"""
-    import inspect
-
     from tavotto.engine import depplan, importscan
 
     (tmp_path / "fig.py").write_text("import lab_helpers\n")
@@ -210,5 +208,26 @@ def test_dependency_scan_reads_the_launcher_before_the_original(tmp_path):
     assert "sys_path_modified" in {w["code"] for w in after.warnings}
     assert after.search_complete is False
     assert "lab_helpers" in {c.module for c in after.classes}  # 原脚本的 import 仍然被分类
-    # 准备计划确实把这棵树交给扫描（不是只在这里手工拼）
-    assert "tree=_launcher_tree(root_p, script)" in inspect.getsource(depplan.plan)
+
+
+@pytest.mark.parametrize("target_kind", ["project_venv", "tavotto_managed"])
+def test_the_real_dependency_plan_defers_imports_a_launcher_makes_findable(tmp_path, target_kind):
+    """真调 `depplan.plan()`（两种合法安装目标）：有启动脚本改 `sys.path` 时，原脚本的 `lab_helpers` 不再当来源未定的缺包，
+    按本地模块认；没有启动脚本时照旧是 unknown（Codex #2048 复核 P2：上一版的条件恒假，修复根本没进准备流程）。"""
+    from tavotto.engine import depplan
+    from tests.test_dependency_plan import _facts
+
+    (tmp_path / "fig.py").write_text("import lab_helpers\n")
+    (tmp_path / "vendor").mkdir()
+    (tmp_path / "vendor" / "lab_helpers.py").write_text("X = 1\n")
+    before = depplan.plan(tmp_path, "fig.py", facts=_facts(), target_kind=target_kind)
+    assert "lab_helpers" in before.unknown
+    launchscript.write(
+        tmp_path,
+        "fig.py",
+        "import os\nimport sys\n\nsys.path.insert(0, os.path.join(os.path.dirname(__file__), 'vendor'))\nrun_original()\n",
+    )
+    after = depplan.plan(tmp_path, "fig.py", facts=_facts(), target_kind=target_kind)
+    # 启动脚本加进来的字面量目录里找得到：按本地模块认，不再是来源未定的缺包（与原脚本自己写这一行完全一样）
+    assert "lab_helpers" not in after.unknown
+    assert after.scan["counts"]["local"] == 1

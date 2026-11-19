@@ -1375,6 +1375,9 @@ def _launcher_tree(root: Path, script: str) -> ast.Module | None:
         head, tail = ast.parse(launcher_text), ast.parse(original)
     except (OSError, SyntaxError, ValueError, RecursionError, MemoryError):
         return None
+    # 原脚本的行号整体排到启动脚本之后：importscan 按行号判「哪些 import 在 `sys.path.insert(...)` 之后」，
+    # 不挪的话原脚本第 1 行的 import 会被当成在启动脚本加路径之前，字面量目录里的本地模块就找不到
+    ast.increment_lineno(tail, len(launcher_text.splitlines()) + 1)
     return ast.fix_missing_locations(ast.Module(body=[*head.body, *tail.body], type_ignores=[]))
 
 
@@ -1433,7 +1436,7 @@ def plan(
         root_p,
         script,
         # 有启动脚本（ADR 0194）时按执行顺序读：启动脚本在前、原脚本在后（Codex #2048 P2）
-        tree=_launcher_tree(root_p, script) if target_kind == "script" else None,
+        tree=_launcher_tree(root_p, script),
         declared=declared,
         stdlib=target.stdlib if target is not None else None,
         # 目标解释器的事实（#888）；没量到（替身 / facts=None）就不传，importscan 走保守口径
