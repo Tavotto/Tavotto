@@ -373,3 +373,23 @@ def test_a_script_that_bootstraps_its_own_package_context_is_left_as_a_script(tm
     assert pkgentry.resolve(tmp_path, script) is None
     plain = _pkg(tmp_path / "other", "plots")  # 对照：没有自举的照样按模块
     assert pkgentry.resolve(tmp_path / "other", plain) is not None
+
+
+@pytest.mark.parametrize(
+    ("snippet", "own"),
+    [
+        # 嵌在顶层 if / try 里的函数、类里的局部赋值不算（Codex 复核 P2）
+        ("if True:\n    def f():\n        __package__ = 'x'\n", False),
+        ("try:\n    class C:\n        __spec__ = None\nexcept Exception:\n    pass\n", False),
+        ("g = lambda: [__package__ := 'x']\n", False),
+        # 模块级解包 / 星号 / := 都算
+        ("__package__, marker = 'plots', None\n", True),
+        ("[*rest, __spec__] = [1, None]\n", True),
+        ("if (__package__ := 'plots'):\n    pass\n", True),
+        ("if __package__ is None:\n    __package__ = 'plots'\n", True),
+    ],
+)
+def test_package_context_detection_is_module_level_only(snippet, own):
+    import ast
+
+    assert pkgentry._sets_own_package_context(ast.parse(snippet)) is own

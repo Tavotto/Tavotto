@@ -63,25 +63,44 @@ def _is_plain_dir(path: str) -> bool:
     return stat.S_ISDIR(st.st_mode) and not scanbudget.is_redirect(st)
 
 
+_CONTEXT_NAMES = ("__package__", "__spec__")
+_NEW_SCOPE = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+
+
+def _binds_context(target: ast.AST) -> bool:
+    """赋值目标里有没有 `__package__` / `__spec__`——含解包（`__package__, x = ...`、`[*a, __spec__] = ...`）。"""
+    if isinstance(target, ast.Name):
+        return target.id in _CONTEXT_NAMES
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return any(_binds_context(e) for e in target.elts)
+    if isinstance(target, ast.Starred):
+        return _binds_context(target.value)
+    return False
+
+
 def _sets_own_package_context(tree: ast.Module) -> bool:
-    """脚本顶层代码（不进函数 / 类体）自己给 `__package__` / `__spec__` 赋值：常见的自举写法
+    """脚本的**模块级**代码自己给 `__package__` / `__spec__` 赋值：常见的自举写法
     （`if __name__ == "__main__" and __package__ is None: __package__ = "plots"` + 改 `sys.path`）。这种脚本按脚本跑本来就行，
-    改成按模块跑反而把脚本目录挪出 `sys.path`、它的绝对同级 import 会断（Codex #2055 P2）——判据对它一律不改。"""
-    for st in tree.body:
-        if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+    改成按模块跑反而把脚本目录挪出 `sys.path`、它的绝对同级 import 会断（Codex #2055 P2）——判据对它一律不改。
+    任意层级的函数 / 类 / lambda 体都不进（那里的赋值是局部变量，Codex #2055 复核 P2）；解包与 `:=` 也算。"""
+    stack: list[ast.AST] = list(tree.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, _NEW_SCOPE):
             continue
-        for node in ast.walk(st):
-            targets = (
-                node.targets
-                if isinstance(node, ast.Assign)
-                else [node.target]
-                if isinstance(node, (ast.AugAssign, ast.AnnAssign))
-                else []
-            )
-            if any(
-                isinstance(t, ast.Name) and t.id in ("__package__", "__spec__") for t in targets
-            ):
-                return True
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.NamedExpr)):
+            targets = [node.target]
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            targets = [node.target]
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            targets = [it.optional_vars for it in node.items if it.optional_vars is not None]
+        else:
+            targets = []
+        if any(_binds_context(t) for t in targets):
+            return True
+        stack.extend(ast.iter_child_nodes(node))
     return False
 
 
