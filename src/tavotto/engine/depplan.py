@@ -46,6 +46,7 @@ distribution）列在 `unknown`，**永远不装、不猜**（FO-034）。
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import hashlib
 import json
@@ -58,7 +59,18 @@ import threading
 from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 
-from . import config, depresolve, distmeta, folderrepair, importscan, launcher, projectenv, runtime
+from . import (
+    config,
+    depresolve,
+    distmeta,
+    folderrepair,
+    importscan,
+    launcher,
+    launchscript,
+    projectenv,
+    runtime,
+    scanbudget,
+)
 
 LOG = logging.getLogger("tavotto.depplan")
 
@@ -1345,6 +1357,27 @@ def _provider_decisions(
     return tuple(out[:MAX_PROVIDER_DECISIONS])
 
 
+def _launcher_tree(root: Path, script: str) -> ast.Module | None:
+    """有启动脚本时依赖调研读的树：启动脚本的语句在前、原脚本的在后——与实际执行顺序一致（胶水先跑，`run_original()` 再跑原件）。
+    启动脚本自己的 import 照样分类；它往 `sys.path` 加目录照常记成 `sys_path_modified`，原脚本里靠那个目录才找得到的 import
+    因此「延后验证」，不在运行前当缺包拦下。原脚本经 `scanbudget` 的不跟随读取（与 importscan 同一条纪律）。
+    没有启动脚本、读不了、解析不了 → None（照旧只读原件）。"""
+    launcher_text = launchscript.read(root, script)
+    if launcher_text is None:
+        return None
+    try:
+        original = scanbudget.read_regular_text(
+            os.path.realpath(root),
+            *Path(script).as_posix().split("/"),
+            no_follow=True,
+            python_source=True,
+        )
+        head, tail = ast.parse(launcher_text), ast.parse(original)
+    except (OSError, SyntaxError, ValueError, RecursionError, MemoryError):
+        return None
+    return ast.fix_missing_locations(ast.Module(body=[*head.body, *tail.body], type_ignores=[]))
+
+
 def plan(
     root: str | Path,
     script: str,
@@ -1399,6 +1432,8 @@ def plan(
     scan = importscan.scan(
         root_p,
         script,
+        # 有启动脚本（ADR 0194）时按执行顺序读：启动脚本在前、原脚本在后（Codex #2048 P2）
+        tree=_launcher_tree(root_p, script) if target_kind == "script" else None,
         declared=declared,
         stdlib=target.stdlib if target is not None else None,
         # 目标解释器的事实（#888）；没量到（替身 / facts=None）就不传，importscan 走保守口径

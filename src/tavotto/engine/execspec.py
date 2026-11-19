@@ -692,6 +692,17 @@ def safe_spec(
     cwd = run_cwd(figures_dir, script, cwd_mode)
     if cwd is None:
         cwd = sandbox
+    # 影子脚本（转换校验）优先；否则 AI 修复写的启动脚本（ADR 0194 §二）：执行它的字节、身份仍是这个脚本
+    shadow = (
+        shadowscript.lookup(figures_dir, script, write_roots_key(write_roots))
+        if write_roots is not None
+        else None
+    )
+    launch_src = None if shadow else launchscript.source_for(figures_dir, script)
+    if launch_src is not None:
+        # 启动脚本恒按 `__main__` 整份执行（Codex #2048 P2）：只在这里定，所有调用方（准备计划、探测、磁盘面板）同一个口径——
+        # 带着登记的函数入口去跑，worker 会把启动脚本当模块 import 再调那个函数，胶水不按设计执行
+        entry = "__main__"
     return ExecutionSpec(
         profile=PROFILE_SAFE,
         interpreter=interpreter,
@@ -711,13 +722,7 @@ def safe_spec(
         write_roots=None if write_roots is None else tuple(write_roots),
         ignored_paths=tuple(ignored_paths or ()),
         stem_aliases=_registered_aliases(figures_dir, script, stem_aliases),
-        # 影子脚本（转换校验）优先；否则 AI 修复写的启动脚本（ADR 0194 §二）：执行它的字节、身份仍是这个脚本
-        script_source=(
-            shadowscript.lookup(figures_dir, script, write_roots_key(write_roots))
-            if write_roots is not None
-            else None
-        )
-        or launchscript.source_for(figures_dir, script),
+        script_source=shadow or launch_src,
     )
 
 

@@ -169,3 +169,46 @@ def test_native_run_script_injects_run_original_only_for_a_launcher(tmp_path, mo
         assert main.seen is True and main.value == 1
     finally:
         sys.modules["__main__"] = saved_main
+
+
+# ---------------------------------------------------------------- Codex #2048 P2 ×2
+def test_safe_spec_always_runs_a_launcher_as_main(tmp_path):
+    """所有调用方（准备计划、探测、磁盘面板）都经 `safe_spec`：有启动脚本时入口恒 `__main__`，不靠调用方各自改。"""
+    (tmp_path / "fig.py").write_text("def main():\n    pass\n")
+    plain = execspec.safe_spec(
+        "fig.py", tmp_path, "main", interpreter=str(tmp_path / "py"), sandbox=str(tmp_path)
+    )
+    assert plain.entry == "main" and plain.script_source is None
+    launchscript.write(tmp_path, "fig.py", "run_original()\n")
+    spec = execspec.safe_spec(
+        "fig.py", tmp_path, "main", interpreter=str(tmp_path / "py"), sandbox=str(tmp_path)
+    )
+    assert spec.entry == "__main__" and spec.script_source == launchscript.source_for(
+        tmp_path, "fig.py"
+    )
+
+
+def test_dependency_scan_reads_the_launcher_before_the_original(tmp_path):
+    """启动脚本往 `sys.path` 加目录再 `run_original()`：依赖调研（`depplan` 交给 importscan 的树）按执行顺序读两份，
+    搜索路径标成不完整（不在运行前当缺包拦下）；没有启动脚本时照旧只读原件。"""
+    import inspect
+
+    from tavotto.engine import depplan, importscan
+
+    (tmp_path / "fig.py").write_text("import lab_helpers\n")
+    (tmp_path / "vendor").mkdir()
+    (tmp_path / "vendor" / "lab_helpers.py").write_text("X = 1\n")
+    assert depplan._launcher_tree(tmp_path, "fig.py") is None
+    before = importscan.scan(tmp_path, "fig.py", tree=depplan._launcher_tree(tmp_path, "fig.py"))
+    assert before.search_complete is True
+    launchscript.write(
+        tmp_path,
+        "fig.py",
+        "import os\nimport sys\n\nsys.path.insert(0, os.path.join(os.path.dirname(__file__), 'vendor'))\nrun_original()\n",
+    )
+    after = importscan.scan(tmp_path, "fig.py", tree=depplan._launcher_tree(tmp_path, "fig.py"))
+    assert "sys_path_modified" in {w["code"] for w in after.warnings}
+    assert after.search_complete is False
+    assert "lab_helpers" in {c.module for c in after.classes}  # 原脚本的 import 仍然被分类
+    # 准备计划确实把这棵树交给扫描（不是只在这里手工拼）
+    assert "tree=_launcher_tree(root_p, script)" in inspect.getsource(depplan.plan)
