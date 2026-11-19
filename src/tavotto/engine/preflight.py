@@ -642,10 +642,11 @@ def _check_panel_fonts(panel: dict, profile: dict, sink: _Sink) -> None:
 
 
 #: 「数据线」线宽下限判的图元（`min_line_width_pt`）。严格同源对：`preflight.ts` 的 `DATA_LINE_ROLES`。
-#: 只收**确实画出描边**的数据图元：折线 / 线集（hlines、等值线…）/ 误差棒；柱要边色不是 `none`。
+#: 只收**确实画出描边**的数据图元：折线 / 线集（hlines、等值线…）；柱要边色不是 `none`。
+#: 误差棒也不判：容器的 `linewidth` 是连线（或探针）的宽，误差线与帽的宽（`elinewidth` / `capthick`）manifest 没给全，量了会漏报或错报。
 #: 不判：坐标轴脊线、刻度、网格、图例框与图例示意线、标注箭头——它们不是数据；
 #: 散点与填充区域的描边——manifest 的 `edgecolor` 把「无边」与「黑边」都写成 `#000000`，分不出画没画。
-DATA_LINE_ROLES = ("line", "linecoll", "errorbar", "bar_series", "bar")
+DATA_LINE_ROLES = ("line", "linecoll", "bar_series", "bar")
 
 
 def _is_data_line(el: dict, role: str) -> bool:
@@ -840,6 +841,7 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
                     )
         if (
             min_lw > 0
+            and _is_drawn(el, hidden_legends)
             and _is_data_line(el, role)
             and not (role == "bar_series" and gid in barred_series)
         ):

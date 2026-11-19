@@ -544,6 +544,9 @@ def cases() -> list[dict]:
         if e["gid"] in ("axes_0.lines_0", "axes_0.lines_1"):
             e["editable"][0]["value"] = 3.0
     out.append(_lw_case("journal-min-line-width-bar-scatter-errorbar-linecoll", 2.0, bar_manifest))
+    m = _clean_manifest()  # 隐藏的细线不在导出里：不报
+    _el_with(m, "axes_0.lines_0", visible=False)
+    out.append(_lw_case("journal-min-line-width-hidden-line-skipped", 2.0, m))
 
     # 10. free-form profile：同一份输入，等级整体降一档（severity 表说了算）。
     #     4pt 才低于它的 6pt 下限——同样一张图在严格 profile 下是 error。

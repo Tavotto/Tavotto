@@ -691,9 +691,9 @@ function checkPanelFonts(
 /**
  * 「数据线」线宽下限（`min_line_width_pt`）判的图元。同源对：`engine/preflight.py` 的 `DATA_LINE_ROLES`。
  * 只收确实画出描边的数据图元；坐标轴脊线 / 刻度 / 网格 / 图例框 / 标注箭头不是数据；
- * 散点与填充区域的描边不判（manifest 的 edgecolor 分不出「无边」与「黑边」）。
+ * 散点与填充区域的描边不判（manifest 的 edgecolor 分不出「无边」与「黑边」）；误差棒不判（容器线宽不是误差线 / 帽的宽）。
  */
-export const DATA_LINE_ROLES = ['line', 'linecoll', 'errorbar', 'bar_series', 'bar']
+export const DATA_LINE_ROLES = ['line', 'linecoll', 'bar_series', 'bar']
 
 function isDataLine(el: ManifestElement, role: string): boolean {
   if (!DATA_LINE_ROLES.includes(role)) return false
@@ -855,7 +855,7 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
         }
       }
     }
-    if (minLw > 0 && isDataLine(el, role) && !(role === 'bar_series' && barredSeries.has(gid))) {
+    if (minLw > 0 && isDrawn(el, hidden) && isDataLine(el, role) && !(role === 'bar_series' && barredSeries.has(gid))) {
       const lw = num(field(el, 'linewidth'))
       if (lw != null && lw > 0) {
         const eff = lw * scale
