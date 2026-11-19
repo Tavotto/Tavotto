@@ -157,6 +157,24 @@ export interface FigureExecutionOwner {
 }
 
 /** Immutable, backend-verified Figure snapshot bound to one source execution and patch set. */
+/**
+ * SVG 计算图表的文档内状态（ADR 0182）。形状与 `types/chartModel.ts` 的
+ * ChartModel / ChartBinding 同源；这里按 id 引用而不复制判据。
+ */
+export interface PanelChartState {
+  model: import('./chartModel').ChartModel
+  binding: import('./chartModel').ChartBinding
+}
+
+/** 不可变 INPUT SVG 附件；字段与 engine/documents.CHART_SOURCE_KEYS 严格同源。 */
+export interface ChartSourceRef {
+  schema: 1
+  sourceId: string
+  bytesSha256: string
+  sizeBytes: number
+  sceneDigest: string
+}
+
 export interface FigureSnapshot {
   version: 1
   sourceId: string
@@ -165,6 +183,26 @@ export interface FigureSnapshot {
   snapshotId: string
   /** Backend-verified archived execution ownership; absent in older snapshots, never inferred. */
   executionOwner?: FigureExecutionOwner
+}
+
+/** Historical execution input; independent of the current full override list/output snapshot. */
+export interface FigureOrigin {
+  version: 1
+  snapshot: FigureSnapshot
+  patches: PanelOverride[]
+}
+
+/**
+ * native-manifest/2 计算框的持久记号：只存布局落位（`originPt` 是渲染外框
+ * `rect_pt` 在源 viewport pt 坐标里的左上角）与 profile，**不存第二份科学模型**——
+ * 模型与绑定仍只在 `PanelObject.chart`。形状判据的唯一出处是引擎
+ * `engine/chartframe.py`（前端消费方 `lib/chartFrame.ts`）；缺席 = 面板仍是
+ * native-manifest/1 的 source viewport 落位。旧前端读到会忽略。
+ */
+export interface PanelChartFrame {
+  version: 1
+  renderProfile: 'native-manifest/2'
+  originPt: [number, number]
 }
 
 export interface PanelObject extends ObjectBase {
@@ -186,6 +224,7 @@ export interface PanelObject extends ObjectBase {
   source?: RuntimePanelSource
   overrides: PanelOverride[]
   figureSnapshot?: FigureSnapshot
+  figureOrigin?: FigureOrigin
   /** Nonsemantic source/frame guard. Never changes the meaning of overrides. */
   artifactValidation?: ArtifactValidation
   /**
@@ -193,6 +232,19 @@ export interface PanelObject extends ObjectBase {
    * 旧前端读到它会忽略，把面板当未采用 PNG 显示原像素；老项目不会获得这个字段。
    */
   sourceBackedFigure?: SourceBackedFigure
+  /**
+   * SVG 计算图表状态（ADR 0182，仅 fileKind === 'svg'）：显式绑定的声明式模型与绑定。
+   * 只存**语义真值**（模型 + 绑定）；组合后的 SVG 是派生物，按模型 rev 重算，不进文档。
+   * 旧前端读到它会忽略——面板退化为静态 SVG 预览，不丢数据。
+   */
+  chart?: PanelChartState
+  chartSource?: ChartSourceRef
+  /**
+   * native-manifest/2 计算框的布局落位（见 `PanelChartFrame`）：只持久
+   * origin/profile，科学语义仍只在 `chart`。旧前端读到会忽略——面板退化为
+   * /1 的 source viewport 预览，不丢数据。
+   */
+  chartFrame?: PanelChartFrame
   /**
    * 锁定的图内元素 gid：画布命中测试跳过它们，避免误选误拖。
    * 只影响交互，不影响渲染与导出；元素树里仍可选中（用于解锁）。
@@ -638,15 +690,17 @@ export interface CanvasData {
 }
 
 /**
- * 本构建能写出来的 schema 版本。**比它更高的文档一律不打开**——旧构建对新
+ * 本构建能读写的最高版本。**比它更高的文档一律不打开**——旧构建对新
  * 字段的语义一无所知，「尽力打开」等于用旧规则重写用户的新数据。
  *
  * 严格同源：`src/tavotto/engine/documents.py` 的 `SCHEMA_CURRENT`。
  */
-export const SCHEMA_CURRENT = 3
+export const SCHEMA_CURRENT = 4
+/** 项目文档（一个项目多张画布）；schema 4 在同一结构上多出计算图表状态。 */
+export const SCHEMA_PROJECT = 3
 
 export interface ProjectDocument {
-  schema: typeof SCHEMA_CURRENT
+  schema: typeof SCHEMA_PROJECT | typeof SCHEMA_CURRENT
   project: { id: string; name: string }
   /** 数组序 = 画布显示顺序 */
   canvases: CanvasData[]
@@ -700,12 +754,12 @@ function withFigureFrames(pd: ProjectDocument): ProjectDocument {
 
 /**
  * 读档统一入口：schema 2 迁移为单画布项目（内容逐字段搬运、不改值），
- * schema 3 原样校验通过。不认识的负载返回 null。
+ * schema 3 / 4 原样校验通过。不认识的负载返回 null。
  */
 export function migrateToProject(raw: unknown): ProjectDocument | null {
   const d = raw as Record<string, unknown> | null
   if (!d || typeof d !== 'object') return null
-  if (d.schema === 3 && Array.isArray(d.canvases) && d.canvases.length > 0) {
+  if ((d.schema === SCHEMA_PROJECT || d.schema === SCHEMA_CURRENT) && Array.isArray(d.canvases) && d.canvases.length > 0) {
     const pd = withFigureFrames(d as unknown as ProjectDocument)
     const active = pd.canvases.some((c) => c.id === pd.activeCanvasId)
     return active ? pd : { ...pd, activeCanvasId: pd.canvases[0].id }
@@ -714,7 +768,7 @@ export function migrateToProject(raw: unknown): ProjectDocument | null {
     const legacy = d as unknown as FigureDocument
     const canvas = docToCanvas({ ...legacy, objects: migrateFigureFrames(legacy.objects) }, newId('c'))
     return {
-      schema: 3,
+      schema: SCHEMA_PROJECT,
       project: { id: newId('p'), name: canvas.name },
       canvases: [canvas],
       activeCanvasId: canvas.id,

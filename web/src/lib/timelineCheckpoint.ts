@@ -12,7 +12,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useTimelineStore } from '@/store/timelineStore'
 import { useUiStore } from '@/store/uiStore'
 import { msg } from '@/i18n'
-import type { FigureDocument } from '@/types/document'
+import type { FigureDocument, ProjectDocument } from '@/types/document'
 
 /**
  * 给排版时间线打一个节点（ADR 0101）——自动节点、关键时刻、手动 / 命名节点、
@@ -122,6 +122,11 @@ export interface CheckpointOptions {
    * 时是快照里的，不是此刻的。
    */
   allowEmpty?: boolean
+  /**
+   * 有值 = 拍这份**整份项目文档**，不是当前画布（原地升级的备份原语，见
+   * `takeProjectCheckpoint`）。不给 = 既有行为：拍当前画布。
+   */
+  project?: ProjectDocument
 }
 
 export async function takeCheckpoint(
@@ -130,7 +135,11 @@ export async function takeCheckpoint(
 ): Promise<{ version?: LayoutVersionMeta; skipped?: boolean } | null> {
   // 给了快照就拍快照里那一刻（关键时刻，见 `MomentSnapshot`）；没给就拍此刻
   const id = snapshot?.identity ?? activeCanvasIdentity()
-  if (!opts.allowEmpty && !id.doc.objects.length) return null
+  // 整份项目的「空」看所有画布；单画布还是看这一张
+  const empty = opts.project
+    ? !opts.project.canvases.some((c) => c.objects.length)
+    : !id.doc.objects.length
+  if (!opts.allowEmpty && empty) return null
   const name = opts.name?.trim() || undefined
   // 缩略图的图源在这里、在任何 await 之前取（见 `composeTimelineThumb`）；快照带着的用快照的
   const thumbP = snapshot
@@ -143,7 +152,7 @@ export async function takeCheckpoint(
       moment: opts.moment,
       name,
       named: name && !opts.programName ? true : undefined,
-      doc: id.doc,
+      doc: opts.project ?? id.doc,
       canvasId: id.canvasId,
       canvasName: id.canvasName,
     },
@@ -169,6 +178,29 @@ export async function takeCheckpoint(
       /* 没有缩略图的节点退回草图；不打扰编辑 */
     })
   return res
+}
+
+/**
+ * 原地升级（图表第一次放进排版，计划里的 7/9）的**备份原语**：
+ * 「先取整份项目文档、再写图表」。
+ *
+ * 与 `takeCheckpoint` 的区别只有一个：送到服务端的是 `buildProject()` 的整份项目
+ * （全部画布 + 工程元数据），不是当前画布。原地升级改的是当前画布上的一个面板，
+ * 但恢复时若节点里只有那一张画布，别的画布会被留在升级后的样子——备份必须覆盖
+ * 整份项目。调用方**必须在写 chart 之前** await 它，返回了 `version` / `skipped`
+ * 才算备份落定；它 throw = 备份没写成，调用方不得继续写图表。
+ *
+ * 节点仍按**当前画布**记 `canvasId` / `canvasName`：时间线按画布分组、预览只看
+ * 那一张，这与正文是整份项目不矛盾。缩略图也只拍当前画布。
+ *
+ * `project` 可显式传入调用方更早取好的整份文档（必须是**写 chart 之前**的那份）；
+ * 缺省取此刻的 `buildProject()`。
+ */
+export async function takeProjectCheckpoint(
+  opts: Omit<CheckpointOptions, 'project'>,
+  project: ProjectDocument = useDocumentStore.getState().buildProject(),
+): Promise<{ version?: LayoutVersionMeta; skipped?: boolean } | null> {
+  return takeCheckpoint({ ...opts, project })
 }
 
 /**

@@ -7,6 +7,7 @@ import * as history from '@/lib/history'
 import { rebaseToCurrentNative, sizeBasisOf, type SizeBasis } from '@/lib/panelNativeSize'
 import { fetchAutosave, fetchAutosaveSummary, probeAutosave, putAutosave, type AutosaveProbe } from '@/lib/api'
 import { DOC_INDEX_KEY, isForeignDocument, recordedProjectOf } from '@/lib/docOwnership'
+import { containsChartState } from '@/lib/documentFormat'
 import type { RestoreIssue } from '@/store/documentRestore'
 import {
   blocksDiskWrite,
@@ -35,6 +36,7 @@ import { patchRefs } from '@/diagnostics/patches'
 import { defaultCanvasName, type CanvasData, type FigureDocument, type FigureExecutionOwner, type FigureSnapshot, type PanelObject, type ProjectDocument } from '@/types/document'
 import {
   SCHEMA_CURRENT,
+  SCHEMA_PROJECT,
   canvasToDoc,
   docToCanvas,
   emptyProject,
@@ -997,8 +999,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   buildProject: () => {
     const s = get()
-    return {
-      schema: 3,
+    const project: ProjectDocument = {
+      schema: SCHEMA_PROJECT,
       project: { id: s.projectMeta.id, name: s.projectMeta.name },
       canvases: s.canvases.map((c) =>
         c.id === s.activeCanvasId ? docToCanvas(s.doc, c.id) : c,
@@ -1007,6 +1009,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       createdAt: s.projectMeta.createdAt,
       updatedAt: Date.now(),
     }
+    // schema 按**拼好的正文内容**选：含 chart / chartSource 的文档才是 4。
+    return containsChartState(project) ? { ...project, schema: SCHEMA_CURRENT } : project
   },
 
   switchCanvas: (id) => {
@@ -2204,8 +2208,13 @@ const editGenerationOf = (documentId: string) => editGeneration.get(documentId) 
 /**
  * 用户编辑之后：项目里那份落后了。编辑代次一律前进；绑定没有 / 已经是 dirty 就不再写。
  * **项目文件那根轴的唯一入口**——判「是不是用户编辑」的只有调用它的那两处，这里不再判第二遍。
+ *
+ * 恢复（`restoreLayoutVersion` 换整份项目）也是一次用户编辑：绑定标脏必须走这里。
+ * 只 `setProjectFile({...binding, dirty:true})` 不推进代次的话，写盘途中
+ * `projectFileSnapshot()` 看不见这次变化，回来的回执会把 dirty 重置成 false——
+ * 磁盘还是恢复前的内容，界面却说「已保存」。
  */
-function markProjectFileDirty(): void {
+export function markProjectFileDirty(): void {
   const s = useDocumentStore.getState()
   editGeneration.set(s.documentId, editGenerationOf(s.documentId) + 1)
   const b = s.projectFile

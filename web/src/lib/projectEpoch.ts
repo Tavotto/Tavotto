@@ -16,6 +16,7 @@ onCurrentProjectChange(() => {
 export interface ProjectEpochGuard {
   /** 发起时的项目 id（可能为 null：跟随后端默认项目） */
   readonly pj: string | null
+  readonly generation: number
   /** 还是发起时的那个项目、那一代吗？ */
   still: () => boolean
 }
@@ -26,6 +27,7 @@ export function captureProjectEpoch(extra?: () => unknown): ProjectEpochGuard {
   const x = extra?.()
   return {
     pj,
+    generation: gen,
     still: () => generation === gen && currentProjectId() === pj && (!extra || extra() === x),
   }
 }
