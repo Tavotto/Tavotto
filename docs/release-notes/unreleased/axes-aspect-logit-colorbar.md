@@ -1,3 +1,0 @@
-## Axes "Equal" aspect stays selected, logit scale only offered when it fits, and colorbar axes no longer show dead properties
-
-Choosing "Equal" for an axes' aspect switched the control to "Custom 1.0" after the redraw; it now stays on "Equal". The axis scale menu offered "logit" even when the axis range lay outside 0–1, where picking it made the render fail; it is now listed only when the data or limits fit inside (0, 1). The axes that holds a colorbar no longer advertises subplot properties (scale, inversion, grid, spines, face colour) that had no effect or did not undo cleanly; it keeps position and visibility, and the colorbar element carries the rest. Preflight and style presets no longer treat a colorbar as a subplot that needs its spines completed.
