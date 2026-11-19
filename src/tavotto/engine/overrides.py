@@ -2019,6 +2019,11 @@ def _set_line_pos_frac(ln, value) -> None:
     transform 上（导出换 dpi 不变），基准 transform 记在 `_mm_pos_base`，每次先回基准再量，
     重放 / 二次拖动幂等；原样 = 基准 transform。"""
     value = _drag_value(value, 2)
+    if getattr(ln, "_mm_points_active", False):
+        # 这条线已经逐点编辑过：`points_frac` 写的是每个顶点的最终位置，位置归它一条说了算——整条平移
+        # 在它面前不起作用、也不碰 pin 表（共用那一格，换掉就丢了拐点，Codex #2060）。两条的先后无关：
+        # pos 先应用的话随后的 points 会把平移放回基准，结果相同
+        return
     _place_line(ln, value)
     _text_pins(ln.get_figure())[ln] = (tuple(value), None)
     _ensure_text_pin_hook(ln.get_figure())
@@ -2037,6 +2042,8 @@ def _place_line(ln, value) -> None:
 
 
 def _restore_line_pos(ln, orig) -> None:
+    if getattr(ln, "_mm_points_active", False):
+        return  # 逐点编辑在生效：整条平移本来就没起作用，撤掉它不动线、不动 pin
     fig = ln.get_figure()
     if fig is not None:
         _text_pins(fig).pop(ln, None)
@@ -2092,9 +2099,11 @@ def _set_line_points_frac(ln, value) -> None:
     （拖一段 = 那一段的两个端点一起走，相邻段跟着伸缩；拖一个点 = 只动那一个；双击一段加拐点、双击拐点
     删掉它会改个数）。线的 marker 跟着顶点走；逐点的样式（markevery 之类）按新个数由 matplotlib 照常处理。整条平移也写它
     （所有点同一位移），所以一条线只会有这一条位置 override——与 `pos_frac` 混写时后写的 setter
-    把前一条的效果放回基准，热态与重放落在同一处。布局引擎下挂进 pin 表，排完按排好的子图再落一次。"""
+    把前一条的效果放回基准，热态与重放落在同一处。**两条同时在时位置只归 `points_frac`**：它写的是绝对位置，
+    `pos_frac` 在它面前不起作用（`_mm_points_active`）；撤掉 `points_frac` 时 `pos_frac` 被标脏重放、重新生效。布局引擎下挂进 pin 表，排完按排好的子图再落一次。"""
     pts = _points_value(ln, value)
     _place_points(ln, pts)
+    ln._mm_points_active = True  # noqa: SLF001 — 位置归它（见 `_set_line_pos_frac`）
     _text_pins(ln.get_figure())[ln] = ((_POINTS_PIN, tuple(pts)), None)
     _ensure_text_pin_hook(ln.get_figure())
 
@@ -2113,6 +2122,7 @@ def _restore_line_points(ln, orig) -> None:
     ln.set_data(pts[:, 0], pts[:, 1])
     ln.__dict__.pop("_mm_pos_base", None)
     ln.__dict__.pop("_mm_points_native", None)
+    ln.__dict__.pop("_mm_points_active", None)
 
 
 def _translated_bases(a):

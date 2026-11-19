@@ -297,6 +297,8 @@ constrained；一次性 worker 全量重放 == 热态）。修前 3 条红。
   少于 2 个、奇数个数、超过上限、不是数就报 warning、什么都不动）。setter 先把线放回基准 transform（整条平移叠的英寸平移一并去掉），再按基准 transform 的逆把显示坐标换回线
   自己的坐标系写进数据；布局引擎下挂进 pin 表（与 `pos_frac` 同一张表、带 `points` 标记），排版前放回脚本原样的顶点、排完再落。
   原样 = （基准 transform, 脚本原样顶点）。`points_frac` 进 `_FRAC_ANCHORED`，每次重放。
+- **两种位置 override 同在一条线上时位置只归 `points_frac`**（Codex #2060 两条 P1）：它写的是每个顶点的绝对位置，`pos_frac` 在它
+  面前不起作用、也不碰 pin 表（共用那一格）；撤掉 `points_frac` 时 `pos_frac` 被标脏重放、重新生效，撤掉 `pos_frac` 时反之。
 - 一条线只写一种位置 override：前端对出 `line_points` 的线，整条平移（`inFigureMoveOf` → `lineMove`、`alignEntries`）也写
   `points_frac`；存量文档里 #2018 写下的 `pos_frac` 照常生效，之后再逐段编辑时 setter 把平移放回基准，热态与重放一致。
 - 前端：`elementGeom.linePointsOf`（文档里写下的 `points_frac` 优先，个数可变）；`interactions.insertLineBend` / `removeLineBend`

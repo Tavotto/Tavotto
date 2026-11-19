@@ -260,7 +260,8 @@ def test_adding_and_removing_bends_changes_the_vertex_count(hot, figs, stem):
 @pytest.mark.parametrize("undo", ["points_frac", "pos_frac"])
 def test_undoing_one_position_override_keeps_the_other(hot, figs, stem, undo):
     """同一条线先整条平移（`pos_frac`）再加拐点（`points_frac`），撤销其中一条：剩下那条照样生效，
-    热态 == 只有剩下那条的全量重放（Codex #2060 P1：撤销加拐点后线跳回脚本原位）。"""
+    热态 == 只有剩下那条的全量重放（Codex #2060 P1：撤销加拐点后线跳回脚本原位）；再重做回两条都在：
+    拐点保留、再画一次不丢（第二条 P1：重做的 pos_frac 换掉了 pin、拐点在下一次排版时消失）。"""
     base = _man(hot, stem)
     a = base[LEADER]["anchor"]
     pos = {"gid": LEADER, "prop": "pos_frac", "value": [a[0] + 0.03, a[1]]}
@@ -284,4 +285,19 @@ def test_undoing_one_position_override_keeps_the_other(hot, figs, stem, undo):
     if undo == "points_frac":
         # 剩下的是整条平移：线在平移后的位置，不是脚本原位
         assert _flat(got[LEADER]["line_points"]) == pytest.approx(_flat(moved), abs=_tol(stem))
+    # 重做回两条都在（Codex #2060 第二条 P1）：拐点还在，再画一次也还在，== 全新重放
+    redo = _man(hot, stem, [pos, points])
+    redraw = _man(hot, stem, [pos, points])
+    fresh = pool.one_shot(SCRIPT_NAME, str(figs), "main")
+    try:
+        fresh.ensure_built()
+        both = _man(fresh, stem, [pos, points])
+    finally:
+        pool.discard(fresh)
+    assert len(redraw[LEADER]["line_points"]) == len(bent)
+    for view in (redo, redraw):
+        assert _flat(view[LEADER]["line_points"]) == pytest.approx(
+            _flat(both[LEADER]["line_points"]), abs=tol
+        )
+        assert view[LEADER]["bbox"] == pytest.approx(both[LEADER]["bbox"], abs=tol)
     _man(hot, stem)
