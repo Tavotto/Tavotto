@@ -16,6 +16,7 @@ import {
   claimedBySelectedGroups,
   entryUnder,
   geomGid,
+  linePointsOf,
   segIntersectsRect,
   selectionHasGroup,
 } from '@/lib/elementGeom'
@@ -78,6 +79,9 @@ import {
   startElementGroupMove,
   startDeferredInFigureDrag,
   startInFigureDrag,
+  insertLineBend,
+  nearestLineSegment,
+  startLineEdit,
   resumeDeferredInFigureDrag,
   trackPointer,
 } from './interactions'
@@ -909,6 +913,13 @@ function ElementHitLayer({
     if (!keepSelection) ui.setSelectedGid(hit?.gid ?? 'figure')
     // 保持选区归保持选区，该拖的照样拖：位图没有自己的几何属性，拖它等于拖宿主
     // 子图。按哪一种平移走只在 `inFigureMoveOf` 判（方向键微调认的是同一处）
+    // 引线（位置不是数据、出逐点的线）：按下拖的是离指针最近的那一段，不是整条
+    // （用户 2026-11-19）。整条平移走方向键 / 与别的元素一起多选拖（`inFigureMoveOf` → lineMove）
+    const linePts = hit && hit.draggable && !keepSelection ? linePointsOf(obj, hit) : null
+    if (hit && linePts) {
+      startLineEdit(e, obj, hit, layout, { kind: 'segment', index: nearestLineSegment(linePts, fx, fy, layout) })
+      return
+    }
     if (hit) startInFigureDrag(e, obj, manifest, hit, layout)
   })
 
@@ -987,6 +998,12 @@ function ElementHitLayer({
         if (e.altKey && !e.shiftKey) return
         const { fx, fy } = frac(e)
         const hit = pickElement(manifest, fx, fy, obj.lockedGids)
+        // 双击引线的一段 = 在那里加一个拐点（拐点上的双击归覆盖层的手柄：删掉它）
+        if (hit?.draggable && hit.line_points) {
+          useUiStore.getState().setSelectedGid(hit.gid)
+          insertLineBend(obj, hit, fx, fy, layout)
+          return
+        }
         // 双击带文字内容的元素 = 快速改字：弹层聚焦内容输入框
         if (!hit?.editable.some((f) => f.prop === 'text' && f.type === 'text')) return
         useUiStore.getState().setSelectedGid(hit.gid)
