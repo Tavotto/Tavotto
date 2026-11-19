@@ -129,6 +129,26 @@ for name in ("worker.py", "executionfact.py", "inputdeclaration.py", "manifest.p
              "bridge_runner.py", "bridgeboot.py", "mathtext_child.py"):
     datas.append((str(PKG / "engine" / name), "tavotto/engine"))
 
+# A fixed chart task loads the Tavotto package from disk in the same external
+# interpreter. Include its package roots so an installed Tavotto cannot shadow
+# this bundle, and ship the pure-Python SVG and EPS contracts it imports.
+for chart_source in (
+    "__init__.py",
+    "svgcoord.py",
+    "engine/__init__.py",
+    "engine/brand.py",
+    "engine/chartframe.py",
+    "engine/chartmanifest.py",
+    "engine/chartmodel.py",
+    "engine/chartprofile.py",
+    "engine/chartwire.py",
+    "engine/svgchart.py",
+    "rendercore/__init__.py",
+    "rendercore/epscontainer.py",
+    "rendercore/svgcheck.py",
+):
+    datas.append((str(PKG / chart_source), (Path("tavotto") / Path(chart_source).parent).as_posix()))
+
 # 内置渲染 runtime（见文件头说明 3）。
 # TAVOTTO_RUNTIME_SRC 可指到别处；TAVOTTO_REQUIRE_RUNTIME=1 时缺了就直接失败——
 # 发行流水线必须打开它，否则「忘了构建 runtime」会安静地产出一个装完不能渲染的
