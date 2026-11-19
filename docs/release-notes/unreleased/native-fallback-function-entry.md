@@ -1,3 +1,0 @@
-## Figures drawn by a function now come out when Tavotto switches to your own Python
-
-Some scripts only define drawing functions such as `make_map()` and never call them at the bottom of the file. Tavotto runs those functions directly. When such a function saved a figure and then read the saved file back, the safe run stopped, Tavotto switched to running the script with your own Python, and that run ended with "no figure" because nothing in the file called the function. The switched run now calls the same function, so the figure appears. If the function is no longer in the script, Tavotto does not start the pointless second run and shows the original card instead.

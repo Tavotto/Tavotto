@@ -1,3 +1,0 @@
-## Hand-drawn legend markers and images placed in axes coordinates can now be dragged
-
-Markers drawn with `ax.scatter(..., transform=ax.transAxes)` (a common way to build a legend by hand), line and shape collections in axes or figure coordinates, and images placed with `imshow(..., transform=ax.transAxes)` could be restyled but not moved. Clicking anywhere in their subplot also selected them, because their selection box covered the whole subplot. They can now be dragged and undone like shapes, and their selection box is just the drawn element. Data scatter plots, data line collections and ordinary `imshow` images stay put.
