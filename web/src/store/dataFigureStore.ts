@@ -3,6 +3,7 @@ import {
   ApiError,
   aiDataFigureCommit,
   aiDataFigureDiscard,
+  aiDataProgressCancel,
   aiDataFigurePropose,
   aiDataFilesAll,
   aiDataOverview,
@@ -69,7 +70,7 @@ export type ProblemKind =
  * 临时标签里这份数据此刻在哪一步：
  *  - `reading` 读表中；`unreadable` 不是表格；`text` 全是文字、没有能画的数字；`pickrow` 表头行没认出来、要用户点一行
  *  - `loading` 候选还在出；`ready` 候选好了；`nothing` 后端说这张表画不出；`failed` 出候选这一步没成
- *  - `cancelled` 大文件读到一半用户点了「取消」：前端不再等这次请求，回到可以重读 / 换文件的状态（后端那一头没有取消手段，见 `cancelRead`）
+ *  - `cancelled` 大文件读到一半用户点了「取消」：后端真的停了读表（协作式取消），回到可以重读 / 换文件的状态（见 `cancelRead`）
  */
 export type DraftPhase = 'idle' | 'reading' | 'cancelled' | 'unreadable' | 'text' | 'pickrow' | 'loading' | 'ready' | 'nothing' | 'failed' | 'mergeFailed'
 
@@ -182,8 +183,11 @@ interface DataFigureStore {
   /** 一张缩略图取到了 / 取不到（422）：就绪状态 + 全部都画不出来时走「没画出来」 */
   thumbSettled: (session: string, id: string, ok: boolean) => void
   draw: (id: string) => Promise<void>
-  /** 大文件读表 / 出候选到一半不想等了：放弃这次请求，回到 `cancelled`（可重读）。后端没有取消接口——它会自己跑完，结果被丢掉；已读好的概览留在后端缓存里，重读更快 */
-  cancelRead: () => void
+  /** 此刻读表 / 出候选那个请求的请求号（进度条轮询、取消都认它）；没有在读 = null */
+  readRid: string | null
+  /** 大文件读表 / 出候选到一半不想等了：调后端取消端点（真的停），原请求随后回 409 `propose_cancelled`，按它收尾到 `cancelled`（可重读）；
+   *  赛跑时以原请求的响应为准（已经读完就照常往下走）；取消端点不可用 / 还没登记上时退回「前端不再等这次请求」（后端会自己跑完、结果丢掉） */
+  cancelRead: () => Promise<void>
   /** 出图中 / 出候选失败之后「再试一次」 */
   retry: () => Promise<void>
   /** 出图失败之后回到候选 */
@@ -252,6 +256,7 @@ const initial = {
   drawingId: null as string | null,
   problem: null as ProblemKind | null,
   fresh: null as FreshFigure | null,
+  readRid: null as string | null,
 }
 /** 换一份数据 / 回到起点时清掉的那些（文件清单、概览、表头行、画好的那张不在内） */
 const idleDraft = {
@@ -268,6 +273,7 @@ const idleDraft = {
   error: null as UiMessage | null,
   drawingId: null as string | null,
   problem: null as ProblemKind | null,
+  readRid: null as string | null,
 }
 
 export const useDataFigureStore = create<DataFigureStore>((set, get) => {
@@ -296,6 +302,8 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     const answers = get().answers
     const hasHeaders = Object.keys(get().headerRows).length > 0
     let res
+    const rid = newRid()
+    set({ readRid: rid })
     try {
       res = await aiDataFigurePropose(
         {
@@ -303,6 +311,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
             ? { tables: group.map((r) => ({ path: r.path, ...(r.sheet == null ? {} : { sheet: r.sheet }) })) }
             : { table: sel.path, ...(sel.sheet == null ? {} : { sheet: sel.sheet }) }),
           render: 'lazy',
+          ...(group ? {} : { client_request_id: rid }), // 合画永远是小表：不跟踪
           ...(Object.keys(answers).length ? { answers } : {}),
           ...(hasHeaders ? { header_rows: get().headerRows } : {}),
         },
@@ -311,6 +320,12 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       )
     } catch (e) {
       if (!still()) return
+      if (get().readRid === rid) set({ readRid: null })
+      // 后端按「取消」中止了这次出候选：回到可重读的状态（不是失败）
+      if (codeOf(e) === 'propose_cancelled') {
+        markCancelled()
+        return
+      }
       // 合画失败的稳定码（`MERGE_FAILURE_CODES`）各有出路：临时标签里显示后端那一句 + 「分别作图」，不当成「再试一次就行」的失败
       const code = e instanceof ApiError && typeof e.body?.code === 'string' ? e.body.code : ''
       if (group && MERGE_FAILURE_CODES.includes(code)) set({ phase: 'mergeFailed', error: reasonOf(e) })
@@ -318,6 +333,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       return
     }
     if (!still()) return
+    if (get().readRid === rid) set({ readRid: null })
     if (res.kind === 'ask') {
       // 懒模式不会问；万一问了按失败处理（不替用户答）
       set({ phase: 'failed', error: null })
@@ -349,7 +365,23 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     }
   }
 
-  async function loadOverview(ref: TableRef, signal?: AbortSignal): Promise<AiDataOverview | null> {
+  /** 读表 / 出候选被取消之后的收尾：概览回到取消前的样子（有旧内容还它，没有就当没读过），临时标签回到可重读的 `cancelled` */
+  function markCancelled(): void {
+    const { selected } = get()
+    if (selected) {
+      const key = overviewKeyOf(selected, get().headerRows)
+      const prev = get().overviews[key]
+      set((s) => {
+        const next = { ...s.overviews }
+        if (prev?.data) next[key] = { status: 'ready', data: prev.data }
+        else delete next[key]
+        return { overviews: next }
+      })
+    }
+    set({ phase: 'cancelled', candidates: [], session: null, thumbs: {}, error: null, readRid: null })
+  }
+
+  async function loadOverview(ref: TableRef, signal?: AbortSignal, rid?: string): Promise<AiDataOverview | null | 'cancelled'> {
     const header = get().headerRows[ref.path] ?? null
     const key = overviewKey(ref, header)
     const prev = get().overviews[key]
@@ -361,12 +393,13 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     const pj = currentProjectId()
     set((s) => ({ overviews: { ...s.overviews, [key]: { status: 'loading', data: prev?.data ?? null } } }))
     try {
-      const data = await aiDataOverview({ path: ref.path, sheet: ref.sheet, headerRow: header }, pj, signal)
+      const data = await aiDataOverview({ path: ref.path, sheet: ref.sheet, headerRow: header }, pj, signal, rid)
       if (ep !== epoch || overviewSeq.get(key) !== mine) return null
       set((s) => ({ overviews: { ...s.overviews, [key]: { status: 'ready', data } } }))
       return data
     } catch (e) {
       if (ep !== epoch || overviewSeq.get(key) !== mine) return null
+      if (codeOf(e) === 'propose_cancelled') return 'cancelled'
       set((s) => ({ overviews: { ...s.overviews, [key]: { status: 'error', data: prev?.data ?? null, error: reasonOf(e) } } }))
       return null
     }
@@ -402,8 +435,15 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       set({ phase: 'unreadable' })
       return
     }
-    const ov = await loadOverview(sel, ctl.signal)
+    const ovRid = newRid()
+    set({ readRid: ovRid })
+    const ov = await loadOverview(sel, ctl.signal, ovRid)
     if (!still()) return
+    if (ov === 'cancelled') {
+      markCancelled()
+      return
+    }
+    if (get().readRid === ovRid) set({ readRid: null })
     if (!ov) {
       set({ phase: 'failed', error: null })
       return
@@ -714,28 +754,32 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       await run({ keepChoices: true })
     },
 
-    cancelRead: () => {
-      const { phase, selected } = get()
+    cancelRead: async () => {
+      const { phase, selected, readRid } = get()
       if (phase !== 'reading' && phase !== 'loading') return
-      readCtl?.abort()
-      readCtl = null
-      runSeq += 1
-      proposeSeq += 1
-      commitRid = null
-      discardSession()
-      if (selected) {
-        // 这张表的概览还挂着「读取中」：回到取消前的样子（有旧内容就还它，没有就当没读过）
-        const key = overviewKeyOf(selected, get().headerRows)
-        overviewSeq.set(key, (overviewSeq.get(key) ?? 0) + 1)
-        const prev = get().overviews[key]
-        set((s) => {
-          const next = { ...s.overviews }
-          if (prev?.data) next[key] = { status: 'ready', data: prev.data }
-          else delete next[key]
-          return { overviews: next }
-        })
+      const ep = epoch
+      const mine = runSeq
+      /** 退路：取消端点不可用 / 请求还没登记上——前端不再等这次请求（后端会自己跑完，结果被丢掉） */
+      const walkAway = () => {
+        if (ep !== epoch || mine !== runSeq) return
+        readCtl?.abort()
+        readCtl = null
+        runSeq += 1
+        proposeSeq += 1
+        commitRid = null
+        discardSession()
+        if (selected) overviewSeq.set(overviewKeyOf(selected, get().headerRows), (overviewSeq.get(overviewKeyOf(selected, get().headerRows)) ?? 0) + 1)
+        markCancelled()
       }
-      set({ phase: 'cancelled', candidates: [], session: null, thumbs: {}, error: null })
+      if (!readRid) return walkAway()
+      try {
+        const r = await aiDataProgressCancel(readRid, currentProjectId())
+        // 真的标成取消了：原请求随后回 409，由它收尾（见 `propose` / `run`）；已经读完（赛跑）就让原请求照常往下走
+        if (r.cancelled) return
+        if (r.state === 'none') walkAway()
+      } catch {
+        walkAway()
+      }
     },
 
     dismissProblem: () => set({ problem: null }),

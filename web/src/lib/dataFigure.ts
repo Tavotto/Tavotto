@@ -28,7 +28,8 @@ export const LARGE_FILE_BYTES = 5 * 1024 * 1024
 export function isLargeFile(entries: AiDataFileEntry[] | null | undefined, ref: TableRef | null): boolean {
   if (!ref || isWorkbook(ref.path)) return false
   const e = entries?.find((x) => x.path === ref.path)
-  return e != null && e.size > LARGE_FILE_BYTES
+  // 大小界线之外还认后端读过之后的大表标记（不到 5 MiB 但超过 10 万行的表）
+  return e != null && (e.size > LARGE_FILE_BYTES || e.table?.large === true)
 }
 
 /** 行数 / 点数的呈现：小于 1 万照旧写原数字，其余用紧凑写法（中文「万」、英文 K / M）；数据条的行数与候选上的「取了多少个点」共用 */

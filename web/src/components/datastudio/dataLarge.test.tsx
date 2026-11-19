@@ -6,7 +6,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/Tooltip'
-import { aiDataFigureDiscard, aiDataFigurePropose, aiDataFilesAll, aiDataOverview, type AiDataOverview } from '@/lib/api'
+import { ApiError, aiDataFigureDiscard, aiDataFigurePropose, aiDataFilesAll, aiDataOverview, aiDataProgress, aiDataProgressCancel, type AiDataOverview, type AiDataProgress } from '@/lib/api'
 import { LARGE_FILE_BYTES } from '@/lib/dataFigure'
 import { setCurrentProjectId } from '@/lib/session'
 import { useDataFigureStore } from '@/store/dataFigureStore'
@@ -27,6 +27,8 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   aiDataFigurePropose: vi.fn(),
   aiDataFigureCommit: vi.fn(),
   aiDataFigureDiscard: vi.fn(async () => ({ ok: true })),
+  aiDataProgress: vi.fn(),
+  aiDataProgressCancel: vi.fn(),
 }))
 vi.mock('@/store/liveSync', () => ({ refreshProjectNow: vi.fn(async () => {}) }))
 
@@ -66,6 +68,8 @@ describe('大文件：读取中的一句话与「取消」', () => {
   const files = vi.mocked(aiDataFilesAll)
   const overview = vi.mocked(aiDataOverview)
   const propose = vi.mocked(aiDataFigurePropose)
+  const progress = vi.mocked(aiDataProgress)
+  const cancelApi = vi.mocked(aiDataProgressCancel)
   const entry = (path: string, size: number) => ({ path, size, table: { status: 'ok' as const, code: null, delimiter: 'comma' as const, header_row: 1, columns: 2, rows: 5 } })
   const item = (id: string, code: string, reduced?: { rows: number; kept: number }) => ({ id, title_code: code, why_code: code, recommended: id === 'i1', unplotted: { count: 0, code: null }, thumbnail_url: `/t/${id}`, thumbnail_status: 'pending' as const, ...(reduced ? { reduced } : {}) })
   const cands = (items: ReturnType<typeof item>[]) => ({ kind: 'candidates' as const, session: 'S1', items, dropped: [], render: 'lazy' as const, header_row: 1, roles: null, defaults: [], mixed_cells: [] })
@@ -79,8 +83,10 @@ describe('大文件：读取中的一句话与「取消」', () => {
     await flush()
   }
   beforeEach(() => {
-    for (const f of [files, overview, propose, vi.mocked(aiDataFigureDiscard)]) f.mockReset()
+    for (const f of [files, overview, propose, vi.mocked(aiDataFigureDiscard), progress, cancelApi]) f.mockReset()
     vi.mocked(aiDataFigureDiscard).mockResolvedValue({ ok: true })
+    progress.mockResolvedValue({ state: 'none' })
+    cancelApi.mockRejectedValue(new Error('offline')) // 默认：取消端点不可用 = 退回「前端不再等」
     setCurrentProjectId('pa')
     useDataFigureStore.getState().clear()
     useProjectStore.setState({ project: { open: true, name: 'proj', writable: true } })
@@ -162,6 +168,129 @@ describe('大文件：读取中的一句话与「取消」', () => {
     await start()
     await open(0)
     expect(q('[data-data-strip-info]')!.textContent).toBe('前 1 行，共 612万 行 · 3 列')
+  })
+
+  const prog = (p: Partial<AiDataProgress>): AiDataProgress => ({ state: 'running', kind: 'overview', fraction: 0.42, indeterminate: false, cancellable: true, elapsed_s: 3, ...p })
+  const wait = async (ms: number) => act(async () => { await new Promise((r) => setTimeout(r, ms)) })
+
+  it('真实进度：请求号随请求发出，行内显示百分比；说不出比例（indeterminate）或 none 就只有那一句话', async () => {
+    overview.mockReturnValue(new Promise(() => {}))
+    progress.mockResolvedValue(prog({ fraction: 0.428 }))
+    await start()
+    await open(0)
+    const rid = overview.mock.calls[0]![3]
+    expect(rid).toMatch(/^[A-Za-z0-9_-]{8,64}$/)
+    await wait(450)
+    expect(progress).toHaveBeenCalledWith(rid, 'pa')
+    expect(q('[data-large-read-pct]')!.textContent).toBe('42%')
+    progress.mockResolvedValue(prog({ fraction: null, indeterminate: true }))
+    await wait(450)
+    expect(q('[data-large-read-pct]')).toBeNull()
+    expect(q('[data-large-read]')!.textContent).toContain('正在读一个大文件，要一会儿…')
+    progress.mockResolvedValue({ state: 'none' })
+    await wait(450)
+    expect(q('[data-large-read-pct]')).toBeNull()
+    expect(q('[data-large-read-cancel]')).not.toBeNull()
+  })
+
+  it('后端说不可取消就不给「取消」', async () => {
+    overview.mockReturnValue(new Promise(() => {}))
+    progress.mockResolvedValue(prog({ cancellable: false }))
+    await start()
+    await open(0)
+    await wait(450)
+    expect(q('[data-large-read-pct]')).not.toBeNull()
+    expect(q('[data-large-read-cancel]')).toBeNull()
+  })
+
+  it('取消成功：调取消端点，原请求回 409 propose_cancelled 后收尾到「已取消」，晚些再点重新读取', async () => {
+    let rejectOv!: (e: unknown) => void
+    overview.mockReturnValueOnce(new Promise((_r, rej) => (rejectOv = rej)))
+    cancelApi.mockResolvedValue(prog({ state: 'cancelled', cancelled: true }))
+    await start()
+    await open(0)
+    const rid = overview.mock.calls[0]![3]
+    await click(q('[data-large-read-cancel]'))
+    expect(cancelApi).toHaveBeenCalledWith(rid, 'pa')
+    expect(useDataFigureStore.getState().phase).toBe('reading') // 以原请求的响应为准
+    expect((overview.mock.calls[0]![2] as AbortSignal).aborted).toBe(false) // 不靠前端中止
+    await act(async () => rejectOv(new ApiError('已取消', 409, { code: 'propose_cancelled' }, null)))
+    await flush()
+    expect(useDataFigureStore.getState().phase).toBe('cancelled')
+    expect(q('[data-studio-cancelled]')).not.toBeNull()
+    expect(q('[data-data-strip]')).toBeNull()
+  })
+
+  it('出候选那一步被取消：同样 409 收尾', async () => {
+    overview.mockResolvedValue(ov())
+    let rejectP!: (e: unknown) => void
+    propose.mockReturnValueOnce(new Promise((_r, rej) => (rejectP = rej)))
+    cancelApi.mockResolvedValue(prog({ state: 'cancelled', cancelled: true, kind: 'propose' }))
+    await start()
+    await open(0)
+    const body = propose.mock.calls[0]![0] as { client_request_id?: string }
+    expect(body.client_request_id).toMatch(/^[A-Za-z0-9_-]{8,64}$/)
+    await click(q('[data-large-read-cancel]'))
+    expect(cancelApi).toHaveBeenCalledWith(body.client_request_id, 'pa')
+    await act(async () => rejectP(new ApiError('已取消', 409, { code: 'propose_cancelled' }, null)))
+    await flush()
+    expect(q('[data-studio-cancelled]')).not.toBeNull()
+  })
+
+  it('取消与完成赛跑：取消没生效（cancelled 为假、已完成），以原请求的响应为准，照常出候选', async () => {
+    let done!: (v: AiDataOverview) => void
+    overview.mockReturnValueOnce(new Promise((r) => (done = r)))
+    propose.mockResolvedValueOnce(cands([item('i1', 'line_band')]))
+    cancelApi.mockResolvedValue(prog({ state: 'done', cancelled: false }))
+    await start()
+    await open(0)
+    await click(q('[data-large-read-cancel]'))
+    expect(useDataFigureStore.getState().phase).toBe('reading')
+    await act(async () => done(ov()))
+    await flush()
+    expect(qa('[data-candidate]')).toHaveLength(1)
+    expect(q('[data-studio-cancelled]')).toBeNull()
+  })
+
+  it('取消时请求还没登记（state none）：退回前端不再等', async () => {
+    overview.mockReturnValueOnce(new Promise(() => {}))
+    cancelApi.mockResolvedValue({ state: 'none', cancelled: false })
+    await start()
+    await open(0)
+    await click(q('[data-large-read-cancel]'))
+    expect(q('[data-studio-cancelled]')).not.toBeNull()
+  })
+
+  it('轮询有界：卸载即停；一次失败就停、不重试', async () => {
+    overview.mockReturnValue(new Promise(() => {}))
+    progress.mockResolvedValue(prog({}))
+    await start()
+    await open(0)
+    await wait(450)
+    const n = progress.mock.calls.length
+    expect(n).toBeGreaterThan(0)
+    act(() => root.unmount())
+    await wait(900)
+    expect(progress.mock.calls.length).toBe(n)
+  })
+
+  it('轮询失败：只退回一句话，不再重试', async () => {
+    overview.mockReturnValue(new Promise(() => {}))
+    progress.mockRejectedValue(new Error('x'))
+    await start()
+    await open(0)
+    await wait(1200)
+    expect(progress).toHaveBeenCalledTimes(1)
+    expect(q('[data-large-read]')).not.toBeNull()
+    expect(q('[data-large-read-pct]')).toBeNull()
+  })
+
+  it('读过之后的大表标记（不到 5 MiB 但行数多）也算大文件', async () => {
+    files.mockResolvedValue({ files: [{ ...entry('rows.csv', 1024), table: { ...entry('rows.csv', 1).table, large: true } }], truncated: false })
+    overview.mockReturnValue(new Promise(() => {}))
+    await start()
+    await open(0)
+    expect(q('[data-large-read]')).not.toBeNull()
   })
 
   it('候选一出来（文字到了）这一句就没了：不再有取消', async () => {
