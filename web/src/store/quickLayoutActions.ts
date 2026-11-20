@@ -29,7 +29,9 @@ import { useDocumentStore } from './documentStore'
 import { finishActiveGesture } from './gestureCoordinator'
 import { useLicenseStore } from './licenseStore'
 import { currentSpec } from './issueFixActions'
+import { exactPanelManifest, useRenderStore } from './renderStore'
 import { requestRender } from './renderScheduler'
+import { alignNewFigures } from './styleBinding'
 import { useRuntimeAssetStore } from './runtimeAssetStore'
 import { useSelectionStore } from './selectionStore'
 import { useUiStore, type StatusAction } from './uiStore'
@@ -144,6 +146,34 @@ function say(message: UiMessage, tone: 'info' | 'done', opts?: { subline?: UiMes
   useUiStore.getState().setStatus(message, tone, opts)
 }
 
+/** 等参与排版、还没出过图的那几张出第一张图（最多 SETTLE_MS），再让画布样式对齐新图（ADR 0081，免费能力）。 */
+const SETTLE_MS = 30_000
+async function settleNewFigures(): Promise<void> {
+  const ready = (id: string) => {
+    const cur = useDocumentStore.getState().doc.objects.find((o) => o.id === id)
+    return !cur || cur.type !== 'panel' || !!exactPanelManifest(useRenderStore.getState(), cur)
+  }
+  const pending = involvedPanels(useDocumentStore.getState().doc).filter((p) => resizable(p) && !ready(p.id))
+  if (pending.length) {
+    for (const p of pending) requestRender(p)
+    await new Promise<void>((resolve) => {
+      const done = () => pending.every((p) => ready(p.id))
+      if (done()) return resolve()
+      const timer = setTimeout(() => {
+        unsubscribe()
+        resolve()
+      }, SETTLE_MS)
+      const unsubscribe = useRenderStore.subscribe(() => {
+        if (!done()) return
+        clearTimeout(timer)
+        unsubscribe()
+        resolve()
+      })
+    })
+  }
+  alignNewFigures()
+}
+
 /**
  * 点「一键排版」。`target` / `gapMm` 来自工具条的小下拉（或命令面板读同一份偏好）。
  * 回的结局给用例与调用方看；用户看到的只有一枚胶囊。
@@ -152,6 +182,15 @@ export async function runQuickLayout(target: QuickLayoutTarget, gapMm: number): 
   if (useQuickLayoutStore.getState().busy) return 'busy'
   // 离散动作：先把还开着的手势收干净（与 setFigureFrame 同）
   finishActiveGesture()
+
+  // 先让画布样式落到新放上来的图上，再按落好样式之后的字号排（2026-11-20 走查：刚放上的图还没出第一张图，
+  // 一键排版抢在样式前面算完，样式随后才套上，轴标题变粗变大，算好的对齐与留白就不作数了）
+  useQuickLayoutStore.setState({ busy: true })
+  try {
+    await settleNewFigures()
+  } finally {
+    useQuickLayoutStore.setState({ busy: false })
+  }
 
   const start = useDocumentStore.getState()
   const docAtStart = start.doc
