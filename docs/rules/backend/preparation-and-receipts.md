@@ -11,7 +11,7 @@
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 320
-改到: `engine/preparation.py`、`prepsession.py`、`dialogscan.py`、`receipt.py`、`trace.py`、`/api/engine/preparation*`（完整清单见细则）
+改到: `engine/preparation.py`、`prepsession.py`、`dialogscan.py`、`receipt.py`、`declaredinputs.py`、`inputdeclaration.py`、`trace.py`、`/api/engine/preparation*`（完整清单见细则）
 主题: 准备计划、执行回执与源图产物、准备会话 → `preparation-and-receipts.md`
 必守要点: 计划与观测分开；过期不执行
 -->
