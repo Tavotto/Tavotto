@@ -20,6 +20,7 @@ import { useLicenseStore } from '@/store/licenseStore'
 import { useQuickLayoutStore } from '@/store/quickLayoutActions'
 import { useUiStore } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspace'
+import { literal } from '@/i18n'
 import { emptyProject } from '@/types/document'
 
 declare global {
@@ -128,12 +129,12 @@ describe('一键排版按钮', () => {
       })
     }
     await pick('[data-quick-layout-target="single"]')
-    expect(readQuickLayoutPrefs()).toEqual({ target: 'single', gapMm: 3, fixSpec: true })
+    expect(readQuickLayoutPrefs()).toEqual({ target: 'single', gapMm: 3, fixSpec: true, columns: null, canvas: 'auto' })
     await act(async () => {
       q('[data-quick-layout-options]')!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse' }))
     })
     await pick('[data-quick-layout-gap="2"]')
-    expect(readQuickLayoutPrefs()).toEqual({ target: 'single', gapMm: 2, fixSpec: true })
+    expect(readQuickLayoutPrefs()).toEqual({ target: 'single', gapMm: 2, fixSpec: true, columns: null, canvas: 'auto' })
     await act(async () => q('[data-quick-layout-run]')!.click())
     expect(runQuickLayout).toHaveBeenCalledWith('single', 2)
   })
@@ -166,13 +167,59 @@ describe('一键排版按钮', () => {
     expect(readQuickLayoutPrefs().fixSpec).toBe(true)
   })
 
+  it('下拉里的「排列」「画布」：默认按摆放位置 / 自动，选了记在本机；保持画布大小时「宽度」三档置灰并带说明', async () => {
+    useLicenseStore.setState({ status: licensed(['quick-layout']) })
+    await mount()
+    const open = () =>
+      act(async () => {
+        q('[data-quick-layout-options]')!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse' }))
+      })
+    const pick = async (sel: string) => {
+      const el = document.querySelector<HTMLElement>(sel)
+      expect(el, `下拉里没有 ${sel}`).toBeTruthy()
+      await act(async () => {
+        el!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse' }))
+        el!.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, pointerType: 'mouse' }))
+        el!.click()
+      })
+    }
+    await open()
+    const checked = (sel: string) => document.querySelector(sel)!.getAttribute('aria-checked')
+    expect(checked('[data-quick-layout-columns="auto"]')).toBe('true')
+    expect(checked('[data-quick-layout-canvas="auto"]')).toBe('true')
+    expect(document.querySelector('[data-quick-layout-columns="auto"]')!.textContent).toBe('按摆放位置')
+    expect(document.querySelector('[data-quick-layout-width-group]')!.getAttribute('title')).toBeNull()
+    await pick('[data-quick-layout-columns="2"]')
+    expect(readQuickLayoutPrefs().columns).toBe(2)
+    await open()
+    await pick('[data-quick-layout-canvas="keep"]')
+    expect(readQuickLayoutPrefs().canvas).toBe('keep')
+    await open()
+    expect(document.querySelector('[data-quick-layout-target="single"]')!.hasAttribute('data-disabled')).toBe(true)
+    expect(document.querySelector('[data-quick-layout-width-group]')!.getAttribute('title')).toBe('保持画布大小时用画布的宽度')
+  })
+
+  it('画布「自动」且用户定过画布大小：宽度三档同样置灰', async () => {
+    useLicenseStore.setState({ status: licensed(['quick-layout']) })
+    useDocumentStore.getState().commit(literal('定大小'), (d) => {
+      d.page.userSized = true
+    })
+    await mount()
+    await act(async () => {
+      q('[data-quick-layout-options]')!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse' }))
+    })
+    expect(document.querySelector('[data-quick-layout-target="double"]')!.hasAttribute('data-disabled')).toBe(true)
+  })
+
   it('本机存储坏了 / 不可用：退回默认值，不抛', () => {
     localStorage.setItem('tavotto.quickLayout', '{坏的')
-    expect(readQuickLayoutPrefs()).toEqual({ target: 'double', gapMm: 3, fixSpec: true })
-    localStorage.setItem('tavotto.quickLayout', JSON.stringify({ target: 'x', gapMm: 9 }))
-    expect(readQuickLayoutPrefs()).toEqual({ target: 'double', gapMm: 3, fixSpec: true })
+    expect(readQuickLayoutPrefs()).toEqual({ target: 'double', gapMm: 3, fixSpec: true, columns: null, canvas: 'auto' })
+    localStorage.setItem('tavotto.quickLayout', JSON.stringify({ target: 'x', gapMm: 9, columns: 7, canvas: 'wide' }))
+    expect(readQuickLayoutPrefs()).toEqual({ target: 'double', gapMm: 3, fixSpec: true, columns: null, canvas: 'auto' })
+    localStorage.setItem('tavotto.quickLayout', JSON.stringify({ columns: 2, canvas: 'keep' }))
+    expect(readQuickLayoutPrefs()).toMatchObject({ columns: 2, canvas: 'keep' })
     localStorage.setItem('tavotto.quickLayout', JSON.stringify({ target: 'single', gapMm: 2, fixSpec: 'no' }))
-    expect(readQuickLayoutPrefs()).toEqual({ target: 'single', gapMm: 2, fixSpec: true })
+    expect(readQuickLayoutPrefs()).toEqual({ target: 'single', gapMm: 2, fixSpec: true, columns: null, canvas: 'auto' })
     localStorage.setItem('tavotto.quickLayout', JSON.stringify({ target: 'single', gapMm: 2, fixSpec: false }))
     expect(readQuickLayoutPrefs().fixSpec).toBe(false)
   })

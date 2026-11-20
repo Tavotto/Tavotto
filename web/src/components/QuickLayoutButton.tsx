@@ -3,13 +3,19 @@ import { useTranslation } from 'react-i18next'
 import { ChevronDown, LayoutGrid } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
+  QUICK_LAYOUT_CANVAS_CHOICES,
+  QUICK_LAYOUT_COLUMNS,
   QUICK_LAYOUT_GAPS,
   QUICK_LAYOUT_TARGETS,
   readQuickLayoutPrefs,
+  resolveCanvasMode,
   writeQuickLayoutPrefs,
+  type QuickLayoutCanvasChoice,
+  type QuickLayoutColumns,
   type QuickLayoutPrefs,
   type QuickLayoutTarget,
 } from '@/lib/quickLayoutPrefs'
+import { useDocumentStore } from '@/store/documentStore'
 import { licenseVisible, useLicenseStore } from '@/store/licenseStore'
 import { runQuickLayout, useQuickLayoutStore } from '@/store/quickLayoutActions'
 import { PremiumLock } from './license/PremiumLock'
@@ -40,7 +46,11 @@ export function QuickLayoutButton({
   }, [status, load])
   const busy = useQuickLayoutStore((s) => s.busy)
   const [prefs, setPrefs] = useState<QuickLayoutPrefs>(readQuickLayoutPrefs)
+  const userSized = useDocumentStore((s) => s.doc.page.userSized)
   if (!licenseVisible(status)) return null
+
+  // 保持画布大小时页宽就是画布的宽度：「宽度」三档不起作用，置灰
+  const keeping = resolveCanvasMode(prefs.canvas, userSized) === 'keep'
 
   const update = (next: QuickLayoutPrefs) => {
     setPrefs(next)
@@ -83,17 +93,43 @@ export function QuickLayoutButton({
             </Button>
           }
         >
-          <MenuLabel>{t('quickLayout.targetLabel')}</MenuLabel>
+          <MenuLabel>{t('quickLayout.columnsLabel')}</MenuLabel>
           <MenuRadioGroup
-            value={prefs.target}
-            onValueChange={(v) => update({ ...prefs, target: v as QuickLayoutTarget })}
+            value={prefs.columns === null ? 'auto' : String(prefs.columns)}
+            onValueChange={(v) => update({ ...prefs, columns: (v === 'auto' ? null : Number(v)) as QuickLayoutColumns })}
           >
-            {QUICK_LAYOUT_TARGETS.map((target) => (
-              <MenuRadioItem key={target} value={target} data-quick-layout-target={target}>
-                {t(`quickLayout.target.${target}`)}
+            {QUICK_LAYOUT_COLUMNS.map((n) => (
+              <MenuRadioItem key={n ?? 'auto'} value={n === null ? 'auto' : String(n)} data-quick-layout-columns={n ?? 'auto'}>
+                {t(`quickLayout.columns.${n ?? 'auto'}`)}
               </MenuRadioItem>
             ))}
           </MenuRadioGroup>
+          <MenuSeparator />
+          <MenuLabel>{t('quickLayout.canvasLabel')}</MenuLabel>
+          <MenuRadioGroup
+            value={prefs.canvas}
+            onValueChange={(v) => update({ ...prefs, canvas: v as QuickLayoutCanvasChoice })}
+          >
+            {QUICK_LAYOUT_CANVAS_CHOICES.map((c) => (
+              <MenuRadioItem key={c} value={c} data-quick-layout-canvas={c}>
+                {t(`quickLayout.canvas.${c}`)}
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+          <MenuSeparator />
+          <MenuLabel>{t('quickLayout.targetLabel')}</MenuLabel>
+          <div title={keeping ? t('quickLayout.widthLockedTip') : undefined} data-quick-layout-width-group>
+            <MenuRadioGroup
+              value={prefs.target}
+              onValueChange={(v) => update({ ...prefs, target: v as QuickLayoutTarget })}
+            >
+              {QUICK_LAYOUT_TARGETS.map((target) => (
+                <MenuRadioItem key={target} value={target} disabled={keeping} data-quick-layout-target={target}>
+                  {t(`quickLayout.target.${target}`)}
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+          </div>
           <MenuSeparator />
           <MenuLabel>{t('quickLayout.gapLabel')}</MenuLabel>
           <MenuRadioGroup

@@ -16,6 +16,8 @@ const req: QuickLayoutRequest = {
   profile: {},
   label_pt: 8,
   fix_spec: true,
+  columns: null,
+  canvas: 'fit',
 }
 const okBody = (extra: Record<string, unknown> = {}) => ({
   ok: true,
@@ -48,6 +50,37 @@ describe('quickLayoutPlan 形状核对', () => {
     serve(rest)
     await expect(quickLayoutPlan(req)).rejects.toMatchObject({ code: 'bad_shape' })
     serve(okBody({ spec_changes: 'font_size' }))
+    await expect(quickLayoutPlan(req)).rejects.toMatchObject({ code: 'bad_shape' })
+  })
+
+  it('grid：缺席 / null 都通过（缺席归一成 null）；自洽的网格通过', async () => {
+    serve(okBody())
+    const a = await quickLayoutPlan(req)
+    expect(a.ok && a.grid).toBeNull()
+    serve(okBody({ grid: null }))
+    expect((await quickLayoutPlan(req)) as { grid: unknown }).toMatchObject({ grid: null })
+    const grid = { rows: 1, cols: 2, cells: { a: [0, 0], b: [0, 1] }, col_ratios: [1, 1], row_ratios: [1] }
+    serve(okBody({ grid }))
+    expect((await quickLayoutPlan(req)) as { grid: unknown }).toMatchObject({ grid })
+  })
+
+  it('grid 形状不对（比例数与行列数不符 / 格子越界 / 非正权重）：整份当形状不对', async () => {
+    const bad = [
+      { rows: 1, cols: 2, cells: { a: [0, 0] }, col_ratios: [1], row_ratios: [1] },
+      { rows: 1, cols: 2, cells: { a: [0, 2] }, col_ratios: [1, 1], row_ratios: [1] },
+      { rows: 1, cols: 2, cells: { a: [0, 0] }, col_ratios: [1, 0], row_ratios: [1] },
+      { rows: 1, cols: 2, cells: 'x', col_ratios: [1, 1], row_ratios: [1] },
+    ]
+    for (const grid of bad) {
+      serve(okBody({ grid }))
+      await expect(quickLayoutPlan(req)).rejects.toMatchObject({ code: 'bad_shape' })
+    }
+  })
+
+  it('失败码 page_too_small 在闭集里；没见过的码不在', async () => {
+    serve({ ok: false, code: 'page_too_small' })
+    expect(await quickLayoutPlan(req)).toEqual({ ok: false, code: 'page_too_small' })
+    serve({ ok: false, code: 'nope' })
     await expect(quickLayoutPlan(req)).rejects.toMatchObject({ code: 'bad_shape' })
   })
 })

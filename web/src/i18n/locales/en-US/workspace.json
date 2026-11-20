@@ -500,7 +500,8 @@
     "transformRotate": "Rotate",
     "transformSkew": "Skew",
     "transformReflect": "Reflect",
-    "quickLayout": "Auto layout"
+    "quickLayout": "Auto layout",
+    "quickLayoutRatios": "Adjust layout proportions"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -1065,7 +1066,8 @@
       "legend_frame": "legend frame",
       "text_weight": "font weight",
       "other": "other styles"
-    }
+    },
+    "quickLayoutPageTooSmall": "The figures don't fit this canvas. Try fewer columns or a larger canvas."
   },
   "tabs": {
     "allCanvases": "All canvases",
@@ -2004,6 +2006,20 @@
     },
     "gapLabel": "Gap",
     "gap": "{{mm}} mm",
-    "fixSpec": "Also fix text and lines to the spec"
+    "fixSpec": "Also fix text and lines to the spec",
+    "columnsLabel": "Arrangement",
+    "columns": {
+      "auto": "By current position",
+      "1": "1 column",
+      "2": "2 columns",
+      "3": "3 columns"
+    },
+    "canvasLabel": "Canvas",
+    "canvas": {
+      "auto": "Auto",
+      "keep": "Keep canvas size",
+      "fit": "Fit to content"
+    },
+    "widthLockedTip": "Width follows the canvas when keeping its size"
   }
 }
