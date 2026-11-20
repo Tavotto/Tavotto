@@ -9,11 +9,17 @@
 
 from __future__ import annotations
 
+import logging
 import math
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Callable
 
 from . import license as engine_license, prohost, specfix
+
+LOG = logging.getLogger("tavotto.quicklayout")
 
 FEATURE = "quick-layout"
 MAX_ROUNDS = 3
@@ -407,6 +413,16 @@ def _spec_fix(p: Panel, profile: dict) -> None:
     p.specfix_ok = all_ok
 
 
+def _each(panels: list[Panel], fn: Callable[[Panel], object]) -> list:
+    """按图并行跑 `fn`（每张图有自己的 worker，互不共享热态）；任何一张抛异常就原样抛出。"""
+    if len(panels) <= 1:
+        return [fn(p) for p in panels]
+    with ThreadPoolExecutor(
+        max_workers=min(8, len(panels)), thread_name_prefix="quicklayout"
+    ) as ex:
+        return list(ex.map(fn, panels))
+
+
 def plan(
     panels: list[Panel],
     fixed: list[dict],
@@ -435,9 +451,30 @@ def plan(
     spec_changed: set[str] = set()
     ask = solver or (lambda payload: prohost.call("quick_layout.plan", payload, feature=FEATURE))
     refs = {f"p{i + 1}": p for i, p in enumerate(panels)}
+    # 计时：每个阶段的渲染次数与耗时（只写本地日志）
+    stats: dict[str, list[float]] = {}
+    stats_lock = threading.Lock()
+    phase_of: dict[int, str] = {}
     for p in panels:
+        raw = p.render
+
+        def timed(patches: list, raw=raw, key=id(p)) -> dict:
+            t = time.perf_counter()
+            try:
+                return raw(patches)
+            finally:
+                with stats_lock:
+                    stats.setdefault(phase_of.get(key, "?"), []).append(time.perf_counter() - t)
+
+        p.render = timed
+    t_all = time.perf_counter()
+
+    def first_render(p: Panel) -> None:
+        phase_of[id(p)] = "b0"
         p.patches = list(p.base)
         _render(p, p.patches)
+
+    _each(panels, first_render)
     labels: list[dict] = []
     bad: list[dict] = []
     for rnd in range(1, MAX_ROUNDS + 1):
@@ -452,25 +489,40 @@ def plan(
                 for i, f in enumerate(fixed)
             ],
         }
+        t_s = time.perf_counter()
         try:
             result = ask(payload)
         except prohost.ProUnavailable as exc:
             raise QuickLayoutError("unavailable", exc.code) from None
+        stats.setdefault(f"sidecar{rnd}", []).append(time.perf_counter() - t_s)
         out = _apply_ops(result.get("ops"), refs, page)
         labels = out["labels"] or labels
-        for p in panels:
+
+        def advance(p: Panel, rnd: int = rnd) -> set[str]:
+            changed: set[str] = set()
             if rnd == 1 and fix_spec:
+                phase_of[id(p)] = "spec"
                 before = {(x.get("gid"), x.get("prop")): x.get("value") for x in p.patches}
                 _spec_fix(p, profile)
                 for x in p.patches:
                     k = (x.get("gid"), x.get("prop"))
                     if k not in before or before[k] != x.get("value"):
-                        cat = SPEC_CATEGORY.get(str(x.get("prop")))
-                        spec_changed.add(cat or "other")
+                        changed.add(SPEC_CATEGORY.get(str(x.get("prop"))) or "other")
+            phase_of[id(p)] = f"round{rnd}"
             _render(p, p.patches)
+            return changed
+
+        # 各张图有各自的 worker：按图并行（ADR 0199 §二「提速」）
+        for changed in _each(panels, advance):
+            spec_changed |= changed
         bad = check(panels, tw, float(gap_mm), padding, labels, label_pt)
         if not bad:
             break
+    LOG.info(
+        "一键排版计时 总 %.2fs：%s",
+        time.perf_counter() - t_all,
+        "，".join(f"{k} {len(v)}次 {sum(v):.2f}s" for k, v in stats.items()),
+    )
     if bad:
         # 等比例轴的图本来就不计对齐（`check` 已排除），所以这里任何一条没过都是真没排好
         raise QuickLayoutError("not_converged", ",".join(sorted({b["metric"] for b in bad})))
