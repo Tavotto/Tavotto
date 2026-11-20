@@ -1,5 +1,5 @@
 import { createContext, useCallback, useRef, useState, type ReactNode } from 'react'
-import { Bold, Italic, RotateCcw } from '@/components/ui/icons'
+import { Bold, Italic, Link2 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
@@ -71,7 +71,7 @@ export function StyleRow({ id, children, follow }: { id: string; children: React
               onClick={follow}
               className="flex h-5 w-3.5 shrink-0 items-center justify-center rounded-sm text-ink-3 outline-none hover:text-ink focus-visible:focus-ring"
             >
-              <RotateCcw size={ICON_SIZE.xs} />
+              <Link2 size={ICON_SIZE.xs} />
             </button>
           </Tip>
         )}
