@@ -20,7 +20,13 @@ from contextlib import contextmanager
 from functools import lru_cache
 
 import matplotlib as mpl
-from matplotlib import cbook as mcbook, colors as mcolors, font_manager, text as mtext
+from matplotlib import (
+    cbook as mcbook,
+    collections as mcollections,
+    colors as mcolors,
+    font_manager,
+    text as mtext,
+)
 from matplotlib.axes import Axes
 from matplotlib.axis import Axis
 from matplotlib.collections import (
@@ -5597,6 +5603,26 @@ def _ensure_agg_canvas(fig):
     return fig.canvas.get_renderer()
 
 
+def _refresh_hidden_marker_sizes(state: FigState) -> None:
+    """没被这次 draw 画到的散点 / 标记集合，把标记大小按**当前文档 dpi** 重算一遍。
+
+    `PathCollection.draw` 每次开头 `set_sizes(self._sizes, self.figure.dpi)`，把「点」换算成像素的
+    结果冻在 `_transforms` 里。集合自己隐藏、或住在隐藏的 axes 里时 draw 被跳过，`_transforms`
+    于是停在上一次画它那回的 dpi（预览是 380 px 那一档）——热会话里「先出过预览、再隐藏 axes」
+    与冷启动重放量出两套标记轮廓（像素相同，因为本来就不画）。与隐藏图例现排（#413）同一族。"""
+    for el in state.elements:
+        art = el["artist"]
+        if not isinstance(art, mcollections._CollectionWithSizes):  # noqa: SLF001
+            continue
+        ax = getattr(art, "axes", None)
+        if art.get_visible() and (ax is None or ax.get_visible()):
+            continue
+        try:
+            art.set_sizes(art.get_sizes(), art.figure.dpi)
+        except Exception:  # noqa: BLE001 — 补算失败只是标记轮廓偏旧，不拦渲染
+            pass
+
+
 def _refresh_hidden_3d_projections(state: FigState) -> None:
     """隐藏的 3D 数据图元，几何按**此刻的视角**重投影（ADR 0135）。
 
@@ -5890,6 +5916,7 @@ def prepare_preview(state: FigState, *, timings: dict | None = None) -> None:
             arm(renderer)
             _layout_legends_for_measure(state, fig)
             _refresh_hidden_3d_projections(state)
+            _refresh_hidden_marker_sizes(state)
             sync_tick_elements(state)
             if timings is not None:
                 timings["manifest_layout_ms"] = round((measured - start) * 1000, 3)
@@ -5984,6 +6011,7 @@ def _measure_manifest(
     _layout_legends_for_measure(state, fig, vector_metrics)
     # 没被这次 draw 投影到的 3D 数据图元（隐藏的、或住在隐藏的 3D 轴里）按**当前**视角补投影
     _refresh_hidden_3d_projections(state)
+    _refresh_hidden_marker_sizes(state)
     # 刻度伪元素按**当前**刻度状态对齐（必须在 draw 之后：标签的文字是 draw
     # 那一刻由 Formatter 填进去的）
     sync_tick_elements(state)
