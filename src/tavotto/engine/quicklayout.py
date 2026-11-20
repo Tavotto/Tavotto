@@ -420,11 +420,11 @@ def _spec_fix(p: Panel, profile: dict) -> None:
 
 
 def _clean_ratios(ratios: object) -> dict:
-    """用户拖分隔线得到的行 / 列比例：正的有限数、每维最多 MAX_COLUMNS 个；不合规的那一维丢掉（= 等分 / 自然高度）。"""
+    """用户拖分隔线得到的列份额 / 行份额 / 行高（`rows_mm`，图框 mm）：正的有限数；不合规的那一维丢掉（= 等分 / 自然高度）。"""
     out: dict = {}
     if not isinstance(ratios, dict):
         return out
-    for k in ("cols", "rows"):
+    for k in ("cols", "rows", "rows_mm"):
         v = ratios.get(k)
         if (
             isinstance(v, list)
