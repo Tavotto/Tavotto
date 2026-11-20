@@ -26,6 +26,7 @@ WIDTH_TOL_MM = 0.1
 ELEMENT_ROLES = frozenset({"axes", "colorbar"})
 TARGETS = ("single", "double", "page")
 OPS = frozenset({"panel.place", "figure.size", "axes.position", "label.place"})
+MAX_PAGE_MM = 2000.0
 
 
 class QuickLayoutError(Exception):
@@ -165,7 +166,8 @@ def _apply_ops(ops: object, refs: dict[str, Panel], page: dict) -> dict[str, lis
         raise QuickLayoutError("invalid_plan", "ops not a list")
     labels: list[dict] = []
     staged: dict[str, dict] = {ref: {"box": None, "size": None, "pos": {}} for ref in refs}
-    pw, ph = float(page["w"]), float(page["h"])
+    # 页面随内容收紧（ADR 0199 §五），这里只防荒谬值
+    pw = ph = MAX_PAGE_MM
     for op in ops:
         if not isinstance(op, dict) or op.get("op") not in OPS:
             raise QuickLayoutError("invalid_plan", "unknown op")
@@ -424,8 +426,16 @@ def plan(
     # 免费的「按期刊修正」自己判了不改（比如字号提上去图例会压住数据）：照实说，不绕过它的判断
     notes += [{"code": "spec_not_fixed", "ref": p.key} for p in panels if p.specfix_ok is False]
     by_ref = {ref: p.key for ref, p in refs.items()}
+    # 一键排版的结果就是最终那张图：页面收紧到「内容外框 + 页边距」（含原地不动的固定盒子）
+    margin = float(page.get("margin") or 0.0)
+    boxes = [p.box for p in panels] + [list(f["box"]) for f in fixed]
+    page_out = {
+        "w": round(max(b[0] + b[2] for b in boxes) + margin, 3),
+        "h": round(max(b[1] + b[3] for b in boxes) + margin, 3),
+    }
     return {
         "ok": True,
+        "page": page_out,
         "panels": [
             {"key": p.key, "patches": p.patches, "box": [round(v, 3) for v in p.box]}
             for p in panels

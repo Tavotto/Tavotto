@@ -1053,7 +1053,7 @@
     "quickLayoutStale": "The figures just changed. Run Auto layout again.",
     "quickLayoutFailed": "Couldn't lay these out. Try again.",
     "quickLayoutNoteEqualAspect": "Figure {{label}} has equal-aspect axes, so its axes weren't aligned",
-    "quickLayoutNoteSpecNotFixed": "Figure {{label}}'s font sizes couldn't reach the spec without covering data"
+    "quickLayoutNoteSpecNotFixed": "Some font sizes in figure {{label}} are still below the spec — see Issues"
   },
   "tabs": {
     "allCanvases": "All canvases",

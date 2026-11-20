@@ -82,6 +82,7 @@ const okPlan = (): QuickLayoutResponse => ({
     { key: 'p2', x: 99, y: 11 },
   ],
   notes: [],
+  page: { w: 193, h: 80 },
   replay_required: false,
 })
 
@@ -101,20 +102,21 @@ beforeEach(async () => {
 })
 
 describe('收集', () => {
-  it('没选中 = 当前画布全部面板；有精确 manifest 的进 panels，位图 / 旋转 / 翻转 / 没 manifest 的进 fixed', async () => {
+  it('没选中 = 当前画布全部面板；有图内编辑入口（script）的进 panels，位图 / 旋转 / 翻转 / 没脚本的进 fixed', async () => {
     seed(
       panel('p1'),
       panel('p2'),
       panel('p3', { fileKind: 'raster' }),
       panel('p4', { rotation: 90 }),
       panel('p5', { flipH: true }),
+      panel('p6', { script: undefined }),
     )
     exact.add('p3') // 位图即使有 manifest 也只当固定盒子
     quickLayoutPlan.mockResolvedValue({ ok: false, code: 'not_converged' })
     await runQuickLayout('double', 3)
     const body = lastRequest()
     expect(body.panels.map((p: { key: string }) => p.key)).toEqual(['p1', 'p2'])
-    expect(body.fixed.map((p: { key: string }) => p.key).sort()).toEqual(['p3', 'p4', 'p5'])
+    expect(body.fixed.map((p: { key: string }) => p.key).sort()).toEqual(['p3', 'p4', 'p5', 'p6'])
     expect(body.panels[0]).toMatchObject({
       key: 'p1',
       id: 'f_p1',
@@ -162,11 +164,30 @@ describe('应用', () => {
     expect(labels.map((l) => l.text)).toEqual(['(a)', '(b)'])
     expect(labels.map((l) => [l.x, l.y])).toEqual([[11, 11], [99, 11]])
     expect(labels.every((l) => l.bold && l.w === 10 && l.h === 5)).toBe(true)
+    // 页面跟着内容收紧，在同一条历史里
+    expect([s().doc.page.w, s().doc.page.h]).toEqual([193, 80])
     // 每张返回的图都重渲染
     expect(requestRender.mock.calls.map((c) => (c[0] as PanelObject).id).sort()).toEqual(['p1', 'p2'])
     expect(takeCheckpoint).toHaveBeenCalledTimes(1)
     expect(statusText()).toBe('已排好')
     expect(useUiStore.getState().statusAction).toBeTruthy()
+  })
+
+  it('再点一次不叠标签：参与排版的图原来范围里的旧子图标签换成新的，远处的文字不动', async () => {
+    seed(panel('p1'), panel('p2', { x: 100 }))
+    s().commit(literal('旧标签'), (d) => {
+      d.objects.push(makeSubLabel(0, 11.5, 11), makeSubLabel(1, 101.5, 11))
+      d.objects.push({ ...makeSubLabel(2, 300, 300) }, { ...makeSubLabel(0, 12, 40), text: 'note' })
+    })
+    quickLayoutPlan.mockResolvedValue(okPlan())
+    expect(await runQuickLayout('double', 3)).toBe('applied')
+    const all = texts().map((l) => [l.text, l.x, l.y])
+    expect(all).toEqual([
+      ['(c)', 300, 300],
+      ['note', 12, 40],
+      ['(a)', 11, 11],
+      ['(b)', 99, 11],
+    ])
   })
 
   it('图幅变了：页面上的框按「渲染回来会再乘一遍」的比例预除，渲染后正好是 box', async () => {
@@ -189,7 +210,7 @@ describe('应用', () => {
     })
     await runQuickLayout('double', 3)
     const sub = formatMessage(useUiStore.getState().statusSubline)
-    expect(sub).toBe('图 b 是等比例坐标，没参与轴线对齐；图 a 的字号没能修到规范（修了会压住数据）')
+    expect(sub).toBe('图 b 是等比例坐标，没参与轴线对齐；图 a 还有几处字号没修到规范，可在「问题」里看')
   })
 
   it('点「撤销」一步撤回整次排版', async () => {

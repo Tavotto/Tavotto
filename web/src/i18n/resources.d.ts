@@ -8252,7 +8252,7 @@ export default interface Resources {
       "quickLayoutDone": "已排好",
       "quickLayoutFailed": "这次没排好，再试一次",
       "quickLayoutNoteEqualAspect": "图 {{label}} 是等比例坐标，没参与轴线对齐",
-      "quickLayoutNoteSpecNotFixed": "图 {{label}} 的字号没能修到规范（修了会压住数据）",
+      "quickLayoutNoteSpecNotFixed": "图 {{label}} 还有几处字号没修到规范，可在「问题」里看",
       "quickLayoutStale": "图刚刚变了，再点一次一键排版",
       "quickLayoutTooFew": "至少要两张图",
       "quickLayoutUndo": "撤销",

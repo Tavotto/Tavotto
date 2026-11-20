@@ -3448,6 +3448,8 @@ export type QuickLayoutResponse =
       panels: { key: string; patches: { gid: string; prop: string; value: unknown }[]; box: [number, number, number, number] }[]
       labels: { key: string; x: number; y: number }[]
       notes: { code: QuickLayoutNoteCode; ref: string }[]
+      /** 页面收紧到「内容外框 + 页边距」：一键排版的结果就是最终那张图（ADR 0199 §五） */
+      page: { w: number; h: number }
       replay_required: boolean
     }
   | { ok: false; code: QuickLayoutFailureCode; replay_required?: boolean }
@@ -3484,6 +3486,9 @@ function isQuickLayoutResponse(body: Record<string, unknown>): boolean {
     body.labels.every(
       (l) => isRec(l) && isStr(l.key) && typeof l.x === 'number' && Number.isFinite(l.x) && typeof l.y === 'number' && Number.isFinite(l.y),
     ) &&
+    isRec(body.page) &&
+    typeof body.page.w === 'number' && Number.isFinite(body.page.w) && body.page.w > 0 &&
+    typeof body.page.h === 'number' && Number.isFinite(body.page.h) && body.page.h > 0 &&
     Array.isArray(body.notes) &&
     body.notes.every((n) => isRec(n) && isStr(n.code) && QUICK_LAYOUT_NOTES.has(n.code) && isStr(n.ref))
   )
