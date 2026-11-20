@@ -1676,6 +1676,72 @@ def test_a_replace_that_never_succeeds_still_fails_loudly(tmp_path, monkeypatch)
         renderhost.shutdown_shared()
 
 
+# ---------------- 会话记录正被恢复列表读着 ----------------
+
+
+@pytest.mark.parametrize("release_reader", [True, False], ids=["released", "still-open"])
+@pytest.mark.parametrize(
+    "native",
+    [
+        False,
+        pytest.param(
+            True, marks=pytest.mark.skipif(os.name != "nt", reason="Windows file sharing")
+        ),
+    ],
+    ids=["simulated", "native"],
+)
+def test_session_save_with_open_reader(client, tmp_path, monkeypatch, native, release_reader):
+    from tavotto.engine import layoutsession
+
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(m, "AUTOSAVE_DIR", tmp_path / "layouts" / "_autosave")
+    route = "/api/layout-session/last"
+    assert client.put(route, json={"doc_id": "d_old", "name": "old"}).status_code == 200
+    state = layoutsession.state_path()
+    before = state.read_bytes()
+    backup_before = layoutsession.backup_path().read_bytes()
+    real_replace = os.replace
+    denied = []
+
+    with state.open("rb") as reader:
+
+        def replace(src, dst):
+            if Path(dst) != state:
+                return real_replace(src, dst)
+            try:
+                if not native and not reader.closed:
+                    exc = PermissionError(errno.EACCES, "open reader denies replacement")
+                    exc.winerror = 32
+                    raise exc
+                return real_replace(src, dst)
+            except PermissionError as exc:
+                assert exc.winerror in (5, 32, 33)
+                assert state.read_bytes() == before
+                denied.append(src)
+                if release_reader:
+                    reader.close()
+                raise
+
+        monkeypatch.setattr(os, "replace", replace)
+        response = client.put(route, json={"doc_id": "d_new", "name": "new"})
+
+    assert denied, "replacement must meet the held read handle"
+    view = client.get("/api/layout-session").get_json()
+    if release_reader:
+        assert response.status_code == 200, response.get_json()
+        assert len(denied) == 1
+        assert view["pending"]["doc_id"] == "d_new"
+        assert layoutsession.backup_path().read_bytes() == state.read_bytes()
+    else:
+        assert response.status_code == 503, response.get_json()
+        assert response.get_json()["code"] == "session_unavailable"
+        assert len(denied) > 1
+        assert view["pending"]["doc_id"] == "d_old"
+        assert state.read_bytes() == before
+        assert layoutsession.backup_path().read_bytes() == backup_before
+    assert not list(state.parent.glob("*.tmp"))
+
+
 # ---------------- 项目切换时 config.json 正被普通读句柄占着 ----------------
 
 

@@ -236,6 +236,8 @@ order: 200
     可能完整的文件，就是把一次读故障变成永久丢数据；字节坏的那种原字节已备份，写入放行。degraded 时槽位清理一个都不删
     （不知道谁受保护就当都受保护）。备份都在 `state/`，不在 `_autosave/`。只读路径（`read_status` / `read_readonly`，
     候选发现与 `/owner` 用）**不写任何东西、不拿锁**（主文件只被整份原子替换，读到的永远是完整的一份）。
+    Windows 上普通读句柄可短时挡住替换。会话账本写入在原会话锁内对共享冲突有限重试；
+    一直占用时保留旧账本并返回既有失败。回归见 `tests/test_windows_regressions.py::test_session_save_with_open_reader`。
   - **`last` 只指向可恢复的正文**（R3）。每组三个指针：`last`（durable）、`prev`（上一份 durable，容量 1）、
     `pending`（最新的打开意图但槽位还没有有效正文，容量 1，**不替换** durable last）。`PUT /api/layout-session/last`
     在槽位的 `_document_lock` 里验「槽位文件在、能读、过 `loads_document` + `validate_document`」（`_slot_recoverable`）再调
