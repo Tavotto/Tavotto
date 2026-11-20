@@ -36,6 +36,7 @@ vi.mock('@/store/renderStore', async (importOriginal) => {
 
 import { addSubLabels, makeSubLabel } from './actions'
 import { useDocumentStore } from './documentStore'
+import { useRenderStore } from './renderStore'
 import { runUndoRedo } from '@/hooks/useKeyboard' // 加载它 = 把「撤销」交给一键排版的胶囊
 import { runQuickLayout, useQuickLayoutStore } from './quickLayoutActions'
 import { currentSpec } from './issueFixActions'
@@ -173,6 +174,20 @@ describe('应用', () => {
     expect(takeCheckpoint).toHaveBeenCalledTimes(1)
     expect(statusText()).toBe('已排好')
     expect(useUiStore.getState().statusAction).toBeTruthy()
+  })
+
+  it('刚放上、还没出过图的图：先等它出第一张图（画布样式随之落上）再发请求', async () => {
+    seed(panel('p1'), panel('p2'))
+    exact.delete('p2')
+    quickLayoutPlan.mockResolvedValue(okPlan())
+    const run = runQuickLayout('double', 3)
+    await Promise.resolve()
+    expect(requestRender.mock.calls.map((c) => (c[0] as PanelObject).id)).toEqual(['p2'])
+    expect(quickLayoutPlan).not.toHaveBeenCalled()
+    exact.add('p2')
+    useRenderStore.setState({ byKey: { ...useRenderStore.getState().byKey } })
+    expect(await run).toBe('applied')
+    expect(quickLayoutPlan).toHaveBeenCalledTimes(1)
   })
 
   it('再点一次不叠标签：参与排版的图原来范围里的旧子图标签换成新的，远处的文字不动', async () => {
