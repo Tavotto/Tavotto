@@ -764,7 +764,8 @@ describe('Codex #547 第二轮评审：库写入一条队列 + 代次', () => {
     const c1 = project.canvases[0]
     c1.objects = [panel('a', 'FigA')]
     const c2 = { ...structuredClone(c1), id: 'c2', name: '第二张', objects: [panel('b', 'FigB')] }
-    c2.style = { id: 's1', snapshot: structuredClone(USER.data) }
+    // 这条 override 是样式之前写的（登记在 owned 里）；没登记的算用户手改的，改样式不覆盖（ADR 0081 §十四）
+    c2.style = { id: 's1', snapshot: structuredClone(USER.data), owned: { 'b@FigB': { 'axes_0.xlabel': { fontsize: { value: 10 } } } } }
     ;(c2.objects[0] as PanelObject).overrides = [{ gid: 'axes_0.xlabel', prop: 'fontsize', value: 10 }]
     project.canvases.push(c2)
     await s().switchDocument(project, 'd_two')
@@ -1956,7 +1957,8 @@ describe('撤销只退画布、不推回样式库（ADR 0081 §十二，用户 2
     const c1 = project.canvases[0]
     c1.objects = [panel('a', 'FigA')]
     const c2 = { ...structuredClone(c1), id: 'c2', name: '第二张', objects: [panel('b', 'FigB')] }
-    c2.style = { id: 's1', snapshot: structuredClone(USER.data) }
+    // 这条 override 是样式之前写的（登记在 owned 里）；没登记的算用户手改的，改样式不覆盖（ADR 0081 §十四）
+    c2.style = { id: 's1', snapshot: structuredClone(USER.data), owned: { 'b@FigB': { 'axes_0.xlabel': { fontsize: { value: 10 } } } } }
     ;(c2.objects[0] as PanelObject).overrides = [{ gid: 'axes_0.xlabel', prop: 'fontsize', value: 10 }]
     project.canvases.push(c2)
     await s().switchDocument(project, 'd_two')
