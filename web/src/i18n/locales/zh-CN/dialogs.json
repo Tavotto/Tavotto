@@ -712,7 +712,8 @@
       "reflect-vertical": {
         "keywords": "reflect mirror flip vertical czjx 垂直镜像 翻转",
         "label": "垂直镜像"
-      }
+      },
+      "quick-layout": {}
     },
     "listLabel": "命令",
     "needPanel": "先选中可编辑的图",

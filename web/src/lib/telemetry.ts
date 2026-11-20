@@ -88,6 +88,7 @@ const EDIT_KIND_BY_LABEL: Record<string, EditKind> = {
   clearGuides: 'annotation',
   // 版面
   addPanel: 'layout',
+  quickLayout: 'layout',
   moveObject: 'layout',
   moveObjects: 'layout',
   moveElement: 'layout',

@@ -724,7 +724,8 @@
       "reflect-vertical": {
         "keywords": "reflect mirror flip vertical",
         "label": "Reflect vertically"
-      }
+      },
+      "quick-layout": {}
     },
     "listLabel": "Commands",
     "needPanel": "Select an editable figure first",

@@ -3419,6 +3419,105 @@ export async function engineSpecfix(
   return body as unknown as SpecFixResponse
 }
 
+/** 一键排版（ADR 0199）的请求体；字段形状与 `app.api_pro_quick_layout_plan` 一一对应 */
+export interface QuickLayoutRequest {
+  /** `key` = 画布上的面板对象 id；`id` = `panel.fileId`（与 engineSpecfix 同一个 id）；`patches` = 此刻的全量覆盖列表（B0） */
+  panels: { key: string; id: string; patches: unknown[]; box: [number, number, number, number] }[]
+  /** 不能改图幅的面板（非图、旋转 / 翻转、位图）：只当障碍物 / 固定盒子 */
+  fixed: { key: string; box: [number, number, number, number] }[]
+  page: { w: number; h: number; margin: number }
+  target: 'single' | 'double' | 'page'
+  gap_mm: number
+  profile: unknown
+  label_pt: number
+}
+
+export type QuickLayoutFailureCode =
+  | 'not_licensed'
+  | 'unavailable'
+  | 'too_few'
+  | 'invalid_plan'
+  | 'not_converged'
+  | 'render_failed'
+
+export type QuickLayoutNoteCode = 'equal_aspect' | 'spec_not_fixed'
+
+export type QuickLayoutResponse =
+  | {
+      ok: true
+      panels: { key: string; patches: { gid: string; prop: string; value: unknown }[]; box: [number, number, number, number] }[]
+      labels: { key: string; x: number; y: number }[]
+      notes: { code: QuickLayoutNoteCode; ref: string }[]
+      replay_required: boolean
+    }
+  | { ok: false; code: QuickLayoutFailureCode; replay_required?: boolean }
+
+const isBox = (v: unknown): v is [number, number, number, number] =>
+  Array.isArray(v) && v.length === 4 && v.every((n) => typeof n === 'number' && Number.isFinite(n))
+
+const QUICK_LAYOUT_FAILURES: ReadonlySet<string> = new Set([
+  'not_licensed',
+  'unavailable',
+  'too_few',
+  'invalid_plan',
+  'not_converged',
+  'render_failed',
+])
+const QUICK_LAYOUT_NOTES: ReadonlySet<string> = new Set(['equal_aspect', 'spec_not_fixed'])
+
+/** 成功体 / 失败体的形状核对：形状不对 = 没拿到，不是「排好了」 */
+function isQuickLayoutResponse(body: Record<string, unknown>): boolean {
+  if (body.replay_required !== undefined && typeof body.replay_required !== 'boolean') return false
+  if (body.ok === false) return isStr(body.code) && QUICK_LAYOUT_FAILURES.has(body.code)
+  return (
+    body.ok === true &&
+    Array.isArray(body.panels) &&
+    body.panels.every(
+      (p) =>
+        isRec(p) &&
+        isStr(p.key) &&
+        isBox(p.box) &&
+        Array.isArray(p.patches) &&
+        p.patches.every((x) => isRec(x) && isStr(x.gid) && isStr(x.prop) && 'value' in x),
+    ) &&
+    Array.isArray(body.labels) &&
+    body.labels.every(
+      (l) => isRec(l) && isStr(l.key) && typeof l.x === 'number' && Number.isFinite(l.x) && typeof l.y === 'number' && Number.isFinite(l.y),
+    ) &&
+    Array.isArray(body.notes) &&
+    body.notes.every((n) => isRec(n) && isStr(n.code) && QUICK_LAYOUT_NOTES.has(n.code) && isStr(n.ref))
+  )
+}
+
+/**
+ * 一键排版的方案（ADR 0199）：**只算不写**，回每张图最终的全量覆盖、新摆放与标签位置，由前端一次 commit。
+ * 失败体（`ok: false`）是正常返回；传输 / 形状不对才抛（调用方当「不知道」处理并重放）。
+ */
+export async function quickLayoutPlan(body: QuickLayoutRequest): Promise<QuickLayoutResponse> {
+  const res = await fetch(apiUrl('/api/pro/quick-layout/plan'), withProject({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+  const out = await res.json().catch(() => ({}) as Record<string, unknown>)
+  if (!res.ok) {
+    noteProjectGone(res.status, out)
+    throw new EngineError(
+      (out.error as string) || t('render.failed', { ns: 'errors', status: res.status }),
+      (out.traceback as string) || '',
+      (out.code as string) || '',
+      (out.module as string) || '',
+      undefined,
+      undefined,
+      { params: out.params as Record<string, unknown> | undefined },
+    )
+  }
+  if (!isQuickLayoutResponse(out)) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: res.status }), '', 'bad_shape', '')
+  }
+  return out as unknown as QuickLayoutResponse
+}
+
 /**
  * 作废这张图的热会话（QuickEdit「重新构建」）：下一次 `engineRender` 从头跑
  * 脚本。后端只让会话过期——不起 worker、不动源脚本、不写回、不清 override。

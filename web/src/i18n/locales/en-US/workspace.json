@@ -142,7 +142,8 @@
     "label": "Canvas tools",
     "pen": "Pen",
     "select": "Select",
-    "subLabels": "Labels"
+    "subLabels": "Labels",
+    "quickLayout": "Auto layout"
   },
   "confirm": {
     "docLossBody": "Browser storage is unavailable or full, so you won’t be able to get this layout back from “Recent layouts on this computer” after switching. Continue anyway?",
@@ -498,7 +499,8 @@
     "transformScale": "Scale",
     "transformRotate": "Rotate",
     "transformSkew": "Skew",
-    "transformReflect": "Reflect"
+    "transformReflect": "Reflect",
+    "quickLayout": "Auto layout"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -1044,7 +1046,14 @@
     "skewSkipped_other": "{{count}} texts or figures were not skewed",
     "rotatePanelUnsupported": "Figures rotate in 90° steps only",
     "rotatePanelSkipped_one": "{{count}} figure was not rotated (figures rotate in 90° steps only)",
-    "rotatePanelSkipped_other": "{{count}} figures were not rotated (figures rotate in 90° steps only)"
+    "rotatePanelSkipped_other": "{{count}} figures were not rotated (figures rotate in 90° steps only)",
+    "quickLayoutDone": "Laid out",
+    "quickLayoutUndo": "Undo",
+    "quickLayoutTooFew": "Need at least two figures",
+    "quickLayoutStale": "The figures just changed. Run Auto layout again.",
+    "quickLayoutFailed": "Couldn't lay these out. Try again.",
+    "quickLayoutNoteEqualAspect": "Figure {{label}} has equal-aspect axes, so its axes weren't aligned",
+    "quickLayoutNoteSpecNotFixed": "Figure {{label}}'s font sizes couldn't reach the spec without covering data"
   },
   "tabs": {
     "allCanvases": "All canvases",
@@ -1144,7 +1153,10 @@
     "documentRenameHint": "Click for layout actions; double-click or F2 to rename",
     "zoomValueInput": "Zoom (%)",
     "zoomSelection": "Zoom to selection",
-    "journalTitle": "Checked against {{journal}} · open journal spec"
+    "journalTitle": "Checked against {{journal}} · open journal spec",
+    "quickLayout": "Auto layout",
+    "quickLayoutTip": "Arrange these figures, their sizes and labels in one go",
+    "quickLayoutOptions": "Auto layout options"
   },
   "tutorialChip": {
     "label": "Tutorial"
@@ -1970,5 +1982,15 @@
     "label": "Editing group",
     "exit": "Exit group editing",
     "exitTip": "Press Esc to go up one level"
+  },
+  "quickLayout": {
+    "targetLabel": "Width",
+    "target": {
+      "double": "Double column",
+      "page": "Full page",
+      "single": "Single column"
+    },
+    "gapLabel": "Gap",
+    "gap": "{{mm}} mm"
   }
 }

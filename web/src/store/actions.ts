@@ -355,6 +355,30 @@ export function addShape(shape: ShapeObject['shape'], partial: Partial<ShapeObje
   return obj
 }
 
+/**
+ * 一个子图标签（小写字母 + 括号，加粗，字号 / 颜色 / 对齐取画布文字默认值，10 × 5 mm）。
+ * `addSubLabels` 与一键排版（ADR 0199 §二，`quickLayoutActions`）共用这一处，两条路出来的标签长得一样；
+ * 位置由调用方给（`addSubLabels` 自己加 x+1.5、y+1 的偏移）。**免费能力的模块，不放任何权益判断。**
+ */
+export function makeSubLabel(index: number, x: number, y: number): TextObject {
+  const def = canvasTextDefaults()
+  return {
+    id: newId('t'),
+    type: 'text',
+    text: `(${String.fromCharCode(97 + index)})`,
+    x,
+    y,
+    w: 10,
+    h: 5,
+    sizePt: def.sizePt,
+    color: def.color,
+    align: def.halign,
+    // 子图序号约定是加粗的——这是这一个入口自己的取舍，
+    // 不是另一套默认值，所以它叠在共用默认值**之上**
+    bold: true,
+  }
+}
+
 /** 按阅读顺序给所有面板添加 (a)(b)(c) 标签 */
 export function addSubLabels() {
   const panels = readingOrder(doc().objects.filter((o) => o.type === 'panel'))
@@ -365,22 +389,7 @@ export function addSubLabels() {
   const created: string[] = []
   commit(hist('addSubLabels'), (d) => {
     panels.forEach((p, i) => {
-      const def = canvasTextDefaults()
-      const label: TextObject = {
-        id: newId('t'),
-        type: 'text',
-        text: `(${String.fromCharCode(97 + i)})`,
-        x: p.x + 1.5,
-        y: p.y + 1,
-        w: 10,
-        h: 5,
-        sizePt: def.sizePt,
-        color: def.color,
-        align: def.halign,
-        // 子图序号约定是加粗的——这是这一个入口自己的取舍，
-        // 不是另一套默认值，所以它叠在共用默认值**之上**
-        bold: true,
-      }
+      const label = makeSubLabel(i, p.x + 1.5, p.y + 1)
       created.push(label.id)
       d.objects.push(label)
     })
