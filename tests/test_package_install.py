@@ -318,6 +318,24 @@ def test_install_publishes_once_and_keeps_the_document(tmp_path, prepared):
     assert "remap_fingerprint" not in result
 
 
+def test_install_from_a_data_directory_with_a_parent_alias(
+    tmp_path, package_path, budget, monkeypatch
+):
+    alias = tmp_path / "data-link"
+    try:
+        alias.symlink_to(tmp_path / "data", target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink unavailable: {exc}")
+    # macOS commonly exposes its temp directory through /var -> /private/var.
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(alias / "recipient"))
+    destination = tmp_path / "新项目"
+    with packages.inspect_chart_package(package_path.read_bytes(), budget=budget) as ready:
+        result = _install(ready, destination)
+
+    assert result["state"] == "resources_installed"
+    assert (destination / config.PROJECT_STORE_DIRNAME).is_dir()
+
+
 def test_publication_error_after_the_rename_is_reported_as_unconfirmed(
     tmp_path, prepared, monkeypatch
 ):

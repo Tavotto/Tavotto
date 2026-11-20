@@ -258,7 +258,11 @@ def inspect_chart_package(
     prepared = None
     data_root = config.data_dir()
     data_root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="chart-package-", dir=data_root) as temporary:
+    # Resolve the configured scratch root before allocating the owned stage.
+    # Its resource paths must pass the same no-alias check as declared inputs.
+    with tempfile.TemporaryDirectory(
+        prefix="chart-package-", dir=data_root.resolve(strict=True)
+    ) as temporary:
         stage = Path(temporary)
         storage_root = stage / "storage"
         storage_root.mkdir()
