@@ -9549,7 +9549,7 @@ def api_engine_specfix():
 def api_pro_quick_layout_plan():
     """一键排版（ADR 0199，高级功能 `quick-layout`）。**只算不写**，照 `/api/engine/specfix`：
 
-    请求：`{panels: [{key, id, patches, box}], fixed: [{key, box}], page: {w, h, margin}, target, gap_mm, profile, label_pt, fix_spec, columns?, canvas: keep|fit}`。
+    请求：`{panels: [{key, id, patches, box}], fixed: [{key, box}], page: {w, h, margin}, target, gap_mm, profile, label_pt, fix_spec, columns?, canvas: keep|fit, ratios?: {cols, rows}}`。成功时另回 `grid`（行列、每张图的格子、比例），前端画分隔线用。
     `patches` 是每张图此刻的全量 override 列表（B0），`box` 是画布上的摆放（mm）。
     成功回 `{ok: true, panels: [{key, patches, box}], labels: [{key, x, y}], notes}`，由前端一次 commit；
     失败回 `{ok: false, code}`，每张图的 worker 回到 B0（或作废），**文档一个字不改**。
@@ -9660,6 +9660,7 @@ def api_pro_quick_layout_plan():
             if isinstance(body.get("columns"), int) and not isinstance(body.get("columns"), bool)
             else None,
             canvas=str(body.get("canvas") or "fit"),
+            ratios=body.get("ratios") if isinstance(body.get("ratios"), dict) else None,
         )
         for st in states:
             _require_route_unchanged(st["id"])

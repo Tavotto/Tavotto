@@ -419,6 +419,38 @@ def _spec_fix(p: Panel, profile: dict) -> None:
     p.specfix_ok = all_ok
 
 
+def _clean_ratios(ratios: object) -> dict:
+    """用户拖分隔线得到的行 / 列比例：正的有限数、每维最多 MAX_COLUMNS 个；不合规的那一维丢掉（= 等分 / 自然高度）。"""
+    out: dict = {}
+    if not isinstance(ratios, dict):
+        return out
+    for k in ("cols", "rows"):
+        v = ratios.get(k)
+        if (
+            isinstance(v, list)
+            and 1 <= len(v) <= MAX_COLUMNS * 4
+            and all(_finite(x) and x > 0 for x in v)
+        ):
+            out[k] = [float(x) for x in v]
+    return out
+
+
+def _grid_out(grid: dict | None, by_ref: dict[str, str]) -> dict | None:
+    """求解器回的网格（行列数、每张图在哪格、比例），短号换回画布对象 id；形状不对就不回（前端不画分隔线）。"""
+    if not grid:
+        return None
+    try:
+        rows, cols = int(grid["rows"]), int(grid["cols"])
+        cells = {by_ref[ref]: [int(rc[0]), int(rc[1])] for ref, rc in grid["cells"].items()}
+        col_r = [float(x) for x in grid["col_ratios"]]
+        row_r = [float(x) for x in grid["row_ratios"]]
+    except (KeyError, TypeError, ValueError):
+        return None
+    if len(col_r) != cols or len(row_r) != rows:
+        return None
+    return {"rows": rows, "cols": cols, "cells": cells, "col_ratios": col_r, "row_ratios": row_r}
+
+
 def _each(panels: list[Panel], fn: Callable[[Panel], object]) -> list:
     """按图并行跑 `fn`（每张图有自己的 worker，互不共享热态）；任何一张抛异常就原样抛出。"""
     if len(panels) <= 1:
@@ -441,6 +473,7 @@ def plan(
     fix_spec: bool = True,
     columns: int | None = None,
     canvas: str = "fit",
+    ratios: dict | None = None,
     solver: Callable[[dict], dict] | None = None,
 ) -> dict:
     """一键排版事务本体。成功返回 `{ok: True, panels: [{key, patches, box}], labels: [...], notes: [...]}`；
@@ -494,7 +527,7 @@ def plan(
             "page": {k: float(page[k]) for k in ("w", "h", "margin") if k in page},
             "target": {"width_mm": tw, "gap_mm": float(gap_mm), "padding_mm": padding},
             "label": {"pt": float(label_pt)},
-            "arrange": {"columns": columns, "canvas": canvas},
+            "arrange": {"columns": columns, "canvas": canvas, "ratios": _clean_ratios(ratios)},
             "panels": [_panel_input(ref, p) for ref, p in refs.items()],
             "fixed": [
                 {"ref": f"f{i + 1}", "box": [float(v) for v in f["box"]]}
@@ -509,6 +542,7 @@ def plan(
         stats.setdefault(f"sidecar{rnd}", []).append(time.perf_counter() - t_s)
         if result.get("error") == "page_too_small":
             raise QuickLayoutError("page_too_small")
+        grid = result.get("grid") if isinstance(result.get("grid"), dict) else None
         out = _apply_ops(result.get("ops"), refs, page)
         labels = out["labels"] or labels
 
@@ -569,6 +603,7 @@ def plan(
         ],
         "labels": [{"key": by_ref[lab["ref"]], "x": lab["x"], "y": lab["y"]} for lab in labels],
         "notes": notes,
+        "grid": _grid_out(grid, by_ref),
         # 按规范修了哪几类（`fix_spec` 关着时为空）
         "spec_changes": sorted(spec_changed),
     }
