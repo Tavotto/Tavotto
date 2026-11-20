@@ -1,7 +1,7 @@
 # ADR 0199：一键排版——第一个高级功能（功能键 `quick-layout`）
 
 日期：2026-11-20 · 状态：**Proposed（只定契约；求解器在私有仓库 `Tavotto/pro`，开源侧做入口、编排、核对与应用）**
-**1.0 收敛纪律：新增产品能力，经 [0198](0198-closed-source-pro-extension.md) 高级版闭源扩展分发；是否按 0193 / 0198 的豁免延伸登记，**待维护者确认**（`docs/1.0-release-readiness.md` §1.8 的登记行同样标「待确认」）。入口跟 0193 的上线开关走。**
+**1.0 收敛纪律：新增产品能力，经 [0198](0198-closed-source-pro-extension.md) 高级版闭源扩展分发；维护者 2026-11-20 确认按 0193 / 0198 的豁免延伸登记在 `docs/1.0-release-readiness.md` §1.8（「都可以豁免」）。入口跟 0193 的上线开关走。**
 相关：[0198 闭源扩展](0198-closed-source-pro-extension.md)（sidecar、pro 协议、「结果是普通数据」的出处）、[0193 高级版授权](0193-paid-edition-license.md)（功能键闭集）、
 [0001 项目 / 画布 / 对象](0001-project-canvas-tab-object.md)（文档模型，单位 mm）、[0161 拖边改图幅](0161-drag-corner-scale-edge-canvas.md)（`figure.size_mm`，文字 pt 不变）、
 [0128 智能对齐](0128-smart-alignment.md)（图内元素几何只取精确 manifest）、[0017 显示回退 ≠ 几何权威](0017-display-fallback-vs-geometry-authority.md)、
