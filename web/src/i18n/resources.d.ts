@@ -7919,6 +7919,7 @@ export default interface Resources {
       "zUp": "上移一层"
     },
     "quickLayout": {
+      "fixSpec": "同时按规范修文字和线条",
       "gap": "{{mm}} mm",
       "gapLabel": "图间距",
       "target": {
@@ -8253,6 +8254,18 @@ export default interface Resources {
       "quickLayoutFailed": "这次没排好，再试一次",
       "quickLayoutNoteEqualAspect": "图 {{label}} 是等比例坐标，没参与轴线对齐",
       "quickLayoutNoteSpecNotFixed": "图 {{label}} 还有几处字号没修到规范，可在「问题」里看",
+      "quickLayoutSpec": {
+        "font_family": "字体",
+        "font_size": "字号",
+        "legend_frame": "图例边框",
+        "line_width": "线宽",
+        "other": "其他样式",
+        "text_weight": "字重",
+        "tick_direction": "刻度方向"
+      },
+      "quickLayoutSpecDone": "已按「{{spec}}」改了{{what}}",
+      "quickLayoutSpecFallback": "当前规范",
+      "quickLayoutSpecSep": "、",
       "quickLayoutStale": "图刚刚变了，再点一次一键排版",
       "quickLayoutTooFew": "至少要两张图",
       "quickLayoutUndo": "撤销",

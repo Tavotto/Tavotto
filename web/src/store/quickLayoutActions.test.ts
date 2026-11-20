@@ -38,6 +38,7 @@ import { addSubLabels, makeSubLabel } from './actions'
 import { useDocumentStore } from './documentStore'
 import { runUndoRedo } from '@/hooks/useKeyboard' // 加载它 = 把「撤销」交给一键排版的胶囊
 import { runQuickLayout, useQuickLayoutStore } from './quickLayoutActions'
+import { currentSpec } from './issueFixActions'
 
 void runUndoRedo
 import { useSelectionStore } from './selectionStore'
@@ -82,6 +83,7 @@ const okPlan = (): QuickLayoutResponse => ({
     { key: 'p2', x: 99, y: 11 },
   ],
   notes: [],
+  spec_changes: [],
   page: { w: 193, h: 80 },
   replay_required: false,
 })
@@ -211,6 +213,38 @@ describe('应用', () => {
     await runQuickLayout('double', 3)
     const sub = formatMessage(useUiStore.getState().statusSubline)
     expect(sub).toBe('图 b 是等比例坐标，没参与轴线对齐；图 a 还有几处字号没修到规范，可在「问题」里看')
+  })
+
+  it('规范改动：排在备注前，类别按固定顺序、用「、」连、带规范名', async () => {
+    seed(panel('p1'), panel('p2'))
+    quickLayoutPlan.mockResolvedValue({
+      ...okPlan(),
+      spec_changes: ['other', 'font_size', 'font_family', 'legend_frame'],
+      notes: [{ code: 'equal_aspect', ref: 'p2' }],
+    })
+    await runQuickLayout('double', 3)
+    const sub = formatMessage(useUiStore.getState().statusSubline)
+    const label = currentSpec().label
+    expect(label).toBeTruthy()
+    expect(sub).toBe(`已按「${label}」改了字体、字号、图例边框、其他样式；图 b 是等比例坐标，没参与轴线对齐`)
+  })
+
+  it('spec_changes 为空：没有规范那一项', async () => {
+    seed(panel('p1'), panel('p2'))
+    quickLayoutPlan.mockResolvedValue(okPlan())
+    await runQuickLayout('double', 3)
+    expect(useUiStore.getState().statusSubline ?? null).toBeNull()
+  })
+
+  it('请求带上偏好里的 fix_spec（默认 true，关了是 false）', async () => {
+    seed(panel('p1'), panel('p2'))
+    quickLayoutPlan.mockResolvedValue(okPlan())
+    await runQuickLayout('double', 3)
+    expect(lastRequest().fix_spec).toBe(true)
+    localStorage.setItem('tavotto.quickLayout', JSON.stringify({ target: 'double', gapMm: 3, fixSpec: false }))
+    useUiStore.getState().setStatus(null)
+    await runQuickLayout('double', 3)
+    expect(lastRequest().fix_spec).toBe(false)
   })
 
   it('点「撤销」一步撤回整次排版', async () => {

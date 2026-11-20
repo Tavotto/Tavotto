@@ -14,7 +14,7 @@ import { licenseVisible, useLicenseStore } from '@/store/licenseStore'
 import { runQuickLayout, useQuickLayoutStore } from '@/store/quickLayoutActions'
 import { PremiumLock } from './license/PremiumLock'
 import { Button } from './ui/Button'
-import { Menu, MenuLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator } from './ui/Menu'
+import { Menu, MenuCheckItem, MenuLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator } from './ui/Menu'
 import { Tip } from './ui/Tooltip'
 
 /**
@@ -67,7 +67,7 @@ export function QuickLayoutButton({
           </Button>
         </Tip>
         <Menu
-          width={168}
+          width={224}
           align="center"
           pointerKeepsFocus
           trigger={
@@ -106,6 +106,14 @@ export function QuickLayoutButton({
               </MenuRadioItem>
             ))}
           </MenuRadioGroup>
+          <MenuSeparator />
+          <MenuCheckItem
+            checked={prefs.fixSpec}
+            onSelect={() => update({ ...prefs, fixSpec: !prefs.fixSpec })}
+            data-quick-layout-fix-spec
+          >
+            {t('quickLayout.fixSpec')}
+          </MenuCheckItem>
         </Menu>
       </span>
     </PremiumLock>

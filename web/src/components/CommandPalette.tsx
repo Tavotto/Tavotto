@@ -198,7 +198,7 @@ const COMMANDS: Command[] = [
     id: 'quick-layout',
     available: () => licenseHas(useLicenseStore.getState().status, 'quick-layout'),
     run: () => {
-      const { target, gapMm } = readQuickLayoutPrefs()
+      const { target, gapMm } = readQuickLayoutPrefs() // fixSpec 由 runQuickLayout 自己读同一份偏好
       void runQuickLayout(target, gapMm)
     },
   },

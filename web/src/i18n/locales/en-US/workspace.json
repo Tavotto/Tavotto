@@ -1053,7 +1053,19 @@
     "quickLayoutStale": "The figures just changed. Run Auto layout again.",
     "quickLayoutFailed": "Couldn't lay these out. Try again.",
     "quickLayoutNoteEqualAspect": "Figure {{label}} has equal-aspect axes, so its axes weren't aligned",
-    "quickLayoutNoteSpecNotFixed": "Some font sizes in figure {{label}} are still below the spec — see Issues"
+    "quickLayoutNoteSpecNotFixed": "Some font sizes in figure {{label}} are still below the spec — see Issues",
+    "quickLayoutSpecDone": "Fixed {{what}} to “{{spec}}”",
+    "quickLayoutSpecFallback": "current spec",
+    "quickLayoutSpecSep": ", ",
+    "quickLayoutSpec": {
+      "font_family": "font",
+      "font_size": "font size",
+      "line_width": "line width",
+      "tick_direction": "tick direction",
+      "legend_frame": "legend frame",
+      "text_weight": "font weight",
+      "other": "other styles"
+    }
   },
   "tabs": {
     "allCanvases": "All canvases",
@@ -1991,6 +2003,7 @@
       "single": "Single column"
     },
     "gapLabel": "Gap",
-    "gap": "{{mm}} mm"
+    "gap": "{{mm}} mm",
+    "fixSpec": "Also fix text and lines to the spec"
   }
 }

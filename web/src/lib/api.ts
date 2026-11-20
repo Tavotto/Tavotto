@@ -3430,6 +3430,8 @@ export interface QuickLayoutRequest {
   gap_mm: number
   profile: unknown
   label_pt: number
+  /** 同时按规范修文字和线条（工具条小下拉里的开关） */
+  fix_spec: boolean
 }
 
 export type QuickLayoutFailureCode =
@@ -3442,12 +3444,23 @@ export type QuickLayoutFailureCode =
 
 export type QuickLayoutNoteCode = 'equal_aspect' | 'spec_not_fixed'
 
+/** 按规范改过哪几类（封闭集合；关着开关或没改动 = 空） */
+export type QuickLayoutSpecChange =
+  | 'font_family'
+  | 'font_size'
+  | 'line_width'
+  | 'tick_direction'
+  | 'legend_frame'
+  | 'text_weight'
+  | 'other'
+
 export type QuickLayoutResponse =
   | {
       ok: true
       panels: { key: string; patches: { gid: string; prop: string; value: unknown }[]; box: [number, number, number, number] }[]
       labels: { key: string; x: number; y: number }[]
       notes: { code: QuickLayoutNoteCode; ref: string }[]
+      spec_changes: QuickLayoutSpecChange[]
       /** 页面收紧到「内容外框 + 页边距」：一键排版的结果就是最终那张图（ADR 0199 §五） */
       page: { w: number; h: number }
       replay_required: boolean
@@ -3466,6 +3479,15 @@ const QUICK_LAYOUT_FAILURES: ReadonlySet<string> = new Set([
   'render_failed',
 ])
 const QUICK_LAYOUT_NOTES: ReadonlySet<string> = new Set(['equal_aspect', 'spec_not_fixed'])
+const QUICK_LAYOUT_SPEC_CHANGES: ReadonlySet<string> = new Set([
+  'font_family',
+  'font_size',
+  'line_width',
+  'tick_direction',
+  'legend_frame',
+  'text_weight',
+  'other',
+])
 
 /** 成功体 / 失败体的形状核对：形状不对 = 没拿到，不是「排好了」 */
 function isQuickLayoutResponse(body: Record<string, unknown>): boolean {
@@ -3490,7 +3512,9 @@ function isQuickLayoutResponse(body: Record<string, unknown>): boolean {
     typeof body.page.w === 'number' && Number.isFinite(body.page.w) && body.page.w > 0 &&
     typeof body.page.h === 'number' && Number.isFinite(body.page.h) && body.page.h > 0 &&
     Array.isArray(body.notes) &&
-    body.notes.every((n) => isRec(n) && isStr(n.code) && QUICK_LAYOUT_NOTES.has(n.code) && isStr(n.ref))
+    body.notes.every((n) => isRec(n) && isStr(n.code) && QUICK_LAYOUT_NOTES.has(n.code) && isStr(n.ref)) &&
+    Array.isArray(body.spec_changes) &&
+    body.spec_changes.every((c) => isStr(c) && QUICK_LAYOUT_SPEC_CHANGES.has(c))
   )
 }
 
