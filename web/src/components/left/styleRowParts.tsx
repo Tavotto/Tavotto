@@ -1,5 +1,5 @@
 import { createContext, useCallback, useRef, useState, type ReactNode } from 'react'
-import { Bold, Italic } from '@/components/ui/icons'
+import { Bold, Italic, RotateCcw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
@@ -10,6 +10,7 @@ import type { ControlValue } from '../inspector/textStyleModel'
 import { StyleToggle } from '../inspector/controls/textRows'
 import { NumberField } from '../ui/Input'
 import { Select } from '../ui/Select'
+import { Tip } from '../ui/Tooltip'
 
 /**
  * 样式面板两层（图层 / 画布层）共用的行零件：行骨架、两列网格、字体下拉、页面 pt 数字框、
@@ -53,13 +54,28 @@ export function CanvasPendingScope({ children }: { children: ReactNode }) {
  *
  * 没有状态列：问题只在「问题」面板里看（见 `StylePanel` 的说明）。
  */
-export function StyleRow({ id, children }: { id: string; children: ReactNode }) {
+export function StyleRow({ id, children, follow }: { id: string; children: ReactNode; follow?: () => void }) {
   const label = ROW_LABEL[id]()
   return (
     <div data-style-row={id} className={cn(STYLE_ROW_GRID, WIDE_COLS, NARROW_COLS, 'items-start py-0.5')}>
-      <span className="h-7 truncate text-xs leading-7 text-ink-2" title={label}>
-        {label}
-      </span>
+      <div className="flex h-7 min-w-0 items-center">
+        <span className="min-w-0 truncate text-xs text-ink-2" title={label}>
+          {label}
+        </span>
+        {follow && (
+          <Tip label={sp('followBack')}>
+            <button
+              type="button"
+              data-style-follow={id}
+              aria-label={sp('followBackOf', { row: label })}
+              onClick={follow}
+              className="flex h-5 w-3.5 shrink-0 items-center justify-center rounded-sm text-ink-3 outline-none hover:text-ink focus-visible:focus-ring"
+            >
+              <RotateCcw size={ICON_SIZE.xs} />
+            </button>
+          </Tip>
+        )}
+      </div>
       <div className={cn('flex min-w-0 flex-col gap-1', WIDE_FLATTEN)}>{children}</div>
     </div>
   )

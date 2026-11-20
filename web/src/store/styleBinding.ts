@@ -147,10 +147,31 @@ function deltaFrom(prev: StyleProfileData | null, next: StyleProfileData): Style
 }
 
 /** 一份（变化量）预设落到这些面板 / 这张画布上，只留真会变的部分 */
-function changesFor(preset: StylePreset, panels: PanelObject[], doc: FigureDocument, canvas: boolean): StylePlan {
+function changesFor(
+  preset: StylePreset,
+  panels: PanelObject[],
+  doc: FigureDocument,
+  canvas: boolean,
+  /** 用户手改的 override（有 override、又不是样式写的）不碰：改样式 / 跟上样式库时用（§十四） */
+  keepUserOwned = false,
+): StylePlan {
   const raw = planStyle(preset, panels, manifestOf, doc, canvas)
   const plan = canvas ? raw : { ...raw, page: undefined, background: undefined }
-  return effectiveChanges(plan, doc, manifestOf, preset)
+  const eff = effectiveChanges(plan, doc, manifestOf, preset)
+  if (!keepUserOwned) return eff
+  return {
+    ...eff,
+    panels: eff.panels
+      .map((pp) => ({
+        ...pp,
+        patches: pp.patches.filter(
+          (x) =>
+            !pp.panel.overrides.some((o) => o.gid === x.gid && o.prop === x.prop) ||
+            !!ownedLive(doc, pp.panel, x.gid, x.prop),
+        ),
+      }))
+      .filter((pp) => pp.patches.length > 0),
+  }
 }
 
 /* ------------------------ 样式写的 override（§十三） ------------------------ */
@@ -653,7 +674,7 @@ export function editBoundStyleAll(edits: StyleEdit[], label?: (name: string) => 
     const upgraded = isLegacyBasis(before)
     const current = canvasStyle()!
     const delta = deltaFrom(current.snapshot as unknown as StyleProfileData, data)
-    const plan = changesFor(delta, panelsOf(doc), doc, true)
+    const plan = changesFor(delta, panelsOf(doc), doc, true, true)
     const missing = missingNow(doc)
     const owned = nextOwned(doc, ownedWrites(doc, plan))
     // 这一笔要把画布改绑到副本上（复制内置 / 「库里没有这一条、按快照新建」两条路，Codex #547 P1）：
@@ -804,7 +825,7 @@ export function followLibrary(): boolean {
   const data = rec.data as unknown as StyleProfileData
   const name = profileName(rec)
   const delta = deltaFrom(before, data)
-  const plan = changesFor(delta, panelsOf(doc), doc, true)
+  const plan = changesFor(delta, panelsOf(doc), doc, true, true)
   const missing = missingNow(doc)
   const owned = nextOwned(doc, ownedWrites(doc, plan))
   commitWith(
@@ -989,6 +1010,43 @@ export function styleMismatchPlan(doc: FigureDocument = docNow()): StylePlan | n
       }))
       .filter((pp) => pp.patches.length > 0),
   }
+}
+
+/**
+ * 这张图上与画布样式**不一样**的地方（含用户手改的）：单图模式的「跟回画布」按它给每一行判断
+ * 要不要出按钮。只认精确 manifest；没绑 / 已脱离 / 还没渲染出来 = 空。
+ */
+export function figureStyleDiff(panel: PanelObject, doc: FigureDocument = docNow()): { gid: string; prop: string }[] {
+  const binding = canvasStyle(doc)
+  const live = panelsOf(doc).find((p) => p.id === panel.id)
+  if (!binding || !live || !manifestOf(live)) return []
+  const plan = changesFor(presetDelta(null, resolvedStyle(binding)), [live], doc, false)
+  return plan.panels.flatMap((pp) => pp.patches.map(({ gid, prop }) => ({ gid, prop })))
+}
+
+/**
+ * 单图模式的「跟回画布」：这张图上这几项换回样式的值，之后归样式（登记为样式写的，样式再改会跟着变；
+ * 基线沿用手改那一条覆盖的脚本原值）。一次 commit，可撤销。别的图一概不碰。
+ */
+export function followCanvasStyle(panelId: string, targets: { gid: string; prop: string }[]): boolean {
+  const doc = docNow()
+  const binding = canvasStyle(doc)
+  const panel = panelsOf(doc).find((p) => p.id === panelId)
+  if (!binding || !panel || !manifestOf(panel)) return false
+  const name = bindingName(binding)
+  const preset = { ...presetDelta(null, resolvedStyle(binding)), name }
+  const raw = changesFor(preset, [panel], doc, false)
+  const plan: StylePlan = {
+    ...raw,
+    annotationIds: [],
+    subLabelIds: [],
+    panels: raw.panels
+      .map((pp) => ({ ...pp, patches: pp.patches.filter((x) => targets.some((t) => t.gid === x.gid && t.prop === x.prop)) }))
+      .filter((pp) => pp.patches.length > 0),
+  }
+  if (isEmptyPlan(plan)) return false
+  writeAligned(hist('followCanvas', { name }), doc, plan, preset)
+  return true
 }
 
 /** 不一致的处数（一个 gid 上的一个属性算一处） */

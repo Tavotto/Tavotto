@@ -1,4 +1,4 @@
-import { memo, useContext, useMemo, useState } from 'react'
+import { memo, useContext, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
@@ -11,8 +11,9 @@ import {
 import { isSubLabel } from '@/lib/stylePresets'
 import { CANVAS_TEXT_FAMILIES, type TypographyValue } from '@/lib/typography'
 import { enterElementEdit } from '@/store/actions'
-import { canvasScope, editBoundStyle, figureScope } from '@/store/styleBinding'
+import { canvasScope, figureScope, figureStyleDiff, followCanvasStyle } from '@/store/styleBinding'
 import { useDocumentStore } from '@/store/documentStore'
+import { useProfileStore } from '@/store/profileStore'
 import { queueFontSize } from './queuedFontSize'
 import {
   exactPanelManifest,
@@ -21,7 +22,6 @@ import {
   usePanelRender,
   useRenderStore,
 } from '@/store/renderStore'
-import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject, TextObject } from '@/types/document'
 import { useCanvasTypography } from '../inspector/typographyAdapter'
@@ -29,9 +29,12 @@ import { optionLabel } from '../inspector/roles/registry'
 import { useTextStyleAdapter } from '../inspector/textStyleAdapter'
 import { EmptyState } from '../ui/EmptyState'
 import { Section } from '../ui/Field'
+import { Segmented } from '../ui/Segmented'
 import { Select } from '../ui/Select'
 import { CanvasStyleLayer } from './CanvasStyleLayer'
+import { FigureStrip } from './FigureStrip'
 import { StyleCanvasActions } from './StyleCanvasActions'
+import { useStyleScopeStore, type StyleScope } from './styleScope'
 import { useCurrentFigure } from './useProblemScope'
 import {
   CanvasPending,
@@ -51,25 +54,26 @@ import {
 } from './styleRowParts'
 
 /**
- * 左栏「样式」，**两层**（2026-11-20 维护者拍板，ADR 0081 §十四）：
+ * 左栏「样式」，顶上一个「画布 | 单图」开关（2026-11-20 维护者二次拍板，ADR 0081 §十四）：
  *
- * * **画布层**（没选中图 / 点了「改整张画布」）：这张画布跟随哪套样式、那套样式本身的值——改一格 =
- *   改样式、整张画布跟着变（`CanvasStyleLayer`）。「跟随样式」的选择器只在这一层顶上，全面板一个。
- * * **图层**（选中一张图）：这张图长什么样，随时看、随时改；顶上一行说清「只改这张图」，旁边「改整张画布」回画布层。
+ * * **画布**：这张画布跟随哪套样式、那套样式本身的值——改一格 = 改样式、整张画布跟着变（`CanvasStyleLayer`）。
+ *   「跟随样式」的选择器只在这一档顶上，全面板一个。
+ * * **单图**：顶上一排小方块（每张图一个，`FigureStrip`），下面是选中那张图自己的值。**改一格只改这张图**，
+ *   不论画布有没有跟随样式：写的是这张图自己的 override，与属性页手改同一条路（登记里注销，从此归用户，
+ *   样式再改也不覆盖）。与画布样式不一样的行末有一颗「跟回画布」。
+ *
+ * 开关是**粘性**的（`styleScope`）：画布上换选中的图不翻它；面板第一次打开、从没选过时，有选中图 = 单图，否则 = 画布。
  *
  * 与「问题」并列、各管一半：这里管「长什么样」，问题面板管「哪里不合规」。**这里不显示任何
  * 问题记号**（用户 2026-09-26：行尾的八角 / 三角去掉，问题只在左侧图标栏的「问题」面板里看，
  * 那颗图标带计数角标）——字号被阻断这类情况这里也不提示，不判规范、也不认回问题清单。
  *
  * * **当前图**与问题面板同一个判据（`useCurrentFigure`），不写第二份。
- * * **数字是页面上读者量到的 pt**：换算在写入器里（`useTextStyleAdapter` 过
- *   `stylePresets.pagePtLens`，属性页用的是同一个），这里拿到的读数、字段上下界、交出去的
- *   值都已经是页面上的。面板缩到 60% 时这里写 9，读者量到的就是 9，而不是 5.4。
- *   画布标注的字号本来就是页面 pt，不换算。
+ * * **数字是页面上读者量到的 pt**：换算在写入器里（`useTextStyleAdapter`），属性页用的是同一个。
  * * **改动走 Inspector 那条路**：图内元素经 `useTextStyleAdapter`（一次点击 = 一次
  *   `setOverrides` commit），画布标注经 `useCanvasTypography`。
  * * **值四档不压扁**：几个元素不一致时是「多个值」，不拿第一个冒充全部。
- * * 底部是画布级动作（`StyleCanvasActions`：对齐 / 按期刊调整 / 恢复原样 / 管理样式），两层共用。
+ * * 底部是画布级动作（`StyleCanvasActions`：对齐 / 按期刊调整 / 恢复原样 / 管理样式），两档共用。
  */
 export function StylePanel() {
   // 各行挂着的「还没落定的写入」（`usePendingWrites`）按**这一行真正的归属**取范围，范围一变那组行
@@ -98,81 +102,86 @@ function StylePanelBody() {
   const render = usePanelRender(panel)
   const rendering = render?.status === 'rendering'
   const figureKey = useDocumentStore((s) => (panel ? figureScope(s, panel) : ''))
-  const bound = useDocumentStore((s) => !!s.doc.style && !s.doc.style.detached)
-  // 「改整张画布」：回到画布层。记的是**那一刻的现场**（哪张图 + 选区），选区或图一变就回到图层，
-  // 不另设「画布层开着」的持久状态
-  const selection = useSelectionStore((s) => s.ids.join(','))
-  const [dismissed, setDismissed] = useState<string | null>(null)
-  const fieldKey = `${figure.id ?? ''}|${selection}`
-  const canvasLayer = !panel || dismissed === fieldKey
-  const toCanvas = () => {
-    useSelectionStore.getState().clear()
-    setDismissed(`${figure.id ?? ''}|`)
-  }
+  // 粘性开关：只由用户点；从没选过时按面板打开那一刻有没有选中的图定起点
+  const chosen = useStyleScopeStore((s) => s.scope)
+  const [initial] = useState<StyleScope>(() => (panel ? 'figure' : 'canvas'))
+  const scope = chosen ?? initial
+  useEffect(() => {
+    if (useStyleScopeStore.getState().scope === null) useStyleScopeStore.getState().setScope(initial)
+  }, [initial])
 
-  if (canvasLayer) {
-    return (
-      <div className="flex min-h-0 flex-1 flex-col" data-style-panel-canvas>
-        <div data-style-scroll className={cn('min-h-0 flex-1 overflow-y-auto', STYLE_CONTAINER)}>
-          <CanvasStyleLayer />
-          <StyleCanvasActions />
-        </div>
-      </div>
-    )
-  }
   return (
-    <div className="flex min-h-0 flex-1 flex-col" data-style-panel>
-      <p className="shrink-0 truncate px-3 text-sm text-ink" data-style-figure title={figure.name ?? ''}>
-        {figure.name}
-      </p>
-      <p data-style-scope className="type-meta shrink-0 px-3 pb-1">
-        {bound ? sp('scopeFigureBound') : sp('scopeFigure')}
-        {' · '}
-        <button
-          type="button"
-          data-style-to-canvas
-          onClick={toCanvas}
-          className="rounded-sm underline-offset-2 outline-none hover:text-ink-2 hover:underline focus-visible:focus-ring"
-        >
-          {sp('toCanvas')}
-        </button>
-      </p>
-      {manifest && !exact && (
-        <p data-style-sync-status={render?.status === 'error' ? 'error' : 'pending'} role="status"
-          className="shrink-0 px-3 py-1 text-xs text-ink-2">
-          {sp(render?.status === 'error' ? 'previewFailed' : 'previewPending')}
-        </p>
-      )}
-      <div data-style-scroll className={cn('min-h-0 flex-1 overflow-y-auto', STYLE_CONTAINER)}>
-        {manifest ? (
-          <FigureStyle key={figureKey} panel={panel} manifest={exact ?? manifest} exact={!!exact} canQueueSize={render?.status !== 'error'} />
-        ) : panel.script ? (
-          /* 可编辑、但这一会话还没渲染过：值要引擎读出来。**不自动跑脚本**（「只带基线、
-             还没动过」的面板不渲染，heavy 脚本要几分钟——`useEngineSync.renderTargets`），
-             由用户点一下，与元素树的「加载元素清单」同一个动作；左栏留在这里 */
-          <EmptyState
-            art="pencil"
-            title={sp('needRender')}
-            hint={rendering ? sp('building') : undefined}
-            action={
-              rendering
-                ? undefined
-                : { label: sp('load'), onClick: () => enterElementEdit(panel.id, { leftTab: 'keep' }) }
-            }
-          />
-        ) : (
-          /* 不是脚本生成的图：没有图内元素可读，不摆一排读不到值的空控件 */
-          <p className="px-3 py-4 text-xs leading-relaxed text-ink-2">{sp('noManifest')}</p>
-        )}
-        <StyleCanvasActions />
+    <div className="flex min-h-0 flex-1 flex-col" data-style-mode={scope}>
+      <div className="shrink-0 px-3 pb-1.5 pt-2" data-style-scope-switch>
+        <Segmented<StyleScope>
+          ariaLabel={sp('modeLabel')}
+          value={scope}
+          onChange={(v) => useStyleScopeStore.getState().setScope(v)}
+          items={[
+            { value: 'canvas', label: sp('modeCanvas'), title: sp('modeCanvasTip') },
+            { value: 'figure', label: sp('modeFigure'), title: sp('modeFigureTip') },
+          ]}
+        />
       </div>
+      {scope === 'canvas' ? (
+        <div className="flex min-h-0 flex-1 flex-col" data-style-panel-canvas>
+          <div data-style-scroll className={cn('min-h-0 flex-1 overflow-y-auto', STYLE_CONTAINER)}>
+            <CanvasStyleLayer />
+            <StyleCanvasActions />
+          </div>
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col" data-style-panel>
+          <FigureStrip currentId={panel?.id ?? null} />
+          {manifest && !exact && (
+            <p data-style-sync-status={render?.status === 'error' ? 'error' : 'pending'} role="status"
+              className="shrink-0 px-3 py-1 text-xs text-ink-2">
+              {sp(render?.status === 'error' ? 'previewFailed' : 'previewPending')}
+            </p>
+          )}
+          <div data-style-scroll className={cn('min-h-0 flex-1 overflow-y-auto', STYLE_CONTAINER)}>
+            {!panel ? (
+              <p data-style-pick className="px-3 py-3 text-xs text-ink-2">{sp('pickFigure')}</p>
+            ) : manifest ? (
+              <FigureStyle key={figureKey} panel={panel} manifest={exact ?? manifest} exact={!!exact} canQueueSize={render?.status !== 'error'} />
+            ) : panel.script ? (
+              /* 可编辑、但这一会话还没渲染过：值要引擎读出来。**不自动跑脚本**（「只带基线、
+                 还没动过」的面板不渲染，heavy 脚本要几分钟——`useEngineSync.renderTargets`），
+                 由用户点一下，与元素树的「加载元素清单」同一个动作；左栏留在这里 */
+              <EmptyState
+                art="pencil"
+                title={sp('needRender')}
+                hint={rendering ? sp('building') : undefined}
+                action={
+                  rendering
+                    ? undefined
+                    : { label: sp('load'), onClick: () => enterElementEdit(panel.id, { leftTab: 'keep' }) }
+                }
+              />
+            ) : (
+              /* 不是脚本生成的图：没有图内元素可读，不摆一排读不到值的空控件 */
+              <p className="px-3 py-4 text-xs leading-relaxed text-ink-2">{sp('noManifest')}</p>
+            )}
+            <StyleCanvasActions />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 function FigureStyle({ panel, manifest, exact, canQueueSize }: { panel: PanelObject; manifest: Manifest; exact: boolean; canQueueSize: boolean }) {
-  const bound = useDocumentStore((s) => !!s.doc.style && !s.doc.style.detached)
-  const locked = !bound && !exact
+  // 单图档：改的永远只是这张图自己的 override，与有没有绑样式无关；这一版清单没回来之前普通控件置灰
+  const locked = !exact
+  const binding = useDocumentStore((s) => s.doc.style)
+  const unbound = !binding || !!binding.detached
+  const records = useProfileStore((s) => s.styles)
+  const overrides = panel.overrides
+  // 与画布样式不一样的 (gid, prop)：每一行据此决定要不要「跟回画布」。没绑 / 脱离 / 还没精确清单 = 空
+  const diff = useMemo(
+    () => (exact ? figureStyleDiff(panel) : []),
+    [exact, panel, manifest, overrides, binding, records], // eslint-disable-line react-hooks/exhaustive-deps
+  )
   const texts = useDocumentStore((s) => s.doc.objects)
   const annotations = useMemo(
     // 子图序号标签 (a)(b)(c) 在样式里是另一项（`subLabel`），不跟普通标注一起改（Codex #547）
@@ -191,14 +200,13 @@ function FigureStyle({ panel, manifest, exact, canQueueSize }: { panel: PanelObj
             sizeRole={row.sizeRole}
             familyRole={row.familyRole}
             faceRole={row.faceRole}
-            bound={bound}
+            diff={diff}
             locked={locked}
             canQueueSize={canQueueSize}
           />
         ))}
-        {annotations.length > 0 && (
-          <AnnotationRow texts={annotations} bound={bound} />
-        )}
+        {/* 画布标注属于整张画布：绑着样式时它在「画布」档里改；没绑才在这里直接改 */}
+        {unbound && annotations.length > 0 && <AnnotationRow texts={annotations} />}
       </Section>
       <Section title={sp('groupLines')}>
         {FIGURE_LINE_ROWS.map((row) => (
@@ -209,7 +217,7 @@ function FigureStyle({ panel, manifest, exact, canQueueSize }: { panel: PanelObj
             manifest={manifest}
             role={row.role}
             prop={row.prop}
-            bound={bound}
+            diff={diff}
             locked={locked}
           />
         ))}
@@ -218,15 +226,22 @@ function FigureStyle({ panel, manifest, exact, canQueueSize }: { panel: PanelObj
   )
 }
 
+/** 「跟回画布」：这一行里与画布样式不一样的那几项换回样式的值（一次 commit） */
+function useFollowBack(panel: PanelObject, diff: Diff, picks: { gids: string[]; prop: string }[]) {
+  const targets = diff.filter((d) => picks.some((p) => p.prop === d.prop && p.gids.includes(d.gid)))
+  return targets.length ? () => void followCanvasStyle(panel.id, targets) : undefined
+}
+
+type Diff = { gid: string; prop: string }[]
 
 interface FigureRowProps {
-  /** 当前画布绑了样式：改一格 = 改这套样式本身（`editBoundStyle`），画布上所有图跟着对齐 */
-  bound: boolean
+  /** 与画布样式不一样的那几项（`figureStyleDiff`）：行里据此摆「跟回画布」 */
+  diff: Diff
   /**
-   * 没绑样式时直接往这张图上写 override，gid 取自显示用的 manifest——那可能是**上一版**（脚本 /
+   * 直接往这张图上写 override，gid 取自显示用的 manifest——那可能是**上一版**（脚本 /
    * override 刚变、这一版还在渲染）。拿过期的 gid 写 override 会写到已经不存在的元素上
    * （Codex #547 P1，与 styleBinding 只认 `exactPanelManifest` 同一条纪律），所以这一版没回来之前
-   * 普通控件置灰；字号可排队，等精确清单到达后重新按角色取目标。绑着样式时写的是样式本身，不经这里的 gid。
+   * 普通控件置灰；字号可排队，等精确清单到达后重新按角色取目标。
    */
   locked: boolean
   panel: PanelObject
@@ -245,7 +260,7 @@ const FigureTextRow = memo(function FigureTextRow({
   sizeRole,
   familyRole,
   faceRole,
-  bound,
+  diff,
   locked,
   canQueueSize,
 }: FigureRowProps & { id: string; sizeRole: string; familyRole: string; faceRole: string | null; canQueueSize: boolean }) {
@@ -270,6 +285,12 @@ const FigureTextRow = memo(function FigureTextRow({
   const style = useTextStyleAdapter(panel, styleEls, STYLE_PROPS)
   const pw = usePendingWrites()
   const ownerScope = figureScope(useDocumentStore.getState(), panel)
+  const follow = useFollowBack(panel, diff, [
+    { gids: familyEls.map((e) => e.gid), prop: 'fontfamily' },
+    { gids: sizeEls.map((e) => e.gid), prop: 'fontsize' },
+    { gids: weightEls.map((e) => e.gid), prop: 'weight' },
+    { gids: styleEls.map((e) => e.gid), prop: 'style' },
+  ])
   if (!sizeEls.length && !familyEls.length) return null
 
   const label = ROW_LABEL[id]()
@@ -282,13 +303,8 @@ const FigureTextRow = memo(function FigureTextRow({
   const weightVal = faceOf('weight', weight)
   const styleVal = faceOf('style', style)
   const writeFace = (prop: 'weight' | 'style', v: string) =>
-    pw.write(prop, v, () =>
-      bound && faceRole
-        ? editBoundStyle({ kind: 'element', role: faceRole, prop, value: v })
-        : (prop === 'weight' ? weight : style).writeOnce(prop, v),
-    )
+    pw.write(prop, v, () => (prop === 'weight' ? weight : style).writeOnce(prop, v))
   const writeSize = (v: number) => {
-    if (bound) return editBoundStyle({ kind: 'element', role: sizeRole, prop: 'fontsize', value: v })
     const ds = useDocumentStore.getState()
     const live = ds.doc.objects.find((o) => o.id === panel.id)
     if (live?.type !== 'panel' || figureScope(ds, live) !== ownerScope) {
@@ -304,7 +320,7 @@ const FigureTextRow = memo(function FigureTextRow({
   }
 
   return (
-    <StyleRow id={id}>
+    <StyleRow id={id} follow={follow}>
       {familyField && (
         <ControlLine line={`${id}.family`}>
           <div data-style-cell={`${id}.family`} className={cn("flex min-w-0 flex-1", WIDE_FAMILY_COL)}>
@@ -315,11 +331,7 @@ const FigureTextRow = memo(function FigureTextRow({
               labels={manifest.font_family_names}
               locked={locked}
               onChange={(v) =>
-                pw.write('fontfamily', v, () =>
-                  bound
-                    ? editBoundStyle({ kind: 'element', role: familyRole, prop: 'fontfamily', value: v })
-                    : family.writeOnce('fontfamily', v),
-                )
+                pw.write('fontfamily', v, () => family.writeOnce('fontfamily', v))
               }
             />
           </div>
@@ -366,7 +378,7 @@ const FigureLineRow = memo(function FigureLineRow({
   manifest,
   role,
   prop,
-  bound,
+  diff,
   locked,
 }: FigureRowProps & { id: string; role: string; prop: string }) {
   useTranslation(['workspace', 'inspector'])
@@ -375,17 +387,15 @@ const FigureLineRow = memo(function FigureLineRow({
   const adapter = useTextStyleAdapter(panel, els, props)
   const pw = usePendingWrites()
   const field = adapter.fieldOf(prop)
+  const follow = useFollowBack(panel, diff, [{ gids: els.map((e) => e.gid), prop }])
   if (!els.length || !field) return null
 
   const label = ROW_LABEL[id]()
   const value = pw.shown(prop, adapter.valueOf(prop))
-  const write = (v: unknown) =>
-    pw.write(prop, v, () =>
-      bound ? editBoundStyle({ kind: 'element', role, prop, value: v }) : adapter.writeOnce(prop, v),
-    )
+  const write = (v: unknown) => pw.write(prop, v, () => adapter.writeOnce(prop, v))
 
   return (
-    <StyleRow id={id}>
+    <StyleRow id={id} follow={follow}>
       <ControlLine line={id}>
         <div data-style-cell={id} className="contents">
           {field.type === 'enum' ? (
@@ -411,13 +421,7 @@ const FigureLineRow = memo(function FigureLineRow({
 })
 
 /** 画布标注：字号本来就是页面上的 pt（不换算），字体是画布文字的闭集；粗体 / 斜体是 `TextObject` 的 `bold` / `italic` */
-function AnnotationRow({
-  texts,
-  bound,
-}: {
-  bound: boolean
-  texts: TextObject[]
-}) {
+function AnnotationRow({ texts }: { texts: TextObject[] }) {
   const adapter = useCanvasTypography(texts)
   // 画布级：挂起值在 `CanvasPendingScope` 里，切选中的图不清（#688）
   const pw = useContext(CanvasPending)!
@@ -433,11 +437,7 @@ function AnnotationRow({
             value={pw.shown('fontFamily', adapter.valueOf('fontFamily'))}
             options={CANVAS_TEXT_FAMILIES}
             onChange={(v) =>
-              pw.write('fontFamily', v, () =>
-                bound
-                  ? editBoundStyle({ kind: 'annotation', prop: 'fontFamily', value: v })
-                  : adapter.writeOnce('fontFamily', v),
-              )
+              pw.write('fontFamily', v, () => adapter.writeOnce('fontFamily', v))
             }
           />
         </div>
@@ -449,11 +449,7 @@ function AnnotationRow({
             value={pw.shown('sizePt', adapter.valueOf('sizePt'))}
             step={0.5}
             onChange={(v) =>
-              pw.write('sizePt', v, () =>
-                bound
-                  ? editBoundStyle({ kind: 'annotation', prop: 'sizePt', value: v })
-                  : adapter.writeOnce('sizePt', v),
-              )
+              pw.write('sizePt', v, () => adapter.writeOnce('sizePt', v))
             }
           />
         </div>
@@ -461,20 +457,8 @@ function AnnotationRow({
           row="annotation"
           weight={face('weight')}
           style={face('style')}
-          onWeight={(v) =>
-            pw.write('weight', v, () =>
-              bound
-                ? editBoundStyle({ kind: 'annotation', prop: 'bold', value: v === 'bold' })
-                : adapter.writeOnce('weight', v),
-            )
-          }
-          onStyle={(v) =>
-            pw.write('style', v, () =>
-              bound
-                ? editBoundStyle({ kind: 'annotation', prop: 'italic', value: v === 'italic' })
-                : adapter.writeOnce('style', v),
-            )
-          }
+          onWeight={(v) => pw.write('weight', v, () => adapter.writeOnce('weight', v))}
+          onStyle={(v) => pw.write('style', v, () => adapter.writeOnce('style', v))}
         />
       </ControlLine>
     </StyleRow>
