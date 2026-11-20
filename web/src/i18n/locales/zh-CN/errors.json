@@ -494,7 +494,18 @@
     "convert_reference_invalid": "参考文件不可用。请使用当前项目内可读取的普通文件；不接受凭据、链接或超出大小限制的文件。",
     "workspace_path_too_long": "项目里有文件路径太长，转换没能开始。",
     "svg_resource_limit": "SVG 或计算图表超过资源预算，无法完成本次操作。",
-    "svg_scene_invalid": "无法读取这份 SVG 的图形内容。请检查文件是否为有效的独立 SVG。"
+    "svg_scene_invalid": "无法读取这份 SVG 的图形内容。请检查文件是否为有效的独立 SVG。",
+    "chart_engine_unavailable": "计算图表的渲染引擎正忙，请稍后重试。",
+    "chart_engine_mismatch": "当前绘图环境与计算图表要求不一致。请使用匹配的绘图环境后重试。",
+    "chart_model_invalid": "计算图表的模型或来源引用无效，无法应用本次操作。",
+    "chart_model_unsupported": "当前不支持这份计算图表的模型或编辑方式。",
+    "chart_render_unsupported": "当前无法完整渲染这张计算图表。",
+    "chart_render_pair_missing": "计算图表没有返回同一版的图像与几何，暂未应用本次渲染。",
+    "figure_snapshot_unavailable": "项目包引用的 Figure 配对或原件无法核验，未生成项目包。请恢复缺失资源或重新生成这张图。",
+    "script_source_missing": "找不到这个脚本的文件（{{script}}）：它可能被移动或删除了。请把脚本放回项目里再运行；Tavotto 不会用同名的其它文件代替它。",
+    "input_declaration_conflict": "输入声明已在另一处更新，请重新读取后再保存。",
+    "input_declaration_invalid": "输入声明或已选择的资源不可用，请检查文件、运行配置和数据位置。",
+    "input_declaration_unavailable": "暂时无法读取或保存输入声明，请稍后重试。"
   },
   "engine": {
     "apply": "应用",

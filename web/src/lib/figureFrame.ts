@@ -53,7 +53,7 @@ type Frac = { x: number; y: number; w: number; h: number }
  * 把一条 override 的值从 figsize 的分数换到脚本图幅的分数（图内的元素留在原处）。
  * 只有值以图幅为基准的那几条要换（引擎 `overrides._FRAME_RELATIVE`）；其余原样。
  */
-function rebaseOverride(o: PanelOverride, f: Frac, frame: ManifestFrame): PanelOverride {
+function rebaseOverride(o: PanelOverride, f: Frac, frame: FrameGeometry): PanelOverride {
   const v = o.value
   const nums = (n: number) => Array.isArray(v) && v.length === n && v.every((x) => typeof x === 'number')
   // top-origin 分数的一点：x' = (x − 左) / 宽，y' = (y − 上) / 高
@@ -79,7 +79,7 @@ function rebaseOverride(o: PanelOverride, f: Frac, frame: ManifestFrame): PanelO
   }
   if (o.gid === 'figure' && o.prop === 'size_mm' && nums(2)) {
     // 那条 override 写的是 figsize；换到图幅里就是这个 figsize 对应的图幅尺寸
-    return { ...o, value: [frame.savefig_mm[2], frame.savefig_mm[3]] }
+    return { ...o, value: [frame.frame_mm[2], frame.frame_mm[3]] }
   }
   return o
 }
@@ -104,8 +104,27 @@ export interface FrameSwitchPatch {
  * 判据就是引擎收不收这个裁剪框（`cropInBounds`，与 `rendercore/ir._crop` 同源）。
  */
 export function frameSwitchPatch(panel: PanelObject, frame: ManifestFrame): FrameSwitchPatch | null {
-  const [gw, gh] = frame.figsize_mm
-  const [sx, sy, fw, fh] = frame.savefig_mm
+  return frameGeometryPatch({ ...panel, overrides: panel.overrides.filter(o => !isLegacyFrameOverride(o)) }, {
+    basis_mm: frame.figsize_mm, frame_mm: frame.savefig_mm,
+  })
+}
+
+/** Geometry only: no claim that a computed SVG came from savefig. */
+export interface FrameGeometry {
+  basis_mm: readonly [number, number]
+  frame_mm: readonly [number, number, number, number]
+}
+
+/** Same inverse-capable fractional edit mapping, shared by both frame adapters. */
+export function rebaseFrameOverride(o: PanelOverride, frame: FrameGeometry): PanelOverride {
+  const [gw, gh] = frame.basis_mm
+  const [sx, sy, fw, fh] = frame.frame_mm
+  return rebaseOverride(o, { x: sx/gw, y: sy/gh, w: fw/gw, h: fh/gh }, frame)
+}
+
+export function frameGeometryPatch(panel: PanelObject, frame: FrameGeometry, opts: { rebaseOverrides?: boolean } = {}): FrameSwitchPatch | null {
+  const [gw, gh] = frame.basis_mm
+  const [sx, sy, fw, fh] = frame.frame_mm
   // 新图幅在 figsize 里的分数（top-origin）
   const f: Frac = { x: sx / gw, y: sy / gh, w: fw / gw, h: fh / gh }
   const oldVis: Frac = panel.crop ?? { x: 0, y: 0, w: 1, h: 1 }
@@ -136,7 +155,7 @@ export function frameSwitchPatch(panel: PanelObject, frame: ManifestFrame): Fram
   const cx = panel.x + panel.w / 2 + px
   const cy = panel.y + panel.h / 2 + py
   return {
-    overrides: panel.overrides.filter((o) => !isLegacyFrameOverride(o)).map((o) => rebaseOverride(o, f, frame)),
+    overrides: opts.rebaseOverrides === false ? panel.overrides : panel.overrides.map((o) => rebaseOverride(o, f, frame)),
     x: cx - w / 2,
     y: cy - h / 2,
     w,
