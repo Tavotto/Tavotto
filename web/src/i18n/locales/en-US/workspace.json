@@ -1204,7 +1204,8 @@
     "shift_multi": "⇧-click several, then change them all",
     "shortcut_help": "Press ? for all shortcuts",
     "shortcutHelpOpen": "Open",
-    "pageBoundsOpen": "Open Canvas tab"
+    "pageBoundsOpen": "Open Canvas tab",
+    "quick_layout": "Drag the gaps between figures to change how much room each gets"
   },
   "prep": {
     "aria": "Prepare {{script}}",
@@ -2020,6 +2021,7 @@
       "keep": "Keep canvas size",
       "fit": "Fit to content"
     },
-    "widthLockedTip": "Width follows the canvas when keeping its size"
+    "widthLockedTip": "Width follows the canvas when keeping its size",
+    "gutterTip": "Drag to adjust proportions"
   }
 }

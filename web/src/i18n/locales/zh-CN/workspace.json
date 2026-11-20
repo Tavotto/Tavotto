@@ -1145,7 +1145,8 @@
     "shift_multi": "⇧ 点击多选，一次改完",
     "shortcut_help": "按 ? 看全部快捷键",
     "shortcutHelpOpen": "打开",
-    "pageBoundsOpen": "打开画布页"
+    "pageBoundsOpen": "打开画布页",
+    "quick_layout": "拖动图之间的空隙，可以调整各图占的比例"
   },
   "prep": {
     "aria": "准备 {{script}}",
@@ -1946,6 +1947,7 @@
       "keep": "保持画布大小",
       "fit": "跟着内容调整"
     },
-    "widthLockedTip": "保持画布大小时用画布的宽度"
+    "widthLockedTip": "保持画布大小时用画布的宽度",
+    "gutterTip": "拖动调整比例"
   }
 }

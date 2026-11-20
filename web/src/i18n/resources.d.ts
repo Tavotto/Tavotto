@@ -6967,6 +6967,7 @@ export default interface Resources {
       "panel_editable": "双击进入图内编辑。",
       "panel_layout_only": "这张图可在版面上摆放；连接源脚本后能改图里的内容。",
       "problem_found": "左侧「问题」可定位对象和属性字段。",
+      "quick_layout": "拖动图之间的空隙，可以调整各图占的比例",
       "ruler_guides": "从标尺拖出对齐线",
       "shift_axis": "按住 ⇧ 拖动，只沿一个方向走",
       "shift_draw": "按住 ⇧ 画正方形和直线",
@@ -7936,6 +7937,7 @@ export default interface Resources {
       "fixSpec": "同时按规范修文字和线条",
       "gap": "{{mm}} mm",
       "gapLabel": "图间距",
+      "gutterTip": "拖动调整比例",
       "target": {
         "double": "双栏",
         "page": "整页",

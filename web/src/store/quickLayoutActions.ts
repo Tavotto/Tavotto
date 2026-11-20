@@ -13,6 +13,7 @@
  * * 标签对象与免费的「添加序号标签」同一个构造（`actions.makeSubLabel`）。
  */
 import { create } from 'zustand'
+import { emitActivity } from '@/lib/activity'
 import { effectiveOverride } from '@/lib/effectiveOverride'
 import { releaseOwned } from '@/lib/styleOwned'
 import { literal, msg, t as translate, type UiMessage } from '@/i18n'
@@ -396,6 +397,7 @@ async function runPlan(run: PlanRun): Promise<QuickLayoutOutcome> {
       if (p?.type === 'panel') requestRender(p, true)
     }
 
+    emitActivity({ kind: run.announce ? 'quick_layout.applied' : 'quick_layout.ratios_applied' })
     if (!run.announce) return 'applied'
     // 「撤销」只在撤销栈还停在这一步时撤；之后又改了别的，撤的就是别的了，只收胶囊
     const depth = after.past.length
