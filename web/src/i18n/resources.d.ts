@@ -6980,6 +6980,7 @@ export default interface Resources {
       "playgroundOpenFigure": "打开图",
       "playgroundResetEdits": "重置修改",
       "quickLayout": "一键排版",
+      "quickLayoutRatios": "调整排版比例",
       "reflowLayoutGroup": "重新排列布局组",
       "refreshJournalV2": "更新期刊要求",
       "releaseCompound": "释放复合路径",
@@ -7813,6 +7814,19 @@ export default interface Resources {
       "zUp": "上移一层"
     },
     "quickLayout": {
+      "canvas": {
+        "auto": "自动",
+        "fit": "跟着内容调整",
+        "keep": "保持画布大小"
+      },
+      "canvasLabel": "画布",
+      "columns": {
+        "1": "1 列",
+        "2": "2 列",
+        "3": "3 列",
+        "auto": "按摆放位置"
+      },
+      "columnsLabel": "排列",
       "fixSpec": "同时按规范修文字和线条",
       "gap": "{{mm}} mm",
       "gapLabel": "图间距",
@@ -7821,7 +7835,8 @@ export default interface Resources {
         "page": "整页",
         "single": "单栏"
       },
-      "targetLabel": "宽度"
+      "targetLabel": "宽度",
+      "widthLockedTip": "保持画布大小时用画布的宽度"
     },
     "rail": {
       "assets": "素材",
@@ -8145,6 +8160,7 @@ export default interface Resources {
       "quickLayoutFailed": "这次没排好，再试一次",
       "quickLayoutNoteEqualAspect": "图 {{label}} 是等比例坐标，没参与轴线对齐",
       "quickLayoutNoteSpecNotFixed": "图 {{label}} 还有几处字号没修到规范，可在「问题」里看",
+      "quickLayoutPageTooSmall": "画布放不下这几张图，可以减少列数或调大画布",
       "quickLayoutSpec": {
         "font_family": "字体",
         "font_size": "字号",

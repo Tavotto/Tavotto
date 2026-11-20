@@ -89,6 +89,7 @@ const EDIT_KIND_BY_LABEL: Record<string, EditKind> = {
   // 版面
   addPanel: 'layout',
   quickLayout: 'layout',
+  quickLayoutRatios: 'layout',
   moveObject: 'layout',
   moveObjects: 'layout',
   moveElement: 'layout',

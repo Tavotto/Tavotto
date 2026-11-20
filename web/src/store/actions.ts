@@ -911,8 +911,16 @@ export function applyPageSize(
   })
 }
 
+/** 用户自己改页面尺寸（属性栏宽高 / 预设 / 横竖交换）：记下「这张画布的大小是用户定的」，一键排版的「画布：自动」据此保持画布大小 */
+export function markPageUserSized(d: FigureDocument): void {
+  d.page.userSized = true
+}
+
 export function setPageSize(w: number, h: number) {
-  commit(hist('setPageSize'), (d) => applyPageSize(d, w, h))
+  commit(hist('setPageSize'), (d) => {
+    applyPageSize(d, w, h)
+    markPageUserSized(d)
+  })
 }
 
 /**

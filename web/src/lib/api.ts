@@ -3390,6 +3390,12 @@ export interface QuickLayoutRequest {
   label_pt: number
   /** 同时按规范修文字和线条（工具条小下拉里的开关） */
   fix_spec: boolean
+  /** 列数；null = 按各图现在大致的摆放位置认行列（互相压住时后端退回自动网格） */
+  columns: number | null
+  /** keep = 在当前页面 w×h 里排；fit = 页宽 = 目标期刊宽、页高跟着内容 */
+  canvas: 'keep' | 'fit'
+  /** 拖分隔线得到的行 / 列相对权重 */
+  ratios?: { cols?: number[]; rows?: number[] }
 }
 
 export type QuickLayoutFailureCode =
@@ -3399,6 +3405,16 @@ export type QuickLayoutFailureCode =
   | 'invalid_plan'
   | 'not_converged'
   | 'render_failed'
+  | 'page_too_small'
+
+/** 求解器回的网格：行列数、每张图（画布对象 id）在哪一格、行 / 列相对权重 */
+export interface QuickLayoutGrid {
+  rows: number
+  cols: number
+  cells: Record<string, [number, number]>
+  col_ratios: number[]
+  row_ratios: number[]
+}
 
 export type QuickLayoutNoteCode = 'equal_aspect' | 'spec_not_fixed'
 
@@ -3421,6 +3437,8 @@ export type QuickLayoutResponse =
       spec_changes: QuickLayoutSpecChange[]
       /** 页面收紧到「内容外框 + 页边距」：一键排版的结果就是最终那张图（ADR 0199 §五） */
       page: { w: number; h: number }
+      /** 网格（拖分隔线重排用）；后端说不出 = null */
+      grid: QuickLayoutGrid | null
       replay_required: boolean
     }
   | { ok: false; code: QuickLayoutFailureCode; replay_required?: boolean }
@@ -3435,6 +3453,7 @@ const QUICK_LAYOUT_FAILURES: ReadonlySet<string> = new Set([
   'invalid_plan',
   'not_converged',
   'render_failed',
+  'page_too_small',
 ])
 const QUICK_LAYOUT_NOTES: ReadonlySet<string> = new Set(['equal_aspect', 'spec_not_fixed'])
 const QUICK_LAYOUT_SPEC_CHANGES: ReadonlySet<string> = new Set([
@@ -3447,12 +3466,36 @@ const QUICK_LAYOUT_SPEC_CHANGES: ReadonlySet<string> = new Set([
   'other',
 ])
 
+const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 1
+const isWeights = (v: unknown, n: number): boolean =>
+  Array.isArray(v) && v.length === n && v.every((x) => typeof x === 'number' && Number.isFinite(x) && x > 0)
+
+/** `grid`：null / 缺席都行（后端说不出网格）；给了就必须自洽，否则整份当形状不对 */
+function isQuickLayoutGrid(g: unknown): boolean {
+  if (g === null || g === undefined) return true
+  if (!isRec(g) || !isCount(g.rows) || !isCount(g.cols) || !isRec(g.cells)) return false
+  const rows = g.rows
+  const cols = g.cols
+  return (
+    isWeights(g.col_ratios, cols) &&
+    isWeights(g.row_ratios, rows) &&
+    Object.values(g.cells).every(
+      (rc) =>
+        Array.isArray(rc) &&
+        rc.length === 2 &&
+        Number.isInteger(rc[0]) && rc[0] >= 0 && rc[0] < rows &&
+        Number.isInteger(rc[1]) && rc[1] >= 0 && rc[1] < cols,
+    )
+  )
+}
+
 /** 成功体 / 失败体的形状核对：形状不对 = 没拿到，不是「排好了」 */
 function isQuickLayoutResponse(body: Record<string, unknown>): boolean {
   if (body.replay_required !== undefined && typeof body.replay_required !== 'boolean') return false
   if (body.ok === false) return isStr(body.code) && QUICK_LAYOUT_FAILURES.has(body.code)
   return (
     body.ok === true &&
+    isQuickLayoutGrid(body.grid) &&
     Array.isArray(body.panels) &&
     body.panels.every(
       (p) =>
@@ -3502,6 +3545,7 @@ export async function quickLayoutPlan(body: QuickLayoutRequest): Promise<QuickLa
   if (!isQuickLayoutResponse(out)) {
     throw new EngineError(t('render.failed', { ns: 'errors', status: res.status }), '', 'bad_shape', '')
   }
+  if (out.ok === true && out.grid === undefined) out.grid = null
   return out as unknown as QuickLayoutResponse
 }
 

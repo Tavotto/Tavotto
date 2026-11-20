@@ -35,8 +35,15 @@ import { alignNewFigures } from './styleBinding'
 import { useRuntimeAssetStore } from './runtimeAssetStore'
 import { useSelectionStore } from './selectionStore'
 import { useUiStore, type StatusAction } from './uiStore'
-import { readQuickLayoutPrefs, type QuickLayoutTarget } from '@/lib/quickLayoutPrefs'
+import {
+  readQuickLayoutPrefs,
+  resolveCanvasMode,
+  type QuickLayoutCanvasMode,
+  type QuickLayoutTarget,
+} from '@/lib/quickLayoutPrefs'
+import { quickLayoutValid } from '@/lib/quickLayoutGrid'
 import type { QuickLayoutSpecChange } from '@/lib/api'
+import type { QuickLayoutMemo } from '@/types/document'
 
 const hist = (key: string): UiMessage => msg(`history.${key}`, undefined, 'workspace')
 const note = (key: string, values?: Record<string, unknown>): UiMessage =>
@@ -51,8 +58,14 @@ export function setQuickLayoutUndoRunner(run: () => void): void {
   undoRunner = run
 }
 
-/** 按钮的忙碌态（请求期间）。运行时状态，不进文档；一次只跑一轮 */
-export const useQuickLayoutStore = create<{ busy: boolean }>(() => ({ busy: false }))
+/**
+ * 按钮的忙碌态（请求期间）与拖分隔线的预览轮廓（mm，只画淡色框；松手后等方案期间留着，方案回来 / 失败时清掉）。
+ * 运行时状态，不进文档；一次只跑一轮
+ */
+export const useQuickLayoutStore = create<{ busy: boolean; preview: Record<string, Box> | null }>(() => ({
+  busy: false,
+  preview: null,
+}))
 
 export type QuickLayoutOutcome =
   | 'applied'
@@ -175,7 +188,7 @@ async function settleNewFigures(): Promise<void> {
 }
 
 /**
- * 点「一键排版」。`target` / `gapMm` 来自工具条的小下拉（或命令面板读同一份偏好）。
+ * 点「一键排版」。`target` / `gapMm` 来自工具条的小下拉（或命令面板读同一份偏好）；排列、画布与「按规范修」读同一份偏好。
  * 回的结局给用例与调用方看；用户看到的只有一枚胶囊。
  */
 export async function runQuickLayout(target: QuickLayoutTarget, gapMm: number): Promise<QuickLayoutOutcome> {
@@ -192,12 +205,85 @@ export async function runQuickLayout(target: QuickLayoutTarget, gapMm: number): 
     useQuickLayoutStore.setState({ busy: false })
   }
 
+  const prefs = readQuickLayoutPrefs()
+  const docAtStart = useDocumentStore.getState().doc
+  return runPlan({
+    involved: involvedPanels(docAtStart),
+    target,
+    gapMm,
+    columns: prefs.columns,
+    canvas: resolveCanvasMode(prefs.canvas, docAtStart.page.userSized),
+    fixSpec: prefs.fixSpec,
+    memoFixSpec: prefs.fixSpec,
+    label: 'quickLayout',
+    checkpoint: true,
+    announce: true,
+  })
+}
+
+/**
+ * 拖分隔线松手：用记着的网格（`doc.quickLayout`）与新的行 / 列比例重排一次——**不再按规范修**（`fix_spec: false`，
+ * 约 0.4 s），一次 commit、一条历史「调整排版比例」。记忆已失效 / 有别的一轮在跑 = 什么都不做。
+ * 失败只是一句话，图一个字没动（调用方负责收掉预览轮廓——这里的 finally 已经清了）。
+ */
+export async function runQuickLayoutRatios(ratios: { cols: number[]; rows: number[] }): Promise<QuickLayoutOutcome> {
+  if (useQuickLayoutStore.getState().busy) return 'busy'
+  const doc = useDocumentStore.getState().doc
+  const memo = doc.quickLayout
+  if (!quickLayoutValid(memo, doc.objects)) {
+    useQuickLayoutStore.setState({ preview: null })
+    return 'stale'
+  }
+  const byId = new Map(doc.objects.map((o) => [o.id, o] as const))
+  const cellPanels = Object.keys(memo.cells).map((id) => byId.get(id) as PanelObject)
+  const fixedPanels = (memo.fixedIds ?? [])
+    .map((id) => byId.get(id))
+    .filter((o): o is PanelObject => o?.type === 'panel')
+  // 记着的网格里的图现在都得还能排；排不了（被旋转 / 换成位图了）= 这份记忆不作数
+  if (!cellPanels.every(resizable)) {
+    useQuickLayoutStore.setState({ preview: null })
+    return 'stale'
+  }
+  return runPlan({
+    involved: [...cellPanels, ...fixedPanels],
+    target: memo.target,
+    gapMm: memo.gapMm,
+    columns: memo.cols,
+    canvas: memo.canvas,
+    fixSpec: false,
+    memoFixSpec: memo.fixSpec,
+    ratios,
+    label: 'quickLayoutRatios',
+    checkpoint: false,
+    announce: false,
+  })
+}
+
+interface PlanRun {
+  involved: PanelObject[]
+  target: QuickLayoutTarget
+  gapMm: number
+  columns: number | null
+  canvas: QuickLayoutCanvasMode
+  fixSpec: boolean
+  /** 写进网格记忆的 `fixSpec`（拖分隔线重排请求里是 false，记忆里仍是那一次排版的选择） */
+  memoFixSpec: boolean
+  ratios?: { cols: number[]; rows: number[] }
+  label: 'quickLayout' | 'quickLayoutRatios'
+  /** 排版时间线的自动检查点（拖分隔线不打：一次拖动一次撤销就够了） */
+  checkpoint: boolean
+  /** 成功后说「已排好 · 撤销」（拖分隔线静默） */
+  announce: boolean
+}
+
+/** 发请求、回来核对、一次 commit：一键排版与拖分隔线重排共用这一处 */
+async function runPlan(run: PlanRun): Promise<QuickLayoutOutcome> {
+  const { involved, target, gapMm, columns, canvas: canvasMode, fixSpec } = run
   const start = useDocumentStore.getState()
   const docAtStart = start.doc
   const loadSeq = start.loadSeq
   const canvasId = start.activeCanvasId
 
-  const involved = involvedPanels(docAtStart)
   const solvable = involved.filter((p) => resizable(p))
   if (solvable.length < 2) {
     say(note('quickLayoutTooFew'), 'info')
@@ -225,11 +311,14 @@ export async function runQuickLayout(target: QuickLayoutTarget, gapMm: number): 
     gap_mm: gapMm,
     profile,
     label_pt: canvasTextDefaults().sizePt,
-    fix_spec: readQuickLayoutPrefs().fixSpec,
+    fix_spec: fixSpec,
+    columns,
+    canvas: canvasMode,
+    ...(run.ratios ? { ratios: run.ratios } : {}),
   }
 
   // 排版时间线的自动检查点（ADR 0101 / 0199 §七）：快照在任何 await 之前取，失败不打扰
-  void takeCheckpoint({ auto: true }).catch(() => undefined)
+  if (run.checkpoint) void takeCheckpoint({ auto: true }).catch(() => undefined)
 
   useQuickLayoutStore.setState({ busy: true })
   let res: QuickLayoutResponse | null = null
@@ -264,7 +353,13 @@ export async function runQuickLayout(target: QuickLayoutTarget, gapMm: number): 
         void useLicenseStore.getState().load()
         return 'not_licensed'
       }
-      say(note(res.code === 'too_few' ? 'quickLayoutTooFew' : 'quickLayoutFailed'), 'info')
+      const key =
+        res.code === 'too_few'
+          ? 'quickLayoutTooFew'
+          : res.code === 'page_too_small'
+            ? 'quickLayoutPageTooSmall'
+            : 'quickLayoutFailed'
+      say(note(key), 'info')
       return res.code === 'too_few' ? 'too_few' : 'failed'
     }
 
@@ -291,7 +386,8 @@ export async function runQuickLayout(target: QuickLayoutTarget, gapMm: number): 
       return 'stale'
     }
 
-    commitPlan(res, involved.map(boxOf))
+    const memo = memoOf(res, sentKeys, run, canvasMode, fixed)
+    commitPlan(res, involved.map(boxOf), run.label, memo)
     // 重渲染：返回的每张图；后端说热态不干净时，其余发出去的也按全量列表重放一次
     const rendered = new Set(res.panels.map((p) => p.key))
     const after = useDocumentStore.getState()
@@ -300,6 +396,7 @@ export async function runQuickLayout(target: QuickLayoutTarget, gapMm: number): 
       if (p?.type === 'panel') requestRender(p, true)
     }
 
+    if (!run.announce) return 'applied'
     // 「撤销」只在撤销栈还停在这一步时撤；之后又改了别的，撤的就是别的了，只收胶囊
     const depth = after.past.length
     say(note('quickLayoutDone'), 'done', {
@@ -315,7 +412,37 @@ export async function runQuickLayout(target: QuickLayoutTarget, gapMm: number): 
     })
     return 'applied'
   } finally {
-    useQuickLayoutStore.setState({ busy: false })
+    useQuickLayoutStore.setState({ busy: false, preview: null })
+  }
+}
+
+/** 网格记忆：后端回了网格、且格子里的图都是发出去的才记；否则这一轮不留记忆（旧的也清掉） */
+function memoOf(
+  res: Extract<QuickLayoutResponse, { ok: true }>,
+  sentKeys: Set<string>,
+  run: PlanRun,
+  canvas: QuickLayoutCanvasMode,
+  fixed: PanelObject[],
+): QuickLayoutMemo | undefined {
+  const g = res.grid
+  if (!g) return undefined
+  const ids = Object.keys(g.cells)
+  if (!ids.length || ids.some((id) => !sentKeys.has(id))) return undefined
+  const boxes: QuickLayoutMemo['boxes'] = {}
+  for (const p of res.panels) if (g.cells[p.key]) boxes[p.key] = [...p.box]
+  if (ids.some((id) => !boxes[id])) return undefined
+  return {
+    rows: g.rows,
+    cols: g.cols,
+    cells: Object.fromEntries(ids.map((id) => [id, [g.cells[id][0], g.cells[id][1]] as [number, number]])),
+    colRatios: [...g.col_ratios],
+    rowRatios: [...g.row_ratios],
+    boxes,
+    target: run.target,
+    gapMm: run.gapMm,
+    canvas,
+    fixSpec: run.memoFixSpec,
+    ...(fixed.length ? { fixedIds: fixed.map((p) => p.id) } : {}),
   }
 }
 
@@ -326,8 +453,13 @@ export async function runQuickLayout(target: QuickLayoutTarget, gapMm: number): 
  * `syncPanelNativeSize`）。所以这里先把 w / h 摆成「乘完正好是 box」的值——与 `setFigureFrameScaled` 同一个办法；
  * 求解器给的 box 与图幅等大（缩放 = 1），渲染一回来页面上的框就是 box。
  */
-function commitPlan(res: Extract<QuickLayoutResponse, { ok: true }>, before: Box[]): void {
-  useDocumentStore.getState().commit(hist('quickLayout'), (d) => {
+function commitPlan(
+  res: Extract<QuickLayoutResponse, { ok: true }>,
+  before: Box[],
+  label: 'quickLayout' | 'quickLayoutRatios',
+  memo: QuickLayoutMemo | undefined,
+): void {
+  useDocumentStore.getState().commit(hist(label), (d) => {
     // 旧的子图标签（「(a)」这类，与样式系统同一判据 `isSubLabel`）落在参与排版的图原来的范围里（外扩 5 mm）的，
     // 换成这次算好位置的新标签：重复点不叠标签，手加的 (a)(b) 也跟着落到对的地方
     const near = (x: number, y: number) =>
@@ -363,7 +495,11 @@ function commitPlan(res: Extract<QuickLayoutResponse, { ok: true }>, before: Box
       d.objects.push(makeSubLabel(i, l.x, l.y))
     })
     // 页面跟着内容收紧（同一条历史，⌘Z 一次撤回）
+    // 注意：这里**不**置 `page.userSized`——那是「用户自己定过画布大小」的记号，排版自己写的不算
     d.page.w = res.page.w
     d.page.h = res.page.h
+    // 网格记忆与排版同一次提交（⌘Z 一起回去）；这一轮没有网格 = 旧的也不再作数
+    if (memo) d.quickLayout = memo
+    else delete d.quickLayout
   })
 }

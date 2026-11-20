@@ -474,7 +474,8 @@
     "outlineStroke": "轮廓化描边",
     "reversePath": "反转路径方向",
     "simplifyPath": "简化路径",
-    "quickLayout": "一键排版"
+    "quickLayout": "一键排版",
+    "quickLayoutRatios": "调整排版比例"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -975,6 +976,7 @@
     "quickLayoutUndo": "撤销",
     "quickLayoutTooFew": "至少要两张图",
     "quickLayoutStale": "图刚刚变了，再点一次一键排版",
+    "quickLayoutPageTooSmall": "画布放不下这几张图，可以减少列数或调大画布",
     "quickLayoutFailed": "这次没排好，再试一次",
     "quickLayoutNoteEqualAspect": "图 {{label}} 是等比例坐标，没参与轴线对齐",
     "quickLayoutNoteSpecNotFixed": "图 {{label}} 还有几处字号没修到规范，可在「问题」里看",
@@ -1906,6 +1908,20 @@
     },
     "gapLabel": "图间距",
     "gap": "{{mm}} mm",
+    "columnsLabel": "排列",
+    "columns": {
+      "auto": "按摆放位置",
+      "1": "1 列",
+      "2": "2 列",
+      "3": "3 列"
+    },
+    "canvasLabel": "画布",
+    "canvas": {
+      "auto": "自动",
+      "keep": "保持画布大小",
+      "fit": "跟着内容调整"
+    },
+    "widthLockedTip": "保持画布大小时用画布的宽度",
     "fixSpec": "同时按规范修文字和线条"
   }
 }

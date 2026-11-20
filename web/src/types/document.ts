@@ -607,6 +607,34 @@ export interface PageSetup {
   transparent?: boolean
   /** 安全区域页边距（mm） */
   margin?: number
+  /**
+   * 用户自己定过这张画布的大小（属性栏宽高 / 预设 / 横竖 / 拖页面边）。可选，磁盘格式不升版；
+   * 一键排版「画布：自动」据此选「保持画布大小」。一键排版自己写页面尺寸时**不**置它。
+   */
+  userSized?: boolean
+}
+
+/**
+ * 一键排版留在画布上的「网格记忆」（ADR 0199，拖分隔线调比例用）。可选字段，旧文档没有；
+ * 只在每张 `cells` 里的图都还在、且位置与大小仍等于 `boxes`（0.05 mm 内）时才算有效——
+ * 用户挪过 / 缩过 / 删过任何一张就静默失效（`lib/quickLayoutGrid.quickLayoutValid`）。
+ */
+export interface QuickLayoutMemo {
+  rows: number
+  cols: number
+  /** 画布对象 id → [行, 列] */
+  cells: Record<string, [number, number]>
+  colRatios: number[]
+  rowRatios: number[]
+  /** 排完那一刻各图在页面上的框（mm，[x, y, w, h]） */
+  boxes: Record<string, [number, number, number, number]>
+  target: 'single' | 'double' | 'page'
+  gapMm: number
+  /** 那一次用的画布模式（已解析：保持 / 跟着内容） */
+  canvas: 'keep' | 'fit'
+  fixSpec: boolean
+  /** 那一次作为固定盒子（障碍物）参与的图 id（拖分隔线重排时照样带上） */
+  fixedIds?: string[]
 }
 
 /**
@@ -706,6 +734,8 @@ export interface FigureDocument {
   framePad?: FramePad
   /** 单图画布处在「紧凑」停靠点上的那几边（ADR 0161）：图幅变了按新的内容边缘重算，不保留旧 mm */
   framePadTight?: FramePadSide[]
+  /** 一键排版的网格记忆（见 `QuickLayoutMemo`）；缺省 = 没排过或已清掉 */
+  quickLayout?: QuickLayoutMemo
 }
 
 /**
@@ -743,6 +773,7 @@ export interface CanvasData {
   /** 单图编辑的画布留白（ADR 0161）；缺省 = 全 0 */
   framePad?: FramePad
   framePadTight?: FramePadSide[]
+  quickLayout?: QuickLayoutMemo
 }
 
 /**
@@ -776,6 +807,7 @@ export function canvasToDoc(c: CanvasData): FigureDocument {
     ...(c.style ? { style: c.style } : {}),
     ...(c.framePad ? { framePad: c.framePad } : {}),
     ...(c.framePadTight?.length ? { framePadTight: c.framePadTight } : {}),
+    ...(c.quickLayout ? { quickLayout: c.quickLayout } : {}),
   }
 }
 
@@ -791,6 +823,7 @@ export function docToCanvas(doc: FigureDocument, id: string): CanvasData {
     ...(doc.style ? { style: doc.style } : {}),
     ...(doc.framePad ? { framePad: doc.framePad } : {}),
     ...(doc.framePadTight?.length ? { framePadTight: doc.framePadTight } : {}),
+    ...(doc.quickLayout ? { quickLayout: doc.quickLayout } : {}),
   }
 }
 

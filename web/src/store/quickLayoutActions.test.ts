@@ -38,7 +38,8 @@ import { addSubLabels, makeSubLabel } from './actions'
 import { useDocumentStore } from './documentStore'
 import { useRenderStore } from './renderStore'
 import { runUndoRedo } from '@/hooks/useKeyboard' // 加载它 = 把「撤销」交给一键排版的胶囊
-import { runQuickLayout, useQuickLayoutStore } from './quickLayoutActions'
+import { runQuickLayout, runQuickLayoutRatios, useQuickLayoutStore } from './quickLayoutActions'
+import { setPageSize } from './actions'
 import { currentSpec } from './issueFixActions'
 
 void runUndoRedo
@@ -86,6 +87,7 @@ const okPlan = (): QuickLayoutResponse => ({
   notes: [],
   spec_changes: [],
   page: { w: 193, h: 80 },
+  grid: { rows: 1, cols: 2, cells: { p1: [0, 0], p2: [0, 1] }, col_ratios: [1, 1], row_ratios: [1] },
   replay_required: false,
 })
 
@@ -369,5 +371,221 @@ describe('addSubLabels 没变', () => {
     expect({ ...a, id: '' }).toEqual({
       id: '', type: 'text', text: '(c)', x: 5, y: 6, w: 10, h: 5, sizePt: 10, color: '#000000', align: 'left', bold: true,
     })
+  })
+})
+
+describe('排列 / 画布 / 网格记忆（ADR 0199 修订）', () => {
+  const prefs = (p: Record<string, unknown>) =>
+    localStorage.setItem('tavotto.quickLayout', JSON.stringify({ target: 'double', gapMm: 3, fixSpec: true, ...p }))
+  const run = async () => {
+    useUiStore.getState().setStatus(null)
+    return runQuickLayout('double', 3)
+  }
+
+  it('请求带 columns（默认 null）与解析后的 canvas（没定过画布大小 = fit）', async () => {
+    seed(panel('p1'), panel('p2'))
+    quickLayoutPlan.mockResolvedValue(okPlan())
+    await run()
+    expect(lastRequest().columns).toBeNull()
+    expect(lastRequest().canvas).toBe('fit')
+    expect(lastRequest().ratios).toBeUndefined()
+    prefs({ columns: 2 })
+    await run()
+    expect(lastRequest().columns).toBe(2)
+  })
+
+  it('画布「自动」：用户定过画布大小 = keep；没定过 / 老文档没有这个字段 = fit；显式选择压过自动', async () => {
+    seed(panel('p1'), panel('p2'))
+    quickLayoutPlan.mockResolvedValue(okPlan())
+    await run()
+    expect(lastRequest().canvas).toBe('fit')
+    s().commit(literal('定大小'), (d) => {
+      d.page.userSized = true
+    })
+    await run()
+    expect(lastRequest().canvas).toBe('keep')
+    prefs({ canvas: 'fit' })
+    await run()
+    expect(lastRequest().canvas).toBe('fit')
+    prefs({ canvas: 'keep' })
+    s().commit(literal('取消'), (d) => {
+      delete d.page.userSized
+    })
+    await run()
+    expect(lastRequest().canvas).toBe('keep')
+  })
+
+  it('用户改页面尺寸（setPageSize）置 userSized；一键排版自己写页面尺寸不置', async () => {
+    seed(panel('p1'), panel('p2'))
+    expect(s().doc.page.userSized).toBeUndefined()
+    quickLayoutPlan.mockResolvedValue(okPlan())
+    await run()
+    expect([s().doc.page.w, s().doc.page.h]).toEqual([193, 80])
+    expect(s().doc.page.userSized).toBeUndefined()
+    setPageSize(200, 100)
+    expect(s().doc.page.userSized).toBe(true)
+    // 已经是 true 的画布，排版之后仍是 true（不改它）
+    await run()
+    expect(s().doc.page.userSized).toBe(true)
+  })
+
+  it('page_too_small：一句话（info 色），图一个字没动，不留记忆', async () => {
+    seed(panel('p1', { nativeW: 85 }), panel('p2', { nativeW: 85 }))
+    const depth = s().past.length
+    quickLayoutPlan.mockResolvedValue({ ok: false, code: 'page_too_small' })
+    expect(await run()).toBe('failed')
+    expect(statusText()).toBe('画布放不下这几张图，可以减少列数或调大画布')
+    expect(useUiStore.getState().statusTone).toBe('info')
+    expect(s().past.length).toBe(depth)
+    expect(s().doc.quickLayout).toBeUndefined()
+  })
+
+  it('排完同一次 commit 里存网格记忆（含 boxes、目标、间距、解析后的画布、fixSpec）；⌘Z 一起回去', async () => {
+    seed(panel('p1', { nativeW: 85 }), panel('p2', { nativeW: 85 }))
+    quickLayoutPlan.mockResolvedValue(okPlan())
+    prefs({ canvas: 'keep', fixSpec: false })
+    const depth = s().past.length
+    await run()
+    expect(s().past.length).toBe(depth + 1)
+    expect(s().doc.quickLayout).toEqual({
+      rows: 1,
+      cols: 2,
+      cells: { p1: [0, 0], p2: [0, 1] },
+      colRatios: [1, 1],
+      rowRatios: [1],
+      boxes: { p1: [10, 10, 85, 60], p2: [98, 10, 85, 60] },
+      target: 'double',
+      gapMm: 3,
+      canvas: 'keep',
+      fixSpec: false,
+    })
+    s().undo()
+    expect(s().doc.quickLayout).toBeUndefined()
+  })
+
+  it('后端没回网格（grid: null）/ 网格里有没发过的图：不留记忆，旧的也清掉', async () => {
+    seed(panel('p1', { nativeW: 85 }), panel('p2', { nativeW: 85 }))
+    quickLayoutPlan.mockResolvedValue(okPlan())
+    await run()
+    expect(s().doc.quickLayout).toBeTruthy()
+    quickLayoutPlan.mockResolvedValue({ ...okPlan(), grid: null })
+    await run()
+    expect(s().doc.quickLayout).toBeUndefined()
+    quickLayoutPlan.mockResolvedValue({
+      ...okPlan(),
+      grid: { rows: 1, cols: 2, cells: { p1: [0, 0], zz: [0, 1] }, col_ratios: [1, 1], row_ratios: [1] },
+    })
+    await run()
+    expect(s().doc.quickLayout).toBeUndefined()
+  })
+
+  it('图幅变了（nativeW ≠ size_mm）：commit 之后页面上的框是「渲染回来再乘一遍」前的预除值，记忆暂时无效；渲染同步到 box 后有效', async () => {
+    const { quickLayoutValid } = await import('@/lib/quickLayoutGrid')
+    // 原生 80 宽，求解器要 85 宽：obj.w = 85 * 80 / 85 = 80，与 box 差 5 mm
+    seed(panel('p1', { nativeW: 80 }), panel('p2', { nativeW: 80 }))
+    quickLayoutPlan.mockResolvedValue(okPlan())
+    await run()
+    const memo = s().doc.quickLayout!
+    expect(quickLayoutValid(memo, s().doc.objects)).toBe(false)
+    // 渲染回来补图幅（syncPanelNativeSize 的结果）：w / h 乘回 box
+    s().commit(literal('渲染同步'), (d) => {
+      for (const o of d.objects) if (o.type === 'panel') [o.w, o.h] = memo.boxes[o.id].slice(2) as [number, number]
+    })
+    expect(quickLayoutValid(memo, s().doc.objects)).toBe(true)
+  })
+
+  it('记忆随画布存取：画布换算互逆，且不进 schema 升版', async () => {
+    seed(panel('p1', { nativeW: 85 }), panel('p2', { nativeW: 85 }))
+    quickLayoutPlan.mockResolvedValue(okPlan())
+    await run()
+    const saved = JSON.parse(JSON.stringify(s().doc))
+    expect(saved.quickLayout.cols).toBe(2)
+    expect(saved.schema).toBe(2)
+  })
+})
+
+describe('拖分隔线重排（runQuickLayoutRatios）', () => {
+  /** 排好一版再说：两张 85×60 并排，记忆有效 */
+  const laidOut = async () => {
+    seed(panel('p1', { nativeW: 85 }), panel('p2', { nativeW: 85 }))
+    quickLayoutPlan.mockResolvedValue(okPlan())
+    await runQuickLayout('double', 3)
+    quickLayoutPlan.mockClear()
+    requestRender.mockClear()
+    useUiStore.getState().setStatus(null)
+  }
+
+  it('一次请求：同样的图 / 目标 / 间距 / 画布，columns = 记忆的列数，fix_spec false，带 ratios；一次 commit、历史名「调整排版比例」', async () => {
+    await laidOut()
+    const depth = s().past.length
+    quickLayoutPlan.mockResolvedValue({
+      ...okPlan(),
+      panels: [
+        { key: 'p1', patches: [{ gid: 'figure', prop: 'size_mm', value: [60, 60] }], box: [10, 10, 60, 60] },
+        { key: 'p2', patches: [{ gid: 'figure', prop: 'size_mm', value: [110, 60] }], box: [73, 10, 110, 60] },
+      ],
+      grid: { rows: 1, cols: 2, cells: { p1: [0, 0], p2: [0, 1] }, col_ratios: [1, 2], row_ratios: [1] },
+    })
+    expect(await runQuickLayoutRatios({ cols: [1, 2], rows: [1] })).toBe('applied')
+    expect(quickLayoutPlan).toHaveBeenCalledTimes(1)
+    const req = lastRequest()
+    expect(req.fix_spec).toBe(false)
+    expect(req.columns).toBe(2)
+    expect(req.ratios).toEqual({ cols: [1, 2], rows: [1] })
+    expect(req.target).toBe('double')
+    expect(req.gap_mm).toBe(3)
+    expect(req.canvas).toBe('fit')
+    expect(req.panels.map((p: { key: string }) => p.key)).toEqual(['p1', 'p2'])
+    expect(s().past.length).toBe(depth + 1)
+    expect(formatMessage(s().past.at(-1)!.label)).toBe('调整排版比例')
+    expect(s().doc.quickLayout?.colRatios).toEqual([1, 2])
+    expect(s().doc.quickLayout?.boxes.p2).toEqual([73, 10, 110, 60])
+    // 记忆里仍是那一次排版的 fixSpec 选择
+    expect(s().doc.quickLayout?.fixSpec).toBe(true)
+    // 静默：不说「已排好」
+    expect(useUiStore.getState().status).toBeNull()
+    // 标签仍是 (a)(b)，没叠
+    expect(texts().map((l) => l.text)).toEqual(['(a)', '(b)'])
+  })
+
+  it('记忆已失效（用户挪过一张）：不发请求', async () => {
+    await laidOut()
+    s().commit(literal('挪'), (d) => {
+      const p = d.objects.find((o) => o.id === 'p1')!
+      p.x += 5
+    })
+    expect(await runQuickLayoutRatios({ cols: [1, 2], rows: [1] })).toBe('stale')
+    expect(quickLayoutPlan).not.toHaveBeenCalled()
+  })
+
+  it('请求失败：不 commit、不留预览，一句话', async () => {
+    await laidOut()
+    const depth = s().past.length
+    useQuickLayoutStore.setState({ preview: { p1: [10, 10, 60, 60] } })
+    quickLayoutPlan.mockResolvedValue({ ok: false, code: 'not_converged' })
+    expect(await runQuickLayoutRatios({ cols: [1, 2], rows: [1] })).toBe('failed')
+    expect(s().past.length).toBe(depth)
+    expect(useQuickLayoutStore.getState().preview).toBeNull()
+    expect(statusText()).toBe('这次没排好，再试一次')
+  })
+
+  it('page_too_small 同样一句话', async () => {
+    await laidOut()
+    quickLayoutPlan.mockResolvedValue({ ok: false, code: 'page_too_small' })
+    await runQuickLayoutRatios({ cols: [1, 2], rows: [1] })
+    expect(statusText()).toBe('画布放不下这几张图，可以减少列数或调大画布')
+  })
+
+  it('等待期间文档变了：丢弃、不 commit', async () => {
+    await laidOut()
+    const depth = s().past.length
+    quickLayoutPlan.mockImplementation(async () => {
+      s().commit(literal('手改'), (d) => {
+        d.objects.find((o) => o.id === 'p2')!.x += 1
+      })
+      return okPlan()
+    })
+    expect(await runQuickLayoutRatios({ cols: [1, 2], rows: [1] })).toBe('stale')
+    expect(s().past.length).toBe(depth + 1) // 只有手改那一条
   })
 })

@@ -491,7 +491,8 @@
     "outlineStroke": "Outline stroke",
     "reversePath": "Reverse path direction",
     "simplifyPath": "Simplify path",
-    "quickLayout": "Auto layout"
+    "quickLayout": "Auto layout",
+    "quickLayoutRatios": "Adjust layout proportions"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -1029,6 +1030,7 @@
     "quickLayoutUndo": "Undo",
     "quickLayoutTooFew": "Need at least two figures",
     "quickLayoutStale": "The figures just changed. Run Auto layout again.",
+    "quickLayoutPageTooSmall": "The figures don't fit this canvas. Try fewer columns or a larger canvas.",
     "quickLayoutFailed": "Couldn't lay these out. Try again.",
     "quickLayoutNoteEqualAspect": "Figure {{label}} has equal-aspect axes, so its axes weren't aligned",
     "quickLayoutNoteSpecNotFixed": "Some font sizes in figure {{label}} are still below the spec — see Issues",
@@ -1977,6 +1979,20 @@
     },
     "gapLabel": "Gap",
     "gap": "{{mm}} mm",
+    "columnsLabel": "Arrangement",
+    "columns": {
+      "auto": "By current position",
+      "1": "1 column",
+      "2": "2 columns",
+      "3": "3 columns"
+    },
+    "canvasLabel": "Canvas",
+    "canvas": {
+      "auto": "Auto",
+      "keep": "Keep canvas size",
+      "fit": "Fit to content"
+    },
+    "widthLockedTip": "Width follows the canvas when keeping its size",
     "fixSpec": "Also fix text and lines to the spec"
   }
 }
