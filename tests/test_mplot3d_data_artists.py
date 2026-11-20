@@ -579,6 +579,28 @@ def test_per_point_sizes_and_linewidths_restore_in_the_script_order(extra):
         )
 
 
+@pytest.mark.parametrize("hide_axes", [False, True], ids=["collection-hidden", "axes-hidden"])
+def test_hidden_per_point_size_scatter_keeps_sizes_on_their_points(extra, library, hide_axes):
+    """逐点大小不同的 3D 散点：出过预览后隐藏集合（或其 axes）、反复测量、再取消隐藏。
+
+    `Path3DCollection.do_3d_projection` 把 `_sizes` 重排成深度序，规范顺序在 `_sizes3d`；隐藏时补算
+    标记 dpi 变换若走子类的 `set_sizes`，会拿排过序的 `get_sizes()` 覆盖 `_sizes3d`，之后每测一次再排一次，
+    取消隐藏后大小落到别的点上。只许刷新依赖 dpi 的 `_transforms`。"""
+    stem = "S3D"
+    base = _man(extra, stem)
+    base_png = _png(extra, stem, [], "hs-base")  # 出过预览：_transforms 停在 380 px 那一档
+    gid = next(e["gid"] for e in base["elements"] if e["role"] == "scatter")
+    target = "axes_0" if hide_axes else gid
+    hide = [{"gid": target, "prop": "visible", "value": False}]
+    first = _man(extra, stem, hide)
+    for _ in range(3):  # 多次测量：每次都会再重排一遍
+        assert _man(extra, stem, hide) == first
+    fresh_man, _fresh_png = _fresh(library, stem, hide, EXTRA_SCRIPT)
+    assert first == fresh_man, "隐藏期间热态 ≠ 冷启动重放"
+    assert _man(extra, stem) == base, "取消隐藏后 manifest 没回原样（大小与点的对应被打乱）"
+    assert _png(extra, stem, [], "hs-undo") == base_png, "取消隐藏后画面不是脚本原样"
+
+
 def test_scatter_facecolor_value_does_not_follow_the_view(extra):
     """3D 散点的 `get_facecolor()` 是深度排序后的数组，`[0]` 随视角变；字段值读未排序的原始面色，转视角不该动它。"""
     stem = "S3D"

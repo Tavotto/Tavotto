@@ -5618,7 +5618,10 @@ def _refresh_hidden_marker_sizes(state: FigState) -> None:
         if art.get_visible() and (ax is None or ax.get_visible()):
             continue
         try:
-            art.set_sizes(art.get_sizes(), art.figure.dpi)
+            # 走基类的 `set_sizes`：只按 `_sizes` 与 dpi 重算 `_transforms`。`Path3DCollection.set_sizes`
+            # 在 draw 之外会把参数写进规范的 `_sizes3d`，而此刻的 `_sizes` 是深度序，覆盖它会打乱
+            # 逐点大小（`overrides.collection_sizes`）。
+            mcollections._CollectionWithSizes.set_sizes(art, art._sizes, art.figure.dpi)  # noqa: SLF001
         except Exception:  # noqa: BLE001 — 补算失败只是标记轮廓偏旧，不拦渲染
             pass
 
