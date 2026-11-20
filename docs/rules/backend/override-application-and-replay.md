@@ -263,6 +263,15 @@ order: 70
   已应用条目带来的身份记在 `FigState.applied_identity`，`FigSession.snapshot()` 原样交出——native
   屏障离开时存的就是这份快照，丢了身份，下一个屏障 rebase 又按位置落到别的对象上（#602 评审）。
   看护 `tests/test_override_identity.py`、`tests/native/test_native_barrier_semantics.py::test_target_identity_survives_the_barrier_snapshot`。
+- **override 不读当前合成值或残留状态，写前问冷重放读到的是否同一份（错题本 L-131 升级，2026-11-21）。**
+  handler 读的值、撤销还原的状态、刷新时取的原样，都要等于全新进程只带这份 override 列表重放时读到的那一份；
+  matplotlib 合成过（全局 alpha）、排过序（3D 深度排序后的 `_sizes`）、或此刻被别的 override 改过的值都不算。同一
+  artist 上有两条 override 时，撤销或重做其中一条后另一条要重新生效；带成员事实的字段按成员算。用例写「热态编辑 /
+  撤销 / 重做」与「冷重放」两条路径的结果对拍。为什么：渐变编辑存了被全局 alpha 合成过的颜色、读了 setter 那一刻的
+  轴方向，批量写把首个成员的方向复制给全部成员，连报三条 P1（#1692）；网格撤销读当时的 rcParams 而非抓下的原值，
+  两条 P1（#1997）；2026-11-19 引线已有 `pos_frac` 时加删拐点再撤销，还原把线重置回脚本原样、连位置钉一起摘掉，重做
+  又让平移钉盖掉拐点钉，两条 P1（#2060）；2026-11-21 隐藏 3D 散点后刷新标记换算读 `get_sizes()`，拿到的是深度排序后
+  的数组，逐点大小错位，一条 P1（#2076）。
 - 坐标约定：manifest bbox/anchor 均为 figure 分数坐标、**y 向下**（top-origin）；
   worker 内部转 matplotlib 的 bottom-origin。
 
