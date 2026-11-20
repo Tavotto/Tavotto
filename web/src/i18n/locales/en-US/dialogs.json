@@ -2646,6 +2646,12 @@
     }
   },
   "packageInstall": {
+    "frozenPanels": "The package preserves the confirmed artwork for these figures. Run their original scripts on this machine to edit figure elements.",
+    "skippedConflict": "{{conflict}} run configurations conflicted with local settings, which were kept.",
+    "skippedCapacity": "{{capacity}} run configurations exceeded the local limit and were skipped.",
+    "skippedBoth": "Local settings took precedence for {{conflict}} run configurations, and {{capacity}} others exceeded the local limit.",
+    "importEntry": "Import project package…",
+    "remapRelink": "Some Figure snapshots were captured under another machine's input mapping. After opening the project, relink those figures to their original files; the old paths will not be reused.",
     "entry": "Install project package to a new folder…",
     "title": "Install computational chart package",
     "description": "Inspect resources, then install a new project. Your current layout is preserved when opening it.",

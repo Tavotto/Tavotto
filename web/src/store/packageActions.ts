@@ -1,4 +1,4 @@
-import { createPackage } from '@/lib/api'
+import { CHART_PACKAGE_FORMAT, createPackage } from '@/lib/api'
 import { msg } from '@/i18n'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { isPackageTooNew, openPackageFile } from '@/lib/packageImport'
@@ -14,16 +14,36 @@ import { useUiStore } from './uiStore'
  * 不是一张图，和「导出这张图」放在同一个弹窗里让两件事互相冒充。搬走
  * 不等于砍掉——导入就在下面一行，一进一出终于在同一个菜单里。
  */
+/** 同一份文档连点两次导出：先发回执不许覆盖后发那次的结局。 */
+let packageExportSequence = 0
+
 export async function exportPackage(attempt = 0): Promise<void> {
   const ui = useUiStore.getState()
   const doc = useDocumentStore.getState()
   // 「再试一次」只重做**这一份**排版的导出：点的时候换了项目 / 排版就只收提示，不把别的东西打成包
+  const sequence = ++packageExportSequence
   const documentId = doc.documentId
+  const loadSeq = doc.loadSeq
   const projectId = currentProjectId()
+  const stillHere = () => {
+    const now = useDocumentStore.getState()
+    return sequence === packageExportSequence
+      && now.documentId === documentId
+      && now.loadSeq === loadSeq && currentProjectId() === projectId
+  }
   try {
-    const res = await createPackage(doc.projectMeta.name || doc.doc.name, doc.buildProject(), {})
-    ui.setStatus(msg('status.packaged', { name: res.name, count: res.assets }, 'workspace'), 'done')
+    const stem = doc.projectMeta.name || doc.doc.name
+    const res = await createPackage(stem, doc.buildProject(), {}, { pj: projectId })
+    if (!stillHere()) return
+    const executionIncomplete = res.document_format === CHART_PACKAGE_FORMAT && res.execution_coverage?.state === 'incomplete'
+    const message = res.document_format === CHART_PACKAGE_FORMAT && res.missing.length > 0
+      ? msg(executionIncomplete ? 'status.packagedIncompleteWithExecution' : 'status.packagedIncomplete', { name: res.name, count: res.missing.length }, 'workspace')
+      : executionIncomplete
+        ? msg('status.packagedExecutionIncomplete', { name: res.name }, 'workspace')
+        : msg('status.packaged', { name: res.name, count: res.assets }, 'workspace')
+    ui.setStatus(message, 'done')
   } catch (e) {
+    if (!stillHere()) return
     ui.setStatus(
       msg(
         'status.packageFailed',
@@ -37,7 +57,7 @@ export async function exportPackage(attempt = 0): Promise<void> {
           owner: PACKAGE_EXPORT_OWNER,
           attempt,
           run: (next) => {
-            if (useDocumentStore.getState().documentId !== documentId || currentProjectId() !== projectId) return
+            if (!stillHere()) return
             return exportPackage(next)
           },
         }),

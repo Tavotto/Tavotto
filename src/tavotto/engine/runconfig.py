@@ -485,12 +485,8 @@ def put(
         return _record_to_config(project_root, cid, configs[cid])
 
 
-def import_portable(project_root: str | Path, records) -> tuple[RunConfig, ...]:
-    """恢复闭式 {id,script,argv} 非敏感登记；不读脚本、不设置默认或成功事实。
-
-    先验证完整批，再在全部 writer 的共同锁里核冲突/容量，一次原子写。已有同 ID
-    的非敏感精确记录只复用；不按 argv 改 ID、不覆盖敏感占位、不淘汰任何记录。
-    """
+def validate_portable(records) -> dict[str, tuple[str, tuple[str, ...]]]:
+    """Validate a complete batch without touching any project or local state."""
     from . import packagemembers
 
     invalid = RunConfigUnsupported("无法导入这份运行配置", reason="portable_record_invalid")
@@ -528,42 +524,51 @@ def import_portable(project_root: str | Path, records) -> tuple[RunConfig, ...]:
         raise RunConfigUnsupported(
             "运行配置无法无损保存", reason="portable_record_invalid"
         ) from exc
+    return incoming
+
+
+def import_portable(
+    project_root: str | Path, records
+) -> tuple[tuple[RunConfig, ...], dict[str, int]]:
+    """Import validated suggestions in one write, preserving local choices and secrets."""
+    incoming = validate_portable(records)
+    skipped = {"conflict": 0, "capacity": 0}
     with _store_guard(project_root):
         data = _read(project_root, preserve=True)
         configs = data["configs"]
-        additions = {}
+        imported = []
+        changed = False
         for cid, (script, tokens) in incoming.items():
             if cid in configs:
                 existing = configs[cid]
-                if existing["sensitive"]:
-                    raise RunConfigSecretMissing(
-                        "不能用导入参数替换敏感配置", reason="portable_secret_conflict"
-                    )
-                if existing["script"] != script or tuple(existing["argv"]) != tokens:
-                    raise RunConfigUnsupported(
-                        "项目已有不同内容的运行配置引用", reason="portable_id_conflict"
-                    )
+                if (
+                    existing["sensitive"]
+                    or existing["script"] != script
+                    or tuple(existing["argv"]) != tokens
+                ):
+                    skipped["conflict"] += 1
+                    continue
             else:
-                additions[cid] = {
+                if len(configs) >= MAX_CONFIGS:
+                    skipped["capacity"] += 1
+                    continue
+                configs[cid] = {
                     "script": script,
                     "argv": list(tokens),
                     "sensitive": False,
                     "source": "portable",
                     "created_at": time.time(),
                 }
-        if additions:
-            if len(configs) + len(additions) > MAX_CONFIGS:
-                raise RunConfigUnsupported(
-                    "运行配置登记已满，未导入任何新配置", reason="portable_capacity"
-                )
-            configs.update(additions)
+                changed = True
+            imported.append(_record_to_config(project_root, cid, configs[cid]))
+        if changed:
             try:
                 _write(project_root, data, preserve=True)
             except (OSError, UnicodeError) as exc:
                 raise RunConfigUnreadable(
                     "运行配置导入写入失败，请检查登记后重试", reason="portable_write_failed"
                 ) from exc
-        return tuple(_record_to_config(project_root, cid, configs[cid]) for cid in incoming)
+        return tuple(imported), skipped
 
 
 def get(project_root: str | Path, config_id: str, *, script: str | None = None) -> RunConfig:

@@ -203,6 +203,7 @@
     "open_project_failed": "无法打开该项目：{{reason}}",
     "package_file_missing": "缺少上传文件",
     "package_invalid": "不是有效的项目包：{{reason}}",
+    "package_source_outside_project": "项目包引用的素材位于项目文件夹外。",
     "package_schema_unsupported": "这个项目包里的排版格式不受当前版本支持",
     "figure_snapshot_unavailable": "项目包引用的 Figure 配对或原件无法核验，未生成项目包。请恢复缺失资源或重新生成这张图。",
     "package_schema_too_new": "这个项目包由新版本的 Tavotto 创建（格式 v{{schema}}），请升级后再打开",

@@ -1,5 +1,7 @@
 """Real R acceptance for an edit of an already built ggplot2 scene."""
 
+import io
+import json
 import os
 import shutil
 import subprocess
@@ -211,6 +213,8 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy)) +
 
 def test_desktop_ggplot_edit_uses_the_layout_archive_and_mixed_export(tmp_path, monkeypatch):
     from tavotto import app as service, security
+    from tavotto.engine import documentassets
+    from test_chart_endpoints import BIND_REQUEST, CORPUS
 
     rscript, explicit = _rscript()
     if explicit is None:
@@ -396,6 +400,72 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
         assert result["status"] == "done" and result["outputs"][0]["format"] == "pdf"
         assert (Path(result["export_dir"]) / result["outputs"][0]["name"]).is_file()
         assert all(not active.alive() for active in nativesession.REGISTRY.list(str(root)))
+
+        (root / "chart.svg").write_bytes((CORPUS / "line_two_series.svg").read_bytes())
+        binding = client.post("/api/svg/chart/bind", json={**BIND_REQUEST, "file": "chart.svg"})
+        assert binding.status_code == 200, binding.get_json()
+        chart = {key: binding.get_json()[key] for key in ("model", "binding")}
+        mixed_document = opened.get_json()
+        mixed_document["schema"] = 4
+        mixed_document["canvases"].append(
+            {
+                "id": "bound-chart",
+                "schema": 2,
+                "name": "Computed SVG",
+                "page": {"w": 140, "h": 80},
+                "guides": [],
+                "objects": [
+                    {
+                        "id": "chart-panel",
+                        "type": "panel",
+                        "fileId": "chart.svg",
+                        "fileKind": "svg",
+                        "chart": chart,
+                        "x": 5,
+                        "y": 5,
+                        "w": 110,
+                        "h": 60,
+                    }
+                ],
+            }
+        )
+        named = "/api/layouts/Portable%20mixed"
+        saved = client.post(named + "?target=project", json=mixed_document)
+        assert saved.status_code == 200, saved.get_json()
+        mixed_document = client.get(named).get_json()
+        chart_reference = mixed_document["canvases"][1]["objects"][0]["chartSource"]
+        original_chart = (root / "chart.svg").read_bytes()
+        (root / "chart.svg").unlink()
+        packed = client.post("/api/package", json={"doc": mixed_document})
+        assert packed.status_code == 200, packed.get_json()
+        package = client.get(packed.get_json()["url"]).get_data()
+
+        service.reset_projects()
+        monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "receiver data"))
+        receiver = tmp_path / "收件人 项目"
+
+        def upload(action, **fields):
+            return client.post(
+                f"/api/package/{action}",
+                data={"package": (io.BytesIO(package), "portable.tavotto"), **fields},
+            )
+
+        assert upload("open").get_json() == {"document_format": "v4"}
+        inspection = upload("inspect")
+        assert inspection.status_code == 200, inspection.get_json()
+        assert inspection.get_json()["missing"] == [] and not receiver.exists()
+        result = upload("install", options=json.dumps({"destination": str(receiver)}))
+        assert result.status_code == 201, result.get_json()
+        assert not (receiver / script.name).exists() and not (receiver / "chart.svg").exists()
+        assert (
+            documentassets.source_path(receiver / "tavottofile", chart_reference).read_bytes()
+            == original_chart
+        )
+        service.open_project(str(receiver))
+        assert client.post("/api/figure-preview", json=archive).get_json()["svg"] == svg
+        persisted = client.post(named + "?target=project", json=result.get_json()["doc"])
+        assert persisted.status_code == 200, persisted.get_json()
+        assert not nativesession.REGISTRY.list(str(receiver))
     finally:
         if session is not None:
             session.cancel_owned()

@@ -1,7 +1,7 @@
-import { mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { expect, startApp, test } from './fixtures'
+import { expect, startApp, test, waitForDocumentReady } from './fixtures'
 
 test.use({ actionTimeout: 20_000 })
 
@@ -14,7 +14,7 @@ const SOURCE = '<svg xmlns="http://www.w3.org/2000/svg" width="100pt" height="10
 test('chart binding backs up the project and reopens the frozen source', {
   tag: '@feature:canvas.bind-computed-svg',
 }, async ({ app, page }) => {
-  test.setTimeout(180_000)
+  test.setTimeout(240_000)
   const project = mkdtempSync(path.join(os.tmpdir(), 'tavotto-chart-document-'))
   const source = path.join(project, 'chart.svg')
   writeFileSync(source, SOURCE)
@@ -217,6 +217,40 @@ test('chart binding backs up the project and reopens the frozen source', {
     const files = readdirSync(export_dir).filter(name => name.endsWith('.pdf'))
     expect(files).toHaveLength(1)
     expect(readFileSync(path.join(export_dir, files[0])).subarray(0, 5).toString()).toBe('%PDF-')
+
+    // The recipient has a fresh user directory and receives only the package.
+    const packed = await page.request.post(reopened.baseURL + '/api/package', { data: { doc: layoutOnDisk } })
+    expect(packed.ok(), await packed.text()).toBe(true)
+    const { name, url } = await packed.json()
+    const archive = await page.request.get(reopened.baseURL + url)
+    expect(archive.ok()).toBe(true)
+    const receiver = await app({ noProject: true })
+    const destination = path.join(receiver.home, '接收 端项目')
+    await page.goto(receiver.baseURL)
+    const fileChooser = page.waitForEvent('filechooser')
+    await page.locator('[data-install-project-package]').click()
+    await (await fileChooser).setFiles({ name, mimeType: 'application/zip', buffer: await archive.body() })
+    const destinationField = page.locator('[data-project-package-destination]')
+    await expect(destinationField).toBeVisible({ timeout: 60_000 })
+    expect(existsSync(destination)).toBe(false)
+    await destinationField.fill(destination)
+    const installation = page.waitForResponse(r => new URL(r.url()).pathname === '/api/package/install', { timeout: 90_000 })
+    await page.locator('[data-project-package-install]').click()
+    const installed = await installation
+    expect(installed.status(), await installed.text()).toBe(201)
+    expect((await installed.json()).document_saved).toBe(false)
+    expect(existsSync(path.join(destination, 'chart.svg'))).toBe(false)
+    await page.locator('[data-project-package-open]').click()
+    const continueEditing = page.locator('[data-project-package-continue]')
+    await expect(continueEditing).toBeVisible({ timeout: 80_000 })
+    await continueEditing.click()
+    await waitForDocumentReady(page)
+    await expect(chart.getByText('Source keep')).toHaveCount(1, { timeout: 60_000 })
+    expect(await chart.innerHTML()).toBe(expected)
+    await page.reload()
+    await waitForDocumentReady(page)
+    await expect(chart.getByText('Source keep')).toHaveCount(1, { timeout: 60_000 })
+    expect(await chart.innerHTML()).toBe(expected)
   } finally {
     await reopened?.stop()
     rmSync(project, { recursive: true, force: true })

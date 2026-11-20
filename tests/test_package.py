@@ -286,8 +286,11 @@ def test_schema4_package_is_accepted_and_collects_panel_assets(env):
             data={"package": (io.BytesIO(f.read()), "x.tavotto")},
             content_type="multipart/form-data",
         ).get_json()
-    assert opened["doc"]["schema"] == documents.SCHEMA_CHART_PROJECT
-    assert opened["missing"] == []
+    assert opened == {"document_format": "v4"}
+    inspected = _open_zip(client, zpath, "/api/package/inspect")
+    assert inspected.status_code == 200, inspected.get_json()
+    assert inspected.get_json()["doc"]["schema"] == documents.SCHEMA_CHART_PROJECT
+    assert inspected.get_json()["missing"] == []
 
 
 def _chart_project_document(ref):
@@ -318,19 +321,18 @@ def _chart_project_document(ref):
     }
 
 
-def _open_zip(client, zpath):
+def _open_zip(client, zpath, endpoint="/api/package/open", **fields):
     with open(zpath, "rb") as f:
         return client.post(
-            "/api/package/open",
-            data={"package": (io.BytesIO(f.read()), "chart.tavotto")},
+            endpoint,
+            data={"package": (io.BytesIO(f.read()), "chart.tavotto"), **fields},
             content_type="multipart/form-data",
         )
 
 
 def test_schema4_package_carries_and_reinstalls_the_chart_source(env, monkeypatch):
-    """来源附件是正文的一部分：包里带精确字节，导入时按摘要装回项目，
-    否则换台机器 / 换个项目打开后第一次保存必然 `chart_source_mismatch`。"""
-    client, figs, _ = env
+    """Inspect leaves the receiver untouched; installation provides the exact source for autosave."""
+    client, figs, tmp = env
     root = figs / "tavottofile"
     ref = documentassets.freeze_source(root, SOURCE_ID, SOURCE, scene_digest=SCENE_DIGEST)
     digest = ref["bytesSha256"]
@@ -340,23 +342,20 @@ def test_schema4_package_carries_and_reinstalls_the_chart_source(env, monkeypatc
     body = resp.get_json()
     assert resp.status_code == 200, body
     assert body["chart_sources"] == 1
-    assert body["missing_chart_sources"] == []
+    assert body["missing"] == []
 
     zpath = root / "export" / body["name"]
     with zipfile.ZipFile(zpath) as z:
-        assert z.read(f"chart_sources/{digest}.svg") == SOURCE
+        assert z.read(f"assets/tavottofile/chart_sources/{digest}.svg") == SOURCE
         man = json.loads(z.read("package_manifest.json"))
-        assert [e["sha256"] for e in man["chart_sources"]] == [digest]
-        assert man["chart_sources"][0]["panels"] == ["o1"]
-        assert man["missing_chart_sources"] == []
+        assert [row["sha256"] for row in man["assets"] if row["kind"] == "chart_source"] == [digest]
 
-    # 模拟另一个项目 / 另一台机器：目标项目里没有这份附件。
-    frozen = root / "chart_sources" / f"{digest}.svg"
-    frozen.unlink()
-    opened = _open_zip(client, zpath).get_json()
-    assert opened["missing_chart_sources"] == []
-    assert frozen.read_bytes() == SOURCE
-    assert opened["doc"]["canvases"][0]["objects"][0]["chartSource"] == ref
+    outgoing = zpath.read_bytes()
+    (root / "chart_sources" / f"{digest}.svg").unlink()
+    inspection = _open_zip(client, zpath, "/api/package/inspect")
+    assert inspection.get_json()["doc"]["canvases"][0]["objects"][0]["chartSource"] == ref
+    destination = tmp / "received project"
+    assert not destination.exists() and not (root / "chart_sources" / f"{digest}.svg").exists()
 
     # 导入后的第一次自动保存真的写得回去（来源就在目标项目的同一根下）。
     monkeypatch.setattr(
@@ -365,11 +364,20 @@ def test_schema4_package_carries_and_reinstalls_the_chart_source(env, monkeypatc
         lambda file_id, chart, **kwargs: SimpleNamespace(
             input_svg=SOURCE,
             scene={"scene_digest": SCENE_DIGEST},
-            path=documentassets.source_path(root, ref),
+            path=documentassets.source_path(
+                kwargs.get("source_storage", destination / "tavottofile"), ref
+            ),
             source_sha256=digest,
         ),
     )
-    saved = client.put("/api/autosave/d_imported", json=opened["doc"])
+    installed = _open_zip(
+        client, zpath, "/api/package/install", options=json.dumps({"destination": str(destination)})
+    )
+    assert installed.status_code == 201, installed.get_json()
+    assert zpath.read_bytes() == outgoing
+    assert documentassets.source_path(destination / "tavottofile", ref).read_bytes() == SOURCE
+    m.open_project(str(destination))
+    saved = client.put("/api/autosave/d_imported", json=installed.get_json()["doc"])
     assert saved.status_code == 200, saved.get_json()
     assert saved.get_json()["chart_sources"][0]["chart_source"] == ref
 
@@ -386,22 +394,19 @@ def test_schema4_package_refuses_a_chart_without_its_source(env):
     assert resp.get_json()["code"] == "chart_model_invalid"
 
 
-def test_package_open_reports_a_tampered_chart_source(env):
+def test_legacy_chart_package_open_reports_a_tampered_chart_source(env):
     """包里的来源字节被改过：不安装、明确报缺失，而不是装一份假的进项目。"""
     client, figs, _ = env
     root = figs / "tavottofile"
     ref = documentassets.freeze_source(root, SOURCE_ID, SOURCE, scene_digest=SCENE_DIGEST)
     digest = ref["bytesSha256"]
-    body = client.post("/api/package", json={"doc": _chart_project_document(ref)}).get_json()
-    zpath = root / "export" / body["name"]
-
     rewritten = io.BytesIO()
-    with zipfile.ZipFile(zpath) as src, zipfile.ZipFile(rewritten, "w") as dst:
-        for name in src.namelist():
-            data = src.read(name)
-            if name == f"chart_sources/{digest}.svg":
-                data = data.replace(b'stroke="blue"', b'stroke="red"')
-            dst.writestr(name, data)
+    with zipfile.ZipFile(rewritten, "w") as dst:
+        dst.writestr("layout.json", json.dumps(_chart_project_document(ref)))
+        dst.writestr("package_manifest.json", json.dumps({"kind": "tavotto-package", "version": 1}))
+        dst.writestr(
+            f"chart_sources/{digest}.svg", SOURCE.replace(b'stroke="blue"', b'stroke="red"')
+        )
     rewritten.seek(0)
 
     (root / "chart_sources" / f"{digest}.svg").unlink()

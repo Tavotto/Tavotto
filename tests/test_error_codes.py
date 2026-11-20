@@ -277,6 +277,7 @@ USER_VISIBLE_CODES = {
     "invalid_document": set(),
     "package_file_missing": set(),
     "package_invalid": {"reason"},
+    "package_source_outside_project": set(),
     "package_schema_unsupported": set(),
     "figure_snapshot_unavailable": set(),
     "package_schema_too_new": {"schema"},

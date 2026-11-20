@@ -47,7 +47,8 @@ def test_import_preserves_reference_exact_tokens_without_reading_or_executing_sc
         return original_open(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "open", forbidden_read)
-    result = runconfig.import_portable(project, [record()])
+    result, skipped = runconfig.import_portable(project, [record()])
+    assert skipped == {"conflict": 0, "capacity": 0}
     assert isinstance(result, tuple) and len(result) == 1
     cfg = result[0]
     assert cfg.id == CID and cfg.script == "科学/原脚本.py"
@@ -60,16 +61,13 @@ def test_import_preserves_reference_exact_tokens_without_reading_or_executing_sc
     assert data.get("captures", {}) == {}
 
 
-def test_whole_batch_id_conflict_publishes_none_and_preserves_original_bytes(project):
+def test_existing_id_conflict_keeps_local_and_imports_the_rest(project):
     original = runconfig.put(project, "existing.py", ["original"])
-    path = runconfig.store_path(project)
-    before = path.read_bytes()
     incoming = [record(), record(original.id, script="other.py", argv=["changed"])]
-    with pytest.raises(runconfig.RunConfigError):
-        runconfig.import_portable(project, incoming)
-    assert path.read_bytes() == before
-    with pytest.raises(runconfig.RunConfigMissing):
-        runconfig.get(project, CID)
+    imported, skipped = runconfig.import_portable(project, incoming)
+    assert [cfg.id for cfg in imported] == [CID]
+    assert runconfig.get(project, original.id) == original
+    assert skipped == {"conflict": 1, "capacity": 0}
 
 
 def launch_record(cid):
@@ -121,7 +119,7 @@ def test_absent_and_empty_evidence_fields_remain_distinct(project, optional):
 
 
 def test_identical_reimport_is_a_byte_exact_no_write_even_at_capacity(project, monkeypatch):
-    first = runconfig.import_portable(project, [record()])[0]
+    ((first,), _) = runconfig.import_portable(project, [record()])
     path = runconfig.store_path(project)
     before = path.read_bytes()
     monkeypatch.setattr(runconfig, "MAX_CONFIGS", 0)
@@ -130,7 +128,8 @@ def test_identical_reimport_is_a_byte_exact_no_write_even_at_capacity(project, m
         pytest.fail("幂等复用不得重写登记")
 
     monkeypatch.setattr(runconfig, "_write", forbidden_write)
-    again = runconfig.import_portable(project, [record(), record()])
+    again, skipped = runconfig.import_portable(project, [record(), record()])
+    assert skipped == {"conflict": 0, "capacity": 0}
     assert again == (first,) and path.read_bytes() == before
 
 
@@ -138,14 +137,14 @@ def test_matching_existing_non_sensitive_record_keeps_original_metadata(project)
     cfg = runconfig.put(project, "scientific.py", TOKENS, source="mcp")
     path = runconfig.store_path(project)
     before = path.read_bytes()
-    imported = runconfig.import_portable(project, [record(cfg.id, script=cfg.script)])
+    imported, _ = runconfig.import_portable(project, [record(cfg.id, script=cfg.script)])
     assert imported == (cfg,) and imported[0].source == "mcp"
     assert path.read_bytes() == before
 
 
 def test_equal_argv_with_different_ids_preserves_both_explicit_references(project):
     first = runconfig.put(project, "scientific.py", TOKENS)
-    imported = runconfig.import_portable(project, [record(script=first.script)])[0]
+    ((imported,), _) = runconfig.import_portable(project, [record(script=first.script)])
     assert imported.id == CID != first.id
     assert runconfig.get(project, first.id).argv == imported.argv
     assert len(runconfig._read(project)["configs"]) == 2
@@ -158,23 +157,22 @@ def test_sensitive_existing_id_never_becomes_a_persistent_plaintext_record(proje
     before = path.read_bytes()
     if forget:
         runconfig.forget_secrets()
-    with pytest.raises(runconfig.RunConfigSecretMissing) as error:
-        runconfig.import_portable(project, [record(secret.id, script=secret.script)])
-    assert error.value.reason == "portable_secret_conflict"
+    imported, skipped = runconfig.import_portable(
+        project, [record(secret.id, script=secret.script)]
+    )
+    assert imported == () and skipped == {"conflict": 1, "capacity": 0}
     assert path.read_bytes() == before
     if not forget:
         assert runconfig.get(project, secret.id).argv == tuple(TOKENS)
 
 
-def test_capacity_refuses_entire_batch_without_pruning_existing_or_new_ids(project, monkeypatch):
+def test_capacity_keeps_existing_and_imports_only_available_slots(project, monkeypatch):
     old = runconfig.put(project, "existing.py", ["original"])
-    path = runconfig.store_path(project)
-    before = path.read_bytes()
     monkeypatch.setattr(runconfig, "MAX_CONFIGS", 2)
-    with pytest.raises(runconfig.RunConfigUnsupported) as error:
-        runconfig.import_portable(project, [record(), record("rc_ffffffffffff")])
-    assert error.value.reason == "portable_capacity"
-    assert path.read_bytes() == before and runconfig.get(project, old.id)
+    imported, skipped = runconfig.import_portable(project, [record(), record("rc_ffffffffffff")])
+    assert [cfg.id for cfg in imported] == [CID]
+    assert runconfig.get(project, old.id) == old
+    assert skipped == {"conflict": 0, "capacity": 1}
 
 
 @pytest.mark.parametrize(
@@ -285,7 +283,7 @@ def test_existing_bad_or_future_store_is_never_repaired_or_replaced(project, raw
 
 
 def test_empty_batch_still_validates_store_but_creates_no_json_when_absent(project):
-    assert runconfig.import_portable(project, []) == ()
+    assert runconfig.import_portable(project, []) == ((), {"conflict": 0, "capacity": 0})
     path = runconfig.store_path(project)
     assert not path.exists()
     path.write_bytes(b"broken")
@@ -315,7 +313,8 @@ def test_write_failure_preserves_bytes_does_not_leak_argv_and_releases_ownership
         assert error.value.reason == "portable_write_failed"
     assert path.read_bytes() == before
     assert not getattr(runconfig._STORE_LOCKS, "held", ())
-    assert runconfig.import_portable(project, [record()])[0].id == CID
+    ((imported,), _) = runconfig.import_portable(project, [record()])
+    assert imported.id == CID
 
 
 def test_lock_permission_failure_cannot_fall_back_to_thread_only_writer(project, monkeypatch):
@@ -402,7 +401,8 @@ else:
         "reason": "store_lock_unavailable",
     }
     assert path.read_bytes() == before
-    assert runconfig.import_portable(project, [record()])[0].id == CID
+    ((imported,), _) = runconfig.import_portable(project, [record()])
+    assert imported.id == CID
 
 
 @pytest.mark.parametrize("entry", ["set_default", "commit_success"])

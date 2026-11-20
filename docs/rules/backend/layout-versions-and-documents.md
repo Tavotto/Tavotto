@@ -79,8 +79,10 @@ order: 200
 - **项目文件绑定**：`/api/layout-session/project-file/<doc_id>` 与其 reserve、confirm、intent 子路由使用同一工作副本。
   读和 reserve 持自动保存槽位锁，核实际正文修订。confirm 持命名正文锁，复核保存回执和关联票据。
   schema 3 升级到 4 保留原槽位和关联，外部改写槽位后旧修订无法预留新关联。看护 `tests/test_layout_recovery_acceptance.py`。
-- **项目包**：`POST /api/package` 打 zip（layout+素材+脚本+sha1 清单）；
-  `POST /api/package/open` 检视（缺失/sha1 漂移），素材永不自动写入图库。
+- **项目包**：`POST /api/package` 按正文 schema 选号，旧包继续使用原素材 SHA-1 清单。
+  含计算图表的便携包在清单中带 `documentpackage.CHART_PACKAGE_FORMAT`。`/api/package/open`
+  按内容分流，`/api/package/inspect` 只核验，`/api/package/install` 校验成员、重放计算图表并独占发布新目录。
+  `packagebudget` 定义全部预算。安装仅发布资源，打开已安装的项目时由原文档 writer 提交正文。
 - **文档显式引用全质量 Figure 配对（X03，2026-10-15）**：面板 `figureSnapshot` 是版本 1 的闭集
   `{version, sourceId, patchHash, receiptId, snapshotId}`，可选 `executionOwner={script, run_config}`；
   owner 只从已验归档派生、纳入内容 ID，不信客户端自报。导出 wire 字段为 `figure_snapshot`。
@@ -138,8 +140,8 @@ order: 200
   `documents.validate_document` 按号分派——2 / 3 走原骨架判据，4 交给
   `validate_chart_document`（来源附件身份在同一入口校验）；保存、自动保存、槽位探测、
   恢复候选、版本节点与教程校验都调这一个入口，不另设判据；项目包按同一
-  `SUPPORTED_SCHEMAS` 集合准入，schema 4 的 `chartSource` 随包封存、
-  检视导入时按摘要装回目标项目的 `chart_sources/`。首次给既有文档加入计算图表是
+  `SUPPORTED_SCHEMAS` 集合准入，schema 4 的 `chartSource` 随包封存。
+  带格式标记的包在用户确认安装后将附件落入目标项目的 `chart_sources/`。首次给既有文档加入计算图表是
   **原地升级**：同一 documentId、同一文件 / 槽位 / 时间线，正文提交为 schema 4，既有历史节点保留；
   升级前用整份项目时间线节点做备份（`takeProjectCheckpoint` 原语已就位），备份没落定不得继续写图表。
   `tests/test_chart_document_upgrade.py` 看护后端的同一时间线与来源冻结失败时的写入边界。

@@ -32,7 +32,8 @@ order: 200
   恢复 schema 3/4 节点换的是整份项目，schema 2 节点仍是单画布检查点（`lib/versionDoc.ts`
   的 `isProjectVersion` / `versionCanvasDoc`）。后端 `documents.validate_document`
   按 schema 号分派，schema 2/3/4 走同一个入口；项目包按同一 `SUPPORTED_SCHEMAS`
-  集合准入（来源附件随包封存、检视时按摘要安装到项目 `chart_sources/`）。画布切换换入换出
+  集合准入。带格式标记的便携包先只读检视，通过明确安装落入新项目后，由原恢复门与自动保存接管正文。
+  接收方项目、文档代次和安装回执在每次等待后复核。画布切换换入换出
   undo 栈（canvasSessions）与 UI 会话（`store/canvasSession.ts`）。
   标签页 openTabs 按 documentId 存本机。
 - **图幅记号 `PanelObject.figureFrame`（ADR 0098 §三）**：缺席 = 升级前放上排版的面板。读档
