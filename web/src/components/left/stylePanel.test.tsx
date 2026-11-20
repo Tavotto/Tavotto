@@ -488,6 +488,7 @@ describe('单图档（2026-11-20 维护者二次拍板，ADR 0081 §十四）：
   const radio = (v: string) => container.querySelector<HTMLElement>(`[data-style-scope-switch] [data-value="${v}"]`)!
   const chips = () => [...container.querySelectorAll<HTMLElement>('[data-figure-chip]')]
   const chipTexts = () => chips().map((c) => c.textContent)
+  const caption = (c: HTMLElement) => c.querySelector('[data-figure-caption]')?.textContent
   const current2 = (id: string) => s().doc.objects.find((o) => o.id === id) as PanelObject
   const ov = (id: string, gid: string, prop: string) =>
     current2(id).overrides.find((o) => o.gid === gid && o.prop === prop)?.value
@@ -552,7 +553,13 @@ describe('单图档（2026-11-20 维护者二次拍板，ADR 0081 §十四）：
   it('图条：每张图一块、按阅读顺序，有子图序号写「a 图名」、没有只写图名；点一块选中它，画布上换选中也跟着', async () => {
     await seedThree()
     await mount()
-    expect(chipTexts()).toEqual(['aFig1', 'bFig2', 'Fig3'])
+    expect(chipTexts(), '有序号写序号、没有写图名').toEqual(['a', 'b', 'Fig3'])
+    expect(chips().map((c) => c.getAttribute('title'))).toEqual(['(a) Fig1', '(b) Fig2', 'Fig3'])
+    expect(chips().every((c) => c.querySelector('[data-figure-thumb] svg[data-canvas-thumb]')), '每块都挂缩略图').toBe(true)
+    expect(chips().map((c) => c.hasAttribute('data-figure-active'))).toEqual([true, false, false])
+    expect(chips()[0].className).toContain('shadow-thumb')
+    expect(chips()[1].className).not.toContain('shadow-thumb')
+    expect(chips()[0].className).not.toMatch(/border-l|bg-accent/)
     expect(chips().map((c) => c.getAttribute('aria-pressed'))).toEqual(['true', 'false', 'false'])
     await click(chips()[1])
     expect(useSelectionStore.getState().ids).toEqual(['p2'])
@@ -562,6 +569,27 @@ describe('单图档（2026-11-20 维护者二次拍板，ADR 0081 §十四）：
     const strip = container.querySelector('[data-style-figures]')!
     expect(strip.className, '放不下横向滚动、不换行').toContain('overflow-x-auto')
     expect(strip.className).not.toContain('flex-wrap')
+  })
+
+  it('图条：有序号的按字母排在前（与摆放位置无关），没有序号的接在后面按阅读顺序；没有任何序号就是阅读顺序', async () => {
+    await seedThree()
+    // 把 (a)(b) 对调：Fig2 是 a、Fig1 是 b
+    s().commit(literal('对调序号'), (d) => {
+      for (const o of d.objects) {
+        if (o.id === 'ta') (o as { text: string }).text = '(b)'
+        if (o.id === 'tb') (o as { text: string }).text = '(a)'
+      }
+    })
+    await mount()
+    expect(chips().map((c) => c.dataset.figureChip)).toEqual(['p2', 'p1', 'p3'])
+    expect(caption(chips()[0])).toBe('a')
+    expect(caption(chips()[2])).toBe('Fig3')
+    s().commit(literal('去序号'), (d) => {
+      d.objects = d.objects.filter((o) => o.type !== 'text' || o.id.length > 2)
+    })
+    await act(async () => {})
+    expect(chips().map((c) => c.dataset.figureChip)).toEqual(['p1', 'p2', 'p3'])
+    expect(chipTexts()).toEqual(['Fig1', 'Fig2', 'Fig3'])
   })
 
   it('图条：← → 在图之间走（选中跟着走、到头不绕回）', async () => {
