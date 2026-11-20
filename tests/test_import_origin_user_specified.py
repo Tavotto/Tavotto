@@ -763,8 +763,11 @@ class TestEndToEndManaged:
     def test_a_wrong_name_fails_and_the_previous_generation_survives(
         self, tmp_path, house, offline_managed_env, monkeypatch
     ):
-        # 离线夹具固定的基础 Python 可能经目录链接进入；不把该链接安装根当名字层。
-        monkeypatch.setattr(deprepair, "_base_python", str(Path(deprepair.base_python()).resolve()))
+        # 离线夹具固定的基础 Python 可能经目录链接进入（Windows 目录联接）；不把该链接安装根当名字层。
+        # 只解析**目录**、保留解释器文件名：在 Linux 上它是 venv 里指向系统 python 的软链接，
+        # 整条 resolve() 会跳出 venv、落到没装 matplotlib 的系统解释器，嫁接宿主栈那一步当场失败。
+        base = Path(deprepair.base_python())
+        monkeypatch.setattr(deprepair, "_base_python", str(base.parent.resolve() / base.name))
         project = _project(tmp_path, ALPHA[1], requirements=f"{ALPHA[0]}\n")
         assert _run(deprepair.create_joint_plan(project, "figure.py"))["state"] == "done"
         gen = managedenv.active_generation(project)
