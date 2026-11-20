@@ -319,7 +319,7 @@ def test_install_publishes_once_and_keeps_the_document(tmp_path, prepared):
 
 
 def test_install_from_a_data_directory_with_a_parent_alias(
-    tmp_path, package_path, budget, monkeypatch
+    tmp_path, execution_package_path, budget, monkeypatch
 ):
     alias = tmp_path / "data-link"
     try:
@@ -329,11 +329,14 @@ def test_install_from_a_data_directory_with_a_parent_alias(
     # macOS commonly exposes its temp directory through /var -> /private/var.
     monkeypatch.setenv("TAVOTTO_DATA_DIR", str(alias / "recipient"))
     destination = tmp_path / "新项目"
-    with packages.inspect_chart_package(package_path.read_bytes(), budget=budget) as ready:
+    with packages.inspect_chart_package(
+        execution_package_path.read_bytes(), budget=budget
+    ) as ready:
         result = _install(ready, destination)
 
     assert result["state"] == "resources_installed"
     assert (destination / config.PROJECT_STORE_DIRNAME).is_dir()
+    assert (destination / "source.py").is_file()
 
 
 def test_publication_error_after_the_rename_is_reported_as_unconfirmed(
