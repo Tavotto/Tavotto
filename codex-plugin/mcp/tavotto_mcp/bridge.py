@@ -23,6 +23,8 @@
 from __future__ import annotations
 
 import base64
+import difflib
+import functools
 import hashlib
 import importlib
 import inspect
@@ -156,7 +158,9 @@ OPTIONAL_ENGINE_MODULES = (
     "execspec",
     "fixtools.readscope",
     "journalremote",
+    "journalfacts_remote",
     "journals",
+    "nativefallback",
     "runconfig",
     "scriptargs",
     "specfix",
@@ -204,6 +208,115 @@ def _remember_mcp_client_name(client_info) -> None:
     if isinstance(name, str):
         slug = _AGENT_HOST_RE.sub("-", name.strip().lower()).strip("-")[:31].strip("-")
         _MCP_CLIENT_NAME = slug or None
+
+
+def journal_facts_enabled() -> bool:
+    """v2 facts require the journal switch and a compatible engine; older engines stay usable."""
+    module = _optional_engine("journalfacts_remote")
+    return (
+        journal_catalog_enabled()
+        and module is not None
+        and callable(getattr(module, "search", None))
+        and callable(getattr(module, "get_facts", None))
+        and isinstance(getattr(module, "FactsError", None), type)
+    )
+
+
+def journal_facts(
+    query: str,
+    journal_id: str | None,
+    offset: int,
+    limit: int,
+    expected_catalog_rev: int | None = None,
+    inspection: dict | None = None,
+) -> dict:
+    """Only translates the engine's read-only v2 facts; never produces a v1 override."""
+    if not journal_catalog_enabled():
+        raise BridgeError("期刊目录入口当前不可用。", code="journal_catalog_disabled")
+    if not journal_facts_enabled():
+        raise BridgeError(
+            "当前引擎还不能读取期刊事实，请升级 Tavotto。", code="engine_capability_missing"
+        )
+    module = _optional_engine("journalfacts_remote")
+    _journal_remote()  # report agent client type through the existing shared channel
+    try:
+        method = module.get_facts if journal_id is not None else module.search
+        options = {"offset": offset, "limit": limit}
+        if expected_catalog_rev is not None:
+            if "expected_catalog_rev" not in inspect.signature(method).parameters:
+                raise BridgeError(
+                    "当前引擎不支持安全分页，请升级 Tavotto。", code="engine_capability_missing"
+                )
+            options["expected_catalog_rev"] = expected_catalog_rev
+        if inspection is not None:
+            inspector = getattr(module, "inspect_facts_page", None)
+            if journal_id is None or not callable(inspector):
+                raise BridgeError(
+                    "当前引擎不能检查这组来源事实，请升级 Tavotto。",
+                    code="engine_capability_missing",
+                )
+            # Validate user selection before any network request.
+            inspector({"facts": []}, inspection)
+        result = method(journal_id if journal_id is not None else query, **options)
+        return inspector(result, inspection) if inspection is not None else result
+    except module.FactsError as exc:
+        if exc.code == "result_too_large" and inspection is not None:
+            raise BridgeError(
+                "期刊事实单条记录超出安全大小，当前无法通过查看入口读取。",
+                code="journal_facts_page_too_large",
+            ) from exc
+        if exc.code in ("quota_hour", "quota_day", "ip_day", "ip_tokens"):
+            raise BridgeError(
+                "期刊目录下载额度已用完，请稍后再试；不要更换设备令牌绕过额度。",
+                code="journal_quota_exceeded",
+                retry_after_s=exc.retry_after_s,
+            ) from exc
+        if exc.code in ("offline", "disabled", "network", "server_error"):
+            raise BridgeError(
+                "v2 期刊事实当前不可用；已有 v1 规范不能冒充 v2 事实。",
+                code="journal_offline",
+                sync_state=getattr(exc, "sync_state", None),
+                sync_code=getattr(exc, "sync_code", None),
+            ) from exc
+        if exc.code in (
+            "index_invalid",
+            "signature_invalid",
+            "key_unknown",
+            "rev_rollback",
+            "index_conflict",
+            "bundle_invalid",
+            "cache_invalid",
+            "invalid_json",
+        ):
+            raise BridgeError(
+                "期刊事实未通过签名或完整性校验，不能使用。",
+                code="journal_verification_failed",
+                sync_state=getattr(exc, "sync_state", None),
+                sync_code=getattr(exc, "sync_code", None),
+            ) from exc
+        if exc.code == "catalog_changed":
+            raise BridgeError(
+                "期刊目录版本与上一页不一致，请从第一页重新读取。",
+                code="journal_catalog_changed",
+                expected_catalog_rev=exc.expected_catalog_rev,
+                current_catalog_rev=exc.current_catalog_rev,
+            ) from exc
+        if exc.code == "unknown_journal":
+            raise BridgeError("期刊事实目录中没有这本刊。", code="journal_unknown") from exc
+        if exc.code == "bad_request":
+            raise BridgeError("查询、期刊 ID 或分页参数不正确。", code="bad_request") from exc
+        raise BridgeError(
+            "期刊事实暂不可用；请稍后重试。", code="journal_facts_unavailable"
+        ) from exc
+
+
+def journal_facts_inspection_budget() -> int:
+    """Use the v2 client's page budget; don't guess for an older engine."""
+    module = _optional_engine("journalfacts_remote")
+    budget = getattr(module, "MAX_PAGE_BYTES", None)
+    if type(budget) is not int or budget <= 0:
+        raise BridgeError("当前引擎不支持安全的期刊事实查看。", code="engine_capability_missing")
+    return budget
 
 
 def _journal_remote():
@@ -269,6 +382,103 @@ def list_journals(query: str | None = None) -> dict:
     return out
 
 
+#: 宽松解析的候选上限（歧义 / 未命中都不超过它，别把整本目录倒给 Agent）
+JOURNAL_CANDIDATE_LIMIT = 8
+_JOURNAL_KEY_DROP = re.compile(r"[\W_]+", re.UNICODE)
+
+
+def _journal_key(text: object) -> str:
+    """宽松比较的归一：NFKC、小写、去掉空白与标点（保留字母数字与 CJK）。"""
+    return _JOURNAL_KEY_DROP.sub("", unicodedata.normalize("NFKC", str(text)).lower())
+
+
+def _journal_names(item: dict) -> list[str]:
+    return [item["id"], item["label"], *item.get("aliases", [])]
+
+
+def resolve_journal_id(raw: object) -> tuple[object, dict | None]:
+    """宽松期刊参数（ADR 0192 §4）：id / 全名 / 别名（大小写、空格、标点不敏感）→ `(期刊 id, journal_resolved)`。
+
+    目录就是 `list_journals` 读的那份（引擎 `search_journals` 的种子 + 缓存索引），这里不抄第二份期刊表。
+    精确 id 原样放行（`journal_resolved` 为 None，旧行为一字不变）；两档：先归一后与 id / 名称 / 别名**整串相等**，
+    再归一后**子串**命中（出版社不参与）。唯一命中就用；多个 = `journal_ambiguous`（候选 ≤ 8）；
+    没有 = `journal_unknown`（最接近的候选）。非字符串 / 空串 / 总开关关着 / 旧引擎原样放行，交给原有的报错。
+    `journal_ambiguous` / `journal_unknown` 的 `next` 在 `nextstep` 里带候选（`docs/rules/plugin/server-core-and-roots.md`）。
+    """
+    journals = _journal_agent_module()
+    if not isinstance(raw, str) or not raw.strip() or journals is None:
+        return raw, None
+    key = _journal_key(raw)
+    remote = _journal_remote()
+    # 先只看本机（种子 + 已缓存索引，不联网）：精确 id 与唯一命中不必等同步，断网也不多等一次超时
+    try:
+        cached = remote.load_cached() if remote is not None else None
+        local = journals.search_journals(None, cached.catalog if cached else None)["journals"]
+    except Exception:  # noqa: BLE001 — 本机这一档只是捷径，读不出来就走下面的同步路径
+        local = []
+    if any(item["id"] == raw for item in local):
+        return raw, None
+    if not key:
+        return raw, None
+    found = _journal_hits(key, local)
+    if len(found) == 1:
+        return found[0]["id"], {"from": raw, "id": found[0]["id"]}
+    items = list_journals()["journals"]  # 本机没唯一命中，再同步一次（节流、不计数）
+    if any(item["id"] == raw for item in items):
+        return raw, None
+    found = _journal_hits(key, items)
+    if len(found) == 1:
+        return found[0]["id"], {"from": raw, "id": found[0]["id"]}
+    if not found and remote is not None and not remote.disabled() and remote.load_cached() is None:
+        # 远程目录取不到（断网 / 服务不可用）：不能断言「库里没有」，原样交给 journal_selection，
+        # 由 agent_resolve 报 journal_offline 让用户联网再试
+        return raw, None
+    if found:
+        raise BridgeError(
+            f"{raw!r} 对应多本期刊，请从候选里选一个 id 再调（不要猜）。",
+            code="journal_ambiguous",
+            journal=raw,
+            candidates=_journal_candidates(found),
+        )
+    near = [i for i in items if key in _journal_key(i.get("publisher", ""))]
+    raise BridgeError(
+        f"期刊库里没有 {raw!r}；用 tavotto_list_journals 查，或从候选里选。不要凭记忆编这本期刊的规范。",
+        code="journal_unknown",
+        journal=raw,
+        candidates=_journal_candidates(near or _journal_close_matches(key, items)),
+    )
+
+
+def _journal_hits(key: str, items: list[dict]) -> list[dict]:
+    """两档：归一后与 id / 名称 / 别名整串相等；没有再看子串。"""
+
+    def hits(match) -> list[dict]:
+        return [
+            item
+            for item in items
+            if any((k := _journal_key(n)) and match(k) for n in _journal_names(item))
+        ]
+
+    return hits(lambda k: k == key) or hits(lambda k: key in k)
+
+
+def _journal_candidates(items: list[dict]) -> list[dict]:
+    return [{"id": i["id"], "label": i["label"]} for i in items[:JOURNAL_CANDIDATE_LIMIT]]
+
+
+def _journal_close_matches(key: str, items: list[dict]) -> list[dict]:
+    keyed: dict[str, dict] = {}
+    for item in items:
+        for name in _journal_names(item):
+            keyed.setdefault(_journal_key(name), item)
+    close = difflib.get_close_matches(key, list(keyed), n=JOURNAL_CANDIDATE_LIMIT, cutoff=0.5)
+    out: list[dict] = []
+    for k in close:
+        if keyed[k] not in out:
+            out.append(keyed[k])
+    return out
+
+
 def _journal_module():
     journals = _journal_agent_module()
     if journals is None:
@@ -277,6 +487,21 @@ def _journal_module():
             code="journal_catalog_disabled",
         )
     return journals
+
+
+def _profile_stamp(profile: dict) -> dict:
+    """Use the engine stamp, correcting the exact legacy label even with an older engine.
+
+    The copy avoids mutating engine-owned state. The vectors shared with both
+    profile implementations guard the compatibility mapping.
+    """
+    stamp = dict(engine_profiles.stamp(profile))
+    if (
+        stamp.get("profile_id") == "journal-base-v1"
+        and stamp.get("label") == "期刊底（期刊未规定的项一律不判）"
+    ):
+        stamp["label"] = "期刊检查基础"
+    return stamp
 
 
 def journal_selection(
@@ -997,6 +1222,16 @@ class Session:
     run: object | None = None
     #: 回包用的公开投影（`_run_projection`：引用 / 个数 / 来源）。
     run_info: dict | None = None
+    #: 最近一次导出出了文件时那一版的 `patch_hash`；None = 还没导出过。关会话时据此说出
+    #: 「改过还没导出」——修改只活在会话里，关掉就没了（评测里 agent 改好就关、文件没出）。
+    exported_hash: str | None = None
+    #: safe 被自身守卫拦下后换成的 native 活图（`nativefallback.NativeWorker`，ADR 0127 修订 2026-11-17）；
+    #: None = 这条会话走 safe 池。不落盘：进程换了之后恢复时 `_render` 会按同一条证据重新回退。
+    native: object | None = None
+    #: 这条会话**上一次成功渲染时**跑的脚本内容 sha1（worker spawn 那一刻读进内存的那份；native 回退没有
+    #: 这个属性，渲染成功后自己算一次）。空串 = 读不到 / 引擎没有 `script_sha1`，此时不比、不重跑。
+    #: 每次 `_render` 成功更新；`_sync_script` 拿它与磁盘上此刻的脚本比（MCP 无头没有 mtime watcher）。
+    script_sha1: str = ""
 
     def patch_hash(self) -> str:
         return patchspec.patch_hash(self.patches)
@@ -1010,7 +1245,17 @@ class Session:
         「开着」——用户看到的是「会话明明还在，一 apply 就说 worker 死了」，
         而且没有任何办法恢复。`pool.get()` 本来就负责「死了就重建」，
         每次问它一遍即可，代价是一次字典查找。
+
+        回退到 native 的会话（`self.native`）**不进池**：真实 Python 进程停在屏障上，就是这张图本身；
+        进程已经不在了（脚本被结束、崩溃）就如实说，不悄悄换回 safe（那会又被同一个守卫拦下）。
         """
+        if self.native is not None:
+            if self.native.alive():
+                return self.native
+            raise BridgeError(
+                "这张图改用真实 Python 运行的那个进程已经结束了，请重新调 tavotto_open_figure 打开它",
+                code=NATIVE_SESSION_ENDED,
+            )
         try:
             return _spawn_worker(self, one_shot=False)
         except engine_pool.WorkerError as exc:
@@ -1019,6 +1264,67 @@ class Session:
     @property
     def run_config_id(self) -> str | None:
         return getattr(self.run, "config_id", None)
+
+
+#: 回退到 native 的会话，真实 Python 进程已经不在
+NATIVE_SESSION_ENDED = "native_session_ended"
+#: native 会话做不了的事（冷重放 = 再起一个真实进程，不在 MCP 里静默做）
+NATIVE_UNSUPPORTED = "native_session_unsupported"
+#: safe 守卫拦下的终局码（`pool.FILE_OPERATION_BLOCKED_CODE` 的镜像）
+FILE_OPERATION_BLOCKED = "safe_file_operation_blocked"
+
+
+def _end_native(session: "Session") -> None:
+    """关掉 / 淘汰 / 退出时收掉这条会话的 native 进程（放行到脚本跑完，放不了就终止）。"""
+    native, session.native = session.native, None
+    if native is not None:
+        try:
+            native.end()
+        except Exception as exc:  # noqa: BLE001 — 收尾不许连累关闭
+            sys.stderr.write(f"tavotto-mcp: 结束会话 {session.id} 的真实 Python 进程失败：{exc}\n")
+
+
+def _native_fallback(session: "Session", worker, exc) -> object | None:
+    """safe 以 `safe_file_operation_blocked` 收场：按 ADR 0127 修订 2026-11-17 换 native 一次。
+
+    返回 `NativeWorker`（已停在屏障上、build 过）；判定不许回退返回 None，并把理由记进 `exc.extra`。
+    起进程失败抛 `engine_pool.WorkerError`（native 自己的真实错误，不回 safe）。"""
+    fallback = _optional_engine("nativefallback")
+    if fallback is None or getattr(exc, "code", None) != FILE_OPERATION_BLOCKED:
+        return None
+    python = str(getattr(worker, "python", "") or "")
+    # 新引擎认 safe 当时的入口（库式模块跑完模块再调它；够不到就不回退，ADR 0127 修订 2026-11-18）；旧引擎不认这两个参数
+    entry_kw = (
+        {"script": session.script, "entry": session.entry}
+        if "entry" in inspect.signature(fallback.decide).parameters
+        else {}
+    )
+    verdict = fallback.decide(session.project, exc.code, python=python, **entry_kw)
+    if not verdict.ok:
+        exc.extra["native_fallback_declined"] = verdict.reason
+        return None
+    _recheck_run(session.run, session.project, session.script)
+    return fallback.launch(
+        session.project,
+        session.script,
+        session.stem,
+        python=python,
+        run=session.run,
+        heavy=session.cost == "heavy",
+        **({"entry": session.entry} if entry_kw else {}),
+    )
+
+
+def _execution_fields(session: "Session") -> dict:
+    """回包里如实说这条会话是怎么跑的：只有回退到 native 才带（safe 是默认，不多加字段）。"""
+    if session.native is None:
+        return {}
+    fallback = _optional_engine("nativefallback")
+    return {
+        "execution": "native",
+        "fallback": {"from": "safe", "reason": FILE_OPERATION_BLOCKED},
+        "execution_note": getattr(fallback, "NOTE", ""),
+    }
 
 
 def _spawn_worker(session: "Session", *, one_shot: bool):
@@ -1302,6 +1608,10 @@ def _bridge_error_from_worker(
             "脚本想写已授权工作区之外的位置。改成写到项目内（相对路径要留意脚本里的 os.chdir），"
             "或请用户在 Tavotto 窗口里自己运行这个脚本；不要换个写法绕过，也不要把路径换成别的形状重试。"
         )
+    capture_failure = (getattr(exc, "extra", None) or {}).get("capture_failure")
+    if isinstance(capture_failure, dict):
+        # native 回退里脚本跑完、截图失败的那条真实原因（nativefallback._stem_missing）
+        extra["capture_failure"] = capture_failure
     _project_needs(code, exc, extra, project=project, script=script)
     extra["requirements"] = _requirements(code, extra)
     if not extra["requirements"]:
@@ -1474,12 +1784,11 @@ def _journal_dir() -> Path:
     return Path(engine_config.data_dir()) / sessionjournal.DIRNAME
 
 
-def _persist(session: Session) -> None:
-    """把会话**已提交**的状态落盘（ADR 0078）。只在提交点调：open / apply / 规范化收尾。
+def _drafts_dir() -> Path:
+    return Path(engine_config.data_dir()) / sessionjournal.DRAFTS_DIRNAME
 
-    落盘失败不让这次工具调用失败——图已经改好了；但要说出来（stderr 归日志，stdout
-    归协议），因为后果是「server 进程换了之后这个会话恢复不了」。
-    """
+
+def _session_record(session: Session) -> dict:
     record = {
         "id": session.id,
         "project": session.project,
@@ -1490,16 +1799,69 @@ def _persist(session: Session) -> None:
         "normalized": session.normalized,
         "cost": session.cost,
         "created": session.created,
+        "exported_hash": session.exported_hash,
     }
     if session.run_config_id is not None:
         # 只存不透明引用（参数原文在本机运行配置登记里，敏感值从不落盘）；带配置的记录用新版本号：
         # 旧插件读到它当作不存在（`unknown_session`），不会把它当成无参数会话复活（C26）
         record["run_config"] = session.run_config_id
         record["run_source"] = (session.run_info or {}).get("source")
+    return record
+
+
+def _persist(session: Session) -> bool:
+    """把会话**已提交**的状态落盘（ADR 0078）。只在提交点调：open / apply / 规范化收尾 / 导出出了文件。
+
+    落盘失败不让这次工具调用失败——图已经改好了；但要说出来（stderr 归日志，stdout
+    归协议），因为后果是「server 进程换了之后这个会话恢复不了」。
+
+    这一版已经导出出了文件时，这张图的草稿（ADR 0192 第 2 条）一并清掉：修改已经落到文件里了。
+    """
+    record = _session_record(session)
+    written = True
     try:
         sessionjournal.save(_journal_dir(), record)
     except (OSError, ValueError, TypeError) as exc:
+        written = False
         sys.stderr.write(f"tavotto-mcp: 会话 {session.id} 落盘失败，进程换了之后恢复不了：{exc}\n")
+    if session.patches and session.exported_hash == session.patch_hash():
+        sessionjournal.delete_drafts(
+            _drafts_dir(), session.project, session.stem, session.run_config_id
+        )
+    return written
+
+
+def _save_draft(record: dict) -> bool:
+    """把一条没导出改动的记录存成草稿（ADR 0192 第 2 条）；同一张图只留最新的一份。失败返回 False 并写 stderr。"""
+    draft = {**record, "exported_hash": None}
+    try:
+        older = sessionjournal.find_drafts(
+            _drafts_dir(), draft["project"], draft["stem"], draft.get("run_config")
+        )
+        # **先把新草稿写成功（`save` 是临时文件 + 原子 rename），再删同图别的草稿**：
+        # 写失败（磁盘满）时旧草稿一份不动，它可能是这批改动唯一的持久副本
+        sessionjournal.save(_drafts_dir(), draft)
+        for old in older:
+            if old["id"] != draft["id"]:
+                sessionjournal.delete(_drafts_dir(), old["id"])
+        return True
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        sys.stderr.write(f"tavotto-mcp: 会话 {record.get('id')} 的草稿存不下来，修改会丢：{exc}\n")
+        return False
+
+
+def _retire(session: Session) -> bool:
+    """明确释放（关闭 / 淘汰）一条内存会话：有没导出的改动就先存成草稿，再连记录一起删。
+    返回是否存下了草稿。草稿不会被 `get_session(旧 id)` 复活，只经 `open_figure` 带回。"""
+    saved = False
+    if unexported_changes(session):
+        saved = _save_draft(_session_record(session))
+        if not saved:
+            return (
+                False  # 草稿没写成：会话记录是这批改动唯一的持久副本，不删（重开时当孤儿记录带回）
+            )
+    _forget(session.id)
+    return saved
 
 
 def _forget(session_id: str) -> None:
@@ -1582,6 +1944,8 @@ def _restore_session(session_id: str) -> Session | None:
     )
     if isinstance(record.get("created"), (int, float)):
         session.created = float(record["created"])
+    if isinstance(record.get("exported_hash"), str):
+        session.exported_hash = record["exported_hash"]
     # 先渲染成功，再登记（与 open 同一条纪律）；渲染失败时记录留着，下次还能再试
     _render(session, list(record["patches"]), preview_dpi=None)
     session.restored = True
@@ -1619,6 +1983,8 @@ def get_session(session_id: str) -> Session:
     ):
         _SESSIONS.pop(session_id, None)
         s.apply_receipt = None
+        # 摘出账本后 close / shutdown 都看不到它了：native 进程要在这里一并收掉
+        _end_native(s)
         raise BridgeError(
             f"会话 {session_id} 的项目已不在当前工作区根内，请重新打开。",
             code="workspace_root_changed",
@@ -1631,26 +1997,91 @@ def get_session(session_id: str) -> Session:
     return s
 
 
+def unexported_changes(session: Session) -> bool:
+    """会话改过（patches 非空）而这一版还没导出过文件。"""
+    return bool(session.patches) and session.exported_hash != session.patch_hash()
+
+
+def _record_unexported(record: dict) -> bool:
+    """落盘记录（只在记录里、不在本进程内存里的会话）是否改过却没导出。"""
+    patches = record.get("patches") or []
+    return bool(patches) and record.get("exported_hash") != patchspec.patch_hash(list(patches))
+
+
+def _settle_export_mark(session: Session, prev: str | None, *, committed: bool) -> None:
+    """事务收尾时对导出标记做与 patches 同样的「提交或回 B0」：没提交、或会话已不在导出的那一版，
+    就撤回到事务开始前的标记（回退时文件也已撤回，那一版不算导出过）。"""
+    if not committed or session.exported_hash != session.patch_hash():
+        session.exported_hash = prev
+
+
+def commit_export(session_id: str) -> None:
+    """单独一次 `tavotto_export` 出了文件：这是提交点，把导出标记落盘（进程接力后关会话照样说得准）。"""
+    s = _SESSIONS.get(session_id)
+    if s is not None and s.exported_hash == s.patch_hash():
+        _persist(s)
+
+
+#: 关掉（或被淘汰）一个改过却没导出的会话时的提醒（ADR 0192 第 2 条）：改动存成了草稿
+UNEXPORTED_NOTE = (
+    "修改还没导出，已存为草稿：重新打开这张图会自动带回（不要草稿就带 discard_draft=true 打开）。"
+    "用户的文件没变。"
+)
+#: 草稿也存不下来时（磁盘错误）：修改确实丢了，如实说
+UNEXPORTED_LOST_NOTE = (
+    "注意：这个会话里的修改还没导出，草稿没能存下来（磁盘问题）；会话记录先留着，"
+    "重新打开这张图仍会尝试带回，但不保证。用户的文件没变。"
+)
+
+
+def _unexported_out(out: dict, saved: bool) -> None:
+    out["unexported_changes"] = True
+    out["draft_saved"] = saved
+    out["note"] = UNEXPORTED_NOTE if saved else UNEXPORTED_LOST_NOTE
+
+
 def close_session(session_id: str) -> dict:
     s = _SESSIONS.pop(session_id, None)
-    # 关闭是明确的释放：落盘记录一起删，别的进程里也不能再把它恢复出来
-    _forget(session_id)
+    # 进程换过时会话只在落盘记录里：删之前先看一眼，没导出的修改照样要存成草稿
+    record = None
+    if s is None and sessionjournal.valid_id(session_id):
+        try:
+            record = sessionjournal.load(_journal_dir(), session_id)
+        except Exception:  # noqa: BLE001 — 读不出来就按「不在了」处理，关闭本身不失败
+            record = None
+    if s is None and record is not None:
+        # 关闭是明确的释放：落盘记录一起删，别的进程里也不能再把它恢复出来
+        saved = _save_draft(record) if _record_unexported(record) else False
+        if saved or not _record_unexported(record):
+            _forget(session_id)  # 草稿没写成就留着记录（唯一的持久副本）
+        out = {"ok": True, "closed": True, "session_id": session_id, "stem": record.get("stem")}
+        if _record_unexported(record):
+            _unexported_out(out, saved)
+        return out
     if s is None:
+        _forget(session_id)  # 没有这个会话（含已清掉的记录）：幂等
         return {
             "ok": True,
             "closed": False,
             "note": f"会话 {session_id} 已经不在了（重复关闭不算错）",
         }
     s.apply_receipt = None
+    # native 活图归这条会话独占：关会话 = 放行脚本跑完（或终止），不留进程
+    _end_native(s)
+    pending = unexported_changes(s)
+    saved = _retire(s)
     # worker 归 pool 管（同一个脚本可能还有别的用户）：这里只丢引用与会话账本。
     # 用户的项目数据一个字节都不动。
-    return {
+    out = {
         "ok": True,
         "closed": True,
         "session_id": session_id,
         "project": s.project,
         "stem": s.stem,
     }
+    if pending:
+        _unexported_out(out, saved)
+    return out
 
 
 def _evict_if_needed() -> list[str]:
@@ -1664,8 +2095,10 @@ def _evict_if_needed() -> list[str]:
         oldest = min(_SESSIONS.values(), key=lambda s: s.last_used)
         _SESSIONS.pop(oldest.id, None)
         oldest.apply_receipt = None
-        # 淘汰也是明确的释放（open 的文字里会点名）：不许在下一次调用里悄悄复活
-        _forget(oldest.id)
+        _end_native(oldest)
+        # 淘汰也是明确的释放（open 的文字里会点名）：不许在下一次调用里悄悄复活；
+        # 没导出的改动存成草稿，重开这张图时带回（ADR 0192 第 2 条）
+        _retire(oldest)
         evicted.append(oldest.id)
     return evicted
 
@@ -1693,6 +2126,7 @@ def _live_session_for(project: str, stem: str, run_config: str | None = None) ->
         and s.stem == stem
         and s.run_config_id == run_config
         and not s.patches
+        and (s.native is None or s.native.alive())
     ]
     return max(live, key=lambda s: s.last_used) if live else None
 
@@ -1719,6 +2153,7 @@ def shutdown_all() -> None:
     """进程退出前收摊：会话账本清空 + 关掉 worker 子进程（不留孤儿）。"""
     for session in _SESSIONS.values():
         session.apply_receipt = None
+        _end_native(session)
     _SESSIONS.clear()
     try:
         engine_pool.shutdown_all(wait=True)
@@ -1815,6 +2250,113 @@ def _resolve_project(target: str, stem: str | None) -> _ProjectCtx:
     )
 
 
+def _find_draft(project: str, stem: str, run_config: str | None) -> dict | None:
+    """这张图（项目、stem、运行配置）可带回的草稿；已经有活会话（不管改没改过）就不带回，免得出现第二个会话。
+
+    草稿与记录同一套越界校验：项目不在**当前连接**允许根内的草稿当作没有（不渲染、不执行脚本）。
+    """
+    if any(
+        s.project == project and s.stem == stem and s.run_config_id == run_config
+        for s in _SESSIONS.values()
+    ):
+        return None
+    roots = allowed_roots()
+    if not roots or _judge_path(project, roots)[1] is not None:
+        return None
+    # 显式草稿与没经 close 就丢的会话记录合在一起，取 saved_at 最新的那份：较新的改动不能被较旧的草稿盖掉
+    found = sessionjournal.find_drafts(_drafts_dir(), project, stem, run_config)
+    found += _orphan_records(project, stem, run_config)
+    return max(found, key=lambda r: float(r["saved_at"])) if found else None
+
+
+def _orphan_records(project: str, stem: str, run_config: str | None) -> list[dict]:
+    """没经 close 就丢了的会话记录（进程直接退出 / 宿主断开）：这张图的活会话记录里，**不在本进程内存**、
+    且有没导出改动的，最新的在前。open 找不到草稿时把它当草稿带回（带回后删掉旧记录，不会再按旧 id 复活出第二份）。
+
+    只靠记录分不出「别的 MCP 进程里还活着」的会话（不存 pid：跨平台判进程存活不可靠，Windows 的 `os.kill`
+    会真的结束进程）。取舍：别的进程正开着同一张图且改过没导出时，后开的会话会带上那份改动（拷贝，不影响它那边继续用），
+    它的记录被删，下一次提交点（apply / 导出）会重新落盘——可接受：与「同一张图开两个会话」同一个量级。
+    """
+    return [
+        r
+        for r in sessionjournal.find_drafts(_journal_dir(), project, stem, run_config)
+        if r["id"] not in _SESSIONS and _record_unexported(r)
+    ]
+
+
+def _unapplied_patches(patches: list, warnings: list) -> list[dict]:
+    """worker 渲染完后哪些 patch 没落上（脚本改过、gid 不在了、属性不支持）。
+
+    只读 worker 自己给的 warning（`engine/overrides.py::_apply` 的四种措辞，按 `gid` / `gid.prop` 精确认），不另猜。
+    """
+    texts = [str(w).rstrip() for w in warnings]
+    out = []
+    for p in patches:
+        gid, prop = str(p["gid"]), str(p["prop"])
+        key = f"{gid}.{prop}"
+        reason = None
+        for t in texts:
+            if t.startswith("编辑的对象已找不到") and t.endswith(f": {key}"):
+                reason = "identity_mismatch"
+            elif t.startswith("元素不存在") and t.endswith(f": {gid}"):
+                reason = "element_missing"
+            elif t.startswith("属性不支持") and t.endswith(f": {key}"):
+                reason = "property_unsupported"
+            elif t.startswith(f"应用失败 {key}:"):
+                reason = "apply_failed"
+            if reason:
+                out.append({"gid": gid, "prop": prop, "reason": reason})
+                break
+    return out
+
+
+def _render_applicable(session: Session, canonical: list) -> tuple[dict, list[dict], list]:
+    """按 `canonical` 渲染；worker 报「没落上」的 patch 剔掉，再渲染一次让会话与画面配对。
+
+    返回 `(render, miss, kept)`：`miss` 是逐条 `{gid, prop, reason}`（`_unapplied_patches` 的口径）。
+    草稿带回（`_render_draft`）与改脚本后重跑（`_sync_script`）共用这一份——用不了的不留在会话里：
+    会话的 patches 要等于画面上真落下的那一组。第二次渲染抛错照旧抛（会话上 patches 不动）。"""
+    render = _render(session, canonical, preview_dpi=None)
+    miss = _unapplied_patches(canonical, session.warnings)
+    if miss:
+        gone = {(m["gid"], m["prop"]) for m in miss}
+        canonical = [p for p in canonical if (str(p["gid"]), str(p["prop"])) not in gone]
+        render = _render(session, canonical, preview_dpi=None)
+    return render, miss, canonical
+
+
+def _render_draft(make_session, draft: dict) -> tuple[Session, dict, dict]:
+    """按草稿的 patches 渲染（先渲染成功才交出会话，调用方再登记）。部分 patch 用不了就带能用的，
+    用不了的逐条进 `dropped`；渲染失败抛 BridgeError（草稿不动）。"""
+    canonical, bad = patchspec.canonicalize_with_diagnostics(draft["patches"])
+    dropped: list[dict] = [
+        {"reason": d["reason"], "entry": d.get("entry", "")} for d in bad if d["index"] != -1
+    ]
+    session = make_session()
+    try:
+        render, miss, canonical = _render_applicable(session, canonical)
+    except BridgeError:
+        _end_native(session)  # 会话不登记了，别留着 native 进程
+        raise
+    dropped.extend(miss)
+    if not dropped:
+        # 没丢任何一条：规范化合同跟着带回（挡板不因为换了进程 / 重开而消失，ADR 0051）；丢过就不再对得上，不带
+        session.contract = draft.get("contract")
+        session.normalized = draft.get("normalized")
+    if isinstance(draft.get("created"), (int, float)):
+        session.created = float(draft["created"])
+    info = {"patches": len(canonical), "from_session": draft["id"]}
+    if dropped:
+        info["dropped"] = dropped
+        info["note"] = (
+            f"已带回上次没导出的 {len(canonical)} 条修改；另有 {len(dropped)} 条因脚本改动用不了，"
+            "已跳过（见 dropped）。"
+        )
+    else:
+        info["note"] = f"已带回上次没导出的 {len(canonical)} 条修改，用户的脚本和文件没变。"
+    return session, render, info
+
+
 def open_figure(
     target: str,
     *,
@@ -1830,8 +2372,12 @@ def open_figure(
     adopt_environment: str | None = None,
     expected_environment_generation: str | None = None,
     prepare_impact_digest: str | None = None,
+    discard_draft: bool = False,
 ) -> dict:
     """解析 → 登记 → 起会话 → 渲染一次。返回给 Codex 的第一份快照。
+
+    `discard_draft`（ADR 0192 第 2 条）：不带回这张图没导出的草稿，并把草稿删掉，从脚本原样打开。
+    不给时，同一（项目、stem、运行配置）没有活会话、又有草稿，就按草稿的 patches 渲染（`restored_draft`）。
 
     `argv` / `run_config`（T10）：这次按哪份运行配置跑（`_choose_run`）。引擎不会就拒绝，绝不无参数先试；
     回包 `run_config` 只有引用 / 个数 / 来源。`adopt_environment`（T10，ADR 0114）：对环境建议的回答——
@@ -1888,9 +2434,18 @@ def open_figure(
     if journal_ref:
         profile = {**profile, "journal_ref": journal_ref}
 
-    session = _live_session_for(project, chosen, getattr(run, "config_id", None))
+    run_config_id = getattr(run, "config_id", None)
+    discarded = 0
+    if discard_draft:
+        discarded = sessionjournal.delete_drafts(_drafts_dir(), project, chosen, run_config_id)
+        for orphan in _orphan_records(project, chosen, run_config_id):
+            discarded += int(sessionjournal.delete(_journal_dir(), orphan["id"]))
+    session = _live_session_for(project, chosen, run_config_id)
     reused = session is not None
     evicted: list[str] = []
+    restored_draft: dict | None = None
+    draft_failed: dict | None = None
+    script_rerun: dict | None = None
     if session is not None:
         # 沿用时**照样重渲染一次**（`patches` 按定义是空的）：open 的返回里
         # manifest / SVG / 位图必须与会话此刻的状态配对（ADR 0022 不变量 5），
@@ -1903,26 +2458,56 @@ def open_figure(
         # 画布经 `session_state` 拿到的就是旧档，渲染看门狗会按 2 分钟而不是 15 分钟
         # 掐掉一次合法的重渲染（Codex 评审）。
         session.cost = str(info.get("cost", "") or "")
-        render = _render(session, list(session.patches), preview_dpi=None)
+        script_rerun, render = _sync_script_render(session)
+        if render is None:
+            render = _render(session, list(session.patches), preview_dpi=None)
     else:
-        session = Session(
-            id="s-" + uuid.uuid4().hex[:12],
-            project=project,
-            stem=chosen,
-            script=info["script"],
-            entry=info["entry"],
-            profile=profile,
-            cost=str(info.get("cost", "") or ""),
-            run=run,
-            run_info=_run_projection(run, run_source),
-        )
-        # **先渲染成功，再登记会话**：脚本 build 阶段抛异常时调用方只拿到一个
-        # 错误，永远拿不到 session_id，也就永远关不掉它。反复失败的 open 会把
-        # 账本堆满，再靠 `_evict_if_needed()` 把**真正在用的**会话挤出去。
-        render = _render(session, [], preview_dpi=None)
+
+        def _fresh() -> Session:
+            return Session(
+                id="s-" + uuid.uuid4().hex[:12],
+                project=project,
+                stem=chosen,
+                script=info["script"],
+                entry=info["entry"],
+                profile=profile,
+                cost=str(info.get("cost", "") or ""),
+                run=run,
+                run_info=_run_projection(run, run_source),
+            )
+
+        session = None
+        draft = None if discard_draft else _find_draft(project, chosen, run_config_id)
+        if draft is not None:
+            # 草稿与记录同一套越界校验，拒在渲染之前（越界的草稿当作没有，不渲染、不执行脚本）
+            try:
+                session, render, restored_draft = _render_draft(_fresh, draft)
+            except BridgeError as exc:
+                # 草稿带不回来不能让这张图打不开：按脚本原样开，草稿留着，如实回报原因
+                draft_failed = {
+                    "from_session": draft["id"],
+                    "code": exc.code or "render_failed",
+                    "error": str(exc),
+                }
+        if session is None:
+            # **先渲染成功，再登记会话**：脚本 build 阶段抛异常时调用方只拿到一个
+            # 错误，永远拿不到 session_id，也就永远关不掉它。反复失败的 open 会把
+            # 账本堆满，再靠 `_evict_if_needed()` 把**真正在用的**会话挤出去。
+            session = _fresh()
+            render = _render(session, [], preview_dpi=None)
         _SESSIONS[session.id] = session
         evicted = _evict_if_needed()
-    _persist(session)
+    persisted = _persist(session)
+    if restored_draft is not None and persisted:
+        # 草稿已经并进这条活会话（它的记录确实落盘了）：草稿完成使命，删掉。
+        # 落盘没成功就一律不删——源草稿 / 旧记录可能是这批改动唯一的持久副本
+        sessionjournal.delete_drafts(_drafts_dir(), project, chosen, run_config_id)
+        for orphan in _orphan_records(project, chosen, run_config_id):
+            # 没被选中的较旧孤儿记录已被更新的改动取代：一并删，免得导出清了草稿后它又被当成未导出的改动带回
+            sessionjournal.delete(_journal_dir(), orphan["id"])
+        if restored_draft["from_session"] != session.id:
+            # 带回的若是没经 close 就丢了的活会话记录：旧记录删掉，别再按旧 id 复活出第二份
+            sessionjournal.delete(_journal_dir(), restored_draft["from_session"])
     out = {
         "ok": True,
         "session_id": session.id,
@@ -1941,11 +2526,24 @@ def open_figure(
             "dynamic_names": reg_info.get("dynamic_names", []),
             "stems": _all_stems(registry),
         },
-        "profile": engine_profiles.stamp(profile),
+        "profile": _profile_stamp(profile),
         **render,
     }
     if profile.get("journal_ref"):
         out["journal_ref"] = profile["journal_ref"]
+    if script_rerun is not None:
+        out["script_rerun"] = script_rerun
+    if restored_draft is not None:
+        out["restored_draft"] = restored_draft
+        # 内嵌画布用这个字段 seed 它的 override 账本（`web/src/mcp/session.ts::seedSession`）：不带的话账本是空的，
+        # 画布下一次编辑发全量列表就把带回的改动抹掉
+        out["patches"] = list(session.patches)
+        if not persisted:
+            restored_draft["note"] += "（注意：这次没能落盘，草稿保留着。）"
+    if draft_failed is not None:
+        out["draft_restore_failed"] = draft_failed
+    if discarded:
+        out["discarded_draft"] = True
     if session.run_info is not None:
         out["run_config"] = session.run_info
     if adopted is not None:
@@ -1969,7 +2567,7 @@ def open_figure(
         # 让 #181 那种图多画一遍不划算。
         if "preview_png_base64" not in out:
             try:
-                out["preview_png_base64"] = preview_png(session, [], 1600)
+                out["preview_png_base64"] = preview_png(session, list(session.patches), 1600)
             except BridgeError as exc:
                 out["preview_png_error"] = exc.code or "preview_failed"
     return out
@@ -2034,6 +2632,7 @@ def open_figures(
     journal: dict | None = None,
     journal_id: str | None = None,
     workdir: str | None = None,
+    discard_draft: bool = False,
 ) -> dict:
     """一次调用打开 N 张独立的图，拿回 N 个**各自可编辑**的会话。
 
@@ -2096,6 +2695,7 @@ def open_figures(
                 profile_id=profile_id,
                 journal=journal,
                 journal_id=journal_id,
+                discard_draft=discard_draft,
             )
         except BridgeError as exc:
             failed.append(_failure_entry(stem, exc))
@@ -2172,6 +2772,12 @@ def _batch_entry(one: dict) -> dict:
         "parameterizable": (one.get("registry") or {}).get("parameterizable"),
         "preview_mode": (one.get("preview") or {}).get("mode"),
         "warnings": one.get("warnings", []),
+        **({"restored_draft": one["restored_draft"]} if "restored_draft" in one else {}),
+        **(
+            {"draft_restore_failed": one["draft_restore_failed"]}
+            if "draft_restore_failed" in one
+            else {}
+        ),
     }
 
 
@@ -2387,6 +2993,8 @@ def refresh_project(
         "assets": {k: assets.get(k) for k in ("added", "removed", "changed", "baseline")},
         "readiness": _compact_readiness(readiness),
         "sessions": sorted(sid for sid, s in _SESSIONS.items() if s.project == project),
+        # 脚本已变的活会话：refresh 不运行脚本（ADR 0025），它们下一次调用会自己按新脚本重跑同一个会话
+        "stale_sessions": stale_session_ids(project),
     }
 
 
@@ -2394,13 +3002,27 @@ def refresh_project(
 def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict:
     worker = session.acquire()
     try:
-        resp = worker.override(session.stem, patches, preview_dpi, inline_svg=True)
+        try:
+            resp = worker.override(session.stem, patches, preview_dpi, inline_svg=True)
+        except engine_pool.WorkerError as exc:
+            # safe 被自身守卫拦下（savefig 后又读回）：换真实 Python 跑一次（ADR 0127 修订 2026-11-17）
+            native = None if session.native is not None else _native_fallback(session, worker, exc)
+            if native is None:
+                raise
+            session.native = worker = native
+            try:
+                resp = worker.override(session.stem, patches, preview_dpi, inline_svg=True)
+            except engine_pool.WorkerError:
+                _end_native(session)
+                raise
     except engine_pool.WorkerError as exc:
         # build 期间的「需要输入」（缺参数 / 运行中要输入 / 缺包）在这里冒出来：与跑前的门同一份结构化投影（T10）
         err = _bridge_error_from_worker(
             exc, project=session.project, script=session.script, default_code="render_failed"
         )
         err.extra.setdefault("module", getattr(exc, "module", ""))
+        if "native_fallback_declined" in exc.extra:
+            err.extra["native_fallback_declined"] = exc.extra["native_fallback_declined"]
         raise err from exc
     session.patches = list(patches)
     session.manifest = resp["manifest"]
@@ -2416,6 +3038,9 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
     session.apply_receipt = None
     session.rev = getattr(worker, "rev", session.rev + 1)
     session.last_used = time.time()
+    session.script_sha1 = str(getattr(worker, "script_sha1", "") or "") or _disk_script_sha1(
+        session
+    )
     out = {
         "manifest": session.manifest,
         "svg": session.svg,
@@ -2424,6 +3049,7 @@ def _render(session: Session, patches: list, *, preview_dpi: int | None) -> dict
         "render_revision": session.rev,
         "warnings": session.warnings,
         "timings": resp.get("timings", {}),
+        **_execution_fields(session),
     }
     if session.preview is not None:
         out["preview"] = session.preview
@@ -2481,6 +3107,133 @@ def _bounded_apply_receipt(out: dict) -> dict:
     raise AssertionError("apply receipt handle exceeded its budget")
 
 
+# ------------------------- 改脚本后同一会话自动重跑 -------------------------
+#: `script_rerun.reason` 的取值（ADR 0192 修订 2026-11-18）
+SCRIPT_RERUN_REASON = "script_changed"
+
+
+def _disk_script_sha1(session: Session) -> str:
+    """磁盘上这条会话的脚本**此刻**的 sha1（与 `pool.script_sha1` 同口径；读不到 / 引擎没有它回空串）。"""
+    fn = getattr(engine_pool, "script_sha1", None)
+    if fn is None:
+        return ""
+    try:
+        return str(fn(session.project, session.script) or "")
+    except Exception:  # noqa: BLE001 — 读不到就当作没法比，不重跑
+        return ""
+
+
+def script_changed(session: Session) -> bool:
+    """会话上次渲染时的脚本与磁盘上此刻的不一样（两边都读得到才算；只读，不运行脚本）。"""
+    # getattr：测试替身 / 旧会话对象可能没有这个字段——没有就当没法比
+    spawned = getattr(session, "script_sha1", "")
+    if not spawned:
+        return False
+    now = _disk_script_sha1(session)
+    return bool(now) and now != spawned
+
+
+def _retire_for_script_change(session: Session) -> None:
+    """作废这条会话**这一份运行配置**的旧 worker（native 会话收掉它的真实 Python 进程）。
+
+    桌面版靠 mtime watcher 调 `engine_pool.invalidate`；MCP 无头没有 watcher，改脚本之后同一个 worker 仍跑着
+    旧代码。参数选法：`run=session.run` + `only_run=True` 只退这一份配置（同脚本别的参数的热会话不动，它们
+    下次被调用时各自发现脚本变了），`write_roots` 必须与 `_spawn_worker` 取 worker 时同一份（绊线根是池键
+    的一段，不带就对不上键、什么都没退）；`force=True` 同步确认式退役，免得紧接着的取 worker 复用旧的。"""
+    if session.native is not None:
+        _end_native(session)
+        return
+    kwargs: dict = {"run": session.run, "only_run": True, "force": True}
+    roots = _tripwire_roots(session.project)
+    if roots is not None:
+        kwargs["write_roots"] = roots
+    try:
+        engine_pool.invalidate(session.script, session.project, **kwargs)
+    except engine_pool.WorkerError as exc:
+        raise _bridge_error_from_worker(
+            exc, project=session.project, script=session.script
+        ) from exc
+
+
+def _sync_script_render(session: Session) -> tuple[dict | None, dict | None]:
+    """脚本在会话之外被改过就按新脚本重跑**同一个会话**：回 `(script_rerun, render)`；没变回 `(None, None)`。
+
+    保留会话 id 与 patches：作废旧 worker、按会话现有 patches 重渲染；重渲染后用不了的 patch（gid 没了等）
+    剔掉并逐条进 `dropped`。有 dropped 时规范化合同与验收一并作废（与 `_render_draft` 同口径：丢过就不再
+    对得上）；没丢时合同照旧、验收标 `stale`（它验的是旧脚本的产物）。新脚本 build 报错照常抛 BridgeError
+    （带 code），会话与 patches 原样保留——`session.script_sha1` 没更新，脚本改好后下一次调用再重跑。"""
+    if not script_changed(session):
+        return None, None
+    _retire_for_script_change(session)
+    render, miss, kept = _render_applicable(session, list(session.patches))
+    if miss:
+        session.contract = None
+        session.normalized = None
+    elif session.normalized is not None:
+        session.normalized["stale"] = True
+    _persist(session)
+    info = {"reason": SCRIPT_RERUN_REASON, "patches": len(kept), **_bounded_dropped(miss)}
+    return info, render
+
+
+#: `script_rerun.dropped` 最多列几条、每个字段最多几字节：它在把手（`HANDLE_ONLY_KEYS`）里，
+#: 预算退到只剩把手时也不会被剔掉，所以必须定长（codex-plugin/AGENTS.md 紧凑结果预算）
+SCRIPT_RERUN_DROPPED_LIMIT = 8
+SCRIPT_RERUN_FIELD_BYTES = 160
+
+
+def _bounded_dropped(miss: list[dict]) -> dict:
+    """用不了的 patch：总数照实给（`dropped_count`），清单只留前几条、字段截短；截过就 `dropped_truncated`。"""
+
+    def cut(value: object) -> str:
+        raw = str(value).encode("utf-8")
+        if len(raw) <= SCRIPT_RERUN_FIELD_BYTES:
+            return str(value)
+        return raw[: SCRIPT_RERUN_FIELD_BYTES - 3].decode("utf-8", "ignore") + "…"
+
+    shown = [
+        {k: cut(v) for k, v in m.items() if k in ("gid", "prop", "reason")}
+        for m in miss[:SCRIPT_RERUN_DROPPED_LIMIT]
+    ]
+    out: dict = {"dropped": shown, "dropped_count": len(miss)}
+    if len(miss) > len(shown):
+        out["dropped_truncated"] = True
+    return out
+
+
+def _sync_script(session: Session) -> dict | None:
+    """`_sync_script_render` 只取 `script_rerun` 那份（没变回 None）。"""
+    return _sync_script_render(session)[0]
+
+
+def _synced(fn):
+    """给按 `session_id` 取会话的工具入口加上「脚本变了先重跑」：重跑信息进结果的 `script_rerun`。
+
+    装饰在 apply / session_state / preflight / export / normalize / fix_to_journal / verify_replay 上
+    （`close_session` 不装：关会话不重跑）。失败时重跑信息挂在错误的 `extra` 上，不丢。"""
+
+    @functools.wraps(fn)
+    def wrapper(session_id, *args, **kwargs):
+        rerun = _sync_script(get_session(session_id))
+        try:
+            result = fn(session_id, *args, **kwargs)
+        except BridgeError as exc:
+            if rerun is not None:
+                exc.extra.setdefault("script_rerun", rerun)
+            raise
+        if rerun is not None and isinstance(result, dict):
+            result["script_rerun"] = rerun
+        return result
+
+    return wrapper
+
+
+def stale_session_ids(project: str) -> list[str]:
+    """这个项目里脚本已变的活会话 id（只读：算一次 sha1，不运行脚本、不重渲染）。"""
+    return sorted(sid for sid, s in _SESSIONS.items() if s.project == project and script_changed(s))
+
+
+@_synced
 def apply_overrides(
     session_id: str,
     patches: object,
@@ -2583,6 +3336,7 @@ def _contract_diff(session: Session, patches: list) -> list[dict]:
     return diff
 
 
+@_synced
 def session_state(session_id: str) -> dict:
     """会话**此刻**的完整快照——manifest / SVG / 位图 / patches——**不重渲染**。
 
@@ -2609,7 +3363,7 @@ def session_state(session_id: str) -> dict:
         "script": session.script,
         "entry": session.entry,
         "cost": session.cost,
-        "profile": engine_profiles.stamp(session.profile),
+        "profile": _profile_stamp(session.profile),
         "patches": list(session.patches),
         "patch_hash": session.patch_hash(),
         "render_revision": session.rev,
@@ -2617,6 +3371,7 @@ def session_state(session_id: str) -> dict:
         "svg": session.svg,
         "warnings": list(session.warnings),
         "restored": _take_restored(session),
+        **_execution_fields(session),
     }
     if session.apply_receipt is not None:
         out["last_apply"] = session.apply_receipt
@@ -2709,6 +3464,7 @@ def export_raster_issues(profile: dict, formats: list[str] | None, dpi: int | No
     ]
 
 
+@_synced
 def run_preflight(
     session_id: str,
     *,
@@ -2733,6 +3489,18 @@ def run_preflight(
     # 分开是因为它量的是「画出来撞没撞上」，不是「该长什么样」；形状同一份，
     # 进同一份报告（ADR 0051）。
     issues += engine_interference.detect(session.manifest, profile, panel_id=session.stem)
+    if profile.get("journal_ref"):
+        for issue in issues:
+            if issue.get("id") != "raster-dpi":
+                continue
+            # The session stores a profile and journal reference, not a bound
+            # per-rule source record. Do not claim that this threshold is a
+            # journal requirement, even when the catalog has changed since open.
+            issue["text"] = issue["text"].replace("低于规范的", "低于当前检查阈值 ", 1)
+            issue["text"] += "；此回执未核验该阈值的期刊出处"
+            message = issue.get("message")
+            if isinstance(message, dict) and message.get("key") in {"rasterDpi", "exportRasterDpi"}:
+                message["key"] += "JournalSourceUnverified"
     summary = engine_preflight.summarize(issues)
     # 匿名用量统计：**结果算完之后**记一次，且只记四个计数 + 一个布尔。
     # 检查项的文案、字体名、gid、对象 id、stem 一个都不发（白名单里没有这些
@@ -2753,7 +3521,7 @@ def run_preflight(
         "ok": True,
         "session_id": session.id,
         "stem": session.stem,
-        "profile": engine_profiles.stamp(profile),
+        "profile": _profile_stamp(profile),
         "size_mm": session.manifest.get("size_mm"),
         "patch_hash": session.patch_hash(),
         "errors": summary["errors"],
@@ -2792,7 +3560,7 @@ def cached_preflight(session: Session) -> dict | None:
         return None
     if cached.get("patch_hash") != session.patch_hash():
         return None
-    if cached.get("profile") != engine_profiles.stamp(session.profile):
+    if cached.get("profile") != _profile_stamp(session.profile):
         return None
     return cached
 
@@ -2800,7 +3568,8 @@ def cached_preflight(session: Session) -> dict | None:
 def format_preflight(session: Session, profile: dict, issues: list[dict], summary: dict) -> str:
     """人类可读的那一份（Codex 会把它念给用户听）。"""
     head = (
-        f"《{profile.get('label', profile['profile_id'])}》 v{profile['version']} · {session.stem}"
+        f"《{_profile_stamp(profile).get('label') or profile['profile_id']}》 "
+        f"v{profile['version']} · {session.stem}"
     )
     size = session.manifest.get("size_mm") if session.manifest else None
     lines = [head]
@@ -2833,6 +3602,7 @@ def format_preflight(session: Session, profile: dict, issues: list[dict], summar
 
 
 # -------------------------------- 导出 --------------------------------------
+@_synced
 def export(
     session_id: str,
     *,
@@ -3191,6 +3961,10 @@ def export(
             entry["manifest"] = o.manifest
         files.append(entry)
 
+    if any(f["status"] == engine_exportjob.STATUS_DONE for f in files):
+        # 只记在内存：export 也是事务（规范化 / 改到合规）里的一步，候选状态不许在提交前落盘。
+        # 单独的 `tavotto_export` 由 `commit_export` 落盘；事务回退时由 `_settle_export_mark` 撤回
+        session.exported_hash = session.patch_hash()
     result = {
         "ok": job.status == engine_exportjob.STATUS_DONE,
         # `partial` 是**独立一档**：并进 `done` 或 `failed` 都会说谎，
@@ -3390,14 +4164,21 @@ def _better(new: dict, old: dict) -> bool:
     return engine_normalize.better_candidate(new, old)
 
 
+@_synced
 def normalize_figure(session_id: str, **kwargs) -> dict:
     """`_normalize_figure` 的提交点：无论提交、回退还是异常回退，事务收尾后会话
     **此刻**的状态（patches + 合同）落盘一次（ADR 0078）。事务中途的候选状态不落盘。"""
+    before = _SESSIONS.get(session_id)
+    prev = before.exported_hash if before is not None else None
+    result: dict | None = None
     try:
-        return _normalize_figure(session_id, **kwargs)
+        result = _normalize_figure(session_id, **kwargs)
+        return result
     finally:
         session = _SESSIONS.get(session_id)
         if session is not None:
+            if session is before:
+                _settle_export_mark(session, prev, committed=bool(result and result.get("ok")))
             _persist(session)
 
 
@@ -3469,7 +4250,7 @@ def _normalize_figure(
             "patch_hash": b0_hash,
             "worker_generation": getattr(session, "rev", None),
             "original_artifact": original,
-            "profile": engine_profiles.stamp(profile),
+            "profile": _profile_stamp(profile),
         },
     )
     plan = engine_normalize.plan_patches(contract, b0_manifest)
@@ -3878,6 +4659,7 @@ FIX_MANUAL_HINTS = {
     "cjk-fallback-missing": "给中文指定回退字体，回脚本改。",
     "math-unrenderable": "改公式写法，回脚本改。",
     "raster-dpi": "导出时把 dpi 调到规范要求以上。",
+    "line-width-below-min": "把数据线加粗到期刊要求的线宽以上，回脚本改。",
 }
 
 
@@ -4008,7 +4790,11 @@ def _preview_width_px(size_mm) -> int:
 
 def _retire_session_worker(session: Session) -> bool:
     """作废这个会话的热 worker（与桌面 `_retire_hot_worker` 同一个原语 `pool.invalidate`）：
-    只让它过期，下一次 `session.acquire()` 冷起、`_render` 按全量列表重放。"""
+    只让它过期，下一次 `session.acquire()` 冷起、`_render` 按全量列表重放。
+
+    native 会话没有「冷起」（那是再跑一遍真实脚本）：不作废，回 False，回滚照样在活图上按全量列表重放。"""
+    if session.native is not None:
+        return False
     # 池里的键带着写入根绊线的授权根（`_spawn_worker` 取 worker 时传的那一份）：不一起给，
     # 对不上键，作废就落空（worker 还在、热态仍不可信）
     context = {}
@@ -4057,6 +4843,142 @@ def _aspect_height(profile: dict, w_mm: float, h_mm: float, w_final: float) -> f
     return None if best is None else round(w_final / best[1], 2)
 
 
+#: 点名冲突的回包里最多列几条、每个约束短句最多多长（`conflicts` 进错误 / 结果预算，要短）。
+FIX_CONFLICTS_CAP = 6
+FIX_CONFLICT_TEXT_CAP = 100
+#: 带 `conflicts` 的结局码（ADR 0192 §3）：没改成时必须点名「哪条规则、哪个元素、哪两个约束」。
+FIX_CONFLICT_EXITS = ("constraint_conflict", "unsupported", "not_resolved", "font_unavailable")
+_SKIP_REASON_TEXT = {
+    "no_safe_value": "算不出安全的目标值",
+    "element_missing": "这个元素在当前图里已不存在",
+}
+
+
+def _clip(text, cap: int = FIX_CONFLICT_TEXT_CAP) -> str:
+    text = str(text or "").strip()
+    return text if len(text) <= cap else text[: cap - 1] + "…"
+
+
+def _fix_conflicts(
+    result: dict, *, stage: str | None, changes: list, detail: dict | None
+) -> list[dict]:
+    """没改成时把「谁和谁冲突」点名：`{rule, gid, constraints: [甲, 乙], prop?, repair?}`。
+
+    **只拼现成结果，不新写判据**（ADR 0180）：规则 id / gid / bucket / repair 来自 normalize 与 specfix 的
+    `blocking` / `unresolved` / `skipped`，prop 来自 specfix 的 `changes`（真的要写的那条 override），复检新增的问题
+    来自 `result["issues"]["introduced"]`。拿不到的字段就不给，不编。
+    """
+    detail = detail or {}
+    items: list[dict] = []
+
+    def change_for(gids, rule=None) -> dict | None:
+        gids = [g for g in gids if g]
+        for c in changes:
+            if c.get("gid") in gids and (rule is None or c.get("rule") == rule):
+                return c
+        return None
+
+    def made(c: dict | None) -> str:
+        if c is None:
+            return "本次要做的规范修复"
+        return f"规范修复 {c.get('rule')} → 改 {c.get('prop')}"
+
+    def add(rule, gids, a, b, **more) -> None:
+        gids = [g for g in (gids or []) if g]
+        items.append(
+            {
+                "rule": rule,
+                "gid": gids[0] if gids else None,
+                **({"gids": gids[:3]} if len(gids) > 1 else {}),
+                "constraints": [_clip(a), _clip(b)],
+                **{k: v for k, v in more.items() if v},
+            }
+        )
+
+    if stage == "size":
+        target = (result.get("size") or {}).get("target") or {}
+        want = "、".join(
+            f"{'宽' if k == 'width_mm' else '高'} {float(v):g} mm" for k, v in target.items()
+        )
+        for b in detail.get("blocking") or []:
+            gids = b.get("gids") or []
+            add(
+                b.get("id"),
+                gids,
+                f"目标图幅 {want or '期刊栏宽'}",
+                f"{b.get('id')} 不得{'恶化' if b.get('bucket') == 'worsened' else '新增'}"
+                + (f"（{b['text']}）" if b.get("text") else ""),
+                repair=b.get("repair"),
+            )
+    elif stage == "panel":
+        for b in detail.get("blocking") or []:
+            gids = b.get("gids") or []
+            c = change_for(gids)  # 找不到对应的 change 就不给 prop：不把无关修复的属性安给它
+            add(
+                b.get("id"),
+                gids,
+                made(c),
+                f"{b.get('id')} 不得{'恶化' if b.get('bucket') == 'worsened' else '新增'}",
+                prop=(c or {}).get("prop"),
+            )
+        for u in detail.get("unresolved") or []:
+            c = change_for([u.get("gid")], u.get("rule"))
+            add(
+                u.get("rule"),
+                [u.get("gid")],
+                f"规范要求 {u.get('rule')}",
+                "改完复检仍未消除",
+                prop=(c or {}).get("prop"),
+            )
+    elif stage == "recheck":
+        for i in (result.get("issues") or {}).get("introduced") or []:
+            if i.get("severity") not in ("error", "warn"):
+                continue
+            gids = i.get("gids") or []
+            c = change_for(gids)  # 找不到对应的 change 就不给 prop：不把无关修复的属性安给它
+            add(
+                i.get("id"),
+                gids,
+                made(c),
+                f"{i.get('id')}（{i.get('severity')}）不得新增"
+                + (f"：{i['text']}" if i.get("text") else ""),
+                prop=(c or {}).get("prop"),
+            )
+    for s in result.get("skipped") or []:
+        reason = s.get("reason")
+        if reason == "font_unavailable":
+            why = f"本机没有字体 {s.get('want') or '（规范要求的）'}"
+        else:
+            why = _SKIP_REASON_TEXT.get(str(reason), str(reason))
+        add(
+            s.get("rule"),
+            [s.get("gid")],
+            f"规范要求 {s.get('rule')}",
+            why,
+            want=s.get("want"),
+        )
+    for w in (detail.get("warnings") or [])[:2]:
+        # 基准图自己没能完整重放（unsupported）：没有元素可指，但要说清是哪个告警
+        add(None, [], "基准图要能完整重放", f"渲染告警：{_clip(w)}")
+    return items[:FIX_CONFLICTS_CAP]
+
+
+def require_fix_engine():
+    """`tavotto_fix_to_journal` / `tavotto_make_journal_ready` 共用的门：期刊库总开关关着回
+    `journal_catalog_disabled`（与工具不出现同一个门），引擎没有修复事务回 `engine_too_old`。
+    返回 specfix 模块。一步交付工具在**打开会话之前**先过这道门，免得开了会话才发现用不了。"""
+    _journal_module()
+    engine = _fix_engine()
+    if engine is None:
+        raise BridgeError(
+            "本机安装的 Tavotto 引擎没有按规范修图的事务；这次没有改动任何设置。",
+            code="engine_too_old",
+            recovery="请用户把 Tavotto 升级到与插件相同的版本后再试。",
+        )
+    return engine
+
+
+@_synced
 def fix_to_journal(
     session_id: str,
     *,
@@ -4090,14 +5012,7 @@ def fix_to_journal(
     不改用户的 .py。预览图随结果的 `_previews`（`before` / `after` 的 base64 PNG）带出，由 server 层
     转成 image 内容块，**不进 structuredContent**。
     """
-    _journal_module()  # 期刊库总开关关着：`journal_catalog_disabled`，与工具不出现同一个门
-    engine = _fix_engine()
-    if engine is None:
-        raise BridgeError(
-            "本机安装的 Tavotto 引擎没有按规范修图的事务；这次没有改动任何设置。",
-            code="engine_too_old",
-            recovery="请用户把 Tavotto 升级到与插件相同的版本后再试。",
-        )
+    engine = require_fix_engine()
     session = get_session(session_id)
     if session.manifest is None:
         raise BridgeError("会话还没有 manifest（先重新 open）", code="no_manifest")
@@ -4135,6 +5050,7 @@ def fix_to_journal(
 
     base = list(session.patches)
     base_hash = session.patch_hash()
+    base_exported = session.exported_hash
     base_contract, base_normalized = session.contract, session.normalized
     b0_manifest = session.manifest
     state = {"clean": True}
@@ -4181,10 +5097,12 @@ def fix_to_journal(
         )
     except BaseException:
         _fix_settle(session, base, state, restore=True, result=None)
+        session.exported_hash = base_exported
         raise
     touched = session.patch_hash() != base_hash
     restore = ((not commit) or dry_run) and (touched or not state["clean"])
     _fix_settle(session, base, state, restore=restore, result=result)
+    _settle_export_mark(session, base_exported, committed=bool(commit) and not dry_run)
     if restore:
         result["rolled_back"] = touched
     elif commit and touched:
@@ -4195,6 +5113,8 @@ def fix_to_journal(
             session.normalized = None
             result["contract_released"] = True
         _persist(session)
+    elif commit and session.exported_hash != base_exported:
+        _persist(session)  # 图没变、只是这次导出了：导出标记也是提交的一部分
     if previews_out:
         result["_previews"] = previews_out
     return result
@@ -4226,6 +5146,7 @@ def _fix_settle(session: Session, base: list, state: dict, *, restore: bool, res
     if failed:
         # 会话上的状态已经对不上 B0：从账本里摘掉，下一次调用按落盘记录（只在提交点写，所以就是 B0）重建
         _SESSIONS.pop(session.id, None)
+        _end_native(session)
     if result is not None:
         result["worker_retired"] = bool(retired)
 
@@ -4268,8 +5189,16 @@ def _fix_run(
             return rule in named
         return include_suggestions or item["severity"] != "suggestion"
 
-    def fail(exit_code: str, **extra) -> bool:
+    def fail(exit_code: str, *, _changes: list | None = None, **extra) -> bool:
         result.update({"ok": False, "exit": exit_code, **extra})
+        if exit_code in FIX_CONFLICT_EXITS:
+            # 点名谁和谁冲突（ADR 0192 §3）：评测里 agent 只拿到一个 exit 码，只好去猜属性名
+            result["conflicts"] = _fix_conflicts(
+                result,
+                stage=extra.get("stage"),
+                changes=_changes if _changes is not None else list(result.get("changes") or []),
+                detail=extra.get("detail"),
+            )
         return False
 
     if previews:
@@ -4325,7 +5254,12 @@ def _fix_run(
             return fail(
                 str(norm.get("exit") or "constraint_conflict"),
                 stage="size",
-                size={**result["size"], "to_mm": None, "column": picked},
+                size={
+                    **result["size"],
+                    "to_mm": None,
+                    "column": picked,
+                    "target": {k: round(float(v), 2) for k, v in targets.items()},
+                },
                 detail={"blocking": blocking[:10], "warnings": norm.get("warnings") or []},
             )
         if norm.get("exit") != engine_normalize.EXIT_NOTHING_TO_DO:
@@ -4373,6 +5307,7 @@ def _fix_run(
                 "unresolved": (tx.get("unresolved") or [])[:10],
                 "warnings": tx.get("warnings") or [],
             },
+            _changes=list(tx.get("changes") or []),
         )
     final = list(tx["patches"]) if tx["ok"] else base1
     if session.patch_hash() != patchspec.patch_hash(final):
@@ -4473,6 +5408,7 @@ def _fix_run(
     return True
 
 
+@_synced
 def verify_replay(session_id: str) -> dict:
     """`hot_apply(patches) == fresh_worker_replay(patches)` 的现场自检。
 
@@ -4485,6 +5421,11 @@ def verify_replay(session_id: str) -> dict:
     session = get_session(session_id)
     if session.manifest is None:
         raise BridgeError("会话还没有 manifest", code="no_manifest")
+    if session.native is not None:
+        raise BridgeError(
+            "这张图改用真实 Python 运行，从零重放要再执行一遍脚本，MCP 里不做这件事",
+            code=NATIVE_UNSUPPORTED,
+        )
     worker = _spawn_worker(session, one_shot=True)
     try:
         resp = worker.override(session.stem, session.patches, None, inline_svg=False)
