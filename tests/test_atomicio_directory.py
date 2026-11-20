@@ -56,6 +56,7 @@ def test_existing_target_is_never_overwritten_and_source_remains_owned(tmp_path,
             referent.mkdir()
             (referent / "sentinel").write_bytes(b"keep target")
         _link(referent, target)
+        link_target = target.readlink()
     with pytest.raises(FileExistsError):
         atomicio.publish_directory_if_absent(stage, target)
     assert (stage / "nested" / "value.bin").read_bytes() == b"complete bytes"
@@ -64,7 +65,8 @@ def test_existing_target_is_never_overwritten_and_source_remains_owned(tmp_path,
     elif kind == "directory":
         assert (target / "sentinel").read_bytes() == b"keep target"
     else:
-        assert target.is_symlink() and target.readlink() == referent
+        assert target.is_symlink()
+        assert target.readlink() == link_target
         if kind == "symlink":
             assert (referent / "sentinel").read_bytes() == b"keep target"
         else:
