@@ -688,6 +688,10 @@
       "reverse-path": {
         "keywords": "reverse path direction flip arrow fzlj 反转 方向 箭头",
         "label": "反转路径方向"
+      },
+      "quick-layout": {
+        "keywords": "一键排版 yjpb yijianpaiban auto layout arrange align",
+        "label": "一键排版"
       }
     },
     "listLabel": "命令",

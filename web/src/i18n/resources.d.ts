@@ -1671,6 +1671,10 @@ export default interface Resources {
           "keywords": "scan check structure jc jiancha 检查 扫描 脚本 目标",
           "label": "显示项目检查结果"
         },
+        "quick-layout": {
+          "keywords": "一键排版 yjpb yijianpaiban auto layout arrange align",
+          "label": "一键排版"
+        },
         "readiness": {
           "keywords": "readiness status editable jr jieru 接入 可编辑 仅版面 仅排版 为什么不能编辑",
           "label": "显示项目接入状态"
@@ -6589,6 +6593,7 @@ export default interface Resources {
       "fit": "适应",
       "label": "画布工具",
       "pen": "钢笔",
+      "quickLayout": "一键排版",
       "select": "选择",
       "subLabels": "序号"
     },
@@ -6974,6 +6979,7 @@ export default interface Resources {
       "pinLayout": "固定位置",
       "playgroundOpenFigure": "打开图",
       "playgroundResetEdits": "重置修改",
+      "quickLayout": "一键排版",
       "reflowLayoutGroup": "重新排列布局组",
       "refreshJournalV2": "更新期刊要求",
       "releaseCompound": "释放复合路径",
@@ -7806,6 +7812,16 @@ export default interface Resources {
       "zTop": "置于顶层",
       "zUp": "上移一层"
     },
+    "quickLayout": {
+      "gap": "{{mm}} mm",
+      "gapLabel": "图间距",
+      "target": {
+        "double": "双栏",
+        "page": "整页",
+        "single": "单栏"
+      },
+      "targetLabel": "宽度"
+    },
     "rail": {
       "assets": "素材",
       "data": "数据",
@@ -8124,6 +8140,13 @@ export default interface Resources {
       "pathfinderEmpty": "算出来是空的，没有改动",
       "pathfinderUnavailable": "这里用不了路径查找器",
       "projectBackgroundError": "后台检查项目文件时出错。已打开的内容不受影响，修好文件后会自动重试。",
+      "quickLayoutDone": "已排好",
+      "quickLayoutFailed": "这次没排好，再试一次",
+      "quickLayoutNoteEqualAspect": "图 {{label}} 是等比例坐标，没参与轴线对齐",
+      "quickLayoutNoteSpecNotFixed": "图 {{label}} 的字号没能修到规范（修了会压住数据）",
+      "quickLayoutStale": "图刚刚变了，再点一次一键排版",
+      "quickLayoutTooFew": "至少要两张图",
+      "quickLayoutUndo": "撤销",
       "rebuildFailed": "无法重新构建。{{error}}",
       "recentMissing": "这份排版已不在本机，已从列表里去掉",
       "recentTooNew": "这份排版来自更新的 Tavotto，本版本无法打开。磁盘上的文件没有改动。",
@@ -8273,6 +8296,9 @@ export default interface Resources {
       "presets": "科研预设与符号…",
       "projectDocuments": "项目里的排版",
       "projectFileUnsaved": "项目里的 {{file}} 有未保存的改动",
+      "quickLayout": "一键排版",
+      "quickLayoutOptions": "一键排版选项",
+      "quickLayoutTip": "一次排好这几张图的位置、大小和标签",
       "readiness": "项目接入状态",
       "recentDocuments": "本机最近的排版",
       "recentEntryMulti_other": "{{name}} · {{canvases}} 张画布 · {{count}} 个对象",

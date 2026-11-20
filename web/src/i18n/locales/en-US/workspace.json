@@ -141,6 +141,7 @@
     "fit": "Fit",
     "label": "Canvas tools",
     "pen": "Pen",
+    "quickLayout": "Auto layout",
     "select": "Select",
     "subLabels": "Labels"
   },
@@ -489,7 +490,8 @@
     "offsetPath": "Offset path",
     "outlineStroke": "Outline stroke",
     "reversePath": "Reverse path direction",
-    "simplifyPath": "Simplify path"
+    "simplifyPath": "Simplify path",
+    "quickLayout": "Auto layout"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -1022,7 +1024,14 @@
     "eyedropperNoTarget": "Select a shape, path or arrow to color first",
     "pathfinderUnavailable": "Pathfinder isn’t available here",
     "pathfinderEmpty": "The result is empty, so nothing changed",
-    "simplifyNothing": "Nothing to simplify"
+    "simplifyNothing": "Nothing to simplify",
+    "quickLayoutDone": "Laid out",
+    "quickLayoutUndo": "Undo",
+    "quickLayoutTooFew": "Need at least two figures",
+    "quickLayoutStale": "The figures just changed. Run Auto layout again.",
+    "quickLayoutFailed": "Couldn't lay these out. Try again.",
+    "quickLayoutNoteEqualAspect": "Figure {{label}} has equal-aspect axes, so its axes weren't aligned",
+    "quickLayoutNoteSpecNotFixed": "Figure {{label}}'s font sizes couldn't reach the spec without covering data"
   },
   "tabs": {
     "allCanvases": "All canvases",
@@ -1122,7 +1131,10 @@
     "documentRenameHint": "Click for layout actions; double-click or F2 to rename",
     "zoomValueInput": "Zoom (%)",
     "zoomSelection": "Zoom to selection",
-    "journalTitle": "Checked against {{journal}} · open journal spec"
+    "journalTitle": "Checked against {{journal}} · open journal spec",
+    "quickLayout": "Auto layout",
+    "quickLayoutTip": "Arrange these figures, their sizes and labels in one go",
+    "quickLayoutOptions": "Auto layout options"
   },
   "tutorialChip": {
     "label": "Tutorial"
@@ -1943,5 +1955,15 @@
   "pathfinder": {
     "blockedEmbedded": "Not available here. Open this in the Tavotto app or a browser",
     "blockedFailed": "Pathfinder couldn’t load on this computer"
+  },
+  "quickLayout": {
+    "targetLabel": "Width",
+    "target": {
+      "double": "Double column",
+      "page": "Full page",
+      "single": "Single column"
+    },
+    "gapLabel": "Gap",
+    "gap": "{{mm}} mm"
   }
 }

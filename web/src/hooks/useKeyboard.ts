@@ -39,6 +39,7 @@ import { useTimelineStore } from '@/store/timelineStore'
 import { isTimelineOpen, useUiStore, type Tool } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { fitStage, zoomToSelection } from '@/store/zoomToSelection'
+import { setQuickLayoutUndoRunner } from '@/store/quickLayoutActions'
 
 
 const TOOL_KEYS: Record<string, Tool> = {
@@ -180,6 +181,9 @@ export function runUndoRedo(redo: boolean) {
     ui.setStatus(msg(redo ? 'status.nothingToRedo' : 'status.nothingToUndo', undefined, 'workspace'), 'info')
   }
 }
+
+// 一键排版胶囊上的「撤销」（ADR 0199 §七）：那一处不能 import 本模块（成环），在这里交进去
+setQuickLayoutUndoRunner(() => runUndoRedo(false))
 
 export function useKeyboard() {
   useEffect(() => {

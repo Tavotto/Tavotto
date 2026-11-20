@@ -133,6 +133,7 @@
     "fit": "适应",
     "label": "画布工具",
     "pen": "钢笔",
+    "quickLayout": "一键排版",
     "select": "选择",
     "subLabels": "序号"
   },
@@ -472,7 +473,8 @@
     "offsetPath": "偏移路径",
     "outlineStroke": "轮廓化描边",
     "reversePath": "反转路径方向",
-    "simplifyPath": "简化路径"
+    "simplifyPath": "简化路径",
+    "quickLayout": "一键排版"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -968,7 +970,14 @@
     "eyedropperNoTarget": "先选中要上色的形状、路径或箭头",
     "pathfinderUnavailable": "这里用不了路径查找器",
     "pathfinderEmpty": "算出来是空的，没有改动",
-    "simplifyNothing": "已经很简单了，没有可删的锚点"
+    "simplifyNothing": "已经很简单了，没有可删的锚点",
+    "quickLayoutDone": "已排好",
+    "quickLayoutUndo": "撤销",
+    "quickLayoutTooFew": "至少要两张图",
+    "quickLayoutStale": "图刚刚变了，再点一次一键排版",
+    "quickLayoutFailed": "这次没排好，再试一次",
+    "quickLayoutNoteEqualAspect": "图 {{label}} 是等比例坐标，没参与轴线对齐",
+    "quickLayoutNoteSpecNotFixed": "图 {{label}} 的字号没能修到规范（修了会压住数据）"
   },
   "tabs": {
     "allCanvases": "全部画布",
@@ -1066,7 +1075,10 @@
     "documentRenameHint": "单击打开排版菜单；双击或按 F2 重命名",
     "zoomValueInput": "缩放比例（%）",
     "zoomSelection": "缩放到选中对象",
-    "journalTitle": "按「{{journal}}」检查 · 点开期刊规范"
+    "journalTitle": "按「{{journal}}」检查 · 点开期刊规范",
+    "quickLayout": "一键排版",
+    "quickLayoutTip": "一次排好这几张图的位置、大小和标签",
+    "quickLayoutOptions": "一键排版选项"
   },
   "tutorialChip": {
     "label": "新手教程"
@@ -1872,5 +1884,15 @@
   "pathfinder": {
     "blockedEmbedded": "在这里用不了，请在 Tavotto 桌面版或浏览器里打开",
     "blockedFailed": "这台电脑上没能加载路径查找器"
+  },
+  "quickLayout": {
+    "targetLabel": "宽度",
+    "target": {
+      "double": "双栏",
+      "page": "整页",
+      "single": "单栏"
+    },
+    "gapLabel": "图间距",
+    "gap": "{{mm}} mm"
   }
 }
