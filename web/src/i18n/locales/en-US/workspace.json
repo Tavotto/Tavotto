@@ -1181,6 +1181,7 @@
     "space_pan": "Hold Space and drag to pan",
     "shift_multi": "⇧-click several, then change them all",
     "shortcut_help": "Press ? for all shortcuts",
+    "quick_layout": "Drag the gaps between figures to change how much room each gets",
     "shortcutHelpOpen": "Open",
     "pageBoundsOpen": "Open Canvas tab"
   },
@@ -1993,6 +1994,7 @@
       "fit": "Fit to content"
     },
     "widthLockedTip": "Width follows the canvas when keeping its size",
-    "fixSpec": "Also fix text and lines to the spec"
+    "fixSpec": "Also fix text and lines to the spec",
+    "gutterTip": "Drag to adjust proportions"
   }
 }

@@ -22,6 +22,7 @@ vi.mock('@/store/renderScheduler', async (importOriginal) => ({
 import { useDocumentStore } from '@/store/documentStore'
 import { cancelActivePointerGesture } from '@/store/gestureCoordinator'
 import { useInteractionStore } from '@/store/interactionStore'
+import { useSelectionStore } from '@/store/selectionStore'
 import { useLicenseStore } from '@/store/licenseStore'
 import { useQuickLayoutStore } from '@/store/quickLayoutActions'
 import { useUiStore } from '@/store/uiStore'
@@ -125,6 +126,73 @@ describe('分隔线命中区', () => {
     expect(host.querySelectorAll('[data-quick-layout-gutter]')).toHaveLength(0)
     act(() => useUiStore.setState({ tool: 'select' }))
     expect(host.querySelectorAll('[data-quick-layout-gutter]')).toHaveLength(1)
+    act(() => s().commit(literal('挪'), (d) => { d.objects[0].x += 3 }))
+    expect(host.querySelector('[data-quick-layout-gutters]')).toBeNull()
+  })
+})
+
+describe('握柄与气泡', () => {
+  const grips = () => [...host.querySelectorAll('[data-quick-layout-grip]')]
+  const shown = () => grips().filter((g) => g.getAttribute('data-quick-layout-grip') === 'shown')
+  const over = (x: number, y: number) => act(() => useInteractionStore.setState({ cursor: { x, y } }))
+  const away = () => act(() => useInteractionStore.setState({ cursor: null }))
+  beforeEach(() => {
+    useInteractionStore.setState({ cursor: null })
+    useSelectionStore.setState({ ids: [] })
+  })
+
+  it('命中区带原生气泡「拖动调整比例」', () => {
+    mount()
+    expect(host.querySelector('[data-quick-layout-gutter]')!.getAttribute('title')).toBe('拖动调整比例')
+  })
+
+  it('鼠标不在页面上、也没选这份排版的图：握柄是透明的；移到页面上才显出来', () => {
+    mount()
+    expect(grips()).toHaveLength(1)
+    expect(shown()).toHaveLength(0)
+    over(20, 20)
+    expect(shown()).toHaveLength(1)
+    over(-5, 20) // 出了页面
+    expect(shown()).toHaveLength(0)
+    away()
+    expect(shown()).toHaveLength(0)
+  })
+
+  it('选中了这份排版里的图：鼠标不在页面上也显；选的是别的图不算', () => {
+    mount()
+    act(() => useSelectionStore.setState({ ids: ['p1'] }))
+    expect(shown()).toHaveLength(1)
+    act(() => useSelectionStore.setState({ ids: ['other'] }))
+    expect(shown()).toHaveLength(0)
+  })
+
+  it('握柄不吃指针事件，只挂在命中区里面', () => {
+    mount()
+    over(20, 20)
+    const grip = host.querySelector<HTMLElement>('[data-quick-layout-grip]')!
+    expect(grip.className).toContain('pointer-events-none')
+    expect(grip.closest('[data-quick-layout-gutter]')).not.toBeNull()
+  })
+
+  it('没解锁 / 记忆失效 / 别的手势在走 / 非选择工具 / 忙碌 / 图内编辑：一颗握柄都没有', () => {
+    over(20, 20)
+    mount()
+    expect(grips()).toHaveLength(1)
+    act(() => useInteractionStore.getState().begin('move' as never))
+    expect(grips()).toHaveLength(0)
+    act(() => useInteractionStore.getState().end())
+    act(() => useQuickLayoutStore.setState({ busy: true }))
+    expect(grips()).toHaveLength(0)
+    act(() => useQuickLayoutStore.setState({ busy: false }))
+    act(() => useUiStore.setState({ tool: 'rect' as never }))
+    expect(grips()).toHaveLength(0)
+    act(() => useUiStore.setState({ tool: 'select' }))
+    act(() => useUiStore.setState({ elementPanelId: 'p1' }))
+    expect(host.querySelector('[data-quick-layout-gutters]')).toBeNull()
+    act(() => useUiStore.setState({ elementPanelId: null }))
+    act(() => useLicenseStore.setState({ status: licensed([]) }))
+    expect(host.querySelector('[data-quick-layout-gutters]')).toBeNull()
+    act(() => useLicenseStore.setState({ status: licensed(['quick-layout']) }))
     act(() => s().commit(literal('挪'), (d) => { d.objects[0].x += 3 }))
     expect(host.querySelector('[data-quick-layout-gutters]')).toBeNull()
   })
