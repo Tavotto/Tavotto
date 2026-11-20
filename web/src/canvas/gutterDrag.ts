@@ -1,15 +1,18 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import { dragGutter, quickLayoutValid, type Gutter } from '@/lib/quickLayoutGrid'
+import { dragGutter, quickLayoutValid, rowHeightsMm, type Gutter } from '@/lib/quickLayoutGrid'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { runQuickLayoutRatios, useQuickLayoutStore } from '@/store/quickLayoutActions'
 import { getTransform, pxToMm } from '@/store/viewportStore'
 import { trackPointer } from './interactions'
+import { QuickLayoutFollow } from './quickLayoutFollow'
 
 /**
- * 拖一条行 / 列分隔线（一键排版之后，ADR 0199）。**预览平面只画淡色轮廓**（`useQuickLayoutStore.preview`），
+ * 拖一条行 / 列分隔线（一键排版之后，ADR 0199）。**预览平面**：图本身按预览框跟手（`QuickLayoutFollow`，只写
+ * DOM 的 translate / scale）；没挂上画面的图退回淡色轮廓（`useQuickLayoutStore.preview`）。
  * 拖动中不 commit、不进历史、不发后端、不重渲染任何图（假实时预览规则）；松手才 `runQuickLayoutRatios`
- * 一次请求 + 一次 commit。Esc / pointercancel 与松手分开：取消 = 收掉轮廓、什么都不发。
+ * 一次请求 + 一次 commit，跟手一直保持到新图落位（见 `quickLayoutFollow`）。
+ * Esc / pointercancel 与松手分开：取消 = 原样放回、什么都不发。
  */
 export function startGutterDrag(e: ReactPointerEvent, gutter: Gutter) {
   if (e.button !== 0) return
@@ -23,23 +26,36 @@ export function startGutterDrag(e: ReactPointerEvent, gutter: Gutter) {
   const interaction = useInteractionStore.getState()
   interaction.begin('gutter')
   let last: ReturnType<typeof dragGutter> = null
+  const follow = new QuickLayoutFollow(memo)
+  const live = follow.followedIds
   trackPointer(e, {
     onMove: (_ev, dxPx, dyPx) => {
       last = dragGutter(memo, gutter.axis, gutter.index, pxToMm(horizontal ? dxPx : dyPx, t0))
-      if (last) useQuickLayoutStore.setState({ preview: last.boxes })
+      if (!last) return
+      useQuickLayoutStore.setState({ preview: last.boxes, live })
+      follow.update(last.boxes)
     },
     onEnd: (moved, _ev, end) => {
       useInteractionStore.getState().end()
       if (end.cancelled || !moved || !last) {
-        useQuickLayoutStore.setState({ preview: null })
+        follow.restore()
+        useQuickLayoutStore.setState({ preview: null, live: null })
         return
       }
+      const rowsMm = rowHeightsMm(memo, last.boxes)
       const ratios = {
         cols: gutter.axis === 'col' ? last.ratios : memo.colRatios,
         rows: gutter.axis === 'row' ? last.ratios : memo.rowRatios,
+        // 绝对行高取自预览框：求解器原样采用，结果与预览一致（列的总宽由页面 / 目标定，占比就够）
+        ...(rowsMm ? { rows_mm: rowsMm } : {}),
       }
-      // 轮廓留着等方案：runQuickLayoutRatios 的 finally（成功 / 失败 / 作废）统一收掉
-      void runQuickLayoutRatios(ratios).finally(() => useQuickLayoutStore.setState({ preview: null }))
+      // 图停在预览框上等方案：成功 = 跟手保持到新图落位（onCommitted）；失败 / 作废 = 原样放回
+      void runQuickLayoutRatios(ratios, follow)
+        .then((outcome) => {
+          if (outcome !== 'applied') follow.restore()
+        })
+        .catch(() => follow.restore())
+        .finally(() => useQuickLayoutStore.setState({ preview: null, live: null }))
     },
   })
 }
