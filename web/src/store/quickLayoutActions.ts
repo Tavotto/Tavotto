@@ -33,7 +33,8 @@ import { requestRender } from './renderScheduler'
 import { useRuntimeAssetStore } from './runtimeAssetStore'
 import { useSelectionStore } from './selectionStore'
 import { useUiStore, type StatusAction } from './uiStore'
-import type { QuickLayoutTarget } from '@/lib/quickLayoutPrefs'
+import { readQuickLayoutPrefs, type QuickLayoutTarget } from '@/lib/quickLayoutPrefs'
+import type { QuickLayoutSpecChange } from '@/lib/api'
 
 const hist = (key: string): UiMessage => msg(`history.${key}`, undefined, 'workspace')
 const note = (key: string, values?: Record<string, unknown>): UiMessage =>
@@ -102,9 +103,32 @@ function letterOf(ref: string, res: Extract<QuickLayoutResponse, { ok: true }>):
   return String.fromCharCode(97 + Math.max(0, i))
 }
 
-function noteLine(res: Extract<QuickLayoutResponse, { ok: true }>): UiMessage | undefined {
+const SPEC_ORDER: QuickLayoutSpecChange[] = [
+  'font_family',
+  'font_size',
+  'line_width',
+  'tick_direction',
+  'legend_frame',
+  'text_weight',
+  'other',
+]
+
+/** 「已按「规范名」改了字体、字号…」：类别按固定顺序，没改动 = 没有这一项 */
+function specLine(res: Extract<QuickLayoutResponse, { ok: true }>, specName: string): string | undefined {
+  const got = new Set(res.spec_changes)
+  const cats = SPEC_ORDER.filter((c) => got.has(c))
+  if (!cats.length) return undefined
+  const sep = translate('status.quickLayoutSpecSep', { ns: 'workspace' })
+  const what = cats.map((c) => translate(`status.quickLayoutSpec.${c}`, { ns: 'workspace' })).join(sep)
+  const spec = specName.trim() || translate('status.quickLayoutSpecFallback', { ns: 'workspace' })
+  return translate('status.quickLayoutSpecDone', { ns: 'workspace', spec, what })
+}
+
+function noteLine(res: Extract<QuickLayoutResponse, { ok: true }>, specName: string): UiMessage | undefined {
   const seen = new Set<string>()
   const lines: string[] = []
+  const spec = specLine(res, specName)
+  if (spec) lines.push(spec)
   for (const n of res.notes) {
     const id = `${n.code}:${n.ref}`
     if (seen.has(id)) continue
@@ -162,6 +186,7 @@ export async function runQuickLayout(target: QuickLayoutTarget, gapMm: number): 
     gap_mm: gapMm,
     profile,
     label_pt: canvasTextDefaults().sizePt,
+    fix_spec: readQuickLayoutPrefs().fixSpec,
   }
 
   // 排版时间线的自动检查点（ADR 0101 / 0199 §七）：快照在任何 await 之前取，失败不打扰
@@ -239,7 +264,7 @@ export async function runQuickLayout(target: QuickLayoutTarget, gapMm: number): 
     // 「撤销」只在撤销栈还停在这一步时撤；之后又改了别的，撤的就是别的了，只收胶囊
     const depth = after.past.length
     say(note('quickLayoutDone'), 'done', {
-      subline: noteLine(res),
+      subline: noteLine(res, profile.label),
       dismissMs: DONE_DISMISS_MS,
       action: {
         label: note('quickLayoutUndo'),

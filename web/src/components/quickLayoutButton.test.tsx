@@ -128,20 +128,52 @@ describe('一键排版按钮', () => {
       })
     }
     await pick('[data-quick-layout-target="single"]')
-    expect(readQuickLayoutPrefs()).toEqual({ target: 'single', gapMm: 3 })
+    expect(readQuickLayoutPrefs()).toEqual({ target: 'single', gapMm: 3, fixSpec: true })
     await act(async () => {
       q('[data-quick-layout-options]')!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse' }))
     })
     await pick('[data-quick-layout-gap="2"]')
-    expect(readQuickLayoutPrefs()).toEqual({ target: 'single', gapMm: 2 })
+    expect(readQuickLayoutPrefs()).toEqual({ target: 'single', gapMm: 2, fixSpec: true })
     await act(async () => q('[data-quick-layout-run]')!.click())
     expect(runQuickLayout).toHaveBeenCalledWith('single', 2)
   })
 
+  it('下拉里的「同时按规范修…」开关：默认勾上，点一下关掉并记在本机，再点开回来', async () => {
+    useLicenseStore.setState({ status: licensed(['quick-layout']) })
+    await mount()
+    const open = () =>
+      act(async () => {
+        q('[data-quick-layout-options]')!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse' }))
+      })
+    const toggle = async () => {
+      const el = document.querySelector<HTMLElement>('[data-quick-layout-fix-spec]')
+      expect(el).toBeTruthy()
+      expect(el!.textContent).toBe('同时按规范修文字和线条')
+      await act(async () => {
+        el!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse' }))
+        el!.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, pointerType: 'mouse' }))
+        el!.click()
+      })
+    }
+    await open()
+    const box = () => document.querySelector('[data-quick-layout-fix-spec]')!
+    expect(box().getAttribute('aria-checked')).toBe('true')
+    // 开关不关菜单：连点两下，勾跟着变
+    await toggle()
+    expect(readQuickLayoutPrefs().fixSpec).toBe(false)
+    expect(box().getAttribute('aria-checked')).toBe('false')
+    await toggle()
+    expect(readQuickLayoutPrefs().fixSpec).toBe(true)
+  })
+
   it('本机存储坏了 / 不可用：退回默认值，不抛', () => {
     localStorage.setItem('tavotto.quickLayout', '{坏的')
-    expect(readQuickLayoutPrefs()).toEqual({ target: 'double', gapMm: 3 })
+    expect(readQuickLayoutPrefs()).toEqual({ target: 'double', gapMm: 3, fixSpec: true })
     localStorage.setItem('tavotto.quickLayout', JSON.stringify({ target: 'x', gapMm: 9 }))
-    expect(readQuickLayoutPrefs()).toEqual({ target: 'double', gapMm: 3 })
+    expect(readQuickLayoutPrefs()).toEqual({ target: 'double', gapMm: 3, fixSpec: true })
+    localStorage.setItem('tavotto.quickLayout', JSON.stringify({ target: 'single', gapMm: 2, fixSpec: 'no' }))
+    expect(readQuickLayoutPrefs()).toEqual({ target: 'single', gapMm: 2, fixSpec: true })
+    localStorage.setItem('tavotto.quickLayout', JSON.stringify({ target: 'single', gapMm: 2, fixSpec: false }))
+    expect(readQuickLayoutPrefs().fixSpec).toBe(false)
   })
 })
