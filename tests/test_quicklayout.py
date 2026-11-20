@@ -160,34 +160,50 @@ def _manifest(size, axes_bbox, ink=(0.0, 0.0, 1.0, 1.0)):
     }
 
 
-def _placed(key, box, axes_bbox):
+def _placed(key, box, axes_bbox, pad=0.5, top=5.0):
+    """图框 box；文字外沿在图框内侧 `pad` mm（求解器的 FRAME_PAD），上方另给标签留出 `top` mm。"""
     p = _panel(key)
     p.box = list(box)
-    p.manifest = _manifest(box[2:], axes_bbox)
+    w, h = box[2:]
+    ink = (pad / w, top / h, 1 - pad / w, 1 - pad / h)
+    p.manifest = _manifest(box[2:], axes_bbox, ink)
     p.size_mm = list(box[2:])
     return p
 
 
+# 页宽 150、留白 2、图间距 3（按文字外沿）：文字格子宽 71.5，图框 72.5，两列图框 x = 1.5 / 76
+A_BOX = [1.5, 1.5, 72.5, 50]
+B_BOX = [76.0, 1.5, 72.5, 50]
+LABELS = [{"ref": "a", "x": 2, "y": 2}, {"ref": "b", "x": 76.5, "y": 2}]
+
+
 def test_check_passes_aligned_grid():
-    a = _placed("a", [10, 10, 73.5, 50], [0.2, 0.1, 0.75, 0.7])
-    b = _placed("b", [86.5, 10, 73.5, 50], [0.2, 0.1, 0.75, 0.7])
-    assert quicklayout.check([a, b], 150, 3, [], 9) == []
+    a = _placed("a", A_BOX, [0.2, 0.15, 0.75, 0.7])
+    b = _placed("b", B_BOX, [0.2, 0.15, 0.75, 0.7])
+    assert quicklayout.check([a, b], 150, 3, 2, LABELS, 9) == []
 
 
-def test_check_catches_misaligned_bottom_and_gap():
-    a = _placed("a", [10, 10, 73.5, 50], [0.2, 0.1, 0.75, 0.7])
-    b = _placed("b", [87.5, 10, 73.5, 50], [0.2, 0.1, 0.75, 0.68])
-    metrics = {m["metric"] for m in quicklayout.check([a, b], 150, 3, [], 9)}
-    assert {"align_bottom", "gap", "width"} <= metrics
+def test_check_catches_misaligned_bottom_and_ink_gap():
+    a = _placed("a", A_BOX, [0.2, 0.15, 0.75, 0.7])
+    b = _placed("b", [75.0, 1.5, 72.5, 50], [0.2, 0.15, 0.75, 0.68])  # 文字外沿只空 2 mm
+    metrics = {m["metric"] for m in quicklayout.check([a, b], 150, 3, 2, LABELS, 9)}
+    assert {"align_bottom", "gap"} <= metrics
+
+
+def test_check_catches_text_touching_frame_and_page_edge():
+    # 文字外沿贴着图框（2026-11-20 走查：「Combination」被裁）、离页边不足 2 mm
+    a = _placed("a", [0.5, 1.5, 72.5, 50], [0.2, 0.15, 0.75, 0.7], pad=0.0)
+    b = _placed("b", B_BOX, [0.2, 0.15, 0.75, 0.7])
+    metrics = {m["metric"] for m in quicklayout.check([a, b], 150, 3, 2, LABELS, 9)}
+    assert {"edge", "page_edge"} <= metrics
 
 
 def test_check_catches_scaled_panel_and_label_overlap():
-    a = _placed("a", [10, 10, 73.5, 50], [0.2, 0.1, 0.75, 0.7])
-    b = _placed("b", [86.5, 10, 73.5, 50], [0.2, 0.1, 0.75, 0.7])
+    a = _placed("a", A_BOX, [0.2, 0.15, 0.75, 0.7])
+    b = _placed("b", B_BOX, [0.2, 0.15, 0.75, 0.7])
     b.size_mm = [80, 50]  # 图框 ≠ 图幅：缩放了，字号就不再是规范值
-    metrics = {
-        m["metric"] for m in quicklayout.check([a, b], 150, 3, [{"ref": "a", "x": 12, "y": 12}], 9)
-    }
+    labels = [{"ref": "a", "x": 10, "y": 10}, LABELS[1]]
+    metrics = {m["metric"] for m in quicklayout.check([a, b], 150, 3, 2, labels, 9)}
     assert {"scale", "label_overlap"} <= metrics
 
 

@@ -22,6 +22,23 @@ PT_MM = 25.4 / 72.0
 ALIGN_TOL_MM = 0.1 * PT_MM
 GAP_TOL_MM = 0.1
 WIDTH_TOL_MM = 0.1
+#: 页面四周文字外沿到页边的空隙（用户没设安全边距时；ADR 0199 §六，维护者 2026-11-20 定）
+DEFAULT_PADDING_MM = 2.0
+#: 文字外沿离图框至少这么远：字形会略微超出测得的外框，贴着图框会被裁（2026-11-20 走查）
+EDGE_MIN_MM = 0.2
+EDGE_TOL_MM = 0.05
+#: 按规范修了哪几类（给胶囊那一行灰字）：属性 → 类别码
+SPEC_CATEGORY = {
+    "fontfamily": "font_family",
+    "fontsize": "font_size",
+    "title_fontsize": "font_size",
+    "tick_fontsize": "font_size",
+    "linewidth": "line_width",
+    "width": "line_width",
+    "direction": "tick_direction",
+    "frameon": "legend_frame",
+    "weight": "text_weight",
+}
 #: 求解器只看得到这些角色（ADR 0199 §四）
 ELEMENT_ROLES = frozenset({"axes", "colorbar"})
 TARGETS = ("single", "double", "page")
@@ -259,16 +276,25 @@ def _groups(panels: list[Panel], idx: int) -> list[list[Panel]]:
 
 
 def check(
-    panels: list[Panel], target_w: float, gap: float, labels: list[dict], label_pt: float
+    panels: list[Panel],
+    page_w: float,
+    gap: float,
+    padding: float,
+    labels: list[dict],
+    label_pt: float,
 ) -> list[dict]:
-    """量 ADR 0199 §六 的指标，返回没过的条目（空 = 全过）。"""
+    """量 ADR 0199 §六 的指标，返回没过的条目（空 = 全过）。间距与页边都按**文字外沿**（ink）量。"""
     bad: list[dict] = []
+    inks: list[tuple[Panel, list[float]]] = []
     for p in panels:
         if abs(p.box[2] - p.size_mm[0]) > 0.05 or abs(p.box[3] - p.size_mm[1]) > 0.05:
             bad.append({"metric": "scale", "ref": p.key})
         ink = _ink(p.manifest or {})
-        if ink[0] < -0.001 or ink[1] < -0.001 or ink[2] > 1.001 or ink[3] > 1.001:
-            bad.append({"metric": "clipped", "ref": p.key})
+        w, h = p.size_mm
+        edge = min(ink[0] * w, ink[1] * h, (1 - ink[2]) * w, (1 - ink[3]) * h)
+        if edge < EDGE_MIN_MM - EDGE_TOL_MM:
+            bad.append({"metric": "edge", "ref": p.key, "mm": round(edge, 3)})
+        inks.append((p, _page_rect(p, ink)))
     aligned = [p for p in panels if not p.equal_aspect and _main_axes(p.manifest or {})]
     for col in _groups(aligned, 0):
         lefts = [_page_rect(p, _box_rect(p))[0] for p in col]
@@ -283,28 +309,42 @@ def check(
             )
         if max(tops) - min(tops) > ALIGN_TOL_MM:
             bad.append({"metric": "align_top", "delta_mm": round(max(tops) - min(tops), 4)})
+    ink_of = {id(p): r for p, r in inks}
+    # 相邻两张图文字外沿之间至少空出「图间距」（同一行看左右，同一列看上下）
     for row in _groups(panels, 1):
         row = sorted(row, key=lambda q: q.box[0])
         for a, b in zip(row, row[1:]):
-            d = b.box[0] - (a.box[0] + a.box[2])
-            if abs(d - gap) > GAP_TOL_MM:
+            d = ink_of[id(b)][0] - ink_of[id(a)][2]
+            if d < gap - GAP_TOL_MM:
                 bad.append({"metric": "gap", "delta_mm": round(d - gap, 4)})
-    x0 = min(p.box[0] for p in panels)
-    x1 = max(p.box[0] + p.box[2] for p in panels)
-    if abs((x1 - x0) - target_w) > WIDTH_TOL_MM:
-        bad.append({"metric": "width", "delta_mm": round((x1 - x0) - target_w, 4)})
-    inks = [(p.key, _page_rect(p, _ink(p.manifest or {}))) for p in panels]
-    for i, (ka, a) in enumerate(inks):
-        for kb, b in inks[i + 1 :]:
-            if a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]:
-                bad.append({"metric": "overlap", "refs": [ka, kb]})
+    for col in _groups(panels, 0):
+        col = sorted(col, key=lambda q: q.box[1])
+        for a, b in zip(col, col[1:]):
+            d = ink_of[id(b)][1] - ink_of[id(a)][3]
+            if d < gap - GAP_TOL_MM:
+                bad.append({"metric": "gap", "delta_mm": round(d - gap, 4)})
+    # 页面四周：任何文字外沿（含标签）离页边都不少于 padding
     lh = label_pt * PT_MM * 1.2
     lw = label_pt * PT_MM * 0.6 * 3
+    rects = [r for _p, r in inks] + [
+        [lab["x"], lab["y"], lab["x"] + lw, lab["y"] + lh] for lab in labels
+    ]
+    if (
+        min(r[0] for r in rects) < padding - EDGE_TOL_MM
+        or min(r[1] for r in rects) < padding - EDGE_TOL_MM
+    ):
+        bad.append({"metric": "page_edge"})
+    if max(r[2] for _p, r in inks) > page_w - padding + EDGE_TOL_MM:
+        bad.append({"metric": "page_edge"})
+    for i, (pa, a) in enumerate(inks):
+        for pb, b in inks[i + 1 :]:
+            if a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]:
+                bad.append({"metric": "overlap", "refs": [pa.key, pb.key]})
     for lab in labels:
         r = [lab["x"], lab["y"], lab["x"] + lw, lab["y"] + lh]
-        for k, a in inks:
+        for pk, a in inks:
             if r[0] < a[2] and a[0] < r[2] and r[1] < a[3] and a[1] < r[3]:
-                bad.append({"metric": "label_overlap", "refs": [lab["ref"], k]})
+                bad.append({"metric": "label_overlap", "refs": [lab["ref"], pk.key]})
     return bad
 
 
@@ -322,7 +362,7 @@ def _box_rect(p: Panel) -> list[float]:
 # ---------------------------------------------------------------------------
 def target_width(profile: dict, target: str, page: dict) -> float:
     if target == "page":
-        return float(page["w"]) - 2 * float(page.get("margin") or 0)
+        return float(page["w"])
     widths = profile.get("widths_mm") if isinstance(profile, dict) else None
     w = widths.get(target) if isinstance(widths, dict) else None
     if not _finite(w) or w <= 0:
@@ -376,6 +416,7 @@ def plan(
     gap_mm: float,
     profile: dict,
     label_pt: float,
+    fix_spec: bool = True,
     solver: Callable[[dict], dict] | None = None,
 ) -> dict:
     """一键排版事务本体。成功返回 `{ok: True, panels: [{key, patches, box}], labels: [...], notes: [...]}`；
@@ -387,6 +428,11 @@ def plan(
     if target not in TARGETS or not _finite(gap_mm) or not (0 <= gap_mm <= 30):
         raise QuickLayoutError("invalid_plan", "bad options")
     tw = target_width(profile, target, page)
+    # 用户设了安全边距就用它，否则默认 2 mm（文字外沿到页边）
+    padding = float(page.get("margin") or 0.0) or DEFAULT_PADDING_MM
+    if tw <= 2 * padding + 10:
+        raise QuickLayoutError("invalid_plan", "page too narrow")
+    spec_changed: set[str] = set()
     ask = solver or (lambda payload: prohost.call("quick_layout.plan", payload, feature=FEATURE))
     refs = {f"p{i + 1}": p for i, p in enumerate(panels)}
     for p in panels:
@@ -398,7 +444,7 @@ def plan(
         payload = {
             "round": rnd,
             "page": {k: float(page[k]) for k in ("w", "h", "margin") if k in page},
-            "target": {"width_mm": tw, "gap_mm": float(gap_mm)},
+            "target": {"width_mm": tw, "gap_mm": float(gap_mm), "padding_mm": padding},
             "label": {"pt": float(label_pt)},
             "panels": [_panel_input(ref, p) for ref, p in refs.items()],
             "fixed": [
@@ -413,10 +459,16 @@ def plan(
         out = _apply_ops(result.get("ops"), refs, page)
         labels = out["labels"] or labels
         for p in panels:
-            if rnd == 1:
+            if rnd == 1 and fix_spec:
+                before = {(x.get("gid"), x.get("prop")): x.get("value") for x in p.patches}
                 _spec_fix(p, profile)
+                for x in p.patches:
+                    k = (x.get("gid"), x.get("prop"))
+                    if k not in before or before[k] != x.get("value"):
+                        cat = SPEC_CATEGORY.get(str(x.get("prop")))
+                        spec_changed.add(cat or "other")
             _render(p, p.patches)
-        bad = check(panels, tw, float(gap_mm), labels, label_pt)
+        bad = check(panels, tw, float(gap_mm), padding, labels, label_pt)
         if not bad:
             break
     if bad:
@@ -426,13 +478,10 @@ def plan(
     # 免费的「按期刊修正」自己判了不改（比如字号提上去图例会压住数据）：照实说，不绕过它的判断
     notes += [{"code": "spec_not_fixed", "ref": p.key} for p in panels if p.specfix_ok is False]
     by_ref = {ref: p.key for ref, p in refs.items()}
-    # 一键排版的结果就是最终那张图：页面收紧到「内容外框 + 页边距」（含原地不动的固定盒子）
-    margin = float(page.get("margin") or 0.0)
-    boxes = [p.box for p in panels] + [list(f["box"]) for f in fixed]
-    page_out = {
-        "w": round(max(b[0] + b[2] for b in boxes) + margin, 3),
-        "h": round(max(b[1] + b[3] for b in boxes) + margin, 3),
-    }
+    # 一键排版的结果就是最终那张图：页宽 = 目标宽度；页高收紧到「最低的文字外沿 + 留白」（含原地不动的固定盒子）
+    bottoms = [_page_rect(p, _ink(p.manifest or {}))[3] for p in panels]
+    bottoms += [f["box"][1] + f["box"][3] for f in fixed]
+    page_out = {"w": round(tw, 3), "h": round(max(bottoms) + padding, 3)}
     return {
         "ok": True,
         "page": page_out,
@@ -442,4 +491,6 @@ def plan(
         ],
         "labels": [{"key": by_ref[lab["ref"]], "x": lab["x"], "y": lab["y"]} for lab in labels],
         "notes": notes,
+        # 按规范修了哪几类（`fix_spec` 关着时为空）
+        "spec_changes": sorted(spec_changed),
     }
