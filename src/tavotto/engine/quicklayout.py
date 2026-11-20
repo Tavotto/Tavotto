@@ -48,6 +48,9 @@ SPEC_CATEGORY = {
 #: 求解器只看得到这些角色（ADR 0199 §四）
 ELEMENT_ROLES = frozenset({"axes", "colorbar"})
 TARGETS = ("single", "double", "page")
+#: 画布：keep = 在用户定好的画布里排；fit = 页宽取期刊栏宽、页高跟着内容（ADR 0199 §一，维护者 2026-11-20）
+CANVAS_MODES = ("keep", "fit")
+MAX_COLUMNS = 6
 OPS = frozenset({"panel.place", "figure.size", "axes.position", "label.place"})
 MAX_PAGE_MM = 2000.0
 
@@ -288,6 +291,7 @@ def check(
     padding: float,
     labels: list[dict],
     label_pt: float,
+    page_h: float | None = None,
 ) -> list[dict]:
     """量 ADR 0199 §六 的指标，返回没过的条目（空 = 全过）。间距与页边都按**文字外沿**（ink）量。"""
     bad: list[dict] = []
@@ -341,6 +345,8 @@ def check(
     ):
         bad.append({"metric": "page_edge"})
     if max(r[2] for _p, r in inks) > page_w - padding + EDGE_TOL_MM:
+        bad.append({"metric": "page_edge"})
+    if page_h is not None and max(r[3] for _p, r in inks) > page_h - padding + EDGE_TOL_MM:
         bad.append({"metric": "page_edge"})
     for i, (pa, a) in enumerate(inks):
         for pb, b in inks[i + 1 :]:
@@ -433,6 +439,8 @@ def plan(
     profile: dict,
     label_pt: float,
     fix_spec: bool = True,
+    columns: int | None = None,
+    canvas: str = "fit",
     solver: Callable[[dict], dict] | None = None,
 ) -> dict:
     """一键排版事务本体。成功返回 `{ok: True, panels: [{key, patches, box}], labels: [...], notes: [...]}`；
@@ -443,7 +451,10 @@ def plan(
         raise QuickLayoutError("too_few")
     if target not in TARGETS or not _finite(gap_mm) or not (0 <= gap_mm <= 30):
         raise QuickLayoutError("invalid_plan", "bad options")
-    tw = target_width(profile, target, page)
+    if canvas not in CANVAS_MODES or (columns is not None and not (1 <= columns <= MAX_COLUMNS)):
+        raise QuickLayoutError("invalid_plan", "bad options")
+    # 保持画布：在用户定好的画布里排，页宽就是画布宽；跟着内容：页宽 = 期刊栏宽
+    tw = float(page["w"]) if canvas == "keep" else target_width(profile, target, page)
     # 用户设了安全边距就用它，否则默认 2 mm（文字外沿到页边）
     padding = float(page.get("margin") or 0.0) or DEFAULT_PADDING_MM
     if tw <= 2 * padding + 10:
@@ -483,6 +494,7 @@ def plan(
             "page": {k: float(page[k]) for k in ("w", "h", "margin") if k in page},
             "target": {"width_mm": tw, "gap_mm": float(gap_mm), "padding_mm": padding},
             "label": {"pt": float(label_pt)},
+            "arrange": {"columns": columns, "canvas": canvas},
             "panels": [_panel_input(ref, p) for ref, p in refs.items()],
             "fixed": [
                 {"ref": f"f{i + 1}", "box": [float(v) for v in f["box"]]}
@@ -495,6 +507,8 @@ def plan(
         except prohost.ProUnavailable as exc:
             raise QuickLayoutError("unavailable", exc.code) from None
         stats.setdefault(f"sidecar{rnd}", []).append(time.perf_counter() - t_s)
+        if result.get("error") == "page_too_small":
+            raise QuickLayoutError("page_too_small")
         out = _apply_ops(result.get("ops"), refs, page)
         labels = out["labels"] or labels
 
@@ -515,7 +529,15 @@ def plan(
         # 各张图有各自的 worker：按图并行（ADR 0199 §二「提速」）
         for changed in _each(panels, advance):
             spec_changed |= changed
-        bad = check(panels, tw, float(gap_mm), padding, labels, label_pt)
+        bad = check(
+            panels,
+            tw,
+            float(gap_mm),
+            padding,
+            labels,
+            label_pt,
+            page_h=float(page["h"]) if canvas == "keep" else None,
+        )
         if not bad:
             break
     LOG.info(
@@ -533,7 +555,11 @@ def plan(
     # 一键排版的结果就是最终那张图：页宽 = 目标宽度；页高收紧到「最低的文字外沿 + 留白」（含原地不动的固定盒子）
     bottoms = [_page_rect(p, _ink(p.manifest or {}))[3] for p in panels]
     bottoms += [f["box"][1] + f["box"][3] for f in fixed]
-    page_out = {"w": round(tw, 3), "h": round(max(bottoms) + padding, 3)}
+    page_out = (
+        {"w": round(float(page["w"]), 3), "h": round(float(page["h"]), 3)}
+        if canvas == "keep"
+        else {"w": round(tw, 3), "h": round(max(bottoms) + padding, 3)}
+    )
     return {
         "ok": True,
         "page": page_out,
