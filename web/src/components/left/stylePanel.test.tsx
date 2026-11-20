@@ -38,6 +38,9 @@ import {
 } from '@/store/styleBinding'
 import { StylePanel } from './StylePanel'
 
+// Radix 的 Select 打开时会 scrollIntoView / 查 pointer capture；jsdom 没有
+Element.prototype.scrollIntoView ??= function scrollIntoView() {}
+
 declare global {
   // eslint-disable-next-line no-var
   var IS_REACT_ACT_ENVIRONMENT: boolean
@@ -199,16 +202,15 @@ describe('显示：页面上的有效字号，四档不压扁', () => {
     expect(ticks.placeholder).toBeTruthy()
   })
 
-  it('没有当前图时一句话 + 一个行动', async () => {
+  it('没有当前图时是画布层：只有一个「跟随样式」选择器，没绑就没有行', async () => {
     await seed()
     useSelectionStore.getState().clear()
     await mount()
     expect(container.querySelector('[data-style-panel]')).toBeNull()
-    // 空态只有一个行动；画布一级的「跟随样式」照样在底部（它不依赖选中哪张图）
-    const empty = container.querySelector('[data-style-panel-empty]')!
-    const outside = [...empty.querySelectorAll('button')].filter((b) => !b.closest('[data-style-apply]'))
-    expect(outside).toHaveLength(1)
-    expect(empty.querySelector('[data-style-apply]')).not.toBeNull()
+    expect(container.querySelector('[data-style-panel-canvas]')).not.toBeNull()
+    expect(container.querySelector('[data-style-apply] [role="combobox"]')!.textContent).toBe('这张画布没有跟随样式')
+    expect(container.querySelectorAll('[data-style-row]'), '没绑样式：没有可改的值').toHaveLength(0)
+    expect(container.querySelectorAll('[role="combobox"][aria-label="跟随样式"]')).toHaveLength(1)
   })
 })
 
@@ -238,17 +240,19 @@ describe('画布跟随样式（ADR 0081）：底部选择器 = 绑定，绑定�
     resetStyleBindingSession()
   }
 
-  it('没绑时选择器写「不跟随样式」；绑上之后写样式名', async () => {
+  it('没绑时选择器写「这张画布没有跟随样式」；绑上之后写「这张画布跟随」+ 样式名', async () => {
     await seed()
+    useSelectionStore.getState().clear()
     await mount()
     const combo = () => container.querySelector('[data-style-apply] [role="combobox"]')!
-    expect(combo().textContent).toBe('不跟随样式')
+    expect(combo().textContent).toBe('这张画布没有跟随样式')
     await act(async () => bindCanvasStyle('s1'))
-    expect(combo().textContent).toBe('投稿用')
+    expect(combo().textContent).toBe('这张画布跟随投稿用')
   })
 
   it('已脱离（撤销过样式修改）：选择器写「已脱离「X」」、提示换成脱离那一句；选回那套样式恢复跟随', async () => {
     await seed()
+    useSelectionStore.getState().clear()
     await mount()
     await act(async () => bindCanvasStyle('s1'))
     await act(async () => {
@@ -259,7 +263,7 @@ describe('画布跟随样式（ADR 0081）：底部选择器 = 绑定，绑定�
     expect(container.querySelector('[data-style-bind-hint]')?.textContent).toBe('这张画布不再跟随样式；重新选中它即恢复。')
     await act(async () => bindCanvasStyle('s1'))
     expect(s().doc.style?.detached).toBeUndefined()
-    expect(combo().textContent).toBe('投稿用')
+    expect(combo().textContent).toBe('这张画布跟随投稿用')
   })
 
   it('绑定之后在面板里改轴标题字号：先存进样式库，画布上两张图一起变（按各自缩放比），一条历史', async () => {
@@ -393,23 +397,106 @@ describe('问题只在「问题」面板里看（用户 2026-09-26）：样式�
   })
 })
 
-describe('「跟随样式」是可折叠的一节（2026-10-07 设计审计 §10.3）', () => {
-  it('在滚动区里（不是钉在底部的页脚）；收起后节头仍说此刻跟着哪一套，展开回来控件都在', async () => {
+describe('两层面板（2026-11-20 维护者拍板，ADR 0081 §十四）：画布层 / 图层，「跟随样式」选择器全面板只有一个', () => {
+  const combos = () => container.querySelectorAll('[role="combobox"][aria-label="跟随样式"]')
+  const richStyle = {
+    ...styleRecord,
+    id: 's2',
+    display_name: '默认样式',
+    data: {
+      element: {
+        axis_label: { fontfamily: 'Times New Roman', fontsize: 9, weight: 'bold' },
+        ticks: { fontsize: 8 },
+        line: { linewidth: 0.75 },
+      },
+      pt_basis: 'page',
+    },
+  }
+  const bindSnapshot = (rec: typeof styleRecord) =>
+    s().commit(literal('绑定'), (d) => {
+      d.style = { id: rec.id, snapshot: rec.data }
+    })
+
+  it('画布层 · 已绑：「这张画布跟随」+ 样式名、一张小样张、一行摘要；下面是这套样式本身的值', async () => {
+    await seed()
+    useProfileStore.setState({ styles: [richStyle as never], loaded: true, error: null })
+    bindSnapshot(richStyle as never)
+    useSelectionStore.getState().clear()
+    await mount()
+    expect(container.querySelector('[data-style-panel]'), '没选中图：不是图层').toBeNull()
+    expect(container.querySelector('[data-style-apply] [role="combobox"]')!.textContent).toBe('这张画布跟随默认样式')
+    expect(container.querySelector('[data-style-bound-preview] svg'), '名字旁有小样张').not.toBeNull()
+    expect(container.querySelector('[data-style-summary]')!.textContent).toBe('Times New Roman · 9/8 pt · 轴标题加粗 · 线 0.75 pt')
+    // 行 = 样式里写着的值（不是某张图的）：轴标题 9、刻度 8、数据线宽 0.75；没写的格是空的
+    expect(input('轴标题字号').value).toBe('9')
+    expect(input('刻度字号').value).toBe('8')
+    expect(input('数据线宽').value).toBe('0.75')
+    expect(input('标题字号').value).toBe('')
+    expect(combos()).toHaveLength(1)
+  })
+
+  it('画布层改一格 = editBoundStyle 一次：存库一次、整张画布一条历史', async () => {
+    await seed()
+    const saves: unknown[] = []
+    useProfileStore.setState({
+      save: async (_k, id, data) => {
+        saves.push({ id, data })
+        const rec = { ...styleRecord, data } as never
+        useProfileStore.setState({ styles: [rec] })
+        return rec
+      },
+    })
+    bindCanvasStyle('s1')
+    await new Promise((r) => setTimeout(r, 50))
+    seedExactRender(current(), manifest(15) as never)
+    useSelectionStore.getState().clear()
+    await mount()
+    const before = s().past.length
+    await type(input('轴标题字号'), '10')
+    await act(async () => {})
+    expect(saves, '改一格只存一次库').toHaveLength(1)
+    expect((saves[0] as { data: { element: { axis_label: { fontsize: number } } } }).data.element.axis_label.fontsize).toBe(10)
+    expect(s().past.length - before, '一条历史').toBe(1)
+    expect(current().overrides.find((o) => o.gid === 'axes_0.xlabel')?.value, '画布上的图跟着对齐（10 ÷ 0.6）').toBe(16.67)
+  })
+
+  it('图层：顶上一行「只改这张图 · 改整张画布」；点「改整张画布」回画布层，再选图又回图层；全程没有选择器', async () => {
     await seed()
     await mount()
-    const section = container.querySelector<HTMLElement>('[data-style-apply]')!
-    expect(section.parentElement!.className).toContain('overflow-y-auto')
-    const toggle = section.querySelector<HTMLButtonElement>('[data-style-apply-toggle]')!
-    expect(toggle.getAttribute('aria-expanded')).toBe('true')
-    expect(section.querySelector('[data-style-manage]')).toBeTruthy()
-    await act(async () => toggle.click())
-    expect(toggle.getAttribute('aria-expanded')).toBe('false')
-    expect(section.querySelector('[data-style-manage]')).toBeNull()
-    expect(section.querySelector('[data-style-apply-summary]')!.textContent).not.toBe('')
-    await act(async () => toggle.click())
-    expect(section.querySelector('[data-style-manage]')).toBeTruthy()
+    const line = container.querySelector('[data-style-scope]')!
+    expect(line.textContent).toBe('只改这张图 · 改整张画布')
+    expect(combos(), '图层里没有第二个选择器').toHaveLength(0)
+    await click(container.querySelector('[data-style-to-canvas]')!)
+    expect(container.querySelector('[data-style-panel]')).toBeNull()
+    expect(container.querySelector('[data-style-panel-canvas]')).not.toBeNull()
+    expect(useSelectionStore.getState().ids).toEqual([])
+    expect(combos()).toHaveLength(1)
+    await act(async () => useSelectionStore.getState().set(['p1']))
+    expect(container.querySelector('[data-style-panel]'), '重新选中图：回到图层').not.toBeNull()
+    expect(combos()).toHaveLength(0)
+  })
+
+  it('图层 · 已绑：顶上那行说清改的是样式（不再说「只改这张图」）', async () => {
+    await seed()
+    bindSnapshot(styleRecord)
+    await mount()
+    expect(container.querySelector('[data-style-scope]')!.textContent).toBe('改的是样式，整张画布都会变 · 改整张画布')
+  })
+
+  it('样式下拉：每一项带小样张 + 一行摘要', async () => {
+    await seed()
+    useProfileStore.setState({ styles: [styleRecord as never, richStyle as never], loaded: true, error: null })
+    useSelectionStore.getState().clear()
+    await mount()
+    await act(async () => container.querySelector<HTMLElement>('[data-style-apply] [data-select-trigger]')!.click())
+    const options = [...document.body.querySelectorAll<HTMLElement>('[data-select-option]')]
+    expect(options.map((o) => o.getAttribute('data-select-option'))).toEqual(['s1', 's2'])
+    for (const o of options) expect(o.querySelector('svg'), '每项有小样张').not.toBeNull()
+    const summaries = options.map((o) => o.querySelector('[data-style-option-summary]')?.textContent)
+    expect(summaries).toEqual(['12 pt', 'Times New Roman · 9/8 pt · 轴标题加粗 · 线 0.75 pt'])
   })
 })
+
 
 describe('Codex #547 评审', () => {
   it('P2 「画布标注」那一行不含子图序号标签 (a)(b)：改它的字号不会顺手改掉序号', async () => {

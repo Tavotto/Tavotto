@@ -803,8 +803,6 @@
     "emptyFromData": "用数据画一张"
   },
   "stylePanel": {
-    "emptyTitle": "在画布上选中一张图，这里显示它的样式",
-    "emptyAction": "从图层中选择",
     "noManifest": "这张图还没有可读的图内元素。",
     "needRender": "要读出这张图的样式，需要渲染一次。",
     "building": "正在构建图表…",
@@ -862,6 +860,18 @@
       "fontsize": "字号",
       "fontfamily": "字体",
       "linewidth": "线宽"
+    },
+    "canvasFollows": "这张画布跟随",
+    "canvasUnbound": "这张画布没有跟随样式",
+    "scopeFigure": "只改这张图",
+    "scopeFigureBound": "改的是样式，整张画布都会变",
+    "toCanvas": "改整张画布",
+    "summary": {
+      "size": "{{sizes}} pt",
+      "axisBold": "轴标题加粗",
+      "titleBold": "标题加粗",
+      "line": "线 {{width}} pt",
+      "frame": "线 {{width}} pt"
     }
   },
   "status": {

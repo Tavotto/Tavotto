@@ -835,8 +835,6 @@
     "emptyFromData": "Draw from data"
   },
   "stylePanel": {
-    "emptyTitle": "Select a figure on the canvas to see its style here",
-    "emptyAction": "Choose from layers",
     "noManifest": "This figure has no readable elements yet.",
     "needRender": "This figure needs one render before its style can be read.",
     "building": "Building the figure…",
@@ -896,6 +894,18 @@
       "fontsize": "size",
       "fontfamily": "font",
       "linewidth": "line width"
+    },
+    "canvasFollows": "This canvas follows",
+    "canvasUnbound": "This canvas follows no style",
+    "scopeFigure": "This figure only",
+    "scopeFigureBound": "Edits the style; the whole canvas changes",
+    "toCanvas": "Edit whole canvas",
+    "summary": {
+      "size": "{{sizes}} pt",
+      "axisBold": "bold axis titles",
+      "titleBold": "bold titles",
+      "line": "line {{width}} pt",
+      "frame": "line {{width}} pt"
     }
   },
   "status": {
