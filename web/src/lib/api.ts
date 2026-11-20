@@ -3436,8 +3436,11 @@ export interface QuickLayoutRequest {
   columns: number | null
   /** keep = 在当前页面 w×h 里排；fit = 页宽 = 目标期刊宽、页高跟着内容 */
   canvas: 'keep' | 'fit'
-  /** 拖分隔线得到的行 / 列相对权重 */
-  ratios?: { cols?: number[]; rows?: number[] }
+  /**
+   * 拖分隔线得到的行 / 列相对权重（图框尺寸的占比）；`rows_mm` = 每行图框的绝对高度（mm，取自预览框），
+   * 求解器原样采用，保证结果与松手前的预览一致
+   */
+  ratios?: { cols?: number[]; rows?: number[]; rows_mm?: number[] }
 }
 
 export type QuickLayoutFailureCode =

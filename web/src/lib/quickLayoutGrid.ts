@@ -123,3 +123,17 @@ export function dragGutter(memo: QuickLayoutMemo, axis: GutterAxis, index: numbe
   }
   return { ratios: next, delta, boxes }
 }
+
+/**
+ * 每一行图框的绝对高度（mm），取自 `boxes`（预览框）里该行任意一格的高度。
+ * 有哪一行没有格子（空行）= 高度未知，整份返回 null（调用方只发比例）。
+ */
+export function rowHeightsMm(memo: QuickLayoutMemo, boxes: Record<string, Box>): number[] | null {
+  const out: (number | null)[] = Array.from({ length: memo.rows }, () => null)
+  for (const [id, [r]] of Object.entries(memo.cells)) {
+    const b = boxes[id]
+    if (!b || r < 0 || r >= memo.rows || out[r] !== null) continue
+    out[r] = b[3]
+  }
+  return out.every((h): h is number => h !== null && Number.isFinite(h) && h > 0) ? out : null
+}

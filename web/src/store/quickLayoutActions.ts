@@ -63,10 +63,21 @@ export function setQuickLayoutUndoRunner(run: () => void): void {
  * 按钮的忙碌态（请求期间）与拖分隔线的预览轮廓（mm，只画淡色框；松手后等方案期间留着，方案回来 / 失败时清掉）。
  * 运行时状态，不进文档；一次只跑一轮
  */
-export const useQuickLayoutStore = create<{ busy: boolean; preview: Record<string, Box> | null }>(() => ({
+export const useQuickLayoutStore = create<{
+  busy: boolean
+  preview: Record<string, Box> | null
+  /** 拖动中正由图本身（而不是淡色轮廓）跟手的那几张图的 id：这些不再画轮廓 */
+  live: readonly string[] | null
+}>(() => ({
   busy: false,
   preview: null,
+  live: null,
 }))
+
+/** 拖分隔线的画面跟手层：方案 commit 之后告诉它最终的框（它负责保持到图真正落位） */
+export interface QuickLayoutCommitObserver {
+  onCommitted(boxes: Record<string, [number, number, number, number]>): void
+}
 
 export type QuickLayoutOutcome =
   | 'applied'
@@ -227,7 +238,10 @@ export async function runQuickLayout(target: QuickLayoutTarget, gapMm: number): 
  * 约 0.4 s），一次 commit、一条历史「调整排版比例」。记忆已失效 / 有别的一轮在跑 = 什么都不做。
  * 失败只是一句话，图一个字没动（调用方负责收掉预览轮廓——这里的 finally 已经清了）。
  */
-export async function runQuickLayoutRatios(ratios: { cols: number[]; rows: number[] }): Promise<QuickLayoutOutcome> {
+export async function runQuickLayoutRatios(
+  ratios: { cols: number[]; rows: number[]; rows_mm?: number[] },
+  observer?: QuickLayoutCommitObserver,
+): Promise<QuickLayoutOutcome> {
   if (useQuickLayoutStore.getState().busy) return 'busy'
   const doc = useDocumentStore.getState().doc
   const memo = doc.quickLayout
@@ -257,6 +271,7 @@ export async function runQuickLayoutRatios(ratios: { cols: number[]; rows: numbe
     label: 'quickLayoutRatios',
     checkpoint: false,
     announce: false,
+    observer,
   })
 }
 
@@ -269,12 +284,14 @@ interface PlanRun {
   fixSpec: boolean
   /** 写进网格记忆的 `fixSpec`（拖分隔线重排请求里是 false，记忆里仍是那一次排版的选择） */
   memoFixSpec: boolean
-  ratios?: { cols: number[]; rows: number[] }
+  ratios?: { cols: number[]; rows: number[]; rows_mm?: number[] }
   label: 'quickLayout' | 'quickLayoutRatios'
   /** 排版时间线的自动检查点（拖分隔线不打：一次拖动一次撤销就够了） */
   checkpoint: boolean
   /** 成功后说「已排好 · 撤销」（拖分隔线静默） */
   announce: boolean
+  /** 拖分隔线的跟手层：commit 之后交最终的框 */
+  observer?: QuickLayoutCommitObserver
 }
 
 /** 发请求、回来核对、一次 commit：一键排版与拖分隔线重排共用这一处 */
@@ -389,6 +406,7 @@ async function runPlan(run: PlanRun): Promise<QuickLayoutOutcome> {
 
     const memo = memoOf(res, sentKeys, run, canvasMode, fixed)
     commitPlan(res, involved.map(boxOf), run.label, memo)
+    run.observer?.onCommitted(Object.fromEntries(res.panels.map((p) => [p.key, [...p.box] as Box])))
     // 重渲染：返回的每张图；后端说热态不干净时，其余发出去的也按全量列表重放一次
     const rendered = new Set(res.panels.map((p) => p.key))
     const after = useDocumentStore.getState()
@@ -414,7 +432,7 @@ async function runPlan(run: PlanRun): Promise<QuickLayoutOutcome> {
     })
     return 'applied'
   } finally {
-    useQuickLayoutStore.setState({ busy: false, preview: null })
+    useQuickLayoutStore.setState({ busy: false, preview: null, live: null })
   }
 }
 
