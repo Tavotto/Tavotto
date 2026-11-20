@@ -306,6 +306,10 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
                 "y": 8,
                 "w": 68,
                 "h": 50,
+                "nativeW": 68,
+                "nativeH": 50,
+                "figureFrame": 1,
+                "overrides": [],
             },
             {
                 "id": "r",
@@ -316,6 +320,9 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
                 "y": 8,
                 "w": 75,
                 "h": 50,
+                "nativeW": 75,
+                "nativeH": 50,
+                "figureFrame": 1,
                 "overrides": patches,
                 "source": {
                     "captureSource": "ggplot2",
@@ -334,6 +341,7 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
                 "canvases": [
                     {
                         "id": "page",
+                        "name": "Matplotlib and ggplot2",
                         "schema": 2,
                         "page": {"w": 160, "h": 65},
                         "objects": panels,
@@ -341,6 +349,8 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
                     },
                 ],
                 "activeCanvasId": "page",
+                "createdAt": 1,
+                "updatedAt": 1,
             },
         )
         assert saved.status_code == 200, saved.get_json()
@@ -425,6 +435,10 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
                         "y": 5,
                         "w": 110,
                         "h": 60,
+                        "nativeW": 110,
+                        "nativeH": 60,
+                        "figureFrame": 1,
+                        "overrides": [],
                     }
                 ],
             }
