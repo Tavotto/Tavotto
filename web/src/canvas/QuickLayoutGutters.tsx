@@ -23,7 +23,7 @@ const GRIP_MIN_STRIP = GRIP_LONG + 8
  * 只在记忆有效（`quickLayoutValid`）、选择工具空闲时挂。鼠标在页面上（或选中了这份排版里的图）时，每条分隔线中点淡入一颗淡色握柄（没条件时仍挂着但透明）
  * （`data-quick-layout-grip`，只提示「这里能拖」，在命中区里面、不另吃点击）；悬停命中区：握柄变选中蓝 + 一根 1 px 线 + 缩放光标，
  * 原生气泡「拖动调整比例」，没有别的文字。
- * 拖动中图本身跟手（`quickLayoutFollow`）；没跟手的图（没挂上画面）画淡色的新格轮廓（`useQuickLayoutStore.preview`，松手后等方案期间留着）。命中区在选框覆盖层之下。
+ * 拖动中图本身跟手（`quickLayoutFollow`），同时每张图都画淡蓝的新格轮廓（`useQuickLayoutStore.preview`，松手后等方案期间留着；维护者 2026-11-20 要求框要在）。命中区在选框覆盖层之下。
  */
 export function QuickLayoutGutters() {
   const status = useLicenseStore((s) => s.status)
@@ -40,7 +40,6 @@ export function QuickLayoutGutters() {
   const kind = useInteractionStore((s) => s.kind)
   const busy = useQuickLayoutStore((s) => s.busy)
   const preview = useQuickLayoutStore((s) => s.preview)
-  const live = useQuickLayoutStore((s) => s.live)
   const page = useDocumentStore((s) => s.doc.page)
   // 鼠标在页面上：指针坐标（mm，按帧节流）落在页面矩形里。只订阅布尔，指针在页内移动不重渲染
   const overPage = useInteractionStore((s) =>
@@ -105,8 +104,8 @@ export function QuickLayoutGutters() {
           )
         })}
       {preview &&
+        // 拖动中每张图都画淡蓝预览框（图本身也跟手；维护者 2026-11-20：框要在，一眼看出新格子）
         Object.entries(preview)
-          .filter(([id]) => !live?.includes(id))
           .map(([id, b]) => (
           <div
             key={id}

@@ -211,6 +211,9 @@ describe('拖分隔线手势', () => {
     expect(pv.p2[0]).toBeCloseTo(78)
     expect(host.querySelectorAll('[data-quick-layout-preview]')).toHaveLength(2)
     expect(quickLayoutPlan).not.toHaveBeenCalled()
+    // 图在跟手（live）时淡蓝框照样画（维护者 2026-11-20）
+    act(() => useQuickLayoutStore.setState({ live: ['p1', 'p2'] }))
+    expect(host.querySelectorAll('[data-quick-layout-preview]')).toHaveLength(2)
     expect(s().past.length).toBe(depth)
     fire('pointermove', -25 * PX_PER_MM(), 0)
     fire('pointerup', -25 * PX_PER_MM(), 0)
