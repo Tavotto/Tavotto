@@ -93,7 +93,7 @@ PAGE = {"w": 210, "h": 297, "margin": 10}
     [
         {"op": "panel.delete", "ref": "p1"},
         {"op": "panel.place", "ref": "p9", "x": 0, "y": 0, "w": 10, "h": 10},
-        {"op": "panel.place", "ref": "p1", "x": 200, "y": 0, "w": 50, "h": 10},
+        {"op": "panel.place", "ref": "p1", "x": 1990, "y": 0, "w": 50, "h": 10},
         {"op": "panel.place", "ref": "p1", "x": float("nan"), "y": 0, "w": 50, "h": 10},
         {"op": "figure.size", "ref": "p1", "w": 0, "h": 10},
         {

@@ -20,6 +20,7 @@ import { quickLayoutPlan, type QuickLayoutRequest, type QuickLayoutResponse } fr
 import { ArtifactValidationError, refuseArtifactOperation } from '@/lib/artifactValidation'
 import { engineTransport } from '@/lib/engineTransport'
 import { takeCheckpoint } from '@/lib/timelineCheckpoint'
+import { isSubLabel } from '@/lib/stylePresets'
 import { canvasTextDefaults } from '@/lib/typography'
 import type { FigureDocument, PanelObject, PanelOverride } from '@/types/document'
 import { panelRotation } from '@/types/document'
@@ -28,7 +29,6 @@ import { useDocumentStore } from './documentStore'
 import { finishActiveGesture } from './gestureCoordinator'
 import { useLicenseStore } from './licenseStore'
 import { currentSpec } from './issueFixActions'
-import { exactPanelManifest, useRenderStore } from './renderStore'
 import { requestRender } from './renderScheduler'
 import { useRuntimeAssetStore } from './runtimeAssetStore'
 import { useSelectionStore } from './selectionStore'
@@ -68,10 +68,10 @@ type Box = [number, number, number, number]
 const boxOf = (p: PanelObject): Box => [p.x, p.y, p.w, p.h]
 
 /**
- * 这张图能不能参与求解（改图幅 / 轴位置）：有精确 manifest 的引擎出图，没旋转 / 翻转，不是位图，不是 native，
+ * 这张图能不能参与求解（改图幅 / 轴位置）：有图内编辑入口的脚本出图，没旋转 / 翻转，不是位图，不是 native，
  * 不是 artifact / 来源驱动的图。其余的只当固定盒子。判据只在这里，后端对 native / 重复图另有一道。
  */
-function resizable(p: PanelObject, state: ReturnType<typeof useRenderStore.getState>): boolean {
+function resizable(p: PanelObject): boolean {
   if (p.fileKind === 'raster') return false
   if (panelRotation(p) !== 0 || p.flipH || p.flipV) return false
   if (!p.fileId) return false
@@ -82,7 +82,9 @@ function resizable(p: PanelObject, state: ReturnType<typeof useRenderStore.getSt
     if (err instanceof ArtifactValidationError) return false
     throw err
   }
-  return !!exactPanelManifest(state, p)
+  // 有图内编辑入口（脚本出图，`obj.script`）就能排：渲染与几何由引擎在请求里自己做，
+  // 不要求前端此刻已有精确 manifest（没进过图内编辑的图前端本来就没有）
+  return !!p.script
 }
 
 /** 选中 ≥ 2 张图就排选中的，否则排当前画布上的全部（ADR 0199 §一） */
@@ -131,10 +133,9 @@ export async function runQuickLayout(target: QuickLayoutTarget, gapMm: number): 
   const docAtStart = start.doc
   const loadSeq = start.loadSeq
   const canvasId = start.activeCanvasId
-  const renderState = useRenderStore.getState()
 
   const involved = involvedPanels(docAtStart)
-  const solvable = involved.filter((p) => resizable(p, renderState))
+  const solvable = involved.filter((p) => resizable(p))
   if (solvable.length < 2) {
     say(note('quickLayoutTooFew'), 'info')
     return 'too_few'
@@ -226,7 +227,7 @@ export async function runQuickLayout(target: QuickLayoutTarget, gapMm: number): 
       return 'stale'
     }
 
-    commitPlan(res)
+    commitPlan(res, involved.map(boxOf))
     // 重渲染：返回的每张图；后端说热态不干净时，其余发出去的也按全量列表重放一次
     const rendered = new Set(res.panels.map((p) => p.key))
     const after = useDocumentStore.getState()
@@ -261,8 +262,13 @@ export async function runQuickLayout(target: QuickLayoutTarget, gapMm: number): 
  * `syncPanelNativeSize`）。所以这里先把 w / h 摆成「乘完正好是 box」的值——与 `setFigureFrameScaled` 同一个办法；
  * 求解器给的 box 与图幅等大（缩放 = 1），渲染一回来页面上的框就是 box。
  */
-function commitPlan(res: Extract<QuickLayoutResponse, { ok: true }>): void {
+function commitPlan(res: Extract<QuickLayoutResponse, { ok: true }>, before: Box[]): void {
   useDocumentStore.getState().commit(hist('quickLayout'), (d) => {
+    // 旧的子图标签（「(a)」这类，与样式系统同一判据 `isSubLabel`）落在参与排版的图原来的范围里（外扩 5 mm）的，
+    // 换成这次算好位置的新标签：重复点不叠标签，手加的 (a)(b) 也跟着落到对的地方
+    const near = (x: number, y: number) =>
+      before.some(([bx, by, bw, bh]) => x >= bx - 5 && x <= bx + bw + 5 && y >= by - 5 && y <= by + bh + 5)
+    d.objects = d.objects.filter((o) => !(o.type === 'text' && isSubLabel(o) && near(o.x, o.y)))
     for (const p of res.panels) {
       const obj = d.objects.find((o) => o.id === p.key)
       if (obj?.type !== 'panel') continue
@@ -292,5 +298,8 @@ function commitPlan(res: Extract<QuickLayoutResponse, { ok: true }>): void {
     res.labels.forEach((l, i) => {
       d.objects.push(makeSubLabel(i, l.x, l.y))
     })
+    // 页面跟着内容收紧（同一条历史，⌘Z 一次撤回）
+    d.page.w = res.page.w
+    d.page.h = res.page.h
   })
 }
