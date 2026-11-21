@@ -43,6 +43,7 @@ vi.mock('@/store/liveSync', () => ({ refreshProjectNow: vi.fn(async () => {}) })
 let root: Root
 let host: HTMLDivElement
 const q = <T extends Element = HTMLElement>(sel: string) => document.querySelector<T>(sel)
+const qa = <T extends Element = HTMLElement>(sel: string) => [...document.querySelectorAll<T>(sel)]
 
 const files = vi.mocked(aiDataFilesAll)
 const overview = vi.mocked(aiDataOverview)
@@ -328,8 +329,14 @@ const wideRoles = (over: Record<string, unknown> = {}) => ({
   ...over,
 })
 const stackRoles = wideRoles({ x: null, y: ['a', 'b', 'c'], group: null, stack: true })
-const yTrigger = () => q('[aria-label="纵轴"]')!
-const xTrigger = () => q('[aria-label="横轴"]')!
+/** 轴的下拉按稳定的 `data-data-role` 锚点找（不靠翻译后的 aria-label，也不取全页第一个）；每个角色恰好一个 */
+const roleTrigger = (key: 'x' | 'y' | 'group'): HTMLElement => {
+  const found = qa(`[data-data-roles] [data-data-role="${key}"] button`)
+  expect(found).toHaveLength(1)
+  return found[0] as HTMLElement
+}
+const yTrigger = () => roleTrigger('y')
+const xTrigger = () => roleTrigger('x')
 
 describe('x_measure：不对应下拉的键', () => {
   const same = { x: 'day', y: 'tumor_volume', group: 'group' }

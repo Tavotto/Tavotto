@@ -79,39 +79,45 @@ export function DataPanel() {
       {roles && (
         <div data-data-roles className="flex flex-col gap-1">
           {roles.options.x.length > 0 && (
-            <Row label={t('dataFigureV2.panel.x')} labelWidth={LABEL_W}>
-              <Select
-                value={roles.x ?? NONE}
-                disabled={busy}
-                ariaLabel={t('dataFigureV2.panel.x')}
-                onChange={pick('x')}
-                options={asOptions(roles.options.x, t('dataFigureV2.panel.noX'))}
-              />
-            </Row>
+            <div data-data-role="x" className="contents">
+              <Row label={t('dataFigureV2.panel.x')} labelWidth={LABEL_W}>
+                <Select
+                  value={roles.x ?? NONE}
+                  disabled={busy}
+                  ariaLabel={t('dataFigureV2.panel.x')}
+                  onChange={pick('x')}
+                  options={asOptions(roles.options.x, t('dataFigureV2.panel.noX'))}
+                />
+              </Row>
+            </div>
           )}
           {roles.options.y.length > 0 && (
-            <Row label={t('dataFigureV2.panel.y')} labelWidth={LABEL_W}>
-              <Select
-                value={roles.y ?? ''}
-                disabled={busy}
-                ariaLabel={t('dataFigureV2.panel.y')}
-                onChange={pick('y')}
-                options={asOptions(roles.options.y)}
-                // 纵轴多列（每列一条线 / 把列当分组）：收起时把几列并列写出来；下拉里仍是单选，选了就收回一列
-                triggerLabel={roles.yAll.length > 1 ? roles.yAll.join('、') : undefined}
-              />
-            </Row>
+            <div data-data-role="y" className="contents">
+              <Row label={t('dataFigureV2.panel.y')} labelWidth={LABEL_W}>
+                <Select
+                  value={roles.y ?? ''}
+                  disabled={busy}
+                  ariaLabel={t('dataFigureV2.panel.y')}
+                  onChange={pick('y')}
+                  options={asOptions(roles.options.y)}
+                  // 纵轴多列（每列一条线 / 把列当分组）：收起时把几列并列写出来；下拉里仍是单选，选了就收回一列
+                  triggerLabel={roles.yAll.length > 1 ? roles.yAll.join('、') : undefined}
+                />
+              </Row>
+            </div>
           )}
           {roles.options.group.length > 0 && (
-            <Row label={t('dataFigureV2.panel.group')} labelWidth={LABEL_W}>
-              <Select
-                value={roles.group ?? NONE}
-                disabled={busy}
-                ariaLabel={t('dataFigureV2.panel.group')}
-                onChange={pick('group')}
-                options={asOptions(roles.options.group, t('dataFigureV2.panel.noGroup'))}
-              />
-            </Row>
+            <div data-data-role="group" className="contents">
+              <Row label={t('dataFigureV2.panel.group')} labelWidth={LABEL_W}>
+                <Select
+                  value={roles.group ?? NONE}
+                  disabled={busy}
+                  ariaLabel={t('dataFigureV2.panel.group')}
+                  onChange={pick('group')}
+                  options={asOptions(roles.options.group, t('dataFigureV2.panel.noGroup'))}
+                />
+              </Row>
+            </div>
           )}
         </div>
       )}
