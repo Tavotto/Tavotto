@@ -50,6 +50,8 @@ src-tauri/gen/
 
 # Rust supervisor tavotto-workerd（workerd/ 源码进仓库；构建产物不进）
 workerd/target/
+# 画布路径查找器内核（vecops/，ADR 0185 M2）：源码与提交的 web/src/lib/vecops/vecops.wasm 进仓库，target 不进
+vecops/target/
 
 # CI 工具 crate（tools/*，源码进仓库；构建产物不进）
 tools/*/target/
