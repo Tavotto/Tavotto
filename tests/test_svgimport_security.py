@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import socket
 import time
@@ -269,8 +270,15 @@ def test_endpoint_never_echoes_the_payload():
 
 
 def test_expansion_is_bounded_again_while_converting(monkeypatch):
-    """纵深防御：就算解析器那一道展开计数漏了（这里把它关掉），换算时逐元素计数也会在上限处停下"""
+    """纵深防御：就算解析器那一道展开计数漏了（这里把它关掉），换算时逐元素计数也会在上限处停下。
+    上限临时调到 5000：默认 20 万在慢的解释器上（CI 的 3.10 约 10 s）会先撞上 5 s 墙钟、报 timeout——那也是拒，
+    但这条要单测「逐元素计数」这一道，不能让墙钟抢先"""
     monkeypatch.setattr(svgcheck, "_references", lambda *a, **k: None)
+    monkeypatch.setattr(
+        svgimport,
+        "IMPORT_BUDGET",
+        dataclasses.replace(svgimport.IMPORT_BUDGET, max_expanded_elements=5000),
+    )
     body = (
         '<defs><rect id="l0" width="1" height="1"/>'
         + "".join(
