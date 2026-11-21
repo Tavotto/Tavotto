@@ -117,7 +117,7 @@ Haiku 5.5 约 $0.0007、gpt-5-mini 约 $0.0024、gpt-5 约 $0.012、Sonnet 5.5 �
 - **签名在哪做**：`ai_providers.builtin_conn` 对内置连接返回 `auth: "tavotto-device"`；`wires.post_json` 遇到这种 auth 时调用 `license` 模块的签名函数逐请求加头（今天 `post_json` 只发静态头，这是唯一要改的传输层代码）。
   子进程执行器（`tavotto-cli agent-run`）不拿设备私钥：签名经父进程的本地回调完成（与 `check` 工具走 stdin IPC 同一条路），私钥不出主进程。
 - **协议**：网关对外只说一种协议（OpenAI Chat Completions 兼容 + `usage` 字段），模型名固定写 `tavotto-auto`；网关按配置选上游（§七）。客户端不知道、也不需要知道用的是哪家模型。
-- **可达性**：国内节点 `ai.tavotto.cn`（与 `license.tavotto.cn` 同一 CloudBase 环境）；海外节点以后再加，**两边共用同一份账本**（只有一个写入点，海外节点转发记账请求）。
+- **可达性**：`ai.tavotto.cn` 一个节点（边缘节点 tavotto-dl，§十），国内外用户都连它；账本在 CloudBase，与 `license.tavotto.cn` 同一份。以后海外加节点也**共用这一份账本**（只有一个写入点）。
 - **网关回权威用量**：每个响应带 `X-Tavotto-Charged`（本请求结算的微元）、`X-Tavotto-Remaining`（可用余额 ÷ 已发放额度，0–1，两位小数）。
   客户端的执行追踪把网关回的成本当作权威值记下（`ai_pricing` 对网关地址本来就算不出价格）。
 
