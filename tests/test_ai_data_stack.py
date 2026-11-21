@@ -535,3 +535,21 @@ def test_large_and_merged_tables_fall_back_cleanly(project, monkeypatch):
     assert "stack" not in (bb.get("roles") or {})
     if bb["kind"] == "candidates":
         assert bb["items"]  # 不出零候选
+
+
+def test_the_category_axis_of_a_stack_has_no_title_and_the_value_axis_keeps_it(tmp_path):
+    res, prof, _v = stack_recipe(
+        tmp_path,
+        rows=wide_rows(("a_mM", "b_mM", "c_mM")),
+        picks={"y": ["a_mM", "b_mM", "c_mM"], "x": "none"},
+    )
+    entry = prof.tables[0]
+    cmp_ = next(c.recipe for c in res.items if c.recipe.family == "comparison")
+    sc = tpl.render_recipe_script(entry, cmp_, data_rel="t.csv", stem="x").script
+    assert "XLABEL = ''" in sc and "YLABEL = 'value (mM)'" in sc
+    # 普通分组列的轴标题不变
+    rows = [["strain", "y"], *[[g, 1.0 + i] for g in ("WT", "KO") for i in range(5)]]
+    res2, prof2, _v2 = cands(tmp_path, rows)
+    c2 = next(c.recipe for c in res2.items if c.recipe.family == "comparison")
+    sc2 = tpl.render_recipe_script(prof2.tables[0], c2, data_rel="t.csv", stem="x").script
+    assert "XLABEL = 'strain'" in sc2

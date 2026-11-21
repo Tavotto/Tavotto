@@ -1541,13 +1541,21 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
     )
     if is_xlsx:
         L.append(f"SHEET = {recipe.sheet!r}")
+    # 把列当分组：类别轴是合成的占位列（`group`），不写轴标题；普通分组列 / numcat 不变
+    xlabel = (
+        ""
+        if recipe.stack and recipe.x == recipe_mod.STACK_CAT
+        else adf.axis_label(recipe.x)
+        if recipe.x
+        else ""
+    )
     L += [
         f"X = {recipe.x!r}",
         f"Y = {recipe.y[0]!r}",
         f"GROUP = {recipe.group!r}",
         f"FACET = {recipe.facet!r}",
         f"ORDER = {recipe.order!r}",
-        f"XLABEL = {adf.axis_label(recipe.x) if recipe.x else ''!r}",
+        f"XLABEL = {xlabel!r}",
         f"YLABEL = {adf.axis_label(recipe.y[0])!r}",
         f"PALETTE = {list(PALETTE)!r}",
     ]
