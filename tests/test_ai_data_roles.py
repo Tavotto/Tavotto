@@ -85,19 +85,34 @@ def with_model(case, tmp_path, answer=None, wire="anthropic"):
 def test_role_cases_are_well_formed(tmp_path):
     assert 20 <= len(CASES) <= 24
     for c in CASES:
-        folder = DR.materialize(c, tmp_path / "proj")
-        entry = adf.profile_folder(tmp_path / "proj" / folder).tables[0]
-        cols = set(entry.summary.columns)
-        if c.get("header"):  # 嗅探的表头不是真表头：列名取真表头读出来的
-            tt = adf.read_text_table(
-                tmp_path / "proj" / folder / "t.csv", header_row=c["header"]["expect_header_row"]
-            )
-            cols = set(tt.summary.columns)
-        assert set(c["roles"]) == cols, c["id"]
-        assert all(r in R.ROLES for r in c["roles"].values())
-        exp = c["expect_default"]
-        assert {x for x in (exp["x"], exp["group"], *exp["y"]) if x} <= cols
-        R.validate_roles_shape(c["model_answer"])  # 录好的回答自己过形状校验
+        DR.check_case_shape(c, tmp_path)
+
+
+HOLDOUT = DR.load_role_cases(DR.HOLDOUT_CASES_FILE)
+
+
+def test_holdout_cases_are_well_formed_and_do_not_overlap_the_main_set(tmp_path):
+    assert 22 <= len(HOLDOUT) <= 26
+    for c in HOLDOUT:
+        DR.check_case_shape(c, tmp_path)
+    assert not {c["id"] for c in HOLDOUT} & {c["id"] for c in CASES}
+    tiers = [c["tier"] for c in HOLDOUT]
+    assert tiers.count("plain") == tiers.count("hard") == len(HOLDOUT) // 2
+    assert any(c.get("also_ok") for c in HOLDOUT)
+    # 留出集的表不能与主集的某张表逐字相同（换皮 / 抄题）
+    main_tables = {t for c in CASES for t in c["tables"].values()}
+    assert not any(t in main_tables for c in HOLDOUT for t in c["tables"].values())
+    assert DR.load_case_set("all") == [*DR.load_case_set("main"), *DR.load_case_set("holdout")]
+    assert {c["set"] for c in DR.load_case_set("all")} == {"main", "holdout"}
+
+
+def test_holdout_plain_tables_are_the_rules_territory_and_the_hard_ones_are_not(tmp_path):
+    runs = [run_case(c, tmp_path, conn=None) for c in HOLDOUT]
+    hits = {r.case["id"]: DR.default_hits(r.case, r.rules)["all"] for r in runs}
+    plain = [i for i, c in ((c["id"], c) for c in HOLDOUT) if c["tier"] == "plain"]
+    hard = [i for i, c in ((c["id"], c) for c in HOLDOUT) if c["tier"] == "hard"]
+    assert sum(hits[i] for i in plain) >= len(plain) - 1  # 普通表：规则几乎都对
+    assert sum(not hits[i] for i in hard) >= len(hard) * 2 // 3  # 难例：规则多半会错
 
 
 def test_the_rules_alone_get_most_of_the_new_cases_wrong_and_the_controls_right(tmp_path):
@@ -812,3 +827,194 @@ def test_a_corrupt_judgement_in_the_cache_is_a_miss():
     body["result"]["shape"] = {"columns": "x"}
     p.write_text(json.dumps(body), encoding="utf-8")
     assert R.cache_get("k") is None
+
+
+# --------------------------------------------------------------------------- 重复跑 / 完成率 / 耗时 / 门（评测支持代码）
+def test_percentile_is_nearest_rank_and_empty_is_none():
+    assert DR.percentile([], 50) is None
+    assert DR.percentile([5], 95) == 5
+    xs = list(range(1, 101))
+    assert (DR.percentile(xs, 50), DR.percentile(xs, 95), DR.percentile(xs, 100)) == (50, 95, 100)
+    assert DR.percentile([10, 1, 3], 50) == 3
+
+
+def test_fresh_runs_always_ask_the_model_again_and_never_touch_the_app_cache(tmp_path):
+    case = BY_ID["RC-01"]
+    wire = "anthropic"
+    app_cache = R.cache_dir()
+    for _ in range(3):
+        t = DR.scripted(case, wire)
+        run = DR.run_case(case, tmp_path / "proj", conn=D.fake_conn(wire), post=t, fresh=True)
+        assert run.state == "ready" and len(t.calls) == 1 and run.usage["requests"] == 1
+        assert [c.requests for c in run.calls] == [1]
+    assert not app_cache.exists() or not list(app_cache.glob("*.json"))
+    # 不 fresh：第二次命中缓存，不发请求（这正是重复跑必须绕过它的原因）
+    t1, t2 = DR.scripted(case, wire), DR.scripted(case, wire)
+    run_case(case, tmp_path, conn=D.fake_conn(wire), post=t1)
+    again = run_case(case, tmp_path, conn=D.fake_conn(wire), post=t2)
+    assert len(t1.calls) == 1 and len(t2.calls) == 0 and again.state == "ready"
+
+
+def test_a_failed_run_does_not_block_the_next_fresh_run_with_the_negative_cache(tmp_path):
+    case = BY_ID["RC-01"]
+    bad = DR.run_case(
+        case,
+        tmp_path / "proj",
+        conn=D.fake_conn("anthropic"),
+        post=D.FakeTransport([500]),
+        fresh=True,
+    )
+    assert bad.state == "failed" and not DR.completed(bad)
+    good = DR.run_case(
+        case,
+        tmp_path / "proj",
+        conn=D.fake_conn("anthropic"),
+        post=DR.scripted(case, "anthropic"),
+        fresh=True,
+    )
+    assert good.state == "ready" and DR.completed(good)
+
+
+def test_completion_needs_a_ready_job_and_all_three_defaults(tmp_path):
+    case = BY_ID["RC-01"]
+    ok = DR.run_case(
+        case,
+        tmp_path / "p",
+        conn=D.fake_conn("anthropic"),
+        post=DR.scripted(case, "anthropic"),
+        fresh=True,
+    )
+    off = DR.run_case(case, tmp_path / "p", conn=None, fresh=True)
+    assert DR.completed(ok) and not DR.completed(off) and off.state == "off"
+    noop = DR.run_case(
+        case,
+        tmp_path / "p",
+        conn=D.fake_conn("anthropic"),
+        post=DR.scripted(case, "anthropic", answer=DR.noop_answer(case)),
+        fresh=True,
+    )
+    assert noop.state == "ready" and not DR.completed(noop)  # 就绪了但没把默认改对
+    # also_ok 的另一种默认也算完成
+    assert DR.default_hits(
+        HOLDOUT_BY_ID["HO-21"], {"x": None, "y": ["activity_U"], "group": "temp_C"}
+    )["all"]
+
+
+HOLDOUT_BY_ID = {c["id"]: c for c in HOLDOUT}
+
+
+def test_breaking_a_default_the_rules_had_right_is_counted_on_any_case_set(tmp_path):
+    case = BY_ID["RC-21"]  # 身高 / 体重：规则本来对（对照用例）
+    wrong = {
+        "columns": [{"name": c, "role": r} for c, r in case["roles"].items()],
+        "picks": {"y": "height_cm", "x": "weight_kg", "group": "none"},
+    }
+    run = DR.run_case(
+        case,
+        tmp_path / "p",
+        conn=D.fake_conn("anthropic"),
+        post=DR.scripted(case, "anthropic", answer=wrong),
+        fresh=True,
+    )
+    assert DR.default_hits(case, run.rules)["all"] and not DR.default_hits(case, run.model)["all"]
+    assert DR.broke_rules(run) and not DR.completed(run)
+    plain_case = {**case, "control": False}  # 不是 control 也算
+    run2 = DR.RoleRun(plain_case, run.rules, run.model, "ready")
+    s = DR.summarize_repeats([run2])
+    assert s["rules_broken_runs"] == 1 and s["rules_broken_cases"] == ["RC-21"]
+    assert s["not_worse_than_rules_rate"] == 0.0 and DR.summarize([run2])["rules_broken"] == 1
+
+
+def test_summarize_repeats_counts_per_case_correct_runs_latency_and_cost(tmp_path):
+    case_a, case_b = BY_ID["RC-01"], BY_ID["RC-19"]
+    runs = []
+    for i, (case, answer) in enumerate(
+        [(case_a, None), (case_a, DR.noop_answer(case_a)), (case_b, None), (case_b, None)]
+    ):
+        r = DR.run_case(
+            case,
+            tmp_path / "p",
+            conn=D.fake_conn("anthropic"),
+            post=DR.scripted(case, "anthropic", answer=answer),
+            fresh=True,
+        )
+        r.calls[0] = ai_structured.StructuredResult(
+            True,
+            requests=1,
+            input_tokens=1000,
+            output_tokens=100,
+            cached_input_tokens=400,
+            elapsed_ms=100 * (i + 1),
+        )
+        r.usage = {
+            "requests": 1,
+            "input_tokens": 1000,
+            "output_tokens": 100,
+            "cost_usd": 0.01 * (i + 1),
+        }
+        runs.append(r)
+    s = DR.summarize_repeats(runs)
+    assert (s["cases"], s["runs"], s["repeats"]) == (2, 4, 2)
+    assert s["completion_rate"] == 0.75 and s["all_runs_correct_share"] == 0.5
+    assert s["per_case"]["RC-01"]["done"] == 1 and s["per_case"]["RC-19"]["done"] == 2
+    assert s["rules_broken_runs"] == 0 and s["not_worse_than_rules_rate"] == 1.0
+    assert s["latency_ms"]["per_call"] == {"n": 4, "p50": 200, "p95": 400, "max": 400}
+    assert s["cached_input_tokens"] == 1600 and s["requests_per_table"] == 1.0
+    assert s["cost_usd"] == pytest.approx(0.10) and s["cost_per_table_usd"] == pytest.approx(0.025)
+    assert s["tiers"]["main"]["cases"] == 1 and s["tiers"]["control"]["cases"] == 1
+
+
+def test_fake_modes_for_the_roles_suite_are_deterministic():
+    case = BY_ID["RC-01"]
+    assert DR.fake_answer(case, "good", 3) is case["model_answer"]
+    assert DR.fake_answer(case, "trap", 0) == DR.noop_answer(case)
+    assert [DR.fake_answer(case, "mixed", k) is case["model_answer"] for k in range(4)] == [
+        True,
+        False,
+        True,
+        False,
+    ]
+    R.validate_roles_shape(DR.noop_answer(case))
+
+
+# --------------------------------------------------------------------------- 「规则已经很确定」的门
+def gate_of(case, tmp_path, version):
+    entry, values, status = DR.gate_inputs(case, tmp_path / "g")
+    return DR.rules_unambiguous(version, entry, values, case.get("hint"), status)
+
+
+def test_gate_says_unambiguous_for_the_plain_shapes_and_ambiguous_for_traps(tmp_path):
+    clean = BY_ID["RC-19"]  # 分组 + 测量值
+    assert all(gate_of(clean, tmp_path, v) for v in DR.GATE_VERSIONS)
+    for cid in (
+        "RC-01",
+        "RC-02",
+        "RC-06",
+        "RC-22",
+        "RC-16",
+        "RC-17",
+    ):  # 批次 / 流水号 / 备注 / 编号 / 混合格 / 表头疑点
+        assert not any(gate_of(BY_ID[cid], tmp_path, v) for v in DR.GATE_VERSIONS), cid
+    hinted = {**clean, "hint": "compare groups"}  # 用户给了提示语：不跳过
+    assert not any(gate_of(hinted, tmp_path, v) for v in DR.GATE_VERSIONS)
+    # 「中」比「严」多放行：时间 + 信号（横轴列单调、测量列不单调）
+    assert gate_of(BY_ID["RC-21"], tmp_path, "medium") and not gate_of(
+        BY_ID["RC-21"], tmp_path, "strict"
+    )
+
+
+def test_gate_never_skips_a_table_where_the_rules_get_the_default_wrong(tmp_path):
+    """硬指标：「严」「中」两个版本在两个用例集上，被跳过的用例里规则错的必须是 0。`loose` 只报数、不设这条。"""
+    cases = DR.load_case_set("all")
+    out = DR.gate_measure(cases, tmp_path)
+    for v in ("strict", "medium"):
+        g = out["versions"][v]["all"]
+        assert g["skipped_but_rules_wrong"] == 0, (v, g["wrong_ids"])
+        assert g["skipped"] >= 3, v  # 不是靠什么都不跳来凑 0
+    assert (
+        out["versions"]["strict"]["all"]["skipped"] <= out["versions"]["medium"]["all"]["skipped"]
+    )
+    assert out["versions"]["medium"]["all"]["skipped"] <= out["versions"]["loose"]["all"]["skipped"]
+    assert {"main", "holdout", "holdout-plain", "holdout-hard", "all"} == set(
+        out["versions"]["strict"]
+    )
