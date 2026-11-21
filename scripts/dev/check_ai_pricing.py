@@ -16,6 +16,11 @@ import json
 import sys
 from pathlib import Path
 
+# Windows 上被捕获 / 重定向时中文输出不能静默丢掉：两条流都钉成 UTF-8（tests/test_windows_regressions.py 看护）
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from tavotto.engine import ai_catalog, ai_pricing  # noqa: E402
