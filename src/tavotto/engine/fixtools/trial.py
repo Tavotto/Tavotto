@@ -713,8 +713,18 @@ NOT_RUN_CODES = frozenset(
         "environment_not_selected",
         "application_not_runnable",
         "application_run_not_claimed",
+        "preparation_plan_stale",  # 批准卡停留期间脚本 / 环境变了：认领时就拒了，脚本没跑（Codex #2079）
     }
 )
+
+
+def _never_ran(code: object, report: dict) -> bool:
+    """这次应用试运行根本没执行脚本：没跑的结局码，或准备阶段明确写着 `executed: false`（如 Conda 起不来，Codex #2079）。"""
+    if str(code or "") in NOT_RUN_CODES:
+        return True
+    result = report.get("result") if isinstance(report, dict) else None
+    error = result.get("error") if isinstance(result, dict) else None
+    return isinstance(error, dict) and error.get("executed") is False
 
 
 def _current_shape(ctx: FixContext) -> str:
@@ -1147,7 +1157,7 @@ def try_run(ctx: FixContext, args: dict) -> ToolResult:
         report = result.get("report") or {}
         rendered = project_run_report(report, ctx).content
         code = result.get("code")
-        if str(code or "") not in NOT_RUN_CODES:
+        if not _never_ran(code, report):
             after = (
                 _after_shape(report) if code in ("", None, "application_run_failed") else str(code)
             )

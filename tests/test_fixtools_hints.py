@@ -148,6 +148,28 @@ def test_a_run_that_never_happened_is_not_an_attempt(box):
     assert "attempts so far" not in r.content and ctx.attempts == []
 
 
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        {"code": "preparation_plan_stale", "report": {}},
+        {
+            "code": "application_run_failed",
+            "report": {
+                "phase": "failed",
+                "result": {"error": {"code": "conda_activation_failed", "executed": False}},
+            },
+        },
+    ],
+)
+def test_a_run_refused_or_never_started_keeps_the_pending_changes(box, outcome):
+    """准备阶段拒了（批准期间脚本变了）或明确没执行（Conda 起不来）：不算一次，攒下的改动留给下一次真跑（Codex #2079）。"""
+    ctx = _app_ctx(box, [outcome], before=_failing("missing_input"))
+    ctx.changes_since_try = ["set_run_arguments"]
+    r = call(ctx, "try_run", {"env": "e"})
+    assert "attempts so far" not in r.content and ctx.attempts == []
+    assert ctx.changes_since_try == ["set_run_arguments"]
+
+
 def test_real_changes_are_collected_for_the_next_attempt(box):
     from tavotto.engine import execpolicy
 
