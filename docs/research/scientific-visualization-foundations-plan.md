@@ -20,7 +20,11 @@
 
 | 书 | 细读 | 只抽查或没读 |
 | --- | --- | --- |
-| GoG | 第 1、2、4–7、9、10、12、17–19、20.3 章 | 第 3、8、11、13、14、16 章及各章 Examples。图 2.2 的管线图、Table 7.1/8.1/10.1 在文本提取时损坏，相关结论只取自正文叙述 |
+| GoG | 第 1、2、4–7、9、10、12、18、19、20.3 章 | 第 15 章只读了开头和 15.3 开头；第 17 章只读了 17.1 前半；第 3、8、11、13、14、16 章及各章 Examples 只抽查。图 2.2 的管线图、Table 7.1/8.1/10.1 在文本提取时损坏，相关结论只取自正文叙述 |
+
+**页码说明**：
+- FDV 和 VAD 的印刷页由 PDF 页序换算（FDV = PDF − 18，VAD = PDF − 25），并逐处对照过页眉。
+- GoG 各章偏移不一。印刷页取自页眉；无页眉的页按相邻页推算，**可能有 ±1 的误差**，例如 p.93、p.219 两处。
 | VAD | 第 2–7、10 章 | 第 1、11、12、13、15 章只读了被引的节；第 8（空间）、9（网络）、14 章没读 |
 | FDV | 第 1–4、6–14、16–29 章 | 第 5、15 章没细读 |
 
@@ -262,7 +266,7 @@ docs/rules/repo/scientific-figure-review.md
 > **P1 数据↔视觉一致**
 > - **来源与证据**：
 >   - FDV 第 1 章 wrong 的定义（p.2–3）[原文]。
->   - FDV 第 3 章「0 can never appear on a log scale」（p.20）[原文]；负值不能上 log 轴是数学事实 [推导]。
+>   - FDV 第 3 章「The value 0, on the other hand, can never appear on a log scale.」（p.20）[原文]；负值不能上 log 轴是数学事实 [推导]。
 >   - FDV 第 17 章「Bars on a linear scale should always start at 0」（p.209）[原文]。
 >   - GoG §9.1.8「frame should always cover the data」（p.219）[原文]。
 > - **适用**：位置或长度编码的数据标记，包括线、散点、柱、误差线、填充带。
@@ -297,7 +301,7 @@ docs/rules/repo/scientific-figure-review.md
 | ID | 规则 | basis | 依据 | 所需输入（现有？） | 严重度 | 误报风险 |
 | --- | --- | --- | --- | --- | --- | --- |
 | V-001 | 对数轴上有 ≤ 0 的数据画不出来（含误差线下端 ≤ 0） | encoding | FDV p.20 [原文] + 数学 | 轴尺度 ✓；数据值 ✗，需新的只读事实 | warn | 低 |
-| V-002 | 线性轴上柱的基线（共同柱底）不在可见范围内 | encoding | FDV p.209 [原文]；GoG p.92 [原文] | 柱底和高（worker 有，manifest 没有）；ylim/xlim ✓ | warn | 中（差值柱、浮动柱要豁免） |
+| V-002 | 线性轴上柱的基线（共同柱底）不在可见范围内 | encoding（**Tavotto 的工程归类**：FDV 把截断柱标为「misleading」，没有贴 wrong；GoG p.92 反而说条形的定义本身不要求底在零，所以不能当支持证据） | FDV p.209「should always start at 0」[原文] | 柱底和高（worker 有，manifest 没有）；ylim/xlim ✓ | warn | 中（差值柱、浮动柱要豁免） |
 | V-003 | 数据点落在轴范围之外被裁掉 | statistics | GoG p.219、FDV 第 3 章 [原文] | 数据 ✗；轴范围 ✓ | suggestion | 中（有意放大） |
 | V-004 | 有误差线，但图内文字没说明 SD / SEM / CI | 不可判定 → 需要你确认 | FDV p.189 [原文]；GoG p.131 [原文] | 误差线 ✓；含义 ✗；图注 ✗（在稿件里） | 不出 issue | — |
 | V-005 | 同一面板里类别色 > 8 | visual | FDV 第 19 章 [原文]；VAD p.226–229 [原文] | 颜色 ✓ | suggestion | 中（连续色映射要排除） |
@@ -405,7 +409,12 @@ docs/rules/repo/scientific-figure-review.md
 ### 5.2 设计
 
 1. **manifest**：给 axes 元素加只读事实 `scale_domain`。只在某根轴的尺度是 `log` 时才出现，形如 `{"y": {"nonpositive": 2, "errorbar_low_nonpositive": 1, "status": "ok"}}`。
-   - 计数源是该轴上可见数据元素的有限值：线 `xydata`、集合 offsets、误差线段端点、柱的底与顶、填充带顶点。
+   - 计数源只取三类可见元素：线（`Line2D.get_xydata()`）、散点（`PathCollection` offsets）、误差线段（`LineCollection` 端点）。并且**只数这一维真正经过该轴 `transData` 的坐标**（`transform.contains_branch_seperately(ax.transData)`；散点用 offset transform）。这样能排除 `axvline` / `axhspan` 等混合变换在轴坐标那一维上的 0–1 值，也能排除 `transAxes` 画的线。
+   - **刻意排除**三类元素：
+     - 柱与直方图：log 轴上柱底默认是 0，`hist(log=True)` 的空箱高也是 0，算进来会让每张 log 柱图都报。这类问题归到 V-002 的 log 基线变体。
+     - `fill_between` 的填充带：画到 0 往往是有意填到底，这类问题另行讨论。
+     - 色条或 LogNorm 上的值。
+   - 原型实测：在 scratchpad 里用 15 个写法验证过这个谓词（matplotlib 3.11.2），结果已逐行写进 §5.3。
    - 预算与 `FINGERPRINT_BUDGET` 共用；量不了时写 `status: "over_budget" | "unavailable"`，规则静默不判。
    - twin 轴按各自轴归属计数。
    - 同步 `web/src/lib/api.ts` 的 `ManifestElement`。
@@ -429,6 +438,13 @@ docs/rules/repo/scientific-figure-review.md
 | 边界 | 被隐藏的 artist（`visible=False`）上有 0 | 无 issue |
 | 边界 | 左轴线性含 0，`twinx` 右轴为 log 且全正 | 无 issue（按轴归属） |
 | 边界 | 数值总量超出预算 | 无 issue，`status=over_budget`，不冒充判过 |
+| 错误 | `scatter([1,2,3],[-1,2,3])`，y 为 log | 1 条 issue，N=1（原型实测 1） |
+| 防误报 | `bar([0,1],[5,50])`，y 为 log（柱底 0） | 无 issue（柱被排除；原型实测 0） |
+| 防误报 | `hist(..., log=True)` 有空箱 | 无 issue（原型实测 0） |
+| 防误报 | log-log 图上加 `axvline(3)`、`axhline(2)` | 无 issue（轴坐标那一维不计；原型实测 0/0） |
+| 防误报 | `axvspan` 画在 log-y 图上 | 无 issue（原型实测 0） |
+| 防误报 | `fill_between(x, 0, y)` 画在 log-y 图上 | 无 issue（填充带被排除；原型实测 0） |
+| 防误报 | 用 `transAxes` 画的线含 0 | 无 issue（原型实测 0） |
 | 编辑 | figurebench 线图含 0，override `yscale→log` | 出现 issue；撤销 override 后消失 |
 | 真图防误报 | `tests/fixtures/figurebench/log_decay`（真 worker；y 为 log 且全正，x 含 0 但是线性轴） | 无 issue |
 | 对拍 | golden 向量 Python 与 TS 同结果 | `id / severity / gids / detail` 一致 |
@@ -441,6 +457,19 @@ docs/rules/repo/scientific-figure-review.md
 - manifest 体积与渲染耗时的增量：在 figurebench 上测量并写进 PR；超过 2% 要说明。
 - 问题面板只多一行，不撑大任何卡片，不加横条。
 - `validation-spec.md` 的 V-001 条目与 check id 有看护。
+
+### 5.5 任务书点名的六个例子：逐个落到可执行的预期
+
+「输入」一列标 ✓ 表示今天 manifest 或项目里已经有，✗ 表示没有。
+
+| 例子 | 类别 | 所需输入 | 正常案例 → 预期 | 边界案例 → 预期 | 错误案例 → 预期 | 判不了时 → 明确结果 |
+| --- | --- | --- | --- | --- | --- | --- |
+| **误差线没标明是 SD / SEM / CI**（V-004） | 不可判定（统计） | 误差线 ✓；含义 ✗（只在配方注释里）；图注 ✗（在稿件里）；图内文字 ✓ | 图内文字（图例或轴标签）含 SD / SEM / s.d. / CI / 标准差 / 标准误 → 不列 | 配方生成的图：`summary=mean_sem` 已知 → 「需要你确认」里列一条**事实**「误差线为 SEM，请写进图注」，不提问 | 没有误差线 → 不列 | 用户脚本画的误差线、图内也没写明 → 「需要你确认」列一条「这些误差线代表什么？请在图注写明」；**不计数、不报警、不猜**，用户标「已写明」后不再出现 |
+| **对数轴上有非正数**（V-001） | 科学错误（encoding） | 轴尺度 ✓；数据值 ✗（MVP 新加只读事实） | 全为正 → 不列 | NaN、symlog、隐藏元素、柱或填充带、混合变换 → 不列（§5.3） | 线、散点或误差线下端 ≤ 0 → warn，N 个 | 超出预算或量不了 → `status` 记 unknown，**不出 issue**，问题面板不显示「已通过」 |
+| **柱状图纵轴截断**（V-002） | 科学错误（Tavotto 工程归类） | 柱底和高 ✗（需要同一事实通道）；ylim ✓；尺度 ✓ | 柱底 0 在可见范围内 → 不列 | 各柱底不同（浮动柱、甘特、堆叠的上层）→ 只看最底层的共同基线，没有共同基线就不列；差值柱（有正有负、0 可见）→ 不列；log 轴上的柱 → 不在 V-002 判，留给后续的 log 基线变体 | 共同基线 0 < ylim 下限（如 bar 5、8，ylim 4–9）→ warn | 柱底数据量不了 → 不出 issue |
+| **归一化了但没说明** | 不可判定 | 是否归一化 ✗（图上看不出来） | 用户脚本里 y 落在 [0, 1] → **不列**（反伪规则用例：不能凭取值范围猜） | 轴标签含「normalized / a.u. / 归一化」→ 也不列（已有说明） | 数据出图里 Tavotto **自己**做了归一化 → 必须写进配方或统计元数据并作为事实展示；未经用户确认不许自动归一化 | 用户脚本 → 什么都不出；由 `non-rules.md` 记录「不做」及理由 |
+| **编辑后数据与图形的映射是否还一致**（E2） | 不变式测试，不是用户可见规则 | `data_fingerprint` ✓ | 每个样式类 `HANDLERS` 键应用后，所有元素指纹逐个相等 | 尺度或范围类键（`yscale`、`ylim`）应用后指纹仍相等，V-001 / V-002 的事实可以变；撤销后事实回到原值 | 若某个 handler 改了数据（例如误把柱位置开放成可编辑）→ 测试红，指出键名 | 指纹 `over_budget` 或 `unavailable` → 该元素记为「未量」，测试要求夹具里不出现这种情况（夹具保持小） |
+| **缺统计元信息时提示、不猜** | 不可判定（数据出图） | 列角色 ✓（#2097 加了 `error` 角色）；误差列的类型 ✗ | 列名 `sd` / `sem` → 识别成对应类型，作为事实展示 | 列名 `err`、`error`、`±` → 类型记为 `unknown`，**不许默认成 SD** | 模型把 `err` 判成 SD 并写进图例 → 测试红 | 类型 unknown → 「需要你确认」列一条；配方的 `summary` 记 unknown，图照画，标注不写类型。#2097 合入后核对它是否已满足这一条 |
 
 ---
 
@@ -477,15 +506,20 @@ docs/rules/repo/scientific-figure-review.md
 ## 7. 需要你拍板的事
 
 1. **1.0 豁免**：V-001（以及同族的 V-002 / V-003）属于扩大产品能力，按 `docs/1.0-release-readiness.md` §1.8 要登记豁免。是否给？
-2. **科学错误类的严重度**：建议用 `warn`（放行，必展示）而不是 `error`。理由：预检的 error 默认阻止导出，而你定过「所有用户当小白，失败不许卡住」；这两条也存在有意的例外（比如对数轴上故意画出 0 的边界）。
-3. **问题面板按「依据」分组**（错误 / 统计风险 / 视觉建议 / 期刊）：涉及界面，先出浅色与深色截图给你看，再动。
-4. **误差线含义（V-004）进「需要你确认」**：
+2. **科学错误类的严重度**：建议用 `warn`（放行，必展示）。这里有两个冲突要你定：
+   - **与现行细则冲突**：`docs/rules/backend/profiles-and-preflight.md:62` 规定「数据语义类全在 suggestion 档，绝不替用户裁决」。用 `warn` 就要修订这份细则，改成只有 `basis: encoding` 这类客观可判定的不一致能进 warn，其余数据语义仍放 suggestion。另一个选项是 V-001 也放 suggestion，代价是这类问题和品味建议混在同一档。
+   - **不用 `error`**：error 默认阻止导出，而你定过「所有用户当小白，失败不许卡住」。
+3. **数据出图懒模式默认 `mean_sd`**（`ai_data_recipe.py:2097`），而 ADR 0178 规定图里不写脚注：图上的误差线是 SD，但用户和读者都看不到这一点。按 P2 与 P7，这是一个没经确认的统计表达选择。两条都是你已有的裁决，所以不默认放过。可选做法：
+   - 保持现状，但让 V-004 把「误差线 = SD（自动选的）」作为事实列进「需要你确认」；
+   - 或者首次出图时问一次 SD / SEM / CI。
+4. **问题面板按「依据」分组**（错误 / 统计风险 / 视觉建议 / 期刊）：涉及界面，先出浅色与深色截图给你看，再动。
+5. **误差线含义（V-004）进「需要你确认」**：
    - 与 ADR 0178「图里不写脚注」不冲突：这一项只出现在问题面板末尾，不写进图里，不计数，不报警。
    - 文案需要你签字。
    - 对配方生成的图，是直接显示「误差线为 SD」这一事实，还是什么都不显示？
-5. **知识库位置**：`docs/sciviz/`，加上根 `AGENTS.md` 一行和 Review guidelines 一句。后两处是判据路径。
-6. **双 y 轴**：只有 GoG 一本书反对。建议不做规则，只进决策框架；你是否同意？
-7. **版权口径**：仓库内只放转述、≤ 25 词的引文和页码，原书 PDF 不入库。
+6. **知识库位置**：`docs/sciviz/`，加上根 `AGENTS.md` 一行和 Review guidelines 一句。后两处是判据路径。
+7. **双 y 轴**：只有 GoG 一本书反对。建议不做规则，只进决策框架；你是否同意？
+8. **版权口径**：仓库内只放转述、≤ 25 词的引文和页码，原书 PDF 不入库。
 
 ## 附：本方案没有做的事
 
