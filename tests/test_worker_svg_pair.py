@@ -40,11 +40,14 @@ def test_peek_selects_the_existing_artifact_session_without_building(monkeypatch
 @pytest.mark.parametrize("restricted", [False, True])
 def test_export_transports_keep_the_pair_in_one_request(worker_type, paired, restricted):
     """Every parent-side control plane sends one command; absence is byte-compatible."""
-    worker = object.__new__(worker_type)
+    if worker_type is nativesession.NativeSession:
+        worker = nativesession.NativeSession(session_id="export-pair", descriptor={})
+    else:
+        worker = object.__new__(worker_type)
+        worker._figure_lock = threading.RLock()
+        worker._require_consistent = lambda stem: None
+        worker._note_temporary = lambda stem, response: None
     worker.built = True
-    worker._figure_lock = threading.RLock()
-    worker._require_consistent = lambda stem: None
-    worker._note_temporary = lambda stem, response: None
     sent = []
 
     def request(payload, timeout):

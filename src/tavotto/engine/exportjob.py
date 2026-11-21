@@ -261,6 +261,8 @@ class ExportJob:
     total: int = 1
     _cancel: threading.Event = field(default_factory=threading.Event, repr=False)
     _tmp_dir: Path | None = field(default=None, repr=False)
+    # 计算面板实际使用的来源字节，发布前用同一指纹复核。
+    _chart_source_dependencies: dict[Path, str] = field(default_factory=dict, repr=False)
     #: 已经开始往最终目录落盘。**过了这个点取消不再被接受**——第一个
     #: `os.replace` 之后就没有"一个字节没动过"可言了。
     #: 读写它一律持 `_commit_lock`（见下）。

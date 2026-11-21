@@ -1,5 +1,6 @@
 import { figureSnapshotFor } from './figureSnapshot'
 import { artifactRequestFields } from './artifactValidation'
+import { chartSourceFields } from './chartSource'
 import type { ExportObject } from './api'
 import type { CanvasObject } from '@/types/document'
 import { DEFAULT_STAR_POINTS, DEFAULT_STAR_RATIO, isKnownObject, isStrokeOnlyShape, panelRotation, readPath, shapeStrokeOn } from '@/types/document'
@@ -13,10 +14,10 @@ import { PATH_DEFAULT_JOIN } from './pathGeom'
  * - **顺序即 z 序**（数组序，底 → 顶），后端按同样顺序合成；
  * - **隐藏对象不发**，locked 照常导出（锁只挡编辑，不改变成图）。
  */
-export function toExportObjects(objects: CanvasObject[]): ExportObject[] {
+export function toExportObjects(objects: CanvasObject[], pdfPanelBookmarks = false): ExportObject[] {
   // 不认识的类型（更新的构建写进来的）不进载荷：`toExportObject` 对它回 undefined，序列化成 null 后被后端
   // 静默丢掉。界面在导出前用 `newerObjectCount` 拦下，这里只保证载荷里没有空洞
-  return objects.filter((o) => !o.hidden && isKnownObject(o)).map(toExportObject)
+  return objects.filter((o) => !o.hidden && isKnownObject(o)).map((o) => toExportObject(o, pdfPanelBookmarks))
 }
 
 /** 会进这次导出、但本构建画不出来的对象个数（看得见且类型不认识，`isKnownObject`）。非 0 时导出不许开始 */
@@ -54,7 +55,7 @@ function appearanceExtras(o: {
   }
 }
 
-function toExportObject(o: CanvasObject): ExportObject {
+function toExportObject(o: CanvasObject, pdfPanelBookmarks: boolean): ExportObject {
   const box = { x_mm: o.x, y_mm: o.y, w_mm: o.w, h_mm: o.h }
 
   switch (o.type) {
@@ -65,8 +66,13 @@ function toExportObject(o: CanvasObject): ExportObject {
       return {
         ...box,
         type: 'panel',
-        ...artifactRequestFields(o),
+        ...(o.chart ? {
+          chart: o.chart,
+          chart_render_profile: o.chartFrame?.renderProfile ?? 'native-manifest/1' as const,
+        } : artifactRequestFields(o)),
+        ...chartSourceFields(o.chartSource),
         id: o.fileId,
+        ...(pdfPanelBookmarks && o.name ? { bookmark_title: o.name } : {}),
         ...(figureSnapshotFor(o) ? { figure_snapshot: figureSnapshotFor(o) } : {}),
         overrides: o.overrides.length ? o.overrides : undefined,
         crop: o.crop,

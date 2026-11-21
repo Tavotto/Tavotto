@@ -194,6 +194,7 @@ import {
 } from '@/lib/legendModel'
 import { mergeUnsupported, UnsupportedProps } from './UnsupportedProps'
 import { effectiveOverride } from '@/lib/effectiveOverride'
+import { usesFigureFrame } from '@/lib/figureFrame'
 import { figureFontChoice, figurePrimaryValue } from '@/lib/figureFontChoice'
 import { patchBoundsOf } from '@/lib/patchResize'
 import { PatchSizeControls } from './PatchSizeControls'
@@ -2151,6 +2152,7 @@ function isLogRange(prop: string, element: ManifestElement, panel: PanelObject):
 }
 
 function currentValue(panel: PanelObject, gid: string, field: EditableField): unknown {
+  if (panel.chartFrame && usesFigureFrame({ gid, prop: field.prop })) return field.value
   const ov = effectiveOverride(panel.overrides, gid, field.prop)
   return ov ? (field.prop === 'fontfamily' ? figurePrimaryValue(ov.value, field.value) : ov.value) : field.value
 }
@@ -3233,7 +3235,7 @@ function SourceAdvancedSection({
         )}
 
         {/* 这一组全部会覆盖用户的原件（写回）或读它的历史；没有关联脚本时连同标题一起隐藏，不留空组头 */}
-        {panel.script && (
+        {panel.script && !panel.chart && (
           <>
             <GroupHead>{el('originalFileGroup')}</GroupHead>
             <OriginalFileActions panel={panel} />

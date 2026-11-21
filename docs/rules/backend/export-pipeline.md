@@ -13,6 +13,10 @@ order: 210
 -->
 
 - **修改后的 .py（ADR 0171）**：`include_edited_script` → `ExportRequest.include_script`，产物是 `outputs[]` 里 `format: "script"` 的一项（`exportjob.SCRIPT_KEY`，不进 `FORMATS`），名字 `<基名>_edited.py`。**原脚本一字节不动，不写项目目录**。`app._produce_edited_script`：`engine/scriptadjust.build` 生成 → `_verify_edited_script` 用写回同一把尺重放（影子脚本 + 隔离模式）→ 不一致或像素没比成都报 `script_export_diverged`、不交付，图片格式照常；目标与原脚本是同一个文件报 `script_export_same_file`。只对单张图；`WRITES` / `NOT_WRITABLE` 必须覆盖 `overrides.HANDLERS` 全部键；`WRITES` 的每个键要么在夹具图上真写进脚本并过验证、要么在 `_DEDICATED` 点名专用用例（`test_every_writable_key_is_swept_or_named`，2026-11-16），导出脚本要的夹具图只追加在 `tests/support/scriptadjust_figures.py`。看护 `tests/test_script_adjust*.py`。
+- **计算 SVG（ADR 0182）**：原图及画布按模型、绑定、编辑列表和来源引用取计算快照。画布内相同来源的实例各取自己的编辑。
+  原图物理尺寸取快照显示框，原图 SVG 携带复算所需的 ChartBundle。PDF 和位图用同一份 RenderCore 转译结果。
+  同步和后台导出在发布前复核本次使用的来源摘要；变更时返回 `chart_source_changed`。预检将这类来源标为 `declarative`，
+  EPS 与修改后的 Python 脚本逐项报告不可用。看护 `tests/test_chart_native_api.py`。
 - **导出（ADR 0031，2026-08-31 定版）**：`POST /api/export`（同步）/
   `/api/export/start`（后台作业，进度经 SSE `export.progress`）/ `/state` /
   `/cancel` / `/validate` —— **五个端点、一个服务**。「要什么」只有
@@ -22,6 +26,10 @@ order: 210
   * `scope=canvas` 合成页；`scope=original` 走 `pdfbackend.original_pdf/png`
     （矢量整页搬运不重画，位图**保源像素网格**）。`original` 段里**没有**
     x/y/w/h 与页面尺寸——想让画布缩放漏进原图导出得先改结构。
+  * **画布 PDF 书签**由 `pdf_panel_bookmarks: true` 开启。RenderCore 在写入面板后用同一份落位结果与页框
+    的交集生成 PDF `FitR` 目的地。跳过隐藏、全透明及页外面板。按面板绘制顺序编号，使用用户给图面板取的
+    名称。书签只改变 PDF 导航元数据，画面与其它格式保持原样。看护 `tests/test_export_endpoint.py`
+    与 `web/e2e/chart-document.spec.ts`。
   * **PPI 只在有位图格式时是数字**，否则 `None`；`partial` 是独立一档
     （成功的照常交付，失败的带自己的 `error.code`）；覆盖策略闭集
     `ask`/`replace`/`rename`，`ask` 撞名时**不渲染不写盘**。

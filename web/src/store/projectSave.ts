@@ -19,7 +19,7 @@ import {
   activeProjectFile,
   captureFigureSnapshotSave,
   getWindowHold,
-  mergeSavedFigureSnapshots,
+  mergeSavedDocumentSources,
   projectFileSnapshot,
   setProjectFile,
   useDocumentStore,
@@ -108,7 +108,7 @@ async function writeOnce(ctx: SaveContext): Promise<boolean> {
     const res = await saveLayout(binding.name, pd, binding.revision ?? REVISION_ABSENT, {
       target: 'project',
     })
-    mergeSavedFigureSnapshots(snapshots, res.figure_snapshots)
+    mergeSavedDocumentSources(snapshots, res)
     // 写成了：立刻说「排版写成了」，时间线打「保存」点（ADR 0101 §7）——在后面任何一步之前，
     // 与它们的成败无关；点拍的是写出去的那一份（`moment`），不管此刻开着的是谁
     emitLayoutSaved('project_file', { moment })

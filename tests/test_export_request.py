@@ -82,6 +82,21 @@ def _canvas_spec(**over):
     return base
 
 
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"formats": ["png"]},
+        {"scope": "original", "original": {"figure_id": "Fig1.pdf"}},
+        {"pdf_panel_bookmarks": "true"},
+    ],
+)
+def test_pdf_bookmarks_require_a_canvas_pdf_and_a_boolean(overrides):
+    spec = _canvas_spec(**{"pdf_panel_bookmarks": True, **overrides})
+    with pytest.raises(exportreq.ExportRequestError) as error:
+        exportreq.normalize(spec)
+    assert error.value.code == "bad_request"
+
+
 def test_ppi_is_none_when_no_raster_format():
     """**「这次 PPI 没有意义」与「PPI 是 600」是两个不同的答案。**
 

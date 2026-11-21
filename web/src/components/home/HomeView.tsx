@@ -61,6 +61,7 @@ import { RowMenu } from '../ui/RowMenu'
 import { useRowMenu } from '../ui/useRowMenu'
 import { AppMenuButton } from '../AppMenuButton'
 import { DirBrowser, TailPath } from '../DirBrowser'
+import { ProjectPackageImportButton } from '../ProjectPackageImportButton'
 
 /**
  * 主页：还没有打开项目时的整屏（`App` 在 `phase === 'none'` 时显示 `ProjectPicker`，
@@ -882,8 +883,12 @@ function RecentSection({
   )
 
   if (recent.length === 0) {
-    // 还没有最近项目：只留一条通往「新建项目 / 按路径打开」的路
-    return <div className="flex justify-center">{allLink}</div>
+    return (
+      <div className="flex flex-wrap justify-center gap-1">
+        <ProjectPackageImportButton />
+        {allLink}
+      </div>
+    )
   }
 
   return (
@@ -891,12 +896,15 @@ function RecentSection({
       aria-labelledby="home-recent-heading"
       className="mx-auto w-full max-w-[720px]"
     >
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between">
         <h2 id="home-recent-heading" className="type-section flex items-baseline gap-1.5">
           {t('picker.recentHeading')}
           <span className="font-normal text-ink-3">{t('picker.recentCount', { count: recent.length })}</span>
         </h2>
-        {allLink}
+        <div className="flex flex-wrap items-center gap-1">
+          <ProjectPackageImportButton />
+          {allLink}
+        </div>
       </div>
       {/* Card interactive 网格（2026-10-07 设计审计 §4.2 / §5）：此前新手版是三列 hover 行、老手版是带分隔线的列表 */}
       {/* 居中的等宽卡（flex-wrap + 固定列宽，不用 grid）：1–2 个项目不再孤零零靠左、右边空一大块——

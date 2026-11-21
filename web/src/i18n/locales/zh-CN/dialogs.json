@@ -198,6 +198,7 @@
       "no_script": "这张图没有脚本"
     },
     "mergePdf": "合成一个多页 PDF：{{name}}（{{count}} 页）",
+    "pdfPanelBookmarks": "为图面板添加 PDF 书签",
     "batchNames": "每张图用各自的名字",
     "exportAgain": "再次导出",
     "newerObjects_other": "有 {{count}} 个对象来自更新的版本，更新后才能导出",
@@ -2315,9 +2316,13 @@
     "noDiff": "与当前画布没有差异",
     "enlarge": "放大查看",
     "previewApproximate": "图内修改预览不可用，面板显示的是磁盘上的原图。",
+    "previewCanvasMissing": "这个节点记录的画布不在它的排版里，无法预览或恢复。",
     "rename": "改名…",
     "restore": "恢复到这里",
     "restoreHistory": "恢复排版节点「{{name}}」",
+    "restoreProjectBody": "这个节点存的是整份项目，恢复会把所有画布都换成那一版，不只是当前画布。现在的整份项目会先存成「恢复前」节点；恢复本身不能撤销，需要时从那个节点恢复回来。",
+    "restoreProjectInvalid": "这个节点的项目排版读不出来，这次没有恢复。",
+    "restoreProjectTitle": "恢复整份项目？",
     "restoreMissingCanvasBody": "这个节点来自已删除的画布「{{from}}」。继续会写进当前画布「{{to}}」，覆盖现有内容。",
     "restoreMissingCanvasTitle": "原画布已不存在",
     "restoreOtherCanvasBody": "这个节点拍自画布「{{from}}」，你当前在「{{to}}」。恢复会切到「{{from}}」写入，不动当前画布。",
@@ -2333,6 +2338,7 @@
     "restoreUnknownCanvasBody": "它由旧版本留下，没有记录来自哪张画布。继续会写进当前画布「{{to}}」，覆盖现有内容。",
     "restoreUnknownCanvasTitle": "这个节点没有来源画布",
     "restored": "已恢复到「{{name}}」。恢复前的排版已存成节点，也可以按 {{undo}} 撤销。",
+    "restoredProject": "已恢复整份项目「{{name}}」。恢复前的整份项目已存成节点，需要时从时间线恢复回去。",
     "save": "存为命名节点",
     "saved": "已把现在存为命名节点「{{name}}」",
     "summary": {
@@ -2715,6 +2721,12 @@
     }
   },
   "packageInstall": {
+    "frozenPanels": "项目包保留了这些图的已确认画面。要继续图内编辑，请在本机运行原脚本。",
+    "skippedConflict": "有 {{conflict}} 条运行参数和本机冲突，保留了本机的。",
+    "skippedCapacity": "有 {{capacity}} 条运行参数超过本机上限，已跳过。",
+    "skippedBoth": "有 {{conflict}} 条运行参数和本机冲突，保留了本机的，另有 {{capacity}} 条超出上限。",
+    "importEntry": "导入项目包…",
+    "remapRelink": "包内 Figure 快照来自另一台机器的数据改指表；打开项目后请重新找到这些图的原始文件，旧路径不会被沿用。",
     "entry": "安装项目包到新目录…",
     "title": "安装计算图表项目包",
     "description": "先检视资源，再安装到新项目；打开时保留原来的排版。",

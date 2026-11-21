@@ -124,6 +124,7 @@ class NativeRelay:
         hello_key: str,
         timeout_code: str,
         watch=None,
+        ack_extra: dict | None = None,
     ) -> tuple[socket.socket, dict]:
         """接受连接直到**认证通过**的那一条；返回 `(sock, 去掉 token 的握手帧)`。
 
@@ -136,6 +137,12 @@ class NativeRelay:
         而错误码要准（`bridge_child_exited` 与 `native_attach_cancelled` 的
         下一步动作完全不同）。
         """
+        ack = {hello_key: 1, "ok": True}
+        if ack_extra:
+            if not isinstance(ack_extra, dict) or set(ack_extra) & {hello_key, "ok", "token"}:
+                raise ValueError("Invalid private handshake payload")
+            ack.update(ack_extra)
+        ack_bytes = json.dumps(ack).encode("utf-8") + b"\n"
         deadline = time.monotonic() + timeout
         while True:
             if self._cancel.is_set():
@@ -162,7 +169,7 @@ class NativeRelay:
                 )
                 _quiet_close(conn)
                 continue  # **不停止 accept**：失败一次就收摊 = 把 DoS 送出去
-            _quiet_send(conn, json.dumps({hello_key: 1, "ok": True}).encode("utf-8") + b"\n")
+            _quiet_send(conn, ack_bytes)
             conn.settimeout(None)
             hello.pop("token", None)  # token 不进任何可能被转发/打日志的结构
             return conn, hello
@@ -182,7 +189,7 @@ class NativeRelay:
         _quiet_close(self._attach_listener)  # 一次会话一条连接
         return hello
 
-    def wait_for_child(self, timeout: float, *, watch=None) -> dict:
+    def wait_for_child(self, timeout: float, *, watch=None, ack_extra=None) -> dict:
         """等 Bridge Runner 连上并认证，并把它的握手帧转给桌面。
 
         **转发一次去掉 token 的握手帧**是本模块唯一会"构造"的字节。它不是
@@ -198,6 +205,7 @@ class NativeRelay:
             hello_key=HELLO_KEY,
             timeout_code=runcodes.NATIVE_ATTACH_TIMEOUT,
             watch=watch,
+            ack_extra=ack_extra,
         )
         self.child_sock = conn
         _quiet_close(self._child_listener)
@@ -208,7 +216,12 @@ class NativeRelay:
         return hello
 
     def adopt_child(
-        self, timeout: float, *, watch=None, timeout_code: str = runcodes.NATIVE_ATTACH_TIMEOUT
+        self,
+        timeout: float,
+        *,
+        watch=None,
+        timeout_code: str = runcodes.NATIVE_ATTACH_TIMEOUT,
+        ack_extra=None,
     ) -> tuple[socket.socket, dict]:
         """只要 child 一侧：**桌面自己 spawn 用户进程**时（ADR 0125）没有 CLI、也没有第二条 attach 连接。
 
@@ -226,6 +239,7 @@ class NativeRelay:
             hello_key=HELLO_KEY,
             timeout_code=timeout_code,
             watch=watch,
+            ack_extra=ack_extra,
         )
         _quiet_close(self._child_listener)
         return conn, hello

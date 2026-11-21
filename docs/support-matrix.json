@@ -61,6 +61,17 @@
       "note": "无桌面安装包，不写 desktop support；CI 的 backend/package 矩阵在 Linux 上最全，但没有发行安装物验收。"
     }
   ],
+  "native_figure_sources": {
+    "ggplot2": {
+      "status": "experimental",
+      "tested_runtime": "R 4.5.3",
+      "tested_packages": { "ggplot2": "4.0.3", "svglite": "2.2.2", "jsonlite": "2.0.0" },
+      "session": "desktop-owned",
+      "operations": ["plain-text plot title RGB color"],
+      "snapshot_representations": ["SVG preview", "Cairo PDF"],
+      "documentation": "docs/implementation/tavotto-core-v02-ggplot2.md"
+    }
+  },
   "mcp_hosts": {
     "note": "非 Codex 本地 MCP 宿主的支持口径（2026-09-24）。这里是**口径**的唯一出处，证据在 docs/implementation/multi-host-mcp/acceptance.md；tests/test_mcp_host_profiles.py 对拍三处：本表 id == configure.py 的 HOST_IDS == 验收矩阵的行。status 三档：experimental = 配置生成已通过独立期望测试、真实客户端未验收（协议级覆盖逐行见验收矩阵，DSH 目前没有）；beta = 有一键安装渠道（`channel` 字段：Claude 插件——Claude Code 与 WorkBuddy 装的是同一份 / DSH bundle），且验收矩阵里有该渠道的子行、至少 local_smoke（本机真宿主冒烟，非发行件）——README 只给这条渠道的章节标「(Beta)」，配置生成器那条路仍是实验（2026-09-28 用户决定）；verified = 验收矩阵里该行至少一项 host_verified 且附证据。没有 verified 之前，README / 网站不得写「支持」某宿主。",
     "channel": "GitHub Release 的完整包 codex-plugin-<版本>.zip + integrations/configure.py 生成配置",

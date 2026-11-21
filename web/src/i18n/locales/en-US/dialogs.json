@@ -203,6 +203,7 @@
       "no_script": "No script for this figure"
     },
     "mergePdf": "Combine into one multi-page PDF: {{name}} ({{count}} pages)",
+    "pdfPanelBookmarks": "Add PDF bookmarks for figure panels",
     "batchNames": "Each figure keeps its own name",
     "exportAgain": "Export again",
     "newerObjects_other": "{{count}} objects come from a newer version. Update to export them.",
@@ -2338,9 +2339,13 @@
     "noDiff": "No differences from the current canvas",
     "enlarge": "View larger",
     "previewApproximate": "Figure-edit preview unavailable. Panels show the original files on disk.",
+    "previewCanvasMissing": "The canvas this point records isn’t in its saved layout, so it can’t be previewed or restored.",
     "rename": "Rename…",
     "restore": "Restore to here",
     "restoreHistory": "Restore layout point “{{name}}”",
+    "restoreProjectBody": "This point holds the whole project. Restoring replaces every canvas with that version, not just the current one. The project as it is now is saved as a “before restore” point first; the restore itself can’t be undone, but you can restore that point later.",
+    "restoreProjectInvalid": "This point’s project layout can’t be read, so nothing was restored.",
+    "restoreProjectTitle": "Restore the whole project?",
     "restoreMissingCanvasBody": "This point came from canvas “{{from}}”, now deleted. Continuing writes into the current canvas “{{to}}”, replacing what’s there.",
     "restoreMissingCanvasTitle": "Original canvas is gone",
     "restoreOtherCanvasBody": "This point was taken on canvas “{{from}}”; you’re on “{{to}}”. Restoring switches to “{{from}}” and writes there, leaving the current canvas alone.",
@@ -2356,6 +2361,7 @@
     "restoreUnknownCanvasBody": "It was left by an older version and doesn’t record its canvas. Continuing writes into the current canvas “{{to}}”, replacing what’s there.",
     "restoreUnknownCanvasTitle": "This point has no source canvas",
     "restored": "Restored to “{{name}}”. The layout before the restore was saved as a point, and {{undo}} undoes it.",
+    "restoredProject": "Restored the whole project “{{name}}”. The project as it was before the restore is saved as a point; restore that point if you need to go back.",
     "save": "Save as named point",
     "saved": "Saved now as named point “{{name}}”",
     "summary": {
@@ -2741,6 +2747,12 @@
     }
   },
   "packageInstall": {
+    "frozenPanels": "The package preserves the confirmed artwork for these figures. Run their original scripts on this machine to edit figure elements.",
+    "skippedConflict": "{{conflict}} run configurations conflicted with local settings, which were kept.",
+    "skippedCapacity": "{{capacity}} run configurations exceeded the local limit and were skipped.",
+    "skippedBoth": "Local settings took precedence for {{conflict}} run configurations, and {{capacity}} others exceeded the local limit.",
+    "importEntry": "Import project package…",
+    "remapRelink": "Some Figure snapshots were captured under another machine's input mapping. After opening the project, relink those figures to their original files; the old paths will not be reused.",
     "entry": "Install project package to a new folder…",
     "title": "Install computational chart package",
     "description": "Inspect resources, then install a new project. Your current layout is preserved when opening it.",

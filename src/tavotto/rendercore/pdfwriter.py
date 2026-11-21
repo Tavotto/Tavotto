@@ -264,7 +264,9 @@ class PdfWriter:
             raise UnsupportedCapability(op, cap.reason, object_id)
 
     # -- 节点 -------------------------------------------------------------
-    def _emit(self, node: ir.Node, rec: _Recorder, ctm: ir.Matrix, depth: int) -> None:
+    def _emit(
+        self, node: ir.Node, rec: _Recorder, ctm: ir.Matrix, depth: int
+    ) -> placement.Placement | None:
         for op in ir.operations_of(node):
             self._check(op, getattr(node, "object_id", ""))
         if isinstance(node, ir.Path):
@@ -276,11 +278,12 @@ class PdfWriter:
         elif isinstance(node, ir.Group):
             self._group(node, rec, ctm, depth)
         elif isinstance(node, ir.ImportedPage):
-            self._imported_page(node, rec, ctm)
+            return self._imported_page(node, rec, ctm)
         elif isinstance(node, ir.Image):
-            self._image(node, rec)
+            return self._image(node, rec)
         else:  # validate() 已经挡住不认识的节点；这里是最后一道
             raise UnsupportedCapability(type(node).__name__.lower(), "不认识的节点", "")
+        return None
 
     # -- 面板 -------------------------------------------------------------
     def _source_bytes(self, node: ir.ImportedPage | ir.Image) -> tuple[ir.FileResource, bytes]:
@@ -389,7 +392,9 @@ class PdfWriter:
         }
         return child.pdf
 
-    def _imported_page(self, node: ir.ImportedPage, rec: _Recorder, ctm: ir.Matrix) -> None:
+    def _imported_page(
+        self, node: ir.ImportedPage, rec: _Recorder, ctm: ir.Matrix
+    ) -> placement.Placement:
         resource = self.page.resources[node.resource]
         if (
             isinstance(resource, ir.FileResource)
@@ -468,6 +473,7 @@ class PdfWriter:
             rec.xobjects[name] = form
             rec.ops.append(inner)
         self.facts.imported_pages.append(fact)
+        return pl
 
     def _charge_raster(self, node: ir.Image, res: ir.FileResource, width: int, height: int) -> None:
         """文档级像素预算：每个**不同**的位图资源在嵌入前记一次账，累计超过就拒——单张各判一次
@@ -573,7 +579,7 @@ class PdfWriter:
         self._image_objs[node.resource] = hit
         return hit
 
-    def _image(self, node: ir.Image, rec: _Recorder) -> None:
+    def _image(self, node: ir.Image, rec: _Recorder) -> placement.Placement:
         res, data = self._source_bytes(node)
         obj, fact = self._image_xobject(node, res, data)
         # Image XObject 画进单位正方形：可见框就是 (0, 0, 1, 1)
@@ -620,6 +626,7 @@ class PdfWriter:
                 "flip_v": node.flip_v,
             }
         )
+        return pl
 
     def _group(self, node: ir.Group, rec: _Recorder, ctm: ir.Matrix, depth: int) -> None:
         self.facts.groups += 1
@@ -979,7 +986,7 @@ class PdfWriter:
         )
         return self.pdf.make_indirect(stream)
 
-    def _build_document(self) -> None:
+    def _build_document(self, bookmark_titles: Mapping[int, str] | None = None) -> None:
         import pikepdf
 
         rec = _Recorder()
@@ -987,8 +994,40 @@ class PdfWriter:
             self._check("page_background", "")
             w, h = self.page.width_pt, self.page.height_pt
             rec.ops.append(f"q {_rgb(self.page.background)} rg 0 0 {_num(w)} {_num(h)} re f Q")
-        for child in self.page.children:
-            self._emit(child, rec, ir.IDENTITY, 1)
+        bookmarks = []
+        for index, child in enumerate(self.page.children):
+            placed = self._emit(child, rec, ir.IDENTITY, 1)
+            # Top-level panels share the page's coordinate system. The same
+            # placement just emitted the crop and transform into the PDF.
+            if (
+                bookmark_titles
+                and index in bookmark_titles
+                and placed is not None
+                and isinstance(child, (ir.Image, ir.ImportedPage))
+                and child.opacity > 0
+            ):
+                left, bottom, right, top = placed.bbox
+                left, bottom = max(0.0, left), max(0.0, bottom)
+                right = min(self.page.width_pt, right)
+                top = min(self.page.height_pt, top)
+                # At a touching edge the transform can leave sub-precision
+                # residue, which is not a drawable destination in the PDF.
+                if float(_num(left)) < float(_num(right)) and float(_num(bottom)) < float(
+                    _num(top)
+                ):
+                    number = len(bookmarks) + 1
+                    title = bookmark_titles[index]
+                    bookmarks.append(
+                        pikepdf.OutlineItem(
+                            f"{number}. {title}" if title else str(number),
+                            0,
+                            "FitR",
+                            left=left,
+                            bottom=bottom,
+                            right=right,
+                            top=top,
+                        )
+                    )
         self._build_fonts()
         content = self._serialize(rec)
         page = pikepdf.Dictionary(
@@ -998,11 +1037,14 @@ class PdfWriter:
             Contents=self.pdf.make_indirect(pikepdf.Stream(self.pdf, content)),
         )
         self.pdf.pages.append(pikepdf.Page(page))
+        if bookmarks:
+            with self.pdf.open_outline() as outline:
+                outline.root.extend(bookmarks)
 
-    def write(self, out: Path) -> WriteFacts:
+    def write(self, out: Path, *, bookmark_titles: Mapping[int, str] | None = None) -> WriteFacts:
         import pikepdf
 
-        self._build_document()
+        self._build_document(bookmark_titles)
         out = Path(out)
         _compress_unfiltered(self.pdf)
         # compress_streams=False：qpdf 的 compress_streams 会把源里带 predictor 的 Flate 图片流解码再重压
@@ -1137,7 +1179,9 @@ def write_pdf(
     out: Path,
     provider: HbFaceProvider,
     files: Mapping[str, bytes] | None = None,
+    *,
+    bookmark_titles: Mapping[int, str] | None = None,
 ) -> WriteFacts:
     """IR → PDF 文件。`provider` 解析 `FontResource` → 已加载的脸（按 sha256 身份）；`files` 是
     `FileResource` key → 冻结字节（`sources.read_frozen()` 核过 hash 的那份），面板要它。"""
-    return PdfWriter(page, provider, files).write(out)
+    return PdfWriter(page, provider, files).write(out, bookmark_titles=bookmark_titles)

@@ -64,6 +64,20 @@ beforeEach(async () => {
 })
 
 describe('scope', () => {
+  it('includes the bookmark choice and panel name only for an opted-in canvas PDF', () => {
+    const doc = { ...useDocumentStore.getState().doc, objects: [{ ...panel, name: 'Series A' }] }
+    const { request: plain } = buildExportRequest(inputOf({ doc }))
+    const { request: bookmarked } = buildExportRequest(inputOf({ doc, pdfPanelBookmarks: true }))
+    const { request: image } = buildExportRequest(inputOf({ doc, formats: ['png'], pdfPanelBookmarks: true }))
+    expect(plain).not.toHaveProperty('pdf_panel_bookmarks')
+    expect(plain.canvas?.objects[0]).not.toHaveProperty('bookmark_title')
+    expect(bookmarked.pdf_panel_bookmarks).toBe(true)
+    expect(bookmarked.canvas?.objects[0]).toMatchObject({ bookmark_title: 'Series A' })
+    expect(image).not.toHaveProperty('pdf_panel_bookmarks')
+    expect(image.canvas?.objects[0]).not.toHaveProperty('bookmark_title')
+    expect(snapshotRevision(bookmarked)).not.toBe(snapshotRevision({ ...bookmarked, pdf_panel_bookmarks: undefined }))
+  })
+
   it('默认跟着工作流走', () => {
     expect(defaultScope('fast_edit')).toBe('original')
     expect(defaultScope('layout')).toBe('canvas')

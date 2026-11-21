@@ -158,4 +158,3 @@ describe('penReduce', () => {
     expect(penReduce(s2, { type: 'resume', nodes }, OPTS).state).toBe(s2)
   })
 })
-

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchRuntimePreviewForState } from '@/lib/api'
+import { fetchFigureSnapshotPreview, fetchRuntimePreviewForState } from '@/lib/api'
+import { figureSnapshotPreviewIdentity } from '@/lib/figureSnapshotPreview'
+import type { FigureSnapshot } from '@/types/document'
 
 /**
  * runtime 面板「还没有引擎图」时挂的预览：**按面板此刻的 overrides** 取（QA-WIN-21）。
@@ -27,16 +29,22 @@ export function useRuntimePreview(
   overrides: readonly unknown[],
   enabled: boolean,
   nonce = 0,
+  snapshot?: FigureSnapshot,
 ): RuntimePreview {
   // 变体串（文件 + overrides 内容），与 `renderKeyOf` 同口径：runtime 面板没有来源驱动的 guard 后缀
-  const variant = `${fileId} ${JSON.stringify(overrides)}`
+  const snapshotKey = snapshot ? figureSnapshotPreviewIdentity(snapshot) : null
+  const variant = `${fileId} ${JSON.stringify(overrides)} ${snapshotKey ?? ''}`
   const [state, setState] = useState<RuntimePreview & { key: string | null }>({ ...IDLE, key: null })
   const urlRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!enabled) return
     const ctrl = new AbortController()
-    void fetchRuntimePreviewForState(fileId, overrides as unknown[], ctrl.signal)
+    const preview = snapshot
+      ? fetchFigureSnapshotPreview(fileId, overrides as unknown[], snapshot, ctrl.signal)
+        .then((got) => ({ blob: new Blob([got.svg], { type: 'image/svg+xml' }), exact: true }))
+      : fetchRuntimePreviewForState(fileId, overrides as unknown[], ctrl.signal)
+    void preview
       .then((got) => {
         if (ctrl.signal.aborted) return
         if (urlRef.current) URL.revokeObjectURL(urlRef.current)

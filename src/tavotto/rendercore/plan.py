@@ -86,6 +86,7 @@ class CompiledPage:
     problems: tuple[dict, ...]
     #: 用到的冻结源，按首次出现顺序（资源 key → FrozenSource）。
     sources: dict[str, FrozenSource]
+    pdf_bookmark_titles: dict[int, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,7 @@ class RenderPlan:
     dropped_hidden: tuple[str, ...] = ()
     problems: tuple[dict, ...] = ()
     sources: dict[str, FrozenSource] = field(default_factory=dict)
+    pdf_bookmark_titles: dict[int, str] = field(default_factory=dict)
 
     @property
     def plan_identity(self) -> str:
@@ -522,6 +524,7 @@ def compile_page(
     faces: FaceProvider,
     background: RGB | None = (1.0, 1.0, 1.0),
     math: dict | None = None,
+    pdf_panel_bookmarks: bool = False,
 ) -> CompiledPage:
     """画布（毫米、顶原点、z 序对象列表）→ 已校验的 `Page`。
 
@@ -533,6 +536,7 @@ def compile_page(
     problems: list[dict] = []
     dropped: list[str] = []
     children: list[Node] = []
+    pdf_bookmark_titles: dict[int, str] = {}
     for o in objects:
         if not isinstance(o, dict):
             raise PlanError("bad_object", f"对象不是 dict: {o!r}")
@@ -543,6 +547,12 @@ def compile_page(
         node: Node | None
         if kind == "panel":
             node = _panel_node(o, page_h, sources, resources, frozen)
+            if pdf_panel_bookmarks:
+                title = o.get("bookmark_title")
+                # Bind by emitted instance position, even when several panels share a source.
+                title = title[:120] if isinstance(title, str) else ""
+                title = "".join(ch for ch in title if ch.isprintable() or ch.isspace())
+                pdf_bookmark_titles[len(children)] = " ".join(title.split())
         elif kind == "text":
             try:
                 user_face, user_cjk = _user_faces(o, faces, problems)
@@ -572,7 +582,7 @@ def compile_page(
         if node is not None:
             children.append(node)
     page = validate(Page(page_w, page_h, tuple(children), resources, background))
-    return CompiledPage(page, tuple(dropped), tuple(problems), frozen)
+    return CompiledPage(page, tuple(dropped), tuple(problems), frozen, pdf_bookmark_titles)
 
 
 def compile_plan(
@@ -597,6 +607,7 @@ def compile_plan(
         faces=faces,
         background=background,
         math=math,
+        pdf_panel_bookmarks=req.pdf_panel_bookmarks,
     )
     ref = exportreq.render_plan_ref(
         req,
@@ -617,6 +628,7 @@ def compile_plan(
         dropped_hidden=compiled.dropped_hidden,
         problems=compiled.problems,
         sources=compiled.sources,
+        pdf_bookmark_titles=compiled.pdf_bookmark_titles,
     )
 
 

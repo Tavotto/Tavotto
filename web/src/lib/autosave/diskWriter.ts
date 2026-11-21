@@ -18,7 +18,8 @@
  *   * **收到 409 基线一个都不推进**：推进等于承认对方那版是我的起点，下一次写就会
  *     把它盖掉。
  */
-import { ApiError, REVISION_ABSENT, type DiskDocumentSummary } from '@/lib/api'
+import { ApiError, REVISION_ABSENT, type PutAutosaveResult, type DiskDocumentSummary } from '@/lib/api'
+import type { ChartSourceReceipt } from '@/lib/chartSourceReceipts'
 import type { FigureSnapshotSaveContext } from '@/lib/figureSnapshot'
 import type { FigureSnapshot, ProjectDocument } from '@/types/document'
 
@@ -91,6 +92,7 @@ export interface WrittenInfo {
   pj: string | null
   metadata: WrittenMetadata
   figureSnapshots?: Record<string, FigureSnapshot>
+  chartSources?: ChartSourceReceipt[]
   snapshotContext?: FigureSnapshotSaveContext
 }
 
@@ -102,7 +104,10 @@ export interface DiskApi {
     baseline: number | undefined,
     revision: string | undefined,
     pj: string | null,
-  ) => Promise<{ saved_at?: number; revision?: string | null; metadata?: WrittenMetadata; figure_snapshots?: Record<string, FigureSnapshot> }>
+  ) => Promise<Pick<PutAutosaveResult, 'metadata' | 'figure_snapshots' | 'chart_sources'> & {
+    saved_at?: number
+    revision?: string | null
+  }>
   fetch: (id: string, pj: string | null) => Promise<{ revision: string | null } | null>
   fetchSummary: (id: string, pj: string | null) => Promise<DiskDocumentSummary | null>
 }
@@ -297,7 +302,9 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
         ports.onWritten(id, res.saved_at ?? Date.now(), {
           pj,
           metadata: res.metadata,
-          ...(res.figure_snapshots !== undefined ? { figureSnapshots: res.figure_snapshots, snapshotContext } : {}),
+          ...(res.figure_snapshots !== undefined || res.chart_sources !== undefined ? { snapshotContext } : {}),
+          ...(res.figure_snapshots !== undefined ? { figureSnapshots: res.figure_snapshots } : {}),
+          ...(res.chart_sources !== undefined ? { chartSources: res.chart_sources } : {}),
         })
         ports.outcome(trigger, 'ok')
       })

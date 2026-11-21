@@ -6159,7 +6159,7 @@ def _measure_manifest(
                 entry["inset_of"] = el["inset_of"]
             # 只读事实（不在 editable、不进文档）：这根轴的范围此刻是不是自动缩放算出来的。`set_[xy]lim` 会把它关掉。
             # TAF 的「目标范围外改动」靠它区分「自动缩放跟着变」与「显式改了坐标范围」（figureverify._auto_prop）。
-            # `peers`：共享这根轴范围的兄弟轴（sharex / twinx 的另一半），它们的范围会跟着这根轴的目标一起变。
+            # `peers`：共享该方向范围的其他已登记轴。空列表是实际观测，缺键是未取得证据。
             autoscale: dict = {}
             peers: dict[str, list[str]] = {}
             for axis in ("x", "y"):
@@ -6169,13 +6169,11 @@ def _measure_manifest(
                 autoscale[axis] = bool(probe())
                 try:
                     sibs = getattr(artist, f"get_shared_{axis}_axes")().get_siblings(artist)
-                except Exception:  # noqa: BLE001 —— 取不到兄弟：不发，判据按「只有自己」处理
-                    sibs = []
-                names = sorted(
+                except Exception:  # noqa: BLE001 —— 无法读取时不发该方向的证据
+                    continue
+                peers[axis] = sorted(
                     g for a in sibs if a is not artist and (g := gid_by_artist_id.get(id(a)))
                 )
-                if names:
-                    peers[axis] = names
             # `expected`：自动缩放**此刻会算出**的范围（`autoscale_view` 的结果，不落到图上）。autoscale 开关只是最终状态——
             # `set_xlim(auto=True)`、先设再 `set_autoscalex_on(True)` 都会让它为 True 而范围其实是显式写的，数据范围（dataLim）
             # 的变化也分不开「自动跟着数据」与「显式写了个恰好包住的范围」；唯一分得开的事实是：实际范围 == 自动缩放会给的范围。

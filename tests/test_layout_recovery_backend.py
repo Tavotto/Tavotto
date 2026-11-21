@@ -25,6 +25,11 @@ import pytest
 from support import linkkit
 from tavotto import app as m
 from tavotto.engine import atomicio, documents, layoutsession, project_watch as engine_watch
+from test_chart_document_assets import (
+    SOURCE_ID,
+    chart as chart_state,
+    reference as chart_reference,
+)
 
 SRC = Path(m.__file__).resolve().parent.parent
 
@@ -744,6 +749,47 @@ def test_a15_pure_runtime_document_is_discoverable_as_unknown_only(client, tmp_p
     assert _owner(client, a, "d_rt")["owner"] == "unknown"
     assert _slot("d_rt").read_bytes() == slot_bytes
     assert not layoutsession.state_path().exists()
+
+
+def test_owner_route_ignores_chart_state_on_schema3_slots(client, tmp_path):
+    """schema 3 槽位里夹带 `chartSource`（没有 `chart`）时，归属旁证不能去解引用
+    `panel["chart"]`——那是 KeyError / 500，一条坏槽位会把整份找回列表打掉。"""
+    pj = _project(client, tmp_path, "p")
+    slot = _doc(1, "旧文档")
+    slot["canvases"][0]["objects"] = [
+        {"id": "o1", "type": "panel", "fileId": "a.svg", "chartSource": {"schema": 1}}
+    ]
+    atomicio.write_json(_slot("d_bad"), slot)
+    assert _owner(client, pj, "d_bad")["owner"] == "unknown"
+
+
+def test_candidates_list_schema3_and_schema4_slots_side_by_side(client, tmp_path):
+    """同一份找回列表里 schema 3 与 schema 4 都读得出来、都不是 invalid：
+    单一存储后它们只由正文 schema 号区分，没有哪个版本要被置灰。"""
+    pj = _project(client, tmp_path, "p")
+    three = _doc(1, "三")
+    three["canvases"][0]["objects"] = [
+        {"id": "o1", "type": "panel", "fileId": "a.svg", "chartSource": {"schema": 1}}
+    ]
+    four = _doc(2, "四")
+    four["schema"] = 4
+    four["canvases"][0]["objects"] = [
+        {
+            "id": "o2",
+            "type": "panel",
+            "fileId": SOURCE_ID,
+            "fileKind": "svg",
+            "chart": chart_state(),
+            "chartSource": chart_reference(),
+        }
+    ]
+    atomicio.write_json(_slot("d_three"), three)
+    atomicio.write_json(_slot("d_four"), four)
+
+    body = _candidates(client, pj, "unknown")
+    by_id = {item["doc_id"]: item for item in body["items"]}
+    assert by_id["d_three"]["status"] == "ok" and by_id["d_three"]["schema"] == 3
+    assert by_id["d_four"]["status"] == "ok" and by_id["d_four"]["schema"] == 4
 
 
 def test_candidates_owned_by_another_project_appear_in_neither_scope(client, tmp_path):

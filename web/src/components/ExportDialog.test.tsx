@@ -1501,6 +1501,9 @@ describe('来源读后端 route（#1209）', () => {
   })
 
   it('重开对话框：新 route 到之前读到的是「没有 route」，不拿旧 offers 禁用 / 放开 EPS', async () => {
+    // 让重开后那次 validate 一定晚于本用例的断言：否则快机器上 act 会把回包一起冲掉，
+    // 断言读到的是新 route，测不到「旧 offers 不能当退路」这件事。
+    routeDelayMs = 50
     routeOf = (req) => ({
       scope: req.scope,
       formats: req.formats,

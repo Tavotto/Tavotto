@@ -127,6 +127,22 @@ order: 190
   替换 `pool.build_owned`；不另建状态机。省略 `execution` = safe，逐字节不变。
 - 脚本自己的异常以 `script_error` + 真实 traceback 收场（进程放行跑完、退出码保留），不吞；native 路径不自动修复缺依赖。
 
+## 显式输入声明的native捕获
+
+显式输入的native捕获复用`inputdeclaration`唯一freezer：desktop按实际cwd与原运行配置匹配，terminal只在正面已知无参数且项目/入口/cwd匹配时可取得候选；未知参数不猜配置。父侧在原认证ACK中传私有候选，`nativerelay`只搬运调用方提供的通用握手字段，不解析引擎语义；无声明ACK/argv/事件保持。runner在实际源码读取前begin、绑定真实编译字节与执行id，每次barrier在引擎读取前finish，成功continue只resume原baseline，变化后不能重新授证。`NativeSession`只在首次进入同execution_id/snapshot_epoch的屏障保存私有fact，释放/EOF沿原状态机撤当前资格；getter不查当前磁盘。build与render/continue共用原Figure锁；仅有正证的本地build响应加原执行id，回执拒绝旧响应搭配新屏障。两条原有native回执入口复用同一投影，缺省JSON/identity不变；full graph不进SSE/公开状态。看护`tests/bridge/test_bridge_declared_inputs.py`、`tests/native/test_native_declared_inputs.py`、`tests/test_declared_input_native_launch.py`。
+
+同一次finish在自有out_dir封存原输入字节时，barrier私有帧可另携`captured_input_archive` opaque descriptor，与fact一起冻结在同一epoch slot。两个getter共享原资格判据、不读磁盘；重复barrier不能追加/替换附件，缺字段的新epoch不继承旧slot。同lineage未变时可复用同一cache键，键不作为执行身份；真实新屏障仍需显式同版传递。回执从父已知缓存根核每份字节，并在IO后再核epoch/execution/fact/descriptor，EOF或release使当前附件失效，已保存历史不重写。封存详情与预算只有`preparation-and-receipts.md`一份权威。看护`tests/native/test_native_input_archive.py`、`tests/test_declared_input_archive_receipt.py`。
+
+## ggplot2 原生适配器
+
+适配器通过 `OwnedLaunch.ggplot_target` 在现有拥有者、注册表、认证传输和环境租约中启动 R。调用方指定项目内的 R 脚本、脚本生成的对象名和 SVG 点数尺寸。R 在完成控制握手、确认绘制包可用后执行脚本。用户标准输出仍由拥有者排空。
+
+当前适配器支持普通文本标题的 RGB 颜色。它保留单次 `ggplot_build()` 和 gtable 的结果，按全量修改列表从原始 gtable 生成 SVG 预览或 Cairo PDF。两种设备分别绘制。更改画笔颜色不重跑统计图层与随机位置计算。显式输入声明仍须由来源适配器取得证据，现有 R 启动入口会拒绝这种声明。
+
+`tests/test_native_ggplot_capture.py` 使用真实 R 核对颜色变化、其它 SVG 内容、统计调用次数、随机数状态及撤销结果。用例也核对桌面拥有者取消后由原注册表与租约完成收尾。
+
+桌面显式启动和保存恢复的使用边界见[原生 ggplot2](../../implementation/tavotto-core-v02-ggplot2.md)。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。

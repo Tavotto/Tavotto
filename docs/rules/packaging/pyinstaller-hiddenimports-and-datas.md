@@ -43,6 +43,10 @@ order: 50
   CI 两条冒烟腿、nightly）先跑 `python scripts/build_mcp_widget.py`；spec 只收与本次源码指纹一致的那一份，缺了或过期拒绝打包；
   `smoke_app.py --exe` 要求冻结 `tavotto-cli mcp` 的体检报画布可用。漏了的表现是宿主工具照常、内嵌画布没有，体检报
   「canvas widget file is missing」（Windows Lab，v0.19.0）。看护 `tests/test_desktop_mcp_serve.py`。
+- **固定图表任务在外部工作解释器加载源码**：`tavotto.spec` 将计算 SVG 的包根、协议、渲染和
+  纯 Python SVG/EPS 契约作为磁盘文件收进。PyInstaller 归档中的模块只对父进程可见。
+  `tests/test_runtime_build.py::test_packaged_fixed_chart_renders_from_spec_sources` 用实际清单
+  在隔离解释器检验完整显示框渲染，并删除协议文件验证缺失会失败。
 - **包内数据文件要显式进 PyInstaller 的 datas**（2026-09-02，ADR 0039）：
   `Analysis` 只把 .py 编进 PYZ，`tavotto/profiles/publication.json` 与
   `tavotto/resources/tutorial_project/` 这类数据在冻结产物里**本来是没有的**

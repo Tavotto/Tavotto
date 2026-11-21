@@ -1,3 +1,8 @@
+import { PRODUCT_NAME } from './brand'
+import type { ChartSourceReceipt } from './chartSourceReceipts'
+import { figureSnapshotPreviewIdentity, sameFigureSnapshotReference } from './figureSnapshotPreview'
+import { figureOriginIdentity, sameFigureOrigin, validFigureOrigin, validFigureSnapshot } from './figureSnapshot'
+import type { ProjectFileAxis, ProjectFileEdit, ProjectFileRead, ProjectFileRecovery, ProjectFileReservation, ProjectFileResult, ProjectFileView } from './projectFileSession'
 import { classifyArtifactFailure } from '@/lib/artifactReason'
 import type { RenderPurpose } from '@/lib/renderPurpose'
 import { ArtifactValidationError, FIGSIZE_SOURCE_POLICY, verifiedSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
@@ -6,13 +11,11 @@ import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
 import type { ExportRoute } from '@/lib/exportRoute'
 import type { FontCatalog } from '@/lib/fontCatalog'
 import type { Remedy } from '@/lib/fixRemedy'
-import type {
-  FigureDocument,
-  FigureSnapshot,
-  ProjectDocument,
-  SourceFont,
-} from '@/types/document'
+import type { FigureExecutionProof } from '@/lib/figureExecutionProof'
+import type { ChartSourceRef, FigureDocument, FigureOrigin, FigureSnapshot, PanelChartState, ProjectDocument, SourceFont } from '@/types/document'
+import { SCHEMA_CURRENT } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
+import type { ComputedRenderFrame } from '@/lib/chartFrame'
 import type { IdentityRename } from '@/lib/overrideIdentity'
 import type { PreviewMetadata } from '@/lib/previewBudget'
 import type { ScriptArgsSchema } from '@/lib/scriptArgsForm'
@@ -448,6 +451,17 @@ export const fetchPanels = () => jsonFetch<PanelsResponse>('/api/panels')
 export const fetchPanelStem = (id: string) =>
   jsonFetch<{ id: string; stem: string }>(`/api/panel-stem?id=${encodeURIComponent(id)}`)
 
+/** 精确磁盘 id 的只读事实；不授予执行、几何编辑或发布资格。 */
+export interface PanelSourceFacts {
+  id: string
+  stem: string
+  kind: PanelInfo['kind']
+  original_spec: AssetOriginalSpec
+}
+
+export const fetchPanelSourceFacts = (id: string, pj?: string | null) =>
+  jsonFetch<PanelSourceFacts>(`/api/panel-stem?id=${encodeURIComponent(id)}&original_spec=1`, undefined, pj)
+
 /**
  * 项目接入就绪度。**只读诊断**：后端不跑用户脚本、不 probe、不写盘、不发事件。
  *
@@ -871,17 +885,17 @@ export const saveProjectAs = (parent: string, pj?: string | null) =>
  */
 const stamp = (mtime?: number) => (mtime ? `&m=${mtime}` : '')
 
-export const renderUrl = (id: string, bucket: number, mtime?: number) =>
-  apiUrl(`/api/render?id=${encodeURIComponent(id)}&w=${bucket}${stamp(mtime)}`)
+export const renderUrl = (id: string, bucket: number, mtime?: number, pj: string | null = currentProjectId()) =>
+  apiUrlFor(`/api/render?id=${encodeURIComponent(id)}&w=${bucket}${stamp(mtime)}`, pj)
 
-export const fileUrl = (id: string, mtime?: number) =>
-  apiUrl(`/api/file?id=${encodeURIComponent(id)}${stamp(mtime)}`)
+export const fileUrl = (id: string, mtime?: number, pj: string | null = currentProjectId()) =>
+  apiUrlFor(`/api/file?id=${encodeURIComponent(id)}${stamp(mtime)}`, pj)
 
 /** materialized cache 里的预览 SVG（runtime 面板重开时的首帧占位）。
  * `nonce` 是重跑后的换代计数（runtimeAssetStore.previewNonce）：同一 URL
  * 的 <img> 不会自己重取，重新运行刷新了 cache 之后靠它换 src。 */
-export const runtimePreviewUrl = (id: string, nonce?: number) =>
-  apiUrl(`/api/runtime/preview?id=${encodeURIComponent(id)}${nonce ? `&t=${nonce}` : ''}`)
+export const runtimePreviewUrl = (id: string, nonce?: number, pj: string | null = currentProjectId()) =>
+  apiUrlFor(`/api/runtime/preview?id=${encodeURIComponent(id)}${nonce ? `&t=${nonce}` : ''}`, pj)
 
 /**
  * **这个文档状态**的 runtime 预览（QA-WIN-21）。`runtimePreviewUrl` 给的是后端「最近一次渲染」的
@@ -894,13 +908,14 @@ export async function fetchRuntimePreviewForState(
   id: string,
   patches: unknown[],
   signal?: AbortSignal,
+  pj: string | null = currentProjectId(),
 ): Promise<{ blob: Blob; exact: boolean } | null> {
-  const res = await fetch(apiUrl('/api/runtime/preview'), withProject({
+  const res = await fetch(apiUrlFor('/api/runtime/preview', pj), withProjectFor({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, patches }),
     signal,
-  }))
+  }, pj))
   if (res.status === 404) return null
   if (!res.ok) throw new Error(`runtime preview ${res.status}`)
   return { blob: await res.blob(), exact: res.headers.get('X-Tavotto-Preview-Exact') === '1' }
@@ -934,12 +949,13 @@ export const panelSrc = (
   kind: string,
   bucket: number,
   mtime?: number,
+  pj: string | null = currentProjectId(),
 ): string | null => {
   if (kind === 'raster')
-    return BROWSER_RASTER_EXTS.has(extOf(id)) ? fileUrl(id, mtime) : renderUrl(id, bucket, mtime)
-  if (kind === 'svg') return fileUrl(id, mtime)
-  if (kind === 'pdf') return renderUrl(id, bucket, mtime)
-  if (kind === 'runtime') return runtimePreviewUrl(id, mtime)
+    return BROWSER_RASTER_EXTS.has(extOf(id)) ? fileUrl(id, mtime, pj) : renderUrl(id, bucket, mtime, pj)
+  if (kind === 'svg') return fileUrl(id, mtime, pj)
+  if (kind === 'pdf') return renderUrl(id, bucket, mtime, pj)
+  if (kind === 'runtime') return runtimePreviewUrl(id, mtime, pj)
   return null
 }
 
@@ -969,8 +985,10 @@ export interface FetchedLayout {
   file: string | null
 }
 
-export async function fetchLayout(name: string): Promise<FetchedLayout> {
-  const res = await fetch(apiUrl(`/api/layouts/${encodeURIComponent(name)}`), withProject())
+export async function fetchLayout(name: string, pj?: string | null): Promise<FetchedLayout> {
+  const path = `/api/layouts/${encodeURIComponent(name)}`
+  const res = pj === undefined ? await fetch(apiUrl(path), withProject())
+    : await fetch(apiUrlFor(path, pj), withProjectFor(undefined, pj))
   if (!res.ok) {
     let body: Record<string, unknown> = {}
     try {
@@ -990,6 +1008,8 @@ export async function fetchLayout(name: string): Promise<FetchedLayout> {
 }
 
 export interface SavedLayout {
+  project_file?: ProjectFileResult
+  chart_sources?: ChartSourceReceipt[]
   /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
   figure_snapshots?: Record<string, FigureSnapshot>
   ok: boolean
@@ -1015,11 +1035,13 @@ export const saveLayout = (
   name: string,
   doc: FigureDocument | ProjectDocument,
   baseRevision?: string,
-  opts?: { target?: 'project' },
+  opts?: { target?: 'project'; pj?: string | null; workingDocId?: string; bindingIntent?: number },
 ) => {
   const params = new URLSearchParams()
   if (baseRevision !== undefined) params.set('base_revision', baseRevision)
   if (opts?.target) params.set('target', opts.target)
+  if (opts?.workingDocId !== undefined) params.set('working_doc_id', opts.workingDocId)
+  if (opts?.bindingIntent !== undefined) params.set('binding_intent', String(opts.bindingIntent))
   const qs = params.toString()
   return jsonFetch<SavedLayout>(
     `/api/layouts/${encodeURIComponent(name)}` + (qs ? `?${qs}` : ''),
@@ -1028,7 +1050,8 @@ export const saveLayout = (
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(doc),
     },
-  )
+    opts?.pj,
+  ).then(normalizeProjectFileResult)
 }
 
 /* --------------------------- 文档自动保存（磁盘） ---------------------------- */
@@ -1061,6 +1084,8 @@ export const REVISION_ABSENT = 'absent'
  * `owner_unknown` = 这次请求的项目身份已失效，归属没记。旧后端不发 = `undefined`（不知道，不当 `ok`）。
  */
 export interface PutAutosaveResult {
+  project_file?: ProjectFileResult
+  chart_sources?: ChartSourceReceipt[]
   /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
   figure_snapshots?: Record<string, FigureSnapshot>
   ok: boolean
@@ -1086,10 +1111,13 @@ export const putAutosave = (
   base?: number,
   baseRevision?: string,
   pj?: string | null,
+  opts?: { projectFileEdit: ProjectFileEdit; projectFileRecovery?: ProjectFileRecovery },
 ) => {
   const q = new URLSearchParams()
   if (base !== undefined) q.set('base', String(base))
   if (baseRevision !== undefined) q.set('base_revision', baseRevision)
+  if (opts) q.set('project_file_edit', JSON.stringify(opts.projectFileEdit))
+  if (opts?.projectFileRecovery) q.set('project_file_recovery', JSON.stringify(opts.projectFileRecovery))
   const qs = q.toString()
   return jsonFetch<PutAutosaveResult>(
     `/api/autosave/${encodeURIComponent(docId)}${qs ? `?${qs}` : ''}`,
@@ -1099,8 +1127,105 @@ export const putAutosave = (
       body: JSON.stringify(doc),
     },
     pj,
-  )
+  ).then(value => {
+    normalizeProjectFileResult(value)
+    if (value.project_file?.state === 'accepted' && value.project_file.edit.autosave_revision !== value.revision) {
+      value.project_file = { state: 'unavailable' }
+    }
+    return value
+  })
 }
+
+function normalizeProjectFileResult<T extends { project_file?: ProjectFileResult }>(value: T): T {
+  if (value.project_file !== undefined) value.project_file = validProjectFileResult(value.project_file)
+  return value
+}
+
+function validProjectFileResult(value: unknown): ProjectFileResult {
+  if (!value || typeof value !== 'object') return { state: 'unavailable' }
+  const result = value as ProjectFileResult
+  if ((result.state === 'bound' || result.state === 'accepted') && validProjectFileView(result)) return result
+  if (result.state === 'superseded' || result.state === 'unconfirmed' || result.state === 'unavailable' || result.state === 'skipped') return result
+  return { state: 'unavailable' }
+}
+
+/** 元信息等待有界；宿主忽略 abort 时也释放保存链，正文 API 的行为不变。 */
+async function projectFileRequest<T>(request: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => { controller.abort(); reject(new Error('project_file_timeout')) }, 5000)
+  })
+  try {
+    return await Promise.race([request(controller.signal), timeout])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** 后端工作副本元信息；与可携的 schema 3/4 正文分离。只有明确 404 才兼容旧本机绑定。 */
+export async function fetchProjectFile(documentId: string, pj: string): Promise<ProjectFileRead> {
+  try {
+    const value = await projectFileRequest(signal => jsonFetch<ProjectFileRead>(
+      `/api/layout-session/project-file/${encodeURIComponent(documentId)}`, { signal }, pj,
+    ))
+    if (validProjectFileView(value)) return value
+    // A structureless reply (old backend / proxy / catch-all 200) means the
+    // endpoint is absent, not that the binding is momentarily unreadable:
+    // blocking saves there loses user edits. A body that *claims* the
+    // contract (has `status`/`version`) but cannot be understood — a future
+    // version or a malformed view — still fails closed.
+    const record = value && typeof value === 'object' ? (value as Record<string, unknown>) : null
+    if (record?.status === 'unavailable') return { version: 1, status: 'unavailable' }
+    if (record?.status !== undefined || record?.version !== undefined) {
+      return { version: 1, status: 'unavailable' }
+    }
+    return { status: 'unsupported' }
+  } catch (error) {
+    if (error instanceof ApiError && (error.status === 404 || error.status === 405)) return { status: 'unsupported' }
+    throw error
+  }
+}
+
+function validProjectFileView(value: unknown): value is ProjectFileView {
+  if (!value || typeof value !== 'object') return false
+  const view = value as ProjectFileView
+  const axis = (v: unknown): boolean => v === null || !!v && typeof v === 'object'
+    && typeof (v as Exclude<ProjectFileAxis, null>).editor_id === 'string'
+    && Number.isSafeInteger((v as Exclude<ProjectFileAxis, null>).sequence)
+    && (v as Exclude<ProjectFileAxis, null>).sequence > 0
+  return view.version === 1 && view.status === 'ok' && Number.isSafeInteger(view.intent_sequence)
+    && view.intent_sequence >= 0 && !!view.edit && typeof view.edit.known === 'boolean'
+    && (view.edit.autosave_revision === null || typeof view.edit.autosave_revision === 'string') && axis(view.edit.axis)
+    && (view.binding === null || !!view.binding && Number.isSafeInteger(view.binding.sequence) && view.binding.sequence > 0
+      && typeof view.binding.name === 'string' && typeof view.binding.file === 'string'
+      && (view.binding.revision === null || typeof view.binding.revision === 'string') && typeof view.binding.dirty === 'boolean')
+}
+
+export async function reserveProjectFile(documentId: string, pj: string, body: {
+  name: string; autosave_revision: string | null; axis: ProjectFileAxis; expected_binding_sequence: number | null
+}): Promise<ProjectFileReservation> {
+  try {
+    return await projectFileRequest(signal => jsonFetch<ProjectFileReservation>(`/api/layout-session/project-file/${encodeURIComponent(documentId)}/reserve`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal,
+    }, pj))
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return { state: 'unsupported' }
+    throw error
+  }
+}
+
+export const confirmProjectFile = (documentId: string, pj: string, body: {
+  name: string; intent_sequence: number; revision: string
+}) => projectFileRequest(signal => jsonFetch<ProjectFileResult>(
+  `/api/layout-session/project-file/${encodeURIComponent(documentId)}/confirm`,
+  { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal }, pj,
+)).then(validProjectFileResult)
+
+export const cancelProjectFile = (documentId: string, pj: string, sequence: number) =>
+  projectFileRequest(signal => jsonFetch<{ state: 'cancelled' | 'superseded' }>(
+    `/api/layout-session/project-file/${encodeURIComponent(documentId)}/intent/${sequence}`, { method: 'DELETE', signal }, pj,
+  ))
 
 /** 读到的一份自动保存：`revision` 来自响应头，是后续写入的基线 */
 export interface FetchedAutosave {
@@ -1173,7 +1298,7 @@ export async function probeAutosave(docId: string, pj?: string | null): Promise<
 }
 
 /** 磁盘那一份的摘要；没有这份文件返回 null */
-export const fetchAutosaveSummary =(docId: string, pj?: string | null) =>
+export const fetchAutosaveSummary = (docId: string, pj?: string | null) =>
   jsonFetch<DiskDocumentSummary>(
     `/api/autosave/${encodeURIComponent(docId)}/summary`,
     undefined,
@@ -1217,9 +1342,33 @@ export type SessionIndexStatus = 'ok' | 'missing' | 'degraded' | 'recovered'
  * - `unsupported`：404 = 没有这组端点（旧后端 / playground / 嵌入画布），沿用受约束的兼容分支；
  * - `unavailable`：网络 / 超时 / 5xx / 401 / 403——**不是** 404，不许当旧端点放行。
  */
+export type OpenIntent =
+  | { version: 1; status: 'ok'; sequence: number; snapshot: string; latest: { doc_id: string; pointer: 'last' | 'pending' } | null }
+  | { version: 1; status: 'stale' | 'untracked'; snapshot: string }
+  | { version: 1; status: 'unavailable' }
+
+function parseOpenIntent(raw: unknown): OpenIntent | undefined {
+  if (raw === undefined) return undefined
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { version: 1, status: 'unavailable' }
+  const r = raw as Record<string, unknown>
+  const keys = (...names: string[]) => Object.keys(r).length === names.length && names.every((k) => Object.hasOwn(r, k))
+  if (r.version !== 1) return { version: 1, status: 'unavailable' }
+  if (r.status === 'unavailable' && keys('version', 'status')) return { version: 1, status: 'unavailable' }
+  if (typeof r.snapshot !== 'string' || !r.snapshot) return { version: 1, status: 'unavailable' }
+  if ((r.status === 'stale' || r.status === 'untracked') && keys('version', 'status', 'snapshot')) return { version: 1, status: r.status, snapshot: r.snapshot }
+  if (r.status !== 'ok' || !keys('version', 'status', 'sequence', 'snapshot', 'latest') || !Number.isSafeInteger(r.sequence) || (r.sequence as number) < 0) return { version: 1, status: 'unavailable' }
+  if (r.latest !== null) {
+    if (!r.latest || typeof r.latest !== 'object' || Array.isArray(r.latest)) return { version: 1, status: 'unavailable' }
+    const v = r.latest as Record<string, unknown>
+    if (Object.keys(v).length !== 2 || typeof v.doc_id !== 'string' || !v.doc_id || !['last', 'pending'].includes(String(v.pointer))) return { version: 1, status: 'unavailable' }
+  }
+  return raw as OpenIntent
+}
+
 export type SessionFetch =
   | {
       kind: 'ok'
+      open_intent?: OpenIntent
       last: SessionPointer | null
       prev: SessionPointer | null
       pending: SessionPointer | null
@@ -1242,12 +1391,13 @@ function parseSessionRef(v: unknown): SessionPointer | null {
 
 const INDEX_STATUSES: readonly SessionIndexStatus[] = ['ok', 'missing', 'degraded', 'recovered']
 
-export async function fetchLayoutSessionResult(pj?: string | null): Promise<SessionFetch> {
+export async function fetchLayoutSessionResult(pj?: string | null, opts?: { includeOpenIntent: true }): Promise<SessionFetch> {
   try {
-    const body = await jsonFetch<Record<string, unknown>>('/api/layout-session', undefined, pj)
+    const body = await jsonFetch<Record<string, unknown>>(`/api/layout-session${opts?.includeOpenIntent ? '?include_open_intent=1' : ''}`, undefined, pj)
     const index = INDEX_STATUSES.find((s) => s === body?.index) ?? 'ok'
     return {
       kind: 'ok',
+      ...(opts?.includeOpenIntent && body?.open_intent !== undefined ? { open_intent: parseOpenIntent(body.open_intent) } : {}),
       last: parseSessionRef(body?.last),
       prev: parseSessionRef(body?.prev),
       pending: parseSessionRef(body?.pending),
@@ -1255,7 +1405,10 @@ export async function fetchLayoutSessionResult(pj?: string | null): Promise<Sess
     }
   } catch (e) {
     if (e instanceof ApiError) {
-      return e.status === 404 ? { kind: 'unsupported' } : { kind: 'unavailable', status: e.status }
+      // A backend that does not implement this namespace answers 404/405. That is
+      // "unsupported", never a transient outage.
+      if (e.status === 404 || e.status === 405) return { kind: 'unsupported' }
+      return { kind: 'unavailable', status: e.status }
     }
     return { kind: 'unavailable', status: null }
   }
@@ -1279,11 +1432,11 @@ export async function fetchLayoutSession(
 export interface PutLayoutSessionLastResult {
   ok: boolean
   last: LayoutSessionLast | null
-  state?: 'durable' | 'pending'
+  state?: 'durable' | 'pending' | 'superseded' | 'unconfirmed'
   pending?: LayoutSessionLast | null
 }
 
-export const putLayoutSessionLast = (ref: { doc_id: string; name: string }, pj?: string | null) =>
+export const putLayoutSessionLast = (ref: { doc_id: string; name: string; repair?: true }, pj?: string | null) =>
   jsonFetch<PutLayoutSessionLastResult>(
     '/api/layout-session/last',
     { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ref) },
@@ -1336,7 +1489,7 @@ export async function fetchLayoutOwnerEvidence(
         : {}),
     }
   } catch (e) {
-    return e instanceof ApiError && e.status === 404 ? 'unsupported' : 'unavailable'
+    return e instanceof ApiError && (e.status === 404 || e.status === 405) ? 'unsupported' : 'unavailable'
   }
 }
 
@@ -1453,7 +1606,7 @@ export async function fetchRecoveryCandidates(
       index: INDEX_STATUSES.find((s) => s === body?.index) ?? 'ok',
     }
   } catch (e) {
-    return e instanceof ApiError && e.status === 404 ? 'unsupported' : 'unavailable'
+    return e instanceof ApiError && (e.status === 404 || e.status === 405) ? 'unsupported' : 'unavailable'
   }
 }
 
@@ -1520,6 +1673,12 @@ export interface LayoutVersionMeta {
   description: string
   objects: number
   page?: { w: number; h: number }
+  /**
+   * 节点正文的 schema（2 = 单画布；3 / 4 = 整份项目）。恢复按它分派「只盖当前
+   * 画布」还是「换整份项目」。旧后端不发这个字段 = 不知道；调用方按「不知道」
+   * 处理，不拿 `page` 在不在去猜。
+   */
+  schema?: number
   /**
    * 这个检查点拍的是**哪一张画布**（R-03）。
    * 检查点存的是激活画布的内容，却按 documentId（整个项目）归档；不记下画布
@@ -1742,9 +1901,7 @@ export const fetchTimeline = (
 
 /** 节点缩略图的地址（`<img src>`）。没有缩略图的节点别调它。 */
 export const versionThumbUrl = (docId: string, v: Pick<LayoutVersionMeta, 'id' | 'thumb'>) =>
-  apiUrl(
-    `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(v.id)}/thumb?f=${v.thumb ?? ''}`,
-  )
+  apiUrl(`/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(v.id)}/thumb?f=${v.thumb ?? ''}`)
 
 /** 给节点挂缩略图。`pj` = 拍节点那一刻的项目（关项目 / 回主页时它随后就变了） */
 export const putVersionThumb = (
@@ -1760,9 +1917,10 @@ export const putVersionThumb = (
     pj,
   )
 
-export const fetchVersionDoc = (docId: string, vid: string) =>
-  jsonFetch<{ doc: FigureDocument } & LayoutVersionMeta>(
+export const fetchVersionDoc = (docId: string, vid: string, pj?: string | null) =>
+  jsonFetch<{ doc: FigureDocument | ProjectDocument } & LayoutVersionMeta>(
     `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}`,
+    undefined, pj,
   )
 
 export const createVersion = (
@@ -1774,7 +1932,12 @@ export const createVersion = (
     /** 用户起的名字才是命名节点（ADR 0101）；程序起的名字（「恢复前」）不带它 */
     named?: boolean
     moment?: LayoutMoment
-    doc: FigureDocument
+    /**
+     * 节点正文。schema 2 = 单画布节点（既有检查点）；schema 3 / 4 = 整份项目节点
+     * （原地升级的备份原语 `takeProjectCheckpoint`）。服务端本来就存整份载荷，
+     * `validate_document` 按 schema 号校验，版本链这一侧不再把项目文档压成一张画布。
+     */
+    doc: FigureDocument | ProjectDocument
     canvasId?: string
     canvasName?: string
   },
@@ -1934,8 +2097,14 @@ export type ExportObject =
   | (ExportBox & ArtifactRequestFields & {
       type: 'panel'
       figure_snapshot?: FigureSnapshot
+      figure_origin?: FigureOrigin
+      chart?: PanelChartState
+  chart_source?: ChartSourceRef
+      chart_render_profile?: 'legacy-scaffold/1' | 'native-manifest/1' | 'native-manifest/2'
       id: string
-      overrides?: { gid: string; prop: string; value: unknown }[]
+      /** Optional user-assigned panel name for an opted-in PDF bookmark. */
+      bookmark_title?: string
+      overrides?: { gid: string; prop: string; value: unknown; identity?: string }[]
       /** 0–1 归一化、top-origin，与 PanelObject.crop 同构，原样直传 */
       crop?: { x: number; y: number; w: number; h: number }
       /** 0/90/180/270；x/y/w/h 已是旋转后的落位，后端只负责把内容转进去 */
@@ -2067,7 +2236,11 @@ export type ExportObject =
 export type ExportOriginalSource = ArtifactRequestFields & {
   figure_id: string
   figure_snapshot?: FigureSnapshot
-  overrides?: { gid: string; prop: string; value: unknown }[]
+  figure_origin?: FigureOrigin
+  chart?: PanelChartState
+  chart_source?: ChartSourceRef
+  chart_render_profile?: 'legacy-scaffold/1' | 'native-manifest/1' | 'native-manifest/2'
+  overrides?: { gid: string; prop: string; value: unknown; identity?: string }[]
   w_mm?: number | null
   h_mm?: number | null
   px_w?: number | null
@@ -2105,6 +2278,7 @@ export interface ExportRequest {
   include_edited_script?: boolean
   /** 「EPS 按不透明导出」：EPS 里的画布标注把半透明压成 100%，其余格式照旧；不选时不带这个键（ADR 0046 / 0174） */
   eps_opaque?: boolean
+  pdf_panel_bookmarks?: boolean
   document_id?: string | null
   /** 导出开始那一刻的文档快照指纹；回执原样带回来，用来说"期间又被编辑过" */
   document_revision?: string | null
@@ -2171,11 +2345,12 @@ export interface ArtifactIdentity {
 export interface ArtifactProvenance {
   sources: {
     source_id: string
-    origin: 'execution' | 'static'
+    origin: 'execution' | 'static' | 'declarative'
     kind: string
     bytes_sha256: string
     receipt_identity: string | null
     patch_hash: string | null
+    render_revision?: string
   }[]
   execution_receipts: string[]
   receipts: ArtifactReceiptFacts[]
@@ -2187,6 +2362,8 @@ export interface ArtifactProvenance {
 export interface ArtifactReceiptFacts {
   receipt_identity: string
   receipt_id: string
+  /** Explicit file evidence captured during this execution; not whole-input coverage. */
+  captured_inputs?: { version: 1; revision: string }
   completeness: 'complete' | 'partial'
   runtime_rejected: string | null
   pid_check: string | null
@@ -2400,26 +2577,35 @@ export const typesetMath = (items: { src: string; family: string }[]) =>
 
 /* --------------------------- 可复现项目包 ---------------------------------- */
 
+export const CHART_PACKAGE_FORMAT = 'v4'
+
 export interface PackageResult {
   name: string
   url: string
   assets: number
   missing: string[]
+  chart_sources?: number
+  document_format?: typeof CHART_PACKAGE_FORMAT
+  execution_coverage?: {
+    state: 'incomplete' | 'complete'
+    issues: { script: string; reason: string }[]
+  }
 }
 
 export const createPackage = (
   stem: string,
   doc: FigureDocument | ProjectDocument,
   settings: Record<string, unknown>,
+  opts?: { pj?: string | null },
 ) =>
   jsonFetch<PackageResult>('/api/package', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ stem, doc, settings }),
-  })
+  }, opts?.pj)
 
 export interface PackageOpenResult {
-  /** 旧包 schema 2 / 新包 schema 3；switchDocument 统一迁移 */
+  /** 旧包 schema 2 / 新包 schema 3 / 带计算图表的 schema 4；switchDocument 统一迁移 */
   doc: FigureDocument | ProjectDocument
   manifest: {
     created_at?: string
@@ -2432,6 +2618,11 @@ export interface PackageOpenResult {
   missing: string[]
   /** 存在但内容与打包时不一致（sha1 漂移） */
   drifted: string[]
+  /**
+   * schema 4 的来源附件没能装进当前项目（包损坏 / 项目只读）：文档能打开，但下一次
+   * 保存会因缺来源失败。缺省 = 没有这条问题（旧后端不发这个键）。
+   */
+  missing_chart_sources?: string[]
 }
 
 /**
@@ -2484,10 +2675,104 @@ export function importNotebook(file: Blob, name: string, pj?: string | null): Pr
   )
 }
 
-export function openPackage(file: File): Promise<PackageOpenResult> {
+type PackageOpenResponse = PackageOpenResult | { document_format: typeof CHART_PACKAGE_FORMAT }
+
+export function openPackage(file: File): Promise<PackageOpenResponse> {
   const form = new FormData()
   form.append('package', file)
-  return jsonFetch<PackageOpenResult>('/api/package/open', { method: 'POST', body: form })
+  return jsonFetch<PackageOpenResponse>('/api/package/open', { method: 'POST', body: form })
+}
+
+export interface ProjectPackageWarning {
+  reason: string
+  id: string
+}
+
+/** 显式v4检视事实；普通包仍由原openPackage消费。 */
+export interface ProjectPackageInspection {
+  document_format: typeof CHART_PACKAGE_FORMAT
+  doc: ProjectDocument
+  manifest: Record<string, unknown>
+  resources: { target: string; record: Record<string, unknown> }[]
+  missing: string[]
+  warnings: ProjectPackageWarning[]
+  figure_snapshots: number
+  execution_coverage: PackageResult['execution_coverage'] | null
+  captured_inputs?: Record<string, unknown>[]
+}
+
+/** 资源、配置及正文分别提交；503也可能携带已经发布的真实目录。 */
+export interface ProjectPackageInstallation {
+  state: 'resources_installed' | 'publication_unconfirmed' | 'installation_unconfirmed'
+  path: string
+  document_format: typeof CHART_PACKAGE_FORMAT
+  doc: ProjectDocument
+  execution: Record<string, unknown> | null
+  missing: string[]
+  warnings: ProjectPackageWarning[]
+  execution_coverage: PackageResult['execution_coverage'] | null
+  configuration: 'pending' | 'needs_review' | 'ready'
+  configuration_review: {
+    version: 1
+    existing_local_metadata: boolean
+    workdir: WorkdirState | null
+    defaults: { script: string; selection: Record<string, unknown> | null; unavailable_code: string | null }[]
+    issues: { reason: string; script: string | null }[]
+  }
+  document_saved: false
+  configuration_error?: string
+  runconfig_skipped?: { conflict: number; capacity: number }
+  upload_cleanup?: 'pending'
+}
+
+export interface ProjectPackageInstallOptions {
+  destination: string
+}
+
+function isProjectPackageInstallation(value: unknown): value is ProjectPackageInstallation {
+  if (!value || typeof value !== 'object') return false
+  const body = value as Partial<ProjectPackageInstallation>
+  return body.document_format === CHART_PACKAGE_FORMAT && body.doc?.schema === SCHEMA_CURRENT
+    && typeof body.path === 'string' && body.path.length > 0
+    && ['resources_installed', 'publication_unconfirmed', 'installation_unconfirmed'].includes(body.state ?? '')
+    && ['pending', 'needs_review', 'ready'].includes(body.configuration ?? '')
+    && body.document_saved === false && Array.isArray(body.missing) && Array.isArray(body.warnings)
+}
+
+export async function inspectProjectPackage(file: File, pj: string | null): Promise<ProjectPackageInspection> {
+  const form = new FormData()
+  form.append('package', file)
+  const result = await jsonFetch<ProjectPackageInspection>(
+    '/api/package/inspect', { method: 'POST', body: form }, pj,
+  )
+  if (!result || typeof result !== 'object' || result.document_format !== CHART_PACKAGE_FORMAT || result.doc?.schema !== SCHEMA_CURRENT) {
+    throw new ApiError('Unexpected document format.', 400, { code: 'invalid_document' })
+  }
+  return result
+}
+
+export async function installProjectPackage(
+  file: File, options: ProjectPackageInstallOptions, pj: string | null,
+): Promise<ProjectPackageInstallation> {
+  const form = new FormData()
+  form.append('package', file)
+  form.append('options', JSON.stringify({ destination: options.destination }))
+  try {
+    const result = await jsonFetch<ProjectPackageInstallation>(
+      '/api/package/install', { method: 'POST', body: form }, pj,
+    )
+    if (!isProjectPackageInstallation(result)) {
+      throw new ApiError('Unexpected installation receipt.', 400, { code: 'invalid_document', receipt: result })
+    }
+    return result
+  } catch (error) {
+    // A known published tree is recoverable state, not permission to retry the
+    // same destination. Keep the original phase receipt for the dialog.
+    if (error instanceof ApiError && error.status === 503 && isProjectPackageInstallation(error.body)) {
+      return error.body
+    }
+    throw error
+  }
 }
 
 
@@ -3036,9 +3321,22 @@ export interface Manifest {
   save_moment?: 'restored'
   /** 快照没用上的原因（闭集，`figcapture.SAVE_MOMENT_REASONS`）；只用来区分文案之外的诊断，界面照旧说「与存盘文件不同」。 */
   save_moment_unavailable?: string
+  /**
+   * native-manifest/2（计算图表）才有：这次实际 SVG draw 的外框声明（闭式形状
+   * 判据的唯一出处是引擎 `engine/chartframe.py`，前端消费方 `lib/chartFrame.ts`）。
+   * /1 与老引擎不发它。
+   */
+  render_frame?: ComputedRenderFrame
 }
 
 export interface EngineRenderResponse {
+  figure_origin?: FigureOrigin
+  /** 冷重放核验通过后采用了新 receipt：`figure_origin` 回显的是重指向后的引用。 */
+  figure_origin_adopted?: boolean
+  /** 本次渲染所属执行的正面证据（`include_figure_execution` 请求时才可能出现）。 */
+  figure_execution?: FigureExecutionProof
+  /** 计算图表最终 SVG + manifest + 完整 patches 的后端渲染身份。 */
+  chart_revision?: string
   /** build 成功、但沙盒里 glob 回空而脚本目录里有文件（图可能缺数据，#1254）；出图结果与状态码不变 */
   workdir_hint?: WorkdirConfirmation
   figure_snapshot_invalidation?: FigureSnapshotInvalidation
@@ -3187,6 +3485,15 @@ export const ENVIRONMENT_CODES = [
 ] as const
 
 export interface EngineRenderOptions extends ArtifactRequestFields {
+  figure_origin?: FigureOrigin
+  /** 显式计算图表状态；与完整 patches 一起走同一次配对渲染。 */
+  chart?: PanelChartState
+  chart_source?: ChartSourceRef
+  /**
+   * 计算图表的坐标合同（`panel.chartFrame?.renderProfile`，仅 /2 面板携带）。
+   * 同一 chart 不同坐标语义不能共用渲染身份；/1 面板不传，请求形状逐字不变。
+   */
+  render_profile?: 'native-manifest/1' | 'native-manifest/2'
   signal?: AbortSignal
   /**
    * 这一次预览 SVG 里**嵌入位图**的 dpi（不给 = worker 的默认）。
@@ -3200,6 +3507,11 @@ export interface EngineRenderOptions extends ArtifactRequestFields {
    * `background_render_deferred`（见 `lib/renderPurpose`），**不是失败**。
    */
   purpose?: RenderPurpose
+  /**
+   * 请求后端在成功响应里附带**本次**执行的正面证据（`figure_execution`）。
+   * 只增加证据：缺证据时字段省略，普通成功不受影响。
+   */
+  includeFigureExecution?: boolean
 }
 
 /**
@@ -3246,6 +3558,7 @@ export async function engineRender(
   patches: unknown[],
   opts: EngineRenderOptions = {},
 ): Promise<EngineRenderResponse> {
+  const origin = checkedFigureOrigin(id, opts.figure_origin, opts)
   const res = await fetch(apiUrl('/api/engine/render'), withProject({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -3254,11 +3567,16 @@ export async function engineRender(
       id,
       patches,
       inline_svg: true,
+      ...(origin !== undefined ? { figure_origin: origin } : {}),
+      ...(opts.chart ? { chart: structuredClone(opts.chart) } : {}),
+      ...(opts.chart_source !== undefined ? { chart_source: structuredClone(opts.chart_source) } : {}),
+      ...(opts.chart && opts.render_profile !== undefined ? { render_profile: opts.render_profile } : {}),
       source_policy: opts.source_policy,
       expected_source: opts.expected_source,
       ...(opts.confirmed_reconstruction_sha256 ? { confirmed_reconstruction_sha256: opts.confirmed_reconstruction_sha256 } : {}),
       ...(opts.previewDpi ? { preview_dpi: opts.previewDpi } : {}),
       ...(opts.purpose && opts.purpose !== 'foreground' ? { purpose: opts.purpose } : {}),
+      ...(opts.includeFigureExecution ? { include_figure_execution: true } : {}),
     }),
     signal: opts.signal,
   }))
@@ -3291,7 +3609,60 @@ export async function engineRender(
     const g = verifiedSource(body.artifact_source, id, opts.source_policy)
     if (opts.expected_source && (g.bytesSha256 !== opts.expected_source.bytes_sha256 || g.sizeBytes !== opts.expected_source.size_bytes)) throw new ArtifactValidationError('source_changed')
   }
+  verifyFigureOriginRender(origin, body)
   return body as EngineRenderResponse
+}
+
+function checkedFigureOrigin(id: string, origin: FigureOrigin | undefined, input?: EngineRenderOptions): FigureOrigin | undefined {
+  if (origin === undefined) return undefined
+  if (!validFigureOrigin(origin, id)) throw new EngineError('Invalid historical Figure input.', '', 'svg_source_unavailable')
+  if (input && [input.chart, input.chart_source, input.source_policy, input.expected_source, input.confirmed_reconstruction_sha256].some(value => value !== undefined)) {
+    throw new EngineError('Historical Figure inputs cannot be combined with a current source selection.', '', 'svg_source_unavailable')
+  }
+  return structuredClone(origin)
+}
+
+/** Echo identifies the captured input; it does not grant geometry without a paired draw. */
+function verifyFigureOriginEcho(origin: FigureOrigin | undefined, response: unknown): void {
+  if (origin === undefined) return
+  const actual = response && typeof response === 'object' ? (response as { figure_origin?: unknown }).figure_origin : undefined
+  if (!validFigureOrigin(actual, origin.snapshot.sourceId) || !sameFigureOrigin(origin, actual)) {
+    throw new EngineError('The historical Figure input could not be verified.', '', 'svg_source_unavailable')
+  }
+}
+
+/**
+ * A verified cold-replay adoption: the same input P and owner re-pointed to the
+ * replayed receipt's reference. Anything else about the echo stays a mismatch.
+ */
+function replayAdoptionOf(sent: FigureOrigin, adopted: unknown): FigureOrigin | undefined {
+  if (adopted === undefined || !validFigureOrigin(adopted, sent.snapshot.sourceId)) return undefined
+  const next = adopted as FigureOrigin
+  if (sameFigureOrigin(sent, next)) return undefined
+  if (next.snapshot.sourceId !== sent.snapshot.sourceId ||
+      next.snapshot.patchHash !== sent.snapshot.patchHash ||
+      !sameFigureOrigin(next.snapshot.executionOwner, sent.snapshot.executionOwner) ||
+      figureOriginIdentity(next.patches) !== figureOriginIdentity(sent.patches)) return undefined
+  return next
+}
+
+export function verifyFigureOriginRender(origin: FigureOrigin | undefined, response: EngineRenderResponse): FigureOrigin | undefined {
+  if (origin !== undefined && response.figure_origin_adopted === true) {
+    const adopted = replayAdoptionOf(origin, response.figure_origin)
+    if (adopted !== undefined) {
+      if (!response || !response.manifest ||
+          (response.preview?.mode !== 'raster' && (typeof response.svg !== 'string' || !response.svg))) {
+        throw new EngineError('The historical Figure response has no matching pixels and geometry.', '', 'svg_source_unavailable')
+      }
+      return adopted
+    }
+  }
+  verifyFigureOriginEcho(origin, response)
+  if (origin !== undefined && (!response || !response.manifest ||
+      (response.preview?.mode !== 'raster' && (typeof response.svg !== 'string' || !response.svg)))) {
+    throw new EngineError('The historical Figure response has no matching pixels and geometry.', '', 'svg_source_unavailable')
+  }
+  return undefined
 }
 
 /**
@@ -3302,6 +3673,7 @@ export async function engineRender(
  * 调用方一个字不改。`only` 点名要修的 `(规则, gid)`；不给 = 全部（建议档不在内）。
  */
 export interface SpecFixResponse {
+  figure_origin?: FigureOrigin
   ok: boolean
   /** `done` / `nothing_to_do` / `font_unavailable` / `constraint_conflict` / `protected_changed` / `not_resolved` / `unsupported` / `budget_exceeded` */
   exit: string
@@ -3351,12 +3723,15 @@ export async function engineSpecfix(
   scale: number,
   profile: unknown,
   only?: { rule: string; gid: string }[],
+  source: Pick<EngineRenderOptions, 'figure_origin'> = {},
+  pj: string | null = currentProjectId(),
 ): Promise<SpecFixResponse> {
-  const res = await fetch(apiUrl('/api/engine/specfix'), withProject({
+  const origin = checkedFigureOrigin(id, source.figure_origin, source)
+  const res = await fetch(apiUrlFor('/api/engine/specfix', pj), withProjectFor({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id, patches, scale, profile, ...(only ? { only } : {}) }),
-  }))
+    body: JSON.stringify({ id, patches, scale, profile, ...(only ? { only } : {}), ...(origin === undefined ? {} : { figure_origin: origin }) }),
+  }, pj))
   const body = await res.json().catch(() => ({}) as Record<string, unknown>)
   if (!res.ok) {
     noteProjectGone(res.status, body)
@@ -3374,6 +3749,7 @@ export async function engineSpecfix(
   if (!isSpecFixResponse(body)) {
     throw new EngineError(t('render.failed', { ns: 'errors', status: res.status }), '', 'bad_shape', '')
   }
+  verifyFigureOriginEcho(origin, body)
   return body as unknown as SpecFixResponse
 }
 
@@ -3414,32 +3790,103 @@ export async function enginePreviewPng(
   patches: unknown[],
   bucket: number,
   signal?: AbortSignal,
+  source: EnginePngOptions = {},
+  pj: string | null = currentProjectId(),
 ): Promise<Blob> {
-  return (await previewPngResponse(id, patches, bucket, signal)).blob()
+  const archived = source.figure_snapshot !== undefined
+  if (source.chart) {
+    const snapshot = await enginePreviewPngSnapshot(id, patches, bucket, signal, source, pj)
+    const png = snapshot.url.slice(snapshot.url.indexOf(',') + 1)
+    return new Blob([Uint8Array.from(atob(png), c => c.charCodeAt(0))], { type: 'image/png' })
+  }
+  const blob = await (await previewPngResponse(id, patches, bucket, signal, false, source, pj)).blob()
+  if ((archived || source.figure_origin !== undefined) && !blob.size) throw invalidFigureSnapshotPreview()
+  return blob
+}
+
+export interface EnginePngOptions extends ArtifactRequestFields {
+  figure_origin?: FigureOrigin
+  chart?: PanelChartState
+  chart_source?: ChartSourceRef
+  /** 计算图表的坐标合同（仅 /2 面板携带；见 EngineRenderOptions.render_profile）。 */
+  render_profile?: 'native-manifest/1' | 'native-manifest/2'
+  /** Immutable archived pixels only; never a live editable manifest. */
+  figure_snapshot?: FigureSnapshot
+}
+
+export interface FigureSnapshotPreview {
+  preview_source: 'figure_snapshot'
+  figure_snapshot: FigureSnapshot
+  svg: string
+  size_mm: [number, number]
+}
+
+const invalidFigureSnapshotPreview = () => new EngineError('The archived Figure preview could not be verified.', '', 'figure_snapshot_preview_invalid')
+
+export async function fetchFigureSnapshotPreview(
+  id: string, patches: unknown[], reference: FigureSnapshot, signal?: AbortSignal,
+  pj: string | null = currentProjectId(),
+): Promise<FigureSnapshotPreview> {
+  if (!validFigureSnapshot(reference, id) || figureSnapshotPreviewIdentity(reference) === null) throw invalidFigureSnapshotPreview()
+  const frozen = structuredClone(reference)
+  const res = await fetch(apiUrlFor('/api/figure-preview', pj), withProjectFor({
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, patches, figure_snapshot: frozen }), signal,
+  }, pj))
+  if (!res.ok) {
+    const body = await errorBody(res)
+    noteProjectGone(res.status, body)
+    throw new EngineError((body.error as string) || t('render.previewPngFailed', { ns: 'errors', status: res.status }),
+      (body.traceback as string) || '', (body.code as string) || '', (body.module as string) || '',
+      body.project_env as ProjectEnvFailure | undefined, body.dependency_repair as DependencyRepairOffer | undefined,
+      { params: body.params as Record<string, unknown> | undefined })
+  }
+  const value = await res.json().catch(() => null) as FigureSnapshotPreview | null
+  if (!value || value.preview_source !== 'figure_snapshot' || typeof value.svg !== 'string' || !value.svg.trim()
+    || !Array.isArray(value.size_mm) || value.size_mm.length !== 2
+    || !value.size_mm.every(size => typeof size === 'number' && Number.isFinite(size) && size > 0)
+    || !sameFigureSnapshotReference(frozen, value.figure_snapshot)) throw invalidFigureSnapshotPreview()
+  return value
 }
 
 export async function enginePreviewPngSnapshot(
-  id: string, patches: unknown[], bucket: number, signal?: AbortSignal, source: ArtifactRequestFields = {},
-): Promise<{ url: string; manifest: Manifest; sourceBacked?: unknown }> {
-  const res = await previewPngResponse(id, patches, bucket, signal, true, source)
-  const frame = await res.json() as { png: string; manifest: Manifest; artifact_source?: unknown; source_backed?: unknown }
+  id: string, patches: unknown[], bucket: number, signal?: AbortSignal, source: EnginePngOptions = {},
+  pj: string | null = currentProjectId(),
+): Promise<{ url: string; manifest: Manifest; sourceBacked?: unknown; chartRevision?: string; figureOrigin?: FigureOrigin }> {
+  const origin = checkedFigureOrigin(id, source.figure_origin, source)
+  const res = await previewPngResponse(id, patches, bucket, signal, true, source, pj)
+  const frame = await res.json() as { png: string; manifest: Manifest; artifact_source?: unknown; source_backed?: unknown; chart_revision?: string; figure_origin?: FigureOrigin }
+  if (origin !== undefined && (!frame || !sameFigureOrigin(origin, frame.figure_origin) || !frame.manifest || !frame.png)) {
+    throw new EngineError('The historical Figure response has no matching pixels and geometry.', '', 'svg_source_unavailable')
+  }
+  if (source.chart && (typeof frame.chart_revision !== 'string' || !frame.chart_revision || !frame.manifest || !frame.png)) {
+    throw new EngineError('The chart response has no paired pixels and geometry.', '', 'chart_render_pair_missing')
+  }
   if (source.source_policy) {
     const g = verifiedSource(frame.artifact_source, id, source.source_policy)
     if (!source.expected_source || g.bytesSha256 !== source.expected_source.bytes_sha256 || g.sizeBytes !== source.expected_source.size_bytes) throw new ArtifactValidationError('source_changed')
   }
   // 来源驱动策略：这次响应自己的准入结论（对照确认绑定的是**显示给用户的这一份**，不是更早那次 render 的）
-  return { url: `data:image/png;base64,${frame.png}`, manifest: frame.manifest, sourceBacked: frame.source_backed }
+  return { url: `data:image/png;base64,${frame.png}`, manifest: frame.manifest, sourceBacked: frame.source_backed,
+    ...(origin !== undefined ? { figureOrigin: frame.figure_origin } : {}),
+    ...(source.chart ? { chartRevision: frame.chart_revision } : {}) }
 }
 
 async function previewPngResponse(
-  id: string, patches: unknown[], bucket: number, signal?: AbortSignal, withManifest = false, source: ArtifactRequestFields = {},
+  id: string, patches: unknown[], bucket: number, signal?: AbortSignal, withManifest = false, source: EnginePngOptions = {},
+  pj: string | null = currentProjectId(),
 ): Promise<Response> {
-  const res = await fetch(apiUrl('/api/engine/preview_png'), withProject({
+  const origin = checkedFigureOrigin(id, source.figure_origin, source)
+  const archived = source.figure_snapshot !== undefined
+  const reference = archived ? structuredClone(source.figure_snapshot) : undefined
+  if (archived && (withManifest || source.chart !== undefined || source.chart_source !== undefined
+    || !validFigureSnapshot(reference, id) || figureSnapshotPreviewIdentity(reference) === null)) throw invalidFigureSnapshotPreview()
+  const res = await fetch(apiUrlFor('/api/engine/preview_png', pj), withProjectFor({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id, patches, w: bucket, ...source, ...(withManifest ? { with_manifest: true } : {}) }),
+    body: JSON.stringify({ id, patches, w: bucket, ...source, ...(origin === undefined ? {} : { figure_origin: origin }), ...(withManifest ? { with_manifest: true } : {}) }),
     signal,
-  }))
+  }, pj))
   if (!res.ok) {
     const body = await errorBody(res)
     noteProjectGone(res.status, body)
@@ -3453,6 +3900,21 @@ async function previewPngResponse(
       { params: body.params as Record<string, unknown> | undefined, retryable: body.retryable as boolean | undefined, installRoute: body.install_route as string | undefined },
     )
   }
+  if (archived) {
+    let echoed: unknown
+    try { echoed = JSON.parse(res.headers.get('X-Tavotto-Figure-Snapshot') ?? '') }
+    catch { throw invalidFigureSnapshotPreview() }
+    if (res.headers.get('Content-Type')?.split(';')[0].trim() !== 'image/png'
+      || !sameFigureSnapshotReference(reference, echoed)) throw invalidFigureSnapshotPreview()
+  }
+  if (origin !== undefined && !withManifest) {
+    let echoed: unknown
+    try { echoed = JSON.parse(res.headers.get(`X-${PRODUCT_NAME}-Figure-Origin`) ?? '') }
+    catch { throw new EngineError('Missing historical Figure identity.', '', 'svg_source_unavailable') }
+    if (res.headers.get('Content-Type')?.split(';')[0].trim() !== 'image/png' || !sameFigureOrigin(origin, echoed)) {
+      throw new EngineError('Mismatched historical Figure identity.', '', 'svg_source_unavailable')
+    }
+  }
   return res
 }
 
@@ -3465,6 +3927,7 @@ async function previewPngResponse(
  * 任一环不过一律 409 且原文件零改动，所以成功路径上 `warnings` 恒为空。
  */
 export interface WriteBackResponse {
+  figure_origin?: FigureOrigin
   updated: string[]
   backup_dir: string
   warnings: string[]
@@ -3507,22 +3970,28 @@ export interface WriteBackDiff {
  *  annotations 非空 = 顺带把画布标注烙进原图（坐标已换算成该图自身的 mm）。
  *  expectedMtime = 前端手里这份素材的 mtime，与磁盘对不上后端回 409
  *  source_changed（素材被工具之外改过，按旧状态覆盖会吃掉别人的改动）。 */
-export const updateSourceFiles = (
+export const updateSourceFiles = async (
   id: string,
   patches: unknown[],
   annotations?: ExportObject[],
   expectedMtime?: number,
-) =>
-  jsonFetch<WriteBackResponse & { baked: boolean }>('/api/engine/update_source', {
+  source: Pick<EngineRenderOptions, 'figure_origin'> = {},
+  pj?: string | null,
+) => {
+  const origin = checkedFigureOrigin(id, source.figure_origin, source)
+  const response = await jsonFetch<WriteBackResponse & { baked: boolean }>('/api/engine/update_source', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      id,
-      patches,
+      id, patches,
       ...(annotations?.length ? { annotations } : {}),
       ...(expectedMtime ? { expected_mtime: expectedMtime } : {}),
+      ...(origin === undefined ? {} : { figure_origin: origin }),
     }),
-  })
+  }, pj)
+  verifyFigureOriginEcho(origin, response)
+  return response
+}
 
 /* -------------------------------- AI 桥 ----------------------------------- */
 
@@ -5368,28 +5837,34 @@ export interface HistoryVersion {
   patches: { gid: string; prop: string; value: unknown }[]
 }
 
-export const fetchHistory = (id: string) =>
-  jsonFetch<{ versions: HistoryVersion[] }>(
-    `/api/engine/history?id=${encodeURIComponent(id)}`,
-  )
+export const fetchHistory = async (id: string, source: Pick<EngineRenderOptions, 'figure_origin'> = {}, pj?: string | null) => {
+  const origin = checkedFigureOrigin(id, source.figure_origin, source)
+  const response = origin === undefined
+    ? await jsonFetch<{ versions: HistoryVersion[] }>(`/api/engine/history?id=${encodeURIComponent(id)}`, undefined, pj)
+    : await jsonFetch<{ versions: HistoryVersion[]; figure_origin?: FigureOrigin }>('/api/engine/history', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, figure_origin: origin }),
+    }, pj)
+  verifyFigureOriginEcho(origin, response)
+  return response
+}
 
 /** n = -1 表示脚本原始状态，永远可用作时间线起点 */
 export const historyPreviewUrl = (id: string, n: number, w = 400) =>
   apiUrl(`/api/engine/history/preview?id=${encodeURIComponent(id)}&n=${n}&w=${w}`)
 
-export const restoreHistory = (id: string, n: number, expectedMtime?: number) =>
-  jsonFetch<
-    // identity：那一版写下时记着的目标身份（ADR 0083），恢复时原样放回
-    WriteBackResponse & { patches: { gid: string; prop: string; value: unknown; identity?: string }[] }
-  >('/api/engine/history/restore', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      id,
-      n,
-      ...(expectedMtime ? { expected_mtime: expectedMtime } : {}),
-    }),
-  })
+export const restoreHistory = async (id: string, n: number, expectedMtime?: number,
+  source: Pick<EngineRenderOptions, 'figure_origin'> = {}, pj?: string | null) => {
+  const origin = checkedFigureOrigin(id, source.figure_origin, source)
+  const response = await jsonFetch<WriteBackResponse & { patches: { gid: string; prop: string; value: unknown; identity?: string }[] }>(
+    '/api/engine/history/restore', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, n, ...(expectedMtime ? { expected_mtime: expectedMtime } : {}),
+        ...(origin === undefined ? {} : { figure_origin: origin }) }),
+    }, pj)
+  verifyFigureOriginEcho(origin, response)
+  return response
+}
 
 /* ------------------------------ 构建版本 ---------------------------------- */
 
@@ -5430,6 +5905,8 @@ export interface SyncPatch {
 }
 
 export interface SyncResult {
+  source_figure_origin?: FigureOrigin
+  target_figure_origin?: FigureOrigin
   mapped: SyncPatch[]
   /** 版面几何类（axes position / size_mm），不可跨图搬运 */
   skipped: SyncPatch[]
@@ -5437,12 +5914,22 @@ export interface SyncResult {
   unmatched: SyncPatch[]
 }
 
-export const syncOverrides = (fromId: string, toId: string, patches: unknown[]) =>
-  jsonFetch<SyncResult>('/api/engine/sync_overrides', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from_id: fromId, to_id: toId, patches }),
-  })
+export const syncOverrides = async (fromId: string, toId: string, patches: unknown[],
+  source: { source_figure_origin?: FigureOrigin; target_figure_origin?: FigureOrigin; target_patches?: unknown[] } = {},
+  pj?: string | null) => {
+  const from = checkedFigureOrigin(fromId, source.source_figure_origin)
+  const to = checkedFigureOrigin(toId, source.target_figure_origin)
+  const response = await jsonFetch<SyncResult>('/api/engine/sync_overrides', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from_id: fromId, to_id: toId, patches,
+      ...(from === undefined ? {} : { source_figure_origin: from }),
+      ...(to === undefined ? {} : { target_figure_origin: to, ...(source.target_patches === undefined ? {} : { target_patches: source.target_patches }) }),
+    }),
+  }, pj)
+  verifyFigureOriginEcho(from, { figure_origin: response?.source_figure_origin })
+  verifyFigureOriginEcho(to, { figure_origin: response?.target_figure_origin })
+  return response
+}
 
 // ---------------------------------------------------------------------------
 // 检查更新
@@ -7423,7 +7910,7 @@ export interface CapturedFigureDescriptor {
   script: string
   entry: string
   stem: string
-  capture_source: 'savefig' | 'pyplot'
+  capture_source: 'savefig' | 'pyplot' | 'ggplot2'
   execution_profile: 'safe' | 'native'
   original_artifact: string | null
   size_mm: [number, number]
@@ -8334,7 +8821,7 @@ export interface RuntimeAssetInfo {
   status: RuntimeStaleStatus
   cached: boolean
   size_mm: [number, number] | null
-  capture_source: 'savefig' | 'pyplot' | null
+  capture_source: CapturedFigureDescriptor['capture_source'] | null
   descriptor: CapturedFigureDescriptor | null
   /** 按参数配置跑出的变体素材才有（本机不透明引用，不含参数值）；无参数的那张没有 */
   run_config?: string
@@ -8418,6 +8905,7 @@ export interface NativePending {
 
 /** 一条 native 会话对外的全部状态（`NativeSession.public_state()` 原样）。 */
 export interface NativeSessionInfo {
+  capture_source?: 'ggplot2'
   figure_snapshot_invalidation?: FigureSnapshotInvalidation
   session_id: string
   project_root: string
@@ -8530,6 +9018,17 @@ export const buildNativeSession = (sessionId: string) =>
     `/api/native/sessions/${encodeURIComponent(sessionId)}/build`,
     { method: 'POST' },
   )
+
+export const startNativeGgplot = (target: {
+  script: string
+  object: string
+  frame_pt: [number, number]
+  rscript?: string
+}) => jsonFetch<{ session: NativeSessionInfo }>('/api/native/ggplot2', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(target),
+})
 
 const nativeAction = (sessionId: string, action: string) =>
   jsonFetch<{ session: NativeSessionInfo }>(

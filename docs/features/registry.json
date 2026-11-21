@@ -283,6 +283,22 @@
       ]
     },
     {
+      "id": "canvas.bind-computed-svg",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "绑定 SVG 的坐标轴和数据，从项目中恢复编辑并导出 PDF",
+        "en-US": "Bind axes and data in an SVG, reopen its edits from the project, and export a PDF"
+      },
+      "entry": "画布 SVG 面板右键 → 绑定数据为计算图表",
+      "e2e": [
+        {
+          "spec": "chart-document.spec.ts",
+          "title": "chart binding backs up the project and reopens the frozen source"
+        }
+      ]
+    },
+    {
       "id": "canvas.select-and-drag",
       "status": "active",
       "platform": "both",
@@ -893,6 +909,22 @@
         {
           "spec": "keyboard-golden-path.spec.ts",
           "title": "纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo → 导出"
+        }
+      ]
+    },
+    {
+      "id": "export.pdf-panel-bookmarks",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "画布 PDF 可添加书签，跳到各图面板的页面范围",
+        "en-US": "Add bookmarks that jump to figure panels in a canvas PDF"
+      },
+      "entry": "导出 → 整张画布 → PDF → 为图面板添加 PDF 书签",
+      "e2e": [
+        {
+          "spec": "chart-document.spec.ts",
+          "title": "canvas PDF export adds bookmarks to two instances of the same figure"
         }
       ]
     },

@@ -7,6 +7,7 @@ import { ZoomControls } from '@/components/ZoomControls'
 import { CloseGuardDialog } from '@/components/CloseGuardDialog'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { ExportDialog } from '@/components/ExportDialog'
+import { ChartBindDialog } from '@/components/chart/ChartBindDialog'
 import { Inspector } from '@/components/inspector/Inspector'
 import { TimelinePreviewDialog } from '@/components/VersionDialog'
 import { LayoutDialog } from '@/components/LayoutDialog'
@@ -55,6 +56,7 @@ import { useJournalV2Sync } from '@/hooks/useJournalV2Sync'
 import { usePickerHistory } from '@/hooks/usePickerHistory'
 import { subscribePruneSelection } from '@/hooks/usePruneSelection'
 import { ProjectPicker } from '@/components/ProjectPicker'
+import { ProjectPackageInstallDialog } from '@/components/ProjectPackageInstallDialog'
 import { NativeTutorial } from '@/components/onboarding/NativeTutorial'
 import { startActivityTelemetry } from '@/lib/activityTelemetry'
 import { HintCard } from '@/components/hints/HintCard'
@@ -144,6 +146,7 @@ export function App() {
     return (
       <>
         <ProjectPicker />
+        <ProjectPackageInstallDialog />
         {/* 新手教程也挂在这一层：首启的欢迎页就出现在还没打开项目的主页上 */}
         <NativeTutorial />
         <TelemetryConsentDialog />
@@ -364,8 +367,10 @@ function Workspace() {
         {/* 时间线预览 / 恢复对话框：与 Inspector 平级常驻，不随右栏开合、页签切换卸载（恢复在飞时它就是锁） */}
         <TimelinePreviewDialog />
         <ExportDialog />
+        <ChartBindDialog />
         <SettingsDialog />
         <LayoutDialog />
+        <ProjectPackageInstallDialog />
         <StyleDialog />
         <RegistryDialog />
         {/* 渲染环境（脚本区「选择渲染环境」就地打开，不深链设置页） */}

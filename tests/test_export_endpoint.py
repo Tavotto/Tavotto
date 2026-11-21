@@ -92,6 +92,69 @@ def test_export_panel_flip_h(client, tmp_path, monkeypatch):
     assert r1 > l1 * 3, (l1, r1)  # 翻转后墨在右
 
 
+def test_canvas_pdf_bookmarks_follow_the_published_panel_regions(client, tmp_path):
+    """Inspect the published destinations and pixels with a reader independent of the writer."""
+    figures = _asym_panel_dir(tmp_path)
+    with pymupdf.open(figures / "asym.pdf") as source:
+        source[0].get_pixmap().save(figures / "raster.png")
+    m.open_project(str(figures))
+    panel = {"type": "panel", "id": "asym.pdf", "x_mm": -4, "y_mm": 3, "w_mm": 24, "h_mm": 12}
+    objects = [
+        {
+            **panel,
+            "bookmark_title": "图一 \n  Cropped",
+            "rotation": 90,
+            "flip_h": True,
+            "crop": {"x": 0.05, "y": 0.12, "w": 0.7, "h": 0.56},
+        },
+        _text_obj("Not a bookmark"),
+        {**panel, "x_mm": 40, "y_mm": 16, "w_mm": 21, "h_mm": 15},
+        {
+            **panel,
+            "id": "raster.png",
+            "bookmark_title": "Bitmap",
+            "x_mm": 80,
+            "y_mm": 44,
+            "w_mm": 26,
+            "h_mm": 11,
+        },
+        {**panel, "x_mm": 110, "bookmark_title": "Off page"},
+        {**panel, "x_mm": 100, "rotation": 90, "bookmark_title": "Touches right edge"},
+        {**panel, "hidden": True, "bookmark_title": "Hidden"},
+        {**panel, "opacity": 0, "bookmark_title": "Transparent"},
+    ]
+    canvas = {"page_w_mm": 100, "page_h_mm": 50, "objects": objects}
+    spec = {"scope": "canvas", "canvas": canvas}
+    with (
+        _export(client, tmp_path, {**spec, "filename": "plain"}) as plain,
+        _export(
+            client, tmp_path, {**spec, "filename": "bookmarks", "pdf_panel_bookmarks": True}
+        ) as bookmarked,
+    ):
+        assert plain.get_toc() == []
+        assert bookmarked.get_toc() == [[1, "1. 图一 Cropped", 1], [1, "2", 1], [1, "3. Bitmap", 1]]
+        assert plain[0].get_pixmap().samples == bookmarked[0].get_pixmap().samples
+        # FitR numbers are in PDF points with a bottom-left origin.
+        # The regions below are computed from fixture positions and the final page edges.
+        expectations_mm = [(0, 35, 20, 47), (40, 19, 61, 34), (80, 0, 100, 6)]
+        for row, expected_mm in zip(bookmarked.get_toc(simple=False), expectations_mm, strict=True):
+            kind, value = bookmarked.xref_get_key(row[3]["xref"], "Dest")
+            assert kind == "array"
+            page, generation, reference, fit, *coordinates = (
+                value.strip("[]").replace("/", " /").split()
+            )
+            assert (page, generation, reference, fit) == (
+                str(bookmarked[0].xref),
+                "0",
+                "R",
+                "/FitR",
+            )
+            assert [float(value) for value in coordinates] == pytest.approx(
+                [value * 72 / 25.4 for value in expected_mm],
+                abs=0.0001,  # MuPDF represents PDF real numbers as floats.
+            )
+
+
 def test_export_single_figure_frame_with_annotation(client, tmp_path):
     """QA-WIN-20：单图档带标注时前端发的是「页面 = 原图图幅、面板在 (0,0) + 标注」的画布请求
     （`web/src/lib/singleExportDoc.ts`）。这条路径得把图和标注一起写进同一个矢量 PDF，页面就是图幅。"""
