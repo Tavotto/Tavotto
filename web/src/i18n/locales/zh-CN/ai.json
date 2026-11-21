@@ -694,6 +694,10 @@
       "noX": "不要横轴",
       "noGroup": "不分组"
     },
+    "suggest": {
+      "apply": "试试建议",
+      "reading": "正在看各列…"
+    },
     "redraw": {
       "from": "用 {{file}} 画的",
       "again": "换个画法",

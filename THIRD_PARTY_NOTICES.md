@@ -106,3 +106,19 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## 路径查找器内核（VectorCraft geom + pathops，MIT OR Apache-2.0）
+
+`vecops/vendor/vectorcraft-geom/` 与 `vecops/vendor/vectorcraft-pathops/` 是
+[storytold/vectorcraft](https://github.com/storytold/vectorcraft) 提交 47500c4 的 `crates/geom` 与 `crates/pathops`
+（版本 0.24.1）随源码内联的副本：`src/` 逐字未改，只改了各自的 `Cargo.toml`（workspace 继承字段写成明值、去掉
+dev-dependencies），上游的 `tests/` 没有搬。它们编进 `web/src/lib/vecops/vecops.wasm`，给画布的路径查找器、
+偏移路径、轮廓化描边用（ADR 0185 §五 M2）。许可证原文在各自目录的 `LICENSE-MIT` / `LICENSE-APACHE`，上游的
+NOTICE 在 `vecops/vendor/NOTICE-vectorcraft`（其中提到的商标、字体与图标都没有随这两个 crate 搬进来）。
+它们经 crates.io 引入的依赖（kurbo、linesweeper、polycool、arrayvec、smallvec、euclid、num-traits、
+rustc-hash、serde、thiserror 等，版本钉在 `vecops/Cargo.lock`）各带自己的 MIT / Apache-2.0 许可。
+
+```
+Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
+Licensed under the MIT License or the Apache License, Version 2.0, at your option.
+```

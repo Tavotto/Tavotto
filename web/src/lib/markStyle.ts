@@ -59,6 +59,12 @@ export const markSidesCapable = (o: FillStrokeMark): o is ShapeObject =>
   o.type === 'shape' && (o.shape === 'polygon' || o.shape === 'star')
 /** 描边对齐：封闭形状（有描边开关的形状；路径的对齐要做偏移，留给 M2） */
 export const markStrokeAlignCapable = (o: FillStrokeMark): o is ShapeObject => o.type === 'shape' && !isStrokeOnlyShape(o.shape)
+/** 路径的描边对齐（ADR 0185 M2）：全部子路径闭合才给（开放路径没有「里外」） */
+export const markPathAlignCapable = (o: FillStrokeMark): o is PathObject =>
+  o.type === 'path' && o.subpaths.length > 0 && o.subpaths.every((sp) => sp.closed)
+/** 对象自己的缺省对齐：形状内侧，路径居中 */
+export const strokeAlignOf = (o: ShapeObject | PathObject): 'inside' | 'center' | 'outside' =>
+  o.strokeAlign ?? (o.type === 'path' ? 'center' : 'inside')
 /** 填充规则：有填充的路径（形状只有一条轮廓，规则不起作用） */
 export const markFillRuleCapable = (o: FillStrokeMark): o is PathObject => o.type === 'path' && !!o.fill
 /** 星形的内径比 */

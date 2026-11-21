@@ -472,7 +472,24 @@
     "defaultAppearance": "Default fill and stroke",
     "swapFillStroke": "Swap fill and stroke",
     "clearFill": "No fill",
-    "eyedropper": "Eyedropper"
+    "eyedropper": "Eyedropper",
+    "pathfinder": {
+      "unite": "Unite",
+      "minusFront": "Minus front",
+      "intersect": "Intersect",
+      "exclude": "Exclude",
+      "divide": "Divide",
+      "trim": "Trim",
+      "merge": "Merge",
+      "crop": "Crop",
+      "minusBack": "Minus back"
+    },
+    "makeCompound": "Make compound path",
+    "releaseCompound": "Release compound path",
+    "offsetPath": "Offset path",
+    "outlineStroke": "Outline stroke",
+    "reversePath": "Reverse path direction",
+    "simplifyPath": "Simplify path"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -608,7 +625,8 @@
     "copy": "Copy",
     "paste": "Paste",
     "copyAsAnnotation": "Copy as annotation",
-    "pasteAsAnnotation": "Paste as annotation"
+    "pasteAsAnnotation": "Paste as annotation",
+    "pathfinder": "Pathfinder"
   },
   "rail": {
     "assets": "Assets",
@@ -1001,7 +1019,10 @@
     "packagedIncompleteWithExecution_one": "Created project package {{name}} with {{count}} missing asset and unconfirmed runtime dependencies. Add the asset and check data and run configurations before moving the project.",
     "packagedIncompleteWithExecution_other": "Created project package {{name}} with {{count}} missing assets and unconfirmed runtime dependencies. Add the assets and check data and run configurations before moving the project.",
     "eyedropperNothing": "No color to pick here",
-    "eyedropperNoTarget": "Select a shape, path or arrow to color first"
+    "eyedropperNoTarget": "Select a shape, path or arrow to color first",
+    "pathfinderUnavailable": "Pathfinder isn’t available here",
+    "pathfinderEmpty": "The result is empty, so nothing changed",
+    "simplifyNothing": "Nothing to simplify"
   },
   "tabs": {
     "allCanvases": "All canvases",
@@ -1918,5 +1939,9 @@
       "errorbar": "Error bars",
       "image": "Heatmap / grid"
     }
+  },
+  "pathfinder": {
+    "blockedEmbedded": "Not available here. Open this in the Tavotto app or a browser",
+    "blockedFailed": "Pathfinder couldn’t load on this computer"
   }
 }

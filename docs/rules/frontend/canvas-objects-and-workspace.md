@@ -103,6 +103,14 @@ order: 210
   外观命令表 `store/appearanceActions.APPEARANCE_COMMANDS`：D 默认填色描边（= 新画对象的样子）、⇧X 互换填色和描边、/ 无填充、I 吸管（工具 `eyedropper`，
   `canvas/eyedropper.sampleAt` 读点到的东西**画出来的**颜色，图内元素也行；上色规则在纯函数 `lib/appearance.applyColorSample`）。
   格式刷带上描边的全部外观。色板（本文档用过的颜色 + 最近用过）在属性栏取色面板里本来就有（`ColorPanel`）。看护 `lib/penTool.test.ts`、`lib/pathEdit.test.ts`、`canvas/penAndAnchors.test.tsx`。
+- **路径查找器（2026-11-15，ADR 0185 M2）**：几何只在 WASM 内核（`vecops/` → `web/src/lib/vecops/vecops.wasm`，按需加载器
+  `lib/vecops/kernel`，不进首屏；改了 Rust 跑 `vecops/build.sh` 重建，CI 逐字节比对）。规则只在纯函数 `lib/pathfinder`：参与的是路径与封闭形状
+  （形状先按「转为路径」的同一份几何换），坐标进内核前把旋转算进去（结果不旋转）；结果落在**最上面那个原对象**的数组位置、原对象全删、
+  沿用谁的样式谁的 id 第一次被沿用时继承、全在同一组才留组；空结果不删任何东西、不进历史。复合路径 ⌘8 / 释放 ⌥⇧⌘8、反转方向不要内核。
+  命令表 `store/pathfinderActions.PATHFINDER_COMMANDS`（右键「路径查找器 ›」、属性栏排列区一行摘要、命令面板、快捷键同一份）；内核加载不了
+  （内嵌画布 `VITE_VECOPS=off`、编译失败）要内核的命令灰掉、`blockedReason` 说原因。路径的 `strokeAlign`（缺省居中，只给全闭合的路径）：
+  两倍线宽描边裁到里面 / 外面，判据 `pathGeom.pathStrokeAlign` ↔ `geometry.path_stroke_align`。看护 `lib/pathfinder.test.ts`（真内核 +
+  `tests/golden/pathfinder_vectors.json` 金样）、`canvas/pathStrokeAlign.test.tsx`、`tests/test_path_object.py`。
 - **不认识的对象类型原样保留（2026-11-14，ADR 0185 的前置）**：更新的构建会往文档里写本构建没有的 `type`
   （第一例是自由路径 `path`）。判据只有 `types/document.isKnownObject`（`KNOWN_OBJECT_TYPES` 闭集）。读盘、保存、
   换画布、复制画布都不碰它（文档层本来就不按类型过滤，别加）；画布上 `ObjectView` 只画虚线占位框
