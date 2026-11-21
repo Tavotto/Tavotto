@@ -1293,3 +1293,70 @@ def test_a_replicate_veto_never_strips_the_only_group_the_rules_found(tmp_path):
 
     assert "group" not in picks("replicate_unit")
     assert picks("note").get("group") == "none"
+
+
+# --------------------------------------------------------------------------- roles.y 必须等于每个候选实际画的列
+WIDE_RULES = "t,a,b,c\n" + "".join(
+    f"{i},{i + 1.0},{i * 2 + 0.5},{i * 3 + 1.2}\n" for i in range(1, 9)
+)
+LONG_GROUPED = "g,dose,r1,r2,r3\n" + "".join(
+    f"{g},{d},{d + k + 1.0},{d * 2 + k},{d * 3 - k + 2.0}\n"
+    for k, g in enumerate("AB")
+    for d in range(1, 9)
+)
+
+
+def propose_in(tmp_path, name, csv, **kw):
+    folder = tmp_path / "proj" / name
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "t.csv").write_text(csv, encoding="utf-8")
+    return P.propose(tmp_path / "proj", project="p", folder=name, render="lazy", **kw)
+
+
+def assert_every_candidate_draws_roles_y(resp):
+    assert resp["kind"] == "candidates" and resp["items"], resp
+    for item in resp["items"]:
+        assert list(item["values"]["y"]) == list(resp["roles"]["y"]), item
+
+
+def test_every_candidate_draws_exactly_roles_y_for_every_source_of_multi_y(tmp_path):
+    # 规则自己的宽表多 y（没有任何 picks）：从前 scatter_fit 只画第一列而 roles.y 报三列
+    r = propose_in(tmp_path, "rules", WIDE_RULES)
+    assert r["roles"]["y"] == ["a", "b", "c"]
+    assert_every_candidate_draws_roles_y(r)
+    assert [i["title_code"] for i in r["items"]] == ["line_points"]
+    assert r["dropped"], "被去掉的只画第一列的备选要记进 dropped"
+    # 用户点名（answers.y 数组）× 无 / 有分组
+    for name, csv, extra in (
+        ("user", MULTI_Y_WITH_X, {"group": "none"}),
+        ("user_g", LONG_GROUPED, {}),
+    ):
+        cols = ["r1", "r2", "r3"]
+        r = propose_in(tmp_path, name, csv, answers={"y": cols, "x": "dose", **extra})
+        assert r["roles"]["y"] == cols
+        assert_every_candidate_draws_roles_y(r)
+    # 模型点名 × 有分组：模型的回答走同一条落地路径（answers 原样并回）
+    case = case_with(
+        HBY["HO-17"],
+        LONG_GROUPED,
+        roles={
+            "g": "group",
+            "dose": "ordered_x",
+            "r1": "measure",
+            "r2": "measure",
+            "r3": "measure",
+        },
+    )
+    run, _ = with_model(
+        case, tmp_path, reach_answer(case["roles"], y=["r1", "r2", "r3"], x="dose", group="g")
+    )
+    r = candidates_of(tmp_path, case, run.payload["answers"])
+    assert_every_candidate_draws_roles_y(r)
+
+
+def test_when_no_candidate_can_draw_all_the_columns_fall_back_to_the_first_one(tmp_path):
+    # 量纲不同的几列（a_mg / b_mm）画不到同一张图：不出零备选，退回单列，roles.y 与图一致
+    csv = "t,a_mg,b_mm\n" + "".join(f"{i},{i + 1.0},{i * 2 + 0.5}\n" for i in range(1, 9))
+    r = propose_in(tmp_path, "units", csv)
+    assert r["roles"]["y"] == ["a_mg"]
+    assert_every_candidate_draws_roles_y(r)
