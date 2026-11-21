@@ -137,6 +137,21 @@ describe('拖页面边（手势）', () => {
     expect(page().h).toBe(120)
   })
 
+  it('拖页面边置 page.userSized（一键排版「画布：自动」据此保持画布大小）；Esc 取消不置；没拖动不置', () => {
+    expect(page().userSized).toBeUndefined()
+    startPageEdgeResize(down(0, 0), 'r')
+    fire('pointerup', 0, 0)
+    expect(page().userSized).toBeUndefined()
+    startPageEdgeResize(down(0, 0), 'r')
+    fire('pointermove', 20 * PX_PER_MM(), 0)
+    cancelActivePointerGesture()
+    expect(page().userSized).toBeUndefined()
+    startPageEdgeResize(down(0, 0), 'b')
+    fire('pointermove', 0, 10 * PX_PER_MM())
+    fire('pointerup', 0, 10 * PX_PER_MM())
+    expect(page().userSized).toBe(true)
+  })
+
   it('拖左边：宽度变，页面坐标反向补偿，对象在屏幕上的位置不变', () => {
     const before = { a: screenPos('a'), b: screenPos('b') }
     startPageEdgeResize(down(0, 0), 'l')

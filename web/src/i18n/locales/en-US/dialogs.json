@@ -700,6 +700,10 @@
       "reverse-path": {
         "keywords": "reverse path direction flip arrow",
         "label": "Reverse path direction"
+      },
+      "quick-layout": {
+        "keywords": "quick layout auto arrange align yjpb",
+        "label": "Auto layout"
       }
     },
     "listLabel": "Commands",
