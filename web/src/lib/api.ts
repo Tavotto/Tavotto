@@ -2749,6 +2749,13 @@ export interface ManifestTextBlock {
   ha: 'left' | 'center' | 'right'
 }
 
+/** `ManifestElement.scale_domain` 的一维（`engine/manifest.SCALE_DOMAIN_STATUSES` 是 `status` 的闭集）。 */
+export interface ScaleDomainFact {
+  status: 'ok' | 'over_budget' | 'unavailable'
+  nonpositive?: number
+  errorbar_low_nonpositive?: number
+}
+
 export interface ManifestElement {
   gid: string
   role: string
@@ -2837,6 +2844,13 @@ export interface ManifestElement {
    * imshow 位图就是这样贴合宿主 axes 的：拖它等于拖宿主子图。
    */
   geom_gid?: string
+  /**
+   * 对数轴上「画不出来的值」的只读事实（V-001 `log-axis-nonpositive`）：只在 axes 元素、且某一维尺度是 `log`
+   * 时出现（色条轴 / 3D 轴不发）。`nonpositive` 数线 / 散点上有限且 ≤ 0 的坐标，`errorbar_low_nonpositive`
+   * 数下端 ≤ 0 的误差线；`status` 不是 `ok`（超预算 / 量不了）时没有计数，预检不判。产生者只有
+   * `engine/manifest.scale_domain`；消费者只有 `lib/preflight.ts` 的 `checkLogAxisNonpositive`。
+   */
+  scale_domain?: Partial<Record<'x' | 'y', ScaleDomainFact>>
   /** 该 axes 其实是色条轴；属性页应改用它的色条元素 */
   is_colorbar?: boolean
   colorbar_gid?: string
