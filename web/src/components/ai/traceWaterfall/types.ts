@@ -23,6 +23,8 @@ export interface WaterfallFact {
 
 export interface WaterfallSpan {
   id: string
+  /** 费用的币种（`cost` 不为 null 时）：价格表估算是 USD，内置 AI 网关结算是 CNY；不知道 = null */
+  costCurrency?: string | null
   parentId?: string
   kind: WaterfallKind
   /** 已翻译的阶段名 */

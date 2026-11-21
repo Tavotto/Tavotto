@@ -684,7 +684,7 @@ def test_failure_codes_are_the_adr_closed_set():
         "rate_limited", "network", "server", "client_error",
     }  # fmt: skip
     assert set(lic.HTTP_STATUS) == set(lic.FAILURES)
-    assert lic.OPS == {"activate", "refresh", "release", "renew"}
+    assert lic.OPS == {"activate", "refresh", "release", "renew", "ai_task"}
     assert lic.FEATURES == {"hosted-ai", "review-plus"}
 
 

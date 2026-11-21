@@ -366,8 +366,8 @@ export function TraceWaterfall({
           <Metric id="duration" label={t('trace.ui.metric.duration')} value={formatSeconds(metrics.extent)} />
           <Metric
             id="cost"
-            label={t('trace.ui.metric.cost')}
-            value={metrics.cost === null ? dash : formatCost(metrics.cost)}
+            label={metrics.costCurrency === 'CNY' ? t('trace.ui.metric.usage') : t('trace.ui.metric.cost')}
+            value={metrics.cost === null ? dash : formatCost(metrics.cost, metrics.costCurrency)}
           />
           <Metric
             id="tokens"

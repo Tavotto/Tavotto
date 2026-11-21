@@ -1615,7 +1615,8 @@ export interface ExecTraceUsage {
   input_tokens: number | null
   output_tokens: number | null
   cached_input_tokens: number | null
-  cost: { amount: number; currency: string; pricing_version: string; estimated: true } | null
+  /** `estimated: false` = 内置 AI 网关实际结算的数（人民币），不是价格表估算 */
+  cost: { amount: number; currency: string; pricing_version: string; estimated: boolean } | null
 }
 export interface ExecTraceSpanDto {
   span_id: string
@@ -3776,7 +3777,7 @@ export interface AiCapabilities {
 /** 一家厂商的一种连接方式（同一厂商的 API Key 与订阅登录合并成一个厂商时有多种） */
 export interface AiVendorMethod {
   id: string
-  kind: 'key' | 'login' | 'oauth'
+  kind: 'key' | 'login' | 'oauth' | 'hosted'
   /** 方式名的 i18n 键（`method.subscription` / `method.apiKey` / `method.kimiCode` / `method.codingPlan` / `method.account`） */
   label_key?: string | null
   /** key 类：对应的目录行 id（保存连接时作为厂商 id） */
@@ -3806,7 +3807,7 @@ export interface AiVendor {
   /** 彩色标志的键（`BrandLogo`）；表外 = 通用图标 */
   logo: string
   region: 'cn' | 'global' | 'custom'
-  connect: 'key' | 'login' | 'oauth'
+  connect: 'key' | 'login' | 'oauth' | 'hosted'
   /** 「去申请 Key」页面（https） */
   key_url?: string
   /** login 类：对应 CLI 已安装才 true；oauth 类：client_id 已配置才出现 */
@@ -3852,6 +3853,8 @@ export interface AiConnection {
   route?: 'cli:codex' | 'cli:claude' | 'builtin'
   /** 订阅类连接：背后那份 CLI 比它的模型清单旧时怎么更新（同 `AiAgentCaps.cli_update`） */
   cli_update?: AiCliUpdate | null
+  /** 「Tavotto Agent」（内置 AI，ADR 0200）：没有 Key、不能检查 / 编辑 / 断开，选中即用 */
+  hosted?: boolean
 }
 
 /** 对话协议（后端 `ai_providers.protocol_of`） */
@@ -3938,7 +3941,8 @@ export const effectiveConnection = (
   caps: AiCapabilities | null | undefined,
 ): AiConnection | null => {
   const list = readyConnections(caps)
-  return list.find((c) => c.id === preferred) ?? list[0] ?? null
+  // 没有（可用的）首选时，「Tavotto Agent」（内置 AI）排第一（维护者 2026-11-21），再是后端给的顺序
+  return list.find((c) => c.id === preferred) ?? list.find((c) => c.hosted) ?? list[0] ?? null
 }
 
 /** 连接对应的内部执行器家族（只用于旧字段 `agent`；builtin 路由没有） */
@@ -3956,7 +3960,7 @@ export const connectionAgent = (c: AiConnection | null | undefined): AiAgentId |
  */
 export const sortVendors = (vendors: AiVendor[], cnFirst: boolean): AiVendor[] => {
   const rank = (v: AiVendor) =>
-    v.region === 'custom' ? 2 : (v.region === 'cn') === cnFirst ? 0 : 1
+    v.connect === 'hosted' ? -1 : v.region === 'custom' ? 2 : (v.region === 'cn') === cnFirst ? 0 : 1
   return vendors
     .map((v, i) => ({ v, i }))
     .sort((a, b) => rank(a.v) - rank(b.v) || a.i - b.i)
@@ -3964,7 +3968,9 @@ export const sortVendors = (vendors: AiVendor[], cnFirst: boolean): AiVendor[] =
 }
 
 /** `POST /api/ai/fix` 的响应：成功给修复会话 id；`ok: false` + 稳定原因码（`ai_fix_unavailable` 没有可用的 API 连接 / `ai_fix_busy` 已有别的修复在跑） */
-export type AiFixResponse = { ok: true; fix_id: string } | { ok: false; reason: string }
+export type AiFixResponse =
+  | { ok: true; fix_id: string; /** 内置 AI 因额度没开成、静默退到了别的连接（只有这种才带） */ hosted_fallback?: { reason: string; retry_at: number | null; label: string; kind: 'key' | 'subscription' } }
+  | { ok: false; reason: string; /** `ai_hosted_unavailable` 时：「Tavotto Agent」没能开任务的闭集原因（`lib/hostedAi.ts`） */ hosted?: { reason: string; retry_at: number | null } }
 
 /** 请求 AI 环境修复（ADR 0148 / 0149）。body：准备会话 id 与脚本（项目相对路径）；带上界面语言，AI 写给用户的话用它 */
 export const requestAiFix = (body: { session_id: string; script: string }) =>

@@ -98,6 +98,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--max-turns", type=int, default=None)
     p.add_argument("--max-seconds", type=float, default=None)
     p.add_argument("--max-total-tokens", type=int, default=None)
+    p.add_argument("--max-output-tokens", type=int, default=None)
     p.add_argument("--request-timeout", type=float, default=None)
     p.add_argument("--prompt-file", default=None, help="提示词文件；缺省读 stdin")
     p.add_argument("--task", default="figure_edit", choices=sorted(TOOLSETS))
@@ -270,6 +271,12 @@ def main(argv: list[str] | None = None) -> int:
         ),
         max_seconds=max(
             1.0, args.max_seconds if args.max_seconds is not None else base.max_seconds
+        ),
+        max_output_tokens=max(
+            1,
+            args.max_output_tokens
+            if args.max_output_tokens is not None
+            else base.max_output_tokens,
         ),
     )
     envelope = RunEnvelope(

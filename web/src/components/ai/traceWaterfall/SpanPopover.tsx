@@ -93,7 +93,7 @@ export function SpanPopover({ node, anchor, running, now, replay = false, slowes
     rows.push({ id: 'duration', label: t('trace.ui.field.duration'), value: dash })
   }
   rows.push({ id: 'started', label: t('trace.ui.field.started'), value: t('trace.ui.startOffset', { value: formatSeconds(span.start) }) })
-  if (node.cost !== null && !(replay && running)) rows.push({ id: 'cost', label: t('trace.ui.field.cost'), value: formatCost(node.cost) })
+  if (node.cost !== null && !(replay && running)) rows.push({ id: 'cost', label: node.currency === 'CNY' ? t('trace.ui.field.usage') : t('trace.ui.field.cost'), value: formatCost(node.cost, node.currency) })
   if (span.kind === 'agent') {
     if (node.tokens !== null) rows.push({ id: 'tokens', label: t('trace.ui.field.tokens'), value: formatTokens(node.tokens) })
     rows.push({ id: 'steps', label: t('trace.ui.field.steps'), value: String(node.children.length) })

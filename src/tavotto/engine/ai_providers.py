@@ -25,7 +25,7 @@ import os
 import re
 from urllib.parse import urlparse
 
-from . import ai_agents, ai_catalog, config
+from . import ai_agents, ai_catalog, config, hosted_ai
 from .agent_runner.wires import ANTHROPIC_EFFORTS, RESPONSES_EFFORTS, check_base_url
 
 # codex 侧临时覆盖用的 provider id 与密钥环境变量名。用 tavotto 前缀是为了
@@ -149,7 +149,8 @@ def _clean(rec: dict, existing_ids: set[str] = frozenset()) -> dict:
     fallback = known[0] if known else ""
     agent = rec.get("agent") if rec.get("agent") in known else fallback
     pid = _slug(str(rec.get("id") or rec.get("label") or agent))
-    while pid in existing_ids:
+    # 「Tavotto Agent」虚拟连接的 id 是保留的（ADR 0200）：用户的连接不许占它，否则连接视图里两条同 id、解析到哪条不确定
+    while pid in existing_ids or pid == hosted_ai.PROVIDER_ID:
         pid = f"{pid}-2"
     models = [str(m).strip() for m in (rec.get("models") or []) if str(m).strip()]
     default_model = str(rec.get("default_model") or "").strip() or None
@@ -248,6 +249,14 @@ def get(pid: str | None) -> dict | None:
         if p.get("id") == pid:
             return p
     return None
+
+
+def lookup(pid: str | None) -> dict | None:
+    """**读取**一条连接：存下来的 provider 记录，或（`pid` 是保留 id 且此刻可用时）「Tavotto Agent」虚拟连接（`hosted_ai`，从不落盘、没有密钥）。
+    只给「解析这次要用哪条连接」的只读路径用；一切写入（保存 / 改 / 删 / 探测）仍只认 `get`，所以虚拟连接碰不到存储。"""
+    if pid == hosted_ai.PROVIDER_ID:
+        return hosted_ai.virtual_record()
+    return get(pid)
 
 
 def public(rec: dict) -> dict:
@@ -618,7 +627,7 @@ def resolve(agent: str, pid: str | None = None) -> dict | None:
         return None
     if agent == ai_agents.BUILTIN_ID:
         # 内置执行器没有「家族」：它能用任何一条 Key 连接，只认显式指定（没有「当前选中」这回事）
-        return get(pid) if pid else None
+        return lookup(pid) if pid else None
     rec = get(pid) if pid else get(active_id(agent))
     if rec is None or rec.get("agent") != agent:
         return None
@@ -711,6 +720,9 @@ def builtin_conn(rec: dict | None, model: str | None = None) -> dict | None:
     账号登录记录的令牌可能快过期：spawn 之前由 `ai_oauth.ensure_fresh` 刷新（这里只看有没有令牌 + 刷新令牌）。"""
     if not rec or incompatibility(rec):
         return None
+    if hosted_ai.is_hosted(rec):
+        # 虚拟连接：型号固定、没有用户 Key；没开任务前是占位（`api_key` 空，`hosted_ai.needs_task`），开了任务带通行证与上限
+        return hosted_ai.conn_of(rec)
     wire = protocol_of(rec)
     chosen = (
         str(model or "").strip()
@@ -923,6 +935,16 @@ def _builtin_overrides(
         args += ["--fallback", f"{wire}={base}"]  # 第一轮「协议不对」时换（自填地址才有；同主机）
     if conn["auth"] == "bearer":
         args += ["--auth", "bearer"]
+    lim = conn.get("limits")
+    if lim:  # Tavotto Agent：网关开任务时下发的单任务上限（ADR 0200 §六），比自带 Key 的默认紧
+        args += [
+            "--max-turns",
+            str(lim["max_turns"]),
+            "--max-total-tokens",
+            str(lim["max_total_tokens"]),
+            "--max-output-tokens",
+            str(lim["max_output_tokens"]),
+        ]
     args += builtin_effort_args(rec, effort, conn["model"])
     return args, {ai_agents.BUILTIN_KEY_ENV: conn["api_key"]}
 

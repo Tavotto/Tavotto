@@ -304,6 +304,9 @@ class HttpModel:
                     if not isinstance(body, dict):
                         raise RunnerFailure("network", "bad_response")
                     turn = self.wire.parse(body)
+                    charged = _charged_micro(headers)
+                    if charged is not None:
+                        turn.usage.charged_micro = charged
                     self._succeeded_wire = self.wire.name
                     self._token_field = self._adjuster().token_field(req.body)
                     return turn
@@ -343,11 +346,33 @@ class HttpModel:
         raise RunnerFailure(last.reason, last.detail)
 
 
+def _charged_micro(headers: dict[str, str]) -> int | None:
+    """内置 AI 网关回的 `X-Tavotto-Charged`（本请求结算的人民币微元，非负整数）；没有 / 不是纯数字 = None。
+    **只是读出来**：采不采信由父进程按「这个连接是不是 Tavotto Agent」决定（`ai_pricing.usage_with_cost`），第三方端点发这个头没有任何效果。"""
+    raw = (headers.get("x-tavotto-charged") or "").strip()
+    return int(raw) if raw.isdigit() and len(raw) <= 15 else None
+
+
+def _error_code(body: bytes) -> str:
+    """`{"error": {"code": …}}` 里的 code；别的形状 = 空串。只用来精确比对闭集码，原文不外传。"""
+    try:
+        obj = json.loads(body[:4096].decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return ""
+    err = obj.get("error") if isinstance(obj, dict) else None
+    code = err.get("code") if isinstance(err, dict) else None
+    return code if isinstance(code, str) else ""
+
+
 def classify_status(status: int, body: bytes) -> RunnerFailure:
     """非 2xx 的分类。**不把服务端错误体放进任何地方**（可能回显提示词）；只用它判断是不是额度问题。"""
     if status in (401, 403):
         return RunnerFailure("auth", f"http_{status}")
     if status == 402:
+        # 内置 AI 网关（ADR 0200 §五.4）：本任务花到了它的上限——走现有的「预算用完」结局（与 token 上限同一条路），不是新错误。
+        # 只认错误体里**精确**的闭集码；别家的 402 仍是额度问题
+        if _error_code(body) == "task_budget_exhausted":
+            return RunnerFailure("budget", "tokens")
         return RunnerFailure("quota", "http_402")
     if status == 429:
         low = body[:4096].lower()
@@ -498,6 +523,10 @@ def estimate_tokens(system: str, tools: list[ToolSpec], history: list[Msg]) -> i
     return n
 
 
+def _charged_field(usage: Usage) -> dict:
+    return {} if usage.charged_micro is None else {"charged_micro": usage.charged_micro}
+
+
 def _accountable(usage: Usage, request_tokens: int, turn: Turn | None) -> Usage:
     """服务端没报 / 报了非法计数时，按字符数保守估算（偏高估）记账——缺 usage 不许让预算失效。"""
     if usage.reported:
@@ -515,6 +544,7 @@ def _accountable(usage: Usage, request_tokens: int, turn: Turn | None) -> Usage:
         output_tokens=max(usage.output_tokens, out),
         cached_input_tokens=0,
         reported=False,
+        charged_micro=usage.charged_micro,
     )
 
 
@@ -677,6 +707,7 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
                         "ms": turn_ms,
                         "reported": exc.usage.reported,
                         "ok": False,
+                        **_charged_field(exc.usage),
                     }
                 )
             return _finish(res, False, exc.reason, exc.detail)
@@ -695,6 +726,7 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
                 # 执行追踪（ADR 0151）：这一轮请求的时长与用量是否服务端报的（否 = 字符数保守估算）
                 "ms": turn_ms,
                 "reported": turn.usage.reported,
+                **_charged_field(turn.usage),
             }
         )
         # 每轮记账后立刻复查：超额的回复不接受、其工具不执行。终止答复（end 且无工具调用）恰好用满上限

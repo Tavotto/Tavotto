@@ -83,6 +83,34 @@ describe('开始', () => {
     expect(entry()?.phase).toBe('unavailable')
   })
 
+  it('Tavotto Agent（内置 AI）没能开任务 → 不是「AI 不会修」：条目撤回、一条中性的状态胶囊带「改用我自己的 Key」', async () => {
+    vi.mocked(requestAiFix).mockResolvedValue({
+      ok: false,
+      reason: 'ai_hosted_unavailable',
+      hosted: { reason: 'daily_limit', retry_at: Date.now() + 86_400_000 },
+    })
+    useAiStore.setState({ caps: { agents: [], endpoints: [], presets: [], checked_at_ms: 0, vendors: [], connections: [] } as never })
+    await useAiFixStore.getState().startAiFix(KEY, REF)
+    expect(entry()).toBeUndefined() // 卡片原样退回失败卡，用户还能再点
+    const ui = useUiStore.getState()
+    expect(ui.status).toMatchObject({ key: 'hosted.daily', ns: 'ai' }) // 今日额度已用尽，请明天再试（不带名称、不带年）
+    expect(ui.statusTone).toBe('info') // 不红
+    expect(ui.statusAction?.label).toMatchObject({ key: 'hosted.useOwnKey', ns: 'ai' })
+    ui.statusAction?.run() // 「改用我自己的 Key」= 打开连接 AI
+    expect(useConnectAiStore.getState().open).toBe(true)
+    useConnectAiStore.getState().close()
+    useUiStore.getState().setStatus(null)
+  })
+
+  it('内置 AI 因额度没开成、后端已静默退到自己的 Key：修复照常 running，条目记一笔（卡片里一行灰字），不弹胶囊', async () => {
+    vi.mocked(requestAiFix).mockResolvedValue({ ok: true, fix_id: 'fx_1', hosted_fallback: { reason: 'quota_exhausted', retry_at: null, label: 'ChatGPT', kind: 'subscription' } })
+    vi.mocked(fetchAiFix).mockResolvedValue(state({}))
+    await useAiFixStore.getState().startAiFix(KEY, REF)
+    expect(entry()?.phase).toBe('running')
+    expect(entry()?.hostedFallback).toEqual({ reason: 'quota_exhausted', retry_at: null, label: 'ChatGPT', kind: 'subscription' })
+    expect(useUiStore.getState().status).toBeNull() // 没有胶囊、没有「改用我自己的 Key」
+  })
+
   it('capabilities 说不可用：不发请求，直接 unavailable', async () => {
     useAiStore.setState({ caps: { agents: [], ai_fix_available: false } as never })
     await useAiFixStore.getState().startAiFix(KEY, REF)

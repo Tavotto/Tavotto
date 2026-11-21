@@ -25,6 +25,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from . import hosted_ai
 from .agent_runner.wires import Msg, RunnerFailure, Usage, post_json
 
 #: 失败的闭集原因。调用方只按这些码决定「退回规则结果」，不展示给用户。
@@ -113,7 +114,10 @@ def map_failure(exc: RunnerFailure) -> tuple[str, str]:
     if reason == "quota":
         return "quota", detail
     if reason == "budget":
-        if detail == "requests":
+        if detail in (
+            "requests",
+            "tokens",
+        ):  # tokens = 内置 AI 网关说这个任务花到上限了（`loop.classify_status`）
             return "over_budget", detail
         return "timeout", detail or "time"
     if reason == "network" and _TIMEOUT_MARK in detail.lower():
@@ -171,6 +175,11 @@ def resolve_connection(budget_s: float | None = None) -> tuple[dict | None, str,
     budget = DEFAULT_LIMITS.timeout_s if budget_s is None else budget_s
     if ai_connections.builtin_forced() is False:
         return None, "no_connection", "builtin_disabled"
+    # 「Tavotto Agent」（内置 AI）可用时排第一（维护者 2026-11-21）：拿到的是还没开任务的占位（`hosted_ai.needs_task`），真发请求前由 `_call`
+    # 开任务；开不成时 `_call` 静默退到下面那条自己的 Key
+    hosted = ai_providers.builtin_conn(hosted_ai.virtual_record())
+    if hosted is not None:
+        return hosted, "", ""
     conn = ai_connections.first_key_connection(refresh=False)
     if conn is None:
         if fixsession.cli_agent() is not None:
@@ -190,6 +199,13 @@ def resolve_connection(budget_s: float | None = None) -> tuple[dict | None, str,
             if fresh is not None:
                 conn = fresh
     return conn, "", ""
+
+
+def fallback_connection() -> dict | None:
+    """内置 AI 开不成任务时的退路：自己的 Key 连接（不联网刷新）；没有 = None（订阅登录没有单次调用入口）。"""
+    from . import ai_connections
+
+    return ai_connections.first_key_connection(refresh=False)
 
 
 def _effort_kwargs(conn: dict, effort: str | None) -> dict:
@@ -218,7 +234,9 @@ def _effort_kwargs(conn: dict, effort: str | None) -> dict:
 
 
 def _cost(conn: dict, usage: Usage, reported: bool) -> float | None:
-    if not reported:
+    if not reported or conn.get(
+        "hosted"
+    ):  # 内置 AI 的成本是网关按人民币结算的（执行追踪另记），这里的美元估算不适用
         return None
     from . import ai_pricing
 
@@ -284,7 +302,59 @@ def _call(
             return StructuredResult(False, reason=why, detail=detail, elapsed_ms=_ms(t0))
         if time.monotonic() - t0 >= limits.timeout_s:  # 解析连接已经用完总时限：不发请求
             return StructuredResult(False, reason="timeout", detail="resolve", elapsed_ms=_ms(t0))
+    if not hosted_ai.needs_task(conn):
+        return _call_with_conn(system, user, validate, limits, conn, post, t0, max_requests, effort)
+    # Tavotto Agent（内置 AI）：先开一个任务（联网一次），用它的通行证与网关下发的上限发请求，结束（任何结局）就关。
+    # 开不成 = 安静的失败结局（调用方本来就静默退回规则结果），不抛、不卡
+    lease = hosted_ai.lease("data_roles")
+    if not lease.ok:
+        own = fallback_connection()
+        if own is not None:  # 静默退到自己的 Key
+            return _call_with_conn(
+                system, user, validate, limits, own, post, t0, max_requests, effort
+            )
+        return StructuredResult(
+            False,
+            reason=hosted_ai.structured_reason(lease.error),
+            detail=lease.error.code if lease.error else "network",
+            elapsed_ms=_ms(t0),
+        )
+    try:
+        granted = lease.conn()
+        if granted is None:
+            return StructuredResult(
+                False, reason="transport", detail="internal", elapsed_ms=_ms(t0)
+            )
+        return _call_with_conn(
+            system, user, validate, limits, granted, post, t0, max_requests, effort
+        )
+    finally:
+        lease.close()
+
+
+def _call_with_conn(
+    system: str,
+    user: str,
+    validate: Callable[[dict], dict],
+    limits: Limits,
+    conn: dict,
+    post: Callable | None,
+    t0: float,
+    max_requests: int | None,
+    effort: str | None = None,
+) -> StructuredResult:
+    from dataclasses import replace
+
     from . import fixsession
+
+    lim = conn.get("limits")
+    if lim:  # 内置 AI 任务（网关下发的上限，比默认紧）：输出长度与请求数取小，网关那边同样会卡一遍
+        limits = replace(
+            limits, max_output_tokens=min(limits.max_output_tokens, lim["max_output_tokens"])
+        )
+        max_requests = (
+            lim["max_turns"] if max_requests is None else min(max_requests, lim["max_turns"])
+        )
 
     sent = [
         0

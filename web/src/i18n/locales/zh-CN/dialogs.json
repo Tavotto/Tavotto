@@ -2019,7 +2019,9 @@
         "hintCodingPlan": "用 Coding Plan 的 Key",
         "hintAccount": "用 {{name}} 账号登录",
         "hintChatgpt": "用 ChatGPT 订阅登录",
-        "hintClaude": "用 Claude 订阅登录"
+        "hintClaude": "用 Claude 订阅登录",
+        "hosted": "内置",
+        "hintHosted": "Pro 会员专享"
       },
       "back": "返回",
       "savedRefreshFailed": "已保存，但没能刷新状态。",
@@ -2042,7 +2044,9 @@
         "reinstall": "重新安装",
         "enable": "打开",
         "installingPct": "正在安装… {{pct}}%"
-      }
+      },
+      "hostedUse": "使用",
+      "hostedInUse": "使用中"
     },
     "hosts": {
       "title": "接入 AI 编辑器",

@@ -40,9 +40,11 @@ from . import (
     ai_data_figure as adf,
     ai_data_model as model_mod,
     ai_data_recipe as recipe_mod,
+    ai_providers,
     ai_structured,
     atomicio,
     config,
+    hosted_ai,
 )
 
 LOG = logging.getLogger(__name__)
@@ -720,7 +722,10 @@ def _available_connection() -> dict | None:
 
         if ai_connections.builtin_forced() is False:
             return None
-        return ai_connections.first_key_connection(refresh=False)
+        # 「Tavotto Agent」（内置 AI，占位，真发请求前开任务）排第一；没有它才看自己的 Key
+        return ai_providers.builtin_conn(
+            hosted_ai.virtual_record()
+        ) or ai_connections.first_key_connection(refresh=False)
     except Exception:  # noqa: BLE001 - 探测失败 = 没有
         return None
 
@@ -900,6 +905,40 @@ def judge(
     job: Job | None = None,
     call: Callable[..., ai_structured.StructuredResult] | None = None,
 ) -> tuple[Judgement, adf.TableEntry, adf.DataSummary] | tuple[str, str]:
+    """`_judge` 的外壳：连的是「Tavotto Agent」（内置 AI，ADR 0200）时**这一整次判断（表头那问 + 列角色那问）共用一个网关任务**，
+    结束就关；别的连接（自己的 Key）原样直通，一个字节都不多做。开不成任务 = 安静的失败结局（调用方本来就退回规则结果）。"""
+    lease = None
+    extra: dict = {}
+    if call is None and "conn" not in _OVERRIDES:
+        conn, _why, _detail = ai_structured.resolve_connection(
+            0.0
+        )  # 预算 0 = 不联网刷新，只做本地挑选
+        if hosted_ai.needs_task(conn):
+            lease = hosted_ai.lease("data_roles")
+            if lease.ok:
+                extra = {"conn": lease.conn()}
+            else:
+                own = ai_structured.fallback_connection()  # 静默退到自己的 Key
+                if own is None:
+                    return ("failed", hosted_ai.structured_reason(lease.error))
+                extra = {"conn": own}
+    try:
+        return _judge(entry, values, hint, data_path=data_path, job=job, call=call, extra=extra)
+    finally:
+        if lease is not None:
+            lease.close()
+
+
+def _judge(
+    entry: adf.TableEntry,
+    values: adf.DataSummary,
+    hint: str | None,
+    *,
+    data_path: Path | None = None,
+    job: Job | None = None,
+    call: Callable[..., ai_structured.StructuredResult] | None = None,
+    extra: dict,
+) -> tuple[Judgement, adf.TableEntry, adf.DataSummary] | tuple[str, str]:
     """向模型要判断 → `(Judgement, 采纳表头之后的 entry, values)`，或 `("failed", 闭集原因)`。**永不抛**。总时限 `TIMEOUT_S`（表头那次与列角色那次共用）。
 
     1. 表头：只有文本表且嗅探 `unsure`（有预览）才问；采纳要求答案在预览行号里、按它重读合格、且与嗅探的不同。
@@ -908,7 +947,7 @@ def judge(
     t0 = time.monotonic()
     total = float(_OVERRIDES.get("timeout_s", TIMEOUT_S))
     do_call = call or ai_structured.call_structured
-    kw = {k: _OVERRIDES[k] for k in ("conn", "post") if k in _OVERRIDES}
+    kw = {**{k: _OVERRIDES[k] for k in ("conn", "post") if k in _OVERRIDES}, **extra}
 
     def run_call(**ckw):
         left = _budget_left()

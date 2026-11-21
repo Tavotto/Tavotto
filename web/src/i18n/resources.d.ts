@@ -323,6 +323,20 @@ export default interface Resources {
       },
       "viewDiff": "查看差异"
     },
+    "hosted": {
+      "daily": "今日额度已用尽，请明天再试",
+      "fallbackDailyKey": "今日额度已用尽，已经切换到您的 {{name}} Key",
+      "fallbackDailySub": "今日额度已用尽，已经切换到您的 {{name}} 订阅",
+      "fallbackQuotaKey": "额度已用尽，已经切换到您的 {{name}} Key",
+      "fallbackQuotaSub": "额度已用尽，已经切换到您的 {{name}} 订阅",
+      "notEntitled": "这台电脑上的 {{name}} 暂时用不了。",
+      "paused": "{{name}} 暂停服务，稍后恢复。",
+      "quota": "额度已用尽，请稍后再试",
+      "quotaOn": "额度已用尽，请 {{when}} 再试",
+      "unavailable": "{{name}} 暂时连不上，稍后再试。",
+      "useOwnKey": "改用我自己的 Key",
+      "whenDate": "{{date}}"
+    },
     "markdown": {
       "image": "[图片：{{alt}}]",
       "untitled": "未命名"
@@ -338,6 +352,7 @@ export default interface Resources {
       "checkConnection": "检查连接",
       "checking": "检查中",
       "conn": {
+        "hosted": "{{name}} 暂时用不了",
         "no_model": "{{name}} 没有这个模型",
         "quota": "{{name}} 额度用完了",
         "unauthorized": "{{name}} 的密钥不对",
@@ -522,6 +537,7 @@ export default interface Resources {
         "attempt": "第几次",
         "changed": "文件有改动",
         "cost": "费用",
+        "costCharged": "网关实际结算的费用（人民币）",
         "costEstimated": "按定价表估算（{{version}}），不是账单",
         "errorCode": "错误码",
         "execution": "执行方式",
@@ -648,7 +664,8 @@ export default interface Resources {
           "steps": "步骤数",
           "tokens": "Token",
           "tokensIn": "输入 Token",
-          "tokensOut": "输出 Token"
+          "tokensOut": "输出 Token",
+          "usage": "用量"
         },
         "legend": {
           "failed": "失败",
@@ -666,7 +683,8 @@ export default interface Resources {
           "errors": "失败",
           "modelCalls": "模型调用",
           "tokens": "Token",
-          "toolCalls": "工具调用"
+          "toolCalls": "工具调用",
+          "usage": "用量"
         },
         "note": {
           "point": "只记录了时刻，没有时长",
@@ -2669,6 +2687,8 @@ export default interface Resources {
         "error": "连接异常",
         "failed": "没能连上，请检查 Key 后重试。",
         "getKey": "去 {{name}} 获取 ↗",
+        "hostedInUse": "使用中",
+        "hostedUse": "使用",
         "keyLabel": "API Key",
         "keyMissing": "请填写密钥",
         "keyPlaceholder": "粘贴 API Key",
@@ -2682,9 +2702,11 @@ export default interface Resources {
           "hintChatgpt": "用 ChatGPT 订阅登录",
           "hintClaude": "用 Claude 订阅登录",
           "hintCodingPlan": "用 Coding Plan 的 Key",
+          "hintHosted": "Pro 会员专享",
           "hintKey": "填写 {{name}} API Key",
           "hintKimiCode": "用 Kimi Code 会员的 Key",
           "hintLogin": "用 {{name}} 登录",
+          "hosted": "内置",
           "kimiCode": "Kimi Code 会员",
           "subscription": "订阅登录"
         },

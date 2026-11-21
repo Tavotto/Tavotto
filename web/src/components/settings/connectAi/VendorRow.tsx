@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronRight } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import type { AiAgentId, AiConnection, AiVendor } from '@/lib/api'
+import { effectiveConnection, type AiAgentId, type AiConnection, type AiVendor } from '@/lib/api'
 import { actionForReason, canCheckConnection, connActionLabel, isCheckableError, probeReasonText, type ConnAction } from '@/lib/connectionCheck'
 import { cn } from '@/lib/utils'
 import { useAiStore } from '@/store/aiStore'
@@ -64,7 +64,10 @@ export function VendorRow({
   const needsAuth = connection?.state === 'needs_auth'
   // 地址跑不了对话（endpoint_unusable / builtin_only）：状态胶囊说原因，右侧一个「检查连接」（重新探测，通了就变「已连接」）
   const checkable = !multi && !!connection && !ready && isCheckableError(connection) && canCheckConnection(connection)
-  const canManage = !multi && ready && !!manage && connection?.route !== 'cli:codex' && connection?.route !== 'cli:claude' && !connection?.id.startsWith('sub:')
+  // 「Tavotto Agent」（内置 AI）：没有 Key、不能换 Key / 断开，所以没有管理区；这一行只有「使用」
+  const hosted = method.kind === 'hosted'
+  const hostedActive = useAiStore((st) => hosted && !!connection && effectiveConnection(st.connection, st.caps)?.id === connection.id)
+  const canManage = !multi && !hosted && ready && !!manage && connection?.route !== 'cli:codex' && connection?.route !== 'cli:claude' && !connection?.id.startsWith('sub:')
   const unavailable = !multi && !method.available
   const [checking, setChecking] = useState(false)
   // 检查过一次仍不通时，以这次的结论为准（连接视图里的旧原因不再用）；null = 还没检查过
@@ -132,6 +135,24 @@ export function VendorRow({
         </Button>
       </span>
     )
+  } else if (hosted) {
+    action = !connection || !ready ? null : hostedActive ? (
+      <StatusPill tone="ok" dot data-connect-state="ready">
+        {cx('hostedInUse')}
+      </StatusPill>
+    ) : (
+      <Button
+        variant="secondary"
+        size="sm"
+        data-connect-action="hosted"
+        onClick={() => {
+          useAiStore.getState().setConnection(connection.id)
+          onConnected(connection)
+        }}
+      >
+        {cx('hostedUse')}
+      </Button>
+    )
   } else if (ready) {
     action = (
       <StatusPill tone="ok" dot data-connect-state="ready">
@@ -179,7 +200,17 @@ export function VendorRow({
   const rowBody = (
     <>
       <BrandLogo logo={vendor.logo} size={24} />
-      <span className="min-w-0 flex-1 truncate text-base font-medium text-ink">{vendorName(vendor)}</span>
+      {hosted ? (
+        // 一句话说明放在名字下面（不撑高行：与右侧按钮同在 min-h-9 的行里）
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate text-base font-medium text-ink">{vendorName(vendor)}</span>
+          <span data-connect-hint="hosted" className="type-caption truncate">
+            {cx('method.hintHosted')}
+          </span>
+        </span>
+      ) : (
+        <span className="min-w-0 flex-1 truncate text-base font-medium text-ink">{vendorName(vendor)}</span>
+      )}
     </>
   )
 
