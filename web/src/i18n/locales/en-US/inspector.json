@@ -671,7 +671,9 @@
     "setMiterLimit": "Change miter limit",
     "setDashPattern": "Change custom dash",
     "setStrokeAlign": "Change stroke alignment",
-    "setFillRule": "Change fill rule"
+    "setFillRule": "Change fill rule",
+    "setGradientKind": "Change paint type",
+    "setGradient": "Edit gradient"
   },
   "lock": "Lock",
   "locked": "Locked",
@@ -1373,5 +1375,36 @@
     "ops": "Path",
     "offsetDistance": "Offset distance",
     "offsetDistanceTip": "Positive grows outward, negative shrinks inward"
+  },
+  "gradient": {
+    "mixed": "Mixed",
+    "fillKind": "Fill type",
+    "strokeKind": "Stroke type",
+    "kindTip": "Solid, linear gradient or radial gradient",
+    "kind": {
+      "solid": "Solid",
+      "linear": "Linear",
+      "radial": "Radial"
+    },
+    "stopColor": "Stop {{n}} color",
+    "stopOffset": "Stop {{n}} position",
+    "stopOpacity": "Stop {{n}} opacity",
+    "stopOpacityTip": "Opacity of this stop",
+    "angle": "Gradient angle",
+    "angleTip": "0° runs left to right, counterclockwise",
+    "radiusTip": "Percent of the object’s longer side",
+    "stop": "Stop {{n}}",
+    "fillBar": "Fill gradient bar",
+    "strokeBar": "Stroke gradient bar",
+    "barTip": "Click an empty spot to add a stop; drag a stop down off the bar to remove it",
+    "reverse": "Reverse",
+    "fillCenter": "Fill center",
+    "fillCenterX": "Fill center X",
+    "fillCenterY": "Fill center Y",
+    "fillRadius": "Fill radius",
+    "strokeCenter": "Stroke center",
+    "strokeCenterX": "Stroke center X",
+    "strokeCenterY": "Stroke center Y",
+    "strokeRadius": "Stroke radius"
   }
 }

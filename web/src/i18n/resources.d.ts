@@ -741,11 +741,15 @@ export default interface Resources {
     },
     "colorField": {
       "documentColors": "排版里的颜色",
+      "figureColors": "图内配色",
       "hex": "{{label}}：色号",
       "none": "无",
       "open": "{{label}}：选色",
       "picker": "{{label}}：取色盘",
       "recent": "最近使用",
+      "recommended": "推荐配色",
+      "recommendedTip": "Okabe-Ito 色盲友好配色，科研图常用",
+      "recommendedTipJournal": "{{journal}} 没有规定配色；这是 Okabe-Ito 色盲友好配色",
       "system": "系统取色器…"
     },
     "count": {
@@ -1706,6 +1710,10 @@ export default interface Resources {
         "select-all": {
           "keywords": "select all qx quanxuan",
           "label": "全选"
+        },
+        "shape-builder": {
+          "keywords": "shape builder merge regions xszcq 形状生成器 合并 区域",
+          "label": "形状生成器"
         },
         "shortcut-help": {
           "keywords": "shortcut help kjj kuaijiejian",
@@ -5461,6 +5469,37 @@ export default interface Resources {
         "symlog": "对称对数"
       }
     },
+    "gradient": {
+      "angle": "渐变角度",
+      "angleTip": "0° 从左到右，逆时针增加",
+      "barTip": "点空白处加色标，往下拖出色带删除",
+      "fillBar": "填充色带",
+      "fillCenter": "填充中心",
+      "fillCenterX": "填充中心 X",
+      "fillCenterY": "填充中心 Y",
+      "fillKind": "填充类型",
+      "fillRadius": "填充半径",
+      "kind": {
+        "linear": "线性",
+        "radial": "径向",
+        "solid": "纯色"
+      },
+      "kindTip": "纯色、线性渐变或径向渐变",
+      "mixed": "多个值",
+      "radiusTip": "按对象长边的百分比",
+      "reverse": "反向",
+      "stop": "色标 {{n}}",
+      "stopColor": "色标 {{n}} 的颜色",
+      "stopOffset": "色标 {{n}} 的位置",
+      "stopOpacity": "色标 {{n}} 的不透明度",
+      "stopOpacityTip": "这个色标的不透明度",
+      "strokeBar": "描边色带",
+      "strokeCenter": "描边中心",
+      "strokeCenterX": "描边中心 X",
+      "strokeCenterY": "描边中心 Y",
+      "strokeKind": "描边类型",
+      "strokeRadius": "描边半径"
+    },
     "gradientStops": {
       "bottom": "下端",
       "followSwatch": "让「{{name}}」的图例色块跟着改",
@@ -5532,6 +5571,8 @@ export default interface Resources {
       "setFillRule": "修改填充规则",
       "setFontFamily": "修改字体",
       "setFontSize": "修改字号",
+      "setGradient": "改渐变",
+      "setGradientKind": "改填充 / 描边类型",
       "setHeadEnd": "修改终点端型",
       "setHeadSizeEnd": "修改终点端型大小",
       "setHeadSizeStart": "修改起点端型大小",
@@ -6472,6 +6513,7 @@ export default interface Resources {
       "saveNamed": "把现在存为命名节点",
       "script": "上标 / 下标（属性面板文字框内）",
       "selectAll": "全选",
+      "shapeBuilder": "形状生成器",
       "tabs": "焦点在画布标签上时：重命名 / 关闭 / 左右挪动",
       "timeline": "打开 / 关闭排版时间线",
       "tools": "选择 / 文字 / 箭头 / 矩形 / 椭圆 / 直线",
@@ -7033,6 +7075,7 @@ export default interface Resources {
       "rotate": "旋转 {{deg}}°",
       "rotateObjects": "旋转对象",
       "rotateReset": "取消旋转",
+      "roundCorners": "圆角",
       "scaleLegend": "缩放图例",
       "scriptWinsOverStyle": "脚本改动优先于样式",
       "seedBaked": "载入文件中的基线",
@@ -7042,6 +7085,7 @@ export default interface Resources {
       "setPageSize": "修改画布尺寸",
       "setProp": "修改{{prop}}",
       "setPublicationProfile": "设置出版规范",
+      "shapeBuilder": "形状生成器",
       "showObject": "显示对象",
       "showObjects": "显示 {{count}} 个对象",
       "simplifyPath": "简化路径",

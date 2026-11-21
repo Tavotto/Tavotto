@@ -700,6 +700,10 @@
       "reverse-path": {
         "keywords": "reverse path direction flip arrow",
         "label": "Reverse path direction"
+      },
+      "shape-builder": {
+        "keywords": "shape builder merge regions",
+        "label": "Shape builder"
       }
     },
     "listLabel": "Commands",

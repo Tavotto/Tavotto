@@ -1616,6 +1616,22 @@
       ]
     },
     {
+      "id": "canvas.gradient-fill",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "形状 / 路径的填充（与描边）可设为线性或径向渐变，画布与导出都按渐变画",
+        "en-US": "Fill (and stroke) of shapes and paths can be linear or radial gradients, drawn as gradients on the canvas and in exports"
+      },
+      "entry": "画布 → 选中矩形 → 右栏「外观」→ 填充类型",
+      "e2e": [
+        {
+          "spec": "vector-gradient.spec.ts",
+          "title": "渐变填充 › 矩形填充改成线性渐变：画布上填充引用渐变、色标不止一种颜色；导出 SVG 里是 linearGradient"
+        }
+      ]
+    },
+    {
       "id": "ai.fix-memory",
       "status": "active",
       "platform": "both",

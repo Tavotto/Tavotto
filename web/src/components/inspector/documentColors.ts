@@ -4,6 +4,8 @@ import { useDocumentStore } from '@/store/documentStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import type { CanvasObject, PageSetup, PanelObject } from '@/types/document'
 import { normalizeHex } from '../ui/colorPalette'
+import { figureColorsOf } from '@/lib/swatches'
+import { useShallow } from 'zustand/react/shallow'
 
 /** 一张画布里取色要看的两样：对象与页面 */
 type CanvasColors = { objects: readonly CanvasObject[]; page: PageSetup }
@@ -98,4 +100,17 @@ export function useDocumentColors(): string[] {
     const set = new Set(colorKeys ? colorKeys.split('\n') : [])
     return documentColorsOf(all, (p, gid, prop) => set.has(overrideKey(p.id, gid, prop)))
   }, [all, colorKeys])
+}
+
+/**
+ * 「图内配色」：当前画布上各张图的 manifest 里报出来的颜色（`lib/swatches.figureColorsOf`）。
+ * manifest 取这一版、没有就取同文件上一版（只读显示用）；都没有就不收。
+ */
+export function useFigureColors(): string[] {
+  const objects = useDocumentStore((s) => s.doc.objects)
+  const panels = useMemo(() => objects.filter((o): o is PanelObject => o.type === 'panel'), [objects])
+  const manifests = useRenderStore(
+    useShallow((s) => panels.map((p) => s.byKey[renderKeyOf(p)]?.manifest ?? s.byKey[s.latest[p.fileId] ?? '']?.manifest ?? null)),
+  )
+  return useMemo(() => figureColorsOf(manifests), [manifests])
 }
