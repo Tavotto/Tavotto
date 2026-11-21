@@ -138,11 +138,13 @@ export default interface Resources {
       },
       "draft": {
         "allText": "这张表里都是文字，没有能画的数字。",
+        "cancelled": "已取消，这个文件没读完。",
         "collapse": "收起",
         "expand": "展开",
         "failed": "这次没画出来，数据没问题。",
         "guessRow": "把第 {{n}} 行当作列名。不对就点对的那一行。",
         "pickLead": "点一张，放进画布接着改。",
+        "readAgain": "重新读取",
         "stripInfo": "前 {{shown}} 行，共 {{total}} 行 · {{columns}} 列",
         "unreadable": "这个文件不是表格，读不了。"
       },
@@ -226,6 +228,10 @@ export default interface Resources {
         "from": "用 {{file}} 画的",
         "undo": "撤销"
       },
+      "reduced": {
+        "hint": "整张表{{rows}}行，这张图画的是其中有代表性的{{kept}}个点，最大最小值都留着。",
+        "text": "{{rows}}行里取{{kept}}个点"
+      },
       "result": {
         "mismatch": "画出来的图和你的数据对不上，所以没有打开它。",
         "unknown": "图画好了，数据核对没能完成。",
@@ -237,8 +243,11 @@ export default interface Resources {
         "split": "按「{{column}}」再分开"
       },
       "working": {
+        "cancel": "取消",
+        "cancelHint": "不再等这次读取，随时可以重新读。",
         "drawing": "正在画…",
         "reading": "正在读…",
+        "readingLarge": "正在读一个大文件，要一会儿…",
         "slow": "还在画，数据多会久一点。"
       }
     },
@@ -769,12 +778,14 @@ export default interface Resources {
       "group": "分组"
     },
     "shape": {
+      "arc": "弧线",
       "brace": "大括号",
       "diamond": "菱形",
       "ellipse": "椭圆",
       "line": "直线",
       "polygon": "多边形",
       "rect": "矩形",
+      "star": "星形",
       "triangle": "三角形"
     }
   },
@@ -1253,6 +1264,7 @@ export default interface Resources {
       "yes": "是"
     },
     "layout": {
+      "computationalFormat": "计算图表",
       "conflict": "磁盘上已存在名为「{{name}}」的排版，由其他窗口或外部工具写入。",
       "conflictDisk": "磁盘上那份：{{canvases}} 张画布 / {{objects}} 个对象",
       "empty": "项目里还没有排版",
@@ -1465,23 +1477,87 @@ export default interface Resources {
         "title": "直接在图上改"
       }
     },
+    "packageInstall": {
+      "attemptedAt": "请求安装到",
+      "chooseAnother": "选择其他项目包…",
+      "chooseDestination": "选择位置…",
+      "close": "关闭",
+      "completionUnknown": "这次安装尚未收到确认结果。请保留并检查此目录；关闭窗口后仍可回看路径。重新安装前请先选择项目包。",
+      "configurationReview": "此项目的本机运行设置需要检查，打开项目不会运行脚本。",
+      "contents": "画布 {{canvases}} · 资源 {{resources}} · 图像归档 {{snapshots}}",
+      "continueEditing": "继续编辑",
+      "dependencies": "运行依赖尚未全部确认；安装不会自动运行包内脚本。",
+      "description": "先检视资源，再安装到新项目；打开时保留原来的排版。",
+      "destination": "新项目目录",
+      "documentPending": "排版正文的保存尚未确认。打开项目后将通过原保存流程写入工作副本。",
+      "entry": "安装项目包到新目录…",
+      "inspecting": "正在检视项目包…",
+      "install": "安装到新目录",
+      "installedAt": "资源已安装到",
+      "installing": "正在安装资源。关闭窗口会停止后续打开，安装结果仍会保留。",
+      "missing_other": "包中缺少 {{count}} 个资源，请补齐后重新导出。",
+      "newDirectory": "填写尚不存在的完整目录路径，已有文件不会被覆盖。",
+      "openInstalled": "打开已安装项目",
+      "opening": "正在打开项目并保存工作副本…",
+      "pickParent": "选择新项目的上级目录",
+      "previous": "其他安装记录",
+      "publicationUnconfirmed": "目录已发布，但安装核对尚未全部确认；打开后请检查资源。",
+      "receivedResult": "已收到这次安装的结果，可以查看后继续。",
+      "resultPending": "结果未确认",
+      "reviewConfiguration": "检查本机运行设置",
+      "saved": "工作副本已保存，可以继续编辑。",
+      "title": "安装计算图表项目包",
+      "viewResult": "查看安装结果"
+    },
     "palette": {
       "commands": {
+        "add-anchor": {
+          "keywords": "add anchor tjmd 加点",
+          "label": "添加锚点"
+        },
         "add-text": {
           "keywords": "text add tjwz wenzi",
           "label": "添加文字"
+        },
+        "average-anchors": {
+          "keywords": "average align pjmd 平均 对齐",
+          "label": "平均锚点"
         },
         "canvas-settings": {
           "keywords": "canvas page settings hbsz huabu",
           "label": "画布设置"
         },
+        "clear-fill": {
+          "keywords": "no fill none wtc 无填充",
+          "label": "无填充"
+        },
+        "convert-anchor": {
+          "keywords": "convert anchor smooth corner zhmd 平滑 尖角",
+          "label": "转换锚点"
+        },
         "convert-to-path": {
           "keywords": "convert path zwlj 路径 钢笔",
           "label": "转为路径"
         },
+        "cut-path": {
+          "keywords": "cut scissors jd 剪刀 断开",
+          "label": "在锚点处断开"
+        },
         "cycle-overlap": {
           "keywords": "cycle overlap twin axis lh lunhuan cd chongdie sszx shuangzongzhou",
           "label": "在重叠的图内元素之间轮换选中"
+        },
+        "default-appearance": {
+          "keywords": "default fill stroke mrtsms 默认 填色 描边",
+          "label": "默认填色描边"
+        },
+        "delete-anchor": {
+          "keywords": "delete anchor scmd 删点",
+          "label": "删除锚点"
+        },
+        "edit-anchors": {
+          "keywords": "anchor direct bjmd 直接选择 锚点",
+          "label": "编辑锚点"
         },
         "edit-elements": {
           "keywords": "edit element tnys tuneiyuansu",
@@ -1490,6 +1566,10 @@ export default interface Resources {
         "export": {
           "keywords": "export pdf png dc daochu",
           "label": "导出 PDF / PNG…"
+        },
+        "eyedropper-tool": {
+          "keywords": "eyedropper pick color xg 吸管 取色",
+          "label": "吸管"
         },
         "fit": {
           "keywords": "fit zoom syhb shiying",
@@ -1506,6 +1586,10 @@ export default interface Resources {
         "hints-reset": {
           "keywords": "hints tips reset ts tishi 提示 新手",
           "label": "重新显示操作提示"
+        },
+        "join-paths": {
+          "keywords": "join connect lj 连接 闭合",
+          "label": "连接"
         },
         "layout-col": {
           "keywords": "col layout lbj liebuju",
@@ -1538,6 +1622,10 @@ export default interface Resources {
         "new-doc": {
           "keywords": "new blank xj xinjian pb paiban",
           "label": "新建空白排版"
+        },
+        "pen-tool": {
+          "keywords": "pen gb 路径 贝塞尔",
+          "label": "钢笔"
         },
         "project-scan": {
           "keywords": "scan check structure jc jiancha 检查 扫描 脚本 目标",
@@ -1582,6 +1670,10 @@ export default interface Resources {
         "sub-labels": {
           "keywords": "label abc xhbq xuhao",
           "label": "添加序号 (a)(b)(c)"
+        },
+        "swap-fill-stroke": {
+          "keywords": "swap fill stroke hhtsms 互换",
+          "label": "互换填色和描边"
         },
         "tutorial-reset": {
           "keywords": "tutorial sample reset restart jc jiaocheng shili 示例 重置",
@@ -2748,7 +2840,7 @@ export default interface Resources {
             "detail_overrides": "正在编辑的图的样式改动",
             "detail_render_env": "渲染环境（Python、matplotlib、已装包、字体）",
             "detail_requests": "最近的后端请求记录（只有方法、路由、状态码、耗时、错误码）",
-            "detail_runs": "最近的渲染、导出、脚本试运行记录",
+            "detail_runs": "最近的渲染、导出、脚本试运行记录，以及 AI 修复的经过",
             "detail_shell": "桌面壳与安装信息（版本、系统、架构、更新结果）",
             "detail_source": "脚本源码与依赖声明文件（你勾选了）",
             "detail_state": "会话状态文件（含损坏副本清单）",
@@ -2765,7 +2857,7 @@ export default interface Resources {
             "ui_trace": "最近的界面操作轨迹（只有操作类型）"
           },
           "listSeparator": "、",
-          "notIncluded": "默认不含脚本、数据文件和匿名统计标识；报错与日志里可能出现文件夹名、文件名和脚本打印出的内容。",
+          "notIncluded": "默认不含脚本文件、数据文件和匿名统计标识；报错与日志里可能出现文件夹名、文件名和脚本打印出的内容，用过 AI 修复时还会带上它读过的脚本片段。",
           "noteCount": "{{count}} / {{max}}",
           "noteLabel": "补充说明（可选）",
           "notePlaceholder": "发生了什么？请不要填姓名、邮箱、路径或数据。",
@@ -3568,6 +3660,11 @@ export default interface Resources {
       "cell_map_too_large": "映射规则写得太多了，最多 50 项。",
       "cell_map_value_invalid": "映射到的值要是一个数，或者写成缺失。",
       "cell_rule_invalid": "这条处理规则不对：要针对这次画图用到、夹着文字的数值列，每列只写一条。",
+      "chart_engine_mismatch": "当前绘图环境与计算图表要求不一致。请使用匹配的绘图环境后重试。",
+      "chart_engine_unavailable": "计算图表的渲染引擎正忙，请稍后重试。",
+      "chart_model_invalid": "计算图表的模型或来源引用无效，无法应用本次操作。",
+      "chart_model_unsupported": "当前不支持这份计算图表的模型或编辑方式。",
+      "chart_render_unsupported": "当前无法完整渲染这张计算图表。",
       "column_not_found": "这张表里没有这一列。",
       "column_type_mismatch": "这一列的类型不适合画在这个位置，比如把文字当数值用。",
       "composition_negative": "占比图里有负数，不能画。",
@@ -3663,8 +3760,8 @@ export default interface Resources {
       "image_format_mismatch_file": "{{file}} 其实是 {{actual}} 图片，只是扩展名写成了 .{{ext}}，换成真正的 {{claimed}} 文件后再运行。",
       "import_folder_abi_mismatch": "脚本自带的“{{folder}}”文件夹是为 Python {{abi}} 装的，和当前环境（Python {{current}}）不兼容。选“跳过这个文件夹重跑”即可，不需要换 Python。",
       "import_folder_unreadable": "脚本加载的项目外文件夹“{{folder}}”读不了（当前账户没有读取权限）。给这个账户开放读取权限，或把它移出脚本的加载路径后重试；换 Python 环境没有用。",
-      "input_declaration_conflict": "输入声明已更新，请重新读取后再保存。",
-      "input_declaration_invalid": "输入声明或批准资源不可用，请检查文件、运行配置和数据位置。",
+      "input_declaration_conflict": "输入声明已在另一处更新，请重新读取后再保存。",
+      "input_declaration_invalid": "输入声明或已选择的资源不可用，请检查文件、运行配置和数据位置。",
       "input_declaration_unavailable": "暂时无法读取或保存输入声明，请稍后重试。",
       "input_remap_changed": "数据位置刚刚改过，这次结果按旧位置产出，已丢弃。请重试。",
       "input_remap_chosen_invalid": "这个位置用不了：{{path}}。请选一个存在的文件或文件夹。",
@@ -5300,8 +5397,10 @@ export default interface Resources {
       "setArrowColor": "修改箭头颜色",
       "setCornerRadius": "修改圆角",
       "setDash": "修改线型",
+      "setDashPattern": "修改自定义虚线",
       "setFill": "修改填充",
       "setFillOpacity": "修改填充不透明度",
+      "setFillRule": "修改填充规则",
       "setFontFamily": "修改字体",
       "setFontSize": "修改字号",
       "setHeadEnd": "修改终点端型",
@@ -5313,6 +5412,7 @@ export default interface Resources {
       "setLineCap": "修改线端",
       "setLineHeight": "修改行距",
       "setLineJoin": "修改拐角",
+      "setMiterLimit": "修改斜接上限",
       "setPadding": "修改内边距",
       "setPageBackground": "修改页面背景",
       "setPageBgColor": "修改页面背景色",
@@ -5321,6 +5421,8 @@ export default interface Resources {
       "setPageW": "修改画布宽度",
       "setPanelScale": "修改图的缩放",
       "setSides": "修改边数",
+      "setStarRatio": "修改内径比",
+      "setStrokeAlign": "修改描边对齐",
       "setStrokeColor": "修改描边颜色",
       "setStrokeOpacity": "修改描边不透明度",
       "setStrokeWidth": "修改线宽",
@@ -5684,6 +5786,12 @@ export default interface Resources {
     "stroke": {
       "addFill": "添加填充",
       "addStroke": "添加描边",
+      "align": {
+        "center": "居中",
+        "inside": "内侧",
+        "outside": "外侧"
+      },
+      "alignRow": "描边对齐",
       "appearance": "外观",
       "cap": {
         "butt": "平头",
@@ -5695,6 +5803,9 @@ export default interface Resources {
       "color": "颜色",
       "cornerRadius": "圆角",
       "dash": "线型",
+      "dashPattern": "自定义虚线",
+      "dashPatternPlaceholder": "如 4 2",
+      "dashPatternTip": "线段和间隙的长度（pt），用空格隔开，如「4 2」；清空就回到上面的线型",
       "dashStyle": {
         "dashdot": "点划线",
         "dashed": "虚线",
@@ -5707,6 +5818,11 @@ export default interface Resources {
       "endSize": "终点大小",
       "fill": "填充",
       "fillOpacity": "不透明度",
+      "fillRule": {
+        "evenodd": "奇偶",
+        "nonzero": "非零"
+      },
+      "fillRuleRow": "填充规则",
       "head": {
         "bar": "短线",
         "diamond": "菱形",
@@ -5723,8 +5839,10 @@ export default interface Resources {
       },
       "joinRow": "拐角",
       "lineWidth": "线宽",
+      "miterLimit": "斜接上限",
       "more": "更多",
       "moreCount": "{{n}} 项",
+      "points": "角数",
       "reverse": "反转方向",
       "sides": "边数",
       "size": {
@@ -5732,6 +5850,8 @@ export default interface Resources {
         "medium": "中",
         "small": "小"
       },
+      "starRatio": "内径比",
+      "starRatioTip": "内顶点到中心的距离占外顶点的比例",
       "start": "起点",
       "startSize": "起点大小",
       "strokeColor": "描边",
@@ -6191,6 +6311,8 @@ export default interface Resources {
       "view": "视图"
     },
     "key": {
+      "anchors": "锚点编辑里：添加 / 删除 / 转换锚点",
+      "appearance": "默认填色描边 / 互换填色和描边 / 无填充",
       "copyPaste": "复制 / 粘贴对象，可跨排版",
       "cycleOverlap": "在重叠的图内元素之间轮换选中",
       "delete": "删除对象；图内编辑时改为隐藏，可恢复。",
@@ -6198,6 +6320,7 @@ export default interface Resources {
       "enter": "编辑所选：文字进入编辑，可编辑的图进入图内编辑",
       "escape": "逐层退出：文字编辑 → 图内元素 → 图内编辑 → 取消选择",
       "export": "导出",
+      "eyedropper": "吸管",
       "freeResize": "自由缩放（不锁定宽高比）",
       "help": "本帮助",
       "multiSelect": "加选 / 减选对象或图内元素",
@@ -6205,6 +6328,8 @@ export default interface Resources {
       "nudge": "微移选中对象或图内元素：0.5 mm / 5 mm / 0.1 mm（页面上的距离）；连按算一步撤销",
       "palette": "命令面板",
       "pan": "平移画布",
+      "pathJoin": "连接路径 / 平均锚点",
+      "pen": "钢笔",
       "quickEdit": "按对象打开快捷编辑菜单",
       "saveDocument": "保存排版",
       "saveLayout": "另存为新排版",
@@ -6366,8 +6491,83 @@ export default interface Resources {
     "canvasTools": {
       "fit": "适应",
       "label": "画布工具",
+      "pen": "钢笔",
       "select": "选择",
       "subLabels": "序号"
+    },
+    "chartBind": {
+      "addSeries": "添加系列",
+      "apply": "绑定计算图表",
+      "axesNodes": "要替换的轴区域节点（每行一个）",
+      "axesNodesHelp": "选择原图中的轴、刻度和标签区域；这些区域会按数据重算。未选择的注释与装饰保持原样。",
+      "axis": {
+        "x": "X 轴校准（两个参考值）",
+        "y": "Y 轴校准（两个参考值）"
+      },
+      "cancel": "取消",
+      "categorical": "类别轴",
+      "categoriesCol": "类别数据列",
+      "colorbarNode": "色条区域节点",
+      "computed": "计算预览",
+      "confirm": "确认绑定",
+      "data": "数据（CSV / TSV）",
+      "dataPlaceholder": "x,y\n0,1.0\n1,2.0",
+      "errorColumn": "Y 误差列",
+      "fileLabel": "来源文件",
+      "firstPosition": "参考位置 1（轴比例）",
+      "firstValue": "参考数值 1",
+      "generating": "正在计算预览…",
+      "gridData": "网格数据（每行一行数值）",
+      "kind": {
+        "bar": "柱图",
+        "errorbar": "误差棒",
+        "image": "热图 / 网格",
+        "line": "折线",
+        "scatter": "散点"
+      },
+      "legend": {
+        "add": "添加图例区域",
+        "addEntry": "添加条目",
+        "custom": "保持脚本原样（不跟随）",
+        "entries": "旧图例里的条目，从上到下（从 0 编号）。文字取场景里对应的文本，可自行修改。",
+        "entryIndex": "条目序号",
+        "entryLabel": "条目文字",
+        "follow": "跟随",
+        "rectHeight": "图例高度",
+        "rectWidth": "图例宽度",
+        "rectX": "图例 X",
+        "rectY": "图例 Y",
+        "region": "图例区域节点",
+        "remove": "移除区域",
+        "removeEntry": "移除条目",
+        "title": "图例区域（重算后的条目跟随各自的系列）"
+      },
+      "menu": "绑定数据为计算图表",
+      "nodesLabel": "节点数",
+      "numeric": "数值轴",
+      "original": "原图",
+      "preview": "生成对照预览",
+      "rect": "绘图区（x y 宽 高）",
+      "rectHeight": "绘图区高度",
+      "rectWidth": "绘图区宽度",
+      "rectX": "绘图区 X",
+      "rectY": "绘图区 Y",
+      "removeSeries": "移除系列",
+      "restoredHelp": "数据、坐标轴与系列已预填。检查对照预览，确认后应用到当前图。",
+      "restoredTitle": "已读取 SVG 内的计算图表",
+      "retryScene": "重新读取原图",
+      "scale": "轴尺度",
+      "scaleLinear": "线性",
+      "scaleLog": "对数",
+      "secondPosition": "参考位置 2（轴比例）",
+      "secondValue": "参考数值 2",
+      "series": "系列（节点 / x 列 / y 列）",
+      "seriesNode": "场景节点 id",
+      "seriesType": "系列类型",
+      "title": "绑定数据为计算图表",
+      "xColumn": "X 数据列",
+      "xKind": "X 轴类型",
+      "yColumn": "Y 数据列"
     },
     "confirm": {
       "docLossBody": "浏览器存储不可用或已满，切换后无法从「本机最近的排版」取回。仍要继续吗？",
@@ -6586,6 +6786,7 @@ export default interface Resources {
       "space_pan": "按住空格拖动，平移画布"
     },
     "history": {
+      "addAnchors": "添加锚点",
       "addArrow": "添加箭头",
       "addGuide": "添加参考线",
       "addPanel": "加入图 {{name}}",
@@ -6593,6 +6794,7 @@ export default interface Resources {
       "addSubLabels": "添加序号标签",
       "addText": "添加文字",
       "adjustCrop": "调整裁剪",
+      "adoptComputedFrame": "采用计算渲染外框",
       "adoptScriptFrame": "改用脚本保存时的图幅",
       "alignNewFigure": "按样式对齐新图",
       "alignNewText": "按样式对齐新标注",
@@ -6601,22 +6803,31 @@ export default interface Resources {
       "applyStyle": "应用样式「{{name}}」",
       "arrowEndpoint": "调整箭头端点",
       "autoReflow": "自动重排布局组",
+      "averageAnchors": "平均锚点",
       "bindStyle": "给当前画布套用样式「{{name}}」",
       "cancelCrop": "取消裁剪",
+      "clearFill": "无填充",
       "clearGuides": "清除参考线",
       "clearJournal": "取消按期刊检查",
       "clearProp": "恢复{{prop}}",
+      "continuePath": "续画路径",
+      "convertAnchors": "转换锚点",
       "convertToPath": "转为路径",
       "convertToPathCount": "把 {{count}} 个对象转为路径",
       "createLayoutGroup": "创建{{kind}}",
+      "cutPath": "在锚点处断开",
+      "defaultAppearance": "默认填色描边",
+      "deleteAnchors": "删除 {{count}} 个锚点",
       "deleteGuide": "删除参考线",
       "deleteObject": "删除 {{name}}",
       "deleteObjects": "删除 {{count}} 个对象",
       "dissolveLayoutGroup": "解散布局组",
+      "drawPath": "画路径",
       "duplicateCanvasSuffix": "{{name}} 副本",
       "duplicateObjects": "复制对象",
       "editStyle": "修改样式「{{name}}」",
       "editText": "编辑文字",
+      "eyedropper": "吸管上色",
       "fillPanel": "填满当前框",
       "fitContentCrop": "贴合内容",
       "fitPanel": "完整放入框内",
@@ -6630,6 +6841,7 @@ export default interface Resources {
       "insertPreset": "插入{{name}}",
       "insertShape": "插入{{name}}",
       "insertSymbol": "插入符号 {{symbol}}",
+      "joinPaths": "连接路径",
       "journalStyle": "参考 {{journal}} 的记录调整样式「{{name}}」",
       "legendDetach": "断开图例项与来源的跟随",
       "legendFollowSource": "图例项重新跟随来源",
@@ -6639,9 +6851,11 @@ export default interface Resources {
       "lockObject": "锁定对象",
       "lockObjects": "锁定 {{count}} 个对象",
       "mcpOpenFigure": "打开图",
+      "moveAnchors": "移动锚点",
       "moveElement": "移动{{label}}",
       "moveElements": "移动 {{count}} 个图内元素",
       "moveGuide": "移动参考线",
+      "moveHandle": "调整手柄",
       "moveObject": "移动对象",
       "moveObjects": "移动 {{count}} 个对象",
       "pasteObjects_other": "粘贴 {{count}} 个对象",
@@ -6680,6 +6894,7 @@ export default interface Resources {
       "showObjects": "显示 {{count}} 个对象",
       "spacingX": "设置水平间距",
       "spacingY": "设置垂直间距",
+      "swapFillStroke": "互换填色和描边",
       "switchKind": "改为{{name}}",
       "switchKindCount": "把 {{count}} 个对象改为{{name}}",
       "syncPublicationProfile": "同步规范到新版",
@@ -7197,6 +7412,35 @@ export default interface Resources {
         "grantCopy": "会弹出系统的授权窗口，同意后再复制；原文件不动。",
         "openPrivacy": "在“隐私与安全性 → 完全磁盘访问”里勾上 {{product}}，再回来重新运行。"
       },
+      "inputs": {
+        "addFile": "添加文件",
+        "anyRelative": "所有相对请求",
+        "approvedRemaps": "已批准的外部输入",
+        "cancel": "取消",
+        "captured": "实际运行记录的输入摘要：{{revision}}",
+        "changed": "参数或准备配置已变化，请先重新检查。",
+        "chooseFile": "选择文件…",
+        "hint": "选择下一次明确运行时要记录的输入。保存仅重新检查，不运行脚本。",
+        "loading": "正在读取输入声明…",
+        "missingRemap": "批准目标已不可用，请移除或重新读取",
+        "noFiles": "尚未选择项目文件",
+        "noRemaps": "没有已批准的外部输入",
+        "notScript": "当前目标不是可声明输入的脚本。",
+        "pathPlaceholder": "项目相对路径或文件路径",
+        "projectFiles": "项目文件",
+        "reload": "重新读取",
+        "reloaded": "已重新读取并合并你的未保存选择，请检查后保存。",
+        "removeDeclaration": "移除声明",
+        "removeFile": "移除",
+        "removed": "声明已移除。",
+        "removedRecheckFailed": "声明已移除，但重新检查未完成。请重新检查。",
+        "save": "保存选择",
+        "saved": "选择已保存。下次运行会按此选择记录输入。",
+        "savedRecheckFailed": "选择已保存，但重新检查未完成。请重新检查。",
+        "scopeUnknown": "当前运行范围尚未确定。",
+        "sensitiveRun": "含敏感参数的运行不记录可携输入声明。",
+        "title": "捕获输入"
+      },
       "install": {
         "download": "需要先下载约 {{mb}} MB。",
         "managedPlace": "Tavotto 目录",
@@ -7549,6 +7793,8 @@ export default interface Resources {
       "doneLocal": "已保存在本机（没有打开项目）",
       "doneProject": "已保存到项目：{{file}}",
       "failed": "无法保存。改动仍在，请检查磁盘空间后重试。",
+      "projectBindingSuperseded": "已写入 {{file}}，但下次保存目标尚未确认。较晚选择的目标会保留，请重新打开这份排版后继续保存。",
+      "projectBindingUnavailable": "项目文件关联尚未确认，本次还没有写入命名文件。改动仍在本机，请重试或重新打开排版。",
       "projectConflict": "项目里的 {{file}} 已在别处改过，这次没有写入。请在弹出的对话框里决定。",
       "projectConflictElsewhere": "项目里的 {{file}} 已在别处改过，这次没有写入。回到那份排版再保存，就能决定怎么处理。",
       "projectFailed": "没能存进项目里的 {{file}}：{{reason}}",
@@ -7718,6 +7964,8 @@ export default interface Resources {
       "elementNotCopyable": "{{name}}还不能复制",
       "elementNotCopyableGeneric": "这个元素还不能复制",
       "elementsHidden_other": "已隐藏 {{count}} 个元素，可在「已隐藏元素」里恢复",
+      "eyedropperNoTarget": "先选中要上色的形状、路径或箭头",
+      "eyedropperNothing": "这里没有能吸的颜色",
       "geometrySyncing": "正在同步图形几何，请稍候再试",
       "groupBlocked": {
         "incomplete": "组里有成员这一版拿不到位置，暂时不能整组移动或缩放",
@@ -7745,6 +7993,9 @@ export default interface Resources {
       "packageOpenFailed": "无法打开项目包。{{error}}",
       "packageOpened": "已打开项目包（{{createdAt}}），素材全部就位",
       "packageTooNew": "这个项目包来自更新的 {{product}}，本版本无法打开。",
+      "packagedExecutionIncomplete": "已生成项目包 {{name}}。运行依赖尚未确认完整，迁移前请检查数据与运行配置。",
+      "packagedIncompleteWithExecution_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材，运行依赖也尚未确认完整。迁移前请补齐素材并检查数据与运行配置。",
+      "packagedIncomplete_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材。恢复前请补齐。",
       "packaged_other": "已生成项目包 {{name}}（{{count}} 个素材）",
       "panelRebuilt": "已按源脚本重新构建",
       "panelRerenderedNoRerun": "已按当前修改重新渲染；源脚本没有重跑",
@@ -7848,11 +8099,19 @@ export default interface Resources {
       "unopened": "未打开"
     },
     "toolHint": {
+      "arc": "拖动画出弧线；Esc 取消",
       "arrow": "拖动画出箭头，Shift 吸附 15° 角；Esc 取消",
+      "brace": "拖动画出大括号；Esc 取消",
+      "diamond": "拖动画出菱形；Esc 取消",
       "ellipse": "拖动画出椭圆；Esc 取消",
+      "eyedropper": "点画布上的东西，把它的颜色给选中的对象；Esc 退出",
       "line": "拖动画出直线；Esc 取消",
+      "pen": "点一下加尖角点，按住拖拉出平滑点；点起点闭合，Enter / Esc 结束",
+      "polygon": "拖动画出多边形；Esc 取消",
       "rect": "拖动绘制矩形；Esc 取消",
-      "text": "拖动绘制文字框，或单击按默认大小放置；Esc 取消"
+      "star": "拖动画出星形；Esc 取消",
+      "text": "拖动绘制文字框，或单击按默认大小放置；Esc 取消",
+      "triangle": "拖动画出三角形；Esc 取消"
     },
     "topbar": {
       "addSubLabels": "添加序号标签",
@@ -7875,7 +8134,6 @@ export default interface Resources {
       "fromOtherProject": "· 其他项目",
       "fromProject": "· 项目 {{name}}",
       "importPackage": "导入项目包…",
-      "insertShape": "插入形状",
       "issueAria": "排版状态：{{status}}。查看详情",
       "issueLastDoc": "没接上上次的排版",
       "issueTooNew": "排版版本较新",

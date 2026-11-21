@@ -463,6 +463,34 @@ export function pathGeometry(o: PathGeomInput, w: number, h: number, sw: number)
   return { fill, stroke, heads, headHalf }
 }
 
+/**
+ * 一条已补齐手柄的子路径（任意坐标系，`map` 把点换到要画的地方）→ d 串；L / C 的判据与 `pathGeometry` 同一条。
+ * 钢笔草稿与锚点编辑的覆盖层用它（它们手里是页面 mm 的锚点，不是比例坐标）。
+ */
+export function subpathD(
+  sp: { closed: boolean; nodes: readonly { p: readonly [number, number]; in: readonly [number, number]; out: readonly [number, number] }[] },
+  map: (q: readonly [number, number]) => [number, number],
+): string {
+  if (!sp.nodes.length) return ''
+  const nodes: ScaledNode[] = sp.nodes.map((n) => ({ p: map(n.p), in: map(n.in), out: map(n.out) }))
+  // L / C 的判据要看**原坐标**里重合没有（换算后浮点可能把重合的点算出一点点差）
+  const segs: PathSeg[] = []
+  segs.push(['M', nodes[0].p[0], nodes[0].p[1]])
+  const step = (a: number, b: number) => {
+    const A = sp.nodes[a]
+    const B = sp.nodes[b]
+    const straight = A.out[0] === A.p[0] && A.out[1] === A.p[1] && B.in[0] === B.p[0] && B.in[1] === B.p[1]
+    if (straight) segs.push(['L', nodes[b].p[0], nodes[b].p[1]])
+    else segs.push(['C', nodes[a].out[0], nodes[a].out[1], nodes[b].in[0], nodes[b].in[1], nodes[b].p[0], nodes[b].p[1]])
+  }
+  for (let i = 1; i < nodes.length; i++) step(i - 1, i)
+  if (sp.closed && nodes.length > 1) {
+    step(nodes.length - 1, 0)
+    segs.push(['Z'])
+  }
+  return pathD(segs)
+}
+
 /** 段 → SVG path 的 d 串（数字原样，不截位：画布与导出逐点一致） */
 export function pathD(segs: readonly PathSeg[]): string {
   return segs.map((s) => (s.length === 1 ? 'Z' : `${s[0]} ${s.slice(1).join(' ')}`)).join(' ')

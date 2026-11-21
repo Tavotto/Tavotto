@@ -7,6 +7,8 @@ import {
   MoveUpRight,
   Square,
   Triangle,
+  Star,
+  Arc,
 } from '@/components/ui/icons'
 import type { ComponentType } from 'react'
 import type { SwitchKind } from '@/lib/shapeSwitch'
@@ -29,6 +31,8 @@ export const KIND_SWITCH_ICON: Record<SwitchKind, ComponentType<{ size?: number;
   diamond: Diamond,
   polygon: Hexagon,
   brace: Braces,
+  star: Star,
+  arc: Arc,
   line: Minus,
   arrow: MoveUpRight,
 }

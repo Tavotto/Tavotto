@@ -63,6 +63,8 @@
     "line": "直线",
     "polygon": "多边形",
     "rect": "矩形",
-    "triangle": "三角形"
+    "triangle": "三角形",
+    "star": "星形",
+    "arc": "弧线"
   }
 }

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { AiDataOverview } from '@/lib/api'
+import { compactCount } from '@/lib/dataFigure'
 import { cn } from '@/lib/utils'
 import { TablePreview } from './TablePreview'
 
@@ -25,7 +26,7 @@ export function DataStrip({
   /** 合画：标题行里「数据」后面的文件切换标签（单份流程不给，数据条一点不变） */
   tabs?: ReactNode
 }) {
-  const { t } = useTranslation('ai')
+  const { t, i18n } = useTranslation('ai')
   const [open, setOpen] = useState(false)
   const expanded = open || forceOpen
   const raw = ov != null && (ov.status === 'unsure' || ov.status === 'unreadable') && ov.raw_lines.length > 0
@@ -36,7 +37,7 @@ export function DataStrip({
     const n = guessRow ?? ov.header_row
     info = n != null && n > 0 ? t('dataFigureV2.draft.guessRow', { n }) : t('dataFigureV2.preview.pickHint')
   } else if (ov?.status === 'ok' && ov.rows != null) {
-    info = t('dataFigureV2.draft.stripInfo', { shown, total: ov.rows, columns: ov.columns ?? ov.fields.length })
+    info = t('dataFigureV2.draft.stripInfo', { shown, total: compactCount(ov.rows, i18n.language), columns: ov.columns ?? ov.fields.length })
   }
   return (
     <section

@@ -399,7 +399,8 @@
     "saved": "已另存为新排版：{{name}}",
     "saving": "正在保存…",
     "savesIntoLabel": "保存到",
-    "rename": "改名"
+    "rename": "改名",
+    "computationalFormat": "计算图表"
   },
   "mcp": {
     "exportBoth": "导出 PDF+PNG",
@@ -463,6 +464,38 @@
       "convert-to-path": {
         "keywords": "convert path zwlj 路径 钢笔",
         "label": "转为路径"
+      },
+      "pen-tool": {
+        "keywords": "pen gb 路径 贝塞尔",
+        "label": "钢笔"
+      },
+      "edit-anchors": {
+        "keywords": "anchor direct bjmd 直接选择 锚点",
+        "label": "编辑锚点"
+      },
+      "add-anchor": {
+        "keywords": "add anchor tjmd 加点",
+        "label": "添加锚点"
+      },
+      "delete-anchor": {
+        "keywords": "delete anchor scmd 删点",
+        "label": "删除锚点"
+      },
+      "convert-anchor": {
+        "keywords": "convert anchor smooth corner zhmd 平滑 尖角",
+        "label": "转换锚点"
+      },
+      "cut-path": {
+        "keywords": "cut scissors jd 剪刀 断开",
+        "label": "在锚点处断开"
+      },
+      "join-paths": {
+        "keywords": "join connect lj 连接 闭合",
+        "label": "连接"
+      },
+      "average-anchors": {
+        "keywords": "average align pjmd 平均 对齐",
+        "label": "平均锚点"
       },
       "cycle-overlap": {
         "keywords": "cycle overlap twin axis lh lunhuan cd chongdie sszx shuangzongzhou",
@@ -591,6 +624,22 @@
       "zoom-selection": {
         "label": "缩放到选中对象",
         "keywords": "zoom selection sfxz suofang xuanzhong"
+      },
+      "default-appearance": {
+        "keywords": "default fill stroke mrtsms 默认 填色 描边",
+        "label": "默认填色描边"
+      },
+      "swap-fill-stroke": {
+        "keywords": "swap fill stroke hhtsms 互换",
+        "label": "互换填色和描边"
+      },
+      "clear-fill": {
+        "keywords": "no fill none wtc 无填充",
+        "label": "无填充"
+      },
+      "eyedropper-tool": {
+        "keywords": "eyedropper pick color xg 吸管 取色",
+        "label": "吸管"
       }
     },
     "listLabel": "命令",
@@ -1460,7 +1509,7 @@
           "detail_requests": "最近的后端请求记录（只有方法、路由、状态码、耗时、错误码）",
           "detail_overrides": "正在编辑的图的样式改动",
           "detail_render_env": "渲染环境（Python、matplotlib、已装包、字体）",
-          "detail_runs": "最近的渲染、导出、脚本试运行记录",
+          "detail_runs": "最近的渲染、导出、脚本试运行记录，以及 AI 修复的经过",
           "detail_shell": "桌面壳与安装信息（版本、系统、架构、更新结果）",
           "detail_storage": "存储环境（剩余空间、可写、是否在同步目录）",
           "detail_console": "界面控制台的最近报错与警告",
@@ -1470,7 +1519,7 @@
           "detail_crash_reports": "系统崩溃报告（你勾选了）",
           "detail_corrupt_sessions": "会话损坏副本的内容（你勾选了）"
         },
-        "notIncluded": "默认不含脚本、数据文件和匿名统计标识；报错与日志里可能出现文件夹名、文件名和脚本打印出的内容。",
+        "notIncluded": "默认不含脚本文件、数据文件和匿名统计标识；报错与日志里可能出现文件夹名、文件名和脚本打印出的内容，用过 AI 修复时还会带上它读过的脚本片段。",
         "save": "保存这份诊断包",
         "saved": "已保存",
         "saveFailed": "没能保存",
@@ -2616,6 +2665,38 @@
       "info_text_height_mm": "文字高度",
       "info_panel_label": "子图标签"
     }
+  },
+  "packageInstall": {
+    "entry": "安装项目包到新目录…",
+    "title": "安装计算图表项目包",
+    "description": "先检视资源，再安装到新项目；打开时保留原来的排版。",
+    "inspecting": "正在检视项目包…",
+    "installing": "正在安装资源。关闭窗口会停止后续打开，安装结果仍会保留。",
+    "opening": "正在打开项目并保存工作副本…",
+    "saved": "工作副本已保存，可以继续编辑。",
+    "publicationUnconfirmed": "目录已发布，但安装核对尚未全部确认；打开后请检查资源。",
+    "configurationReview": "此项目的本机运行设置需要检查，打开项目不会运行脚本。",
+    "reviewConfiguration": "检查本机运行设置",
+    "chooseAnother": "选择其他项目包…",
+    "close": "关闭",
+    "continueEditing": "继续编辑",
+    "openInstalled": "打开已安装项目",
+    "install": "安装到新目录",
+    "contents": "画布 {{canvases}} · 资源 {{resources}} · 图像归档 {{snapshots}}",
+    "destination": "新项目目录",
+    "chooseDestination": "选择位置…",
+    "pickParent": "选择新项目的上级目录",
+    "newDirectory": "填写尚不存在的完整目录路径，已有文件不会被覆盖。",
+    "missing_other": "包中缺少 {{count}} 个资源，请补齐后重新导出。",
+    "dependencies": "运行依赖尚未全部确认；安装不会自动运行包内脚本。",
+    "installedAt": "资源已安装到",
+    "documentPending": "排版正文的保存尚未确认。打开项目后将通过原保存流程写入工作副本。",
+    "previous": "其他安装记录",
+    "completionUnknown": "这次安装尚未收到确认结果。请保留并检查此目录；关闭窗口后仍可回看路径。重新安装前请先选择项目包。",
+    "attemptedAt": "请求安装到",
+    "resultPending": "结果未确认",
+    "receivedResult": "已收到这次安装的结果，可以查看后继续。",
+    "viewResult": "查看安装结果"
   },
   "review": {
     "button": "分享审阅",

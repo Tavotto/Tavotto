@@ -9,8 +9,8 @@ import type {
   LineCap,
   LineJoin,
 } from '@/types/document'
-import { arrowHeads } from '@/types/document'
-import { DEFAULT_LINE_CAP } from '@/lib/shapeGeometry'
+import { arrowHeads, DEFAULT_STAR_POINTS, DEFAULT_STAR_RATIO, type PathObject, type ShapeObject } from '@/types/document'
+import { DEFAULT_LINE_CAP, STROKE_MITER_LIMIT, validDashPattern } from '@/lib/shapeGeometry'
 import {
   isFillStrokeMark,
   markCornerRadiusCapable,
@@ -21,6 +21,9 @@ import {
   markHeadCapable,
   markHeads,
   markSidesCapable,
+  markStarCapable,
+  markStrokeAlignCapable,
+  markFillRuleCapable,
   markStrokeOn,
   markStrokeToggle,
   setMarkHead,
@@ -34,7 +37,7 @@ import { Row, Section } from '../ui/Field'
 import { Segmented } from '../ui/Segmented'
 import { SummaryRow } from '../ui/SummaryRow'
 import { INSPECTOR_LABEL_W } from './layout'
-import { ColorField, NO_COLOR, NumberField } from '../ui/Input'
+import { ColorField, NO_COLOR, NumberField, TextInput } from '../ui/Input'
 import { Popover } from '../ui/Popover'
 import { EffectToggle } from './controls/EffectToggle'
 import { OptionGrid, type GridOption } from './controls/OptionGrid'
@@ -464,6 +467,8 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
           objs.some((o) => o.strokeOpacity != null),
           objs.some((o) => o.lineCap != null && o.lineCap !== DEFAULT_LINE_CAP),
           objs.some((o) => o.lineJoin != null && o.lineJoin !== 'round'),
+          objs.some((o) => o.miterLimit != null),
+          objs.some((o) => o.dashPattern != null),
         ])}
       >
         <HeadSizeRows objs={objs} patch={patch} />
@@ -478,9 +483,105 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
           onCap={(v) => patch(hist('setLineCap'), (o) => setCap(o, v))}
           onJoin={(v) => patch(hist('setLineJoin'), (o) => setJoin(o, v, 'round'))}
         />
+        {objs.some((o) => o.lineJoin === 'miter') && (
+          <MiterLimitRow
+            value={shared(objs, (o) => (o as ArrowObject).miterLimit ?? STROKE_MITER_LIMIT)}
+            onChange={(v) => patch(hist('setMiterLimit'), (o) => setMiter(o, v))}
+          />
+        )}
+        <DashPatternRow
+          value={shared(objs, (o) => (o as ArrowObject).dashPattern ?? null)}
+          onChange={(v) => patch(hist('setDashPattern'), (o) => setDashPattern(o, v))}
+        />
       </MoreFold>
     </>
   )
+}
+
+/** 斜接上限：只在选了尖角时出现（圆角 / 斜角下它不起作用）；等于缺省 10 就删字段 */
+function MiterLimitRow({ value, onChange }: { value: number | undefined; onChange: (v: number) => void }) {
+  return (
+    <div data-prop="miterLimit">
+      <Row label={sk('miterLimit')} labelWidth={INSPECTOR_LABEL_W}>
+        <NumberField
+          half
+          ariaLabel={sk('miterLimit')}
+          value={value ?? STROKE_MITER_LIMIT}
+          mixed={value === undefined}
+          step={1}
+          min={1}
+          max={100}
+          precision={1}
+          onChange={onChange}
+        />
+      </Row>
+    </div>
+  )
+}
+
+/** 「4 2」「4, 2, 1, 2」→ 数组；读不成合法虚线（`validDashPattern`）回 null */
+const parseDash = (text: string): number[] | null =>
+  validDashPattern(
+    text
+      .split(/[\s,，、]+/)
+      .filter(Boolean)
+      .map(Number),
+  )
+
+/**
+ * 自定义虚线（pt，线段 / 间隙交替）：一个文本框，写「4 2」这样的数；清空 = 回到上面选的线型。
+ * 有它时上面的「线型」不再起作用（导出与画布同一条：`validDashPattern` 优先）。读不成数就标红、不写。
+ */
+function DashPatternRow({ value, onChange }: { value: number[] | undefined | null; onChange: (v: number[] | null) => void }) {
+  const shown = value ? value.join(' ') : ''
+  const [draft, setDraft] = useState<string | null>(null)
+  const text = draft ?? shown
+  const invalid = draft != null && draft.trim() !== '' && parseDash(draft) == null
+  const commit = () => {
+    if (draft == null) return
+    const t = draft.trim()
+    if (t === '') onChange(null)
+    else {
+      const p = parseDash(t)
+      if (!p) return
+      onChange(p)
+    }
+    setDraft(null)
+  }
+  return (
+    <div data-prop="dashPattern">
+      <Row label={sk('dashPattern')} labelWidth={INSPECTOR_LABEL_W}>
+        <TextInput
+          aria-label={sk('dashPattern')}
+          title={sk('dashPatternTip')}
+          placeholder={sk('dashPatternPlaceholder')}
+          suffix="pt"
+          align="left"
+          value={value === null && draft == null ? '' : text}
+          invalid={invalid}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit()
+            if (e.key === 'Escape') setDraft(null)
+          }}
+        />
+      </Row>
+    </div>
+  )
+}
+
+const ALIGN_VALUES: ('inside' | 'center' | 'outside')[] = ['inside', 'center', 'outside']
+
+/** 写入器：斜接上限 / 自定义虚线 / 描边对齐 / 填充规则，等于缺省就删字段 */
+function setMiter(o: { miterLimit?: number }, v: number): void {
+  const m = Math.max(1, v)
+  if (Math.abs(m - STROKE_MITER_LIMIT) < 1e-9) delete o.miterLimit
+  else o.miterLimit = m
+}
+function setDashPattern(o: { dashPattern?: number[] }, v: number[] | null): void {
+  if (v) o.dashPattern = v
+  else delete o.dashPattern
 }
 
 /** 线端 + 拐角两行；点线靠圆线帽画点，线端行置灰并说原因（title） */
@@ -543,6 +644,7 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
   const hasFillable = objs.some(markFillable)
   const allRect = objs.every(markCornerRadiusCapable)
   const allPolygon = objs.every(markSidesCapable)
+  const allStar = objs.every(markStarCapable)
   const headed = headedOf(objs)
   const fill = shared(objs, (o) => (o as FillStrokeMark).fill)
   // 全都有填充、只是颜色不同：填充是开着的，色块画「多个值」（之前 shared 给 undefined，
@@ -561,6 +663,17 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
   const patch = (label: UiMessage, fn: (o: FillStrokeMark) => void) =>
     updateObjects(ids, label, (o) => {
       if (isFillStrokeMark(o)) fn(o)
+    })
+  /** 描边对齐只写封闭形状（`markStrokeAlignCapable`）；填充规则只写有填充的路径 */
+  const aligned = objs.filter(markStrokeAlignCapable)
+  const filledPaths = objs.filter(markFillRuleCapable)
+  const patchAligned = (label: UiMessage, fn: (o: ShapeObject) => void) =>
+    updateObjects(ids, label, (o) => {
+      if (isFillStrokeMark(o) && markStrokeAlignCapable(o)) fn(o)
+    })
+  const patchPaths = (label: UiMessage, fn: (o: PathObject) => void) =>
+    updateObjects(ids, label, (o) => {
+      if (isFillStrokeMark(o) && markFillRuleCapable(o)) fn(o)
     })
   /** 端型行只写有端型的那几个（选区里混着封闭形状时，它们一个字不动） */
   const patchHeaded = (label: UiMessage, fn: (o: HeadedMark) => void) =>
@@ -681,11 +794,15 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
           </Row>
         )}
         {allPolygon && (
-          <Row label={sk('sides')} labelWidth={INSPECTOR_LABEL_W}>
+          // 多边形是边数、星形是角数（同一个字段 `sides`）；只有星形的选区叫「角数」
+          <Row label={sk(allStar ? 'points' : 'sides')} labelWidth={INSPECTOR_LABEL_W}>
             <NumberField
               half
-              ariaLabel={sk('sides')}
-              value={shared(objs, (o) => (o as FillStrokeMark & { sides?: number }).sides ?? 6) ?? 6}
+              ariaLabel={sk(allStar ? 'points' : 'sides')}
+              value={
+                shared(objs, (o) => (o as ShapeObject).sides ?? ((o as ShapeObject).shape === 'star' ? DEFAULT_STAR_POINTS : 6)) ??
+                (allStar ? DEFAULT_STAR_POINTS : 6)
+              }
               step={1}
               min={3}
               max={12}
@@ -697,8 +814,32 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
             />
           </Row>
         )}
+        {allStar && (
+          // 星形的内径比（ADR 0185 M1）：百分数，等于缺省就不写字段
+          <Row label={<span title={sk('starRatioTip')}>{sk('starRatio')}</span>} labelWidth={INSPECTOR_LABEL_W}>
+            <NumberField
+              half
+              ariaLabel={sk('starRatio')}
+              value={Math.round((shared(objs, (o) => (o as ShapeObject).starRatio ?? DEFAULT_STAR_RATIO) ?? DEFAULT_STAR_RATIO) * 100)}
+              mixed={shared(objs, (o) => (o as ShapeObject).starRatio ?? DEFAULT_STAR_RATIO) === undefined}
+              step={1}
+              min={5}
+              max={95}
+              precision={0}
+              unit="%"
+              onChange={(v) =>
+                patch(hist('setStarRatio'), (o) => {
+                  if (!markStarCapable(o)) return
+                  const r = Math.max(0.05, Math.min(0.95, v / 100))
+                  if (Math.abs(r - DEFAULT_STAR_RATIO) < 1e-9) delete o.starRatio
+                  else o.starRatio = r
+                })
+              }
+            />
+          </Row>
+        )}
     </AppearanceSection>
-    {showStroke && (
+    {(showStroke || filledPaths.length > 0) && (
       // 低频描边项收进一行「更多」：描边不透明度、线端、拐角（ADR 0174）
       <MoreFold
         changed={countChanged([
@@ -706,9 +847,45 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
           objs.some((o) => o.strokeOpacity != null),
           objs.some((o) => o.lineCap != null && o.lineCap !== DEFAULT_LINE_CAP),
           objs.some((o) => o.lineJoin != null && o.lineJoin !== markDefaultJoin(o)),
+          objs.some((o) => o.miterLimit != null),
+          objs.some((o) => o.dashPattern != null),
+          objs.some((o) => o.type === 'shape' && o.strokeAlign != null),
+          objs.some((o) => o.type === 'path' && o.fillRule != null),
         ])}
       >
-        {headed.length > 0 && <HeadSizeRows objs={headed} patch={patchHeaded} />}
+        {showStroke && headed.length > 0 && <HeadSizeRows objs={headed} patch={patchHeaded} />}
+        {showStroke && aligned.length > 0 && (
+          // 描边对齐（只对封闭形状）：内侧（缺省，外沿贴框）/ 居中 / 外侧
+          <ChoiceRow
+            label={sk('alignRow')}
+            group="align"
+            values={ALIGN_VALUES}
+            value={shared(aligned, (o) => (o as ShapeObject).strokeAlign ?? 'inside') ?? null}
+            onChange={(v) =>
+              patchAligned(hist('setStrokeAlign'), (o) => {
+                if (v === 'inside') delete o.strokeAlign
+                else o.strokeAlign = v
+              })
+            }
+          />
+        )}
+        {filledPaths.length > 0 && (
+          // 填充规则（自由路径）：非零 / 奇偶（多条子路径叠在一起时，奇偶让内圈成为洞）
+          <ChoiceRow
+            label={sk('fillRuleRow')}
+            group="fillRule"
+            values={['nonzero', 'evenodd'] as const}
+            value={shared(filledPaths, (o) => (o as PathObject).fillRule ?? 'nonzero') ?? null}
+            onChange={(v) =>
+              patchPaths(hist('setFillRule'), (o) => {
+                if (v === 'evenodd') o.fillRule = 'evenodd'
+                else delete o.fillRule
+              })
+            }
+          />
+        )}
+        {showStroke && (
+        <>
         <StrokeOpacityRow
           value={shared(objs, (o) => (o as FillStrokeMark).strokeOpacity ?? 1)}
           onChange={(v) => patch(hist('setStrokeOpacity'), (o) => setOpacity(o, v))}
@@ -721,6 +898,18 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
           onCap={(v) => patch(hist('setLineCap'), (o) => setCap(o, v))}
           onJoin={(v) => patch(hist('setLineJoin'), (o) => setJoin(o, v, markDefaultJoin(o)))}
         />
+        {objs.some((o) => (o.lineJoin ?? markDefaultJoin(o)) === 'miter' && !markHasNoJoin(o)) && (
+          <MiterLimitRow
+            value={shared(objs, (o) => (o as FillStrokeMark).miterLimit ?? STROKE_MITER_LIMIT)}
+            onChange={(v) => patch(hist('setMiterLimit'), (o) => setMiter(o, v))}
+          />
+        )}
+        <DashPatternRow
+          value={shared(objs, (o) => (o as FillStrokeMark).dashPattern ?? null)}
+          onChange={(v) => patch(hist('setDashPattern'), (o) => setDashPattern(o, v))}
+        />
+        </>
+        )}
       </MoreFold>
     )}
     </>

@@ -94,6 +94,11 @@ export const GROUPS: { id: string; rows: Row[] }[] = [
     id: 'tools',
     rows: [
       row('tools', 'toolSelect', 'toolText', 'toolArrow', 'toolRect', 'toolEllipse', 'toolLine'),
+      row('pen', 'toolPen'),
+      row('anchors', 'addAnchor', 'deleteAnchor', 'convertAnchor'),
+      row('pathJoin', 'joinPaths', 'averageAnchors'),
+      row('appearance', 'defaultAppearance', 'swapFillStroke', 'clearFill'),
+      row('eyedropper', 'toolEyedropper'),
       { comboKey: 'altDrag', comboValues: { alt: ALT }, desc: 'freeResize' },
       row('tabs', 'tabRename', 'tabClose', 'tabReorder'),
       row('tutorialPause', 'escape'),
