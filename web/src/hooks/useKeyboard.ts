@@ -54,6 +54,7 @@ const TOOL_KEYS: Record<string, Tool> = {
   o: 'ellipse',
   l: 'line',
   p: 'pen',
+  n: 'pencil',
 }
 
 /**

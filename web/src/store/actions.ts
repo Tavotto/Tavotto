@@ -69,7 +69,7 @@ import type {
   ShapeObject,
   TextObject,
 } from '@/types/document'
-import { emptyProject, isKnownObject, objectLabel, objectRotation, type ProjectDocument } from '@/types/document'
+import { arrowHeads, emptyProject, isKnownObject, legacyHead, objectLabel, objectRotation, type ArrowHeadType, type PathTextObject, type ProjectDocument } from '@/types/document'
 import { findDocumentsForProjectFile, bindingForReuse, type ProjectFileBinding } from '@/lib/projectFile'
 import { isDocHeldElsewhere } from '@/lib/docPresence'
 import { useAssetStore } from './assetStore'
@@ -127,7 +127,7 @@ import { useJournalV2Store } from './journalV2Store'
 import { useTimelineStore } from './timelineStore'
 import { hasPendingStyleWork } from './styleWork'
 import { canConvertToPath, toPathObject } from '@/lib/convertToPath'
-import { isFillStrokeMark, styleFamilyOf } from '@/lib/markStyle'
+import { styleFamilyOf } from '@/lib/markStyle'
 import { fitStageNow } from '@/store/zoomToSelection'
 import { remapLineIds } from '@/lib/pathText'
 
@@ -3226,13 +3226,20 @@ export function setSelectionSpacing(axis: 'x' | 'y', gap: number) {
 type StyleClip =
   | { kind: 'panel'; crop?: CropRect; rotation?: PanelRotation; opacity?: number }
   | ({ kind: 'text' } & Partial<TextObject>)
+  | ({ kind: 'pathText' } & Partial<PathTextObject>)
   | ({ kind: 'arrow' } & Partial<ArrowObject>)
   | ({ kind: 'shape' } & Partial<ShapeObject>)
   | ({ kind: 'path' } & Partial<PathObject>)
 
-/** 每类对象参与样式复制的键（几何 x/y/w/h 与内容永不复制） */
+/**
+ * 每类对象参与样式复制的键（几何 x/y/w/h 与内容永不复制）。2026-11-16 起（ADR 0185 M7）补全：文字带上字体（三个通用族 /
+ * 原图字体身份）与科学文本解释，路径带上描边对齐，路径文字也能刷；描边一族（箭头 / 形状 / 路径）之间互刷线宽、颜色、虚线、
+ * 线端拐角、不透明度，箭头 ↔ 路径还带端型；文字一族（文字 / 路径文字）之间互刷字号、粗斜、颜色、字体。
+ */
 const TEXT_STYLE_KEYS = ['sizePt', 'bold', 'italic', 'underline', 'color', 'align',
-  'lineHeight', 'padding', 'bg', 'borderColor', 'borderPt', 'rotationDeg'] as const
+  'lineHeight', 'padding', 'bg', 'borderColor', 'borderPt', 'rotationDeg',
+  'fontFamily', 'sourceFont', 'interpretation'] as const
+const PATHTEXT_STYLE_KEYS = ['sizePt', 'bold', 'italic', 'color', 'fontFamily', 'textAlign', 'flip', 'baselineOffsetPt'] as const
 const ARROW_STYLE_KEYS = ['strokePt', 'color', 'head', 'headStart', 'headEnd',
   'headSizeStart', 'headSizeEnd', 'dash', 'strokeOpacity', 'lineCap', 'lineJoin',
   'miterLimit', 'dashPattern', 'rotationDeg'] as const
@@ -3243,20 +3250,24 @@ const SHAPE_STYLE_KEYS = ['strokePt', 'color', 'fill', 'cornerRadius',
 /**
  * 自由路径（ADR 0185）：填充 / 描边字段与形状同名同义，端型与箭头同名同义。形状 ↔ 路径同族互刷
  * （`markStyle.styleFamilyOf`），写的是两边**都有**的那几个键（`styleKeysOf` 取交集）——圆角不刷到路径上、端型不刷到形状上。
+ * 描边对齐两边缺省不同（形状缺省内侧、路径缺省居中），跨类刷时按实际生效的值换（`transferStyle`）。
  */
 const PATH_STYLE_KEYS = ['strokePt', 'color', 'fill', 'fillOpacity', 'fillRule', 'dash', 'stroke',
   'strokeOpacity', 'lineCap', 'lineJoin', 'miterLimit', 'dashPattern', 'fillGradient', 'strokeGradient',
-  'headStart', 'headEnd', 'headSizeStart', 'headSizeEnd', 'rotationDeg'] as const
+  'strokeAlign', 'headStart', 'headEnd', 'headSizeStart', 'headSizeEnd', 'rotationDeg'] as const
 const STYLE_KEYS: Record<StyleClip['kind'], readonly string[]> = {
   panel: [],
   text: TEXT_STYLE_KEYS,
+  pathText: PATHTEXT_STYLE_KEYS,
   arrow: ARROW_STYLE_KEYS,
   shape: SHAPE_STYLE_KEYS,
   path: PATH_STYLE_KEYS,
 }
-/** 从 `from` 类型刷到 `to` 类型时写哪些键：两边都参与样式复制的键 */
+/** 跨类刷时另外换算的键：描边对齐（两边缺省不同）、端型（箭头的旧 `head` 字段） */
+const CONVERTED = new Set(['strokeAlign', 'head', 'headStart', 'headEnd'])
+/** 从 `from` 类型刷到 `to` 类型时照搬的键：两边都参与样式复制的键（同类全部照搬；跨类时换算的那几个另算） */
 const styleKeysOf = (from: StyleClip['kind'], to: StyleClip['kind']): string[] =>
-  STYLE_KEYS[from].filter((k) => STYLE_KEYS[to].includes(k))
+  STYLE_KEYS[from].filter((k) => STYLE_KEYS[to].includes(k) && (from === to || !CONVERTED.has(k)))
 
 function pickKeys(src: object, keys: readonly string[]): Record<string, unknown> {
   const from = src as Record<string, unknown>
@@ -3272,10 +3283,58 @@ function assignKeys(target: object, clip: object, keys: readonly string[]): void
   }
 }
 
+/** 描边对齐实际生效的值：形状缺省内侧、路径缺省居中 */
+const effectiveAlign = (kind: StyleClip['kind'], v: unknown): 'inside' | 'center' | 'outside' =>
+  v === 'inside' || v === 'center' || v === 'outside' ? v : kind === 'shape' ? 'inside' : 'center'
+
+/** 来源的两端端型（箭头按 `arrowHeads` 读旧 `head`；路径缺省无） */
+function headsOf(clip: StyleClip): { start: ArrowHeadType; end: ArrowHeadType } | null {
+  if (clip.kind === 'arrow') return arrowHeads(clip as ArrowObject)
+  if (clip.kind === 'path') return { start: (clip as PathObject).headStart ?? 'none', end: (clip as PathObject).headEnd ?? 'none' }
+  return null
+}
+
+/** 把样式刷到一个对象上：同族的键照搬，跨类时描边对齐、端型按实际生效的值换算 */
+function transferStyle(o: CanvasObject, clip: StyleClip): void {
+  assignKeys(o, clip, styleKeysOf(clip.kind, o.type as StyleClip['kind']))
+  if (clip.kind === o.type) return
+  const target = o as unknown as Record<string, unknown>
+  // 描边对齐：形状 ↔ 路径
+  if (STYLE_KEYS[clip.kind].includes('strokeAlign') && (o.type === 'shape' || o.type === 'path')) {
+    const eff = effectiveAlign(clip.kind, (clip as Record<string, unknown>).strokeAlign)
+    if (eff === (o.type === 'shape' ? 'inside' : 'center') || (o.type === 'path' && eff === 'center')) delete target.strokeAlign
+    else target.strokeAlign = eff
+  }
+  // 端型：箭头 ↔ 路径
+  const heads = headsOf(clip)
+  if (heads && (o.type === 'arrow' || o.type === 'path')) {
+    if (o.type === 'arrow') {
+      target.headStart = heads.start
+      target.headEnd = heads.end
+      target.head = legacyHead(heads)
+    } else {
+      if (heads.start === 'none') delete target.headStart
+      else target.headStart = heads.start
+      if (heads.end === 'none') delete target.headEnd
+      else target.headEnd = heads.end
+    }
+  }
+}
+
 /** 样式剪贴板不属于文档，不进 undo；粘贴才是一条历史 */
 let styleClip: StyleClip | null = null
+/** 样式是从哪个对象复制的：粘贴时它还在选区里就跳过（它本来就是这个样式，不该算进「已粘贴到 N 个对象」） */
+let styleSourceId: string | null = null
 
 export const styleClipKind = () => styleClip?.kind ?? null
+
+const COPIED_NOTE: Record<Exclude<StyleClip['kind'], 'panel'>, string> = {
+  text: 'styleCopiedText',
+  pathText: 'styleCopiedText',
+  arrow: 'styleCopiedArrow',
+  shape: 'styleCopiedShape',
+  path: 'styleCopiedPath',
+}
 
 export function copySelectionStyle() {
   const src = selectedObjects().at(-1)
@@ -3286,19 +3345,13 @@ export function copySelectionStyle() {
       rotation: src.rotation,
       opacity: src.opacity,
     }
+    styleSourceId = src.id
     status(note('styleCopiedPanel'), 'done')
-  } else if (src?.type === 'text') {
-    styleClip = { kind: 'text', ...pickKeys(src, TEXT_STYLE_KEYS) }
-    status(note('styleCopiedText'), 'done')
-  } else if (src?.type === 'arrow') {
-    styleClip = { kind: 'arrow', ...pickKeys(src, ARROW_STYLE_KEYS) }
-    status(note('styleCopiedArrow'), 'done')
-  } else if (src?.type === 'shape') {
-    styleClip = { kind: 'shape', ...pickKeys(src, SHAPE_STYLE_KEYS) }
-    status(note('styleCopiedShape'), 'done')
-  } else if (src?.type === 'path') {
-    styleClip = { kind: 'path', ...pickKeys(src, PATH_STYLE_KEYS) }
-    status(note('styleCopiedPath'), 'done')
+  } else if (src && src.type in COPIED_NOTE) {
+    const kind = src.type as Exclude<StyleClip['kind'], 'panel'>
+    styleClip = { kind, ...pickKeys(src, STYLE_KEYS[kind]) } as StyleClip
+    styleSourceId = src.id
+    status(note(COPIED_NOTE[kind]), 'done')
   } else {
     status(note('styleCopyNeedSelection'), 'error')
   }
@@ -3307,9 +3360,9 @@ export function copySelectionStyle() {
 export function pasteSelectionStyle() {
   const clip = styleClip
   if (!clip) return
-  // 同族就能刷（形状 ↔ 自由路径是一族，`markStyle.styleFamilyOf`）
+  // 同族就能刷：描边一族（箭头 / 形状 / 路径）、文字一族（文字 / 路径文字）、图（`markStyle.styleFamilyOf`）
   const ids = selectedObjects()
-    .filter((o) => styleFamilyOf(o.type) === styleFamilyOf(clip.kind))
+    .filter((o) => o.id !== styleSourceId && styleFamilyOf(o.type) === styleFamilyOf(clip.kind))
     .map((o) => o.id)
   if (!ids.length) {
     status(note('stylePasteNoTarget', { kind: t(`objectType.${clip.kind}`) }), 'error')
@@ -3320,12 +3373,8 @@ export function pasteSelectionStyle() {
       rotatePanelDraft(o, clip.rotation ?? 0)
       applyCropDraft(o, clip.crop)
       o.opacity = clip.opacity
-    } else if (clip.kind === 'text' && o.type === 'text') {
-      assignKeys(o, clip, TEXT_STYLE_KEYS)
-    } else if (clip.kind === 'arrow' && o.type === 'arrow') {
-      assignKeys(o, clip, ARROW_STYLE_KEYS)
-    } else if (styleFamilyOf(clip.kind) === 'fillStroke' && isFillStrokeMark(o)) {
-      assignKeys(o, clip, styleKeysOf(clip.kind, o.type))
+    } else if (o.type !== 'panel') {
+      transferStyle(o, clip)
     }
   })
   status(note('stylePasted', { count: ids.length }), 'done')

@@ -142,7 +142,9 @@
     "label": "Canvas tools",
     "pen": "Pen",
     "select": "Select",
-    "subLabels": "Labels"
+    "subLabels": "Labels",
+    "pencil": "Pencil",
+    "pathTools": "Pen and pencil"
   },
   "confirm": {
     "docLossBody": "Browser storage is unavailable or full, so you won’t be able to get this layout back from “Recent layouts on this computer” after switching. Continue anyway?",
@@ -507,7 +509,8 @@
     "addPathText": "Add text on path",
     "pathTextStart": "Move text start",
     "pathTextGap": "Adjust text-on-path offset",
-    "editPathTextPath": "Edit text path"
+    "editPathTextPath": "Edit text path",
+    "drawPencil": "Draw with pencil"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -1091,7 +1094,8 @@
     "rect": "Drag to draw a rectangle. Esc to cancel.",
     "star": "Drag to draw a star; Esc to cancel",
     "text": "Drag to draw a text box, or click for the default size. Esc to cancel.",
-    "triangle": "Drag to draw a triangle; Esc to cancel"
+    "triangle": "Drag to draw a triangle; Esc to cancel",
+    "pencil": "Drag to draw; the line is smoothed when you release. End at the start to close; hold {{alt}} to keep the raw stroke"
   },
   "topbar": {
     "addSubLabels": "Add panel labels",
