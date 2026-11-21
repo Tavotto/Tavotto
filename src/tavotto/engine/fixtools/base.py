@@ -142,6 +142,8 @@ class FixContext:
     #: 本会话启动脚本里认出过的凭据值：与 `fixes_made` 分开累积，被覆盖 / 回滚的改动丢了它们也还在（Codex #2100 P1），
     #: 记住做法时其余字段照它抹。只在内存
     fix_secrets: set = field(default_factory=set)
+    #: 本会话有哪一版启动脚本碰过凭据（`fixmemory.launcher_is_risky`）：碰过就不记运行参数与数据路径，覆盖 / 回滚后也不撤
+    fix_risky: bool = False
     case_insensitive: bool | None = None
     extra_deny: list[Path] | None = None
 

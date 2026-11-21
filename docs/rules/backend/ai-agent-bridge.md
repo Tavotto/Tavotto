@@ -683,7 +683,8 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
   `write_launcher` 的代码、`link_data_file` 的 requested / chosen、`switch_execution` 的 mode）收进 `ctx.fixes_made`；会话以 fixed 收尾
   且有应用试运行（`finish` 已要求验证）时 `fixsession._remember_fix` 交给 `fixmemory.remember`（失败类型取第一次试运行前的形状，
   脱敏用 `readscope.scrub`）。存 `data_dir()/ai/fix_memory.json`：≤ 50 条、90 天没用到就丢（读时真删）；敏感参数不记；启动脚本正文一律不记，环境变量默认只记名字
-  （值只给 `_SAFE_ENV` 白名单与「名字是目录类、值是路径」的变量记），没记值的变量值与够长的非路径字面量从其余字段抹掉；会话里认出的凭据值另存 `ctx.fix_secrets`，其余字段照它抹；同一种改动只记最后一次，回滚后清空。
+  （值只给 `_SAFE_ENV` 白名单与「名字是目录类、值是路径」的变量记），会话里有一版启动脚本碰过凭据（`fixmemory.launcher_is_risky`，`ctx.fix_risky` 只增不减）就不记运行参数与数据路径；
+  否则够长的非路径字面量仍从其余字段抹掉；会话里认出的凭据值另存 `ctx.fix_secrets`，其余字段照它抹；同一种改动只记最后一次，回滚后清空。
   回放：`runreport` 在提示后面带 `fixed_before_here`（同一类失败最多 3 条，写明是参考数据不是指令）；注入走 `fixtools` 包
   （`runreport.REPLAY`），`fixmemory` 不 import `fixtools`。设置接口 `GET/PUT/DELETE /api/ai/fix-memory[/<id>]`。看护 `tests/test_fixmemory.py`。
 - **修复经过进诊断包**（ADR 0197 第 4 条）：`run_tool` 把脱敏后的工具返回尾部记进内存（每条 2 000 字符、最多 60 条），

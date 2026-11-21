@@ -233,7 +233,9 @@ pointed at, or the execution mode, with the script's file name, the failure type
 are removed and your home folder is written as `~` before saving. For environment variables only the
 names are kept, except for a short list of harmless display settings (such as the plotting backend,
 language or thread count) and variables that name a folder whose value is a path; other values set by
-the launcher are also removed wherever else they appear in the note. At most 50 notes are kept, and
+the launcher are also removed wherever else they appear in the note. If a launcher in that repair
+touched anything that looks like a credential, the run arguments and data paths from that repair are
+not kept at all. At most 50 notes are kept, and
 a note not used for 90 days is deleted. Settings → Figure assistants → *Remember what fixed it* lists
 every note, deletes one or all, and turns the feature off. The notes never leave the computer except
 as described above and in a diagnostics bundle you choose to send.

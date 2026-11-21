@@ -179,6 +179,7 @@ def run_tool(
             made = _fix_made(tool.name, args)
             if made is not None and made[0] == "launcher" and isinstance(made[1].get("text"), str):
                 ctx.fix_secrets |= _fixmemory.launcher_secrets(made[1]["text"])
+                ctx.fix_risky = ctx.fix_risky or _fixmemory.launcher_is_risky(made[1]["text"])
             if made is not None:
                 # 同一种改动后来又改了：只留最后一次（数据指认也只留最后一次——前缀规则会互相顶替，按请求路径分不清哪条
                 # 还生效，Codex #2100 P2；少记一条只是少个参考，记错一条会把失效的做法当成「修好过」）

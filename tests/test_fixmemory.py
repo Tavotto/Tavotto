@@ -424,9 +424,7 @@ def test_env_values_are_kept_only_for_known_harmless_or_path_variables(store, na
 
 
 def test_short_common_literals_do_not_spoil_recorded_paths(store):
-    launcher = (
-        "import os\nos.chdir('data')\nos.environ['API_TOKEN'] = 'longsecretvalue'\nrun_original()\n"
-    )
+    launcher = "import os\nos.chdir('data')\nos.environ['MPLBACKEND'] = 'Agg'\nrun_original()\n"
     fixmemory.remember(
         "missing_input",
         [
@@ -440,4 +438,61 @@ def test_short_common_literals_do_not_spoil_recorded_paths(store):
     )
     link = next(r for r in fixmemory.entries() if r["kind"] == "data_link")["fields"]
     assert link == {"asked": "data/results.csv", "linked": "/Users/me/project/data/results.csv"}
-    assert "longsecretvalue" not in store.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        "import os\np = 'abc/123plain'\nos.environ['API_TOKEN'] = p\nrun_original()\n",
+        "import os\nos.environ['API_TOKEN']: str = 'x7!'\nrun_original()\n",
+        "import os\nos.environ['DB_PASS']: str = 'x7!'\nrun_original()\n",
+        "import os\nenv = os.environ\nenv['DB_PWD'] = 'x7!'\nrun_original()\n",
+        "from os import putenv\nputenv('DB_PWD', 'x7!')\nrun_original()\n",
+        "import os\nos.environ['DB_PASS'] = 'x7!'\nrun_original()\n",
+        "import os\nos.environ['LAB_DATA_DIR'] = os.path.expanduser('~/x7!')\nrun_original()\n",
+        "run_original(\n",
+    ],
+)
+def test_a_session_whose_launcher_touches_credentials_keeps_no_args_or_paths(store, launcher):
+    assert fixmemory.launcher_is_risky(launcher)
+    fixmemory.remember(
+        "env_var_missing",
+        [
+            ("launcher", {"text": launcher}),
+            ("run_args", {"args": ["--p", "x7!", "abc/123plain"]}),
+            ("data_link", {"asked": "a.csv", "linked": "/data/x7!/abc/123plain.csv"}),
+        ],
+    )
+    raw = store.read_text(encoding="utf-8") if store.exists() else ""
+    assert "x7!" not in raw and "123plain" not in raw
+    assert {r["kind"] for r in fixmemory.entries()} <= {"launcher"}
+
+
+def test_a_harmless_launcher_is_not_risky():
+    launcher = "import os\nos.environ['MPLBACKEND'] = 'Agg'\nos.environ['LAB_DATA_DIR'] = '~/lab'\nrun_original()\n"
+    assert not fixmemory.launcher_is_risky(launcher)
+
+
+def test_risk_seen_earlier_in_the_session_outlives_an_overwrite(store, box):
+    import dataclasses
+
+    from tavotto.engine.fixtools import REGISTRY, run_tool
+    from tavotto.engine.fixtools.base import ok
+
+    def done(_ctx, _args):
+        r = ok("done", "done")
+        r.mutated = True
+        return r
+
+    ctx = make_ctx(box)
+    for name, args in (
+        ("write_launcher", {"code": "import os\nos.environ['DB_PASS'] = 'x7!'\nrun_original()\n"}),
+        ("set_run_arguments", {"argv": ["--p", "x7!"]}),
+        ("write_launcher", {"code": "run_original()\n"}),
+    ):
+        run_tool(dataclasses.replace(REGISTRY[name], handler=done), ctx, args)
+    assert ctx.fix_risky is True
+    fixmemory.remember(
+        "env_var_missing", ctx.fixes_made, secrets=ctx.fix_secrets, risky=ctx.fix_risky
+    )
+    assert "x7!" not in store.read_text(encoding="utf-8")

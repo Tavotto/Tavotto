@@ -203,10 +203,12 @@ def _is_environ(node: ast.AST) -> bool:
     )
 
 
-def _env_sets(tree: ast.AST) -> list[tuple[str, str | None]]:
+def _env_sets(tree: ast.AST, used: set[int] | None = None) -> list[tuple[str, str | None]]:
     """启动脚本里设环境变量的每一处（按 Python 语法认，不靠正则）：`os.environ[k] = v`、`os.environ.setdefault(k, v)`、
-    `os.environ.update({k: v} / k=v)`、`os.putenv(k, v)`。值不是字面量的记 None（名字照记）。"""
+    `os.environ.update({k: v} / k=v)`、`os.putenv(k, v)`。值不是字面量的记 None（名字照记）。`used` 收下认出来的那几处
+    `environ` / `putenv` 节点的 id（`launcher_is_risky` 拿它判断有没有认不出的写法）。"""
     out: list[tuple[str, str | None]] = []
+    used = used if used is not None else set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             for t in node.targets:
@@ -216,15 +218,19 @@ def _env_sets(tree: ast.AST) -> list[tuple[str, str | None]]:
                     and _str(t.slice) is not None
                 ):
                     out.append((_str(t.slice), _str(node.value)))
+                    used.add(id(t.value))
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             attr, owner = node.func.attr, node.func.value
             first = _str(node.args[0]) if node.args else None
             second = _str(node.args[1]) if len(node.args) > 1 else None
             if attr == "setdefault" and _is_environ(owner) and first is not None:
                 out.append((first, second))
+                used.add(id(owner))
             elif attr == "putenv" and first is not None:
                 out.append((first, second))
+                used.add(id(node.func))
             elif attr == "update" and _is_environ(owner):
+                used.add(id(owner))
                 for arg in node.args:
                     if isinstance(arg, ast.Dict):
                         for k, v in zip(arg.keys, arg.values):
@@ -264,6 +270,49 @@ def _kept_env(tree: ast.AST) -> list[tuple[str, str | None]]:
         (name, value if value is not None and _env_value_kept(name, value) else None)
         for name, value in _env_sets(tree)[:10]
     ]
+
+
+def _ident_tokens(tree: ast.AST):
+    """解码后的名字与字符串：常量、变量名、属性名、关键字参数名、函数 / 参数名、导入名。"""
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Constant) and isinstance(n.value, str):
+            yield n.value
+        elif isinstance(n, ast.Name):
+            yield n.id
+        elif isinstance(n, ast.Attribute):
+            yield n.attr
+        elif isinstance(n, ast.keyword) and n.arg:
+            yield n.arg
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            yield n.name
+        elif isinstance(n, ast.arg):
+            yield n.arg
+        elif isinstance(n, ast.alias):
+            yield n.asname or n.name
+
+
+def launcher_is_risky(text: str) -> bool:
+    """这版启动脚本碰没碰凭据——碰了，这次会话的运行参数与数据路径**整条不记**（d2 人工核后 Codex #2100 再报两条：
+    从别的字段里挑值去抹，总有漏的形状；不记就没有漏）。算「碰了」的：
+    解析不了；任何解码后的名字 / 字符串像凭据；设了不在白名单里的环境变量值（含值不是字面量的）；
+    出现了认不出写法的 `environ` / `putenv`（别名、标注赋值、`from os import putenv`……）。"""
+    try:
+        tree = ast.parse(text or "")
+    except (SyntaxError, ValueError):
+        return True
+    if any(_SECRETISH.search(tok) for tok in _ident_tokens(tree)):
+        return True
+    used: set[int] = set()
+    sets = _env_sets(tree, used)
+    if any(v is None or not _env_value_kept(k, v) for k, v in sets):
+        return True
+    for n in ast.walk(tree):
+        name = n.attr if isinstance(n, ast.Attribute) else n.id if isinstance(n, ast.Name) else None
+        if name in ("environ", "putenv", "unsetenv") and id(n) not in used:
+            return True
+        if isinstance(n, ast.alias) and n.name.split(".")[-1] in ("environ", "putenv"):
+            return True
+    return False
 
 
 def launcher_secrets(text: str) -> set[str]:
@@ -352,6 +401,7 @@ def remember(
     sensitive_args: bool = False,
     scrub: Callable[[str], str] = _default_scrub,
     secrets: frozenset[str] | set[str] = frozenset(),
+    risky: bool = False,
     path: Path | None = None,
     now: float | None = None,
 ) -> list[str]:
@@ -370,7 +420,15 @@ def remember(
                 if kind == "launcher" and isinstance((change or {}).get("text"), str)
                 for v in launcher_secrets(change["text"])
             )
+            risky = risky or any(
+                kind == "launcher"
+                and isinstance((change or {}).get("text"), str)
+                and launcher_is_risky(change["text"])
+                for kind, change in changes
+            )
             for kind, change in changes:
+                if risky and kind in ("run_args", "data_link"):
+                    continue  # 这次会话的启动脚本碰过凭据：参数与路径整条不记
                 fields = fields_for(
                     kind, change or {}, sensitive_args=sensitive_args, scrub=scrub, secrets=secrets
                 )

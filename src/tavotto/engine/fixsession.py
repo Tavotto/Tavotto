@@ -469,6 +469,7 @@ def _remember_fix(s: FixSession) -> None:
             sensitive_args=bool(getattr(ctx, "run_arguments_sensitive", False)),
             scrub=fixtools.readscope.scrub,
             secrets=frozenset(getattr(ctx, "fix_secrets", ()) or ()),
+            risky=bool(getattr(ctx, "fix_risky", False)),
         )
     except Exception:  # noqa: BLE001 - 记不下不影响修复结局
         LOG.warning("记住修好的做法失败", exc_info=True)
