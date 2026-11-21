@@ -226,9 +226,16 @@ def test_only_the_unplottable_axes_are_reported_on_a_real_manifest(cases_manifes
 
 @needs_worker
 def test_real_snapshot_for_the_frontend_is_what_the_worker_emits(cases_manifest):
-    """`scale_domain_real.json` 不是手写的：这里重新渲染，逐字等于真 worker 的输出才算数。"""
+    """`scale_domain_real.json` 不是手写的：这里重新渲染，逐字等于真 worker 的输出才算数。
+
+    改了 `CASES_SCRIPT` 或事实口径后重出：`PYTHONPATH=$PWD/src python tests/test_preflight_log_axis.py --write`，
+    不许手改那份 JSON。"""
+    assert json.loads(REAL_SNAPSHOT.read_text(encoding="utf-8")) == _snapshot(cases_manifest)
+
+
+def _snapshot(cases_manifest) -> dict:
     axes = _axes_by_title(cases_manifest)
-    fresh = {
+    return {
         "comment": "真 worker 渲染 tests/test_preflight_log_axis.py 的 CASES_SCRIPT 得到的 axes 元素"
         "（只留 gid / role / scale_domain）。pytest 重渲染逐字比对；web/src/lib/preflight.logAxis.test.ts 消费它。",
         "elements": [
@@ -243,7 +250,6 @@ def test_real_snapshot_for_the_frontend_is_what_the_worker_emits(cases_manifest)
         ],
         "expected_gids": sorted(hit for i in _hits(cases_manifest) for hit in i["gids"]),
     }
-    assert json.loads(REAL_SNAPSHOT.read_text(encoding="utf-8")) == fresh
 
 
 @needs_worker
@@ -261,7 +267,8 @@ def test_over_budget_is_not_judged(tmp_path):
         "budget = [2]\n"
         "small = M.scale_domain(ax, budget)\n"
         "full = M.scale_domain(ax, [M.FINGERPRINT_BUDGET])\n"
-        "print(json.dumps({'small': small, 'left': budget[0], 'full': full}))\n",
+        "print(json.dumps({'small': small, 'left': budget[0], 'full': full,"
+        " 'statuses': list(M.SCALE_DOMAIN_STATUSES)}))\n",
         encoding="utf-8",
     )
     proc = subprocess.run(
@@ -275,6 +282,10 @@ def test_over_budget_is_not_judged(tmp_path):
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert out["small"] == {"y": {"status": "over_budget"}}
     assert out["left"] == 2  # 没量就不扣
+    # status 闭集与 TS 侧 `ScaleDomainFact.status` 的字面值一致（同源对，见 same-origin-pairs.md）
+    assert out["statuses"] == ["ok", "over_budget", "unavailable"]
+    ts = (ROOT / "web" / "src" / "lib" / "api.ts").read_text(encoding="utf-8")
+    assert "status: 'ok' | 'over_budget' | 'unavailable'" in ts
     assert out["full"] == {"y": {"status": "ok", "nonpositive": 1, "errorbar_low_nonpositive": 0}}
     man = {
         "stem": "x",
@@ -333,7 +344,11 @@ def _figurebench(tmp: Path, name: str):
     dst = tmp / name
     shutil.copytree(FIGUREBENCH / name, dst)
     w = pool.one_shot("figure.py", str(dst), "main")
-    w.ensure_built()
+    try:
+        w.ensure_built()
+    except BaseException:
+        pool.discard(w)
+        raise
     return w
 
 
@@ -368,3 +383,21 @@ def test_figurebench_log_decay_is_not_flagged(tmp_path):
     }
     for pid in ("lab-publication-v1", "journal-base-v1", "free-form-v1"):
         assert _hits(man, pid) == [], pid
+
+
+if __name__ == "__main__":
+    import sys
+    import tempfile
+
+    if sys.argv[1:] != ["--write"]:
+        raise SystemExit(
+            "用法：PYTHONPATH=$PWD/src python tests/test_preflight_log_axis.py --write"
+        )
+    _w, _man = _render(
+        Path(tempfile.mkdtemp()), "fig_logcases.py", CASES_SCRIPT, "LogCases", "main"
+    )
+    pool.discard(_w)
+    REAL_SNAPSHOT.write_text(
+        json.dumps(_snapshot(_man), ensure_ascii=False, indent=1) + "\n", encoding="utf-8"
+    )
+    print(f"已写入 {REAL_SNAPSHOT}")
