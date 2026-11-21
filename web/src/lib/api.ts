@@ -4150,6 +4150,44 @@ export const setConvertUnsandboxedWindows = (enabled: boolean) =>
     body: JSON.stringify({ enabled }),
   })
 
+/** 「记住修好的做法」的一条（ADR 0197 第 3 层·在线；`engine/fixmemory.py`）。`fields` 按 `kind` 取用 */
+export interface FixMemoryEntry {
+  id: string
+  shape: string
+  kind: 'run_args' | 'launcher' | 'data_link' | 'execution'
+  fields: {
+    args?: string[]
+    env?: { name: string; value?: string }[]
+    text?: string
+    asked?: string
+    linked?: string
+    mode?: string
+  }
+  script: string
+  created: number
+  last_used: number
+  times: number
+}
+
+export interface FixMemoryState {
+  enabled: boolean
+  entries: FixMemoryEntry[]
+}
+
+export const fetchFixMemory = () => jsonFetch<FixMemoryState>('/api/ai/fix-memory')
+
+export const setFixMemoryEnabled = (enabled: boolean) =>
+  jsonFetch<FixMemoryState>('/api/ai/fix-memory', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  })
+
+export const deleteFixMemory = (id?: string) =>
+  jsonFetch<FixMemoryState>(id ? `/api/ai/fix-memory/${encodeURIComponent(id)}` : '/api/ai/fix-memory', {
+    method: 'DELETE',
+  })
+
 export const fetchAiCapabilities = (refresh = false) =>
   jsonFetch<AiCapabilities>(`/api/ai/capabilities${refresh ? '?refresh=1' : ''}`)
 

@@ -1598,6 +1598,22 @@
           "title": "钢笔与锚点编辑 › P 钢笔点三个点再点回起点：画出一条闭合路径；Enter 进锚点编辑、拖一个锚点，形状真的变了"
         }
       ]
+    },
+    {
+      "id": "ai.fix-memory",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "记住修好的做法：AI 修复真修好后把这次的改动记在本机，别的项目遇到同类失败时作参考；设置里能看、逐条删、全部删除（先确认）、关掉",
+        "en-US": "Remember what fixed it: after AI repair really fixes a script, the change is kept on this computer as a reference for the same kind of failure elsewhere; Settings lists each one, deletes one or all (with confirmation) and turns it off"
+      },
+      "entry": "设置 → 改图助手 →「记住修好的做法」",
+      "e2e": [
+        {
+          "spec": "fix-memory.spec.ts",
+          "title": "记住修好的做法：设置里能看到每一条、逐条删、全部删除先确认、关掉开关后重新打开仍是关"
+        }
+      ]
     }
   ]
 }

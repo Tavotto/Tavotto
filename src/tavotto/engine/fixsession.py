@@ -446,6 +446,28 @@ _FIX_TRACE_END = {
 }
 
 
+def _remember_fix(s: FixSession) -> None:
+    """会话以「修好」收尾、且应用试运行真的验证过（`finish` 在有应用试运行时已要求这一点）：把这次做成的改动记在本机
+    （`engine/fixmemory`，ADR 0197 第 3 层·在线）。失败类型取第一次试运行之前的形状。不抛。"""
+    ctx = s.ctx
+    if s.outcome != OUTCOME_FIXED or ctx is None or ctx.application_runner is None:
+        return
+    if not ctx.fixes_made or not ctx.attempts:
+        return
+    try:
+        from . import fixmemory
+
+        fixmemory.remember(
+            str(ctx.attempts[0].get("before") or ""),
+            list(ctx.fixes_made),
+            script=s.script,
+            sensitive_args=bool(getattr(ctx, "run_arguments_sensitive", False)),
+            scrub=fixtools.readscope.scrub,
+        )
+    except Exception:  # noqa: BLE001 - 记不下不影响修复结局
+        LOG.warning("记住修好的做法失败", exc_info=True)
+
+
 def _trace_settle(s: FixSession) -> None:
     try:
         status = _FIX_TRACE_END.get(s.outcome or "", "unknown")
@@ -793,6 +815,7 @@ class FixSessions:
                 s.repair_token = self._repair_token(s)
             s.done.set()
         _trace_settle(s)
+        _remember_fix(s)
         if s.ctx is not None:
             s.ctx.release_leases()  # change_python 持的旧代租约：会话结束才放（之后旧代才可能被清理）
         self._notify(s)

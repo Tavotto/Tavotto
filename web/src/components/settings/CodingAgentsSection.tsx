@@ -25,6 +25,7 @@ import { Details, Summary } from '../ui/Details'
 import { CodexIntegrationPanel } from './CodexIntegrationPanel'
 import { HostsPanel } from './HostsPanel'
 import { ConvertSandboxRow } from './ConvertSandboxRow'
+import { FixMemoryRow } from './FixMemoryRow'
 import { isDesktop } from '@/lib/desktop'
 import { ag } from './agentState'
 
@@ -266,6 +267,7 @@ export function CodingAgentsSection() {
         </p>
         <ConnectionsList caps={caps} />
         <HostsPanel />
+        <FixMemoryRow key="fix-memory" />
         <Details
           data-connect-advanced
           open={advancedOpen}
@@ -286,6 +288,7 @@ export function CodingAgentsSection() {
         {announce}
       </p>
       {legacy}
+      <FixMemoryRow key="fix-memory" />
     </div>
   )
 }

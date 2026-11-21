@@ -7,7 +7,7 @@ D1 登记「看」「试」两组；D2a 加「改」组（change.py：装包 / �
 
 from __future__ import annotations
 
-from .. import exectrace
+from .. import exectrace, fixmemory as _fixmemory
 from ..agent_runner.tools import Tool
 from ..agent_runner.wires import ToolResult
 from . import runreport as _runreport
@@ -38,6 +38,8 @@ REGISTRY: dict[str, FixTool] = {
 
 # 提示只点名本会话调得到的工具（ADR 0197 第 1 层）：注册表由这里交给 runreport，不让它反过来 import 本包（免得成环）
 _runreport.TOOL_TIERS.update({name: t.tier for name, t in REGISTRY.items()})
+# 「这台电脑上这样修好过」（ADR 0197 第 3 层·在线）：同样由包交给 runreport，runreport 不 import engine 的存储
+_runreport.REPLAY = _fixmemory.replay_text
 
 exectrace.register_vocabulary("tool", REGISTRY)
 exectrace.register_vocabulary("tier", TIERS)
@@ -93,6 +95,19 @@ def _remember(ctx: FixContext, tool: str, result: ToolResult) -> None:
         del ctx.transcript[:-TRANSCRIPT_MAX_ENTRIES]
     except Exception:  # noqa: BLE001 - 记不下不影响工具调用
         pass
+
+
+def _fix_made(tool: str, args: dict) -> tuple[str, dict] | None:
+    """真做成的一次改动 → (种类, 真实参数)，供「记住修好的做法」（ADR 0197 第 3 层·在线）。只认四种能在别的项目复用的改动"""
+    if tool == "set_run_arguments":
+        return ("run_args", {"args": list(args.get("argv") or [])})
+    if tool == "write_launcher":
+        return ("launcher", {"text": args.get("code")})
+    if tool == "link_data_file":
+        return ("data_link", {"asked": args.get("requested"), "linked": args.get("chosen")})
+    if tool == "switch_execution":
+        return ("execution", {"mode": args.get("mode")})
+    return None
 
 
 def run_tool(
@@ -152,6 +167,10 @@ def run_tool(
     ):
         ctx.changes_attempted += 1
         ctx.changes_since_try.append(tool.name)
+    if result.mutated and not result.is_error and isinstance(args, dict):
+        made = _fix_made(tool.name, args)
+        if made is not None:
+            ctx.fixes_made.append(made)
     # 等用户的那张卡已经有了决定（批准 / 拒绝）：工具这一层与它的 user_wait 说同一句话（审计的 approved_by 不动）
     decided = getattr(ctx, "trace_wait_decision", None)
     ctx.trace_wait_decision = None
