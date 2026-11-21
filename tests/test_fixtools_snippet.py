@@ -342,7 +342,8 @@ def test_the_bytecode_cache_prefix_is_not_read_before_the_guard(box, monkeypatch
         for line in r.content.splitlines()
         if line.startswith(("prefix ", "env ", "private "))
     )
-    assert lines["prefix"].endswith("/pyc") and lines["env"].endswith("/pyc"), r.content
+    assert lines["prefix"].endswith(("/pyc", "\\pyc")), r.content  # Windows 上是反斜杠
+    assert lines["env"].endswith(("/pyc", "\\pyc")), r.content
     assert lines["private"] == "False"
 
 
