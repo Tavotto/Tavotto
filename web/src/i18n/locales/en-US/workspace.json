@@ -429,6 +429,7 @@
     "unbindStyle": "Stop following a style",
     "bindStyle": "Lay out this canvas with style “{{name}}”",
     "alignToStyle": "Match to style “{{name}}”",
+    "followCanvas": "Follow style “{{name}}” again",
     "scriptWinsOverStyle": "Script changes take precedence over style",
     "rotate": "Rotate {{deg}}°",
     "rotateObjects": "Rotate objects",
@@ -835,8 +836,6 @@
     "emptyFromData": "Draw from data"
   },
   "stylePanel": {
-    "emptyTitle": "Select a figure on the canvas to see its style here",
-    "emptyAction": "Choose from layers",
     "noManifest": "This figure has no readable elements yet.",
     "needRender": "This figure needs one render before its style can be read.",
     "building": "Building the figure…",
@@ -896,6 +895,24 @@
       "fontsize": "size",
       "fontfamily": "font",
       "linewidth": "line width"
+    },
+    "canvasFollows": "This canvas follows",
+    "canvasUnbound": "This canvas follows no style",
+    "modeLabel": "Style scope",
+    "modeCanvas": "Canvas",
+    "modeFigure": "Figure",
+    "modeCanvasTip": "Edits the canvas style; every figure follows",
+    "modeFigureTip": "Edits only the selected figure; the canvas style stays",
+    "figuresLabel": "Figures on this canvas",
+    "pickFigure": "Pick a figure above to see its style",
+    "followBack": "Follow canvas",
+    "followBackOf": "{{row}}: follow canvas",
+    "summary": {
+      "size": "{{sizes}} pt",
+      "axisBold": "bold axis titles",
+      "titleBold": "bold titles",
+      "line": "line {{width}} pt",
+      "frame": "line {{width}} pt"
     }
   },
   "status": {
