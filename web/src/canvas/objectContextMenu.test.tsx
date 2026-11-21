@@ -574,12 +574,13 @@ describe('文字 / 箭头 / 形状', () => {
   })
 
   it.each(['a1', 's1'])(
-    '%s：更改为 > / 全部属性 ── 副本 / 锁 / 隐藏 / 层级 ── 删除（颜色 / 线宽留给 ContextBar）',
+    '%s：更改为 > / 转为路径 / 全部属性 ── 副本 / 锁 / 隐藏 / 层级 ── 删除（颜色 / 线宽留给 ContextBar）',
     async (id) => {
       await openOn(id)
       expect(menu()?.dataset.quickMenu).toBe('mark')
       expect(itemKeys()).toEqual([
         'change-kind',
+        'convert-to-path',
         'open-inspector',
         'copy',
         'paste',

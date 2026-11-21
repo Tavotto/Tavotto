@@ -35,6 +35,7 @@ import {
   SquareMousePointer,
   Tags,
   Type,
+  Spline,
   Ungroup,
 } from '@/components/ui/icons'
 import type { ComponentType } from 'react'
@@ -46,6 +47,7 @@ import { keyOf } from '@/lib/keymap'
 import { useWorkspaceStore } from '@/store/workspace'
 import { canZoomToSelectionNow, fitStage, zoomToSelection } from '@/store/zoomToSelection'
 import { objectLabel } from '@/types/document'
+import { canConvertToPath } from '@/lib/convertToPath'
 import { rankCommands, type PaletteSection } from '@/lib/commandRanking'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { cn } from '@/lib/utils'
@@ -59,6 +61,7 @@ import {
   runManualSave,
   selectAll,
   ungroupSelected,
+  convertToPath,
   startNamedNode,
   openTimeline,
 } from '@/store/actions'
@@ -183,6 +186,17 @@ const COMMANDS: Command[] = [
   { id: 'select-all', shortcut: keyOf('selectAll'), run: selectAll },
   { id: 'group', needsSelection: true, run: groupSelected },
   { id: 'ungroup', needsSelection: true, run: ungroupSelected },
+  // 转为路径（ADR 0185）：判据与右键菜单同一个（`canConvertToPath`，选区里每个都能转才出现），写入只有 `convertToPath`
+  {
+    id: 'convert-to-path',
+    needsSelection: true,
+    available: () => {
+      const ids = useSelectionStore.getState().ids
+      const objs = useDocumentStore.getState().doc.objects.filter((o) => ids.includes(o.id))
+      return objs.length > 0 && objs.every(canConvertToPath)
+    },
+    run: () => convertToPath(useSelectionStore.getState().ids),
+  },
   { id: 'layout-row', needsSelection: true, run: () => createLayoutGroup('row') },
   { id: 'layout-col', needsSelection: true, run: () => createLayoutGroup('col') },
   { id: 'layout-grid', needsSelection: true, run: () => createLayoutGroup('grid') },
@@ -258,6 +272,7 @@ const COMMAND_ICONS: Record<string, ComponentType<{ size?: number; className?: s
   'select-all': ListChecks,
   group: Group,
   ungroup: Ungroup,
+  'convert-to-path': Spline,
   'layout-row': AlignHorizontalDistributeCenter,
   'layout-col': AlignVerticalDistributeCenter,
   'layout-grid': LayoutGrid,

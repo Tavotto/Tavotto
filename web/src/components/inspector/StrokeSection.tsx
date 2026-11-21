@@ -8,10 +8,27 @@ import type {
   HeadSize,
   LineCap,
   LineJoin,
-  ShapeObject,
 } from '@/types/document'
-import { arrowHeads, legacyHead, shapeStrokeOn } from '@/types/document'
-import { DEFAULT_LINE_CAP, defaultLineJoin } from '@/lib/shapeGeometry'
+import { arrowHeads } from '@/types/document'
+import { DEFAULT_LINE_CAP } from '@/lib/shapeGeometry'
+import {
+  isFillStrokeMark,
+  markCornerRadiusCapable,
+  markDefaultJoin,
+  markFillable,
+  markHasNoJoin,
+  headedOf,
+  markHeadCapable,
+  markHeads,
+  markSidesCapable,
+  markStrokeOn,
+  markStrokeToggle,
+  setMarkHead,
+  setMarkHeadSize,
+  setMarkStrokeOff,
+  type FillStrokeMark,
+  type HeadedMark,
+} from '@/lib/markStyle'
 import { Button } from '../ui/Button'
 import { Row, Section } from '../ui/Field'
 import { Segmented } from '../ui/Segmented'
@@ -323,9 +340,70 @@ function MoreFold({ changed, children }: { changed: number; children: ReactNode 
 /** 这一组对象里有没有任何一个把这项改离缺省（折叠行右值的项数） */
 const countChanged = (flags: boolean[]) => flags.filter(Boolean).length
 
-/** 写新端型时同步维护旧 head 字段；规则在 `types/document.legacyHead` 一份 */
-function syncLegacyHead(o: ArrowObject): void {
-  o.head = legacyHead(arrowHeads(o))
+/**
+ * 起点 / 终点端型两行（箭头与含开放子路径的自由路径共用；读写只走 `lib/markStyle` 的 `markHeads` / `setMarkHead`）。
+ * `patch` 只会喂进有端型字段的对象。
+ */
+function HeadRows<T extends HeadedMark>({
+  objs,
+  patch,
+}: {
+  objs: T[]
+  patch: (label: UiMessage, fn: (o: T) => void) => void
+}) {
+  const heads = headedOf(objs) as T[]
+  return (
+    <>
+      <Row label={sk('end')} labelWidth={INSPECTOR_LABEL_W}>
+        <HeadSelect
+          value={shared(heads, (o) => markHeads(o as T).end) ?? null}
+          onChange={(v) => patch(hist('setHeadEnd'), (o) => setMarkHead(o, 'end', v))}
+          ariaLabel={sk('end')}
+        />
+      </Row>
+      <Row label={sk('start')} labelWidth={INSPECTOR_LABEL_W}>
+        <HeadSelect
+          value={shared(heads, (o) => markHeads(o as T).start) ?? null}
+          onChange={(v) => patch(hist('setHeadStart'), (o) => setMarkHead(o, 'start', v))}
+          ariaLabel={sk('start')}
+        />
+      </Row>
+    </>
+  )
+}
+
+/** 端型大小（「更多」里）：只给真有端型的那一端 */
+function HeadSizeRows<T extends HeadedMark>({
+  objs,
+  patch,
+}: {
+  objs: T[]
+  patch: (label: UiMessage, fn: (o: T) => void) => void
+}) {
+  const heads = headedOf(objs) as T[]
+  const has = (o: T, end: 'start' | 'end') => markHeads(o)[end] !== 'none'
+  return (
+    <>
+      {heads.some((o) => has(o, 'end')) && (
+        <ChoiceRow
+          label={sk('endSize')}
+          group="size"
+          values={SIZE_VALUES}
+          value={shared(heads, (o) => (o as T).headSizeEnd ?? 'medium') ?? null}
+          onChange={(v) => patch(hist('setHeadSizeEnd'), (o) => setMarkHeadSize(o, 'end', v))}
+        />
+      )}
+      {heads.some((o) => has(o, 'start')) && (
+        <ChoiceRow
+          label={sk('startSize')}
+          group="size"
+          values={SIZE_VALUES}
+          value={shared(heads, (o) => (o as T).headSizeStart ?? 'medium') ?? null}
+          onChange={(v) => patch(hist('setHeadSizeStart'), (o) => setMarkHeadSize(o, 'start', v))}
+        />
+      )}
+    </>
+  )
 }
 
 export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
@@ -337,13 +415,6 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
     })
   const arrowColor = shared(objs, (o) => (o as ArrowObject).color)
   const dash = shared(objs, (o) => (o as ArrowObject).dash ?? 'solid')
-  const hasHead = (o: ArrowObject, end: 'start' | 'end') => arrowHeads(o)[end] !== 'none'
-  const setSize = (which: 'Start' | 'End') => (v: HeadSize) =>
-    patch(hist(`setHeadSize${which}`), (o) => {
-      const key = `headSize${which}` as const
-      if (v === 'medium') delete o[key]
-      else o[key] = v
-    })
 
   return (
     <>
@@ -353,34 +424,7 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
           value={dash ?? null}
           onChange={(v) => patch(hist('setDash'), (o) => (o.dash = v === 'solid' ? undefined : v))}
         />
-        <Row label={sk('end')} labelWidth={INSPECTOR_LABEL_W}>
-          <HeadSelect
-            value={shared(objs, (o) => arrowHeads(o as ArrowObject).end) ?? null}
-            onChange={(v) =>
-              patch(hist('setHeadEnd'), (o) => {
-                const prev = arrowHeads(o) // 先取旧值：设了新字段后旧 head 不再参与推导
-                o.headEnd = v
-                o.headStart = prev.start
-                syncLegacyHead(o)
-              })
-            }
-            ariaLabel={sk('end')}
-          />
-        </Row>
-        <Row label={sk('start')} labelWidth={INSPECTOR_LABEL_W}>
-          <HeadSelect
-            value={shared(objs, (o) => arrowHeads(o as ArrowObject).start) ?? null}
-            onChange={(v) =>
-              patch(hist('setHeadStart'), (o) => {
-                const prev = arrowHeads(o)
-                o.headStart = v
-                o.headEnd = prev.end
-                syncLegacyHead(o)
-              })
-            }
-            ariaLabel={sk('start')}
-          />
-        </Row>
+        <HeadRows objs={objs} patch={patch} />
         {/* 与形状同一套行语法（2026-10-07 §9.2）：线宽半列一行、颜色一行（色块 + hex） */}
         <StrokeWidthRow
           value={shared(objs, (o) => (o as ArrowObject).strokePt)}
@@ -422,24 +466,7 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
           objs.some((o) => o.lineJoin != null && o.lineJoin !== 'round'),
         ])}
       >
-        {objs.some((o) => hasHead(o, 'end')) && (
-          <ChoiceRow
-            label={sk('endSize')}
-            group="size"
-            values={SIZE_VALUES}
-            value={shared(objs, (o) => (o as ArrowObject).headSizeEnd ?? 'medium') ?? null}
-            onChange={setSize('End')}
-          />
-        )}
-        {objs.some((o) => hasHead(o, 'start')) && (
-          <ChoiceRow
-            label={sk('startSize')}
-            group="size"
-            values={SIZE_VALUES}
-            value={shared(objs, (o) => (o as ArrowObject).headSizeStart ?? 'medium') ?? null}
-            onChange={setSize('Start')}
-          />
-        )}
+        <HeadSizeRows objs={objs} patch={patch} />
         <StrokeOpacityRow
           value={shared(objs, (o) => (o as ArrowObject).strokeOpacity ?? 1)}
           onChange={(v) => patch(hist('setStrokeOpacity'), (o) => setOpacity(o, v))}
@@ -505,30 +532,40 @@ function setJoin(o: { lineJoin?: LineJoin }, v: LineJoin, fallback: LineJoin): v
   else o.lineJoin = v
 }
 
-export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
+/**
+ * 形状与自由路径（ADR 0185）的外观：两者的填充 / 描边字段逐字相同，所以是同一套控件；哪一行出现、写哪个字段
+ * 全部问 `lib/markStyle` 的能力函数（这里不按对象类型分支）。路径含开放子路径时多出端型行（与箭头同一组控件）。
+ */
+export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
   useTranslation('inspector')
   const ids = objs.map((o) => o.id)
   // line 只有描边；brace 只描边不填充
-  const hasFillable = objs.some((o) => o.shape !== 'line' && o.shape !== 'brace')
-  const allRect = objs.every((o) => o.shape === 'rect')
-  const allPolygon = objs.every((o) => o.shape === 'polygon')
-  const fill = shared(objs, (o) => (o as ShapeObject).fill)
+  const hasFillable = objs.some(markFillable)
+  const allRect = objs.every(markCornerRadiusCapable)
+  const allPolygon = objs.every(markSidesCapable)
+  const headed = headedOf(objs)
+  const fill = shared(objs, (o) => (o as FillStrokeMark).fill)
   // 全都有填充、只是颜色不同：填充是开着的，色块画「多个值」（之前 shared 给 undefined，
   // 整行退回「＋添加填充」，一点就把所有人的填充刷成白色）。有的有、有的没有仍按「没开」处理
   const fillMixed = fill === undefined && objs.length > 0 && objs.every((o) => !!o.fill)
   const fillOn = !!fill || fillMixed
-  const strokeColor = shared(objs, (o) => (o as ShapeObject).color)
-  // 描边开关只对封闭形状（直线 / 大括号只有描边）；开着 = 有任何一个封闭形状有描边
-  const closed = objs.filter((o) => o.shape !== 'line' && o.shape !== 'brace')
-  const strokeOn = closed.length === 0 || closed.some(shapeStrokeOn)
+  const strokeColor = shared(objs, (o) => (o as FillStrokeMark).color)
+  // 描边开关只对封闭形状与路径（直线 / 大括号只有描边）；开着 = 有任何一个可开关的对象有描边
+  const closed = objs.filter(markStrokeToggle)
+  const strokeOn = closed.length === 0 || closed.some(markStrokeOn)
   // 描边的细节行（线宽 / 线型 / 更多）只在还有描边的时候出现
-  const showStroke = objs.some(shapeStrokeOn)
-  const dash = shared(objs, (o) => (o as ShapeObject).dash ?? 'solid')
-  const allLine = objs.every((o) => o.shape === 'line')
-  const fillOpacity = shared(objs, (o) => (o as ShapeObject).fillOpacity ?? 1)
-  const patch = (label: UiMessage, fn: (o: ShapeObject) => void) =>
+  const showStroke = objs.some(markStrokeOn)
+  const dash = shared(objs, (o) => (o as FillStrokeMark).dash ?? 'solid')
+  const allLine = objs.every(markHasNoJoin)
+  const fillOpacity = shared(objs, (o) => (o as FillStrokeMark).fillOpacity ?? 1)
+  const patch = (label: UiMessage, fn: (o: FillStrokeMark) => void) =>
     updateObjects(ids, label, (o) => {
-      if (o.type === 'shape') fn(o)
+      if (isFillStrokeMark(o)) fn(o)
+    })
+  /** 端型行只写有端型的那几个（选区里混着封闭形状时，它们一个字不动） */
+  const patchHeaded = (label: UiMessage, fn: (o: HeadedMark) => void) =>
+    updateObjects(ids, label, (o) => {
+      if (markHeadCapable(o)) fn(o)
     })
 
   return (
@@ -597,11 +634,7 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
                   delete o.stroke
                 })
               }
-              onOff={() =>
-                patch(hist('clearStroke'), (o) => {
-                  if (o.shape !== 'line' && o.shape !== 'brace') o.stroke = false
-                })
-              }
+              onOff={() => patch(hist('clearStroke'), setMarkStrokeOff)}
             />
           )}
           {(!hasFillable || strokeOn) && (
@@ -615,7 +648,7 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
         </Row>
         {showStroke && (
           <StrokeWidthRow
-            value={shared(objs, (o) => (o as ShapeObject).strokePt)}
+            value={shared(objs, (o) => (o as FillStrokeMark).strokePt)}
             onChange={(v) => patch(hist('setStrokeWidth'), (o) => (o.strokePt = v))}
           />
         )}
@@ -625,12 +658,13 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
             onChange={(v) => patch(hist('setDash'), (o) => (o.dash = v === 'solid' ? undefined : v))}
           />
         )}
+        {showStroke && headed.length > 0 && <HeadRows objs={headed} patch={patchHeaded} />}
         {allRect && (
           <Row label={sk('cornerRadius')} labelWidth={INSPECTOR_LABEL_W}>
             <NumberField
               half
               ariaLabel={sk('cornerRadius')}
-              value={shared(objs, (o) => (o as ShapeObject).cornerRadius ?? 0) ?? 0}
+              value={shared(objs, (o) => (o as FillStrokeMark & { cornerRadius?: number }).cornerRadius ?? 0) ?? 0}
               step={0.5}
               min={0}
               max={50}
@@ -638,6 +672,7 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
               unit="mm"
               onChange={(v) =>
                 patch(hist('setCornerRadius'), (o) => {
+                  if (!markCornerRadiusCapable(o)) return
                   if (v > 0) o.cornerRadius = v
                   else delete o.cornerRadius
                 })
@@ -650,11 +685,15 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
             <NumberField
               half
               ariaLabel={sk('sides')}
-              value={shared(objs, (o) => (o as ShapeObject).sides ?? 6) ?? 6}
+              value={shared(objs, (o) => (o as FillStrokeMark & { sides?: number }).sides ?? 6) ?? 6}
               step={1}
               min={3}
               max={12}
-              onChange={(v) => patch(hist('setSides'), (o) => (o.sides = Math.round(v)))}
+              onChange={(v) =>
+                patch(hist('setSides'), (o) => {
+                  if (markSidesCapable(o)) o.sides = Math.round(v)
+                })
+              }
             />
           </Row>
         )}
@@ -663,22 +702,24 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
       // 低频描边项收进一行「更多」：描边不透明度、线端、拐角（ADR 0174）
       <MoreFold
         changed={countChanged([
+          headed.some((o) => o.headSizeStart != null || o.headSizeEnd != null),
           objs.some((o) => o.strokeOpacity != null),
           objs.some((o) => o.lineCap != null && o.lineCap !== DEFAULT_LINE_CAP),
-          objs.some((o) => o.lineJoin != null && o.lineJoin !== defaultLineJoin(o.shape)),
+          objs.some((o) => o.lineJoin != null && o.lineJoin !== markDefaultJoin(o)),
         ])}
       >
+        {headed.length > 0 && <HeadSizeRows objs={headed} patch={patchHeaded} />}
         <StrokeOpacityRow
-          value={shared(objs, (o) => (o as ShapeObject).strokeOpacity ?? 1)}
+          value={shared(objs, (o) => (o as FillStrokeMark).strokeOpacity ?? 1)}
           onChange={(v) => patch(hist('setStrokeOpacity'), (o) => setOpacity(o, v))}
         />
         <LineEndRows
-          cap={shared(objs, (o) => (o as ShapeObject).lineCap ?? DEFAULT_LINE_CAP) ?? null}
-          join={shared(objs, (o) => (o as ShapeObject).lineJoin ?? defaultLineJoin((o as ShapeObject).shape)) ?? null}
+          cap={shared(objs, (o) => (o as FillStrokeMark).lineCap ?? DEFAULT_LINE_CAP) ?? null}
+          join={shared(objs, (o) => (o as FillStrokeMark).lineJoin ?? markDefaultJoin(o as FillStrokeMark)) ?? null}
           dotted={dash === 'dotted'}
           hideJoin={allLine}
           onCap={(v) => patch(hist('setLineCap'), (o) => setCap(o, v))}
-          onJoin={(v) => patch(hist('setLineJoin'), (o) => setJoin(o, v, defaultLineJoin(o.shape)))}
+          onJoin={(v) => patch(hist('setLineJoin'), (o) => setJoin(o, v, markDefaultJoin(o)))}
         />
       </MoreFold>
     )}

@@ -2,7 +2,7 @@ import { Fragment, useLayoutEffect } from 'react'
 import { perfCount } from '@/perf/core'
 import type { ElementGeometry, ManifestElement } from '@/lib/api'
 import type { Rect4 } from '@/lib/axesLayout'
-import { geomPathD, translateGeom } from '@/lib/pathGeom'
+import { geomPathD, pathOutline, translateGeom } from '@/lib/pathGeom'
 import { PATH_HIT_SHAPES, shapeInset, shapeOutline } from '@/lib/shapeGeometry'
 import { MM_PER_PT } from '@/lib/units'
 import { arrowEndpointsOf, geomTarget, linePointsOf, panelFullRect, resolveGroup } from '@/lib/elementGeom'
@@ -525,7 +525,9 @@ function ObjectOutline({
   const strokeWidth = primary ? 2 : 1
   const anchor = primary ? { 'data-primary-selection': obj.id } : {}
   const outline =
-    obj.type === 'shape' && PATH_HIT_SHAPES.has(obj.shape)
+    obj.type === 'path'
+      ? pathOutline(obj, box.w, box.h, Math.max(mmToPx(obj.strokePt * MM_PER_PT, t), 0.05))
+      : obj.type === 'shape' && PATH_HIT_SHAPES.has(obj.shape)
       ? shapeOutline(
           obj.shape,
           box.w,

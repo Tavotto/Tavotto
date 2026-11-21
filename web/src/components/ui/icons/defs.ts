@@ -334,6 +334,8 @@ const RAW_DEFS = {
   Diamond: { s: [DIAMOND], sel: { f: [DIAMOND] } },
   Hexagon: { s: [poly(regular(12, 12, 9.3, 6, -90), 1.6)] },
   Triangle: { s: [poly([[12, 4], [21, 20], [3, 20]], 1.8)] },
+  // 自由路径（ADR 0185）：一条 S 形曲线 + 两端锚点
+  Spline: { s: ['M6 18C6 10 18 14 18 6'], f: [dot(6, 18, 1.6), dot(18, 6, 1.6)] },
   Braces: { s: ['M8 3.5H7.5a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2H8', 'M16 3.5h.5a2 2 0 0 1 2 2v4a2 2 0 0 0 2 2 2 2 0 0 0-2 2v4a2 2 0 0 1-2 2H16'] },
 
 } satisfies Record<string, IconDef>
