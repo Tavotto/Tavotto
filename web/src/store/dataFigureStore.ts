@@ -6,12 +6,14 @@ import {
   aiDataProgressCancel,
   aiDataFigurePropose,
   aiDataFilesAll,
+  aiDataUnderstanding,
   aiDataOverview,
   backendErrorMsg,
   isDefiniteRunFailure,
   type AiDataCommitResult,
   type AiDataFileEntry,
   type AiDataOverview,
+  type AiDataUnderstanding,
 } from '@/lib/api'
 import { setCanvasCovered } from '@/store/canvasCover'
 import { runExclusive } from '@/lib/dataCommitQueue'
@@ -19,6 +21,7 @@ import { isCommitInProgress, pollCommit } from '@/lib/dataCommitPoll'
 import { currentProjectId } from '@/lib/session'
 import { candidateIdentity, candidatesFromResponse, headerRowFromResponse, mixedFromResponse, rolesFromResponse, sourcesFromResponse, unitsRowFromResponse, type Candidate, type GroupSource, type ColumnRoles, type MixedColumn, type ThumbState } from '@/lib/dataFigureAdapter'
 import { MERGE_FAILURE_CODES, fileRows, hasNumericColumn, isStaleProposeCode, sameTable, tableKey, type CellMode, type TableRef } from '@/lib/dataFigure'
+import { SUGGEST_KEYS, diffSuggestion, suggestionFrom, type Suggestion, type SuggestionDiff } from '@/lib/dataUnderstanding'
 import { msg, type UiMessage } from '@/i18n'
 
 /**
@@ -159,6 +162,10 @@ interface DataFigureStore {
   /** 出图没成的结局（出图成功就直接进编辑器；没画出来的行 / 没法核对这类话走浮动通知，不留在临时标签里） */
   problem: ProblemKind | null
   fresh: FreshFigure | null
+  /** 「读懂数据」后台任务还在跑（右栏标题行一行灰字）；`failed` / `off` / 超时 / 出结果都回到 false，界面与没有这个功能时一样 */
+  understanding: boolean
+  /** 模型建议与此刻的映射不同、但用户已经动过下拉（或正在出图）没有自动套用：右栏标题行的胶囊；点一下才套用，不点就是忽略 */
+  suggestion: Suggestion | null
 
   /** 首页左卡进项目之后：开「数据」抽屉；只有一个可读文件就直接开它的临时标签 */
   enter: () => void
@@ -183,6 +190,8 @@ interface DataFigureStore {
   /** 一张缩略图取到了 / 取不到（422）：就绪状态 + 全部都画不出来时走「没画出来」 */
   thumbSettled: (session: string, id: string, ok: boolean) => void
   draw: (id: string) => Promise<void>
+  /** 点胶囊：套用模型的建议（等同用户自己改了映射后重新出候选） */
+  applySuggestion: () => void
   /** 此刻读表 / 出候选那个请求的请求号（进度条轮询、取消都认它）；没有在读 = null */
   readRid: string | null
   /** 大文件读表 / 出候选到一半不想等了：调后端取消端点（真的停），原请求随后回 409 `propose_cancelled`，按它收尾到 `cancelled`（可重读）；
@@ -256,6 +265,8 @@ const initial = {
   drawingId: null as string | null,
   problem: null as ProblemKind | null,
   fresh: null as FreshFigure | null,
+  understanding: false,
+  suggestion: null as Suggestion | null,
   readRid: null as string | null,
 }
 /** 换一份数据 / 回到起点时清掉的那些（文件清单、概览、表头行、画好的那张不在内） */
@@ -273,7 +284,21 @@ const idleDraft = {
   error: null as UiMessage | null,
   drawingId: null as string | null,
   problem: null as ProblemKind | null,
+  understanding: false,
+  suggestion: null as Suggestion | null,
   readRid: null as string | null,
+}
+
+/** 「读懂数据」轮询：后端限时 25 s，约 1 s 一次，最多 30 次，之后静默放弃 */
+const UNDERSTANDING_POLL_MS = 1000
+const UNDERSTANDING_POLL_MAX = 30
+let understandingSeq = 0
+let understandingTimer: ReturnType<typeof setTimeout> | null = null
+/** 停掉在跑的轮询（换文件 / 重新读表 / 关标签 / 换项目 / 出图进编辑器）：旧结果回来对不上序号就丢，绝不套到别的文件上 */
+const stopUnderstanding = (): void => {
+  understandingSeq += 1
+  if (understandingTimer) clearTimeout(understandingTimer)
+  understandingTimer = null
 }
 
 export const useDataFigureStore = create<DataFigureStore>((set, get) => {
@@ -288,6 +313,82 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   const discardSession = () => {
     const sid = get().session
     if (sid) void aiDataFigureDiscard(sid, currentProjectId()).catch(() => undefined)
+  }
+
+  const headerFixed = (): boolean => {
+    const sel = get().selected
+    return sel ? get().headerRows[sel.path] != null : false
+  }
+
+  /** 套用一份（已核过与此刻不同的）建议：等同用户自己改了映射 / 指了表头行，再出候选 */
+  function applyDiff(d: SuggestionDiff): void {
+    stopUnderstanding()
+    set({ understanding: false, suggestion: null })
+    const sel = get().selected
+    if (d.headerRow !== null && sel && !get().group) {
+      // 换了表头行：列也跟着变，列名建议是按重读后的表给的——和 `setHeaderRow` 同一条路，但把建议的列一起带上
+      discardSession()
+      commitRid = null
+      set((s) => ({ headerRows: { ...s.headerRows, [sel.path]: d.headerRow! }, answers: { ...s.answers, ...d.picks } }))
+      void run({ keepChoices: true })
+      return
+    }
+    if (Object.keys(d.picks).length > 0) reask((a) => ({ ...a, ...d.picks }))
+  }
+
+  /** 「读懂数据」出结果了：用户还没动过横轴 / 纵轴 / 分组就直接套用，动过了（或正在出图）留给胶囊，没差别什么都不做 */
+  function onUnderstood(sug: Suggestion): void {
+    const d = diffSuggestion(sug, get().roles, get().headerRowUsed, headerFixed())
+    if (!d) return
+    const touched = SUGGEST_KEYS.some((k) => k in get().answers)
+    if (!touched && !get().drawingId) applyDiff(d)
+    else set({ suggestion: sug })
+  }
+
+  /** 起轮询（响应里 `understanding` 是 `pending`）或直接用内嵌的结果（`ready`）；`failed` / `off` / 超时全部静默 */
+  function trackUnderstanding(u: AiDataUnderstanding, pj: string | null): void {
+    stopUnderstanding()
+    set({ understanding: false, suggestion: null })
+    const mine = understandingSeq
+    const ep = epoch
+    const alive = () => ep === epoch && mine === understandingSeq
+    /** 终态返回 true；`pending` 返回 false */
+    const settle = (v: AiDataUnderstanding): boolean => {
+      if (v.state === 'pending') return false
+      set({ understanding: false })
+      if (v.state === 'ready') {
+        const sug = suggestionFrom(v, get().selected?.path ?? null, !get().group)
+        if (sug) onUnderstood(sug)
+      }
+      return true
+    }
+    if (u.state === 'pending') set({ understanding: true })
+    else {
+      settle(u)
+      return
+    }
+    let polls = 0
+    const tick = (): void => {
+      understandingTimer = setTimeout(async () => {
+        understandingTimer = null
+        if (!alive()) return
+        polls += 1
+        let v: AiDataUnderstanding | null = null
+        try {
+          v = await aiDataUnderstanding(u.id, pj)
+        } catch {
+          v = null // 偶发失败不当结局：下一次再问，到次数为止
+        }
+        if (!alive()) return
+        if (v && settle(v)) return
+        if (polls >= UNDERSTANDING_POLL_MAX) {
+          set({ understanding: false })
+          return
+        }
+        tick()
+      }, UNDERSTANDING_POLL_MS)
+    }
+    tick()
   }
 
   /**
@@ -357,8 +458,10 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         thumbs: Object.fromEntries(res.items.map((i) => [i.id, 'pending' as ThumbState])),
         nothingReasons: [],
       })
+      if (res.understanding) trackUnderstanding(res.understanding, pj)
     } else if (res.kind === 'nothing') {
       set({ ...common, phase: 'nothing', nothingReasons: [...(res.reasons ?? [])], candidates: [], session: null })
+      if (res.understanding) trackUnderstanding(res.understanding, pj)
     } else {
       // 形状不对按失败处理（不当成拿到了空的）
       set({ phase: 'failed', error: null })
@@ -367,6 +470,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
 
   /** 读表 / 出候选被取消之后的收尾：概览回到取消前的样子（有旧内容还它，没有就当没读过），临时标签回到可重读的 `cancelled` */
   function markCancelled(): void {
+    stopUnderstanding() // 取消读取：读懂数据的轮询一并停，旧结果不再套用
     const { selected } = get()
     if (selected) {
       const key = overviewKeyOf(selected, get().headerRows)
@@ -378,7 +482,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         return { overviews: next }
       })
     }
-    set({ phase: 'cancelled', candidates: [], session: null, thumbs: {}, error: null, readRid: null })
+    set({ phase: 'cancelled', candidates: [], session: null, thumbs: {}, error: null, readRid: null, understanding: false, suggestion: null })
   }
 
   async function loadOverview(ref: TableRef, signal?: AbortSignal, rid?: string): Promise<AiDataOverview | null | 'cancelled'> {
@@ -416,6 +520,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     const seq = { current: () => runSeq }
     runSeq += 1
     proposeSeq += 1
+    stopUnderstanding()
     const { pj, still } = capture(seq)
     const kept = opts.keepChoices ? { answers: get().answers, mixed: get().mixed, roles: get().roles } : { answers: {} as Record<string, unknown> }
     const ctl = new AbortController()
@@ -469,7 +574,8 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   async function goEditor(script: string): Promise<void> {
     const ep = epoch
     const file = get().selected
-    set({ draftOpen: false, draftActive: false, drawingId: null, problem: null, phase: 'idle', session: null, candidates: [], fresh: file && !get().group ? { file, from: host.activeCanvasId(), canvasId: null } : null })
+    stopUnderstanding()
+    set({ understanding: false, suggestion: null, draftOpen: false, draftActive: false, drawingId: null, problem: null, phase: 'idle', session: null, candidates: [], fresh: file && !get().group ? { file, from: host.activeCanvasId(), canvasId: null } : null })
     if (ep !== epoch) return
     // `still`：换过项目 / 清过状态就不许再打开（A 项目的相对路径不能拿到 B 项目里去跑）
     await host.openScript(script, () => ep === epoch).catch(() => undefined)
@@ -689,6 +795,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       discardSession()
       proposeSeq += 1
       runSeq += 1
+      stopUnderstanding()
       commitRid = null
       set({ draftOpen: false, draftActive: false, selected: null, group: null, sources: null, ...idleDraft })
     },
@@ -754,6 +861,17 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       await run({ keepChoices: true })
     },
 
+    applySuggestion: () => {
+      const sug = get().suggestion
+      if (!sug || get().drawingId) return
+      const d = diffSuggestion(sug, get().roles, get().headerRowUsed, headerFixed())
+      if (!d) {
+        set({ suggestion: null })
+        return
+      }
+      applyDiff(d)
+    },
+
     cancelRead: async () => {
       const { phase, selected, readRid } = get()
       if (phase !== 'reading' && phase !== 'loading') return
@@ -800,6 +918,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
 
     clear: () => {
       epoch += 1
+      stopUnderstanding()
       groupFresh.clear()
       filesDirty = false
       commitRid = null

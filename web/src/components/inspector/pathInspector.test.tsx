@@ -285,6 +285,21 @@ describe('「更多」里的描边附加项（ADR 0185 第二批）', () => {
     expect('strokeAlign' in byId<ShapeObject>('s1')).toBe(false)
   })
 
+  it('闭合路径也有描边对齐（ADR 0185 M2）：缺省居中；选「内侧」写字段，选回「居中」删字段；开放路径没有这一行', async () => {
+    await seed([closedPath()], ['p2'])
+    await mount()
+    await openMore()
+    expect(radio('描边对齐', '居中').getAttribute('aria-checked')).toBe('true')
+    await act(async () => radio('描边对齐', '内侧').click())
+    expect(byId<PathObject>('p2').strokeAlign).toBe('inside')
+    await act(async () => radio('描边对齐', '居中').click())
+    expect('strokeAlign' in byId<PathObject>('p2')).toBe(false)
+    await seed([openPath()], ['p1'])
+    await mount()
+    await openMore()
+    expect(host.querySelector('[role=radiogroup][aria-label="描边对齐"]')).toBeNull()
+  })
+
   it('直线：没有描边对齐', async () => {
     await seed([rect({ shape: 'line', fill: null })], ['s1'])
     await mount()

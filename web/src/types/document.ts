@@ -461,6 +461,11 @@ export interface PathObject extends ObjectBase {
   miterLimit?: number
   /** 自定义虚线：线段 / 间隙交替的长度（pt，绝对值）；有它就不看 `dash`。缺省 / 空 = 不用 */
   dashPattern?: number[]
+  /**
+   * 描边对齐（ADR 0185 M2）：缺省居中（不写字段，与 Illustrator 的路径相同——注意形状的缺省是内侧）。只在**全部子路径
+   * 闭合**且有描边时生效（`pathGeom.pathStrokeAlign`）：内侧 = 两倍线宽的描边裁到填充区域里，外侧 = 裁到填充区域外
+   */
+  strokeAlign?: 'inside' | 'outside'
   headStart?: ArrowHeadType
   headEnd?: ArrowHeadType
   headSizeStart?: HeadSize
