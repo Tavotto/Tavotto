@@ -528,8 +528,8 @@
       "extract": "只用里面的数字"
     },
     "variant": {
-      "split": "按「{{column}}」再分开",
-      "by_file": "只按文件比较"
+      "split": "按文件 +「{{column}}」分组",
+      "by_file": "只按文件分组"
     },
     "candidate": {
       "points_mean": {
