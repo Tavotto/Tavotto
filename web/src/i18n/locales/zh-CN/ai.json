@@ -687,7 +687,7 @@
     },
     "suggest": {
       "apply": "换成建议的列",
-      "reading": "正在看这几列…"
+      "reading": "正在看各列…"
     },
     "redraw": {
       "from": "用 {{file}} 画的",

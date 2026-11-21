@@ -234,7 +234,7 @@ export default interface Resources {
       },
       "suggest": {
         "apply": "换成建议的列",
-        "reading": "正在看这几列…"
+        "reading": "正在看各列…"
       },
       "variant": {
         "by_file": "只按文件比较",

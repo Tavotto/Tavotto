@@ -694,7 +694,7 @@
     },
     "suggest": {
       "apply": "Use suggested columns",
-      "reading": "Looking at the columns…"
+      "reading": "Checking columns…"
     },
     "redraw": {
       "from": "Drawn from {{file}}",
