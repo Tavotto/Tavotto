@@ -239,8 +239,8 @@ export default interface Resources {
         "verified": "图画好了，数据和文件逐项对上。"
       },
       "variant": {
-        "by_file": "只按文件比较",
-        "split": "按「{{column}}」再分开"
+        "by_file": "只按文件分组",
+        "split": "按文件 +「{{column}}」分组"
       },
       "working": {
         "cancel": "取消",
