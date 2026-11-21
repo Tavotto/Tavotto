@@ -435,6 +435,16 @@ def parse_answers(answers) -> dict:
     out: dict = {}
     for key in _ANSWER_KEYS:
         if key in answers:
+            if key == "y" and isinstance(answers[key], list):
+                # 多列纵轴（读懂数据 / 用户点名）：1 到 `MULTI_Y_MAX` 个列名；形状不对 = 错误，取值合不合格由列角色规则判（不合格当没给）
+                raw = answers[key]
+                if not 1 <= len(raw) <= recipe_mod.MULTI_Y_MAX:
+                    raise ProposeError("propose_input_invalid", key)
+                names = [_text(c, key) for c in raw]
+                if any(c is None for c in names):
+                    raise ProposeError("propose_input_invalid", key)
+                out[key] = names[0] if len(names) == 1 else names
+                continue
             val = _text(answers[key], key)
             if val is not None:
                 out[key] = val
