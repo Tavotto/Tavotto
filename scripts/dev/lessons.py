@@ -9,6 +9,8 @@
     python scripts/dev/lessons.py --due     # 列出 Seen ≥ 3、待升级的条目
     python scripts/dev/lessons.py --json    # 解析结果（给复盘脚本）
     python scripts/dev/lessons.py --stats   # 每层体积与余量、下一个可用编号
+    python scripts/dev/lessons.py --recurrence [--since YYYY-MM-DD]
+                                            # 已升级条目：看护在哪、升级后又犯了几次
 
 按改动文件取命中的条目见同目录 `lessons_for_diff.py`（匹配规则 `trigger_matches` 在本模块）。
 
@@ -64,6 +66,14 @@ HEAD = re.compile(r"^### (L-(\d{3,}))\s+(\S.*)$")
 FIELD = re.compile(r"^- ([^:：]+)[:：]\s*(.*)$")
 #: 已升级的条目只留标题这一行：`### L-001 规则 → docs/rules/<层>/<主题>.md`。
 PROMOTED = re.compile(r"^(.*\S)\s+→\s*(docs/rules/[a-z]+/[\w.-]+\.md)$")
+#: 细则里升级那段的标记：`（错题本 L-017 升级，2026-11-11）`。日期是升级那天，之后写进这段的日期都算再犯。
+UPGRADE_MARK = r"错题本\s*{id}\s*升级[，,]\s*(\d{{4}}-\d{{2}}-\d{{2}})"
+#: 升级那段写不出机械看护时的明示标记：诚实地说「只靠人记」，好过假装有看护。
+MANUAL_GUARD = "看护：只靠人记"
+_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_TICKED = re.compile(r"`([^`\s]+)`")
+#: 另一条升级的标记（可能折行：`错题本 L-072` 行尾、`升级` 在下一行）：一段到这里为止。
+_OTHER_MARK = re.compile(r"错题本\s*L-\d{3,}(?:\s*升级|\s*$)")
 
 
 @dataclass(frozen=True)
@@ -250,6 +260,125 @@ def _build(c: dict) -> Lesson:
     )
 
 
+@dataclass(frozen=True)
+class Upgrade:
+    """一条已升级条目在细则里的那一段。"""
+
+    id: str
+    target: str
+    date: str  # 升级那天
+    guards: tuple[str, ...]  # 段里点名、且在仓库里找得到的测试 / 门禁文件
+    manual: bool  # 段里写了 MANUAL_GUARD
+    recurrences: tuple[str, ...]  # 段里晚于升级日的日期 = 升级后再犯的日子（升序、不重复）
+
+
+def upgrade_block(text: str, lesson_id: str) -> tuple[str, str] | None:
+    """细则 `text` 里 `lesson_id` 升级那一段：返回 (升级日, 段落原文)；找不到标记返回 None。
+
+    段落的边界：标记在标题上，到下一个同级或更高级标题为止；标记在条目 / 粗体段首，到空行、
+    标题，或缩进不深于它的下一个 `- ` 条目 / `**` 粗体段首为止。两种都在下一条升级标记前停下。"""
+    m = re.search(UPGRADE_MARK.format(id=re.escape(lesson_id)), text)
+    if not m:
+        return None
+    lines = text.splitlines()
+    first = text.count("\n", 0, m.start())
+    head = lines[first]
+    end = len(lines)
+    last_mark_line = text.count("\n", 0, m.end())
+    level = len(head) - len(head.lstrip("#")) if head.startswith("#") else 0
+    indent = len(head) - len(head.lstrip(" "))
+    for i in range(last_mark_line + 1, len(lines)):
+        ln = lines[i]
+        body = ln.lstrip(" ")
+        if _OTHER_MARK.search(ln):
+            end = i  # 下一条升级从这里开始，它的再犯不算到这条头上
+            break
+        if level:
+            if ln.startswith("#") and len(ln) - len(ln.lstrip("#")) <= level:
+                end = i
+                break
+            continue
+        if not body or ln.startswith("#"):
+            end = i
+            break
+        if len(ln) - len(body) <= indent and (body.startswith("- ") or body.startswith("**")):
+            end = i
+            break
+    return m.group(1), "\n".join(lines[first:end])
+
+
+def _is_guard_token(tok: str) -> bool:
+    name = tok.rsplit("/", 1)[-1]
+    return (
+        (name.startswith("test_") and name.endswith(".py"))
+        or ".test." in name
+        or ".spec." in name
+        or tok.startswith(("tests/", "scripts/ci/", "web/e2e/"))
+    )
+
+
+def block_guards(body: str, tracked: list[str]) -> tuple[str, ...]:
+    """段里反引号点名的测试 / 门禁文件，且能在已跟踪文件里按后缀找到（写错名 = 不算看护）。"""
+    out: list[str] = []
+    for tok in _TICKED.findall(body):
+        tok = tok.split("::", 1)[0].rstrip("，。、；:")
+        if not _is_guard_token(tok) or tok in out:
+            continue
+        if any(p == tok or p.endswith("/" + tok) for p in tracked):
+            out.append(tok)
+    return tuple(out)
+
+
+def upgrades(
+    lessons: list[Lesson], *, root: Path = ROOT, tracked: list[str] | None = None
+) -> tuple[list[Upgrade], list[str]]:
+    """每条已升级条目在细则里那一段的看护与再犯；第二项是找不到那一段的问题。"""
+    out: list[Upgrade] = []
+    errs: list[str] = []
+    for x in lessons:
+        if not x.promoted_to:
+            continue
+        target = root / x.promoted_to
+        if not target.is_file():
+            continue  # `problems` 已报
+        found = upgrade_block(target.read_text(encoding="utf-8"), x.id)
+        if found is None:
+            errs.append(
+                f"{x.id}: {x.promoted_to} 里找不到「错题本 {x.id} 升级，YYYY-MM-DD」标记"
+                "（升级日是数再犯的起点）"
+            )
+            continue
+        date, body = found
+        if tracked is None:
+            tracked = tracked_files(root)
+        later = sorted({d for d in _DATE.findall(body) if d > date})
+        out.append(
+            Upgrade(
+                id=x.id,
+                target=x.promoted_to,
+                date=date,
+                guards=block_guards(body, tracked),
+                manual=MANUAL_GUARD in body,
+                recurrences=tuple(later),
+            )
+        )
+    return out, errs
+
+
+def upgrade_problems(
+    lessons: list[Lesson], *, root: Path = ROOT, tracked: list[str] | None = None
+) -> list[str]:
+    """升级那一段必须带机械看护（点名一个找得到的测试 / 门禁文件），或明写「看护：只靠人记」。"""
+    ups, errs = upgrades(lessons, root=root, tracked=tracked)
+    for u in ups:
+        if not u.guards and not u.manual:
+            errs.append(
+                f"{u.id}: {u.target} 里升级那一段没点名看护（反引号写出测试 / 门禁文件），"
+                f"写不出就明写「{MANUAL_GUARD}」"
+            )
+    return errs
+
+
 def beijing_today(now: dt.datetime | None = None) -> dt.date:
     """北京时间的今天；now 不带时区时按 UTC 解读。"""
     now = now or dt.datetime.now(dt.timezone.utc)
@@ -296,6 +425,7 @@ def problems(
         if x.seen and dt.date.fromisoformat(x.seen[-1]) > today:
             out.append(f"{x.id}: Seen 里有未来的日期 {x.seen[-1]}")
     out += trigger_problems(lessons, root=root, tracked=tracked)
+    out += upgrade_problems(lessons, root=root, tracked=tracked)
     return out
 
 
@@ -389,8 +519,19 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--due", action="store_true", help="列出待升级的条目")
     g.add_argument("--json", action="store_true", help="输出解析结果")
     g.add_argument("--stats", action="store_true", help="每层体积与余量、下一个可用编号")
+    g.add_argument(
+        "--recurrence", action="store_true", help="已升级条目的看护与升级后再犯（复盘的效果数）"
+    )
+    ap.add_argument("--since", help="--recurrence 只数这天及以后的再犯（YYYY-MM-DD）")
     ap.add_argument("--dir", type=Path, default=LESSONS)
     args = ap.parse_args(argv)
+    if args.recurrence:
+        try:
+            ups, errs = upgrades(load(args.dir), root=args.dir.parents[3])
+        except LessonsError as e:
+            print(e, file=sys.stderr)
+            return 1
+        return _print_recurrence(ups, errs, args.since)
     if args.json or args.due or args.stats:
         try:
             lessons = load(args.dir)
@@ -414,6 +555,32 @@ def main(argv: list[str] | None = None) -> int:
             print(f"下一个编号\tL-{max(x.number for x in lessons) + 1:03d}")
         return 0
     errs = check_all(args.dir)
+    for e in errs:
+        print(e, file=sys.stderr)
+    return 1 if errs else 0
+
+
+def _print_recurrence(ups: list[Upgrade], errs: list[str], since: str | None) -> int:
+    if since is not None:
+        try:
+            dt.date.fromisoformat(since)
+        except ValueError:
+            print(f"--since 须是 YYYY-MM-DD，得到「{since}」", file=sys.stderr)
+            return 2
+    total = 0
+    hit = 0
+    for u in sorted(ups, key=lambda u: (-len(u.recurrences), u.id)):
+        dates = [d for d in u.recurrences if since is None or d >= since]
+        total += len(dates)
+        hit += bool(dates)
+        guard = "、".join(u.guards) if u.guards else ("只靠人记" if u.manual else "缺看护")
+        again = f"再犯 {len(dates)}（{'、'.join(dates)}）" if dates else "再犯 0"
+        print(f"{u.id}\t升级 {u.date}\t{again}\t看护 {guard}")
+    manual = sum(1 for u in ups if not u.guards)
+    scope = f"{since} 起" if since else "升级后"
+    print(
+        f"合计\t{len(ups)} 条已升级，{scope}再犯 {total} 次、涉及 {hit} 条；{manual} 条没有机械看护"
+    )
     for e in errs:
         print(e, file=sys.stderr)
     return 1 if errs else 0
