@@ -6750,6 +6750,7 @@ export default interface Resources {
       "pinLayout": "固定位置",
       "playgroundOpenFigure": "打开图",
       "playgroundResetEdits": "重置修改",
+      "rebindJournal": "更新期刊编号",
       "reflowLayoutGroup": "重新排列布局组",
       "refreshJournalV2": "更新期刊要求",
       "relinkAssets_other": "重新链接 {{count}} 个素材",

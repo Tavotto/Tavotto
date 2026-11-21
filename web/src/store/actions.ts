@@ -988,6 +988,20 @@ export function refreshJournalV2(journalId: string, v2: V2Patch | null): void {
 }
 
 /**
+ * 旧期刊 id 换绑到它现在的 id（目录里该刊把旧 id 记成了别名，`resolveJournalAlias`）：只改 `journalRef.id`，
+ * 绑定里的规则快照、出处、版本号、label 原样不动（库更新不改已定稿项目的 v1 结论）。静默：不弹胶囊、不报错；
+ * 绑定已不是 `oldId`（用户换了刊 / 换了画布）就什么都不做。返回是否写了。
+ */
+export function rebindJournalId(oldId: string, newId: string): boolean {
+  const p = doc().profile
+  if (!p?.journalRef || p.journalRef.id !== oldId || oldId === newId) return false
+  commit(hist('rebindJournal'), (d) => {
+    if (d.profile?.journalRef) d.profile.journalRef.id = newId
+  })
+  return true
+}
+
+/**
  * 「不按期刊」：一次提交退回选期刊之前的规范与页宽（撤销一步回到期刊）。
  * 没有记录（老项目 / 记录缺失）= 退回默认规范、页宽不动。没按期刊选过时什么都不做。
  */
