@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -167,3 +168,84 @@ def test_runs_under_isolated_interpreter_against_the_real_book(tmp_path):
     )
     assert r.returncode == 0, r.stderr
     assert "L-101\tdocs/rules/repo/lessons/ci.md\t" in r.stdout
+
+
+# ---- --hook：编码 agent 改完文件后注入命中的条目 ----
+
+
+@pytest.fixture
+def repo(tmp_path, books, monkeypatch):
+    monkeypatch.setattr(D.tempfile, "gettempdir", lambda: str(tmp_path / "tmp"))
+    return tmp_path
+
+
+def _hook(repo, books, path, session="s1"):
+    payload = {"session_id": session, "tool_input": {"file_path": str(repo / path)}}
+    out = D.hook(payload, root=repo, directory=books)
+    return None if out is None else json.loads(out)["hookSpecificOutput"]
+
+
+def test_hook_injects_hits_once_per_session(repo, books):
+    first = _hook(repo, books, "scripts/ci/gate.py")
+    assert first["hookEventName"] == "PostToolUse"
+    ctx = first["additionalContext"]
+    assert "L-001" in ctx and "为什么：只有 CI 才有的变量。" in ctx
+    assert "通用纪律" in ctx and "L-002" in ctx  # 会话里第一次改仓库文件附通用条目
+    assert "L-003" not in ctx
+    # 同一会话再改同一带：已提示过，不再重复
+    assert _hook(repo, books, "scripts/ci/other.py") is None
+    # 换一个文件命中新条目：只提示新的，通用的不再附
+    ctx = _hook(repo, books, "web/e2e/card_x.spec.ts")["additionalContext"]
+    assert "L-003" in ctx and "L-001" not in ctx and "L-002" not in ctx
+    # 新会话从头来
+    assert "L-001" in _hook(repo, books, "scripts/ci/gate.py", session="s2")["additionalContext"]
+
+
+def test_hook_ignores_files_outside_the_repo_and_bad_payloads(repo, books, tmp_path_factory):
+    outside = tmp_path_factory.mktemp("elsewhere") / "scripts" / "ci" / "gate.py"
+    assert (
+        D.hook(
+            {"session_id": "s", "tool_input": {"file_path": str(outside)}},
+            root=repo,
+            directory=books,
+        )
+        is None
+    )
+    assert D.hook({"session_id": "s", "tool_input": {}}, root=repo, directory=books) is None
+    assert D.hook({}, root=repo, directory=books) is None
+
+
+def test_hook_cli_never_fails(tmp_path):
+    """钩子挡住改文件比漏提示坏得多：坏输入、读不到错题本都静默退出 0。"""
+    for stdin in ("not json", "", '{"tool_input": {"file_path": 3}}'):
+        r = subprocess.run(
+            [sys.executable, "-I", str(SCRIPT), "--hook", "--dir", str(tmp_path / "none")],
+            input=stdin,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert r.returncode == 0 and r.stdout == "", (stdin, r)
+
+
+def test_hook_against_the_real_book(tmp_path):
+    """真错题本、真起 `python3 -I`：改 L-101 守的那个文件，提示里点名 L-101。"""
+    payload = {
+        "session_id": f"real-{tmp_path.name}",
+        "tool_input": {"file_path": str(ROOT / "tests" / "test_tracked_paths_are_windows_safe.py")},
+    }
+    r = subprocess.run(
+        [sys.executable, "-I", str(SCRIPT), "--hook"],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env={
+            **__import__("os").environ,
+            "TMPDIR": str(tmp_path),
+            "TEMP": str(tmp_path),
+            "TMP": str(tmp_path),
+        },
+    )
+    assert r.returncode == 0, r.stderr
+    assert "L-101" in json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]

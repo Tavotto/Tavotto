@@ -1,0 +1,7 @@
+# 提交进仓库的 web/src/lib/vecops/vecops.wasm 要能在 CI 上逐字节重建，编译器版本必须钉死。
+# 改版本 = 重新跑 vecops/build.sh 并提交新的 .wasm（CI 会对比）。
+[toolchain]
+channel = "1.95.0"
+targets = ["wasm32-unknown-unknown"]
+components = ["clippy", "rustfmt"]
+profile = "minimal"

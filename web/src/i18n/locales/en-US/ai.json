@@ -701,6 +701,10 @@
       "noX": "No X axis",
       "noGroup": "No grouping"
     },
+    "suggest": {
+      "apply": "Try suggested",
+      "reading": "Checking columns…"
+    },
     "redraw": {
       "from": "Drawn from {{file}}",
       "again": "Try another style",
