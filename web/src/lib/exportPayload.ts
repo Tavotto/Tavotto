@@ -32,17 +32,26 @@ export function newerObjectCount(objects: readonly CanvasObject[]): number {
 function appearanceExtras(o: {
   miterLimit?: number
   dashPattern?: number[]
-  strokeAlign?: 'center' | 'outside'
+  strokeAlign?: 'center' | 'outside' | 'inside'
   type: string
   shape?: string
-}): { miter_limit?: number; dash_pattern?: number[]; stroke_align?: 'center' | 'outside' } {
+}): { miter_limit?: number; dash_pattern?: number[]; stroke_align?: 'center' | 'outside' | 'inside' } {
   const ml = miterLimitOf(o.miterLimit)
   const dp = validDashPattern(o.dashPattern)
-  const align = o.type === 'shape' && o.shape && !isStrokeOnlyShape(o.shape) ? o.strokeAlign : undefined
+  // 形状：缺省内侧，只发 center / outside；路径（ADR 0185 M2）：缺省居中，只发 inside / outside。字段原样发，
+  // 生效与否（路径要全闭合、有描边）由后端 `geometry.path_stroke_align` 用同一条判据再判
+  const align =
+    o.type === 'shape' && o.shape && !isStrokeOnlyShape(o.shape)
+      ? o.strokeAlign === 'center' || o.strokeAlign === 'outside'
+        ? o.strokeAlign
+        : undefined
+      : o.type === 'path' && (o.strokeAlign === 'inside' || o.strokeAlign === 'outside')
+        ? o.strokeAlign
+        : undefined
   return {
     ...(ml !== STROKE_MITER_LIMIT ? { miter_limit: ml } : {}),
     ...(dp ? { dash_pattern: dp } : {}),
-    ...(align === 'center' || align === 'outside' ? { stroke_align: align } : {}),
+    ...(align ? { stroke_align: align } : {}),
   }
 }
 

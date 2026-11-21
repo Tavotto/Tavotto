@@ -1,3 +1,4 @@
+import { pathStrokeAlign } from './pathGeom'
 import type { CanvasObject, DashStyle, FigureDocument, LineCap } from '@/types/document'
 import { isStrokeOnlyShape, objectRotation, readPath, shapeStrokeOn } from '@/types/document'
 import { headSizeFactor, miterLimitOf, outlineOf, shapeInset, strokeCap } from './shapeGeometry'
@@ -125,8 +126,12 @@ function strokeOutset(o: CanvasObject): number {
             r.headEnd !== 'none' ? headSizeFactor(o.headSizeEnd) : 0,
           )
         : 0
+      // 描边对齐（ADR 0185 M2，只对全闭合的路径生效）：内侧不越出曲线（尖角也裁在里面）；外侧越出一整个线宽，尖角按两倍线宽算
+      const align = pathStrokeAlign(o)
+      if (align === 'inside') return 0
       const base = f ? 1.7 * f + 0.5 : capHalf(o.lineCap, o.dash)
       const miter = o.lineJoin === 'miter' ? miterLimitOf(o.miterLimit) / 2 : 0
+      if (align === 'outside') return ptToMm(sw * Math.max(1, 2 * miter))
       return ptToMm(sw * Math.max(base, miter))
     }
     default:

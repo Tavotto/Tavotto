@@ -652,6 +652,54 @@
       "eyedropper-tool": {
         "keywords": "eyedropper pick color sample",
         "label": "Eyedropper"
+      },
+      "pathfinder-unite": {
+        "keywords": "unite union merge combine pathfinder",
+        "label": "Unite"
+      },
+      "pathfinder-minus-front": {
+        "keywords": "minus front subtract pathfinder",
+        "label": "Minus front"
+      },
+      "pathfinder-intersect": {
+        "keywords": "intersect overlap pathfinder",
+        "label": "Intersect"
+      },
+      "pathfinder-exclude": {
+        "keywords": "exclude xor overlap pathfinder",
+        "label": "Exclude"
+      },
+      "pathfinder-divide": {
+        "keywords": "divide split pathfinder",
+        "label": "Divide"
+      },
+      "pathfinder-trim": {
+        "keywords": "trim hidden pathfinder",
+        "label": "Trim"
+      },
+      "make-compound": {
+        "keywords": "compound path hole",
+        "label": "Make compound path"
+      },
+      "release-compound": {
+        "keywords": "release compound path",
+        "label": "Release compound path"
+      },
+      "offset-path": {
+        "keywords": "offset path expand inset",
+        "label": "Offset path"
+      },
+      "outline-stroke": {
+        "keywords": "outline stroke expand",
+        "label": "Outline stroke"
+      },
+      "simplify-path": {
+        "keywords": "simplify smooth reduce anchors",
+        "label": "Simplify path"
+      },
+      "reverse-path": {
+        "keywords": "reverse path direction flip arrow",
+        "label": "Reverse path direction"
       }
     },
     "listLabel": "Commands",

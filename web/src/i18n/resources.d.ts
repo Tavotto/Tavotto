@@ -1625,9 +1625,45 @@ export default interface Resources {
           "keywords": "open load layout zr zairu dk dakai pb paiban",
           "label": "打开排版…"
         },
+        "make-compound": {
+          "keywords": "compound path hole jlfhlj 复合路径 挖洞",
+          "label": "建立复合路径"
+        },
         "new-doc": {
           "keywords": "new blank xj xinjian pb paiban",
           "label": "新建空白排版"
+        },
+        "offset-path": {
+          "keywords": "offset path expand inset pylj 偏移 外扩 内缩",
+          "label": "偏移路径"
+        },
+        "outline-stroke": {
+          "keywords": "outline stroke expand lkhmb 轮廓化 描边 扩展",
+          "label": "轮廓化描边"
+        },
+        "pathfinder-divide": {
+          "keywords": "divide split fg 分割 切开 路径查找器",
+          "label": "分割"
+        },
+        "pathfinder-exclude": {
+          "keywords": "exclude xor pccd 排除 重叠 路径查找器",
+          "label": "排除重叠"
+        },
+        "pathfinder-intersect": {
+          "keywords": "intersect overlap xj 相交 交集 路径查找器",
+          "label": "相交"
+        },
+        "pathfinder-minus-front": {
+          "keywords": "minus front subtract jqdc 减去 顶层 路径查找器",
+          "label": "减去顶层"
+        },
+        "pathfinder-trim": {
+          "keywords": "trim hide xb 修边 去掉被盖住的 路径查找器",
+          "label": "修边"
+        },
+        "pathfinder-unite": {
+          "keywords": "unite union merge combine hb 合并 联集 路径查找器",
+          "label": "合并"
         },
         "pen-tool": {
           "keywords": "pen gb 路径 贝塞尔",
@@ -1644,6 +1680,14 @@ export default interface Resources {
         "refresh-project": {
           "keywords": "refresh reload rescan sx shuaxin 重新扫描 新文件 检查",
           "label": "刷新项目"
+        },
+        "release-compound": {
+          "keywords": "release compound sffhlj 释放 复合路径",
+          "label": "释放复合路径"
+        },
+        "reverse-path": {
+          "keywords": "reverse path direction flip arrow fzlj 反转 方向 箭头",
+          "label": "反转路径方向"
         },
         "rulers": {
           "keywords": "ruler bc biaochi",
@@ -1668,6 +1712,10 @@ export default interface Resources {
         "shortcut-help": {
           "keywords": "shortcut help kjj kuaijiejian",
           "label": "快捷键帮助"
+        },
+        "simplify-path": {
+          "keywords": "simplify smooth reduce anchors jhlj 简化 删锚点 平滑",
+          "label": "简化路径"
         },
         "styles": {
           "keywords": "style token preset ys lwys yangshi",
@@ -4832,6 +4880,7 @@ export default interface Resources {
       "pasteStyle": "粘贴样式",
       "pasteStyleEmpty": "还没有复制过样式",
       "pasteStyleTip": "粘贴到选区里的{{kind}}",
+      "pathfinderLabel": "路径查找器",
       "pinMembers": "固定选中成员，重排时不动。",
       "refLabel": "对齐到",
       "refTip": {
@@ -5586,6 +5635,12 @@ export default interface Resources {
       "unknown": "未知"
     },
     "panelLabel": "右侧面板",
+    "pathfinder": {
+      "modes": "形状模式",
+      "offsetDistance": "偏移距离",
+      "offsetDistanceTip": "正数往外扩，负数往里缩",
+      "ops": "路径"
+    },
     "pinnedAria": "右栏常驻，点击改为自动收起",
     "prop": {
       "alpha": "不透明度",
@@ -6330,6 +6385,7 @@ export default interface Resources {
     "key": {
       "anchors": "锚点编辑里：添加 / 删除 / 转换锚点",
       "appearance": "默认填色描边 / 互换填色和描边 / 无填充",
+      "compoundPath": "建立 / 释放复合路径",
       "copyPaste": "复制 / 粘贴对象，可跨排版",
       "cycleOverlap": "在重叠的图内元素之间轮换选中",
       "delete": "删除对象；图内编辑时改为隐藏，可恢复。",
@@ -6872,6 +6928,7 @@ export default interface Resources {
       "lockElement": "锁定图内元素",
       "lockObject": "锁定对象",
       "lockObjects": "锁定 {{count}} 个对象",
+      "makeCompound": "建立复合路径",
       "mcpOpenFigure": "打开图",
       "moveAnchors": "移动锚点",
       "moveElement": "移动{{label}}",
@@ -6880,13 +6937,27 @@ export default interface Resources {
       "moveHandle": "调整手柄",
       "moveObject": "移动对象",
       "moveObjects": "移动 {{count}} 个对象",
+      "offsetPath": "偏移路径",
+      "outlineStroke": "轮廓化描边",
       "pasteObjects_other": "粘贴 {{count}} 个对象",
       "pasteStyle": "粘贴样式",
+      "pathfinder": {
+        "crop": "裁剪",
+        "divide": "分割",
+        "exclude": "排除重叠",
+        "intersect": "相交",
+        "merge": "合并同色",
+        "minusBack": "减去后方",
+        "minusFront": "减去顶层",
+        "trim": "修边",
+        "unite": "合并"
+      },
       "pinLayout": "固定位置",
       "playgroundOpenFigure": "打开图",
       "playgroundResetEdits": "重置修改",
       "reflowLayoutGroup": "重新排列布局组",
       "refreshJournalV2": "更新期刊要求",
+      "releaseCompound": "释放复合路径",
       "relinkAssets_other": "重新链接 {{count}} 个素材",
       "renameCanvas": "重命名画布",
       "renameObject": "重命名对象",
@@ -6900,6 +6971,7 @@ export default interface Resources {
       "restoreAspect": "恢复原始比例",
       "restoreNativeSize": "恢复原始尺寸",
       "restoreStyle": "恢复原样并解除样式跟随",
+      "reversePath": "反转路径方向",
       "rotate": "旋转 {{deg}}°",
       "rotateObjects": "旋转对象",
       "rotateReset": "取消旋转",
@@ -6914,6 +6986,7 @@ export default interface Resources {
       "setPublicationProfile": "设置出版规范",
       "showObject": "显示对象",
       "showObjects": "显示 {{count}} 个对象",
+      "simplifyPath": "简化路径",
       "spacingX": "设置水平间距",
       "spacingY": "设置垂直间距",
       "swapFillStroke": "互换填色和描边",
@@ -7028,6 +7101,10 @@ export default interface Resources {
       "runtimePossiblyStale": "脚本或环境可能有变，重新运行即可更新。",
       "runtimeRerunFailed": "重新运行失败",
       "stale": "脚本已更新"
+    },
+    "pathfinder": {
+      "blockedEmbedded": "在这里用不了，请在 Tavotto 桌面版或浏览器里打开",
+      "blockedFailed": "这台电脑上没能加载路径查找器"
     },
     "prep": {
       "aiFix": {
@@ -7690,6 +7767,7 @@ export default interface Resources {
       "openInspector": "打开全部属性",
       "paste": "粘贴",
       "pasteAsAnnotation": "粘贴为标注",
+      "pathfinder": "路径查找器",
       "rebuild": "重新构建",
       "resetOverridesCount_other": "恢复图内修改（{{count}} 项）",
       "scale": "缩放",
@@ -8036,6 +8114,8 @@ export default interface Resources {
       "pasteNothing": "没有可粘贴的对象。缺失素材的对象已跳过。",
       "pastedWithSkips_other": "已粘贴 {{count}} 个对象，跳过 {{skipped}} 张缺失素材的图。{{undo}} 可撤销。",
       "pasted_other": "已粘贴 {{count}} 个对象（{{undo}} 可撤销）",
+      "pathfinderEmpty": "算出来是空的，没有改动",
+      "pathfinderUnavailable": "这里用不了路径查找器",
       "projectBackgroundError": "后台检查项目文件时出错。已打开的内容不受影响，修好文件后会自动重试。",
       "rebuildFailed": "无法重新构建。{{error}}",
       "recentMissing": "这份排版已不在本机，已从列表里去掉",
@@ -8047,6 +8127,7 @@ export default interface Resources {
       "renderFailed": "无法渲染 {{name}}",
       "renderFailedWithError": "无法渲染 {{name}}。{{error}}",
       "scriptChanged_other": "脚本已更新，{{count}} 张图已重新渲染",
+      "simplifyNothing": "已经很简单了，没有可删的锚点",
       "sourceLinked_other": "已找到源脚本（{{count}} 张）",
       "sourceLostEditing": "你可能移动了该图脚本，需要重新关联。",
       "sourceLostRelink": "重新关联脚本",

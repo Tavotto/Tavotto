@@ -76,7 +76,8 @@
     "zDown": "下移一层",
     "zTop": "置于顶层",
     "zUp": "上移一层",
-    "zorderLabel": "层级"
+    "zorderLabel": "层级",
+    "pathfinderLabel": "路径查找器"
   },
   "assistantRunningTip": "助手运行中",
   "autoHideAria": "右栏自动收起中，点击改为常驻",
@@ -1335,5 +1336,11 @@
     "legendAria": "{{field}} · 跟着改的图例色块",
     "swatchN": "色块 {{n}}",
     "followSwatch": "让「{{name}}」的图例色块跟着改"
+  },
+  "pathfinder": {
+    "modes": "形状模式",
+    "ops": "路径",
+    "offsetDistance": "偏移距离",
+    "offsetDistanceTip": "正数往外扩，负数往里缩"
   }
 }

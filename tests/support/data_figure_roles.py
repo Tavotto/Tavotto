@@ -121,16 +121,24 @@ def run_case(
 
 # --------------------------------------------------------------------------- 评分
 def default_hits(case: dict, got: dict | None) -> dict:
-    exp = case["expect_default"]
+    """`expect_default` 是标准答案；用例可另给 `also_ok`（同形状的列表）：科学上同样说得通的默认（如试次序号当横轴画随试次的变化），
+    整份与其中一份一致也算对。"""
     if got is None:
         return {"x": False, "y": False, "group": False, "all": False}
-    hit = {
-        "x": got["x"] == exp["x"],
-        "y": sorted(got["y"]) == sorted(exp["y"]),
-        "group": got["group"] == exp["group"],
-    }
-    hit["all"] = all(hit.values())
-    return hit
+
+    def one(exp: dict) -> dict:
+        hit = {
+            "x": got["x"] == exp["x"],
+            "y": sorted(got["y"]) == sorted(exp["y"]),
+            "group": got["group"] == exp["group"],
+        }
+        hit["all"] = all(hit.values())
+        return hit
+
+    first = one(case["expect_default"])
+    if first["all"]:
+        return first
+    return next((h for h in map(one, case.get("also_ok", ())) if h["all"]), first)
 
 
 def role_accuracy(case: dict, roles: Sequence[dict]) -> tuple[int, int, int, int]:

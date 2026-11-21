@@ -455,7 +455,24 @@
     "defaultAppearance": "默认填色描边",
     "swapFillStroke": "互换填色和描边",
     "clearFill": "无填充",
-    "eyedropper": "吸管上色"
+    "eyedropper": "吸管上色",
+    "pathfinder": {
+      "unite": "合并",
+      "minusFront": "减去顶层",
+      "intersect": "相交",
+      "exclude": "排除重叠",
+      "divide": "分割",
+      "trim": "修边",
+      "merge": "合并同色",
+      "crop": "裁剪",
+      "minusBack": "减去后方"
+    },
+    "makeCompound": "建立复合路径",
+    "releaseCompound": "释放复合路径",
+    "offsetPath": "偏移路径",
+    "outlineStroke": "轮廓化描边",
+    "reversePath": "反转路径方向",
+    "simplifyPath": "简化路径"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -585,7 +602,8 @@
     "copy": "复制",
     "paste": "粘贴",
     "copyAsAnnotation": "复制为标注",
-    "pasteAsAnnotation": "粘贴为标注"
+    "pasteAsAnnotation": "粘贴为标注",
+    "pathfinder": "路径查找器"
   },
   "rail": {
     "assets": "素材",
@@ -959,7 +977,10 @@
     "copyDetails": "复制详情",
     "copiedDetails": "已复制",
     "eyedropperNothing": "这里没有能吸的颜色",
-    "eyedropperNoTarget": "先选中要上色的形状、路径或箭头"
+    "eyedropperNoTarget": "先选中要上色的形状、路径或箭头",
+    "pathfinderUnavailable": "这里用不了路径查找器",
+    "pathfinderEmpty": "算出来是空的，没有改动",
+    "simplifyNothing": "已经很简单了，没有可删的锚点"
   },
   "tabs": {
     "allCanvases": "全部画布",
@@ -1864,5 +1885,9 @@
   },
   "dataDrawer": {
     "count": "{{count}} 个数据文件"
+  },
+  "pathfinder": {
+    "blockedEmbedded": "在这里用不了，请在 Tavotto 桌面版或浏览器里打开",
+    "blockedFailed": "这台电脑上没能加载路径查找器"
   }
 }
