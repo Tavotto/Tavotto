@@ -36,6 +36,63 @@ KINDS = ("run_args", "launcher", "data_link", "execution")
 
 #: 变量名像凭据：只记名字、不记值
 _SECRETISH = re.compile(r"(KEY|TOKEN|SECRET|PASSW|PASSWD|CREDENTIAL|AUTH|COOKIE|SESSION)", re.I)
+
+#: 环境变量的值**默认不记**，只记名字（d2 人工核 #2100：黑名单猜凭据永远漏，`DB_PASS`、`*_PWD`、`*_DSN`……）。
+#: 只有两种记值：① 已知无害、影响出图的变量；② 名字一看就是「某个目录 / 路径」、值本身也是个路径的变量（数据目录类，
+#: 「缺环境变量」最常见的就是它们）。名字像凭据的一律不记值，即使碰巧落在这两类里
+_SAFE_ENV = frozenset(
+    {
+        "MPLBACKEND",
+        "MPLCONFIGDIR",
+        "PYTHONIOENCODING",
+        "PYTHONUTF8",
+        "PYTHONHASHSEED",
+        "LANG",
+        "LANGUAGE",
+        "TZ",
+        "QT_QPA_PLATFORM",
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+    }
+)
+_PATH_ENV = re.compile(r"(?:^|_)(?:DIR|DIRECTORY|PATH|ROOT|FOLDER|HOME|DATA)$", re.I)
+#: 短的、常见的字面量（`"data"`、`"w"`）不当秘密：抹掉它们只会把记下的路径抹坏（d2 人工核 #2100 P2）
+_SECRET_MIN_CHARS = 8
+
+
+def _env_value_kept(name: str, value: str) -> bool:
+    if _SECRETISH.search(name):
+        return False
+    if name in _SAFE_ENV or name.startswith("LC_"):
+        return True
+    return bool(_PATH_ENV.search(name)) and _looks_like_path(value)
+
+
+def _looks_like_path(value: str) -> bool:
+    v = value.strip()
+    return (
+        bool(v)
+        and (
+            v.startswith(("/", "~", "./", "../", "\\\\"))
+            or (len(v) > 2 and v[1] == ":" and v[2] in "/\\")
+        )
+        and "\n" not in v
+    )
+
+
+def _maybe_secret(value: str) -> bool:
+    """要从别的字段里抹掉的候选：够长、不是路径（路径抹了记录就没用了，口令里极少有斜杠）。"""
+    return (
+        len(value) >= _SECRET_MIN_CHARS
+        and not _looks_like_path(value)
+        and "/" not in value
+        and "\\" not in value
+    )
+
+
 _LOCK = threading.Lock()
 
 
@@ -204,7 +261,7 @@ def _kept_env(tree: ast.AST) -> list[tuple[str, str | None]]:
     """要记的环境变量 (名字, 值)：名字是字面量（按解码后的值判断，`\\x4b` 之类转义照样认得出）；名字像凭据的、值不是字面量的，
     值记 None（只记名字）。"""
     return [
-        (name, value if value is not None and not _SECRETISH.search(name) else None)
+        (name, value if value is not None and _env_value_kept(name, value) else None)
         for name, value in _env_sets(tree)[:10]
     ]
 
@@ -215,15 +272,17 @@ def launcher_secrets(text: str) -> set[str]:
     try:
         tree = ast.parse(text or "")
     except (SyntaxError, ValueError):
-        return {v for line in (text or "").splitlines() for v in _quoted(line)}
+        return {v for line in (text or "").splitlines() for v in _quoted(line) if _maybe_secret(v)}
     kept = {v for _, v in _kept_env(tree) if v is not None}
-    return {
+    # 环境变量里没记值的那些（多半是凭据）不论长短都抹；其余字面量只抹够长、不是路径的
+    unkept = {v for n, v in _env_sets(tree) if v and v not in kept}
+    return unkept | {
         n.value
         for n in ast.walk(tree)
         if isinstance(n, ast.Constant)
         and isinstance(n.value, str)
-        and n.value
         and n.value not in kept
+        and _maybe_secret(n.value)
     }
 
 

@@ -395,3 +395,49 @@ def test_no_spelling_of_a_credential_lets_its_value_through(store, launcher):
         secrets=secrets,
     )
     assert "mysecret123" not in store.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------- d2 人工核 #2100
+@pytest.mark.parametrize(
+    "name", ["DB_PASS", "DB_PWD", "SSH_PRIVATE", "DATABASE_DSN", "TLS_CERT", "MY_LOGIN"]
+)
+def test_env_values_are_kept_only_for_known_harmless_or_path_variables(store, name):
+    launcher = (
+        "import os\n"
+        f"os.environ['{name}'] = 'hunter2pass'\n"
+        "os.environ['MPLBACKEND'] = 'Agg'\n"
+        "os.environ['LAB_DATA_DIR'] = '~/lab/data'\n"
+        "run_original()\n"
+    )
+    fixmemory.remember(
+        "env_var_missing",
+        [("launcher", {"text": launcher}), ("run_args", {"args": ["--p", "hunter2pass"]})],
+        secrets=fixmemory.launcher_secrets(launcher),
+    )
+    assert "hunter2pass" not in store.read_text(encoding="utf-8")
+    env = next(r for r in fixmemory.entries() if r["kind"] == "launcher")["fields"]["env"]
+    assert env == [
+        {"name": name},
+        {"name": "MPLBACKEND", "value": "Agg"},
+        {"name": "LAB_DATA_DIR", "value": "~/lab/data"},
+    ]
+
+
+def test_short_common_literals_do_not_spoil_recorded_paths(store):
+    launcher = (
+        "import os\nos.chdir('data')\nos.environ['API_TOKEN'] = 'longsecretvalue'\nrun_original()\n"
+    )
+    fixmemory.remember(
+        "missing_input",
+        [
+            ("launcher", {"text": launcher}),
+            (
+                "data_link",
+                {"asked": "data/results.csv", "linked": "/Users/me/project/data/results.csv"},
+            ),
+        ],
+        secrets=fixmemory.launcher_secrets(launcher),
+    )
+    link = next(r for r in fixmemory.entries() if r["kind"] == "data_link")["fields"]
+    assert link == {"asked": "data/results.csv", "linked": "/Users/me/project/data/results.csv"}
+    assert "longsecretvalue" not in store.read_text(encoding="utf-8")
