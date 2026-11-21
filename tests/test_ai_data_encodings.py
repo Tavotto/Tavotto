@@ -218,8 +218,9 @@ def test_the_common_module_did_not_change_so_its_hash_and_name_stay_put():
 #: 2026-11-18 合画（几份列名相同的数据拼成一张图）给公共模块加了 `merge_tables` → `tavotto_plot_76e4a6f6.py`；
 #: 同日合画标签撞车保险给它加了 `group_key` 与标签重复检查 → `tavotto_plot_642ce634.py`；
 #: 同日认 `.xvg`（`xvg_text` / `xvg_label` 进公共模块）→ `tavotto_plot_8dccb037.py`；
-#: 2026-11-19 大表（ADR 0178 修订）：`table_from_text` / `delimited_records` 改成流式 `iter_table` / `iter_records` 的整份文本版 → 这一个）
-PINNED_RUNTIME_NAME = "tavotto_plot_98157f49.py"
+#: 2026-11-19 大表（ADR 0178 修订）：`table_from_text` / `delimited_records` 改成流式 `iter_table` / `iter_records` 的整份文本版 → `tavotto_plot_98157f49.py`；
+#: 2026-11-21 整数编码的分组（`knockout` 0 / 1）：公共模块多了 `NumCat` / `apply_numcat`，`distinct` 遇到整列 `NumCat` 按数值升序 → 这一个）
+PINNED_RUNTIME_NAME = "tavotto_plot_f7aa140e.py"
 
 
 # =========================================================================== 接口

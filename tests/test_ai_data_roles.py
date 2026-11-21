@@ -1261,6 +1261,40 @@ def test_job_usage_records_cached_input_tokens(tmp_path):
     assert "cached_input_tokens" in run.usage and isinstance(run.usage["cached_input_tokens"], int)
 
 
+def test_a_replicate_veto_never_strips_the_only_group_the_rules_found(tmp_path):
+    """规则落定了分组列（板号），模型判它是 `replicate_unit` 并建议不分组：不采纳，结果与规则相同；判成备注的仍会去掉。"""
+    case = {
+        "id": "T-plate",
+        "tables": {
+            "t.csv": "plate,well,od450\n"
+            + "".join(
+                f"P{p},{r}{c},{0.2 + 0.1 * p + 0.01 * c}\n"
+                for p in (1, 2)
+                for r in "ABC"
+                for c in (1, 2, 3)
+            )
+        },
+        "hint": None,
+    }
+    folder = DR.materialize(case, tmp_path / "proj")
+    entry = adf.profile_folder(tmp_path / "proj" / folder).tables[0]
+
+    def picks(role):
+        shape = {
+            "columns": [
+                {"name": "plate", "role": role},
+                {"name": "well", "role": "row_id"},
+                {"name": "od450", "role": "measure"},
+            ],
+            "picks": {"y": ["od450"], "x": "none", "group": "none"},
+        }
+        roles, _ = R.valid_roles(entry.summary, R.validate_roles_shape(shape))
+        return R.suggest(entry, None, roles, shape["picks"], None)[0]
+
+    assert "group" not in picks("replicate_unit")
+    assert picks("note").get("group") == "none"
+
+
 # --------------------------------------------------------------------------- roles.y 必须等于每个候选实际画的列
 WIDE_RULES = "t,a,b,c\n" + "".join(
     f"{i},{i + 1.0},{i * 2 + 0.5},{i * 3 + 1.2}\n" for i in range(1, 9)

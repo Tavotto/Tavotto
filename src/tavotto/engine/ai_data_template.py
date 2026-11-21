@@ -41,8 +41,10 @@ from dataclasses import dataclass, replace
 
 from . import ai_data_figure as adf, ai_data_recipe as recipe_mod, xlsxread
 from .ai_data_figure import (
+    NumCat,
     SemicolonCell,
     apply_cells,
+    apply_numcat,
     date_number,
     delimited_records,
     iter_records,
@@ -129,8 +131,11 @@ def merge_tables(tables, labels, column):
 
 
 def distinct(values):
-    """按首次出现的顺序去重。"""
-    return list(dict.fromkeys(values))
+    """按首次出现的顺序去重；整列都是整数编码的类别（`NumCat`，见 `apply_numcat`）时改按数值升序（类别顺序按编码大小，不看谁先出现）。"""
+    out = list(dict.fromkeys(values))
+    if out and all(isinstance(v, NumCat) for v in out):
+        out.sort(key=lambda v: v.number)
+    return out
 
 
 def make_label(mark, *parts):
@@ -947,6 +952,7 @@ def pick_fonts(latin, cjk):
 
 RUNTIME_FUNCTIONS = (
     SemicolonCell,
+    NumCat,
     parse_cell,
     parse_date,
     date_number,
@@ -960,6 +966,7 @@ RUNTIME_FUNCTIONS = (
     read_delimited,
     read_xlsx,
     apply_cells,
+    apply_numcat,
     group_key,
     merge_tables,
     distinct,
@@ -1340,6 +1347,8 @@ def _read_lines(recipe, reader: str) -> list[str]:
     out = [f"    header, rows = {reader}"]
     if recipe.cells:
         out.append("    rows, _cell_notes, _cell_stats = apply_cells(header, rows, CELLS)")
+    if recipe.numcat:
+        out.append("    rows = apply_numcat(header, rows, NUMCATS)")
     return out
 
 
@@ -1369,6 +1378,8 @@ def _data_lines(entry, data_rel) -> list[str]:
 def _header(entry, recipe, data_rel, title, is_xlsx):
     name = runtime_module()[0][: -len(".py")]
     cells = [f"CELLS = {[c.args() for c in recipe.cells]!r}"] if recipe.cells else []
+    if recipe.numcat:  # 整数编码的类别列（读表后规范成整数写法，类别按数值升序）
+        cells.append(f"NUMCATS = {list(recipe.numcat)!r}")
     return [
         f'"""由 Tavotto 根据数据生成的图（data_to_figure v2：{title}）。之后就是一份普通的绘图脚本，可以随意修改。\n\n'
         f'读表、汇总、布局的函数在同目录的 {name}.py 里（Tavotto 生成，别改它；它不含数据）。"""',

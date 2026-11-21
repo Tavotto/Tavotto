@@ -212,6 +212,10 @@ class ColumnSummary:
 #: 分组列：不同取值个数的上限（>12 个取值的类别列不当分组，多半是标签 / 名字）
 MAX_GROUP_LEVELS = 12
 
+#: 整数编码的分组列（`knockout` 0 / 1、`treatment` 1 / 2 / 3）：不同取值个数的上限。比文字分组的 12 更严——数值本身有大小意义，
+#: 取值一多（剂量 / 时间点 / 计数）它更像横轴或测量值而不是类别；6 以内的整数编码才有「几个组互相比较」的读法（见 `numcat_levels`）。
+NUMCAT_MAX_LEVELS = 6
+
 LAYOUTS = ("long", "wide", "matrix", "unknown")
 
 
@@ -257,6 +261,9 @@ class DataSummary:
     sheet: str | None = None
     layout: str = "unknown"
     groups: dict[str, int] = field(default_factory=dict)
+    #: 整数编码的类别列（`numcat_levels`）：列名 → 不同取值个数。**不是 `groups`**：规则从不把它当分组，只有用户 / 模型点名、配方带上
+    #: `FigureRecipe.numcat` 时才按类别用；不进 `to_dict`（对外响应与历史库逐字不变）。大表与合画是空的（这两条路暂不支持）。
+    numcat: dict[str, int] = field(default_factory=dict)
     id_like: list[str] = field(default_factory=list)
     repeats: bool | None = None
     row_count: int | None = None
@@ -1533,6 +1540,7 @@ def _summarize(
         sheet=sheet,
         layout=layout,
         groups=groups,
+        numcat=numcat_levels(header, rows, per, id_like) if parse is parse_cell else {},
         id_like=id_like,
         repeats=repeats,
         row_count=None if keep_rows else len(rows),
@@ -1940,6 +1948,67 @@ def apply_cells(header, rows, rules):
         if parts:
             notes.append(f"{col}: " + ", ".join(parts))
     return out, notes, stats
+
+
+# --------------------------------------------------------------------------- 整数编码的类别列
+def numcat_levels(header, rows, per, id_like) -> dict[str, int]:
+    """整数编码、可当类别用的列 → 不同取值个数（**客观条件的唯一实现**：摘要、配方校验、列角色挑选、模型采纳都读 `DataSummary.numcat`）。
+
+    条件（全部满足才算）：列 kind 是 `numeric`（有数、没有文字格；没有 `nan`；日期 / 混合列不算）、非空值**全是整数**（`3.0` 算、`1.5` 不算；
+    负数可以：`-1 / 0 / 1` 的编码是常见的）、不同取值（按整数值，`1` / `1.0` / `01` 同一个）满足 `2 <= k <= NUMCAT_MAX_LEVELS`、
+    非空格子数 > `k`（至少一个取值重复出现——每行都不同的是编号 / 测量值，不是类别）、不是 `id_like` 列（名字 / 结构像编号的整数列——批次、样本号——
+    与文字编号一样不当分组）。空格子不算取值，那一行画图时跳过（同文字分组的空格子）。只看小表的行数据；大表没有行数据，得到空。"""
+    out: dict[str, int] = {}
+    if not rows:
+        return out
+    for j, h in enumerate(header):
+        s = per[h]
+        if s.kind != "numeric" or s.nan or h in id_like:
+            continue
+        seen: set[int] = set()
+        n = 0
+        ok = True
+        for r in rows:
+            cell = r[j]
+            if not cell.strip():
+                continue
+            kind, v = parse_cell(cell)
+            if kind != "numeric" or not v.is_integer() or abs(v) >= 1e15:
+                ok = False
+                break
+            seen.add(int(v))
+            n += 1
+        if ok and 2 <= len(seen) <= NUMCAT_MAX_LEVELS and n > len(seen):
+            out[h] = len(seen)
+    return out
+
+
+class NumCat(str):
+    """整数编码的类别格子（`apply_numcat` 打的标记）：内容是**规范整数写法**（`0`、`1`、`-1`，没有 `0.0` / `01` / 空白），`number` 是它的数值。
+    运行时的 `distinct` 看见一列全是它，就按数值升序排类别（而不是首次出现的顺序）。`strip` 返回自己——取数处都写 `cell.strip()`，标记要留住。
+    **运行时类**（进公共模块）。"""
+
+    def __new__(cls, text, number):
+        obj = super().__new__(cls, text)
+        obj.number = number
+        return obj
+
+    def strip(self, chars=None):
+        return self
+
+
+def apply_numcat(header, rows, cols):
+    """整数编码的类别列读表后的处理：这些列的每个数值格换成 `NumCat`（规范整数写法 + 数值）；空格 / 不是数的格原样（那一行当缺失，同文字分组）。
+    只改这次读到的内存里的副本，不碰文件。**这是运行时函数**：父进程算期望值与生成的脚本调用同一份源码。"""
+    idx = {h: i for i, h in enumerate(header)}
+    out = [list(r) for r in rows]
+    for col in cols:
+        i = idx[col]
+        for r in out:
+            kind, v = parse_cell(r[i])
+            if kind == "numeric":
+                r[i] = NumCat(str(int(v)) if v.is_integer() else r[i].strip(), v)
+    return out
 
 
 # --------------------------------------------------------------------------- 列映射
