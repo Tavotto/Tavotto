@@ -4669,7 +4669,24 @@ export interface AiDataLazyInfo {
   defaults?: { question_code: string; answer?: Record<string, unknown> }[]
   /** 数值列里夹着文字的列：默认不画那几行（`skip`），用户可改成取数字（`extract`） */
   mixed_cells?: { column: string; non_numeric: number; rows: number; mode: 'skip' | 'extract' }[]
+  /** 连了自带 Key 的模型时才有（后端「读懂数据」后台任务，ADR 0178 第 1 步）：`pending` 就轮询 `aiDataUnderstanding`；`ready` 时建议内嵌；没有这个键 = 与从前一样 */
+  understanding?: AiDataUnderstanding
 }
+
+/** 「读懂数据」：`ready` 带模型对各列的判断换算出的建议（`answers` 的 `x` / `y` / `group` 取列名或 `none`，另可能有 `cells`）；`failed` 只有闭集 `reason`；`off` = 不存在 / 过期 / 别的项目，不是错误 */
+export interface AiDataUnderstanding {
+  id: string
+  state: 'pending' | 'ready' | 'failed' | 'off'
+  answers?: Record<string, unknown>
+  /** 表（相对路径）→ 表头物理行号 */
+  header_rows?: Record<string, number>
+  roles?: { column: string; role: string }[]
+  dropped?: number
+  reason?: string
+}
+
+export const aiDataUnderstanding = (id: string, pj?: string | null) =>
+  jsonFetch<AiDataUnderstanding>(`/api/ai/data-figure/understanding/${encodeURIComponent(id)}`, undefined, pj)
 
 export type AiDataProposeResponse =
   | {
