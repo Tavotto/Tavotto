@@ -47,6 +47,8 @@ MAX_COMPOSITION_PARTS = 8
 MAX_TRAJECTORIES = 30
 #: 配方里的列数 / 层数 / 文字长度
 MAX_Y = adf.MAX_COLUMNS  # 配方 y 列数的硬上限 = 摘要的列数上限；各族更严的上限在 FamilySpec.y_max
+#: 用户 / 模型一次点名的纵轴列数上限（与宽表分支的「至多 3 个」同一个数）
+MULTI_Y_MAX = 3
 #: 数值列里夹着文字时，非数字的非空格子占比上限与数值格子的最少个数（`numeric_like`）
 MAX_TEXT_SHARE = 0.2
 MIN_NUMERIC_CELLS = 3
@@ -794,6 +796,24 @@ def _unit_of(col: str) -> str | None:
     """列名后缀里的单位（只认 `ai_data_figure.UNITS` 闭集）；认不出 → None。"""
     m = adf._UNIT_SUFFIX.match(col)
     return adf.UNITS.get(m.group("unit")) if m else None
+
+
+def multi_y_ok(s: adf.DataSummary, cols: list[str]) -> bool:
+    """用户 / 模型点名的**多列纵轴**能不能用（`_resolve_roles` 与 `ai_data_roles.suggest` 共用这一处）：2 到 `MULTI_Y_MAX` 列、互不相同、
+    都在表里、都是数值列（`numeric_like`）、没有 `id_like` 列、列名后缀里认得出的单位至多一种（不同单位 = 双轴，`dual_axis_unsupported`）。"""
+    if not 2 <= len(cols) <= MULTI_Y_MAX or len(set(cols)) != len(cols):
+        return False
+    if any(
+        c not in s.per_column or c in s.id_like or not numeric_like(s.per_column[c]) for c in cols
+    ):
+        return False
+    return len({u for u in (_unit_of(c) for c in cols) if u}) <= 1
+
+
+def id_group_ok(s: adf.DataSummary, col: str) -> bool:
+    """名字 / 结构像编号（`id_like`）的列，能不能被点名当分组：它得是分组列（`s.groups`：文字、2–12 个取值、有取值重复出现——
+    每行都不同的是标签不是分组）。数字编号（批次 1 2 3）不在 `s.groups`，不算。"""
+    return col in s.id_like and col in s.groups
 
 
 # --------------------------------------------------------------------------- 取值（需要带行数据的 DataSummary）
@@ -1755,6 +1775,8 @@ def _resolve_roles(
        relationship（分组比较与分布是主图，不拿一个猜出来的横轴去换）。有横轴时分组列做颜色分组（恰好两个分组列时另一个做分面）。
     （横轴候选 `xs` 里的数值列可以是夹着少量文字的（`numeric_like`，与 y 同一阈值）：那几行不画、先问 / 懒模式默认跳过，处理规则同 y 列；文字占多数的列不进。）
     （`picks.group == "none"` / `picks.x == "none"`：用户在右侧面板明确不要分组 / 不要有序横轴——当没有这个角色，不问。）
+    （读懂数据的三处例外，条件各一处实现：`picks.y` 可以是 2–`MULTI_Y_MAX` 个列名的数组（`multi_y_ok`，不合格当没给）；`picks.group` 点名一个名字像编号、但文字且有重复
+    取值的列（`id_group_ok`）时它进分组列；`picks.x` 在有分组列时本来就认。没有这些 `picks` 时与上面逐字相同。）
     4. layout 是 `matrix`（对称矩阵）→ 画不了（`matrix_unsupported`）：模板没有热图。"""
     s = entry.summary
     cols = s.columns
@@ -1773,8 +1795,17 @@ def _resolve_roles(
     # --- y
     ys: list[str]
     p = picks.get("y")
+    multi: list[str] | None = None
+    if isinstance(p, list):  # 点名多列纵轴（只在列客观上合格时采纳，否则当没给）
+        if len(p) == 1 and p[0] in nums:
+            p = p[0]
+        else:
+            multi = list(p) if all(isinstance(c, str) for c in p) and multi_y_ok(s, p) else None
+            p = None
     named_y = [c for c in named if c in nums]
-    if p in nums:
+    if multi is not None:
+        ys = multi
+    elif p in nums:
         ys = [p]
     elif p == "unsure":
         ys = [nums[-1]]
@@ -1787,6 +1818,11 @@ def _resolve_roles(
     else:
         return NeedsChoice("pick_value", _col_options("y", nums, s), _unsure("y"))
     # --- 分组列（`picks.group == "none"`：用户明确不要分组，不走下面的挑选与提问）
+    gp0 = picks.get("group")
+    if isinstance(gp0, str) and gp0 != "none" and gp0 not in cats and id_group_ok(s, gp0):
+        # 名字像编号、但取值重复出现的文字列（`sample` 一类）：被点名当分组才采纳；没点名时仍永不当分组
+        cats = [gp0] + cats
+        cats_all = [c for c in cols if c in cats_all or c == gp0]
     if picks.get("group") == "none":
         cats = []
     elif len(cats) > 1:
@@ -1906,8 +1942,11 @@ def default_candidates(
     ):
         eff = Confirmed("repeated")  # 回答里的列名不是这张表的列：当没给，走下面的唯一 / 提问
         confirmed = eff
+    promoted = [
+        c for c in roles.cats if c in s.id_like
+    ]  # 被点名当分组的编号样文字列：不再兼作「重复测量的个体编号」
     if confirmed.design == "repeated" and confirmed.unit_col is None:
-        ids = [c for c in s.id_like]
+        ids = [c for c in s.id_like if c not in promoted]
         if len(ids) == 1:
             eff = Confirmed("repeated", ids[0])
         elif picks.get("unit") in ids:
@@ -1917,7 +1956,8 @@ def default_candidates(
         else:
             return NeedsChoice("pick_unit", _col_options("unit", ids, s), _unsure("unit"))
     can_trend = roles.x_ord is not None
-    if eff.design is None and s.repeats and can_trend and picks.get("design") != "unsure":
+    repeats = s.repeats and not (promoted and set(s.id_like) <= set(promoted))
+    if eff.design is None and repeats and can_trend and picks.get("design") != "unsure":
         return NeedsChoice(
             "pick_design",
             (

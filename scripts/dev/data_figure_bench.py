@@ -12,7 +12,7 @@
   所以开跑前要求 N ≥ 用例数 × 2 作为下限核）；运行中到上限就不再发，并在报告里记「没跑完」（`stopped_early`），最后一条可能因此被截成 `over_budget`。**读你本机的连接配置，可能刷新账号登录令牌；用例的表格摘要会发给该连接的服务商。**
   开跑前自己先和维护者报预算——真实跑分花的是你的额度。
 
-**`--real --key-file PATH --model NAME [--base-url URL] [--effort low|medium|high]`**：不用应用里配置的连接，从文件读一把单独的 API key（默认 OpenAI 官方、`openai-responses` 协议）
+**`--real --key-file PATH --model NAME [--base-url URL] [--effort minimal|low|medium|high]`**：不用应用里配置的连接，从文件读一把单独的 API key（默认 OpenAI 官方、`openai-responses` 协议）
 组一个**临时**连接——不读、不写应用配置与 provider 存储（数据 / 配置目录指到临时目录），不落盘；key 文件权限必须是仅本人可读写（600，比这宽就拒绝），
 key 不出现在 stdout / stderr / 报告 / 错误文字里（输出流与报告统一做一遍替换）。`--key-file` 只能和 `--real` 同用，仍然强制 `--max-calls`。
 
@@ -75,7 +75,7 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--base-url", default=OPENAI_BASE, help="--key-file 的地址（默认 OpenAI 官方）")
     p.add_argument(
         "--effort",
-        choices=("low", "medium", "high"),
+        choices=("minimal", "low", "medium", "high"),
         default="",
         help="--key-file 的思考强度（默认 low）",
     )
