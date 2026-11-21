@@ -72,7 +72,7 @@ for (const width of [600, 780, 920, 1024]) {
     expect(ctx).not.toBeNull()
     expect(intersects(bar!, ctx!), JSON.stringify({ bar, ctx })).toBe(false)
 
-    // 五颗按钮都在、都够得着（盒子在工具条里）
+    // 六颗按钮（选择 / 文字 / 标注 ▾ / 钢笔 | 序号 / 适应）都在、都够得着（盒子在工具条里）
     const inside = await page.evaluate(() => {
       const bar = document.querySelector('[data-canvas-toolbar]')!.getBoundingClientRect()
       return [...document.querySelectorAll('[data-canvas-toolbar] button')].map((b) => {
@@ -80,7 +80,7 @@ for (const width of [600, 780, 920, 1024]) {
         return r.width > 0 && r.left >= bar.left - 0.5 && r.right <= bar.right + 0.5
       })
     })
-    expect(inside).toEqual([true, true, true, true, true])
+    expect(inside).toEqual([true, true, true, true, true, true])
   })
 }
 

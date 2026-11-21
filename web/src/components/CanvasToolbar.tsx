@@ -23,7 +23,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { addSubLabels } from '@/store/actions'
 import { keyOf, type KeyId } from '@/lib/keymap'
 import { cn } from '@/lib/utils'
-import { useUiStore } from '@/store/uiStore'
+import { isRightOverlay, useUiStore } from '@/store/uiStore'
 import { NOTICE_FIT_ROOM, TOOLBAR_FIT_CLEARANCE, useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import { fitStage } from '@/store/zoomToSelection'
@@ -103,6 +103,9 @@ function Bar() {
   const setTool = useUiStore((s) => s.setTool)
   const [presetsOpen, setPresetsOpen] = useState(false)
   const activeMark = MARK_TOOLS.find((m) => m.tool === tool)
+  // 属性栏以覆盖层开着（< 1280 且没固定）时盖住画布右边一段：工具条在剩下看得见的那段里居中、宽度也只用那段，
+  // 否则工具一多（钢笔）右端的「适应画布」就钻到属性栏底下点不着
+  const coveredRight = useUiStore((s) => (s.rightOpen && isRightOverlay(s) ? s.rightWidth : 0))
   const ActiveMark = activeMark?.icon
 
   // 动作按钮的字窄于 900 收成只有图标（名字仍在 aria-label 与读屏里）：画布窄时工具条不许比画布还宽
@@ -139,6 +142,11 @@ function Bar() {
       onKeyDown={onKeyDown}
       // 底边居中角位，12px 内距（四个角位同一档，2026-10-07 设计审计 §10.1）。工具钮 32 + p-1 = 40 高，
       // 顶边离舞台底边 52——与 TOOLBAR_FIT_CLEARANCE（52 + 8 的缝）对上
+      style={
+        coveredRight
+          ? { left: `calc((100% - ${coveredRight}px) / 2)`, maxWidth: `calc(100% - ${coveredRight}px - 1.5rem)` }
+          : undefined
+      }
       className="pointer-events-auto absolute bottom-3 left-1/2 z-canvas-chrome flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-0.5 rounded-full bg-surface p-1 shadow-pop"
     >
       {/* 工具（模式）：32 圆形图标钮，名字在气泡与读屏里；激活 = 墨色实底 + 实心图标 + aria-pressed
