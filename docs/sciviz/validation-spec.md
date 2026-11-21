@@ -14,10 +14,11 @@
 | `discouraged-colormap` | visual | G-022 |
 | `palette-semantic` | visual | G-022 |
 | `palette-line-markers` | visual | G-024 |
+| `log-axis-nonpositive` | encoding | G-001（V-001） |
 
 ### V-001 对数轴上有画不出来的数据
 
-- **预检 id**：`log-axis-nonpositive` · **basis**：encoding · **状态**：实现中（维护者 2026-11-21 给豁免、定 warn）。
+- **预检 id**：`log-axis-nonpositive` · **basis**：encoding · **状态**：已实现（#2111；维护者 2026-11-21 给豁免、定 warn）。看护：`tests/test_preflight_log_axis.py`。
 - **依据**：
   - FDV 第 3 章，0 永远不能出现在 log 轴上（p.20）[原文]。
   - 负值的情形：log 在 x ≤ 0 处无定义 [推导]。

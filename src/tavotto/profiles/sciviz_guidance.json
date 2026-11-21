@@ -39,7 +39,9 @@
       "spec": [
         "V-001"
       ],
-      "checks": []
+      "checks": [
+        "log-axis-nonpositive"
+      ]
     },
     {
       "id": "G-002",

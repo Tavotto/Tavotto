@@ -1,0 +1,238 @@
+{
+ "comment": "真 worker 渲染 tests/test_preflight_log_axis.py 的 CASES_SCRIPT 得到的 axes 元素（只留 gid / role / scale_domain）。pytest 重渲染逐字比对；web/src/lib/preflight.logAxis.test.ts 消费它。",
+ "elements": [
+  {
+   "title": "axvline_loglog",
+   "gid": "axes_11",
+   "role": "axes",
+   "scale_domain": {
+    "x": {
+     "status": "ok",
+     "nonpositive": 0,
+     "errorbar_low_nonpositive": 0
+    },
+    "y": {
+     "status": "ok",
+     "nonpositive": 0,
+     "errorbar_low_nonpositive": 0
+    }
+   }
+  },
+  {
+   "title": "axvspan",
+   "gid": "axes_12",
+   "role": "axes",
+   "scale_domain": {
+    "y": {
+     "status": "ok",
+     "nonpositive": 0,
+     "errorbar_low_nonpositive": 0
+    }
+   }
+  },
+  {
+   "title": "bar",
+   "gid": "axes_9",
+   "role": "axes",
+   "scale_domain": {
+    "y": {
+     "status": "ok",
+     "nonpositive": 0,
+     "errorbar_low_nonpositive": 0
+    }
+   }
+  },
+  {
+   "title": "errorbar_low",
+   "gid": "axes_2",
+   "role": "axes",
+   "scale_domain": {
+    "y": {
+     "status": "ok",
+     "nonpositive": 0,
+     "errorbar_low_nonpositive": 1
+    }
+   }
+  },
+  {
+   "title": "errorbar_low_capped",
+   "gid": "axes_3",
+   "role": "axes",
+   "scale_domain": {
+    "y": {
+     "status": "ok",
+     "nonpositive": 0,
+     "errorbar_low_nonpositive": 1
+    }
+   }
+  },
+  {
+   "title": "errorbar_xerr",
+   "gid": "axes_17",
+   "role": "axes",
+   "scale_domain": {
+    "y": {
+     "status": "ok",
+     "nonpositive": 0,
+     "errorbar_low_nonpositive": 0
+    }
+   }
+  },
+  {
+   "title": "fill_between",
+   "gid": "axes_13",
+   "role": "axes",
+   "scale_domain": {
+    "y": {
+     "status": "ok",
+     "nonpositive": 0,
+     "errorbar_low_nonpositive": 0
+    }
+   }
+  },
+  {
+   "title": "hidden",
+   "gid": "axes_6",
+   "role": "axes",
+   "scale_domain": {
+    "y": {
+     "status": "ok",
+     "nonpositive": 0,
+     "errorbar_low_nonpositive": 0
+    }
+   }
+  },
+  {
+   "title": "hist",
+   "gid": "axes_10",
+   "role": "axes",
+   "scale_domain": {
+    "y": {
+     "status": "ok",
+     "nonpositive": 0,
+     "errorbar_low_nonpositive": 0
+    }
+   }
+  },
+  {
+   "title": "line_nonpositive",
+   "gid": "axes_1",
+   "role": "axes",
+   "scale_domain": {
+    "y": {
+     "status": "ok",
+     "nonpositive": 2,
+     "errorbar_low_nonpositive": 0
+    }
+   }
+  },
+  {
+   "title": "loglog_x_zero",
+   "gid": "axes_18",
+   "role": "axes",
+   "scale_domain": {
+    "x": {
+     "status": "ok",
+     "nonpositive": 1,
+     "errorbar_low_nonpositive": 0
+    },
+    "y": {
+     "status": "ok",
+     "nonpositive": 0,
+     "errorbar_low_nonpositive": 0
+    }
+   }
+  },
+  {
+   "title": "nan_masked",
+   "gid": "axes_4",
+   "role": "axes",
+   "scale_domain": {
+    "y": {
+     "status": "ok",
+     "nonpositive": 0,
+     "errorbar_low_nonpositive": 0
+    }
+   }
+  },
+  {
+   "title": "normal",
+   "gid": "axes_0",
+   "role": "axes",
+   "scale_domain": {
+    "y": {
+     "status": "ok",
+     "nonpositive": 0,
+     "errorbar_low_nonpositive": 0
+    }
+   }
+  },
+  {
+   "title": "scatter",
+   "gid": "axes_8",
+   "role": "axes",
+   "scale_domain": {
+    "y": {
+     "status": "ok",
+     "nonpositive": 1,
+     "errorbar_low_nonpositive": 0
+    }
+   }
+  },
+  {
+   "title": "stem",
+   "gid": "axes_15",
+   "role": "axes",
+   "scale_domain": {
+    "y": {
+     "status": "ok",
+     "nonpositive": 0,
+     "errorbar_low_nonpositive": 0
+    }
+   }
+  },
+  {
+   "title": "transaxes_line",
+   "gid": "axes_14",
+   "role": "axes",
+   "scale_domain": {
+    "y": {
+     "status": "ok",
+     "nonpositive": 0,
+     "errorbar_low_nonpositive": 0
+    }
+   }
+  },
+  {
+   "title": "twinx_right",
+   "gid": "axes_20",
+   "role": "axes",
+   "scale_domain": {
+    "y": {
+     "status": "ok",
+     "nonpositive": 0,
+     "errorbar_low_nonpositive": 0
+    }
+   }
+  },
+  {
+   "title": "vlines",
+   "gid": "axes_16",
+   "role": "axes",
+   "scale_domain": {
+    "y": {
+     "status": "ok",
+     "nonpositive": 0,
+     "errorbar_low_nonpositive": 0
+    }
+   }
+  }
+ ],
+ "expected_gids": [
+  "axes_1",
+  "axes_18",
+  "axes_2",
+  "axes_3",
+  "axes_8"
+ ]
+}

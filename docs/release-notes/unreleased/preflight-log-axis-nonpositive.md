@@ -1,0 +1,3 @@
+## Checks flag values a log axis can't draw
+
+When a log-scale axis has data at or below zero, matplotlib quietly leaves those points out or pushes them off the axis. The problem list now says so in one line, for example "2 values ≤ 0 on the log y axis can't be drawn". It counts points on lines and scatter plots, and error bars whose lower end falls at or below zero. Bars, histograms, filled bands and colorbars are not counted, because they are drawn down to zero on purpose. It also appears when you switch an axis to log in the inspector, and goes away when you undo. Tavotto does not change anything for you: switching to symlog or removing the points is your decision.
