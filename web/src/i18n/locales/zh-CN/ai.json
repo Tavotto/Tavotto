@@ -637,7 +637,14 @@
     "working": {
       "reading": "正在读…",
       "drawing": "正在画…",
-      "slow": "还在画，数据多会久一点。"
+      "slow": "还在画，数据多会久一点。",
+      "readingLarge": "正在读一个大文件，要一会儿…",
+      "cancel": "取消",
+      "cancelHint": "不再等这次读取，随时可以重新读。"
+    },
+    "reduced": {
+      "text": "{{rows}}行里取{{kept}}个点",
+      "hint": "整张表{{rows}}行，这张图画的是其中有代表性的{{kept}}个点，最大最小值都留着。"
     },
     "preview": {
       "headerPick": "哪一行是每列的名字",
@@ -672,6 +679,8 @@
       "allText": "这张表里都是文字，没有能画的数字。",
       "unreadable": "这个文件不是表格，读不了。",
       "failed": "这次没画出来，数据没问题。",
+      "cancelled": "已取消，这个文件没读完。",
+      "readAgain": "重新读取",
       "stripInfo": "前 {{shown}} 行，共 {{total}} 行 · {{columns}} 列",
       "expand": "展开",
       "collapse": "收起"

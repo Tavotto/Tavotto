@@ -35,6 +35,10 @@ import {
   SquareMousePointer,
   Tags,
   Type,
+  Spline,
+  ArrowLeftRight,
+  Ban,
+  Pipette,
   Ungroup,
 } from '@/components/ui/icons'
 import type { ComponentType } from 'react'
@@ -46,6 +50,10 @@ import { keyOf } from '@/lib/keymap'
 import { useWorkspaceStore } from '@/store/workspace'
 import { canZoomToSelectionNow, fitStage, zoomToSelection } from '@/store/zoomToSelection'
 import { objectLabel } from '@/types/document'
+import { canConvertToPath } from '@/lib/convertToPath'
+import { PATH_COMMANDS } from '@/store/pathActions'
+import { APPEARANCE_COMMANDS } from '@/store/appearanceActions'
+import { PATH_COMMAND_ICONS } from './pathCommandIcons'
 import { rankCommands, type PaletteSection } from '@/lib/commandRanking'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { cn } from '@/lib/utils'
@@ -59,6 +67,7 @@ import {
   runManualSave,
   selectAll,
   ungroupSelected,
+  convertToPath,
   startNamedNode,
   openTimeline,
 } from '@/store/actions'
@@ -183,6 +192,26 @@ const COMMANDS: Command[] = [
   { id: 'select-all', shortcut: keyOf('selectAll'), run: selectAll },
   { id: 'group', needsSelection: true, run: groupSelected },
   { id: 'ungroup', needsSelection: true, run: ungroupSelected },
+  // 路径编辑（ADR 0185 M1）：钢笔 / 编辑锚点 / 加删转换锚点——整张表来自 `PATH_COMMANDS`，右键菜单与快捷键读同一份
+  // 外观（ADR 0185 第二批）：D / ⇧X / / / I，表在 `APPEARANCE_COMMANDS`，快捷键读同一份
+  ...APPEARANCE_COMMANDS.map((c) => ({ id: c.id, shortcut: keyOf(c.key), available: c.available, run: c.run })),
+  ...PATH_COMMANDS.map((c) => ({
+    id: c.id,
+    shortcut: c.key ? keyOf(c.key) : undefined,
+    available: c.available,
+    run: c.run,
+  })),
+  // 转为路径（ADR 0185）：判据与右键菜单同一个（`canConvertToPath`，选区里每个都能转才出现），写入只有 `convertToPath`
+  {
+    id: 'convert-to-path',
+    needsSelection: true,
+    available: () => {
+      const ids = useSelectionStore.getState().ids
+      const objs = useDocumentStore.getState().doc.objects.filter((o) => ids.includes(o.id))
+      return objs.length > 0 && objs.every(canConvertToPath)
+    },
+    run: () => convertToPath(useSelectionStore.getState().ids),
+  },
   { id: 'layout-row', needsSelection: true, run: () => createLayoutGroup('row') },
   { id: 'layout-col', needsSelection: true, run: () => createLayoutGroup('col') },
   { id: 'layout-grid', needsSelection: true, run: () => createLayoutGroup('grid') },
@@ -258,6 +287,12 @@ const COMMAND_ICONS: Record<string, ComponentType<{ size?: number; className?: s
   'select-all': ListChecks,
   group: Group,
   ungroup: Ungroup,
+  'convert-to-path': Spline,
+  ...PATH_COMMAND_ICONS,
+  'default-appearance': RotateCcw,
+  'swap-fill-stroke': ArrowLeftRight,
+  'clear-fill': Ban,
+  'eyedropper-tool': Pipette,
   'layout-row': AlignHorizontalDistributeCenter,
   'layout-col': AlignVerticalDistributeCenter,
   'layout-grid': LayoutGrid,

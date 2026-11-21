@@ -6,26 +6,38 @@
  * 缩略图（版本列表 / 画布列表）不走这里：草图里没有这些字段，也不值得为几十张小图画箭头帽。
  */
 import {
+  arcPath,
   arrowGeometry,
   bracePath,
   cornerRadius,
   defaultLineJoin,
   isFilledHead,
+  outlineOf,
   shapeInset,
-  shapeOutline,
   strokeOpacityOf,
   svgStroke,
 } from '@/lib/shapeGeometry'
 import { MM_PER_PT } from '@/lib/units'
-import type { ArrowObject, ShapeObject } from '@/types/document'
+import { PathBody } from '@/canvas/PathView'
+import type { ArrowObject, PathObject, ShapeObject } from '@/types/document'
 import { lineEndpoints, objectRotation, shapeStrokeOn } from '@/types/document'
 
-export function ThumbShape({ obj }: { obj: ArrowObject | ShapeObject }) {
+export function ThumbShape({ obj }: { obj: ArrowObject | ShapeObject | PathObject }) {
   const w = Math.max(obj.w, 0.001)
   const h = Math.max(obj.h, 0.001)
   const sw = Math.max(obj.strokePt * MM_PER_PT, 0.0132)
   const rot = objectRotation(obj)
   const wrap = rot ? `rotate(${rot} ${obj.x + w / 2} ${obj.y + h / 2})` : undefined
+  if (obj.type === 'path') {
+    // 自由路径（ADR 0185）：与画布 PathView 同一组图元（`PathBody`），几何只在 `pathGeom.pathGeometry`
+    return (
+      <g data-thumb-shape="path" transform={wrap}>
+        <g transform={`translate(${obj.x} ${obj.y})`}>
+          <PathBody obj={obj} sw={sw} w={w} h={h} />
+        </g>
+      </g>
+    )
+  }
   const strokeOn = obj.type === 'arrow' || shapeStrokeOn(obj)
   const stroke = strokeOn
     ? svgStroke(
@@ -75,8 +87,10 @@ export function ThumbShape({ obj }: { obj: ArrowObject | ShapeObject }) {
     body = <line x1={s.rx * w} y1={s.ry * h} x2={e.rx * w} y2={e.ry * h} {...stroke} />
   } else if (obj.shape === 'brace') {
     body = <path d={bracePath(w, h, inset)} fill="none" {...stroke} />
+  } else if (obj.shape === 'arc') {
+    body = <path d={arcPath(w, h, inset)} fill="none" {...stroke} />
   } else {
-    const o = shapeOutline(obj.shape, w, h, inset, obj.sides)
+    const o = outlineOf(obj, w, h, inset)
     if (o?.kind === 'ellipse') {
       body = <ellipse cx={o.cx} cy={o.cy} rx={o.rx} ry={o.ry} fill={fill} fillOpacity={fillOpacity} {...stroke} />
     } else if (o?.kind === 'poly') {

@@ -395,9 +395,55 @@ export function discardPanelPreview(panelId: string): void {
   if (panels.has(panelId)) restorePanel(panelId)
 }
 
+/* -------------------------------------------------------------------------- */
+/*  钢笔的草稿路径（ADR 0185 M1）                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 钢笔画到一半的那条路径：**预览平面的一部分**——不 commit、不进历史、不发后端，覆盖层（`OverlaySvg`）订阅它画。
+ * 完成一条路径时由画布层清掉它、再做唯一的那一次 commit。坐标是页面 mm。
+ */
+export interface PathDraftPreview {
+  closed: boolean
+  nodes: readonly { p: readonly [number, number]; in: readonly [number, number]; out: readonly [number, number] }[]
+  /** 最后一个点 → 指针的橡皮筋线；按着鼠标时没有 */
+  rubber: readonly [readonly [number, number], readonly [number, number]] | null
+  /** 指针在起点上、再点一下就闭合 */
+  closeHint: boolean
+}
+
+let pathDraft: PathDraftPreview | null = null
+let pathDraftVersion = 0
+const pathDraftListeners = new Set<() => void>()
+
+/** 设 / 清钢笔草稿（`null` 清掉） */
+export function previewPathDraft(d: PathDraftPreview | null): void {
+  if (d === pathDraft) return
+  pathDraft = d
+  pathDraftVersion++
+  for (const fn of pathDraftListeners) fn()
+}
+
+/** 此刻的钢笔草稿（快照，不订阅） */
+export const pathDraftPreview = (): PathDraftPreview | null => pathDraft
+
+const subscribePathDraft = (fn: () => void) => {
+  pathDraftListeners.add(fn)
+  return () => {
+    pathDraftListeners.delete(fn)
+  }
+}
+
+/** 覆盖层订阅钢笔草稿 */
+export function usePreviewPathDraft(): PathDraftPreview | null {
+  useSyncExternalStore(subscribePathDraft, () => pathDraftVersion)
+  return pathDraft
+}
+
 /** 测试与切项目用：清干净，不碰 DOM（DOM 由 React 自己收） */
 export function resetPreview(): void {
   session = null
+  previewPathDraft(null)
   const hadLines = [...panels.values()].some((p) => p.lines.size)
   panels.clear()
   if (hadLines || dirtyLinePanels.size) bumpLines()

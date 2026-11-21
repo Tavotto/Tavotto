@@ -171,7 +171,7 @@ import { useProjectStore } from "@/store/projectStore";
 import { useDocumentStore } from "@/store/documentStore";
 import { askConfirm, dialogCovered, EXPORT_DONE_DISMISS_MS, useUiStore } from "@/store/uiStore";
 import { useWorkspaceStore } from "@/store/workspace";
-import { isRuntimePanel, type ArrowObject, type CanvasObject, type FigureDocument, type PanelObject, type ShapeObject, type TextObject } from "@/types/document";
+import { isRuntimePanel, type ArrowObject, type CanvasObject, type FigureDocument, type PanelObject, type PathObject, type ShapeObject, type TextObject } from "@/types/document";
 import type { ThumbObject } from "@/types/thumb";
 import { cropToVisibleContent, croppedDocument } from "@/lib/exportCrop";
 import { frameCanvasOf, isZeroPad } from "@/lib/framePad";
@@ -2323,9 +2323,9 @@ function exportedTextOf(o: ThumbObject): TextObject | null {
 }
 
 /** 整版预览里的箭头 / 形状按导出出来的样子画：端点、填色、线型、旋转都取对象自己的（喂给 `CanvasThumb` 的 `exportedShape`） */
-function exportedShapeOf(o: ThumbObject): ArrowObject | ShapeObject | null {
+function exportedShapeOf(o: ThumbObject): ArrowObject | ShapeObject | PathObject | null {
   const obj = o as CanvasObject;
-  return obj.type === "arrow" || obj.type === "shape" ? obj : null;
+  return obj.type === "arrow" || obj.type === "shape" || obj.type === "path" ? obj : null;
 }
 
 /**

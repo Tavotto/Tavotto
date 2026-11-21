@@ -896,11 +896,23 @@ def reduce_relationship(header, body, spec):
     return rows, info
 
 
-def reduce_file(path, delimiter, header_row, units_row, codec, spec):
+def tick_rows(body, raw, progress):
+    """透传 `body`，每 65536 行调一次 `progress(已读字节)`（父进程的进度 / 取消检查点；脚本里不传，不经过这里）。"""
+    n = 0
+    for item in body:
+        n += 1
+        if not n & 0xFFFF:
+            progress(raw.tell())
+        yield item
+
+
+def reduce_file(path, delimiter, header_row, units_row, codec, spec, progress=None):
     """大表文件 → `(表头, 缩减后的行, 信息)`：流式读（`iter_table`，读法与小表同一份）+ 按 `spec["kind"]` 缩减。`codec` 是 Python 的 codec 名
-    （由父进程按文件定下、以字面量写进脚本，脚本不探测）。"""
+    （由父进程按文件定下、以字面量写进脚本，脚本不探测）。`progress`：可选的 `f(已读字节)`，父进程用它报进度并在取消时抛异常。"""
     with open(path, "rb") as raw, io.TextIOWrapper(raw, encoding=codec, newline="") as fh:
         header, body = iter_table(fh, delimiter, header_row, units_row)
+        if progress is not None:
+            body = tick_rows(body, raw, progress)
         if spec["kind"] == "trend":
             rows, info = reduce_trend(header, body, spec)
         elif spec["kind"] == "relationship":
@@ -998,6 +1010,7 @@ RUNTIME_FUNCTIONS = (
     bin_rows,
     reduce_trend,
     reduce_relationship,
+    tick_rows,
     reduce_file,
     read_reduced,
     pick_fonts,
@@ -2162,6 +2175,7 @@ def large_reduce(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> tu
         if hit is not None:
             _REDUCE_CACHE[key] = _REDUCE_CACHE.pop(key)
     if hit is None:
+        total = values.size
         _header_cells, rows, info = reduce_file(
             info_s.path,
             values.delimiter or ",",
@@ -2169,6 +2183,9 @@ def large_reduce(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> tu
             values.units_row,
             adf.large_codec(values.encoding),
             spec,
+            (lambda pos: adf.progress.tick("reduce", pos, total))
+            if adf.progress.active()
+            else None,
         )
         hit = (rows, info)
         with _REDUCE_LOCK:
@@ -2197,6 +2214,20 @@ def large_reduce(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> tu
         if info["gap_runs"] and gap_audit(values, spec, info["ords"]):
             raise TemplateError("template_recipe_mismatch", "large_gaps")
     return rows, info
+
+
+def large_reduce_pending(values: adf.DataSummary, recipes) -> int:
+    """这批配方的缩减还要读几遍文件（同一参数的共用一遍，缓存里已有的不读）：给进度摊遍数用。"""
+    todo = set()
+    with _REDUCE_LOCK:
+        for r in recipes:
+            try:
+                key = (values.sha256, json.dumps(large_spec(values, r), sort_keys=True))
+            except (KeyError, ValueError):
+                continue
+            if key not in _REDUCE_CACHE:
+                todo.add(key)
+    return len(todo)
 
 
 def large_unplotted(

@@ -11,8 +11,10 @@ import { isKnownObject, isLinear, objectRotation, panelRotation } from '@/types/
 import { PATH_HIT_SHAPES } from '@/lib/shapeGeometry'
 import { startMoveDrag } from './interactions'
 import { openQuickEdit } from './quickEditStore'
+import { editAnchors } from '@/store/pathActions'
 import { ArrowView } from './ArrowView'
 import { PanelView } from './PanelView'
+import { PathView } from './PathView'
 import { ShapeView } from './ShapeView'
 import { TextView } from './TextView'
 
@@ -44,7 +46,8 @@ export const ObjectView = memo(function ObjectView({
   // 椭圆 / 三角 / 菱形 / 多边形 / 大括号的包围盒里大半是空白，按盒命中会让
   // 空白角也吃点击（还挡住底下的面板）。与细长线状对象同一个修法：外层 div
   // 整个让位，命中交给 ShapeView 里沿真实轮廓的透明层
-  const pathHitShape = obj.type === 'shape' && PATH_HIT_SHAPES.has(obj.shape)
+  // 自由路径（ADR 0185）同理：命中交给 PathView 里沿真实轮廓的透明层（填充按 fill-rule）
+  const pathHitShape = (obj.type === 'shape' && PATH_HIT_SHAPES.has(obj.shape)) || obj.type === 'path'
   // 更新的构建写进来的对象：只画占位框，不接指针（不能选中 / 拖动 / 删除），文档里原样保留（`isKnownObject`）
   const known = isKnownObject(obj)
   const hit = obj.locked || drawing || spaceDown ? 'none' : 'stroke'
@@ -107,6 +110,8 @@ export const ObjectView = memo(function ObjectView({
   const onDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation()
     if (obj.type === 'text') useUiStore.getState().setEditingText(obj.id)
+    // 路径：双击进锚点编辑（直接选择，ADR 0185 M1）
+    else if (obj.type === 'path') editAnchors(obj.id)
     else if (obj.type === 'panel') {
       // 已经在编辑的面板不能再进一次：enterElementEdit 会清掉图内选区。
       if (useUiStore.getState().elementPanelId === obj.id) return
@@ -160,6 +165,7 @@ export const ObjectView = memo(function ObjectView({
       {obj.type === 'text' && <TextView obj={obj} preview={preview} />}
       {obj.type === 'arrow' && <ArrowView obj={obj} hit={hit} />}
       {obj.type === 'shape' && <ShapeView obj={obj} hit={hit} />}
+      {obj.type === 'path' && <PathView obj={obj} hit={hit} />}
       {!known && <div data-unknown-object className="absolute inset-0 border border-dashed border-ink-3" />}
     </div>
   )

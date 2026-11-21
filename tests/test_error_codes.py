@@ -278,6 +278,11 @@ USER_VISIBLE_CODES = {
     "input_remap_requested_invalid": set(),
     "input_remap_rule_unknown": {"source"},
     "input_remap_changed": set(),
+    # ADR 0182 §2：显式输入声明（`/api/engine/input-declarations`，`engine/declaredinputs` 的三个异常
+    # 由 app 的漏斗转成 JSON）。全部是固定文案、不带参数——路径与脚本名不进响应
+    "input_declaration_conflict": set(),
+    "input_declaration_invalid": set(),
+    "input_declaration_unavailable": set(),
     # ADR 0110：经确认改写脚本里的数据路径（`scriptbackup` / `scriptedit` 的 `ScriptEditError(code)`
     # 由 app 的 409 漏斗转出）。`script_edit_nothing_to_change` 另带结构化的 `skipped`（对话框逐条列），
     # 不作占位符
@@ -800,6 +805,8 @@ SCANNED = [n for n in _SOURCE_FILES if (SRC_DIR / n).is_file()]
 NON_UI_CODES = {
     # 数据出图懒渲染（ADR 0178 修订）：取某张缩略图 422——前端只据此静默去掉这一张卡，不展示文案
     "propose_thumbnail_failed",
+    # 数据出图大表取消（ADR 0178 修订·进度）：用户自己点的取消，原请求回 409——前端据此静默收起进度，不展示文案
+    "propose_cancelled",
     # 视图范围加脚本（ADR 0184）：前端只在后台顺手发、名字已是项目相对路径，失败不出界面
     "invalid_script_name",
     # Conversion-run diagnostics are mapped by ai_convert._failure_check to the

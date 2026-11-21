@@ -1990,6 +1990,12 @@ export type ExportObject =
       /** 线端 / 拐角；缺省 = 圆头 / 圆角 */
       line_cap?: 'butt' | 'round' | 'square'
       line_join?: 'miter' | 'bevel' | 'round'
+      /** 斜接上限；缺省 10 */
+      miter_limit?: number
+      /** 自定义虚线（pt）；有它就不看 dash */
+      dash_pattern?: number[]
+      /** 描边对齐（只对封闭形状）；缺省内侧 */
+      stroke_align?: 'center' | 'outside'
       rotation_deg?: number
     })
   | (ExportBox & {
@@ -2003,6 +2009,8 @@ export type ExportObject =
       fill: string | null
       corner_radius_mm?: number
       sides?: number
+      /** 星形内径比；缺省 0.382 */
+      star_ratio?: number
       fill_opacity?: number
       dash?: ExportDash
       /** 无边框（只发 `false`；缺省 = 有描边；直线 / 大括号忽略） */
@@ -2010,6 +2018,41 @@ export type ExportObject =
       stroke_opacity?: number
       line_cap?: 'butt' | 'round' | 'square'
       line_join?: 'miter' | 'bevel' | 'round'
+      /** 斜接上限；缺省 10 */
+      miter_limit?: number
+      /** 自定义虚线（pt）；有它就不看 dash */
+      dash_pattern?: number[]
+      /** 描边对齐（只对封闭形状）；缺省内侧 */
+      stroke_align?: 'center' | 'outside'
+      rotation_deg?: number
+    })
+  | (ExportBox & {
+      /** 自由路径（ADR 0185）：子路径的锚点 / 手柄是包围盒比例坐标；画法在 `rendercore/geometry.path_paths` */
+      type: 'path'
+      subpaths: { closed: boolean; nodes: { p: [number, number]; in?: [number, number]; out?: [number, number] }[] }[]
+      /** 缺省 nonzero */
+      fill_rule?: 'evenodd'
+      stroke_pt: number
+      color: string
+      fill: string | null
+      fill_opacity?: number
+      dash?: ExportDash
+      /** 无描边（只发 `false`） */
+      stroke?: false
+      stroke_opacity?: number
+      line_cap?: 'butt' | 'round' | 'square'
+      line_join?: 'miter' | 'bevel' | 'round'
+      /** 斜接上限；缺省 10 */
+      miter_limit?: number
+      /** 自定义虚线（pt）；有它就不看 dash */
+      dash_pattern?: number[]
+      /** 描边对齐（只对封闭形状）；缺省内侧 */
+      stroke_align?: 'center' | 'outside'
+      /** 端型只对开放子路径生效；缺省 = 无 */
+      head_start?: ExportHeadType
+      head_end?: ExportHeadType
+      head_size_start?: 'small' | 'large'
+      head_size_end?: 'small' | 'large'
       rotation_deg?: number
     })
 
@@ -4484,6 +4527,8 @@ export interface AiDataTable {
   rows: number | null
   /** 只有 `unsure` 带：文件前若干行原文 */
   preview?: { line: number; text: string }[]
+  /** 大表标记（读过之后才有；没读过的靠文件大小判断） */
+  large?: boolean
 }
 
 /** XLSX 的一张工作表；行列数 / status / code 全是 null = 没读（超出读取预算），不是读不了 */
@@ -4527,6 +4572,8 @@ export interface AiDataOverview {
     id_like: boolean
   }[]
   preview_rows: { line: number; cells: string[] }[]
+  /** 大表（流式读 + 缩减）；小表没有这一项 */
+  large?: boolean
   truncated: boolean
   lead_lines: { line: number; text: string }[]
   raw_lines: { line: number; text: string }[]
@@ -4536,12 +4583,32 @@ export interface AiDataOverview {
 export const aiDataOverview = (
   q: { path: string; sheet?: string | null; headerRow?: number | null },
   pj?: string | null,
+  signal?: AbortSignal,
+  requestId?: string,
 ) => {
   const qs = new URLSearchParams({ path: q.path })
+  if (requestId) qs.set('request_id', requestId)
   if (q.sheet) qs.set('sheet', q.sheet)
   if (q.headerRow != null) qs.set('header_row', String(q.headerRow))
-  return jsonFetch<AiDataOverview>(`/api/ai/data-overview?${qs}`, undefined, pj)
+  return jsonFetch<AiDataOverview>(`/api/ai/data-overview?${qs}`, signal ? { signal } : undefined, pj)
 }
+
+/** 大表读表 / 出候选的真实进度（`GET /api/ai/data-progress/<请求号>`）：`none` = 还没开始 / 小表 / 不认识；`fraction` 为 null = 说不出比例（indeterminate） */
+export interface AiDataProgress {
+  state: 'none' | 'running' | 'done' | 'cancelled' | 'failed'
+  kind?: 'overview' | 'propose' | 'thumbnail' | 'commit'
+  fraction?: number | null
+  indeterminate?: boolean
+  /** 只有进行中的概览 / 出备选为真；缩略图与提交不可取消 */
+  cancellable?: boolean
+  elapsed_s?: number
+  /** 取消端点专有：这次是否真的把一个进行中的请求标成了取消 */
+  cancelled?: boolean
+}
+export const aiDataProgress = (rid: string, pj?: string | null) => jsonFetch<AiDataProgress>(`/api/ai/data-progress/${encodeURIComponent(rid)}`, undefined, pj)
+/** 取消（协作式、幂等）：原请求随后回 409 `propose_cancelled`；赛跑时以原请求的响应为准 */
+export const aiDataProgressCancel = (rid: string, pj?: string | null) =>
+  jsonFetch<AiDataProgress>(`/api/ai/data-progress/${encodeURIComponent(rid)}/cancel`, { method: 'POST' }, pj)
 
 /** 提问里一个选项：`code` + `params` 给文案，`answer` 原样并进下一次 propose 的 `answers` */
 export interface AiDataOption {
@@ -4567,6 +4634,8 @@ export interface AiDataProposeItem {
   recommended: boolean
   coverage?: Record<string, unknown>
   unplotted: { count: number; code: string | null }
+  /** 大表（超过 5 MiB / 10 万行的文本表）才有：整表 `rows` 行，这张图实际画的是缩减后的 `kept` 行；小表没有这一项 */
+  reduced?: { rows: number; kept: number }
   /** 服务端给的相对路径；加项目标识要经 `aiDataThumbnailUrl` */
   thumbnail_url: string
   /** 懒模式 `pending`（缩略图在取图时才画）；旧模式 `ready` */
@@ -4644,10 +4713,10 @@ export interface AiDataProposeBody {
   render?: 'lazy'
 }
 
-export const aiDataFigurePropose = (body: AiDataProposeBody, pj?: string | null) =>
+export const aiDataFigurePropose = (body: AiDataProposeBody, pj?: string | null, signal?: AbortSignal) =>
   jsonFetch<AiDataProposeResponse>(
     '/api/ai/data-figure/propose',
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), ...(signal ? { signal } : {}) },
     pj,
   )
 
@@ -4665,6 +4734,8 @@ export interface AiDataCommitResult {
   can_delete_script?: boolean
   unplotted?: { count: number; rows: { row: number; column: string; reason: string }[]; code: string | null }
   cells?: unknown
+  /** 大表：画出的是缩减后的点（同候选的 `reduced`）；界面不据此弹提示 */
+  reduced?: { rows: number; kept: number }
 }
 
 export const aiDataFigureCommit = (
@@ -6060,6 +6131,88 @@ export interface InputRemapState {
   rules: InputRemapRule[]
   /** 改指表此刻的代次（只增不减、跨后端重启也单调）：前端按它去重作废（ADR 0106 §五） */
   generation: number
+}
+
+/** Exact frozen scope supplied by the preparation plan, never inferred from argv. */
+export interface InputDeclarationScope {
+  script: string
+  cwd_mode: WorkdirMode
+  run_config: string | null
+}
+
+export interface InputDeclarationState {
+  version: 1
+  /** Whole settings-store CAS; distinct from a plan's selection revision. */
+  revision: string | null
+  declarations: {
+    scope: InputDeclarationScope
+    files: string[]
+    remaps: string[]
+    /** Opt-in row identity from the same settings snapshot; not the write CAS. */
+    selection_revision?: string
+  }[]
+}
+
+export interface PreparationInputDeclaration {
+  version: 1
+  scope: InputDeclarationScope | null
+  selection_revision: string | null
+  input_remap_generation: number | null
+  unavailable_reason: null | 'sensitive_run' | 'scope_unknown' | 'not_script'
+  /** Only actual capture evidence for this plan's exact selection. */
+  captured_inputs: { version: 1; revision: string } | null
+}
+
+export const fetchInputRemap = async (pj: string, signal?: AbortSignal): Promise<InputRemapState> => {
+  const result = await jsonFetch<{ ok: boolean; input_remap: InputRemapState }>(
+    '/api/engine/input-remap', { signal, cache: 'no-store' }, pj,
+  )
+  return result.input_remap
+}
+
+export const fetchDeclaredInputs = async (pj: string, signal?: AbortSignal): Promise<InputDeclarationState> => {
+  const result = await jsonFetch<{ ok: boolean; input_declarations: InputDeclarationState }>(
+    '/api/engine/input-declarations?include_selection_revisions=1', { signal, cache: 'no-store' }, pj,
+  )
+  return result.input_declarations
+}
+
+/** Normalize only the selected existing file, using the server's project containment authority. */
+export const resolveDeclaredInputProjectFile = async (path: string, pj: string, signal?: AbortSignal): Promise<string> => {
+  const result = await jsonFetch<{ ok: boolean; project_file: string }>(
+    `/api/engine/input-declarations?project_file=${encodeURIComponent(path)}`,
+    { signal, cache: 'no-store' }, pj,
+  )
+  return result.project_file
+}
+
+export const declareInputs = async (
+  body: InputDeclarationScope & {
+    files: string[]
+    remaps?: string[]
+    expected_revision: string | null
+    expected_remap_generation?: number
+  },
+  pj: string,
+  signal?: AbortSignal,
+): Promise<InputDeclarationState> => {
+  const result = await jsonFetch<{ ok: boolean; input_declarations: InputDeclarationState }>(
+    '/api/engine/input-declarations',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal }, pj,
+  )
+  return result.input_declarations
+}
+
+export const removeDeclaredInputs = async (
+  body: InputDeclarationScope & { expected_revision: string | null },
+  pj: string,
+  signal?: AbortSignal,
+): Promise<InputDeclarationState> => {
+  const result = await jsonFetch<{ ok: boolean; input_declarations: InputDeclarationState }>(
+    '/api/engine/input-declarations',
+    { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal }, pj,
+  )
+  return result.input_declarations
 }
 
 /** 用户指认了数据位置：后端推一条规则、按项目记住、关掉该项目的会话（ADR 0106） */
@@ -7749,6 +7902,8 @@ export type PreparationAttemptRecord = PreparationAttempt
 /** 会话报告（`SessionService.report`）：前端只保存这份投影，不另算「能不能跑」 */
 export interface PreparationReport {
   figure_snapshot_invalidation?: FigureSnapshotInvalidation
+  /** Present only on the explicit input-editor read; ordinary polling stays unchanged. */
+  input_declaration?: PreparationInputDeclaration
   session_version: number
   session_id: string
   project_id: string
@@ -7965,6 +8120,13 @@ export const fetchPreparationSession = (sessionId: string, pj: string | null, si
     `/api/engine/preparation-sessions/${encodeURIComponent(sessionId)}`,
     { signal, cache: 'no-store' },
     pj,
+  )
+
+/** Read frozen input scope on demand without creating a session or registering arguments. */
+export const fetchPreparationInputDeclarationContext = (sessionId: string, pj: string, signal?: AbortSignal) =>
+  jsonFetch<PreparationReport>(
+    `/api/engine/preparation-sessions/${encodeURIComponent(sessionId)}?include_input_declaration=1`,
+    { signal, cache: 'no-store' }, pj,
   )
 
 /** 认领一个后端生成的动作：只交不透明 id + 看到的配置修订（+ 依赖授权回显的影响摘要） */

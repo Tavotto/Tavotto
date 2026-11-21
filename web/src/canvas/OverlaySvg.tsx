@@ -2,8 +2,8 @@ import { Fragment, useLayoutEffect } from 'react'
 import { perfCount } from '@/perf/core'
 import type { ElementGeometry, ManifestElement } from '@/lib/api'
 import type { Rect4 } from '@/lib/axesLayout'
-import { geomPathD, translateGeom } from '@/lib/pathGeom'
-import { PATH_HIT_SHAPES, shapeInset, shapeOutline } from '@/lib/shapeGeometry'
+import { geomPathD, pathOutline, translateGeom } from '@/lib/pathGeom'
+import { outlineOf, PATH_HIT_SHAPES, shapeInset } from '@/lib/shapeGeometry'
 import { MM_PER_PT } from '@/lib/units'
 import { arrowEndpointsOf, geomTarget, linePointsOf, panelFullRect, resolveGroup } from '@/lib/elementGeom'
 import { patchBoundsOf } from '@/lib/patchResize'
@@ -50,6 +50,8 @@ import { contentDirOnPage, elementOverlayTransform } from './elementGeometry'
 import { openQuickEdit } from './quickEditStore'
 import { IssueElementHighlight, IssueOverlay } from './IssueOverlay'
 import { ReviewOverlay } from './ReviewOverlay'
+import { AnchorEdit, AnchorMarquee, PenDraft } from './PathEditOverlay'
+import { useActivePathEdit } from '@/store/pathEditStore'
 
 /**
  * 覆盖层语法（2026-10-07 设计审计 §10.1，值在 index.css 的画布覆盖层 token）：
@@ -154,6 +156,8 @@ export function OverlaySvg() {
   const editingTextId = useUiStore((s) => s.editingTextId)
   const elementPanelId = useUiStore((s) => s.elementPanelId)
   const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
+  // 钢笔工具下不画缩放手柄：刚画完的路径还选着，它的框角正好落在路径端点上，会把「点端点续画」截成缩放
+  const tool = useUiStore((s) => s.tool)
   const activePanelId = useWorkspaceStore((s) => s.activePanelId)
   const issueHighlight = useUiStore((s) => s.issueHighlight)
   // 预览线按「持有预览账本的面板」画，不按图内编辑态（见 PreviewLines）
@@ -182,6 +186,8 @@ export function OverlaySvg() {
   // 单图编辑里那张图的缩放手柄不画（ADR 0161）：拖它的角 / 边是改画布（`FigureEdgeHandles` 的角柄与边带，
   // 贴在画布框上），不是视觉缩放 / 拉伸；两套手柄叠在一起时这一层在上、会抢走指针。选区轮廓照画
   const fastEditFigure = single?.type === 'panel' && fastEdit && single.id === activePanelId
+  // 锚点编辑（直接选择，ADR 0185 M1）里不画缩放手柄：拖的是锚点，不是框
+  const anchorEditId = useActivePathEdit()?.path.id ?? null
   const groupBounds = selected.length > 1 ? boundsOf(selected.map(visualBounds)) : null
   const hovered =
     hoverId && !selectedIds.includes(hoverId) && dragKind === 'none'
@@ -322,7 +328,7 @@ export function OverlaySvg() {
       )}
 
       {/* 缩放手柄 + 线状对象端点（箭头 / 直线）：整组绕包围盒中心转到对象朝向 */}
-      {single && !single.locked && !fastEditFigure && (
+      {single && !single.locked && !fastEditFigure && single.id !== anchorEditId && tool !== 'pen' && (
         <g
           transform={spinOf(single, toScreen(single, t))}
           // 手柄 / 命中带 / 端点不在 `[data-object-id]` 底下：右键它们要开**这个对象**的菜单，
@@ -403,6 +409,11 @@ export function OverlaySvg() {
             style={DASH}
           />
         ))}
+
+      {/* 自由路径：锚点编辑的锚点与手柄、钢笔画到一半的草稿（预览平面） */}
+      <AnchorEdit t={t} />
+      <AnchorMarquee t={t} />
+      <PenDraft t={t} />
 
       {cropTarget && cropTarget.type === 'panel' && <CropFrame obj={cropTarget} t={t} />}
 
@@ -525,14 +536,10 @@ function ObjectOutline({
   const strokeWidth = primary ? 2 : 1
   const anchor = primary ? { 'data-primary-selection': obj.id } : {}
   const outline =
-    obj.type === 'shape' && PATH_HIT_SHAPES.has(obj.shape)
-      ? shapeOutline(
-          obj.shape,
-          box.w,
-          box.h,
-          shapeInset(obj, Math.max(mmToPx(obj.strokePt * MM_PER_PT, t), 0.05)),
-          obj.sides,
-        )
+    obj.type === 'path'
+      ? pathOutline(obj, box.w, box.h, Math.max(mmToPx(obj.strokePt * MM_PER_PT, t), 0.05))
+      : obj.type === 'shape' && PATH_HIT_SHAPES.has(obj.shape)
+      ? outlineOf(obj, box.w, box.h, shapeInset(obj, Math.max(mmToPx(obj.strokePt * MM_PER_PT, t), 0.05)))
       : null
   if (!outline) {
     return (

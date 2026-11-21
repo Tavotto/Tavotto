@@ -35,6 +35,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   aiDataFigureCommit: vi.fn(),
   aiDataFigureDiscard: vi.fn(async () => ({ ok: true })),
   aiDataUnderstanding: vi.fn(),
+  aiDataProgressCancel: vi.fn(async () => ({ cancelled: false, state: 'none' })),
 }))
 vi.mock('@/store/liveSync', () => ({ refreshProjectNow: vi.fn(async () => {}) }))
 
@@ -256,6 +257,27 @@ describe('静默与不套用', () => {
     await act(async () => store().clear())
     await tick(5000)
     expect(poll).toHaveBeenCalledTimes(1)
+  })
+
+  it('读取中途取消（与大表读取进度 / 取消共存）：轮询停、灰字消失、旧结果不套用，之后重读仍能重新起轮询', async () => {
+    propose.mockResolvedValueOnce(cands({ understanding: pending }))
+    poll.mockResolvedValue(ready({ x: 'week' }))
+    await pick('growth.csv')
+    expect(q('[data-data-reading]')).not.toBeNull()
+    // 用户改了分组 → 重新出候选，这一次一直在读
+    propose.mockImplementationOnce(() => new Promise(() => {}))
+    await act(async () => store().setRole('group', 'arm'))
+    await settle()
+    expect(store().phase).toBe('loading')
+    await act(async () => store().cancelRead())
+    await settle()
+    expect(store().phase).toBe('cancelled')
+    expect(store().understanding).toBe(false)
+    await tick(5000)
+    expect(poll).not.toHaveBeenCalled()
+    expect(q('[data-data-reading]')).toBeNull()
+    expect(q('[data-data-suggest]')).toBeNull()
+    expect(store().suggestion).toBeNull()
   })
 
   it('响应里没有 understanding（没连模型）：与从前一样，一次请求、没有灰字', async () => {
