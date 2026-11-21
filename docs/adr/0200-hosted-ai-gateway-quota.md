@@ -26,10 +26,11 @@
   - 改图助手 `figure_edit`（`/api/ai/run`，含「按期刊修正」这一情景）；
   - AI 修复 `fix_environment`（`/api/ai/fix`，`fixsession` 进程内循环）；
   - 数据出图「理解列」（`/api/ai/data-figure/propose` → `ai_data_roles`，单轮结构化调用）；
-  - 「转成可编辑」`convert`（`/api/ai/convert`、`/realign`）：**是否算进、单列上限，待维护者定**（单次上限 80 万 token，是其他任务的 2 倍）。
+  - 「转成可编辑」`convert`（`/api/ai/convert`、`/realign`）：**算进**（维护者 2026-11-21），单列单任务上限（自带 key 时单次上限 80 万 token，是其他任务的 2 倍；内置时按实测另定，§六）。
 - **不算的**：Codex / Claude Code 订阅登录（`sub:codex` / `sub:claude`）、用户自填的任何连接——这些照旧走用户自己的账，网关不出现。
 - 一键排版（0199）没有模型调用，与本 ADR 无关。
-- **内置 AI 是一条连接，不是一个开关**：在「连接 AI」列表里多一条「Tavotto 内置」（只有 `license.has("hosted-ai")` 时出现）。
+- **对用户的名字叫「Tavotto Agent」**（维护者 2026-11-21 定，隐私说明与界面同名；界面上由品牌常量 `PRODUCT_NAME` 拼出，不手写产品名）。
+- **Tavotto Agent 是一条连接，不是一个开关**：在「连接 AI」列表里多一条「Tavotto Agent」（只有 `license.has("hosted-ai")` 时出现）。
   执行器路由照旧（ADR 0170 / 「界面不出现执行器」）：用户选了它就用它，选了自己的 key 就用自己的。功能代码里没有任何 `has()` 判断——判断只在这条连接是否出现。
 
 ### 二、计量单位：后台记成本，界面显示额度
@@ -131,7 +132,7 @@ Haiku 5.5 约 $0.0007、gpt-5-mini 约 $0.0024、gpt-5 约 $0.012、Sonnet 5.5 �
 3. **任务内透支**：放行之后，这个任务可以一直用到 `ceiling`，即使余额中途变成负数——**不在任务中途掐断**。负数从之后发放的额度里补；所以每笔购买最多被透支一个任务的 `ceiling`（维护者 2026-11-21 同意略超 40%）。
 4. **任务到顶**：任务累计到 `ceiling` 时，网关对下一个请求回 `task_budget_exhausted`；引擎把它当作已有的「预算用完」结局处理（`fix_failed:budget` 同一条路），不报新错误。
 5. **幂等**：同一 `task_id` + 请求序号重放不重复扣；任务 30 分钟无请求自动关闭。
-6. **失败扣不扣**：**待维护者定**（§十二）。草案：照扣——模型的钱已经花了；靠收紧 `ceiling` 控制失败的损失，而不是退款。
+6. **失败照扣**（维护者 2026-11-21 定）：模型的钱已经花了；靠单任务上限 `ceiling`（§六）控制失败的损失，不退额度。
 
 ### 六、单任务上限（内置 AI 专用，比自带 key 紧）
 
@@ -167,7 +168,17 @@ Haiku 5.5 约 $0.0007、gpt-5-mini 约 $0.0024、gpt-5 约 $0.012、Sonnet 5.5 �
 - 走内置 AI 时，用户的脚本片段、截图、数据摘要会经过我们的网关转给上游模型商。**网关不存请求与回复内容**，只记：
   授权号的哈希、任务类型、上游模型、token 数、成本、耗时、结果码。保留 90 天。
 - 用自带 key 时一个字节都不经过我们。
-- `docs/privacy.md` 新增「内置 AI」一节，写明以上与上游模型商的名字；**措辞待维护者点头**。
+- `docs/privacy.md` 新增「Tavotto Agent」一节（维护者 2026-11-21 定名），并改掉「Optional AI assistant」里「Tavotto never relays these requests through its own servers」这句
+  （改成「除了 Tavotto Agent，……」）。草稿如下，**措辞待维护者点头后才进 privacy.md**：
+
+  > **Tavotto Agent (paid edition, optional).** If you have the paid edition and pick "Tavotto Agent" in the "Connect an AI" dialog,
+  > your AI requests go to Tavotto's own relay (`ai.tavotto.cn`), which forwards them to DeepSeek's official API under Tavotto's account.
+  > What is sent is the same as for any other AI you connect (your instruction, and what the assistant reads from the project to do the job,
+  > including scripts, rendered previews and short data summaries). The relay does not store requests or replies. For billing it keeps,
+  > for 90 days: a one-way hash of your license, the kind of task, the model, token counts, cost, duration and the result code.
+  > Each request is signed with a key that stays on your computer, so the relay can check it comes from your activated device.
+  > DeepSeek's own privacy terms apply to what it receives. If you use your own API key or a subscription sign-in instead,
+  > nothing goes through Tavotto's relay.
 
 ### 十、部署与可行性（测试模式先验）
 
@@ -179,7 +190,7 @@ Haiku 5.5 约 $0.0007、gpt-5-mini 约 $0.0024、gpt-5 约 $0.012、Sonnet 5.5 �
 
 ### 十一、上线开关与步骤
 
-- `hosted_ai.PRODUCTION_LIVE = False`：在网关正式部署并验通之前，正式安装里看不到「Tavotto 内置」连接、零网络。另有 `TAVOTTO_NO_HOSTED_AI=1` 逃生口。
+- `hosted_ai.PRODUCTION_LIVE = False`：在网关正式部署并验通之前，正式安装里看不到「Tavotto Agent」连接、零网络。另有 `TAVOTTO_NO_HOSTED_AI=1` 逃生口。
 - 步骤（每步先报合并大队长，再由维护者本人批准）：
   1. 测试网关 + Stripe 测试授权，跑通「开任务 → 请求 → 结算 → 到顶 → 额度用完 → 改用自己的 key」；
   2. 候选托管模型每类任务每题 ≥ 3 次实测，维护者定额度；
@@ -189,12 +200,16 @@ Haiku 5.5 约 $0.0007、gpt-5-mini 约 $0.0024、gpt-5 约 $0.012、Sonnet 5.5 �
 
 ### 十二、待维护者拍板
 
-1. ~~托管模型~~：**已定 DeepSeek 官方 API `deepseek-flash`**（维护者 2026-11-21）；海外节点是否另配上游，待定；
-2. ~~成本占比~~：**已定实付金额的 40%、只算模型 token 费、允许透支一个任务**（维护者 2026-11-21，§二之一）；
-3. 失败的任务扣不扣额度（草案：扣，靠单任务上限控损失）；
-4. 「转成可编辑」算不算进内置 AI；
-5. 隐私声明「内置 AI」一节的措辞；
-6. 豁免是否按 0193 延伸登记 §1.8。
+维护者 2026-11-21 已定：
+- 托管模型 = DeepSeek 官方 API `deepseek-flash`，**国内外用户都用它**（海外节点也转 DeepSeek，不另配上游）；
+- 额度 = 实付金额 × 40%，只算模型 token 费，允许透支一个任务（§二之一）；
+- 失败的任务照扣（§五.6）；
+- 「转成可编辑」算进（§一）；
+- 对用户的名字叫「Tavotto Agent」（§一、§九）。
+
+仍待定：
+1. 隐私声明「Tavotto Agent」一节的英文措辞（§九草稿）；
+2. 豁免是否按 0193 延伸登记 §1.8。
 
 ## 后果
 
