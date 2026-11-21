@@ -1020,6 +1020,314 @@ def test_gate_never_skips_a_table_where_the_rules_get_the_default_wrong(tmp_path
     )
 
 
+# --------------------------------------------------------------------------- 模型的判断「够得到」规则的三处（留出集 HO-16 / HO-17 / HO-19）
+HBY = {c["id"]: c for c in HOLDOUT}
+
+
+def case_with(base, table, **changes):
+    """拿一条留出用例，换表（CSV 文本）与回答——没有的键沿用。"""
+    c = json.loads(json.dumps(base))
+    c["tables"] = {next(iter(base["tables"])): table}
+    c.update(changes)
+    return c
+
+
+def reach_answer(roles, **picks):
+    return {
+        "columns": [{"name": n, "role": r} for n, r in roles.items()],
+        "picks": {"y": "unsure", "x": "unsure", "group": "unsure", **picks},
+    }
+
+
+def candidates_of(tmp_path, case, answers):
+    resp = P.propose(
+        tmp_path / "proj",
+        project="p",
+        folder=DR.materialize(case, tmp_path / "proj"),
+        render="lazy",
+        answers=answers,
+    )
+    assert resp["kind"] == "candidates" and resp["items"], resp
+    return resp
+
+
+def test_ho17_repeat_columns_without_an_x_axis_stay_a_known_product_limit(tmp_path):
+    """HO-17（rep1 / rep2 / rep3 一起看、没有横轴）要「把列当分组」的画法，尚未支持：没有有序横轴时分布 / 比较类配方只画第一列，
+    多列纵轴不采纳（当没给，计入 dropped），`roles.y` 与候选实际画的列一致。标准答案不改。"""
+    case = HBY["HO-17"]
+    run, _ = with_model(case, tmp_path)
+    assert run.model != case["expect_default"] and run.state == "ready"
+    assert run.payload["dropped"] >= 1
+    assert run.payload["answers"].get("y") != ["rep1", "rep2", "rep3"]
+    assert len(run.model["y"]) == 1
+    # 直接送数组也一样：规则当没给
+    folder = DR.materialize(case, tmp_path / "proj")
+    plain = P.propose(tmp_path / "proj", project="p", folder=folder, render="lazy")
+    got = P.propose(
+        tmp_path / "proj",
+        project="p",
+        folder=folder,
+        render="lazy",
+        answers={"y": ["rep1", "rep2", "rep3"]},
+    )
+    assert got["roles"] == plain["roles"]
+    assert len(got["roles"]["y"]) == 1
+
+
+MULTI_Y_WITH_X = "sample,dose,r1,r2,r3\n" + "".join(
+    f"S{i},{i},{i + 1.0},{i + 1.5},{i + 2.2}\n" for i in range(1, 9)
+)
+
+
+def test_multi_y_with_an_ordered_x_is_adopted_and_every_trend_candidate_draws_all_columns(tmp_path):
+    case = case_with(
+        HBY["HO-17"],
+        MULTI_Y_WITH_X,
+        roles={
+            "sample": "row_id",
+            "dose": "ordered_x",
+            "r1": "measure",
+            "r2": "measure",
+            "r3": "measure",
+        },
+    )
+    ans = reach_answer(case["roles"], y=["r1", "r2", "r3"], x="dose", group="none")
+    run, _ = with_model(case, tmp_path, ans)
+    assert run.model["y"] == ["r1", "r2", "r3"] and run.model["x"] == "dose"
+    resp = candidates_of(tmp_path, case, run.payload["answers"])
+    assert resp["roles"]["y"] == ["r1", "r2", "r3"]
+    trend = [i for i in resp["items"] if i.get("family") == "trend" or "line" in i["title_code"]]
+    assert trend
+    for item in trend:
+        assert set(item["values"]["y"]) == {"r1", "r2", "r3"}, item
+
+
+def test_multi_y_is_not_adopted_when_the_model_also_says_there_is_no_x(tmp_path):
+    case = case_with(HBY["HO-17"], MULTI_Y_WITH_X, roles={})
+    roles = {
+        "sample": "row_id",
+        "dose": "ordered_x",
+        "r1": "measure",
+        "r2": "measure",
+        "r3": "measure",
+    }
+    run, _ = with_model(
+        case, tmp_path, reach_answer(roles, y=["r1", "r2", "r3"], x="none", group="none")
+    )
+    assert len(run.model["y"]) == 1 and run.model["x"] is None
+    assert run.payload["dropped"] >= 1
+    resp = candidates_of(tmp_path, case, run.payload["answers"])
+    assert resp["roles"]["y"] == run.model["y"]
+
+
+def test_ho17_multi_y_is_dropped_when_the_columns_are_not_objectively_fine(tmp_path):
+    case = HBY["HO-17"]
+    rules = run_case(case, tmp_path, conn=None).rules
+    roles = {"sample": "row_id", "rep1": "measure", "rep2": "measure", "rep3": "measure"}
+    bad = {
+        "ghost": ["rep1", "ghost"],  # 列不存在
+        "text column": ["rep1", "sample"],  # 文字列不是数值列
+        "duplicate": ["rep1", "rep1"],
+        "role vetoes": ["rep1", "rep2"],  # 下面单独改 rep2 的角色
+    }
+    for name, y in bad.items():
+        r = dict(roles, rep2="note") if name == "role vetoes" else roles
+        run, _ = with_model(case, tmp_path, reach_answer(r, y=y))
+        assert run.state == "ready" and run.model == rules, name
+    # 超过 3 列
+    wide = "sample,a,b,c,d\nA1,1,2,3,4\nA2,2,3,4,5\nB1,3,4,5,6\nB2,4,5,6,7\n"
+    c4 = case_with(case, wide)
+    r4 = {"sample": "row_id", "a": "measure", "b": "measure", "c": "measure", "d": "measure"}
+    base = run_case(c4, tmp_path, conn=None).rules
+    run, _ = with_model(c4, tmp_path, reach_answer(r4, y=["a", "b", "c", "d"]))
+    assert run.model == base
+    # 不同单位（双轴）不当一组纵轴
+    units = "sample,a_mg,b_mm,c_mg\nA1,1,2,3\nA2,2,3,4\nB1,3,4,5\nB2,4,5,6\n"
+    cu = case_with(case, units)
+    ru = {"sample": "row_id", "a_mg": "measure", "b_mm": "measure", "c_mg": "measure"}
+    base = run_case(cu, tmp_path, conn=None).rules
+    run, _ = with_model(cu, tmp_path, reach_answer(ru, y=["a_mg", "b_mm"]))
+    assert run.model == base
+
+
+def test_a_list_valued_y_answer_is_parsed_but_garbage_is_a_clean_error(tmp_path):
+    assert P.parse_answers({"y": ["a", "b"]}) == {"y": ["a", "b"]}
+    assert P.parse_answers({"y": ["a"]}) == {"y": "a"}
+    for bad in ([], ["a", "b", "c", "d"], ["a", 1], ["a", None], {"a": 1}):
+        with pytest.raises(P.ProposeError):
+            P.parse_answers({"y": bad})
+    # 别的键仍只认字符串
+    with pytest.raises(P.ProposeError):
+        P.parse_answers({"x": ["a"]})
+    # 用户在右栏点的单列（字符串）照旧
+    assert P.parse_answers({"y": "rep1"}) == {"y": "rep1"}
+
+
+def test_list_valued_y_that_is_not_usable_is_ignored_by_the_rules(tmp_path):
+    case = HBY["HO-17"]
+    folder = DR.materialize(case, tmp_path / "proj")
+    plain = P.propose(tmp_path / "proj", project="p", folder=folder, render="lazy")
+    for y in (["rep1", "ghost"], ["rep1", "sample"], ["rep1", "rep1"]):
+        got = P.propose(
+            tmp_path / "proj", project="p", folder=folder, render="lazy", answers={"y": y}
+        )
+        assert got["roles"] == plain["roles"], y
+
+
+def test_ho19_the_model_gives_the_x_axis_even_though_the_table_has_a_group(tmp_path):
+    case = HBY["HO-19"]
+    rules = run_case(case, tmp_path, conn=None).rules
+    assert rules["x"] is None
+    run, _ = with_model(case, tmp_path)
+    assert run.model == case["expect_default"] and run.payload["answers"]["x"] == "day"
+    candidates_of(tmp_path, case, run.payload["answers"])
+
+
+def test_ho19_x_is_dropped_unless_it_is_time_or_ordered_and_a_real_candidate(tmp_path):
+    case = HBY["HO-19"]
+    base = case["model_answer"]["columns"]
+    roles = {c["name"]: c["role"] for c in base}
+    for name, picks in {
+        "measure role": ({**roles, "sem": "measure"}, {"x": "sem"}),  # 不是 time / ordered_x
+        "the y itself": (roles, {"x": "mean_length_mm"}),
+        "a group column": (roles, {"x": "strain"}),  # 文字列，不是横轴候选
+        "none": (roles, {"x": "none"}),
+        "ghost": (roles, {"x": "ghost"}),
+    }.items():
+        r, pk = picks
+        run, _ = with_model(
+            case, tmp_path, reach_answer(r, y=["mean_length_mm"], group="strain", **pk)
+        )
+        assert (
+            run.state == "ready" and run.model["x"] is None and run.model["y"] == ["mean_length_mm"]
+        ), name
+
+
+def test_ho16_an_id_like_text_column_can_be_the_group_when_the_model_says_so(tmp_path):
+    case = HBY["HO-16"]
+    folder = DR.materialize(case, tmp_path / "proj")
+    s = adf.profile_folder(tmp_path / "proj" / folder).tables[0].summary
+    assert "sample" in s.id_like and "sample" in s.groups  # 卡点：规则把它判成编号
+    rules = run_case(case, tmp_path, conn=None).rules
+    assert rules["group"] is None
+    run, _ = with_model(case, tmp_path)
+    assert run.model == case["expect_default"] and run.payload["answers"]["group"] == "sample"
+    resp = candidates_of(tmp_path, case, run.payload["answers"])
+    assert resp["roles"]["unit"] is None
+    assert "sample" in resp["roles"]["options"]["group"]
+    # 点名之后它不再兼作「重复测量的个体编号」：不再问「同一对象重复测量吗」
+    assert all(i.get("kind") != "ask" for i in resp["items"])
+
+
+def test_ho16_only_when_the_model_says_group_and_the_column_really_repeats(tmp_path):
+    case = HBY["HO-16"]
+    rules = run_case(case, tmp_path, conn=None).rules
+    roles = {c["name"]: c["role"] for c in case["model_answer"]["columns"]}
+    for r in ({**roles, "sample": "replicate_unit"}, {**roles, "sample": "row_id"}):
+        run, _ = with_model(
+            case, tmp_path, reach_answer(r, y=["transmittance"], x="wavenumber_cm", group="sample")
+        )
+        assert run.model == rules, r["sample"]
+    # 每行都不同的样品名不是分组（`groups` 不收）：丢弃，回到规则
+    uniq = "sample,wavenumber_cm,transmittance\n" + "".join(
+        f"S{i},{4000 - 200 * i},{90 + i}\n" for i in range(12)
+    )
+    cu = case_with(case, uniq)
+    base = run_case(cu, tmp_path, conn=None).rules
+    run, _ = with_model(
+        cu, tmp_path, reach_answer(roles, y=["transmittance"], x="wavenumber_cm", group="sample")
+    )
+    assert run.model == base
+
+
+def test_without_a_model_pick_an_id_like_column_is_never_a_group_or_the_y(tmp_path):
+    """没有 `picks` 时规则逐字不变：编号样的列永不当分组；`answers.group` 点名才采纳。"""
+    case = HBY["HO-16"]
+    folder = DR.materialize(case, tmp_path / "proj")
+    a = P.propose(tmp_path / "proj", project="p", folder=folder, render="lazy")
+    b = P.propose(
+        tmp_path / "proj", project="p", folder=folder, render="lazy", answers={"group": "unsure"}
+    )
+    assert a["roles"]["group"] is None and b["roles"]["group"] is None
+    c = P.propose(
+        tmp_path / "proj", project="p", folder=folder, render="lazy", answers={"group": "sample"}
+    )
+    assert c["roles"]["group"] == "sample"
+
+
+def test_job_usage_records_cached_input_tokens(tmp_path):
+    case = HBY["HO-19"]
+    run, _ = with_model(case, tmp_path)
+    assert "cached_input_tokens" in run.usage and isinstance(run.usage["cached_input_tokens"], int)
+
+
+# --------------------------------------------------------------------------- roles.y 必须等于每个候选实际画的列
+WIDE_RULES = "t,a,b,c\n" + "".join(
+    f"{i},{i + 1.0},{i * 2 + 0.5},{i * 3 + 1.2}\n" for i in range(1, 9)
+)
+LONG_GROUPED = "g,dose,r1,r2,r3\n" + "".join(
+    f"{g},{d},{d + k + 1.0},{d * 2 + k},{d * 3 - k + 2.0}\n"
+    for k, g in enumerate("AB")
+    for d in range(1, 9)
+)
+
+
+def propose_in(tmp_path, name, csv, **kw):
+    folder = tmp_path / "proj" / name
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "t.csv").write_text(csv, encoding="utf-8")
+    return P.propose(tmp_path / "proj", project="p", folder=name, render="lazy", **kw)
+
+
+def assert_every_candidate_draws_roles_y(resp):
+    assert resp["kind"] == "candidates" and resp["items"], resp
+    for item in resp["items"]:
+        assert list(item["values"]["y"]) == list(resp["roles"]["y"]), item
+
+
+def test_every_candidate_draws_exactly_roles_y_for_every_source_of_multi_y(tmp_path):
+    # 规则自己的宽表多 y（没有任何 picks）：从前 scatter_fit 只画第一列而 roles.y 报三列
+    r = propose_in(tmp_path, "rules", WIDE_RULES)
+    assert r["roles"]["y"] == ["a", "b", "c"]
+    assert_every_candidate_draws_roles_y(r)
+    assert [i["title_code"] for i in r["items"]] == ["line_points"]
+    assert r["dropped"], "被去掉的只画第一列的备选要记进 dropped"
+    # 用户点名（answers.y 数组）× 无 / 有分组
+    for name, csv, extra in (
+        ("user", MULTI_Y_WITH_X, {"group": "none"}),
+        ("user_g", LONG_GROUPED, {}),
+    ):
+        cols = ["r1", "r2", "r3"]
+        r = propose_in(tmp_path, name, csv, answers={"y": cols, "x": "dose", **extra})
+        assert r["roles"]["y"] == cols
+        assert_every_candidate_draws_roles_y(r)
+    # 模型点名 × 有分组：模型的回答走同一条落地路径（answers 原样并回）
+    case = case_with(
+        HBY["HO-17"],
+        LONG_GROUPED,
+        roles={
+            "g": "group",
+            "dose": "ordered_x",
+            "r1": "measure",
+            "r2": "measure",
+            "r3": "measure",
+        },
+    )
+    run, _ = with_model(
+        case, tmp_path, reach_answer(case["roles"], y=["r1", "r2", "r3"], x="dose", group="g")
+    )
+    r = candidates_of(tmp_path, case, run.payload["answers"])
+    assert_every_candidate_draws_roles_y(r)
+
+
+def test_when_no_candidate_can_draw_all_the_columns_fall_back_to_the_first_one(tmp_path):
+    # 量纲不同的几列（a_mg / b_mm）画不到同一张图：不出零备选，退回单列，roles.y 与图一致
+    csv = "t,a_mg,b_mm\n" + "".join(f"{i},{i + 1.0},{i * 2 + 0.5}\n" for i in range(1, 9))
+    r = propose_in(tmp_path, "units", csv)
+    assert r["roles"]["y"] == ["a_mg"]
+    assert_every_candidate_draws_roles_y(r)
+
+
 # --------------------------------------------------------------------------- 「读懂数据」有没有可用连接（前端「连接 AI」胶囊的依据）
 @pytest.mark.parametrize("why", ["none", "cli_only", "builtin_off"])
 def test_available_is_false_without_a_key_connection(monkeypatch, why):
