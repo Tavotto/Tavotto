@@ -200,16 +200,13 @@ def _mask(text: str, secrets: set[str] | frozenset[str]) -> str:
     return text
 
 
-def _kept_env(tree: ast.AST) -> list[dict]:
-    """要记的环境变量：名字是字面量（按解码后的值判断，`\\x4b` 之类转义照样认得出）；名字像凭据的只记名字；值不是字面量的
-    也只记名字。"""
-    env: list[dict] = []
-    for name, value in _env_sets(tree)[:10]:
-        item: dict = {"name": name}
-        if value is not None and not _SECRETISH.search(name):
-            item["value"] = value
-        env.append(item)
-    return env
+def _kept_env(tree: ast.AST) -> list[tuple[str, str | None]]:
+    """要记的环境变量 (名字, 值)：名字是字面量（按解码后的值判断，`\\x4b` 之类转义照样认得出）；名字像凭据的、值不是字面量的，
+    值记 None（只记名字）。"""
+    return [
+        (name, value if value is not None and not _SECRETISH.search(name) else None)
+        for name, value in _env_sets(tree)[:10]
+    ]
 
 
 def launcher_secrets(text: str) -> set[str]:
@@ -219,7 +216,7 @@ def launcher_secrets(text: str) -> set[str]:
         tree = ast.parse(text or "")
     except (SyntaxError, ValueError):
         return {v for line in (text or "").splitlines() for v in _quoted(line)}
-    kept = {e["value"] for e in _kept_env(tree) if "value" in e}
+    kept = {v for _, v in _kept_env(tree) if v is not None}
     return {
         n.value
         for n in ast.walk(tree)
@@ -239,14 +236,12 @@ def _launcher_fields(
         tree = ast.parse(text or "")
     except (SyntaxError, ValueError):
         return {"env": [], "text": ""}
-    env = []
-    for item in _kept_env(tree):
-        if "value" in item:
-            item = {
-                **item,
-                "value": _tidy(_mask(item["value"], set(secrets)), ARG_MAX_CHARS, scrub),
-            }
-        env.append(item)
+    env = [
+        {"name": n}
+        if v is None
+        else {"name": n, "value": _tidy(_mask(v, set(secrets)), ARG_MAX_CHARS, scrub)}
+        for n, v in _kept_env(tree)
+    ]
     return {"env": env, "text": ""}
 
 
