@@ -139,7 +139,7 @@ def offline_managed_env(monkeypatch):
 def real_venv(root: Path, *, name: str = ".venv") -> Path:
     """在 `root` 下建一个**能执行**、且不含 Tavotto 的 venv。
 
-    创建细节（`--system-site-packages` 与遮蔽宿主的 Tavotto）在
+    创建细节（显式接入宿主包目录与遮蔽宿主的 Tavotto）在
     `support.venvfixture` 一处——两组用例共用同一份，免得其中一份漏掉遮蔽
     那一步之后在 CI 上才发现。
     """
