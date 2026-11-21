@@ -255,12 +255,49 @@ describe('分享弹窗三态', () => {
     expect(writeText).toHaveBeenCalledWith(SHARE.review_url)
     expect(JSON.stringify(useUiStore.getState().status)).toContain('review.linkCopied')
   })
-  it('进行中：点阵进度、不能随手关', async () => {
+  it('进行中：外框描边 + 底部小字原位换成阶段，不占 status 区（卡片尺寸不变）、不能随手关', async () => {
     resetStore({ dialogOpen: true, stage: 'uploading' })
     await render(<ReviewDialog />)
     expect(q('[data-review-status="working"]')).not.toBeNull()
+    expect(q('[data-edge-progress="mid"]')).not.toBeNull()
+    expect(q('[data-dialog-status]')).toBeNull()
     useReviewStore.getState().closeDialog()
     expect(useReviewStore.getState().dialogOpen).toBe(true)
+  })
+})
+
+describe('外框描边合拢闸', () => {
+  it('首次生成：done 后先合拢一圈，链接回来且停完一拍才换出链接；其间「生成」一直禁用', async () => {
+    resetStore({ dialogOpen: true, stage: 'uploading' })
+    await render(<ReviewDialog />)
+    await act(async () => useReviewStore.setState({ stage: 'done' }))
+    expect(q('[data-edge-progress="full"]')).not.toBeNull()
+    expect(q('[data-review-link]')).toBeNull()
+    expect(q<HTMLButtonElement>('[data-review-create]')?.disabled).toBe(true)
+    // 定时走完但链接还没回来：仍然拦着，不闪回可点的表单
+    await settle(1000)
+    expect(q('[data-review-link]')).toBeNull()
+    expect(q<HTMLButtonElement>('[data-review-create]')?.disabled).toBe(true)
+    await act(async () => useReviewStore.setState({ share: SHARE }))
+    expect(q('[data-edge-progress="off"]')).not.toBeNull()
+    expect(q('[data-review-link]')?.className).toContain('animate-rise-in')
+  })
+  it('更新：合拢期间「画布有新改动」那一行留着，合拢完才收起', async () => {
+    resetStore({ dialogOpen: true, share: SHARE, changed: true, stage: 'uploading' })
+    await render(<ReviewDialog />)
+    await act(async () => useReviewStore.setState({ stage: 'done', changed: false }))
+    expect(q('[data-review-changed]')).not.toBeNull()
+    await settle(1000)
+    expect(q('[data-review-changed]')).toBeNull()
+    expect(q('[data-review-link]')?.className).not.toContain('animate-rise-in')
+  })
+  it('链接一直不回来：兜底上限后放行，不卡死在禁用的表单上', async () => {
+    resetStore({ dialogOpen: true, stage: 'uploading' })
+    await render(<ReviewDialog />)
+    await act(async () => useReviewStore.setState({ stage: 'done' }))
+    await settle(6000)
+    expect(q('[data-edge-progress="off"]')).not.toBeNull()
+    expect(q<HTMLButtonElement>('[data-review-create]')?.disabled).toBe(false)
   })
 })
 
@@ -276,6 +313,15 @@ describe('失败码：一句话 + 可重试', () => {
       expect(q('[data-review-retry]')).not.toBeNull()
     })
   }
+  it('失败原位换掉底部那行，不占 status 区；描边从半圈淡出，不停在那里', async () => {
+    resetStore({ dialogOpen: true, stage: 'uploading' })
+    await render(<ReviewDialog />)
+    expect(q('[data-edge-progress="mid"]')).not.toBeNull()
+    await act(async () => useReviewStore.setState({ stage: 'failed', failure: { code: 'network', retryable: true } }))
+    expect(q('[data-edge-progress="off"]')).not.toBeNull()
+    expect(q('[data-review-status="failed"]')).not.toBeNull()
+    expect(q('[data-dialog-status]')).toBeNull()
+  })
   it('不可重试就没有重试钮；重试 = 再发一次同样的请求', async () => {
     resetStore({ dialogOpen: true, stage: 'failed', failure: { code: 'too_large', retryable: false } })
     await render(<ReviewDialog />)

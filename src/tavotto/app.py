@@ -5817,6 +5817,7 @@ def _build_diagnostics_bundle(
         frontend=detail.frontend,
         registry=ctx.registry if ctx is not None else None,
         fix_journey=engine_prepsession.SESSIONS.fix_journeys(pid) if pid else None,
+        fix_sessions=engine_fixsession.SESSIONS.diagnostics_for(pid) if pid else None,
         fix_audit=engine_fixsession.audit_tail(engine_fixsession.SESSIONS.ids_for(pid))
         if pid
         else None,

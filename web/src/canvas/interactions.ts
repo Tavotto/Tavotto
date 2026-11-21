@@ -111,6 +111,7 @@ import { displayedExactManifest } from '@/store/mountedSvgStore'
 import { exactPanelManifest, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
+import { DRAW_COLOR_DEFAULT } from '@/lib/drawDefaults'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import {
@@ -143,6 +144,7 @@ import {
   recordDiagnosticEvent,
 } from '@/diagnostics'
 import {
+  DEFAULT_STAR_POINTS,
   isLinear,
   lineEndpoints,
   isKnownObject,
@@ -174,7 +176,10 @@ const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
  * 当场翻好塞进去，切到英文后历史面板只重翻外层模板，显示成「Add 矩形」，
  * 而且换不回来（原始 tool 已经没了）。
  */
-const drawnToolMsg = (tool: Exclude<Tool, 'select'>): UiMessage =>
+/** 拖一下就落一个对象的工具（钢笔是多次点击的状态机，另走 `canvas/penController`） */
+export type DrawTool = Exclude<Tool, 'select' | 'pen' | 'eyedropper'>
+
+const drawnToolMsg = (tool: DrawTool): UiMessage =>
   tool === 'text' || tool === 'arrow'
     ? msg(`objectType.${tool}`)
     : msg(`shape.${tool}`)
@@ -266,7 +271,7 @@ function snapPrefs() {
   }
 }
 
-const candidatesFor = (exclude: Set<string>) => {
+export const candidatesFor = (exclude: Set<string>) => {
   const prefs = snapPrefs()
   if (!prefs) return null
   const cands = snapCandidates(doc().objects, exclude, doc().page, doc().guides, prefs)
@@ -341,7 +346,7 @@ const NEAR_AXIS_DEG = 4
 
 /** 一次绘制的粗粒度形状（纯函数）：`vec` = 起点到终点，`box` = 落下来的包围盒 */
 export function drawShape(
-  tool: Exclude<Tool, 'select'>,
+  tool: DrawTool,
   vec: { x: number; y: number },
   box: { w: number; h: number },
   shift: boolean,
@@ -855,7 +860,7 @@ export function startPan(e: ReactPointerEvent) {
  * 新画出来的标注的默认颜色：**文档数据**（落进对象的 `color`），不是界面色——所以它不是 token。
  * 覆盖层的草稿预览（`OverlaySvg.DraftLinePreview`）读同一个常量：预览即成品。
  */
-export const DRAW_COLOR = '#1B1B18'
+export const DRAW_COLOR = DRAW_COLOR_DEFAULT
 
 const DEFAULT_DRAW: Record<string, { w: number; h: number }> = {
   text: { w: 40, h: 5 },
@@ -863,6 +868,13 @@ const DEFAULT_DRAW: Record<string, { w: number; h: number }> = {
   rect: { w: 30, h: 20 },
   ellipse: { w: 30, h: 20 },
   line: { w: 30, h: 0.01 },
+  // 三角形 / 菱形 / 多边形 / 大括号（2026-11-14 起也是拖画工具）：单击不拖时落的默认尺寸与原来「插入形状」相同
+  triangle: { w: 20, h: 16 },
+  diamond: { w: 20, h: 16 },
+  polygon: { w: 20, h: 16 },
+  brace: { w: 6, h: 24 },
+  star: { w: 20, h: 20 },
+  arc: { w: 20, h: 16 },
 }
 
 /**
@@ -875,7 +887,7 @@ const DEFAULT_DRAW: Record<string, { w: number; h: number }> = {
  * shift（Illustrator 语义）：矩形 / 椭圆锁成正方形 / 正圆（锚在起点），
  * 箭头 / 直线锁 15° 角（与端点拖拽同一档）。
  */
-export function startDraw(e: ReactPointerEvent, tool: Exclude<Tool, 'select'>) {
+export function startDraw(e: ReactPointerEvent, tool: DrawTool) {
   const store = useDocumentStore.getState()
   const start = clientToMm(e.clientX, e.clientY)
   const cands = candidatesFor(new Set())
@@ -902,7 +914,7 @@ export function startDraw(e: ReactPointerEvent, tool: Exclude<Tool, 'select'>) {
           cur = { x: hx ?? cur.x, y: hy ?? cur.y }
           interaction().setSnap(hx != null ? [hx] : [], hy != null ? [hy] : [])
         }
-        if (ev.shiftKey && (tool === 'rect' || tool === 'ellipse')) {
+        if (ev.shiftKey && tool !== 'text') {
           const dx = cur.x - start.x
           const dy = cur.y - start.y
           const side = Math.max(Math.abs(dx), Math.abs(dy))
@@ -1008,6 +1020,8 @@ export function startDraw(e: ReactPointerEvent, tool: Exclude<Tool, 'select'>) {
           strokePt: 1,
           color: DRAW_COLOR,
           fill: null,
+          ...(tool === 'polygon' ? { sides: 6 } : {}),
+          ...(tool === 'star' ? { sides: DEFAULT_STAR_POINTS } : {}),
         }
         created = shape
       }

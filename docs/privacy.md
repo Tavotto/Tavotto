@@ -22,7 +22,8 @@ not mean that every feature is offline.
 Tavotto does not upload figure files, source scripts, project files, layouts,
 exports, or the contents of a user's scientific data to the Tavotto project or to
 any service operated by the maintainers. The one thing a user can choose to send
-is a redacted diagnostics bundle, which contains none of those and is never sent
+is a redacted diagnostics bundle, which contains none of those (except, if you used AI
+repair, the parts of your script the repair assistant read — see below) and is never sent
 automatically — see [Diagnostics bundle](#diagnostics-bundle).
 
 This holds for the anonymous usage statistics too. The event schema physically
@@ -404,7 +405,12 @@ Offering the option uploads nothing; sending does:
   duration and error code only — no request bodies, query strings or arguments), the
   style edits of the figure being edited, the render environment (Python and matplotlib
   versions, installed packages, non-default matplotlib settings, missing fonts), recent
-  render/export/test-run records, desktop-shell and install facts (app, Tauri and
+  render/export/test-run records, what AI repair did in this app session (the outcome, the
+  assistant's own summary, the provider and model name — never its address or key — each
+  test run's failure type and the hint it was given, the last part of every tool result
+  the assistant saw, which can include parts of your script it read and the source lines
+  of error messages, and any launcher it wrote; kept only in memory, so nothing remains after
+  Tavotto restarts, and included whether or not *script source* is ticked), desktop-shell and install facts (app, Tauri and
   WebView versions, OS version, CPU architecture, Rosetta, install method, update result
   and whether the mirror or GitHub was used when known), storage facts (free disk space,
   writability, whether the project is in a cloud-sync folder, the Windows long-path
@@ -424,7 +430,7 @@ Offering the option uploads nothing; sending does:
   a conversion left in Tavotto's local cache, and the local Python modules those scripts loaded from outside the project folder when they last ran — only `.py` modules that were really loaded from a folder the script itself added to Python's search path, never third-party packages or Python's own; never files sitting directly in your home folder or at the root of a drive, never anything under the credential folders Tavotto's AI helpers are also barred from (such as `.ssh`), never through a symbolic link; at most 20 per script, each cut at 1 MiB and counted in the same 100-file limit as the scripts; Tavotto remembers only the paths of these modules, in its own data folder for 30 days, and reads their contents only when you tick this box — attached as they are — **secret removal in scripts is best
   effort and cannot be guaranteed, so do not tick it if your scripts contain secrets**;
   without it the bundle contains no script source at all, including the source lines normally
-  printed inside tracebacks), *system crash
+  printed inside tracebacks, apart from the AI-repair record described above), *system crash
   reports* (Tavotto, sidecar and render-Python crash reports from the last 7 days:
   macOS reports and Windows WER reports are redacted text, but Windows crash dumps
   (`.dmp`) are snapshots of the program's memory that may contain the contents and
