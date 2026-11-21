@@ -1527,7 +1527,7 @@
           "detail_requests": "Recent backend requests (method, route, status, duration, error code only)",
           "detail_overrides": "Style edits of the figure being edited",
           "detail_render_env": "Render environment (Python, matplotlib, installed packages, fonts)",
-          "detail_runs": "Recent render, export and script test-run records",
+          "detail_runs": "Recent render, export and script test-run records, and what AI repair did",
           "detail_shell": "Desktop shell and install facts (versions, OS, architecture, update result)",
           "detail_storage": "Storage environment (free space, writable, sync folder)",
           "detail_console": "Recent errors and warnings from the interface console",
@@ -1537,7 +1537,7 @@
           "detail_crash_reports": "System crash reports (you ticked this)",
           "detail_corrupt_sessions": "Contents of corrupted session copies (you ticked this)"
         },
-        "notIncluded": "Not included by default: your scripts, data files, or the anonymous-statistics identifier. Errors and logs may mention folder names, file names and output printed by your script.",
+        "notIncluded": "Not included by default: your script files, data files, or the anonymous-statistics identifier. Errors and logs may mention folder names, file names and output printed by your script, and if you used AI repair, the parts of your script it read.",
         "save": "Save this bundle",
         "saved": "Saved",
         "saveFailed": "Could not save",
