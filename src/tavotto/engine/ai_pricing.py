@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from . import exectrace
 
-PRICING_VERSION = "2026-11-10"
+PRICING_VERSION = "2026-11-21"
 CURRENCY = "USD"
 
 #: 厂商 → 出处（核对日期即 `PRICING_VERSION`）。
@@ -29,6 +29,15 @@ _BASE_URLS = {
     "https://api.anthropic.com": "anthropic",
     "https://api.openai.com/v1": "openai",
 }
+
+#: OpenAI 短上下文档的上限（一轮输入 Token，含缓存命中）
+OPENAI_SHORT_CONTEXT = 272_000
+
+
+def _short(rates: dict) -> dict:
+    """只有短上下文价的条目：超过上限的一轮没有档位可落 → `_rates` 返回 None。"""
+    return {"tiers": [(OPENAI_SHORT_CONTEXT, rates)]}
+
 
 #: (厂商, 模型 id) → 每百万 Token 的价格：input（未命中缓存）/ cached（缓存命中）/ output。
 #: `tiers`：按这一轮的输入 Token 数分档（Haiku 5.5：≤100k / >100k）。
@@ -45,6 +54,19 @@ TABLE: dict[tuple[str, str], dict] = {
     },
     ("openai", "gpt-5"): {"input": 1.25, "cached": 0.125, "output": 10.0},
     ("openai", "gpt-5-mini"): {"input": 0.25, "cached": 0.025, "output": 2.0},
+    ("openai", "gpt-5-nano"): {"input": 0.05, "cached": 0.005, "output": 0.40},
+    # GPT-6 / 5.6 系列：定价页分「短上下文（一轮输入 ≤ 272k）/ 长上下文」两档，这里只收核过的短上下文价；
+    # 超过 272k 的一轮查不到价 = 费用 None（不是 0，也不拿短上下文价顶替）。
+    ("openai", "gpt-6.2-astra"): _short({"input": 8.0, "cached": 0.40, "output": 40.0}),
+    ("openai", "gpt-6.2-sol"): _short({"input": 2.0, "cached": 0.10, "output": 10.0}),
+    ("openai", "gpt-6.1-sol"): _short({"input": 2.0, "cached": 0.10, "output": 10.0}),
+    ("openai", "gpt-6.1-terra"): _short({"input": 1.0, "cached": 0.05, "output": 5.0}),
+    ("openai", "gpt-6-astra"): _short({"input": 10.0, "cached": 1.0, "output": 50.0}),
+    ("openai", "gpt-6-sol"): _short({"input": 2.0, "cached": 0.20, "output": 10.0}),
+    ("openai", "gpt-6-luna"): _short({"input": 0.10, "cached": 0.01, "output": 0.50}),
+    ("openai", "gpt-5.6-sol"): _short({"input": 4.0, "cached": 0.40, "output": 20.0}),
+    ("openai", "gpt-5.6-terra"): _short({"input": 2.0, "cached": 0.20, "output": 12.0}),
+    ("openai", "gpt-5.6-luna"): _short({"input": 0.20, "cached": 0.02, "output": 1.20}),
 }
 
 exectrace.register_vocabulary("pricing_version", [PRICING_VERSION])

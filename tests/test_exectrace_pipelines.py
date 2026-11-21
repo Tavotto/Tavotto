@@ -297,6 +297,24 @@ def test_pricing_tiers_and_unknown_models():
     ) == pytest.approx(4.0 + 0.1 + 40.0)
 
 
+def test_openai_short_context_entries_have_no_price_above_the_threshold():
+    """GPT-6 / 5.6 系列只收了短上下文价：一轮输入超过 272k 查不到价（None），不拿短上下文价顶替。"""
+    at = ai_pricing.OPENAI_SHORT_CONTEXT
+    assert ai_pricing.estimate(
+        "openai", "gpt-6-luna", input_tokens=1_000, cached=0, output=1_000
+    ) == pytest.approx((1_000 * 0.10 + 1_000 * 0.50) / 1_000_000)
+    assert ai_pricing.estimate(
+        "openai", "gpt-6.2-sol", input_tokens=at, cached=at, output=0
+    ) == pytest.approx(at * 0.10 / 1_000_000)
+    assert (
+        ai_pricing.estimate("openai", "gpt-6.2-sol", input_tokens=at + 1, cached=0, output=0)
+        is None
+    )
+    assert ai_pricing.estimate(
+        "openai", "gpt-5-nano", input_tokens=1_000_000, cached=0, output=0
+    ) == pytest.approx(0.05)
+
+
 def test_every_official_model_hint_has_a_price():
     """官方端点在「连接 AI」里推荐的型号，定价表必须有价——否则用户选了它，费用估算是空的（Fable 5.2 漏过一次）。"""
     vendors = json.loads(ai_catalog.CATALOG_PATH.read_text(encoding="utf-8"))["vendors"]
