@@ -166,6 +166,18 @@ describe('握柄与气泡', () => {
     expect(shown()).toHaveLength(0)
   })
 
+  it('拖动中：按下态的钮跟着分隔线走，小胶囊读出两侧毫米数；松手清掉', () => {
+    mount()
+    act(() =>
+      useQuickLayoutStore.setState({ drag: { axis: 'col', pos: 80, from: 2, to: 60, along: 0.5, sizes: [74.24, 68.76] } }),
+    )
+    const readout = host.querySelector('[data-quick-layout-readout]')!
+    expect(readout.textContent).toBe('74.2mm68.8mm')
+    expect(host.querySelector('[data-quick-layout-drag-grip]')!.className).toContain('pointer-events-none')
+    act(() => useQuickLayoutStore.setState({ drag: null }))
+    expect(host.querySelector('[data-quick-layout-readout]')).toBeNull()
+  })
+
   it('握柄不吃指针事件，只挂在命中区里面', () => {
     mount()
     over(20, 20)

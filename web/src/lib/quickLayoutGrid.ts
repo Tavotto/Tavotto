@@ -79,6 +79,14 @@ export function gutters(memo: QuickLayoutMemo): Gutter[] {
   return out
 }
 
+/** 第 `index` 条分隔线两侧那两列（行）的宽（高），mm；拖动读数用。没有这条分隔线 = null */
+export function gutterPair(memo: QuickLayoutMemo, axis: GutterAxis, index: number): [number, number] | null {
+  const sp = spans(memo, axis)
+  const a = sp[index]
+  const b = sp[index + 1]
+  return a && b ? [a[1] - a[0], b[1] - b[0]] : null
+}
+
 export interface GutterDrag {
   ratios: number[]
   /** 实际生效的位移（mm，夹取之后） */
