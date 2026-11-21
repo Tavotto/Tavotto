@@ -252,6 +252,25 @@ describe('大文件：读取中的一句话与「取消」', () => {
     expect(q('[data-studio-cancelled]')).toBeNull()
   })
 
+  it('取消请求晚到才失败、原请求已经读完出了候选：好结果留着，不换成「已取消」', async () => {
+    let done!: (v: AiDataOverview) => void
+    let failCancel!: (e: unknown) => void
+    overview.mockReturnValueOnce(new Promise((r) => (done = r)))
+    propose.mockResolvedValueOnce(cands([item('i1', 'line_band')]))
+    cancelApi.mockReturnValueOnce(new Promise((_r, rej) => (failCancel = rej)))
+    await start()
+    await open(0)
+    await click(q('[data-large-read-cancel]'))
+    await act(async () => done(ov()))
+    await flush()
+    expect(qa('[data-candidate]')).toHaveLength(1)
+    await act(async () => failCancel(new Error('offline')))
+    await flush()
+    expect(useDataFigureStore.getState().phase).toBe('ready')
+    expect(qa('[data-candidate]')).toHaveLength(1)
+    expect(q('[data-studio-cancelled]')).toBeNull()
+  })
+
   it('取消时请求还没登记（state none）：退回前端不再等', async () => {
     overview.mockReturnValueOnce(new Promise(() => {}))
     cancelApi.mockResolvedValue({ state: 'none', cancelled: false })

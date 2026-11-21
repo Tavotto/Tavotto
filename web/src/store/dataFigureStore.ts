@@ -771,14 +771,16 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         if (selected) overviewSeq.set(overviewKeyOf(selected, get().headerRows), (overviewSeq.get(overviewKeyOf(selected, get().headerRows)) ?? 0) + 1)
         markCancelled()
       }
+      /** 取消请求回来得晚（或失败）时原请求可能已经读完、候选都出来了：那就以原请求为准，不能再把好结果换成「已取消」 */
+      const stillWaiting = () => get().phase === 'reading' || get().phase === 'loading'
       if (!readRid) return walkAway()
       try {
         const r = await aiDataProgressCancel(readRid, currentProjectId())
         // 真的标成取消了：原请求随后回 409，由它收尾（见 `propose` / `run`）；已经读完（赛跑）就让原请求照常往下走
         if (r.cancelled) return
-        if (r.state === 'none') walkAway()
+        if (r.state === 'none' && stillWaiting()) walkAway()
       } catch {
-        walkAway()
+        if (stillWaiting()) walkAway()
       }
     },
 
