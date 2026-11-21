@@ -180,19 +180,30 @@ Haiku 5.5 约 $0.0007、gpt-5-mini 约 $0.0024、gpt-5 约 $0.012、Sonnet 5.5 �
   > DeepSeek's own privacy terms apply to what it receives. If you use your own API key or a subscription sign-in instead,
   > nothing goes through Tavotto's relay.
 
-### 十、部署与可行性（测试模式先验）
+### 十、部署：网关放在边缘节点 tavotto-dl，账本留在 CloudBase
 
-- 首选：CloudBase HTTP 云函数（Web 函数）`ai-gateway-test`，与 `license-api-test` 同一测试环境、同一份授权台账。
-  Web 函数默认支持 SSE；一个连接的时长受函数最大运行时间限制。
-- **上线前必须在测试环境实测两件事**，任一不满足就改用 CloudBase 云托管（容器）：
-  1. 单次请求时长：一轮输出 8k–32k token 的请求要 1–5 分钟。引擎今天是非流式请求，网关对上游用流式、对客户端在 JSON 前发空白字符保活（JSON 允许前导空白），确认网关层不会在 60 秒断开；
-  2. 请求体大小：`check` 工具一次最多 4 MiB 图片，base64 后约 5.4 MiB，并且在多轮对话历史里重复出现——实测上限，必要时客户端先把图上传到云存储、请求里只带地址。
+**2026-11-21 在 CloudBase 测试环境实测**（探针函数测完已删）：
+
+| 项目 | 事件型云函数（经 HTTP 访问服务） |
+|---|---|
+| 单次请求时长 | 130 s 正常返回（函数超时 900 s） |
+| JSON 请求体 | **约 100 KiB 以上被拒**（`EXCEED_MAX_PAYLOAD_SIZE`；64 KiB 过、128 KiB 拒） |
+| 二进制请求体 | 2 MB 过、5 MB 拒 |
+
+一轮请求带着对话历史，`check` 的图片一次就是 MB 级，所以**事件型云函数不能做 AI 网关**。HTTP 云函数要先绑自定义域名才能挂路由（默认域名不许手动加），没有测；云托管这个账号里没有现成环境。
+
+**决定**（维护者 2026-11-21）：网关跑在**国内更新边缘节点 tavotto-dl**（腾讯云轻量，上海，118.89.121.57，4 核 4G，同时承担 `up.tavotto.cn`）：
+- 实测空闲：负载 0.00、可用内存约 3 GB、本月出网约 5 GB（套餐每月 500 GB，更新下载的闸门 450 GB）；到 `api.deepseek.com` 建连 13–28 ms、TLS 40–70 ms。
+- 部署形态与边缘节点一致：经 infra 仓库（与 `edge/` 同一套部署脚本），Python 3.12 的 systemd 服务监听本机回环，nginx 反代 `ai.tavotto.cn`（DNS 与证书上线前另批）；请求体上限、超时由我们自己的 nginx 定，不受云函数网关限制。
+- 授权台账、额度账本、配置表**仍在 CloudBase**（与 `license-api` 同一份），网关经 CloudBase 服务端接口读写，只有一个写入点；海外用户同样连这个节点。
+- 代价：出口带宽 5 Mbps 与更新下载共用。文字请求几十 KB 不受影响；带图请求 1 MB 约 1.7 s。上线后看 `vnstat` 与网关耗时，必要时让更新下载在 AI 请求多时让路，或给网关单独换机器。
+- 网关挂了只影响付费用户的 Tavotto Agent，客户端回到「改用自己的 key」（§八），与更新下载互不牵连（独立进程、独立 nginx server 块）。
 
 ### 十一、上线开关与步骤
 
 - `hosted_ai.PRODUCTION_LIVE = False`：在网关正式部署并验通之前，正式安装里看不到「Tavotto Agent」连接、零网络。另有 `TAVOTTO_NO_HOSTED_AI=1` 逃生口。
 - 步骤（每步先报合并大队长，再由维护者本人批准）：
-  1. 测试网关 + Stripe 测试授权，跑通「开任务 → 请求 → 结算 → 到顶 → 额度用完 → 改用自己的 key」；
+  1. 测试网关（tavotto-dl 回环端口，经 SSH 隧道访问，不开公网）+ Stripe 测试授权，跑通「开任务 → 请求 → 结算 → 到顶 → 额度用完 → 改用自己的 key」；
   2. 候选托管模型每类任务每题 ≥ 3 次实测，维护者定额度；
   3. 正式网关、正式上游密钥、服务商花费上限；
   4. 隐私声明这一节上线；
