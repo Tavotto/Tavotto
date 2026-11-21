@@ -140,7 +140,8 @@
       "unauthorized": "{{name}} 的密钥不对",
       "quota": "{{name}} 额度用完了",
       "no_model": "{{name}} 没有这个模型",
-      "unreachable": "{{name}} 连不上这个地址"
+      "unreachable": "{{name}} 连不上这个地址",
+      "hosted": "{{name}} 暂时用不了"
     },
     "refillKey": "重填密钥",
     "switchAi": "换个 AI",
@@ -514,7 +515,8 @@
       "usageEstimated": "估算（服务端没有报告）",
       "cost": "费用",
       "costEstimated": "按定价表估算（{{version}}），不是账单",
-      "firstFailure": "最先出错的一步"
+      "firstFailure": "最先出错的一步",
+      "costCharged": "网关实际结算的费用（人民币）"
     }
   },
   "dependency": {
@@ -715,5 +717,14 @@
       "failed": "失败",
       "groupTitle": "{{count}} 个文件"
     }
+  },
+  "hosted": {
+    "quota": "{{name}} 的额度用完了。",
+    "quotaOn": "{{name}} 的额度用完了，{{date}}恢复。",
+    "daily": "{{name}} 今天的额度用完了。",
+    "dailyOn": "{{name}} 今天的额度用完了，{{date}}再用。",
+    "notEntitled": "这台电脑上的 {{name}} 暂时用不了。",
+    "unavailable": "{{name}} 暂时连不上，稍后再试。",
+    "useOwnKey": "改用我自己的 Key"
   }
 }

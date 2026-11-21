@@ -1,0 +1,77 @@
+import { ApiError } from '@/lib/api'
+import { PRODUCT_NAME } from '@/lib/brand'
+import { formatDate } from '@/i18n/format'
+import { msg, type UiMessage } from '@/i18n'
+
+/**
+ * 「Tavotto Agent」（内置 AI，ADR 0200）的前端侧：连接 id、名字，和「没能开任务」时给用户的一句话。
+ * 事实在后端（`engine/hosted_ai.py`）：这里只翻译它给的闭集原因，不判断额度、不判断授权。
+ */
+
+/** 虚拟连接的 id（与后端 `hosted_ai.PROVIDER_ID` 同值）；连接上另有 `hosted: true` */
+export const HOSTED_AI_ID = 'tavotto-agent'
+
+/** 界面名：由品牌常量拼出，不手写产品名 */
+export const hostedAiName = (): string => `${PRODUCT_NAME} Agent`
+
+/** 后端 `hosted_ai.FAILURES` 的闭集 */
+export type HostedFailureReason =
+  | 'quota_exhausted'
+  | 'daily_limit'
+  | 'not_entitled'
+  | 'kind_disabled'
+  | 'paused'
+  | 'rate_limited'
+  | 'network'
+  | 'server'
+  | 'client_error'
+  | 'disabled'
+
+export interface HostedFailure {
+  reason: HostedFailureReason | string
+  /** 额度恢复 / 可再试的时刻（UTC 毫秒）；网关没给 = null */
+  retry_at: number | null
+}
+
+const isHostedFailure = (x: unknown): x is HostedFailure =>
+  !!x && typeof x === 'object' && typeof (x as { reason?: unknown }).reason === 'string'
+
+const normalize = (x: HostedFailure): HostedFailure => ({
+  reason: x.reason,
+  retry_at: typeof x.retry_at === 'number' && Number.isFinite(x.retry_at) ? x.retry_at : null,
+})
+
+/** `POST /api/ai/run` 的 409 `ai_hosted_unavailable`（params 是 `{reason, retry_at}`）→ 失败说明；别的错误 = null */
+export function hostedFailureOfError(e: unknown): HostedFailure | null {
+  if (!(e instanceof ApiError) || e.body?.code !== 'ai_hosted_unavailable') return null
+  const p = e.body?.params
+  return isHostedFailure(p) ? normalize(p) : { reason: 'server', retry_at: null }
+}
+
+/** `POST /api/ai/fix` 的 `{ok: false, reason: 'ai_hosted_unavailable', hosted}` */
+export function hostedFailureOfFix(res: { reason?: string; hosted?: unknown }): HostedFailure | null {
+  if (res.reason !== 'ai_hosted_unavailable') return null
+  return isHostedFailure(res.hosted) ? normalize(res.hosted) : { reason: 'server', retry_at: null }
+}
+
+/** 稍后再试有没有意义：额度类等到恢复的时刻才会好，原样重发只会再得到同一句 */
+export const isWaitReason = (f: HostedFailure): boolean => f.reason === 'quota_exhausted' || f.reason === 'daily_limit'
+
+/** 一句话（不带句号以外的修饰；每个键都写成字面量，i18n 检查才数得到） */
+export function hostedFailureMessage(f: HostedFailure): UiMessage {
+  const name = hostedAiName()
+  const date = f.retry_at != null ? formatDate(f.retry_at) : null
+  switch (f.reason) {
+    case 'quota_exhausted':
+      return date ? msg('hosted.quotaOn', { name, date }, 'ai') : msg('hosted.quota', { name }, 'ai')
+    case 'daily_limit':
+      return date ? msg('hosted.dailyOn', { name, date }, 'ai') : msg('hosted.daily', { name }, 'ai')
+    case 'not_entitled':
+      return msg('hosted.notEntitled', { name }, 'ai')
+    default:
+      return msg('hosted.unavailable', { name }, 'ai')
+  }
+}
+
+/** 「改用我自己的 Key」按钮上的字 */
+export const hostedOwnKeyLabel = (): UiMessage => msg('hosted.useOwnKey', undefined, 'ai')

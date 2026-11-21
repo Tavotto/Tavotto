@@ -25,7 +25,8 @@ order: 325
 - **时间不伪造。** Span 偏移只用本进程单调钟；墙钟只给 Trace 起止。别的进程的时长走 `reported_duration_ms`（`timing="reported"`），
   只知道时刻的用 `point()`；不把两个相邻观察点之间的时间算给前一个阶段。第三方 CLI 内部看不见就只记外层区间 + `opaque=true`。
 - **Token / 费用**：没有可信用量就是 `None`，不是 0；`source` 必须是 `reported` / `estimated`；费用只在带币种与定价版本时收，
-  永远 `estimated=True`。不为统计额外发模型请求。
+  价格表算出来的永远 `estimated=True`；唯一例外是内置 AI 网关回的权威结算值（`cost.authoritative`，币种 CNY、`pricing_version=gateway`，`estimated=False`，ADR 0200，
+  只认连接确实是 Tavotto Agent 的）。不为统计额外发模型请求。
 - **采集失败不影响业务。** 公开方法吞异常计 `internal_errors`；存储不可写 / 损坏只计数；`TAVOTTO_NO_EXEC_TRACE=1` 拿到 `NullTrace`。
   调用点不得自己 `try` 掉业务异常来「保护」采集，也不得在业务锁里等采集。
 - **存储**：`data_dir()/cache/exec-trace/`，每 Trace 一个 JSON，`atomicio` 原子写，**只在后台写线程里写**（业务线程只 `submit`，绝不在业务锁里等磁盘）；上限 / 保留 / 节流 / 恢复的数值是

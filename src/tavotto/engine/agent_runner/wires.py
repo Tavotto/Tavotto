@@ -72,6 +72,8 @@ class Usage:
     cached_input_tokens: int = 0
     #: 服务端报了合法的输入 / 输出计数。False = 缺 usage 或计数非法——loop 会按字符数保守估算记账
     reported: bool = True
+    #: 内置 AI 网关回的本请求结算成本（人民币微元，`X-Tavotto-Charged`）；其它端点没有 = None（只在 `HttpModel` 里读出）
+    charged_micro: int | None = None
 
 
 def _reported(u: dict, *keys: str) -> bool:

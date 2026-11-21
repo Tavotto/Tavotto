@@ -120,6 +120,13 @@ describe('TraceWaterfall', () => {
     expect(q('[data-trace-metric="cost"] [data-value]')!.getAttribute('data-value')).toBe('$0.02')
   })
 
+  it('费用的币种跟着数据：网关结算的人民币写 ¥，价格表估算的美元写 $；一条轨迹里币种一致', () => {
+    render({ ...model, spans: spans.map((s) => ({ ...s, costCurrency: s.cost === null ? null : 'CNY' })) })
+    expect(q('[data-trace-metric="cost"] [data-value]')!.getAttribute('data-value')).toBe('¥0.02')
+    render({ ...model, spans: spans.map((s) => ({ ...s, costCurrency: s.cost === null ? null : 'USD' })) })
+    expect(q('[data-trace-metric="cost"] [data-value]')!.getAttribute('data-value')).toBe('$0.02')
+  })
+
   it('有不可观察的 Agent 时调用次数写 —；根的失败不与子的失败重复计', () => {
     const v = (id: string) => q(`[data-trace-metric="${id}"] [data-value]`)!.getAttribute('data-value')
     render({

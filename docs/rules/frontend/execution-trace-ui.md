@@ -15,7 +15,7 @@ order: 225
 - **数据只有一条路**：`fetchExecTrace(kind, ref, pj)` → `/api/exec-trace`（按项目认领，别的项目的 id 读作「没有」）→ `lib/execTrace.toWaterfall()`
   → `traceWaterfall/types.ts` 的展示模型 → `TraceWaterfall` 只画。组件里不出现第二份状态映射、不读 DTO。
 - **诚实规则**（组件与适配层都要守）：`end` 缺 = 还在跑；`timing='point'` 只画点不画宽条；`unmeasured` 只画虚线框；`reported` 照常画、
-  popover 说明来历；`cost` / token 是 `null` 就写「—」不写 0；有不可观察的 Agent（`opaque`）时模型调用数写「—」（数不出来）；工具调用数只数经我们自己入口观察到的那些，当**下界**写 `≥N`，一个都没观察到才写「—」，看得全就是准数；斜纹只属于真的等待 Span（`kind==='wait'`），被子智能体盖住的时间画 `delegate`（淡泳道），不是「等」；
+  popover 说明来历；`cost` / token 是 `null` 就写「—」不写 0；费用的币种跟着数据（`cost.currency`：价格表估算 USD 写 `$`、内置 AI 网关实际结算 CNY 写 `¥`，`estimated:false` 的不说「按定价表估算」；一条轨迹里只有一个连接在花钱，币种一致）；有不可观察的 Agent（`opaque`）时模型调用数写「—」（数不出来）；工具调用数只数经我们自己入口观察到的那些，当**下界**写 `≥N`，一个都没观察到才写「—」，看得全就是准数；斜纹只属于真的等待 Span（`kind==='wait'`），被子智能体盖住的时间画 `delegate`（淡泳道），不是「等」；
   失败计数不把根的连带失败重复算；「首个失败」与「最慢」是两个不同的标记，永不由最慢推出根因。
 - **入口**：窄栏（转录里每一轮、智能修复卡的折叠详情里）只放一行「执行记录」，点开是一张**宽的浮动卡**（`TraceDialog`，共用 `ui/Dialog` 的 `shell` 宽度；
   窄栏放不下 Waterfall）；`TraceDetails` / `TraceDialog` 按 `kind` 泛化（`ai_task` 用 AI 会话 id，`fix_session` 用修复的准备会话 id `ref.session_id`）。

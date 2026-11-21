@@ -143,7 +143,8 @@
       "unauthorized": "{{name}}: the key is wrong",
       "quota": "{{name}}: the quota is used up",
       "no_model": "{{name}}: that model doesn’t exist",
-      "unreachable": "{{name}}: can’t reach this address"
+      "unreachable": "{{name}}: can’t reach this address",
+      "hosted": "{{name}} isn’t available right now"
     },
     "refillKey": "Re-enter key",
     "switchAi": "Use another AI",
@@ -521,7 +522,8 @@
       "usageEstimated": "Estimated (the service didn't report it)",
       "cost": "Cost",
       "costEstimated": "Estimated from the price table ({{version}}), not a bill",
-      "firstFailure": "First step that failed"
+      "firstFailure": "First step that failed",
+      "costCharged": "Cost actually charged by the gateway (CNY)"
     }
   },
   "dependency": {
@@ -722,5 +724,14 @@
       "failed": "Failed",
       "groupTitle": "{{count}} files"
     }
+  },
+  "hosted": {
+    "quota": "{{name}} has no quota left.",
+    "quotaOn": "{{name}} has no quota left. It resets on {{date}}.",
+    "daily": "{{name}} is out of quota for today.",
+    "dailyOn": "{{name}} is out of quota for today. Try again on {{date}}.",
+    "notEntitled": "{{name}} isn’t available on this computer right now.",
+    "unavailable": "{{name}} can’t be reached right now. Try again later.",
+    "useOwnKey": "Use my own key"
   }
 }

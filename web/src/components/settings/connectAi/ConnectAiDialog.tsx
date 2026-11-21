@@ -50,7 +50,9 @@ export function ConnectAiDialog({
   const [manual, setManual] = useState(false)
   const [step, setStep] = useState<AiVendor | null>(null)
   const vendors = listedVendors(caps)
-  const shown = all ? vendors : vendors.slice(0, CONNECT_AI_VISIBLE)
+  // 「Tavotto Agent」（内置 AI）排在最前，不占「默认露 5 家」的名额
+  const visible = CONNECT_AI_VISIBLE + vendors.filter((v) => v.connect === 'hosted').length
+  const shown = all ? vendors : vendors.slice(0, visible)
   const title = reason === 'fix' ? cx('titleFix') : reason === 'convert' ? cx('titleConvert') : cx('title')
   const subtitle = reason === 'convert' ? cx('subtitleConvert', { name: name ?? '' }) : cx('subtitle')
 
@@ -170,14 +172,14 @@ export function ConnectAiDialog({
                       <VendorRow key={c.id} vendor={customVendorOf(c)} connection={c} onConnected={done} onChooseMethods={setStep} />
                     ))}
                   </ul>
-                  {!all && vendors.length > CONNECT_AI_VISIBLE && (
+                  {!all && vendors.length > visible && (
                     <div>
                       <Button variant="ghost" size="sm" data-connect-more onClick={() => setAll(true)}>
                         {cx('more')}
                       </Button>
                     </div>
                   )}
-                  {(all || vendors.length <= CONNECT_AI_VISIBLE) && (
+                  {(all || vendors.length <= visible) && (
                     <div>
                       <Button variant="ghost" size="sm" data-connect-other onClick={() => setManual(true)}>
                         {cx('other')}

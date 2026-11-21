@@ -19,6 +19,8 @@ export interface TraceNode {
   lane: number
   /** 汇总：自己有就用自己的，智能体没有则累加子孙已知的；全不知道 = null */
   cost: number | null
+  /** 汇总费用的币种（同一条轨迹里只有一个连接在花钱，币种一致）；不知道 = null */
+  currency: string | null
   tokens: number | null
 }
 
@@ -31,7 +33,7 @@ const known = (...xs: (number | null)[]) => {
 export function buildTree(spans: WaterfallSpan[]): TraceNode[] {
   const nodes = new Map<string, TraceNode>()
   for (const span of spans) {
-    nodes.set(span.id, { span, children: [], depth: 0, lane: 0, cost: null, tokens: null })
+    nodes.set(span.id, { span, children: [], depth: 0, lane: 0, cost: null, currency: null, tokens: null })
   }
   const roots: TraceNode[] = []
   for (const node of nodes.values()) {
@@ -54,6 +56,7 @@ export function buildTree(spans: WaterfallSpan[]): TraceNode[] {
     const kids = node.children.filter((c) => !seen.has(c.span.id))
     for (const child of kids) resolve(child, depth + 1, agentDepth + (child.span.kind === 'agent' ? 1 : 0), seen)
     node.cost = own ?? (isAgent ? known(...kids.map((c) => c.cost)) : null)
+    node.currency = node.span.costCurrency ?? kids.find((c) => c.cost !== null)?.currency ?? null
     node.tokens = ownTokens ?? (isAgent ? known(...kids.map((c) => c.tokens)) : null)
   }
   roots.sort((a, b) => a.span.start - b.span.start)
@@ -208,6 +211,7 @@ export function laneSegments(agent: TraceNode, now: number, model: WaterfallMode
 export interface TraceMetrics {
   extent: number
   cost: number | null
+  costCurrency: string | null
   tokens: number | null
   /** null = 有不可观察的 Agent，数不出来（不是 0） */
   llmCalls: number | null
@@ -223,6 +227,7 @@ export function computeMetrics(roots: TraceNode[], model: WaterfallModel, now: n
   const m: TraceMetrics = {
     extent: model.duration,
     cost: known(...roots.map((r) => r.cost)),
+    costCurrency: roots.find((r) => r.cost !== null)?.currency ?? null,
     tokens: known(...roots.map((r) => r.tokens)),
     llmCalls: 0,
     toolCalls: 0,
@@ -324,9 +329,9 @@ export function formatTick(seconds: number) {
     : t('trace.ui.tick.seconds', { ns: 'ai', value: formatNumber(Number(seconds.toFixed(1))) })
 }
 
-export function formatCost(cost: number) {
+export function formatCost(cost: number, currency?: string | null) {
   const digits = cost > 0 && cost < 0.01 ? 3 : 2
-  return `$${formatNumber(cost, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`
+  return `${currency === 'CNY' ? '¥' : '$'}${formatNumber(cost, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`
 }
 
 export function formatTokens(n: number) {
@@ -342,5 +347,5 @@ export function spanFigure(node: TraceNode, now: number, replay = false): string
   const text = formatSeconds(Math.max(0, endOf(span, now, replay) - span.start))
   // 回放中还没结束的：费用此刻不知道，只写已经过去的时长
   if (!settledAt(span, now, replay)) return text
-  return node.cost !== null && node.cost > 0 ? `${text} · ${formatCost(node.cost)}` : text
+  return node.cost !== null && node.cost > 0 ? `${text} · ${formatCost(node.cost, node.currency)}` : text
 }

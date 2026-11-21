@@ -150,6 +150,8 @@ function connReasonText(reason: string | null, name: string): string {
       return ai('notice.conn.quota', { name })
     case 'no_model':
       return ai('notice.conn.no_model', { name })
+    case 'hosted':
+      return ai('notice.conn.hosted', { name })
     default:
       return ai('notice.conn.unreachable', { name })
   }
@@ -224,8 +226,10 @@ export function Turn({
   // 连接类失败：还没检查前按错误码说原因，检查过一次就按检查的结论说
   const connName = currentConnection()?.label ?? session.agentLabel
   const checkedOnce = connCheck.phase === 'failed'
-  const connReason = checkedOnce ? connCheck.reason : reasonOfAgentError(agentError)
-  const connAction = actionForReason(connReason, checkedOnce)
+  // 「Tavotto Agent」（内置 AI）：没有 Key 可重填、地址可改、也没有「检查连接」——不论哪种连接类失败，一句话 + 「换个 AI」（改用自己的 Key）
+  const hostedConn = currentConnection()?.hosted === true
+  const connReason = hostedConn ? 'hosted' : checkedOnce ? connCheck.reason : reasonOfAgentError(agentError)
+  const connAction = hostedConn ? 'switch_ai' : actionForReason(connReason, checkedOnce)
   const runConnAction = (a: ConnAction) => {
     if (a === 'check') void connCheck.check()
     else if (a === 'switch_ai') requestConnectAi()

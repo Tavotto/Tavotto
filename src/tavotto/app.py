@@ -125,6 +125,7 @@ from .engine import (
     foreignsource as engine_foreignsource,
     handoff as engine_handoff,
     handoffreceipt as engine_handoffreceipt,
+    hosted_ai as engine_hosted_ai,
     inputbroker as engine_inputbroker,
     inputcopy as engine_inputcopy,
     inputremap as engine_inputremap,
@@ -6168,6 +6169,10 @@ def _license_result(fn, *args, **kwargs):
         return _license_json(fn(*args, **kwargs))
     except engine_license.LicenseError as exc:
         return _license_error(exc)
+    finally:
+        if fn in (engine_license.activate, engine_license.refresh, engine_license.release):
+            # 授权变了（激活 / 刷新 / 解绑，成败都算：刷新可能把令牌标成失效），「Tavotto Agent」这条连接该出现 / 消失：别让能力表的缓存留着旧结论
+            engine_ai.invalidate_capabilities()
 
 
 @app.get("/api/license/status")
@@ -11370,7 +11375,7 @@ def api_ai_fix():
         abort(400)
     conn = engine_fixsession.connection()
     cli_agent = engine_fixsession.cli_agent() if conn is None else None
-    if conn is None and cli_agent is None:
+    if conn is None and cli_agent is None and not engine_hosted_ai.available():
         return jsonify({"ok": False, "reason": "ai_fix_unavailable"})
     ctx = current_ctx()
     try:
@@ -11389,6 +11394,18 @@ def api_ai_fix():
         return _fix_error(engine_fixsession.FixError("fix_script_outside_project", 400))
     script_path = Path(cand) if os.path.isfile(cand) else None
     fix_box = {"sess": sess}
+    # 没有自己的 Key、也没有可用的 CLI：最后兜底用「Tavotto Agent」（内置 AI，ADR 0200）。开任务（联网一次）放在所有本地校验**之后**，
+    # 这样畸形请求不会白开一个任务；开不成 = 一个安静的结果（前端给「改用我自己的 key」/「X 号再试」两条路），不是错误
+    lease = None
+    fix_limits = None
+    if conn is None and cli_agent is None:
+        lease = engine_hosted_ai.lease("fix")
+        if not lease.ok:
+            return jsonify(
+                {"ok": False, "reason": "ai_hosted_unavailable", "hosted": lease.error.public()}
+            )
+        conn = lease.conn()
+        fix_limits = engine_fixsession.hosted_limits(lease)
     if conn is not None:
         model, redactor = engine_fixsession.build_model(conn)
         cli = None
@@ -11416,16 +11433,24 @@ def api_ai_fix():
             audit=engine_fixsession.AuditLog(),
             script_path=script_path,
             locale=body.get("locale"),
+            limits=fix_limits,
+            on_finish=lease.close if lease is not None else None,
             ctx_kwargs={
                 **_fix_session_env(sess),
                 **_fix_application_verification(ctx, fix_box, desktop=_desktop_initiated()),
                 "on_input_remap_changed": _fix_remap_notifier(ctx),
             },
         )
-    except engine_fixsession.FixError as exc:
-        if exc.code == "fix_busy":
-            return jsonify({"ok": False, "reason": "ai_fix_busy"})
-        return _fix_error(exc)
+    except BaseException as exc:
+        if lease is not None:
+            lease.close()  # 会话没起来（忙 / 起不来）：任务不能留着
+        if isinstance(exc, engine_fixsession.FixError):
+            if exc.code == "fix_busy":
+                return jsonify({"ok": False, "reason": "ai_fix_busy"})
+            return _fix_error(exc)
+        raise
+    if lease is not None and fx.on_finish != lease.close:
+        lease.close()  # 没挂上这次的任务（同一个准备会话上已有进行中的修复，start 回了现成的；或已收尾）：关掉，幂等
     return jsonify({"ok": True, "fix_id": fx.id})
 
 

@@ -2,13 +2,13 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「编码 Agent 桥」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_ai_data_recipe.py`、`tests/test_ai_data_template.py`、`tests/test_ai_data_propose.py`、`tests/test_ai_data_merge.py`、`tests/test_ai_structured.py`、`tests/test_ai_data_model.py`、`tests/test_data_figure_bench.py`、`tests/test_ai_data_roles.py`、`tests/test_ai_data_text_tables.py`、`tests/test_ai_agents.py`、`test_ai_login.py`、`test_ai_bridge.py`、`tests/test_ai_probe.py`、`test_ai_capabilities.py`、`test_ai_refresh.py`、`test_ai_history.py`、`test_ai_idempotency.py`、`test_ai_revert_stale.py`、`test_codex_install_cli.py`、`test_managed_cli.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_ai_data_recipe.py`、`tests/test_ai_data_template.py`、`tests/test_ai_data_propose.py`、`tests/test_ai_data_merge.py`、`tests/test_ai_structured.py`、`tests/test_ai_data_model.py`、`tests/test_data_figure_bench.py`、`tests/test_ai_data_roles.py`、`tests/test_ai_data_text_tables.py`、`tests/test_ai_agents.py`、`test_ai_login.py`、`test_ai_bridge.py`、`tests/test_ai_probe.py`、`test_ai_capabilities.py`、`test_ai_refresh.py`、`test_ai_history.py`、`test_ai_idempotency.py`、`test_ai_revert_stale.py`、`test_codex_install_cli.py`、`test_managed_cli.py`、`test_hosted_ai.py`、`test_hosted_ai_fix.py`
 > `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml；revert 只回滚本次 AI 那一版（细则见 `ai-agent-bridge.md`）
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 240
-改到: `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`ai_structured.py`、`ai_data_*.py`、`codexinstall.py`、`managedcli.py`、`resources/managed_cli_lock.json`、`/api/ai/*`
+改到: `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`ai_structured.py`、`ai_data_*.py`、`hosted_ai.py`、`codexinstall.py`、`managedcli.py`、`resources/managed_cli_lock.json`、`/api/ai/*`
 主题: 编码 Agent 桥 → `ai-agent-bridge.md`
 必守要点: 「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml
 -->
@@ -33,6 +33,19 @@ order: 240
   `app.refresh_project` 是四条路径（手动 / watcher / codex / ai）唯一的漏斗，
   `project_refresh_completed` 遥测只在这一处、只收这四个来由。
 - **改图收尾的跟进建议（`task.suggestions`，闭集 `kind: legend_label`）**：内置执行器的 `check`（`ai_figure_edit.agent_check`）渲染后，按 stem × gid 比 manifest `editable` 的 `label` 值（`label_changes`，**不看 identity / 数据指纹**，与数据检查的结论互不依赖），记进 `cand.extras["label_findings"]`；提交后那次渲染补最终值；`_settle_task` 在成功（`completed`）+ 已提交 + 最终回到原文 + 图例项正显示该文字（`label_visible_in_legend`）时才写 `{kind, stem, gid, legend_gid, from, to}`（`legend_gid` = 最终版里 `legend_entry.source_gid` 绑定该曲线的可见图例项；可见性也只认这个绑定，别处同名文字不算），只含这两段已画在图上的文字。CLI 路径（Codex / Claude Code）提交前不渲染，看不到被改过的 label，没有这项。前端点「一起改」走画布 `setOverride(panel, legend_gid, 'text', to, true)`（写曲线 `label` 不会动图例），不经 AI、不写脚本。看护 `tests/test_ai_legend_label_followup.py`、`tests/test_ai_edit_check_app.py`、`web/src/components/ai/legendLabelNotice.test.tsx`。
+- **内置 AI「Tavotto Agent」（`engine/hosted_ai.py`，ADR 0200，功能键 `hosted-ai`）是一条虚拟连接，不是第三个执行器**：`PROVIDER_ID = "tavotto-agent"`，
+  只在 `hosted_ai.available()`（没被 `TAVOTTO_NO_HOSTED_AI=1` 关、网关端点合规——正式开关 `PRODUCTION_LIVE=False` 时只认 `TAVOTTO_HOSTED_AI_ENDPOINT`、本机授权令牌有效且带
+  `hosted-ai`）时出现在连接视图；**从不写进 config.json、没有用户 Key、id 保留**（`ai_providers._clean` 不让用户的连接占它）。**读取路径**（`ai_providers.lookup` / `resolve` /
+  `ai_connections.resolve_connection`）能看见它，**一切写入路径**（`get` / 保存 / 探测 / `/check`）看不见。`license.has()` 只在 `hosted_ai.available()` 里被调（`test_license_callsites` 登记），
+  功能代码里没有任何权益判断。路由只有内置循环（`route_for` 最前一条），绝不走 CLI。
+  **任务生命周期**：开任务 = 设备签名（`op = "ai_task"`，`license.sign_op`）的一次 POST `/v1/task`，换回任务通行证 + 这个任务的上限；之后内置执行器照常发请求（通行证当 API key，
+  模型名固定 `tavotto-auto`，只进子进程环境变量、不进 argv / 日志 / 事件 / 落盘；形状 `tvk_task_…` 在 `diagnostictext` 里按值抹）；结束时 `Lease.close()`（幂等、永不抛）。
+  四条路径：**改图 / 转换**（`ai_bridge.run` 是外壳：选了它才在**脚本锁之外**开任务，开不成带进 `_run`、在去重之后抛 `ai_hosted_unavailable`；任务在 `_pump` 的 finally 里关，没起来的退出路径在外壳里关；
+  `_respawn` 修正轮复用同一个任务）、**修复**（`/api/ai/fix` 在没有自己的 Key、没有可用 CLI 时兜底，`FixSessions.start(on_finish=…)` 在任何结局收尾时关）、**数据出图**
+  （`ai_structured._call` 开任务；`ai_data_roles.judge` 让表头 + 列角色两问共用一个任务）。**隐式路径里自己的 Key 永远优先**（`first_key_connection` 不选它）。
+  失败（额度 / 每日上限 / 未授权 / 熔断 / 网络）一律是闭集 `HostedError`，对用户是安静的两条路（改用自己的 Key / 稍后再试），不是错误；任务中途 402 `task_budget_exhausted` 走
+  `loop.classify_status` → `budget/tokens`，与 token 上限同一条结局。网关回的 `X-Tavotto-Charged` 经 `Usage.charged_micro` → `usage` 事件 → `ai_pricing.usage_with_cost`
+  成为执行追踪里的权威成本（CNY、`estimated=False`），**只认连接确实是 Tavotto Agent 的**。
 - **「支持哪些 Agent」的唯一权威是 `engine/ai_agents.py` 的 `AGENT_REGISTRY`**
   （ADR 0015，改动前先读）。候选探测、启动验证、无副作用就绪检查、命令构造、
   流式输出分类、一键安装包名，全部由各自的 `AgentDefinition` 适配器给出。

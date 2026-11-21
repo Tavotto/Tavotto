@@ -323,6 +323,15 @@ export default interface Resources {
       },
       "viewDiff": "查看差异"
     },
+    "hosted": {
+      "daily": "{{name}} 今天的额度用完了。",
+      "dailyOn": "{{name}} 今天的额度用完了，{{date}}再用。",
+      "notEntitled": "这台电脑上的 {{name}} 暂时用不了。",
+      "quota": "{{name}} 的额度用完了。",
+      "quotaOn": "{{name}} 的额度用完了，{{date}}恢复。",
+      "unavailable": "{{name}} 暂时连不上，稍后再试。",
+      "useOwnKey": "改用我自己的 Key"
+    },
     "markdown": {
       "image": "[图片：{{alt}}]",
       "untitled": "未命名"
@@ -338,6 +347,7 @@ export default interface Resources {
       "checkConnection": "检查连接",
       "checking": "检查中",
       "conn": {
+        "hosted": "{{name}} 暂时用不了",
         "no_model": "{{name}} 没有这个模型",
         "quota": "{{name}} 额度用完了",
         "unauthorized": "{{name}} 的密钥不对",
@@ -522,6 +532,7 @@ export default interface Resources {
         "attempt": "第几次",
         "changed": "文件有改动",
         "cost": "费用",
+        "costCharged": "网关实际结算的费用（人民币）",
         "costEstimated": "按定价表估算（{{version}}），不是账单",
         "errorCode": "错误码",
         "execution": "执行方式",
@@ -2636,6 +2647,8 @@ export default interface Resources {
         "error": "连接异常",
         "failed": "没能连上，请检查 Key 后重试。",
         "getKey": "去 {{name}} 获取 ↗",
+        "hostedInUse": "使用中",
+        "hostedUse": "使用",
         "keyLabel": "API Key",
         "keyMissing": "请填写密钥",
         "keyPlaceholder": "粘贴 API Key",
@@ -2649,9 +2662,11 @@ export default interface Resources {
           "hintChatgpt": "用 ChatGPT 订阅登录",
           "hintClaude": "用 Claude 订阅登录",
           "hintCodingPlan": "用 Coding Plan 的 Key",
+          "hintHosted": "高级版自带，不用申请 Key",
           "hintKey": "填写 {{name}} API Key",
           "hintKimiCode": "用 Kimi Code 会员的 Key",
           "hintLogin": "用 {{name}} 登录",
+          "hosted": "内置",
           "kimiCode": "Kimi Code 会员",
           "subscription": "订阅登录"
         },

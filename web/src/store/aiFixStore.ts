@@ -30,12 +30,14 @@ import {
   type AiFixCard,
   type AiFixState,
 } from '@/lib/api'
+import { hostedFailureOfFix } from '@/lib/hostedAi'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { onCurrentProjectChange } from '@/lib/session'
 import { useAiStore } from '@/store/aiStore'
 import { useConvertStore } from '@/store/convertStore'
 import { requestConnectAi, useConnectAiStore } from '@/store/connectAiStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
+import { announceHostedFailure } from '@/store/hostedAiNotice'
 import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useUiStore } from '@/store/uiStore'
@@ -228,6 +230,11 @@ export const useAiFixStore = create<AiFixStoreState>((set, get) => {
           setPhase('running', { fixId: res.fix_id, pj: guard.pj ?? undefined })
           schedule(key)
           void get().refresh(key)
+        } else if (hostedFailureOfFix(res)) {
+          // 「Tavotto Agent」（内置 AI）没能开任务（额度 / 每日上限 / 授权 / 暂时连不上）：不是「AI 不会修」。
+          // 卡片原样退回失败卡（用户还可以再点），一条安静的状态胶囊说原因 + 「改用我自己的 Key」
+          get().clear(key)
+          announceHostedFailure(hostedFailureOfFix(res)!)
         } else setPhase(res.reason === 'ai_fix_busy' ? 'busy' : 'unavailable')
       } catch {
         if (!guard.still()) return
