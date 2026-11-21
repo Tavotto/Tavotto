@@ -13,16 +13,36 @@ import { startGutterDrag } from './gutterDrag'
 
 /** 分隔线命中区的屏幕宽度（px）：看不见的细条，悬停才显出一根 1 px 线 */
 const HIT_PX = 8
-/** 握柄：分隔线中点的一颗小圆角条（屏幕 px，不随缩放变）；分隔线比它加两头留白还短就不画 */
-const GRIP_LONG = 18
-const GRIP_SHORT = 3
-const GRIP_MIN_STRIP = GRIP_LONG + 8
+/** 握柄：一颗 18 px 的瓷白小圆钮（屏幕 px，不随缩放变，样式见 index.css `.ql-knob`）；分隔线比它加两头留白还短就不画 */
+const GRIP = 18
+const GRIP_MIN_STRIP = GRIP + 8
+
+/** 圆钮里两枚向外的细箭头（列分隔线左右；行分隔线整颗转 90°） */
+function Chevrons() {
+  return (
+    <svg viewBox="0 0 14 14" width={10} height={10} overflow="visible">
+      <path className="ql-knob-l" d="M5 3.5 L2 7 L5 10.5" />
+      <path className="ql-knob-r" d="M9 3.5 L12 7 L9 10.5" />
+    </svg>
+  )
+}
+
+/** 读数里的一个尺寸：数字 + 淡一档的单位 */
+function Mm({ v }: { v: number }) {
+  return (
+    <>
+      {(Math.round(v * 10) / 10).toFixed(1)}
+      <span className="ql-readout-unit">mm</span>
+    </>
+  )
+}
 
 /**
  * 一键排版之后行 / 列之间的分隔线命中区（高级功能 `quick-layout`；没解锁时什么都不画）。
  * 只在记忆有效（`quickLayoutValid`）、选择工具空闲时挂。鼠标在页面上（或选中了这份排版里的图）时，每条分隔线中点淡入一颗淡色握柄（没条件时仍挂着但透明）
  * （`data-quick-layout-grip`，只提示「这里能拖」，在命中区里面、不另吃点击）；悬停命中区：握柄变选中蓝 + 一根 1 px 线 + 缩放光标，
- * 原生气泡「拖动调整比例」，没有别的文字。
+ * 原生气泡「拖动调整比例」，没有别的文字。握柄是瓷白小圆钮 + 两枚向外的细箭头（维护者 2026-11-21 从 D3 三版里选「瓷白」）：
+ * 悬停边线变蓝、微微抬起、箭头张开；拖动中另画一颗按下态的钮跟着分隔线走，旁边一枚浅色小胶囊读出两侧的毫米数。
  * 拖动中图本身跟手（`quickLayoutFollow`），同时每张图都画淡蓝的新格轮廓（`useQuickLayoutStore.preview`，松手后等方案期间留着；维护者 2026-11-20 要求框要在）。命中区在选框覆盖层之下。
  */
 export function QuickLayoutGutters() {
@@ -40,6 +60,7 @@ export function QuickLayoutGutters() {
   const kind = useInteractionStore((s) => s.kind)
   const busy = useQuickLayoutStore((s) => s.busy)
   const preview = useQuickLayoutStore((s) => s.preview)
+  const drag = useQuickLayoutStore((s) => s.drag)
   const page = useDocumentStore((s) => s.doc.page)
   // 鼠标在页面上：指针坐标（mm，按帧节流）落在页面矩形里。只订阅布尔，指针在页内移动不重渲染
   const overPage = useInteractionStore((s) =>
@@ -71,38 +92,32 @@ export function QuickLayoutGutters() {
             <div
               key={`${g.axis}-${g.index}`}
               data-quick-layout-gutter={`${g.axis}-${g.index}`}
-              className={cn('group pointer-events-auto absolute', vertical ? 'cursor-col-resize' : 'cursor-row-resize')}
+              className={cn('ql-gutter group pointer-events-auto absolute', vertical ? 'cursor-col-resize' : 'cursor-row-resize')}
               style={style}
               title={t('quickLayout.gutterTip')}
-              onPointerDown={(e) => startGutterDrag(e, g)}
+              onPointerDown={(e) => startGutterDrag(e, g, along)}
             >
               {px(bandEnd - g.from) >= GRIP_MIN_STRIP && (
                 <span
                   aria-hidden
                   data-quick-layout-grip={showGrips ? 'shown' : 'hidden'}
-                  className={cn(
-                    // 握柄是画在纸上的记号：用纸上的墨（两套主题同值，不跟界面 ink 变浅）；悬停换成选中蓝
-                    'pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full bg-[var(--color-paper-ink-3)]',
-                    'transition-opacity duration-fast motion-reduce:transition-none',
-                    showGrips ? 'opacity-60 group-hover:bg-sel group-hover:opacity-100' : 'opacity-0',
-                  )}
-                  style={
-                    vertical
-                      ? { width: GRIP_SHORT, height: GRIP_LONG, left: '50%', top: `${along * 100}%` }
-                      : { width: GRIP_LONG, height: GRIP_SHORT, top: '50%', left: `${along * 100}%` }
-                  }
-                />
+                  className={cn('ql-knob pointer-events-none absolute', !vertical && 'ql-knob-row', !showGrips && 'opacity-0')}
+                  style={vertical ? { left: '50%', top: `${along * 100}%` } : { top: '50%', left: `${along * 100}%` }}
+                >
+                  <Chevrons />
+                </span>
               )}
               <span
                 aria-hidden
                 className={cn(
-                  'absolute bg-sel opacity-0 group-hover:opacity-100',
+                  'absolute bg-sel opacity-0 transition-opacity group-hover:opacity-40',
                   vertical ? 'inset-y-0 left-1/2 w-px -translate-x-1/2' : 'inset-x-0 top-1/2 h-px -translate-y-1/2',
                 )}
               />
             </div>
           )
         })}
+      {drag && <DragKnob drag={drag} px={px} panX={panX} panY={panY} />}
       {preview &&
         // 拖动中每张图都画淡蓝预览框（图本身也跟手；维护者 2026-11-20：框要在，一眼看出新格子）
         Object.entries(preview)
@@ -115,5 +130,53 @@ export function QuickLayoutGutters() {
           />
         ))}
     </div>
+  )
+}
+
+/** 拖动中那条分隔线：按下态的圆钮跟着走，旁边浅色小胶囊读出两侧的宽（高）。不吃指针（拖动由 trackPointer 接管） */
+function DragKnob({
+  drag,
+  px,
+  panX,
+  panY,
+}: {
+  drag: NonNullable<ReturnType<typeof useQuickLayoutStore.getState>['drag']>
+  px: (mm: number) => number
+  panX: number
+  panY: number
+}) {
+  const vertical = drag.axis === 'col'
+  const at = drag.from + (drag.to - drag.from) * drag.along
+  const x = panX + px(vertical ? drag.pos : at)
+  const y = panY + px(vertical ? at : drag.pos)
+  return (
+    <>
+      <span
+        aria-hidden
+        className={cn('pointer-events-none absolute bg-sel', vertical ? 'w-px -translate-x-1/2' : 'h-px -translate-y-1/2')}
+        style={
+          vertical
+            ? { left: x, top: panY + px(drag.from), height: px(drag.to - drag.from) }
+            : { top: y, left: panX + px(drag.from), width: px(drag.to - drag.from) }
+        }
+      />
+      <span
+        aria-hidden
+        data-quick-layout-drag-grip
+        className={cn('ql-knob ql-knob-active pointer-events-none absolute', !vertical && 'ql-knob-row')}
+        style={{ left: x, top: y }}
+      >
+        <Chevrons />
+      </span>
+      <span
+        data-quick-layout-readout
+        className={cn('ql-readout pointer-events-none absolute', vertical ? 'ql-readout-col' : 'ql-readout-row')}
+        style={{ left: x, top: y }}
+      >
+        <Mm v={drag.sizes[0]} />
+        <span aria-hidden className="ql-readout-sep" />
+        <Mm v={drag.sizes[1]} />
+      </span>
+    </>
   )
 }

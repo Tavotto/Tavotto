@@ -68,11 +68,24 @@ export const useQuickLayoutStore = create<{
   preview: Record<string, Box> | null
   /** 拖动中正由图本身（而不是淡色轮廓）跟手的那几张图的 id：这些不再画轮廓 */
   live: readonly string[] | null
+  /** 正在拖的那条分隔线（mm）：拖动中把手跟着走、读出两侧的宽（高）；松手后等方案期间留着 */
+  drag: GutterDragView | null
 }>(() => ({
   busy: false,
   preview: null,
   live: null,
+  drag: null,
 }))
+
+/** 拖动中的分隔线：位置（已含位移）、沿线范围、把手所在的比例位置、两侧尺寸 */
+export interface GutterDragView {
+  axis: 'col' | 'row'
+  pos: number
+  from: number
+  to: number
+  along: number
+  sizes: [number, number]
+}
 
 /** 拖分隔线的画面跟手层：方案 commit 之后告诉它最终的框（它负责保持到图真正落位） */
 export interface QuickLayoutCommitObserver {
@@ -246,7 +259,7 @@ export async function runQuickLayoutRatios(
   const doc = useDocumentStore.getState().doc
   const memo = doc.quickLayout
   if (!quickLayoutValid(memo, doc.objects)) {
-    useQuickLayoutStore.setState({ preview: null })
+    useQuickLayoutStore.setState({ preview: null, drag: null })
     return 'stale'
   }
   const byId = new Map(doc.objects.map((o) => [o.id, o] as const))
@@ -256,7 +269,7 @@ export async function runQuickLayoutRatios(
     .filter((o): o is PanelObject => o?.type === 'panel')
   // 记着的网格里的图现在都得还能排；排不了（被旋转 / 换成位图了）= 这份记忆不作数
   if (!cellPanels.every(resizable)) {
-    useQuickLayoutStore.setState({ preview: null })
+    useQuickLayoutStore.setState({ preview: null, drag: null })
     return 'stale'
   }
   return runPlan({
@@ -432,7 +445,7 @@ async function runPlan(run: PlanRun): Promise<QuickLayoutOutcome> {
     })
     return 'applied'
   } finally {
-    useQuickLayoutStore.setState({ busy: false, preview: null, live: null })
+    useQuickLayoutStore.setState({ busy: false, preview: null, live: null, drag: null })
   }
 }
 

@@ -1,5 +1,5 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import { dragGutter, quickLayoutValid, rowHeightsMm, type Gutter } from '@/lib/quickLayoutGrid'
+import { dragGutter, gutterPair, quickLayoutValid, rowHeightsMm, type Gutter } from '@/lib/quickLayoutGrid'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { runQuickLayoutRatios, useQuickLayoutStore } from '@/store/quickLayoutActions'
@@ -14,7 +14,7 @@ import { QuickLayoutFollow } from './quickLayoutFollow'
  * 一次请求 + 一次 commit，跟手一直保持到新图落位（见 `quickLayoutFollow`）。
  * Esc / pointercancel 与松手分开：取消 = 原样放回、什么都不发。
  */
-export function startGutterDrag(e: ReactPointerEvent, gutter: Gutter) {
+export function startGutterDrag(e: ReactPointerEvent, gutter: Gutter, along = 0.5) {
   if (e.button !== 0) return
   const d0 = useDocumentStore.getState().doc
   const memo = d0.quickLayout
@@ -28,18 +28,26 @@ export function startGutterDrag(e: ReactPointerEvent, gutter: Gutter) {
   let last: ReturnType<typeof dragGutter> = null
   const follow = new QuickLayoutFollow(memo)
   const live = follow.followedIds
+  const pair = gutterPair(memo, gutter.axis, gutter.index)
   trackPointer(e, {
     onMove: (_ev, dxPx, dyPx) => {
       last = dragGutter(memo, gutter.axis, gutter.index, pxToMm(horizontal ? dxPx : dyPx, t0))
       if (!last) return
-      useQuickLayoutStore.setState({ preview: last.boxes, live })
+      const d = last.delta
+      useQuickLayoutStore.setState({
+        preview: last.boxes,
+        live,
+        drag: pair
+          ? { axis: gutter.axis, pos: gutter.pos + d, from: gutter.from, to: gutter.to, along, sizes: [pair[0] + d, pair[1] - d] }
+          : null,
+      })
       follow.update(last.boxes)
     },
     onEnd: (moved, _ev, end) => {
       useInteractionStore.getState().end()
       if (end.cancelled || !moved || !last) {
         follow.restore()
-        useQuickLayoutStore.setState({ preview: null, live: null })
+        useQuickLayoutStore.setState({ preview: null, live: null, drag: null })
         return
       }
       const rowsMm = rowHeightsMm(memo, last.boxes)
@@ -55,7 +63,7 @@ export function startGutterDrag(e: ReactPointerEvent, gutter: Gutter) {
           if (outcome !== 'applied') follow.restore()
         })
         .catch(() => follow.restore())
-        .finally(() => useQuickLayoutStore.setState({ preview: null, live: null }))
+        .finally(() => useQuickLayoutStore.setState({ preview: null, live: null, drag: null }))
     },
   })
 }
