@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from support import procprobe
 from tavotto.engine import ai_agents, ai_bridge, ai_structured as S
 
 REAL_FIND = S.find_cli_connection
@@ -604,12 +605,4 @@ def test_the_real_runner_kills_the_whole_process_tree_on_timeout(tmp_path):
     )
     assert proc.timed_out and time.monotonic() - t0 < 20
     child = int(pidfile.read_text())
-    deadline = time.monotonic() + 5
-    alive = True
-    while alive and time.monotonic() < deadline:
-        try:
-            os.kill(child, 0)
-            time.sleep(0.05)
-        except ProcessLookupError:
-            alive = False
-    assert not alive  # 孙进程也被收掉
+    assert procprobe.wait_gone(child, timeout=5)  # 孙进程也被收掉
