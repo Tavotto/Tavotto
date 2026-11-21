@@ -222,8 +222,12 @@ def _cost(conn: dict, usage: Usage, reported: bool) -> float | None:
         return None
     from . import ai_pricing
 
+    vendor = ai_pricing.vendor_of(conn)
+    # `cost_usd` 只收美元：人民币计价的站点（智谱 / MiniMax 国内站）当没有价，不把人民币数字当美元累加，也不换算。
+    if ai_pricing.currency_of(vendor, conn.get("model")) not in (None, "USD"):
+        return None
     return ai_pricing.estimate(
-        ai_pricing.vendor_of(conn),
+        vendor,
         conn.get("model"),
         input_tokens=usage.input_tokens,
         cached=usage.cached_input_tokens,
