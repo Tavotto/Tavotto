@@ -913,7 +913,7 @@ def _value_problems(
         for k, xv, yv in zip(gk, v.nums(r.x), v.nums(y0)):
             if xv is not None and yv is not None:
                 xs_by.setdefault(k, set()).add(xv)
-        if not xs_by or min(len(x) for x in xs_by.values()) < MIN_X_TREND:
+        if trend_too_few_x(len(x) for x in xs_by.values()):
             P.append(Problem("trend_too_few_x", "x"))
     if spec.key == "paired" and r.x is not None and r.unit is not None:
         # 配对键含分面：每个分面格内逐个体判（同一个体在别的分面里的测量不算它的重复）
@@ -1037,6 +1037,51 @@ def cell_rule_problems(
 
 
 # --------------------------------------------------------------------------- 校验
+#: 大表（`DataSummary.large`，ADR 0178 修订·大表）能画的图元：家族 → 图元集合。**只放行「缩减后画出来的点就是要给人看的东西、不需要对全部行再算统计量」的画法**
+#: （折线 / 阶梯 / 散点 / 点；汇总类图元——误差线、带、柱、箱、小提琴、直方图、密度、拟合线、水平汇总线——要对**全部**行算统计量，
+#: 大表上还没有流式的精确实现，一律拒）。图元不在这里 = `mark_not_allowed`（复用既有稳定码，不新增前端文案）。
+LARGE_MARKS: dict[str, frozenset[str]] = {
+    "trend": frozenset({"line", "step", "points"}),
+    "relationship": frozenset({"points"}),
+}
+
+
+def trend_too_few_x(counts) -> bool:
+    """趋势的「不同横轴取值太少」判据（小表 `_value_problems` 与大表 `ai_data_template.large_reduce` 共用这一个谓词）：`counts` 是每个（分面, 分组）里
+    **横轴与第一个 y 都有限**的观测的不同 x 个数（没有这样的观测的格子不在里面）；一个格子都没有、或最少的一个不足 `MIN_X_TREND` 就拒。"""
+    counts = list(counts)
+    return not counts or min(counts) < MIN_X_TREND
+
+
+def _large_problems(recipe: FigureRecipe, s: adf.DataSummary) -> list[Problem]:
+    """大表上这份配方的拒绝项：家族 / 图元不在 `LARGE_MARKS`、层带汇总（`summary` 不是 none）、带「夹着文字格」的处理规则（逐行规则没有流式实现）。"""
+    allowed = LARGE_MARKS.get(recipe.family, frozenset())
+    out: list[Problem] = []
+    for i, layer in enumerate(recipe.layers):
+        if layer.mark not in allowed or layer.summary != SUMMARY_NONE:
+            out.append(Problem("mark_not_allowed", f"layers[{i}].mark", f"large:{layer.mark}"))
+    if recipe.cells:
+        out.append(Problem("mark_not_allowed", "cells", "large"))
+    if recipe.unit is not None:
+        out.append(Problem("mark_not_allowed", "unit", "large"))
+    # 取值类规则里只靠「整表最小 / 最大」就能精确判的：对数轴上的非正值（概览扫描留下了每列的精确最小值）。
+    # 要整表流过才知道的（折线的 x 重复 / 没排序、系列的 x 个数）在缩减那一遍判（`ai_data_template.large_reduce` 的 `LargeRuleError`）。
+    if s.large is not None:
+        stats = s.large.stats
+        if recipe.scale in ("log_y", "log_xy") and any(
+            c in stats and stats[c].lo is not None and stats[c].lo <= 0 for c in recipe.y
+        ):
+            out.append(Problem("log_nonpositive", "scale", "y"))
+        if (
+            recipe.scale in ("log_x", "log_xy")
+            and recipe.x in stats
+            and stats[recipe.x].lo is not None
+            and stats[recipe.x].lo <= 0
+        ):
+            out.append(Problem("log_nonpositive", "scale", "x"))
+    return out
+
+
 def validate_recipe(
     profile: adf.FolderProfile,
     recipe: FigureRecipe,
@@ -1195,6 +1240,8 @@ def validate_recipe(
         if items > MAX_RANKING_ITEMS:
             P.append(Problem("ranking_too_many_items", "x", str(items)))
     P.extend(cell_rule_problems(recipe, s, values))
+    if s.large is not None:
+        P.extend(_large_problems(recipe, s))
     # 取值（只在列都对得上时）
     if values is not None and values.rows and cols_ok:
         if values.columns != s.columns or values.sheet != s.sheet:

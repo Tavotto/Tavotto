@@ -15983,8 +15983,12 @@ def _data_figure_commit(ctx, project: str, session_id: str, item_id: str, rid):
         out["can_delete_script"] = verdict == "mismatch"
         # 候选会话留到 TTL：用户可以接着把同一批里的另一个备选也出成图
         out["cells"] = prepared.cell_stats  # 处理规则实际作用的计数（与图下方说明同一份）
+        if prepared.values.large is not None:  # 大表：画出的是缩减后的点（小表的响应没有这一项）
+            out["reduced"] = engine_ai_data_propose.reduced_of(
+                prepared.values, prepared.selection.recipe
+            )
         out["unplotted"] = {
-            "count": len(prepared.not_plotted),
+            "count": engine_ai_data_propose.unplotted_total(prepared.not_plotted),
             "rows": prepared.not_plotted[:50],
             "code": engine_ai_data_propose.UNPLOTTED_CODE if prepared.not_plotted else None,
         }
