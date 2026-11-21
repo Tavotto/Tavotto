@@ -4,10 +4,10 @@
 `answers.cells`——再由规则 `default_candidates` 生成配方、过 `validate_recipe` / `enforce_order`。闭集配方校验一步没绕过：模型改变的只是「规则在有歧义处
 默认选哪一列」。逐字段降级：哪个字段不合格（列不存在 / 类型对不上 / 角色不在枚举里 / 规则键对不上）就只丢那个字段，回到规则默认，丢弃只记个数。
 
-* **列角色闭集** `ROLES`：`time` / `ordered_x` / `measure` / `group` / `replicate_unit` / `row_id` / `unit_label` / `note` / `other`。
+* **列角色闭集** `ROLES`：`time` / `ordered_x` / `measure` / `group` / `replicate_unit` / `row_id` / `error` / `unit_label` / `note` / `other`。
   `replicate_unit` **永远不会**变成用户确认过的事实（`Confirmed.unit_col`）：它只用来让规则别把这一列当 y / x / 分组。
 * **何时采纳**（`suggest`）：规则会问（选值 / 选分组 / 选横轴）的地方，用模型的选择；规则唯一确定了某个角色、但模型明确说那一列是
-  `row_id` / `note` / `unit_label` / `replicate_unit` / `other`（y 还包括「不是 measure」，分组还包括「是 measure / time」）才推翻它；其余保持规则结果。
+  `row_id` / `note` / `unit_label` / `replicate_unit` / `error` / `other`（y 还包括「不是 measure」，分组还包括「是 measure / time」）才推翻它；其余保持规则结果。
 * **四处「够得到」的采纳**（模型明确判断 + 列客观满足，否则丢该项回规则；谓词在 `ai_data_recipe`）：多列纵轴（`multi_y_ok`：2–3 个同单位数值列、非编号列、角色都是
   `measure`，`answers.y` 为数组）；有分组时的横轴（角色 `time` / `ordered_x`，且是规则的横轴候选）；编号样文字列当分组（角色 `group` 且 `id_group_ok`）；
   整数编码的数值列当分组（`knockout` 0 / 1：角色 `group` 且 `numcat_pick_ok`——非空值全是整数、2–6 个取值、有重复、不是编号样的列；规则从不自己把它当分组，
@@ -60,6 +60,7 @@ ROLES: dict[str, str] = {
     "group": "分类分组（对照 / 处理、基因型、药物名、批次类别）",
     "replicate_unit": "同一个对象的编号（小鼠号、受试者、样品重复号），多行共用同一个编号表示同一对象的重复测量",
     "row_id": "行号或流水号，每行一个，不是要比较的量",
+    "error": "误差或离散度（sd、sem、se、std、stderr、ci、err、误差、标准差、标准误），是另一列测量值的附属量，不单独画在纵轴上",
     "unit_label": "单位或量纲说明（如 mg/L、%）",
     "note": "备注、说明、自由文字",
     "other": "以上都不是，或看不出来",
@@ -106,6 +107,8 @@ def system_prompt() -> str:
         "每行都不同且单调递增的整数列多半是 `row_id`；同一个值反复出现、个数远小于行数的编号列多半是 `replicate_unit`。\n"
         "- 批次、平行样、重复、板号这类整数列（只有少数几个取值、在每个分组里反复出现、不单调）是 `replicate_unit`，不是横轴。"
         '`x` 只给时间、剂量、浓度、温度这类取值本身有先后或大小意义的量；表里没有这样的列就给 `"none"`，不要拿剩下的整数列凑。\n'
+        "- 已经汇总过的表里，均值旁边的 sd / sem / se / ci 这类列是 `error`，不是 `measure`，也不要放进 `picks.y`；"
+        "样本量 `n` / `count` 这类列给 `other`。\n"
         "- 拿不准就给 `other`，不要猜。一列只能有一个角色。\n"
         "- `picks` 是你建议的默认画法：`y` 是测量值的列名数组（最多 3 个，同单位才放多个），`x` 是横轴的列名，"
         '不该有有序横轴就给 `"none"`，`group` 是颜色 / 比较分组的列名，不该分组给 `"none"`。拿不准的角色给 `"unsure"`。'
@@ -495,7 +498,7 @@ def _valid_pick(
 
 
 #: 模型说「这一列是它们之一」就不该当横轴（编号 / 备注 / 单位说明 / 其它）
-_NOT_AN_AXIS = frozenset({"row_id", "note", "unit_label", "replicate_unit", "other"})
+_NOT_AN_AXIS = frozenset({"row_id", "note", "unit_label", "replicate_unit", "error", "other"})
 
 
 def _vetoed(key: str, role: str | None) -> bool:

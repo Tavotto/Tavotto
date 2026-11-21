@@ -354,7 +354,7 @@ interval / trajectories / dose_response / profile）。批次 2 / 3 在本 PR �
 
 **目标**：让默认的横轴 / 纵轴 / 分组更常是对的（规则在有歧义处只能猜「最后一个数值列 / 最左一列」）。**模型只给「列判断」，不出配方**：判断被翻译成 `propose` 本来就接受的三种输入——`answers.y / x / group`（`none` = 不要）、`header_rows`、`answers.cells`——配方仍由规则 `default_candidates` 生成并过 `validate_recipe` / `enforce_order`，闭集配方校验一步没绕过。
 
-**列角色闭集**：`time` / `ordered_x` / `measure` / `group` / `replicate_unit` / `row_id` / `unit_label` / `note` / `other`。**`replicate_unit` 永远不会变成用户确认的事实**（`Confirmed.unit_col` 只来自用户）：它只让规则别把这一列当 y / x / 分组；响应里的建议只含 `y` / `x` / `group` / `cells`，没有 `design` / `unit`。
+**列角色闭集**：`time` / `ordered_x` / `measure` / `group` / `replicate_unit` / `row_id` / `error`（sd / sem 这类误差列：不当纵轴，2026-11-21 加）/ `unit_label` / `note` / `other`。**`replicate_unit` 永远不会变成用户确认的事实**（`Confirmed.unit_col` 只来自用户）：它只让规则别把这一列当 y / x / 分组；响应里的建议只含 `y` / `x` / `group` / `cells`，没有 `design` / `unit`。
 
 **校验与降级（逐字段）**：形状层严格（未知键 / 类型不对整份拒收 = `invalid_output`，不重试）；取值层逐字段——列不存在、角色不在枚举、重复给同一列、角色与列的类型对不上（`measure` 必须是 `numeric_like`、`time` / `ordered_x` 必须是日期或数值、`group` 必须在分组列里）、选择与自己给的角色矛盾、多 y 列不满足下面的客观条件、处理规则的键对不上 / 列没夹文字 / 不是最终用到的列，各丢各的，只记丢弃个数，回到规则默认。**采纳策略**：规则会问的地方（选值 / 选分组 / 选横轴）用模型的选择；规则唯一确定了某个角色、但模型明确说那一列不能当这个轴（y 的角色不是 `measure`；x 是 `row_id` / `note` / `unit_label` / `replicate_unit` / `other`；分组不是 `group`）才推翻；其余保持规则结果。用户的回答永远优先：请求里已有 `answers.y / x / group / cells` 或 `header_rows` 就不起模型任务（也避开「采纳建议 → 再来一次 → 再起任务」的循环）。
 
