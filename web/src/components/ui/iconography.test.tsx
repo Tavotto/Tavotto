@@ -64,6 +64,7 @@ const SVG_ALLOWLIST: Record<string, number> = {
   '/src/canvas/PathView.tsx': 1, // 画布自由路径本体（ADR 0185）
   '/src/canvas/OverlaySvg.tsx': 1, // 选框 / 手柄 / 参考线覆盖层
   '/src/canvas/PageEdgeResize.tsx': 1, // 拖页面边的尺寸标注（引出线 + 双箭头，画布叠加层）
+  '/src/canvas/QuickLayoutGutters.tsx': 1, // 一键排版分隔线把手里的两枚细箭头（画布叠加层；两段路径各自张开，不走图标集的比例缩放，ADR 0199）
   '/src/canvas/IssueSpotlight.tsx': 1, // 定位舞台灯的暗幕与受光遮罩（画布叠加层）
   '/src/components/ui/Sketch.tsx': 1, // 空状态手帐线稿（54×42 的插图，不是图标；一个 <svg> 出 11 幅）
   '/src/components/ui/EdgeProgress.tsx': 1, // 沿对话框外框走的进度描边（画的是卡片外框本身，ADR 0187 §八）
