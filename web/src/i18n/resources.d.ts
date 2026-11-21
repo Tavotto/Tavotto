@@ -138,11 +138,13 @@ export default interface Resources {
       },
       "draft": {
         "allText": "这张表里都是文字，没有能画的数字。",
+        "cancelled": "已取消，这个文件没读完。",
         "collapse": "收起",
         "expand": "展开",
         "failed": "这次没画出来，数据没问题。",
         "guessRow": "把第 {{n}} 行当作列名。不对就点对的那一行。",
         "pickLead": "点一张，放进画布接着改。",
+        "readAgain": "重新读取",
         "stripInfo": "前 {{shown}} 行，共 {{total}} 行 · {{columns}} 列",
         "unreadable": "这个文件不是表格，读不了。"
       },
@@ -226,6 +228,10 @@ export default interface Resources {
         "from": "用 {{file}} 画的",
         "undo": "撤销"
       },
+      "reduced": {
+        "hint": "整张表{{rows}}行，这张图画的是其中有代表性的{{kept}}个点，最大最小值都留着。",
+        "text": "{{rows}}行里取{{kept}}个点"
+      },
       "result": {
         "mismatch": "画出来的图和你的数据对不上，所以没有打开它。",
         "unknown": "图画好了，数据核对没能完成。",
@@ -237,8 +243,11 @@ export default interface Resources {
         "split": "按「{{column}}」再分开"
       },
       "working": {
+        "cancel": "取消",
+        "cancelHint": "不再等这次读取，随时可以重新读。",
         "drawing": "正在画…",
         "reading": "正在读…",
+        "readingLarge": "正在读一个大文件，要一会儿…",
         "slow": "还在画，数据多会久一点。"
       }
     },
