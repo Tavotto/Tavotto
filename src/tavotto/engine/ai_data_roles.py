@@ -503,6 +503,17 @@ def _vetoed(key: str, role: str | None) -> bool:
     return role != "group"
 
 
+def _multi_y_without_x(entry, hint, loop: dict, key: str, valid: dict) -> bool:
+    """模型给的多列纵轴，配上（模型给的 / 规则默认的）横轴后没有有序横轴吗？是 = 不采纳：分布 / 比较类配方只画第一列。"""
+    if key != "y" or not isinstance(valid[key], list):
+        return False
+    trial = {**loop, "y": valid["y"]}
+    if "x" not in trial:
+        trial["x"] = valid.get("x", "unsure")
+    res = recipe_mod.resolve_roles(entry, hint, trial)
+    return not (isinstance(res, recipe_mod.Roles) and res.x_ord is not None)
+
+
 def suggest(
     entry: adf.TableEntry,
     hint: str | None,
@@ -533,6 +544,9 @@ def suggest(
             key = _QUESTION_KEY.get(res.question_code)
             if key is None or key in loop:
                 break
+            if key in valid and _multi_y_without_x(entry, hint, loop, key, valid):
+                dropped += 1
+                valid.pop(key)  # 不采纳：当模型没给这一项，规则默认
             if key in valid:
                 loop[key] = emit[key] = valid[key]
             else:
@@ -568,6 +582,9 @@ def suggest(
                     loop[key] = emit[key] = pick
                     changed = True
                 continue
+            if key in valid and _multi_y_without_x(entry, hint, loop, key, valid):
+                dropped += 1
+                valid.pop(key)
             if _vetoed(key, roles.get(col)) and key in valid and valid[key] != col:
                 loop[key] = emit[key] = valid[key]
                 changed = True
