@@ -25,7 +25,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import config, license as engine_license
+from . import config, license as engine_license, runtime
 
 LOG = logging.getLogger("tavotto.prohost")
 
@@ -109,6 +109,8 @@ class _Sidecar:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                # 桌面版后台起的隐藏子进程：Windows 上不弹黑框
+                creationflags=runtime.CREATE_NO_WINDOW,
             )
         except OSError as exc:
             raise ProUnavailable("missing", str(exc)) from None
