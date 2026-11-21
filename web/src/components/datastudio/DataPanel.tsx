@@ -53,7 +53,7 @@ export function DataPanel() {
               data-data-suggest
               title={diffTitle || undefined}
               onClick={() => useDataFigureStore.getState().applySuggestion()}
-              className="h-6 shrink-0 rounded-full bg-surface-hover px-2.5 text-xs font-medium text-ink outline-none hover:bg-border focus-visible:focus-ring"
+              className="h-6 shrink-0 rounded-full border border-border bg-surface-hover px-2.5 text-xs font-medium text-ink outline-none hover:bg-border focus-visible:focus-ring"
             >
               {t('dataFigureV2.suggest.apply')}
             </button>
