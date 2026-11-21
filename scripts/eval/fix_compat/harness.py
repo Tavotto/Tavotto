@@ -669,13 +669,16 @@ def cmd_probe(args) -> None:
             prep = run_prep(app, it["script"])
         summ = summarize_report(prep["report"])
         print(pid, json.dumps(summ, ensure_ascii=False), flush=True)
+        # 题库的 `hint` 要与实测对上（tests/test_fix_compat_corpus_hints.py 按最近一轮 baseline 核对）：对不上就当场说
         want = (it.get("hint") or {}).get("code")
-        if want and summ.get("phase") != "completed" and summ.get("outcome_code") != want:
-            # 题库里写的「未修前结局码」是 tests/test_fix_compat_corpus_hints.py 的输入：产品换了码就更新它
+        failing = summ.get("phase") != "completed"
+        if failing and summ.get("outcome_code") != want:
             print(
                 f"  !! corpus.json 的 hint.code 是 {want!r}，实测 {summ.get('outcome_code')!r}",
                 flush=True,
             )
+        elif not failing and want:
+            print("  !! 实测已经出图（不用 AI），corpus.json 里这题的 hint 该去掉", flush=True)
 
 
 def cmd_run(args) -> None:

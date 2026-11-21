@@ -48,9 +48,10 @@ Codex 能随手跑一小段代码看结果再决定下一步。`run_command`（A
 
 ### 第 3 层·离线：评测失败变成提示
 
-- **不花额度的看护**：`scripts/eval/fix_compat/corpus.json` 每道要 AI 动手的题写上 `hint: {code, trace?, tool}`——
-  未修前的结局码（`harness.py probe` 实测；实测与之不符时 probe 当场提示更新）和修好它实际用的工具。
-  `tests/test_fix_compat_corpus_hints.py` 核对：每道题都拿得到提示、提示点名那个工具；新加的题不写期望也红。
+- **不花额度的看护**：`scripts/eval/fix_compat/corpus.json` 里未修前还失败的题写上 `hint: {code, trace?, tool}`——
+  未修前的结局码和修好它实际用的工具。`tests/test_fix_compat_corpus_hints.py` 把它和**实测**对上：`results/` 最近一轮
+  `baseline.jsonl` 里还失败的题必须都写、`code` 等于实测结局码，已经出图（产品自己修好、不用 AI）的题不写；再核对每道题都拿得到
+  点名那个工具的提示。`harness.py probe` 实测与题库不符时当场提示（Codex #2093：看护要量到产品结局，不是手写期望）。
   第一次跑就抓到一处：准备会话报复数 `no_figures_captured`，提示表只认 native 回退的单数，`lib-needs-data-arg` 一直没人指路
   （`hints.SHAPE_ALIASES` 归一）。
 - **提炼的输入**：harness 的 A 组轨迹保留审计 `attempt`（只有码）；`summarize.py` 多一张「提示跟进」表——每次试运行的失败形状、

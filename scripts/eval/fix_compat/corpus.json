@@ -21,10 +21,6 @@
   "script": "figlib.py",
   "files": {
    "figlib.py": "import os\nimport numpy as np\nimport matplotlib\nmatplotlib.use(\"Agg\")\nimport matplotlib.pyplot as plt\n\nOUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), \"lib_out.png\")\n\n\ndef _save(fig, path):\n    fig.savefig(path, dpi=150)\n    return os.stat(path).st_size\n\n\ndef make_figure():\n    x = np.linspace(0, 10, 100)\n    fig, ax = plt.subplots(figsize=(4, 3))\n    ax.plot(x, np.cos(x) * np.exp(-x / 6))\n    ax.set_title(\"damped cosine\")\n    _save(fig, OUT)\n    return fig\n"
-  },
-  "hint": {
-   "code": "no_figure_captured",
-   "tool": "write_launcher"
   }
  },
  "lib-needs-data-arg": {
@@ -88,10 +84,6 @@
   "script": "fig.py",
   "files": {
    "fig.py": "import matplotlib\nmatplotlib.use(\"TkAgg\")\nimport matplotlib.pyplot as plt\n\nfig, ax = plt.subplots(figsize=(4, 3))\nax.plot([0, 1, 2], [0, 1, 4])\nplt.show()\n"
-  },
-  "hint": {
-   "code": "missing_dependency",
-   "tool": "install_packages"
   }
  },
  "stdin-prompt": {
@@ -128,11 +120,6 @@
    "plots/__init__.py": "",
    "plots/helpers.py": "def tidy(ax):\n    ax.set_xlabel('x')\n    ax.set_ylabel('y')\n",
    "plots/fig.py": "import matplotlib\nmatplotlib.use(\"Agg\")\nimport matplotlib.pyplot as plt\nfrom .helpers import tidy\n\nfig, ax = plt.subplots(figsize=(4, 3))\nax.plot([1, 2, 3], [3, 1, 2])\ntidy(ax)\n"
-  },
-  "hint": {
-   "code": "script_error",
-   "trace": "ImportError: attempted relative import with no known parent package",
-   "tool": "write_launcher"
   }
  }
 }
