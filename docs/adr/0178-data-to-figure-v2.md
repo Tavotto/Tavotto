@@ -364,6 +364,8 @@ interval / trajectories / dose_response / profile）。批次 2 / 3 在本 PR �
 * **编号样的文字列当分组**：规则把名字像编号（`sample` 一类）的文字列判成 `id_like`，永不当分组。现在：模型判 `group` 且这列在 `s.groups` 里（`id_group_ok`：文字、2–12 个取值、有取值重复出现——每行都不同的是标签不是分组；数字编号不在其中）才采纳；落地走 `answers.group`（只有点名才进，没点名仍永不当分组），`roles.options.group` 里带上它，并且它不再兼作「重复测量的个体编号」（所有编号样的列都被当了分组时，不再问「同一对象重复测量吗」）。
 * **没做：0/1 数值列当分组（HO-20）**。卡点不在模型判断这一层：`s.groups` 只收文字列，`validate_recipe` 的 `cat` 角色（`_type_ok`）、`_cat`、`eligible`、落盘时对原件的再校验（`ai_data_task`）与模板的分格取数都认 `s.groups`；只在 `_resolve_roles` 放行会得到零个备选或落盘时校验失败。要做得先有一个贯穿配方的「数值列按类别用」事实，见本节后续决议。
 
+**`roles.y` 必须等于每个备选实际画的列（2026-11-21）**：`default_candidates` 最终的 `ys` 多于一列时（规则自己的宽表多 y、模型点名、用户点名一视同仁），只返回画全这些列的备选——目前只有趋势类（每列一条线）；只用第一列的关系图 / 分组比较 / 分布被去掉，记进 `dropped`（原因码用现有的 `roles_invalid`，`detail` = `multi_y_not_drawn`，不加新码）。去完一个不剩（如量纲不同退到第一列）就回到单列（`ys[0]`）重算，不出零备选，`roles.y` 同步变成单列。这是 main 上规则宽表本来就有的不一致（`roles.y` 三列、`scatter_fit` 只画第一列），因此没有模型时宽表的备选列表也少了只画第一列的那几张（主集 / 留出集里 RC-12、HO-05、HO-15、HO-18 各少一张 `scatter_fit`）；默认的 x / y / 分组不变。
+
 **表头 / 单位行**：只在读表 `status == "unsure"`（已有预览）且用户没指定表头行时多问一次，答案必须是预览里的行号、按它重读要读出合格的表（有数值列）、且与嗅探的不同，才采纳，之后对重读的表再问列角色。**单位行强制不做**（不动读表运行时，`PINNED_RUNTIME_NAME` 不变）。
 
 **接法**：`propose(render="lazy")` 先照常返回文字候选；有可用的 Key 连接（`first_key_connection(refresh=False)`；订阅登录、没连、运维关内置 = 没有）时响应多一个 `understanding: {id, state}`，起后台线程（缓存命中则 `ready` 内嵌）。`GET /api/ai/data-figure/understanding/<id>` 轮询（会话认证、项目绑定、只读不联网）：`pending` / `ready`（`answers`、`header_rows`、`roles`、`dropped`）/ `failed`（闭集 `reason`）/ `off`（不存在 / 过期 / 别的项目，不是错误）。前端 `ready` 后把 `answers` 与 `header_rows` 并进原请求再 `propose` 一次、换掉旧会话；没有可用连接时响应里**没有** `understanding` 键、与从前逐字相同（测试钉住，含「有连接时响应只多这一个键」）。不做 `data-overview` 预取，只在显式出图时触发。「重新判断」的后端参数留好（`start(refresh=True)` 忽略缓存），前端以后接。
