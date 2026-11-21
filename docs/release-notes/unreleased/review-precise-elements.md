@@ -1,3 +1,0 @@
-## Reviewers can click a single curve, tick label or text in a shared review link
-
-When you shared a figure for review, clicking a curve on the review page selected a large box around the whole plot, and tick labels could not be picked at all. Tavotto now sends the outline of each element, cut to the part that is visible in the picture, so the review page picks elements the same way the canvas does: a curve highlights along its own path, a tick label on its own. A comment on an element now shows its pin where the reviewer clicked, and the pin follows the element when you move it. Scripts, data and file paths are still never uploaded.

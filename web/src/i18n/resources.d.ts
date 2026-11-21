@@ -759,6 +759,7 @@ export default interface Resources {
       "arrow": "箭头",
       "emptyText": "空文字",
       "panel": "图",
+      "path": "路径",
       "shape": "形状",
       "text": "文字",
       "unknown": "新版对象"
@@ -1473,6 +1474,10 @@ export default interface Resources {
         "canvas-settings": {
           "keywords": "canvas page settings hbsz huabu",
           "label": "画布设置"
+        },
+        "convert-to-path": {
+          "keywords": "convert path zwlj 路径 钢笔",
+          "label": "转为路径"
         },
         "cycle-overlap": {
           "keywords": "cycle overlap twin axis lh lunhuan cd chongdie sszx shuangzongzhou",
@@ -3607,8 +3612,8 @@ export default interface Resources {
       "data_path_outside_project": "这份数据不在当前项目里。",
       "data_ragged": "数据里有几行的列数和表头不一致。",
       "data_sheet_not_found": "这个 Excel 文件里找不到所选的工作表。",
-      "data_too_large": "数据文件太大（超过 5 MB），没有读取。",
-      "data_too_long": "数据行数太多（超过 10 万行），没有读取。",
+      "data_too_large": "数据文件太大，没有读取。",
+      "data_too_long": "数据行数太多，没有读取。",
       "data_too_wide": "数据列数太多（超过 64 列），没有读取。",
       "data_unreadable": "读不了这份数据文件。",
       "data_xlsx_invalid": "这个 Excel 文件已损坏或不是有效的 .xlsx，无法读取。",
@@ -3658,6 +3663,9 @@ export default interface Resources {
       "image_format_mismatch_file": "{{file}} 其实是 {{actual}} 图片，只是扩展名写成了 .{{ext}}，换成真正的 {{claimed}} 文件后再运行。",
       "import_folder_abi_mismatch": "脚本自带的“{{folder}}”文件夹是为 Python {{abi}} 装的，和当前环境（Python {{current}}）不兼容。选“跳过这个文件夹重跑”即可，不需要换 Python。",
       "import_folder_unreadable": "脚本加载的项目外文件夹“{{folder}}”读不了（当前账户没有读取权限）。给这个账户开放读取权限，或把它移出脚本的加载路径后重试；换 Python 环境没有用。",
+      "input_declaration_conflict": "输入声明已更新，请重新读取后再保存。",
+      "input_declaration_invalid": "输入声明或批准资源不可用，请检查文件、运行配置和数据位置。",
+      "input_declaration_unavailable": "暂时无法读取或保存输入声明，请稍后重试。",
       "input_remap_changed": "数据位置刚刚改过，这次结果按旧位置产出，已丢弃。请重试。",
       "input_remap_chosen_invalid": "这个位置用不了：{{path}}。请选一个存在的文件或文件夹。",
       "input_remap_not_found_in_dir": "文件夹 {{path}} 里没有 {{name}}。请选它所在的那个文件夹，或直接选这个文件。",
@@ -3955,6 +3963,7 @@ export default interface Resources {
       "write_back_disabled": "项目是只读的：无法写回原始文件。可在项目设置里恢复可写。",
       "write_back_foreign_file": "{{file}} 是这个脚本里另一张图保存的，写回不会覆盖它，原文件没有改动。",
       "write_back_format_unsupported": "写回只支持 PDF 和 PNG 素材，这张是 {{format}}。",
+      "write_back_future_props": "这张图里有用更新版本做的修改，这一版写不回去，原文件没动。",
       "write_back_multipage_pdf": "{{file}} 是脚本用 PdfPages 写的 PDF，写回不会覆盖它，原文件没有改动。要拿到编辑后的结果，请用导出。",
       "write_back_persist_failed": "无法写回：写回前的准备失败（{{reason}}）。原文件未做任何改动，请检查文件是否可读、磁盘空间与目录权限后重试。",
       "write_back_warnings": "无法写回：重放时出现了警告。",
@@ -4394,6 +4403,7 @@ export default interface Resources {
       "workdirRootConfirmTitle": "改为在项目根目录里运行？",
       "workdirSuggest": "如果脚本先检查文件在不在，或用专门的读取库读数据，这些在沙盒里找不到项目数据；可以改在脚本所在的目录运行。",
       "workdirSuggestButton": "改为在脚本目录里运行",
+      "writeBackFutureNotice": "这张图里有用更新版本做的修改，这一版写不回去，原文件没动。",
       "writeBackMultipagePdfExport": "导出",
       "writeBackMultipagePdfNotice": "{{file}} 是脚本用 PdfPages 写的多页 PDF，写回只能写进一张图，不会覆盖它，原文件没有改动。编辑后的图请从导出里拿。"
     },
@@ -6596,6 +6606,8 @@ export default interface Resources {
       "clearGuides": "清除参考线",
       "clearJournal": "取消按期刊检查",
       "clearProp": "恢复{{prop}}",
+      "convertToPath": "转为路径",
+      "convertToPathCount": "把 {{count}} 个对象转为路径",
       "createLayoutGroup": "创建{{kind}}",
       "deleteGuide": "删除参考线",
       "deleteObject": "删除 {{name}}",
@@ -7392,6 +7404,7 @@ export default interface Resources {
       "arrangeRef": "参照：{{ref}}",
       "changeKind": "更改为",
       "connectSource": "连接源脚本",
+      "convertToPath": "转为路径",
       "copy": "复制",
       "copyAsAnnotation": "复制为标注",
       "cropRotatedReason": "旋转过的图暂不能裁剪，先取消旋转",
@@ -7755,6 +7768,7 @@ export default interface Resources {
       "sourceLost_other": "源脚本关系已失效，{{count}} 张图已改为普通图片。图片和它们在画布上的摆放都保留着。",
       "styleCopiedArrow": "已复制箭头样式",
       "styleCopiedPanel": "已复制图的样式",
+      "styleCopiedPath": "已复制路径样式",
       "styleCopiedShape": "已复制形状样式",
       "styleCopiedText": "已复制文字样式",
       "styleCopyNeedSelection": "先选中要复制样式的对象",

@@ -1,5 +1,5 @@
 import type { CanvasObject, DashStyle, FigureDocument, LineCap } from '@/types/document'
-import { objectRotation, shapeStrokeOn } from '@/types/document'
+import { objectRotation, readPath, shapeStrokeOn } from '@/types/document'
 import { headSizeFactor, shapeInset, shapeOutline, STROKE_MITER_LIMIT, strokeCap } from './shapeGeometry'
 import { ptToMm } from './units'
 
@@ -107,6 +107,23 @@ function strokeOutset(o: CanvasObject): number {
         hasEnd ? headSizeFactor(o.headSizeEnd) : 0,
       )
       return ptToMm(sw * (1.7 * f + 0.5))
+    }
+    case 'path': {
+      // 自由路径（ADR 0185）：描边居中在曲线上（包围盒按曲线实际范围算），越出半个线宽（方头 √2/2）；
+      // 开放子路径带端型时同箭头（帽半宽 + 线端半宽）；选了尖角时尖角可以伸出去，按斜接上限的保守量算
+      const r = readPath(o)
+      if (!r.strokeOn) return 0
+      const sw = Math.max(o.strokePt, 0.05)
+      const open = r.subpaths.some((sp) => !sp.closed && sp.nodes.length >= 2)
+      const f = open
+        ? Math.max(
+            r.headStart !== 'none' ? headSizeFactor(o.headSizeStart) : 0,
+            r.headEnd !== 'none' ? headSizeFactor(o.headSizeEnd) : 0,
+          )
+        : 0
+      const base = f ? 1.7 * f + 0.5 : capHalf(o.lineCap, o.dash)
+      const miter = o.lineJoin === 'miter' ? STROKE_MITER_LIMIT / 2 : 0
+      return ptToMm(sw * Math.max(base, miter))
     }
     default:
       return 0

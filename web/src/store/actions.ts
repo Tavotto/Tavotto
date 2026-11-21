@@ -20,7 +20,7 @@ import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geomet
 import { clamp, DUPLICATE_OFFSET_MM } from '@/lib/units'
 import { PAGE_MM_MAX, PAGE_MM_MIN } from '@/lib/pageRange'
 import { pickJournal } from '@/lib/journalPick'
-import { bindingFor, builtinEntryById, type JournalPrev } from '@/lib/specBinding'
+import { bindingFor, builtinEntryById, type JournalPrev, type SpecBinding } from '@/lib/specBinding'
 import { DEFAULT_PROFILE_ID } from '@/lib/profile'
 import { useJournalCatalogStore } from './journalCatalogStore'
 import { placePanelInPage } from '@/lib/panelPlacement'
@@ -65,6 +65,7 @@ import type {
   LayoutGroup,
   PanelObject,
   PanelOverride,
+  PathObject,
   ShapeObject,
   TextObject,
 } from '@/types/document'
@@ -107,10 +108,12 @@ import {
 } from '@/types/document'
 import { contentToPageVec, panelContentTransform } from '@/lib/panelTransform'
 import { emitLayoutSaved } from '@/lib/layoutSaved'
-import { applyV2, type V2Patch } from '@/lib/journalV2'
+import { applyV2, pickV2OnlyJournal, type V2IndexEntry, type V2Patch } from '@/lib/journalV2'
 import { useJournalV2Store } from './journalV2Store'
 import { useTimelineStore } from './timelineStore'
 import { hasPendingStyleWork } from './styleWork'
+import { canConvertToPath, toPathObject } from '@/lib/convertToPath'
+import { isFillStrokeMark, styleFamilyOf } from '@/lib/markStyle'
 import { fitStageNow } from '@/store/zoomToSelection'
 
 /** 本文件的历史标签与状态提示都在 workspace 命名空间下 */
@@ -909,9 +912,33 @@ export function setPageSize(w: number, h: number) {
  */
 export function selectJournal(journalId: string, v2: V2Patch | null = null): void {
   const d0 = doc()
-  // 退路只记「选期刊之前」那一份：从一本期刊换到另一本时沿用最初的，不把上一本期刊当成「之前」
+  const prev = journalPrevOf(d0)
+  const pick = pickJournal(journalId, useJournalCatalogStore.getState().catalog, {
+    pageW: d0.page.w,
+    follow: d0.profile?.follow,
+    prev,
+  })
+  // v2 事实（取到了才有）按项叠上去，v2 优先；预检求值器不变（ADR 0155 §14）
+  pick.binding = applyV2(pick.binding, v2)
+  useJournalV2Store.getState().remember(journalId, v2)
+  commitJournalPick(pick)
+}
+
+/**
+ * 选一本只在 v2 里有的刊（v1 目录没有；2026-11-17 用户拍板进选刊列表）：绑定只含 v2 无条件事实折出的规则，
+ * 其余一律不补。补丁必须已经在手（没有 v2 就没有内容可绑——调用方先判终态，取不到不调这里）。
+ */
+export function selectV2OnlyJournal(entry: Pick<V2IndexEntry, 'id' | 'label'>, v2: V2Patch): void {
+  const d0 = doc()
+  const pick = pickV2OnlyJournal(entry, v2, { pageW: d0.page.w, follow: d0.profile?.follow, prev: journalPrevOf(d0) })
+  useJournalV2Store.getState().remember(entry.id, v2)
+  commitJournalPick(pick)
+}
+
+/** 退路只记「选期刊之前」那一份：从一本期刊换到另一本时沿用最初的，不把上一本期刊当成「之前」 */
+function journalPrevOf(d0: ReturnType<typeof doc>): JournalPrev | undefined {
   const p0 = d0.profile
-  const prev: JournalPrev | undefined = p0?.journalRef
+  return p0?.journalRef
     ? p0.journalPrev
     : {
         profile: p0
@@ -919,14 +946,11 @@ export function selectJournal(journalId: string, v2: V2Patch | null = null): voi
           : null,
         pageW: d0.page.w,
       }
-  const pick = pickJournal(journalId, useJournalCatalogStore.getState().catalog, {
-    pageW: d0.page.w,
-    follow: p0?.follow,
-    prev,
-  })
-  // v2 事实（取到了才有）按项叠上去，v2 优先；预检求值器不变（ADR 0155 §14）
-  pick.binding = applyV2(pick.binding, v2)
-  useJournalV2Store.getState().remember(journalId, v2)
+}
+
+function commitJournalPick(pick: { binding: SpecBinding; pageW: number | null; label: string }): void {
+  const d0 = doc()
+  const p0 = d0.profile
   // 期刊把页宽设成了多少：「不按期刊」只在页宽仍是它时才退回原页宽
   // 新期刊没给页宽（pageW = null）时沿用已记的 setW：当前页宽可能是用户手改的，不能把它当成「期刊设的」
   if (pick.binding.journalPrev) {
@@ -1144,6 +1168,32 @@ export function switchObjectKind(ids: string[], target: SwitchKind) {
     d.objects.forEach((o, i) => {
       const switched = next.get(o.id)
       if (switched) d.objects[i] = switched
+    })
+  })
+}
+
+/**
+ * 「转为路径」（ADR 0185 §二）：形状 / 箭头 → 自由路径 `path`。**一条 commit、一条历史**。
+ *
+ * 与 `switchObjectKind` 同三条纪律：不换 id、就地替换（数组位置 = z 序不动）、在 draft 外面算
+ * （`lib/convertToPath.toPathObject` 是纯函数，画面逐点不动）。选区里不能转的对象（文字 / 面板 / 已经是路径）
+ * 原样不动、能转的照转；一个都转不了就什么都不做（不进历史、不打断手势）。单向——撤销负责回去。
+ */
+export function convertToPath(ids: string[]) {
+  const next = new Map<string, CanvasObject>()
+  for (const o of doc().objects) {
+    if (!ids.includes(o.id) || !canConvertToPath(o)) continue
+    const converted = toPathObject(o)
+    if (converted) next.set(o.id, converted)
+  }
+  if (!next.size) return
+  finishActiveGesture()
+  const label =
+    next.size === 1 ? hist('convertToPath') : hist('convertToPathCount', { count: next.size })
+  commit(label, (d) => {
+    d.objects.forEach((o, i) => {
+      const converted = next.get(o.id)
+      if (converted) d.objects[i] = converted
     })
   })
 }
@@ -3025,6 +3075,7 @@ type StyleClip =
   | ({ kind: 'text' } & Partial<TextObject>)
   | ({ kind: 'arrow' } & Partial<ArrowObject>)
   | ({ kind: 'shape' } & Partial<ShapeObject>)
+  | ({ kind: 'path' } & Partial<PathObject>)
 
 /** 每类对象参与样式复制的键（几何 x/y/w/h 与内容永不复制） */
 const TEXT_STYLE_KEYS = ['sizePt', 'bold', 'italic', 'underline', 'color', 'align',
@@ -3033,6 +3084,23 @@ const ARROW_STYLE_KEYS = ['strokePt', 'color', 'head', 'headStart', 'headEnd',
   'dash', 'rotationDeg'] as const
 const SHAPE_STYLE_KEYS = ['strokePt', 'color', 'fill', 'cornerRadius',
   'fillOpacity', 'dash', 'rotationDeg'] as const
+/**
+ * 自由路径（ADR 0185）：填充 / 描边字段与形状同名同义，端型与箭头同名同义。形状 ↔ 路径同族互刷
+ * （`markStyle.styleFamilyOf`），写的是两边**都有**的那几个键（`styleKeysOf` 取交集）——圆角不刷到路径上、端型不刷到形状上。
+ */
+const PATH_STYLE_KEYS = ['strokePt', 'color', 'fill', 'fillOpacity', 'dash', 'stroke',
+  'strokeOpacity', 'lineCap', 'lineJoin', 'headStart', 'headEnd', 'headSizeStart',
+  'headSizeEnd', 'rotationDeg'] as const
+const STYLE_KEYS: Record<StyleClip['kind'], readonly string[]> = {
+  panel: [],
+  text: TEXT_STYLE_KEYS,
+  arrow: ARROW_STYLE_KEYS,
+  shape: SHAPE_STYLE_KEYS,
+  path: PATH_STYLE_KEYS,
+}
+/** 从 `from` 类型刷到 `to` 类型时写哪些键：两边都参与样式复制的键 */
+const styleKeysOf = (from: StyleClip['kind'], to: StyleClip['kind']): string[] =>
+  STYLE_KEYS[from].filter((k) => STYLE_KEYS[to].includes(k))
 
 function pickKeys(src: object, keys: readonly string[]): Record<string, unknown> {
   const from = src as Record<string, unknown>
@@ -3072,6 +3140,9 @@ export function copySelectionStyle() {
   } else if (src?.type === 'shape') {
     styleClip = { kind: 'shape', ...pickKeys(src, SHAPE_STYLE_KEYS) }
     status(note('styleCopiedShape'), 'done')
+  } else if (src?.type === 'path') {
+    styleClip = { kind: 'path', ...pickKeys(src, PATH_STYLE_KEYS) }
+    status(note('styleCopiedPath'), 'done')
   } else {
     status(note('styleCopyNeedSelection'), 'error')
   }
@@ -3080,8 +3151,9 @@ export function copySelectionStyle() {
 export function pasteSelectionStyle() {
   const clip = styleClip
   if (!clip) return
+  // 同族就能刷（形状 ↔ 自由路径是一族，`markStyle.styleFamilyOf`）
   const ids = selectedObjects()
-    .filter((o) => o.type === clip.kind)
+    .filter((o) => styleFamilyOf(o.type) === styleFamilyOf(clip.kind))
     .map((o) => o.id)
   if (!ids.length) {
     status(note('stylePasteNoTarget', { kind: t(`objectType.${clip.kind}`) }), 'error')
@@ -3096,8 +3168,8 @@ export function pasteSelectionStyle() {
       assignKeys(o, clip, TEXT_STYLE_KEYS)
     } else if (clip.kind === 'arrow' && o.type === 'arrow') {
       assignKeys(o, clip, ARROW_STYLE_KEYS)
-    } else if (clip.kind === 'shape' && o.type === 'shape') {
-      assignKeys(o, clip, SHAPE_STYLE_KEYS)
+    } else if (styleFamilyOf(clip.kind) === 'fillStroke' && isFillStrokeMark(o)) {
+      assignKeys(o, clip, styleKeysOf(clip.kind, o.type))
     }
   })
   status(note('stylePasted', { count: ids.length }), 'done')

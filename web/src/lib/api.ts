@@ -2012,6 +2012,29 @@ export type ExportObject =
       line_join?: 'miter' | 'bevel' | 'round'
       rotation_deg?: number
     })
+  | (ExportBox & {
+      /** 自由路径（ADR 0185）：子路径的锚点 / 手柄是包围盒比例坐标；画法在 `rendercore/geometry.path_paths` */
+      type: 'path'
+      subpaths: { closed: boolean; nodes: { p: [number, number]; in?: [number, number]; out?: [number, number] }[] }[]
+      /** 缺省 nonzero */
+      fill_rule?: 'evenodd'
+      stroke_pt: number
+      color: string
+      fill: string | null
+      fill_opacity?: number
+      dash?: ExportDash
+      /** 无描边（只发 `false`） */
+      stroke?: false
+      stroke_opacity?: number
+      line_cap?: 'butt' | 'round' | 'square'
+      line_join?: 'miter' | 'bevel' | 'round'
+      /** 端型只对开放子路径生效；缺省 = 无 */
+      head_start?: ExportHeadType
+      head_end?: ExportHeadType
+      head_size_start?: 'small' | 'large'
+      head_size_end?: 'small' | 'large'
+      rotation_deg?: number
+    })
 
 /**
  * 统一导出请求（ADR 0031）——**原图与画布走同一个结构**。
@@ -6045,6 +6068,88 @@ export interface InputRemapState {
   generation: number
 }
 
+/** Exact frozen scope supplied by the preparation plan, never inferred from argv. */
+export interface InputDeclarationScope {
+  script: string
+  cwd_mode: WorkdirMode
+  run_config: string | null
+}
+
+export interface InputDeclarationState {
+  version: 1
+  /** Whole settings-store CAS; distinct from a plan's selection revision. */
+  revision: string | null
+  declarations: {
+    scope: InputDeclarationScope
+    files: string[]
+    remaps: string[]
+    /** Opt-in row identity from the same settings snapshot; not the write CAS. */
+    selection_revision?: string
+  }[]
+}
+
+export interface PreparationInputDeclaration {
+  version: 1
+  scope: InputDeclarationScope | null
+  selection_revision: string | null
+  input_remap_generation: number | null
+  unavailable_reason: null | 'sensitive_run' | 'scope_unknown' | 'not_script'
+  /** Only actual capture evidence for this plan's exact selection. */
+  captured_inputs: { version: 1; revision: string } | null
+}
+
+export const fetchInputRemap = async (pj: string, signal?: AbortSignal): Promise<InputRemapState> => {
+  const result = await jsonFetch<{ ok: boolean; input_remap: InputRemapState }>(
+    '/api/engine/input-remap', { signal, cache: 'no-store' }, pj,
+  )
+  return result.input_remap
+}
+
+export const fetchDeclaredInputs = async (pj: string, signal?: AbortSignal): Promise<InputDeclarationState> => {
+  const result = await jsonFetch<{ ok: boolean; input_declarations: InputDeclarationState }>(
+    '/api/engine/input-declarations?include_selection_revisions=1', { signal, cache: 'no-store' }, pj,
+  )
+  return result.input_declarations
+}
+
+/** Normalize only the selected existing file, using the server's project containment authority. */
+export const resolveDeclaredInputProjectFile = async (path: string, pj: string, signal?: AbortSignal): Promise<string> => {
+  const result = await jsonFetch<{ ok: boolean; project_file: string }>(
+    `/api/engine/input-declarations?project_file=${encodeURIComponent(path)}`,
+    { signal, cache: 'no-store' }, pj,
+  )
+  return result.project_file
+}
+
+export const declareInputs = async (
+  body: InputDeclarationScope & {
+    files: string[]
+    remaps?: string[]
+    expected_revision: string | null
+    expected_remap_generation?: number
+  },
+  pj: string,
+  signal?: AbortSignal,
+): Promise<InputDeclarationState> => {
+  const result = await jsonFetch<{ ok: boolean; input_declarations: InputDeclarationState }>(
+    '/api/engine/input-declarations',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal }, pj,
+  )
+  return result.input_declarations
+}
+
+export const removeDeclaredInputs = async (
+  body: InputDeclarationScope & { expected_revision: string | null },
+  pj: string,
+  signal?: AbortSignal,
+): Promise<InputDeclarationState> => {
+  const result = await jsonFetch<{ ok: boolean; input_declarations: InputDeclarationState }>(
+    '/api/engine/input-declarations',
+    { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal }, pj,
+  )
+  return result.input_declarations
+}
+
 /** 用户指认了数据位置：后端推一条规则、按项目记住、关掉该项目的会话（ADR 0106） */
 export const addInputRemap = (requested: string, chosen: string, chosenKind: 'file' | 'dir' | 'auto') =>
   jsonFetch<{ ok: boolean; rule: InputRemapRule; input_remap: InputRemapState }>(
@@ -7732,6 +7837,8 @@ export type PreparationAttemptRecord = PreparationAttempt
 /** 会话报告（`SessionService.report`）：前端只保存这份投影，不另算「能不能跑」 */
 export interface PreparationReport {
   figure_snapshot_invalidation?: FigureSnapshotInvalidation
+  /** Present only on the explicit input-editor read; ordinary polling stays unchanged. */
+  input_declaration?: PreparationInputDeclaration
   session_version: number
   session_id: string
   project_id: string
@@ -7948,6 +8055,13 @@ export const fetchPreparationSession = (sessionId: string, pj: string | null, si
     `/api/engine/preparation-sessions/${encodeURIComponent(sessionId)}`,
     { signal, cache: 'no-store' },
     pj,
+  )
+
+/** Read frozen input scope on demand without creating a session or registering arguments. */
+export const fetchPreparationInputDeclarationContext = (sessionId: string, pj: string, signal?: AbortSignal) =>
+  jsonFetch<PreparationReport>(
+    `/api/engine/preparation-sessions/${encodeURIComponent(sessionId)}?include_input_declaration=1`,
+    { signal, cache: 'no-store' }, pj,
   )
 
 /** 认领一个后端生成的动作：只交不透明 id + 看到的配置修订（+ 依赖授权回显的影响摘要） */

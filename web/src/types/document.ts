@@ -393,6 +393,78 @@ export interface ShapeObject extends ObjectBase {
   lineJoin?: LineJoin
 }
 
+/** 路径上的一个点：包围盒比例坐标 [rx, ry]（与 `EndPoint` 同一套，可以落在 [0,1] 之外） */
+export type PathPoint = [number, number]
+
+/** 路径的一个锚点（ADR 0185 §二）。手柄是绝对坐标（同一坐标系）；缺省 = 与锚点重合 */
+export interface PathNode {
+  p: PathPoint
+  in?: PathPoint
+  out?: PathPoint
+  /** 平滑点（拖一侧手柄另一侧共线）；缺省尖角，不写字段 */
+  smooth?: true
+}
+
+export interface PathSubpath {
+  closed: boolean
+  nodes: PathNode[]
+}
+
+/**
+ * 自由路径（ADR 0185 §二）。`x/y/w/h` 仍是权威包围盒（按曲线实际范围算，不按控制点），
+ * 锚点与手柄是它的比例坐标。填充 / 描边字段与 `ShapeObject` 逐字相同（ADR 0174），
+ * 端型字段与 `ArrowObject` 同名同义、只对开放子路径生效。读取缺省值一律走 `readPath()`。
+ */
+export interface PathObject extends ObjectBase {
+  type: 'path'
+  subpaths: PathSubpath[]
+  /** 缺省 nonzero，不写字段 */
+  fillRule?: 'evenodd'
+  strokePt: number
+  color: string
+  fill: string | null
+  fillOpacity?: number
+  /** 只有 `false` 会落盘（= 无描边） */
+  stroke?: boolean
+  strokeOpacity?: number
+  dash?: DashStyle
+  lineCap?: LineCap
+  lineJoin?: LineJoin
+  headStart?: ArrowHeadType
+  headEnd?: ArrowHeadType
+  headSizeStart?: HeadSize
+  headSizeEnd?: HeadSize
+}
+
+/** `readPath` 读出来的锚点：手柄缺省已补成锚点本身 */
+export interface ResolvedPathNode {
+  p: PathPoint
+  in: PathPoint
+  out: PathPoint
+}
+
+/** 路径的缺省值统一读取（画布、命中、缩略图、导出载荷同用这一处；后端 `geometry.read_path` 同一规则） */
+export function readPath(
+  o: Pick<PathObject, 'subpaths' | 'fillRule' | 'stroke' | 'headStart' | 'headEnd'>,
+): {
+  subpaths: { closed: boolean; nodes: ResolvedPathNode[] }[]
+  fillRule: 'nonzero' | 'evenodd'
+  strokeOn: boolean
+  headStart: ArrowHeadType
+  headEnd: ArrowHeadType
+} {
+  return {
+    subpaths: (o.subpaths ?? []).map((sp) => ({
+      closed: sp.closed === true,
+      nodes: (sp.nodes ?? []).map((n) => ({ p: n.p, in: n.in ?? n.p, out: n.out ?? n.p })),
+    })),
+    fillRule: o.fillRule === 'evenodd' ? 'evenodd' : 'nonzero',
+    strokeOn: o.stroke !== false,
+    headStart: o.headStart ?? 'none',
+    headEnd: o.headEnd ?? 'none',
+  }
+}
+
 /**
  * 面板素材形态的唯一判别器。未知取值（更新的文档 schema 里的新形态）回
  * 'unknown'——消费方必须 fail closed：按缺失素材显示 / 跳过文件请求，
@@ -473,14 +545,14 @@ export function lineEndpoints(o: { start?: EndPoint; end?: EndPoint }): {
 export const objectRotation = (o: CanvasObject): number =>
   o.type === 'panel' ? 0 : (o.rotationDeg ?? 0)
 
-export type CanvasObject = PanelObject | TextObject | ArrowObject | ShapeObject
+export type CanvasObject = PanelObject | TextObject | ArrowObject | ShapeObject | PathObject
 
 /**
- * 这个构建认得的对象类型（闭集）。更新的构建可能往文档里写进新类型（例如自由路径 `path`，ADR 0185）；
+ * 这个构建认得的对象类型（闭集）。更新的构建可能往文档里写进新类型（自由路径 `path` 是 ADR 0185 加进来的第一例）；
  * 本构建读到不认识的类型时**原样保留**（读盘、保存、换画布都不碰它），只画一个占位框，
  * 不让它被选中、移动、删除，也不让它在导出里静默消失（导出前拦下）。判据只有这一处。
  */
-export const KNOWN_OBJECT_TYPES: ReadonlySet<string> = new Set(['panel', 'text', 'arrow', 'shape'])
+export const KNOWN_OBJECT_TYPES: ReadonlySet<string> = new Set(['panel', 'text', 'arrow', 'shape', 'path'])
 
 /** 本构建认得这个对象（否则是更新的构建写进来的，见 `KNOWN_OBJECT_TYPES`） */
 export const isKnownObject = (o: { type: string }): boolean => KNOWN_OBJECT_TYPES.has(o.type)
@@ -843,6 +915,8 @@ export function objectLabel(o: CanvasObject): string {
       return t('objectType.arrow')
     case 'shape':
       return t(`shape.${o.shape}`)
+    case 'path':
+      return t('objectType.path')
     default:
       // 更新的构建写进来的类型（`isKnownObject`）：不许回 undefined（图层树、版本差异会显示成空）
       return t('objectType.unknown')

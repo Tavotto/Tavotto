@@ -239,6 +239,7 @@ def launch(
         stdin=execspec.STDIN_NULL,
         env={"PYTHONUNBUFFERED": "1"},
         ignored_paths=pathignore.paths_for(root),
+        registered_entry=entry,  # ADR 0196：不给 = 整份脚本，判据照常
         # 启动脚本（ADR 0194）优先：执行它的字节、身份仍是这个脚本；否则库式模块跑完模块再调函数入口（ADR 0127 修订 2026-11-18）
         script_source=launchscript.source_for(root, script),
         entry=None

@@ -9,11 +9,13 @@
  * 叠加是幂等的：同一份 v2 再叠一次得到同一个绑定（打开项目自动更新时靠它判「有没有变」）。
  */
 import {
+  JOURNAL_BASE_PROFILE_ID,
   SCHEMA,
   SEVERITY_BUMP,
   foldInto,
   journalOverride,
   journalSources,
+  listJournals,
   ruleFolds,
   sourceLink,
   validateCatalog,
@@ -21,7 +23,9 @@ import {
   type JournalRule,
   type JournalSource,
   type JournalSnapshot,
+  type JournalSummary,
 } from '@/lib/journals'
+import { bindingFor, builtinEntryById, type JournalPrev, type JournalRef, type SpecBinding } from '@/lib/specBinding'
 import { currentLocale, t as translate } from '@/i18n'
 import type { FigureDocument } from '@/types/document'
 
@@ -99,8 +103,14 @@ function checkPatch(raw: unknown): V2Patch | null {
   return { ...patch, confirm: rows }
 }
 
-/** 取一本刊的 v2 折叠结果。任何失败（离线 / 被拒 / 开关关 / 校验不过）都是 null：预检按 v1 或已有快照照常判。 */
-export async function fetchJournalV2(journalId: string, signal?: AbortSignal): Promise<V2Patch | null> {
+/** 取单刊 v2 的终态：`ready`（补丁可用）/ `quota`（每设备每小时额度用完）/ `offline`（其余一切：离线、被拒、开关关、补丁不合法） */
+export interface V2Outcome {
+  state: 'ready' | 'quota' | 'offline'
+  patch: V2Patch | null
+}
+
+/** 取一本刊的 v2 折叠结果，带终态（选 v2-only 刊要据此说话）。永不抛。 */
+export async function fetchJournalV2Outcome(journalId: string, signal?: AbortSignal): Promise<V2Outcome> {
   try {
     const response = await fetch('/api/journal-facts/preflight', {
       method: 'POST',
@@ -108,11 +118,101 @@ export async function fetchJournalV2(journalId: string, signal?: AbortSignal): P
       body: JSON.stringify({ journal_id: journalId, locale: currentLocale() }),
       signal,
     })
+    if (response.status === 429) return { state: 'quota', patch: null }
+    if (!response.ok) return { state: 'offline', patch: null }
+    const patch = checkPatch(await response.json())
+    return patch ? { state: 'ready', patch } : { state: 'offline', patch: null }
+  } catch {
+    return { state: 'offline', patch: null }
+  }
+}
+
+/** 取一本刊的 v2 折叠结果。任何失败（离线 / 被拒 / 开关关 / 校验不过）都是 null：预检按 v1 或已有快照照常判。 */
+export async function fetchJournalV2(journalId: string, signal?: AbortSignal): Promise<V2Patch | null> {
+  return (await fetchJournalV2Outcome(journalId, signal)).patch
+}
+
+/** 已签名 v2 index 里的一本刊（`POST /api/journal-facts/index`；只有名称 / 出版社 / ISSN / 别名，没有任何事实） */
+export interface V2IndexEntry {
+  id: string
+  label: string
+  publisher: string
+  publisher_label: string
+  issn: string
+  eissn: string
+  aliases: string[]
+}
+
+const str = (v: unknown): v is string => typeof v === 'string'
+
+/**
+ * 取 v2 index 的刊列表（选刊列表用：只读公开的已签名 index，不逐刊拉包、不占每设备每小时的额度）。
+ * 取不到（离线又没缓存 / 被拒 / 开关关 / 形状不对）= null：列表里就没有 v2-only 的刊，别的照旧，不报错。
+ */
+export async function fetchJournalV2Index(signal?: AbortSignal): Promise<V2IndexEntry[] | null> {
+  try {
+    const response = await fetch('/api/journal-facts/index', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ locale: currentLocale() }),
+      signal,
+    })
     if (!response.ok) return null
-    return checkPatch(await response.json())
+    const raw: unknown = await response.json()
+    if (!isObj(raw) || !Array.isArray(raw.journals)) return null
+    return raw.journals.filter(
+      (j): j is V2IndexEntry =>
+        isObj(j) &&
+        str(j.id) &&
+        str(j.label) &&
+        str(j.publisher) &&
+        str(j.publisher_label) &&
+        str(j.issn) &&
+        str(j.eissn) &&
+        Array.isArray(j.aliases) &&
+        j.aliases.every(str),
+    )
   } catch {
     return null
   }
+}
+
+/** v2 index 里 v1 目录**没有**的刊（按 id），补成选刊列表认得的 `JournalSummary`（没有 issn 时 eissn 顶上）。 */
+export function v2OnlySummaries(entries: readonly V2IndexEntry[] | null, v1Catalog: unknown): JournalSummary[] {
+  if (!entries?.length) return []
+  const have = new Set(listJournals(v1Catalog).map((j) => j.journal_id))
+  return entries
+    .filter((e) => !have.has(e.id))
+    .map((e) => ({
+      journal_id: e.id,
+      label: e.label,
+      publisher: e.publisher,
+      publisher_label: e.publisher_label,
+      issn: e.issn || e.eissn,
+      aliases: [...e.aliases],
+    }))
+}
+
+/**
+ * 选一本只在 v2 里有的刊：中性底 `journal-base-v1` + v2 无条件事实折出的规则（`applyV2`，与 v1 刊同一条路径）。
+ * v1 没有这本刊，所以没有任何 v1 项可沿用，也**不补默认**（「未规定不补」）；带条件的事实只在「需要你确认」。
+ * 页宽不动（v2 不折栏宽）。绑定存规则与出处全文，离线重开照这份判。
+ */
+export function pickV2OnlyJournal(
+  entry: Pick<V2IndexEntry, 'id' | 'label'>,
+  patch: V2Patch,
+  ctx: { pageW: number; follow?: boolean; prev?: JournalPrev },
+): { binding: SpecBinding; pageW: null; label: string } {
+  const base = builtinEntryById(JOURNAL_BASE_PROFILE_ID)
+  if (!base) throw new Error(`journal: ${entry.id}`)
+  const retrieved =
+    [...Object.values(patch.sources), ...patch.confirm.map((r) => r.source)]
+      .map((s) => s.retrieved)
+      .sort()
+      .at(-1) ?? ''
+  const ref: JournalRef = { id: entry.id, catalogRev: patch.catalog_rev, retrieved, label: entry.label }
+  const bare = bindingFor(base, { journalRef: ref, journalSources: {}, journalPrev: ctx.prev, follow: ctx.follow })
+  return { binding: applyV2(bare, patch), pageW: null, label: entry.label }
 }
 
 /** 本地端点：已验签的原文截图（只回该刊事实引用过的图） */

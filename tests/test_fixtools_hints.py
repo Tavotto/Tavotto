@@ -20,10 +20,6 @@ from tavotto.engine.fixtools.audit import AuditLog
 from tavotto.engine.fixtools.runreport import project_run_report
 from test_fixtools import box, call, make_ctx, put  # noqa: F401
 
-#: 还在别的 PR 里、尚未进注册表的工具（ADR 0197 第 2 层 #2064）。合入后从这里删掉
-PENDING_TOOLS = frozenset({"run_snippet"})
-
-
 def _failing(code: str, traceback: str = "") -> dict:
     return {
         "phase": "failed",
@@ -33,12 +29,12 @@ def _failing(code: str, traceback: str = "") -> dict:
 
 
 def test_every_tool_a_hint_names_exists():
-    assert hints.tools_named() <= set(REGISTRY) | PENDING_TOOLS
+    assert hints.tools_named() <= set(REGISTRY)
 
 
 def test_every_tool_named_in_a_sentence_is_declared_for_it():
     """句子里出现的工具名都在它声明的工具里：否则「工具不可用就不说这句」会漏掉，模型被指向调不到的工具。"""
-    names = set(REGISTRY) | PENDING_TOOLS
+    names = set(REGISTRY)
     for hint in hints.HINTS.values():
         for tools, text in hint.lines:
             mentioned = {n for n in names if re.search(rf"\b{re.escape(n)}\b", text)}

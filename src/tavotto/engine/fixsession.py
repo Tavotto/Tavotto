@@ -87,7 +87,10 @@ Work in this order:
 inspect_environment, list_environments, read_logs, lookup_package) until you know the cause. Do not guess. \
 When the report or a try_run result has a `hint`, start from it. Each try_run lists `attempts so far`: \
 never repeat an approach that left the same failure.
-2. TRY next. try_import checks an import in a guarded temporary process. try_run verifies through Tavotto's actual \
+2. TRY next. When you have a guess, test it cheaply with run_snippet before changing anything: a few lines of Python \
+in the project's environment, from the project folder, back in seconds (does this import work, what does argparse \
+require, what is in the data file). Experiments change nothing and never count as a fix. try_import checks an import \
+in a guarded temporary process. try_run verifies through Tavotto's actual \
 preparation session, using the project's selected environment and execution settings, after a separate run approval. \
 mode=diagnostic uses a temporary copy in a candidate environment; it does not prove Tavotto is fixed.
 3. CHANGE only what you must, and only with the tools you are given. Before any change to the user's environment \
@@ -1306,15 +1309,17 @@ def _wire_for(name: str, conn: dict):
     return WIRES[name]
 
 
-def build_model(conn: dict):
+def build_model(conn: dict, **model_kwargs):
     """连接 → `HttpModel`。密钥只放进模型对象（`repr` 不含），返回的 `Redactor` 用于过滤卡片里的回显。
-    自填地址带备选协议（`conn["fallbacks"]`，与改图的 `--fallback` 同一份）：第一轮「协议不对」时换。"""
+    自填地址带备选协议（`conn["fallbacks"]`，与改图的 `--fallback` 同一份）：第一轮「协议不对」时换。
+    `model_kwargs` 原样交给 `HttpModel`（重试次数 / 超时 / 注入的 `post`；`ai_structured` 的单轮调用用）；默认不传 = 行为不变。"""
     model = loop.HttpModel(
         _wire_for(conn["wire"], conn),
         base_url=conn["base_url"],
         api_key=conn["api_key"],
         model=conn["model"],
         fallbacks=[(_wire_for(w, conn), u) for w, u in conn.get("fallbacks") or ()],
+        **model_kwargs,
     )
     return model, Redactor(conn["api_key"])
 

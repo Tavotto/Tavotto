@@ -249,6 +249,20 @@ FIXED: list[tuple[str, str, list[list[dict]]]] = [
             ],
         ],
     ),
+    (
+        # 脊线：先开右脊并设线宽，再隐藏整个 axes——热态 scatter 的 geometry.paths 与清空重放不同。
+        # InvMix 随机种子 28（lab 放宽种子）。
+        "seq28-spine-right-then-axes-hidden",
+        "InvMix",
+        [
+            [_p("axes_0", "spine_right", True), _p("axes_0", "spine_right_linewidth", 2.78)],
+            [
+                _p("axes_0", "spine_right", True),
+                _p("axes_0", "spine_right_linewidth", 2.78),
+                _p("axes_0", "visible", False),
+            ],
+        ],
+    ),
 ]
 
 

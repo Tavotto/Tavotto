@@ -1,3 +1,0 @@
-## The exported `_edited.py` now carries your text effects and arrow edits
-
-Text outline, background box and line spacing (including the labels in a legend), the axis-label distance on 3D plots, arrow style, colour, width, dash style, head size, visibility and layer, dragging an arrow's end points, and showing, hiding or re-layering a text box or table you added are now written into the `_edited.py` file you get by ticking **PY** on export. Before, these edits were left out and the script drew the text and arrows as it originally did. A dashed arrow still dashes only the shaft and keeps a solid head, just as it looks in the editor.

@@ -172,6 +172,28 @@ def drop_script_dir_from_sys_path(here: str) -> bool:
     return False
 
 
+def package_path_root(script: str, module: str) -> str | None:
+    """按模块运行一份包里的脚本时的 `sys.path[0]`：包根的上一级目录（ADR 0196，与 `python -m 包.模块` 一致）。
+
+    子进程只收模块名（`plots.fig`）与脚本路径，这里从脚本路径往上数层得出：脚本文件名必须是模块名最后一段 + `.py`、
+    往上每一级目录名必须与模块名的各段逐一对上（Windows 不分大小写），否则回 None——**绝不猜**，由调用方大声失败或照旧按脚本运行。
+    safe worker（`--as-module`）与 native bridge（`--as-module`）共用这一个，两侧的 `sys.path[0]` 与 `co_filename` 因而同源。
+    """
+    parts = module.split(".") if isinstance(module, str) else []
+    if not parts or not all(p.isidentifier() for p in parts):
+        return None
+    path = os.path.abspath(script)
+    base, ext = os.path.splitext(os.path.basename(path))
+    if ext != ".py" or os.path.normcase(base) != os.path.normcase(parts[-1]):
+        return None
+    cur = os.path.dirname(path)
+    for name in reversed(parts[:-1]):
+        if os.path.normcase(os.path.basename(cur)) != os.path.normcase(name):
+            return None
+        cur = os.path.dirname(cur)
+    return cur
+
+
 def load_engine_modules(engine_dir: str, names) -> types.ModuleType:
     """把 `names` 装进私有包 `tavotto_bridge_runtime`，还原顶层命名空间。
 

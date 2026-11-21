@@ -609,6 +609,9 @@ def plan_for(
             env={"PYTHONUNBUFFERED": "1"},
             # ADR 0154：用户选了「跳过这个文件夹」的目录，native bridge 的顶层导入不再去那里找
             ignored_paths=pathignore.paths_for(root),
+            # ADR 0196：登记入口是函数的脚本不按模块运行（与 safe 同一个判据）
+            registered_entry=entry,
+            # ADR 0127 修订：库式模块跑完模块再调函数入口
             entry=native_entry,
             script_source=launch_src,
             **execspec.run_kwargs(run),

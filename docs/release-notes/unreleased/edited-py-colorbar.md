@@ -1,3 +1,0 @@
-## The exported `_edited.py` now carries your colorbar edits
-
-The colorbar's label, colormap, value range (min and max), tick size and colour, outline on/off and width, and showing or hiding the colorbar are now written into the `_edited.py` file you get by ticking **PY** on export. Before, these edits were left out and the script drew the colorbar as it originally did. Flipping a colorbar horizontal and the end arrows (extend) still cannot be expressed in plain matplotlib, so they are not written; the exported file also leaves out the colormap and range of a colorbar built from a bare `ScalarMappable`.
