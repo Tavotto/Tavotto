@@ -60,7 +60,9 @@ it.each(['en-US', 'zh-CN'] as const)('discloses package and assistant networking
     const auto = host.querySelector<HTMLButtonElement>('#setting-update-auto')
     expect(!!auto).toBe(!desktop)
   }
-  expect(fetch).not.toHaveBeenCalled()
+  // 唯一允许的请求：授权行读本机引擎的 `GET /api/license/status`（纯本机、不联网，ADR 0193 §五）
+  const calls = vi.mocked(fetch).mock.calls.map((c) => String(c[0]))
+  expect(calls.filter((u) => !u.includes('/api/license/status'))).toEqual([])
 })
 
 // 「支持 Tavotto」只是一条去官网支持页的链接：语言跟着界面走，新窗口打开，页内不发请求

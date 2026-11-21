@@ -15,6 +15,7 @@ import { ExternalLink, Heart } from '../ui/icons'
 import { FieldGroup, FormSection } from '../ui/FormSection'
 import { Toggle } from '../ui/Toggle'
 import { DiagnosticDisclosure, SettingRow } from './SettingRow'
+import { LicenseRow } from './LicenseRow'
 import { UpdateSettings } from './UpdateSettings'
 
 const st = (key: string, values?: Record<string, unknown>) =>
@@ -59,6 +60,8 @@ export function PrivacyAboutSettings() {
   return (
     <div className="contents">
       <ProductBlock version={version} />
+      {/* 高级版授权：一行；入口没开（PRODUCTION_LIVE = False）时整块不渲染（ADR 0193 §八） */}
+      <LicenseRow />
       {/* 「更新」并进这一页（2026-09-30）：版本在上、检查更新紧随其后，再是隐私 */}
       <UpdateSettings />
       <PrivacyBlock />
