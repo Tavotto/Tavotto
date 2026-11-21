@@ -136,6 +136,9 @@ export default interface Resources {
           "why": "看每组数值分布的形状，点保留了每个观测。"
         }
       },
+      "connect": {
+        "pill": "连接 AI 以供智能分析"
+      },
       "draft": {
         "allText": "这张表里都是文字，没有能画的数字。",
         "cancelled": "已取消，这个文件没读完。",
@@ -240,6 +243,7 @@ export default interface Resources {
       },
       "suggest": {
         "apply": "试试建议",
+        "connectHint": "连上后会帮你看懂每一列，选对横轴、纵轴和分组",
         "reading": "正在看各列…"
       },
       "variant": {

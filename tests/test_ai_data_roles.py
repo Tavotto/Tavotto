@@ -1326,3 +1326,43 @@ def test_when_no_candidate_can_draw_all_the_columns_fall_back_to_the_first_one(t
     r = propose_in(tmp_path, "units", csv)
     assert r["roles"]["y"] == ["a_mg"]
     assert_every_candidate_draws_roles_y(r)
+
+
+# --------------------------------------------------------------------------- 「读懂数据」有没有可用连接（前端「连接 AI」胶囊的依据）
+@pytest.mark.parametrize("why", ["none", "cli_only", "builtin_off"])
+def test_available_is_false_without_a_key_connection(monkeypatch, why):
+    """没连 / 只有订阅登录（cli_only）/ 运维关掉内置：`available()` 为 False；判据与 `start()` 同一个 `_available_connection()`。"""
+    monkeypatch.setattr(ai_connections, "first_key_connection", lambda refresh=False: None)
+    monkeypatch.setattr(fixsession, "cli_agent", lambda: "codex" if why == "cli_only" else None)
+    monkeypatch.setattr(
+        ai_connections, "builtin_forced", lambda: False if why == "builtin_off" else None
+    )
+    assert R.available() is False
+
+
+def test_available_is_true_with_a_key_connection_and_never_refreshes_or_touches_the_network(
+    monkeypatch,
+):
+    seen: list[bool] = []
+
+    def first(refresh=False):
+        seen.append(refresh)
+        return D.fake_conn()
+
+    monkeypatch.setattr(ai_connections, "builtin_forced", lambda: None)
+    monkeypatch.setattr(ai_connections, "first_key_connection", first)
+    assert R.available() is True
+    assert seen == [False]  # 不刷新令牌；联网由本文件的 autouse 夹具（任何 socket 访问即失败）兜底
+
+
+def test_data_files_response_carries_understanding_available(project, monkeypatch):
+    m, client, figs, _state = project
+    (figs / "d.csv").write_text("a,b\n1,2\n3,4\n", encoding="utf-8")
+    monkeypatch.setattr(ai_connections, "first_key_connection", lambda refresh=False: None)
+    assert (
+        client.get("/api/ai/data-files?formats=all").get_json()["understanding_available"] is False
+    )
+    monkeypatch.setattr(ai_connections, "builtin_forced", lambda: None)
+    monkeypatch.setattr(ai_connections, "first_key_connection", lambda refresh=False: D.fake_conn())
+    body = client.get("/api/ai/data-files?formats=all").get_json()
+    assert body["understanding_available"] is True and body["files"][0]["path"] == "d.csv"

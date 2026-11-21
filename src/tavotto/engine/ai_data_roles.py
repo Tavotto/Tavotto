@@ -778,6 +778,12 @@ def _available_connection() -> dict | None:
         return None
 
 
+def available() -> bool:
+    """「读懂数据」此刻有没有可用的连接——只读的布尔事实，给前端决定要不要提示「连接 AI」（不暴露连接内容）。
+    判据就是 `start()` 用的 `_available_connection()`：不联网、不刷新令牌（`first_key_connection(refresh=False)`）。"""
+    return _available_connection() is not None
+
+
 def _sweep(now: float) -> None:
     for jid, j in list(_JOBS.items()):
         if now - j.created > JOB_TTL_S:

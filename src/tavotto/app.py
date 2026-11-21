@@ -15825,7 +15825,14 @@ def api_ai_data_files():
             else:
                 row["sheets"] = None
         files.append(row)
-    resp = jsonify({"files": files, "truncated": truncated})
+    # `understanding_available`：「读懂数据」此刻有没有可用连接（只读事实、不联网；前端据此决定要不要出「连接 AI」胶囊，连接状态变化后随清单重取）
+    resp = jsonify(
+        {
+            "files": files,
+            "truncated": truncated,
+            "understanding_available": engine_ai_data_roles.available(),
+        }
+    )
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
