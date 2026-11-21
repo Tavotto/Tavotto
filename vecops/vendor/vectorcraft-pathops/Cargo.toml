@@ -1,0 +1,15 @@
+# 随源码内联自 storytold/vectorcraft 47500c4 的 crates/pathops（MIT OR Apache-2.0）。
+# 只改了这份清单：workspace 继承的字段写成明值、去掉 dev-dependencies（上游用例依赖不随源码搬的 testkit）。
+[package]
+name = "vectorcraft-pathops"
+version = "0.24.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "VectorCraft path operations: booleans (Pathfinder), shape builder regions, offset, outline stroke, simplify"
+publish = false
+
+[dependencies]
+vectorcraft-geom = { path = "../vectorcraft-geom" }
+kurbo = "0.13"
+thiserror = "2"
+linesweeper = "0.5"

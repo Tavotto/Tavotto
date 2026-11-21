@@ -29,6 +29,7 @@ ADR 0185 加的自由路径 `path`（`read_path` / `path_segments` / `path_paths
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 from .ir import Group, Node, Paint, Path, Segment, Stroke, hex2rgb
@@ -607,6 +608,24 @@ def path_segments(o: dict, w: float, h: float, sw: float | None = None) -> dict:
 PATH_DEFAULT_JOIN = "round"
 
 
+def path_stroke_align(o: dict) -> str | None:
+    """路径实际生效的描边对齐（ADR 0185 M2）：设了 inside / outside、有描边、每条画得出的子路径都闭合才生效；
+    否则 None（居中）。与前端 `pathGeom.pathStrokeAlign` 同一条判据。"""
+    align = o.get("stroke_align")
+    if align not in ("inside", "outside"):
+        return None
+    r = read_path(o)
+    if not r["stroke_on"]:
+        return None
+    drawn = [sp for sp in r["subpaths"] if len(sp["nodes"]) >= 2]
+    return align if drawn and all(sp["closed"] for sp in drawn) else None
+
+
+def outside_clip_pad(w: float, h: float, sw: float) -> float:
+    """外侧对齐裁剪区的外扩量：与前端 `pathGeom.outsideClipPad` 同一个数。"""
+    return max(w, h) + 4 * sw
+
+
 def path_paths(o: dict, w: float, h: float) -> list[Node]:
     """一个 path 对象 → 框空间里的 IR 节点（画布 `PathView` / `PathBody` 一一对应）。
 
@@ -628,6 +647,24 @@ def path_paths(o: dict, w: float, h: float) -> list[Node]:
     rule = r["fill_rule"]
     if not r["stroke_on"]:
         return [Path(tuple(g["fill"]), fill=fill, fill_rule=rule, object_id=oid)] if fill else []
+    align = path_stroke_align(o)
+    if align is not None:
+        # 描边对齐（ADR 0185 M2）：两倍线宽的描边裁到路径里面（内侧）/ 外面（外侧：大矩形 + 路径按奇偶）。
+        # 虚线长度按原线宽算，只把线宽换成两倍——与前端 `PathBody` 同一画法
+        seg = tuple(g["fill"])
+        if align == "inside":
+            clip = Path(seg, fill_rule=rule)
+        else:
+            pad = outside_clip_pad(w, h, sw)
+            clip = Path(
+                rect_segments(-pad, -pad, w + 2 * pad, h + 2 * pad) + seg, fill_rule="evenodd"
+            )
+        wide = dataclasses.replace(_stroke(o, sw, join=PATH_DEFAULT_JOIN), width=2 * sw)
+        out_a: list[Node] = []
+        if fill is not None:
+            out_a.append(Path(seg, fill=fill, fill_rule=rule, object_id=oid))
+        out_a.append(Group((Path(seg, stroke=wide, object_id=oid),), clip=clip, object_id=oid))
+        return out_a
     if not g["heads"]:
         return [
             Path(

@@ -22,7 +22,9 @@ import {
   markHeads,
   markSidesCapable,
   markStarCapable,
+  markPathAlignCapable,
   markStrokeAlignCapable,
+  strokeAlignOf,
   markFillRuleCapable,
   markStrokeOn,
   markStrokeToggle,
@@ -664,12 +666,20 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
     updateObjects(ids, label, (o) => {
       if (isFillStrokeMark(o)) fn(o)
     })
-  /** 描边对齐只写封闭形状（`markStrokeAlignCapable`）；填充规则只写有填充的路径 */
-  const aligned = objs.filter(markStrokeAlignCapable)
+  /** 描边对齐只写封闭形状与全闭合的路径；填充规则只写有填充的路径 */
+  const aligned = objs.filter((o) => markStrokeAlignCapable(o) || markPathAlignCapable(o)) as (ShapeObject | PathObject)[]
   const filledPaths = objs.filter(markFillRuleCapable)
-  const patchAligned = (label: UiMessage, fn: (o: ShapeObject) => void) =>
-    updateObjects(ids, label, (o) => {
-      if (isFillStrokeMark(o) && markStrokeAlignCapable(o)) fn(o)
+  /** 描边对齐写回：等于各自的缺省（形状内侧、路径居中）就删字段 */
+  const setAlign = (v: 'inside' | 'center' | 'outside') =>
+    updateObjects(ids, hist('setStrokeAlign'), (o) => {
+      if (!isFillStrokeMark(o)) return
+      if (markStrokeAlignCapable(o)) {
+        if (v === 'inside') delete o.strokeAlign
+        else o.strokeAlign = v
+      } else if (markPathAlignCapable(o)) {
+        if (v === 'center') delete o.strokeAlign
+        else o.strokeAlign = v
+      }
     })
   const patchPaths = (label: UiMessage, fn: (o: PathObject) => void) =>
     updateObjects(ids, label, (o) => {
@@ -849,24 +859,19 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
           objs.some((o) => o.lineJoin != null && o.lineJoin !== markDefaultJoin(o)),
           objs.some((o) => o.miterLimit != null),
           objs.some((o) => o.dashPattern != null),
-          objs.some((o) => o.type === 'shape' && o.strokeAlign != null),
+          objs.some((o) => (o.type === 'shape' || o.type === 'path') && o.strokeAlign != null),
           objs.some((o) => o.type === 'path' && o.fillRule != null),
         ])}
       >
         {showStroke && headed.length > 0 && <HeadSizeRows objs={headed} patch={patchHeaded} />}
         {showStroke && aligned.length > 0 && (
-          // 描边对齐（只对封闭形状）：内侧（缺省，外沿贴框）/ 居中 / 外侧
+          // 描边对齐（封闭形状缺省内侧、外沿贴框；全闭合的路径缺省居中，ADR 0185 M2）：内侧 / 居中 / 外侧
           <ChoiceRow
             label={sk('alignRow')}
             group="align"
             values={ALIGN_VALUES}
-            value={shared(aligned, (o) => (o as ShapeObject).strokeAlign ?? 'inside') ?? null}
-            onChange={(v) =>
-              patchAligned(hist('setStrokeAlign'), (o) => {
-                if (v === 'inside') delete o.strokeAlign
-                else o.strokeAlign = v
-              })
-            }
+            value={shared(aligned, (o) => strokeAlignOf(o as ShapeObject | PathObject)) ?? null}
+            onChange={setAlign}
           />
         )}
         {filledPaths.length > 0 && (
