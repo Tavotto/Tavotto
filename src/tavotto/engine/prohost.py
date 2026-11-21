@@ -152,25 +152,34 @@ class _Sidecar:
             allow_nan=False,
         ).encode("utf-8")
         assert self.proc.stdin is not None and self.proc.stdout is not None
-        try:
-            self.proc.stdin.write(line + b"\n")
-            self.proc.stdin.flush()
-        except OSError:
-            raise ProUnavailable("crashed", "stdin closed") from None
         box: dict = {}
 
-        def read() -> None:
+        # 写入 + 读回整个往返共用一个截止时间：子进程不读 stdin 时 write/flush 会堵在管道上，
+        # 所以写也放进带超时的线程里，到点 close() 杀掉并回收子进程（同时解除堵塞的写）。
+        def exchange() -> None:
+            try:
+                self.proc.stdin.write(line + b"\n")  # type: ignore[union-attr]
+                self.proc.stdin.flush()  # type: ignore[union-attr]
+            except (OSError, ValueError):
+                box["stdin_closed"] = True
+                return
             try:
                 box["raw"] = self.proc.stdout.readline(MAX_LINE_BYTES)  # type: ignore[union-attr]
             except Exception as exc:  # noqa: BLE001
                 box["err"] = exc
 
-        t = threading.Thread(target=read, daemon=True)
+        t = threading.Thread(target=exchange, daemon=True)
         t.start()
         t.join(timeout)
         if t.is_alive():
+            # 先杀并回收子进程：堵在 write 上的线程持着 stdin 的缓冲锁，先 close() 会跟它一起死锁
+            self.proc.kill()
+            self.proc.wait()
+            t.join(2)
             self.close()
             raise ProUnavailable("timeout", cmd)
+        if box.get("stdin_closed"):
+            raise ProUnavailable("crashed", "stdin closed")
         raw = box.get("raw") or b""
         if not raw:
             raise ProUnavailable("crashed", "no response")

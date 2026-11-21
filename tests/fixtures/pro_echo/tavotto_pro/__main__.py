@@ -26,6 +26,8 @@ for raw in sys.stdin:
                 "platform": sys.platform,
             },
         )
+        if os.environ.get("PRO_ECHO_NO_READ"):
+            time.sleep(120)  # 握手后不再读 stdin（测宿主写入也受超时约束）
     elif cmd == "echo":
         reply(rid, True, result={"payload": payload})
     elif cmd == "sleep":

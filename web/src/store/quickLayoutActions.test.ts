@@ -218,6 +218,30 @@ describe('应用', () => {
     expect([p2.w, p2.h]).toEqual([40, 30])
   })
 
+  it('被裁剪的图：规划发整图框，落位的可见框 = 整图框 × crop，显示比例与后端校验的一致；没裁剪的不变', async () => {
+    seed(panel('p1', { x: 10, y: 10, w: 40, h: 60, crop: { x: 0.25, y: 0, w: 0.5, h: 1 } }), panel('p2'))
+    quickLayoutPlan.mockResolvedValue(okPlan())
+    await runQuickLayout('double', 3)
+    // 规划：整图框（可见框 40 宽是半幅 → 整图 80 宽，原点往左退 0.25 × 80）
+    expect(lastRequest().panels[0].box).toEqual([-10, 10, 80, 60])
+    const p1 = s().doc.objects.find((o) => o.id === 'p1') as PanelObject
+    const p2 = s().doc.objects.find((o) => o.id === 'p2') as PanelObject
+    // 求解整图 85×60 @ (10,10)：可见宽 = 85 × 0.5，位置 = 原点 + crop.x × 整图宽，crop 不动
+    expect(p1.crop).toEqual({ x: 0.25, y: 0, w: 0.5, h: 1 })
+    expect(p1.x).toBeCloseTo(10 + 0.25 * 85)
+    expect(p1.y).toBeCloseTo(10)
+    expect(p1.h).toBeCloseTo(60)
+    // 渲染回来 native 同步再乘 85 / 80：可见宽正好是 42.5
+    const synced = (p1.w * 85) / p1.nativeW
+    expect(synced).toBeCloseTo(85 * 0.5)
+    // 显示比例（可见框 / crop.w）= 求解整图宽 / 原生宽
+    expect(synced / (p1.crop?.w ?? 1) / p1.nativeW).toBeCloseTo(85 / 80)
+    // 没裁剪的图：框 = 求解 box
+    expect([p2.x, p2.y, p2.w, p2.h]).toEqual([98, 10, (85 * 80) / 85, 60])
+    // 网格记忆按页面上的框记（quickLayoutValid 拿它跟图比）
+    expect(s().doc.quickLayout?.boxes.p1[2]).toBeCloseTo(42.5)
+  })
+
   it('备注合成一行灰字，进同一枚胶囊', async () => {
     seed(panel('p1'), panel('p2'))
     quickLayoutPlan.mockResolvedValue({

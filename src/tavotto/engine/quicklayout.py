@@ -14,6 +14,7 @@ import math
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -451,10 +452,24 @@ def _grid_out(grid: dict | None, by_ref: dict[str, str]) -> dict | None:
     return {"rows": rows, "cols": cols, "cells": cells, "col_ratios": col_r, "row_ratios": row_r}
 
 
-def _each(panels: list[Panel], fn: Callable[[Panel], object]) -> list:
-    """按图并行跑 `fn`（每张图有自己的 worker，互不共享热态）；任何一张抛异常就原样抛出。"""
+def _each(
+    panels: list[Panel],
+    fn: Callable[[Panel], object],
+    bind: Callable[[], AbstractContextManager] | None = None,
+) -> list:
+    """按图并行跑 `fn`（每张图有自己的 worker，互不共享热态）；任何一张抛异常就原样抛出。
+
+    `bind`：线程池里的线程没有 request context，也不继承 `_BOUND_CTX`，不绑定会落到默认项目
+    （AGENTS.md：后台线程必须 `app.bound_project(ctx)`）。engine 不 import app，由调用方传进来。"""
     if len(panels) <= 1:
         return [fn(p) for p in panels]
+    if bind is not None:
+        inner = fn
+
+        def fn(p: Panel) -> object:  # noqa: F811 — 同名包一层
+            with bind():
+                return inner(p)
+
     with ThreadPoolExecutor(
         max_workers=min(8, len(panels)), thread_name_prefix="quicklayout"
     ) as ex:
@@ -475,6 +490,7 @@ def plan(
     canvas: str = "fit",
     ratios: dict | None = None,
     solver: Callable[[dict], dict] | None = None,
+    bind: Callable[[], AbstractContextManager] | None = None,
 ) -> dict:
     """一键排版事务本体。成功返回 `{ok: True, panels: [{key, patches, box}], labels: [...], notes: [...]}`；
     失败抛 `QuickLayoutError`（调用方把每张图渲回 B0）。"""
@@ -518,7 +534,7 @@ def plan(
         p.patches = list(p.base)
         _render(p, p.patches)
 
-    _each(panels, first_render)
+    _each(panels, first_render, bind)
     labels: list[dict] = []
     bad: list[dict] = []
     for rnd in range(1, MAX_ROUNDS + 1):
@@ -561,7 +577,7 @@ def plan(
             return changed
 
         # 各张图有各自的 worker：按图并行（ADR 0199 §二「提速」）
-        for changed in _each(panels, advance):
+        for changed in _each(panels, advance, bind):
             spec_changed |= changed
         bad = check(
             panels,

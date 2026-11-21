@@ -9655,6 +9655,7 @@ def api_pro_quick_layout_plan():
                 retired = _retire_hot_worker(st["worker"]) or retired
         return retired
 
+    ql_ctx = _request_ctx()  # 并行渲染线程没有 request context，要钉在发起请求的项目上
     try:
         out = engine_quicklayout.plan(
             panels,
@@ -9670,6 +9671,7 @@ def api_pro_quick_layout_plan():
             else None,
             canvas=str(body.get("canvas") or "fit"),
             ratios=body.get("ratios") if isinstance(body.get("ratios"), dict) else None,
+            bind=(lambda: bound_project(ql_ctx)) if ql_ctx is not None else None,
         )
         for st in states:
             _require_route_unchanged(st["id"])

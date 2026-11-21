@@ -109,6 +109,25 @@ type Box = [number, number, number, number]
 const boxOf = (p: PanelObject): Box => [p.x, p.y, p.w, p.h]
 
 /**
+ * 求解器按「整张图」摆放与校验（字号 / 轴线对齐 / 间距）。被裁剪的图（`crop` = 相对整图的 0–1 比例框）
+ * 页面上的框只是可见部分，显示比例 = 可见框 / crop.w，所以规划请求发整图框，落位再换回可见框，比例尺才与校验的一致。
+ */
+function fullBoxOf(p: PanelObject): Box {
+  const c = p.crop
+  if (!c) return boxOf(p)
+  const w = p.w / c.w
+  const h = p.h / c.h
+  return [p.x - c.x * w, p.y - c.y * h, w, h]
+}
+
+/** 求解器的整图框 -> 页面上的可见框（`fullBoxOf` 的逆）；没裁剪原样 */
+function visibleBox(crop: PanelObject['crop'], b: Box): Box {
+  if (!crop) return b
+  const [x, y, w, h] = b
+  return [x + crop.x * w, y + crop.y * h, w * crop.w, h * crop.h]
+}
+
+/**
  * 这张图能不能参与求解（改图幅 / 轴位置）：有图内编辑入口的脚本出图，没旋转 / 翻转，不是位图，不是 native，
  * 不是 artifact / 来源驱动的图。其余的只当固定盒子。判据只在这里，后端对 native / 重复图另有一道。
  */
@@ -335,7 +354,7 @@ async function runPlan(run: PlanRun): Promise<QuickLayoutOutcome> {
   const profile = currentSpec()
 
   const body: QuickLayoutRequest = {
-    panels: solvable.map((p) => ({ key: p.id, id: p.fileId, patches: p.overrides, box: boxOf(p) })),
+    panels: solvable.map((p) => ({ key: p.id, id: p.fileId, patches: p.overrides, box: fullBoxOf(p) })),
     fixed: fixed.map((p) => ({ key: p.id, box: boxOf(p) })),
     page: { w: docAtStart.page.w, h: docAtStart.page.h, margin: docAtStart.page.margin ?? 0 },
     target,
@@ -417,9 +436,12 @@ async function runPlan(run: PlanRun): Promise<QuickLayoutOutcome> {
       return 'stale'
     }
 
-    const memo = memoOf(res, sentKeys, run, canvasMode, fixed)
+    // 页面上落的是可见框（被裁剪的图 = 整图框按 crop 取一块）；网格记忆 / 跟手层也都按页面上的框记
+    const cropOf = new Map(involved.map((p) => [p.id, p.crop] as const))
+    const shown = (key: string, b: Box): Box => visibleBox(cropOf.get(key), [...b] as Box)
+    const memo = memoOf(res, sentKeys, run, canvasMode, fixed, shown)
     commitPlan(res, involved.map(boxOf), run.label, memo)
-    run.observer?.onCommitted(Object.fromEntries(res.panels.map((p) => [p.key, [...p.box] as Box])))
+    run.observer?.onCommitted(Object.fromEntries(res.panels.map((p) => [p.key, shown(p.key, p.box)])))
     // 重渲染：返回的每张图；后端说热态不干净时，其余发出去的也按全量列表重放一次
     const rendered = new Set(res.panels.map((p) => p.key))
     const after = useDocumentStore.getState()
@@ -456,13 +478,14 @@ function memoOf(
   run: PlanRun,
   canvas: QuickLayoutCanvasMode,
   fixed: PanelObject[],
+  shown: (key: string, b: Box) => Box,
 ): QuickLayoutMemo | undefined {
   const g = res.grid
   if (!g) return undefined
   const ids = Object.keys(g.cells)
   if (!ids.length || ids.some((id) => !sentKeys.has(id))) return undefined
   const boxes: QuickLayoutMemo['boxes'] = {}
-  for (const p of res.panels) if (g.cells[p.key]) boxes[p.key] = [...p.box]
+  for (const p of res.panels) if (g.cells[p.key]) boxes[p.key] = shown(p.key, p.box)
   if (ids.some((id) => !boxes[id])) return undefined
   return {
     rows: g.rows,
@@ -511,14 +534,17 @@ function commitPlan(
       })
       obj.overrides = next
       releaseOwned(d, obj, written)
-      const [x, y, w, h] = p.box
+      const [x, y, w, h] = visibleBox(obj.crop, [...p.box] as Box)
+      const fullW = obj.crop ? w / obj.crop.w : w
+      const fullH = obj.crop ? h / obj.crop.h : h
       const size = effectiveOverride(next, 'figure', 'size_mm')?.value
       const [sw, sh] = Array.isArray(size) ? (size as unknown[]) : []
       obj.x = x
       obj.y = y
       if (obj.nativeW > 0 && obj.nativeH > 0 && typeof sw === 'number' && typeof sh === 'number' && sw > 0 && sh > 0) {
-        obj.w = (w * obj.nativeW) / sw
-        obj.h = (h * obj.nativeH) / sh
+        // 整图在页面上按 nativeW / sw 缩放，可见框 = 它乘 crop 比例（crop 不动，渲染回来的 native 同步不改比例）
+        obj.w = ((fullW * obj.nativeW) / sw) * (obj.crop?.w ?? 1)
+        obj.h = ((fullH * obj.nativeH) / sh) * (obj.crop?.h ?? 1)
       } else {
         obj.w = w
         obj.h = h

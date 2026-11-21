@@ -220,3 +220,38 @@ def test_plan_refuses_without_license(monkeypatch):
             label_pt=9,
         )
     assert exc.value.code == "not_licensed"
+
+
+def test_request_timeout_covers_blocked_stdin_write(dev_mode, monkeypatch):
+    """子进程不读 stdin、请求体远超管道容量：写入也受截止时间约束，超时后回收进程、释放锁。"""
+    import time
+
+    monkeypatch.setenv("PRO_ECHO_NO_READ", "1")
+    t0 = time.monotonic()
+    with pytest.raises(prohost.ProUnavailable) as exc:
+        prohost.call("echo", {"blob": "x" * (4 * 1024 * 1024)}, feature="quick-layout", timeout=1.0)
+    assert exc.value.code == "timeout"
+    assert time.monotonic() - t0 < 15
+    assert prohost._current is None
+    assert prohost._crashes == 1
+    assert prohost._LOCK.acquire(timeout=1)  # 锁已释放
+    prohost._LOCK.release()
+    t1 = time.monotonic()
+    prohost.shutdown()
+    assert time.monotonic() - t1 < 5
+
+
+def test_parallel_render_binds_requesting_project():
+    """并行渲染线程里看到的项目 = 发起请求的项目（不是默认项目）。"""
+    from tavotto import app as tavotto_app
+
+    marker = object()
+    seen: list = []
+
+    def fn(p):
+        seen.append(getattr(tavotto_app._BOUND_CTX, "ctx", None))
+
+    panels = [_panel("a"), _panel("b"), _panel("c")]
+    quicklayout._each(panels, fn, lambda: tavotto_app.bound_project(marker))
+    assert seen == [marker] * 3
+    assert getattr(tavotto_app._BOUND_CTX, "ctx", None) is None  # 请求线程不被污染
