@@ -70,6 +70,31 @@ interface PathNode {
   实时复合形状（保留原件可再调）不做。
 - 备选与否决：纯 TS（paper.js 的布尔在重合边上常出错；Clipper2 只算多边形，曲线要先打散再拟合，丢精度）。
 
+**修订（2026-11-15，M2 落地）**：
+
+- **构建方式**：源码（`vecops/`，上游两个 crate 原样放进 `vecops/vendor/`）与编好的 `web/src/lib/vecops/vecops.wasm` 一起进仓库；
+  前端构建与桌面打包都不需要 Rust 工具链。可信度靠**逐字节重建**：`vecops/rust-toolchain.toml` 钉 1.95.0、`--locked`、
+  `--remap-path-prefix` 抹掉本机路径、`vecops/rustc-wrap.sh` 把 Cargo 混进了宿主平台的 `-C metadata` 换成平台无关的值
+  （不换的话 macOS 与 Linux 编出来大小相同、字节不同）；macOS arm64 与 Linux x86_64 实测同一份字节。CI 的快线 job `vecops`（进 fast gate）跑
+  `vecops/build.sh --check`，改了 Rust 没重建 .wasm 就红。否决的两种：CI 里现编（每个前端构建、每台打包机都要装 wasm32 目标，
+  出错面大）；只提交 .wasm 不提交源码（不可审计，违反「vendor 保留来源」）。
+- **实测**（入口：路径查找器 / 偏移 / 轮廓化 / 简化）：wasm 659 KB（比 11-14 的探针多了分割 / 修边要用的平面剖分），gzip 210 KB、
+  brotli 164 KB，比上面的估计大三成；Node 里编译 1.2 ms、两圆合并冷启动 4 ms、分割热态 0.24 ms。只在选区适用（右键菜单打开、
+  属性栏出现「路径查找器」那一行）时预取，不进首屏。
+- **桌面壳不用改 CSP**：`tauri.conf.json` 的 `security.csp` 是 null，后端也不给页面发 CSP，WASM 照常编译；「后果」里原来要求加
+  `'wasm-unsafe-eval'` 的那一句已改掉。
+- **Codex 内嵌画布不提供要内核的命令**：内嵌画布是单文件构建，`vite.mcp.config.ts` 把 `VITE_VECOPS` 定成 off，内核连同
+  `?url` 导入一起被摇掉（单文件里没有这 660 KB）；那几个按钮灰掉，停上去说「请在桌面版或浏览器里打开」。复合路径、反转方向
+  不要内核，照常可用。
+- **结果的 id**：每个原对象的样式第一次被结果沿用时，那块结果继承它的 id 与名字（版式里指着它的东西不断）；其余结果新 id。
+  建立复合路径沿用最后面那个对象（与 Illustrator 一致），释放后第一条子路径留原 id。偏移路径是在原对象上面**多一个**新对象；
+  轮廓化描边在原对象没有填充时同 id 换掉它，有填充时原对象关掉描边、轮廓作为新对象放在它上面（Illustrator 是编组，这里不编组）。
+- **路径的描边对齐**：路径缺省居中（与 Illustrator 的路径相同；形状缺省仍是内侧），只对全部子路径闭合的路径生效；内侧 / 外侧是
+  两倍线宽的描边裁到路径里面 / 外面（外侧的裁剪区是大矩形 + 路径按奇偶），前后端同一画法（`pathGeom.pathStrokeAlign` ↔
+  `geometry.path_stroke_align`）。
+- 没做：形状生成器 ⇧M（交互式，留到后面一期）；轮廓化描边暂不支持虚线、端型和设了内外对齐的路径（内核不画这些，命令不出现）；
+  简化是固定容差 0.5 pt，没有滑块。
+
 ### 四、导出侧只加「画路径」
 
 - `rendercore/plan.py` 加 `_path_node` → `ir.Path`；`geometry.py` 加 `path_segments`，与前端 `lib/pathGeom.ts` 共读
@@ -107,6 +132,6 @@ interface PathNode {
 ## 后果
 
 - 新增一个对象类型，§四 列出的消费者一个都不能漏；每个消费者要有用例。
-- 前端多一个按需加载的 WASM（约 120–155 KB 压缩）。桌面壳 CSP 要允许 `'wasm-unsafe-eval'`；Codex 内嵌画布有载荷上限（ADR 0069），
-  WASM 不进内嵌载荷：能外链加载就外链，不能就在内嵌画布里不提供路径查找器并说明原因。
+- 前端多一个按需加载的 WASM（实测 gzip 210 KB / brotli 164 KB，见 §三 修订）。桌面壳不用改 CSP；Codex 内嵌画布有载荷上限（ADR 0069），
+  WASM 不进内嵌载荷，内嵌画布里要内核的命令灰掉并说明原因。
 - 每期的界面先给浅色 / 深色截图拍板，再开 PR；新控件塞进现有属性栏行与「更多」折叠行，不撑大卡片。

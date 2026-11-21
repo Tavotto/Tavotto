@@ -1994,8 +1994,8 @@ export type ExportObject =
       miter_limit?: number
       /** 自定义虚线（pt）；有它就不看 dash */
       dash_pattern?: number[]
-      /** 描边对齐（只对封闭形状）；缺省内侧 */
-      stroke_align?: 'center' | 'outside'
+      /** 描边对齐：形状发 center / outside（缺省内侧），路径发 inside / outside（缺省居中，ADR 0185 M2）；箭头不发 */
+      stroke_align?: 'center' | 'outside' | 'inside'
       rotation_deg?: number
     })
   | (ExportBox & {
@@ -2022,8 +2022,8 @@ export type ExportObject =
       miter_limit?: number
       /** 自定义虚线（pt）；有它就不看 dash */
       dash_pattern?: number[]
-      /** 描边对齐（只对封闭形状）；缺省内侧 */
-      stroke_align?: 'center' | 'outside'
+      /** 描边对齐：形状发 center / outside（缺省内侧），路径发 inside / outside（缺省居中，ADR 0185 M2）；箭头不发 */
+      stroke_align?: 'center' | 'outside' | 'inside'
       rotation_deg?: number
     })
   | (ExportBox & {
@@ -2046,8 +2046,8 @@ export type ExportObject =
       miter_limit?: number
       /** 自定义虚线（pt）；有它就不看 dash */
       dash_pattern?: number[]
-      /** 描边对齐（只对封闭形状）；缺省内侧 */
-      stroke_align?: 'center' | 'outside'
+      /** 描边对齐：形状发 center / outside（缺省内侧），路径发 inside / outside（缺省居中，ADR 0185 M2）；箭头不发 */
+      stroke_align?: 'center' | 'outside' | 'inside'
       /** 端型只对开放子路径生效；缺省 = 无 */
       head_start?: ExportHeadType
       head_end?: ExportHeadType

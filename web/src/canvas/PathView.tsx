@@ -1,5 +1,6 @@
 import { MM_PER_PT } from '@/lib/units'
-import { PATH_DEFAULT_JOIN, pathD, pathGeometry } from '@/lib/pathGeom'
+import { useId } from 'react'
+import { outsideClipPad, PATH_DEFAULT_JOIN, pathD, pathGeometry, pathStrokeAlign } from '@/lib/pathGeom'
 import { hitStrokeWidth, isFilledHead, strokeOpacityOf, svgStroke, type ArrowHeadShape } from '@/lib/shapeGeometry'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { PathObject } from '@/types/document'
@@ -57,6 +58,7 @@ export function PathView({ obj, hit = 'none' }: { obj: PathObject; hit?: 'stroke
  * 无描边又无填充：什么都不画（与形状同一条，ADR 0174）。
  */
 export function PathBody({ obj, sw, w, h }: { obj: PathObject; sw: number; w: number; h: number }) {
+  const clipId = `pclip-${useId().replace(/:/g, '')}`
   const r = readPath(obj)
   const g = pathGeometry(obj, w, h, sw)
   if (!g.fill.length) return null
@@ -65,6 +67,30 @@ export function PathBody({ obj, sw, w, h }: { obj: PathObject; sw: number; w: nu
   const fillRule = r.fillRule === 'evenodd' ? ('evenodd' as const) : undefined
   if (!r.strokeOn) {
     return obj.fill ? <path d={pathD(g.fill)} fill={fill} fillOpacity={fillOpacity} fillRule={fillRule} /> : null
+  }
+  const align = pathStrokeAlign(obj)
+  if (align) {
+    // 描边对齐（ADR 0185 M2）：两倍线宽的描边裁到路径里面（内侧）/ 外面（外侧，大矩形 + 路径按奇偶）——与后端
+    // `geometry.path_paths` 同一画法。虚线长度按原线宽算（只把 strokeWidth 换成两倍）
+    const d = pathD(g.fill)
+    const pad = outsideClipPad(w, h, sw)
+    const clipD = align === 'inside' ? d : `M${-pad} ${-pad}H${w + pad}V${h + pad}H${-pad}Z ${d}`
+    return (
+      <>
+        {obj.fill && <path d={d} fill={fill} fillOpacity={fillOpacity} fillRule={fillRule} />}
+        <clipPath id={clipId}>
+          <path d={clipD} clipRule={align === 'inside' ? fillRule : 'evenodd'} />
+        </clipPath>
+        <path
+          data-stroke-align={align}
+          d={d}
+          fill="none"
+          clipPath={`url(#${clipId})`}
+          {...svgStroke(obj, sw, PATH_DEFAULT_JOIN)}
+          strokeWidth={2 * sw}
+        />
+      </>
+    )
   }
   if (!g.heads.length) {
     return (

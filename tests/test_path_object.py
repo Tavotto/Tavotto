@@ -456,3 +456,78 @@ def test_version_sketch_carries_small_paths_and_drops_huge_ones():
     ]
     assert app._sketch_subpaths(huge) is None
     assert app._sketch_subpaths("nope") is None
+
+
+# ---------------------------------------------------------------------------
+# 描边对齐（ADR 0185 M2）：两倍线宽的描边裁到路径里面 / 外面
+# ---------------------------------------------------------------------------
+CLOSED = {
+    "stroke_pt": 2.0,
+    "color": "#000000",
+    "fill": "#ff0000",
+    "dash": "dashed",
+    "subpaths": [
+        {"closed": True, "nodes": [{"p": [0, 0]}, {"p": [1, 0]}, {"p": [1, 1]}, {"p": [0, 1]}]}
+    ],
+}
+
+
+def test_stroke_align_inside_clips_a_double_width_stroke_to_the_path():
+    fill, group = geometry.path_paths({**CLOSED, "stroke_align": "inside"}, 40.0, 30.0)
+    assert isinstance(fill, ir.Path) and fill.fill is not None and fill.stroke is None
+    assert isinstance(group, ir.Group) and group.clip is not None
+    assert group.clip.segments == fill.segments and group.clip.fill_rule == "nonzero"
+    [stroke] = group.children
+    assert stroke.fill is None and stroke.stroke.width == pytest.approx(4.0)
+    # 虚线长度按原线宽算：与居中时同一串数
+    [plain] = geometry.path_paths(CLOSED, 40.0, 30.0)
+    assert stroke.stroke.dash == plain.stroke.dash
+
+
+def test_stroke_align_outside_clips_to_a_big_rect_minus_the_path():
+    _fill, group = geometry.path_paths({**CLOSED, "stroke_align": "outside"}, 40.0, 30.0)
+    pad = geometry.outside_clip_pad(40.0, 30.0, 2.0)
+    assert pad == pytest.approx(48.0)
+    assert group.clip.fill_rule == "evenodd"
+    assert group.clip.segments[0] == ("M", -pad, -pad)
+    assert group.clip.segments[-len(_fill.segments) :] == _fill.segments
+
+
+@pytest.mark.parametrize(
+    "tweak",
+    [
+        {
+            "subpaths": [{"closed": False, "nodes": [{"p": [0, 0]}, {"p": [1, 1]}]}]
+        },  # 开放路径没有里外
+        {"stroke": False},
+        {"stroke_align": "center"},
+        {"stroke_align": "sideways"},
+    ],
+)
+def test_stroke_align_only_applies_to_closed_stroked_paths(tweak):
+    o = {**CLOSED, "stroke_align": "inside", **tweak}
+    assert geometry.path_stroke_align(o) is None
+    assert not any(
+        isinstance(n, ir.Group) and n.clip is not None for n in geometry.path_paths(o, 40.0, 30.0)
+    )
+
+
+@needs_rc
+@pytest.mark.parametrize("align", ["inside", "outside"])
+def test_stroke_align_survives_pdf_svg_and_eps(tmp_path, align):
+    from tavotto.rendercore import epswriter, fonts, pdfwriter, svgwriter
+    from tavotto.rendercore.hbshaper import HbFaceProvider
+
+    obj = {**PATH_OBJ, "fill_rule": None, "stroke_align": align}
+    page = _page_with(obj)
+    faces = HbFaceProvider(fonts.FontRegistry.discover())
+    svg = tmp_path / "p.svg"
+    svgwriter.write_svg(page, svg, faces)
+    text = svg.read_text(encoding="utf-8")
+    assert "<clipPath" in text and 'stroke-width="3"' in text
+    ps, _facts = epswriter.overlay_ps(page, faces)
+    assert re.search(r"(?m)(^|\s)" + ("eoclip" if align == "outside" else "clip") + r"(\s|$)", ps)
+    pdf = tmp_path / "p.pdf"
+    pdfwriter.write_pdf(page, pdf, faces)
+    _head, content = pdfread.page(pdfread.objects(pdf.read_bytes()))
+    assert (b"W* n" if align == "outside" else b"W n") in content
