@@ -436,9 +436,10 @@ def parse_answers(answers) -> dict:
     for key in _ANSWER_KEYS:
         if key in answers:
             if key == "y" and isinstance(answers[key], list):
-                # 多列纵轴（读懂数据 / 用户点名）：1 到 `MULTI_Y_MAX` 个列名；形状不对 = 错误，取值合不合格由列角色规则判（不合格当没给）
+                # 多列纵轴（读懂数据 / 用户点名）：1 到 `STACK_MAX_COLUMNS` 个列名（有有序横轴时每列一条线，至多 `MULTI_Y_MAX` 个；没有横轴时是
+                # 「把这几列当分组」，至多 `STACK_MAX_COLUMNS` 个）；形状不对 = 错误，取值合不合格由列角色规则判（不合格当没给）
                 raw = answers[key]
-                if not 1 <= len(raw) <= recipe_mod.MULTI_Y_MAX:
+                if not 1 <= len(raw) <= max(recipe_mod.MULTI_Y_MAX, recipe_mod.STACK_MAX_COLUMNS):
                     raise ProposeError("propose_input_invalid", key)
                 names = [_text(c, key) for c in raw]
                 if any(c is None for c in names):
@@ -485,6 +486,10 @@ def unplotted_rows(values: adf.DataSummary, recipe) -> list[dict]:
     """配方画不出来的行（`row` 是文件里的行号，表头算第 1 行，XLSX 是表内行号）：横轴（trend / relationship）没有值（空 / NaN / 不是数或日期）的行
     画不到坐标里。y 列的空 / NaN 是缺失，折线在那里断开，不算没画；夹着文字格的数值列用户已选了处理方式（`recipe.cells`），
     那些格子是用户明确决定过的，不在这里报（统计在 `cell_stats`）。"""
+    if (
+        recipe.stack
+    ):  # 把列当分组：被转的列都是纯数值列，空格 / NaN 是缺失（不是「没画」），没有横轴
+        return []
     if values.large is not None:
         total, numbers = tpl.large_unplotted(values, recipe)
         ex = Examples({"row": n, "column": recipe.x, "reason": "x_not_a_value"} for n in numbers)
@@ -986,12 +991,14 @@ def item_to_dict(sess: Session, item: Item, recommended: bool) -> dict:
             "table": sess.merge.sources[0].path if sess.merge is not None else r.table,
             "sheet": r.sheet,
             "family": r.family,
-            "x": r.x,
-            "y": list(r.y),
-            "group": r.group,
+            # 把列当分组：`y` 是被当分组的那几列（与响应里 `roles.y` 一致），配方里转换后的值 / 类别列是内部的，不对外；多一项 `stack` 标明
+            "x": None if r.stack else r.x,
+            "y": list(r.stack or r.y),
+            "group": None if r.stack else r.group,
             "facet": r.facet,
             "unit": r.unit,
             "layers": [layer.to_dict() for layer in r.layers],
+            **({"stack": list(r.stack)} if r.stack else {}),
         },
         "recommended": recommended,
         "coverage": item.coverage,

@@ -2011,6 +2011,20 @@ def apply_numcat(header, rows, cols):
     return out
 
 
+def apply_stack(header, rows, cols, value_name, cat_name):
+    """「把这几列当分组」读表后的转换（宽表 → 长表，只在内存里的副本上做，不碰文件）：返回 `([value_name, cat_name], 行)`——一列「值」、一列「类别」（= 原来的列名原文）。
+    **按列逐列**取（先 `cols[0]` 的全部、再 `cols[1]` 的……），所以类别的首次出现顺序恒等于 `cols` 的顺序，与哪一行先有值无关；只取数值格（空格子 / `nan` 不是观测，
+    那一格不产生行），值保留去首尾空白的原文（之后与别的路径一样由 `parse_cell` 解析）。其余列不进结果。**这是运行时函数**：父进程算期望值与生成的脚本调用同一份源码。"""
+    idx = {h: i for i, h in enumerate(header)}
+    out = []
+    for col in cols:
+        i = idx[col]
+        for r in rows:
+            if parse_cell(r[i])[0] == "numeric":
+                out.append([r[i].strip(), col])
+    return [value_name, cat_name], out
+
+
 # --------------------------------------------------------------------------- 列映射
 @dataclass(frozen=True)
 class Mapping:

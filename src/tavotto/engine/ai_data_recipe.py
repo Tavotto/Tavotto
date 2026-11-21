@@ -51,6 +51,16 @@ MAX_Y = adf.MAX_COLUMNS  # 配方 y 列数的硬上限 = 摘要的列数上限�
 MULTI_Y_MAX = 3
 #: 配方里「按类别用的整数编码列」至多几列：分组 + 分面 + 类别横轴
 MAX_NUMCAT = 3
+#: 「把这几列当分组」（`FigureRecipe.stack`，宽表转长表）至多几列。这里是**类别个数**（每列一组，进颜色分组 / 类别横轴），不是同一根轴上的几条线，
+#: 所以不沿用多列纵轴的 3：取颜色分组的上限 `MAX_GROUP_LEVELS`（8，再多颜色分不清）——这样每一种备选（含 ECDF 的颜色分组）都放得下，
+#: 没有「某个备选因类别太多被剔掉」的参差；类别横轴本来的上限（12）更宽，不是瓶颈
+STACK_MAX_COLUMNS = MAX_GROUP_LEVELS
+#: 「把这几列当分组」每一列至少要有几个数值格（一组只有一个值谈不上互相比较）
+STACK_MIN_N = 2
+#: 转成长表之后的两列的名字（只在这条配方内部、对应的脚本里存在；表里真有同名的列也不冲突——长表只有这两列）。值列名带上共同的单位后缀（`value_mM`），
+#: 轴标题因此仍是 `value (mM)`
+STACK_VALUE = "value"
+STACK_CAT = "group"
 #: 数值列里夹着文字时，非数字的非空格子占比上限与数值格子的最少个数（`numeric_like`）
 MAX_TEXT_SHARE = 0.2
 MIN_NUMERIC_CELLS = 3
@@ -550,6 +560,7 @@ _RECIPE_KEYS = (
     "why",
     "cells",
     "numcat",
+    "stack",
 )
 _CELL_KEYS = ("column", "mode", "map", "rest")
 _RECIPE_REQUIRED = ("table", "family", "layers", "y", "why")
@@ -569,9 +580,9 @@ def _name(value, what: str, *, optional: bool = False) -> str | None:
     return value
 
 
-def _names(value, what: str) -> tuple[str, ...]:
-    """列名数组（`numcat`）：必须是 0–`MAX_NUMCAT` 个列名的数组，否则 `recipe_malformed`。"""
-    if not isinstance(value, list) or len(value) > MAX_NUMCAT:
+def _names(value, what: str, limit: int = MAX_NUMCAT) -> tuple[str, ...]:
+    """列名数组（`numcat` / `stack`）：必须是 0–`limit` 个列名的数组，否则 `recipe_malformed`。"""
+    if not isinstance(value, list) or len(value) > limit:
         raise RecipeError("recipe_malformed", what)
     return tuple(_name(v, what) for v in value)
 
@@ -666,6 +677,10 @@ class FigureRecipe:
     #: 校验（`validate_recipe` 把它们当类别列）→ 脚本（读表后 `apply_numcat` 规范成整数写法、类别按数值升序）→ 落盘再校验 → 指纹核对。
     #: 空 = 与从前逐字相同；规则（没有人点名）永远不写它。
     numcat: tuple[str, ...] = ()
+    #: 「把这几列当分组」：被点名的 2–`STACK_MAX_COLUMNS` 个同一种量的数值列（宽表：每列一个条件 / 一次重复）在逻辑上转成长表——一列值（`stack_names` 的第一个）、
+    #: 一列类别（第二个，取值 = 原来的列名原文、顺序 = `stack` 里的顺序）；`y` 是那个值列、类别列做 `x`（比较类）或 `group`（分布类）。这一条事实贯穿
+    #: 校验（`validate_recipe` 按转换后的长表看）→ 脚本（读表后 `apply_stack`）→ 落盘再校验 → 指纹核对。空 = 与从前逐字相同；规则永远不写它。
+    stack: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, data) -> FigureRecipe:
@@ -731,6 +746,7 @@ class FigureRecipe:
             scale=_choice(data.get("scale", "linear"), SCALES, "scale"),
             cells=_cells_from(data.get("cells", [])),
             numcat=_names(data.get("numcat", []), "numcat"),
+            stack=_names(data.get("stack", []), "stack", STACK_MAX_COLUMNS),
         )
 
     def to_dict(self) -> dict:
@@ -751,6 +767,7 @@ class FigureRecipe:
             "why": self.why,
             **({"cells": [c.to_dict() for c in self.cells]} if self.cells else {}),
             **({"numcat": list(self.numcat)} if self.numcat else {}),
+            **({"stack": list(self.stack)} if self.stack else {}),
         }
 
 
@@ -843,6 +860,99 @@ def numcat_view(s: adf.DataSummary, cols) -> adf.DataSummary:
     都读 `groups`，这样不必每处都分叉。`cols` 为空原样返回。"""
     extra = {c: s.numcat[c] for c in cols if c in s.numcat and c not in s.groups}
     return replace(s, groups={**s.groups, **extra}) if extra else s
+
+
+def stack_names(cols) -> tuple[str, str]:
+    """转成长表之后的 `(值列名, 类别列名)`：值列名 = `STACK_VALUE`，各列名后缀里的单位认得出且都一样就接在后面（`value_mM`，轴标题 `value (mM)`）。"""
+    keys = []
+    for c in cols:
+        m = adf._UNIT_SUFFIX.match(c)
+        keys.append(m.group("unit") if m and m.group("unit") in adf.UNITS else None)
+    unit = keys[0] if keys and keys[0] and len(set(keys)) == 1 else None
+    return (f"{STACK_VALUE}_{unit}" if unit else STACK_VALUE), STACK_CAT
+
+
+def stack_ok(s: adf.DataSummary, cols) -> bool:
+    """用户 / 模型点名的这几列能不能「当分组」（**客观条件的唯一实现**：`_resolve_roles`、`ai_data_roles`、`validate_recipe` 共用）：2 到 `STACK_MAX_COLUMNS` 列、
+    互不相同、都在表里、**都是纯数值列**（`kind == "numeric"`：夹着文字的列要先有处理规则，这里不支持——干净地回到规则结果）、不是 `id_like` 列、每列至少
+    `STACK_MIN_N` 个数值格、列名后缀里认得出的单位至多一种（不同量纲不放在同一根值轴上）；小表（大表没有行数据、缩减只认趋势 / 散点）、非矩阵。"""
+    if not isinstance(cols, (list, tuple)) or not 2 <= len(cols) <= STACK_MAX_COLUMNS:
+        return False
+    if len(set(cols)) != len(cols) or s.large is not None or s.layout == "matrix":
+        return False
+    for c in cols:
+        col = s.per_column.get(c) if isinstance(c, str) else None
+        if col is None or c in s.id_like or col.kind != "numeric" or col.numeric < STACK_MIN_N:
+            return False
+    return len({u for u in (_unit_of(c) for c in cols) if u}) <= 1
+
+
+def stack_view(s: adf.DataSummary, cols) -> adf.DataSummary:
+    """把 `cols` 当分组之后的长表摘要：两列 `[值, 类别]`（`stack_names`），类别是一个分组列（取值个数 = 列数）、值列是数值列；`s` 带行数据就同时转出行
+    （`adf.apply_stack`，脚本读表后调用的同一个函数；按列逐列、类别顺序 = `cols` 顺序）。校验 / 资格判定里所有「是不是类别列」「每组 n」的判据都读这张表。
+    调用方先过 `stack_ok`。"""
+    vname, cname = stack_names(cols)
+    n = sum(s.per_column[c].numeric for c in cols)
+    per = {
+        vname: adf.ColumnSummary(vname, numeric=n),
+        cname: adf.ColumnSummary(cname, text_count=n, text=list(cols)[: adf.TEXT_SAMPLES]),
+    }
+    rows: list[list[str]] = []
+    if s.rows:
+        _header, rows = adf.apply_stack(s.columns, s.rows, list(cols), vname, cname)
+    return replace(
+        s,
+        columns=[vname, cname],
+        rows=rows,
+        per_column=per,
+        layout="long",
+        groups={cname: len(cols)},
+        numcat={},
+        id_like=[],
+        repeats=None,
+        row_count=None if s.rows else n,
+        row_numbers=[],
+        row_sources=[],
+        units_row=s.units_row,
+    )
+
+
+def _stack_problems(recipe: FigureRecipe, s: adf.DataSummary) -> list[Problem]:
+    """`recipe.stack` 的结构校验（`s` 是原表摘要）：族、与别的事实互斥、每一列客观合格、`y` / 类别角色与转换后的长表对得上。有问题就不再往下判（长表不存在）。"""
+    P: list[Problem] = []
+    if recipe.family not in ("comparison", "distribution"):
+        P.append(Problem("roles_invalid", "stack", "family"))
+    if s.large is not None:  # 大表没有行数据：转换没有流式实现
+        P.append(Problem("mark_not_allowed", "stack", "large"))
+        return P
+    if recipe.cells or recipe.numcat or recipe.unit is not None or recipe.paired:
+        P.append(Problem("roles_invalid", "stack", "exclusive"))
+    for i, c in enumerate(recipe.stack):
+        if c not in s.per_column:
+            P.append(Problem("column_not_found", f"stack[{i}]"))
+        elif (
+            c in recipe.stack[:i]
+            or c in s.id_like
+            or s.per_column[c].kind != "numeric"
+            or s.per_column[c].numeric < STACK_MIN_N
+        ):
+            P.append(Problem("column_type_mismatch", f"stack[{i}]", "num"))
+    if len(recipe.stack) < 2:
+        P.append(Problem("roles_invalid", "stack", "2+"))
+    if P:
+        return P
+    if len({u for u in (_unit_of(c) for c in recipe.stack) if u}) > 1:
+        return [Problem("dual_axis_unsupported", "stack")]
+    vname, cname = stack_names(recipe.stack)
+    if recipe.y != (vname,):
+        P.append(Problem("roles_invalid", "y", "stack"))
+    if cname not in (
+        recipe.x,
+        recipe.group,
+        recipe.facet,
+    ):  # 类别列得真的参与作图，否则几列被悄悄并成一堆
+        P.append(Problem("roles_invalid", "stack", "category"))
+    return P
 
 
 # --------------------------------------------------------------------------- 取值（需要带行数据的 DataSummary）
@@ -1013,7 +1123,10 @@ def _value_problems(
 
 # --------------------------------------------------------------------------- 夹着文字格的数值列：规则校验与套用
 def with_cells_applied(values: adf.DataSummary, recipe: FigureRecipe) -> adf.DataSummary:
-    """套上配方的处理规则（夹着文字格的 `cells`、整数编码的 `numcat`）之后的带行数据摘要（取值规则、期望指纹都按「处理后的数据」算）；没有规则原样返回。"""
+    """套上配方的处理规则（夹着文字格的 `cells`、整数编码的 `numcat`、把列当分组的 `stack`）之后的带行数据摘要（取值规则、期望指纹都按「处理后的数据」算）；没有规则原样返回。
+    `stack` 与前两者互斥（`validate_recipe` 判），转换后是只有 `[值, 类别]` 两列的长表摘要（`stack_view`）。"""
+    if recipe.stack:
+        return stack_view(values, recipe.stack)
     rows = values.rows
     if recipe.cells:
         rows, _notes, _stats = adf.apply_cells(
@@ -1117,6 +1230,8 @@ def _large_problems(recipe: FigureRecipe, s: adf.DataSummary) -> list[Problem]:
         recipe.numcat
     ):  # 整数编码的分组：大表暂不支持（缩减的系列数上界读 `groups`，`numcat` 在大表摘要里恒为空）
         out.append(Problem("mark_not_allowed", "numcat", "large"))
+    if recipe.stack:  # 把列当分组：大表没有行数据，转换没有流式实现（`_stack_problems` 也判一次）
+        out.append(Problem("mark_not_allowed", "stack", "large"))
     if recipe.unit is not None:
         out.append(Problem("mark_not_allowed", "unit", "large"))
     # 取值类规则里只靠「整表最小 / 最大」就能精确判的：对数轴上的非正值（概览扫描留下了每列的精确最小值）。
@@ -1153,9 +1268,15 @@ def validate_recipe(
     if entry is None:
         return [Problem("table_not_found", "table")]
     s = entry.summary
+    s0 = s  # 原表摘要（`values` 的列要对着它核；`stack` 之后 `s` 是转换后的长表）
     spec = FAMILIES[recipe.family]
     P: list[Problem] = []
     rule_cols = {c.column for c in recipe.cells}
+    if recipe.stack:
+        bad = _stack_problems(recipe, s)
+        if bad:
+            return bad
+        s = stack_view(s, recipe.stack)
     if recipe.numcat:
         cat_roles = {recipe.group, recipe.facet} | (
             {recipe.x} if "cat" in spec.x_types and "ord" not in spec.x_types else set()
@@ -1309,9 +1430,11 @@ def validate_recipe(
         P.extend(_large_problems(recipe, s))
     # 取值（只在列都对得上时）
     if values is not None and values.rows and cols_ok:
-        if values.columns != s.columns or values.sheet != s.sheet:
+        if values.columns != s0.columns or values.sheet != s0.sheet:
             raise ValueError("values 与 profile 里那张表的列 / 工作表对不上")
-        if (recipe.cells or recipe.numcat) and not any(p.code.startswith("cell_") for p in P):
+        if (recipe.cells or recipe.numcat or recipe.stack) and not any(
+            p.code.startswith("cell_") for p in P
+        ):
             values = with_cells_applied(values, recipe)
         P.extend(_value_problems(recipe, spec, s, _Values(values), unit_confirmed))
     return P
@@ -1808,11 +1931,55 @@ class _Roles:
     options: dict = field(default_factory=dict)
     #: `cats` 里被点名、按类别用的整数编码列（配方的 `numcat` 来源）；没人点名 = 空
     numcat: tuple[str, ...] = ()
+    #: 「把这几列当分组」（`FigureRecipe.stack`）：被点名的宽表列（表里的列顺序）；这时 `ys` 就是它们（真列名）、`cats` 空、没有横轴。没有 = 空
+    stack: tuple[str, ...] = ()
+
+
+def _stack_roles(entry: adf.TableEntry, hint: str | None, picks: dict) -> _Roles | None:
+    """`picks.y` 给了多列、而最终**没有有序横轴**，且这几列客观上能「当分组」（`stack_ok`）→ 角色落成「列当分组」；否则 None（交给原有的规则）。
+    **只有点名才进**（规则从不自己用）。不支持的情形一律返回 None、回到规则结果：合画（合成的文件列才是主分组）、大表、有文字分组列（「列当分组再分组」）、
+    点名了分组列、整数编码的分组点名、有序横轴存在（`picks.x` 点名了它，或没说 `none` 而除这几列外还有日期 / 数值列——此时仍是每列一条线的趋势类）。
+    类别顺序 = 表里的列顺序（不是点名的顺序）。"""
+    p = picks.get("y")
+    s = entry.summary
+    if (
+        not isinstance(p, list)
+        or not all(isinstance(c, str) for c in p)
+        or getattr(entry, "merge", None) is not None
+        or not stack_ok(s, p)
+    ):
+        return None
+    gp = picks.get("group")
+    if isinstance(gp, str) and gp not in ("none", "unsure"):
+        return None
+    ids = set(s.id_like)
+    cols = s.columns
+    if any(c in s.groups and c not in ids for c in cols):  # 有文字分组列
+        return None
+    ys = [c for c in cols if c in p]
+    xs = [
+        c
+        for c in cols
+        if c not in ys
+        and c not in ids
+        and (s.per_column[c].kind == "date" or numeric_like(s.per_column[c]))
+    ]
+    if xs and picks.get("x") != "none":
+        return None
+    options = {
+        "y": [c for c in cols if numeric_like(s.per_column[c]) and c not in ids],
+        "group": [c for c in cols if c in s.numcat and c not in ys],
+        "x": xs,
+    }
+    return _Roles(tuple(ys), (), None, False, options, (), tuple(ys))
 
 
 def _resolve_roles(
     entry: adf.TableEntry, hint: str | None, picks: dict
 ) -> _Roles | NeedsChoice | str:
+    stacked = _stack_roles(entry, hint, picks)
+    if stacked is not None:
+        return stacked
     res = _resolve_roles_raw(entry, hint, picks)
     if isinstance(picks.get("y"), list) and isinstance(res, _Roles) and len(res.ys) > 1:
         # 多列纵轴只在有有序横轴（趋势类每列一条线）时才用：分布 / 比较类配方只画第一列（`default_candidates` 的 `[y]`），
@@ -2053,10 +2220,25 @@ def default_candidates(
         "facet": roles.cats[1] if len(roles.cats) == 2 else None,
         "unit": unit,
         "options": {k: list(v) for k, v in roles.options.items()},
+        # 「把列当分组」：`y` 就是被当分组的那几列（与每个备选实际画的列一致），没有横轴、没有分组；只有这时才多这一项（其余响应逐字不变）
+        **({"stack": True} if roles.stack else {}),
     }
+    # 「把列当分组」之后，后面的备选 / 资格都按转换后的长表（`stack_view`）来：一个值列加一个类别列，类别列像文字分组列一样做比较的横轴 / 分布的颜色分组
+    view_entry, view_values = entry, values
+    if roles.stack:
+        view_entry = replace(entry, summary=stack_view(s, roles.stack))
+        if values is not None and values.rows:
+            view_values = stack_view(values, roles.stack)
+        vname, cname = stack_names(roles.stack)
+        roles = replace(roles, ys=(vname,), cats=(cname,))
+        y = vname
     cells = dict(cells or {})
     # 夹着少量文字的数值列：y 列与有序横轴列同一套规则（先问 / 懒模式默认「不画那几行」，规则进配方）
-    mixed = mixed_columns(s, (*roles.ys, *([roles.x_ord] if roles.x_ord else [])))
+    mixed = (
+        []  # 把列当分组：被当分组的列都是纯数值列（`stack_ok`），没有夹着文字的
+        if view_entry is not entry
+        else mixed_columns(s, (*roles.ys, *([roles.x_ord] if roles.x_ord else [])))
+    )
     pending = [c for c in mixed if c not in cells]
     if pending and values is not None and values.rows:
         context = tuple(
@@ -2065,7 +2247,7 @@ def default_candidates(
         return mixed_cells_question(values, pending, context)
     ok_families = {
         e.family
-        for e in eligible(entry, eff, values=values, numcat=roles.numcat)
+        for e in eligible(view_entry, eff, values=view_values, numcat=roles.numcat)
         if e.status in ("ok", "partial") and e.renderable
     }
     groups: list[list[tuple[str, FigureRecipe]]] = []
@@ -2246,6 +2428,8 @@ def default_candidates(
             rules = tuple(cells[c] for c in used_cols if c in cells and c in mixed)
             if rules:
                 rec = replace(rec, cells=rules)
+            if roles.stack:  # 把列当分组：每个备选都带这条事实（y / 类别列已是长表里的两列）
+                rec = replace(rec, stack=roles.stack)
             if (
                 roles.numcat
             ):  # 点名的整数编码列：配方里这一列带上「按类别用」的事实（只对它真在类别角色里的配方）
