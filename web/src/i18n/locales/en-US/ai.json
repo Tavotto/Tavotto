@@ -535,8 +535,8 @@
       "extract": "Use only the numbers inside"
     },
     "variant": {
-      "split": "Split further by “{{column}}”",
-      "by_file": "Compared by file only"
+      "split": "Grouped by file + “{{column}}”",
+      "by_file": "Grouped by file only"
     },
     "candidate": {
       "points_mean": {
