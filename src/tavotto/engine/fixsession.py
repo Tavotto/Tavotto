@@ -450,16 +450,21 @@ def _remember_fix(s: FixSession) -> None:
     """会话以「修好」收尾、且应用试运行真的验证过（`finish` 在有应用试运行时已要求这一点）：把这次做成的改动记在本机
     （`engine/fixmemory`，ADR 0197 第 3 层·在线）。失败类型取第一次试运行之前的形状。不抛。"""
     ctx = s.ctx
-    if s.outcome != OUTCOME_FIXED or ctx is None or ctx.application_runner is None:
+    if (
+        s.outcome != OUTCOME_FIXED
+        or ctx is None
+        or getattr(ctx, "application_runner", None) is None
+    ):
         return
-    if not ctx.fixes_made or not ctx.attempts:
+    attempts, made = getattr(ctx, "attempts", None), getattr(ctx, "fixes_made", None)
+    if not made or not attempts:
         return
     try:
         from . import fixmemory
 
         fixmemory.remember(
-            str(ctx.attempts[0].get("before") or ""),
-            list(ctx.fixes_made),
+            str(attempts[0].get("before") or ""),
+            list(made),
             script=s.script,
             sensitive_args=bool(getattr(ctx, "run_arguments_sensitive", False)),
             scrub=fixtools.readscope.scrub,
