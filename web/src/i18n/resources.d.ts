@@ -243,8 +243,8 @@ export default interface Resources {
         "reading": "正在看各列…"
       },
       "variant": {
-        "by_file": "只按文件比较",
-        "split": "按「{{column}}」再分开"
+        "by_file": "只按文件分组",
+        "split": "按文件 +「{{column}}」分组"
       },
       "working": {
         "cancel": "取消",
