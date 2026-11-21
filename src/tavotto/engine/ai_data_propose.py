@@ -25,6 +25,7 @@ Flask 父进程 import；**不调模型**（模型工具集是下一个 PR，复
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import logging
@@ -43,7 +44,9 @@ from pathlib import Path, PurePosixPath
 from . import (
     ai_data_figure as adf,
     ai_data_merge as merge_mod,
+    ai_data_progress as progress,
     ai_data_recipe as recipe_mod,
+    ai_data_roles as roles_mod,
     ai_data_template as tpl,
     ai_figure_edit,
     config,
@@ -65,6 +68,7 @@ ERROR_CODES = (
     "propose_input_invalid",  # 请求体的字段类型不对 / 超长
     "propose_cells_invalid",  # 数值列里夹着的文字格的处理规则不合格（`params.reason` 是拒绝码，`params.key` 点名哪一项）
     "propose_cells_need_rule",  # 用户只用文字说明了怎么处理（`describe`）：要先由助手整理成规则，不猜
+    "propose_cancelled",  # 前端取消了这个读表类请求（概览 / 出备选；`/api/ai/data-progress/<rid>/cancel`）：什么都没留下
     "propose_thumbnail_failed",  # 懒渲染（`render="lazy"`）：这一张缩略图画不出来（`params.reason` 是 `DROP_REASONS` 里的码）
     "tables_columns_differ",  # 合画（`tables`）：这几份的列名集合或顺序不一样，拼不成一张表（`params.index` = 第一个与第一份不同的下标）
     "tables_limit_exceeded",  # 合画：份数超过上限（`params.max`）
@@ -82,6 +86,9 @@ DROP_REASONS = (
 CANDIDATE_ROOT = config.data_dir() / "cache" / "ai_data_candidates"
 SESSION_TTL_S = 30 * 60
 MAX_SESSIONS = 6
+#: 候选目录里**大表字节副本**的总量上限：每个会话放一份选中那张表的副本（≤ `adf.MAX_BYTES`），最多 6 个会话会占满磁盘；
+#: 新会话放不下就先丢最老的（用户已经往前走了的）。小表（≤ `adf.SMALL_BYTES`）不计入。
+LARGE_STAGE_BUDGET = 1024 * 1024 * 1024
 #: 缩略图宽度（像素）与单张字节上限
 THUMB_WIDTH_PX = 640
 MAX_THUMB_BYTES = 4 * 1024 * 1024
@@ -164,6 +171,8 @@ class Item:
     thumb: Path | None = None
     unplotted: int = 0  # 有多少行因为横轴没有值而没画（稳定码 `rows_not_plotted` + 计数）
     cells: list | None = None  # 处理规则作用的统计（没有规则 = None）
+    #: 大表：画出来的是缩减后的点 `{"rows": 整表行数, "kept": 留下的行数}`；小表 = None（响应里没有这一项）
+    reduced: dict | None = None
     #: 缩略图状态：`ready`（已有 PNG；旧模式一律如此）/ `pending`（懒模式，还没画）/ `failed`（`reason` 是 `DROP_REASONS` 里的码）
     state: str = "ready"
     reason: str | None = None
@@ -197,6 +206,8 @@ class Session:
     root: Path | None = None  # 项目目录（懒渲染取项目解释器用）
     #: 懒渲染：画哪些备选（`items` 的插入顺序就是推荐顺序）
     lazy: bool = False
+    #: 大表（`DataSummary.large`）：进度只对大表有条目
+    large: bool = False
     #: 合画（几份拼一张）：各份与合成列；单份 = None（`table` / `sheet` / `data_sha256` 在合画时是第一份的 / 拼后的身份，`folder_rel` 是落点目录）
     merge: merge_mod.MergeSpec | None = None
 
@@ -235,6 +246,22 @@ def _drop(sess: Session) -> None:
             _REQUESTS.pop(key, None)
     if _inside_root(sess.dir):
         _rmtree(sess.dir)
+
+
+def _staged_bytes(sess: Session) -> int:
+    return sess.data_size if sess.data_size > adf.SMALL_BYTES else 0
+
+
+def make_room(extra: int) -> None:
+    """要放进 `extra` 字节的大表副本之前：丢最老的会话，直到所有会话的大表副本加上它不超过 `LARGE_STAGE_BUDGET`。"""
+    if extra <= adf.SMALL_BYTES:
+        return
+    with _LOCK:
+        for sess in sorted(_SESSIONS.values(), key=lambda s: s.touched):
+            if sum(_staged_bytes(s) for s in _SESSIONS.values()) + extra <= LARGE_STAGE_BUDGET:
+                break
+            if _staged_bytes(sess):
+                _drop(sess)
 
 
 def sweep(now: float | None = None) -> None:
@@ -434,10 +461,25 @@ def confirmed_from(answers: dict[str, str]) -> tuple[recipe_mod.Confirmed, dict]
     return recipe_mod.Confirmed(), picks
 
 
+class Examples(list):
+    """大表上「没画的行」只给前 100 个例子；`total` 是精确的总数（来自概览扫描）。小表直接是普通列表（`total` 同长度）。"""
+
+    total: int = 0
+
+
+def unplotted_total(rows: list[dict]) -> int:
+    return getattr(rows, "total", len(rows))
+
+
 def unplotted_rows(values: adf.DataSummary, recipe) -> list[dict]:
     """配方画不出来的行（`row` 是文件里的行号，表头算第 1 行，XLSX 是表内行号）：横轴（trend / relationship）没有值（空 / NaN / 不是数或日期）的行
     画不到坐标里。y 列的空 / NaN 是缺失，折线在那里断开，不算没画；夹着文字格的数值列用户已选了处理方式（`recipe.cells`），
     那些格子是用户明确决定过的，不在这里报（统计在 `cell_stats`）。"""
+    if values.large is not None:
+        total, numbers = tpl.large_unplotted(values, recipe)
+        ex = Examples({"row": n, "column": recipe.x, "reason": "x_not_a_value"} for n in numbers)
+        ex.total = total
+        return ex
     out: list[dict] = []
     idx = {c: i for i, c in enumerate(values.columns)}
     x = recipe.x if recipe.family in ("trend", "relationship") else None
@@ -470,6 +512,14 @@ def _unplotted(values: adf.DataSummary, n: int, column: str, reason: str) -> dic
     if src is not None:  # 合画：行号是那一份自己的文件行号，要带上是哪一份
         item["file"] = src
     return item
+
+
+def reduced_of(values: adf.DataSummary, recipe) -> dict | None:
+    """大表：`{"rows": 整表行数, "kept": 缩减后画出的行数}`（缩减结果在 `large_reduce` 的缓存里，不再读文件）；小表 None。"""
+    if values.large is None:
+        return None
+    _rows, info = tpl.large_reduce(values, recipe)
+    return {"rows": info["rows"], "kept": info["kept"]}
 
 
 def cell_stats(values: adf.DataSummary, recipe) -> list[dict]:
@@ -566,10 +616,21 @@ def _render_attempt(sdir: Path, rel: str, stem: str, thumb: Path) -> _Rendered:
             LOG.warning("数据出图候选渲染后 worker 退役失败", exc_info=True)
 
 
-def _stage_table(sdir: Path, source: Path, table_rel: str) -> None:
+def _stage_table(sdir: Path, source: Path, table_rel: str, tracked: bool = False) -> None:
     """把选中的那一张数据文件的**字节副本**放进候选目录（布局与将来落盘后相同）。只复制不链接；源文件只读。"""
     dest = sdir.joinpath(*PurePosixPath(normalize_rel(table_rel)).parts)
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if tracked and progress.active():
+        # 大表副本按块复制：每块记字节进度并查取消（`shutil.copyfile` 一口气拷 500 MB 不能中途停）。取消 / 出错由调用方删整个会话目录
+        total = source.stat().st_size
+        done = 0
+        with source.open("rb") as src, dest.open("wb") as out:
+            for chunk in iter(lambda: src.read(8 * 1024 * 1024), b""):
+                out.write(chunk)
+                done += len(chunk)
+                progress.tick("stage", done, total)
+        shutil.copystat(source, dest)
+        return
     shutil.copyfile(source, dest)
 
 
@@ -595,6 +656,8 @@ def _plan_candidates(
     figures.mkdir(parents=True, exist_ok=True)
     data_rel = script_data_rel(entry.path)
     plan: list[_Planned] = []
+    if values.large is not None:
+        progress.set_passes("reduce", max(1, tpl.large_reduce_pending(values, recipes)))
     for n, recipe in enumerate(recipes, start=1):
         stem = f"cand_{n}"
         try:
@@ -602,6 +665,9 @@ def _plan_candidates(
             expected = tpl.expected_fingerprints(values, recipe)
         except tpl.TemplateError:
             plan.append(_Planned(n, stem, recipe, "candidate_template_unsupported", []))
+            continue
+        except tpl.LargeRuleError as exc:  # 大表：整表流过才知道的资格判据没过（折线的 x 重复 / 没排序等），码与小表上同一条规则一致
+            plan.append(_Planned(n, stem, recipe, exc.code, []))
             continue
         (figures / rendered.runtime_name).write_bytes(rendered.runtime)
         (figures / f"{stem}.py").write_text(rendered.script, encoding="utf-8")
@@ -695,6 +761,10 @@ def ensure_thumbnail(project: str, session_id: str, item_id: str) -> Path:
     if item.state == "pending":
         with item.lock:
             if item.state == "pending":
+                if sess.large:
+                    progress.enter(
+                        "render"
+                    )  # worker 里读 + 缩减 + 画图：没有字节进度，如实标「不确定」
                 _finish_lazy_item(sess, item)
     if item.state == "failed":
         raise ProposeError("propose_thumbnail_failed", params={"reason": item.reason})
@@ -754,9 +824,18 @@ def with_explicit_table(
     if rel is None:
         return profile
     values = adf.inspect_data_source(
-        folder / PurePosixPath(rel), sheet, v2=True, header_row=(header_rows or {}).get(rel)
+        folder / PurePosixPath(rel),
+        sheet,
+        v2=True,
+        header_row=(header_rows or {}).get(rel),
+        allow_large=True,
     )
-    summary = replace(values, rows=[], row_numbers=[], row_count=len(values.rows))
+    summary = replace(
+        values,
+        rows=[],
+        row_numbers=[],
+        row_count=values.row_count if values.large is not None else len(values.rows),
+    )
     entry = adf.TableEntry(rel, values.sheet, False, summary)
     return adf.FolderProfile(
         (*profile.tables, entry), profile.skipped, profile.truncated, profile.truncated_reason
@@ -765,11 +844,14 @@ def with_explicit_table(
 
 def _table_for_values(root_folder: Path, entry: adf.TableEntry) -> adf.DataSummary:
     # 同一读法：表头行取摘要里实际用的那一行（预览 / 资格判定 / 脚本读出来的是同一张表）
+    if entry.summary.large is not None:
+        return entry.summary  # 大表：概览那一遍扫描就是整表摘要（没有行数据），不再整份扫第二遍
     return adf.inspect_data_source(
         root_folder / PurePosixPath(entry.path),
         entry.sheet,
         v2=True,
         header_row=entry.summary.header_line,
+        allow_large=True,
     )
 
 
@@ -910,6 +992,7 @@ def item_to_dict(sess: Session, item: Item, recommended: bool) -> dict:
         },
         "thumbnail_url": f"/api/ai/data-figure/thumbnail/{sess.id}/{item.id}",
         "thumbnail_status": item.state,
+        **({"reduced": item.reduced} if item.reduced is not None else {}),
         **({"variant": item.variant} if sess.merge is not None and sess.merge.splittable else {}),
     }
 
@@ -943,6 +1026,7 @@ def propose(
 
     **不往用户文件夹写任何东西**（候选目录在 `data_dir()/cache/`，见模块说明）；幂等：同一 `(项目, client_request_id)` 在 TTL 内回同一份响应。"""
     sweep()
+    progress.check()
     if render is not None and render not in RENDER_MODES:
         raise ProposeError("propose_input_invalid", "render")
     auto = render == "lazy"
@@ -952,6 +1036,9 @@ def propose(
     sheet = _text(sheet, "sheet")
     ans = parse_answers(answers)
     hrows = parse_header_rows(header_rows)
+    user_took_over = _user_took_over(
+        ans
+    )  # 懒模式的循环会往 `ans` 里补默认答案，所以在它之前记下请求原本带没带
     tabs = parse_tables(tables)
     if tabs is not None and table is not None:  # `table` 与 `tables` 只能给一个
         raise ProposeError("propose_input_invalid", "tables")
@@ -1157,7 +1244,14 @@ def propose(
             for src in merged.merge.sources:
                 _stage_table(sdir, folder_path / PurePosixPath(src.rel), src.rel)
         else:
-            _stage_table(sdir, folder_path / PurePosixPath(chosen.path), chosen.path)
+            progress.check()
+            make_room(values.size)
+            _stage_table(
+                sdir,
+                folder_path / PurePosixPath(chosen.path),
+                chosen.path,
+                tracked=values.large is not None,
+            )
         if auto:
             plan = _plan_candidates(sdir, chosen, values, [c.recipe for c in res.items])
             for cand, p in zip(res.items, plan, strict=True):
@@ -1170,6 +1264,14 @@ def propose(
             for cand, (_recipe, coverage, reason, png, fb) in zip(res.items, rendered, strict=True):
                 fallback = fallback or fb
                 ready.append((cand, coverage, reason, png, None))
+    except OSError as exc:
+        _rmtree(sdir)
+        if exc.errno not in (errno.ENOSPC, errno.EDQUOT):
+            raise
+        # 候选目录所在的磁盘放不下大表的副本：结构化的「没有备选」，不是 500（原因码复用既有的 `candidate_render_failed`）
+        return remember(
+            {"kind": "nothing", "reasons": ["candidate_render_failed"], "dropped": [], **basics()}
+        )
     except BaseException:
         _rmtree(sdir)
         raise
@@ -1186,8 +1288,9 @@ def propose(
             cand.recipe,
             coverage or {},
             png,
-            len(unplotted_rows(values, cand.recipe)),
+            unplotted_total(unplotted_rows(values, cand.recipe)),
             cell_stats(values, cand.recipe) or None,
+            reduced=reduced_of(values, cand.recipe),
             state="pending" if planned is not None else "ready",
             variant=variants.get(id(cand.recipe)),
             stem=planned.stem if planned is not None else None,
@@ -1221,6 +1324,7 @@ def propose(
         touched=time.time(),
         root=Path(root),
         lazy=auto,
+        large=values.large is not None,
     )
     with _LOCK:
         _SESSIONS[sid] = sess
@@ -1233,7 +1337,23 @@ def propose(
         "interpreter_fallback": fallback,
         **basics(),
     }
+    if auto and not hrows and not user_took_over:
+        # 第 1 步「读懂数据」：有可用的 Key 连接才起后台任务、响应里才多这一个键；没有时响应与从前逐字相同
+        und = roles_mod.start(
+            project=project,
+            entry=chosen,
+            values=values,
+            hint=hint,
+            data_path=None if merged is not None else folder_path / PurePosixPath(chosen.path),
+        )
+        if und is not None:
+            out["understanding"] = und
     return remember(out, sid)
+
+
+def _user_took_over(ans: dict) -> bool:
+    """请求里已有用户（或前端替用户带上的模型建议）定下的列角色 / 处理规则：不再起模型任务，也避免「采纳建议 → 再来一次 → 再起任务」的循环。"""
+    return any(k in ans for k in ("y", "x", "group", "cells"))
 
 
 def _answers_digest(ans: dict) -> dict:

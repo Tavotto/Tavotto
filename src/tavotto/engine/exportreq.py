@@ -711,8 +711,9 @@ def _figure_origin(source, source_id):
         raise ExportRequestError("bad_request", "Invalid historical Figure input", {}) from exc
 
 
-#: `original.objects` 里允许的类型：标注。面板不许（图自己就是 `figure_id`；第二张图是整版的事）。
-ORIGINAL_OBJECT_TYPES = ("text", "arrow", "shape")
+#: `original.objects` 里允许的类型：标注（ADR 0185 加自由路径 `path`）。面板不许（图自己就是 `figure_id`；
+#: 第二张图是整版的事）。
+ORIGINAL_OBJECT_TYPES = ("text", "arrow", "shape", "path")
 
 
 def _original_objects(source: dict) -> tuple[dict, ...]:
@@ -725,7 +726,7 @@ def _original_objects(source: dict) -> tuple[dict, ...]:
     for obj in raw:
         if not isinstance(obj, dict) or obj.get("type") not in ORIGINAL_OBJECT_TYPES:
             raise ExportRequestError(
-                "bad_objects", "original.objects 只能是 text / arrow / shape 标注", {}
+                "bad_objects", "original.objects 只能是 text / arrow / shape / path 标注", {}
             )
         objects.append(obj)
     if objects and not (source.get("w_mm") and source.get("h_mm")):

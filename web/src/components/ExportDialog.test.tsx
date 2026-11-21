@@ -3133,7 +3133,7 @@ describe('每张图单独导出：依次发多个作业（后端协议不变）'
   it('画布上有更新的构建写进来的对象：逐张导出也灰着，并说清原因（Codex #1913）', async () => {
     await setupTwo({ select: [] })
     const doc = useDocumentStore.getState().doc
-    const newer = { id: 'n1', type: 'path', x: 5, y: 5, w: 10, h: 10, subpaths: [] } as never
+    const newer = { id: 'n1', type: 'futureThing', x: 5, y: 5, w: 10, h: 10 } as never
     useDocumentStore.setState({ doc: { ...doc, objects: [...doc.objects, newer] } } as never)
     await click(originalRadio())
     expect(document.body.querySelector('[data-export-batch-names]')).toBeTruthy()

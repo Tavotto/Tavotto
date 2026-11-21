@@ -192,6 +192,31 @@ def resolve_connection(budget_s: float | None = None) -> tuple[dict | None, str,
     return conn, "", ""
 
 
+def _effort_kwargs(conn: dict, effort: str | None) -> dict:
+    """想要的强度 → `HttpModel` 的 `effort` / `thinking`（经 `builtin_effort_args` 核过才有）；任何一步不确定 = 空（不发）。"""
+    if conn.get(
+        "effort"
+    ):  # 只有手动基准的临时连接带（存储里的连接没有这个键）；协议层仍按自己认的取值过滤
+        return {"effort": conn["effort"]}
+    if not effort:
+        return {}
+    try:
+        from . import ai_providers
+
+        rec = ai_providers.get(conn.get("provider_id"))
+        if rec is None:
+            return {}
+        args = ai_providers.builtin_effort_args(rec, effort, conn.get("model"))
+    except Exception:  # noqa: BLE001 - 查不到强度支持 = 不发
+        return {}
+    out: dict = {}
+    if "--effort" in args:
+        out["effort"] = args[args.index("--effort") + 1]
+    if "--thinking" in args:
+        out["thinking"] = args[args.index("--thinking") + 1]
+    return out
+
+
 def _cost(conn: dict, usage: Usage, reported: bool) -> float | None:
     if not reported:
         return None
@@ -216,6 +241,7 @@ def call_structured(
     conn: dict | None = None,
     post: Callable | None = None,
     max_requests: int | None = None,
+    effort: str | None = None,
 ) -> StructuredResult:
     """发一次无工具的单轮请求，要回一个过了 `validate` 的 dict。**永不抛**（`Exception` 一律落成 `transport`）。
 
@@ -224,11 +250,13 @@ def call_structured(
     * `conn`：`builtin_conn` 形状的连接；不给就 `resolve_connection()`。`post`：注入的传输函数（`wires.post_json` 的签名），只给测试用。
     * 上限：输入字符超限不发请求（`over_budget`）；输出被截断（撞到最长输出）→ `over_budget`、不重试；总时限（`limits.timeout_s`）两次尝试共用。
     * `max_requests`：实际 HTTP 请求数的硬上限（传输层数，含换协议 / 字段降级的恢复请求）；到顶不再发，回 `over_budget` / `requests`。
+    * `effort`：想要的思考强度（`low` 等）。只有 `ai_providers.builtin_effort_args` 对「这个地址 + 这个型号」确认支持的才发（官方端点、目录核过的型号），
+      其余（第三方网关、不认的型号、不支持的协议）一个字段都不发——不发对方不认的字段，也就不需要靠 400 再降级。
     * 重试：只在回复不是合法 JSON（含没有文字）时，最多 `limits.max_retries`（≤ 1）次；传输失败 / 拒答 / 鉴权失败都不重发。
     """
     t0 = time.monotonic()
     try:
-        return _call(system, user, validate, limits, conn, post, t0, max_requests)
+        return _call(system, user, validate, limits, conn, post, t0, max_requests, effort)
     except Exception:  # noqa: BLE001 - 契约：永不抛；原因里不放异常消息（可能含提示词 / 地址）
         return StructuredResult(False, reason="transport", detail="internal", elapsed_ms=_ms(t0))
 
@@ -246,6 +274,7 @@ def _call(
     post: Callable | None,
     t0: float,
     max_requests: int | None,
+    effort: str | None = None,
 ) -> StructuredResult:
     if len(system) + len(user) > limits.max_input_chars:
         return StructuredResult(False, reason="over_budget", detail="input", elapsed_ms=_ms(t0))
@@ -275,6 +304,7 @@ def _call(
         "max_attempts": 1,
         "retry_base": 0.0,
         "post": counted,
+        **_effort_kwargs(conn, effort),
     }
     model, _redactor = fixsession.build_model(conn, **kwargs)
     deadline = t0 + limits.timeout_s  # 总时限从调用开始算：解析连接（可能联网刷新令牌）也在里面

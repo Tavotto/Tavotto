@@ -3,8 +3,9 @@ import { artifactRequestFields } from './artifactValidation'
 import { chartSourceFields } from './chartSource'
 import type { ExportObject } from './api'
 import type { CanvasObject } from '@/types/document'
-import { isKnownObject, panelRotation, shapeStrokeOn } from '@/types/document'
-import { DEFAULT_LINE_CAP, defaultLineJoin, strokeOpacityOf } from './shapeGeometry'
+import { DEFAULT_STAR_POINTS, DEFAULT_STAR_RATIO, isKnownObject, isStrokeOnlyShape, panelRotation, readPath, shapeStrokeOn } from '@/types/document'
+import { DEFAULT_LINE_CAP, defaultLineJoin, miterLimitOf, STROKE_MITER_LIMIT, strokeOpacityOf, validDashPattern } from './shapeGeometry'
+import { PATH_DEFAULT_JOIN } from './pathGeom'
 
 /**
  * 画布对象 → 导出载荷。
@@ -22,6 +23,27 @@ export function toExportObjects(objects: CanvasObject[]): ExportObject[] {
 /** 会进这次导出、但本构建画不出来的对象个数（看得见且类型不认识，`isKnownObject`）。非 0 时导出不许开始 */
 export function newerObjectCount(objects: readonly CanvasObject[]): number {
   return objects.filter((o) => !o.hidden && !isKnownObject(o)).length
+}
+
+/**
+ * 描边的附加外观（斜接上限、自定义虚线；形状再加描边对齐）：缺省一律不发——老后端拿到的载荷与加属性之前逐字节一致。
+ * 读法与画布同一组函数（`miterLimitOf` / `validDashPattern`），后端 `geometry.miter_limit` / `valid_dash_pattern` 同一条判据。
+ */
+function appearanceExtras(o: {
+  miterLimit?: number
+  dashPattern?: number[]
+  strokeAlign?: 'center' | 'outside'
+  type: string
+  shape?: string
+}): { miter_limit?: number; dash_pattern?: number[]; stroke_align?: 'center' | 'outside' } {
+  const ml = miterLimitOf(o.miterLimit)
+  const dp = validDashPattern(o.dashPattern)
+  const align = o.type === 'shape' && o.shape && !isStrokeOnlyShape(o.shape) ? o.strokeAlign : undefined
+  return {
+    ...(ml !== STROKE_MITER_LIMIT ? { miter_limit: ml } : {}),
+    ...(dp ? { dash_pattern: dp } : {}),
+    ...(align === 'center' || align === 'outside' ? { stroke_align: align } : {}),
+  }
 }
 
 function toExportObject(o: CanvasObject): ExportObject {
@@ -99,6 +121,7 @@ function toExportObject(o: CanvasObject): ExportObject {
         stroke_opacity: strokeOpacityOf(o.strokeOpacity),
         line_cap: o.lineCap && o.lineCap !== DEFAULT_LINE_CAP ? o.lineCap : undefined,
         line_join: o.lineJoin && o.lineJoin !== 'round' ? o.lineJoin : undefined,
+        ...appearanceExtras(o),
         rotation_deg: o.rotationDeg || undefined,
       }
     case 'shape':
@@ -113,7 +136,9 @@ function toExportObject(o: CanvasObject): ExportObject {
         color: o.color,
         fill: o.fill,
         corner_radius_mm: o.cornerRadius || undefined,
-        sides: o.shape === 'polygon' ? (o.sides ?? 6) : undefined,
+        sides: o.shape === 'polygon' ? (o.sides ?? 6) : o.shape === 'star' ? (o.sides ?? DEFAULT_STAR_POINTS) : undefined,
+        // 星形内径比：缺省不发（后端按同一个缺省补）
+        star_ratio: o.shape === 'star' && o.starRatio != null && o.starRatio !== DEFAULT_STAR_RATIO ? o.starRatio : undefined,
         fill_opacity: o.fill && o.fillOpacity != null && o.fillOpacity < 1 ? o.fillOpacity : undefined,
         dash: o.dash && o.dash !== 'solid' ? o.dash : undefined,
         // 无边框只对封闭形状发（直线 / 大括号只有描边）；无边框时描边相关的其余字段都不发
@@ -121,7 +146,41 @@ function toExportObject(o: CanvasObject): ExportObject {
         stroke_opacity: shapeStrokeOn(o) ? strokeOpacityOf(o.strokeOpacity) : undefined,
         line_cap: o.lineCap && o.lineCap !== DEFAULT_LINE_CAP ? o.lineCap : undefined,
         line_join: o.lineJoin && o.lineJoin !== defaultLineJoin(o.shape) ? o.lineJoin : undefined,
+        ...appearanceExtras(o),
         rotation_deg: o.rotationDeg || undefined,
       }
+    case 'path': {
+      // 自由路径（ADR 0185）：锚点与手柄原样（比例坐标），`smooth` 只是编辑语义、画法用不上，不发；
+      // 其余字段与形状 / 箭头同名同义，缺省一律不发（后端 `geometry.read_path` 补同一份缺省）
+      const strokeOn = readPath(o).strokeOn
+      return {
+        ...box,
+        type: 'path',
+        subpaths: o.subpaths.map((sp) => ({
+          closed: sp.closed,
+          nodes: sp.nodes.map((n) => ({
+            p: n.p,
+            ...(n.in ? { in: n.in } : {}),
+            ...(n.out ? { out: n.out } : {}),
+          })),
+        })),
+        fill_rule: o.fillRule === 'evenodd' ? 'evenodd' : undefined,
+        stroke_pt: o.strokePt,
+        color: o.color,
+        fill: o.fill,
+        fill_opacity: o.fill && o.fillOpacity != null && o.fillOpacity < 1 ? o.fillOpacity : undefined,
+        dash: o.dash && o.dash !== 'solid' ? o.dash : undefined,
+        stroke: strokeOn ? undefined : false,
+        stroke_opacity: strokeOn ? strokeOpacityOf(o.strokeOpacity) : undefined,
+        line_cap: o.lineCap && o.lineCap !== DEFAULT_LINE_CAP ? o.lineCap : undefined,
+        line_join: o.lineJoin && o.lineJoin !== PATH_DEFAULT_JOIN ? o.lineJoin : undefined,
+        ...appearanceExtras(o),
+        head_start: o.headStart && o.headStart !== 'none' ? o.headStart : undefined,
+        head_end: o.headEnd && o.headEnd !== 'none' ? o.headEnd : undefined,
+        head_size_start: o.headSizeStart && o.headSizeStart !== 'medium' ? o.headSizeStart : undefined,
+        head_size_end: o.headSizeEnd && o.headSizeEnd !== 'medium' ? o.headSizeEnd : undefined,
+        rotation_deg: o.rotationDeg || undefined,
+      }
+    }
   }
 }

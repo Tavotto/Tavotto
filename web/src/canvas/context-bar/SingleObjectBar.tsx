@@ -20,13 +20,8 @@ import { useExactPanelManifest } from '@/store/renderStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import { useAssetStore } from '@/store/assetStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
-import type {
-  ArrowObject,
-  CanvasObject,
-  PanelObject,
-  ShapeObject,
-  TextObject,
-} from '@/types/document'
+import type { CanvasObject, PanelObject, TextObject } from '@/types/document'
+import { isStrokedMark, type StrokedMark } from '@/lib/markStyle'
 import { FrameQuick } from './FrameQuick'
 import { TextQuickControls } from './textQuick'
 import { Sep } from './shared'
@@ -47,11 +42,9 @@ export function ObjectQuickActions({
       return <TextObjectActions obj={obj} compact={compact} />
     case 'panel':
       return <PanelObjectActions obj={obj} />
-    case 'arrow':
-    case 'shape':
-      return <MarkObjectActions obj={obj} />
     default:
-      return null
+      // 箭头 / 形状 / 自由路径：颜色 + 线宽（判据在 `lib/markStyle.isStrokedMark`）
+      return isStrokedMark(obj) ? <MarkObjectActions obj={obj} /> : null
   }
 }
 
@@ -177,10 +170,10 @@ function LayoutPanelActions({ obj }: { obj: PanelObject }) {
   )
 }
 
-function MarkObjectActions({ obj }: { obj: ArrowObject | ShapeObject }) {
-  const patch = (label: UiMessage, fn: (o: ArrowObject | ShapeObject) => void) =>
+function MarkObjectActions({ obj }: { obj: StrokedMark }) {
+  const patch = (label: UiMessage, fn: (o: StrokedMark) => void) =>
     updateObjects([obj.id], label, (o) => {
-      if (o.type === 'arrow' || o.type === 'shape') fn(o as ArrowObject | ShapeObject)
+      if (isStrokedMark(o)) fn(o)
     })
   return (
     <div className="flex items-center gap-1">

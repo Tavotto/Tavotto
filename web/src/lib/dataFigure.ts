@@ -18,6 +18,32 @@ export const sameTable = (a: TableRef | null, b: TableRef | null): boolean =>
 
 export const isWorkbook = (path: string): boolean => /\.xlsx$/i.test(path)
 
+/**
+ * 「大文件」的界线：文本表超过它，后端走流式读 + 缩减（`ai_data_figure.SMALL_BYTES`，严格同源对，看护 `tests/test_ai_data_large.py`）。
+ * 只用来决定读的时候要不要说「正在读一个大文件」并给「取消」；行数超限（10 万行）要读完才知道，前端不猜。
+ */
+export const LARGE_FILE_BYTES = 5 * 1024 * 1024
+
+/** 这份表是不是大文件（清单里的字节数；XLSX 永远只认小表，不算；清单没读到 = 不算） */
+export function isLargeFile(entries: AiDataFileEntry[] | null | undefined, ref: TableRef | null): boolean {
+  if (!ref || isWorkbook(ref.path)) return false
+  const e = entries?.find((x) => x.path === ref.path)
+  // 大小界线之外还认后端读过之后的大表标记（不到 5 MiB 但超过 10 万行的表）
+  return e != null && (e.size > LARGE_FILE_BYTES || e.table?.large === true)
+}
+
+/** 行数 / 点数的呈现：小于 1 万照旧写原数字，其余用紧凑写法（中文「万」、英文 K / M）；数据条的行数与候选上的「取了多少个点」共用 */
+export function compactCount(n: number, lng: string): string {
+  if (!Number.isFinite(n) || Math.abs(n) < 10_000) return String(n)
+  return new Intl.NumberFormat(lng, { notation: 'compact', maximumFractionDigits: 1 }).format(n)
+}
+
+/** 「画的是 N 行里的 K 个点」里的两个数：`万` / `K` / `M` 紧凑写法（随界面语言）；整表没少画（kept ≥ rows）返回 null，界面不说 */
+export function reducedNumbers(r: { rows: number; kept: number } | null | undefined, lng: string): { rows: string; kept: string } | null {
+  if (!r || !(r.rows > 0) || !(r.kept > 0) || r.kept >= r.rows) return null
+  return { rows: compactCount(r.rows, lng), kept: compactCount(r.kept, lng) }
+}
+
 /** 清单里一行（一张表）此刻怎么说 */
 export type RowStatus =
   | { kind: 'table'; rows: number; columns: number }

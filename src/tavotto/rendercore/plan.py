@@ -14,8 +14,8 @@
   y 向上空间里的负角）。写入器不知道毫米，也不再翻 y（RC-008）。
 * **paint order = `objects` 的列表顺序**。`hidden` 的对象不进 IR，id 记在 `dropped_hidden`；
   同层顺序原样保留，不按 id / 类型排序（RC-009）。
-* 文字经 `typography.layout_text()` 变成 `ShapedText`（已排字形），Arrow / Shape 经
-  `geometry` 变成 `Path`，面板变成 `ImportedPage`（PDF）或 `Image`（位图）+ 一条
+* 文字经 `typography.layout_text()` 变成 `ShapedText`（已排字形），Arrow / Shape / Path（自由路径，
+  ADR 0185）经 `geometry` 变成 `Path`，面板变成 `ImportedPage`（PDF）或 `Image`（位图）+ 一条
   `FileResource`（冻结源的语义身份 + 字节 hash）；面板的 crop / 旋转 / 翻转只记在节点上，
   落位的矩阵由写入器经 `placement.place()` 算（顺序合同只有那一份）。
 * 编译完立刻 `ir.validate()`：非法数字 / 尺寸 / 资源引用在这里被拒，写入器只收合法的页。
@@ -425,6 +425,17 @@ def _shape_node(o: dict, page_h: float) -> Node | None:
     )
 
 
+def _path_node(o: dict, page_h: float) -> Node | None:
+    """自由路径（ADR 0185）→ 一个带对象变换的组；几何在 `geometry.path_paths`（与前端 `pathGeom` 同源）。"""
+    _x, _y, w, h = _box_pt(o, allow_zero=True)
+    nodes = geometry.path_paths(o, w, h)
+    if not nodes:
+        return None  # 既不填也不描（或没有画得出的子路径）：什么都不画，与形状同一条
+    return Group(
+        tuple(nodes), transform=_object_transform(o, page_h), object_id=str(o.get("id", ""))
+    )
+
+
 def _synth_of(face) -> dict[str, bool]:
     """这张脸要模拟的粗斜 → `GlyphRun` 的字段。"""
     return {
@@ -552,6 +563,8 @@ def compile_page(
             node = _text_node(o, page_h, fs, resources, problems, math)
         elif kind in ("arrow", "shape"):
             node = _shape_node(o, page_h)
+        elif kind == "path":
+            node = _path_node(o, page_h)
         else:
             raise PlanError(
                 "bad_object", f"不认识的对象类型: {kind!r}", {"id": str(o.get("id", ""))}

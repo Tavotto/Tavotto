@@ -1,4 +1,5 @@
 import type { ExportObject } from './api'
+import { isStrokeOnlyShape } from '@/types/document'
 import { buildExportRequest, type ExportRequestInput } from './exportRequest'
 
 /**
@@ -14,7 +15,8 @@ import { buildExportRequest, type ExportRequestInput } from './exportRequest'
  *   `stroke_opacity < 1` 且有描边（`stroke !== false`，line / brace 恒有）→ 描边 alpha；
  * - 箭头：`stroke_opacity < 1` → 整支箭头是透明组（`Group.opacity`）；
  * - 文字：颜色 / 底色 / 边框都没有 alpha，永远不算；
- * - 面板不进 `original.objects`（标注只有 text / arrow / shape）。
+ * - 路径：填充 `fill_opacity < 1` 且有填充；`stroke_opacity < 1` 且有描边（有端型时它是透明组，同样算）；
+ * - 面板不进 `original.objects`（标注只有 text / arrow / shape / path）。
  * `_unit()`：非有限数、布尔、≥ 1 都按不透明。
  */
 const translucent = (v: unknown): boolean =>
@@ -23,8 +25,12 @@ const translucent = (v: unknown): boolean =>
 /** 这个标注对象里有没有 EPS 画不出的半透明 */
 export function isEpsTranslucent(o: ExportObject): boolean {
   if (o.type === 'arrow') return translucent(o.stroke_opacity)
+  if (o.type === 'path') {
+    // 路径（ADR 0185）：填充 alpha / 描边 alpha（有端型时是透明组，同样画不进 EPS）
+    return (!!o.fill && translucent(o.fill_opacity)) || (o.stroke !== false && translucent(o.stroke_opacity))
+  }
   if (o.type === 'shape') {
-    const lineLike = o.shape === 'line' || o.shape === 'brace'
+    const lineLike = isStrokeOnlyShape(o.shape)
     const strokeOn = lineLike || o.stroke !== false
     return (!lineLike && !!o.fill && translucent(o.fill_opacity)) || (strokeOn && translucent(o.stroke_opacity))
   }

@@ -137,7 +137,7 @@ def test_utf16_nul_bytes_are_not_binary_but_a_real_nul_still_is(tmp_path):
 
 
 def test_a_file_larger_than_the_sniff_window_is_decoded_whole_so_a_cut_inside_a_character_cannot_fail(
-    tmp_path,
+    tmp_path, monkeypatch
 ):
     # 整份文件（≤ MAX_BYTES）一次性解码，编码不靠开头一段猜：无论 256 KiB 的嗅探窗口切在哪个多字节字符中间，结果都一样
     for pad in range(0, 4):
@@ -146,7 +146,8 @@ def test_a_file_larger_than_the_sniff_window_is_decoded_whole_so_a_cut_inside_a_
         assert len(raw) > adf.SNIFF_CHARS
         t = adf.read_text_table(write(tmp_path, f"big{pad}.csv", raw))
         assert t.status == "ok" and t.encoding == "gb18030" and t.rows == 40000, (pad, t.code)
-    t = adf.read_text_table(write(tmp_path, "huge.csv", b"\xc4\xe3" * adf.MAX_BYTES))
+    monkeypatch.setattr(adf, "MAX_BYTES", adf.SMALL_BYTES * 2 - 1)  # 大表硬上限收紧到刚好放不下
+    t = adf.read_text_table(write(tmp_path, "huge.csv", b"\xc4\xe3" * adf.SMALL_BYTES))
     assert t.code == "data_too_large"
 
 
@@ -216,8 +217,9 @@ def test_the_common_module_did_not_change_so_its_hash_and_name_stay_put():
 #: 同日用户决定图里不写任何脚注，删掉只给脚注用的运行时函数（`n_note` / `n_phrase` / `trend_point_counts` / `trend_series_counts`）→ `tavotto_plot_86dcfebb.py`；
 #: 2026-11-18 合画（几份列名相同的数据拼成一张图）给公共模块加了 `merge_tables` → `tavotto_plot_76e4a6f6.py`；
 #: 同日合画标签撞车保险给它加了 `group_key` 与标签重复检查 → `tavotto_plot_642ce634.py`；
-#: 同日认 `.xvg`（`xvg_text` / `xvg_label` 进公共模块）→ 这一个）
-PINNED_RUNTIME_NAME = "tavotto_plot_8dccb037.py"
+#: 同日认 `.xvg`（`xvg_text` / `xvg_label` 进公共模块）→ `tavotto_plot_8dccb037.py`；
+#: 2026-11-19 大表（ADR 0178 修订）：`table_from_text` / `delimited_records` 改成流式 `iter_table` / `iter_records` 的整份文本版 → 这一个）
+PINNED_RUNTIME_NAME = "tavotto_plot_98157f49.py"
 
 
 # =========================================================================== 接口

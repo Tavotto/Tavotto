@@ -36,6 +36,13 @@ test('chart binding backs up the project and reopens the frozen source', {
           id: 'chart-panel', type: 'panel', x: 20, y: 20, w: 50, h: 50,
           fileId: 'chart.svg', fileKind: 'svg', nativeW: 100 * 25.4 / 72, nativeH: 100 * 25.4 / 72,
           overrides: [],
+        }, {
+          id: 'curve-note', type: 'path', x: 80, y: 24, w: 24, h: 18,
+          color: '#224466', strokePt: 1.5, fill: '#aaccee', fillRule: 'evenodd',
+          subpaths: [{
+            closed: true,
+            nodes: [{ p: [0, 0.5], out: [0, 0] }, { p: [1, 0.5], in: [1, 0], out: [1, 1] }, { p: [0.5, 1] }],
+          }],
         }],
       }],
       activeCanvasId: 'c1', createdAt: 1, updatedAt: 1,
@@ -45,6 +52,10 @@ test('chart binding backs up the project and reopens the frozen source', {
     await page.goto(first.baseURL)
     await openLayout()
     const panel = page.locator('[data-canvas-stage] [data-object-id="chart-panel"]')
+    const annotation = page.locator('[data-canvas-stage] [data-object-id="curve-note"] svg > path:not([data-hit-path])')
+    await expect(annotation).toBeVisible()
+    await expect(annotation).toHaveAttribute('d', /C/)
+    const annotationGeometry = (await annotation.getAttribute('d'))!
     const dialog = page.locator('[data-chart-bind-dialog]')
     const enterBinding = async () => {
       await panel.click({ button: 'right' })
@@ -190,6 +201,7 @@ test('chart binding backs up the project and reopens the frozen source', {
     await expect(chart.getByText('Source keep')).toHaveCount(1, { timeout: 60_000 })
     expect(await chart.innerHTML()).toBe(expected)
     await expect(chart).toHaveAttribute('viewBox', largerFrame!)
+    await expect(annotation).toHaveAttribute('d', annotationGeometry)
 
     await page.keyboard.press('ControlOrMeta+e')
     const output = page.getByRole('dialog')
@@ -247,10 +259,13 @@ test('chart binding backs up the project and reopens the frozen source', {
     await waitForDocumentReady(page)
     await expect(chart.getByText('Source keep')).toHaveCount(1, { timeout: 60_000 })
     expect(await chart.innerHTML()).toBe(expected)
+    await expect(annotation).toHaveAttribute('d', annotationGeometry)
     await page.reload()
     await waitForDocumentReady(page)
     await expect(chart.getByText('Source keep')).toHaveCount(1, { timeout: 60_000 })
     expect(await chart.innerHTML()).toBe(expected)
+    await expect(annotation).toHaveAttribute('d', annotationGeometry)
+    await expect(annotation).toHaveAttribute('fill-rule', 'evenodd')
   } finally {
     await reopened?.stop()
     rmSync(project, { recursive: true, force: true })

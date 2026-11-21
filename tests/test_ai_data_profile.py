@@ -176,7 +176,7 @@ def test_tsv_uses_the_same_limits_and_codes(tmp_path):
     with pytest.raises(adf.DataSourceError) as e:
         adf.inspect_data_source(tmp_path / "r.tsv")
     assert e.value.code == "data_ragged"
-    (tmp_path / "big.tab").write_bytes(b"a\tb\n" + b"1\t2\n" * (adf.MAX_BYTES // 4 + 10))
+    (tmp_path / "big.tab").write_bytes(b"a\tb\n" + b"1\t2\n" * (adf.SMALL_BYTES // 4 + 10))
     with pytest.raises(adf.DataSourceError) as e:
         adf.inspect_data_source(tmp_path / "big.tab")
     assert e.value.code == "data_too_large"
@@ -188,9 +188,10 @@ def test_v1_csv_behaviour_unchanged_for_unknown_suffix(tmp_path):
 
 
 def test_limits_are_one_number_in_both_modules():
+    # XLSX 与 v1 永远只认小表（`SMALL_*`）；`MAX_*` 是大表的硬上限（ADR 0178 修订·大表）
     assert (xlsxread.MAX_BYTES, xlsxread.MAX_ROWS, xlsxread.MAX_COLUMNS) == (
-        adf.MAX_BYTES,
-        adf.MAX_ROWS,
+        adf.SMALL_BYTES,
+        adf.SMALL_ROWS,
         adf.MAX_COLUMNS,
     )
 
