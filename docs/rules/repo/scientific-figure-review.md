@@ -1,6 +1,6 @@
 # 科学图形：开发与评审时的七个问题
 
-> 根 `AGENTS.md`「科学图形」一节的全文（2026-11-21 立）。知识体系在 `docs/sciviz/`，Agent 准则的唯一出处是
+> 由根 `AGENTS.md` 子系统索引「跨仓库」一行点名（2026-11-21 立）。知识体系在 `docs/sciviz/`，Agent 准则的唯一出处是
 > `src/tavotto/profiles/sciviz_guidance.json`（看护 `tests/test_sciviz_guidance.py`）。
 
 **什么时候读**：改到下列地方时读。

@@ -60,11 +60,6 @@
 根因，提出改结构的候选并实验反证，之后才把真取舍交维护者。不放松安全、验证、审查与 1.0 纪律；
 临时缓解不关根 issue。全文：`docs/rules/repo/third-path-review.md`。
 
-## 科学图形
-
-改图形模型 / 编辑、预检、数据出图、作图准则时先过七问：`docs/rules/repo/scientific-figure-review.md`
-（知识体系 `docs/sciviz/`；Agent 准则唯一出处 `src/tavotto/profiles/sciviz_guidance.json`）。
-
 ## 最常用验证
 
 ```sh
@@ -117,5 +112,5 @@ python scripts/smoke_app.py --python .venv/bin/python   # 端到端冒烟
 | `packaging/` | `packaging/AGENTS.md` → `docs/rules/packaging/` | wheel/sdist、内置渲染 runtime、PyInstaller、macOS 签名 |
 | `codex-plugin/` | `codex-plugin/AGENTS.md` → `docs/rules/plugin/` | Codex 插件、技能、MCP server、内嵌画布、首次使用契约 |
 | `.github/` | `.github/AGENTS.md`（速查表）→ `docs/rules/ci/` | CI 分层、门禁纪律、验证链、发布链 |
-| 跨仓库 | `docs/rules/repo/` | 同源对总表、判据的主语、第三路径审查、科学图形七问、不变量展开、本地验证、错题本 |
+| 跨仓库 | `docs/rules/repo/` | 同源对总表、判据的主语、第三路径审查、科学图形七问（改图形 / 预检 / 数据出图先读 `scientific-figure-review.md`）、不变量展开、本地验证、错题本 |
 | 架构决策 | `docs/adr/` | 改动前先读对应 ADR |
