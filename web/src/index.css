@@ -1040,7 +1040,6 @@
   --edge-off: 1;
   & path {
     fill: none;
-    vector-effect: non-scaling-stroke;
     stroke-linecap: round;
   }
   & .edge-progress-track {
@@ -1080,23 +1079,29 @@
   }
   &[data-edge-progress='start'] :is(.edge-progress-run, .edge-progress-head) {
     transition:
-      stroke-dashoffset var(--edge-creep-start) cubic-bezier(0.2, 0.7, 0.3, 1),
+      stroke-dashoffset var(--edge-creep-start) var(--ease-pop),
       opacity var(--duration-fast) var(--ease-standard);
   }
   &[data-edge-progress='mid'] :is(.edge-progress-run, .edge-progress-head) {
     transition:
-      stroke-dashoffset var(--edge-creep-mid) cubic-bezier(0.1, 0.6, 0.2, 1),
+      stroke-dashoffset var(--edge-creep-mid) var(--ease-pop),
       opacity var(--duration-fast) var(--ease-standard);
   }
   &:is([data-edge-progress='start'], [data-edge-progress='mid'], [data-edge-progress='full']) path {
     opacity: 1;
   }
   /* 合拢：笔头在起点收进线里（淡掉），整圈是一条完整的墨线 */
+  /* 合拢：--edge-seal（EdgeProgress 内联给，与调用方的合拢闸同源）走完整圈；笔头走到起点再收进线里 */
+  &[data-edge-progress='full'] .edge-progress-run {
+    transition:
+      stroke-dashoffset var(--edge-seal) var(--ease-pop),
+      opacity var(--duration-fast) var(--ease-standard);
+  }
   &[data-edge-progress='full'] .edge-progress-head {
     opacity: 0;
     transition:
-      stroke-dashoffset var(--duration-slow) var(--ease-pop),
-      opacity var(--duration-fast) var(--ease-standard) var(--duration-slow);
+      stroke-dashoffset var(--edge-seal) var(--ease-pop),
+      opacity var(--duration-fast) var(--ease-standard) var(--edge-seal);
   }
   /* 退场：位置留在原地只淡出；淡完（delay = slow）才悄悄归零，下一次从顶边正中重新出发 */
   &[data-edge-progress='off'] :is(.edge-progress-run, .edge-progress-head) {

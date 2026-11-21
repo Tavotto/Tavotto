@@ -5,7 +5,7 @@ import { CanvasThumb } from '../CanvasThumb'
 import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { TextInput } from '../ui/Input'
-import { EdgeProgress, type EdgePhase } from '../ui/EdgeProgress'
+import { EDGE_SEAL_MS, EdgeProgress, type EdgePhase } from '../ui/EdgeProgress'
 import { SwapText } from '../ui/SwapText'
 import { ProgressBar } from '../ui/ProgressBar'
 import { DURATION } from '@/lib/motion'
@@ -21,6 +21,9 @@ import type { PanelObject } from '@/types/document'
 import { expiryShort, failureText, rs, versionWhen } from './reviewText'
 
 /** 链接已复制：通知轨轻提示一句（复制按钮自己的「已复制」另算） */
+/** 合拢后等链接回来的上限：过了就不再拦着（reloadShare 失败时不卡死在禁用的表单上） */
+const SEAL_CAP_MS = DURATION.slow * 16
+
 export const toastLinkCopied = () => useUiStore.getState().setStatus(msg('review.linkCopied', undefined, 'dialogs'), 'done')
 
 /** 大预览图：单图编辑 = 那张图，排版 = 整页（按它自己的宽高比，纸色底）。喂的是内存里的对象，与画布列表同一份画法 */
@@ -134,24 +137,35 @@ export function ReviewDialog() {
   useEffect(() => {
     if (!s.dialogOpen) setPhase('idle')
   }, [s.dialogOpen])
-  const sealing = phase === 'full'
+  // done 刚到的那一帧 phase 还没切成 full（effect 在渲染之后）：同一帧就要算合拢，否则冻结的正文会先被刷成新的
+  const sealing = phase === 'full' || (s.stage === 'done' && (phase === 'start' || phase === 'mid'))
   const busy = running || sealing
   // 进行中与合拢期间正文冻结在发起时的那一态（首次 = 表单、更新 = 原链接），合拢完才换
   const frozen = useRef(liveShare)
   if (!busy) frozen.current = liveShare
   const share = busy ? frozen.current : liveShare
+  const frozenChanged = useRef(s.changed)
+  if (!busy) frozenChanged.current = s.changed
+  const changed = busy ? frozenChanged.current : s.changed
   // 链接是刚生成出来的（表单 → 链接）：链接行浮上来落位；平时打开弹窗、更新已有链接都不播
   const [revealed, setRevealed] = useState(false)
+  // 合拢闸：一圈合拢走完再整圈停一拍（定时），**并且**链接已经到手，才淡出描边、换正文——
+  // 只看定时器的话 share 晚到时会闪回可点的「生成」（新建额度一天只有一个）。兜底上限防 share 永远不来卡死
+  const [sealHeld, setSealHeld] = useState(false)
   useEffect(() => {
-    if (!sealing) return
-    const fresh = !frozen.current
-    // 合拢的那一圈走完（slow）再整圈停一拍（slow），然后描边淡出、链接落位
-    const t = setTimeout(() => {
-      setPhase('off')
-      if (fresh) setRevealed(true)
-    }, DURATION.slow * 2)
-    return () => clearTimeout(t)
+    if (!sealing) return setSealHeld(false)
+    const held = setTimeout(() => setSealHeld(true), EDGE_SEAL_MS + DURATION.slow)
+    const cap = setTimeout(() => setPhase('off'), EDGE_SEAL_MS + SEAL_CAP_MS)
+    return () => {
+      clearTimeout(held)
+      clearTimeout(cap)
+    }
   }, [sealing])
+  useEffect(() => {
+    if (!sealing || !sealHeld || !liveShare) return
+    if (!frozen.current) setRevealed(true)
+    setPhase('off')
+  }, [sealing, sealHeld, liveShare])
   useEffect(() => {
     if (!s.dialogOpen) setRevealed(false)
   }, [s.dialogOpen])
@@ -221,7 +235,7 @@ export function ReviewDialog() {
             {rs('copyLink')}
           </Button>
         </div>
-        {s.changed && (
+        {changed && (
           <div className="flex items-center justify-between gap-2 border-t border-border pt-3" data-review-changed>
             <span className="flex items-center gap-1.5 text-sm text-ink-2">
               <span aria-hidden className="size-1.5 rounded-full bg-accent" />

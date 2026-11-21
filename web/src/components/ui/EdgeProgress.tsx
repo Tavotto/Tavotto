@@ -1,10 +1,11 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import { DURATION } from '@/lib/motion'
 
 /**
  * 沿对话框外框走一圈的进度描边（外部审阅「分享审阅」，ADR 0187 §八 修订 2026-11-21）。
  *
  * 挂在 `Dialog` 的 `edge` 槽里：铺满 `RD.Content`、不占位、不接事件，所以卡片尺寸一点不变。
- * 从顶边正中出发顺时针走，圆角与外壳同一个 `--radius-panel`，线内缩半个线宽，贴着外框不被裁。
+ * 从顶边正中出发顺时针走，圆角读外壳的计算值，线内缩半个线宽，贴着外框不被裁。
  *
  * **不是百分比**：拿不到真进度的地方不报 `aria-valuenow`、不出数字（ADR 0168 的「不做假百分比」）。
  * 调用方只给 `phase`，每一段要走到哪、走多慢都在 `index.css` 的 `edge-progress` 里：
@@ -38,19 +39,26 @@ export function edgePath(w: number, h: number, r: number, i: number): string {
   ].join(' ')
 }
 
-const RADIUS = 16 // 与 index.css 的 --radius-panel 同值（外壳 rounded-panel）
+/**
+ * 合拢一圈的时长：两档 slow。合拢常常从很靠前的位置出发（复用画面时一次轮询就 done），slow 一档扫完整圈像闪了一下。
+ * 经内联 `--edge-seal` 交给 CSS，调用方的合拢闸也用它——一个出处。
+ */
+export const EDGE_SEAL_MS = DURATION.slow * 2
 const STROKE = 2 // 最粗的那条（笔头）；线内缩它的一半，贴着外框不被圆角裁掉
 
 export function EdgeProgress({ phase, label }: { phase: EdgePhase; label: string }) {
   const box = useRef<HTMLDivElement>(null)
-  const [size, setSize] = useState<{ w: number; h: number } | null>(null)
+  const [size, setSize] = useState<{ w: number; h: number; r: number } | null>(null)
   useLayoutEffect(() => {
     const el = box.current
     if (!el) return
     const read = () => {
       const w = el.clientWidth
       const h = el.clientHeight
-      setSize((s) => (s && s.w === w && s.h === h ? s : { w, h }))
+      // 圆角读外壳自己的计算值（rounded-panel），不在这里另写一份
+      const host = el.parentElement
+      const r = host ? parseFloat(getComputedStyle(host).borderTopLeftRadius) || 0 : 0
+      setSize((s) => (s && s.w === w && s.h === h && s.r === r ? s : { w, h, r }))
     }
     read()
     if (typeof ResizeObserver === 'undefined') return
@@ -65,14 +73,15 @@ export function EdgeProgress({ phase, label }: { phase: EdgePhase; label: string
       aria-hidden={!active || undefined}
       className="edge-progress pointer-events-none absolute inset-0 z-sticky"
       data-edge-progress={phase}
+      style={{ '--edge-seal': `${EDGE_SEAL_MS}ms` } as CSSProperties}
       {...(active ? { role: 'progressbar', 'aria-label': label } : {})}
     >
       {size && size.w > 0 && size.h > 0 && (
         // 画的是卡片外框本身，不是图标：iconography.test 的内联 svg 豁免表登记 1 个
         <svg width={size.w} height={size.h} viewBox={`0 0 ${size.w} ${size.h}`} className="block">
-          <path className="edge-progress-track" d={edgePath(size.w, size.h, RADIUS, STROKE / 2)} pathLength={1} />
-          <path className="edge-progress-run" d={edgePath(size.w, size.h, RADIUS, STROKE / 2)} pathLength={1} />
-          <path className="edge-progress-head" d={edgePath(size.w, size.h, RADIUS, STROKE / 2)} pathLength={1} />
+          <path className="edge-progress-track" d={edgePath(size.w, size.h, size.r, STROKE / 2)} pathLength={1} />
+          <path className="edge-progress-run" d={edgePath(size.w, size.h, size.r, STROKE / 2)} pathLength={1} />
+          <path className="edge-progress-head" d={edgePath(size.w, size.h, size.r, STROKE / 2)} pathLength={1} />
         </svg>
       )}
     </div>
