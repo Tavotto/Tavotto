@@ -845,29 +845,17 @@ function AssistantPanelBody() {
             </div>
           </Reveal>
           {/* 发送失败只属于那一张图：换到别的面板就不再摆着它的「重试」（Codex #827 P1） */}
-          {error && error.panelId === panel?.id && (
+          {error && error.panelId === panel?.id && !error.hosted && (
             <Notice
-              tone={error.hosted ? 'neutral' : 'danger'}
-              data-ai-error={error.hosted ? 'hosted' : 'send'}
+              tone="danger"
+              data-ai-error="send"
               className="mb-2"
               // 一句话「没有发出去 · 原因」+ 「重试」；HTTP 状态 / 后端 detail / 诊断引用在「详情」里。
               // 内置 AI 没能开任务：只有一句话（额度 / 恢复日期 / 授权 / 暂时连不上），不套「没有发出去」的红色标题
-              title={error.hosted ? undefined : ai('panel.sendFailed')}
+              title={ai('panel.sendFailed')}
               detail={error.detail}
               action={
-                error.hosted ? (
-                  // 两条路：改用自己的 Key（永远免费可用）；等一等再试（额度类等到恢复日，句子里已写；别的原因这里给「重试」）
-                  <span className="flex items-center gap-2">
-                    <Button data-ai-hosted-own-key variant="secondary" size="sm" onClick={() => requestConnectAi()}>
-                      {formatMessage(hostedOwnKeyLabel())}
-                    </Button>
-                    {!isWaitReason(error.hosted) && error.hosted.reason !== 'not_entitled' && (
-                      <Button data-ai-retry variant="ghost" size="sm" disabled={!canSend || (error.source === 'composer' && tooLarge)} onClick={retryFailed}>
-                        {ai('panel.retry')}
-                      </Button>
-                    )}
-                  </span>
-                ) : error.code === 'ai_panel_file_missing' ? (
+                error.code === 'ai_panel_file_missing' ? (
                   <Button data-ai-refresh-project size="sm" onClick={refreshMissingFile}>
                     {translate('topbar.refreshProject', { ns: 'workspace' })}
                   </Button>
@@ -974,6 +962,35 @@ function AssistantPanelBody() {
                   : draftReplaced
                     ? ai('panel.draftReplaced')
                     : ai('panel.draftRestored')}
+            </p>
+          )}
+          {/* 内置 AI 没能开任务：一行灰字（与上面的草稿提示同一种安静的说法，不是色块、不挤页面）+ 一个文字按钮「改用我自己的 Key」；
+              暂停服务 / 额度类 / 未授权都不给「重试」——原样重发得到的还是同一句 */}
+          {error && error.panelId === panel?.id && error.hosted && (
+            <p data-ai-error="hosted" className="mb-1.5 px-1 text-center text-xs text-ink-3">
+              {error.text}{' '}
+              <button
+                type="button"
+                data-ai-hosted-own-key
+                onClick={() => requestConnectAi()}
+                className="rounded-sm text-accent outline-none hover:underline focus-visible:focus-ring"
+              >
+                {formatMessage(hostedOwnKeyLabel())}
+              </button>
+              {!isWaitReason(error.hosted) && error.hosted.reason !== 'not_entitled' && error.hosted.reason !== 'paused' && (
+                <>
+                  {' · '}
+                  <button
+                    type="button"
+                    data-ai-retry
+                    disabled={!canSend || (error.source === 'composer' && tooLarge)}
+                    onClick={retryFailed}
+                    className="rounded-sm text-accent outline-none hover:underline focus-visible:focus-ring disabled:opacity-40"
+                  >
+                    {ai('panel.retry')}
+                  </button>
+                </>
+              )}
             </p>
           )}
           {panel && refItems.some((x) => x.kind === 'image') && <NoVisionNote />}

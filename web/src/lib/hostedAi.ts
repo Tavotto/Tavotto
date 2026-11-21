@@ -1,6 +1,6 @@
 import { ApiError } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
-import { formatDate } from '@/i18n/format'
+import { formatDateTime } from '@/i18n/format'
 import { msg, type UiMessage } from '@/i18n'
 
 /**
@@ -57,20 +57,47 @@ export function hostedFailureOfFix(res: { reason?: string; hosted?: unknown }): 
 /** 稍后再试有没有意义：额度类等到恢复的时刻才会好，原样重发只会再得到同一句 */
 export const isWaitReason = (f: HostedFailure): boolean => f.reason === 'quota_exhausted' || f.reason === 'daily_limit'
 
+/** 本地日历上的「明天」（按本地日期算，不按 24 小时） */
+export function isTomorrow(ts: number, now: number = Date.now()): boolean {
+  const day = (t: number) => {
+    const d = new Date(t)
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  }
+  const tomorrow = new Date(day(now))
+  tomorrow.setDate(tomorrow.getDate() + 1)
+  return day(ts) === tomorrow.getTime()
+}
+
+/** 「什么时候再用」：明天说「明天」，其余只写月日（不带年）；没有时刻 = null */
+export function whenMessage(retryAt: number | null, now: number = Date.now()): UiMessage | null {
+  if (retryAt == null) return null
+  if (isTomorrow(retryAt, now)) return msg('hosted.whenTomorrow', undefined, 'ai')
+  return msg('hosted.whenDate', { date: formatDateTime(retryAt, { month: 'short', day: 'numeric' }) }, 'ai')
+}
+
 /** 一句话（不带句号以外的修饰；每个键都写成字面量，i18n 检查才数得到） */
-export function hostedFailureMessage(f: HostedFailure): UiMessage {
+export function hostedFailureMessage(f: HostedFailure, now: number = Date.now()): UiMessage {
   const name = hostedAiName()
-  const date = f.retry_at != null ? formatDate(f.retry_at) : null
+  const when = whenMessage(f.retry_at, now)
   switch (f.reason) {
     case 'quota_exhausted':
-      return date ? msg('hosted.quotaOn', { name, date }, 'ai') : msg('hosted.quota', { name }, 'ai')
+      return when ? msg('hosted.quotaOn', { name, when }, 'ai') : msg('hosted.quota', { name }, 'ai')
     case 'daily_limit':
-      return date ? msg('hosted.dailyOn', { name, date }, 'ai') : msg('hosted.daily', { name }, 'ai')
+      return when ? msg('hosted.dailyOn', { name, when }, 'ai') : msg('hosted.daily', { name }, 'ai')
     case 'not_entitled':
       return msg('hosted.notEntitled', { name }, 'ai')
+    case 'paused':
+      return msg('hosted.paused', { name }, 'ai')
     default:
       return msg('hosted.unavailable', { name }, 'ai')
   }
+}
+
+/** 修复因额度静默退到自己的 Key 之后，卡片里的一行灰字 */
+export function hostedFallbackMessage(f: HostedFailure, now: number = Date.now()): UiMessage {
+  const when = whenMessage(f.retry_at, now)
+  if (f.reason === 'quota_exhausted') return when ? msg('hosted.fallbackQuotaOn', { when }, 'ai') : msg('hosted.fallbackQuota', undefined, 'ai')
+  return msg('hosted.fallbackDaily', undefined, 'ai')
 }
 
 /** 「改用我自己的 Key」按钮上的字 */

@@ -93,7 +93,7 @@ describe('开始', () => {
     await useAiFixStore.getState().startAiFix(KEY, REF)
     expect(entry()).toBeUndefined() // 卡片原样退回失败卡，用户还能再点
     const ui = useUiStore.getState()
-    expect(ui.status).toMatchObject({ key: 'hosted.dailyOn', ns: 'ai' })
+    expect(ui.status).toMatchObject({ key: 'hosted.dailyOn', ns: 'ai' }) // 带「明天」/ 月日，不带年
     expect(ui.statusTone).toBe('info') // 不红
     expect(ui.statusAction?.label).toMatchObject({ key: 'hosted.useOwnKey', ns: 'ai' })
     ui.statusAction?.run() // 「改用我自己的 Key」= 打开连接 AI
@@ -102,13 +102,13 @@ describe('开始', () => {
     useUiStore.getState().setStatus(null)
   })
 
-  it('内置 AI 因额度没开成、后端已静默退到别的连接：修复照常 running，只多一句状态胶囊', async () => {
+  it('内置 AI 因额度没开成、后端已静默退到自己的 Key：修复照常 running，条目记一笔（卡片里一行灰字），不弹胶囊', async () => {
     vi.mocked(requestAiFix).mockResolvedValue({ ok: true, fix_id: 'fx_1', hosted_fallback: { reason: 'quota_exhausted', retry_at: null } })
     vi.mocked(fetchAiFix).mockResolvedValue(state({}))
     await useAiFixStore.getState().startAiFix(KEY, REF)
     expect(entry()?.phase).toBe('running')
-    expect(useUiStore.getState().status).toMatchObject({ key: 'hosted.quota', ns: 'ai' })
-    useUiStore.getState().setStatus(null)
+    expect(entry()?.hostedFallback).toEqual({ reason: 'quota_exhausted', retry_at: null })
+    expect(useUiStore.getState().status).toBeNull() // 没有胶囊、没有「改用我自己的 Key」
   })
 
   it('capabilities 说不可用：不发请求，直接 unavailable', async () => {

@@ -437,7 +437,9 @@ def test_the_connection_appears_when_available_and_is_never_persisted(gw):
     assert len(mine) == 1
     c = mine[0]
     assert c["route"] == "builtin" and c["state"] == "ready" and c["hosted"] is True
-    assert c["models"] == ["tavotto-auto"] and c["efforts"] == []
+    assert (
+        c["models"] == [] and c["default_model"] is None and c["efforts"] == []
+    )  # 界面不出现 tavotto-auto
     assert c["label"] == f"{__import__('tavotto.engine.brand', fromlist=['x']).PRODUCT_NAME} Agent"
     assert "api_key" not in c and "has_key" not in c
     vendors = [v for v in ai_connections.vendors({}) if v["id"] == hosted_ai.PROVIDER_ID]
@@ -701,7 +703,7 @@ def test_gateway_cost_without_reported_usage_still_counts_and_attributes_are_clo
     attrs, rejected = exectrace.project_attributes(
         ai_pricing.model_attributes({"id": hosted_ai.PROVIDER_ID, "hosted": True}, "tavotto-auto")
     )
-    assert attrs == {"provider": "tavotto-agent", "model": "tavotto-auto"} and rejected == 0
+    assert attrs == {"provider": "tavotto-agent"} and rejected == 0
     assert {"USD", "CNY"} == exectrace.vocabulary("currency")
 
 

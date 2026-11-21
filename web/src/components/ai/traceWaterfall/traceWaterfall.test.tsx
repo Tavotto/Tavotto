@@ -123,6 +123,10 @@ describe('TraceWaterfall', () => {
   it('费用的币种跟着数据：网关结算的人民币写 ¥，价格表估算的美元写 $；一条轨迹里币种一致', () => {
     render({ ...model, spans: spans.map((s) => ({ ...s, costCurrency: s.cost === null ? null : 'CNY' })) })
     expect(q('[data-trace-metric="cost"] [data-value]')!.getAttribute('data-value')).toBe('¥0.02')
+    // 内置 AI：标签是「用量」不是「费用」，行尾不写 ¥（只在总计里说一次）
+    expect(q('[data-trace-metric="cost"]')!.textContent).toContain('用量')
+    expect(q('[data-trace-metric="cost"]')!.textContent).not.toContain('费用')
+    expect(q('[data-trace-bar]')!.closest('[data-trace-row]')?.textContent ?? '').not.toContain('¥')
     render({ ...model, spans: spans.map((s) => ({ ...s, costCurrency: s.cost === null ? null : 'USD' })) })
     expect(q('[data-trace-metric="cost"] [data-value]')!.getAttribute('data-value')).toBe('$0.02')
   })

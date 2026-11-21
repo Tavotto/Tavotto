@@ -101,6 +101,20 @@ describe.each(['zh-CN', 'en-US'] as const)('一句话读懂（%s）', (lang) => 
   })
 })
 
+describe('内置 AI 额度用完、这次用的是自己的 Key', () => {
+  it('卡片里一行灰字；没有胶囊、没有「改用我自己的 Key」按钮', async () => {
+    const card = await render(entry({ phase: 'running', hostedFallback: { reason: 'daily_limit', retry_at: null } }))
+    expect(card.querySelector('[data-ai-fix-hosted-fallback]')?.textContent).toBe('今天的额度用完了，这次用的是你自己的 Key。')
+    expect(card.textContent).not.toContain('改用我自己的')
+    expect(visiblePrimaryButtons(card)).toBeLessThanOrEqual(1)
+  })
+
+  it('没有退路时不出现这一行', async () => {
+    const card = await render(entry({ phase: 'running' }))
+    expect(card.querySelector('[data-ai-fix-hosted-fallback]')).toBeNull()
+  })
+})
+
 describe('回答', () => {
   it('修复 / 取消：回 yes / no；详情里有查看过哪些文件，没有「没读」固定行', async () => {
     const answer = vi.fn(async () => {})

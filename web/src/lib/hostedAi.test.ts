@@ -7,42 +7,54 @@ import { describe, expect, it } from 'vitest'
 import { ApiError } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { formatMessage, setLocale } from '@/i18n'
-import { formatDate } from '@/i18n/format'
-import { hostedAiName, hostedFailureMessage, hostedFailureOfError, hostedFailureOfFix, isWaitReason } from './hostedAi'
+import { formatDateTime } from '@/i18n/format'
+import { hostedAiName, hostedFailureMessage, hostedFallbackMessage, isTomorrow, hostedFailureOfError, hostedFailureOfFix, isWaitReason } from './hostedAi'
 
 const NAME = `${PRODUCT_NAME} Agent`
-const TOMORROW = Date.UTC(2026, 10, 22, 16, 0, 0)
+const NOW = new Date(2026, 10, 21, 10, 0, 0).getTime()
+const TOMORROW = new Date(2026, 10, 22, 0, 0, 0).getTime()
+const LATER = new Date(2026, 10, 30, 0, 0, 0).getTime()
 
 describe('hostedFailureMessage', () => {
   it('名字取自品牌常量', () => {
     expect(hostedAiName()).toBe(NAME)
   })
 
-  it('额度类：有恢复时刻就写日期，没有就只说用完了', async () => {
+  it('额度类：明天说「明天」，其余只写月日（不带年），没有时刻就只说用完了', async () => {
     await setLocale('zh-CN')
-    expect(formatMessage(hostedFailureMessage({ reason: 'quota_exhausted', retry_at: null }))).toBe(`${NAME} 的额度用完了。`)
-    expect(formatMessage(hostedFailureMessage({ reason: 'quota_exhausted', retry_at: TOMORROW }))).toBe(
-      `${NAME} 的额度用完了，${formatDate(TOMORROW)}恢复。`,
-    )
-    expect(formatMessage(hostedFailureMessage({ reason: 'daily_limit', retry_at: TOMORROW }))).toBe(
-      `${NAME} 今天的额度用完了，${formatDate(TOMORROW)}再用。`,
-    )
-    expect(formatMessage(hostedFailureMessage({ reason: 'daily_limit', retry_at: null }))).toBe(`${NAME} 今天的额度用完了。`)
+    expect(formatMessage(hostedFailureMessage({ reason: 'quota_exhausted', retry_at: null }, NOW))).toBe(`${NAME} 的额度用完了。`)
+    expect(formatMessage(hostedFailureMessage({ reason: 'daily_limit', retry_at: TOMORROW }, NOW))).toBe(`${NAME} 今天的额度用完了，明天再用。`)
+    const md = formatDateTime(LATER, { month: 'short', day: 'numeric' })
+    expect(md).not.toContain('2026')
+    expect(formatMessage(hostedFailureMessage({ reason: 'quota_exhausted', retry_at: LATER }, NOW))).toBe(`${NAME} 的额度用完了，${md}再用。`)
+    expect(isTomorrow(TOMORROW, NOW)).toBe(true)
+    expect(isTomorrow(LATER, NOW)).toBe(false)
+    expect(isTomorrow(NOW + 3_600_000, NOW)).toBe(false) // 今天晚些时候不是明天
+  })
+
+  it('暂停服务一句；退到自己的 Key 之后卡片里的灰字', async () => {
+    await setLocale('zh-CN')
+    expect(formatMessage(hostedFailureMessage({ reason: 'paused', retry_at: null }))).toBe(`${NAME} 暂停服务，稍后恢复。`)
+    expect(formatMessage(hostedFallbackMessage({ reason: 'daily_limit', retry_at: TOMORROW }, NOW))).toBe('今天的额度用完了，这次用的是你自己的 Key。')
+    expect(formatMessage(hostedFallbackMessage({ reason: 'quota_exhausted', retry_at: null }, NOW))).toBe('额度用完了，这次用的是你自己的 Key。')
+    expect(formatMessage(hostedFallbackMessage({ reason: 'quota_exhausted', retry_at: TOMORROW }, NOW))).toBe('额度用完了，明天再用；这次用的是你自己的 Key。')
   })
 
   it('未授权一句；熔断 / 网络 / 网关出错 / 未知原因统一「暂时连不上」', async () => {
     await setLocale('zh-CN')
     expect(formatMessage(hostedFailureMessage({ reason: 'not_entitled', retry_at: null }))).toBe(`这台电脑上的 ${NAME} 暂时用不了。`)
-    for (const reason of ['paused', 'network', 'server', 'rate_limited', 'kind_disabled', 'client_error', 'disabled', 'something_new']) {
+    for (const reason of ['network', 'server', 'rate_limited', 'kind_disabled', 'client_error', 'disabled', 'something_new']) {
       expect(formatMessage(hostedFailureMessage({ reason, retry_at: null }))).toBe(`${NAME} 暂时连不上，稍后再试。`)
     }
   })
 
   it('英文界面同样一句话', async () => {
     await setLocale('en-US')
-    expect(formatMessage(hostedFailureMessage({ reason: 'daily_limit', retry_at: TOMORROW }))).toBe(
-      `${NAME} is out of quota for today. Try again on ${formatDate(TOMORROW)}.`,
+    expect(formatMessage(hostedFailureMessage({ reason: 'daily_limit', retry_at: TOMORROW }, NOW))).toBe(`${NAME} is out of quota for today. Try again tomorrow.`)
+    expect(formatMessage(hostedFailureMessage({ reason: 'quota_exhausted', retry_at: LATER }, NOW))).toBe(
+      `${NAME} has no quota left. Try again on ${formatDateTime(LATER, { month: 'short', day: 'numeric' })}.`,
     )
+    expect(formatMessage(hostedFailureMessage({ reason: 'paused', retry_at: null }))).toBe(`${NAME} is paused for now.`)
     await setLocale('zh-CN')
   })
 

@@ -134,7 +134,9 @@ def usage_with_cost(event: dict, endpoint, model) -> dict | None:
 def model_attributes(endpoint, model) -> dict:
     """只有定价表里认得的厂商 / 模型才进 attributes（词表闭集）；自定义端点、别的模型什么都不带。"""
     if hosted_ai.is_hosted(endpoint):
-        return {"provider": hosted_ai.PROVIDER_ID, "model": hosted_ai.MODEL}
+        return {
+            "provider": hosted_ai.PROVIDER_ID
+        }  # 型号名是内部的，不进执行记录（界面会把它原样显示出来）
     vendor = vendor_of(endpoint)
     if vendor is None or (vendor, model) not in TABLE:
         return {}

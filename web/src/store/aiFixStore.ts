@@ -30,7 +30,7 @@ import {
   type AiFixCard,
   type AiFixState,
 } from '@/lib/api'
-import { hostedFailureOfFix } from '@/lib/hostedAi'
+import { hostedFailureOfFix, type HostedFailure } from '@/lib/hostedAi'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { onCurrentProjectChange } from '@/lib/session'
 import { useAiStore } from '@/store/aiStore'
@@ -76,6 +76,8 @@ export interface AiFixEntry {
   sendBase?: number
   /** 回答请求在途（按钮置忙，防连点） */
   answering?: boolean
+  /** 内置 AI 因额度没开成、这次用的是自己的 Key（卡片里一行灰字） */
+  hostedFallback?: HostedFailure
   /** 进度与卡住（后端公开状态原样带过来；界面按它说一句话） */
   activity?: AiFixState['activity']
   stalled?: AiFixState['stalled']
@@ -227,9 +229,9 @@ export const useAiFixStore = create<AiFixStoreState>((set, get) => {
           return
         }
         if (res.ok) {
-          // 内置 AI 因额度没开成、已静默退到别的连接：只说一句（不挡），修复照常跑
-          if (res.hosted_fallback) announceHostedFailure(hostedFailureOfFix({ reason: 'ai_hosted_unavailable', hosted: res.hosted_fallback })!)
-          setPhase('running', { fixId: res.fix_id, pj: guard.pj ?? undefined })
+          // 内置 AI 因额度没开成、已静默退到自己的 Key：不弹胶囊、不给按钮，卡片里记一笔（一行灰字，见 `AiFixFlow`）
+          const fallback = res.hosted_fallback ? hostedFailureOfFix({ reason: 'ai_hosted_unavailable', hosted: res.hosted_fallback }) : null
+          setPhase('running', { fixId: res.fix_id, pj: guard.pj ?? undefined, ...(fallback ? { hostedFallback: fallback } : {}) })
           schedule(key)
           void get().refresh(key)
         } else if (hostedFailureOfFix(res)) {

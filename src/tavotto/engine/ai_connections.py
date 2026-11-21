@@ -396,9 +396,10 @@ def _hosted_connection() -> dict | None:
         "label": rec["label"],
         "logo": hosted_ai.PROVIDER_ID,
         "state": "ready",
-        "models": [hosted_ai.MODEL],
-        "model_details": [{"id": hosted_ai.MODEL, "display_name": rec["label"]}],
-        "default_model": hosted_ai.MODEL,
+        # 不列型号：界面只显示产品名，不出现内部型号 `tavotto-auto`（型号清单为空 = 选中即切换连接，没有第二级）
+        "models": [],
+        "model_details": [],
+        "default_model": None,
         "efforts": [],
         "default_effort": None,
         "route": ROUTE_BUILTIN,

@@ -325,12 +325,18 @@ export default interface Resources {
     },
     "hosted": {
       "daily": "{{name}} 今天的额度用完了。",
-      "dailyOn": "{{name}} 今天的额度用完了，{{date}}再用。",
+      "dailyOn": "{{name}} 今天的额度用完了，{{when}}再用。",
+      "fallbackDaily": "今天的额度用完了，这次用的是你自己的 Key。",
+      "fallbackQuota": "额度用完了，这次用的是你自己的 Key。",
+      "fallbackQuotaOn": "额度用完了，{{when}}再用；这次用的是你自己的 Key。",
       "notEntitled": "这台电脑上的 {{name}} 暂时用不了。",
+      "paused": "{{name}} 暂停服务，稍后恢复。",
       "quota": "{{name}} 的额度用完了。",
-      "quotaOn": "{{name}} 的额度用完了，{{date}}恢复。",
+      "quotaOn": "{{name}} 的额度用完了，{{when}}再用。",
       "unavailable": "{{name}} 暂时连不上，稍后再试。",
-      "useOwnKey": "改用我自己的 Key"
+      "useOwnKey": "改用我自己的 Key",
+      "whenDate": "{{date}}",
+      "whenTomorrow": "明天"
     },
     "markdown": {
       "image": "[图片：{{alt}}]",
@@ -659,7 +665,8 @@ export default interface Resources {
           "steps": "步骤数",
           "tokens": "Token",
           "tokensIn": "输入 Token",
-          "tokensOut": "输出 Token"
+          "tokensOut": "输出 Token",
+          "usage": "用量"
         },
         "legend": {
           "failed": "失败",
@@ -677,7 +684,8 @@ export default interface Resources {
           "errors": "失败",
           "modelCalls": "模型调用",
           "tokens": "Token",
-          "toolCalls": "工具调用"
+          "toolCalls": "工具调用",
+          "usage": "用量"
         },
         "note": {
           "point": "只记录了时刻，没有时长",

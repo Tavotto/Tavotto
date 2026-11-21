@@ -147,8 +147,9 @@ def virtual_record() -> dict | None:
         "agent": "claude",
         "base_url": target.base,
         "api_key": "",
-        "models": [MODEL],
-        "default_model": MODEL,
+        # 型号清单与默认型号都留空：界面不出现内部型号名 `tavotto-auto`（连接只显示产品名）；真正发给网关的型号由 `conn_of` 固定
+        "models": [],
+        "default_model": "",
         "protocol": "anthropic",
         "hosted": True,
     }
@@ -411,8 +412,8 @@ class Lease:
             "agent": "claude",
             "base_url": g.base_url,
             "api_key": g.task_token,
-            "models": [MODEL],
-            "default_model": MODEL,
+            "models": [],
+            "default_model": "",
             "protocol": "anthropic",
             "hosted": True,
             "hosted_limits": g.limits.as_dict(),
