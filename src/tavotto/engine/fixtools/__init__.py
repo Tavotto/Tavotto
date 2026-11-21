@@ -10,6 +10,7 @@ from __future__ import annotations
 from .. import exectrace
 from ..agent_runner.tools import Tool
 from ..agent_runner.wires import ToolResult
+from . import runreport as _runreport
 from .ask import ASK_TOOLS
 from .audit import AuditLog
 from .base import BLOCKED_CODES, FIX_SESSION_TIERS, TIERS, FixContext, FixTool
@@ -34,6 +35,9 @@ REGISTRY: dict[str, FixTool] = {
     )
 }
 
+
+# 提示只点名本会话调得到的工具（ADR 0197 第 1 层）：注册表由这里交给 runreport，不让它反过来 import 本包（免得成环）
+_runreport.TOOL_TIERS.update({name: t.tier for name, t in REGISTRY.items()})
 
 exectrace.register_vocabulary("tool", REGISTRY)
 exectrace.register_vocabulary("tier", TIERS)

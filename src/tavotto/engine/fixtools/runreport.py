@@ -177,12 +177,14 @@ def _data_links_fact(ctx: FixContext) -> dict | None:
     }
 
 
+#: 工具名 → 档位；`fixtools/__init__` 建好注册表后填（本模块不 import 包本身，免得成环）
+TOOL_TIERS: dict[str, str] = {}
+
+
 def tool_available(ctx: FixContext) -> callable:
     """提示里能点名的工具：注册表里有、本会话的档位放行。"""
-    from . import REGISTRY
-
     allowed = getattr(ctx, "allowed_tiers", frozenset())
-    return lambda name: name in REGISTRY and REGISTRY[name].tier in allowed
+    return lambda name: TOOL_TIERS.get(name) in allowed
 
 
 def hint_of(report: object, ctx: FixContext) -> tuple[str, str, str] | None:
