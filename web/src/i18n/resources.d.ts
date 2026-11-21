@@ -232,6 +232,10 @@ export default interface Resources {
         "unverifiable": "图画好了，但这类图没法逐项核对数据。",
         "verified": "图画好了，数据和文件逐项对上。"
       },
+      "suggest": {
+        "apply": "换成建议的列",
+        "reading": "正在看这几列…"
+      },
       "variant": {
         "by_file": "只按文件比较",
         "split": "按「{{column}}」再分开"

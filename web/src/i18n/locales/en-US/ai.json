@@ -692,6 +692,10 @@
       "noX": "No X axis",
       "noGroup": "No grouping"
     },
+    "suggest": {
+      "apply": "Use suggested columns",
+      "reading": "Looking at the columns…"
+    },
     "redraw": {
       "from": "Drawn from {{file}}",
       "again": "Try another style",
