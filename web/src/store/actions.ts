@@ -989,13 +989,15 @@ export function refreshJournalV2(journalId: string, v2: V2Patch | null): void {
 
 /**
  * 旧期刊 id 换绑到它现在的 id（目录里该刊把旧 id 记成了别名，`resolveJournalAlias`）：只改 `journalRef.id`，
- * 绑定里的规则快照、出处、版本号、label 原样不动（库更新不改已定稿项目的 v1 结论）。静默：不弹胶囊、不报错；
+ * 绑定里的规则快照、出处、版本号、label 原样不动（库更新不改已定稿项目的 v1 结论）。
+ * 这是数据迁移不是用户编辑：走 `silent`，不进撤销栈、不清 future（否则撤销换绑会被 effect 立刻换回并吞掉重做历史）。
+ * 静默：不弹胶囊、不报错；
  * 绑定已不是 `oldId`（用户换了刊 / 换了画布）就什么都不做。返回是否写了。
  */
 export function rebindJournalId(oldId: string, newId: string): boolean {
   const p = doc().profile
   if (!p?.journalRef || p.journalRef.id !== oldId || oldId === newId) return false
-  commit(hist('rebindJournal'), (d) => {
+  useDocumentStore.getState().silent((d) => {
     if (d.profile?.journalRef) d.profile.journalRef.id = newId
   })
   return true

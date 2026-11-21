@@ -10,7 +10,7 @@ import { setLocale } from '@/i18n'
 import { useJournalV2Sync } from '@/hooks/useJournalV2Sync'
 import { resolveJournalAlias } from '@/lib/journalPick'
 import { loadCatalog, type JournalCatalog } from '@/lib/journals'
-import { selectJournal } from '@/store/actions'
+import { selectJournal, setPageSize } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { registerGesture } from '@/store/gestureCoordinator'
 import { useJournalCatalogStore } from '@/store/journalCatalogStore'
@@ -95,14 +95,35 @@ describe('resolveJournalAlias', () => {
 })
 
 describe('useJournalV2Sync：旧 id 换绑', () => {
-  it('唯一匹配：静默换到新 id，规则快照与 label 原样，一次历史，不弹胶囊', async () => {
+  it('唯一匹配：静默换到新 id，规则快照与 label 原样，不进历史，不弹胶囊', async () => {
     const orig = await openBoundTo(OLD)
     useJournalCatalogStore.setState({ catalog: catalogWith({ 'fx-beta': [OLD] }) })
     await render()
     expect(ref()?.id).toBe('fx-beta')
     expect(ref()?.label).toBe(orig.label)
     expect(useDocumentStore.getState().doc.profile?.journal).toEqual(orig.journal)
+    expect(pastCount()).toBe(0)
+  })
+  it('用户编辑后撤销：换绑不进撤销栈，重做历史不丢', async () => {
+    await openBoundTo(OLD)
+    useJournalCatalogStore.setState({ catalog: catalogWith({ 'fx-beta': [OLD] }) })
+    await render()
+    expect(ref()?.id).toBe('fx-beta')
+    act(() => setPageSize(123, 99))
     expect(pastCount()).toBe(1)
+    act(() => {
+      useDocumentStore.getState().undo()
+    })
+    expect(useDocumentStore.getState().future.length).toBe(1)
+    act(() => {
+      useDocumentStore.getState().undo() // 栈里已经没有换绑这一步
+    })
+    expect(useDocumentStore.getState().future.length).toBe(1)
+    expect(ref()?.id).toBe('fx-beta')
+    act(() => {
+      useDocumentStore.getState().redo()
+    })
+    expect(useDocumentStore.getState().doc.page.w).toBe(123)
   })
   it('目录晚到（启动后远程索引才换新）：到了再换', async () => {
     await openBoundTo(OLD)

@@ -440,7 +440,6 @@
     "setPublicationProfile": "Set publication profile",
     "clearJournal": "Clear journal",
     "setJournal": "Set journal",
-    "rebindJournal": "Update journal ID",
     "refreshJournalV2": "Update journal requirements",
     "showObject": "Show object",
     "spacingX": "Set horizontal spacing",
