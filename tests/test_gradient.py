@@ -61,6 +61,25 @@ def _ir(p):
     return {"kind": "radial", "stops": stops, "center": list(p.center), "radius": p.radius}
 
 
+def _close(got, want) -> bool:
+    """逐层比：数字按 approx，列表 / 字典逐项。pytest 9.2 起 approx 不收字典里套列表（`stops` 是列表的列表）"""
+    if isinstance(want, dict):
+        return (
+            isinstance(got, dict)
+            and got.keys() == want.keys()
+            and all(_close(got[k], want[k]) for k in want)
+        )
+    if isinstance(want, list):
+        return (
+            isinstance(got, list)
+            and len(got) == len(want)
+            and all(_close(g, w) for g, w in zip(got, want))
+        )
+    if isinstance(want, (int, float)) and not isinstance(want, bool):
+        return got == pytest.approx(want)
+    return got == want
+
+
 @pytest.mark.parametrize("case", VECTORS["cases"], ids=lambda c: json.dumps(c["in"])[:60])
 def test_read_and_paint_match_the_shared_vectors(case):
     r = geometry.read_gradient(case["in"])
@@ -69,7 +88,7 @@ def test_read_and_paint_match_the_shared_vectors(case):
     assert r == case["read"]
     for p in case["paint"]:
         got = _ir(geometry.gradient_paint(case["in"], p["w"], p["h"], p["alpha"]))
-        assert got == pytest.approx(p["out"]) if got is not None else p["out"] is None
+        assert _close(got, p["out"]) if got is not None else p["out"] is None, (got, p["out"])
 
 
 def test_the_vector_set_covers_both_kinds_and_rejects():
