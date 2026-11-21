@@ -196,18 +196,22 @@ def _quoted(line: str) -> list[str]:
 
 
 def launcher_secrets(text: str) -> set[str]:
-    """启动脚本里像凭据的变量被设成的字面值（同一会话别的字段也按它抹）。解析不了回空集——那时正文整个不记。"""
+    """同一会话别的字段要抹掉的值。正文里提到了像凭据的名字（不管是怎么设的——赋值、标注赋值、解包、update 的各种参数、
+    导入后直接调用……都不去认，Codex #2100 三轮 P1），这段脚本里所有字符串字面量都当成可能的秘密；没提到回空集。"""
+    if not _SECRETISH.search(text or ""):
+        return set()
     try:
         tree = ast.parse(text or "")
     except (SyntaxError, ValueError):
-        # 解析不了：正文本来就不记；值按宽松写法认出来，同一会话别的字段照样抹
-        return {
-            v
-            for line in (text or "").splitlines()
-            if _SECRETISH.search(line)
-            for v in _quoted(line)
-        }
-    return {v for k, v in _env_sets(tree) if v and _SECRETISH.search(k)}
+        return {v for line in (text or "").splitlines() for v in _quoted(line)}
+    return {
+        n.value
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Constant)
+        and isinstance(n.value, str)
+        and n.value
+        and not (n.value.isidentifier() and _SECRETISH.search(n.value))
+    }
 
 
 def _mask(text: str, secrets: set[str] | frozenset[str]) -> str:
@@ -249,9 +253,9 @@ def _launcher_fields(
         if value is not None and not _SECRETISH.search(name):
             item["value"] = _tidy(_mask(value, found), ARG_MAX_CHARS, scrub)
         env.append(item)
-    # 只要设了像凭据的变量（值从哪来——字面量、变量、拼接、函数——都不去猜），正文整段不记，只留变量名（Codex #2100 两轮 P1：
-    # 逐个写法去抹永远有下一种写法）。没有这类变量时正文照记，同一会话认出的秘密照样抹，抹不干净也不记
-    if any(_SECRETISH.search(name) for name, _ in sets):
+    # 正文里任何地方出现像凭据的名字，正文整段不记，只留认出的变量名（Codex #2100 三轮 P1：按「怎么设环境变量」去认，
+    # 永远有下一种合法写法；改按「提没提到」判，不看语法）。没提到时正文照记，同一会话认出的秘密照样抹，抹不干净也不记
+    if _SECRETISH.search(text or ""):
         return {"env": env, "text": ""}
     body = _mask(text or "", found)
     if _still_leaks(body, found):
