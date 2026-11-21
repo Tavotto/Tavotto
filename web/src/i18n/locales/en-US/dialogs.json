@@ -476,6 +476,38 @@
         "keywords": "convert path outline bezier vector",
         "label": "Convert to Path"
       },
+      "pen-tool": {
+        "keywords": "pen path bezier draw",
+        "label": "Pen"
+      },
+      "edit-anchors": {
+        "keywords": "anchor direct selection points",
+        "label": "Edit Anchor Points"
+      },
+      "add-anchor": {
+        "keywords": "add anchor point plus",
+        "label": "Add Anchor Point"
+      },
+      "delete-anchor": {
+        "keywords": "delete remove anchor point minus",
+        "label": "Delete Anchor Point"
+      },
+      "convert-anchor": {
+        "keywords": "convert anchor smooth corner",
+        "label": "Convert Anchor Point"
+      },
+      "cut-path": {
+        "keywords": "cut scissors split break",
+        "label": "Cut Path at Anchor Points"
+      },
+      "join-paths": {
+        "keywords": "join connect close",
+        "label": "Join"
+      },
+      "average-anchors": {
+        "keywords": "average align anchors",
+        "label": "Average Anchor Points"
+      },
       "cycle-overlap": {
         "keywords": "cycle overlap overlapping twin axis behind stack",
         "label": "Cycle through overlapping figure elements"
@@ -603,6 +635,22 @@
       "zoom-selection": {
         "label": "Zoom to selection",
         "keywords": "zoom selection focus frame view fit selected"
+      },
+      "default-appearance": {
+        "keywords": "default fill stroke reset",
+        "label": "Default Fill and Stroke"
+      },
+      "swap-fill-stroke": {
+        "keywords": "swap fill stroke",
+        "label": "Swap Fill and Stroke"
+      },
+      "clear-fill": {
+        "keywords": "no fill none clear",
+        "label": "No Fill"
+      },
+      "eyedropper-tool": {
+        "keywords": "eyedropper pick color sample",
+        "label": "Eyedropper"
       }
     },
     "listLabel": "Commands",
