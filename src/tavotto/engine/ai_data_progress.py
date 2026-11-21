@@ -89,6 +89,11 @@ def _start(project: str, rid: str, kind: str) -> Entry:
     with _LOCK:
         _sweep(now)
         e = Entry(project, rid, kind, now, now)
+        prev = _ENTRIES.get((project, rid))
+        if prev is not None and prev.state == "running":
+            # 同一请求号在上一次还没跑完时又来了一次（重试）：两次共用一个取消标志，取消端点一次停掉两边——
+            # 否则登记表里只剩新的那条，旧请求会在取消之后继续读表、建候选。
+            e.cancel = prev.cancel
         _ENTRIES[(project, rid)] = e
         return e
 

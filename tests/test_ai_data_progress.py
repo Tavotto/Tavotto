@@ -125,6 +125,28 @@ def test_cancel_is_idempotent_scoped_to_the_project_and_checked_at_ticks():
         progress.tick("render", 0, 0)  # 不会因取消抛
 
 
+def test_a_retry_with_the_same_request_id_shares_the_cancel_flag_with_the_running_original():
+    progress.reset_for_tests()
+    with progress.track("p", "retry-rid-1", "propose"):
+        progress.tick("scan", 1, 10)
+        ctx = __import__("contextvars").copy_context()
+
+        def retry():
+            with progress.track("p", "retry-rid-1", "propose"):
+                progress.tick("scan", 1, 10)
+                assert progress.cancel("p", "retry-rid-1")["cancelled"] is True
+                with pytest.raises(progress.Cancelled):
+                    progress.tick("scan", 2, 10)
+
+        ctx.run(retry)
+        # 取消登记在重试那条上，但原请求（还握着旧条目）下一个检查点同样停下
+        with pytest.raises(progress.Cancelled):
+            progress.tick("scan", 2, 10)
+    # 都结束之后同一请求号再来：新的取消标志，不继承旧的
+    with progress.track("p", "retry-rid-1", "propose"):
+        progress.tick("scan", 1, 10)
+
+
 def test_cancelled_is_not_swallowed_by_except_exception():
     assert not issubclass(progress.Cancelled, Exception)  # 各处 `except Exception` 吞不掉它
 
