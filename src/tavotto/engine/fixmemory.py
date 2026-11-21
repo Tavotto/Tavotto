@@ -36,12 +36,6 @@ KINDS = ("run_args", "launcher", "data_link", "execution")
 
 #: 变量名像凭据：只记名字、不记值
 _SECRETISH = re.compile(r"(KEY|TOKEN|SECRET|PASSW|PASSWD|CREDENTIAL|AUTH|COOKIE|SESSION)", re.I)
-#: 解析不了的启动脚本里「像凭据的名字 + 引号里的值」的宽松写法（只用来抹别的字段，不用来记）
-_LOOSE_SECRET = re.compile(
-    r"""[A-Za-z_]*(?:KEY|TOKEN|SECRET|PASSW|CREDENTIAL|AUTH|COOKIE|SESSION)[A-Za-z0-9_]*['"]?\s*[\],:=)]?\s*[,=:]?\s*(['"]{1,3})(.+?)\1""",
-    re.I,
-)
-
 _LOCK = threading.Lock()
 
 
@@ -185,13 +179,34 @@ def _env_sets(tree: ast.AST) -> list[tuple[str, str | None]]:
     return out
 
 
+def _quoted(line: str) -> list[str]:
+    """一行里引号包着的每一段（线性扫描，不用正则，免得在不可信文本上回溯；只用来抹别的字段）。"""
+    out: list[str] = []
+    quote, start = "", 0
+    for i, ch in enumerate(line):
+        if quote:
+            if ch == quote:
+                if i > start:
+                    out.append(line[start:i])
+                quote = ""
+        elif ch in "'\"":
+            quote, start = ch, i + 1
+    # 像凭据的变量名本身（`'API_TOKEN'`）不算值
+    return [v for v in out if not (v.isidentifier() and _SECRETISH.search(v))]
+
+
 def launcher_secrets(text: str) -> set[str]:
     """启动脚本里像凭据的变量被设成的字面值（同一会话别的字段也按它抹）。解析不了回空集——那时正文整个不记。"""
     try:
         tree = ast.parse(text or "")
     except (SyntaxError, ValueError):
         # 解析不了：正文本来就不记；值按宽松写法认出来，同一会话别的字段照样抹
-        return {m.group(2) for m in _LOOSE_SECRET.finditer(text or "") if m.group(2)}
+        return {
+            v
+            for line in (text or "").splitlines()
+            if _SECRETISH.search(line)
+            for v in _quoted(line)
+        }
     return {v for k, v in _env_sets(tree) if v and _SECRETISH.search(k)}
 
 
