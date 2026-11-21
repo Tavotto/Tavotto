@@ -12,10 +12,11 @@ import {
   aiDataFilesAll,
   aiDataOverview,
   aiDataUnderstanding,
+  type AiDataAnswerPatch,
   type AiDataOverview,
   type AiDataUnderstanding,
 } from '@/lib/api'
-import { diffSuggestion, suggestionFrom } from '@/lib/dataUnderstanding'
+import { diffSuggestion, suggestionFrom, type Suggestion } from '@/lib/dataUnderstanding'
 import { setCurrentProjectId } from '@/lib/session'
 import { useDataFigureStore } from '@/store/dataFigureStore'
 import { useProjectStore } from '@/store/projectStore'
@@ -65,7 +66,7 @@ const cands = (extra: Record<string, unknown> = {}) => ({
   ...extra,
 })
 const pending: AiDataUnderstanding = { id: 'U1', state: 'pending' }
-const ready = (answers: Record<string, unknown>, extra: Partial<AiDataUnderstanding> = {}): AiDataUnderstanding => ({ id: 'U1', state: 'ready', answers, header_rows: {}, roles: [], dropped: 0, ...extra })
+const ready = (answers: AiDataAnswerPatch, extra: Partial<AiDataUnderstanding> = {}): AiDataUnderstanding => ({ id: 'U1', state: 'ready', answers, header_rows: {}, roles: [], dropped: 0, ...extra })
 
 const store = () => useDataFigureStore.getState()
 const tick = async (ms = 1000) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
@@ -183,12 +184,15 @@ describe('静默与不套用', () => {
     expect(poll).toHaveBeenCalledTimes(1) // 终态之后不再问
   })
 
-  it('一直 pending（后端也超时没回）：到次数就停，灰字消失，不报错', async () => {
+  it('一直 pending（后端也超时没回）：到时间上限（75 秒）就停，灰字消失，不报错', async () => {
     propose.mockResolvedValue(cands({ understanding: pending }))
     poll.mockResolvedValue(pending)
     await pick('growth.csv')
     await tick(40_000)
-    expect(poll.mock.calls.length).toBeLessThanOrEqual(30)
+    expect(q('[data-data-reading]')).not.toBeNull() // 订阅登录的后端限时 60 秒：这时还在等
+    await tick(40_000)
+    expect(poll.mock.calls.length).toBeGreaterThanOrEqual(70)
+    expect(poll.mock.calls.length).toBeLessThanOrEqual(76)
     expect(q('[data-data-reading]')).toBeNull()
     expect(q('[data-data-suggest]')).toBeNull()
     expect(proposeCalls()).toBe(1)
@@ -290,7 +294,7 @@ describe('静默与不套用', () => {
 })
 
 describe('lib/dataUnderstanding', () => {
-  const r = { x: 'day', y: 'v', yExtra: 0, group: null, options: { x: ['day', 'wk'], y: ['v', 'w'], group: ['g'] } }
+  const r = { x: 'day', y: 'v', yAll: ['v'], stack: false, yExtra: 0, group: null, options: { x: ['day', 'wk'], y: ['v', 'w'], group: ['g'] } }
   it('suggestionFrom：只有 ready 才有；y 给数组取第一个；空建议 = null', () => {
     expect(suggestionFrom({ id: 'u', state: 'failed' }, 'a.csv', true)).toBeNull()
     expect(suggestionFrom(ready({ y: ['w'] }), 'a.csv', true)).toEqual({ picks: { y: 'w' }, headerRow: null })
@@ -307,13 +311,191 @@ describe('lib/dataUnderstanding', () => {
     expect(diffSuggestion({ picks: {}, headerRow: 1 }, r, 1, false)).toBeNull()
   })
   it('diffSuggestion：纵轴此刻不止一列而建议只要其中第一列，也算不同（否则多出来的那列一直被画成测量值）', () => {
-    const wide = { x: 'time', y: 'signal', yExtra: 1, group: null, options: { x: [], y: ['signal', 'batch'], group: [] } }
+    const wide = { x: 'time', y: 'signal', yAll: ['signal', 'batch'], stack: false, yExtra: 1, group: null, options: { x: [], y: ['signal', 'batch'], group: [] } }
     expect(diffSuggestion({ picks: { y: 'signal' }, headerRow: null }, wide, 1, false)).toEqual({ picks: { y: 'signal' }, headerRow: null })
-    expect(diffSuggestion({ picks: { y: 'signal' }, headerRow: null }, { ...wide, yExtra: 0 }, 1, false)).toBeNull()
+    expect(diffSuggestion({ picks: { y: 'signal' }, headerRow: null }, { ...wide, yAll: ['signal'], yExtra: 0 }, 1, false)).toBeNull()
   })
   it('diffSuggestion：成对换轴（纵轴换成 a、原来的纵轴 c 去当横轴）两半都留下——横轴下拉此刻不列当前纵轴，不能据此把它丢掉', () => {
-    const abc = { x: 'a', y: 'c', yExtra: 0, group: null, options: { x: ['a', 'b'], y: ['a', 'b', 'c'], group: [] } }
+    const abc = { x: 'a', y: 'c', yAll: ['c'], stack: false, yExtra: 0, group: null, options: { x: ['a', 'b'], y: ['a', 'b', 'c'], group: [] } }
     expect(diffSuggestion({ picks: { y: 'a', x: 'c' }, headerRow: null }, abc, 1, false)).toEqual({ picks: { y: 'a', x: 'c' }, headerRow: null })
     expect(diffSuggestion({ picks: { x: 'zzz' }, headerRow: null }, abc, 1, false)).toBeNull() // 这张表里没有的列仍不算
+  })
+})
+
+const wideRoles = (over: Record<string, unknown> = {}) => ({
+  ...roles,
+  options: { x: ['day', 'week'], y: ['tumor_volume', 'day', 'a', 'b', 'c'], group: ['group', 'arm'] },
+  ...over,
+})
+const stackRoles = wideRoles({ x: null, y: ['a', 'b', 'c'], group: null, stack: true })
+const yTrigger = () => q('[aria-label="纵轴"]')!
+const xTrigger = () => q('[aria-label="横轴"]')!
+
+describe('x_measure：不对应下拉的键', () => {
+  const same = { x: 'day', y: 'tumor_volume', group: 'group' }
+  it('x / y / group 都相同、只有 x_measure：没动过下拉就自动重新出候选一次，请求体里带 x_measure；套用后同一条建议不再触发', async () => {
+    propose.mockResolvedValue(cands({ understanding: ready({ ...same, x_measure: 'day' }) }))
+    await pick('growth.csv')
+    await settle()
+    await settle()
+    expect(proposeCalls()).toBe(2)
+    expect(propose.mock.calls[1]![0].answers).toEqual({ x_measure: 'day' })
+    await tick(5000)
+    expect(proposeCalls()).toBe(2) // 防循环：第二次响应里又带同一份建议，答案里已经有同值的 x_measure = 相同
+    expect(q('[data-data-suggest]')).toBeNull()
+  })
+
+  it('动过下拉：出胶囊（没有悬停说明），点了才带上 x_measure', async () => {
+    propose.mockResolvedValueOnce(cands({ understanding: pending })).mockResolvedValue(cands())
+    poll.mockResolvedValueOnce(ready({ ...same, x_measure: 'day' }))
+    await pick('growth.csv')
+    await act(async () => store().setRole('group', 'arm'))
+    await settle()
+    await tick()
+    const pill = q('[data-data-suggest]')!
+    expect(pill).not.toBeNull()
+    expect(pill.getAttribute('title')).toBeNull()
+    expect(propose.mock.calls.every((c) => c[0].answers?.x_measure === undefined)).toBe(true)
+    await act(async () => pill.click())
+    await settle()
+    expect(propose.mock.calls.at(-1)![0].answers).toEqual({ group: 'arm', x_measure: 'day' })
+    expect(q('[data-data-suggest]')).toBeNull()
+  })
+
+  it('套用后用户自己改横轴：与横轴绑定的 x_measure 被清掉', async () => {
+    propose.mockResolvedValue(cands({ understanding: ready({ ...same, x_measure: 'day' }) }))
+    await pick('growth.csv')
+    await settle()
+    await settle()
+    propose.mockResolvedValue(cands())
+    await act(async () => store().setRole('x', 'week'))
+    await settle()
+    expect(propose.mock.calls.at(-1)![0].answers).toEqual({ x: 'week' })
+  })
+
+  it('自动套用写进去的键不算「用户动过」：之后换了一份不同的建议仍自动套用', async () => {
+    propose.mockResolvedValueOnce(cands({ understanding: ready({ ...same, x_measure: 'day' }) })).mockResolvedValue(cands({ understanding: ready({ ...same, x_measure: 'day', group: 'arm' }) }))
+    await pick('growth.csv')
+    await settle()
+    await settle()
+    expect(proposeCalls()).toBeGreaterThanOrEqual(3)
+    expect(propose.mock.calls[2]![0].answers).toEqual({ x_measure: 'day', group: 'arm' })
+  })
+})
+
+describe('多列纵轴', () => {
+  it('有横轴的 2 列：数组原样带回；回来的 roles 与建议相同，不再重复触发', async () => {
+    propose
+      .mockResolvedValueOnce(cands({ roles: wideRoles(), understanding: ready({ y: ['tumor_volume', 'day'] }) }))
+      .mockResolvedValue(cands({ roles: wideRoles({ y: ['tumor_volume', 'day'] }), understanding: ready({ y: ['tumor_volume', 'day'] }) }))
+    await pick('growth.csv')
+    await settle()
+    await settle()
+    expect(propose.mock.calls[1]![0].answers).toEqual({ y: ['tumor_volume', 'day'] })
+    await tick(3000)
+    expect(proposeCalls()).toBe(2)
+    expect(yTrigger().textContent).toContain('tumor_volume、day')
+  })
+
+  it('把列当分组（x == none、3 列）：原样带回；右栏纵轴并列写出、横轴显示「不要横轴」', async () => {
+    propose
+      .mockResolvedValueOnce(cands({ roles: wideRoles(), understanding: ready({ y: ['a', 'b', 'c'], x: 'none' }) }))
+      .mockResolvedValue(cands({ roles: stackRoles, understanding: ready({ y: ['a', 'b', 'c'], x: 'none' }) }))
+    await pick('growth.csv')
+    await settle()
+    await settle()
+    expect(propose.mock.calls[1]![0].answers).toEqual({ y: ['a', 'b', 'c'], x: 'none' })
+    await tick(3000)
+    expect(proposeCalls()).toBe(2)
+    expect(yTrigger().textContent).toContain('a、b、c')
+    expect(xTrigger().textContent).toContain('不要横轴')
+    expect(q('[data-data-suggest]')).toBeNull()
+  })
+
+  it('自动套用后用户选单列纵轴：放掉「不要横轴」的绑定；选真横轴：纵轴收回第一列', async () => {
+    propose
+      .mockResolvedValueOnce(cands({ roles: wideRoles(), understanding: ready({ y: ['a', 'b', 'c'], x: 'none' }) }))
+      .mockResolvedValue(cands({ roles: stackRoles }))
+    await pick('growth.csv')
+    await settle()
+    await settle()
+    await act(async () => store().setRole('y', 'tumor_volume'))
+    await settle()
+    expect(propose.mock.calls.at(-1)![0].answers).toEqual({ y: 'tumor_volume' })
+    // 回到「把列当分组」的答案，再选真横轴
+    propose.mockResolvedValue(cands())
+    useDataFigureStore.setState({ answers: { y: ['a', 'b'], x: 'none' } })
+    await act(async () => store().setRole('x', 'week'))
+    await settle()
+    expect(propose.mock.calls.at(-1)![0].answers).toEqual({ y: 'a', x: 'week' })
+  })
+
+  it('动过下拉：胶囊的悬停说明把列名用「、」连起来', async () => {
+    propose.mockResolvedValueOnce(cands({ roles: wideRoles(), understanding: pending })).mockResolvedValue(cands({ roles: wideRoles() }))
+    poll.mockResolvedValueOnce(ready({ y: ['a', 'b'] }))
+    await pick('growth.csv')
+    await act(async () => store().setRole('group', 'arm'))
+    await settle()
+    await tick()
+    expect(q('[data-data-suggest]')!.getAttribute('title')).toBe('纵轴 a、b')
+  })
+
+  it('一列的数组当成那一列；形状不对（有 none / 重复 / 超过 8 列）整项丢掉、不拿第一列凑数', () => {
+    expect(suggestionFrom(ready({ y: ['a'] }), 'a.csv', true)).toEqual({ picks: { y: 'a' }, headerRow: null })
+    expect(suggestionFrom(ready({ y: ['a', 'b'] }), 'a.csv', true)!.picks.y).toEqual(['a', 'b'])
+    expect(suggestionFrom(ready({ y: ['a', 'none'] }), 'a.csv', true)).toBeNull()
+    expect(suggestionFrom(ready({ y: ['a', 'a'] }), 'a.csv', true)).toBeNull()
+    expect(suggestionFrom(ready({ y: Array.from({ length: 9 }, (_, i) => `c${i}`) }), 'a.csv', true)).toBeNull()
+    expect(suggestionFrom(ready({ y: ['a', 3 as unknown as string] }), 'a.csv', true)).toBeNull()
+  })
+})
+
+describe('lib/dataUnderstanding：新键', () => {
+  const base = { x: 'day', y: 'v', yAll: ['v'], stack: false, yExtra: 0, group: null, options: { x: ['day'], y: ['v', 'a', 'b', 'c'], group: [] } }
+  const stack = { ...base, x: null, y: 'a', yAll: ['a', 'b', 'c'], yExtra: 2, stack: true }
+  const sug = (picks: Suggestion['picks'], xMeasure?: string): Suggestion => ({ picks, ...(xMeasure !== undefined ? { xMeasure } : {}), headerRow: null })
+  it('suggestionFrom 带出 x_measure；cells 与未知键不套用', () => {
+    expect(suggestionFrom(ready({ x_measure: 'day', cells: { v: {} }, foo: 1 }), 'a.csv', true)).toEqual({ picks: {}, xMeasure: 'day', headerRow: null })
+  })
+  it('数组 y：与此刻纵轴同序 = 相同；顺序不同 = 不同（线的顺序 / 把列当分组时的类别顺序）；有选不到的列 = 整条不算', () => {
+    expect(diffSuggestion(sug({ y: ['a', 'b', 'c'], x: 'none' }), stack, 1, false)).toBeNull()
+    expect(diffSuggestion(sug({ y: ['c', 'b', 'a'], x: 'none' }), stack, 1, false)).toEqual({ picks: { y: ['c', 'b', 'a'] }, headerRow: null })
+    expect(diffSuggestion(sug({ y: ['a', 'b'] }), base, 1, false)).toEqual({ picks: { y: ['a', 'b'] }, headerRow: null })
+    expect(diffSuggestion(sug({ y: ['a', 'zzz'] }), base, 1, false)).toBeNull()
+  })
+  it('数组 y 已经原样发过（后端没采纳）：不再算不同', () => {
+    expect(diffSuggestion(sug({ y: ['a', 'b'] }), base, 1, false, { y: ['a', 'b'] })).toBeNull()
+  })
+  it('x_measure：答案里没有同值的就算不同（即使 x / y / group 都相同）；有了就相同；列不在表里不算', () => {
+    expect(diffSuggestion(sug({ x: 'day', y: 'v' }, 'day'), base, 1, false)).toEqual({ picks: {}, xMeasure: 'day', headerRow: null })
+    expect(diffSuggestion(sug({}, 'day'), base, 1, false, { x_measure: 'day' })).toBeNull()
+    expect(diffSuggestion(sug({}, 'zzz'), base, 1, false)).toBeNull()
+  })
+  it('换表头行的分支也带上 x_measure', () => {
+    expect(diffSuggestion({ picks: {}, xMeasure: 'day', headerRow: 3 }, base, 1, false)).toEqual({ picks: {}, xMeasure: 'day', headerRow: 3 })
+  })
+})
+
+describe('轮询到终态为止', () => {
+  it('第 45 秒才 ready 也能套用', async () => {
+    propose.mockResolvedValueOnce(cands({ understanding: pending })).mockResolvedValueOnce(cands())
+    let n = 0
+    poll.mockImplementation(async () => (++n >= 45 ? ready({ x: 'week' }) : pending))
+    await pick('growth.csv')
+    await tick(44_000)
+    expect(proposeCalls()).toBe(1)
+    expect(q('[data-data-reading]')).not.toBeNull()
+    await tick(2000)
+    expect(propose.mock.calls[1]![0]).toMatchObject({ answers: { x: 'week' } })
+  })
+  it('卸载 / 换项目即停：之后不再问', async () => {
+    propose.mockResolvedValue(cands({ understanding: pending }))
+    poll.mockResolvedValue(pending)
+    await pick('growth.csv')
+    await tick(5000)
+    const n = poll.mock.calls.length
+    await act(async () => store().clear())
+    await tick(20_000)
+    expect(poll.mock.calls.length).toBe(n)
   })
 })
