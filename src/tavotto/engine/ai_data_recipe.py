@@ -1813,6 +1813,18 @@ class _Roles:
 def _resolve_roles(
     entry: adf.TableEntry, hint: str | None, picks: dict
 ) -> _Roles | NeedsChoice | str:
+    res = _resolve_roles_raw(entry, hint, picks)
+    if isinstance(picks.get("y"), list) and isinstance(res, _Roles) and len(res.ys) > 1:
+        # 多列纵轴只在有有序横轴（趋势类每列一条线）时才用：分布 / 比较类配方只画第一列（`default_candidates` 的 `[y]`），
+        # `roles.y` 报三列而图里只有一列 = 悄悄丢列。没有横轴就当没给这个 pick，回到规则结果
+        if res.x_ord is None or picks.get("y") != list(res.ys):
+            return _resolve_roles_raw(entry, hint, {k: v for k, v in picks.items() if k != "y"})
+    return res
+
+
+def _resolve_roles_raw(
+    entry: adf.TableEntry, hint: str | None, picks: dict
+) -> _Roles | NeedsChoice | str:
     """列角色的挑选规则（**一处文字定义，下面是实现**；保守：能由结构或用户点名唯一确定就确定，有歧义就问，绝不猜）。
 
     记号：`ids` = `id_like` 列（**永不**当 y / x / 分组，只可能经用户确认成 `unit`）；`nums` = 数值列（`numeric_like`：全是数，或夹着不超过 20% 文字格的，去掉 ids；夹着的文字格那行不画并报告）；
