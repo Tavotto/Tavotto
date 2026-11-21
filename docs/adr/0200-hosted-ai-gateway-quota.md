@@ -1,7 +1,7 @@
 # ADR 0200：内置 AI 额度——网关转发、按任务放行、按成本记账（功能键 `hosted-ai`）
 
-日期：2026-11-21 · 状态：**Proposed（草稿：先定契约与计量口径；额度数字、模型、成本比例等维护者拍板，见 §十二）**
-**1.0 收敛纪律：新增产品能力，属于 [0193](0193-paid-edition-license.md) 已登记的功能键 `hosted-ai`；豁免是否按 0193 延伸，待维护者确认后登记 `docs/1.0-release-readiness.md` §1.8。入口跟 0193 的上线开关走，另加本 ADR 自己的开关（§十一）。**
+日期：2026-11-21 · 状态：**Proposed（契约与计量口径已定，维护者拍板见 §十二；网关与引擎各一路实现，先在测试模式走通）**
+**1.0 收敛纪律：新增产品能力，属于 [0193](0193-paid-edition-license.md) 已登记的功能键 `hosted-ai`；维护者 2026-11-21 确认豁免（「可以的，豁免」），登记在 `docs/1.0-release-readiness.md` §1.8。入口跟 0193 的上线开关走，另加本 ADR 自己的开关（§十一）。**
 相关：[0193 高级版授权](0193-paid-edition-license.md)（令牌、设备签名、§六「服务端每次请求判权益」）、[0187 外部审阅](0187-external-review-share.md)（CloudBase、出站笼子、上线开关）、
 [0151 执行追踪](0151-execution-trace.md)（用量记录、`ai_pricing` 估算）、[0148](0148-fix-router.md) / [0197](0197-ai-fix-experiments.md)（AI 修复）、[0138](0138-tavotto-ai-foundation.md) / [0175](0175-ai-attachments.md)（改图助手）、[0178](0178-data-to-figure-v2.md)（数据出图「理解列」）；
 隐私声明 `docs/privacy.md` 新增一节（措辞待维护者点头，§九）。
@@ -169,7 +169,7 @@ Haiku 5.5 约 $0.0007、gpt-5-mini 约 $0.0024、gpt-5 约 $0.012、Sonnet 5.5 �
   授权号的哈希、任务类型、上游模型、token 数、成本、耗时、结果码。保留 90 天。
 - 用自带 key 时一个字节都不经过我们。
 - `docs/privacy.md` 新增「Tavotto Agent」一节（维护者 2026-11-21 定名），并改掉「Optional AI assistant」里「Tavotto never relays these requests through its own servers」这句
-  （改成「除了 Tavotto Agent，……」）。草稿如下，**措辞待维护者点头后才进 privacy.md**：
+  （改成「除了 Tavotto Agent，……」）。草稿如下，维护者 2026-11-21 认可，随网关上线的 PR 写进 privacy.md：
 
   > **Tavotto Agent (paid edition, optional).** If you have the paid edition and pick "Tavotto Agent" in the "Connect an AI" dialog,
   > your AI requests go to Tavotto's own relay (`ai.tavotto.cn`), which forwards them to DeepSeek's official API under Tavotto's account.
@@ -207,9 +207,7 @@ Haiku 5.5 约 $0.0007、gpt-5-mini 约 $0.0024、gpt-5 约 $0.012、Sonnet 5.5 �
 - 「转成可编辑」算进（§一）；
 - 对用户的名字叫「Tavotto Agent」（§一、§九）。
 
-仍待定：
-1. 隐私声明「Tavotto Agent」一节的英文措辞（§九草稿）；
-2. 豁免是否按 0193 延伸登记 §1.8。
+- 豁免已确认并登记 §1.8；§九的隐私说明草稿维护者同日认可（「可以的」），随网关上线的那个 PR 改进 `docs/privacy.md`（功能没上线前不写进去）。
 
 ## 后果
 
