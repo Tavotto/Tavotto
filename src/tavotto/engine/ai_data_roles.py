@@ -8,9 +8,10 @@
   `replicate_unit` **永远不会**变成用户确认过的事实（`Confirmed.unit_col`）：它只用来让规则别把这一列当 y / x / 分组。
 * **何时采纳**（`suggest`）：规则会问（选值 / 选分组 / 选横轴）的地方，用模型的选择；规则唯一确定了某个角色、但模型明确说那一列是
   `row_id` / `note` / `unit_label` / `replicate_unit` / `other`（y 还包括「不是 measure」，分组还包括「是 measure / time」）才推翻它；其余保持规则结果。
-* **三处「够得到」的采纳**（模型明确判断 + 列客观满足，否则丢该项回规则；谓词在 `ai_data_recipe`）：多列纵轴（`multi_y_ok`：2–3 个同单位数值列、非编号列、角色都是
-  `measure`，`answers.y` 为数组）；有分组时的横轴（角色 `time` / `ordered_x`，且是规则的横轴候选）；编号样文字列当分组（角色 `group` 且 `id_group_ok`）。
-  0/1 数值列当分组不做（`s.groups` 只收文字列，配方校验 / 落盘再校验 / 模板都认它，见 ADR 0178）。
+* **四处「够得到」的采纳**（模型明确判断 + 列客观满足，否则丢该项回规则；谓词在 `ai_data_recipe`）：多列纵轴（`multi_y_ok`：2–3 个同单位数值列、非编号列、角色都是
+  `measure`，`answers.y` 为数组）；有分组时的横轴（角色 `time` / `ordered_x`，且是规则的横轴候选）；编号样文字列当分组（角色 `group` 且 `id_group_ok`）；
+  整数编码的数值列当分组（`knockout` 0 / 1：角色 `group` 且 `numcat_pick_ok`——非空值全是整数、2–6 个取值、有重复、不是编号样的列；规则从不自己把它当分组，
+  配方带 `numcat` 这条事实，见 ADR 0178）。
 * **表头行**：只在读表时 `status == "unsure"`（已有预览）且用户没指定表头行时问；答案必须是预览里的行号，按它重读要能读出合格的表，才采纳。
   **单位行不强制**（不动读表运行时，生成脚本的公共模块哈希不变）。
 * **用户的回答永远优先**：请求里已有 `answers.y / x / group / cells` 或 `header_rows` 时不起模型任务（用户已接管）。
@@ -428,7 +429,9 @@ def _role_fits_column(s: adf.DataSummary, col: str, role: str) -> bool:
     if role in ("time", "ordered_x"):
         return c.kind == "date" or recipe_mod.numeric_like(c)
     if role == "group":
-        return col in s.groups
+        return col in s.groups or recipe_mod.numcat_pick_ok(
+            s, col
+        )  # 文字分组列，或整数编码的类别列（0 / 1 的敲除标记）
     return True  # replicate_unit / row_id / unit_label / note / other 什么列都可以
 
 
@@ -485,7 +488,10 @@ def _valid_pick(
         return value if recipe_mod.numeric_like(c) else None
     if key == "x":
         return value if (c.kind == "date" or recipe_mod.numeric_like(c)) else None
-    return value if value in s.groups else None
+    if value in s.groups:
+        return value
+    # 整数编码的分组（`knockout` 0 / 1）：模型得明确判 `group`，且这列客观上合格（`numcat_pick_ok`）
+    return value if role == "group" and recipe_mod.numcat_pick_ok(s, value) else None
 
 
 #: 模型说「这一列是它们之一」就不该当横轴（编号 / 备注 / 单位说明 / 其它）
@@ -549,14 +555,15 @@ def suggest(
             if key in emit or key in (fixed or {}):
                 continue
             if col is None:
-                # 规则落定成「没有」，而模型明确给了一个在客观上说得通的：分组 = 编号样的文字列（`id_group_ok`，模型判 `group`，已由 `_valid_pick` 核）；
+                # 规则落定成「没有」，而模型明确给了一个在客观上说得通的：分组 = 编号样的文字列（`id_group_ok`）或整数编码的列（`numcat_pick_ok`，
+                # 如 0 / 1 的敲除标记），都是模型判 `group`、已由 `_valid_pick` 核；
                 # 有分组时的横轴 = 模型判 `time` / `ordered_x`，且是规则此刻的横轴候选（日期 / 数值，不是 y）
                 pick = valid.get(key)
                 if (
                     key == "group"
                     and isinstance(pick, str)
                     and pick != "none"
-                    and recipe_mod.id_group_ok(s, pick)
+                    and (recipe_mod.id_group_ok(s, pick) or recipe_mod.numcat_pick_ok(s, pick))
                 ) or (
                     key == "x"
                     and res.cats
