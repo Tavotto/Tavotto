@@ -4,22 +4,58 @@ import { Button } from '@/components/ui/Button'
 import { Segmented } from '@/components/ui/Segmented'
 import { canRevealInFileManager, revealProjectFile } from '@/lib/desktop'
 import { feedbackAction } from '@/lib/canvasFileIntake'
-import { KNOWN_NOTHING_REASONS } from '@/lib/dataFigure'
+import { KNOWN_NOTHING_REASONS, isLargeFile } from '@/lib/dataFigure'
 import { useFormatMessage } from '@/i18n/react'
 import { useDataBatchStore } from '@/store/dataBatchStore'
 import '@/lib/dataFigureHost'
 import { overviewKeyOf, useDataFigureStore } from '@/store/dataFigureStore'
 import { useDocumentStore } from '@/store/documentStore'
+import { cn } from '@/lib/utils'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { CandidateGrid, useDrawingLine } from './CandidateGrid'
 import { DataStrip } from './DataStrip'
+import { useReadProgress } from './useReadProgress'
 
 /** 正文字号、左对齐、没有底色块和图标的一句话（失败 / 说明都用它） */
 function Line({ children, anchor }: { children: React.ReactNode; anchor?: string }) {
   return (
     <p {...(anchor ? { [anchor]: '' } : {})} className="text-base text-ink">
       {children}
+    </p>
+  )
+}
+
+/**
+ * 大文件（> 5 MiB）读表 / 出候选时的一句话 + 行内的「取消」：没有百分比（后端没有进度信号，不编造）；取消 = 不再等这次请求（后端没有取消接口）。
+ * 小文件不渲染它，界面与原来逐像素相同。按钮在一行里、不撑高（负外边距吃掉按钮比文字行多出的高度）。
+ */
+function LargeReadLine({ lead }: { lead?: boolean }) {
+  const { t } = useTranslation('ai')
+  const rid = useDataFigureStore((s) => s.readRid)
+  const p = useReadProgress(rid)
+  // 有比例才显示（indeterminate / none / 请求失败 = 只有那一句话）；比例由后端保证单调不减
+  const f = p?.state === 'running' && !p.indeterminate && typeof p.fraction === 'number' ? Math.min(1, Math.max(0, p.fraction)) : null
+  const pct = f == null ? null : Math.floor(f * 100)
+  // 后端说这一步不能取消（或已经结束 / 已被取消）就不给按钮；还没拿到进度时先给
+  const cancellable = p == null || p.state === 'none' || (p.state === 'running' && p.cancellable !== false)
+  return (
+    <p data-large-read {...(lead ? { 'data-draft-lead': '' } : {})} className={cn('flex items-baseline gap-2.5 text-base text-ink-2', lead && 'mb-3.5 h-5')} role="status">
+      <span className="min-w-0 truncate">
+        {t('dataFigureV2.working.readingLarge')}
+        {pct != null && <span data-large-read-pct className="ml-1.5 tabular-nums">{pct}%</span>}
+      </span>
+      {cancellable && (
+        <button
+          type="button"
+          data-large-read-cancel
+          title={t('dataFigureV2.working.cancelHint')}
+          onClick={() => void useDataFigureStore.getState().cancelRead()}
+          className="-my-0.5 h-6 shrink-0 rounded-full px-2.5 text-sm text-ink-2 outline-none hover:bg-surface-hover hover:text-ink focus-visible:focus-ring"
+        >
+          {t('dataFigureV2.working.cancel')}
+        </button>
+      )}
     </p>
   )
 }
@@ -40,6 +76,7 @@ export function DataDraft() {
   const overviewGen = useDataFigureStore((s) => s.overviewGen)
   const overviews = useDataFigureStore((s) => s.overviews)
   const headerRows = useDataFigureStore((s) => s.headerRows)
+  const files = useDataFigureStore((s) => s.files)
   // 合画的数据条此刻看第几个文件（默认第一个）；换了一组就回到第一个
   const [stripIdx, setStripIdx] = useState(0)
   const groupKey = group ? group.map((r) => `${r.path}|${r.sheet}`).join('\n') : null
@@ -63,7 +100,12 @@ export function DataDraft() {
   const problem = useDataFigureStore((s) => s.problem)
   const root = useRef<HTMLDivElement>(null)
   const st = useDataFigureStore.getState
-  const drawingLine = useDrawingLine(drawingId != null)
+  // 大文件：清单里的大小（> 5 MiB）、读过之后后端给的大表标记（不到 5 MiB 但行数多）任一成立
+  const ovNow = (stripRef ?? selected) ? overviews[overviewKeyOf((stripRef ?? selected)!, headerRows)]?.data : null
+  const large = !group && (isLargeFile(files.status === 'idle' ? null : files.entries, selected) || ovNow?.large === true)
+  // 大文件的缩略图是后端当场画的、要等一阵：沿用已有的那句慢提示（8 秒后换句），不新增文案
+  const waitingThumbs = large && phase === 'ready' && allCandidates.length > 0 && !allCandidates.every((c) => thumbs[c.id] === 'ready' || thumbs[c.id] === 'failed')
+  const drawingLine = useDrawingLine(drawingId != null || waitingThumbs)
   const feedback = feedbackAction()
   const projectRoot = useProjectStore((s) => s.project?.figures_dir)
 
@@ -194,21 +236,34 @@ export function DataDraft() {
   } else if (phase === 'nothing') {
     const first = reasons.find((r) => KNOWN_NOTHING_REASONS.includes(r))
     top = <Line anchor="data-studio-nothing">{first ? t(`dataFigureV2.reason.${first}`) : t('dataFigureV2.nothing.generic')}</Line>
+  } else if (phase === 'cancelled') {
+    top = (
+      <div data-studio-cancelled className="flex flex-col items-start gap-2">
+        <Line>{t('dataFigureV2.draft.cancelled')}</Line>
+        <Button variant="primary" size="lg" className="mt-1" data-studio-primary data-studio-retry onClick={() => void st().retry()}>
+          {t('dataFigureV2.draft.readAgain')}
+        </Button>
+      </div>
+    )
   } else if (phase === 'reading') {
-    top = <p className="text-base text-ink-2" role="status">{t('dataFigureV2.working.reading')}</p>
+    top = large ? <LargeReadLine /> : <p className="text-base text-ink-2" role="status">{t('dataFigureV2.working.reading')}</p>
   } else {
     const pending = phase === 'loading' || phase === 'idle'
     top = (
       <>
-        <p data-draft-lead className="mb-3.5 h-5 text-base text-ink-2" role="status">
-          {drawingId ? drawingLine : settled ? t('dataFigureV2.draft.pickLead') : t('dataFigureV2.working.drawing')}
-        </p>
+        {large && phase === 'loading' ? (
+          <LargeReadLine lead />
+        ) : (
+          <p data-draft-lead className="mb-3.5 h-5 text-base text-ink-2" role="status">
+            {drawingId || waitingThumbs ? drawingLine : settled ? t('dataFigureV2.draft.pickLead') : t('dataFigureV2.working.drawing')}
+          </p>
+        )}
         <CandidateGrid items={candidates} thumbs={thumbs} pending={pending} drawingId={drawingId} onPick={(id) => void st().draw(id)} onThumb={(id, ok) => session && st().thumbSettled(session, id, ok)} />
       </>
     )
   }
 
-  const noStrip = phase === 'unreadable' && !ov?.raw_lines?.length
+  const noStrip = (phase === 'unreadable' || phase === 'cancelled') && !ov?.raw_lines?.length
   return (
     <div
       ref={root}

@@ -132,6 +132,7 @@
   "canvasTools": {
     "fit": "适应",
     "label": "画布工具",
+    "pen": "钢笔",
     "select": "选择",
     "subLabels": "序号"
   },
@@ -386,6 +387,16 @@
     "switchKindCount": "把 {{count}} 个对象改为{{name}}",
     "convertToPath": "转为路径",
     "convertToPathCount": "把 {{count}} 个对象转为路径",
+    "drawPath": "画路径",
+    "continuePath": "续画路径",
+    "moveAnchors": "移动锚点",
+    "moveHandle": "调整手柄",
+    "addAnchors": "添加锚点",
+    "deleteAnchors": "删除 {{count}} 个锚点",
+    "convertAnchors": "转换锚点",
+    "cutPath": "在锚点处断开",
+    "joinPaths": "连接路径",
+    "averageAnchors": "平均锚点",
     "resizeAxes": "缩放 {{count}} 个子图",
     "resizePatch": "调整图框大小",
     "scaleLegend": "缩放图例",
@@ -439,7 +450,12 @@
     "hideObjects": "隐藏 {{count}} 个对象",
     "showObjects": "显示 {{count}} 个对象",
     "setFramePad": "修改画布留白",
-    "journalStyle": "参考 {{journal}} 的记录调整样式「{{name}}」"
+    "journalStyle": "参考 {{journal}} 的记录调整样式「{{name}}」",
+    "adoptComputedFrame": "采用计算渲染外框",
+    "defaultAppearance": "默认填色描边",
+    "swapFillStroke": "互换填色和描边",
+    "clearFill": "无填充",
+    "eyedropper": "吸管上色"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -679,7 +695,9 @@
     "projectFailed": "没能存进项目里的 {{file}}：{{reason}}",
     "projectSkipped": "没有写入项目里的 {{file}}：按下保存之后切换了排版或项目。回到那份排版再保存一次。",
     "reloadFailed": "没能读到磁盘上的那一版",
-    "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。"
+    "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。",
+    "projectBindingUnavailable": "项目文件关联尚未确认，本次还没有写入命名文件。改动仍在本机，请重试或重新打开排版。",
+    "projectBindingSuperseded": "已写入 {{file}}，但下次保存目标尚未确认。较晚选择的目标会保留，请重新打开这份排版后继续保存。"
   },
   "scrim": {
     "collapse": "收起侧栏"
@@ -924,7 +942,12 @@
       "incomplete": "组里有成员这一版拿不到位置，暂时不能整组移动或缩放"
     },
     "copyDetails": "复制详情",
-    "copiedDetails": "已复制"
+    "copiedDetails": "已复制",
+    "packagedIncomplete_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材。恢复前请补齐。",
+    "packagedExecutionIncomplete": "已生成项目包 {{name}}。运行依赖尚未确认完整，迁移前请检查数据与运行配置。",
+    "packagedIncompleteWithExecution_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材，运行依赖也尚未确认完整。迁移前请补齐素材并检查数据与运行配置。",
+    "eyedropperNothing": "这里没有能吸的颜色",
+    "eyedropperNoTarget": "先选中要上色的形状、路径或箭头"
   },
   "tabs": {
     "allCanvases": "全部画布",
@@ -935,11 +958,19 @@
     "unopened": "未打开"
   },
   "toolHint": {
+    "arc": "拖动画出弧线；Esc 取消",
     "arrow": "拖动画出箭头，Shift 吸附 15° 角；Esc 取消",
+    "brace": "拖动画出大括号；Esc 取消",
+    "diamond": "拖动画出菱形；Esc 取消",
     "ellipse": "拖动画出椭圆；Esc 取消",
+    "eyedropper": "点画布上的东西，把它的颜色给选中的对象；Esc 退出",
     "line": "拖动画出直线；Esc 取消",
+    "pen": "点一下加尖角点，按住拖拉出平滑点；点起点闭合，Enter / Esc 结束",
+    "polygon": "拖动画出多边形；Esc 取消",
     "rect": "拖动绘制矩形；Esc 取消",
-    "text": "拖动绘制文字框，或单击按默认大小放置；Esc 取消"
+    "star": "拖动画出星形；Esc 取消",
+    "text": "拖动绘制文字框，或单击按默认大小放置；Esc 取消",
+    "triangle": "拖动画出三角形；Esc 取消"
   },
   "topbar": {
     "addSubLabels": "添加序号标签",
@@ -961,7 +992,6 @@
     "fromOtherProject": "· 其他项目",
     "fromProject": "· 项目 {{name}}",
     "importPackage": "导入项目包…",
-    "insertShape": "插入形状",
     "more": "更多",
     "moreGroup": {
       "file": "文件",
@@ -1655,6 +1685,35 @@
     "library": {
       "partial": "只查了一部分文件，可能还有别的脚本调用它",
       "openFailed": "没能打开那个文件夹"
+    },
+    "inputs": {
+      "title": "捕获输入",
+      "hint": "选择下一次明确运行时要记录的输入。保存仅重新检查，不运行脚本。",
+      "projectFiles": "项目文件",
+      "chooseFile": "选择文件…",
+      "pathPlaceholder": "项目相对路径或文件路径",
+      "addFile": "添加文件",
+      "noFiles": "尚未选择项目文件",
+      "approvedRemaps": "已批准的外部输入",
+      "noRemaps": "没有已批准的外部输入",
+      "anyRelative": "所有相对请求",
+      "missingRemap": "批准目标已不可用，请移除或重新读取",
+      "removeFile": "移除",
+      "save": "保存选择",
+      "cancel": "取消",
+      "removeDeclaration": "移除声明",
+      "reload": "重新读取",
+      "loading": "正在读取输入声明…",
+      "saved": "选择已保存。下次运行会按此选择记录输入。",
+      "removed": "声明已移除。",
+      "savedRecheckFailed": "选择已保存，但重新检查未完成。请重新检查。",
+      "removedRecheckFailed": "声明已移除，但重新检查未完成。请重新检查。",
+      "reloaded": "已重新读取并合并你的未保存选择，请检查后保存。",
+      "changed": "参数或准备配置已变化，请先重新检查。",
+      "sensitiveRun": "含敏感参数的运行不记录可携输入声明。",
+      "scopeUnknown": "当前运行范围尚未确定。",
+      "notScript": "当前目标不是可声明输入的脚本。",
+      "captured": "实际运行记录的输入摘要：{{revision}}"
     }
   },
   "canvasMenu": {
@@ -1714,5 +1773,79 @@
   },
   "dataDrawer": {
     "count": "{{count}} 个数据文件"
+  },
+  "chartBind": {
+    "title": "绑定数据为计算图表",
+    "fileLabel": "来源文件",
+    "nodesLabel": "节点数",
+    "rect": "绘图区（x y 宽 高）",
+    "axis": {
+      "x": "X 轴校准（两个参考值）",
+      "y": "Y 轴校准（两个参考值）"
+    },
+    "series": "系列（节点 / x 列 / y 列）",
+    "seriesNode": "场景节点 id",
+    "data": "数据（CSV / TSV）",
+    "restoredTitle": "已读取 SVG 内的计算图表",
+    "restoredHelp": "数据、坐标轴与系列已预填。检查对照预览，确认后应用到当前图。",
+    "preview": "生成对照预览",
+    "confirm": "确认绑定",
+    "cancel": "取消",
+    "apply": "绑定计算图表",
+    "menu": "绑定数据为计算图表",
+    "scaleLinear": "线性",
+    "scaleLog": "对数",
+    "dataPlaceholder": "x,y\n0,1.0\n1,2.0",
+    "generating": "正在计算预览…",
+    "retryScene": "重新读取原图",
+    "rectX": "绘图区 X",
+    "rectY": "绘图区 Y",
+    "rectWidth": "绘图区宽度",
+    "rectHeight": "绘图区高度",
+    "axesNodes": "要替换的轴区域节点（每行一个）",
+    "axesNodesHelp": "选择原图中的轴、刻度和标签区域；这些区域会按数据重算。未选择的注释与装饰保持原样。",
+    "scale": "轴尺度",
+    "firstPosition": "参考位置 1（轴比例）",
+    "firstValue": "参考数值 1",
+    "secondPosition": "参考位置 2（轴比例）",
+    "secondValue": "参考数值 2",
+    "xKind": "X 轴类型",
+    "numeric": "数值轴",
+    "categorical": "类别轴",
+    "categoriesCol": "类别数据列",
+    "seriesType": "系列类型",
+    "removeSeries": "移除系列",
+    "addSeries": "添加系列",
+    "colorbarNode": "色条区域节点",
+    "xColumn": "X 数据列",
+    "yColumn": "Y 数据列",
+    "errorColumn": "Y 误差列",
+    "gridData": "网格数据（每行一行数值）",
+    "original": "原图",
+    "computed": "计算预览",
+    "legend": {
+      "title": "图例区域（重算后的条目跟随各自的系列）",
+      "add": "添加图例区域",
+      "remove": "移除区域",
+      "region": "图例区域节点",
+      "rectX": "图例 X",
+      "rectY": "图例 Y",
+      "rectWidth": "图例宽度",
+      "rectHeight": "图例高度",
+      "entries": "旧图例里的条目，从上到下（从 0 编号）。文字取场景里对应的文本，可自行修改。",
+      "entryIndex": "条目序号",
+      "entryLabel": "条目文字",
+      "follow": "跟随",
+      "custom": "保持脚本原样（不跟随）",
+      "addEntry": "添加条目",
+      "removeEntry": "移除条目"
+    },
+    "kind": {
+      "line": "折线",
+      "scatter": "散点",
+      "bar": "柱图",
+      "errorbar": "误差棒",
+      "image": "热图 / 网格"
+    }
   }
 }

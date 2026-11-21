@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/Badge'
 import { cn } from '@/lib/utils'
 import type { Candidate, ThumbState } from '@/lib/dataFigureAdapter'
+import { reducedNumbers } from '@/lib/dataFigure'
 import { FigureThumb } from './FigureThumb'
 
 const KNOWN_CANDIDATES = [
@@ -51,12 +52,17 @@ export function CandidateGrid({
   /** 一张缩略图取到了 / 取不到 */
   onThumb: (id: string, ok: boolean) => void
 }) {
-  const { t } = useTranslation('ai')
+  const { t, i18n } = useTranslation('ai')
   const grid = useRef<HTMLDivElement>(null)
   const known = (c: string) => KNOWN_CANDIDATES.includes(c)
   const title = (c: string) => (known(c) ? t(`dataFigureV2.candidate.${c}.title`) : t('dataFigureV2.candidate.other.title'))
   const why = (c: string) => (known(c) ? t(`dataFigureV2.candidate.${c}.why`) : t('dataFigureV2.candidate.other.why'))
   const variantText = (v: NonNullable<Candidate['variant']>) => (v.kind === 'split' ? t('dataFigureV2.variant.split', { column: v.column }) : t('dataFigureV2.variant.by_file'))
+  // 大表的候选带 `reduced`（整表行数 / 画出的点数）：安静的一小段灰字 + 悬停说明；没少画（小表 / kept ≥ rows）就没有
+  const reducedOf = (it: Candidate) => {
+    const n = reducedNumbers(it.reduced, i18n.language)
+    return n ? { text: t('dataFigureV2.reduced.text', n), hint: t('dataFigureV2.reduced.hint', n) } : null
+  }
   const count = pending ? 4 : items.length
   const oneRow = count <= 2
 
@@ -93,6 +99,7 @@ export function CandidateGrid({
             const mine = drawingId === it.id
             const dim = drawingId != null && !mine
             const ready = thumbs[it.id] === 'ready'
+            const red = reducedOf(it)
             return (
               <button
                 key={it.id}
@@ -116,6 +123,11 @@ export function CandidateGrid({
                 <span className="mx-1.5 mt-3 flex items-center gap-2">
                   <span className="min-w-0 text-base font-medium text-ink">{title(it.title_code)}</span>
                   {i === 0 && <Badge>{t('dataFigureV2.pick.recommended')}</Badge>}
+                  {red && (
+                    <span data-candidate-reduced className="ml-auto shrink-0 whitespace-nowrap text-xs tabular-nums text-ink-3" title={red.hint}>
+                      {red.text}
+                    </span>
+                  )}
                 </span>
                 {/* 成对的候选（同名同说明）靠这一行分清；列名是用户数据，只当文本显示 */}
                 {it.variant && (

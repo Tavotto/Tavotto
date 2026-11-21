@@ -349,6 +349,10 @@ export interface ArrowObject extends ObjectBase {
   /** 线端 / 拐角；缺省 = 圆头 / 圆角（现在的画法），不写字段 */
   lineCap?: LineCap
   lineJoin?: LineJoin
+  /** 尖角的斜接上限（≥ 1）；缺省 = `shapeGeometry.STROKE_MITER_LIMIT`（10），等于缺省不写 */
+  miterLimit?: number
+  /** 自定义虚线：线段 / 间隙交替的长度（pt，绝对值）；有它就不看 `dash`。缺省 / 空 = 不用 */
+  dashPattern?: number[]
 }
 
 export type ShapeKind =
@@ -359,6 +363,18 @@ export type ShapeKind =
   | 'diamond'
   | 'polygon'
   | 'brace'
+  /** 星形（ADR 0185 M1）：`sides` = 角数（缺省 5），`starRatio` = 内径比（缺省 `DEFAULT_STAR_RATIO`） */
+  | 'star'
+  /** 弧线（ADR 0185 M1）：框的左下角到右上角的四分之一椭圆弧，只有描边 */
+  | 'arc'
+
+/** 星形的缺省角数与内径比（正五角星的内外径比 ≈ 0.382）；与后端 `geometry.DEFAULT_STAR_POINTS / DEFAULT_STAR_RATIO` 同源 */
+export const DEFAULT_STAR_POINTS = 5
+export const DEFAULT_STAR_RATIO = 0.382
+
+/** 只有描边、没有填充也没有描边开关的形状（直线 / 大括号 / 弧线）；判据只有这一处，后端 `geometry.STROKE_ONLY_SHAPES` 同一张表 */
+export const STROKE_ONLY_SHAPES: ReadonlySet<string> = new Set(['line', 'brace', 'arc'])
+export const isStrokeOnlyShape = (shape: string): boolean => STROKE_ONLY_SHAPES.has(shape)
 
 export interface ShapeObject extends ObjectBase {
   type: 'shape'
@@ -376,8 +392,10 @@ export interface ShapeObject extends ObjectBase {
   end?: EndPoint
   /** 圆角半径 mm（rect 专用） */
   cornerRadius?: number
-  /** 正多边形边数（polygon 专用，3–12） */
+  /** 正多边形边数（polygon 专用，3–12）；星形的角数（star，3–12，缺省 5） */
   sides?: number
+  /** 星形内径比（star 专用，0.05–0.95；缺省 `DEFAULT_STAR_RATIO`，等于缺省不写字段） */
+  starRatio?: number
   /** 填充透明度 0–1；缺省 1 */
   fillOpacity?: number
   dash?: DashStyle
@@ -391,6 +409,15 @@ export interface ShapeObject extends ObjectBase {
   /** 线端 / 拐角；缺省见 `lib/shapeGeometry`，等于缺省就不写字段 */
   lineCap?: LineCap
   lineJoin?: LineJoin
+  /** 尖角的斜接上限（≥ 1）；缺省 = `shapeGeometry.STROKE_MITER_LIMIT`（10），等于缺省不写 */
+  miterLimit?: number
+  /** 自定义虚线：线段 / 间隙交替的长度（pt，绝对值）；有它就不看 `dash`。缺省 / 空 = 不用 */
+  dashPattern?: number[]
+  /**
+   * 描边对齐（只对封闭形状）：缺省 = 内侧（描边整个在框里、外沿贴框，加属性之前就是这样）；
+   * `center` = 骑在轮廓上（框边就是线的中线）；`outside` = 整个在框外。等于缺省不写
+   */
+  strokeAlign?: 'center' | 'outside'
 }
 
 /** 路径上的一个点：包围盒比例坐标 [rx, ry]（与 `EndPoint` 同一套，可以落在 [0,1] 之外） */
@@ -430,6 +457,10 @@ export interface PathObject extends ObjectBase {
   dash?: DashStyle
   lineCap?: LineCap
   lineJoin?: LineJoin
+  /** 尖角的斜接上限（≥ 1）；缺省 = `shapeGeometry.STROKE_MITER_LIMIT`（10），等于缺省不写 */
+  miterLimit?: number
+  /** 自定义虚线：线段 / 间隙交替的长度（pt，绝对值）；有它就不看 `dash`。缺省 / 空 = 不用 */
+  dashPattern?: number[]
   headStart?: ArrowHeadType
   headEnd?: ArrowHeadType
   headSizeStart?: HeadSize
@@ -513,7 +544,7 @@ export function legacyHead(heads: {
 
 /** 形状此刻有没有描边。直线 / 大括号只有描边，不看 `stroke` 字段（画布、缩略图、导出同用这一处） */
 export function shapeStrokeOn(o: Pick<ShapeObject, 'shape' | 'stroke'>): boolean {
-  return o.shape === 'line' || o.shape === 'brace' || o.stroke !== false
+  return isStrokeOnlyShape(o.shape) || o.stroke !== false
 }
 
 /** 直线形状（端点语义只对这一种 shape 生效） */

@@ -10,6 +10,7 @@ from __future__ import annotations
 from .. import exectrace
 from ..agent_runner.tools import Tool
 from ..agent_runner.wires import ToolResult
+from . import runreport as _runreport
 from .ask import ASK_TOOLS
 from .audit import AuditLog
 from .base import BLOCKED_CODES, FIX_SESSION_TIERS, TIERS, FixContext, FixTool
@@ -34,6 +35,9 @@ REGISTRY: dict[str, FixTool] = {
     )
 }
 
+
+# 提示只点名本会话调得到的工具（ADR 0197 第 1 层）：注册表由这里交给 runreport，不让它反过来 import 本包（免得成环）
+_runreport.TOOL_TIERS.update({name: t.tier for name, t in REGISTRY.items()})
 
 exectrace.register_vocabulary("tool", REGISTRY)
 exectrace.register_vocabulary("tier", TIERS)
@@ -70,6 +74,25 @@ REFUSED_BEFORE_ACTING = frozenset(
         "launcher_unsafe_dir",
     }
 )
+
+
+#: 修复经过（诊断包用）的上限：每条工具返回只留尾部这么多字符，整个会话最多这么多条（老的先丢）
+TRANSCRIPT_ENTRY_CHARS = 2000
+TRANSCRIPT_MAX_ENTRIES = 60
+
+
+def _remember(ctx: FixContext, tool: str, result: ToolResult) -> None:
+    """工具返回（已脱敏）进内存里的修复经过；只留尾部，条数有界。不抛。"""
+    try:
+        text = result.content or ""
+        if len(text) > TRANSCRIPT_ENTRY_CHARS:
+            text = "…" + text[-TRANSCRIPT_ENTRY_CHARS:]
+        ctx.transcript.append(
+            {"step": ctx.step, "tool": tool, "code": result.code or "", "text": text}
+        )
+        del ctx.transcript[:-TRANSCRIPT_MAX_ENTRIES]
+    except Exception:  # noqa: BLE001 - 记不下不影响工具调用
+        pass
 
 
 def run_tool(
@@ -117,6 +140,7 @@ def run_tool(
     if result.mutated:
         ctx.verification = None
     result.content = scrub(result.content)
+    _remember(ctx, tool.name, result)
     ctx.trace_tool_span = None
     approved_by = _approved_by(result, ctx)
     if (
@@ -127,6 +151,7 @@ def run_tool(
         and (result.mutated or (result.is_error and result.code not in REFUSED_BEFORE_ACTING))
     ):
         ctx.changes_attempted += 1
+        ctx.changes_since_try.append(tool.name)
     # 等用户的那张卡已经有了决定（批准 / 拒绝）：工具这一层与它的 user_wait 说同一句话（审计的 approved_by 不动）
     decided = getattr(ctx, "trace_wait_decision", None)
     ctx.trace_wait_decision = None
@@ -155,6 +180,7 @@ def run_tool(
             approved_step=ctx.call_meta.get("approved_step"),
             sandbox=ctx.call_meta.get("sandbox"),
             command_tier=ctx.call_meta.get("command_tier"),
+            attempt=ctx.call_meta.get("attempt"),
         )
     return result
 

@@ -88,6 +88,8 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { openArrangeInInspector } from './context-bar/openArrange'
 import { canConvertToPath } from '@/lib/convertToPath'
+import { PATH_COMMANDS } from '@/store/pathActions'
+import { PATH_COMMAND_ICONS } from '@/components/pathCommandIcons'
 import type { CanvasObject, PanelObject } from '@/types/document'
 import { objectLabel, panelRotation } from '@/types/document'
 import { isAdoptedPanel } from '@/lib/artifactValidation'
@@ -220,6 +222,7 @@ export function ObjectContextMenu({
 
       {kind === 'mark' && <ChangeKindSub objs={[obj]} run={run} />}
       {kind === 'mark' && <ConvertToPathItem objs={[obj]} run={run} />}
+      {kind === 'mark' && <PathCommandItems run={run} />}
 
       {kind !== 'multi' && <OpenInspectorItem run={run} />}
 
@@ -400,6 +403,7 @@ function MultiItems({
       )}
       <ChangeKindSub objs={selected} run={run} />
       <ConvertToPathItem objs={selected} run={run} />
+      <PathCommandItems run={run} />
       <MenuItem
         icon={SlidersHorizontal}
         data-quick-item="open-arrange"
@@ -471,6 +475,30 @@ function ConvertToPathItem({
     <MenuItem icon={Spline} data-quick-item="convert-to-path" onSelect={run(() => convertToPath(ids))}>
       {qe('convertToPath')}
     </MenuItem>
+  )
+}
+
+/**
+ * 路径编辑的命令（ADR 0185 M1）：编辑锚点；锚点编辑里再有添加 / 删除 / 转换锚点。哪几项出现只看命令表
+ * `PATH_COMMANDS` 的 `available()`（与命令面板、快捷键同一份），文案取命令面板那一条，这里只发意图。
+ */
+function PathCommandItems({ run }: { run: (fn: () => void) => () => void }) {
+  const items = PATH_COMMANDS.filter((c) => c.id !== 'pen-tool' && c.available())
+  if (!items.length) return null
+  return (
+    <>
+      {items.map((c) => (
+        <MenuItem
+          key={c.id}
+          icon={PATH_COMMAND_ICONS[c.id]}
+          data-quick-item={c.id}
+          shortcut={c.key ? keyOf(c.key) : undefined}
+          onSelect={run(c.run)}
+        >
+          {translate(`palette.commands.${c.id}.label`, { ns: 'dialogs' })}
+        </MenuItem>
+      ))}
+    </>
   )
 }
 

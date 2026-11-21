@@ -703,6 +703,81 @@ def try_import(ctx: FixContext, args: dict) -> ToolResult:
     )
 
 
+# --------------------------------------------------------------------------- 试运行记录（ADR 0197 第 1 层）
+ATTEMPTS_SHOWN = 8
+#: 应用试运行根本没跑的结局（没批准 / 取消 / 环境没选中 / 起不来）：不算一次尝试
+NOT_RUN_CODES = frozenset(
+    {
+        "needs_approval",
+        "cancelled",
+        "environment_not_selected",
+        "application_not_runnable",
+        "application_run_not_claimed",
+        "preparation_plan_stale",  # 批准卡停留期间脚本 / 环境变了：认领时就拒了，脚本没跑（Codex #2079）
+    }
+)
+
+
+def _never_ran(code: object, report: dict) -> bool:
+    """这次应用试运行根本没执行脚本：没跑的结局码，或准备阶段明确写着 `executed: false`（如 Conda 起不来，Codex #2079）。"""
+    if str(code or "") in NOT_RUN_CODES:
+        return True
+    result = report.get("result") if isinstance(report, dict) else None
+    error = result.get("error") if isinstance(result, dict) else None
+    return isinstance(error, dict) and error.get("executed") is False
+
+
+def _current_shape(ctx: FixContext) -> str:
+    from . import hints
+
+    try:
+        return hints.shape_of_report(ctx.report() if ctx.report is not None else None)
+    except Exception:  # noqa: BLE001 — 报告读不到就不记形状
+        return ""
+
+
+def _after_shape(report: dict) -> str:
+    from . import hints
+
+    phase = report.get("phase") if isinstance(report, dict) else None
+    return hints.shape_of_report(report) or ("ok" if phase == "completed" else str(phase or ""))
+
+
+def _record_attempt(ctx: FixContext, before: str, after: str, report: dict) -> str:
+    """记一条试运行（只有形状码、提示 id、这之前真做过的改动的工具名），审计同一条；返回给模型看的记录表。"""
+    from .runreport import hint_of
+
+    hint = hint_of(report, ctx) if after != "ok" else None
+    entry = {
+        "n": len(ctx.attempts) + 1,
+        "before": before,
+        "after": after,
+        "hint": hint[1] if hint else "",
+        "changes": list(ctx.changes_since_try),
+    }
+    ctx.attempts.append(entry)
+    ctx.changes_since_try = []
+    ctx.call_meta["attempt"] = entry
+    lines = []
+    for a in ctx.attempts[-ATTEMPTS_SHOWN:]:
+        did = ", ".join(a["changes"]) or "no change"
+        moved = (
+            "same failure"
+            if a["before"] == a["after"]
+            else f"{a['before'] or '?'} -> {a['after'] or '?'}"
+        )
+        lines.append(f"{a['n']}. after {did}: {moved}")
+    repeated = len(ctx.attempts) >= 2 and all(
+        a["after"] == after and a["after"] != "ok" for a in ctx.attempts[-2:]
+    )
+    tail = (
+        "\nThe same failure came back twice in a row: do not repeat that approach; take the hint or try another cause."
+        if repeated
+        else ""
+    )
+    return "\n\nattempts so far:\n" + "\n".join(lines) + tail
+
+
 # --------------------------------------------------------------------------- run_snippet（ADR 0197）
 SNIPPET_TIMEOUT_DEFAULT_S = 20.0
 SNIPPET_TIMEOUT_MAX_S = 30.0
@@ -1077,10 +1152,16 @@ def try_run(ctx: FixContext, args: dict) -> ToolResult:
         def approve_run(summary, details):
             return approve(ctx, "try_run", summary, details=details) is None
 
+        before = _current_shape(ctx)
         result = ctx.application_runner(python, timeout, ctx.cancel, approve_run)
         report = result.get("report") or {}
         rendered = project_run_report(report, ctx).content
         code = result.get("code")
+        if not _never_ran(code, report):
+            after = (
+                _after_shape(report) if code in ("", None, "application_run_failed") else str(code)
+            )
+            rendered += _record_attempt(ctx, before, after or str(code or ""), report)
         if code:
             guidance = (
                 " Select that environment explicitly before verifying it, or use mode=diagnostic."

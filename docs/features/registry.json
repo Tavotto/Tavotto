@@ -1582,6 +1582,22 @@
           "title": "矢量路径 › 右键「转为路径」：画面不动、矩形变成 path、一次撤销回到矩形；空心路径沿轮廓点得中"
         }
       ]
+    },
+    {
+      "id": "canvas.pen-tool",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "钢笔（P）点几下画出一条路径（点回起点闭合）；Enter / 双击进锚点编辑，拖锚点改形",
+        "en-US": "The pen tool (P) draws a path with a few clicks (click the start to close); Enter or double-click enters anchor editing, drag an anchor to reshape"
+      },
+      "entry": "画布工具栏 → 钢笔（P）；选中路径 → Enter / 双击",
+      "e2e": [
+        {
+          "spec": "vector-pen.spec.ts",
+          "title": "钢笔与锚点编辑 › P 钢笔点三个点再点回起点：画出一条闭合路径；Enter 进锚点编辑、拖一个锚点，形状真的变了"
+        }
+      ]
     }
   ]
 }
