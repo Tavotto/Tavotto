@@ -1,3 +1,0 @@
-## Figures made from data no longer carry an automatic footnote
-
-In the experimental data-to-figure flow, the generated figure (preview and the script it creates) no longer prints any automatic note under the plot: not the "n non-numeric cells ignored" line, not the definition of the summary (such as "mean ± SD") or of a fitted line, and not the sample size. The plot itself is unchanged (fit lines and summaries are still drawn), the space that was reserved for the note is gone, and the details are shown in the side panel instead. When groups have different sample sizes, n still appears in the tick labels.

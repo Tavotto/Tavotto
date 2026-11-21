@@ -18,6 +18,19 @@ order: 70
   期刊也拒收。改回 3 的前提是先让 `tests/test_scientific_text_matrix.py` 有别的办法绿。
 - override 是**全量列表**语义：worker 维护 applied/originals 两表，缺失的 key 自动
   恢复原值（undo 的基础）。前端永远发完整 `o.overrides`。
+- **坐标范围的原样 = 模式 + 当时的范围 + 当时的 scale（2026-11-19，`_AutoscaleAt`）**：自动缩放开着时
+  `xlim` / `ylim` 的 getter 不再只回 `_AUTOSCALE`——seaborn 分类轴是 `set_xlim(-.5, n-.5, auto=None)`（范围显式、
+  开关开着），撤销时重新自动缩放会换成默认边距的另一个范围（CompatBench 拖动阶段在 `sci_sns_bar` /
+  `sci_sns_violin` 上抓到）。撤销时 scale 没变：范围放回（方向照 invert 判据）、再打开自动缩放；scale 变过
+  （「ylim → 换 log → 撤 ylim」）：照旧重新自动缩放，与全新重放一致。原样只活在 worker 的 `state.originals`，
+  不进 patch / 项目文件。看护：`tests/test_axes_lim_undo_explicit.py`、`test_invariants_engine.py` 的 `C-autoscale-*`。
+- **认不出的 prop 名跳过、不报 warning（2026-11-19，向前兼容）**：这一版**任何一类元素都没有 handler** 的 prop
+  名（`overrides.known_props()`，从 `HANDLERS` 收）是更新的 Tavotto 写下的新编辑方式，`apply` 不应用、不进
+  `applied`、不算 warning，记进 `FigState.future_props`；`override` / `export` 响应带 `future_props`。旧版本打开
+  新项目因此不再满屏「属性不支持」。三条照旧：认得这个名字、只是这一类元素没有的仍报「属性不支持」；认得的键
+  值不对仍报应用失败；元素不存在仍报「元素不存在」（这一版判不出是新版本才登记的元素还是脚本改了）。跳过的键
+  原样留在项目里——`patchspec` 不按 prop 名筛、前端整份保存、引擎只读不写 override 列表。写回遇到它们拒绝，见
+  `writeback-transaction.md`。看护：`tests/test_future_override_keys.py`。
 - **刻度组有 `fontfamily`、文字元素报真正画字的脸（2026-09-13，ADR 0051）**：
   `("ticks", "fontfamily")` 走 `tick_params(labelfontfamily=…)`（matplotlib ≥ 3.7）
   + 已有标签逐条 `set_math_fontfamily("custom")`——刻度**数量增长**后新建的标签里的
@@ -250,6 +263,15 @@ order: 70
   已应用条目带来的身份记在 `FigState.applied_identity`，`FigSession.snapshot()` 原样交出——native
   屏障离开时存的就是这份快照，丢了身份，下一个屏障 rebase 又按位置落到别的对象上（#602 评审）。
   看护 `tests/test_override_identity.py`、`tests/native/test_native_barrier_semantics.py::test_target_identity_survives_the_barrier_snapshot`。
+- **override 不读当前合成值或残留状态，写前问冷重放读到的是否同一份（错题本 L-131 升级，2026-11-21）。**
+  handler 读的值、撤销还原的状态、刷新时取的原样，都要等于全新进程只带这份 override 列表重放时读到的那一份；
+  matplotlib 合成过（全局 alpha）、排过序（3D 深度排序后的 `_sizes`）、或此刻被别的 override 改过的值都不算。同一
+  artist 上有两条 override 时，撤销或重做其中一条后另一条要重新生效；带成员事实的字段按成员算。用例写「热态编辑 /
+  撤销 / 重做」与「冷重放」两条路径的结果对拍。为什么：渐变编辑存了被全局 alpha 合成过的颜色、读了 setter 那一刻的
+  轴方向，批量写把首个成员的方向复制给全部成员，连报三条 P1（#1692）；网格撤销读当时的 rcParams 而非抓下的原值，
+  两条 P1（#1997）；2026-11-19 引线已有 `pos_frac` 时加删拐点再撤销，还原把线重置回脚本原样、连位置钉一起摘掉，重做
+  又让平移钉盖掉拐点钉，两条 P1（#2060）；2026-11-21 隐藏 3D 散点后刷新标记换算读 `get_sizes()`，拿到的是深度排序后
+  的数组，逐点大小错位，一条 P1（#2076）。
 - 坐标约定：manifest bbox/anchor 均为 figure 分数坐标、**y 向下**（top-origin）；
   worker 内部转 matplotlib 的 bottom-origin。
 

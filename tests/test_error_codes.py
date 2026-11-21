@@ -517,6 +517,7 @@ USER_VISIBLE_CODES = {
     "dir_fsync_failed": {"reason"},
     "write_back_disabled": set(),
     "write_back_warnings": set(),
+    "write_back_future_props": set(),
     # issue #252 / QA 2026-09-24 SCI-05-B1：commit 的落盘准备（备份 + fsync）没过，
     # 任何 replace 之前，原件零改动
     "write_back_persist_failed": {"reason"},

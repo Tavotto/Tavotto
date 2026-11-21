@@ -49,12 +49,17 @@ ROOT = HERE.parents[2]
 CORPUS_JSON = HERE / "corpus.json"
 #: B 组项目放在这里（与日志 / 判分状态分开，agent 的工作目录旁边没有评测的私有文件）
 SCRATCH = Path(os.environ.get("EVAL_SCRATCH", "/tmp/scratch-projects"))
-RESULTS = HERE / "results"
+#: 每一轮可以单独放（`EVAL_RESULTS=…/results/2026-11-19-deepseek-flash`），不和基线混在同一个 jsonl 里
+RESULTS = Path(os.environ.get("EVAL_RESULTS") or (HERE / "results"))
+RESULTS.mkdir(parents=True, exist_ok=True)
 RUNS = Path(os.environ.get("EVAL_RUNS", "/tmp/tavotto-fix-compat-runs"))
 MODEL = os.environ.get("EVAL_MODEL", "opencode-go/deepseek-v4.1-flash")
 PYTHON = os.environ.get("PYTHON") or sys.executable
-#: A 组的连接型号（opencode-go 目录里的名字，没有 `opencode-go/` 前缀）
-CONN_MODEL = MODEL.split("/", 1)[-1]
+#: A 组的连接：`EVAL_MODEL` 写成「Tavotto 连接厂商 id/型号」（`opencode-go/deepseek-v4.1-flash`、`deepseek/deepseek-flash`、
+#: `anthropic-api/claude-opus-5-5`、`openai-api/gpt-5`……厂商 id 见 `src/tavotto/engine/ai_catalog.json`）
+CONN_VENDOR, _, CONN_MODEL = MODEL.partition("/")
+#: A 组的密钥：`EVAL_A_API_KEY`（任意厂商）；旧名 `OPENCODE_GO_API_KEY` 照旧认
+A_KEY_VARS = ("EVAL_A_API_KEY", "OPENCODE_GO_API_KEY")
 SESSIONS = "/api/engine/preparation-sessions"
 SETTLED = (
     "completed",
@@ -70,6 +75,7 @@ SIDECAR_ENV = {
     "PYTHONPATH": str(ROOT / "src"),
     # sidecar 继承整个环境，worker / 用户脚本也拿得到：密钥变量置空（连接是经 HTTP 存进 Tavotto 配置的）
     "OPENCODE_GO_API_KEY": "",
+    "EVAL_A_API_KEY": "",
 }
 
 sys.path.insert(0, str(ROOT / "tests"))
@@ -243,13 +249,17 @@ def classify_stuck(rec: dict) -> str:
 
 
 def connect_builtin(app) -> dict:
-    """经 Tavotto 自己的配置入口存一条 OpenCode Go 连接（密钥只来自环境变量，不回显）。"""
-    key = os.environ.get("OPENCODE_GO_API_KEY", "").strip()
+    """经 Tavotto 自己的配置入口存一条连接（厂商 / 型号来自 `EVAL_MODEL`；密钥只来自环境变量，不回显）。"""
+    key = next(
+        (os.environ.get(v, "").strip() for v in A_KEY_VARS if os.environ.get(v, "").strip()), ""
+    )
     if not key:
-        raise SystemExit("A 组需要环境变量 OPENCODE_GO_API_KEY（OpenCode Go 密钥）；没有就不能跑 A")
+        raise SystemExit(
+            f"A 组需要环境变量 {' 或 '.join(A_KEY_VARS)}（{CONN_VENDOR} 的密钥）；没有就不能跑 A"
+        )
     st, body = app.call(
         "/api/ai/connections",
-        {"vendor": "opencode-go", "api_key": key, "model": CONN_MODEL},
+        {"vendor": CONN_VENDOR, "api_key": key, "model": CONN_MODEL},
         timeout=120,
     )
     conn = body.get("connection") or {}
@@ -263,7 +273,7 @@ def connect_builtin(app) -> dict:
     }
     if not body.get("ok") or conn.get("state") not in ("ready", "ok", "connected"):
         # 连接不可用：不要往下调 /api/ai/fix（没有连接时它会改走本机的 Codex / Claude Code CLI）
-        raise SystemExit(f"OpenCode Go 连接没存成 / 不可用，A 组中止：{summary}")
+        raise SystemExit(f"{CONN_VENDOR} 连接没存成 / 不可用，A 组中止：{summary}")
     return summary
 
 
@@ -588,7 +598,7 @@ def one_run(cond: str, pid: str, item: dict, rep: int, timeout: int) -> dict:
             rec.update(judge(app, project, item, before))
             if cond == "A":  # 密钥不留在一次性配置目录里
                 try:
-                    app.call("/api/ai/connections/opencode-go", method="DELETE", timeout=30)
+                    app.call(f"/api/ai/connections/{CONN_VENDOR}", method="DELETE", timeout=30)
                 except Exception:  # noqa: BLE001
                     pass
     rec["wall_s_total"] = round(time.time() - t0, 1)

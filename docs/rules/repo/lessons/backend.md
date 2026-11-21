@@ -93,13 +93,6 @@
 - 为什么: 线程在 fixture teardown 与 monkeypatch 撤销后才投递，调用到真函数；空闲机器量不到，CI 每个 session 漏一条。
 - 证据: #440
 
-### L-065 按当下环境读代理用 build_opener().open，别用模块级 urlopen
-- 类: 别这样
-- 触发: src/tavotto/engine/updater.py, src/tavotto/engine/ai_probe.py
-- Seen: 2026-09-21
-- 为什么: 模块级 urlopen 首次调用就缓存 ProxyHandler，之后改代理环境变量无效；死代理对照用例单跑绿、全量红。
-- 证据: （迁移自维护者记录，无编号）
-
 ### L-066 .part 搬正式名失败时，先查正式名上是否已有校验合格的副本
 - 类: 照这样
 - 触发: src/tavotto/engine/privatepython.py, src/tavotto/engine/updater.py
@@ -144,12 +137,7 @@
 
 ### L-130 接外部 CLI 的写入或沙盒行为，目标平台用真 CLI 跑一次，假 CLI 绿不算 → docs/rules/backend/ai-agent-bridge.md
 
-### L-131 override 不读当前合成值或残留状态，写前问冷重放读到的是否同一份
-- 类: 别这样
-- 触发: src/tavotto/engine/overrides.py, src/tavotto/engine/manifest.py
-- Seen: 2026-11-04, 2026-11-18
-- 为什么: 渐变编辑存了被全局 alpha 合成过的颜色、读了 setter 那一刻的轴方向，热态与全新重放分岔，连报两条 P1；批量写又把首个成员的方向复制给全部成员，第三条 P1。带成员事实的字段按成员算。网格撤销改读当时的 rcParams 而非抓下的原值，又两条 P1（#1997）。
-- 证据: #1692, #1997
+### L-131 override 不读当前合成值或残留状态，写前问冷重放读到的是否同一份 → docs/rules/backend/override-application-and-replay.md
 
 ### L-137 worker 给脚本的运行面要和 python script.py 对拍 → docs/rules/backend/worker-protocol-and-lifecycle.md
 
@@ -223,3 +211,10 @@
 - Seen: 2026-11-16
 - 为什么: 诊断包收源码按「在不在项目文件夹里」划界，脚本经 sys.path 引入项目外公共代码时一份都没带上，一份用户反馈才暴露。另一份里素材扫描早已测出「扩展名 png、字节是 JPEG」，运行失败却只给笼统 script_error，AI 转去怀疑安全运行；首版路径换算按同名去项目根猜文件，评审用「脚本 chdir 到外部目录」拦下（#1966）。夹具要有项目外 import、chdir 出去两种写法；换算只镜像产品已有的确定规则，换不出就回空。
 - 证据: #1953, #1966
+
+### L-174 修复的看护用例经产品真入口断言结果，不断言源码文本
+- 类: 别这样
+- 触发: src/tavotto/engine/depplan.py, tests/test_launchscript.py
+- Seen: 2026-11-19
+- 为什么: 给依赖计划接启动脚本时条件写成 `target_kind == "script"`，而那里的 `target_kind` 是安装目标，条件恒假；用例只断言 `inspect.getsource` 里有这行调用，一直绿，修复从没生效，定向复核才抓到。改成真调入口后又暴露拼接 AST 没挪行号、导入扫描照样认错。同名参数在两个模块含义不同，先核语义再用。
+- 证据: #2048

@@ -1,3 +1,0 @@
-## AI agents can now deliver a journal-ready figure in one call
-
-The Tavotto MCP server has a new tool, `tavotto_make_journal_ready`. Give it a figure and a journal and it opens the figure, fixes it to that journal's rules, runs the pre-export checks and exports the files, then reports what changed, what is left and where the files are. If any step fails it stops at that step without exporting and says what to do next; if the checks still need your confirmation it asks you instead of exporting anyway. The session stays open afterwards, so the agent can keep fine-tuning with the existing tools, and unexported changes are saved as a draft as before. It appears whenever the built-in journal library is switched on.
