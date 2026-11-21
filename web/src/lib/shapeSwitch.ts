@@ -184,6 +184,9 @@ export function switchObject(o: CanvasObject, target: SwitchKind): CanvasObject 
       : {}),
     // 描边对齐同理：只有封闭形状读
     ...(o.type === 'shape' && o.strokeAlign && !isStrokeOnlyShape(target) ? { strokeAlign: o.strokeAlign } : {}),
+    // 渐变（ADR 0186）：填充渐变跟着填充走（只有描边的形状不带），描边渐变形状之间都带
+    ...(o.type === 'shape' && o.fillGradient && !isStrokeOnlyShape(target) ? { fillGradient: o.fillGradient } : {}),
+    ...(o.type === 'shape' && o.strokeGradient ? { strokeGradient: o.strokeGradient } : {}),
     ...(target === 'line' ? { start: ends.start, end: ends.end } : {}),
     ...(target === 'polygon' ? { sides: DEFAULT_SIDES } : {}),
     ...(target === 'star' ? { sides: DEFAULT_STAR_POINTS } : {}),
@@ -218,6 +221,9 @@ const KIND_FIELDS = [
   'headSizeEnd',
   'stroke',
   'strokeAlign',
+  // 渐变（ADR 0186）：只有形状读（箭头没有），形状之间照带
+  'fillGradient',
+  'strokeGradient',
 ] as const
 
 type KindKey = (typeof KIND_FIELDS)[number]
