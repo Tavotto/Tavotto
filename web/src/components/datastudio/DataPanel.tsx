@@ -3,6 +3,7 @@ import { Row } from '@/components/ui/Field'
 import { Select } from '@/components/ui/Select'
 import { overviewKeyOf, useDataFigureStore, type RoleKey } from '@/store/dataFigureStore'
 import type { CellMode } from '@/lib/dataFigure'
+import { diffSuggestion } from '@/lib/dataUnderstanding'
 
 const baseName = (p: string): string => p.slice(p.lastIndexOf('/') + 1)
 /** 「不要横轴 / 不分组」的取值：不会和任何列名撞（列名里不会有控制字符） */
@@ -23,6 +24,8 @@ export function DataPanel() {
   const mixed = useDataFigureStore((s) => s.mixed)
   const roles = useDataFigureStore((s) => s.roles)
   const busy = useDataFigureStore((s) => s.drawingId != null)
+  const understanding = useDataFigureStore((s) => s.understanding)
+  const suggestion = useDataFigureStore((s) => s.suggestion)
   if (!selected) return null
   const ov = overviews[overviewKeyOf(selected, headerRows)]?.data ?? null
   // 合画：概览只有第一份的，行列数不代表整组，不显示
@@ -30,11 +33,36 @@ export function DataPanel() {
   const cols = !group && ov?.status === 'ok' ? ov.columns : null
   const count = mixed ? mixed.columns.reduce((n, c) => n + c.nonNumeric, 0) : 0
   const pick = (key: RoleKey) => (v: string) => useDataFigureStore.getState().setRole(key, v === NONE ? 'none' : v)
+  // 模型的建议和此刻不同、但用户已经动过下拉：标题行右侧一枚胶囊，点了才套用（建议与此刻相同时 diff 为空，什么都不显示）
+  const diff = suggestion ? diffSuggestion(suggestion, roles, useDataFigureStore.getState().headerRowUsed, headerRows[selected.path] != null) : null
+  const diffTitle = diff
+    ? (['x', 'y', 'group'] as const)
+        .filter((k) => diff.picks[k] !== undefined)
+        .map((k) => `${t(`dataFigureV2.panel.${k}`)} ${diff.picks[k] === 'none' ? t(k === 'x' ? 'dataFigureV2.panel.noX' : 'dataFigureV2.panel.noGroup') : diff.picks[k]}`)
+        .join(' · ')
+    : ''
   const asOptions = (list: string[], none?: string) => [...(none ? [{ value: NONE, label: none }] : []), ...list.map((c) => ({ value: c, label: c }))]
   return (
     <div data-data-panel className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-3 pt-2">
       <header className="flex flex-col">
-        <p className="flex h-6 items-center type-caption">{t('dataFigureV2.list.heading')}</p>
+        <p className="flex h-6 items-center justify-between gap-2 type-caption">
+          <span>{t('dataFigureV2.list.heading')}</span>
+          {diff && !busy ? (
+            <button
+              type="button"
+              data-data-suggest
+              title={diffTitle || undefined}
+              onClick={() => useDataFigureStore.getState().applySuggestion()}
+              className="h-6 shrink-0 rounded-full border border-border bg-surface-hover px-2.5 text-xs font-medium text-ink outline-none hover:bg-border focus-visible:focus-ring"
+            >
+              {t('dataFigureV2.suggest.apply')}
+            </button>
+          ) : understanding ? (
+            <span data-data-reading className="text-xs font-normal text-ink-3">
+              {t('dataFigureV2.suggest.reading')}
+            </span>
+          ) : null}
+        </p>
         <h2 className="type-heading min-w-0 break-words py-1" title={group ? undefined : selected.path}>
           {group ? t('dataFigureV2.batch.groupTitle', { count: group.length }) : baseName(selected.path)}
           {!group && selected.sheet ? <span className="font-normal text-ink-3"> · {selected.sheet}</span> : null}

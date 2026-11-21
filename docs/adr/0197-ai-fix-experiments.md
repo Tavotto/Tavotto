@@ -46,6 +46,20 @@ Codex 能随手跑一小段代码看结果再决定下一步。`run_command`（A
 - 这是 `docs/rules/backend/diagnostics.md`「不勾不带源码」的登记例外；发送框的「包含 / 不包含」两句与 `docs/privacy.md` 同步写明
   「用过 AI 修复时还会带上它读过的脚本片段」。report.json 形状不变，`detail-runs.json` 只是多一个键，不升 schema。
 
+### 第 3 层·离线：评测失败变成提示
+
+- **不花额度的看护**：`scripts/eval/fix_compat/corpus.json` 里未修前还失败的题写上 `hint: {code, trace?, tool}`——
+  未修前的结局码和修好它实际用的工具。`tests/test_fix_compat_corpus_hints.py` 把它和**实测**对上：`results/` 最近一轮
+  `baseline.jsonl` 里还失败的题必须都写、`code` 等于实测结局码，已经出图（产品自己修好、不用 AI）的题不写；再核对每道题都拿得到
+  点名那个工具的提示。`harness.py probe` 实测与题库不符时当场提示（Codex #2093：看护要量到产品结局，不是手写期望）。
+  第一次跑就抓到一处：准备会话报复数 `no_figures_captured`，提示表只认 native 回退的单数，`lib-needs-data-arg` 一直没人指路
+  （`hints.SHAPE_ALIASES` 归一）。
+- **提炼的输入**：harness 的 A 组轨迹保留审计 `attempt`（只有码）；`summarize.py` 多一张「提示跟进」表——每次试运行的失败形状、
+  给的提示、模型接着动的工具、下一次形状变没变。给了提示没照做、照做了形状没动，就是要改写或新增提示的地方；
+  每条新提示随一道题进题库（上面的看护防退步）。
+- 新的失败轨迹要用弱模型在包含第 1、2 层的 main 上重跑（每题 3 次），需要维护者给额度；在那之前只做上面两件。
+- 在线那一半见下一节（维护者 11-21 看过界面并裁决）。
+
 ### 第 3 层·在线：本机记住修好的做法
 
 维护者 2026-11-21 的裁决：连具体做法也记，并做界面；修好的做法要进诊断包；同意随提示发给所选的 AI。

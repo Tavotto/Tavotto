@@ -99,6 +99,35 @@ def tool_stats(data: dict[str, list[dict]]) -> str:
     return "\n".join(lines)
 
 
+def hint_follow(data: dict[str, list[dict]]) -> str:
+    """A 组每次应用试运行（审计 `attempt`）：给了哪条提示、模型接下来动了哪个会改东西的工具、下一次失败形状变没变。
+    离线提炼新提示（ADR 0197 第 3 层）看的就是这张表：给了提示却没照做、照做了形状没动，都是要改提示或加提示的地方。"""
+    rows = []
+    for r in data.get("A", []):
+        tr = r.get("trajectory") or []
+        idx = [i for i, t in enumerate(tr) if t.get("attempt")]
+        for j, i in enumerate(idx):
+            att = tr[i]["attempt"]
+            end = idx[j + 1] if j + 1 < len(idx) else len(tr)
+            nxt = next(
+                (t.get("tool") for t in tr[i + 1 : end] if t.get("tier") not in ("observe", None)),
+                "-",
+            )
+            moved = "-"
+            if j + 1 < len(idx):
+                later = tr[idx[j + 1]]["attempt"]
+                moved = (
+                    "same" if later.get("after") == att.get("after") else str(later.get("after"))
+                )
+            rows.append(
+                f"| {r['id']} | {att.get('n')} | {att.get('after') or '?'} | {att.get('hint') or '-'} | {nxt} | {moved} |"
+            )
+    if not rows:
+        return "（没有带试运行记录的 A 组运行：审计里还没有 `attempt` 字段的旧结果）"
+    head = "| 题 | 第几次 | 失败形状 | 给的提示 | 接着动的工具 | 下一次的形状 |\n|---|---|---|---|---|---|"
+    return head + "\n" + "\n".join(rows)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", default=str(HERE / "results"))
@@ -112,6 +141,8 @@ def main() -> None:
     print(stuck_counts(data))
     print()
     print(tool_stats(data))
+    print()
+    print(hint_follow(data))
 
 
 if __name__ == "__main__":

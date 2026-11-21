@@ -366,3 +366,130 @@ def test_arm_rules_makes_zero_transport_calls_and_resolves_no_connection(
         and report["requests_used"] == 0
         and report["connection"] is None
     )
+
+
+# --------------------------------------------------------------------------- roles 套件：--repeats / --cases / 统计 / 门
+def roles_report(tmp_path, *args):
+    out = tmp_path / "roles.json"
+    done = bench(tmp_path, "--suite", "roles", *args, "--out", str(out))
+    assert done.returncode == 0, done.stderr + done.stdout
+    return json.loads(out.read_text(encoding="utf-8")), done.stdout
+
+
+def test_repeats_with_good_fake_answers_count_every_run_and_every_request(tmp_path):
+    rep, text = roles_report(tmp_path, "--fake", "good", "--repeats", "3", "--only", "RC-01,RC-19")
+    st = rep["stats"]
+    assert rep["repeats"] == 3 and (st["cases"], st["runs"], st["repeats"]) == (2, 6, 3)
+    assert st["completion_rate"] == 1.0 and st["all_runs_correct_share"] == 1.0
+    assert st["per_case"]["RC-01"]["done"] == 3 and st["rules_broken_runs"] == 0
+    assert st["requests"] == 6 == rep["requests_used"] and st["requests_per_table"] == 1.0
+    assert st["latency_ms"]["per_call"]["n"] == 6 and st["latency_ms"]["per_table"]["n"] == 6
+    assert len(rep["cases"]) == 6 and {c["attempt"] for c in rep["cases"]} == {1, 2, 3}
+    assert all(len(c["calls"]) == 1 for c in rep["cases"])
+    assert "完成率 100.0%" in text and "每次运行都用独立的空缓存" in text and "每张表平均" in text
+
+
+def test_mixed_fake_answers_make_the_per_case_counts_vary(tmp_path):
+    rep, _ = roles_report(tmp_path, "--fake", "mixed", "--repeats", "2", "--only", "RC-01,RC-19")
+    st = rep["stats"]
+    # RC-01 规则会错：good 那次对、trap（什么都不改）那次错；RC-19 规则本来就对：两次都对
+    assert (st["per_case"]["RC-01"]["done"], st["per_case"]["RC-19"]["done"]) == (1, 2)
+    assert st["completion_rate"] == 0.75 and st["all_runs_correct_share"] == 0.5
+    assert st["rules_broken_runs"] == 0 and st["not_worse_than_rules_rate"] == 1.0
+
+
+def test_cases_flag_selects_the_set_and_the_report_names_it(tmp_path):
+    hold, _ = roles_report(tmp_path, "--fake", "good", "--cases", "holdout")
+    assert hold["case_set"] == "holdout" and hold["stats"]["cases"] == 24
+    assert {c["id"][:3] for c in hold["cases"]} == {"HO-"}
+    both, _ = roles_report(tmp_path, "--fake", "good", "--cases", "all", "--only", "RC-01,HO-01")
+    assert [c["id"] for c in both["cases"]] == ["RC-01", "HO-01"]
+    done = bench(tmp_path, "--suite", "roles", "--cases", "holdout", "--only", "RC-01")
+    assert done.returncode == 2 and "未知用例" in done.stderr  # 用例集之外的 id 不放行
+
+
+def test_repeats_and_cases_are_for_the_roles_suite_only_and_bounded(tmp_path):
+    for args in (
+        ["--repeats", "2"],
+        ["--cases", "holdout"],
+        ["--suite", "roles", "--repeats", "0"],
+    ):
+        done = bench(tmp_path, *args)
+        assert done.returncode == 2, args
+
+
+def test_real_cap_must_cover_cases_times_two_times_repeats_before_any_request(tmp_path):
+    done = bench(
+        tmp_path,
+        "--suite",
+        "roles",
+        "--real",
+        "--max-calls",
+        "11",
+        "--repeats",
+        "3",
+        "--only",
+        "RC-01,RC-02",
+    )
+    assert done.returncode == 2 and "× 3 = 12" in done.stderr and "没有发出任何请求" in done.stderr
+    # 够了才会往下走到解析连接（这里没有连接 → 照旧不发请求）
+    ok = bench(
+        tmp_path,
+        "--suite",
+        "roles",
+        "--real",
+        "--max-calls",
+        "12",
+        "--repeats",
+        "3",
+        "--only",
+        "RC-01,RC-02",
+    )
+    assert ok.returncode == 2 and "没有可用的连接" in ok.stderr
+
+
+def test_the_request_cap_stops_a_repeated_fake_run_early(tmp_path):
+    rep, _ = roles_report(
+        tmp_path, "--fake", "good", "--repeats", "3", "--only", "RC-01", "--max-calls", "2"
+    )
+    assert rep["stopped_early"] is True and rep["requests_used"] == 2 and len(rep["cases"]) == 2
+
+
+def test_real_repeats_bypass_the_cache_and_each_run_sends_its_own_request(
+    tmp_path, monkeypatch, capsys
+):
+    import sys as _sys
+
+    _sys.path.insert(0, str(ROOT / "tests" / "support"))
+    import data_figure_roles as DR
+
+    case = next(c for c in DR.load_role_cases() if c["id"] == "RC-01")
+    rec = Recorder([json.dumps(case["model_answer"]), json.dumps(case["model_answer"])])
+    rc, text, report = run_inproc(tmp_path, monkeypatch, capsys, rec, "--repeats", "2")
+    assert rc == 0, text
+    assert len(rec.calls) == 2  # 第二次没有读缓存
+    data = json.loads(report)
+    st = data["stats"]
+    assert data["requests_used"] == 2 and st["runs"] == 2 and st["completion_rate"] == 1.0
+    assert st["input_tokens"] == 3000 and st["output_tokens"] == 1800
+    assert st["cost_per_table_usd"] == pytest.approx((1500 * 1.25 + 900 * 10.0) / 1_000_000)
+    assert st["latency_ms"]["per_call"]["n"] == 2 and st["cached_input_tokens"] == 0
+    assert KEY not in text + report
+    assert not (tmp_path / "d0").exists() or not list(
+        (tmp_path / "d0").rglob("ai_data_roles/*.json")
+    )
+
+
+def test_arm_rules_prints_the_gate_table_and_the_hard_zero(tmp_path):
+    rep, text = roles_report(tmp_path, "--arm", "rules", "--cases", "all")
+    assert (
+        rep["mode"] == "rules-only"
+        and rep["requests_used"] == 0
+        and rep["stats"]["completion_rate"] == 0.0
+    )
+    gate = rep["gate"]
+    assert set(gate["versions"]) == {"strict", "medium", "loose"}
+    for v in ("strict", "medium"):
+        assert gate["versions"][v]["all"]["skipped_but_rules_wrong"] == 0
+    assert gate["rules_right"]["all"]["cases"] == 46
+    assert "必须 0" in text and "holdout-plain" in text
