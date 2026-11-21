@@ -11,6 +11,7 @@ import { isKnownObject, isLinear, objectRotation, panelRotation } from '@/types/
 import { PATH_HIT_SHAPES } from '@/lib/shapeGeometry'
 import { startMoveDrag } from './interactions'
 import { openQuickEdit } from './quickEditStore'
+import { editAnchors } from '@/store/pathActions'
 import { ArrowView } from './ArrowView'
 import { PanelView } from './PanelView'
 import { PathView } from './PathView'
@@ -109,6 +110,8 @@ export const ObjectView = memo(function ObjectView({
   const onDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation()
     if (obj.type === 'text') useUiStore.getState().setEditingText(obj.id)
+    // 路径：双击进锚点编辑（直接选择，ADR 0185 M1）
+    else if (obj.type === 'path') editAnchors(obj.id)
     else if (obj.type === 'panel') {
       // 已经在编辑的面板不能再进一次：enterElementEdit 会清掉图内选区。
       if (useUiStore.getState().elementPanelId === obj.id) return

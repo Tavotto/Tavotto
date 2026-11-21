@@ -83,6 +83,7 @@ class AuditLog:
         approved_step: int | None = None,
         sandbox: str | None = None,
         command_tier: int | None = None,
+        attempt: dict | None = None,
     ) -> None:
         line = {
             "ts": round(time.time(), 3),
@@ -106,6 +107,14 @@ class AuditLog:
             line["sandbox"] = sandbox
         if command_tier in (1, 2):
             line["command_tier"] = command_tier
+        if isinstance(attempt, dict):  # 试运行记录（ADR 0197）：只有形状码、提示 id 与工具名
+            line["attempt"] = {
+                "n": int(attempt.get("n") or 0),
+                "before": str(attempt.get("before") or "")[:60],
+                "after": str(attempt.get("after") or "")[:60],
+                "hint": str(attempt.get("hint") or "")[:40],
+                "changes": [str(c)[:40] for c in (attempt.get("changes") or [])][:10],
+            }
         try:
             with _lock:
                 p = self.path

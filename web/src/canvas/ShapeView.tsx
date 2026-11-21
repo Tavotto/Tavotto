@@ -1,17 +1,18 @@
 import { MM_PER_PT } from '@/lib/units'
 import {
+  arcPath,
   bracePath,
   cornerRadius,
   defaultLineJoin,
   hitStrokeWidth,
   PATH_HIT_SHAPES,
+  outlineOf,
   shapeInset,
-  shapeOutline,
   svgStroke,
 } from '@/lib/shapeGeometry'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { ShapeObject } from '@/types/document'
-import { lineEndpoints, shapeStrokeOn } from '@/types/document'
+import { isStrokeOnlyShape, lineEndpoints, shapeStrokeOn } from '@/types/document'
 
 /**
  * 形状：几何公式与后端 _draw_shape 一一对应（engine 侧同名注释），
@@ -111,24 +112,25 @@ export function ShapeView({ obj, hit = 'none' }: { obj: ShapeObject; hit?: 'stro
             </>
           )
         })()}
-      {(obj.shape === 'triangle' || obj.shape === 'diamond' || obj.shape === 'polygon') &&
+      {(obj.shape === 'triangle' || obj.shape === 'diamond' || obj.shape === 'polygon' || obj.shape === 'star') &&
         (() => {
-          const o = shapeOutline(obj.shape, w, h, inset, obj.sides)
+          const o = outlineOf(obj, w, h, inset)
           return o?.kind === 'poly' ? poly(o.points) : null
         })()}
       {obj.shape === 'brace' && (
         <path d={bracePath(w, h, inset)} fill="none" {...stroke} />
       )}
+      {obj.shape === 'arc' && <path d={arcPath(w, h, inset)} fill="none" {...stroke} />}
       {/* 真实轮廓的透明命中层：包围盒命中会让三角形 / 大括号的空白角也吃点击
           （外层 div 因此让位，见 ObjectView 的 pointerEvents）。有填充的按
           「整块可点」，空心的只在描边附近命中，与图内曲线同一语义。 */}
       {hit !== 'none' &&
         PATH_HIT_SHAPES.has(obj.shape) &&
         (() => {
-          const o = shapeOutline(obj.shape, w, h, inset, obj.sides)
+          const o = outlineOf(obj, w, h, inset)
           if (!o) return null
-          // 无边框又无填充的形状整块可点（否则只剩一圈看不见的轮廓能点中）
-          const filled = obj.shape !== 'brace' && (!!obj.fill || !strokeOn)
+          // 无边框又无填充的形状整块可点（否则只剩一圈看不见的轮廓能点中）；只有描边的（大括号 / 弧线）只认描边
+          const filled = !isStrokeOnlyShape(obj.shape) && (!!obj.fill || !strokeOn)
           const common = {
             'data-hit-shape': '',
             fill: filled ? 'transparent' : 'none',

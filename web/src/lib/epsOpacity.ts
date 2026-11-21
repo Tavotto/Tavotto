@@ -1,4 +1,5 @@
 import type { ExportObject } from './api'
+import { isStrokeOnlyShape } from '@/types/document'
 import { buildExportRequest, type ExportRequestInput } from './exportRequest'
 
 /**
@@ -29,7 +30,7 @@ export function isEpsTranslucent(o: ExportObject): boolean {
     return (!!o.fill && translucent(o.fill_opacity)) || (o.stroke !== false && translucent(o.stroke_opacity))
   }
   if (o.type === 'shape') {
-    const lineLike = o.shape === 'line' || o.shape === 'brace'
+    const lineLike = isStrokeOnlyShape(o.shape)
     const strokeOn = lineLike || o.stroke !== false
     return (!lineLike && !!o.fill && translucent(o.fill_opacity)) || (strokeOn && translucent(o.stroke_opacity))
   }
