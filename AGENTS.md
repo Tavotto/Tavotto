@@ -96,6 +96,8 @@ python scripts/smoke_app.py --python .venv/bin/python   # 端到端冒烟
   往返）；用户 Python / venv 发现、内置 runtime 回退、缺依赖说清（用户依赖不在内置 runtime）；
   数据不一定在脚本旁（相对路径基准、改 cwd、别处打开项目、盘符 / 大小写 / 非 ASCII）；与用户原
   matplotlib 输出无理由的差异（元素位置、axes 几何、文字、字体、图例、刻度、图幅）；同源对只改一侧。
+- 错题本：按 diff 的文件取命中条目（`python3 -I scripts/dev/lessons_for_diff.py`，或读
+  `docs/rules/repo/lessons/` 里「触发」匹配的条目），这次又犯了哪条就按它报，并点名 `L-xxx`。
 - 定向复核（评论点名了上次的 commit / 意见）：只核那几条修好没有、修复有没有引入回归。
 
 ## 子系统索引（改哪里，先读哪份）
