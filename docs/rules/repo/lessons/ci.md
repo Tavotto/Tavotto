@@ -201,12 +201,12 @@
 - 为什么: Windows 腿 32 到 42 分钟顶着 45 分钟上限，被取消后聚合门禁红、被踢出队列，易误读为 flaky；套件变长要回头量时长再定上限。快速失败会取消其余腿（ci-lanes.md）：summary 有 `root_failures` 时 cancelled 是收尾，无 failure 才按本条核。fast gate 的 `root_failures` 可能为空、根因只在 integration gate 里，两个 gate 都读（#1991）。
 - 证据: #340, #345, #346, #1991
 
-### L-134 碰上游私有 API 写成新旧都认，CI 装的是当天最新版
+### L-134 碰上游 API 与边缘行为写成新旧都认：CI 装当天最新版，本地按锁文件
 - 类: 别这样
-- 触发: tests/support/pip_config_isolation.py, tests/test_pip_config_pair.py
-- Seen: 2026-11-03
-- 为什么: pip 26.3 把 pip._internal.configuration.kinds 换成 Kind，测试注入的 sitecustomize 启动即挂，15 个后端分片同时红、合并组连踢；本地 pip 25.3 全绿。顺序也有讲究：旧版的 Kind 是空别名。
-- 证据: #1639, #1658
+- 触发: tests/support/pip_config_isolation.py, tests/test_pip_config_pair.py, tests/test_windows_regressions.py, tests/test_rendercore_writer.py
+- Seen: 2026-11-03, 2026-11-21
+- 为什么: pip 26.3 把 pip._internal.configuration.kinds 换成 Kind，测试注入的 sitecustomize 启动即挂，15 个后端分片同时红、合并组连踢；本地 pip 25.3 全绿。顺序也有讲究：旧版的 Kind 是空别名。11-21 两起反方向的：pytest 9.2 的 approx 不收字典套列表，CI 红 7 条、本地 9.1.1 绿（#2032）；9.2 把超长参数 id 自动缩短，用例 id 长度守卫在 CI 恒绿、本地红，main 上带着 6 万字符的 id 两天没人发现（#2091）。两边结论不一致先比 pytest / pip 版本，复现用 CI 同装法。
+- 证据: #1639, #1658, #2032, #2091
 
 ### L-135 改 scripts/ci 后，设上 GITHUB_STEP_SUMMARY 与 GITHUB_OUTPUT 再跑一遍
 - 类: 别这样
@@ -225,6 +225,6 @@
 ### L-159 平台故障残局：gate 卡住整轮 rerun，PR 无检查空提交，超时踢出按原 head 重排
 - 类: 照这样
 - 触发: .github/workflows/ci.yml, docs/ci/parallel-prs.md, docs/rules/ci/ci-lanes.md
-- Seen: 2026-11-12
-- 为什么: 一次 Actions 故障里，合并组单独 rerun 带 needs 的 gate job 直接 startup_failure；PR 上「no checks reported」是事件被吞，等不来；checks_timed_out 与 runner shutdown signal 踢出的 PR 自身 CI 绿、head 未变，按原 head 重排一次即过，同因再踢才查。照这三步把一批 14 个 PR 一夜合完。
-- 证据: #1857, #1864, #1866
+- Seen: 2026-11-12, 2026-11-21
+- 为什么: 一次 Actions 故障里，合并组单独 rerun 带 needs 的 gate job 直接 startup_failure；PR 上「no checks reported」是事件被吞，等不来；checks_timed_out 与 runner shutdown signal 踢出的 PR 自身 CI 绿、head 未变，按原 head 重排一次即过，同因再踢才查。照这三步把一批 14 个 PR 一夜合完。11-21 队列第 3 位的 CLA 判定报 budget_deferred（服务按合并前缀控预算）整组红，同理不改代码，等前序合入后按原 head 重排（#2064）。
+- 证据: #1857, #1864, #1866, #2064
