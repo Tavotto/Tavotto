@@ -28,11 +28,11 @@ function Chevrons() {
 }
 
 /** 读数里的一个尺寸：数字 + 淡一档的单位 */
-function Mm({ v }: { v: number }) {
+function Mm({ v, unit }: { v: number; unit: string }) {
   return (
     <>
       {(Math.round(v * 10) / 10).toFixed(1)}
-      <span className="ql-readout-unit">mm</span>
+      <span className="ql-readout-unit">{unit}</span>
     </>
   )
 }
@@ -145,6 +145,8 @@ function DragKnob({
   panX: number
   panY: number
 }) {
+  const { t } = useTranslation('workspace')
+  const unit = t('stage.rulerUnit')
   const vertical = drag.axis === 'col'
   const at = drag.from + (drag.to - drag.from) * drag.along
   const x = panX + px(vertical ? drag.pos : at)
@@ -173,9 +175,9 @@ function DragKnob({
         className={cn('ql-readout pointer-events-none absolute', vertical ? 'ql-readout-col' : 'ql-readout-row')}
         style={{ left: x, top: y }}
       >
-        <Mm v={drag.sizes[0]} />
+        <Mm v={drag.sizes[0]} unit={unit} />
         <span aria-hidden className="ql-readout-sep" />
-        <Mm v={drag.sizes[1]} />
+        <Mm v={drag.sizes[1]} unit={unit} />
       </span>
     </>
   )
