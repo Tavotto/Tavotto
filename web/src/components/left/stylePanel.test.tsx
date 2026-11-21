@@ -571,6 +571,17 @@ describe('单图档（2026-11-20 维护者二次拍板，ADR 0081 §十四）：
     expect(strip.className).not.toContain('flex-wrap')
   })
 
+  it('Codex #2083 P2 正在图内编辑 A 时点图条上的 B：退出 A 的图内编辑，当前块与样式目标都换成 B', async () => {
+    await seedThree()
+    await mount()
+    await act(async () => useUiStore.getState().setElementPanel('p1'))
+    expect(chips().map((c) => c.getAttribute('aria-pressed'))).toEqual(['true', 'false', 'false'])
+    await click(chips()[1])
+    expect(useUiStore.getState().elementPanelId, '图内编辑的上下文清掉').toBeNull()
+    expect(useSelectionStore.getState().ids).toEqual(['p2'])
+    expect(chips().map((c) => c.getAttribute('aria-pressed'))).toEqual(['false', 'true', 'false'])
+  })
+
   it('图条：有序号的按字母排在前（与摆放位置无关），没有序号的接在后面按阅读顺序；没有任何序号就是阅读顺序', async () => {
     await seedThree()
     // 把 (a)(b) 对调：Fig2 是 a、Fig1 是 b

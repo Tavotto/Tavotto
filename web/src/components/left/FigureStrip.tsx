@@ -4,7 +4,7 @@ import { readingOrder } from '@/lib/geometry'
 import { isSubLabel } from '@/lib/stylePresets'
 import { cn } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
-import { useSelectionStore } from '@/store/selectionStore'
+import { focusLayoutPanel } from '@/store/workspace'
 import type { CanvasObject, PanelObject, TextObject } from '@/types/document'
 import { CanvasThumb } from '@/components/CanvasThumb'
 import { sp } from './styleRowParts'
@@ -49,7 +49,8 @@ export function FigureStrip({ currentId }: { currentId: string | null }) {
   if (!figures.length) return null
   const stop = figures.find((f) => f.panel.id === currentId) ?? figures[0]
 
-  const select = (id: string) => useSelectionStore.getState().set([id])
+  // 走「聚焦这张图」：顺带退出上一张图的图内编辑，否则样式仍改着那一张（Codex #2083 P2）
+  const select = (id: string) => focusLayoutPanel(id)
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const delta = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0
     if (!delta) return
