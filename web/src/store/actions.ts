@@ -69,7 +69,7 @@ import type {
   ShapeObject,
   TextObject,
 } from '@/types/document'
-import { emptyProject, isKnownObject, objectLabel, type ProjectDocument } from '@/types/document'
+import { emptyProject, isKnownObject, objectLabel, objectRotation, type ProjectDocument } from '@/types/document'
 import { findDocumentsForProjectFile, bindingForReuse, type ProjectFileBinding } from '@/lib/projectFile'
 import { isDocHeldElsewhere } from '@/lib/docPresence'
 import { useAssetStore } from './assetStore'
@@ -95,6 +95,19 @@ import { aliasClearPlan } from '@/lib/aliasOverrides'
 import { fitContentCrop, isContentFit } from '@/lib/panelEdgeCrop'
 import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, structuralPanelManifest, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
+import { isolationScope } from './isolationStore'
+import { useTransformPrefs } from './transformPrefs'
+import {
+  gatherContiguous,
+  gidOfKey,
+  groupPathOf,
+  isGroupKey,
+  orphanMasks,
+  remapGroupPath,
+  setGroupPath,
+  unitKeyOf,
+  unitMembers,
+} from '@/lib/groupTree'
 import { askConfirm, isTimelineOpen, useUiStore, type StatusAction, type StatusTone } from './uiStore'
 import { feedbackStatusAction, retryOrFeedback, tooNewAction } from './failureExit'
 import { useViewportStore } from './viewportStore'
@@ -484,6 +497,8 @@ export function deleteSelected() {
     ids.length === 1 ? hist('deleteObject', { name }) : hist('deleteObjects', { count: ids.length })
   commit(label, (d) => {
     d.objects = d.objects.filter((o) => !ids.includes(o.id))
+    // 剪切组里被裁的对象删光了：蒙版还原成普通可见对象，不留一个看不见的东西（ADR 0191）
+    releaseOrphanMasks(d)
     // 成员不足 2 个的布局组失去意义，一并清掉（约束消失，剩余对象原地不动）
     if (d.layoutGroups?.length) {
       d.layoutGroups = d.layoutGroups.filter(
@@ -505,26 +520,53 @@ export function duplicateSelected() {
   // 对任何 Proxy 都直接抛 DataCloneError（引擎级行为）——复制会 100% 静默失败。
   // 对已 finalize 的 plain object 克隆好再整体 push，与 clipboard.materializePaste 同一模式。
   const regroup = new Map<string, string>()
-  const clones: CanvasObject[] = doc()
-    .objects.filter((o) => ids.includes(o.id))
+  const sources = doc().objects.filter((o) => ids.includes(o.id))
+  const step = duplicateStep(sources)
+  const scope = isolationScope()
+  const clones: CanvasObject[] = sources
     .map((o) => {
       const copy = structuredClone(o)
       copy.id = newId(o.type[0])
-      copy.x += DUPLICATE_OFFSET_MM
-      copy.y += DUPLICATE_OFFSET_MM
-      // 组要跟着复制成新的一份，否则副本会和原件粘成同一组
-      if (copy.groupId) {
-        const next = regroup.get(copy.groupId) ?? newId('g')
-        regroup.set(copy.groupId, next)
-        copy.groupId = next
+      copy.x += step.dx
+      copy.y += step.dy
+      // 重复复制（ADR 0185 M4 第二批）：副本上次被转过，这一份再转同样的角度（面板只走 90°，不跟）
+      if (step.ddeg && copy.type !== 'panel') {
+        const d = (((objectRotation(copy) + step.ddeg) % 360) + 540) % 360 - 180
+        if (Math.abs(d) > 1e-9) copy.rotationDeg = d
+        else delete copy.rotationDeg
       }
+      // 组要跟着复制成新的一份，否则副本会和原件粘成同一组（嵌套组整条链一起换）
+      // 组内编辑里复制：正在编辑的那一层及其外层祖先原样保留（副本仍留在这个组里），只换它下面的子组
+      const keep = scope ? groupPathOf(copy).indexOf(scope) + 1 : 0
+      remapGroupPath(copy, (g, i) => {
+        if (i < keep) return g
+        const next = regroup.get(g) ?? newId('g')
+        regroup.set(g, next)
+        return next
+      })
       return copy
     })
   if (!clones.length) return
   commit(hist('duplicateObjects'), (d) => {
     d.objects.push(...clones)
   })
+  useTransformPrefs.getState().rememberDup(sources.map((o) => o.id), clones.map((c) => c.id))
   select(clones.map((c) => c.id))
+}
+
+/**
+ * ⌘D 这一次的位移与角度差（ADR 0185 M4 第二批「重复复制和位移」）：选区正好是上一次 ⌘D 的副本、而且副本之后被挪 / 转过，
+ * 就按「副本 − 原件」再走一步（Figma / PPT 的做法，用来排一排）；否则照旧错开 `DUPLICATE_OFFSET_MM`。
+ */
+export function duplicateStep(sources: readonly CanvasObject[]): { dx: number; dy: number; ddeg: number } {
+  const plain = { dx: DUPLICATE_OFFSET_MM, dy: DUPLICATE_OFFSET_MM, ddeg: 0 }
+  const last = useTransformPrefs.getState().lastDup
+  if (!last || last.to.length !== sources.length || !sources.every((o) => last.to.includes(o.id))) return plain
+  const objs = doc().objects
+  const a = objs.find((o) => o.id === last.from[0])
+  const b = objs.find((o) => o.id === last.to[0])
+  if (!a || !b) return plain
+  return { dx: b.x - a.x, dy: b.y - a.y, ddeg: a.type === 'panel' ? 0 : objectRotation(b) - objectRotation(a) }
 }
 
 export type ZMove = 'top' | 'bottom' | 'up' | 'down'
@@ -1066,6 +1108,14 @@ export function reorderObject(fromId: string, targetId: string, position: 'above
 export function toggleHidden(id: string) {
   const o = findObject(id)
   if (!o) return
+  // 剪切路径（ADR 0191）：隐藏 / 显示的是「裁不裁」（`clipOff`），`hidden` 永远留给旧构建
+  if (o.clipMask) {
+    updateObject(id, hist(o.clipOff ? 'showObject' : 'hideObject'), (obj) => {
+      if (obj.clipOff) delete obj.clipOff
+      else obj.clipOff = true
+    })
+    return
+  }
   updateObject(id, hist(o.hidden ? 'showObject' : 'hideObject'), (obj) => {
     obj.hidden = !obj.hidden
   })
@@ -1111,7 +1161,8 @@ export function setObjectsLocked(ids: string[], locked: boolean) {
 
 /** 批量隐藏 / 显示：同上，一条历史。隐藏后对象仍留在选区里（与 `toggleHidden` 一致，图层树里可恢复） */
 export function setObjectsHidden(ids: string[], hidden: boolean) {
-  const targets = doc().objects.filter((o) => ids.includes(o.id) && !!o.hidden !== hidden)
+  // 剪切路径不跟着批量隐藏 / 显示走：它的 hidden 是给旧构建的，「裁不裁」只在图层树那一行上切（ADR 0191）
+  const targets = doc().objects.filter((o) => ids.includes(o.id) && !o.clipMask && !!o.hidden !== hidden)
   if (!targets.length) return
   finishActiveGesture()
   const tids = targets.map((o) => o.id)
@@ -2823,20 +2874,25 @@ export function startLayoutAutoReflow(): () => void {
 /* ========================================================================== */
 
 /**
- * 该对象所在组的全部成员 id（无组则只有它自己），保持文档顺序。
- * 不含更新的构建写进来的组员（`isKnownObject`）：点中组里认识的成员不会把它们带进选区。
+ * 点中这个对象时一起选中的对象 id（文档顺序）：它在当前这一层（组内编辑的作用域，`isolationStore`）里所在的
+ * 单元——直接成员就是它自己，否则是它所在的、紧挨着这一层的那个子组的全员（嵌套组，ADR 0191）。
+ * 不在当前这一层里（组外的对象）= 只有它自己。
+ * 不含更新的构建写进来的组员（`isKnownObject`，#2037）：点中组里认识的成员不会把它们带进选区。
  */
 export function groupMates(id: string): string[] {
   const objs = doc().objects
   const self = objs.find((o) => o.id === id)
-  if (!self?.groupId) return self ? [id] : []
-  return objs.filter((o) => o.groupId === self.groupId && (o.id === id || isKnownObject(o))).map((o) => o.id)
+  if (!self) return []
+  const key = unitKeyOf(self, isolationScope(objs))
+  if (!key) return [id]
+  const byId = new Map(objs.map((o) => [o.id, o]))
+  return unitMembers(objs, key).filter((m) => m === id || isKnownObject(byId.get(m)!))
 }
 
 /**
  * 选区里这次真正能移动的对象。组的意义是「保持相对排布」，所以**组内任一成员
  * 锁定就整组不动**——只动没锁的那一半等于把组悄悄拆散（成员的锁定状态不限于
- * 选区内，按 groupId 全量扫文档）。不成组的锁定对象照旧逐个过滤。
+ * 选区内，按单元全量扫文档）。不成组的锁定对象照旧逐个过滤。
  */
 export function movableTargets(ids: string[]): {
   objects: CanvasObject[]
@@ -2844,15 +2900,18 @@ export function movableTargets(ids: string[]): {
   blockedGroups: number
 } {
   const objs = doc().objects
-  const expanded = expandGroups(ids)
-  const lockedGids = new Set(
-    objs.filter((o) => o.locked && o.groupId).map((o) => o.groupId as string),
+  const expanded = new Set(expandGroups(ids))
+  const scope = isolationScope(objs)
+  const unitOf = new Map(objs.map((o) => [o.id, unitKeyOf(o, scope)]))
+  const lockedUnits = new Set(
+    objs.filter((o) => o.locked && isGroupKey(unitOf.get(o.id) ?? '')).map((o) => unitOf.get(o.id) as string),
   )
   const blocked = new Set<string>()
   const objects = objs.filter((o) => {
-    if (!expanded.includes(o.id)) return false
-    if (o.groupId && lockedGids.has(o.groupId)) {
-      blocked.add(o.groupId)
+    if (!expanded.has(o.id)) return false
+    const u = unitOf.get(o.id)
+    if (u && lockedUnits.has(u)) {
+      blocked.add(u)
       return false
     }
     return !o.locked
@@ -2872,50 +2931,121 @@ export function warnBlockedGroups(blockedGroups: number, movedAny: boolean) {
 }
 
 /**
- * 选区补齐成整组：点中组里任意一个 = 选中整组。
- * 更新的构建写进来的组员（`isKnownObject`）不补进来：它们不能选中、不能移动，原样留在文档里（与图层树选组一致）。
+ * 选区补齐成整组：点中组里任意一个 = 选中它在当前这一层里的整个单元（`groupMates`）。
+ * 更新的构建写进来的组员（`isKnownObject`，#2037）不补进来：它们不能选中、不能移动，原样留在文档里（与图层树选组一致）。
  */
 export function expandGroups(ids: string[]): string[] {
   const objs = doc().objects
-  const gids = new Set(
-    ids.map((id) => objs.find((o) => o.id === id)?.groupId).filter(Boolean) as string[],
-  )
-  if (!gids.size) return ids
+  const scope = isolationScope(objs)
+  const keys = new Set<string>()
+  for (const id of ids) {
+    const o = objs.find((x) => x.id === id)
+    const k = o ? unitKeyOf(o, scope) : null
+    if (k && isGroupKey(k)) keys.add(k)
+  }
+  if (!keys.size) return ids
   const out = [...ids]
+  const byId = new Map(objs.map((o) => [o.id, o]))
+  for (const k of keys)
+    for (const m of unitMembers(objs, k)) if (isKnownObject(byId.get(m)!) && !out.includes(m)) out.push(m)
+  return out
+}
+
+/**
+ * 选区在当前这一层里的单元键（去重，按文档顺序）。组内编辑时组外的对象不算。
+ * 成组 / 取消成组 / 建剪切蒙版都按单元算：选中一个子组 = 那个子组整体是一个成员。
+ */
+export function selectedUnits(ids: readonly string[] = useSelectionStore.getState().ids): string[] {
+  const objs = doc().objects
+  const scope = isolationScope(objs)
+  const want = new Set(ids)
+  const out: string[] = []
   for (const o of objs) {
-    if (o.groupId && gids.has(o.groupId) && isKnownObject(o) && !out.includes(o.id)) out.push(o.id)
+    if (!want.has(o.id)) continue
+    const k = unitKeyOf(o, scope)
+    if (k && !out.includes(k)) out.push(k)
   }
   return out
 }
 
+/**
+ * 把选区里的单元收进一个新组（⌘G，嵌套组 ADR 0191）：新组挂在当前这一层下面，子组整体成为它的成员；
+ * 成员挪成连续的一段、落在最上面那个的位置（Illustrator 同一做法）。返回新组 id；不足两个单元 = null。
+ * `extra` 在同一次 commit 里对草稿再做一步（建剪切蒙版用）。
+ */
+export function groupUnits(
+  label: UiMessage,
+  extra?: (d: FigureDocument, gid: string) => void,
+): string | null {
+  const units = selectedUnits()
+  if (units.length < 2) return null
+  // 离散动作：先收掉还开着的连续手势，否则这次 commit 会并进上一条历史
+  finishActiveGesture()
+  const objs = doc().objects
+  const scope = isolationScope(objs)
+  const gid = newId('g')
+  const members = new Set(units.flatMap((k) => unitMembers(objs, k)))
+  commit(label, (d) => {
+    for (const o of d.objects) {
+      if (!members.has(o.id)) continue
+      const p = groupPathOf(o)
+      const at = scope ? p.indexOf(scope) + 1 : 0
+      setGroupPath(o, [...p.slice(0, at), gid, ...p.slice(at)])
+    }
+    d.objects = gatherContiguous(d.objects, members)
+    extra?.(d, gid)
+  })
+  return gid
+}
+
 export function groupSelected() {
   const ids = useSelectionStore.getState().ids
-  if (ids.length < 2) {
+  if (selectedUnits(ids).length < 2) {
     status(note('needTwoForGroup'), 'info')
     return
   }
-  // 离散动作：先收掉还开着的连续手势，否则这次 commit 会并进上一条历史
-  finishActiveGesture()
-  const gid = newId('g')
-  updateObjects(ids, hist('group', { count: ids.length }), (o) => {
-    o.groupId = gid
-  })
+  if (!groupUnits(hist('group', { count: ids.length }))) return
   status(note('grouped', { count: ids.length }), 'done')
   emitActivity({ kind: 'selection.grouped', count: ids.length })
 }
 
+/** 剪切组里没东西可裁的蒙版还原成普通可见对象（就地改草稿；删对象、取消成组之后调用） */
+export function releaseOrphanMasks(d: FigureDocument) {
+  const orphans = new Set(orphanMasks(d.objects))
+  if (!orphans.size) return
+  for (const o of d.objects) {
+    if (!orphans.has(o.id)) continue
+    delete o.clipMask
+    delete o.clipOff
+    delete o.hidden
+  }
+}
+
+/**
+ * 取消成组（⇧⌘G）：拆掉选区在当前这一层里的组单元，只拆一层——它的成员（对象与子组）升到它原来所在的那一层。
+ * 拆的是剪切组时，蒙版一起还原成普通可见对象（Illustrator 同一做法）。
+ */
 export function ungroupSelected() {
   const ids = useSelectionStore.getState().ids
-  const gids = new Set(
-    selectedObjects().map((o) => o.groupId).filter(Boolean) as string[],
-  )
+  const gids = new Set(selectedUnits(ids).filter(isGroupKey).map(gidOfKey))
   if (!gids.size) {
     status(note('notInAnyGroup'), 'info')
     return
   }
   finishActiveGesture()
   commit(hist('ungroup'), (d) => {
-    for (const o of d.objects) if (ids.includes(o.id)) o.groupId = undefined
+    for (const o of d.objects) {
+      const p = groupPathOf(o)
+      if (!p.some((g) => gids.has(g))) continue
+      // 这个组自己的蒙版：拆组 = 释放蒙版
+      if (o.clipMask && gids.has(p[p.length - 1])) {
+        delete o.clipMask
+        delete o.clipOff
+        delete o.hidden
+      }
+      setGroupPath(o, p.filter((g) => !gids.has(g)))
+    }
+    releaseOrphanMasks(d)
     // 该组若带布局约束，成员散了约束也一并移除
     if (d.layoutGroups?.length) {
       d.layoutGroups = d.layoutGroups.filter(
@@ -2930,8 +3060,10 @@ export function ungroupSelected() {
  * 这批对象里有没有成组的——「取消成组」可不可用的唯一判据。
  * 属性页（非响应式地问当前选区）与浮动栏（订阅着 objects 的组件）都读它。
  */
-export const selectionHasGroupIn = (objs: readonly CanvasObject[]): boolean =>
-  objs.some((o) => !!o.groupId)
+export const selectionHasGroupIn = (objs: readonly CanvasObject[]): boolean => {
+  const scope = isolationScope()
+  return objs.some((o) => isGroupKey(unitKeyOf(o, scope) ?? ''))
+}
 
 /** 选区里存在成组对象——决定「取消成组」是否可用 */
 export const selectionHasGroup = () => selectionHasGroupIn(selectedObjects())

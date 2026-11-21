@@ -1623,6 +1623,10 @@ export default interface Resources {
           "keywords": "open load layout zr zairu dk dakai pb paiban",
           "label": "打开排版…"
         },
+        "make-clip-mask": {
+          "keywords": "clipping mask clip crop jqmb 剪切蒙版 裁剪",
+          "label": "建立剪切蒙版"
+        },
         "make-compound": {
           "keywords": "compound path hole jlfhlj 复合路径 挖洞",
           "label": "建立复合路径"
@@ -1675,9 +1679,21 @@ export default interface Resources {
           "keywords": "readiness status editable jr jieru 接入 可编辑 仅版面 仅排版 为什么不能编辑",
           "label": "显示项目接入状态"
         },
+        "reflect-horizontal": {
+          "keywords": "reflect mirror flip horizontal spjx 水平镜像 翻转",
+          "label": "水平镜像"
+        },
+        "reflect-vertical": {
+          "keywords": "reflect mirror flip vertical czjx 垂直镜像 翻转",
+          "label": "垂直镜像"
+        },
         "refresh-project": {
           "keywords": "refresh reload rescan sx shuaxin 重新扫描 新文件 检查",
           "label": "刷新项目"
+        },
+        "release-clip-mask": {
+          "keywords": "release clipping mask sfjqmb 释放 剪切蒙版",
+          "label": "释放剪切蒙版"
         },
         "release-compound": {
           "keywords": "release compound sffhlj 释放 复合路径",
@@ -1730,6 +1746,10 @@ export default interface Resources {
         "swap-fill-stroke": {
           "keywords": "swap fill stroke hhtsms 互换",
           "label": "互换填色和描边"
+        },
+        "transform-again": {
+          "keywords": "transform again repeat zcbh 再次变换 重复",
+          "label": "再次变换"
         },
         "tutorial-reset": {
           "keywords": "tutorial sample reset restart jc jiaocheng shili 示例 重置",
@@ -6123,7 +6143,33 @@ export default interface Resources {
       "zTicks": "Z 刻度"
     },
     "transform": {
+      "lockRatio": "锁定宽高比",
+      "ratioLocked": "宽高比已锁定",
+      "ratioUnlocked": "宽高比未锁定",
+      "refPoint": {
+        "b": "下中",
+        "bl": "左下",
+        "br": "右下",
+        "c": "中心",
+        "l": "左中",
+        "label": "参考点",
+        "r": "右中",
+        "t": "上中",
+        "tl": "左上",
+        "tr": "右上"
+      },
+      "refPointTip": "参考点：{{point}}。X / Y 报这个点，缩放、旋转、倾斜、镜像都以它为不动点",
+      "reflectH": "水平镜像",
+      "reflectV": "垂直镜像",
+      "rotatePanelHint": "图在「图」那一节按 90° 旋转",
       "rotation": "旋转",
+      "rotationSkew": "旋转 · 倾斜",
+      "scaleStrokes": "缩放描边和效果",
+      "scaleStrokesOff": "缩放时线宽和圆角不变",
+      "scaleStrokesOn": "缩放时线宽和圆角跟着变",
+      "skew": "水平倾斜",
+      "skewTip": "水平倾斜：形状会变成路径",
+      "skewUnsupported": "文字和图不能倾斜",
       "summary": "X {{x}} · Y {{y}} mm",
       "textHeightAuto": "文字高度随内容",
       "textWidthAuto": "竖排的宽度随列数",
@@ -6948,6 +6994,7 @@ export default interface Resources {
       "lockElement": "锁定图内元素",
       "lockObject": "锁定对象",
       "lockObjects": "锁定 {{count}} 个对象",
+      "makeClipMask": "建立剪切蒙版",
       "makeCompound": "建立复合路径",
       "mcpOpenFigure": "打开图",
       "moveAnchors": "移动锚点",
@@ -6977,6 +7024,7 @@ export default interface Resources {
       "playgroundResetEdits": "重置修改",
       "reflowLayoutGroup": "重新排列布局组",
       "refreshJournalV2": "更新期刊要求",
+      "releaseClipMask": "释放剪切蒙版",
       "releaseCompound": "释放复合路径",
       "relinkAssets_other": "重新链接 {{count}} 个素材",
       "renameCanvas": "重命名画布",
@@ -7019,6 +7067,11 @@ export default interface Resources {
       "tickSideHide": "{{side}}：隐藏刻度线",
       "tickSideOff": "{{side}}：不显示{{dir}}刻度",
       "tickSideOn": "{{side}}：显示{{dir}}刻度",
+      "transformMove": "移动",
+      "transformReflect": "镜像",
+      "transformRotate": "旋转",
+      "transformScale": "缩放",
+      "transformSkew": "倾斜",
       "unbindStyle": "不再跟随样式",
       "ungroup": "取消成组",
       "unhideElement": "恢复隐藏元素",
@@ -7034,7 +7087,15 @@ export default interface Resources {
       "zTop": "置于顶层",
       "zUp": "上移一层"
     },
+    "isolation": {
+      "exit": "退出组内编辑",
+      "exitTip": "按 Esc 退出一层",
+      "label": "组内编辑"
+    },
     "layerTree": {
+      "clipGroupLabel_other": "剪切组 · {{count}} 个对象",
+      "clipPath": "剪切路径",
+      "clipPathTip": "这个形状只用来裁剪组里的其他对象，不会画出来",
       "collapseGroup": "折叠组",
       "editableBadge": "可编辑",
       "editableState": "可编辑",
@@ -8057,6 +8118,9 @@ export default interface Resources {
       "blockedGroupsSkipped_other": "组内有锁定对象，已跳过 {{count}} 个组",
       "building": "正在构建 {{name}}…",
       "buildingWithHint": "正在构建 {{name}}（{{hint}}）",
+      "clipMade": "已建立剪切蒙版",
+      "clipNeedPathOnTop": "最上面的对象要是路径或封闭形状，才能当剪切蒙版",
+      "clipNeedTwo": "至少选中 2 个对象才能建立剪切蒙版",
       "clipboardReadDenied": "无法读取剪贴板。浏览器未授权。",
       "clipboardReadUnsupported": "浏览器不支持读取剪贴板，无法粘贴对象",
       "clipboardWriteDenied": "无法访问剪贴板。浏览器未授权。",
@@ -8136,8 +8200,12 @@ export default interface Resources {
       "renderDone": "渲染完成：{{name}}",
       "renderFailed": "无法渲染 {{name}}",
       "renderFailedWithError": "无法渲染 {{name}}。{{error}}",
+      "rotatePanelSkipped_other": "有 {{count}} 张图没有旋转（图只能按 90° 旋转）",
+      "rotatePanelUnsupported": "图只能按 90° 旋转",
       "scriptChanged_other": "脚本已更新，{{count}} 张图已重新渲染",
       "simplifyNothing": "已经很简单了，没有可删的锚点",
+      "skewSkipped_other": "有 {{count}} 个文字或图没有倾斜",
+      "skewUnsupported": "文字和图不能倾斜",
       "sourceLinked_other": "已找到源脚本（{{count}} 张）",
       "sourceLostEditing": "你可能移动了该图脚本，需要重新关联。",
       "sourceLostRelink": "重新关联脚本",

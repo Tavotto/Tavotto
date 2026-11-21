@@ -1,3 +1,4 @@
+import { visibleBounds } from '@/lib/transform'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
@@ -324,7 +325,8 @@ function ContextBarBody() {
     }
     let anchor: ScreenRect | null = null
     if (mode === 'multi' && multi) {
-      const b = boundsOf(multi.map(visualBounds))
+      // 剪切组按蒙版范围（ADR 0185 M4 第二批）
+      const b = visibleBounds(multi, useDocumentStore.getState().doc.objects) ?? boundsOf(multi.map(visualBounds))
       const t: ViewTransform = { zoom, panX, panY, originX, originY }
       anchor = b ? selectionScreenRect(b, t) : null
     } else if (mode === 'elements' && panel && multiGids) {
