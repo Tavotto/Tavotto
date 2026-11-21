@@ -1432,3 +1432,47 @@ def test_roles_cache_is_not_shared_between_the_small_model_and_the_users_model(t
     t = DR.scripted(case, "openai-responses")
     run = run_case(case, tmp_path, conn=_official_conn(), post=t)
     assert run.state == "ready" and [c["body"]["model"] for c in t.calls] == ["gpt-6.2-sol"]
+
+
+def test_unsure_about_a_continuous_column_does_not_veto_the_x_axis_the_rules_chose(tmp_path):
+    """身高-体重：规则选身高当横轴。模型只说身高「看不出来」（other）并建议不要横轴：不采纳（连续取值的数值列）；
+    同样的 other 落在整数的样本量列上仍然否决（HO-22 那类）。"""
+    case = {
+        "id": "T-hw",
+        "tables": {
+            "t.csv": "height_cm,weight_kg\n"
+            + "".join(f"{150 + 1.7 * i:.1f},{50 + 2.1 * i:.1f}\n" for i in range(15))
+        },
+        "hint": None,
+    }
+    folder = DR.materialize(case, tmp_path / "proj")
+    entry = adf.profile_folder(tmp_path / "proj" / folder).tables[0]
+    values = adf.inspect_data_source(tmp_path / "proj" / folder / "t.csv", v2=True)
+    assert R.continuous_columns(values) == {"height_cm", "weight_kg"}
+
+    def picks(role):
+        shape = R.validate_roles_shape(
+            {
+                "columns": [
+                    {"name": "height_cm", "role": role},
+                    {"name": "weight_kg", "role": "measure"},
+                ],
+                "picks": {"y": ["weight_kg"], "x": "none", "group": "none"},
+            }
+        )
+        return R.interpret(entry, values, shape, None).picks
+
+    assert "x" not in picks("other")  # 拿不准不算否决
+    assert picks("row_id").get("x") == "none"  # 明确说是行号仍然否决
+
+    ints = {
+        "id": "T-n",
+        "tables": {
+            "t.csv": "mean_mass,n\n"
+            + "".join(f"{2.5 + 0.3 * i:.2f},{8 + i % 4}\n" for i in range(12))
+        },
+        "hint": None,
+    }
+    folder = DR.materialize(ints, tmp_path / "proj2")
+    values2 = adf.inspect_data_source(tmp_path / "proj2" / folder / "t.csv", v2=True)
+    assert "n" not in R.continuous_columns(values2)
