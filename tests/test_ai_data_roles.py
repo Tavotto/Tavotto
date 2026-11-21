@@ -31,6 +31,7 @@ import data_figure_cases as D  # noqa: E402
 import data_figure_roles as DR  # noqa: E402
 
 from tavotto.engine import (  # noqa: E402
+    ai_agents,
     ai_connections,
     ai_data_figure as adf,
     ai_data_propose as P,
@@ -57,6 +58,15 @@ def isolate(tmp_path, monkeypatch):
     monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("TAVOTTO_NO_TELEMETRY", "1")
     monkeypatch.setattr(P, "CANDIDATE_ROOT", tmp_path / "propose")
+    # CLI 连接的用例只注入假的「跑进程」；可执行文件的解析也要是假的，否则没装 Codex 的机器（CI）在起进程之前就得到
+    # `no_connection/not_installed`，这些用例根本测不到想测的行为
+    monkeypatch.setattr(
+        ai_agents,
+        "resolve",
+        lambda agent, probe_readiness=True: ai_agents.Resolution(
+            argv=[f"/fake/{agent.id}"], path=f"/fake/{agent.id}"
+        ),
+    )
     R.reset_for_tests()
     yield
     R.reset_for_tests()
