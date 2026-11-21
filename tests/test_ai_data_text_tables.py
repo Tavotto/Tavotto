@@ -235,6 +235,8 @@ def test_size_and_row_limits_reuse_the_existing_constants(tmp_path, monkeypatch)
     t = adf.read_text_table(p)
     assert t.status == "unreadable" and t.code == "data_too_large"
     monkeypatch.undo()
+    # 行数多的先转大表读法（`SMALL_ROWS`），再受大表上限（`MAX_ROWS`）约束：两个都收紧才是「太长」
+    monkeypatch.setattr(adf, "SMALL_ROWS", 10)
     monkeypatch.setattr(adf, "MAX_ROWS", 10)
     t = adf.read_text_table(p)
     assert t.status == "unreadable" and t.code in ("data_too_long",)

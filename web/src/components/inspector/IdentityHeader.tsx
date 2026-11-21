@@ -11,6 +11,7 @@ import {
   LockOpen,
   MoveUpRight,
   Replace,
+  Spline,
   Square,
   Trash2,
   Type as TypeIcon,
@@ -41,6 +42,7 @@ const TYPE_ICON = {
   text: TypeIcon,
   arrow: MoveUpRight,
   shape: Square,
+  path: Spline,
 } as const
 
 /**
@@ -364,7 +366,7 @@ function summarize(objs: CanvasObject[]): string {
   const parts: string[] = []
   if (n('panel')) parts.push(translate('summaryPanels', { ns: 'inspector', count: n('panel') }))
   if (n('text')) parts.push(translate('summaryTexts', { ns: 'inspector', count: n('text') }))
-  const marks = n('arrow') + n('shape')
+  const marks = n('arrow') + n('shape') + n('path')
   if (marks) parts.push(translate('summaryMarks', { ns: 'inspector', count: marks }))
   return listJoin(parts)
 }

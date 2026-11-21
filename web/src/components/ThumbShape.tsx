@@ -17,15 +17,26 @@ import {
   svgStroke,
 } from '@/lib/shapeGeometry'
 import { MM_PER_PT } from '@/lib/units'
-import type { ArrowObject, ShapeObject } from '@/types/document'
+import { PathBody } from '@/canvas/PathView'
+import type { ArrowObject, PathObject, ShapeObject } from '@/types/document'
 import { lineEndpoints, objectRotation, shapeStrokeOn } from '@/types/document'
 
-export function ThumbShape({ obj }: { obj: ArrowObject | ShapeObject }) {
+export function ThumbShape({ obj }: { obj: ArrowObject | ShapeObject | PathObject }) {
   const w = Math.max(obj.w, 0.001)
   const h = Math.max(obj.h, 0.001)
   const sw = Math.max(obj.strokePt * MM_PER_PT, 0.0132)
   const rot = objectRotation(obj)
   const wrap = rot ? `rotate(${rot} ${obj.x + w / 2} ${obj.y + h / 2})` : undefined
+  if (obj.type === 'path') {
+    // 自由路径（ADR 0185）：与画布 PathView 同一组图元（`PathBody`），几何只在 `pathGeom.pathGeometry`
+    return (
+      <g data-thumb-shape="path" transform={wrap}>
+        <g transform={`translate(${obj.x} ${obj.y})`}>
+          <PathBody obj={obj} sw={sw} w={w} h={h} />
+        </g>
+      </g>
+    )
+  }
   const strokeOn = obj.type === 'arrow' || shapeStrokeOn(obj)
   const stroke = strokeOn
     ? svgStroke(

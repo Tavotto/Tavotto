@@ -21,6 +21,9 @@ ADR 0174 加的属性（全部缺省 = 旧画法，旧文档逐字不变）：�
 `head_size_start` / `head_size_end`。每一条与 `web/src/lib/shapeGeometry.ts` 同源，由共享向量
 `tests/golden/shape_geometry_vectors.json` 接住。
 
+ADR 0185 加的自由路径 `path`（`read_path` / `path_segments` / `path_paths`）与前端 `web/src/lib/pathGeom.ts`
+同源，共享向量 `tests/golden/path_vectors.json`。
+
 纯标准库。
 """
 
@@ -28,7 +31,7 @@ from __future__ import annotations
 
 import math
 
-from .ir import Paint, Path, Segment, Stroke, hex2rgb
+from .ir import Group, Node, Paint, Path, Segment, Stroke, hex2rgb
 
 #: 三次贝塞尔近似四分之一圆弧的控制点系数。
 KAPPA = 0.5522847498
@@ -375,4 +378,214 @@ def arrow_paths(o: dict, w: float, h: float) -> list[Path]:
             out.append(
                 Path(polyline_segments(head[1], False), stroke=head_strokes[head[0]], object_id=oid)
             )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 自由路径（ADR 0185）——与前端 `web/src/lib/pathGeom.ts` 的 `pathGeometry` 严格同源
+# ---------------------------------------------------------------------------
+def _pt(v: object) -> tuple[float, float] | None:
+    if isinstance(v, (list, tuple)) and len(v) == 2:
+        try:
+            x, y = float(v[0]), float(v[1])
+        except (TypeError, ValueError):
+            return None
+        if math.isfinite(x) and math.isfinite(y):
+            return (x, y)
+    return None
+
+
+def read_path(o: dict) -> dict:
+    """路径的缺省值统一读取；与前端 `types/document.readPath` 同一规则。
+
+    手柄缺省 = 与锚点重合；`fill_rule` 缺省 nonzero；`stroke` 只有 `false` 关描边；端型缺省 none。
+    锚点读不成数对的整个丢掉（坏数据不画，也不报错——与不认识的端型同一种保守）。"""
+    subpaths = []
+    for sp in o.get("subpaths") or ():
+        if not isinstance(sp, dict):
+            continue
+        nodes = []
+        for n in sp.get("nodes") or ():
+            if not isinstance(n, dict):
+                continue
+            p = _pt(n.get("p"))
+            if p is None:
+                continue
+            nodes.append({"p": p, "in": _pt(n.get("in")) or p, "out": _pt(n.get("out")) or p})
+        subpaths.append({"closed": sp.get("closed") is True, "nodes": nodes})
+    hs, he = o.get("head_start"), o.get("head_end")
+    return {
+        "subpaths": subpaths,
+        "fill_rule": "evenodd" if o.get("fill_rule") == "evenodd" else "nonzero",
+        "stroke_on": o.get("stroke") is not False,
+        "head_start": hs if isinstance(hs, str) else "none",
+        "head_end": he if isinstance(he, str) else "none",
+    }
+
+
+def _seg_to(a: dict, b: dict, out: list) -> None:
+    if a["out"] == a["p"] and b["in"] == b["p"]:
+        out.append(("L", *b["p"]))
+    else:
+        out.append(("C", *a["out"], *b["in"], *b["p"]))
+
+
+def _subpath_segs(nodes: list[dict], closed: bool, out: list) -> None:
+    out.append(("M", *nodes[0]["p"]))
+    for i in range(1, len(nodes)):
+        _seg_to(nodes[i - 1], nodes[i], out)
+    if closed:
+        _seg_to(nodes[-1], nodes[0], out)
+        out.append(("Z",))
+
+
+def _first_distinct(tip: tuple[float, float], cands) -> tuple[float, float] | None:
+    for c in cands:
+        if math.hypot(c[0] - tip[0], c[1] - tip[1]) > 1e-9:
+            return c
+    return None
+
+
+def _unit_to(a, b) -> tuple[float, float]:
+    if a is None or b is None:
+        return (0.0, 0.0)
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    ln = math.hypot(dx, dy) or 1.0
+    return (dx / ln, dy / ln)
+
+
+def path_segments(o: dict, w: float, h: float, sw: float | None = None) -> dict:
+    """路径在框空间（原点框左上、y 向下）里的几何：`fill`（全部子路径、未回缩）、`stroke`（开放子路径
+    两端按实心端型回缩）、`heads`（`head_geometry` 的形状，每条开放子路径先终点后起点）、`head_half`。
+
+    规则（与前端 `pathGeometry` 逐条相同）：比例坐标 × 框；前一锚点的出手柄与后一锚点的入手柄都与各自锚点
+    重合 → `L`，否则 `C`；闭合子路径补「末 → 首」再 `Z`；少于两个锚点的子路径不画；端型只对开放子路径、
+    且有描边时画，方向取那一端的切线（往里第一个不与端点重合的控制点），回缩 = 端点与相邻手柄一起平移。"""
+    if sw is None:
+        sw = max(float(o.get("stroke_pt", 1.0)), 0.05)
+    r = read_path(o)
+    f_start, f_end = _head_size(o, "start"), _head_size(o, "end")
+    want_heads = r["stroke_on"] and (r["head_start"] != "none" or r["head_end"] != "none")
+    fill: list = []
+    stroke: list = []
+    heads: list = []
+    head_half = 0.0
+    for sp in r["subpaths"]:
+        raw = sp["nodes"]
+        n = len(raw)
+        if n < 2:
+            continue
+        nodes = [
+            {k: (q[k][0] * w, q[k][1] * h) for k in ("p", "in", "out")}  # type: ignore[index]
+            for q in raw
+        ]
+        _subpath_segs(nodes, sp["closed"], fill)
+        if sp["closed"] or not want_heads:
+            _subpath_segs(nodes, sp["closed"], stroke)
+            continue
+        first, last = nodes[0], nodes[-1]
+        us = _unit_to(
+            first["p"], _first_distinct(first["p"], (first["out"], nodes[1]["in"], nodes[1]["p"]))
+        )
+        ue = _unit_to(
+            _first_distinct(last["p"], (last["in"], nodes[-2]["out"], nodes[-2]["p"])), last["p"]
+        )
+        e_shape, e_trim = head_geometry(r["head_end"], last["p"], 1.0, ue, sw, f_end)
+        s_shape, s_trim = head_geometry(r["head_start"], first["p"], -1.0, us, sw, f_start)
+        trimmed = list(nodes)
+        if s_trim:
+            d = (us[0] * s_trim, us[1] * s_trim)
+            trimmed[0] = {
+                "p": (first["p"][0] + d[0], first["p"][1] + d[1]),
+                "in": first["in"],
+                "out": (first["out"][0] + d[0], first["out"][1] + d[1]),
+            }
+        if e_trim:
+            d = (-ue[0] * e_trim, -ue[1] * e_trim)
+            trimmed[-1] = {
+                "p": (last["p"][0] + d[0], last["p"][1] + d[1]),
+                "in": (last["in"][0] + d[0], last["in"][1] + d[1]),
+                "out": last["out"],
+            }
+        _subpath_segs(trimmed, False, stroke)
+        if e_shape is not None:
+            heads.append(e_shape)
+            head_half = max(head_half, sw * 1.7 * f_end)
+        if s_shape is not None:
+            heads.append(s_shape)
+            head_half = max(head_half, sw * 1.7 * f_start)
+    return {"fill": fill, "stroke": stroke, "heads": heads, "head_half": head_half}
+
+
+#: 路径的缺省拐角：与封闭形状 / 箭头相同（圆角）；与前端 `pathGeom.PATH_DEFAULT_JOIN` 同一个缺省。
+PATH_DEFAULT_JOIN = "round"
+
+
+def path_paths(o: dict, w: float, h: float) -> list[Node]:
+    """一个 path 对象 → 框空间里的 IR 节点（画布 `PathView` / `PathBody` 一一对应）。
+
+    没有端型：一条路径又填又描（描边不透明度在描边 Paint 上，与形状相同）。有端型：填充单独一条，
+    描边 + 端型放进一个透明组（不透明度作用于「线 + 端型」整体，杆伸进实心端型的重叠处不叠深——与箭头
+    同一做法，ADR 0174）；不透明时不包组。既不填也不描：什么都不画。"""
+    sw = max(float(o.get("stroke_pt", 1.0)), 0.05)
+    r = read_path(o)
+    g = path_segments(o, w, h, sw)
+    if not g["fill"]:
+        return []
+    fill_opacity = o.get("fill_opacity")
+    fill = (
+        Paint(hex2rgb(o["fill"]), 1.0 if fill_opacity is None else float(fill_opacity))
+        if o.get("fill")
+        else None
+    )
+    oid = str(o.get("id", ""))
+    rule = r["fill_rule"]
+    if not r["stroke_on"]:
+        return [Path(tuple(g["fill"]), fill=fill, fill_rule=rule, object_id=oid)] if fill else []
+    if not g["heads"]:
+        return [
+            Path(
+                tuple(g["fill"]),
+                fill=fill,
+                stroke=_stroke(o, sw, join=PATH_DEFAULT_JOIN),
+                fill_rule=rule,
+                object_id=oid,
+            )
+        ]
+    out: list[Node] = []
+    if fill is not None:
+        out.append(Path(tuple(g["fill"]), fill=fill, fill_rule=rule, object_id=oid))
+    color = Paint(hex2rgb(o.get("color", "#000000")))
+    inner: list[Node] = [
+        Path(
+            tuple(g["stroke"]),
+            stroke=_stroke(o, sw, join=PATH_DEFAULT_JOIN, opaque=True),
+            object_id=oid,
+        )
+    ]
+    head_strokes = {
+        "open": _stroke(o, sw, join="round", dash=False, opaque=True),
+        "bar": _stroke(o, sw, join="miter", dash=False, opaque=True),
+    }
+    for head in g["heads"]:
+        if head[0] == "poly":
+            inner.append(Path(polyline_segments(head[1], True), fill=color, object_id=oid))
+        elif head[0] == "dot":
+            _, cx, cy, rad = head
+            inner.append(
+                Path(
+                    ellipse_segments(cx - rad, cy - rad, 2 * rad, 2 * rad),
+                    fill=color,
+                    object_id=oid,
+                )
+            )
+        else:
+            inner.append(
+                Path(polyline_segments(head[1], False), stroke=head_strokes[head[0]], object_id=oid)
+            )
+    alpha = _alpha(o)
+    if alpha < 1:
+        out.append(Group(tuple(inner), opacity=alpha, object_id=oid))
+    else:
+        out.extend(inner)
     return out

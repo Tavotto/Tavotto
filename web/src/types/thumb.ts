@@ -1,3 +1,5 @@
+import type { PathSubpath } from '@/types/document'
+
 /**
  * 缩略图画得出来所需的**最小事实**。
  *
@@ -27,6 +29,8 @@ export interface ThumbObject {
   textFormat?: string
   /** 形状：种类 */
   shape?: string
+  /** 自由路径（ADR 0185）：子路径（比例坐标）。草图里锚点太多时后端不带它，缩略图退回外框 */
+  subpaths?: PathSubpath[]
 }
 
 /** 缩略图的页面比例（mm）。 */

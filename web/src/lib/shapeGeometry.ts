@@ -27,21 +27,34 @@ export function polygonPoints(
   return pts
 }
 
+/** 大括号的构造：起点 + 依次的直线段 / 二次贝塞尔段（`bracePath` 与「转为路径」共用这一份） */
+export type BracePart = { kind: 'Q'; c: [number, number]; p: [number, number] } | { kind: 'L'; p: [number, number] }
+
+export function braceParts(w: number, h: number, inset: number): { start: [number, number]; parts: BracePart[] } {
+  const cx = w / 2
+  const tipGap = Math.min(h * 0.06, h / 2 - inset)
+  return {
+    start: [w - inset, inset],
+    parts: [
+      { kind: 'Q', c: [cx, inset], p: [cx, h * 0.25] },
+      { kind: 'L', p: [cx, h / 2 - tipGap] },
+      { kind: 'Q', c: [cx, h / 2], p: [inset, h / 2] },
+      { kind: 'Q', c: [cx, h / 2], p: [cx, h / 2 + tipGap] },
+      { kind: 'L', p: [cx, h * 0.75] },
+      { kind: 'Q', c: [cx, h - inset], p: [w - inset, h - inset] },
+    ],
+  }
+}
+
 /**
  * 大括号「{」：右侧两钩 + 中部左尖，用二次贝塞尔；
  * 旋转（rotationDeg）覆盖其它方向。与后端 _brace_segments 同一构造。
  */
 export function bracePath(w: number, h: number, inset: number): string {
-  const cx = w / 2
-  const tipGap = Math.min(h * 0.06, h / 2 - inset)
+  const { start, parts } = braceParts(w, h, inset)
   return [
-    `M ${w - inset},${inset}`,
-    `Q ${cx},${inset} ${cx},${h * 0.25}`,
-    `L ${cx},${h / 2 - tipGap}`,
-    `Q ${cx},${h / 2} ${inset},${h / 2}`,
-    `Q ${cx},${h / 2} ${cx},${h / 2 + tipGap}`,
-    `L ${cx},${h * 0.75}`,
-    `Q ${cx},${h - inset} ${w - inset},${h - inset}`,
+    `M ${start[0]},${start[1]}`,
+    ...parts.map((q) => (q.kind === 'Q' ? `Q ${q.c[0]},${q.c[1]} ${q.p[0]},${q.p[1]}` : `L ${q.p[0]},${q.p[1]}`)),
   ].join(' ')
 }
 
@@ -272,6 +285,68 @@ export const HEAD_TRIM: Readonly<Record<string, number>> = {
 export const STEALTH_NOTCH = 0.7
 
 /**
+ * 一个端型的几何 + 线在这一端回缩的距离（**箭头与路径开放端共用的唯一出处**，ADR 0185 §四）。
+ * 尖在 `tip`；`sign` = 1 是终点（向后是 -u）、-1 是起点；`(ux, uy)` 是起点 → 终点方向的单位向量
+ * （路径的端点取那一端的切线方向）。与后端 `geometry.head_geometry` 逐点对应。
+ */
+export function headGeometry(
+  kind: string,
+  tip: Pt,
+  sign: 1 | -1,
+  ux: number,
+  uy: number,
+  sw: number,
+  f: number,
+): { shape: ArrowHeadShape | null; trim: number } {
+  const nx = -uy
+  const ny = ux
+  const L = sw * 4 * f
+  const H = sw * 1.7 * f
+  // 沿箭杆向后 d、横向偏 s 的点
+  const at = (d: number, s: number): Pt => ({
+    x: tip.x - sign * ux * d + nx * s,
+    y: tip.y - sign * uy * d + ny * s,
+  })
+  const pts = (...ps: Pt[]) => ps.map((p) => `${p.x},${p.y}`).join(' ')
+  switch (kind) {
+    case 'triangle':
+      return {
+        shape: { kind, points: pts(tip, at(L, H), at(L, -H)) },
+        trim: L * HEAD_TRIM.triangle,
+      }
+    case 'stealth':
+      return {
+        shape: { kind, points: pts(tip, at(L, H), at(L * STEALTH_NOTCH, 0), at(L, -H)) },
+        trim: L * HEAD_TRIM.stealth,
+      }
+    case 'diamond':
+      return {
+        shape: { kind, points: pts(tip, at(L / 2, H), at(L, 0), at(L / 2, -H)) },
+        trim: L * HEAD_TRIM.diamond,
+      }
+    case 'dot': {
+      const c = at(H, 0)
+      return { shape: { kind, cx: c.x, cy: c.y, r: H }, trim: H }
+    }
+    case 'open': {
+      const p1 = at(L, H)
+      const p2 = at(L, -H)
+      return {
+        shape: { kind, d: `M ${p1.x},${p1.y} L ${tip.x},${tip.y} L ${p2.x},${p2.y}` },
+        trim: 0,
+      }
+    }
+    case 'bar': {
+      const p1 = at(0, H)
+      const p2 = at(0, -H)
+      return { shape: { kind, d: `M ${p1.x},${p1.y} L ${p2.x},${p2.y}` }, trim: 0 }
+    }
+    default:
+      return { shape: null, trim: 0 }
+  }
+}
+
+/**
  * 箭头的真实几何（**ArrowView 与导出预览 `CanvasThumb` 的箭头共用的唯一出处**）。
  * 与后端 `geometry.arrow_paths` 一一对应：帽长 4×线宽、帽半宽 1.7×线宽（再乘端型大小档位）、
  * 实心端型回缩线段（`HEAD_TRIM`）。`w` / `h` 是包围盒、`sw` 是线宽，三者同单位
@@ -294,67 +369,12 @@ export function arrowGeometry(
   const len = Math.hypot(dx, dy) || 1
   const ux = dx / len
   const uy = dy / len
-  const nx = -uy
-  const ny = ux
   const heads = arrowHeads(obj as ArrowObject)
   const fStart = headSizeFactor(obj.headSizeStart)
   const fEnd = headSizeFactor(obj.headSizeEnd)
 
-  /** 一端：尖在 tip，`sign` = 1 终点（向后是 -u），-1 起点；返回形状与线段在这一端回缩的距离 */
-  const headOf = (
-    kind: string,
-    tip: Pt,
-    sign: 1 | -1,
-    f: number,
-  ): { shape: ArrowHeadShape | null; trim: number } => {
-    const L = sw * 4 * f
-    const H = sw * 1.7 * f
-    // 沿箭杆向后 d、横向偏 s 的点
-    const at = (d: number, s: number): Pt => ({
-      x: tip.x - sign * ux * d + nx * s,
-      y: tip.y - sign * uy * d + ny * s,
-    })
-    const pts = (...ps: Pt[]) => ps.map((p) => `${p.x},${p.y}`).join(' ')
-    switch (kind) {
-      case 'triangle':
-        return {
-          shape: { kind, points: pts(tip, at(L, H), at(L, -H)) },
-          trim: L * HEAD_TRIM.triangle,
-        }
-      case 'stealth':
-        return {
-          shape: { kind, points: pts(tip, at(L, H), at(L * STEALTH_NOTCH, 0), at(L, -H)) },
-          trim: L * HEAD_TRIM.stealth,
-        }
-      case 'diamond':
-        return {
-          shape: { kind, points: pts(tip, at(L / 2, H), at(L, 0), at(L / 2, -H)) },
-          trim: L * HEAD_TRIM.diamond,
-        }
-      case 'dot': {
-        const c = at(H, 0)
-        return { shape: { kind, cx: c.x, cy: c.y, r: H }, trim: H }
-      }
-      case 'open': {
-        const p1 = at(L, H)
-        const p2 = at(L, -H)
-        return {
-          shape: { kind, d: `M ${p1.x},${p1.y} L ${tip.x},${tip.y} L ${p2.x},${p2.y}` },
-          trim: 0,
-        }
-      }
-      case 'bar': {
-        const p1 = at(0, H)
-        const p2 = at(0, -H)
-        return { shape: { kind, d: `M ${p1.x},${p1.y} L ${p2.x},${p2.y}` }, trim: 0 }
-      }
-      default:
-        return { shape: null, trim: 0 }
-    }
-  }
-
-  const s = headOf(heads.start, a, -1, fStart)
-  const e = headOf(heads.end, b, 1, fEnd)
+  const s = headGeometry(heads.start, a, -1, ux, uy, sw, fStart)
+  const e = headGeometry(heads.end, b, 1, ux, uy, sw, fEnd)
   const p1 = { x: a.x + ux * s.trim, y: a.y + uy * s.trim }
   const p2 = { x: b.x - ux * e.trim, y: b.y - uy * e.trim }
   const fMax = Math.max(heads.start !== 'none' ? fStart : 1, heads.end !== 'none' ? fEnd : 1)

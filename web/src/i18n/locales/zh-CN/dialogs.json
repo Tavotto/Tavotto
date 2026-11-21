@@ -461,6 +461,10 @@
         "keywords": "canvas page settings hbsz huabu",
         "label": "画布设置"
       },
+      "convert-to-path": {
+        "keywords": "convert path zwlj 路径 钢笔",
+        "label": "转为路径"
+      },
       "cycle-overlap": {
         "keywords": "cycle overlap twin axis lh lunhuan cd chongdie sszx shuangzongzhou",
         "label": "在重叠的图内元素之间轮换选中"

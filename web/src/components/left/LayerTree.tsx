@@ -18,6 +18,7 @@ import {
   Pencil,
   Shapes,
   Slash,
+  Spline,
   Square,
   Triangle,
   Type,
@@ -55,6 +56,7 @@ const ICONS = {
   diamond: Diamond,
   polygon: Hexagon,
   brace: Braces,
+  path: Spline,
 } as const
 
 function iconFor(o: CanvasObject) {

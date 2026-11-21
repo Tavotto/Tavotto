@@ -759,6 +759,7 @@ export default interface Resources {
       "arrow": "箭头",
       "emptyText": "空文字",
       "panel": "图",
+      "path": "路径",
       "shape": "形状",
       "text": "文字",
       "unknown": "新版对象"
@@ -1506,6 +1507,10 @@ export default interface Resources {
         "canvas-settings": {
           "keywords": "canvas page settings hbsz huabu",
           "label": "画布设置"
+        },
+        "convert-to-path": {
+          "keywords": "convert path zwlj 路径 钢笔",
+          "label": "转为路径"
         },
         "cycle-overlap": {
           "keywords": "cycle overlap twin axis lh lunhuan cd chongdie sszx shuangzongzhou",
@@ -3645,8 +3650,8 @@ export default interface Resources {
       "data_path_outside_project": "这份数据不在当前项目里。",
       "data_ragged": "数据里有几行的列数和表头不一致。",
       "data_sheet_not_found": "这个 Excel 文件里找不到所选的工作表。",
-      "data_too_large": "数据文件太大（超过 5 MB），没有读取。",
-      "data_too_long": "数据行数太多（超过 10 万行），没有读取。",
+      "data_too_large": "数据文件太大，没有读取。",
+      "data_too_long": "数据行数太多，没有读取。",
       "data_too_wide": "数据列数太多（超过 64 列），没有读取。",
       "data_unreadable": "读不了这份数据文件。",
       "data_xlsx_invalid": "这个 Excel 文件已损坏或不是有效的 .xlsx，无法读取。",
@@ -6714,6 +6719,8 @@ export default interface Resources {
       "clearGuides": "清除参考线",
       "clearJournal": "取消按期刊检查",
       "clearProp": "恢复{{prop}}",
+      "convertToPath": "转为路径",
+      "convertToPathCount": "把 {{count}} 个对象转为路径",
       "createLayoutGroup": "创建{{kind}}",
       "deleteGuide": "删除参考线",
       "deleteObject": "删除 {{name}}",
@@ -7539,6 +7546,7 @@ export default interface Resources {
       "arrangeRef": "参照：{{ref}}",
       "changeKind": "更改为",
       "connectSource": "连接源脚本",
+      "convertToPath": "转为路径",
       "copy": "复制",
       "copyAsAnnotation": "复制为标注",
       "cropRotatedReason": "旋转过的图暂不能裁剪，先取消旋转",
@@ -7907,6 +7915,7 @@ export default interface Resources {
       "sourceLost_other": "源脚本关系已失效，{{count}} 张图已改为普通图片。图片和它们在画布上的摆放都保留着。",
       "styleCopiedArrow": "已复制箭头样式",
       "styleCopiedPanel": "已复制图的样式",
+      "styleCopiedPath": "已复制路径样式",
       "styleCopiedShape": "已复制形状样式",
       "styleCopiedText": "已复制文字样式",
       "styleCopyNeedSelection": "先选中要复制样式的对象",

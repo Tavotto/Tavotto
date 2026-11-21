@@ -2012,6 +2012,29 @@ export type ExportObject =
       line_join?: 'miter' | 'bevel' | 'round'
       rotation_deg?: number
     })
+  | (ExportBox & {
+      /** 自由路径（ADR 0185）：子路径的锚点 / 手柄是包围盒比例坐标；画法在 `rendercore/geometry.path_paths` */
+      type: 'path'
+      subpaths: { closed: boolean; nodes: { p: [number, number]; in?: [number, number]; out?: [number, number] }[] }[]
+      /** 缺省 nonzero */
+      fill_rule?: 'evenodd'
+      stroke_pt: number
+      color: string
+      fill: string | null
+      fill_opacity?: number
+      dash?: ExportDash
+      /** 无描边（只发 `false`） */
+      stroke?: false
+      stroke_opacity?: number
+      line_cap?: 'butt' | 'round' | 'square'
+      line_join?: 'miter' | 'bevel' | 'round'
+      /** 端型只对开放子路径生效；缺省 = 无 */
+      head_start?: ExportHeadType
+      head_end?: ExportHeadType
+      head_size_start?: 'small' | 'large'
+      head_size_end?: 'small' | 'large'
+      rotation_deg?: number
+    })
 
 /**
  * 统一导出请求（ADR 0031）——**原图与画布走同一个结构**。

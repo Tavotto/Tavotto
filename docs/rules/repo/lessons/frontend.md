@@ -212,3 +212,10 @@
 - Seen: 2026-11-18
 - 为什么: Playwright 用 esbuild 不查类型，新 spec 在 playwright 里跑得过；pnpm build 的 tsc -b 把 web/e2e 一起类型检查，在 SVGElement | HTMLElement 上取 ownerSVGElement 报 TS2339，整层前端构建红；之后跑的 e2e 用的是旧前端产物，假红一片。逐层跑 e2e 先看 build 的退出码。
 - 证据: （会话记录，无编号）
+
+### L-175 e2e 等到「可见过一次」不算稳定，会重挂载的视图在每次动作前重新展开、点击带短超时
+- 类: 别这样
+- 触发: web/e2e/coding-agents.spec.ts, web/src/components/settings/CodingAgentsSection.tsx
+- Seen: 2026-11-18, 2026-11-19
+- 为什么: 设置页的 `toPass` 只等清单可见一次，随后能力接口 1 秒内刷新多次、重挂载视图把「高级」收回，后面的点击落在隐藏元素上；点击没有短超时，每次白烧约 3 分钟到用例超时，Windows 打包版分片两天里踢出合并队列 8 次以上。每次需要前置状态的交互都在动作里重新确立它，并整段重试。
+- 证据: #2059
