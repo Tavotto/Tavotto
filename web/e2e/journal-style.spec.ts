@@ -53,8 +53,9 @@ test(
 
     await row.locator('[data-style-journal-adjust]').click()
     await expect(row).toHaveCount(0, { timeout: 30_000 })
-    // 跟随的是一份新样式（名字就是期刊名），刻度字号在面板里读得到 5 pt
-    await expect(page.locator('[data-style-apply-summary]')).toContainText('Fixture Zeta')
+    // 跟随的是一份新样式（名字就是期刊名）：画布档顶上的「这张画布跟随〔样式〕」选择器写着它（ADR 0081 §十四）
+    await page.locator('[data-style-scope-switch] [role="radio"][data-value="canvas"]').click()
+    await expect(page.locator('[data-style-apply] [role="combobox"]')).toContainText('Fixture Zeta')
 
     await page.keyboard.press('ControlOrMeta+z')
     await expect(row).toBeVisible({ timeout: 30_000 })
