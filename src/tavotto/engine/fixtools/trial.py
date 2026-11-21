@@ -156,11 +156,12 @@ try:
     if _strict:
         # 判据的数据与要用的函数全部在装 hook 时以默认参数捕获，hook 自己不读任何全局：被执行的代码改模块属性、改已结束帧的
         # 局部变量都动不到它（Codex #2064 P1）。装好后删掉所有名字；拿到函数对象只剩 gc 一条路，一并拦下
-        def _make(deny, fold, realpath, isdir, fsdecode, pathlike, sep, net_log, read_log):
+        def _make(deny, names, exempt, fold, realpath, basename, isdir, fsdecode, pathlike, sep, net_log, read_log):
             _NET = ("socket.connect", "socket.bind", "socket.sendto", "socket.sendmsg", "socket.getaddrinfo", "socket.gethostbyname", "socket.gethostbyaddr")
             _INTROSPECT = ("gc.get_objects", "gc.get_referrers", "gc.get_referents")
             _FUNC_ATTRS = ("__code__", "__defaults__", "__kwdefaults__", "__globals__")
-            def _hook(event, args, _deny=deny, _fold=fold, _realpath=realpath, _isdir=isdir, _fsdecode=fsdecode,
+            def _hook(event, args, _deny=deny, _names=names, _exempt=exempt, _fold=fold, _realpath=realpath,
+                      _base=basename, _isdir=isdir, _fsdecode=fsdecode,
                       _pathlike=pathlike, _sep=sep, _net=_NET, _intro=_INTROSPECT, _fattrs=_FUNC_ATTRS,
                       _nlog=net_log, _rlog=read_log, _str=str, _bytes=bytes, _isinst=isinstance, _any=any, _type=type):
                 if event in _net:
@@ -172,6 +173,7 @@ try:
                     raise PermissionError("Tavotto experiment: rewriting functions is not allowed")
                 if event in ("open", "os.listdir", "os.scandir") and args and _isinst(args[0], (_str, _bytes, _pathlike)):
                     try:
+                        raw = _fold(_fsdecode(args[0]))
                         rp = _fold(_realpath(_fsdecode(args[0])))
                     except Exception:
                         return
@@ -182,14 +184,26 @@ try:
                     if event == "open" and _isdir(rp):
                         _rlog.append(event)
                         raise PermissionError("Tavotto experiment: opening a folder as a file is not allowed")
+                    # 文件名形状（`.env*`、`*.pem`、`id_*`……）与 AI 读取范围同一套规则，只对文件：要的名字与链接指到的名字都看
+                    if event == "open":
+                        for n in (_base(raw), _base(rp)):
+                            if not n.endswith(_exempt) and _any(m(n) for m in _names):
+                                _rlog.append(event)
+                                raise PermissionError("Tavotto experiment: this file looks like it holds credentials and cannot be read")
             return _hook
         # macOS / Windows 的默认文件系统不分大小写：`~/.SSH/id_rsa` 打开的就是 `~/.ssh/id_rsa`，比较前一律 casefold
         _fold = (lambda p, _n=os.path.normcase: _n(p).casefold()) if sys.platform in ("darwin", "win32") else os.path.normcase
+        _spec = json.loads(_strict)
+        # 名字模式装 hook 时就编成正则、只留匹配方法：不经 fnmatch 模块的全局缓存，被执行的代码改模块属性也动不到
+        import fnmatch as _fnm, re as _re
         sys.addaudithook(_make(
-            tuple(_fold(os.path.realpath(p)) for p in json.loads(_strict)), _fold, os.path.realpath, os.path.isdir,
+            tuple(_fold(os.path.realpath(p)) for p in _spec["roots"]),
+            tuple(_re.compile(_fnm.translate(_fold(p))).match for p in _spec["names"]),
+            tuple(_fold(x) for x in _spec["exempt"]),
+            _fold, os.path.realpath, os.path.basename, os.path.isdir,
             os.fsdecode, os.PathLike, os.sep, _blocked_net, _blocked_reads,
         ))
-        del _make, _fold
+        del _make, _fold, _spec, _fnm, _re
     del _strict
     _path0 = os.environ.pop("TAVOTTO_TRIAL_PATH0", None)
     # 两个守卫都装好之后才做 site 初始化：site-packages、.pth、sitecustomize / usercustomize 都在守卫之下执行
@@ -325,8 +339,15 @@ def run_python(
             "TAVOTTO_TRIAL_ENGINE_DIR": str(Path(figcapture.__file__).resolve().parent),
         }
     if strict_deny is not None:
-        # 实验模式（ADR 0197）：断网 + 凭据位置不可读，进程内守卫与操作系统沙盒两层同一份清单
-        extra_env = {**(extra_env or {}), "TAVOTTO_TRIAL_STRICT": json.dumps(list(strict_deny))}
+        # 实验模式（ADR 0197）：断网 + 凭据位置不可读（进程内守卫与操作系统沙盒两层同一份清单）+ 凭据形状的文件名不可读（只在进程内，与 read_file 同一套名字规则）
+        from .readscope import _NAME_EXEMPT_SUFFIX, DENY_NAME_PATTERNS
+
+        strict = {
+            "roots": list(strict_deny),
+            "names": list(DENY_NAME_PATTERNS),
+            "exempt": list(_NAME_EXEMPT_SUFFIX),
+        }
+        extra_env = {**(extra_env or {}), "TAVOTTO_TRIAL_STRICT": json.dumps(strict)}
     if cwd is not None:
         extra_env = {**(extra_env or {}), "TAVOTTO_TRIAL_PATH0": cwd}
     try:
@@ -696,7 +717,7 @@ def _clip(text: str, limit: int = SNIPPET_OUTPUT_CHARS) -> str:
 
 def run_snippet(ctx: FixContext, args: dict) -> ToolResult:
     """在一个环境里跑一小段模型写的 Python，几秒拿结果——AI 的「试错」（ADR 0197）。不改任何东西、不弹卡（维护者 11-19 裁决）：
-    与试跑同一个受保护的子进程（写入绊线 + 禁起进程 + 有就套操作系统沙盒），另加断网、凭据位置不可读、更短的时限；
+    与试跑同一个受保护的子进程（写入绊线 + 禁起进程 + 有就套操作系统沙盒），另加断网、凭据位置与凭据形状的文件不可读、更短的时限；
     当前目录是项目根、项目根在 `sys.path` 上，所以能读项目里的数据、能 import 项目自己的模块，但一个文件都写不进项目。"""
     python = ctx.python_of(args.get("env"))
     if python is None:
@@ -734,7 +755,7 @@ def run_snippet(ctx: FixContext, args: dict) -> ToolResult:
     if res.get("blocked_network"):
         note += "\nblocked_network: experiments cannot use the network"
     if res.get("blocked_reads"):
-        note += "\nblocked_reads: credential locations cannot be read"
+        note += "\nblocked_reads: credential locations and credential-like files cannot be read"
     if res["status"] == "timeout":
         return err("timeout", f"The experiment did not finish within {timeout:g} s.{note}")
     if res["status"] != "ok":

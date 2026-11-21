@@ -362,3 +362,36 @@ def test_the_interpreter_starts_without_code_location_variables(box, monkeypatch
     assert "PYTHONPATH" not in seen and "PYTHONPYCACHEPREFIX" not in seen
     assert seen["TAVOTTO_TRIAL_PYTHONPATH"] == "/somewhere/lib"
     assert seen["TAVOTTO_TRIAL_PYCACHEPREFIX"] == "/somewhere/pyc"
+
+
+# ---------------------------------------------------------------- d2 人工核 #2064：读取范围的名字规则
+@pytest.mark.parametrize(
+    "name", [".env", ".env.local", "x.pem", "deploy.key", "id_ed25519", "token", "secrets.json"]
+)
+def test_credential_like_files_in_the_project_cannot_be_read(box, monkeypatch, name):
+    """`read_file` 按文件名拦的（`.env*`、`*.pem`、`id_*`……）实验里同样读不到：当前目录就是项目根，一句 `open('.env')` 不能绕过。"""
+    _no_os_sandbox(monkeypatch)
+    put(box.proj / name, "SECRET-KEY-MATERIAL")
+    r = call(_ctx(box), "run_snippet", {"env": "e", "code": f"print(open({name!r}).read())"})
+    assert "SECRET-KEY-MATERIAL" not in r.content and "blocked_reads" in r.content, r.content
+
+
+def test_a_link_with_an_innocent_name_to_a_credential_file_is_blocked(box, monkeypatch):
+    _no_os_sandbox(monkeypatch)
+    put(box.proj / "sub" / ".env", "SECRET-KEY-MATERIAL")
+    os.symlink(box.proj / "sub" / ".env", box.proj / "notes.txt")
+    r = call(_ctx(box), "run_snippet", {"env": "e", "code": "print(open('notes.txt').read())"})
+    assert "SECRET-KEY-MATERIAL" not in r.content and "blocked_reads" in r.content, r.content
+
+
+def test_public_keys_and_ordinary_files_stay_readable(box, monkeypatch):
+    _no_os_sandbox(monkeypatch)
+    put(box.proj / "id_rsa.pub", "ssh-ed25519 PUBLIC")
+    put(box.proj / "envelope.csv", "a,b")
+    code = "print(open('id_rsa.pub').read()); print(open('envelope.csv').read())"
+    r = call(_ctx(box), "run_snippet", {"env": "e", "code": code})
+    assert (
+        "ssh-ed25519 PUBLIC" in r.content
+        and "a,b" in r.content
+        and "blocked_reads" not in r.content
+    ), r.content

@@ -27,6 +27,9 @@ Codex 能随手跑一小段代码看结果再决定下一步。`run_command`（A
 - 执行器只有一条：`trial.run_python`（写入根绊线 + 禁起进程 + 有就套操作系统沙盒）。实验另加 `strict_deny`：
   - **断网、凭据位置不可读**：进程内第二个 audit hook 拦 `socket.connect / bind / sendto / sendmsg / getaddrinfo / gethostby*`，
     以及落在硬拦表里的 `open / os.listdir / os.scandir`；清单就是 AI 读取范围的硬拦表（`ReadScope.deny_roots()`，与 `readscope.DENY_HOME_RELATIVE` + Tavotto 自己的密钥文件同源）。
+  - **名字规则同样生效**（d2 人工核 #2064）：`open` 的目标按文件名比对 `readscope.DENY_NAME_PATTERNS`（`.env*`、`*.pem`、`id_*`、`token`……），
+    `_NAME_EXEMPT_SUFFIX`（`.pub`）豁免、只对文件，大小写口径与 `read_file` 的 `_name_denied` 一致；要的名字与符号链接指到的名字都看。
+    否则当前目录就是项目根，一句 `open('.env')` 就绕过了读取范围。模式装 hook 时编成正则、以默认参数捕获，不经 `fnmatch` 的模块缓存。
   - 操作系统沙盒同一份清单：macOS profile 加 `(deny network*)` 与逐条 `(deny file-read* (subpath …))`；bwrap 加 `--unshare-net`，凭据目录盖空 tmpfs、凭据文件盖 `/dev/null`。
     实验口径的沙盒单独探测（`--unshare-net` 在禁了网络命名空间的机器上会失败，失败就退回进程内守卫并标 `os_sandbox: none`）。
   - 当前目录是项目根、项目根在 `sys.path` 上（经环境变量交给守卫前导、用户代码运行前摘掉；不改模型代码，报错行号不偏）：能读项目数据、能 import 项目模块，写不进项目。
@@ -47,6 +50,8 @@ Codex 能随手跑一小段代码看结果再决定下一步。`run_command`（A
 - 有操作系统沙盒时（macOS、可用的 bwrap），断网与拒读由内核按真实路径执行，上面这些写法都碰不到它；进程内守卫只是第二层。
 - C 扩展 / `ctypes` 直接发系统调用绕过进程内拦截（与写入绊线的既有盲区相同）。
 - 进程内的读拦截按「真实路径前缀」判（macOS / Windows 上先 casefold）；硬链接到凭据文件的别名拦不到（有操作系统沙盒的平台由沙盒拦）。
+- 名字规则**只有进程内这一层**：操作系统沙盒按路径前缀拦，不便按文件名拦，所以即使有沙盒，起个无害名字的硬链接、或直接发系统调用，都能读到项目里的 `.env` 一类文件——归入上面已接受的「纯 Python / C 扩展可绕过」。
+  hook 检查与真正 `open` 之间把符号链接换个目标的竞态同属这一类，不另修。
 - 「守卫装好前只从标准库导入」同样作用于试跑的诊断副本与探 import（它们共用这段前导）：当前目录不再在 `sys.path` 上（`run_path` 仍把脚本所在目录放在最前）。
 
 ## 后果
