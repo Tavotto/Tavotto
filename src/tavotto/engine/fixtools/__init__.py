@@ -110,6 +110,12 @@ def _fix_made(tool: str, args: dict) -> tuple[str, dict] | None:
     return None
 
 
+def _same_slot(a: tuple[str, dict], b: tuple[str, dict]) -> bool:
+    if a[0] != b[0]:
+        return False
+    return a[0] != "data_link" or a[1].get("asked") == b[1].get("asked")
+
+
 def run_tool(
     tool: FixTool, ctx: FixContext, args: object, audit: AuditLog | None = None
 ) -> ToolResult:
@@ -168,9 +174,16 @@ def run_tool(
         ctx.changes_attempted += 1
         ctx.changes_since_try.append(tool.name)
     if result.mutated and not result.is_error and isinstance(args, dict):
-        made = _fix_made(tool.name, args)
-        if made is not None:
-            ctx.fixes_made.append(made)
+        if tool.name == "rollback":
+            # 回滚撤掉了快照之后的改动：哪些还生效说不准，宁可都不记（Codex #2100 P2）
+            ctx.fixes_made.clear()
+        else:
+            made = _fix_made(tool.name, args)
+            if made is not None:
+                # 同一种改动后来又改了：只留最后生效的那次（数据指认按「要的路径」各算一条）
+                ctx.fixes_made[:] = [f for f in ctx.fixes_made if _same_slot(f, made) is False] + [
+                    made
+                ]
     # 等用户的那张卡已经有了决定（批准 / 拒绝）：工具这一层与它的 user_wait 说同一句话（审计的 approved_by 不动）
     decided = getattr(ctx, "trace_wait_decision", None)
     ctx.trace_wait_decision = None

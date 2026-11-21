@@ -216,3 +216,64 @@ def test_api_lists_toggles_and_deletes(store, client, monkeypatch):
     assert len(client.delete(f"/api/ai/fix-memory/{a}").get_json()["entries"]) == 1
     assert client.delete("/api/ai/fix-memory/not-an-id").status_code == 400
     assert client.delete("/api/ai/fix-memory").get_json()["entries"] == []
+
+
+# ---------------------------------------------------------------- Codex #2100
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        "import os\nos.environ.update({'API_TOKEN': 'abc123plain'})\nrun_original()\n",
+        "import os\nos.environ.update(API_TOKEN='abc123plain')\nrun_original()\n",
+        'import os\nos.environ["API_TOKEN"] = """abc123plain"""\nrun_original()\n',
+        "import os\nos.environ.setdefault('API_TOKEN', 'abc123plain')\nprint('abc123plain')\nrun_original()\n",
+        "import os\nos.putenv('DB_PASSWORD', 'abc123plain')\nrun_original()\n",
+        "import os\nos.environ['API_TOKEN'] = 'abc123' 'plain'\nrun_original()\n",  # 拼接：抹不干净就整段不记
+        "import os\nos.environ['API_TOKEN'] = 'abc123plain'\nrun_original(\n",  # 解析不了：正文不记，值照样从别的字段抹掉
+    ],
+)
+def test_credential_values_never_reach_the_disk_in_any_spelling(store, launcher):
+    fixmemory.remember(
+        "env_var_missing",
+        [("launcher", {"text": launcher}), ("run_args", {"args": ["--token", "abc123plain"]})],
+    )
+    raw = store.read_text(encoding="utf-8") if store.exists() else ""
+    assert "abc123plain" not in raw and "abc123" not in raw.replace("abc123plain", "")
+
+
+def test_expired_notes_are_really_deleted_from_disk(store):
+    fixmemory.remember(
+        "missing_input",
+        [("data_link", {"asked": "old.csv", "linked": "x"})],
+        now=time.time() - 91 * DAY,
+    )
+    assert "old.csv" in store.read_text(encoding="utf-8")
+    assert fixmemory.entries() == []
+    assert not store.exists() or "old.csv" not in store.read_text(encoding="utf-8")
+
+
+def test_only_the_change_still_in_effect_is_kept(box):
+    from tavotto.engine.fixtools import _fix_made, _same_slot
+
+    ctx = make_ctx(box)
+    for argv in (["--a"], ["--b"]):
+        made = _fix_made("set_run_arguments", {"argv": argv})
+        ctx.fixes_made[:] = [f for f in ctx.fixes_made if not _same_slot(f, made)] + [made]
+    assert ctx.fixes_made == [("run_args", {"args": ["--b"]})]
+
+
+def test_a_rollback_forgets_the_pending_fixes(box):
+    from tavotto.engine.fixtools import REGISTRY, run_tool
+    from tavotto.engine.fixtools.base import ok
+
+    ctx = make_ctx(box)
+    ctx.fixes_made = [("run_args", {"args": ["--a"]})]
+
+    def fake(_ctx, _args):
+        r = ok("Rolled back", "rolled back")
+        r.mutated = True
+        return r
+
+    import dataclasses
+
+    run_tool(dataclasses.replace(REGISTRY["rollback"], handler=fake), ctx, {"snapshot": "snap_x"})
+    assert ctx.fixes_made == []

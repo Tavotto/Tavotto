@@ -14,6 +14,7 @@ AI 修复**真修好**一次（应用试运行通过 + `finish` 报 fixed）之�
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -35,8 +36,10 @@ KINDS = ("run_args", "launcher", "data_link", "execution")
 
 #: 变量名像凭据：只记名字、不记值
 _SECRETISH = re.compile(r"(KEY|TOKEN|SECRET|PASSW|PASSWD|CREDENTIAL|AUTH|COOKIE|SESSION)", re.I)
-_ENV_SET = re.compile(
-    r"""os\.environ(?:\.setdefault\(\s*|\[\s*)(['"])([A-Za-z_][A-Za-z0-9_]*)\1(?:\s*,\s*|\s*\]\s*=\s*)(['"])(.*?)\3""",
+#: 解析不了的启动脚本里「像凭据的名字 + 引号里的值」的宽松写法（只用来抹别的字段，不用来记）
+_LOOSE_SECRET = re.compile(
+    r"""[A-Za-z_]*(?:KEY|TOKEN|SECRET|PASSW|CREDENTIAL|AUTH|COOKIE|SESSION)[A-Za-z0-9_]*['"]?\s*[\],:=)]?\s*[,=:]?\s*(['"]{1,3})(.+?)\1""",
+    re.I,
 )
 
 _LOCK = threading.Lock()
@@ -87,9 +90,20 @@ def _fresh(rows: list[dict], now: float) -> list[dict]:
 
 
 def entries(path: Path | None = None) -> list[dict]:
+    """读的时候顺手把过期 / 超额的真删掉并写回：隐私说明写的是「90 天没用到就删」，不是只在界面上藏起来（Codex #2100 P2）。"""
     path = path or default_path()
     with _LOCK:
-        return _fresh(_load(path), time.time())
+        rows = _load(path)
+        kept = _fresh(rows, time.time())
+        if len(kept) != len(rows):
+            try:
+                if kept:
+                    _save(path, kept)
+                else:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return kept
 
 
 def delete(entry_id: str, path: Path | None = None) -> bool:
@@ -127,28 +141,102 @@ def _tidy(text: str, limit: int, scrub: Callable[[str], str] = _default_scrub) -
     return text if len(text) <= limit else text[:limit] + "…"
 
 
-def _launcher_fields(text: str, scrub: Callable[[str], str] = _default_scrub) -> dict:
-    """启动脚本正文 + 从中认出的环境变量（像凭据的只留名字）。"""
+def _str(node: ast.AST | None) -> str | None:
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+
+def _is_environ(node: ast.AST) -> bool:
+    return (
+        isinstance(node, (ast.Attribute, ast.Name))
+        and ast.unparse(node).split(".")[-1] == "environ"
+    )
+
+
+def _env_sets(tree: ast.AST) -> list[tuple[str, str | None]]:
+    """启动脚本里设环境变量的每一处（按 Python 语法认，不靠正则）：`os.environ[k] = v`、`os.environ.setdefault(k, v)`、
+    `os.environ.update({k: v} / k=v)`、`os.putenv(k, v)`。值不是字面量的记 None（名字照记）。"""
+    out: list[tuple[str, str | None]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if (
+                    isinstance(t, ast.Subscript)
+                    and _is_environ(t.value)
+                    and _str(t.slice) is not None
+                ):
+                    out.append((_str(t.slice), _str(node.value)))
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            attr, owner = node.func.attr, node.func.value
+            first = _str(node.args[0]) if node.args else None
+            second = _str(node.args[1]) if len(node.args) > 1 else None
+            if attr == "setdefault" and _is_environ(owner) and first is not None:
+                out.append((first, second))
+            elif attr == "putenv" and first is not None:
+                out.append((first, second))
+            elif attr == "update" and _is_environ(owner):
+                for arg in node.args:
+                    if isinstance(arg, ast.Dict):
+                        for k, v in zip(arg.keys, arg.values):
+                            if _str(k) is not None:
+                                out.append((_str(k), _str(v)))
+                for kw in node.keywords:
+                    if kw.arg:
+                        out.append((kw.arg, _str(kw.value)))
+    return out
+
+
+def launcher_secrets(text: str) -> set[str]:
+    """启动脚本里像凭据的变量被设成的字面值（同一会话别的字段也按它抹）。解析不了回空集——那时正文整个不记。"""
+    try:
+        tree = ast.parse(text or "")
+    except (SyntaxError, ValueError):
+        # 解析不了：正文本来就不记；值按宽松写法认出来，同一会话别的字段照样抹
+        return {m.group(2) for m in _LOOSE_SECRET.finditer(text or "") if m.group(2)}
+    return {v for k, v in _env_sets(tree) if v and _SECRETISH.search(k)}
+
+
+def _mask(text: str, secrets: set[str] | frozenset[str]) -> str:
+    for v in sorted(secrets, key=len, reverse=True):
+        text = text.replace(v, "…")
+    return text
+
+
+def _still_leaks(text: str, secrets: set[str]) -> bool:
+    """抹过之后按语法再看一遍：任何字符串字面量里还带着秘密（转义、拼接写法）就算漏；解析不了也算漏。"""
+    if not secrets:
+        return False
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return True
+    return any(
+        isinstance(n, ast.Constant)
+        and isinstance(n.value, str)
+        and any(v in n.value for v in secrets)
+        for n in ast.walk(tree)
+    )
+
+
+def _launcher_fields(
+    text: str, scrub: Callable[[str], str] = _default_scrub, secrets: frozenset[str] = frozenset()
+) -> dict:
+    """启动脚本正文 + 从中认出的环境变量（像凭据的只留名字）。正文里秘密值出现的每一处都抹成 `…`；抹不干净（转义、
+    拼接写法）或者解析不了，正文整个不记、只留变量（Codex #2100 P1）。"""
+    try:
+        tree = ast.parse(text or "")
+    except (SyntaxError, ValueError):
+        return {"env": [], "text": ""}
+    found = set(secrets) | launcher_secrets(text)
     env: list[dict] = []
-    for m in _ENV_SET.finditer(text or ""):
-        name, value = m.group(2), m.group(4)
-        env.append(
-            {
-                "name": name,
-                **(
-                    {} if _SECRETISH.search(name) else {"value": _tidy(value, ARG_MAX_CHARS, scrub)}
-                ),
-            }
-        )
-    body = text or ""
-    for item in env:
-        if "value" not in item:  # 正文里同一个值也抹掉
-            body = re.sub(
-                rf"""(os\.environ(?:\.setdefault\(\s*|\[\s*)(['"]){re.escape(item["name"])}\2(?:\s*,\s*|\s*\]\s*=\s*))(['"]).*?\3""",
-                r"\1\3…\3",
-                body,
-            )
-    return {"env": env[:10], "text": _tidy(body, TEXT_MAX_CHARS, scrub)}
+    for name, value in _env_sets(tree)[:10]:
+        item: dict = {"name": name}
+        if value is not None and not _SECRETISH.search(name):
+            item["value"] = _tidy(_mask(value, found), ARG_MAX_CHARS, scrub)
+        env.append(item)
+    body = _mask(text or "", found)
+    if _still_leaks(body, found):
+        body = ""
+    return {"env": env, "text": _tidy(body, TEXT_MAX_CHARS, scrub) if body else ""}
 
 
 def fields_for(
@@ -157,25 +245,34 @@ def fields_for(
     *,
     sensitive_args: bool = False,
     scrub: Callable[[str], str] = _default_scrub,
+    secrets: frozenset[str] = frozenset(),
 ) -> dict | None:
-    """一次改动（调用方给的真实参数）→ 要记的字段；不该记就回 None。"""
+    """一次改动（调用方给的真实参数）→ 要记的字段；不该记就回 None。`secrets`：同一会话启动脚本里认出的凭据值，
+    别的字段里出现也抹掉。"""
+
+    def clean(value: object, limit: int) -> str:
+        return _tidy(_mask(str(value), secrets), limit, scrub)
+
     if kind == "run_args":
         if sensitive_args:
             return None
         args = change.get("args")
         if not isinstance(args, list) or not args:
             return None
-        return {"args": [_tidy(a, ARG_MAX_CHARS, scrub) for a in args[:20]]}
+        return {"args": [clean(a, ARG_MAX_CHARS) for a in args[:20]]}
     if kind == "launcher":
         text = change.get("text")
-        return _launcher_fields(text, scrub) if isinstance(text, str) and text.strip() else None
+        if not isinstance(text, str) or not text.strip():
+            return None
+        fields = _launcher_fields(text, scrub, secrets)
+        return fields if fields["text"] or fields["env"] else None
     if kind == "data_link":
         asked, linked = change.get("asked"), change.get("linked")
         if not asked or not linked:
             return None
         return {
-            "asked": _tidy(asked, ARG_MAX_CHARS, scrub),
-            "linked": _tidy(linked, ARG_MAX_CHARS, scrub),
+            "asked": clean(asked, ARG_MAX_CHARS),
+            "linked": clean(linked, ARG_MAX_CHARS),
         }
     if kind == "execution":
         mode = change.get("mode")
@@ -202,8 +299,16 @@ def remember(
     try:
         with _LOCK:
             rows = _load(path)
+            secrets = frozenset(
+                v
+                for kind, change in changes
+                if kind == "launcher" and isinstance((change or {}).get("text"), str)
+                for v in launcher_secrets(change["text"])
+            )
             for kind, change in changes:
-                fields = fields_for(kind, change or {}, sensitive_args=sensitive_args, scrub=scrub)
+                fields = fields_for(
+                    kind, change or {}, sensitive_args=sensitive_args, scrub=scrub, secrets=secrets
+                )
                 if fields is None:
                     continue
                 key = hashlib.sha256(
