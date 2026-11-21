@@ -132,16 +132,48 @@ def test_malformed_requests_do_not_open_a_task(client, gw):
     assert gw.calls == []
 
 
-def test_an_own_key_wins_and_the_gateway_is_never_touched(
+def test_hosted_goes_first_even_when_an_own_key_exists(
     client, tmp_path, fake_pool, sessions, monkeypatch, gw
 ):
     _root, _pj, report = _create_ready(client, tmp_path)
+    seen: list[dict] = []
     connect(monkeypatch, Scripted([("finish", {"outcome": "not_fixed", "summary": "x"})]))
-    fid = client.post(
+    use_model(monkeypatch, Scripted([("finish", {"outcome": "not_fixed", "summary": "x"})]), seen)
+    body = client.post(
         "/api/ai/fix", json={"session_id": report["session_id"], "script": "fig.py"}
-    ).get_json()["fix_id"]
-    poll(client, fid, lambda b: b["state"] == "finished")
-    assert gw.calls == []
+    ).get_json()
+    poll(client, body["fix_id"], lambda b: b["state"] == "finished")
+    assert gw.kinds() == ["fix"] and seen[0]["api_key"] == TASK_TOKEN
+    assert "hosted_fallback" not in body
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "info"),
+    [
+        (402, "quota_exhausted", True),
+        (402, "daily_limit", True),
+        (403, "not_entitled", False),
+        (503, "paused", False),
+    ],
+)
+def test_open_failure_falls_back_to_the_own_key_and_only_quota_is_surfaced(
+    client, tmp_path, fake_pool, sessions, monkeypatch, gw, status, code, info
+):
+    _root, _pj, report = _create_ready(client, tmp_path)
+    seen: list[dict] = []
+    connect(monkeypatch, Scripted())
+    use_model(monkeypatch, Scripted([("finish", {"outcome": "not_fixed", "summary": "x"})]), seen)
+    gw.script.append(err(status, code, retry_at=TOMORROW_MS))
+    body = client.post(
+        "/api/ai/fix", json={"session_id": report["session_id"], "script": "fig.py"}
+    ).get_json()
+    assert body["ok"] is True
+    poll(client, body["fix_id"], lambda b: b["state"] == "finished")
+    assert seen[0]["api_key"] != TASK_TOKEN  # 退到了自己的 Key
+    assert ("hosted_fallback" in body) is info
+    if info:
+        assert body["hosted_fallback"] == {"reason": code, "retry_at": TOMORROW_MS}
+    assert "/v1/task/close" not in gw.paths()
 
 
 def test_a_second_fix_on_the_same_prep_session_closes_the_extra_task(

@@ -11375,7 +11375,8 @@ def api_ai_fix():
         abort(400)
     conn = engine_fixsession.connection()
     cli_agent = engine_fixsession.cli_agent() if conn is None else None
-    if conn is None and cli_agent is None and not engine_hosted_ai.available():
+    hosted_on = engine_hosted_ai.available()
+    if conn is None and cli_agent is None and not hosted_on:
         return jsonify({"ok": False, "reason": "ai_fix_unavailable"})
     ctx = current_ctx()
     try:
@@ -11394,18 +11395,25 @@ def api_ai_fix():
         return _fix_error(engine_fixsession.FixError("fix_script_outside_project", 400))
     script_path = Path(cand) if os.path.isfile(cand) else None
     fix_box = {"sess": sess}
-    # 没有自己的 Key、也没有可用的 CLI：最后兜底用「Tavotto Agent」（内置 AI，ADR 0200）。开任务（联网一次）放在所有本地校验**之后**，
-    # 这样畸形请求不会白开一个任务；开不成 = 一个安静的结果（前端给「改用我自己的 key」/「X 号再试」两条路），不是错误
+    # 「Tavotto Agent」（内置 AI，ADR 0200）可用时**排第一**（维护者 2026-11-21），在自己的 Key、CLI 之前。开任务（联网一次）放在所有本地校验
+    # **之后**，畸形请求不会白开一个任务。开不成：有下一个可用的连接就静默退到它（只有因额度退的才在响应里带 `hosted_fallback`，前端说一句）；
+    # 一个退路都没有 = 一个安静的结果（前端给「改用我自己的 key」/「X 号再试」），不是错误
     lease = None
     fix_limits = None
-    if conn is None and cli_agent is None:
+    fallback_info = None
+    if hosted_on:
         lease = engine_hosted_ai.lease("fix")
-        if not lease.ok:
-            return jsonify(
-                {"ok": False, "reason": "ai_hosted_unavailable", "hosted": lease.error.public()}
-            )
-        conn = lease.conn()
-        fix_limits = engine_fixsession.hosted_limits(lease)
+        if lease.ok:
+            conn, cli_agent = lease.conn(), None
+            fix_limits = engine_fixsession.hosted_limits(lease)
+        else:
+            err, lease = lease.error, None
+            if conn is None and cli_agent is None:
+                return jsonify(
+                    {"ok": False, "reason": "ai_hosted_unavailable", "hosted": err.public()}
+                )
+            if err.code in ("quota_exhausted", "daily_limit"):
+                fallback_info = err.public()
     if conn is not None:
         model, redactor = engine_fixsession.build_model(conn)
         cli = None
@@ -11451,7 +11459,13 @@ def api_ai_fix():
         raise
     if lease is not None and fx.on_finish != lease.close:
         lease.close()  # 没挂上这次的任务（同一个准备会话上已有进行中的修复，start 回了现成的；或已收尾）：关掉，幂等
-    return jsonify({"ok": True, "fix_id": fx.id})
+    return jsonify(
+        {
+            "ok": True,
+            "fix_id": fx.id,
+            **({"hosted_fallback": fallback_info} if fallback_info else {}),
+        }
+    )
 
 
 @app.get("/api/ai/fix/<fix_id>")

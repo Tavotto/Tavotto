@@ -720,10 +720,10 @@ def _available_connection() -> dict | None:
 
         if ai_connections.builtin_forced() is False:
             return None
-        # 自己的 Key 优先；都没有时「Tavotto Agent」（内置 AI，占位，真发请求前由 `ai_structured` 开任务）兜底
-        return ai_connections.first_key_connection(refresh=False) or ai_providers.builtin_conn(
+        # 「Tavotto Agent」（内置 AI，占位，真发请求前开任务）排第一；没有它才看自己的 Key
+        return ai_providers.builtin_conn(
             hosted_ai.virtual_record()
-        )
+        ) or ai_connections.first_key_connection(refresh=False)
     except Exception:  # noqa: BLE001 - 探测失败 = 没有
         return None
 
@@ -913,9 +913,13 @@ def judge(
         )  # 预算 0 = 不联网刷新，只做本地挑选
         if hosted_ai.needs_task(conn):
             lease = hosted_ai.lease("data_roles")
-            if not lease.ok:
-                return ("failed", hosted_ai.structured_reason(lease.error))
-            extra = {"conn": lease.conn()}
+            if lease.ok:
+                extra = {"conn": lease.conn()}
+            else:
+                own = ai_structured.fallback_connection()  # 静默退到自己的 Key
+                if own is None:
+                    return ("failed", hosted_ai.structured_reason(lease.error))
+                extra = {"conn": own}
     try:
         return _judge(entry, values, hint, data_path=data_path, job=job, call=call, extra=extra)
     finally:

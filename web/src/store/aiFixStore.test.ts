@@ -102,6 +102,15 @@ describe('开始', () => {
     useUiStore.getState().setStatus(null)
   })
 
+  it('内置 AI 因额度没开成、后端已静默退到别的连接：修复照常 running，只多一句状态胶囊', async () => {
+    vi.mocked(requestAiFix).mockResolvedValue({ ok: true, fix_id: 'fx_1', hosted_fallback: { reason: 'quota_exhausted', retry_at: null } })
+    vi.mocked(fetchAiFix).mockResolvedValue(state({}))
+    await useAiFixStore.getState().startAiFix(KEY, REF)
+    expect(entry()?.phase).toBe('running')
+    expect(useUiStore.getState().status).toMatchObject({ key: 'hosted.quota', ns: 'ai' })
+    useUiStore.getState().setStatus(null)
+  })
+
   it('capabilities 说不可用：不发请求，直接 unavailable', async () => {
     useAiStore.setState({ caps: { agents: [], ai_fix_available: false } as never })
     await useAiFixStore.getState().startAiFix(KEY, REF)

@@ -95,6 +95,8 @@ describe('Tavotto Agent 在连接弹窗里的一行', () => {
 
   it('没有 Key 表单：只有一句话说明和一个「使用」', async () => {
     await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
+    useAiStore.setState({ connection: 'deepseek' })
+    await act(async () => {})
     const r = row(HOSTED_AI_ID)
     expect(r.querySelector('input')).toBeNull()
     expect(r.querySelector('[data-connect-action="key"]')).toBeNull()
@@ -104,8 +106,11 @@ describe('Tavotto Agent 在连接弹窗里的一行', () => {
 
   it('点「使用」= 选中这条连接并关闭弹窗，像选任何一条连接', async () => {
     let connected = 0
+    useAiStore.setState({ connection: 'deepseek' })
     await render(<ConnectAiDialog open list="all" onClose={() => {}} onConnected={() => (connected += 1)} />)
     expect(effectiveConnection(useAiStore.getState().connection, useAiStore.getState().caps)?.id).toBe('deepseek')
+    // 没有首选时 Tavotto Agent 排第一（维护者 2026-11-21）
+    expect(effectiveConnection(null, useAiStore.getState().caps)?.id).toBe(HOSTED_AI_ID)
     await click(row(HOSTED_AI_ID).querySelector('[data-connect-action="hosted"]')!)
     expect(useAiStore.getState().connection).toBe(HOSTED_AI_ID)
     expect(connected).toBe(1)

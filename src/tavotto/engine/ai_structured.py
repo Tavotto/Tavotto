@@ -175,13 +175,13 @@ def resolve_connection(budget_s: float | None = None) -> tuple[dict | None, str,
     budget = DEFAULT_LIMITS.timeout_s if budget_s is None else budget_s
     if ai_connections.builtin_forced() is False:
         return None, "no_connection", "builtin_disabled"
+    # 「Tavotto Agent」（内置 AI）可用时排第一（维护者 2026-11-21）：拿到的是还没开任务的占位（`hosted_ai.needs_task`），真发请求前由 `_call`
+    # 开任务；开不成时 `_call` 静默退到下面那条自己的 Key
+    hosted = ai_providers.builtin_conn(hosted_ai.virtual_record())
+    if hosted is not None:
+        return hosted, "", ""
     conn = ai_connections.first_key_connection(refresh=False)
     if conn is None:
-        # 自己的 Key 都没有：有「Tavotto Agent」（内置 AI）就用它——订阅登录（CLI）没有单次调用入口，这里反而比它有用。
-        # 拿到的是还没开任务的占位（`hosted_ai.needs_task`），真发请求前由 `_call` 开任务
-        hosted = ai_providers.builtin_conn(hosted_ai.virtual_record())
-        if hosted is not None:
-            return hosted, "", ""
         if fixsession.cli_agent() is not None:
             return None, "unsupported_connection", "cli_only"
         return None, "no_connection", "none"
@@ -199,6 +199,13 @@ def resolve_connection(budget_s: float | None = None) -> tuple[dict | None, str,
             if fresh is not None:
                 conn = fresh
     return conn, "", ""
+
+
+def fallback_connection() -> dict | None:
+    """内置 AI 开不成任务时的退路：自己的 Key 连接（不联网刷新）；没有 = None（订阅登录没有单次调用入口）。"""
+    from . import ai_connections
+
+    return ai_connections.first_key_connection(refresh=False)
 
 
 def _effort_kwargs(conn: dict, effort: str | None) -> dict:
@@ -301,6 +308,11 @@ def _call(
     # 开不成 = 安静的失败结局（调用方本来就静默退回规则结果），不抛、不卡
     lease = hosted_ai.lease("data_roles")
     if not lease.ok:
+        own = fallback_connection()
+        if own is not None:  # 静默退到自己的 Key
+            return _call_with_conn(
+                system, user, validate, limits, own, post, t0, max_requests, effort
+            )
         return StructuredResult(
             False,
             reason=hosted_ai.structured_reason(lease.error),

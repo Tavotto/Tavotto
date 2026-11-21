@@ -227,6 +227,8 @@ export const useAiFixStore = create<AiFixStoreState>((set, get) => {
           return
         }
         if (res.ok) {
+          // 内置 AI 因额度没开成、已静默退到别的连接：只说一句（不挡），修复照常跑
+          if (res.hosted_fallback) announceHostedFailure(hostedFailureOfFix({ reason: 'ai_hosted_unavailable', hosted: res.hosted_fallback })!)
           setPhase('running', { fixId: res.fix_id, pj: guard.pj ?? undefined })
           schedule(key)
           void get().refresh(key)

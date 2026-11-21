@@ -503,8 +503,8 @@ def test_builtin_usable_with_only_the_hosted_connection(gw):
     assert ai_connections.builtin_usable() is False
 
 
-def test_first_key_connection_never_picks_the_hosted_one_so_own_keys_always_win(gw):
-    """隐式路径（修复 / 数据出图）里自己的 Key 优先；内置 AI 只在什么都没有时兜底（`fixsession` / `ai_structured` 里各自接）。"""
+def test_first_key_connection_never_picks_the_hosted_one_it_is_the_callers_first_choice(gw):
+    """`first_key_connection` 只管自己的 Key；内置 AI 在隐式路径（修复 / 数据出图）里由调用方放在最前，开不成时退到这里。"""
     assert ai_connections.first_key_connection(refresh=True) is None
     ai_providers.save(
         {
@@ -518,8 +518,10 @@ def test_first_key_connection_never_picks_the_hosted_one_so_own_keys_always_win(
     )
     conn = ai_connections.first_key_connection()
     assert conn is not None and conn["provider_id"] == "mine" and "hosted" not in conn
+    # 隐式路径里「Tavotto Agent」排第一（维护者 2026-11-21）：占位连接，真发请求前开任务；开不成静默退到自己的 Key
     conn2, why, _ = ai_structured.resolve_connection(0.0)
-    assert conn2["provider_id"] == "mine" and why == ""
+    assert hosted_ai.needs_task(conn2) and why == ""
+    assert ai_structured.fallback_connection()["provider_id"] == "mine"
 
 
 # ---------------------------------------------------------------------------
@@ -1090,3 +1092,51 @@ def test_license_changes_refresh_the_capabilities_cache(gw, monkeypatch):
     fresh = [c["id"] for c in client.get("/api/ai/capabilities").get_json()["connections"]]
     assert hosted_ai.PROVIDER_ID not in fresh
     ai_bridge.invalidate_capabilities()
+
+
+def _own_key():
+    ai_providers.save(
+        {
+            "id": "mine",
+            "label": "mine",
+            "agent": "claude",
+            "base_url": "https://api.example.com",
+            "api_key": "sk-test-1234567890",
+            "default_model": "m1",
+        }
+    )
+
+
+def test_data_roles_prefers_hosted_over_an_own_key_and_uses_the_pass(gw):
+    _own_key()
+    post = FakePost([_ok_reply()])
+    res = ai_structured.call_structured(system="S", user="U", validate=_validate, post=post)
+    assert res.ok and post.calls[0]["headers"]["x-api-key"] == TASK_TOKEN
+    assert gw.kinds() == ["data_roles"]
+
+
+@pytest.mark.parametrize("code", ["quota_exhausted", "daily_limit", "not_entitled", "paused"])
+def test_data_roles_falls_back_silently_to_the_own_key_when_the_task_cannot_open(gw, code):
+    _own_key()
+    gw.script.append(err(402 if "quota" in code or "daily" in code else 403, code))
+    post = FakePost([_ok_reply()])
+    res = ai_structured.call_structured(system="S", user="U", validate=_validate, post=post)
+    assert res.ok and post.calls[0]["headers"]["x-api-key"] == "sk-test-1234567890"
+    assert "/v1/task/close" not in gw.paths()
+
+
+def test_a_judge_falls_back_to_the_own_key_when_the_task_cannot_open(gw, monkeypatch):
+    from tavotto.engine import ai_data_roles
+
+    convs = []
+
+    def fake_call(**kw):
+        convs.append(kw.get("conn"))
+        return ai_structured.StructuredResult(False, reason="invalid_output", detail="x")
+
+    _own_key()
+    monkeypatch.setattr(ai_data_roles, "build_request", lambda *a, **k: ("S", "U"))
+    monkeypatch.setattr(ai_structured, "call_structured", fake_call)
+    gw.script.append(err(402, "quota_exhausted"))
+    ai_data_roles.judge(object(), object(), None, data_path=None)
+    assert [c["provider_id"] for c in convs] == ["mine"]

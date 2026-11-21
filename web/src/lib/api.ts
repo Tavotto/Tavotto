@@ -3941,7 +3941,8 @@ export const effectiveConnection = (
   caps: AiCapabilities | null | undefined,
 ): AiConnection | null => {
   const list = readyConnections(caps)
-  return list.find((c) => c.id === preferred) ?? list[0] ?? null
+  // 没有（可用的）首选时，「Tavotto Agent」（内置 AI）排第一（维护者 2026-11-21），再是后端给的顺序
+  return list.find((c) => c.id === preferred) ?? list.find((c) => c.hosted) ?? list[0] ?? null
 }
 
 /** 连接对应的内部执行器家族（只用于旧字段 `agent`；builtin 路由没有） */
@@ -3968,7 +3969,7 @@ export const sortVendors = (vendors: AiVendor[], cnFirst: boolean): AiVendor[] =
 
 /** `POST /api/ai/fix` 的响应：成功给修复会话 id；`ok: false` + 稳定原因码（`ai_fix_unavailable` 没有可用的 API 连接 / `ai_fix_busy` 已有别的修复在跑） */
 export type AiFixResponse =
-  | { ok: true; fix_id: string }
+  | { ok: true; fix_id: string; /** 内置 AI 因额度没开成、静默退到了别的连接（只有这种才带） */ hosted_fallback?: { reason: string; retry_at: number | null } }
   | { ok: false; reason: string; /** `ai_hosted_unavailable` 时：「Tavotto Agent」没能开任务的闭集原因（`lib/hostedAi.ts`） */ hosted?: { reason: string; retry_at: number | null } }
 
 /** 请求 AI 环境修复（ADR 0148 / 0149）。body：准备会话 id 与脚本（项目相对路径）；带上界面语言，AI 写给用户的话用它 */
