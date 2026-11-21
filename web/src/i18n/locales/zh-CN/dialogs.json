@@ -1494,7 +1494,46 @@
       "viewGuide": "查看使用指南",
       "defaultLabel": "默认助手",
       "defaultNone": "没有可用的助手",
-      "convertUnsandboxed": "转换时允许 AI 不受沙盒限制"
+      "convertUnsandboxed": "转换时允许 AI 不受沙盒限制",
+      "fixMemory": {
+        "label": "记住修好的做法",
+        "help": "修好脚本后，在本机记下这次的做法；别的项目遇到同类问题时可直接参考。只存在本机，不上传，也不进诊断包。",
+        "count_other": "已记住 {{count}} 条",
+        "none": "还没有记住的做法",
+        "view": "查看",
+        "title": "记住的做法",
+        "clearAll": "全部删除",
+        "delete": "删除这条",
+        "meta_other": "{{date}} · 用过 {{count}} 次",
+        "launcherText": "查看脚本",
+        "kind": {
+          "run_args": "传入运行参数 {{args}}",
+          "launcher": "加启动脚本",
+          "launcherEnv": "启动脚本里设 {{env}}",
+          "data_link": "把 {{asked}} 指到 {{linked}}",
+          "execution": "改用{{mode}}运行"
+        },
+        "mode": {
+          "safe": "安全模式",
+          "native": "本机 Python"
+        },
+        "shape": {
+          "env_var_missing": "缺环境变量",
+          "script_needs_arguments": "需要命令行参数",
+          "script_needs_input": "等待键盘输入",
+          "input_eof": "等待键盘输入",
+          "missing_input": "找不到数据文件",
+          "relative_import": "相对导入失败",
+          "no_figure_captured": "没画出图",
+          "script_is_library": "只定义了函数",
+          "missing_dependency": "缺少包",
+          "script_uses_gui_dialog": "会弹文件对话框",
+          "safe_file_operation_blocked": "安全模式拦下了文件操作",
+          "other": "其他问题"
+        },
+        "clearBody_other": "删掉全部 {{count}} 条？删了找不回。",
+        "cancel": "取消"
+      }
     },
     "canvas": {
       "companionsExplain": "关联元素是手动摆过位置的标题、轴标签、图例，以及色条轴与 twinx 孪生轴。不带它们，挪动子图时会留在原地；关掉则只动子图本身。",

@@ -2570,6 +2570,45 @@ export default interface Resources {
           "regionGlobal": "海外",
           "requiredAria": "必填"
         },
+        "fixMemory": {
+          "cancel": "取消",
+          "clearAll": "全部删除",
+          "clearBody_other": "删掉全部 {{count}} 条？删了找不回。",
+          "count_other": "已记住 {{count}} 条",
+          "delete": "删除这条",
+          "help": "修好脚本后，在本机记下这次的做法；别的项目遇到同类问题时可直接参考。只存在本机，不上传，也不进诊断包。",
+          "kind": {
+            "data_link": "把 {{asked}} 指到 {{linked}}",
+            "execution": "改用{{mode}}运行",
+            "launcher": "加启动脚本",
+            "launcherEnv": "启动脚本里设 {{env}}",
+            "run_args": "传入运行参数 {{args}}"
+          },
+          "label": "记住修好的做法",
+          "launcherText": "查看脚本",
+          "meta_other": "{{date}} · 用过 {{count}} 次",
+          "mode": {
+            "native": "本机 Python",
+            "safe": "安全模式"
+          },
+          "none": "还没有记住的做法",
+          "shape": {
+            "env_var_missing": "缺环境变量",
+            "input_eof": "等待键盘输入",
+            "missing_dependency": "缺少包",
+            "missing_input": "找不到数据文件",
+            "no_figure_captured": "没画出图",
+            "other": "其他问题",
+            "relative_import": "相对导入失败",
+            "safe_file_operation_blocked": "安全模式拦下了文件操作",
+            "script_is_library": "只定义了函数",
+            "script_needs_arguments": "需要命令行参数",
+            "script_needs_input": "等待键盘输入",
+            "script_uses_gui_dialog": "会弹文件对话框"
+          },
+          "title": "记住的做法",
+          "view": "查看"
+        },
         "install": {
           "action": "用 npm 安装 {{name}}",
           "confirmAction": "开始安装",
