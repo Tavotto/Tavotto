@@ -16,6 +16,14 @@
 组一个**临时**连接——不读、不写应用配置与 provider 存储（数据 / 配置目录指到临时目录），不落盘；key 文件权限必须是仅本人可读写（600，比这宽就拒绝），
 key 不出现在 stdout / stderr / 报告 / 错误文字里（输出流与报告统一做一遍替换）。`--key-file` 只能和 `--real` 同用，仍然强制 `--max-calls`。
 
+**`--suite roles` 的统计口径**（`--repeats N` 每条用例跑 N 次；每次都用独立的空缓存目录并清负缓存，所以重复跑每次都真的再问一次模型，不读不写应用缓存）：
+* **完成** = 模型任务 `state == ready`，且并进建议后的默认横轴 / 纵轴 / 分组与标准答案（或用例的 `also_ok`）三项全部一致。没起任务 / 失败都不算。
+* 报：整体完成率、每条用例 N 次里对几次、「N 次全对的用例占比」、不比规则差的比例（没有出现「规则本来对、模型改错」）与「改坏规则本来对的」次数 / 用例（任何用例集都算）。
+* 每次调用记耗时（p50 / p95 / 最大值；另给每张表的合计）、请求数、输入 / 输出 / 命中缓存的输入 token、估价、**每张表平均花费**（一次运行 = 一张表）。
+* `--cases main|holdout|all`：用例集。`main` 是调提示词时用过的 22 条（已被调优污染，只当回归）；`holdout` 是留出的 24 条（标准答案先写定，不许据它改提示词）；`all` 两者合并。
+* `--arm rules` 另输出「规则已经很确定就不问模型」的门（严 / 中 / 松三个版本）：各跳过几条、被跳过的里规则实际错了几条（硬指标：必须 0）。**只测量，没有接进产品。**
+* `--real` 的请求数上限不得少于 用例数 × 2 × N。
+
 用法：
     python scripts/dev/data_figure_bench.py [--fake good|trap|mixed] [--wire anthropic|openai-chat|openai-responses] [--only DF-01,DF-02] [--out report.json]
     python scripts/dev/data_figure_bench.py --real --max-calls 28 [--only ...] [--out report.json]
@@ -78,9 +86,25 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
         "--fake", choices=("good", "trap", "mixed"), default="good", help="假回答模式（默认模式）"
     )
     p.add_argument("--wire", choices=("anthropic", "openai-chat", "openai-responses"), default=None)
+    p.add_argument(
+        "--cases",
+        choices=("main", "holdout", "all"),
+        default="main",
+        help="仅 --suite roles：用例集（main 22 条已被调优污染只当回归；holdout 24 条留出集；all 两者合并）",
+    )
+    p.add_argument(
+        "--repeats",
+        type=int,
+        default=1,
+        help="仅 --suite roles：每条用例跑 N 次（每次独立空缓存）；--real 的 --max-calls 至少 用例数 × 2 × N",
+    )
     p.add_argument("--only", default="", help="只跑这些用例 id，逗号分隔")
     p.add_argument("--out", default="", help="把 JSON 报告写到这个文件")
     args = p.parse_args(argv)
+    if args.repeats < 1 or args.repeats > 50:
+        p.error("--repeats 要在 1 到 50 之间")
+    if args.suite != "roles" and (args.repeats != 1 or args.cases != "main"):
+        p.error("--repeats / --cases 只用于 --suite roles")
     if args.arm == "rules" and (args.real or args.key_file):
         # 在解析任何连接 / 读任何 key 文件之前就拒绝：`--arm rules` 的意思是「不连模型、不花钱」
         p.error("--arm rules 不连模型，不能和 --real / --key-file 同用")
@@ -140,12 +164,13 @@ def _install_scrub(secret: str) -> None:
     sys.stderr = _Scrub(sys.stderr, secret)
 
 
-def _real_connection(args, n_cases: int, label: str):
+def _real_connection(args, n_cases: int, label: str, repeats: int = 1):
     """`--real` 的连接：`--key-file` 的临时连接，或应用里第一条 Key 连接。→ `(conn, 退出码)`；退出码非 0 = 已说明原因、没发任何请求。"""
-    need = n_cases * MAX_REQUESTS_PER_CASE
+    need = n_cases * MAX_REQUESTS_PER_CASE * repeats
     if args.max_calls < need:
+        times = f" × {repeats}" if repeats > 1 else ""
         print(
-            f"--real 要显式给 --max-calls，且不少于 用例数 × {MAX_REQUESTS_PER_CASE} = {need}"
+            f"--real 要显式给 --max-calls，且不少于 用例数 × {MAX_REQUESTS_PER_CASE}{times} = {need}"
             f"（当前 {args.max_calls}）。没有发出任何请求。",
             file=sys.stderr,
         )
@@ -181,7 +206,9 @@ def _real_connection(args, n_cases: int, label: str):
             print(f"没有可用的连接：{reason}（{detail}）。没有发出任何请求。", file=sys.stderr)
             return None, 2
     print(
-        f"真实模式（{label}）：{n_cases} 条用例，请求数上限 {args.max_calls}，连接协议 {conn['wire']}、型号 {conn['model']}"
+        f"真实模式（{label}）：{n_cases} 条用例"
+        + (f" × {repeats} 次" if repeats > 1 else "")
+        + f"，请求数上限 {args.max_calls}，连接协议 {conn['wire']}、型号 {conn['model']}"
         + (f"、思考强度 {conn['effort']}" if conn.get("effort") else ""),
         file=sys.stderr,
     )
@@ -333,9 +360,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _main_roles(args, D, DR, tmp_iso) -> int:
-    """第 1 步「读懂数据」：每条用例一次 propose（规则臂 = 这一次的响应），有连接就同步等模型、并进建议再来一次（模型臂）。
-    `--max-calls` 是**实际 HTTP 请求数**的硬上限（经 `ai_data_roles` 的 `request_budget` 覆盖，每次模型调用前核、用完扣）。"""
-    cases = DR.load_role_cases()
+    """第 1 步「读懂数据」：每条用例（× `--repeats`）一次 propose（规则臂 = 这一次的响应），有连接就同步等模型、并进建议再来一次（模型臂）。
+    `--max-calls` 是**实际 HTTP 请求数**的硬上限（经 `ai_data_roles` 的 `request_budget` 覆盖，每次模型调用前核、用完扣）。
+    每次运行都用独立的空缓存（`DR.run_case(fresh=True)`）：重复跑不会读到上一次的结果。"""
+    cases = DR.load_case_set(args.cases)
     if args.only:
         wanted = {x.strip() for x in args.only.split(",") if x.strip()}
         unknown = wanted - {c["id"] for c in cases}
@@ -343,10 +371,11 @@ def _main_roles(args, D, DR, tmp_iso) -> int:
             print(f"未知用例：{sorted(unknown)}", file=sys.stderr)
             return 2
         cases = [c for c in cases if c["id"] in wanted]
+    repeats = 1 if args.arm == "rules" else args.repeats  # 规则是确定的，重复没有意义
     conn = None
     if args.real or args.arm == "both":
         if args.real:
-            conn, rc = _real_connection(args, len(cases), "roles")
+            conn, rc = _real_connection(args, len(cases), "roles", repeats)
             if rc:
                 return rc
         else:
@@ -356,35 +385,58 @@ def _main_roles(args, D, DR, tmp_iso) -> int:
     stopped_early = False
     with tempfile.TemporaryDirectory(prefix="data-figure-roles-") as work:
         for case in cases:
-            if budget is not None and budget[0] < 1:
-                stopped_early = True
+            for k in range(repeats):
+                if budget is not None and budget[0] < 1:
+                    stopped_early = True
+                    break
+                post = (
+                    None
+                    if args.real or conn is None
+                    else DR.scripted(case, args.wire, answer=DR.fake_answer(case, args.fake, k))
+                )
+                run = DR.run_case(
+                    case,
+                    Path(work) / "proj",
+                    conn=conn,
+                    post=post,
+                    request_budget=budget,
+                    fresh=True,
+                )
+                runs.append((k, run))
+                a = DR.default_hits(case, run.rules)["all"]
+                b = DR.default_hits(case, run.model)["all"] if run.model is not None else None
+                tag = f"#{k + 1}" if repeats > 1 else ""
+                print(
+                    f"{case['id']}{tag}  规则={'对' if a else '错'} 模型={'-' if b is None else ('对' if b else '错')} "
+                    f"状态={run.state} 原因={run.reason or '-'} 请求={run.usage.get('requests', 0)}  {case['title']}"
+                )
+            if stopped_early:
                 break
-            post = None if args.real or conn is None else DR.scripted(case, args.wire)
-            run = DR.run_case(
-                case, Path(work) / "proj", conn=conn, post=post, request_budget=budget
-            )
-            runs.append(run)
-            a = DR.default_hits(case, run.rules)["all"]
-            b = DR.default_hits(case, run.model)["all"] if run.model is not None else None
-            print(
-                f"{case['id']}  规则={'对' if a else '错'} 模型={'-' if b is None else ('对' if b else '错')} "
-                f"状态={run.state} 原因={run.reason or '-'} 请求={run.usage.get('requests', 0)}  {case['title']}"
-            )
-    summary = DR.summarize(runs)
+        gate = DR.gate_measure(cases, Path(work)) if args.arm == "rules" else None
+    only_runs = [r for _k, r in runs]
+    if args.arm == "rules" and args.repeats > 1:
+        print("规则臂是确定的：--repeats 在 --arm rules 下只跑一次", file=sys.stderr)
+    summary = DR.summarize(only_runs)
+    stats = DR.summarize_repeats(only_runs)
     used = summary["requests"]
     report = {
         "suite": "roles",
         "mode": "real" if args.real else ("fake" if conn is not None else "rules-only"),
+        "case_set": args.cases,
+        "repeats": repeats,
         "connection": _connection_info(args, conn),
-        "wire": runs[0].usage.get("wire", "") if runs else "",
-        "model": runs[0].usage.get("model", "") if runs else "",
+        "wire": only_runs[0].usage.get("wire", "") if only_runs else "",
+        "model": only_runs[0].usage.get("model", "") if only_runs else "",
         "requests_used": used,
         "max_calls": args.max_calls or None,
         "stopped_early": stopped_early,
         "summary": summary,
+        "stats": stats,
+        "gate": gate,
         "cases": [
             {
                 "id": r.case["id"],
+                "attempt": k + 1,
                 "state": r.state,
                 "reason": r.reason,
                 "rules": r.rules,
@@ -392,13 +444,43 @@ def _main_roles(args, D, DR, tmp_iso) -> int:
                 "expect": r.case["expect_default"],
                 "dropped": r.payload.get("dropped"),
                 "usage": r.usage,
+                "calls": [
+                    {
+                        "elapsed_ms": c.elapsed_ms,
+                        "requests": c.requests,
+                        "input_tokens": c.input_tokens,
+                        "output_tokens": c.output_tokens,
+                        "cached_input_tokens": c.cached_input_tokens,
+                        "ok": c.ok,
+                        "reason": c.reason,
+                    }
+                    for c in r.calls
+                ],
             }
-            for r in runs
+            for k, r in runs
         ],
     }
+    _print_summary_line(summary, args.arm, used, stopped_early)
+    if gate is None:
+        _print_stats(stats, args)
+    else:
+        _print_gate(gate)
+    _write_report(args, report)
+    if tmp_iso is not None:
+        tmp_iso.cleanup()
+    return 0
+
+
+def _print_summary_line(summary: dict, arm: str, used: int, stopped_early: bool) -> None:
     ra, rm = summary["arm_rules"], summary["arm_model"]
+    if arm == "rules":
+        print(
+            f"\n规则单臂（不连模型）：{summary['cases']} 条用例，默认 x/y/分组全对 {ra['all']:.0%}"
+            f"（x {ra['x']:.0%}，y {ra['y']:.0%}，分组 {ra['group']:.0%}）"
+        )
+        return
     print(
-        f"\n用例 {summary['cases']}：默认 x/y/分组全对 规则 {ra['all']:.0%} → 模型 {rm['all']:.0%}"
+        f"\n运行 {summary['cases']} 次：默认 x/y/分组全对 规则 {ra['all']:.0%} → 模型 {rm['all']:.0%}"
         f"（x {ra['x']:.0%}→{rm['x']:.0%}，y {ra['y']:.0%}→{rm['y']:.0%}，分组 {ra['group']:.0%}→{rm['group']:.0%}）；"
         f"对照被改坏 {summary['control_regressions']} 条；"
         + (
@@ -416,10 +498,73 @@ def _main_roles(args, D, DR, tmp_iso) -> int:
         + ("；用量不是服务端报的，token 为估算" if not summary["usage_reported_all"] else "")
         + ("\n没跑完：请求数上限已用完" if stopped_early else "")
     )
-    _write_report(args, report)
-    if tmp_iso is not None:
-        tmp_iso.cleanup()
-    return 0
+
+
+def _fmt_ms(v) -> str:
+    return "-" if v is None else f"{v:.0f}"
+
+
+def _print_stats(st: dict, args) -> None:
+    if not st["runs"]:
+        return
+    lat = st["latency_ms"]
+    print(f"\n完成（{st['definition']}）")
+    print(
+        f"用例集 {args.cases}，{st['cases']} 条 × {st['repeats']} 次 = {st['runs']} 次运行；{st['cache']}"
+    )
+    print(
+        f"完成率 {st['completion_rate']:.1%}（规则单臂 {st['rules_completion_rate']:.1%}）；"
+        f"{st['repeats']} 次全对的用例占比 {st['all_runs_correct_share']:.1%}；"
+        f"不比规则差 {st['not_worse_than_rules_rate']:.1%}，改坏规则本来对的 {st['rules_broken_runs']} 次"
+        + (f"（{', '.join(st['rules_broken_cases'])}）" if st["rules_broken_cases"] else "")
+        + f"；没就绪 {st['not_ready_runs']} 次"
+    )
+    for tier, t in sorted(st["tiers"].items()):
+        print(
+            f"  {tier}：{t['cases']} 条，完成率 {t['completion_rate']:.1%}（规则本来就对的 {t['rules_ok_cases']} 条）"
+        )
+    wrong = [
+        f"{cid} {r['done']}/{r['runs']}"
+        for cid, r in st["per_case"].items()
+        if r["done"] < r["runs"]
+    ]
+    print("没有全对的用例（对几次/共几次）：" + ("、".join(wrong) if wrong else "无"))
+    pc, pt = lat["per_call"], lat["per_table"]
+    print(
+        f"耗时 ms：每次调用 p50 {_fmt_ms(pc['p50'])} / p95 {_fmt_ms(pc['p95'])} / 最大 {_fmt_ms(pc['max'])}（{pc['n']} 次）；"
+        f"每张表合计 p50 {_fmt_ms(pt['p50'])} / p95 {_fmt_ms(pt['p95'])} / 最大 {_fmt_ms(pt['max'])}"
+    )
+    cost = st["cost_per_table_usd"]
+    print(
+        f"每张表平均 {st['requests_per_table']:.2f} 个请求；输入 {st['input_tokens']}（其中命中缓存 {st['cached_input_tokens']}）/ 输出 {st['output_tokens']} token；"
+        + (f"每张表平均花费 ${cost:.5f}" if cost is not None else "每张表平均花费：无法估价")
+        + (f"（{st['cost_unknown_tables']} 张表无法估价）" if st["cost_unknown_tables"] else "")
+    )
+
+
+def _print_gate(gate: dict) -> None:
+    """一张表：行 = 范围，列 = 版本；每格「跳过 n（占比）/ 其中规则错 m」。m 必须是 0。"""
+    vers = list(gate["versions"])
+    print(
+        "\n「规则已经很确定就不问模型」的门（只测量，未接进产品；规则臂，不连模型）。格内 = 跳过条数（占比）/ 被跳过却规则错的条数（必须 0）"
+    )
+    print(f"{'范围':16s}{'用例':>5s}{'规则本来对':>11s}" + "".join(f"{v:>18s}" for v in vers))
+    for scope, rr in gate["rules_right"].items():
+        cells = []
+        for v in vers:
+            g = gate["versions"][v][scope]
+            cells.append(
+                f"{g['skipped']}（{g['skipped_share']:.0%}）/ {g['skipped_but_rules_wrong']}".rjust(
+                    18
+                )
+            )
+        print(f"{scope:16s}{rr['cases']:>5d}{rr['rules_right']:>11d}" + "".join(cells))
+    for v in vers:
+        g = gate["versions"][v]["all"]
+        print(
+            f"  {v} 跳过：{', '.join(g['skipped_ids']) or '无'}"
+            + (f"；其中规则错：{', '.join(g['wrong_ids'])}" if g["wrong_ids"] else "")
+        )
 
 
 if __name__ == "__main__":

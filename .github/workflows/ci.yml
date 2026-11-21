@@ -1674,6 +1674,26 @@ jobs:
   #
   # `cargo fmt` 不吃 cfg（rustfmt 解析整个文件），所以它本来就两支都看得见；
   # 真正需要第二条腿的是 clippy 与 cargo test。
+  # 画布路径查找器的 WASM 内核（ADR 0185 §五 M2）：vecops/ 是独立的 crate（vendor 的 vectorcraft），编出来的
+  # web/src/lib/vecops/vecops.wasm 提交进仓库、前端构建不需要 Rust。这里验两件事：Rust 本身（fmt / clippy / 用例），
+  # 以及提交的 .wasm 与源码**逐字节一致**（build.sh --check：改了 Rust 没重建就红）。vecops/rust-toolchain.toml
+  # 钉 1.95.0 + wasm32 目标，rustup 进目录时自动装；不用 rust-cache（产物小、编一遍半分钟，缓存键与种子都省了）。
+  vecops:
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.docs-scope.outputs.docs_only != 'true'
+    needs: [docs-scope]
+    timeout-minutes: 15  # 本地实测：fmt + clippy + 6 条用例 ~20 s，release 编 wasm ~12 s（冷编依赖另算 ~30 s）
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: vecops
+    steps:
+      - uses: actions/checkout@v5
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets --no-deps -- -D warnings
+      - run: cargo test --locked
+      - name: 校验 vecops.wasm 与源码逐字节一致
+        run: ./build.sh --check
+
   desktop-shell:
     if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.docs-scope.outputs.docs_only != 'true'
     needs: [docs-scope]
@@ -2872,7 +2892,7 @@ jobs:
     # always() 让它在上游失败后照跑并且红；事件条件与快线一致——push main
     # 上快线不跑，Gate 也不跑（required contexts 只在 PR / merge_group 上有意义）。
     if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
-    needs: [python-lint, cla-check, release-note-gate, docs-scope, invariants, backend-fast, frontend, plugin-candidate, workerd, desktop-shell, compat-smoke]
+    needs: [python-lint, cla-check, release-note-gate, docs-scope, invariants, backend-fast, frontend, plugin-candidate, workerd, vecops, desktop-shell, compat-smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -2916,12 +2936,12 @@ jobs:
           EXTRA=()
           if [ "$DOCS_ONLY" = "true" ]; then
             EXTRA=(--classifier docs-scope
-                   --docs-only-skippable invariants,backend-fast,frontend,plugin-candidate,workerd,desktop-shell,compat-smoke)
+                   --docs-only-skippable invariants,backend-fast,frontend,plugin-candidate,workerd,vecops,desktop-shell,compat-smoke)
           fi
           python3 -I "$RUNNER_TEMP/trusted-gate/aggregate_gate.py" \
             --mode fast \
             --event "${{ github.event_name }}" \
-            --required python-lint,cla-check,release-note-gate,docs-scope,invariants,backend-fast,frontend,plugin-candidate,workerd,desktop-shell,compat-smoke \
+            --required python-lint,cla-check,release-note-gate,docs-scope,invariants,backend-fast,frontend,plugin-candidate,workerd,vecops,desktop-shell,compat-smoke \
             --needs-json "$NEEDS_JSON" \
             ${EXTRA[@]+"${EXTRA[@]}"}
 

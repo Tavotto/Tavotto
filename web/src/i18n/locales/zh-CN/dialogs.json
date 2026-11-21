@@ -399,7 +399,8 @@
     "saved": "已另存为新排版：{{name}}",
     "saving": "正在保存…",
     "savesIntoLabel": "保存到",
-    "rename": "改名"
+    "rename": "改名",
+    "computationalFormat": "计算图表"
   },
   "mcp": {
     "exportBoth": "导出 PDF+PNG",
@@ -639,6 +640,54 @@
       "eyedropper-tool": {
         "keywords": "eyedropper pick color xg 吸管 取色",
         "label": "吸管"
+      },
+      "pathfinder-unite": {
+        "keywords": "unite union merge combine hb 合并 联集 路径查找器",
+        "label": "合并"
+      },
+      "pathfinder-minus-front": {
+        "keywords": "minus front subtract jqdc 减去 顶层 路径查找器",
+        "label": "减去顶层"
+      },
+      "pathfinder-intersect": {
+        "keywords": "intersect overlap xj 相交 交集 路径查找器",
+        "label": "相交"
+      },
+      "pathfinder-exclude": {
+        "keywords": "exclude xor pccd 排除 重叠 路径查找器",
+        "label": "排除重叠"
+      },
+      "pathfinder-divide": {
+        "keywords": "divide split fg 分割 切开 路径查找器",
+        "label": "分割"
+      },
+      "pathfinder-trim": {
+        "keywords": "trim hide xb 修边 去掉被盖住的 路径查找器",
+        "label": "修边"
+      },
+      "make-compound": {
+        "keywords": "compound path hole jlfhlj 复合路径 挖洞",
+        "label": "建立复合路径"
+      },
+      "release-compound": {
+        "keywords": "release compound sffhlj 释放 复合路径",
+        "label": "释放复合路径"
+      },
+      "offset-path": {
+        "keywords": "offset path expand inset pylj 偏移 外扩 内缩",
+        "label": "偏移路径"
+      },
+      "outline-stroke": {
+        "keywords": "outline stroke expand lkhmb 轮廓化 描边 扩展",
+        "label": "轮廓化描边"
+      },
+      "simplify-path": {
+        "keywords": "simplify smooth reduce anchors jhlj 简化 删锚点 平滑",
+        "label": "简化路径"
+      },
+      "reverse-path": {
+        "keywords": "reverse path direction flip arrow fzlj 反转 方向 箭头",
+        "label": "反转路径方向"
       }
     },
     "listLabel": "命令",
@@ -1508,7 +1557,7 @@
           "detail_requests": "最近的后端请求记录（只有方法、路由、状态码、耗时、错误码）",
           "detail_overrides": "正在编辑的图的样式改动",
           "detail_render_env": "渲染环境（Python、matplotlib、已装包、字体）",
-          "detail_runs": "最近的渲染、导出、脚本试运行记录",
+          "detail_runs": "最近的渲染、导出、脚本试运行记录，以及 AI 修复的经过",
           "detail_shell": "桌面壳与安装信息（版本、系统、架构、更新结果）",
           "detail_storage": "存储环境（剩余空间、可写、是否在同步目录）",
           "detail_console": "界面控制台的最近报错与警告",
@@ -1518,7 +1567,7 @@
           "detail_crash_reports": "系统崩溃报告（你勾选了）",
           "detail_corrupt_sessions": "会话损坏副本的内容（你勾选了）"
         },
-        "notIncluded": "默认不含脚本、数据文件和匿名统计标识；报错与日志里可能出现文件夹名、文件名和脚本打印出的内容。",
+        "notIncluded": "默认不含脚本文件、数据文件和匿名统计标识；报错与日志里可能出现文件夹名、文件名和脚本打印出的内容，用过 AI 修复时还会带上它读过的脚本片段。",
         "save": "保存这份诊断包",
         "saved": "已保存",
         "saveFailed": "没能保存",
@@ -2664,6 +2713,38 @@
       "info_text_height_mm": "文字高度",
       "info_panel_label": "子图标签"
     }
+  },
+  "packageInstall": {
+    "entry": "安装项目包到新目录…",
+    "title": "安装计算图表项目包",
+    "description": "先检视资源，再安装到新项目；打开时保留原来的排版。",
+    "inspecting": "正在检视项目包…",
+    "installing": "正在安装资源。关闭窗口会停止后续打开，安装结果仍会保留。",
+    "opening": "正在打开项目并保存工作副本…",
+    "saved": "工作副本已保存，可以继续编辑。",
+    "publicationUnconfirmed": "目录已发布，但安装核对尚未全部确认；打开后请检查资源。",
+    "configurationReview": "此项目的本机运行设置需要检查，打开项目不会运行脚本。",
+    "reviewConfiguration": "检查本机运行设置",
+    "chooseAnother": "选择其他项目包…",
+    "close": "关闭",
+    "continueEditing": "继续编辑",
+    "openInstalled": "打开已安装项目",
+    "install": "安装到新目录",
+    "contents": "画布 {{canvases}} · 资源 {{resources}} · 图像归档 {{snapshots}}",
+    "destination": "新项目目录",
+    "chooseDestination": "选择位置…",
+    "pickParent": "选择新项目的上级目录",
+    "newDirectory": "填写尚不存在的完整目录路径，已有文件不会被覆盖。",
+    "missing_other": "包中缺少 {{count}} 个资源，请补齐后重新导出。",
+    "dependencies": "运行依赖尚未全部确认；安装不会自动运行包内脚本。",
+    "installedAt": "资源已安装到",
+    "documentPending": "排版正文的保存尚未确认。打开项目后将通过原保存流程写入工作副本。",
+    "previous": "其他安装记录",
+    "completionUnknown": "这次安装尚未收到确认结果。请保留并检查此目录；关闭窗口后仍可回看路径。重新安装前请先选择项目包。",
+    "attemptedAt": "请求安装到",
+    "resultPending": "结果未确认",
+    "receivedResult": "已收到这次安装的结果，可以查看后继续。",
+    "viewResult": "查看安装结果"
   },
   "review": {
     "button": "分享审阅",

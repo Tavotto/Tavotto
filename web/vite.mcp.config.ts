@@ -13,6 +13,9 @@ import { fileURLToPath, URL } from 'node:url'
  */
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // 路径查找器的 WASM 内核（ADR 0185 M2）不进内嵌画布：单文件里塞不下也没必要（宿主 CSP 不放行外部请求），
+  // `lib/vecops/kernel` 读到 off 就把按钮灰掉、停上去说原因；连同 `?url` 的导入一起被摇掉
+  define: { 'import.meta.env.VITE_VECOPS': JSON.stringify('off') },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

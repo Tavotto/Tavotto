@@ -57,6 +57,7 @@ import {
   type ArrangeButton,
 } from './arrangeButtons'
 import { useSelectedObjects } from './common'
+import { PathfinderRows, usePathfinderCommands } from './PathfinderRows'
 
 /** 本组的文案在 inspector:arrange.* 下；对齐动作名复用 inspector:alignMode.* */
 const ar = (key: string, values?: Record<string, unknown>) =>
@@ -208,6 +209,10 @@ export function ArrangeSection({
   const layerIndex = !multi && selectedIds.length === 1 ? stack.findIndex((o) => o.id === selectedIds[0]) : -1
   const layerValue =
     layerIndex >= 0 ? ar('layerValue', { n: layerIndex + 1, total: stack.length }) : undefined
+  // 路径查找器（ADR 0185 M2）：选区适用时多一行摘要，点开才是那几排图标（不撑大排列卡片）
+  const pathfinder = usePathfinderCommands()
+  const pathfinderFold = () =>
+    pathfinder.length > 0 && fold('pathfinder', ar('pathfinderLabel'), <PathfinderRows commands={pathfinder} />)
   /** 摘要行（设计稿 A1 / A9）：展开状态按「arrange:id」记在会话里，单选与多选各自一份 */
   const fold = (id: string, label: string, children: ReactNode, value?: string) => {
     const key = `arrange:${multi ? 'multi' : 'single'}:${id}`
@@ -235,6 +240,7 @@ export function ArrangeSection({
         </Section>
         {/* 层级是低频的：收成摘要行（设计稿 A1），点开是原来的四个键 */}
         {fold('zorder', ar('zorderLabel'), <ZOrderToolbar />, layerValue)}
+        {pathfinderFold()}
       </>
     )
   }
@@ -260,6 +266,7 @@ export function ArrangeSection({
       {fold('zorder', ar('zorderLabel'), <ZOrderToolbar />)}
       {fold('spacingGroup', ar('foldSpacingGroup'), <MultiSpacingGroupLayout />)}
       {fold('style', ar('foldStyle'), <MultiStyleRow />)}
+      {pathfinderFold()}
     </>
   )
 }

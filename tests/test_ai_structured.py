@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import socket
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -160,13 +161,23 @@ def test_socket_timeout_and_total_deadline_both_map_to_timeout():
 
 
 def test_the_deadline_is_shared_by_both_attempts():
+    """第一次用掉大半总时限，第二次只拿到剩下的那点（不是重新给满）。不按墙钟判结局：第二次一直不回，
+    只有总时限能结束它；单次请求的超时是确定的「剩余」，慢 runner 上只会更小（#2085 合并组 macOS 抖红过）。"""
+    first_s, limit_s = 0.15, 0.2
+
     def slow_bad(body):
-        time.sleep(0.15)
+        time.sleep(first_s)
         return D.reply_body("anthropic", "no")
 
-    res, t = call([slow_bad, slow_bad], limits=S.Limits(timeout_s=0.2))
+    def never_answers(body):
+        threading.Event().wait(5)  # 远超总时限：要是迟到的回复被收下，结局就不是 timeout
+        return D.reply_body("anthropic", "no")
+
+    res, t = call([slow_bad, never_answers], limits=S.Limits(timeout_s=limit_s))
     assert res.reason == "timeout"
-    assert len(t.calls) <= 2
+    assert len(t.calls) in (1, 2)  # 慢机器上第一次就用完了总时限，第二次根本不发
+    if len(t.calls) == 2:
+        assert t.calls[1]["timeout"] <= limit_s - first_s
 
 
 def test_input_over_budget_sends_nothing():

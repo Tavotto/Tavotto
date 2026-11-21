@@ -53,6 +53,7 @@ import { objectLabel } from '@/types/document'
 import { canConvertToPath } from '@/lib/convertToPath'
 import { PATH_COMMANDS } from '@/store/pathActions'
 import { APPEARANCE_COMMANDS } from '@/store/appearanceActions'
+import { PATHFINDER_COMMANDS } from '@/store/pathfinderActions'
 import { PATH_COMMAND_ICONS } from './pathCommandIcons'
 import { rankCommands, type PaletteSection } from '@/lib/commandRanking'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -196,6 +197,14 @@ const COMMANDS: Command[] = [
   // 外观（ADR 0185 第二批）：D / ⇧X / / / I，表在 `APPEARANCE_COMMANDS`，快捷键读同一份
   ...APPEARANCE_COMMANDS.map((c) => ({ id: c.id, shortcut: keyOf(c.key), available: c.available, run: c.run })),
   ...PATH_COMMANDS.map((c) => ({
+    id: c.id,
+    shortcut: c.key ? keyOf(c.key) : undefined,
+    available: c.available,
+    run: c.run,
+  })),
+  // 路径查找器（ADR 0185 M2）：表在 `PATHFINDER_COMMANDS`，右键菜单、属性栏、快捷键读同一份。内核加载不了时这几条照样列，
+  // 点了只说一句（命令面板没有灰掉的样式）
+  ...PATHFINDER_COMMANDS.map((c) => ({
     id: c.id,
     shortcut: c.key ? keyOf(c.key) : undefined,
     available: c.available,

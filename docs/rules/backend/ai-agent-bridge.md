@@ -675,6 +675,12 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
   `run` 不在 `CHANGE_TIERS`，实验不解开「先动手才能起草缺陷」的闸。没有操作系统沙盒（Windows、无 bwrap 的 Linux）时进程内守卫只是尽力而为，普通 Python 也能绕开，维护者接受（ADR 0197「盲区」）；
   守卫前导在守卫装好之前只从标准库位置导入（`''` 与 PYTHONPATH 之后才还原、`''` 不还原），子进程一律从试跑目录起——试跑副本与探 import 同一条。
   看护：`tests/test_fixtools_snippet.py`。不带 `strict_deny` 的调用（试跑 / 探 import / 体检）守卫前导与沙盒参数逐字不变。
+- **失败提示与试运行记录**（ADR 0197 第 1 层）：形状判据只有 `fixtools/hints.py` 一份（`ask` 的「用户侧失败先别报缺陷」闸门也取它）；
+  提示每句声明点名的工具，工具调不到这句不说、主动作说不了整条不说；放在 `read_run_report` / `try_run` 返回最前面。
+  应用试运行真跑完才记一条 `{n, before, after, hint, changes}`（`changes` 由 `run_tool` 在计入 `changes_attempted` 处收集），审计 `attempt` 字段只记这些码。
+  看护：`tests/test_fixtools_hints.py`（含「提示点名的工具都在注册表里」）。
+- **修复经过进诊断包**（ADR 0197 第 4 条）：`run_tool` 把脱敏后的工具返回尾部记进内存（每条 2 000 字符、最多 60 条），
+  `FixSessions.diagnostics_for` 交给 `diagdetail.Sources.fix_sessions`；模型只带厂商 id 与模型名。看护：`tests/test_diag_fix_sessions.py`。
 - **读取范围**（`readscope.py`，判据只有 `ReadScope.check`）：主目录 + 项目根 + 环境前缀内可读，其余 `outside_scope`；`DENY_HOME_RELATIVE` / `DENY_NAME_PATTERNS` 命中
   `denied`（**文件名表只列明确的凭据文件形状**：整名或固定后缀，不用 `*token*` / `*secret*` 子串通配；**目录不按名拦**，`ReadScope._path_denied` 对目录只比固定位置表）（词法与 `realpath` 后各判一次；大小写不敏感于 macOS / Windows；Tavotto 自己的 `config.json` 在内）。单次读 ≤ 256 KiB（**按 64 KiB 块读、自己切行，当前行只留前 256 KiB**，所以任何文件大小下内存都有界；单行超限就截断该行并说明；截断给说明，`start_line` / `max_lines` 续读），
   二进制只给类型与大小。项目外的读取进 `ctx.reads`；**跟随的文件符号链接按解析后的目标记**（`_walk` 与 `resolve_or_error` 都用 `ReadScope.check` 的结果：目标在项目外就记目标路径，在项目内不记）。
@@ -960,7 +966,7 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 该平台走一遍；恢复路径在工具控制流里接通明确授权，别只靠模型按提示自行重试。为什么：转换链路用例全用不带沙盒的假 Codex，Windows unelevated 沙盒里自带写入工具一律失败（#1604）；
 写大文件时事件流静默、写入被拒后换位置写，都是真模型才复现（#1628）；2026-11-07 一份用户反馈：Windows 没有第①档
 沙盒，命令一律返回 `sandbox_unavailable`，设计指望模型带 `outside_sandbox` 重试，真模型没重试，用户批准修复后什么都没
-发生（#1793）。
+发生（#1793）。看护：只靠人记。
 
 ## 改图助手的附件（ADR 0175，`engine/ai_attachments.py`）
 

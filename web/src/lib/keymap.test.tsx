@@ -198,7 +198,7 @@ describe('keymap ↔ useKeyboard', () => {
   it('每条与状态无关的登记，合成出来的按键确实被 useKeyboard 消费', () => {
     // 需要先有选区（Enter / 方向键）、或要先进锚点编辑（+ / − / ⇧C，ADR 0185 M1）的不在这里判，见文件头；
     // 锚点那三条在 `canvas/penAndAnchors.test.tsx` 里进了锚点编辑再按
-    const stateful = new Set<KeyId>(['enter', 'nudge', 'addAnchor', 'deleteAnchor', 'convertAnchor', 'joinPaths', 'averageAnchors', 'defaultAppearance', 'swapFillStroke', 'clearFill'])
+    const stateful = new Set<KeyId>(['enter', 'nudge', 'addAnchor', 'deleteAnchor', 'convertAnchor', 'joinPaths', 'averageAnchors', 'makeCompound', 'releaseCompound', 'defaultAppearance', 'swapFillStroke', 'clearFill'])
     const dead: string[] = []
     for (const [id, b] of Object.entries(KEYMAP) as [KeyId, (typeof KEYMAP)[KeyId]][]) {
       if ('native' in b || stateful.has(id)) continue
