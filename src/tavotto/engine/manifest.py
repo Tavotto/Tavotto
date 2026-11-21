@@ -5135,6 +5135,106 @@ def data_fingerprint(artist, budget: list[int]) -> dict | None:
         return {"status": "unavailable"}
 
 
+#: `scale_domain` 每一维的 `status` 闭集（V-001 `log-axis-nonpositive` 读它；不是 `ok` 一律不判）
+SCALE_DOMAIN_STATUSES = ("ok", "over_budget", "unavailable")
+
+
+def _scale_domain_sources(ax) -> list[tuple[str, object, object]]:
+    """这根轴上**参与 V-001 计数**的可见元素：`(kind, 经过的变换, 数组)`。
+
+    只收三类：折线（`Line2D.get_xydata()`）、散点（`PathCollection` 的 offsets，变换取 offset transform）、
+    误差线（`ErrorbarContainer` 的线段集合，`kind == "bar"`，只数下端）。刻意不收：
+    柱 / 直方图（log 轴上柱底就是 0）、`fill_between` 等填充（画到 0 多是有意填到底）、色条与 LogNorm、
+    别的 `LineCollection`（`vlines(x, 0, y)` / stem 的茎从 0 起画）、stem 的基线（y = 0 的一条线）、
+    误差棒的帽（它的位置就是误差线端点，算进来会把同一个下端数两遍）。"""
+    import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
+
+    skip: set[int] = set()
+    bar_cols: list = []
+    for c in ax.containers:
+        if isinstance(c, ErrorbarContainer):
+            _data_line, caplines, barlinecols = c.lines
+            skip.update(id(cap) for cap in caplines)
+            bar_cols.extend(barlinecols)
+        elif isinstance(c, StemContainer):
+            skip.add(id(c.baseline))
+    out: list[tuple[str, object, object]] = []
+    for line in ax.lines:
+        if id(line) in skip or not line.get_visible():
+            continue
+        out.append(("point", line.get_transform(), line.get_xydata()))
+    for col in ax.collections:
+        if not (isinstance(col, PathCollection) and col.get_visible()):
+            continue
+        offsets = col.get_offsets()
+        # 没设 offsets 的集合默认是一个 (0, 0)：那不是数据点（与 `_fingerprint_parts` 同一口径）
+        if offsets is None or not len(offsets) or (len(offsets) == 1 and not np.any(offsets)):
+            continue
+        out.append(("point", col.get_offset_transform(), offsets))
+    for col in bar_cols:
+        if not col.get_visible():
+            continue
+        segs = [np.asarray(s, dtype=float) for s in col.get_segments()]
+        segs = [s for s in segs if s.ndim == 2 and s.shape[0] >= 2 and s.shape[1] >= 2]
+        if segs:
+            out.append(("bar", col.get_transform(), segs))
+    return out
+
+
+def scale_domain(ax, budget: list[int]) -> dict | None:
+    """对数轴上「画不出来的值」的只读事实（V-001；不进 `editable`、不进文档，同 `data_fingerprint`）。
+
+    只在某一维尺度是 `log` 时出现：`{"y": {"status": "ok", "nonpositive": N, "errorbar_low_nonpositive": M}}`。
+    `nonpositive` 数线 / 散点上有限且 ≤ 0 的坐标，`errorbar_low_nonpositive` 数下端 ≤ 0 的误差线（沿这一维的段）；
+    NaN / 掩码值不算。只数**这一维真正经过该轴 `transData`** 的坐标（`contains_branch_seperately`）：`axvline` /
+    `axhspan` 在轴坐标那一维上的 0–1、`transAxes` 画的线都不算。twin 轴各数各的（`ax.lines` 本来就分轴）。
+    `budget` 与数据指纹同一个上限（`FINGERPRINT_BUDGET`），但是**另一份**计数器：共用会让原本量得了的指纹被挤成
+    `over_budget`。超出写 `over_budget`、量不了写 `unavailable`，规则见到这两种一律不判（「没量」不是「没有」）。"""
+    try:
+        dims = [(d, i) for d, i in (("x", 0), ("y", 1)) if getattr(ax, f"get_{d}scale")() == "log"]
+    except Exception:  # noqa: BLE001 —— 自定义 Axes 什么都可能抛；量不了就不发
+        return None
+    if not dims:
+        return None
+    try:
+        import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
+
+        sources = _scale_domain_sources(ax)
+        data = ax.transData
+        branches = [tr.contains_branch_seperately(data) for _, tr, _ in sources]
+    except Exception:  # noqa: BLE001
+        return {d: {"status": "unavailable"} for d, _ in dims}
+    out: dict[str, dict] = {}
+    for dim, i in dims:
+        try:
+            picked = [(k, arr) for (k, _, arr), br in zip(sources, branches) if br[i]]
+            size = sum(
+                sum(int(s.shape[0]) for s in arr) if k == "bar" else int(np.shape(arr)[0])
+                for k, arr in picked
+            )
+            if size > budget[0]:
+                out[dim] = {"status": "over_budget"}
+                continue
+            budget[0] -= size
+            points = low = 0
+            for k, arr in picked:
+                if k == "bar":
+                    for seg in arr:
+                        v = seg[:, i]
+                        v = v[np.isfinite(v)]
+                        # 只数沿这一维的误差线：xerr 的水平段在 y 维上两端相同，它的 y 就是数据点本身（线里已数过）
+                        if v.size >= 2 and v.min() < v.max() and v.min() <= 0:
+                            low += 1
+                    continue
+                v = np.ma.filled(np.ma.asarray(arr, dtype=float), np.nan)
+                v = v[:, i] if v.ndim == 2 and v.shape[1] > i else np.zeros(0)
+                points += int((np.isfinite(v) & (v <= 0)).sum())
+            out[dim] = {"status": "ok", "nonpositive": points, "errorbar_low_nonpositive": low}
+        except Exception:  # noqa: BLE001
+            out[dim] = {"status": "unavailable"}
+    return out
+
+
 _MIN_HIT_PX = 4.0  # 扁平元素最小命中厚度（display 像素）
 
 #: 3D 轴上登记的数据图元的角色（ADR 0135）；`_refresh_hidden_3d_projections` 只看这几种。
@@ -6075,6 +6175,8 @@ def _measure_manifest(
         state.pristine_fields = pristine_fields
 
     fingerprint_budget = [FINGERPRINT_BUDGET]
+    #: V-001 的计数配额：与指纹同一个上限、另一份计数器（见 `scale_domain`）
+    scale_domain_budget = [FINGERPRINT_BUDGET]
     for el in state.elements:
         artist = el["artist"]
         if not _owner_axis_drawn(el):
@@ -6157,6 +6259,12 @@ def _measure_manifest(
                 entry["follow_gids"] = follow
             if el.get("inset_of"):
                 entry["inset_of"] = el["inset_of"]
+            # 对数轴上画不出来的值（V-001 `log-axis-nonpositive`）：只读事实，只在某一维是 log 时出现。
+            # 色条轴（值来自色阶）与 3D 轴不发——两维都不是 log 时键整个缺席，预检输出逐字节不变
+            if el["role"] == "axes" and artist not in state.colorbar_axes:
+                domain = scale_domain(artist, scale_domain_budget)
+                if domain:
+                    entry["scale_domain"] = domain
             # 只读事实（不在 editable、不进文档）：这根轴的范围此刻是不是自动缩放算出来的。`set_[xy]lim` 会把它关掉。
             # TAF 的「目标范围外改动」靠它区分「自动缩放跟着变」与「显式改了坐标范围」（figureverify._auto_prop）。
             # `peers`：共享这根轴范围的兄弟轴（sharex / twinx 的另一半），它们的范围会跟着这根轴的目标一起变。
