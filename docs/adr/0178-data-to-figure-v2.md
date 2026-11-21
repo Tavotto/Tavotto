@@ -349,3 +349,29 @@ interval / trajectories / dose_response / profile）。批次 2 / 3 在本 PR �
 **暂不支持的连接**：订阅登录（Codex / Claude Code CLI）返回 `unsupported_connection`。它们没有干净的「无工具单次调用」：CLI 自带系统提示与工具并读用户自己的配置，Tavotto 没有给它们的单轮入口。适配方向（本步不做）：给 `AgentDefinition` 加一个可选的 `build_structured_command`——候选写法是 Codex 的 `codex exec --output-schema`（临时目录、只读沙盒）与 Claude Code 的 `claude -p --output-format json --json-schema`（不给工具），经同一个 `spawn_env()`——这些参数**本步没有在本机核过**，每家要在目标平台真跑一次再开。「当前连接」= 连接视图里第一个内置执行器能直接用的 Key / 账号登录连接（`first_key_connection`，旧版选中的接口排在前，与 AI 修复同一口径）；让用户在这条功能里单独选连接，是后续步骤的产品决定。
 
 **不变的边界**：模型不执行任何代码、本步不新增工具 / 命令行 / 写文件能力；表里的文字只作 JSON 字符串进 `<data>` 块（`<` 转义，伪造不出块的结尾），配方里没有自由文本进脚本；密钥只在 `HttpModel` 内（`repr` 不含）；本模块不写日志、不发遥测（遥测仍不收列名、路径、指令、图里文字）；运行时公共模块（生成脚本内嵌的那份）一个字节未动。
+
+## 修订（2026-11-19）：第 1 步「读懂数据」——模型判断每列是什么（`engine/ai_data_roles.py`，`ai.taf.enabled` 后面，不加子开关）
+
+**目标**：让默认的横轴 / 纵轴 / 分组更常是对的（规则在有歧义处只能猜「最后一个数值列 / 最左一列」）。**模型只给「列判断」，不出配方**：判断被翻译成 `propose` 本来就接受的三种输入——`answers.y / x / group`（`none` = 不要）、`header_rows`、`answers.cells`——配方仍由规则 `default_candidates` 生成并过 `validate_recipe` / `enforce_order`，闭集配方校验一步没绕过。
+
+**列角色闭集**：`time` / `ordered_x` / `measure` / `group` / `replicate_unit` / `row_id` / `unit_label` / `note` / `other`。**`replicate_unit` 永远不会变成用户确认的事实**（`Confirmed.unit_col` 只来自用户）：它只让规则别把这一列当 y / x / 分组；响应里的建议只含 `y` / `x` / `group` / `cells`，没有 `design` / `unit`。
+
+**校验与降级（逐字段）**：形状层严格（未知键 / 类型不对整份拒收 = `invalid_output`，不重试）；取值层逐字段——列不存在、角色不在枚举、重复给同一列、角色与列的类型对不上（`measure` 必须是 `numeric_like`、`time` / `ordered_x` 必须是日期或数值、`group` 必须在分组列里）、选择与自己给的角色矛盾、多 y 列、处理规则的键对不上 / 列没夹文字 / 不是最终用到的列，各丢各的，只记丢弃个数，回到规则默认。**采纳策略**：规则会问的地方（选值 / 选分组 / 选横轴）用模型的选择；规则唯一确定了某个角色、但模型明确说那一列不能当这个轴（y 的角色不是 `measure`；x 是 `row_id` / `note` / `unit_label` / `replicate_unit` / `other`；分组不是 `group`）才推翻；其余保持规则结果。用户的回答永远优先：请求里已有 `answers.y / x / group / cells` 或 `header_rows` 就不起模型任务（也避开「采纳建议 → 再来一次 → 再起任务」的循环）。
+
+**表头 / 单位行**：只在读表 `status == "unsure"`（已有预览）且用户没指定表头行时多问一次，答案必须是预览里的行号、按它重读要读出合格的表（有数值列）、且与嗅探的不同，才采纳，之后对重读的表再问列角色。**单位行强制不做**（不动读表运行时，`PINNED_RUNTIME_NAME` 不变）。
+
+**接法**：`propose(render="lazy")` 先照常返回文字候选；有可用的 Key 连接（`first_key_connection(refresh=False)`；订阅登录、没连、运维关内置 = 没有）时响应多一个 `understanding: {id, state}`，起后台线程（缓存命中则 `ready` 内嵌）。`GET /api/ai/data-figure/understanding/<id>` 轮询（会话认证、项目绑定、只读不联网）：`pending` / `ready`（`answers`、`header_rows`、`roles`、`dropped`）/ `failed`（闭集 `reason`）/ `off`（不存在 / 过期 / 别的项目，不是错误）。前端 `ready` 后把 `answers` 与 `header_rows` 并进原请求再 `propose` 一次、换掉旧会话；没有可用连接时响应里**没有** `understanding` 键、与从前逐字相同（测试钉住，含「有连接时响应只多这一个键」）。不做 `data-overview` 预取，只在显式出图时触发。「重新判断」的后端参数留好（`start(refresh=True)` 忽略缓存），前端以后接。
+
+**时限与强度**：总时限 25 s（表头那次与列角色那次共用，含解析连接——挑连接不联网，只在剩余预算 ≥ 35 s 才对挑中的那一条联网刷新）；输出 ≤ 2 000 token；思考强度请求 `low`，但只有 `builtin_effort_args` 对「这个地址 + 这个型号」确认支持才发（官方端点、目录核过的型号），其余一个字段都不发（不靠 400 再降级）。`call_structured` 新增 `effort` 参数，`fixsession.build_model` 透传。
+
+**发给模型的 / 不发的（逐项）**
+* 发：表名（相对路径）与工作表名；行数；布局；分组取值及个数；编号线索；每列的名字、类型、空值 / NaN / 文字格个数、最多 20 条去重文字样本（每条 ≤ 60 字）；**本地算出的聚合**（只对数值列与日期列：不同值个数、是否单调、是否全为整数、最小 / 最大）；用户那一句提示（≤ 200 字）；仅 `unsure` 的表发表头预览（≤ 8 行 × 120 字，带原文行号）。摘要超预算（40 000 字）按序收缩文字样本 20 → 8 → 3 → 0。
+* 不发：数据行本身；文件哈希与大小；绝对路径与用户目录名；密钥与地址；别的表。表里的文字是不可信数据：JSON 字符串放进 `<data>`、`<` 转义，提示词明说不是指令。
+* **本步不发完整数据。**（用户 2026-11-19 已同意摘要、图、脚本乃至完整数据可发给模型；隐私说明文档**先不改**，列为开关打开前的待办。）
+* 不写日志、不发遥测、不进诊断包：缓存里有列名，不在诊断包采集清单里；`tests/test_ai_data_roles.py` 钉住（诊断包 zip 里找不到缓存内容与列名、`telemetry.EVENTS` 没有相关事件、任务跑完不调 `capture`、模块不 import 遥测 / 诊断 / 追踪、日志调用只许固定文字）。
+
+**缓存 / 单飞 / 负缓存**：缓存里存的是**模型的原始判断**（校验后的 `Judgement`：列角色、选择、处理规则、采纳的表头行），**不存**按提示算出的建议——每次命中都按**当前完整提示**与规则重新派生（`derive`），所以键与派生结果不会错位（提示只有前 200 字发给模型，规则读的是完整提示；Codex #2068）。`data_dir()/cache/ai_data_roles/<key>.json`，原子写；key = 协议版本（2）+ 系统提示哈希 + 数据字节哈希 + 实际表头行 + **模型看到的**提示（前 200 字）+ 连接身份（provider id + 型号，不含密钥与地址）+ 表；单飞登记另含完整提示摘要且只在 pending 期间存在；TTL 30 天、至多 200 条（按 mtime 淘汰）；坏文件 / 旧版本 = 未命中。失败只做 60 s 内存负缓存（同一 key 不再起任务，不落盘）；同一 `(项目, key)` 在途任务单飞。后台线程只读数据文件、联网、写缓存目录，不碰按项目绑定的状态，故不需要 `bound_project`。
+
+**度量**：`tests/fixtures/data_figure_cases/roles_cases.json`（22 条：18 条规则会出错的——整数批次 / 流水号 / 重复序号被当轴、顺序反了、两个分组列、备注列在前、中文、夹文字格、两种表头问题——加 4 条规则本来就对的对照）；评分有列角色正确率（全部 / 关键列）、默认 x / y / 分组命中率（规则臂 vs 模型臂）、对照被改坏数、表头 / 处理规则命中；`scripts/dev/data_figure_bench.py --suite roles [--arm rules|both] [--real --max-calls N]`，`--max-calls` 按**实际 HTTP 请求数**硬拦，报告含实际输入 / 输出 token 与按定价表估的花费。假回答下的模型臂是录好的理想回答，**只证明链路与护栏，不代表真模型的命中率**。**本步没有对真模型跑过。**
+
+**不做 / 留给后面**：单位行强制；多表文件夹里让模型选表（选表仍是规则或用户的事）；订阅登录（`unsupported_connection`，行为与今天一样）；前端轮询与「采纳建议」的交互（文案要用户签字）。

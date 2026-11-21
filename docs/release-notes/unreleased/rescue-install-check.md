@@ -1,3 +1,0 @@
-## When antivirus software removes or locks Tavotto's files, the error page now offers to reinstall
-
-If antivirus software quarantined or locked one of Tavotto's internal files, Windows showed an English "Unhandled exception in script" box and the app then sat for a minute before showing the error page, whose "Restart" could not fix it. Tavotto now quits that failed start straight away, checks whether its installed files are all present and readable, and, if some are missing or blocked, makes "Reinstall Tavotto" the main button with the existing advice to add Tavotto to your antivirus trust list. The startup diagnostics sent from the error page record only the result of that check (intact, missing, unreadable or unknown), never file names.

@@ -71,6 +71,7 @@ from .engine import (
     ai_data_overview as engine_ai_data_overview,
     ai_data_progress as engine_ai_data_progress,
     ai_data_propose as engine_ai_data_propose,
+    ai_data_roles as engine_ai_data_roles,
     ai_data_task as engine_ai_data_task,
     ai_figure_edit as engine_ai_figure_edit,
     ai_history as engine_ai_history,
@@ -9816,6 +9817,7 @@ def api_engine_update_source():
         ScriptChangedError,
         ReplayDivergenceError,
         WriteBackVerifyError,
+        WriteBackFutureError,
         WriteBackPersistError,
         FileLockedError,
         WriteBackFormatError,
@@ -10027,6 +10029,19 @@ class ReplayDivergenceError(RuntimeError):
         more = f"（另有 {len(diffs) - 3} 处）" if len(diffs) > 3 else ""
         super().__init__(f"{head}{more}")
         self.diffs = diffs
+
+
+class WriteBackFutureError(RuntimeError):
+    """写回前自检：这组 patches 里有**更新的 Tavotto 写下、这一版认不出**的修改（`future_props`）。
+
+    这一版不应用它们（项目照样打开，见 `overrides.known_props`），所以画布上看不到、重放出来的图里也没有——
+    写回的话原文件里就少了这些修改，而项目文件里它们还在，换回新版本再看又是另一张图。不静默丢、也不报成
+    「重放时出现了警告」：说清楚是新版本的修改、请更新后再写回。原文件零改动。
+    """
+
+    def __init__(self, props: list[str]):
+        super().__init__(", ".join(props))
+        self.props = props
 
 
 class WriteBackVerifyError(RuntimeError):
@@ -10497,6 +10512,7 @@ def _write_source_files(
     )
     tmps: list[tuple[Path, Path]] = []
     warnings: list[str] = []
+    future_props: list[str] = []  # 更新的 Tavotto 写下、这一版认不出的修改（WriteBackFutureError）
     try:
         resp = fresh.override(stem, patches)
         # 同一 stem 下别的图写的文件不是写回目标：按这次全量重放（一次性 worker 刚 build）的描述符收窄，
@@ -10529,6 +10545,9 @@ def _write_source_files(
             for w in eresp.get("warnings") or []:
                 if w not in warnings:  # PDF/PNG 两次导出报的是同一批
                     warnings.append(str(w))
+            for f in eresp.get("future_props") or []:
+                if f not in future_props:
+                    future_props.append(str(f))
         if annotations:
             pdf_tmp = next((t for tg, t in tmps if tg.suffix == ".pdf"), None)
             png_tmp = next((t for tg, t in tmps if tg.suffix == ".png"), None)
@@ -10543,6 +10562,8 @@ def _write_source_files(
             )
         if warnings:
             raise WriteBackVerifyError(warnings)
+        if future_props:
+            raise WriteBackFutureError(future_props)
         if diffs:
             raise ReplayDivergenceError(diffs[:REPLAY_DIFF_LIMIT])
     except BaseException:
@@ -10758,6 +10779,14 @@ def _write_back_error_response(exc):
                 f"分歧：{exc}。这属于引擎级问题，请把此信息报告给开发者。",
                 "code": "replay_divergence",
                 "diffs": exc.diffs,
+            }
+        ), 409
+    if isinstance(exc, WriteBackFutureError):
+        return jsonify(
+            {
+                "error": "这张图里有用更新版本做的修改，这一版写不回去，原文件没动。",
+                "code": "write_back_future_props",
+                "props": exc.props,
             }
         ), 409
     if isinstance(exc, WriteBackVerifyError):
@@ -11030,6 +11059,7 @@ def api_engine_history_restore():
         ScriptChangedError,
         ReplayDivergenceError,
         WriteBackVerifyError,
+        WriteBackFutureError,
         WriteBackPersistError,
         FileLockedError,
         WriteBackFormatError,
@@ -11780,6 +11810,99 @@ def api_engine_input_remap_get():
     """当前项目的只读改指表（ADR 0106）。"""
     root = str(require_project())
     return jsonify({"ok": True, "input_remap": engine_inputremap.state(root)})
+
+
+@app.route("/api/engine/input-declarations", methods=["GET", "POST", "DELETE"])
+def api_engine_input_declarations():
+    """Select explicitly approved inputs; this endpoint never executes a script."""
+    from .engine import declaredinputs
+
+    ctx = current_ctx()
+    try:
+        if request.method == "GET":
+            state = declaredinputs.state(
+                ctx.path,
+                **(
+                    {"include_selection_revisions": True}
+                    if request.args.get("include_selection_revisions") == "1"
+                    else {}
+                ),
+            )
+        else:
+            body = request.get_json(silent=True)
+            required = {"script", "cwd_mode", "expected_revision"}
+            optional = {"run_config"} | (
+                {"files", "remaps", "expected_remap_generation"}
+                if request.method == "POST"
+                else set()
+            )
+            if (
+                not isinstance(body, dict)
+                or not required <= set(body)
+                or set(body) - required - optional
+                or (request.method == "POST" and "files" not in body)
+                or not isinstance(body["script"], str)
+            ):
+                raise declaredinputs.DeclaredInputsError("Invalid input declaration request")
+            script = body["script"]
+            if request.method == "POST":
+                script, rejected = _resolve_project_script(ctx, script)
+                if rejected is not None:
+                    return rejected
+            common = {
+                "script": script,
+                "cwd_mode": body["cwd_mode"],
+                "run_config": body.get("run_config"),
+                "expected_revision": body["expected_revision"],
+            }
+            if request.method == "POST":
+                state = declaredinputs.declare(
+                    ctx.path,
+                    files=body["files"],
+                    remaps=body.get("remaps", []),
+                    **common,
+                    **(
+                        {"expected_remap_generation": body["expected_remap_generation"]}
+                        if "expected_remap_generation" in body
+                        else {}
+                    ),
+                )
+            else:
+                state = declaredinputs.remove(ctx.path, **common)
+        payload = {"ok": True, "input_declarations": state}
+        if request.method == "GET" and "project_file" in request.args:
+            payload["project_file"] = declaredinputs.resolve_project_file(
+                ctx.path, request.args["project_file"]
+            )
+        return jsonify(payload)
+    except declaredinputs.DeclaredInputsConflict:
+        return jsonify(
+            {
+                "error": "输入声明已更新，请重新读取后再保存",
+                "code": "input_declaration_conflict",
+                "params": {},
+            }
+        ), 409
+    except declaredinputs.DeclaredInputsUnavailable:
+        return jsonify(
+            {
+                "error": "暂时无法读取或保存输入声明",
+                "code": "input_declaration_unavailable",
+                "params": {},
+            }
+        ), 503
+    except declaredinputs.DeclaredInputsError:
+        return jsonify(
+            {"error": "输入声明或批准资源不可用", "code": "input_declaration_invalid", "params": {}}
+        ), 400
+    except OSError:
+        return jsonify(
+            {
+                "error": "暂时无法读取或保存输入声明",
+                "code": "input_declaration_unavailable",
+                "params": {},
+            }
+        ), 503
 
 
 @app.get("/api/engine/script-arguments")
@@ -15846,6 +15969,20 @@ def api_ai_data_figure_propose():
     except engine_ai_data_figure.DataSourceError as exc:
         return jsonify({"error": str(exc), "code": exc.code}), 400
     resp = jsonify(out)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/ai/data-figure/understanding/<understanding_id>")
+def api_ai_data_figure_understanding(understanding_id):
+    """第 1 步「读懂数据」的轮询：`propose(render="lazy")` 响应里的 `understanding.id`。回 `{id, state: "pending" | "ready" | "failed" | "off"}`；
+    `ready` 带 `answers`（可原样并进下一次 propose 的 `answers`）、`header_rows`、`roles`（每列的角色标注）、`dropped`（因不合格被丢弃的字段个数）；
+    `failed` 带闭集 `reason`（前端什么也不用做）；不存在 / 过期 / 别的项目的 = `off`（不是错误）。只读：不起任务、不联网。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    ctx = current_ctx()
+    view = engine_ai_data_roles.get(str(ctx.path.resolve()), understanding_id)
+    resp = jsonify(view if view is not None else {"id": understanding_id, "state": "off"})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

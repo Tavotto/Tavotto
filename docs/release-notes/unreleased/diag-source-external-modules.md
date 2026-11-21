@@ -1,3 +1,0 @@
-## Problem reports can include helper modules that live outside the project folder
-
-If a script adds a shared code folder to `sys.path` (for example `sys.path.insert(0, "../../common")`) and imports a helper from there, ticking "script source" in the problem-report dialog used to attach only the scripts inside the project folder, so the helper where the error actually happened was missing from the report. The report now also includes the local Python modules the script really loaded from outside the project folder the last time it ran, even if you restarted Tavotto before sending the report. Third-party packages and Python's own modules are never included, and nothing changes when "script source" is not ticked.

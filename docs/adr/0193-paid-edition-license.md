@@ -54,6 +54,7 @@ Tavotto 要有收入来抵持续的开销（模型调用、CloudBase、CDN），
 | `POST /v1/recover` | `{email}`：把激活码重新发到这个邮箱；不论邮箱是否存在，回答一样 |
 | `POST /v1/devices/release` | `{license_id, device_pub, ts, sig}`：本机解绑，腾出名额 |
 | `GET` · `POST /v1/devices/reset?t=<令牌>` | 电脑丢了时清空这份授权的所有设备：GET 只回确认页、不写任何东西，POST 才清空；令牌来自 `recover` 邮件 |
+| `POST /v1/pro/manifest` | 已授权设备取高级版闭源组件的发布清单与限时下载地址；契约以 [ADR 0198](0198-closed-source-pro-extension.md) §五 为唯一出处（Proposed，实现 PR 才同步 §五 的 `op` 闭集） |
 
 - **webhook 处理**：
   - 用 Stripe 官方库对**原始请求体**验签（`constructEvent`），验不过回 400。

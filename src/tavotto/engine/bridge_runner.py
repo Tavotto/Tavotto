@@ -560,7 +560,9 @@ def resolve_module_origin(target: str) -> str:
     return getattr(spec, "origin", "") or ""
 
 
-def run_module(target: str, argv: list, on_origin=None, on_start=None) -> None:
+def run_module(
+    target: str, argv: list, on_origin=None, on_start=None, path_root: str | None = None
+) -> None:
     """等价于 `python -m <target> <argv…>`。
 
     `runpy.run_module(..., run_name="__main__", alter_sys=True)` 在
@@ -572,11 +574,27 @@ def run_module(target: str, argv: list, on_origin=None, on_start=None) -> None:
 
     `on_origin` 在**开跑之前**收到目标模块的源文件路径（见
     `resolve_module_origin`）。
+
+    `path_root`（ADR 0196，桌面拥有的 native 把包里的脚本按模块运行）：`sys.path[0]` 用它——包根的上一级，
+    而不是 cwd（桌面的 cwd 是脚本目录或项目根，那里 import 不到 `plots`）；没给 = 与真实 `-m` 一样放 cwd。
     """
     import runpy  # noqa: PLC0415 — 只有 module 目标才需要，脚本目标不必付这份 import
 
     sys.argv = [target, *argv]  # run_module(alter_sys=True) 会把 argv[0] 换成模块文件
-    sys.path.insert(0, os.getcwd())
+    sys.path.insert(0, path_root or os.getcwd())
+    if path_root is not None:
+        # 包里的脚本按模块运行（ADR 0196）：入口的代码一律**从当前源码编译**，不用 `.pyc`（Codex #2055 P1）——
+        # 同一秒内等长改写会让旧 `.pyc` 时间戳仍然有效，`run_module` 照用它就静默跑出改写前的图。safe 侧同样从源码编译
+        _, spec, _cached = runpy._get_module_details(target)  # noqa: SLF001
+        origin = spec.origin or ""
+        with io.open_code(origin) as fh:
+            code = compile(fh.read(), origin, "exec", dont_inherit=True)
+        if on_origin is not None:
+            on_origin(origin)
+        if on_start is not None:
+            on_start(origin)
+        runpy._run_module_code(code, None, "__main__", spec)  # noqa: SLF001
+        return
     if on_start is not None:
         # These are run_module(alter_sys=True)'s own two operations, split at
         # the compiled-code boundary. A missing/invalid target must not report
@@ -1444,6 +1462,9 @@ def _parse_args(argv: list):
     ap = argparse.ArgumentParser(prog="tavotto-bridge-runner", allow_abbrev=False)
     ap.add_argument("--target-kind", choices=("script", "module"), required=True)
     ap.add_argument("--target", required=True)
+    # ADR 0196：包里的脚本按模块运行（`python -m 包.模块`）。身份参数仍是脚本（`--target-kind script --target <脚本>`：
+    # 描述符 / 资产 id / 指纹从一开始就与按脚本运行相同），这里只换执行那一步；终端的 `tavotto run` 永远不带
+    ap.add_argument("--as-module", default=None)
     ap.add_argument("--out-dir", default="")
     ap.add_argument("--preview-dpi", type=int, default=200)
     ap.add_argument("--control-host", default="127.0.0.1")
@@ -1472,6 +1493,14 @@ def _parse_args(argv: list):
         mine, user_argv = argv, []
     args = ap.parse_args(mine)
     args.user_argv = user_argv
+    args.module_path_root = None
+    if args.as_module:
+        if args.target_kind == "script":
+            args.module_path_root = bridgeboot.package_path_root(args.target, args.as_module)
+        if args.module_path_root is None:
+            args.as_module = (
+                None  # 模块名与脚本路径对不上：不猜，照旧按脚本运行（失败的样子与以前一字不差）
+            )
     return args
 
 
@@ -1635,7 +1664,14 @@ def main(argv: list | None = None) -> int:
 
     exit_code = 0
     try:
-        if args.target_kind == "script" and args.call_entry:
+        if args.as_module:
+            run_module(
+                args.as_module,
+                args.user_argv,
+                on_start=run.execution_started,
+                path_root=args.module_path_root,
+            )
+        elif args.target_kind == "script" and args.call_entry:
             run_script_entry(
                 args.target, args.user_argv, args.call_entry, on_start=run.execution_started
             )
@@ -1652,6 +1688,7 @@ def main(argv: list | None = None) -> int:
                 args.user_argv,
                 on_origin=_set_module_source(args),
                 on_start=run.execution_started,
+                path_root=args.module_path_root,
             )
     except SystemExit as exc:  # 用户脚本自己 sys.exit(...)：图仍然算数
         exit_code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
