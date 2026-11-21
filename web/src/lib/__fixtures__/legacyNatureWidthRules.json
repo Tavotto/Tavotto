@@ -1,0 +1,106 @@
+{
+ "nature-chemistry": {
+  "value": 180,
+  "qualifier": "max",
+  "stage": "production",
+  "mark": "180 mm",
+  "src": "s1",
+  "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+  "snapshot": {
+   "file": "snapshots/a921b62be6a29c1909f8d0991c90f6723b378d4504b1aee49312b22c86cd27ae.webp",
+   "width": 809,
+   "height": 408
+  }
+ },
+ "nature-energy": {
+  "value": 180,
+  "qualifier": "max",
+  "stage": "production",
+  "mark": "180 mm",
+  "src": "s1",
+  "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+  "snapshot": {
+   "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
+   "width": 809,
+   "height": 408
+  }
+ },
+ "nature-materials": {
+  "value": 180,
+  "qualifier": "max",
+  "stage": "production",
+  "mark": "180 mm",
+  "src": "s1",
+  "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+  "snapshot": {
+   "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
+   "width": 809,
+   "height": 408
+  }
+ },
+ "nature-medicine": {
+  "value": 180,
+  "qualifier": "max",
+  "stage": "production",
+  "mark": "180 mm",
+  "src": "s1",
+  "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+  "snapshot": {
+   "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
+   "width": 809,
+   "height": 408
+  }
+ },
+ "nature-methods": {
+  "value": 180,
+  "qualifier": "max",
+  "stage": "production",
+  "mark": "180 mm",
+  "src": "s1",
+  "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+  "snapshot": {
+   "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
+   "width": 809,
+   "height": 408
+  }
+ },
+ "nature-nanotechnology": {
+  "value": 180,
+  "qualifier": "max",
+  "stage": "production",
+  "mark": "180 mm",
+  "src": "s1",
+  "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+  "snapshot": {
+   "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
+   "width": 809,
+   "height": 408
+  }
+ },
+ "nature-photonics": {
+  "value": 180,
+  "qualifier": "max",
+  "stage": "production",
+  "mark": "180 mm",
+  "src": "s1",
+  "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+  "snapshot": {
+   "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
+   "width": 809,
+   "height": 408
+  }
+ },
+ "nature-physics": {
+  "value": 180,
+  "qualifier": "max",
+  "stage": "production",
+  "mark": "180 mm",
+  "src": "s1",
+  "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+  "snapshot": {
+   "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
+   "width": 809,
+   "height": 408
+  }
+ }
+}

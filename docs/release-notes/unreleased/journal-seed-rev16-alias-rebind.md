@@ -1,0 +1,3 @@
+## Journal catalog: built-in seed synced to rev16, and renamed journal IDs are followed
+
+The built-in seed for the eight Nature research journals (Chemistry, Energy, Materials, Medicine, Methods, Nanotechnology, Photonics, Physics) no longer shows the 180 mm "maximum width of figure panels" sentence as a double-column width, and Nanophotonics now uses the current Wiley page (300 dpi) instead of the old 600 dpi page. Projects that already stored a journal ID which the catalog later renamed (kept as an alias) are silently re-pointed to the new ID when the project is opened, so they keep receiving journal requirement updates; the stored requirements themselves are not changed.
