@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { CandidateGrid, useDrawingLine } from './CandidateGrid'
+import { useConnectAiWatch } from './useConnectAi'
 import { DataStrip } from './DataStrip'
 import { useReadProgress } from './useReadProgress'
 
@@ -68,6 +69,7 @@ function LargeReadLine({ lead }: { lead?: boolean }) {
 export function DataDraft() {
   const { t } = useTranslation('ai')
   const fm = useFormatMessage()
+  useConnectAiWatch() // 连接变化的观察（常驻宿主；重跑「读懂数据」不依赖右栏 / 抽屉是否开着）
   const open = useDataFigureStore((s) => s.draftOpen)
   const active = useDataFigureStore((s) => s.draftActive)
   const selected = useDataFigureStore((s) => s.selected)

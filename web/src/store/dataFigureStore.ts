@@ -167,6 +167,12 @@ interface DataFigureStore {
   /** 模型建议与此刻的映射不同、但用户已经动过下拉（或正在出图）没有自动套用：右栏标题行的胶囊；点一下才套用，不点就是忽略 */
   suggestion: Suggestion | null
 
+  /** 后端说「读懂数据」此刻有没有可用的连接（`/api/ai/data-files` 的 `understanding_available`，随清单取）；null = 还没取到 / 旧后端没有这个字段（前端退回 `hasUsableAi`） */
+  understandingAvailable: boolean | null
+  /** 观察到过「读懂数据不可用」且连上之后还没因此重跑过：宿主（`useConnectAiWatch`，生命周期覆盖抽屉与草稿）重新挂上时据此补跑；记在 store 里而不是组件 ref */
+  sawUnavailable: boolean
+  /** 宿主汇报此刻「读懂数据」是否不可用：不可用 → 记下；从不可用变为可用 → 对当前数据重跑一次（`rerunForConnection` 自己拦「动过下拉 / 出图中」） */
+  noteUnavailable: (unavailable: boolean) => void
   /** 首页左卡进项目之后：开「数据」抽屉；只有一个可读文件就直接开它的临时标签 */
   enter: () => void
   loadFiles: () => Promise<void>
@@ -269,6 +275,8 @@ const initial = {
   fresh: null as FreshFigure | null,
   understanding: false,
   suggestion: null as Suggestion | null,
+  understandingAvailable: null as boolean | null,
+  sawUnavailable: false,
   readRid: null as string | null,
 }
 /** 换一份数据 / 回到起点时清掉的那些（文件清单、概览、表头行、画好的那张不在内） */
@@ -724,7 +732,10 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         const r = await aiDataFilesAll(pj)
         if (ep !== epoch || mine !== filesSeq) return
         if (!r || !Array.isArray(r.files)) throw new Error('bad shape')
-        set({ files: { status: 'ready', entries: r.files, truncated: r.truncated === true } })
+        set({
+          files: { status: 'ready', entries: r.files, truncated: r.truncated === true },
+          understandingAvailable: typeof r.understanding_available === 'boolean' ? r.understanding_available : null,
+        })
       } catch (e) {
         if (ep !== epoch || mine !== filesSeq) return
         set({ files: { status: 'error', entries: keep, error: reasonOf(e) } })
@@ -861,6 +872,16 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       }
       set({ problem: null })
       await run({ keepChoices: true })
+    },
+
+    noteUnavailable: (unavailable) => {
+      if (unavailable) {
+        if (!get().sawUnavailable) set({ sawUnavailable: true })
+        return
+      }
+      if (!get().sawUnavailable) return
+      set({ sawUnavailable: false })
+      get().rerunForConnection()
     },
 
     rerunForConnection: () => {

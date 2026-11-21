@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react'
-import { hasUsableAi } from '@/lib/api'
 import { useAiStore } from '@/store/aiStore'
+import { useUnderstandingUnavailable } from './useConnectAi'
 import { requestConnectAi } from '@/store/connectAiStore'
 import { useCapsWatch } from '@/components/settings/connectAi/useCapsWatch'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -162,14 +162,14 @@ function DataDrawerBody({ floatInset }: { floatInset: boolean }) {
 
 /**
  * 「数据」抽屉：清单 + 底部居中一枚悬浮的「连接 AI」胶囊（没有可用的 AI 连接时一直显示，没有关闭按钮；抽屉里没有数据文件时也显示）。
- * 连接状态来源与助手面板空态同一个（`aiStore.caps` + `hasUsableAi`）：还没探测完（`caps` 为 null）不显示，宁可晚出现。
+ * 显示条件见 `useUnderstandingUnavailable`（后端说「读懂数据」不可用；字段缺失退回 `hasUsableAi`）：连接状态未知不显示，宁可晚出现。
  * 胶囊绝对定位浮在抽屉之上、不占布局高度；清单底部留出等于它的内边距（`floatInset`），滚到底最后一行不会被盖住。
- * 连上之后对当前数据重跑一次候选的事在 `DataPanel`（它认「没连 → 连上」那一下）。
+ * 连上之后对当前数据重跑一次候选的事在 `useConnectAiWatch`（`DataDraft` 常驻宿主）。
  */
 export function DataDrawer() {
   const { t } = useTranslation('ai')
   const caps = useAiStore((s) => s.caps)
-  const unconnected = caps !== null && !hasUsableAi(caps)
+  const unconnected = useUnderstandingUnavailable() === true
   useEffect(() => {
     if (caps === null) void useAiStore.getState().loadCaps().catch(() => undefined)
   }, [caps])

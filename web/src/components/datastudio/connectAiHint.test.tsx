@@ -20,6 +20,7 @@ import { useAiStore } from '@/store/aiStore'
 import { useConnectAiStore } from '@/store/connectAiStore'
 import { useDataFigureStore } from '@/store/dataFigureStore'
 import { useProjectStore } from '@/store/projectStore'
+import { DataDraft } from './DataDraft'
 import { DataDrawer } from './DataDrawer'
 import { DataPanel } from './DataPanel'
 
@@ -68,7 +69,14 @@ const ready = (answers: Record<string, unknown>): AiDataUnderstanding => ({ id: 
 /** 没有任何连接 / 有一个可用的连接（自带 Key、账号登录、订阅登录同一个判据：连接 state = ready） */
 const capsNone = { agents: [], vendors: [], connections: [] } as unknown as AiCapabilities
 const capsWith = (kind: string) => ({ agents: [], vendors: [], connections: [{ id: 'c1', kind, state: 'ready', label: 'x', models: [] }] }) as unknown as AiCapabilities
-const setCaps = (caps: AiCapabilities | null) => act(async () => useAiStore.setState({ caps }))
+/** 后端的 `understanding_available`：undefined = 响应里没有这个字段（旧后端）；`setCaps` 默认让它跟「有没有连接」一致 */
+let backendAvail: boolean | undefined
+const setCaps = (caps: AiCapabilities | null, avail: boolean | undefined = caps === capsNone ? false : caps === null ? undefined : true) => {
+  backendAvail = avail
+  return act(async () => useAiStore.setState({ caps }))
+}
+const ui = <TooltipProvider><DataDrawer /><DataDraft /><DataPanel /></TooltipProvider>
+const mountAll = () => act(async () => { root.render(ui) })
 
 const store = () => useDataFigureStore.getState()
 const tick = async (ms = 1000) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
@@ -84,13 +92,14 @@ beforeEach(async () => {
   useAiStore.setState({ caps: null })
   useConnectAiStore.setState({ open: false })
   useProjectStore.setState({ project: { open: true, name: 'proj', writable: true } })
-  files.mockResolvedValue({ files: [tbl('growth.csv'), tbl('a.csv'), tbl('b.csv')], truncated: false })
+  backendAvail = undefined
+  files.mockImplementation(async () => ({ files: [tbl('growth.csv'), tbl('a.csv'), tbl('b.csv')], truncated: false, ...(backendAvail === undefined ? {} : { understanding_available: backendAvail }) }))
   overview.mockResolvedValue(ov())
   propose.mockResolvedValue(cands())
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
-  await act(async () => { root.render(<TooltipProvider><DataDrawer /><DataPanel /></TooltipProvider>) })
+  await mountAll()
 })
 afterEach(() => {
   act(() => root?.unmount())
@@ -240,5 +249,100 @@ describe('连上之后', () => {
     await setCaps(capsWith('key'))
     await settle()
     expect(propose).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('后端说「读懂数据」可不可用（订阅登录等 hasUsableAi 为真但后端还不支持）', () => {
+  it('后端说不可用而 hasUsableAi 为真（只连了订阅）：胶囊仍在，也不重跑', async () => {
+    backendAvail = false
+    await act(async () => store().loadFiles()) // 清单响应带着 `understanding_available: false`
+    await setCaps(capsNone)
+    await pick('growth.csv')
+    expect(q('[data-data-connect]')).not.toBeNull()
+    expect(propose).toHaveBeenCalledTimes(1)
+    await setCaps(capsWith('subscription'), false)
+    await settle()
+    await settle()
+    expect(q('[data-data-connect]')).not.toBeNull()
+    expect(propose).toHaveBeenCalledTimes(1)
+  })
+
+  it('后端说可用：胶囊不在', async () => {
+    backendAvail = true
+    await act(async () => store().loadFiles())
+    await setCaps(capsNone, true)
+    await settle()
+    expect(q('[data-data-connect]')).toBeNull()
+  })
+
+  it('字段缺失（旧后端 / 取失败）：退回 hasUsableAi', async () => {
+    await setCaps(capsNone, undefined)
+    await settle()
+    expect(store().understandingAvailable).toBeNull()
+    expect(q('[data-data-connect]')).not.toBeNull()
+    await setCaps(capsWith('key'), undefined)
+    await settle()
+    expect(q('[data-data-connect]')).toBeNull()
+  })
+
+  it('连接集合变了（caps 刷新）→ 重取清单，拿到新的「可不可用」；集合没变的刷新不重取', async () => {
+    await setCaps(capsNone)
+    await settle()
+    const n = files.mock.calls.length
+    await setCaps(capsNone)
+    await settle()
+    expect(files.mock.calls.length).toBe(n)
+    await setCaps(capsWith('key'))
+    await settle()
+    await settle()
+    expect(files.mock.calls.length).toBe(n + 1)
+    expect(store().understandingAvailable).toBe(true)
+  })
+})
+
+describe('观察不依赖右栏 / 抽屉是否挂着', () => {
+  it('右栏（DataPanel）没挂：连上后仍然重新出一次候选', async () => {
+    await act(async () => root.render(<TooltipProvider><DataDrawer /><DataDraft /></TooltipProvider>))
+    await setCaps(capsNone)
+    await pick('growth.csv')
+    expect(q('[data-data-panel]')).toBeNull()
+    expect(propose).toHaveBeenCalledTimes(1)
+    await setCaps(capsWith('key'))
+    await settle()
+    await settle()
+    expect(propose).toHaveBeenCalledTimes(2)
+  })
+
+  it('变化发生时整个数据页都没挂：之后再挂上，补跑一次且只一次', async () => {
+    await setCaps(capsNone)
+    await pick('growth.csv')
+    expect(store().sawUnavailable).toBe(true)
+    await act(async () => root.render(<div />)) // 抽屉、草稿、右栏全卸载
+    await setCaps(capsWith('key'))
+    await act(async () => store().loadFiles()) // 变化发生期间别处刷新了清单
+    await settle()
+    expect(propose).toHaveBeenCalledTimes(1)
+    await mountAll()
+    await settle()
+    await settle()
+    expect(propose).toHaveBeenCalledTimes(2)
+    await setCaps(capsWith('key'))
+    await settle()
+    expect(propose).toHaveBeenCalledTimes(2)
+  })
+
+  it('补跑也守条件：动过下拉 / 出图中不跑', async () => {
+    await setCaps(capsNone)
+    await pick('growth.csv')
+    await act(async () => store().setRole('x', 'week'))
+    await settle()
+    const n = propose.mock.calls.length
+    await act(async () => root.render(<div />))
+    await setCaps(capsWith('key'))
+    await act(async () => store().loadFiles())
+    await mountAll()
+    await settle()
+    expect(propose.mock.calls.length).toBe(n)
+    expect(store().sawUnavailable).toBe(false)
   })
 })
