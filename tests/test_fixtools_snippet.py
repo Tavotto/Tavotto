@@ -380,7 +380,10 @@ def test_credential_like_files_in_the_project_cannot_be_read(box, monkeypatch, n
 def test_a_link_with_an_innocent_name_to_a_credential_file_is_blocked(box, monkeypatch):
     _no_os_sandbox(monkeypatch)
     put(box.proj / "sub" / ".env", "SECRET-KEY-MATERIAL")
-    os.symlink(box.proj / "sub" / ".env", box.proj / "notes.txt")
+    try:
+        os.symlink(box.proj / "sub" / ".env", box.proj / "notes.txt")
+    except OSError as exc:  # Windows 非管理员、没开开发者模式时建不了符号链接
+        pytest.skip(f"cannot create symlinks here: {exc}")
     r = call(_ctx(box), "run_snippet", {"env": "e", "code": "print(open('notes.txt').read())"})
     assert "SECRET-KEY-MATERIAL" not in r.content and "blocked_reads" in r.content, r.content
 
