@@ -1051,16 +1051,73 @@ def candidates_of(tmp_path, case, answers):
     return resp
 
 
-def test_ho17_several_repeat_columns_become_the_y_axis_together(tmp_path):
+def test_ho17_repeat_columns_without_an_x_axis_stay_a_known_product_limit(tmp_path):
+    """HO-17（rep1 / rep2 / rep3 一起看、没有横轴）要「把列当分组」的画法，尚未支持：没有有序横轴时分布 / 比较类配方只画第一列，
+    多列纵轴不采纳（当没给，计入 dropped），`roles.y` 与候选实际画的列一致。标准答案不改。"""
     case = HBY["HO-17"]
-    rules = run_case(case, tmp_path, conn=None).rules
-    assert rules["y"] != ["rep1", "rep2", "rep3"]
     run, _ = with_model(case, tmp_path)
-    assert run.model == case["expect_default"]
-    assert run.payload["answers"]["y"] == ["rep1", "rep2", "rep3"]
-    # 并回 propose：配方仍过校验，有备选
+    assert run.model != case["expect_default"] and run.state == "ready"
+    assert run.payload["dropped"] >= 1
+    assert run.payload["answers"].get("y") != ["rep1", "rep2", "rep3"]
+    assert len(run.model["y"]) == 1
+    # 直接送数组也一样：规则当没给
+    folder = DR.materialize(case, tmp_path / "proj")
+    plain = P.propose(tmp_path / "proj", project="p", folder=folder, render="lazy")
+    got = P.propose(
+        tmp_path / "proj",
+        project="p",
+        folder=folder,
+        render="lazy",
+        answers={"y": ["rep1", "rep2", "rep3"]},
+    )
+    assert got["roles"] == plain["roles"]
+    assert len(got["roles"]["y"]) == 1
+
+
+MULTI_Y_WITH_X = "sample,dose,r1,r2,r3\n" + "".join(
+    f"S{i},{i},{i + 1.0},{i + 1.5},{i + 2.2}\n" for i in range(1, 9)
+)
+
+
+def test_multi_y_with_an_ordered_x_is_adopted_and_every_trend_candidate_draws_all_columns(tmp_path):
+    case = case_with(
+        HBY["HO-17"],
+        MULTI_Y_WITH_X,
+        roles={
+            "sample": "row_id",
+            "dose": "ordered_x",
+            "r1": "measure",
+            "r2": "measure",
+            "r3": "measure",
+        },
+    )
+    ans = reach_answer(case["roles"], y=["r1", "r2", "r3"], x="dose", group="none")
+    run, _ = with_model(case, tmp_path, ans)
+    assert run.model["y"] == ["r1", "r2", "r3"] and run.model["x"] == "dose"
     resp = candidates_of(tmp_path, case, run.payload["answers"])
-    assert resp["roles"]["y"] == ["rep1", "rep2", "rep3"]
+    assert resp["roles"]["y"] == ["r1", "r2", "r3"]
+    trend = [i for i in resp["items"] if i.get("family") == "trend" or "line" in i["title_code"]]
+    assert trend
+    for item in trend:
+        assert set(item["values"]["y"]) == {"r1", "r2", "r3"}, item
+
+
+def test_multi_y_is_not_adopted_when_the_model_also_says_there_is_no_x(tmp_path):
+    case = case_with(HBY["HO-17"], MULTI_Y_WITH_X, roles={})
+    roles = {
+        "sample": "row_id",
+        "dose": "ordered_x",
+        "r1": "measure",
+        "r2": "measure",
+        "r3": "measure",
+    }
+    run, _ = with_model(
+        case, tmp_path, reach_answer(roles, y=["r1", "r2", "r3"], x="none", group="none")
+    )
+    assert len(run.model["y"]) == 1 and run.model["x"] is None
+    assert run.payload["dropped"] >= 1
+    resp = candidates_of(tmp_path, case, run.payload["answers"])
+    assert resp["roles"]["y"] == run.model["y"]
 
 
 def test_ho17_multi_y_is_dropped_when_the_columns_are_not_objectively_fine(tmp_path):
