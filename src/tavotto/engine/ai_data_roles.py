@@ -721,8 +721,9 @@ def _available_connection() -> dict | None:
         if ai_connections.builtin_forced() is False:
             return None
         # 「Tavotto Agent」（内置 AI，占位，真发请求前开任务）排第一；没有它才看自己的 Key
-        return ai_providers.builtin_conn(
-            hosted_ai.virtual_record()
+        virtual = hosted_ai.virtual_record()
+        return (
+            ai_providers.builtin_conn(virtual) if virtual is not None else None
         ) or ai_connections.first_key_connection(refresh=False)
     except Exception:  # noqa: BLE001 - 探测失败 = 没有
         return None

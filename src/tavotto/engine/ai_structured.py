@@ -177,7 +177,8 @@ def resolve_connection(budget_s: float | None = None) -> tuple[dict | None, str,
         return None, "no_connection", "builtin_disabled"
     # 「Tavotto Agent」（内置 AI）可用时排第一（维护者 2026-11-21）：拿到的是还没开任务的占位（`hosted_ai.needs_task`），真发请求前由 `_call`
     # 开任务；开不成时 `_call` 静默退到下面那条自己的 Key
-    hosted = ai_providers.builtin_conn(hosted_ai.virtual_record())
+    virtual = hosted_ai.virtual_record()
+    hosted = ai_providers.builtin_conn(virtual) if virtual is not None else None
     if hosted is not None:
         return hosted, "", ""
     conn = ai_connections.first_key_connection(refresh=False)

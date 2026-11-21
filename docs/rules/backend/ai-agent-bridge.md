@@ -8,7 +8,7 @@
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 240
-改到: `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`ai_structured.py`、`ai_data_*.py`、`hosted_ai.py`、`codexinstall.py`、`managedcli.py`、`resources/managed_cli_lock.json`、`/api/ai/*`
+改到: `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`ai_structured.py`、`ai_data_*.py`、`hosted_ai.py`、`hosted_gateway.py`、`codexinstall.py`、`managedcli.py`、`resources/managed_cli_lock.json`、`/api/ai/*`
 主题: 编码 Agent 桥 → `ai-agent-bridge.md`
 必守要点: 「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml
 -->
@@ -33,10 +33,10 @@ order: 240
   `app.refresh_project` 是四条路径（手动 / watcher / codex / ai）唯一的漏斗，
   `project_refresh_completed` 遥测只在这一处、只收这四个来由。
 - **改图收尾的跟进建议（`task.suggestions`，闭集 `kind: legend_label`）**：内置执行器的 `check`（`ai_figure_edit.agent_check`）渲染后，按 stem × gid 比 manifest `editable` 的 `label` 值（`label_changes`，**不看 identity / 数据指纹**，与数据检查的结论互不依赖），记进 `cand.extras["label_findings"]`；提交后那次渲染补最终值；`_settle_task` 在成功（`completed`）+ 已提交 + 最终回到原文 + 图例项正显示该文字（`label_visible_in_legend`）时才写 `{kind, stem, gid, legend_gid, from, to}`（`legend_gid` = 最终版里 `legend_entry.source_gid` 绑定该曲线的可见图例项；可见性也只认这个绑定，别处同名文字不算），只含这两段已画在图上的文字。CLI 路径（Codex / Claude Code）提交前不渲染，看不到被改过的 label，没有这项。前端点「一起改」走画布 `setOverride(panel, legend_gid, 'text', to, true)`（写曲线 `label` 不会动图例），不经 AI、不写脚本。看护 `tests/test_ai_legend_label_followup.py`、`tests/test_ai_edit_check_app.py`、`web/src/components/ai/legendLabelNotice.test.tsx`。
-- **内置 AI「Tavotto Agent」（`engine/hosted_ai.py`，ADR 0200，功能键 `hosted-ai`）是一条虚拟连接，不是第三个执行器**：`PROVIDER_ID = "tavotto-agent"`，
+- **内置 AI「Tavotto Agent」（`engine/hosted_ai.py` 叶子 + `engine/hosted_gateway.py` 联网实现，ADR 0200，功能键 `hosted-ai`）是一条虚拟连接，不是第三个执行器**：`PROVIDER_ID = "tavotto-agent"`，
   只在 `hosted_ai.available()`（没被 `TAVOTTO_NO_HOSTED_AI=1` 关、网关端点合规——正式开关 `PRODUCTION_LIVE=False` 时只认 `TAVOTTO_HOSTED_AI_ENDPOINT`、本机授权令牌有效且带
   `hosted-ai`）时出现在连接视图；**从不写进 config.json、没有用户 Key、id 保留**（`ai_providers._clean` 不让用户的连接占它）。**读取路径**（`ai_providers.lookup` / `resolve` /
-  `ai_connections.resolve_connection`）能看见它，**一切写入路径**（`get` / 保存 / 探测 / `/check`）看不见。`license.has()` 只在 `hosted_ai.available()` 里被调（`test_license_callsites` 登记），
+  `ai_connections.resolve_connection`）能看见它，**一切写入路径**（`get` / 保存 / 探测 / `/check`）看不见。`license.has()` 只在 `hosted_gateway.available()` 里被调；**`ai_*` 一族只许 import 叶子 `hosted_ai`，不许 import `hosted_gateway`（它 import `license` → `diagsend`，会把 `ai_*` 与诊断 / 遥测 / 更新器的旧环连成大环；入口层 `app.py` import 它即登记）**（`test_license_callsites` 登记），
   功能代码里没有任何权益判断。路由只有内置循环（`route_for` 最前一条），绝不走 CLI。
   **任务生命周期**：开任务 = 设备签名（`op = "ai_task"`，`license.sign_op`）的一次 POST `/v1/task`，换回任务通行证 + 这个任务的上限；之后内置执行器照常发请求（通行证当 API key，
   模型名固定 `tavotto-auto`，只进子进程环境变量、不进 argv / 日志 / 事件 / 落盘；形状 `tvk_task_…` 在 `diagnostictext` 里按值抹）；结束时 `Lease.close()`（幂等、永不抛）。

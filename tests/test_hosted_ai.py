@@ -25,6 +25,7 @@ from tavotto.engine import (
     exectrace,
     fixsession,
     hosted_ai,
+    hosted_gateway,  # noqa: F401 — import 即登记联网实现
     license as lic,
 )
 from tavotto.engine.agent_runner import loop, wires

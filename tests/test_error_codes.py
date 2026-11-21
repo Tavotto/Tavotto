@@ -335,6 +335,8 @@ USER_VISIBLE_CODES = {
     "ai_endpoint_incompatible": {"endpoint"},
     # 账号登录（设备码 OAuth，ADR 0146）
     "ai_endpoint_needs_login": {"endpoint"},
+    # 内置 AI（Tavotto Agent，ADR 0200）没能开任务：前端按 params.reason 自己说一句并给「改用我自己的 Key」，这条只是没认出时的兜底文案
+    "ai_hosted_unavailable": set(),
     "oauth_unavailable": set(),
     "oauth_start_failed": set(),
     "oauth_flow_not_found": set(),

@@ -126,6 +126,7 @@ from .engine import (
     handoff as engine_handoff,
     handoffreceipt as engine_handoffreceipt,
     hosted_ai as engine_hosted_ai,
+    hosted_gateway as engine_hosted_gateway,  # noqa: F401 — import 即登记联网实现（`hosted_ai.register`）；`ai_*` 一族不许 import 它，免得与诊断 / 遥测的旧环连成大环
     inputbroker as engine_inputbroker,
     inputcopy as engine_inputcopy,
     inputremap as engine_inputremap,

@@ -1,6 +1,6 @@
 """看护 ADR 0193 §一「付费只拦新功能」：全仓库对 `license.has(` 的调用点，只许出现在登记表里的模块。
 
-登记表 `REGISTERED_CALLERS` 现在只有 `engine/hosted_ai.py`（`hosted-ai` 内置 AI「Tavotto Agent」，ADR 0200）：它的 `available()` 是唯一的
+登记表 `REGISTERED_CALLERS` 现在只有 `engine/hosted_gateway.py`（`hosted-ai` 内置 AI「Tavotto Agent」，ADR 0200）：它的 `available()` 是唯一的
 权益判断，功能代码（改图 / 修复 / 数据出图）里没有任何 `has()`。`review-plus` 外部审阅加量的 PR 才会再加。**加调用点要同步改 ADR 0193 §一**（登记新功能键与它的模块），并把模块写进下面的登记表；
 凡随任何一个正式版免费发布过的能力，代码里都不许出现权益判断。
 """
@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 #: 登记过的、允许调用 `license.has(...)` 的模块（相对仓库根的 posix 路径）。
-REGISTERED_CALLERS: frozenset[str] = frozenset({"src/tavotto/engine/hosted_ai.py"})
+REGISTERED_CALLERS: frozenset[str] = frozenset({"src/tavotto/engine/hosted_gateway.py"})
 LICENSE_MODULE = "src/tavotto/engine/license.py"
 SKIP_DIRS = {".venv", "node_modules", ".git", "target", "target-wincheck", ".pnpm-store", "dist"}
 
@@ -92,7 +92,7 @@ def test_has_is_called_only_from_registered_modules():
 
 def test_registry_lists_exactly_the_registered_feature_modules():
     # 第二个调用点进来时，这条与登记表一起改（并改 ADR 0193 §一）
-    assert REGISTERED_CALLERS == frozenset({"src/tavotto/engine/hosted_ai.py"})
+    assert REGISTERED_CALLERS == frozenset({"src/tavotto/engine/hosted_gateway.py"})
 
 
 def test_the_scanner_actually_finds_call_sites():
