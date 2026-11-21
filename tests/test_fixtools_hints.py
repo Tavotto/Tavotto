@@ -20,6 +20,7 @@ from tavotto.engine.fixtools.audit import AuditLog
 from tavotto.engine.fixtools.runreport import project_run_report
 from test_fixtools import box, call, make_ctx, put  # noqa: F401
 
+
 def _failing(code: str, traceback: str = "") -> dict:
     return {
         "phase": "failed",
