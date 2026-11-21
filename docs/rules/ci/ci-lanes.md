@@ -15,7 +15,7 @@ order: 10
 
 CI 按**发生时机**分工（`.github/workflows/ci.yml` 抬头有全图，2026-08-25
 Merge Queue 定版）：PR = 快速反馈（python-lint / invariants / backend-fast /
-frontend / workerd / **desktop-shell** / compat-smoke / CodeQL）；merge_group = 完整合并资格的唯一常规执行
+frontend / workerd / vecops / **desktop-shell** / compat-smoke / CodeQL）；merge_group = 完整合并资格的唯一常规执行
 点（backend-platforms / package ×3 / 两个真产物冒烟，Merge Queue 对「最新
 main + 前序 PR + 当前 PR」的组合提交验证）；`full-ci` 标签 = 在 PR 自己的
 SHA 上提前跑全套；push main = 轻量落地审计（main-landing-audit，不重复打
@@ -37,7 +37,7 @@ codeql.yml 的 `cancel-in-progress` **只对 PR 开**：merge_group 候选与 ma
 
 **docs-only 快车道（`docs-scope` job，2026-10-31）。** 只改 `docs/release-notes/**.md`（**不含**
 `UNRELEASED.md` 与 `unreleased/` 片段目录：`test_claude_plugin.py` / `test_dsh_bundle.py` / `test_install_commands_from_brand.py` 读它们；只此一条，不扩到整个
-`docs/`）的 PR 与队列候选不再跑 invariants / backend-fast / frontend / plugin-candidate / workerd /
+`docs/`）的 PR 与队列候选不再跑 invariants / backend-fast / frontend / plugin-candidate / workerd / vecops /
 desktop-shell / compat-smoke 和五个重型资格；python-lint / cla-check / release-note-gate / `docs-scope`
 照跑，`docs-scope` 在 docs-only 时另跑 `tests/test_docs_references.py`（发行说明相对链接）。
 **Gate 怎么有据地接受这些 skipped**（CI01 §4 ① 说的「前置 filter + 短路会让 Gate 判红」的解法）：

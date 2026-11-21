@@ -1264,6 +1264,7 @@ export default interface Resources {
       "yes": "是"
     },
     "layout": {
+      "computationalFormat": "计算图表",
       "conflict": "磁盘上已存在名为「{{name}}」的排版，由其他窗口或外部工具写入。",
       "conflictDisk": "磁盘上那份：{{canvases}} 张画布 / {{objects}} 个对象",
       "empty": "项目里还没有排版",
@@ -1476,6 +1477,38 @@ export default interface Resources {
         "title": "直接在图上改"
       }
     },
+    "packageInstall": {
+      "attemptedAt": "请求安装到",
+      "chooseAnother": "选择其他项目包…",
+      "chooseDestination": "选择位置…",
+      "close": "关闭",
+      "completionUnknown": "这次安装尚未收到确认结果。请保留并检查此目录；关闭窗口后仍可回看路径。重新安装前请先选择项目包。",
+      "configurationReview": "此项目的本机运行设置需要检查，打开项目不会运行脚本。",
+      "contents": "画布 {{canvases}} · 资源 {{resources}} · 图像归档 {{snapshots}}",
+      "continueEditing": "继续编辑",
+      "dependencies": "运行依赖尚未全部确认；安装不会自动运行包内脚本。",
+      "description": "先检视资源，再安装到新项目；打开时保留原来的排版。",
+      "destination": "新项目目录",
+      "documentPending": "排版正文的保存尚未确认。打开项目后将通过原保存流程写入工作副本。",
+      "entry": "安装项目包到新目录…",
+      "inspecting": "正在检视项目包…",
+      "install": "安装到新目录",
+      "installedAt": "资源已安装到",
+      "installing": "正在安装资源。关闭窗口会停止后续打开，安装结果仍会保留。",
+      "missing_other": "包中缺少 {{count}} 个资源，请补齐后重新导出。",
+      "newDirectory": "填写尚不存在的完整目录路径，已有文件不会被覆盖。",
+      "openInstalled": "打开已安装项目",
+      "opening": "正在打开项目并保存工作副本…",
+      "pickParent": "选择新项目的上级目录",
+      "previous": "其他安装记录",
+      "publicationUnconfirmed": "目录已发布，但安装核对尚未全部确认；打开后请检查资源。",
+      "receivedResult": "已收到这次安装的结果，可以查看后继续。",
+      "resultPending": "结果未确认",
+      "reviewConfiguration": "检查本机运行设置",
+      "saved": "工作副本已保存，可以继续编辑。",
+      "title": "安装计算图表项目包",
+      "viewResult": "查看安装结果"
+    },
     "palette": {
       "commands": {
         "add-anchor": {
@@ -1586,9 +1619,45 @@ export default interface Resources {
           "keywords": "open load layout zr zairu dk dakai pb paiban",
           "label": "打开排版…"
         },
+        "make-compound": {
+          "keywords": "compound path hole jlfhlj 复合路径 挖洞",
+          "label": "建立复合路径"
+        },
         "new-doc": {
           "keywords": "new blank xj xinjian pb paiban",
           "label": "新建空白排版"
+        },
+        "offset-path": {
+          "keywords": "offset path expand inset pylj 偏移 外扩 内缩",
+          "label": "偏移路径"
+        },
+        "outline-stroke": {
+          "keywords": "outline stroke expand lkhmb 轮廓化 描边 扩展",
+          "label": "轮廓化描边"
+        },
+        "pathfinder-divide": {
+          "keywords": "divide split fg 分割 切开 路径查找器",
+          "label": "分割"
+        },
+        "pathfinder-exclude": {
+          "keywords": "exclude xor pccd 排除 重叠 路径查找器",
+          "label": "排除重叠"
+        },
+        "pathfinder-intersect": {
+          "keywords": "intersect overlap xj 相交 交集 路径查找器",
+          "label": "相交"
+        },
+        "pathfinder-minus-front": {
+          "keywords": "minus front subtract jqdc 减去 顶层 路径查找器",
+          "label": "减去顶层"
+        },
+        "pathfinder-trim": {
+          "keywords": "trim hide xb 修边 去掉被盖住的 路径查找器",
+          "label": "修边"
+        },
+        "pathfinder-unite": {
+          "keywords": "unite union merge combine hb 合并 联集 路径查找器",
+          "label": "合并"
         },
         "pen-tool": {
           "keywords": "pen gb 路径 贝塞尔",
@@ -1605,6 +1674,14 @@ export default interface Resources {
         "refresh-project": {
           "keywords": "refresh reload rescan sx shuaxin 重新扫描 新文件 检查",
           "label": "刷新项目"
+        },
+        "release-compound": {
+          "keywords": "release compound sffhlj 释放 复合路径",
+          "label": "释放复合路径"
+        },
+        "reverse-path": {
+          "keywords": "reverse path direction flip arrow fzlj 反转 方向 箭头",
+          "label": "反转路径方向"
         },
         "rulers": {
           "keywords": "ruler bc biaochi",
@@ -1629,6 +1706,10 @@ export default interface Resources {
         "shortcut-help": {
           "keywords": "shortcut help kjj kuaijiejian",
           "label": "快捷键帮助"
+        },
+        "simplify-path": {
+          "keywords": "simplify smooth reduce anchors jhlj 简化 删锚点 平滑",
+          "label": "简化路径"
         },
         "styles": {
           "keywords": "style token preset ys lwys yangshi",
@@ -3666,6 +3747,11 @@ export default interface Resources {
       "cell_map_too_large": "映射规则写得太多了，最多 50 项。",
       "cell_map_value_invalid": "映射到的值要是一个数，或者写成缺失。",
       "cell_rule_invalid": "这条处理规则不对：要针对这次画图用到、夹着文字的数值列，每列只写一条。",
+      "chart_engine_mismatch": "当前绘图环境与计算图表要求不一致。请使用匹配的绘图环境后重试。",
+      "chart_engine_unavailable": "计算图表的渲染引擎正忙，请稍后重试。",
+      "chart_model_invalid": "计算图表的模型或来源引用无效，无法应用本次操作。",
+      "chart_model_unsupported": "当前不支持这份计算图表的模型或编辑方式。",
+      "chart_render_unsupported": "当前无法完整渲染这张计算图表。",
       "column_not_found": "这张表里没有这一列。",
       "column_type_mismatch": "这一列的类型不适合画在这个位置，比如把文字当数值用。",
       "composition_negative": "占比图里有负数，不能画。",
@@ -3761,8 +3847,8 @@ export default interface Resources {
       "image_format_mismatch_file": "{{file}} 其实是 {{actual}} 图片，只是扩展名写成了 .{{ext}}，换成真正的 {{claimed}} 文件后再运行。",
       "import_folder_abi_mismatch": "脚本自带的“{{folder}}”文件夹是为 Python {{abi}} 装的，和当前环境（Python {{current}}）不兼容。选“跳过这个文件夹重跑”即可，不需要换 Python。",
       "import_folder_unreadable": "脚本加载的项目外文件夹“{{folder}}”读不了（当前账户没有读取权限）。给这个账户开放读取权限，或把它移出脚本的加载路径后重试；换 Python 环境没有用。",
-      "input_declaration_conflict": "输入声明已更新，请重新读取后再保存。",
-      "input_declaration_invalid": "输入声明或批准资源不可用，请检查文件、运行配置和数据位置。",
+      "input_declaration_conflict": "输入声明已在另一处更新，请重新读取后再保存。",
+      "input_declaration_invalid": "输入声明或已选择的资源不可用，请检查文件、运行配置和数据位置。",
       "input_declaration_unavailable": "暂时无法读取或保存输入声明，请稍后重试。",
       "input_remap_changed": "数据位置刚刚改过，这次结果按旧位置产出，已丢弃。请重试。",
       "input_remap_chosen_invalid": "这个位置用不了：{{path}}。请选一个存在的文件或文件夹。",
@@ -4816,6 +4902,7 @@ export default interface Resources {
       "pasteStyle": "粘贴样式",
       "pasteStyleEmpty": "还没有复制过样式",
       "pasteStyleTip": "粘贴到选区里的{{kind}}",
+      "pathfinderLabel": "路径查找器",
       "pinMembers": "固定选中成员，重排时不动。",
       "refLabel": "对齐到",
       "refTip": {
@@ -5570,6 +5657,12 @@ export default interface Resources {
       "unknown": "未知"
     },
     "panelLabel": "右侧面板",
+    "pathfinder": {
+      "modes": "形状模式",
+      "offsetDistance": "偏移距离",
+      "offsetDistanceTip": "正数往外扩，负数往里缩",
+      "ops": "路径"
+    },
     "pinnedAria": "右栏常驻，点击改为自动收起",
     "prop": {
       "alpha": "不透明度",
@@ -6314,6 +6407,7 @@ export default interface Resources {
     "key": {
       "anchors": "锚点编辑里：添加 / 删除 / 转换锚点",
       "appearance": "默认填色描边 / 互换填色和描边 / 无填充",
+      "compoundPath": "建立 / 释放复合路径",
       "copyPaste": "复制 / 粘贴对象，可跨排版",
       "cycleOverlap": "在重叠的图内元素之间轮换选中",
       "delete": "删除对象；图内编辑时改为隐藏，可恢复。",
@@ -6495,6 +6589,80 @@ export default interface Resources {
       "pen": "钢笔",
       "select": "选择",
       "subLabels": "序号"
+    },
+    "chartBind": {
+      "addSeries": "添加系列",
+      "apply": "绑定计算图表",
+      "axesNodes": "要替换的轴区域节点（每行一个）",
+      "axesNodesHelp": "选择原图中的轴、刻度和标签区域；这些区域会按数据重算。未选择的注释与装饰保持原样。",
+      "axis": {
+        "x": "X 轴校准（两个参考值）",
+        "y": "Y 轴校准（两个参考值）"
+      },
+      "cancel": "取消",
+      "categorical": "类别轴",
+      "categoriesCol": "类别数据列",
+      "colorbarNode": "色条区域节点",
+      "computed": "计算预览",
+      "confirm": "确认绑定",
+      "data": "数据（CSV / TSV）",
+      "dataPlaceholder": "x,y\n0,1.0\n1,2.0",
+      "errorColumn": "Y 误差列",
+      "fileLabel": "来源文件",
+      "firstPosition": "参考位置 1（轴比例）",
+      "firstValue": "参考数值 1",
+      "generating": "正在计算预览…",
+      "gridData": "网格数据（每行一行数值）",
+      "kind": {
+        "bar": "柱图",
+        "errorbar": "误差棒",
+        "image": "热图 / 网格",
+        "line": "折线",
+        "scatter": "散点"
+      },
+      "legend": {
+        "add": "添加图例区域",
+        "addEntry": "添加条目",
+        "custom": "保持脚本原样（不跟随）",
+        "entries": "旧图例里的条目，从上到下（从 0 编号）。文字取场景里对应的文本，可自行修改。",
+        "entryIndex": "条目序号",
+        "entryLabel": "条目文字",
+        "follow": "跟随",
+        "rectHeight": "图例高度",
+        "rectWidth": "图例宽度",
+        "rectX": "图例 X",
+        "rectY": "图例 Y",
+        "region": "图例区域节点",
+        "remove": "移除区域",
+        "removeEntry": "移除条目",
+        "title": "图例区域（重算后的条目跟随各自的系列）"
+      },
+      "menu": "绑定数据为计算图表",
+      "nodesLabel": "节点数",
+      "numeric": "数值轴",
+      "original": "原图",
+      "preview": "生成对照预览",
+      "rect": "绘图区（x y 宽 高）",
+      "rectHeight": "绘图区高度",
+      "rectWidth": "绘图区宽度",
+      "rectX": "绘图区 X",
+      "rectY": "绘图区 Y",
+      "removeSeries": "移除系列",
+      "restoredHelp": "数据、坐标轴与系列已预填。检查对照预览，确认后应用到当前图。",
+      "restoredTitle": "已读取 SVG 内的计算图表",
+      "retryScene": "重新读取原图",
+      "scale": "轴尺度",
+      "scaleLinear": "线性",
+      "scaleLog": "对数",
+      "secondPosition": "参考位置 2（轴比例）",
+      "secondValue": "参考数值 2",
+      "series": "系列（节点 / x 列 / y 列）",
+      "seriesNode": "场景节点 id",
+      "seriesType": "系列类型",
+      "title": "绑定数据为计算图表",
+      "xColumn": "X 数据列",
+      "xKind": "X 轴类型",
+      "yColumn": "Y 数据列"
     },
     "confirm": {
       "docLossBody": "浏览器存储不可用或已满，切换后无法从「本机最近的排版」取回。仍要继续吗？",
@@ -6721,6 +6889,7 @@ export default interface Resources {
       "addSubLabels": "添加序号标签",
       "addText": "添加文字",
       "adjustCrop": "调整裁剪",
+      "adoptComputedFrame": "采用计算渲染外框",
       "adoptScriptFrame": "改用脚本保存时的图幅",
       "alignNewFigure": "按样式对齐新图",
       "alignNewText": "按样式对齐新标注",
@@ -6776,6 +6945,7 @@ export default interface Resources {
       "lockElement": "锁定图内元素",
       "lockObject": "锁定对象",
       "lockObjects": "锁定 {{count}} 个对象",
+      "makeCompound": "建立复合路径",
       "mcpOpenFigure": "打开图",
       "moveAnchors": "移动锚点",
       "moveElement": "移动{{label}}",
@@ -6784,13 +6954,27 @@ export default interface Resources {
       "moveHandle": "调整手柄",
       "moveObject": "移动对象",
       "moveObjects": "移动 {{count}} 个对象",
+      "offsetPath": "偏移路径",
+      "outlineStroke": "轮廓化描边",
       "pasteObjects_other": "粘贴 {{count}} 个对象",
       "pasteStyle": "粘贴样式",
+      "pathfinder": {
+        "crop": "裁剪",
+        "divide": "分割",
+        "exclude": "排除重叠",
+        "intersect": "相交",
+        "merge": "合并同色",
+        "minusBack": "减去后方",
+        "minusFront": "减去顶层",
+        "trim": "修边",
+        "unite": "合并"
+      },
       "pinLayout": "固定位置",
       "playgroundOpenFigure": "打开图",
       "playgroundResetEdits": "重置修改",
       "reflowLayoutGroup": "重新排列布局组",
       "refreshJournalV2": "更新期刊要求",
+      "releaseCompound": "释放复合路径",
       "relinkAssets_other": "重新链接 {{count}} 个素材",
       "renameCanvas": "重命名画布",
       "renameObject": "重命名对象",
@@ -6804,6 +6988,7 @@ export default interface Resources {
       "restoreAspect": "恢复原始比例",
       "restoreNativeSize": "恢复原始尺寸",
       "restoreStyle": "恢复原样并解除样式跟随",
+      "reversePath": "反转路径方向",
       "rotate": "旋转 {{deg}}°",
       "rotateObjects": "旋转对象",
       "rotateReset": "取消旋转",
@@ -6818,6 +7003,7 @@ export default interface Resources {
       "setPublicationProfile": "设置出版规范",
       "showObject": "显示对象",
       "showObjects": "显示 {{count}} 个对象",
+      "simplifyPath": "简化路径",
       "spacingX": "设置水平间距",
       "spacingY": "设置垂直间距",
       "swapFillStroke": "互换填色和描边",
@@ -6932,6 +7118,10 @@ export default interface Resources {
       "runtimePossiblyStale": "脚本或环境可能有变，重新运行即可更新。",
       "runtimeRerunFailed": "重新运行失败",
       "stale": "脚本已更新"
+    },
+    "pathfinder": {
+      "blockedEmbedded": "在这里用不了，请在 Tavotto 桌面版或浏览器里打开",
+      "blockedFailed": "这台电脑上没能加载路径查找器"
     },
     "prep": {
       "aiFix": {
@@ -7338,6 +7528,35 @@ export default interface Resources {
         "grantCopy": "会弹出系统的授权窗口，同意后再复制；原文件不动。",
         "openPrivacy": "在“隐私与安全性 → 完全磁盘访问”里勾上 {{product}}，再回来重新运行。"
       },
+      "inputs": {
+        "addFile": "添加文件",
+        "anyRelative": "所有相对请求",
+        "approvedRemaps": "已批准的外部输入",
+        "cancel": "取消",
+        "captured": "实际运行记录的输入摘要：{{revision}}",
+        "changed": "参数或准备配置已变化，请先重新检查。",
+        "chooseFile": "选择文件…",
+        "hint": "选择下一次明确运行时要记录的输入。保存仅重新检查，不运行脚本。",
+        "loading": "正在读取输入声明…",
+        "missingRemap": "批准目标已不可用，请移除或重新读取",
+        "noFiles": "尚未选择项目文件",
+        "noRemaps": "没有已批准的外部输入",
+        "notScript": "当前目标不是可声明输入的脚本。",
+        "pathPlaceholder": "项目相对路径或文件路径",
+        "projectFiles": "项目文件",
+        "reload": "重新读取",
+        "reloaded": "已重新读取并合并你的未保存选择，请检查后保存。",
+        "removeDeclaration": "移除声明",
+        "removeFile": "移除",
+        "removed": "声明已移除。",
+        "removedRecheckFailed": "声明已移除，但重新检查未完成。请重新检查。",
+        "save": "保存选择",
+        "saved": "选择已保存。下次运行会按此选择记录输入。",
+        "savedRecheckFailed": "选择已保存，但重新检查未完成。请重新检查。",
+        "scopeUnknown": "当前运行范围尚未确定。",
+        "sensitiveRun": "含敏感参数的运行不记录可携输入声明。",
+        "title": "捕获输入"
+      },
       "install": {
         "download": "需要先下载约 {{mb}} MB。",
         "managedPlace": "Tavotto 目录",
@@ -7565,6 +7784,7 @@ export default interface Resources {
       "openInspector": "打开全部属性",
       "paste": "粘贴",
       "pasteAsAnnotation": "粘贴为标注",
+      "pathfinder": "路径查找器",
       "rebuild": "重新构建",
       "resetOverridesCount_other": "恢复图内修改（{{count}} 项）",
       "scale": "缩放",
@@ -7690,6 +7910,8 @@ export default interface Resources {
       "doneLocal": "已保存在本机（没有打开项目）",
       "doneProject": "已保存到项目：{{file}}",
       "failed": "无法保存。改动仍在，请检查磁盘空间后重试。",
+      "projectBindingSuperseded": "已写入 {{file}}，但下次保存目标尚未确认。较晚选择的目标会保留，请重新打开这份排版后继续保存。",
+      "projectBindingUnavailable": "项目文件关联尚未确认，本次还没有写入命名文件。改动仍在本机，请重试或重新打开排版。",
       "projectConflict": "项目里的 {{file}} 已在别处改过，这次没有写入。请在弹出的对话框里决定。",
       "projectConflictElsewhere": "项目里的 {{file}} 已在别处改过，这次没有写入。回到那份排版再保存，就能决定怎么处理。",
       "projectFailed": "没能存进项目里的 {{file}}：{{reason}}",
@@ -7888,12 +8110,17 @@ export default interface Resources {
       "packageOpenFailed": "无法打开项目包。{{error}}",
       "packageOpened": "已打开项目包（{{createdAt}}），素材全部就位",
       "packageTooNew": "这个项目包来自更新的 {{product}}，本版本无法打开。",
+      "packagedExecutionIncomplete": "已生成项目包 {{name}}。运行依赖尚未确认完整，迁移前请检查数据与运行配置。",
+      "packagedIncompleteWithExecution_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材，运行依赖也尚未确认完整。迁移前请补齐素材并检查数据与运行配置。",
+      "packagedIncomplete_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材。恢复前请补齐。",
       "packaged_other": "已生成项目包 {{name}}（{{count}} 个素材）",
       "panelRebuilt": "已按源脚本重新构建",
       "panelRerenderedNoRerun": "已按当前修改重新渲染；源脚本没有重跑",
       "pasteNothing": "没有可粘贴的对象。缺失素材的对象已跳过。",
       "pastedWithSkips_other": "已粘贴 {{count}} 个对象，跳过 {{skipped}} 张缺失素材的图。{{undo}} 可撤销。",
       "pasted_other": "已粘贴 {{count}} 个对象（{{undo}} 可撤销）",
+      "pathfinderEmpty": "算出来是空的，没有改动",
+      "pathfinderUnavailable": "这里用不了路径查找器",
       "projectBackgroundError": "后台检查项目文件时出错。已打开的内容不受影响，修好文件后会自动重试。",
       "rebuildFailed": "无法重新构建。{{error}}",
       "recentMissing": "这份排版已不在本机，已从列表里去掉",
@@ -7905,6 +8132,7 @@ export default interface Resources {
       "renderFailed": "无法渲染 {{name}}",
       "renderFailedWithError": "无法渲染 {{name}}。{{error}}",
       "scriptChanged_other": "脚本已更新，{{count}} 张图已重新渲染",
+      "simplifyNothing": "已经很简单了，没有可删的锚点",
       "sourceLinked_other": "已找到源脚本（{{count}} 张）",
       "sourceLostEditing": "你可能移动了该图脚本，需要重新关联。",
       "sourceLostRelink": "重新关联脚本",

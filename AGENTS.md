@@ -106,6 +106,7 @@ python scripts/smoke_app.py --python .venv/bin/python   # 端到端冒烟
 | `web/` | `web/AGENTS.md` → `docs/rules/frontend/` | 前端、渲染态、预览平面、命中几何、i18n、playground、UI 视觉纪律 |
 | `src-tauri/` | `src-tauri/AGENTS.md` → `docs/rules/desktop/` | 桌面壳、ACL、更新通道、安装界面、壳内 i18n |
 | `workerd/` | `workerd/AGENTS.md` | Rust supervisor |
+| `vecops/` | `vecops/AGENTS.md` | 画布路径查找器的 WASM 内核（vendor 的 vectorcraft） |
 | `packaging/` | `packaging/AGENTS.md` → `docs/rules/packaging/` | wheel/sdist、内置渲染 runtime、PyInstaller、macOS 签名 |
 | `codex-plugin/` | `codex-plugin/AGENTS.md` → `docs/rules/plugin/` | Codex 插件、技能、MCP server、内嵌画布、首次使用契约 |
 | `.github/` | `.github/AGENTS.md`（速查表）→ `docs/rules/ci/` | CI 分层、门禁纪律、验证链、发布链 |
