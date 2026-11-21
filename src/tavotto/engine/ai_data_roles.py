@@ -512,6 +512,19 @@ def _vetoed(key: str, role: str | None) -> bool:
     return role != "group"
 
 
+def _default_group_is_replicate(
+    entry: adf.TableEntry, hint: str | None, loop: dict, roles: dict
+) -> bool:
+    """规则在几个分组列里默认会选的那一列，模型判它是「重复 / 批次编号」吗。是的话模型的「不分组」不采纳：按板号 / 批次分开画没有害处，
+    去掉分组却可能把规则本来对的结果改差（HO-23）。"""
+    res = recipe_mod.resolve_roles(entry, hint, {**loop, "group": "unsure"})
+    return (
+        isinstance(res, recipe_mod.Roles)
+        and bool(res.cats)
+        and roles.get(res.cats[0]) == "replicate_unit"
+    )
+
+
 def suggest(
     entry: adf.TableEntry,
     hint: str | None,
@@ -542,7 +555,11 @@ def suggest(
             key = _QUESTION_KEY.get(res.question_code)
             if key is None or key in loop:
                 break
-            if key in valid:
+            if key in valid and not (
+                key == "group"
+                and valid[key] == "none"
+                and _default_group_is_replicate(entry, hint, loop, roles)
+            ):
                 loop[key] = emit[key] = valid[key]
             else:
                 loop[key] = "unsure"  # 模型没有可用的选择：规则默认（占位只用来往下走）
@@ -579,6 +596,10 @@ def suggest(
                     changed = True
                 continue
             if _vetoed(key, roles.get(col)) and key in valid and valid[key] != col:
+                # 规则已经落定了一个分组列，模型判它是「重复 / 批次编号」并建议干脆不分组：不采纳——按板号 / 批次分开画没有害处，
+                # 去掉分组却是把规则本来对的结果改差（HO-23：酶标板的板号）。换成另一个分组列、或判成备注 / 行号的照常采纳。
+                if key == "group" and valid[key] == "none" and roles.get(col) == "replicate_unit":
+                    continue
                 loop[key] = emit[key] = valid[key]
                 changed = True
         if not changed:
