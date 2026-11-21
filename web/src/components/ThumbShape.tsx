@@ -21,6 +21,7 @@ import { MM_PER_PT } from '@/lib/units'
 import { PathBody } from '@/canvas/PathView'
 import type { ArrowObject, PathObject, ShapeObject } from '@/types/document'
 import { lineEndpoints, objectRotation, shapeStrokeOn } from '@/types/document'
+import { usePaints } from '@/canvas/gradientPaint'
 
 export function ThumbShape({ obj }: { obj: ArrowObject | ShapeObject | PathObject }) {
   const w = Math.max(obj.w, 0.001)
@@ -73,9 +74,33 @@ export function ThumbShape({ obj }: { obj: ArrowObject | ShapeObject | PathObjec
     )
   }
 
+  return <ThumbClosedShape obj={obj} w={w} h={h} sw={sw} wrap={wrap} at={at} strokeOn={strokeOn} baseStroke={stroke} />
+}
+
+/** 形状那一支单独成组件：`usePaints` 是 hook，不能放在上面按类型提前返回的分支后面 */
+function ThumbClosedShape({
+  obj,
+  w,
+  h,
+  sw,
+  wrap,
+  at,
+  strokeOn,
+  baseStroke,
+}: {
+  obj: ShapeObject
+  w: number
+  h: number
+  sw: number
+  wrap: string | undefined
+  at: string
+  strokeOn: boolean
+  baseStroke: ReturnType<typeof svgStroke> | Record<string, never>
+}) {
   const inset = shapeInset(obj, sw)
-  const fill = obj.fill ?? 'none'
-  const fillOpacity = obj.fill ? (obj.fillOpacity ?? 1) : undefined
+  const paints = usePaints(obj, w, h, strokeOn)
+  const { fill, fillOpacity } = paints
+  const stroke = strokeOn ? { ...baseStroke, ...paints.strokeOverride } : baseStroke
   let body: React.ReactNode = null
   if (obj.shape === 'rect') {
     const rw = Math.max(w - 2 * inset, 0.001)
@@ -106,7 +131,10 @@ export function ThumbShape({ obj }: { obj: ArrowObject | ShapeObject | PathObjec
   }
   return (
     <g data-thumb-shape={obj.shape} transform={wrap}>
-      <g transform={at}>{body}</g>
+      <g transform={at}>
+        {paints.defs}
+        {body}
+      </g>
     </g>
   )
 }

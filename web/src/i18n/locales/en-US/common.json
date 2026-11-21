@@ -21,7 +21,11 @@
     "hex": "{{label}}: hex",
     "documentColors": "In this layout",
     "recent": "Recent",
-    "system": "System colour picker…"
+    "system": "System colour picker…",
+    "figureColors": "Figure colors",
+    "recommended": "Suggested",
+    "recommendedTip": "Okabe-Ito colorblind-safe palette, common in scientific figures",
+    "recommendedTipJournal": "{{journal}} does not specify colors; this is the Okabe-Ito colorblind-safe palette"
   },
   "count": {
     "selectedObjects_one": "{{count}} object selected",

@@ -472,7 +472,9 @@
     "offsetPath": "偏移路径",
     "outlineStroke": "轮廓化描边",
     "reversePath": "反转路径方向",
-    "simplifyPath": "简化路径"
+    "simplifyPath": "简化路径",
+    "roundCorners": "圆角",
+    "shapeBuilder": "形状生成器"
   },
   "layerTree": {
     "collapseGroup": "折叠组",

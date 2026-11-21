@@ -3086,14 +3086,14 @@ const ARROW_STYLE_KEYS = ['strokePt', 'color', 'head', 'headStart', 'headEnd',
 /** 2026-11-14 起格式刷把描边的全部外观都带上（ADR 0174 的描边开关 / 不透明度 / 线端拐角，ADR 0185 的斜接上限 / 自定义虚线 / 描边对齐） */
 const SHAPE_STYLE_KEYS = ['strokePt', 'color', 'fill', 'cornerRadius',
   'fillOpacity', 'dash', 'stroke', 'strokeOpacity', 'lineCap', 'lineJoin', 'miterLimit',
-  'dashPattern', 'strokeAlign', 'rotationDeg'] as const
+  'dashPattern', 'strokeAlign', 'fillGradient', 'strokeGradient', 'rotationDeg'] as const
 /**
  * 自由路径（ADR 0185）：填充 / 描边字段与形状同名同义，端型与箭头同名同义。形状 ↔ 路径同族互刷
  * （`markStyle.styleFamilyOf`），写的是两边**都有**的那几个键（`styleKeysOf` 取交集）——圆角不刷到路径上、端型不刷到形状上。
  */
 const PATH_STYLE_KEYS = ['strokePt', 'color', 'fill', 'fillOpacity', 'fillRule', 'dash', 'stroke',
-  'strokeOpacity', 'lineCap', 'lineJoin', 'miterLimit', 'dashPattern', 'headStart', 'headEnd', 'headSizeStart',
-  'headSizeEnd', 'rotationDeg'] as const
+  'strokeOpacity', 'lineCap', 'lineJoin', 'miterLimit', 'dashPattern', 'fillGradient', 'strokeGradient',
+  'headStart', 'headEnd', 'headSizeStart', 'headSizeEnd', 'rotationDeg'] as const
 const STYLE_KEYS: Record<StyleClip['kind'], readonly string[]> = {
   panel: [],
   text: TEXT_STYLE_KEYS,
