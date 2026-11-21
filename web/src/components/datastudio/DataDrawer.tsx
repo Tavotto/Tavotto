@@ -1,4 +1,10 @@
 import { useEffect, useMemo } from 'react'
+import { hasUsableAi } from '@/lib/api'
+import { useAiStore } from '@/store/aiStore'
+import { requestConnectAi } from '@/store/connectAiStore'
+import { useCapsWatch } from '@/components/settings/connectAi/useCapsWatch'
+import { ICON_SIZE } from '@/components/ui/Icon'
+import { Sparkles } from '@/components/ui/icons'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/Button'
 import { Notice } from '@/components/ui/Notice'
@@ -18,7 +24,7 @@ import { DataList } from './DataList'
  * 左栏「数据」抽屉（`LeftTab` 'data'，和「素材」「大纲」一样走 `railClick`）：这个文件夹里的数据文件树。
  * 点一个文件 = 在画布标签栏开（或复用）一个临时标签（`DataDraft`）并开始出候选，抽屉与画布文档都不动。抽屉里不加说明文字。
  */
-export function DataDrawer() {
+function DataDrawerBody({ floatInset }: { floatInset: boolean }) {
   const { t } = useTranslation('ai')
   const { t: tc } = useTranslation('common')
   const files = useDataFigureStore((s) => s.files)
@@ -119,6 +125,7 @@ export function DataDrawer() {
       )}
       <DataBatchActions open={pickMode} />
       <DataList
+        floatInset={floatInset}
         rows={rows}
         // 多选态下清单里只有「已选」这一种高亮；合画的临时标签开着时也不单独亮第一份（也让漫游 tabindex 回到第一行）
         selected={pickMode || group ? null : selected}
@@ -149,6 +156,42 @@ export function DataDrawer() {
           return true
         }}
       />
+    </div>
+  )
+}
+
+/**
+ * 「数据」抽屉：清单 + 底部居中一枚悬浮的「连接 AI」胶囊（没有可用的 AI 连接时一直显示，没有关闭按钮；抽屉里没有数据文件时也显示）。
+ * 连接状态来源与助手面板空态同一个（`aiStore.caps` + `hasUsableAi`）：还没探测完（`caps` 为 null）不显示，宁可晚出现。
+ * 胶囊绝对定位浮在抽屉之上、不占布局高度；清单底部留出等于它的内边距（`floatInset`），滚到底最后一行不会被盖住。
+ * 连上之后对当前数据重跑一次候选的事在 `DataPanel`（它认「没连 → 连上」那一下）。
+ */
+export function DataDrawer() {
+  const { t } = useTranslation('ai')
+  const caps = useAiStore((s) => s.caps)
+  const unconnected = caps !== null && !hasUsableAi(caps)
+  useEffect(() => {
+    if (caps === null) void useAiStore.getState().loadCaps().catch(() => undefined)
+  }, [caps])
+  // 用户可能在终端里登录了订阅：回到前台刷新一次（连接弹窗开着时它自己 3 秒一刷）
+  useCapsWatch(unconnected, { poll: false })
+  return (
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <DataDrawerBody floatInset={unconnected} />
+      {unconnected && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center px-3">
+          <button
+            type="button"
+            data-data-connect
+            title={t('dataFigureV2.suggest.connectHint')}
+            onClick={() => requestConnectAi()}
+            className="pointer-events-auto inline-flex h-9 max-w-full items-center gap-1.5 rounded-full bg-surface pl-3.5 pr-4 text-base font-medium text-ink shadow-pop outline-none hover:bg-surface-hover focus-visible:focus-ring"
+          >
+            <Sparkles size={ICON_SIZE.md} aria-hidden className="shrink-0 text-ink-2" />
+            <span className="truncate">{t('dataFigureV2.connect.pill')}</span>
+          </button>
+        </div>
+      )}
     </div>
   )
 }

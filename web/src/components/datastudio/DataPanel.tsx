@@ -1,13 +1,19 @@
+import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Row } from '@/components/ui/Field'
 import { Select } from '@/components/ui/Select'
 import { overviewKeyOf, useDataFigureStore, type RoleKey } from '@/store/dataFigureStore'
 import type { CellMode } from '@/lib/dataFigure'
 import { diffSuggestion } from '@/lib/dataUnderstanding'
+import { hasUsableAi } from '@/lib/api'
+import { useAiStore } from '@/store/aiStore'
 
 const baseName = (p: string): string => p.slice(p.lastIndexOf('/') + 1)
 /** 「不要横轴 / 不分组」的取值：不会和任何列名撞（列名里不会有控制字符） */
 const NONE = '\u0000none'
+
+/** 标题行右端的小胶囊（「试试建议」） */
+const CAPSULE = 'h-6 shrink-0 rounded-full border border-border bg-surface-hover px-2.5 text-xs font-medium text-ink outline-none hover:bg-border focus-visible:focus-ring'
 
 /**
  * 右侧面板在临时标签激活时显示的这份数据：文件名、行列数；横轴 / 纵轴 / 分组三个下拉（值与可选的列来自响应的 `roles`，
@@ -26,6 +32,16 @@ export function DataPanel() {
   const busy = useDataFigureStore((s) => s.drawingId != null)
   const understanding = useDataFigureStore((s) => s.understanding)
   const suggestion = useDataFigureStore((s) => s.suggestion)
+  // 连接状态（「连接 AI」胶囊在左栏「数据」抽屉底部，见 `DataDrawer`）：这里只管「从没连变为连上」时对当前数据重跑一次
+  const caps = useAiStore((s) => s.caps)
+  const unconnected = caps !== null && !hasUsableAi(caps)
+  // 从「没连」变为「连上」：对当前这份数据重新出一次候选（`caps` 第一次探测完不算；动过下拉的由 store 拦下）
+  const wasUnconnected = useRef(false)
+  useEffect(() => {
+    if (caps === null) return
+    if (wasUnconnected.current && !unconnected) useDataFigureStore.getState().rerunForConnection()
+    wasUnconnected.current = unconnected
+  }, [caps, unconnected])
   if (!selected) return null
   const ov = overviews[overviewKeyOf(selected, headerRows)]?.data ?? null
   // 合画：概览只有第一份的，行列数不代表整组，不显示
@@ -53,7 +69,7 @@ export function DataPanel() {
               data-data-suggest
               title={diffTitle || undefined}
               onClick={() => useDataFigureStore.getState().applySuggestion()}
-              className="h-6 shrink-0 rounded-full border border-border bg-surface-hover px-2.5 text-xs font-medium text-ink outline-none hover:bg-border focus-visible:focus-ring"
+              className={CAPSULE}
             >
               {t('dataFigureV2.suggest.apply')}
             </button>

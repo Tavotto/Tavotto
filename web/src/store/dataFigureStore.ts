@@ -190,6 +190,8 @@ interface DataFigureStore {
   /** 一张缩略图取到了 / 取不到（422）：就绪状态 + 全部都画不出来时走「没画出来」 */
   thumbSettled: (session: string, id: string, ok: boolean) => void
   draw: (id: string) => Promise<void>
+  /** 用户刚连上 AI：对当前这份数据重新出一次候选，让「读懂数据」跑起来。用户已动过横轴 / 纵轴 / 分组下拉、正在出图、候选还没出完时什么都不做 */
+  rerunForConnection: () => void
   /** 点胶囊：套用模型的建议（等同用户自己改了映射后重新出候选） */
   applySuggestion: () => void
   /** 此刻读表 / 出候选那个请求的请求号（进度条轮询、取消都认它）；没有在读 = null */
@@ -859,6 +861,13 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       }
       set({ problem: null })
       await run({ keepChoices: true })
+    },
+
+    rerunForConnection: () => {
+      const { selected, phase, drawingId, answers } = get()
+      if (!selected || drawingId || (phase !== 'ready' && phase !== 'nothing')) return
+      if (SUGGEST_KEYS.some((k) => k in answers)) return
+      reask((a) => a)
     },
 
     applySuggestion: () => {

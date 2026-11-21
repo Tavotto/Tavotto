@@ -86,7 +86,10 @@ export function DataList({
   onFocusRow,
   onConfirm,
   multi,
+  floatInset,
 }: {
+  /** 清单底部有悬浮胶囊：滚到底时最后一行要能露在它上面（底部内边距 = 胶囊高度 + 离底边 + 呼吸） */
+  floatInset?: boolean
   rows: DataFileRow[]
   selected: TableRef | null
   /** 用户改过表头行后，这一行说重读后的行数（键 = 路径） */
@@ -415,7 +418,7 @@ export function DataList({
           multi.onClear()
         }
       }}
-      className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto pb-3"
+      className={cn('flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto', floatInset ? 'pb-16' : 'pb-3')}
     >
       {tree.map((n, i) => renderNode(n, '', i))}
     </ul>
