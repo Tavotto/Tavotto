@@ -639,7 +639,13 @@ export const isSelectAllTarget = (o: CanvasObject): boolean => !o.hidden && !o.l
  * 走这一处——快速编辑里曾经把整版看不见的对象全选上，接着 Delete 就把它们从版上删掉（Codex #833）。
  */
 export function selectAllIds(objects: readonly CanvasObject[]): string[] {
-  return objects.filter(isSelectAllTarget).map((o) => o.id)
+  // 剪切组的蒙版是隐藏的（给旧构建的，ADR 0191），但它是组的一部分：组里有成员被全选，蒙版跟着进选区——
+  // 否则 ⌘A + Delete 删掉内容、蒙版被当成孤立的还原出来，平白多出一个形状
+  const base = objects.filter(isSelectAllTarget)
+  const gids = new Set(base.flatMap((o) => groupPathOf(o)))
+  return objects
+    .filter((o) => isSelectAllTarget(o) || (!!o.clipMask && !o.locked && !!o.groupId && gids.has(o.groupId)))
+    .map((o) => o.id)
 }
 
 export function selectAll() {
@@ -3018,6 +3024,10 @@ export function releaseOrphanMasks(d: FigureDocument) {
     delete o.clipMask
     delete o.clipOff
     delete o.hidden
+    // 组里只剩它自己：这一层组也拿掉（不留一个「组 · 1 个对象」）
+    const p = groupPathOf(o)
+    const gid = p[p.length - 1]
+    if (gid && !d.objects.some((x) => x.id !== o.id && groupPathOf(x).includes(gid))) setGroupPath(o, p.slice(0, -1))
   }
 }
 

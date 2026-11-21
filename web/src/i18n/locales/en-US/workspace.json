@@ -498,7 +498,10 @@
     "transformScale": "Scale",
     "transformRotate": "Rotate",
     "transformSkew": "Skew",
-    "transformReflect": "Reflect"
+    "transformReflect": "Reflect",
+    "importSvg": "Paste SVG ({{count}} objects)",
+    "explodeSvg": "Make editable",
+    "outlineText": "Create outlines ({{count}})"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -1044,7 +1047,20 @@
     "skewSkipped_other": "{{count}} texts or figures were not skewed",
     "rotatePanelUnsupported": "Figures rotate in 90° steps only",
     "rotatePanelSkipped_one": "{{count}} figure was not rotated (figures rotate in 90° steps only)",
-    "rotatePanelSkipped_other": "{{count}} figures were not rotated (figures rotate in 90° steps only)"
+    "rotatePanelSkipped_other": "{{count}} figures were not rotated (figures rotate in 90° steps only)",
+    "svgImported_one": "Turned into {{count}} editable object",
+    "svgImported_other": "Turned into {{count}} editable objects",
+    "svgAsImage": "Placed as an image because {{reason}}",
+    "svgExplodeFailed": "Kept as a figure because {{reason}}",
+    "svgAsRaster": "Placed as a {{dpi}} dpi bitmap because {{reason}}",
+    "outlined_one": "{{count}} text converted to outlines",
+    "outlined_other": "{{count}} texts converted to outlines",
+    "outlinePartial_one": "{{count}} text could not be converted (font unavailable)",
+    "outlinePartial_other": "{{count}} texts could not be converted (font unavailable)",
+    "outlineFailed_one": "{{count}} text could not be converted to outlines (font unavailable)",
+    "outlineFailed_other": "{{count}} texts could not be converted to outlines (font unavailable)",
+    "svgCopied": "Copied as SVG — paste into Illustrator, Inkscape or Figma",
+    "svgCopyFailed": "Could not copy as SVG"
   },
   "tabs": {
     "allCanvases": "All canvases",
@@ -1970,5 +1986,31 @@
     "label": "Editing group",
     "exit": "Exit group editing",
     "exitTip": "Press Esc to go up one level"
+  },
+  "svgImport": {
+    "reason": {
+      "filter": "it uses filters",
+      "mask": "it uses masks",
+      "pattern": "it uses pattern fills",
+      "image": "it contains images",
+      "foreign_object": "it contains web content (foreignObject)",
+      "text_path": "it has text on a path",
+      "marker": "it uses line markers",
+      "external_ref": "it references external files or entities",
+      "css_selector": "it uses complex style selectors",
+      "clip_units": "a clipping path uses relative units",
+      "text_layout": "text is positioned letter by letter",
+      "skew_text": "it has skewed text",
+      "symbol_viewbox": "a symbol has its own scaling",
+      "bad_xml": "the SVG is incomplete",
+      "not_svg": "it is not SVG",
+      "too_large": "the file is too large",
+      "too_many_elements": "it has too many elements",
+      "unreadable": "it could not be read",
+      "unsupported_element": "it uses elements Tavotto cannot draw (such as filters)",
+      "script": "it contains scripts or event handlers",
+      "reference_cycle": "it has circular references",
+      "timeout": "it is too complex to read in time"
+    }
   }
 }
