@@ -601,6 +601,23 @@ def first_key_connection(*, refresh: bool = False) -> dict | None:
     return None
 
 
+def display_of(
+    provider_id: str | None, cli_agent: str | None, connections_view: list[dict]
+) -> dict | None:
+    """一条连接在「连接 AI」列表里的显示名与种类 → `{"label", "kind"}`（`kind` = `key` / `subscription`）；找不到 = None。
+    `provider_id`：自己的 Key / 账号登录连接的 id；`cli_agent`：订阅登录（Codex → ChatGPT、Claude Code → Claude）。显示名不另写一份，取自连接视图。"""
+    if provider_id:
+        cid, kind = provider_id, "key"
+    else:
+        sub = next((k for k, v in SUBSCRIPTIONS.items() if v[0] == cli_agent), None)
+        if sub is None:
+            return None
+        cid, kind = sub, "subscription"
+    found = next((c for c in connections_view if c.get("id") == cid), None)
+    label = str(found.get("label") or "") if found else ""
+    return {"label": label, "kind": kind} if label else None
+
+
 def builtin_usable() -> bool:
     """`require_usable("builtin")` 的判据：没被运维开关强制关掉，且有可用的 Key 连接。"""
     return builtin_forced() is not False and (

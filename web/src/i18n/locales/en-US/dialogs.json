@@ -2042,7 +2042,7 @@
         "hintChatgpt": "Sign in with your ChatGPT subscription",
         "hintClaude": "Sign in with your Claude subscription",
         "hosted": "Built in",
-        "hintHosted": "Included with the paid edition. No key needed"
+        "hintHosted": "For Pro members"
       },
       "back": "Back",
       "savedRefreshFailed": "Saved, but the status couldn’t be refreshed.",

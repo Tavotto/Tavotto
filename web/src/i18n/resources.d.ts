@@ -324,19 +324,18 @@ export default interface Resources {
       "viewDiff": "查看差异"
     },
     "hosted": {
-      "daily": "{{name}} 今天的额度用完了。",
-      "dailyOn": "{{name}} 今天的额度用完了，{{when}}再用。",
-      "fallbackDaily": "今天的额度用完了，这次用的是你自己的 Key。",
-      "fallbackQuota": "额度用完了，这次用的是你自己的 Key。",
-      "fallbackQuotaOn": "额度用完了，{{when}}再用；这次用的是你自己的 Key。",
+      "daily": "今日额度已用尽，请明天再试",
+      "fallbackDailyKey": "今日额度已用尽，已经切换到您的 {{name}} Key",
+      "fallbackDailySub": "今日额度已用尽，已经切换到您的 {{name}} 订阅",
+      "fallbackQuotaKey": "额度已用尽，已经切换到您的 {{name}} Key",
+      "fallbackQuotaSub": "额度已用尽，已经切换到您的 {{name}} 订阅",
       "notEntitled": "这台电脑上的 {{name}} 暂时用不了。",
       "paused": "{{name}} 暂停服务，稍后恢复。",
-      "quota": "{{name}} 的额度用完了。",
-      "quotaOn": "{{name}} 的额度用完了，{{when}}再用。",
+      "quota": "额度已用尽，请稍后再试",
+      "quotaOn": "额度已用尽，请 {{when}} 再试",
       "unavailable": "{{name}} 暂时连不上，稍后再试。",
       "useOwnKey": "改用我自己的 Key",
-      "whenDate": "{{date}}",
-      "whenTomorrow": "明天"
+      "whenDate": "{{date}}"
     },
     "markdown": {
       "image": "[图片：{{alt}}]",
@@ -2670,7 +2669,7 @@ export default interface Resources {
           "hintChatgpt": "用 ChatGPT 订阅登录",
           "hintClaude": "用 Claude 订阅登录",
           "hintCodingPlan": "用 Coding Plan 的 Key",
-          "hintHosted": "高级版自带，不用申请 Key",
+          "hintHosted": "Pro 会员专享",
           "hintKey": "填写 {{name}} API Key",
           "hintKimiCode": "用 Kimi Code 会员的 Key",
           "hintLogin": "用 {{name}} 登录",

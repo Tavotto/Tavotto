@@ -68,10 +68,9 @@ export function isTomorrow(ts: number, now: number = Date.now()): boolean {
   return day(ts) === tomorrow.getTime()
 }
 
-/** 「什么时候再用」：明天说「明天」，其余只写月日（不带年）；没有时刻 = null */
+/** 额度恢复的日期（只写月日，不带年）；没有时刻 / 就是明天（那种情况用「请明天再试」的说法）= null */
 export function whenMessage(retryAt: number | null, now: number = Date.now()): UiMessage | null {
-  if (retryAt == null) return null
-  if (isTomorrow(retryAt, now)) return msg('hosted.whenTomorrow', undefined, 'ai')
+  if (retryAt == null || isTomorrow(retryAt, now)) return null
   return msg('hosted.whenDate', { date: formatDateTime(retryAt, { month: 'short', day: 'numeric' }) }, 'ai')
 }
 
@@ -81,9 +80,11 @@ export function hostedFailureMessage(f: HostedFailure, now: number = Date.now())
   const when = whenMessage(f.retry_at, now)
   switch (f.reason) {
     case 'quota_exhausted':
-      return when ? msg('hosted.quotaOn', { name, when }, 'ai') : msg('hosted.quota', { name }, 'ai')
+      // 恢复日是明天 = 按「今日额度」的说法；有别的日期才写日期
+      if (f.retry_at != null && isTomorrow(f.retry_at, now)) return msg('hosted.daily', undefined, 'ai')
+      return when ? msg('hosted.quotaOn', { when }, 'ai') : msg('hosted.quota', undefined, 'ai')
     case 'daily_limit':
-      return when ? msg('hosted.dailyOn', { name, when }, 'ai') : msg('hosted.daily', { name }, 'ai')
+      return msg('hosted.daily', undefined, 'ai')
     case 'not_entitled':
       return msg('hosted.notEntitled', { name }, 'ai')
     case 'paused':
@@ -93,11 +94,26 @@ export function hostedFailureMessage(f: HostedFailure, now: number = Date.now())
   }
 }
 
-/** 修复因额度静默退到自己的 Key 之后，卡片里的一行灰字 */
-export function hostedFallbackMessage(f: HostedFailure, now: number = Date.now()): UiMessage {
-  const when = whenMessage(f.retry_at, now)
-  if (f.reason === 'quota_exhausted') return when ? msg('hosted.fallbackQuotaOn', { when }, 'ai') : msg('hosted.fallbackQuota', undefined, 'ai')
-  return msg('hosted.fallbackDaily', undefined, 'ai')
+/** 因额度静默退到的那条连接：显示名（取自连接弹窗列表）与种类，后端 `ai_connections.display_of` 给 */
+export interface HostedFallback extends HostedFailure {
+  label: string
+  kind: 'key' | 'subscription'
+}
+
+/** 修复因额度静默退到自己的连接之后，卡片里的一行灰字：「今日额度已用尽，已经切换到您的 DeepSeek Key / ChatGPT 订阅」 */
+export function hostedFallbackMessage(f: HostedFallback): UiMessage {
+  const name = f.label
+  if (f.reason === 'quota_exhausted') {
+    return f.kind === 'subscription' ? msg('hosted.fallbackQuotaSub', { name }, 'ai') : msg('hosted.fallbackQuotaKey', { name }, 'ai')
+  }
+  return f.kind === 'subscription' ? msg('hosted.fallbackDailySub', { name }, 'ai') : msg('hosted.fallbackDailyKey', { name }, 'ai')
+}
+
+/** `POST /api/ai/fix` 成功响应里的 `hosted_fallback`；形状不对 = null（不说这一句，修复照常跑） */
+export function hostedFallbackOfFix(res: { hosted_fallback?: unknown }): HostedFallback | null {
+  const f = res.hosted_fallback as Partial<HostedFallback> | undefined
+  if (!f || typeof f.reason !== 'string' || typeof f.label !== 'string' || !f.label) return null
+  return { reason: f.reason, retry_at: typeof f.retry_at === 'number' ? f.retry_at : null, label: f.label, kind: f.kind === 'subscription' ? 'subscription' : 'key' }
 }
 
 /** 「改用我自己的 Key」按钮上的字 */

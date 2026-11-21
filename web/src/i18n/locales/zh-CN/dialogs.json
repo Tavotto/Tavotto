@@ -2020,7 +2020,7 @@
         "hintChatgpt": "用 ChatGPT 订阅登录",
         "hintClaude": "用 Claude 订阅登录",
         "hosted": "内置",
-        "hintHosted": "高级版自带，不用申请 Key"
+        "hintHosted": "Pro 会员专享"
       },
       "back": "返回",
       "savedRefreshFailed": "已保存，但没能刷新状态。",

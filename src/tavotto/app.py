@@ -11413,7 +11413,17 @@ def api_ai_fix():
                     {"ok": False, "reason": "ai_hosted_unavailable", "hosted": err.public()}
                 )
             if err.code in ("quota_exhausted", "daily_limit"):
-                fallback_info = err.public()
+                # 前端要说「已经切换到您的 <名称> Key / 订阅」：名称取连接弹窗列表里那条连接的显示名（连接视图是唯一出处），种类 = key / subscription
+                shown = engine_ai_connections.display_of(
+                    conn["provider_id"] if conn is not None else None,
+                    cli_agent,
+                    # 现算连接视图（只读配置，不重新探测 CLI）：能力表缓存里可能还没有刚保存的连接
+                    engine_ai_connections.connections(
+                        {a["id"]: a for a in engine_ai.capabilities().get("agents", [])}
+                    ),
+                )
+                if shown is not None:
+                    fallback_info = {**err.public(), **shown}
     if conn is not None:
         model, redactor = engine_fixsession.build_model(conn)
         cli = None

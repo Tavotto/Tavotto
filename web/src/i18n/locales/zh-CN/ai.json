@@ -721,18 +721,17 @@
     }
   },
   "hosted": {
-    "quota": "{{name}} 的额度用完了。",
-    "quotaOn": "{{name}} 的额度用完了，{{when}}再用。",
-    "daily": "{{name}} 今天的额度用完了。",
-    "dailyOn": "{{name}} 今天的额度用完了，{{when}}再用。",
+    "quota": "额度已用尽，请稍后再试",
+    "quotaOn": "额度已用尽，请 {{when}} 再试",
+    "daily": "今日额度已用尽，请明天再试",
     "notEntitled": "这台电脑上的 {{name}} 暂时用不了。",
     "paused": "{{name}} 暂停服务，稍后恢复。",
     "unavailable": "{{name}} 暂时连不上，稍后再试。",
     "useOwnKey": "改用我自己的 Key",
-    "whenTomorrow": "明天",
     "whenDate": "{{date}}",
-    "fallbackDaily": "今天的额度用完了，这次用的是你自己的 Key。",
-    "fallbackQuota": "额度用完了，这次用的是你自己的 Key。",
-    "fallbackQuotaOn": "额度用完了，{{when}}再用；这次用的是你自己的 Key。"
+    "fallbackDailyKey": "今日额度已用尽，已经切换到您的 {{name}} Key",
+    "fallbackDailySub": "今日额度已用尽，已经切换到您的 {{name}} 订阅",
+    "fallbackQuotaKey": "额度已用尽，已经切换到您的 {{name}} Key",
+    "fallbackQuotaSub": "额度已用尽，已经切换到您的 {{name}} 订阅"
   }
 }

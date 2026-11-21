@@ -966,8 +966,8 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
       const note = q('[data-ai-error="hosted"]')!
       expect(note.tagName).toBe('P') // 一行灰字，不是 Notice 色块
       expect(q('[data-notice]')).toBeNull()
-      expect(note.textContent).toContain('今天的额度用完了')
-      expect(note.textContent).toContain('明天再用')
+      expect(note.textContent).toContain('今日额度已用尽，请明天再试')
+      expect(note.textContent).not.toContain('Tavotto Agent')
       expect(note.textContent).not.toContain('tavotto-auto')
       expect(note.textContent).not.toContain('没有发出去')
       expect(note.querySelector('[data-ai-retry]')).toBeNull() // 额度类原样重发只会再得到同一句

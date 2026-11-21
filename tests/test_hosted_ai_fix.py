@@ -172,7 +172,9 @@ def test_open_failure_falls_back_to_the_own_key_and_only_quota_is_surfaced(
     assert seen[0]["api_key"] != TASK_TOKEN  # 退到了自己的 Key
     assert ("hosted_fallback" in body) is info
     if info:
-        assert body["hosted_fallback"] == {"reason": code, "retry_at": TOMORROW_MS}
+        fb = body["hosted_fallback"]
+        assert (fb["reason"], fb["retry_at"], fb["kind"]) == (code, TOMORROW_MS, "key")
+        assert fb["label"]  # 连接弹窗列表里那条连接的显示名，前端拼「已经切换到您的 <名称> Key」
     assert "/v1/task/close" not in gw.paths()
 
 

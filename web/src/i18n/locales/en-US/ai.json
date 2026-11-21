@@ -728,18 +728,17 @@
     }
   },
   "hosted": {
-    "quota": "{{name}} has no quota left.",
-    "quotaOn": "{{name}} has no quota left. Try again {{when}}.",
-    "daily": "{{name}} is out of quota for today.",
-    "dailyOn": "{{name}} is out of quota for today. Try again {{when}}.",
+    "quota": "Your quota is used up. Please try again later.",
+    "quotaOn": "Your quota is used up. Please try again on {{when}}.",
+    "daily": "Today’s quota is used up. Please try again tomorrow.",
     "notEntitled": "{{name}} isn’t available on this computer right now.",
     "paused": "{{name}} is paused for now.",
     "unavailable": "{{name}} can’t be reached right now. Try again later.",
     "useOwnKey": "Use my own key",
-    "whenTomorrow": "tomorrow",
-    "whenDate": "on {{date}}",
-    "fallbackDaily": "Today’s quota is used up, so this run used your own key.",
-    "fallbackQuota": "The quota is used up, so this run used your own key.",
-    "fallbackQuotaOn": "The quota is used up (try again {{when}}), so this run used your own key."
+    "whenDate": "{{date}}",
+    "fallbackDailyKey": "Today’s quota is used up. Switched to your {{name}} key.",
+    "fallbackDailySub": "Today’s quota is used up. Switched to your {{name}} subscription.",
+    "fallbackQuotaKey": "Your quota is used up. Switched to your {{name}} key.",
+    "fallbackQuotaSub": "Your quota is used up. Switched to your {{name}} subscription."
   }
 }

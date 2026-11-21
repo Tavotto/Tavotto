@@ -8,7 +8,7 @@ import { ApiError } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { formatMessage, setLocale } from '@/i18n'
 import { formatDateTime } from '@/i18n/format'
-import { hostedAiName, hostedFailureMessage, hostedFallbackMessage, isTomorrow, hostedFailureOfError, hostedFailureOfFix, isWaitReason } from './hostedAi'
+import { hostedAiName, hostedFailureMessage, hostedFallbackMessage, hostedFallbackOfFix, isTomorrow, hostedFailureOfError, hostedFailureOfFix, isWaitReason } from './hostedAi'
 
 const NAME = `${PRODUCT_NAME} Agent`
 const NOW = new Date(2026, 10, 21, 10, 0, 0).getTime()
@@ -22,11 +22,14 @@ describe('hostedFailureMessage', () => {
 
   it('额度类：明天说「明天」，其余只写月日（不带年），没有时刻就只说用完了', async () => {
     await setLocale('zh-CN')
-    expect(formatMessage(hostedFailureMessage({ reason: 'quota_exhausted', retry_at: null }, NOW))).toBe(`${NAME} 的额度用完了。`)
-    expect(formatMessage(hostedFailureMessage({ reason: 'daily_limit', retry_at: TOMORROW }, NOW))).toBe(`${NAME} 今天的额度用完了，明天再用。`)
+    expect(formatMessage(hostedFailureMessage({ reason: 'quota_exhausted', retry_at: null }, NOW))).toBe('额度已用尽，请稍后再试')
+    expect(formatMessage(hostedFailureMessage({ reason: 'daily_limit', retry_at: TOMORROW }, NOW))).toBe('今日额度已用尽，请明天再试')
+    expect(formatMessage(hostedFailureMessage({ reason: 'daily_limit', retry_at: null }, NOW))).toBe('今日额度已用尽，请明天再试')
+    // 恢复日就是明天：按「今日额度」的说法
+    expect(formatMessage(hostedFailureMessage({ reason: 'quota_exhausted', retry_at: TOMORROW }, NOW))).toBe('今日额度已用尽，请明天再试')
     const md = formatDateTime(LATER, { month: 'short', day: 'numeric' })
     expect(md).not.toContain('2026')
-    expect(formatMessage(hostedFailureMessage({ reason: 'quota_exhausted', retry_at: LATER }, NOW))).toBe(`${NAME} 的额度用完了，${md}再用。`)
+    expect(formatMessage(hostedFailureMessage({ reason: 'quota_exhausted', retry_at: LATER }, NOW))).toBe(`额度已用尽，请 ${md} 再试`)
     expect(isTomorrow(TOMORROW, NOW)).toBe(true)
     expect(isTomorrow(LATER, NOW)).toBe(false)
     expect(isTomorrow(NOW + 3_600_000, NOW)).toBe(false) // 今天晚些时候不是明天
@@ -35,9 +38,18 @@ describe('hostedFailureMessage', () => {
   it('暂停服务一句；退到自己的 Key 之后卡片里的灰字', async () => {
     await setLocale('zh-CN')
     expect(formatMessage(hostedFailureMessage({ reason: 'paused', retry_at: null }))).toBe(`${NAME} 暂停服务，稍后恢复。`)
-    expect(formatMessage(hostedFallbackMessage({ reason: 'daily_limit', retry_at: TOMORROW }, NOW))).toBe('今天的额度用完了，这次用的是你自己的 Key。')
-    expect(formatMessage(hostedFallbackMessage({ reason: 'quota_exhausted', retry_at: null }, NOW))).toBe('额度用完了，这次用的是你自己的 Key。')
-    expect(formatMessage(hostedFallbackMessage({ reason: 'quota_exhausted', retry_at: TOMORROW }, NOW))).toBe('额度用完了，明天再用；这次用的是你自己的 Key。')
+    const fb = (reason: string, label: string, kind: 'key' | 'subscription') => ({ reason, retry_at: null, label, kind })
+    expect(formatMessage(hostedFallbackMessage(fb('daily_limit', 'DeepSeek', 'key')))).toBe('今日额度已用尽，已经切换到您的 DeepSeek Key')
+    expect(formatMessage(hostedFallbackMessage(fb('daily_limit', 'ChatGPT', 'subscription')))).toBe('今日额度已用尽，已经切换到您的 ChatGPT 订阅')
+    expect(formatMessage(hostedFallbackMessage(fb('quota_exhausted', 'DeepSeek', 'key')))).toBe('额度已用尽，已经切换到您的 DeepSeek Key')
+    expect(formatMessage(hostedFallbackMessage(fb('quota_exhausted', 'Claude', 'subscription')))).toBe('额度已用尽，已经切换到您的 Claude 订阅')
+    await setLocale('en-US')
+    expect(formatMessage(hostedFallbackMessage(fb('daily_limit', 'DeepSeek', 'key')))).toBe('Today’s quota is used up. Switched to your DeepSeek key.')
+    expect(formatMessage(hostedFallbackMessage(fb('daily_limit', 'ChatGPT', 'subscription')))).toBe('Today’s quota is used up. Switched to your ChatGPT subscription.')
+    await setLocale('zh-CN')
+    // 后端没给名称 / 形状不对：不说这一句
+    expect(hostedFallbackOfFix({ hosted_fallback: { reason: 'daily_limit', retry_at: null } })).toBeNull()
+    expect(hostedFallbackOfFix({ hosted_fallback: { reason: 'daily_limit', retry_at: null, label: 'X', kind: 'subscription' } })?.kind).toBe('subscription')
   })
 
   it('未授权一句；熔断 / 网络 / 网关出错 / 未知原因统一「暂时连不上」', async () => {
@@ -50,9 +62,9 @@ describe('hostedFailureMessage', () => {
 
   it('英文界面同样一句话', async () => {
     await setLocale('en-US')
-    expect(formatMessage(hostedFailureMessage({ reason: 'daily_limit', retry_at: TOMORROW }, NOW))).toBe(`${NAME} is out of quota for today. Try again tomorrow.`)
+    expect(formatMessage(hostedFailureMessage({ reason: 'daily_limit', retry_at: TOMORROW }, NOW))).toBe('Today’s quota is used up. Please try again tomorrow.')
     expect(formatMessage(hostedFailureMessage({ reason: 'quota_exhausted', retry_at: LATER }, NOW))).toBe(
-      `${NAME} has no quota left. Try again on ${formatDateTime(LATER, { month: 'short', day: 'numeric' })}.`,
+      `Your quota is used up. Please try again on ${formatDateTime(LATER, { month: 'short', day: 'numeric' })}.`,
     )
     expect(formatMessage(hostedFailureMessage({ reason: 'paused', retry_at: null }))).toBe(`${NAME} is paused for now.`)
     await setLocale('zh-CN')
