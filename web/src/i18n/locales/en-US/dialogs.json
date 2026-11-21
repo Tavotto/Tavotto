@@ -725,7 +725,10 @@
         "keywords": "reflect mirror flip vertical",
         "label": "Reflect vertically"
       },
-      "quick-layout": {}
+      "quick-layout": {
+        "keywords": "quick layout auto arrange align yjpb",
+        "label": "Auto layout"
+      }
     },
     "listLabel": "Commands",
     "needPanel": "Select an editable figure first",

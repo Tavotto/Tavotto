@@ -1680,7 +1680,8 @@ export default interface Resources {
           "label": "显示项目检查结果"
         },
         "quick-layout": {
-
+          "keywords": "一键排版 yjpb yijianpaiban auto layout arrange align",
+          "label": "一键排版"
         },
         "readiness": {
           "keywords": "readiness status editable jr jieru 接入 可编辑 仅版面 仅排版 为什么不能编辑",

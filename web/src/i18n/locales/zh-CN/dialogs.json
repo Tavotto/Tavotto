@@ -713,7 +713,10 @@
         "keywords": "reflect mirror flip vertical czjx 垂直镜像 翻转",
         "label": "垂直镜像"
       },
-      "quick-layout": {}
+      "quick-layout": {
+        "keywords": "一键排版 yjpb yijianpaiban auto layout arrange align",
+        "label": "一键排版"
+      }
     },
     "listLabel": "命令",
     "needPanel": "先选中可编辑的图",
