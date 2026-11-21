@@ -305,6 +305,39 @@ def test_over_budget_is_not_judged(tmp_path):
     assert _hits(man) == []
 
 
+@needs_worker
+def test_explicit_scatter_at_origin_counts_but_default_offsets_do_not(tmp_path):
+    """`scatter([0], [0])` 是真数据，切 log 后画不出来要计数；不带 offsets 的 PathCollection 默认那个 (0, 0)
+    不经 transData、不是数据，不计。两者 offsets 都是 [[0, 0]]，只能靠 offset transform 区分（Codex #2111）。"""
+    probe = tmp_path / "probe.py"
+    probe.write_text(
+        "import json, sys\n"
+        f"sys.path.insert(0, {str(ROOT / 'src' / 'tavotto' / 'engine')!r})\n"
+        "import matplotlib; matplotlib.use('Agg')\n"
+        "import matplotlib.pyplot as plt\n"
+        "from matplotlib.collections import PathCollection\n"
+        "from matplotlib.path import Path\n"
+        "import manifest as M\n"
+        "fig, (a, b) = plt.subplots(1, 2)\n"
+        "a.scatter([0], [0]); a.scatter([1, 2], [1, 2]); a.set_yscale('log')\n"
+        "b.add_collection(PathCollection([Path.unit_circle()])); b.scatter([1, 2], [1, 2]); b.set_yscale('log')\n"
+        "fig.canvas.draw()\n"
+        "print(json.dumps([M.scale_domain(ax, [M.FINGERPRINT_BUDGET]) for ax in (a, b)]))\n",
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [WORKER_PY, str(probe)],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr
+    explicit, implicit = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert explicit == {"y": {"status": "ok", "nonpositive": 1, "errorbar_low_nonpositive": 0}}
+    assert implicit == {"y": {"status": "ok", "nonpositive": 0, "errorbar_low_nonpositive": 0}}
+
+
 EDIT_SCRIPT = """\
 import matplotlib.pyplot as plt
 

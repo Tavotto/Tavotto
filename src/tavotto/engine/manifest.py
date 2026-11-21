@@ -5167,8 +5167,10 @@ def _scale_domain_sources(ax) -> list[tuple[str, object, object]]:
         if not (isinstance(col, PathCollection) and col.get_visible()):
             continue
         offsets = col.get_offsets()
-        # 没设 offsets 的集合默认是一个 (0, 0)：那不是数据点（与 `_fingerprint_parts` 同一口径）
-        if offsets is None or not len(offsets) or (len(offsets) == 1 and not np.any(offsets)):
+        # 没设 offsets 的集合默认是一个 (0, 0)，但它的 offset transform 是 IdentityTransform、不经 transData，
+        # 后面按维的 `contains_branch_seperately` 本来就把它排除；**不能**按「单个 (0, 0)」排除——
+        # 用户显式画在原点的 `scatter([0], [0])` 也长这样，那是真数据（Codex #2111）
+        if offsets is None or not len(offsets):
             continue
         out.append(("point", col.get_offset_transform(), offsets))
     for col in bar_cols:
