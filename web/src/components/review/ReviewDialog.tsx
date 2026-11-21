@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg } from '@/i18n/message'
 import { CanvasThumb } from '../CanvasThumb'
 import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { TextInput } from '../ui/Input'
-import { Notice } from '../ui/Notice'
+import { EdgeProgress, type EdgePhase } from '../ui/EdgeProgress'
+import { SwapText } from '../ui/SwapText'
 import { ProgressBar } from '../ui/ProgressBar'
+import { DURATION } from '@/lib/motion'
 import { shareLive } from '@/lib/reviewPlacement'
 import { cn } from '@/lib/utils'
 import { listRowClass } from '../ui/listRow'
@@ -89,7 +91,11 @@ function Picker({ onClose }: { onClose: () => void }) {
 
 /**
  * 「分享审阅」弹窗（ADR 0187 §八，第 4 轮设计）：四态。已分享有改动 / 已分享没改动 / 首次 / 新建用完（不放图）。
- * 没有版本号、没有意见数、没有剩余次数；进行中用点阵进度，失败按失败码一句话 + 重试。唯一挂载点 `ReviewHost`。
+ * 没有版本号、没有意见数、没有剩余次数。唯一挂载点 `ReviewHost`。
+ *
+ * 进行中**卡片尺寸不变**（2026-11-21 修订）：进度是沿外框走的一圈描边（`ui/EdgeProgress`），阶段文字原位换掉
+ * 底部那行小字；描边合拢一圈之后才换出链接（`sealing` 那一小段表单照旧禁用，不闪回可点的「生成」）。
+ * 失败同样原位：底部那行换成失败码的一句话 + 右端「重试」。
  */
 export function ReviewDialog() {
   useTranslation('dialogs')
@@ -113,9 +119,42 @@ export function ReviewDialog() {
     }
   }, [s.dialogOpen])
 
-  const share = s.share && shareLive(s.share) ? s.share : null
-  const busy = s.stage === 'rendering' || s.stage === 'uploading'
+  const liveShare = s.share && shareLive(s.share) ? s.share : null
+  const running = s.stage === 'rendering' || s.stage === 'uploading'
   const close = () => s.closeDialog()
+
+  // 外框描边：rendering 走前半段、uploading 逼近终点、done 合拢；失败 / 关窗淡出
+  const [phase, setPhase] = useState<EdgePhase>('idle')
+  useEffect(() => {
+    if (s.stage === 'rendering') setPhase('start')
+    else if (s.stage === 'uploading') setPhase('mid')
+    else if (s.stage === 'done') setPhase((p) => (p === 'start' || p === 'mid' ? 'full' : p))
+    else setPhase((p) => (p === 'idle' ? 'idle' : 'off'))
+  }, [s.stage])
+  useEffect(() => {
+    if (!s.dialogOpen) setPhase('idle')
+  }, [s.dialogOpen])
+  const sealing = phase === 'full'
+  const busy = running || sealing
+  // 进行中与合拢期间正文冻结在发起时的那一态（首次 = 表单、更新 = 原链接），合拢完才换
+  const frozen = useRef(liveShare)
+  if (!busy) frozen.current = liveShare
+  const share = busy ? frozen.current : liveShare
+  // 链接是刚生成出来的（表单 → 链接）：链接行浮上来落位；平时打开弹窗、更新已有链接都不播
+  const [revealed, setRevealed] = useState(false)
+  useEffect(() => {
+    if (!sealing) return
+    const fresh = !frozen.current
+    // 合拢的那一圈走完（slow）再整圈停一拍（slow），然后描边淡出、链接落位
+    const t = setTimeout(() => {
+      setPhase('off')
+      if (fresh) setRevealed(true)
+    }, DURATION.slow * 2)
+    return () => clearTimeout(t)
+  }, [sealing])
+  useEffect(() => {
+    if (!s.dialogOpen) setRevealed(false)
+  }, [s.dialogOpen])
 
   // 自动复制：一次生成 / 更新刚做完（done）→ 复制链接并在通知轨说一句
   useEffect(() => {
@@ -124,31 +163,33 @@ export function ReviewDialog() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s.stage])
 
-  let status: React.ReactNode = null
-  if (busy) {
-    status = (
-      <div
-        className="flex items-center justify-between gap-4 rounded-md bg-surface-hover px-3 py-1.5"
-        data-review-status="working"
-      >
-        <p className="min-w-0 truncate text-sm text-ink-2">{rs(`stage.${s.stage}`)}</p>
-        <ProgressBar pct={null} label={rs(`stage.${s.stage}`)} className="w-36 shrink-0" />
-      </div>
-    )
-  } else if (s.stage === 'failed' && s.failure) {
-    status = (
-      <Notice tone="danger" data-review-status="failed">
-        <span className="flex items-center justify-between gap-2">
-          <span data-review-failure={s.failure.code}>{failureText(s.failure.code)}</span>
-          {s.failure.retryable && (
-            <Button variant="secondary" size="sm" onClick={() => void s.retry()} data-review-retry>
-              {rs('retry')}
-            </Button>
-          )}
+  const failed = s.stage === 'failed' && s.failure ? s.failure : null
+  /** 底部那行小字：平时是 `rest`（隐私说明 / 失效日期），进行中原位换成阶段，失败换成那一句话 */
+  const footLeft = (rest: string) => {
+    if (running || sealing) {
+      const text = rs(`stage.${s.stage === 'uploading' || sealing ? 'uploading' : 'rendering'}`)
+      return <SwapText text={text} className="block min-w-0 truncate" textClassName="type-caption text-ink-2" data-review-status="working" aria-live="polite" />
+    }
+    if (failed) {
+      const text = failureText(failed.code)
+      return (
+        <span className="min-w-0 truncate type-caption text-danger-content" title={text} data-review-status="failed" data-review-failure={failed.code} role="alert">
+          {text}
         </span>
-      </Notice>
-    )
+      )
+    }
+    return <span className="min-w-0 truncate type-caption text-ink-3">{rest}</span>
   }
+  const retryBtn = failed?.retryable ? (
+    <button
+      type="button"
+      className="type-caption shrink-0 rounded-sm text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
+      onClick={() => void s.retry()}
+      data-review-retry
+    >
+      {rs('retry')}
+    </button>
+  ) : null
 
   const quiet = 'type-caption text-ink-3'
   let body: React.ReactNode
@@ -165,7 +206,7 @@ export function ReviewDialog() {
     body = (
       <div className="flex flex-col gap-3">
         <ShareThumb />
-        <div className="flex items-center gap-2" data-review-link>
+        <div className={cn('flex items-center gap-2', revealed && 'animate-rise-in')} data-review-link>
           <div className="flex h-8 min-w-0 flex-1 items-center rounded-full bg-surface-hover px-3">
             <span className="min-w-0 truncate font-mono text-xs text-ink-2" title={share.review_url} aria-label={rs('linkLabel')}>
               {share.review_url.replace(/^https?:\/\//, '')}
@@ -186,15 +227,16 @@ export function ReviewDialog() {
               <span aria-hidden className="size-1.5 rounded-full bg-accent" />
               {rs('changed')}
             </span>
-            <Button variant="secondary" size="md" loading={busy} disabled={busy} onClick={() => void s.update()} data-review-update>
+            <Button variant="secondary" size="md" disabled={busy} onClick={() => void s.update()} data-review-update>
               {rs('updateHere')}
             </Button>
           </div>
         )}
-        <div className="flex items-center justify-between gap-2">
-          <span className={quiet} data-review-stats>
-            {rs('shareNote', { date: expiryShort(share.expires_at) })}
+        <div className="flex h-5 items-center justify-between gap-2">
+          <span className="flex min-w-0" data-review-stats>
+            {footLeft(rs('shareNote', { date: expiryShort(share.expires_at) }))}
           </span>
+          {retryBtn ?? (
           <button
             type="button"
             className={cn(quiet, 'rounded-sm outline-none hover:text-ink focus-visible:focus-ring', confirmStop && 'text-danger-content')}
@@ -204,6 +246,7 @@ export function ReviewDialog() {
           >
             {confirmStop ? rs('stopConfirm') : rs('stop')}
           </button>
+          )}
         </div>
       </div>
     )
@@ -222,15 +265,17 @@ export function ReviewDialog() {
             className="min-w-0 flex-1"
             data-review-note
           />
-          <Button variant="primary" size="lg" loading={busy} disabled={busy || !target} onClick={() => void s.create(title, note.trim())} data-review-create>
+          <Button variant="primary" size="lg" disabled={busy || !target} onClick={() => void s.create(title, note.trim())} data-review-create>
             {rs('create')}
           </Button>
         </div>
-        <div className="flex items-center justify-between gap-2">
-          <span className={quiet}>{rs('privacyFoot')}</span>
-          <span className={quiet} data-review-quota>
-            {rs('dailyNew')}
-          </span>
+        <div className="flex h-5 items-center justify-between gap-2">
+          <span className="flex min-w-0">{footLeft(rs('privacyFoot'))}</span>
+          {retryBtn ?? (
+            <span className={cn(quiet, 'shrink-0')} data-review-quota>
+              {rs('dailyNew')}
+            </span>
+          )}
         </div>
       </div>
     )
@@ -253,7 +298,7 @@ export function ReviewDialog() {
       size="md"
       anchor="review"
       blockDismiss={busy}
-      status={status}
+      edge={<EdgeProgress phase={phase} label={rs(`stage.${s.stage === 'rendering' ? 'rendering' : 'uploading'}`)} />}
     >
       {body}
     </Dialog>

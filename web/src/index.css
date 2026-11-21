@@ -1030,6 +1030,82 @@
   }
 }
 
+/* 沿对话框外框走一圈的进度描边（`ui/EdgeProgress`，外部审阅分享，ADR 0187 §八 2026-11-21 修订）。
+   不是百分比：`start` / `mid` 各自先快后慢逼近一个停靠点、永远不自己走满，`full` 才合拢；阶段跳了从当前
+   计算值接着走。墨色（蓝色只给选择 / 焦点；用 ink 混透明，亮暗同源、暗色不刺眼）、不发光；底轨是一圈发丝线，起点不像断口。停靠点与爬升时长只在这里，
+   不是 motion token（它们是进度的节奏，不是界面动效）。reduced-motion：全局兜底把过渡压到 0.01ms，直接到位。 */
+@utility edge-progress {
+  --edge-creep-start: 2.8s;
+  --edge-creep-mid: 9s;
+  --edge-off: 1;
+  & path {
+    fill: none;
+    vector-effect: non-scaling-stroke;
+    stroke-linecap: round;
+  }
+  & .edge-progress-track {
+    stroke: var(--color-border);
+    stroke-width: 1px;
+    opacity: 0;
+    transition: opacity var(--duration-base) var(--ease-standard);
+  }
+  /* 走过的那段（墨 55%、1.25px）+ 前端一小截「笔头」（墨 80%、2px、圆头）：两条用同一个 --edge-off、同一组过渡，所以同步 */
+  & .edge-progress-run,
+  & .edge-progress-head {
+    opacity: 0;
+    transition:
+      stroke-dashoffset var(--duration-slow) var(--ease-pop),
+      opacity var(--duration-base) var(--ease-standard);
+  }
+  & .edge-progress-run {
+    stroke: color-mix(in srgb, var(--color-ink) 55%, transparent);
+    stroke-width: 1.25px;
+    stroke-dasharray: 1 1;
+    stroke-dashoffset: var(--edge-off);
+  }
+  & .edge-progress-head {
+    stroke: color-mix(in srgb, var(--color-ink) 80%, transparent);
+    stroke-width: 2px;
+    stroke-dasharray: 0.012 1;
+    stroke-dashoffset: calc(var(--edge-off) - 0.988);
+  }
+  &[data-edge-progress='start'] {
+    --edge-off: 0.55;
+  }
+  &[data-edge-progress='mid'] {
+    --edge-off: 0.08;
+  }
+  &[data-edge-progress='full'] {
+    --edge-off: 0;
+  }
+  &[data-edge-progress='start'] :is(.edge-progress-run, .edge-progress-head) {
+    transition:
+      stroke-dashoffset var(--edge-creep-start) cubic-bezier(0.2, 0.7, 0.3, 1),
+      opacity var(--duration-fast) var(--ease-standard);
+  }
+  &[data-edge-progress='mid'] :is(.edge-progress-run, .edge-progress-head) {
+    transition:
+      stroke-dashoffset var(--edge-creep-mid) cubic-bezier(0.1, 0.6, 0.2, 1),
+      opacity var(--duration-fast) var(--ease-standard);
+  }
+  &:is([data-edge-progress='start'], [data-edge-progress='mid'], [data-edge-progress='full']) path {
+    opacity: 1;
+  }
+  /* 合拢：笔头在起点收进线里（淡掉），整圈是一条完整的墨线 */
+  &[data-edge-progress='full'] .edge-progress-head {
+    opacity: 0;
+    transition:
+      stroke-dashoffset var(--duration-slow) var(--ease-pop),
+      opacity var(--duration-fast) var(--ease-standard) var(--duration-slow);
+  }
+  /* 退场：位置留在原地只淡出；淡完（delay = slow）才悄悄归零，下一次从顶边正中重新出发 */
+  &[data-edge-progress='off'] :is(.edge-progress-run, .edge-progress-head) {
+    transition:
+      stroke-dashoffset 0s linear var(--duration-slow),
+      opacity var(--duration-slow) var(--ease-standard);
+  }
+}
+
 /* 原位换字的盒子（`ui/SwapText`）：`data-ghost` 是刚被换掉的那句，画在 ::before 里压在同一个位置
    上退场——它不进 DOM 文本（textContent / 读屏都只看得到新字，`/ ''` 把生成内容的可达名清空），
    新字在里层 span 里接着进场。旧句比新句长时按盒子宽裁掉，不会戳出 toast。

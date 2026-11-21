@@ -255,10 +255,12 @@ describe('分享弹窗三态', () => {
     expect(writeText).toHaveBeenCalledWith(SHARE.review_url)
     expect(JSON.stringify(useUiStore.getState().status)).toContain('review.linkCopied')
   })
-  it('进行中：点阵进度、不能随手关', async () => {
+  it('进行中：外框描边 + 底部小字原位换成阶段，不占 status 区（卡片尺寸不变）、不能随手关', async () => {
     resetStore({ dialogOpen: true, stage: 'uploading' })
     await render(<ReviewDialog />)
     expect(q('[data-review-status="working"]')).not.toBeNull()
+    expect(q('[data-edge-progress="mid"]')).not.toBeNull()
+    expect(q('[data-dialog-status]')).toBeNull()
     useReviewStore.getState().closeDialog()
     expect(useReviewStore.getState().dialogOpen).toBe(true)
   })
@@ -276,6 +278,13 @@ describe('失败码：一句话 + 可重试', () => {
       expect(q('[data-review-retry]')).not.toBeNull()
     })
   }
+  it('失败原位换掉底部那行，不占 status 区；描边不留在半圈', async () => {
+    resetStore({ dialogOpen: true, stage: 'failed', failure: { code: 'network', retryable: true } })
+    await render(<ReviewDialog />)
+    expect(q('[data-review-status="failed"]')).not.toBeNull()
+    expect(q('[data-dialog-status]')).toBeNull()
+    expect(q('[data-edge-progress="start"], [data-edge-progress="mid"]')).toBeNull()
+  })
   it('不可重试就没有重试钮；重试 = 再发一次同样的请求', async () => {
     resetStore({ dialogOpen: true, stage: 'failed', failure: { code: 'too_large', retryable: false } })
     await render(<ReviewDialog />)
