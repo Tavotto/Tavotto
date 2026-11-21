@@ -30,7 +30,7 @@ function Line({ children, anchor }: { children: React.ReactNode; anchor?: string
  * 大文件（> 5 MiB）读表 / 出候选时的一句话 + 行内的「取消」：没有百分比（后端没有进度信号，不编造）；取消 = 不再等这次请求（后端没有取消接口）。
  * 小文件不渲染它，界面与原来逐像素相同。按钮在一行里、不撑高（负外边距吃掉按钮比文字行多出的高度）。
  */
-function LargeReadLine({ lead, bar }: { lead?: boolean; bar?: boolean }) {
+function LargeReadLine({ lead }: { lead?: boolean }) {
   const { t } = useTranslation('ai')
   const rid = useDataFigureStore((s) => s.readRid)
   const p = useReadProgress(rid)
@@ -41,14 +41,9 @@ function LargeReadLine({ lead, bar }: { lead?: boolean; bar?: boolean }) {
   const cancellable = p == null || p.state === 'none' || (p.state === 'running' && p.cancellable !== false)
   return (
     <p data-large-read {...(lead ? { 'data-draft-lead': '' } : {})} className={cn('flex items-baseline gap-2.5 text-base text-ink-2', lead && 'mb-3.5 h-5')} role="status">
-      <span className="relative min-w-0 truncate">
+      <span className="min-w-0 truncate">
         {t('dataFigureV2.working.readingLarge')}
-        {pct != null && !bar && <span data-large-read-pct className="ml-1.5 tabular-nums">{pct}%</span>}
-        {pct != null && bar && (
-          <span data-large-read-bar aria-hidden className="absolute inset-x-0 -bottom-0.5 h-0.5 overflow-hidden rounded-full bg-surface-active">
-            <span className="block h-full rounded-full bg-ink-3 transition-[width] duration-base ease-standard" style={{ width: `${pct}%` }} />
-          </span>
-        )}
+        {pct != null && <span data-large-read-pct className="ml-1.5 tabular-nums">{pct}%</span>}
       </span>
       {cancellable && (
         <button
@@ -70,7 +65,7 @@ function LargeReadLine({ lead, bar }: { lead?: boolean; bar?: boolean }) {
  * 上面是候选画法网格（或一句话的说明），下面是数据条。出图中被点的那张带扫光、其余淡掉。
  * Esc 关临时标签；切到别的画布标签时临时标签留着但不激活。
  */
-export function DataDraft({ progressBar }: { progressBar?: boolean } = {}) {
+export function DataDraft() {
   const { t } = useTranslation('ai')
   const fm = useFormatMessage()
   const open = useDataFigureStore((s) => s.draftOpen)
@@ -251,13 +246,13 @@ export function DataDraft({ progressBar }: { progressBar?: boolean } = {}) {
       </div>
     )
   } else if (phase === 'reading') {
-    top = large ? <LargeReadLine bar={progressBar} /> : <p className="text-base text-ink-2" role="status">{t('dataFigureV2.working.reading')}</p>
+    top = large ? <LargeReadLine /> : <p className="text-base text-ink-2" role="status">{t('dataFigureV2.working.reading')}</p>
   } else {
     const pending = phase === 'loading' || phase === 'idle'
     top = (
       <>
         {large && phase === 'loading' ? (
-          <LargeReadLine lead bar={progressBar} />
+          <LargeReadLine lead />
         ) : (
           <p data-draft-lead className="mb-3.5 h-5 text-base text-ink-2" role="status">
             {drawingId || waitingThumbs ? drawingLine : settled ? t('dataFigureV2.draft.pickLead') : t('dataFigureV2.working.drawing')}
