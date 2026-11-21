@@ -535,8 +535,8 @@
       "extract": "Use only the numbers inside"
     },
     "variant": {
-      "split": "Split further by “{{column}}”",
-      "by_file": "Compared by file only"
+      "split": "Grouped by file + “{{column}}”",
+      "by_file": "Grouped by file only"
     },
     "candidate": {
       "points_mean": {
@@ -700,6 +700,10 @@
       "group": "Group",
       "noX": "No X axis",
       "noGroup": "No grouping"
+    },
+    "suggest": {
+      "apply": "Try suggested",
+      "reading": "Checking columns…"
     },
     "redraw": {
       "from": "Drawn from {{file}}",

@@ -688,3 +688,38 @@ def test_windows_isolated_command_kills_the_job_even_when_the_direct_child_alrea
     assert events == ["job-open", "terminate", "job-kill"]
     assert result["cleanup"]["how"] == "already-exited"
     assert result["cleanup"]["job_killed"] is True
+
+
+def test_fresh_port_skips_a_port_already_used_in_this_run(monkeypatch):
+    """系统把刚丢租约的同一个号再发一次时，换端口重试要真换（#2099：两次都拿到 43445）。"""
+    handed = iter([43445, 43445, 50001])
+    monkeypatch.setattr(PS.SA, "_free_port", lambda: next(handed))
+    assert PS.fresh_port({43445}) == 50001
+    monkeypatch.setattr(PS.SA, "_free_port", lambda: 43445)
+    # 取不到新号：不死循环，交回空着的那个号让下一次尝试照常判
+    assert PS.fresh_port({43445}) == 43445
+
+
+def test_retry_after_lost_lease_uses_a_different_port_even_if_the_os_repeats_it(
+    tmp_path, monkeypatch
+):
+    """接线：主循环每次尝试都走 `fresh_port`，系统重发同一个号时第二次尝试拿到的是新号。"""
+    handed = iter([43445, 43445, 50001])
+    monkeypatch.setattr(PS.SA, "_free_port", lambda: next(handed))
+    ports: list[int] = []
+
+    def fake_attempt(n, cmd, attempt_dir, port, timeout):
+        ports.append(port)
+        if n == 1:
+            return {
+                "ok": False,
+                "state": "lease_lost",
+                "reason": "日志里出现端口占用类文案",
+                "port": port,
+            }
+        return {"ok": True, "state": "ready", "ready_seconds": 0.1, "version": {}, "port": port}
+
+    monkeypatch.setattr(PS, "run_attempt", fake_attempt)
+    rc = PS.main(["--launch", "x {port}", "--workdir", str(tmp_path / "run")])
+    assert rc == 0
+    assert ports == [43445, 50001]

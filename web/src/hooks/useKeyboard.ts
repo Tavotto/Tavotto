@@ -22,6 +22,7 @@ import { penFinish } from '@/canvas/penController'
 import { deleteAnchorPoints, editAnchors, exitAnchorEdit, PATH_COMMANDS } from '@/store/pathActions'
 import { activePathEdit } from '@/store/pathEditStore'
 import { APPEARANCE_COMMANDS } from '@/store/appearanceActions'
+import { PATHFINDER_COMMANDS } from '@/store/pathfinderActions'
 import { bindingFor } from '@/lib/keymap'
 import { useDocumentStore } from '@/store/documentStore'
 import {
@@ -308,7 +309,9 @@ export function useKeyboard() {
       // Windows 上 AltGr 报成 Ctrl+Alt：那是在打字，不认
       if (mod) {
         const bound = e.getModifierState?.('AltGraph') ? null : bindingFor(e)
-        const cmd = bound ? PATH_COMMANDS.find((c) => c.key === bound) : undefined
+        const cmd = bound
+          ? (PATH_COMMANDS.find((c) => c.key === bound) ?? PATHFINDER_COMMANDS.find((c) => c.key === bound))
+          : undefined
         if (cmd?.available()) {
           e.preventDefault()
           cmd.run()

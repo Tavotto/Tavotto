@@ -129,6 +129,13 @@ class FixContext:
     step: int = 0
     #: 本会话里真正尝试过的改动次数（会改变执行的档、且没被策略挡下；`prepare_diagnostics` 的闸门读它）
     changes_attempted: int = 0
+    #: 试运行记录（ADR 0197 第 1 层）：每次应用试运行一条 `{n, before, after, hint, changes}`，只有形状码与工具名，没有内容
+    attempts: list = field(default_factory=list)
+    #: 上一次试运行之后真做过的改动（工具名），下一次试运行把它们记进那一条
+    changes_since_try: list = field(default_factory=list)
+    #: 修复经过的内容（ADR 0197 第 4 条，维护者 11-19 裁决「总是收，脱敏后」）：每次工具调用返回给模型的文字（已过 `scrub`）
+    #: 的有界尾部，**只在内存**——不落盘（ADR 0149 §六 3），会话还在时诊断包才取得到
+    transcript: list = field(default_factory=list)
     case_insensitive: bool | None = None
     extra_deny: list[Path] | None = None
 

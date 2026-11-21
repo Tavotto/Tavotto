@@ -581,6 +581,8 @@ describe('文字 / 箭头 / 形状', () => {
       expect(itemKeys()).toEqual([
         'change-kind',
         'convert-to-path',
+        // 封闭形状能偏移路径 / 轮廓化描边（ADR 0185 M2），收在「路径查找器 ›」里；箭头两样都不适用
+        ...(id === 's1' ? ['pathfinder'] : []),
         'open-inspector',
         'copy',
         'paste',

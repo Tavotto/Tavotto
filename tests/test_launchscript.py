@@ -41,6 +41,7 @@ def test_write_read_revision_remove_roundtrip(tmp_path):
 @pytest.mark.parametrize(
     ("code", "want"),
     [("def (:\n", "syntax_error"), ("x = 1\x00", "not_text"), ("#" * (65 * 1024), "too_large")],
+    ids=["syntax-error", "not-text", "too-large"],
 )
 def test_validate_rejects(code, want):
     with pytest.raises(launchscript.LauncherError) as exc:

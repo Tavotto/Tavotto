@@ -327,4 +327,4 @@ safe 回执的私有 instance 含实际 execution ID，透明重开不靠未变�
   东西时（`sys.stdout`、入口导入、标准句柄），以裸跑为准列差集：替身比对真对象的公开属性，脚本名夹具带点号，
   输出用例含 `os.write(1)` 和不 capture 的子进程。为什么：三份用户反馈各撞一处，夹具都比真实脚本规整。
   `StdoutTail` 没有 `reconfigure` / `buffer`，第一行就调它的脚本一张图也出不来（#1541）；`import_module(stem)` 把
-  `4-51.名称` 的点号当包分隔符（#1590）；`redirect_stdout` 只换 Python 层，子进程打一行字就进协议管道（#1643）。
+  `4-51.名称` 的点号当包分隔符（#1590）；`redirect_stdout` 只换 Python 层，子进程打一行字就进协议管道（#1643）。看护：只靠人记。

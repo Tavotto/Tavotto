@@ -1,0 +1,27 @@
+[package]
+name = "tavotto-vecops"
+version = "0.0.0"
+edition = "2024"
+# 与上游同一个工具链下限（vendor/ 里的 vectorcraft 要求 1.95）；CI 与 build.sh 钉的是确切版本，见 rust-toolchain.toml
+rust-version = "1.95"
+license = "AGPL-3.0-only"
+description = "Tavotto 画布的路径查找器内核：vendor/ 里的 vectorcraft pathops 编成 WASM，平铺 f64 的 C ABI（ADR 0185 §五 M2）"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+vectorcraft-geom = { path = "vendor/vectorcraft-geom" }
+vectorcraft-pathops = { path = "vendor/vectorcraft-pathops" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false
+
+# 独立工作区：不被仓库别处的 Cargo 工作区收进去
+[workspace]

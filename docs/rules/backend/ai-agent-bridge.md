@@ -675,6 +675,12 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
   `run` 不在 `CHANGE_TIERS`，实验不解开「先动手才能起草缺陷」的闸。没有操作系统沙盒（Windows、无 bwrap 的 Linux）时进程内守卫只是尽力而为，普通 Python 也能绕开，维护者接受（ADR 0197「盲区」）；
   守卫前导在守卫装好之前只从标准库位置导入（`''` 与 PYTHONPATH 之后才还原、`''` 不还原），子进程一律从试跑目录起——试跑副本与探 import 同一条。
   看护：`tests/test_fixtools_snippet.py`。不带 `strict_deny` 的调用（试跑 / 探 import / 体检）守卫前导与沙盒参数逐字不变。
+- **失败提示与试运行记录**（ADR 0197 第 1 层）：形状判据只有 `fixtools/hints.py` 一份（`ask` 的「用户侧失败先别报缺陷」闸门也取它）；
+  提示每句声明点名的工具，工具调不到这句不说、主动作说不了整条不说；放在 `read_run_report` / `try_run` 返回最前面。
+  应用试运行真跑完才记一条 `{n, before, after, hint, changes}`（`changes` 由 `run_tool` 在计入 `changes_attempted` 处收集），审计 `attempt` 字段只记这些码。
+  看护：`tests/test_fixtools_hints.py`（含「提示点名的工具都在注册表里」）。
+- **修复经过进诊断包**（ADR 0197 第 4 条）：`run_tool` 把脱敏后的工具返回尾部记进内存（每条 2 000 字符、最多 60 条），
+  `FixSessions.diagnostics_for` 交给 `diagdetail.Sources.fix_sessions`；模型只带厂商 id 与模型名。看护：`tests/test_diag_fix_sessions.py`。
 - **读取范围**（`readscope.py`，判据只有 `ReadScope.check`）：主目录 + 项目根 + 环境前缀内可读，其余 `outside_scope`；`DENY_HOME_RELATIVE` / `DENY_NAME_PATTERNS` 命中
   `denied`（**文件名表只列明确的凭据文件形状**：整名或固定后缀，不用 `*token*` / `*secret*` 子串通配；**目录不按名拦**，`ReadScope._path_denied` 对目录只比固定位置表）（词法与 `realpath` 后各判一次；大小写不敏感于 macOS / Windows；Tavotto 自己的 `config.json` 在内）。单次读 ≤ 256 KiB（**按 64 KiB 块读、自己切行，当前行只留前 256 KiB**，所以任何文件大小下内存都有界；单行超限就截断该行并说明；截断给说明，`start_line` / `max_lines` 续读），
   二进制只给类型与大小。项目外的读取进 `ctx.reads`；**跟随的文件符号链接按解析后的目标记**（`_walk` 与 `resolve_or_error` 都用 `ReadScope.check` 的结果：目标在项目外就记目标路径，在项目内不记）。
@@ -960,7 +966,7 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 该平台走一遍；恢复路径在工具控制流里接通明确授权，别只靠模型按提示自行重试。为什么：转换链路用例全用不带沙盒的假 Codex，Windows unelevated 沙盒里自带写入工具一律失败（#1604）；
 写大文件时事件流静默、写入被拒后换位置写，都是真模型才复现（#1628）；2026-11-07 一份用户反馈：Windows 没有第①档
 沙盒，命令一律返回 `sandbox_unavailable`，设计指望模型带 `outside_sandbox` 重试，真模型没重试，用户批准修复后什么都没
-发生（#1793）。
+发生（#1793）。看护：只靠人记。
 
 ## 改图助手的附件（ADR 0175，`engine/ai_attachments.py`）
 
@@ -991,6 +997,8 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 模型只给**列判断**（`ROLES` 闭集：`time` / `ordered_x` / `measure` / `group` / `replicate_unit` / `row_id` / `unit_label` / `note` / `other`），翻译成 `propose` 本来就收的 `answers.y / x / group`、`header_rows`、`answers.cells`；配方仍由 `default_candidates` 生成、过 `validate_recipe` / `enforce_order`。看护 `tests/test_ai_data_roles.py`、`tests/test_data_figure_bench.py`。
 
 - **逐字段降级**：形状层严格（未知键整份拒收），取值层一个字段一个字段判（列不存在 / 角色不在枚举 / 与列类型对不上 / 选择与自己给的角色矛盾 / 规则键对不上），丢了只记个数、回规则默认。**`replicate_unit` 永不变成用户事实**（建议里没有 `design` / `unit`）。采纳策略在 `suggest`：规则会问的地方用模型的选择；规则唯一确定的角色只在模型明确否决那一列时才换。
+- **三处「够得到」的采纳（2026-11-21）**：没有 `picks` 时规则逐字不变；每条都是「模型明确判断 + 列客观满足」，谓词只在 `ai_data_recipe`（`suggest` 采纳、`_resolve_roles` 落地共用），不满足 = 丢该项回规则结果、不报错。① 多列纵轴：`picks.y` 数组 2–3 列（`MULTI_Y_MAX`），`multi_y_ok`＝互不相同 / 数值列 / 非编号列 / 单位至多一种，且模型对每列的角色只能是 `measure`，**且有有序横轴**（没有横轴时不采纳——分布 / 比较类配方只画第一列；没有横轴的宽表重复列要「把列当分组」，尚未支持，HO-17）；`answers.y` 因此可以是 1–3 个列名的数组（`parse_answers` 只对 `y` 接受数组，规则不认的数组当没给），只在规则要问「选哪个值」或选中的列被否决时采纳。② 有分组时的横轴：模型判 `time` / `ordered_x`、该列是规则此刻的横轴候选（日期 / 数值、不是 y / 编号列）。③ 编号样文字列当分组：模型判 `group` 且 `id_group_ok`（在 `s.groups` 里，即文字、2–12 个取值、有重复）；`answers.group` 点名才进 `cats`，`roles.options.group` 带上它，且它不再兼作重复测量的个体编号（全部编号列都被当分组时不再问 `pick_design`）。**没做**：0/1 数值列当分组（HO-20）——`validate_recipe` 的 `cat`（`_type_ok`）、`_cat`、`eligible`、落盘再校验（`ai_data_task`）与模板分格都认 `s.groups`，只改 `_resolve_roles` 会得到零备选或落盘校验失败，要先有贯穿配方的「数值列按类别用」事实。
+- **`roles.y` = 每个备选实际画的列（2026-11-21）**：`default_candidates` 里最终 `ys` 多于一列时（规则宽表 / 模型点名 / 用户点名一视同仁）只留画全这些列的备选（现在只有趋势类），其余记进 `dropped`（`roles_invalid`，`detail=multi_y_not_drawn`，不加新码）；全被去掉（如量纲不同退到第一列）就用 `picks.y = ys[0]` 重算，不出零备选。看护 `tests/test_ai_data_roles.py` 的 `*_draws_*` 两条。
 - **用户永远优先**：请求带 `answers.y / x / group / cells` 或 `header_rows` 就不起任务（`ai_data_propose._user_took_over`，必须在懒模式循环往 `ans` 补默认答案**之前**记下）。
 - **响应不变量**：没有可用 Key 连接（没连、订阅登录、运维关内置）或非 lazy 时，响应里**没有** `understanding` 键；有连接时只多这一个键。后台线程不碰按项目绑定的状态（只读数据文件、联网、写缓存目录），所以没用 `bound_project`——将来加了任何按项目绑定的状态要补。
 - **缓存 / 单飞 / 负缓存**：缓存只存模型的**原始判断**（`Judgement`），建议每次按当前完整提示 + 规则现算（`derive`）——别把派生结果缓存起来；`data_dir()/cache/ai_data_roles/`（原子写、TTL 30 天、≤ 200 条）；key 含协议版本 + 系统提示哈希 + 数据字节哈希 + 表头行 + 模型看到的提示 + 连接身份（不含密钥 / 地址）；单飞只在 pending 期间、键含完整提示摘要；失败只做 60 s 内存负缓存；同 `(项目, key)` 在途单飞。缓存里有列名：**不进诊断包、不进遥测**（测试钉住）。
