@@ -306,4 +306,14 @@ describe('lib/dataUnderstanding', () => {
     expect(diffSuggestion({ picks: {}, headerRow: 3 }, r, 1, false)).toEqual({ picks: {}, headerRow: 3 })
     expect(diffSuggestion({ picks: {}, headerRow: 1 }, r, 1, false)).toBeNull()
   })
+  it('diffSuggestion：纵轴此刻不止一列而建议只要其中第一列，也算不同（否则多出来的那列一直被画成测量值）', () => {
+    const wide = { x: 'time', y: 'signal', yExtra: 1, group: null, options: { x: [], y: ['signal', 'batch'], group: [] } }
+    expect(diffSuggestion({ picks: { y: 'signal' }, headerRow: null }, wide, 1, false)).toEqual({ picks: { y: 'signal' }, headerRow: null })
+    expect(diffSuggestion({ picks: { y: 'signal' }, headerRow: null }, { ...wide, yExtra: 0 }, 1, false)).toBeNull()
+  })
+  it('diffSuggestion：成对换轴（纵轴换成 a、原来的纵轴 c 去当横轴）两半都留下——横轴下拉此刻不列当前纵轴，不能据此把它丢掉', () => {
+    const abc = { x: 'a', y: 'c', yExtra: 0, group: null, options: { x: ['a', 'b'], y: ['a', 'b', 'c'], group: [] } }
+    expect(diffSuggestion({ picks: { y: 'a', x: 'c' }, headerRow: null }, abc, 1, false)).toEqual({ picks: { y: 'a', x: 'c' }, headerRow: null })
+    expect(diffSuggestion({ picks: { x: 'zzz' }, headerRow: null }, abc, 1, false)).toBeNull() // 这张表里没有的列仍不算
+  })
 })

@@ -47,7 +47,7 @@ const NONE = 'none'
 
 /**
  * 建议与此刻的映射比：只留下不同的项。`roles` = 右栏当前的列角色（下拉的值与可选列）；`headerUsed` = 这次实际用的表头行；
- * `headerFixed` = 用户已经自己指过表头行（不覆盖）。下拉里选不到的列（`roles.options` 没有它）不算建议——胶囊点了也不能让右栏显示出来。
+ * `headerFixed` = 用户已经自己指过表头行（不覆盖）。这张表的下拉里从没出现过的列不算建议——胶囊点了也不能让右栏显示出来。
  * 没有差别 = null（什么都不显示）。
  */
 export function diffSuggestion(s: Suggestion, roles: ColumnRoles | null, headerUsed: number | null, headerFixed: boolean): SuggestionDiff | null {
@@ -58,6 +58,11 @@ export function diffSuggestion(s: Suggestion, roles: ColumnRoles | null, headerU
     for (const k of SUGGEST_KEYS) if (s.picks[k] !== undefined) picks[k] = s.picks[k]
   } else if (roles) {
     const cur: Record<SuggestKey, string | null> = { x: roles.x, y: roles.y, group: roles.group }
+    // 某个角色的下拉不列「此刻被别的角色占着的列」（后端从横轴候选里去掉当前纵轴，反过来也一样）。建议常常是成对换的
+    // （纵轴换成 a、原来的纵轴 c 去当横轴）：按「这张表任何一个下拉里出现过、或此刻正被用着的列」核，成对的另一半才不会被丢掉；
+    // 列真不合适由后端在下一次出候选时照常校验。
+    const known = new Set<string>([...roles.options.x, ...roles.options.y, ...roles.options.group])
+    for (const v of [roles.x, roles.y, roles.group]) if (v !== null) known.add(v)
     for (const k of SUGGEST_KEYS) {
       const want = s.picks[k]
       if (want === undefined) continue
@@ -66,7 +71,9 @@ export function diffSuggestion(s: Suggestion, roles: ColumnRoles | null, headerU
         if (k !== 'y' && cur[k] !== null && roles.options[k].length > 0) picks[k] = NONE
         continue
       }
-      if (want !== cur[k] && roles.options[k].includes(want)) picks[k] = want
+      // 纵轴此刻不止一列（宽表默认把 2–3 列都当纵轴，`yExtra` 记着另外几列）而建议只要一列：即使第一列相同也是不同
+      const differs = want !== cur[k] || (k === 'y' && roles.yExtra > 0)
+      if (differs && (roles.options[k].includes(want) || known.has(want))) picks[k] = want
     }
   }
   if (Object.keys(picks).length === 0 && headerRow === null) return null
