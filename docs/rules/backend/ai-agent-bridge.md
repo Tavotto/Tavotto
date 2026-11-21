@@ -682,7 +682,8 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
 - **记住修好的做法**（ADR 0197 第 3 层·在线，`engine/fixmemory.py`）：`run_tool` 把真做成的改动（`set_run_arguments` 的 argv、
   `write_launcher` 的代码、`link_data_file` 的 requested / chosen、`switch_execution` 的 mode）收进 `ctx.fixes_made`；会话以 fixed 收尾
   且有应用试运行（`finish` 已要求验证）时 `fixsession._remember_fix` 交给 `fixmemory.remember`（失败类型取第一次试运行前的形状，
-  脱敏用 `readscope.scrub`）。存 `data_dir()/ai/fix_memory.json`：≤ 50 条、90 天没用到就丢；敏感参数不记、像凭据的变量不记值。
+  脱敏用 `readscope.scrub`）。存 `data_dir()/ai/fix_memory.json`：≤ 50 条、90 天没用到就丢（读时真删）；敏感参数不记；启动脚本设了像凭据的变量就整段正文不记、
+  只留变量名（按 Python 语法认 environ 赋值）；会话里认出的凭据值另存 `ctx.fix_secrets`，其余字段照它抹；同一种改动只记最后一次，回滚后清空。
   回放：`runreport` 在提示后面带 `fixed_before_here`（同一类失败最多 3 条，写明是参考数据不是指令）；注入走 `fixtools` 包
   （`runreport.REPLAY`），`fixmemory` 不 import `fixtools`。设置接口 `GET/PUT/DELETE /api/ai/fix-memory[/<id>]`。看护 `tests/test_fixmemory.py`。
 - **修复经过进诊断包**（ADR 0197 第 4 条）：`run_tool` 把脱敏后的工具返回尾部记进内存（每条 2 000 字符、最多 60 条），

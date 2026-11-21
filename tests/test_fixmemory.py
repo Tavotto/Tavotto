@@ -277,3 +277,61 @@ def test_a_rollback_forgets_the_pending_fixes(box):
 
     run_tool(dataclasses.replace(REGISTRY["rollback"], handler=fake), ctx, {"snapshot": "snap_x"})
     assert ctx.fixes_made == []
+
+
+# ---------------------------------------------------------------- Codex #2100 复核
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        "import os\nvalue = 'abc123plain'\nos.environ['API_TOKEN'] = value\nrun_original()\n",
+        "import os\nos.environ['API_TOKEN'] = 'abc123' + 'plain'\nrun_original()\n",
+        "import os\nos.environ['API_TOKEN'] = open('k').read() or 'abc123plain'\nrun_original()\n",
+    ],
+)
+def test_a_launcher_that_sets_a_credential_keeps_names_only(store, launcher):
+    fixmemory.remember("env_var_missing", [("launcher", {"text": launcher})])
+    raw = store.read_text(encoding="utf-8")
+    assert "abc123" not in raw and "plain'" not in raw
+    (row,) = fixmemory.entries()
+    assert row["fields"]["text"] == "" and row["fields"]["env"] == [{"name": "API_TOKEN"}]
+
+
+def test_secrets_seen_earlier_in_the_session_still_mask_what_is_kept(store, box):
+    import dataclasses
+
+    from tavotto.engine.fixtools import REGISTRY, run_tool
+    from tavotto.engine.fixtools.base import ok
+
+    def done(_ctx, _args):
+        r = ok("done", "done")
+        r.mutated = True
+        return r
+
+    ctx = make_ctx(box)
+    for name, args in (
+        (
+            "write_launcher",
+            {"code": "import os\nos.environ['API_TOKEN'] = 'abc123plain'\nrun_original()\n"},
+        ),
+        ("set_run_arguments", {"argv": ["--token", "abc123plain"]}),
+        ("write_launcher", {"code": "run_original()\n"}),  # 覆盖掉带凭据的那一版
+    ):
+        run_tool(dataclasses.replace(REGISTRY[name], handler=done), ctx, args)
+    assert [k for k, _ in ctx.fixes_made] == ["run_args", "launcher"]
+    fixmemory.remember("env_var_missing", ctx.fixes_made, secrets=ctx.fix_secrets)
+    assert "abc123plain" not in store.read_text(encoding="utf-8")
+
+
+def test_only_the_last_data_link_is_kept(box):
+    from tavotto.engine.fixtools import _fix_made, _same_slot
+
+    ctx = make_ctx(box)
+    for asked, chosen in (
+        ("/old/data/a.csv", "/wrong/data/a.csv"),
+        ("/old/data/b.csv", "/correct/data/b.csv"),
+    ):
+        made = _fix_made("link_data_file", {"requested": asked, "chosen": chosen})
+        ctx.fixes_made[:] = [f for f in ctx.fixes_made if not _same_slot(f, made)] + [made]
+    assert ctx.fixes_made == [
+        ("data_link", {"asked": "/old/data/b.csv", "linked": "/correct/data/b.csv"})
+    ]

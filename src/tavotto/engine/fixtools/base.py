@@ -139,6 +139,9 @@ class FixContext:
     #: 本会话真做成的改动（种类, 真实参数）——会话以「修好」收尾时交给 `engine/fixmemory` 记在本机（ADR 0197 第 3 层·在线）。
     #: 只在内存；记不记、记什么由 fixmemory 决定（敏感参数不记、像凭据的变量不记值）
     fixes_made: list = field(default_factory=list)
+    #: 本会话启动脚本里认出过的凭据值：与 `fixes_made` 分开累积，被覆盖 / 回滚的改动丢了它们也还在（Codex #2100 P1），
+    #: 记住做法时其余字段照它抹。只在内存
+    fix_secrets: set = field(default_factory=set)
     case_insensitive: bool | None = None
     extra_deny: list[Path] | None = None
 

@@ -230,7 +230,8 @@ succeeded), Tavotto keeps a note of what it changed in `ai/fix_memory.json` in i
 run arguments (not when the script's arguments are marked sensitive), the launcher it wrote, which
 file a missing data path was pointed at, or the execution mode, with the script's file name, the
 failure type and dates. Secrets are removed and your home folder is written as `~` before saving;
-variables whose names look like credentials keep their name only. At most 50 notes are kept, and
+when a launcher sets a variable whose name looks like a credential, only the variable names are kept
+and the launcher text is not saved. At most 50 notes are kept, and
 a note not used for 90 days is deleted. Settings → Figure assistants → *Remember what fixed it* lists
 every note, deletes one or all, and turns the feature off. The notes never leave the computer except
 as described above and in a diagnostics bundle you choose to send.

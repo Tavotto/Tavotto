@@ -111,9 +111,7 @@ def _fix_made(tool: str, args: dict) -> tuple[str, dict] | None:
 
 
 def _same_slot(a: tuple[str, dict], b: tuple[str, dict]) -> bool:
-    if a[0] != b[0]:
-        return False
-    return a[0] != "data_link" or a[1].get("asked") == b[1].get("asked")
+    return a[0] == b[0]
 
 
 def run_tool(
@@ -179,8 +177,11 @@ def run_tool(
             ctx.fixes_made.clear()
         else:
             made = _fix_made(tool.name, args)
+            if made is not None and made[0] == "launcher" and isinstance(made[1].get("text"), str):
+                ctx.fix_secrets |= _fixmemory.launcher_secrets(made[1]["text"])
             if made is not None:
-                # 同一种改动后来又改了：只留最后生效的那次（数据指认按「要的路径」各算一条）
+                # 同一种改动后来又改了：只留最后一次（数据指认也只留最后一次——前缀规则会互相顶替，按请求路径分不清哪条
+                # 还生效，Codex #2100 P2；少记一条只是少个参考，记错一条会把失效的做法当成「修好过」）
                 ctx.fixes_made[:] = [f for f in ctx.fixes_made if _same_slot(f, made) is False] + [
                     made
                 ]

@@ -227,12 +227,17 @@ def _launcher_fields(
     except (SyntaxError, ValueError):
         return {"env": [], "text": ""}
     found = set(secrets) | launcher_secrets(text)
+    sets = _env_sets(tree)
     env: list[dict] = []
-    for name, value in _env_sets(tree)[:10]:
+    for name, value in sets[:10]:
         item: dict = {"name": name}
         if value is not None and not _SECRETISH.search(name):
             item["value"] = _tidy(_mask(value, found), ARG_MAX_CHARS, scrub)
         env.append(item)
+    # 只要设了像凭据的变量（值从哪来——字面量、变量、拼接、函数——都不去猜），正文整段不记，只留变量名（Codex #2100 两轮 P1：
+    # 逐个写法去抹永远有下一种写法）。没有这类变量时正文照记，同一会话认出的秘密照样抹，抹不干净也不记
+    if any(_SECRETISH.search(name) for name, _ in sets):
+        return {"env": env, "text": ""}
     body = _mask(text or "", found)
     if _still_leaks(body, found):
         body = ""
@@ -287,6 +292,7 @@ def remember(
     script: str = "",
     sensitive_args: bool = False,
     scrub: Callable[[str], str] = _default_scrub,
+    secrets: frozenset[str] | set[str] = frozenset(),
     path: Path | None = None,
     now: float | None = None,
 ) -> list[str]:
@@ -299,7 +305,7 @@ def remember(
     try:
         with _LOCK:
             rows = _load(path)
-            secrets = frozenset(
+            secrets = frozenset(secrets) | frozenset(
                 v
                 for kind, change in changes
                 if kind == "launcher" and isinstance((change or {}).get("text"), str)
