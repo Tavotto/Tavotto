@@ -501,7 +501,13 @@
     "transformReflect": "Reflect",
     "importSvg": "Paste SVG ({{count}} objects)",
     "explodeSvg": "Make editable",
-    "outlineText": "Create outlines ({{count}})"
+    "outlineText": "Create outlines ({{count}})",
+    "arrayCopies_one": "Repeat ({{count}} copy)",
+    "arrayCopies_other": "Repeat ({{count}} copies)",
+    "addPathText": "Add text on path",
+    "pathTextStart": "Move text start",
+    "pathTextGap": "Adjust text-on-path offset",
+    "editPathTextPath": "Edit text path"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -642,7 +648,8 @@
     "paste": "Paste",
     "copyAsAnnotation": "Copy as annotation",
     "pasteAsAnnotation": "Paste as annotation",
-    "pathfinder": "Pathfinder"
+    "pathfinder": "Pathfinder",
+    "addPathText": "Add text on path"
   },
   "rail": {
     "assets": "Assets",
@@ -1060,7 +1067,8 @@
     "outlineFailed_one": "{{count}} text could not be converted to outlines (font unavailable)",
     "outlineFailed_other": "{{count}} texts could not be converted to outlines (font unavailable)",
     "svgCopied": "Copied as SVG — paste into Illustrator, Inkscape or Figma",
-    "svgCopyFailed": "Could not copy as SVG"
+    "svgCopyFailed": "Could not copy as SVG",
+    "arrayTooMany": "At most {{max}} copies at once"
   },
   "tabs": {
     "allCanvases": "All canvases",

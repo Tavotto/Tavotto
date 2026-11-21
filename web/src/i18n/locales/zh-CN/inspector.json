@@ -14,7 +14,7 @@
   },
   "alignRef": {
     "page": "画布",
-    "primary": "最后选中",
+    "primary": "关键对象",
     "selection": "选区"
   },
   "arrange": {
@@ -77,7 +77,20 @@
     "zTop": "置于顶层",
     "zUp": "上移一层",
     "zorderLabel": "层级",
-    "pathfinderLabel": "路径查找器"
+    "pathfinderLabel": "路径查找器",
+    "arrayLabel": "阵列",
+    "arrayKind": "方式",
+    "arrayGrid": "网格",
+    "arrayRadial": "环形",
+    "arrayRowsCols": "行 · 列",
+    "arrayRows": "行数",
+    "arrayCols": "列数",
+    "arrayCountRadius": "份数 · 半径",
+    "arrayCount": "份数（含原件）",
+    "arrayRadius": "半径",
+    "arrayRotate": "跟着转",
+    "arrayMake_other": "生成 {{count}} 份",
+    "arrayTooMany": "一次最多 {{max}} 份"
   },
   "assistantRunningTip": "助手运行中",
   "autoHideAria": "右栏自动收起中，点击改为常驻",
@@ -656,7 +669,10 @@
     "setStrokeAlign": "修改描边对齐",
     "setFillRule": "修改填充规则",
     "setGradientKind": "改填充 / 描边类型",
-    "setGradient": "改渐变"
+    "setGradient": "改渐变",
+    "flipPathText": "翻转路径文字",
+    "pathTextStart": "移动路径文字起点",
+    "pathTextOffset": "修改路径文字离线"
   },
   "lock": "锁定",
   "locked": "已锁定",
@@ -1401,5 +1417,19 @@
     "strokeCenterX": "描边中心 X",
     "strokeCenterY": "描边中心 Y",
     "strokeRadius": "描边半径"
+  },
+  "pathText": {
+    "title": "路径文字",
+    "start": "起点",
+    "alignStart": "从起点开始",
+    "alignCenter": "以起点居中",
+    "alignEnd": "到起点结束",
+    "flip": "翻到路径另一侧",
+    "offset": "离线",
+    "offsetTip": "基线离开线多远：0 贴线，负数压到线上；清空回到自动",
+    "offsetAuto": "自动 {{value}}",
+    "offsetAutoBare": "自动",
+    "offsetReset": "自动",
+    "editPathTip": "改字；要改字排的那条路径，在画布上 {{mod}} 双击这段字"
   }
 }

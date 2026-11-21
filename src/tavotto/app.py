@@ -4179,7 +4179,7 @@ def api_svg_copy():
         not isinstance(objs, list)
         or not objs
         or not all(
-            isinstance(o, dict) and o.get("type") in ("text", "arrow", "shape", "path")
+            isinstance(o, dict) and o.get("type") in ("text", "arrow", "shape", "path", "pathText")
             for o in objs
         )
         or not (
@@ -4226,7 +4226,7 @@ def api_text_outline():
         not isinstance(objs, list)
         or not objs
         or len(objs) > TEXT_OUTLINE_MAX
-        or not all(isinstance(o, dict) and o.get("type") == "text" for o in objs)
+        or not all(isinstance(o, dict) and o.get("type") in ("text", "pathText") for o in objs)
     ):
         return jsonify({"ok": False, "error": "bad_objects"}), 400
     if any(len(str(o.get("text") or "")) > SVG_COPY_MAX_TEXT for o in objs):
@@ -4237,7 +4237,13 @@ def api_text_outline():
     results = []
     for o in objs:
         try:
-            results.append({"paths": textoutline.outline_text(o, faces=provider, math=math)})
+            r: dict = {"paths": textoutline.outline_text(o, faces=provider, math=math)}
+            if o.get("type") == "pathText":
+                # 路径文字（ADR 0190）：自动离线算出来是多少——属性栏「离线」框用它做占位数
+                r["auto_offset_pt"] = round(rc_plan.path_text_auto_offset(o, provider), 4)
+                # 开放路径上放不下的字（ADR 0190）：画布在路径末端画红「+」
+                r["overflow"] = rc_plan.path_text_overflow(o, provider)
+            results.append(r)
         except rc_plan.PlanError as exc:
             results.append({"error": exc.code})
     return jsonify({"ok": True, "results": results})
@@ -18458,7 +18464,8 @@ def _version_sketch(v: dict, max_objects: int, max_text: int) -> dict | None:
             item["text"] = text[:max_text]
         elif kind == "shape" and isinstance(o.get("shape"), str):
             item["shape"] = o["shape"]
-        elif kind == "path":
+        elif kind in ("path", "pathText"):
+            # 路径文字（ADR 0190）在草图里只画它那条路径（与前端小缩略图同一画法）
             subpaths = _sketch_subpaths(o.get("subpaths"))
             if subpaths is not None:
                 item["subpaths"] = subpaths

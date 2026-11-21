@@ -1,0 +1,233 @@
+{
+ "cases": [
+  {
+   "name": "网格 2×3",
+   "objs": [
+    {
+     "id": "r",
+     "type": "shape",
+     "shape": "rect",
+     "x": 10,
+     "y": 20,
+     "w": 8,
+     "h": 4,
+     "strokePt": 1,
+     "color": "#000000",
+     "fill": "#ff0000"
+    }
+   ],
+   "spec": {
+    "kind": "grid",
+    "rows": 2,
+    "cols": 3,
+    "gapX": 2,
+    "gapY": 1.5
+   },
+   "expect": [
+    [
+     {
+      "x": 20.0,
+      "y": 20.0,
+      "rotationDeg": 0
+     }
+    ],
+    [
+     {
+      "x": 30.0,
+      "y": 20.0,
+      "rotationDeg": 0
+     }
+    ],
+    [
+     {
+      "x": 10.0,
+      "y": 25.5,
+      "rotationDeg": 0
+     }
+    ],
+    [
+     {
+      "x": 20.0,
+      "y": 25.5,
+      "rotationDeg": 0
+     }
+    ],
+    [
+     {
+      "x": 30.0,
+      "y": 25.5,
+      "rotationDeg": 0
+     }
+    ]
+   ]
+  },
+  {
+   "name": "环形 6 份跟着转",
+   "objs": [
+    {
+     "id": "r",
+     "type": "shape",
+     "shape": "rect",
+     "x": 10,
+     "y": 20,
+     "w": 8,
+     "h": 4,
+     "strokePt": 1,
+     "color": "#000000",
+     "fill": "#ff0000"
+    }
+   ],
+   "spec": {
+    "kind": "radial",
+    "count": 6,
+    "radius": 15,
+    "rotate": true
+   },
+   "expect": [
+    [
+     {
+      "x": 22.99038105676658,
+      "y": 27.5,
+      "rotationDeg": 60.0
+     }
+    ],
+    [
+     {
+      "x": 22.99038105676658,
+      "y": 42.5,
+      "rotationDeg": 120.0
+     }
+    ],
+    [
+     {
+      "x": 10.000000000000002,
+      "y": 50.0,
+      "rotationDeg": -180.0
+     }
+    ],
+    [
+     {
+      "x": -2.9903810567665765,
+      "y": 42.50000000000001,
+      "rotationDeg": -120.0
+     }
+    ],
+    [
+     {
+      "x": -2.9903810567665783,
+      "y": 27.5,
+      "rotationDeg": -60.0
+     }
+    ]
+   ]
+  },
+  {
+   "name": "环形 4 份不转",
+   "objs": [
+    {
+     "id": "r",
+     "type": "shape",
+     "shape": "rect",
+     "x": 10,
+     "y": 20,
+     "w": 8,
+     "h": 4,
+     "strokePt": 1,
+     "color": "#000000",
+     "fill": "#ff0000"
+    }
+   ],
+   "spec": {
+    "kind": "radial",
+    "count": 4,
+    "radius": 10,
+    "rotate": false
+   },
+   "expect": [
+    [
+     {
+      "x": 20.0,
+      "y": 30.0,
+      "rotationDeg": 0
+     }
+    ],
+    [
+     {
+      "x": 10.000000000000002,
+      "y": 40.0,
+      "rotationDeg": 0
+     }
+    ],
+    [
+     {
+      "x": 0.0,
+      "y": 30.0,
+      "rotationDeg": 0
+     }
+    ]
+   ]
+  },
+  {
+   "name": "两个对象当一个整体、环形 3 份跟着转",
+   "objs": [
+    {
+     "id": "r",
+     "type": "shape",
+     "shape": "rect",
+     "x": 10,
+     "y": 20,
+     "w": 8,
+     "h": 4,
+     "strokePt": 1,
+     "color": "#000000",
+     "fill": "#ff0000"
+    },
+    {
+     "id": "s",
+     "type": "shape",
+     "shape": "rect",
+     "x": 20,
+     "y": 22,
+     "w": 4,
+     "h": 6,
+     "strokePt": 1,
+     "color": "#000000",
+     "fill": "#ff0000",
+     "rotationDeg": 10
+    }
+   ],
+   "spec": {
+    "kind": "radial",
+    "count": 3,
+    "radius": 20,
+    "rotate": true
+   },
+   "expect": [
+    [
+     {
+      "x": 34.051127337958995,
+      "y": 50.41579477148589,
+      "rotationDeg": 120.0
+     },
+     {
+      "x": 29.453051126605683,
+      "y": 54.84399800176139,
+      "rotationDeg": 130.0
+     }
+    ],
+    [
+     {
+      "x": -4.315287279421181,
+      "y": 56.03678465006984,
+      "rotationDeg": -120.0
+     },
+     {
+      "x": -3.7172110680678685,
+      "y": 46.608581419794334,
+      "rotationDeg": -110.0
+     }
+    ]
+   ]
+  }
+ ]
+}

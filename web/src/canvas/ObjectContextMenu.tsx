@@ -23,6 +23,7 @@ import {
   RefreshCw,
   RotateCcw,
   Shapes,
+  PathText,
   Spline,
   SlidersHorizontal,
   Trash2,
@@ -94,6 +95,7 @@ import { canConvertToPath } from '@/lib/convertToPath'
 import { PATH_COMMANDS } from '@/store/pathActions'
 import { blockedReason, PATHFINDER_COMMANDS } from '@/store/pathfinderActions'
 import { canExplodeSvg, explodeSvgPanel } from '@/store/svgImportActions'
+import { addPathTextToSelection, pathTextTarget } from '@/store/pathTextActions'
 import { canOutlineText, outlineSelectedText } from '@/store/textOutlineActions'
 import { canCopyAsSvg, copySelectionAsSvg } from '@/store/svgCopyActions'
 import { canMakeClipMask, canReleaseClipMask, makeClipMask, releaseClipMask } from '@/store/groupActions'
@@ -174,7 +176,7 @@ export function ObjectContextMenu({
         ? obj.script
           ? 'panel'
           : 'panel-layout-only'
-        : obj.type === 'text'
+        : obj.type === 'text' || obj.type === 'pathText'
           ? 'text'
           : 'mark'
   // 菜单真的打开了（组件挂上 = 用户右键成功落在一个对象上）才发一声本地信号。
@@ -237,7 +239,7 @@ export function ObjectContextMenu({
         </MenuItem>
       )}
       {/* 文字转轮廓（ADR 0189）：判据 `canOutlineText`（选区里有可转的文字），多选全是文字时也给 */}
-      {(kind === 'text' || (multi && selected.every((o) => o.type === 'text'))) && canOutlineText() && (
+      {(kind === 'text' || (multi && selected.every((o) => o.type === 'text' || o.type === 'pathText'))) && canOutlineText() && (
         <MenuItem icon={Spline} shortcut={keyOf('outlineText')} data-quick-item="outline-text" onSelect={runAsync(outlineSelectedText)}>
           {translate('palette.commands.outline-text.label', { ns: 'dialogs' })}
         </MenuItem>
@@ -246,6 +248,12 @@ export function ObjectContextMenu({
 
       {kind === 'mark' && <ChangeKindSub objs={[obj]} run={run} />}
       {kind === 'mark' && <ConvertToPathItem objs={[obj]} run={run} />}
+      {/* 路径文字（ADR 0190）：选中一条能放字的路径 / 形状 / 箭头 */}
+      {kind === 'mark' && pathTextTarget() && (
+        <MenuItem icon={PathText} data-quick-item="add-path-text" onSelect={run(() => void addPathTextToSelection())}>
+          {qe('addPathText')}
+        </MenuItem>
+      )}
       {kind === 'mark' && <PathCommandItems run={run} />}
       {kind === 'mark' && <PathfinderSub run={run} />}
 

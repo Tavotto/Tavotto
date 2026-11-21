@@ -134,7 +134,7 @@ export function alignSelectedPanelElements(panelId: string, mode: AlignMode): Al
   const annotations = objects.filter(
     (o) =>
       selIds.includes(o.id) &&
-      (o.type === 'text' || o.type === 'arrow' || o.type === 'shape' || o.type === 'path'),
+      (o.type === 'text' || o.type === 'arrow' || o.type === 'shape' || o.type === 'path' || o.type === 'pathText'),
   )
 
   // 5. 重算条目。选区里有动不了的组：整次不做，说出为什么（与拖它、按方向键同一句）

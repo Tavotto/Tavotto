@@ -4,7 +4,7 @@ import { artifactRequestFields } from './artifactValidation'
 import type { ExportClipPath, ExportObject } from './api'
 import { clipChainOf, groupMasks, isActiveMask } from './groupTree'
 import { maskAsPath } from './clipMask'
-import type { CanvasObject, Gradient } from '@/types/document'
+import type { CanvasObject, Gradient, PathTextObject } from '@/types/document'
 import { DEFAULT_STAR_POINTS, DEFAULT_STAR_RATIO, isKnownObject, isStrokeOnlyShape, panelRotation, readPath, shapeStrokeOn } from '@/types/document'
 import { DEFAULT_LINE_CAP, defaultLineJoin, miterLimitOf, STROKE_MITER_LIMIT, strokeOpacityOf, validDashPattern } from './shapeGeometry'
 import { PATH_DEFAULT_JOIN } from './pathGeom'
@@ -28,7 +28,7 @@ export function toExportObjects(
   return objects
     .filter((o) => !o.hidden && isKnownObject(o) && !isActiveMask(o, masks))
     .map((o) => {
-      const e = toExportObject(o)
+      const e = o.type === 'pathText' ? pathTextExport(o, lineWidthOf(o, context)) : toExportObject(o)
       const chain = clipChainOf(o, masks)
       return chain.length ? { ...e, clip: chain.map(toExportClip) } : e
     })
@@ -232,5 +232,50 @@ function toExportObject(o: CanvasObject): ExportObject {
         rotation_deg: o.rotationDeg || undefined,
       }
     }
+    case 'pathText':
+      // 线宽要看文档里别的对象：`toExportObjects` 带着上下文走 `pathTextExport`；单独转一个时按没有线算
+      return pathTextExport(o)
+  }
+}
+
+/**
+ * 路径文字那条线的描边宽度（pt）：生成时一起成组的那条线（`lineId`）还在、看得见、有描边就取它的线宽，否则 0。
+ * 自动离线要用（ADR 0190）；画布预览与导出载荷同一个判据。
+ */
+export function lineWidthOf(o: PathTextObject, objects: readonly CanvasObject[]): number {
+  if (!o.lineId) return 0
+  const l = objects.find((x) => x.id === o.lineId)
+  if (!l || l.hidden) return 0
+  if (l.type === 'arrow') return Math.max(l.strokePt, 0)
+  if (l.type === 'path') return readPath(l).strokeOn ? Math.max(l.strokePt, 0) : 0
+  if (l.type === 'shape') return shapeStrokeOn(l) ? Math.max(l.strokePt, 0) : 0
+  return 0
+}
+
+/** 路径文字的导出字段：缺省不发（后端 `pathtext` 补同一份缺省）。画布预览接口也用这一份 */
+export function pathTextExport(o: PathTextObject, lineWidthPt = 0): ExportObject {
+  return {
+    x_mm: o.x,
+    y_mm: o.y,
+    w_mm: o.w,
+    h_mm: o.h,
+    type: 'pathText',
+    text: o.text,
+    size_pt: o.sizePt,
+    bold: o.bold,
+    italic: o.italic === true,
+    color: o.color,
+    font_family: o.fontFamily,
+    subpaths: o.subpaths.map((sp) => ({
+      closed: sp.closed,
+      nodes: sp.nodes.map((n) => ({ p: n.p, ...(n.in ? { in: n.in } : {}), ...(n.out ? { out: n.out } : {}) })),
+    })),
+    start_offset: o.startOffset || undefined,
+    text_align: o.textAlign,
+    flip: o.flip === true ? true : undefined,
+    baseline_offset_pt:
+      typeof o.baselineOffsetPt === 'number' && Number.isFinite(o.baselineOffsetPt) ? o.baselineOffsetPt : undefined,
+    line_width_pt: lineWidthPt > 0 ? lineWidthPt : undefined,
+    rotation_deg: o.rotationDeg || undefined,
   }
 }
