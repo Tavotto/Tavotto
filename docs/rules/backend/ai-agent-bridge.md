@@ -324,6 +324,7 @@ order: 240
   大表读法 `read_text_table`→`_read_large_text_table`（流式：一遍校验 sha256 / 编码 / 二进制，一遍解析统计，摘要 `rows == []`、`large` 有整表统计；同一个 `_detect`、同一组错误码；`iter_table` / `iter_records` 是读法的唯一实现，`table_from_text` / `delimited_records` 是它们的整份文本版）。
   XLSX、v1、合画永远只认小表（`inspect_data_source` 对大表默认抛 `data_too_large`，只有传 `allow_large=True` 的出备选 / 提交路径认）。**`values.rows` 为空 ≠ 规则判过了**：`validate_recipe` 对大表只放行 `LARGE_MARKS`（趋势的折线 / 阶梯 / 点、关系的散点），汇总类图元一律 `mark_not_allowed`；数据相关的资格（折线 x 重复 / 没排序、系列 x 个数）在缩减那一遍判（`LargeRuleError`，码同小表）。
   画法：脚本读 `read_reduced`（趋势按 x 值分箱留包络、关系等距抽样 + 极值），之后与小表同一份画图代码；父进程 `large_reduce` 与脚本是同一份源码，并与概览扫描的整表统计对账。看护 `tests/test_ai_data_large.py`。
+- **大表的进度与取消（ADR 0178 修订，`engine/ai_data_progress.py`）**：`tick` / `check` 是读表循环里的检查点（`_stream_check` / `_scan_summary` / 候选副本复制 / `reduce_file(progress=)`），`Cancelled` 是 `BaseException` 子类——新增的读表循环不许用 `except Exception` 之外的方式吞它，也不许在检查点之外自造取消；条目只有大表才有、有界、只含阶段名与数字。端点 `GET /api/ai/data-progress/<rid>` 与 `POST …/cancel`（幂等；缩略图与提交不可取消）。看护 `tests/test_ai_data_progress.py`。
 - **数据出图 v2 的模板与期望指纹（`engine/ai_data_template.py`，ADR 0178）**：`render_recipe_script(entry, recipe, data_rel=, stem=, style=)` 只接受通过
   `validate_recipe` 的配方，不认识的组合抛 `TemplateError`、不画近似。**一份实现两处用**：读表 / 单元格解析 / 汇总 / 抖动 / 箱 / 核密度 / 拟合都是模块里的普通函数
   （`RUNTIME_FUNCTIONS`），这些函数的源码（`inspect.getsource`）与 `xlsxread` 的源码原文被收进**旁边的公共模块** `tavotto_plot_<sha256 前 8 位>.py`（`runtime_module()`，内容寻址、对所有图逐字节相同、不含数据，
