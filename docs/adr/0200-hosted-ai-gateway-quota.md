@@ -106,36 +106,79 @@ Haiku 5.5 约 $0.0007、gpt-5-mini 约 $0.0024、gpt-5 约 $0.012、Sonnet 5.5 �
 ### 四、架构：客户端 → 网关 → 上游
 
 ```
-引擎（内置执行器 / fixsession / ai_structured）
-  └─ wires.post_json ──(授权令牌 + 设备签名 + task_id)──▶ AI 网关（我们的服务器，持上游密钥）
-                                                           ├─ 验令牌、验设备签名、读授权台账（0193 §六）
-                                                           ├─ 额度账本：任务放行 → 请求预扣 → 按实际用量结算
-                                                           └─ 按配置路由到上游模型 ──▶ 模型服务商
+引擎（ai_bridge / fixsession / ai_structured）
+  ├─ hosted_ai.open_task(kind) ──(授权令牌 + 设备签名，一次)──▶ AI 网关 /v1/task ──(服务密钥)──▶ license-api /v1/ai/admit（台账、余额）
+  │                                    ◀── 任务通行证（30 分钟、上限 = 一个任务）
+  └─ 内置执行器照常发请求（Anthropic Messages 线路，通行证当 API key）──▶ AI 网关 /v1/messages ──(上游密钥)──▶ DeepSeek
+                                                                         └─ 记账：任务结束 / 每 60 s ──▶ license-api /v1/ai/charge
 ```
 
 - **上游密钥只在网关的环境变量里**，客户端拿不到任何上游密钥。
-- **只认内置执行器**：网关不接受普通的 `Authorization: Bearer <key>`。每个请求必须带
-  `X-Tavotto-License`（授权令牌）、`X-Tavotto-Task`（§五的任务号）、`X-Tavotto-Ts`、`X-Tavotto-Sig`（设备私钥对 `方法 | 路径 | sha256(请求体) | ts | task_id` 的 Ed25519 签名，同 0193 的设备密钥）。
-  所以这条连接不能被塞进 Codex / Claude Code / 别的软件当通用模型代理用。
-- **签名在哪做**：`ai_providers.builtin_conn` 对内置连接返回 `auth: "tavotto-device"`；`wires.post_json` 遇到这种 auth 时调用 `license` 模块的签名函数逐请求加头（今天 `post_json` 只发静态头，这是唯一要改的传输层代码）。
-  子进程执行器（`tavotto-cli agent-run`）不拿设备私钥：签名经父进程的本地回调完成（与 `check` 工具走 stdin IPC 同一条路），私钥不出主进程。
-- **协议**：网关对外只说一种协议（OpenAI Chat Completions 兼容 + `usage` 字段），模型名固定写 `tavotto-auto`；网关按配置选上游（§七）。客户端不知道、也不需要知道用的是哪家模型。
+- **认人：开任务签一次，之后用任务通行证**（维护者 2026-11-21 选定，取代「逐请求设备签名」）：
+  - 开任务的请求按 0193 的设备签名规则签（`op = "ai_task"`），附授权令牌；网关核令牌签名、`exp`、`hosted-ai` 功能键、设备，再由 license-api 核台账与余额。
+  - 通过后回一张**任务通行证**（随机 256 位，`tvk_task_` 前缀），30 分钟无请求即失效，最多只能花这一个任务的 `ceiling`。
+  - 之后这个任务里的每个模型请求把通行证当作 API key 发（`x-api-key` 或 `Authorization: Bearer`），**内置执行器与 `wires.post_json` 不改**，子进程也不碰设备私钥。
+  - 风险边界：通行证被拿走，最多被花掉一个任务的上限（约 ¥0.1–0.6），且只能调 `tavotto-auto`、受 `max_tokens` 与轮数上限约束；网关不认任何别的 key。
+- **协议**：网关对外说 **Anthropic Messages**（`POST /v1/messages`，与实测线路一致，缓存命中原样透传），模型名固定写 `tavotto-auto`，网关按配置换成上游模型（§七）。
+  请求体除 `model` 与 `max_tokens`（封顶）外**一个字节不改**，保住 DeepSeek 的前缀缓存。
 - **可达性**：`ai.tavotto.cn` 一个节点（边缘节点 tavotto-dl，§十），国内外用户都连它；账本在 CloudBase，与 `license.tavotto.cn` 同一份。以后海外加节点也**共用这一份账本**（只有一个写入点）。
-- **网关回权威用量**：每个响应带 `X-Tavotto-Charged`（本请求结算的微元）、`X-Tavotto-Remaining`（可用余额 ÷ 已发放额度，0–1，两位小数）。
+- **网关回权威用量**：每个响应带 `X-Tavotto-Charged`（本请求结算的微元，人民币）、`X-Tavotto-Remaining`（可用余额 ÷ 已发放额度，0–1，两位小数，开任务时的快照减去本任务已花）。
   客户端的执行追踪把网关回的成本当作权威值记下（`ai_pricing` 对网关地址本来就算不出价格）。
+
+### 四之一、接口契约（三方实现的唯一出处）
+
+**单位**：金额一律**人民币微元**（整数，1 元 = 1,000,000）；美元订单按配置汇率 `usd_cny` 折成人民币记预算。时间一律毫秒整数（UTC）。错误体统一 `{"error": {"code", "message"}}`。
+
+**A. 客户端 → 网关**（正式 `https://ai.tavotto.cn`；开发 / 测试由 `TAVOTTO_HOSTED_AI_ENDPOINT` 指定，规则同 `TAVOTTO_LICENSE_ENDPOINT`）
+
+1. `POST /v1/task`
+   - 请求体（设备签名规则见 infra `serverless/license/README.md`「设备签名」，`op` 固定 `"ai_task"`）：
+     `{"op":"ai_task","token":"<授权令牌原文>","device_pub":"<b64>","kind":"figure_edit|fix|data_roles|convert","client":"<应用版本>","ts":<ms>,"sig":"<b64>"}`
+   - 200：`{"task_id":"tsk_…","task_token":"tvk_task_…","expires_idle_ms":1800000,"ceiling_micro":<int>,"limits":{"max_turns":<int>,"max_total_tokens":<int>,"max_output_tokens":<int>},"model":"tavotto-auto","remaining":<0..1>}`
+   - 错误码（闭集）：`quota_exhausted`（402，带 `retry_at`：额度恢复到放行线的时刻）、`daily_limit`（402，带 `retry_at`）、`not_entitled`（403：令牌无 `hosted-ai` / 过期 / 作废 / 设备不在名单）、`kind_disabled`（403）、`paused`（503：熔断第二档或总开关）、`client_error`（400 / 401：签名、时钟 ±10 分钟、格式）、`rate_limited`（429，`Retry-After`）、`server`（500 / 502）。
+2. `POST /v1/messages`（Anthropic Messages；`x-api-key` 或 `Authorization: Bearer` = 任务通行证；`anthropic-version` 照传）
+   - 网关：通行证有效 → `model` 换成路由的上游模型 → `max_tokens = min(请求值, limits.max_output_tokens)` → 本任务累计 + 本次 `max_tokens` 的最坏成本超过 `ceiling` 时先不发、回 `task_budget_exhausted` → 转发 → 按上游原始 `usage` 结算。
+   - 只支持非流式（`stream: true` 回 400 `client_error`；引擎今天就是非流式）。
+   - 200：上游响应体原样，加头 `X-Tavotto-Charged`、`X-Tavotto-Remaining`、`X-Tavotto-Task-Spent`（本任务累计微元）。
+   - 错误码：`task_expired`（401：通行证不存在 / 已过期）、`task_budget_exhausted`（402）、`paused`（503）、`upstream_error`（502：上游 5xx / 超时，**不计费**）、`client_error`（400）。上游 4xx 原样透传（不计费）。
+3. `POST /v1/task/close`（`Authorization: Bearer` = 通行证；空体）：任务结束时客户端调一次，网关立即记账。可选（不调则 30 分钟空闲后自动关闭）。
+
+**B. 网关 → license-api**（CloudBase，同 `license-api` 函数，新增 3 个端点；鉴权 = 服务签名）
+
+- 服务签名头 `X-Tavotto-Service: <ts>.<hex(HMAC-SHA256(AI_GATEWAY_SECRET, "<ts>\n<sha256(原始请求体) 十六进制>"))>`，`|now − ts| > 5 分钟` 拒收。`AI_GATEWAY_SECRET` ≥ 32 字节，测试 / 正式各一把，只在两边的环境变量里。
+- `POST /v1/ai/admit` `{"license_id","device_pub","kind","now"}` → license-api 重读授权（作废立即生效）、核设备、核 `hosted-ai`，算余额与当日已用，写一条任务记录：
+  200 `{"task_id","ceiling_micro","limits":{…},"remaining":<0..1>,"granted_micro","spent_micro"}`；或 `{"error":{"code":"quota_exhausted"|"daily_limit"|"not_entitled"|"kind_disabled","retry_at"?}}`。
+- `POST /v1/ai/charge` `{"task_id","spent_micro","requests","final":bool,"usage":{"input_miss","input_hit","output"}}` → **幂等的「设为」**：任务累计只增不减（取 max），差额记到授权的总花费与当日花费；`final` 后再来的 charge 拒收。200 `{"remaining","spent_micro"}`。
+- `POST /v1/ai/config` `{}` → 当前配置（§七字段；集合里没有就回代码里的默认值）。
+
+**C. 余额算法**（license-api 内，按授权号汇总）
+
+- 每笔**未作废、带 `hosted-ai`** 的购买：`budget = 实付金额 × budget_ratio`（台账里记 `amount` 与 `currency`，开通时从 Stripe Checkout Session 的 `amount_total` / `currency` 写入；老记录没有就按 Price 的 `unit_amount` 补）。
+  这笔的有效段 `[起点, 终点)` 用 0193 的链式算法；发放：起点即发 `budget × min(30, term)/term`，余下在段内按天线性发；段结束后不再增加。
+- `granted(now) = Σ 各笔已发放`；`balance = granted − spent_total`；同一授权下各笔的结余**合并使用**（叠加购买时前一笔没用完的继续可用，总量仍不超过 Σ 40%）。
+- 当日上限（北京时间自然日）`= Σ 当前有效各笔的 (30 天份额 × day_ratio)`，某笔付款后 24 小时内它的那一份再乘 `refund_window_ratio`。
+- 放行：`balance ≥ admit_line(kind)` 且 `当日上限 − 当日已用 ≥ admit_line(kind)`；放行后任务可花到 `ceiling(kind)`（允许透支一个任务）。
+- 退款作废的那笔：`budget` 归零，已花的照算（可能让余额为负，直到之后的发放补上）。
+
+**D. 价格与时段**（网关内，配置可改）：DeepSeek `deepseek-flash` 人民币每百万 token：命中 0.04 / 未命中 2 / 输出 8（高峰：北京时间周一至周五 9–12、14–18 点，不含法定节假日）；其余时段半价（节假日表进配置）。
+`cost = input_miss × 未命中价 + input_hit × 命中价 + output × 输出价`，其中 Anthropic 线路 `input_miss = usage.input_tokens`、`input_hit = usage.cache_read_input_tokens`、`output = usage.output_tokens`（含思考 token）。
+
+**E. 默认配置**（`ai_config` 集合缺省值，均可改）：`budget_ratio 0.40`，`front_days 30`，`day_ratio 1/3`，`refund_window_ratio 1/3`，`usd_cny 7.2`；
+各类任务（`admit_line` / `ceiling` 微元，`max_turns` / `max_total_tokens` / `max_output_tokens`）：
+`figure_edit` 10,000 / 100,000，24 / 200,000 / 8,192；`fix` 20,000 / 300,000，40 / 300,000 / 4,096；`data_roles` 5,000 / 50,000，2 / 40,000 / 2,000；`convert` 30,000 / 600,000，32 / 600,000 / 16,384。
+熔断：全网关当日花费 ≥ ¥50 报警、≥ ¥200 暂停到次日 0 点（北京时间）；总开关 `kill`。
 
 ### 五、按任务放行，按请求结算
 
 一次改图是一个**任务**：最多 24 轮 × 2 次 Agent 调用，几十个请求。只按请求扣，会在任务做到一半时余额见底、白花一半钱还没结果。所以：
 
-1. **开任务**：功能开始前 `POST /v1/ai/task {kind}`（`kind ∈ figure_edit | fix | data_roles | convert`，闭集）。
-   网关核权益、核余额 ≥ 该类任务的**放行线**（配置，默认 = 该类 P50 成本），回 `{task_id, ceiling}`。
-   `ceiling` = 该类任务的**单任务上限**（配置，按 P90 定）。余额不足放行线 → 回 `quota_exhausted`（§八）。
-2. **请求**：每个请求带 `task_id`。网关先按「请求体估算输入 + `max_tokens` 全额输出」预扣，转发，再按上游回的实际 `usage` 结算、多退。
+1. **开任务**：见 §四之一 A1 / B / C。
+2. **请求**：网关按「本任务已花 + 本次 `max_tokens` 的最坏成本」判断是否还在 `ceiling` 内，转发后按上游实际 `usage` 计入本任务。
 3. **任务内透支**：放行之后，这个任务可以一直用到 `ceiling`，即使余额中途变成负数——**不在任务中途掐断**。负数从之后发放的额度里补；所以每笔购买最多被透支一个任务的 `ceiling`（维护者 2026-11-21 同意略超 40%）。
-4. **任务到顶**：任务累计到 `ceiling` 时，网关对下一个请求回 `task_budget_exhausted`；引擎把它当作已有的「预算用完」结局处理（`fix_failed:budget` 同一条路），不报新错误。
-5. **幂等**：同一 `task_id` + 请求序号重放不重复扣；任务 30 分钟无请求自动关闭。
-6. **失败照扣**（维护者 2026-11-21 定）：模型的钱已经花了；靠单任务上限 `ceiling`（§六）控制失败的损失，不退额度。
+4. **任务到顶**：网关回 `task_budget_exhausted`；引擎把它当作已有的「预算用完」结局处理（与 `fix_failed:budget` 同一条路），不报新错误。
+5. **记账频率**：网关在本机追加写一份记账日志（每个请求一行：任务号、用量、成本，不含内容），任务关闭时向 license-api `charge(final)`，未关闭的任务每 60 秒合并 `charge` 一次。
+   charge 是幂等的「设为」，网关重启后从本机日志补发，不会重复扣。所以 CloudBase 的写入是按任务 / 按分钟，不是按请求。
+6. **失败照扣**（维护者 2026-11-21 定）：模型的钱已经花了；靠单任务上限 `ceiling`（§六）控制失败的损失，不退额度。上游 5xx / 超时不计费。
 
 ### 六、单任务上限（内置 AI 专用，比自带 key 紧）
 
@@ -179,7 +222,8 @@ Haiku 5.5 约 $0.0007、gpt-5-mini 约 $0.0024、gpt-5 约 $0.012、Sonnet 5.5 �
   > What is sent is the same as for any other AI you connect (your instruction, and what the assistant reads from the project to do the job,
   > including scripts, rendered previews and short data summaries). The relay does not store requests or replies. For billing it keeps,
   > for 90 days: a one-way hash of your license, the kind of task, the model, token counts, cost, duration and the result code.
-  > Each request is signed with a key that stays on your computer, so the relay can check it comes from your activated device.
+  > Each task starts with a request signed by a key that stays on your computer, so the relay can check it comes from your activated device;
+  > the rest of that task uses a one-time pass that expires after 30 minutes of inactivity.
   > DeepSeek's own privacy terms apply to what it receives. If you use your own API key or a subscription sign-in instead,
   > nothing goes through Tavotto's relay.
 
