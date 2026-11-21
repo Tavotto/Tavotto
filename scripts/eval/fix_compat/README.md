@@ -149,3 +149,19 @@ argv 两题、环境变量、stdin 都在结束语里说对了原因。合入 #2
 - **换了模型，不是同口径**：基线 A 组没跑成，B 组用的是 `deepseek-v4.1-flash`，这一轮 A 组是更强的 `gpt-6-luna`。与模型无关、能确定的只有两条：不修就出图从 0/8 到 3/8；参数类两题有了 `set_run_arguments` 这个动作。同口径的弱模型 A 组还没跑。
 - **对照题 `lib-needs-data-arg` 也「修好」了**：AI 没编数据，而是写了一行启动脚本去运行项目里真正的入口 `run_report.py`，于是那张图挂在了 `figlib.py` 名下。维护者 11-19 裁决这种情况应引导用户去打开真入口，不用启动脚本代跑（ADR 0188），提示词随 ADR 0197 第 1 层一起改。
 - 8/8 已经到顶，这套题量不出后续改动的提升，还要更难的题、弱模型、每题 3 次，并把步数和耗时也算进指标。
+
+## 11-21 第三轮：失败提示、试运行记录、小实验都在（#2064 / #2079 / #2093 之后）
+
+`results/2026-11-21-deepseek-flash/`，Tavotto 源码 8ddcb9432（main + #2093）。A 组走 Tavotto 内置的 DeepSeek 连接（`EVAL_MODEL=deepseek/deepseek-flash`），**每题 3 次**；先跑一轮 baseline。
+
+| | baseline | A |
+|---|---|---|
+| 要 AI 动手的 5 题（不含已经出图的题和对照题） | 0/5 | **15/15** |
+| 对照题 `lib-needs-data-arg`（solvable=false） | 0/1 | 0/3 |
+
+- 平均 9.3 步、44 s 一题；修好用的工具：`set_run_arguments` ×6、`write_launcher` ×6、`link_data_file` ×3，`run_snippet` 用了 5 次。
+- 「提示跟进」表里每次应用试运行都是第一次就 `ok`：没有出现给了提示却重复同一失败的情况，本轮没有可提炼的新提示。
+- 对照题 3 次都按 ADR 0188 的裁决收尾：说明 `figlib.py` 只是画图工具、请用户打开同文件夹的 `run_report.py`，不代跑。判分算不成功是对照题的设定。
+  第 1 次被归成 `tool_denied:run_snippet`，其实是模型先猜错了环境 id（`env_unknown`），查过 `list_environments` 后就照常跑了，不是被拒。
+- **不能直接和 11-19 比**：11-19 的 A 组是 OpenCode Go 的 `deepseek-v4.1-flash`、每题 1 次，代码里还没有失败提示、试运行记录与小实验；本轮换了模型和连接方式。
+  要分清提示本身的作用，需要同一模型在 #2079 前后各跑一轮（未做）。
