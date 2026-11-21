@@ -39,6 +39,14 @@ B 组用 opencode 自己已登录的 OpenCode Go 凭据（`opencode auth`），h
 基础设施故障（sidecar 起不来等）打印 `INFRA_ERROR` 不记结果；模型额度用完（输出里有 `usage limit` / `go-limit`）停下，不记那一组。
 opencode 报错时退出码也可能是 0，`agent_errors` 里查 `Error:`。
 
+## 提示看护与「提示跟进」表（ADR 0197 第 3 层·离线）
+
+- 题库每道要 AI 动手的题带 `hint: {code, trace?, tool}`：未修前的结局码（traceback 才认得出的形状带一段 `trace`）与修好它要用的工具。
+  `tests/test_fix_compat_corpus_hints.py` 在普通 CI 里核对每道题都拿得到点名那个工具的提示，不叫模型。
+  `harness.py probe` 实测的结局码与 `hint.code` 不符时会打印 `!!`，按实测更新题库。
+- A 组轨迹里应用试运行那一行带 `attempt`（`n / before / after / hint / changes`，只有码）。`report` 最后一张表按每次试运行列出
+  给的提示、模型接着动的第一个非观察工具、下一次的失败形状——给了提示没照做、照做了形状没动的行，就是该改写或新增提示的地方。
+
 ## 费用口径
 
 单次 A 运行：内置循环有步数 / 时间预算（`FIX_LIMITS`），一次几万 token 量级；单次 B 运行：opencode 一般 20–40 次工具调用、几十万 input token（含缓存）。

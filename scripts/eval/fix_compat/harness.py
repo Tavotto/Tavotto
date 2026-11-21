@@ -591,6 +591,8 @@ def one_run(cond: str, pid: str, item: dict, rep: int, timeout: int) -> dict:
                         "approved_by": a.get("approved_by"),
                         "result": (a.get("result") or {}).get("code")
                         or (a.get("result") or {}).get("ok"),
+                        # 应用试运行的记录（ADR 0197 第 1 层，只有码）：之前 / 之后的形状、给的提示 id、这之前做过的改动
+                        **({"attempt": a["attempt"]} if a.get("attempt") else {}),
                     }
                     for a in audit
                 ]
@@ -665,7 +667,15 @@ def cmd_probe(args) -> None:
         materialize(it, base / "project")
         with sidecar(base / "project", base / "work") as app:
             prep = run_prep(app, it["script"])
-        print(pid, json.dumps(summarize_report(prep["report"]), ensure_ascii=False), flush=True)
+        summ = summarize_report(prep["report"])
+        print(pid, json.dumps(summ, ensure_ascii=False), flush=True)
+        want = (it.get("hint") or {}).get("code")
+        if want and summ.get("phase") != "completed" and summ.get("outcome_code") != want:
+            # 题库里写的「未修前结局码」是 tests/test_fix_compat_corpus_hints.py 的输入：产品换了码就更新它
+            print(
+                f"  !! corpus.json 的 hint.code 是 {want!r}，实测 {summ.get('outcome_code')!r}",
+                flush=True,
+            )
 
 
 def cmd_run(args) -> None:
