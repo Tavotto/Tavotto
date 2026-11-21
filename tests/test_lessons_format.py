@@ -434,3 +434,13 @@ def test_the_real_rules_name_every_upgrade_with_a_date():
     ups, errs = L.upgrades(lessons)
     assert errs == []
     assert len(ups) == sum(1 for x in lessons if x.status == "promoted") > 0
+
+
+def test_check_reports_upgrade_without_guard(root):
+    """`problems` / `--check` 真的接上了看护检查：细则那段删掉看护就红。"""
+    target = root / "docs" / "rules" / "ci" / "windows-lab.md"
+    target.write_text(
+        "- **规则（错题本 L-002 升级，2026-11-01）。** 没写看护。\n", encoding="utf-8"
+    )
+    errs = _problems(GOOD, root)
+    assert any("L-002" in e and "看护" in e for e in errs), errs
