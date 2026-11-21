@@ -74,6 +74,7 @@ def resolve_size(
             or min(view_box[2:]) <= 0
         ):
             raise UnsupportedSVG("svg_dimensions")
+
         if width is None and height is None:
             width, height = view_box[2] * 0.75, view_box[3] * 0.75
         elif width is None:
