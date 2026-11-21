@@ -6,13 +6,14 @@
  * 缩略图（版本列表 / 画布列表）不走这里：草图里没有这些字段，也不值得为几十张小图画箭头帽。
  */
 import {
+  arcPath,
   arrowGeometry,
   bracePath,
   cornerRadius,
   defaultLineJoin,
   isFilledHead,
+  outlineOf,
   shapeInset,
-  shapeOutline,
   strokeOpacityOf,
   svgStroke,
 } from '@/lib/shapeGeometry'
@@ -86,8 +87,10 @@ export function ThumbShape({ obj }: { obj: ArrowObject | ShapeObject | PathObjec
     body = <line x1={s.rx * w} y1={s.ry * h} x2={e.rx * w} y2={e.ry * h} {...stroke} />
   } else if (obj.shape === 'brace') {
     body = <path d={bracePath(w, h, inset)} fill="none" {...stroke} />
+  } else if (obj.shape === 'arc') {
+    body = <path d={arcPath(w, h, inset)} fill="none" {...stroke} />
   } else {
-    const o = shapeOutline(obj.shape, w, h, inset, obj.sides)
+    const o = outlineOf(obj, w, h, inset)
     if (o?.kind === 'ellipse') {
       body = <ellipse cx={o.cx} cy={o.cy} rx={o.rx} ry={o.ry} fill={fill} fillOpacity={fillOpacity} {...stroke} />
     } else if (o?.kind === 'poly') {

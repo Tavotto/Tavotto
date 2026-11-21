@@ -140,6 +140,7 @@
   "canvasTools": {
     "fit": "Fit",
     "label": "Canvas tools",
+    "pen": "Pen",
     "select": "Select",
     "subLabels": "Labels"
   },
@@ -403,6 +404,16 @@
     "switchKindCount": "Change {{count}} objects to {{name}}",
     "convertToPath": "Convert to Path",
     "convertToPathCount": "Convert {{count}} objects to paths",
+    "drawPath": "Draw path",
+    "continuePath": "Continue path",
+    "moveAnchors": "Move anchors",
+    "moveHandle": "Adjust handle",
+    "addAnchors": "Add anchor points",
+    "deleteAnchors": "Delete {{count}} anchor points",
+    "convertAnchors": "Convert anchor points",
+    "cutPath": "Cut path at anchor points",
+    "joinPaths": "Join paths",
+    "averageAnchors": "Average anchor points",
     "resizeAxes": "Resize {{count}} axes",
     "resizePatch": "Resize box",
     "scaleLegend": "Scale legend",
@@ -457,7 +468,11 @@
     "showObjects": "Show {{count}} objects",
     "setFramePad": "Change canvas margin",
     "journalStyle": "Adjust style “{{name}}” using the {{journal}} record",
-    "adoptComputedFrame": "Use the rendered computed frame"
+    "adoptComputedFrame": "Use the rendered computed frame",
+    "defaultAppearance": "Default fill and stroke",
+    "swapFillStroke": "Swap fill and stroke",
+    "clearFill": "No fill",
+    "eyedropper": "Eyedropper"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -984,7 +999,9 @@
     "packagedIncomplete_other": "Created project package {{name}} with {{count}} missing assets. Add the missing assets before restoring.",
     "packagedExecutionIncomplete": "Created project package {{name}}. Runtime dependencies have not been fully confirmed. Check data and run configurations before moving the project.",
     "packagedIncompleteWithExecution_one": "Created project package {{name}} with {{count}} missing asset and unconfirmed runtime dependencies. Add the asset and check data and run configurations before moving the project.",
-    "packagedIncompleteWithExecution_other": "Created project package {{name}} with {{count}} missing assets and unconfirmed runtime dependencies. Add the assets and check data and run configurations before moving the project."
+    "packagedIncompleteWithExecution_other": "Created project package {{name}} with {{count}} missing assets and unconfirmed runtime dependencies. Add the assets and check data and run configurations before moving the project.",
+    "eyedropperNothing": "No color to pick here",
+    "eyedropperNoTarget": "Select a shape, path or arrow to color first"
   },
   "tabs": {
     "allCanvases": "All canvases",
@@ -995,11 +1012,19 @@
     "unopened": "Not open"
   },
   "toolHint": {
+    "arc": "Drag to draw an arc; Esc to cancel",
     "arrow": "Drag to draw an arrow; hold Shift to snap to 15°. Esc to cancel.",
+    "brace": "Drag to draw a brace; Esc to cancel",
+    "diamond": "Drag to draw a diamond; Esc to cancel",
     "ellipse": "Drag to draw an ellipse. Esc to cancel.",
+    "eyedropper": "Click anything on the canvas to give its colors to the selection; Esc to exit",
     "line": "Drag to draw a line. Esc to cancel.",
+    "pen": "Click to add a corner point, drag for a smooth point; click the start point to close, Enter or Esc to finish",
+    "polygon": "Drag to draw a polygon; Esc to cancel",
     "rect": "Drag to draw a rectangle. Esc to cancel.",
-    "text": "Drag to draw a text box, or click for the default size. Esc to cancel."
+    "star": "Drag to draw a star; Esc to cancel",
+    "text": "Drag to draw a text box, or click for the default size. Esc to cancel.",
+    "triangle": "Drag to draw a triangle; Esc to cancel"
   },
   "topbar": {
     "addSubLabels": "Add panel labels",
@@ -1021,7 +1046,6 @@
     "fromOtherProject": "· another project",
     "fromProject": "· in {{name}}",
     "importPackage": "Import project package…",
-    "insertShape": "Insert shape",
     "more": "More",
     "moreGroup": {
       "file": "File",

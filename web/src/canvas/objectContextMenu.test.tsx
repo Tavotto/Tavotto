@@ -752,7 +752,7 @@ describe('更改为 ›：类型切换', () => {
   it('形状：子菜单给整个形状族，当前那一种带勾（radio 语义）', async () => {
     await openOn('s1')
     await openChangeKind()
-    expect(kindItems()).toEqual(['rect', 'ellipse', 'triangle', 'diamond', 'polygon', 'brace'])
+    expect(kindItems()).toEqual(['rect', 'ellipse', 'triangle', 'diamond', 'polygon', 'star', 'brace', 'arc'])
     for (const el of items().filter((e) => e.dataset.quickItem?.startsWith('change-to-'))) {
       expect(el.getAttribute('role')).toBe('menuitemradio')
     }

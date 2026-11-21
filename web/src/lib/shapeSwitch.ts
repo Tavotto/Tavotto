@@ -8,7 +8,7 @@ import type {
   ShapeKind,
   ShapeObject,
 } from '@/types/document'
-import { arrowHeads, legacyHead, lineEndpoints } from '@/types/document'
+import { arrowHeads, DEFAULT_STAR_POINTS, isStrokeOnlyShape, legacyHead, lineEndpoints } from '@/types/document'
 
 /**
  * 画布标注的**类型切换**：矩形 ↔ 椭圆 ↔ 其它形状、直线 ↔ 箭头。
@@ -57,6 +57,8 @@ const FAMILY_OF: Record<SwitchKind, SwitchFamily> = {
   diamond: 'box',
   polygon: 'box',
   brace: 'box',
+  star: 'box',
+  arc: 'box',
   line: 'linear',
   arrow: 'linear',
 }
@@ -67,7 +69,7 @@ const FAMILY_OF: Record<SwitchKind, SwitchFamily> = {
  * 表里的每一种都要出现在自己族的清单里，清单里的每一种也都得在表里。
  */
 export const SWITCH_FAMILY_KINDS: Record<SwitchFamily, readonly SwitchKind[]> = {
-  box: ['rect', 'ellipse', 'triangle', 'diamond', 'polygon', 'brace'],
+  box: ['rect', 'ellipse', 'triangle', 'diamond', 'polygon', 'star', 'brace', 'arc'],
   linear: ['line', 'arrow'],
 }
 
@@ -177,11 +179,14 @@ export function switchObject(o: CanvasObject, target: SwitchKind): CanvasObject 
     fill: o.type === 'shape' ? o.fill : null,
     ...(o.type === 'shape' && o.fillOpacity != null ? { fillOpacity: o.fillOpacity } : {}),
     // 无边框只有封闭形状读（直线 / 大括号永远有描边，目标是它们就不带）
-    ...(o.type === 'shape' && o.stroke === false && target !== 'line' && target !== 'brace'
+    ...(o.type === 'shape' && o.stroke === false && !isStrokeOnlyShape(target)
       ? { stroke: false }
       : {}),
+    // 描边对齐同理：只有封闭形状读
+    ...(o.type === 'shape' && o.strokeAlign && !isStrokeOnlyShape(target) ? { strokeAlign: o.strokeAlign } : {}),
     ...(target === 'line' ? { start: ends.start, end: ends.end } : {}),
     ...(target === 'polygon' ? { sides: DEFAULT_SIDES } : {}),
+    ...(target === 'star' ? { sides: DEFAULT_STAR_POINTS } : {}),
   } satisfies ShapeObject
 }
 
@@ -203,6 +208,7 @@ const KIND_FIELDS = [
   'fillOpacity',
   'cornerRadius',
   'sides',
+  'starRatio',
   'start',
   'end',
   'head',
@@ -211,6 +217,7 @@ const KIND_FIELDS = [
   'headSizeStart',
   'headSizeEnd',
   'stroke',
+  'strokeAlign',
 ] as const
 
 type KindKey = (typeof KIND_FIELDS)[number]
@@ -230,6 +237,8 @@ export const SHARED_STYLE_FIELDS = [
   'strokeOpacity',
   'lineCap',
   'lineJoin',
+  'miterLimit',
+  'dashPattern',
 ] as const
 type SharedStyleKey = (typeof SHARED_STYLE_FIELDS)[number]
 

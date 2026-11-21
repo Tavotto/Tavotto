@@ -665,7 +665,12 @@
     "toggleBold": "Toggle bold",
     "toggleItalic": "Toggle italic",
     "toggleUnderline": "Toggle underline",
-    "transformCase": "Change letter case"
+    "transformCase": "Change letter case",
+    "setStarRatio": "Change inner radius",
+    "setMiterLimit": "Change miter limit",
+    "setDashPattern": "Change custom dash",
+    "setStrokeAlign": "Change stroke alignment",
+    "setFillRule": "Change fill rule"
   },
   "lock": "Lock",
   "locked": "Locked",
@@ -1012,7 +1017,25 @@
     "start": "Start",
     "startSize": "Start size",
     "strokeColor": "Stroke",
-    "strokeOpacity": "Stroke opacity"
+    "strokeOpacity": "Stroke opacity",
+    "points": "Points",
+    "starRatio": "Inner radius",
+    "starRatioTip": "Distance of the inner points from the center, as a share of the outer points",
+    "miterLimit": "Miter limit",
+    "dashPattern": "Custom dash",
+    "dashPatternTip": "Dash and gap lengths in pt, separated by spaces, e.g. \"4 2\"; clear it to use the dash style above",
+    "dashPatternPlaceholder": "e.g. 4 2",
+    "alignRow": "Align stroke",
+    "align": {
+      "inside": "Inside",
+      "center": "Center",
+      "outside": "Outside"
+    },
+    "fillRuleRow": "Fill rule",
+    "fillRule": {
+      "nonzero": "Non-zero",
+      "evenodd": "Even-odd"
+    }
   },
   "summaryMarks": "{{count}} annotations",
   "summaryPanels": "{{count}} figures",

@@ -64,6 +64,8 @@
     "line": "Line",
     "polygon": "Polygon",
     "rect": "Rectangle",
-    "triangle": "Triangle"
+    "triangle": "Triangle",
+    "star": "Star",
+    "arc": "Arc"
   }
 }

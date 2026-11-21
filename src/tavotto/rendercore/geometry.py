@@ -63,6 +63,27 @@ DASH_RATIOS: dict[str, tuple[float, ...]] = {
 }
 
 
+def valid_dash_pattern(p: object) -> tuple[float, ...] | None:
+    """自定义虚线（线段 / 间隙交替，pt 绝对值）读得成数就回它：1–12 个、每个有限且 ≥ 0、总长 > 0；否则 None
+    （照预设线型画）。与前端 `shapeGeometry.validDashPattern` 同一条判据。"""
+    if not isinstance(p, (list, tuple)) or not 1 <= len(p) <= 12:
+        return None
+    vals = []
+    for v in p:
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0:
+            return None
+        vals.append(float(v))
+    return tuple(vals) if sum(vals) > 0 else None
+
+
+def miter_limit(v: object) -> float:
+    """斜接上限：缺省 / 非有限数 / < 1 = 10（PDF 的缺省，也是画布的 `STROKE_MITER_LIMIT`）；与前端
+    `shapeGeometry.miterLimitOf` 同一条。"""
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 1:
+        return 10.0
+    return float(v)
+
+
 def dash_pattern(dash: object, sw: float) -> tuple[float, ...]:
     """虚线间距按线宽比例换算；与前端 shapeGeometry.dashArray 同一比例。空元组 = 实线。"""
     if dash == "dotted":
@@ -82,9 +103,44 @@ def stroke_cap(cap: object, dash: object) -> str:
     return cap if cap in ("butt", "round", "square") else DEFAULT_LINE_CAP  # type: ignore[return-value]
 
 
+#: 只有描边、没有填充也没有描边开关的形状；与前端 `types/document.STROKE_ONLY_SHAPES` 同一张表。
+STROKE_ONLY_SHAPES = ("line", "brace", "arc")
+
+#: 星形的缺省角数与内径比；与前端 `types/document.DEFAULT_STAR_POINTS / DEFAULT_STAR_RATIO` 同源。
+DEFAULT_STAR_POINTS = 5
+DEFAULT_STAR_RATIO = 0.382
+
+
 def default_line_join(shape: object) -> str:
-    """缺省拐角：封闭形状 / 箭头圆角；直线与大括号尖角。与前端 `shapeGeometry.defaultLineJoin` 同源。"""
-    return "miter" if shape in ("line", "brace") else "round"
+    """缺省拐角：封闭形状 / 箭头圆角；只有描边的形状（直线 / 大括号 / 弧线）尖角。与前端 `shapeGeometry.defaultLineJoin` 同源。"""
+    return "miter" if shape in STROKE_ONLY_SHAPES else "round"
+
+
+def star_points(
+    points: int, w: float, h: float, inset: float, ratio: float
+) -> list[tuple[float, float]]:
+    """星形顶点：外顶点内切包围盒，内顶点在外径 × 内径比上，从正上方起外 / 内交替；角数夹到 3–12、内径比夹到
+    0.05–0.95。与前端 `shapeGeometry.starPoints` 同一公式（共享向量 `tests/golden/star_arc_vectors.json`）。"""
+    n = max(3, min(12, int(round(points))))
+    k = max(0.05, min(0.95, ratio))
+    rx, ry = max(w / 2 - inset, 0.001), max(h / 2 - inset, 0.001)
+    out = []
+    for i in range(2 * n):
+        a = -math.pi / 2 + i * math.pi / n
+        f = k if i % 2 else 1.0
+        out.append((w / 2 + rx * f * math.cos(a), h / 2 + ry * f * math.sin(a)))
+    return out
+
+
+def arc_segments(w: float, h: float, inset: float) -> tuple[Segment, ...]:
+    """弧线：框的左下角到右上角、圆心在右下角的四分之一椭圆弧（一段三次贝塞尔，κ 近似）。与前端
+    `shapeGeometry.arcPoints` 同一构造。"""
+    cx, cy = w - inset, h - inset
+    rx, ry = max(w - 2 * inset, 0.001), max(h - 2 * inset, 0.001)
+    return (
+        ("M", cx - rx, cy),
+        ("C", cx - rx, cy - KAPPA * ry, cx - KAPPA * rx, cy - ry, cx, cy - ry),
+    )
 
 
 def _line_join(o: dict, default: str) -> str:
@@ -186,14 +242,31 @@ def arrow_opacity(o: dict) -> float:
 def _stroke(o: dict, sw: float, *, join: str, dash: bool = True, opaque: bool = False) -> Stroke:
     """对象的一条描边。线端 / 拐角 / 不透明度 / 线型都从对象上读（缺省 = 旧画法）；
     `dash=False` 给箭头端型（端型不画虚线，也不受点线强制圆头影响）。"""
-    d = o.get("dash") if dash else None
+    # 自定义虚线（pt 绝对值）优先于预设线型；它不是点线，线端照用户选的
+    custom = valid_dash_pattern(o.get("dash_pattern")) if dash else None
+    d = (None if custom else o.get("dash")) if dash else None
     return Stroke(
         paint=Paint(hex2rgb(o.get("color", "#000000")), 1.0 if opaque else _alpha(o)),
         width=sw,
         cap=stroke_cap(o.get("line_cap"), d),
         join=_line_join(o, join),
-        dash=dash_pattern(d, sw) if dash else (),
+        dash=(tuple(round(v, 3) for v in custom) if custom else dash_pattern(d, sw))
+        if dash
+        else (),
+        miter_limit=miter_limit(o.get("miter_limit")),
     )
+
+
+def shape_inset(o: dict, sw: float) -> float:
+    """形状的描边内缩量：有描边时缺省内侧（外沿贴框，`sw / 2`），`stroke_align` = center → 0、outside → `-sw / 2`；
+    只有描边的形状不看对齐；无边框 0。与前端 `shapeGeometry.shapeInset` 同一条。"""
+    kind = o.get("shape")
+    if kind in STROKE_ONLY_SHAPES:
+        return sw / 2
+    if o.get("stroke") is False:
+        return 0.0
+    align = o.get("stroke_align")
+    return 0.0 if align == "center" else -sw / 2 if align == "outside" else sw / 2
 
 
 def shape_paths(o: dict, w: float, h: float) -> list[Path]:
@@ -215,10 +288,10 @@ def shape_paths(o: dict, w: float, h: float) -> list[Path]:
     oid = str(o.get("id", ""))
     # 无边框（`stroke: false`，只对封闭形状）：不描边、填充铺满整个框（不再内缩半个线宽）；
     # 直线与大括号只有描边，不看这个字段
-    stroke_on = kind in ("line", "brace") or o.get("stroke") is not False
-    inset = sw / 2 if stroke_on else 0.0
+    stroke_on = kind in STROKE_ONLY_SHAPES or o.get("stroke") is not False
+    inset = shape_inset(o, sw)
     filled_stroke = _stroke(o, sw, join=default_line_join(kind)) if stroke_on else None
-    if filled_stroke is None and fill is None and kind not in ("line", "brace"):
+    if filled_stroke is None and fill is None and kind not in STROKE_ONLY_SHAPES:
         return []  # 既无填充也无边框：什么都不画（IR 不收「既不填也不描」的路径）
 
     if kind == "rect":
@@ -245,6 +318,19 @@ def shape_paths(o: dict, w: float, h: float) -> list[Path]:
     if kind == "polygon":
         pts = polygon_points(int(o.get("sides") or 6), w, h, inset)
         return [Path(polyline_segments(pts, True), fill=fill, stroke=filled_stroke, object_id=oid)]
+    if kind == "star":
+        ratio = o.get("star_ratio")
+        ratio = (
+            float(ratio)
+            if isinstance(ratio, (int, float))
+            and not isinstance(ratio, bool)
+            and math.isfinite(ratio)
+            else DEFAULT_STAR_RATIO
+        )
+        pts = star_points(int(o.get("sides") or DEFAULT_STAR_POINTS), w, h, inset, ratio)
+        return [Path(polyline_segments(pts, True), fill=fill, stroke=filled_stroke, object_id=oid)]
+    if kind == "arc":
+        return [Path(arc_segments(w, h, inset), stroke=_stroke(o, sw, join="miter"), object_id=oid)]
     if kind == "brace":
         cx = w / 2
         tip_gap = min(h * 0.06, h / 2 - inset)
