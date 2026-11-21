@@ -45,7 +45,7 @@ export function PremiumLock({
             useUiStore.getState().setSettingsOpen(true, 'about')
           }
         }}
-        className={cn('inline-flex cursor-pointer opacity-50 outline-none focus-visible:focus-ring')}
+        className={cn('inline-flex opacity-50 outline-none focus-visible:focus-ring')}
       >
         <span className="pointer-events-none inline-flex" inert>
           {children}
