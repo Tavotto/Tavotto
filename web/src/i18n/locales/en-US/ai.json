@@ -693,7 +693,7 @@
       "noGroup": "No grouping"
     },
     "suggest": {
-      "apply": "Use suggested columns",
+      "apply": "Try suggested",
       "reading": "Checking columns…"
     },
     "redraw": {

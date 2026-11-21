@@ -233,7 +233,7 @@ export default interface Resources {
         "verified": "图画好了，数据和文件逐项对上。"
       },
       "suggest": {
-        "apply": "换成建议的列",
+        "apply": "试试建议",
         "reading": "正在看各列…"
       },
       "variant": {

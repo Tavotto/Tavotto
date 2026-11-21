@@ -146,7 +146,7 @@ describe('动过下拉之后：不覆盖，只出胶囊', () => {
     expect(proposeCalls()).toBe(2) // 没有自动重新出候选
     const pill = q('[data-data-suggest]')!
     expect(pill).not.toBeNull()
-    expect(pill.textContent).toBe('换成建议的列')
+    expect(pill.textContent).toBe('试试建议')
     expect(pill.getAttribute('title')).toBe('横轴 week')
     expect(q('[data-data-reading]')).toBeNull()
     await act(async () => pill.click())

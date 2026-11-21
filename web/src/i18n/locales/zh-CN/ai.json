@@ -686,7 +686,7 @@
       "noGroup": "不分组"
     },
     "suggest": {
-      "apply": "换成建议的列",
+      "apply": "试试建议",
       "reading": "正在看各列…"
     },
     "redraw": {
