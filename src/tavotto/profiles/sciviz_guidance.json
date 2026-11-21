@@ -318,7 +318,7 @@
       "basis": "statistics",
       "strength": "strong",
       "decidable": "context",
-      "agent": "汇总统计会丢信息（均值、方差、相关都相同的数据可以长得完全不同）。数据量允许时，把原始点叠在汇总图形上或并排展示，并说明汇总丢掉了什么。",
+      "agent": "汇总统计会丢信息（均值、方差、相关都相同的数据可以长得完全不同）。数据量允许时，把原始点叠在汇总图形上或并排展示，并说明汇总丢掉了什么。「数据量允许」的具体界线是工程选择，由数据出图的配方规则定义，要如实说是工程阈值。",
       "exceptions": [
         "点太多导致严重遮挡时改用密度或分箱，并说明"
       ],
@@ -345,11 +345,11 @@
     },
     {
       "id": "G-013",
-      "title": "样本太少不用小提琴图和箱线图",
+      "title": "样本太少不用小提琴、密度图和箱线图",
       "basis": "statistics",
       "strength": "strong",
       "decidable": "context",
-      "agent": "每组点数不多时，小提琴和密度图会凭空造出形状，改画原始点（加抖动）。书里没有给具体的 n 阈值；Tavotto 数据出图用的阈值是工程选择，要如实说。",
+      "agent": "每组点数不多时，小提琴和密度图会凭空造出形状；箱线图的箱和须也只由少数几个点决定。这时改画原始点（加抖动）。书里没有给具体的 n 阈值；Tavotto 用的阈值是工程选择，要如实说。",
       "exceptions": [],
       "evidence": [
         {
@@ -357,6 +357,11 @@
           "loc": "ch.9 Visualizing Many Distributions at Once, p.85",
           "tag": "原文",
           "quote": "verify that you have sufficiently many data points in each group"
+        },
+        {
+          "src": "TAVOTTO",
+          "loc": "箱线图同样适用是 Tavotto 的推导；书里只对小提琴与密度图明说",
+          "tag": "推导"
         }
       ],
       "principles": [
@@ -466,11 +471,11 @@
     },
     {
       "id": "G-018",
-      "title": "只有有序的横轴才连线",
+      "title": "只有有序、被连续跟踪的横轴才连线",
       "basis": "visual",
       "strength": "strong",
       "decidable": "context",
-      "agent": "折线暗示相邻值之间有变化趋势，只用于时间、剂量、浓度这类有序横轴。类别横轴（组名、样品名）用柱或点，不连线。",
+      "agent": "折线暗示相邻值之间有连续变化，只用于时间、剂量、浓度这类有序横轴上对同一对象的跟踪。类别横轴（组名、样品名）用柱或点；两个独立测量的量之间（方法比较、材料性能、两种指标的关系）没有 key，用散点，不连线。",
       "exceptions": [],
       "evidence": [
         {
@@ -478,6 +483,12 @@
           "loc": "§7.5.1 Line Charts, p.156",
           "tag": "原文",
           "quote": "Line charts should be used for ordered keys but not categorical keys."
+        },
+        {
+          "src": "VAD",
+          "loc": "§7.4 Scatterplots, p.146",
+          "tag": "原文",
+          "quote": "scatterplots are the canonical example of showing two value attributes"
         }
       ],
       "principles": [
@@ -686,7 +697,7 @@
       "basis": "visual",
       "strength": "firm",
       "decidable": "context",
-      "agent": "两个轴画的是同一个量（如前后两次测量、预测与实测）时，用相等的轴比例（aspect=1），并考虑画 y = x 参考线。",
+      "agent": "两个轴画的是同一个量（如两种方法测同一批样品、前后两次测量、预测与实测）时，用相等的轴比例（aspect=1），并考虑画 y = x 参考线。两列单位相同只是线索：是不是同一个量，由用户确认，或者以用户自己的话为准。",
       "exceptions": [
         "两轴单位不同时可以自由拉伸"
       ],
@@ -1306,6 +1317,92 @@
       ],
       "principles": [
         "P7"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-052",
+      "title": "同一个横轴值有多次观测时不逐点连线",
+      "basis": "visual",
+      "strength": "inference",
+      "decidable": "auto",
+      "agent": "同一个 x 有多个重复观测（平行样、重复孔）而没有确认过的个体编号时，不要按行顺序逐点连线，那会来回折出不存在的变化。画每个 x 的汇总线（写明汇总方式）并露出原始点；有个体编号且用户确认是同一对象时，才按个体分别连线。",
+      "exceptions": [
+        "用户确认的个体轨迹（每个个体一条线）"
+      ],
+      "evidence": [
+        {
+          "src": "VAD",
+          "loc": "§7.5.1 Line Charts, p.155–156（连线标记表示有序 key 上的连续）",
+          "tag": "原文"
+        },
+        {
+          "src": "TAVOTTO",
+          "loc": "重复 x 不连线是 Tavotto 依据 expressiveness 的推导；数据出图配方的拒绝码 line_duplicate_x_unconfirmed 是同一条",
+          "tag": "推导"
+        }
+      ],
+      "principles": [
+        "P5"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-053",
+      "title": "已经汇总过的表不再汇总",
+      "basis": "statistics",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "表里已经是均值和误差列（sd、sem、ci）时，直接用这两列画点和误差线，误差类型按列名或用户确认；不要对均值再算均值和 SD，那会得到一个没有意义的数。误差列类型拿不准时按 G-005 处理，不默认成 SD。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "GoG",
+          "loc": "§3.5, p.52（预聚合后统计不可复原）",
+          "tag": "原文",
+          "quote": "The median of medians is not the median of the aggregate"
+        },
+        {
+          "src": "TAVOTTO",
+          "loc": "「对汇总表不再算 mean ± sd」是 Tavotto 据此的推导",
+          "tag": "推导"
+        }
+      ],
+      "principles": [
+        "P2"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-054",
+      "title": "数据跨数量级或表示倍数时考虑对数轴",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "数据跨好几个数量级（剂量梯度、细菌载量、浓度），或者表示比值、倍数变化时，考虑用对数轴，否则小值会挤在一起看不出差别。含 0 或负值时不能用对数轴（见 G-001）；取对数后的汇总按 G-011。用对数轴是展示选择，要告诉用户，「跨几个数量级算多」是工程阈值。",
+      "exceptions": [
+        "含 0 或负值的数据"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.3 Coordinate Systems and Axes, p.17",
+          "tag": "原文",
+          "quote": "Log scales are linear in multiplication"
+        },
+        {
+          "src": "FDV",
+          "loc": "ch.3 Coordinate Systems and Axes, p.20",
+          "tag": "原文",
+          "quote": "As a general rule, ratios should not be displayed on a linear scale."
+        }
+      ],
+      "principles": [
+        "P3",
+        "P5"
       ],
       "spec": [],
       "checks": []

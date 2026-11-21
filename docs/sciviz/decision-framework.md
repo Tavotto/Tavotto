@@ -33,6 +33,25 @@
 
 任务作为输入或确认项交给推荐器，**不由推荐器自己定**（VAD p.78 [原文]）。用户说不清时，按「比较各组 / 看趋势 / 看关系 / 看分布」出选择题。
 
+**Tavotto 的任务闭集**：与数据出图跑分用例（`tests/fixtures/data_figure_cases/recommend_cases.json`）用同一套词，对应到 VAD 的目标。
+
+| Tavotto 任务 | VAD 目标 / 查询 | 典型画法 |
+| --- | --- | --- |
+| `compare_groups` | compare values | 原始点 + 汇总、箱线 + 点、柱（从 0 起） |
+| `trend` | trend（有序 key） | 折线 + 点、汇总线 + 误差带 |
+| `dose_response` | trend + dependency | 同上，常用对数横轴（G-054） |
+| `relationship` | correlation / dependency（0 key、2 value） | 散点、散点 + 拟合 |
+| `agreement` | similarity（两轴同一个量） | 等比例散点 + y = x（G-026） |
+| `distribution` | distribution | 原始点、ECDF、小提琴 + 点、密度、箱线 + 点 |
+| `part_whole` | part-to-whole | 归一化堆叠柱、饼（块少时） |
+| `paired_change` | compare（重复测量） | 配对连线（个体经用户确认，G-038） |
+| `ranking` | extremes / 排序 | 按数值排序的点图或柱（G-040） |
+| `intervals` | value + 不确定性 | 点 + 误差线（类型写明，G-005） |
+| `pattern_in_matrix` | 2 key、1 value | 热图 |
+| `undetermined` | — | 出选择题，或走最保守的画法 |
+
+`task_source` 的取值有三种：`from_hint`（用户的话）、`from_data`（从数据结构推出）、`needs_confirm`（要问用户）。按 P6，只有 `from_hint` 和用户点选过的结果，才算「用户确认过的目的」。
+
 ## 3. Derive（派生）
 
 候选包括：差值、比值、归一化、log、分箱、聚合、排序、拟合。每个派生都要写明四件事：
