@@ -100,6 +100,45 @@ describe('授权行', () => {
     expect(q('[data-license-action="activate"]')).not.toBeNull()
     expect(document.querySelector('[role="dialog"]')).toBeNull()
   })
+
+  it('Codex #2071 P2 过期：续费之外还能「刷新」取回续费后的到期日；吊销：能输入新的激活码', async () => {
+    const EXPIRED = { ...NONE, state: 'expired', exp: 1_700_000_000 }
+    const fetchMock = vi.fn((u: string) => (u.includes('/refresh') ? json(ACTIVE) : json(EXPIRED)))
+    vi.stubGlobal('fetch', fetchMock)
+    await render()
+    expect(q('[data-license-state]')?.dataset.licenseState).toBe('expired')
+    expect(q('[data-license-action="renew"]')).not.toBeNull()
+    await act(async () => q('[data-license-action="refresh"]')!.click())
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('/api/license/refresh'))).toBe(true)
+    expect(q('[data-license-state]')?.dataset.licenseState).toBe('active')
+    await act(async () => root.unmount())
+
+    useLicenseStore.setState(useLicenseStore.getInitialState())
+    vi.stubGlobal('fetch', vi.fn(() => json({ ...NONE, state: 'revoked' })))
+    await render()
+    expect(q('[data-license-state]')?.dataset.licenseState).toBe('revoked')
+    await act(async () => q('[data-license-action="enter"]')!.click())
+    expect(q('[data-license-input]')).not.toBeNull()
+  })
+
+  it('Codex #2071 P2 解绑失败（网络）后点「重试」：重做解绑，不拿刷新顶替', async () => {
+    let down = true
+    const fetchMock = vi.fn((u: string) => {
+      if (u.includes('/release')) return down ? Promise.reject(new TypeError('offline')) : json(NONE)
+      return json(ACTIVE)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    await render()
+    await act(async () => q('[data-license-action="release"]')!.click())
+    expect(q('[data-license-state]')?.dataset.licenseState).toMatch(/^failed:/)
+    down = false
+    const before = fetchMock.mock.calls.length
+    await act(async () => q('[data-license-action="retry"]')!.click())
+    const after = fetchMock.mock.calls.slice(before).map((c) => String(c[0]))
+    expect(after.some((u) => u.includes('/api/license/release'))).toBe(true)
+    expect(after.some((u) => u.includes('/api/license/refresh'))).toBe(false)
+    expect(q('[data-license-state]')?.dataset.licenseState).toBe('none')
+  })
 })
 
 describe('付费功能的灰态', () => {

@@ -51,6 +51,8 @@ export function LicenseRow() {
   const { load, activate, refresh, release, buy, clearFailure } = useLicenseStore.getState()
   const [entering, setEntering] = useState(false)
   const [code, setCode] = useState('')
+  /** 上一次联网做的是哪一件：失败后的「重试」重做那一件，不拿刷新顶替解绑（Codex #2071 P2） */
+  const [lastOp, setLastOp] = useState<'activate' | 'refresh' | 'release'>('refresh')
   const input = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -64,14 +66,28 @@ export function LicenseRow() {
 
   const submit = async () => {
     if (!code.trim()) return
+    setLastOp('activate')
     if (await activate(code)) {
       setEntering(false)
       setCode('')
     }
   }
+  const doRefresh = () => {
+    setLastOp('refresh')
+    return refresh()
+  }
+  const doRelease = () => {
+    setLastOp('release')
+    return release()
+  }
   const act = (kind: 'retry' | 'buy' | 'renew') => {
-    if (kind === 'retry') return entering ? submit() : refresh()
-    return buy()
+    if (kind !== 'retry') return buy()
+    if (entering) return submit()
+    return lastOp === 'release' ? doRelease() : doRefresh()
+  }
+  const enterCode = () => {
+    clearFailure()
+    setEntering(true)
   }
 
   const state = status.state
@@ -125,7 +141,7 @@ export function LicenseRow() {
         variant="ghost"
         loading={busy}
         title={st('releaseTitle')}
-        onClick={() => void release()}
+        onClick={() => void doRelease()}
         data-license-action="release"
       >
         {st('action.release')}
@@ -133,15 +149,34 @@ export function LicenseRow() {
     )
   } else if (state === 'lapsed') {
     control = (
-      <Button variant="secondary" loading={busy} onClick={() => void refresh()} data-license-action="refresh">
+      <Button variant="secondary" loading={busy} onClick={() => void doRefresh()} data-license-action="refresh">
         {st('action.refresh')}
       </Button>
     )
-  } else if (state === 'expired' || state === 'revoked') {
+  } else if (state === 'expired') {
+    // 续费之后点「刷新」取回新的到期日；后端对过期的令牌照样能刷新（Codex #2071 P2）
     control = (
-      <Button variant="secondary" loading={busy} onClick={() => void buy()} data-license-action="buy">
-        {st(state === 'expired' ? 'action.renew' : 'action.buy')}
-      </Button>
+      <div className="flex items-center gap-2">
+        <Button variant="ghost" loading={busy} onClick={() => void doRefresh()} data-license-action="refresh">
+          {st('action.refresh')}
+        </Button>
+        <Button variant="secondary" loading={busy} onClick={() => void buy()} data-license-action="renew">
+          {st('action.renew')}
+        </Button>
+      </div>
+    )
+  } else if (state === 'revoked') {
+    // 吊销之后要重新激活：买了新的码能在这里输入（Codex #2071 P2）
+    control = (
+      <div className="flex items-center gap-2">
+        <Button variant="ghost" loading={busy} onClick={() => void buy()} data-license-action="buy">
+          {st('action.buy')}
+          <ExternalLink size={ICON_SIZE.xs} className="text-ink-2" aria-hidden />
+        </Button>
+        <Button variant="secondary" onClick={enterCode} data-license-action="enter">
+          {st('action.enter')}
+        </Button>
+      </div>
     )
   } else {
     control = (
@@ -152,10 +187,7 @@ export function LicenseRow() {
         </Button>
         <Button
           variant="secondary"
-          onClick={() => {
-            clearFailure()
-            setEntering(true)
-          }}
+          onClick={enterCode}
           data-license-action="enter"
         >
           {st('action.enter')}
