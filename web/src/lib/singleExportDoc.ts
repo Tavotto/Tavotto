@@ -84,6 +84,7 @@ function scaleLengths(o: CanvasObject, k: number): CanvasObject {
         ...(o.borderColor ? { borderPt: (o.borderPt ?? 0.75) * k } : o.borderPt != null ? { borderPt: o.borderPt * k } : {}),
       }
     case 'arrow':
+    case 'path':
       return { ...o, strokePt: o.strokePt * k }
     case 'shape':
       return {

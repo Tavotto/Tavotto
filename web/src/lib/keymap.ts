@@ -91,6 +91,20 @@ export const KEYMAP = {
   toolRect: k('R', { key: 'r' }),
   toolEllipse: k('O', { key: 'o' }),
   toolLine: k('L', { key: 'l' }),
+  // 自由路径（ADR 0185 M1，Illustrator 习惯）：P 钢笔；锚点编辑里 + / − 加删锚点、⇧C 转换锚点。
+  // 直接选择 A 与既有的箭头工具 A 冲突，没有单键（双击路径 / Enter / 右键「编辑锚点」进入）
+  toolPen: k('P', { key: 'p' }),
+  addAnchor: k('+', { key: '+' }, { key: '=', shift: false }),
+  deleteAnchor: k('−', { key: '-', shift: false }),
+  convertAnchor: k('⇧C', { key: 'c', shift: true }),
+  // 连接 ⌘J、平均 ⌥⌘J（Illustrator 的键位）：选着两个端点 / 两条开放路径、选着几个锚点时才消费。⌥ 会改写 key，按 code 认
+  joinPaths: k(`${MOD}J`, { code: 'KeyJ', mod: true, shift: false, alt: false }),
+  averageAnchors: k(`${ALT}${MOD}J`, { code: 'KeyJ', mod: true, shift: false, alt: true }),
+  // 外观（Illustrator 习惯）：D 默认填色描边、⇧X 互换填色和描边、/ 无填充、I 吸管。选着能上色的标注时才消费（I 一直可用）
+  defaultAppearance: k('D', { key: 'd', shift: false }),
+  swapFillStroke: k('⇧X', { key: 'x', shift: true }),
+  clearFill: k('/', { key: '/', shift: false }),
+  toolEyedropper: k('I', { key: 'i', shift: false }),
   // 画布标签（焦点在标签上时；`CanvasTabs` 自己处理，不经全局 keydown）
   tabRename: native('F2'),
   tabClose: native(`${MOD}W`),

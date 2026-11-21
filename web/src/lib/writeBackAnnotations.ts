@@ -7,7 +7,7 @@ import type { CanvasObject, PanelObject } from '@/types/document'
 import { panelRotation } from '@/types/document'
 
 /**
- * 「写回原始文件」携带画布标注：把与面板重叠的标注（文字/箭头/形状）
+ * 「写回原始文件」携带画布标注：把与面板重叠的标注（文字/箭头/形状/路径）
  * 从画布 mm 换算成**该图自身的 mm**（后端 annotate_asset 按这套坐标直接
  * 用导出合成同一组 _draw_* 绘制）。
  *
@@ -26,7 +26,7 @@ export interface PanelAnnotations {
   objectIds: string[]
 }
 
-const ANNOTATION_TYPES = new Set(['text', 'arrow', 'shape'])
+const ANNOTATION_TYPES = new Set(['text', 'arrow', 'shape', 'path'])
 
 function overlapArea(a: CanvasObject, p: PanelObject): number {
   const w = Math.min(a.x + a.w, p.x + p.w) - Math.max(a.x, p.x)
@@ -104,6 +104,9 @@ function toFigureMm(o: ExportObject, panel: PanelObject): ExportObject {
   } else if (scaled.type === 'shape') {
     scaled.stroke_pt *= k
     if (scaled.corner_radius_mm != null) scaled.corner_radius_mm *= k
+  } else if (scaled.type === 'path') {
+    // 锚点 / 手柄是包围盒比例坐标，随框一起换算，不用再缩；长度类只有线宽
+    scaled.stroke_pt *= k
   }
   return scaled
 }

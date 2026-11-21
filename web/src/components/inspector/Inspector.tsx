@@ -13,7 +13,8 @@ import { ResizeHandle } from '@/components/ui/ResizeHandle'
 import { tryRegisterPointerCancel } from '@/store/gestureCoordinator'
 import { useDocumentStore } from '@/store/documentStore'
 import { RIGHT_DEFAULT, RIGHT_MAX, RIGHT_MIN, isRightPinned, useUiStore, type RightTab } from '@/store/uiStore'
-import type { ArrowObject, PanelObject, ShapeObject, TextObject } from '@/types/document'
+import type { ArrowObject, PanelObject, TextObject } from '@/types/document'
+import { isFillStrokeMark } from '@/lib/markStyle'
 import { useAiStore } from '@/store/aiStore'
 import { TimelinePanel } from '../VersionDialog'
 import { assistantTabLabel, AssistantPanel } from '../ai/AiPanel'
@@ -264,7 +265,8 @@ function PropertiesPage() {
   const panels = objs.filter((o): o is PanelObject => o.type === 'panel')
   const texts = objs.filter((o): o is TextObject => o.type === 'text')
   const arrows = objs.filter((o): o is ArrowObject => o.type === 'arrow')
-  const shapes = objs.filter((o): o is ShapeObject => o.type === 'shape')
+  // 形状与自由路径共用一套外观控件（填充 / 描边字段逐字相同，ADR 0185；判据在 `lib/markStyle`）
+  const shapes = objs.filter(isFillStrokeMark)
   const onlyType = (n: number) => n > 0 && objs.length === n
   // 面板选区的位置与尺寸由 PanelSection 自己出（含宽高比锁），
   // 这里再来一份 TransformSection 就重复了

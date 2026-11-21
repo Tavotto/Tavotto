@@ -1,0 +1,298 @@
+{
+ "_doc": "填充与描边补齐的共享向量（ADR 0185 第二批）。dash：自定义虚线的判据；miter：斜接上限的读法；inset：形状描边内缩量（线宽 sw = 2，描边对齐 内侧 / 居中 / 外侧）；stroke：一条描边实际生效的线型（pt）/ 线端 / 斜接上限。由 scripts/dev/gen_appearance_vectors.py 重录。",
+ "dash": [
+  {
+   "in": [
+    4,
+    2
+   ],
+   "out": [
+    4.0,
+    2.0
+   ]
+  },
+  {
+   "in": [
+    4,
+    2,
+    1,
+    2
+   ],
+   "out": [
+    4.0,
+    2.0,
+    1.0,
+    2.0
+   ]
+  },
+  {
+   "in": [
+    0,
+    3
+   ],
+   "out": [
+    0.0,
+    3.0
+   ]
+  },
+  {
+   "in": [
+    3
+   ],
+   "out": [
+    3.0
+   ]
+  },
+  {
+   "in": [],
+   "out": null
+  },
+  {
+   "in": [
+    0,
+    0
+   ],
+   "out": null
+  },
+  {
+   "in": [
+    -1,
+    2
+   ],
+   "out": null
+  },
+  {
+   "in": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ],
+   "out": null
+  },
+  {
+   "in": [
+    "4",
+    2
+   ],
+   "out": null
+  },
+  {
+   "in": [
+    true,
+    2
+   ],
+   "out": null
+  },
+  {
+   "in": null,
+   "out": null
+  },
+  {
+   "in": "4 2",
+   "out": null
+  }
+ ],
+ "miter": [
+  {
+   "in": null,
+   "out": 10.0
+  },
+  {
+   "in": 10,
+   "out": 10.0
+  },
+  {
+   "in": 4,
+   "out": 4.0
+  },
+  {
+   "in": 1,
+   "out": 1.0
+  },
+  {
+   "in": 0.5,
+   "out": 10.0
+  },
+  {
+   "in": 100,
+   "out": 100.0
+  },
+  {
+   "in": -3,
+   "out": 10.0
+  },
+  {
+   "in": true,
+   "out": 10.0
+  },
+  {
+   "in": "4",
+   "out": 10.0
+  }
+ ],
+ "inset": [
+  {
+   "in": {
+    "shape": "rect"
+   },
+   "sw": 2.0,
+   "out": 1.0
+  },
+  {
+   "in": {
+    "shape": "rect",
+    "stroke_align": "center"
+   },
+   "sw": 2.0,
+   "out": 0.0
+  },
+  {
+   "in": {
+    "shape": "rect",
+    "stroke_align": "outside"
+   },
+   "sw": 2.0,
+   "out": -1.0
+  },
+  {
+   "in": {
+    "shape": "rect",
+    "stroke": false,
+    "stroke_align": "outside"
+   },
+   "sw": 2.0,
+   "out": 0.0
+  },
+  {
+   "in": {
+    "shape": "ellipse",
+    "stroke_align": "outside"
+   },
+   "sw": 2.0,
+   "out": -1.0
+  },
+  {
+   "in": {
+    "shape": "line",
+    "stroke_align": "outside"
+   },
+   "sw": 2.0,
+   "out": 1.0
+  },
+  {
+   "in": {
+    "shape": "brace",
+    "stroke_align": "center"
+   },
+   "sw": 2.0,
+   "out": 1.0
+  },
+  {
+   "in": {
+    "shape": "arc",
+    "stroke_align": "outside"
+   },
+   "sw": 2.0,
+   "out": 1.0
+  },
+  {
+   "in": {
+    "shape": "star",
+    "stroke_align": "center"
+   },
+   "sw": 2.0,
+   "out": 0.0
+  },
+  {
+   "in": {
+    "shape": "rect",
+    "stroke_align": "bogus"
+   },
+   "sw": 2.0,
+   "out": 1.0
+  }
+ ],
+ "stroke": [
+  {
+   "in": {
+    "dash": "dashed",
+    "stroke_pt": 2.0
+   },
+   "dash": [
+    8.0,
+    5.0
+   ],
+   "cap": "round",
+   "miter_limit": 10.0
+  },
+  {
+   "in": {
+    "dash": "dotted",
+    "dash_pattern": [
+     3,
+     1
+    ],
+    "line_cap": "butt",
+    "stroke_pt": 2.0
+   },
+   "dash": [
+    3.0,
+    1.0
+   ],
+   "cap": "butt",
+   "miter_limit": 10.0
+  },
+  {
+   "in": {
+    "dash_pattern": [
+     5,
+     2.5,
+     1,
+     2.5
+    ],
+    "stroke_pt": 0.5
+   },
+   "dash": [
+    5.0,
+    2.5,
+    1.0,
+    2.5
+   ],
+   "cap": "round",
+   "miter_limit": 10.0
+  },
+  {
+   "in": {
+    "dash": "dotted",
+    "line_cap": "butt",
+    "stroke_pt": 1.0
+   },
+   "dash": [
+    0.01,
+    2.0
+   ],
+   "cap": "round",
+   "miter_limit": 10.0
+  },
+  {
+   "in": {
+    "miter_limit": 3,
+    "line_join": "miter",
+    "stroke_pt": 1.0
+   },
+   "dash": [],
+   "cap": "round",
+   "miter_limit": 3.0
+  }
+ ]
+}

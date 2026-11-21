@@ -47,6 +47,7 @@
     "arrow": "箭头",
     "emptyText": "空文字",
     "panel": "图",
+    "path": "路径",
     "shape": "形状",
     "text": "文字",
     "unknown": "新版对象"
@@ -62,6 +63,8 @@
     "line": "直线",
     "polygon": "多边形",
     "rect": "矩形",
-    "triangle": "三角形"
+    "triangle": "三角形",
+    "star": "星形",
+    "arc": "弧线"
   }
 }

@@ -240,10 +240,10 @@ describe('徽标：能切换的是按钮，不能切换的还是那颗静态徽�
 /* -------------------------------------------------------------------------- */
 
 describe('下拉：给同族的全部类型，当前那个带勾', () => {
-  it('矩形：六种形状，矩形被勾上；每一项都是 radio 且有文字名', async () => {
+  it('矩形：八种形状（含星形 / 弧线），矩形被勾上；每一项都是 radio 且有文字名', async () => {
     await mount([shapeOf('s1')])
     await openSwitch()
-    expect(kindItems()).toEqual(['rect', 'ellipse', 'triangle', 'diamond', 'polygon', 'brace'])
+    expect(kindItems()).toEqual(['rect', 'ellipse', 'triangle', 'diamond', 'polygon', 'star', 'brace', 'arc'])
     expect(kindItem('rect')!.getAttribute('role')).toBe('menuitemradio')
     expect(kindItem('rect')!.getAttribute('aria-checked')).toBe('true')
     expect(kindItem('ellipse')!.getAttribute('aria-checked')).toBe('false')
@@ -313,6 +313,6 @@ describe('键盘可达', () => {
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0))
     })
-    expect(kindItems()).toHaveLength(6)
+    expect(kindItems()).toHaveLength(8)
   })
 })

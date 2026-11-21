@@ -48,6 +48,7 @@
     "arrow": "Arrow",
     "emptyText": "Empty text",
     "panel": "Figure",
+    "path": "Path",
     "shape": "Shape",
     "text": "Text",
     "unknown": "Newer object"
@@ -63,6 +64,8 @@
     "line": "Line",
     "polygon": "Polygon",
     "rect": "Rectangle",
-    "triangle": "Triangle"
+    "triangle": "Triangle",
+    "star": "Star",
+    "arc": "Arc"
   }
 }

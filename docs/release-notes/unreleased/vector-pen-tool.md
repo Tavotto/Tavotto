@@ -1,0 +1,3 @@
+## Pen tool, anchor editing and more shapes
+
+Press P to draw paths with the pen: click for corners, drag for curves, click the first point to close, click an open end to keep drawing, hold Shift to lock to 45°. Double-click a path or press Enter to edit its anchors: drag anchors and handles, add, delete and convert points, cut with the scissors, join ends with ⌘J and average them with ⌥⌘J. Stars and arcs join the shape list. Strokes gain a miter limit, custom dashes, inside/outside alignment for closed shapes and a fill rule for paths; D resets to the default fill and stroke, Shift-X swaps them, / clears the fill and I picks a colour from anything on the canvas, including elements inside a figure.

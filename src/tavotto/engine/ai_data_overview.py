@@ -111,14 +111,19 @@ def _fill(out: dict, summ: adf.DataSummary, *, xlsx: bool = False) -> None:
         }
         for name in summ.columns
     ]
+    if summ.large is not None:
+        out["large"] = (
+            True  # 大表：前端据此在请求时带 `request_id` 显示进度（小表的响应没有这一项）
+        )
+    shown, more = summ.preview(PREVIEW_ROWS)
     out["preview_rows"] = [
         {
-            "line": summ.row_number(i),
+            "line": line,
             "cells": [_clip(display_number(c) if xlsx else c, CELL_CHARS) for c in row],
         }
-        for i, row in enumerate(summ.rows[:PREVIEW_ROWS])
+        for line, row in shown
     ]
-    out["truncated"] = len(summ.rows) > PREVIEW_ROWS
+    out["truncated"] = more
 
 
 def resolve_file(root: str | Path, path) -> tuple[str, Path]:
@@ -181,7 +186,7 @@ def overview(root: str | Path, path, *, sheet=None, header_row=None) -> dict:
         _fill(out, summ, xlsx=True)
         return out
     try:
-        info = adf.read_text_table(file, header_row=hrow)
+        info = adf.read_text_table(file, header_row=hrow, use_cache=True)
     except Exception:  # noqa: BLE001
         return _base(rel, "unreadable", "data_unreadable")
     out = _base(rel, info.status, info.code)

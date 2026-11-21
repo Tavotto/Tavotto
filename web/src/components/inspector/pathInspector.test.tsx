@@ -1,0 +1,304 @@
+/**
+ * 自由路径（ADR 0185）在属性栏 / 浮动栏 / 格式刷里不是死胡同：「转为路径」之后照样能改颜色、线宽、填充、端型。
+ *
+ * 路径的填充 / 描边字段与形状逐字相同，所以它走**同一套控件**（`ShapeSection`）；哪一行出现、写哪个字段只问
+ * `lib/markStyle` 的能力函数。含开放子路径时多出端型（与箭头同一组控件）。判据的主语：用户在真属性页里操作之后
+ * **文档里的那个对象**——改动只进一次 commit，撤销按步回到形状本来的样子。
+ */
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { literal } from '@/i18n'
+import { ObjectQuickActions } from '@/canvas/context-bar/SingleObjectBar'
+import { TooltipProvider } from '@/components/ui/Tooltip'
+import { convertToPath, copySelectionStyle, pasteSelectionStyle } from '@/store/actions'
+import { useDocumentStore } from '@/store/documentStore'
+import { useSelectionStore } from '@/store/selectionStore'
+import { useUiStore } from '@/store/uiStore'
+import { emptyProject, type CanvasObject, type PathObject, type ShapeObject } from '@/types/document'
+import { Inspector } from './Inspector'
+
+globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
+declare global {
+  // eslint-disable-next-line no-var
+  var IS_REACT_ACT_ENVIRONMENT: boolean
+}
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+
+const rect = (over: Partial<ShapeObject> = {}): ShapeObject => ({
+  id: 's1',
+  type: 'shape',
+  shape: 'rect',
+  x: 20,
+  y: 20,
+  w: 40,
+  h: 25,
+  color: '#1b1b18',
+  strokePt: 1,
+  fill: '#ffcc00',
+  ...over,
+})
+const openPath = (over: Partial<PathObject> = {}): PathObject => ({
+  id: 'p1',
+  type: 'path',
+  x: 10,
+  y: 10,
+  w: 30,
+  h: 20,
+  color: '#224466',
+  strokePt: 2,
+  fill: null,
+  subpaths: [{ closed: false, nodes: [{ p: [0, 1] }, { p: [1, 0], in: [0.5, 0] }] }],
+  ...over,
+})
+const closedPath = (over: Partial<PathObject> = {}): PathObject => ({
+  ...openPath({ id: 'p2', fill: '#00aa00' }),
+  subpaths: [{ closed: true, nodes: [{ p: [0, 0] }, { p: [1, 0] }, { p: [0.5, 1] }] }],
+  ...over,
+})
+
+let root: Root
+let host: HTMLDivElement
+const doc = () => useDocumentStore.getState().doc
+const byId = <T extends CanvasObject>(id: string) => doc().objects.find((o) => o.id === id) as T
+const past = () => useDocumentStore.getState().past.length
+
+async function seed(objs: CanvasObject[], sel: string[]) {
+  await useDocumentStore.getState().switchDocument(emptyProject(), 'd_path_inspector_' + Math.random())
+  useDocumentStore.getState().commit(literal('加标注'), (d) => {
+    d.objects.push(...objs)
+  })
+  useDocumentStore.setState({ past: [], future: [] })
+  useUiStore.setState({ rightOpen: true, rightTab: 'properties', layout: 'wide', elementPanelId: null })
+  useSelectionStore.getState().set(sel)
+}
+async function mount(node: React.ReactNode = <Inspector />) {
+  await act(async () => root.render(<TooltipProvider>{node}</TooltipProvider>))
+}
+
+beforeEach(() => {
+  host = document.createElement('div')
+  document.body.appendChild(host)
+  root = createRoot(host)
+})
+afterEach(async () => {
+  await act(async () => root.unmount())
+  host.remove()
+  useSelectionStore.getState().clear()
+})
+
+/** 系统取色盘：一次 input，再失焦（ColorField 在拖动期间开事务，失焦收成一条历史） */
+async function pickColor(label: string, value: string) {
+  const input = host.querySelector<HTMLInputElement>(`input[type=color][aria-label="${label}：取色盘"]`)
+  expect(input, `${label} 的取色盘不在`).toBeTruthy()
+  await act(async () => {
+    input!.focus()
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value)
+    input!.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () => input!.blur())
+}
+async function typeNumber(label: string, value: string) {
+  const input = host.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)
+  expect(input, `${label} 不在`).toBeTruthy()
+  await act(async () => {
+    input!.focus()
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value)
+    input!.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () => {
+    input!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  })
+}
+
+describe('属性栏：路径与封闭形状同一套外观控件', () => {
+  it('闭合路径：填充 / 描边颜色 / 线宽 / 线型都在，没有端型、没有圆角 / 边数', async () => {
+    await seed([closedPath()], ['p2'])
+    await mount()
+    expect(host.querySelector('input[type=color][aria-label="填充：取色盘"]')).not.toBeNull()
+    expect(host.querySelector('input[type=color][aria-label="描边：取色盘"]')).not.toBeNull()
+    expect(host.querySelector('input[aria-label="线宽"]')).not.toBeNull()
+    expect(host.textContent).toContain('线型')
+    expect(host.textContent).not.toContain('终点')
+    expect(host.querySelector('input[aria-label="圆角"]')).toBeNull()
+  })
+
+  it('开放路径：多出起点 / 终点端型（与箭头同一组控件）', async () => {
+    await seed([openPath()], ['p1'])
+    await mount()
+    expect(host.textContent).toContain('终点')
+    expect(host.textContent).toContain('起点')
+  })
+
+  it('改描边颜色 / 线宽 / 填充：写的是路径自己的字段，每次一条 commit', async () => {
+    await seed([closedPath()], ['p2'])
+    await mount()
+    await pickColor('描边', '#ff0000')
+    expect(byId<PathObject>('p2').color).toBe('#ff0000')
+    expect(past()).toBe(1)
+    await typeNumber('线宽', '3.5')
+    expect(byId<PathObject>('p2').strokePt).toBe(3.5)
+    expect(past()).toBe(2)
+    await pickColor('填充', '#0000ff')
+    expect(byId<PathObject>('p2').fill).toBe('#0000ff')
+    expect(past()).toBe(3)
+    expect(byId<PathObject>('p2').type).toBe('path')
+  })
+
+  it('形状 → 转为路径 → 改颜色 → 撤销两次：回到原来的形状、原来的颜色', async () => {
+    const original = rect()
+    await seed([original], ['s1'])
+    await mount()
+    await act(async () => convertToPath(['s1']))
+    expect(byId('s1').type).toBe('path')
+    await pickColor('描边', '#ff0000')
+    expect(byId<PathObject>('s1').color).toBe('#ff0000')
+    expect(past()).toBe(2)
+    await act(async () => useDocumentStore.getState().undo())
+    expect(byId<PathObject>('s1')).toMatchObject({ type: 'path', color: '#1b1b18' })
+    await act(async () => useDocumentStore.getState().undo())
+    expect(JSON.parse(JSON.stringify(byId('s1')))).toEqual(original)
+  })
+
+  it('选区里混着形状与路径：同一套控件，改颜色两个都改、一条 commit', async () => {
+    await seed([rect(), closedPath()], ['s1', 'p2'])
+    await mount()
+    await pickColor('描边', '#00ff00')
+    expect(byId<ShapeObject>('s1').color).toBe('#00ff00')
+    expect(byId<PathObject>('p2').color).toBe('#00ff00')
+    expect(past()).toBe(1)
+  })
+})
+
+describe('浮动栏：路径有颜色 + 线宽', () => {
+  it('单选路径时出现，改颜色写进路径', async () => {
+    await seed([closedPath()], ['p2'])
+    await mount(<ObjectQuickActions obj={byId('p2')} />)
+    await pickColor('描边', '#123456')
+    expect(byId<PathObject>('p2').color).toBe('#123456')
+    expect(past()).toBe(1)
+  })
+})
+
+describe('格式刷：形状 ↔ 路径互刷填充描边', () => {
+  it('形状 → 路径：同名字段照搬，形状独有的（圆角）不写', async () => {
+    await seed(
+      [rect({ color: '#aa0000', fill: '#00aa00', fillOpacity: 0.4, strokePt: 3, dash: 'dashed', cornerRadius: 2 }), closedPath()],
+      ['s1'],
+    )
+    copySelectionStyle()
+    useSelectionStore.getState().set(['p2'])
+    pasteSelectionStyle()
+    const p = byId<PathObject>('p2')
+    expect(p).toMatchObject({ type: 'path', color: '#aa0000', fill: '#00aa00', fillOpacity: 0.4, strokePt: 3, dash: 'dashed' })
+    expect('cornerRadius' in p).toBe(false)
+    expect(past()).toBe(1)
+  })
+
+  it('路径 → 形状：同名字段照搬，路径独有的（端型）不写', async () => {
+    await seed([openPath({ color: '#0000aa', strokePt: 4, headEnd: 'triangle', fill: '#eeeeee' }), rect()], ['p1'])
+    copySelectionStyle()
+    useSelectionStore.getState().set(['s1'])
+    pasteSelectionStyle()
+    const s = byId<ShapeObject>('s1')
+    expect(s).toMatchObject({ type: 'shape', shape: 'rect', color: '#0000aa', strokePt: 4, fill: '#eeeeee' })
+    expect('headEnd' in s).toBe(false)
+  })
+})
+
+describe('星形（ADR 0185 M1）：属性栏的角数与内径比', () => {
+  it('选星形：边数那一行叫「角数」，多一行「内径比」；改内径比写 starRatio，等于缺省就删字段', async () => {
+    await seed([rect({ id: 'st', shape: 'star' })], ['st'])
+    await mount()
+    expect(host.querySelector('input[aria-label="角数"]')).not.toBeNull()
+    expect(host.querySelector('input[aria-label="边数"]')).toBeNull()
+    await typeNumber('内径比', '60')
+    expect(byId<ShapeObject>('st').starRatio).toBeCloseTo(0.6, 9)
+    expect(past()).toBe(1)
+    await typeNumber('内径比', '38.2')
+    expect('starRatio' in byId<ShapeObject>('st')).toBe(false) // 改回缺省 0.382：字段删掉
+    await typeNumber('角数', '7')
+    expect(byId<ShapeObject>('st').sides).toBe(7)
+  })
+
+  it('矩形 / 多边形没有「内径比」那一行（不撑大别的形状的卡片）', async () => {
+    await seed([rect({ id: 'r1' }), rect({ id: 'pg', shape: 'polygon' })], ['pg'])
+    await mount()
+    expect(host.querySelector('input[aria-label="内径比"]')).toBeNull()
+    expect(host.querySelector('input[aria-label="边数"]')).not.toBeNull()
+  })
+})
+
+describe('「更多」里的描边附加项（ADR 0185 第二批）', () => {
+  const openMore = async () => {
+    const btn = host.querySelector<HTMLButtonElement>('[data-fold="stroke-more"] button')
+    expect(btn, '更多不在').toBeTruthy()
+    await act(async () => btn!.click())
+  }
+  const radio = (group: string, label: string) =>
+    [...host.querySelectorAll<HTMLElement>(`[role=radiogroup][aria-label="${group}"] [role=radio]`)].find((r) => r.textContent === label)!
+  async function typeText(label: string, value: string) {
+    const input = host.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)
+    expect(input, `${label} 不在`).toBeTruthy()
+    await act(async () => {
+      input!.focus()
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value)
+      input!.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      input!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    })
+  }
+
+  it('斜接上限只在尖角时出现；改了写 miterLimit，一次 commit', async () => {
+    await seed([rect()], ['s1'])
+    await mount()
+    await openMore()
+    expect(host.querySelector('input[aria-label="斜接上限"]')).toBeNull()
+    await act(async () => radio('拐角', '尖角').click())
+    expect(host.querySelector('input[aria-label="斜接上限"]')).not.toBeNull()
+    await typeNumber('斜接上限', '3')
+    expect(byId<ShapeObject>('s1').miterLimit).toBe(3)
+    expect(past()).toBe(2)
+  })
+
+  it('自定义虚线：写「4 2」→ dashPattern；读不成数不写；清空删字段', async () => {
+    await seed([rect()], ['s1'])
+    await mount()
+    await openMore()
+    await typeText('自定义虚线', '4 2')
+    expect(byId<ShapeObject>('s1').dashPattern).toEqual([4, 2])
+    await typeText('自定义虚线', '4 x')
+    expect(byId<ShapeObject>('s1').dashPattern).toEqual([4, 2])
+    expect(host.querySelector('input[aria-label="自定义虚线"]')!.getAttribute('aria-invalid')).toBe('true')
+    await typeText('自定义虚线', '')
+    expect('dashPattern' in byId<ShapeObject>('s1')).toBe(false)
+  })
+
+  it('描边对齐：封闭形状有这一行，选「外侧」写 strokeAlign，选回「内侧」删字段；直线没有这一行', async () => {
+    await seed([rect()], ['s1'])
+    await mount()
+    await openMore()
+    await act(async () => radio('描边对齐', '外侧').click())
+    expect(byId<ShapeObject>('s1').strokeAlign).toBe('outside')
+    await act(async () => radio('描边对齐', '内侧').click())
+    expect('strokeAlign' in byId<ShapeObject>('s1')).toBe(false)
+  })
+
+  it('直线：没有描边对齐', async () => {
+    await seed([rect({ shape: 'line', fill: null })], ['s1'])
+    await mount()
+    await openMore()
+    expect(host.querySelector('[role=radiogroup][aria-label="描边对齐"]')).toBeNull()
+  })
+
+  it('有填充的路径：填充规则 非零 / 奇偶；没描边也能改', async () => {
+    await seed([closedPath({ stroke: false })], ['p2'])
+    await mount()
+    await openMore()
+    await act(async () => radio('填充规则', '奇偶').click())
+    expect(byId<PathObject>('p2').fillRule).toBe('evenodd')
+    await act(async () => radio('填充规则', '非零').click())
+    expect('fillRule' in byId<PathObject>('p2')).toBe(false)
+  })
+})

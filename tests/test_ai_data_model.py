@@ -377,17 +377,12 @@ def _imports(path: Path) -> set[str]:
     return names
 
 
-def test_nothing_in_the_product_calls_the_model_yet():
-    """本步只有函数：除模块自己外，产品代码里没有任何 import 指向 `ai_data_model`；`ai_structured` 只被它一家 import。"""
+def test_nothing_in_the_product_calls_propose_recipes_yet():
+    """第 2 步才会接模型出配方：`propose_recipes` 在产品代码里没有任何调用（第 1 步的 `ai_data_roles` 只借它的请求文字小工具，不出配方）。"""
     src = ROOT / "src" / "tavotto"
-    users_model, users_structured = [], []
     for path in src.rglob("*.py"):
-        if path.name in ("ai_data_model.py", "ai_structured.py"):
+        if path.name == "ai_data_model.py":
             continue
-        imported = _imports(path)
-        if "ai_data_model" in imported:
-            users_model.append(path.name)
-        if "ai_structured" in imported:
-            users_structured.append(path.name)
-    assert users_model == [] and users_structured == []
-    assert "ai_structured" in _imports(src / "engine" / "ai_data_model.py")
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            name = node.attr if isinstance(node, ast.Attribute) else getattr(node, "id", None)
+            assert name != "propose_recipes", path.name

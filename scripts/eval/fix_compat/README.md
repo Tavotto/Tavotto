@@ -24,7 +24,9 @@
 
 ```sh
 export PYTHON=/path/to/python                 # 装好 tavotto 依赖（matplotlib 等）的解释器；源码树经 PYTHONPATH 生效
-export OPENCODE_GO_API_KEY=...                # 只有 A 组需要；只经环境变量，不进任何文件 / 日志 / 轨迹
+export EVAL_A_API_KEY=...                     # 只有 A 组需要（缺省读 OPENCODE_GO_API_KEY）；只经环境变量，不进任何文件 / 日志 / 轨迹
+export EVAL_MODEL=opencode-go/deepseek-v4.1-flash   # A 组用的「厂商 id/模型」（厂商 id 取 ai_catalog.json，如 openai-api/gpt-6-luna）
+export EVAL_RESULTS=$PWD/scripts/eval/fix_compat/results/<日期-模型>   # 每轮结果单独一个目录，不和别的轮次混
 python scripts/eval/fix_compat/harness.py list
 python scripts/eval/fix_compat/harness.py probe                 # 未修前的真实结局（不叫模型）
 python scripts/eval/fix_compat/harness.py run baseline          # 不修，只判
@@ -122,3 +124,19 @@ B 的明细（行号 = `results/B.jsonl` 的行，从 1 数）：
 
 A 组 1/8，B 组 2/8（B 的两题都是绕开、没有修原脚本）。**A 的失败几乎全是「知道原因、没有动作可做」**，不是推理不到：
 argv 两题、环境变量、stdin 都在结束语里说对了原因。合入 #2044 / #2048 / #2050 后重跑这一套量改进。
+
+
+## 11-19 第二轮：合入 #2044 / #2048 / #2050 / #2053 / #2054 / #2055 之后
+
+结果目录：`results/2026-11-19-integration/`（不修）与 `results/2026-11-19-gpt-6-luna/`（A 组，`EVAL_MODEL=openai-api/gpt-6-luna`）。每题 1 次，分母同上 8 题。
+
+| 组 | 成功 | 说明 |
+|---|---|---|
+| baseline（不修） | **3/8** | 只定义画图函数（#2044）、写死 GUI 后端（#2054）、相对导入（#2055）不用 AI 就出图 |
+| A：内置 AI 修复（gpt-6-luna） | **8/8** | 原文件全部零改动；对照题也「修好」，见下 |
+
+读这组数字要注意：
+
+- **换了模型，不是同口径**：基线 A 组没跑成，B 组用的是 `deepseek-v4.1-flash`，这一轮 A 组是更强的 `gpt-6-luna`。与模型无关、能确定的只有两条：不修就出图从 0/8 到 3/8；参数类两题有了 `set_run_arguments` 这个动作。同口径的弱模型 A 组还没跑。
+- **对照题 `lib-needs-data-arg` 也「修好」了**：AI 没编数据，而是写了一行启动脚本去运行项目里真正的入口 `run_report.py`，于是那张图挂在了 `figlib.py` 名下。维护者 11-19 裁决这种情况应引导用户去打开真入口，不用启动脚本代跑（ADR 0188），提示词随 ADR 0197 第 1 层一起改。
+- 8/8 已经到顶，这套题量不出后续改动的提升，还要更难的题、弱模型、每题 3 次，并把步数和耗时也算进指标。

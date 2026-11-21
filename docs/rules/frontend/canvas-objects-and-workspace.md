@@ -2,7 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「项目系统与多画布（前端侧）」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`shapeSwitch.golden.test.ts` + `tests/test_compose_switched_shapes.py`、`canvas/shapeOutline.test.tsx`、`store/workspace.test.ts`、`store/pageFit.test.ts`、`store/addPanelFraming.test.ts`、`store/addPanelEntry.test.ts`、`store/addPanelAvoid.test.ts`、`lib/panelPlacement.test.ts`、`canvas/pageOutsideMask.test.tsx`、`e2e/cross-tab-paste.spec.ts`、`e2e/nav-audit.spec.ts`
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`shapeSwitch.golden.test.ts` + `tests/test_compose_switched_shapes.py`、`canvas/shapeOutline.test.tsx`、`store/workspace.test.ts`、`store/pageFit.test.ts`、`store/addPanelFraming.test.ts`、`store/addPanelEntry.test.ts`、`store/addPanelAvoid.test.ts`、`lib/panelPlacement.test.ts`、`canvas/pageOutsideMask.test.tsx`、`lib/pathGeom.golden.test.ts` + `tests/test_path_object.py`、`lib/convertToPath.test.tsx`、`lib/penTool.test.ts`、`lib/pathEdit.test.ts`、`canvas/penAndAnchors.test.tsx`、`canvas/shapeTools.test.tsx`、`lib/starArc.golden.test.ts` + `tests/test_star_arc.py`、`lib/appearance.test.tsx`、`lib/appearance.golden.test.ts` + `tests/test_appearance.py`、`e2e/cross-tab-paste.spec.ts`、`e2e/nav-audit.spec.ts`
 > `web/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：剪贴板主路径是原生 ClipboardEvent；类型切换一次 commit 不换 id；「适应画布」是模式；加图分层链 `addFigureToLayout` → `addPanelToCanvas` → `actions.addPanel`，权威在该细则
 
 <!-- agents-route
@@ -60,6 +60,49 @@ order: 210
   `tests/golden/shape_geometry_vectors.json` 两侧各跑一遍），改一边必须同步另一边，
   pytest 从合成的 PDF 内容流抽坐标做几何级看护（`tests/test_compose_arrow.py`）。
   科研预设在 `lib/presets.ts`（纯既有对象组合）。
+- **自由路径 `path`（2026-11-14，ADR 0185 §二 / §四）**：`PathObject` = `subpaths: { closed, nodes: { p, in?, out?, smooth? }[] }[]`
+  （锚点与**绝对**手柄都是包围盒比例坐标，手柄可以落在 [0,1] 之外）+ `fillRule?: 'evenodd'` + 与 `ShapeObject` 逐字相同的填充 / 描边字段
+  （`stroke: false` 只落盘 false）+ 与 `ArrowObject` 同名同义、只对开放子路径生效的 `headStart/End` / `headSizeStart/End`；新字段缺省一律不写。
+  `x/y/w/h` 仍是权威包围盒、按**曲线实际范围**算（不按控制点，`pathGeom.segsExtent` / `fitPathBox`），缩放 / 对齐 / 吸附 / `visualBounds` /
+  `rotationDeg` 全部沿用。**缺省值只从 `types/document.readPath()` 读**（手柄缺省 = 锚点、nonzero、有描边、无端型；后端 `geometry.read_path` 同一规则），
+  几何只在 `lib/pathGeom.pathGeometry` 一处（相邻锚点两侧手柄都与锚点重合 → `L`，否则 `C`；开放端端型沿切线、复用 `shapeGeometry.headGeometry`，
+  实心端型让描边回缩）；画布 `canvas/PathView`（命中层沿真实轮廓、填充按 `fill-rule`，描边带不窄于 `hitStrokeWidth`）与导出预览 `ThumbShape`
+  共用 `PathBody`，描边属性只走 `svgStroke()`；有端型时描边 + 端型放进一个 `<g opacity>`（导出是同构的透明组，杆伸进实心端型处不叠深）。
+  **前后端同源**：`pathGeometry` ↔ `rendercore/geometry.path_segments`，共享向量 `tests/golden/path_vectors.json`（`scripts/dev/gen_path_vectors.py` 重录），
+  前端一侧同时断言导出载荷 `toExportObjects` 产出向量里的 `payload`。消费者逐个接上：`exportPayload` / `exportreq.ORIGINAL_OBJECT_TYPES`（app.py 写回标注的
+  类型过滤也读它）/ `facade.place` / `plan._path_node` / `writeBackAnnotations`（`ANNOTATION_TYPES`，只缩线宽）/ `singleExportDoc` / `epsOpacity` /
+  `exportCrop` / `CanvasThumb`（草图带 ≤64 个锚点时沿轮廓画，`app._sketch_subpaths`）/ `timelineThumb` / 图层树 `Spline` 图标 / `objectLabel`「路径」。
+  **转为路径**：`lib/convertToPath.toPathObject`（纯函数）+ `store/actions.convertToPath(ids)`——**一次 commit、不换 id、数组位置不动**，形状七种与箭头的杆
+  → `path`，几何取画布正在画的那一份（`shapeInset` / `shapeOutline` / `cornerRadius` / `braceParts` / `lineEndpoints` / `arrowHeads`），椭圆与圆角用
+  κ = 0.5522847498 的 4 段三次贝塞尔、大括号的二次贝塞尔精确升三次；包围盒收到曲线范围，旋转对象的中心随之挪了的那一点整体补回（`fitPathBox`）。
+  填充 / 描边 / 线型 / 端型字段照搬，直线与大括号写明原来的尖角。入口只有右键菜单「转为路径」（选区全能转才摆，`canConvertToPath`）与命令面板
+  `convert-to-path`（同一判据）。看护 `lib/convertToPath.test.tsx`（转前后页面 mm 里双向 Hausdorff < 0.01 mm，含旋转 / 无边框 / 各端型）。
+  属性栏 / 浮动栏 / 格式刷：路径与形状共用 `ShapeSection`（开放路径多出箭头那组端型控件）、浮动栏的颜色 + 线宽，格式刷形状 ↔ 路径同族互刷、只写两边都有的键；
+  哪一行出现、写哪个字段只问能力层 `lib/markStyle`（组件里不按类型分支）。看护 `components/inspector/pathInspector.test.tsx`。
+  已知差异（既有的画布 ≠ 导出）：大括号的导出一直是后端 `curve_segment` 的 κ 近似、画布是二次贝塞尔，40×25 mm 的大括号两者最远差约 0.5 mm；
+  转为路径后导出跟画布一致（精确升阶），所以这一种转完**导出**会挪这一点，画布不动。
+- **钢笔与直接选择（2026-11-14，ADR 0185 M1）**：钢笔是纯状态机 `lib/penTool.penReduce`（指针 / 按键进，状态 + 预览 + 命令出），
+  画布一侧 `canvas/penController` 只换算坐标、把草稿交给预览平面（`svgPreviewStore.previewPathDraft`，覆盖层 `PathEditOverlay.PenDraft` 画）、
+  完成时**一次** commit 落成 `path`（`fitPathBox`，包围盒按曲线范围）。画到一半登记成进行中的手势：Enter / Esc / 换工具 / 任何离散动作
+  先按开放路径落定。直接选择 = 锚点编辑（双击路径 / Enter / 右键「编辑锚点」进，Esc 退；界面态 `store/pathEditStore`，生效只看
+  `activePathEdit()`）：拖锚点 / 手柄 / 框选锚点在 `canvas/pathEditDrag`，走 `beginTxn / endTxn`，每帧从按下那一刻的对象现算
+  （`lib/pathEdit`，纯函数、无界面——将来 MCP 也调它），包围盒同一次更新里重算、旋转中心的挪动整体补回。加 / 删 / 转换锚点与钢笔、
+  编辑锚点注册在 `store/pathActions.PATH_COMMANDS` 一张表：命令面板、右键菜单、快捷键（P、+ / −、⇧C；Delete 在锚点编辑里删锚点）都读它的
+  `available()`。直接选择没有 A 键（A 是箭头工具）。锚点框选的框是 `interaction.anchorMarquee`（细虚线、不铺底，与对象框选分开），
+  拖着时锚点实时变实心、松手框即消失。工具条（2026-11-14 用户拍板）：钢笔单独一格；标注菜单是**一张**形状列表（八种都拖画、单击落默认尺寸 `DEFAULT_DRAW`），
+  预设在分隔线下，没有「插入形状」那一段。
+  续画：钢笔点在开放路径的端点上就从那里接着画（同一个对象、一次 commit，从起点接时落盘倒回原方向）；钢笔与拖锚点按 ⇧ 锁 45°，
+  不按时吸到画布那套候选（`interactions.candidatesFor`：页面、对象、参考线、网格、图内元素中心线）与同一条路径的锚点（`pathEdit.anchorSnapLines`）。
+  剪刀 / 连接 ⌘J / 平均 ⌥⌘J 进 `PATH_COMMANDS`（几何 `pathEdit.cutAtAnchors` / `joinSubpaths` / `closeSubpath` / `averageAnchors`）；
+  剪刀断出来的第一段留在原对象、其余成新对象。锚点编辑时不出单选浮动栏（`ContextBar` 认 `useActivePathEdit`）。
+  星形 / 弧线是两种新形状（`ShapeKind`）：星形 `sides` = 角数（缺省 5）、`starRatio` 内径比（缺省 0.382，等于缺省不写）；
+  弧线只有描边（「只有描边的形状」判据唯一出处 `types/document.STROKE_ONLY_SHAPES`，后端 `geometry.STROKE_ONLY_SHAPES` 同表）。
+- **填充与描边补齐（2026-11-14，ADR 0185 第二批）**：形状 / 路径 / 箭头加 `miterLimit`（缺省 10）、`dashPattern`（pt 绝对值，有它就不看 `dash`，
+  也不算点线）；封闭形状加 `strokeAlign`（缺省内侧 = 外沿贴框，`center` / `outside`，内缩量只在 `shapeInset` ↔ `geometry.shape_inset`）；
+  路径的 `fillRule` 有了开关。新字段缺省一律不写、导出不发；属性栏都在「更多」里（斜接上限只在尖角时出现、对齐只给封闭形状、填充规则只给有填充的路径）。
+  外观命令表 `store/appearanceActions.APPEARANCE_COMMANDS`：D 默认填色描边（= 新画对象的样子）、⇧X 互换填色和描边、/ 无填充、I 吸管（工具 `eyedropper`，
+  `canvas/eyedropper.sampleAt` 读点到的东西**画出来的**颜色，图内元素也行；上色规则在纯函数 `lib/appearance.applyColorSample`）。
+  格式刷带上描边的全部外观。色板（本文档用过的颜色 + 最近用过）在属性栏取色面板里本来就有（`ColorPanel`）。看护 `lib/penTool.test.ts`、`lib/pathEdit.test.ts`、`canvas/penAndAnchors.test.tsx`。
 - **不认识的对象类型原样保留（2026-11-14，ADR 0185 的前置）**：更新的构建会往文档里写本构建没有的 `type`
   （第一例是自由路径 `path`）。判据只有 `types/document.isKnownObject`（`KNOWN_OBJECT_TYPES` 闭集）。读盘、保存、
   换画布、复制画布都不碰它（文档层本来就不按类型过滤，别加）；画布上 `ObjectView` 只画虚线占位框

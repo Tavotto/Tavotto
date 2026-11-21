@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "dev" / "data_figure_bench.py"
 
@@ -104,3 +106,263 @@ def test_script_stops_early_when_the_request_cap_is_reached(tmp_path):
     report = json.loads(out.read_text(encoding="utf-8"))
     assert report["stopped_early"] is True and report["requests_used"] == 3
     assert len(report["cases"]) == 3
+
+
+# --------------------------------------------------------------------------- --key-file（只用假传输；绝不联网）
+KEY = "sk-test-SECRET-KEY-0123456789abcdef"
+
+
+def load_bench():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("data_figure_bench_inproc", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def key_file(tmp_path, content=KEY + "\n", mode=0o600):
+    p = tmp_path / "eval.key"
+    p.write_text(content, encoding="ascii")
+    p.chmod(mode)
+    return p
+
+
+def test_key_file_flag_combinations_are_refused_without_any_request(tmp_path):
+    kf = key_file(tmp_path)
+    for args in (
+        ["--key-file", str(kf), "--model", "gpt-5"],  # 没有 --real
+        ["--real", "--key-file", str(kf), "--max-calls", "50"],  # 没有 --model
+        ["--real", "--key-file", str(kf), "--model", "gpt-5"],  # 没有 --max-calls
+        ["--model", "gpt-5"],  # 没有 --key-file
+        [
+            "--real",
+            "--key-file",
+            str(kf),
+            "--model",
+            "gpt-5",
+            "--max-calls",
+            "50",
+            "--effort",
+            "max",
+        ],
+    ):
+        done = bench(tmp_path, *args)
+        assert done.returncode == 2, args
+        assert KEY not in done.stdout + done.stderr
+
+
+@pytest.mark.skipif(os.name == "nt", reason="权限位是 POSIX 的概念")
+@pytest.mark.parametrize("mode", [0o644, 0o640, 0o604, 0o666])
+def test_key_file_wider_than_600_is_refused_and_says_why(tmp_path, mode):
+    kf = key_file(tmp_path, mode=mode)
+    done = bench(tmp_path, "--real", "--key-file", str(kf), "--model", "gpt-5", "--max-calls", "50")
+    assert done.returncode == 2 and "权限太宽" in done.stderr and "没有发出任何请求" in done.stderr
+    assert KEY not in done.stdout + done.stderr
+
+
+@pytest.mark.parametrize("content", ["", "two\nlines\n", "has space\n", "sk-密钥\n"])
+def test_malformed_key_files_are_refused_without_echoing_content(tmp_path, content):
+    kf = tmp_path / "bad.key"
+    kf.write_text(content, encoding="utf-8")
+    kf.chmod(0o600)
+    done = bench(tmp_path, "--real", "--key-file", str(kf), "--model", "gpt-5", "--max-calls", "50")
+    assert done.returncode == 2 and "没有发出任何请求" in done.stderr
+    assert content.strip() not in done.stdout + done.stderr or not content.strip()
+
+
+class Recorder:
+    """假的 `post_json`：记下请求（含头里的 key——那是它该收到的），回录好的回答；`mode` 控制失败形状。"""
+
+    def __init__(self, answers, mode="ok"):
+        self.answers, self.mode, self.calls = answers, mode, []
+
+    def __call__(self, url, headers, body, *, timeout, max_bytes=None):
+        self.calls.append({"url": url, "headers": dict(headers), "body": body})
+        if self.mode == "leaky":  # 异常文字里带了 key：任何输出都不许出现它
+            raise RuntimeError(f"boom {headers.get('Authorization')}")
+        if self.mode == "401":
+            return (
+                401,
+                {},
+                json.dumps({"error": f"bad key {headers.get('Authorization')}"}).encode(),
+            )
+        text = self.answers.pop(0)
+        return (
+            200,
+            {},
+            json.dumps(
+                {
+                    "status": "completed",
+                    "output": [
+                        {"type": "message", "content": [{"type": "output_text", "text": text}]}
+                    ],
+                    "usage": {"input_tokens": 1500, "output_tokens": 900},
+                }
+            ).encode(),
+        )
+
+
+def run_inproc(tmp_path, monkeypatch, capsys, recorder, *extra, case="RC-01", suite="roles"):
+    mod = load_bench()
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "d0"))
+    monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp_path / "c0"))
+    import sys as _sys
+
+    _sys.path.insert(0, str(ROOT / "src"))
+    from tavotto.engine import ai_data_roles, ai_structured
+
+    ai_data_roles.reset_for_tests()  # 进程内多次跑：负缓存 / 任务登记不能串到下一条用例
+    monkeypatch.setattr(ai_structured, "post_json", recorder)
+    kf = key_file(tmp_path)
+    out = tmp_path / "report.json"
+    saved = (_sys.stdout, _sys.stderr)
+    try:
+        rc = mod.main(
+            [
+                "--suite", suite, "--real", "--key-file", str(kf), "--model", "gpt-5",
+                "--max-calls", "4", "--only", case, "--out", str(out), *extra,
+            ]
+        )  # fmt: skip
+    finally:
+        _sys.stdout, _sys.stderr = saved
+    cap = capsys.readouterr()
+    return rc, cap.out + cap.err, (out.read_text(encoding="utf-8") if out.exists() else "")
+
+
+def test_key_file_run_with_a_fake_transport_reports_usage_and_never_leaks_the_key(
+    tmp_path, monkeypatch, capsys, caplog
+):
+    import sys as _sys
+
+    _sys.path.insert(0, str(ROOT / "tests" / "support"))
+    import data_figure_roles as DR
+
+    case = next(c for c in DR.load_role_cases() if c["id"] == "RC-01")
+    rec = Recorder([json.dumps(case["model_answer"])])
+    caplog.set_level("DEBUG")
+    rc, text, report = run_inproc(tmp_path, monkeypatch, capsys, rec)
+    assert rc == 0, text
+    for blob in (text, report, caplog.text):
+        assert KEY not in blob
+    data = json.loads(report)
+    assert data["mode"] == "real" and data["requests_used"] == 1 == len(rec.calls)
+    assert data["connection"] == {
+        "source": "key-file",
+        "wire": "openai-responses",
+        "model": "gpt-5",
+        "effort": "low",
+        "base_url_host": "api.openai.com",
+    }
+    s = data["summary"]
+    assert (s["input_tokens"], s["output_tokens"]) == (1500, 900)
+    assert s["cost_usd"] == pytest.approx((1500 * 1.25 + 900 * 10.0) / 1_000_000)  # 按定价表
+    call = rec.calls[0]
+    assert call["url"] == "https://api.openai.com/v1/responses"
+    assert call["headers"]["Authorization"] == f"Bearer {KEY}"  # key 只出现在发给服务商的头里
+    assert call["body"]["model"] == "gpt-5" and call["body"]["reasoning"] == {"effort": "low"}
+    assert "输出（含推理）" in text
+    # 没写应用配置 / provider 存储
+    assert not (tmp_path / "c0").exists() or not any((tmp_path / "c0").rglob("*"))
+
+
+@pytest.mark.parametrize("mode", ["leaky", "401"])
+def test_key_never_appears_in_outputs_even_when_errors_echo_it(
+    tmp_path, monkeypatch, capsys, caplog, mode
+):
+    caplog.set_level("DEBUG")
+    rc, text, report = run_inproc(tmp_path, monkeypatch, capsys, Recorder([], mode))
+    assert rc == 0
+    for blob in (text, report, caplog.text):
+        assert KEY not in blob
+    assert json.loads(report)["summary"]["failures"]  # 失败如实记下，只是不带 key
+
+
+def test_key_file_recipes_suite_uses_the_same_connection_and_hard_cap(
+    tmp_path, monkeypatch, capsys
+):
+    import sys as _sys
+
+    _sys.path.insert(0, str(ROOT / "tests" / "support"))
+    import data_figure_cases as D
+
+    case = next(c for c in D.load_cases() if c["id"] == "DF-01")
+    rec = Recorder([D.good_answer(case)])
+    rc, text, report = run_inproc(tmp_path, monkeypatch, capsys, rec, case="DF-01", suite="recipes")
+    assert rc == 0 and KEY not in text + report
+    assert json.loads(report)["connection"]["effort"] == "low" and len(rec.calls) == 1
+    assert rec.calls[0]["body"]["reasoning"] == {"effort": "low"}
+
+
+def test_scrub_and_report_writer_replace_the_key_as_a_last_line_of_defence(tmp_path):
+    import io
+    import types
+
+    mod = load_bench()
+    buf = io.StringIO()
+    mod._Scrub(buf, KEY).write(f"leak {KEY} here")
+    assert KEY not in buf.getvalue() and "***" in buf.getvalue()
+    kf = key_file(tmp_path)
+    out = tmp_path / "r.json"
+    mod._write_report(types.SimpleNamespace(out=str(out), key_file=str(kf)), {"x": f"oops {KEY}"})
+    assert KEY not in out.read_text(encoding="utf-8")
+
+
+def test_arm_rules_refuses_real_and_key_file_before_touching_any_credential(tmp_path):
+    missing = tmp_path / "nope.key"  # 不存在：若先读 key 文件，报错会是「读不到」而不是 arm 冲突
+    for args in (
+        ["--suite", "roles", "--arm", "rules", "--real", "--max-calls", "50"],
+        [
+            "--suite",
+            "roles",
+            "--arm",
+            "rules",
+            "--real",
+            "--key-file",
+            str(missing),
+            "--model",
+            "gpt-5",
+            "--max-calls",
+            "50",
+        ],
+    ):
+        done = bench(tmp_path, *args)
+        assert done.returncode == 2 and "--arm rules" in done.stderr, args
+        assert "没有可用的连接" not in done.stderr and "读不到" not in done.stderr
+
+
+def test_arm_rules_makes_zero_transport_calls_and_resolves_no_connection(
+    tmp_path, monkeypatch, capsys
+):
+    import sys as _sys
+
+    mod = load_bench()
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "d0"))
+    monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp_path / "c0"))
+    _sys.path.insert(0, str(ROOT / "src"))
+    from tavotto.engine import ai_data_roles, ai_structured
+
+    ai_data_roles.reset_for_tests()
+    rec = Recorder([])
+    monkeypatch.setattr(ai_structured, "post_json", rec)
+
+    def boom():
+        raise AssertionError("resolve_connection must not run")
+
+    monkeypatch.setattr(ai_structured, "resolve_connection", boom)
+    out = tmp_path / "r.json"
+    saved = (_sys.stdout, _sys.stderr)
+    try:
+        rc = mod.main(
+            ["--suite", "roles", "--arm", "rules", "--only", "RC-01,RC-02", "--out", str(out)]
+        )
+    finally:
+        _sys.stdout, _sys.stderr = saved
+    capsys.readouterr()
+    assert rc == 0 and rec.calls == []
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert (
+        report["mode"] == "rules-only"
+        and report["requests_used"] == 0
+        and report["connection"] is None
+    )

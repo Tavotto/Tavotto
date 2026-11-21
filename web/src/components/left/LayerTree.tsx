@@ -18,7 +18,10 @@ import {
   Pencil,
   Shapes,
   Slash,
+  Spline,
   Square,
+  Star,
+  Arc,
   Triangle,
   Type,
 } from '@/components/ui/icons'
@@ -55,6 +58,9 @@ const ICONS = {
   diamond: Diamond,
   polygon: Hexagon,
   brace: Braces,
+  star: Star,
+  arc: Arc,
+  path: Spline,
 } as const
 
 function iconFor(o: CanvasObject) {
