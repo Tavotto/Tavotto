@@ -26,6 +26,10 @@ order: 210
   * `scope=canvas` 合成页；`scope=original` 走 `pdfbackend.original_pdf/png`
     （矢量整页搬运不重画，位图**保源像素网格**）。`original` 段里**没有**
     x/y/w/h 与页面尺寸——想让画布缩放漏进原图导出得先改结构。
+  * **画布 PDF 书签**由 `pdf_panel_bookmarks: true` 开启。RenderCore 在写入面板后用同一份落位结果与页框
+    的交集生成 PDF `FitR` 目的地。跳过隐藏、全透明及页外面板。按面板绘制顺序编号，使用用户给图面板取的
+    名称。书签只改变 PDF 导航元数据，画面与其它格式保持原样。看护 `tests/test_export_endpoint.py`
+    与 `web/e2e/chart-document.spec.ts`。
   * **PPI 只在有位图格式时是数字**，否则 `None`；`partial` 是独立一档
     （成功的照常交付，失败的带自己的 `error.code`）；覆盖策略闭集
     `ask`/`replace`/`rename`，`ask` 撞名时**不渲染不写盘**。

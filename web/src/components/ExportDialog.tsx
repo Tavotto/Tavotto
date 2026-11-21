@@ -292,6 +292,7 @@ interface ParkedState {
   filenameTouched: boolean;
   withReport: boolean;
   withScript: boolean;
+  pdfPanelBookmarks: boolean;
   transparent: boolean;
   strict: boolean;
 }
@@ -366,6 +367,7 @@ export function ExportDialog() {
   const [transparent, setTransparent] = useState(false);
   // 修改后的 .py（ADR 0171）：每次都要重跑一遍脚本，所以不记进导出默认值
   const [withScript, setWithScript] = useState(false);
+  const [pdfPanelBookmarks, setPdfPanelBookmarks] = useState(false);
   /** 严格核验产物（ADR 0068 的 `strict` 政策）：必需项失败或无法核验的那一项不发布 */
   const [strict, setStrict] = useState(
     () => readExportDefaults().strictInspection,
@@ -682,10 +684,12 @@ export function ExportDialog() {
       setFilenameTouched(restore.filenameTouched);
       setWithReport(restore.withReport);
       setWithScript(restore.withScript);
+      setPdfPanelBookmarks(restore.pdfPanelBookmarks);
       setTransparent(restore.transparent);
       setStrict(restore.strict);
       return;
     }
+    setPdfPanelBookmarks(false);
     if (journalKey && journalApplied.current !== journalKey) {
       journalApplied.current = journalKey;
       const d = readExportDefaults();
@@ -959,6 +963,7 @@ export function ExportDialog() {
       background: transparent && transparentApplies ? "transparent" : "white",
       includeReport: reportOn,
       includeScript: withScript && script.ok,
+      pdfPanelBookmarks,
       strictInspection: strict,
       profileId: checkProfileId,
       // 后端的 `acknowledged` 策略 = 「这些阻断项导出时仍未处理」：自动带上，不再靠勾选
@@ -1279,6 +1284,7 @@ export function ExportDialog() {
       withReport,
       withScript,
       script.ok,
+      pdfPanelBookmarks,
       scope,
       transparent,
       strict,
@@ -1405,6 +1411,7 @@ export function ExportDialog() {
       filenameTouched,
       withReport,
       withScript,
+      pdfPanelBookmarks,
       transparent,
       strict,
     };
@@ -2033,6 +2040,19 @@ export function ExportDialog() {
                   <label data-export-merge-pdf className="flex min-h-7 items-center gap-2 text-ink">
                     <Checkbox checked={mergePdfChoice} onChange={() => setMergePdfChoice((v) => !v)} />
                     <span>{ex("mergePdf", { name: `${mergePlan.name}.pdf`, count: mergePlan.figureIds.length })}</span>
+                  </label>
+                </FormRow>
+              )}
+              {scope === "canvas" && formats.includes("pdf") &&
+                exportDoc.objects.some((o) => o.type === "panel" && !o.hidden) && (
+                <FormRow>
+                  <label className="flex min-h-7 items-center gap-2 text-ink">
+                    <Checkbox
+                      data-export-pdf-bookmarks
+                      checked={pdfPanelBookmarks}
+                      onChange={(event) => setPdfPanelBookmarks(event.currentTarget.checked)}
+                    />
+                    <span>{ex("pdfPanelBookmarks")}</span>
                   </label>
                 </FormRow>
               )}

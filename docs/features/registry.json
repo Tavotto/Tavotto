@@ -913,6 +913,22 @@
       ]
     },
     {
+      "id": "export.pdf-panel-bookmarks",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "画布 PDF 可添加书签，跳到各图面板的页面范围",
+        "en-US": "Add bookmarks that jump to figure panels in a canvas PDF"
+      },
+      "entry": "导出 → 整张画布 → PDF → 为图面板添加 PDF 书签",
+      "e2e": [
+        {
+          "spec": "chart-document.spec.ts",
+          "title": "canvas PDF export adds bookmarks to two instances of the same figure"
+        }
+      ]
+    },
+    {
       "id": "export.png",
       "status": "active",
       "platform": "both",

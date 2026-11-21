@@ -2102,6 +2102,8 @@ export type ExportObject =
   chart_source?: ChartSourceRef
       chart_render_profile?: 'legacy-scaffold/1' | 'native-manifest/1' | 'native-manifest/2'
       id: string
+      /** Optional user-assigned panel name for an opted-in PDF bookmark. */
+      bookmark_title?: string
       overrides?: { gid: string; prop: string; value: unknown; identity?: string }[]
       /** 0–1 归一化、top-origin，与 PanelObject.crop 同构，原样直传 */
       crop?: { x: number; y: number; w: number; h: number }
@@ -2276,6 +2278,7 @@ export interface ExportRequest {
   include_edited_script?: boolean
   /** 「EPS 按不透明导出」：EPS 里的画布标注把半透明压成 100%，其余格式照旧；不选时不带这个键（ADR 0046 / 0174） */
   eps_opaque?: boolean
+  pdf_panel_bookmarks?: boolean
   document_id?: string | null
   /** 导出开始那一刻的文档快照指纹；回执原样带回来，用来说"期间又被编辑过" */
   document_revision?: string | null

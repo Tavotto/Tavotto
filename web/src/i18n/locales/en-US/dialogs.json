@@ -203,6 +203,7 @@
       "no_script": "No script for this figure"
     },
     "mergePdf": "Combine into one multi-page PDF: {{name}} ({{count}} pages)",
+    "pdfPanelBookmarks": "Add PDF bookmarks for figure panels",
     "batchNames": "Each figure keeps its own name",
     "exportAgain": "Export again",
     "newerObjects_other": "{{count}} objects come from a newer version. Update to export them.",

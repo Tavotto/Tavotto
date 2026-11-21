@@ -271,3 +271,70 @@ test('chart binding backs up the project and reopens the frozen source', {
     rmSync(project, { recursive: true, force: true })
   }
 })
+
+test('canvas PDF export adds bookmarks to two instances of the same figure', {
+  tag: '@feature:export.pdf-panel-bookmarks',
+}, async ({ app, page }) => {
+  const project = mkdtempSync(path.join(os.tmpdir(), 'tavotto-pdf-bookmarks-'))
+  const layoutName = 'BookmarkLayout'
+  const fileId = 'panel.pdf'
+  let instance: Awaited<ReturnType<typeof startApp>> | undefined
+  try {
+    writeFileSync(path.join(project, fileId), readFileSync(path.join(
+      import.meta.dirname, '..', '..', 'examples', 'figures', 'Fig1_kinetics.pdf',
+    )))
+    instance = await app({ figures: project })
+    const panel = {
+      type: 'panel', y: 20, w: 50, h: 40, fileId, fileKind: 'pdf', nativeW: 100, nativeH: 80,
+      overrides: [],
+    }
+    const saved = await page.request.post(instance.baseURL + '/api/layouts/' + layoutName + '?target=project', {
+      data: {
+        schema: 3, project: { id: 'bookmark-test', name: layoutName },
+        canvases: [{
+          id: 'c1', name: layoutName, schema: 2, page: { w: 140, h: 100 }, guides: [], updatedAt: 1,
+          objects: [
+            { ...panel, id: 'bookmark-left', name: 'Left panel', x: 15 },
+            { ...panel, id: 'bookmark-right', name: 'Right panel', x: 75 },
+          ],
+        }],
+        activeCanvasId: 'c1', createdAt: 1, updatedAt: 1,
+      },
+    })
+    expect(saved.ok(), await saved.text()).toBe(true)
+    await page.goto(instance.baseURL)
+    await waitForDocumentReady(page)
+    await page.keyboard.press('ControlOrMeta+k')
+    await page.locator('[data-palette-input]').fill('打开排版')
+    await page.locator('[data-cmd-id="load-layout"]').click()
+    await page.locator('[data-layout-row="BookmarkLayout"]').click()
+    await expect(page.locator('[data-canvas-stage] [data-object-id="bookmark-right"]')).toBeVisible()
+    await page.locator('[data-onboarding-anchor="export"]').click()
+    const dialog = page.locator('[data-export-group="format"]')
+    const pdf = dialog.locator('[data-export-format="pdf"] input')
+    await expect(pdf).toBeVisible()
+    if (!(await pdf.isChecked())) await pdf.check()
+    const bookmarks = dialog.locator('[data-export-pdf-bookmarks]')
+    await expect(bookmarks).toBeVisible()
+    await expect(bookmarks).not.toBeChecked()
+    await bookmarks.check()
+    const started = page.waitForResponse(r =>
+      new URL(r.url()).pathname === '/api/export/start' && r.request().method() === 'POST')
+    await page.locator('[data-export-start]').click()
+    const job = await started
+    expect(job.ok(), await job.text()).toBe(true)
+    const request = job.request().postDataJSON()
+    expect(request.pdf_panel_bookmarks).toBe(true)
+    expect(request.canvas.objects.map((o: { bookmark_title: string }) => o.bookmark_title))
+      .toEqual(['Left panel', 'Right panel'])
+    const { export_dir } = await job.json()
+    await expect(page.locator('[data-export-result]')).toBeVisible({ timeout: 60_000 })
+    const files = readdirSync(export_dir).filter(name => name.endsWith('.pdf'))
+    expect(files).toHaveLength(1)
+    const published = readFileSync(path.join(export_dir, files[0])).toString('latin1')
+    expect(published.match(/\/FitR\b/g)).toHaveLength(2)
+  } finally {
+    await instance?.stop()
+    rmSync(project, { recursive: true, force: true })
+  }
+})

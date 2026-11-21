@@ -389,6 +389,7 @@ class ExportRequest:
     #: 「EPS 按不透明导出」：EPS 里的画布标注把半透明压成 100%（颜色不变，不和白色混），其余格式照旧保留。
     #: 只对 `scope=original` 有意义；缺省 False 时请求、计划身份与产物与从前逐字节相同。
     eps_opaque: bool = False
+    pdf_panel_bookmarks: bool = False
 
     @property
     def has_raster(self) -> bool:
@@ -416,6 +417,7 @@ class ExportRequest:
             "inspection": self.inspection.to_payload(),
             **({"merge_pdf": self.merge_pdf.to_payload()} if self.merge_pdf is not None else {}),
             **({"eps_opaque": True} if self.eps_opaque else {}),
+            **({"pdf_panel_bookmarks": True} if self.pdf_panel_bookmarks else {}),
             **(
                 {"expected_source": self.original.expected_source}
                 if self.original and self.original.expected_source is not None
@@ -510,7 +512,8 @@ def render_plan_ref(req: ExportRequest, resources: list[dict]) -> dict:
             # A private execution reference selects the input; the resolved
             # resource's public receipt identity supplies render semantics.
             "objects": [
-                {k: v for k, v in obj.items() if k != "figure_origin"} for obj in req.canvas.objects
+                {k: v for k, v in obj.items() if k not in ("figure_origin", "bookmark_title")}
+                for obj in req.canvas.objects
             ],
         }
     if req.original is not None:
@@ -936,6 +939,11 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
     if include_script and (scope != SCOPE_ORIGINAL or spec.get("merge_pdf") is not None):
         raise ExportRequestError("script_export_not_for_canvas", "整版导出不能附带脚本", {})
     formats = _formats(spec.get("formats"), allowed_formats, allow_empty=include_script)
+    pdf_panel_bookmarks = spec.get("pdf_panel_bookmarks", False)
+    if type(pdf_panel_bookmarks) is not bool or (
+        pdf_panel_bookmarks and (scope != SCOPE_CANVAS or FORMAT_PDF not in formats)
+    ):
+        raise ExportRequestError("bad_request", "PDF panel bookmarks require a canvas PDF", {})
     # 「EPS 按不透明导出」：只认严格的 True（不是真值），旧契约与整版导出没有这个选项
     eps_opaque = spec.get("eps_opaque") is True and not legacy and scope == SCOPE_ORIGINAL
     has_raster = any(f in RASTER_FORMATS for f in formats)
@@ -1033,4 +1041,5 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
         inspection=inspection,
         include_script=include_script,
         eps_opaque=eps_opaque,
+        pdf_panel_bookmarks=pdf_panel_bookmarks,
     )

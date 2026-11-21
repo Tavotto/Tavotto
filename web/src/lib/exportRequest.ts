@@ -253,6 +253,7 @@ export interface ExportRequestInput {
   includeReport?: boolean
   /** 同时导出修改后的 .py（ADR 0171）。只对单张图有意义；调用方已按 `scriptAvailability` 收窄 */
   includeScript?: boolean
+  pdfPanelBookmarks?: boolean
   /**
    * 「EPS 按不透明导出」（导出前提醒的第二个选择，`lib/epsOpacity`）：只在这次真会发 EPS、且单图带标注时才进请求
    * （`eps_opaque: true`），否则请求与从前逐字节相同。
@@ -346,11 +347,13 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
       : {}),
   }
   if (input.scope === 'canvas') {
+    const pdfPanelBookmarks = input.pdfPanelBookmarks === true && formats.includes('pdf')
+    if (pdfPanelBookmarks) request.pdf_panel_bookmarks = true
     request.canvas = {
       page_w_mm: input.doc.page.w,
       page_h_mm: input.doc.page.h,
       // 顺序即 z 序（底 → 顶），隐藏对象不发 —— 与画布预览同一条投影
-      objects: toExportObjects(input.doc.objects).map((object): ExportObject =>
+      objects: toExportObjects(input.doc.objects, pdfPanelBookmarks).map((object): ExportObject =>
         // chart_render_profile 已由 toExportObjects 投影（单一出处）；
         // 这里只把 overrides 从文档对象上摘下来
         object.type === 'panel' && object.chart
@@ -459,6 +462,7 @@ export function snapshotRevision(request: ExportRequest): string {
     canvas: request.canvas ?? null,
     original: request.original ?? null,
     ...(request.merge_pdf ? { merge_pdf: request.merge_pdf } : {}),
+    ...(request.pdf_panel_bookmarks ? { pdf_panel_bookmarks: true } : {}),
   })
   // FNV-1a 32 位，两轮不同种子拼成 64 位：短、稳定、跨平台逐字节一致
   return `${fnv1a(material, 0x811c9dc5)}${fnv1a(material, 0x01000193)}`

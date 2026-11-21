@@ -1048,6 +1048,7 @@ export default interface Resources {
       "outputFailed": "无法导出 {{format}}：{{reason}}",
       "partialSummary": "{{ok}} 个成功，{{failed}} 个失败",
       "pdfHint": "矢量",
+      "pdfPanelBookmarks": "为图面板添加 PDF 书签",
       "phase": {
         "cancelled": "已取消",
         "conflict": "等待你决定怎么处理同名文件",
