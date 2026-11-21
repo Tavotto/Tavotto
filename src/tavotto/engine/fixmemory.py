@@ -191,27 +191,7 @@ def _quoted(line: str) -> list[str]:
                 quote = ""
         elif ch in "'\"":
             quote, start = ch, i + 1
-    # 像凭据的变量名本身（`'API_TOKEN'`）不算值
-    return [v for v in out if not (v.isidentifier() and _SECRETISH.search(v))]
-
-
-def launcher_secrets(text: str) -> set[str]:
-    """同一会话别的字段要抹掉的值。正文里提到了像凭据的名字（不管是怎么设的——赋值、标注赋值、解包、update 的各种参数、
-    导入后直接调用……都不去认，Codex #2100 三轮 P1），这段脚本里所有字符串字面量都当成可能的秘密；没提到回空集。"""
-    if not _SECRETISH.search(text or ""):
-        return set()
-    try:
-        tree = ast.parse(text or "")
-    except (SyntaxError, ValueError):
-        return {v for line in (text or "").splitlines() for v in _quoted(line)}
-    return {
-        n.value
-        for n in ast.walk(tree)
-        if isinstance(n, ast.Constant)
-        and isinstance(n.value, str)
-        and n.value
-        and not (n.value.isidentifier() and _SECRETISH.search(n.value))
-    }
+    return out
 
 
 def _mask(text: str, secrets: set[str] | frozenset[str]) -> str:
@@ -220,47 +200,54 @@ def _mask(text: str, secrets: set[str] | frozenset[str]) -> str:
     return text
 
 
-def _still_leaks(text: str, secrets: set[str]) -> bool:
-    """抹过之后按语法再看一遍：任何字符串字面量里还带着秘密（转义、拼接写法）就算漏；解析不了也算漏。"""
-    if not secrets:
-        return False
+def _kept_env(tree: ast.AST) -> list[dict]:
+    """要记的环境变量：名字是字面量（按解码后的值判断，`\\x4b` 之类转义照样认得出）；名字像凭据的只记名字；值不是字面量的
+    也只记名字。"""
+    env: list[dict] = []
+    for name, value in _env_sets(tree)[:10]:
+        item: dict = {"name": name}
+        if value is not None and not _SECRETISH.search(name):
+            item["value"] = value
+        env.append(item)
+    return env
+
+
+def launcher_secrets(text: str) -> set[str]:
+    """同一会话别的字段要抹掉的值：启动脚本里**所有**字符串字面量（解码后的值），只除去上面那张表里明确要记的非凭据变量值。
+    不按拼写豁免任何值（Codex #2100 四轮 P1：`'mysecret123'` 这样的口令本身就像个名字）。解析不了：每一段引号里的内容都算。"""
     try:
-        tree = ast.parse(text)
+        tree = ast.parse(text or "")
     except (SyntaxError, ValueError):
-        return True
-    return any(
-        isinstance(n, ast.Constant)
-        and isinstance(n.value, str)
-        and any(v in n.value for v in secrets)
+        return {v for line in (text or "").splitlines() for v in _quoted(line)}
+    kept = {e["value"] for e in _kept_env(tree) if "value" in e}
+    return {
+        n.value
         for n in ast.walk(tree)
-    )
+        if isinstance(n, ast.Constant)
+        and isinstance(n.value, str)
+        and n.value
+        and n.value not in kept
+    }
 
 
 def _launcher_fields(
     text: str, scrub: Callable[[str], str] = _default_scrub, secrets: frozenset[str] = frozenset()
 ) -> dict:
-    """启动脚本正文 + 从中认出的环境变量（像凭据的只留名字）。正文里秘密值出现的每一处都抹成 `…`；抹不干净（转义、
-    拼接写法）或者解析不了，正文整个不记、只留变量（Codex #2100 P1）。"""
+    """启动脚本只记它设了哪些环境变量，**正文一律不记**（Codex #2100 四轮 P1：按「是不是凭据」去决定记不记正文，转义、拼接、
+    别名的写法认不完）。正文要看时诊断包的修复经过里有当次那份（ADR 0197 第 4 条，同样脱敏）。"""
     try:
         tree = ast.parse(text or "")
     except (SyntaxError, ValueError):
         return {"env": [], "text": ""}
-    found = set(secrets) | launcher_secrets(text)
-    sets = _env_sets(tree)
-    env: list[dict] = []
-    for name, value in sets[:10]:
-        item: dict = {"name": name}
-        if value is not None and not _SECRETISH.search(name):
-            item["value"] = _tidy(_mask(value, found), ARG_MAX_CHARS, scrub)
+    env = []
+    for item in _kept_env(tree):
+        if "value" in item:
+            item = {
+                **item,
+                "value": _tidy(_mask(item["value"], set(secrets)), ARG_MAX_CHARS, scrub),
+            }
         env.append(item)
-    # 正文里任何地方出现像凭据的名字，正文整段不记，只留认出的变量名（Codex #2100 三轮 P1：按「怎么设环境变量」去认，
-    # 永远有下一种合法写法；改按「提没提到」判，不看语法）。没提到时正文照记，同一会话认出的秘密照样抹，抹不干净也不记
-    if _SECRETISH.search(text or ""):
-        return {"env": env, "text": ""}
-    body = _mask(text or "", found)
-    if _still_leaks(body, found):
-        body = ""
-    return {"env": env, "text": _tidy(body, TEXT_MAX_CHARS, scrub) if body else ""}
+    return {"env": env, "text": ""}
 
 
 def fields_for(
@@ -288,8 +275,7 @@ def fields_for(
         text = change.get("text")
         if not isinstance(text, str) or not text.strip():
             return None
-        fields = _launcher_fields(text, scrub, secrets)
-        return fields if fields["text"] or fields["env"] else None
+        return _launcher_fields(text, scrub, secrets)
     if kind == "data_link":
         asked, linked = change.get("asked"), change.get("linked")
         if not asked or not linked:

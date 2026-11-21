@@ -64,10 +64,10 @@ def test_secrets_and_home_never_reach_the_disk(store, monkeypatch, tmp_path):
     assert "abc123plain" not in raw  # 像凭据的变量：值不记
     assert "sk-abcdefghijklmnopqrstuvwx" not in raw  # 密钥形状照样换掉
     assert str(home) not in raw
-    # 启动脚本提到了像凭据的名字：正文不记，脚本里的字面量都当可能的秘密抹掉（宁可少记）
+    # 启动脚本正文不记；名字不像凭据的字面量变量照记值，像凭据的只记名字
     fields = next(r for r in fixmemory.entries() if r["kind"] == "launcher")["fields"]
     assert fields["text"] == ""
-    assert fields["env"] == [{"name": "LAB_DATA_DIR", "value": "…"}, {"name": "API_TOKEN"}]
+    assert fields["env"] == [{"name": "LAB_DATA_DIR", "value": "~/lab/data"}, {"name": "API_TOKEN"}]
 
 
 def test_a_launcher_without_credentials_is_kept_with_home_as_tilde(store, monkeypatch, tmp_path):
@@ -81,7 +81,7 @@ def test_a_launcher_without_credentials_is_kept_with_home_as_tilde(store, monkey
     assert str(home) not in raw and "~/lab/data" in raw
     (row,) = fixmemory.entries()
     assert row["fields"]["env"] == [{"name": "LAB_DATA_DIR", "value": "~/lab/data"}]
-    assert "run_original()" in row["fields"]["text"]
+    assert row["fields"]["text"] == ""  # 启动脚本正文一律不记（诊断包的修复经过里有当次那份）
 
 
 def test_sensitive_run_arguments_are_not_remembered(store):
@@ -362,7 +362,7 @@ def test_only_the_last_data_link_is_kept(box):
         "import os\nos.environ.update([('API_TOKEN', 'abc123plain')])\nrun_original()\n",
     ],
 )
-def test_any_mention_of_a_credential_name_drops_the_launcher_text(store, launcher):
+def test_launcher_text_is_never_kept_and_its_literals_mask_other_fields(store, launcher):
     fixmemory.remember(
         "env_var_missing",
         [("launcher", {"text": launcher}), ("run_args", {"args": ["--t", "abc123plain"]})],
@@ -372,3 +372,26 @@ def test_any_mention_of_a_credential_name_drops_the_launcher_text(store, launche
     assert all(
         r["fields"].get("text", "") == "" for r in fixmemory.entries() if r["kind"] == "launcher"
     )
+
+
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        "import os\nos.environ['API_TOKEN'] = 'mysecret123'\nrun_original()\n",
+        "import os\nos.environ['API_TO\\x4bEN'] = 'mysecret123'\nrun_original()\n",
+        "import os\nos.environ['API_TO' + 'KEN'] = 'mysecret123'\nrun_original()\n",
+        "import os\nos.environ['API_TOKEN'] = 'mysecret123'\nrun_original(\n",
+    ],
+)
+def test_no_spelling_of_a_credential_lets_its_value_through(store, launcher):
+    secrets = fixmemory.launcher_secrets(launcher)
+    fixmemory.remember(
+        "env_var_missing",
+        [
+            ("launcher", {"text": launcher}),
+            ("run_args", {"args": ["--p", "mysecret123"]}),
+            ("data_link", {"asked": "a.csv", "linked": "/x/mysecret123/a.csv"}),
+        ],
+        secrets=secrets,
+    )
+    assert "mysecret123" not in store.read_text(encoding="utf-8")
