@@ -4661,6 +4661,8 @@ export interface AiDataRoles {
   group: string | null
   facet: string | null
   unit: string | null
+  /** 真 = 「把列当分组」（宽表每列一个条件 / 一次重复）：`y` 是被当分组的那几列，`x` / `group` 为 null；后端没给 = 不是 */
+  stack?: boolean
   options: { x?: string[]; y?: string[]; group?: string[] }
 }
 
@@ -4683,11 +4685,24 @@ export interface AiDataLazyInfo {
   understanding?: AiDataUnderstanding
 }
 
-/** 「读懂数据」：`ready` 带模型对各列的判断换算出的建议（`answers` 的 `x` / `y` / `group` 取列名或 `none`，另可能有 `cells`）；`failed` 只有闭集 `reason`；`off` = 不存在 / 过期 / 别的项目，不是错误 */
+/**
+ * 「读懂数据」建议的 `answers`：可原样并进下一次 `propose` 的 `answers` 的补丁。`y` 可以是列名数组（2–3 列 = 有横轴、每列一条线；
+ * 2–8 列且 `x == 'none'` = 把列当分组，顺序即类别顺序）；`x_measure` = 规则选作横轴的那一列其实是测量值（不对应任何下拉）。其它键前端不认。
+ */
+export interface AiDataAnswerPatch {
+  x?: string
+  y?: string | string[]
+  group?: string
+  x_measure?: string
+  cells?: unknown
+  [k: string]: unknown
+}
+
+/** 「读懂数据」：`ready` 带模型对各列的判断换算出的建议（`answers`：`x` / `y` / `group` 取列名或 `none`，`y` 可为数组，另可能有 `x_measure` / `cells`）；`failed` 只有闭集 `reason`；`off` = 不存在 / 过期 / 别的项目，不是错误 */
 export interface AiDataUnderstanding {
   id: string
   state: 'pending' | 'ready' | 'failed' | 'off'
-  answers?: Record<string, unknown>
+  answers?: AiDataAnswerPatch
   /** 表（相对路径）→ 表头物理行号 */
   header_rows?: Record<string, number>
   roles?: { column: string; role: string }[]
