@@ -1997,6 +1997,7 @@ def default_candidates(
     * 用到的数值列夹着少量文字（`numeric_like`，非数字占比 ≤ 20%）且 `cells` 里没有该列的处理规则 → 返回 `MixedCells`（先问用户，不出图）；
       有规则就把规则带进每个备选的配方（`FigureRecipe.cells`）。
     * 一个都画不了 → `Candidates(items=())`，带 `reasons`；被护栏剔除的备选在 `dropped`。
+    * `roles.ys` 多于一列时，只返回画全这些列的备选（趋势类）；只画第一列的去掉并记进 `dropped`（`roles_invalid` / `multi_y_not_drawn`），一个不剩就退回单列重算。
     """
     picks = dict(picks or {})
     chosen = pick_table(profile, table, sheet, hint)
@@ -2237,6 +2238,7 @@ def default_candidates(
         )
     picked: list[tuple[str, FigureRecipe]] = []
     dropped: list[Dropped] = []
+    y_filtered = False
     for gi, alts in enumerate(groups):
         for code, rec in alts:
             used_cols = (
@@ -2264,10 +2266,26 @@ def default_candidates(
                     cells=tuple(r for r in rec.cells if r.column in (rec.y[0], rec.x)),
                 )
                 problems = validate_recipe(profile, rec, confirmed=eff, values=values)
+            if not problems and len(roles.ys) > 1 and tuple(rec.y) != tuple(roles.ys):
+                # `roles.y` 报几列，每个备选就得画这几列：只用第一列的（关系图、分组比较、分布）去掉，记进 dropped
+                problems = [Problem("roles_invalid", "y", "multi_y_not_drawn")]
+                y_filtered = True
             if not problems:
                 picked.append((code, rec))
                 break
             dropped.append(Dropped(gi, tuple(problems)))
+    if y_filtered and not picked:
+        # 没有一个备选能画全这几列（如量纲不同退到第一列）：回到单列的原有行为，不出零备选
+        return default_candidates(
+            profile,
+            table=table,
+            sheet=sheet,
+            confirmed=confirmed,
+            hint=hint,
+            values=values,
+            picks={**picks, "y": roles.ys[0]},
+            cells=cells,
+        )
     res = enforce_order(
         profile, [r for _, r in picked][:MAX_CANDIDATES], confirmed=eff, values=values
     )
