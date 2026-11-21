@@ -142,6 +142,62 @@ def is_effort_origin(agent: str, base_url: str) -> bool:
     )
 
 
+#: `hidden_efforts` / `structured_small` 里允许出现的、**界面不露出**的档位（目前只有 none：界面没有它的文案）
+_HIDDEN_EFFORT_VALUES = ("none",)
+
+
+def verified_efforts(agent: str, base_url: str, model: str | None = None) -> list[str]:
+    """`effort_support` 的档位 + 该型号规则里 `hidden_efforts` 登记的、逐型号核过但界面不露出的档位（只有结构化调用路径用）。
+    先中先得的前缀机制与 `effort_support` 相同；没有命中的规则 = `[]`。"""
+    shown = effort_support(agent, base_url, model)["efforts"]
+    try:
+        raw = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return shown
+    want = origin_of(base_url)
+    key = _model_key(model)
+    for o in (raw.get("effort_origins") if isinstance(raw, dict) else None) or []:
+        if o.get("agent") != agent or want is None or origin_of(o.get("origin", "")) != want:
+            continue
+        for rule in o.get("models") or []:
+            if key and key.startswith(_model_key(rule.get("prefix"))):
+                hidden = rule.get("hidden_efforts") or []
+                if not isinstance(hidden, list) or any(
+                    e not in _HIDDEN_EFFORT_VALUES for e in hidden
+                ):
+                    raise CatalogError(
+                        f"{o.get('origin')} {rule.get('prefix')} 的 hidden_efforts 不合法: {hidden!r}"
+                    )
+                return [*shown, *hidden]
+        break
+    return shown
+
+
+def structured_small(base_url: str, wire: str) -> dict | None:
+    """一问一答的结构化调用（`ai_structured`）在这个官方端点 + 协议上用的「小型号 + 最低档」→ `{"model", "effort"}`；没登记 = None。
+
+    只认 `structured_small` 里 origin（scheme + host + 端口）与协议都对上的行；档位必须是该型号核过的（`verified_efforts`），否则目录坏了 = `CatalogError`。"""
+    want = origin_of(base_url)
+    if want is None:
+        return None
+    try:
+        raw = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    for row in (raw.get("structured_small") if isinstance(raw, dict) else None) or []:
+        if row.get("wire") != wire or origin_of(row.get("origin", "")) != want:
+            continue
+        model, effort = str(row.get("model") or ""), str(row.get("effort") or "")
+        if not model or not effort or not str(row.get("source") or "").strip():
+            raise CatalogError(
+                f"structured_small 行缺 model / effort / source: {row.get('origin')!r}"
+            )
+        if effort not in verified_efforts(str(row.get("agent") or ""), str(row["origin"]), model):
+            raise CatalogError(f"structured_small 的档位没有逐型号核过: {model} {effort}")
+        return {"model": model, "effort": effort}
+    return None
+
+
 def efforts_for(agent: str, base_url: str, model: str | None = None) -> list[str]:
     """内置执行器在这个地址、这个型号上**确认支持**的思考强度档位；不确定 = `[]`（宁可不显示，也不发对方不认的字段）。
     细节见 `effort_support`。"""

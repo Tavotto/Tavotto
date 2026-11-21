@@ -776,6 +776,7 @@ def reset_for_tests() -> None:
         _JOBS.clear()
         _BY_KEY.clear()
         _NEGATIVE.clear()
+    ai_structured.reset_small_for_tests()
     _OVERRIDES.clear()
 
 
@@ -791,8 +792,18 @@ def _spend(n: int) -> None:
         b[0] = max(0, int(b[0]) - n)
 
 
+def _auto_small() -> bool:
+    return bool(_OVERRIDES.get("auto_small", True))
+
+
 def _identity(conn: dict) -> str:
-    return f"{conn.get('provider_id', '')}|{conn.get('model', '')}"
+    """缓存键里的「判断来源」：连接 + **实际会用的型号与强度**（小型号策略换了型号 / 强度 = 不同的判断来源；这个连接身份近期被判用不了小型号时按原型号算）。"""
+    model, effort = (
+        ai_structured.effective_choice(conn, EFFORT)
+        if _auto_small()
+        else (str(conn.get("model") or ""), str(conn.get("effort") or EFFORT))
+    )
+    return f"{conn.get('provider_id', '')}|{model}|{effort}"
 
 
 def _available_connection() -> dict | None:
@@ -955,7 +966,10 @@ def _add_usage(job: Job | None, res: ai_structured.StructuredResult) -> None:
     u["usage_reported"] = u.get("usage_reported", True) and res.usage_reported
     if res.cost_usd is not None:
         u["cost_usd"] = u.get("cost_usd", 0.0) + res.cost_usd
-    u.setdefault("model", res.model)
+    if res.model:
+        u["model"] = res.model  # 实际用的那个（兜底换回用户型号时是后一个）；两次请求的用量都已累加
+    if res.fell_back:
+        u["fell_back"] = True
     u.setdefault("wire", res.wire)
 
 
@@ -994,6 +1008,8 @@ def judge(
     total = float(_OVERRIDES.get("timeout_s", TIMEOUT_S))
     do_call = call or ai_structured.call_structured
     kw = {k: _OVERRIDES[k] for k in ("conn", "post") if k in _OVERRIDES}
+    # 小型号 + 最低档策略（ADR 0178 2026-11-21）：产品里恒开；手动基准可经覆盖关掉，好显式比较型号 / 强度
+    kw["auto_small"] = _auto_small()
 
     def run_call(**ckw):
         left = _budget_left()

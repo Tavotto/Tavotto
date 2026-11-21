@@ -75,9 +75,15 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--base-url", default=OPENAI_BASE, help="--key-file 的地址（默认 OpenAI 官方）")
     p.add_argument(
         "--effort",
-        choices=("minimal", "low", "medium", "high"),
+        choices=("none", "minimal", "low", "medium", "high"),
         default="",
-        help="--key-file 的思考强度（默认 low）",
+        help="--key-file 的思考强度（默认 low；不认的型号 / 档位服务端会 400）",
+    )
+    p.add_argument(
+        "--auto-small",
+        action="store_true",
+        help="仅 --suite roles 且 --real：开「小型号 + 最低档」自动策略（默认关：显式给什么型号 / 强度就用什么）。"
+        "与 --effort 互斥（临时连接不带 effort，型号当成「用户选的型号」）",
     )
     p.add_argument(
         "--max-calls", type=int, default=0, help="--real 的实际请求数上限（至少 用例数 × 2）"
@@ -113,9 +119,13 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
             p.error("--key-file 只能和 --real 同用")
         if not args.model:
             p.error("--key-file 要同时给 --model")
-        args.effort = args.effort or "low"
+        if args.auto_small and args.effort:
+            p.error("--auto-small 与 --effort 互斥：自动策略自己定型号与强度")
+        args.effort = "" if args.auto_small else (args.effort or "low")
     elif args.model or args.effort or args.base_url != OPENAI_BASE:
         p.error("--model / --base-url / --effort 只在 --key-file 下有意义")
+    if args.auto_small and (not args.real or args.suite != "roles"):
+        p.error("--auto-small 只用于 --suite roles --real")
     if args.wire is None:
         args.wire = "openai-responses" if args.key_file else "anthropic"
     return args
@@ -193,8 +203,9 @@ def _real_connection(args, n_cases: int, label: str, repeats: int = 1):
             "model": args.model,
             "auth": "key",
             "provider_id": "bench-temp",  # 临时连接：不在 provider 存储里
-            "effort": args.effort,  # 只有这条临时连接带；`ai_structured._effort_kwargs` 认它
         }
+        if args.effort:  # 只有这条临时连接带（且显式给了才带）；`ai_structured._effort_kwargs` 认它，也让自动策略不插手
+            conn["effort"] = args.effort
     else:
         from tavotto.engine import ai_structured
 
@@ -398,6 +409,7 @@ def _main_roles(args, D, DR, tmp_iso) -> int:
                     post=post,
                     request_budget=budget,
                     fresh=True,
+                    auto_small=args.auto_small,  # 默认 False：跑分显式给什么型号 / 强度就用什么
                 )
                 runs.append((k, run))
                 a = DR.default_hits(case, run.rules)["all"]

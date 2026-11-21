@@ -388,3 +388,21 @@ interval / trajectories / dose_response / profile）。批次 2 / 3 在本 PR �
 **度量**：`tests/fixtures/data_figure_cases/roles_cases.json`（22 条：18 条规则会出错的——整数批次 / 流水号 / 重复序号被当轴、顺序反了、两个分组列、备注列在前、中文、夹文字格、两种表头问题——加 4 条规则本来就对的对照）；评分有列角色正确率（全部 / 关键列）、默认 x / y / 分组命中率（规则臂 vs 模型臂）、对照被改坏数、表头 / 处理规则命中；`scripts/dev/data_figure_bench.py --suite roles [--arm rules|both] [--real --max-calls N]`，`--max-calls` 按**实际 HTTP 请求数**硬拦，报告含实际输入 / 输出 token 与按定价表估的花费。假回答下的模型臂是录好的理想回答，**只证明链路与护栏，不代表真模型的命中率**。**本步没有对真模型跑过。**
 
 **不做 / 留给后面**：单位行强制；多表文件夹里让模型选表（选表仍是规则或用户的事）；订阅登录（`unsupported_connection`，行为与今天一样）；前端轮询与「采纳建议」的交互（文案要用户签字）。
+
+**修订（2026-11-21，维护者同意按实测改）：读懂数据默认用小型号 + 最低档，不行再兜底回用户的型号**（`ai_structured.small_plan` / `ai_catalog.json` 的 `structured_small`）。第 1 步是一问一答的小任务，在 46 条用例上重复跑（OpenAI 官方端点、Responses 协议；「改坏」= 规则本来对的被模型改错）：
+
+| 型号 / reasoning.effort | 次数 | 完成率 | 改坏 | 每张表花费 |
+|---|---|---|---|---|
+| gpt-6-luna / none | 230 | 99.6% | 0 | ≈ $0.00005 |
+| gpt-6-luna / low | 230 | 97.4% | 0 | ≈ $0.00008 |
+| gpt-6.1-terra / none | 138 | 98.6% | 0 | ≈ $0.0004 |
+| gpt-6.2-sol / low | 138 | 100% | 0 | ≈ $0.0034 |
+
+逐型号问 API 的支持档位：`gpt-6-luna`、`gpt-6.1-terra` 认 none/low/medium/high/xhigh/max（不认 minimal）；`gpt-6.2-sol` 认 low/medium/high/xhigh/max（none、minimal 都不认）；gpt-5 / mini / nano 认 minimal。其余 GPT-6 / 5.6 型号没有逐个核过。发不支持的值服务端回 400。
+
+* **策略表**放 `ai_catalog.json` 的顶层 `structured_small`（与 `effort_origins` 同一份目录、同一套 origin 匹配与出处注释习惯）：按「官方端点 origin + 协议」给 `(型号, effort)`，现在只登记 OpenAI 官方 + `openai-responses` → `gpt-6-luna` + `none`。**不登记 = 行为不变**：Anthropic 官方、第三方 / 自定义端点、账号登录（Bearer）、订阅登录 CLI。用户自选的型号已经是它、或连接自带 `effort`（手动基准显式给的）时不插手。
+* **只有调用方显式开 `auto_small` 才生效**（`call_structured` 默认关）：只有实测过的读懂数据（`ai_data_roles`）开；配方排序（`ai_data_model`）没测过，不开。**不影响改图助手 / 智能修复**——它们的型号与档位仍由用户选择与目录决定。
+* **兜底**：小型号这一次失败且属于「这把 Key / 这个端点用不了它」——`transport` 里 `http_400` / `http_404` / `http_422`、`auth` 里 `http_403`（`ai_structured._SMALL_UNUSABLE`；能区分到的就是 HTTP 状态，不读服务端错误体）——就**改用用户连接里原本的型号与原有 effort 再试一次**，共用同一个总时限与 `max_requests`（预算 / 时间不够就不试、如实返回小型号那次的失败）。401（密钥被拒，换型号也一样）、timeout、quota、refused、invalid_output、over_budget 都不换型号。进程内记「连接身份（地址 + provider + Key 摘要 + 小型号）不可用」10 分钟（`SMALL_UNAVAILABLE_TTL_S`），期内直接用原型号。
+* **`none` 的出路**：wire 层 `RESPONSES_WIRE_EFFORTS = RESPONSES_EFFORTS + none`；`RESPONSES_EFFORTS`（用户可选档位）不含 none，改图 / 修复的校验与连接视图的过滤照旧，所以它们永远发不出 none。目录里 `gpt-6-luna` / `gpt-6.1-terra` / `gpt-6.2-sol` 在 `gpt-6` 前缀之前单列（前缀先中先得），界面档位仍是 low/medium/high；`none` 记在 `hidden_efforts`（`ai_catalog.verified_efforts`），因为前端的档位文案表（`effortLabel`）没有 none，露出来会显示成裸的 `none`。要在界面上露出 none，先让用户签字加文案。
+* **缓存键**（`ai_data_roles._identity`）带**实际会用的型号与强度**（`ai_structured.effective_choice`）：换型号 = 不同的判断来源；记下「小型号不可用」之后按原型号算。兜底成功的那份判断仍存在小型号的键下（调用前就定键）。用量记录的 `model` 是最后实际用的那个，`fell_back` 标出换过；两次请求都计入 `requests` / token / 花费。
+* 手动基准 `--effort` 加 `none`；`--real --key-file` 仍是「显式给什么型号 / 强度就用什么」，不自动换；`--auto-small`（只用于 `--suite roles --real`，与 `--effort` 互斥）验证自动策略，默认关。
