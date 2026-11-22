@@ -16,6 +16,9 @@ for raw in sys.stdin:
     rid, cmd, payload = req["request_id"], req["cmd"], req.get("payload") or {}
     if cmd == "hello":
         api = int(os.environ.get("PRO_ECHO_API", "1"))
+        if os.environ.get("PRO_ECHO_HELLO_FAIL"):  # 握手回失败信封、自己不退（测宿主回收）
+            reply(rid, False, code="unsupported", message="hello refused")
+            continue
         reply(
             rid,
             True,

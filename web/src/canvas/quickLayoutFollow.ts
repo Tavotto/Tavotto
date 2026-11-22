@@ -47,6 +47,8 @@ export class QuickLayoutFollow {
   private timer: ReturnType<typeof setTimeout> | null = null
   private holding = false
   private ended = false
+  /** commit 完成时的撤销栈深度：栈缩短 = 这次排版被撤销（或换了文档），目标几何已失去依据 */
+  private pastDepth = 0
 
   /** 收集这份排版记忆里的图与它们旁边的子图标签的 DOM 节点（没挂上的图就没有跟手，退回淡色轮廓） */
   constructor(memo: QuickLayoutMemo) {
@@ -116,8 +118,13 @@ export class QuickLayoutFollow {
     this.holding = true
     this.ensureObserver()
     const check = () => this.settle()
+    this.pastDepth = useDocumentStore.getState().past.length
     this.unsubs.push(
-      useDocumentStore.subscribe(check),
+      useDocumentStore.subscribe((st) => {
+        // 撤销（或换文档）让这次 commit 不在了：立刻放手，不等 8 秒，也别再把已撤销的目标盖在 React 恢复的几何上
+        if (st.past.length < this.pastDepth) this.restore()
+        else this.settle()
+      }),
       useRenderStore.subscribe(check),
       useMountedSvgStore.subscribe(check),
     )

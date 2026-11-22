@@ -284,6 +284,24 @@ describe('拖分隔线：图跟手 + 请求与预览一致', () => {
     vi.useRealTimers()
   })
 
+  it('commit 之后、新图挂上之前撤销：预览立刻放手，DOM 几何回到撤销后的文档值', async () => {
+    quickLayoutPlan.mockResolvedValue(okPlan())
+    startGutterDrag(down(0, 0), gutter())
+    fire('pointermove', -25 * PX_PER_MM(), 0)
+    fire('pointerup', -25 * PX_PER_MM(), 0)
+    await flush()
+    act(() => { place('p1'); place('p2') })
+    await tick()
+    expect(els.p1.style.scale).not.toBe('')
+    act(() => { s().undo() })
+    act(() => { place('p1'); place('p2') })
+    await tick()
+    expect(els.p1.style.scale).toBe('')
+    expect(els.p1.style.translate).toBe('')
+    expectBox('p1', [10, 10, 85, 60])
+    expectBox('p2', [98, 10, 85, 60])
+  })
+
   it('请求失败 / 作废：不动画，节点原样放回', async () => {
     quickLayoutPlan.mockResolvedValue({ ok: false, code: 'not_converged' })
     startGutterDrag(down(0, 0), gutter())

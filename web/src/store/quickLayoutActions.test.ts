@@ -234,6 +234,21 @@ describe('应用', () => {
     }
   })
 
+  it('左侧半宽裁剪的两张图连续排两次：标签不叠，只有一个 (a)、一个 (b)', async () => {
+    const crop = { x: 0.5, y: 0, w: 0.5, h: 1 }
+    seed(panel('p1', { x: 50, w: 40, crop }), panel('p2', { x: 140, w: 40, crop }))
+    quickLayoutPlan.mockResolvedValue({
+      ...okPlan(),
+      panels: [
+        { key: 'p1', patches: [], box: [10, 10, 80, 60] },
+        { key: 'p2', patches: [], box: [98, 10, 80, 60] },
+      ],
+    })
+    expect(await runQuickLayout('double', 3)).toBe('applied')
+    expect(await runQuickLayout('double', 3)).toBe('applied')
+    expect(texts().map((l) => l.text)).toEqual(['(a)', '(b)'])
+  })
+
   it('混选里有固定的图（位图）：只换「真拿到新标签」的图的旧标签，位图自己的 (c) 还在', async () => {
     seed(panel('p1'), panel('p2', { x: 100 }), panel('p3', { fileKind: 'raster', x: 10, y: 100 }))
     s().commit(literal('旧标签'), (d) => {

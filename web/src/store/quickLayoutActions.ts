@@ -544,12 +544,12 @@ function commitPlan(
 ): void {
   useDocumentStore.getState().commit(hist(label), (d) => {
     // 旧的子图标签（「(a)」这类，与样式系统同一判据 `isSubLabel`）落在**这次真拿到新标签的那几张图**
-    // 原来的范围里（外扩 5 mm）的，换成这次算好位置的新标签：重复点不叠标签，手加的 (a)(b) 也跟着落到对的地方。
+    // 原来的范围里（被裁剪的图按整图框，求解器的标签相对整图摆；外扩 5 mm）的，换成这次算好位置的新标签：重复点不叠标签，手加的 (a)(b) 也跟着落到对的地方。
     // 固定的图（位图 / 旋转…）后端不回标签，它的旧标签原样留着
     const labelled = new Set(res.labels.map((l) => l.key))
     const before = d.objects
       .filter((o): o is PanelObject => o.type === 'panel' && labelled.has(o.id))
-      .map(boxOf)
+      .map(fullBoxOf)
     const near = (x: number, y: number) =>
       before.some(([bx, by, bw, bh]) => x >= bx - 5 && x <= bx + bw + 5 && y >= by - 5 && y <= by + bh + 5)
     d.objects = d.objects.filter((o) => !(o.type === 'text' && isSubLabel(o) && near(o.x, o.y)))

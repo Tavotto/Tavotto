@@ -250,6 +250,27 @@ def test_close_kills_and_reaps_a_sidecar_that_ignores_eof(dev_mode, monkeypatch)
     assert proc.returncode is not None  # 已回收
 
 
+def test_failed_handshake_reaps_the_spawned_sidecar(dev_mode, monkeypatch):
+    """握手回失败信封、组件自己不退：构造半途失败时也要结束并回收刚拉起的进程，不留孤儿。"""
+    import subprocess as sp
+
+    monkeypatch.setenv("PRO_ECHO_HELLO_FAIL", "1")
+    monkeypatch.setenv("PRO_ECHO_IGNORE_EOF", "1")
+    spawned: list = []
+    real = sp.Popen
+
+    def spy(*a, **kw):
+        p = real(*a, **kw)
+        spawned.append(p)
+        return p
+
+    monkeypatch.setattr(prohost.subprocess, "Popen", spy)
+    with pytest.raises(prohost.ProUnavailable):
+        prohost.call("echo", {"x": 1}, feature="quick-layout")
+    assert prohost._current is None
+    assert len(spawned) == 1 and spawned[0].returncode is not None  # 已结束并回收
+
+
 def test_parallel_render_binds_requesting_project():
     """并行渲染线程里看到的项目 = 发起请求的项目（不是默认项目）。"""
     from tavotto import app as tavotto_app

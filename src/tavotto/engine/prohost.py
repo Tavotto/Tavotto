@@ -118,11 +118,19 @@ class _Sidecar:
         self.last_used = time.monotonic()
         self._stderr = threading.Thread(target=self._drain_stderr, daemon=True)
         self._stderr.start()
-        hello = self.request("hello", {}, timeout=HELLO_TIMEOUT_S)
-        api = hello.get("pro_api")
-        if api not in SUPPORTED_PRO_API:
-            self.close()
-            raise ProUnavailable("unsupported", f"pro_api {api!r}")
+        # 握手没成功（失败信封 / 结果不对 / 版本不认）：构造没完成、调用方拿不到这个对象，
+        # 只能在这里结束并回收刚拉起的进程，否则它成了谁也够不着的孤儿
+        try:
+            hello = self.request("hello", {}, timeout=HELLO_TIMEOUT_S)
+            if not isinstance(hello, dict):
+                raise ProUnavailable("internal", "hello result is not an object")
+            api = hello.get("pro_api")
+            if api not in SUPPORTED_PRO_API:
+                raise ProUnavailable("unsupported", f"pro_api {api!r}")
+        except BaseException:
+            if self.proc.poll() is None:
+                self.close()
+            raise
         feats = hello.get("features")
         self.features = (
             frozenset(f for f in feats if isinstance(f, str))
