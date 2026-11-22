@@ -1949,31 +1949,6 @@ class Worker(wireproto.V1Handler):
         _prepare_cache_dir(lambda: self.out_dir.mkdir(parents=True, exist_ok=True))
         _prepare_cache_dir(lambda: self.sandbox.mkdir(parents=True, exist_ok=True))
         os.chdir(self.workdir or self.sandbox)
-        candidate = self._requested_input_declaration
-        if candidate is not None:
-            scope = candidate.get("scope") if isinstance(candidate, dict) else None
-            mode = scope.get("cwd_mode") if isinstance(scope, dict) else None
-            try:
-                script_id = self.script.relative_to(self.figures_dir).as_posix()
-            except ValueError:
-                script_id = self.script.as_posix()
-            paused = (
-                self._input_observer.paused()
-                if self._input_observer is not None
-                else contextlib.nullcontext()
-            )
-            with paused:
-                self._input_capture = inputdeclaration.begin(
-                    candidate,
-                    script=script_id,
-                    script_path=str(self.script_source),
-                    cwd_mode=mode,
-                    run_config=self.run_config or None,
-                    remap_rules=self.input_remap,
-                    actual_cwd=str(self.workdir or self.sandbox),
-                    project_root=str(self.figures_dir),
-                    sandbox=str(self.sandbox),
-                )
 
     def _install_file_guards(self):
         global BLOCKED_OPS

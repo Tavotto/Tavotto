@@ -277,18 +277,6 @@ class V1Handler:
         if cmd == "cancel":
             return self.cancel(payload)
 
-        existing_command = {
-            "render_existing": "render",
-            "export_existing": "export",
-            "preview_png_existing": "preview_png",
-        }.get(cmd)
-        existing = existing_command is not None
-        if existing:
-            self.require_existing_execution(payload.get("expected_execution_id"))
-            self.require_existing_figure(req.get("stem"))
-            # Reuse the same renderer, patch validation, timings and response shape.
-            cmd = existing_command
-
         if cmd in self.unbuilt_commands():
             return self.handle_extra(cmd, req, payload)
 
