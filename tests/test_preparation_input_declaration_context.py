@@ -403,3 +403,19 @@ def test_capture_summary_requires_existing_selection_private_attachment_and_read
         status=preparation.STATUS_CANCELLED if missing == "ready" else preparation.STATUS_READY,
     )
     assert _context(service, session)["captured_inputs"] is None
+
+
+def test_reused_archive_from_another_selection_never_certifies_the_new_choice(world):
+    """Codex #1925 P1：attempt 计划与会话计划同为 B、回执捕获却来自 A 的旧执行时，
+    投影不得把旧 archive 当成 B 的捕获展示；回执本身照旧保留为历史事实。"""
+    selection(world, files=[INPUT])
+    actual = _sealed(world)
+    assert actual.captured_selection_revision is not None
+    selection(world, files=[OTHER])
+    service, session = _session(world)
+    assert session.plan.input_declaration_state["revision"] != actual.captured_selection_revision
+    result = _attempt(service, session, actual)
+    assert result.receipt is actual
+    assert _context(service, session)["captured_inputs"] is None
+    # 历史回执一字不动：只是不再作为新选择的结果展示
+    assert service.report(session)["result"]["receipt"]["captured_inputs"] == actual.captured_inputs

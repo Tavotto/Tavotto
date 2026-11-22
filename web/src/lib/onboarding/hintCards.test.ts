@@ -534,3 +534,71 @@ describe('账的持久化', () => {
     expect(out.activeDays).toBe(0)
   })
 })
+
+describe('一键排版之后的拖分隔线（quick_layout）', () => {
+  const memo = () => ({
+    rows: 1,
+    cols: 2,
+    cells: { a: [0, 0] as [number, number], b: [0, 1] as [number, number] },
+    colRatios: [1, 1],
+    rowRatios: [1],
+    boxes: { a: [0, 0, 10, 10] as [number, number, number, number], b: [0, 0, 10, 10] as [number, number, number, number] },
+    target: 'double' as const,
+    gapMm: 3,
+    canvas: 'fit' as const,
+    fixSpec: true,
+  })
+  const withMemo = () => {
+    useWorkspaceStore.setState({ mode: 'layout' })
+    useDocumentStore.getState().commit(literal('memo'), (d) => {
+      d.quickLayout = memo()
+    })
+  }
+
+  it('第一次排版成功 → 出卡、记一次；到时收起后不再出（每台机器一次）', () => {
+    withMemo()
+    emitActivity({ kind: 'quick_layout.applied' })
+    expect(current()).toBe('quick_layout')
+    expect(stats().quick_layout).toMatchObject({ shows: 1, done: false })
+    vi.advanceTimersByTime(CARD_AUTO_DISMISS_MS)
+    expect(current()).toBeNull()
+    // 隔了很久、又排了一次：只出一次
+    vi.advanceTimersByTime(CARD_MIN_GAP_MS + 1000)
+    resetHintSessionForTest()
+    emitActivity({ kind: 'quick_layout.applied' })
+    expect(current()).toBeNull()
+    expect(stats().quick_layout?.shows).toBe(1)
+  })
+
+  it('点 × = 别再提；自己拖过一次分隔线 = 学会，已出的收起、之后不再出', () => {
+    withMemo()
+    emitActivity({ kind: 'quick_layout.applied' })
+    emitActivity({ kind: 'quick_layout.ratios_applied' })
+    expect(current()).toBeNull()
+    expect(stats().quick_layout?.done).toBe(true)
+  })
+
+  it('先拖过分隔线（学会）再排版：不出', () => {
+    withMemo()
+    emitActivity({ kind: 'quick_layout.ratios_applied' })
+    emitActivity({ kind: 'quick_layout.applied' })
+    expect(current()).toBeNull()
+  })
+
+  it('记忆已失效 / 不在多图排版里（没有分隔线可拖）：不出、也不记账', () => {
+    emitActivity({ kind: 'quick_layout.applied' })
+    expect(current()).toBeNull()
+    withMemo()
+    useWorkspaceStore.setState({ mode: 'fast_edit' })
+    emitActivity({ kind: 'quick_layout.applied' })
+    expect(current()).toBeNull()
+    expect(stats().quick_layout).toBeUndefined()
+  })
+
+  it('设置里关掉操作提示：不出', () => {
+    withMemo()
+    useOnboardingStore.setState({ hintsOff: true })
+    emitActivity({ kind: 'quick_layout.applied' })
+    expect(current()).toBeNull()
+  })
+})

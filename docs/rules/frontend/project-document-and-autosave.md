@@ -36,6 +36,8 @@ order: 200
   越界的 crop 会让 RenderCore 拒掉整份排版（#688）。
 - 文档模型可选字段（schema 仍为 2，旧文档兼容）：
   `PanelObject.lockedGids / flipH / flipV`、`ObjectBase.layoutPinned`、
+  `PageSetup.userSized`（用户明确设过画布尺寸：属性栏宽高 / 预设 / 方向、拖页边；一键排版自己写页面不置，ADR 0199）、
+  `FigureDocument.quickLayout`（一键排版记下的网格：行列、每张图的格子、比例、排好时的框；框被用户动过即失效，拖分隔线只在有效时出现，ADR 0199）、
   `FigureDocument.layoutGroups`（行/列/网格约束，id 即 groupId，
   尺寸变化自动重排）。**自动重排只跟用户编辑**（`startLayoutAutoReflow`，按
   `historyMove` 在栈上认：新条目 = 编辑，条目在 past / future 间挪格 = 撤销 / 重做，
