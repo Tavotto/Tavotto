@@ -362,9 +362,16 @@ def _forbidden(argv: list[str]) -> None:
 
 
 def test_codex_command_snapshot(monkeypatch):
+    # 型号目录读取用 pathlib：`os.name` 被改掉之后 `Path` 会分派到另一半平台而炸（Windows 上改成 posix 就是这样），先桩掉
+    monkeypatch.setattr(ai_agents.CodexAgent, "_catalog", classmethod(lambda cls: []))
     monkeypatch.setattr(ai_agents.os, "name", "posix")
     spec = ai_agents.get_agent("codex").build_structured_command(_ctx("codex"))
     assert spec is not None
+    # 产品用 `os.path.join` 拼辅助文件（Windows 上分隔符是反斜杠）：期望值用同一个函数拼，不写死 `/`
+    sys_file, out_file = (
+        os.path.join("/tmp/x/aux", "system.md"),
+        os.path.join("/tmp/x/aux", "out.txt"),
+    )
     assert spec.argv == [
         "/fake/codex",
         "exec",
@@ -379,17 +386,17 @@ def test_codex_command_snapshot(monkeypatch):
         "-c",
         "skills.include_instructions=false",
         "-c",
-        'model_instructions_file="/tmp/x/aux/system.md"',
+        f"model_instructions_file={ai_agents.toml_string(sys_file)}",
         "-m",
         "m-test",
         "-o",
-        "/tmp/x/aux/out.txt",
+        out_file,
         "-",
     ]
     _forbidden(spec.argv)
     assert spec.stdin == USER_SENTINEL and spec.env == {}
-    assert spec.files == {"/tmp/x/aux/system.md": SYSTEM_TEXT}
-    assert spec.output_file == "/tmp/x/aux/out.txt"
+    assert spec.files == {sys_file: SYSTEM_TEXT}
+    assert spec.output_file == out_file
 
 
 def test_claude_command_snapshot():
@@ -423,8 +430,11 @@ def test_claude_command_snapshot():
 def test_schema_flags_only_when_a_schema_is_given():
     schema = {"type": "object", "additionalProperties": False, "properties": {}}
     c = ai_agents.get_agent("codex").build_structured_command(_ctx("codex", schema=schema))
-    assert _flag_value(c.argv, "--output-schema") == "/tmp/x/aux/schema.json"
-    assert json.loads(c.files["/tmp/x/aux/schema.json"]) == schema
+    schema_file = os.path.join(
+        "/tmp/x/aux", "schema.json"
+    )  # 与产品同一个拼法（Windows 上是反斜杠）
+    assert _flag_value(c.argv, "--output-schema") == schema_file
+    assert json.loads(c.files[schema_file]) == schema
     k = ai_agents.get_agent("claude").build_structured_command(_ctx("claude", schema=schema))
     assert json.loads(_flag_value(k.argv, "--json-schema")) == schema
 
