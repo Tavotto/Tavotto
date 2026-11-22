@@ -6784,8 +6784,8 @@ export default interface Resources {
       "label": "画布工具",
       "pathTools": "钢笔与铅笔",
       "pen": "钢笔",
-      "quickLayout": "一键排版",
       "pencil": "铅笔",
+      "quickLayout": "一键排版",
       "select": "选择",
       "subLabels": "序号"
     },
