@@ -676,19 +676,22 @@ class NativeSession:
         return True
 
     def _revoke_pending_barrier(self) -> bool:
-        """Revoke one unconfirmed barrier, with ``_lock`` held.
+        """Clear the live barrier and report any receipt change, with ``_lock`` held.
 
         Local terminal states (notably one-way terminate) are not runner
         acknowledgements. Only trusted release/end frames or a successful
         continue response clear this pending barrier without uncertainty.
         """
-        if self._barrier_snapshot_epoch is not None:
-            changed = self.snapshot_epoch == self._barrier_snapshot_epoch
-            if changed:
-                self.snapshot_epoch += 1
-            self._barrier_snapshot_epoch = None
-            return changed
-        return False
+        epoch = self._barrier_snapshot_epoch
+        self._barrier_snapshot_epoch = None
+        if epoch is None or self.snapshot_epoch != epoch:
+            return False
+        # The owned R bridge has already run the script to completion at this
+        # barrier. Its command loop can redraw the capture, and EOF exits it.
+        if self.ggplot_target is not None and self.barrier_reason == "script_end":
+            return False
+        self.snapshot_epoch += 1
+        return True
 
     def _on_transport_closed(self, reason: dict | None) -> None:
         owned = self.owned

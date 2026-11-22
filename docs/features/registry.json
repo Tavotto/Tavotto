@@ -1390,6 +1390,21 @@
       ]
     },
     {
+      "id": "desktop.ggplot-facet-label-color",
+      "status": "active",
+      "platform": "desktop",
+      "summary": {
+        "zh-CN": "修改原生 ggplot2 的单个分面标签颜色，并随排版保存和导出",
+        "en-US": "Recolor an individual native ggplot2 facet label, then save the layout and export it"
+      },
+      "entry": "脚本 → 用 R 运行 → 图内元素 → 分面标签 → 颜色",
+      "e2e": [],
+      "desktop_manual": [
+        "用 R 运行一个带两个不同标签的普通 facet_wrap 图。在元素树中选择其中一个标签改色，核对两处颜色，撤销后重做。",
+        "保存排版，结束 R 会话后重开并导出 PDF，核对所选标签的颜色。"
+      ]
+    },
+    {
       "id": "figure.cross-figure-align",
       "status": "active",
       "platform": "both",

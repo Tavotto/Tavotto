@@ -124,7 +124,7 @@ class GgplotTarget:
             if identity is not None and (
                 not isinstance(gid, str) or identity != identities.get(gid)
             ):
-                raise pool.WorkerError("The native R title target changed. Select it again.")
+                raise pool.WorkerError("The native R text target changed. Select it again.")
 
     @staticmethod
     def acknowledge_export(response: dict, svg_path: str | None) -> dict:

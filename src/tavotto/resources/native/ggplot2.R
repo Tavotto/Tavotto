@@ -25,7 +25,7 @@ ggplot_text_slots <- c(
   "axis.y.right.title" = "ylab-r"
 )
 
-ggplot_text_target <- function(table, slots, role) {
+ggplot_text_target <- function(table, slots, role, title_child = NULL) {
   path <- character()
   for (slot in slots) {
     box <- table$layout[slot, ]
@@ -33,6 +33,10 @@ ggplot_text_target <- function(table, slots, role) {
     cell <- paste0(box$name, ".", paste(c(box$t, box$r, box$b, box$l), collapse = "-"))
     path <- c(path, table$name, cell)
     table <- table$grobs[[slot]]
+  }
+  if (!is.null(title_child)) {
+    path <- c(path, table$name)
+    table <- table$children[[title_child]]
   }
   children <- table$children
   if (length(children) != 1L) return(NULL)
@@ -48,8 +52,10 @@ ggplot_text_target <- function(table, slots, role) {
   color <- grDevices::rgb(rgb[1L], rgb[2L], rgb[3L],
                           alpha = if (rgb[4L] != 255L) rgb[4L] else NULL,
                           maxColorValue = 255)
+  edit_path <- if (is.null(title_child)) text$name else grid::gPath(table$name, text$name)
   list(slots = slots, parent_path = paste(c(path, table$name), collapse = "::"),
-       child = text$name, label = text$label, paint = text$gp, color = color, role = role)
+       child = text$name, edit_path = edit_path, label = text$label,
+       paint = text$gp, color = color, role = role)
 }
 
 ggplot_legend_titles <- function(table) {
@@ -76,6 +82,29 @@ ggplot_legend_titles <- function(table) {
   targets[!(duplicated(labels) | duplicated(labels, fromLast = TRUE))]
 }
 
+ggplot_facet_labels <- function(table) {
+  targets <- list()
+  keys <- character()
+  cells <- table$layout$name
+  slots <- which(grepl("^strip-[tblr]-[0-9]+(-[0-9]+)?$", cells) &
+                   !duplicated(cells) & !duplicated(cells, fromLast = TRUE))
+  for (slot in slots) {
+    strip <- table$grobs[[slot]]
+    if (!inherits(strip, "gtable") || length(strip$grobs) != 1L ||
+        !identical(strip$layout$name, "strip")) next
+    titles <- which(vapply(strip$grobs[[1L]]$children, inherits, logical(1L), "titleGrob"))
+    if (length(titles) != 1L) next
+    target <- ggplot_text_target(table, c(slot, 1L), "text", title_child = titles[[1L]])
+    if (is.null(target)) next
+    position <- sub("^strip-", "", cells[[slot]])
+    gid <- paste0("facet.", gsub("-", ".", position, fixed = TRUE), ".label")
+    targets[[gid]] <- target
+    keys <- c(keys, paste(substr(position, 1L, 1L), target$label, sep = ":"))
+  }
+  # Reordered strips with duplicate labels on the same side have no stable target.
+  targets[!(duplicated(keys) | duplicated(keys, fromLast = TRUE))]
+}
+
 measure_ggplot_text <- function(drawn, target, frame_pt) {
   row <- which(drawn$name == target$child & drawn$gPath == target$parent_path)
   if (length(row) != 1L) return(NULL)
@@ -100,7 +129,7 @@ ggplot_text_targets <- function(table, frame_pt) {
     role <- if (gid == "plot.title") "title" else "axis_label"
     targets[[gid]] <- ggplot_text_target(table, slot, role)
   }
-  targets <- c(targets, ggplot_legend_titles(table))
+  targets <- c(targets, ggplot_legend_titles(table), ggplot_facet_labels(table))
   if (!length(targets)) return(targets)
   drawn <- tryCatch({
     grid::grid.force()
@@ -141,10 +170,10 @@ capture_ggplot <- function(plot, frame_pt) {
   list(state = state, svg = render_ggplot(state))
 }
 
-edit_ggplot_title <- function(table, slots, child, paint) {
-  if (!length(slots)) return(grid::editGrob(table, child, gp = paint, strict = TRUE))
+edit_ggplot_text <- function(table, slots, path, paint) {
+  if (!length(slots)) return(grid::editGrob(table, path, gp = paint, strict = TRUE))
   slot <- slots[[1L]]
-  table$grobs[[slot]] <- edit_ggplot_title(table$grobs[[slot]], slots[-1L], child, paint)
+  table$grobs[[slot]] <- edit_ggplot_text(table$grobs[[slot]], slots[-1L], path, paint)
   table
 }
 
@@ -152,15 +181,15 @@ ggplot_table_for <- function(state, colors) {
   table <- state$table
   for (gid in names(colors)) {
     target <- state$text_targets[[gid]]
-    if (is.null(target)) stop("The requested native R title is unavailable.")
+    if (is.null(target)) stop("The requested native R text is unavailable.")
     color <- colors[[gid]]
     if (!is.character(color) || length(color) != 1L ||
         is.na(color) || !grepl("^#[0-9A-Fa-f]{6}$", color)) {
-      stop("The native R title color must be an RGB hex color.")
+      stop("The native R text color must be an RGB hex color.")
     }
     paint <- target$paint
     paint$col <- color
-    table <- edit_ggplot_title(table, target$slots, target$child, paint)
+    table <- edit_ggplot_text(table, target$slots, target$edit_path, paint)
   }
   table
 }

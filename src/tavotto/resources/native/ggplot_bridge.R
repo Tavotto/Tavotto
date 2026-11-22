@@ -72,7 +72,7 @@ main <- function() {
   })
   send(list(bridge_event = "barrier", reason = "script_end", stems = list(stem)))
 
-  title_colors_from <- function(request) {
+  text_colors_from <- function(request) {
     if (!identical(request$stem, stem)) stop("Unknown ggplot object.")
     patches <- request$payload$patches
     if (!is.list(patches)) stop("Expected a full list of plot patches.")
@@ -83,7 +83,7 @@ main <- function() {
           !is.character(patch$gid) || length(patch$gid) != 1L ||
           is.na(patch$gid) || !nzchar(patch$gid) ||
           !identical(patch$prop, "color") || !is.character(patch$value)) {
-        stop("This ggplot adapter supports plain-text plot, axis and legend title colors.")
+        stop("This ggplot adapter supports plain-text title and facet-label colors.")
       }
       colors[[patch$gid]] <- patch$value
     }
@@ -106,12 +106,12 @@ main <- function() {
                      manifest = adapter$ggplot_manifest(captured$state, stem),
                      ggplot2 = as.character(utils::packageVersion("ggplot2"))),
         render = {
-          colors <- title_colors_from(request)
+          colors <- text_colors_from(request)
           list(ok = TRUE, svg = adapter$render_ggplot(captured$state, colors),
                manifest = adapter$ggplot_manifest(captured$state, stem, colors))
         },
         export = {
-          colors <- title_colors_from(request)
+          colors <- text_colors_from(request)
           payload <- request$payload
           if (!identical(payload$format, "pdf") || !is.character(payload$path)) {
             stop("The ggplot adapter exports a PDF with an optional SVG companion.")

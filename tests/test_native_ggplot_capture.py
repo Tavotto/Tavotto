@@ -35,6 +35,7 @@ ADAPTER = ROOT / "src" / "tavotto" / "resources" / "native" / "ggplot2.R"
 X_BOTTOM = "axis.x.bottom.title"
 Y_LEFT = "axis.y.left.title"
 LEGEND = "legend.right.1.title"
+FACET = "facet.t.2.2.label"
 
 
 def _pdf_text_colors(path):
@@ -67,7 +68,8 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
   ggplot2::geom_point(ggplot2::aes(shape = factor(cyl)),
                       position = ggplot2::position_jitter(width = .12, height = 0)) +
   ggplot2::stat_summary(fun = tracked_mean, geom = "point", shape = 4) +
-  ggplot2::facet_wrap(ggplot2::vars(cyl)) +
+  ggplot2::facet_wrap(ggplot2::vars(cyl), labeller = ggplot2::labeller(
+    cyl = function(values) paste("Cylinder", values))) +
   ggplot2::labs(title = "Fuel economy", x = "Engine displacement", y = "Highway mileage",
                  colour = "Drive type", shape = "Cylinders") +
   ggplot2::guides(
@@ -84,7 +86,8 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
     axis.title.x.bottom = ggplot2::element_text(colour = "#223344"),
     axis.title.x.top = ggplot2::element_text(colour = "#334455"),
     axis.title.y.left = ggplot2::element_text(colour = "#445566"),
-    axis.title.y.right = ggplot2::element_text(colour = "#556677")
+    axis.title.y.right = ggplot2::element_text(colour = "#556677"),
+    strip.text = ggplot2::element_text(colour = "#202040")
   )
 
 baseline <- adapter$capture_ggplot(plot, c(432, 288))
@@ -94,13 +97,19 @@ labels <- c("plot.title" = "Fuel economy",
             "axis.y.left.title" = "Highway mileage",
             "axis.y.right.title" = "Secondary vertical",
             "legend.right.1.title" = "Drive type",
-            "legend.right.2.title" = "Cylinders")
-original <- c("#112233", "#223344", "#334455", "#445566", "#556677", "#667788", "#778899")
-colors <- setNames(as.list(c("#6C3799", "#8C3011", "#2370B1", "#2A7654", "#923190", "#3373A7", "#C75052")),
+            "legend.right.2.title" = "Cylinders",
+            "facet.t.2.2.label" = "Cylinder 8")
+facets <- c("facet.t.1.2.label" = "Cylinder 6", "facet.t.2.2.label" = "Cylinder 8",
+            "facet.t.1.1.label" = "Cylinder 4", "facet.t.2.1.label" = "Cylinder 5")
+original <- c("#112233", "#223344", "#334455", "#445566", "#556677", "#667788", "#778899", "#202040")
+colors <- setNames(as.list(c("#6C3799", "#8C3011", "#2370B1", "#2A7654",
+                            "#923190", "#3373A7", "#C75052", "#BE3D47")),
                    names(labels))
 stopifnot(summary_calls > 0L, length(baseline$state$layers) == 2L,
           length(baseline$state$panel_ranges) == 4L,
-          identical(names(baseline$state$text_targets), names(labels)))
+          identical(names(baseline$state$text_targets), c(head(names(labels), -1L), names(facets))),
+          identical(vapply(baseline$state$text_targets[names(facets)], function(t) t$label,
+                           character(1L)), facets))
 count_at_capture <- summary_calls
 rng_at_capture <- .Random.seed
 edited <- adapter$render_ggplot(baseline$state, colors)
@@ -120,7 +129,8 @@ for (i in seq_along(labels)) {
     stopifnot(bbox[[4L]] > bbox[[3L]], abs(anchor[[2L]] - bbox[[2L]] - bbox[[4L]] / 2) < 1)
   } else {
     anchor <- as.numeric(sub(".* x='([^']+)'.*", "\\1", edited_line))
-    expected_x <- bbox[[1L]] + if (startsWith(gid, "axis.x.")) bbox[[3L]] / 2 else 0
+    centered <- startsWith(gid, "axis.x.") || startsWith(gid, "facet.")
+    expected_x <- bbox[[1L]] + if (centered) bbox[[3L]] / 2 else 0
     stopifnot(bbox[[3L]] > bbox[[4L]], abs(anchor - expected_x) < 1)
     if (startsWith(gid, "legend.")) {
       y <- as.numeric(sub(".* y='([^']+)'.*", "\\1", edited_line))
@@ -136,24 +146,24 @@ stopifnot(lengths(gregexpr("<svg ", baseline$svg, fixed = TRUE)) == 1L,
 
 bad_value <- tryCatch(adapter$render_ggplot(baseline$state, list("plot.title" = "not-a-colour")),
                       error = conditionMessage)
-stopifnot(identical(bad_value, "The native R title color must be an RGB hex color."))
+stopifnot(identical(bad_value, "The native R text color must be an RGB hex color."))
 limited <- adapter$capture_ggplot(
   plot + ggplot2::labs(title = NULL, x = expression(alpha), colour = "Shared", shape = "Shared") +
     ggplot2::theme(axis.title.y.left = ggplot2::element_blank()),
   c(432, 288))
 stopifnot(identical(names(limited$state$text_targets),
-                    c("axis.x.top.title", "axis.y.right.title")),
+                    c("axis.x.top.title", "axis.y.right.title", names(facets))),
           length(grep(">Shared</text>", strsplit(limited$svg, "\n")[[1L]], fixed = TRUE)) == 2L)
 bad_target <- tryCatch(adapter$render_ggplot(limited$state, colors),
                        error = conditionMessage)
-stopifnot(identical(bad_target, "The requested native R title is unavailable."),
+stopifnot(identical(bad_target, "The requested native R text is unavailable."),
           identical(grDevices::dev.cur(), c("null device" = 1L)))
 
 hidden <- adapter$capture_ggplot(plot + ggplot2::guides(
   colour = ggplot2::guide_legend(title = expression(mu)),
   shape = ggplot2::guide_legend(title = NULL)
 ), c(432, 288))
-stopifnot(identical(names(hidden$state$text_targets), head(names(labels), 5L)))
+stopifnot(identical(names(hidden$state$text_targets), c(head(names(labels), 5L), names(facets))))
 
 bar <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
   ggplot2::geom_point() + ggplot2::labs(colour = "City mileage") +
@@ -165,6 +175,45 @@ bar_edited <- adapter$render_ggplot(bar_state, setNames(list("#26838F"), gid))
 bar_title <- grep(">City mileage</text>", strsplit(bar_edited, "\n")[[1L]],
                   value = TRUE, fixed = TRUE)
 stopifnot(length(bar_title) == 1L, grepl("#26838F", bar_title, fixed = TRUE))
+
+data <- data.frame(x = 1:4, y = 4:1, row = rep(c("Sample", "Shared"), each = 2),
+                   column = rep(c("Control", "Shared"), 2))
+points <- ggplot2::ggplot(data, ggplot2::aes(x, y)) + ggplot2::geom_point() +
+  ggplot2::theme(strip.text.x = ggplot2::element_text(colour = "#375994"),
+                 strip.text.y = ggplot2::element_text(colour = "#4F7152"))
+capture <- function(plot) adapter$capture_ggplot(plot, c(432, 288))
+facet_targets <- function(plot) {
+  targets <- capture(plot)$state$text_targets
+  targets[startsWith(names(targets), "facet.")]
+}
+grid <- capture(points + ggplot2::facet_grid(ggplot2::vars(row), ggplot2::vars(column)))
+left <- facet_targets(points + ggplot2::facet_wrap(ggplot2::vars(row), strip.position = "left"))
+bottom <- facet_targets(points + ggplot2::facet_wrap(ggplot2::vars(column), strip.position = "bottom"))
+stopifnot(identical(names(left), c("facet.l.1.2.label", "facet.l.1.1.label")),
+          identical(names(bottom), c("facet.b.1.1.label", "facet.b.2.1.label")))
+across <- grid$state$text_targets[["facet.t.2.label"]]
+down <- grid$state$text_targets[["facet.r.2.label"]]
+stopifnot(across$label == "Shared", down$label == "Shared",
+          across$color == "#375994", down$color == "#4F7152")
+grid_edit <- adapter$render_ggplot(grid$state, list("facet.r.2.label" = "#BC4964"))
+row <- grep("#BC4964", strsplit(grid_edit, "\n")[[1L]], value = TRUE, fixed = TRUE)
+bbox <- down$bbox * c(432, 288, 432, 288)
+anchor <- as.numeric(strsplit(sub(".*translate\\(([^)]+)\\).*", "\\1", row), ",")[[1L]])
+stopifnot(length(row) == 1L, grepl(">Shared</text>", row, fixed = TRUE),
+          abs(anchor[[2L]] - bbox[[2L]] - bbox[[4L]] / 2) < 1,
+          identical(sub("#BC4964", "#4F7152", grid_edit, fixed = TRUE), grid$svg))
+
+repeat_labels <- ggplot2::labeller(column = function(values) rep("Repeated facet", length(values)))
+repeated <- capture(points + ggplot2::facet_wrap(ggplot2::vars(column), labeller = repeat_labels))
+stacked <- points + ggplot2::facet_wrap(ggplot2::vars(row, column))
+formula <- points + ggplot2::facet_wrap(ggplot2::vars(column), labeller = ggplot2::label_parsed)
+blank <- points + ggplot2::facet_wrap(ggplot2::vars(column)) +
+  ggplot2::theme(strip.text.x = ggplot2::element_blank())
+stopifnot(!any(startsWith(names(repeated$state$text_targets), "facet.")),
+          length(grep(">Repeated facet</text>", strsplit(repeated$svg, "\n")[[1L]],
+                      fixed = TRUE)) == 2L,
+          !length(facet_targets(stacked)), !length(facet_targets(formula)),
+          !length(facet_targets(blank)))
 
 if (capabilities("cairo")) {
   cairo_pdf <- grDevices::cairo_pdf
@@ -277,10 +326,10 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy)) +
         assert bottom["editable"][0]["value"] == "#6B6B6B"
         invalid = [{"gid": "plot.title", "prop": "text", "value": "Unchanged"}]
         with pytest.raises(
-            pool.WorkerError, match="supports plain-text plot, axis and legend title colors"
+            pool.WorkerError, match="supports plain-text title and facet-label colors"
         ):
             session.override(stem, invalid, inline_svg=True)
-        with pytest.raises(pool.WorkerError, match="title is unavailable"):
+        with pytest.raises(pool.WorkerError, match="text is unavailable"):
             session.override(
                 stem,
                 [{"gid": "axis.y.right.title", "prop": "color", "value": "#6C3799"}],
@@ -294,9 +343,9 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy)) +
                 "identity": title["identity"],
             }
         ]
-        with pytest.raises(pool.WorkerError, match="title target changed"):
+        with pytest.raises(pool.WorkerError, match="text target changed"):
             session.override(stem, [{**color[0], "identity": "r1:another-title"}], inline_svg=True)
-        with pytest.raises(pool.WorkerError, match="title target changed"):
+        with pytest.raises(pool.WorkerError, match="text target changed"):
             session.override(
                 stem,
                 [{**color[0], "gid": X_BOTTOM, "identity": top["identity"]}],
@@ -341,7 +390,9 @@ def test_desktop_ggplot_edit_uses_the_layout_archive_and_mixed_export(tmp_path, 
         """
 cat("computed", file = "r-witness")
 plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
-  ggplot2::geom_point() + ggplot2::facet_wrap(ggplot2::vars(cyl)) +
+  ggplot2::geom_point() +
+  ggplot2::facet_wrap(ggplot2::vars(cyl), labeller = ggplot2::labeller(
+    cyl = function(values) paste("Cylinder", values))) +
   ggplot2::labs(title = "Fuel economy", x = "Engine displacement", y = "Highway mileage",
                  colour = "Drive type") +
   ggplot2::theme(plot.title = ggplot2::element_text(colour = "#112233"))
@@ -407,11 +458,14 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
         elements = {element["gid"]: element for element in render([])["manifest"]["elements"]}
         assert elements[LEGEND]["role"] == "legend_text"
         assert elements[LEGEND]["label"] == "Drive type"
+        assert elements[FACET]["role"] == "text"
+        assert elements[FACET]["label"] == "Cylinder 8"
         expected = {
             "plot.title": "#6C3799",
             X_BOTTOM: "#8C3011",
             Y_LEFT: "#2A7654",
             LEGEND: "#2370B1",
+            FACET: "#BE3D47",
         }
         patches = [
             {"gid": gid, "prop": "color", "value": color, "identity": elements[gid]["identity"]}
@@ -421,8 +475,20 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
         edit = render(patches)
         svg = edit["svg"]
         for element in edit["manifest"]["elements"]:
-            assert element["editable"][0]["value"] == expected[element["gid"]]
-        assert "#2370B1" not in render(patches[:-1])["svg"]
+            gid = element["gid"]
+            assert element["editable"][0]["value"] == expected.get(
+                gid, elements[gid]["editable"][0]["value"]
+            )
+        other_facet = elements["facet.t.1.1.label"]
+        with pytest.raises(pool.WorkerError, match="text target changed"):
+            session.override(
+                descriptor["stem"],
+                [*patches[:-1], {**patches[-1], "identity": other_facet["identity"]}],
+                inline_svg=True,
+            )
+        assert session.svg_path(descriptor["stem"]).read_text(encoding="utf-8") == svg
+        without_facet = render(patches[:-1])["svg"]
+        assert "#2370B1" in without_facet and "#BE3D47" not in without_facet
         undo_x_and_y = render(patches[:1])["svg"]
         assert (
             "#6C3799" in undo_x_and_y
@@ -496,7 +562,44 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
         )
         assert saved.status_code == 200, saved.get_json()
         assert "r" in saved.get_json()["figure_snapshots"]
+        saved_document = client.get(layout).get_json()
+        reference = saved_document["canvases"][0]["objects"][1]["figureSnapshot"]
         assert session.cancel_owned().confirmed
+        session = None
+        # Reopening can autosave before the sidecar itself restarts.
+        slot = "/api/autosave/d_native_ggplot_stopped"
+        autosaved = client.put(slot, json=saved_document)
+        assert autosaved.status_code == 200, autosaved.get_json()
+        assert (
+            client.get(slot).get_json()["canvases"][0]["objects"][1]["figureSnapshot"] == reference
+        )
+        original_request = {
+            "scope": "original",
+            "filename": "Archived original",
+            "formats": ["pdf"],
+            "original": {
+                "figure_id": source,
+                "overrides": patches,
+                "figure_snapshot": reference,
+            },
+        }
+        exported = client.post("/api/export", json=original_request)
+        assert exported.status_code == 200, exported.get_json()
+        original = exported.get_json()
+        assert original["status"] == "done", original
+        colors = _pdf_text_colors(Path(original["export_dir"]) / original["outputs"][0]["name"])
+        assert colors["Cylinder 8"] == {int(expected[FACET][1:], 16)}
+
+        script.write_text('stop("new execution failed")\n', encoding="utf-8")
+        launched = client.post("/api/native/ggplot2", json=target)
+        assert launched.status_code == 202, launched.get_json()
+        sid = launched.get_json()["session"]["session_id"]
+        session = nativesession.REGISTRY.get(sid)
+        assert session.wait_for_state(nativesession.TERMINAL_STATES, timeout=20)
+        assert session.execution_id
+        stale = client.post("/api/export", json={**original_request, "filename": "Stale original"})
+        assert stale.get_json().get("error", {}).get("code") == "svg_snapshot_missing"
+        assert not (root / "tavottofile" / "export" / "Stale original.pdf").exists()
         session = None
         service.reset_projects()
         script.rename(root / "source-moved")
