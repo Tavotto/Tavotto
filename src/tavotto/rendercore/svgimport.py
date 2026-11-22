@@ -96,11 +96,35 @@ def _nums(s: str) -> list[float]:
     return [float(x) for x in _NUM_RE.findall(s or "")]
 
 
+def _transform_calls(s: str):
+    """`name ( args )` 逐个切出来：单趟线性扫描（原来的 `([a-zA-Z]+)\\s*\\(([^)]*)\\)` 遇到一长串字母、或 `A((((…`
+    这种没有右括号的输入会从每个起点重扫一遍，是平方级回溯，CodeQL py/polynomial-redos）"""
+    i, n = 0, len(s)
+    while i < n:
+        if not s[i].isascii() or not s[i].isalpha():
+            i += 1
+            continue
+        j = i
+        while j < n and s[j].isascii() and s[j].isalpha():
+            j += 1
+        name = s[i:j]
+        while j < n and s[j].isspace():
+            j += 1
+        if j < n and s[j] == "(":
+            k = s.find(")", j + 1)
+            if k < 0:
+                return
+            yield name, s[j + 1 : k]
+            i = k + 1
+        else:
+            i = j
+
+
 def parse_transform(s: str | None) -> Matrix:
     m = IDENTITY
     if not s:
         return m
-    for name, args in re.findall(r"([a-zA-Z]+)\s*\(([^)]*)\)", s):
+    for name, args in _transform_calls(s):
         v = _nums(args)
         t: Matrix
         if name == "matrix" and len(v) == 6:
@@ -222,7 +246,10 @@ def _parse_decls(s: str) -> dict[str, str]:
         if ":" in part:
             k, v = part.split(":", 1)
             k = k.strip().lower()
-            v = re.sub(r"\s*!important\s*$", "", v.strip())
+            v = v.strip()
+            # 去掉结尾的 !important：不用 `\\s*!important\\s*$`（一长串空格时平方级回溯，CodeQL py/polynomial-redos）
+            if v.endswith("!important"):
+                v = v[: -len("!important")].rstrip()
             if k in STYLE_PROPS:
                 out[k] = v
     return out
