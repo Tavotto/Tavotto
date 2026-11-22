@@ -1168,6 +1168,13 @@ def _input_declaration_context(plan: preparation.PreparationPlan, found) -> dict
         and attempt_plan.input_remap_generation == plan.input_remap_generation
         and isinstance(rcpt, receipt.ExecutionReceipt)
         and isinstance(rcpt.captured_input_archive, inputdeclaration.InputArchive)
+        # The capture itself must prove it was taken under this selection: the
+        # receipt stamps the store row revision its own candidate was approved
+        # from (Codex #1925 P1). A reused archive from an older execution with
+        # a different selection certifies nothing here; the old receipt is
+        # preserved untouched, it is simply not presented as this choice's
+        # result. Pure field comparison — polling stays free of resource IO.
+        and rcpt.captured_selection_revision == attempt_plan.input_declaration_state["revision"]
     ):
         # Selection and remap approval are independently versioned: a retained
         # ready attempt must match both frozen observations of the current plan.

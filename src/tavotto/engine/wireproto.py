@@ -292,6 +292,18 @@ class V1Handler:
         if cmd in self.unbuilt_commands():
             return self.handle_extra(cmd, req, payload)
 
+        existing_command = {
+            "render_existing": "render",
+            "export_existing": "export",
+            "preview_png_existing": "preview_png",
+        }.get(cmd)
+        existing = existing_command is not None
+        if existing:
+            self.require_existing_execution(payload.get("expected_execution_id"))
+            self.require_existing_figure(req.get("stem"))
+            # Reuse the same renderer, patch validation, timings and response shape.
+            cmd = existing_command
+
         patches = payload.get("patches", [])
         if cmd in PATCH_COMMANDS and not isinstance(patches, list):
             raise ProtocolError("bad_request", "payload.patches 必须是数组")

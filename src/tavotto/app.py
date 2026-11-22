@@ -165,6 +165,7 @@ from .engine import (
     projectcopy as engine_projectcopy,
     projectenv as engine_projectenv,
     projscan as engine_projscan,
+    quicklayout as engine_quicklayout,
     rasterhint as engine_rasterhint,
     readiness as engine_readiness,
     receipt as engine_receipt,
@@ -11955,6 +11956,146 @@ def api_engine_specfix():
     return jsonify(out)
 
 
+@app.post("/api/pro/quick-layout/plan")
+def api_pro_quick_layout_plan():
+    """一键排版（ADR 0199，高级功能 `quick-layout`）。**只算不写**，照 `/api/engine/specfix`：
+
+    请求：`{panels: [{key, id, patches, box}], fixed: [{key, box}], page: {w, h, margin}, target, gap_mm, profile, label_pt, fix_spec, columns?, canvas: keep|fit, ratios?: {cols, rows}}`。成功时另回 `grid`（行列、每张图的格子、比例），前端画分隔线用。
+    `patches` 是每张图此刻的全量 override 列表（B0），`box` 是画布上的摆放（mm）。
+    成功回 `{ok: true, panels: [{key, patches, box}], labels: [{key, x, y}], notes}`，由前端一次 commit；
+    失败回 `{ok: false, code}`，每张图的 worker 回到 B0（或作废），**文档一个字不改**。
+    权益判断在 `engine/quicklayout.py`（本路由不判，`test_license_callsites` 看护）。
+    """
+    body = request.get_json(force=True) or {}
+    raw_panels = body.get("panels")
+    if not isinstance(raw_panels, list):
+        return jsonify({"error": "panels 必须是列表", "code": "invalid_panels"}), 400
+    profile = body.get("profile")
+    if not isinstance(profile, dict) or not isinstance(profile.get("severity"), dict):
+        return jsonify({"error": "profile 必须是一份完整的规范", "code": "invalid_profile"}), 400
+    page = body.get("page") if isinstance(body.get("page"), dict) else {}
+    try:
+        page = {k: float(page[k]) for k in ("w", "h")} | {"margin": float(page.get("margin") or 0)}
+        label_pt = float(body.get("label_pt") or 8.0)
+        gap_mm = float(body.get("gap_mm") if body.get("gap_mm") is not None else 3.0)
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"error": "page / label_pt / gap_mm 不合规", "code": "invalid_options"}), 400
+    if not engine_quicklayout.licensed():
+        return jsonify({"ok": False, "code": "not_licensed"})
+
+    states: list[dict] = []
+    panels: list = []
+    fixed = [
+        {"key": str(f.get("key") or ""), "box": [float(v) for v in f.get("box")]}
+        for f in body.get("fixed") or []
+        if isinstance(f, dict) and isinstance(f.get("box"), list) and len(f["box"]) == 4
+    ]
+    seen: set[str] = set()
+    for raw in raw_panels:
+        if not isinstance(raw, dict) or not isinstance(raw.get("patches"), list):
+            return jsonify({"error": "panel 形状不对", "code": "invalid_panels"}), 400
+        rel_id, box = str(raw.get("id") or ""), raw.get("box")
+        if not (isinstance(box, list) and len(box) == 4):
+            return jsonify({"error": "box 形状不对", "code": "invalid_panels"}), 400
+        # 同一张图摆了两次、native 图：只当固定盒子参与排位（ADR 0199 §一 / §二）
+        if rel_id in seen or _specfix_profile(rel_id) == engine_enginesession.PROFILE_NATIVE:
+            fixed.append({"key": str(raw.get("key") or ""), "box": [float(v) for v in box]})
+            continue
+        try:
+            worker, stem = _engine_worker(rel_id, safe_only=True)
+        except NativeWorkerRefused:
+            fixed.append({"key": str(raw.get("key") or ""), "box": [float(v) for v in box]})
+            continue
+        seen.add(rel_id)
+        state = {
+            "id": rel_id,
+            "worker": worker,
+            "stem": stem,
+            "clean": True,
+            "base": list(raw["patches"]),
+        }
+
+        def render(patches: list, state=state) -> dict:
+            _require_route_unchanged(state["id"])
+            try:
+                wk, st, resp = _engine_attempt(
+                    state["id"],
+                    state["worker"],
+                    state["stem"],
+                    lambda w, s: w.override(s, patches, None),
+                    safe_only=True,
+                )
+            except BaseException:
+                state["clean"] = False
+                raise
+            state["worker"], state["stem"] = wk, st
+            if resp.get("warnings"):
+                state["clean"] = False
+            return resp
+
+        states.append(state)
+        panels.append(
+            engine_quicklayout.Panel(
+                key=str(raw.get("key") or ""),
+                rel_id=rel_id,
+                base=list(raw["patches"]),
+                box=[float(v) for v in box],
+                render=render,
+            )
+        )
+
+    def rollback() -> bool:
+        retired = False
+        for st in states:
+            if st["clean"]:
+                try:
+                    st_render = next(p.render for p in panels if p.rel_id == st["id"])
+                    st_render(st["base"])
+                except BaseException:  # noqa: BLE001 — 回不到 B0 就作废
+                    st["clean"] = False
+            if not st["clean"]:
+                retired = _retire_hot_worker(st["worker"]) or retired
+        return retired
+
+    ql_ctx = _request_ctx()  # 并行渲染线程没有 request context，要钉在发起请求的项目上
+    try:
+        out = engine_quicklayout.plan(
+            panels,
+            fixed,
+            page=page,
+            target=str(body.get("target") or "double"),
+            gap_mm=gap_mm,
+            profile=profile,
+            label_pt=label_pt,
+            fix_spec=body.get("fix_spec") is not False,
+            columns=int(body["columns"])
+            if isinstance(body.get("columns"), int) and not isinstance(body.get("columns"), bool)
+            else None,
+            canvas=str(body.get("canvas") or "fit"),
+            ratios=body.get("ratios") if isinstance(body.get("ratios"), dict) else None,
+            bind=(lambda: bound_project(ql_ctx)) if ql_ctx is not None else None,
+        )
+        for st in states:
+            _require_route_unchanged(st["id"])
+    except engine_quicklayout.QuickLayoutError as exc:
+        LOG.info("一键排版没有排好: %s", exc)
+        retired = rollback()
+        return jsonify({"ok": False, "code": exc.code, "replay_required": retired})
+    except (_SpecfixRouteChanged, NativeWorkerRefused, engine_pool.WorkerError) as exc:
+        LOG.warning("一键排版途中渲染失败: %s", exc)
+        retired = rollback()
+        return jsonify({"ok": False, "code": "render_failed", "replay_required": retired})
+    except BaseException:
+        rollback()
+        raise
+    retired = False
+    for st in states:
+        if not st["clean"]:
+            retired = _retire_hot_worker(st["worker"]) or retired
+    out["replay_required"] = retired
+    return jsonify(out)
+
+
 class _SpecfixRouteChanged(Exception):
     """修复事务途中，这张图「由谁渲染」变了（safe → native）。"""
 
@@ -15144,6 +15285,8 @@ def _preparation_runner(pl, before_retry=None):
         acquired.append(worker)
         engine_preparation.SERVICE.note_owner(pl.plan_id, worker, created)
 
+    from .engine import declaredinputs as engine_declaredinputs
+
     try:
         return engine_pool.build_owned(
             pl.script,
@@ -15155,7 +15298,20 @@ def _preparation_runner(pl, before_retry=None):
             **({"run": pl.run} if getattr(pl, "run", None) is not None else {}),
             # 这份计划自己的解释器（路径 + 来源 + 环境代）：取会话只认它，不再对共享的项目记录重新决定
             **({"pinned": _plan_pin(pl)} if _plan_pin(pl) is not None else {}),
+            # 计划冻结的精确声明选择：取到会话快失败一次，build 载荷构造处同一次读里权威核对
+            # （Codex #1925 P2），检查与出门之间没有第二次读
+            **(
+                {"input_declaration_state": pl.input_declaration_state}
+                if getattr(pl, "input_declaration_state", None) is not None
+                else {}
+            ),
         )
+    except engine_declaredinputs.DeclaredInputsConflict as exc:
+        # 载荷构造处的核对（Codex #1925 P2）：计划冻结的选择已不是存储此刻的选择——
+        # 与 native 分支同一折算，计划冲突，刷新救得回来
+        raise engine_pool.WorkerError(
+            "输入声明已变化，请刷新准备计划", code="preparation_plan_stale"
+        ) from exc
     finally:
         for worker in acquired:
             fact = _svg_execution_result(worker)
@@ -15199,7 +15355,10 @@ def _native_preparation_runner(pl, before_retry=None):
                 launch_order=pl.launch_order,
                 cancelled=lambda: engine_preparation.SERVICE.launch_blocked(pl.plan_id),
                 **(
-                    {"input_declaration_state": pl.input_declaration_state}
+                    {
+                        "input_declaration_state": pl.input_declaration_state,
+                        "input_remap_generation": pl.input_remap_generation,
+                    }
                     if getattr(pl, "input_declaration_state", None) is not None
                     else {}
                 ),

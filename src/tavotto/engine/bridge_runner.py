@@ -474,7 +474,7 @@ def run_script(
     # `source`（ADR 0194 启动脚本）：字节来自它，身份（`__file__` / 编译文件名 / argv[0]）仍是 target
     with io.open_code(os.path.abspath(source) if source else abspath) as f:
         code_bytes = f.read()
-    if on_source is not None and not source:
+    if on_source is not None:
         on_source(abspath, code_bytes)
     # `dont_inherit=True` **是必须的**：本文件自己有 `from __future__ import
     # annotations`，而 `compile()` 默认会把**调用处生效的** future 语句一并
@@ -518,6 +518,7 @@ def run_script_entry(target: str, argv: list, entry: str, on_start=None, *, on_s
     with io.open_code(abspath) as f:
         source = f.read()
     if on_source is not None:
+        # Declared-input capture binds the bytes this entry actually compiles.
         on_source(abspath, source)
     code = compile(source, abspath, "exec", dont_inherit=True)
     name = os.path.splitext(os.path.basename(abspath))[0]
@@ -591,7 +592,7 @@ def run_module(
     `path_root`（ADR 0196，桌面拥有的 native 把包里的脚本按模块运行）：`sys.path[0]` 用它——包根的上一级，
     而不是 cwd（桌面的 cwd 是脚本目录或项目根，那里 import 不到 `plots`）；没给 = 与真实 `-m` 一样放 cwd。
     """
-    import runpy  # noqa: PLC0415 — 只有 module 目标才需要，脚本目标不必付这份 import
+    import runpy  # noqa: PLC0415 — 只有 module 目标才需要付这份 import
 
     sys.argv = [target, *argv]  # run_module(alter_sys=True) 会把 argv[0] 换成模块文件
     sys.path.insert(0, path_root or os.getcwd())
@@ -601,10 +602,13 @@ def run_module(
         _, spec, _cached = runpy._get_module_details(target)  # noqa: SLF001
         origin = spec.origin or ""
         with io.open_code(origin) as fh:
-            source = fh.read()
-        code = compile(source, origin, "exec", dont_inherit=True)
+            code_bytes = fh.read()
         if on_source is not None:
-            on_source(origin, source)
+            # Only the target module's own source read binds the capture; the
+            # parent-package imports _get_module_details may have triggered are
+            # not target execution.
+            on_source(origin, code_bytes)
+        code = compile(code_bytes, origin, "exec", dont_inherit=True)
         if on_origin is not None:
             on_origin(origin)
         if on_start is not None:
@@ -1029,8 +1033,15 @@ class BridgeRun:
         with _engine_reads():
             self._input_capture = _PKG.inputdeclaration.begin(
                 candidate,
+                # scope identity stays the original script; the byte identity is
+                # what this process actually reads and compiles (ADR 0194: the
+                # AI-repair launcher's bytes, original script's identity).
                 script=self.args.rel_target,
-                script_path=self.args.source_path,
+                script_path=(
+                    os.path.abspath(self.args.script_source)
+                    if self.args.script_source
+                    else self.args.source_path
+                ),
                 cwd_mode=candidate["scope"]["cwd_mode"],
                 run_config=self.args.run_config or None,
                 remap_rules=(),
@@ -1047,6 +1058,15 @@ class BridgeRun:
         self._captured_inputs = None
         self._captured_input_archive = None
         if self._input_capture is None:
+            return
+        if self._capture_source_sha256 is None:
+            # Pre-target barrier (Codex #1925 P2): a parent package imported by
+            # runpy._get_module_details may show a Figure before the target
+            # module's source is ever read. finish() would fail without
+            # sticking — no bound bytes yet — and discarding the still-healthy
+            # pending capture here would leave the real target boundary without
+            # evidence. Keep it armed: this barrier stays a plain control-plane
+            # release, and the target's own read boundary captures as designed.
             return
         try:
             # Raw runner callers historically let the first preview create this
@@ -1814,35 +1834,37 @@ def main(argv: list | None = None) -> int:
 
     exit_code = 0
     try:
-        if args.target_kind == "script":
-            # 启动脚本沿用原图身份，但其字节和输入链不等同于原始源码。
-            if not args.script_source:
-                run.begin_input_capture()
-            on_source = run.capture_source if run._input_capture is not None else None
-            if args.as_module:
-                run_module(
-                    args.as_module,
-                    args.user_argv,
-                    on_start=run.execution_started,
-                    path_root=args.module_path_root,
-                    on_source=on_source,
-                )
-            elif args.call_entry:
-                run_script_entry(
-                    args.target,
-                    args.user_argv,
-                    args.call_entry,
-                    on_start=run.execution_started,
-                    on_source=on_source,
-                )
-            else:
-                run_script(
-                    args.target,
-                    args.user_argv,
-                    on_start=run.execution_started,
-                    source=args.script_source,
-                    on_source=on_source,
-                )
+        if args.as_module:
+            # Package script run as a module (ADR 0196): same declared-input
+            # capture, bound at the target module's own source read.
+            run.begin_input_capture()
+            run_module(
+                args.as_module,
+                args.user_argv,
+                on_start=run.execution_started,
+                path_root=args.module_path_root,
+                on_source=run.capture_source if run._input_capture is not None else None,
+            )
+        elif args.target_kind == "script" and args.call_entry:
+            # Registered function entry (ADR 0127): same capture boundary at
+            # the module's actual source read.
+            run.begin_input_capture()
+            run_script_entry(
+                args.target,
+                args.user_argv,
+                args.call_entry,
+                on_start=run.execution_started,
+                on_source=run.capture_source if run._input_capture is not None else None,
+            )
+        elif args.target_kind == "script":
+            run.begin_input_capture()
+            run_script(
+                args.target,
+                args.user_argv,
+                on_start=run.execution_started,
+                on_source=run.capture_source if run._input_capture is not None else None,
+                source=args.script_source,
+            )
         else:
             run_module(
                 args.target,

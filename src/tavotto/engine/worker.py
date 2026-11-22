@@ -2175,6 +2175,31 @@ class Worker(wireproto.V1Handler):
         self.session.begin_save_moments()
         self.configure_run({})
         self._prepare_sandbox()
+        candidate = self._requested_input_declaration
+        if candidate is not None:
+            scope = candidate.get("scope") if isinstance(candidate, dict) else None
+            mode = scope.get("cwd_mode") if isinstance(scope, dict) else None
+            try:
+                script_id = self.script.relative_to(self.figures_dir).as_posix()
+            except ValueError:
+                script_id = self.script.as_posix()
+            paused = (
+                self._input_observer.paused()
+                if self._input_observer is not None
+                else contextlib.nullcontext()
+            )
+            with paused:
+                self._input_capture = inputdeclaration.begin(
+                    candidate,
+                    script=script_id,
+                    script_path=str(self.script_source),
+                    cwd_mode=mode,
+                    run_config=self.run_config or None,
+                    remap_rules=self.input_remap,
+                    actual_cwd=str(self.workdir or self.sandbox),
+                    project_root=str(self.figures_dir),
+                    sandbox=str(self.sandbox),
+                )
         # 与 `python 脚本.py` 同一个顺序：脚本自己所在目录在 `sys.path[0]`（面板脚本放 panels/ 子目录时，
         # 只加图库根会让 import_module(stem) 直接 ModuleNotFoundError）；项目根（图库根）**追加到末尾**，排在
         # site-packages 之后——脚本 import 项目根下的 paper_style / 数据模块照样找得到，但项目根里恰好有同名

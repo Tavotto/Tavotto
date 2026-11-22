@@ -142,7 +142,8 @@
     "label": "Canvas tools",
     "pen": "Pen",
     "select": "Select",
-    "subLabels": "Labels"
+    "subLabels": "Labels",
+    "quickLayout": "Auto layout"
   },
   "confirm": {
     "docLossBody": "Browser storage is unavailable or full, so you won’t be able to get this layout back from “Recent layouts on this computer” after switching. Continue anyway?",
@@ -499,7 +500,9 @@
     "transformScale": "Scale",
     "transformRotate": "Rotate",
     "transformSkew": "Skew",
-    "transformReflect": "Reflect"
+    "transformReflect": "Reflect",
+    "quickLayout": "Auto layout",
+    "quickLayoutRatios": "Adjust layout proportions"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -1073,7 +1076,27 @@
     "skewSkipped_other": "{{count}} texts or figures were not skewed",
     "rotatePanelUnsupported": "Figures rotate in 90° steps only",
     "rotatePanelSkipped_one": "{{count}} figure was not rotated (figures rotate in 90° steps only)",
-    "rotatePanelSkipped_other": "{{count}} figures were not rotated (figures rotate in 90° steps only)"
+    "rotatePanelSkipped_other": "{{count}} figures were not rotated (figures rotate in 90° steps only)",
+    "quickLayoutDone": "Laid out",
+    "quickLayoutUndo": "Undo",
+    "quickLayoutTooFew": "Need at least two figures",
+    "quickLayoutStale": "The figures just changed. Run Auto layout again.",
+    "quickLayoutFailed": "Couldn't lay these out. Try again.",
+    "quickLayoutNoteEqualAspect": "Figure {{label}} has equal-aspect axes, so its axes weren't aligned",
+    "quickLayoutNoteSpecNotFixed": "Some font sizes in figure {{label}} are still below the spec — see Issues",
+    "quickLayoutSpecDone": "Fixed {{what}} to “{{spec}}”",
+    "quickLayoutSpecFallback": "current spec",
+    "quickLayoutSpecSep": ", ",
+    "quickLayoutSpec": {
+      "font_family": "font",
+      "font_size": "font size",
+      "line_width": "line width",
+      "tick_direction": "tick direction",
+      "legend_frame": "legend frame",
+      "text_weight": "font weight",
+      "other": "other styles"
+    },
+    "quickLayoutPageTooSmall": "The figures don't fit this canvas. Try fewer columns or a larger canvas."
   },
   "tabs": {
     "allCanvases": "All canvases",
@@ -1173,7 +1196,10 @@
     "documentRenameHint": "Click for layout actions; double-click or F2 to rename",
     "zoomValueInput": "Zoom (%)",
     "zoomSelection": "Zoom to selection",
-    "journalTitle": "Checked against {{journal}} · open journal spec"
+    "journalTitle": "Checked against {{journal}} · open journal spec",
+    "quickLayout": "Auto layout",
+    "quickLayoutTip": "Arrange these figures, their sizes and labels in one go",
+    "quickLayoutOptions": "Auto layout options"
   },
   "tutorialChip": {
     "label": "Tutorial"
@@ -1207,7 +1233,8 @@
     "shift_multi": "⇧-click several, then change them all",
     "shortcut_help": "Press ? for all shortcuts",
     "shortcutHelpOpen": "Open",
-    "pageBoundsOpen": "Open Canvas tab"
+    "pageBoundsOpen": "Open Canvas tab",
+    "quick_layout": "Drag the gaps between figures to change how much room each gets"
   },
   "prep": {
     "aria": "Prepare {{script}}",
@@ -2004,5 +2031,31 @@
     "label": "Editing group",
     "exit": "Exit group editing",
     "exitTip": "Press Esc to go up one level"
+  },
+  "quickLayout": {
+    "targetLabel": "Width",
+    "target": {
+      "double": "Double column",
+      "page": "Full page",
+      "single": "Single column"
+    },
+    "gapLabel": "Gap",
+    "gap": "{{mm}} mm",
+    "fixSpec": "Also fix text and lines to the spec",
+    "columnsLabel": "Arrangement",
+    "columns": {
+      "auto": "By current position",
+      "1": "1 column",
+      "2": "2 columns",
+      "3": "3 columns"
+    },
+    "canvasLabel": "Canvas",
+    "canvas": {
+      "auto": "Auto",
+      "keep": "Keep canvas size",
+      "fit": "Fit to content"
+    },
+    "widthLockedTip": "Width follows the canvas when keeping its size",
+    "gutterTip": "Drag to adjust proportions"
   }
 }

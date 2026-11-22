@@ -726,6 +726,10 @@
       "reflect-vertical": {
         "keywords": "reflect mirror flip vertical",
         "label": "Reflect vertically"
+      },
+      "quick-layout": {
+        "keywords": "quick layout auto arrange align yjpb",
+        "label": "Auto layout"
       }
     },
     "listLabel": "Commands",
