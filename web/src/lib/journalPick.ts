@@ -30,6 +30,19 @@ import { bindingFor, builtinEntryById, type JournalPrev, type JournalRef, type S
 const jt = (key: string, values?: Record<string, unknown>) =>
   translate(`journal.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
+/* ------------------------------ 旧 id 别名换绑 ----------------------------- */
+
+/**
+ * 项目里存的期刊 id 在目录里找不到时，按别名找它现在叫什么：`id` **精确等于**（逐字、不做 NFKC / 大小写折叠）
+ * 某本刊 `aliases` 里的一项，且只匹配到唯一一本，才返回那本刊的新 id；id 本身在目录里、没匹配到、匹配到多本，一律 `null`。
+ * 目录加载校验保证别名不会与任何现行 id 撞名，所以「id 在目录里」与「按别名换绑」互斥；这里仍先判前者，不依赖那条保证。
+ */
+export function resolveJournalAlias(id: string, catalog: JournalCatalog): string | null {
+  if (Object.prototype.hasOwnProperty.call(catalog.journals, id)) return null
+  const hits = Object.entries(catalog.journals).filter(([, j]) => (j.aliases ?? []).includes(id))
+  return hits.length === 1 ? hits[0][0] : null
+}
+
 /* ------------------------------- 搜索与分组 ------------------------------- */
 
 const issnKey = (s: string) => aliasKey(s).replace(/[-\s]/g, '')

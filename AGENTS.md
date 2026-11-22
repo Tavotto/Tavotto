@@ -91,7 +91,7 @@ python scripts/smoke_app.py --python .venv/bin/python   # 端到端冒烟
 
 - 只报正确性、回归、用户数据、Windows / macOS 差异、用户既有项目兼容；格式 / lint / 类型 /
   命名不报（CI 管）；diff 没触及也没因它变可达的旧代码不报。每条写出触发场景（操作 → 错误
-  结果），纯理论的不报。P1 = 丢编辑、热态 ≠ 文件 ≠ 重放、静默错图、受支持平台走不通、门禁空转。
+  结果），纯理论的不报。P1 = 丢编辑、热态 ≠ 文件 ≠ 重放、静默错图（含数据被静默丢掉 / 截断）、受支持平台走不通、门禁空转。
 - 重点：画布视觉位置与逻辑坐标分叉（单选 / 多选变换、平移后缩放、倍率换算、撤销重做、序列化
   往返）；用户 Python / venv 发现、内置 runtime 回退、缺依赖说清（用户依赖不在内置 runtime）；
   数据不一定在脚本旁（相对路径基准、改 cwd、别处打开项目、盘符 / 大小写 / 非 ASCII）；与用户原
@@ -112,5 +112,5 @@ python scripts/smoke_app.py --python .venv/bin/python   # 端到端冒烟
 | `packaging/` | `packaging/AGENTS.md` → `docs/rules/packaging/` | wheel/sdist、内置渲染 runtime、PyInstaller、macOS 签名 |
 | `codex-plugin/` | `codex-plugin/AGENTS.md` → `docs/rules/plugin/` | Codex 插件、技能、MCP server、内嵌画布、首次使用契约 |
 | `.github/` | `.github/AGENTS.md`（速查表）→ `docs/rules/ci/` | CI 分层、门禁纪律、验证链、发布链 |
-| 跨仓库 | `docs/rules/repo/` | 同源对总表、判据的主语、第三路径审查、不变量展开、本地验证、错题本 |
+| 跨仓库 | `docs/rules/repo/` | 同源对总表、判据的主语、第三路径审查、科学图形七问（改图形 / 预检 / 数据出图先读 `scientific-figure-review.md`）、不变量展开、本地验证、错题本 |
 | 架构决策 | `docs/adr/` | 改动前先读对应 ADR |

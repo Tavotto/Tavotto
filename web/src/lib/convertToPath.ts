@@ -11,6 +11,7 @@ import { arrowHeads, isStrokeOnlyShape, lineEndpoints, objectRotation, shapeStro
 import { fitPathBox, PATH_DEFAULT_JOIN } from './pathGeom'
 import { arcPoints, braceParts, cornerRadius, defaultLineJoin, KAPPA, outlineOf, shapeInset, shapeOutline } from './shapeGeometry'
 import { MM_PER_PT } from './units'
+import { remapGradients } from './gradient'
 
 /**
  * 「转为路径」（ADR 0185 §二）：形状 / 箭头 → 自由路径 `path`。
@@ -190,6 +191,9 @@ export function toPathObject(o: ShapeObject | ArrowObject): PathObject | null {
     ...(heads && heads.end !== 'none' ? { headEnd: heads.end } : {}),
     ...(o.type === 'arrow' && o.headSizeStart ? { headSizeStart: o.headSizeStart } : {}),
     ...(o.type === 'arrow' && o.headSizeEnd ? { headSizeEnd: o.headSizeEnd } : {}),
+    // 渐变（ADR 0186）：填充渐变跟着填充走；比例坐标从形状的框换到路径的框（下面 remapGradients）
+    ...(fill && o.type === 'shape' && o.fillGradient ? { fillGradient: o.fillGradient } : {}),
+    ...(o.type === 'shape' && o.strokeGradient ? { strokeGradient: o.strokeGradient } : {}),
   }
-  return out
+  return remapGradients(out, o, out, deg)
 }

@@ -1,3 +1,4 @@
+import type { ReadGradient } from './gradient'
 import { classifyArtifactFailure } from '@/lib/artifactReason'
 import type { RenderPurpose } from '@/lib/renderPurpose'
 import { ArtifactValidationError, FIGSIZE_SOURCE_POLICY, verifiedSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
@@ -1996,6 +1997,9 @@ export type ExportObject =
       dash_pattern?: number[]
       /** 描边对齐：形状发 center / outside（缺省内侧），路径发 inside / outside（缺省居中，ADR 0185 M2）；箭头不发 */
       stroke_align?: 'center' | 'outside' | 'inside'
+      /** 填充 / 描边渐变（ADR 0186）：`lib/gradient.readGradient` 读过的那份；没有 / 不生效不发 */
+      fill_gradient?: ReadGradient
+      stroke_gradient?: ReadGradient
       rotation_deg?: number
     })
   | (ExportBox & {
@@ -2024,6 +2028,9 @@ export type ExportObject =
       dash_pattern?: number[]
       /** 描边对齐：形状发 center / outside（缺省内侧），路径发 inside / outside（缺省居中，ADR 0185 M2）；箭头不发 */
       stroke_align?: 'center' | 'outside' | 'inside'
+      /** 填充 / 描边渐变（ADR 0186）：`lib/gradient.readGradient` 读过的那份；没有 / 不生效不发 */
+      fill_gradient?: ReadGradient
+      stroke_gradient?: ReadGradient
       rotation_deg?: number
     })
   | (ExportBox & {
@@ -2048,6 +2055,9 @@ export type ExportObject =
       dash_pattern?: number[]
       /** 描边对齐：形状发 center / outside（缺省内侧），路径发 inside / outside（缺省居中，ADR 0185 M2）；箭头不发 */
       stroke_align?: 'center' | 'outside' | 'inside'
+      /** 填充 / 描边渐变（ADR 0186）：`lib/gradient.readGradient` 读过的那份；没有 / 不生效不发 */
+      fill_gradient?: ReadGradient
+      stroke_gradient?: ReadGradient
       /** 端型只对开放子路径生效；缺省 = 无 */
       head_start?: ExportHeadType
       head_end?: ExportHeadType
@@ -4651,6 +4661,8 @@ export interface AiDataRoles {
   group: string | null
   facet: string | null
   unit: string | null
+  /** 真 = 「把列当分组」（宽表每列一个条件 / 一次重复）：`y` 是被当分组的那几列，`x` / `group` 为 null；后端没给 = 不是 */
+  stack?: boolean
   options: { x?: string[]; y?: string[]; group?: string[] }
 }
 
@@ -4673,11 +4685,24 @@ export interface AiDataLazyInfo {
   understanding?: AiDataUnderstanding
 }
 
-/** 「读懂数据」：`ready` 带模型对各列的判断换算出的建议（`answers` 的 `x` / `y` / `group` 取列名或 `none`，另可能有 `cells`）；`failed` 只有闭集 `reason`；`off` = 不存在 / 过期 / 别的项目，不是错误 */
+/**
+ * 「读懂数据」建议的 `answers`：可原样并进下一次 `propose` 的 `answers` 的补丁。`y` 可以是列名数组（2–3 列 = 有横轴、每列一条线；
+ * 2–8 列且 `x == 'none'` = 把列当分组，顺序即类别顺序）；`x_measure` = 规则选作横轴的那一列其实是测量值（不对应任何下拉）。其它键前端不认。
+ */
+export interface AiDataAnswerPatch {
+  x?: string
+  y?: string | string[]
+  group?: string
+  x_measure?: string
+  cells?: unknown
+  [k: string]: unknown
+}
+
+/** 「读懂数据」：`ready` 带模型对各列的判断换算出的建议（`answers`：`x` / `y` / `group` 取列名或 `none`，`y` 可为数组，另可能有 `x_measure` / `cells`）；`failed` 只有闭集 `reason`；`off` = 不存在 / 过期 / 别的项目，不是错误 */
 export interface AiDataUnderstanding {
   id: string
   state: 'pending' | 'ready' | 'failed' | 'off'
-  answers?: Record<string, unknown>
+  answers?: AiDataAnswerPatch
   /** 表（相对路径）→ 表头物理行号 */
   header_rows?: Record<string, number>
   roles?: { column: string; role: string }[]
@@ -8747,3 +8772,48 @@ export const reviewSnapshotUrl = (shareId: string, v: number) =>
 export const fetchReviewChanged = (shareId: string, render: ReviewRender) =>
   jsonFetch<{ changed: boolean }>('/api/review/changed', reviewPost({ share_id: shareId, render }))
 export const fetchReviewUnread = () => jsonFetch<ReviewUnread>('/api/review/unread')
+
+/* ------------------- 高级版授权（ADR 0193） -------------------
+ * 本机引擎的遥控器：`status` 纯本机；`activate` / `refresh` / `release` / `checkout` 会引出远程请求，只在用户点了才发。
+ * `enabled: false`（正式安装、`PRODUCTION_LIVE = False` 且没设测试端点）= 界面上完全不出现授权入口。 */
+
+export type LicenseFailureCode =
+  | 'invalid_code'
+  | 'device_limit'
+  | 'revoked'
+  | 'expired'
+  | 'price_unavailable'
+  | 'rate_limited'
+  | 'network'
+  | 'server'
+  | 'client_error'
+
+export type LicenseState = 'none' | 'active' | 'expired' | 'revoked' | 'lapsed'
+
+export type LicenseStatus =
+  | { enabled: false }
+  | {
+      enabled: true
+      licensed: boolean
+      state: LicenseState
+      features: string[]
+      /** 权益到期时刻（UTC 秒） */
+      exp: number | null
+      /** 打码后的邮箱（`m***@gmail.com`），只用于显示 */
+      email_hint: string
+      needs_refresh: boolean
+    }
+
+const licenseBody = (body?: unknown): RequestInit => ({
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body ?? {}),
+})
+
+export const fetchLicenseStatus = () => jsonFetch<LicenseStatus>('/api/license/status')
+export const activateLicense = (code: string) =>
+  jsonFetch<LicenseStatus>('/api/license/activate', licenseBody({ code }))
+export const refreshLicense = () => jsonFetch<LicenseStatus>('/api/license/refresh', licenseBody())
+export const releaseLicense = () => jsonFetch<LicenseStatus>('/api/license/release', licenseBody())
+export const licenseCheckout = (lookupKey: string, locale: string, renew = false) =>
+  jsonFetch<{ ok: true; url: string }>('/api/license/checkout', licenseBody({ lookup_key: lookupKey, locale, renew }))

@@ -124,7 +124,7 @@ Execution Trace（本地执行观察）≠ Task Diagnostic（`taskdiag` 终局�
 （会话终态）互不合并；Agent 退出码在 `agent_run.exit_ok`。验证结论仍在 TaskResult 里，Trace 不重判。
 
 **Token 与费用**（裁决 3）：`ai_pricing.py` 带版本（`PRICING_VERSION`）的定价表，只收从官方定价页逐条核过的条目（Anthropic Claude 5 系列、
-OpenAI gpt-5 / gpt-5-mini，出处见 `SOURCES`）；厂商只认连接的 `base_url` 与目录预设**逐字相同**，自定义网关不冒充官方计价。只有
+OpenAI gpt-5 / gpt-5-mini / gpt-5-nano 与 GPT-6、5.6 系列的短上下文档——一轮输入超过 272k 不估价，2026-11-21 补，出处见 `SOURCES`）；厂商只认连接的 `base_url` 与目录预设**逐字相同**，自定义网关不冒充官方计价。只有
 服务端报了用量（`reported=true`）才算费用；字符数估算的用量 Token 照记、标 `estimated`、费用 `null`。Anthropic 缓存**写入**按基础输入价算
 （用量里没拆出写入量），所以永远 `estimated=True`。第三方 CLI 一律没有 Token / 费用。
 
