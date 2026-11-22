@@ -27,6 +27,11 @@ export const styleLedgerKey = (styleId: string | undefined): string => `${ledger
 export const styleWork = {
   /** 按代次 · 绑定 · 图保存；解绑保留，撤销恢复绑定时仍能结算 */
   pending: new Map<string, Map<string, StyleProfileData>>(),
+  /**
+   * 欠账里哪些项补的时候**不碰用户手改的 override**（同键同图，是 `pending` 的子集）：改样式 /
+   * 跟上样式库记下的那几项。不在这里的（明确绑定、新图欠的整份）补的时候照旧覆盖（§十四）
+   */
+  keep: new Map<string, Map<string, StyleProfileData>>(),
   /** 排着 / 跑着的库写入个数；从 enqueue 起算，finally 落账 */
   inflight: 0,
 }

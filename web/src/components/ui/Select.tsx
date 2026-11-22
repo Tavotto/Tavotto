@@ -15,6 +15,8 @@ export interface SelectOption<T extends string = string> {
   group?: string
   /** 搜索时比对的文字（`SearchSelect` 用）；`label` 不是纯文字时必须给 */
   searchText?: string
+  /** 这一行的额外类名（`cn` 合并，可覆盖行高）：带小样张 / 摘要的两行选项用 */
+  rowClass?: string
 }
 
 interface SelectProps<T extends string> {
@@ -129,6 +131,7 @@ export function Select<T extends string>({
                   value={opt.value}
                   className={cn(
                     SELECT_ROW,
+                    opt.rowClass,
                     'data-[highlighted]:bg-surface-hover data-[state=checked]:font-medium data-[state=checked]:text-ink',
                   )}
                 >
