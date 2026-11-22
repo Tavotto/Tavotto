@@ -36,6 +36,7 @@ import { newId } from '@/lib/id'
 import { boundedCount, captureTelemetry, classifyEditKind } from '@/lib/telemetry'
 import { documentDigest, recordDiagnosticEvent } from '@/diagnostics'
 import { patchRefs } from '@/diagnostics/patches'
+import { remapGroupPath } from '@/lib/groupTree'
 import { defaultCanvasName, type CanvasData, type FigureDocument, type FigureExecutionOwner, type FigureSnapshot, type PanelObject, type ProjectDocument } from '@/types/document'
 import {
   SCHEMA_CURRENT,
@@ -1125,10 +1126,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       const copy = structuredClone(o)
       copy.id = newId(o.type[0])
       idMap.set(o.id, copy.id)
-      if (copy.groupId) {
-        if (!groupMap.has(copy.groupId)) groupMap.set(copy.groupId, newId('g'))
-        copy.groupId = groupMap.get(copy.groupId)
-      }
+      remapGroupPath(copy, (g) => {
+        if (!groupMap.has(g)) groupMap.set(g, newId('g'))
+        return groupMap.get(g)!
+      })
       return copy
     })
     const layoutGroups = synced.layoutGroups

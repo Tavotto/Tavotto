@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import vectors from '../../../../tests/golden/journal_vectors.json'
 import { literal, msg, setLocale } from '@/i18n'
 import { journalProfile, journalSources, loadCatalog } from '@/lib/journals'
+import { legacyNatureCatalog } from '@/lib/__fixtures__/legacyNatureCatalog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
 import { BUNDLED_ASSET_BASE, useJournalCatalogStore } from '@/store/journalCatalogStore'
@@ -585,7 +586,7 @@ describe('远程目录里还没下载的刊：选中时的胶囊提示', () => {
 
 describe('historical panel width display', () => {
   it.each(['nature-chemistry', 'nature-energy', 'nature-materials', 'nature-medicine', 'nature-methods', 'nature-nanotechnology', 'nature-photonics', 'nature-physics'])('shows historical panel advice from the saved binding for %s', async (id) => {
-    useJournalCatalogStore.setState({ catalog: loadCatalog() })
+    useJournalCatalogStore.setState({ catalog: legacyNatureCatalog() })
     act(() => selectJournal(id))
     const before = structuredClone(useDocumentStore.getState().doc.profile)
     await mount(<JournalRequirements />)
@@ -606,7 +607,7 @@ describe('historical panel width display', () => {
   })
 
   it('does not reclassify evidence with a submission stage', async () => {
-    useJournalCatalogStore.setState({ catalog: loadCatalog() })
+    useJournalCatalogStore.setState({ catalog: legacyNatureCatalog() })
     act(() => selectJournal('nature-chemistry'))
     const profile = structuredClone(useDocumentStore.getState().doc.profile!)
     profile.journalSources!['info.width_double_mm'].stage = 'submission'
@@ -618,7 +619,7 @@ describe('historical panel width display', () => {
   })
 
   it('explains the historical-source limitation in English', async () => {
-    useJournalCatalogStore.setState({ catalog: loadCatalog() })
+    useJournalCatalogStore.setState({ catalog: legacyNatureCatalog() })
     act(() => selectJournal('nature-chemistry'))
     await setLocale('en-US')
     await mount(<JournalRequirements />)

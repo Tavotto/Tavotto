@@ -19,6 +19,7 @@ import { useDocumentStore } from './documentStore'
 import { finishActiveGesture } from './gestureCoordinator'
 import { activePathEdit } from './pathEditStore'
 import { useSelectionStore } from './selectionStore'
+import { enterShapeBuilder, shapeBuilderActive } from './shapeBuilder'
 import { useUiStore } from './uiStore'
 
 /**
@@ -181,6 +182,7 @@ export interface PathfinderCommand {
     | 'outline-stroke'
     | 'reverse-path'
     | 'simplify-path'
+    | 'shape-builder'
   key?: KeyId
   /** 要不要 WASM 内核（要的话内核加载不了时灰掉） */
   kernel: boolean
@@ -217,6 +219,13 @@ export const PATHFINDER_COMMANDS: readonly PathfinderCommand[] = [
       return picked.length > 0 && picked.length === ids.size && picked.every(canOutlineStroke)
     },
     run: () => void outlineSelected(),
+  },
+  {
+    id: 'shape-builder',
+    key: 'shapeBuilder',
+    kernel: true,
+    available: () => twoOrMore() && !shapeBuilderActive(),
+    run: () => void enterShapeBuilder(),
   },
   {
     id: 'simplify-path',

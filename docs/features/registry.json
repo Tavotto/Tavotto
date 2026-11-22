@@ -1646,6 +1646,42 @@
           "title": "路径查找器 › 选两个重叠矩形点「联集」：合成一个 path、框是两者合起来的范围；一次撤销回到两个矩形"
         }
       ]
+    },
+    {
+      "id": "canvas.gradient-fill",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "形状 / 路径的填充（与描边）可设为线性或径向渐变，画布与导出都按渐变画",
+        "en-US": "Fill (and stroke) of shapes and paths can be linear or radial gradients, drawn as gradients on the canvas and in exports"
+      },
+      "entry": "画布 → 选中矩形 → 右栏「外观」→ 填充类型",
+      "e2e": [
+        {
+          "spec": "vector-gradient.spec.ts",
+          "title": "渐变填充 › 矩形填充改成线性渐变：画布上填充引用渐变、色标不止一种颜色；导出 SVG 里是 linearGradient"
+        }
+      ]
+    },
+    {
+      "id": "canvas.nested-groups-clip",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "嵌套组与组内编辑（双击进组、Esc 退出），以及剪切蒙版（⌘7 建立、⌥⌘7 释放）",
+        "en-US": "Nested groups with in-group editing (double-click to enter, Esc to leave) and clipping masks (⌘7 to make, ⌥⌘7 to release)"
+      },
+      "entry": "画布 → 选中多个对象 → ⌘G；⌘7",
+      "e2e": [
+        {
+          "spec": "vector-groups.spec.ts",
+          "title": "嵌套组与剪切蒙版 › 两层嵌套组：点成员选中整组；双击一层层进组（组外淡出）、Esc 一层层退出"
+        },
+        {
+          "spec": "vector-groups.spec.ts",
+          "title": "嵌套组与剪切蒙版 › 剪切蒙版：⌘7 后大矩形只在蒙版范围内点得中（画面按蒙版裁）；⌥⌘7 释放后恢复"
+        }
+      ]
     }
   ]
 }

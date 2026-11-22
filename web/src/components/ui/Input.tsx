@@ -642,6 +642,8 @@ export function ColorField({
             <ColorPanel
               value={mixed ? null : value}
               documentColors={host?.documentColors ?? []}
+              figureColors={host?.figureColors ?? []}
+              recommended={host?.recommended ?? null}
               onPick={(c) => {
                 pick(c)
                 setOpen(false)
@@ -754,18 +756,22 @@ function HexInput({
 }
 
 /**
- * 取色面板：文档颜色 / 最近 / 系统取色器。
+ * 取色面板：排版里的颜色 / 最近 / 图内配色 / 推荐配色（色盲友好，ADR 0185 M3）/ 系统取色器。
  * 「无」与不透明度不在这里：能取「无」的属性各有自己的开关（形状填充、文字底色的 EffectToggle），
  * 不透明度各有自己的一行——同一个属性不出第二个控件。
  */
 function ColorPanel({
   value,
   documentColors,
+  figureColors,
+  recommended,
   onPick,
   onSystem,
 }: {
   value: string | null
   documentColors: readonly string[]
+  figureColors: readonly string[]
+  recommended: { colors: readonly string[]; journal: string | null } | null
   onPick: (c: string) => void
   onSystem: () => void
 }) {
@@ -797,10 +803,12 @@ function ColorPanel({
       </button>
     )
   }
-  const group = (title: string, colors: readonly string[], attr: string) =>
+  const group = (title: string, colors: readonly string[], attr: string, tip?: string) =>
     colors.length > 0 && (
       <div data-color-group={attr} className="flex flex-col gap-1">
-        <p className="type-meta">{title}</p>
+        <p className="type-meta" title={tip}>
+          {title}
+        </p>
         <div className="flex flex-wrap gap-1">{colors.map((c) => chip(c, `${attr}-${c}`))}</div>
       </div>
     )
@@ -808,6 +816,16 @@ function ColorPanel({
     <div className="flex flex-col gap-2" data-color-panel>
       {group(t('colorField.documentColors'), documentColors.slice(0, 16), 'document')}
       {group(t('colorField.recent'), recentColors, 'recent')}
+      {group(t('colorField.figureColors'), figureColors, 'figure')}
+      {recommended &&
+        group(
+          t('colorField.recommended'),
+          recommended.colors,
+          'recommended',
+          recommended.journal
+            ? t('colorField.recommendedTipJournal', { journal: recommended.journal })
+            : t('colorField.recommendedTip'),
+        )}
       <button
         type="button"
         data-color-system

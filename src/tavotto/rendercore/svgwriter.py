@@ -190,6 +190,40 @@ class SvgWriter:
         if cap.level == ir.CAP_UNSUPPORTED:
             raise UnsupportedCapability(operation, cap.reason, object_id)
 
+    def _gradient(self, g) -> str:
+        """渐变（ADR 0186）→ `<defs>` 里的 `<linearGradient>` / `<radialGradient>`，`userSpaceOnUse`：坐标就是引用它的
+        路径所在的框空间（随外层 `<g transform>` 走）。色标的 alpha 走 `stop-opacity`。回 id。"""
+        name = self._name("grad")
+        if isinstance(g, ir.LinearGradient):
+            el = _element(
+                self.defs,
+                "linearGradient",
+                id=name,
+                gradientUnits="userSpaceOnUse",
+                x1=_num(g.p0[0]),
+                y1=_num(g.p0[1]),
+                x2=_num(g.p1[0]),
+                y2=_num(g.p1[1]),
+            )
+        else:
+            el = _element(
+                self.defs,
+                "radialGradient",
+                id=name,
+                gradientUnits="userSpaceOnUse",
+                cx=_num(g.center[0]),
+                cy=_num(g.center[1]),
+                r=_num(g.radius),
+            )
+        for st in g.stops:
+            _element(
+                el,
+                "stop",
+                offset=_num(st.offset),
+                **{"stop-color": _color(st.rgb), "stop-opacity": _num(st.alpha)},
+            )
+        return name
+
     def _clip(self, parent: ET.Element, segments: tuple, rule: str = "nonzero") -> None:
         name = self._name("clip")
         clip = _element(self.defs, "clipPath", id=name, clipPathUnits="userSpaceOnUse")
@@ -273,17 +307,23 @@ class SvgWriter:
             "fill-rule": node.fill_rule,
         }
         if node.fill is not None:
-            attrs.update(fill=_color(node.fill.rgb), **{"fill-opacity": _num(node.fill.alpha)})
+            if ir.is_gradient(node.fill):
+                attrs["fill"] = f"url(#{self._gradient(node.fill)})"
+            else:
+                attrs.update(fill=_color(node.fill.rgb), **{"fill-opacity": _num(node.fill.alpha)})
         if node.stroke is not None:
             stroke = node.stroke
             if stroke.width == 0:
                 raise UnsupportedCapability(
                     "path_stroke", "svg_hairline_unsupported", node.object_id
                 )
+            grad = ir.is_gradient(stroke.paint)
             attrs.update(
-                stroke=_color(stroke.paint.rgb),
+                stroke=f"url(#{self._gradient(stroke.paint)})"
+                if grad
+                else _color(stroke.paint.rgb),
+                **({} if grad else {"stroke-opacity": _num(stroke.paint.alpha)}),
                 **{
-                    "stroke-opacity": _num(stroke.paint.alpha),
                     "stroke-width": _num(stroke.width),
                     "stroke-linecap": stroke.cap,
                     "stroke-linejoin": stroke.join,

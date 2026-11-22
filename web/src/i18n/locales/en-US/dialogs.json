@@ -701,6 +701,30 @@
       "reverse-path": {
         "keywords": "reverse path direction flip arrow",
         "label": "Reverse path direction"
+      },
+      "shape-builder": {
+        "keywords": "shape builder merge regions",
+        "label": "Shape builder"
+      },
+      "make-clip-mask": {
+        "keywords": "clipping mask clip crop",
+        "label": "Make clipping mask"
+      },
+      "release-clip-mask": {
+        "keywords": "release clipping mask",
+        "label": "Release clipping mask"
+      },
+      "transform-again": {
+        "keywords": "transform again repeat",
+        "label": "Transform again"
+      },
+      "reflect-horizontal": {
+        "keywords": "reflect mirror flip horizontal",
+        "label": "Reflect horizontally"
+      },
+      "reflect-vertical": {
+        "keywords": "reflect mirror flip vertical",
+        "label": "Reflect vertically"
       }
     },
     "listLabel": "Commands",
@@ -2181,6 +2205,43 @@
       "overwriteTitle": "Overwrite your edited skill in {{host}}?",
       "overwriteBody": "Your changes will be replaced with the version that ships with Tavotto.",
       "cancel": "Cancel"
+    },
+    "license": {
+      "label": "Premium",
+      "none": "Not activated",
+      "until": "Valid until {{date}}",
+      "codeLabel": "Activation code",
+      "state": {
+        "expired": "Expired on {{date}}",
+        "revoked": "This license is no longer valid",
+        "lapsed": "Needs a quick online check"
+      },
+      "action": {
+        "enter": "Enter code",
+        "buy": "Buy",
+        "activate": "Activate",
+        "release": "Unbind this computer",
+        "refresh": "Check now",
+        "renew": "Renew",
+        "retry": "Try again",
+        "cancel": "Cancel"
+      },
+      "failure": {
+        "invalid_code": "That code isn't right. Check it and try again",
+        "device_limit": "This license is already on its maximum number of computers. Unbind one of them first",
+        "revoked": "This license is no longer valid",
+        "expired": "This license has expired",
+        "price_unavailable": "Can't buy right now. Please try again later",
+        "rate_limited": "Too many tries. Wait a moment and try again",
+        "network": "Can't reach the license server. Check your network and try again",
+        "server": "The license service is unavailable. Please try again later",
+        "client_error": "That didn't go through. Please try again later"
+      },
+      "lock": {
+        "tip": "Premium feature. Click to learn more",
+        "aria": "Premium feature, learn about Premium"
+      },
+      "releaseTitle": "After unbinding, you can activate it on another computer"
     }
   },
   "style": {

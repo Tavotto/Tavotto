@@ -111,6 +111,49 @@ order: 210
   （内嵌画布 `VITE_VECOPS=off`、编译失败）要内核的命令灰掉、`blockedReason` 说原因。路径的 `strokeAlign`（缺省居中，只给全闭合的路径）：
   两倍线宽描边裁到里面 / 外面，判据 `pathGeom.pathStrokeAlign` ↔ `geometry.path_stroke_align`。看护 `lib/pathfinder.test.ts`（真内核 +
   `tests/golden/pathfinder_vectors.json` 金样）、`canvas/pathStrokeAlign.test.tsx`、`tests/test_path_object.py`。
+- **渐变（2026-11-15，ADR 0186 第一期）**：形状与路径多两个可选字段 `fillGradient` / `strokeGradient`（线性 from / to、径向 center / radius，
+  都是包围盒比例；色标 offset / color / opacity?），`fill` / `color` 纯色一直留着做旧版本的降级色。读取与框空间几何**只**经 `lib/gradient`
+  （`readGradient` / `gradientGeometry` ↔ 后端 `geometry.read_gradient` / `gradient_paint`，共享向量 `tests/golden/gradient_vectors.json`）；
+  画布 / 导出预览的 `<linearGradient>` / `<radialGradient>` 只从 `canvas/gradientPaint.usePaints` 出。包围盒换了（转为路径、`pathFromMm` 收框）
+  用 `remapGradients` 换比例坐标；新加一处改框的写法也要过它。界面（2026-11-15 用户返工成 PPT 式色带）：渐变时那一行是「开关 + 图标下拉 + 角度（线性）+ 反向」、没有预览条、不再显示降级纯色（每次写渐变把首个色标同步进
+  `fill` / `color`）；色带常显在下面、占满控件列（点空白加、拖动不越邻居、往下拖出 / Delete 删、节点是 slider），再下一行只编辑选中色标；
+  径向的中心与半径在「更多」（`inspector/controls/GradientControls`，填充与描边共用一个色带）。EPS 判据 `lib/epsOpacity` 认色标透明。看护 `lib/gradient.test.tsx`、`lib/gradient.golden.test.ts`、
+  `inspector/gradientInspector.test.tsx`、`tests/test_gradient.py`。
+- **画布渐变柄与实时圆角（2026-11-15，ADR 0186 第二期 / ADR 0185 M3 第二批）**：两个覆盖层都在 `OverlaySvg` 里、都只在单选 + 选择工具时出现。
+  渐变柄 `canvas/GradientHandles`（几何 `lib/gradientHandles`），编辑哪一侧 / 选中哪个色标与属性栏色带共用 `store/gradientEditStore`；
+  实时圆角 `canvas/LiveCorners`（几何 `lib/liveCorners`）：矩形改 `cornerRadius`，路径把角烤成圆弧（锚点下标变，松手清锚点选择）。
+  拖动都走 `beginTxn / txnUpdate / endTxn`。看护 `canvas/gradientHandlesAndCorners.test.tsx`、`lib/gradientHandles.test.ts`、
+  `lib/liveCorners.test.ts`、`lib/liveCorners.golden.test.ts`、`tests/test_live_corners.py`。
+- **形状生成器 ⇧M（2026-11-15，ADR 0185 M3 第三批）**：会话在 `store/shapeBuilder`（区域放会话里、不碰文档，退出时有改动才一次 commit），
+  覆盖层 `canvas/ShapeBuilderOverlay`；几何 `lib/pathfinder.builderFaces / mergeFaces / builderPlan`（vecops 内核的分割 / 合并）。会话开着时
+  `useKeyboard` 只认 Esc / Enter。看护 `store/shapeBuilder.test.tsx`。取色面板的「图内配色 / 推荐配色」在 `lib/swatches`，宿主
+  `ColorFieldHost.figureColors / recommended` 由属性栏挂上；看护 `lib/swatches.test.tsx`。
+- **嵌套组、组内编辑、剪切蒙版（2026-11-15，ADR 0191，即 ADR 0185 M4 第一批）**：组的结构只在对象身上——`groupId` 是**最内层**组（旧构建只认它，
+  照样当一层组用）、`groupPath` 是外 → 内整条链（两层及以上才写，末项必须等于 `groupId`，对不上就按 `[groupId]` 读）、`clipMask`
+  = 「我是我最内层组的剪切路径」；**没有文档级的组表**（组存在 = 有对象挂在它下面）。判据唯一出处 `lib/groupTree`（链、单元、图层树、
+  连续化、每组生效的蒙版、裁一个对象的蒙版链、孤立蒙版、复制换 id），别处不许再按 `groupId` 相等判「同组」。**选择按单元**：点中一个对象
+  选的是它在当前这一层里的单元（`actions.groupMates / expandGroups / selectedUnits / movableTargets`，锁定按单元整组挡）；这一层由组内
+  编辑的作用域决定（`store/isolationStore`，不进文档、不进历史，链上的组没了自动退回、换画布清空）。双击组里的对象先进组
+  （`groupActions.enterGroupAt`），进到直接成员那一层后双击才交给对象自己；Esc 退一层（`useKeyboard`，排在工具复位之后、清选区之前），
+  双击空白处全退；出口与面包屑在 `WorkspaceContextBar`（「我在改哪一层」只说一遍）。⌘G 把单元收进新组（子组整体成为成员）、成员挪成连续
+  一段；⇧⌘G 只拆一层。**剪切蒙版**：⌘7 要求选区最上面那个是这一层的直接成员且 `canBeMask`（路径 / 封闭形状），建组并给它写
+  `clipMask + hidden`（hidden 是给旧构建的：不画蒙版、内容不裁、对象都在）；新构建只看 `clipMask` 判生效，不看 hidden；图层树上隐藏蒙版 = 暂时不裁（`clipOff`，`toggleHidden` 切它，批量隐藏跳过蒙版）。⌥⌘7 释放（组留着），
+  ⇧⌘G 拆剪切组 = 释放；删光被裁的对象蒙版还原（`actions.releaseOrphanMasks`）。画布：`CanvasStage.LayerObjects` 不画生效的蒙版、被裁的对象
+  外面一层层包贴在世界原点的零尺寸 div（`clip-path: path()`，外层蒙版在外，同时裁掉命中）；组内编辑时组外变淡、不接指针。导出：
+  `exportPayload.toExportObjects(objects, context)` 不发蒙版、被裁的对象带 `clip`（外 → 内的路径轮廓，形状先 `clipMask.maskAsPath`）；单图编辑
+  裁这张图走 `original.clip`（`singleExportDoc.figureClipOf`，没有标注也走合成路径），写回原图时轮廓同一套换算（`writeBackAnnotations.toFigureMm`）。
+  后端 `plan._clipped` 包 `Group(clip=…)`（PDF `W n` / SVG `<clipPath>` / EPS `clip`、PNG 由 PDF 栅格化），原图 EPS 由
+  `epsoverlay.compose(figure_clip=…)` 裁内嵌段。轮廓同源对拍 `tests/golden/clip_mask_vectors.json`（`scripts/dev/gen_clip_mask_vectors.py`）。
+  与布局组（`layoutGroups`）是两回事：布局组只按 `groupId` 认成员，这里不碰它。看护 `lib/groupTree.test.ts`、`store/groupActions.test.tsx`、
+  `lib/clipMask.golden.test.ts`、`tests/test_clip_mask.py`、`tests/test_export_original_clip.py`。
+- **变换面板（2026-11-15，ADR 0185 M4 第二批）**：几何唯一出处 `lib/transform`（参考点、`visibleBounds`、`scaleObject` /
+  `rotateObjectAbout` / `reflectObject` / `skewObject` / `applyTransform`），写入 `store/transformActions`（一次 commit、同 id、同数组位置，
+  锁定按单元跳过），偏好与「上一次变换」`store/transformPrefs`。属性栏 `inspector/TransformSection`：参考点在 X / Y 之间、等比锁在 W / H 之间，
+  不加行；选区恰好是一整个组时按整组看得见的范围（剪切组 = 蒙版）整体变换。**所有「选区的框」**（`OverlaySvg` 联合框、浮动栏落位、
+  `MeasureChip`、标尺选区带、缩放到选区）都用 `visibleBounds`，剪切组的选框描蒙版、不给被裁对象的单个缩放手柄。镜像 / 倾斜只写旧字段（不对称
+  形状与倾斜对象换成路径），所以导出端不用改。⌘D 是「创建副本」，副本被挪 / 转过后再按就按同样的位移与角度差再复制（`actions.duplicateStep`）；
+  ⌥⌘D 再次变换（`useKeyboard` 里排在 ⌘D 前面，⌘D 只认没按 ⌥ 的）。看护 `store/transformActions.test.tsx`、`lib/transform.golden.test.ts`、
+  `canvas/primarySelection.test.tsx`、`tests/test_transform_vectors.py`。
 - **不认识的对象类型原样保留（2026-11-14，ADR 0185 的前置）**：更新的构建会往文档里写本构建没有的 `type`
   （第一例是自由路径 `path`）。判据只有 `types/document.isKnownObject`（`KNOWN_OBJECT_TYPES` 闭集）。读盘、保存、
   换画布、复制画布都不碰它（文档层本来就不按类型过滤，别加）；画布上 `ObjectView` 只画虚线占位框

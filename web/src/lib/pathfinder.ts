@@ -113,11 +113,32 @@ export function decodeSubpaths(b: readonly number[], at = 0): { subs: MmSubpath[
   return { subs, next: i }
 }
 
-/** 结果对象的样式底子：沿用 `src` 的填充 / 描边 / 线型，去掉旋转、填充规则与几何（几何由 `pathFromMm` 填） */
+/**
+ * 结果对象的样式底子：沿用 `src` 的填充 / 描边 / 线型，去掉旋转、填充规则与几何（几何由 `pathFromMm` 填）。
+ * 渐变（ADR 0186）先拿掉、算完再按原比例放回（`withGradients`）——结果铺满它自己的新框，`pathFromMm` 不拿假框去换算它。
+ */
 function styleBase(src: PathObject, groupId: string | undefined): PathObject {
-  const { rotationDeg: _r, fillRule: _f, name: _n, groupId: _g, layoutPinned: _l, ...rest } = src
-  return { ...rest, ...(groupId ? { groupId } : {}) }
+  const {
+    rotationDeg: _r,
+    fillRule: _f,
+    name: _n,
+    groupId: _g,
+    groupPath: _gp,
+    clipMask: _cm,
+    layoutPinned: _l,
+    fillGradient: _fg,
+    strokeGradient: _sg,
+    ...rest
+  } = src
+  // 嵌套组（ADR 0191）：留在原对象那个组里时整条链跟着走；剪切蒙版的身份不传给结果（结果是可见的新形状）
+  const path = groupId && groupId === src.groupId && src.groupPath ? { groupPath: [...src.groupPath] } : {}
+  return { ...rest, ...(groupId ? { groupId, ...path } : {}) }
 }
+const withGradients = (made: PathObject, src: PathObject): PathObject => ({
+  ...made,
+  ...(src.fillGradient && made.fill ? { fillGradient: src.fillGradient } : {}),
+  ...(src.strokeGradient ? { strokeGradient: src.strokeGradient } : {}),
+})
 
 /** 一组原对象共同的组（全在同一个组里才有） */
 function commonGroup(objs: readonly CanvasObject[]): string | undefined {
@@ -155,7 +176,7 @@ export function planReplace(
     const inherit = !used.has(r.key)
     used.add(r.key)
     add.push({
-      ...made,
+      ...withGradients(made, src),
       id: inherit ? src.id : newId('p'),
       ...(inherit && src.name != null ? { name: src.name } : {}),
     })
@@ -266,7 +287,7 @@ export function offsetPaths(
     if (!d) continue
     const base = styleBase(o, o.groupId)
     const made = pathFromMm({ ...base, x: 0, y: 0, w: 1, h: 1 }, d.subs)
-    if (made) out.push({ after: o.id, add: { ...made, id: newId('p') } })
+    if (made) out.push({ after: o.id, add: { ...withGradients(made, o), id: newId('p') } })
   }
   return out.length ? out : null
 }
@@ -335,11 +356,13 @@ export function outlineStrokes(
       d.subs,
     )
     if (!made) continue
+    // 描边渐变变成轮廓的填充渐变（ADR 0186）：比例坐标照原样，铺满轮廓的框
+    const outlined: PathObject = p.strokeGradient ? { ...made, fillGradient: p.strokeGradient } : made
     if (p.fill) {
       const kept: PathObject = { ...p, stroke: false }
-      out.push({ replace: kept, extra: { ...made, id: newId('p') } })
+      out.push({ replace: kept, extra: { ...outlined, id: newId('p') } })
     } else {
-      out.push({ replace: { ...made, id: p.id, ...(p.name != null ? { name: p.name } : {}) }, extra: null })
+      out.push({ replace: { ...outlined, id: p.id, ...(p.name != null ? { name: p.name } : {}) }, extra: null })
     }
   }
   return out.length ? out : null
@@ -387,4 +410,76 @@ export function reversePath(o: PathObject): PathObject {
       })),
     })),
   }
+}
+
+/* ------------------------------ 形状生成器（⇧M） ------------------------------ */
+
+/** 形状生成器里的一块区域：页面 mm（旋转已算进去）的子路径 + 沿用哪个原对象的样式（`sources` 的下标） */
+export interface BuilderFace {
+  key: number
+  subs: MmSubpath[]
+}
+
+/** 内核的形状栈编码（从后往前，key = 下标） */
+function encodeStack(items: readonly { rule: 0 | 1; subs: MmSubpath[] }[]): number[] {
+  const input: number[] = [items.length]
+  items.forEach((it, i) => input.push(it.rule, i, ...encodeSubpaths(it.subs)))
+  return input
+}
+
+function decodeResults(out: readonly number[]): { key: number; subs: MmSubpath[] }[] | null {
+  const results: { key: number; subs: MmSubpath[] }[] = []
+  let i = 1
+  for (let r = 0; r < out[0]; r++) {
+    const key = out[i++]
+    const d = decodeSubpaths(out, i)
+    if (!d) return null
+    i = d.next
+    results.push({ key, subs: d.subs })
+  }
+  return results
+}
+
+/**
+ * 进形状生成器：选中的对象按「分割」切成互不重叠的区域，每块记着盖住它的最前面那个原对象（样式与 id 都跟它）。
+ * 不能参与 / 少于两个 / 内核算不出 = null。
+ */
+export function builderFaces(
+  kernel: VecopsKernel,
+  objects: readonly CanvasObject[],
+  ids: readonly string[],
+): { sources: PathObject[]; faces: BuilderFace[] } | null {
+  const sources = operands(objects, ids)
+  if (!sources || sources.length < 2) return null
+  const out = kernel.pathfinder(
+    OP_CODE.divide,
+    encodeStack(sources.map((o) => ({ rule: o.fillRule === 'evenodd' ? 1 : 0, subs: worldSubpaths(o) }))),
+  )
+  const faces = out && decodeResults(out)
+  return faces && faces.length ? { sources, faces } : null
+}
+
+/** 把几块区域并成一块（内核「合并」）：沿用 `faces[0]` 的样式来源 */
+export function mergeFaces(kernel: VecopsKernel, faces: readonly BuilderFace[]): BuilderFace | null {
+  if (!faces.length) return null
+  if (faces.length === 1) return faces[0]
+  const out = kernel.pathfinder(OP_CODE.unite, encodeStack(faces.map((f) => ({ rule: 0, subs: f.subs }))))
+  const res = out && decodeResults(out)
+  if (!res || !res.length) return null
+  return { key: faces[0].key, subs: res.flatMap((r) => r.subs) }
+}
+
+/** 退出形状生成器时的落位：剩下的每块区域一个路径对象（id / 样式 / 位置规则与路径查找器相同） */
+export function builderPlan(
+  objects: readonly CanvasObject[],
+  sources: readonly PathObject[],
+  faces: readonly BuilderFace[],
+): PathfinderPlan | null {
+  if (!faces.length) {
+    // 全删掉了：原对象都删，什么都不加
+    const ids = new Set(sources.map((s) => s.id))
+    const idx = objects.map((o, i) => (ids.has(o.id) ? i : -1)).filter((i) => i >= 0)
+    return { remove: [...ids], add: [], at: Math.max(...idx) - (idx.length - 1) }
+  }
+  return planReplace(objects, sources, faces)
 }

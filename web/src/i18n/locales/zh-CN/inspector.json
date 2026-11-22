@@ -654,7 +654,9 @@
     "setMiterLimit": "修改斜接上限",
     "setDashPattern": "修改自定义虚线",
     "setStrokeAlign": "修改描边对齐",
-    "setFillRule": "修改填充规则"
+    "setFillRule": "修改填充规则",
+    "setGradientKind": "改填充 / 描边类型",
+    "setGradient": "改渐变"
   },
   "lock": "锁定",
   "locked": "已锁定",
@@ -1192,7 +1194,33 @@
     "summary": "X {{x}} · Y {{y}} mm",
     "textHeightAuto": "文字高度随内容",
     "textWidthAuto": "竖排的宽度随列数",
-    "title": "位置与尺寸"
+    "title": "位置与尺寸",
+    "refPoint": {
+      "label": "参考点",
+      "tl": "左上",
+      "t": "上中",
+      "tr": "右上",
+      "l": "左中",
+      "c": "中心",
+      "r": "右中",
+      "bl": "左下",
+      "b": "下中",
+      "br": "右下"
+    },
+    "refPointTip": "参考点：{{point}}。X / Y 报这个点，缩放、旋转、倾斜、镜像都以它为不动点",
+    "lockRatio": "锁定宽高比",
+    "ratioLocked": "宽高比已锁定",
+    "ratioUnlocked": "宽高比未锁定",
+    "rotationSkew": "旋转 · 倾斜",
+    "skew": "水平倾斜",
+    "skewTip": "水平倾斜：形状会变成路径",
+    "skewUnsupported": "文字和图不能倾斜",
+    "rotatePanelHint": "图在「图」那一节按 90° 旋转",
+    "reflectH": "水平镜像",
+    "reflectV": "垂直镜像",
+    "scaleStrokes": "缩放描边和效果",
+    "scaleStrokesOn": "缩放时线宽和圆角跟着变",
+    "scaleStrokesOff": "缩放时线宽和圆角不变"
   },
   "unlock": "解锁",
   "unsupported": {
@@ -1342,5 +1370,36 @@
     "ops": "路径",
     "offsetDistance": "偏移距离",
     "offsetDistanceTip": "正数往外扩，负数往里缩"
+  },
+  "gradient": {
+    "mixed": "多个值",
+    "fillKind": "填充类型",
+    "strokeKind": "描边类型",
+    "kindTip": "纯色、线性渐变或径向渐变",
+    "kind": {
+      "solid": "纯色",
+      "linear": "线性",
+      "radial": "径向"
+    },
+    "stopColor": "色标 {{n}} 的颜色",
+    "stopOffset": "色标 {{n}} 的位置",
+    "stopOpacity": "色标 {{n}} 的不透明度",
+    "stopOpacityTip": "这个色标的不透明度",
+    "angle": "渐变角度",
+    "angleTip": "0° 从左到右，逆时针增加",
+    "radiusTip": "按对象长边的百分比",
+    "stop": "色标 {{n}}",
+    "fillBar": "填充色带",
+    "strokeBar": "描边色带",
+    "barTip": "点空白处加色标，往下拖出色带删除",
+    "reverse": "反向",
+    "fillCenter": "填充中心",
+    "fillCenterX": "填充中心 X",
+    "fillCenterY": "填充中心 Y",
+    "fillRadius": "填充半径",
+    "strokeCenter": "描边中心",
+    "strokeCenterX": "描边中心 X",
+    "strokeCenterY": "描边中心 Y",
+    "strokeRadius": "描边半径"
   }
 }

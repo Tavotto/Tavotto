@@ -3,6 +3,7 @@ import { Row } from '@/components/ui/Field'
 import { Select } from '@/components/ui/Select'
 import { overviewKeyOf, useDataFigureStore, type RoleKey } from '@/store/dataFigureStore'
 import type { CellMode } from '@/lib/dataFigure'
+import { diffSuggestion } from '@/lib/dataUnderstanding'
 
 const baseName = (p: string): string => p.slice(p.lastIndexOf('/') + 1)
 /** 「不要横轴 / 不分组」的取值：不会和任何列名撞（列名里不会有控制字符） */
@@ -23,6 +24,8 @@ export function DataPanel() {
   const mixed = useDataFigureStore((s) => s.mixed)
   const roles = useDataFigureStore((s) => s.roles)
   const busy = useDataFigureStore((s) => s.drawingId != null)
+  const understanding = useDataFigureStore((s) => s.understanding)
+  const suggestion = useDataFigureStore((s) => s.suggestion)
   if (!selected) return null
   const ov = overviews[overviewKeyOf(selected, headerRows)]?.data ?? null
   // 合画：概览只有第一份的，行列数不代表整组，不显示
@@ -30,11 +33,39 @@ export function DataPanel() {
   const cols = !group && ov?.status === 'ok' ? ov.columns : null
   const count = mixed ? mixed.columns.reduce((n, c) => n + c.nonNumeric, 0) : 0
   const pick = (key: RoleKey) => (v: string) => useDataFigureStore.getState().setRole(key, v === NONE ? 'none' : v)
+  // 模型的建议和此刻不同、但用户已经动过下拉：标题行右侧一枚胶囊，点了才套用（建议与此刻相同时 diff 为空，什么都不显示）
+  const diff = suggestion ? diffSuggestion(suggestion, roles, useDataFigureStore.getState().headerRowUsed, headerRows[selected.path] != null, useDataFigureStore.getState().answers) : null
+  const diffTitle = diff
+    ? (['x', 'y', 'group'] as const)
+        .filter((k) => diff.picks[k] !== undefined)
+        .map((k) => {
+          const v = diff.picks[k]!
+          return `${t(`dataFigureV2.panel.${k}`)} ${Array.isArray(v) ? v.join('、') : v === 'none' ? t(k === 'x' ? 'dataFigureV2.panel.noX' : 'dataFigureV2.panel.noGroup') : v}`
+        })
+        .join(' · ')
+    : ''
   const asOptions = (list: string[], none?: string) => [...(none ? [{ value: NONE, label: none }] : []), ...list.map((c) => ({ value: c, label: c }))]
   return (
     <div data-data-panel className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-3 pt-2">
       <header className="flex flex-col">
-        <p className="flex h-6 items-center type-caption">{t('dataFigureV2.list.heading')}</p>
+        <p className="flex h-6 items-center justify-between gap-2 type-caption">
+          <span>{t('dataFigureV2.list.heading')}</span>
+          {diff && !busy ? (
+            <button
+              type="button"
+              data-data-suggest
+              title={diffTitle || undefined}
+              onClick={() => useDataFigureStore.getState().applySuggestion()}
+              className="h-6 shrink-0 rounded-full border border-border bg-surface-hover px-2.5 text-xs font-medium text-ink outline-none hover:bg-border focus-visible:focus-ring"
+            >
+              {t('dataFigureV2.suggest.apply')}
+            </button>
+          ) : understanding ? (
+            <span data-data-reading className="text-xs font-normal text-ink-3">
+              {t('dataFigureV2.suggest.reading')}
+            </span>
+          ) : null}
+        </p>
         <h2 className="type-heading min-w-0 break-words py-1" title={group ? undefined : selected.path}>
           {group ? t('dataFigureV2.batch.groupTitle', { count: group.length }) : baseName(selected.path)}
           {!group && selected.sheet ? <span className="font-normal text-ink-3"> · {selected.sheet}</span> : null}
@@ -48,31 +79,45 @@ export function DataPanel() {
       {roles && (
         <div data-data-roles className="flex flex-col gap-1">
           {roles.options.x.length > 0 && (
-            <Row label={t('dataFigureV2.panel.x')} labelWidth={LABEL_W}>
-              <Select
-                value={roles.x ?? NONE}
-                disabled={busy}
-                ariaLabel={t('dataFigureV2.panel.x')}
-                onChange={pick('x')}
-                options={asOptions(roles.options.x, t('dataFigureV2.panel.noX'))}
-              />
-            </Row>
+            <div data-data-role="x" className="contents">
+              <Row label={t('dataFigureV2.panel.x')} labelWidth={LABEL_W}>
+                <Select
+                  value={roles.x ?? NONE}
+                  disabled={busy}
+                  ariaLabel={t('dataFigureV2.panel.x')}
+                  onChange={pick('x')}
+                  options={asOptions(roles.options.x, t('dataFigureV2.panel.noX'))}
+                />
+              </Row>
+            </div>
           )}
           {roles.options.y.length > 0 && (
-            <Row label={t('dataFigureV2.panel.y')} labelWidth={LABEL_W}>
-              <Select value={roles.y ?? ''} disabled={busy} ariaLabel={t('dataFigureV2.panel.y')} onChange={pick('y')} options={asOptions(roles.options.y)} />
-            </Row>
+            <div data-data-role="y" className="contents">
+              <Row label={t('dataFigureV2.panel.y')} labelWidth={LABEL_W}>
+                <Select
+                  value={roles.y ?? ''}
+                  disabled={busy}
+                  ariaLabel={t('dataFigureV2.panel.y')}
+                  onChange={pick('y')}
+                  options={asOptions(roles.options.y)}
+                  // 纵轴多列（每列一条线 / 把列当分组）：收起时把几列并列写出来；下拉里仍是单选，选了就收回一列
+                  triggerLabel={roles.yAll.length > 1 ? roles.yAll.join('、') : undefined}
+                />
+              </Row>
+            </div>
           )}
           {roles.options.group.length > 0 && (
-            <Row label={t('dataFigureV2.panel.group')} labelWidth={LABEL_W}>
-              <Select
-                value={roles.group ?? NONE}
-                disabled={busy}
-                ariaLabel={t('dataFigureV2.panel.group')}
-                onChange={pick('group')}
-                options={asOptions(roles.options.group, t('dataFigureV2.panel.noGroup'))}
-              />
-            </Row>
+            <div data-data-role="group" className="contents">
+              <Row label={t('dataFigureV2.panel.group')} labelWidth={LABEL_W}>
+                <Select
+                  value={roles.group ?? NONE}
+                  disabled={busy}
+                  ariaLabel={t('dataFigureV2.panel.group')}
+                  onChange={pick('group')}
+                  options={asOptions(roles.options.group, t('dataFigureV2.panel.noGroup'))}
+                />
+              </Row>
+            </div>
           )}
         </div>
       )}

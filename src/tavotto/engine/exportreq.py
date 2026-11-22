@@ -315,6 +315,9 @@ class OriginalSource:
     pad_mm: tuple[float, float, float, float] | tuple[()] = ()
     #: 精确 INPUT SVG 的不可变文档资源引用；存在时必须与图表和来源 ID 同源。
     chart_source: dict | None = None
+    #: 裁这张图的剪切蒙版轮廓（ADR 0191），外 → 内；坐标与 `objects` 同一套（页面 mm）。为空 = 不裁（请求与输出与从前
+    #: 逐字节相同）。非空时走带标注的合成路径（没有标注也走），图外面包同样的 `Group(clip=…)`（`plan._clipped`）。
+    clip: tuple[dict, ...] = ()
 
     @property
     def page_mm(self) -> tuple[float, float] | None:
@@ -543,6 +546,7 @@ def render_plan_ref(req: ExportRequest, resources: list[dict]) -> dict:
                 if req.original.chart_source is not None
                 else {}
             ),
+            **({"clip": list(req.original.clip)} if req.original.clip else {}),
             **(
                 {"expected_source": req.original.expected_source}
                 if req.original.expected_source is not None
@@ -849,6 +853,22 @@ def _chart_canvas_object(source: dict) -> dict:
     }
 
 
+def _original_clip(source: dict) -> tuple[dict, ...]:
+    """`original.clip`（ADR 0191）：裁这张图的蒙版轮廓，一律是路径的几何；缺席 = 不裁。带它必须给出图幅。"""
+    raw = source.get("clip")
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or not all(
+        isinstance(m, dict) and m.get("type") == "path" for m in raw
+    ):
+        raise ExportRequestError("bad_objects", "original.clip 只能是路径轮廓的列表", {})
+    if raw and not (source.get("w_mm") and source.get("h_mm")):
+        raise ExportRequestError(
+            "bad_objects", "带剪切蒙版的原图导出必须给出原图图幅 w_mm / h_mm", {}
+        )
+    return tuple(raw)
+
+
 def _original_source(source: Any) -> OriginalSource:
     """`original` 段（以及多页 PDF 里每一页的来源）→ `OriginalSource`。**一份解析，两处用**。"""
     if not isinstance(source, dict):
@@ -869,6 +889,7 @@ def _original_source(source: Any) -> OriginalSource:
     objects = _original_objects(source)
     return OriginalSource(
         objects=objects,
+        clip=_original_clip(source),
         objects_below=_objects_below(source, len(objects)),
         pad_mm=_pad_mm(source),
         figure_id=figure_id,

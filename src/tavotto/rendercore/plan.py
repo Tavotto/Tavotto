@@ -50,6 +50,7 @@ from .ir import (
     Resource,
     ShapedText,
     Stroke,
+    apply,
     compose,
     hex2rgb,
     mm2pt,
@@ -438,6 +439,43 @@ def _path_node(o: dict, page_h: float) -> Node | None:
     )
 
 
+def clip_outline(m: dict, page_h: float) -> tuple[tuple, str] | None:
+    """剪切蒙版（ADR 0191）→ 页面空间（pt、y 向上）的裁剪轮廓与填充规则；画不出轮廓 = None。
+
+    蒙版在载荷里一律是路径的几何（前端 `clipMask.maskAsPath`：形状先换成等价路径），轮廓 = `geometry.path_segments`
+    的填充几何（框空间），再按对象变换（框 → 页面，绕框中心旋转）逐点换过去——与前端 `clipMask.maskOutline` 同一条规则。"""
+    if not isinstance(m, dict):
+        return None
+    _x, _y, w, h = _box_pt(m, allow_zero=True)
+    segs = geometry.path_segments(m, w, h)["fill"]
+    if not segs:
+        return None
+    t = _object_transform(m, page_h)
+    out = []
+    for s in segs:
+        if s[0] == "Z":
+            out.append(("Z",))
+            continue
+        pts = [apply(t, s[i], s[i + 1]) for i in range(1, len(s), 2)]
+        out.append((s[0], *[v for p in pts for v in p]))
+    return tuple(out), geometry.read_path(m)["fill_rule"]
+
+
+def _clipped(node: Node, clips: object, page_h: float) -> Node | None:
+    """被剪切组裁的对象：外 → 内每个蒙版包一层 `Group(clip=…)`（外层在外）。一个蒙版画不出轮廓 = 全部裁掉，
+    这个对象不画（与画布同一条）。真裁剪：PDF `W n`、SVG `<clipPath>`、EPS `clip`，位图由 PDF 栅格化，不栅格化矢量。"""
+    if not isinstance(clips, list):
+        raise PlanError("bad_object", "clip 必须是一个列表", {"id": getattr(node, "object_id", "")})
+    oid = getattr(node, "object_id", "")
+    for m in reversed(clips):
+        outline = clip_outline(m, page_h)
+        if outline is None:
+            return None
+        segs, rule = outline
+        node = Group((node,), clip=Path(segs, fill_rule=rule), object_id=oid)
+    return node
+
+
 def _synth_of(face) -> dict[str, bool]:
     """这张脸要模拟的粗斜 → `GlyphRun` 的字段。"""
     return {
@@ -547,12 +585,6 @@ def compile_page(
         node: Node | None
         if kind == "panel":
             node = _panel_node(o, page_h, sources, resources, frozen)
-            if pdf_panel_bookmarks:
-                title = o.get("bookmark_title")
-                # Bind by emitted instance position, even when several panels share a source.
-                title = title[:120] if isinstance(title, str) else ""
-                title = "".join(ch for ch in title if ch.isprintable() or ch.isspace())
-                pdf_bookmark_titles[len(children)] = " ".join(title.split())
         elif kind == "text":
             try:
                 user_face, user_cjk = _user_faces(o, faces, problems)
@@ -579,7 +611,15 @@ def compile_page(
             raise PlanError(
                 "bad_object", f"不认识的对象类型: {kind!r}", {"id": str(o.get("id", ""))}
             )
+        if node is not None and o.get("clip"):
+            node = _clipped(node, o.get("clip"), page_h)
         if node is not None:
+            if kind == "panel" and pdf_panel_bookmarks:
+                title = o.get("bookmark_title")
+                # Bind by emitted instance position, even when several panels share a source.
+                title = title[:120] if isinstance(title, str) else ""
+                title = "".join(ch for ch in title if ch.isprintable() or ch.isspace())
+                pdf_bookmark_titles[len(children)] = " ".join(title.split())
             children.append(node)
     page = validate(Page(page_w, page_h, tuple(children), resources, background))
     return CompiledPage(page, tuple(dropped), tuple(problems), frozen, pdf_bookmark_titles)

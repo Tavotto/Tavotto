@@ -371,9 +371,26 @@ export function applyAlign(
   return true
 }
 
-/** 阅读顺序：先按行（同一行容差 5mm）再按列，用于 (a)(b)(c) 自动编号 */
-export function readingOrder<T extends { x: number; y: number }>(items: T[]): T[] {
-  return items.slice().sort((a, b) => (Math.abs(a.y - b.y) > 5 ? a.y - b.y : a.x - b.x))
+/**
+ * 阅读顺序：先按行再按列，用于 (a)(b)(c) 自动编号与单图条。
+ *
+ * 行带 = 该行第一个（最靠上的）元素的纵向范围：后面元素的**中心**落在这条带里就算同一行，否则另起一行；
+ * 行内按 x。没有 `h` 的元素（只有坐标）按 5mm 的带宽。旧写法拿两个元素的顶边差比 5mm，比较不具传递性，
+ * 高矮不一的两张图（顶边差 > 5mm 但中心同行）会被排成「矮的在前」，上下叠放时也会和同行混序。
+ */
+export function readingOrder<T extends { x: number; y: number; h?: number }>(items: T[]): T[] {
+  const byTop = items.slice().sort((a, b) => a.y - b.y || a.x - b.x)
+  const rows: T[][] = []
+  let bandEnd = -Infinity
+  for (const it of byTop) {
+    const center = it.y + (it.h ?? 0) / 2
+    if (rows.length && center <= bandEnd) rows[rows.length - 1].push(it)
+    else {
+      rows.push([it])
+      bandEnd = it.y + Math.max(it.h ?? 0, 5)
+    }
+  }
+  return rows.flatMap((r) => r.sort((a, b) => a.x - b.x))
 }
 
 export type ResizeDir = 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w'

@@ -3999,6 +3999,8 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
         "w_mm": src.w_mm,
         "h_mm": src.h_mm,
         **({"overrides": src.overrides} if src.overrides else {}),
+        # 剪切蒙版裁这张图（ADR 0191）：与画布上被裁的对象同一条路（`plan._clipped`）
+        **({"clip": list(src.clip)} if src.clip else {}),
         **({"figure_snapshot": src.figure_snapshot} if src.figure_snapshot is not None else {}),
         **({"source_policy": src.source_policy} if src.source_policy is not None else {}),
         **({"expected_source": src.expected_source} if src.expected_source is not None else {}),
@@ -4179,6 +4181,13 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
             ),
             "clip_page": True,
         }
+    if src.clip:
+        # 剪切蒙版裁这张图（ADR 0191）：外 → 内逐条 clip（PostScript 的 clip 本来就取交集）
+        clip_text = ""
+        for m in src.clip:
+            outline = rc_plan.clip_outline(m, page_h_pt)
+            clip_text += epswriter.clip_ops(*(outline if outline else (None,)))
+        pad_extra["figure_clip"] = clip_text
     out = tmp_dir / "out_annotated.eps"
     out.write_bytes(
         engine_epsoverlay.compose(
@@ -4386,9 +4395,9 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     """
     req = job.request
     src = req.original
-    if src.chart is not None and not (src.objects or src.pad_mm):
+    if src.chart is not None and not (src.objects or src.pad_mm or src.clip):
         return _export_produce_chart_original(job, src, tmp_dir)
-    if src.objects or src.pad_mm:
+    if src.objects or src.pad_mm or src.clip:
         return _export_produce_original_annotated(job, tmp_dir, artifact_sources=artifact_sources)
     if (
         Path(src.figure_id).suffix.lower() in SVG_EXT

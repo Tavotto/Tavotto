@@ -4,10 +4,14 @@
 `answers.cells`——再由规则 `default_candidates` 生成配方、过 `validate_recipe` / `enforce_order`。闭集配方校验一步没绕过：模型改变的只是「规则在有歧义处
 默认选哪一列」。逐字段降级：哪个字段不合格（列不存在 / 类型对不上 / 角色不在枚举里 / 规则键对不上）就只丢那个字段，回到规则默认，丢弃只记个数。
 
-* **列角色闭集** `ROLES`：`time` / `ordered_x` / `measure` / `group` / `replicate_unit` / `row_id` / `unit_label` / `note` / `other`。
+* **列角色闭集** `ROLES`：`time` / `ordered_x` / `measure` / `group` / `replicate_unit` / `row_id` / `error` / `unit_label` / `note` / `other`。
   `replicate_unit` **永远不会**变成用户确认过的事实（`Confirmed.unit_col`）：它只用来让规则别把这一列当 y / x / 分组。
 * **何时采纳**（`suggest`）：规则会问（选值 / 选分组 / 选横轴）的地方，用模型的选择；规则唯一确定了某个角色、但模型明确说那一列是
-  `row_id` / `note` / `unit_label` / `replicate_unit` / `other`（y 还包括「不是 measure」，分组还包括「是 measure / time」）才推翻它；其余保持规则结果。
+  `row_id` / `note` / `unit_label` / `replicate_unit` / `error` / `other`（y 还包括「不是 measure」，分组还包括「是 measure / time」）才推翻它；其余保持规则结果。
+* **四处「够得到」的采纳**（模型明确判断 + 列客观满足，否则丢该项回规则；谓词在 `ai_data_recipe`）：多列纵轴（`multi_y_ok`：2–3 个同单位数值列、非编号列、角色都是
+  `measure`，`answers.y` 为数组）；有分组时的横轴（角色 `time` / `ordered_x`，且是规则的横轴候选）；编号样文字列当分组（角色 `group` 且 `id_group_ok`）；
+  整数编码的数值列当分组（`knockout` 0 / 1：角色 `group` 且 `numcat_pick_ok`——非空值全是整数、2–6 个取值、有重复、不是编号样的列；规则从不自己把它当分组，
+  配方带 `numcat` 这条事实，见 ADR 0178）。
 * **表头行**：只在读表时 `status == "unsure"`（已有预览）且用户没指定表头行时问；答案必须是预览里的行号，按它重读要能读出合格的表，才采纳。
   **单位行不强制**（不动读表运行时，生成脚本的公共模块哈希不变）。
 * **用户的回答永远优先**：请求里已有 `answers.y / x / group / cells` 或 `header_rows` 时不起模型任务（用户已接管）。
@@ -56,6 +60,7 @@ ROLES: dict[str, str] = {
     "group": "分类分组（对照 / 处理、基因型、药物名、批次类别）",
     "replicate_unit": "同一个对象的编号（小鼠号、受试者、样品重复号），多行共用同一个编号表示同一对象的重复测量",
     "row_id": "行号或流水号，每行一个，不是要比较的量",
+    "error": "误差或离散度（sd、sem、se、std、stderr、ci、err、误差、标准差、标准误），是另一列测量值的附属量，不单独画在纵轴上",
     "unit_label": "单位或量纲说明（如 mg/L、%）",
     "note": "备注、说明、自由文字",
     "other": "以上都不是，或看不出来",
@@ -102,6 +107,8 @@ def system_prompt() -> str:
         "每行都不同且单调递增的整数列多半是 `row_id`；同一个值反复出现、个数远小于行数的编号列多半是 `replicate_unit`。\n"
         "- 批次、平行样、重复、板号这类整数列（只有少数几个取值、在每个分组里反复出现、不单调）是 `replicate_unit`，不是横轴。"
         '`x` 只给时间、剂量、浓度、温度这类取值本身有先后或大小意义的量；表里没有这样的列就给 `"none"`，不要拿剩下的整数列凑。\n'
+        "- 已经汇总过的表里，均值旁边的 sd / sem / se / ci 这类列是 `error`，不是 `measure`，也不要放进 `picks.y`；"
+        "样本量 `n` / `count` 这类列给 `other`。\n"
         "- 拿不准就给 `other`，不要猜。一列只能有一个角色。\n"
         "- `picks` 是你建议的默认画法：`y` 是测量值的列名数组（最多 3 个，同单位才放多个），`x` 是横轴的列名，"
         '不该有有序横轴就给 `"none"`，`group` 是颜色 / 比较分组的列名，不该分组给 `"none"`。拿不准的角色给 `"unsure"`。'
@@ -425,7 +432,9 @@ def _role_fits_column(s: adf.DataSummary, col: str, role: str) -> bool:
     if role in ("time", "ordered_x"):
         return c.kind == "date" or recipe_mod.numeric_like(c)
     if role == "group":
-        return col in s.groups
+        return col in s.groups or recipe_mod.numcat_pick_ok(
+            s, col
+        )  # 文字分组列，或整数编码的类别列（0 / 1 的敲除标记）
     return True  # replicate_unit / row_id / unit_label / note / other 什么列都可以
 
 
@@ -447,11 +456,18 @@ def valid_roles(s: adf.DataSummary, shape: dict) -> tuple[dict[str, str], int]:
 
 def _valid_pick(
     s: adf.DataSummary, key: str, value: str | list, roles: dict[str, str]
-) -> str | None:
+) -> str | list[str] | None:
     """模型对一个轴的选择 → 合格的列名 / `none`；不合格 = None（丢）。`unsure` 不是选择。"""
     if key == "y":
         cols = value if isinstance(value, list) else [value]
-        if len(cols) != 1:  # 多 y 列只有规则的宽表分支会出（同单位），模型不替它定
+        if len(cols) > 1:
+            # 多列纵轴：客观条件在 `recipe_mod.multi_y_ok`（数值列、2–3 列、同单位、无编号列），再加模型自己的角色不能否决（每列只能是 `measure`）
+            if not recipe_mod.multi_y_ok(s, cols) or any(
+                roles.get(c) not in (None, "measure") for c in cols
+            ):
+                return None
+            return list(cols)  # type: ignore[return-value]
+        if not cols:
             return None
         value = cols[0]
     assert isinstance(value, str)
@@ -462,6 +478,12 @@ def _valid_pick(
     if value not in s.per_column or value in s.id_like and key != "group":
         return None
     role = roles.get(value)
+    if (
+        key == "group"
+        and value in s.id_like
+        and not (role == "group" and recipe_mod.id_group_ok(s, value))
+    ):
+        return None  # 编号样的列当分组：模型得明确判 `group`，且这列真有重复取值（`id_group_ok`）
     if role is not None and role not in _ALLOWED[key]:
         return None
     c = s.per_column[value]
@@ -469,11 +491,14 @@ def _valid_pick(
         return value if recipe_mod.numeric_like(c) else None
     if key == "x":
         return value if (c.kind == "date" or recipe_mod.numeric_like(c)) else None
-    return value if value in s.groups else None
+    if value in s.groups:
+        return value
+    # 整数编码的分组（`knockout` 0 / 1）：模型得明确判 `group`，且这列客观上合格（`numcat_pick_ok`）
+    return value if role == "group" and recipe_mod.numcat_pick_ok(s, value) else None
 
 
 #: 模型说「这一列是它们之一」就不该当横轴（编号 / 备注 / 单位说明 / 其它）
-_NOT_AN_AXIS = frozenset({"row_id", "note", "unit_label", "replicate_unit", "other"})
+_NOT_AN_AXIS = frozenset({"row_id", "note", "unit_label", "replicate_unit", "error", "other"})
 
 
 def _vetoed(key: str, role: str | None) -> bool:
@@ -485,6 +510,30 @@ def _vetoed(key: str, role: str | None) -> bool:
     if key == "x":
         return role in _NOT_AN_AXIS
     return role != "group"
+
+
+def _default_group_is_replicate(
+    entry: adf.TableEntry, hint: str | None, loop: dict, roles: dict
+) -> bool:
+    """规则在几个分组列里默认会选的那一列，模型判它是「重复 / 批次编号」吗。是的话模型的「不分组」不采纳：按板号 / 批次分开画没有害处，
+    去掉分组却可能把规则本来对的结果改差（HO-23）。"""
+    res = recipe_mod.resolve_roles(entry, hint, {**loop, "group": "unsure"})
+    return (
+        isinstance(res, recipe_mod.Roles)
+        and bool(res.cats)
+        and roles.get(res.cats[0]) == "replicate_unit"
+    )
+
+
+def _multi_y_without_x(entry, hint, loop: dict, key: str, valid: dict) -> bool:
+    """模型给的多列纵轴，配上（模型给的 / 规则默认的）横轴后没有有序横轴吗？是 = 不采纳：分布 / 比较类配方只画第一列。"""
+    if key != "y" or not isinstance(valid[key], list):
+        return False
+    trial = {**loop, "y": valid["y"]}
+    if "x" not in trial:
+        trial["x"] = valid.get("x", "unsure")
+    res = recipe_mod.resolve_roles(entry, hint, trial)
+    return not (isinstance(res, recipe_mod.Roles) and res.x_ord is not None)
 
 
 def suggest(
@@ -517,7 +566,14 @@ def suggest(
             key = _QUESTION_KEY.get(res.question_code)
             if key is None or key in loop:
                 break
-            if key in valid:
+            if key in valid and _multi_y_without_x(entry, hint, loop, key, valid):
+                dropped += 1
+                valid.pop(key)  # 不采纳：当模型没给这一项，规则默认
+            if key in valid and not (
+                key == "group"
+                and valid[key] == "none"
+                and _default_group_is_replicate(entry, hint, loop, roles)
+            ):
                 loop[key] = emit[key] = valid[key]
             else:
                 loop[key] = "unsure"  # 模型没有可用的选择：规则默认（占位只用来往下走）
@@ -530,9 +586,37 @@ def suggest(
         }
         changed = False
         for key, col in decided.items():
-            if col is None or key in emit or key in (fixed or {}):
+            if key in emit or key in (fixed or {}):
                 continue
+            if col is None:
+                # 规则落定成「没有」，而模型明确给了一个在客观上说得通的：分组 = 编号样的文字列（`id_group_ok`）或整数编码的列（`numcat_pick_ok`，
+                # 如 0 / 1 的敲除标记），都是模型判 `group`、已由 `_valid_pick` 核；
+                # 有分组时的横轴 = 模型判 `time` / `ordered_x`，且是规则此刻的横轴候选（日期 / 数值，不是 y）
+                pick = valid.get(key)
+                if (
+                    key == "group"
+                    and isinstance(pick, str)
+                    and pick != "none"
+                    and (recipe_mod.id_group_ok(s, pick) or recipe_mod.numcat_pick_ok(s, pick))
+                ) or (
+                    key == "x"
+                    and res.cats
+                    and isinstance(pick, str)
+                    and pick != "none"
+                    and roles.get(pick) in ("time", "ordered_x")
+                    and pick in res.options["x"]
+                ):
+                    loop[key] = emit[key] = pick
+                    changed = True
+                continue
+            if key in valid and _multi_y_without_x(entry, hint, loop, key, valid):
+                dropped += 1
+                valid.pop(key)
             if _vetoed(key, roles.get(col)) and key in valid and valid[key] != col:
+                # 规则已经落定了一个分组列，模型判它是「重复 / 批次编号」并建议干脆不分组：不采纳——按板号 / 批次分开画没有害处，
+                # 去掉分组却是把规则本来对的结果改差（HO-23：酶标板的板号）。换成另一个分组列、或判成备注 / 行号的照常采纳。
+                if key == "group" and valid[key] == "none" and roles.get(col) == "replicate_unit":
+                    continue
                 loop[key] = emit[key] = valid[key]
                 changed = True
         if not changed:
@@ -865,6 +949,7 @@ def _add_usage(job: Job | None, res: ai_structured.StructuredResult) -> None:
         ("requests", res.requests),
         ("input_tokens", res.input_tokens),
         ("output_tokens", res.output_tokens),
+        ("cached_input_tokens", res.cached_input_tokens),
     ):
         u[k] = u.get(k, 0) + v
     u["usage_reported"] = u.get("usage_reported", True) and res.usage_reported

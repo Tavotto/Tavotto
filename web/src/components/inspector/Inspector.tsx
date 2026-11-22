@@ -27,7 +27,8 @@ import { useReviewStore } from '@/store/reviewStore'
 import { Tip } from '../ui/Tooltip'
 import { ArrangeSection } from './ArrangeSection'
 import { CanvasPage } from './CanvasPage'
-import { useDocumentColors } from './documentColors'
+import { useDocumentColors, useFigureColors } from './documentColors'
+import { recommendedSwatches } from '@/lib/swatches'
 import { PanelElementPage } from './GroupPage'
 import { IdentityHeader } from './IdentityHeader'
 import { INSPECTOR_CONTAINER } from './layout'
@@ -92,7 +93,12 @@ export function Inspector({
   const motion = drawerMotion({ state, overlay, width, side: 'right' })
   // 属性栏里的 ColorField 带可编辑 hex 与取色面板（文档颜色 / 最近 / 系统取色器）；浮动栏不挂这层
   const documentColors = useDocumentColors()
-  const colorHost = useMemo(() => ({ rich: true, documentColors }), [documentColors])
+  const figureColors = useFigureColors()
+  const journalLabel = useDocumentStore((s) => s.doc.profile?.journalRef?.label ?? null)
+  const colorHost = useMemo(
+    () => ({ rich: true, documentColors, figureColors, recommended: recommendedSwatches(journalLabel) }),
+    [documentColors, figureColors, journalLabel],
+  )
 
   return (
     <aside

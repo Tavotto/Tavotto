@@ -26,7 +26,7 @@ import { artifactRequestFields, artifactValidationIssue, isAdoptedPanel, origina
  * 被忽略的变换逐项进 `ignored`：**忽略而不说等于骗人**（ADR 0028）。
  */
 import { t as translate } from '@/i18n'
-import type { ExportObject, ExportOriginalSource, ExportRequest } from './api'
+import type { ExportClipPath, ExportObject, ExportOriginalSource, ExportRequest } from './api'
 import { checkFilename, stripOutputExtension, type FilenameReason } from './exportName'
 import { epsFromOffers, epsFromRoute, scriptFromRoute, type ExportOffers, type ExportRoute } from './exportRoute'
 import { getOriginalOutputSpec, type OriginalOutputSpec } from './originalSpec'
@@ -275,6 +275,8 @@ export interface ExportRequestInput {
   annotations?: readonly CanvasObject[]
   /** `annotations` 里前几个在图的下面（保留图层次序） */
   annotationsBelow?: number
+  /** 裁这张图的剪切蒙版轮廓（ADR 0191，`lib/singleExportDoc.figureClipOf`）；进 `original.clip`，空 = 不发 */
+  figureClip?: readonly ExportClipPath[]
   /** 单图画布留白（ADR 0161，导出 mm）；非零时进 `original.pad_mm`，全 0 / 缺省时载荷与从前逐字节相同 */
   framePad?: FramePad | null
   /** 后端 validate 发布的 route（`lib/exportRoute`）；缺省走前端退路 */
@@ -353,7 +355,7 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
       page_w_mm: input.doc.page.w,
       page_h_mm: input.doc.page.h,
       // 顺序即 z 序（底 → 顶），隐藏对象不发 —— 与画布预览同一条投影
-      objects: toExportObjects(input.doc.objects, pdfPanelBookmarks).map((object): ExportObject =>
+      objects: toExportObjects(input.doc.objects, input.doc.objects, pdfPanelBookmarks).map((object): ExportObject =>
         // chart_render_profile 已由 toExportObjects 投影（单一出处）；
         // 这里只把 overrides 从文档对象上摘下来
         object.type === 'panel' && object.chart
@@ -393,6 +395,7 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
         const below = Math.min(Math.max(input.annotationsBelow ?? 0, 0), objects.length)
         if (below > 0) request.original.objects_below = below
       }
+      if (input.figureClip?.length) request.original.clip = [...input.figureClip]
       const pad = input.framePad
       if (pad && !isZeroPad(pad)) {
         const r2 = (v: number) => Math.round(v * 100) / 100

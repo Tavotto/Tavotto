@@ -4,14 +4,24 @@ import { msg, t as translate, type UiMessage } from '@/i18n'
 import { fitBeforeRotate } from '@/canvas/textFit'
 import { normalizeRotationDeg } from '@/lib/geometry'
 import { formatMm } from '@/lib/units'
-import { updateObjects } from '@/store/actions'
+import { selectedUnits, updateObjects } from '@/store/actions'
+import { useDocumentStore } from '@/store/documentStore'
+import { useTransformPrefs } from '@/store/transformPrefs'
+import { reflectSelection, skewSelection, transformSelection } from '@/store/transformActions'
+import { isGroupKey } from '@/lib/groupTree'
+import { canSkew, refFrac, visibleBounds } from '@/lib/transform'
+import { rotateAbout } from '@/lib/pathGeom'
+import { FlipHorizontal2, FlipVertical2, Link2, Scaling, Unlink2 } from '@/components/ui/icons'
+import { ICON_SIZE } from '@/components/ui/Icon'
+import { IconButton } from '../ui/Button'
+import { RefPointGrid } from './RefPointGrid'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import type { CanvasObject } from '@/types/document'
 import { Row, Section } from '../ui/Field'
 import { SummaryRow } from '../ui/SummaryRow'
 import { INSPECTOR_LABEL_W } from './layout'
 import { NumberField } from '../ui/Input'
-import { GeometryGrid, GeometrySpacer, MmField } from './MmField'
+import { GeometryGrid, MmField } from './MmField'
 import { shared } from './common'
 
 /** X / Y / W / H —— 面板与形状改宽高时按比例联动，文字高度由内容决定 */
@@ -35,121 +45,329 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
   const isVertical = (o: CanvasObject) => o.type === 'text' && o.writingMode === 'vertical'
   const allVertical = textOnly && objs.every(isVertical)
   const noneVertical = !objs.some(isVertical)
-  const keepRatio = objs.every((o) => o.type === 'panel')
   // 任意角度旋转只对 text/arrow/shape 开放；面板走 90° 步进（PanelSection）
   const rotatable = objs.every((o) => o.type !== 'panel')
+  // 变换面板（ADR 0185 M4 第二批）：参考点、等比锁、缩放描边和效果是个人偏好（`transformPrefs`）
+  const refPoint = useTransformPrefs((s) => s.refPoint)
+  const lockRatio = useTransformPrefs((s) => s.lockRatio)
+  const strokes = useTransformPrefs((s) => s.scaleStrokes)
+  const setPrefs = useTransformPrefs((s) => s.set)
+  const remember = useTransformPrefs((s) => s.remember)
+  const all = useDocumentStore((s) => s.doc.objects)
+  const [fx, fy] = refFrac(refPoint)
+  // 选区恰好是一整个组（含剪切组）：X / Y / W / H 说的是整组看得见的范围（剪切组 = 蒙版范围），改它 = 整组变换
+  const units = selectedUnits(ids)
+  const unit = objs.length > 1 && units.length === 1 && isGroupKey(units[0])
+  const box = unit ? visibleBounds(objs, all) : null
+  const panelsInside = objs.some((o) => o.type === 'panel')
+  const ratioLocked = lockRatio || (unit && panelsInside)
+  const skewable = objs.some((o) => !o.hidden && canSkew(o))
 
   const setEach = (label: UiMessage, fn: (o: CanvasObject, index: number) => void) =>
     updateObjects(ids, label, (o) => fn(o, ids.indexOf(o.id)))
+  /** 参考点在对象（未旋转的）框上的坐标 */
+  const refX = (o: CanvasObject) => o.x + fx * o.w
+  const refY = (o: CanvasObject) => o.y + fy * o.h
+  /** 改了宽 / 高：以参考点为不动点；开着「缩放描边和效果」时线宽等跟着 √(kx·ky) 走 */
+  const resize = (o: CanvasObject, kx: number, ky: number) => {
+    const rx = refX(o)
+    const ry = refY(o)
+    o.w *= kx
+    o.h *= ky
+    o.x = rx - fx * o.w
+    o.y = ry - fy * o.h
+    if (strokes && o.type !== 'text') {
+      const k = Math.sqrt(Math.abs(kx * ky))
+      const c = o as unknown as Record<string, number | undefined>
+      for (const f of ['strokePt', 'cornerRadius'] as const) if (typeof c[f] === 'number') c[f] = (c[f] as number) * k
+    }
+  }
+  const lockToggle = (
+    <IconButton
+      data-transform-ratio-lock=""
+      label={t('transform.lockRatio')}
+      tip={t(ratioLocked ? 'transform.ratioLocked' : 'transform.ratioUnlocked')}
+      iconSize="sm"
+      active={ratioLocked}
+      aria-pressed={ratioLocked}
+      disabled={unit && panelsInside}
+      onClick={() => setPrefs({ lockRatio: !lockRatio })}
+    >
+      {ratioLocked ? <Link2 size={ICON_SIZE.sm} /> : <Unlink2 size={ICON_SIZE.sm} />}
+    </IconButton>
+  )
 
-  const body = (
+  /** 拖动数字（scrub）会反复调用起手时的闭包：整组变换是对「当前文档」施加增量，所以每次按此刻的范围算，不用渲染时的 `box`（否则会累加） */
+  const liveBox = () => {
+    const doc = useDocumentStore.getState().doc.objects
+    const idSet = new Set(ids)
+    return visibleBounds(doc.filter((o) => idSet.has(o.id)), doc) ?? box
+  }
+
+  const body = unit && box ? (
     <>
       <GeometryGrid>
         <MmField
           label="X"
+          dataProp="transform.x"
           historyLabel={hist('setX')}
-          value={shared(objs, (o) => o.x)}
+          value={box.x + fx * box.w}
           onChange={(v) => {
-            const base = shared(objs, (o) => o.x)
-            if (base === undefined && one == null) {
-              // 多个不同值时按整体偏移，保持相对位置
-              const min = Math.min(...objs.map((o) => o.x))
-              setEach(hist('setX'), (o) => {
-                o.x += v - min
-              })
-            } else setEach(hist('setX'), (o) => {
-              o.x = v
-            })
+            const b = liveBox()
+            if (b) transformSelection({ kind: 'move', dx: v - (b.x + fx * b.w), dy: 0 })
           }}
         />
-        <GeometrySpacer />
+        <RefPointGrid value={refPoint} onChange={(rp) => setPrefs({ refPoint: rp })} />
         <MmField
           label="Y"
+          dataProp="transform.y"
           historyLabel={hist('setY')}
-          value={shared(objs, (o) => o.y)}
+          value={box.y + fy * box.h}
           onChange={(v) => {
-            const base = shared(objs, (o) => o.y)
-            if (base === undefined && one == null) {
-              const min = Math.min(...objs.map((o) => o.y))
-              setEach(hist('setY'), (o) => {
-                o.y += v - min
-              })
-            } else setEach(hist('setY'), (o) => {
-              o.y = v
-            })
+            const b = liveBox()
+            if (b) transformSelection({ kind: 'move', dx: 0, dy: v - (b.y + fy * b.h) })
           }}
         />
         <MmField
           label="W"
+          dataProp="transform.w"
+          historyLabel={hist('setWidth')}
+          min={0.1}
+          value={box.w}
+          onChange={(v) => {
+            const b = liveBox()
+            if (!b) return
+            const k = v / b.w
+            transformSelection({ kind: 'scale', kx: k, ky: ratioLocked ? k : 1, rp: refPoint })
+          }}
+        />
+        {lockToggle}
+        <MmField
+          label="H"
+          dataProp="transform.h"
+          historyLabel={hist('setHeight')}
+          min={0.1}
+          value={box.h}
+          onChange={(v) => {
+            const b = liveBox()
+            if (!b) return
+            const k = v / b.h
+            transformSelection({ kind: 'scale', kx: ratioLocked ? k : 1, ky: k, rp: refPoint })
+          }}
+        />
+      </GeometryGrid>
+      <RotateSkewRow
+        rotation={0}
+        rotationMixed={false}
+        rotatable
+        skewable={skewable}
+        onRotate={(v) => v && transformSelection({ kind: 'rotate', deg: v, rp: refPoint })}
+      />
+    </>
+  ) : (
+    <>
+      <GeometryGrid>
+        <MmField
+          label="X"
+          dataProp="transform.x"
+          historyLabel={hist('setX')}
+          value={shared(objs, refX)}
+          onChange={(v) => {
+            const base = shared(objs, refX)
+            if (base === undefined && one == null) {
+              // 多个不同值时按整体偏移，保持相对位置
+              const min = Math.min(...objs.map(refX))
+              setEach(hist('setX'), (o) => {
+                o.x += v - min
+              })
+            } else {
+              if (one) remember({ kind: 'move', dx: v - refX(one), dy: 0 })
+              setEach(hist('setX'), (o) => {
+                o.x = v - fx * o.w
+              })
+            }
+          }}
+        />
+        <RefPointGrid value={refPoint} onChange={(rp) => setPrefs({ refPoint: rp })} />
+        <MmField
+          label="Y"
+          dataProp="transform.y"
+          historyLabel={hist('setY')}
+          value={shared(objs, refY)}
+          onChange={(v) => {
+            const base = shared(objs, refY)
+            if (base === undefined && one == null) {
+              const min = Math.min(...objs.map(refY))
+              setEach(hist('setY'), (o) => {
+                o.y += v - min
+              })
+            } else {
+              if (one) remember({ kind: 'move', dx: 0, dy: v - refY(one) })
+              setEach(hist('setY'), (o) => {
+                o.y = v - fy * o.h
+              })
+            }
+          }}
+        />
+        <MmField
+          label="W"
+          dataProp="transform.w"
           historyLabel={hist('setWidth')}
           min={1}
           disabled={allVertical}
           title={allVertical ? t('transform.textWidthAuto') : undefined}
           value={shared(objs, (o) => o.w)}
-          onChange={(v) =>
+          onChange={(v) => {
+            if (one && !isVertical(one)) {
+              const k = v / one.w
+              remember({ kind: 'scale', kx: k, ky: lockRatio && one.type !== 'text' ? k : 1, rp: refPoint })
+            }
             setEach(hist('setWidth'), (o) => {
               if (isVertical(o)) return
               const k = v / o.w
-              o.w = v
-              if (o.type === 'panel' || (o.type === 'shape' && keepRatio)) o.h *= k
+              const keep = o.type === 'panel' || (lockRatio && o.type !== 'text')
+              resize(o, k, keep ? k : 1)
             })
-          }
+          }}
         />
-        <GeometrySpacer />
+        {lockToggle}
         <MmField
           label="H"
+          dataProp="transform.h"
           historyLabel={hist('setHeight')}
           min={1}
           disabled={textOnly && noneVertical}
           title={textOnly && noneVertical ? t('transform.textHeightAuto') : undefined}
           value={shared(objs, (o) => o.h)}
-          onChange={(v) =>
+          onChange={(v) => {
+            if (one && !(one.type === 'text' && !isVertical(one))) {
+              const k = v / one.h
+              remember({ kind: 'scale', kx: lockRatio && one.type !== 'text' ? k : 1, ky: k, rp: refPoint })
+            }
             setEach(hist('setHeight'), (o) => {
               if (o.type === 'text' && !isVertical(o)) return
               const k = v / o.h
-              o.h = v
-              if (o.type === 'panel') o.w *= k
+              const keep = o.type === 'panel' || (lockRatio && o.type !== 'text')
+              resize(o, keep ? k : 1, k)
             })
-          }
+          }}
         />
       </GeometryGrid>
-      {rotatable && (
-        <div className="mt-1.5">
-          <Row label={t('transform.rotation')} labelWidth={INSPECTOR_LABEL_W}>
-            <NumberField
-              half
-              value={shared(objs, (o) => normalizeRotationDeg(o.rotationDeg ?? 0)) ?? 0}
-              mixed={shared(objs, (o) => normalizeRotationDeg(o.rotationDeg ?? 0)) === undefined}
-              step={15}
-              min={-360}
-              max={360}
-              unit="°"
-              ariaLabel={t('transform.rotation')}
-              onChange={(v) =>
-                setEach(hist('rotateObject'), (o) => {
-                  const deg = normalizeRotationDeg(v)
-                  // 单行文字从 0 变非 0 的那一次先收到贴字宽（量法与落位见 canvas/textFit）
-                  const fit = deg ? fitBeforeRotate(o) : null
-                  if (fit) Object.assign(o, fit)
-                  if (deg) o.rotationDeg = deg
-                  else delete o.rotationDeg
-                })
-              }
-            />
-          </Row>
-        </div>
-      )}
+      <RotateSkewRow
+        rotation={shared(objs, (o) => normalizeRotationDeg(o.rotationDeg ?? 0)) ?? 0}
+        rotationMixed={shared(objs, (o) => normalizeRotationDeg(o.rotationDeg ?? 0)) === undefined}
+        rotatable={rotatable}
+        skewable={skewable}
+        onRotate={(v) => {
+          if (one) remember({ kind: 'rotate', deg: normalizeRotationDeg(v) - normalizeRotationDeg(one.rotationDeg ?? 0), rp: refPoint })
+          setEach(hist('rotateObject'), (o) => {
+            const deg = normalizeRotationDeg(v)
+            // 单行文字从 0 变非 0 的那一次先收到贴字宽（量法与落位见 canvas/textFit）
+            const fit = deg ? fitBeforeRotate(o) : null
+            if (fit) Object.assign(o, fit)
+            const cur = normalizeRotationDeg(o.rotationDeg ?? 0)
+            // 绕参考点转（参考点在旋转后的框上）；参考点在中心时就是原来的「绕中心转」
+            const c: [number, number] = [o.x + o.w / 2, o.y + o.h / 2]
+            const ref = rotateAbout([refX(o), refY(o)], c, cur)
+            // o 是 Immer 草稿：不能交给要 structuredClone 的 `rotateObjectAbout`，框中心就地绕参考点转
+            const nc = rotateAbout(c, ref, deg - cur)
+            o.x = nc[0] - o.w / 2
+            o.y = nc[1] - o.h / 2
+            if (deg) o.rotationDeg = deg
+            else delete o.rotationDeg
+          })
+        }}
+      />
     </>
+  )
+
+  const actions = (
+    <div className="flex items-center" data-transform-actions="">
+      <IconButton label={t('transform.reflectH')} iconSize="sm" data-transform-reflect="h" onClick={() => void reflectSelection('h')}>
+        <FlipHorizontal2 size={ICON_SIZE.sm} />
+      </IconButton>
+      <IconButton label={t('transform.reflectV')} iconSize="sm" data-transform-reflect="v" onClick={() => void reflectSelection('v')}>
+        <FlipVertical2 size={ICON_SIZE.sm} />
+      </IconButton>
+      <IconButton
+        label={t('transform.scaleStrokes')}
+        tip={t(strokes ? 'transform.scaleStrokesOn' : 'transform.scaleStrokesOff')}
+        iconSize="sm"
+        active={strokes}
+        aria-pressed={strokes}
+        data-transform-scale-strokes=""
+        onClick={() => setPrefs({ scaleStrokes: !strokes })}
+      >
+        <Scaling size={ICON_SIZE.sm} />
+      </IconButton>
+    </div>
   )
 
   if (foldKey) {
     return (
       <FoldedTransform title={t('transform.title')} foldKey={foldKey} objs={objs}>
+        <div className="mb-1 flex justify-end">{actions}</div>
         {body}
       </FoldedTransform>
     )
   }
-  return <Section data-transform-section title={t('transform.title')}>{body}</Section>
+  return (
+    <Section data-transform-section title={t('transform.title')} action={actions}>
+      {body}
+    </Section>
+  )
+}
+
+/** 旋转 + 水平倾斜一行（两个半宽框）。倾斜是一次动作：输入角度回车就斜切（烤进路径），框里回到 0 */
+function RotateSkewRow({
+  rotation,
+  rotationMixed,
+  rotatable,
+  skewable,
+  onRotate,
+}: {
+  rotation: number
+  rotationMixed: boolean
+  rotatable: boolean
+  skewable: boolean
+  onRotate: (v: number) => void
+}) {
+  const { t } = useTranslation('inspector')
+  return (
+    <div className="mt-1.5">
+      <Row label={t('transform.rotationSkew')} labelWidth={INSPECTOR_LABEL_W}>
+        <div className="flex min-w-0 gap-1.5">
+          <NumberField
+            half
+            value={rotation}
+            mixed={rotationMixed}
+            disabled={!rotatable}
+            title={rotatable ? undefined : t('transform.rotatePanelHint')}
+            step={15}
+            min={-360}
+            max={360}
+            unit="°"
+            ariaLabel={t('transform.rotation')}
+            dataProp="transform.rotation"
+            onChange={onRotate}
+          />
+          <NumberField
+            half
+            value={0}
+            step={5}
+            min={-89}
+            max={89}
+            unit="°"
+            disabled={!skewable}
+            title={skewable ? t('transform.skewTip') : t('transform.skewUnsupported')}
+            ariaLabel={t('transform.skew')}
+            dataProp="transform.skew"
+            onChange={(v) => void skewSelection(v)}
+          />
+        </div>
+      </Row>
+    </div>
+  )
 }
 
 /**

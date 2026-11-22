@@ -141,7 +141,7 @@ import { boundedCount, captureTelemetry } from "@/lib/telemetry";
 import { cn } from "@/lib/utils";
 import { canRevealInFileManager, isDesktop, revealExportedFile } from "@/lib/desktop";
 import { useEpsOpacityGate } from "./EpsOpacityPrompt";
-import { annotationsBelow, annotationsOf, singleAnnotatedDocument } from "@/lib/singleExportDoc";
+import { annotationsBelow, annotationsOf, figureClipOf, singleAnnotatedDocument } from "@/lib/singleExportDoc";
 import { useOriginalAvailability } from "@/hooks/useOriginalSpec";
 import { useRuntimePreview } from "@/hooks/useRuntimePreview";
 import { engineTransport } from "@/lib/engineTransport";
@@ -518,6 +518,7 @@ export function ExportDialog() {
   );
   const annotations = useMemo(() => (annotatedDoc ? annotationsOf(annotatedDoc) : undefined), [annotatedDoc]);
   const annotationsUnder = useMemo(() => (annotatedDoc ? annotationsBelow(annotatedDoc) : 0), [annotatedDoc]);
+  const figureClip = useMemo(() => (annotatedDoc ? figureClipOf(annotatedDoc) : undefined), [annotatedDoc]);
   /** 单图退路导出的区域 = 可见对象并集包围盒（`lib/exportCrop`）；预览与尺寸读它，与请求同一份 */
   const fallbackCrop = useMemo(
     () =>
@@ -975,6 +976,7 @@ export function ExportDialog() {
       spec: availability.spec,
       annotations,
       annotationsBelow: annotationsUnder,
+      figureClip,
       framePad,
       route,
       exportDir: exportDirNow,

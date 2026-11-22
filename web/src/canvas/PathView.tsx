@@ -5,6 +5,7 @@ import { hitStrokeWidth, isFilledHead, strokeOpacityOf, svgStroke, type ArrowHea
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { PathObject } from '@/types/document'
 import { readPath } from '@/types/document'
+import { usePaints } from './gradientPaint'
 
 /**
  * 自由路径（ADR 0185）：几何只在 `lib/pathGeom.pathGeometry` 一处算（与后端 `geometry.path_segments` 同源）。
@@ -60,13 +61,21 @@ export function PathView({ obj, hit = 'none' }: { obj: PathObject; hit?: 'stroke
 export function PathBody({ obj, sw, w, h }: { obj: PathObject; sw: number; w: number; h: number }) {
   const clipId = `pclip-${useId().replace(/:/g, '')}`
   const r = readPath(obj)
+  // 填充 / 描边渐变（ADR 0186）：与 ShapeView 同一个出口
+  const paints = usePaints(obj, w, h, r.strokeOn)
+  // 有端型时描边不透明度在整组上（见下），组里的描边渐变按不透明算——与后端 `opaque=True` 那一支相同
+  const barePaints = usePaints({ ...obj, strokeOpacity: undefined }, w, h, r.strokeOn)
   const g = pathGeometry(obj, w, h, sw)
   if (!g.fill.length) return null
-  const fill = obj.fill ?? 'none'
-  const fillOpacity = obj.fill ? (obj.fillOpacity ?? 1) : undefined
+  const { fill, fillOpacity } = paints
   const fillRule = r.fillRule === 'evenodd' ? ('evenodd' as const) : undefined
   if (!r.strokeOn) {
-    return obj.fill ? <path d={pathD(g.fill)} fill={fill} fillOpacity={fillOpacity} fillRule={fillRule} /> : null
+    return obj.fill ? (
+      <>
+        {paints.defs}
+        <path d={pathD(g.fill)} fill={fill} fillOpacity={fillOpacity} fillRule={fillRule} />
+      </>
+    ) : null
   }
   const align = pathStrokeAlign(obj)
   if (align) {
@@ -77,6 +86,7 @@ export function PathBody({ obj, sw, w, h }: { obj: PathObject; sw: number; w: nu
     const clipD = align === 'inside' ? d : `M${-pad} ${-pad}H${w + pad}V${h + pad}H${-pad}Z ${d}`
     return (
       <>
+        {paints.defs}
         {obj.fill && <path d={d} fill={fill} fillOpacity={fillOpacity} fillRule={fillRule} />}
         <clipPath id={clipId}>
           <path d={clipD} clipRule={align === 'inside' ? fillRule : 'evenodd'} />
@@ -87,6 +97,7 @@ export function PathBody({ obj, sw, w, h }: { obj: PathObject; sw: number; w: nu
           fill="none"
           clipPath={`url(#${clipId})`}
           {...svgStroke(obj, sw, PATH_DEFAULT_JOIN)}
+          {...paints.strokeOverride}
           strokeWidth={2 * sw}
         />
       </>
@@ -94,13 +105,17 @@ export function PathBody({ obj, sw, w, h }: { obj: PathObject; sw: number; w: nu
   }
   if (!g.heads.length) {
     return (
-      <path
-        d={pathD(g.fill)}
-        fill={fill}
-        fillOpacity={fillOpacity}
-        fillRule={fillRule}
-        {...svgStroke(obj, sw, PATH_DEFAULT_JOIN)}
-      />
+      <>
+        {paints.defs}
+        <path
+          d={pathD(g.fill)}
+          fill={fill}
+          fillOpacity={fillOpacity}
+          fillRule={fillRule}
+          {...svgStroke(obj, sw, PATH_DEFAULT_JOIN)}
+          {...paints.strokeOverride}
+        />
+      </>
     )
   }
   const bare = { ...obj, strokeOpacity: undefined }
@@ -116,9 +131,11 @@ export function PathBody({ obj, sw, w, h }: { obj: PathObject; sw: number; w: nu
     )
   return (
     <>
+      {paints.defs}
+      {barePaints.defs}
       {obj.fill && <path d={pathD(g.fill)} fill={fill} fillOpacity={fillOpacity} fillRule={fillRule} />}
       <g opacity={strokeOpacityOf(obj.strokeOpacity)}>
-        <path d={pathD(g.stroke)} fill="none" {...svgStroke(bare, sw, PATH_DEFAULT_JOIN)} />
+        <path d={pathD(g.stroke)} fill="none" {...svgStroke(bare, sw, PATH_DEFAULT_JOIN)} {...barePaints.strokeOverride} />
         {g.heads.map(renderHead)}
       </g>
     </>

@@ -548,6 +548,82 @@ def cases() -> list[dict]:
     _el_with(m, "axes_0.lines_0", visible=False)
     out.append(_lw_case("journal-min-line-width-hidden-line-skipped", 2.0, m))
 
+    # 9k. V-001 对数轴上有 ≤ 0 的值（`log-axis-nonpositive`）：事实只读 axes 元素的 `scale_domain`
+    #     （`engine/manifest.scale_domain`）。那一维 `status == "ok"` 且两个计数之和 > 0 才报；
+    #     超预算 / 量不了 / 缺 status / 计数不是非负整数一律不判。每个（axes, 维）一次命中，x 先于 y，
+    #     最糟（合计最大）的那次决定 detail。三张 severity 表都是 warn（漏登记会兜底成 warn，
+    #     所以 severity 本身测不出漏登记——那一条由 `tests/test_preflight.py` 直接读表看护）
+    def _log_case(name: str, domains: dict, *, profile_id: str = "lab-publication-v1") -> dict:
+        m = _clean_manifest()
+        for gid, domain in domains.items():
+            el = next((e for e in m["elements"] if e["gid"] == gid), None)
+            if el is None:
+                el = _el(gid, "axes")
+                m["elements"].append(el)
+            el["scale_domain"] = domain
+        return {"name": name, "profile_id": profile_id, "spec": _spec([_panel("p1", manifest=m)])}
+
+    def _ok(points, low=0) -> dict:
+        return {"status": "ok", "nonpositive": points, "errorbar_low_nonpositive": low}
+
+    out.append(_log_case("log-axis-nonpositive-points", {"axes_0": {"y": _ok(2)}}))
+    out.append(_log_case("log-axis-errorbar-low-only", {"axes_0": {"y": _ok(0, 1)}}))
+    out.append(_log_case("log-axis-all-positive-no-report", {"axes_0": {"y": _ok(0, 0)}}))
+    out.append(
+        _log_case(
+            "log-axis-not-measured-no-report",
+            {
+                "axes_0": {
+                    # 超预算却带着计数：不许冒充判过
+                    "x": {"status": "over_budget", "nonpositive": 5},
+                    "y": {"status": "unavailable", "nonpositive": 3, "errorbar_low_nonpositive": 1},
+                }
+            },
+        )
+    )
+    out.append(
+        _log_case("log-axis-status-missing-no-report", {"axes_0": {"y": {"nonpositive": 3}}})
+    )
+    out.append(
+        _log_case(
+            "log-axis-bad-counts-no-report",
+            {
+                "axes_0": {
+                    "x": {"status": "ok", "nonpositive": 1.5, "errorbar_low_nonpositive": -2},
+                    "y": {"status": "ok", "nonpositive": "3", "errorbar_low_nonpositive": True},
+                }
+            },
+        )
+    )
+    out.append(_log_case("log-axis-integral-float-count", {"axes_0": {"y": _ok(2.0)}}))
+    out.append(_log_case("log-axis-not-a-dict-no-report", {"axes_0": {"y": [2, 0]}}))
+    out.append(
+        _log_case(
+            "log-axis-two-dims-two-axes",
+            {
+                "axes_0": {"x": _ok(1), "y": _ok(3, 1)},
+                "axes_1": {"y": _ok(2)},
+            },
+        )
+    )
+    m_case = _log_case("log-axis-hidden-axes-no-report", {"axes_0": {"y": _ok(2)}})
+    m_case["spec"]["panels"][0]["manifest"]["elements"][0]["editable"].append(
+        {"prop": "visible", "type": "bool", "value": False}
+    )
+    out.append(m_case)
+    out.append(
+        _log_case(
+            "log-axis-nonpositive-free-form", {"axes_0": {"y": _ok(2)}}, profile_id="free-form-v1"
+        )
+    )
+    out.append(
+        _log_case(
+            "log-axis-nonpositive-journal-base",
+            {"axes_0": {"y": _ok(2)}},
+            profile_id="journal-base-v1",
+        )
+    )
+
     # 10. free-form profile：同一份输入，等级整体降一档（severity 表说了算）。
     #     4pt 才低于它的 6pt 下限——同样一张图在严格 profile 下是 error。
     m = _clean_manifest()
