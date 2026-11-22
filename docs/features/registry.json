@@ -1406,6 +1406,21 @@
       ]
     },
     {
+      "id": "desktop.ggplot-legend-entry-color",
+      "status": "active",
+      "platform": "desktop",
+      "summary": {
+        "zh-CN": "修改原生 ggplot2 的单个图例条目文字颜色，并随排版保存和导出",
+        "en-US": "Recolor a single native ggplot2 legend entry label, then save the layout and export it"
+      },
+      "entry": "脚本 → 用 R 运行 → 图内元素 → 图例条目 → 颜色",
+      "e2e": [],
+      "desktop_manual": [
+        "用 R 运行有唯一纯文本图例标题的普通 guide_legend 图。在元素树中选一个条目改色，核对图例键和其他条目，撤销后重做。",
+        "保存排版，结束 R 会话后重开布局并导出 PDF，核对所选条目的文字颜色。"
+      ]
+    },
+    {
       "id": "desktop.ggplot-facet-label-color",
       "status": "active",
       "platform": "desktop",

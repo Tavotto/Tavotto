@@ -58,8 +58,29 @@ ggplot_text_target <- function(table, slots, role, title_child = NULL) {
        paint = text$gp, color = color, role = role)
 }
 
-ggplot_legend_titles <- function(table) {
+ggplot_legend_entries <- function(table, slots, guide, prefix, title) {
+  cells <- guide$layout$name
+  labels <- which(grepl("^label-[0-9]+-[0-9]+$", cells))
+  keys <- cells[grepl("^key-[0-9]+-[0-9]+-bg$", cells)]
+  # A standard keyed legend has one cell per key and one per label.
+  if (!length(labels) || length(labels) != length(keys) ||
+      anyDuplicated(keys) || anyDuplicated(cells[labels])) return(list())
   targets <- list()
+  for (slot in labels) {
+    target <- ggplot_text_target(table, c(slots, slot), "legend_text")
+    if (is.null(target)) next
+    cell <- sub("^label-", "", cells[[slot]])
+    gid <- paste0(prefix, ".entry.", gsub("-", ".", cell, fixed = TRUE))
+    target$legend_title <- title
+    targets[[gid]] <- target
+  }
+  text <- vapply(targets, function(target) target$label, character(1L))
+  targets[!(duplicated(text) | duplicated(text, fromLast = TRUE))]
+}
+
+ggplot_legend_targets <- function(table) {
+  titles <- list()
+  entries <- list()
   for (box_slot in which(startsWith(table$layout$name, "guide-box-"))) {
     box <- table$grobs[[box_slot]]
     if (!inherits(box, "gtable")) next
@@ -71,15 +92,19 @@ ggplot_legend_titles <- function(table) {
       if (!inherits(guide, "gtable")) next
       title_slot <- which(guide$layout$name == "title")
       if (length(title_slot) != 1L) next
-      target <- ggplot_text_target(table, c(box_slot, guide_slot, title_slot), "legend_text")
+      slots <- c(box_slot, guide_slot)
+      target <- ggplot_text_target(table, c(slots, title_slot), "legend_text")
       if (is.null(target)) next
-      gid <- paste("legend", position, index, "title", sep = ".")
-      targets[[gid]] <- target
+      prefix <- paste("legend", position, index, sep = ".")
+      gid <- paste0(prefix, ".title")
+      titles[[gid]] <- target
+      entries[[gid]] <- ggplot_legend_entries(table, slots, guide, prefix, target$label)
     }
   }
   # An index and a label cannot distinguish same-named guides after reordering.
-  labels <- vapply(targets, function(target) target$label, character(1L))
-  targets[!(duplicated(labels) | duplicated(labels, fromLast = TRUE))]
+  labels <- vapply(titles, function(target) target$label, character(1L))
+  titles <- titles[!(duplicated(labels) | duplicated(labels, fromLast = TRUE))]
+  c(titles, unlist(unname(entries[names(titles)]), recursive = FALSE))
 }
 
 ggplot_facet_labels <- function(table) {
@@ -129,7 +154,7 @@ ggplot_text_targets <- function(table, frame_pt) {
     role <- if (gid == "plot.title") "title" else "axis_label"
     targets[[gid]] <- ggplot_text_target(table, slot, role)
   }
-  targets <- c(targets, ggplot_legend_titles(table), ggplot_facet_labels(table))
+  targets <- c(targets, ggplot_legend_targets(table), ggplot_facet_labels(table))
   if (!length(targets)) return(targets)
   drawn <- tryCatch({
     grid::grid.force()
@@ -232,11 +257,13 @@ ggplot_manifest <- function(state, stem, colors = list()) {
   elements <- lapply(names(state$text_targets), function(gid) {
     target <- state$text_targets[[gid]]
     color <- if (is.null(colors[[gid]])) target$color else colors[[gid]]
-    list(
+    element <- list(
       gid = gid, role = target$role, label = target$label,
       bbox = as.list(target$bbox), draggable = FALSE,
       editable = list(list(prop = "color", type = "color", value = color))
     )
+    if (!is.null(target$legend_title)) element$legend_title <- target$legend_title
+    element
   })
   list(stem = stem, size_mm = as.list(state$frame_pt * 25.4 / 72), elements = elements)
 }

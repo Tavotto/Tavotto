@@ -35,6 +35,7 @@ ADAPTER = ROOT / "src" / "tavotto" / "resources" / "native" / "ggplot2.R"
 X_BOTTOM = "axis.x.bottom.title"
 Y_LEFT = "axis.y.left.title"
 LEGEND = "legend.right.1.title"
+LEGEND_ENTRY = "legend.right.1.entry.3.2"
 FACET = "facet.t.2.2.label"
 
 
@@ -68,13 +69,16 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
   ggplot2::geom_point(ggplot2::aes(shape = factor(cyl)),
                       position = ggplot2::position_jitter(width = .12, height = 0)) +
   ggplot2::stat_summary(fun = tracked_mean, geom = "point", shape = 4) +
+  ggplot2::scale_colour_discrete(labels = c("Four wheel drive", "Front wheel drive",
+                                           "Rear wheel drive")) +
   ggplot2::facet_wrap(ggplot2::vars(cyl), labeller = ggplot2::labeller(
     cyl = function(values) paste("Cylinder", values))) +
   ggplot2::labs(title = "Fuel economy", x = "Engine displacement", y = "Highway mileage",
                  colour = "Drive type", shape = "Cylinders") +
   ggplot2::guides(
     colour = ggplot2::guide_legend(order = 1, theme = ggplot2::theme(
-      legend.title = ggplot2::element_text(colour = "#667788"))),
+      legend.title = ggplot2::element_text(colour = "#667788"),
+      legend.text = ggplot2::element_text(colour = "#7D6439"))),
     shape = ggplot2::guide_legend(order = 2, theme = ggplot2::theme(
       legend.title = ggplot2::element_text(colour = "#778899")))
   ) +
@@ -98,16 +102,25 @@ labels <- c("plot.title" = "Fuel economy",
             "axis.y.right.title" = "Secondary vertical",
             "legend.right.1.title" = "Drive type",
             "legend.right.2.title" = "Cylinders",
+            "legend.right.1.entry.3.2" = "Front wheel drive",
             "facet.t.2.2.label" = "Cylinder 8")
 facets <- c("facet.t.1.2.label" = "Cylinder 6", "facet.t.2.2.label" = "Cylinder 8",
             "facet.t.1.1.label" = "Cylinder 4", "facet.t.2.1.label" = "Cylinder 5")
-original <- c("#112233", "#223344", "#334455", "#445566", "#556677", "#667788", "#778899", "#202040")
+original <- c("#112233", "#223344", "#334455", "#445566", "#556677",
+              "#667788", "#778899", "#7D6439", "#202040")
 colors <- setNames(as.list(c("#6C3799", "#8C3011", "#2370B1", "#2A7654",
-                            "#923190", "#3373A7", "#C75052", "#BE3D47")),
+                            "#923190", "#3373A7", "#C75052", "#E058A9", "#BE3D47")),
                    names(labels))
+entries <- function(state) {
+  state$text_targets[grepl("\\.entry\\.", names(state$text_targets))]
+}
 stopifnot(summary_calls > 0L, length(baseline$state$layers) == 2L,
           length(baseline$state$panel_ranges) == 4L,
-          identical(names(baseline$state$text_targets), c(head(names(labels), -1L), names(facets))),
+          identical(setdiff(names(baseline$state$text_targets), names(entries(baseline$state))),
+                    c(head(names(labels), -2L), names(facets))),
+          length(entries(baseline$state)) == 7L,
+          identical(baseline$state$text_targets[["legend.right.1.entry.3.2"]]$legend_title,
+                    "Drive type"),
           identical(vapply(baseline$state$text_targets[names(facets)], function(t) t$label,
                            character(1L)), facets))
 count_at_capture <- summary_calls
@@ -167,14 +180,46 @@ stopifnot(identical(names(hidden$state$text_targets), c(head(names(labels), 5L),
 
 bar <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
   ggplot2::geom_point() + ggplot2::labs(colour = "City mileage") +
+  ggplot2::scale_colour_continuous(breaks = 20) +
   ggplot2::guides(colour = ggplot2::guide_colourbar(position = "bottom"))
 bar_state <- adapter$capture_ggplot(bar, c(432, 288))$state
 gid <- "legend.bottom.1.title"
-stopifnot(identical(bar_state$text_targets[[gid]]$label, "City mileage"))
+stopifnot(identical(bar_state$text_targets[[gid]]$label, "City mileage"),
+          !length(entries(bar_state)))
 bar_edited <- adapter$render_ggplot(bar_state, setNames(list("#26838F"), gid))
 bar_title <- grep(">City mileage</text>", strsplit(bar_edited, "\n")[[1L]],
                   value = TRUE, fixed = TRUE)
 stopifnot(length(bar_title) == 1L, grepl("#26838F", bar_title, fixed = TRUE))
+
+drive_plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
+  ggplot2::geom_point()
+repeated_legend <- drive_plot +
+  ggplot2::scale_colour_discrete(name = "Groups", labels = c("Repeated", "Repeated", "Other"))
+labels <- entries(adapter$capture_ggplot(repeated_legend, c(432, 288))$state)
+stopifnot(length(labels) == 1L, identical(labels[[1L]]$label, "Other"))
+separate_guides <- drive_plot + ggplot2::geom_point(ggplot2::aes(shape = factor(cyl))) +
+  ggplot2::scale_colour_discrete(name = "Drive", labels = c("Shared entry", "Front", "Rear")) +
+  ggplot2::scale_shape_discrete(name = "Cylinders", labels = c("Shared entry", "Five", "Six", "Eight")) +
+  ggplot2::guides(colour = ggplot2::guide_legend(order = 1), shape = ggplot2::guide_legend(order = 2))
+separate <- adapter$capture_ggplot(separate_guides, c(432, 288))
+shared <- Filter(function(target) identical(target$label, "Shared entry"), entries(separate$state))
+stopifnot(length(shared) == 2L, identical(shared[[1L]]$legend_title, "Drive"),
+          identical(shared[[2L]]$legend_title, "Cylinders"))
+separate_edited <- adapter$render_ggplot(separate$state, setNames(list("#934896"), names(shared)[[2L]]))
+shared_lines <- function(svg) grep(">Shared entry</text>", strsplit(svg, "\n")[[1L]],
+                                   fixed = TRUE, value = TRUE)
+stopifnot(identical(shared_lines(separate_edited)[[1L]], shared_lines(separate$svg)[[1L]]),
+          grepl("#934896", shared_lines(separate_edited)[[2L]], fixed = TRUE))
+wrap <- drive_plot + ggplot2::labs(colour = "Drive type") +
+  ggplot2::guides(colour = ggplot2::guide_legend(ncol = 2, position = "bottom"))
+wrapped <- adapter$capture_ggplot(wrap, c(432, 288))
+bottom_entries <- entries(wrapped$state)
+stopifnot(length(bottom_entries) == 3L, all(startsWith(names(bottom_entries), "legend.bottom.")))
+bottom_gid <- names(bottom_entries)[[3L]]
+bottom_label <- paste0(">", bottom_entries[[3L]]$label, "</text>")
+wrapped_edited <- adapter$render_ggplot(wrapped$state, setNames(list("#6F2A9B"), bottom_gid))
+wrapped_line <- grep(bottom_label, strsplit(wrapped_edited, "\n")[[1L]], fixed = TRUE, value = TRUE)
+stopifnot(length(wrapped_line) == 1L, grepl("#6F2A9B", wrapped_line, fixed = TRUE))
 
 data <- data.frame(x = 1:4, y = 4:1, row = rep(c("Sample", "Shared"), each = 2),
                    column = rep(c("Control", "Shared"), 2))
@@ -326,7 +371,7 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy)) +
         assert bottom["editable"][0]["value"] == "#6B6B6B"
         invalid = [{"gid": "plot.title", "prop": "text", "value": "Unchanged"}]
         with pytest.raises(
-            pool.WorkerError, match="supports plain-text title and facet-label colors"
+            pool.WorkerError, match="supports RGB colors for supported text targets"
         ):
             session.override(stem, invalid, inline_svg=True)
         with pytest.raises(pool.WorkerError, match="text is unavailable"):
@@ -391,11 +436,14 @@ def test_desktop_ggplot_edit_uses_the_layout_archive_and_mixed_export(tmp_path, 
 cat("computed", file = "r-witness")
 plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
   ggplot2::geom_point() +
+  ggplot2::scale_colour_discrete(labels = c("Four wheel drive", "Front wheel drive",
+                                           "Rear wheel drive")) +
   ggplot2::facet_wrap(ggplot2::vars(cyl), labeller = ggplot2::labeller(
     cyl = function(values) paste("Cylinder", values))) +
   ggplot2::labs(title = "Fuel economy", x = "Engine displacement", y = "Highway mileage",
                  colour = "Drive type") +
-  ggplot2::theme(plot.title = ggplot2::element_text(colour = "#112233"))
+  ggplot2::theme(plot.title = ggplot2::element_text(colour = "#112233"),
+                 legend.text = ggplot2::element_text(colour = "#294052"))
 """,
         encoding="utf-8",
     )
@@ -458,6 +506,8 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
         elements = {element["gid"]: element for element in render([])["manifest"]["elements"]}
         assert elements[LEGEND]["role"] == "legend_text"
         assert elements[LEGEND]["label"] == "Drive type"
+        assert elements[LEGEND_ENTRY]["role"] == "legend_text"
+        assert elements[LEGEND_ENTRY]["label"] == "Front wheel drive"
         assert elements[FACET]["role"] == "text"
         assert elements[FACET]["label"] == "Cylinder 8"
         expected = {
@@ -465,6 +515,7 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
             X_BOTTOM: "#8C3011",
             Y_LEFT: "#2A7654",
             LEGEND: "#2370B1",
+            LEGEND_ENTRY: "#E058A9",
             FACET: "#BE3D47",
         }
         patches = [
@@ -487,6 +538,16 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
                 inline_svg=True,
             )
         assert session.svg_path(descriptor["stem"]).read_text(encoding="utf-8") == svg
+        entry_patch = next(patch for patch in patches if patch["gid"] == LEGEND_ENTRY)
+        with pytest.raises(pool.WorkerError, match="text target changed"):
+            session.override(
+                descriptor["stem"],
+                [{key: value for key, value in entry_patch.items() if key != "identity"}],
+                inline_svg=True,
+            )
+        assert session.svg_path(descriptor["stem"]).read_text(encoding="utf-8") == svg
+        without_entry = render([patch for patch in patches if patch["gid"] != LEGEND_ENTRY])["svg"]
+        assert "#E058A9" not in without_entry and "#2370B1" in without_entry
         without_facet = render(patches[:-1])["svg"]
         assert "#2370B1" in without_facet and "#BE3D47" not in without_facet
         undo_x_and_y = render(patches[:1])["svg"]
@@ -589,7 +650,10 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
         assert original["status"] == "done", original
         colors = _pdf_text_colors(Path(original["export_dir"]) / original["outputs"][0]["name"])
         assert colors["Cylinder 8"] == {int(expected[FACET][1:], 16)}
+        assert colors["Front wheel drive"] == {int(expected[LEGEND_ENTRY][1:], 16)}
+        assert colors["Rear wheel drive"] == {0x294052}
 
+        original_script = script.read_text(encoding="utf-8")
         script.write_text('stop("new execution failed")\n', encoding="utf-8")
         launched = client.post("/api/native/ggplot2", json=target)
         assert launched.status_code == 202, launched.get_json()
@@ -600,6 +664,22 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
         stale = client.post("/api/export", json={**original_request, "filename": "Stale original"})
         assert stale.get_json().get("error", {}).get("code") == "svg_snapshot_missing"
         assert not (root / "tavottofile" / "export" / "Stale original.pdf").exists()
+        # The same GID and label in a renamed guide must reject the old edit.
+        script.write_text(
+            original_script.replace('"Drive type"', '"Other drive grouping"'), encoding="utf-8"
+        )
+        launched = client.post("/api/native/ggplot2", json=target)
+        assert launched.status_code == 202, launched.get_json()
+        sid = launched.get_json()["session"]["session_id"]
+        session = nativesession.REGISTRY.get(sid)
+        assert session.wait_for_state((nativesession.BARRIER,), timeout=20) == nativesession.BARRIER
+        assert client.post(f"/api/native/sessions/{sid}/build").status_code == 200
+        regrouped = {element["gid"]: element for element in render([])["manifest"]["elements"]}
+        assert regrouped[LEGEND_ENTRY]["label"] == elements[LEGEND_ENTRY]["label"]
+        assert regrouped[LEGEND_ENTRY]["identity"] != entry_patch["identity"]
+        with pytest.raises(pool.WorkerError, match="text target changed"):
+            session.override(descriptor["stem"], [entry_patch], inline_svg=True)
+        assert session.cancel_owned().confirmed
         session = None
         service.reset_projects()
         script.rename(root / "source-moved")

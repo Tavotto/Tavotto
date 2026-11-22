@@ -83,7 +83,7 @@ main <- function() {
           !is.character(patch$gid) || length(patch$gid) != 1L ||
           is.na(patch$gid) || !nzchar(patch$gid) ||
           !identical(patch$prop, "color") || !is.character(patch$value)) {
-        stop("This ggplot adapter supports plain-text title and facet-label colors.")
+        stop("This ggplot adapter supports RGB colors for supported text targets.")
       }
       colors[[patch$gid]] <- patch$value
     }
