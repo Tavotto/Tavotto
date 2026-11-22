@@ -1,0 +1,3 @@
+## Style panel: switch between the whole canvas and a single figure
+
+The Style panel now has a "Canvas | Figure" switch at the top. In Canvas mode you pick the style the whole canvas follows and edit its fonts, sizes and line widths in one place; every figure changes together. In Figure mode a strip of thumbnails (in panel-label order) lets you pick one figure and change only that figure; rows that differ from the canvas get a small link button to follow the canvas again. The style menu now shows a small sample and a one-line summary for each style. Changes you made to a single figure are kept when the canvas style changes later, including changes made in older versions; pick the style again to make the whole canvas uniform.

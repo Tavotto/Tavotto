@@ -10,16 +10,24 @@
 
 连接支持：
 * API Key / 自填地址 / 账号登录（OAuth）这类内置执行器能直接用的连接（`ai_providers.builtin_conn`）：支持。
-* 订阅登录（Codex / Claude Code CLI）：**暂不支持**，返回 `unsupported_connection`。它们没有干净的「无工具单次调用」——CLI 自带系统提示、
-  工具与用户配置，Tavotto 没有给它们的单轮入口。适配方向见 ADR 0178 修订节与 `docs/rules/backend/ai-agent-bridge.md`。
+* 订阅登录（Codex / Claude Code CLI）：没有 Key 连接时走它们的无工具单轮入口（`AgentDefinition.build_structured_command`：
+  只读沙盒 / 无工具、空临时工作目录、不落会话、不读用户的 CLI 配置、显式型号、用户内容只走 stdin）。适配器没覆写 = `unsupported_connection`。
+  语义与 HTTP 路径同一套（同一个 `validate`、非 JSON 重试一次、总时限、永不抛）；CLI 拿不到 token / 花费，用量如实记 `usage_reported=False`。
+  **真跑要订阅额度，不进 CI / 夜跑**（`scripts/dev/structured_cli_smoke.py` 只在维护者本机手工跑）。
 
 隐私：本模块**不写日志、不发遥测**；失败的 `detail` 只是短代码（HTTP 状态、异常类型名、`not_json` 之类），不含响应原文、提示词、
-地址或密钥；`StructuredResult` 里没有提示词与回复原文（成功时只有已过校验的 `value`）。
+地址或密钥；`StructuredResult` 里没有提示词与回复原文（成功时只有已过校验的 `value`）。CLI 路径的 stdout / stderr 只在内存里解析：
+stderr 直接丢弃（`DEVNULL`），临时目录（系统提示 / 输出文件）退出后删除。
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
+import shutil
+import subprocess
+import tempfile
 import threading
 import time
 from collections.abc import Callable
@@ -29,7 +37,7 @@ from .agent_runner.wires import Msg, RunnerFailure, Usage, post_json
 
 #: 失败的闭集原因。调用方只按这些码决定「退回规则结果」，不展示给用户。
 #: * no_connection          没有任何连接（或运维开关关了内置执行器）
-#: * unsupported_connection  只有订阅登录（Codex / Claude Code CLI）这类没有单次调用方式的连接
+#: * unsupported_connection  只有订阅登录、且它的适配器没有无工具单次调用（没覆写 `build_structured_command`）
 #: * over_budget             输入超过上限（没发请求）、输出被截断（撞到最长输出），或 `max_requests` 到顶
 #: * timeout                 超过总时限（含两次尝试）或网络层读超时
 #: * refused                 服务端拒答 / 内容过滤
@@ -161,21 +169,20 @@ def resolve_connection(budget_s: float | None = None) -> tuple[dict | None, str,
     """用户当前连着的、内置执行器能直接用的连接 → `(builtin_conn 形状 | None, 原因码, detail)`。
 
     「当前」= 连接视图里第一个可用的 Key / 账号登录连接（`ai_connections.first_key_connection`，旧版选中的接口排在前，与 AI 修复同一口径）。
-    没有时分两种：能经 MCP 接法修复的 CLI（订阅登录）在用 → `unsupported_connection`；什么都没有 → `no_connection`。
+    没有时看订阅登录（Codex / Claude Code CLI）：适配器支持无工具单轮 → 返回 CLI 连接描述 `{"kind": "cli", "agent", "model", "conn_id"}`（`call_structured`
+    据此走 `_call_cli`）；有订阅登录但适配器不支持 → `unsupported_connection`；什么都没有 → `no_connection`。
 
     **时限**：挑连接本身不联网（`refresh=False`）。只对挑中的**那一条**记录、且只在 `budget_s`（剩余预算，默认 `DEFAULT_LIMITS.timeout_s`）
     ≥ `REFRESH_NEEDS_S` 时才联网刷新（账号登录令牌 `ensure_fresh` / 地址 `ensure_api_root`）；预算不够就用现有记录，令牌真过期了请求会得到 `auth`、
     调用方退回规则结果。不会顺序刷新多条连接。令牌刷不动（需重新登录）→ `no_connection` / `needs_login`。"""
-    from . import ai_connections, ai_oauth, ai_providers, fixsession
+    from . import ai_connections, ai_oauth, ai_providers
 
     budget = DEFAULT_LIMITS.timeout_s if budget_s is None else budget_s
     if ai_connections.builtin_forced() is False:
         return None, "no_connection", "builtin_disabled"
     conn = ai_connections.first_key_connection(refresh=False)
     if conn is None:
-        if fixsession.cli_agent() is not None:
-            return None, "unsupported_connection", "cli_only"
-        return None, "no_connection", "none"
+        return find_cli_connection(cached_only=False)
     if budget >= REFRESH_NEEDS_S:
         rec = ai_providers.get(conn.get("provider_id"))
         if rec is not None:
@@ -192,18 +199,191 @@ def resolve_connection(budget_s: float | None = None) -> tuple[dict | None, str,
     return conn, "", ""
 
 
+def _effort_kwargs(conn: dict, effort: str | None) -> dict:
+    """想要的强度 → `HttpModel` 的 `effort` / `thinking`（经 `builtin_effort_args` 核过才有）；任何一步不确定 = 空（不发）。"""
+    if conn.get(
+        "effort"
+    ):  # 只有手动基准的临时连接带（存储里的连接没有这个键）；协议层仍按自己认的取值过滤
+        return {"effort": conn["effort"]}
+    if not effort:
+        return {}
+    try:
+        from . import ai_providers
+
+        rec = ai_providers.get(conn.get("provider_id"))
+        if rec is None:
+            return {}
+        args = ai_providers.builtin_effort_args(rec, effort, conn.get("model"))
+    except Exception:  # noqa: BLE001 - 查不到强度支持 = 不发
+        return {}
+    out: dict = {}
+    if "--effort" in args:
+        out["effort"] = args[args.index("--effort") + 1]
+    if "--thinking" in args:
+        out["thinking"] = args[args.index("--thinking") + 1]
+    return out
+
+
 def _cost(conn: dict, usage: Usage, reported: bool) -> float | None:
     if not reported:
         return None
     from . import ai_pricing
 
+    vendor = ai_pricing.vendor_of(conn)
+    # `cost_usd` 只收美元：人民币计价的站点（智谱 / MiniMax 国内站）当没有价，不把人民币数字当美元累加，也不换算。
+    if ai_pricing.currency_of(vendor, conn.get("model")) not in (None, "USD"):
+        return None
     return ai_pricing.estimate(
-        ai_pricing.vendor_of(conn),
+        vendor,
         conn.get("model"),
         input_tokens=usage.input_tokens,
         cached=usage.cached_input_tokens,
         output=usage.output_tokens,
     )
+
+
+# --------------------------------------------------------------------------- 订阅登录（CLI）连接
+#: CLI 路径的总时限（两次尝试共用）。CLI 冷启动（起 node / 载入、连后端）比 HTTP 慢得多。**待本机真跑（`scripts/dev/structured_cli_smoke.py`）后校准**。
+#: 前端轮询上限（30 次 × 1 秒）小于它：见 ADR 0178 与 `ai-agent-bridge.md`。
+CLI_TIMEOUT_S = 60.0
+#: 同一时刻最多一个结构化 CLI 进程；排队等待的上限（超过就放弃这次，静默退回规则结果）
+CLI_QUEUE_MAX_S = 120.0
+#: 读 CLI stdout 的内存上限（字符）；超出的丢弃（失败事件在最后，所以只丢中间没用的流水不现实——上限给宽）
+CLI_MAX_STDOUT = 4_000_000
+CLI_MAX_OUTPUT_FILE = 1_000_000
+_CLI_SLOT = (
+    threading.RLock()
+)  # 可重入：`ai_data_roles.understand` 先占住，里面的 `_call_cli` 再占不会死锁
+
+
+@contextlib.contextmanager
+def cli_slot(timeout: float | None = None):
+    """同一时刻最多起一个结构化 CLI 进程（用户连点几个文件时不同时起一堆 CLI）。拿不到 = `TimeoutError`。"""
+    if not _CLI_SLOT.acquire(timeout=-1 if timeout is None else max(0.0, timeout)):
+        raise TimeoutError("cli_slot")
+    try:
+        yield
+    finally:
+        _CLI_SLOT.release()
+
+
+def is_cli_conn(conn: dict | None) -> bool:
+    return isinstance(conn, dict) and conn.get("kind") == "cli"
+
+
+def cli_identity(conn: dict) -> str:
+    """缓存键里的连接身份：CLI 种类 + 型号（换型号 / 换家都换键）。"""
+    return f"cli:{conn.get('agent', '')}|{conn.get('model', '')}"
+
+
+def find_cli_connection(*, cached_only: bool) -> tuple[dict | None, str, str]:
+    """订阅登录连接里第一个「可用且适配器支持无工具单轮」的 → `({"kind": "cli", "agent", "model", "conn_id"} | None, 原因码, detail)`。
+
+    * 没有可用的订阅登录 = `no_connection`；有，但适配器都没覆写 `build_structured_command` / 解析不出型号 = `unsupported_connection`。
+    * 型号 = 连接里已解析出的 `default_model`，没有就取它型号清单的第一项（适配器自己的目录顺序）；都没有 = 不支持（不写死型号名）。
+    * `cached_only`：只看已有的能力缓存，绝不探测（同步路径用）；缓存还没有 = `no_connection`。"""
+    from . import ai_agents, ai_bridge, ai_connections
+
+    try:
+        caps = ai_bridge.capabilities_if_cached() if cached_only else ai_bridge.capabilities()
+    except Exception:  # noqa: BLE001 - 探测失败 = 没有连接
+        caps = None
+    if not caps:
+        return None, "no_connection", "none"
+    saw_unsupported = False
+    for c in caps.get("connections") or []:
+        sub = ai_connections.SUBSCRIPTIONS.get(c.get("id"))
+        if sub is None or c.get("state") != "ready":
+            continue
+        agent = ai_agents.get_agent(sub[0])
+        if agent is None or not agent.supports_structured():
+            saw_unsupported = True
+            continue
+        model = str(c.get("default_model") or "").strip() or next(
+            (str(m) for m in (c.get("models") or []) if m), ""
+        )
+        if not model:
+            saw_unsupported = True
+            continue
+        return {"kind": "cli", "agent": agent.id, "model": model, "conn_id": c["id"]}, "", ""
+    if saw_unsupported:
+        return None, "unsupported_connection", "cli_only"
+    return None, "no_connection", "none"
+
+
+@dataclass(frozen=True)
+class CliRun:
+    """一次 CLI 进程的执行请求（`runner` 的入参；测试注入假 runner 时看它）。"""
+
+    argv: list[str]
+    env: dict
+    cwd: str
+    stdin: str
+    timeout_s: float
+
+
+@dataclass(frozen=True)
+class CliProc:
+    """一次 CLI 进程的结局：`launch_failed` = 起不来（没装 / 没权限）；`timed_out` = 超时已杀整个进程树。"""
+
+    exit_code: int | None
+    stdout: str = ""
+    timed_out: bool = False
+    launch_failed: bool = False
+
+
+def _run_process(run: CliRun) -> CliProc:
+    """真起进程（复用 `ai_bridge._popen` / `_terminate` / `_await_exit`：无窗口、POSIX 自成进程组、超时杀整棵树）。stderr 丢弃，stdout 只读进内存。"""
+    from . import ai_bridge
+
+    try:
+        proc = ai_bridge._popen(run.argv, run.cwd, run.env, subprocess.DEVNULL, run.stdin)
+    except (OSError, ValueError):
+        return CliProc(None, launch_failed=True)
+    chunks: list[str] = []
+    size = 0
+
+    def pump() -> None:
+        nonlocal size
+        try:
+            assert proc.stdout is not None
+            while True:
+                piece = proc.stdout.read(65536)
+                if not piece:
+                    return
+                if size < CLI_MAX_STDOUT:
+                    chunks.append(piece)
+                    size += len(piece)
+        except (OSError, ValueError):
+            return
+
+    reader = threading.Thread(target=pump, daemon=True, name="ai-structured-stdout")
+    reader.start()
+    timed_out = False
+    try:
+        proc.wait(timeout=max(0.1, run.timeout_s))
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        ai_bridge._terminate({"proc": proc})
+    finally:
+        ai_bridge._await_exit({"proc": proc})  # 组里剩下的子进程也收掉
+    reader.join(timeout=5)
+    return CliProc(proc.returncode, "".join(chunks), timed_out)
+
+
+#: CLI 自己的结构化失败字段 → 本模块闭集（`ai_agents.RUNNER_ERRORS` 的子集）。认不得的一律 `transport`
+_RUNNER_REASON = {
+    "agent_auth": "auth",
+    "agent_quota": "quota",
+}
+
+
+def _read_capped(path: str) -> str | None:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read(CLI_MAX_OUTPUT_FILE + 1)
+    except OSError:
+        return None
 
 
 # --------------------------------------------------------------------------- 调用
@@ -216,6 +396,9 @@ def call_structured(
     conn: dict | None = None,
     post: Callable | None = None,
     max_requests: int | None = None,
+    effort: str | None = None,
+    runner: Callable[[CliRun], CliProc] | None = None,
+    schema: dict | None = None,
 ) -> StructuredResult:
     """发一次无工具的单轮请求，要回一个过了 `validate` 的 dict。**永不抛**（`Exception` 一律落成 `transport`）。
 
@@ -224,11 +407,18 @@ def call_structured(
     * `conn`：`builtin_conn` 形状的连接；不给就 `resolve_connection()`。`post`：注入的传输函数（`wires.post_json` 的签名），只给测试用。
     * 上限：输入字符超限不发请求（`over_budget`）；输出被截断（撞到最长输出）→ `over_budget`、不重试；总时限（`limits.timeout_s`）两次尝试共用。
     * `max_requests`：实际 HTTP 请求数的硬上限（传输层数，含换协议 / 字段降级的恢复请求）；到顶不再发，回 `over_budget` / `requests`。
+    * `effort`：想要的思考强度（`low` 等）。只有 `ai_providers.builtin_effort_args` 对「这个地址 + 这个型号」确认支持的才发（官方端点、目录核过的型号），
+      其余（第三方网关、不认的型号、不支持的协议）一个字段都不发——不发对方不认的字段，也就不需要靠 400 再降级。
     * 重试：只在回复不是合法 JSON（含没有文字）时，最多 `limits.max_retries`（≤ 1）次；传输失败 / 拒答 / 鉴权失败都不重发。
+    * 订阅登录（`conn` 是 `{"kind": "cli", …}`，或没给 `conn` 而用户只有订阅登录）走 `_call_cli`：`runner` 是注入的「跑进程」函数（只给测试用）；
+      `schema` 是可选的 JSON Schema（给了才带 `--output-schema` / `--json-schema`；严格模式的 schema 要求在这条路径上**未实测**）。
+      CLI 没法设输出 token 上限：`max_output_tokens` 只用来给回复长度设宽松上界；`max_requests` 数的是起的进程数。
     """
     t0 = time.monotonic()
     try:
-        return _call(system, user, validate, limits, conn, post, t0, max_requests)
+        return _call(
+            system, user, validate, limits, conn, post, t0, max_requests, effort, runner, schema
+        )
     except Exception:  # noqa: BLE001 - 契约：永不抛；原因里不放异常消息（可能含提示词 / 地址）
         return StructuredResult(False, reason="transport", detail="internal", elapsed_ms=_ms(t0))
 
@@ -246,6 +436,9 @@ def _call(
     post: Callable | None,
     t0: float,
     max_requests: int | None,
+    effort: str | None = None,
+    runner: Callable[[CliRun], CliProc] | None = None,
+    schema: dict | None = None,
 ) -> StructuredResult:
     if len(system) + len(user) > limits.max_input_chars:
         return StructuredResult(False, reason="over_budget", detail="input", elapsed_ms=_ms(t0))
@@ -255,6 +448,10 @@ def _call(
             return StructuredResult(False, reason=why, detail=detail, elapsed_ms=_ms(t0))
         if time.monotonic() - t0 >= limits.timeout_s:  # 解析连接已经用完总时限：不发请求
             return StructuredResult(False, reason="timeout", detail="resolve", elapsed_ms=_ms(t0))
+    if is_cli_conn(conn):
+        return _call_cli(
+            system, user, validate, limits, conn, t0, max_requests, effort, runner, schema
+        )
     from . import fixsession
 
     sent = [
@@ -275,6 +472,7 @@ def _call(
         "max_attempts": 1,
         "retry_base": 0.0,
         "post": counted,
+        **_effort_kwargs(conn, effort),
     }
     model, _redactor = fixsession.build_model(conn, **kwargs)
     deadline = t0 + limits.timeout_s  # 总时限从调用开始算：解析连接（可能联网刷新令牌）也在里面
@@ -349,3 +547,121 @@ def _call(
             return fail("invalid_output", "shape")
         return StructuredResult(True, value=value, **usage_fields())
     return fail("invalid_output", "not_json")  # 不可达（循环内必返回或继续）；兜底给闭集结局
+
+
+def _call_cli(
+    system: str,
+    user: str,
+    validate: Callable[[dict], dict],
+    limits: Limits,
+    conn: dict,
+    t0: float,
+    max_requests: int | None,
+    effort: str | None,
+    runner: Callable[[CliRun], CliProc] | None,
+    schema: dict | None,
+) -> StructuredResult:
+    """订阅登录路径：与 `_call` 同一套语义（同一个 `validate`、非 JSON 重试一次、总时限、不抛），每次尝试起一个**新**的 CLI 进程
+    （不落会话，没有「接着上一轮」，所以重试时把固定的那句话接在用户内容后，不带上一次的回复）。
+
+    失败归类只认 CLI 自己的结构化字段（`parse_structured_output`）：auth / quota 来自它们；其余非零退出 = `transport`；起不来 = `no_connection`；
+    空输出 / 非 JSON / 没过校验 = `invalid_output`；超时杀整个进程树 = `timeout`。stdout / stderr 不落盘、不进日志。"""
+    from . import ai_agents
+
+    agent = ai_agents.get_agent(str(conn.get("agent") or ""))
+    do_run = runner or _run_process
+    deadline = t0 + limits.timeout_s
+    max_attempts = 1 + limits.max_retries
+    max_chars = limits.max_output_tokens * 8
+    attempts = 0
+    started = 0
+
+    def fields() -> dict:
+        return {
+            "attempts": attempts,
+            "requests": started,
+            "usage_reported": False,  # CLI 拿不到 token / 花费
+            "elapsed_ms": _ms(t0),
+            "wire": f"cli:{conn.get('agent', '')}",
+            "model": str(conn.get("model") or ""),
+        }
+
+    def fail(reason: str, detail: str) -> StructuredResult:
+        return StructuredResult(False, reason=reason, detail=detail, **fields())
+
+    if agent is None or not agent.supports_structured():
+        return fail("unsupported_connection", "cli_only")
+    res = ai_agents.resolve(agent, probe_readiness=False)
+    if res.argv is None:
+        return fail("no_connection", "not_installed")
+    env = ai_agents.spawn_env(res.path)
+    prompt = user
+    try:
+        with cli_slot(max(0.0, deadline - time.monotonic())):
+            while attempts < max_attempts:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return fail("timeout", "time")
+                if max_requests is not None and started >= max_requests:
+                    return fail("over_budget", "requests")
+                attempts += 1
+                tmp = tempfile.mkdtemp(prefix="tavotto-sc-")
+                try:
+                    cwd = os.path.join(tmp, "work")  # 空目录：模型工作区里什么都没有
+                    aux = os.path.join(tmp, "aux")  # 系统提示 / schema / 输出文件在这里，不在工作区
+                    os.mkdir(cwd)
+                    os.mkdir(aux)
+                    spec = agent.build_structured_command(
+                        ai_agents.StructuredRunContext(
+                            argv=list(res.argv),
+                            system=system,
+                            user=prompt,
+                            model=str(conn["model"]),
+                            cwd=cwd,
+                            aux_dir=aux,
+                            effort=effort,
+                            schema=schema,
+                        )
+                    )
+                    if spec is None:
+                        return fail("unsupported_connection", "cli_only")
+                    for path, text in spec.files.items():
+                        with open(path, "w", encoding="utf-8") as f:
+                            f.write(text)
+                    started += 1
+                    proc = do_run(
+                        CliRun(list(spec.argv), {**env, **spec.env}, cwd, spec.stdin, left)
+                    )
+                    if proc.launch_failed:
+                        return fail("no_connection", "launch")
+                    if proc.timed_out:
+                        return fail("timeout", "time")
+                    out_text = _read_capped(spec.output_file) if spec.output_file else None
+                    reply = agent.parse_structured_output(
+                        proc.stdout, out_text, proc.exit_code if proc.exit_code is not None else -1
+                    )
+                finally:
+                    shutil.rmtree(tmp, ignore_errors=True)
+                if reply.failure is not None:
+                    return fail(_RUNNER_REASON.get(reply.failure, "transport"), reply.failure)
+                if proc.exit_code != 0:
+                    return fail("transport", "exit")
+                text = reply.text
+                if text is not None and len(text) > max_chars:
+                    return fail("over_budget", "output")
+                obj = parse_json_object(text) if text else None
+                if obj is None:
+                    if attempts < max_attempts:
+                        prompt = f"{user}\n\n{RETRY_NOTICE}"
+                        continue
+                    return fail("invalid_output", "not_json" if text else "empty")
+                try:
+                    value = validate(obj)
+                except Exception:  # noqa: BLE001 - 校验函数说「不合格」的方式不限
+                    return fail("invalid_output", "shape")
+                if not isinstance(value, dict):
+                    return fail("invalid_output", "shape")
+                return StructuredResult(True, value=value, **fields())
+    except TimeoutError:
+        return fail("timeout", "queue")
+    return fail("invalid_output", "not_json")  # 不可达；兜底给闭集结局

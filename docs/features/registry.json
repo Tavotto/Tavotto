@@ -1566,6 +1566,90 @@
           "title": "功能：只定义了画图函数的文件，「运行它」在当前项目里运行调用它的脚本"
         }
       ]
+    },
+    {
+      "id": "canvas.vector-path",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "形状 / 箭头可「转为路径」：画面不动、变成自由路径对象，一次撤销回到形状；路径沿真实轮廓命中",
+        "en-US": "Shapes and arrows can be converted to paths: the picture stays put, the object becomes a free path, one undo restores the shape; paths are hit along their real outline"
+      },
+      "entry": "画布 → 右键形状 →「转为路径」",
+      "e2e": [
+        {
+          "spec": "vector-path.spec.ts",
+          "title": "矢量路径 › 右键「转为路径」：画面不动、矩形变成 path、一次撤销回到矩形；空心路径沿轮廓点得中"
+        }
+      ]
+    },
+    {
+      "id": "canvas.pen-tool",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "钢笔（P）点几下画出一条路径（点回起点闭合）；Enter / 双击进锚点编辑，拖锚点改形",
+        "en-US": "The pen tool (P) draws a path with a few clicks (click the start to close); Enter or double-click enters anchor editing, drag an anchor to reshape"
+      },
+      "entry": "画布工具栏 → 钢笔（P）；选中路径 → Enter / 双击",
+      "e2e": [
+        {
+          "spec": "vector-pen.spec.ts",
+          "title": "钢笔与锚点编辑 › P 钢笔点三个点再点回起点：画出一条闭合路径；Enter 进锚点编辑、拖一个锚点，形状真的变了"
+        }
+      ]
+    },
+    {
+      "id": "canvas.pathfinder",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "选中重叠的形状 / 路径，在属性栏「路径查找器」里做联集、减去顶层、交集、排除等，结果是一个路径",
+        "en-US": "With overlapping shapes or paths selected, Pathfinder in the inspector does unite, minus front, intersect, exclude and more, producing a path"
+      },
+      "entry": "画布 → 选中多个对象 → 右栏「路径查找器」",
+      "e2e": [
+        {
+          "spec": "vector-pathfinder.spec.ts",
+          "title": "路径查找器 › 选两个重叠矩形点「联集」：合成一个 path、框是两者合起来的范围；一次撤销回到两个矩形"
+        }
+      ]
+    },
+    {
+      "id": "canvas.gradient-fill",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "形状 / 路径的填充（与描边）可设为线性或径向渐变，画布与导出都按渐变画",
+        "en-US": "Fill (and stroke) of shapes and paths can be linear or radial gradients, drawn as gradients on the canvas and in exports"
+      },
+      "entry": "画布 → 选中矩形 → 右栏「外观」→ 填充类型",
+      "e2e": [
+        {
+          "spec": "vector-gradient.spec.ts",
+          "title": "渐变填充 › 矩形填充改成线性渐变：画布上填充引用渐变、色标不止一种颜色；导出 SVG 里是 linearGradient"
+        }
+      ]
+    },
+    {
+      "id": "canvas.nested-groups-clip",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "嵌套组与组内编辑（双击进组、Esc 退出），以及剪切蒙版（⌘7 建立、⌥⌘7 释放）",
+        "en-US": "Nested groups with in-group editing (double-click to enter, Esc to leave) and clipping masks (⌘7 to make, ⌥⌘7 to release)"
+      },
+      "entry": "画布 → 选中多个对象 → ⌘G；⌘7",
+      "e2e": [
+        {
+          "spec": "vector-groups.spec.ts",
+          "title": "嵌套组与剪切蒙版 › 两层嵌套组：点成员选中整组；双击一层层进组（组外淡出）、Esc 一层层退出"
+        },
+        {
+          "spec": "vector-groups.spec.ts",
+          "title": "嵌套组与剪切蒙版 › 剪切蒙版：⌘7 后大矩形只在蒙版范围内点得中（画面按蒙版裁）；⌥⌘7 释放后恢复"
+        }
+      ]
     }
   ]
 }

@@ -78,7 +78,7 @@ def test_bad_inputs_are_refused_with_a_stable_code(tmp_path, content, code):
 
 
 def test_oversized_input_is_refused_not_truncated(tmp_path, monkeypatch):
-    monkeypatch.setattr(adf, "MAX_ROWS", 3)
+    monkeypatch.setattr(adf, "SMALL_ROWS", 3)
     p = tmp_path / "d.csv"
     p.write_text("x,y\n" + "".join(f"{i},{i}\n" for i in range(4)), encoding="utf-8")
     with pytest.raises(adf.DataSourceError) as e:

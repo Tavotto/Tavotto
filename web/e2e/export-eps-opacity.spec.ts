@@ -20,13 +20,13 @@ async function openAnnotatedFigure(page: Page, baseURL: string) {
   await expect(page.locator('[data-display="exact"]')).toHaveCount(1, { timeout: 120_000 })
   // 插一个三角形标注、加填充、填充不透明度 50%
   await page.locator('[data-tool-menu="annotate"]').click({ timeout: 10_000 })
-  // 「插入形状」直接落一个形状（不用拖）；三角形是封闭形状、能加填充
-  await page.locator('[data-insert-shape="triangle"]').click({ timeout: 10_000 })
-  // 刚插入的形状没被选中：点三角形左边的斜边选上它（命中的是描边）
-  const shape = page.locator('[data-canvas-stage] [data-object-id]').last() // 最上层 = 刚插入的形状（图在它下面）
+  // 选三角形工具，在图上单击 = 落一个默认尺寸的三角形并选中它（2026-11-14 起形状都是拖画工具，单击退回默认尺寸）；
+  // 三角形是封闭形状、能加填充
+  await page.locator('[data-mark-tool="triangle"]').click({ timeout: 10_000 })
+  const figure = (await page.locator('[data-element-svg] > svg').boundingBox())!
+  await page.mouse.click(figure.x + figure.width * 0.4, figure.y + figure.height * 0.4)
+  const shape = page.locator('[data-canvas-stage] [data-object-id]').last() // 最上层 = 刚画的形状（图在它下面）
   await expect(shape).toBeVisible({ timeout: 10_000 })
-  const box = (await shape.boundingBox())!
-  await page.mouse.click(box.x + box.width * 0.25, box.y + box.height * 0.5)
   await page.locator('[data-effect-add="fill"]').click({ timeout: 10_000 })
   const opacity = page.locator('[data-prop="fillOpacity"] input')
   await opacity.fill('50')

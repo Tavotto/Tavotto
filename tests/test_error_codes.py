@@ -808,6 +808,8 @@ SCANNED = [n for n in _SOURCE_FILES if (SRC_DIR / n).is_file()]
 NON_UI_CODES = {
     # 数据出图懒渲染（ADR 0178 修订）：取某张缩略图 422——前端只据此静默去掉这一张卡，不展示文案
     "propose_thumbnail_failed",
+    # 数据出图大表取消（ADR 0178 修订·进度）：用户自己点的取消，原请求回 409——前端据此静默收起进度，不展示文案
+    "propose_cancelled",
     # 视图范围加脚本（ADR 0184）：前端只在后台顺手发、名字已是项目相对路径，失败不出界面
     "invalid_script_name",
     # Conversion-run diagnostics are mapped by ai_convert._failure_check to the

@@ -19,23 +19,30 @@ v1 的硬边界（`02-architecture.md` §四、`04-security-model.md`）：被�
 
 from __future__ import annotations
 
+import codecs
 import csv
 import datetime as _dt
 import hashlib
 import io
+import itertools
 import json
 import math
 import re
 import struct
+import threading
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import xlsxread
+from . import ai_data_progress as progress, xlsxread
 
-#: 受控摘要的上限：超出就拒绝（`too_large`），不截断着给一个看起来完整的摘要
-MAX_BYTES = 5 * 1024 * 1024
-MAX_ROWS = 100_000
+#: 「小表」的界线（ADR 0178 修订·大表）：不超过它就走原来的整份读进内存的路径（脚本、指纹、摘要逐字不变）；
+#: v1（CSV 同目录路径）、XLSX、合画永远只认小表。超过它的文本表格是「大表」，走流式读 + 缩减（`read_large_table` / 模板的 `*_reduced`）。
+SMALL_BYTES = 5 * 1024 * 1024
+SMALL_ROWS = 100_000
+#: 大表的硬上限：超出就拒绝（`data_too_large` / `data_too_long`），不截断着给一个看起来完整的摘要
+MAX_BYTES = 500 * 1024 * 1024
+MAX_ROWS = 60_000_000
 MAX_COLUMNS = 64
 #: 每列最多带回多少个文字样本（按出现顺序、不去重；摘要给人看、给模型看，不是数据本身）
 TEXT_SAMPLES = 20
@@ -205,7 +212,36 @@ class ColumnSummary:
 #: 分组列：不同取值个数的上限（>12 个取值的类别列不当分组，多半是标签 / 名字）
 MAX_GROUP_LEVELS = 12
 
+#: 整数编码的分组列（`knockout` 0 / 1、`treatment` 1 / 2 / 3）：不同取值个数的上限。比文字分组的 12 更严——数值本身有大小意义，
+#: 取值一多（剂量 / 时间点 / 计数）它更像横轴或测量值而不是类别；6 以内的整数编码才有「几个组互相比较」的读法（见 `numcat_levels`）。
+NUMCAT_MAX_LEVELS = 6
+
 LAYOUTS = ("long", "wide", "matrix", "unknown")
+
+
+@dataclass
+class ColStat:
+    """大表扫描时一列的精确统计（只算有限数值格）：个数与最小 / 最大。独立于缩减那一遍的另一次累计，用来核对「缩减读到的行没少」。"""
+
+    numeric: int = 0
+    lo: float | None = None
+    hi: float | None = None
+
+
+#: 大表预览（数据概览端点只给前 `PREVIEW_ROWS`）：扫描时留下的前几行
+LARGE_PREVIEW_ROWS = 40
+#: 结构线索里「去重集合」的上限：超过就不再收（保守结局见 `_structure`）
+STRUCTURE_SET_CAP = 200_000
+
+
+@dataclass
+class LargeInfo:
+    rows: int
+    stats: dict[str, ColStat]
+    preview: list[list[str]]
+    preview_numbers: list[int]
+    #: 扫描的文件（绝对路径；父进程内部用，不进任何响应）：缩减那一遍从这里再读一次
+    path: str | None = None
 
 
 @dataclass
@@ -225,6 +261,9 @@ class DataSummary:
     sheet: str | None = None
     layout: str = "unknown"
     groups: dict[str, int] = field(default_factory=dict)
+    #: 整数编码的类别列（`numcat_levels`）：列名 → 不同取值个数。**不是 `groups`**：规则从不把它当分组，只有用户 / 模型点名、配方带上
+    #: `FigureRecipe.numcat` 时才按类别用；不进 `to_dict`（对外响应与历史库逐字不变）。大表与合画是空的（这两条路暂不支持）。
+    numcat: dict[str, int] = field(default_factory=dict)
     id_like: list[str] = field(default_factory=list)
     repeats: bool | None = None
     row_count: int | None = None
@@ -242,6 +281,19 @@ class DataSummary:
     encoding: str | None = None
     #: 合画（几份列名相同的表拼成一张）时与 `rows` 逐项对应的「这一行来自哪一份」（该份的分组值）；单份 = 空。`row_numbers` 是各份自己的文件行号
     row_sources: list[str] = field(default_factory=list)
+    #: 大表（超过 `SMALL_BYTES` / `SMALL_ROWS` 的文本表格）才有：这时 `rows` 是空的（行数据不进内存），行数在 `row_count`，
+    #: 精确的整表统计与前几行预览在这里。**`large is not None` 的摘要上凡是要「逐行取值」的规则都得有流式的答案或拒绝**
+    #: （`ai_data_recipe` 的大表资格：只放行有流式答案的画法）；绝不把「没有行」当成「规则判过了」。
+    large: LargeInfo | None = None
+
+    def preview(self, limit: int) -> tuple[list[tuple[int, list[str]]], bool]:
+        """前 `limit` 行（文件行号, 单元格）与「后面还有」：小表取 `rows`，大表取扫描时留下的前几行。"""
+        if self.large is not None:
+            got = list(zip(self.large.preview_numbers, self.large.preview))
+            return got[:limit], self.large.rows > limit
+        return [(self.row_number(i), r) for i, r in enumerate(self.rows[:limit])], len(
+            self.rows
+        ) > limit
 
     def row_source(self, i: int) -> str | None:
         return self.row_sources[i] if i < len(self.row_sources) else None
@@ -292,23 +344,28 @@ def _from_xlsx_error(exc: xlsxread.XlsxError) -> DataSourceError:
 #   * 嗅探（`_detect` / `read_text_table`）：只在父进程，从文件内容定出读法。脚本里**不嗅探**，读法以字面量写进脚本。
 # 读法 = `(delimiter, header_row)`：`delimiter` 是 `,` / `\t` / `;` / `ws`（连续空白）；`header_row` 是 1 起的**物理行号**
 # （与预览里给用户看的行号同一口径；带引号的跨行字段只占一条记录，行号仍按物理行）。
-def delimited_records(text, delimiter):
-    """全文 → `[(起始物理行号, 单元格列表)]`；全空记录（空行、只有分隔符的行）丢掉。`ws` = 每行按连续空白切；其余按 `csv` 规则。
-    **这是运行时函数**（生成的脚本里也是它）。"""
-    out = []
+def iter_records(lines, delimiter):
+    """行迭代器（文件对象以 `newline=""` 打开，或 `io.StringIO(text, newline="")`）→ 逐条产出 `(起始物理行号, 单元格列表, 原行文字 | None)`；
+    全空记录（空行、只有分隔符的行）丢掉。`ws` = 每行按连续空白切（原行文字给 `resolve_header` 用）；其余按 `csv` 规则（原行文字是 None）。
+    **流式**：不把整份文本留在内存里。**运行时函数**（生成的脚本里也是它）。"""
     if delimiter == "ws":
-        for n, line in enumerate(re.split(r"\r\n|\r|\n", text), start=1):
+        for n, line in enumerate(lines, start=1):
             cells = line.split()
             if cells:
-                out.append((n, cells))
-        return out
-    reader = csv.reader(io.StringIO(text, newline=""), delimiter=delimiter)
+                yield n, cells, line.rstrip("\r\n")
+        return
+    reader = csv.reader(lines, delimiter=delimiter)
     prev = 0
     for row in reader:
         if any(c.strip() for c in row):
-            out.append((prev + 1, row))
+            yield prev + 1, row, None
         prev = reader.line_num
-    return out
+
+
+def delimited_records(text, delimiter):
+    """全文 → `[(起始物理行号, 单元格列表)]`；全空记录（空行、只有分隔符的行）丢掉。`ws` = 每行按连续空白切；其余按 `csv` 规则。
+    `iter_records` 的整份文本版（同一份实现）。**这是运行时函数**（生成的脚本里也是它）。"""
+    return [(n, cells) for n, cells, _raw in iter_records(io.StringIO(text, newline=""), delimiter)]
 
 
 def resolve_header(cells, raw, delimiter, width):
@@ -407,31 +464,56 @@ def xvg_text(text):
     return "\n".join(out)
 
 
-def table_from_text(text, delimiter, header_row=None, units_row=False):
-    """`(表头, 数据行, 数据行的物理行号)`。`header_row` 为 None：第一条非空记录是表头，其余都是数据（老读法，干净的 CSV / TSV 与它逐字相同）。
-    给了行号：从该行起（第一条起始行号 ≥ 它的记录）是表头，之前的行都是说明、不读；表头之后以 `#` 开头**且列数与表头不同**的行是
-    注释、丢掉（列数相同的 `#` 行是数据）。`units_row` 真：表头之后的第一条记录是单位行，不是数据，切掉（嗅探认出来才由调用方给；
-    切掉后数据行的物理行号不变）。**运行时函数**：父进程与生成的脚本读出来的必然是同一张表。"""
-    records = delimited_records(text, delimiter)
+def iter_table(lines, delimiter, header_row=None, units_row=False):
+    """`(表头, 数据行迭代器)`；迭代器逐条产出 `(物理行号, 单元格列表)`。读法与 `table_from_text` 完全一样（这就是它的实现）：
+    `header_row` 为 None：第一条非空记录是表头，其余都是数据（老读法，干净的 CSV / TSV 与它逐字相同）。给了行号：从该行起（第一条起始行号 ≥ 它的记录）
+    是表头，之前的行都是说明、不读；表头之后以 `#` 开头**且列数与表头不同**的行是注释、丢掉（列数相同的 `#` 行是数据）。`units_row` 真：表头之后的
+    第一条记录是单位行，不是数据，切掉（嗅探认出来才由调用方给；切掉后数据行的物理行号不变）。没有任何记录 → `([], 空迭代器)`。
+    **流式、运行时函数**：父进程与生成的脚本读出来的必然是同一张表；大文件一遍扫过，内存只与表头和（显式表头行时）开头的注释行有关。"""
+    records = iter_records(lines, delimiter)
     if header_row is not None:
-        records = [r for r in records if r[0] >= header_row]
-    if not records:
-        return [], [], []
-    first_line, first = records[0]
-    rest = records[1:]
+        records = (r for r in records if r[0] >= header_row)
+    first = next(records, None)
+    if first is None:
+        return [], iter(())
+    first_line, first_cells, first_raw = first
+    rest = ((n, c) for n, c, _raw in records)
     if delimiter == ";":
-        rest = [(n, [SemicolonCell(c) if "," in c else c for c in cells]) for n, cells in rest]
+        rest = ((n, [SemicolonCell(c) if "," in c else c for c in cells]) for n, cells in rest)
     if units_row:
-        rest = rest[1:]
+        next(rest, None)
     if header_row is None:
-        return [h.strip() for h in first], [c for _, c in rest], [n for n, _ in rest]
-    probe = next((c for _, c in rest if not c[0].lstrip().startswith("#")), None)
-    if probe is None and rest:
-        probe = rest[0][1]
-    raw = re.split(r"\r\n|\r|\n", text)[first_line - 1] if delimiter == "ws" else ""
-    header = resolve_header(first, raw, delimiter, len(probe) if probe is not None else len(first))
-    body = [(n, c) for n, c in rest if len(c) == len(header) or not c[0].lstrip().startswith("#")]
-    return header, [c for _, c in body], [n for n, _ in body]
+        return [h.strip() for h in first_cells], rest
+    # 列数以表头之后第一条非 `#` 记录为准（没有就取紧跟的第一条）；探测时读过的记录接回去，不丢
+    held = []
+    probe = None
+    for n, c in rest:
+        held.append((n, c))
+        if not c[0].lstrip().startswith("#"):
+            probe = c
+            break
+    if probe is None and held:
+        probe = held[0][1]
+    header = resolve_header(
+        first_cells,
+        first_raw or "",
+        delimiter,
+        len(probe) if probe is not None else len(first_cells),
+    )
+
+    def body():
+        for n, c in itertools.chain(held, rest):
+            if len(c) == len(header) or not c[0].lstrip().startswith("#"):
+                yield n, c
+
+    return header, body()
+
+
+def table_from_text(text, delimiter, header_row=None, units_row=False):
+    """`(表头, 数据行, 数据行的物理行号)`：`iter_table` 的整份文本版（同一份读法，见它的文档）。**运行时函数**。"""
+    header, body = iter_table(io.StringIO(text, newline=""), delimiter, header_row, units_row)
+    pairs = list(body)
+    return header, [c for _, c in pairs], [n for n, _ in pairs]
 
 
 # --- 嗅探（只在父进程）
@@ -698,7 +780,7 @@ class TextTable:
     encoding: str | None = None
 
     def to_dict(self) -> dict:
-        return {
+        out = {
             "status": self.status,
             "code": self.code,
             "delimiter": DELIMITER_NAMES.get(self.delimiter) if self.delimiter else None,
@@ -708,6 +790,9 @@ class TextTable:
             "rows": self.rows,
             "preview": [{"line": n, "text": t} for n, t in self.preview],
         }
+        if self.summary is not None and self.summary.large is not None:
+            out["large"] = True  # 大表（读它要几十秒）；小表的响应没有这一项
+        return out
 
 
 #: 文本表格认的编码（稳定名，给界面显示；不外露 Python 的 codec 名）。判定规则只有这一条、确定且可解释：
@@ -717,6 +802,20 @@ class TextTable:
 TEXT_ENCODINGS = ("utf-8", "utf-8-bom", "utf-16le", "utf-16be", "gb18030")
 #: 生成的脚本里 `.decode(...)` 用的 codec 名；UTF-8 / UTF-8 BOM 不在表里（脚本沿用 `read_delimited` 的 `utf-8-sig`，逐字不变）
 _SCRIPT_CODECS = {"utf-16le": "utf-16", "utf-16be": "utf-16", "gb18030": "gb18030"}
+
+
+#: 大表脚本里总是显式写出 codec（读法的一部分）：编码名 → Python codec 名
+_LARGE_CODECS = {
+    "utf-8": "utf-8",
+    "utf-8-bom": "utf-8-sig",
+    "utf-16le": "utf-16",
+    "utf-16be": "utf-16",
+    "gb18030": "gb18030",
+}
+
+
+def large_codec(encoding: str | None) -> str:
+    return _LARGE_CODECS.get(encoding or "", "utf-8")
 
 
 def script_codec(encoding: str | None) -> str | None:
@@ -760,7 +859,7 @@ def _unreadable(code: str) -> TextTable:
     return TextTable("unreadable", code=code)
 
 
-def read_text_table(
+def _read_small_text_table(
     path: str | Path, *, header_row: int | None = None, keep_rows: bool = True
 ) -> TextTable:
     """读一个文本表格（`.csv` / `.tsv` / `.tab` / `.txt` / `.dat` / `.asc`）：嗅探读法 → 按读法解析 → 受控摘要。**不抛异常**，读不了就是
@@ -772,7 +871,7 @@ def read_text_table(
     suffix = p.suffix.lower()
     try:
         size = p.stat().st_size
-        if size > MAX_BYTES:
+        if size > SMALL_BYTES:
             return _unreadable("data_too_large")
         raw = p.read_bytes()
     except OSError:
@@ -795,7 +894,7 @@ def read_text_table(
         return _unreadable("data_empty")
     if suffix in XVG_SUFFIXES:
         text = xvg_text(text)  # 脚本里调用的是同一个函数（见 `ai_data_template._reader_expr`）
-    if text.count("\n") + text.count("\r") > 2 * MAX_ROWS + 1000:
+    if text.count("\n") + text.count("\r") > 2 * SMALL_ROWS + 1000:
         return _unreadable("data_too_long")
     sha = hashlib.sha256(raw).hexdigest()
     try:
@@ -913,11 +1012,386 @@ def read_text_table(
     )
 
 
+# --------------------------------------------------------------------------- 大表（流式读）
+#: 大表读法：一遍校验（sha256 / 编码 / 二进制 / 行数）+ 一遍解析统计，内存只与列数和有界的集合有关；嗅探、预览、说明行取开头这一段
+LARGE_HEAD_BYTES = 1024 * 1024
+_CHUNK_BYTES = 4 * 1024 * 1024
+_CTRL_DELETE = {c: None for c in range(32) if chr(c) not in "\t\r\n\f"}
+_LARGE_CACHE: dict = {}
+_LARGE_CACHE_MAX = 6
+_LARGE_LOCK = threading.Lock()
+
+
+def _stream_check(p: Path) -> tuple[str, str, str, int] | str:
+    """大表的一遍校验：`(sha256, 编码名, 打开用的 codec, 行结束符个数)`，或稳定错误码。判定规则与 `decode_text` / `_read_small_text_table` 的
+    整份读逐条一致（BOM → UTF-8 BOM / UTF-16；否则严格 UTF-8，再严格 GB18030 + 合理性；NUL / 控制字符占 2% 以上 = 二进制；全空白 = 空），
+    只是分块增量解码，不把整份文件读进内存。"""
+    sha = hashlib.sha256()
+    total = 2 * p.stat().st_size  # 两遍：sha256 / NUL，再增量解码；进度按两遍合计
+    read = 0
+    with p.open("rb") as fh:
+        head = fh.read(4)
+        fh.seek(0)
+        nul = False
+        for chunk in iter(lambda: fh.read(_CHUNK_BYTES), b""):
+            sha.update(chunk)
+            read += len(chunk)
+            progress.tick("validate", read, total)
+            if not nul and b"\x00" in chunk:
+                nul = True
+    digest = sha.hexdigest()
+    if head.startswith((b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")):
+        return "data_decode_error"
+    if head.startswith(b"\xef\xbb\xbf"):
+        attempts = [("utf-8-sig", "utf-8-bom")]
+    elif head.startswith((b"\xff\xfe", b"\xfe\xff")):
+        attempts = [("utf-16", "utf-16le" if head.startswith(b"\xff\xfe") else "utf-16be")]
+    else:
+        if nul:
+            return "data_binary"
+        attempts = [("utf-8", "utf-8"), ("gb18030", "gb18030")]
+    for codec, label in attempts:
+        dec = codecs.getincrementaldecoder(codec)(errors="strict")
+        chars = ctrl = lines = 0
+        content = False
+        exotic: set[str] = set()
+        try:
+            with p.open("rb") as fh:
+                last = False
+                while not last:
+                    chunk = fh.read(_CHUNK_BYTES)
+                    last = not chunk
+                    read += len(chunk)
+                    progress.tick("validate", min(read, total), total)
+                    text = dec.decode(chunk, final=last)
+                    if "\x00" in text:
+                        return "data_binary"
+                    chars += len(text)
+                    ctrl += len(text) - len(text.translate(_CTRL_DELETE))
+                    lines += text.count("\n") + text.count("\r")
+                    content = content or (bool(text) and not text.isspace())
+                    if codec == "gb18030":
+                        exotic.update(ch for ch in set(text) if ch > "\x7f")
+        except UnicodeDecodeError:
+            continue
+        if codec == "gb18030" and not _plausible_cjk("".join(exotic)):
+            return "data_decode_error"
+        if ctrl > max(8, chars // 50):
+            return "data_binary"
+        if not content:
+            return "data_empty"
+        return digest, label, codec, lines
+    return "data_decode_error"
+
+
+def _head_text(p: Path, codec: str) -> str:
+    """文件开头一段（到最后一个换行为止）解码后的文字：嗅探 / 预览 / 说明行用。"""
+    with p.open("rb") as fh:
+        raw = fh.read(LARGE_HEAD_BYTES)
+    text = codecs.getincrementaldecoder(codec)(errors="strict").decode(raw, final=False)
+    cut = max(text.rfind("\n"), text.rfind("\r"))
+    return text[: cut + 1] if cut > 0 and len(raw) >= LARGE_HEAD_BYTES else text
+
+
+def _scan_summary(
+    header_cells,
+    body,
+    *,
+    path_name: str,
+    sha256: str,
+    size: int,
+    parse,
+    delimiter: str | None,
+    header_row: int | None,
+    header_line: int,
+    encoding: str | None,
+    units_row: bool,
+    path: str | None = None,
+    pos=None,
+) -> DataSummary:
+    """大表的一遍扫描：`_summarize` 的流式版（同样的列统计、同样的错误码），行不进内存。结构线索用有界集合（`_Facts`）。
+    除受控摘要外留下精确的整表统计（行数、每列有限数值的个数 / 最小 / 最大）与前 `LARGE_PREVIEW_ROWS` 行。"""
+    header = [h.strip() for h in header_cells]
+    if len(header) > MAX_COLUMNS:
+        raise DataSourceError("data_too_wide", str(len(header)))
+    if any(not h for h in header) or len(set(header)) != len(header):
+        raise DataSourceError("data_header_invalid")
+    ncols = len(header)
+    per = {h: ColumnSummary(h) for h in header}
+    cols = [per[h] for h in header]
+    levels = {h: set() for h in header}
+    lvls = [levels[h] for h in header]
+    stats = {h: ColStat() for h in header}
+    sts = [stats[h] for h in header]
+    id_cols = [j for j, h in enumerate(header) if _id_name(h)]
+    id_sets = {j: set() for j in id_cols}
+    id_n = dict.fromkeys(id_cols, 0)
+    id_nonint = dict.fromkeys(id_cols, False)
+    id_over: set[int] = set()
+    first_set: set[str] = set()
+    first_ok = True
+    count = 0
+    preview: list[list[str]] = []
+    pnums: list[int] = []
+    for n, r in body:
+        if len(r) != ncols:
+            raise DataSourceError("data_ragged")
+        count += 1
+        if count > MAX_ROWS:
+            raise DataSourceError("data_too_long", str(count))
+        if not count & 0xFFFF and pos is not None:  # 每 65536 行：记已读字节、查取消
+            progress.tick("scan", pos(), size)
+        if count <= LARGE_PREVIEW_ROWS:
+            preview.append(r)
+            pnums.append(n)
+        for j in range(ncols):
+            cell = r[j]
+            cls, v = parse(cell)
+            s = cols[j]
+            if cls == "numeric":
+                s.numeric += 1
+                st = sts[j]
+                st.numeric += 1
+                if st.lo is None:
+                    st.lo = st.hi = v
+                elif v < st.lo:
+                    st.lo = v
+                elif v > st.hi:
+                    st.hi = v
+            elif cls == "text":
+                s.text_count += 1
+                if parse_date(cell) is not None:
+                    s.dates += 1
+                if len(s.text) < TEXT_SAMPLES:
+                    s.text.append(cell.strip())
+                lv = lvls[j]
+                if len(lv) <= MAX_GROUP_LEVELS:
+                    lv.add(cell.strip())
+            elif cls == "empty":
+                s.empty += 1
+            else:
+                s.nan += 1
+        if first_ok:
+            lab = r[0].strip()
+            if lab in first_set or len(first_set) >= STRUCTURE_SET_CAP:
+                first_ok = False
+                first_set = set()
+            else:
+                first_set.add(lab)
+        for j in id_cols:
+            c = r[j].strip()
+            if not c:
+                continue
+            id_n[j] += 1
+            if j not in id_over:
+                id_sets[j].add(c)
+                if len(id_sets[j]) > STRUCTURE_SET_CAP:
+                    id_over.add(j)
+            if not id_nonint[j]:
+                kind, num = parse(c)
+                if kind == "numeric" and not num.is_integer():
+                    id_nonint[j] = True
+    if count == 0:
+        raise DataSourceError("data_empty")
+    first = header[0]
+    first_labels = (
+        first_set
+        if first_ok
+        and per[first].kind == "text"
+        and per[first].nan == 0
+        and per[first].text_count == count
+        else None
+    )
+    ids: dict[str, tuple[int, int, bool]] = {}
+    capped = set()
+    for j in id_cols:
+        h = header[j]
+        k = per[h]
+        if k.kind not in ("text", "numeric") or k.nan:
+            continue
+        ids[h] = (id_n[j], len(id_sets[j]), not (k.kind == "numeric" and id_nonint[j]))
+        if j in id_over:
+            capped.add(h)
+    layout, groups, id_like, repeats = _structure_from(
+        header, per, levels, count, _Facts(first_labels, ids, frozenset(capped))
+    )
+    return DataSummary(
+        path_name=path_name,
+        sha256=sha256,
+        size=size,
+        columns=header,
+        rows=[],
+        per_column=per,
+        layout=layout,
+        groups=groups,
+        id_like=id_like,
+        repeats=repeats,
+        row_count=count,
+        delimiter=delimiter,
+        header_row=header_row,
+        header_line=header_line,
+        encoding=encoding,
+        units_row=units_row,
+        large=LargeInfo(count, stats, preview, pnums, path),
+    )
+
+
+def _old_reader_stream(fh, delimiter):
+    """老读法（嗅探不出读法的 `.csv` / `.tsv`）：第一条非空记录是表头，行号按记录序号（含空行；与 v1 一致）。"""
+    reader = csv.reader(fh, delimiter=delimiter)
+    for n, row in enumerate(reader, start=1):
+        if any(c.strip() for c in row):
+            yield n, row
+
+
+def _read_large_text_table(p: Path, *, header_row: int | None, size: int) -> TextTable:
+    """大表（超过 `SMALL_BYTES` / `SMALL_ROWS`）的 `read_text_table`：判定与小表同一套（同一个 `_detect`、同一组错误码与「认得准 / 猜的」口径），
+    只是流式读。`.xvg` 要整份改写文本，大表不支持（`data_too_large`）。嗅探 / 预览 / 说明行只看开头 `LARGE_HEAD_BYTES`；
+    读法里的 `header_row` 在大表里总是显式的行号（不去判断「整份没有 `#` 行」）。"""
+    suffix = p.suffix.lower()
+    if suffix in XVG_SUFFIXES:
+        return _unreadable("data_too_large")
+    try:
+        checked = _stream_check(p)
+    except OSError:
+        return _unreadable("data_unreadable")
+    if isinstance(checked, str):
+        return _unreadable(checked)
+    sha, encoding, codec, newlines = checked
+    if newlines > 2 * MAX_ROWS + 1000:
+        return _unreadable("data_too_long")
+
+    def _tt(*a, **kw):
+        return TextTable(*a, encoding=encoding, **kw)
+
+    try:
+        text = _head_text(p, codec)
+        layout = _detect(text, suffix)
+    except csv.Error:
+        return _unreadable("data_malformed")
+    except (OSError, UnicodeDecodeError):
+        return _unreadable("data_unreadable")
+    if isinstance(layout, RaggedLayout):
+        if header_row is None:
+            return _tt(
+                "unreadable", code="data_ragged", delimiter=layout.delimiter,
+                header_line=layout.line, preview=_preview(text, layout.line),
+            )  # fmt: skip
+        layout = TextLayout(layout.delimiter, layout.line, True)
+    if layout is None:
+        if suffix not in CSV_SUFFIXES + TSV_SUFFIXES:
+            return _unreadable("data_not_table")
+        layout = TextLayout("\t" if suffix in TSV_SUFFIXES else ",", 0, True)
+    delim = layout.delimiter
+    lines = re.split(r"\r\n|\r|\n", text)
+    if header_row is not None and not 1 <= header_row <= max(len(lines), newlines + 1):
+        return _tt("unreadable", code="data_header_row_invalid", preview=_preview(text, 1))
+    old_reader = layout.header_line == 0 and header_row is None
+    line = 1 if old_reader else (header_row if header_row is not None else layout.header_line)
+    units = bool(not old_reader and layout.units and line == layout.header_line)
+    script_header = None if old_reader else line
+    guessed = not old_reader and not layout.sure and header_row is None
+    summ = None
+    ncols = None
+    try:
+        with io.TextIOWrapper(p.open("rb"), encoding=codec, newline="") as fh:
+            if old_reader:
+                body = _old_reader_stream(fh, delim)
+                first = next(body, None)
+                if first is not None:
+                    ncols = len(first[1])
+                    summ = _scan_summary(
+                        first[1], body, path_name=p.name, sha256=sha, size=size, parse=parse_cell,
+                        delimiter=delim, header_row=None, header_line=1, encoding=encoding,
+                        units_row=False, path=str(p), pos=fh.buffer.tell,
+                    )  # fmt: skip
+            else:
+                head_cells, body = iter_table(fh, delim, script_header, units)
+                if head_cells:
+                    ncols = len(head_cells)
+                    summ = _scan_summary(
+                        head_cells, body, path_name=p.name, sha256=sha, size=size, parse=parse_cell,
+                        delimiter=delim, header_row=script_header, header_line=line,
+                        encoding=encoding, units_row=units, path=str(p), pos=fh.buffer.tell,
+                    )  # fmt: skip
+    except csv.Error:
+        return _unreadable("data_malformed")
+    except (OSError, UnicodeDecodeError):
+        return _unreadable("data_unreadable")
+    except DataSourceError as exc:
+        if guessed and exc.code == "data_header_invalid":
+            return _tt(
+                "unsure", delimiter=delim, header_line=line, columns=ncols,
+                preview=_preview(text, line), lead=_lead(lines, line),
+            )  # fmt: skip
+        if header_row is not None:
+            return _tt(
+                "unreadable", code=exc.code, delimiter=delim, header_line=line,
+                preview=_preview(text, line),
+            )  # fmt: skip
+        return _unreadable(exc.code)
+    if summ is None:
+        if header_row is not None:
+            return _tt(
+                "unreadable", code="data_header_row_invalid", delimiter=delim,
+                header_line=line, preview=_preview(text, line),
+            )  # fmt: skip
+        return _unreadable("data_empty")
+    return _tt(
+        "unsure" if guessed else "ok",
+        delimiter=delim,
+        header_line=line,
+        columns=len(summ.columns),
+        rows=summ.row_count,
+        preview=_preview(text, line) if guessed else (),
+        summary=summ,
+        lead=() if old_reader else _lead(lines, line),
+    )
+
+
+def read_text_table(
+    path: str | Path,
+    *,
+    header_row: int | None = None,
+    keep_rows: bool = True,
+    use_cache: bool = False,
+) -> TextTable:
+    """读一个文本表格（`.csv` / `.tsv` / `.tab` / `.txt` / `.dat` / `.asc` / `.xvg`）：不超过 `SMALL_BYTES` / `SMALL_ROWS` 的**小表**走原来的整份读法
+    （`_read_small_text_table`，摘要带行数据）；更大的**大表**走流式读（`_read_large_text_table`，摘要 `rows == []`、`large` 有整表统计），
+    上限 `MAX_BYTES` / `MAX_ROWS`，超出 `data_too_large` / `data_too_long`。**不抛异常**。`use_cache`（只对大表有意义）：同一个文件（路径、字节数、
+    mtime、inode）同一个表头行的扫描结果复用，省掉文件夹概览 / 出备选反复整份扫一遍；提交前核对 sha256 的读取**不许**用缓存。"""
+    p = Path(path)
+    try:
+        st = p.stat()
+    except OSError:
+        return _unreadable("data_unreadable")
+    if st.st_size > MAX_BYTES:
+        return _unreadable("data_too_large")
+    if st.st_size <= SMALL_BYTES:
+        out = _read_small_text_table(p, header_row=header_row, keep_rows=keep_rows)
+        if not (out.status == "unreadable" and out.code == "data_too_long"):
+            return out
+    key = (str(p), st.st_size, st.st_mtime_ns, st.st_ino, header_row)
+    if use_cache:
+        with _LARGE_LOCK:
+            hit = _LARGE_CACHE.get(key)
+            if hit is not None:
+                _LARGE_CACHE[key] = _LARGE_CACHE.pop(key)  # 最近用过的排到最后
+                return hit
+    out = _read_large_text_table(p, header_row=header_row, size=st.st_size)
+    if use_cache:
+        with _LARGE_LOCK:
+            _LARGE_CACHE[key] = out
+            while len(_LARGE_CACHE) > _LARGE_CACHE_MAX:
+                _LARGE_CACHE.pop(next(iter(_LARGE_CACHE)))
+    return out
+
+
 def _read_delimited(p: Path, delimiter: str) -> tuple[list[list[str]], str, int]:
     """`(表, 原始字节的 sha256, 字节数)`：UTF-8 / UTF-8 BOM；上限与错误码是 CSV / TSV 共用的一份。"""
     try:
         size = p.stat().st_size
-        if size > MAX_BYTES:
+        if size > SMALL_BYTES:
             raise DataSourceError("data_too_large", str(size))
         raw = p.read_bytes()
     except OSError as exc:
@@ -939,11 +1413,13 @@ def inspect_data_source(
     *,
     v2: bool = False,
     header_row: int | None = None,
+    allow_large: bool = False,
 ) -> DataSummary:
     """读一份表的受控摘要。后缀 `.tsv` / `.tab` 按制表符分隔、`.xlsx` 读 `sheet`（表名 / 序号 0 起 / `None` = 第一张可见表）、
     `.xls` / `.xlsm` / `.xlsb` 拒绝（`data_excel_unsupported`）；**其余一律按 CSV 读**（v1 行为不变：后缀的白名单由调用方
     管，如 `ai_data_task` 的 `data_not_csv`）。UTF-8 / UTF-8 BOM。调用方负责路径在项目内（`contained_path`）。
 
+    `allow_large`：认大表（`read_text_table` 的流式读，摘要不带行数据，见 `DataSummary.large`）的调用方才传；不传时大表抛 `data_too_large`。
     `v2=True`（数据出图 v2 的读法，v1 不传）：文本格式走 `read_text_table`（嗅探分隔符、跳过说明行、找表头行，`.txt` / `.dat` / `.asc` 也认；
     `header_row` 是调用方指定的表头物理行号；编码认 UTF-8 / UTF-8 BOM / 有 BOM 的 UTF-16 / GB18030，见 `decode_text`），单元格规则认千分位（`1,000`）；读不了抛 `DataSourceError`（稳定码）。XLSX 的读法不变，
     只是同样认千分位的文字格。"""
@@ -961,6 +1437,9 @@ def inspect_data_source(
         info = read_text_table(p, header_row=header_row)
         if info.summary is None:
             raise DataSourceError(info.code or "data_header_invalid")
+        if info.summary.large is not None and not allow_large:
+            # 大表的摘要没有行数据：不认大表的调用方（合画、v1 之外的老入口）一律拒，绝不拿一张空行的表当成读过了
+            raise DataSourceError("data_too_large")
         return info.summary
     table, sha, size = _read_delimited(p, "\t" if suffix in TSV_SUFFIXES else ",")
     return _summarize(
@@ -1025,7 +1504,7 @@ def _summarize(
     if any(not h for h in header) or len(set(header)) != len(header):
         raise DataSourceError("data_header_invalid")
     rows = table[1:]
-    if len(rows) > MAX_ROWS:
+    if len(rows) > SMALL_ROWS:
         raise DataSourceError("data_too_long", str(len(rows)))
     if not rows:
         raise DataSourceError("data_empty")
@@ -1061,6 +1540,7 @@ def _summarize(
         sheet=sheet,
         layout=layout,
         groups=groups,
+        numcat=numcat_levels(header, rows, per, id_like) if parse is parse_cell else {},
         id_like=id_like,
         repeats=repeats,
         row_count=None if keep_rows else len(rows),
@@ -1113,6 +1593,7 @@ def _structure(
     per: dict[str, ColumnSummary],
     levels: dict[str, set[str]],
     parse=None,
+    facts=None,
 ) -> tuple[str, dict[str, int], list[str], bool | None]:
     """`(layout, groups, id_like, repeats)`。全部保守：拿不准就 `unknown` / 空 / None，不猜。定义（一处，下面是实现）：
 
@@ -1131,38 +1612,67 @@ def _structure(
       单个 y 的两列表 `x, y`、分组加多个数值列、带备注文字列的表，一律 `unknown`。"""
     parse = parse or legacy_parse_cell
     n = len(rows)
-    groups: dict[str, int] = {}
-    for h in header:
-        s = per[h]
-        k = len(levels[h])
-        if s.kind == "text" and s.nan == 0 and 2 <= k <= MAX_GROUP_LEVELS and s.text_count > k:
-            groups[h] = k
+    if facts is None:
+        facts = _row_facts(header, rows, per, parse)
+    return _structure_from(header, per, levels, n, facts)
+
+
+@dataclass
+class _Facts:
+    """`_structure` 要逐行才能知道的两类事实（小表从行数据算，大表扫描时边读边累计）：
+    `first_labels`：第一列是否「每行都是文字、互不相同」——是则给出标签集合（大表超过 `STRUCTURE_SET_CAP` 个不同取值就不再收，按「不是」处理）；
+    `ids[列名]`：名字像编号的列的 `(非空格子数, 不同取值数, 数值是否全是整数)`（大表不同取值超过上限时 `capped`：不同取值数按上限算，
+    **不据此断言「有重复」**——拿不准的 `repeats` 不报 True）。"""
+
+    first_labels: set[str] | None
+    ids: dict[str, tuple[int, int, bool]]
+    capped: frozenset[str] = frozenset()
+
+
+def _row_facts(header, rows, per, parse) -> _Facts:
+    n = len(rows)
+    first_labels: set[str] | None = None
+    first = header[0]
+    if per[first].kind == "text" and per[first].nan == 0 and per[first].text_count == n:
+        labs = [r[0].strip() for r in rows]
+        if len(set(labs)) == n:
+            first_labels = set(labs)
     col_of = {h: i for i, h in enumerate(header)}
-    id_like: list[str] = []
-    repeats: bool | None = None
+    ids: dict[str, tuple[int, int, bool]] = {}
     for h in header:
         s = per[h]
         if not _id_name(h) or s.kind not in ("text", "numeric") or s.nan:
             continue
         vals = [r[col_of[h]].strip() for r in rows]
         vals = [v for v in vals if v]
-        if s.kind == "numeric" and not all(parse(v)[1].is_integer() for v in vals):
+        all_int = not (s.kind == "numeric" and not all(parse(v)[1].is_integer() for v in vals))
+        ids[h] = (len(vals), len(set(vals)), all_int)
+    return _Facts(first_labels, ids)
+
+
+def _structure_from(header, per, levels, n, facts: _Facts):
+    groups: dict[str, int] = {}
+    for h in header:
+        s = per[h]
+        k = len(levels[h])
+        if s.kind == "text" and s.nan == 0 and 2 <= k <= MAX_GROUP_LEVELS and s.text_count > k:
+            groups[h] = k
+    id_like: list[str] = []
+    repeats: bool | None = None
+    for h in header:
+        if h not in facts.ids:
             continue
-        distinct = len(set(vals))
-        if distinct < 2:
+        nonempty, distinct, all_int = facts.ids[h]
+        if not all_int or distinct < 2:
             continue
         id_like.append(h)
-        repeats = bool(repeats) or len(vals) > distinct
+        repeats = bool(repeats) or (nonempty > distinct and h not in facts.capped)
     kinds = {h: per[h].kind for h in header}
     numeric = [h for h in header if kinds[h] == "numeric"]
     layout = "unknown"
     if "mixed" not in kinds.values():
         first = header[0]
-        first_labels: set[str] | None = None
-        if kinds[first] == "text" and per[first].nan == 0 and per[first].text_count == n:
-            labs = [r[0].strip() for r in rows]
-            if len(set(labs)) == n:
-                first_labels = set(labs)
+        first_labels = facts.first_labels
         rest = header[1:]
         if (
             first_labels is not None
@@ -1228,6 +1738,9 @@ def xlsx_sheets(
 #: 一次最多摘要多少张表（XLSX 每个工作表算一张）/ 最多记多少条跳过 / 最多看多少个目录项；超了标 `truncated`，不静默截断
 MAX_PROFILE_TABLES = 20
 MAX_PROFILE_SKIPPED = 50
+#: 一次文件夹摘要里**大表**（> `SMALL_BYTES`）最多整份扫描多少字节（每份约 5 s / 100 MB）：超出的大表进 `skipped`（`data_too_large`，「这一轮没读」），
+#: 用户显式选中的表不受限（`ai_data_propose.with_explicit_table`）。已缓存的扫描不另算时间，但仍计入，保持结果与缓存状态无关。
+PROFILE_LARGE_BYTES = 1536 * 1024 * 1024
 PROFILE_SCAN_MAX = 50_000
 
 
@@ -1307,12 +1820,19 @@ def profile_folder(root: str | Path, header_rows: dict[str, int] | None = None) 
         skipped.append(SkippedEntry(rel, sheet, code))
         return True
 
+    large_read = 0
     for rel, _size in found:
         if len(tables) >= MAX_PROFILE_TABLES:
             reason = "tables"
             break
         p = base / rel
         suffix = p.suffix.lower()
+        if suffix not in XLSX_SUFFIXES + LEGACY_EXCEL_SUFFIXES and _size > SMALL_BYTES:
+            large_read += _size
+            if large_read > PROFILE_LARGE_BYTES:
+                if not skip(rel, None, "data_too_large"):
+                    break
+                continue
         if suffix in LEGACY_EXCEL_SUFFIXES:
             if not skip(rel, None, "data_excel_unsupported"):
                 break
@@ -1348,7 +1868,9 @@ def profile_folder(root: str | Path, header_rows: dict[str, int] | None = None) 
                 break
             continue
         try:
-            info = read_text_table(p, header_row=(header_rows or {}).get(rel), keep_rows=False)
+            info = read_text_table(
+                p, header_row=(header_rows or {}).get(rel), keep_rows=False, use_cache=True
+            )
         except Exception:  # noqa: BLE001 - 单个文件的任何意外都不该拖垮整个文件夹
             info = TextTable("unreadable", code="data_unreadable")
         if info.summary is None:
@@ -1426,6 +1948,67 @@ def apply_cells(header, rows, rules):
         if parts:
             notes.append(f"{col}: " + ", ".join(parts))
     return out, notes, stats
+
+
+# --------------------------------------------------------------------------- 整数编码的类别列
+def numcat_levels(header, rows, per, id_like) -> dict[str, int]:
+    """整数编码、可当类别用的列 → 不同取值个数（**客观条件的唯一实现**：摘要、配方校验、列角色挑选、模型采纳都读 `DataSummary.numcat`）。
+
+    条件（全部满足才算）：列 kind 是 `numeric`（有数、没有文字格；没有 `nan`；日期 / 混合列不算）、非空值**全是整数**（`3.0` 算、`1.5` 不算；
+    负数可以：`-1 / 0 / 1` 的编码是常见的）、不同取值（按整数值，`1` / `1.0` / `01` 同一个）满足 `2 <= k <= NUMCAT_MAX_LEVELS`、
+    非空格子数 > `k`（至少一个取值重复出现——每行都不同的是编号 / 测量值，不是类别）、不是 `id_like` 列（名字 / 结构像编号的整数列——批次、样本号——
+    与文字编号一样不当分组）。空格子不算取值，那一行画图时跳过（同文字分组的空格子）。只看小表的行数据；大表没有行数据，得到空。"""
+    out: dict[str, int] = {}
+    if not rows:
+        return out
+    for j, h in enumerate(header):
+        s = per[h]
+        if s.kind != "numeric" or s.nan or h in id_like:
+            continue
+        seen: set[int] = set()
+        n = 0
+        ok = True
+        for r in rows:
+            cell = r[j]
+            if not cell.strip():
+                continue
+            kind, v = parse_cell(cell)
+            if kind != "numeric" or not v.is_integer() or abs(v) >= 1e15:
+                ok = False
+                break
+            seen.add(int(v))
+            n += 1
+        if ok and 2 <= len(seen) <= NUMCAT_MAX_LEVELS and n > len(seen):
+            out[h] = len(seen)
+    return out
+
+
+class NumCat(str):
+    """整数编码的类别格子（`apply_numcat` 打的标记）：内容是**规范整数写法**（`0`、`1`、`-1`，没有 `0.0` / `01` / 空白），`number` 是它的数值。
+    运行时的 `distinct` 看见一列全是它，就按数值升序排类别（而不是首次出现的顺序）。`strip` 返回自己——取数处都写 `cell.strip()`，标记要留住。
+    **运行时类**（进公共模块）。"""
+
+    def __new__(cls, text, number):
+        obj = super().__new__(cls, text)
+        obj.number = number
+        return obj
+
+    def strip(self, chars=None):
+        return self
+
+
+def apply_numcat(header, rows, cols):
+    """整数编码的类别列读表后的处理：这些列的每个数值格换成 `NumCat`（规范整数写法 + 数值）；空格 / 不是数的格原样（那一行当缺失，同文字分组）。
+    只改这次读到的内存里的副本，不碰文件。**这是运行时函数**：父进程算期望值与生成的脚本调用同一份源码。"""
+    idx = {h: i for i, h in enumerate(header)}
+    out = [list(r) for r in rows]
+    for col in cols:
+        i = idx[col]
+        for r in out:
+            kind, v = parse_cell(r[i])
+            if kind == "numeric":
+                r[i] = NumCat(str(int(v)) if v.is_integer() else r[i].strip(), v)
+    return out
 
 
 # --------------------------------------------------------------------------- 列映射

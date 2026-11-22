@@ -1,17 +1,19 @@
 import { MM_PER_PT } from '@/lib/units'
 import {
+  arcPath,
   bracePath,
   cornerRadius,
   defaultLineJoin,
   hitStrokeWidth,
   PATH_HIT_SHAPES,
+  outlineOf,
   shapeInset,
-  shapeOutline,
   svgStroke,
 } from '@/lib/shapeGeometry'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { ShapeObject } from '@/types/document'
-import { lineEndpoints, shapeStrokeOn } from '@/types/document'
+import { isStrokeOnlyShape, lineEndpoints, shapeStrokeOn } from '@/types/document'
+import { usePaints } from './gradientPaint'
 
 /**
  * 形状：几何公式与后端 _draw_shape 一一对应（engine 侧同名注释），
@@ -30,8 +32,9 @@ export function ShapeView({ obj, hit = 'none' }: { obj: ShapeObject; hit?: 'stro
   // 描边居中，内缩半个线宽让外沿正好贴合包围盒；无边框时不内缩，填充铺满包围盒
   const inset = shapeInset(obj, sw)
   const strokeOn = shapeStrokeOn(obj)
-  const fill = obj.fill ?? 'none'
-  const fillOpacity = obj.fill ? (obj.fillOpacity ?? 1) : undefined
+  // 填充 / 描边可以是渐变（ADR 0186）：`usePaints` 给 url(#…) 与 <defs>，没有渐变时就是原来的纯色
+  const paints = usePaints(obj, w, h, strokeOn)
+  const { fill, fillOpacity } = paints
   // 描边内缩后的矩形（与后端 rect 同一个 Rect），圆角钳制也以它为准
   const rectW = Math.max(w - 2 * inset, 0.001)
   const rectH = Math.max(h - 2 * inset, 0.001)
@@ -41,7 +44,7 @@ export function ShapeView({ obj, hit = 'none' }: { obj: ShapeObject; hit?: 'stro
 
   // dotted 的「点」全靠圆线帽，svgStroke 里点线强制圆头（与后端 `geometry.stroke_cap` 同源）；
   // 无边框 = 一个描边属性都不给（SVG 缺省 stroke 就是 none）
-  const stroke = strokeOn ? svgStroke(obj, sw, defaultLineJoin(obj.shape)) : {}
+  const stroke = strokeOn ? { ...svgStroke(obj, sw, defaultLineJoin(obj.shape)), ...paints.strokeOverride } : {}
 
   const poly = (pts: [number, number][]) => (
     <polygon
@@ -60,6 +63,7 @@ export function ShapeView({ obj, hit = 'none' }: { obj: ShapeObject; hit?: 'stro
       width={Math.max(w, 1)}
       height={Math.max(h, 1)}
     >
+      {paints.defs}
       {obj.shape === 'rect' && (
         <rect
           x={inset}
@@ -111,24 +115,25 @@ export function ShapeView({ obj, hit = 'none' }: { obj: ShapeObject; hit?: 'stro
             </>
           )
         })()}
-      {(obj.shape === 'triangle' || obj.shape === 'diamond' || obj.shape === 'polygon') &&
+      {(obj.shape === 'triangle' || obj.shape === 'diamond' || obj.shape === 'polygon' || obj.shape === 'star') &&
         (() => {
-          const o = shapeOutline(obj.shape, w, h, inset, obj.sides)
+          const o = outlineOf(obj, w, h, inset)
           return o?.kind === 'poly' ? poly(o.points) : null
         })()}
       {obj.shape === 'brace' && (
         <path d={bracePath(w, h, inset)} fill="none" {...stroke} />
       )}
+      {obj.shape === 'arc' && <path d={arcPath(w, h, inset)} fill="none" {...stroke} />}
       {/* 真实轮廓的透明命中层：包围盒命中会让三角形 / 大括号的空白角也吃点击
           （外层 div 因此让位，见 ObjectView 的 pointerEvents）。有填充的按
           「整块可点」，空心的只在描边附近命中，与图内曲线同一语义。 */}
       {hit !== 'none' &&
         PATH_HIT_SHAPES.has(obj.shape) &&
         (() => {
-          const o = shapeOutline(obj.shape, w, h, inset, obj.sides)
+          const o = outlineOf(obj, w, h, inset)
           if (!o) return null
-          // 无边框又无填充的形状整块可点（否则只剩一圈看不见的轮廓能点中）
-          const filled = obj.shape !== 'brace' && (!!obj.fill || !strokeOn)
+          // 无边框又无填充的形状整块可点（否则只剩一圈看不见的轮廓能点中）；只有描边的（大括号 / 弧线）只认描边
+          const filled = !isStrokeOnlyShape(obj.shape) && (!!obj.fill || !strokeOn)
           const common = {
             'data-hit-shape': '',
             fill: filled ? 'transparent' : 'none',

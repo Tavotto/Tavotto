@@ -36,6 +36,9 @@ export const FEEDBACK_EMAIL = 'feedback@tavotto.com'
 export const WEBSITE_URL = 'https://www.tavotto.com'
 export const supportPageUrl = (locale: 'zh-CN' | 'en-US'): string =>
   `${WEBSITE_URL}${locale === 'zh-CN' ? '/zh/support/' : '/support/'}`
+/** 高级版价格页（四档通行证在那里选；应用内「购买」「续费」只是打开它） */
+export const premiumPageUrl = (locale: 'zh-CN' | 'en-US'): string =>
+  `${WEBSITE_URL}${locale === 'zh-CN' ? '/zh/premium/' : '/premium/'}`
 export const CODEX_GUIDE_URL = `${REPO_URL}#using-tavotto-in-codex-plugin`
 
 export const PACKAGE_KIND = 'tavotto-package'

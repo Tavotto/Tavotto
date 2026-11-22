@@ -235,6 +235,7 @@ const DATA_EXTENSIONS: Readonly<Record<string, string>> = {
   '.webp': '图片',
   '.png': '图片（联系入口的二维码，打包进前端、不从网络加载）',
   '.py': 'playground 的示例脚本：在 Pyodide 里跑的 Python，不是 JS 模块',
+  '.wasm': '路径查找器内核（vecops/ 编出来的 WASM，ADR 0185 M2）：按 URL 加载后实例化，不是 JS 模块，拿不到这里的换算函数',
 }
 /** 按文件名点名的非代码文件（不进 git 的本机杂物） */
 const DATA_BASENAMES: Readonly<Record<string, string>> = {
@@ -857,7 +858,7 @@ describe('界面代码与 store 不自己做页面 pt 换算', () => {
   it.each([
     ['/src/lib/x.vue'],
     ['/src/lib/x.svelte'],
-    ['/src/lib/x.wasm'],
+    ['/src/lib/x.wat'],
     ['/src/lib/x'],
     ['/src/lib/.env'],
     ['/src/lib/x.ts.orig'],
@@ -865,7 +866,7 @@ describe('界面代码与 store 不自己做页面 pt 换算', () => {
     expect(unknownKind(path)).toBe(true)
   })
 
-  it.each([['/src/i18n/x.json'], ['/src/index.css'], ['/src/p/a.webp'], ['/src/p/a.py'], ['/src/lib/.DS_Store']])(
+  it.each([['/src/i18n/x.json'], ['/src/index.css'], ['/src/p/a.webp'], ['/src/p/a.py'], ['/src/lib/vecops/vecops.wasm'], ['/src/lib/.DS_Store']])(
     '点了名的数据文件不红：%s',
     (path) => {
       expect(unknownKind(path)).toBe(false)

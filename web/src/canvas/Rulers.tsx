@@ -1,3 +1,4 @@
+import { visibleBounds } from '@/lib/transform'
 import { useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { perfCount } from '@/perf/core'
@@ -240,7 +241,7 @@ function useSelectionSpan(): { x: [number, number]; y: [number, number] } | null
   // 标尺（`CanvasStage` 的 showRulers），这里是第二道：选区里挂着的看不见的版面对象不进选区带
   const sel = renderedSelection(objects, ids)
   if (!sel.length) return null
-  const b = boundsOf(sel.map(visualBounds))
+  const b = visibleBounds(sel, objects) ?? boundsOf(sel.map(visualBounds))
   if (!b) return null
   return { x: [b.x, b.x + b.w], y: [b.y, b.y + b.h] }
 }

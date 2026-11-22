@@ -355,7 +355,7 @@ export function WriteBackDialog({
     const p = panels[0]
     const touching = objects.some(
       (o) =>
-        (o.type === 'text' || o.type === 'arrow' || o.type === 'shape') &&
+        (o.type === 'text' || o.type === 'arrow' || o.type === 'shape' || o.type === 'path') &&
         !o.hidden &&
         o.x < p.x + p.w && o.x + o.w > p.x && o.y < p.y + p.h && o.y + o.h > p.y,
     )

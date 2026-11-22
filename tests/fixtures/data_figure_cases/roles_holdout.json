@@ -1,0 +1,1176 @@
+{
+ "version": 1,
+ "cases": [
+  {
+   "id": "HO-01",
+   "title": "生物：基因型两组，体重",
+   "tier": "plain",
+   "tags": [
+    "group-measure",
+    "bio"
+   ],
+   "tables": {
+    "t.csv": "genotype,body_weight_g\nWT,25.2\nWT,24.2\nWT,23.5\nWT,25.8\nWT,24.4\nWT,24.6\nWT,25.0\nWT,25.5\nKO,21.8\nKO,22.4\nKO,20.1\nKO,21.7\nKO,21.7\nKO,20.5\nKO,22.2\nKO,20.3\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "genotype": "group",
+    "body_weight_g": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "body_weight_g"
+    ],
+    "group": "genotype"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "genotype",
+      "role": "group"
+     },
+     {
+      "name": "body_weight_g",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "body_weight_g"
+     ],
+     "x": "none",
+     "group": "genotype"
+    }
+   }
+  },
+  {
+   "id": "HO-02",
+   "title": "化学：吸光度随时间",
+   "tier": "plain",
+   "tags": [
+    "time-series",
+    "chem"
+   ],
+   "tables": {
+    "t.csv": "time_min,absorbance\n0.0,0.048\n2.5,0.124\n5.0,0.186\n7.5,0.251\n10.0,0.340\n12.5,0.393\n15.0,0.479\n17.5,0.529\n20.0,0.617\n22.5,0.681\n25.0,0.746\n27.5,0.816\n30.0,0.876\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "time_min": "time",
+    "absorbance": "measure"
+   },
+   "expect_default": {
+    "x": "time_min",
+    "y": [
+     "absorbance"
+    ],
+    "group": null
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "time_min",
+      "role": "time"
+     },
+     {
+      "name": "absorbance",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "absorbance"
+     ],
+     "x": "time_min",
+     "group": "none"
+    }
+   }
+  },
+  {
+   "id": "HO-03",
+   "title": "药理：剂量-响应单条曲线",
+   "tier": "plain",
+   "tags": [
+    "dose-response",
+    "pharm"
+   ],
+   "tables": {
+    "t.csv": "dose_nM,viability_pct\n0.1,97.2\n1,97.3\n10,91.8\n100,51.7\n1000,14.0\n10000,3.5\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "dose_nM": "ordered_x",
+    "viability_pct": "measure"
+   },
+   "expect_default": {
+    "x": "dose_nM",
+    "y": [
+     "viability_pct"
+    ],
+    "group": null
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "dose_nM",
+      "role": "ordered_x"
+     },
+     {
+      "name": "viability_pct",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "viability_pct"
+     ],
+     "x": "dose_nM",
+     "group": "none"
+    }
+   }
+  },
+  {
+   "id": "HO-04",
+   "title": "材料：晶粒尺寸与屈服强度两数值散点",
+   "tier": "plain",
+   "tags": [
+    "scatter",
+    "materials"
+   ],
+   "tables": {
+    "t.csv": "grain_size_um,yield_strength_mpa\n2,542\n4,434\n6,392\n8,362\n10,339\n14,309\n18,305\n25,277\n33,276\n40,268\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "grain_size_um": "ordered_x",
+    "yield_strength_mpa": "measure"
+   },
+   "expect_default": {
+    "x": "grain_size_um",
+    "y": [
+     "yield_strength_mpa"
+    ],
+    "group": null
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "grain_size_um",
+      "role": "ordered_x"
+     },
+     {
+      "name": "yield_strength_mpa",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "yield_strength_mpa"
+     ],
+     "x": "grain_size_um",
+     "group": "none"
+    }
+   }
+  },
+  {
+   "id": "HO-05",
+   "title": "环境：三种金属离子浓度随时间（宽表）",
+   "tier": "plain",
+   "tags": [
+    "wide",
+    "environment"
+   ],
+   "tables": {
+    "t.csv": "time_h,Cu_ppb,Zn_ppb,Pb_ppb\n0,11.1,29.8,4.3\n4,13.7,29.4,4.2\n8,16.7,32.3,5.8\n12,20.2,31.4,6.2\n16,21.3,31.3,7.1\n20,21.9,34.3,7.8\n24,23.1,36.5,7.9\n28,24.9,34.8,7.2\n32,27.8,34.7,8.1\n36,30.2,36.6,8.6\n40,31.6,37.2,9.6\n44,34.0,39.1,9.9\n48,36.3,40.6,10.3\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "time_h": "time",
+    "Cu_ppb": "measure",
+    "Zn_ppb": "measure",
+    "Pb_ppb": "measure"
+   },
+   "expect_default": {
+    "x": "time_h",
+    "y": [
+     "Cu_ppb",
+     "Zn_ppb",
+     "Pb_ppb"
+    ],
+    "group": null
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "time_h",
+      "role": "time"
+     },
+     {
+      "name": "Cu_ppb",
+      "role": "measure"
+     },
+     {
+      "name": "Zn_ppb",
+      "role": "measure"
+     },
+     {
+      "name": "Pb_ppb",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "Cu_ppb",
+      "Zn_ppb",
+      "Pb_ppb"
+     ],
+     "x": "time_h",
+     "group": "none"
+    }
+   }
+  },
+  {
+   "id": "HO-06",
+   "title": "物理：表头下面跟一行单位（K、Ohm）",
+   "tier": "plain",
+   "tags": [
+    "units-row",
+    "physics"
+   ],
+   "tables": {
+    "t.csv": "temperature,resistance\nK,Ohm\n300,2.329\n325,2.270\n350,2.452\n375,2.411\n400,2.577\n425,2.678\n450,2.766\n475,2.795\n500,2.932\n525,2.964\n550,3.053\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "temperature": "ordered_x",
+    "resistance": "measure"
+   },
+   "expect_default": {
+    "x": "temperature",
+    "y": [
+     "resistance"
+    ],
+    "group": null
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "temperature",
+      "role": "ordered_x"
+     },
+     {
+      "name": "resistance",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "resistance"
+     ],
+     "x": "temperature",
+     "group": "none"
+    }
+   },
+   "header": {
+    "expect_header_row": 1,
+    "model_header_answer": {
+     "header_row": 1
+    },
+    "confirm_only": true
+   }
+  },
+  {
+   "id": "HO-07",
+   "title": "心理：被试编号 + 三种条件的反应时（重复测量）",
+   "tier": "plain",
+   "tags": [
+    "subject-id",
+    "psych"
+   ],
+   "tables": {
+    "t.csv": "subject_id,condition,rt_ms\nS01,congruent,383\nS01,incongruent,460\nS01,neutral,380\nS02,congruent,521\nS02,incongruent,563\nS02,neutral,511\nS03,congruent,467\nS03,incongruent,513\nS03,neutral,481\nS04,congruent,510\nS04,incongruent,554\nS04,neutral,519\nS05,congruent,455\nS05,incongruent,515\nS05,neutral,490\nS06,congruent,496\nS06,incongruent,534\nS06,neutral,502\nS07,congruent,443\nS07,incongruent,496\nS07,neutral,442\nS08,congruent,474\nS08,incongruent,515\nS08,neutral,482\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "subject_id": "replicate_unit",
+    "condition": "group",
+    "rt_ms": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "rt_ms"
+    ],
+    "group": "condition"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "subject_id",
+      "role": "replicate_unit"
+     },
+     {
+      "name": "condition",
+      "role": "group"
+     },
+     {
+      "name": "rt_ms",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "rt_ms"
+     ],
+     "x": "none",
+     "group": "condition"
+    }
+   }
+  },
+  {
+   "id": "HO-08",
+   "title": "中文列名：叶绿素含量随时间",
+   "tier": "plain",
+   "tags": [
+    "chinese",
+    "time-series"
+   ],
+   "tables": {
+    "t.csv": "时间_h,叶绿素含量\n0,8.6\n2,8.7\n4,11.0\n6,13.1\n8,13.2\n10,15.1\n12,18.1\n14,18.4\n16,19.7\n18,22.5\n20,24.6\n22,26.3\n24,28.5\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "时间_h": "time",
+    "叶绿素含量": "measure"
+   },
+   "expect_default": {
+    "x": "时间_h",
+    "y": [
+     "叶绿素含量"
+    ],
+    "group": null
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "时间_h",
+      "role": "time"
+     },
+     {
+      "name": "叶绿素含量",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "叶绿素含量"
+     ],
+     "x": "时间_h",
+     "group": "none"
+    }
+   }
+  },
+  {
+   "id": "HO-09",
+   "title": "环境：制表符分隔，三个采样点叶绿素 a",
+   "tier": "plain",
+   "tags": [
+    "tsv",
+    "environment"
+   ],
+   "tables": {
+    "t.tsv": "site\tchl_a_ugL\nupstream\t2.23\nupstream\t1.69\nupstream\t1.92\nupstream\t2.46\nupstream\t2.12\nmidstream\t3.62\nmidstream\t4.94\nmidstream\t4.85\nmidstream\t3.79\nmidstream\t4.71\ndownstream\t8.85\ndownstream\t9.81\ndownstream\t8.95\ndownstream\t10.08\ndownstream\t9.23\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "site": "group",
+    "chl_a_ugL": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "chl_a_ugL"
+    ],
+    "group": "site"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "site",
+      "role": "group"
+     },
+     {
+      "name": "chl_a_ugL",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "chl_a_ugL"
+     ],
+     "x": "none",
+     "group": "site"
+    }
+   }
+  },
+  {
+   "id": "HO-10",
+   "title": "生物：分号分隔，三个菌株生长速率",
+   "tier": "plain",
+   "tags": [
+    "semicolon",
+    "bio"
+   ],
+   "tables": {
+    "t.csv": "strain;growth_rate\nPA14;0.911\nPA14;0.754\nPA14;0.797\nPA14;0.833\nPA14;0.902\nPA14;0.806\ndlasR;0.581\ndlasR;0.511\ndlasR;0.519\ndlasR;0.509\ndlasR;0.569\ndlasR;0.539\ndpqsA;0.701\ndpqsA;0.576\ndpqsA;0.586\ndpqsA;0.638\ndpqsA;0.637\ndpqsA;0.649\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "strain": "group",
+    "growth_rate": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "growth_rate"
+    ],
+    "group": "strain"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "strain",
+      "role": "group"
+     },
+     {
+      "name": "growth_rate",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "growth_rate"
+     ],
+     "x": "none",
+     "group": "strain"
+    }
+   }
+  },
+  {
+   "id": "HO-11",
+   "title": "药理：天数 × 处理组 × 肿瘤体积",
+   "tier": "plain",
+   "tags": [
+    "group-time",
+    "pharm"
+   ],
+   "tables": {
+    "t.csv": "day,treatment,tumor_volume_mm3\n0,vehicle,106\n0,vehicle,101\n0,vehicle,97\n3,vehicle,190\n3,vehicle,189\n3,vehicle,187\n6,vehicle,283\n6,vehicle,277\n6,vehicle,280\n9,vehicle,369\n9,vehicle,365\n9,vehicle,372\n12,vehicle,458\n12,vehicle,457\n12,vehicle,456\n0,drugX,102\n0,drugX,100\n0,drugX,96\n3,drugX,144\n3,drugX,144\n3,drugX,149\n6,drugX,182\n6,drugX,191\n6,drugX,182\n9,drugX,241\n9,drugX,225\n9,drugX,229\n12,drugX,278\n12,drugX,283\n12,drugX,284\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "day": "time",
+    "treatment": "group",
+    "tumor_volume_mm3": "measure"
+   },
+   "expect_default": {
+    "x": "day",
+    "y": [
+     "tumor_volume_mm3"
+    ],
+    "group": "treatment"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "day",
+      "role": "time"
+     },
+     {
+      "name": "treatment",
+      "role": "group"
+     },
+     {
+      "name": "tumor_volume_mm3",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "tumor_volume_mm3"
+     ],
+     "x": "day",
+     "group": "treatment"
+    }
+   }
+  },
+  {
+   "id": "HO-12",
+   "title": "环境：ISO 日期 + PM2.5 日均值",
+   "tier": "plain",
+   "tags": [
+    "date",
+    "environment"
+   ],
+   "tables": {
+    "t.csv": "date,pm25_ugm3\n2026-03-01,32.2\n2026-03-02,40.9\n2026-03-03,37.4\n2026-03-04,40.9\n2026-03-05,38.6\n2026-03-06,42.0\n2026-03-07,51.3\n2026-03-08,38.6\n2026-03-09,36.8\n2026-03-10,43.6\n2026-03-11,44.9\n2026-03-12,37.4\n2026-03-13,44.8\n2026-03-14,48.7\n2026-03-15,44.6\n2026-03-16,34.4\n2026-03-17,30.4\n2026-03-18,39.0\n2026-03-19,46.7\n2026-03-20,48.6\n2026-03-21,47.5\n2026-03-22,35.2\n2026-03-23,37.0\n2026-03-24,41.6\n2026-03-25,44.0\n2026-03-26,42.0\n2026-03-27,33.8\n2026-03-28,50.7\n2026-03-29,28.0\n2026-03-30,26.5\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "date": "time",
+    "pm25_ugm3": "measure"
+   },
+   "expect_default": {
+    "x": "date",
+    "y": [
+     "pm25_ugm3"
+    ],
+    "group": null
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "date",
+      "role": "time"
+     },
+     {
+      "name": "pm25_ugm3",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "pm25_ugm3"
+     ],
+     "x": "date",
+     "group": "none"
+    }
+   }
+  },
+  {
+   "id": "HO-13",
+   "title": "年份列排在物种数之后，规则默认最后一个数值列",
+   "tier": "hard",
+   "tags": [
+    "year",
+    "order",
+    "ecology"
+   ],
+   "tables": {
+    "t.csv": "site,species_count,year\ncoast,42,2016\ncoast,42,2017\ncoast,45,2018\ncoast,46,2019\ncoast,42,2020\ncoast,46,2021\ncoast,48,2022\ncoast,50,2023\ninland,30,2016\ninland,30,2017\ninland,32,2018\ninland,30,2019\ninland,34,2020\ninland,34,2021\ninland,35,2022\ninland,32,2023\nalpine,15,2016\nalpine,23,2017\nalpine,20,2018\nalpine,21,2019\nalpine,19,2020\nalpine,23,2021\nalpine,24,2022\nalpine,27,2023\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "site": "group",
+    "species_count": "measure",
+    "year": "time"
+   },
+   "expect_default": {
+    "x": "year",
+    "y": [
+     "species_count"
+    ],
+    "group": "site"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "site",
+      "role": "group"
+     },
+     {
+      "name": "species_count",
+      "role": "measure"
+     },
+     {
+      "name": "year",
+      "role": "time"
+     }
+    ],
+    "picks": {
+     "y": [
+      "species_count"
+     ],
+     "x": "year",
+     "group": "site"
+    }
+   }
+  },
+  {
+   "id": "HO-14",
+   "title": "钙镁比是处理梯度（横轴），生物量在最前",
+   "tier": "hard",
+   "tags": [
+    "ratio",
+    "order",
+    "agronomy"
+   ],
+   "tables": {
+    "t.csv": "biomass_g,Ca_Mg_ratio,soil\n4.07,0.5,sandy\n4.25,1.0,sandy\n4.94,2.0,sandy\n5.68,4.0,sandy\n7.00,8.0,sandy\n4.52,0.5,loam\n4.95,1.0,loam\n5.45,2.0,loam\n6.63,4.0,loam\n7.29,8.0,loam\n4.46,0.5,clay\n4.62,1.0,clay\n5.54,2.0,clay\n6.15,4.0,clay\n7.36,8.0,clay\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "biomass_g": "measure",
+    "Ca_Mg_ratio": "ordered_x",
+    "soil": "group"
+   },
+   "expect_default": {
+    "x": "Ca_Mg_ratio",
+    "y": [
+     "biomass_g"
+    ],
+    "group": "soil"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "biomass_g",
+      "role": "measure"
+     },
+     {
+      "name": "Ca_Mg_ratio",
+      "role": "ordered_x"
+     },
+     {
+      "name": "soil",
+      "role": "group"
+     }
+    ],
+    "picks": {
+     "y": [
+      "biomass_g"
+     ],
+     "x": "Ca_Mg_ratio",
+     "group": "soil"
+    }
+   }
+  },
+  {
+   "id": "HO-15",
+   "title": "显微坐标 x_um / y_um 与荧光强度（强度在最前）",
+   "tier": "hard",
+   "tags": [
+    "coords",
+    "imaging"
+   ],
+   "tables": {
+    "t.csv": "intensity,x_um,y_um\n91.4,0,0\n116.9,0,10\n129.5,0,20\n118.2,0,30\n96.6,0,40\n121.1,10,0\n185.9,10,10\n222.8,10,20\n183.5,10,30\n117.9,10,40\n131.4,20,0\n226.2,20,10\n280.0,20,20\n223.4,20,30\n134.5,20,40\n120.9,30,0\n190.3,30,10\n224.8,30,20\n189.1,30,30\n119.5,30,40\n96.1,40,0\n117.4,40,10\n134.0,40,20\n117.9,40,30\n97.5,40,40\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "intensity": "measure",
+    "x_um": "ordered_x",
+    "y_um": "ordered_x"
+   },
+   "expect_default": {
+    "x": "x_um",
+    "y": [
+     "intensity"
+    ],
+    "group": null
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "intensity",
+      "role": "measure"
+     },
+     {
+      "name": "x_um",
+      "role": "ordered_x"
+     },
+     {
+      "name": "y_um",
+      "role": "ordered_x"
+     }
+    ],
+    "picks": {
+     "y": [
+      "intensity"
+     ],
+     "x": "x_um",
+     "group": "none"
+    }
+   },
+   "also_ok": [
+    {
+     "x": "y_um",
+     "y": [
+      "intensity"
+     ],
+     "group": null
+    }
+   ]
+  },
+  {
+   "id": "HO-16",
+   "title": "红外光谱：波数递减、样品分组、透过率在最后",
+   "tier": "hard",
+   "tags": [
+    "wavenumber",
+    "spectrum"
+   ],
+   "tables": {
+    "t.csv": "sample,wavenumber_cm,transmittance\nPE,4000,94.4\nPE,3800,95.1\nPE,3600,96.0\nPE,3400,94.2\nPE,3200,94.1\nPE,3000,79.5\nPE,2800,79.7\nPE,2600,95.6\nPE,2400,95.9\nPE,2200,93.3\nPE,2000,85.5\nPE,1800,61.8\nPE,1600,59.8\nPE,1400,85.6\nPE,1200,94.7\nPE,1000,94.9\nPE,800,95.8\nPE,600,94.8\nPE,400,96.4\nPS,4000,94.9\nPS,3800,94.9\nPS,3600,95.4\nPS,3400,94.4\nPS,3200,94.7\nPS,3000,85.1\nPS,2800,83.2\nPS,2600,94.7\nPS,2400,94.3\nPS,2200,93.9\nPS,2000,87.8\nPS,1800,71.1\nPS,1600,71.8\nPS,1400,88.4\nPS,1200,93.7\nPS,1000,95.5\nPS,800,94.9\nPS,600,94.4\nPS,400,95.7\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "sample": "group",
+    "wavenumber_cm": "ordered_x",
+    "transmittance": "measure"
+   },
+   "expect_default": {
+    "x": "wavenumber_cm",
+    "y": [
+     "transmittance"
+    ],
+    "group": "sample"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "sample",
+      "role": "group"
+     },
+     {
+      "name": "wavenumber_cm",
+      "role": "ordered_x"
+     },
+     {
+      "name": "transmittance",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "transmittance"
+     ],
+     "x": "wavenumber_cm",
+     "group": "sample"
+    }
+   }
+  },
+  {
+   "id": "HO-17",
+   "title": "每行一个样品名 + rep1/rep2/rep3 三个重复列",
+   "tier": "hard",
+   "tags": [
+    "rep-wide",
+    "unique-names"
+   ],
+   "tables": {
+    "t.csv": "sample,rep1,rep2,rep3\nA1,42.5,42.7,41.0\nA2,41.4,41.3,44.1\nB1,37.1,34.3,32.3\nB2,41.5,41.8,42.7\nC1,47.0,42.5,42.8\nC2,47.7,47.2,48.1\nD1,39.8,41.1,41.0\nD2,36.7,34.8,35.1\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "sample": "row_id",
+    "rep1": "measure",
+    "rep2": "measure",
+    "rep3": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "rep1",
+     "rep2",
+     "rep3"
+    ],
+    "group": null
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "sample",
+      "role": "row_id"
+     },
+     {
+      "name": "rep1",
+      "role": "measure"
+     },
+     {
+      "name": "rep2",
+      "role": "measure"
+     },
+     {
+      "name": "rep3",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "rep1",
+      "rep2",
+      "rep3"
+     ],
+     "x": "none",
+     "group": "none"
+    }
+   }
+  },
+  {
+   "id": "HO-18",
+   "title": "已汇总的剂量-响应：均值 + 标准差（sd 在最后）",
+   "tier": "hard",
+   "tags": [
+    "error-col",
+    "pharm"
+   ],
+   "tables": {
+    "t.csv": "dose_uM,mean_response,sd\n0.01,99.3,4.0\n0.03,98.0,5.1\n0.1,93.8,4.9\n0.3,83.3,6.4\n1,60.0,4.6\n3,33.3,4.4\n10,13.0,5.8\n30,4.8,6.2\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "dose_uM": "ordered_x",
+    "mean_response": "measure",
+    "sd": "error"
+   },
+   "expect_default": {
+    "x": "dose_uM",
+    "y": [
+     "mean_response"
+    ],
+    "group": null
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "dose_uM",
+      "role": "ordered_x"
+     },
+     {
+      "name": "mean_response",
+      "role": "measure"
+     },
+     {
+      "name": "sd",
+      "role": "error"
+     }
+    ],
+    "picks": {
+     "y": [
+      "mean_response"
+     ],
+     "x": "dose_uM",
+     "group": "none"
+    }
+   }
+  },
+  {
+   "id": "HO-19",
+   "title": "按品系汇总的随天数长度：均值 + 标准误",
+   "tier": "hard",
+   "tags": [
+    "error-col",
+    "group-time"
+   ],
+   "tables": {
+    "t.csv": "strain,day,mean_length_mm,sem\nm1,1,3.06,0.22\nm1,2,3.81,0.24\nm1,3,4.66,0.19\nm1,4,5.59,0.26\nm1,5,6.34,0.17\nm1,6,7.54,0.22\nm2,1,2.51,0.22\nm2,2,2.82,0.21\nm2,3,3.75,0.37\nm2,4,3.89,0.32\nm2,5,4.70,0.18\nm2,6,4.86,0.14\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "strain": "group",
+    "day": "time",
+    "mean_length_mm": "measure",
+    "sem": "error"
+   },
+   "expect_default": {
+    "x": "day",
+    "y": [
+     "mean_length_mm"
+    ],
+    "group": "strain"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "strain",
+      "role": "group"
+     },
+     {
+      "name": "day",
+      "role": "time"
+     },
+     {
+      "name": "mean_length_mm",
+      "role": "measure"
+     },
+     {
+      "name": "sem",
+      "role": "error"
+     }
+    ],
+    "picks": {
+     "y": [
+      "mean_length_mm"
+     ],
+     "x": "day",
+     "group": "strain"
+    }
+   }
+  },
+  {
+   "id": "HO-20",
+   "title": "0/1 编码的敲除标记，只有两个取值",
+   "tier": "hard",
+   "tags": [
+    "boolean",
+    "bio"
+   ],
+   "tables": {
+    "t.csv": "knockout,growth_rate\n0,1.016\n0,1.057\n0,1.075\n0,0.989\n0,1.084\n0,0.934\n0,1.075\n0,0.987\n1,0.726\n1,0.599\n1,0.625\n1,0.625\n1,0.727\n1,0.626\n1,0.737\n1,0.718\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "knockout": "group",
+    "growth_rate": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "growth_rate"
+    ],
+    "group": "knockout"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "knockout",
+      "role": "group"
+     },
+     {
+      "name": "growth_rate",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "growth_rate"
+     ],
+     "x": "none",
+     "group": "knockout"
+    }
+   }
+  },
+  {
+   "id": "HO-21",
+   "title": "温度只有 4/25/37 三档：当横轴或当分组都说得通",
+   "tier": "hard",
+   "tags": [
+    "temperature",
+    "x-or-group"
+   ],
+   "tables": {
+    "t.csv": "temp_C,activity_U\n4,15\n4,8\n4,0\n4,12\n4,13\n25,59\n25,50\n25,69\n25,60\n25,53\n37,108\n37,98\n37,90\n37,103\n37,95\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "temp_C": "ordered_x",
+    "activity_U": "measure"
+   },
+   "expect_default": {
+    "x": "temp_C",
+    "y": [
+     "activity_U"
+    ],
+    "group": null
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "temp_C",
+      "role": "ordered_x"
+     },
+     {
+      "name": "activity_U",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "activity_U"
+     ],
+     "x": "temp_C",
+     "group": "none"
+    }
+   },
+   "also_ok": [
+    {
+     "x": null,
+     "y": [
+      "activity_U"
+     ],
+     "group": "temp_C"
+    }
+   ]
+  },
+  {
+   "id": "HO-22",
+   "title": "汇总表：均值列 + 样本量 n（n 在最后）",
+   "tier": "hard",
+   "tags": [
+    "n-col",
+    "pharm"
+   ],
+   "tables": {
+    "t.csv": "drug,mean_inhibition,n\nsaline,11.1,12\nsaline,9.4,10\ndrugA,35.5,9\ndrugA,42.2,8\ndrugB,54.9,12\ndrugB,65.3,10\ndrugC,22.2,9\ndrugC,28.8,10\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "drug": "group",
+    "mean_inhibition": "measure",
+    "n": "other"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "mean_inhibition"
+    ],
+    "group": "drug"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "drug",
+      "role": "group"
+     },
+     {
+      "name": "mean_inhibition",
+      "role": "measure"
+     },
+     {
+      "name": "n",
+      "role": "other"
+     }
+    ],
+    "picks": {
+     "y": [
+      "mean_inhibition"
+     ],
+     "x": "none",
+     "group": "drug"
+    }
+   }
+  },
+  {
+   "id": "HO-23",
+   "title": "酶标板：板号分组、孔位名每行不同",
+   "tier": "hard",
+   "tags": [
+    "well-name",
+    "plate"
+   ],
+   "tables": {
+    "t.csv": "plate,well,od450\nP1,A1,0.726\nP1,A2,0.562\nP1,A3,0.540\nP1,B1,0.597\nP1,B2,0.666\nP1,B3,0.590\nP1,C1,0.243\nP1,C2,0.351\nP1,C3,0.240\nP1,D1,0.216\nP1,D2,0.367\nP1,D3,0.289\nP2,A1,0.623\nP2,A2,0.564\nP2,A3,0.712\nP2,B1,0.589\nP2,B2,0.602\nP2,B3,0.575\nP2,C1,0.289\nP2,C2,0.255\nP2,C3,0.250\nP2,D1,0.334\nP2,D2,0.267\nP2,D3,0.270\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "plate": "group",
+    "well": "row_id",
+    "od450": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "od450"
+    ],
+    "group": "plate"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "plate",
+      "role": "group"
+     },
+     {
+      "name": "well",
+      "role": "row_id"
+     },
+     {
+      "name": "od450",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "od450"
+     ],
+     "x": "none",
+     "group": "plate"
+    }
+   }
+  },
+  {
+   "id": "HO-24",
+   "title": "盆体积全是 500 ml 的常数列，排在最后",
+   "tier": "hard",
+   "tags": [
+    "constant-col",
+    "agronomy"
+   ],
+   "tables": {
+    "t.csv": "species,biomass_g,pot_volume_ml\nrice,12.0,500\nrice,12.8,500\nrice,16.2,500\nrice,12.7,500\nrice,13.7,500\nrice,15.4,500\nwheat,13.6,500\nwheat,10.2,500\nwheat,9.7,500\nwheat,10.2,500\nwheat,13.5,500\nwheat,11.9,500\nmaize,20.5,500\nmaize,17.6,500\nmaize,19.2,500\nmaize,18.3,500\nmaize,20.2,500\nmaize,20.3,500\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "species": "group",
+    "biomass_g": "measure",
+    "pot_volume_ml": "other"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "biomass_g"
+    ],
+    "group": "species"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "species",
+      "role": "group"
+     },
+     {
+      "name": "biomass_g",
+      "role": "measure"
+     },
+     {
+      "name": "pot_volume_ml",
+      "role": "other"
+     }
+    ],
+    "picks": {
+     "y": [
+      "biomass_g"
+     ],
+     "x": "none",
+     "group": "species"
+    }
+   }
+  }
+ ]
+}

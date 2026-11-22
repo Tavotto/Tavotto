@@ -1,7 +1,7 @@
 """首开环境决定里互不依赖的探测并发跑（`pool.run_probes_concurrently`）。
 
 看护：
-1. 首次（缓存未命中）并发：总耗时 ≈ 最长的那个，不是总和；
+1. 首次（缓存未命中）并发：几个探测同时在跑（用栅栏证明，不量墙钟——慢 runner 上墙钟会抖）；
 2. 结果与异常和串行逐项对得上（最靠前的失败优先、`CaptureDeferred` 原样抛出）；
 3. 缓存命中 / 池锁被持 / `no_capture` 里：不起任何线程；
 4. 子段 `probe_*_ms` 属于闭集、只在真探测时出现，并发线程里的也记进调用线程的分段表。
@@ -17,6 +17,8 @@ import pytest
 from tavotto.engine import depplan, deprepair, launcher, pool, userenvs
 
 NAP = 0.3
+#: 栅栏等同伴的上限：并发时瞬间凑齐；串行时第一个等满这么久后 `BrokenBarrierError`，用例红
+RENDEZVOUS_S = 10.0
 
 
 @pytest.fixture
@@ -39,12 +41,20 @@ def _nap(value):
     return fn
 
 
+def _meet(barrier, value):
+    def fn():
+        barrier.wait()  # 三个都在跑才过得去：串行跑会在这里等满 RENDEZVOUS_S 后报错
+        return value
+
+    return fn
+
+
 def test_runs_concurrently_and_keeps_order():
-    t0 = time.perf_counter()
-    got = pool.run_probes_concurrently(_nap("a"), _nap("b"), _nap("c"))
-    elapsed = time.perf_counter() - t0
+    barrier = threading.Barrier(3, timeout=RENDEZVOUS_S)
+    got = pool.run_probes_concurrently(
+        _meet(barrier, "a"), _meet(barrier, "b"), _meet(barrier, "c")
+    )
     assert got == ("a", "b", "c")
-    assert elapsed < NAP * 2  # 串行 = 0.9s；并发 ≈ 0.3s
 
 
 def test_first_failure_in_order_wins_and_all_finish():
@@ -87,23 +97,22 @@ def test_serial_fallbacks_start_no_thread(no_threads):
         assert pool.run_probes_concurrently(lambda: 1, lambda: 2) == (1, 2)
 
 
-def _managed_env(monkeypatch, *, facts_cached: bool, base_cached: bool):
+def _managed_env(monkeypatch, *, facts_cached: bool, base_cached: bool, meet=None):
+    """`meet` 给一个两方栅栏时，两个探测都要等到对方也在跑才返回（证明并发，不量时间）。"""
+    wait = meet.wait if meet is not None else (lambda: time.sleep(NAP))
     monkeypatch.setattr(deprepair.managedenv, "python_of", lambda root: "")
     monkeypatch.setattr(depplan, "facts_cached", lambda py: facts_cached)
     monkeypatch.setattr(deprepair, "_base_python_cached", lambda: base_cached)
-    monkeypatch.setattr(
-        depplan, "target_facts", lambda py, use_cache=True: (time.sleep(NAP), "F")[1]
-    )
-    monkeypatch.setattr(deprepair, "base_python", lambda: (time.sleep(NAP), "/base")[1])
+    monkeypatch.setattr(depplan, "target_facts", lambda py, use_cache=True: (wait(), "F")[1])
+    monkeypatch.setattr(deprepair, "base_python", lambda: (wait(), "/base")[1])
     monkeypatch.setattr(depplan, "fresh_venv_facts", lambda base, **k: ("fresh", base))
     monkeypatch.setattr(depplan, "adapter_distributions", lambda: ())
 
 
 def test_facts_and_base_python_probe_concurrently_on_first_miss(monkeypatch):
-    _managed_env(monkeypatch, facts_cached=False, base_cached=False)
-    t0 = time.perf_counter()
+    meet = threading.Barrier(2, timeout=RENDEZVOUS_S)
+    _managed_env(monkeypatch, facts_cached=False, base_cached=False, meet=meet)
     got = deprepair._facts_for_inner(deprepair.TARGET_MANAGED, "/py", "/root")
-    assert time.perf_counter() - t0 < NAP * 1.7
     assert got == ("F", ("fresh", "/base"), "/py")  # 与串行同一结果
 
 
@@ -130,24 +139,19 @@ def test_facts_failure_wins_over_base_python(monkeypatch):
     assert info.value.code == launcher.UNAVAILABLE_CODE
 
 
-def _plan_env(monkeypatch, *, silent=True, needs_ask=True):
+def _plan_env(monkeypatch, *, silent=True, needs_ask=True, meet=None):
     calls = []
+    wait = meet.wait if meet is not None else (lambda: time.sleep(NAP))
     monkeypatch.setattr(deprepair.projectenv, "silent_adoption_enabled", lambda: silent)
     monkeypatch.setattr(userenvs, "login_shell_needs_ask", lambda: needs_ask)
-    monkeypatch.setattr(
-        userenvs, "login_shell_pythons", lambda: (time.sleep(NAP), calls.append("shell"))[0]
-    )
-    monkeypatch.setattr(
-        deprepair, "joint_plan_for", lambda root, script: (time.sleep(NAP), ("plan",))[1]
-    )
+    monkeypatch.setattr(userenvs, "login_shell_pythons", lambda: (wait(), calls.append("shell"))[0])
+    monkeypatch.setattr(deprepair, "joint_plan_for", lambda root, script: (wait(), ("plan",))[1])
     return calls
 
 
 def test_login_shell_warmed_concurrently_with_joint_plan(monkeypatch):
-    calls = _plan_env(monkeypatch)
-    t0 = time.perf_counter()
+    calls = _plan_env(monkeypatch, meet=threading.Barrier(2, timeout=RENDEZVOUS_S))
     assert deprepair._joint_plan_warming_login_shell("/r", "s.py") == ("plan",)
-    assert time.perf_counter() - t0 < NAP * 1.7
     assert calls == ["shell"]
 
 

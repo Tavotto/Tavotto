@@ -211,6 +211,10 @@ const RULES: Rule[] = [
         count: 4,
         why: '九宫格 + 外侧带的空间型 radio（含一处 querySelector 字面量），自带 roving tabindex',
       },
+      '/src/components/inspector/RefPointGrid.tsx': {
+        count: 1,
+        why: '变换面板的九宫格参考点（ADR 0185 M4）：28 px 空位里的空间型 radio，与 LegendPositionPicker 同族，自带方向键漫游',
+      },
     },
   },
   {
@@ -325,7 +329,7 @@ const RULES: Rule[] = [
       '/src/components/settings/brandLogoData.ts': { count: 23, why: '第三方品牌色（厂商彩色标志，取自 lobe-icons 的 -color 版；VS Code 取自 Simple Icons）' },
       '/src/canvas/context-bar/ElementBar.tsx': { count: 1, why: '文档数据：取色框没有值时的 #000000' },
       '/src/canvas/context-bar/textQuick.tsx': { count: 1, why: '文档数据：文字颜色缺省 #000000' },
-      '/src/canvas/interactions.ts': { count: 2, why: '文档数据：新画的标注 / 文字的缺省颜色' },
+      '/src/canvas/interactions.ts': { count: 1, why: '文档数据：新画的文字的缺省颜色（标注的缺省墨色在 lib/drawDefaults）' },
     },
   },
   {

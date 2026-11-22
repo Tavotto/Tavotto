@@ -2,13 +2,13 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「编码 Agent 桥」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_ai_data_recipe.py`、`tests/test_ai_data_template.py`、`tests/test_ai_data_propose.py`、`tests/test_ai_data_merge.py`、`tests/test_ai_structured.py`、`tests/test_ai_data_model.py`、`tests/test_data_figure_bench.py`、`tests/test_ai_data_text_tables.py`、`tests/test_ai_agents.py`、`test_ai_login.py`、`test_ai_bridge.py`、`tests/test_ai_probe.py`、`test_ai_capabilities.py`、`test_ai_refresh.py`、`test_ai_history.py`、`test_ai_idempotency.py`、`test_ai_revert_stale.py`、`test_codex_install_cli.py`、`test_managed_cli.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_ai_data_recipe.py`、`tests/test_ai_data_template.py`、`tests/test_ai_data_propose.py`、`tests/test_ai_data_merge.py`、`tests/test_ai_structured.py`、`tests/test_ai_structured_cli.py`、`tests/test_ai_data_model.py`、`tests/test_data_figure_bench.py`、`tests/test_ai_data_roles.py`、`tests/test_ai_data_text_tables.py`、`tests/test_ai_agents.py`、`test_ai_login.py`、`test_ai_bridge.py`、`tests/test_ai_probe.py`、`test_ai_capabilities.py`、`test_ai_refresh.py`、`test_ai_history.py`、`test_ai_idempotency.py`、`test_ai_revert_stale.py`、`test_codex_install_cli.py`、`test_managed_cli.py`
 > `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml；revert 只回滚本次 AI 那一版（细则见 `ai-agent-bridge.md`）
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 240
-改到: `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`ai_structured.py`、`ai_data_model.py`、`ai_data_recipe.py`、`ai_data_template.py`、`ai_data_propose.py`、`ai_data_merge.py`、`ai_data_task.py`、`codexinstall.py`、`managedcli.py`、`resources/managed_cli_lock.json`、`/api/ai/*`
+改到: `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`ai_structured.py`、`ai_data_*.py`、`codexinstall.py`、`managedcli.py`、`resources/managed_cli_lock.json`、`/api/ai/*`
 主题: 编码 Agent 桥 → `ai-agent-bridge.md`
 必守要点: 「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml
 -->
@@ -320,6 +320,11 @@ order: 240
   `DataSummary.id_like` / `repeats` 只是线索、永不当已确认；`enforce_order` 在模型排序之后再强制一遍（柱加误差线不排在含原始点的画法前、不合格剔除带原因、剩不足 2 个如实返回）。
   `renderable(family)` 的出处是 `ai_data_recipe.RENDERABLE`（现在是批次 1 的四族 comparison、trend、relationship、distribution；`ai_data_template` import 时核它与 `RENDERERS` 逐项一致）。选图准则文字 `ai_prompt_pack.data_figure_guidance()` **由这三张表渲染**，不许另抄第二份规则清单
   （`tests/test_ai_data_recipe.py` 钉每个码都有句子、准则不出现表里没有的族 / 图元）。阈值全是 `ai_data_recipe` 的具名常量。
+- **数据出图 v2 的大表（ADR 0178 修订·大表）**：超过 `adf.SMALL_BYTES` / `SMALL_ROWS`（5 MiB / 10 万行）的文本表格是**大表**，上限 `MAX_BYTES` 500 MiB / `MAX_ROWS` 6000 万；小表整条链逐字不变。
+  大表读法 `read_text_table`→`_read_large_text_table`（流式：一遍校验 sha256 / 编码 / 二进制，一遍解析统计，摘要 `rows == []`、`large` 有整表统计；同一个 `_detect`、同一组错误码；`iter_table` / `iter_records` 是读法的唯一实现，`table_from_text` / `delimited_records` 是它们的整份文本版）。
+  XLSX、v1、合画永远只认小表（`inspect_data_source` 对大表默认抛 `data_too_large`，只有传 `allow_large=True` 的出备选 / 提交路径认）。**`values.rows` 为空 ≠ 规则判过了**：`validate_recipe` 对大表只放行 `LARGE_MARKS`（趋势的折线 / 阶梯 / 点、关系的散点），汇总类图元一律 `mark_not_allowed`；数据相关的资格（折线 x 重复 / 没排序、系列 x 个数）在缩减那一遍判（`LargeRuleError`，码同小表）。
+  画法：脚本读 `read_reduced`（趋势按 x 值分箱留包络、关系等距抽样 + 极值），之后与小表同一份画图代码；父进程 `large_reduce` 与脚本是同一份源码，并与概览扫描的整表统计对账。看护 `tests/test_ai_data_large.py`。
+- **大表的进度与取消（ADR 0178 修订，`engine/ai_data_progress.py`）**：`tick` / `check` 是读表循环里的检查点（`_stream_check` / `_scan_summary` / 候选副本复制 / `reduce_file(progress=)`），`Cancelled` 是 `BaseException` 子类——新增的读表循环不许用 `except Exception` 之外的方式吞它，也不许在检查点之外自造取消；条目只有大表才有、有界、只含阶段名与数字。端点 `GET /api/ai/data-progress/<rid>` 与 `POST …/cancel`（幂等；缩略图与提交不可取消）。看护 `tests/test_ai_data_progress.py`。
 - **数据出图 v2 的模板与期望指纹（`engine/ai_data_template.py`，ADR 0178）**：`render_recipe_script(entry, recipe, data_rel=, stem=, style=)` 只接受通过
   `validate_recipe` 的配方，不认识的组合抛 `TemplateError`、不画近似。**一份实现两处用**：读表 / 单元格解析 / 汇总 / 抖动 / 箱 / 核密度 / 拟合都是模块里的普通函数
   （`RUNTIME_FUNCTIONS`），这些函数的源码（`inspect.getsource`）与 `xlsxread` 的源码原文被收进**旁边的公共模块** `tavotto_plot_<sha256 前 8 位>.py`（`runtime_module()`，内容寻址、对所有图逐字节相同、不含数据，
@@ -663,7 +668,19 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
 - **档位**：`ToolSpec.tier ∈ observe | run | tavotto | listed | user_env | outward`（默认 `observe`）+ `waits_for_user`（默认 `False`），**不序列化给模型**
   （`tests/test_fixtools.py::test_tier_is_never_sent_to_the_model` 钉三种 wire 的请求体）。`FixContext.allowed_tiers` 之外的工具 `run_tool` 拒绝（`tier_not_allowed`）；裸构造默认只放行 `observe`，修复会话创建方用 `FixContext.for_fix_session(...)`（放行 `observe` + `run`）。
   D1 有两档：`observe` 看（`read_run_report` / `read_file` / `list_dir` / `find_files` / `grep_files` / `list_environments` / `read_logs` / `lookup_package`）；
-  `run` 试（`try_import` / `try_run` / `inspect_environment`）——**运行用户代码，不承诺「什么都不改」**，保护范围与盲区见下条。
+  `run` 试（`try_import` / `try_run` / `inspect_environment` / `run_snippet`）——**运行用户代码，不承诺「什么都不改」**，保护范围与盲区见下条。
+- **小实验 `run_snippet`**（ADR 0197）：模型写的一小段 Python 经 `run_python(strict_deny=ctx.scope.deny_roots(), cwd=项目根)` 跑——
+  在试跑的守卫之上**断网、凭据位置与凭据形状的文件名不可读**（进程内第二个 audit hook + 操作系统沙盒同一份位置清单；名字规则 `DENY_NAME_PATTERNS` 只在进程内那层；实验口径的沙盒单独探测），当前目录是项目根、项目根在 `sys.path` 上（经守卫前导，不改模型代码）。
+  不弹卡（维护者 11-19 裁决）；≤ 30 s、≤ 20 000 字符、先 `compile`；输出各路尾部 6 000 字符过 `scrub`；结果带 `blocked_network` / `blocked_reads`。
+  `run` 不在 `CHANGE_TIERS`，实验不解开「先动手才能起草缺陷」的闸。没有操作系统沙盒（Windows、无 bwrap 的 Linux）时进程内守卫只是尽力而为，普通 Python 也能绕开，维护者接受（ADR 0197「盲区」）；
+  守卫前导在守卫装好之前只从标准库位置导入（`''` 与 PYTHONPATH 之后才还原、`''` 不还原），子进程一律从试跑目录起——试跑副本与探 import 同一条。
+  看护：`tests/test_fixtools_snippet.py`。不带 `strict_deny` 的调用（试跑 / 探 import / 体检）守卫前导与沙盒参数逐字不变。
+- **失败提示与试运行记录**（ADR 0197 第 1 层）：形状判据只有 `fixtools/hints.py` 一份（`ask` 的「用户侧失败先别报缺陷」闸门也取它）；
+  提示每句声明点名的工具，工具调不到这句不说、主动作说不了整条不说；放在 `read_run_report` / `try_run` 返回最前面。
+  应用试运行真跑完才记一条 `{n, before, after, hint, changes}`（`changes` 由 `run_tool` 在计入 `changes_attempted` 处收集），审计 `attempt` 字段只记这些码。
+  看护：`tests/test_fixtools_hints.py`（含「提示点名的工具都在注册表里」）。
+- **修复经过进诊断包**（ADR 0197 第 4 条）：`run_tool` 把脱敏后的工具返回尾部记进内存（每条 2 000 字符、最多 60 条），
+  `FixSessions.diagnostics_for` 交给 `diagdetail.Sources.fix_sessions`；模型只带厂商 id 与模型名。看护：`tests/test_diag_fix_sessions.py`。
 - **读取范围**（`readscope.py`，判据只有 `ReadScope.check`）：主目录 + 项目根 + 环境前缀内可读，其余 `outside_scope`；`DENY_HOME_RELATIVE` / `DENY_NAME_PATTERNS` 命中
   `denied`（**文件名表只列明确的凭据文件形状**：整名或固定后缀，不用 `*token*` / `*secret*` 子串通配；**目录不按名拦**，`ReadScope._path_denied` 对目录只比固定位置表）（词法与 `realpath` 后各判一次；大小写不敏感于 macOS / Windows；Tavotto 自己的 `config.json` 在内）。单次读 ≤ 256 KiB（**按 64 KiB 块读、自己切行，当前行只留前 256 KiB**，所以任何文件大小下内存都有界；单行超限就截断该行并说明；截断给说明，`start_line` / `max_lines` 续读），
   二进制只给类型与大小。项目外的读取进 `ctx.reads`；**跟随的文件符号链接按解析后的目标记**（`_walk` 与 `resolve_or_error` 都用 `ReadScope.check` 的结果：目标在项目外就记目标路径，在项目内不记）。
@@ -949,7 +966,7 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 该平台走一遍；恢复路径在工具控制流里接通明确授权，别只靠模型按提示自行重试。为什么：转换链路用例全用不带沙盒的假 Codex，Windows unelevated 沙盒里自带写入工具一律失败（#1604）；
 写大文件时事件流静默、写入被拒后换位置写，都是真模型才复现（#1628）；2026-11-07 一份用户反馈：Windows 没有第①档
 沙盒，命令一律返回 `sandbox_unavailable`，设计指望模型带 `outside_sandbox` 重试，真模型没重试，用户批准修复后什么都没
-发生（#1793）。
+发生（#1793）。看护：只靠人记。
 
 ## 改图助手的附件（ADR 0175，`engine/ai_attachments.py`）
 
@@ -964,13 +981,27 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 
 ## 无工具单轮结构化调用（`engine/ai_structured.py` + `ai_data_model.py`，ADR 0178 修订 2026-11-19，第 0 步地基，无调用点）
 
-给「模型只回答一次、只交一个 JSON」的场景用（现在只有数据出图的配方）。看护 `tests/test_ai_structured.py`、`tests/test_ai_data_model.py`、`tests/test_data_figure_bench.py`。
+给「模型只回答一次、只交一个 JSON」的场景用（现在只有数据出图的配方）。看护 `tests/test_ai_structured.py`、`tests/test_ai_structured_cli.py`、`tests/test_ai_data_model.py`、`tests/test_data_figure_bench.py`。
 
 - **不另写 HTTP**：`call_structured` 驱动内置执行器的 `loop.HttpModel.complete(tools=[], max_attempts=1)`（经 `fixsession.build_model(conn, **model_kwargs)`）。出站约束仍只在 `wires.post_json` / `_opener()`（`test_outbound_https_trust.py` 钉的那一处）；本模块不碰 opener、不 import 网络库。
 - **永不抛**：任何异常落成 `transport/internal`；失败只有 `REASONS` 闭集（`no_connection` / `unsupported_connection` / `over_budget` / `timeout` / `refused` / `invalid_output` / `auth` / `quota` / `transport`），`detail` 只是短代码，**不含**响应原文、提示词、地址、密钥。`map_failure` 对 `loop.REASONS` 每个值都有结局（加新 reason 时 `test_failure_mapping_is_total_over_the_runner_reasons` 会红）。两种超时都要映射到 `timeout`：总时限是 `budget/time`，套接字读超时是 `network` + 异常类型名。
 - **重试只有一种**：回复不是合法 JSON（含没有文字）→ 追加固定的一句话重发，至多 1 次；形状不过校验、传输失败、拒答、鉴权失败、被截断都**不重发**。总时限两次共用，从解析连接起算；挑连接不联网，只在剩余预算 ≥ `REFRESH_NEEDS_S` 时才对挑中的那一条刷新令牌 / 核地址（没法传时限，不放线程里超时，免得留半截写入）。**请求数在传输层数**（`StructuredResult.requests`；换协议 / 字段降级不消耗尝试，一次 `complete()` 可发多个请求），`max_requests` 硬拦、到顶 `over_budget/requests`；手动脚本的 `--max-calls` 按它算。`stop == max_tokens` 是 `over_budget`。
-- **连接**：只用内置执行器能直接用的连接（`ai_providers.builtin_conn` 形状：API Key / 自填地址 / 账号登录令牌）；只有订阅登录（Codex / Claude Code CLI）→ `unsupported_connection`，**不硬凑**——CLI 没有无工具单次调用的入口。适配方向见 ADR 0178 修订节。
+- **连接**：先用内置执行器能直接用的连接（`ai_providers.builtin_conn` 形状：API Key / 自填地址 / 账号登录令牌）；没有时看订阅登录：适配器覆写了 `AgentDefinition.build_structured_command`（Codex、Claude Code）→ CLI 连接描述 `{"kind": "cli", "agent", "model", "conn_id"}`，走 `_call_cli`；没覆写 / 解析不出型号 → `unsupported_connection`；什么都没有（含订阅需要重新登录）→ `no_connection`。**订阅登录路径**：每次尝试起一个新 CLI 进程（`ai_bridge._popen` / `_terminate` / `_await_exit`，无窗口、自成进程组、超时杀整棵树；stderr 丢弃），工作目录是新建的**空**临时目录、系统提示 / schema / 输出文件在另一个临时目录，用完删除；argv 里没有用户内容 / 令牌 / `--dangerously-*` / 可写沙盒（用户内容只走 stdin），不落会话历史，**不读用户自己的 CLI 配置**，型号显式（连接里的；没有就取适配器清单第一项；都没有 = 不支持，不写死型号名），思考强度只在 `_effort_confirmed`（目录明确列了该型号档位）时才带。Windows 沿用 `_codex_windows_sandbox_args`。命令与 Claude 不用 `--bare` 的原因见 ADR 0178「订阅登录连接」。失败码只认 CLI 自己的结构化字段（`codex_failure_class` / `claude_failure_class` 复用）：`agent_auth` → `auth`、`agent_quota` → `quota`，其余非零退出 `transport`，起不来 `no_connection`，超时 `timeout`，空 / 非 JSON / 不合格 `invalid_output`（非 JSON 重试一次，重试时只追加固定那句话、不带上一次回复）。CLI 拿不到用量：`usage_reported=False`，`requests` = 起的进程数。总时限 `CLI_TIMEOUT_S`（60 s，**待本机真跑校准**）；同一时刻最多一个结构化 CLI 进程（`cli_slot`，可重入；`ai_data_roles.judge` 在计时前占住，排队不吃预算）。**真跑要订阅额度，不进 CI / 夜跑**：`tests/conftest.py::_offline_structured_cli` 默认把 CLI 发现函数置空、把真起进程的 `_run_process` 换成「记一笔、不起进程」并在用例结束时断言没被碰过（`call_structured` 永不抛，所以不能靠抛异常），CLI 用例只注入假 `runner`；`scripts/dev/structured_cli_smoke.py` 只在维护者本机手工跑。`ai_bridge.capabilities_if_cached()` 供同步路径（`propose`）只看已有缓存、不触发探测。
 - **不记录**：不写日志、不发遥测、不进诊断包；`StructuredResult` 里没有提示词与回复原文。新增遥测事件要等下次 `CONSENT_VERSION` 升版，且仍不收列名、路径、指令、图里文字。
 - **数据出图调用点 `ai_data_model.propose_recipes`**：受控摘要只含 路径 / 工作表 / 行数 / 布局 / 分组 / 编号线索 / 每列名字、类型、计数、≤ 20 条文字样本（不含行数据、哈希、大小）；表里的文字当数据：JSON 字符串放进 `<data>`、`<` 转义，提示词明说不是指令。模型交的每份配方先过 `FigureRecipe.from_dict` 再 `enforce_order`（`validate_recipe` 的闭集校验），丢弃只记原序号 + 拒绝码。`confirmed` 默认什么都没确认：模型不能凭列名当个体编号 / 配对。
-- **没有调用点是被钉住的**：`test_nothing_in_the_product_calls_the_model_yet`（AST）要求产品里没有任何 import 指向 `ai_data_model` / `ai_structured`。接进 `propose` 的那个 PR 要有意改这条测试，并先过 ADR 0178 的开关与用户可见行为评审。
+- **配方调用点仍没有调用方**：`test_nothing_in_the_product_calls_propose_recipes_yet`（AST）要求产品里没有任何对 `propose_recipes` 的引用（第 2 步才接）。`ai_structured` / `ai_data_model` 的 import 关系由 `tests/test_ai_data_roles.py::test_only_propose_and_the_model_pair_reach_the_model_modules` 钉住。
 - **固定用例集**：`tests/fixtures/data_figure_cases/cases.json`（格式与判定器见 `tests/support/data_figure_cases.py` 文档串）；每条自带 `reference`（好回答）与 `trap`（踩坑），用例自证。手动入口 `scripts/dev/data_figure_bench.py`：默认假回答；`--real` 才连真模型，必须 `--max-calls` ≥ 用例数 × 2，**真实跑分花额度，开跑前先报预算**。
+
+### 读懂数据（`engine/ai_data_roles.py`，ADR 0178 修订 2026-11-19，第 1 步）
+
+模型只给**列判断**（`ROLES` 闭集：`time` / `ordered_x` / `measure` / `group` / `replicate_unit` / `row_id` / `error`（sd / sem 这类误差列：不当纵轴，2026-11-21 加）/ `unit_label` / `note` / `other`），翻译成 `propose` 本来就收的 `answers.y / x / group`、`header_rows`、`answers.cells`；配方仍由 `default_candidates` 生成、过 `validate_recipe` / `enforce_order`。看护 `tests/test_ai_data_roles.py`、`tests/test_data_figure_bench.py`。
+
+- **逐字段降级**：形状层严格（未知键整份拒收），取值层一个字段一个字段判（列不存在 / 角色不在枚举 / 与列类型对不上 / 选择与自己给的角色矛盾 / 规则键对不上），丢了只记个数、回规则默认。**`replicate_unit` 永不变成用户事实**（建议里没有 `design` / `unit`）。采纳策略在 `suggest`：规则会问的地方用模型的选择；规则唯一确定的角色只在模型明确否决那一列时才换。
+- **四处「够得到」的采纳（2026-11-21）**：没有 `picks` 时规则逐字不变；每条都是「模型明确判断 + 列客观满足」，谓词只在 `ai_data_recipe`（`suggest` 采纳、`_resolve_roles` 落地共用），不满足 = 丢该项回规则结果、不报错。① 多列纵轴：`picks.y` 数组 2–3 列（`MULTI_Y_MAX`），`multi_y_ok`＝互不相同 / 数值列 / 非编号列 / 单位至多一种，且模型对每列的角色只能是 `measure`，**且有有序横轴**（没有横轴时不采纳——分布 / 比较类配方只画第一列；没有横轴的宽表重复列要「把列当分组」，尚未支持，HO-17）；`answers.y` 因此可以是 1–3 个列名的数组（`parse_answers` 只对 `y` 接受数组，规则不认的数组当没给），只在规则要问「选哪个值」或选中的列被否决时采纳。② 有分组时的横轴：模型判 `time` / `ordered_x`、该列是规则此刻的横轴候选（日期 / 数值、不是 y / 编号列）。③ 编号样文字列当分组：模型判 `group` 且 `id_group_ok`（在 `s.groups` 里，即文字、2–12 个取值、有重复）；`answers.group` 点名才进 `cats`，`roles.options.group` 带上它，且它不再兼作重复测量的个体编号（全部编号列都被当分组时不再问 `pick_design`）。④ 整数编码的数值列当分组（HO-20，`knockout` 0 / 1）：`FigureRecipe.numcat` 这条事实贯穿配方→`validate_recipe`（`numcat_view`）→脚本（`apply_numcat`、类别按数值升序）→落盘再校验→指纹核对；客观条件 `DataSummary.numcat`（`adf.numcat_levels`，≤ `NUMCAT_MAX_LEVELS`=6），用户选或模型判 `group`（`numcat_pick_ok`）才进，规则从不自己用；`roles.options.group` 会列出它；大表 / 合画暂不支持、回规则结果（ADR 0178）。
+- **`roles.y` = 每个备选实际画的列（2026-11-21）**：`default_candidates` 里最终 `ys` 多于一列时（规则宽表 / 模型点名 / 用户点名一视同仁）只留画全这些列的备选（现在只有趋势类），其余记进 `dropped`（`roles_invalid`，`detail=multi_y_not_drawn`，不加新码）；全被去掉（如量纲不同退到第一列）就用 `picks.y = ys[0]` 重算，不出零备选。看护 `tests/test_ai_data_roles.py` 的 `*_draws_*` 两条。
+- **用户永远优先**：请求带 `answers.y / x / group / cells` 或 `header_rows` 就不起任务（`ai_data_propose._user_took_over`，必须在懒模式循环往 `ans` 补默认答案**之前**记下）。
+- **响应不变量**：没有可用连接（没连、订阅登录里适配器不支持 / 缓存里还没有、运维关内置）或非 lazy 时，响应里**没有** `understanding` 键；有连接时只多这一个键。后台线程不碰按项目绑定的状态（只读数据文件、联网、写缓存目录），所以没用 `bound_project`——将来加了任何按项目绑定的状态要补。
+- **缓存 / 单飞 / 负缓存**：缓存只存模型的**原始判断**（`Judgement`），建议每次按当前完整提示 + 规则现算（`derive`）——别把派生结果缓存起来；`data_dir()/cache/ai_data_roles/`（原子写、TTL 30 天、≤ 200 条）；key 含协议版本 + 系统提示哈希 + 数据字节哈希 + 表头行 + 模型看到的提示 + 连接身份（不含密钥 / 地址）；单飞只在 pending 期间、键含完整提示摘要；失败只做 60 s 内存负缓存；同 `(项目, key)` 在途单飞。缓存里有列名：**不进诊断包、不进遥测**（测试钉住）。
+- **外发清单**见 ADR 0178 本节：只发受控摘要 + 本地聚合（不同值个数 / 单调 / 全整数 / min / max）+ 仅 `unsure` 表的 ≤ 8 行 × 120 字预览；不发行数据、哈希、绝对路径。隐私说明文档开关打开前要补。
+- **时限**：总时限 25 s（含解析连接，挑连接不联网，预算 ≥ 35 s 才对挑中的那一条刷新）；订阅登录（CLI）连接取 `ai_structured.CLI_TIMEOUT_S`（60 s，待校准），比前端轮询上限（30 次 × 1 秒，若仍是这个值）长，前端要配合；缓存键的连接身份对 CLI 是 `cli:<agent>|<型号>`；`call_structured(effort=)` 只在 `builtin_effort_args` 确认支持时才发，`max_requests` 按传输层实际请求数硬拦。
+- **手动基准**：`scripts/dev/data_figure_bench.py --suite roles`（默认假回答；`--arm rules` 只跑规则（与 `--real` / `--key-file` 同用直接 exit 2，在解析任何凭据之前）；`--real` 要 `--max-calls` ≥ 用例数 × 2 且硬拦实际请求数）。**真实跑分花额度，开跑前先报预算。** `--real --key-file PATH --model NAME [--base-url] [--effort low|medium|high]` 用一把单独存的 key 组**临时**连接（不读不写应用配置与 provider 存储，数据 / 配置目录指到临时目录；key 文件必须仅本人可读写，比 600 宽就拒绝；只能和 `--real` 同用、仍强制 `--max-calls`）；key 不出现在 stdout / stderr / 报告里（输出流与报告统一替换，`tests/test_data_figure_bench.py` 钉住），报告写型号 / 强度 / 实际请求数 / 输入输出（含推理）token / 按定价表的估算花费。

@@ -473,6 +473,42 @@
         "keywords": "canvas page settings size",
         "label": "Canvas settings"
       },
+      "convert-to-path": {
+        "keywords": "convert path outline bezier vector",
+        "label": "Convert to Path"
+      },
+      "pen-tool": {
+        "keywords": "pen path bezier draw",
+        "label": "Pen"
+      },
+      "edit-anchors": {
+        "keywords": "anchor direct selection points",
+        "label": "Edit Anchor Points"
+      },
+      "add-anchor": {
+        "keywords": "add anchor point plus",
+        "label": "Add Anchor Point"
+      },
+      "delete-anchor": {
+        "keywords": "delete remove anchor point minus",
+        "label": "Delete Anchor Point"
+      },
+      "convert-anchor": {
+        "keywords": "convert anchor smooth corner",
+        "label": "Convert Anchor Point"
+      },
+      "cut-path": {
+        "keywords": "cut scissors split break",
+        "label": "Cut Path at Anchor Points"
+      },
+      "join-paths": {
+        "keywords": "join connect close",
+        "label": "Join"
+      },
+      "average-anchors": {
+        "keywords": "average align anchors",
+        "label": "Average Anchor Points"
+      },
       "cycle-overlap": {
         "keywords": "cycle overlap overlapping twin axis behind stack",
         "label": "Cycle through overlapping figure elements"
@@ -600,6 +636,94 @@
       "zoom-selection": {
         "label": "Zoom to selection",
         "keywords": "zoom selection focus frame view fit selected"
+      },
+      "default-appearance": {
+        "keywords": "default fill stroke reset",
+        "label": "Default Fill and Stroke"
+      },
+      "swap-fill-stroke": {
+        "keywords": "swap fill stroke",
+        "label": "Swap Fill and Stroke"
+      },
+      "clear-fill": {
+        "keywords": "no fill none clear",
+        "label": "No Fill"
+      },
+      "eyedropper-tool": {
+        "keywords": "eyedropper pick color sample",
+        "label": "Eyedropper"
+      },
+      "pathfinder-unite": {
+        "keywords": "unite union merge combine pathfinder",
+        "label": "Unite"
+      },
+      "pathfinder-minus-front": {
+        "keywords": "minus front subtract pathfinder",
+        "label": "Minus front"
+      },
+      "pathfinder-intersect": {
+        "keywords": "intersect overlap pathfinder",
+        "label": "Intersect"
+      },
+      "pathfinder-exclude": {
+        "keywords": "exclude xor overlap pathfinder",
+        "label": "Exclude"
+      },
+      "pathfinder-divide": {
+        "keywords": "divide split pathfinder",
+        "label": "Divide"
+      },
+      "pathfinder-trim": {
+        "keywords": "trim hidden pathfinder",
+        "label": "Trim"
+      },
+      "make-compound": {
+        "keywords": "compound path hole",
+        "label": "Make compound path"
+      },
+      "release-compound": {
+        "keywords": "release compound path",
+        "label": "Release compound path"
+      },
+      "offset-path": {
+        "keywords": "offset path expand inset",
+        "label": "Offset path"
+      },
+      "outline-stroke": {
+        "keywords": "outline stroke expand",
+        "label": "Outline stroke"
+      },
+      "simplify-path": {
+        "keywords": "simplify smooth reduce anchors",
+        "label": "Simplify path"
+      },
+      "reverse-path": {
+        "keywords": "reverse path direction flip arrow",
+        "label": "Reverse path direction"
+      },
+      "shape-builder": {
+        "keywords": "shape builder merge regions",
+        "label": "Shape builder"
+      },
+      "make-clip-mask": {
+        "keywords": "clipping mask clip crop",
+        "label": "Make clipping mask"
+      },
+      "release-clip-mask": {
+        "keywords": "release clipping mask",
+        "label": "Release clipping mask"
+      },
+      "transform-again": {
+        "keywords": "transform again repeat",
+        "label": "Transform again"
+      },
+      "reflect-horizontal": {
+        "keywords": "reflect mirror flip horizontal",
+        "label": "Reflect horizontally"
+      },
+      "reflect-vertical": {
+        "keywords": "reflect mirror flip vertical",
+        "label": "Reflect vertically"
       }
     },
     "listLabel": "Commands",
@@ -1476,7 +1600,7 @@
           "detail_requests": "Recent backend requests (method, route, status, duration, error code only)",
           "detail_overrides": "Style edits of the figure being edited",
           "detail_render_env": "Render environment (Python, matplotlib, installed packages, fonts)",
-          "detail_runs": "Recent render, export and script test-run records",
+          "detail_runs": "Recent render, export and script test-run records, and what AI repair did",
           "detail_shell": "Desktop shell and install facts (versions, OS, architecture, update result)",
           "detail_storage": "Storage environment (free space, writable, sync folder)",
           "detail_console": "Recent errors and warnings from the interface console",
@@ -1486,7 +1610,7 @@
           "detail_crash_reports": "System crash reports (you ticked this)",
           "detail_corrupt_sessions": "Contents of corrupted session copies (you ticked this)"
         },
-        "notIncluded": "Not included by default: your scripts, data files, or the anonymous-statistics identifier. Errors and logs may mention folder names, file names and output printed by your script.",
+        "notIncluded": "Not included by default: your script files, data files, or the anonymous-statistics identifier. Errors and logs may mention folder names, file names and output printed by your script, and if you used AI repair, the parts of your script it read.",
         "save": "Save this bundle",
         "saved": "Saved",
         "saveFailed": "Could not save",
@@ -2080,6 +2204,43 @@
       "overwriteTitle": "Overwrite your edited skill in {{host}}?",
       "overwriteBody": "Your changes will be replaced with the version that ships with Tavotto.",
       "cancel": "Cancel"
+    },
+    "license": {
+      "label": "Premium",
+      "none": "Not activated",
+      "until": "Valid until {{date}}",
+      "codeLabel": "Activation code",
+      "state": {
+        "expired": "Expired on {{date}}",
+        "revoked": "This license is no longer valid",
+        "lapsed": "Needs a quick online check"
+      },
+      "action": {
+        "enter": "Enter code",
+        "buy": "Buy",
+        "activate": "Activate",
+        "release": "Unbind this computer",
+        "refresh": "Check now",
+        "renew": "Renew",
+        "retry": "Try again",
+        "cancel": "Cancel"
+      },
+      "failure": {
+        "invalid_code": "That code isn't right. Check it and try again",
+        "device_limit": "This license is already on its maximum number of computers. Unbind one of them first",
+        "revoked": "This license is no longer valid",
+        "expired": "This license has expired",
+        "price_unavailable": "Can't buy right now. Please try again later",
+        "rate_limited": "Too many tries. Wait a moment and try again",
+        "network": "Can't reach the license server. Check your network and try again",
+        "server": "The license service is unavailable. Please try again later",
+        "client_error": "That didn't go through. Please try again later"
+      },
+      "lock": {
+        "tip": "Premium feature. Click to learn more",
+        "aria": "Premium feature, learn about Premium"
+      },
+      "releaseTitle": "After unbinding, you can activate it on another computer"
     }
   },
   "style": {

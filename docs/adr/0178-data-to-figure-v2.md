@@ -247,6 +247,57 @@ id 是服务端登记的不透明串）、`POST /api/ai/data-figure/commit`（`{
 * **终态**：全部画成（选择清空且没有没画成的）→ 清多选、退出多选态、左栏切到素材抽屉，不弹任何通知（「分别作图」全部成功的行为不变）；部分 / 全部没画成 → 留在数据抽屉，画成的「已完成」、没成的「失败」（原因句放 title：`nothing` 用 `dataFigureV2.reason.*`，数据与图对不上用 `result.mismatch`，后端给的错误用 `backendErrorMsg`）并保持选中；表没有可画的（`nothing` / 全是文字 / 表头没认准）算没画成；项目文件夹写不进（`figures_dir_unusable` / `common_module_conflict` / 项目只读）立刻停整批；中途切项目 / 关项目（`captureProjectEpoch` + store `epoch`）静默中止，已写出的就是普通脚本；脚本已落盘但数据与图对不上算没画成（脚本留着，Tavotto 不替用户删文件），核对没完成 / 没法逐项核对算画成、不弹提示；会话过期 / 数据变了静默重新出一次。新一轮开始（没有没画成的在等重试）时，上一批留下的「已完成」标记作废，免得「已完成 N 张」把它们算进来；取消选一份没画成的 = 撤掉它的「失败」。
 * **合画一张**（把选中的几份画进同一张图，每份文件是一组）：点「合并作图」→ 退出多选态 → 像点单个文件一样开临时标签（标签名 / 右栏标题 `dataFigureV2.batch.groupTitle`：「N 个文件」），里面是候选画法网格，点一张 = 和单份一样生成脚本并在画布打开（不出「换个画法」胶囊：它只认单份）。`dataFigureStore` 加可选的 `group: TableRef[] | null`（`selected` 是其中第一份，数据条 / 概览认它；`select` / `closeDraft` / `clear` 复位，`select` 的「同一份已开着」捷径对组无效），`propose` 发请求时有 `group` 就发 `tables: [{path, sheet?}]`（≥ 2 份，其余字段同单份，`render: "lazy"`），不发 `table`；合画不做第一份的「全是文字 / 要点表头行」判断，交给后端。后端合同（`feat/d2f-merge-tables`）：成功响应与单份同形，分组角色默认是后端合成的那一列；几份表列名不一致回 400 `tables_columns_differ`，份数超上限（`MAX_MERGE_TABLES` = 8，前端只在 `lib/dataFigure.ts` 写一处）回 400 `tables_limit_exceeded`（`params.max`，文案在 errors 命名空间「一次最多合并 {{max}} 个文件。」）。选中超过 8 个时「合并作图」禁用、title 用这一句，「分别作图」不受限。**成对候选**：合画时文件里原本有分组列且文件内有多个取值，候选成对出现（同一个 `title_code` / `why_code`），响应 `items[].variant`：`{kind:"split", column}`（`dataFigureV2.variant.split`「按「{{column}}」再分开」）/ `{kind:"by_file"}`（`variant.by_file`「只按文件比较」）/ null；磁贴标题下一行小字（`data-candidate-variant` 只放 kind、不放列名）显示，列名是用户数据、只做文本渲染、不进 `data-*` 与遥测。候选最多 8 张：骨架仍固定 4 张，名称到了再按实际数量排，网格在内容区里滚动。**候选的身份**：成对候选 `title_code` 故意相同，会话过期 / 数据变了、刷新候选后按画法找回「原来点的那张」只许用 `candidateIdentity`（`title_code` + `variant` kind，`split` 还要比 `column`；单份没有 variant，与只比 `title_code` 等价）；刷新后找不到身份完全相同的那张就不自动提交，回到候选网格让用户重选。**概览新鲜度**：每次新开合并标签（`selectGroup`），每个文件的概览至少重读一次（切到它时若本标签里还没读过就重读，先显示缓存；同一标签内来回切不重复）；磁盘事件（`invalidateFiles`）之后本标签里读过的都作废，当前显示的文件随 `overviewGen` 重读。**数据条**：合画时标题行里「数据」后面放一排文件切换标签（复用 `ui/Segmented`，文字取响应 `sources[].label`，没有就按路径去扩展名；数量多时这一排横向滚动，不换行、不撑高标题行；`data-*` 里不放文件名），默认第一个；点哪个，下面的表和「前 N 行，共 M 行 · K 列」就是哪个文件的（`ensureOverview` 按需读，读过的不重读），「展开」展开当前选中的；表头行 / 单位行各文件各管各的（在某个文件的预览里点一行指表头，只带它的 `header_rows` 重新出候选）。单份流程的数据条不变。**出路**：「换成分别作图就能画」的后端码是一处集合 `MERGE_FAILURE_CODES`（`lib/dataFigure.ts`：`tables_columns_differ` / `tables_limit_exceeded` / `tables_labels_collide`，加新码只改这里），都落到同一个 `DraftPhase` `mergeFailed`，临时标签里显示后端那一句（errors 命名空间）；某份表不在了是 200 `nothing` + `table_not_found`，沿用「找不到你选的那张表。」；两类临时标签里都是一句话 + 主按钮「分别作图」——点了关掉临时标签、恢复这几份的选择（`dataBatchStore.drawEach`）、回数据抽屉并直接开始各画一张；不给「再试一次」（点多少次都一样）。
 
+## 修订（2026-11-19）：大表（上限 500 MiB；`adf.SMALL_*` / `MAX_*`，`ai_data_template.reduce_*`）
+
+**起因**。用户决定「上限直接放到 500 MB」。实测（`scratchpad/d2f-size/report.md`，改前）：5 MiB / 10 万行的上限不是任意值——整条链对同一份数据做约 7 次纯 Python 逐格完整解析、内存约 20× 文件；21 MB 起
+`manifest.FINGERPRINT_BUDGET` 超限、数据核对悄悄变 unknown；105 MB 一张缩略图 181 s、提交 386 s；525 MB 概览就要 152 s / 5.4 GB；逐点画 262 万点的图是一块纯色。所以不是改常量，而是改链路。
+
+**两档，界线不变**。`SMALL_BYTES = 5 MiB` / `SMALL_ROWS = 10 万` 就是原来的上限：不超过它的文本表格走**原来的整份读法，脚本、期望指纹、摘要逐字不变**（改前 / 改后各 39 个用例的脚本文本 [公共模块名按 `tavotto_plot_[0-9a-f]{8}` 归一]、期望指纹、覆盖情况、摘要字典逐项相同；XLSX 夹具每次重新生成、zip 时间戳不同，sha256 不同，屏蔽 sha256 后相同）。
+超过它的是**大表**，上限 `MAX_BYTES = 500 MiB`、`MAX_ROWS = 6000 万`（超出仍是 `data_too_large` / `data_too_long`，文案不动）。XLSX、v1、合画永远只认小表（`inspect_data_source` 对大表默认抛 `data_too_large`，只有传 `allow_large=True` 的出备选 / 提交路径认）。
+
+**读表（流式，一份实现）**。`iter_records` / `iter_table` 是读法的唯一实现（行迭代器进、`(物理行号, 单元格)` 出）；原来的 `delimited_records` / `table_from_text` 变成它们的整份文本版（薄包装），所以小表与大表读出来的是同一张表
+（`tests/test_ai_data_large.py` 用 `text_tables` 的整套语料 + 全部编码在两条路径上逐字段比对）。大表 `read_text_table`→`_read_large_text_table`：一遍校验（sha256、编码、二进制、行数，增量解码）+ 一遍解析统计；嗅探 / 预览 / 说明行只看开头 1 MiB，其余判定（同一个 `_detect`、同一组稳定码、「认得准 / 猜的」口径）与小表相同。
+摘要 `rows == []`，`DataSummary.large` 带整表精确统计（行数、每列有限数值的个数 / 最小 / 最大）与前 40 行预览；结构线索（分组 / 编号 / 布局）用有界集合（`STRUCTURE_SET_CAP`，超过按保守结局：不断言「有重复」）。同一个文件的扫描结果按（路径、字节数、mtime、inode、表头行）缓存（`use_cache`，只给概览 / 出备选；提交前核 sha256 的读取不用缓存）。`.xvg` 要整份改写文本，大表不支持。
+
+**画法（缩减，趋势与关系）**。逐点画对大数据本身没有意义，所以大表的脚本读 `read_reduced`：
+* 趋势（折线 / 阶梯 / 点）：每个（分面, 分组）系列在 **x 值**上分箱（2 的幂宽、起点 = 该系列第一行的 x、箱数超过上限就翻倍并箱——一遍扫完，不用先知道 x 范围，未排序的序列照样对）；每个箱留 最左 / 最右、每个 y 列的最小 / 最大。所以**每个 y 的全局最小 / 最大、x 的两端都在图上**。**断开**（有折线 / 阶梯层时）：折线在 y 不是数的地方断开，所以每个系列每个 y 列里**每一段**缺失（夹在两个有限值之间的连续非数行）各留下它的第一行——留下的任意两个相邻点之间，只要原数据在它们之间断开过，就一定有一条断开标记（2026-11-19 Codex 复现：多段缺失落进同一个箱、只留第一条会把极值点跨缺口连起来）。每个系列每个 y 列至多留 200 段（`LARGE_GAP_RUNS_MAX`），更多就**不画折线**（`template_option_unsupported`，前端显示「这种画法暂时画不出来」），散点照常。
+* 关系（散点）：每个系列 等距抽样（第 0, K, 2K… 个有效点，K 是 2 的幂）+ x、y 各自的最小 / 最大所在行（4 个极值点）。
+缩减留下的是原文行，之后与小表**同一份画图代码**（`trend_data` / `relationship_data` 原样吃）；父进程 `large_reduce` 与脚本里的 `read_reduced` 是同一份源码（进公共模块）。点数按预算反推（`large_spec`：系列数 × 每系列点数 × y 列数 × 层数 × 2 ≤ 100 万，是 `FINGERPRINT_BUDGET` 的一半），所以任何大表画出的数据总量都在指纹预算以内，**核对不会因超预算变成 unknown**，`manifest.py` 一行没改。
+大表只放行 `ai_data_recipe.LARGE_MARKS`（趋势的折线 / 阶梯 / 点、关系的散点）；误差线 / 带 / 柱 / 箱 / 小提琴 / 直方图 / 密度 / 拟合线 / 水平汇总线要对**全部**行算统计量，大表上还没有流式的精确实现，`validate_recipe` 一律 `mark_not_allowed`（复用既有稳定码）；分组比较与分布两族在大表上暂时没有备选（structured `nothing`，不是错误）。带 `unit`（个体）与「夹着文字格」的处理规则的配方在大表上也拒（逐行规则没有流式实现）。
+**值规则不许「没有行就当判过」**：小表上读行数据判的规则，大表上逐条给出流式答案或拒绝——对数轴上的非正值读概览扫描的精确最小值（`log_nonpositive`）；折线的 x 重复 / 没排序（`line_duplicate_x_unconfirmed`；重复只数 x 与该 y 列都有限的相邻观测，与小表同口径）与系列的 x 个数（`trend_too_few_x`）在缩减那一遍判（`LargeRuleError`，码与小表同一条规则一致、前端已有文案）。`trend_too_few_x` 的判据是 `ai_data_recipe.trend_too_few_x(counts)` 这一个谓词，小表的 `_value_problems` 与大表的 `large_reduce` 共用（计数口径：x 与第一个 y 都有限的观测的不同 x 个数，没有这样观测的格子不计入）；x 没排序的序列拿不到折线，但散点照常。
+
+**核对**。（1）画出的点：与小表同一条指纹链，期望值按缩减后的表算，真 worker 里的 manifest 指纹逐字节对拍；（2）对原始数据的汇总：缩减那一遍独立累计读到的行数与每个 y（及关系的 x）的（有限数个数, 最小, 最大），`large_reduce` 与概览扫描的整表统计**逐项对账**，对不上（文件在两遍之间变了 / 缩减丢了行）抛 `TemplateError`——两遍是独立的累计，不是「同一个函数在两边各算一次再相等」。（3）**断开**：`gap_audit` 独立于缩减（不复用缩减里的任何状态，只用留下的行序号）再读一遍文件（只在折线且有断开时），数「某个系列某个 y 列里一段断开一行都没被留下」的段数，大于 0 抛 `TemplateError`。反证：`test_counter_proof_*`（脚本侧箱数不同 → 候选剔除；缩减丢行 → 对账抛错；缩减丢一段断开 → `gap_audit` 抓住；对数轴规则读的是整表最小值）。
+
+**磁盘与时间**。候选目录仍放选中那张表的**字节副本**（脚本读 `../<数据>`，所以候选脚本就是将来落盘的脚本）；副本是我们自己的另一个文件，不是链接（硬链接会让候选脚本写到用户文件的 inode，符号链接解析到用户文件，两者都不要），`tests/test_ai_data_large.py` 钉住 inode 不同、写副本不改原件。大表副本总量设上限 `LARGE_STAGE_BUDGET = 1 GiB`：新会话放不下就先丢最老的大表会话；磁盘满（ENOSPC / EDQUOT）回结构化的「没有备选」（`candidate_render_failed`），不是 500。脚本在 worker 里的整个读 + 缩减 + 画图算 build（`pool.BUILD_TIMEOUT = 900 s`），500 MB 宽表实测约 25 s，不需要改 worker 超时与沙盒。响应里大表备选与提交结果多一项 `reduced: {rows, kept}`（小表响应没有）。`unplotted.count` 是精确总数（来自扫描），`rows` 只给前 100 个例子。
+
+**实测**（Apple 机、24 GB；进程树 RSS 峰值；合成长时间序列 `time_s` + 3 列数值，折线 + 点 / 散点两个备选；别的会话同时在跑测试，只看量级。改前数字来自 `report.md`）：
+
+| 数据 | 概览 | propose(lazy) | 缩略图 #1 | 提交（含渲染 + 核对） | 峰值 RSS | 结局 |
+|---|---|---|---|---|---|---|
+| 21 MB 改前 | 3.2 s | 18 s | 37 s | 44 s | 0.9 GB | partial / 核对 unknown |
+| 21 MB 改后 | 1.4 s | 2.0 s | 3.1 s | 5.2 s | 0.3 GB | completed / verified |
+| 105 MB 改前 | 18 s | 85 s | 181 s | 386 s | 3.5 + 2.7 GB | partial / unknown |
+| 105 MB 改后 | 5.6 s | 9.2 s | 7.3 s | 20.6 s | 0.36 GB | completed / verified |
+| 525 MB 改前 | 152 s | > 900 s 没跑完 | — | — | ≥ 5.4 GB | 不可用 |
+| 500 MB（499.5 MB、1446 万行）改后 | 24.3 s | 41.5 s | 23.2 s | 70.5 s | 0.76 GB | completed / verified |
+
+**界面文案（未改，列给用户定）**：`data_too_large` 等已上线文案里写着「5 MB」的地方；大表上被拒的汇总类画法只显示既有的「这种画法暂时画不出来」，没有说「表太大」；前端没有「正在读一个大文件」的进度与取消，也没显示 `reduced`（「画的是 N 行里的 K 个点」）。
+
+## 修订（2026-11-19）：大表的真实进度与取消（`engine/ai_data_progress.py`、`/api/ai/data-progress/<rid>`）
+
+**起因**。概览 / 出备选 / 缩略图 / 提交都是同步长请求（500 MB 读表 25–35 s、出候选 40–80 s），前端的「取消」只是不再等，后端会读完再丢掉。
+
+**进度**。请求带请求号（概览与缩略图的 query `request_id`；出备选与提交沿用 body 的 `client_request_id`），后端在读表循环里记「已读字节 / 总字节」：`_stream_check`（`validate`，sha256 + 增量解码两遍合计）、`_scan_summary`（`scan`，每 65536 行一个检查点）、候选副本复制（`stage`，8 MiB 一块）、
+缩减（`reduce`，运行时函数 `reduce_file` 的可选 `progress` 回调经 `tick_rows` 每 65536 行调一次；脚本里不传，所以公共模块里多了 `tick_rows`、哈希随之换了名）。`GET /api/ai/data-progress/<rid>` 回 `{state, kind, phase, phase_done, phase_total, pass, passes, fraction, indeterminate, cancellable, elapsed_s}`；`fraction` 按每种请求的阶段权重折算、
+**单调不减**（缩减要读几遍由候选的画法数定，`set_passes`）。缩略图与提交的 worker 阶段（读 + 缩减 + 画图）在另一个进程里、脚本不带回调，**没有字节进度**，如实标 `indeterminate: true`、`fraction: null`（提交前的重读校验仍有 `validate` / `scan` 字节进度）。
+**只有大表有条目**：条目在请求开始时登记（取消要能赶在读表之前到），结束时若从没进过大表阶段就删掉，查询读作 `none`——小表的请求与响应逐字不变（响应里多出来的只有大表才有的 `large` / `reduced` 标记）。条目有界（至多 32 条、终态留 10 分钟），只有阶段名与数字，不含路径 / 列名，不进遥测。会话认证 guard 与项目绑定同其它 `/api/ai/*` 端点（键是 `(项目, 请求号)`，别的项目查不到）。
+
+**取消**。选**取消端点** `POST /api/ai/data-progress/<rid>/cancel`，不用「请求断开即停」：Flask / werkzeug 的处理线程在读表期间不读 socket，断线检测在本仓库的 HTTP 栈里不可靠（桌面壳、本机代理、浏览器 `AbortController` 的行为也不一致）；显式端点语义确定、可幂等、可测试。
+取消是协作式的：读表循环的检查点发现标志就抛 `ai_data_progress.Cancelled`（**`BaseException` 子类**，与 `asyncio.CancelledError` 同约定：各处 `except Exception` —— `profile_folder`、概览 —— 吞不掉，不会被当成「这个文件读不了」），原请求回 409 `propose_cancelled`；清理走原有的 `except BaseException` 路径：候选目录（含半份大表副本）整个删、没有会话、幂等表不记这次响应、扫描 / 缩减缓存只在成功后才写。
+端点幂等：重复取消、取消已完成 / 不认识 / 别的项目的请求都是 200，`cancelled` 只在「这次真的把一个进行中的可取消请求标成了取消」时为真；取消与完成赛跑时**以原请求的响应为准**（最后一个检查点之后才到的取消不生效）。缩略图与提交**不可取消**（提交一旦开始就会落盘；缩略图在 worker 里画）。
+
+**大表标记**。`/api/ai/data-files` 里读过的文本表的 `table`、`/api/ai/data-overview` 的响应在大表上多一项 `large: true`（小表没有这一项）；`table` 为 null（预算内没读）的文件，前端用 `size > 5 MiB` 判断，窄表「不到 5 MiB 却超过 10 万行」要读过才知道。
+
 ## 注入分析：Agent 能读整个文件，表里的文字能影响模型
 
 表里的文字（列名、单元格、工作表名）可以诱导模型，但**模型能交出的只有一份闭集配方**：未知键、未知取值、层数不对、`why` 含换行都在 `from_dict` 当场拒收；
@@ -295,6 +346,45 @@ interval / trajectories / dose_response / profile）。批次 2 / 3 在本 PR �
 
 **上限**（`Limits` 默认）：输入 ≤ 60 000 字（系统提示 + 用户内容；系统提示约 18 KB 固定）、输出 ≤ 3 000 token（另按每 token ≤ 8 字符卡回复长度，防不守上限的端点）、总时限 60 s（两次尝试共用、从解析连接起算；挑连接不联网，只在剩余预算 ≥ 35 s 时才对挑中的那一条联网刷新令牌 / 核地址，不够就用现有记录——这两步没法传入时限，放进线程超时会留下继续写 provider 存储的半截副作用）、**最多重试 1 次且仅在回复不是合法 JSON 时**（换协议 / 字段降级的自救不算重试，所以一次调用可能发多个 HTTP 请求：`StructuredResult.requests` 在传输层数，`max_requests` 对它硬性生效，到顶回 `over_budget`）——传输失败 / 拒答 / 鉴权失败 / 形状不对都不重发。摘要超出输入上限时按序收缩：每列文字样本 20 → 8 → 3 → 0 条，再从末尾起少发表（至少留 1 张），数目记在 `ModelRecipes.tables_omitted` / `sample_cap`；最多发 8 张表、每条样本 ≤ 60 字、用户提示 ≤ 200 字；模型一次最多交 8 份配方，多出的记 `too_many_candidates`。
 
-**暂不支持的连接**：订阅登录（Codex / Claude Code CLI）返回 `unsupported_connection`。它们没有干净的「无工具单次调用」：CLI 自带系统提示与工具并读用户自己的配置，Tavotto 没有给它们的单轮入口。适配方向（本步不做）：给 `AgentDefinition` 加一个可选的 `build_structured_command`——候选写法是 Codex 的 `codex exec --output-schema`（临时目录、只读沙盒）与 Claude Code 的 `claude -p --output-format json --json-schema`（不给工具），经同一个 `spawn_env()`——这些参数**本步没有在本机核过**，每家要在目标平台真跑一次再开。「当前连接」= 连接视图里第一个内置执行器能直接用的 Key / 账号登录连接（`first_key_connection`，旧版选中的接口排在前，与 AI 修复同一口径）；让用户在这条功能里单独选连接，是后续步骤的产品决定。
+**订阅登录连接（Codex / Claude Code CLI，2026-11-21 补，原为 `unsupported_connection`）**：没有 Key 连接、只有订阅登录时，`resolve_connection` 返回 CLI 连接描述 `{"kind": "cli", "agent", "model", "conn_id"}`，`call_structured` 走 `_call_cli`：给 `AgentDefinition` 加了可选的 `build_structured_command` / `parse_structured_output`（默认不支持 = 该适配器仍是 `unsupported_connection`）。与 HTTP 路径同一套语义（同一个 `validate`、非 JSON 重试一次、总时限、永不抛、闭集失败码），每次尝试起一个新进程（不落会话）。命令：Codex = `codex exec --sandbox read-only --ephemeral --ignore-user-config --skip-git-repo-check -C <空临时目录> -m <型号> -c model_instructions_file=<我们的系统提示> -c skills.include_instructions=false [-c model_reasoning_effort=low] [--output-schema <文件>] --json -o <输出文件> -`；Claude Code = `claude -p --output-format json --system-prompt <我们的系统提示> --tools "" --no-session-persistence --setting-sources "" --strict-mcp-config --disable-slash-commands --model <型号> [--effort low] [--json-schema …]`（**不用 `--bare`**：它不读 OAuth，订阅登录会失效）。用户内容只走 stdin，argv 里没有用户内容 / 令牌 / `--dangerously-*` / 可写沙盒（Codex 没法真禁工具，靠只读沙盒 + 空目录）。**型号显式**：连接里已解析出的型号，没有就取该适配器型号清单第一项，都没有 = 不支持（不写死型号名）；**不读用户自己的 CLI 配置**；思考强度只在适配器目录明确列了该型号的档位时才带。失败码：CLI 自己的结构化字段（Codex `turn.failed` 的状态码、Claude `result.api_error_status`）→ `auth` / `quota`，其余非零退出 `transport`，起不来 `no_connection`，超时杀整个进程树 `timeout`，空 / 非 JSON / 不合格 `invalid_output`。CLI 拿不到 token / 花费：`usage_reported=False`、请求数（起的进程数）照计。同一时刻最多一个结构化 CLI 进程（排队不吃总时限）。stdout / stderr 不落盘（stderr 丢弃）、不进日志 / 遥测 / 诊断包。**真跑要订阅额度，不进 CI / 夜跑**；`scripts/dev/structured_cli_smoke.py` 只在维护者本机手工跑，下面这些**尚未在真 CLI 上核过**：Codex 的 `model_instructions_file` 是否整体换掉预置指令、`--ignore-user-config` 是否挡住 `$CODEX_HOME` 下的 AGENTS.md / 技能、严格 schema 是否被接受（本步 `ai_data_roles` 不带 schema，靠提示词 + 本地解析校验）；Claude 的 `--setting-sources ""` 空串、带 `--json-schema` 时结果在 `structured_output` 还是 `result`。「当前连接」= 连接视图里第一个内置执行器能直接用的 Key / 账号登录连接（`first_key_connection`，旧版选中的接口排在前，与 AI 修复同一口径），其次才是订阅登录；让用户在这条功能里单独选连接，是后续步骤的产品决定。
 
 **不变的边界**：模型不执行任何代码、本步不新增工具 / 命令行 / 写文件能力；表里的文字只作 JSON 字符串进 `<data>` 块（`<` 转义，伪造不出块的结尾），配方里没有自由文本进脚本；密钥只在 `HttpModel` 内（`repr` 不含）；本模块不写日志、不发遥测（遥测仍不收列名、路径、指令、图里文字）；运行时公共模块（生成脚本内嵌的那份）一个字节未动。
+
+## 修订（2026-11-19）：第 1 步「读懂数据」——模型判断每列是什么（`engine/ai_data_roles.py`，`ai.taf.enabled` 后面，不加子开关）
+
+**目标**：让默认的横轴 / 纵轴 / 分组更常是对的（规则在有歧义处只能猜「最后一个数值列 / 最左一列」）。**模型只给「列判断」，不出配方**：判断被翻译成 `propose` 本来就接受的三种输入——`answers.y / x / group`（`none` = 不要）、`header_rows`、`answers.cells`——配方仍由规则 `default_candidates` 生成并过 `validate_recipe` / `enforce_order`，闭集配方校验一步没绕过。
+
+**列角色闭集**：`time` / `ordered_x` / `measure` / `group` / `replicate_unit` / `row_id` / `error`（sd / sem 这类误差列：不当纵轴，2026-11-21 加）/ `unit_label` / `note` / `other`。**`replicate_unit` 永远不会变成用户确认的事实**（`Confirmed.unit_col` 只来自用户）：它只让规则别把这一列当 y / x / 分组；响应里的建议只含 `y` / `x` / `group` / `cells`，没有 `design` / `unit`。
+
+**校验与降级（逐字段）**：形状层严格（未知键 / 类型不对整份拒收 = `invalid_output`，不重试）；取值层逐字段——列不存在、角色不在枚举、重复给同一列、角色与列的类型对不上（`measure` 必须是 `numeric_like`、`time` / `ordered_x` 必须是日期或数值、`group` 必须在分组列里）、选择与自己给的角色矛盾、多 y 列不满足下面的客观条件、处理规则的键对不上 / 列没夹文字 / 不是最终用到的列，各丢各的，只记丢弃个数，回到规则默认。**采纳策略**：规则会问的地方（选值 / 选分组 / 选横轴）用模型的选择；规则唯一确定了某个角色、但模型明确说那一列不能当这个轴（y 的角色不是 `measure`；x 是 `row_id` / `note` / `unit_label` / `replicate_unit` / `other`；分组不是 `group`）才推翻；其余保持规则结果。用户的回答永远优先：请求里已有 `answers.y / x / group / cells` 或 `header_rows` 就不起模型任务（也避开「采纳建议 → 再来一次 → 再起任务」的循环）。
+
+**模型判断「够得到」规则的三处（2026-11-21，留出集 HO-16 / 17 / 19）**：没有模型（没有 `picks`）时规则逐字不变；下面三种采纳都要「模型明确判断 + 列客观上满足条件」，条件各只有一处实现（`ai_data_recipe`），`suggest`（采纳）与 `_resolve_roles`（落地）共用，不满足就丢该项回规则结果，从不报错。
+* **多列纵轴**：`picks.y` 给 2–3 个列名（`MULTI_Y_MAX`，与宽表分支同上限）。条件 `multi_y_ok`：互不相同、都在表里、都是数值列（`numeric_like`）、没有 `id_like` 列、列名后缀认得出的单位至多一种（否则是双轴，`dual_axis_unsupported` 会把整组备选剔光）；再加模型自己的角色不能否决（每列只能是 `measure`）。落地：`answers.y` 可以是 1–3 个列名的数组（`parse_answers` 接受，别的键仍只认字符串；右栏下拉发的仍是字符串，`propose` 响应里 `roles.y` 本来就是数组）；规则不认的数组当没给。只在规则本来要问「选哪个值」（或规则选的那列被否决）时采纳，规则已落定的宽表多 y 不动。**还要有有序横轴**：只有趋势类（`line_units` / `line_points` / `line_band`，每列一条线）画全部纵轴列，分布 / 比较 / 散点类配方只用第一列，所以没有横轴（模型说 `none`，或规则也给不出横轴）时多列纵轴不采纳——当没给、计入丢弃个数，`roles.y` 与候选实际画的列一致（`_resolve_roles` 与 `suggest` 各核一次）。**已知限制**：没有横轴的宽表重复列（rep1 / rep2 / rep3，或每列一个条件）要「把列当分组」的画法（宽表转长表），尚未支持（留出集 HO-17 因此在 `--fake good` 下不过，标准答案不改）。
+* **有分组时的横轴**：规则有分组列又有多个横轴候选时不问横轴（分组比较是主图），模型给的 `x` 从前被忽略。现在：模型判该列 `time` / `ordered_x`（只是 `measure` 不行）、它是规则此刻的横轴候选（日期 / 数值、不是 y、不是编号列）才采纳；`none` / `unsure` 不算。
+* **编号样的文字列当分组**：规则把名字像编号（`sample` 一类）的文字列判成 `id_like`，永不当分组。现在：模型判 `group` 且这列在 `s.groups` 里（`id_group_ok`：文字、2–12 个取值、有取值重复出现——每行都不同的是标签不是分组；数字编号不在其中）才采纳；落地走 `answers.group`（只有点名才进，没点名仍永不当分组），`roles.options.group` 里带上它，并且它不再兼作「重复测量的个体编号」（所有编号样的列都被当了分组时，不再问「同一对象重复测量吗」）。
+* **整数编码的数值列当分组（2026-11-21，HO-20；用户同意，维护者定的边界）**。`knockout` 取 0 / 1、`treatment` 取 1 / 2 / 3 这类整数编码的分组列，从前「分组列必须是文字列」贯穿多处而画不出分组比较。现在给配方加一条明确事实 **`FigureRecipe.numcat`**（列名数组，至多 `MAX_NUMCAT` = 3；空时 `to_dict` 与旧版逐字相同）：「这些数值列按类别用」，贯穿 配方 → `validate_recipe` → 模板 / 生成脚本 → 落盘再校验 → 指纹核对；**不扩大 `s.groups`，不改规则**。
+  * **客观条件（本地可核，唯一实现 `ai_data_figure.numcat_levels`，结果放 `DataSummary.numcat` = 列 → 取值个数，不进 `to_dict`）**：列 kind 是 `numeric`（没有文字格、没有 `nan` 字面量）、非空值全是整数（`3.0` 算、`1.5` 不算、`|v| ≥ 1e15` 不算；**负数可以**）、不同取值（按整数值，`1` / `1.0` / `01` 同一个）2 到 `NUMCAT_MAX_LEVELS`（= 6）个、非空格子数 > 取值数（至少一个取值重复；每行都不同的是编号 / 测量值）、不是 `id_like` 列（`subject` 一类名字）。**空格子**不算取值、那一行不画（同文字分组）。6 而不是文字分组的 12：数值本身有大小意义，取值一多更像剂量 / 时间点 / 计数。只对小表、v2 读法算；大表与合画（`merge.build` 显式清空）恒为空。
+  * **点名来源**：用户在右栏「分组」里选它（`answers.group`），或模型判它 `group` 并经 `ai_data_roles` 采纳（`_role_fits_column` / `_valid_pick` / `suggest` 都读同一个谓词 `numcat_pick_ok`）。规则**从不**自己把它当分组：没有人点名时配方与响应逐字不变，唯一的差别是 `roles.options.group` 多列出了满足条件的整数编码列（默认选择不变；**可回退**：`_resolve_roles` 末尾 `options["group"]` 那一行）。条件不满足 = 丢弃这项、回规则结果。点名的列同时从 y 候选与横轴候选里拿掉（否则单独点名分组会得到「x = 分组」的趋势图）；拿掉后没有数值列可当 y 就当没点名。
+  * **各层怎么认**：`validate_recipe` 对 `numcat` 里的每一列要求在 `s.numcat`、不重复、真的处在分组 / 分面 / 类别横轴角色（有序横轴不行），然后用 `numcat_view` 把它们当 `groups` 看（取值上限、构成部分数、排名条目数、配对水平数都读同一处）；`eligible(…, numcat=)` 同理；`default_candidates` 在校验前给用到它的备选补上 `numcat`。取值规则、落盘再校验与 `expected_fingerprints` 都经 `with_cells_applied`（先 `cells` 再 `numcat`），与脚本读表后调用的是**同一个**运行时函数 `apply_numcat`。
+  * **类别的显示与排序**：`apply_numcat` 把这些列的数值格换成 `NumCat`（`str` 子类，内容是规范整数写法 `0` / `1` / `-1`，没有 `0.0`；`strip` 返回自己所以标记不丢）；运行时 `distinct` 见整列都是 `NumCat` 就按数值升序，否则仍是首次出现的顺序（别的路径逐字不变）。图例 / 刻度标签因此是 `0`、`1`。`NumCat` / `apply_numcat` 进 `RUNTIME_FUNCTIONS`，公共模块哈希由 `98157f49` 变为 `f7aa140e`（`tests/test_ai_data_encodings.py::PINNED_RUNTIME_NAME`）；老脚本继续 import 它们当时的那一版。
+  * **大表 / 合画 / `.xvg` / XLSX**：大表暂不支持（摘要里 `numcat` 为空 → 点名被丢；`_large_problems` 另对非空 `numcat` 报 `mark_not_allowed`，因为缩减的系列数上界读 `groups`）；合画暂不支持（合成的文件列才是主分组，`build` 把 `numcat` 清空）；`.xvg` 与 XLSX 走同一个 `_summarize`，客观条件自然适用（XLSX 里 `1.0` 与 `1` 同一取值）。测试 `tests/test_ai_data_numcat.py`（客观条件表、规则不变、点名 / 模型采纳、真 worker 渲染并 `verified`、回退）。
+
+**`roles.y` 必须等于每个备选实际画的列（2026-11-21）**：`default_candidates` 最终的 `ys` 多于一列时（规则自己的宽表多 y、模型点名、用户点名一视同仁），只返回画全这些列的备选——目前只有趋势类（每列一条线）；只用第一列的关系图 / 分组比较 / 分布被去掉，记进 `dropped`（原因码用现有的 `roles_invalid`，`detail` = `multi_y_not_drawn`，不加新码）。去完一个不剩（如量纲不同退到第一列）就回到单列（`ys[0]`）重算，不出零备选，`roles.y` 同步变成单列。这是 main 上规则宽表本来就有的不一致（`roles.y` 三列、`scatter_fit` 只画第一列），因此没有模型时宽表的备选列表也少了只画第一列的那几张（主集 / 留出集里 RC-12、HO-05、HO-15、HO-18 各少一张 `scatter_fit`）；默认的 x / y / 分组不变。
+
+**表头 / 单位行**：只在读表 `status == "unsure"`（已有预览）且用户没指定表头行时多问一次，答案必须是预览里的行号、按它重读要读出合格的表（有数值列）、且与嗅探的不同，才采纳，之后对重读的表再问列角色。**单位行强制不做**（不动读表运行时，`PINNED_RUNTIME_NAME` 不变）。
+
+**接法**：`propose(render="lazy")` 先照常返回文字候选；有可用连接（Key 连接 `first_key_connection(refresh=False)`，其次是适配器支持无工具单轮的订阅登录 CLI，只看已有的能力缓存、不探测；没连、运维关内置 = 没有）时响应多一个 `understanding: {id, state}`，起后台线程（缓存命中则 `ready` 内嵌）。`GET /api/ai/data-figure/understanding/<id>` 轮询（会话认证、项目绑定、只读不联网）：`pending` / `ready`（`answers`、`header_rows`、`roles`、`dropped`）/ `failed`（闭集 `reason`）/ `off`（不存在 / 过期 / 别的项目，不是错误）。前端 `ready` 后把 `answers` 与 `header_rows` 并进原请求再 `propose` 一次、换掉旧会话；没有可用连接时响应里**没有** `understanding` 键、与从前逐字相同（测试钉住，含「有连接时响应只多这一个键」）。不做 `data-overview` 预取，只在显式出图时触发。「重新判断」的后端参数留好（`start(refresh=True)` 忽略缓存），前端以后接。
+
+**时限与强度**：总时限 25 s（表头那次与列角色那次共用，含解析连接——挑连接不联网，只在剩余预算 ≥ 35 s 才对挑中的那一条联网刷新）；**订阅登录（CLI）连接取 `ai_structured.CLI_TIMEOUT_S` = 60 s（待本机真跑后校准；CLI 冷启动慢），排队等那一个 CLI 名额不吃这 60 s；前端轮询上限若仍是 30 次 × 1 秒，比它短，要前端配合放宽**；输出 ≤ 2 000 token；思考强度请求 `low`，但只有 `builtin_effort_args` 对「这个地址 + 这个型号」确认支持才发（官方端点、目录核过的型号），其余一个字段都不发（不靠 400 再降级）。`call_structured` 新增 `effort` 参数，`fixsession.build_model` 透传。
+
+**发给模型的 / 不发的（逐项）**
+* 发：表名（相对路径）与工作表名；行数；布局；分组取值及个数；编号线索；每列的名字、类型、空值 / NaN / 文字格个数、最多 20 条去重文字样本（每条 ≤ 60 字）；**本地算出的聚合**（只对数值列与日期列：不同值个数、是否单调、是否全为整数、最小 / 最大）；用户那一句提示（≤ 200 字）；仅 `unsure` 的表发表头预览（≤ 8 行 × 120 字，带原文行号）。摘要超预算（40 000 字）按序收缩文字样本 20 → 8 → 3 → 0。
+* 不发：数据行本身；文件哈希与大小；绝对路径与用户目录名；密钥与地址；别的表。表里的文字是不可信数据：JSON 字符串放进 `<data>`、`<` 转义，提示词明说不是指令。
+* **本步不发完整数据。**（用户 2026-11-19 已同意摘要、图、脚本乃至完整数据可发给模型；隐私说明文档**先不改**，列为开关打开前的待办。）
+* 不写日志、不发遥测、不进诊断包：缓存里有列名，不在诊断包采集清单里；`tests/test_ai_data_roles.py` 钉住（诊断包 zip 里找不到缓存内容与列名、`telemetry.EVENTS` 没有相关事件、任务跑完不调 `capture`、模块不 import 遥测 / 诊断 / 追踪、日志调用只许固定文字）。
+
+**缓存 / 单飞 / 负缓存**：缓存里存的是**模型的原始判断**（校验后的 `Judgement`：列角色、选择、处理规则、采纳的表头行），**不存**按提示算出的建议——每次命中都按**当前完整提示**与规则重新派生（`derive`），所以键与派生结果不会错位（提示只有前 200 字发给模型，规则读的是完整提示；Codex #2068）。`data_dir()/cache/ai_data_roles/<key>.json`，原子写；key = 协议版本（2）+ 系统提示哈希 + 数据字节哈希 + 实际表头行 + **模型看到的**提示（前 200 字）+ 连接身份（provider id + 型号，不含密钥与地址）+ 表；单飞登记另含完整提示摘要且只在 pending 期间存在；TTL 30 天、至多 200 条（按 mtime 淘汰）；坏文件 / 旧版本 = 未命中。失败只做 60 s 内存负缓存（同一 key 不再起任务，不落盘）；同一 `(项目, key)` 在途任务单飞。后台线程只读数据文件、联网、写缓存目录，不碰按项目绑定的状态，故不需要 `bound_project`。
+
+**度量**：`tests/fixtures/data_figure_cases/roles_cases.json`（22 条：18 条规则会出错的——整数批次 / 流水号 / 重复序号被当轴、顺序反了、两个分组列、备注列在前、中文、夹文字格、两种表头问题——加 4 条规则本来就对的对照）；评分有列角色正确率（全部 / 关键列）、默认 x / y / 分组命中率（规则臂 vs 模型臂）、对照被改坏数、表头 / 处理规则命中；`scripts/dev/data_figure_bench.py --suite roles [--arm rules|both] [--real --max-calls N]`，`--max-calls` 按**实际 HTTP 请求数**硬拦，报告含实际输入 / 输出 token 与按定价表估的花费。假回答下的模型臂是录好的理想回答，**只证明链路与护栏，不代表真模型的命中率**。**本步没有对真模型跑过。**
+
+**不做 / 留给后面**：单位行强制；多表文件夹里让模型选表（选表仍是规则或用户的事）；前端轮询与「采纳建议」的交互（文案要用户签字）。

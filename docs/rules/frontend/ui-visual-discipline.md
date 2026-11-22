@@ -78,6 +78,8 @@ cursor-not-allowed`；未选中复选框 / 单选边框与关态开关轨道 `bo
 没写时长的 `transition-*` 默认就是 `--duration-fast` + `--ease-standard`（`motion.test` 守着）。
 **Card 几何默认不变，`lift` 是登记豁免**（宪法第二十五节「Card `lift`」，用户 2026-10-15 裁决）：`<Card lift>` 在 hover / 键盘聚焦时 translateY(-2px) + scale(`--card-lift-scale`，默认 1.015、上限 1.02) + 阴影升到 `shadow-lift`（含 1px accent/20% 描边，不要外发光；用户 2026-10-16 选定整卡放大 + 描边），按下回落，
 
+**对话框外框进度描边**（外部审阅分享，用户 2026-11-21，ADR 0187 §八）：`Dialog` 的 `edge` 槽挂 `ui/EdgeProgress`，铺满外壳、不占位、不接事件，给「进度不许撑高卡片」的场合用；不报 `aria-valuenow`、不出数字（ADR 0168）。爬升时长 `--edge-creep-*` 与停靠点只在 `index.css` 的 `edge-progress` 里，是进度节奏而不是界面动效，不进 motion token；合拢时长 `EDGE_SEAL_MS`（两档 slow）由组件内联给 CSS、调用方合拢闸同源。墨色混透明、不发光，蓝色仍只给选择 / 焦点。只此一处，内联 svg 豁免表登记 1 个。
+
 第二处登记豁免：改图助手的附件预览卡（`components/ai/AttachCards.tsx`，用户 2026-11-11 裁决，ADR 0175）：静止时略微倾斜（确定性角度序列）、悬停 / 聚焦摆正并 translateY(-2px)、`prefers-reduced-motion` 下不位移；只此一处，门禁按文件登记次数。
 reduced-motion 下只换阴影 / 描边，disabled / selected 不浮起；静止态写恒等变换（`translate-y-0 scale-100`）以免 none↔非 none 引发重排。只许首页项目卡（品牌位置）用，别处不开。
 门禁 `foundation.test`（交互态位移 / 缩放仅 Card.tsx 一处）+ `foundationPrimitives.test`（≤2px 整数、缩放 ≤1.02）。

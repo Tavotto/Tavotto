@@ -1,3 +1,4 @@
+import { visibleBounds } from '@/lib/transform'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
@@ -44,6 +45,7 @@ import {
   type ScreenRect,
 } from './position'
 import { useNoticeRailStore } from '@/store/noticeRailStore'
+import { useActivePathEdit } from '@/store/pathEditStore'
 import { OpenInspectorButton } from './shared'
 import { qb } from './text'
 
@@ -159,8 +161,11 @@ function ContextBarBody() {
     : ids
         .map((id) => objects.find((o) => o.id === id))
         .filter((o): o is CanvasObject => o != null && !o.hidden)
+  // 锚点编辑（直接选择，ADR 0185 M1）里不出单选浮动栏：它贴在路径上方，正好盖住锚点的手柄（2026-11-14 用户拍板）；
+  // 退出编辑就回来
+  const anchorEditId = useActivePathEdit()?.path.id ?? null
   const obj: CanvasObject | null =
-    !cropTarget && !panel && ids.length === 1 ? (selected[0] ?? null) : null
+    !cropTarget && !panel && ids.length === 1 && ids[0] !== anchorEditId ? (selected[0] ?? null) : null
   // 图内编辑态里 shift 加选的标注是混排选区（归 ElementInspector 的对齐工具条管），
   // 不出多选栏——判据是「在不在图内编辑」，不是「那张面板还在不在」
   const multi: CanvasObject[] | null =
@@ -320,7 +325,8 @@ function ContextBarBody() {
     }
     let anchor: ScreenRect | null = null
     if (mode === 'multi' && multi) {
-      const b = boundsOf(multi.map(visualBounds))
+      // 剪切组按蒙版范围（ADR 0185 M4 第二批）
+      const b = visibleBounds(multi, useDocumentStore.getState().doc.objects) ?? boundsOf(multi.map(visualBounds))
       const t: ViewTransform = { zoom, panX, panY, originX, originY }
       anchor = b ? selectionScreenRect(b, t) : null
     } else if (mode === 'elements' && panel && multiGids) {

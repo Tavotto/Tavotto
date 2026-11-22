@@ -141,7 +141,7 @@ import { boundedCount, captureTelemetry } from "@/lib/telemetry";
 import { cn } from "@/lib/utils";
 import { canRevealInFileManager, isDesktop, revealExportedFile } from "@/lib/desktop";
 import { useEpsOpacityGate } from "./EpsOpacityPrompt";
-import { annotationsBelow, annotationsOf, singleAnnotatedDocument } from "@/lib/singleExportDoc";
+import { annotationsBelow, annotationsOf, figureClipOf, singleAnnotatedDocument } from "@/lib/singleExportDoc";
 import { useOriginalAvailability } from "@/hooks/useOriginalSpec";
 import { useRuntimePreview } from "@/hooks/useRuntimePreview";
 import { engineTransport } from "@/lib/engineTransport";
@@ -171,7 +171,7 @@ import { useProjectStore } from "@/store/projectStore";
 import { useDocumentStore } from "@/store/documentStore";
 import { askConfirm, dialogCovered, EXPORT_DONE_DISMISS_MS, useUiStore } from "@/store/uiStore";
 import { useWorkspaceStore } from "@/store/workspace";
-import { isRuntimePanel, type ArrowObject, type CanvasObject, type FigureDocument, type PanelObject, type ShapeObject, type TextObject } from "@/types/document";
+import { isRuntimePanel, type ArrowObject, type CanvasObject, type FigureDocument, type PanelObject, type PathObject, type ShapeObject, type TextObject } from "@/types/document";
 import type { ThumbObject } from "@/types/thumb";
 import { cropToVisibleContent, croppedDocument } from "@/lib/exportCrop";
 import { frameCanvasOf, isZeroPad } from "@/lib/framePad";
@@ -516,6 +516,7 @@ export function ExportDialog() {
   );
   const annotations = useMemo(() => (annotatedDoc ? annotationsOf(annotatedDoc) : undefined), [annotatedDoc]);
   const annotationsUnder = useMemo(() => (annotatedDoc ? annotationsBelow(annotatedDoc) : 0), [annotatedDoc]);
+  const figureClip = useMemo(() => (annotatedDoc ? figureClipOf(annotatedDoc) : undefined), [annotatedDoc]);
   /** 单图退路导出的区域 = 可见对象并集包围盒（`lib/exportCrop`）；预览与尺寸读它，与请求同一份 */
   const fallbackCrop = useMemo(
     () =>
@@ -970,6 +971,7 @@ export function ExportDialog() {
       spec: availability.spec,
       annotations,
       annotationsBelow: annotationsUnder,
+      figureClip,
       framePad,
       route,
       exportDir: exportDirNow,
@@ -2323,9 +2325,9 @@ function exportedTextOf(o: ThumbObject): TextObject | null {
 }
 
 /** 整版预览里的箭头 / 形状按导出出来的样子画：端点、填色、线型、旋转都取对象自己的（喂给 `CanvasThumb` 的 `exportedShape`） */
-function exportedShapeOf(o: ThumbObject): ArrowObject | ShapeObject | null {
+function exportedShapeOf(o: ThumbObject): ArrowObject | ShapeObject | PathObject | null {
   const obj = o as CanvasObject;
-  return obj.type === "arrow" || obj.type === "shape" ? obj : null;
+  return obj.type === "arrow" || obj.type === "shape" || obj.type === "path" ? obj : null;
 }
 
 /**

@@ -24,7 +24,9 @@
 
 ```sh
 export PYTHON=/path/to/python                 # 装好 tavotto 依赖（matplotlib 等）的解释器；源码树经 PYTHONPATH 生效
-export OPENCODE_GO_API_KEY=...                # 只有 A 组需要；只经环境变量，不进任何文件 / 日志 / 轨迹
+export EVAL_A_API_KEY=...                     # 只有 A 组需要（缺省读 OPENCODE_GO_API_KEY）；只经环境变量，不进任何文件 / 日志 / 轨迹
+export EVAL_MODEL=opencode-go/deepseek-v4.1-flash   # A 组用的「厂商 id/模型」（厂商 id 取 ai_catalog.json，如 openai-api/gpt-6-luna）
+export EVAL_RESULTS=$PWD/scripts/eval/fix_compat/results/<日期-模型>   # 每轮结果单独一个目录，不和别的轮次混
 python scripts/eval/fix_compat/harness.py list
 python scripts/eval/fix_compat/harness.py probe                 # 未修前的真实结局（不叫模型）
 python scripts/eval/fix_compat/harness.py run baseline          # 不修，只判
@@ -36,6 +38,15 @@ python scripts/eval/fix_compat/harness.py report                # = summarize.py
 B 组用 opencode 自己已登录的 OpenCode Go 凭据（`opencode auth`），harness 不读它。结果追加到 `results/<cond>.jsonl`，同一 (题, rep) 已有就跳过，可断点续跑。
 基础设施故障（sidecar 起不来等）打印 `INFRA_ERROR` 不记结果；模型额度用完（输出里有 `usage limit` / `go-limit`）停下，不记那一组。
 opencode 报错时退出码也可能是 0，`agent_errors` 里查 `Error:`。
+
+## 提示看护与「提示跟进」表（ADR 0197 第 3 层·离线）
+
+- 未修前还失败的题带 `hint: {code, trace?, tool}`：实测的结局码（traceback 才认得出的形状带一段 `trace`）与修好它要用的工具；
+  已经不用 AI 就出图的题不带。`tests/test_fix_compat_corpus_hints.py` 在普通 CI 里按 `results/` 最近一轮 `baseline.jsonl`
+  核对这两条，再核对每道题都拿得到点名那个工具的提示，不叫模型。每轮新 baseline 进仓库后若对不上，按实测更新题库；
+  `harness.py probe` 对不上时也会打印 `!!`。
+- A 组轨迹里应用试运行那一行带 `attempt`（`n / before / after / hint / changes`，只有码）。`report` 最后一张表按每次试运行列出
+  给的提示、模型接着动的第一个非观察工具、下一次的失败形状——给了提示没照做、照做了形状没动的行，就是该改写或新增提示的地方。
 
 ## 费用口径
 
@@ -122,3 +133,35 @@ B 的明细（行号 = `results/B.jsonl` 的行，从 1 数）：
 
 A 组 1/8，B 组 2/8（B 的两题都是绕开、没有修原脚本）。**A 的失败几乎全是「知道原因、没有动作可做」**，不是推理不到：
 argv 两题、环境变量、stdin 都在结束语里说对了原因。合入 #2044 / #2048 / #2050 后重跑这一套量改进。
+
+
+## 11-19 第二轮：合入 #2044 / #2048 / #2050 / #2053 / #2054 / #2055 之后
+
+结果目录：`results/2026-11-19-integration/`（不修）与 `results/2026-11-19-gpt-6-luna/`（A 组，`EVAL_MODEL=openai-api/gpt-6-luna`）。每题 1 次，分母同上 8 题。
+
+| 组 | 成功 | 说明 |
+|---|---|---|
+| baseline（不修） | **3/8** | 只定义画图函数（#2044）、写死 GUI 后端（#2054）、相对导入（#2055）不用 AI 就出图 |
+| A：内置 AI 修复（gpt-6-luna） | **8/8** | 原文件全部零改动；对照题也「修好」，见下 |
+
+读这组数字要注意：
+
+- **换了模型，不是同口径**：基线 A 组没跑成，B 组用的是 `deepseek-v4.1-flash`，这一轮 A 组是更强的 `gpt-6-luna`。与模型无关、能确定的只有两条：不修就出图从 0/8 到 3/8；参数类两题有了 `set_run_arguments` 这个动作。同口径的弱模型 A 组还没跑。
+- **对照题 `lib-needs-data-arg` 也「修好」了**：AI 没编数据，而是写了一行启动脚本去运行项目里真正的入口 `run_report.py`，于是那张图挂在了 `figlib.py` 名下。维护者 11-19 裁决这种情况应引导用户去打开真入口，不用启动脚本代跑（ADR 0188），提示词随 ADR 0197 第 1 层一起改。
+- 8/8 已经到顶，这套题量不出后续改动的提升，还要更难的题、弱模型、每题 3 次，并把步数和耗时也算进指标。
+
+## 11-21 第三轮：失败提示、试运行记录、小实验都在（#2064 / #2079 / #2093 之后）
+
+`results/2026-11-21-deepseek-flash/`，Tavotto 源码 8ddcb9432（main + #2093）。A 组走 Tavotto 内置的 DeepSeek 连接（`EVAL_MODEL=deepseek/deepseek-flash`），**每题 3 次**；先跑一轮 baseline。
+
+| | baseline | A |
+|---|---|---|
+| 要 AI 动手的 5 题（不含已经出图的题和对照题） | 0/5 | **15/15** |
+| 对照题 `lib-needs-data-arg`（solvable=false） | 0/1 | 0/3 |
+
+- 平均 9.3 步、44 s 一题；修好用的工具：`set_run_arguments` ×6、`write_launcher` ×6、`link_data_file` ×3，`run_snippet` 用了 5 次。
+- 「提示跟进」表里每次应用试运行都是第一次就 `ok`：没有出现给了提示却重复同一失败的情况，本轮没有可提炼的新提示。
+- 对照题 3 次都按 ADR 0188 的裁决收尾：说明 `figlib.py` 只是画图工具、请用户打开同文件夹的 `run_report.py`，不代跑。判分算不成功是对照题的设定。
+  第 1 次被归成 `tool_denied:run_snippet`，其实是模型先猜错了环境 id（`env_unknown`），查过 `list_environments` 后就照常跑了，不是被拒。
+- **不能直接和 11-19 比**：11-19 的 A 组是 OpenCode Go 的 `deepseek-v4.1-flash`、每题 1 次，代码里还没有失败提示、试运行记录与小实验；本轮换了模型和连接方式。
+  要分清提示本身的作用，需要同一模型在 #2079 前后各跑一轮（未做）。

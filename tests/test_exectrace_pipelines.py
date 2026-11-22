@@ -297,18 +297,142 @@ def test_pricing_tiers_and_unknown_models():
     ) == pytest.approx(4.0 + 0.1 + 40.0)
 
 
+def test_openai_short_context_entries_have_no_price_above_the_threshold():
+    """GPT-6 / 5.6 系列只收了短上下文价：一轮输入超过 272k 查不到价（None），不拿短上下文价顶替。"""
+    at = ai_pricing.OPENAI_SHORT_CONTEXT
+    assert ai_pricing.estimate(
+        "openai", "gpt-6-luna", input_tokens=1_000, cached=0, output=1_000
+    ) == pytest.approx((1_000 * 0.10 + 1_000 * 0.50) / 1_000_000)
+    assert ai_pricing.estimate(
+        "openai", "gpt-6.2-sol", input_tokens=at, cached=at, output=0
+    ) == pytest.approx(at * 0.10 / 1_000_000)
+    assert (
+        ai_pricing.estimate("openai", "gpt-6.2-sol", input_tokens=at + 1, cached=0, output=0)
+        is None
+    )
+    assert ai_pricing.estimate(
+        "openai", "gpt-5-nano", input_tokens=1_000_000, cached=0, output=0
+    ) == pytest.approx(0.05)
+
+
 def test_every_official_model_hint_has_a_price():
-    """官方端点在「连接 AI」里推荐的型号，定价表必须有价——否则用户选了它，费用估算是空的（Fable 5.2 漏过一次）。"""
+    """官方端点在「连接 AI」里推荐的型号，定价表必须有价——否则用户选了它，费用估算是空的（Fable 5.2 漏过一次）。
+    例外只有 `UNPRICED_HINTS` 里逐条写了原因的（官方定价页没有这个型号）；订阅制 / 分时段 / 聚合网关等整家没有价的厂商在
+    `NOT_PRICED` 里写明原因，不是被漏掉的。"""
     vendors = json.loads(ai_catalog.CATALOG_PATH.read_text(encoding="utf-8"))["vendors"]
     official = [v for v in vendors if ai_pricing.vendor_of(v)]
     assert {ai_pricing.vendor_of(v) for v in official} == set(ai_pricing.SOURCES)
-    missing = [
-        (v["id"], m)
+    missing = {
+        (ai_pricing.vendor_of(v), m)
         for v in official
         for m in v.get("models_hint") or []
         if (ai_pricing.vendor_of(v), m) not in ai_pricing.TABLE
-    ]
-    assert missing == []
+    }
+    assert missing == set(ai_pricing.UNPRICED_HINTS)
+    # 目录每个带 base_url 的厂商：要么有官方端点计价，要么在 NOT_PRICED 里写了原因（自填的 custom-* 没有 base_url）
+    with_url = {v["id"] for v in vendors if v.get("base_url")}
+    priced = {v["id"] for v in official}
+    assert with_url - priced == set(ai_pricing.NOT_PRICED)
+    assert all(reason.strip() for reason in ai_pricing.NOT_PRICED.values())
+
+
+def test_the_openai_hint_is_a_current_priced_pair():
+    vendors = {
+        v["id"]: v
+        for v in json.loads(ai_catalog.CATALOG_PATH.read_text(encoding="utf-8"))["vendors"]
+    }
+    assert vendors["openai-api"]["models_hint"] == ["gpt-6.2-sol", "gpt-6-luna"]
+
+
+def test_every_listed_claude_model_has_its_own_cache_hit_price():
+    """Anthropic 缓存命中价按型号：Fable 5.2 / 5.1 为 0.025x，Opus 5.5 / Sonnet 5.5 为 0.05x，Fable 5 与其余型号 1 / 0.1x 的绝对价。"""
+
+    def r(model, **kw):
+        return ai_pricing.estimate("anthropic", model, **kw)
+
+    mtok = 1_000_000
+    assert r("claude-fable-5", input_tokens=mtok, cached=mtok, output=0) == pytest.approx(1.0)
+    assert r("claude-fable-5-1", input_tokens=mtok, cached=mtok, output=0) == pytest.approx(0.25)
+    assert r("claude-opus-5-5", input_tokens=mtok, cached=mtok, output=0) == pytest.approx(0.20)
+    assert r("claude-sonnet-5-5", input_tokens=mtok, cached=mtok, output=0) == pytest.approx(0.10)
+    assert r("claude-sonnet-5", input_tokens=mtok, cached=mtok, output=mtok) == pytest.approx(10.2)
+    assert r("claude-opus-4-6", input_tokens=mtok, cached=0, output=mtok) == pytest.approx(30.0)
+    assert r("claude-haiku-4-5-20251001", input_tokens=mtok, cached=0, output=0) == pytest.approx(
+        1.0
+    )
+    # 官方别名与它指向的快照同价
+    for alias, pinned in (
+        ("claude-opus-4-5", "claude-opus-4-5-20251101"),
+        ("claude-sonnet-4-5", "claude-sonnet-4-5-20250929"),
+        ("claude-haiku-4-5", "claude-haiku-4-5-20251001"),
+    ):
+        assert ai_pricing.TABLE[("anthropic", alias)] == ai_pricing.TABLE[("anthropic", pinned)]
+    # 已退役 / 限量型号不收
+    for gone in ("claude-opus-4-1", "claude-opus-4", "claude-sonnet-4", "claude-mythos-5-2"):
+        assert ("anthropic", gone) not in ai_pricing.TABLE
+
+
+def test_cny_vendors_keep_their_own_currency_and_are_never_converted():
+    mtok = 1_000_000
+    cn = {"base_url": "https://api.minimaxi.com/anthropic"}
+    glob = {"base_url": "https://api.minimax.io/anthropic"}
+    zhipu = {"base_url": "https://open.bigmodel.cn/api/anthropic"}
+    assert ai_pricing.vendor_of(cn) == "minimax"
+    assert ai_pricing.vendor_of(glob) == "minimax-global"
+    assert ai_pricing.vendor_of(zhipu) == "zhipu"
+    assert ai_pricing.currency_of("minimax", "MiniMax-M3") == "CNY"
+    assert ai_pricing.currency_of("zhipu", "glm-5.3") == "CNY"
+    assert ai_pricing.currency_of("minimax-global", "MiniMax-M3") == "USD"
+    assert ai_pricing.currency_of("anthropic", "claude-opus-5-5") == "USD"
+    assert ai_pricing.currency_of("zhipu", "glm-9") is None
+    # 同一个型号两个站点各按各的价目表（不是汇率换算）：2.10 元 vs 0.30 美元
+    assert ai_pricing.estimate(
+        "minimax", "MiniMax-M3", input_tokens=500_000, cached=0, output=0
+    ) == pytest.approx(500_000 * 2.10 / mtok)
+    assert ai_pricing.estimate(
+        "minimax-global", "MiniMax-M3", input_tokens=500_000, cached=0, output=0
+    ) == pytest.approx(500_000 * 0.30 / mtok)
+    # M3 按一轮输入分档：≤512k / >512k
+    t = ai_pricing.MINIMAX_TIER
+    assert ai_pricing.estimate(
+        "minimax", "MiniMax-M3", input_tokens=t, cached=t, output=1_000_000
+    ) == pytest.approx(t * 0.42 / mtok + 8.40)
+    assert ai_pricing.estimate(
+        "minimax", "MiniMax-M3", input_tokens=t + 1, cached=0, output=0
+    ) == pytest.approx((t + 1) * 4.20 / mtok)
+    assert ai_pricing.estimate(
+        "minimax-global", "MiniMax-M3.1-Flash", input_tokens=mtok, cached=mtok, output=mtok
+    ) == pytest.approx(0.015 + 0.60)
+    assert ai_pricing.estimate(
+        "minimax", "MiniMax-M3.1-Flash", input_tokens=mtok, cached=0, output=mtok
+    ) == pytest.approx(1.00 + 4.00)
+    assert ai_pricing.estimate(
+        "zhipu", "glm-5.3", input_tokens=mtok, cached=mtok // 2, output=mtok
+    ) == pytest.approx(4.0 + 1.0 + 28.0)
+    assert (
+        ai_pricing.estimate("minimax", "MiniMax-M2.7", input_tokens=10, cached=0, output=0) is None
+    )
+    # 费用对象带条目自己的币种
+    ev = {"reported": True, "input_tokens": 1000, "output_tokens": 100, "cached_input_tokens": 0}
+    usage = ai_pricing.usage_with_cost(ev, zhipu, "glm-5.3")
+    assert usage["cost"]["currency"] == "CNY"
+    assert usage["cost"]["amount"] == pytest.approx((1000 * 8 + 100 * 28) / mtok)
+    assert exectrace.project_usage(usage)["cost"]["currency"] == "CNY"
+    assert ai_pricing.usage_with_cost(ev, glob, "MiniMax-M3")["cost"]["currency"] == "USD"
+    assert "cost" not in ai_pricing.usage_with_cost(
+        ev, {"base_url": "https://x.invalid"}, "glm-5.3"
+    )
+
+
+def test_structured_cost_usd_is_none_for_a_cny_vendor():
+    from tavotto.engine import ai_structured
+    from tavotto.engine.agent_runner.wires import Usage
+
+    usage = Usage(input_tokens=1000, output_tokens=100, cached_input_tokens=0)
+    cny = {"base_url": "https://open.bigmodel.cn/api/anthropic", "model": "glm-5.3"}
+    usd = {"base_url": "https://api.minimax.io/anthropic", "model": "MiniMax-M3"}
+    assert ai_structured._cost(cny, usage, True) is None
+    assert ai_structured._cost(usd, usage, True) == pytest.approx((1000 * 0.30 + 100 * 1.20) / 1e6)
 
 
 # ================================================================ 智能修复（fixsession + run_tool）

@@ -6,26 +6,39 @@
  * 缩略图（版本列表 / 画布列表）不走这里：草图里没有这些字段，也不值得为几十张小图画箭头帽。
  */
 import {
+  arcPath,
   arrowGeometry,
   bracePath,
   cornerRadius,
   defaultLineJoin,
   isFilledHead,
+  outlineOf,
   shapeInset,
-  shapeOutline,
   strokeOpacityOf,
   svgStroke,
 } from '@/lib/shapeGeometry'
 import { MM_PER_PT } from '@/lib/units'
-import type { ArrowObject, ShapeObject } from '@/types/document'
+import { PathBody } from '@/canvas/PathView'
+import type { ArrowObject, PathObject, ShapeObject } from '@/types/document'
 import { lineEndpoints, objectRotation, shapeStrokeOn } from '@/types/document'
+import { usePaints } from '@/canvas/gradientPaint'
 
-export function ThumbShape({ obj }: { obj: ArrowObject | ShapeObject }) {
+export function ThumbShape({ obj }: { obj: ArrowObject | ShapeObject | PathObject }) {
   const w = Math.max(obj.w, 0.001)
   const h = Math.max(obj.h, 0.001)
   const sw = Math.max(obj.strokePt * MM_PER_PT, 0.0132)
   const rot = objectRotation(obj)
   const wrap = rot ? `rotate(${rot} ${obj.x + w / 2} ${obj.y + h / 2})` : undefined
+  if (obj.type === 'path') {
+    // 自由路径（ADR 0185）：与画布 PathView 同一组图元（`PathBody`），几何只在 `pathGeom.pathGeometry`
+    return (
+      <g data-thumb-shape="path" transform={wrap}>
+        <g transform={`translate(${obj.x} ${obj.y})`}>
+          <PathBody obj={obj} sw={sw} w={w} h={h} />
+        </g>
+      </g>
+    )
+  }
   const strokeOn = obj.type === 'arrow' || shapeStrokeOn(obj)
   const stroke = strokeOn
     ? svgStroke(
@@ -61,9 +74,33 @@ export function ThumbShape({ obj }: { obj: ArrowObject | ShapeObject }) {
     )
   }
 
+  return <ThumbClosedShape obj={obj} w={w} h={h} sw={sw} wrap={wrap} at={at} strokeOn={strokeOn} baseStroke={stroke} />
+}
+
+/** 形状那一支单独成组件：`usePaints` 是 hook，不能放在上面按类型提前返回的分支后面 */
+function ThumbClosedShape({
+  obj,
+  w,
+  h,
+  sw,
+  wrap,
+  at,
+  strokeOn,
+  baseStroke,
+}: {
+  obj: ShapeObject
+  w: number
+  h: number
+  sw: number
+  wrap: string | undefined
+  at: string
+  strokeOn: boolean
+  baseStroke: ReturnType<typeof svgStroke> | Record<string, never>
+}) {
   const inset = shapeInset(obj, sw)
-  const fill = obj.fill ?? 'none'
-  const fillOpacity = obj.fill ? (obj.fillOpacity ?? 1) : undefined
+  const paints = usePaints(obj, w, h, strokeOn)
+  const { fill, fillOpacity } = paints
+  const stroke = strokeOn ? { ...baseStroke, ...paints.strokeOverride } : baseStroke
   let body: React.ReactNode = null
   if (obj.shape === 'rect') {
     const rw = Math.max(w - 2 * inset, 0.001)
@@ -75,8 +112,10 @@ export function ThumbShape({ obj }: { obj: ArrowObject | ShapeObject }) {
     body = <line x1={s.rx * w} y1={s.ry * h} x2={e.rx * w} y2={e.ry * h} {...stroke} />
   } else if (obj.shape === 'brace') {
     body = <path d={bracePath(w, h, inset)} fill="none" {...stroke} />
+  } else if (obj.shape === 'arc') {
+    body = <path d={arcPath(w, h, inset)} fill="none" {...stroke} />
   } else {
-    const o = shapeOutline(obj.shape, w, h, inset, obj.sides)
+    const o = outlineOf(obj, w, h, inset)
     if (o?.kind === 'ellipse') {
       body = <ellipse cx={o.cx} cy={o.cy} rx={o.rx} ry={o.ry} fill={fill} fillOpacity={fillOpacity} {...stroke} />
     } else if (o?.kind === 'poly') {
@@ -92,7 +131,10 @@ export function ThumbShape({ obj }: { obj: ArrowObject | ShapeObject }) {
   }
   return (
     <g data-thumb-shape={obj.shape} transform={wrap}>
-      <g transform={at}>{body}</g>
+      <g transform={at}>
+        {paints.defs}
+        {body}
+      </g>
     </g>
   )
 }

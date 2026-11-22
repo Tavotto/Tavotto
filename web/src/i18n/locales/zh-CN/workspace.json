@@ -132,6 +132,7 @@
   "canvasTools": {
     "fit": "适应",
     "label": "画布工具",
+    "pen": "钢笔",
     "select": "选择",
     "subLabels": "序号"
   },
@@ -384,6 +385,18 @@
     "resetOverrides": "重置图内修改",
     "switchKind": "改为{{name}}",
     "switchKindCount": "把 {{count}} 个对象改为{{name}}",
+    "convertToPath": "转为路径",
+    "convertToPathCount": "把 {{count}} 个对象转为路径",
+    "drawPath": "画路径",
+    "continuePath": "续画路径",
+    "moveAnchors": "移动锚点",
+    "moveHandle": "调整手柄",
+    "addAnchors": "添加锚点",
+    "deleteAnchors": "删除 {{count}} 个锚点",
+    "convertAnchors": "转换锚点",
+    "cutPath": "在锚点处断开",
+    "joinPaths": "连接路径",
+    "averageAnchors": "平均锚点",
     "resizeAxes": "缩放 {{count}} 个子图",
     "resizePatch": "调整图框大小",
     "scaleLegend": "缩放图例",
@@ -399,6 +412,7 @@
     "unbindStyle": "不再跟随样式",
     "bindStyle": "给当前画布套用样式「{{name}}」",
     "alignToStyle": "按样式「{{name}}」对齐",
+    "followCanvas": "按样式「{{name}}」跟回画布",
     "scriptWinsOverStyle": "脚本改动优先于样式",
     "rotate": "旋转 {{deg}}°",
     "rotateObjects": "旋转对象",
@@ -438,7 +452,37 @@
     "showObjects": "显示 {{count}} 个对象",
     "setFramePad": "修改画布留白",
     "journalStyle": "参考 {{journal}} 的记录调整样式「{{name}}」",
-    "adoptComputedFrame": "采用计算渲染外框"
+    "adoptComputedFrame": "采用计算渲染外框",
+    "defaultAppearance": "默认填色描边",
+    "swapFillStroke": "互换填色和描边",
+    "clearFill": "无填充",
+    "eyedropper": "吸管上色",
+    "pathfinder": {
+      "unite": "合并",
+      "minusFront": "减去顶层",
+      "intersect": "相交",
+      "exclude": "排除重叠",
+      "divide": "分割",
+      "trim": "修边",
+      "merge": "合并同色",
+      "crop": "裁剪",
+      "minusBack": "减去后方"
+    },
+    "makeCompound": "建立复合路径",
+    "releaseCompound": "释放复合路径",
+    "offsetPath": "偏移路径",
+    "outlineStroke": "轮廓化描边",
+    "reversePath": "反转路径方向",
+    "simplifyPath": "简化路径",
+    "roundCorners": "圆角",
+    "shapeBuilder": "形状生成器",
+    "makeClipMask": "建立剪切蒙版",
+    "releaseClipMask": "释放剪切蒙版",
+    "transformMove": "移动",
+    "transformScale": "缩放",
+    "transformRotate": "旋转",
+    "transformSkew": "倾斜",
+    "transformReflect": "镜像"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -461,7 +505,10 @@
     "rowActions": "{{label}} 的操作",
     "moveUp": "上移一层",
     "moveDown": "下移一层",
-    "rename": "重命名"
+    "rename": "重命名",
+    "clipGroupLabel_other": "剪切组 · {{count}} 个对象",
+    "clipPath": "剪切路径",
+    "clipPathTip": "这个形状只用来裁剪组里的其他对象，不会画出来"
   },
   "layoutKind": {
     "col": "列布局",
@@ -528,6 +575,7 @@
   "quickEdit": {
     "aria": "快捷编辑",
     "changeKind": "更改为",
+    "convertToPath": "转为路径",
     "editElements": "改图里的内容",
     "hide": "隐藏此元素",
     "hideObject": "隐藏",
@@ -567,7 +615,8 @@
     "copy": "复制",
     "paste": "粘贴",
     "copyAsAnnotation": "复制为标注",
-    "pasteAsAnnotation": "粘贴为标注"
+    "pasteAsAnnotation": "粘贴为标注",
+    "pathfinder": "路径查找器"
   },
   "rail": {
     "assets": "素材",
@@ -767,8 +816,6 @@
     "emptyFromData": "用数据画一张"
   },
   "stylePanel": {
-    "emptyTitle": "在画布上选中一张图，这里显示它的样式",
-    "emptyAction": "从图层中选择",
     "noManifest": "这张图还没有可读的图内元素。",
     "needRender": "要读出这张图的样式，需要渲染一次。",
     "building": "正在构建图表…",
@@ -826,6 +873,24 @@
       "fontsize": "字号",
       "fontfamily": "字体",
       "linewidth": "线宽"
+    },
+    "canvasFollows": "这张画布跟随",
+    "canvasUnbound": "这张画布没有跟随样式",
+    "modeLabel": "样式范围",
+    "modeCanvas": "画布",
+    "modeFigure": "单图",
+    "modeCanvasTip": "改画布样式，这张画布上的图都跟着变",
+    "modeFigureTip": "只改选中的那张图，不动画布样式",
+    "figuresLabel": "这张画布上的图",
+    "pickFigure": "点上面一张图，看它的样式",
+    "followBack": "跟回画布",
+    "followBackOf": "{{row}}跟回画布",
+    "summary": {
+      "size": "{{sizes}} pt",
+      "axisBold": "轴标题加粗",
+      "titleBold": "标题加粗",
+      "line": "线 {{width}} pt",
+      "frame": "线 {{width}} pt"
     }
   },
   "status": {
@@ -908,6 +973,7 @@
     "styleCopiedArrow": "已复制箭头样式",
     "styleCopiedPanel": "已复制图的样式",
     "styleCopiedShape": "已复制形状样式",
+    "styleCopiedPath": "已复制路径样式",
     "styleCopiedText": "已复制文字样式",
     "styleCopyNeedSelection": "先选中要复制样式的对象",
     "stylePasteNoTarget": "选区里没有可粘贴的{{kind}}",
@@ -926,7 +992,19 @@
     "copiedDetails": "已复制",
     "packagedIncomplete_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材。恢复前请补齐。",
     "packagedExecutionIncomplete": "已生成项目包 {{name}}。运行依赖尚未确认完整，迁移前请检查数据与运行配置。",
-    "packagedIncompleteWithExecution_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材，运行依赖也尚未确认完整。迁移前请补齐素材并检查数据与运行配置。"
+    "packagedIncompleteWithExecution_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材，运行依赖也尚未确认完整。迁移前请补齐素材并检查数据与运行配置。",
+    "eyedropperNothing": "这里没有能吸的颜色",
+    "eyedropperNoTarget": "先选中要上色的形状、路径或箭头",
+    "pathfinderUnavailable": "这里用不了路径查找器",
+    "pathfinderEmpty": "算出来是空的，没有改动",
+    "simplifyNothing": "已经很简单了，没有可删的锚点",
+    "clipNeedTwo": "至少选中 2 个对象才能建立剪切蒙版",
+    "clipNeedPathOnTop": "最上面的对象要是路径或封闭形状，才能当剪切蒙版",
+    "clipMade": "已建立剪切蒙版",
+    "skewUnsupported": "文字和图不能倾斜",
+    "skewSkipped_other": "有 {{count}} 个文字或图没有倾斜",
+    "rotatePanelUnsupported": "图只能按 90° 旋转",
+    "rotatePanelSkipped_other": "有 {{count}} 张图没有旋转（图只能按 90° 旋转）"
   },
   "tabs": {
     "allCanvases": "全部画布",
@@ -937,11 +1015,19 @@
     "unopened": "未打开"
   },
   "toolHint": {
+    "arc": "拖动画出弧线；Esc 取消",
     "arrow": "拖动画出箭头，Shift 吸附 15° 角；Esc 取消",
+    "brace": "拖动画出大括号；Esc 取消",
+    "diamond": "拖动画出菱形；Esc 取消",
     "ellipse": "拖动画出椭圆；Esc 取消",
+    "eyedropper": "点画布上的东西，把它的颜色给选中的对象；Esc 退出",
     "line": "拖动画出直线；Esc 取消",
+    "pen": "点一下加尖角点，按住拖拉出平滑点；点起点闭合，Enter / Esc 结束",
+    "polygon": "拖动画出多边形；Esc 取消",
     "rect": "拖动绘制矩形；Esc 取消",
-    "text": "拖动绘制文字框，或单击按默认大小放置；Esc 取消"
+    "star": "拖动画出星形；Esc 取消",
+    "text": "拖动绘制文字框，或单击按默认大小放置；Esc 取消",
+    "triangle": "拖动画出三角形；Esc 取消"
   },
   "topbar": {
     "addSubLabels": "添加序号标签",
@@ -963,7 +1049,6 @@
     "fromOtherProject": "· 其他项目",
     "fromProject": "· 项目 {{name}}",
     "importPackage": "导入项目包…",
-    "insertShape": "插入形状",
     "more": "更多",
     "moreGroup": {
       "file": "文件",
@@ -1819,5 +1904,14 @@
       "errorbar": "误差棒",
       "image": "热图 / 网格"
     }
+  },
+  "pathfinder": {
+    "blockedEmbedded": "在这里用不了，请在 Tavotto 桌面版或浏览器里打开",
+    "blockedFailed": "这台电脑上没能加载路径查找器"
+  },
+  "isolation": {
+    "label": "组内编辑",
+    "exit": "退出组内编辑",
+    "exitTip": "按 Esc 退出一层"
   }
 }
