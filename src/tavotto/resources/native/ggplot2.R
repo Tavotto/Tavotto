@@ -19,6 +19,8 @@ with_svg_frame <- function(frame_pt, draw) {
 
 ggplot_text_slots <- c(
   "plot.title" = "title",
+  "plot.subtitle" = "subtitle",
+  "plot.caption" = "caption",
   "axis.x.bottom.title" = "xlab-b",
   "axis.x.top.title" = "xlab-t",
   "axis.y.left.title" = "ylab-l",
@@ -151,7 +153,7 @@ ggplot_text_targets <- function(table, frame_pt) {
   for (gid in names(ggplot_text_slots)) {
     slot <- which(table$layout$name == ggplot_text_slots[[gid]])
     if (length(slot) != 1L) next
-    role <- if (gid == "plot.title") "title" else "axis_label"
+    role <- if (gid == "plot.title") "title" else if (startsWith(gid, "axis.")) "axis_label" else "text"
     targets[[gid]] <- ggplot_text_target(table, slot, role)
   }
   targets <- c(targets, ggplot_legend_targets(table), ggplot_facet_labels(table))

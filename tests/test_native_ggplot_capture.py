@@ -32,6 +32,8 @@ def _rscript():
 
 ROOT = Path(__file__).resolve().parents[1]
 ADAPTER = ROOT / "src" / "tavotto" / "resources" / "native" / "ggplot2.R"
+SUBTITLE = "plot.subtitle"
+CAPTION = "plot.caption"
 X_BOTTOM = "axis.x.bottom.title"
 Y_LEFT = "axis.y.left.title"
 LEGEND = "legend.right.1.title"
@@ -177,6 +179,38 @@ hidden <- adapter$capture_ggplot(plot + ggplot2::guides(
   shape = ggplot2::guide_legend(title = NULL)
 ), c(432, 288))
 stopifnot(identical(names(hidden$state$text_targets), c(head(names(labels), 5L), names(facets))))
+
+secondary_plot <- plot +
+  ggplot2::labs(subtitle = "Comparing drive configurations", caption = "Source: ggplot2 mpg") +
+  ggplot2::theme(plot.subtitle = ggplot2::element_text(hjust = .5, colour = "#635479"),
+                 plot.caption = ggplot2::element_text(hjust = 1, colour = "#426154"))
+secondary <- adapter$capture_ggplot(secondary_plot, c(432, 288))
+count_at_capture <- summary_calls
+rng_at_capture <- .Random.seed
+secondary_edits <- list("plot.subtitle" = "#B04964", "plot.caption" = "#2B7984")
+edited <- adapter$render_ggplot(secondary$state, secondary_edits)
+restored <- edited
+anchors <- c("plot.subtitle" = .5, "plot.caption" = 1)
+for (gid in names(secondary_edits)) {
+  target <- secondary$state$text_targets[[gid]]
+  stopifnot(identical(target$role, "text"))
+  label <- paste0(">", target$label, "</text>")
+  before <- grep(label, strsplit(secondary$svg, "\n")[[1L]], fixed = TRUE, value = TRUE)
+  after <- grep(label, strsplit(edited, "\n")[[1L]], fixed = TRUE, value = TRUE)
+  stopifnot(length(before) == 1L, grepl(target$color, before, fixed = TRUE),
+            identical(after, sub(target$color, secondary_edits[[gid]], before, fixed = TRUE)))
+  bbox <- target$bbox * c(432, 288, 432, 288)
+  svg_x <- as.numeric(sub(".* x='([^']+)'.*", "\\1", after))
+  stopifnot(abs(svg_x - bbox[[1L]] - bbox[[3L]] * anchors[[gid]]) < 1)
+  restored <- sub(secondary_edits[[gid]], target$color, restored, fixed = TRUE)
+}
+stopifnot(identical(restored, secondary$svg),
+          identical(adapter$render_ggplot(secondary$state), secondary$svg),
+          count_at_capture == summary_calls, identical(rng_at_capture, .Random.seed))
+unsupported_secondary <- adapter$capture_ggplot(
+  secondary_plot + ggplot2::labs(subtitle = expression(alpha)) +
+    ggplot2::theme(plot.caption = ggplot2::element_blank()), c(432, 288))
+stopifnot(!any(names(secondary_edits) %in% names(unsupported_secondary$state$text_targets)))
 
 bar <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
   ggplot2::geom_point() + ggplot2::labs(colour = "City mileage") +
@@ -440,7 +474,8 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
                                            "Rear wheel drive")) +
   ggplot2::facet_wrap(ggplot2::vars(cyl), labeller = ggplot2::labeller(
     cyl = function(values) paste("Cylinder", values))) +
-  ggplot2::labs(title = "Fuel economy", x = "Engine displacement", y = "Highway mileage",
+  ggplot2::labs(title = "Fuel economy", subtitle = "Comparing drive configurations",
+                 caption = "Source: ggplot2 mpg", x = "Engine displacement", y = "Highway mileage",
                  colour = "Drive type") +
   ggplot2::theme(plot.title = ggplot2::element_text(colour = "#112233"),
                  legend.text = ggplot2::element_text(colour = "#294052"))
@@ -510,8 +545,13 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
         assert elements[LEGEND_ENTRY]["label"] == "Front wheel drive"
         assert elements[FACET]["role"] == "text"
         assert elements[FACET]["label"] == "Cylinder 8"
+        assert elements[SUBTITLE]["role"] == elements[CAPTION]["role"] == "text"
+        assert elements[SUBTITLE]["label"] == "Comparing drive configurations"
+        assert elements[CAPTION]["label"] == "Source: ggplot2 mpg"
         expected = {
             "plot.title": "#6C3799",
+            SUBTITLE: "#B04964",
+            CAPTION: "#2B7984",
             X_BOTTOM: "#8C3011",
             Y_LEFT: "#2A7654",
             LEGEND: "#2370B1",
@@ -548,6 +588,8 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
         assert session.svg_path(descriptor["stem"]).read_text(encoding="utf-8") == svg
         without_entry = render([patch for patch in patches if patch["gid"] != LEGEND_ENTRY])["svg"]
         assert "#E058A9" not in without_entry and "#2370B1" in without_entry
+        without_caption = render([patch for patch in patches if patch["gid"] != CAPTION])["svg"]
+        assert "#2B7984" not in without_caption and "#B04964" in without_caption
         without_facet = render(patches[:-1])["svg"]
         assert "#2370B1" in without_facet and "#BE3D47" not in without_facet
         undo_x_and_y = render(patches[:1])["svg"]
@@ -652,6 +694,8 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
         assert colors["Cylinder 8"] == {int(expected[FACET][1:], 16)}
         assert colors["Front wheel drive"] == {int(expected[LEGEND_ENTRY][1:], 16)}
         assert colors["Rear wheel drive"] == {0x294052}
+        assert colors["Comparing drive configurations"] == {int(expected[SUBTITLE][1:], 16)}
+        assert colors["Source: ggplot2 mpg"] == {int(expected[CAPTION][1:], 16)}
 
         original_script = script.read_text(encoding="utf-8")
         script.write_text('stop("new execution failed")\n', encoding="utf-8")

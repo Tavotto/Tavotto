@@ -1406,6 +1406,21 @@
       ]
     },
     {
+      "id": "desktop.ggplot-subtitle-caption-color",
+      "status": "active",
+      "platform": "desktop",
+      "summary": {
+        "zh-CN": "单独修改原生 ggplot2 的副标题和图注颜色，并随排版保存和导出",
+        "en-US": "Recolor native ggplot2 subtitles and captions independently, then save the layout and export"
+      },
+      "entry": "脚本 → 用 R 运行 → 图内元素 → 副标题或图注 → 颜色",
+      "e2e": [],
+      "desktop_manual": [
+        "用 R 运行带纯文本副标题和图注的 ggplot2 图。分别改色，核对图标题及另一处文字的颜色，撤销后重做。",
+        "保存排版，结束 R 会话并重开后导出 PDF，核对副标题和图注的颜色。"
+      ]
+    },
+    {
       "id": "desktop.ggplot-legend-entry-color",
       "status": "active",
       "platform": "desktop",
