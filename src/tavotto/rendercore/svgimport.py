@@ -34,6 +34,8 @@ MAX_ELEMENTS = 50_000
 #: 一次导入里所有路径的锚点总数上限，与单条 `d` 的字符上限（防一条路径塞满 8 MB）
 MAX_ANCHORS = 100_000
 MAX_PATH_D_CHARS = 2 * 1024 * 1024
+#: 导入后 CSS 规则（选择器）总数上限
+MAX_CSS_SELECTORS = 10_000
 KAPPA_ARC_MAX = math.pi / 2
 
 #: 原因码（前端按它说一句原因）
@@ -270,17 +272,25 @@ def _parse_decls(s: str) -> dict[str, str]:
 def parse_css(
     text: str, notes: dict[str, int], start: int = 0, deadline: float = math.inf
 ) -> list[_Rule]:
-    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    # 注释 / @ 规则：进到这里的样式表已经过 `svgcheck._stylesheet` 的校验（选择器与声明里都不许有 `/*`、`@`），实际走不到；
+    # 先查有没有再替换，避免对根本没有它们的文本白扫
+    if "/*" in text:
+        text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
     # @font-face / @media 这类块：整块跳过（@media 里的规则不应用——打印 / 屏幕差异不影响导入几何）
-    text = re.sub(r"@[\w-]+[^{;]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}", "", text)
-    text = re.sub(r"@[\w-]+[^;{]*;", "", text)
+    if "@" in text:
+        text = re.sub(r"@[\w-]+[^{;]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}", "", text)
+        text = re.sub(r"@[\w-]+[^;{]*;", "", text)
     rules: list[_Rule] = []
     order = start
-    for n, (sels, body) in enumerate(re.findall(r"([^{}]+)\{([^{}]*)\}", text)):
-        if not n & 0xFF and time.monotonic() > deadline:
-            raise SvgImportError("timeout", f"超过 {DEADLINE_S:g} 秒")
+    # 与 `([^{}]+)\{([^{}]*)\}` 的 findall 同一语义，但是线性扫描（那个正则对「合法规则后面跟一大串空白」会在每个起点重试，
+    # 平方级，Codex 线程 4656811230）
+    ticks = 0
+    for _s, _e, sels, body in svgcheck._iter_rules(text):
         decls = _parse_decls(body)
         for sel in sels.split(","):
+            ticks += 1
+            if not ticks & 0xFF and time.monotonic() > deadline:
+                raise SvgImportError("timeout", f"超过 {DEADLINE_S:g} 秒")
             sel = sel.strip()
             m = _SIMPLE_SEL.match(sel) if sel else None
             if not m or (not m.group(1) and not m.group(2)):
@@ -292,6 +302,10 @@ def parse_css(
             classes = tuple(n for k, n in parts if k == ".")
             ids = [n for k, n in parts if k == "#"]
             order += 1
+            if (
+                order > MAX_CSS_SELECTORS
+            ):  # `order` 从 `start`（已累计的规则数）接着数，是全文档的总数
+                raise SvgImportError("too_many_elements", "CSS 选择器过多")
             rules.append(
                 _Rule(
                     tag,

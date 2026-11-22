@@ -748,3 +748,69 @@ def test_geometry_total_is_checked_against_the_limit_not_only_added():
     with pytest.raises(svgimport.SvgImportError) as e:
         svgimport._geometry(ET.fromstring('<path d="M0 0"/>'), "path", ctx)
     assert e.value.code == "too_many_elements"
+
+
+# ---- Codex 线程 4656811230：parse_css 的规则扫描必须线性 ----
+
+
+def _old_parse_css_rules(text: str):
+    import re
+
+    return re.findall(r"([^{}]+)\{([^{}]*)\}", text)
+
+
+def test_parse_css_trailing_whitespace_is_linear():
+    """`a{}` 后接大量空格（svgcheck 接受尾部空白）：原来 findall 在每个空白起点重试，4 万个空格 13 秒"""
+    text = "a{}" + " " * 60_000
+    t0 = time.monotonic()
+    rules = svgimport.parse_css(text, {}, 0, time.monotonic() + 5)
+    assert time.monotonic() - t0 < 10.0
+    assert len(rules) == 1
+
+
+def test_parse_css_matches_the_old_regex_on_random_input():
+    import random
+
+    rng = random.Random(11)
+    for _ in range(2000):
+        css = "".join(rng.choice("ab.#{} ;:\n") for _ in range(rng.randint(0, 30)))
+        got = [
+            (r.tag, r.classes, r.ident, tuple(sorted(r.decls)))
+            for r in svgimport.parse_css(css, {}, 0)
+        ]
+        want = []
+        for sels, body in _old_parse_css_rules(css):
+            decls = svgimport._parse_decls(body)
+            for sel in sels.split(","):
+                sel = sel.strip()
+                m = svgimport._SIMPLE_SEL.match(sel) if sel else None
+                if not m or (not m.group(1) and not m.group(2)):
+                    continue
+                import re
+
+                parts = re.findall(r"([.#])([\w-]+)", m.group(2))
+                ids = [n for k, n in parts if k == "#"]
+                want.append(
+                    (
+                        m.group(1),
+                        tuple(n for k, n in parts if k == "."),
+                        ids[0] if ids else None,
+                        tuple(sorted(decls)),
+                    )
+                )
+        assert got == want, css
+
+
+def test_import_with_trailing_css_whitespace_stays_within_the_wall_clock(monkeypatch):
+    monkeypatch.setattr(svgimport, "DEADLINE_S", 0.3)
+    text = SVG.format("<style>a{}" + " " * 60_000 + "</style>")
+    t0 = time.monotonic()
+    outcome(text)
+    assert time.monotonic() - t0 < 0.3 + 1.0
+
+
+def test_css_selector_count_is_capped():
+    css = ",".join(["a"] * (svgimport.MAX_CSS_SELECTORS + 5)) + "{fill:red}"
+    with pytest.raises(svgimport.SvgImportError) as e:
+        svgimport.parse_css(css, {}, 0)
+    assert e.value.code == "too_many_elements"
