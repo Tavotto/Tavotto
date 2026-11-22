@@ -3419,6 +3419,181 @@ export async function engineSpecfix(
   return body as unknown as SpecFixResponse
 }
 
+/** 一键排版（ADR 0199）的请求体；字段形状与 `app.api_pro_quick_layout_plan` 一一对应 */
+export interface QuickLayoutRequest {
+  /** `key` = 画布上的面板对象 id；`id` = `panel.fileId`（与 engineSpecfix 同一个 id）；`patches` = 此刻的全量覆盖列表（B0） */
+  panels: { key: string; id: string; patches: unknown[]; box: [number, number, number, number] }[]
+  /** 不能改图幅的面板（非图、旋转 / 翻转、位图）：只当障碍物 / 固定盒子 */
+  fixed: { key: string; box: [number, number, number, number] }[]
+  page: { w: number; h: number; margin: number }
+  target: 'single' | 'double' | 'page'
+  gap_mm: number
+  profile: unknown
+  label_pt: number
+  /** 同时按规范修文字和线条（工具条小下拉里的开关） */
+  fix_spec: boolean
+  /** 列数；null = 按各图现在大致的摆放位置认行列（互相压住时后端退回自动网格） */
+  columns: number | null
+  /** keep = 在当前页面 w×h 里排；fit = 页宽 = 目标期刊宽、页高跟着内容 */
+  canvas: 'keep' | 'fit'
+  /**
+   * 拖分隔线得到的行 / 列相对权重（图框尺寸的占比）；`rows_mm` = 每行图框的绝对高度（mm，取自预览框），
+   * 求解器原样采用，保证结果与松手前的预览一致
+   */
+  ratios?: { cols?: number[]; rows?: number[]; rows_mm?: number[] }
+}
+
+export type QuickLayoutFailureCode =
+  | 'not_licensed'
+  | 'unavailable'
+  | 'too_few'
+  | 'invalid_plan'
+  | 'not_converged'
+  | 'render_failed'
+  | 'page_too_small'
+
+/** 求解器回的网格：行列数、每张图（画布对象 id）在哪一格、行 / 列相对权重 */
+export interface QuickLayoutGrid {
+  rows: number
+  cols: number
+  cells: Record<string, [number, number]>
+  col_ratios: number[]
+  row_ratios: number[]
+}
+
+export type QuickLayoutNoteCode = 'equal_aspect' | 'spec_not_fixed'
+
+/** 按规范改过哪几类（封闭集合；关着开关或没改动 = 空） */
+export type QuickLayoutSpecChange =
+  | 'font_family'
+  | 'font_size'
+  | 'line_width'
+  | 'tick_direction'
+  | 'legend_frame'
+  | 'text_weight'
+  | 'other'
+
+export type QuickLayoutResponse =
+  | {
+      ok: true
+      panels: { key: string; patches: { gid: string; prop: string; value: unknown }[]; box: [number, number, number, number] }[]
+      labels: { key: string; x: number; y: number }[]
+      notes: { code: QuickLayoutNoteCode; ref: string }[]
+      spec_changes: QuickLayoutSpecChange[]
+      /** 页面收紧到「内容外框 + 页边距」：一键排版的结果就是最终那张图（ADR 0199 §五） */
+      page: { w: number; h: number }
+      /** 网格（拖分隔线重排用）；后端说不出 = null */
+      grid: QuickLayoutGrid | null
+      replay_required: boolean
+    }
+  | { ok: false; code: QuickLayoutFailureCode; replay_required?: boolean }
+
+const isBox = (v: unknown): v is [number, number, number, number] =>
+  Array.isArray(v) && v.length === 4 && v.every((n) => typeof n === 'number' && Number.isFinite(n))
+
+const QUICK_LAYOUT_FAILURES: ReadonlySet<string> = new Set([
+  'not_licensed',
+  'unavailable',
+  'too_few',
+  'invalid_plan',
+  'not_converged',
+  'render_failed',
+  'page_too_small',
+])
+const QUICK_LAYOUT_NOTES: ReadonlySet<string> = new Set(['equal_aspect', 'spec_not_fixed'])
+const QUICK_LAYOUT_SPEC_CHANGES: ReadonlySet<string> = new Set([
+  'font_family',
+  'font_size',
+  'line_width',
+  'tick_direction',
+  'legend_frame',
+  'text_weight',
+  'other',
+])
+
+const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 1
+const isWeights = (v: unknown, n: number): boolean =>
+  Array.isArray(v) && v.length === n && v.every((x) => typeof x === 'number' && Number.isFinite(x) && x > 0)
+
+/** `grid`：null / 缺席都行（后端说不出网格）；给了就必须自洽，否则整份当形状不对 */
+function isQuickLayoutGrid(g: unknown): boolean {
+  if (g === null || g === undefined) return true
+  if (!isRec(g) || !isCount(g.rows) || !isCount(g.cols) || !isRec(g.cells)) return false
+  const rows = g.rows
+  const cols = g.cols
+  return (
+    isWeights(g.col_ratios, cols) &&
+    isWeights(g.row_ratios, rows) &&
+    Object.values(g.cells).every(
+      (rc) =>
+        Array.isArray(rc) &&
+        rc.length === 2 &&
+        Number.isInteger(rc[0]) && rc[0] >= 0 && rc[0] < rows &&
+        Number.isInteger(rc[1]) && rc[1] >= 0 && rc[1] < cols,
+    )
+  )
+}
+
+/** 成功体 / 失败体的形状核对：形状不对 = 没拿到，不是「排好了」 */
+function isQuickLayoutResponse(body: Record<string, unknown>): boolean {
+  if (body.replay_required !== undefined && typeof body.replay_required !== 'boolean') return false
+  if (body.ok === false) return isStr(body.code) && QUICK_LAYOUT_FAILURES.has(body.code)
+  return (
+    body.ok === true &&
+    isQuickLayoutGrid(body.grid) &&
+    Array.isArray(body.panels) &&
+    body.panels.every(
+      (p) =>
+        isRec(p) &&
+        isStr(p.key) &&
+        isBox(p.box) &&
+        Array.isArray(p.patches) &&
+        p.patches.every((x) => isRec(x) && isStr(x.gid) && isStr(x.prop) && 'value' in x),
+    ) &&
+    Array.isArray(body.labels) &&
+    body.labels.every(
+      (l) => isRec(l) && isStr(l.key) && typeof l.x === 'number' && Number.isFinite(l.x) && typeof l.y === 'number' && Number.isFinite(l.y),
+    ) &&
+    isRec(body.page) &&
+    typeof body.page.w === 'number' && Number.isFinite(body.page.w) && body.page.w > 0 &&
+    typeof body.page.h === 'number' && Number.isFinite(body.page.h) && body.page.h > 0 &&
+    Array.isArray(body.notes) &&
+    body.notes.every((n) => isRec(n) && isStr(n.code) && QUICK_LAYOUT_NOTES.has(n.code) && isStr(n.ref)) &&
+    Array.isArray(body.spec_changes) &&
+    body.spec_changes.every((c) => isStr(c) && QUICK_LAYOUT_SPEC_CHANGES.has(c))
+  )
+}
+
+/**
+ * 一键排版的方案（ADR 0199）：**只算不写**，回每张图最终的全量覆盖、新摆放与标签位置，由前端一次 commit。
+ * 失败体（`ok: false`）是正常返回；传输 / 形状不对才抛（调用方当「不知道」处理并重放）。
+ */
+export async function quickLayoutPlan(body: QuickLayoutRequest): Promise<QuickLayoutResponse> {
+  const res = await fetch(apiUrl('/api/pro/quick-layout/plan'), withProject({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+  const out = await res.json().catch(() => ({}) as Record<string, unknown>)
+  if (!res.ok) {
+    noteProjectGone(res.status, out)
+    throw new EngineError(
+      (out.error as string) || t('render.failed', { ns: 'errors', status: res.status }),
+      (out.traceback as string) || '',
+      (out.code as string) || '',
+      (out.module as string) || '',
+      undefined,
+      undefined,
+      { params: out.params as Record<string, unknown> | undefined },
+    )
+  }
+  if (!isQuickLayoutResponse(out)) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: res.status }), '', 'bad_shape', '')
+  }
+  if (out.ok === true && out.grid === undefined) out.grid = null
+  return out as unknown as QuickLayoutResponse
+}
+
 /**
  * 作废这张图的热会话（QuickEdit「重新构建」）：下一次 `engineRender` 从头跑
  * 脚本。后端只让会话过期——不起 worker、不动源脚本、不写回、不清 override。

@@ -43,6 +43,8 @@ const SAMPLES: Record<ActivityKind, ActivityDetail> = {
   'view.drag_panned': { kind: 'view.drag_panned' },
   'view.wheel_struggled': { kind: 'view.wheel_struggled' },
   'figure.text_quick_edit': { kind: 'figure.text_quick_edit' },
+  'quick_layout.applied': { kind: 'quick_layout.applied' },
+  'quick_layout.ratios_applied': { kind: 'quick_layout.ratios_applied' },
 }
 
 describe('kind 闭集', () => {
