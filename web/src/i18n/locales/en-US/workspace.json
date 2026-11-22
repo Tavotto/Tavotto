@@ -1130,6 +1130,7 @@
     "documentName": "Layout name",
     "export": "Export",
     "exportPackage": "Export project package",
+    "exportCanvasPackage": "Package current canvas only",
     "exportTip": "Export PNG / PDF",
     "fitCanvas": "Fit canvas",
     "foreignOpen": {

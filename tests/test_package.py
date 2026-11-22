@@ -163,6 +163,69 @@ def test_package_schema3_collects_assets_across_canvases(env, tmp_path):
     assert opened["missing"] == []
 
 
+@pytest.mark.parametrize("schema", [documents.SCHEMA_PROJECT, documents.SCHEMA_CHART_PROJECT])
+def test_package_can_select_one_canvas_before_collecting_assets(env, schema):
+    client, figs, tmp = env
+    shared_pdf = (figs / "p1.pdf").read_bytes()
+    (figs / "private.pdf").write_bytes(shared_pdf)
+    private = {**_layout("private.pdf"), "id": "private", "name": "private canvas"}
+    shared = {**_layout(), "id": "shared", "name": "shared canvas"}
+    private["objects"].append({**shared["objects"][0], "id": "shared-copy"})
+    doc = {
+        "schema": schema,
+        "project": {"id": "p1", "name": "Two canvases"},
+        "canvases": [private, shared],
+        "activeCanvasId": "private",
+    }
+    response = client.post("/api/package", json={"doc": doc, "canvas_id": "shared"})
+    body = response.get_json()
+    assert response.status_code == 200, body
+    assert body["assets"] == 1
+    assert body["document_format"] == "v4"
+    package = figs / "tavottofile" / "export" / body["name"]
+    expected_document = {
+        **doc,
+        "schema": documents.SCHEMA_CHART_PROJECT,
+        "canvases": [shared],
+        "activeCanvasId": "shared",
+    }
+    with zipfile.ZipFile(package) as archive:
+        assert set(archive.namelist()) == {"layout.json", "package_manifest.json", "assets/p1.pdf"}
+        assert archive.read("assets/p1.pdf") == shared_pdf
+        assert json.loads(archive.read("layout.json")) == expected_document
+        manifest = json.loads(archive.read("package_manifest.json"))
+        assert "figures_dir" not in manifest
+        assert [entry["id"] for entry in manifest["assets"]] == ["p1.pdf"]
+    (figs / "p1.pdf").unlink()
+    destination = tmp / "received canvas"
+    response = _open_zip(
+        client,
+        package,
+        "/api/package/install",
+        options=json.dumps({"destination": str(destination)}),
+    )
+    assert response.status_code == 201, response.get_json()
+    assert response.get_json()["doc"] == expected_document
+    assert (destination / "p1.pdf").read_bytes() == shared_pdf
+    assert not (destination / "private.pdf").exists()
+
+
+@pytest.mark.parametrize(
+    ("canvas_id", "ids"), [(None, ["c1"]), ("missing", ["c1"]), ("c1", ["c1", "c1"])]
+)
+def test_package_cannot_fall_back_to_all_canvases_on_bad_selection(env, canvas_id, ids):
+    client, figs, _ = env
+    doc = {
+        "schema": documents.SCHEMA_PROJECT,
+        "canvases": [{**_layout(), "id": canvas} for canvas in ids],
+        "activeCanvasId": "c1",
+    }
+    response = client.post("/api/package", json={"doc": doc, "canvas_id": canvas_id})
+    assert response.status_code == 400
+    assert response.get_json()["code"] == "invalid_document"
+    assert not list((figs / "tavottofile" / "export").glob("*.tavotto"))
+
+
 def test_package_open_keys_off_structure_not_kind_or_extension(env):
     """检视只认 zip 里的结构，不认 `kind` 字符串、也不认扩展名。
 

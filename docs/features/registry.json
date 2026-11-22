@@ -299,6 +299,22 @@
       ]
     },
     {
+      "id": "canvas.package-current",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "分享当前画布及其引用的素材，接收方可以重新打开和导出",
+        "en-US": "Share the current canvas with its resources so recipients can reopen and export it"
+      },
+      "entry": "排版菜单 → 仅打包当前画布",
+      "e2e": [
+        {
+          "spec": "chart-document.spec.ts",
+          "title": "packages only the active canvas and reopens it in a fresh project"
+        }
+      ]
+    },
+    {
       "id": "canvas.select-and-drag",
       "status": "active",
       "platform": "both",

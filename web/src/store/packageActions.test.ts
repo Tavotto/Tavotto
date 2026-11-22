@@ -86,6 +86,24 @@ describe('导出项目包失败', () => {
     ui().statusAction!.run()
     expect(useDiagSendStore.getState().open).toBe(true)
   })
+
+  it('仅打包当前画布时，切到另一张画布后旧重试不再导出', async () => {
+    const document = emptyProject()
+    const first = document.canvases[0]
+    document.canvases.push({ ...first, id: 'sibling', name: 'Sibling' })
+    await useDocumentStore.getState().switchDocument(document, 'two-canvases')
+    createPackage.mockRejectedValueOnce(new Error('x'))
+    await exportPackage('canvas')
+    expect(createPackage).toHaveBeenCalledWith(first.name, expect.objectContaining({
+      activeCanvasId: first.id,
+    }), {}, { pj: 'A', canvasId: first.id })
+    const retry = ui().statusAction!
+    useDocumentStore.getState().switchCanvas('sibling')
+    expect(useDocumentStore.getState().activeCanvasId).toBe('sibling')
+    retry.run()
+    await Promise.resolve()
+    expect(createPackage).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('打开项目包失败', () => {

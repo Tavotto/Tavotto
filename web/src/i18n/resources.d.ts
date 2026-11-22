@@ -8465,6 +8465,7 @@ export default interface Resources {
       "documentName": "排版名",
       "documentRenameHint": "单击打开排版菜单；双击或按 F2 重命名",
       "export": "导出",
+      "exportCanvasPackage": "仅打包当前画布",
       "exportPackage": "导出项目包",
       "exportTip": "导出 PNG / PDF",
       "fitCanvas": "适应画布",

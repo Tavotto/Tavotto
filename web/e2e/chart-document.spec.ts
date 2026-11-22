@@ -272,6 +272,145 @@ test('chart binding backs up the project and reopens the frozen source', {
   }
 })
 
+test('packages only the active canvas and reopens it in a fresh project', {
+  tag: '@feature:canvas.package-current',
+}, async ({ app, page }) => {
+  test.setTimeout(240_000)
+  const project = mkdtempSync(path.join(os.tmpdir(), 'tavotto-canvas-package-'))
+  const layoutName = 'SharingLayout'
+  const c1 = 'private'
+  const c2 = 'shared'
+  let sender: Awaited<ReturnType<typeof startApp>> | undefined
+  try {
+    writeFileSync(path.join(project, 'chart.svg'), SOURCE)
+    writeFileSync(path.join(project, 'private.svg'), SOURCE.replace('Source keep', 'Private note'))
+    writeFileSync(path.join(project, 'inset.pdf'), readFileSync(path.join(
+      import.meta.dirname, '..', '..', 'examples', 'figures', 'Fig1_kinetics.pdf',
+    )))
+    sender = await startApp({ figures: project })
+    const canvas = (id: string, name: string, fileId: string) => ({
+      id, name, schema: 2, page: { w: 120, h: 100 }, guides: [], updatedAt: 1,
+      objects: [{
+        id: id + '-panel', type: 'panel', x: 20, y: 20, w: 50, h: 50,
+        fileId, fileKind: 'svg', nativeW: 100 * 25.4 / 72, nativeH: 100 * 25.4 / 72,
+        overrides: [],
+      }],
+    })
+    const shared = canvas(c2, 'Shared canvas', 'chart.svg')
+    shared.objects.push({
+      ...shared.objects[0], id: 'shared-inset', fileId: 'inset.pdf', fileKind: 'pdf',
+      x: 80, w: 25, h: 20, nativeW: 100, nativeH: 80,
+    })
+    const layout = {
+      schema: 3, project: { id: 'sharing-test', name: layoutName },
+      canvases: [
+        canvas(c1, 'Private canvas', 'private.svg'),
+        shared,
+      ],
+      activeCanvasId: c1, createdAt: 1, updatedAt: 1,
+    }
+    const layoutURL = sender.baseURL + '/api/layouts/' + layoutName
+    const seeded = await page.request.post(layoutURL + '?target=project', { data: layout })
+    expect(seeded.ok(), await seeded.text()).toBe(true)
+    await page.goto(sender.baseURL)
+    const documentMenu = page.getByRole('button', { name: /^(文档|排版)：/ })
+    await documentMenu.click()
+    await page.getByRole('menuitem', { name: /^打开(文档|排版)/ }).click()
+    await page.getByRole('dialog').getByRole('button', { name: new RegExp(layoutName) }).click()
+    await waitForDocumentReady(page)
+    await page.locator('[data-all-canvases]').click()
+    await page.locator('[data-all-canvases-item="shared"]').click()
+    await expect(page.locator('[data-canvas-tab="shared"]')).toHaveAttribute('aria-selected', 'true')
+    const panel = page.locator('[data-canvas-stage] [data-object-id="shared-panel"]')
+    await panel.click({ button: 'right' })
+    await page.locator('[data-quick-item="bind-chart"]').click()
+    const binding = page.locator('[data-chart-bind-dialog]')
+    for (const [index, value] of [10, 10, 80, 80].entries()) {
+      await binding.locator(`[data-chart-rect="${index}"]`).fill(String(value))
+    }
+    await binding.locator('[data-chart-axes-nodes]').fill('old_axis')
+    await binding.locator('[data-chart-series-field="node"]').fill('curve')
+    await binding.locator('[data-chart-series-field="x"]').fill('x')
+    await binding.locator('[data-chart-series-field="y"]').fill('y')
+    await binding.locator('[data-chart-data]').fill('x,y\n0,25\n10,25\n')
+    await page.locator('[data-chart-bind-action="preview"]').click()
+    await expect(binding.locator('[data-chart-comparison] img')).toHaveCount(2, { timeout: 60_000 })
+    await page.locator('[data-chart-bind-action="confirm"]').click()
+    const chart = panel.locator('[data-display="exact"] [data-element-svg] > svg')
+    await expect(chart.getByText('Source keep')).toHaveCount(1, { timeout: 60_000 })
+    const expectedSvg = await chart.innerHTML()
+    const saved = page.waitForResponse(response =>
+      new URL(response.url()).pathname === '/api/layouts/' + layoutName && response.request().method() === 'POST')
+    await page.keyboard.press('ControlOrMeta+s')
+    const save = await saved
+    expect(save.ok(), await save.text()).toBe(true)
+    const before = await (await page.request.get(layoutURL)).text()
+
+    await documentMenu.click()
+    const packaging = page.waitForResponse(response => new URL(response.url()).pathname === '/api/package')
+    await page.getByRole('menuitem', { name: '仅打包当前画布', exact: true }).click()
+    const packed = await packaging
+    expect(packed.ok(), await packed.text()).toBe(true)
+    const { name, url, chart_sources } = await packed.json()
+    expect(chart_sources).toBe(1)
+    expect(name).toMatch(/^Shared_canvas_/)
+    await expect(page.locator('[data-canvas-tab="private"]')).toBeVisible()
+    expect(await (await page.request.get(layoutURL)).text()).toBe(before)
+    const archive = await page.request.get(sender.baseURL + url)
+    expect(archive.ok(), await archive.text()).toBe(true)
+    const buffer = await archive.body()
+    await sender.stop()
+    sender = undefined
+
+    const receiver = await app({ noProject: true })
+    const destination = path.join(receiver.home, 'received canvas')
+    await page.goto(receiver.baseURL)
+    const chooser = page.waitForEvent('filechooser')
+    await page.locator('[data-install-project-package]').click()
+    await (await chooser).setFiles({ name, mimeType: 'application/zip', buffer })
+    await page.locator('[data-project-package-destination]').fill(destination, { timeout: 60_000 })
+    const installation = page.waitForResponse(response =>
+      new URL(response.url()).pathname === '/api/package/install', { timeout: 90_000 })
+    await page.locator('[data-project-package-install]').click()
+    const installed = await installation
+    expect(installed.status(), await installed.text()).toBe(201)
+    const received = (await installed.json()).doc
+    expect(received.activeCanvasId).toBe(c2)
+    expect(received.canvases.map((item: { id: string }) => item.id)).toEqual([c2])
+    expect(existsSync(path.join(destination, 'private.svg'))).toBe(false)
+    expect(existsSync(path.join(destination, 'inset.pdf'))).toBe(true)
+    await page.locator('[data-project-package-open]').click()
+    const continueEditing = page.locator('[data-project-package-continue]')
+    await continueEditing.click({ timeout: 80_000 })
+    await expect(continueEditing).toBeHidden()
+    await waitForDocumentReady(page)
+    await expect(chart.getByText('Source keep')).toHaveCount(1, { timeout: 60_000 })
+    expect(await chart.innerHTML()).toBe(expectedSvg)
+    await expect(page.locator('[data-canvas-tab="private"]')).toHaveCount(0)
+
+    await page.locator('[data-onboarding-anchor="export"]').click()
+    const pdf = page.locator('[data-export-format="pdf"] input')
+    await expect(pdf).toBeVisible()
+    if (!(await pdf.isChecked())) await pdf.check()
+    const png = page.locator('[data-export-format="png"] input')
+    if (await png.isChecked()) await png.uncheck()
+    const exportStarted = page.waitForResponse(response =>
+      new URL(response.url()).pathname === '/api/export/start' && response.request().method() === 'POST')
+    await page.locator('[data-export-start]').click()
+    const job = await exportStarted
+    expect(job.ok(), await job.text()).toBe(true)
+    expect(job.request().postDataJSON().scope).toBe('canvas')
+    const { export_dir } = await job.json()
+    await expect(page.locator('[data-export-result]')).toBeVisible({ timeout: 60_000 })
+    const files = readdirSync(export_dir).filter(file => file.endsWith('.pdf'))
+    expect(files).toHaveLength(1)
+    expect(readFileSync(path.join(export_dir, files[0])).subarray(0, 5).toString()).toBe('%PDF-')
+  } finally {
+    await sender?.stop()
+    rmSync(project, { recursive: true, force: true })
+  }
+})
+
 test('canvas PDF export adds bookmarks to two instances of the same figure', {
   tag: '@feature:export.pdf-panel-bookmarks',
 }, async ({ app, page }) => {

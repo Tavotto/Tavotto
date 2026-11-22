@@ -684,6 +684,7 @@ export function DocumentMenu() {
   const name = useDocumentStore((s) => s.projectMeta.name)
   const documentId = useDocumentStore((s) => s.documentId)
   const recentDocs = useDocumentStore((s) => s.recentDocs)
+  const hasMultipleCanvases = useDocumentStore((s) => s.canvases.length > 1)
   const projectFile = useActiveProjectFile()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name)
@@ -779,6 +780,9 @@ export function DocumentMenu() {
         {t('topbar.openDocument')}
       </MenuItem>
       <MenuItem onSelect={() => void exportPackage()}>{t('topbar.exportPackage')}</MenuItem>
+      {hasMultipleCanvases && (
+        <MenuItem onSelect={() => void exportPackage('canvas')}>{t('topbar.exportCanvasPackage')}</MenuItem>
+      )}
       <MenuItem onSelect={importPackage}>{t('topbar.importPackage')}</MenuItem>
 
       <MenuSeparator />

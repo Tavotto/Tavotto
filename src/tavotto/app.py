@@ -5988,12 +5988,42 @@ def api_package():
     清单记录每个素材的 sha1，换机器打开时据此发现缺失/内容漂移；
     打包只读 figures 目录，不写入任何源文件。
 
-    计算图表文档（schema 4）走同一条端点写 v4 便携包：按**提交文档的
-    schema** 分流，不给用户两套选择（#1921）。
+    整份排版按提交文档的 schema 选择包格式（#1921）。
+    单画布分享先从提交文档选取画布，再以同一条链生成可安装的 v4 便携包。
     """
     root = require_project()
     body = request.get_json(force=True)
     doc = body.get("doc") if isinstance(body, dict) else None
+    if isinstance(body, dict) and "canvas_id" in body:
+        canvas_id = body["canvas_id"]
+        if (
+            not isinstance(canvas_id, str)
+            or not canvas_id
+            or not isinstance(doc, dict)
+            or doc.get("schema")
+            not in (
+                engine_documents.SCHEMA_PROJECT,
+                engine_documents.SCHEMA_CHART_PROJECT,
+            )
+            or not isinstance(doc.get("canvases"), list)
+        ):
+            raise engine_documents.DocumentError("invalid_document", "无效的项目包画布")
+        selected = [
+            canvas
+            for canvas in doc["canvases"]
+            if isinstance(canvas, dict) and canvas.get("id") == canvas_id
+        ]
+        if len(selected) != 1:
+            raise engine_documents.DocumentError("invalid_document", "项目包画布必须唯一")
+        # A single-canvas share is installable even when the sender uses schema 3.
+        # Collect files and execution dependencies only from the export copy.
+        doc = {
+            **doc,
+            "schema": engine_documents.SCHEMA_CHART_PROJECT,
+            "canvases": selected,
+            "activeCanvasId": canvas_id,
+        }
+        body = {**body, "doc": doc}
     if isinstance(doc, dict) and doc.get("schema") == engine_documents.SCHEMA_CHART_PROJECT:
         return _api_chart_package(body)
     if not isinstance(doc, dict) or doc.get("schema") not in (2, 3):
