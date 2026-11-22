@@ -74,7 +74,7 @@ _ALLOWED = {
 }
 _QUESTION_KEY = {"pick_value": "y", "pick_group": "group", "pick_x": "x"}
 
-#: 总时限 / 输出上限 / 思考强度（官方端点核过才发）
+#: 总时限 / 输出上限 / 思考强度（官方端点核过才发）。订阅登录（CLI）连接的总时限是 `ai_structured.CLI_TIMEOUT_S`（冷启动慢，待本机真跑后校准）
 TIMEOUT_S = 25.0
 MAX_OUTPUT_TOKENS = 2_000
 MAX_INPUT_CHARS = 40_000
@@ -845,7 +845,10 @@ def _auto_small() -> bool:
 
 
 def _identity(conn: dict) -> str:
-    """缓存键里的「判断来源」：连接 + **实际会用的型号与强度**（小型号策略换了型号 / 强度 = 不同的判断来源；这个连接身份近期被判用不了小型号时按原型号算）。"""
+    """缓存键里的「判断来源」：CLI 连接 = CLI 种类 + 型号；Key 连接 = 连接 + **实际会用的型号与强度**
+    （小型号策略换了型号 / 强度 = 不同的判断来源；这个连接身份近期被判用不了小型号时按原型号算）。"""
+    if ai_structured.is_cli_conn(conn):
+        return ai_structured.cli_identity(conn)
     model, effort = (
         ai_structured.effective_choice(conn, EFFORT)
         if _auto_small()
@@ -855,7 +858,8 @@ def _identity(conn: dict) -> str:
 
 
 def _available_connection() -> dict | None:
-    """propose 时就要知道的：有没有内置执行器能直接用的 Key 连接（不联网）；没有（含订阅登录）= None → 响应里没有 `understanding` 键。"""
+    """propose 时就要知道的：有没有能用的连接（不联网、不探测）——内置执行器能直接用的 Key 连接，其次是订阅登录里适配器支持无工具单轮的 CLI 连接
+    （只看已有的能力缓存，缓存还没有 = 没有）；都没有 = None → 响应里没有 `understanding` 键。"""
     if "conn" in _OVERRIDES:
         return _OVERRIDES["conn"]
     try:
@@ -863,7 +867,10 @@ def _available_connection() -> dict | None:
 
         if ai_connections.builtin_forced() is False:
             return None
-        return ai_connections.first_key_connection(refresh=False)
+        key = ai_connections.first_key_connection(refresh=False)
+        if key is not None:
+            return key
+        return ai_structured.find_cli_connection(cached_only=True)[0]
     except Exception:  # noqa: BLE001 - 探测失败 = 没有
         return None
 
@@ -956,7 +963,7 @@ def start(
         if hit is None:
             _BY_KEY[flight] = job.id
     if hit is None:
-        args = (job, entry, values, hint, data_path, dict(fixed or {}))
+        args = (job, entry, values, hint, data_path, dict(fixed or {}), conn)
         if _OVERRIDES.get("sync"):
             _run(*args)
         else:
@@ -976,10 +983,11 @@ def _run(
     hint: str | None,
     data_path: Path | None,
     fixed: dict,
+    conn: dict | None = None,
 ) -> None:
-    """任务体。**永不抛**；结果写进 `job`（`ready` / `failed`），成功写缓存，失败记 60 s 负缓存。"""
+    """任务体。**永不抛**；结果写进 `job`（`ready` / `failed`），成功写缓存，失败记 60 s 负缓存。`conn` 是 `start` 挑中的连接（只有 CLI 连接才往下传）。"""
     try:
-        judged = judge(entry, values, hint, data_path=data_path, job=job)
+        judged = judge(entry, values, hint, data_path=data_path, job=job, conn=conn)
         if isinstance(judged, tuple) and judged and isinstance(judged[0], Judgement):
             outcome = derive(judged[1], judged[2], judged[0], hint, fixed=fixed)
             judgement: Judgement | None = judged[0]
@@ -1046,6 +1054,28 @@ def judge(
     data_path: Path | None = None,
     job: Job | None = None,
     call: Callable[..., ai_structured.StructuredResult] | None = None,
+    conn: dict | None = None,
+) -> tuple[Judgement, adf.TableEntry, adf.DataSummary] | tuple[str, str]:
+    """订阅登录（CLI）连接同一时刻只许一个任务在跑（`ai_structured.cli_slot`）：先排队、拿到之后才开始计总时限——排队不吃预算。
+    其余连接直接 `_judge`。"""
+    if not ai_structured.is_cli_conn(_OVERRIDES.get("conn") or conn):
+        return _judge(entry, values, hint, data_path=data_path, job=job, call=call, conn=conn)
+    try:
+        with ai_structured.cli_slot(ai_structured.CLI_QUEUE_MAX_S):
+            return _judge(entry, values, hint, data_path=data_path, job=job, call=call, conn=conn)
+    except TimeoutError:
+        return ("failed", "timeout")
+
+
+def _judge(
+    entry: adf.TableEntry,
+    values: adf.DataSummary,
+    hint: str | None,
+    *,
+    data_path: Path | None = None,
+    job: Job | None = None,
+    call: Callable[..., ai_structured.StructuredResult] | None = None,
+    conn: dict | None = None,
 ) -> tuple[Judgement, adf.TableEntry, adf.DataSummary] | tuple[str, str]:
     """向模型要判断 → `(Judgement, 采纳表头之后的 entry, values)`，或 `("failed", 闭集原因)`。**永不抛**。总时限 `TIMEOUT_S`（表头那次与列角色那次共用）。
 
@@ -1053,11 +1083,15 @@ def judge(
     2. 列角色：对（可能已按新表头重读的）表问一次，`interpret` 逐字段降级。
     表头问失败不拖垮列角色（用嗅探的表头继续）；列角色问失败 = 整体失败（调用方什么都不改）。"""
     t0 = time.monotonic()
-    total = float(_OVERRIDES.get("timeout_s", TIMEOUT_S))
+    kw = {k: _OVERRIDES[k] for k in ("conn", "post", "runner") if k in _OVERRIDES}
+    cli = ai_structured.is_cli_conn(kw.get("conn") or conn)
+    if cli and "conn" not in kw:
+        kw["conn"] = conn  # 缓存键用的就是这一条（含型号）：别让 `call_structured` 再挑一次
+    total = float(_OVERRIDES.get("timeout_s", ai_structured.CLI_TIMEOUT_S if cli else TIMEOUT_S))
     do_call = call or ai_structured.call_structured
-    kw = {k: _OVERRIDES[k] for k in ("conn", "post") if k in _OVERRIDES}
-    # 小型号 + 最低档策略（ADR 0178 2026-11-21）：产品里恒开；手动基准可经覆盖关掉，好显式比较型号 / 强度
-    kw["auto_small"] = _auto_small()
+    # 小型号 + 最低档策略（ADR 0178 2026-11-21）：产品里恒开；手动基准可经覆盖关掉，好显式比较型号 / 强度。
+    # 只作用于 Key 连接：订阅登录（CLI）连接不传（`call_structured` 本来也会忽略）
+    kw["auto_small"] = _auto_small() and not cli
 
     def run_call(**ckw):
         left = _budget_left()

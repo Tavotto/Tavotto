@@ -147,10 +147,31 @@ function deltaFrom(prev: StyleProfileData | null, next: StyleProfileData): Style
 }
 
 /** 一份（变化量）预设落到这些面板 / 这张画布上，只留真会变的部分 */
-function changesFor(preset: StylePreset, panels: PanelObject[], doc: FigureDocument, canvas: boolean): StylePlan {
+function changesFor(
+  preset: StylePreset,
+  panels: PanelObject[],
+  doc: FigureDocument,
+  canvas: boolean,
+  /** 用户手改的 override（有 override、又不是样式写的）不碰：改样式 / 跟上样式库时用（§十四） */
+  keepUserOwned = false,
+): StylePlan {
   const raw = planStyle(preset, panels, manifestOf, doc, canvas)
   const plan = canvas ? raw : { ...raw, page: undefined, background: undefined }
-  return effectiveChanges(plan, doc, manifestOf, preset)
+  const eff = effectiveChanges(plan, doc, manifestOf, preset)
+  if (!keepUserOwned) return eff
+  return {
+    ...eff,
+    panels: eff.panels
+      .map((pp) => ({
+        ...pp,
+        patches: pp.patches.filter(
+          (x) =>
+            !pp.panel.overrides.some((o) => o.gid === x.gid && o.prop === x.prop) ||
+            !!ownedLive(doc, pp.panel, x.gid, x.prop),
+        ),
+      }))
+      .filter((pp) => pp.patches.length > 0),
+  }
 }
 
 /* ------------------------ 样式写的 override（§十三） ------------------------ */
@@ -256,6 +277,7 @@ function markSeen(doc: FigureDocument, ids: Iterable<string>) {
  * 键里带绑定：A 的欠账不会在画布跟随 B 之后写下去；明确绑上 A 时才清 A 的（`forgetDebts`）。
  */
 const pending = styleWork.pending
+const keeping = styleWork.keep
 
 /** 两笔变化量合成一笔（后来的覆盖先来的；图内角色按 role × prop 合） */
 function mergeDelta(a: StyleProfileData | undefined, b: StyleProfileData): StyleProfileData {
@@ -303,21 +325,99 @@ const missingNow = (doc: FigureDocument): string[] => panelsOf(doc).filter((p) =
  * 样式的其余部分永远落不上去（Codex #547 P1）。「新图」按没 manifest 时认得出的判据：一个 override 都没有 /
  * 只有抄来的烘焙基线；带着别的 override 的（对齐过的、手改过的）仍只欠变化量，不冲掉手改。
  */
-function owe(doc: FigureDocument, delta: StyleProfileData, missingIds: string[], full: StyleProfileData) {
+function owe(
+  doc: FigureDocument,
+  delta: StyleProfileData,
+  missingIds: string[],
+  full: StyleProfileData,
+  /** 改样式 / 跟上样式库：补的时候不碰用户手改的 override（明确绑定传 false，照旧覆盖） */
+  keepUserOwned = false,
+) {
   const ids = new Set(missingIds)
   const missing = panelsOf(doc).filter((p) => ids.has(figKey(p)))
   if (!missing.length) return
   const key = ledgerKey(doc)
   const assets = useAssetStore.getState().byId
   const map = pending.get(key) ?? new Map<string, StyleProfileData>()
+  const keep = keeping.get(key) ?? new Map<string, StyleProfileData>()
   for (const p of missing) {
     // 对齐过的图带着样式写的 override，合样式的图欠整份等于只欠这一笔：只看 override 就够
     const fresh = !p.overrides.length || isCopiedBakedBaseline(p.overrides, assets[p.fileId])
     const owed = fresh ? full : delta
     if (!Object.keys(owed.element ?? {}).length && !owed.palette?.length) continue
-    map.set(figKey(p), mergeDelta(map.get(figKey(p)), owed))
+    const fig = figKey(p)
+    const prev = map.get(fig)
+    if (keepUserOwned && !fresh) {
+      // 只有这一笔才欠的项记成「不碰手改」；之前一笔要覆盖的项（绑定欠的）仍按覆盖补
+      const add = withoutKeys(owed, prev)
+      if (Object.keys(add.element ?? {}).length || add.palette?.length) keep.set(fig, mergeDelta(keep.get(fig), add))
+    } else {
+      const rest = keep.get(fig) && withoutKeys(keep.get(fig)!, owed)
+      if (rest && (Object.keys(rest.element ?? {}).length || rest.palette?.length)) keep.set(fig, rest)
+      else keep.delete(fig)
+    }
+    map.set(fig, mergeDelta(prev, owed))
   }
   if (map.size) pending.set(key, map)
+  if (keep.size) keeping.set(key, keep)
+  else keeping.delete(key)
+}
+
+/** `a` 里去掉 `b` 也有的项（图内角色按 role × prop，配色整体算一项） */
+function withoutKeys(a: StyleProfileData, b: StyleProfileData | undefined): StyleProfileData {
+  const element: StyleProfileData['element'] = {}
+  for (const [role, props] of Object.entries(a.element ?? {})) {
+    for (const [prop, v] of Object.entries(props)) {
+      if (b?.element?.[role] && prop in b.element[role]) continue
+      ;(element[role] ??= {})[prop] = v
+    }
+  }
+  return {
+    element,
+    ...(a.palette?.length && !b?.palette?.length ? { palette: a.palette } : {}),
+    ...(a.pt_basis ? { pt_basis: a.pt_basis } : {}),
+  }
+}
+
+/** `a` 里只留 `b` 也有的项 */
+function onlyKeys(a: StyleProfileData, b: StyleProfileData): StyleProfileData {
+  const element: StyleProfileData['element'] = {}
+  for (const [role, props] of Object.entries(a.element ?? {})) {
+    for (const [prop, v] of Object.entries(props)) {
+      if (b.element?.[role] && prop in b.element[role]) (element[role] ??= {})[prop] = v
+    }
+  }
+  return {
+    element,
+    ...(a.palette?.length && b.palette?.length ? { palette: a.palette } : {}),
+    ...(a.pt_basis ? { pt_basis: a.pt_basis } : {}),
+  }
+}
+
+/** 两份同一张图的计划合成一份（先来的那份同 gid × prop 优先） */
+function mergePlans(a: StylePlan, b: StylePlan): StylePlan {
+  const panels = [...a.panels]
+  for (const pp of b.panels) {
+    const i = panels.findIndex((x) => x.panel.id === pp.panel.id)
+    if (i < 0) {
+      panels.push(pp)
+      continue
+    }
+    const have = panels[i]
+    const extra = pp.patches.filter((x) => !have.patches.some((y) => y.gid === x.gid && y.prop === x.prop))
+    panels[i] = {
+      ...have,
+      patches: [...have.patches, ...extra],
+      overwrites: have.overwrites + pp.overwrites,
+      unmappable: [...new Set([...have.unmappable, ...pp.unmappable])],
+    }
+  }
+  return {
+    ...a,
+    panels,
+    annotationIds: [...new Set([...a.annotationIds, ...b.annotationIds])],
+    subLabelIds: [...new Set([...a.subLabelIds, ...b.subLabelIds])],
+  }
 }
 
 /**
@@ -327,6 +427,7 @@ function owe(doc: FigureDocument, delta: StyleProfileData, missingIds: string[],
  */
 function forgetDebts(styleId: string) {
   pending.delete(styleLedgerKey(styleId))
+  keeping.delete(styleLedgerKey(styleId))
 }
 
 /* --------------------------- 样式库写入队列 -------------------------------- */
@@ -419,6 +520,7 @@ export function figureScope(
 export function resetStyleBindingSession(): void {
   seen.clear()
   pending.clear()
+  keeping.clear()
   redirects.clear()
   queuedBinds.clear()
   styleWork.inflight = 0
@@ -653,7 +755,7 @@ export function editBoundStyleAll(edits: StyleEdit[], label?: (name: string) => 
     const upgraded = isLegacyBasis(before)
     const current = canvasStyle()!
     const delta = deltaFrom(current.snapshot as unknown as StyleProfileData, data)
-    const plan = changesFor(delta, panelsOf(doc), doc, true)
+    const plan = changesFor(delta, panelsOf(doc), doc, true, true)
     const missing = missingNow(doc)
     const owned = nextOwned(doc, ownedWrites(doc, plan))
     // 这一笔要把画布改绑到副本上（复制内置 / 「库里没有这一条、按快照新建」两条路，Codex #547 P1）：
@@ -678,7 +780,7 @@ export function editBoundStyleAll(edits: StyleEdit[], label?: (name: string) => 
       if (redirectKey) redirects.delete(redirectKey)
       throw e
     }
-    owe(docNow(), delta, missing, presetDelta(null, data))
+    owe(docNow(), delta, missing, presetDelta(null, data), true)
     if (copied) useUiStore.getState().setStatus(msg('stylePanel.copiedBuiltin', { name }, 'workspace'), 'done')
     else if (upgraded) useUiStore.getState().setStatus(msg('stylePanel.upgradedLegacy', { name }, 'workspace'), 'done')
     return true
@@ -804,7 +906,7 @@ export function followLibrary(): boolean {
   const data = rec.data as unknown as StyleProfileData
   const name = profileName(rec)
   const delta = deltaFrom(before, data)
-  const plan = changesFor(delta, panelsOf(doc), doc, true)
+  const plan = changesFor(delta, panelsOf(doc), doc, true, true)
   const missing = missingNow(doc)
   const owned = nextOwned(doc, ownedWrites(doc, plan))
   commitWith(
@@ -819,7 +921,7 @@ export function followLibrary(): boolean {
   // 渲染不了的图（渲染出错 / runtime 拿不到精确 manifest）不挡快照前进——挡的话一张坏图就让
   // 整张画布永远跟不上库——但它们欠着这一笔：记账，等它们哪天渲染成功时补上（Codex #547 P1）。
   // 不记的话它身上旧样式的 override 会让「新图」判据跳过它，它就永远停在旧样式上
-  owe(docNow(), delta, missing, presetDelta(null, data))
+  owe(docNow(), delta, missing, presetDelta(null, data), true)
   return true
 }
 
@@ -848,8 +950,15 @@ export function alignNewFigures(): number {
     if (!target) continue
     if (debt) {
       owed!.delete(fig)
+      const keepDebt = keeping.get(key)?.get(fig)
+      keeping.get(key)?.delete(fig)
       markSeen(doc, [fig])
-      const plan = changesFor({ ...pruneToStyle(debt, style), name: '' } as StylePreset, [target], current, false)
+      const now = pruneToStyle(debt, style)
+      // 改样式 / 跟上样式库欠的项不碰用户手改的 override；绑定欠的、新图欠的整份照旧覆盖（§十四）
+      const over = changesFor({ ...(keepDebt ? withoutKeys(now, keepDebt) : now), name: '' } as StylePreset, [target], current, false)
+      const plan = keepDebt
+        ? mergePlans(over, changesFor({ ...onlyKeys(now, keepDebt), name: '' } as StylePreset, [target], current, false, true))
+        : over
       if (isEmptyPlan(plan)) continue
       writeAligned(hist('syncStyle', { name: bindingName(binding) }), current, plan, preset)
       aligned += 1
@@ -989,6 +1098,43 @@ export function styleMismatchPlan(doc: FigureDocument = docNow()): StylePlan | n
       }))
       .filter((pp) => pp.patches.length > 0),
   }
+}
+
+/**
+ * 这张图上与画布样式**不一样**的地方（含用户手改的）：单图模式的「跟回画布」按它给每一行判断
+ * 要不要出按钮。只认精确 manifest；没绑 / 已脱离 / 还没渲染出来 = 空。
+ */
+export function figureStyleDiff(panel: PanelObject, doc: FigureDocument = docNow()): { gid: string; prop: string }[] {
+  const binding = canvasStyle(doc)
+  const live = panelsOf(doc).find((p) => p.id === panel.id)
+  if (!binding || !live || !manifestOf(live)) return []
+  const plan = changesFor(presetDelta(null, resolvedStyle(binding)), [live], doc, false)
+  return plan.panels.flatMap((pp) => pp.patches.map(({ gid, prop }) => ({ gid, prop })))
+}
+
+/**
+ * 单图模式的「跟回画布」：这张图上这几项换回样式的值，之后归样式（登记为样式写的，样式再改会跟着变；
+ * 基线沿用手改那一条覆盖的脚本原值）。一次 commit，可撤销。别的图一概不碰。
+ */
+export function followCanvasStyle(panelId: string, targets: { gid: string; prop: string }[]): boolean {
+  const doc = docNow()
+  const binding = canvasStyle(doc)
+  const panel = panelsOf(doc).find((p) => p.id === panelId)
+  if (!binding || !panel || !manifestOf(panel)) return false
+  const name = bindingName(binding)
+  const preset = { ...presetDelta(null, resolvedStyle(binding)), name }
+  const raw = changesFor(preset, [panel], doc, false)
+  const plan: StylePlan = {
+    ...raw,
+    annotationIds: [],
+    subLabelIds: [],
+    panels: raw.panels
+      .map((pp) => ({ ...pp, patches: pp.patches.filter((x) => targets.some((t) => t.gid === x.gid && t.prop === x.prop)) }))
+      .filter((pp) => pp.patches.length > 0),
+  }
+  if (isEmptyPlan(plan)) return false
+  writeAligned(hist('followCanvas', { name }), doc, plan, preset)
+  return true
 }
 
 /** 不一致的处数（一个 gid 上的一个属性算一处） */

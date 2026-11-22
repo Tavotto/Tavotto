@@ -21,10 +21,11 @@ if str(SUPPORT) not in sys.path:
 
 import data_figure_cases as D  # noqa: E402
 
-from tavotto.engine import ai_connections, ai_structured as S, fixsession  # noqa: E402
+from tavotto.engine import ai_connections, ai_structured as S, fixsession  # noqa: E402,F401
 from tavotto.engine.agent_runner import loop, wires  # noqa: E402
 
 JSON_OK = '{"answer": 1}'
+_REAL_FIND_CLI = S.find_cli_connection  # conftest 的 autouse 会把模块上的换成「没有」
 
 
 @pytest.fixture(autouse=True)
@@ -289,17 +290,33 @@ def test_limits_are_validated():
 # --------------------------------------------------------------------------- 连接
 def test_resolve_connection_no_connection(monkeypatch):
     monkeypatch.setattr(ai_connections, "first_key_connection", lambda refresh=False: None)
-    monkeypatch.setattr(fixsession, "cli_agent", lambda: None)
     monkeypatch.setattr(ai_connections, "builtin_forced", lambda: None)
-    assert S.resolve_connection() == (None, "no_connection", "none")
+    assert S.resolve_connection() == (None, "no_connection", "none")  # conftest：没有 CLI 连接
     res = S.call_structured(system="s", user="u", validate=validate_answer)
     assert (res.reason, res.attempts) == ("no_connection", 0)
 
 
-def test_subscription_only_is_unsupported_connection(monkeypatch):
+def test_subscription_only_with_an_adapter_that_cannot_do_it_is_unsupported_connection(
+    monkeypatch,
+):
+    """订阅登录里适配器没覆写 `build_structured_command` = `unsupported_connection`（能做的那条路见 `test_ai_structured_cli.py`）。"""
+    from tavotto.engine import ai_agents, ai_bridge
+
+    monkeypatch.setattr(S, "find_cli_connection", _REAL_FIND_CLI)
     monkeypatch.setattr(ai_connections, "first_key_connection", lambda refresh=False: None)
-    monkeypatch.setattr(fixsession, "cli_agent", lambda: "codex")
     monkeypatch.setattr(ai_connections, "builtin_forced", lambda: None)
+    monkeypatch.setattr(
+        ai_bridge,
+        "capabilities",
+        lambda refresh=False: {
+            "connections": [{"id": "sub:codex", "state": "ready", "default_model": "m"}]
+        },
+    )
+    monkeypatch.setattr(
+        ai_agents.CodexAgent,
+        "build_structured_command",
+        ai_agents.AgentDefinition.build_structured_command,
+    )
     res = S.call_structured(system="s", user="u", validate=validate_answer)
     assert (res.reason, res.detail) == ("unsupported_connection", "cli_only")
 
