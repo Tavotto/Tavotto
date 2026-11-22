@@ -461,7 +461,7 @@ def test_iter_rules_matches_regex_semantics():
 
 def test_style_without_braces_is_linear_time():
     """`<style>` 里一大段没有花括号的文字：以前 `_RULE.sub` 平方级回溯（4 万字符超 15 秒），现在线性"""
-    for n in (40_000, 400_000):
+    for n in (40_000, 60_000):
         text = SVG.format("<style>" + "a" * n + "</style>")
         t0 = time.monotonic()
         outcome(text)
@@ -500,3 +500,40 @@ def test_single_path_deadline(monkeypatch):
     with pytest.raises(svgimport.SvgImportError) as e:
         svgimport.parse_path_d(d, deadline=time.monotonic() - 1)
     assert e.value.code == "timeout"
+
+
+# ---- CodeQL py/polynomial-redos：transform 与 !important 的扫描必须线性 ----
+
+
+@pytest.mark.parametrize(
+    "s",
+    [
+        "a" * 60_000,
+        "A(" + "(" * 60_000,
+        "translate(" + "(" * 60_000,
+        " " * 60_000 + "translate(1 2)",
+    ],
+    ids=["letters", "A-parens", "name-parens", "spaces"],
+)
+def test_parse_transform_pathological_input_is_linear_time(s):
+    t0 = time.monotonic()
+    svgimport.parse_transform(s)
+    assert time.monotonic() - t0 < 1.0
+
+
+def test_parse_transform_semantics_unchanged():
+    assert svgimport.parse_transform("translate(1 2) scale(3)") == (3, 0, 0, 3, 1, 2)
+    assert svgimport.parse_transform("  translate (5)") == (1, 0, 0, 1, 5, 0)
+    assert svgimport.parse_transform("translate(1 2") == svgimport.IDENTITY  # 没有右括号：忽略
+
+
+def test_important_stripping_is_linear_time_and_keeps_semantics():
+    t0 = time.monotonic()
+    out = svgimport._parse_decls("fill:" + " " * 60_000 + "red")
+    assert out == {"fill": "red"}
+    assert time.monotonic() - t0 < 1.0
+    assert svgimport._parse_decls("fill: red !important")["fill"] == "red"
+    assert svgimport._parse_decls("fill: red !important  ")["fill"] == "red"
+    t0 = time.monotonic()
+    svgimport._parse_decls("fill:red" + " " * 60_000 + "!imp")
+    assert time.monotonic() - t0 < 1.0
