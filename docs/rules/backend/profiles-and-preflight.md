@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「出版规范 profile 与预检」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_preflight.py`、`test_manifest_clip_bbox.py`、`test_profile_store.py`、`tests/golden/preflight_vectors.json`；期刊库（ADR 0155）：`tests/test_journal_catalog.py`、`web/src/lib/journals.test.ts`、`tests/golden/journal_vectors.json`；旧期刊底标签的新输出替换：`tests/test_mcp_dpi_attribution.py`、`web/src/lib/profile.test.ts` 与 `tests/golden/profile_display_vectors.json`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_preflight.py`、`tests/test_preflight_log_axis.py`、`test_manifest_clip_bbox.py`、`test_profile_store.py`、`tests/golden/preflight_vectors.json`；期刊库（ADR 0155）：`tests/test_journal_catalog.py`、`web/src/lib/journals.test.ts`、`tests/golden/journal_vectors.json`；旧期刊底标签的新输出替换：`tests/test_mcp_dpi_attribution.py`、`web/src/lib/profile.test.ts` 与 `tests/golden/profile_display_vectors.json`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
@@ -59,8 +59,20 @@ order: 260
   宁可多报不漏报）。看护在 `tests/test_manifest_clip_bbox.py`。
 - 四档：`error`（默认阻止导出，显式确认才放行且写进 proof）/ `warn`（放行必展示）/
   `not_verifiable`（**查不了**，如位图内部文字，需人工确认并写进 proof）/ `suggestion`
-  （数据语义类全在这档，**绝不替用户裁决**）。**没登记的检查项兜底为 warn**，
-  刻意不是 suggestion——忘了登记会让用户以为它通过了。
+  （需要上下文才能判的数据语义——误差棒、拟合置信带、曲线可分辨——全在这档，**绝不替用户裁决**；
+  2026-11-21 用户裁决修订：**客观可判定的数据 ↔ 编码不一致**可以进 warn，例如下条 V-001，仍不自动修）。
+  **没登记的检查项兜底为 warn**，刻意不是 suggestion——忘了登记会让用户以为它通过了。
+- **`log-axis-nonpositive`（V-001，对数轴上有 ≤ 0 的值画不出来；1.0 豁免见 `docs/1.0-release-readiness.md` §1.8）**：
+  事实是 axes 元素上的只读 `scale_domain`，产生者只有 `engine/manifest.scale_domain`（不进 `editable`、不进文档），
+  只在某一维尺度是 `log` 时出现，色条轴 / 3D 轴不发。只数三类可见元素——折线 `get_xydata()`、散点
+  `PathCollection` 的 offsets（offset transform）、`ErrorbarContainer` 的误差线段（下端单独计 `errorbar_low_nonpositive`，
+  只数沿这一维的段）——且只数**这一维真正经过该轴 `transData`** 的坐标（`contains_branch_seperately`），有限值才算。
+  刻意排除：柱 / 直方图、`fill_between` 等填充、色条与 LogNorm、其它 `LineCollection`（vlines、stem 的茎）、stem 基线、
+  误差棒的帽。配额与 `FINGERPRINT_BUDGET` 同一个上限、**另一份计数器**（共用会把原本量得了的指纹挤成 `over_budget`）；
+  `status` 不是 `ok` 时没有计数、规则不判。三张 severity 表都是 `warn`，`fix: none`（改 symlog / 删点是科学决策），
+  问题面板归 `lines`。求值器 `_check_log_axis_nonpositive` ↔ `preflight.ts` `checkLogAxisNonpositive`（计数口径
+  `_domain_count` ↔ `domainCount`），golden `log-axis-*`；真 worker 看护 `tests/test_preflight_log_axis.py`，
+  它重出的 `tests/golden/scale_domain_real.json` 由 `web/src/lib/preflight.logAxis.test.ts` 消费。
 - 文档里存**绑定 + 绑定那一刻的规则全文快照**（`FigureDocument.profile`，可选，
   schema 仍是 2）：`{id, journal?, snapshot?, snapshotVersion?, follow?}`。ADR 0029
   之前这里只存 `{id, journal}`，于是改一次全局规范，上个月定稿的图会**悄悄换一套

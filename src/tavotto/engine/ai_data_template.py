@@ -35,15 +35,20 @@ import io
 import json
 import math
 import re
+import threading
 import tokenize
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from . import ai_data_figure as adf, ai_data_recipe as recipe_mod, xlsxread
 from .ai_data_figure import (
+    NumCat,
     SemicolonCell,
     apply_cells,
+    apply_numcat,
     date_number,
     delimited_records,
+    iter_records,
+    iter_table,
     parse_cell,
     parse_date,
     resolve_header,
@@ -68,6 +73,15 @@ class TemplateError(ValueError):
         if code not in TEMPLATE_ERROR_CODES:
             raise ValueError(f"未登记的 TemplateError 码：{code}")
         super().__init__(f"{code}: {detail}" if detail else code)
+        self.code = code
+
+
+class LargeRuleError(ValueError):
+    """大表上数据相关的资格判据没过（折线的 x 有重复 / 没排序、系列不够多个 x……）：`code` 是 `ai_data_recipe.REJECTIONS` 里的稳定码
+    （与小表上 `validate_recipe` 对同一条规则报的码一致，前端已有文案）。小表的这些规则读行数据判，大表要把整表流过一遍才知道，所以在缩减那一遍里判。"""
+
+    def __init__(self, code: str):
+        super().__init__(code)
         self.code = code
 
 
@@ -117,8 +131,11 @@ def merge_tables(tables, labels, column):
 
 
 def distinct(values):
-    """按首次出现的顺序去重。"""
-    return list(dict.fromkeys(values))
+    """按首次出现的顺序去重；整列都是整数编码的类别（`NumCat`，见 `apply_numcat`）时改按数值升序（类别顺序按编码大小，不看谁先出现）。"""
+    out = list(dict.fromkeys(values))
+    if out and all(isinstance(v, NumCat) for v in out):
+        out.sort(key=lambda v: v.number)
+    return out
 
 
 def make_label(mark, *parts):
@@ -592,6 +609,329 @@ def ecdf_xy(vals):
     return [s[0]] + s, [0.0] + [(i + 1) / n for i in range(n)]
 
 
+# ---- 大表缩减（ADR 0178 修订·大表）：流式一遍，内存只与「箱数 × 系列数」有关
+def bin_update(b, yv, row):
+    """把一行（`row = (行序号, 单元格)`，`yv` = 各 y 列的有限数值或 None）并进箱 `b` 的 y 角色：每个 y 列记最小 / 最大值所在行。
+    严格比较、行序号递增，所以并列时先出现的赢——与 `bin_merge` 的并列规则（行序号小的赢）一致。"""
+    for j in range(len(yv)):
+        v = yv[j]
+        if v is None:
+            continue
+        o = 4 + 4 * j
+        if b[o] is None or v < b[o]:
+            b[o], b[o + 1] = v, row
+        if b[o + 2] is None or v > b[o + 2]:
+            b[o + 2], b[o + 3] = v, row
+
+
+def bin_merge(a, b, ny):
+    """两个相邻箱并成一个（箱宽翻倍时）：每个角色取两边更极端的；并列取行序号小的。结果只取决于两个箱里的行，与并入的先后无关。"""
+    out = list(a)
+    if b[0] < a[0] or (b[0] == a[0] and b[1][0] < a[1][0]):
+        out[0], out[1] = b[0], b[1]
+    if b[2] > a[2] or (b[2] == a[2] and b[3][0] < a[3][0]):
+        out[2], out[3] = b[2], b[3]
+    for j in range(ny):
+        o = 4 + 4 * j
+        if b[o] is not None and (
+            a[o] is None or b[o] < a[o] or (b[o] == a[o] and b[o + 1][0] < a[o + 1][0])
+        ):
+            out[o], out[o + 1] = b[o], b[o + 1]
+        if b[o + 2] is not None and (
+            a[o + 2] is None
+            or b[o + 2] > a[o + 2]
+            or (b[o + 2] == a[o + 2] and b[o + 3][0] < a[o + 3][0])
+        ):
+            out[o + 2], out[o + 3] = b[o + 2], b[o + 3]
+    return out
+
+
+def bin_rows(b, ny):
+    """一个箱要留下的行：最左 / 最右（按 x）、每个 y 列的最小 / 最大。"""
+    out = [b[1], b[3]]
+    for j in range(ny):
+        o = 4 + 4 * j
+        out += [s for s in (b[o + 1], b[o + 3]) if s is not None]
+    return out
+
+
+def reduce_trend(header, body, spec):
+    """流式缩减一张大表给「趋势」图（折线 / 阶梯 / 点）用：`(留下的行, 信息)`。行是原文单元格（与读表读出来的行同形），按文件顺序；
+    下游的 `trend_data` 与小表一字不差地吃这些行。
+
+    **做法**：行按（分面, 分组）分系列，与 `trend_data` 同口径（分组 / 分面为空的行不画；x 不是值的行不画）；每个系列在 **x 值**上分箱
+    （不是文件里的位置：未排序、多条交错的序列照样对）：箱宽是 2 的幂、起点是该系列第一行的 x，箱数超过 `spec["bins"]` 时箱宽翻倍并箱
+    （一遍扫完，不要先知道 x 的范围）。每个箱留下 最左 / 最右 的行与每个 y 列取最小 / 最大值的行（上下包络），所以
+    **每个 y 的全局最小 / 最大、x 的两端都原样在图上**。
+    **断开**（`spec["lines"]`，有折线 / 阶梯层时）：折线在 y 不是数的地方断开，所以每个系列每个 y 列里**每一段**缺失（夹在两个有限值之间的连续非数行）
+    各留下它的第一行——这样留下的任意两个相邻点之间，只要原数据在它们之间断开过，就一定有一条断开标记；每个系列每个 y 列至多留 `spec["gap_max"]`
+    段，更多就不再留并标 `gap_over`（调用方拒绝这张折线，不画一条会把断开连起来的线）。系列数超过 `spec["series_max"]` →
+    `ValueError("reduce_series_overflow")`（数据与出备选时不一样了，不悄悄多画）。
+    `信息`：读到的行数、x 不是值的行数与前 100 个行号、每个 y 列的（有限数个数, 最小, 最大）——整表上的独立累计，父进程拿它与概览扫描的
+    统计对账；`mono`：每个系列的 x 是否按文件顺序不减；`dup`：某个 y 列在同一系列里是否有两个有限观测的 x 相同（只数 x 与该 y 都有限的行，
+    与小表的规则同口径；只在 `mono` 时可信）；`x_counts`：每个有（x 与第一个 y 都有限的）观测的系列的不同 x 个数（封顶 4）；
+    `ords`：留下的行的行序号；`gap_runs` / `gap_over`：断开的段数 / 是否超过上限；`grid`：每个系列最终的箱（起点, 箱宽）。"""
+    xi = header.index(spec["x"])
+    yis = [header.index(y) for y in spec["ys"]]
+    kis = [header.index(k) for k in spec["keys"]]
+    x_is_date = spec["date"]
+    nb = spec["bins"]
+    smax = spec["series_max"]
+    lines = spec.get("lines", False)
+    gap_max = spec.get("gap_max", 0)
+    ny = len(yis)
+    series = {}
+    gap_rows = {}
+    gap_runs = 0
+    gap_over = False
+    n_rows = 0
+    x_invalid = 0
+    examples = []
+    ystat = [[0, None, None] for _ in yis]
+    for ln, r in body:
+        n_rows += 1
+        yv = [None] * ny
+        for j in range(ny):
+            kind, v = parse_cell(r[yis[j]])
+            if kind == "numeric":
+                yv[j] = v
+                s = ystat[j]
+                s[0] += 1
+                if s[1] is None:
+                    s[1] = s[2] = v
+                elif v < s[1]:
+                    s[1] = v
+                elif v > s[2]:
+                    s[2] = v
+        if x_is_date:
+            dv = parse_date(r[xi])
+            xv = date_number(dv) if dv is not None else None
+        else:
+            kind, v = parse_cell(r[xi])
+            xv = v if kind == "numeric" else None
+        if xv is None:
+            x_invalid += 1
+            if len(examples) < 100:
+                examples.append(ln)
+            continue
+        key = tuple(r[k].strip() for k in kis)
+        if "" in key:
+            continue
+        st = series.get(key)
+        if st is None:
+            if len(series) >= smax:
+                raise ValueError("reduce_series_overflow")
+            e = math.frexp(abs(xv))[1] if xv else 0
+            st = series[key] = {
+                "w": 2.0 ** (e - 52),
+                "o": xv,
+                "bins": {},
+                "prev": None,
+                "mono": True,
+                "pv": [None] * ny,
+                "dup": False,
+                "xs": set(),
+                "seen": [False] * ny,
+                "ingap": [False] * ny,
+                "gaps": [0] * ny,
+            }
+        prev = st["prev"]
+        if prev is not None and xv < prev:
+            st["mono"] = False
+        st["prev"] = xv
+        pv = st["pv"]
+        for j in range(ny):
+            if yv[j] is not None:
+                if pv[j] is not None and xv == pv[j]:
+                    st["dup"] = True
+                pv[j] = xv
+        if yv[0] is not None and len(st["xs"]) < 4:
+            st["xs"].add(xv)
+        row = (n_rows, r)
+        if lines:
+            for j in range(ny):
+                if yv[j] is None:
+                    if st["seen"][j] and not st["ingap"][j]:
+                        st["ingap"][j] = True
+                        gap_runs += 1
+                        if st["gaps"][j] < gap_max:
+                            st["gaps"][j] += 1
+                            gap_rows[n_rows] = r
+                        else:
+                            gap_over = True
+                else:
+                    st["seen"][j] = True
+                    st["ingap"][j] = False
+        bins = st["bins"]
+        k = math.floor((xv - st["o"]) / st["w"])
+        b = bins.get(k)
+        if b is None:
+            b = bins[k] = [xv, row, xv, row] + [None] * (4 * ny)
+            bin_update(b, yv, row)
+            while len(bins) > nb:
+                st["w"] *= 2.0
+                merged = {}
+                for kk, bb in bins.items():
+                    nk = kk // 2
+                    cur = merged.get(nk)
+                    merged[nk] = bb if cur is None else bin_merge(cur, bb, ny)
+                bins = st["bins"] = merged
+            continue
+        if xv < b[0]:
+            b[0], b[1] = xv, row
+        if xv > b[2]:
+            b[2], b[3] = xv, row
+        bin_update(b, yv, row)
+    kept = dict(gap_rows)
+    for st in series.values():
+        for b in st["bins"].values():
+            for slot in bin_rows(b, ny):
+                kept[slot[0]] = slot[1]
+    ords = sorted(kept)
+    rows = [kept[i] for i in ords]
+    counts = [len(s["xs"]) for s in series.values() if s["xs"]]
+    info = {
+        "rows": n_rows,
+        "kept": len(rows),
+        "ords": ords,
+        "x_invalid": x_invalid,
+        "examples": examples,
+        "series": len(series),
+        "y": [tuple(s) for s in ystat],
+        "mono": all(s["mono"] for s in series.values()),
+        "dup": any(s["dup"] for s in series.values()),
+        "x_counts": counts,
+        "bins": max((len(s["bins"]) for s in series.values()), default=0),
+        "gap_runs": gap_runs,
+        "gap_over": gap_over,
+        "grid": {k: (s["o"], s["w"]) for k, s in series.items()},
+    }
+    return rows, info
+
+
+def reduce_relationship(header, body, spec):
+    """流式缩减一张大表给「两个量的关系」图（散点）用：`(留下的行, 信息)`。系列 = （分面, 分组），与 `relationship_data` 同口径（分组 / 分面为空、
+    x 或 y 不是有限数的行不画）。每个系列留下 **等距抽样 + 四个极值点**：等距抽样 = 该系列第 0, K, 2K… 个有效点（K 是 2 的幂，留下的超过
+    `spec["points"]` 就翻倍并丢掉不再满足的，一遍扫完、不要先知道行数）；极值点 = x 与 y 各自的最小 / 最大所在行（并列取先出现的），
+    所以坐标范围与离群点照实在图上。系列数超过 `spec["series_max"]` → `ValueError("reduce_series_overflow")`。`信息`：读到的行数、x 不是有限数的行数与前
+    100 个行号、x 与 y 在**整表**上的（有限数个数, 最小, 最大）（独立累计，父进程对账用）。"""
+    xi = header.index(spec["x"])
+    yi = header.index(spec["ys"][0])
+    kis = [header.index(k) for k in spec["keys"]]
+    cap = spec["points"]
+    smax = spec["series_max"]
+    series = {}
+    n_rows = 0
+    x_invalid = 0
+    examples = []
+    xstat = [0, None, None]
+    ystat = [0, None, None]
+    for ln, r in body:
+        n_rows += 1
+        kx, vx = parse_cell(r[xi])
+        ky, vy = parse_cell(r[yi])
+        if kx == "numeric":
+            xstat[0] += 1
+            if xstat[1] is None:
+                xstat[1] = xstat[2] = vx
+            elif vx < xstat[1]:
+                xstat[1] = vx
+            elif vx > xstat[2]:
+                xstat[2] = vx
+        else:
+            x_invalid += 1
+            if len(examples) < 100:
+                examples.append(ln)
+        if ky == "numeric":
+            ystat[0] += 1
+            if ystat[1] is None:
+                ystat[1] = ystat[2] = vy
+            elif vy < ystat[1]:
+                ystat[1] = vy
+            elif vy > ystat[2]:
+                ystat[2] = vy
+        if kx != "numeric" or ky != "numeric":
+            continue
+        key = tuple(r[k].strip() for k in kis)
+        if "" in key:
+            continue
+        st = series.get(key)
+        if st is None:
+            if len(series) >= smax:
+                raise ValueError("reduce_series_overflow")
+            st = series[key] = {"n": 0, "k": 1, "kept": [], "ext": [None] * 4}
+        i = st["n"]
+        st["n"] = i + 1
+        row = (n_rows, r)
+        if i % st["k"] == 0:
+            st["kept"].append((i, row))
+            while len(st["kept"]) > cap:
+                st["k"] *= 2
+                st["kept"] = [t for t in st["kept"] if t[0] % st["k"] == 0]
+        ext = st["ext"]
+        if ext[0] is None or vx < ext[0][0]:
+            ext[0] = (vx, row)
+        if ext[1] is None or vx > ext[1][0]:
+            ext[1] = (vx, row)
+        if ext[2] is None or vy < ext[2][0]:
+            ext[2] = (vy, row)
+        if ext[3] is None or vy > ext[3][0]:
+            ext[3] = (vy, row)
+    kept = {}
+    for st in series.values():
+        for _i, slot in st["kept"]:
+            kept[slot[0]] = slot[1]
+        for e in st["ext"]:
+            if e is not None:
+                kept[e[1][0]] = e[1][1]
+    ords = sorted(kept)
+    rows = [kept[i] for i in ords]
+    info = {
+        "rows": n_rows,
+        "kept": len(rows),
+        "ords": ords,
+        "x_invalid": x_invalid,
+        "examples": examples,
+        "series": len(series),
+        "x": tuple(xstat),
+        "y": [tuple(ystat)],
+        "valid": min((s["n"] for s in series.values()), default=0),
+        "strides": {k: s["k"] for k, s in series.items()},
+    }
+    return rows, info
+
+
+def tick_rows(body, raw, progress):
+    """透传 `body`，每 65536 行调一次 `progress(已读字节)`（父进程的进度 / 取消检查点；脚本里不传，不经过这里）。"""
+    n = 0
+    for item in body:
+        n += 1
+        if not n & 0xFFFF:
+            progress(raw.tell())
+        yield item
+
+
+def reduce_file(path, delimiter, header_row, units_row, codec, spec, progress=None):
+    """大表文件 → `(表头, 缩减后的行, 信息)`：流式读（`iter_table`，读法与小表同一份）+ 按 `spec["kind"]` 缩减。`codec` 是 Python 的 codec 名
+    （由父进程按文件定下、以字面量写进脚本，脚本不探测）。`progress`：可选的 `f(已读字节)`，父进程用它报进度并在取消时抛异常。"""
+    with open(path, "rb") as raw, io.TextIOWrapper(raw, encoding=codec, newline="") as fh:
+        header, body = iter_table(fh, delimiter, header_row, units_row)
+        if progress is not None:
+            body = tick_rows(body, raw, progress)
+        if spec["kind"] == "trend":
+            rows, info = reduce_trend(header, body, spec)
+        elif spec["kind"] == "relationship":
+            rows, info = reduce_relationship(header, body, spec)
+        else:
+            raise ValueError("reduce_kind_unsupported")
+    return header, rows, info
+
+
+def read_reduced(path, delimiter, header_row, units_row, codec, spec):
+    """生成的脚本在大表上读表的那一句：`(表头, 缩减后的行)`；之后与小表同一份画图代码。"""
+    return reduce_file(path, delimiter, header_row, units_row, codec, spec)[:2]
+
+
 def pick_fonts(latin, cjk):
     """从候选里各挑**第一个本机真有的**（常规与粗体字重都在）字体（拉丁文一个、中文回退一个）：整张候选清单都塞进 `font.family` 会让
     matplotlib 为每个缺字重 / 缺字体的名字各报一条 findfont 警告。"""
@@ -612,17 +952,21 @@ def pick_fonts(latin, cjk):
 
 RUNTIME_FUNCTIONS = (
     SemicolonCell,
+    NumCat,
     parse_cell,
     parse_date,
     date_number,
+    iter_records,
     delimited_records,
     resolve_header,
     xvg_label,
     xvg_text,
+    iter_table,
     table_from_text,
     read_delimited,
     read_xlsx,
     apply_cells,
+    apply_numcat,
     group_key,
     merge_tables,
     distinct,
@@ -668,6 +1012,14 @@ RUNTIME_FUNCTIONS = (
     hist_heights,
     density_curve,
     ecdf_xy,
+    bin_update,
+    bin_merge,
+    bin_rows,
+    reduce_trend,
+    reduce_relationship,
+    tick_rows,
+    reduce_file,
+    read_reduced,
     pick_fonts,
 )
 #: 只有 XLSX 数据源的脚本才内嵌 `read_xlsx` 与 xlsxread；CSV / TSV 的脚本里没有它们
@@ -771,6 +1123,12 @@ def _check(entry: adf.TableEntry, recipe: recipe_mod.FigureRecipe) -> None:
         raise TemplateError("template_family_unsupported", recipe.family)
     if recipe.table != entry.path or recipe.sheet != entry.sheet:
         raise TemplateError("template_recipe_mismatch", "table")
+    if entry.summary.large is not None and (
+        recipe.family not in ("trend", "relationship") or recipe.unit is not None or recipe.cells
+    ):
+        raise TemplateError(
+            "template_option_unsupported", "large"
+        )  # 大表只有趋势的缩减实现（见 `recipe_mod.LARGE_MARKS`）
     cols = entry.summary.per_column
     named = [recipe.x, *recipe.y, recipe.group, recipe.facet, recipe.unit]
     if any(c is not None and c not in cols for c in named):
@@ -959,6 +1317,7 @@ def _runtime_source() -> str:
         "import bisect",
         "import csv",
         "import io",
+        "import itertools",
         "import math",
         "import re",
         "",
@@ -988,6 +1347,8 @@ def _read_lines(recipe, reader: str) -> list[str]:
     out = [f"    header, rows = {reader}"]
     if recipe.cells:
         out.append("    rows, _cell_notes, _cell_stats = apply_cells(header, rows, CELLS)")
+    if recipe.numcat:
+        out.append("    rows = apply_numcat(header, rows, NUMCATS)")
     return out
 
 
@@ -1017,6 +1378,8 @@ def _data_lines(entry, data_rel) -> list[str]:
 def _header(entry, recipe, data_rel, title, is_xlsx):
     name = runtime_module()[0][: -len(".py")]
     cells = [f"CELLS = {[c.args() for c in recipe.cells]!r}"] if recipe.cells else []
+    if recipe.numcat:  # 整数编码的类别列（读表后规范成整数写法，类别按数值升序）
+        cells.append(f"NUMCATS = {list(recipe.numcat)!r}")
     return [
         f'"""由 Tavotto 根据数据生成的图（data_to_figure v2：{title}）。之后就是一份普通的绘图脚本，可以随意修改。\n\n'
         f'读表、汇总、布局的函数在同目录的 {name}.py 里（Tavotto 生成，别改它；它不含数据）。"""',
@@ -1295,6 +1658,9 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
     L = _header(entry, recipe, data_rel, "变化趋势", is_xlsx)
     if is_xlsx:
         L.append(f"SHEET = {recipe.sheet!r}")
+    large = entry.summary.large is not None
+    if large:
+        L.append(f"REDUCE = {large_spec(entry.summary, recipe)!r}")
     ylabel = ", ".join(adf.axis_label(y) for y in recipe.y)
     L += [
         f"X = {recipe.x!r}",
@@ -1311,6 +1677,8 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
     ]
     if is_xlsx:
         reader = "read_xlsx(DATA, SHEET)"
+    elif large:
+        reader = _large_reader_expr(entry)
     else:
         reader = _reader_expr(entry, False)
     L += ["", "", "def main():"]
@@ -1391,6 +1759,9 @@ def _render_relationship(entry, recipe, data_rel, stem, style) -> str:
     L = _header(entry, recipe, data_rel, "看两个量的关系", is_xlsx)
     if is_xlsx:
         L.append(f"SHEET = {recipe.sheet!r}")
+    large = entry.summary.large is not None
+    if large:
+        L.append(f"REDUCE = {large_spec(entry.summary, recipe)!r}")
     L += [
         f"X = {recipe.x!r}",
         f"Y = {recipe.y[0]!r}",
@@ -1400,7 +1771,7 @@ def _render_relationship(entry, recipe, data_rel, stem, style) -> str:
         f"YLABEL = {adf.axis_label(recipe.y[0])!r}",
         f"PALETTE = {list(PALETTE)!r}",
     ]
-    reader = _reader_expr(entry, is_xlsx)
+    reader = _large_reader_expr(entry) if large else _reader_expr(entry, is_xlsx)
     L += ["", "", "def main():"]
     main_at = len(L)
     L += _read_lines(recipe, reader)
@@ -1694,11 +2065,203 @@ def _interleave(xs, ys) -> list[float]:
     return [v for pair in zip(xs, ys) for v in pair]
 
 
+# --------------------------------------------------------------------------- 大表：缩减的参数、对账与判据（父进程）
+#: 缩减后画出的数值总数的预算（两个坐标一起算）：manifest 的 `FINGERPRINT_BUDGET` 的一半，另一半留给图上别的元素与余量
+LARGE_POINT_BUDGET = 1_000_000
+#: 每个系列的箱数上限（再多就是一个像素里画几个箱，没有意义）
+LARGE_BINS_MAX = 2000
+LARGE_BINS_MIN = 20
+#: 折线每个系列每个 y 列最多保留多少段断开（见 `reduce_trend`）；更多的断开就不画折线（散点照常）
+LARGE_GAP_RUNS_MAX = 200
+#: 关系图每个系列留下的点数上限 / 下限（等距抽样的点，另加 4 个极值点）
+LARGE_POINTS_MAX = 20_000
+LARGE_POINTS_MIN = 50
+
+
+def large_spec(summary: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> dict:
+    """缩减的参数（字面量写进脚本的 `REDUCE`）：只由配方与摘要里的**结构**事实定（系列数上界 = 分组 × 分面的取值个数），不含数据值。
+    点数按预算反推：系列数 × 每系列最多留的点 × y 列数 × 层数 × 2 个坐标 ≤ `LARGE_POINT_BUDGET`——所以任何大表画出的数据总量都在
+    manifest 的指纹预算以内，核对不会因超预算变成 unknown。趋势：按 x 分箱留包络（每箱最多 `2 + 3 × y 列数` 行）；关系：每系列等距抽样 + 4 个极值点。"""
+    keys = [c for c in (recipe.group, recipe.facet) if c is not None]
+    series = 1
+    for c in keys:
+        series *= max(1, summary.groups.get(c, 1))
+    ny = len(recipe.y)
+    layers = max(1, len(recipe.layers))
+    if recipe.family == "relationship":
+        points = LARGE_POINTS_MAX
+        points = min(points, LARGE_POINT_BUDGET // (series * layers * 2) - 4)
+        return {
+            "kind": "relationship",
+            "x": recipe.x,
+            "ys": list(recipe.y),
+            "keys": keys,
+            "points": max(LARGE_POINTS_MIN, points),
+            "series_max": series,
+        }
+    lines = any(
+        ly.mark in recipe_mod.POINTWISE_LINES and ly.summary == recipe_mod.SUMMARY_NONE
+        for ly in recipe.layers
+    )
+    gap_max = LARGE_GAP_RUNS_MAX if lines else 0
+    per_bin_rows = 2 + 2 * ny
+    # 每系列最多 `bins × 每箱行数 + y 列数 × 断开段数` 行，每行在每个 y 列、每层各画一个点（x、y 两个坐标）
+    rows_budget = LARGE_POINT_BUDGET // (series * ny * layers * 2) - ny * gap_max
+    bins = rows_budget // per_bin_rows
+    return {
+        "kind": "trend",
+        "x": recipe.x,
+        "ys": list(recipe.y),
+        "keys": keys,
+        "date": summary.per_column[recipe.x].kind == "date",
+        "bins": max(LARGE_BINS_MIN, min(LARGE_BINS_MAX, bins)),
+        "series_max": series,
+        "lines": lines,
+        "gap_max": gap_max,
+    }
+
+
+def _large_reader_expr(entry) -> str:
+    s = entry.summary
+    delim = s.delimiter or ("\t" if entry.path.lower().endswith((".tsv", ".tab")) else ",")
+    codec = adf.large_codec(s.encoding)
+    return (
+        f"read_reduced(DATA, {delim!r}, {s.header_row!r}, {bool(s.units_row)!r}, {codec!r}, REDUCE)"
+    )
+
+
+_REDUCE_CACHE: dict = {}
+_REDUCE_CACHE_MAX = 6
+_REDUCE_LOCK = threading.Lock()
+
+
+def gap_audit(values: adf.DataSummary, spec: dict, ords) -> int:
+    """**独立于缩减**的断开对账（只在父进程、只在折线 + 有断开时多读一遍文件）：数「某个系列某个 y 列里，夹在两个有限值之间的连续非数行（一段断开）
+    里一行都没被留下」的段数。缩减把断开弄丢（留下的点之间会被连成线）时它大于 0。不复用缩减里的任何状态，只用留下的行序号。"""
+    keep = set(ords)
+    xi = values.columns.index(spec["x"])
+    yis = [values.columns.index(y) for y in spec["ys"]]
+    kis = [values.columns.index(k) for k in spec["keys"]]
+    state: dict = {}
+    lost = 0
+    with (
+        open(values.large.path, "rb") as raw,
+        io.TextIOWrapper(raw, encoding=adf.large_codec(values.encoding), newline="") as fh,
+    ):
+        _h, body = adf.iter_table(fh, values.delimiter or ",", values.header_row, values.units_row)
+        for n, (_ln, r) in enumerate(body, start=1):
+            if spec["date"]:
+                good = adf.parse_date(r[xi]) is not None
+            else:
+                good = adf.parse_cell(r[xi])[0] == "numeric"
+            key = tuple(r[k].strip() for k in kis)
+            if not good or "" in key:
+                continue
+            sts = state.setdefault(key, [None] * len(yis))
+            for j, yi in enumerate(yis):
+                finite = adf.parse_cell(r[yi])[0] == "numeric"
+                cur = sts[j]
+                if finite:
+                    if isinstance(cur, list) and not cur[0]:
+                        lost += 1  # 这一段断开里没有任何一行被留下
+                    sts[j] = True
+                elif cur is True:
+                    sts[j] = [n in keep]
+                elif isinstance(cur, list) and n in keep:
+                    cur[0] = True
+    return lost
+
+
+def large_reduce(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> tuple[list, dict]:
+    """大表对这份配方的缩减结果 `(行, 信息)`（同一文件内容 + 同一参数的结果缓存，出备选的几个候选共用一遍）：父进程这一遍与脚本里的 `read_reduced`
+    是同一份源码。**对账**：缩减那一遍读到的行数与每个 y 列的（有限数个数, 最小, 最大）必须等于概览扫描的整表统计（两遍是独立的累计）——
+    对不上说明文件在两遍之间变了或缩减丢了行，抛 `TemplateError("template_recipe_mismatch")`。再判数据相关的资格（见 `LargeRuleError`）。"""
+    info_s = values.large
+    if info_s is None or not info_s.path:
+        raise TemplateError("template_recipe_mismatch", "large")
+    spec = large_spec(values, recipe)
+    key = (values.sha256, json.dumps(spec, sort_keys=True))
+    with _REDUCE_LOCK:
+        hit = _REDUCE_CACHE.get(key)
+        if hit is not None:
+            _REDUCE_CACHE[key] = _REDUCE_CACHE.pop(key)
+    if hit is None:
+        total = values.size
+        _header_cells, rows, info = reduce_file(
+            info_s.path,
+            values.delimiter or ",",
+            values.header_row,
+            values.units_row,
+            adf.large_codec(values.encoding),
+            spec,
+            (lambda pos: adf.progress.tick("reduce", pos, total))
+            if adf.progress.active()
+            else None,
+        )
+        hit = (rows, info)
+        with _REDUCE_LOCK:
+            _REDUCE_CACHE[key] = hit
+            while len(_REDUCE_CACHE) > _REDUCE_CACHE_MAX:
+                _REDUCE_CACHE.pop(next(iter(_REDUCE_CACHE)))
+    rows, info = hit
+    if info["rows"] != info_s.rows:
+        raise TemplateError("template_recipe_mismatch", "large_rows")
+    stats = [(y, got) for y, got in zip(recipe.y, info["y"], strict=True)]
+    if spec["kind"] == "relationship":
+        stats.append((recipe.x, info["x"]))
+    for col, (n, lo, hi) in stats:
+        st = info_s.stats[col]
+        if (n, lo, hi) != (st.numeric, st.lo, st.hi):
+            raise TemplateError("template_recipe_mismatch", "large_stats")
+    if spec["kind"] == "relationship":
+        return rows, info
+    if info["series"] == 0 or recipe_mod.trend_too_few_x(info["x_counts"]):
+        raise LargeRuleError("trend_too_few_x")
+    if spec["lines"]:
+        if not (info["mono"] and not info["dup"]):
+            raise LargeRuleError("line_duplicate_x_unconfirmed")
+        if info["gap_over"]:
+            raise TemplateError("template_option_unsupported", "large_gaps")
+        if info["gap_runs"] and gap_audit(values, spec, info["ords"]):
+            raise TemplateError("template_recipe_mismatch", "large_gaps")
+    return rows, info
+
+
+def large_reduce_pending(values: adf.DataSummary, recipes) -> int:
+    """这批配方的缩减还要读几遍文件（同一参数的共用一遍，缓存里已有的不读）：给进度摊遍数用。"""
+    todo = set()
+    with _REDUCE_LOCK:
+        for r in recipes:
+            try:
+                key = (values.sha256, json.dumps(large_spec(values, r), sort_keys=True))
+            except (KeyError, ValueError):
+                continue
+            if key not in _REDUCE_CACHE:
+                todo.add(key)
+    return len(todo)
+
+
+def large_unplotted(
+    values: adf.DataSummary, recipe: recipe_mod.FigureRecipe
+) -> tuple[int, list[int]]:
+    """大表上画不出的行：`(总数, 前 100 个文件行号)`。横轴不是值（空 / NaN / 不是数或日期）的行——总数取自概览扫描（精确），行号取自缩减那一遍。"""
+    s = values.per_column[recipe.x]
+    total = s.empty + s.nan + (s.text_count if s.kind != "date" else 0)
+    if total == 0:
+        return 0, []
+    _rows, info = large_reduce(values, recipe)
+    return total, list(info["examples"])
+
+
 def expected_fingerprints(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> list[dict]:
     """`[{label, part, digest}]`：按配方「这份脚本画出来应当是什么数据」，只含能逐字节算准的层（见模块文档与
     `fingerprint_coverage`）。`values` 是带行数据的摘要（对配方指的那张表 `inspect_data_source`）；与脚本调用同一批函数。"""
     if recipe.family not in RENDERERS:
         raise TemplateError("template_family_unsupported", recipe.family)
+    if values.large is not None:
+        # 大表：期望值按「缩减后的那张表」算——缩减用的就是脚本里的 `reduce_file`（同一份源码），之后与小表同一批函数
+        rows, _info = large_reduce(values, recipe)
+        values = replace(values, rows=rows, row_numbers=[], row_count=None, large=None)
     values = recipe_mod.with_cells_applied(
         values, recipe
     )  # 与脚本读表后套的是同一份规则、同一份源码

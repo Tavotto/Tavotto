@@ -1,5 +1,6 @@
 /**
- * 更新的构建写进文档的对象类型（第一例：自由路径 `path`，ADR 0185），本构建读到时的兜底。
+ * 更新的构建写进文档的对象类型（第一例是自由路径 `path`，ADR 0185；本构建已经认得它，这里用虚构的
+ * `futureThing` 代表「更新的构建写进来的类型」），本构建读到时的兜底。
  *
  * 修之前（旧构建打开带 `type: 'path'` 的文档）：读盘、保存都原样保留——但图层树 `iconFor` 拿到 undefined，
  * `<Icon/>` 抛错让整个界面落进错误边界；导出时 `toExportObject` 回 undefined → 载荷里是 null → 后端静默丢掉，
@@ -42,8 +43,8 @@ globalThis.fetch = vi.fn(async () => new Response('{}', { status: 200 })) as typ
 /** 更新的构建写进来的对象：本构建的类型里没有它，只能经 unknown 造出来 */
 const newer = (over: Record<string, unknown> = {}): CanvasObject =>
   ({
-    id: 'n1', type: 'path', x: 10, y: 10, w: 30, h: 20,
-    subpaths: [{ closed: true, nodes: [{ p: [0, 0] }, { p: [1, 0] }, { p: [1, 1] }] }],
+    id: 'n1', type: 'futureThing', x: 10, y: 10, w: 30, h: 20,
+    payload: [{ closed: true, nodes: [{ p: [0, 0] }, { p: [1, 0] }, { p: [1, 1] }] }],
     ...over,
   }) as unknown as CanvasObject
 const text = (over: Partial<CanvasObject> = {}): CanvasObject =>
@@ -65,9 +66,9 @@ afterEach(async () => {
 })
 
 describe('判据', () => {
-  it('四种已知类型认得，别的都不认得', () => {
-    for (const type of ['panel', 'text', 'arrow', 'shape']) expect(isKnownObject({ type })).toBe(true)
-    expect(isKnownObject({ type: 'path' })).toBe(false)
+  it('五种已知类型认得，别的都不认得', () => {
+    for (const type of ['panel', 'text', 'arrow', 'shape', 'path']) expect(isKnownObject({ type })).toBe(true)
+    expect(isKnownObject({ type: 'futureThing' })).toBe(false)
     expect(isKnownObject({ type: '' })).toBe(false)
   })
 

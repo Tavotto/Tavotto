@@ -1,6 +1,7 @@
+import { pathStrokeAlign } from './pathGeom'
 import type { CanvasObject, DashStyle, FigureDocument, LineCap } from '@/types/document'
-import { objectRotation, shapeStrokeOn } from '@/types/document'
-import { headSizeFactor, shapeInset, shapeOutline, STROKE_MITER_LIMIT, strokeCap } from './shapeGeometry'
+import { isStrokeOnlyShape, objectRotation, readPath, shapeStrokeOn } from '@/types/document'
+import { headSizeFactor, miterLimitOf, outlineOf, shapeInset, strokeCap } from './shapeGeometry'
 import { ptToMm } from './units'
 
 /**
@@ -39,10 +40,10 @@ function capHalf(cap: LineCap | undefined, dash: DashStyle | undefined): number 
  * （斜角与圆角都在顶点半线宽的圆里）。矩形的直角尖正好落在框角上，不越框。
  */
 function miterOverflow(o: Extract<CanvasObject, { type: 'shape' }>): number {
-  if (o.lineJoin !== 'miter' || !shapeStrokeOn(o) || !['triangle', 'diamond', 'polygon'].includes(o.shape)) return 0
+  if (o.lineJoin !== 'miter' || !shapeStrokeOn(o) || !['triangle', 'diamond', 'polygon', 'star'].includes(o.shape)) return 0
   const half = ptToMm(Math.max(o.strokePt, 0.05)) / 2
   if (!(half > 0)) return 0
-  const outline = shapeOutline(o.shape, o.w, o.h, shapeInset(o, half * 2), o.sides)
+  const outline = outlineOf(o, o.w, o.h, shapeInset(o, half * 2))
   if (outline?.kind !== 'poly') return 0
   const pts = outline.points
   let over = 0
@@ -63,7 +64,7 @@ function miterOverflow(o: Extract<CanvasObject, { type: 'shape' }>): number {
     let reach = half
     let tx = vx
     let ty = vy
-    if (sinHalf > 0 && 1 / sinHalf <= STROKE_MITER_LIMIT) {
+    if (sinHalf > 0 && 1 / sinHalf <= miterLimitOf(o.miterLimit)) {
       // 外角平分线 = 两条邻边单位向量之和的反方向
       const ux = -(ax / la + bx / lb)
       const uy = -(ay / la + by / lb)
@@ -85,9 +86,13 @@ function strokeOutset(o: CanvasObject): number {
     case 'text':
       return o.borderColor ? ptToMm(Math.max(o.borderPt ?? 0.75, 0.05) / 2) : 0
     case 'shape':
-      return o.shape === 'line' || o.shape === 'brace'
-        ? ptToMm(Math.max(o.strokePt, 0.05) * capHalf(o.lineCap, o.dash))
-        : miterOverflow(o)
+      if (isStrokeOnlyShape(o.shape)) return ptToMm(Math.max(o.strokePt, 0.05) * capHalf(o.lineCap, o.dash))
+      // 描边对齐：缺省内侧不越框；居中越出半个线宽；外侧越出一整个线宽（尖角另算，取大的）
+      return Math.max(
+        shapeStrokeOn(o) && o.strokeAlign === 'center' ? ptToMm(Math.max(o.strokePt, 0.05)) / 2 : 0,
+        shapeStrokeOn(o) && o.strokeAlign === 'outside' ? ptToMm(Math.max(o.strokePt, 0.05)) : 0,
+        miterOverflow(o),
+      )
     case 'arrow': {
       const sw = Math.max(o.strokePt, 0.05)
       // 哪一端有端型：与 `geometry.arrow_heads` 同一判据（新字段任一在就只看新字段，否则看旧 head，缺省 end）
@@ -107,6 +112,27 @@ function strokeOutset(o: CanvasObject): number {
         hasEnd ? headSizeFactor(o.headSizeEnd) : 0,
       )
       return ptToMm(sw * (1.7 * f + 0.5))
+    }
+    case 'path': {
+      // 自由路径（ADR 0185）：描边居中在曲线上（包围盒按曲线实际范围算），越出半个线宽（方头 √2/2）；
+      // 开放子路径带端型时同箭头（帽半宽 + 线端半宽）；选了尖角时尖角可以伸出去，按斜接上限的保守量算
+      const r = readPath(o)
+      if (!r.strokeOn) return 0
+      const sw = Math.max(o.strokePt, 0.05)
+      const open = r.subpaths.some((sp) => !sp.closed && sp.nodes.length >= 2)
+      const f = open
+        ? Math.max(
+            r.headStart !== 'none' ? headSizeFactor(o.headSizeStart) : 0,
+            r.headEnd !== 'none' ? headSizeFactor(o.headSizeEnd) : 0,
+          )
+        : 0
+      // 描边对齐（ADR 0185 M2，只对全闭合的路径生效）：内侧不越出曲线（尖角也裁在里面）；外侧越出一整个线宽，尖角按两倍线宽算
+      const align = pathStrokeAlign(o)
+      if (align === 'inside') return 0
+      const base = f ? 1.7 * f + 0.5 : capHalf(o.lineCap, o.dash)
+      const miter = o.lineJoin === 'miter' ? miterLimitOf(o.miterLimit) / 2 : 0
+      if (align === 'outside') return ptToMm(sw * Math.max(1, 2 * miter))
+      return ptToMm(sw * Math.max(base, miter))
     }
     default:
       return 0

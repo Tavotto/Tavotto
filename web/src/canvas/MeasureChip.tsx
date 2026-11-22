@@ -1,3 +1,4 @@
+import { visibleBounds } from '@/lib/transform'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { perfCount } from '@/perf/core'
@@ -95,7 +96,7 @@ export function MeasureChip() {
   const anchor: Rect | null = figureNudge
     ? (fig?.anchor ?? null)
     : sel.length
-      ? boundsOf(sel.map(visualBounds))
+      ? (visibleBounds(sel, objects) ?? boundsOf(sel.map(visualBounds)))
       : box
   // 图内微调的读数只要 Δ、不读 `box`（那是画布选区的盒，面板没选中时为 null）
   if (!anchor || (!box && !figureNudge)) return null

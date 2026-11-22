@@ -192,19 +192,14 @@
 - 为什么: 粘贴命令的分词真值只取 POSIX 的 shlex，golden 里一条 Windows 路径都没有；引号外的反斜杠被当转义吃掉，两侧对拍一直绿，门禁和评审都没发现，一份用户反馈才暴露。真值只来自一个平台的实现，另一个平台的行为就没人看护。
 - 证据: #1900
 
-### L-165 新写一条做同一件事的路径，先把旧路径已有的防护列出来逐条搬过去
-- 类: 别这样
-- 触发: src/tavotto/engine/ai_convert.py, tests/test_convert_output_content.py, src/tavotto/engine/ai_connections.py, src/tavotto/engine/ai_probe.py, src/tavotto/engine/ai_data_propose.py
-- Seen: 2026-11-16, 2026-11-17
-- 为什么: 为了不让轮询看到候选消失，把 rmtree + copytree 的还原换成手写逐文件覆盖，丢了不跟随符号链接与 Windows 联接点的保护，评审连报两条 P1（#1960）；保存时新加的协议探测把旧密钥直接发往改过的地址，而拉型号清单那条路早有「改了地址不带旧密钥」（#1965）。替换或新增之前把旧路径的防护列成清单，新路径上每条各写一个反证用例。缩略图改按需渲染后，没渲染完的候选提交时跳过了渲染与指纹校验（#1992）。
-- 证据: #1960, #1965, #1992
+### L-165 新写一条做同一件事的路径，先把旧路径已有的防护列出来逐条搬过去 → docs/rules/repo/predicate-subject.md
 
 ### L-167 新解析器或转换器：认得的输入要么兑现、要么报 issue，不许静默丢
 - 类: 别这样
-- 触发: src/tavotto/svg*, src/tavotto/engine/chart*, src/tavotto/chartbundle.py, tests/support/svg_corpus/
-- Seen: 2026-11-16
-- 为什么: SVG 场景转换器认得嵌套 clip-path 与 textLength，转换时却当没写，画出来不裁、字宽不对（#1879）；粘贴表格分词滤掉空串，`1,,3` 的空格悄悄消失，重名表头后者覆盖前者且 issues 为空，TS 镜像校验只查样式键不查值（#1880）。两个 PR 评审共 7 条 P1。每个认得的属性或格式写一条「兑现」或「报 issue」的用例；镜像校验与权威实现共用一份含拒绝样例的向量。
-- 证据: #1879, #1880
+- 触发: src/tavotto/svg*, src/tavotto/engine/chart*, src/tavotto/chartbundle.py, tests/support/svg_corpus/, web/src/lib/pathfinder.ts
+- Seen: 2026-11-16, 2026-11-18
+- 为什么: SVG 场景转换器认得嵌套 clip-path 与 textLength，转换时却当没写，画出来不裁、字宽不对（#1879）；粘贴表格分词滤掉空串，`1,,3` 的空格悄悄消失，重名表头后者覆盖前者且 issues 为空，TS 镜像校验只查样式键不查值（#1880）。两个 PR 评审共 7 条 P1。每个认得的属性或格式写一条「兑现」或「报 issue」的用例；镜像校验与权威实现共用一份含拒绝样例的向量。11-18 偏移路径只把坐标交给内核，复合路径的 evenodd 填充规则丢了，洞被填上，评审报 P1（#2031）。
+- 证据: #1879, #1880, #2031
 
 ### L-169 测试替身与真实类同形：用真类构造或 spec_set 真类，属性别写成方法
 - 类: 别这样
@@ -212,3 +207,17 @@
 - Seen: 2026-11-18
 - 为什么: 诊断包采集把只读属性当方法调，唯一覆盖它的用例用了手写替身、也写成方法，于是一直绿；这条分支在真实会话上从没跑通过，直到一份用户反馈的包里该项只剩 TypeError。评审看 diff 只看到「调用了一个存在的名字」。替身用 create_autospec / spec_set= 真类，或直接构造真类；前端替身同理按真实类型声明。
 - 证据: #2017
+
+### L-176 拦不可信代码或藏秘密的闸，被找到第一种绕过就换成默认拒绝，别再补一种写法
+- 类: 别这样
+- 触发: src/tavotto/engine/fixtools/, src/tavotto/engine/agent_runner/redact.py, src/tavotto/engine/fixsession.py, src/tavotto/engine/diagdetail.py
+- Seen: 2026-11-21
+- 为什么: 小实验的进程内守卫先按前缀、再按精确匹配、再按规范化路径剔除 sys.path，四轮评审报 6 条 P1，最后改成启动时根本不让解释器看到 PYTHONPATH 才收敛（#2064）；本机记住修好的做法的凭据脱敏用正则、AST、凭据名黑名单、挑值去抹换了五种做法，轮轮被找到新漏法，换成正文不存、环境变量按白名单记值、碰过凭据整条不记才收敛（#2100）。写法永远认不完：默认不放、白名单放行、可疑整条丢，判不了按碰过算。
+- 证据: #2064, #2100
+
+### L-177 并发与进度用例用栅栏或事件摆出时序，别断言墙钟上限或靠后台线程采样
+- 类: 别这样
+- 触发: tests/test_probe_concurrency.py, tests/test_ai_data_progress.py
+- Seen: 2026-11-21, 2026-11-22
+- 为什么: 「两个探测并发跑完 < 单次 × 1.7」在负载高的 3.10 分片上量到 2 倍，把无关的 #2079 踢出队列；大表提交的进度用例靠后台线程轮询，没采到 render 阶段就判红，又在 macOS 分片踢了无关的 #2096。每次白烧一轮合并组。顺序用 Barrier / Event 或假时钟钉，采样断言改成读服务端记下的阶段序列；测某一道限额时把别的限额调开，别靠机器快慢。
+- 证据: #2079, #2096

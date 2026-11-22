@@ -574,12 +574,15 @@ describe('文字 / 箭头 / 形状', () => {
   })
 
   it.each(['a1', 's1'])(
-    '%s：更改为 > / 全部属性 ── 副本 / 锁 / 隐藏 / 层级 ── 删除（颜色 / 线宽留给 ContextBar）',
+    '%s：更改为 > / 转为路径 / 全部属性 ── 副本 / 锁 / 隐藏 / 层级 ── 删除（颜色 / 线宽留给 ContextBar）',
     async (id) => {
       await openOn(id)
       expect(menu()?.dataset.quickMenu).toBe('mark')
       expect(itemKeys()).toEqual([
         'change-kind',
+        'convert-to-path',
+        // 封闭形状能偏移路径 / 轮廓化描边（ADR 0185 M2），收在「路径查找器 ›」里；箭头两样都不适用
+        ...(id === 's1' ? ['pathfinder'] : []),
         'open-inspector',
         'copy',
         'paste',
@@ -751,7 +754,7 @@ describe('更改为 ›：类型切换', () => {
   it('形状：子菜单给整个形状族，当前那一种带勾（radio 语义）', async () => {
     await openOn('s1')
     await openChangeKind()
-    expect(kindItems()).toEqual(['rect', 'ellipse', 'triangle', 'diamond', 'polygon', 'brace'])
+    expect(kindItems()).toEqual(['rect', 'ellipse', 'triangle', 'diamond', 'polygon', 'star', 'brace', 'arc'])
     for (const el of items().filter((e) => e.dataset.quickItem?.startsWith('change-to-'))) {
       expect(el.getAttribute('role')).toBe('menuitemradio')
     }

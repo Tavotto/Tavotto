@@ -38,6 +38,7 @@ FAST_SKIPPABLE = {
     "frontend",
     "plugin-candidate",
     "workerd",
+    "vecops",
     "desktop-shell",
     "compat-smoke",
 }

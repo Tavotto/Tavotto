@@ -14,8 +14,8 @@
   y 向上空间里的负角）。写入器不知道毫米，也不再翻 y（RC-008）。
 * **paint order = `objects` 的列表顺序**。`hidden` 的对象不进 IR，id 记在 `dropped_hidden`；
   同层顺序原样保留，不按 id / 类型排序（RC-009）。
-* 文字经 `typography.layout_text()` 变成 `ShapedText`（已排字形），Arrow / Shape 经
-  `geometry` 变成 `Path`，面板变成 `ImportedPage`（PDF）或 `Image`（位图）+ 一条
+* 文字经 `typography.layout_text()` 变成 `ShapedText`（已排字形），Arrow / Shape / Path（自由路径，
+  ADR 0185）经 `geometry` 变成 `Path`，面板变成 `ImportedPage`（PDF）或 `Image`（位图）+ 一条
   `FileResource`（冻结源的语义身份 + 字节 hash）；面板的 crop / 旋转 / 翻转只记在节点上，
   落位的矩阵由写入器经 `placement.place()` 算（顺序合同只有那一份）。
 * 编译完立刻 `ir.validate()`：非法数字 / 尺寸 / 资源引用在这里被拒，写入器只收合法的页。
@@ -50,6 +50,7 @@ from .ir import (
     Resource,
     ShapedText,
     Stroke,
+    apply,
     compose,
     hex2rgb,
     mm2pt,
@@ -425,6 +426,54 @@ def _shape_node(o: dict, page_h: float) -> Node | None:
     )
 
 
+def _path_node(o: dict, page_h: float) -> Node | None:
+    """自由路径（ADR 0185）→ 一个带对象变换的组；几何在 `geometry.path_paths`（与前端 `pathGeom` 同源）。"""
+    _x, _y, w, h = _box_pt(o, allow_zero=True)
+    nodes = geometry.path_paths(o, w, h)
+    if not nodes:
+        return None  # 既不填也不描（或没有画得出的子路径）：什么都不画，与形状同一条
+    return Group(
+        tuple(nodes), transform=_object_transform(o, page_h), object_id=str(o.get("id", ""))
+    )
+
+
+def clip_outline(m: dict, page_h: float) -> tuple[tuple, str] | None:
+    """剪切蒙版（ADR 0191）→ 页面空间（pt、y 向上）的裁剪轮廓与填充规则；画不出轮廓 = None。
+
+    蒙版在载荷里一律是路径的几何（前端 `clipMask.maskAsPath`：形状先换成等价路径），轮廓 = `geometry.path_segments`
+    的填充几何（框空间），再按对象变换（框 → 页面，绕框中心旋转）逐点换过去——与前端 `clipMask.maskOutline` 同一条规则。"""
+    if not isinstance(m, dict):
+        return None
+    _x, _y, w, h = _box_pt(m, allow_zero=True)
+    segs = geometry.path_segments(m, w, h)["fill"]
+    if not segs:
+        return None
+    t = _object_transform(m, page_h)
+    out = []
+    for s in segs:
+        if s[0] == "Z":
+            out.append(("Z",))
+            continue
+        pts = [apply(t, s[i], s[i + 1]) for i in range(1, len(s), 2)]
+        out.append((s[0], *[v for p in pts for v in p]))
+    return tuple(out), geometry.read_path(m)["fill_rule"]
+
+
+def _clipped(node: Node, clips: object, page_h: float) -> Node | None:
+    """被剪切组裁的对象：外 → 内每个蒙版包一层 `Group(clip=…)`（外层在外）。一个蒙版画不出轮廓 = 全部裁掉，
+    这个对象不画（与画布同一条）。真裁剪：PDF `W n`、SVG `<clipPath>`、EPS `clip`，位图由 PDF 栅格化，不栅格化矢量。"""
+    if not isinstance(clips, list):
+        raise PlanError("bad_object", "clip 必须是一个列表", {"id": getattr(node, "object_id", "")})
+    oid = getattr(node, "object_id", "")
+    for m in reversed(clips):
+        outline = clip_outline(m, page_h)
+        if outline is None:
+            return None
+        segs, rule = outline
+        node = Group((node,), clip=Path(segs, fill_rule=rule), object_id=oid)
+    return node
+
+
 def _synth_of(face) -> dict[str, bool]:
     """这张脸要模拟的粗斜 → `GlyphRun` 的字段。"""
     return {
@@ -552,10 +601,14 @@ def compile_page(
             node = _text_node(o, page_h, fs, resources, problems, math)
         elif kind in ("arrow", "shape"):
             node = _shape_node(o, page_h)
+        elif kind == "path":
+            node = _path_node(o, page_h)
         else:
             raise PlanError(
                 "bad_object", f"不认识的对象类型: {kind!r}", {"id": str(o.get("id", ""))}
             )
+        if node is not None and o.get("clip"):
+            node = _clipped(node, o.get("clip"), page_h)
         if node is not None:
             children.append(node)
     page = validate(Page(page_w, page_h, tuple(children), resources, background))

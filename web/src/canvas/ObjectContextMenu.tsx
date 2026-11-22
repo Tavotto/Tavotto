@@ -23,11 +23,14 @@ import {
   RefreshCw,
   RotateCcw,
   Shapes,
+  Spline,
   SlidersHorizontal,
   Trash2,
   Ungroup,
+  ClipMask,
+  ReleaseClipMask,
 } from '@/components/ui/icons'
-import { t as translate } from '@/i18n'
+import { formatMessage, t as translate } from '@/i18n'
 import { emitActivity } from '@/lib/activity'
 import { keyOf } from '@/lib/keymap'
 import { canPasteFromMenu, copySelectedObjects, pasteObjects } from '@/lib/clipboard'
@@ -61,10 +64,12 @@ import {
   groupSelected,
   rebuildPanel,
   resetOverridesConfirmed,
+  selectedUnits,
   selectionHasGroupIn,
   setObjectsHidden,
   setObjectsLocked,
   switchObjectKind,
+  convertToPath,
   toggleHidden,
   toggleLocked,
   triStateOf,
@@ -85,6 +90,13 @@ import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { openArrangeInInspector } from './context-bar/openArrange'
+import { canConvertToPath } from '@/lib/convertToPath'
+import { PATH_COMMANDS } from '@/store/pathActions'
+import { blockedReason, PATHFINDER_COMMANDS } from '@/store/pathfinderActions'
+import { canMakeClipMask, canReleaseClipMask, makeClipMask, releaseClipMask } from '@/store/groupActions'
+import { PATHFINDER_COMMAND_ICONS } from '@/components/pathfinderCommandIcons'
+import { loadVecops } from '@/lib/vecops/kernel'
+import { PATH_COMMAND_ICONS } from '@/components/pathCommandIcons'
 import type { CanvasObject, PanelObject } from '@/types/document'
 import { objectLabel, panelRotation } from '@/types/document'
 import { isAdoptedPanel } from '@/lib/artifactValidation'
@@ -98,6 +110,7 @@ import { isAdoptedPanel } from '@/lib/artifactValidation'
  * 这里不算几何、不判就绪度、不碰 override 数组：
  *
  *   排列 / 成组   alignSelectedTo / groupSelected / ungroupSelected（ADR 0036，T-91）
+ *   转为路径      convertToPath（形状 / 箭头 → 自由路径，ADR 0185；判据 `lib/convertToPath`）
  *   重新构建      rebuildPanel（作废热会话 + 按当前 overrides 重画；不进历史）
  *   恢复图内修改  resetOverridesConfirmed（同属性页「重置到脚本原始」；先问一句）
  *   同步修改      openSyncOverrides（打开 `SyncOverridesHost` 那扇窗；有修改且有同脚本兄弟图才摆）
@@ -113,6 +126,8 @@ const qe = (key: string, values?: Record<string, unknown>) =>
   translate(`quickEdit.${key}`, { ns: 'workspace', ...(values ?? {}) })
 const ins = (key: string, values?: Record<string, unknown>) =>
   translate(key, { ns: 'inspector', ...(values ?? {}) })
+/** 与命令面板同名的命令（剪切蒙版等）：标签就用命令面板那一条 */
+const palLabel = (id: string) => translate(`palette.commands.${id}.label`, { ns: 'dialogs' })
 
 /** 菜单形态：Prompt 21 的引导按它挂钩（`data-quick-menu`） */
 export type ObjectMenuKind = 'panel' | 'panel-layout-only' | 'text' | 'mark' | 'multi'
@@ -215,6 +230,9 @@ export function ObjectContextMenu({
       {kind === 'multi' && <MultiItems selected={selected} run={run} />}
 
       {kind === 'mark' && <ChangeKindSub objs={[obj]} run={run} />}
+      {kind === 'mark' && <ConvertToPathItem objs={[obj]} run={run} />}
+      {kind === 'mark' && <PathCommandItems run={run} />}
+      {kind === 'mark' && <PathfinderSub run={run} />}
 
       {kind !== 'multi' && <OpenInspectorItem run={run} />}
 
@@ -372,8 +390,9 @@ function MultiItems({
   const grouped = selectionHasGroupIn(selected)
   // 选区恰好是**一整个组**：再「成组」一次只会换个组 id、多一条历史，没有意义；
   // 含组的混合选区两个动作都给（把它们并成一组 / 把里面的组拆开），不替用户猜
-  const wholeGroup =
-    grouped && selected.every((o) => !!o.groupId && o.groupId === selected[0].groupId)
+  // 嵌套组（ADR 0191）按当前这一层的单元数：只有一个单元且它是组 = 整个一组
+  const units = selectedUnits(selected.map((o) => o.id))
+  const wholeGroup = grouped && units.length === 1
   return (
     <>
       <MenuSub label={qe('arrange')} data-quick-item="arrange">
@@ -393,7 +412,20 @@ function MultiItems({
           {ins('arrange.ungroup')}
         </MenuItem>
       )}
+      {canMakeClipMask() && (
+        <MenuItem icon={ClipMask} shortcut={keyOf('makeClipMask')} data-quick-item="make-clip-mask" onSelect={run(makeClipMask)}>
+          {palLabel('make-clip-mask')}
+        </MenuItem>
+      )}
+      {canReleaseClipMask() && (
+        <MenuItem icon={ReleaseClipMask} shortcut={keyOf('releaseClipMask')} data-quick-item="release-clip-mask" onSelect={run(releaseClipMask)}>
+          {palLabel('release-clip-mask')}
+        </MenuItem>
+      )}
       <ChangeKindSub objs={selected} run={run} />
+      <ConvertToPathItem objs={selected} run={run} />
+      <PathCommandItems run={run} />
+      <PathfinderSub run={run} />
       <MenuItem
         icon={SlidersHorizontal}
         data-quick-item="open-arrange"
@@ -444,6 +476,84 @@ function ChangeKindSub({
           </MenuRadioItem>
         ))}
       </MenuRadioGroup>
+    </MenuSub>
+  )
+}
+
+/**
+ * 「转为路径」（ADR 0185）：选中的形状 / 箭头换成同 id 的自由路径，画面不动。判据只有
+ * `lib/convertToPath.canConvertToPath`（选区里每个都能转才摆），写入只有 `convertToPath`——这里只发意图。
+ */
+function ConvertToPathItem({
+  objs,
+  run,
+}: {
+  objs: CanvasObject[]
+  run: (fn: () => void) => () => void
+}) {
+  if (!objs.length || !objs.every(canConvertToPath)) return null
+  const ids = objs.map((o) => o.id)
+  return (
+    <MenuItem icon={Spline} data-quick-item="convert-to-path" onSelect={run(() => convertToPath(ids))}>
+      {qe('convertToPath')}
+    </MenuItem>
+  )
+}
+
+/**
+ * 路径编辑的命令（ADR 0185 M1）：编辑锚点；锚点编辑里再有添加 / 删除 / 转换锚点。哪几项出现只看命令表
+ * `PATH_COMMANDS` 的 `available()`（与命令面板、快捷键同一份），文案取命令面板那一条，这里只发意图。
+ */
+function PathCommandItems({ run }: { run: (fn: () => void) => () => void }) {
+  const items = PATH_COMMANDS.filter((c) => c.id !== 'pen-tool' && c.available())
+  if (!items.length) return null
+  return (
+    <>
+      {items.map((c) => (
+        <MenuItem
+          key={c.id}
+          icon={PATH_COMMAND_ICONS[c.id]}
+          data-quick-item={c.id}
+          shortcut={c.key ? keyOf(c.key) : undefined}
+          onSelect={run(c.run)}
+        >
+          {translate(`palette.commands.${c.id}.label`, { ns: 'dialogs' })}
+        </MenuItem>
+      ))}
+    </>
+  )
+}
+
+/**
+ * 「路径查找器 ›」（ADR 0185 M2）：合并 / 减去顶层 / 相交 / 排除重叠 / 分割 / 修边、复合路径、偏移路径、轮廓化描边、反转方向。
+ * 哪几项出现只看 `PATHFINDER_COMMANDS` 的 `available()`（与属性栏、命令面板、快捷键同一份）；内核加载不了的项
+ * `disabled` + 常驻原因。菜单一打开就预取内核。
+ */
+function PathfinderSub({ run }: { run: (fn: () => void) => () => void }) {
+  const items = PATHFINDER_COMMANDS.filter((c) => c.available())
+  const needsKernel = items.some((c) => c.kernel)
+  useEffect(() => {
+    if (needsKernel) void loadVecops()
+  }, [needsKernel])
+  if (!items.length) return null
+  return (
+    <MenuSub label={qe('pathfinder')} icon={PATHFINDER_COMMAND_ICONS['pathfinder-unite']} data-quick-item="pathfinder">
+      {items.map((c) => {
+        const reason = blockedReason(c)
+        return (
+          <MenuItem
+            key={c.id}
+            icon={PATHFINDER_COMMAND_ICONS[c.id]}
+            data-quick-item={c.id}
+            shortcut={c.key ? keyOf(c.key) : undefined}
+            disabled={!!reason}
+            reason={reason ? formatMessage(reason) : undefined}
+            onSelect={run(c.run)}
+          >
+            {translate(`palette.commands.${c.id}.label`, { ns: 'dialogs' })}
+          </MenuItem>
+        )
+      })}
     </MenuSub>
   )
 }

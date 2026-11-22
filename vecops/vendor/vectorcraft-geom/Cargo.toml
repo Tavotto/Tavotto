@@ -1,0 +1,14 @@
+# 随源码内联自 storytold/vectorcraft 47500c4 的 crates/geom（MIT OR Apache-2.0）。
+# 只改了这份清单：workspace 继承的字段写成明值、去掉 dev-dependencies（上游用例依赖不随源码搬的 testkit）。
+[package]
+name = "vectorcraft-geom"
+version = "0.24.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "VectorCraft geom"
+publish = false
+
+[dependencies]
+kurbo = { version = "0.13", features = ["serde"] }
+serde = { version = "1", features = ["derive", "rc"] }
+thiserror = "2"

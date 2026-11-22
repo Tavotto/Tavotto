@@ -8,18 +8,41 @@ import type {
   HeadSize,
   LineCap,
   LineJoin,
-  ShapeObject,
 } from '@/types/document'
-import { arrowHeads, legacyHead, shapeStrokeOn } from '@/types/document'
-import { DEFAULT_LINE_CAP, defaultLineJoin } from '@/lib/shapeGeometry'
+import { arrowHeads, DEFAULT_STAR_POINTS, DEFAULT_STAR_RATIO, type PathObject, type ShapeObject } from '@/types/document'
+import { DEFAULT_LINE_CAP, STROKE_MITER_LIMIT, validDashPattern } from '@/lib/shapeGeometry'
+import {
+  isFillStrokeMark,
+  markCornerRadiusCapable,
+  markDefaultJoin,
+  markFillable,
+  markHasNoJoin,
+  headedOf,
+  markHeadCapable,
+  markHeads,
+  markSidesCapable,
+  markStarCapable,
+  markPathAlignCapable,
+  markStrokeAlignCapable,
+  strokeAlignOf,
+  markFillRuleCapable,
+  markStrokeOn,
+  markStrokeToggle,
+  setMarkHead,
+  setMarkHeadSize,
+  setMarkStrokeOff,
+  type FillStrokeMark,
+  type HeadedMark,
+} from '@/lib/markStyle'
 import { Button } from '../ui/Button'
 import { Row, Section } from '../ui/Field'
 import { Segmented } from '../ui/Segmented'
 import { SummaryRow } from '../ui/SummaryRow'
 import { INSPECTOR_LABEL_W } from './layout'
-import { ColorField, NO_COLOR, NumberField } from '../ui/Input'
+import { ColorField, NO_COLOR, NumberField, TextInput } from '../ui/Input'
 import { Popover } from '../ui/Popover'
 import { EffectToggle } from './controls/EffectToggle'
+import { GradientEditor, GradientKindSelect, gradientOf, GradientTools, RadialRows } from './controls/GradientControls'
 import { OptionGrid, type GridOption } from './controls/OptionGrid'
 import { PickerTrigger } from './controls/PickerTrigger'
 import { shared } from './common'
@@ -323,9 +346,70 @@ function MoreFold({ changed, children }: { changed: number; children: ReactNode 
 /** 这一组对象里有没有任何一个把这项改离缺省（折叠行右值的项数） */
 const countChanged = (flags: boolean[]) => flags.filter(Boolean).length
 
-/** 写新端型时同步维护旧 head 字段；规则在 `types/document.legacyHead` 一份 */
-function syncLegacyHead(o: ArrowObject): void {
-  o.head = legacyHead(arrowHeads(o))
+/**
+ * 起点 / 终点端型两行（箭头与含开放子路径的自由路径共用；读写只走 `lib/markStyle` 的 `markHeads` / `setMarkHead`）。
+ * `patch` 只会喂进有端型字段的对象。
+ */
+function HeadRows<T extends HeadedMark>({
+  objs,
+  patch,
+}: {
+  objs: T[]
+  patch: (label: UiMessage, fn: (o: T) => void) => void
+}) {
+  const heads = headedOf(objs) as T[]
+  return (
+    <>
+      <Row label={sk('end')} labelWidth={INSPECTOR_LABEL_W}>
+        <HeadSelect
+          value={shared(heads, (o) => markHeads(o as T).end) ?? null}
+          onChange={(v) => patch(hist('setHeadEnd'), (o) => setMarkHead(o, 'end', v))}
+          ariaLabel={sk('end')}
+        />
+      </Row>
+      <Row label={sk('start')} labelWidth={INSPECTOR_LABEL_W}>
+        <HeadSelect
+          value={shared(heads, (o) => markHeads(o as T).start) ?? null}
+          onChange={(v) => patch(hist('setHeadStart'), (o) => setMarkHead(o, 'start', v))}
+          ariaLabel={sk('start')}
+        />
+      </Row>
+    </>
+  )
+}
+
+/** 端型大小（「更多」里）：只给真有端型的那一端 */
+function HeadSizeRows<T extends HeadedMark>({
+  objs,
+  patch,
+}: {
+  objs: T[]
+  patch: (label: UiMessage, fn: (o: T) => void) => void
+}) {
+  const heads = headedOf(objs) as T[]
+  const has = (o: T, end: 'start' | 'end') => markHeads(o)[end] !== 'none'
+  return (
+    <>
+      {heads.some((o) => has(o, 'end')) && (
+        <ChoiceRow
+          label={sk('endSize')}
+          group="size"
+          values={SIZE_VALUES}
+          value={shared(heads, (o) => (o as T).headSizeEnd ?? 'medium') ?? null}
+          onChange={(v) => patch(hist('setHeadSizeEnd'), (o) => setMarkHeadSize(o, 'end', v))}
+        />
+      )}
+      {heads.some((o) => has(o, 'start')) && (
+        <ChoiceRow
+          label={sk('startSize')}
+          group="size"
+          values={SIZE_VALUES}
+          value={shared(heads, (o) => (o as T).headSizeStart ?? 'medium') ?? null}
+          onChange={(v) => patch(hist('setHeadSizeStart'), (o) => setMarkHeadSize(o, 'start', v))}
+        />
+      )}
+    </>
+  )
 }
 
 export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
@@ -337,13 +421,6 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
     })
   const arrowColor = shared(objs, (o) => (o as ArrowObject).color)
   const dash = shared(objs, (o) => (o as ArrowObject).dash ?? 'solid')
-  const hasHead = (o: ArrowObject, end: 'start' | 'end') => arrowHeads(o)[end] !== 'none'
-  const setSize = (which: 'Start' | 'End') => (v: HeadSize) =>
-    patch(hist(`setHeadSize${which}`), (o) => {
-      const key = `headSize${which}` as const
-      if (v === 'medium') delete o[key]
-      else o[key] = v
-    })
 
   return (
     <>
@@ -353,34 +430,7 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
           value={dash ?? null}
           onChange={(v) => patch(hist('setDash'), (o) => (o.dash = v === 'solid' ? undefined : v))}
         />
-        <Row label={sk('end')} labelWidth={INSPECTOR_LABEL_W}>
-          <HeadSelect
-            value={shared(objs, (o) => arrowHeads(o as ArrowObject).end) ?? null}
-            onChange={(v) =>
-              patch(hist('setHeadEnd'), (o) => {
-                const prev = arrowHeads(o) // 先取旧值：设了新字段后旧 head 不再参与推导
-                o.headEnd = v
-                o.headStart = prev.start
-                syncLegacyHead(o)
-              })
-            }
-            ariaLabel={sk('end')}
-          />
-        </Row>
-        <Row label={sk('start')} labelWidth={INSPECTOR_LABEL_W}>
-          <HeadSelect
-            value={shared(objs, (o) => arrowHeads(o as ArrowObject).start) ?? null}
-            onChange={(v) =>
-              patch(hist('setHeadStart'), (o) => {
-                const prev = arrowHeads(o)
-                o.headStart = v
-                o.headEnd = prev.end
-                syncLegacyHead(o)
-              })
-            }
-            ariaLabel={sk('start')}
-          />
-        </Row>
+        <HeadRows objs={objs} patch={patch} />
         {/* 与形状同一套行语法（2026-10-07 §9.2）：线宽半列一行、颜色一行（色块 + hex） */}
         <StrokeWidthRow
           value={shared(objs, (o) => (o as ArrowObject).strokePt)}
@@ -420,26 +470,11 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
           objs.some((o) => o.strokeOpacity != null),
           objs.some((o) => o.lineCap != null && o.lineCap !== DEFAULT_LINE_CAP),
           objs.some((o) => o.lineJoin != null && o.lineJoin !== 'round'),
+          objs.some((o) => o.miterLimit != null),
+          objs.some((o) => o.dashPattern != null),
         ])}
       >
-        {objs.some((o) => hasHead(o, 'end')) && (
-          <ChoiceRow
-            label={sk('endSize')}
-            group="size"
-            values={SIZE_VALUES}
-            value={shared(objs, (o) => (o as ArrowObject).headSizeEnd ?? 'medium') ?? null}
-            onChange={setSize('End')}
-          />
-        )}
-        {objs.some((o) => hasHead(o, 'start')) && (
-          <ChoiceRow
-            label={sk('startSize')}
-            group="size"
-            values={SIZE_VALUES}
-            value={shared(objs, (o) => (o as ArrowObject).headSizeStart ?? 'medium') ?? null}
-            onChange={setSize('Start')}
-          />
-        )}
+        <HeadSizeRows objs={objs} patch={patch} />
         <StrokeOpacityRow
           value={shared(objs, (o) => (o as ArrowObject).strokeOpacity ?? 1)}
           onChange={(v) => patch(hist('setStrokeOpacity'), (o) => setOpacity(o, v))}
@@ -451,9 +486,105 @@ export function ArrowSection({ objs }: { objs: ArrowObject[] }) {
           onCap={(v) => patch(hist('setLineCap'), (o) => setCap(o, v))}
           onJoin={(v) => patch(hist('setLineJoin'), (o) => setJoin(o, v, 'round'))}
         />
+        {objs.some((o) => o.lineJoin === 'miter') && (
+          <MiterLimitRow
+            value={shared(objs, (o) => (o as ArrowObject).miterLimit ?? STROKE_MITER_LIMIT)}
+            onChange={(v) => patch(hist('setMiterLimit'), (o) => setMiter(o, v))}
+          />
+        )}
+        <DashPatternRow
+          value={shared(objs, (o) => (o as ArrowObject).dashPattern ?? null)}
+          onChange={(v) => patch(hist('setDashPattern'), (o) => setDashPattern(o, v))}
+        />
       </MoreFold>
     </>
   )
+}
+
+/** 斜接上限：只在选了尖角时出现（圆角 / 斜角下它不起作用）；等于缺省 10 就删字段 */
+function MiterLimitRow({ value, onChange }: { value: number | undefined; onChange: (v: number) => void }) {
+  return (
+    <div data-prop="miterLimit">
+      <Row label={sk('miterLimit')} labelWidth={INSPECTOR_LABEL_W}>
+        <NumberField
+          half
+          ariaLabel={sk('miterLimit')}
+          value={value ?? STROKE_MITER_LIMIT}
+          mixed={value === undefined}
+          step={1}
+          min={1}
+          max={100}
+          precision={1}
+          onChange={onChange}
+        />
+      </Row>
+    </div>
+  )
+}
+
+/** 「4 2」「4, 2, 1, 2」→ 数组；读不成合法虚线（`validDashPattern`）回 null */
+const parseDash = (text: string): number[] | null =>
+  validDashPattern(
+    text
+      .split(/[\s,，、]+/)
+      .filter(Boolean)
+      .map(Number),
+  )
+
+/**
+ * 自定义虚线（pt，线段 / 间隙交替）：一个文本框，写「4 2」这样的数；清空 = 回到上面选的线型。
+ * 有它时上面的「线型」不再起作用（导出与画布同一条：`validDashPattern` 优先）。读不成数就标红、不写。
+ */
+function DashPatternRow({ value, onChange }: { value: number[] | undefined | null; onChange: (v: number[] | null) => void }) {
+  const shown = value ? value.join(' ') : ''
+  const [draft, setDraft] = useState<string | null>(null)
+  const text = draft ?? shown
+  const invalid = draft != null && draft.trim() !== '' && parseDash(draft) == null
+  const commit = () => {
+    if (draft == null) return
+    const t = draft.trim()
+    if (t === '') onChange(null)
+    else {
+      const p = parseDash(t)
+      if (!p) return
+      onChange(p)
+    }
+    setDraft(null)
+  }
+  return (
+    <div data-prop="dashPattern">
+      <Row label={sk('dashPattern')} labelWidth={INSPECTOR_LABEL_W}>
+        <TextInput
+          aria-label={sk('dashPattern')}
+          title={sk('dashPatternTip')}
+          placeholder={sk('dashPatternPlaceholder')}
+          suffix="pt"
+          align="left"
+          value={value === null && draft == null ? '' : text}
+          invalid={invalid}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit()
+            if (e.key === 'Escape') setDraft(null)
+          }}
+        />
+      </Row>
+    </div>
+  )
+}
+
+const ALIGN_VALUES: ('inside' | 'center' | 'outside')[] = ['inside', 'center', 'outside']
+
+/** 写入器：斜接上限 / 自定义虚线 / 描边对齐 / 填充规则，等于缺省就删字段 */
+function setMiter(o: { miterLimit?: number }, v: number): void {
+  const m = Math.max(1, v)
+  if (Math.abs(m - STROKE_MITER_LIMIT) < 1e-9) delete o.miterLimit
+  else o.miterLimit = m
+}
+function setDashPattern(o: { dashPattern?: number[] }, v: number[] | null): void {
+  if (v) o.dashPattern = v
+  else delete o.dashPattern
 }
 
 /** 线端 + 拐角两行；点线靠圆线帽画点，线端行置灰并说原因（title） */
@@ -505,30 +636,68 @@ function setJoin(o: { lineJoin?: LineJoin }, v: LineJoin, fallback: LineJoin): v
   else o.lineJoin = v
 }
 
-export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
+/**
+ * 形状与自由路径（ADR 0185）的外观：两者的填充 / 描边字段逐字相同，所以是同一套控件；哪一行出现、写哪个字段
+ * 全部问 `lib/markStyle` 的能力函数（这里不按对象类型分支）。路径含开放子路径时多出端型行（与箭头同一组控件）。
+ */
+export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
   useTranslation('inspector')
   const ids = objs.map((o) => o.id)
   // line 只有描边；brace 只描边不填充
-  const hasFillable = objs.some((o) => o.shape !== 'line' && o.shape !== 'brace')
-  const allRect = objs.every((o) => o.shape === 'rect')
-  const allPolygon = objs.every((o) => o.shape === 'polygon')
-  const fill = shared(objs, (o) => (o as ShapeObject).fill)
+  const hasFillable = objs.some(markFillable)
+  const allRect = objs.every(markCornerRadiusCapable)
+  const allPolygon = objs.every(markSidesCapable)
+  const allStar = objs.every(markStarCapable)
+  const headed = headedOf(objs)
+  const fill = shared(objs, (o) => (o as FillStrokeMark).fill)
   // 全都有填充、只是颜色不同：填充是开着的，色块画「多个值」（之前 shared 给 undefined，
   // 整行退回「＋添加填充」，一点就把所有人的填充刷成白色）。有的有、有的没有仍按「没开」处理
   const fillMixed = fill === undefined && objs.length > 0 && objs.every((o) => !!o.fill)
   const fillOn = !!fill || fillMixed
-  const strokeColor = shared(objs, (o) => (o as ShapeObject).color)
-  // 描边开关只对封闭形状（直线 / 大括号只有描边）；开着 = 有任何一个封闭形状有描边
-  const closed = objs.filter((o) => o.shape !== 'line' && o.shape !== 'brace')
-  const strokeOn = closed.length === 0 || closed.some(shapeStrokeOn)
+  const strokeColor = shared(objs, (o) => (o as FillStrokeMark).color)
+  // 描边开关只对封闭形状与路径（直线 / 大括号只有描边）；开着 = 有任何一个可开关的对象有描边
+  const closed = objs.filter(markStrokeToggle)
+  const strokeOn = closed.length === 0 || closed.some(markStrokeOn)
   // 描边的细节行（线宽 / 线型 / 更多）只在还有描边的时候出现
-  const showStroke = objs.some(shapeStrokeOn)
-  const dash = shared(objs, (o) => (o as ShapeObject).dash ?? 'solid')
-  const allLine = objs.every((o) => o.shape === 'line')
-  const fillOpacity = shared(objs, (o) => (o as ShapeObject).fillOpacity ?? 1)
-  const patch = (label: UiMessage, fn: (o: ShapeObject) => void) =>
+  const showStroke = objs.some(markStrokeOn)
+  const dash = shared(objs, (o) => (o as FillStrokeMark).dash ?? 'solid')
+  const allLine = objs.every(markHasNoJoin)
+  const fillOpacity = shared(objs, (o) => (o as FillStrokeMark).fillOpacity ?? 1)
+  const patch = (label: UiMessage, fn: (o: FillStrokeMark) => void) =>
     updateObjects(ids, label, (o) => {
-      if (o.type === 'shape') fn(o)
+      if (isFillStrokeMark(o)) fn(o)
+    })
+  /** 渐变（ADR 0186）：填充渐变只给有填充的、描边渐变只给有描边的 */
+  const fillables = objs.filter((o) => markFillable(o) && !!o.fill)
+  const stroked = objs.filter(markStrokeOn)
+  // 这一侧的渐变以第一个对象为准（多选时编辑写给全部）
+  const fillGrad = fillables.map((o) => gradientOf(o, 'fill')).find(Boolean) ?? null
+  const strokeGrad = stroked.map((o) => gradientOf(o, 'stroke')).find(Boolean) ?? null
+  /** 径向的中心与半径在「更多」里：有径向时「更多」要在 */
+  const radialOn = fillGrad?.kind === 'radial' || strokeGrad?.kind === 'radial'
+  /** 描边对齐只写封闭形状与全闭合的路径；填充规则只写有填充的路径 */
+  const aligned = objs.filter((o) => markStrokeAlignCapable(o) || markPathAlignCapable(o)) as (ShapeObject | PathObject)[]
+  const filledPaths = objs.filter(markFillRuleCapable)
+  /** 描边对齐写回：等于各自的缺省（形状内侧、路径居中）就删字段 */
+  const setAlign = (v: 'inside' | 'center' | 'outside') =>
+    updateObjects(ids, hist('setStrokeAlign'), (o) => {
+      if (!isFillStrokeMark(o)) return
+      if (markStrokeAlignCapable(o)) {
+        if (v === 'inside') delete o.strokeAlign
+        else o.strokeAlign = v
+      } else if (markPathAlignCapable(o)) {
+        if (v === 'center') delete o.strokeAlign
+        else o.strokeAlign = v
+      }
+    })
+  const patchPaths = (label: UiMessage, fn: (o: PathObject) => void) =>
+    updateObjects(ids, label, (o) => {
+      if (isFillStrokeMark(o) && markFillRuleCapable(o)) fn(o)
+    })
+  /** 端型行只写有端型的那几个（选区里混着封闭形状时，它们一个字不动） */
+  const patchHeaded = (label: UiMessage, fn: (o: HeadedMark) => void) =>
+    updateObjects(ids, label, (o) => {
+      if (markHeadCapable(o)) fn(o)
     })
 
   return (
@@ -549,7 +718,8 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
               onAdd={() => patch(hist('addFill'), (o) => (o.fill = '#FFFFFF'))}
               onOff={() => patch(hist('clearFill'), (o) => (o.fill = null))}
             />
-            {fillOn && (
+            {/* 渐变时（ADR 0186）色块与十六进制不显示（降级纯色自动取首个色标），这一行是类型下拉 + 角度 + 反向 */}
+            {fillOn && !fillGrad && (
               <ColorField
                 ariaLabel={sk('fill')}
                 mixed={fillMixed}
@@ -557,8 +727,12 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
                 onChange={(v) => patch(hist('setFill'), (o) => (o.fill = v))}
               />
             )}
+            {fillOn && <GradientKindSelect objs={fillables} target="fill" />}
+            {fillOn && fillGrad && <GradientTools objs={fillables} target="fill" />}
           </Row>
         )}
+        {/* 色带常显，紧跟在填充那一行下面（PPT 式：点空白加色标、拖动、往下拖出删除） */}
+        {hasFillable && fillOn && fillGrad && <GradientEditor objs={fillables} target="fill" />}
         {hasFillable && fillOn && (
           // 填充不透明度：填充自己的一行半列（此前挤在线宽那一行的右端，靠 index.css 的 40px 框）
           <div data-prop="fillOpacity">
@@ -597,14 +771,10 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
                   delete o.stroke
                 })
               }
-              onOff={() =>
-                patch(hist('clearStroke'), (o) => {
-                  if (o.shape !== 'line' && o.shape !== 'brace') o.stroke = false
-                })
-              }
+              onOff={() => patch(hist('clearStroke'), setMarkStrokeOff)}
             />
           )}
-          {(!hasFillable || strokeOn) && (
+          {(!hasFillable || strokeOn) && !strokeGrad && (
             <ColorField
               ariaLabel={sk('strokeColor')}
               mixed={strokeColor === undefined}
@@ -612,10 +782,13 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
               onChange={(v) => patch(hist('setStrokeColor'), (o) => (o.color = v))}
             />
           )}
+          {showStroke && <GradientKindSelect objs={stroked} target="stroke" />}
+          {showStroke && strokeGrad && <GradientTools objs={stroked} target="stroke" />}
         </Row>
+        {showStroke && strokeGrad && <GradientEditor objs={stroked} target="stroke" />}
         {showStroke && (
           <StrokeWidthRow
-            value={shared(objs, (o) => (o as ShapeObject).strokePt)}
+            value={shared(objs, (o) => (o as FillStrokeMark).strokePt)}
             onChange={(v) => patch(hist('setStrokeWidth'), (o) => (o.strokePt = v))}
           />
         )}
@@ -625,12 +798,13 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
             onChange={(v) => patch(hist('setDash'), (o) => (o.dash = v === 'solid' ? undefined : v))}
           />
         )}
+        {showStroke && headed.length > 0 && <HeadRows objs={headed} patch={patchHeaded} />}
         {allRect && (
           <Row label={sk('cornerRadius')} labelWidth={INSPECTOR_LABEL_W}>
             <NumberField
               half
               ariaLabel={sk('cornerRadius')}
-              value={shared(objs, (o) => (o as ShapeObject).cornerRadius ?? 0) ?? 0}
+              value={shared(objs, (o) => (o as FillStrokeMark & { cornerRadius?: number }).cornerRadius ?? 0) ?? 0}
               step={0.5}
               min={0}
               max={50}
@@ -638,6 +812,7 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
               unit="mm"
               onChange={(v) =>
                 patch(hist('setCornerRadius'), (o) => {
+                  if (!markCornerRadiusCapable(o)) return
                   if (v > 0) o.cornerRadius = v
                   else delete o.cornerRadius
                 })
@@ -646,40 +821,120 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
           </Row>
         )}
         {allPolygon && (
-          <Row label={sk('sides')} labelWidth={INSPECTOR_LABEL_W}>
+          // 多边形是边数、星形是角数（同一个字段 `sides`）；只有星形的选区叫「角数」
+          <Row label={sk(allStar ? 'points' : 'sides')} labelWidth={INSPECTOR_LABEL_W}>
             <NumberField
               half
-              ariaLabel={sk('sides')}
-              value={shared(objs, (o) => (o as ShapeObject).sides ?? 6) ?? 6}
+              ariaLabel={sk(allStar ? 'points' : 'sides')}
+              value={
+                shared(objs, (o) => (o as ShapeObject).sides ?? ((o as ShapeObject).shape === 'star' ? DEFAULT_STAR_POINTS : 6)) ??
+                (allStar ? DEFAULT_STAR_POINTS : 6)
+              }
               step={1}
               min={3}
               max={12}
-              onChange={(v) => patch(hist('setSides'), (o) => (o.sides = Math.round(v)))}
+              onChange={(v) =>
+                patch(hist('setSides'), (o) => {
+                  if (markSidesCapable(o)) o.sides = Math.round(v)
+                })
+              }
+            />
+          </Row>
+        )}
+        {allStar && (
+          // 星形的内径比（ADR 0185 M1）：百分数，等于缺省就不写字段
+          <Row label={<span title={sk('starRatioTip')}>{sk('starRatio')}</span>} labelWidth={INSPECTOR_LABEL_W}>
+            <NumberField
+              half
+              ariaLabel={sk('starRatio')}
+              value={Math.round((shared(objs, (o) => (o as ShapeObject).starRatio ?? DEFAULT_STAR_RATIO) ?? DEFAULT_STAR_RATIO) * 100)}
+              mixed={shared(objs, (o) => (o as ShapeObject).starRatio ?? DEFAULT_STAR_RATIO) === undefined}
+              step={1}
+              min={5}
+              max={95}
+              precision={0}
+              unit="%"
+              onChange={(v) =>
+                patch(hist('setStarRatio'), (o) => {
+                  if (!markStarCapable(o)) return
+                  const r = Math.max(0.05, Math.min(0.95, v / 100))
+                  if (Math.abs(r - DEFAULT_STAR_RATIO) < 1e-9) delete o.starRatio
+                  else o.starRatio = r
+                })
+              }
             />
           </Row>
         )}
     </AppearanceSection>
-    {showStroke && (
+    {(showStroke || filledPaths.length > 0 || radialOn) && (
       // 低频描边项收进一行「更多」：描边不透明度、线端、拐角（ADR 0174）
       <MoreFold
         changed={countChanged([
+          headed.some((o) => o.headSizeStart != null || o.headSizeEnd != null),
           objs.some((o) => o.strokeOpacity != null),
           objs.some((o) => o.lineCap != null && o.lineCap !== DEFAULT_LINE_CAP),
-          objs.some((o) => o.lineJoin != null && o.lineJoin !== defaultLineJoin(o.shape)),
+          objs.some((o) => o.lineJoin != null && o.lineJoin !== markDefaultJoin(o)),
+          objs.some((o) => o.miterLimit != null),
+          objs.some((o) => o.dashPattern != null),
+          objs.some((o) => (o.type === 'shape' || o.type === 'path') && o.strokeAlign != null),
+          objs.some((o) => o.type === 'path' && o.fillRule != null),
         ])}
       >
+        {/* 径向渐变的中心与半径（ADR 0186）；色标与角度在色带那里 */}
+        <RadialRows objs={fillables} target="fill" />
+        <RadialRows objs={stroked} target="stroke" />
+        {showStroke && headed.length > 0 && <HeadSizeRows objs={headed} patch={patchHeaded} />}
+        {showStroke && aligned.length > 0 && (
+          // 描边对齐（封闭形状缺省内侧、外沿贴框；全闭合的路径缺省居中，ADR 0185 M2）：内侧 / 居中 / 外侧
+          <ChoiceRow
+            label={sk('alignRow')}
+            group="align"
+            values={ALIGN_VALUES}
+            value={shared(aligned, (o) => strokeAlignOf(o as ShapeObject | PathObject)) ?? null}
+            onChange={setAlign}
+          />
+        )}
+        {filledPaths.length > 0 && (
+          // 填充规则（自由路径）：非零 / 奇偶（多条子路径叠在一起时，奇偶让内圈成为洞）
+          <ChoiceRow
+            label={sk('fillRuleRow')}
+            group="fillRule"
+            values={['nonzero', 'evenodd'] as const}
+            value={shared(filledPaths, (o) => (o as PathObject).fillRule ?? 'nonzero') ?? null}
+            onChange={(v) =>
+              patchPaths(hist('setFillRule'), (o) => {
+                if (v === 'evenodd') o.fillRule = 'evenodd'
+                else delete o.fillRule
+              })
+            }
+          />
+        )}
+        {showStroke && (
+        <>
         <StrokeOpacityRow
-          value={shared(objs, (o) => (o as ShapeObject).strokeOpacity ?? 1)}
+          value={shared(objs, (o) => (o as FillStrokeMark).strokeOpacity ?? 1)}
           onChange={(v) => patch(hist('setStrokeOpacity'), (o) => setOpacity(o, v))}
         />
         <LineEndRows
-          cap={shared(objs, (o) => (o as ShapeObject).lineCap ?? DEFAULT_LINE_CAP) ?? null}
-          join={shared(objs, (o) => (o as ShapeObject).lineJoin ?? defaultLineJoin((o as ShapeObject).shape)) ?? null}
+          cap={shared(objs, (o) => (o as FillStrokeMark).lineCap ?? DEFAULT_LINE_CAP) ?? null}
+          join={shared(objs, (o) => (o as FillStrokeMark).lineJoin ?? markDefaultJoin(o as FillStrokeMark)) ?? null}
           dotted={dash === 'dotted'}
           hideJoin={allLine}
           onCap={(v) => patch(hist('setLineCap'), (o) => setCap(o, v))}
-          onJoin={(v) => patch(hist('setLineJoin'), (o) => setJoin(o, v, defaultLineJoin(o.shape)))}
+          onJoin={(v) => patch(hist('setLineJoin'), (o) => setJoin(o, v, markDefaultJoin(o)))}
         />
+        {objs.some((o) => (o.lineJoin ?? markDefaultJoin(o)) === 'miter' && !markHasNoJoin(o)) && (
+          <MiterLimitRow
+            value={shared(objs, (o) => (o as FillStrokeMark).miterLimit ?? STROKE_MITER_LIMIT)}
+            onChange={(v) => patch(hist('setMiterLimit'), (o) => setMiter(o, v))}
+          />
+        )}
+        <DashPatternRow
+          value={shared(objs, (o) => (o as FillStrokeMark).dashPattern ?? null)}
+          onChange={(v) => patch(hist('setDashPattern'), (o) => setDashPattern(o, v))}
+        />
+        </>
+        )}
       </MoreFold>
     )}
     </>

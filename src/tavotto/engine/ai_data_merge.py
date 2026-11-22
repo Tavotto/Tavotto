@@ -28,8 +28,8 @@ from . import ai_data_figure as adf, ai_data_template as tpl
 
 #: 一次最多合画几份。取 8 = 配方里颜色分组的上限（`ai_data_recipe.MAX_GROUP_LEVELS`）：分组列就是文件，超过它趋势 / 关系图的颜色分组画不了
 MAX_TABLES = 8
-#: 各份文件字节数之和的上限（每份仍受 `adf.MAX_BYTES`）：候选目录里同一会话放这几份的字节副本，磁盘上界按它算
-MAX_TOTAL_BYTES = 4 * adf.MAX_BYTES
+#: 各份文件字节数之和的上限（每份仍受 `adf.SMALL_BYTES`：合画只认小表，大表读到 `adf.inspect_data_source` 即拒）：候选目录里同一会话放这几份的字节副本，磁盘上界按它算
+MAX_TOTAL_BYTES = 4 * adf.SMALL_BYTES
 COLUMN_BASE = "file"
 _LABEL_MAX = 100
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
@@ -338,7 +338,9 @@ def build(
         parse=adf.parse_cell,
     )
     values = replace(
-        values, row_sources=[s.label for s, v in zip(filled, summaries) for _ in v.rows]
+        values,
+        row_sources=[s.label for s, v in zip(filled, summaries) for _ in v.rows],
+        numcat={},  # 合画暂不支持整数编码的分组（合成的文件列才是主分组）：点名了也回到规则结果
     )
     ignored, splittable = classify_groups(values, column)
     if ignored:  # 与文件是同一件事的分组列：不当分组（颜色 / 分面 / 比较的横轴）候选

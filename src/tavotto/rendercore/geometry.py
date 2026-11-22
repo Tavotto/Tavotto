@@ -21,14 +21,30 @@ ADR 0174 加的属性（全部缺省 = 旧画法，旧文档逐字不变）：�
 `head_size_start` / `head_size_end`。每一条与 `web/src/lib/shapeGeometry.ts` 同源，由共享向量
 `tests/golden/shape_geometry_vectors.json` 接住。
 
+ADR 0185 加的自由路径 `path`（`read_path` / `path_segments` / `path_paths`）与前端 `web/src/lib/pathGeom.ts`
+同源，共享向量 `tests/golden/path_vectors.json`。
+
 纯标准库。
 """
 
 from __future__ import annotations
 
+import dataclasses
 import math
+import re
 
-from .ir import Paint, Path, Segment, Stroke, hex2rgb
+from .ir import (
+    GradientStop,
+    Group,
+    LinearGradient,
+    Node,
+    Paint,
+    Path,
+    RadialGradient,
+    Segment,
+    Stroke,
+    hex2rgb,
+)
 
 #: 三次贝塞尔近似四分之一圆弧的控制点系数。
 KAPPA = 0.5522847498
@@ -60,6 +76,27 @@ DASH_RATIOS: dict[str, tuple[float, ...]] = {
 }
 
 
+def valid_dash_pattern(p: object) -> tuple[float, ...] | None:
+    """自定义虚线（线段 / 间隙交替，pt 绝对值）读得成数就回它：1–12 个、每个有限且 ≥ 0、总长 > 0；否则 None
+    （照预设线型画）。与前端 `shapeGeometry.validDashPattern` 同一条判据。"""
+    if not isinstance(p, (list, tuple)) or not 1 <= len(p) <= 12:
+        return None
+    vals = []
+    for v in p:
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0:
+            return None
+        vals.append(float(v))
+    return tuple(vals) if sum(vals) > 0 else None
+
+
+def miter_limit(v: object) -> float:
+    """斜接上限：缺省 / 非有限数 / < 1 = 10（PDF 的缺省，也是画布的 `STROKE_MITER_LIMIT`）；与前端
+    `shapeGeometry.miterLimitOf` 同一条。"""
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 1:
+        return 10.0
+    return float(v)
+
+
 def dash_pattern(dash: object, sw: float) -> tuple[float, ...]:
     """虚线间距按线宽比例换算；与前端 shapeGeometry.dashArray 同一比例。空元组 = 实线。"""
     if dash == "dotted":
@@ -79,9 +116,44 @@ def stroke_cap(cap: object, dash: object) -> str:
     return cap if cap in ("butt", "round", "square") else DEFAULT_LINE_CAP  # type: ignore[return-value]
 
 
+#: 只有描边、没有填充也没有描边开关的形状；与前端 `types/document.STROKE_ONLY_SHAPES` 同一张表。
+STROKE_ONLY_SHAPES = ("line", "brace", "arc")
+
+#: 星形的缺省角数与内径比；与前端 `types/document.DEFAULT_STAR_POINTS / DEFAULT_STAR_RATIO` 同源。
+DEFAULT_STAR_POINTS = 5
+DEFAULT_STAR_RATIO = 0.382
+
+
 def default_line_join(shape: object) -> str:
-    """缺省拐角：封闭形状 / 箭头圆角；直线与大括号尖角。与前端 `shapeGeometry.defaultLineJoin` 同源。"""
-    return "miter" if shape in ("line", "brace") else "round"
+    """缺省拐角：封闭形状 / 箭头圆角；只有描边的形状（直线 / 大括号 / 弧线）尖角。与前端 `shapeGeometry.defaultLineJoin` 同源。"""
+    return "miter" if shape in STROKE_ONLY_SHAPES else "round"
+
+
+def star_points(
+    points: int, w: float, h: float, inset: float, ratio: float
+) -> list[tuple[float, float]]:
+    """星形顶点：外顶点内切包围盒，内顶点在外径 × 内径比上，从正上方起外 / 内交替；角数夹到 3–12、内径比夹到
+    0.05–0.95。与前端 `shapeGeometry.starPoints` 同一公式（共享向量 `tests/golden/star_arc_vectors.json`）。"""
+    n = max(3, min(12, int(round(points))))
+    k = max(0.05, min(0.95, ratio))
+    rx, ry = max(w / 2 - inset, 0.001), max(h / 2 - inset, 0.001)
+    out = []
+    for i in range(2 * n):
+        a = -math.pi / 2 + i * math.pi / n
+        f = k if i % 2 else 1.0
+        out.append((w / 2 + rx * f * math.cos(a), h / 2 + ry * f * math.sin(a)))
+    return out
+
+
+def arc_segments(w: float, h: float, inset: float) -> tuple[Segment, ...]:
+    """弧线：框的左下角到右上角、圆心在右下角的四分之一椭圆弧（一段三次贝塞尔，κ 近似）。与前端
+    `shapeGeometry.arcPoints` 同一构造。"""
+    cx, cy = w - inset, h - inset
+    rx, ry = max(w - 2 * inset, 0.001), max(h - 2 * inset, 0.001)
+    return (
+        ("M", cx - rx, cy),
+        ("C", cx - rx, cy - KAPPA * ry, cx - KAPPA * rx, cy - ry, cx, cy - ry),
+    )
 
 
 def _line_join(o: dict, default: str) -> str:
@@ -180,17 +252,116 @@ def arrow_opacity(o: dict) -> float:
     return _alpha(o)
 
 
-def _stroke(o: dict, sw: float, *, join: str, dash: bool = True, opaque: bool = False) -> Stroke:
+_HEX = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+
+def _num(v: object) -> float | None:
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+        return None
+    return float(v)
+
+
+def _pair(v: object) -> tuple[float, float] | None:
+    if not isinstance(v, (list, tuple)) or len(v) != 2:
+        return None
+    a, b = _num(v[0]), _num(v[1])
+    return None if a is None or b is None else (a, b)
+
+
+def read_gradient(g: object) -> dict | None:
+    """渐变字段的统一读取（ADR 0186）；与前端 `lib/gradient.readGradient` 同一条规则（共享向量
+    `tests/golden/gradient_vectors.json`）。读不成 = None（退回纯色，不报错）：
+
+    - `kind` 只认 linear / radial；
+    - 色标丢掉读不成的（offset 不是有限数、颜色不是 #rgb / #rrggbb），offset 钳到 [0, 1]、opacity 钳到 [0, 1]
+      （缺省 1），按 offset 稳定排序；剩不到两个 = None；
+    - 线性：from / to 都是有限数对、且不重合；径向：center 是有限数对、radius 有限且 > 0。"""
+    if not isinstance(g, dict) or g.get("kind") not in ("linear", "radial"):
+        return None
+    stops = []
+    for st in g.get("stops") or ():
+        if not isinstance(st, dict):
+            continue
+        off = _num(st.get("offset"))
+        color = st.get("color")
+        if off is None or not isinstance(color, str) or not _HEX.match(color):
+            continue
+        op = st.get("opacity")
+        opv = 1.0 if op is None else _num(op)
+        if opv is None:
+            continue
+        stops.append(
+            {"offset": min(max(off, 0.0), 1.0), "color": color, "opacity": min(max(opv, 0.0), 1.0)}
+        )
+    stops.sort(key=lambda st: st["offset"])
+    if len(stops) < 2:
+        return None
+    if g["kind"] == "linear":
+        a, b = _pair(g.get("from")), _pair(g.get("to"))
+        if a is None or b is None or a == b:
+            return None
+        return {"kind": "linear", "stops": stops, "from": a, "to": b}
+    c, r = _pair(g.get("center")), _num(g.get("radius"))
+    if c is None or r is None or r <= 0:
+        return None
+    return {"kind": "radial", "stops": stops, "center": c, "radius": r}
+
+
+def gradient_paint(g: object, w: float, h: float, alpha: float = 1.0):
+    """渐变字段 → IR 渐变（框空间 pt）：比例坐标 × 框；径向半径 × 框的长边；色标 alpha = opacity × `alpha`
+    （对象的填充 / 描边不透明度）。读不成 = None。与前端 `lib/gradient.gradientGeometry` 同源。"""
+    r = read_gradient(g)
+    if r is None:
+        return None
+    stops = tuple(
+        GradientStop(st["offset"], hex2rgb(st["color"]), st["opacity"] * alpha) for st in r["stops"]
+    )
+    if r["kind"] == "linear":
+        (x0, y0), (x1, y1) = r["from"], r["to"]
+        return LinearGradient(stops, (x0 * w, y0 * h), (x1 * w, y1 * h))
+    cx, cy = r["center"]
+    return RadialGradient(stops, (cx * w, cy * h), r["radius"] * max(w, h, 1e-6))
+
+
+def _stroke(
+    o: dict,
+    sw: float,
+    *,
+    join: str,
+    dash: bool = True,
+    opaque: bool = False,
+    box: tuple[float, float] | None = None,
+) -> Stroke:
     """对象的一条描边。线端 / 拐角 / 不透明度 / 线型都从对象上读（缺省 = 旧画法）；
     `dash=False` 给箭头端型（端型不画虚线，也不受点线强制圆头影响）。"""
-    d = o.get("dash") if dash else None
+    # 自定义虚线（pt 绝对值）优先于预设线型；它不是点线，线端照用户选的
+    custom = valid_dash_pattern(o.get("dash_pattern")) if dash else None
+    d = (None if custom else o.get("dash")) if dash else None
+    alpha = 1.0 if opaque else _alpha(o)
+    # 描边渐变（ADR 0186）：给了框尺寸（形状 / 路径的描边）且字段读得成才用；端型那几条不给 box，照用纯色
+    grad = gradient_paint(o.get("stroke_gradient"), box[0], box[1], alpha) if box else None
     return Stroke(
-        paint=Paint(hex2rgb(o.get("color", "#000000")), 1.0 if opaque else _alpha(o)),
+        paint=grad or Paint(hex2rgb(o.get("color", "#000000")), alpha),
         width=sw,
         cap=stroke_cap(o.get("line_cap"), d),
         join=_line_join(o, join),
-        dash=dash_pattern(d, sw) if dash else (),
+        dash=(tuple(round(v, 3) for v in custom) if custom else dash_pattern(d, sw))
+        if dash
+        else (),
+        miter_limit=miter_limit(o.get("miter_limit")),
     )
+
+
+def shape_inset(o: dict, sw: float) -> float:
+    """形状的描边内缩量：有描边时缺省内侧（外沿贴框，`sw / 2`），`stroke_align` = center → 0、outside → `-sw / 2`；
+    只有描边的形状不看对齐；无边框 0。与前端 `shapeGeometry.shapeInset` 同一条。"""
+    kind = o.get("shape")
+    if kind in STROKE_ONLY_SHAPES:
+        return sw / 2
+    if o.get("stroke") is False:
+        return 0.0
+    align = o.get("stroke_align")
+    return 0.0 if align == "center" else -sw / 2 if align == "outside" else sw / 2
 
 
 def shape_paths(o: dict, w: float, h: float) -> list[Path]:
@@ -208,14 +379,17 @@ def shape_paths(o: dict, w: float, h: float) -> list[Path]:
         if o.get("fill")
         else None
     )
+    if fill is not None:
+        # 填充渐变（ADR 0186）：只在有填充时生效，覆盖纯色；读不成照用纯色
+        fill = gradient_paint(o.get("fill_gradient"), w, h, fill.alpha) or fill
     kind = o.get("shape")
     oid = str(o.get("id", ""))
     # 无边框（`stroke: false`，只对封闭形状）：不描边、填充铺满整个框（不再内缩半个线宽）；
     # 直线与大括号只有描边，不看这个字段
-    stroke_on = kind in ("line", "brace") or o.get("stroke") is not False
-    inset = sw / 2 if stroke_on else 0.0
-    filled_stroke = _stroke(o, sw, join=default_line_join(kind)) if stroke_on else None
-    if filled_stroke is None and fill is None and kind not in ("line", "brace"):
+    stroke_on = kind in STROKE_ONLY_SHAPES or o.get("stroke") is not False
+    inset = shape_inset(o, sw)
+    filled_stroke = _stroke(o, sw, join=default_line_join(kind), box=(w, h)) if stroke_on else None
+    if filled_stroke is None and fill is None and kind not in STROKE_ONLY_SHAPES:
         return []  # 既无填充也无边框：什么都不画（IR 不收「既不填也不描」的路径）
 
     if kind == "rect":
@@ -242,6 +416,25 @@ def shape_paths(o: dict, w: float, h: float) -> list[Path]:
     if kind == "polygon":
         pts = polygon_points(int(o.get("sides") or 6), w, h, inset)
         return [Path(polyline_segments(pts, True), fill=fill, stroke=filled_stroke, object_id=oid)]
+    if kind == "star":
+        ratio = o.get("star_ratio")
+        ratio = (
+            float(ratio)
+            if isinstance(ratio, (int, float))
+            and not isinstance(ratio, bool)
+            and math.isfinite(ratio)
+            else DEFAULT_STAR_RATIO
+        )
+        pts = star_points(int(o.get("sides") or DEFAULT_STAR_POINTS), w, h, inset, ratio)
+        return [Path(polyline_segments(pts, True), fill=fill, stroke=filled_stroke, object_id=oid)]
+    if kind == "arc":
+        return [
+            Path(
+                arc_segments(w, h, inset),
+                stroke=_stroke(o, sw, join="miter", box=(w, h)),
+                object_id=oid,
+            )
+        ]
     if kind == "brace":
         cx = w / 2
         tip_gap = min(h * 0.06, h / 2 - inset)
@@ -252,7 +445,7 @@ def shape_paths(o: dict, w: float, h: float) -> list[Path]:
         segs.append(curve_segment((inset, h / 2), (cx, h / 2), (cx, h / 2 + tip_gap)))
         segs.append(("L", cx, h * 0.75))
         segs.append(curve_segment((cx, h * 0.75), (cx, h - inset), (w - inset, h - inset)))
-        return [Path(tuple(segs), stroke=_stroke(o, sw, join="miter"), object_id=oid)]
+        return [Path(tuple(segs), stroke=_stroke(o, sw, join="miter", box=(w, h)), object_id=oid)]
     # line：端点与箭头同一套算法（框比例坐标 → 绝对 pt）；缺省即水平中线
     s = o.get("start") or {"rx": 0.0, "ry": 0.5}
     e = o.get("end") or {"rx": 1.0, "ry": 0.5}
@@ -260,7 +453,13 @@ def shape_paths(o: dict, w: float, h: float) -> list[Path]:
         (float(s["rx"]) * w, float(s["ry"]) * h),
         (float(e["rx"]) * w, float(e["ry"]) * h),
     ]
-    return [Path(polyline_segments(pts, False), stroke=_stroke(o, sw, join="miter"), object_id=oid)]
+    return [
+        Path(
+            polyline_segments(pts, False),
+            stroke=_stroke(o, sw, join="miter", box=(w, h)),
+            object_id=oid,
+        )
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -375,4 +574,252 @@ def arrow_paths(o: dict, w: float, h: float) -> list[Path]:
             out.append(
                 Path(polyline_segments(head[1], False), stroke=head_strokes[head[0]], object_id=oid)
             )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 自由路径（ADR 0185）——与前端 `web/src/lib/pathGeom.ts` 的 `pathGeometry` 严格同源
+# ---------------------------------------------------------------------------
+def _pt(v: object) -> tuple[float, float] | None:
+    if isinstance(v, (list, tuple)) and len(v) == 2:
+        try:
+            x, y = float(v[0]), float(v[1])
+        except (TypeError, ValueError):
+            return None
+        if math.isfinite(x) and math.isfinite(y):
+            return (x, y)
+    return None
+
+
+def read_path(o: dict) -> dict:
+    """路径的缺省值统一读取；与前端 `types/document.readPath` 同一规则。
+
+    手柄缺省 = 与锚点重合；`fill_rule` 缺省 nonzero；`stroke` 只有 `false` 关描边；端型缺省 none。
+    锚点读不成数对的整个丢掉（坏数据不画，也不报错——与不认识的端型同一种保守）。"""
+    subpaths = []
+    for sp in o.get("subpaths") or ():
+        if not isinstance(sp, dict):
+            continue
+        nodes = []
+        for n in sp.get("nodes") or ():
+            if not isinstance(n, dict):
+                continue
+            p = _pt(n.get("p"))
+            if p is None:
+                continue
+            nodes.append({"p": p, "in": _pt(n.get("in")) or p, "out": _pt(n.get("out")) or p})
+        subpaths.append({"closed": sp.get("closed") is True, "nodes": nodes})
+    hs, he = o.get("head_start"), o.get("head_end")
+    return {
+        "subpaths": subpaths,
+        "fill_rule": "evenodd" if o.get("fill_rule") == "evenodd" else "nonzero",
+        "stroke_on": o.get("stroke") is not False,
+        "head_start": hs if isinstance(hs, str) else "none",
+        "head_end": he if isinstance(he, str) else "none",
+    }
+
+
+def _seg_to(a: dict, b: dict, out: list) -> None:
+    if a["out"] == a["p"] and b["in"] == b["p"]:
+        out.append(("L", *b["p"]))
+    else:
+        out.append(("C", *a["out"], *b["in"], *b["p"]))
+
+
+def _subpath_segs(nodes: list[dict], closed: bool, out: list) -> None:
+    out.append(("M", *nodes[0]["p"]))
+    for i in range(1, len(nodes)):
+        _seg_to(nodes[i - 1], nodes[i], out)
+    if closed:
+        _seg_to(nodes[-1], nodes[0], out)
+        out.append(("Z",))
+
+
+def _first_distinct(tip: tuple[float, float], cands) -> tuple[float, float] | None:
+    for c in cands:
+        if math.hypot(c[0] - tip[0], c[1] - tip[1]) > 1e-9:
+            return c
+    return None
+
+
+def _unit_to(a, b) -> tuple[float, float]:
+    if a is None or b is None:
+        return (0.0, 0.0)
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    ln = math.hypot(dx, dy) or 1.0
+    return (dx / ln, dy / ln)
+
+
+def path_segments(o: dict, w: float, h: float, sw: float | None = None) -> dict:
+    """路径在框空间（原点框左上、y 向下）里的几何：`fill`（全部子路径、未回缩）、`stroke`（开放子路径
+    两端按实心端型回缩）、`heads`（`head_geometry` 的形状，每条开放子路径先终点后起点）、`head_half`。
+
+    规则（与前端 `pathGeometry` 逐条相同）：比例坐标 × 框；前一锚点的出手柄与后一锚点的入手柄都与各自锚点
+    重合 → `L`，否则 `C`；闭合子路径补「末 → 首」再 `Z`；少于两个锚点的子路径不画；端型只对开放子路径、
+    且有描边时画，方向取那一端的切线（往里第一个不与端点重合的控制点），回缩 = 端点与相邻手柄一起平移。"""
+    if sw is None:
+        sw = max(float(o.get("stroke_pt", 1.0)), 0.05)
+    r = read_path(o)
+    f_start, f_end = _head_size(o, "start"), _head_size(o, "end")
+    want_heads = r["stroke_on"] and (r["head_start"] != "none" or r["head_end"] != "none")
+    fill: list = []
+    stroke: list = []
+    heads: list = []
+    head_half = 0.0
+    for sp in r["subpaths"]:
+        raw = sp["nodes"]
+        n = len(raw)
+        if n < 2:
+            continue
+        nodes = [
+            {k: (q[k][0] * w, q[k][1] * h) for k in ("p", "in", "out")}  # type: ignore[index]
+            for q in raw
+        ]
+        _subpath_segs(nodes, sp["closed"], fill)
+        if sp["closed"] or not want_heads:
+            _subpath_segs(nodes, sp["closed"], stroke)
+            continue
+        first, last = nodes[0], nodes[-1]
+        us = _unit_to(
+            first["p"], _first_distinct(first["p"], (first["out"], nodes[1]["in"], nodes[1]["p"]))
+        )
+        ue = _unit_to(
+            _first_distinct(last["p"], (last["in"], nodes[-2]["out"], nodes[-2]["p"])), last["p"]
+        )
+        e_shape, e_trim = head_geometry(r["head_end"], last["p"], 1.0, ue, sw, f_end)
+        s_shape, s_trim = head_geometry(r["head_start"], first["p"], -1.0, us, sw, f_start)
+        trimmed = list(nodes)
+        if s_trim:
+            d = (us[0] * s_trim, us[1] * s_trim)
+            trimmed[0] = {
+                "p": (first["p"][0] + d[0], first["p"][1] + d[1]),
+                "in": first["in"],
+                "out": (first["out"][0] + d[0], first["out"][1] + d[1]),
+            }
+        if e_trim:
+            d = (-ue[0] * e_trim, -ue[1] * e_trim)
+            trimmed[-1] = {
+                "p": (last["p"][0] + d[0], last["p"][1] + d[1]),
+                "in": (last["in"][0] + d[0], last["in"][1] + d[1]),
+                "out": last["out"],
+            }
+        _subpath_segs(trimmed, False, stroke)
+        if e_shape is not None:
+            heads.append(e_shape)
+            head_half = max(head_half, sw * 1.7 * f_end)
+        if s_shape is not None:
+            heads.append(s_shape)
+            head_half = max(head_half, sw * 1.7 * f_start)
+    return {"fill": fill, "stroke": stroke, "heads": heads, "head_half": head_half}
+
+
+#: 路径的缺省拐角：与封闭形状 / 箭头相同（圆角）；与前端 `pathGeom.PATH_DEFAULT_JOIN` 同一个缺省。
+PATH_DEFAULT_JOIN = "round"
+
+
+def path_stroke_align(o: dict) -> str | None:
+    """路径实际生效的描边对齐（ADR 0185 M2）：设了 inside / outside、有描边、每条画得出的子路径都闭合才生效；
+    否则 None（居中）。与前端 `pathGeom.pathStrokeAlign` 同一条判据。"""
+    align = o.get("stroke_align")
+    if align not in ("inside", "outside"):
+        return None
+    r = read_path(o)
+    if not r["stroke_on"]:
+        return None
+    drawn = [sp for sp in r["subpaths"] if len(sp["nodes"]) >= 2]
+    return align if drawn and all(sp["closed"] for sp in drawn) else None
+
+
+def outside_clip_pad(w: float, h: float, sw: float) -> float:
+    """外侧对齐裁剪区的外扩量：与前端 `pathGeom.outsideClipPad` 同一个数。"""
+    return max(w, h) + 4 * sw
+
+
+def path_paths(o: dict, w: float, h: float) -> list[Node]:
+    """一个 path 对象 → 框空间里的 IR 节点（画布 `PathView` / `PathBody` 一一对应）。
+
+    没有端型：一条路径又填又描（描边不透明度在描边 Paint 上，与形状相同）。有端型：填充单独一条，
+    描边 + 端型放进一个透明组（不透明度作用于「线 + 端型」整体，杆伸进实心端型的重叠处不叠深——与箭头
+    同一做法，ADR 0174）；不透明时不包组。既不填也不描：什么都不画。"""
+    sw = max(float(o.get("stroke_pt", 1.0)), 0.05)
+    r = read_path(o)
+    g = path_segments(o, w, h, sw)
+    if not g["fill"]:
+        return []
+    fill_opacity = o.get("fill_opacity")
+    fill = (
+        Paint(hex2rgb(o["fill"]), 1.0 if fill_opacity is None else float(fill_opacity))
+        if o.get("fill")
+        else None
+    )
+    if fill is not None:
+        fill = gradient_paint(o.get("fill_gradient"), w, h, fill.alpha) or fill  # ADR 0186
+    oid = str(o.get("id", ""))
+    rule = r["fill_rule"]
+    if not r["stroke_on"]:
+        return [Path(tuple(g["fill"]), fill=fill, fill_rule=rule, object_id=oid)] if fill else []
+    align = path_stroke_align(o)
+    if align is not None:
+        # 描边对齐（ADR 0185 M2）：两倍线宽的描边裁到路径里面（内侧）/ 外面（外侧：大矩形 + 路径按奇偶）。
+        # 虚线长度按原线宽算，只把线宽换成两倍——与前端 `PathBody` 同一画法
+        seg = tuple(g["fill"])
+        if align == "inside":
+            clip = Path(seg, fill_rule=rule)
+        else:
+            pad = outside_clip_pad(w, h, sw)
+            clip = Path(
+                rect_segments(-pad, -pad, w + 2 * pad, h + 2 * pad) + seg, fill_rule="evenodd"
+            )
+        wide = dataclasses.replace(_stroke(o, sw, join=PATH_DEFAULT_JOIN, box=(w, h)), width=2 * sw)
+        out_a: list[Node] = []
+        if fill is not None:
+            out_a.append(Path(seg, fill=fill, fill_rule=rule, object_id=oid))
+        out_a.append(Group((Path(seg, stroke=wide, object_id=oid),), clip=clip, object_id=oid))
+        return out_a
+    if not g["heads"]:
+        return [
+            Path(
+                tuple(g["fill"]),
+                fill=fill,
+                stroke=_stroke(o, sw, join=PATH_DEFAULT_JOIN, box=(w, h)),
+                fill_rule=rule,
+                object_id=oid,
+            )
+        ]
+    out: list[Node] = []
+    if fill is not None:
+        out.append(Path(tuple(g["fill"]), fill=fill, fill_rule=rule, object_id=oid))
+    color = Paint(hex2rgb(o.get("color", "#000000")))
+    inner: list[Node] = [
+        Path(
+            tuple(g["stroke"]),
+            stroke=_stroke(o, sw, join=PATH_DEFAULT_JOIN, opaque=True, box=(w, h)),
+            object_id=oid,
+        )
+    ]
+    head_strokes = {
+        "open": _stroke(o, sw, join="round", dash=False, opaque=True),
+        "bar": _stroke(o, sw, join="miter", dash=False, opaque=True),
+    }
+    for head in g["heads"]:
+        if head[0] == "poly":
+            inner.append(Path(polyline_segments(head[1], True), fill=color, object_id=oid))
+        elif head[0] == "dot":
+            _, cx, cy, rad = head
+            inner.append(
+                Path(
+                    ellipse_segments(cx - rad, cy - rad, 2 * rad, 2 * rad),
+                    fill=color,
+                    object_id=oid,
+                )
+            )
+        else:
+            inner.append(
+                Path(polyline_segments(head[1], False), stroke=head_strokes[head[0]], object_id=oid)
+            )
+    alpha = _alpha(o)
+    if alpha < 1:
+        out.append(Group(tuple(inner), opacity=alpha, object_id=oid))
+    else:
+        out.extend(inner)
     return out

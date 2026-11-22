@@ -103,3 +103,36 @@ describe('选项过滤与处理方式', () => {
   })
 })
 
+
+describe('大文件判断与「N 行里取 K 个点」的数字', () => {
+  const e = (path: string, size: number) => ({ path, size })
+  it('只认大于 5 MiB 的文本表；恰好 5 MiB、XLSX、清单没读到都不算', async () => {
+    const { LARGE_FILE_BYTES, isLargeFile } = await import('@/lib/dataFigure')
+    const entries = [e('a.csv', LARGE_FILE_BYTES + 1), e('b.csv', LARGE_FILE_BYTES), e('c.xlsx', LARGE_FILE_BYTES * 9)]
+    expect(isLargeFile(entries, { path: 'a.csv', sheet: null })).toBe(true)
+    expect(isLargeFile(entries, { path: 'b.csv', sheet: null })).toBe(false)
+    expect(isLargeFile(entries, { path: 'c.xlsx', sheet: 'S' })).toBe(false)
+    expect(isLargeFile(entries, { path: 'x.csv', sheet: null })).toBe(false)
+    expect(isLargeFile(null, { path: 'a.csv', sheet: null })).toBe(false)
+    expect(isLargeFile(entries, null)).toBe(false)
+  })
+  it('紧凑数字随语言；没少画 / 缺项 / 非法就是 null', async () => {
+    const { reducedNumbers } = await import('@/lib/dataFigure')
+    expect(reducedNumbers({ rows: 6_120_000, kept: 42_113 }, 'zh-CN')).toEqual({ rows: '612万', kept: '4.2万' })
+    expect(reducedNumbers({ rows: 6_120_000, kept: 42_113 }, 'en-US')).toEqual({ rows: '6.1M', kept: '42.1K' })
+    expect(reducedNumbers({ rows: 6_120_000, kept: 8_400 }, 'en-US')).toEqual({ rows: '6.1M', kept: '8400' }) // 小于 1 万照旧写原数字
+    expect(reducedNumbers({ rows: 100, kept: 100 }, 'zh-CN')).toBeNull()
+    expect(reducedNumbers({ rows: 100, kept: 0 }, 'zh-CN')).toBeNull()
+    expect(reducedNumbers(undefined, 'zh-CN')).toBeNull()
+  })
+})
+
+describe('compactCount（数据条行数与 reduced 共用）', () => {
+  it('小于 1 万原样；其余随语言紧凑', async () => {
+    const { compactCount } = await import('@/lib/dataFigure')
+    expect(compactCount(144, 'zh-CN')).toBe('144')
+    expect(compactCount(9999, 'en-US')).toBe('9999')
+    expect(compactCount(300000, 'zh-CN')).toBe('30万')
+    expect(compactCount(6_120_000, 'en-US')).toBe('6.1M')
+  })
+})

@@ -1,0 +1,1073 @@
+{
+ "version": 1,
+ "cases": [
+  {
+   "id": "RC-01",
+   "title": "整数批次号排在最后，规则默认拿它当纵轴",
+   "tags": [
+    "batch-int",
+    "y-wrong"
+   ],
+   "tables": {
+    "t.csv": "condition,expression,batch\nctrl,5.0,1\nctrl,8.3,2\nctrl,7.6,3\nctrl,6.9,1\nctrl,6.2,2\nctrl,9.5,3\nctrl,8.8,1\nctrl,8.1,2\nctrl,7.4,3\ndrug,5.0,1\ndrug,8.3,2\ndrug,7.6,3\ndrug,6.9,1\ndrug,6.2,2\ndrug,9.5,3\ndrug,8.8,1\ndrug,8.1,2\ndrug,7.4,3\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "condition": "group",
+    "expression": "measure",
+    "batch": "replicate_unit"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "expression"
+    ],
+    "group": "condition"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "condition",
+      "role": "group"
+     },
+     {
+      "name": "expression",
+      "role": "measure"
+     },
+     {
+      "name": "batch",
+      "role": "replicate_unit"
+     }
+    ],
+    "picks": {
+     "y": [
+      "expression"
+     ],
+     "x": "none",
+     "group": "condition"
+    }
+   }
+  },
+  {
+   "id": "RC-02",
+   "title": "run 是 1..20 的流水号（不是编号词），规则拿它当横轴",
+   "tags": [
+    "row-id",
+    "x-wrong"
+   ],
+   "tables": {
+    "t.csv": "run,group,level\n1,ctrl,5.0\n2,drug,8.3\n3,ctrl,7.6\n4,drug,6.9\n5,ctrl,6.2\n6,drug,9.5\n7,ctrl,8.8\n8,drug,8.1\n9,ctrl,7.4\n10,drug,10.7\n11,ctrl,10.0\n12,drug,9.3\n13,ctrl,8.6\n14,drug,11.9\n15,ctrl,11.2\n16,drug,10.5\n17,ctrl,9.8\n18,drug,13.1\n19,ctrl,12.4\n20,drug,11.7\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "run": "row_id",
+    "group": "group",
+    "level": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "level"
+    ],
+    "group": "group"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "run",
+      "role": "row_id"
+     },
+     {
+      "name": "group",
+      "role": "group"
+     },
+     {
+      "name": "level",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "level"
+     ],
+     "x": "none",
+     "group": "group"
+    }
+   }
+  },
+  {
+   "id": "RC-03",
+   "title": "两个分组列，提问说比较药物，规则默认最左一列",
+   "tags": [
+    "two-groups",
+    "group-wrong",
+    "hint"
+   ],
+   "tables": {
+    "t.csv": "line,drug,value\nWT,saline,5.0\nKO,drugA,8.3\nWT,drugB,7.6\nKO,saline,6.9\nWT,drugA,6.2\nKO,drugB,9.5\nWT,saline,8.8\nKO,drugA,8.1\nWT,drugB,7.4\nKO,saline,10.7\nWT,drugA,10.0\nKO,drugB,9.3\nWT,saline,8.6\nKO,drugA,11.9\nWT,drugB,11.2\nKO,saline,10.5\nWT,drugA,9.8\nKO,drugB,13.1\nWT,saline,12.4\nKO,drugA,11.7\nWT,drugB,11.0\nKO,saline,14.3\nWT,drugA,13.6\nKO,drugB,12.9\n"
+   },
+   "hint": "compare the drugs",
+   "control": false,
+   "roles": {
+    "line": "group",
+    "drug": "group",
+    "value": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "value"
+    ],
+    "group": "drug"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "line",
+      "role": "group"
+     },
+     {
+      "name": "drug",
+      "role": "group"
+     },
+     {
+      "name": "value",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "value"
+     ],
+     "x": "none",
+     "group": "drug"
+    }
+   }
+  },
+  {
+   "id": "RC-04",
+   "title": "计数在前、天数在后：规则默认最后一个数值列当纵轴",
+   "tags": [
+    "order",
+    "y-wrong"
+   ],
+   "tables": {
+    "t.csv": "count,day\n3.0,0\n5.5,1\n6.0,2\n8.5,3\n9.0,4\n11.5,5\n12.0,6\n14.5,7\n15.0,8\n17.5,9\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "count": "measure",
+    "day": "time"
+   },
+   "expect_default": {
+    "x": "day",
+    "y": [
+     "count"
+    ],
+    "group": null
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "count",
+      "role": "measure"
+     },
+     {
+      "name": "day",
+      "role": "time"
+     }
+    ],
+    "picks": {
+     "y": [
+      "count"
+     ],
+     "x": "day",
+     "group": "none"
+    }
+   }
+  },
+  {
+   "id": "RC-05",
+   "title": "中文：平行样是 1-3 的整数，排在最后",
+   "tags": [
+    "chinese",
+    "batch-int",
+    "y-wrong"
+   ],
+   "tables": {
+    "t.csv": "处理,荧光强度,平行样\n处理,100,1\n对照,109,2\n处理,109,3\n对照,118,1\n处理,118,2\n对照,127,3\n处理,127,1\n对照,136,2\n处理,136,3\n对照,136,1\n处理,145,2\n对照,145,3\n处理,154,1\n对照,154,2\n处理,163,3\n对照,163,1\n处理,172,2\n对照,172,3\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "处理": "group",
+    "荧光强度": "measure",
+    "平行样": "replicate_unit"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "荧光强度"
+    ],
+    "group": "处理"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "处理",
+      "role": "group"
+     },
+     {
+      "name": "荧光强度",
+      "role": "measure"
+     },
+     {
+      "name": "平行样",
+      "role": "replicate_unit"
+     }
+    ],
+    "picks": {
+     "y": [
+      "荧光强度"
+     ],
+     "x": "none",
+     "group": "处理"
+    }
+   }
+  },
+  {
+   "id": "RC-06",
+   "title": "中文：备注列排在分组列前面，规则默认最左分组列",
+   "tags": [
+    "chinese",
+    "note-group",
+    "group-wrong"
+   ],
+   "tables": {
+    "t.csv": "备注,分组,数值\n正常,对照,5.0\n复测,对照,8.3\n正常,药物,7.6\n复测,药物,6.9\n正常,对照,6.2\n复测,对照,9.5\n正常,药物,8.8\n复测,药物,8.1\n正常,对照,7.4\n复测,对照,10.7\n正常,药物,10.0\n复测,药物,9.3\n正常,对照,8.6\n复测,对照,11.9\n正常,药物,11.2\n复测,药物,10.5\n正常,对照,9.8\n复测,对照,13.1\n正常,药物,12.4\n复测,药物,11.7\n正常,对照,11.0\n复测,对照,14.3\n正常,药物,13.6\n复测,药物,12.9\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "备注": "note",
+    "分组": "group",
+    "数值": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "数值"
+    ],
+    "group": "分组"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "备注",
+      "role": "note"
+     },
+     {
+      "name": "分组",
+      "role": "group"
+     },
+     {
+      "name": "数值",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "数值"
+     ],
+     "x": "none",
+     "group": "分组"
+    }
+   }
+  },
+  {
+   "id": "RC-07",
+   "title": "comment 只有两种取值、排在分组列前面",
+   "tags": [
+    "note-group",
+    "group-wrong"
+   ],
+   "tables": {
+    "t.csv": "comment,group,value\nok,ctrl,5.0\nretest,ctrl,8.3\nok,drug,7.6\nretest,drug,6.9\nok,ctrl,6.2\nretest,ctrl,9.5\nok,drug,8.8\nretest,drug,8.1\nok,ctrl,7.4\nretest,ctrl,10.7\nok,drug,10.0\nretest,drug,9.3\nok,ctrl,8.6\nretest,ctrl,11.9\nok,drug,11.2\nretest,drug,10.5\nok,ctrl,9.8\nretest,ctrl,13.1\nok,drug,12.4\nretest,drug,11.7\nok,ctrl,11.0\nretest,ctrl,14.3\nok,drug,13.6\nretest,drug,12.9\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "comment": "note",
+    "group": "group",
+    "value": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "value"
+    ],
+    "group": "group"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "comment",
+      "role": "note"
+     },
+     {
+      "name": "group",
+      "role": "group"
+     },
+     {
+      "name": "value",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "value"
+     ],
+     "x": "none",
+     "group": "group"
+    }
+   }
+  },
+  {
+   "id": "RC-08",
+   "title": "响应在前、剂量在后：规则把剂量当纵轴",
+   "tags": [
+    "order",
+    "y-wrong"
+   ],
+   "tables": {
+    "t.csv": "response,dose_uM,compound\n99.2,0.1,A\n97.6,0.3,B\n92,1,A\n76,3,B\n20,10,A\n-140,30,B\n99.2,0.1,A\n97.6,0.3,B\n92,1,A\n76,3,B\n20,10,A\n-140,30,B\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "response": "measure",
+    "dose_uM": "ordered_x",
+    "compound": "group"
+   },
+   "expect_default": {
+    "x": "dose_uM",
+    "y": [
+     "response"
+    ],
+    "group": "compound"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "response",
+      "role": "measure"
+     },
+     {
+      "name": "dose_uM",
+      "role": "ordered_x"
+     },
+     {
+      "name": "compound",
+      "role": "group"
+     }
+    ],
+    "picks": {
+     "y": [
+      "response"
+     ],
+     "x": "dose_uM",
+     "group": "compound"
+    }
+   }
+  },
+  {
+   "id": "RC-09",
+   "title": "中文：抑制率在前、浓度在后",
+   "tags": [
+    "chinese",
+    "order",
+    "y-wrong"
+   ],
+   "tables": {
+    "t.csv": "抑制率,浓度_uM,药物\n89.4,0.1,甲\n88.2,0.3,乙\n84,1,甲\n72,3,乙\n30,10,甲\n-90,30,乙\n89.4,0.1,甲\n88.2,0.3,乙\n84,1,甲\n72,3,乙\n30,10,甲\n-90,30,乙\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "抑制率": "measure",
+    "浓度_uM": "ordered_x",
+    "药物": "group"
+   },
+   "expect_default": {
+    "x": "浓度_uM",
+    "y": [
+     "抑制率"
+    ],
+    "group": "药物"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "抑制率",
+      "role": "measure"
+     },
+     {
+      "name": "浓度_uM",
+      "role": "ordered_x"
+     },
+     {
+      "name": "药物",
+      "role": "group"
+     }
+    ],
+    "picks": {
+     "y": [
+      "抑制率"
+     ],
+     "x": "浓度_uM",
+     "group": "药物"
+    }
+   }
+  },
+  {
+   "id": "RC-10",
+   "title": "replicate 是 1-3 的重复序号，规则拿它当横轴出折线",
+   "tags": [
+    "replicate-x",
+    "x-wrong"
+   ],
+   "tables": {
+    "t.csv": "replicate,strain,growth\n1,s1,2.5\n2,s1,3.0\n3,s1,3.5\n1,s2,3.7\n2,s2,4.2\n3,s2,4.7\n1,s3,3.7\n2,s3,4.2\n3,s3,4.7\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "replicate": "replicate_unit",
+    "strain": "group",
+    "growth": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "growth"
+    ],
+    "group": "strain"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "replicate",
+      "role": "replicate_unit"
+     },
+     {
+      "name": "strain",
+      "role": "group"
+     },
+     {
+      "name": "growth",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "growth"
+     ],
+     "x": "none",
+     "group": "strain"
+    }
+   }
+  },
+  {
+   "id": "RC-11",
+   "title": "中文：重复、菌株、OD600",
+   "tags": [
+    "chinese",
+    "replicate-x",
+    "x-wrong"
+   ],
+   "tables": {
+    "t.csv": "重复,菌株,OD600\n1,m1,0.45\n2,m1,0.55\n3,m1,0.65\n1,m2,0.45\n2,m2,0.55\n3,m2,0.65\n1,m3,0.45\n2,m3,0.55\n3,m3,0.65\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "重复": "replicate_unit",
+    "菌株": "group",
+    "OD600": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "OD600"
+    ],
+    "group": "菌株"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "重复",
+      "role": "replicate_unit"
+     },
+     {
+      "name": "菌株",
+      "role": "group"
+     },
+     {
+      "name": "OD600",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "OD600"
+     ],
+     "x": "none",
+     "group": "菌株"
+    }
+   }
+  },
+  {
+   "id": "RC-12",
+   "title": "idx 流水号 + 时间 + OD：规则横轴默认最左数值列 idx",
+   "tags": [
+    "row-id",
+    "x-wrong"
+   ],
+   "tables": {
+    "t.csv": "idx,time_h,OD600\n1,0,0.1\n2,2,0.27\n3,4,0.44\n4,6,0.58\n5,8,0.75\n6,10,0.92\n7,12,1.06\n8,14,1.23\n9,16,1.4\n10,18,1.54\n11,20,1.71\n12,22,1.88\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "idx": "row_id",
+    "time_h": "time",
+    "OD600": "measure"
+   },
+   "expect_default": {
+    "x": "time_h",
+    "y": [
+     "OD600"
+    ],
+    "group": null
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "idx",
+      "role": "row_id"
+     },
+     {
+      "name": "time_h",
+      "role": "time"
+     },
+     {
+      "name": "OD600",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "OD600"
+     ],
+     "x": "time_h",
+     "group": "none"
+    }
+   }
+  },
+  {
+   "id": "RC-13",
+   "title": "well 是 1..24 的孔位序号",
+   "tags": [
+    "row-id",
+    "x-wrong"
+   ],
+   "tables": {
+    "t.csv": "well,group,signal\n1,ctrl,1000\n2,drug,1050\n3,ctrl,1100\n4,drug,1060\n5,ctrl,1110\n6,drug,1070\n7,ctrl,1120\n8,drug,1170\n9,ctrl,1130\n10,drug,1180\n11,ctrl,1140\n12,drug,1190\n13,ctrl,1240\n14,drug,1200\n15,ctrl,1250\n16,drug,1210\n17,ctrl,1260\n18,drug,1310\n19,ctrl,1270\n20,drug,1320\n21,ctrl,1280\n22,drug,1330\n23,ctrl,1290\n24,drug,1340\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "well": "row_id",
+    "group": "group",
+    "signal": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "signal"
+    ],
+    "group": "group"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "well",
+      "role": "row_id"
+     },
+     {
+      "name": "group",
+      "role": "group"
+     },
+     {
+      "name": "signal",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "signal"
+     ],
+     "x": "none",
+     "group": "group"
+    }
+   }
+  },
+  {
+   "id": "RC-14",
+   "title": "trial 是 1..16 的试次序号，夹在分组与数值之间（不要横轴，或按试次画变化，都说得通）",
+   "tags": [
+    "row-id",
+    "x-wrong"
+   ],
+   "tables": {
+    "t.csv": "arm,trial,score\nA,1,5.0\nB,2,8.3\nA,3,7.6\nB,4,6.9\nA,5,6.2\nB,6,9.5\nA,7,8.8\nB,8,8.1\nA,9,7.4\nB,10,10.7\nA,11,10.0\nB,12,9.3\nA,13,8.6\nB,14,11.9\nA,15,11.2\nB,16,10.5\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "arm": "group",
+    "trial": "row_id",
+    "score": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "score"
+    ],
+    "group": "arm"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "arm",
+      "role": "group"
+     },
+     {
+      "name": "trial",
+      "role": "row_id"
+     },
+     {
+      "name": "score",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "score"
+     ],
+     "x": "none",
+     "group": "arm"
+    }
+   },
+   "also_ok": [
+    {
+     "x": "trial",
+     "y": [
+      "score"
+     ],
+     "group": "arm"
+    }
+   ]
+  },
+  {
+   "id": "RC-15",
+   "title": "中文提问：比较不同处理（品系、处理两个分组列）",
+   "tags": [
+    "chinese",
+    "two-groups",
+    "group-wrong",
+    "hint"
+   ],
+   "tables": {
+    "t.csv": "品系,处理,值\n野生型,对照,5.0\n突变,对照,8.3\n野生型,药物,7.6\n突变,药物,6.9\n野生型,对照,6.2\n突变,对照,9.5\n野生型,药物,8.8\n突变,药物,8.1\n野生型,对照,7.4\n突变,对照,10.7\n野生型,药物,10.0\n突变,药物,9.3\n野生型,对照,8.6\n突变,对照,11.9\n野生型,药物,11.2\n突变,药物,10.5\n野生型,对照,9.8\n突变,对照,13.1\n野生型,药物,12.4\n突变,药物,11.7\n野生型,对照,11.0\n突变,对照,14.3\n野生型,药物,13.6\n突变,药物,12.9\n"
+   },
+   "hint": "比较不同处理",
+   "control": false,
+   "roles": {
+    "品系": "group",
+    "处理": "group",
+    "值": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "值"
+    ],
+    "group": "处理"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "品系",
+      "role": "group"
+     },
+     {
+      "name": "处理",
+      "role": "group"
+     },
+     {
+      "name": "值",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "值"
+     ],
+     "x": "none",
+     "group": "处理"
+    }
+   }
+  },
+  {
+   "id": "RC-16",
+   "title": "数值列夹着 <0.5 与 n.d.：给处理规则",
+   "tags": [
+    "mixed-cells"
+   ],
+   "tables": {
+    "t.csv": "group,value\nctrl,5.0\ndrug,8.3\nctrl,<0.5\ndrug,6.9\nctrl,6.2\ndrug,n.d.\nctrl,8.8\ndrug,8.1\nctrl,7.4\ndrug,10.7\nctrl,10.0\ndrug,9.3\nctrl,8.6\ndrug,11.9\nctrl,11.2\ndrug,10.5\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "group": "group",
+    "value": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "value"
+    ],
+    "group": "group"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "group",
+      "role": "group"
+     },
+     {
+      "name": "value",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "value"
+     ],
+     "x": "none",
+     "group": "group"
+    },
+    "cells": [
+     {
+      "column": "value",
+      "mode": "map",
+      "map": {
+       "<0.5": 0.5,
+       "n.d.": null
+      },
+      "rest": "skip"
+     }
+    ]
+   },
+   "expect_cells": [
+    "value"
+   ]
+  },
+  {
+   "id": "RC-17",
+   "title": "第一行是标题（嗅探猜成表头），真表头在第 2 行",
+   "tags": [
+    "header",
+    "title-row"
+   ],
+   "tables": {
+    "t.csv": "Growth curves,2026,x\nstrain,time_h,OD600\nA,1,0.1\nA,2,0.2\nA,3,0.3\nA,4,0.4\nB,1,0.3\nB,2,0.4\nB,3,0.5\nB,4,0.6\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "strain": "group",
+    "time_h": "time",
+    "OD600": "measure"
+   },
+   "expect_default": {
+    "x": "time_h",
+    "y": [
+     "OD600"
+    ],
+    "group": "strain"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "strain",
+      "role": "group"
+     },
+     {
+      "name": "time_h",
+      "role": "time"
+     },
+     {
+      "name": "OD600",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "OD600"
+     ],
+     "x": "time_h",
+     "group": "strain"
+    }
+   },
+   "header": {
+    "expect_header_row": 2,
+    "model_header_answer": {
+     "header_row": 2
+    }
+   }
+  },
+  {
+   "id": "RC-18",
+   "title": "第一行是 a,b,c 占位名，真表头在第 2 行",
+   "tags": [
+    "header",
+    "placeholder-row"
+   ],
+   "tables": {
+    "t.csv": "a,b,c\nstrain,time_h,OD600\nA,1,0.1\nA,2,0.2\nA,3,0.3\nA,4,0.4\nB,1,0.3\nB,2,0.4\nB,3,0.5\nB,4,0.6\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "strain": "group",
+    "time_h": "time",
+    "OD600": "measure"
+   },
+   "expect_default": {
+    "x": "time_h",
+    "y": [
+     "OD600"
+    ],
+    "group": "strain"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "strain",
+      "role": "group"
+     },
+     {
+      "name": "time_h",
+      "role": "time"
+     },
+     {
+      "name": "OD600",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "OD600"
+     ],
+     "x": "time_h",
+     "group": "strain"
+    }
+   },
+   "header": {
+    "expect_header_row": 2,
+    "model_header_answer": {
+     "header_row": 2
+    }
+   }
+  },
+  {
+   "id": "RC-19",
+   "title": "对照：一个分组列加一个测量值",
+   "tags": [
+    "control"
+   ],
+   "tables": {
+    "t.csv": "group,value\nctrl,5.0\nctrl,8.3\nctrl,7.6\nctrl,6.9\nctrl,6.2\nctrl,9.5\ndrug,5.0\ndrug,8.3\ndrug,7.6\ndrug,6.9\ndrug,6.2\ndrug,9.5\ndrugB,5.0\ndrugB,8.3\ndrugB,7.6\ndrugB,6.9\ndrugB,6.2\ndrugB,9.5\n"
+   },
+   "hint": null,
+   "control": true,
+   "roles": {
+    "group": "group",
+    "value": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "value"
+    ],
+    "group": "group"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "group",
+      "role": "group"
+     },
+     {
+      "name": "value",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "value"
+     ],
+     "x": "none",
+     "group": "group"
+    }
+   }
+  },
+  {
+   "id": "RC-20",
+   "title": "对照：时间加信号",
+   "tags": [
+    "control"
+   ],
+   "tables": {
+    "t.csv": "time,signal\n1,2.5\n2,2.8\n3,3.3\n4,3.6\n5,4.1\n6,4.4\n7,4.9\n8,5.2\n9,5.7\n10,6.0\n11,6.5\n"
+   },
+   "hint": null,
+   "control": true,
+   "roles": {
+    "time": "time",
+    "signal": "measure"
+   },
+   "expect_default": {
+    "x": "time",
+    "y": [
+     "signal"
+    ],
+    "group": null
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "time",
+      "role": "time"
+     },
+     {
+      "name": "signal",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "signal"
+     ],
+     "x": "time",
+     "group": "none"
+    }
+   }
+  },
+  {
+   "id": "RC-21",
+   "title": "对照：身高体重两个数值",
+   "tags": [
+    "control"
+   ],
+   "tables": {
+    "t.csv": "height_cm,weight_kg\n150.0,50.0\n151.7,54.9\n153.4,54.8\n155.1,59.7\n156.8,59.6\n158.5,59.5\n160.2,64.4\n161.9,64.3\n163.6,69.2\n165.3,69.1\n167.0,69.0\n168.7,73.9\n170.4,73.8\n172.1,78.7\n173.8,78.6\n"
+   },
+   "hint": null,
+   "control": true,
+   "roles": {
+    "height_cm": "measure",
+    "weight_kg": "measure"
+   },
+   "expect_default": {
+    "x": "height_cm",
+    "y": [
+     "weight_kg"
+    ],
+    "group": null
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "height_cm",
+      "role": "measure"
+     },
+     {
+      "name": "weight_kg",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "weight_kg"
+     ],
+     "x": "height_cm",
+     "group": "none"
+    }
+   }
+  },
+  {
+   "id": "RC-22",
+   "title": "对照：mouse_id 是编号列（规则已排除）",
+   "tags": [
+    "control"
+   ],
+   "tables": {
+    "t.csv": "group,mouse_id,value\nctrl,m1,5.0\ndrug,m1,8.3\nctrl,m2,7.6\ndrug,m2,6.9\nctrl,m3,6.2\ndrug,m3,9.5\nctrl,m4,8.8\ndrug,m4,8.1\nctrl,m5,7.4\ndrug,m5,10.7\nctrl,m6,10.0\ndrug,m6,9.3\nctrl,m7,8.6\ndrug,m7,11.9\nctrl,m8,11.2\ndrug,m8,10.5\n"
+   },
+   "hint": null,
+   "control": true,
+   "roles": {
+    "group": "group",
+    "mouse_id": "replicate_unit",
+    "value": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "value"
+    ],
+    "group": "group"
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "group",
+      "role": "group"
+     },
+     {
+      "name": "mouse_id",
+      "role": "replicate_unit"
+     },
+     {
+      "name": "value",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "value"
+     ],
+     "x": "none",
+     "group": "group"
+    }
+   }
+  }
+ ]
+}

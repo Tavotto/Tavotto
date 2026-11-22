@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronUp,
   Circle,
+  ClipMask,
   Diamond,
   Eye,
   EyeOff,
@@ -18,7 +19,10 @@ import {
   Pencil,
   Shapes,
   Slash,
+  Spline,
   Square,
+  Star,
+  Arc,
   Triangle,
   Type,
 } from '@/components/ui/icons'
@@ -37,6 +41,7 @@ import { renameObject, reorderObject, toggleHidden, toggleLocked } from '@/store
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { isKnownObject, objectLabel, type CanvasObject, type LayoutGroup } from '@/types/document'
+import { groupPathOf, layerTree, type LayerNode } from '@/lib/groupTree'
 import { layoutKindLabel } from '@/store/actions'
 import { Badge } from '../ui/Badge'
 import { EmptyLine } from '../ui/EmptyLine'
@@ -55,6 +60,9 @@ const ICONS = {
   diamond: Diamond,
   polygon: Hexagon,
   brace: Braces,
+  star: Star,
+  arc: Arc,
+  path: Spline,
 } as const
 
 function iconFor(o: CanvasObject) {
@@ -67,10 +75,15 @@ function iconFor(o: CanvasObject) {
 const lt = (key: string, values?: Record<string, unknown>) =>
   translate(`layerTree.${key}`, { ns: 'workspace', ...(values ?? {}) })
 
-/** 显示行：普通对象 / 组标题（组成员挂在标题下，可折叠） */
+/** 显示行：普通对象 / 组标题（组成员挂在标题下，可折叠；嵌套组逐层缩进，ADR 0191） */
 type TreeRow =
-  | { kind: 'object'; obj: CanvasObject; depth: 0 | 1; pos: number; size: number }
-  | { kind: 'group'; gid: string; members: CanvasObject[]; pos: number; size: number }
+  | { kind: 'object'; obj: CanvasObject; depth: number; pos: number; size: number; mask: boolean }
+  | { kind: 'group'; gid: string; members: CanvasObject[]; depth: number; pos: number; size: number; clip: boolean }
+
+/** 组节点下的全部对象（任意深度，上 → 下） */
+function membersOf(n: LayerNode): CanvasObject[] {
+  return n.kind === 'object' ? [n.obj] : n.children.flatMap(membersOf)
+}
 
 /**
  * `embedded`（2026-10 审计 A3）：坐在「大纲」里、挂在当前画布那一行下面——不自己滚动（外层滚），
@@ -124,8 +137,11 @@ export function LayerTree({
     // 收起中的组成员还保活着（退场动画，整棵 inert）：那不算「可见」（`findVisibleRow`，与元素树同一出口）
     const at = (key: string) => findVisibleRow(list, 'data-layer', key)
     // 选中项藏在折叠的组里（行没渲染）：滚到它最近的可见祖先——组标题行
-    const groupId = objects.find((o) => o.id === primaryId)?.groupId
-    const target = at(primaryId) ?? (groupId ? at(`g:${groupId}`) : null)
+    // 嵌套组：从最内层往外找第一个看得见的组标题
+    const self = objects.find((o) => o.id === primaryId)
+    const chain = self ? groupPathOf(self) : []
+    let target = at(primaryId)
+    for (let k = chain.length - 1; !target && k >= 0; k--) target = at(`g:${chain[k]}`)
     target?.scrollIntoView({ block: 'nearest' })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [primaryId, collapsed])
@@ -141,29 +157,26 @@ export function LayerTree({
     return embedded ? <li role="none">{empty}</li> : empty
   }
 
-  // 成组的对象折进组标题下（在最上层成员的位置出现一次）。树的语义（2026-10-07 设计审计 §10.3：
-  // listbox → tree）：顶层是对象与组标题，组成员是第二层；每行报自己在同层里的位置与个数
-  const topLevel = zOrder.filter(
-    (o, i) => !o.groupId || zOrder.findIndex((x) => x.groupId === o.groupId) === i,
-  ).length
+  // 成组的对象折进组标题下（在最上层成员的位置出现一次），嵌套组逐层挂（`lib/groupTree.layerTree`）。树的语义
+  // （2026-10-07 设计审计 §10.3：listbox → tree）：每行报自己在同层里的位置与个数；收起的组下面的行不在 rows 里
+  const tree = layerTree(objects)
   const rows: TreeRow[] = []
-  const seenGroups = new Set<string>()
-  let top = 0
-  for (const o of zOrder) {
-    if (!o.groupId) {
-      rows.push({ kind: 'object', obj: o, depth: 0, pos: ++top, size: topLevel })
-      continue
-    }
-    if (seenGroups.has(o.groupId)) continue
-    seenGroups.add(o.groupId)
-    const members = zOrder.filter((x) => x.groupId === o.groupId)
-    rows.push({ kind: 'group', gid: o.groupId, members, pos: ++top, size: topLevel })
-    if (!collapsed[o.groupId]) {
-      members.forEach((m, i) =>
-        rows.push({ kind: 'object', obj: m, depth: 1, pos: i + 1, size: members.length }),
-      )
-    }
+  const walk = (nodes: LayerNode[], depth: number) => {
+    nodes.forEach((n, i) => {
+      if (n.kind === 'object') {
+        rows.push({ kind: 'object', obj: n.obj, depth, pos: i + 1, size: nodes.length, mask: n.obj.id === parentMask })
+        return
+      }
+      rows.push({ kind: 'group', gid: n.gid, members: membersOf(n), depth, pos: i + 1, size: nodes.length, clip: !!n.mask })
+      if (collapsed[n.gid]) return
+      const outer = parentMask
+      parentMask = n.mask?.id ?? null
+      walk(n.children, depth + 1)
+      parentMask = outer
+    })
   }
+  let parentMask: string | null = null
+  walk(tree, 0)
 
   // 「上移 / 下移一层」的可换位落点：可见的对象行之间。⋯ 菜单与 Alt+方向键
   // 共用这一份顺序，两处不各数一遍
@@ -180,11 +193,7 @@ export function LayerTree({
   const navKey = (from: string, key: string) => {
     const action = treeKeyAction(
       key,
-      rows.map((r) =>
-        r.kind === 'group'
-          ? { level: 0, expanded: !collapsed[r.gid] }
-          : { level: r.depth },
-      ),
+      rows.map((r) => (r.kind === 'group' ? { level: r.depth, expanded: !collapsed[r.gid] } : { level: r.depth })),
       rows.findIndex((r) => keyOf(r) === from),
     )
     if (!action) {
@@ -236,6 +245,8 @@ export function LayerTree({
               key={`g:${r.gid}`}
               gid={r.gid}
               members={r.members}
+              clip={r.clip}
+              depth={r.depth}
               layout={layoutGroups?.find((g) => g.id === r.gid)}
               collapsed={!!collapsed[r.gid]}
               pos={r.pos}
@@ -256,6 +267,7 @@ export function LayerTree({
           <LayerRow
             key={o.id}
             obj={o}
+            mask={r.mask}
             depth={r.depth + baseDepth}
             pos={r.pos}
             size={r.size}
@@ -272,24 +284,25 @@ export function LayerTree({
         )
       }
 
-  // 组成员收进 `TreeBranch`（折叠 / 展开的高度过渡）；行本身与键位仍按扁平序列
+  // 组成员收进 `TreeBranch`（折叠 / 展开的高度过渡）；行本身与键位仍按扁平序列。嵌套组的分支套在父分支里
   const renderTree = (): ReactNode[] => {
-    const out: ReactNode[] = []
-    for (let i = 0; i < rows.length; i++) {
-      const r = rows[i]
-      out.push(renderRow(r))
-      if (r.kind !== 'group') continue
-      const kids: ReactNode[] = []
-      while (i + 1 < rows.length && rows[i + 1].kind === 'object' && (rows[i + 1] as { depth: number }).depth === 1) {
-        kids.push(renderRow(rows[++i]))
+    let i = 0
+    const level = (depth: number): ReactNode[] => {
+      const out: ReactNode[] = []
+      while (i < rows.length && rows[i].depth >= depth) {
+        const r = rows[i++]
+        out.push(renderRow(r))
+        if (r.kind !== 'group') continue
+        const kids = level(depth + 1)
+        out.push(
+          <TreeBranch key={`branch:${r.gid}`} open={!collapsed[r.gid]} onSettled={rebase}>
+            {kids}
+          </TreeBranch>,
+        )
       }
-      out.push(
-        <TreeBranch key={`branch:${r.gid}`} open={!collapsed[r.gid]} onSettled={rebase}>
-          {kids}
-        </TreeBranch>,
-      )
+      return out
     }
-    return out
+    return level(0)
   }
 
   const list = (
@@ -315,6 +328,8 @@ export function LayerTree({
 function GroupRow({
   gid,
   members,
+  clip,
+  depth,
   layout,
   collapsed,
   pos,
@@ -327,6 +342,10 @@ function GroupRow({
 }: {
   gid: string
   members: CanvasObject[]
+  /** 剪切组（ADR 0191）：标题换成「剪切组」 */
+  clip: boolean
+  /** 嵌套层级（顶层 = 0） */
+  depth: number
   layout?: LayoutGroup
   collapsed: boolean
   pos: number
@@ -342,13 +361,14 @@ function GroupRow({
   // 组里混着更新的构建写进来的对象时只选认识的：选进去就能被 Delete / 拖动改掉，文档里原样保留的承诺就破了
   const selectAllMembers = () =>
     useSelectionStore.getState().set(members.filter(isKnownObject).map((m) => m.id))
-  const labelRef = useBoldTrackingLock<HTMLSpanElement>(allSelected, lt('groupLabel', { count: members.length }))
+  const label = lt(clip ? 'clipGroupLabel' : 'groupLabel', { count: members.length })
+  const labelRef = useBoldTrackingLock<HTMLSpanElement>(allSelected, label)
   return (
     <li
       role="treeitem"
       aria-selected={allSelected}
       aria-expanded={!collapsed}
-      aria-level={1 + baseDepth}
+      aria-level={1 + depth + baseDepth}
       aria-posinset={pos}
       aria-setsize={size}
       aria-label={
@@ -357,7 +377,9 @@ function GroupRow({
               count: members.length,
               layout: layoutKindLabel(layout.kind),
             })
-          : lt('groupAria', { count: members.length })
+          : clip
+            ? label
+            : lt('groupAria', { count: members.length })
       }
       tabIndex={tabbable ? 0 : -1}
       data-layer={`g:${gid}`}
@@ -377,7 +399,7 @@ function GroupRow({
           selectAllMembers()
         }
       }}
-      style={treeIndent(baseDepth)}
+      style={treeIndent(depth + baseDepth)}
       className={cn(listRowClass({ tree: true, group: true, selected: allSelected }), 'pr-2')}
     >
       <TreeChevron
@@ -385,9 +407,9 @@ function GroupRow({
         onToggle={onToggle}
         label={lt(collapsed ? 'expandGroup' : 'collapseGroup')}
       />
-      <TreeIcon icon={Layers} />
+      <TreeIcon icon={clip ? ClipMask : Layers} />
       <span ref={labelRef} data-tree-label className="min-w-0 flex-1 truncate">
-        {lt('groupLabel', { count: members.length })}
+        {label}
       </span>
       {layout && <Badge>{layoutKindLabel(layout.kind)}</Badge>}
     </li>
@@ -396,6 +418,8 @@ function GroupRow({
 
 interface RowProps {
   obj: CanvasObject
+  /** 这一行是剪切路径（ADR 0191）：不画、只裁；「已隐藏」与菜单里的隐藏 / 显示指的是暂时不裁（`clipOff`），不是 hidden */
+  mask?: boolean
   depth?: number
   pos: number
   size: number
@@ -414,6 +438,7 @@ interface RowProps {
 
 function LayerRow({
   obj,
+  mask = false,
   depth = 0,
   pos,
   size,
@@ -434,7 +459,9 @@ function LayerRow({
   const markKeyFinish = useRenameFocusReturn(editing, rowRef)
   // ⋯ / 右键 / ⇧F10 同一份菜单（`ui/RowMenu`）；行有焦点时 ⋯ 进 Tab 顺序
   const menu = useRowMenu({ enabled: !editing })
-  const Icon = iconFor(obj)
+  const Icon = mask ? ClipMask : iconFor(obj)
+  // 剪切路径的 hidden 只是给旧构建看的（ADR 0191），这里不当「已隐藏」
+  const hidden = mask ? !!obj.clipOff : !!obj.hidden
   const isScript = obj.type === 'panel' && !!obj.script
   // 更新的构建写进来的对象：行照常显示、能改名 / 隐藏 / 调层级，但不进选区（选进去就能被 Delete 删掉）
   const known = isKnownObject(obj)
@@ -444,7 +471,8 @@ function LayerRow({
   // 可编辑（能进图内编辑）与隐藏 / 锁定一样进可达名：角标只是视觉记号
   const stateLabel = [
     isScript && lt('editableState'),
-    obj.hidden && lt('hiddenState'),
+    mask && lt('clipPath'),
+    hidden && lt('hiddenState'),
     obj.locked && lt('lockedState'),
   ]
     .filter(Boolean)
@@ -537,13 +565,15 @@ function LayerRow({
       }}
       onDoubleClick={() => setEditing(true)}
       style={treeIndent(depth)}
-      className={cn(listRowClass({ tree: true, selected, hidden: obj.hidden, dragging }), 'pr-0.5')}
+      className={cn(listRowClass({ tree: true, selected, hidden, dragging }), 'pr-0.5')}
     >
       {/* 落点线：2px accent + 圆点（`dropLineClass`，此前是 1px 的内阴影线，几乎看不见） */}
       <span aria-hidden data-layer-drop={dropHint ?? undefined} className={dropLineClass(dropHint === 'above' ? 'before' : dropHint === 'below' ? 'after' : null)} />
       {/* 顶层对象没有折叠箭头，留一个空列：与组标题行的图标对齐 */}
       <TreeChevron />
-      <TreeIcon icon={Icon} />
+      <span className="contents" title={mask ? lt('clipPathTip') : undefined}>
+        <TreeIcon icon={Icon} />
+      </span>
       {editing ? (
         <input
           autoFocus
@@ -582,6 +612,8 @@ function LayerRow({
         </span>
       )}
       {/* 「基准」是一个词不是取值代号：type-meta，不用等宽（左栏审计 L29） */}
+      {/* 剪切路径（ADR 0191）：行尾一个词说清它是什么，与「基准」同一副 */}
+      {mask && !editing && <span className="shrink-0 type-meta font-normal">{lt('clipPath')}</span>}
       {primary && !editing && (
         <span className="shrink-0 type-meta font-normal">{lt('primary')}</span>
       )}
@@ -592,7 +624,7 @@ function LayerRow({
       {obj.locked && (
         <Lock size={ICON_SIZE.xs} className="shrink-0 text-ink-3" aria-label={lt('lockedState')} />
       )}
-      {obj.hidden && (
+      {hidden && (
         <EyeOff size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-label={lt('hiddenState')} />
       )}
 
@@ -606,8 +638,9 @@ function LayerRow({
           <MenuItem icon={obj.locked ? LockOpen : Lock} onSelect={() => toggleLocked(obj.id)}>
             {lt(obj.locked ? 'unlock' : 'lock')}
           </MenuItem>
-          <MenuItem icon={obj.hidden ? Eye : EyeOff} onSelect={() => toggleHidden(obj.id)}>
-            {lt(obj.hidden ? 'show' : 'hide')}
+          {/* 剪切路径：隐藏 = 暂时不裁（`toggleHidden` 切的是 clipOff，ADR 0191） */}
+          <MenuItem icon={hidden ? Eye : EyeOff} onSelect={() => toggleHidden(obj.id)}>
+            {lt(hidden ? 'show' : 'hide')}
           </MenuItem>
           <MenuSeparator />
           {/* 层级动作作用在**这一行**上，不看选区——菜单是从这一行打开的。

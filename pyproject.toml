@@ -138,11 +138,14 @@ artifacts = ["src/tavotto/web/**", "src/tavotto/resources/fonts/**"]
 # 二进制源码，不属于 pip 包——同样要防住 sdist include 那条 `tests` 模式。
 # 桌面安装包附带的私有 Python 归档（build/private-python-bundle/，ADR 0111）同理：25–47 MB 的平台归档，
 # 只随安装包走。
+# 画布路径查找器内核的 crate（vecops/，ADR 0185 M2）同理：编出来的 .wasm 经前端构建进 src/tavotto/web/，
+# Rust 源码与 vendor/ 里的上游副本不属于 pip 包，它的 tests/ 同样会撞上 sdist 那条 `tests` 模式。
 exclude = ["runtime", "runtime/**", "build/runtime-cache/**", "build/private-python-bundle/**",
            "workerd", "workerd/**",
            "codex-plugin", "codex-plugin/**", ".agents", ".agents/**",
            "services", "services/**",
-           "tools", "tools/**"]
+           "tools", "tools/**",
+           "vecops", "vecops/**"]
 
 # 包内数据（profiles/、resources/tutorial_project/）随 packages 自然收进 wheel 与 sdist，
 # 前提是它们不被 .gitignore 挡（hatchling 默认跳过 VCS 忽略的文件）。桌面产物那边

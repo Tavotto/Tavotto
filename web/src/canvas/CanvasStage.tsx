@@ -1,5 +1,5 @@
 import { visibleFigureCards } from '@/lib/figureGroup'
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { perfCount } from '@/perf/core'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
@@ -17,7 +17,10 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useExactPanelManifest } from '@/store/renderStore'
 import { frameCanvasOf, isZeroPad } from '@/lib/framePad'
-import type { PanelObject } from '@/types/document'
+import type { CanvasObject, PanelObject } from '@/types/document'
+import { clipChainOf, groupMasks, inScope, isActiveMask } from '@/lib/groupTree'
+import { clipPathCss, maskOutline } from '@/lib/clipMask'
+import { useIsolationStore, validPath } from '@/store/isolationStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -43,6 +46,10 @@ import { Rulers, RULER_SIZE } from './Rulers'
 import { CanvasContextMenu } from './CanvasContextMenu'
 import { placePanelInPage } from '@/lib/panelPlacement'
 import { startDraw, startMarquee, startPan } from './interactions'
+import { penHover, penPointerDown } from './penController'
+import { eyedropperPointerDown } from './eyedropper'
+import { startAnchorMarquee } from './pathEditDrag'
+import { activePathEdit } from '@/store/pathEditStore'
 import { groundInkFor } from '@/lib/canvasSelection'
 import { cn } from '@/lib/utils'
 
@@ -196,8 +203,23 @@ export function CanvasStage() {
       useUiStore.getState().setCropTarget(null)
       return
     }
+    // 钢笔（ADR 0185 M1）：加点 / 拉手柄 / 点起点闭合，状态机在 `lib/penTool`
+    if (tool === 'pen') {
+      penPointerDown(e)
+      return
+    }
+    // 吸管：读点到的东西画出来的颜色，给选区上色（`canvas/eyedropper`）
+    if (tool === 'eyedropper') {
+      eyedropperPointerDown(e)
+      return
+    }
     if (tool !== 'select') {
       startDraw(e, tool)
+      return
+    }
+    // 锚点编辑里点空白：框选锚点（没拖 = 退出锚点编辑、清选区）
+    if (activePathEdit()) {
+      startAnchorMarquee(e)
       return
     }
     startMarquee(e)
@@ -207,6 +229,7 @@ export function CanvasStage() {
   const rafRef = useRef(0)
   const onPointerMove = (e: React.PointerEvent) => {
     const { clientX, clientY } = e
+    if (tool === 'pen') penHover(clientX, clientY, e.shiftKey)
     if (rafRef.current) return
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = 0
@@ -217,6 +240,11 @@ export function CanvasStage() {
   // 双击画布外侧灰色工作区 → 适应当前画布（对象/页面内容/各种编辑态不误触）
   const onDoubleClick = (e: React.MouseEvent) => {
     const ui = useUiStore.getState()
+    // 组内编辑时双击空白处 = 退出组内编辑（Illustrator 习惯），这一下不适应画布
+    if (useIsolationStore.getState().path.length && !(e.target as HTMLElement).closest('[data-object-id]')) {
+      useIsolationStore.getState().clear()
+      return
+    }
     const ok = shouldFitOnDoubleClick({
       tool,
       spaceDown,
@@ -455,6 +483,9 @@ function DropGhost({ box }: { box: { x: number; y: number; w: number; h: number 
  */
 function CanvasLayers() {
   const objects = useDocumentStore((s) => s.doc.objects)
+  // 组内编辑（ADR 0191）：只对激活画布生效；链失效的部分不算
+  const isoPath = useIsolationStore((s) => s.path)
+  const isolation = useMemo(() => validPath(isoPath, objects).at(-1) ?? null, [isoPath, objects])
   const openTabs = useDocumentStore((s) => s.openTabs)
   const activeId = useDocumentStore((s) => s.activeCanvasId)
   const canvases = useDocumentStore((s) => s.canvases)
@@ -472,11 +503,52 @@ function CanvasLayers() {
             className="absolute left-0 top-0"
             style={active ? undefined : { display: 'none' }}
           >
-            {objs.map((o) => (
-              <ObjectView key={o.id} obj={o} />
-            ))}
+            <LayerObjects objects={objs} isolation={active ? isolation : null} />
           </div>
         )
+      })}
+    </>
+  )
+}
+
+/**
+ * 一张画布的对象（ADR 0191）：剪切组里生效的蒙版不画（只拿来裁），被裁的对象外面一层层包上
+ * `clip-path`（外层组的蒙版在外）。包裹层是贴在世界原点、零尺寸的 div，所以蒙版轮廓直接用世界坐标，
+ * 不管对象自己转没转；`clip-path` 同时裁掉命中，点不到被裁掉的那部分。组内编辑时组外的对象变淡、不接指针。
+ */
+export function LayerObjects({ objects, isolation }: { objects: readonly CanvasObject[]; isolation: string | null }) {
+  const masks = useMemo(() => groupMasks(objects), [objects])
+  const clipCss = useMemo(() => {
+    const out = new Map<string, string>()
+    for (const m of masks.values()) {
+      const outline = maskOutline(m)
+      // 画不出轮廓的蒙版 = 什么都不剩（与后端 `plan._clipped` 同一条：空裁剪区）
+      out.set(m.id, outline ? clipPathCss(outline, mmToWorld(1)) : 'inset(50%)')
+    }
+    return out
+  }, [masks])
+  return (
+    <>
+      {objects.map((o) => {
+        if (isActiveMask(o, masks)) return null
+        const outside = !!isolation && !inScope(o, isolation)
+        let node = <ObjectView key={o.id} obj={o} outside={outside} />
+        const chain = clipChainOf(o, masks)
+        for (let i = chain.length - 1; i >= 0; i--) {
+          node = (
+            <div key={o.id} data-clip-by={chain[i].id} className="absolute left-0 top-0" style={{ clipPath: clipCss.get(chain[i].id) }}>
+              {node}
+            </div>
+          )
+        }
+        if (outside) {
+          node = (
+            <div key={o.id} data-isolation-outside className="absolute left-0 top-0 opacity-35" style={{ pointerEvents: 'none' }}>
+              {node}
+            </div>
+          )
+        }
+        return node
       })}
     </>
   )

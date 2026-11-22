@@ -1,0 +1,1413 @@
+{
+  "_doc": "科学可视化指导条目的唯一出处（2026-11-21 立，docs/sciviz/README.md）。给 Tavotto Agent / 插件技能 / 数据出图准则当参考；预检判据仍以 publication.json 为准，这里的 checks 只是指向。basis：encoding=数据与编码不一致 / statistics=统计表达风险 / visual=感知建议 / undecidable=仅凭图和数据判不了 / taste=作者偏好。strength：firm=原文用 must、always 等硬措辞 / strong=明确推荐但有例外 / preference=原文自称品味或意见 / inference=Tavotto 自己的推导。evidence.tag：原文 / 二手 / 推导。quote 一律 ≤25 词，逐字取自原书。",
+  "schema": 1,
+  "sources": {
+    "GoG": "Leland Wilkinson, The Grammar of Graphics, 2nd ed., Springer 2005",
+    "VAD": "Tamara Munzner, Visualization Analysis and Design, CRC Press 2014",
+    "FDV": "Claus O. Wilke, Fundamentals of Data Visualization, O'Reilly 2019（全文 https://clauswilke.com/dataviz/）",
+    "MATH": "数学事实（不归于任何一本书）",
+    "TAVOTTO": "Tavotto 自己的工程推导"
+  },
+  "entries": [
+    {
+      "id": "G-001",
+      "title": "对数轴上只放正值",
+      "basis": "encoding",
+      "strength": "firm",
+      "decidable": "auto",
+      "agent": "对数轴画不出 0 和负值，matplotlib 会把它们静默画到轴外。数据里有非正值时，改用线性轴或 symlog，或在脚本里显式处理，并告诉用户少画了哪些点；误差线下端 ≤ 0 时同理。",
+      "exceptions": [
+        "symlog / logit 轴不适用",
+        "色条的 LogNorm 另行处理"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.3 Coordinate Systems and Axes, p.20",
+          "tag": "原文",
+          "quote": "The value 0, on the other hand, can never appear on a log scale."
+        },
+        {
+          "src": "MATH",
+          "loc": "log(x) 在 x ≤ 0 处无定义；负值的情形书里没有讨论",
+          "tag": "推导"
+        }
+      ],
+      "principles": [
+        "P1"
+      ],
+      "spec": [
+        "V-001"
+      ],
+      "checks": [
+        "log-axis-nonpositive"
+      ]
+    },
+    {
+      "id": "G-002",
+      "title": "线性轴上的柱从 0 起",
+      "basis": "encoding",
+      "strength": "firm",
+      "decidable": "auto",
+      "agent": "柱长要和数值成比例，线性轴上的柱必须从 0 起，不要用 ylim 截掉柱底。要突出小差异时改用点图或折线（它们可以不从 0 起）。表示差值的柱从 0 向两侧画，并在图注说明是差值。",
+      "exceptions": [
+        "差值柱",
+        "浮动柱 / 区间柱 / 甘特图：柱底本身有含义",
+        "对数轴上的柱见 G-003"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.17 The Principle of Proportional Ink, p.209",
+          "tag": "原文",
+          "quote": "Bars on a linear scale should always start at 0."
+        },
+        {
+          "src": "FDV",
+          "loc": "ch.6 Visualizing Amounts（点图与非零范围）, p.53–54",
+          "tag": "原文"
+        },
+        {
+          "src": "GoG",
+          "loc": "§6.1, p.92（零基线是尺度问题，条形的定义本身不要求底在零）",
+          "tag": "原文",
+          "quote": "these are statements about scales rather than graphics"
+        }
+      ],
+      "principles": [
+        "P1"
+      ],
+      "spec": [
+        "V-002"
+      ],
+      "checks": []
+    },
+    {
+      "id": "G-003",
+      "title": "对数轴上的柱表示比值，从 1 起；数量用点",
+      "basis": "statistics",
+      "strength": "firm",
+      "decidable": "context",
+      "agent": "在对数轴上画数量（amount）的柱，柱长没有意义，改用点图。只有柱表示比值（ratio、fold change）时才在对数轴上画柱，且从 1 起。是不是比值要问用户，不要猜。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.17 The Principle of Proportional Ink, p.215",
+          "tag": "原文",
+          "quote": "they represent ratios and need to be drawn starting from 1, not 0"
+        }
+      ],
+      "principles": [
+        "P1",
+        "P3"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-004",
+      "title": "填充面积图从 0 起",
+      "basis": "encoding",
+      "strength": "firm",
+      "decidable": "context",
+      "agent": "用面积表示数量（面积图、填到底的曲线）时，y 轴要从 0 起；否则不要填充，只画线。",
+      "exceptions": [
+        "置信带等表示区间的填充不适用"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.13 Visualizing Time Series, p.134",
+          "tag": "原文",
+          "quote": "this visualization is only valid if the y axis starts at zero"
+        }
+      ],
+      "principles": [
+        "P1"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-005",
+      "title": "误差线必须说明代表什么",
+      "basis": "undecidable",
+      "strength": "firm",
+      "decidable": "no",
+      "agent": "画出来的误差线看不出是 SD、SEM 还是 95% CI，必须由作者写明（图例或图注）。不知道时问用户，绝不默认成某一种；你自己算的汇总要如实告诉用户用了哪一种。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.16 Visualizing Uncertainty, p.189",
+          "tag": "原文",
+          "quote": "you must specify what quantity and/or confidence level the error bars represent"
+        },
+        {
+          "src": "GoG",
+          "loc": "§7.2, p.131（误差线只是 interval 几何，同一几何可表示不同统计）",
+          "tag": "原文",
+          "quote": "The shape of the bars is arbitrary."
+        }
+      ],
+      "principles": [
+        "P2"
+      ],
+      "spec": [
+        "V-004"
+      ],
+      "checks": []
+    },
+    {
+      "id": "G-006",
+      "title": "SD 与 SE 不混用",
+      "basis": "statistics",
+      "strength": "firm",
+      "decidable": "no",
+      "agent": "SD 描述数据的散布，SE 描述估计的精度，两者含义不同。用户问「用哪个」时说明区别，由用户按研究目的选，不替用户定。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.16 Visualizing Uncertainty, p.187",
+          "tag": "原文",
+          "quote": "It is critical that we don’t confuse the standard deviation and the standard error."
+        }
+      ],
+      "principles": [
+        "P2"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-007",
+      "title": "不靠误差线是否重叠判断显著性",
+      "basis": "statistics",
+      "strength": "firm",
+      "decidable": "no",
+      "agent": "不要根据误差线是否重叠告诉用户「差异显著 / 不显著」。Tavotto 图上只放描述性汇总，不做显著性检验。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.16 Visualizing Uncertainty, p.191",
+          "tag": "原文",
+          "quote": "are not reliable and should be avoided"
+        }
+      ],
+      "principles": [
+        "P2"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-008",
+      "title": "置信带写明置信水平",
+      "basis": "undecidable",
+      "strength": "strong",
+      "decidable": "no",
+      "agent": "拟合线外的置信带要写明置信水平（如 95%）和拟合方法；不知道就问。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.16 Visualizing Uncertainty, p.199",
+          "tag": "原文",
+          "quote": "To draw a confidence band, we need to specify a confidence level"
+        }
+      ],
+      "principles": [
+        "P2"
+      ],
+      "spec": [],
+      "checks": [
+        "fit-without-ci"
+      ]
+    },
+    {
+      "id": "G-009",
+      "title": "改轴范围不会重算统计",
+      "basis": "statistics",
+      "strength": "firm",
+      "decidable": "context",
+      "agent": "缩小 xlim / ylim 只是裁掉画面，脚本里算好的回归线、均值、置信带仍基于全部数据。用户为好看而裁掉数据时，提醒被裁掉的点仍参与了汇总，或者建议在脚本里真正筛选数据并重算。",
+      "exceptions": [
+        "有意的局部放大（inset）"
+      ],
+      "evidence": [
+        {
+          "src": "GoG",
+          "loc": "§9.1.8, p.219",
+          "tag": "原文",
+          "quote": "the frame should always cover the data on which the graphs are based"
+        },
+        {
+          "src": "GoG",
+          "loc": "§9.1, p.191–192（数据缩放与图形缩放）",
+          "tag": "原文"
+        }
+      ],
+      "principles": [
+        "P1",
+        "P3"
+      ],
+      "spec": [
+        "V-003"
+      ],
+      "checks": []
+    },
+    {
+      "id": "G-010",
+      "title": "变量取 log 与轴取 log 的标题不同",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "轴本身是对数轴时，轴标题写变量名（如 Concentration），不写 log(Concentration)。数据先取了对数、再画在线性轴上时，轴标题写 log10(…) 并注明底数。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "GoG",
+          "loc": "§6.2, p.93",
+          "tag": "原文",
+          "quote": "Log of Income"
+        },
+        {
+          "src": "FDV",
+          "loc": "ch.3 Coordinate Systems and Axes, p.17–18",
+          "tag": "原文",
+          "quote": "the correct axis title for a logarithmic scale is the name of the variable shown"
+        }
+      ],
+      "principles": [
+        "P3"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-011",
+      "title": "先变换、再汇总",
+      "basis": "statistics",
+      "strength": "firm",
+      "decidable": "no",
+      "agent": "均值的 log 不等于 log 的均值。数据要在对数尺度上比较时，先取对数再算均值和误差，在原始刻度上画出来的误差线会不对称。改轴尺度不会自动做这一步，要说明。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "GoG",
+          "loc": "§6.2, p.93",
+          "tag": "原文",
+          "quote": "variable and scale transformations must be done before these statistical methods do their work"
+        },
+        {
+          "src": "GoG",
+          "loc": "§9.1.8, p.218",
+          "tag": "原文"
+        }
+      ],
+      "principles": [
+        "P3"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-012",
+      "title": "能露出原始数据就露出",
+      "basis": "statistics",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "汇总统计会丢信息（均值、方差、相关都相同的数据可以长得完全不同）。数据量允许时，把原始点叠在汇总图形上或并排展示，并说明汇总丢掉了什么。「数据量允许」的具体界线是工程选择，由数据出图的配方规则定义，要如实说是工程阈值。",
+      "exceptions": [
+        "点太多导致严重遮挡时改用密度或分箱，并说明"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.12 Visualizing Associations, p.124",
+          "tag": "原文",
+          "quote": "It is always better to visualize the raw data rather than abstract derived quantities"
+        },
+        {
+          "src": "VAD",
+          "loc": "§1.6 与 ch.13 Reduce（Anscombe 四重奏）, p.7–8",
+          "tag": "原文"
+        }
+      ],
+      "principles": [
+        "P5"
+      ],
+      "spec": [],
+      "checks": [
+        "bar-without-errorbar"
+      ]
+    },
+    {
+      "id": "G-013",
+      "title": "样本太少不用小提琴、密度图和箱线图",
+      "basis": "statistics",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "每组点数不多时，小提琴和密度图会凭空造出形状；箱线图的箱和须也只由少数几个点决定。这时改画原始点（加抖动）。书里没有给具体的 n 阈值；Tavotto 用的阈值是工程选择，要如实说。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.9 Visualizing Many Distributions at Once, p.85",
+          "tag": "原文",
+          "quote": "verify that you have sufficiently many data points in each group"
+        },
+        {
+          "src": "TAVOTTO",
+          "loc": "箱线图同样适用是 Tavotto 的推导；书里只对小提琴与密度图明说",
+          "tag": "推导"
+        }
+      ],
+      "principles": [
+        "P5"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-014",
+      "title": "直方图的 bin 宽要试、要说明",
+      "basis": "statistics",
+      "strength": "strong",
+      "decidable": "no",
+      "agent": "直方图的形状随 bin 宽变化，要试几个 bin 宽，并告诉用户选了多少、为什么；各 bin 必须等宽。不要声称某个 bin 宽「正确」。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.7 Visualizing Distributions, p.61",
+          "tag": "原文",
+          "quote": "always explore multiple bin widths"
+        },
+        {
+          "src": "VAD",
+          "loc": "§13.4 Histogram, p.306",
+          "tag": "原文"
+        }
+      ],
+      "principles": [
+        "P5"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-015",
+      "title": "密度估计不预测不可能的值",
+      "basis": "statistics",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "核密度曲线伸到负浓度、负年龄等不可能区间时，要截断或换画法，并告诉用户。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.7 Visualizing Distributions, p.64",
+          "tag": "原文",
+          "quote": "does not predict the existence of nonsensical data values"
+        }
+      ],
+      "principles": [
+        "P1"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-016",
+      "title": "平滑与拟合写明方法和参数",
+      "basis": "statistics",
+      "strength": "strong",
+      "decidable": "no",
+      "agent": "同一份数据可以平滑成很多样子。画平滑线或拟合线时，告诉用户用了什么方法、什么窗口或参数，并建议写进图注；有明确函数形式时优先用它。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.14 Visualizing Trends, p.150",
+          "tag": "原文",
+          "quote": "The same dataset can be smoothed in many different ways."
+        }
+      ],
+      "principles": [
+        "P2",
+        "P8"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-017",
+      "title": "抖动会改数据：要小心、要固定种子",
+      "basis": "statistics",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "加抖动（jitter）时幅度要小于数据精度，并固定随机种子，保证重跑得到同一张图。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.18 Handling Overlapping Points, p.222",
+          "tag": "原文",
+          "quote": "it does change the data and therefore has to be performed with care"
+        },
+        {
+          "src": "FDV",
+          "loc": "ch.28 Choosing the Right Visualization Software, p.326",
+          "tag": "原文"
+        }
+      ],
+      "principles": [
+        "P8"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-018",
+      "title": "只有有序、被连续跟踪的横轴才连线",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "折线暗示相邻值之间有连续变化，只用于时间、剂量、浓度这类有序横轴上对同一对象的跟踪。类别横轴（组名、样品名）用柱或点；两个独立测量的量之间（方法比较、材料性能、两种指标的关系）没有 key，用散点，不连线。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "VAD",
+          "loc": "§7.5.1 Line Charts, p.156",
+          "tag": "原文",
+          "quote": "Line charts should be used for ordered keys but not categorical keys."
+        },
+        {
+          "src": "VAD",
+          "loc": "§7.4 Scatterplots, p.146",
+          "tag": "原文",
+          "quote": "scatterplots are the canonical example of showing two value attributes"
+        }
+      ],
+      "principles": [
+        "P5"
+      ],
+      "spec": [
+        "V-008"
+      ],
+      "checks": []
+    },
+    {
+      "id": "G-019",
+      "title": "最重要的量用位置编码",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "人眼判断同一刻度上的位置最准，长度次之，角度、面积、颜色深浅更差。把读者最需要比较的量放在共同坐标轴的位置上。这是指导性的综合结论，不是定律，说理由时要这么表述。",
+      "exceptions": [
+        "任务是看整体与部分的比例时，饼图也可以（见 G-043）"
+      ],
+      "evidence": [
+        {
+          "src": "VAD",
+          "loc": "§5.4 Channel Effectiveness, p.102",
+          "tag": "原文",
+          "quote": "my own synthesis"
+        },
+        {
+          "src": "VAD",
+          "loc": "§5.5.1, p.105（转述 Cleveland–McGill 与 Heer–Bostock 实验）",
+          "tag": "二手"
+        }
+      ],
+      "principles": [
+        "P5",
+        "P6"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-020",
+      "title": "有序数据用有序的通道，类别用可区分的通道",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "数值和有序类别用位置、长度、亮度编码；无序类别用色相、形状或分区编码。不要用色相表示大小，也不要用暗示顺序的通道表示无序类别。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "VAD",
+          "loc": "§5.4.1 Expressiveness, p.100",
+          "tag": "原文",
+          "quote": "all of, and only"
+        }
+      ],
+      "principles": [
+        "P5"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-021",
+      "title": "类别色不超过约 8 种",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "auto",
+      "agent": "类别色超过约 8 种就很难区分。可以合并成「其他」、分面，或者直接在线条末端标注名称，而不是继续加颜色。",
+      "exceptions": [
+        "连续色映射不适用"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.19 Common Pitfalls of Color Use, p.234",
+          "tag": "原文",
+          "quote": "Use direct labeling instead of colors when you need to distinguish between more than about eight categorical items."
+        },
+        {
+          "src": "VAD",
+          "loc": "§10.3.1 Categorical Colormaps, p.226–229（小而分离区域约 6–12 种）",
+          "tag": "原文"
+        }
+      ],
+      "principles": [
+        "P5"
+      ],
+      "spec": [
+        "V-005"
+      ],
+      "checks": []
+    },
+    {
+      "id": "G-022",
+      "title": "连续数据不用彩虹色图",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "auto",
+      "agent": "jet、rainbow 这类色图亮度不单调，会制造假边界、藏起真细节。连续数据用亮度单调的色图（如 viridis、batlow）。类别少的分段彩虹色可以用。",
+      "exceptions": [
+        "类别少的分段彩虹色"
+      ],
+      "evidence": [
+        {
+          "src": "VAD",
+          "loc": "§10.3.2 Ordered Colormaps, p.232–234",
+          "tag": "原文",
+          "quote": "Rainbows are not always bad"
+        },
+        {
+          "src": "FDV",
+          "loc": "ch.19 Common Pitfalls of Color Use, p.237–238",
+          "tag": "原文"
+        }
+      ],
+      "principles": [
+        "P5"
+      ],
+      "spec": [],
+      "checks": [
+        "discouraged-colormap",
+        "palette-semantic"
+      ]
+    },
+    {
+      "id": "G-023",
+      "title": "发散色图的中点要有含义",
+      "basis": "undecidable",
+      "strength": "strong",
+      "decidable": "no",
+      "agent": "发散色图只在数据有一个有意义的中点（0、对照值、阈值）时使用，中点由用户确认，不能因为数据里有负数就自动选发散色图。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.4 Color Scales, p.30",
+          "tag": "原文"
+        },
+        {
+          "src": "VAD",
+          "loc": "§2.5 Attribute Types（diverging）, p.33",
+          "tag": "原文"
+        }
+      ],
+      "principles": [
+        "P5"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-024",
+      "title": "照顾色觉缺陷读者：冗余编码，并用模拟器检查",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "约 8% 的男性有色觉缺陷。不要只靠颜色区分组别，同时用线型或标记形状区分；避免红绿对比；用色觉模拟检查，不要只依赖「色盲安全色板」。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.19 Common Pitfalls of Color Use, p.242",
+          "tag": "原文",
+          "quote": "test your figures in a CVD simulator"
+        },
+        {
+          "src": "VAD",
+          "loc": "§10.3.4 Colorblind Safe, p.235",
+          "tag": "原文"
+        }
+      ],
+      "principles": [
+        "P5"
+      ],
+      "spec": [],
+      "checks": [
+        "palette-line-markers"
+      ]
+    },
+    {
+      "id": "G-025",
+      "title": "黑白下也要读得懂",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "最关键的区分在灰度打印下也要成立：把最重要的属性放在亮度上，色相只做辅助。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "VAD",
+          "loc": "§6.9 Get It Right in Black and White, p.140",
+          "tag": "原文",
+          "quote": "Get It Right in Black and White"
+        }
+      ],
+      "principles": [
+        "P5"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-026",
+      "title": "x、y 同单位时两轴等比例",
+      "basis": "visual",
+      "strength": "firm",
+      "decidable": "context",
+      "agent": "两个轴画的是同一个量（如两种方法测同一批样品、前后两次测量、预测与实测）时，用相等的轴比例（aspect=1），并考虑画 y = x 参考线。两列单位相同只是线索：是不是同一个量，由用户确认，或者以用户自己的话为准。",
+      "exceptions": [
+        "两轴单位不同时可以自由拉伸"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.3 Coordinate Systems and Axes, p.15",
+          "tag": "原文",
+          "quote": "the grid spacings for the two axes should be equal"
+        }
+      ],
+      "principles": [
+        "P1"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-027",
+      "title": "小倍数用相同的轴范围",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "同一种图拆成多个面板比较时，各面板用相同的轴范围；确实要不同时，在图注里提醒读者。",
+      "exceptions": [
+        "各面板量纲不同"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.21 Multi-Panel Figures, p.259",
+          "tag": "原文",
+          "quote": "I generally recommend against using different axis scalings in separate panels of a small multiples plot."
+        }
+      ],
+      "principles": [
+        "P5"
+      ],
+      "spec": [
+        "V-006"
+      ],
+      "checks": []
+    },
+    {
+      "id": "G-028",
+      "title": "多面板视觉语言一致",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "auto",
+      "agent": "同一个类别在所有面板里用同一种颜色、同样的顺序；面板标签的字体、大小、位置一致；轴要对齐。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.21 Multi-Panel Figures, p.261–265",
+          "tag": "原文"
+        }
+      ],
+      "principles": [
+        "P5"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-029",
+      "title": "叠加不超过两三层，多了改并排",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "一个坐标系里叠两层很容易读，三层要小心；更多系列时考虑拆成小倍数并排。书里没有给精确的系列数阈值。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "VAD",
+          "loc": "§12.2 Juxtapose vs Superimpose, p.267",
+          "tag": "原文",
+          "quote": "two is very feasible and three is possible with care"
+        }
+      ],
+      "principles": [
+        "P5"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-030",
+      "title": "没有理由不用 3D",
+      "basis": "visual",
+      "strength": "firm",
+      "decidable": "context",
+      "agent": "3D 柱、3D 饼这类装饰性 3D 会扭曲数值，不要画。数据本身是三维形状（地形、结构）时才用 3D；抽象数据的第三个变量改用颜色、分面或热图。",
+      "exceptions": [
+        "真实三维对象",
+        "可交互旋转的展示"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.26 Don’t Go 3D, p.305",
+          "tag": "原文",
+          "quote": "It is unequivocally bad and should be erased from the visual vocabulary of data scientists."
+        },
+        {
+          "src": "VAD",
+          "loc": "§6.3 No Unjustified 3D, p.117",
+          "tag": "原文",
+          "quote": "No Unjustified 3D"
+        }
+      ],
+      "principles": [
+        "P5"
+      ],
+      "spec": [
+        "V-007"
+      ],
+      "checks": []
+    },
+    {
+      "id": "G-031",
+      "title": "在最终尺寸下检查文字大小",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "auto",
+      "agent": "轴标签、刻度标签往往太小。按最终印刷尺寸检查文字大小；具体的 pt 下限只来自期刊或 Tavotto 的出版规范，书里没有给数值。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.24 Use Larger Axis Labels, p.291",
+          "tag": "原文",
+          "quote": "pay attention to your axis labels"
+        }
+      ],
+      "principles": [
+        "P5"
+      ],
+      "spec": [],
+      "checks": [
+        "font-too-small",
+        "font-below-absolute-floor"
+      ]
+    },
+    {
+      "id": "G-032",
+      "title": "数值轴的标题带单位",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "数值轴的标题写明量和单位，如「Time (h)」；不要让读者猜轴代表什么。类别轴、年份这类一看就懂的可以省略单位。",
+      "exceptions": [
+        "自明的类别或年份"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.22 Titles, Captions, and Tables, p.270–271",
+          "tag": "原文",
+          "quote": "it is a bad practice to make your readers guess what you mean"
+        }
+      ],
+      "principles": [
+        "P5"
+      ],
+      "spec": [],
+      "checks": [
+        "axis-label-format"
+      ]
+    },
+    {
+      "id": "G-033",
+      "title": "图例顺序跟数据走；能直接标注就不用图例",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "auto",
+      "agent": "图例条目的顺序和曲线末端的上下顺序一致；线条不多时，可以把名称直接标在线旁。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.20 Redundant Coding, p.249–251",
+          "tag": "原文",
+          "quote": "If there is a visual ordering in your data, make sure to match it in the legend."
+        }
+      ],
+      "principles": [
+        "P5"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-034",
+      "title": "含线条和文字的图不存 JPEG",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "auto",
+      "agent": "数据图优先存矢量 PDF；需要位图时用 PNG 或 TIFF，不用 JPEG（有损压缩会糊掉线条和文字）。期刊另有要求时按期刊。",
+      "exceptions": [
+        "期刊明确要求的格式"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.27 Understanding the Most Commonly Used Image File Formats, p.322",
+          "tag": "原文",
+          "quote": "it is a good idea to avoid the JPEG format whenever possible"
+        }
+      ],
+      "principles": [
+        "P8"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-035",
+      "title": "饼图各块合计 100%，重叠类别不进同一个饼",
+      "basis": "encoding",
+      "strength": "firm",
+      "decidable": "context",
+      "agent": "饼图和堆叠比例图的各部分必须互斥且合计为整体；一个样本可能同时属于多类时，不要画成一个饼。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.11 Visualizing Nested Proportions, p.105",
+          "tag": "原文",
+          "quote": "All the slices in a pie chart must add up to 100%"
+        }
+      ],
+      "principles": [
+        "P1"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-036",
+      "title": "数据约束的属性不按美观改",
+      "basis": "encoding",
+      "strength": "firm",
+      "decidable": "auto",
+      "agent": "柱高、点的位置、表示数值的气泡面积由数据决定，编辑图时不能为了好看去改；颜色、线宽、字体、图例位置是样式，可以随意改。用户要改前者时，告诉他应该改数据或脚本。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "GoG",
+          "loc": "§10.5, p.278",
+          "tag": "原文",
+          "quote": "size for area is a data attribute, not an arbitrary value we may change for aesthetic purposes"
+        },
+        {
+          "src": "GoG",
+          "loc": "ch.18 ViZml（数据 / 结构 / 样式三层）, p.589–609",
+          "tag": "原文"
+        }
+      ],
+      "principles": [
+        "P4"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-037",
+      "title": "派生数据要说明，不擅自派生",
+      "basis": "statistics",
+      "strength": "inference",
+      "decidable": "no",
+      "agent": "归一化、差值、比值、取对数、分箱、聚合都会改变读者看到的东西，而且会丢信息。只在用户同意后做，做了要写进脚本、告诉用户丢了什么，并建议写进图注。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "VAD",
+          "loc": "§3.4.2.3 Derive, p.50–53",
+          "tag": "原文",
+          "quote": "Don’t just draw what you’re given"
+        },
+        {
+          "src": "TAVOTTO",
+          "loc": "「只在用户同意后做」是 Tavotto 的约束",
+          "tag": "推导"
+        }
+      ],
+      "principles": [
+        "P5",
+        "P8"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-038",
+      "title": "数据含义由用户确认，不从数值猜",
+      "basis": "undecidable",
+      "strength": "firm",
+      "decidable": "no",
+      "agent": "光看数值无法知道列的含义：哪一列是自变量、是否为时间、样本是独立还是重复测量、误差列是 SD 还是 SEM，都要用户确认。拿不准时问选择题；用户说不确定，就走最保守的画法。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "VAD",
+          "loc": "§2.2 / §2.6.1, p.22, p.36, p.39",
+          "tag": "原文",
+          "quote": "The type of the data is its structural or mathematical interpretation."
+        },
+        {
+          "src": "GoG",
+          "loc": "ch.19 Reader, p.612（没有元数据就分不清独立组与重复测量）",
+          "tag": "原文"
+        }
+      ],
+      "principles": [
+        "P2",
+        "P5"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-039",
+      "title": "推荐理由分三档说",
+      "basis": "visual",
+      "strength": "inference",
+      "decidable": "no",
+      "agent": "给出推荐理由时分开说三件事：数据事实（如「横轴是有序的时间」）、感知依据（如「位置比面积准确」，这是指导性原则）、用户确认过的目的（如「比较组间均值」）。不要把它们合成一个「置信度」，也不要说某种图「被证明最优」。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "VAD",
+          "loc": "ch.4 Validation, p.77–78",
+          "tag": "原文",
+          "quote": "doing their own work"
+        },
+        {
+          "src": "VAD",
+          "loc": "§1.11, p.13",
+          "tag": "原文",
+          "quote": "few absolute truths"
+        },
+        {
+          "src": "TAVOTTO",
+          "loc": "「三档分开、不合成置信度」是 Tavotto 依据 VAD 第 4 章验证层次的推导",
+          "tag": "推导"
+        }
+      ],
+      "principles": [
+        "P6"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-040",
+      "title": "无序类别的柱按数值排序",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "柱代表无序类别时，按数值升序或降序排；类别本身有顺序（时间、剂量、等级）时保持原顺序。",
+      "exceptions": [
+        "类别有自然顺序"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.6 Visualizing Amounts, p.48",
+          "tag": "原文",
+          "quote": "If the bars represent unordered categories, order them by ascending or descending data values."
+        }
+      ],
+      "principles": [
+        "P5"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-041",
+      "title": "双 y 轴尽量避免",
+      "basis": "visual",
+      "strength": "preference",
+      "decidable": "auto",
+      "agent": "两个量纲不同的量优先上下分面，各画各的坐标轴。用户坚持用双 y 轴时照做，不当错误处理。依据只有一本书，另两本没有讨论。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "GoG",
+          "loc": "§12.1.4, p.351–352",
+          "tag": "原文"
+        }
+      ],
+      "principles": [
+        "P5"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-042",
+      "title": "折线图和点图可以不从 0 起",
+      "basis": "taste",
+      "strength": "preference",
+      "decidable": "no",
+      "agent": "位置编码（折线、点）不要求从 0 起，按想让读者看到的变化选范围；但范围选得太窄会夸大变化。不要把「折线没从 0 起」当成问题报告。",
+      "exceptions": [
+        "与柱或面积组合时按 G-002 / G-004"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.6 Visualizing Amounts, p.53–54；ch.17, p.209–210",
+          "tag": "原文"
+        }
+      ],
+      "principles": [
+        "P7"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-043",
+      "title": "饼图、堆叠柱、并排柱没有绝对优劣",
+      "basis": "taste",
+      "strength": "preference",
+      "decidable": "no",
+      "agent": "表示比例时，饼图适合少数几块、强调整体的简单分数；多组比较时柱更好。按数据和用户偏好选，不要把饼图本身当错误。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.10 Visualizing Proportions, p.96",
+          "tag": "原文",
+          "quote": "none of these visualizations is consistently superior over any other"
+        }
+      ],
+      "principles": [
+        "P7"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-044",
+      "title": "分组柱还是拆成多张图：品味",
+      "basis": "taste",
+      "strength": "preference",
+      "decidable": "no",
+      "agent": "分组柱与拆成多个小图各有取舍，按用户偏好和要强调的比较选。作者本人偏好拆开，但明说是品味。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.6 Visualizing Amounts, p.52",
+          "tag": "原文",
+          "quote": "ultimately a matter of taste"
+        }
+      ],
+      "principles": [
+        "P7"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-045",
+      "title": "直方图还是密度图：品味",
+      "basis": "taste",
+      "strength": "preference",
+      "decidable": "no",
+      "agent": "单个分布用直方图或密度图都可以；比较多个分布时密度图通常更清楚（作者不推荐堆叠直方图）。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.7 Visualizing Distributions, p.64–68",
+          "tag": "原文",
+          "quote": "largely a matter of taste"
+        }
+      ],
+      "principles": [
+        "P7"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-046",
+      "title": "误差线带不带端帽：品味",
+      "basis": "taste",
+      "strength": "preference",
+      "decidable": "no",
+      "agent": "端帽有无纯属偏好，按用户或期刊风格，不要提建议。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.16 Visualizing Uncertainty, p.192",
+          "tag": "原文",
+          "quote": "primarily a question of personal taste"
+        }
+      ],
+      "principles": [
+        "P7"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-047",
+      "title": "外框、网格：品味",
+      "basis": "taste",
+      "strength": "preference",
+      "decidable": "no",
+      "agent": "要不要外框、要不要网格、网格多密都是偏好。默认按 Tavotto 出版规范或期刊；作者本人偏好白底上浅而少的网格。不要把相反做法当问题。",
+      "exceptions": [
+        "完全没有网格时，至少保留一条关键参考线（如基线）"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.23 Balance the Data and the Context, p.279–282",
+          "tag": "原文",
+          "quote": "Reasonable people can disagree about whether to use a grid or not"
+        }
+      ],
+      "principles": [
+        "P7"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-048",
+      "title": "空心点还是实心点，轮廓还是填充：品味",
+      "basis": "taste",
+      "strength": "preference",
+      "decidable": "no",
+      "agent": "作者偏好实心点和浅色填充，而不是空心轮廓，但这是意见。用户的选择照做，不提建议；只有在遮挡严重时，才把空心点作为可选方案提一句。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.25 Avoid Line Drawings, p.297–302",
+          "tag": "原文",
+          "quote": "does not supersede the principle of proportional ink"
+        }
+      ],
+      "principles": [
+        "P7"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-049",
+      "title": "刻度标签旋转：偏好横排",
+      "basis": "taste",
+      "strength": "preference",
+      "decidable": "no",
+      "agent": "类别名太长时，作者偏好把柱改成横向，而不是旋转刻度标签；这是偏好，用户要旋转就照做。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.6 Visualizing Amounts, p.46",
+          "tag": "原文",
+          "quote": "I am not a big proponent of rotated labels"
+        }
+      ],
+      "principles": [
+        "P7"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-050",
+      "title": "柱加误差线技术上没错，但常有更好的画法",
+      "basis": "taste",
+      "strength": "preference",
+      "decidable": "no",
+      "agent": "均值柱加误差线是科研常见画法，不是错误；数据量允许时可以建议同时画出原始点或分布，让读者看到变异。用户坚持就照做。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.16 Visualizing Uncertainty, p.193",
+          "tag": "原文",
+          "quote": "technically correct"
+        }
+      ],
+      "principles": [
+        "P7",
+        "P5"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-051",
+      "title": "不按心理物理指数修正大小",
+      "basis": "taste",
+      "strength": "preference",
+      "decidable": "no",
+      "agent": "不要为了「感知准确」去按 Stevens 指数改写面积或大小映射；保持数据到大小的映射可解释，必要时限制变化范围。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "GoG",
+          "loc": "§10.1, p.258–259",
+          "tag": "原文",
+          "quote": "does not imply that we should normalize the physical world to an inferred perceptual world"
+        }
+      ],
+      "principles": [
+        "P7"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-052",
+      "title": "同一个横轴值有多次观测时不逐点连线",
+      "basis": "visual",
+      "strength": "inference",
+      "decidable": "auto",
+      "agent": "同一个 x 有多个重复观测（平行样、重复孔）而没有确认过的个体编号时，不要按行顺序逐点连线，那会来回折出不存在的变化。画每个 x 的汇总线（写明汇总方式）并露出原始点；有个体编号且用户确认是同一对象时，才按个体分别连线。",
+      "exceptions": [
+        "用户确认的个体轨迹（每个个体一条线）"
+      ],
+      "evidence": [
+        {
+          "src": "VAD",
+          "loc": "§7.5.1 Line Charts, p.155–156（连线标记表示有序 key 上的连续）",
+          "tag": "原文"
+        },
+        {
+          "src": "TAVOTTO",
+          "loc": "重复 x 不连线是 Tavotto 依据 expressiveness 的推导；数据出图配方的拒绝码 line_duplicate_x_unconfirmed 是同一条",
+          "tag": "推导"
+        }
+      ],
+      "principles": [
+        "P5"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-053",
+      "title": "已经汇总过的表不再汇总",
+      "basis": "statistics",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "表里已经是均值和误差列（sd、sem、ci）时，直接用这两列画点和误差线，误差类型按列名或用户确认；不要对均值再算均值和 SD，那会得到一个没有意义的数。误差列类型拿不准时按 G-005 处理，不默认成 SD。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "GoG",
+          "loc": "§3.5, p.52（预聚合后统计不可复原）",
+          "tag": "原文",
+          "quote": "The median of medians is not the median of the aggregate"
+        },
+        {
+          "src": "TAVOTTO",
+          "loc": "「对汇总表不再算 mean ± sd」是 Tavotto 据此的推导",
+          "tag": "推导"
+        }
+      ],
+      "principles": [
+        "P2"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-054",
+      "title": "数据跨数量级或表示倍数时考虑对数轴",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "数据跨好几个数量级（剂量梯度、细菌载量、浓度），或者表示比值、倍数变化时，考虑用对数轴，否则小值会挤在一起看不出差别。含 0 或负值时不能用对数轴（见 G-001）；取对数后的汇总按 G-011。用对数轴是展示选择，要告诉用户，「跨几个数量级算多」是工程阈值。",
+      "exceptions": [
+        "含 0 或负值的数据"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.3 Coordinate Systems and Axes, p.17",
+          "tag": "原文",
+          "quote": "Log scales are linear in multiplication"
+        },
+        {
+          "src": "FDV",
+          "loc": "ch.3 Coordinate Systems and Axes, p.20",
+          "tag": "原文",
+          "quote": "As a general rule, ratios should not be displayed on a linear scale."
+        }
+      ],
+      "principles": [
+        "P3",
+        "P5"
+      ],
+      "spec": [],
+      "checks": []
+    }
+  ]
+}

@@ -21,7 +21,11 @@
     "hex": "{{label}}: hex",
     "documentColors": "In this layout",
     "recent": "Recent",
-    "system": "System colour picker…"
+    "system": "System colour picker…",
+    "figureColors": "Figure colors",
+    "recommended": "Suggested",
+    "recommendedTip": "Okabe-Ito colorblind-safe palette, common in scientific figures",
+    "recommendedTipJournal": "{{journal}} does not specify colors; this is the Okabe-Ito colorblind-safe palette"
   },
   "count": {
     "selectedObjects_one": "{{count}} object selected",
@@ -48,6 +52,7 @@
     "arrow": "Arrow",
     "emptyText": "Empty text",
     "panel": "Figure",
+    "path": "Path",
     "shape": "Shape",
     "text": "Text",
     "unknown": "Newer object"
@@ -63,6 +68,8 @@
     "line": "Line",
     "polygon": "Polygon",
     "rect": "Rectangle",
-    "triangle": "Triangle"
+    "triangle": "Triangle",
+    "star": "Star",
+    "arc": "Arc"
   }
 }

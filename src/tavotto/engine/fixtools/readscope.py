@@ -338,6 +338,17 @@ class ReadScope:
         for rel in DENY_HOME_RELATIVE:
             deny.append(self._norm(os.path.join(raw_home, *rel.split("/"))))
         self._deny = sorted(set(deny))
+        # 同一份硬拦表的原始形态（不 casefold）：交给实验的操作系统沙盒与进程内守卫（ADR 0197）
+        raw: list[str] = []
+        for rel in DENY_HOME_RELATIVE:
+            raw.append(os.path.join(raw_home, *rel.split("/")))
+            raw.append(os.path.join(self._home_orig, *rel.split("/")))
+        raw += [os.path.abspath(p) for p in secret]
+        self._deny_raw = sorted(set(raw))
+
+    def deny_roots(self) -> list[str]:
+        """硬拦位置的绝对路径（存在与否都列；凭据目录与 Tavotto 自己的密钥文件）。"""
+        return list(self._deny_raw)
 
     # ---- 规范化 -----------------------------------------------------------
     def _norm(self, p: str) -> str:

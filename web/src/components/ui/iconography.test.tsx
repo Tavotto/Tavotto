@@ -61,10 +61,12 @@ const SVG_ALLOWLIST: Record<string, number> = {
   '/src/vendor/stageshow/cursor.tsx': 1, // 提示动画里的光标（圆点 / 箭头样式；vendored，ADR 0177）
   '/src/vendor/stageshow/cursors.tsx': 8, // 提示动画里的 macOS 光标图形（箭头 / 手 / 抓 / 四向缩放等 8 种；演的是鼠标本身，vendored）
   '/src/canvas/ArrowView.tsx': 1, // 画布箭头本体
+  '/src/canvas/PathView.tsx': 1, // 画布自由路径本体（ADR 0185）
   '/src/canvas/OverlaySvg.tsx': 1, // 选框 / 手柄 / 参考线覆盖层
   '/src/canvas/PageEdgeResize.tsx': 1, // 拖页面边的尺寸标注（引出线 + 双箭头，画布叠加层）
   '/src/canvas/IssueSpotlight.tsx': 1, // 定位舞台灯的暗幕与受光遮罩（画布叠加层）
   '/src/components/ui/Sketch.tsx': 1, // 空状态手帐线稿（54×42 的插图，不是图标；一个 <svg> 出 11 幅）
+  '/src/components/ui/EdgeProgress.tsx': 1, // 沿对话框外框走的进度描边（画的是卡片外框本身，ADR 0187 §八）
   '/src/components/ui/Spinner.tsx': 1, // 全产品唯一的加载图形（底环 + 短弧，描边下限属于它，不走图标集的比例缩放）
   '/src/components/ui/BrandMark.tsx': 1, // 品牌标（唯一出处 lib/brand.ts 的图形侧）
   '/src/components/settings/BrandLogo.tsx': 2, // 厂商标志（多色 / 渐变，图形数据在 brandLogoData.ts）+ 没有彩色版的厂商的单色图形

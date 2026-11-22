@@ -2,28 +2,34 @@ import { useEffect, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowUpRight,
+  Braces,
   ChevronDown,
   Circle,
+  Diamond,
+  Hexagon,
   Maximize2,
   MousePointerClick,
   Shapes,
   Slash,
+  Spline,
   Square,
   Tags,
+  Triangle,
   Type,
+  Star,
+  Arc,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { addSubLabels } from '@/store/actions'
-import { insertShape } from '@/lib/presets'
 import { keyOf, type KeyId } from '@/lib/keymap'
 import { cn } from '@/lib/utils'
-import { useUiStore } from '@/store/uiStore'
+import { isRightOverlay, useUiStore } from '@/store/uiStore'
 import { NOTICE_FIT_ROOM, TOOLBAR_FIT_CLEARANCE, useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import { fitStage } from '@/store/zoomToSelection'
 import { PresetsDialog } from './PresetsDialog'
 import { Button } from './ui/Button'
-import { Menu, MenuItem, MenuLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator } from './ui/Menu'
+import { Menu, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator } from './ui/Menu'
 import { Tip } from './ui/Tooltip'
 
 /**
@@ -44,16 +50,25 @@ export function useCanvasToolbarVisible(): boolean {
 }
 
 /**
- * 标注形状收进一个菜单：名字走 common:objectType / common:shape，这里只留图标与快捷键。
- * 「文字」有自己的按钮，不在这张表里。
+ * 标注形状收进一个菜单：**一张列表、一种属性**——八种都是「拖着画出来」的工具（单击不拖 = 落一个默认尺寸，
+ * 见 `canvas/interactions.startDraw` 的 `DEFAULT_DRAW`）。2026-11-14 之前三角形 / 菱形 / 多边形 / 大括号单列在
+ * 「插入形状」一段、点一下在画布中心落一个，与上面的拖画工具是两种行为，用户说「层级非常不明晰」，合成一段。
+ * 名字走 common:objectType / common:shape，这里只留图标与快捷键（有键位的才有）。
+ * 钢笔不在这里：它画的是自由路径（多次点击的状态机），与形状不是一种东西，工具条上单独一格。
  */
-type MarkTool = 'arrow' | 'rect' | 'ellipse' | 'line'
+type MarkTool = 'arrow' | 'line' | 'rect' | 'ellipse' | 'triangle' | 'diamond' | 'polygon' | 'star' | 'brace' | 'arc'
 
-const MARK_TOOLS: { tool: MarkTool; icon: typeof Type; key: KeyId }[] = [
+const MARK_TOOLS: { tool: MarkTool; icon: typeof Type; key?: KeyId }[] = [
   { tool: 'arrow', icon: ArrowUpRight, key: 'toolArrow' },
+  { tool: 'line', icon: Slash, key: 'toolLine' },
   { tool: 'rect', icon: Square, key: 'toolRect' },
   { tool: 'ellipse', icon: Circle, key: 'toolEllipse' },
-  { tool: 'line', icon: Slash, key: 'toolLine' },
+  { tool: 'triangle', icon: Triangle },
+  { tool: 'diamond', icon: Diamond },
+  { tool: 'polygon', icon: Hexagon },
+  { tool: 'star', icon: Star },
+  { tool: 'brace', icon: Braces },
+  { tool: 'arc', icon: Arc },
 ]
 
 /**
@@ -63,14 +78,10 @@ const MARK_TOOLS: { tool: MarkTool; icon: typeof Type; key: KeyId }[] = [
  * 混在一个 `Exclude<Tool,'select'>` 里会让提取器要求 `shape.arrow`、
  * `objectType.rect` 这类不存在的条目。
  */
-const markToolKey = (tool: MarkTool): string =>
-  tool === 'arrow' ? objectTypeKey(tool) : shapeKey(tool)
+const markToolKey = (tool: MarkTool): string => (tool === 'arrow' ? objectTypeKey(tool) : shapeKey(tool))
 
 const objectTypeKey = (tool: 'arrow') => `common:objectType.${tool}`
-const shapeKey = (tool: 'rect' | 'ellipse' | 'line') => `common:shape.${tool}`
-
-/** 插入的形状（非工具，点一下直接落一个） */
-const INSERT_SHAPES = ['triangle', 'diamond', 'polygon', 'brace'] as const
+const shapeKey = (tool: Exclude<MarkTool, 'arrow'>) => `common:shape.${tool}`
 
 export function CanvasToolbar() {
   const visible = useCanvasToolbarVisible()
@@ -92,6 +103,9 @@ function Bar() {
   const setTool = useUiStore((s) => s.setTool)
   const [presetsOpen, setPresetsOpen] = useState(false)
   const activeMark = MARK_TOOLS.find((m) => m.tool === tool)
+  // 属性栏以覆盖层开着（< 1280 且没固定）时盖住画布右边一段：工具条在剩下看得见的那段里居中、宽度也只用那段，
+  // 否则工具一多（钢笔）右端的「适应画布」就钻到属性栏底下点不着
+  const coveredRight = useUiStore((s) => (s.rightOpen && isRightOverlay(s) ? s.rightWidth : 0))
   const ActiveMark = activeMark?.icon
 
   // 动作按钮的字窄于 900 收成只有图标（名字仍在 aria-label 与读屏里）：画布窄时工具条不许比画布还宽
@@ -128,6 +142,11 @@ function Bar() {
       onKeyDown={onKeyDown}
       // 底边居中角位，12px 内距（四个角位同一档，2026-10-07 设计审计 §10.1）。工具钮 32 + p-1 = 40 高，
       // 顶边离舞台底边 52——与 TOOLBAR_FIT_CLEARANCE（52 + 8 的缝）对上
+      style={
+        coveredRight
+          ? { left: `calc((100% - ${coveredRight}px) / 2)`, maxWidth: `calc(100% - ${coveredRight}px - 1.5rem)` }
+          : undefined
+      }
       className="pointer-events-auto absolute bottom-3 left-1/2 z-canvas-chrome flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-0.5 rounded-full bg-surface p-1 shadow-pop"
     >
       {/* 工具（模式）：32 圆形图标钮，名字在气泡与读屏里；激活 = 墨色实底 + 实心图标 + aria-pressed
@@ -196,22 +215,32 @@ function Bar() {
           onValueChange={(v) => setTool(tool === v ? 'select' : (v as MarkTool))}
         >
           {MARK_TOOLS.map(({ tool: mark, icon: Icon, key }) => (
-            <MenuRadioItem key={mark} value={mark} icon={Icon} shortcut={keyOf(key)}>
+            <MenuRadioItem key={mark} value={mark} icon={Icon} shortcut={key ? keyOf(key) : undefined} data-mark-tool={mark}>
               {t(markToolKey(mark))}
             </MenuRadioItem>
           ))}
         </MenuRadioGroup>
         <MenuSeparator />
-        <MenuLabel>{t('workspace:topbar.insertShape')}</MenuLabel>
-        {INSERT_SHAPES.map((kind) => (
-          <MenuItem key={kind} data-insert-shape={kind} onSelect={() => insertShape(kind)}>
-            {t(`common:shape.${kind}`)}
-          </MenuItem>
-        ))}
-        <MenuSeparator />
         <MenuItem data-perf-open-presets onSelect={() => setPresetsOpen(true)}>{t('workspace:topbar.presets')}</MenuItem>
       </Menu>
       <PresetsDialog open={presetsOpen} onClose={() => setPresetsOpen(false)} />
+
+      {/* 钢笔（ADR 0185 M1）：画自由路径，与形状不是同一种东西，单独一格、紧挨形状 */}
+      <Tip label={t('workspace:canvasTools.pen')} shortcut={keyOf('toolPen')}>
+        <Button
+          size="icon-lg"
+          active={tool === 'pen'}
+          aria-pressed={tool === 'pen'}
+          data-tool="pen"
+          data-toolbar-item
+          onMouseDown={noFocusOnPointer}
+          onClick={() => setTool(tool === 'pen' ? 'select' : 'pen')}
+          aria-label={t('workspace:canvasTools.pen')}
+          className={toolClass(tool === 'pen')}
+        >
+          <Spline size={ICON_SIZE.md} filled={tool === 'pen'} />
+        </Button>
+      </Tip>
 
       {/* 工具（模式）与一次性动作之间一道竖线：前者按下去「换了一种状态」，后者「做一件事就完」 */}
       <span aria-hidden className="mx-1 h-5 w-px shrink-0 bg-border" />
