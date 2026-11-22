@@ -814,3 +814,79 @@ def test_css_selector_count_is_capped():
     with pytest.raises(svgimport.SvgImportError) as e:
         svgimport.parse_css(css, {}, 0)
     assert e.value.code == "too_many_elements"
+
+
+# ---- Codex 线程 4656811236：渐变色标 × 样式级联 ----
+
+
+def test_stops_times_rules_stop_at_the_deadline(monkeypatch):
+    """9000 条 `stop{}` 规则 × 1000 个色标（色标上限以内）：每个色标都要扫一遍规则表，原来不查墙钟、数秒后成功返回
+    （Codex 原例是 2000 规则 × 1 万色标，16 秒；现在色标数超过上限直接拒）"""
+    monkeypatch.setattr(svgimport, "DEADLINE_S", 0.3)
+    stops = '<stop offset="0"/>' * 1_000
+    rules = "stop{stop-color:red}" * 9_000
+    text = SVG.format(
+        f"<style>{rules}</style><defs><linearGradient id='g'>{stops}</linearGradient></defs>"
+        '<rect width="5" height="5" fill="url(#g)"/>'
+    )
+    t0 = time.monotonic()
+    got = outcome(text)
+    assert time.monotonic() - t0 < 0.3 + 1.0
+    assert got in (("rejected", "timeout"), ("ok", ""))
+
+
+def test_gradient_stop_count_is_capped():
+    stops = '<stop offset="0"/>' * (svgimport.MAX_STOPS + 1)
+    text = SVG.format(
+        f"<defs><linearGradient id='g'>{stops}</linearGradient></defs>"
+        '<rect width="5" height="5" fill="url(#g)"/>'
+    )
+    assert outcome(text) == ("rejected", "too_many_elements")
+    ok = '<stop offset="0"/><stop offset="1" stop-color="red"/>' * 10
+    text = SVG.format(
+        f"<defs><linearGradient id='g'>{ok}</linearGradient></defs>"
+        '<rect width="5" height="5" fill="url(#g)"/>'
+    )
+    assert outcome(text) == ("ok", "")
+
+
+def test_gradient_stops_are_computed_once_per_gradient(monkeypatch):
+    """50 个图形引用同一个渐变：色标只过一遍样式级联（以前每个图形重算）"""
+    calls = []
+    real = svgimport._computed
+
+    def spy(el, parent, ctx):
+        calls.append(svgimport._local(el.tag))
+        return real(el, parent, ctx)
+
+    monkeypatch.setattr(svgimport, "_computed", spy)
+    text = SVG.format(
+        "<defs><linearGradient id='g'><stop offset='0' stop-color='red'/><stop offset='1' stop-color='blue'/>"
+        "</linearGradient></defs>" + '<rect width="5" height="5" fill="url(#g)"/>' * 50
+    )
+    r = svgimport.import_svg(text)
+    assert len(r["objects"]) == 50 and all("fillGradient" in o for o in r["objects"])
+    assert calls.count("stop") == 2
+
+
+def test_gradient_href_inheritance_semantics():
+    """属性取自己的、色标取 href 链上第一个有色标的（引用环 svgcheck 在前面就拒了，这里不会走到）"""
+    text = SVG.format(
+        '<defs><linearGradient id="a" x2="0.5" xlink:href="#b"/>'
+        '<linearGradient id="b"><stop offset="0" stop-color="red"/><stop offset="1" stop-color="blue"/></linearGradient></defs>'
+        '<rect width="10" height="10" fill="url(#a)"/>'
+    )
+    r = svgimport.import_svg(text)
+    g = r["objects"][0]["fillGradient"]
+    assert [s["color"] for s in g["stops"]] == ["#ff0000", "#0000ff"]
+    assert g["to"][0] == pytest.approx(0.5, abs=0.02)
+
+
+def test_long_gradient_href_chain_does_not_recurse():
+    n = 500
+    grads = "".join(f'<linearGradient id="g{i}" xlink:href="#g{i + 1}"/>' for i in range(n))
+    grads += f'<linearGradient id="g{n}"><stop offset="0"/><stop offset="1" stop-color="red"/></linearGradient>'
+    r = svgimport.import_svg(
+        SVG.format(f'<defs>{grads}</defs><rect width="5" height="5" fill="url(#g0)"/>')
+    )
+    assert len(r["objects"]) == 1  # 链太长（超过跳数上限）：当没有色标，纯色退化，不崩

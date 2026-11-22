@@ -34,8 +34,12 @@ MAX_ELEMENTS = 50_000
 #: 一次导入里所有路径的锚点总数上限，与单条 `d` 的字符上限（防一条路径塞满 8 MB）
 MAX_ANCHORS = 100_000
 MAX_PATH_D_CHARS = 2 * 1024 * 1024
+#: 单个渐变的色标数上限
+MAX_STOPS = 1_000
 #: 导入后 CSS 规则（选择器）总数上限
 MAX_CSS_SELECTORS = 10_000
+#: 渐变 `href` 继承链最多跟这么多跳（再长的链不是人写的；同时避免递归过深）
+MAX_HREF_HOPS = 32
 KAPPA_ARC_MAX = math.pi / 2
 
 #: 原因码（前端按它说一句原因）
@@ -697,6 +701,7 @@ class _Ctx:
     use_depth: int = 0
     anchors: int = 0
     deadline: float = math.inf
+    stops_cache: dict[str, list[dict]] = field(default_factory=dict)
 
     def note(self, code: str) -> None:
         self.notes[code] = self.notes.get(code, 0) + 1
@@ -738,7 +743,7 @@ def _computed(el, parent: dict, ctx: _Ctx) -> dict:
         and all(c in cls for c in r.classes)
         and (r.ident is None or r.ident == ident)
     ]
-    for r in sorted(matched, key=lambda r: (r.spec, r.order)):
+    for r in matched:  # `ctx.rules` 在建 ctx 时已按 (spec, order) 排好序，这里不再每个元素排一遍
         st.update(r.decls)
     if el.get("style"):
         st.update(_parse_decls(el.get("style")))
@@ -752,38 +757,69 @@ def _url_id(v: str | None) -> str | None:
     return m.group(1) if m else None
 
 
-def _stops(el, ctx: _Ctx, seen=()) -> list[dict]:
-    stops = []
+def _check_clock(ctx: _Ctx) -> None:
+    if time.monotonic() > ctx.deadline:
+        raise SvgImportError("timeout", f"超过 {DEADLINE_S:g} 秒")
+
+
+def _href_chain(el, ctx: _Ctx):
+    """渐变自己、再沿 `href` 一路继承的祖先（有环就停、最多 `MAX_HREF_HOPS` 跳）。迭代而不递归：几千个渐变首尾相连不会撑爆栈，
+    也不再每跳复制一份「已见」元组（平方级）。"""
+    seen = {id(el)}
+    yield el
+    for _ in range(MAX_HREF_HOPS):
+        ref = _href(el)
+        if not (ref and ref.startswith("#") and ref[1:] in ctx.ids):
+            return
+        el = ctx.ids[ref[1:]]
+        if id(el) in seen:
+            return
+        seen.add(id(el))
+        yield el
+
+
+def _stops(el, ctx: _Ctx) -> list[dict]:
+    """渐变的色标（自己没有就用 `href` 链上第一个有色标的）。结果按渐变缓存：引用它的每个图形不再重算；
+    色标数有上限，逐个色标查墙钟（每个色标要走一遍样式级联，色标数 × 规则数是两个预算相乘）"""
+    for node in _href_chain(el, ctx):
+        key = node.get("id") or ""
+        if key and key in ctx.stops_cache:
+            got = ctx.stops_cache[key]
+        else:
+            got = _own_stops(node, ctx)
+            if key:
+                ctx.stops_cache[key] = got
+        if got:
+            return got
+    return []
+
+
+def _own_stops(el, ctx: _Ctx) -> list[dict]:
+    stops: list[dict] = []
     for s in el:
         if _local(s.tag) != "stop":
             continue
+        if len(stops) >= MAX_STOPS:
+            raise SvgImportError("too_many_elements", "渐变色标过多")
+        _check_clock(ctx)
         st = _computed(s, {}, ctx)
         off = s.get("offset", "0").strip()
-        o = (
-            float(off[:-1]) / 100
-            if off.endswith("%")
-            else float(_nums(off)[0] if _nums(off) else 0)
-        )
+        offs = _nums(off)
+        o = float(off[:-1]) / 100 if off.endswith("%") else float(offs[0] if offs else 0)
         col = parse_color(st.get("stop-color", "black")) or ("#000000", 0.0)
         alpha = col[1] * float(st.get("stop-opacity", "1") or 1)
         stop = {"offset": _r(max(0.0, min(1.0, o))), "color": col[0]}
         if alpha < 1:
             stop["opacity"] = _r(max(0.0, alpha))
         stops.append(stop)
-    if not stops:
-        ref = _href(el)
-        if ref and ref.startswith("#") and ref[1:] in ctx.ids and ref[1:] not in seen:
-            return _stops(ctx.ids[ref[1:]], ctx, (*seen, ref[1:]))
     return stops
 
 
-def _grad_attr(el, name, ctx: _Ctx, seen=()):
-    v = el.get(name)
-    if v is not None:
-        return v
-    ref = _href(el)
-    if ref and ref.startswith("#") and ref[1:] in ctx.ids and ref[1:] not in seen:
-        return _grad_attr(ctx.ids[ref[1:]], name, ctx, (*seen, ref[1:]))
+def _grad_attr(el, name, ctx: _Ctx):
+    for node in _href_chain(el, ctx):
+        v = node.get(name)
+        if v is not None:
+            return v
     return None
 
 
@@ -1397,6 +1433,7 @@ def import_svg(svg_text: str) -> dict:
     rules: list[_Rule] = []
     for c in css:
         rules += parse_css(c, notes, len(rules), deadline)
+    rules.sort(key=lambda r: (r.spec, r.order))  # 一次排好，级联时按序取用
     ctx = _Ctx(ids=ids, rules=rules, notes=notes, deadline=deadline)
     # 视口：width / height（缺省按 viewBox，单位 px = 1/96 in）；viewBox 等比放进视口（preserveAspectRatio 缺省 xMidYMid meet）
     vb = _nums(root.get("viewBox") or "")
