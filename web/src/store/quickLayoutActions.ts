@@ -466,7 +466,7 @@ async function runPlan(run: PlanRun): Promise<QuickLayoutOutcome> {
     const cropOf = new Map(involved.map((p) => [p.id, p.crop] as const))
     const shown = (key: string, b: Box): Box => visibleBox(cropOf.get(key), [...b] as Box)
     const memo = memoOf(res, sentKeys, run, canvasMode, fixed, shown)
-    commitPlan(res, involved.map(boxOf), run.label, memo)
+    commitPlan(res, run.label, memo)
     run.observer?.onCommitted(Object.fromEntries(res.panels.map((p) => [p.key, shown(p.key, p.box)])))
     // 重渲染：返回的每张图；后端说热态不干净时，其余发出去的也按全量列表重放一次
     const rendered = new Set(res.panels.map((p) => p.key))
@@ -539,16 +539,38 @@ function memoOf(
  */
 function commitPlan(
   res: Extract<QuickLayoutResponse, { ok: true }>,
-  before: Box[],
   label: 'quickLayout' | 'quickLayoutRatios',
   memo: QuickLayoutMemo | undefined,
 ): void {
   useDocumentStore.getState().commit(hist(label), (d) => {
-    // 旧的子图标签（「(a)」这类，与样式系统同一判据 `isSubLabel`）落在参与排版的图原来的范围里（外扩 5 mm）的，
-    // 换成这次算好位置的新标签：重复点不叠标签，手加的 (a)(b) 也跟着落到对的地方
+    // 旧的子图标签（「(a)」这类，与样式系统同一判据 `isSubLabel`）落在**这次真拿到新标签的那几张图**
+    // 原来的范围里（外扩 5 mm）的，换成这次算好位置的新标签：重复点不叠标签，手加的 (a)(b) 也跟着落到对的地方。
+    // 固定的图（位图 / 旋转…）后端不回标签，它的旧标签原样留着
+    const labelled = new Set(res.labels.map((l) => l.key))
+    const before = d.objects
+      .filter((o): o is PanelObject => o.type === 'panel' && labelled.has(o.id))
+      .map(boxOf)
     const near = (x: number, y: number) =>
       before.some(([bx, by, bw, bh]) => x >= bx - 5 && x <= bx + bw + 5 && y >= by - 5 && y <= by + bh + 5)
     d.objects = d.objects.filter((o) => !(o.type === 'text' && isSubLabel(o) && near(o.x, o.y)))
+    // 参与排版的图离开它们原来的布局组：否则尺寸一变，自动重排（`startLayoutAutoReflow`）120 ms 后
+    // 会按旧组的排布把方案盖掉。与「取消成组」同写法：成员少于 2 个的布局组连同约束一起移除；同一次 commit，⌘Z 一并回去
+    const moving = new Set(res.panels.map((p) => p.key))
+    const gids = new Set<string>()
+    for (const o of d.objects) {
+      if (moving.has(o.id) && o.groupId && d.layoutGroups?.some((g) => g.id === o.groupId)) {
+        gids.add(o.groupId)
+        o.groupId = undefined
+      }
+    }
+    if (gids.size && d.layoutGroups) {
+      const dead = new Set(
+        d.layoutGroups.filter((g) => gids.has(g.id) && d.objects.filter((o) => o.groupId === g.id).length < 2).map((g) => g.id),
+      )
+      for (const o of d.objects) if (o.groupId && dead.has(o.groupId)) o.groupId = undefined
+      d.layoutGroups = d.layoutGroups.filter((g) => !dead.has(g.id))
+      if (!d.layoutGroups.length) delete d.layoutGroups
+    }
     for (const p of res.panels) {
       const obj = d.objects.find((o) => o.id === p.key)
       if (obj?.type !== 'panel') continue
@@ -583,8 +605,18 @@ function commitPlan(
     })
     // 页面跟着内容收紧（同一条历史，⌘Z 一次撤回）
     // 注意：这里**不**置 `page.userSized`——那是「用户自己定过画布大小」的记号，排版自己写的不算
-    d.page.w = res.page.w
-    d.page.h = res.page.h
+    // 没参与排版的对象（只排选中一部分时的别的图 / 标注 / 形状，固定的图）原地不动：页面至少要包得住它们，
+    // 否则导出按页面裁掉原来看得见的内容（页边口径与请求里发的 margin 一致）
+    const margin = d.page.margin ?? 0
+    let needW = res.page.w
+    let needH = res.page.h
+    for (const o of d.objects) {
+      if (moving.has(o.id) || o.hidden) continue
+      needW = Math.max(needW, o.x + o.w + margin)
+      needH = Math.max(needH, o.y + o.h + margin)
+    }
+    d.page.w = needW
+    d.page.h = needH
     // 网格记忆与排版同一次提交（⌘Z 一起回去）；这一轮没有网格 = 旧的也不再作数
     if (memo) d.quickLayout = memo
     else delete d.quickLayout

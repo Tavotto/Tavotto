@@ -39,7 +39,7 @@ import { useDocumentStore } from './documentStore'
 import { useRenderStore } from './renderStore'
 import { runUndoRedo } from '@/hooks/useKeyboard' // 加载它 = 把「撤销」交给一键排版的胶囊
 import { runQuickLayout, runQuickLayoutRatios, useQuickLayoutStore } from './quickLayoutActions'
-import { setPageSize } from './actions'
+import { setPageSize, startLayoutAutoReflow } from './actions'
 import { currentSpec } from './issueFixActions'
 
 void runUndoRedo
@@ -207,6 +207,54 @@ describe('应用', () => {
       ['(a)', 11, 11],
       ['(b)', 99, 11],
     ])
+  })
+
+  it('参与排版的图原先在布局组里：排版后自动重排不会盖掉方案，撤销一次分组与位置一起回去', async () => {
+    seed(panel('p1', { groupId: 'g1', nativeW: 85 }), panel('p2', { x: 10, y: 74, groupId: 'g1', nativeW: 85 }))
+    s().commit(literal('布局组'), (d) => {
+      d.layoutGroups = [{ id: 'g1', kind: 'col', order: ['p1', 'p2'], gap: 4, align: 'start', uniform: null }]
+    })
+    const snap = () => JSON.stringify([s().doc.objects, s().doc.layoutGroups ?? null])
+    const before = snap()
+    vi.useFakeTimers()
+    const stop = startLayoutAutoReflow()
+    try {
+      quickLayoutPlan.mockResolvedValue(okPlan())
+      expect(await runQuickLayout('double', 3)).toBe('applied')
+      vi.advanceTimersByTime(500)
+      const p2 = s().doc.objects.find((o) => o.id === 'p2') as PanelObject
+      expect([p2.x, p2.y]).toEqual([98, 10])
+      expect(s().doc.layoutGroups ?? []).toEqual([])
+      expect(s().doc.objects.every((o) => !o.groupId)).toBe(true)
+      s().undo()
+      expect(snap()).toBe(before)
+    } finally {
+      stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('混选里有固定的图（位图）：只换「真拿到新标签」的图的旧标签，位图自己的 (c) 还在', async () => {
+    seed(panel('p1'), panel('p2', { x: 100 }), panel('p3', { fileKind: 'raster', x: 10, y: 100 }))
+    s().commit(literal('旧标签'), (d) => {
+      d.objects.push(makeSubLabel(2, 11, 101))
+    })
+    quickLayoutPlan.mockResolvedValue(okPlan())
+    expect(await runQuickLayout('double', 3)).toBe('applied')
+    expect(texts().map((l) => l.text)).toEqual(['(c)', '(a)', '(b)'])
+  })
+
+  it('只选了画布上 4 张里的 2 张、页面收紧：没参与的图原来在页面里的，排完仍在页面里', async () => {
+    seed(panel('p1'), panel('p2', { x: 100 }), panel('p3', { x: 300, y: 200 }), panel('p4', { x: 200, y: 260 }))
+    useSelectionStore.getState().set(['p1', 'p2'])
+    quickLayoutPlan.mockResolvedValue(okPlan())
+    expect(await runQuickLayout('double', 3)).toBe('applied')
+    const { w, h } = s().doc.page
+    for (const o of s().doc.objects) {
+      if (o.type !== 'panel' || ['p1', 'p2'].includes(o.id)) continue
+      expect(o.x + o.w).toBeLessThanOrEqual(w)
+      expect(o.y + o.h).toBeLessThanOrEqual(h)
+    }
   })
 
   it('图幅变了：页面上的框按「渲染回来会再乘一遍」的比例预除，渲染后正好是 box', async () => {

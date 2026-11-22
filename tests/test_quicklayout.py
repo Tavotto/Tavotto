@@ -241,6 +241,15 @@ def test_request_timeout_covers_blocked_stdin_write(dev_mode, monkeypatch):
     assert time.monotonic() - t1 < 5
 
 
+def test_close_kills_and_reaps_a_sidecar_that_ignores_eof(dev_mode, monkeypatch):
+    """组件关了 stdin 也不退：close() 结束它之后要再 wait 一次，确认退出、不留僵尸进程。"""
+    monkeypatch.setenv("PRO_ECHO_IGNORE_EOF", "1")
+    prohost.call("echo", {"x": 1}, feature="quick-layout")
+    proc = prohost._current.proc
+    prohost.shutdown()
+    assert proc.returncode is not None  # 已回收
+
+
 def test_parallel_render_binds_requesting_project():
     """并行渲染线程里看到的项目 = 发起请求的项目（不是默认项目）。"""
     from tavotto import app as tavotto_app

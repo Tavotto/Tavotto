@@ -212,6 +212,11 @@ class _Sidecar:
             self.proc.wait(timeout=2)
         except subprocess.TimeoutExpired:
             self.proc.kill()  # 只结束自己拉起的这个 PID
+            # kill 之后再 wait 一次：确认真的退出并回收，不留僵尸进程
+            try:
+                self.proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                LOG.warning("pro sidecar %s did not exit after kill", self.proc.pid)
 
 
 _LOCK = threading.Lock()

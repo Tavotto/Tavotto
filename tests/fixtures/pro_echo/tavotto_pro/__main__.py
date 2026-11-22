@@ -39,3 +39,7 @@ for raw in sys.stdin:
         reply("nope", True, result={})
     else:
         reply(rid, False, code="unsupported", message=cmd)
+
+# stdin 关了（宿主 close()）也不退：测宿主 kill 之后会不会回收
+if os.environ.get("PRO_ECHO_IGNORE_EOF"):
+    time.sleep(120)
