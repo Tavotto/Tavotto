@@ -1931,7 +1931,23 @@ interface ExportBox {
 type ExportDash = 'dashed' | 'dotted' | 'longdash' | 'dashdot' | 'longdashdot'
 type ExportHeadType = 'none' | 'triangle' | 'open' | 'bar' | 'dot' | 'diamond' | 'stealth'
 
-export type ExportObject =
+export type ExportObject = ExportObjectBody & {
+  /**
+   * 剪切蒙版（ADR 0191）：裁这个对象的蒙版轮廓，外 → 内。蒙版一律以路径的几何发（形状先换成等价路径，
+   * `lib/clipMask.maskAsPath`）；没有就不发——不带剪切组的文档载荷与以前逐字节一致
+   */
+  clip?: ExportClipPath[]
+}
+
+/** 蒙版轮廓：只有几何（比例坐标的锚点 + 框 + 旋转），后端 `plan._clipped` 读 */
+export type ExportClipPath = ExportBox & {
+  type: 'path'
+  subpaths: { closed: boolean; nodes: { p: [number, number]; in?: [number, number]; out?: [number, number] }[] }[]
+  fill_rule?: 'evenodd'
+  rotation_deg?: number
+}
+
+type ExportObjectBody =
   | (ExportBox & ArtifactRequestFields & {
       type: 'panel'
       figure_snapshot?: FigureSnapshot
@@ -2076,6 +2092,8 @@ export type ExportObject =
 /** `scope=original` 的一张图的来源（`original` 段，以及多页 PDF 里每一页）。**没有 x/y/w/h，也没有页面尺寸** */
 export type ExportOriginalSource = ArtifactRequestFields & {
   figure_id: string
+  /** 裁这张图的剪切蒙版轮廓（ADR 0191），外 → 内；没有就不发 */
+  clip?: ExportClipPath[]
   figure_snapshot?: FigureSnapshot
   overrides?: { gid: string; prop: string; value: unknown }[]
   w_mm?: number | null
@@ -2759,6 +2777,13 @@ export interface ManifestTextBlock {
   ha: 'left' | 'center' | 'right'
 }
 
+/** `ManifestElement.scale_domain` 的一维（`engine/manifest.SCALE_DOMAIN_STATUSES` 是 `status` 的闭集）。 */
+export interface ScaleDomainFact {
+  status: 'ok' | 'over_budget' | 'unavailable'
+  nonpositive?: number
+  errorbar_low_nonpositive?: number
+}
+
 export interface ManifestElement {
   gid: string
   role: string
@@ -2847,6 +2872,13 @@ export interface ManifestElement {
    * imshow 位图就是这样贴合宿主 axes 的：拖它等于拖宿主子图。
    */
   geom_gid?: string
+  /**
+   * 对数轴上「画不出来的值」的只读事实（V-001 `log-axis-nonpositive`）：只在 axes 元素、且某一维尺度是 `log`
+   * 时出现（色条轴 / 3D 轴不发）。`nonpositive` 数线 / 散点上有限且 ≤ 0 的坐标，`errorbar_low_nonpositive`
+   * 数下端 ≤ 0 的误差线；`status` 不是 `ok`（超预算 / 量不了）时没有计数，预检不判。产生者只有
+   * `engine/manifest.scale_domain`；消费者只有 `lib/preflight.ts` 的 `checkLogAxisNonpositive`。
+   */
+  scale_domain?: Partial<Record<'x' | 'y', ScaleDomainFact>>
   /** 该 axes 其实是色条轴；属性页应改用它的色条元素 */
   is_colorbar?: boolean
   colorbar_gid?: string

@@ -1708,7 +1708,11 @@ def test_lazy_uses_default_answers_instead_of_asking_and_reports_roles(project, 
     assert [d["question_code"] for d in body["defaults"]] == ["pick_value"]
     roles = body["roles"]
     assert roles["y"] == ["signal"]  # 「不确定」的默认 = 最后一个数值列
-    assert roles["options"]["y"] == ["time_s", "signal"] and roles["options"]["group"] == ["arm"]
+    assert roles["options"]["y"] == ["time_s", "signal"] and roles["options"]["group"] == [
+        "time_s",
+        "arm",
+    ]
+    # 整数编码的列（time_s 只有几个重复取值）也列进分组下拉（2026-11-21，可回退）；默认选择不变
     assert roles["x"] == "time_s" or roles["group"] == "arm"
     # 面板上换了纵轴 = 复用 answers.y，重新出候选（不另造一套参数）
     again = propose(client, table="t.csv", render="lazy", answers={"y": "time_s"}).get_json()

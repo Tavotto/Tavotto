@@ -7,7 +7,7 @@
 
 * **默认（假回答，不联网、不花钱）**：`--fake good|trap|mixed` 用用例里录好的回答（`reference` / 踩坑的 `trap`）经假传输跑通整条链，用来自测评分与报告；
   `--wire` 选假回答走哪种协议的回复体。数据目录与配置目录指到临时目录，不碰用户的任何配置。
-* **`--real`（真模型，要花钱）**：用你当前连着的 API 连接（连接视图里第一个内置执行器能用的，与 AI 修复同一口径；订阅登录 Codex / Claude Code 暂不支持）。
+* **`--real`（真模型，要花钱）**：用你当前连着的 API 连接（连接视图里第一个内置执行器能用的，与 AI 修复同一口径；订阅登录 Codex / Claude Code 不走这个脚本：它们的真跑入口是 `scripts/dev/structured_cli_smoke.py`）。
   必须同时给 `--max-calls N`（**实际 HTTP 请求数**上限，在传输层数——换协议 / 字段降级的恢复请求也算；每条用例至少 1 次、回复不是合法 JSON 时重试一次，
   所以开跑前要求 N ≥ 用例数 × 2 作为下限核）；运行中到上限就不再发，并在报告里记「没跑完」（`stopped_early`），最后一条可能因此被截成 `over_budget`。**读你本机的连接配置，可能刷新账号登录令牌；用例的表格摘要会发给该连接的服务商。**
   开跑前自己先和维护者报预算——真实跑分花的是你的额度。
@@ -199,6 +199,9 @@ def _real_connection(args, n_cases: int, label: str, repeats: int = 1):
         from tavotto.engine import ai_structured
 
         conn, reason, detail = ai_structured.resolve_connection()
+        if ai_structured.is_cli_conn(conn):
+            # 订阅登录会起真 CLI、花订阅额度，且没有协议层可计请求数：基准不走它（真跑入口是 structured_cli_smoke.py）
+            conn, reason, detail = None, "unsupported_connection", "cli_only"
         if conn is None:
             print(f"没有可用的连接：{reason}（{detail}）。没有发出任何请求。", file=sys.stderr)
             return None, 2

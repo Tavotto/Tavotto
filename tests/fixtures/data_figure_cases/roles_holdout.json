@@ -841,7 +841,7 @@
    "roles": {
     "dose_uM": "ordered_x",
     "mean_response": "measure",
-    "sd": "other"
+    "sd": "error"
    },
    "expect_default": {
     "x": "dose_uM",
@@ -862,7 +862,7 @@
      },
      {
       "name": "sd",
-      "role": "other"
+      "role": "error"
      }
     ],
     "picks": {
@@ -891,7 +891,7 @@
     "strain": "group",
     "day": "time",
     "mean_length_mm": "measure",
-    "sem": "other"
+    "sem": "error"
    },
    "expect_default": {
     "x": "day",
@@ -916,7 +916,7 @@
      },
      {
       "name": "sem",
-      "role": "other"
+      "role": "error"
      }
     ],
     "picks": {

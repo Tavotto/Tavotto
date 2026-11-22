@@ -1,3 +1,4 @@
+import { visibleBounds } from '@/lib/transform'
 import { emitActivity } from '@/lib/activity'
 import { boundsOf, visualBounds, type Rect } from '@/lib/geometry'
 import type { CanvasObject, FigureDocument } from '@/types/document'
@@ -32,7 +33,7 @@ export function selectionBoxOf(
   ids: readonly string[],
 ): Rect | null {
   const objs = renderedSelection(objects, ids)
-  const box = objs.length ? boundsOf(objs.map(visualBounds)) : null
+  const box = objs.length ? (visibleBounds(objs, objects) ?? boundsOf(objs.map(visualBounds))) : null
   return box && box.w > 0 && box.h > 0 ? box : null
 }
 

@@ -31,12 +31,12 @@ import data_figure_cases as D  # noqa: E402
 import data_figure_roles as DR  # noqa: E402
 
 from tavotto.engine import (  # noqa: E402
+    ai_agents,
     ai_connections,
     ai_data_figure as adf,
     ai_data_propose as P,
     ai_data_roles as R,
     ai_structured,
-    fixsession,
     telemetry,
 )
 from tavotto.engine.agent_runner import wires  # noqa: E402
@@ -58,6 +58,15 @@ def isolate(tmp_path, monkeypatch):
     monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("TAVOTTO_NO_TELEMETRY", "1")
     monkeypatch.setattr(P, "CANDIDATE_ROOT", tmp_path / "propose")
+    # CLI 连接的用例只注入假的「跑进程」；可执行文件的解析也要是假的，否则没装 Codex 的机器（CI）在起进程之前就得到
+    # `no_connection/not_installed`，这些用例根本测不到想测的行为
+    monkeypatch.setattr(
+        ai_agents,
+        "resolve",
+        lambda agent, probe_readiness=True: ai_agents.Resolution(
+            argv=[f"/fake/{agent.id}"], path=f"/fake/{agent.id}"
+        ),
+    )
     R.reset_for_tests()
     yield
     R.reset_for_tests()
@@ -145,9 +154,18 @@ def lazy(tmp_path, case=None):
 
 
 @pytest.mark.parametrize("why", ["none", "cli_only", "builtin_off", "eager"])
-def test_no_usable_key_connection_means_no_understanding_key(tmp_path, monkeypatch, why):
+def test_no_usable_connection_means_no_understanding_key(tmp_path, monkeypatch, why):
+    """没有可用连接（没 Key、没有适配器支持的订阅登录 CLI）= 响应里没有 `understanding`。`cli_only`：有订阅登录但适配器不支持。"""
     monkeypatch.setattr(ai_connections, "first_key_connection", lambda refresh=False: None)
-    monkeypatch.setattr(fixsession, "cli_agent", lambda: "codex" if why == "cli_only" else None)
+    monkeypatch.setattr(
+        ai_structured,
+        "find_cli_connection",
+        lambda *, cached_only: (
+            (None, "unsupported_connection", "cli_only")
+            if why == "cli_only"
+            else (None, "no_connection", "none")
+        ),
+    )
     monkeypatch.setattr(
         ai_connections, "builtin_forced", lambda: False if why == "builtin_off" else None
     )
@@ -1261,6 +1279,40 @@ def test_job_usage_records_cached_input_tokens(tmp_path):
     assert "cached_input_tokens" in run.usage and isinstance(run.usage["cached_input_tokens"], int)
 
 
+def test_a_replicate_veto_never_strips_the_only_group_the_rules_found(tmp_path):
+    """规则落定了分组列（板号），模型判它是 `replicate_unit` 并建议不分组：不采纳，结果与规则相同；判成备注的仍会去掉。"""
+    case = {
+        "id": "T-plate",
+        "tables": {
+            "t.csv": "plate,well,od450\n"
+            + "".join(
+                f"P{p},{r}{c},{0.2 + 0.1 * p + 0.01 * c}\n"
+                for p in (1, 2)
+                for r in "ABC"
+                for c in (1, 2, 3)
+            )
+        },
+        "hint": None,
+    }
+    folder = DR.materialize(case, tmp_path / "proj")
+    entry = adf.profile_folder(tmp_path / "proj" / folder).tables[0]
+
+    def picks(role):
+        shape = {
+            "columns": [
+                {"name": "plate", "role": role},
+                {"name": "well", "role": "row_id"},
+                {"name": "od450", "role": "measure"},
+            ],
+            "picks": {"y": ["od450"], "x": "none", "group": "none"},
+        }
+        roles, _ = R.valid_roles(entry.summary, R.validate_roles_shape(shape))
+        return R.suggest(entry, None, roles, shape["picks"], None)[0]
+
+    assert "group" not in picks("replicate_unit")
+    assert picks("note").get("group") == "none"
+
+
 # --------------------------------------------------------------------------- roles.y 必须等于每个候选实际画的列
 WIDE_RULES = "t,a,b,c\n" + "".join(
     f"{i},{i + 1.0},{i * 2 + 0.5},{i * 3 + 1.2}\n" for i in range(1, 9)
@@ -1328,15 +1380,170 @@ def test_when_no_candidate_can_draw_all_the_columns_fall_back_to_the_first_one(t
     assert_every_candidate_draws_roles_y(r)
 
 
-# --------------------------------------------------------------------------- 「读懂数据」有没有可用连接（前端「连接 AI」胶囊的依据）
-@pytest.mark.parametrize("why", ["none", "cli_only", "builtin_off"])
-def test_available_is_false_without_a_key_connection(monkeypatch, why):
-    """没连 / 只有订阅登录（cli_only）/ 运维关掉内置：`available()` 为 False；判据与 `start()` 同一个 `_available_connection()`。"""
+# --------------------------------------------------------------------------- 订阅登录（CLI）连接：同样自动跑，失败静默
+CLI_CONN = {"kind": "cli", "agent": "codex", "model": "gpt-test", "conn_id": "sub:codex"}
+
+
+class CliScript:
+    """假「跑进程」：Codex 形状（回复写进 `-o` 文件）。脚本项 = 回复文字 / `("exit", n)` / `"timeout"` / `"slow"`。"""
+
+    def __init__(self, items, gate=None):
+        self.items = list(items)
+        self.runs: list[ai_structured.CliRun] = []
+        self.active = [0, 0]
+        self.gate = gate
+        self.lock = threading.Lock()
+
+    def __call__(self, run):
+        with self.lock:
+            self.runs.append(run)
+            item = self.items.pop(0)
+            self.active[0] += 1
+            self.active[1] = max(self.active[1], self.active[0])
+        try:
+            if self.gate is not None:
+                self.gate.wait(5)
+            if item == "timeout":
+                return ai_structured.CliProc(None, timed_out=True)
+            if isinstance(item, tuple):
+                return ai_structured.CliProc(item[1], "")
+            out = run.argv[run.argv.index("-o") + 1]
+            Path(out).write_text(item, encoding="utf-8")
+            return ai_structured.CliProc(0, "")
+        finally:
+            with self.lock:
+                self.active[0] -= 1
+
+
+def _roles_inputs(tmp_path, case):
+    folder = DR.materialize(case, tmp_path / "proj")
+    entry = adf.profile_folder(tmp_path / "proj" / folder).tables[0]
+    values = adf.inspect_data_source(tmp_path / "proj" / folder / "t.csv", v2=True)
+    return entry, values
+
+
+def test_a_cli_connection_starts_the_job_and_the_answer_is_adopted(tmp_path):
+    case = BY_ID["RC-03"]
+    entry, values = _roles_inputs(tmp_path, case)
+    runner = CliScript([json.dumps(case["model_answer"], ensure_ascii=False)])
+    R.set_overrides(conn=CLI_CONN, runner=runner, sync=True)
+    out = R.start(project="p", entry=entry, values=values, hint=case["hint"], data_path=None)
+    assert out["state"] == "ready" and len(runner.runs) == 1
+    assert R.usage_of("p", out["id"])["usage_reported"] is False  # CLI 拿不到 token；请求数照计
+    assert R.usage_of("p", out["id"])["requests"] == 1
+
+
+@pytest.mark.parametrize(
+    ("items", "reason"),
+    [
+        ([("exit", 1)], "transport"),
+        (["timeout"], "timeout"),
+        (["not json", "still not"], "invalid_output"),
+    ],
+)
+def test_a_failing_cli_is_silent_failed_with_a_closed_reason_and_negative_cached(
+    tmp_path, items, reason
+):
+    case = BY_ID["RC-03"]
+    entry, values = _roles_inputs(tmp_path, case)
+    runner = CliScript(items)
+    R.set_overrides(conn=CLI_CONN, runner=runner, sync=True)
+    out = R.start(project="p", entry=entry, values=values, hint=case["hint"], data_path=None)
+    assert out["state"] == "failed" and out["reason"] == reason
+    again = R.start(project="p", entry=entry, values=values, hint=case["hint"], data_path=None)
+    assert again is None and len(runner.runs) == len(items)  # 负缓存 60 s：不再起进程
+
+
+def test_the_cli_connection_is_offered_when_no_key_connection_exists(monkeypatch):
     monkeypatch.setattr(ai_connections, "first_key_connection", lambda refresh=False: None)
-    monkeypatch.setattr(fixsession, "cli_agent", lambda: "codex" if why == "cli_only" else None)
+    monkeypatch.setattr(ai_connections, "builtin_forced", lambda: None)
+    assert R._available_connection() is None  # conftest：没有 CLI 连接
+    monkeypatch.setattr(
+        ai_structured, "find_cli_connection", lambda *, cached_only: (CLI_CONN, "", "")
+    )
+    assert R._available_connection() == CLI_CONN
+    key = D.fake_conn()
+    monkeypatch.setattr(ai_connections, "first_key_connection", lambda refresh=False: key)
+    assert R._available_connection() == key  # Key 连接优先
+    monkeypatch.setattr(ai_connections, "builtin_forced", lambda: False)
+    assert R._available_connection() is None  # 运维开关一并关掉
+
+
+def test_the_cache_key_carries_the_cli_kind_and_model():
+    a = R._identity(CLI_CONN)
+    assert a == "cli:codex|gpt-test"
+    assert a != R._identity({**CLI_CONN, "model": "other"})
+    assert a != R._identity({**CLI_CONN, "agent": "claude"})
+    assert a != R._identity(D.fake_conn())
+
+
+def test_a_cli_connection_gets_the_cli_total_time_and_a_key_connection_keeps_the_old_one(tmp_path):
+    case = BY_ID["RC-01"]
+    entry, values = _roles_inputs(tmp_path, case)
+    seen = []
+
+    def spy(**kw):
+        seen.append((kw["limits"].timeout_s, kw.get("conn")))
+        return ai_structured.StructuredResult(False, reason="transport")
+
+    R.judge(entry, values, case["hint"], call=spy, conn=CLI_CONN)
+    R.judge(entry, values, case["hint"], call=spy, conn=None)
+    assert ai_structured.CLI_TIMEOUT_S > R.TIMEOUT_S
+    assert (
+        CLI_CONN == seen[0][1]
+        and ai_structured.CLI_TIMEOUT_S - 1 < seen[0][0] <= ai_structured.CLI_TIMEOUT_S
+    )
+    assert seen[1][1] is None and seen[1][0] <= R.TIMEOUT_S
+
+
+def test_two_cli_jobs_never_run_two_processes_at_once(tmp_path):
+    cases = [BY_ID["RC-01"], BY_ID["RC-03"]]
+    gate = threading.Event()
+    answers = [json.dumps(c["model_answer"], ensure_ascii=False) for c in cases]
+    runner = CliScript(answers, gate=gate)
+    R.set_overrides(conn=CLI_CONN, runner=runner)
+    jobs = []
+    for i, case in enumerate(cases):
+        entry, values = _roles_inputs(tmp_path / str(i), case)
+        jobs.append(
+            R.start(project="p", entry=entry, values=values, hint=case["hint"], data_path=None)
+        )
+    assert all(j["state"] == "pending" for j in jobs)
+    time.sleep(0.2)
+    gate.set()
+    deadline = time.time() + 10
+    while time.time() < deadline and any(R.get("p", j["id"])["state"] == "pending" for j in jobs):
+        time.sleep(0.02)
+    assert [R.get("p", j["id"])["state"] for j in jobs] == ["ready", "ready"]
+    assert runner.active[1] == 1 and len(runner.runs) == 2
+
+
+# --------------------------------------------------------------------------- 「读懂数据」有没有可用连接（前端「连接 AI」胶囊的依据）
+@pytest.mark.parametrize("why", ["none", "builtin_off"])
+def test_available_is_false_without_any_usable_connection(monkeypatch, why):
+    """没连 / 运维关掉内置：`available()` 为 False；判据与 `start()` 同一个 `_available_connection()`。"""
+    monkeypatch.setattr(ai_connections, "first_key_connection", lambda refresh=False: None)
     monkeypatch.setattr(
         ai_connections, "builtin_forced", lambda: False if why == "builtin_off" else None
     )
+    assert R.available() is False  # conftest：默认没有 CLI 连接
+
+
+def test_available_follows_the_subscription_login_when_its_cli_can_do_structured_calls(monkeypatch):
+    """只有订阅登录：适配器支持无工具单轮（#2090）= 可用，胶囊不该再出现；不支持 / 还没有能力缓存 = 不可用。运维开关关掉时一并不可用。"""
+    monkeypatch.setattr(ai_connections, "first_key_connection", lambda refresh=False: None)
+    monkeypatch.setattr(ai_connections, "builtin_forced", lambda: None)
+    monkeypatch.setattr(
+        ai_structured,
+        "find_cli_connection",
+        lambda *, cached_only: (None, "unsupported_connection", "cli_only"),
+    )
+    assert R.available() is False
+    monkeypatch.setattr(
+        ai_structured, "find_cli_connection", lambda *, cached_only: (CLI_CONN, "", "")
+    )
+    assert R.available() is True
+    monkeypatch.setattr(ai_connections, "builtin_forced", lambda: False)
     assert R.available() is False
 
 

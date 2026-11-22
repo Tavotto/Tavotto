@@ -338,7 +338,9 @@ def build(
         parse=adf.parse_cell,
     )
     values = replace(
-        values, row_sources=[s.label for s, v in zip(filled, summaries) for _ in v.rows]
+        values,
+        row_sources=[s.label for s, v in zip(filled, summaries) for _ in v.rows],
+        numcat={},  # 合画暂不支持整数编码的分组（合成的文件列才是主分组）：点名了也回到规则结果
     )
     ignored, splittable = classify_groups(values, column)
     if ignored:  # 与文件是同一件事的分组列：不当分组（颜色 / 分面 / 比较的横轴）候选
