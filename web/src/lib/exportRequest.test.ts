@@ -92,6 +92,20 @@ describe('scope', () => {
     expect(snapshotRevision(layered)).not.toBe(snapshotRevision(plain))
   })
 
+  it('requires opt-in for a canvas PDF text attachment and freezes the choice in the job revision', () => {
+    const { request: plain } = buildExportRequest(inputOf())
+    const { request: attached } = buildExportRequest(inputOf({ pdfTextAttachment: true }))
+    const { request: image } = buildExportRequest(inputOf({ formats: ['png'], pdfTextAttachment: true }))
+    const { request: original } = buildExportRequest(inputOf({
+      scope: 'original', figureId: 'Fig1.pdf', pdfTextAttachment: true,
+    }))
+    expect(plain).not.toHaveProperty('pdf_text_attachment')
+    expect(attached.pdf_text_attachment).toBe(true)
+    expect(image).not.toHaveProperty('pdf_text_attachment')
+    expect(original).not.toHaveProperty('pdf_text_attachment')
+    expect(snapshotRevision(attached)).not.toBe(snapshotRevision(plain))
+  })
+
   it('默认跟着工作流走', () => {
     expect(defaultScope('fast_edit')).toBe('original')
     expect(defaultScope('layout')).toBe('canvas')

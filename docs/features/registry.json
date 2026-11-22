@@ -956,7 +956,23 @@
       "e2e": [
         {
           "spec": "chart-document.spec.ts",
-          "title": "canvas PDF export adds a toggleable annotation layer"
+          "title": "canvas PDF export adds an annotation layer and a text attachment"
+        }
+      ]
+    },
+    {
+      "id": "export.pdf-text-attachment",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "画布 PDF 可附带参与排版的文字标注及页面指纹",
+        "en-US": "Embed placed canvas text annotations and a page fingerprint in a canvas PDF"
+      },
+      "entry": "导出 → 当前画布 → PDF → 将画布文字标注作为 JSON 附件嵌入 PDF",
+      "e2e": [
+        {
+          "spec": "chart-document.spec.ts",
+          "title": "canvas PDF export adds an annotation layer and a text attachment"
         }
       ]
     },

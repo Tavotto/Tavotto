@@ -123,6 +123,32 @@ def test_pdf_annotation_layer_echoes_only_opt_in_without_changing_the_visual_pla
     )
 
 
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"formats": ["svg"]},
+        {"scope": "original", "original": {"figure_id": "Fig1.pdf"}},
+        {"pdf_text_attachment": 1},
+    ],
+)
+def test_pdf_text_attachment_requires_a_canvas_pdf_and_a_boolean(overrides):
+    spec = _canvas_spec(**{"pdf_text_attachment": True, **overrides})
+    with pytest.raises(exportreq.ExportRequestError) as error:
+        exportreq.normalize(spec)
+    assert error.value.code == "bad_request"
+
+
+def test_pdf_text_attachment_echoes_only_opt_in_without_changing_the_visual_plan():
+    plain = exportreq.normalize(_canvas_spec())
+    with_attachment = exportreq.normalize(_canvas_spec(pdf_text_attachment=True))
+    assert "pdf_text_attachment" not in plain.to_payload()
+    assert with_attachment.to_payload()["pdf_text_attachment"] is True
+    assert (
+        exportreq.render_plan_ref(plain, [])["plan_identity"]
+        == exportreq.render_plan_ref(with_attachment, [])["plan_identity"]
+    )
+
+
 def test_ppi_is_none_when_no_raster_format():
     """**「这次 PPI 没有意义」与「PPI 是 600」是两个不同的答案。**
 

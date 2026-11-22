@@ -478,8 +478,8 @@ test('canvas PDF export adds bookmarks to two instances of the same figure', {
   }
 })
 
-test('canvas PDF export adds a toggleable annotation layer', {
-  tag: '@feature:export.pdf-annotation-layer',
+test('canvas PDF export adds an annotation layer and a text attachment', {
+  tag: ['@feature:export.pdf-annotation-layer', '@feature:export.pdf-text-attachment'],
 }, async ({ app, page }) => {
   const project = mkdtempSync(path.join(os.tmpdir(), 'tavotto-pdf-annotation-layer-'))
   const name = 'LayeredCanvas'
@@ -520,21 +520,28 @@ test('canvas PDF export adds a toggleable annotation layer', {
     const pdf = dialog.locator('[data-export-format="pdf"] input')
     if (!(await pdf.isChecked())) await pdf.check()
     const layer = dialog.locator('[data-export-pdf-annotation-layer]')
+    const attachment = dialog.locator('[data-export-pdf-text-attachment]')
     await expect(layer).toBeVisible()
     await expect(layer).not.toBeChecked()
+    await expect(attachment).toBeVisible()
+    await expect(attachment).not.toBeChecked()
     await layer.check()
+    await attachment.check()
     await page.keyboard.press('Escape')
     await expect(layer).toBeHidden()
     await page.locator('[data-onboarding-anchor="export"]').click()
     if (!(await pdf.isChecked())) await pdf.check()
     await expect(layer).not.toBeChecked()
+    await expect(attachment).not.toBeChecked()
     await layer.check()
+    await attachment.check()
     const started = page.waitForResponse(r =>
       new URL(r.url()).pathname === '/api/export/start' && r.request().method() === 'POST')
     await page.locator('[data-export-start]').click()
     const job = await started
     expect(job.ok(), await job.text()).toBe(true)
     expect(job.request().postDataJSON().pdf_annotation_layer).toBe(true)
+    expect(job.request().postDataJSON().pdf_text_attachment).toBe(true)
     const { export_dir } = await job.json()
     await expect(page.locator('[data-export-result]')).toBeVisible({ timeout: 60_000 })
     const files = readdirSync(export_dir).filter(file => file.endsWith('.pdf'))
@@ -543,6 +550,9 @@ test('canvas PDF export adds a toggleable annotation layer', {
     expect(published).toContain('/OCProperties')
     expect(published).toContain('/Type /OCG')
     expect(published).toContain('/Name (Canvas annotations)')
+    expect(published).toContain('/EmbeddedFiles')
+    expect(published).toContain('/Type /EmbeddedFile')
+    expect(published).toContain('(tavotto-canvas-text.json)')
   } finally {
     await instance?.stop()
     rmSync(project, { recursive: true, force: true })

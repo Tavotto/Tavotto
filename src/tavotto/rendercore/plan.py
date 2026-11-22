@@ -89,6 +89,7 @@ class CompiledPage:
     sources: dict[str, FrozenSource]
     pdf_bookmark_titles: dict[int, str] = field(default_factory=dict)
     pdf_annotation_indices: frozenset[int] = frozenset()
+    pdf_annotation_text: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -107,6 +108,7 @@ class RenderPlan:
     sources: dict[str, FrozenSource] = field(default_factory=dict)
     pdf_bookmark_titles: dict[int, str] = field(default_factory=dict)
     pdf_annotation_indices: frozenset[int] = frozenset()
+    pdf_annotation_text: tuple[str, ...] | None = None
 
     @property
     def plan_identity(self) -> str:
@@ -566,6 +568,7 @@ def compile_page(
     math: dict | None = None,
     pdf_panel_bookmarks: bool = False,
     pdf_annotation_layer: bool = False,
+    pdf_text_attachment: bool = False,
 ) -> CompiledPage:
     """画布（毫米、顶原点、z 序对象列表）→ 已校验的 `Page`。
 
@@ -579,6 +582,7 @@ def compile_page(
     children: list[Node] = []
     pdf_bookmark_titles: dict[int, str] = {}
     annotation_indices: set[int] = set()
+    annotation_text: list[str] = []
     for o in objects:
         if not isinstance(o, dict):
             raise PlanError("bad_object", f"对象不是 dict: {o!r}")
@@ -626,6 +630,8 @@ def compile_page(
                 pdf_bookmark_titles[len(children)] = " ".join(title.split())
             if pdf_annotation_layer and kind != "panel":
                 annotation_indices.add(len(children))
+            if pdf_text_attachment and kind == "text":
+                annotation_text.append(o["text"])
             children.append(node)
     page = validate(Page(page_w, page_h, tuple(children), resources, background))
     return CompiledPage(
@@ -633,8 +639,9 @@ def compile_page(
         tuple(dropped),
         tuple(problems),
         frozen,
-        pdf_bookmark_titles,
-        frozenset(annotation_indices),
+        pdf_bookmark_titles=pdf_bookmark_titles,
+        pdf_annotation_indices=frozenset(annotation_indices),
+        pdf_annotation_text=tuple(annotation_text) if pdf_text_attachment else None,
     )
 
 
@@ -662,6 +669,7 @@ def compile_plan(
         math=math,
         pdf_panel_bookmarks=req.pdf_panel_bookmarks,
         pdf_annotation_layer=req.pdf_annotation_layer,
+        pdf_text_attachment=req.pdf_text_attachment,
     )
     ref = exportreq.render_plan_ref(
         req,
@@ -684,6 +692,7 @@ def compile_plan(
         sources=compiled.sources,
         pdf_bookmark_titles=compiled.pdf_bookmark_titles,
         pdf_annotation_indices=compiled.pdf_annotation_indices,
+        pdf_annotation_text=compiled.pdf_annotation_text,
     )
 
 

@@ -294,6 +294,7 @@ interface ParkedState {
   withScript: boolean;
   pdfPanelBookmarks: boolean;
   pdfAnnotationLayer: boolean;
+  pdfTextAttachment: boolean;
   transparent: boolean;
   strict: boolean;
 }
@@ -370,6 +371,7 @@ export function ExportDialog() {
   const [withScript, setWithScript] = useState(false);
   const [pdfPanelBookmarks, setPdfPanelBookmarks] = useState(false);
   const [pdfAnnotationLayer, setPdfAnnotationLayer] = useState(false);
+  const [pdfTextAttachment, setPdfTextAttachment] = useState(false);
   /** 严格核验产物（ADR 0068 的 `strict` 政策）：必需项失败或无法核验的那一项不发布 */
   const [strict, setStrict] = useState(
     () => readExportDefaults().strictInspection,
@@ -689,12 +691,14 @@ export function ExportDialog() {
       setWithScript(restore.withScript);
       setPdfPanelBookmarks(restore.pdfPanelBookmarks);
       setPdfAnnotationLayer(restore.pdfAnnotationLayer);
+      setPdfTextAttachment(restore.pdfTextAttachment);
       setTransparent(restore.transparent);
       setStrict(restore.strict);
       return;
     }
     setPdfPanelBookmarks(false);
     setPdfAnnotationLayer(false);
+    setPdfTextAttachment(false);
     if (journalKey && journalApplied.current !== journalKey) {
       journalApplied.current = journalKey;
       const d = readExportDefaults();
@@ -970,6 +974,7 @@ export function ExportDialog() {
       includeScript: withScript && script.ok,
       pdfPanelBookmarks,
       pdfAnnotationLayer,
+      pdfTextAttachment,
       strictInspection: strict,
       profileId: checkProfileId,
       // 后端的 `acknowledged` 策略 = 「这些阻断项导出时仍未处理」：自动带上，不再靠勾选
@@ -1293,6 +1298,7 @@ export function ExportDialog() {
       script.ok,
       pdfPanelBookmarks,
       pdfAnnotationLayer,
+      pdfTextAttachment,
       scope,
       transparent,
       strict,
@@ -1421,6 +1427,7 @@ export function ExportDialog() {
       withScript,
       pdfPanelBookmarks,
       pdfAnnotationLayer,
+      pdfTextAttachment,
       transparent,
       strict,
     };
@@ -2075,6 +2082,19 @@ export function ExportDialog() {
                       onChange={(event) => setPdfAnnotationLayer(event.currentTarget.checked)}
                     />
                     <span>{ex("pdfAnnotationLayer")}</span>
+                  </label>
+                </FormRow>
+              )}
+              {scope === "canvas" && formats.includes("pdf") &&
+                exportDoc.objects.some((o) => !o.hidden && o.type === "text" && o.text.trim()) && (
+                <FormRow>
+                  <label className="flex min-h-7 items-center gap-2 text-ink">
+                    <Checkbox
+                      data-export-pdf-text-attachment
+                      checked={pdfTextAttachment}
+                      onChange={(event) => setPdfTextAttachment(event.currentTarget.checked)}
+                    />
+                    <span>{ex("pdfTextAttachment")}</span>
                   </label>
                 </FormRow>
               )}

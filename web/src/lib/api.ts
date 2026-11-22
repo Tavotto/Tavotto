@@ -2308,6 +2308,7 @@ export interface ExportRequest {
   eps_opaque?: boolean
   pdf_panel_bookmarks?: boolean
   pdf_annotation_layer?: boolean
+  pdf_text_attachment?: boolean
   document_id?: string | null
   /** 导出开始那一刻的文档快照指纹；回执原样带回来，用来说"期间又被编辑过" */
   document_revision?: string | null

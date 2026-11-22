@@ -62,6 +62,7 @@ from typing import Any, Mapping
 from .. import deflate
 from . import ir, placement, raster, rasterio
 from .hbshaper import HbFace, HbFaceProvider, require
+from .pdfsemantic import attach_canvas_text, read_canvas_text
 
 WRITER_ERROR_CODES = (
     "unsupported_capability",  # IR 用到了 CAPABILITIES["pdf"] 里声明 unsupported 的操作
@@ -70,6 +71,7 @@ WRITER_ERROR_CODES = (
     "source_bytes_missing",  # 节点引用的文件资源没有交进来字节（files 里没有这个 key）
     "source_identity",  # 交进来的字节 sha256 与资源身份不符
     "source_unreadable",  # 源 PDF 打不开 / 加密 / 没有这一页 / 位图解不开
+    "text_attachment_invalid",  # 落盘的附件内容或页面指纹对不上计划
 )
 
 
@@ -1215,12 +1217,15 @@ class PdfWriter:
         *,
         bookmark_titles: Mapping[int, str] | None = None,
         annotation_indices: frozenset[int] = frozenset(),
+        annotation_text: tuple[str, ...] | None = None,
     ) -> WriteFacts:
         import pikepdf
 
         self._build_document(bookmark_titles, annotation_indices)
         out = Path(out)
         _compress_unfiltered(self.pdf)
+        if annotation_text is not None:
+            attach_canvas_text(self.pdf, annotation_text)
         # compress_streams=False：qpdf 的 compress_streams 会把源里带 predictor 的 Flate 图片流解码再重压
         # （与 stream_decode_level 无关，qpdf 12.3.2 实测：29 张图的海报 76 ms、体积不变）。要压的只有
         # 确实没过滤的流，上一行已经压过；其余流原样照搬源的编码。
@@ -1234,6 +1239,15 @@ class PdfWriter:
         for doc in self._foreign_docs:  # 流数据已经写进文件，外来文档可以放了
             doc.close()
         self._foreign_docs.clear()
+        if annotation_text is not None:
+            try:
+                with pikepdf.Pdf.open(out) as written:
+                    if read_canvas_text(written) != annotation_text:
+                        raise ValueError("The saved attachment differs from the canvas plan")
+            except (pikepdf.PdfError, ValueError) as exc:
+                raise WriterError(
+                    "text_attachment_invalid", "PDF text attachment verification failed"
+                ) from exc
         data = out.read_bytes()
         self.facts.sha256 = hashlib.sha256(data).hexdigest()
         self.facts.bytes = len(data)
@@ -1365,9 +1379,13 @@ def write_pdf(
     *,
     bookmark_titles: Mapping[int, str] | None = None,
     annotation_indices: frozenset[int] = frozenset(),
+    annotation_text: tuple[str, ...] | None = None,
 ) -> WriteFacts:
     """IR → PDF 文件。`provider` 解析 `FontResource` → 已加载的脸（按 sha256 身份）；`files` 是
     `FileResource` key → 冻结字节（`sources.read_frozen()` 核过 hash 的那份），面板要它。"""
     return PdfWriter(page, provider, files).write(
-        out, bookmark_titles=bookmark_titles, annotation_indices=annotation_indices
+        out,
+        bookmark_titles=bookmark_titles,
+        annotation_indices=annotation_indices,
+        annotation_text=annotation_text,
     )

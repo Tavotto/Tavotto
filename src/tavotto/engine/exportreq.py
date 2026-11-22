@@ -394,6 +394,7 @@ class ExportRequest:
     eps_opaque: bool = False
     pdf_panel_bookmarks: bool = False
     pdf_annotation_layer: bool = False
+    pdf_text_attachment: bool = False
 
     @property
     def has_raster(self) -> bool:
@@ -423,6 +424,7 @@ class ExportRequest:
             **({"eps_opaque": True} if self.eps_opaque else {}),
             **({"pdf_panel_bookmarks": True} if self.pdf_panel_bookmarks else {}),
             **({"pdf_annotation_layer": True} if self.pdf_annotation_layer else {}),
+            **({"pdf_text_attachment": True} if self.pdf_text_attachment else {}),
             **(
                 {"expected_source": self.original.expected_source}
                 if self.original and self.original.expected_source is not None
@@ -969,6 +971,9 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
     pdf_annotation_layer = spec.get("pdf_annotation_layer", False)
     if type(pdf_annotation_layer) is not bool or (pdf_annotation_layer and not canvas_pdf):
         raise ExportRequestError("bad_request", "PDF annotation layers require a canvas PDF", {})
+    pdf_text_attachment = spec.get("pdf_text_attachment", False)
+    if type(pdf_text_attachment) is not bool or (pdf_text_attachment and not canvas_pdf):
+        raise ExportRequestError("bad_request", "PDF text attachments require a canvas PDF", {})
     # 「EPS 按不透明导出」：只认严格的 True（不是真值），旧契约与整版导出没有这个选项
     eps_opaque = spec.get("eps_opaque") is True and not legacy and scope == SCOPE_ORIGINAL
     has_raster = any(f in RASTER_FORMATS for f in formats)
@@ -1068,4 +1073,5 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
         eps_opaque=eps_opaque,
         pdf_panel_bookmarks=pdf_panel_bookmarks,
         pdf_annotation_layer=pdf_annotation_layer,
+        pdf_text_attachment=pdf_text_attachment,
     )

@@ -34,6 +34,16 @@ order: 210
     的绘制序号。PDF 写入器就地标记对应的绘制指令，共用一个默认显示的可选内容组（OCG），保持标注和图面板
     的相对次序。阅读器关闭该层时只隐藏画布标注。同步导出 PNG / TIFF 仍使用默认显示状态的同一份 PDF。
     看护 `tests/test_export_endpoint.py` 与 `web/e2e/chart-document.spec.ts`。
+  * **画布 PDF 文字附件**由 `pdf_text_attachment: true` 开启，只用于画布 PDF。编译后的画布文字对象
+    按绘制顺序携带原文，包含公式标注的输入文字；隐藏、空白、图面板内文字与项目元数据不进入附件。
+    无文字时显式请求生成空列表。标准 PDF 附件名为 `tavotto-canvas-text.json`，MIME 为
+    `application/json`。v1 JSON 记录 `schema_version`、`source=tavotto.canvas.text`、
+    `page=1`、`annotations=[{"text":…}]` 和 `page_fingerprint`。
+    `rendercore.pdfsemantic.read_canvas_text()` 按指纹记录的 qpdf 版本复算。算法
+    `qpdf-page-sha256-v1` 把唯一一页复制到新 PDF，按确定性 ID、禁用对象流、解码通用过滤器并关闭压缩的设置写出，再算
+    SHA-256。核对范围为页面、其内容流及资源，目录级的书签、附件和图层开关默认值在范围之外。更换 qpdf 版本时
+    读取器报告指纹格式不受支持。PDF 编辑器重编码专用图像流或重写页面对象也可能使旧指纹失效。导出器在发布前用同一读取器
+    重开产物并核对计划中的文字。看护 `tests/test_export_endpoint.py` 与 `web/e2e/chart-document.spec.ts`。
   * **PPI 只在有位图格式时是数字**，否则 `None`；`partial` 是独立一档
     （成功的照常交付，失败的带自己的 `error.code`）；覆盖策略闭集
     `ask`/`replace`/`rename`，`ask` 撞名时**不渲染不写盘**。

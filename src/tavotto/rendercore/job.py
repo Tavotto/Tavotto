@@ -217,6 +217,11 @@ def produce(
                     if rp.pdf_annotation_indices
                     else {}
                 ),
+                **(
+                    {"annotation_text": rp.pdf_annotation_text}
+                    if rp.pdf_annotation_text is not None
+                    else {}
+                ),
             )
         except pdfwriter.WriterError as exc:
             pdf_error = exc

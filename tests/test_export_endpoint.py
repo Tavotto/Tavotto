@@ -6,10 +6,12 @@
 import json
 from pathlib import Path
 
+import pikepdf
 import pymupdf
 import pytest
 
 from tavotto import app as m, pdfbackend as pb
+from tavotto.rendercore import pdfsemantic
 
 
 @pytest.fixture
@@ -226,6 +228,94 @@ def test_canvas_pdf_annotation_layer_toggles_marks_without_changing_default_pixe
         assert "Editable label" not in actual[0].get_text()
         actual.set_layer_ui_config(layer["number"], action=pymupdf.PDF_OC_ON)
         assert actual[0].get_pixmap().samples == default_pixels.samples
+
+
+def test_canvas_pdf_text_attachment_contains_only_painted_annotations_and_detects_stale_page(
+    client, tmp_path
+):
+    m.open_project(str(_asym_panel_dir(tmp_path)))
+    panel = {
+        "type": "panel",
+        "id": "asym.pdf",
+        "x_mm": 0,
+        "y_mm": 0,
+        "w_mm": 100,
+        "h_mm": 50,
+    }
+    texts = ("实验组", "Control\nB")
+    marks = [
+        panel,
+        _text_obj(texts[0], id="private-object-id", x_mm=60, y_mm=3),
+        _text_obj("Do not attach", hidden=True),
+        _text_obj("  "),
+        _text_obj(texts[1], x_mm=60, y_mm=22),
+    ]
+    filename = "tavotto-canvas-text.json"
+
+    def export(name, *, objects=marks, attachment=False):
+        response = client.post(
+            "/api/export",
+            json={
+                "scope": "canvas",
+                "filename": name,
+                "formats": ["pdf"],
+                "canvas": {"page_w_mm": 100, "page_h_mm": 50, "objects": objects},
+                "pdf_panel_bookmarks": True,
+                "pdf_annotation_layer": True,
+                "pdf_text_attachment": attachment,
+            },
+        )
+        assert response.status_code == 200, response.get_json()
+        body = response.get_json()
+        assert body["status"] == "done", body
+        (item,) = body["files"]
+        return Path(body["export_dir"]) / item["name"]
+
+    plain = export("Plain")
+    enriched = export("With attachment", attachment=True)
+    empty = export("No text", objects=[panel], attachment=True)
+    with pymupdf.open(plain) as expected, pymupdf.open(enriched) as actual:
+        assert expected.embfile_names() == []
+        assert actual.embfile_names() == [filename]
+        payload = json.loads(actual.embfile_get(filename))
+        assert set(payload) == {
+            "schema_version",
+            "source",
+            "page",
+            "page_fingerprint",
+            "annotations",
+        }
+        assert payload["schema_version"] == payload["page"] == 1
+        assert payload["source"] == "tavotto.canvas.text"
+        assert payload["annotations"] == [{"text": text} for text in texts]
+        assert actual[0].get_pixmap(dpi=144).samples == expected[0].get_pixmap(dpi=144).samples
+        assert "实验组" in actual[0].get_text()
+        assert actual.get_toc() == expected.get_toc()
+
+    with pikepdf.Pdf.open(empty) as pdf:
+        assert pdfsemantic.read_canvas_text(pdf) == ()
+    with pikepdf.Pdf.open(enriched) as pdf:
+        assert pdfsemantic.read_canvas_text(pdf) == texts
+        pdf.docinfo["/Title"] = "New document title"
+        retitled = tmp_path / "retitled.pdf"
+        pdf.save(retitled)
+    with pikepdf.Pdf.open(retitled) as pdf:
+        assert pdfsemantic.read_canvas_text(pdf) == texts
+        form = next(iter(pdf.pages[0].Resources.XObject.values()))
+        form.write(b"60 60 15 15 re f")
+        modified = tmp_path / "modified.pdf"
+        pdf.save(modified)
+    with pikepdf.Pdf.open(modified) as pdf, pytest.raises(pdfsemantic.StaleTextAttachment):
+        pdfsemantic.read_canvas_text(pdf)
+
+    revised = export("Revised canvas", objects=[panel, _text_obj("Revised B")], attachment=True)
+    with pikepdf.Pdf.open(revised) as pdf:
+        assert pdfsemantic.read_canvas_text(pdf) == ("Revised B",)
+        pdf.attachments[filename] = pikepdf.AttachedFileSpec(
+            pdf, json.dumps(payload).encode("utf-8"), mime_type="application/json"
+        )
+        with pytest.raises(pdfsemantic.StaleTextAttachment):
+            pdfsemantic.read_canvas_text(pdf)
 
 
 def test_export_single_figure_frame_with_annotation(client, tmp_path):
