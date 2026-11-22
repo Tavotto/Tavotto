@@ -205,7 +205,22 @@ function say(message: UiMessage, tone: 'info' | 'done', opts?: { subline?: UiMes
 
 /** 等参与排版、还没出过图的那几张出第一张图（最多 SETTLE_MS），再让画布样式对齐新图（ADR 0081，免费能力）。 */
 const SETTLE_MS = 30_000
-async function settleNewFigures(): Promise<void> {
+/** 一次操作出发时所在的文档 / 载入 / 画布：每个 await 回来都对着它核，换了就放弃 */
+interface OpContext {
+  documentId: string
+  loadSeq: number
+  canvasId: string
+}
+const contextNow = (): OpContext => {
+  const s = useDocumentStore.getState()
+  return { documentId: s.documentId, loadSeq: s.loadSeq, canvasId: s.activeCanvasId }
+}
+const sameContext = (a: OpContext): boolean => {
+  const b = contextNow()
+  return a.documentId === b.documentId && a.loadSeq === b.loadSeq && a.canvasId === b.canvasId
+}
+
+async function settleNewFigures(ctx: OpContext): Promise<boolean> {
   const ready = (id: string) => {
     const cur = useDocumentStore.getState().doc.objects.find((o) => o.id === id)
     return !cur || cur.type !== 'panel' || !!exactPanelManifest(useRenderStore.getState(), cur)
@@ -228,7 +243,10 @@ async function settleNewFigures(): Promise<void> {
       })
     })
   }
+  // 等待期间切了文档 / 画布 / 项目：不对新活动的那份做任何事
+  if (!sameContext(ctx)) return false
   alignNewFigures()
+  return true
 }
 
 /**
@@ -242,12 +260,15 @@ export async function runQuickLayout(target: QuickLayoutTarget, gapMm: number): 
 
   // 先让画布样式落到新放上来的图上，再按落好样式之后的字号排（2026-11-20 走查：刚放上的图还没出第一张图，
   // 一键排版抢在样式前面算完，样式随后才套上，轴标题变粗变大，算好的对齐与留白就不作数了）
+  const ctx = contextNow() // 第一个 await 之前取基线，整条链路都对着它核
   useQuickLayoutStore.setState({ busy: true })
+  let settled = false
   try {
-    await settleNewFigures()
+    settled = await settleNewFigures(ctx)
   } finally {
     useQuickLayoutStore.setState({ busy: false })
   }
+  if (!settled) return 'stale' // 静默放弃：文档一个字没动，不说话
 
   const prefs = readQuickLayoutPrefs()
   const docAtStart = useDocumentStore.getState().doc
@@ -262,6 +283,7 @@ export async function runQuickLayout(target: QuickLayoutTarget, gapMm: number): 
     label: 'quickLayout',
     checkpoint: true,
     announce: true,
+    ctx,
   })
 }
 
@@ -324,6 +346,8 @@ interface PlanRun {
   announce: boolean
   /** 拖分隔线的跟手层：commit 之后交最终的框 */
   observer?: QuickLayoutCommitObserver
+  /** 出发时的文档 / 画布基线（没给 = 进 runPlan 这一刻取） */
+  ctx?: OpContext
 }
 
 /** 发请求、回来核对、一次 commit：一键排版与拖分隔线重排共用这一处 */
@@ -331,8 +355,8 @@ async function runPlan(run: PlanRun): Promise<QuickLayoutOutcome> {
   const { involved, target, gapMm, columns, canvas: canvasMode, fixSpec } = run
   const start = useDocumentStore.getState()
   const docAtStart = start.doc
-  const loadSeq = start.loadSeq
-  const canvasId = start.activeCanvasId
+  const ctx = run.ctx ?? contextNow()
+  if (!sameContext(ctx)) return 'stale'
 
   const solvable = involved.filter((p) => resizable(p))
   if (solvable.length < 2) {
@@ -380,7 +404,7 @@ async function runPlan(run: PlanRun): Promise<QuickLayoutOutcome> {
     }
 
     const now = useDocumentStore.getState()
-    const sameLoad = now.loadSeq === loadSeq
+    const sameLoad = now.loadSeq === ctx.loadSeq && now.documentId === ctx.documentId
     /** 把共享 worker 按这几张图**此刻**的列表重放（只在同一份载入的文档里做） */
     const replay = (ids: Iterable<string>) => {
       if (!sameLoad) return
@@ -423,7 +447,9 @@ async function runPlan(run: PlanRun): Promise<QuickLayoutOutcome> {
     // ---- 回来之后：这次用到的每一样输入都还是出发时那一份，才写 ----
     const moved =
       !sameLoad ||
-      now.activeCanvasId !== canvasId ||
+      now.activeCanvasId !== ctx.canvasId ||
+      // 别的手势的事务开着：commit 会把整个排版并进那条事务（取消拖动就连排版一起丢），这次结果作废
+      now.txn != null ||
       same(now.doc.page) !== pageAtStart ||
       same(currentSpec()) !== specAtStart ||
       [...b0].some(([id, before]) => {
@@ -452,15 +478,17 @@ async function runPlan(run: PlanRun): Promise<QuickLayoutOutcome> {
 
     emitActivity({ kind: run.announce ? 'quick_layout.applied' : 'quick_layout.ratios_applied' })
     if (!run.announce) return 'applied'
-    // 「撤销」只在撤销栈还停在这一步时撤；之后又改了别的，撤的就是别的了，只收胶囊
-    const depth = after.past.length
+    // 「撤销」只在同一文档 / 画布、且栈顶还是这一条历史时撤；之后又改了别的，撤的就是别的了，只收胶囊
+    const entry = after.past.at(-1)
+    const doneCtx = contextNow()
     say(note('quickLayoutDone'), 'done', {
       subline: noteLine(res, profile.label),
       dismissMs: DONE_DISMISS_MS,
       action: {
         label: note('quickLayoutUndo'),
         run: () => {
-          if (useDocumentStore.getState().past.length === depth) undoRunner?.()
+          const cur = useDocumentStore.getState()
+          if (sameContext(doneCtx) && entry && cur.past.at(-1) === entry) undoRunner?.()
           else useUiStore.getState().setStatus(null)
         },
       },

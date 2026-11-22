@@ -297,6 +297,25 @@ describe('应用', () => {
     expect((s().doc.objects.find((o) => o.id === 'p1') as PanelObject).overrides[0].prop).toBe('fontsize')
   })
 
+  it('A 画布排完、切到同样历史深度的 B 画布再点胶囊撤销：B 的最近一次编辑不被撤', async () => {
+    seed(panel('p1'), panel('p2'))
+    quickLayoutPlan.mockResolvedValue(okPlan())
+    await runQuickLayout('double', 3)
+    const depthA = s().past.length
+    const action = useUiStore.getState().statusAction!
+    s().addCanvas('B')
+    for (let i = 0; i < depthA; i++) {
+      s().commit(literal(`B 的编辑 ${i}`), (d) => {
+        d.objects.push({ ...makeSubLabel(i, 1, 1), id: `b_${i}` })
+      })
+    }
+    const docB = s().doc
+    expect(s().past.length).toBe(depthA)
+    action.run()
+    expect(s().past.length).toBe(depthA)
+    expect(s().doc).toBe(docB)
+  })
+
   it('replay_required：没返回的发出去的图也重放', async () => {
     seed(panel('p1'), panel('p2'), panel('p3'))
     quickLayoutPlan.mockResolvedValue({ ...okPlan(), replay_required: true })
@@ -331,6 +350,46 @@ describe('等待期间与失败', () => {
     expect(texts()).toHaveLength(0)
     expect(statusText()).toBe('图刚刚变了，再点一次一键排版')
     expect(requestRender).toHaveBeenCalled()
+  })
+
+  it('等首次渲染期间切换了文档：整条链路放弃，不是 applied，目标文档一个字没动', async () => {
+    seed(panel('p1'), panel('p2'))
+    exact.delete('p2')
+    quickLayoutPlan.mockResolvedValue(okPlan())
+    const run = runQuickLayout('double', 3)
+    await Promise.resolve()
+    await s().switchDocument(emptyProject(), 'd_other')
+    seed(panel('p1'), panel('p2'))
+    const dest = s().doc
+    const depth = s().past.length
+    exact.add('p2')
+    useRenderStore.setState({ byKey: { ...useRenderStore.getState().byKey } })
+    expect(await run).not.toBe('applied')
+    expect(quickLayoutPlan).not.toHaveBeenCalled()
+    expect(s().doc).toBe(dest)
+    expect(s().past.length).toBe(depth)
+    expect(useQuickLayoutStore.getState().busy).toBe(false)
+  })
+
+  it('规划请求挂起期间开始了一次拖动事务：不把排版并进那次事务，取消拖动后与拖动前一致', async () => {
+    seed(panel('p1'), panel('p2'))
+    s().commit(literal('加标注'), (d) => {
+      d.objects.push({ ...makeSubLabel(0, 150, 100), id: 'note1' })
+    })
+    const before = s().doc
+    const depth = s().past.length
+    quickLayoutPlan.mockImplementation(async () => {
+      s().beginTxn(literal('拖动'))
+      s().txnUpdate((d) => {
+        d.objects.find((o) => o.id === 'note1')!.x += 5 // 拖的是不相干的标注：面板与页面都没变
+      })
+      return okPlan()
+    })
+    expect(await runQuickLayout('double', 3)).not.toBe('applied')
+    s().endTxn({ discard: true })
+    expect(s().doc).toEqual(before)
+    expect(s().past.length).toBe(depth)
+    expect(s().past.some((e) => formatMessage(e.label) === '一键排版')).toBe(false)
   })
 
   it('后端回失败：什么都不改，一句话，不是红色', async () => {
