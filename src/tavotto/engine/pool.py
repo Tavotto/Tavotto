@@ -6426,6 +6426,14 @@ def build(
     return worker, resp
 
 
+def _ensure_built_with(worker, input_declaration):
+    """没有计划冻结的声明选择时照旧无参调用 `ensure_built()`：只有带声明的分派才把选择传下去，
+    其余 worker 形状（含只实现无参 `ensure_built` 的替身）调用不变。"""
+    if input_declaration is None:
+        return worker.ensure_built()
+    return worker.ensure_built(input_declaration=input_declaration)
+
+
 def _require_current_declaration(worker, expected) -> None:
     """FO-007 在取到会话时的**快失败**：计划冻结的声明选择必须仍是存储此刻的选择，
     一眼就能看见的过期不排队 build。权威核对在 build 请求的载荷构造里——
@@ -6533,7 +6541,7 @@ def _build_with(
     if before_build is not None:
         before_build(worker)
     try:
-        resp = worker.ensure_built(input_declaration=input_declaration)
+        resp = _ensure_built_with(worker, input_declaration)
     except WorkerError as exc:
         if adopt_script_dir and _adopt_script_dir(figures_dir, getattr(exc, "workdir_hint", None)):
             return _rebuild_in_script_dir(
@@ -6581,7 +6589,7 @@ def _build_with(
         before_build(worker)
     return (
         worker,
-        worker.ensure_built(input_declaration=input_declaration),
+        _ensure_built_with(worker, input_declaration),
         created or created_again,
     )
 
