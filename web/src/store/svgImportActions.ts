@@ -74,7 +74,7 @@ export async function pasteSvgText(svg: string): Promise<'objects' | 'image' | '
     const file = new File([svg], 'pasted.svg', { type: 'image/svg+xml' })
     const why = reasonText(res?.ok ? reason : (reason ?? 'unreadable'))
     const nameOf = (f: File, i: number) => pastedImageName({ name: '', type: f.type }, now, i)
-    const r = await importAndPlace([file], { nameOf })
+    const r = await importAndPlace([file], { nameOf, canvasId: origin.canvasId })
     if (r.aborted) return 'aborted'
     if (r.placed.length) {
       svgStatus('svgAsImage', { reason: why }, 'info')
@@ -84,9 +84,10 @@ export async function pasteSvgText(svg: string): Promise<'objects' | 'image' | '
     const code = res?.ok ? reason : (res?.error ?? reason ?? 'unreadable')
     const png = code && NO_RASTER.has(code) ? null : await rasterizeSvg(svg, res?.size_mm ?? [0, 0])
     if (!stillAtOrigin(origin)) return 'aborted'
-    const r2 = png ? await importAndPlace([new File([png], 'pasted.png', { type: 'image/png' })], { nameOf }) : null
+    const r2 = png ? await importAndPlace([new File([png], 'pasted.png', { type: 'image/png' })], { nameOf, canvasId: origin.canvasId }) : null
+    if (r2?.aborted) return 'aborted'
     if (r2?.placed.length) svgStatus('svgAsRaster', { reason: why, dpi: RASTER_DPI }, 'info')
-    else reportImageResult(r2 && !r2.aborted ? r2 : r)
+    else reportImageResult(r2 ?? r)
     return 'image'
   }
   useDocumentStore.getState().commit(hist('importSvg', { count: placed.length }), (d) => {

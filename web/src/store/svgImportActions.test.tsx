@@ -192,6 +192,34 @@ describe('异步返回后核对发起时的项目与画布（Codex 线程 461443
     expect(intake).not.toHaveBeenCalled()
   })
 
+  it('图片回退：把发起时的画布身份交给上传放置流程（它在实际提交前核对）；它报 aborted 就什么都不说', async () => {
+    setCurrentProjectId('A')
+    await seed()
+    const origin = useDocumentStore.getState().activeCanvasId
+    reply = { ok: true, objects: [], size_mm: [1, 1], unsupported: { image: 2 } }
+    intake.mockResolvedValueOnce({ placed: [], problems: [], aborted: true } as never)
+    expect(await pasteSvgText(SVG)).toBe('aborted')
+    expect(intake).toHaveBeenCalledTimes(1)
+    expect((intake.mock.calls[0] as unknown as [File[], { canvasId?: string }])[1].canvasId).toBe(origin)
+    expect(report).not.toHaveBeenCalled()
+    expect(useUiStore.getState().status).toBeNull()
+  })
+
+  it('PNG 回退的第二次放置同样带画布身份；上传期间换了画布 → aborted、不说「当位图放进来」', async () => {
+    setCurrentProjectId('A')
+    await seed()
+    const origin = useDocumentStore.getState().activeCanvasId
+    reply = { ok: true, objects: [], size_mm: [20, 10], unsupported: { filter: 1 } }
+    intake.mockResolvedValueOnce({ placed: [], problems: [{ name: 'pasted.svg', reason: literal('不收') }], aborted: false } as never)
+    intake.mockResolvedValueOnce({ placed: [], problems: [], aborted: true } as never)
+    raster.mockResolvedValueOnce(new Blob(['png'], { type: 'image/png' }))
+    expect(await pasteSvgText(SVG)).toBe('aborted')
+    expect(intake).toHaveBeenCalledTimes(2)
+    for (const c of intake.mock.calls) expect((c as unknown as [File[], { canvasId?: string }])[1].canvasId).toBe(origin)
+    expect(report).not.toHaveBeenCalled()
+    expect(useUiStore.getState().status).toBeNull()
+  })
+
   it('拆成对象：解析期间切了项目 → 图不动、不进历史', async () => {
     setCurrentProjectId('A')
     await seed([{ id: 'p', type: 'panel', fileId: 'f.svg', fileKind: 'svg', x: 0, y: 0, w: 10, h: 10 } as CanvasObject])

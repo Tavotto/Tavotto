@@ -157,12 +157,16 @@ export const reasonOf = (e: unknown): UiMessage =>
  * 逐个上传 → 重扫一次素材清单 → 依次放上画布。
  * 第一张放在落点（按页面毫米坐标，仍在发起时的那张画布上才用），其余交给常规摆放（避让已有对象，自然错开）。
  * 落点的画布变了（上传期间切了标签）就不带点：按旧画布的页面算的坐标放到别的画布上会落在页外。
+ * `canvasId`：这批文件**只许**放进这张画布（粘贴 SVG 的图片回退：发起时的那张）；上传 / 重扫 / 实际放置前核对，
+ * 画布换了整批作废（`aborted`），不放进现在的画布（Codex 线程 4656678194）。不传 = 放进放置那一刻的当前画布。
  */
 export async function importAndPlace(
   files: readonly File[],
-  opts: { place?: CanvasDropPlace | null; nameOf?: (f: File, i: number) => string } = {},
+  opts: { place?: CanvasDropPlace | null; nameOf?: (f: File, i: number) => string; canvasId?: string } = {},
 ): Promise<PlaceResult> {
   const pj = currentProjectId()
+  /** 项目换了，或（指定了画布时）画布换了：这一批作废 */
+  const moved = () => currentProjectId() !== pj || (opts.canvasId !== undefined && useDocumentStore.getState().activeCanvasId !== opts.canvasId)
   const problems: IntakeProblem[] = []
   // 没有项目就没有项目文件夹可放（浏览器 playground / MCP 画布里没有这个后端）：每个文件各说一句原因，不白发请求
   if (pj === null)
@@ -173,23 +177,29 @@ export async function importAndPlace(
     try {
       imported.push({ file, asset: await importAsset(file, name, pj) })
     } catch (e) {
-      if (currentProjectId() !== pj) return { placed: [], problems: [], aborted: true }
+      if (moved()) return { placed: [], problems: [], aborted: true }
       problems.push({ name: file.name, reason: reasonOf(e) })
     }
-    if (currentProjectId() !== pj) return { placed: [], problems: [], aborted: true }
+    if (moved()) return { placed: [], problems: [], aborted: true }
   }
   if (!imported.length) return { placed: [], problems, aborted: false }
 
   // `force`：在途的那份清单可能在这次导入之前就读完了目录
   await useAssetStore.getState().load({ force: true })
-  if (currentProjectId() !== pj) return { placed: [], problems: [], aborted: true }
+  if (moved()) return { placed: [], problems: [], aborted: true }
 
   const sameCanvas = opts.place ? useDocumentStore.getState().activeCanvasId === opts.place.canvasId : false
   const at = sameCanvas ? opts.place?.at : undefined
   const placed: string[] = []
   // 上传 / 重扫是异步的，回来时用户可能正在别的手势里：放置是离散动作，先收手势再放（`runDiscreteAction`，
   // 不看焦点的 `app` 档），否则 `commit` 会并进那次事务——取消拖动连图一起回滚、一次撤销撤掉两件事
+  let late = false
   runDiscreteAction('app', null, () => {
+    // 真正提交前再核一次（收手势 / 恢复门可能让这一刻晚于上面的检查）
+    if (moved()) {
+      late = true
+      return
+    }
     for (const [i, { file, asset }] of imported.entries()) {
       const info = useAssetStore.getState().byId[asset.id]
       if (!info) {
@@ -201,6 +211,7 @@ export async function importAndPlace(
       placed.push(asset.name)
     }
   })
+  if (late) return { placed: [], problems: [], aborted: true }
   return { placed, problems, aborted: false }
 }
 

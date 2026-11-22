@@ -2,7 +2,7 @@
  * 拖 / 粘贴文件进画布（ADR 0176）的前端判据。主语：**发给后端的上传（名字 / 项目）、放上画布的次数与落点、说给用户的那一句
  * （问题是否带「发送问题反馈」主按钮）**。上传与素材清单用桩，`addPanelToCanvas` 走真的（恢复门因此真的生效）。
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import golden from '../../../tests/golden/asset_import_extensions.json'
 import { formatMessage } from '@/i18n'
 import { ApiError, type ImportedAsset, type PanelInfo } from '@/lib/api'
@@ -110,6 +110,9 @@ describe('分类', () => {
 })
 
 describe('importAndPlace', () => {
+  const homeId = useDocumentStore.getState().activeCanvasId
+  afterEach(() => useDocumentStore.setState({ activeCanvasId: homeId }))
+
   it('一张图：按文件名上传、成为素材、放在落点；发起项目随请求带走', async () => {
     imports.importAsset.mockImplementation(async (_f: Blob, name: string) => asset(name))
     const canvasId = useDocumentStore.getState().activeCanvasId
@@ -150,6 +153,37 @@ describe('importAndPlace', () => {
     expect(res.placed).toEqual(['a'])
     const [p] = objects()
     expect(p.x).toBeLessThan(500)
+  })
+
+  it('指定了画布：上传期间切到同项目的另一张画布 → 整批作废，不放进新画布（Codex 线程 4656678194）', async () => {
+    const origin = useDocumentStore.getState().activeCanvasId
+    imports.importAsset.mockImplementation(async (_f: Blob, name: string) => {
+      useDocumentStore.setState({ activeCanvasId: 'c_other' })
+      return asset(name)
+    })
+    const res = await importAndPlace([file('a.png')], { canvasId: origin })
+    expect(res).toMatchObject({ aborted: true, placed: [], problems: [] })
+    expect(objects()).toHaveLength(0)
+  })
+
+  it('指定了画布：重扫素材清单期间换了画布 → 同样作废', async () => {
+    const origin = useDocumentStore.getState().activeCanvasId
+    imports.importAsset.mockImplementation(async (_f: Blob, name: string) => asset(name))
+    vi.spyOn(useAssetStore.getState(), 'load').mockImplementation(async () => {
+      useDocumentStore.setState({ activeCanvasId: 'c_other' })
+      useAssetStore.setState({ byId: { 'a.png': info('a.png') } } as never)
+      return null as never
+    })
+    const res = await importAndPlace([file('a.png')], { canvasId: origin })
+    expect(res.aborted).toBe(true)
+    expect(objects()).toHaveLength(0)
+  })
+
+  it('指定了画布且没换：照常放', async () => {
+    imports.importAsset.mockImplementation(async (_f: Blob, name: string) => asset(name))
+    const res = await importAndPlace([file('a.png')], { canvasId: useDocumentStore.getState().activeCanvasId })
+    expect(res).toMatchObject({ placed: ['a'], aborted: false })
+    expect(objects()).toHaveLength(1)
   })
 
   it('有的成、有的不成：成的照放，不成的带着后端原因', async () => {
