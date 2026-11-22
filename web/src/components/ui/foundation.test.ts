@@ -211,6 +211,10 @@ const RULES: Rule[] = [
         count: 4,
         why: '九宫格 + 外侧带的空间型 radio（含一处 querySelector 字面量），自带 roving tabindex',
       },
+      '/src/components/inspector/RefPointGrid.tsx': {
+        count: 1,
+        why: '变换面板的九宫格参考点（ADR 0185 M4）：28 px 空位里的空间型 radio，与 LegendPositionPicker 同族，自带方向键漫游',
+      },
     },
   },
   {

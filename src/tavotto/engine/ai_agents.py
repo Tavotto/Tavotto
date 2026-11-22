@@ -144,6 +144,15 @@ def _effort_supported(details: list[ModelDetail], model: str | None, effort: str
     return effort in d.efforts
 
 
+def _effort_confirmed(details: list[ModelDetail], model: str | None, effort: str | None) -> bool:
+    """比 `_effort_supported` 严：目录里有这个型号、明确列了档位、且请求的档位在其中才算。**目录没有 / 不知道 = 不发**
+    （结构化调用不靠 CLI 拒绝了再降级——那是又一次冷启动）。"""
+    if not model or not effort:
+        return False
+    d = next((x for x in details if x.id == model), None)
+    return d is not None and d.efforts_known and effort in d.efforts
+
+
 @dataclass(frozen=True)
 class LoginSpec:
     """「官方登录按钮」要启动的那条官方命令。**子命令写死在适配器里**，绝不来自请求体。
@@ -271,6 +280,46 @@ class FixRunContext:
     endpoint_env: dict[str, str] = field(default_factory=dict)
     #: 用户给这个 Agent 选了第三方接口时的型号（接口自己的型号名）；官方登录态为 None（CLI 用自己的默认）
     model: str | None = None
+
+
+@dataclass(frozen=True)
+class StructuredRunContext:
+    """「无工具、单轮、只回一个 JSON」调用（`ai_structured` 的订阅登录路径，ADR 0178）起 CLI 的输入。
+
+    **这里没有任何令牌**。`cwd` 是调用方新建的**空**临时目录（模型能看到的唯一工作区）；`aux_dir` 是另一个私有临时目录，
+    放系统提示 / schema / 输出文件——它们不在 `cwd` 里，模型的工作区里什么都没有。`user` 是用户内容（表格摘要），只经 stdin，绝不进 argv。"""
+
+    argv: list[str]  # 已通过启动验证的 CLI 启动 argv
+    system: str
+    user: str
+    model: str  # 显式型号（连接里已解析出的）；不读用户的 CLI 配置
+    cwd: str
+    aux_dir: str
+    effort: str | None = None
+    #: 调用方给的 JSON Schema（可选）。不给就不带 schema 参数，靠提示词 + 本地解析 / 校验
+    schema: dict | None = None
+
+
+@dataclass(frozen=True)
+class StructuredSpec:
+    """`build_structured_command` 的产出：调用方照单执行——先把 `files` 写好，再起 `argv`，`stdin` 写进去，退出后取 `output_file` 与 stdout。"""
+
+    argv: list[str]
+    env: dict[str, str] = field(default_factory=dict)
+    #: 绝对路径 → 文本。都在 `StructuredRunContext.aux_dir` 里，调用方负责写入与事后删除
+    files: dict[str, str] = field(default_factory=dict)
+    stdin: str = ""
+    #: CLI 把最终回复写进的文件（绝对路径，在 `aux_dir` 里）；None = 回复在 stdout
+    output_file: str | None = None
+
+
+@dataclass(frozen=True)
+class StructuredReply:
+    """从 CLI 的 stdout / 输出文件里取出的最终结果：`text` 是模型回复的文字（None = 没有）；`failure` 是 CLI **自己的结构化字段**
+    归出的 `RUNNER_ERRORS` 之一（`agent_auth` / `agent_quota` / `agent_network` / `agent_model_unavailable`），认不得 = None（不猜）。"""
+
+    text: str | None = None
+    failure: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -899,6 +948,22 @@ class AgentDefinition:
         """AI 修复会话里起 CLI 的命令（MCP 接法，ADR 0149 D3）。**默认 None = 不支持**。"""
         return None
 
+    def build_structured_command(self, ctx: StructuredRunContext) -> StructuredSpec | None:
+        """无工具单轮结构化调用的命令（ADR 0178）。**默认 None = 不支持**；覆写了才算支持（`supports_structured`）。
+
+        硬要求：argv 里没有用户内容 / 令牌 / `--dangerously-*` / 可写沙盒；不落会话历史；型号显式；不读用户自己的 CLI 配置。"""
+        return None
+
+    def parse_structured_output(
+        self, stdout: str, output_text: str | None, exit_code: int
+    ) -> StructuredReply:
+        """CLI 退出后取最终文字与失败归类（`build_structured_command` 的另一半）。只认 CLI 自己的结构化字段，绝不读模型自由文本。"""
+        return StructuredReply()
+
+    @classmethod
+    def supports_structured(cls) -> bool:
+        return cls.build_structured_command is not AgentDefinition.build_structured_command
+
     def fix_event_parser(self) -> Callable[[str], list[dict]] | None:
         """修复会话读 CLI 结构化输出（stdout 一行一个事件）用的解析器工厂；每次会话取一个新的（可带状态）。
         解析器把一行变成 0..n 个 `{"kind": "mcp_begin"|"mcp_end"|"approval"|"denied"|"output", "tool": 工具名(不带前缀)}`。
@@ -1233,6 +1298,61 @@ class CodexAgent(AgentDefinition):
             if ctx.model:
                 cmd += ["-m", ctx.model]
         return SpawnSpec(cmd + [ctx.prompt], dict(ctx.endpoint_env))
+
+    def build_structured_command(self, ctx: StructuredRunContext) -> StructuredSpec | None:
+        """`codex exec` 的无工具单轮：只读沙盒 + 空工作目录（Codex 没法真禁工具，所以靠这两样）、不落会话、不读用户的 config.toml
+        （登录态仍来自 `CODEX_HOME`）、`model_instructions_file` 把 CLI 预置指令整体换成我们的系统提示、用户内容走 stdin（`-`）。
+        `--json` 只为失败归类（`turn.failed` 事件，同 `codex_failure_class`）；最终文字取 `-o` 文件。
+        **注意**：`model_instructions_file` 是否真的整体换掉了预置指令、`--ignore-user-config` 是否同时挡住 `$CODEX_HOME` 下的 AGENTS.md / 技能目录，
+        `codex debug prompt-input` 渲染不出来（它不接这两个开关），要真跑一次才能确认——见 `scripts/dev/structured_cli_smoke.py`。"""
+        sys_file = os.path.join(ctx.aux_dir, "system.md")
+        out_file = os.path.join(ctx.aux_dir, "out.txt")
+        files = {sys_file: ctx.system}
+        cmd = [
+            *ctx.argv,
+            "exec",
+            "-C",
+            ctx.cwd,
+            "--json",
+            "--sandbox",
+            "read-only",
+            "--skip-git-repo-check",
+            "--ephemeral",
+            "--ignore-user-config",
+            # 不把技能清单塞进上下文：`codex debug prompt-input` 实测渲染的输入里技能说明占约 19K 字符（内置技能，与用户配置无关），
+            # 这一个只想要一个 JSON 的单轮用不上；关掉后渲染 ≈ 6K 字符（冷启动与首 token 都更快）
+            "-c",
+            "skills.include_instructions=false",
+            "-c",
+            f"model_instructions_file={toml_string(sys_file)}",
+            "-m",
+            ctx.model,
+        ]
+        cmd += _codex_windows_sandbox_args([])
+        if _effort_confirmed(self._catalog(), ctx.model, ctx.effort):
+            cmd += ["-c", f"model_reasoning_effort={ctx.effort}"]
+        if ctx.schema is not None:
+            schema_file = os.path.join(ctx.aux_dir, "schema.json")
+            files[schema_file] = json.dumps(ctx.schema, ensure_ascii=False)
+            cmd += ["--output-schema", schema_file]
+        cmd += ["-o", out_file, "-"]
+        return StructuredSpec(cmd, {}, files, ctx.user, out_file)
+
+    def parse_structured_output(
+        self, stdout: str, output_text: str | None, exit_code: int
+    ) -> StructuredReply:
+        failure = None
+        for line in stdout.splitlines():
+            if '"turn.failed"' not in line:
+                continue
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(ev, dict) and ev.get("type") == "turn.failed":
+                failure = codex_failure_class(ev) or failure
+        text = output_text if output_text and output_text.strip() else None
+        return StructuredReply(text, failure)
 
     def fix_event_parser(self) -> Callable[[str], list[dict]] | None:
         def parse(line: str) -> list[dict]:
@@ -1660,6 +1780,58 @@ class ClaudeAgent(AgentDefinition):
         if ctx.model and ctx.endpoint_env:
             cmd += ["--model", ctx.model]
         return SpawnSpec(cmd, env)
+
+    def build_structured_command(self, ctx: StructuredRunContext) -> StructuredSpec | None:
+        """`claude -p` 的无工具单轮：`--tools ""` 不给任何内置工具、不落会话、不读用户 / 项目 / 本地设置（`--setting-sources ""`）、
+        不加载别处的 MCP 与技能、系统提示整体换成我们的（`--system-prompt`，固定文字、不含用户内容）、用户内容走 stdin。
+        **不用 `--bare`**：它不读 OAuth，订阅登录会失效。`--tools` 是变长参数，后面必须紧跟另一个 `--` 开头的参数。"""
+        cmd = [
+            *ctx.argv,
+            "-p",
+            "--output-format",
+            "json",
+            "--system-prompt",
+            ctx.system,
+            "--tools",
+            "",
+            "--no-session-persistence",
+            "--setting-sources",
+            "",
+            "--strict-mcp-config",
+            "--disable-slash-commands",
+            "--model",
+            ctx.model,
+        ]
+        if _effort_confirmed(self._catalog()[0], ctx.model, ctx.effort):
+            cmd += ["--effort", ctx.effort]
+        if ctx.schema is not None:
+            cmd += ["--json-schema", json.dumps(ctx.schema, ensure_ascii=False)]
+        return StructuredSpec(cmd, {}, {}, ctx.user, None)
+
+    def parse_structured_output(
+        self, stdout: str, output_text: str | None, exit_code: int
+    ) -> StructuredReply:
+        """`--output-format json` 是一个 `result` 事件对象（个别版本是事件数组：取最后一个 `result`）。文字优先取 `structured_output`
+        （带 `--json-schema` 时结果放这里，**未实测**），否则 `result` 字符串；`is_error` 的不当文字。"""
+        try:
+            data = json.loads(stdout)
+        except ValueError:
+            return StructuredReply()
+        if isinstance(data, list):
+            data = next(
+                (e for e in reversed(data) if isinstance(e, dict) and e.get("type") == "result"),
+                None,
+            )
+        if not isinstance(data, dict):
+            return StructuredReply()
+        failure = claude_failure_class({**data, "type": "result"}) if data.get("is_error") else None
+        if data.get("is_error"):
+            return StructuredReply(None, failure)
+        so = data.get("structured_output")
+        if isinstance(so, dict):
+            return StructuredReply(json.dumps(so, ensure_ascii=False), None)
+        res = data.get("result")
+        return StructuredReply(res if isinstance(res, str) and res.strip() else None, None)
 
     def fix_event_parser(self) -> Callable[[str], list[dict]] | None:
         prefix = "mcp__tavotto_fix__"

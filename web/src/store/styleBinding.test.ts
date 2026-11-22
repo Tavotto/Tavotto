@@ -764,7 +764,8 @@ describe('Codex #547 第二轮评审：库写入一条队列 + 代次', () => {
     const c1 = project.canvases[0]
     c1.objects = [panel('a', 'FigA')]
     const c2 = { ...structuredClone(c1), id: 'c2', name: '第二张', objects: [panel('b', 'FigB')] }
-    c2.style = { id: 's1', snapshot: structuredClone(USER.data) }
+    // 这条 override 是样式之前写的（登记在 owned 里）；没登记的算用户手改的，改样式不覆盖（ADR 0081 §十四）
+    c2.style = { id: 's1', snapshot: structuredClone(USER.data), owned: { 'b@FigB': { 'axes_0.xlabel': { fontsize: { value: 10 } } } } }
     ;(c2.objects[0] as PanelObject).overrides = [{ gid: 'axes_0.xlabel', prop: 'fontsize', value: 10 }]
     project.canvases.push(c2)
     await s().switchDocument(project, 'd_two')
@@ -1471,6 +1472,45 @@ describe('Codex #547 最后一轮评审（964ce71f）', () => {
     expect(ov('b', 'axes_0.xlabel', 'fontsize')).toBe(12)
     expect(ov('b', 'axes_0.title', 'fontsize')).toBe(14)
   })
+
+  it('Codex #2083 P1 没渲染回来的图上用户手改过这一项：改样式记下的欠账补的时候也不覆盖手改（§十四）', async () => {
+    fakeLibrary([record({ id: 's1', data: { element: { axis_label: { fontsize: 10 } }, pt_basis: 'page' } })])
+    await seed([panel('a', 'FigA'), panel('b', 'FigB')])
+    stop = startStyleBindingSync()
+    bindCanvasStyle('s1')
+    rerenderAll()
+    // 单图档把 b 的轴标题改成 14（用户的），这一版还没渲染回来
+    s().commit(literal('手改轴标题'), (d) => {
+      const o = d.objects.find((x) => x.id === 'b') as PanelObject
+      o.overrides = o.overrides.map((v) => (v.gid === 'axes_0.xlabel' ? { ...v, value: 14 } : v))
+    })
+    rerender('a')
+    await editBoundStyle({ kind: 'element', role: 'axis_label', prop: 'fontsize', value: 12 })
+    expect(ov('a', 'axes_0.xlabel', 'fontsize'), '有 manifest 的图当场改').toBe(12)
+    rerender('b')
+    alignNewFigures()
+    expect(ov('b', 'axes_0.xlabel', 'fontsize'), '手改的 14 留着').toBe(14)
+    expect(
+      s().doc.style?.owned?.[`b@${panelById('b').fileId}`]?.['axes_0.xlabel']?.fontsize,
+      '也不重新登记成样式写的',
+    ).toBeUndefined()
+  })
+
+  it('Codex #2083 P1 明确绑定欠的那一项照旧覆盖：之后改样式也只是换成新值，不因为「不碰手改」漏掉', async () => {
+    fakeLibrary([record({ id: 's1', data: { element: { axis_label: { fontsize: 10 } }, pt_basis: 'page' } })])
+    await seed([panel('a', 'FigA'), panel('b', 'FigB')])
+    // 绑定之前用户手改了 b（没登记），这一版还没渲染回来
+    s().commit(literal('手改轴标题'), (d) => {
+      const o = d.objects.find((x) => x.id === 'b') as PanelObject
+      o.overrides = [...o.overrides.filter((v) => v.gid !== 'axes_0.xlabel' || v.prop !== 'fontsize'), { gid: 'axes_0.xlabel', prop: 'fontsize', value: 16 } as never]
+    })
+    stop = startStyleBindingSync()
+    bindCanvasStyle('s1')
+    await editBoundStyle({ kind: 'element', role: 'axis_label', prop: 'fontsize', value: 12 })
+    rerender('b')
+    alignNewFigures()
+    expect(ov('b', 'axes_0.xlabel', 'fontsize'), '绑定要整张统一：按样式此刻的值写').toBe(12)
+  })
 })
 
 describe('重跑后脚本赢：不自动对齐，显示不一致、一键对齐（用户 2026-09-25 裁决，ADR 0081 §二 / §十三）', () => {
@@ -1956,7 +1996,8 @@ describe('撤销只退画布、不推回样式库（ADR 0081 §十二，用户 2
     const c1 = project.canvases[0]
     c1.objects = [panel('a', 'FigA')]
     const c2 = { ...structuredClone(c1), id: 'c2', name: '第二张', objects: [panel('b', 'FigB')] }
-    c2.style = { id: 's1', snapshot: structuredClone(USER.data) }
+    // 这条 override 是样式之前写的（登记在 owned 里）；没登记的算用户手改的，改样式不覆盖（ADR 0081 §十四）
+    c2.style = { id: 's1', snapshot: structuredClone(USER.data), owned: { 'b@FigB': { 'axes_0.xlabel': { fontsize: { value: 10 } } } } }
     ;(c2.objects[0] as PanelObject).overrides = [{ gid: 'axes_0.xlabel', prop: 'fontsize', value: 10 }]
     project.canvases.push(c2)
     await s().switchDocument(project, 'd_two')

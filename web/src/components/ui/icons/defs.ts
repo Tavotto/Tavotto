@@ -239,6 +239,9 @@ const RAW_DEFS = {
   Crop: { s: ['M6.5 2.5v13a2 2 0 0 0 2 2h13', 'M2.5 6.5h13a2 2 0 0 1 2 2v13'] },
   Group: { s: [{ d: rr(3, 3, 18, 18, 2.5), dash: '3.6 2.65' }], f: [rr(7, 7, 4, 4, 1), rr(13, 13, 4, 4, 1)] },
   Ungroup: { s: ['M3 8V5.5A2.5 2.5 0 0 1 5.5 3H8', 'M16 21h2.5a2.5 2.5 0 0 0 2.5-2.5V16'], f: [rr(7, 7, 4, 4, 1), rr(13, 13, 4, 4, 1)] },
+  // 剪切蒙版（ADR 0191）：圆形的剪切路径罩着一块内容；释放 = 剪切路径变成虚线
+  ClipMask: { s: [circ(12, 12, 8.5)], f: [rr(8, 8, 8, 8, 1)] },
+  ReleaseClipMask: { s: [{ d: circ(12, 12, 8.5), dash: '3.6 2.65' }], f: [rr(8, 8, 8, 8, 1)] },
   Crosshair: { s: [circ(12, 12, 8), 'M12 2.5v4', 'M12 17.5v4', 'M2.5 12h4', 'M17.5 12h4'] },
   Clipboard: { s: [CLIP_BOARD, CLIP] },
   ClipboardPaste: { s: [CLIP_BOARD, CLIP, 'M9 12h6', 'M9 16h4'] },
@@ -455,6 +458,8 @@ export const SMALL_DEFS: Partial<Record<IconName, IconDef>> = {
   RefreshCw: { s: ['M19 13a7 7 0 1 1-2-6', 'M17 3V7H13'] },
   Download: { s: ['M5 20H19', 'M12 4V15', 'M7 10L12 15L17 10'] },
   ExternalLink: { s: ['M10 5H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V14', 'M14 5H19V10', 'M19 5L11 13'] },
+  // 「跟回画布」（样式面板单图档）：横线都落在奇数上（7 / 11 / 15），12px 整像素
+  Link2: { s: ['M10 7H8a4 4 0 0 0 0 8H10', 'M14 7H16a4 4 0 0 1 0 8H14', 'M9 11H15'] },
   Circle: { s: [SMALL_RING] },
   Lock: { s: ['M8 11V8a4 4 0 0 1 8 0v3'], f: [{ d: 'M7 11H17a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V13a2 2 0 0 1 2-2Z', w: 0 }] },
   TriangleAlert: { f: [{ d: 'M12 3.5L21 19H3Z', w: 2 }], k: [{ d: 'M11 8H13V13H11Z', w: 0 }, { d: 'M11 15H13V17H11Z', w: 0 }] },
