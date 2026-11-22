@@ -906,16 +906,31 @@ def size_mm_of(fig) -> tuple[float, float]:
     return (round(w_in * 25.4, 2), round(h_in * 25.4, 2))
 
 
+#: 盘根形脚本串：`X:` 单独成段或 `X:/…`（反斜杠已归一成 `/`），`.match` 锚定串首。
+#: `X:name` 不在其中——POSIX 相对文件名（`normalize_relative_script` 的 docstring）。
+_DRIVE_ROOTED_RE = re.compile(r"[A-Za-z]:$|[A-Za-z]:/")
+_DRIVE_PREFIX_RE = re.compile(r"[A-Za-z]:")
+
+
 def normalize_relative_script(script: str) -> str:
     """脚本路径规范：项目相对、POSIX 分隔。绝对路径直接拒绝。
 
     asset id 与 fingerprint 都吃它——混进绝对路径，同一个项目换台机器（或
     换个挂载点）id 就变了，保存重开后 override 挂错身份（FigS3 一族事故）。
+
+    盘符判据只拒**盘根形**（`X:` 单独成段或 `X:/…`）：POSIX 里冒号是合法文件
+    名字符，`a:b.py` 是普通相对文件名（Codex #1925 P1），按位次判会把 macOS
+    上真实存在的脚本当成绝对路径、在计划创建的最前面炸成 500。这一放行只在
+    POSIX 上成立：Windows 上 `C:foo.py` 是驱动器相对路径（C 盘当前目录下的
+    foo.py），`os.path.join(root, "C:foo.py")` 会换盘跳出项目根、asset id 也会
+    混进盘符，所以 `os.name == "nt"` 时照旧拒绝一切 `X:` 开头的串，不依赖别处
+    的 `contained_path` 兜住。
     """
     if not isinstance(script, str) or not script.strip():
         raise ValueError("script 必须是非空字符串")
     normalized = script.replace("\\", "/")
-    if normalized.startswith("/") or (len(normalized) > 1 and normalized[1] == ":"):
+    drive = _DRIVE_PREFIX_RE if os.name == "nt" else _DRIVE_ROOTED_RE
+    if normalized.startswith("/") or drive.match(normalized):
         raise ValueError(f"script 必须是项目相对路径，不能是绝对路径: {script!r}")
     return normalized
 
