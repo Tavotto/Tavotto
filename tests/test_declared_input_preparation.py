@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import hashlib
+import os
 import sys
 import threading
 from types import SimpleNamespace
@@ -609,7 +610,49 @@ def test_real_native_preparation_result_keeps_actual_capture_in_success_record(w
                 session.cancel_owned()
 
 
-@pytest.mark.parametrize("name", ["phase:fit.py", "plot.py ", "plot.py.", "data?.py", "a:b.py"])
+#: `a:b.py` 只在 POSIX 上是普通相对文件名；Windows 上它是驱动器相对路径（换盘跳出项目根），
+#: 不可能是项目里的脚本，`normalize_relative_script` 在 nt 上照旧拒绝（见下方专门用例）。
+_POSIX_ONLY_DRIVE_LIKE = pytest.mark.skipif(
+    os.name == "nt", reason="Windows 上 a:b.py 是驱动器相对路径，不是项目内文件名"
+)
+
+
+@pytest.mark.parametrize(
+    ("platform", "name", "rejected"),
+    [
+        ("nt", "C:foo.py", True),
+        ("nt", "a:b.py", True),
+        ("nt", "C:", True),
+        ("nt", "C:/x/plot.py", True),
+        ("nt", "phase:fit.py", False),
+        ("posix", "a:b.py", False),
+        ("posix", "C:foo.py", False),
+        ("posix", "C:", True),
+        ("posix", "C:/x/plot.py", True),
+    ],
+)
+def test_drive_relative_names_are_rejected_only_on_windows(monkeypatch, platform, name, rejected):
+    """维护者复核 #1925 P1-3：盘根形在所有平台上都拒；`X:name` 驱动器相对形只在 POSIX
+    上当普通相对文件名放行——Windows 上 `os.path.join(root, "C:foo.py")` 会换盘、跳出
+    项目根，asset id 也会混进盘符，必须在规范化这一步就拒，不依赖 `contained_path`。"""
+    monkeypatch.setattr(figcapture.os, "name", platform)
+    if rejected:
+        with pytest.raises(ValueError):
+            figcapture.normalize_relative_script(name)
+    else:
+        assert figcapture.normalize_relative_script(name) == name
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "phase:fit.py",
+        "plot.py ",
+        "plot.py.",
+        "data?.py",
+        pytest.param("a:b.py", marks=_POSIX_ONLY_DRIVE_LIKE),
+    ],
+)
 def test_unportable_script_names_observe_absence_instead_of_failing(world, name):
     """本机文件系统收得下、但落不进可移植声明身份的脚本名（macOS 冒号；Windows 尾随
     空格 / 点等），只观察为「这个 scope 没有声明」，绝不拦下准备（Codex #1925 P1，
@@ -689,7 +732,10 @@ def test_dispatch_refuses_a_changed_selection_before_the_build_leaves(world, mon
     assert dispatched == [1]
 
 
-@pytest.mark.parametrize("name", ["phase:fit.py", "plot.py ", "plot.py.", "a:b.py"])
+@pytest.mark.parametrize(
+    "name",
+    ["phase:fit.py", "plot.py ", "plot.py.", pytest.param("a:b.py", marks=_POSIX_ONLY_DRIVE_LIKE)],
+)
 def test_dispatch_degrades_unportable_names_instead_of_crashing(world, monkeypatch, name):
     """Codex #1925 P1（二轮）：分派边界的现读与计划侧同一降级——不可移植脚本名观察到
     没有声明、build 照发；计划创建与 spec 构造也不再被 `a:b.py` 这类盘符形名字在声明
