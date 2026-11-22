@@ -120,6 +120,9 @@ class OwnedLaunch:
     cancelled: object | None = None
     #: Private exact-scope metadata observed by preparation; never argv or public state.
     input_declaration_state: dict | None = dataclasses.field(default=None, repr=False)
+    #: The approved input remap generation observed with that selection; None = unknown,
+    #: only the live table is compared.
+    input_remap_generation: int | None = dataclasses.field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         spec = self.spec
@@ -682,15 +685,18 @@ def start(
         raise RunError(runcodes.INTERPRETER_NOT_EXECUTABLE, interpreter=spec.interpreter)
     try:
         input_payload = declaredinputs.payload_for_native(
-            spec, expected_selection=launch.input_declaration_state
+            spec,
+            expected_selection=launch.input_declaration_state,
+            expected_remap_generation=launch.input_remap_generation,
         )
     except declaredinputs.DeclaredInputsConflict:
+        # The approval itself changed (selection revision or remap table): only
+        # a refresh fixes this, so it stays a plan conflict.
         raise
-    except declaredinputs.DeclaredInputsError as exc:
-        if launch.input_declaration_state is not None:
-            raise declaredinputs.DeclaredInputsConflict(
-                "Input declaration is no longer available for this launch"
-            ) from exc
+    except declaredinputs.DeclaredInputsError:
+        # Optional evidence: a moved or deleted resource is not a selection
+        # change, and refresh cannot fix it. The launch proceeds without a
+        # capture, exactly like the terminal and safe paths.
         input_payload = {}
     # 租约键 = 会话 id：每次启动唯一（launch_id + 随机后缀），不同所有者之间互相删不掉对方的租约
     # 完整 128 位随机（不截断）：同一 launch_id 反复复用时也不会生日碰撞回到旧目录 / 旧回执身份

@@ -41,7 +41,18 @@ class Runner:
     """Owned child plus a real token handshake and synchronous parent socket."""
 
     def __init__(
-        self, root, *, candidate=None, target="plot.py", kind="script", argv=(), rc=None, cwd=None
+        self,
+        root,
+        *,
+        candidate=None,
+        target="plot.py",
+        kind="script",
+        argv=(),
+        rc=None,
+        cwd=None,
+        entry=None,
+        script_source=None,
+        as_module=None,
     ):
         self.root = root
         self.candidate = candidate
@@ -50,6 +61,9 @@ class Runner:
         self.argv = argv
         self.rc = rc
         self.cwd = root if cwd is None else cwd
+        self.entry = entry
+        self.script_source = script_source
+        self.as_module = as_module
         self.frames = []
         self.counter = 0
         self.at_barrier = False
@@ -77,6 +91,12 @@ class Runner:
         ]
         if self.rc:
             command += ["--run-config", self.rc]
+        if self.entry:
+            command += ["--entry", self.entry]
+        if self.script_source:
+            command += ["--script-source", self.script_source]
+        if self.as_module:
+            command += ["--as-module", self.as_module]
         command += ["--", *self.argv]
         self.command = command
         try:
@@ -480,4 +500,88 @@ assert inputdeclaration.SENTINEL == 'user-owned'
     with Runner(project, candidate=candidate(project)) as runner:
         capture(runner.event("barrier"))
         assert (project / "__pycache__").is_dir()
+        runner.finish()
+
+
+LIBRARY_ENTRY = """import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from pathlib import Path
+
+def main():
+    value = float(Path('data.txt').read_text())
+    fig, ax = plt.subplots(figsize=(2, 1))
+    ax.plot([0, 1], [value, value])
+    fig.savefig('F.svg')
+"""
+
+
+def test_function_entry_runs_still_capture_the_declared_inputs(project):
+    """Codex #1925 P2：登记的函数入口同样在实际目标源码读取边界开始捕获。"""
+    (project / "plot.py").write_text(LIBRARY_ENTRY, encoding="utf-8")
+    source = (project / "plot.py").read_bytes()
+    with Runner(project, candidate=candidate(project), entry="main") as runner:
+        runner.event("execution_started")
+        fact = capture(runner.event("barrier"))
+        assert fact["declaration"]["script"]["sha256"] == hashlib.sha256(source).hexdigest()
+        assert fact["declaration"]["files"] == [
+            {"id": "data.txt", "sha256": hashlib.sha256(b"1\n").hexdigest(), "size_bytes": 2}
+        ]
+        runner.finish()
+
+
+def test_package_module_runs_capture_at_the_target_module_source_read(project):
+    """Codex #1925 P2：包里的脚本按模块运行（ADR 0196）同样捕获；父包 import
+    不冒领目标声明，绑定的字节是目标模块自己那一次读取。"""
+    plots = project / "plots"
+    plots.mkdir()
+    (plots / "__init__.py").write_text("", encoding="utf-8")
+    (plots / "helpers.py").write_text("value = 3\n", encoding="utf-8")
+    (plots / "fig.py").write_text(
+        "from pathlib import Path\n"
+        "from .helpers import value\n"
+        "import matplotlib\n"
+        "matplotlib.use('Agg')\n"
+        "import matplotlib.pyplot as plt\n"
+        "fig, ax = plt.subplots(figsize=(2, 1))\n"
+        "ax.plot([0, 1], [value, value])\n"
+        "fig.savefig('F.svg')\n"
+        "plt.show()\n",
+        encoding="utf-8",
+    )
+    with Runner(
+        project,
+        candidate=candidate(project, script="plots/fig.py"),
+        target="plots/fig.py",
+        as_module="plots.fig",
+    ) as runner:
+        runner.event("execution_started")
+        fact = capture(runner.event("barrier"), script="plots/fig.py")
+        assert (
+            fact["declaration"]["script"]["sha256"]
+            == hashlib.sha256((plots / "fig.py").read_bytes()).hexdigest()
+        )
+        assert fact["declaration"]["files"] == [
+            {"id": "data.txt", "sha256": hashlib.sha256(b"1\n").hexdigest(), "size_bytes": 2}
+        ]
+        runner.finish()
+
+
+def test_launcher_bytes_bind_the_capture_while_the_scope_stays_the_original_script(project):
+    """Codex #1925 P2（ADR 0194 §二）：native 候选与 runner 在 spec.script_source 上
+    一致——绑定的是启动脚本实际编译的字节，scope 身份仍是原脚本。"""
+    launcher_dir = project / "tavottofile" / "launchers"
+    launcher_dir.mkdir(parents=True)
+    launcher = launcher_dir / "plot.py"
+    launcher_bytes = (HEADER + FIGURE + "plt.show()\n").encode("utf-8")
+    launcher.write_bytes(launcher_bytes)
+    (project / "plot.py").write_bytes(b"# original identity, never compiled here\n")
+    approved = inputdeclaration.validate_candidate(
+        {**candidate(project), "script_path": str(launcher)}
+    )
+    with Runner(project, candidate=approved, script_source=str(launcher)) as runner:
+        runner.event("execution_started")
+        fact = capture(runner.event("barrier"))
+        assert fact["declaration"]["script"]["sha256"] == hashlib.sha256(launcher_bytes).hexdigest()
+        assert fact["declaration"]["scope"]["script"] == "plot.py"
         runner.finish()

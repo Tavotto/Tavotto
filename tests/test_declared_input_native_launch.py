@@ -238,6 +238,117 @@ plt.show()
 )
 
 
+def test_remap_approval_drift_conflicts_the_native_candidate(project):
+    """Codex #1925 P1：行内冻结的改指批准必须对照现表——删规则、整表换代、
+    改指目标三样都让候选冲突，而不是把旧目标照旧拷走。"""
+    external = project.parent / "external-launch"
+    external.mkdir()
+    (external / "a.csv").write_bytes(b"4,5\n")
+    (external / "b.csv").write_bytes(b"6,7\n")
+    inputremap.add_rule(project, {"kind": "file", "from": "old.csv", "to": str(external / "a.csv")})
+    _declare(project, remaps=["old.csv"])
+    spec = _spec(project)
+    selection = declaredinputs.scope_selection(project, script=SCRIPT, cwd_mode="project_root")
+    old_generation = inputremap.generation(project)
+    approved = declaredinputs.payload_for_native(spec, expected_selection=selection)
+    assert str((external / "a.csv").resolve()) in [
+        item["path"] for item in approved["input_declaration"]["files"]
+    ]
+
+    # 批准被删：行里冻结的规则已不在现表
+    inputremap.remove_rule(project, "file", "old.csv")
+    with pytest.raises(declaredinputs.DeclaredInputsConflict):
+        declaredinputs.payload_for_native(spec, expected_selection=selection)
+
+    # 规则原样回来、但整表换代：计划观察的代次旧了，同样冲突
+    inputremap.add_rule(project, {"kind": "file", "from": "old.csv", "to": str(external / "a.csv")})
+    assert (
+        declaredinputs.scope_selection(project, script=SCRIPT, cwd_mode="project_root") == selection
+    )
+    assert declaredinputs.payload_for_native(spec, expected_selection=selection)
+    with pytest.raises(declaredinputs.DeclaredInputsConflict):
+        declaredinputs.payload_for_native(
+            spec, expected_selection=selection, expected_remap_generation=old_generation
+        )
+
+    # 同一条规则被改指到另一目标：现表与行内冻结值不一致
+    inputremap.add_rule(project, {"kind": "file", "from": "old.csv", "to": str(external / "b.csv")})
+    with pytest.raises(declaredinputs.DeclaredInputsConflict):
+        declaredinputs.payload_for_native(spec, expected_selection=selection)
+
+
+@nativekit.needs_user_python
+def test_owned_launch_uses_the_plan_observed_remap_generation(project):
+    """桌面拥有的启动把计划观察到的改指代次带到分派点：表动了就冲突，不动照常。"""
+    inputremap.add_rule(
+        project, {"kind": "file", "from": "extra.csv", "to": str(project / "data.csv")}
+    )
+    _declare(project)
+    selection = declaredinputs.scope_selection(project, script=SCRIPT, cwd_mode="project_root")
+    old_generation = inputremap.generation(project)
+    (project / SCRIPT).write_bytes(TWO_SHOWS.encode("utf-8"))
+    session = desktopproc.start(
+        desktopproc.OwnedLaunch(
+            _spec(project),
+            policy=desktopkit.FAST,
+            input_declaration_state=selection,
+            input_remap_generation=old_generation,
+        )
+    )
+    try:
+        nativekit.wait_state(session, [nativesession.BARRIER])
+        desktopkit.finish(session)
+    finally:
+        if not session.owned.finished:
+            session.cancel_owned()
+    inputremap.add_rule(
+        project,
+        {
+            "kind": "file",
+            "from": "extra.csv",
+            "to": str(project.parent / "external-launch" / "a.csv"),
+        },
+    )
+    with pytest.raises(declaredinputs.DeclaredInputsConflict):
+        desktopproc.start(
+            desktopproc.OwnedLaunch(
+                _spec(project),
+                policy=desktopkit.FAST,
+                input_declaration_state=selection,
+                input_remap_generation=old_generation,
+            )
+        )
+
+
+@nativekit.needs_user_python
+def test_missing_capture_resource_degrades_the_owned_launch_without_stale(project):
+    """Codex #1925 P2：声明的文件被移走 / 删除不是声明变化——launch 照常、捕获缺席，
+    绝不落「请刷新准备计划」那条刷新救不回来也不该拦脚本的路。脚本本身不读那份文件。"""
+    (project / SCRIPT).write_bytes(
+        (
+            desktopkit.FIGURE_HEADER + "fig, ax = plt.subplots()\nax.plot([0, 1])\nplt.show()\n"
+        ).encode("utf-8")
+    )
+    _declare(project)
+    (project / "data.csv").unlink()
+    selection = declaredinputs.scope_selection(project, script=SCRIPT, cwd_mode="project_root")
+    session = desktopproc.start(
+        desktopproc.OwnedLaunch(
+            _spec(project), policy=desktopkit.FAST, input_declaration_state=selection
+        )
+    )
+    try:
+        nativekit.wait_state(session, [nativesession.BARRIER])
+        session.ensure_built()
+        rcpt = receipt.from_native_session(session, SCRIPT)
+        assert rcpt.captured_inputs is None
+        assert rcpt.captured_input_archive is None
+        desktopkit.finish(session)
+    finally:
+        if not session.owned.finished:
+            session.cancel_owned()
+
+
 @nativekit.needs_user_python
 @pytest.mark.parametrize("change", [False, True])
 def test_real_owned_launch_ack_barriers_and_receipts(project, change):

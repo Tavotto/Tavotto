@@ -12500,6 +12500,12 @@ def _preparation_runner(pl, before_retry=None):
             **({"run": pl.run} if getattr(pl, "run", None) is not None else {}),
             # 这份计划自己的解释器（路径 + 来源 + 环境代）：取会话只认它，不再对共享的项目记录重新决定
             **({"pinned": _plan_pin(pl)} if _plan_pin(pl) is not None else {}),
+            # 计划冻结的精确声明选择：分派前在 build 出门前再比一次（FO-007 的分派边界）
+            **(
+                {"input_declaration_state": pl.input_declaration_state}
+                if getattr(pl, "input_declaration_state", None) is not None
+                else {}
+            ),
         )
     finally:
         for worker in acquired:
@@ -12544,7 +12550,10 @@ def _native_preparation_runner(pl, before_retry=None):
                 launch_order=pl.launch_order,
                 cancelled=lambda: engine_preparation.SERVICE.launch_blocked(pl.plan_id),
                 **(
-                    {"input_declaration_state": pl.input_declaration_state}
+                    {
+                        "input_declaration_state": pl.input_declaration_state,
+                        "input_remap_generation": pl.input_remap_generation,
+                    }
                     if getattr(pl, "input_declaration_state", None) is not None
                     else {}
                 ),

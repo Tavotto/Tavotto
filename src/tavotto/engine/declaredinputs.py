@@ -437,12 +437,17 @@ def payload_for(worker):
             return {}
     return {
         "input_declaration": _candidate(
-            root, scope, row, rules=spec.input_remap, source=spec.script_source
+            root,
+            scope,
+            row,
+            rules=spec.input_remap,
+            source=spec.script_source,
+            row_revision=_row_revision(row),
         )
     }
 
 
-def _candidate(root, scope, row, *, rules=(), source=None, native=False):
+def _candidate(root, scope, row, *, rules=(), source=None, native=False, row_revision=None):
     rules = [dict(rule) for rule in rules]
     if figcapture.clean_remap_rules(rules) != rules:
         raise DeclaredInputsError("Worker remap rules are malformed")
@@ -485,10 +490,49 @@ def _candidate(root, scope, row, *, rules=(), source=None, native=False):
         "rules": rules,
         "limits": {"max_files": projectcopy.MAX_FILES, "max_bytes": projectcopy.MAX_BYTES},
     }
+    if row_revision is not None:
+        # Provenance stamp: the capture made from this candidate can name the
+        # exact declaration row it was approved under, so a report may present
+        # it only for that same selection (Codex #1925 P1).
+        candidate["revision"] = row_revision
     return inputdeclaration.validate_candidate(copy.deepcopy(candidate))
 
 
-def payload_for_native(spec, *, run=None, cwd_mode=None, expected_selection=None):
+def _validate_native_remaps(root, row, *, expected_generation=_REMAP_GENERATION_UNSET):
+    """The declared remap approvals must still exist unchanged in the live table.
+
+    A removed or retargeted rule is an approval change (`DeclaredInputsConflict`,
+    refresh can fix it); a missing target resource is only unavailable evidence
+    (`DeclaredInputsError`, the launch degrades to no capture).
+    """
+    if not row["remaps"] and expected_generation is _REMAP_GENERATION_UNSET:
+        return
+    generation, rules = inputremap.snapshot(root)
+    if expected_generation is not _REMAP_GENERATION_UNSET and expected_generation != generation:
+        raise DeclaredInputsConflict("Approved input remaps changed")
+    for selected in row["remaps"]:
+        matching = [
+            rule
+            for rule in rules
+            if rule["kind"] == selected["kind"] and rule["from"] == selected["from"]
+        ]
+        if len(matching) != 1 or matching[0]["to"] != selected["to"]:
+            raise DeclaredInputsConflict("Approved input remaps changed")
+        approved = projectenv.contained_path(selected["to"], selected["to"])
+        available = (
+            Path(approved).is_file()
+            if approved is not None and selected["kind"] == figcapture.REMAP_FILE
+            else Path(approved).is_dir()
+            if approved is not None
+            else False
+        )
+        if not available:
+            raise DeclaredInputsError("Approved remap target has the wrong type or is missing")
+
+
+def payload_for_native(
+    spec, *, run=None, cwd_mode=None, expected_selection=None, expected_remap_generation=None
+):
     """Approved candidate for actual native cwd and positively known arguments.
 
     Terminal nonempty argv has no verified portable run reference. Multiple
@@ -559,7 +603,28 @@ def payload_for_native(spec, *, run=None, cwd_mode=None, expected_selection=None
     if len(rows) != 1:
         return {}
     row = rows[0]
-    return {"input_declaration": _candidate(spec.project_root, row["scope"], row, native=True)}
+    _validate_native_remaps(
+        spec.project_root,
+        row,
+        expected_generation=(
+            _REMAP_GENERATION_UNSET
+            if expected_remap_generation is None
+            else expected_remap_generation
+        ),
+    )
+    return {
+        "input_declaration": _candidate(
+            spec.project_root,
+            row["scope"],
+            row,
+            native=True,
+            # ADR 0194: the launcher's bytes are what run_script compiles, so
+            # the candidate's byte identity is script_source when present; the
+            # scope identity stays the original script.
+            source=spec.script_source or None,
+            row_revision=_row_revision(row),
+        )
+    }
 
 
 def matches_current_public(root, *, script, cwd_mode, run, captured_inputs, execution="safe"):
@@ -589,7 +654,39 @@ def matches_current_public(root, *, script, cwd_mode, run, captured_inputs, exec
             row,
             rules=inputremap.rules_for(root) if execution == execspec.PROFILE_SAFE else (),
             native=execution == execspec.PROFILE_NATIVE,
+            row_revision=selection["revision"],
         )
         return inputdeclaration.current_public_fact(candidate) == checked
     except (DeclaredInputsError, ValueError, OSError, TypeError):
         return False
+
+
+def scope_selection_degraded(root, *, script, cwd_mode, run=None, execution="safe"):
+    """`scope_selection` with the portability trap degraded to observed absence.
+
+    A locally legal script name that cannot have a portable declaration identity
+    (macOS colon, Windows trailing space or dot) is "no declaration can exist
+    here", never a preparation failure; an unreadable store degrades the same
+    way because the declaration feature is optional evidence.
+    """
+    try:
+        return scope_selection(root, script=script, cwd_mode=cwd_mode, run=run, execution=execution)
+    except (DeclaredInputsError, OSError):
+        return {"scope": None, "revision": None}
+
+
+def current_selection(worker):
+    """The parent-side observation of this safe worker's exact declaration scope.
+
+    Same degraded absence as the plan-side observation (`scope_selection_degraded`):
+    an unportable script identity or an unreadable store observes no declaration.
+    """
+    scope = _actual_scope(worker)
+    if scope is None:
+        return {"scope": None, "revision": None}
+    try:
+        data, _ = _read(worker.spec.project_root)
+    except OSError:
+        return {"scope": None, "revision": None}
+    row = next((item for item in data["declarations"] if item["scope"] == scope), None)
+    return {"scope": dict(scope), "revision": _row_revision(row)}

@@ -6,6 +6,7 @@ import copy
 import dataclasses
 import hashlib
 import sys
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -606,3 +607,114 @@ def test_real_native_preparation_result_keeps_actual_capture_in_success_record(w
         for session in sessions:
             if not session.owned.finished:
                 session.cancel_owned()
+
+
+@pytest.mark.parametrize("name", ["phase:fit.py", "plot.py ", "plot.py.", "data?.py"])
+def test_unportable_script_names_observe_absence_instead_of_failing(world, name):
+    """本机文件系统收得下、但落不进可移植声明身份的脚本名（macOS 冒号；Windows 尾随
+    空格 / 点等），只观察为「这个 scope 没有声明」，绝不拦下准备（Codex #1925 P1，
+    维护者补充的 Windows 同类情形同一通道）。"""
+    for execution in ("safe", "native"):
+        assert declaredinputs.scope_selection_degraded(
+            world, script=name, cwd_mode="project_root", execution=execution
+        ) == {"scope": None, "revision": None}
+    target = world / name
+    if not target.exists():
+        try:
+            target.write_text("def main():\n    pass\n", encoding="utf-8")
+        except OSError:
+            return  # Windows 拒绝该字面拼名且无剥尾等价物：降级判据已由上面两条钉住
+    planned = preparation.plan_for(
+        project_id="fixture-project",
+        project_root=str(world),
+        asset_id="",
+        stem="",
+        script=name,
+        entry="main",
+        original_artifact=None,
+        target=preparation.TARGET_SCRIPT,
+        run=None,
+        execution="safe",
+    )
+    assert planned.input_declaration_state == {"scope": None, "revision": None}
+    assert preparation.stale_reason(planned) is None
+
+
+def test_dispatch_refuses_a_changed_selection_before_the_build_leaves(world, monkeypatch):
+    """FO-007 在分派边界（Codex #1925 P2）：计划期 stale 检查与 build 出门之间声明被改，
+    拒发 build——脚本不按计划没见过的选择执行，写盘落完才被拦的旧路关闭。"""
+    selection(world, files=[INPUT])
+    planned = plan(world)
+    spec = execspec.safe_spec(
+        SCRIPT,
+        str(world),
+        "main",
+        interpreter=sys.executable,
+        sandbox=str(world.parent / "dispatch-sandbox"),
+        cwd_mode="project_root",
+        stem_aliases={},
+    )
+    worker = SimpleNamespace(
+        spec=spec,
+        script_name=SCRIPT,
+        figures_dir=str(world),
+        entry="main",
+        run=None,
+        python=sys.executable,
+        python_source="env_override",
+        generation=1,
+        built=False,
+        build_failed=False,
+        out_dir=str(world.parent / "dispatch-out"),
+    )
+    dispatched = []
+    worker.ensure_built = lambda *a, **k: dispatched.append(1) or {"stems": ["F"]}
+    monkeypatch.setattr(pool, "acquire", lambda *a, **k: (worker, True))
+    monkeypatch.setattr(pool, "workdir_hint_of_build", lambda *a, **k: None)
+
+    worker, response, created = pool.build_owned(
+        SCRIPT, str(world), "main", input_declaration_state=planned.input_declaration_state
+    )
+    assert created is True and dispatched == [1]
+
+    # 另一个窗口改了选择：同一份计划再分派，build 出门前就拒绝
+    selection(world, files=[OTHER])
+    worker.ensure_built = lambda *a, **k: pytest.fail("build left after the selection changed")
+    with pytest.raises(pool.WorkerError) as caught:
+        pool.build_owned(
+            SCRIPT, str(world), "main", input_declaration_state=planned.input_declaration_state
+        )
+    assert caught.value.code == "preparation_plan_stale"
+    assert dispatched == [1]
+
+
+def test_cached_build_response_receipt_keeps_the_frozen_capsule_identity(world):
+    """Codex #1925 P2：同一捕获执行的第二次 build 回包顶层 runtime 是现采的，
+    回执装配吃冻结 capsule——同一执行、同一封存档案的身份不漂移。"""
+    selection(world)
+    worker, response, actual = captured_worker(world)
+    worker._execution_lock = threading.Lock()
+    enriched = {
+        **response,
+        "captured_inputs": copy.deepcopy(worker.last_captured_inputs),
+        "captured_build": {
+            "execution_id": worker.execution_id,
+            "runtime": copy.deepcopy(response["runtime"]),
+            "descriptors": copy.deepcopy(response["descriptors"]),
+            "source_sha256": worker.last_captured_inputs["declaration"]["script"]["sha256"],
+        },
+    }
+    pool._accept_captured_inputs(worker, enriched)
+    assert worker.last_captured_build is not None
+    assert actual.captured_selection_revision == worker.last_captured_inputs["selection_revision"]
+    poisoned = {
+        "runtime": {**response["runtime"], "pid": 999999},
+        "descriptors": [{"stem": "G"}],
+        "execution_id": worker.execution_id,
+    }
+    again = receipt.from_worker(
+        worker, poisoned, control_plane=receipt.CONTROL_PLANE_PYTHON, grant=None
+    )
+    assert again.receipt_id == actual.receipt_id
+    assert again.runtime == actual.runtime
+    assert again.descriptors == actual.descriptors

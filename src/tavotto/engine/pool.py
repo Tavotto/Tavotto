@@ -6388,6 +6388,23 @@ def build(
     return worker, resp
 
 
+def _require_current_declaration(worker, expected) -> None:
+    """FO-007 在分派边界的同一份判据：计划冻结的声明选择必须仍是存储此刻的选择，
+    **build 请求出门之前**就拒绝——否则脚本按计划没见过的选择执行，写盘落完才被
+    执行后的核对拦下（Codex #1925 P2）。读不了的存储降级成「观察到没有声明」
+    （`declaredinputs.current_selection`），与计划侧同一口径。"""
+    if not isinstance(expected, dict) or set(expected) != {"scope", "revision"}:
+        raise WorkerError("Invalid expected input declaration.", code="bad_request")
+    from . import declaredinputs
+
+    current = declaredinputs.current_selection(worker)
+    if current["scope"] != expected["scope"] or current["revision"] != expected["revision"]:
+        raise WorkerError(
+            "输入声明在检查之后变了，这份计划作废；请重新检查",
+            code="preparation_plan_stale",
+        )
+
+
 def build_owned(
     script_name: str,
     figures_dir: str,
@@ -6398,6 +6415,7 @@ def build_owned(
     run=None,
     on_acquired=None,
     pinned: EnvironmentDecision | None = None,
+    input_declaration_state: dict | None = None,
 ):
     """`build()` + 所有权：回 `(worker, build 响应, created)`。
 
@@ -6410,6 +6428,10 @@ def build_owned(
 
     `on_acquired(worker, created)`：每次取到会话、**执行之前**调一次（T09）——调用方据此在 build 还在跑的时候就
     知道「这条是不是我建的」，取消可以当场只关自己建的那条，不必等 build 返回。
+
+    `input_declaration_state`：计划冻结的精确声明选择（scope + revision）。每次取到会话、
+    build 出门前按 `_require_current_declaration` 与存储再比一次；带它的调用方（准备接口）
+    在计划期的 stale 检查与这次分派之间隔着取会话 / 退会话，竞态窗口在这里收口。
     """
     context = {"run": run} if run is not None else {}
     first = [True]
@@ -6425,12 +6447,17 @@ def build_owned(
             on_acquired(worker, created)
         return worker, created
 
+    def before_build(worker):
+        if input_declaration_state is not None:
+            _require_current_declaration(worker, input_declaration_state)
+
     return _build_with(
         take,
         script_name,
         figures_dir,
         allow_project_env=allow_project_env,
         before_retry=before_retry,
+        before_build=before_build,
     )
 
 

@@ -796,8 +796,13 @@ def _binding_sans_mode(binding: dict | None) -> dict | None:
 
 
 def _declaration_selection(root, script, cwd_mode, *, run=None, execution="safe"):
-    """只消费唯一 metadata 选择器；不扫描、hash 或自行推导声明身份。"""
-    selection = declaredinputs.scope_selection(
+    """只消费唯一 metadata 选择器；不扫描、hash 或自行推导声明身份。
+
+    不可移植脚本名（macOS 冒号 / Windows 尾随空格或点）与读不了的声明存储在
+    `declaredinputs.scope_selection_degraded` 里统一降级成「观察到没有声明」：
+    只把声明控件标为不可用，绝不拦下正常准备。
+    """
+    selection = declaredinputs.scope_selection_degraded(
         root, script=script, cwd_mode=cwd_mode, run=run, execution=execution
     )
     return execspec.FrozenDict(
