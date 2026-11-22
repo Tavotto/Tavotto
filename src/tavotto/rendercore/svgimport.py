@@ -88,12 +88,19 @@ def apply(m: Matrix, x: float, y: float) -> tuple[float, float]:
     return a * x + c * y + e, b * x + d * y + f
 
 
-_NUM = r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"
+#: 无歧义的数值语法：`\d+(?:\.\d*)?` 与原来的 `\d+\.?\d*` 接受同一批字符串，但一串数字只有一种划分，回溯不会平方级
+#: （原写法遇到「几万个 9 再接非法后缀」要十几秒，Codex 线程 4656678185）
+_NUM = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
 _NUM_RE = re.compile(_NUM)
+#: 单个数值 token 的字符上限：再长的不是坐标（float 的有效位数也就十几位），按非法处理
+MAX_NUM_CHARS = 64
 
 
 def _nums(s: str) -> list[float]:
-    return [float(x) for x in _NUM_RE.findall(s or "")]
+    toks = _NUM_RE.findall(s or "")
+    if any(len(t) > MAX_NUM_CHARS for t in toks):
+        return []
+    return [float(x) for x in toks]
 
 
 def _transform_calls(s: str):
@@ -148,13 +155,18 @@ def parse_transform(s: str | None) -> Matrix:
     return m
 
 
+_LENGTH_RE = re.compile(rf"({_NUM})\s*([a-z%]*)\Z")
+
+
 def _length(s: str | None, ref: float = 0.0, default: float = 0.0) -> float:
     """SVG 长度 → 用户单位（px）。百分比按 `ref`。"""
     if s is None:
         return default
     s = str(s).strip()
-    m = re.match(rf"^({_NUM})\s*([a-z%]*)$", s)
-    if not m:
+    if len(s) > 2 * MAX_NUM_CHARS:
+        return default
+    m = _LENGTH_RE.match(s)
+    if not m or len(m.group(1)) > MAX_NUM_CHARS:
         return default
     v, unit = float(m.group(1)), m.group(2)
     return {
@@ -364,6 +376,8 @@ def parse_path_d(
     if len(d or "") > MAX_PATH_D_CHARS:
         raise SvgImportError("too_many_elements", "单条路径过长")
     toks = _CMD.findall(d or "")
+    if any(len(t[1]) > MAX_NUM_CHARS for t in toks):
+        return []  # 数值 token 过长 = 非法：整条当没有几何
     anchors = 0
     ticks = 0
     subs: list[dict] = []

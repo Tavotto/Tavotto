@@ -537,3 +537,38 @@ def test_important_stripping_is_linear_time_and_keeps_semantics():
     t0 = time.monotonic()
     svgimport._parse_decls("fill:red" + " " * 60_000 + "!imp")
     assert time.monotonic() - t0 < 1.0
+
+
+# ---- Codex 线程 4656678185：长度 / 数值正则的歧义回溯 ----
+
+
+@pytest.mark.parametrize("n", [20_000, 40_000])
+@pytest.mark.parametrize("attr", ["width", "height"])
+def test_length_with_long_digit_run_is_linear_time(attr, n):
+    """`width="999…9!"`：原来的 `\\d+\\.?\\d*` 有歧义，2 万位就要十几秒"""
+    text = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" {attr}="{"9" * n}!"/>'
+    t0 = time.monotonic()
+    outcome(text)
+    assert time.monotonic() - t0 < 1.0
+
+
+def test_length_semantics_unchanged_and_overlong_token_is_invalid():
+    assert svgimport._length("10") == 10
+    assert svgimport._length("1.5e1px") == 15
+    assert svgimport._length(".5in") == 48
+    assert svgimport._length("5.") == 5
+    assert svgimport._length("50%", ref=200) == 100
+    assert svgimport._length("9" * 100, default=7) == 7  # 数值 token 过长 = 非法
+    assert svgimport._length("9" * 100 + "!", default=7) == 7
+    assert svgimport._nums("1 2.5 .5 -3e2") == [1, 2.5, 0.5, -300]
+    assert svgimport._nums("1 " + "9" * 100) == []
+    assert svgimport.parse_path_d("M0 0 L" + "9" * 100 + " 1") == []
+    assert len(svgimport.parse_path_d("M0 0 L1 1")[0]["nodes"]) == 2
+
+
+def test_number_regex_is_unambiguous_on_pathological_runs():
+    for s in ("9" * 40_000 + "!", "1." * 20_000, "1e" * 20_000, "+-" * 20_000):
+        t0 = time.monotonic()
+        svgimport._LENGTH_RE.match(s)
+        svgimport._NUM_RE.findall(s)
+        assert time.monotonic() - t0 < 1.0
