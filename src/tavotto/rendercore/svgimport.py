@@ -34,8 +34,13 @@ MAX_ELEMENTS = 50_000
 #: 一次导入里所有路径的锚点总数上限，与单条 `d` 的字符上限（防一条路径塞满 8 MB）
 MAX_ANCHORS = 100_000
 MAX_PATH_D_CHARS = 2 * 1024 * 1024
+#: 一条 `transform` 属性的字符上限与调用个数上限（逐字符 / 逐调用的 Python 循环，没有墙钟可查；再长的不是人写的变换）
+MAX_TRANSFORM_CHARS = 256 * 1024
+MAX_TRANSFORM_CALLS = 10_000
 #: 单个渐变的色标数上限
 MAX_STOPS = 1_000
+#: `stroke-dasharray` 的项数上限
+MAX_DASH_ITEMS = 1_000
 #: 导入后 CSS 规则（选择器）总数上限
 MAX_CSS_SELECTORS = 10_000
 #: 渐变 `href` 继承链最多跟这么多跳（再长的链不是人写的；同时避免递归过深）
@@ -103,6 +108,10 @@ MAX_NUM_CHARS = 64
 
 
 def _nums(s: str) -> list[float]:
+    if s and len(s) > MAX_PATH_D_CHARS:
+        raise SvgImportError(
+            "too_many_elements", "数值列表过长"
+        )  # 几百万个数的属性：逐个 float 没有墙钟可查
     toks = _NUM_RE.findall(s or "")
     if any(len(t) > MAX_NUM_CHARS for t in toks):
         return []
@@ -137,7 +146,11 @@ def parse_transform(s: str | None) -> Matrix:
     m = IDENTITY
     if not s:
         return m
-    for name, args in _transform_calls(s):
+    if len(s) > MAX_TRANSFORM_CHARS:
+        raise SvgImportError("too_many_elements", "transform 过长")
+    for calls, (name, args) in enumerate(_transform_calls(s)):
+        if calls >= MAX_TRANSFORM_CALLS:
+            raise SvgImportError("too_many_elements", "transform 调用过多")
         v = _nums(args)
         t: Matrix
         if name == "matrix" and len(v) == 6:
@@ -623,7 +636,9 @@ def _cubic_extent(p0, p1, p2, p3):
 MIN_DIM_MM = 0.01
 
 
-def fit_box(subs: list[dict]) -> tuple[float, float, float, float] | None:
+def fit_box(
+    subs: list[dict], deadline: float = math.inf
+) -> tuple[float, float, float, float] | None:
     """曲线实际范围（与前端 `pathGeom.fitPathBox` 同一条：曲线极值、短边钳到 0.01 mm、居中补齐）。"""
     xs: list[float] = []
     ys: list[float] = []
@@ -632,7 +647,9 @@ def fit_box(subs: list[dict]) -> tuple[float, float, float, float] | None:
         if len(ns) < 2:
             continue
         pairs = list(zip(ns, ns[1:])) + ([(ns[-1], ns[0])] if sp["closed"] else [])
-        for a, b in pairs:
+        for tick, (a, b) in enumerate(pairs):
+            if not tick & 0x3FF and time.monotonic() > deadline:
+                raise SvgImportError("timeout", f"超过 {DEADLINE_S:g} 秒")
             for k, acc in ((0, xs), (1, ys)):
                 lo, hi = _cubic_extent(a["p"][k], a["out"][k], b["in"][k], b["p"][k])
                 acc += [lo, hi]
@@ -649,24 +666,28 @@ def fit_box(subs: list[dict]) -> tuple[float, float, float, float] | None:
     return x0, y0, w, h
 
 
-def _transform_subs(subs: list[dict], m: Matrix) -> list[dict]:
-    return [
-        {
-            "closed": sp["closed"],
-            "nodes": [{k: apply(m, *n[k]) for k in ("p", "in", "out")} for n in sp["nodes"]],
-        }
-        for sp in subs
-    ]
+def _transform_subs(subs: list[dict], m: Matrix, deadline: float = math.inf) -> list[dict]:
+    out = []
+    ticks = 0
+    for sp in subs:
+        nodes = []
+        for n in sp["nodes"]:
+            ticks += 1
+            if not ticks & 0x3FF and time.monotonic() > deadline:
+                raise SvgImportError("timeout", f"超过 {DEADLINE_S:g} 秒")
+            nodes.append({k: apply(m, *n[k]) for k in ("p", "in", "out")})
+        out.append({"closed": sp["closed"], "nodes": nodes})
+    return out
 
 
 def _r(v: float) -> float:
     return round(v, 6) + 0.0
 
 
-def path_object(subs_mm: list[dict]) -> dict | None:
+def path_object(subs_mm: list[dict], deadline: float = math.inf) -> dict | None:
     """页面 mm 的子路径 → 路径对象的几何字段（框 + 比例坐标锚点；手柄与锚点重合不写）。"""
     subs_mm = [s for s in subs_mm if len(s["nodes"]) >= 2]
-    box = fit_box(subs_mm)
+    box = fit_box(subs_mm, deadline)
     if box is None:
         return None
     x, y, w, h = box
@@ -675,9 +696,13 @@ def path_object(subs_mm: list[dict]) -> dict | None:
         return [_r((q[0] - x) / w), _r((q[1] - y) / h)]
 
     out_subs = []
+    ticks = 0
     for sp in subs_mm:
         nodes = []
         for n in sp["nodes"]:
+            ticks += 1
+            if not ticks & 0x3FF and time.monotonic() > deadline:
+                raise SvgImportError("timeout", f"超过 {DEADLINE_S:g} 秒")
             node = {"p": frac(n["p"])}
             if n["in"] != n["p"]:
                 node["in"] = frac(n["in"])
@@ -928,11 +953,13 @@ def _paint_fields(
             out["miterLimit"] = _r(max(1.0, ml[0]))
         dash = st.get("stroke-dasharray", "none")
         if dash and dash != "none":
-            d = [
-                _length(v, 1.0) * scale_mm / MM_PER_PT
-                for v in re.split(r"[,\s]+", dash.strip())
-                if v
-            ]
+            items = [v for v in re.split(r"[,\s]+", dash.strip()) if v]
+            # 项数有上限（几百万项的虚线数组每项都换算一遍，没有墙钟可查）：超出按没有虚线处理
+            d = (
+                [_length(v, 1.0) * scale_mm / MM_PER_PT for v in items]
+                if len(items) <= MAX_DASH_ITEMS
+                else []
+            )
             if len(d) % 2:
                 d = d * 2
             if d and any(v > 0 for v in d):
@@ -942,8 +969,8 @@ def _paint_fields(
     return out
 
 
-def _bbox(subs: list[dict]):
-    b = fit_box(subs)
+def _bbox(subs: list[dict], deadline: float = math.inf):
+    b = fit_box(subs, deadline)
     return b if b else (0.0, 0.0, 1.0, 1.0)
 
 
@@ -958,8 +985,8 @@ def _new_gid(ctx: _Ctx) -> str:
 
 
 def _emit_shape(subs_user, st, ctm, ctx: _Ctx, path: list[str], opacity: float) -> dict | None:
-    subs_mm = _transform_subs(subs_user, ctm)
-    geom = path_object(subs_mm)
+    subs_mm = _transform_subs(subs_user, ctm, ctx.deadline)
+    geom = path_object(subs_mm, ctx.deadline)
     if geom is None:
         return None
     scale = math.sqrt(abs(ctm[0] * ctm[3] - ctm[1] * ctm[2]))
@@ -967,7 +994,7 @@ def _emit_shape(subs_user, st, ctm, ctx: _Ctx, path: list[str], opacity: float) 
         st,
         ctx,
         ctm,
-        _bbox(subs_user),
+        _bbox(subs_user, ctx.deadline),
         (geom["x"], geom["y"], geom["w"], geom["h"]),
         scale,
         opacity,
@@ -1036,6 +1063,8 @@ def _geometry_raw(el, tag: str, ctx: _Ctx | None = None) -> list[dict] | None:
         ]
     if tag in ("polyline", "polygon"):
         v = _nums(g("points") or "")
+        if ctx is not None and len(v) // 2 > MAX_ANCHORS - ctx.anchors:
+            raise SvgImportError("too_many_elements", "点数超出上限")  # 建几十万个节点字典之前先拒
         pts = [(v[i], v[i + 1]) for i in range(0, len(v) - 1, 2)]
         if len(pts) < 2:
             return None
@@ -1216,11 +1245,15 @@ def _clip_mask(cid: str, ctm: Matrix, ctx: _Ctx, bbox_ctm: Matrix) -> list[dict]
             )
             g = _geometry(target, _local(target.tag), ctx)
             if g:
-                subs += _transform_subs(g, mul(cm, parse_transform(target.get("transform"))))
+                subs += _transform_subs(
+                    g, mul(cm, parse_transform(target.get("transform"))), ctx.deadline
+                )
             continue
         g = _geometry(child, tag, ctx)
         if g:
-            subs += _transform_subs(g, mul(m, parse_transform(child.get("transform"))))
+            subs += _transform_subs(
+                g, mul(m, parse_transform(child.get("transform"))), ctx.deadline
+            )
     return subs or None
 
 
@@ -1267,7 +1300,10 @@ def _walk(el, st_parent: dict, ctm: Matrix, path: list[str], ctx: _Ctx, opacity:
             st2 = {**st, "clip-path": "none"}
             _walk_inner(el, tag, st2, m, inner, ctx, op)
             if len(ctx.objects) > start:
-                geom = path_object(_transform_subs(clip_subs, (MM_PER_PX, 0, 0, MM_PER_PX, 0, 0)))
+                geom = path_object(
+                    _transform_subs(clip_subs, (MM_PER_PX, 0, 0, MM_PER_PX, 0, 0), ctx.deadline),
+                    ctx.deadline,
+                )
                 if geom:
                     mask = {
                         "id": _new_id(ctx),
@@ -1466,7 +1502,7 @@ def import_svg(svg_text: str) -> dict:
         if isinstance(c.tag, str):
             _walk(c, st_root, mul(m, IDENTITY), [], ctx, float(st_root.get("opacity", "1") or 1))
     # 只剩一个成员的组（子对象被跳过了）不算组：拿掉这一层
-    _prune_groups(ctx.objects)
+    _prune_groups(ctx.objects, deadline)
     return {
         "objects": ctx.objects,
         "size_mm": [_r(w * MM_PER_PX), _r(h * MM_PER_PX)],
@@ -1474,7 +1510,7 @@ def import_svg(svg_text: str) -> dict:
     }
 
 
-def _prune_groups(objs: list[dict]) -> None:
+def _prune_groups(objs: list[dict], deadline: float = math.inf) -> None:
     from collections import Counter
 
     def chain(o):
@@ -1482,6 +1518,8 @@ def _prune_groups(objs: list[dict]) -> None:
         return list(p) if p else ([o["groupId"]] if o.get("groupId") else [])
 
     for _ in range(8):
+        if time.monotonic() > deadline:
+            raise SvgImportError("timeout", f"超过 {DEADLINE_S:g} 秒")
         counts = Counter(g for o in objs for g in set(chain(o)))
         lonely = {g for g, n in counts.items() if n < 2}
         # 包住全部对象的那一层（SVG 写入器为翻 y 包的根组、Inkscape 的图层）：粘贴后本来就全选着，再包一层只是多一次双击
@@ -1491,7 +1529,9 @@ def _prune_groups(objs: list[dict]) -> None:
             lonely.add(top[0])
         if not lonely:
             return
-        for o in objs:
+        for tick, o in enumerate(objs):
+            if not tick & 0xFFF and time.monotonic() > deadline:
+                raise SvgImportError("timeout", f"超过 {DEADLINE_S:g} 秒")
             p = [g for g in chain(o) if g not in lonely]
             o.pop("groupPath", None)
             o.pop("groupId", None)

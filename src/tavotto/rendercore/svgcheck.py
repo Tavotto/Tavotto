@@ -352,9 +352,11 @@ def _css_value(value: str) -> list[str]:
     return refs
 
 
-def _declarations(css: str) -> list[str]:
+def _declarations(css: str, deadline: float = math.inf) -> list[str]:
     refs: list[str] = []
-    for part in css.split(";"):
+    for n, part in enumerate(css.split(";")):
+        if not n & 0xFF:
+            _check_deadline(deadline)  # 一个 `style` 属性 / 一条规则里可以塞几十万条声明
         if not part.strip():
             continue
         match = _DECLARATION.fullmatch(part)
@@ -392,7 +394,7 @@ def _stylesheet(
             raise SVGError("svg_unsafe_css")
         if any(not selector.strip() for selector in match.group(1).split(",")):
             raise SVGError("svg_unsafe_css")
-        refs.extend(_declarations(match.group(2)))
+        refs.extend(_declarations(match.group(2), deadline))
         pos = match.end()
     return refs
 
@@ -504,8 +506,14 @@ def _inert(decl: str) -> bool:
     return prop in _INERT_CSS or (prop, value) in _INERT_CSS_VALUES
 
 
-def _drop_inert(css_body: str) -> str:
-    return ";".join(d for d in css_body.split(";") if d.strip() and not _inert(d))
+def _drop_inert(css_body: str, deadline: float = math.inf) -> str:
+    kept = []
+    for n, d in enumerate(css_body.split(";")):
+        if not n & 0xFF:
+            _check_deadline(deadline)
+        if d.strip() and not _inert(d):
+            kept.append(d)
+    return ";".join(kept)
 
 
 def _tolerate(root: ET.Element, deadline: float = math.inf) -> None:
@@ -540,13 +548,13 @@ def _tolerate(root: ET.Element, deadline: float = math.inf) -> None:
             if ans not in ("", _XML_NS, XLINK_NS):
                 del node.attrib[key]
         if "style" in node.attrib:
-            node.set("style", _drop_inert(node.get("style") or ""))
+            node.set("style", _drop_inert(node.get("style") or "", deadline))
         if _name(node.tag)[1] == "style" and node.text:
             text, out, last = node.text, [], 0
             for n, (start, end, sel, body) in enumerate(_iter_rules(text)):
                 if not n & 0xFF:
                     _check_deadline(deadline)
-                out.append(text[last:start] + sel + "{" + _drop_inert(body) + "}")
+                out.append(text[last:start] + sel + "{" + _drop_inert(body, deadline) + "}")
                 last = end
             out.append(text[last:])
             node.text = "".join(out)
@@ -641,7 +649,7 @@ def parse_svg(
                 else:
                     raise SVGError("svg_external_resource")
             elif attr == "style":
-                refs.setdefault(index, []).extend(_declarations(value))
+                refs.setdefault(index, []).extend(_declarations(value, deadline))
             elif attr.lower() in ("src", "base"):
                 raise SVGError("svg_external_resource")
             elif attr in _CSS_PROPERTIES or (
