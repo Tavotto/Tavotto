@@ -1085,16 +1085,18 @@ def _family(s: str | None) -> str | None:
 
 def _emit_text(el, st, ctm, ctx: _Ctx, path: list[str], opacity: float) -> None:
     """`<text>` → 文字对象：每个有自己 x / y 的 tspan 各成一个；dx / dy / rotate / textPath 做不准 → 记不支持。"""
-    runs: list[tuple[float, float, str, dict]] = []
     x0 = _nums(el.get("x") or "0")
     y0 = _nums(el.get("y") or "0")
     cx, cy = (x0[0] if x0 else 0.0), (y0[0] if y0 else 0.0)
     if any(el.get(a) for a in ("dx", "dy", "rotate", "textLength")) or len(x0) > 1 or len(y0) > 1:
         ctx.note("text_layout")
         return
+    # 每段文字收集成片段列表、最后一次 `join`：逐个 `ptxt + text` 每次都复制此前累计的全文，平方级（Codex 线程 4656811239）
+    runs: list[list] = []  # [x, y, 片段列表, 样式]
     if el.text and el.text.strip():
-        runs.append((cx, cy, el.text, st))
+        runs.append([cx, cy, [el.text], st])
     for child in el:
+        _check_clock(ctx)  # 每个 tspan 都要走一遍样式级联，子节点数 × 规则数
         t = _local(child.tag)
         if t == "textPath":
             ctx.note("text_path")
@@ -1113,13 +1115,11 @@ def _emit_text(el, st, ctm, ctx: _Ctx, path: list[str], opacity: float) -> None:
         text = "".join(child.itertext())
         if tx is None and ty is None and runs:
             # 同一行接着写：并到上一段（样式取上一段的）
-            px, py, ptxt, pst = runs[-1]
-            runs[-1] = (px, py, ptxt + text, pst)
+            runs[-1][2].append(text)
         elif text.strip():
-            runs.append((tx if tx is not None else cx, ty if ty is not None else cy, text, cst))
+            runs.append([tx if tx is not None else cx, ty if ty is not None else cy, [text], cst])
         if child.tail and child.tail.strip() and runs:
-            px, py, ptxt, pst = runs[-1]
-            runs[-1] = (px, py, ptxt + child.tail, pst)
+            runs[-1][2].append(child.tail)
     a, b, c, d = ctm[:4]
     sx = math.hypot(a, b)
     sy = math.hypot(c, d)
@@ -1129,7 +1129,12 @@ def _emit_text(el, st, ctm, ctx: _Ctx, path: list[str], opacity: float) -> None:
         ctx.note("skew_text")
         return
     rot = math.degrees(math.atan2(b, a))
-    for rx, ry, text, rst in runs:
+    for rx, ry, pieces, rst in runs:
+        _check_clock(ctx)
+        ctx.count += 1  # 文字段也是展开出来的对象：与元素同一个展开上限
+        if ctx.count > IMPORT_BUDGET.max_expanded_elements:
+            raise SvgImportError("too_many_elements", "展开后的元素超出上限")
+        text = "".join(pieces)
         text = re.sub(r"\s+", " ", text).strip()
         if not text:
             continue

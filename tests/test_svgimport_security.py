@@ -890,3 +890,35 @@ def test_long_gradient_href_chain_does_not_recurse():
         SVG.format(f'<defs>{grads}</defs><rect width="5" height="5" fill="url(#g0)"/>')
     )
     assert len(r["objects"]) == 1  # 链太长（超过跳数上限）：当没有色标，纯色退化，不崩
+
+
+# ---- Codex 线程 4656811239：tspan 文字分段收集后一次 join ----
+
+
+def test_tspan_runs_keep_their_text_and_order():
+    body = (
+        '<text x="1" y="5">a<tspan>b</tspan>c<tspan x="2" y="6">d</tspan><tspan>e</tspan>f</text>'
+    )
+    r = svgimport.import_svg(SVG.format(body))
+    assert [(o["text"]) for o in r["objects"]] == ["abc", "def"]
+
+
+def test_tspan_loop_checks_the_wall_clock():
+    from xml.etree import ElementTree as ET
+
+    el = ET.fromstring('<text x="1" y="5">' + "<tspan>a</tspan>" * 2000 + "</text>")
+    ctx = svgimport._Ctx(ids={}, rules=[], deadline=time.monotonic() - 1)
+    with pytest.raises(svgimport.SvgImportError) as e:
+        svgimport._emit_text(el, {}, svgimport.IDENTITY, ctx, [], 1.0)
+    assert e.value.code == "timeout"
+
+
+def test_many_tspans_are_joined_in_linear_time(monkeypatch):
+    """4 万个 80 字符 tspan：以前 `ptxt + text` 每次复制全文（Codex 实测 7 秒）；这里只核成功时结果正确且在预算内"""
+    monkeypatch.setattr(svgimport, "DEADLINE_S", 120.0)
+    n = 40_000
+    text = SVG.format('<text x="1" y="5">x' + ("<tspan>" + "a" * 80 + "</tspan>") * n + "</text>")
+    t0 = time.monotonic()
+    r = svgimport.import_svg(text)
+    assert time.monotonic() - t0 < 5.0
+    assert len(r["objects"][0]["text"]) == 1 + 80 * n
