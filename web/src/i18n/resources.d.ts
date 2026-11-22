@@ -1679,6 +1679,10 @@ export default interface Resources {
           "keywords": "scan check structure jc jiancha 检查 扫描 脚本 目标",
           "label": "显示项目检查结果"
         },
+        "quick-layout": {
+          "keywords": "一键排版 yjpb yijianpaiban auto layout arrange align",
+          "label": "一键排版"
+        },
         "readiness": {
           "keywords": "readiness status editable jr jieru 接入 可编辑 仅版面 仅排版 为什么不能编辑",
           "label": "显示项目接入状态"
@@ -6683,6 +6687,7 @@ export default interface Resources {
       "fit": "适应",
       "label": "画布工具",
       "pen": "钢笔",
+      "quickLayout": "一键排版",
       "select": "选择",
       "subLabels": "序号"
     },
@@ -6967,6 +6972,7 @@ export default interface Resources {
       "panel_editable": "双击进入图内编辑。",
       "panel_layout_only": "这张图可在版面上摆放；连接源脚本后能改图里的内容。",
       "problem_found": "左侧「问题」可定位对象和属性字段。",
+      "quick_layout": "拖动图之间的空隙，可以调整各图占的比例",
       "ruler_guides": "从标尺拖出对齐线",
       "shift_axis": "按住 ⇧ 拖动，只沿一个方向走",
       "shift_draw": "按住 ⇧ 画正方形和直线",
@@ -7070,6 +7076,8 @@ export default interface Resources {
       "pinLayout": "固定位置",
       "playgroundOpenFigure": "打开图",
       "playgroundResetEdits": "重置修改",
+      "quickLayout": "一键排版",
+      "quickLayoutRatios": "调整排版比例",
       "reflowLayoutGroup": "重新排列布局组",
       "refreshJournalV2": "更新期刊要求",
       "releaseClipMask": "释放剪切蒙版",
@@ -7918,6 +7926,32 @@ export default interface Resources {
       "zTop": "置于顶层",
       "zUp": "上移一层"
     },
+    "quickLayout": {
+      "canvas": {
+        "auto": "自动",
+        "fit": "跟着内容调整",
+        "keep": "保持画布大小"
+      },
+      "canvasLabel": "画布",
+      "columns": {
+        "1": "1 列",
+        "2": "2 列",
+        "3": "3 列",
+        "auto": "按摆放位置"
+      },
+      "columnsLabel": "排列",
+      "fixSpec": "同时按规范修文字和线条",
+      "gap": "{{mm}} mm",
+      "gapLabel": "图间距",
+      "gutterTip": "拖动调整比例",
+      "target": {
+        "double": "双栏",
+        "page": "整页",
+        "single": "单栏"
+      },
+      "targetLabel": "宽度",
+      "widthLockedTip": "保持画布大小时用画布的宽度"
+    },
     "rail": {
       "assets": "素材",
       "data": "数据",
@@ -8239,6 +8273,26 @@ export default interface Resources {
       "pathfinderEmpty": "算出来是空的，没有改动",
       "pathfinderUnavailable": "这里用不了路径查找器",
       "projectBackgroundError": "后台检查项目文件时出错。已打开的内容不受影响，修好文件后会自动重试。",
+      "quickLayoutDone": "已排好",
+      "quickLayoutFailed": "这次没排好，再试一次",
+      "quickLayoutNoteEqualAspect": "图 {{label}} 是等比例坐标，没参与轴线对齐",
+      "quickLayoutNoteSpecNotFixed": "图 {{label}} 还有几处字号没修到规范，可在「问题」里看",
+      "quickLayoutPageTooSmall": "画布放不下这几张图，可以减少列数或调大画布",
+      "quickLayoutSpec": {
+        "font_family": "字体",
+        "font_size": "字号",
+        "legend_frame": "图例边框",
+        "line_width": "线宽",
+        "other": "其他样式",
+        "text_weight": "字重",
+        "tick_direction": "刻度方向"
+      },
+      "quickLayoutSpecDone": "已按「{{spec}}」改了{{what}}",
+      "quickLayoutSpecFallback": "当前规范",
+      "quickLayoutSpecSep": "、",
+      "quickLayoutStale": "图刚刚变了，再点一次一键排版",
+      "quickLayoutTooFew": "至少要两张图",
+      "quickLayoutUndo": "撤销",
       "rebuildFailed": "无法重新构建。{{error}}",
       "recentMissing": "这份排版已不在本机，已从列表里去掉",
       "recentTooNew": "这份排版来自更新的 Tavotto，本版本无法打开。磁盘上的文件没有改动。",
@@ -8408,6 +8462,9 @@ export default interface Resources {
       "presets": "科研预设与符号…",
       "projectDocuments": "项目里的排版",
       "projectFileUnsaved": "项目里的 {{file}} 有未保存的改动",
+      "quickLayout": "一键排版",
+      "quickLayoutOptions": "一键排版选项",
+      "quickLayoutTip": "一次排好这几张图的位置、大小和标签",
       "readiness": "项目接入状态",
       "recentDocuments": "本机最近的排版",
       "recentEntryMulti_other": "{{name}} · {{canvases}} 张画布 · {{count}} 个对象",

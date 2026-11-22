@@ -508,3 +508,42 @@
   color: var(--color-ink-2);
   font: 500 9px/1 system-ui, sans-serif;
 }
+
+/* 一键排版分隔线：中点一颗竖条（悬停 / 拖动变蓝），与 `canvas/QuickLayoutGutters` 的握柄同一个形状 */
+.hint-gutter {
+  position: absolute;
+  z-index: 3;
+  width: 8px;
+}
+.hint-gutter::before,
+.hint-gutter::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.hint-gutter::before {
+  top: calc(50% - 9px);
+  width: 3px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--color-paper-ink);
+  opacity: 0.32;
+}
+.hint-gutter::after {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--color-sel);
+  opacity: 0;
+  transition: opacity 120ms;
+}
+.hint-gutter[data-hover]::before,
+.hint-gutter[data-held]::before {
+  background: var(--color-sel);
+  opacity: 1;
+}
+.hint-gutter[data-hover]::after,
+.hint-gutter[data-held]::after {
+  opacity: 1;
+}

@@ -1290,6 +1290,88 @@
   pointer-events: none;
 }
 
+/* 一键排版分隔线的把手（ADR 0199；维护者 2026-11-21 从 D3 的三版里选「瓷白」）：画在纸上的一粒小瓷扣——纸色由上到下
+   微微压暗、顶上一道内高光、外圈 0.5 px 发丝边，两枚 1 px 的向外细箭头。悬停边线变选中蓝、微微抬起、箭头张开；拖动中
+   （.ql-knob-active）微沉、实蓝边。纸上的记号，墨与投影都从 paper-ink 派生，两套主题同值（纸不反相）。 */
+.ql-knob {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 9999px;
+  translate: -50% -50%;
+  color: color-mix(in srgb, var(--color-paper-ink) 72%, var(--color-paper));
+  background: linear-gradient(180deg, var(--color-paper), color-mix(in srgb, var(--color-paper-ink) 5%, var(--color-paper)));
+  box-shadow:
+    inset 0 1px 0 var(--color-paper),
+    0 0 0 0.5px color-mix(in srgb, var(--color-paper-ink) 22%, transparent),
+    0 1px 1.5px color-mix(in srgb, var(--color-paper-ink) 10%, transparent),
+    0 3px 8px -2px color-mix(in srgb, var(--color-paper-ink) 14%, transparent);
+  transition:
+    opacity var(--duration-base) var(--ease-standard),
+    box-shadow var(--duration-base) var(--ease-standard),
+    scale var(--duration-base) var(--ease-standard);
+}
+.ql-knob-row svg { rotate: 90deg; }
+.ql-knob path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform var(--duration-base) var(--ease-standard);
+}
+.ql-gutter:hover .ql-knob,
+.ql-knob-active {
+  color: var(--color-sel);
+  box-shadow:
+    inset 0 0.5px 0 var(--color-paper),
+    0 0 0 1px color-mix(in srgb, var(--color-sel) 55%, transparent),
+    0 1px 2px color-mix(in srgb, var(--color-paper-ink) 10%, transparent),
+    0 6px 14px -4px color-mix(in srgb, var(--color-sel) 30%, transparent);
+}
+.ql-gutter:hover .ql-knob { scale: 1.06; }
+.ql-knob-active {
+  scale: 0.95;
+  box-shadow:
+    inset 0 0.5px 0 var(--color-paper),
+    0 0 0 1px var(--color-sel),
+    0 1px 1px color-mix(in srgb, var(--color-paper-ink) 12%, transparent),
+    0 2px 5px -2px color-mix(in srgb, var(--color-sel) 30%, transparent);
+}
+.ql-gutter:hover .ql-knob-l, .ql-knob-active .ql-knob-l { transform: translateX(-1.4px); }
+.ql-gutter:hover .ql-knob-r, .ql-knob-active .ql-knob-r { transform: translateX(1.4px); }
+/* 拖动读数：同材质的浅色小胶囊，两个数中间一道细竖线 */
+.ql-readout {
+  white-space: nowrap;
+  padding: 4px 8px;
+  border-radius: 9999px;
+  font-size: var(--text-xs);
+  line-height: 1;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-paper-ink);
+  background: var(--color-paper);
+  box-shadow:
+    0 0 0 0.5px color-mix(in srgb, var(--color-paper-ink) 16%, transparent),
+    0 1px 2px color-mix(in srgb, var(--color-paper-ink) 8%, transparent),
+    0 6px 16px -4px color-mix(in srgb, var(--color-paper-ink) 16%, transparent);
+}
+.ql-readout-col { translate: -50% calc(-100% - 17px); }
+.ql-readout-row { translate: 18px -50%; }
+.ql-readout-unit { margin-left: 2px; color: var(--color-paper-ink-3); }
+.ql-readout-sep {
+  display: inline-block;
+  width: 1px;
+  height: 8px;
+  margin: 0 6px;
+  vertical-align: -0.5px;
+  background: color-mix(in srgb, var(--color-paper-ink) 16%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ql-knob, .ql-knob path { transition: none; }
+}
+
 /* 属性栏的分组线（2026-09-30 重设计，参照 OpenBitFun）：相邻两个 Section 之间一条左右各内缩 12px
    的 hairline，把「位置和大小 / 对齐 / 裁剪」分成一眼能数清的几块。用背景画线而不是 border：
    Section 自带左右 12px 内边距，border 会顶到面板边缘。只在属性栏里生效，设置页与抽屉照旧靠留白。 */
