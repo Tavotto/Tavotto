@@ -1234,7 +1234,7 @@ class PreparationService:
             return
         tr.mark("spawn")
 
-        def before_retry() -> None:
+        def before_retry():
             # 缺包后自动接手换了解释器（项目 venv / ADR 0107 的系统解释器，后者还把默认工作目录改成脚本
             # 目录）：计划记下的授权 / 解释器 / 数据绑定与此刻再比一次——与起会话之前同一份判据。第二次执行
             # 会在计划没写过的解释器或 cwd 里跑、回执却挂在这份不可变计划上——不跑，作废（Codex #713 P1 ×2）
@@ -1249,6 +1249,10 @@ class PreparationService:
                 stale = self._stale_reason(plan)
             if stale is not None:
                 raise _StaleBeforeRetry(*stale)
+            # 就地吸收换过计划时，分派用的冻结声明选择也换成重冻结的那份（Codex #1925 P2-b）：
+            # build 请求、分派核对与回执挂的计划才一致。钉住行时重冻结与原份逐字相同（行修订
+            # 的哈希含 scope）；真正会变的只有两侧都观察到缺席的换档重跑（ADR 0047 采纳后）。
+            return plan.input_declaration_state
 
         try:
             if entry.force_rebuild:

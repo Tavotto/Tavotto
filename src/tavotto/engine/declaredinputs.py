@@ -414,8 +414,16 @@ def _remap_identity(root, approved, rule):
     return "remap:" + hashlib.sha256(encoded).hexdigest()
 
 
-def payload_for(worker):
-    """只有真实 safe spec 的精确声明才进入 build；无声明不触碰资源。"""
+def payload_for(worker, *, expected_selection=None):
+    """只有真实 safe spec 的精确声明才进入 build；无声明不触碰资源。
+
+    `expected_selection`（计划冻结的 `{scope, revision}`，Codex #1925 P2）：给了
+    就在**这一次存储读里**当场核对——计划检查之后的第二次读不再存在，载荷带
+    出门的批准就是检查批准的那一份。scope 对不上或行修订变了抛
+    `DeclaredInputsConflict`（native 的 `payload_for_native(expected_selection=...)`
+    同一形状；分派边界把它折算成 `preparation_plan_stale`）。计划冻结的是
+    观察到的缺席时，这里也保持缺席——检查之后才出现的行绝不搭这趟 build。
+    """
     scope = _actual_scope(worker)
     if scope is None:
         return {}
@@ -426,6 +434,19 @@ def payload_for(worker):
         (item for item in data["declarations"] if item["scope"] == scope),
         None,
     )
+    if expected_selection is not None:
+        if not isinstance(expected_selection, dict) or set(expected_selection) != {
+            "scope",
+            "revision",
+        }:
+            raise DeclaredInputsError("Invalid input declaration selection")
+        expected_scope = expected_selection["scope"]
+        if expected_scope is None:
+            return {}
+        if expected_scope != scope:
+            raise DeclaredInputsConflict("Input declaration scope changed")
+        if _row_revision(row) != expected_selection["revision"]:
+            raise DeclaredInputsConflict("Input declaration selection changed")
     if row is None:
         return {}
     if scope["run_config"] is not None:
@@ -501,9 +522,15 @@ def _candidate(root, scope, row, *, rules=(), source=None, native=False, row_rev
 def _validate_native_remaps(root, row, *, expected_generation=_REMAP_GENERATION_UNSET):
     """The declared remap approvals must still exist unchanged in the live table.
 
-    A removed or retargeted rule is an approval change (`DeclaredInputsConflict`,
-    refresh can fix it); a missing target resource is only unavailable evidence
-    (`DeclaredInputsError`, the launch degrades to no capture).
+    A table generation different from the plan's observation is an approval
+    change (`DeclaredInputsConflict`): a fresh check records the current
+    generation, so refresh fixes it. A row whose approved rule no longer
+    matches the live table (revoked, retargeted, duplicated) cannot be fixed
+    by any refresh — the row itself did not change — so it degrades to
+    unavailable evidence (`DeclaredInputsError`): the launch proceeds without
+    a capture until the declaration is edited, mirroring the safe path, where
+    a worker rule that no longer matches the approved declaration also just
+    suspends capture. A missing target resource degrades the same way.
     """
     if not row["remaps"] and expected_generation is _REMAP_GENERATION_UNSET:
         return
@@ -517,7 +544,7 @@ def _validate_native_remaps(root, row, *, expected_generation=_REMAP_GENERATION_
             if rule["kind"] == selected["kind"] and rule["from"] == selected["from"]
         ]
         if len(matching) != 1 or matching[0]["to"] != selected["to"]:
-            raise DeclaredInputsConflict("Approved input remaps changed")
+            raise DeclaredInputsError("Approved input remap rule no longer matches the live table")
         approved = projectenv.contained_path(selected["to"], selected["to"])
         available = (
             Path(approved).is_file()
@@ -681,7 +708,13 @@ def current_selection(worker):
     Same degraded absence as the plan-side observation (`scope_selection_degraded`):
     an unportable script identity or an unreadable store observes no declaration.
     """
-    scope = _actual_scope(worker)
+    try:
+        scope = _actual_scope(worker)
+    except DeclaredInputsError:
+        # Dispatch must never repeat the plan-side portability trap as a crash
+        # (Codex #1925 P1): a locally legal name that cannot have a portable
+        # declaration identity is observed absence, and the build proceeds.
+        return {"scope": None, "revision": None}
     if scope is None:
         return {"scope": None, "revision": None}
     try:

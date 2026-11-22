@@ -12489,6 +12489,8 @@ def _preparation_runner(pl, before_retry=None):
         acquired.append(worker)
         engine_preparation.SERVICE.note_owner(pl.plan_id, worker, created)
 
+    from .engine import declaredinputs as engine_declaredinputs
+
     try:
         return engine_pool.build_owned(
             pl.script,
@@ -12500,13 +12502,20 @@ def _preparation_runner(pl, before_retry=None):
             **({"run": pl.run} if getattr(pl, "run", None) is not None else {}),
             # 这份计划自己的解释器（路径 + 来源 + 环境代）：取会话只认它，不再对共享的项目记录重新决定
             **({"pinned": _plan_pin(pl)} if _plan_pin(pl) is not None else {}),
-            # 计划冻结的精确声明选择：分派前在 build 出门前再比一次（FO-007 的分派边界）
+            # 计划冻结的精确声明选择：取到会话快失败一次，build 载荷构造处同一次读里权威核对
+            # （Codex #1925 P2），检查与出门之间没有第二次读
             **(
                 {"input_declaration_state": pl.input_declaration_state}
                 if getattr(pl, "input_declaration_state", None) is not None
                 else {}
             ),
         )
+    except engine_declaredinputs.DeclaredInputsConflict as exc:
+        # 载荷构造处的核对（Codex #1925 P2）：计划冻结的选择已不是存储此刻的选择——
+        # 与 native 分支同一折算，计划冲突，刷新救得回来
+        raise engine_pool.WorkerError(
+            "输入声明已变化，请刷新准备计划", code="preparation_plan_stale"
+        ) from exc
     finally:
         for worker in acquired:
             fact = _svg_execution_result(worker)

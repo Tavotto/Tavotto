@@ -489,6 +489,47 @@ def test_module_parent_import_barrier_cannot_claim_the_target_declaration(projec
         runner.finish()
 
 
+def test_parent_import_show_barrier_keeps_the_target_capture_alive(project):
+    """Codex #1925 P2（二轮）：父包 import 期就 `show()` 的屏障不带声明捕获，也**不
+    销毁**还武装着的 pending capture——目标模块源码读取边界的屏障照常出证据，
+    字节身份就是目标模块自己那一次读取。"""
+    plots = project / "plots"
+    plots.mkdir()
+    (plots / "__init__.py").write_text(HEADER + FIGURE + "plt.show()\n", encoding="utf-8")
+    (plots / "helpers.py").write_text("value = 3\n", encoding="utf-8")
+    (plots / "fig.py").write_text(
+        "from pathlib import Path\n"
+        "from .helpers import value\n"
+        "import matplotlib\n"
+        "matplotlib.use('Agg')\n"
+        "import matplotlib.pyplot as plt\n"
+        "fig, ax = plt.subplots(figsize=(2, 1))\n"
+        "ax.plot([0, 1], [value, value])\n"
+        "fig.savefig('F.svg')\n"
+        "plt.show()\n",
+        encoding="utf-8",
+    )
+    with Runner(
+        project,
+        candidate=candidate(project, script="plots/fig.py"),
+        target="plots/fig.py",
+        as_module="plots.fig",
+    ) as runner:
+        # 父包 import 的 show 屏障：legacy 形状（无证据、无 execution_id），
+        # capture 保持武装——绝不在这里被清掉
+        no_capture(runner.event("barrier"))
+        assert not any(frame.get("bridge_event") == "execution_started" for frame in runner.frames)
+        runner.call("continue")
+        start = runner.event("execution_started")
+        assert start["script"] == "plots/fig.py"
+        fact = capture(runner.event("barrier"), script="plots/fig.py")
+        assert (
+            fact["declaration"]["script"]["sha256"]
+            == hashlib.sha256((plots / "fig.py").read_bytes()).hexdigest()
+        )
+        runner.finish()
+
+
 def test_private_bootstrap_preserves_the_users_same_named_inputdeclaration_module(project):
     (project / "inputdeclaration.py").write_text("SENTINEL = 'user-owned'\n", encoding="utf-8")
     source = """import sys

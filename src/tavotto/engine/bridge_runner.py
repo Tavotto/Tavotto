@@ -1058,6 +1058,15 @@ class BridgeRun:
         self._captured_input_archive = None
         if self._input_capture is None:
             return
+        if self._capture_source_sha256 is None:
+            # Pre-target barrier (Codex #1925 P2): a parent package imported by
+            # runpy._get_module_details may show a Figure before the target
+            # module's source is ever read. finish() would fail without
+            # sticking — no bound bytes yet — and discarding the still-healthy
+            # pending capture here would leave the real target boundary without
+            # evidence. Keep it armed: this barrier stays a plain control-plane
+            # release, and the target's own read boundary captures as designed.
+            return
         try:
             # Raw runner callers historically let the first preview create this
             # owned output directory. Capture now precedes that preview.

@@ -609,11 +609,12 @@ def test_real_native_preparation_result_keeps_actual_capture_in_success_record(w
                 session.cancel_owned()
 
 
-@pytest.mark.parametrize("name", ["phase:fit.py", "plot.py ", "plot.py.", "data?.py"])
+@pytest.mark.parametrize("name", ["phase:fit.py", "plot.py ", "plot.py.", "data?.py", "a:b.py"])
 def test_unportable_script_names_observe_absence_instead_of_failing(world, name):
     """本机文件系统收得下、但落不进可移植声明身份的脚本名（macOS 冒号；Windows 尾随
     空格 / 点等），只观察为「这个 scope 没有声明」，绝不拦下准备（Codex #1925 P1，
-    维护者补充的 Windows 同类情形同一通道）。"""
+    维护者补充的 Windows 同类情形同一通道）。`a:b.py` 冒号在首位只是长得像盘符，
+    POSIX 里是普通相对文件名，计划创建同样不拦（二轮 P1）。"""
     for execution in ("safe", "native"):
         assert declaredinputs.scope_selection_degraded(
             world, script=name, cwd_mode="project_root", execution=execution
@@ -686,6 +687,237 @@ def test_dispatch_refuses_a_changed_selection_before_the_build_leaves(world, mon
         )
     assert caught.value.code == "preparation_plan_stale"
     assert dispatched == [1]
+
+
+@pytest.mark.parametrize("name", ["phase:fit.py", "plot.py ", "plot.py.", "a:b.py"])
+def test_dispatch_degrades_unportable_names_instead_of_crashing(world, monkeypatch, name):
+    """Codex #1925 P1（二轮）：分派边界的现读与计划侧同一降级——不可移植脚本名观察到
+    没有声明、build 照发；计划创建与 spec 构造也不再被 `a:b.py` 这类盘符形名字在声明
+    代码之前炸成 internal_error（POSIX 相对文件名，冒号在首位只是长得像盘符）。"""
+    planned = preparation.plan_for(
+        project_id="fixture-project",
+        project_root=str(world),
+        asset_id="",
+        stem="",
+        script=name,
+        entry="main",
+        original_artifact=None,
+        target=preparation.TARGET_SCRIPT,
+        run=None,
+        execution="safe",
+    )
+    assert planned.input_declaration_state == {"scope": None, "revision": None}
+    assert preparation.stale_reason(planned) is None
+    spec = execspec.safe_spec(
+        name,
+        str(world),
+        "main",
+        interpreter=sys.executable,
+        sandbox=str(world.parent / "degrade-sandbox"),
+        cwd_mode="project_root",
+        stem_aliases={},
+    )
+    worker = SimpleNamespace(
+        spec=spec,
+        script_name=name,
+        figures_dir=str(world),
+        entry="main",
+        run=None,
+        python=sys.executable,
+        python_source="env_override",
+        generation=1,
+        built=False,
+        build_failed=False,
+        out_dir=str(world.parent / "degrade-out"),
+    )
+    dispatched = []
+    worker.ensure_built = lambda *a, **k: dispatched.append(1) or {"stems": ["F"]}
+    monkeypatch.setattr(pool, "acquire", lambda *a, **k: (worker, True))
+    monkeypatch.setattr(pool, "workdir_hint_of_build", lambda *a, **k: None)
+    worker, response, created = pool.build_owned(
+        name, str(world), "main", input_declaration_state=planned.input_declaration_state
+    )
+    assert created is True and dispatched == [1]
+
+
+def test_payload_construction_carries_the_checked_selection(world, monkeypatch):
+    """Codex #1925 P2（二轮）：计划检查与 build 载荷构造之间声明被改——构造处用冻结
+    选择在同一次存储读里核对，改了就在出门前冲突（`DeclaredInputsConflict`，准备边界
+    折算成 `preparation_plan_stale`），绝不把没批过的选择送进 build。"""
+    selection(world, files=[INPUT])
+    planned = plan(world)
+    spec = execspec.safe_spec(
+        SCRIPT,
+        str(world),
+        "main",
+        interpreter=sys.executable,
+        sandbox=str(world.parent / "payload-sandbox"),
+        cwd_mode="project_root",
+        stem_aliases={},
+    )
+    worker = SimpleNamespace(
+        spec=spec,
+        script_name=SCRIPT,
+        figures_dir=str(world),
+        entry="main",
+        run=None,
+        python=sys.executable,
+        python_source="env_override",
+        generation=1,
+        built=False,
+        build_failed=False,
+        out_dir=str(world.parent / "payload-out"),
+    )
+    dispatched = []
+
+    def ensure_built(**kwargs):
+        # EngineWorker._request_observed 的同一行调用：真·载荷构造路径。
+        # 823ffaea4 上 build_owned 不带 input_declaration（kwargs 为空）——载荷构造
+        # 无核对，B 直接出门（本用例红）；修复后 expected 是计划冻结的选择。
+        payload = pool._input_declaration_payload(
+            worker, "build", {"cmd": "build"}, expected=kwargs.get("input_declaration")
+        )
+        dispatched.append(payload.get("input_declaration"))
+        return {"stems": ["F"]}
+
+    worker.ensure_built = ensure_built
+    real_current = declaredinputs.current_selection
+    mutated = [False]
+
+    def check_then_change(w):
+        result = real_current(w)
+        if not mutated[0]:
+            mutated[0] = True
+            # 检查的那一次读已过、载荷的这一次还没来：另一个窗口把选择换成 B
+            selection(world, files=[OTHER])
+        return result
+
+    monkeypatch.setattr(declaredinputs, "current_selection", check_then_change)
+    monkeypatch.setattr(pool, "acquire", lambda *a, **k: (worker, True))
+    monkeypatch.setattr(pool, "workdir_hint_of_build", lambda *a, **k: None)
+
+    with pytest.raises(declaredinputs.DeclaredInputsConflict):
+        pool.build_owned(
+            SCRIPT, str(world), "main", input_declaration_state=planned.input_declaration_state
+        )
+    assert dispatched == []  # build 一行没跑：载荷没带出门
+
+    # 存储与冻结选择一致的正常路：构造处核对通过，载荷带出门的就是批准的那一行
+    fresh = plan(world)
+    worker2, response2, created2 = pool.build_owned(
+        SCRIPT, str(world), "main", input_declaration_state=fresh.input_declaration_state
+    )
+    assert created2 is True and len(dispatched) == 1
+    assert dispatched[0]["revision"] == fresh.input_declaration_state["revision"]
+
+
+def test_adopt_retry_dispatches_the_refrozen_expectation(world, monkeypatch):
+    """Codex #1925 P2-b（二轮）：换目录重跑的分派吃 `before_retry` 交回的**重冻结**选择
+    ——两侧都观察到缺席的重跑照常进行，不再被旧计划的沙盒档 scope 拒成 stale；重跑腿
+    的 build 载荷也带同一份。"""
+    planned = plan(world)  # 未声明：冻结的是 project_root 档的缺席
+    assert planned.input_declaration_state["revision"] is None
+    refrozen = {
+        "scope": {"script": SCRIPT, "cwd_mode": "project", "run_config": None},
+        "revision": None,
+    }
+    specs = [
+        execspec.safe_spec(
+            SCRIPT,
+            str(world),
+            "main",
+            interpreter=sys.executable,
+            sandbox=str(world.parent / "adopt-sandbox"),
+            cwd_mode="project_root",
+            stem_aliases={},
+        ),
+        execspec.safe_spec(
+            SCRIPT,
+            str(world),
+            "main",
+            interpreter=sys.executable,
+            sandbox=str(world.parent / "adopt-sandbox"),
+            cwd_mode="project",  # ADR 0047 采纳后的新 worker：脚本目录档
+            stem_aliases={},
+        ),
+    ]
+    taken, ensured = [], []
+
+    class FakeWorker(SimpleNamespace):
+        def ensure_built(self, *, input_declaration=None):
+            ensured.append(input_declaration)
+            if self.spec.cwd_mode == "project_root":
+                # 第一次执行在沙盒里落空：运行时证据说数据只在脚本目录（ADR 0047）
+                raise pool.WorkerError("sandbox run found nothing")
+            return {"stems": ["F"]}
+
+    def acquire(_script, _figures, _entry, **_kw):
+        index = len(taken)
+        taken.append(index)
+        return FakeWorker(
+            spec=specs[index],
+            script_name=SCRIPT,
+            figures_dir=str(world),
+            entry="main",
+            run=None,
+            python=sys.executable,
+            python_source="env_override",
+            generation=1,
+            built=False,
+            build_failed=False,
+            out_dir=str(world.parent / "adopt-out"),
+        ), True
+
+    monkeypatch.setattr(pool, "acquire", acquire)
+    monkeypatch.setattr(pool, "shutdown_all", lambda *_a, **_k: None)
+    monkeypatch.setattr(pool.workdir, "adopt_runtime_evidence", lambda *_a, **_k: True)
+
+    worker, response, created = pool.build_owned(
+        SCRIPT,
+        str(world),
+        "main",
+        before_retry=lambda: refrozen,  # 就地吸收后交回重冻结的选择（preparation 层同一合同）
+        input_declaration_state=planned.input_declaration_state,
+    )
+    assert created is True and len(taken) == 2
+    # 重跑腿：核对与 build 载荷都吃重冻结的选择，worker 的真实 scope（project）与之相符
+    assert ensured == [planned.input_declaration_state, refrozen]
+    assert response == {"stems": ["F"]}
+
+
+def test_before_retry_hands_the_refrozen_absence_selection_to_the_retry(world):
+    """Codex #1925 P2-b（二轮）：运行时证据采纳（ADR 0047）后的重跑，准备层的
+    `before_retry` 交回吸收后重冻结的选择——新档 scope、同样观察到缺席。钉住行的
+    重冻结与原份逐字相同（行修订哈希含 scope），只有缺席的重跑会真的变。"""
+    root = world.parent / "undecided-project"  # 未决定项目：采纳路径可触发
+    root.mkdir()
+    (root / SCRIPT).write_text("def main():\n    pass\n", encoding="utf-8")
+    (root / "data").mkdir()
+    (root / "data" / "run_1.txt").write_bytes(b"1\n")
+    planned = plan(root)
+    frozen = planned.input_declaration_state
+    assert frozen["scope"]["cwd_mode"] == "sandbox" and frozen["revision"] is None
+    hint = workdir.probe_hint(str(root), SCRIPT, [{"kind": "glob", "target": "data/run_*.txt"}])
+    assert hint is not None and hint["source"] == "runtime"
+
+    seen = []
+
+    def runner(pl, *, before_retry):
+        # 第一次执行在沙盒里落空、证据被采纳（真实流程里是 pool._build_with 做的）：
+        assert workdir.adopt_runtime_evidence(str(root), hint)
+        state = before_retry()
+        seen.append(state)
+        assert state == {
+            "scope": {"script": SCRIPT, "cwd_mode": "project", "run_config": None},
+            "revision": None,
+        }
+        raise KeyboardInterrupt  # 断言已过：分派合同已钉住，receipt 装配不在本用例范围
+
+    entry = entry_for(planned)
+    with pytest.raises(KeyboardInterrupt):
+        preparation.PreparationService()._execute(entry, runner)
+    assert entry.plan.input_declaration_state["scope"]["cwd_mode"] == "project"
+    assert seen == [entry.plan.input_declaration_state]
 
 
 def test_cached_build_response_receipt_keeps_the_frozen_capsule_identity(world):

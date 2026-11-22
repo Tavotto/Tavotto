@@ -2915,13 +2915,20 @@ def _clear_captured_inputs(worker) -> None:
     worker.last_captured_input_archive = None
 
 
-def _input_declaration_payload(worker, command, payload: dict) -> dict:
+def _input_declaration_payload(worker, command, payload: dict, *, expected=None) -> dict:
     if command not in _EXECUTING_COMMANDS:
         return payload
     from . import declaredinputs
 
     try:
-        extension = declaredinputs.payload_for(worker)
+        if expected is None:
+            extension = declaredinputs.payload_for(worker)
+        else:
+            # `expected`（计划冻结的选择，Codex #1925 P2）：载荷构造就在这一次读里核对，
+            # 检查之后存储再变报 Conflict——不是「unavailable」，build 不出门。
+            extension = declaredinputs.payload_for(worker, expected_selection=expected)
+    except declaredinputs.DeclaredInputsConflict:
+        raise
     except declaredinputs.DeclaredInputsError:
         worker.last_input_declaration_issue = "unavailable"
         return payload
@@ -3742,17 +3749,26 @@ class EngineWorker:
             getattr(self, "figures_dir", None),
         )
 
-    def request(self, obj: dict, timeout: float | None = None) -> dict:
+    def request(
+        self, obj: dict, timeout: float | None = None, *, input_declaration: dict | None = None
+    ) -> dict:
         with _ExecutionWatch(self, obj.get("cmd")) as watch:
             if watch.key is not None:
                 obj = {**obj, "execution_watch": watch.key}
-            return self._request_observed(obj, timeout, watch)
+            return self._request_observed(obj, timeout, watch, input_declaration=input_declaration)
 
-    def _request_observed(self, obj: dict, timeout: float | None, watch: _ExecutionWatch) -> dict:
+    def _request_observed(
+        self,
+        obj: dict,
+        timeout: float | None,
+        watch: _ExecutionWatch,
+        *,
+        input_declaration: dict | None = None,
+    ) -> dict:
         obj = {**obj, **_run_payload(getattr(self, "run", None))}
         if getattr(self, "artifact_source", None) is not None:
             obj = {**obj, "artifact_source": self.artifact_source}
-        obj = _input_declaration_payload(self, obj.get("cmd"), obj)
+        obj = _input_declaration_payload(self, obj.get("cmd"), obj, expected=input_declaration)
         # None → 取模块常量的**当前**值（默认参数会在 def 时定死，测试改不动）
         timeout = REQUEST_TIMEOUT if timeout is None else timeout
         _note_dispatch(self)
@@ -3889,13 +3905,15 @@ class EngineWorker:
             resp, (t_lock - t_req) * 1000.0, (time.perf_counter() - t_req) * 1000.0
         )
 
-    def ensure_built(self) -> dict:
+    def ensure_built(self, *, input_declaration: dict | None = None) -> dict:
         # build 要跑用户整个脚本。传的是**兜底上限**——真正判死的是静默看门狗
         # （ADR 0050），所以这里不再需要先知道这个脚本有多慢。
         try:
             # 脚本里的 input()（ADR 0099）：build 期间父进程当它的答题方——两条控制面同一个 context manager
             with inputbroker.serving(self):
-                resp = self.request({"cmd": "build"}, BUILD_HARD_TIMEOUT)
+                resp = self.request(
+                    {"cmd": "build"}, BUILD_HARD_TIMEOUT, input_declaration=input_declaration
+                )
         except inputbroker.TranscriptUnavailable as exc:
             self.build_failed = True
             _clear_captured_inputs(self)
@@ -4633,23 +4651,38 @@ class WorkerdWorker:
         stem: str | None = None,
         payload: dict | None = None,
         idle_timeout: float | None = None,
+        input_declaration: dict | None = None,
     ) -> dict:
         with _ExecutionWatch(self, op) as watch:
             if watch.key is not None:
                 payload = {**(payload or {}), "execution_watch": watch.key}
             return self._call_observed(
-                op, timeout, stem=stem, payload=payload, idle_timeout=idle_timeout, watch=watch
+                op,
+                timeout,
+                stem=stem,
+                payload=payload,
+                idle_timeout=idle_timeout,
+                watch=watch,
+                input_declaration=input_declaration,
             )
 
     def _call_observed(
-        self, op, timeout, *, stem, payload, idle_timeout, watch: _ExecutionWatch
+        self,
+        op,
+        timeout,
+        *,
+        stem,
+        payload,
+        idle_timeout,
+        watch: _ExecutionWatch,
+        input_declaration: dict | None = None,
     ) -> dict:
         from . import workerd_client
 
         payload = {**(payload or {}), **_run_payload(getattr(self, "run", None))}
         if getattr(self, "artifact_source", None) is not None:
             payload = {**(payload or {}), "artifact_source": self.artifact_source}
-        payload = _input_declaration_payload(self, op, payload)
+        payload = _input_declaration_payload(self, op, payload, expected=input_declaration)
         _note_dispatch(self)
         self._touch()
         t_req = time.perf_counter()
@@ -4782,13 +4815,18 @@ class WorkerdWorker:
             stop.set()
             t.join(_PROGRESS_POLL + 1.0)
 
-    def ensure_built(self) -> dict:
+    def ensure_built(self, *, input_declaration: dict | None = None) -> dict:
         # 与 Python 池同一条判据（ADR 0050）：兜底上限 + 静默看门狗，
         # 看门狗由 workerd 那侧执行（它 stat 的是同一个 worker.log）。
         try:
             with inputbroker.serving(self):  # 与 EngineWorker 同一个答题方（ADR 0099）
                 with self._relay_log_growth():
-                    resp = self._call("build", BUILD_HARD_TIMEOUT, idle_timeout=BUILD_IDLE_TIMEOUT)
+                    resp = self._call(
+                        "build",
+                        BUILD_HARD_TIMEOUT,
+                        idle_timeout=BUILD_IDLE_TIMEOUT,
+                        input_declaration=input_declaration,
+                    )
         except inputbroker.TranscriptUnavailable as exc:
             self.build_failed = True
             _clear_captured_inputs(self)
@@ -6389,9 +6427,10 @@ def build(
 
 
 def _require_current_declaration(worker, expected) -> None:
-    """FO-007 在分派边界的同一份判据：计划冻结的声明选择必须仍是存储此刻的选择，
-    **build 请求出门之前**就拒绝——否则脚本按计划没见过的选择执行，写盘落完才被
-    执行后的核对拦下（Codex #1925 P2）。读不了的存储降级成「观察到没有声明」
+    """FO-007 在取到会话时的**快失败**：计划冻结的声明选择必须仍是存储此刻的选择，
+    一眼就能看见的过期不排队 build。权威核对在 build 请求的载荷构造里——
+    `payload_for(expected_selection=...)` 用同一次存储读既核又拼（Codex #1925 P2），
+    检查与出门之间不存在第二次读。读不了的存储降级成「观察到没有声明」
     （`declaredinputs.current_selection`），与计划侧同一口径。"""
     if not isinstance(expected, dict) or set(expected) != {"scope", "revision"}:
         raise WorkerError("Invalid expected input declaration.", code="bad_request")
@@ -6424,14 +6463,18 @@ def build_owned(
     再来一次 `build_owned()` 只是一次往返：worker 侧对已 build 的会话早返回，用户脚本
     不重跑（`test_worker_runtime_report` 用脚本自己的副作用计数钉着）。
 
-    `before_retry()`：缺包后自动接手成功、**第二次执行之前**调一次（见 `_build_with`）。
+    `before_retry()`：缺包后自动接手成功、**第二次执行之前**调一次；就地吸收换过计划时
+    回**重冻结的声明选择**，重跑腿的核对与 build 载荷吃它（见 `_build_with`）。
 
     `on_acquired(worker, created)`：每次取到会话、**执行之前**调一次（T09）——调用方据此在 build 还在跑的时候就
     知道「这条是不是我建的」，取消可以当场只关自己建的那条，不必等 build 返回。
 
-    `input_declaration_state`：计划冻结的精确声明选择（scope + revision）。每次取到会话、
-    build 出门前按 `_require_current_declaration` 与存储再比一次；带它的调用方（准备接口）
-    在计划期的 stale 检查与这次分派之间隔着取会话 / 退会话，竞态窗口在这里收口。
+    `input_declaration_state`：计划冻结的精确声明选择（scope + revision）。每次取到会话
+    先按 `_require_current_declaration` 快失败一次（核对在 `_build_with` 里，取会话之后、
+    执行之前）；权威核对随请求下传到 build 载荷的构造处——`payload_for(
+    expected_selection=...)` 在同一次存储读里核对并拼装，检查与出门之间没有第二次读
+    （Codex #1925 P2）。带它的调用方（准备接口）在计划期的 stale 检查与这次分派之间隔着
+    取会话 / 退会话，竞态窗口在这里收口。
     """
     context = {"run": run} if run is not None else {}
     first = [True]
@@ -6447,17 +6490,15 @@ def build_owned(
             on_acquired(worker, created)
         return worker, created
 
-    def before_build(worker):
-        if input_declaration_state is not None:
-            _require_current_declaration(worker, input_declaration_state)
-
     return _build_with(
         take,
         script_name,
         figures_dir,
         allow_project_env=allow_project_env,
         before_retry=before_retry,
-        before_build=before_build,
+        # 计划冻结的选择一路带到 build 请求的载荷构造：那里在同一份存储读里核对，
+        # 检查与出门之间不再有第二次读（Codex #1925 P2）。
+        input_declaration=input_declaration_state,
     )
 
 
@@ -6470,6 +6511,7 @@ def _build_with(
     before_retry=None,
     before_build=None,
     adopt_script_dir: bool = True,
+    input_declaration: dict | None = None,
 ):
     """`build` / `build_owned` 共用的编排：`take()` 回 `(worker, created)`。
 
@@ -6478,12 +6520,20 @@ def _build_with(
 
     `before_retry()`：自动接手换了项目的解释器决策——连同它派生的工作目录默认（用户自己的 Python →
     脚本目录，ADR 0107 §二）——之后、第二次执行之前调一次。按计划执行的调用方（准备接口）在这里核
-    计划记下的授权还成不成立，不成立就抛出：不在计划没写过的 cwd 里重跑（Codex #713 P1）。"""
+    计划记下的授权还成不成立，不成立就抛出：不在计划没写过的 cwd 里重跑（Codex #713 P1）。就地吸收
+    换过计划时回**重冻结的声明选择**（`{scope, revision}`）：重跑腿的核对与 build 载荷都吃它，分派
+    与回执挂的计划才一致（Codex #1925 P2-b）；回 None = 沿用原选择。
+
+    `input_declaration`：计划冻结的精确声明选择，每次取到会话先核一次、原样带进每一次
+    `ensure_built`——build 请求的载荷构造在同一份存储读里核对它（Codex #1925 P2），检查与出门
+    之间没有第二次读。"""
     worker, created = take()
+    if input_declaration is not None:
+        _require_current_declaration(worker, input_declaration)
     if before_build is not None:
         before_build(worker)
     try:
-        resp = worker.ensure_built()
+        resp = worker.ensure_built(input_declaration=input_declaration)
     except WorkerError as exc:
         if adopt_script_dir and _adopt_script_dir(figures_dir, getattr(exc, "workdir_hint", None)):
             return _rebuild_in_script_dir(
@@ -6494,6 +6544,7 @@ def _build_with(
                 allow_project_env,
                 before_retry,
                 before_build,
+                input_declaration,
             )
         if not allow_project_env or not should_try_project_env(exc):
             raise
@@ -6517,14 +6568,22 @@ def _build_with(
                 allow_project_env,
                 before_retry,
                 before_build,
+                input_declaration,
             )
         return worker, resp, created
-    if before_retry is not None:
-        before_retry()
+    replacement = before_retry() if before_retry is not None else None
+    if replacement is not None:
+        input_declaration = replacement
     worker, created_again = take()
+    if input_declaration is not None:
+        _require_current_declaration(worker, input_declaration)
     if before_build is not None:
         before_build(worker)
-    return worker, worker.ensure_built(), created or created_again
+    return (
+        worker,
+        worker.ensure_built(input_declaration=input_declaration),
+        created or created_again,
+    )
 
 
 def _captured_any(resp) -> bool:
@@ -6546,12 +6605,22 @@ def _adopt_script_dir(figures_dir: str, hint) -> bool:
 
 
 def _rebuild_in_script_dir(
-    take, script_name, figures_dir, created, allow_project_env, before_retry, before_build
+    take,
+    script_name,
+    figures_dir,
+    created,
+    allow_project_env,
+    before_retry,
+    before_build,
+    input_declaration=None,
 ):
     """换到脚本目录之后的那一次重跑：与缺包自动接手同一个顺序（先 `before_retry` 核计划，再取会话）。
-    重跑本身仍可走缺包自动接手；不会再换一次目录（模式已不是沙盒，`probe_hint` 不再给证据，另外显式关掉）。"""
-    if before_retry is not None:
-        before_retry()
+    重跑本身仍可走缺包自动接手；不会再换一次目录（模式已不是沙盒，`probe_hint` 不再给证据，另外显式关掉）。
+    `before_retry` 交回的重冻结声明选择（就地吸收换计划时）替换这份重跑腿的核对与 build 载荷
+    （Codex #1925 P2-b）——新档的 scope 是 worker 真实的 scope，两侧都观察到缺席的重跑照常进行。"""
+    replacement = before_retry() if before_retry is not None else None
+    if replacement is not None:
+        input_declaration = replacement
     worker, resp, created_again = _build_with(
         take,
         script_name,
@@ -6560,6 +6629,7 @@ def _rebuild_in_script_dir(
         before_retry=before_retry,
         before_build=before_build,
         adopt_script_dir=False,
+        input_declaration=input_declaration,
     )
     return worker, resp, created or created_again
 
