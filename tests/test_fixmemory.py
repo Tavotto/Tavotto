@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from types import SimpleNamespace
 
@@ -44,12 +45,25 @@ def test_remember_round_trip_and_repeat_counts(store):
     assert row["script"] == "make_fig3.py" and row["times"] == 2 and row["kind"] == "run_args"
 
 
-def test_secrets_and_home_never_reach_the_disk(store, monkeypatch, tmp_path):
+def _fake_home(monkeypatch, tmp_path):
+    """假家目录：POSIX 认 HOME、Windows 认 USERPROFILE，两个都设（`os.path.expanduser` 按平台取）。"""
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    return home
+
+
+def _data_dir(home) -> tuple[str, str]:
+    """(启动脚本里那个路径的源码写法, 记下来应是什么)。用 repr 拼进源码：Windows 的 `C:\\Users` 里 `\\U` 会被当成转义。"""
+    return repr(str(home / "lab" / "data")), os.path.join("~", "lab", "data")
+
+
+def test_secrets_and_home_never_reach_the_disk(store, monkeypatch, tmp_path):
+    home = _fake_home(monkeypatch, tmp_path)
+    src, kept = _data_dir(home)
     launcher = (
         "import os\n"
-        f"os.environ.setdefault('LAB_DATA_DIR', '{home}/lab/data')\n"
+        f"os.environ.setdefault('LAB_DATA_DIR', {src})\n"
         "os.environ.setdefault('API_TOKEN', 'abc123plain')\n"
         "run_original()\n"
     )
@@ -63,24 +77,22 @@ def test_secrets_and_home_never_reach_the_disk(store, monkeypatch, tmp_path):
     raw = store.read_text(encoding="utf-8")
     assert "abc123plain" not in raw  # 像凭据的变量：值不记
     assert "sk-abcdefghijklmnopqrstuvwx" not in raw  # 密钥形状照样换掉
-    assert str(home) not in raw
+    rows = fixmemory.entries()
+    assert str(home) not in json.dumps(rows, ensure_ascii=False).replace("\\\\", "\\")
     # 启动脚本正文不记；名字不像凭据的字面量变量照记值，像凭据的只记名字
-    fields = next(r for r in fixmemory.entries() if r["kind"] == "launcher")["fields"]
+    fields = next(r for r in rows if r["kind"] == "launcher")["fields"]
     assert fields["text"] == ""
-    assert fields["env"] == [{"name": "LAB_DATA_DIR", "value": "~/lab/data"}, {"name": "API_TOKEN"}]
+    assert fields["env"] == [{"name": "LAB_DATA_DIR", "value": kept}, {"name": "API_TOKEN"}]
 
 
 def test_a_launcher_without_credentials_is_kept_with_home_as_tilde(store, monkeypatch, tmp_path):
-    home = tmp_path / "home"
-    monkeypatch.setenv("HOME", str(home))
-    launcher = (
-        f"import os\nos.environ.setdefault('LAB_DATA_DIR', '{home}/lab/data')\nrun_original()\n"
-    )
+    home = _fake_home(monkeypatch, tmp_path)
+    src, kept = _data_dir(home)
+    launcher = f"import os\nos.environ.setdefault('LAB_DATA_DIR', {src})\nrun_original()\n"
     fixmemory.remember("env_var_missing", [("launcher", {"text": launcher})])
-    raw = store.read_text(encoding="utf-8")
-    assert str(home) not in raw and "~/lab/data" in raw
     (row,) = fixmemory.entries()
-    assert row["fields"]["env"] == [{"name": "LAB_DATA_DIR", "value": "~/lab/data"}]
+    assert str(home) not in json.dumps(row, ensure_ascii=False).replace("\\\\", "\\")
+    assert row["fields"]["env"] == [{"name": "LAB_DATA_DIR", "value": kept}]
     assert row["fields"]["text"] == ""  # 启动脚本正文一律不记（诊断包的修复经过里有当次那份）
 
 

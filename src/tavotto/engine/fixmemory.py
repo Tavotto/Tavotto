@@ -185,10 +185,12 @@ def _default_scrub(text: str) -> str:
 
 
 def _tidy(text: str, limit: int, scrub: Callable[[str], str] = _default_scrub) -> str:
-    text = scrub(str(text or ""))
+    # 先把家目录写成 `~`，再脱敏：脱敏会把 `C:\\Users\\<名字>` 里的用户名换掉，换完就认不出家目录了（Windows 合并组实测）
+    text = str(text or "")
     home = os.path.expanduser("~")
     if home and home != "~":
         text = text.replace(home, "~")
+    text = scrub(text)
     return text if len(text) <= limit else text[:limit] + "…"
 
 
