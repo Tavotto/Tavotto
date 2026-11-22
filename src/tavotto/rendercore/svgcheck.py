@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import base64
 import binascii
+import math
 import re
 import struct
+import time
 from dataclasses import dataclass
 from xml.etree import ElementTree as ET
 
@@ -150,6 +152,8 @@ class SVGBudget:
     max_image_bytes: int = 16 * 1024 * 1024
     max_image_pixels: int = 100_000_000
     max_expanded_elements: int = 1_000_000
+    #: `<style>` 里规则条数的上限（None = 不限，静态素材照旧；外部 SVG 导入会设，Codex 线程 4656678188）
+    max_css_rules: int | None = None
 
 
 class SVGError(ValueError):
@@ -158,6 +162,12 @@ class SVGError(ValueError):
     def __init__(self, code: str):
         self.code = code
         super().__init__(code)
+
+
+def _check_deadline(deadline: float) -> None:
+    """墙钟过了 `deadline`（`time.monotonic()` 刻度，缺省 inf = 不限）就抛 `svg_timeout`。"""
+    if time.monotonic() > deadline:
+        raise SVGError("svg_timeout")
 
 
 def strip_matplotlib_doctype(data: bytes) -> bytes:
@@ -281,9 +291,10 @@ _REPAIR_SELECTOR_ID = re.compile(r"#([^\s,>+~.#:\[\]*{}()]+)")
 
 
 class _BoundedBuilder(ET.TreeBuilder):
-    def __init__(self, budget: SVGBudget):
+    def __init__(self, budget: SVGBudget, deadline: float = math.inf):
         super().__init__()
         self.budget = budget
+        self.deadline = deadline
         self.depth = self.elements = self.attribute_chars = self.text_chars = 0
 
     def start(self, tag, attrs):
@@ -297,6 +308,8 @@ class _BoundedBuilder(ET.TreeBuilder):
             or self.attribute_chars > self.budget.max_attribute_chars
         ):
             raise SVGError("svg_resource_limit")
+        if not self.elements & 0x3FF:
+            _check_deadline(self.deadline)
         return super().start(tag, attrs)
 
     def end(self, tag):
@@ -351,12 +364,29 @@ def _declarations(css: str) -> list[str]:
     return refs
 
 
-def _stylesheet(css: str) -> list[str]:
+_TRAILING_SPACE = re.compile(r"\s*")
+
+
+def _stylesheet(
+    css: str,
+    max_rules: int | None = None,
+    deadline: float = math.inf,
+    counted: list[int] | None = None,
+) -> list[str]:
+    """逐条规则校验。只用下标推进：不切片复制剩余全文（原来每条规则 `css[pos:].strip()` 复制一遍，几十万条短规则平方级）。"""
     refs: list[str] = []
     pos = 0
+    rules = 0
     while pos < len(css):
-        if not css[pos:].strip():
+        if _TRAILING_SPACE.match(css, pos).end() == len(css):
             break
+        rules += 1
+        if counted is not None:
+            counted[0] += 1
+        if max_rules is not None and rules > max_rules:
+            raise SVGError("svg_resource_limit")
+        if not rules & 0xFF:
+            _check_deadline(deadline)
         match = _RULE.match(css, pos)
         if not match or not _SELECTOR.fullmatch(match.group(1).strip()):
             raise SVGError("svg_unsafe_css")
@@ -478,10 +508,12 @@ def _drop_inert(css_body: str) -> str:
     return ";".join(d for d in css_body.split(";") if d.strip() and not _inert(d))
 
 
-def _tolerate(root: ET.Element) -> None:
+def _tolerate(root: ET.Element, deadline: float = math.inf) -> None:
     """`tolerant` 模式的清理（外部 SVG 导入用，ADR 0189）：编辑器的私有命名空间元素与属性、整段 metadata、对画面没作用的
     CSS 声明删掉；**安全规则一条不放**——脚本、事件属性、外链、DTD / 实体、引用环、预算照旧由后面的验证拒绝。"""
-    for parent in list(root.iter()):
+    for tick, parent in enumerate(list(root.iter())):
+        if not tick & 0xFF:
+            _check_deadline(deadline)
         for child in list(parent):
             ns, tag = _name(child.tag) if isinstance(child.tag, str) else ("", "")
             if (
@@ -490,7 +522,9 @@ def _tolerate(root: ET.Element) -> None:
                 or (tag == "metadata" and ns in ("", SVG_NS))
             ):
                 parent.remove(child)
-    for node in root.iter():
+    for tick, node in enumerate(root.iter()):
+        if not tick & 0xFF:
+            _check_deadline(deadline)
         for key in list(node.attrib):
             ans, _attr = _name(key)
             if ans not in ("", _XML_NS, XLINK_NS):
@@ -499,7 +533,9 @@ def _tolerate(root: ET.Element) -> None:
             node.set("style", _drop_inert(node.get("style") or ""))
         if _name(node.tag)[1] == "style" and node.text:
             text, out, last = node.text, [], 0
-            for start, end, sel, body in _iter_rules(text):
+            for n, (start, end, sel, body) in enumerate(_iter_rules(text)):
+                if not n & 0xFF:
+                    _check_deadline(deadline)
                 out.append(text[last:start] + sel + "{" + _drop_inert(body) + "}")
                 last = end
             out.append(text[last:])
@@ -507,13 +543,18 @@ def _tolerate(root: ET.Element) -> None:
 
 
 def parse_svg(
-    data: bytes, *, budget: SVGBudget | None = None, tolerant: bool = False
+    data: bytes,
+    *,
+    budget: SVGBudget | None = None,
+    tolerant: bool = False,
+    deadline: float = math.inf,
 ) -> ET.Element:
     """Parse a bounded safe static SVG, validating every local resource reference.
 
     `tolerant`（外部 SVG 导入，ADR 0189）：先删掉公共 SVG DTD 声明（没有内部子集）、编辑器私有命名空间、metadata 与对画面没作用的
     CSS 声明，再做与严格模式**完全相同**的验证。实体、外链、脚本、事件属性、引用环、预算不放宽。"""
     budget = budget or SVGBudget()
+    _check_deadline(deadline)
     if len(data) > budget.max_bytes:
         raise SVGError("svg_resource_limit")
     try:
@@ -530,13 +571,14 @@ def parse_svg(
     if encoding and encoding.group(2).lower().replace("-", "") != "utf8":
         raise SVGError("svg_encoding_unsupported")
     try:
-        root = ET.fromstring(text, parser=ET.XMLParser(target=_BoundedBuilder(budget)))
+        root = ET.fromstring(text, parser=ET.XMLParser(target=_BoundedBuilder(budget, deadline)))
     except (ET.ParseError, LookupError) as exc:
         raise SVGError("svg_unparseable") from exc
+    _check_deadline(deadline)
     if _name(root.tag) not in ((SVG_NS, "svg"), ("", "svg")):
         raise SVGError("svg_invalid_root")
     if tolerant:
-        _tolerate(root)
+        _tolerate(root, deadline)
     nodes = list(root.iter())
     indices = {id(node): i for i, node in enumerate(nodes)}
     edges = [[indices[id(child)] for child in node] for node in nodes]
@@ -544,7 +586,10 @@ def parse_svg(
     refs: dict[int, list[str]] = {}
     metadata: set[int] = set()
     image_bytes = image_pixels = 0
+    css_rules = [0]  # 全文档 `<style>` 规则累计
     for index, node in enumerate(nodes):
+        if not index & 0xFF:
+            _check_deadline(deadline)
         ns, tag = _name(node.tag)
         in_metadata = index in metadata or (ns in ("", SVG_NS) and tag == "metadata")
         if in_metadata:
@@ -557,7 +602,8 @@ def parse_svg(
         if tag == "style":
             if node.get("type", "text/css") != "text/css" or len(node):
                 raise SVGError("svg_unsafe_css")
-            refs[index] = _stylesheet(node.text or "")
+            left = None if budget.max_css_rules is None else budget.max_css_rules - css_rules[0]
+            refs[index] = _stylesheet(node.text or "", left, deadline, css_rules)
         for key, value in node.attrib.items():
             ans, attr = _name(key)
             if attr.lower().startswith("on") or (ans == _XML_NS and attr == "base"):

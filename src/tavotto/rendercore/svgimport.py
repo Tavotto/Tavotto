@@ -267,14 +267,18 @@ def _parse_decls(s: str) -> dict[str, str]:
     return out
 
 
-def parse_css(text: str, notes: dict[str, int], start: int = 0) -> list[_Rule]:
+def parse_css(
+    text: str, notes: dict[str, int], start: int = 0, deadline: float = math.inf
+) -> list[_Rule]:
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
     # @font-face / @media 这类块：整块跳过（@media 里的规则不应用——打印 / 屏幕差异不影响导入几何）
     text = re.sub(r"@[\w-]+[^{;]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}", "", text)
     text = re.sub(r"@[\w-]+[^;{]*;", "", text)
     rules: list[_Rule] = []
     order = start
-    for sels, body in re.findall(r"([^{}]+)\{([^{}]*)\}", text):
+    for n, (sels, body) in enumerate(re.findall(r"([^{}]+)\{([^{}]*)\}", text)):
+        if not n & 0xFF and time.monotonic() > deadline:
+            raise SvgImportError("timeout", f"超过 {DEADLINE_S:g} 秒")
         decls = _parse_decls(body)
         for sel in sels.split(","):
             sel = sel.strip()
@@ -1276,6 +1280,7 @@ IMPORT_BUDGET = svgcheck.SVGBudget(
     max_image_bytes=4 * 1024 * 1024,
     max_image_pixels=40_000_000,
     max_expanded_elements=200_000,
+    max_css_rules=10_000,  # 几十万条空规则也是一种拖时间的写法（Codex 线程 4656678188）
 )
 #: 视口（width / height / viewBox）的上限：一张图不会超过 10 m；更大的多半是故意撑爆的坐标
 MAX_VIEWPORT_MM = 10_000.0
@@ -1303,7 +1308,7 @@ _CHECK_CODES = {
 }
 
 
-def _parse(svg_text: str):
+def _parse(svg_text: str, deadline: float = math.inf):
     """唯一的入口是 `svgcheck.parse_svg`（与静态 SVG 素材、ADR 0182 的场景解析同一个受限解析器），`tolerant` 模式：只多删掉
     编辑器私有命名空间与无作用的 CSS，安全规则一条不放。被拒绝的输入根本到不了下面的换算。"""
     data = svg_text.encode("utf-8") if isinstance(svg_text, str) else svg_text
@@ -1312,8 +1317,10 @@ def _parse(svg_text: str):
     if not re.search(rb"<svg[\s>]", data[:65536]):
         raise SvgImportError("not_svg", "没有 <svg> 元素")
     try:
-        return svgcheck.parse_svg(data, budget=IMPORT_BUDGET, tolerant=True)
+        return svgcheck.parse_svg(data, budget=IMPORT_BUDGET, tolerant=True, deadline=deadline)
     except svgcheck.SVGError as exc:
+        if exc.code == "svg_timeout":
+            raise SvgImportError("timeout", f"超过 {DEADLINE_S:g} 秒") from exc
         code = _CHECK_CODES.get(exc.code, "bad_xml")
         if code in ("bad_xml", "not_svg", "too_large"):
             raise SvgImportError(code, exc.code) from exc
@@ -1332,13 +1339,17 @@ def import_svg(svg_text: str) -> dict:
     """SVG 文本 → `{objects, size_mm: [w, h], unsupported: {code: count}}`。
 
     `unsupported` 非空 = 有做不准的东西，调用方应把整个 SVG 当图片放进来（`objects` 仍给出，只供诊断）。"""
+    # 墙钟从入口起算：XML 解析、受限校验、CSS 清理与解析、换算共用这一份预算（Codex 线程 4656678188）
+    deadline = time.monotonic() + DEADLINE_S
     try:
-        root = _parse(svg_text)
+        root = _parse(svg_text, deadline)
     except _Rejected as rej:
         return {"objects": [], "size_mm": [0.0, 0.0], "unsupported": {rej.code: 1}}
     ids = {}
     css = []
-    for el in root.iter():
+    for tick, el in enumerate(root.iter()):
+        if not tick & 0xFF and time.monotonic() > deadline:
+            raise SvgImportError("timeout", f"超过 {DEADLINE_S:g} 秒")
         if not isinstance(el.tag, str):
             continue
         if el.get("id"):
@@ -1348,8 +1359,8 @@ def import_svg(svg_text: str) -> dict:
     notes: dict[str, int] = {}
     rules: list[_Rule] = []
     for c in css:
-        rules += parse_css(c, notes, len(rules))
-    ctx = _Ctx(ids=ids, rules=rules, notes=notes, deadline=time.monotonic() + DEADLINE_S)
+        rules += parse_css(c, notes, len(rules), deadline)
+    ctx = _Ctx(ids=ids, rules=rules, notes=notes, deadline=deadline)
     # 视口：width / height（缺省按 viewBox，单位 px = 1/96 in）；viewBox 等比放进视口（preserveAspectRatio 缺省 xMidYMid meet）
     vb = _nums(root.get("viewBox") or "")
     vbw, vbh = (vb[2], vb[3]) if len(vb) == 4 and vb[2] > 0 and vb[3] > 0 else (None, None)

@@ -572,3 +572,72 @@ def test_number_regex_is_unambiguous_on_pathological_runs():
         svgimport._LENGTH_RE.match(s)
         svgimport._NUM_RE.findall(s)
         assert time.monotonic() - t0 < 1.0
+
+
+# ---- Codex 线程 4656678188：墙钟从入口起算，CSS 扫描不再平方级 ----
+
+
+def test_many_tiny_css_rules_are_refused_within_the_wall_clock():
+    """`<style>` 里 32 万条 `a{}`（约 960 KB）：原来 7 秒后成功返回，现在超规则数上限直接拒绝"""
+    t0 = time.monotonic()
+    got = outcome(SVG.format("<style>" + "a{}" * 320_000 + "</style>"))
+    assert got in (("rejected", "too_large"), ("rejected", "timeout")), got
+    assert time.monotonic() - t0 < svgimport.DEADLINE_S
+
+
+def test_stylesheet_scan_is_linear_in_rule_count():
+    """不再 `css[pos:].strip()` 逐条复制剩余全文：60 万条短规则的扫描应在 2 秒内"""
+    css = "a{}" * 600_000
+    t0 = time.monotonic()
+    assert svgcheck._stylesheet(css) == []
+    assert time.monotonic() - t0 < 2.0
+
+
+def test_small_stylesheets_still_apply():
+    text = SVG.format(
+        '<style>.a{fill:red}\n  rect{stroke:blue}  </style><rect class="a" width="5" height="5"/>'
+    )
+    r = svgimport.import_svg(text)
+    assert not r["unsupported"] and r["objects"][0]["fill"] == "#ff0000"
+    assert svgcheck._stylesheet("  a{fill:red} \n b{fill:blue}  \n") == []
+
+
+def test_stylesheet_rule_cap_and_deadline_are_enforced():
+    with pytest.raises(svgcheck.SVGError) as e:
+        svgcheck._stylesheet("a{}" * 11, 10)
+    assert e.value.code == "svg_resource_limit"
+    with pytest.raises(svgcheck.SVGError) as e:
+        svgcheck._stylesheet("a{}" * 1000, None, time.monotonic() - 1)
+    assert e.value.code == "svg_timeout"
+
+
+def test_parse_svg_checks_the_deadline_while_parsing_and_validating():
+    past = time.monotonic() - 1
+    for body in ("<g/>" * 5000, "<style>" + "a{}" * 5000 + "</style>"):
+        for tolerant in (False, True):
+            with pytest.raises(svgcheck.SVGError) as e:
+                svgcheck.parse_svg(SVG.format(body).encode(), tolerant=tolerant, deadline=past)
+            assert e.value.code == "svg_timeout"
+    # 不给 deadline 时行为不变
+    svgcheck.parse_svg(SVG.format("<g/>" * 5000).encode(), tolerant=True)
+
+
+def test_import_deadline_starts_at_entry_and_covers_parsing_and_css(monkeypatch):
+    seen = {}
+    real = svgcheck.parse_svg
+
+    def spy(data, **kw):
+        seen.update(kw)
+        return real(data, **kw)
+
+    monkeypatch.setattr(svgcheck, "parse_svg", spy)
+    t0 = time.monotonic()
+    svgimport.import_svg(SVG.format('<rect width="1" height="1"/>'))
+    assert t0 < seen["deadline"] <= time.monotonic() + svgimport.DEADLINE_S
+    # parse_css 自己也会超时
+    with pytest.raises(svgimport.SvgImportError) as e:
+        svgimport.parse_css("a{}" * 1000, {}, 0, time.monotonic() - 1)
+    assert e.value.code == "timeout"
+    # 解析阶段超时 -> timeout（不是 bad_xml / 做不准）
+    monkeypatch.setattr(svgimport, "DEADLINE_S", -1.0)
+    assert outcome("<svg xmlns='http://www.w3.org/2000/svg'><g/></svg>") == ("rejected", "timeout")
