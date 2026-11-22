@@ -238,6 +238,41 @@ plt.show()
 )
 
 
+def test_native_candidate_binds_the_launcher_bytes_as_its_source(project):
+    """Codex #1925 P2-6（父侧）：spec.script_source 存在时候选的字节身份是启动脚本
+    （ADR 0194 §二），scope 身份仍是原脚本。"""
+    launcher_dir = project / "tavottofile" / "launchers"
+    launcher_dir.mkdir(parents=True)
+    launcher = launcher_dir / "figure.py"
+    launcher.write_bytes(b"# launcher bytes, what run_script actually compiles\n")
+    spec = execspec.desktop_native_spec(
+        str(project / SCRIPT),
+        interpreter=nativekit.USER_PYTHON or sys.executable,
+        cwd=execspec.desktop_cwd(project, SCRIPT, "project_root"),
+        project_root=str(project),
+        stem_aliases=(),
+        script_source=str(launcher),
+    )
+    _declare(project)
+    candidate = declaredinputs.payload_for_native(spec)["input_declaration"]
+    assert candidate["script_path"] == str(launcher)
+    assert candidate["scope"]["script"] == SCRIPT
+    capture = inputdeclaration.begin(
+        candidate,
+        script=SCRIPT,
+        script_path=str(launcher),
+        cwd_mode=candidate["scope"]["cwd_mode"],
+        run_config=None,
+        actual_cwd=spec.cwd,
+        project_root=str(project),
+    )
+    assert capture is not None
+    capture.entered(executionfact.new_id())
+    fact = capture.finish(hashlib.sha256(launcher.read_bytes()).hexdigest())
+    assert fact is not None
+    assert fact["selection_revision"] is not None
+
+
 def test_remap_approval_drift_conflicts_the_native_candidate(project):
     """Codex #1925 P1：行内冻结的改指批准必须对照现表——删规则、整表换代、
     改指目标三样都让候选冲突，而不是把旧目标照旧拷走。"""
