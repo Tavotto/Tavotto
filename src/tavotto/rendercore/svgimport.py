@@ -417,6 +417,7 @@ def parse_path_d(
 
     def start(px, py):
         nonlocal cur
+        spend()  # 子路径的起点也是锚点：与线段 / 曲线同一个预算（Codex 线程 4656811246）
         cur = {"closed": False, "nodes": [{"p": (px, py), "in": (px, py), "out": (px, py)}]}
         subs.append(cur)
 
@@ -962,7 +963,7 @@ def _geometry_raw(el, tag: str, ctx: _Ctx | None = None) -> list[dict] | None:
         subs = parse_path_d(
             g("d") or "", max_anchors=MAX_ANCHORS - ctx.anchors, deadline=ctx.deadline
         )
-        ctx.anchors += sum(len(sp["nodes"]) for sp in subs)
+        _spend_anchors(ctx, subs)  # 累计并立刻查上限（以前只加数不检查）
         return subs
     if tag == "rect":
         w, h = _length(g("width")), _length(g("height"))

@@ -713,3 +713,38 @@ def test_tolerant_cleanup_keeps_order_and_drops_metadata_and_foreign_nodes():
         tolerant=True,
     )
     assert [c.get("id") for c in root] == ["a", "b", "c"]
+
+
+# ---- Codex 线程 4656811246：每个子路径的起点也是锚点 ----
+
+
+def test_every_subpath_start_is_charged_to_the_anchor_budget(monkeypatch):
+    """`M0 0 L1 1 ` 重复 10 万次 = 20 万锚点：原来起点不计费，成功返回超过 MAX_ANCHORS 的结果"""
+    monkeypatch.setattr(svgimport, "DEADLINE_S", 120.0)
+    d = "M0 0 L1 1 " * 100_000
+    assert outcome(SVG.format(f'<path d="{d}" fill="red"/>')) == ("rejected", "too_many_elements")
+    # 只有 M 也一样（每个 M 一个锚点）
+    d = "M0 0 " * (svgimport.MAX_ANCHORS + 10)
+    assert outcome(SVG.format(f'<path d="{d}" fill="red"/>')) == ("rejected", "too_many_elements")
+
+
+def test_parse_path_d_counts_the_subpath_start():
+    assert len(svgimport.parse_path_d("M0 0 L1 1", max_anchors=2)[0]["nodes"]) == 2
+    with pytest.raises(svgimport.SvgImportError) as e:
+        svgimport.parse_path_d("M0 0 L1 1", max_anchors=1)
+    assert e.value.code == "too_many_elements"
+    with pytest.raises(svgimport.SvgImportError):
+        svgimport.parse_path_d("M0 0 M1 1 M2 2", max_anchors=2)
+
+
+def test_geometry_total_is_checked_against_the_limit_not_only_added():
+    """`_geometry` 对 path 分支累计之后也要查上限（以前只加数）"""
+    from xml.etree import ElementTree as ET
+
+    ctx = svgimport._Ctx(ids={}, rules=[], deadline=time.monotonic() + 60)
+    ctx.anchors = svgimport.MAX_ANCHORS - 1
+    el = ET.fromstring('<path d="M0 0"/>')
+    svgimport._geometry(el, "path", ctx)  # 刚好到上限：不报
+    with pytest.raises(svgimport.SvgImportError) as e:
+        svgimport._geometry(ET.fromstring('<path d="M0 0"/>'), "path", ctx)
+    assert e.value.code == "too_many_elements"
