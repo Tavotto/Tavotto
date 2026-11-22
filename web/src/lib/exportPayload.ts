@@ -1,7 +1,8 @@
+import { effectiveFillGradient, effectiveStrokeGradient, type ReadGradient } from './gradient'
 import { figureSnapshotFor } from './figureSnapshot'
 import { artifactRequestFields } from './artifactValidation'
 import type { ExportObject } from './api'
-import type { CanvasObject } from '@/types/document'
+import type { CanvasObject, Gradient } from '@/types/document'
 import { DEFAULT_STAR_POINTS, DEFAULT_STAR_RATIO, isKnownObject, isStrokeOnlyShape, panelRotation, readPath, shapeStrokeOn } from '@/types/document'
 import { DEFAULT_LINE_CAP, defaultLineJoin, miterLimitOf, STROKE_MITER_LIMIT, strokeOpacityOf, validDashPattern } from './shapeGeometry'
 import { PATH_DEFAULT_JOIN } from './pathGeom'
@@ -52,6 +53,16 @@ function appearanceExtras(o: {
     ...(dp ? { dash_pattern: dp } : {}),
     ...(align ? { stroke_align: align } : {}),
   }
+}
+
+/** 渐变（ADR 0186）：只发生效的那份（填充渐变要有填充、描边渐变要有描边），读过的形状；缺省不发 */
+function gradientExtras(
+  o: { fill: string | null; fillGradient?: Gradient; strokeGradient?: Gradient },
+  strokeOn: boolean,
+): { fill_gradient?: ReadGradient; stroke_gradient?: ReadGradient } {
+  const f = effectiveFillGradient(o)
+  const st = effectiveStrokeGradient(o, strokeOn)
+  return { ...(f ? { fill_gradient: f } : {}), ...(st ? { stroke_gradient: st } : {}) }
 }
 
 function toExportObject(o: CanvasObject): ExportObject {
@@ -151,6 +162,7 @@ function toExportObject(o: CanvasObject): ExportObject {
         line_cap: o.lineCap && o.lineCap !== DEFAULT_LINE_CAP ? o.lineCap : undefined,
         line_join: o.lineJoin && o.lineJoin !== defaultLineJoin(o.shape) ? o.lineJoin : undefined,
         ...appearanceExtras(o),
+        ...gradientExtras(o, shapeStrokeOn(o)),
         rotation_deg: o.rotationDeg || undefined,
       }
     case 'path': {
@@ -179,6 +191,7 @@ function toExportObject(o: CanvasObject): ExportObject {
         line_cap: o.lineCap && o.lineCap !== DEFAULT_LINE_CAP ? o.lineCap : undefined,
         line_join: o.lineJoin && o.lineJoin !== PATH_DEFAULT_JOIN ? o.lineJoin : undefined,
         ...appearanceExtras(o),
+        ...gradientExtras(o, strokeOn),
         head_start: o.headStart && o.headStart !== 'none' ? o.headStart : undefined,
         head_end: o.headEnd && o.headEnd !== 'none' ? o.headEnd : undefined,
         head_size_start: o.headSizeStart && o.headSizeStart !== 'medium' ? o.headSizeStart : undefined,

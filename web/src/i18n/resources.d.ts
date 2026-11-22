@@ -741,11 +741,15 @@ export default interface Resources {
     },
     "colorField": {
       "documentColors": "排版里的颜色",
+      "figureColors": "图内配色",
       "hex": "{{label}}：色号",
       "none": "无",
       "open": "{{label}}：选色",
       "picker": "{{label}}：取色盘",
       "recent": "最近使用",
+      "recommended": "推荐配色",
+      "recommendedTip": "Okabe-Ito 色盲友好配色，科研图常用",
+      "recommendedTipJournal": "{{journal}} 没有规定配色；这是 Okabe-Ito 色盲友好配色",
       "system": "系统取色器…"
     },
     "count": {
@@ -1706,6 +1710,10 @@ export default interface Resources {
         "select-all": {
           "keywords": "select all qx quanxuan",
           "label": "全选"
+        },
+        "shape-builder": {
+          "keywords": "shape builder merge regions xszcq 形状生成器 合并 区域",
+          "label": "形状生成器"
         },
         "shortcut-help": {
           "keywords": "shortcut help kjj kuaijiejian",
@@ -3056,6 +3064,43 @@ export default interface Resources {
         "title": "接入 AI 编辑器",
         "update": "更新",
         "updating": "更新中…"
+      },
+      "license": {
+        "action": {
+          "activate": "激活",
+          "buy": "购买",
+          "cancel": "取消",
+          "enter": "输入激活码",
+          "refresh": "现在确认",
+          "release": "解绑这台电脑",
+          "renew": "续费",
+          "retry": "再试一次"
+        },
+        "codeLabel": "激活码",
+        "failure": {
+          "client_error": "没能完成，请稍后再试",
+          "device_limit": "这份授权的电脑已经满了，先在另一台上解绑",
+          "expired": "这份授权已经到期",
+          "invalid_code": "激活码不对，核对一下再试",
+          "network": "连不上授权服务器，检查网络后再试",
+          "price_unavailable": "现在还不能购买，请稍后再试",
+          "rate_limited": "试得太频繁了，过一会儿再试",
+          "revoked": "这份授权已失效",
+          "server": "授权服务暂时不可用，请稍后再试"
+        },
+        "label": "高级版",
+        "lock": {
+          "aria": "高级版功能，了解高级版",
+          "tip": "高级版功能，点一下了解"
+        },
+        "none": "还没激活",
+        "releaseTitle": "解绑后可以在另一台电脑上激活",
+        "state": {
+          "expired": "已于 {{date}} 到期",
+          "lapsed": "需要联网确认一下授权",
+          "revoked": "这份授权已失效"
+        },
+        "until": "有效期至 {{date}}"
       },
       "navGroup": {
         "general": "应用",
@@ -4583,6 +4628,7 @@ export default interface Resources {
       "legendOverDataRisk": "图例可能压住数据——只有包围盒相交，量不到几何（{{count}} 项：{{targets}}）",
       "lineWidthBelowMin": "数据线的有效线宽 {{effective}} pt，要求至少 {{min}} pt。",
       "lineWidthOffPreset": "线宽的有效值 {{effective}} pt 不在规范档位 {{presets}} pt 上。",
+      "logAxisNonpositive": "对数 {{axis}} 轴上有 {{count}} 个 ≤ 0 的值画不出来",
       "missingAsset": "图引用的素材文件不在当前图库中，导出会失败或出空白。",
       "outOfPage": "对象超出页面范围，超出部分不会出现在成图里",
       "outsideMargin": "对象越过了 {{margin}} mm 安全区页边距",
@@ -4762,6 +4808,7 @@ export default interface Resources {
         "legend-over-data": "图例压住数据",
         "line-width-below-min": "数据线太细",
         "line-width-off-preset": "线宽不在规范档位上",
+        "log-axis-nonpositive": "对数轴上有画不出来的值",
         "missing-asset": "素材文件缺失",
         "out-of-page": "超出页面范围",
         "outside-margin": "越过安全边距",
@@ -5385,6 +5432,37 @@ export default interface Resources {
         "symlog": "对称对数"
       }
     },
+    "gradient": {
+      "angle": "渐变角度",
+      "angleTip": "0° 从左到右，逆时针增加",
+      "barTip": "点空白处加色标，往下拖出色带删除",
+      "fillBar": "填充色带",
+      "fillCenter": "填充中心",
+      "fillCenterX": "填充中心 X",
+      "fillCenterY": "填充中心 Y",
+      "fillKind": "填充类型",
+      "fillRadius": "填充半径",
+      "kind": {
+        "linear": "线性",
+        "radial": "径向",
+        "solid": "纯色"
+      },
+      "kindTip": "纯色、线性渐变或径向渐变",
+      "mixed": "多个值",
+      "radiusTip": "按对象长边的百分比",
+      "reverse": "反向",
+      "stop": "色标 {{n}}",
+      "stopColor": "色标 {{n}} 的颜色",
+      "stopOffset": "色标 {{n}} 的位置",
+      "stopOpacity": "色标 {{n}} 的不透明度",
+      "stopOpacityTip": "这个色标的不透明度",
+      "strokeBar": "描边色带",
+      "strokeCenter": "描边中心",
+      "strokeCenterX": "描边中心 X",
+      "strokeCenterY": "描边中心 Y",
+      "strokeKind": "描边类型",
+      "strokeRadius": "描边半径"
+    },
     "gradientStops": {
       "bottom": "下端",
       "followSwatch": "让「{{name}}」的图例色块跟着改",
@@ -5456,6 +5534,8 @@ export default interface Resources {
       "setFillRule": "修改填充规则",
       "setFontFamily": "修改字体",
       "setFontSize": "修改字号",
+      "setGradient": "改渐变",
+      "setGradientKind": "改填充 / 描边类型",
       "setHeadEnd": "修改终点端型",
       "setHeadSizeEnd": "修改终点端型大小",
       "setHeadSizeStart": "修改起点端型大小",
@@ -6396,6 +6476,7 @@ export default interface Resources {
       "saveNamed": "把现在存为命名节点",
       "script": "上标 / 下标（属性面板文字框内）",
       "selectAll": "全选",
+      "shapeBuilder": "形状生成器",
       "tabs": "焦点在画布标签上时：重命名 / 关闭 / 左右挪动",
       "timeline": "打开 / 关闭排版时间线",
       "tools": "选择 / 文字 / 箭头 / 矩形 / 椭圆 / 直线",
@@ -6957,6 +7038,7 @@ export default interface Resources {
       "rotate": "旋转 {{deg}}°",
       "rotateObjects": "旋转对象",
       "rotateReset": "取消旋转",
+      "roundCorners": "圆角",
       "scaleLegend": "缩放图例",
       "scriptWinsOverStyle": "脚本改动优先于样式",
       "seedBaked": "载入文件中的基线",
@@ -6966,6 +7048,7 @@ export default interface Resources {
       "setPageSize": "修改画布尺寸",
       "setProp": "修改{{prop}}",
       "setPublicationProfile": "设置出版规范",
+      "shapeBuilder": "形状生成器",
       "showObject": "显示对象",
       "showObjects": "显示 {{count}} 个对象",
       "simplifyPath": "简化路径",

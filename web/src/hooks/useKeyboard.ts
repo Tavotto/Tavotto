@@ -23,6 +23,7 @@ import { deleteAnchorPoints, editAnchors, exitAnchorEdit, PATH_COMMANDS } from '
 import { activePathEdit } from '@/store/pathEditStore'
 import { APPEARANCE_COMMANDS } from '@/store/appearanceActions'
 import { PATHFINDER_COMMANDS } from '@/store/pathfinderActions'
+import { finishShapeBuilder, shapeBuilderActive } from '@/store/shapeBuilder'
 import { bindingFor } from '@/lib/keymap'
 import { useDocumentStore } from '@/store/documentStore'
 import {
@@ -327,6 +328,14 @@ export function useKeyboard() {
         return
       }
 
+      // 形状生成器（⇧M）开着：Esc / Enter 收尾退出（有改动就落一条历史），其余键先不响应，免得删除 / 工具键改掉正在拼的那组对象
+      if (shapeBuilderActive()) {
+        if (e.key === 'Escape' || e.key === 'Enter') {
+          e.preventDefault()
+          finishShapeBuilder()
+        }
+        return
+      }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
         deleteSelection()
@@ -415,7 +424,9 @@ export function useKeyboard() {
       // 路径命令的单键（+ / − / ⇧C；P 在下面的工具键里）：命令表 `PATH_COMMANDS` 说了算，此刻不可用的不消费
       const bound = bindingFor(e)
       const cmd = bound
-        ? (PATH_COMMANDS.find((c) => c.key === bound && c.id !== 'pen-tool') ?? APPEARANCE_COMMANDS.find((c) => c.key === bound))
+        ? (PATH_COMMANDS.find((c) => c.key === bound && c.id !== 'pen-tool') ??
+          APPEARANCE_COMMANDS.find((c) => c.key === bound) ??
+          PATHFINDER_COMMANDS.find((c) => c.key === bound))
         : undefined
       if (cmd) {
         if (cmd.available()) {

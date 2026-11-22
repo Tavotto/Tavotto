@@ -709,6 +709,52 @@ function isDataLine(el: ManifestElement, role: string): boolean {
   return true
 }
 
+/**
+ * `scale_domain` 里的计数：非负整数才算数（JSON 的 2.0 也算 2），其余一律当 0（不判）。
+ * 同源对：`engine/preflight.py` 的 `_domain_count`。
+ */
+function domainCount(v: unknown): number {
+  return typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : 0
+}
+
+/**
+ * V-001：对数轴上有 ≤ 0 的值（log 无定义，matplotlib 静默画到轴外 / 丢掉）。事实只读 axes 元素的
+ * `scale_domain`（产生者只有 `engine/manifest.scale_domain`）：那一维 `status` 是 `ok` 且两个计数之和 > 0 才报，
+ * `over_budget` / `unavailable` / 缺席一律不判。每个（axes, 维）一次命中，x 先于 y；与
+ * `engine/preflight.py` 的 `_check_log_axis_nonpositive` 同源（golden `log-axis-*`）。
+ */
+function checkLogAxisNonpositive(
+  manifest: Manifest,
+  pid: string,
+  hidden: Set<string>,
+  sink: Sink,
+): void {
+  for (const el of manifest.elements ?? []) {
+    if (el.role !== 'axes' || !isDrawn(el, hidden)) continue
+    const domain = el.scale_domain
+    if (!domain || typeof domain !== 'object' || Array.isArray(domain)) continue
+    for (const dim of ['x', 'y'] as const) {
+      const fact = domain[dim]
+      if (!fact || typeof fact !== 'object' || fact.status !== 'ok') continue
+      const points = domainCount(fact.nonpositive)
+      const low = domainCount(fact.errorbar_low_nonpositive)
+      const total = points + low
+      if (total <= 0) continue
+      sink.add(
+        'log-axis-nonpositive',
+        pf('logAxisNonpositive', { count: total, axis: dim }),
+        {
+          objectIds: [pid],
+          gids: [el.gid],
+          detail: { axis: dim, nonpositive: points, errorbar_low_nonpositive: low },
+          worse: total,
+          prop: `${dim}scale`,
+        },
+      )
+    }
+  }
+}
+
 function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, sink: Sink): void {
   const manifest = panel.manifest
   if (!manifest) return
@@ -921,6 +967,9 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
       )
     }
   }
+
+  // --- 数据与编码客观不一致（V-001）：数学上可判定，进 warn；不自动修（改 symlog / 删点是科学决策） ---
+  checkLogAxisNonpositive(manifest, pid, hidden, sink)
 
   // --- 数据语义：只给建议，绝不替用户裁决 ---
   for (const ax of [...rolesByAxes.keys()].sort()) {

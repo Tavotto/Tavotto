@@ -58,6 +58,33 @@ class Watcher(threading.Thread):
             time.sleep(0.003)
 
 
+@pytest.fixture
+def reports(monkeypatch):
+    """在产品的进度上报处挂钩：每次 `tick` / `enter` 之后立刻取一份该请求的 `snapshot`，按序存下来。
+    不靠轮询采样——轮询在机器快的时候可能一次都采不到某个阶段（`render` 很短时就是这样，合并组里红过一次）。
+    上报函数都经模块属性调用（`progress.tick` / `progress.enter`），所以换掉模块属性就能看到每一次上报。"""
+    seen: list[dict] = []
+    lock = threading.Lock()
+
+    def wrap(name):
+        orig = getattr(progress, name)
+
+        def hooked(*a, **k):
+            try:
+                return orig(*a, **k)
+            finally:
+                e = progress._CUR.get()
+                if e is not None:
+                    with lock:
+                        seen.append({"rid": e.rid, **progress.snapshot(e.project, e.rid)})
+
+        monkeypatch.setattr(progress, name, hooked)
+
+    wrap("tick")
+    wrap("enter")
+    return seen
+
+
 # =========================================================================== 进度登记表本身
 def test_the_registry_is_bounded_in_count_and_age_and_hides_small_requests():
     progress.reset_for_tests()
@@ -254,7 +281,7 @@ def test_progress_endpoint_is_guarded_and_validates_the_request_id(big):
     assert client.post("/api/ai/data-progress/rid-none-001/cancel").status_code == 404
 
 
-def test_propose_progress_is_visible_and_reaches_done(big):
+def test_propose_progress_is_visible_and_reaches_done(big, reports):
     m, client, figs, _ = big
     put(figs, "data/run.csv", _big_rows())
     w = Watcher(m, "rid-prop-0001")
@@ -264,8 +291,9 @@ def test_propose_progress_is_visible_and_reaches_done(big):
     w.stop = True
     w.join(5)
     assert out["status"] == 200 and out["body"]["kind"] == "candidates", out
-    running = [s for s in w.seen if s["state"] == "running"]
-    assert running, "轮询期间没读到进行中的进度"
+    # 进行中的状态取自每一次上报（确定），不取自轮询采到的那几个
+    running = [s for s in reports if s["rid"] == "rid-prop-0001" and s["state"] == "running"]
+    assert running, "上报处没有记到进行中的进度"
     fr = [s["fraction"] for s in running if s["fraction"] is not None]
     assert fr == sorted(fr)
     assert {s["phase"] for s in running} <= {"validate", "scan", "stage", "reduce"}
@@ -402,26 +430,25 @@ def test_the_data_files_listing_marks_large_tables_it_has_read(big):
 
 
 @needs_worker
-def test_commit_reports_an_indeterminate_render_phase_and_cannot_be_cancelled(big):
+def test_commit_reports_an_indeterminate_render_phase_and_cannot_be_cancelled(big, reports):
     m, client, figs, _ = big
     put(figs, "data/run.csv", _big_rows(60_000))
     body = propose(client, render="lazy", answers={"y": "signal_mV"}).get_json()
     assert body["kind"] == "candidates"
     item = next(i for i in body["items"] if i["title_code"] == "line_points")
     assert client.get(item["thumbnail_url"] + "?request_id=rid-thum-0001").status_code == 200
-    w = Watcher(m, "rid-comm-0001")
-    w.start()
     r = client.post(
         "/api/ai/data-figure/commit",
         json={"session": body["session"], "id": item["id"], "client_request_id": "rid-comm-0001"},
     )
-    w.stop = True
-    w.join(5)
     assert r.status_code == 200 and r.get_json()["data_check"] == "verified"
-    running = [s for s in w.seen if s["state"] == "running"]
+    # 每一次上报之后的状态（不靠轮询采样：commit 很快时轮询可能一次都采不到 render）
+    running = [s for s in reports if s["rid"] == "rid-comm-0001" and s["state"] == "running"]
+    assert running
     assert all(s["kind"] == "commit" and s["cancellable"] is False for s in running)
     render = [s for s in running if s["phase"] == "render"]
-    assert render and all(s["fraction"] is None and s["indeterminate"] for s in render)
+    assert render, "commit 没有上报 render 阶段"
+    assert all(s["fraction"] is None and s["indeterminate"] for s in render)
     assert (
         client.post("/api/ai/data-progress/rid-comm-0001/cancel").get_json()["cancelled"] is False
     )

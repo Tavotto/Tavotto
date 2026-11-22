@@ -24,6 +24,8 @@ export function applyDefaultAppearance(o: StrokedMark): void {
   delete o.stroke
   o.fill = null
   delete o.fillOpacity
+  delete o.fillGradient
+  delete o.strokeGradient
   if (o.type === 'shape') delete o.strokeAlign
 }
 
@@ -37,6 +39,13 @@ export function swapFillStroke(o: StrokedMark): boolean {
   const fillOpacity = o.fillOpacity
   const stroke = markStrokeOn(o) ? o.color : null
   const strokeOpacity = markStrokeOn(o) ? o.strokeOpacity : undefined
+  // 渐变跟着各自的颜色一起换（ADR 0186）：填充渐变 ↔ 描边渐变
+  const fillGradient = fill ? o.fillGradient : undefined
+  const strokeGradient = stroke ? o.strokeGradient : undefined
+  delete o.fillGradient
+  delete o.strokeGradient
+  if (strokeGradient) o.fillGradient = strokeGradient
+  if (fillGradient) o.strokeGradient = fillGradient
   o.fill = stroke
   if (stroke && strokeOpacity != null) o.fillOpacity = strokeOpacity
   else delete o.fillOpacity
@@ -57,6 +66,7 @@ export function clearFill(o: StrokedMark): boolean {
   if (!isFillStrokeMark(o) || !markFillable(o) || o.fill == null) return false
   o.fill = null
   delete o.fillOpacity
+  delete o.fillGradient
   return true
 }
 
@@ -96,15 +106,17 @@ export function applyColorSample(o: CanvasObject, s: ColorSample): boolean {
   let changed = false
   const fillable = isFillStrokeMark(o) && markFillable(o)
   if (s.fill && fillable) {
-    if (isFillStrokeMark(o) && o.fill !== s.fill) {
+    if (isFillStrokeMark(o) && (o.fill !== s.fill || o.fillGradient)) {
       o.fill = s.fill
+      delete o.fillGradient // 吸到的是一个纯色：渐变让位（ADR 0186）
       changed = true
     }
   }
   const strokeColor = s.stroke ?? (!fillable ? s.fill : null)
   if (strokeColor) {
-    if (o.color !== strokeColor) {
+    if (o.color !== strokeColor || (isFillStrokeMark(o) && o.strokeGradient)) {
       o.color = strokeColor
+      if (isFillStrokeMark(o)) delete o.strokeGradient
       changed = true
     }
     if (isFillStrokeMark(o) && o.stroke === false && s.stroke) {

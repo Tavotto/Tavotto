@@ -4660,6 +4660,7 @@ FIX_MANUAL_HINTS = {
     "math-unrenderable": "改公式写法，回脚本改。",
     "raster-dpi": "导出时把 dpi 调到规范要求以上。",
     "line-width-below-min": "把数据线加粗到期刊要求的线宽以上，回脚本改。",
+    "log-axis-nonpositive": "对数轴画不出 ≤ 0 的值；换轴的尺度还是处理这些数据，由作者回脚本决定。",
 }
 
 

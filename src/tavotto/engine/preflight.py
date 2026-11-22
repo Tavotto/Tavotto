@@ -663,6 +663,52 @@ def _is_data_line(el: dict, role: str) -> bool:
     return True
 
 
+def _domain_count(value: object) -> int:
+    """`scale_domain` 里的计数：非负整数才算数（JSON 的 2.0 也算 2），其余一律当 0（不判）。
+
+    与 `preflight.ts` 的 `domainCount` 同源：`Number.isInteger` 认 2.0、不认 true / "3" / NaN。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    if not math.isfinite(value) or not float(value).is_integer() or value <= 0:
+        return 0
+    return int(value)
+
+
+def _check_log_axis_nonpositive(
+    manifest: dict, pid: str, hidden_legends: set[str], sink: _Sink
+) -> None:
+    """V-001：对数轴上有 ≤ 0 的值（log 无定义，matplotlib 静默画到轴外 / 丢掉）。
+
+    事实只读 axes 元素的 `scale_domain`（产生者只有 `engine/manifest.scale_domain`）：那一维 `status` 是 `ok` 且
+    `nonpositive + errorbar_low_nonpositive > 0` 才报，`over_budget` / `unavailable` / 缺席一律不判——「没量」
+    不是「没有」。每个（axes, 维）一次命中，x 先于 y；与 `preflight.ts` 的 `checkLogAxisNonpositive` 同源。"""
+    for el in manifest.get("elements") or []:
+        if el.get("role") != "axes" or not _is_drawn(el, hidden_legends):
+            continue
+        domain = el.get("scale_domain")
+        if not isinstance(domain, dict):
+            continue
+        gid = str(el.get("gid", ""))
+        for dim in ("x", "y"):
+            fact = domain.get(dim)
+            if not isinstance(fact, dict) or fact.get("status") != "ok":
+                continue
+            points = _domain_count(fact.get("nonpositive"))
+            low = _domain_count(fact.get("errorbar_low_nonpositive"))
+            total = points + low
+            if total <= 0:
+                continue
+            sink.add(
+                "log-axis-nonpositive",
+                f"对数 {dim} 轴上有 {total} 个 ≤ 0 的值画不出来",
+                message=("logAxisNonpositive", {"count": total, "axis": dim}),
+                object_ids=[pid],
+                gids=[gid],
+                detail={"axis": dim, "nonpositive": points, "errorbar_low_nonpositive": low},
+                worse=total,
+            )
+
+
 def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
     manifest = panel.get("manifest")
     if not isinstance(manifest, dict):
@@ -927,6 +973,9 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
                 detail={"count": count},
                 worse=count,
             )
+
+    # --- 数据与编码客观不一致（V-001）：数学上可判定，进 warn；不自动修（改 symlog / 删点是科学决策） ---
+    _check_log_axis_nonpositive(manifest, pid, hidden_legends, sink)
 
     # --- 数据语义：只给建议，绝不替用户裁决 ---
     for ax, roles in sorted(roles_by_axes.items()):

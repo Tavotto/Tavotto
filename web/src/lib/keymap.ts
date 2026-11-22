@@ -103,6 +103,8 @@ export const KEYMAP = {
   // 复合路径 ⌘8 / 释放 ⌥⇧⌘8（Illustrator 的键位，ADR 0185 M2）：选着两个以上能参与的对象 / 一个多子路径的路径时才消费。按 code 认
   makeCompound: k(`${MOD}8`, { code: 'Digit8', mod: true, shift: false, alt: false }),
   releaseCompound: k(`${ALT}⇧${MOD}8`, { code: 'Digit8', mod: true, shift: true, alt: true }),
+  // 形状生成器 ⇧M（Illustrator 的键位，ADR 0185 M3）：选着两个以上能参与的对象时才消费
+  shapeBuilder: k('⇧M', { key: 'm', shift: true, mod: false, alt: false }),
   // 外观（Illustrator 习惯）：D 默认填色描边、⇧X 互换填色和描边、/ 无填充、I 吸管。选着能上色的标注时才消费（I 一直可用）
   defaultAppearance: k('D', { key: 'd', shift: false }),
   swapFillStroke: k('⇧X', { key: 'x', shift: true }),
