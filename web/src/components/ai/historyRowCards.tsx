@@ -130,6 +130,7 @@ export interface TraceSummary {
   extent: number
   errors: number
   cost: number | null
+  costCurrency: string | null
   tokens: number | null
   segs: { left: number; width: number; type: 'model' | 'tool' | 'wait' | 'failed' | 'muted' | 'think' | 'delegate' }[]
 }
@@ -159,7 +160,7 @@ export function useTraceSummary(taskRef: string, pj: string | null): SummaryStat
             type: leafType(span),
           })
         })
-        setSt({ state: 'ready', summary: { extent: m.extent, errors: m.errors, cost: m.cost, tokens: m.tokens, segs } })
+        setSt({ state: 'ready', summary: { extent: m.extent, errors: m.errors, cost: m.cost, costCurrency: m.costCurrency, tokens: m.tokens, segs } })
       })
       .catch(() => !stopped && setSt({ state: 'none' }))
     return () => {
@@ -356,7 +357,7 @@ function ModelCard({
         {usage?.cost != null && (
           <>
             <dt className="text-ink-3">{t('trace.ui.metric.cost')}</dt>
-            <dd className="m-0 text-end text-ink tabular-nums">≈ {formatCost(usage.cost)}</dd>
+            <dd className="m-0 text-end text-ink tabular-nums">≈ {formatCost(usage.cost, usage.costCurrency)}</dd>
           </>
         )}
       </dl>

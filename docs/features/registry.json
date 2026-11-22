@@ -1630,6 +1630,26 @@
           "title": "渐变填充 › 矩形填充改成线性渐变：画布上填充引用渐变、色标不止一种颜色；导出 SVG 里是 linearGradient"
         }
       ]
+    },
+    {
+      "id": "canvas.nested-groups-clip",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "嵌套组与组内编辑（双击进组、Esc 退出），以及剪切蒙版（⌘7 建立、⌥⌘7 释放）",
+        "en-US": "Nested groups with in-group editing (double-click to enter, Esc to leave) and clipping masks (⌘7 to make, ⌥⌘7 to release)"
+      },
+      "entry": "画布 → 选中多个对象 → ⌘G；⌘7",
+      "e2e": [
+        {
+          "spec": "vector-groups.spec.ts",
+          "title": "嵌套组与剪切蒙版 › 两层嵌套组：点成员选中整组；双击一层层进组（组外淡出）、Esc 一层层退出"
+        },
+        {
+          "spec": "vector-groups.spec.ts",
+          "title": "嵌套组与剪切蒙版 › 剪切蒙版：⌘7 后大矩形只在蒙版范围内点得中（画面按蒙版裁）；⌥⌘7 释放后恢复"
+        }
+      ]
     }
   ]
 }

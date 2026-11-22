@@ -104,6 +104,7 @@ function spanOf(dto: ExecTraceDto, span: ExecTraceSpanDto): WaterfallSpan {
     retry: span.attempt > 1,
     icon: iconOf(span, kind, isRoot),
     cost: span.usage?.cost?.amount ?? null,
+    costCurrency: span.usage?.cost?.currency ?? null,
     tokensIn: span.usage?.input_tokens ?? null,
     tokensOut: span.usage?.output_tokens ?? null,
     firstFailure: dto.first_failure?.span_id === span.span_id && !isRoot,

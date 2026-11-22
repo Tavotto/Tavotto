@@ -1,7 +1,9 @@
 import { effectiveFillGradient, effectiveStrokeGradient, type ReadGradient } from './gradient'
 import { figureSnapshotFor } from './figureSnapshot'
 import { artifactRequestFields } from './artifactValidation'
-import type { ExportObject } from './api'
+import type { ExportClipPath, ExportObject } from './api'
+import { clipChainOf, groupMasks, isActiveMask } from './groupTree'
+import { maskAsPath } from './clipMask'
 import type { CanvasObject, Gradient } from '@/types/document'
 import { DEFAULT_STAR_POINTS, DEFAULT_STAR_RATIO, isKnownObject, isStrokeOnlyShape, panelRotation, readPath, shapeStrokeOn } from '@/types/document'
 import { DEFAULT_LINE_CAP, defaultLineJoin, miterLimitOf, STROKE_MITER_LIMIT, strokeOpacityOf, validDashPattern } from './shapeGeometry'
@@ -14,10 +16,41 @@ import { PATH_DEFAULT_JOIN } from './pathGeom'
  * - **顺序即 z 序**（数组序，底 → 顶），后端按同样顺序合成；
  * - **隐藏对象不发**，locked 照常导出（锁只挡编辑，不改变成图）。
  */
-export function toExportObjects(objects: CanvasObject[]): ExportObject[] {
+export function toExportObjects(
+  objects: readonly CanvasObject[],
+  /** 找剪切蒙版用的全集（蒙版本身是隐藏的，调用方给的列表可能已经把它滤掉了）；缺省 = `objects` */
+  context: readonly CanvasObject[] = objects,
+): ExportObject[] {
   // 不认识的类型（更新的构建写进来的）不进载荷：`toExportObject` 对它回 undefined，序列化成 null 后被后端
-  // 静默丢掉。界面在导出前用 `newerObjectCount` 拦下，这里只保证载荷里没有空洞
-  return objects.filter((o) => !o.hidden && isKnownObject(o)).map(toExportObject)
+  // 静默丢掉。界面在导出前用 `newerObjectCount` 拦下，这里只保证载荷里没有空洞。
+  // 剪切组里生效的蒙版不画（ADR 0191）：它只作为被裁对象的 `clip` 出现
+  const masks = groupMasks(context)
+  return objects
+    .filter((o) => !o.hidden && isKnownObject(o) && !isActiveMask(o, masks))
+    .map((o) => {
+      const e = toExportObject(o)
+      const chain = clipChainOf(o, masks)
+      return chain.length ? { ...e, clip: chain.map(toExportClip) } : e
+    })
+}
+
+/** 蒙版 → 载荷里的轮廓（只有几何）。换不出路径的（退化成一个点的形状）发一条空轮廓 = 全部裁掉，与画布同一条 */
+export function toExportClip(m: CanvasObject): ExportClipPath {
+  const p = maskAsPath(m)
+  if (!p) return { type: 'path', x_mm: m.x, y_mm: m.y, w_mm: m.w, h_mm: m.h, subpaths: [] }
+  return {
+    type: 'path',
+    x_mm: p.x,
+    y_mm: p.y,
+    w_mm: p.w,
+    h_mm: p.h,
+    subpaths: p.subpaths.map((sp) => ({
+      closed: sp.closed,
+      nodes: sp.nodes.map((n) => ({ p: n.p, ...(n.in ? { in: n.in } : {}), ...(n.out ? { out: n.out } : {}) })),
+    })),
+    ...(p.fillRule === 'evenodd' ? { fill_rule: 'evenodd' as const } : {}),
+    ...(p.rotationDeg ? { rotation_deg: p.rotationDeg } : {}),
+  }
 }
 
 /** 会进这次导出、但本构建画不出来的对象个数（看得见且类型不认识，`isKnownObject`）。非 0 时导出不许开始 */

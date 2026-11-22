@@ -169,6 +169,18 @@ describe('箭头的命中线', () => {
   })
 })
 
+describe('组内编辑时组外对象（outside）', () => {
+  it('命中线写 none，不压过祖先的 none；点按 / 双击 / 右键都不处理（Codex 线程 4614452854）', () => {
+    render(<ObjectView obj={horizontalArrow()} outside />)
+    expect(hitLine()!.style.pointerEvents).toBe('none')
+    act(() => {
+      objectDiv().dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+      objectDiv().dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+    })
+    expect(useQuickEdit.getState().target).toBeNull()
+  })
+})
+
 describe('直线形状的命中线', () => {
   it('line 分支有命中线，外层 div 让位', () => {
     render(<ObjectView obj={lineShape()} />)

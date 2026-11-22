@@ -60,7 +60,9 @@ export const KEYMAP = {
   redo: k(`⇧${MOD}Z`, { key: 'z', mod: true, shift: true }, { key: 'y', mod: true }),
   copy: native(`${MOD}C`),
   paste: native(`${MOD}V`),
-  duplicate: k(`${MOD}D`, { key: 'd', mod: true }),
+  duplicate: k(`${MOD}D`, { key: 'd', mod: true, alt: false }),
+  // 再次变换 ⌥⌘D（ADR 0185 M4 第二批）：⌥ 会改写 key，按 code 认；有上一次变换、有选区时才消费
+  transformAgain: k(`${ALT}${MOD}D`, { code: 'KeyD', mod: true, shift: false, alt: true }),
   delete: k('Delete', { key: 'delete' }, { key: 'backspace' }),
   nudge: k(
     '↑ ↓ ← →',
@@ -103,6 +105,11 @@ export const KEYMAP = {
   // 复合路径 ⌘8 / 释放 ⌥⇧⌘8（Illustrator 的键位，ADR 0185 M2）：选着两个以上能参与的对象 / 一个多子路径的路径时才消费。按 code 认
   makeCompound: k(`${MOD}8`, { code: 'Digit8', mod: true, shift: false, alt: false }),
   releaseCompound: k(`${ALT}⇧${MOD}8`, { code: 'Digit8', mod: true, shift: true, alt: true }),
+  // 成组 ⌘G / 取消成组 ⇧⌘G、剪切蒙版 ⌘7 / 释放 ⌥⌘7（Illustrator 的键位，ADR 0191）：选区够条件时才消费。按 code 认
+  groupObjects: k(`${MOD}G`, { code: 'KeyG', mod: true, shift: false, alt: false }),
+  ungroupObjects: k(`⇧${MOD}G`, { code: 'KeyG', mod: true, shift: true, alt: false }),
+  makeClipMask: k(`${MOD}7`, { code: 'Digit7', mod: true, shift: false, alt: false }),
+  releaseClipMask: k(`${ALT}${MOD}7`, { code: 'Digit7', mod: true, shift: false, alt: true }),
   // 形状生成器 ⇧M（Illustrator 的键位，ADR 0185 M3）：选着两个以上能参与的对象时才消费
   shapeBuilder: k('⇧M', { key: 'm', shift: true, mod: false, alt: false }),
   // 外观（Illustrator 习惯）：D 默认填色描边、⇧X 互换填色和描边、/ 无填充、I 吸管。选着能上色的标注时才消费（I 一直可用）
