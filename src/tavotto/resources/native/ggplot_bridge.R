@@ -72,20 +72,22 @@ main <- function() {
   })
   send(list(bridge_event = "barrier", reason = "script_end", stems = list(stem)))
 
-  color_from <- function(request) {
+  title_colors_from <- function(request) {
     if (!identical(request$stem, stem)) stop("Unknown ggplot object.")
     patches <- request$payload$patches
     if (!is.list(patches)) stop("Expected a full list of plot patches.")
-    color <- NULL
+    colors <- list()
     for (patch in patches) {
-      if (!identical(sort(setdiff(names(patch), "identity")), c("gid", "prop", "value")) ||
-          !identical(patch$gid, "plot.title") || !identical(patch$prop, "color") ||
-          !is.character(patch$value)) {
-        stop("This ggplot adapter supports the plain-text title color.")
+      if (!is.list(patch) ||
+          !identical(sort(setdiff(names(patch), "identity")), c("gid", "prop", "value")) ||
+          !is.character(patch$gid) || length(patch$gid) != 1L ||
+          is.na(patch$gid) || !nzchar(patch$gid) ||
+          !identical(patch$prop, "color") || !is.character(patch$value)) {
+        stop("This ggplot adapter supports plain-text plot and axis title colors.")
       }
-      color <- patch$value
+      colors[[patch$gid]] <- patch$value
     }
-    color
+    colors
   }
 
   repeat {
@@ -104,20 +106,20 @@ main <- function() {
                      manifest = adapter$ggplot_manifest(captured$state, stem),
                      ggplot2 = as.character(utils::packageVersion("ggplot2"))),
         render = {
-          color <- color_from(request)
-          list(ok = TRUE, svg = adapter$render_ggplot(captured$state, color),
-               manifest = adapter$ggplot_manifest(captured$state, stem, color))
+          colors <- title_colors_from(request)
+          list(ok = TRUE, svg = adapter$render_ggplot(captured$state, colors),
+               manifest = adapter$ggplot_manifest(captured$state, stem, colors))
         },
         export = {
-          color <- color_from(request)
+          colors <- title_colors_from(request)
           payload <- request$payload
           if (!identical(payload$format, "pdf") || !is.character(payload$path)) {
             stop("The ggplot adapter exports a PDF with an optional SVG companion.")
           }
-          adapter$export_ggplot_pdf(captured$state, color, payload$path)
+          adapter$export_ggplot_pdf(captured$state, colors, payload$path)
           companion <- NULL
           if (!is.null(payload$svg_path)) {
-            companion <- adapter$render_ggplot(captured$state, color)
+            companion <- adapter$render_ggplot(captured$state, colors)
           }
           list(ok = TRUE, path = payload$path, svg_companion = companion)
         },

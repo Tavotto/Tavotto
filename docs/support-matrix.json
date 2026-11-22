@@ -67,7 +67,7 @@
       "tested_runtime": "R 4.5.3",
       "tested_packages": { "ggplot2": "4.0.3", "svglite": "2.2.2", "jsonlite": "2.0.0" },
       "session": "desktop-owned",
-      "operations": ["plain-text plot title RGB color"],
+      "operations": ["plain-text plot title RGB color", "plain-text axis title RGB color"],
       "snapshot_representations": ["SVG preview", "Cairo PDF"],
       "documentation": "docs/implementation/tavotto-core-v02-ggplot2.md"
     }

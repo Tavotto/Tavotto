@@ -81,6 +81,9 @@ class GgplotTarget:
             raise pool.WorkerError("The R capture returned no matching SVG and manifest.")
         for element in manifest["elements"]:
             label = element["label"].encode("utf-8")
+            # Keep plot-title identities already stored in saved overrides.
+            if element["gid"] != "plot.title":
+                label = element["gid"].encode("utf-8") + b"\0" + label
             element["identity"] = "r1:" + hashlib.sha256(label).hexdigest()[:16]
         try:
             with tempfile.TemporaryDirectory(dir=session.out_dir) as temporary:
@@ -117,8 +120,11 @@ class GgplotTarget:
             if not isinstance(patch, dict):
                 continue
             identity = patch.get("identity")
-            if identity is not None and identity != identities.get(patch.get("gid")):
-                raise pool.WorkerError("The native R plot title changed. Select it again.")
+            gid = patch.get("gid")
+            if identity is not None and (
+                not isinstance(gid, str) or identity != identities.get(gid)
+            ):
+                raise pool.WorkerError("The native R title target changed. Select it again.")
 
     @staticmethod
     def acknowledge_export(response: dict, svg_path: str | None) -> dict:
