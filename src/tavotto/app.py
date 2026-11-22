@@ -5828,6 +5828,7 @@ def _build_diagnostics_bundle(
         registry=ctx.registry if ctx is not None else None,
         fix_journey=engine_prepsession.SESSIONS.fix_journeys(pid) if pid else None,
         fix_sessions=engine_fixsession.SESSIONS.diagnostics_for(pid) if pid else None,
+        fix_memory=_fix_memory_entries(),
         fix_audit=engine_fixsession.audit_tail(engine_fixsession.SESSIONS.ids_for(pid))
         if pid
         else None,
@@ -11315,6 +11316,59 @@ def api_ai_capabilities():
 
 #: 「转换时允许 AI 不受沙盒限制」只在 Windows 存在；做成模块常量，测试不必改全局 `os.name`
 _IS_WINDOWS = os.name == "nt"
+
+
+def _fix_memory_entries() -> list[dict]:
+    """诊断包用：本机记住的做法（读不了就空，不拖垮打包）。"""
+    try:
+        from .engine import fixmemory
+
+        return fixmemory.entries()
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _fix_memory_body():
+    from .engine import fixmemory
+
+    resp = jsonify({"enabled": fixmemory.enabled(), "entries": fixmemory.entries()})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/ai/fix-memory")
+def api_ai_fix_memory():
+    """设置 → 改图助手 →「记住修好的做法」：本机记下的修法（ADR 0197 第 3 层·在线）。只读本机文件，不出网。"""
+    return _fix_memory_body()
+
+
+@app.put("/api/ai/fix-memory")
+def api_ai_fix_memory_toggle():
+    from .engine import fixmemory
+
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("enabled"), bool):
+        abort(400)
+    fixmemory.set_enabled(body["enabled"])
+    return _fix_memory_body()
+
+
+@app.delete("/api/ai/fix-memory")
+def api_ai_fix_memory_clear():
+    from .engine import fixmemory
+
+    fixmemory.clear()
+    return _fix_memory_body()
+
+
+@app.delete("/api/ai/fix-memory/<entry_id>")
+def api_ai_fix_memory_delete(entry_id: str):
+    from .engine import fixmemory
+
+    if not re.fullmatch(r"[0-9a-f]{12}", entry_id or ""):
+        abort(400)
+    fixmemory.delete(entry_id)
+    return _fix_memory_body()
 
 
 @app.put("/api/ai/convert-unsandboxed")

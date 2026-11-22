@@ -219,6 +219,26 @@ deleted within an hour), are never added to your project, to usage statistics or
 diagnostics bundle, and go only to the AI you connected.
 When the project is checked against a journal, the request also carries that journal's
 name and figure requirements (font sizes, fonts, line width, figure widths, resolution).
+When AI repair meets a kind of failure it has fixed before on this computer, the request also
+carries up to three of those earlier fixes from *Remember what fixed it* (see below): the run
+arguments, the data path a file was pointed at, the environment variables a launcher set, or the
+execution mode, possibly from another project. Variables whose names look like credentials are sent
+by name only. Turn the setting off or delete entries to stop this.
+
+**Remember what fixed it.** After AI repair really fixes a script (its test run in Tavotto
+succeeded), Tavotto keeps a note of what it changed in `ai/fix_memory.json` in its own data folder:
+run arguments (not when the script's arguments are marked sensitive), the environment variables a
+launcher it wrote sets (the launcher text itself is not kept), which file a missing data path was
+pointed at, or the execution mode, with the script's file name, the failure type and dates. Secrets
+are removed and your home folder is written as `~` before saving. For environment variables only the
+names are kept, except for a short list of harmless display settings (such as the plotting backend,
+language or thread count) and variables that name a folder whose value is a path; other values set by
+the launcher are also removed wherever else they appear in the note. If a launcher in that repair
+touched anything that looks like a credential, the run arguments and data paths from that repair are
+not kept at all. At most 50 notes are kept, and
+a note not used for 90 days is deleted. Settings → Figure assistants → *Remember what fixed it* lists
+every note, deletes one or all, and turns the feature off. The notes never leave the computer except
+as described above and in a diagnostics bundle you choose to send.
 Tavotto itself does not upload AI prompts, responses or diffs anywhere (see "Data
 Tavotto does not upload"). The AI service, or the command-line tool in the first
 case, has its own network, account and privacy behavior and is not a background
@@ -410,7 +430,9 @@ Offering the option uploads nothing; sending does:
   test run's failure type and the hint it was given, the last part of every tool result
   the assistant saw, which can include parts of your script it read and the source lines
   of error messages, and any launcher it wrote; kept only in memory, so nothing remains after
-  Tavotto restarts, and included whether or not *script source* is ticked), desktop-shell and install facts (app, Tauri and
+  Tavotto restarts, and included whether or not *script source* is ticked), the notes kept by
+  *Remember what fixed it* (see "Optional AI assistant"; also included whether or not *script source*
+  is ticked, with secrets and your home folder removed), desktop-shell and install facts (app, Tauri and
   WebView versions, OS version, CPU architecture, Rosetta, install method, update result
   and whether the mirror or GitHub was used when known), storage facts (free disk space,
   writability, whether the project is in a cloud-sync folder, the Windows long-path
