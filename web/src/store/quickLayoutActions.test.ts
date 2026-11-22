@@ -133,6 +133,18 @@ describe('收集', () => {
     expect(body.profile).toBeTruthy()
   })
 
+  it('没有多选时画布上有锁定的图：按固定处理，不进 panels、位置 / 尺寸 / overrides / 标签都不动、仍锁定', async () => {
+    seed(panel('p1'), panel('p2'), panel('p3', { x: 200, locked: true }))
+    const before = JSON.stringify(s().doc.objects.find((o) => o.id === 'p3'))
+    quickLayoutPlan.mockResolvedValue(okPlan())
+    await runQuickLayout('double', 3)
+    const body = lastRequest()
+    expect(body.panels.map((p: { key: string }) => p.key)).toEqual(['p1', 'p2'])
+    expect(body.fixed.map((p: { key: string }) => p.key)).toEqual(['p3'])
+    expect(JSON.stringify(s().doc.objects.find((o) => o.id === 'p3'))).toBe(before)
+    expect((s().doc.objects.find((o) => o.id === 'p3') as PanelObject).locked).toBe(true)
+  })
+
   it('选中 ≥ 2 张就只排选中的；只选了 1 张还是排全部', async () => {
     seed(panel('p1'), panel('p2'), panel('p3'))
     quickLayoutPlan.mockResolvedValue({ ok: false, code: 'not_converged' })

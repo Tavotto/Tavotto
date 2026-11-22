@@ -25,7 +25,7 @@ import { isSubLabel } from '@/lib/stylePresets'
 import { canvasTextDefaults } from '@/lib/typography'
 import type { FigureDocument, PanelObject, PanelOverride } from '@/types/document'
 import { panelRotation } from '@/types/document'
-import { makeSubLabel } from './actions'
+import { makeSubLabel, movableTargets } from './actions'
 import { useDocumentStore } from './documentStore'
 import { finishActiveGesture } from './gestureCoordinator'
 import { useLicenseStore } from './licenseStore'
@@ -113,11 +113,16 @@ const boxOf = (p: PanelObject): Box => [p.x, p.y, p.w, p.h]
  * 页面上的框只是可见部分，显示比例 = 可见框 / crop.w，所以规划请求发整图框，落位再换回可见框，比例尺才与校验的一致。
  */
 function fullBoxOf(p: PanelObject): Box {
-  const c = p.crop
-  if (!c) return boxOf(p)
-  const w = p.w / c.w
-  const h = p.h / c.h
-  return [p.x - c.x * w, p.y - c.y * h, w, h]
+  return fullFromVisible(p.crop, boxOf(p))
+}
+
+/** 页面上的可见框 -> 整图框（`visibleBox` 的逆）；没裁剪原样。拖分隔线的预览 / 网格记忆里都是可见框，发求解器前走这里 */
+export function fullFromVisible(crop: PanelObject['crop'], b: Box): Box {
+  if (!crop) return b
+  const [x, y, vw, vh] = b
+  const w = vw / crop.w
+  const h = vh / crop.h
+  return [x - crop.x * w, y - crop.y * h, w, h]
 }
 
 /** 求解器的整图框 -> 页面上的可见框（`fullBoxOf` 的逆）；没裁剪原样 */
@@ -145,6 +150,14 @@ function resizable(p: PanelObject): boolean {
   // 有图内编辑入口（脚本出图，`obj.script`）就能排：渲染与几何由引擎在请求里自己做，
   // 不要求前端此刻已有精确 manifest（没进过图内编辑的图前端本来就没有）
   return !!p.script
+}
+
+/**
+ * 锁定的图、含锁定成员的分组里的图一律按固定处理（不改位置 / 尺寸 / overrides / 标签）：
+ * 判据直接取 `movableTargets`，与拖动 / 方向键同一套。
+ */
+function unlocked(panels: readonly PanelObject[]): Set<string> {
+  return new Set(movableTargets(panels.map((p) => p.id)).objects.map((o) => o.id))
 }
 
 /** 选中 ≥ 2 张图就排选中的，否则排当前画布上的全部（ADR 0199 §一） */
@@ -225,7 +238,9 @@ async function settleNewFigures(ctx: OpContext): Promise<boolean> {
     const cur = useDocumentStore.getState().doc.objects.find((o) => o.id === id)
     return !cur || cur.type !== 'panel' || !!exactPanelManifest(useRenderStore.getState(), cur)
   }
-  const pending = involvedPanels(useDocumentStore.getState().doc).filter((p) => resizable(p) && !ready(p.id))
+  const involvedNow = involvedPanels(useDocumentStore.getState().doc)
+  const free = unlocked(involvedNow)
+  const pending = involvedNow.filter((p) => free.has(p.id) && resizable(p) && !ready(p.id))
   if (pending.length) {
     for (const p of pending) requestRender(p)
     await new Promise<void>((resolve) => {
@@ -309,7 +324,8 @@ export async function runQuickLayoutRatios(
     .map((id) => byId.get(id))
     .filter((o): o is PanelObject => o?.type === 'panel')
   // 记着的网格里的图现在都得还能排；排不了（被旋转 / 换成位图了）= 这份记忆不作数
-  if (!cellPanels.every(resizable)) {
+  const free = unlocked(cellPanels)
+  if (!cellPanels.every((p) => resizable(p) && free.has(p.id))) {
     useQuickLayoutStore.setState({ preview: null, drag: null })
     return 'stale'
   }
@@ -358,7 +374,8 @@ async function runPlan(run: PlanRun): Promise<QuickLayoutOutcome> {
   const ctx = run.ctx ?? contextNow()
   if (!sameContext(ctx)) return 'stale'
 
-  const solvable = involved.filter((p) => resizable(p))
+  const free = unlocked(involved)
+  const solvable = involved.filter((p) => free.has(p.id) && resizable(p))
   if (solvable.length < 2) {
     say(note('quickLayoutTooFew'), 'info')
     return 'too_few'

@@ -211,6 +211,52 @@ describe('握柄与气泡', () => {
 })
 
 describe('拖分隔线手势', () => {
+  it('相邻两列 crop.w 不同（0.5 与 1）：发给求解器的 cols 占比按整图宽度算，预览仍按可见框', async () => {
+    act(() =>
+      s().commit(literal('裁'), (d) => {
+        const p1 = d.objects[0] as PanelObject
+        p1.w = 40
+        p1.crop = { x: 0, y: 0, w: 0.5, h: 1 } // 整图宽 80，可见 40
+        d.quickLayout!.boxes = { p1: [10, 10, 40, 60], p2: [98, 10, 85, 60] }
+      }),
+    )
+    mount()
+    quickLayoutPlan.mockResolvedValue(okPlan())
+    const g = gutters(s().doc.quickLayout!).find((x) => x.axis === 'col')!
+    startGutterDrag(down(0, 0), g)
+    fire('pointermove', 5 * PX_PER_MM(), 0)
+    const pv = useQuickLayoutStore.getState().preview!
+    expect(pv.p1[2]).toBeCloseTo(45) // 预览：可见宽 40 + 5
+    fire('pointerup', 5 * PX_PER_MM(), 0)
+    await flush()
+    const req = quickLayoutPlan.mock.calls[0][0]
+    // 可见 (40+5) : (85-5) ；整图 = 可见 ×2 : ×1 -> 90 : 80（按可见算会是 45 : 80）
+    expect(req.ratios.cols[0]).toBeCloseTo((2 * 90) / 170)
+    expect(req.ratios.cols[0] + req.ratios.cols[1]).toBeCloseTo(2)
+  })
+
+  it('被竖向裁剪的图（crop.h = 0.5）：拖列分隔线发给求解器的 rows_mm 是整图高度，不是可见高度；列方向只发占比', async () => {
+    act(() =>
+      s().commit(literal('裁'), (d) => {
+        for (const o of d.objects) if (o.type === 'panel') { o.h = 30; o.crop = { x: 0, y: 0, w: 1, h: 0.5 } }
+        d.quickLayout!.boxes = { p1: [10, 10, 85, 30], p2: [98, 10, 85, 30] }
+      }),
+    )
+    mount()
+    quickLayoutPlan.mockResolvedValue(okPlan())
+    startGutterDrag(down(0, 0), gutter())
+    fire('pointermove', -10 * PX_PER_MM(), 0)
+    fire('pointerup', -10 * PX_PER_MM(), 0)
+    await flush()
+    const req = quickLayoutPlan.mock.calls[0][0]
+    // 整图高 = 可见 30 / 0.5 = 60；不是 30（被采用后再 crop 一次就只剩 15）
+    expect(req.ratios.rows_mm).toEqual([60])
+    expect(req.panels.map((p: { box: number[] }) => p.box[3])).toEqual([60, 60])
+    // 列方向：只发占比（没有 cols_mm），竖向裁剪不影响列占比
+    expect(req.ratios.cols_mm).toBeUndefined()
+    expect(req.ratios.cols[0]).toBeCloseTo((2 * 75) / 170)
+  })
+
   it('拖动中：只有预览轮廓，不 commit、不发请求；松手一次请求 + 一次 commit', async () => {
     mount()
     const depth = s().past.length

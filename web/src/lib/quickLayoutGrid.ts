@@ -33,11 +33,11 @@ export function quickLayoutValid(memo: QuickLayoutMemo | undefined, objects: rea
 }
 
 /** 第 `i` 列（行）占的区间 [起, 止]（mm）：该列（行）里所有图的并；没有图 = null */
-function spans(memo: QuickLayoutMemo, axis: GutterAxis): ([number, number] | null)[] {
+function spans(memo: QuickLayoutMemo, axis: GutterAxis, boxes: Record<string, Box> = memo.boxes): ([number, number] | null)[] {
   const n = axis === 'col' ? memo.cols : memo.rows
   const out: ([number, number] | null)[] = Array.from({ length: n }, () => null)
   for (const [id, [r, c]] of Object.entries(memo.cells)) {
-    const b = memo.boxes[id]
+    const b = boxes[id]
     const k = axis === 'col' ? c : r
     if (!b || k < 0 || k >= n) continue
     const [lo, hi] = axis === 'col' ? [b[0], b[0] + b[2]] : [b[1], b[1] + b[3]]
@@ -99,7 +99,14 @@ export interface GutterDrag {
  * 把第 `index` 条分隔线拖 `deltaMm`：**只动相邻两列（行）**，它俩合计的权重不变（别的列权重原样），
  * 各自至少占两者合计的 `MIN_PAIR_SHARE`。没有这条分隔线（空列、越界）= null。
  */
-export function dragGutter(memo: QuickLayoutMemo, axis: GutterAxis, index: number, deltaMm: number): GutterDrag | null {
+export function dragGutter(
+  memo: QuickLayoutMemo,
+  axis: GutterAxis,
+  index: number,
+  deltaMm: number,
+  /** 记忆里每张图的整图框（被裁剪的图与可见框不同）：给了就按整图尺寸换算发给求解器的占比；预览框与位移仍按可见框 */
+  fullBoxes?: Record<string, Box>,
+): GutterDrag | null {
   const sp = spans(memo, axis)
   const a = sp[index]
   const b = sp[index + 1]
@@ -112,9 +119,21 @@ export function dragGutter(memo: QuickLayoutMemo, axis: GutterAxis, index: numbe
   const share = Math.min(1 - MIN_PAIR_SHARE, Math.max(MIN_PAIR_SHARE, (wa + deltaMm) / total))
   const delta = share * total - wa
   const pair = ratios[index] + ratios[index + 1]
+  // 求解器的占比按整图尺寸：把拖完之后两列（行）的可见尺寸按各自「整图 / 可见」换回整图，再取占比
+  let rShare = share
+  if (fullBoxes) {
+    const fs = spans(memo, axis, fullBoxes)
+    const fa = fs[index]
+    const fb = fs[index + 1]
+    if (fa && fb && wa > 0 && wb > 0) {
+      const na = share * total * ((fa[1] - fa[0]) / wa)
+      const nb = (1 - share) * total * ((fb[1] - fb[0]) / wb)
+      if (na + nb > 0) rShare = na / (na + nb)
+    }
+  }
   const next = ratios.slice()
-  next[index] = pair * share
-  next[index + 1] = pair * (1 - share)
+  next[index] = pair * rShare
+  next[index + 1] = pair * (1 - rShare)
   const boxes: Record<string, Box> = {}
   for (const [id, [r, c]] of Object.entries(memo.cells)) {
     const box = memo.boxes[id]

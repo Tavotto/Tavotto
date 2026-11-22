@@ -2,7 +2,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import { dragGutter, gutterPair, quickLayoutValid, rowHeightsMm, type Gutter } from '@/lib/quickLayoutGrid'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
-import { runQuickLayoutRatios, useQuickLayoutStore } from '@/store/quickLayoutActions'
+import { fullFromVisible, runQuickLayoutRatios, useQuickLayoutStore } from '@/store/quickLayoutActions'
 import { getTransform, pxToMm } from '@/store/viewportStore'
 import { trackPointer } from './interactions'
 import { QuickLayoutFollow } from './quickLayoutFollow'
@@ -28,10 +28,15 @@ export function startGutterDrag(e: ReactPointerEvent, gutter: Gutter, along = 0.
   let last: ReturnType<typeof dragGutter> = null
   const follow = new QuickLayoutFollow(memo)
   const live = follow.followedIds
+  // 记忆里的可见框 -> 整图框：占比按整图尺寸发给求解器（预览仍按可见框）
+  const cropOf0 = new Map(d0.objects.map((o) => [o.id, o.type === 'panel' ? o.crop : undefined] as const))
+  const memoFull = Object.fromEntries(
+    Object.entries(memo.boxes).map(([id, b]) => [id, fullFromVisible(cropOf0.get(id), b)] as const),
+  )
   const pair = gutterPair(memo, gutter.axis, gutter.index)
   trackPointer(e, {
     onMove: (_ev, dxPx, dyPx) => {
-      last = dragGutter(memo, gutter.axis, gutter.index, pxToMm(horizontal ? dxPx : dyPx, t0))
+      last = dragGutter(memo, gutter.axis, gutter.index, pxToMm(horizontal ? dxPx : dyPx, t0), memoFull)
       if (!last) return
       const d = last.delta
       useQuickLayoutStore.setState({
@@ -50,11 +55,16 @@ export function startGutterDrag(e: ReactPointerEvent, gutter: Gutter, along = 0.
         useQuickLayoutStore.setState({ preview: null, live: null, drag: null })
         return
       }
-      const rowsMm = rowHeightsMm(memo, last.boxes)
+      // 预览框是页面上的可见框；求解器按整图高度工作，被裁剪的图要先换算回整图，否则排完会再被 crop 缩一次
+      const cropOf = new Map(d0.objects.map((o) => [o.id, o.type === 'panel' ? o.crop : undefined] as const))
+      const fullBoxes = Object.fromEntries(
+        Object.entries(last.boxes).map(([id, b]) => [id, fullFromVisible(cropOf.get(id), b)] as const),
+      )
+      const rowsMm = rowHeightsMm(memo, fullBoxes)
       const ratios = {
         cols: gutter.axis === 'col' ? last.ratios : memo.colRatios,
         rows: gutter.axis === 'row' ? last.ratios : memo.rowRatios,
-        // 绝对行高取自预览框：求解器原样采用，结果与预览一致（列的总宽由页面 / 目标定，占比就够）
+        // 绝对行高取自预览框（已换算成整图高度）：求解器原样采用，结果与预览一致（列的总宽由页面 / 目标定，占比就够）
         ...(rowsMm ? { rows_mm: rowsMm } : {}),
       }
       // 图停在预览框上等方案：成功 = 跟手保持到新图落位（onCommitted）；失败 / 作废 = 原样放回
