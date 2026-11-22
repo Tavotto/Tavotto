@@ -491,7 +491,14 @@
     "reversePath": "Reverse path direction",
     "simplifyPath": "Simplify path",
     "roundCorners": "Round corners",
-    "shapeBuilder": "Shape builder"
+    "shapeBuilder": "Shape builder",
+    "makeClipMask": "Make clipping mask",
+    "releaseClipMask": "Release clipping mask",
+    "transformMove": "Move",
+    "transformScale": "Scale",
+    "transformRotate": "Rotate",
+    "transformSkew": "Skew",
+    "transformReflect": "Reflect"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -517,7 +524,11 @@
     "rowActions": "Actions for {{label}}",
     "moveUp": "Bring forward",
     "moveDown": "Send backward",
-    "rename": "Rename"
+    "rename": "Rename",
+    "clipGroupLabel_one": "Clip group · {{count}} object",
+    "clipGroupLabel_other": "Clip group · {{count}} objects",
+    "clipPath": "Clipping path",
+    "clipPathTip": "This shape only clips the other objects in the group; it is not drawn"
   },
   "layoutKind": {
     "col": "column layout",
@@ -1024,7 +1035,16 @@
     "eyedropperNoTarget": "Select a shape, path or arrow to color first",
     "pathfinderUnavailable": "Pathfinder isn’t available here",
     "pathfinderEmpty": "The result is empty, so nothing changed",
-    "simplifyNothing": "Nothing to simplify"
+    "simplifyNothing": "Nothing to simplify",
+    "clipNeedTwo": "Select at least 2 objects to make a clipping mask",
+    "clipNeedPathOnTop": "The top object must be a path or a closed shape to act as the clipping mask",
+    "clipMade": "Clipping mask made",
+    "skewUnsupported": "Text and figures cannot be skewed",
+    "skewSkipped_one": "{{count}} text or figure was not skewed",
+    "skewSkipped_other": "{{count}} texts or figures were not skewed",
+    "rotatePanelUnsupported": "Figures rotate in 90° steps only",
+    "rotatePanelSkipped_one": "{{count}} figure was not rotated (figures rotate in 90° steps only)",
+    "rotatePanelSkipped_other": "{{count}} figures were not rotated (figures rotate in 90° steps only)"
   },
   "tabs": {
     "allCanvases": "All canvases",
@@ -1945,5 +1965,10 @@
   "pathfinder": {
     "blockedEmbedded": "Not available here. Open this in the Tavotto app or a browser",
     "blockedFailed": "Pathfinder couldn’t load on this computer"
+  },
+  "isolation": {
+    "label": "Editing group",
+    "exit": "Exit group editing",
+    "exitTip": "Press Esc to go up one level"
   }
 }
