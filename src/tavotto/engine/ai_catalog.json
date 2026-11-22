@@ -403,8 +403,8 @@
       "wire_api": "responses",
       "key_url": "https://platform.openai.com/api-keys",
       "models_hint": [
-        "gpt-5",
-        "gpt-5-mini"
+        "gpt-6.2-sol",
+        "gpt-6-luna"
       ],
       "source": "https://platform.openai.com/docs/api-reference/responses",
       "oauth": null,

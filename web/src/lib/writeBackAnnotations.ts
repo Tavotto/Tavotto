@@ -76,7 +76,8 @@ export function collectPanelAnnotations(
     if (!anns?.length) continue
     out.set(p.id, {
       objectIds: anns.map((o) => o.id),
-      objects: toExportObjects(anns).map((o) => toFigureMm(o, p)),
+      // 剪切蒙版（ADR 0191）：蒙版是隐藏的、不在 anns 里，按全集找；轮廓与对象同一套换算
+      objects: toExportObjects(anns, objects).map((o) => toFigureMm(o, p)),
     })
   }
   return out
@@ -94,6 +95,15 @@ function toFigureMm(o: ExportObject, panel: PanelObject): ExportObject {
     y_mm: (o.y_mm - full.y) * ky,
     w_mm: o.w_mm * kx,
     h_mm: o.h_mm * ky,
+  }
+  if (o.clip) {
+    scaled.clip = o.clip.map((m) => ({
+      ...m,
+      x_mm: (m.x_mm - full.x) * kx,
+      y_mm: (m.y_mm - full.y) * ky,
+      w_mm: m.w_mm * kx,
+      h_mm: m.h_mm * ky,
+    }))
   }
   if (scaled.type === 'text') {
     scaled.size_pt *= k

@@ -123,8 +123,13 @@ Execution Trace（本地执行观察）≠ Task Diagnostic（`taskdiag` 终局�
 **四件事分开记**（根 Span 的 attributes）：`changed`（文件变没变）、`refresh`（统一刷新结局）、`outcome`（任务结局）各一条，与根的 `status`
 （会话终态）互不合并；Agent 退出码在 `agent_run.exit_ok`。验证结论仍在 TaskResult 里，Trace 不重判。
 
-**Token 与费用**（裁决 3）：`ai_pricing.py` 带版本（`PRICING_VERSION`）的定价表，只收从官方定价页逐条核过的条目（Anthropic Claude 5 系列、
-OpenAI gpt-5 / gpt-5-mini / gpt-5-nano 与 GPT-6、5.6 系列的短上下文档——一轮输入超过 272k 不估价，2026-11-21 补，出处见 `SOURCES`）；厂商只认连接的 `base_url` 与目录预设**逐字相同**，自定义网关不冒充官方计价。只有
+**Token 与费用**（裁决 3）：`ai_pricing.py` 带版本（`PRICING_VERSION`）的定价表，只收从官方定价页逐条核过的条目（Anthropic 仍在售的 Fable 5.x / Opus 5.5–4.5 / Sonnet 5.5–4.5 / Haiku 5.5·4.5——型号 id 逐个来自官方型号页、缓存命中价按各型号自己的数字；
+OpenAI gpt-5 / gpt-5-mini / gpt-5-nano 与 GPT-6、5.6 系列的短上下文档——一轮输入超过 272k 不估价；智谱国内站 GLM-5.3 / 5.2（元）；
+MiniMax 国内站（元）与国际站（美元）的 M3 / M3.1-Flash（M3 按 512k 分档，取标准层永久五折后的价）；2026-11-21 补，出处见 `SOURCES`）。
+**币种按条目**：默认美元，人民币站点条目写 `currency: "CNY"`，原样记、**绝不换算**；费用对象的 `currency` 取条目币种，追踪词表闭集为 USD / CNY；
+只汇总美元的 `ai_structured.cost_usd` 遇到人民币条目当没有价。没有官方逐型号 Token 价的厂商（订阅制、DeepSeek 按时段分价、聚合网关、
+定价页抓不到的）不收，原因逐家写在 `ai_pricing.NOT_PRICED`，测试要求目录每个带 base_url 的厂商二选一。开发侧体检：`scripts/dev/check_ai_pricing.py`（只读、不联网；
+运行时仍只用入库的表，不联网拉价，见 magpie 对比结论）；厂商只认连接的 `base_url` 与目录预设**逐字相同**，自定义网关不冒充官方计价。只有
 服务端报了用量（`reported=true`）才算费用；字符数估算的用量 Token 照记、标 `estimated`、费用 `null`。Anthropic 缓存**写入**按基础输入价算
 （用量里没拆出写入量），所以永远 `estimated=True`。第三方 CLI 一律没有 Token / 费用。
 

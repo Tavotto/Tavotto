@@ -10,7 +10,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { useViewportStore } from '@/store/viewportStore'
+import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { emptyProject, type ArrowObject, type TextObject } from '@/types/document'
 import { OverlaySvg } from './OverlaySvg'
 
@@ -91,5 +91,30 @@ describe('主选标记', () => {
     // t1.x = 10mm → 37.8px；联合宽 = 50+20-10 = 60mm → 226.8px
     expect(Number(r.getAttribute('x'))).toBeCloseTo(38.5, 0)
     expect(Number(r.getAttribute('width'))).toBeCloseTo(226, 0)
+  })
+})
+
+describe('剪切组的选框（ADR 0185 M4 第二批）', () => {
+  it('只剩一个被裁对象可见：仍画联合框，范围是蒙版，不给单个缩放手柄', async () => {
+    await act(async () =>
+      useDocumentStore.getState().commit(literal('剪切组'), (d) => {
+        d.objects = [
+          { ...text('big', 0), w: 80, h: 40, y: 0, groupId: 'g' } as TextObject,
+          {
+            id: 'm', type: 'shape', shape: 'rect', x: 20, y: 10, w: 10, h: 10, strokePt: 1, color: '#000', fill: null,
+            stroke: false, groupId: 'g', clipMask: true, hidden: true,
+          } as never,
+        ]
+      }),
+    )
+    await select(['big', 'm'])
+    const b = bounds()
+    expect(b).not.toBeNull()
+    // 联合框的宽 = 蒙版宽 10 mm 换到屏幕（被裁对象 80 mm 宽）
+    expect(Math.abs(Number(b!.getAttribute('width')) - mmToWorld(10))).toBeLessThan(2)
+    expect(container.querySelector('[data-handle]')).toBeNull()
+    // 只选被裁对象本身（组内编辑）：照旧是它自己的单选手柄
+    await select(['big'])
+    expect(bounds()).toBeNull()
   })
 })

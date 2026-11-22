@@ -287,3 +287,32 @@ describe('覆盖式侧栏下让位', () => {
     expect((bar()!.parentElement as HTMLElement).style.paddingRight).toBe('')
   })
 })
+
+describe('组内编辑（ADR 0191）', () => {
+  it('排版里进了组：同一条浮条说「组内编辑」，出口是「退出组内编辑」，点了回到顶层', async () => {
+    const { useIsolationStore } = await import('@/store/isolationStore')
+    useDocumentStore.getState().commit(literal('组'), (d) => {
+      d.objects.push(
+        { id: 'a', type: 'shape', shape: 'rect', x: 0, y: 0, w: 5, h: 5, strokePt: 1, color: '#000', fill: null, groupId: 'g' } as CanvasObject,
+        { id: 'b', type: 'shape', shape: 'rect', x: 9, y: 0, w: 5, h: 5, strokePt: 1, color: '#000', fill: null, groupId: 'g' } as CanvasObject,
+      )
+    })
+    useIsolationStore.getState().enter(['g'])
+    await mount()
+    expect(bar()).not.toBeNull()
+    expect(objectCrumb()).toBe(t('isolation.label', { ns: 'workspace' }))
+    const exit = host.querySelector<HTMLElement>('[data-exit-isolation]')!
+    expect(exit.textContent).toContain(t('isolation.exit', { ns: 'workspace' }))
+    await act(async () => exit.click())
+    expect(useIsolationStore.getState().path).toEqual([])
+    expect(bar()).toBeNull()
+  })
+
+  it('组已经不在了（被拆 / 被删）：不出现', async () => {
+    const { useIsolationStore } = await import('@/store/isolationStore')
+    useIsolationStore.getState().enter(['gone'])
+    await mount()
+    expect(bar()).toBeNull()
+    useIsolationStore.getState().clear()
+  })
+})

@@ -1,3 +1,5 @@
+import { exitGroupLevel, GROUP_COMMANDS } from '@/store/groupActions'
+import { TRANSFORM_COMMANDS } from '@/store/transformActions'
 import { useEffect } from 'react'
 import { formatMessage, msg } from '@/i18n'
 import { usePalette } from '@/components/CommandPalette'
@@ -256,7 +258,17 @@ export function useKeyboard() {
         }
         return
       }
-      if (mod && e.key.toLowerCase() === 'd') {
+      // ⌥⌘D 再次变换（ADR 0185 M4 第二批）：排在 ⌘D 前面——Windows 上 Ctrl+Alt+D 的 key 仍是 d
+      if (mod && e.altKey && !e.shiftKey && e.code === 'KeyD') {
+        if (e.getModifierState?.('AltGraph')) return
+        const again = TRANSFORM_COMMANDS.find((c) => c.id === 'transform-again')!
+        if (again.available()) {
+          e.preventDefault()
+          again.run()
+        }
+        return
+      }
+      if (mod && !e.altKey && e.key.toLowerCase() === 'd') {
         e.preventDefault()
         // 快速编辑里不加副本（副本落在版面上、这一屏看不见）：判据在 `duplicateSelected` 里
         duplicateSelected()
@@ -311,7 +323,9 @@ export function useKeyboard() {
       if (mod) {
         const bound = e.getModifierState?.('AltGraph') ? null : bindingFor(e)
         const cmd = bound
-          ? (PATH_COMMANDS.find((c) => c.key === bound) ?? PATHFINDER_COMMANDS.find((c) => c.key === bound))
+          ? (PATH_COMMANDS.find((c) => c.key === bound) ??
+            PATHFINDER_COMMANDS.find((c) => c.key === bound) ??
+            GROUP_COMMANDS.find((c) => c.key === bound))
           : undefined
         if (cmd?.available()) {
           e.preventDefault()
@@ -364,6 +378,8 @@ export function useKeyboard() {
         } else if (ui.cropTargetId) cancelCrop()
         else if (activePathEdit()) exitAnchorEdit()
         else if (ui.tool !== 'select') ui.setTool('select')
+        // 组内编辑（ADR 0191）：Esc 退一层，选中刚退出的那个组
+        else if (exitGroupLevel()) return
         else useSelectionStore.getState().clear()
         return
       }
