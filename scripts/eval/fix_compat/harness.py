@@ -591,6 +591,8 @@ def one_run(cond: str, pid: str, item: dict, rep: int, timeout: int) -> dict:
                         "approved_by": a.get("approved_by"),
                         "result": (a.get("result") or {}).get("code")
                         or (a.get("result") or {}).get("ok"),
+                        # 应用试运行的记录（ADR 0197 第 1 层，只有码）：之前 / 之后的形状、给的提示 id、这之前做过的改动
+                        **({"attempt": a["attempt"]} if a.get("attempt") else {}),
                     }
                     for a in audit
                 ]
@@ -665,7 +667,18 @@ def cmd_probe(args) -> None:
         materialize(it, base / "project")
         with sidecar(base / "project", base / "work") as app:
             prep = run_prep(app, it["script"])
-        print(pid, json.dumps(summarize_report(prep["report"]), ensure_ascii=False), flush=True)
+        summ = summarize_report(prep["report"])
+        print(pid, json.dumps(summ, ensure_ascii=False), flush=True)
+        # 题库的 `hint` 要与实测对上（tests/test_fix_compat_corpus_hints.py 按最近一轮 baseline 核对）：对不上就当场说
+        want = (it.get("hint") or {}).get("code")
+        failing = summ.get("phase") != "completed"
+        if failing and summ.get("outcome_code") != want:
+            print(
+                f"  !! corpus.json 的 hint.code 是 {want!r}，实测 {summ.get('outcome_code')!r}",
+                flush=True,
+            )
+        elif not failing and want:
+            print("  !! 实测已经出图（不用 AI），corpus.json 里这题的 hint 该去掉", flush=True)
 
 
 def cmd_run(args) -> None:

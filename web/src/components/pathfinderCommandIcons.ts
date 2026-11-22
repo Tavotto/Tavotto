@@ -9,6 +9,7 @@ import {
   PathMinusFront,
   PathTrim,
   PathUnite,
+  ShapeBuilder,
   SimplifyPath,
   Ungroup,
 } from '@/components/ui/icons'
@@ -28,4 +29,5 @@ export const PATHFINDER_COMMAND_ICONS: Record<PathfinderCommand['id'], typeof Pa
   'outline-stroke': OutlineStroke,
   'reverse-path': ArrowLeftRight,
   'simplify-path': SimplifyPath,
+  'shape-builder': ShapeBuilder,
 }

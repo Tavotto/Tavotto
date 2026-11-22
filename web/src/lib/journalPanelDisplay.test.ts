@@ -1,23 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import { journalSources, loadCatalog, type JournalFieldSource } from './journals'
+import { journalSources, type JournalFieldSource } from './journals'
+import { legacyNatureCatalog } from './__fixtures__/legacyNatureCatalog'
 import { panelDisplayPath } from './journalPanelDisplay'
 
 const oldPath = 'info.width_double_mm'
 const correctPath = 'info.panel_max_width_aip_mm'
-const source = journalSources('nature-chemistry', loadCatalog())[oldPath]
+const source = journalSources('nature-chemistry', legacyNatureCatalog())[oldPath]
 const withoutStage = structuredClone(source)
 Reflect.deleteProperty(withoutStage, 'stage')
 
 describe('panelDisplayPath', () => {
   it.each(['nature-chemistry', 'nature-energy', 'nature-materials', 'nature-medicine', 'nature-methods', 'nature-nanotechnology', 'nature-photonics', 'nature-physics'])('recognizes production evidence for %s without changing it', (journal) => {
-    const current = journalSources(journal, loadCatalog())[oldPath]
+    const current = journalSources(journal, legacyNatureCatalog())[oldPath]
     const before = structuredClone(current)
     expect(current.stage).toBe('production')
     expect(panelDisplayPath(journal, oldPath, current)).toBe(correctPath)
     expect(current).toEqual(before)
   })
   it.each(['nature-chemistry', 'nature-energy', 'nature-materials', 'nature-medicine', 'nature-methods', 'nature-nanotechnology', 'nature-photonics', 'nature-physics'])('rejects altered scope and evidence for %s', (journal) => {
-    const current = journalSources(journal, loadCatalog())[oldPath]
+    const current = journalSources(journal, legacyNatureCatalog())[oldPath]
     for (const patch of [
       { source_scope: 'publisher' }, { rule_scope: 'publisher' }, { affects: 'preflight' },
       { stage: 'submission' }, { stage: undefined }, { value: '180' }, { qualifier: 'min' },

@@ -21,7 +21,11 @@
     "hex": "{{label}}：色号",
     "documentColors": "排版里的颜色",
     "recent": "最近使用",
-    "system": "系统取色器…"
+    "system": "系统取色器…",
+    "figureColors": "图内配色",
+    "recommended": "推荐配色",
+    "recommendedTip": "Okabe-Ito 色盲友好配色，科研图常用",
+    "recommendedTipJournal": "{{journal}} 没有规定配色；这是 Okabe-Ito 色盲友好配色"
   },
   "count": {
     "selectedObjects_other": "已选 {{count}} 个对象"

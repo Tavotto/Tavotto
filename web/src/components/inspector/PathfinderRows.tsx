@@ -34,6 +34,7 @@ const SHAPE_MODES: readonly PathfinderCommand['id'][] = [
   'pathfinder-divide',
   'pathfinder-trim',
   'make-compound',
+  'shape-builder',
 ]
 const PATH_OPS: readonly PathfinderCommand['id'][] = ['outline-stroke', 'simplify-path', 'reverse-path', 'release-compound']
 

@@ -33,12 +33,21 @@ USER_SIDE_SHAPES = frozenset(
 )
 
 
+#: 说的是同一件事的不同结局码 → 提示表里的那一个键（准备会话报复数 `no_figures_captured`，native 回退报单数；
+#: 评测题 lib-needs-data-arg 因此一直拿不到提示，`tests/test_fix_compat_corpus_hints.py` 看护）
+SHAPE_ALIASES: dict[str, str] = {
+    "no_figures_captured": "no_figure_captured",
+    "no_figures_captured_silent": "no_figure_captured",
+}
+
+
 def shape_of(code: str, trace: str = "") -> str:
-    """(错误码, traceback 文本) → 形状。认不出细分就是错误码本身；什么都没有回空串。"""
+    """(错误码, traceback 文本) → 形状。认不出细分就是错误码本身（同义码归一）；什么都没有回空串。"""
     for shape, parts in TRACE_SHAPES:
         if all(p in trace for p in parts):
             return shape
-    return str(code or "")
+    code = str(code or "")
+    return SHAPE_ALIASES.get(code, code)
 
 
 def report_error(report: object) -> tuple[str, str]:

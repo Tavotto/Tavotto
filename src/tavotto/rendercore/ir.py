@@ -164,6 +164,51 @@ class Paint:
     alpha: float = 1.0
 
 
+@dataclass(frozen=True)
+class GradientStop:
+    """渐变的一个色标（ADR 0186）：offset 0–1、单调不减。"""
+
+    offset: float
+    rgb: RGB
+    alpha: float = 1.0
+
+
+@dataclass(frozen=True)
+class LinearGradient:
+    """线性渐变（ADR 0186）：起点 / 终点在**对象框空间**（与路径段同一坐标，随 Group.transform 走）。只做 pad。"""
+
+    stops: tuple[GradientStop, ...]
+    p0: tuple[float, float]
+    p1: tuple[float, float]
+    spread: str = "pad"
+
+
+@dataclass(frozen=True)
+class RadialGradient:
+    """径向渐变（ADR 0186）：同心圆（焦点 = 圆心），框空间。只做 pad。"""
+
+    stops: tuple[GradientStop, ...]
+    center: tuple[float, float]
+    radius: float
+    spread: str = "pad"
+
+
+#: 渐变两种（闭集）；`AnyPaint = Paint | LinearGradient | RadialGradient`
+GRADIENTS = (LinearGradient, RadialGradient)
+AnyPaint = Union[Paint, LinearGradient, RadialGradient]
+
+
+def is_gradient(p: object) -> bool:
+    return isinstance(p, GRADIENTS)
+
+
+def paint_translucent(p: object) -> bool:
+    """这个颜料哪里有 alpha < 1：纯色看常量 alpha，渐变看任一色标（EPS 的「透明」判据同这一条）。"""
+    if isinstance(p, GRADIENTS):
+        return any(st.alpha < 1.0 for st in p.stops)
+    return isinstance(p, Paint) and p.alpha < 1.0
+
+
 #: 线帽 / 线接的闭集（与 PDF 的 `J` / `j` 取值一一对应）。
 LINE_CAPS = ("butt", "round", "square")
 LINE_JOINS = ("miter", "round", "bevel")
@@ -420,6 +465,8 @@ OPERATIONS = (
     "image",
     "imported_page",
     "flip",
+    "gradient_fill",
+    "gradient_stroke",
 )
 CAP_FORMATS = ("pdf", "png", "tiff", "eps", "svg")
 CAP_SCOPES = ("canvas", "original")
@@ -457,6 +504,11 @@ CAPABILITIES: dict[str, dict[str, Capability]] = {
                 "object_alpha",
                 "text",
             ),
+        ),
+        **_caps(
+            CAP_NATIVE,
+            "ADR 0186：渐变 = Shading Pattern（axial / radial，Extend 两端），色标带 alpha 另建 luminosity 软蒙版",
+            ("gradient_fill", "gradient_stroke"),
         ),
         **_caps(
             CAP_NATIVE,
@@ -500,11 +552,15 @@ def operations_of(node: Node) -> tuple[str, ...]:
     if isinstance(node, Path):
         if node.fill is not None:
             ops.append("path_fill")
-            if node.fill.alpha < 1.0:
+            if is_gradient(node.fill):
+                ops.append("gradient_fill")
+            if paint_translucent(node.fill):
                 ops.append("object_alpha")
         if node.stroke is not None:
             ops.append("path_stroke")
-            if node.stroke.paint.alpha < 1.0:
+            if is_gradient(node.stroke.paint):
+                ops.append("gradient_stroke")
+            if paint_translucent(node.stroke.paint):
                 ops.append("object_alpha")
     elif isinstance(node, ShapedText):
         ops.append("text")
@@ -614,7 +670,46 @@ def _alpha(v: object, path: str) -> None:
         raise IRError("bad_alpha", f"alpha 必须在 [0, 1]: {v!r}", path)
 
 
+def _rgb_ok(rgb: object, path: str) -> None:
+    if not isinstance(rgb, tuple) or len(rgb) != 3:
+        raise IRError("bad_color", f"颜色必须是三元组: {rgb!r}", path)
+    for c in rgb:
+        v = _finite(c, path, "颜色分量")
+        if v < 0.0 or v > 1.0:
+            raise IRError("bad_color", f"颜色分量必须在 [0, 1]: {rgb!r}", path)
+
+
+def _gradient(g: object, path: str) -> None:
+    """渐变（ADR 0186）：色标 ≥ 2、offset 在 [0, 1] 且单调不减、颜色合法；坐标有限；半径 > 0；只认 pad。"""
+    stops = getattr(g, "stops", None)
+    if not isinstance(stops, tuple) or len(stops) < 2:
+        raise IRError("bad_color", "渐变至少要两个色标", path)
+    last = 0.0
+    for st in stops:
+        if not isinstance(st, GradientStop):
+            raise IRError("bad_color", f"不是 GradientStop: {st!r}", path)
+        off = _finite(st.offset, path, "色标位置")
+        if off < last or off > 1.0:
+            raise IRError("bad_color", f"色标位置必须在 [0, 1] 且单调不减: {off!r}", path)
+        last = off
+        _rgb_ok(st.rgb, path)
+        _alpha(st.alpha, path)
+    if g.spread != "pad":
+        raise IRError("bad_color", f"渐变只做 pad: {g.spread!r}", path)
+    if isinstance(g, LinearGradient):
+        for v in (*g.p0, *g.p1):
+            _finite(v, path, "渐变坐标")
+    else:
+        for v in g.center:
+            _finite(v, path, "渐变坐标")
+        if _finite(g.radius, path, "渐变半径") <= 0:
+            raise IRError("bad_color", f"径向渐变的半径必须 > 0: {g.radius!r}", path)
+
+
 def _paint(p: object, path: str) -> None:
+    if isinstance(p, GRADIENTS):
+        _gradient(p, path)
+        return
     if not isinstance(p, Paint):
         raise IRError("bad_color", f"不是 Paint: {p!r}", path)
     if not isinstance(p.rgb, tuple) or len(p.rgb) != 3:
@@ -675,6 +770,8 @@ def _path(node: Path, path: str) -> None:
 def _text(node: ShapedText, page: Page, path: str) -> None:
     _finite(node.x, path, "x")
     _finite(node.y, path, "y")
+    if isinstance(node.paint, GRADIENTS):
+        raise IRError("bad_color", "文字不支持渐变", path)
     _paint(node.paint, path)
     if not isinstance(node.runs, tuple):
         raise IRError("bad_glyph", "runs 必须是元组", path)
