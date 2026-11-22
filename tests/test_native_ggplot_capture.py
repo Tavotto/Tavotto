@@ -34,6 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ADAPTER = ROOT / "src" / "tavotto" / "resources" / "native" / "ggplot2.R"
 X_BOTTOM = "axis.x.bottom.title"
 Y_LEFT = "axis.y.left.title"
+LEGEND = "legend.right.1.title"
 
 
 def _pdf_text_colors(path):
@@ -63,10 +64,18 @@ tracked_mean <- function(values) {
 }
 set.seed(32026)
 plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
-  ggplot2::geom_point(position = ggplot2::position_jitter(width = .12, height = 0)) +
+  ggplot2::geom_point(ggplot2::aes(shape = factor(cyl)),
+                      position = ggplot2::position_jitter(width = .12, height = 0)) +
   ggplot2::stat_summary(fun = tracked_mean, geom = "point", shape = 4) +
   ggplot2::facet_wrap(ggplot2::vars(cyl)) +
-  ggplot2::labs(title = "Fuel economy", x = "Engine displacement", y = "Highway mileage") +
+  ggplot2::labs(title = "Fuel economy", x = "Engine displacement", y = "Highway mileage",
+                 colour = "Drive type", shape = "Cylinders") +
+  ggplot2::guides(
+    colour = ggplot2::guide_legend(order = 1, theme = ggplot2::theme(
+      legend.title = ggplot2::element_text(colour = "#667788"))),
+    shape = ggplot2::guide_legend(order = 2, theme = ggplot2::theme(
+      legend.title = ggplot2::element_text(colour = "#778899")))
+  ) +
   ggplot2::scale_x_continuous(sec.axis = ggplot2::dup_axis(name = "Secondary horizontal")) +
   ggplot2::scale_y_continuous(sec.axis = ggplot2::dup_axis(name = "Secondary vertical")) +
   ggplot2::theme_bw() +
@@ -83,9 +92,11 @@ labels <- c("plot.title" = "Fuel economy",
             "axis.x.bottom.title" = "Engine displacement",
             "axis.x.top.title" = "Secondary horizontal",
             "axis.y.left.title" = "Highway mileage",
-            "axis.y.right.title" = "Secondary vertical")
-original <- c("#112233", "#223344", "#334455", "#445566", "#556677")
-colors <- setNames(as.list(c("#6C3799", "#8C3011", "#2370B1", "#2A7654", "#923190")),
+            "axis.y.right.title" = "Secondary vertical",
+            "legend.right.1.title" = "Drive type",
+            "legend.right.2.title" = "Cylinders")
+original <- c("#112233", "#223344", "#334455", "#445566", "#556677", "#667788", "#778899")
+colors <- setNames(as.list(c("#6C3799", "#8C3011", "#2370B1", "#2A7654", "#923190", "#3373A7", "#C75052")),
                    names(labels))
 stopifnot(summary_calls > 0L, length(baseline$state$layers) == 2L,
           length(baseline$state$panel_ranges) == 4L,
@@ -109,8 +120,12 @@ for (i in seq_along(labels)) {
     stopifnot(bbox[[4L]] > bbox[[3L]], abs(anchor[[2L]] - bbox[[2L]] - bbox[[4L]] / 2) < 1)
   } else {
     anchor <- as.numeric(sub(".* x='([^']+)'.*", "\\1", edited_line))
-    expected_x <- bbox[[1L]] + if (gid == "plot.title") 0 else bbox[[3L]] / 2
+    expected_x <- bbox[[1L]] + if (startsWith(gid, "axis.x.")) bbox[[3L]] / 2 else 0
     stopifnot(bbox[[3L]] > bbox[[4L]], abs(anchor - expected_x) < 1)
+    if (startsWith(gid, "legend.")) {
+      y <- as.numeric(sub(".* y='([^']+)'.*", "\\1", edited_line))
+      stopifnot(y >= bbox[[2L]] - 1, y <= bbox[[2L]] + bbox[[4L]] + 1)
+    }
   }
   restored <- sub(colors[[gid]], original[[i]], restored, fixed = TRUE)
 }
@@ -123,15 +138,33 @@ bad_value <- tryCatch(adapter$render_ggplot(baseline$state, list("plot.title" = 
                       error = conditionMessage)
 stopifnot(identical(bad_value, "The native R title color must be an RGB hex color."))
 limited <- adapter$capture_ggplot(
-  plot + ggplot2::labs(title = NULL, x = expression(alpha)) +
+  plot + ggplot2::labs(title = NULL, x = expression(alpha), colour = "Shared", shape = "Shared") +
     ggplot2::theme(axis.title.y.left = ggplot2::element_blank()),
   c(432, 288))
 stopifnot(identical(names(limited$state$text_targets),
-                    c("axis.x.top.title", "axis.y.right.title")))
+                    c("axis.x.top.title", "axis.y.right.title")),
+          length(grep(">Shared</text>", strsplit(limited$svg, "\n")[[1L]], fixed = TRUE)) == 2L)
 bad_target <- tryCatch(adapter$render_ggplot(limited$state, colors),
                        error = conditionMessage)
 stopifnot(identical(bad_target, "The requested native R title is unavailable."),
           identical(grDevices::dev.cur(), c("null device" = 1L)))
+
+hidden <- adapter$capture_ggplot(plot + ggplot2::guides(
+  colour = ggplot2::guide_legend(title = expression(mu)),
+  shape = ggplot2::guide_legend(title = NULL)
+), c(432, 288))
+stopifnot(identical(names(hidden$state$text_targets), head(names(labels), 5L)))
+
+bar <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
+  ggplot2::geom_point() + ggplot2::labs(colour = "City mileage") +
+  ggplot2::guides(colour = ggplot2::guide_colourbar(position = "bottom"))
+bar_state <- adapter$capture_ggplot(bar, c(432, 288))$state
+gid <- "legend.bottom.1.title"
+stopifnot(identical(bar_state$text_targets[[gid]]$label, "City mileage"))
+bar_edited <- adapter$render_ggplot(bar_state, setNames(list("#26838F"), gid))
+bar_title <- grep(">City mileage</text>", strsplit(bar_edited, "\n")[[1L]],
+                  value = TRUE, fixed = TRUE)
+stopifnot(length(bar_title) == 1L, grepl("#26838F", bar_title, fixed = TRUE))
 
 if (capabilities("cairo")) {
   cairo_pdf <- grDevices::cairo_pdf
@@ -244,7 +277,7 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy)) +
         assert bottom["editable"][0]["value"] == "#6B6B6B"
         invalid = [{"gid": "plot.title", "prop": "text", "value": "Unchanged"}]
         with pytest.raises(
-            pool.WorkerError, match="supports plain-text plot and axis title colors"
+            pool.WorkerError, match="supports plain-text plot, axis and legend title colors"
         ):
             session.override(stem, invalid, inline_svg=True)
         with pytest.raises(pool.WorkerError, match="title is unavailable"):
@@ -309,7 +342,8 @@ def test_desktop_ggplot_edit_uses_the_layout_archive_and_mixed_export(tmp_path, 
 cat("computed", file = "r-witness")
 plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
   ggplot2::geom_point() + ggplot2::facet_wrap(ggplot2::vars(cyl)) +
-  ggplot2::labs(title = "Fuel economy", x = "Engine displacement", y = "Highway mileage") +
+  ggplot2::labs(title = "Fuel economy", x = "Engine displacement", y = "Highway mileage",
+                 colour = "Drive type") +
   ggplot2::theme(plot.title = ggplot2::element_text(colour = "#112233"))
 """,
         encoding="utf-8",
@@ -371,10 +405,13 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
             return result.get_json()
 
         elements = {element["gid"]: element for element in render([])["manifest"]["elements"]}
+        assert elements[LEGEND]["role"] == "legend_text"
+        assert elements[LEGEND]["label"] == "Drive type"
         expected = {
             "plot.title": "#6C3799",
             X_BOTTOM: "#8C3011",
             Y_LEFT: "#2A7654",
+            LEGEND: "#2370B1",
         }
         patches = [
             {"gid": gid, "prop": "color", "value": color, "identity": elements[gid]["identity"]}
@@ -385,6 +422,7 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
         svg = edit["svg"]
         for element in edit["manifest"]["elements"]:
             assert element["editable"][0]["value"] == expected[element["gid"]]
+        assert "#2370B1" not in render(patches[:-1])["svg"]
         undo_x_and_y = render(patches[:1])["svg"]
         assert (
             "#6C3799" in undo_x_and_y

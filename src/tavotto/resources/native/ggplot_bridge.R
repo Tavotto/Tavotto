@@ -83,7 +83,7 @@ main <- function() {
           !is.character(patch$gid) || length(patch$gid) != 1L ||
           is.na(patch$gid) || !nzchar(patch$gid) ||
           !identical(patch$prop, "color") || !is.character(patch$value)) {
-        stop("This ggplot adapter supports plain-text plot and axis title colors.")
+        stop("This ggplot adapter supports plain-text plot, axis and legend title colors.")
       }
       colors[[patch$gid]] <- patch$value
     }

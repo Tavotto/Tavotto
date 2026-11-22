@@ -25,10 +25,16 @@ ggplot_text_slots <- c(
   "axis.y.right.title" = "ylab-r"
 )
 
-ggplot_text_target <- function(table, slot_name) {
-  slot <- which(table$layout$name == slot_name)
-  if (length(slot) != 1L) return(NULL)
-  children <- table$grobs[[slot]]$children
+ggplot_text_target <- function(table, slots, role) {
+  path <- character()
+  for (slot in slots) {
+    box <- table$layout[slot, ]
+    # gtable names its drawn cells in top-right-bottom-left order.
+    cell <- paste0(box$name, ".", paste(c(box$t, box$r, box$b, box$l), collapse = "-"))
+    path <- c(path, table$name, cell)
+    table <- table$grobs[[slot]]
+  }
+  children <- table$children
   if (length(children) != 1L) return(NULL)
   text <- children[[1L]]
   if (!inherits(text, "text") || !is.character(text$label) ||
@@ -42,17 +48,43 @@ ggplot_text_target <- function(table, slot_name) {
   color <- grDevices::rgb(rgb[1L], rgb[2L], rgb[3L],
                           alpha = if (rgb[4L] != 255L) rgb[4L] else NULL,
                           maxColorValue = 255)
-  list(slot = slot, child = text$name, label = text$label, paint = text$gp, color = color)
+  list(slots = slots, parent_path = paste(c(path, table$name), collapse = "::"),
+       child = text$name, label = text$label, paint = text$gp, color = color, role = role)
 }
 
-measure_ggplot_text <- function(table, target, frame_pt) {
-  box <- table$layout[target$slot, ]
-  # gtable's makeContent names cell viewports in top-right-bottom-left order.
-  cell <- paste0(box$name, ".", paste(c(box$t, box$r, box$b, box$l), collapse = "-"))
-  wrapper <- table$grobs[[target$slot]]$name
+ggplot_legend_titles <- function(table) {
+  targets <- list()
+  for (box_slot in which(startsWith(table$layout$name, "guide-box-"))) {
+    box <- table$grobs[[box_slot]]
+    if (!inherits(box, "gtable")) next
+    position <- sub("^guide-box-", "", table$layout$name[[box_slot]])
+    guides <- which(box$layout$name == "guides")
+    for (index in seq_along(guides)) {
+      guide_slot <- guides[[index]]
+      guide <- box$grobs[[guide_slot]]
+      if (!inherits(guide, "gtable")) next
+      title_slot <- which(guide$layout$name == "title")
+      if (length(title_slot) != 1L) next
+      target <- ggplot_text_target(table, c(box_slot, guide_slot, title_slot), "legend_text")
+      if (is.null(target)) next
+      gid <- paste("legend", position, index, "title", sep = ".")
+      targets[[gid]] <- target
+    }
+  }
+  # An index and a label cannot distinguish same-named guides after reordering.
+  labels <- vapply(targets, function(target) target$label, character(1L))
+  targets[!(duplicated(labels) | duplicated(labels, fromLast = TRUE))]
+}
+
+measure_ggplot_text <- function(drawn, target, frame_pt) {
+  row <- which(drawn$name == target$child & drawn$gPath == target$parent_path)
+  if (length(row) != 1L) return(NULL)
+  # Nested guides can insert viewports that are not part of their grob paths.
+  viewport <- strsplit(drawn$vpPath[[row]], "::", fixed = TRUE)[[1L]]
+  if (length(viewport) < 2L || viewport[[1L]] != "ROOT") return(NULL)
   on.exit(grid::upViewport(0))
-  grid::seekViewport(grid::vpPath(table$name, cell))
-  text <- grid::grid.get(grid::gPath(table$name, cell, wrapper, target$child), strict = TRUE)
+  grid::downViewport(do.call(grid::vpPath, as.list(viewport[-1L])), strict = TRUE)
+  text <- grid::grid.get(grid::gPath(target$parent_path, target$child), strict = TRUE)
   lower <- grid::deviceLoc(grid::grobX(text, 180), grid::grobY(text, 270), valueOnly = TRUE)
   upper <- grid::deviceLoc(grid::grobX(text, 0), grid::grobY(text, 90), valueOnly = TRUE)
   frame_in <- frame_pt / 72
@@ -61,20 +93,27 @@ measure_ggplot_text <- function(table, target, frame_pt) {
 }
 
 ggplot_text_targets <- function(table, frame_pt) {
-  forced <- tryCatch({
-    grid::grid.force()
-    TRUE
-  }, error = function(error) FALSE)
-  if (!forced) return(list())
   targets <- list()
   for (gid in names(ggplot_text_slots)) {
-    target <- ggplot_text_target(table, ggplot_text_slots[[gid]])
-    if (is.null(target)) next
-    bbox <- tryCatch(measure_ggplot_text(table, target, frame_pt),
+    slot <- which(table$layout$name == ggplot_text_slots[[gid]])
+    if (length(slot) != 1L) next
+    role <- if (gid == "plot.title") "title" else "axis_label"
+    targets[[gid]] <- ggplot_text_target(table, slot, role)
+  }
+  targets <- c(targets, ggplot_legend_titles(table))
+  if (!length(targets)) return(targets)
+  drawn <- tryCatch({
+    grid::grid.force()
+    grid::grid.ls(viewports = TRUE, print = FALSE)
+  }, error = function(error) NULL)
+  if (is.null(drawn)) return(list())
+  for (gid in names(targets)) {
+    bbox <- tryCatch(measure_ggplot_text(drawn, targets[[gid]], frame_pt),
                      error = function(error) NULL)
     if (length(bbox) == 4L && all(is.finite(bbox)) && all(bbox[3:4] > 0)) {
-      target$bbox <- bbox
-      targets[[gid]] <- target
+      targets[[gid]]$bbox <- bbox
+    } else {
+      targets[[gid]] <- NULL
     }
   }
   targets
@@ -102,6 +141,13 @@ capture_ggplot <- function(plot, frame_pt) {
   list(state = state, svg = render_ggplot(state))
 }
 
+edit_ggplot_title <- function(table, slots, child, paint) {
+  if (!length(slots)) return(grid::editGrob(table, child, gp = paint, strict = TRUE))
+  slot <- slots[[1L]]
+  table$grobs[[slot]] <- edit_ggplot_title(table$grobs[[slot]], slots[-1L], child, paint)
+  table
+}
+
 ggplot_table_for <- function(state, colors) {
   table <- state$table
   for (gid in names(colors)) {
@@ -114,9 +160,7 @@ ggplot_table_for <- function(state, colors) {
     }
     paint <- target$paint
     paint$col <- color
-    table$grobs[[target$slot]] <- grid::editGrob(
-      table$grobs[[target$slot]], target$child, gp = paint, strict = TRUE
-    )
+    table <- edit_ggplot_title(table, target$slots, target$child, paint)
   }
   table
 }
@@ -158,10 +202,9 @@ export_ggplot_pdf <- function(state, colors, path) {
 ggplot_manifest <- function(state, stem, colors = list()) {
   elements <- lapply(names(state$text_targets), function(gid) {
     target <- state$text_targets[[gid]]
-    role <- if (gid == "plot.title") "title" else "axis_label"
     color <- if (is.null(colors[[gid]])) target$color else colors[[gid]]
     list(
-      gid = gid, role = role, label = target$label,
+      gid = gid, role = target$role, label = target$label,
       bbox = as.list(target$bbox), draggable = FALSE,
       editable = list(list(prop = "color", type = "color", value = color))
     )
