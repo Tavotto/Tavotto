@@ -34,10 +34,14 @@ export function candidatesFromResponse(items: AiDataProposeItem[], pj: string | 
 export interface ColumnRoles {
   /** 有序横轴；null = 这次没有横轴 */
   x: string | null
-  /** 纵轴（后端给数组：宽表可能把 2–3 列当作纵轴；界面先按第一个显示） */
+  /** 纵轴的第一列（下拉的取值） */
   y: string | null
-  /** 额外有几列当纵轴（界面不显示，只用来在汇报里说清） */
+  /** 纵轴的全部列（后端给数组：宽表 2–3 列各一条线；`stack` 时是被当分组的 2–8 列），顺序有意义；没有 = 空数组 */
+  yAll: string[]
+  /** 额外有几列当纵轴 */
   yExtra: number
+  /** 「把列当分组」：此时 `x` / `group` 为 null，`yAll` 是那几列 */
+  stack: boolean
   /** 分组；null = 不分组 */
   group: string | null
   options: { x: string[]; y: string[]; group: string[] }
@@ -49,6 +53,8 @@ export function rolesFromResponse(res: AiDataProposeResponse): ColumnRoles | nul
   return {
     x: r.x ?? null,
     y: r.y?.[0] ?? null,
+    yAll: [...(r.y ?? [])],
+    stack: r.stack === true,
     yExtra: Math.max(0, (r.y?.length ?? 0) - 1),
     group: r.group ?? null,
     options: { x: r.options?.x ?? [], y: r.options?.y ?? [], group: r.options?.group ?? [] },
