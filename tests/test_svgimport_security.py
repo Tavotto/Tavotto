@@ -641,3 +641,52 @@ def test_import_deadline_starts_at_entry_and_covers_parsing_and_css(monkeypatch)
     # 解析阶段超时 -> timeout（不是 bad_xml / 做不准）
     monkeypatch.setattr(svgimport, "DEADLINE_S", -1.0)
     assert outcome("<svg xmlns='http://www.w3.org/2000/svg'><g/></svg>") == ("rejected", "timeout")
+
+
+# ---- Codex 线程 4656678190：polyline / polygon 等几何分支也要扣共享锚点预算 ----
+
+
+@pytest.mark.parametrize("tag", ["polyline", "polygon"])
+def test_polyline_and_polygon_count_against_the_anchor_budget(tag, monkeypatch):
+    """单个 `<polyline points>` 30 万个点：原来成功导入 60 万锚点，现在拒绝"""
+    monkeypatch.setattr(svgimport, "DEADLINE_S", 120.0)  # 慢机器上别让墙钟抢在预算前面
+    pts = "0,0 1,1 " * 300_000
+    t0 = time.monotonic()
+    got = outcome(SVG.format(f'<{tag} points="{pts}" fill="red"/>'))
+    assert got == ("rejected", "too_many_elements"), got
+    assert time.monotonic() - t0 < 5.0
+
+
+def test_polyline_just_under_the_budget_still_imports():
+    pts = "0,0 1,1 " * 1000
+    r = svgimport.import_svg(SVG.format(f'<polyline points="{pts}" fill="none" stroke="red"/>'))
+    assert not r["unsupported"] and len(r["objects"]) == 1
+    assert len(svgimport.import_svg(SVG.format('<polygon points="0,0 5,0 5,5"/>'))["objects"]) == 1
+
+
+def test_use_of_a_big_polyline_is_charged_every_time(monkeypatch):
+    monkeypatch.setattr(svgimport, "DEADLINE_S", 120.0)
+    pts = "0,0 1,1 " * 10_000  # 2 万个锚点；引用 10 次 = 20 万 > 10 万
+    text = SVG.format(
+        f'<defs><polyline id="p" points="{pts}" fill="none" stroke="red"/></defs>'
+        + '<use href="#p"/>' * 10
+    )
+    assert outcome(text) == ("rejected", "too_many_elements")
+
+
+def test_use_of_simple_shapes_is_charged_every_time(monkeypatch):
+    """rect / circle / line 这类固定锚点的分支同样累计"""
+    monkeypatch.setattr(svgimport, "DEADLINE_S", 120.0)
+    for shape in ('<rect id="p" width="1" height="1"/>', '<circle id="p" r="1"/>'):
+        text = SVG.format(f"<defs>{shape}</defs>" + '<use href="#p"/>' * 30_000)
+        assert outcome(text) == ("rejected", "too_many_elements"), shape
+
+
+def test_geometry_branches_check_the_deadline():
+    from xml.etree import ElementTree as ET
+
+    ctx = svgimport._Ctx(ids={}, rules=[], deadline=time.monotonic() - 1)
+    el = ET.fromstring('<polyline points="0,0 1,1"/>')
+    with pytest.raises(svgimport.SvgImportError) as e:
+        svgimport._geometry(el, "polyline", ctx)
+    assert e.value.code == "timeout"

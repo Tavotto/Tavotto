@@ -931,7 +931,29 @@ def _emit_shape(subs_user, st, ctm, ctx: _Ctx, path: list[str], opacity: float) 
     return obj
 
 
+def _spend_anchors(ctx: _Ctx, subs: list[dict] | None) -> None:
+    """所有几何分支共用的锚点预算（path / polyline / polygon / rect / circle / ellipse / line）：跨整次导入累计，
+    `<use>` 每展开一次就再扣一次；顺带查墙钟（Codex 线程 4656678190）"""
+    if time.monotonic() > ctx.deadline:
+        raise SvgImportError("timeout", f"超过 {DEADLINE_S:g} 秒")
+    ctx.anchors += sum(len(sp["nodes"]) for sp in subs or ())
+    if ctx.anchors > MAX_ANCHORS:
+        raise SvgImportError("too_many_elements", "锚点超出上限")
+
+
 def _geometry(el, tag: str, ctx: _Ctx | None = None) -> list[dict] | None:
+    if ctx is None or tag == "path":
+        return _geometry_raw(el, tag, ctx)
+    if tag in ("polyline", "polygon") and len(el.get("points") or "") > MAX_PATH_D_CHARS:
+        raise SvgImportError("too_many_elements", "points 过长")  # 分词之前先拒
+    if time.monotonic() > ctx.deadline:
+        raise SvgImportError("timeout", f"超过 {DEADLINE_S:g} 秒")
+    subs = _geometry_raw(el, tag, ctx)
+    _spend_anchors(ctx, subs)
+    return subs
+
+
+def _geometry_raw(el, tag: str, ctx: _Ctx | None = None) -> list[dict] | None:
     g = el.get
     if tag == "path":
         if ctx is None:
