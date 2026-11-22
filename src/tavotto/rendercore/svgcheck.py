@@ -511,17 +511,27 @@ def _drop_inert(css_body: str) -> str:
 def _tolerate(root: ET.Element, deadline: float = math.inf) -> None:
     """`tolerant` 模式的清理（外部 SVG 导入用，ADR 0189）：编辑器的私有命名空间元素与属性、整段 metadata、对画面没作用的
     CSS 声明删掉；**安全规则一条不放**——脚本、事件属性、外链、DTD / 实体、引用环、预算照旧由后面的验证拒绝。"""
-    for tick, parent in enumerate(list(root.iter())):
-        if not tick & 0xFF:
-            _check_deadline(deadline)
-        for child in list(parent):
+    # 每个父节点一趟过滤、整体替换子节点列表：逐个 `parent.remove(child)` 每次都要线性找一遍，大量保留节点后跟大量要删的节点时
+    # 是平方级（Codex 线程 4656770810）；墙钟按子节点计数检查，一个父节点下挂几万个子节点也查得到
+    tick = 0
+    for parent in list(root.iter()):
+        kept = []
+        dropped = False
+        for child in parent:
+            tick += 1
+            if not tick & 0xFF:
+                _check_deadline(deadline)
             ns, tag = _name(child.tag) if isinstance(child.tag, str) else ("", "")
             if (
                 not isinstance(child.tag, str)
                 or (ns not in ("", SVG_NS))
                 or (tag == "metadata" and ns in ("", SVG_NS))
             ):
-                parent.remove(child)
+                dropped = True
+            else:
+                kept.append(child)
+        if dropped:
+            parent[:] = kept
     for tick, node in enumerate(root.iter()):
         if not tick & 0xFF:
             _check_deadline(deadline)

@@ -690,3 +690,26 @@ def test_geometry_branches_check_the_deadline():
     with pytest.raises(svgimport.SvgImportError) as e:
         svgimport._geometry(el, "polyline", ctx)
     assert e.value.code == "timeout"
+
+
+def test_tolerant_cleanup_of_many_siblings_is_linear():
+    """容错清理逐个 `parent.remove(child)` 是平方级（Codex 线程 4656770810）：同一父节点下 2 万个保留节点后跟 2 万个 metadata，
+    原来约 9 秒才报 timeout；一趟过滤后应在 1.5 秒内结束，且不是超时"""
+    body = "<g/>" * 20_000 + "<metadata/>" * 20_000
+    t0 = time.monotonic()
+    got = outcome(SVG.format(body))
+    assert time.monotonic() - t0 < 1.5
+    assert got != ("rejected", "timeout")
+
+
+def test_tolerant_cleanup_keeps_order_and_drops_metadata_and_foreign_nodes():
+    root = svgcheck.parse_svg(
+        (
+            '<svg xmlns="http://www.w3.org/2000/svg" xmlns:x="urn:editor" viewBox="0 0 10 10">'
+            '<rect id="a" width="1" height="1"/><metadata/><x:private/>'
+            '<circle id="b" r="1"/><metadata/><rect id="c" width="1" height="1"/></svg>'
+        ).encode(),
+        budget=svgimport.IMPORT_BUDGET,
+        tolerant=True,
+    )
+    assert [c.get("id") for c in root] == ["a", "b", "c"]
