@@ -101,7 +101,19 @@ order: 320
   `grant` 比一次，不一致就 `preparation_plan_stale`，一行脚本不跑。缺包后自动接手换了解释器（ADR 0107：
   用户自己的 Python 默认在脚本目录跑）时，`pool.build_owned(before_retry=…)` 在**第二次执行之前**把授权 / 解释器 /
   数据绑定按同一份 `_stale_reason` 再比一次，不一致同样作废（`executed=True`：第一次按计划跑过），不在计划没写过的
-  解释器或 cwd 里重跑。
+  解释器或 cwd 里重跑。声明选择同在分派边界核对：带 `input_declaration_state` 的 `build_owned` 在每次取到会话、
+  build 出门前把计划冻结的选择与声明存储的当前选择再比一次（`declaredinputs.current_selection`，与计划侧同一
+  降级口径），不一致同样 `preparation_plan_stale`（`executed=False`）——脚本不按计划没见过的选择执行，才轮到
+  执行后的核对兜底。看护 `test_dispatch_refuses_a_changed_selection_before_the_build_leaves`。
+- **捕获回执带出处章（Codex #1925 P1）**：捕获的 fact 记下它 candidate 被批准时的声明行修订
+  （`selection_revision`），回执以私有 `captured_selection_revision` 携带同一出处。准备报告只在章与冻结选择的
+  修订相等时把这份封存摘要展示为当前选择的结果；缓存回放 / 复用的旧执行捕获（出处对不上）照旧留在回执里作历史，
+  只是不再冒名新选择。轮询只比字段，不读存储、不解析图。看护
+  `test_reused_archive_from_another_selection_never_certifies_the_new_choice`。
+- **不可移植脚本名只禁声明（Codex #1925 P1）**：本机文件系统收得下、但落不进可移植声明身份的脚本名
+  （macOS 冒号、Windows 尾随空格 / 点等）与读不了的声明存储，一律由 `declaredinputs.scope_selection_degraded`
+  降级成「观察到没有声明」——准备照常、声明控件不可用，绝不拦下计划或运行。看护
+  `test_unportable_script_names_observe_absence_instead_of_failing`。
 - **自报只收这一条会话的（U09，ADR 0070）**：worker 的 `runtime_report()` 带 `report_origin=build` 与 `pid`；
   `receipt.from_worker` 核 origin，并把 pid 与控制面自己起的那个子进程对（`EngineWorker.child_pid` /
   `WorkerdWorker.child_pid` / `NativeSession.child_pid`）。体检 / 探针 / 手拼的字典**一律拒收**：`runtime=None`、
