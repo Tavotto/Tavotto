@@ -35,14 +35,19 @@ def flatten_alpha(page: ir.Page) -> ir.Page:
     拒绝（不在这次范围），所以这里不碰它们。返回新页面，原页面（给其它格式用的那份）不改。
     """
 
-    def paint(p: ir.Paint | None) -> ir.Paint | None:
+    def paint(p):
+        # 渐变（ADR 0186）：每个色标的 alpha 一并压成 1，颜色不动
+        if ir.is_gradient(p):
+            if not ir.paint_translucent(p):
+                return p
+            return replace(p, stops=tuple(replace(st, alpha=1.0) for st in p.stops))
         return p if p is None or p.alpha >= 1.0 else replace(p, alpha=1.0)
 
     def node(n: ir.Node) -> ir.Node:
         if isinstance(n, ir.Path):
             stroke = n.stroke
-            if stroke is not None and stroke.paint.alpha < 1.0:
-                stroke = replace(stroke, paint=replace(stroke.paint, alpha=1.0))
+            if stroke is not None and ir.paint_translucent(stroke.paint):
+                stroke = replace(stroke, paint=paint(stroke.paint))
             return replace(n, fill=paint(n.fill), stroke=stroke)
         if isinstance(n, ir.ShapedText):
             return replace(n, paint=paint(n.paint))
@@ -112,6 +117,49 @@ def _path_ops(segments: tuple) -> list[str]:
     return out
 
 
+def _function(stops: tuple) -> str:
+    """色标 → PostScript 函数字典（与 PDF 写入器同一种：两段一个 Type 2，多段 Type 3 缝合；首尾补到 0 / 1）。"""
+    st = list(stops)
+    if st[0].offset > 0:
+        st.insert(0, replace(st[0], offset=0.0))
+    if st[-1].offset < 1:
+        st.append(replace(st[-1], offset=1.0))
+
+    def arr(vals) -> str:
+        return "[" + " ".join(_num(v) for v in vals) + "]"
+
+    funcs = [
+        f"<< /FunctionType 2 /Domain [0 1] /C0 {arr(a.rgb)} /C1 {arr(z.rgb)} /N 1 >>"
+        for a, z in zip(st, st[1:])
+    ]
+    if len(funcs) == 1:
+        return funcs[0]
+    return (
+        "<< /FunctionType 3 /Domain [0 1] /Functions ["
+        + " ".join(funcs)
+        + "] /Bounds "
+        + arr(x.offset for x in st[1:-1])
+        + " /Encode "
+        + arr([0, 1] * len(funcs))
+        + " >>"
+    )
+
+
+def _shading(g) -> str:
+    if isinstance(g, ir.LinearGradient):
+        kind, coords = 2, (*g.p0, *g.p1)
+    else:
+        cx, cy = g.center
+        kind, coords = 3, (cx, cy, 0.0, cx, cy, g.radius)
+    return (
+        f"<< /ShadingType {kind} /ColorSpace /DeviceRGB /Coords ["
+        + " ".join(_num(v) for v in coords)
+        + "] /Extend [true true] /Function "
+        + _function(g.stops)
+        + " >>"
+    )
+
+
 _CAPS = {"butt": 0, "round": 1, "square": 2}
 _JOINS = {"miter": 0, "round": 1, "bevel": 2}
 
@@ -159,6 +207,11 @@ class OverlayWriter:
             self._text(node)
 
     def _paint_path(self, node: ir.Path) -> None:
+        if ir.is_gradient(node.fill) or (
+            node.stroke is not None and ir.is_gradient(node.stroke.paint)
+        ):
+            self._gradient_path(node)
+            return
         self.facts.paths += 1
         b = self._body
         b.extend(_path_ops(node.segments))
@@ -178,6 +231,37 @@ class OverlayWriter:
                 f"{_num(s.width)} setlinewidth {_CAPS[s.cap]} setlinecap {_JOINS[s.join]} setlinejoin "
                 f"{_num(s.miter_limit)} setmiterlimit {dash} {_rgb(s.paint.rgb)} stroke"
             )
+
+    def _gradient_path(self, node: ir.Path) -> None:
+        """有渐变的路径（ADR 0186）：PostScript Level 3 `shfill`——填充先 `clip` 到路径再铺渐变；描边先
+        `strokepath`（带线宽 / 线端 / 拐角 / 虚线）再 `clip`、铺渐变。纯色的那一半照旧画。先填后描。"""
+        self.facts.paths += 1
+        b = self._body
+        clip = "eoclip" if node.fill_rule == "evenodd" else "clip"
+        if node.fill is not None:
+            b.append("gsave")
+            b.extend(_path_ops(node.segments))
+            if ir.is_gradient(node.fill):
+                b += [clip, "newpath", _shading(node.fill) + " shfill"]
+            else:
+                b.append(
+                    _rgb(node.fill.rgb) + (" eofill" if node.fill_rule == "evenodd" else " fill")
+                )
+            b.append("grestore")
+        if node.stroke is not None:
+            s = node.stroke
+            dash = "[" + " ".join(_num(v) for v in s.dash) + "] " + _num(s.dash_phase) + " setdash"
+            style = (
+                f"{_num(s.width)} setlinewidth {_CAPS[s.cap]} setlinecap {_JOINS[s.join]} setlinejoin "
+                f"{_num(s.miter_limit)} setmiterlimit {dash}"
+            )
+            b.append("gsave")
+            b.extend(_path_ops(node.segments))
+            if ir.is_gradient(s.paint):
+                b += [style, "strokepath clip newpath", _shading(s.paint) + " shfill"]
+            else:
+                b.append(f"{style} {_rgb(s.paint.rgb)} stroke")
+            b.append("grestore")
 
     # ---- 文字（字形轮廓）----------------------------------------------------
     def _face(self, key: str):

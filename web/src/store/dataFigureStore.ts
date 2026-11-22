@@ -166,6 +166,8 @@ interface DataFigureStore {
   understanding: boolean
   /** 模型建议与此刻的映射不同、但用户已经动过下拉（或正在出图）没有自动套用：右栏标题行的胶囊；点一下才套用，不点就是忽略 */
   suggestion: Suggestion | null
+  /** 「读懂数据」自动套用写进 `answers` 的那些键（含 `x_measure`）和值：不算用户动过下拉；用户自己改了那一项就从这里去掉 */
+  autoPicks: Record<string, unknown>
 
   /** 首页左卡进项目之后：开「数据」抽屉；只有一个可读文件就直接开它的临时标签 */
   enter: () => void
@@ -267,6 +269,7 @@ const initial = {
   fresh: null as FreshFigure | null,
   understanding: false,
   suggestion: null as Suggestion | null,
+  autoPicks: {} as Record<string, unknown>,
   readRid: null as string | null,
 }
 /** 换一份数据 / 回到起点时清掉的那些（文件清单、概览、表头行、画好的那张不在内） */
@@ -286,12 +289,20 @@ const idleDraft = {
   problem: null as ProblemKind | null,
   understanding: false,
   suggestion: null as Suggestion | null,
+  autoPicks: {} as Record<string, unknown>,
   readRid: null as string | null,
 }
 
-/** 「读懂数据」轮询：后端限时 25 s，约 1 s 一次，最多 30 次，之后静默放弃 */
+/** 两个 answers 取值是否相同（列名或列名数组，数组按顺序比） */
+const sameValue = (a: unknown, b: unknown): boolean =>
+  Array.isArray(a) || Array.isArray(b) ? Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => v === b[i]) : a === b
+
+/**
+ * 「读懂数据」轮询：直到终态为止，按时间封顶——后端总时限订阅登录（CLI）60 s、Key 25 s，再留余量；1 s 一次，单次失败不算结局，
+ * 到点静默放弃。（不按次数：请求本身慢的时候次数会比时间少得多。）
+ */
 const UNDERSTANDING_POLL_MS = 1000
-const UNDERSTANDING_POLL_MAX = 30
+const UNDERSTANDING_POLL_MAX_MS = 75_000
 let understandingSeq = 0
 let understandingTimer: ReturnType<typeof setTimeout> | null = null
 /** 停掉在跑的轮询（换文件 / 重新读表 / 关标签 / 换项目 / 出图进编辑器）：旧结果回来对不上序号就丢，绝不套到别的文件上 */
@@ -325,22 +336,31 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     stopUnderstanding()
     set({ understanding: false, suggestion: null })
     const sel = get().selected
+    // 套进 `answers` 的补丁（含 `x_measure`，它不对应任何下拉）；记下来：这些键不算用户动过，也不会因同一份建议再套一次
+    const patch: Record<string, unknown> = { ...d.picks, ...(d.xMeasure !== undefined ? { x_measure: d.xMeasure } : {}) }
+    set((s) => ({ autoPicks: { ...s.autoPicks, ...patch } }))
     if (d.headerRow !== null && sel && !get().group) {
       // 换了表头行：列也跟着变，列名建议是按重读后的表给的——和 `setHeaderRow` 同一条路，但把建议的列一起带上
       discardSession()
       commitRid = null
-      set((s) => ({ headerRows: { ...s.headerRows, [sel.path]: d.headerRow! }, answers: { ...s.answers, ...d.picks } }))
+      set((s) => ({ headerRows: { ...s.headerRows, [sel.path]: d.headerRow! }, answers: { ...s.answers, ...patch } }))
       void run({ keepChoices: true })
       return
     }
-    if (Object.keys(d.picks).length > 0) reask((a) => ({ ...a, ...d.picks }))
+    if (Object.keys(patch).length > 0) reask((a) => ({ ...a, ...patch }))
   }
 
   /** 「读懂数据」出结果了：用户还没动过横轴 / 纵轴 / 分组就直接套用，动过了（或正在出图）留给胶囊，没差别什么都不做 */
   function onUnderstood(sug: Suggestion): void {
-    const d = diffSuggestion(sug, get().roles, get().headerRowUsed, headerFixed())
+    const d = diffSuggestion(sug, get().roles, get().headerRowUsed, headerFixed(), get().answers)
     if (!d) return
-    const touched = SUGGEST_KEYS.some((k) => k in get().answers)
+    const { answers, autoPicks } = get()
+    // 自动套用写进去的键不算「动过」（值还是套用时的那个）；用户自己改过的才算
+    const touched = SUGGEST_KEYS.some((k) => k in answers && !(k in autoPicks && sameValue(answers[k], autoPicks[k])))
+    // 同一份补丁已经自动套用过一次、这里仍不同（后端没采纳）：不再套第二遍，也不弹胶囊——点了也是同一个结果
+    const again = d.headerRow === null && Object.keys(d.picks).length + (d.xMeasure !== undefined ? 1 : 0) > 0 &&
+      Object.entries({ ...d.picks, ...(d.xMeasure !== undefined ? { x_measure: d.xMeasure } : {}) }).every(([k, v]) => k in autoPicks && sameValue(autoPicks[k], v))
+    if (again) return
     if (!touched && !get().drawingId) applyDiff(d)
     else set({ suggestion: sug })
   }
@@ -367,12 +387,11 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       settle(u)
       return
     }
-    let polls = 0
+    const t0 = Date.now()
     const tick = (): void => {
       understandingTimer = setTimeout(async () => {
         understandingTimer = null
         if (!alive()) return
-        polls += 1
         let v: AiDataUnderstanding | null = null
         try {
           v = await aiDataUnderstanding(u.id, pj)
@@ -381,7 +400,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         }
         if (!alive()) return
         if (v && settle(v)) return
-        if (polls >= UNDERSTANDING_POLL_MAX) {
+        if (Date.now() - t0 >= UNDERSTANDING_POLL_MAX_MS) {
           set({ understanding: false })
           return
         }
@@ -522,7 +541,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     proposeSeq += 1
     stopUnderstanding()
     const { pj, still } = capture(seq)
-    const kept = opts.keepChoices ? { answers: get().answers, mixed: get().mixed, roles: get().roles } : { answers: {} as Record<string, unknown> }
+    const kept = opts.keepChoices ? { answers: get().answers, autoPicks: get().autoPicks, mixed: get().mixed, roles: get().roles } : { answers: {} as Record<string, unknown> }
     const ctl = new AbortController()
     readCtl = ctl
     set({ ...idleDraft, ...kept, phase: 'reading' })
@@ -824,7 +843,25 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
 
     setRole: (key, value) => {
       if (get().drawingId) return
-      reask((a) => ({ ...a, [key]: value }))
+      // 用户改了哪一项，就清掉与那一项绑定的自动键：改横轴 → 清 `x_measure`（它说的就是「原来那个横轴」）；原来是「不要横轴 + 多列纵轴」
+      // （把列当分组）而用户选了真横轴 → 纵轴收回第一列（数组只在没有横轴时才是分组）；用户选单列纵轴 → 放掉那个「不要横轴」的绑定。
+      const a = { ...get().answers, [key]: value }
+      const auto = { ...get().autoPicks }
+      delete auto[key]
+      const was = get().answers
+      if (key === 'x') {
+        delete a.x_measure
+        delete auto.x_measure
+        if (was.x === 'none' && Array.isArray(was.y) && value !== 'none') {
+          a.y = was.y[0]
+          delete auto.y
+        }
+      }
+      if (key === 'y' && was.x === 'none' && Array.isArray(was.y)) {
+        delete a.x
+        delete auto.x
+      }
+      reask(() => a, { autoPicks: auto })
     },
 
     thumbSettled: (session, id, ok) => {
@@ -864,7 +901,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     applySuggestion: () => {
       const sug = get().suggestion
       if (!sug || get().drawingId) return
-      const d = diffSuggestion(sug, get().roles, get().headerRowUsed, headerFixed())
+      const d = diffSuggestion(sug, get().roles, get().headerRowUsed, headerFixed(), get().answers)
       if (!d) {
         set({ suggestion: null })
         return

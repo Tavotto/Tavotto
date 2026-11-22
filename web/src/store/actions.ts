@@ -988,6 +988,22 @@ export function refreshJournalV2(journalId: string, v2: V2Patch | null): void {
 }
 
 /**
+ * 旧期刊 id 换绑到它现在的 id（目录里该刊把旧 id 记成了别名，`resolveJournalAlias`）：只改 `journalRef.id`，
+ * 绑定里的规则快照、出处、版本号、label 原样不动（库更新不改已定稿项目的 v1 结论）。
+ * 这是数据迁移不是用户编辑：走 `silent`，不进撤销栈、不清 future（否则撤销换绑会被 effect 立刻换回并吞掉重做历史）。
+ * 静默：不弹胶囊、不报错；
+ * 绑定已不是 `oldId`（用户换了刊 / 换了画布）就什么都不做。返回是否写了。
+ */
+export function rebindJournalId(oldId: string, newId: string): boolean {
+  const p = doc().profile
+  if (!p?.journalRef || p.journalRef.id !== oldId || oldId === newId) return false
+  useDocumentStore.getState().silent((d) => {
+    if (d.profile?.journalRef) d.profile.journalRef.id = newId
+  })
+  return true
+}
+
+/**
  * 「不按期刊」：一次提交退回选期刊之前的规范与页宽（撤销一步回到期刊）。
  * 没有记录（老项目 / 记录缺失）= 退回默认规范、页宽不动。没按期刊选过时什么都不做。
  */
@@ -3086,14 +3102,14 @@ const ARROW_STYLE_KEYS = ['strokePt', 'color', 'head', 'headStart', 'headEnd',
 /** 2026-11-14 起格式刷把描边的全部外观都带上（ADR 0174 的描边开关 / 不透明度 / 线端拐角，ADR 0185 的斜接上限 / 自定义虚线 / 描边对齐） */
 const SHAPE_STYLE_KEYS = ['strokePt', 'color', 'fill', 'cornerRadius',
   'fillOpacity', 'dash', 'stroke', 'strokeOpacity', 'lineCap', 'lineJoin', 'miterLimit',
-  'dashPattern', 'strokeAlign', 'rotationDeg'] as const
+  'dashPattern', 'strokeAlign', 'fillGradient', 'strokeGradient', 'rotationDeg'] as const
 /**
  * 自由路径（ADR 0185）：填充 / 描边字段与形状同名同义，端型与箭头同名同义。形状 ↔ 路径同族互刷
  * （`markStyle.styleFamilyOf`），写的是两边**都有**的那几个键（`styleKeysOf` 取交集）——圆角不刷到路径上、端型不刷到形状上。
  */
 const PATH_STYLE_KEYS = ['strokePt', 'color', 'fill', 'fillOpacity', 'fillRule', 'dash', 'stroke',
-  'strokeOpacity', 'lineCap', 'lineJoin', 'miterLimit', 'dashPattern', 'headStart', 'headEnd', 'headSizeStart',
-  'headSizeEnd', 'rotationDeg'] as const
+  'strokeOpacity', 'lineCap', 'lineJoin', 'miterLimit', 'dashPattern', 'fillGradient', 'strokeGradient',
+  'headStart', 'headEnd', 'headSizeStart', 'headSizeEnd', 'rotationDeg'] as const
 const STYLE_KEYS: Record<StyleClip['kind'], readonly string[]> = {
   panel: [],
   text: TEXT_STYLE_KEYS,
