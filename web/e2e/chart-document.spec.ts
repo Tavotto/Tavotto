@@ -338,3 +338,74 @@ test('canvas PDF export adds bookmarks to two instances of the same figure', {
     rmSync(project, { recursive: true, force: true })
   }
 })
+
+test('canvas PDF export adds a toggleable annotation layer', {
+  tag: '@feature:export.pdf-annotation-layer',
+}, async ({ app, page }) => {
+  const project = mkdtempSync(path.join(os.tmpdir(), 'tavotto-pdf-annotation-layer-'))
+  const name = 'LayeredCanvas'
+  const fileId = 'panel.pdf'
+  let instance: Awaited<ReturnType<typeof startApp>> | undefined
+  try {
+    writeFileSync(path.join(project, fileId), readFileSync(path.join(
+      import.meta.dirname, '..', '..', 'examples', 'figures', 'Fig1_kinetics.pdf',
+    )))
+    instance = await app({ figures: project })
+    const saved = await page.request.post(instance.baseURL + '/api/layouts/' + name + '?target=project', {
+      data: {
+        schema: 3, project: { id: 'pdf-layer-test', name },
+        canvases: [{
+          id: 'c1', name, schema: 2, page: { w: 140, h: 100 }, guides: [], updatedAt: 1,
+          objects: [
+            { type: 'panel', id: 'figure', x: 15, y: 10, w: 70, h: 55,
+              fileId, fileKind: 'pdf', nativeW: 100, nativeH: 80, overrides: [] },
+            { type: 'panel', id: 'detail', x: 90, y: 10, w: 35, h: 27.5,
+              fileId, fileKind: 'pdf', nativeW: 100, nativeH: 80, overrides: [] },
+            { type: 'text', id: 'label', x: 15, y: 70, w: 55, h: 10,
+              text: 'Canvas annotation', sizePt: 12, color: '#224466', bold: false, align: 'left' },
+          ],
+        }],
+        activeCanvasId: 'c1', createdAt: 1, updatedAt: 1,
+      },
+    })
+    expect(saved.ok(), await saved.text()).toBe(true)
+    await page.goto(instance.baseURL)
+    await waitForDocumentReady(page)
+    await page.keyboard.press('ControlOrMeta+k')
+    await page.locator('[data-palette-input]').fill('打开排版')
+    await page.locator('[data-cmd-id="load-layout"]').click()
+    await page.locator('[data-layout-row="LayeredCanvas"]').click()
+    await expect(page.locator('[data-canvas-stage] [data-object-id="label"]')).toBeVisible()
+    await page.locator('[data-onboarding-anchor="export"]').click()
+    const dialog = page.locator('[data-export-group="format"]')
+    const pdf = dialog.locator('[data-export-format="pdf"] input')
+    if (!(await pdf.isChecked())) await pdf.check()
+    const layer = dialog.locator('[data-export-pdf-annotation-layer]')
+    await expect(layer).toBeVisible()
+    await expect(layer).not.toBeChecked()
+    await layer.check()
+    await page.keyboard.press('Escape')
+    await expect(layer).toBeHidden()
+    await page.locator('[data-onboarding-anchor="export"]').click()
+    if (!(await pdf.isChecked())) await pdf.check()
+    await expect(layer).not.toBeChecked()
+    await layer.check()
+    const started = page.waitForResponse(r =>
+      new URL(r.url()).pathname === '/api/export/start' && r.request().method() === 'POST')
+    await page.locator('[data-export-start]').click()
+    const job = await started
+    expect(job.ok(), await job.text()).toBe(true)
+    expect(job.request().postDataJSON().pdf_annotation_layer).toBe(true)
+    const { export_dir } = await job.json()
+    await expect(page.locator('[data-export-result]')).toBeVisible({ timeout: 60_000 })
+    const files = readdirSync(export_dir).filter(file => file.endsWith('.pdf'))
+    expect(files).toHaveLength(1)
+    const published = readFileSync(path.join(export_dir, files[0])).toString('latin1')
+    expect(published).toContain('/OCProperties')
+    expect(published).toContain('/Type /OCG')
+    expect(published).toContain('/Name (Canvas annotations)')
+  } finally {
+    await instance?.stop()
+    rmSync(project, { recursive: true, force: true })
+  }
+})

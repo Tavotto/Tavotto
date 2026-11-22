@@ -393,6 +393,7 @@ class ExportRequest:
     #: 只对 `scope=original` 有意义；缺省 False 时请求、计划身份与产物与从前逐字节相同。
     eps_opaque: bool = False
     pdf_panel_bookmarks: bool = False
+    pdf_annotation_layer: bool = False
 
     @property
     def has_raster(self) -> bool:
@@ -421,6 +422,7 @@ class ExportRequest:
             **({"merge_pdf": self.merge_pdf.to_payload()} if self.merge_pdf is not None else {}),
             **({"eps_opaque": True} if self.eps_opaque else {}),
             **({"pdf_panel_bookmarks": True} if self.pdf_panel_bookmarks else {}),
+            **({"pdf_annotation_layer": True} if self.pdf_annotation_layer else {}),
             **(
                 {"expected_source": self.original.expected_source}
                 if self.original and self.original.expected_source is not None
@@ -960,11 +962,13 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
     if include_script and (scope != SCOPE_ORIGINAL or spec.get("merge_pdf") is not None):
         raise ExportRequestError("script_export_not_for_canvas", "整版导出不能附带脚本", {})
     formats = _formats(spec.get("formats"), allowed_formats, allow_empty=include_script)
+    canvas_pdf = scope == SCOPE_CANVAS and FORMAT_PDF in formats
     pdf_panel_bookmarks = spec.get("pdf_panel_bookmarks", False)
-    if type(pdf_panel_bookmarks) is not bool or (
-        pdf_panel_bookmarks and (scope != SCOPE_CANVAS or FORMAT_PDF not in formats)
-    ):
+    if type(pdf_panel_bookmarks) is not bool or (pdf_panel_bookmarks and not canvas_pdf):
         raise ExportRequestError("bad_request", "PDF panel bookmarks require a canvas PDF", {})
+    pdf_annotation_layer = spec.get("pdf_annotation_layer", False)
+    if type(pdf_annotation_layer) is not bool or (pdf_annotation_layer and not canvas_pdf):
+        raise ExportRequestError("bad_request", "PDF annotation layers require a canvas PDF", {})
     # 「EPS 按不透明导出」：只认严格的 True（不是真值），旧契约与整版导出没有这个选项
     eps_opaque = spec.get("eps_opaque") is True and not legacy and scope == SCOPE_ORIGINAL
     has_raster = any(f in RASTER_FORMATS for f in formats)
@@ -1063,4 +1067,5 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
         include_script=include_script,
         eps_opaque=eps_opaque,
         pdf_panel_bookmarks=pdf_panel_bookmarks,
+        pdf_annotation_layer=pdf_annotation_layer,
     )

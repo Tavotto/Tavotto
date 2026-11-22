@@ -929,6 +929,22 @@
       ]
     },
     {
+      "id": "export.pdf-annotation-layer",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "画布标注可作为一个默认显示、可开关的 PDF 图层导出",
+        "en-US": "Export canvas annotations as one toggleable PDF layer"
+      },
+      "entry": "导出 → 当前画布 → PDF → 将画布标注放入可开关的 PDF 图层",
+      "e2e": [
+        {
+          "spec": "chart-document.spec.ts",
+          "title": "canvas PDF export adds a toggleable annotation layer"
+        }
+      ]
+    },
+    {
       "id": "export.png",
       "status": "active",
       "platform": "both",

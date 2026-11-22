@@ -88,6 +88,7 @@ class CompiledPage:
     #: 用到的冻结源，按首次出现顺序（资源 key → FrozenSource）。
     sources: dict[str, FrozenSource]
     pdf_bookmark_titles: dict[int, str] = field(default_factory=dict)
+    pdf_annotation_indices: frozenset[int] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,7 @@ class RenderPlan:
     problems: tuple[dict, ...] = ()
     sources: dict[str, FrozenSource] = field(default_factory=dict)
     pdf_bookmark_titles: dict[int, str] = field(default_factory=dict)
+    pdf_annotation_indices: frozenset[int] = frozenset()
 
     @property
     def plan_identity(self) -> str:
@@ -563,6 +565,7 @@ def compile_page(
     background: RGB | None = (1.0, 1.0, 1.0),
     math: dict | None = None,
     pdf_panel_bookmarks: bool = False,
+    pdf_annotation_layer: bool = False,
 ) -> CompiledPage:
     """画布（毫米、顶原点、z 序对象列表）→ 已校验的 `Page`。
 
@@ -575,6 +578,7 @@ def compile_page(
     dropped: list[str] = []
     children: list[Node] = []
     pdf_bookmark_titles: dict[int, str] = {}
+    annotation_indices: set[int] = set()
     for o in objects:
         if not isinstance(o, dict):
             raise PlanError("bad_object", f"对象不是 dict: {o!r}")
@@ -620,9 +624,18 @@ def compile_page(
                 title = title[:120] if isinstance(title, str) else ""
                 title = "".join(ch for ch in title if ch.isprintable() or ch.isspace())
                 pdf_bookmark_titles[len(children)] = " ".join(title.split())
+            if pdf_annotation_layer and kind != "panel":
+                annotation_indices.add(len(children))
             children.append(node)
     page = validate(Page(page_w, page_h, tuple(children), resources, background))
-    return CompiledPage(page, tuple(dropped), tuple(problems), frozen, pdf_bookmark_titles)
+    return CompiledPage(
+        page,
+        tuple(dropped),
+        tuple(problems),
+        frozen,
+        pdf_bookmark_titles,
+        frozenset(annotation_indices),
+    )
 
 
 def compile_plan(
@@ -648,6 +661,7 @@ def compile_plan(
         background=background,
         math=math,
         pdf_panel_bookmarks=req.pdf_panel_bookmarks,
+        pdf_annotation_layer=req.pdf_annotation_layer,
     )
     ref = exportreq.render_plan_ref(
         req,
@@ -669,6 +683,7 @@ def compile_plan(
         problems=compiled.problems,
         sources=compiled.sources,
         pdf_bookmark_titles=compiled.pdf_bookmark_titles,
+        pdf_annotation_indices=compiled.pdf_annotation_indices,
     )
 
 

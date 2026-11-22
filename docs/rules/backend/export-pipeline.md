@@ -30,6 +30,10 @@ order: 210
     的交集生成 PDF `FitR` 目的地。跳过隐藏、全透明及页外面板。按面板绘制顺序编号，使用用户给图面板取的
     名称。书签只改变 PDF 导航元数据，画面与其它格式保持原样。看护 `tests/test_export_endpoint.py`
     与 `web/e2e/chart-document.spec.ts`。
+  * **画布 PDF 标注图层**由 `pdf_annotation_layer: true` 开启，只用于画布 PDF。编译期记录已编译标注对象
+    的绘制序号。PDF 写入器就地标记对应的绘制指令，共用一个默认显示的可选内容组（OCG），保持标注和图面板
+    的相对次序。阅读器关闭该层时只隐藏画布标注。同步导出 PNG / TIFF 仍使用默认显示状态的同一份 PDF。
+    看护 `tests/test_export_endpoint.py` 与 `web/e2e/chart-document.spec.ts`。
   * **PPI 只在有位图格式时是数字**，否则 `None`；`partial` 是独立一档
     （成功的照常交付，失败的带自己的 `error.code`）；覆盖策略闭集
     `ask`/`replace`/`rename`，`ask` 撞名时**不渲染不写盘**。

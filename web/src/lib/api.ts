@@ -2307,6 +2307,7 @@ export interface ExportRequest {
   /** 「EPS 按不透明导出」：EPS 里的画布标注把半透明压成 100%，其余格式照旧；不选时不带这个键（ADR 0046 / 0174） */
   eps_opaque?: boolean
   pdf_panel_bookmarks?: boolean
+  pdf_annotation_layer?: boolean
   document_id?: string | null
   /** 导出开始那一刻的文档快照指纹；回执原样带回来，用来说"期间又被编辑过" */
   document_revision?: string | null

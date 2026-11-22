@@ -212,6 +212,11 @@ def produce(
                 provider,
                 files,
                 **({"bookmark_titles": rp.pdf_bookmark_titles} if rp.pdf_bookmark_titles else {}),
+                **(
+                    {"annotation_indices": rp.pdf_annotation_indices}
+                    if rp.pdf_annotation_indices
+                    else {}
+                ),
             )
         except pdfwriter.WriterError as exc:
             pdf_error = exc

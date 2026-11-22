@@ -1055,6 +1055,7 @@ export default interface Resources {
       "operationFailed": "无法完成：{{error}}",
       "outputFailed": "无法导出 {{format}}：{{reason}}",
       "partialSummary": "{{ok}} 个成功，{{failed}} 个失败",
+      "pdfAnnotationLayer": "将画布标注放入可开关的 PDF 图层",
       "pdfHint": "矢量",
       "pdfPanelBookmarks": "为图面板添加 PDF 书签",
       "phase": {

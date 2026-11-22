@@ -171,7 +171,7 @@ import { useProjectStore } from "@/store/projectStore";
 import { useDocumentStore } from "@/store/documentStore";
 import { askConfirm, dialogCovered, EXPORT_DONE_DISMISS_MS, useUiStore } from "@/store/uiStore";
 import { useWorkspaceStore } from "@/store/workspace";
-import { isRuntimePanel, type ArrowObject, type CanvasObject, type FigureDocument, type PanelObject, type PathObject, type ShapeObject, type TextObject } from "@/types/document";
+import { isKnownObject, isRuntimePanel, type ArrowObject, type CanvasObject, type FigureDocument, type PanelObject, type PathObject, type ShapeObject, type TextObject } from "@/types/document";
 import type { ThumbObject } from "@/types/thumb";
 import { cropToVisibleContent, croppedDocument } from "@/lib/exportCrop";
 import { frameCanvasOf, isZeroPad } from "@/lib/framePad";
@@ -293,6 +293,7 @@ interface ParkedState {
   withReport: boolean;
   withScript: boolean;
   pdfPanelBookmarks: boolean;
+  pdfAnnotationLayer: boolean;
   transparent: boolean;
   strict: boolean;
 }
@@ -368,6 +369,7 @@ export function ExportDialog() {
   // 修改后的 .py（ADR 0171）：每次都要重跑一遍脚本，所以不记进导出默认值
   const [withScript, setWithScript] = useState(false);
   const [pdfPanelBookmarks, setPdfPanelBookmarks] = useState(false);
+  const [pdfAnnotationLayer, setPdfAnnotationLayer] = useState(false);
   /** 严格核验产物（ADR 0068 的 `strict` 政策）：必需项失败或无法核验的那一项不发布 */
   const [strict, setStrict] = useState(
     () => readExportDefaults().strictInspection,
@@ -686,11 +688,13 @@ export function ExportDialog() {
       setWithReport(restore.withReport);
       setWithScript(restore.withScript);
       setPdfPanelBookmarks(restore.pdfPanelBookmarks);
+      setPdfAnnotationLayer(restore.pdfAnnotationLayer);
       setTransparent(restore.transparent);
       setStrict(restore.strict);
       return;
     }
     setPdfPanelBookmarks(false);
+    setPdfAnnotationLayer(false);
     if (journalKey && journalApplied.current !== journalKey) {
       journalApplied.current = journalKey;
       const d = readExportDefaults();
@@ -965,6 +969,7 @@ export function ExportDialog() {
       includeReport: reportOn,
       includeScript: withScript && script.ok,
       pdfPanelBookmarks,
+      pdfAnnotationLayer,
       strictInspection: strict,
       profileId: checkProfileId,
       // 后端的 `acknowledged` 策略 = 「这些阻断项导出时仍未处理」：自动带上，不再靠勾选
@@ -1287,6 +1292,7 @@ export function ExportDialog() {
       withScript,
       script.ok,
       pdfPanelBookmarks,
+      pdfAnnotationLayer,
       scope,
       transparent,
       strict,
@@ -1414,6 +1420,7 @@ export function ExportDialog() {
       withReport,
       withScript,
       pdfPanelBookmarks,
+      pdfAnnotationLayer,
       transparent,
       strict,
     };
@@ -2055,6 +2062,19 @@ export function ExportDialog() {
                       onChange={(event) => setPdfPanelBookmarks(event.currentTarget.checked)}
                     />
                     <span>{ex("pdfPanelBookmarks")}</span>
+                  </label>
+                </FormRow>
+              )}
+              {scope === "canvas" && formats.includes("pdf") &&
+                exportDoc.objects.some((o) => !o.hidden && isKnownObject(o) && o.type !== "panel") && (
+                <FormRow>
+                  <label className="flex min-h-7 items-center gap-2 text-ink">
+                    <Checkbox
+                      data-export-pdf-annotation-layer
+                      checked={pdfAnnotationLayer}
+                      onChange={(event) => setPdfAnnotationLayer(event.currentTarget.checked)}
+                    />
+                    <span>{ex("pdfAnnotationLayer")}</span>
                   </label>
                 </FormRow>
               )}

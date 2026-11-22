@@ -1132,7 +1132,11 @@ class PdfWriter:
         )
         return self.pdf.make_indirect(stream)
 
-    def _build_document(self, bookmark_titles: Mapping[int, str] | None = None) -> None:
+    def _build_document(
+        self,
+        bookmark_titles: Mapping[int, str] | None = None,
+        annotation_indices: frozenset[int] = frozenset(),
+    ) -> None:
         import pikepdf
 
         rec = _Recorder()
@@ -1141,8 +1145,16 @@ class PdfWriter:
             w, h = self.page.width_pt, self.page.height_pt
             rec.ops.append(f"q {_rgb(self.page.background)} rg 0 0 {_num(w)} {_num(h)} re f Q")
         bookmarks = []
+        annotation_property = "/CanvasAnnotations"
+        has_annotation_layer = False
         for index, child in enumerate(self.page.children):
+            start = len(rec.ops) if index in annotation_indices else None
             placed = self._emit(child, rec, ir.IDENTITY, 1)
+            # Keep each marked node in its original position in the paint stack.
+            if start is not None and len(rec.ops) > start:
+                rec.ops.insert(start, f"/OC {annotation_property} BDC")
+                rec.ops.append("EMC")
+                has_annotation_layer = True
             # Top-level panels share the page's coordinate system. The same
             # placement just emitted the crop and transform into the PDF.
             if (
@@ -1176,10 +1188,20 @@ class PdfWriter:
                     )
         self._build_fonts()
         content = self._serialize(rec)
+        resources = self._resources(rec)
+        if has_annotation_layer:
+            group = self.pdf.make_indirect(
+                pikepdf.Dictionary(Type=pikepdf.Name.OCG, Name="Canvas annotations")
+            )
+            self.pdf.Root.OCProperties = pikepdf.Dictionary(
+                OCGs=pikepdf.Array([group]),
+                D=pikepdf.Dictionary(BaseState=pikepdf.Name.ON, Order=pikepdf.Array([group])),
+            )
+            resources.Properties = pikepdf.Dictionary({annotation_property: group})
         page = pikepdf.Dictionary(
             Type=pikepdf.Name.Page,
             MediaBox=pikepdf.Array([0, 0, float(self.page.width_pt), float(self.page.height_pt)]),
-            Resources=self._resources(rec),
+            Resources=resources,
             Contents=self.pdf.make_indirect(pikepdf.Stream(self.pdf, content)),
         )
         self.pdf.pages.append(pikepdf.Page(page))
@@ -1187,10 +1209,16 @@ class PdfWriter:
             with self.pdf.open_outline() as outline:
                 outline.root.extend(bookmarks)
 
-    def write(self, out: Path, *, bookmark_titles: Mapping[int, str] | None = None) -> WriteFacts:
+    def write(
+        self,
+        out: Path,
+        *,
+        bookmark_titles: Mapping[int, str] | None = None,
+        annotation_indices: frozenset[int] = frozenset(),
+    ) -> WriteFacts:
         import pikepdf
 
-        self._build_document(bookmark_titles)
+        self._build_document(bookmark_titles, annotation_indices)
         out = Path(out)
         _compress_unfiltered(self.pdf)
         # compress_streams=False：qpdf 的 compress_streams 会把源里带 predictor 的 Flate 图片流解码再重压
@@ -1336,7 +1364,10 @@ def write_pdf(
     files: Mapping[str, bytes] | None = None,
     *,
     bookmark_titles: Mapping[int, str] | None = None,
+    annotation_indices: frozenset[int] = frozenset(),
 ) -> WriteFacts:
     """IR → PDF 文件。`provider` 解析 `FontResource` → 已加载的脸（按 sha256 身份）；`files` 是
     `FileResource` key → 冻结字节（`sources.read_frozen()` 核过 hash 的那份），面板要它。"""
-    return PdfWriter(page, provider, files).write(out, bookmark_titles=bookmark_titles)
+    return PdfWriter(page, provider, files).write(
+        out, bookmark_titles=bookmark_titles, annotation_indices=annotation_indices
+    )

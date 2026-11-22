@@ -155,6 +155,79 @@ def test_canvas_pdf_bookmarks_follow_the_published_panel_regions(client, tmp_pat
             )
 
 
+def test_canvas_pdf_annotation_layer_toggles_marks_without_changing_default_pixels(
+    client, tmp_path
+):
+    m.open_project(str(_asym_panel_dir(tmp_path)))
+    panel = {
+        "type": "panel",
+        "id": "asym.pdf",
+        "bookmark_title": "Source",
+        "x_mm": 0,
+        "y_mm": 0,
+        "w_mm": 100,
+        "h_mm": 50,
+    }
+    shape = {
+        "type": "shape",
+        "shape": "rect",
+        "x_mm": 0,
+        "y_mm": 0,
+        "w_mm": 65,
+        "h_mm": 50,
+        "fill": "#ff0000",
+        "stroke": False,
+    }
+    marks = [shape, panel, _text_obj("Editable label", x_mm=55, y_mm=4, w_mm=38)]
+
+    def export(name, objects, *, layered=False):
+        response = client.post(
+            "/api/export",
+            json={
+                "scope": "canvas",
+                "filename": name,
+                "formats": ["pdf", "png"],
+                "ppi": 150,
+                "canvas": {"page_w_mm": 100, "page_h_mm": 50, "objects": objects},
+                "pdf_panel_bookmarks": True,
+                "pdf_annotation_layer": layered,
+            },
+        )
+        assert response.status_code == 200, response.get_json()
+        body = response.get_json()
+        assert body["status"] == "done", body
+        store = Path(body["export_dir"])
+        return {
+            Path(item["name"]).suffix: (store / item["name"]).read_bytes() for item in body["files"]
+        }
+
+    plain = export("Plain", marks)
+    layered = export("Layered", marks, layered=True)
+    panel_only = export("Panel only", [panel, _text_obj("Hidden", hidden=True)], layered=True)
+    assert plain[".png"] == layered[".png"]
+
+    with (
+        pymupdf.open(stream=plain[".pdf"]) as expected,
+        pymupdf.open(stream=layered[".pdf"]) as actual,
+        pymupdf.open(stream=panel_only[".pdf"]) as without_marks,
+    ):
+        assert expected.get_ocgs() == without_marks.get_ocgs() == {}
+        (layer,) = actual.layer_ui_configs()
+        assert layer["text"] == "Canvas annotations" and layer["on"] and not layer["locked"]
+        assert actual.get_toc() == expected.get_toc() == [[1, "1. Source", 1]]
+        assert len(actual[0].get_images()) == 0
+        assert "Editable label" in actual[0].get_text()
+        default_pixels = actual[0].get_pixmap()
+        assert default_pixels.samples == expected[0].get_pixmap().samples
+        assert default_pixels.pixel(40, 40) == (0, 0, 0)  # Panel draws over the annotation.
+        assert default_pixels.pixel(160, 50) == (255, 0, 0)  # Unpainted area on the same panel.
+        actual.set_layer_ui_config(layer["number"], action=pymupdf.PDF_OC_OFF)
+        assert actual[0].get_pixmap().samples == without_marks[0].get_pixmap().samples
+        assert "Editable label" not in actual[0].get_text()
+        actual.set_layer_ui_config(layer["number"], action=pymupdf.PDF_OC_ON)
+        assert actual[0].get_pixmap().samples == default_pixels.samples
+
+
 def test_export_single_figure_frame_with_annotation(client, tmp_path):
     """QA-WIN-20：单图档带标注时前端发的是「页面 = 原图图幅、面板在 (0,0) + 标注」的画布请求
     （`web/src/lib/singleExportDoc.ts`）。这条路径得把图和标注一起写进同一个矢量 PDF，页面就是图幅。"""

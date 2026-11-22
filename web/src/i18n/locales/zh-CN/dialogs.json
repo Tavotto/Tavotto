@@ -199,6 +199,7 @@
     },
     "mergePdf": "合成一个多页 PDF：{{name}}（{{count}} 页）",
     "pdfPanelBookmarks": "为图面板添加 PDF 书签",
+    "pdfAnnotationLayer": "将画布标注放入可开关的 PDF 图层",
     "batchNames": "每张图用各自的名字",
     "exportAgain": "再次导出",
     "newerObjects_other": "有 {{count}} 个对象来自更新的版本，更新后才能导出",

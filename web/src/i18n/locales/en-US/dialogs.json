@@ -204,6 +204,7 @@
     },
     "mergePdf": "Combine into one multi-page PDF: {{name}} ({{count}} pages)",
     "pdfPanelBookmarks": "Add PDF bookmarks for figure panels",
+    "pdfAnnotationLayer": "Put canvas annotations on a toggleable PDF layer",
     "batchNames": "Each figure keeps its own name",
     "exportAgain": "Export again",
     "newerObjects_other": "{{count}} objects come from a newer version. Update to export them.",
