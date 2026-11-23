@@ -694,9 +694,13 @@
       "noX": "不要横轴",
       "noGroup": "不分组"
     },
+    "connect": {
+      "pill": "连接 AI 以供智能分析"
+    },
     "suggest": {
       "apply": "试试建议",
-      "reading": "正在看各列…"
+      "reading": "正在看各列…",
+      "connectHint": "连上后会帮你看懂每一列，选对横轴、纵轴和分组"
     },
     "spec": {
       "line": "按{{parts}}出图",

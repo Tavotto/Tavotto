@@ -5068,7 +5068,7 @@ export interface AiDataFileEntry {
 }
 
 export const aiDataFilesAll = (pj?: string | null) =>
-  jsonFetch<{ files: AiDataFileEntry[]; truncated: boolean }>('/api/ai/data-files?formats=all', undefined, pj)
+  jsonFetch<{ files: AiDataFileEntry[]; truncated: boolean; understanding_available?: boolean }>('/api/ai/data-files?formats=all', undefined, pj)
 
 export interface AiDataOverview {
   path: string

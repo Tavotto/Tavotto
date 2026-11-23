@@ -179,6 +179,12 @@ interface DataFigureStore {
   /** 「读懂数据」自动套用写进 `answers` 的那些键（含 `x_measure`）和值：不算用户动过下拉；用户自己改了那一项就从这里去掉 */
   autoPicks: Record<string, unknown>
 
+  /** 后端说「读懂数据」此刻有没有可用的连接（`/api/ai/data-files` 的 `understanding_available`，随清单取）；null = 还没取到 / 旧后端没有这个字段（前端退回 `hasUsableAi`） */
+  understandingAvailable: boolean | null
+  /** 观察到过「读懂数据不可用」且连上之后还没因此重跑过：宿主（`useConnectAiWatch`，生命周期覆盖抽屉与草稿）重新挂上时据此补跑；记在 store 里而不是组件 ref */
+  sawUnavailable: boolean
+  /** 宿主汇报此刻「读懂数据」是否不可用：不可用 → 记下；从不可用变为可用 → 对当前数据重跑一次（`rerunForConnection` 自己拦「动过下拉 / 出图中」） */
+  noteUnavailable: (unavailable: boolean) => void
   /** 首页左卡进项目之后：开「数据」抽屉；只有一个可读文件就直接开它的临时标签 */
   enter: () => void
   loadFiles: () => Promise<void>
@@ -202,6 +208,8 @@ interface DataFigureStore {
   /** 一张缩略图取到了 / 取不到（422）：就绪状态 + 全部都画不出来时走「没画出来」 */
   thumbSettled: (session: string, id: string, ok: boolean) => void
   draw: (id: string) => Promise<void>
+  /** 用户刚连上 AI：对当前这份数据重新出一次候选，让「读懂数据」跑起来。用户已动过横轴 / 纵轴 / 分组下拉、正在出图、候选还没出完时什么都不做 */
+  rerunForConnection: () => void
   /** 点胶囊：套用模型的建议（等同用户自己改了映射后重新出候选） */
   applySuggestion: () => void
   /** 草稿自己的规范绑定（`DocumentProfile` 形状；null = 默认规范）：第一次出候选时取自激活画布，之后只由右栏「期刊」一行改，不写任何画布 */
@@ -292,6 +300,8 @@ const initial = {
   understanding: false,
   suggestion: null as Suggestion | null,
   autoPicks: {} as Record<string, unknown>,
+  understandingAvailable: null as boolean | null,
+  sawUnavailable: false,
   readRid: null as string | null,
   // 草稿自己的规范绑定只在 `initial`：换文件 / 关标签（`idleDraft`）不清它，项目代际（`clear()`）与重新进入（`enter()`）才清
   specBinding: null as DocumentProfile | null,
@@ -799,7 +809,10 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         const r = await aiDataFilesAll(pj)
         if (ep !== epoch || mine !== filesSeq) return
         if (!r || !Array.isArray(r.files)) throw new Error('bad shape')
-        set({ files: { status: 'ready', entries: r.files, truncated: r.truncated === true } })
+        set({
+          files: { status: 'ready', entries: r.files, truncated: r.truncated === true },
+          understandingAvailable: typeof r.understanding_available === 'boolean' ? r.understanding_available : null,
+        })
       } catch (e) {
         if (ep !== epoch || mine !== filesSeq) return
         set({ files: { status: 'error', entries: keep, error: reasonOf(e) } })
@@ -954,6 +967,24 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       }
       set({ problem: null })
       await run({ keepChoices: true })
+    },
+
+    noteUnavailable: (unavailable) => {
+      if (unavailable) {
+        if (!get().sawUnavailable) set({ sawUnavailable: true })
+        return
+      }
+      if (!get().sawUnavailable) return
+      set({ sawUnavailable: false })
+      get().rerunForConnection()
+    },
+
+    rerunForConnection: () => {
+      const { selected, phase, drawingId, answers, autoPicks } = get()
+      if (!selected || drawingId || (phase !== 'ready' && phase !== 'nothing')) return
+      // 「用户动过下拉」与 `onUnderstood` 同一口径：自动套用写进 `answers` 的键（`autoPicks`）不算
+      if (SUGGEST_KEYS.some((k) => k in answers && !(k in autoPicks && sameValue(answers[k], autoPicks[k])))) return
+      reask((a) => a)
     },
 
     applySuggestion: () => {
