@@ -508,3 +508,14 @@ def test_risk_seen_earlier_in_the_session_outlives_an_overwrite(store, box):
         "env_var_missing", ctx.fixes_made, secrets=ctx.fix_secrets, risky=ctx.fix_risky
     )
     assert "x7!" not in store.read_text(encoding="utf-8")
+
+
+def test_a_fix_is_remembered_even_when_the_attempt_lost_the_starting_shape(store, box):
+    s = _session(box, outcome="fixed")
+    s.ctx.attempts = [
+        {"n": 1, "before": "", "after": "ok", "hint": "", "changes": ["set_run_arguments"]}
+    ]
+    s.ctx.first_shape = "script_needs_arguments"
+    fixsession._remember_fix(s)
+    (row,) = fixmemory.entries()
+    assert row["shape"] == "script_needs_arguments" and row["kind"] == "run_args"
