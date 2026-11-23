@@ -5,6 +5,13 @@ import { Rejected } from '../core/types.ts';
 // These ceilings leave headroom below Free's 50 external requests / 50 D1 queries.
 export const FREE_BUDGET = Object.freeze({heads:1,external:40,externalWork:35,sql:40,sqlWork:20,
   workMs:60_000,cleanupMs:90_000,leaseMarginMs:30_000});
+// Workers Paid allows 10,000 subrequests per invocation (Free: 50). Only the external-request ceilings follow the
+// plan: SQL and time ceilings are unchanged (the atomicity/contention design), and every cap stays finite, so an
+// oversized queue still rejects in full (`budget_deferred`) rather than being truncated. 480/500 leaves 20 spare
+// below the 500 total; wrangler `limits.subrequests` (1000) is the platform backstop above this application cap.
+// Opt-in per deployment via CLA_WORKERS_PAID_BUDGET=true; default remains the Free numbers.
+export const PAID_EXTERNAL = Object.freeze({external:500,externalWork:480});
+export type ExternalCaps = Readonly<{external:number;externalWork:number}>;
 // Verification uses eight fixed SQL statements plus two per non-exempt person.
 export const VERIFICATION_FINAL_SQL = 3;
 export const VERIFICATION_FIXED_SQL = 2+3+VERIFICATION_FINAL_SQL;
@@ -29,9 +36,9 @@ export class InvocationBudget {
   private readonly clock:()=>number; private readonly wall:()=>number;
   private workEnd:number; private cleanupEnd:number;
   private phase:'work'|'correction'|'settlement'='work';
-  private sql=0; private external=0;
-  constructor(clock=()=>performance.now(),wall=()=>Date.now()) {
-    this.clock=clock;this.wall=wall;const start=clock();
+  private sql=0; private external=0; private readonly cap:ExternalCaps;
+  constructor(clock=()=>performance.now(),wall=()=>Date.now(),cap:ExternalCaps=FREE_BUDGET) {
+    this.clock=clock;this.wall=wall;this.cap=cap;const start=clock();
     this.workEnd=start+FREE_BUDGET.workMs;this.cleanupEnd=start+FREE_BUDGET.cleanupMs;
   }
   bindLease(until:number,databaseNow?:number):void {
@@ -44,7 +51,7 @@ export class InvocationBudget {
     if(this.phase==='settlement' || this.clock()>=(this.phase==='work'?this.workEnd:this.cleanupEnd))throw new BudgetDeferred('time');
   }
   correction():void {
-    this.checkWork();if(this.external+5>FREE_BUDGET.external)throw new BudgetDeferred('external');
+    this.checkWork();if(this.external+5>this.cap.external)throw new BudgetDeferred('external');
     this.phase='correction';
   }
   settlement():void {this.phase='settlement';}
@@ -59,14 +66,14 @@ export class InvocationBudget {
     this.sql+=count; // Attempts, including failed transactions, are never refunded.
   }
   externalSignal():AbortSignal {
-    this.checkWork();const cap=this.phase==='work'?FREE_BUDGET.externalWork:FREE_BUDGET.external;
+    this.checkWork();const cap=this.phase==='work'?this.cap.externalWork:this.cap.external;
     if(this.external>=cap)throw new BudgetDeferred('external');
     this.external++;
     return AbortSignal.timeout(Math.max(1,Math.ceil(Math.min(10_000,(this.phase==='work'?this.workEnd:this.cleanupEnd)-this.clock()))));
   }
   snapshot():{sql:number;external:number} {return {sql:this.sql,external:this.external};}
   reserveWorkExternal(count:number):void {
-    this.checkWork();if(!Number.isSafeInteger(count) || count<0 || this.external+count>FREE_BUDGET.externalWork)throw new BudgetDeferred('external');
+    this.checkWork();if(!Number.isSafeInteger(count) || count<0 || this.external+count>this.cap.externalWork)throw new BudgetDeferred('external');
   }
 }
 
