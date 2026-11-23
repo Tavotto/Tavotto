@@ -297,6 +297,23 @@ def test_dragging_and_rotating_a_copy_matches_cold_replay_and_undoes(rig):
         hot.override(STEM, [])
 
 
+@pytest.mark.parametrize(
+    "at", [[1.35, 0.5], [-0.45, 0.5], [0.5, -0.4]], ids=["right", "left", "below"]
+)
+def test_a_copy_outside_the_axes_does_not_move_the_layout(rig, at):
+    """副本落在子图外（刻度、标签的地盘）：tight / constrained 布局不把它算进边距，别的元素一个不动。"""
+    layout, hot, _c = rig
+    base = hot.override(STEM, [])
+    cp = _copy_patch("axes_0", "datatext", "axes_0.texts_0", "data text", at)
+    resp = hot.override(STEM, [cp])
+    assert resp["warnings"] == []
+    assert cp["gid"] in _els(resp)
+    base_boxes = _boxes(base)
+    moved = {g: b for g, b in _boxes(resp).items() if g != cp["gid"] and base_boxes.get(g) != b}
+    assert not moved, f"{layout}：副本落在 {at} 挪动了别的元素 {moved}"
+    hot.override(STEM, [])
+
+
 def test_copy_registers_once_under_its_own_gid_with_the_sources_role(rig):
     layout, hot, _cold_ = rig
     patches = [
@@ -538,3 +555,93 @@ def test_write_back_with_copies_passes_the_replay_gate(write_back, replay_bases)
     # 这份列表原样在手：重新渲染不报 warning（副本是 patch，不是脚本里的东西）
     again = client.post("/api/engine/render", json={"id": "TestFig_a.pdf", "patches": patches})
     assert again.get_json()["warnings"] == []
+
+
+# ---------------------------------------------------------------------------
+# 引擎内部视角：排序档与「instrument 重跑时副本在世」（只有 worker 解释器里 import 得了 matplotlib）
+# ---------------------------------------------------------------------------
+_PROBE = """\
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import overrides, manifest, tickmodel
+from matplotlib.figure import Figure
+
+fig, ax = plt.subplots()
+ax.set_title("T")
+ax.text(0.5, 0.5, "x")
+fig.text(0.1, 0.1, "f")
+state = overrides.FigState(fig)
+manifest.instrument(state)
+rank = lambda prop, art, gid="": overrides._apply_rank(prop, art, gid)
+ranks = {
+    "frame": rank("frame", fig), "size": rank("size_mm", fig), "position": rank("position", ax),
+    "scale": rank("xscale", ax),
+    "copy": rank("copy_of", None, "axes_0.copy_ab12cd34"),
+    "rest": rank("fontsize", ax.title),
+    "tick_model": rank("major_step", tickmodel.TickSet(ax, "x"), "axes_0.xticks"),
+    "tick_text": rank("text", tickmodel.TickLabel(ax, "x", 1), "axes_0.xticklabels_1"),
+}
+patches = [
+    {"gid": "axes_0.copy_ab12cd34", "prop": "copy_of",
+     "value": {"src": "axes_0.title", "text": "T", "at": [0.5, 0.5]}},
+    {"gid": "fig.copy_ef56gh78", "prop": "copy_of",
+     "value": {"src": "fig.texts_0", "text": "f", "at": [0.5, 0.5]}},
+]
+warnings = overrides.apply(state, patches)
+before = sorted(state.index)
+manifest.instrument(state)  # 副本在世时再登记一遍（native 屏障 rebase 的形状）
+after = sorted(state.index)
+copies_live = [t.get_text() for t in list(ax.texts) + list(fig.artists) if getattr(t, "_mm_copy", None)]
+warnings2 = overrides.apply(state, patches)  # rebase 之后重放同一份列表：不许叠出第二份副本
+copies_live2 = [t.get_text() for t in list(ax.texts) + list(fig.artists) if getattr(t, "_mm_copy", None)]
+print(json.dumps({"ranks": ranks, "warnings": warnings, "before": before, "after": after,
+                  "texts": [g for g in after if ".texts_" in g], "copies_live": copies_live, "warnings2": warnings2,
+                  "copies_live2": copies_live2, "again": sorted(state.index)}))
+"""
+
+
+def _probe() -> dict:
+    import json
+    import subprocess
+    from pathlib import Path
+
+    from tavotto.engine import scriptadjust
+
+    engine_dir = (
+        Path(scriptadjust.__file__).resolve().parent
+    )  # 引擎模块只在 worker 里按平铺模块 import
+    out = subprocess.run(  # noqa: S603 — 测试里起 worker 解释器跑探针
+        [WORKER_PY, "-c", _PROBE, str(engine_dir)],
+        capture_output=True,
+        encoding="utf-8",
+        timeout=120,
+        check=True,
+    )
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+@pytest.fixture(scope="module")
+def probe():
+    return _probe()
+
+
+def test_copy_rank_sits_between_the_geometry_group_and_the_rest(probe):
+    r = probe["ranks"]
+    assert r["frame"] < r["size"] < r["position"] < r["scale"] < r["copy"] < r["rest"]
+    assert r["rest"] < r["tick_model"] < r["tick_text"]
+
+
+def test_instrument_rerun_with_live_copies_does_not_register_them_again(probe):
+    """native 屏障 rebase 会在副本在世时重跑 `instrument`：按序登记跳过带 `_mm_copy` 的，副本不再以序号名出现。"""
+    assert probe["warnings"] == []
+    assert len(probe["copies_live"]) == 2
+    # 脚本自己的文字序号一个不变（axes_0.texts_0 / fig.texts_0），没有 texts_1 / artists_N 之类多出来的名字
+    assert probe["texts"] == ["axes_0.texts_0", "fig.texts_0"]
+    assert not any(".artists_" in g for g in probe["after"])
+    # 重跑 instrument 清空了登记表，副本此刻确实不在里面——它们的 gid 由 `_ensure_copy` 在下一轮 apply 重新登记
+    assert (
+        "axes_0.copy_ab12cd34" in probe["before"] and "axes_0.copy_ab12cd34" not in probe["after"]
+    )

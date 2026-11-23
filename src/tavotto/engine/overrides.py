@@ -6090,6 +6090,10 @@ def _ensure_copy(state: FigState, gid: str, value, warnings: list[str]):
         warnings.append(f"属性不支持: {gid}.{COPY_PROP}")
         return None, False
 
+    # `instrument` 重跑（native 屏障 rebase）清空了登记表、而副本还画在图上：再建一个之前先把这个 gid 的旧副本摘干净，
+    # 不然同一个 gid 在图上有两段字
+    for old in [c for c in host.get_children() if getattr(c, "_mm_copy", None) == gid]:
+        old.remove()
     t = Text(spec["at"][0], spec["at"][1], spec["text"])
     t.update_from(src)  # 字体 / 颜色 / 对齐 / 转角 / 可见 / alpha / 描边特效（样式按引用）
     # `update_from` 不管的几项：轴标题的 `rotation_mode='anchor'` 不抄的话竖排标题的锚点语义变了
