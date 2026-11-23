@@ -389,6 +389,25 @@ interval / trajectories / dose_response / profile）。批次 2 / 3 在本 PR �
 
 **不做 / 留给后面**：单位行强制；多表文件夹里让模型选表（选表仍是规则或用户的事）；前端轮询与「采纳建议」的交互（文案要用户签字）。
 
+**修订（2026-11-21，维护者同意按实测改）：读懂数据默认用小型号 + 最低档，不行再兜底回用户的型号**（`ai_structured.small_plan` / `ai_catalog.json` 的 `structured_small`）。第 1 步是一问一答的小任务，在 46 条用例上重复跑（OpenAI 官方端点、Responses 协议；「改坏」= 规则本来对的被模型改错）：
+
+| 型号 / reasoning.effort | 次数 | 完成率 | 改坏 | 每张表花费 |
+|---|---|---|---|---|
+| gpt-6-luna / none | 230 | 99.6% | 0 | ≈ $0.00005 |
+| gpt-6-luna / low | 230 | 97.4% | 0 | ≈ $0.00008 |
+| gpt-6.1-terra / none | 138 | 98.6% | 0 | ≈ $0.0004 |
+| gpt-6.2-sol / low | 138 | 100% | 0 | ≈ $0.0034 |
+
+逐型号问 API 的支持档位：`gpt-6-luna`、`gpt-6.1-terra` 认 none/low/medium/high/xhigh/max（不认 minimal）；`gpt-6.2-sol` 认 low/medium/high/xhigh/max（none、minimal 都不认）；gpt-5 / mini / nano 认 minimal。其余 GPT-6 / 5.6 型号没有逐个核过。发不支持的值服务端回 400。
+
+* **策略表**放 `ai_catalog.json` 的顶层 `structured_small`（与 `effort_origins` 同一份目录、同一套 origin 匹配与出处注释习惯）：按「官方端点 origin + 协议」给 `(型号, effort)`，现在只登记 OpenAI 官方 + `openai-responses` → `gpt-6-luna` + `none`。**不登记 = 行为不变**：Anthropic 官方、第三方 / 自定义端点、账号登录（Bearer）、订阅登录 CLI。用户自选的型号已经是它、或连接自带 `effort`（手动基准显式给的）时不插手。
+* **只有调用方显式开 `auto_small` 才生效**（`call_structured` 默认关）：只有实测过的读懂数据（`ai_data_roles`）开；配方排序（`ai_data_model`）没测过，不开。**不影响改图助手 / 智能修复**——它们的型号与档位仍由用户选择与目录决定。
+* **兜底**：小型号这一次失败且属于「这把 Key / 这个端点用不了它」——`transport` 里 `http_400` / `http_404` / `http_422`、`auth` 里 `http_403`（`ai_structured._SMALL_UNUSABLE`；能区分到的就是 HTTP 状态，不读服务端错误体）——就**改用用户连接里原本的型号与原有 effort 再试一次**，共用同一个总时限与 `max_requests`（预算 / 时间不够就不试、如实返回小型号那次的失败）。401（密钥被拒，换型号也一样）、timeout、quota、refused、invalid_output、over_budget 都不换型号。进程内记「连接身份（地址 + provider + Key 摘要 + 小型号）不可用」10 分钟（`SMALL_UNAVAILABLE_TTL_S`），期内直接用原型号。
+* **`none` 的出路**：wire 层 `RESPONSES_WIRE_EFFORTS = RESPONSES_EFFORTS + none`；`RESPONSES_EFFORTS`（用户可选档位）不含 none，改图 / 修复的校验与连接视图的过滤照旧，所以它们永远发不出 none。目录里 `gpt-6-luna` / `gpt-6.1-terra` / `gpt-6.2-sol` 在 `gpt-6` 前缀之前单列（前缀先中先得），界面档位仍是 low/medium/high；`none` 记在 `hidden_efforts`（`ai_catalog.verified_efforts`），因为前端的档位文案表（`effortLabel`）没有 none，露出来会显示成裸的 `none`。要在界面上露出 none，先让用户签字加文案。
+* **缓存键**（`ai_data_roles._identity`）带**实际会用的型号与强度**（`ai_structured.effective_choice`）：换型号 = 不同的判断来源；记下「小型号不可用」之后按原型号算。兜底成功的那份判断仍存在小型号的键下（调用前就定键）。用量记录的 `model` 是最后实际用的那个，`fell_back` 标出换过；两次请求都计入 `requests` / token / 花费。
+* 手动基准 `--effort` 加 `none`；`--real --key-file` 仍是「显式给什么型号 / 强度就用什么」，不自动换；`--auto-small`（只用于 `--suite roles --real`，与 `--effort` 互斥）验证自动策略，默认关。
+* **只作用于 Key 连接**：订阅登录（CLI）连接走 `_call_cli`，`small_plan` / `effective_choice` 对 CLI 连接一律「不适用」，型号与强度仍由 CLI 连接自己决定，缓存身份仍是 `cli_identity`。
+
 ## 修订（2026-11-23，用户决定）：按画布的出版规范出图（`ai_data_propose.parse_spec`、`ai_data_template.style_from_profile`）
 
 **起因**：模板的样式只读内置默认规范（`profiles.load()` 无参），不看画布选的期刊——同一个项目里编辑器按期刊检查图，数据出图却另起一套。用户原话：「是的，直接按照该期刊的图宽和字号出图，同时我也希望面板中就直接有修改的地方，不用到设置里就能更改，这样用户看起来更加直观」。

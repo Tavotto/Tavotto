@@ -358,6 +358,51 @@ def test_a_side_effect_on_a_protected_property_fails_the_transaction():
     ]
 
 
+def _with_colorbar(m, size=8.0):
+    """在合成 manifest 里加一根色条：两组刻度 + 色条本身（`tick_fontsize` 是盖着两组刻度字号的广播别名）。"""
+    m["elements"] += [
+        _el("axes_2", "axes", [0.9, 0.1, 0.03, 0.8]),
+        _el("axes_2.xticks", "ticks", [0.9, 0.05, 0.03, 0.04], fontsize=size),
+        _el("axes_2.yticks", "ticks", [0.94, 0.1, 0.04, 0.8], fontsize=size),
+        {
+            **_el("axes_2.colorbar", "colorbar", [0.9, 0.1, 0.03, 0.8], tick_fontsize=size),
+            "alias_covers": {"tick_fontsize": {"fontsize": ["axes_2.xticks", "axes_2.yticks"]}},
+        },
+    ]
+    return m
+
+
+def test_a_colorbar_alias_follows_its_ticks_and_is_not_a_protected_change():
+    """改字号把色条两组刻度从 8 改到 7：色条的 `tick_fontsize` 只是它们的别名，跟着变不算受保护属性被改
+    （此前整组回滚，带色条的图色条刻度永远修不上）。"""
+    m = _with_colorbar(_two_column_manifest())
+    c = _contract(m, {"font_family": "DejaVu Sans"})
+    # 与 `specfix.build_contract` 同一口径：只放行计划里出现的 prop（`fontsize`），别名 `tick_fontsize` 不在其中
+    c["allowed"] = [
+        [g, "fontsize"]
+        for g, snap in c["baseline"]["snapshot"].items()
+        if "fontsize" in snap["props"]
+    ]
+    assert ("axes_2.colorbar", "tick_fontsize") not in normalize.allowed_keys(c)
+    after = _with_colorbar(_two_column_manifest(), size=7.0)
+    v = _compare(c, after)
+    assert [x for x in v["protected_changes"] if x["gid"].startswith("axes_2")] == []
+
+
+def test_a_colorbar_alias_that_moves_without_its_ticks_is_still_reported():
+    """别名变了、它盖着的刻度却没变也不在允许集合里：那就是另一处改动，照样报。"""
+    m = _with_colorbar(_two_column_manifest())
+    c = _contract(m, {"font_family": "DejaVu Serif"})
+    after = _with_colorbar(_two_column_manifest())
+    for el in after["elements"]:
+        if el["gid"] == "axes_2.colorbar":
+            el["editable"] = [{"prop": "tick_fontsize", "value": 6.0}]
+    v = _compare(c, after)
+    assert {"gid": "axes_2.colorbar", "prop": "tick_fontsize", "before": 8.0, "after": 6.0} in v[
+        "protected_changes"
+    ]
+
+
 def test_auto_ticks_may_recompute_but_fixed_ticks_may_not():
     m = _two_column_manifest()
     c = _contract(m, {"width_mm": 80})
