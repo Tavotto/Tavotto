@@ -657,6 +657,13 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
   `/api/ai/convert` 与 `/api/ai/run` 一样接受 `connection`。**思考强度**：`ai_catalog.efforts_for(agent, base_url, model)` 声明「来源 + 型号」确认支持（行级 `efforts` / 顶层 `effort_origins[].models` 型号前缀），内置路由才给 `efforts`（默认型号的档位；每个型号的在 `model_details[].efforts`），传 runner 前按实际型号再核一遍。AI 修复的 `first_key_connection` 跳过 `last_error: unauthorized` 的记录。遥测 `ai_assistant_invoked.agent` 对 `builtin` 落成 `other`。
 - **AI 修复**：`fixsession.connection()` 改为 `ai_connections.first_key_connection()`——第一个内置循环能直接用的 Key 连接（老用户旧版「选中」的接口排最前，其余按保存顺序），不再只看各家族的 active provider。
 
+### SIWC 令牌提供方（`engine/siwc_auth.py`，ADR 0201 §三，本阶段不实现登录）
+
+- **接口** `TokenProvider`：`access_token(min_valid_s=MIN_VALID_S)` / `invalidate(reason)` / `status()`；`status().public()` 是唯一能离开模块的形状（无令牌）。本阶段 `provider()` 恒 `DisabledProvider`（开关开着也一样）。
+- **刷新状态机** `RefreshingProvider`：`MIN_VALID_S` = 最长任务 900 s + 300 s（**不复用** `ai_oauth` 的 10 分钟）；进程内串行刷新；`TokenSet` 四样整体替换、刷新没回 scope = 授权不变；
+  终态刷新错误（`TERMINAL_REFRESH_ERRORS`）才清凭据，`invalid_client` 不清，暂时失败保留凭据（`TokenUnavailable`）；缺 `chatgpt.tokens.use.direct` → `PlanUsageDisabled`（已登录、不许用订阅额度、不换计费方式）；`earliest_refresh_at` 之前不刷新（含义官方未定义，未经真服务确认）。
+- **不碰 Codex CLI 的令牌**、不 import 网络模块 / `ai_agents` / `ai_oauth` / `ai_providers`（看护 `tests/test_siwc_auth.py` 按 AST 钉）。
+
 ## AI 修复工具箱（`engine/fixtools/`，ADR 0149 提议，D1：注册表 + 「看」「试」）
 
 脚本跑不起来时让 AI 去查的工具集。**一张注册表、两种接法**：`REGISTRY: dict[str, FixTool]`（`__init__.py`）与接法无关，内置执行器经
