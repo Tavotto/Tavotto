@@ -118,9 +118,37 @@ ggplot_legend_entries <- function(table, slots, guide, prefix, title) {
   targets[!(duplicated(text) | duplicated(text, fromLast = TRUE))]
 }
 
-ggplot_legend_targets <- function(table) {
+ggplot_colourbar_titles <- function(built) {
+  # Colour steps can draw the same cells. Confirm the built guide class and
+  # join to the rendered guide only by a unique title.
+  guides <- built$plot$guides
+  if (!length(guides$guides) || !identical(names(guides$guides), names(guides$params))) {
+    return(character())
+  }
+  titles <- vapply(guides$params, function(params) {
+    title <- params$title
+    if (is.character(title) && length(title) == 1L && !is.na(title)) title else ""
+  }, character(1L))
+  colourbars <- vapply(guides$guides, function(guide) {
+    identical(class(guide)[[1L]], "GuideColourbar")
+  }, logical(1L))
+  titles[colourbars & nzchar(titles) & !duplicated(titles) & !duplicated(titles, fromLast = TRUE)]
+}
+
+ggplot_colourbar_ticks <- function(table, slots, guide, prefix, title) {
+  cells <- guide$layout$name
+  labels <- which(grepl("^label-[0-9]+-[0-9]+$", cells))
+  if (sum(cells == "bar") != 1L || length(labels) != 1L) return(list())
+  label <- paste0("\u8272\u6761\u523b\u5ea6 \u201c", title, "\u201d")
+  target <- ggplot_text_target(table, c(slots, labels), "legend_text", group_label = label)
+  if (is.null(target)) return(list())
+  target$legend_title <- title
+  stats::setNames(list(target), paste0(prefix, ".colourbar.ticks"))
+}
+
+ggplot_legend_targets <- function(table, colourbar_titles) {
   titles <- list()
-  entries <- list()
+  guide_labels <- list()
   for (box_slot in which(startsWith(table$layout$name, "guide-box-"))) {
     box <- table$grobs[[box_slot]]
     if (!inherits(box, "gtable")) next
@@ -138,13 +166,17 @@ ggplot_legend_targets <- function(table) {
       prefix <- paste("legend", position, index, sep = ".")
       gid <- paste0(prefix, ".title")
       titles[[gid]] <- target
-      entries[[gid]] <- ggplot_legend_entries(table, slots, guide, prefix, target$label)
+      guide_labels[[gid]] <- if (target$label %in% colourbar_titles) {
+        ggplot_colourbar_ticks(table, slots, guide, prefix, target$label)
+      } else {
+        ggplot_legend_entries(table, slots, guide, prefix, target$label)
+      }
     }
   }
   # An index and a label cannot distinguish same-named guides after reordering.
   labels <- vapply(titles, function(target) target$label, character(1L))
   titles <- titles[!(duplicated(labels) | duplicated(labels, fromLast = TRUE))]
-  c(titles, unlist(unname(entries[names(titles)]), recursive = FALSE))
+  c(titles, unlist(unname(guide_labels[names(titles)]), recursive = FALSE))
 }
 
 ggplot_facet_labels <- function(table) {
@@ -186,7 +218,7 @@ measure_ggplot_text <- function(drawn, target, frame_pt) {
     (upper$x - lower$x) / frame_in[[1L]], (upper$y - lower$y) / frame_in[[2L]])
 }
 
-ggplot_text_targets <- function(table, frame_pt) {
+ggplot_text_targets <- function(table, frame_pt, colourbar_titles) {
   targets <- list()
   for (gid in names(ggplot_text_slots)) {
     slot <- which(table$layout$name == ggplot_text_slots[[gid]])
@@ -194,7 +226,7 @@ ggplot_text_targets <- function(table, frame_pt) {
     role <- if (gid == "plot.title") "title" else if (startsWith(gid, "axis.")) "axis_label" else "text"
     targets[[gid]] <- ggplot_text_target(table, slot, role)
   }
-  targets <- c(targets, ggplot_legend_targets(table), ggplot_facet_labels(table),
+  targets <- c(targets, ggplot_legend_targets(table, colourbar_titles), ggplot_facet_labels(table),
                ggplot_axis_ticks(table))
   if (!length(targets)) return(targets)
   drawn <- tryCatch({
@@ -223,7 +255,7 @@ capture_ggplot <- function(plot, frame_pt) {
     grid::grid.draw(table)
     list(
       table = table,
-      text_targets = ggplot_text_targets(table, frame_pt),
+      text_targets = ggplot_text_targets(table, frame_pt, ggplot_colourbar_titles(built)),
       layers = built$data,
       panel_ranges = lapply(built$layout$panel_params, function(panel) {
         list(x = panel$x.range, y = panel$y.range)

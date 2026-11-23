@@ -386,6 +386,7 @@
     "axesTwin": "Axes {{value}} ({{side}}{{ord}})",
     "axisLabelNamed": "{{axis}} axis “{{value}}”",
     "axisSideTickLabels": "{{side}} tick labels",
+    "colourbarTickLabels": "Colorbar tick labels “{{value}}”",
     "bar": "Bar {{value}}",
     "barSeries": "Bar series {{value}}",
     "barSeriesNamed": "Bar series “{{value}}”",

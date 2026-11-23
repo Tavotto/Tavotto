@@ -5293,6 +5293,7 @@ export default interface Resources {
       "barSeriesNamed": "柱形系列 “{{value}}”",
       "colorbar": "色条",
       "colorbarAxes": "色条轴",
+      "colourbarTickLabels": "色条刻度 “{{value}}”",
       "errorbar": "误差棒 {{value}}",
       "figure": "整张图",
       "fillArea": "填充区域 {{value}}",

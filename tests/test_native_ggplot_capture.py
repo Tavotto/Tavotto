@@ -36,6 +36,7 @@ SUBTITLE = "plot.subtitle"
 CAPTION = "plot.caption"
 TICKS_BOTTOM = "axis.x.bottom.ticks"
 TICKS_TOP = "axis.x.top.ticks"
+COLOURBAR_TICKS = "legend.bottom.1.colourbar.ticks"
 X_BOTTOM = "axis.x.bottom.title"
 Y_LEFT = "axis.y.left.title"
 LEGEND = "legend.right.1.title"
@@ -56,7 +57,7 @@ def _pdf_text_colors(path):
 
 
 PROBE = r"""
-adapter <- new.env()
+adapter <- new.env(parent = baseenv())
 sys.source(commandArgs(trailingOnly = TRUE)[[1L]], envir = adapter)
 if (!requireNamespace("ggplot2", quietly = TRUE) ||
     !requireNamespace("svglite", quietly = TRUE)) {
@@ -278,6 +279,56 @@ bar_title <- grep(">City mileage</text>", strsplit(bar_edited, "\n")[[1L]],
                   value = TRUE, fixed = TRUE)
 stopifnot(length(bar_title) == 1L, grepl("#26838F", bar_title, fixed = TRUE))
 
+bar_data <- data.frame(x = 1:6, y = 6:1, signal = 0:5, reference = seq(0, 50, 10))
+bar_points <- ggplot2::ggplot(bar_data, ggplot2::aes(x, y, colour = signal, fill = reference)) +
+  ggplot2::geom_point(shape = 21)
+bars <- bar_points +
+  ggplot2::scale_colour_continuous(name = "Signal", breaks = c(1, 3, 5),
+    labels = c("Low", "Middle", "High")) +
+  ggplot2::scale_fill_continuous(name = "Reference", breaks = c(10, 30, 50),
+    labels = c("Ten", "Thirty", "Fifty")) +
+  ggplot2::guides(colour = ggplot2::guide_colourbar(position = "bottom", angle = 25,
+    theme = ggplot2::theme(legend.text = ggplot2::element_text(colour = "#614270"))),
+    fill = ggplot2::guide_colourbar(position = "right", display = "rectangles",
+    theme = ggplot2::theme(legend.text = ggplot2::element_text(colour = "#345E77"))))
+captured_bars <- adapter$capture_ggplot(bars, c(432, 288))
+bar_ids <- c("legend.bottom.1.colourbar.ticks", "legend.right.1.colourbar.ticks")
+bar_colours <- c("#C32146", "#187958")
+bar_labels <- list(c("Low", "Middle", "High"), c("Ten", "Thirty", "Fifty"))
+for (index in seq_along(bar_ids)) {
+  id <- bar_ids[[index]]
+  target <- captured_bars$state$text_targets[[id]]
+  stopifnot(identical(target$legend_title, c("Signal", "Reference")[[index]]),
+            identical(unlist(target$tick_labels), bar_labels[[index]]),
+            all(target$bbox[3:4] > 0))
+  color <- bar_colours[[index]]
+  svg <- adapter$render_ggplot(captured_bars$state, setNames(list(color), id))
+  lines <- grep(paste0("fill: ", color), strsplit(svg, "\n")[[1L]], fixed = TRUE, value = TRUE)
+  stopifnot(all(startsWith(lines, "<text ")),
+            identical(sub("^.*>([^<]*)</text>$", "\\1", lines), bar_labels[[index]]),
+            identical(gsub(color, target$color, svg, fixed = TRUE), captured_bars$svg))
+}
+stopifnot(identical(adapter$render_ggplot(captured_bars$state), captured_bars$svg))
+bar_ticks <- function(plot) {
+  captured <- adapter$capture_ggplot(plot, c(432, 288))
+  grep("\\.colourbar\\.ticks$", names(captured$state$text_targets), value = TRUE)
+}
+stepped <- suppressWarnings(bars + ggplot2::scale_colour_steps(name = "Signal") +
+  ggplot2::guides(colour = ggplot2::guide_coloursteps(position = "bottom")))
+stopifnot(identical(bar_ticks(stepped), bar_ids[[2L]]))
+duplicate <- bars +
+  ggplot2::guides(colour = ggplot2::guide_colourbar(position = "bottom", title = "Shared"),
+                 fill = ggplot2::guide_colourbar(position = "right", title = "Shared"))
+stopifnot(!length(bar_ticks(duplicate)))
+unlabelled <- bars + ggplot2::guides(
+  colour = ggplot2::guide_colourbar(position = "bottom", title = NULL),
+  fill = ggplot2::guide_colourbar(position = "right", theme = ggplot2::theme(
+    legend.text = ggplot2::element_blank())))
+stopifnot(!length(bar_ticks(unlabelled)))
+bar_formula <- suppressWarnings(bars + ggplot2::scale_colour_continuous(name = "Signal",
+  breaks = c(1, 3, 5), labels = expression(alpha, beta, gamma)))
+stopifnot(identical(bar_ticks(bar_formula), bar_ids[[2L]]))
+
 drive_plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
   ggplot2::geom_point()
 repeated_legend <- drive_plot +
@@ -404,10 +455,13 @@ def test_owned_r_uses_the_native_registry_transport_and_lease(tmp_path):
         """
 stopifnot(!nzchar(Sys.getenv("TAVOTTO_BRIDGE_TOKEN")))
 cat('{"bridge_event":"ended"}\n')
-plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy)) +
+plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
   ggplot2::geom_point() +
   ggplot2::labs(title = "Fuel economy", x = "Engine displacement", y = "Highway mileage") +
   ggplot2::scale_x_continuous(sec.axis = ggplot2::dup_axis()) +
+  ggplot2::scale_colour_continuous(name = "City mileage", breaks = c(10, 20, 30),
+    labels = c("Ten", "Twenty", "Thirty"),
+    guide = ggplot2::guide_colourbar(position = "bottom")) +
   ggplot2::theme(plot.title = ggplot2::element_text(colour = "#112233"),
                  axis.title.x = ggplot2::element_text(colour = "grey42"))
 """,
@@ -427,7 +481,7 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy)) +
         state = session.wait_for_state(
             {nativesession.BARRIER, *nativesession.TERMINAL_STATES}, timeout=20
         )
-        assert state == nativesession.BARRIER, session.public_state()
+        assert state == nativesession.BARRIER, session.script_error or session.public_state()
         assert registry.list(str(tmp_path)) == [session]
         assert session.session_id in envlease.native_sessions_on(spec.interpreter)
         baseline = session.ensure_built()
@@ -472,6 +526,18 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy)) +
         tick_patch["identity"] = tick_group["identity"]
         tick_render = session.override(stem, [tick_patch], inline_svg=True)
         assert "#A64184" in tick_render["svg"]
+        assert session.override(stem, [], inline_svg=True)["svg"] == baseline["svg"]
+        bar_ticks = elements[COLOURBAR_TICKS]
+        assert bar_ticks["label"] == "色条刻度 “City mileage”"
+        assert bar_ticks["role"] == "legend_text" and not bar_ticks["draggable"]
+        assert bar_ticks["identity"].startswith("r2:")
+        assert "tick_labels" not in bar_ticks and "legend_title" not in bar_ticks
+        bar_patch = {"gid": COLOURBAR_TICKS, "prop": "color", "value": "#C32146"}
+        with pytest.raises(pool.WorkerError, match="text target changed"):
+            session.override(stem, [bar_patch], inline_svg=True)
+        bar_patch["identity"] = bar_ticks["identity"]
+        bar_preview = session.override(stem, [bar_patch], inline_svg=True)["svg"]
+        assert bar_preview.count("#C32146") == 3
         assert session.override(stem, [], inline_svg=True)["svg"] == baseline["svg"]
         invalid = [{"gid": "plot.title", "prop": "text", "value": "Unchanged"}]
         with pytest.raises(

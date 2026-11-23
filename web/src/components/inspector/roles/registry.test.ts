@@ -215,6 +215,9 @@ describe.each(['zh-CN', 'en-US'] as const)('%s', (locale) => {
       ]) {
         expect(engineLabel(label)).toBe(locale === 'en-US' ? english : label)
       }
+      expect(engineLabel('色条刻度 “Pressure”')).toBe(
+        locale === 'en-US' ? 'Colorbar tick labels “Pressure”' : '色条刻度 “Pressure”',
+      )
     })
   })
 

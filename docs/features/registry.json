@@ -1438,6 +1438,21 @@
       ]
     },
     {
+      "id": "desktop.ggplot-colourbar-tick-text-color",
+      "status": "active",
+      "platform": "desktop",
+      "summary": {
+        "zh-CN": "修改原生 ggplot2 连续色条的一组刻度文字颜色，保存后可随排版导出",
+        "en-US": "Recolor the tick labels of a native ggplot2 continuous colorbar, then save and export"
+      },
+      "entry": "脚本 → 用 R 运行 → 图内元素 → 选连续色条的刻度文字 → 颜色",
+      "e2e": [],
+      "desktop_manual": [
+        "打开含横排与竖排连续色条的图，分别修改两组刻度文字的颜色并撤销、重做，核对两条色带和标题。",
+        "保存排版，结束 R 会话后重开并导出 PDF，核对色条刻度文字的颜色。"
+      ]
+    },
+    {
       "id": "desktop.ggplot-axis-tick-text-color",
       "status": "active",
       "platform": "desktop",

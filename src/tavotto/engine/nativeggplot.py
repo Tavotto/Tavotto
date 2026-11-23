@@ -85,11 +85,10 @@ class GgplotTarget:
             tick_labels = element.pop("tick_labels", None)
             if legend_title is not None or tick_labels is not None:
                 # Use the owning guide or the observed labels as part of the target identity.
-                context = (
-                    [element["gid"], legend_title, element["label"]]
-                    if legend_title is not None
-                    else [element["gid"], tick_labels]
-                )
+                context = [element["gid"]]
+                if legend_title is not None:
+                    context.append(legend_title)
+                context.append(tick_labels if tick_labels is not None else element["label"])
                 element["identity"] = (
                     _CONTEXTUAL_TEXT_IDENTITY_PREFIX
                     + hashlib.sha256(json.dumps(context).encode("utf-8")).hexdigest()[:16]

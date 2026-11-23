@@ -370,6 +370,7 @@
     "axesTwin": "子图 {{value}}（{{side}}{{ord}}）",
     "axisLabelNamed": "{{axis}} 轴 “{{value}}”",
     "axisSideTickLabels": "{{side}}刻度文字",
+    "colourbarTickLabels": "色条刻度 “{{value}}”",
     "bar": "柱 {{value}}",
     "barSeries": "柱形系列 {{value}}",
     "barSeriesNamed": "柱形系列 “{{value}}”",

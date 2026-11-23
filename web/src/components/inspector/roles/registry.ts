@@ -252,6 +252,7 @@ const ENGINE_LABEL_PATTERNS: { re: RegExp; key: string }[] = [
   { re: /^([XYZ]) 轴 “(.*)”$/s, key: 'axisLabelNamed' },
   { re: /^([XYZ]) 刻度文字$/, key: 'tickLabels' },
   { re: /^(左轴|右轴|上轴|下轴)刻度文字$/, key: 'axisSideTickLabels' },
+  { re: /^色条刻度 “(.*)”$/s, key: 'colourbarTickLabels' },
 ]
 
 /** 轴侧字面量（引擎协议中文）→ twinSide 翻译键。 */
