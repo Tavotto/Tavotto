@@ -954,6 +954,7 @@ def legend_hits_data(ax, leg, pad=1.0):
     """图例有没有压到这个坐标区里画的数据（线、点、柱 / 箱、填充带）。图例一侧取**真正挡住数据的东西**（与预检同一口径：`docs/sciviz/validation-spec.md` V-011「图例一侧的取法（与数据出图摆放共用）」）：
     画了不透明底框的，整块框都算（图例画在数据上面，框里的空白也把线盖住了）；没有底框或底框全透明的，只算每条文字和每个色块
     各自的外接框——空白处压着线不算。数据一侧用真实几何。调用前图要先排过版（`fig.draw_without_rendering()`）。"""
+    from matplotlib.collections import PathCollection, PolyCollection
     from matplotlib.transforms import Bbox
 
     # 「有框且不透明」= `frameon` 为真且实际画出来的框颜色 alpha > 0（matplotlib 的 framealpha 直接替换颜色里的 alpha）
@@ -996,14 +997,13 @@ def legend_hits_data(ax, leg, pad=1.0):
     for col in ax.collections:
         if not col.get_visible():
             continue
-        offsets = col.get_offsets()
-        if len(offsets) and len(col.get_paths()) <= 1:  # 散点：一个记号形状 + 一批位置
-            sizes = col.get_sizes() if hasattr(col, "get_sizes") else []
+        if isinstance(col, PathCollection):  # 散点：一个记号形状 + 一批位置
+            sizes = col.get_sizes()
             radius = (max(sizes) ** 0.5 if len(sizes) else 3.0) * scale / 2
-            if points_hit(col.get_offset_transform().transform(offsets), radius):
+            if points_hit(col.get_offset_transform().transform(col.get_offsets()), radius):
                 return True
-        else:  # 填充带 / 线段集合（误差线的帽）
-            filled = bool(len(col.get_facecolor()))
+        else:  # 填充带 / 小提琴（PolyCollection，哪怕只有一块）按填充路径；线段集合（误差线的帽）按线段
+            filled = isinstance(col, PolyCollection)
             if any(path_hits(path, col.get_transform(), filled) for path in col.get_paths()):
                 return True
     for patch in ax.patches:
