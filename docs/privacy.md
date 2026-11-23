@@ -629,6 +629,23 @@ cancelled or failed upload is never resumed on its own.
 * **Turning it off.** `TAVOTTO_NO_REVIEW_SHARE=1` removes the feature and all of
   its network requests.
 
+## Paid edition components
+
+These requests exist only on a computer where a paid-edition license has been
+activated; without a license the app makes none of them.
+
+* **Fetching the component release list.** The app sends the license number,
+  this device's public key, a signature, a timestamp, the system platform and
+  the protocol versions it supports, to get the release list and a short-lived
+  download address for the paid-feature component. **It does not send your
+  projects, scripts, data, file paths or computer details.**
+* **Downloading the component.** The component is downloaded from Tavotto's
+  download server, which records the IP address and time, as it does for in-app
+  updates. The component runs on this computer as a separate program and does
+  not connect to the network.
+* **Turning it off.** `TAVOTTO_NO_LICENSE=1` removes the paid edition and all of
+  its network requests.
+
 ## Local service
 
 The desktop application uses a local service bound to `127.0.0.1` for the user
