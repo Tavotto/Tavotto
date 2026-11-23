@@ -90,6 +90,7 @@ export const HINT_KINDS = [
   'space_pan',
   'shift_multi',
   'shortcut_help',
+  'quick_layout',
 ] as const
 export type HintKind = (typeof HINT_KINDS)[number]
 export const isHintKind = (v: unknown): v is HintKind =>

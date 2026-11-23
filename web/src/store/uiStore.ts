@@ -350,6 +350,8 @@ interface UiState extends Persisted {
   statusModalEpoch: number
   /** 「复制详情」额外附在界面句子后面的一行（`setStatus` 的 `copyDetail`，如后端原话）；不显示，只进剪贴板 */
   statusCopyDetail: string | null
+  /** 胶囊里主句下面的一行灰字（`setStatus` 的 `subline`，如一键排版的补充说明）；null = 没有 */
+  statusSubline: UiMessage | null
   /** 正在双击编辑的文字对象 */
   editingTextId: string | null
   /** 进入裁剪模式的面板 */
@@ -525,6 +527,8 @@ interface UiState extends Persisted {
       action?: StatusAction
       /** 错误胶囊上「复制」要多带的一行（后端原话）：复制出来是「界面句子 + 换行 + 它」；界面不显示 */
       copyDetail?: string
+      /** 主句下面一行灰字（描述符，显示时才翻）；错误语气不画 */
+      subline?: UiMessage
       /**
        * 带动作却仍自己走的那种（导出成功的「已导出 … · 在文件夹中显示」）：给了它就按这个毫秒数收起，
        * 指针停在上面 / 焦点在它的按钮上照样不走表（`statusDismissTimer`）。错误语气不受它影响，仍常驻。
@@ -653,6 +657,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   statusAction: null,
   statusModalEpoch: 0,
   statusCopyDetail: null,
+  statusSubline: null,
   editingTextId: null,
   cropTargetId: null,
   cropBaseline: null,
@@ -843,6 +848,7 @@ export const useUiStore = create<UiState>((set, get) => ({
       statusAction: status ? (opts?.action ?? null) : null,
       statusModalEpoch: status ? useDialogLayerStore.getState().epoch : 0,
       statusCopyDetail: status ? (opts?.copyDetail ?? null) : null,
+      statusSubline: status ? (opts?.subline ?? null) : null,
     })
     statusDismissTimer.cancel()
     // 普通状态短暂即逝；错误与带动作的保留到用户处理（toast 上有关闭键）——带动作但声明了 `dismissMs` 的例外
@@ -856,6 +862,7 @@ export const useUiStore = create<UiState>((set, get) => ({
           statusAction: null,
           statusModalEpoch: 0,
           statusCopyDetail: null,
+          statusSubline: null,
         }),
       )
     }
@@ -864,14 +871,14 @@ export const useUiStore = create<UiState>((set, get) => ({
   clearStatusOwnedBy: (owner) => {
     if (!get().status || get().statusOwner !== owner) return
     statusDismissTimer.cancel()
-    set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null, statusAction: null, statusModalEpoch: 0, statusCopyDetail: null })
+    set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null, statusAction: null, statusModalEpoch: 0, statusCopyDetail: null, statusSubline: null })
   },
 
   clearStatusOwnedByPrefix: (prefix) => {
     const owner = get().statusOwner
     if (!get().status || owner === null || !owner.startsWith(prefix)) return
     statusDismissTimer.cancel()
-    set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null, statusAction: null, statusModalEpoch: 0, statusCopyDetail: null })
+    set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null, statusAction: null, statusModalEpoch: 0, statusCopyDetail: null, statusSubline: null })
   },
 
   // 不按值短路：值相同的新对象也要换上，否则后来者拿不到主人身份，`releaseIssueHover` 会认错人

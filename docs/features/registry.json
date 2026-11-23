@@ -1650,6 +1650,22 @@
           "title": "嵌套组与剪切蒙版 › 剪切蒙版：⌘7 后大矩形只在蒙版范围内点得中（画面按蒙版裁）；⌥⌘7 释放后恢复"
         }
       ]
+    },
+    {
+      "id": "ai.fix-memory",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "记住修好的做法：AI 修复真修好后把这次的改动记在本机，别的项目遇到同类失败时作参考；设置里能看、逐条删、全部删除（先确认）、关掉",
+        "en-US": "Remember what fixed it: after AI repair really fixes a script, the change is kept on this computer as a reference for the same kind of failure elsewhere; Settings lists each one, deletes one or all (with confirmation) and turns it off"
+      },
+      "entry": "设置 → 改图助手 →「记住修好的做法」",
+      "e2e": [
+        {
+          "spec": "fix-memory.spec.ts",
+          "title": "记住修好的做法：设置里能看到每一条、逐条删、全部删除先确认、关掉开关后重新打开仍是关"
+        }
+      ]
     }
   ]
 }

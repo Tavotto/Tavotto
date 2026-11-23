@@ -500,6 +500,7 @@
     "chart_model_invalid": "计算图表的模型或来源引用无效，无法应用本次操作。",
     "chart_model_unsupported": "当前不支持这份计算图表的模型或编辑方式。",
     "chart_render_unsupported": "当前无法完整渲染这张计算图表。",
+    "script_source_missing": "找不到这个脚本的文件（{{script}}）：它可能被移动或删除了。请把脚本放回项目里再运行；Tavotto 不会用同名的其它文件代替它。",
     "input_declaration_conflict": "输入声明已在另一处更新，请重新读取后再保存。",
     "input_declaration_invalid": "输入声明或已选择的资源不可用，请检查文件、运行配置和数据位置。",
     "input_declaration_unavailable": "暂时无法读取或保存输入声明，请稍后重试。"

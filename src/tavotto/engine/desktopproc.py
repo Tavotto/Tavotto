@@ -62,6 +62,7 @@ from pathlib import Path
 from . import (
     bridge,
     config,
+    declaredinputs,
     envlease,
     execspec,
     launcher,
@@ -117,6 +118,11 @@ class OwnedLaunch:
     #: 「这份计划是不是已被取消 / 取代」的判定（`PreparationService.is_cancelled`），在 `reserve` / `begin_start` / Popen 之前
     #: 最后一次核对，与代次、序号是同一处判定（注册表 `_refuse_if_closed`）。None = 不核
     cancelled: object | None = None
+    #: Private exact-scope metadata observed by preparation; never argv or public state.
+    input_declaration_state: dict | None = dataclasses.field(default=None, repr=False)
+    #: The approved input remap generation observed with that selection; None = unknown,
+    #: only the live table is compared.
+    input_remap_generation: int | None = dataclasses.field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         spec = self.spec
@@ -735,6 +741,25 @@ def start(
             base_env = launcher.activate_env(spec.interpreter, dict(os.environ))
         except launcher.LauncherUnavailable as exc:
             raise RunError(runcodes.CONDA_LAUNCHER_UNAVAILABLE, reason=str(exc)[:200]) from exc
+        # 声明批准的现表对照在**激活之后**取（Codex #1925 P1）：激活要跑 conda 与
+        # activate.d，期间改指表可以被动到——在这里取快照，激活窗口里删掉 / 换代的
+        # 规则到不了子进程的捕获握手。冲突仍照旧是计划冲突（只有刷新救得回来）；
+        # 资源缺失这类只降级成无捕获，照常启动。
+        try:
+            input_payload = declaredinputs.payload_for_native(
+                spec,
+                expected_selection=launch.input_declaration_state,
+                expected_remap_generation=launch.input_remap_generation,
+            )
+        except declaredinputs.DeclaredInputsConflict:
+            # The approval itself changed (selection revision or remap table): only
+            # a refresh fixes this, so it stays a plan conflict.
+            raise
+        except declaredinputs.DeclaredInputsError:
+            # Optional evidence: a moved or deleted resource is not a selection
+            # change, and refresh cannot fix it. The launch proceeds without a
+            # capture, exactly like the terminal and safe paths.
+            input_payload = {}
         relay = nativerelay.NativeRelay()
         argv = execspec.bridge_argv(
             spec,
@@ -779,6 +804,7 @@ def start(
                 pol.connect_timeout,
                 watch=_child_watch(proc),
                 timeout_code=runcodes.DESKTOP_RUN_CONNECT_TIMEOUT,
+                **({"ack_extra": input_payload} if input_payload else {}),
             )
         except BaseException:
             owner.arm()  # 握手没成：没有 reader 也没有登记，收尾已完整，放行回调再取消

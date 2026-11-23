@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 from ..agent_runner.wires import ToolResult
@@ -179,6 +180,17 @@ def _data_links_fact(ctx: FixContext) -> dict | None:
 
 #: 工具名 → 档位；`fixtools/__init__` 建好注册表后填（本模块不 import 包本身，免得成环）
 TOOL_TIERS: dict[str, str] = {}
+#: 失败形状 → 「这台电脑上这样修好过」的一段（`engine/fixmemory.replay_text`，由包注入）；没注入 = 不带
+REPLAY: Callable[[str], str] | None = None
+
+
+def _replay(shape: str) -> str:
+    if not shape or REPLAY is None:
+        return ""
+    try:
+        return REPLAY(shape)
+    except Exception:  # noqa: BLE001 - 本机记录读不了就不带
+        return ""
 
 
 def tool_available(ctx: FixContext) -> callable:
@@ -209,6 +221,15 @@ def project_run_report(report: dict | None, ctx: FixContext) -> ToolResult:
     hint = hint_of(report, ctx)
     if hint is not None:
         picked = {"hint": {"for": hint[0], "id": hint[1], "next": hint[2]}, **picked}
+    # 本机修好过同一类失败（维护者 11-21 同意随提示发给所选 AI）：当参考数据给，紧跟提示；改动照常各自过批准
+    shape = hints.shape_of_report(report)
+    seen = _replay(shape)
+    if seen:
+        picked = {
+            **({"hint": picked.pop("hint")} if "hint" in picked else {}),
+            "fixed_before_here": seen,
+            **picked,
+        }
     result = report.get("result") or {}
     error = result.get("error") if isinstance(result, dict) else None
     error = error or report.get("error")

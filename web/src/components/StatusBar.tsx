@@ -142,6 +142,7 @@ function Toast({
   order,
   plain,
   note,
+  subline,
   ...rest
 }: {
   tone: 'info' | 'error' | 'hint'
@@ -161,6 +162,8 @@ function Toast({
   plain?: boolean
   /** 折叠的补充一句：默认不占位，悬停（title）与读屏可得——卡片默认只露一句话 + 一个主按钮 */
   note?: string
+  /** 主句下面一行灰字（一键排版的补充说明）：同一枚胶囊里，不另起一块 */
+  subline?: string
 } & Record<`data-${string}`, string | undefined>) {
   const held = useRef(new Set<string>())
   const grip = (reason: string) => {
@@ -209,7 +212,14 @@ function Toast({
         <ErrorBody text={text} copyDetail={copyDetail} />
       ) : (
         /* 同一条 toast 换文字时原位换（旧字退、新字进），不硬切 */
-        <SwapText className="min-w-0 flex-1" text={text} />
+        subline ? (
+          <div className="flex min-w-0 flex-1 flex-col py-0.5">
+            <SwapText className="min-w-0" text={text} />
+            <span data-toast-subline="" className="min-w-0 text-xs leading-4 text-ink-3">{subline}</span>
+          </div>
+        ) : (
+          <SwapText className="min-w-0 flex-1" text={text} />
+        )
       )}
       {action && (
         <Button
@@ -348,21 +358,23 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const tone = useUiStore((s) => s.statusTone)
   const statusAction = useUiStore((s) => s.statusAction)
   const statusCopyDetail = useUiStore((s) => s.statusCopyDetail)
+  const statusSubline = useUiStore((s) => s.statusSubline)
   const statusModalEpoch = useUiStore((s) => s.statusModalEpoch)
   // 退场那 90ms 里 status 已经是 null 了，得把最后一条文案留着播完，
   // 否则会看到一个空壳滑下去。留的是**描述符**，不是翻好的字符串：
   // 退场期间切语言也跟着换。
-  const last = useRef<{ status: UiMessage | null; tone: typeof tone; action: typeof statusAction; modalEpoch: number; detail: string | null }>({
+  const last = useRef<{ status: UiMessage | null; tone: typeof tone; action: typeof statusAction; modalEpoch: number; detail: string | null; subline: UiMessage | null }>({
     status: null,
     tone: 'info',
     action: null,
     modalEpoch: 0,
     detail: null,
+    subline: null,
   })
   useEffect(() => {
-    if (status) last.current = { status, tone, action: statusAction, modalEpoch: statusModalEpoch, detail: statusCopyDetail }
-  }, [status, tone, statusAction, statusModalEpoch, statusCopyDetail])
-  const shown = status ? { status, tone, action: statusAction, modalEpoch: statusModalEpoch, detail: statusCopyDetail } : last.current
+    if (status) last.current = { status, tone, action: statusAction, modalEpoch: statusModalEpoch, detail: statusCopyDetail, subline: statusSubline }
+  }, [status, tone, statusAction, statusModalEpoch, statusCopyDetail, statusSubline])
+  const shown = status ? { status, tone, action: statusAction, modalEpoch: statusModalEpoch, detail: statusCopyDetail, subline: statusSubline } : last.current
   // 弹窗打开之前画布上遗留的普通 done/info 提示（modalEpoch 落后于当前模态代际）留在画布层（遮罩之下），
   // 只有弹窗期间新触发的提示或 error 级告警才升进 z-toast 压在弹窗之上
   const statusInModalLayer = !overModal || shown.tone === 'error' || shown.modalEpoch >= modalEpoch
@@ -524,6 +536,7 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
       icon={<StatusIcon tone={shown.tone} />}
       text={shownText}
       copyDetail={shown.detail ?? undefined}
+      subline={shown.subline && shown.tone !== 'error' ? fmt(shown.subline) : undefined}
       action={shown.action ? { label: fmt(shown.action.label), onClick: shown.action.run } : undefined}
       onClose={shown.tone === 'error' || shown.action ? () => useUiStore.getState().setStatus(null) : undefined}
       closeLabel={t('status.dismissError')}
