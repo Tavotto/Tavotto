@@ -37,3 +37,6 @@ export const FIELD_OPEN = 'data-[state=open]:border-accent'
 export const FIELD_INVALID = 'border-danger hover:border-danger'
 /** 禁用态与 Button / Checkbox 同一档；hover 不再变色 */
 export const FIELD_DISABLED = 'cursor-not-allowed opacity-40 hover:bg-field'
+
+/** 套在 `Button` 上、长得和同列的下拉一样的触发器（选择器等不是 `Select` 却要和下拉并排的控件用）：同一个框、同高、同内边距，铺满剩余宽度 */
+export const fieldBoxTrigger = cn(FIELD_BOX, FIELD_OPEN, 'w-full rounded-sm px-2 active:bg-field data-[state=open]:bg-field')

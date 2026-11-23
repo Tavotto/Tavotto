@@ -2,9 +2,8 @@ import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { JournalPicker, type JournalPickTarget } from '@/components/journal/JournalPicker'
 import { Row } from '@/components/ui/Field'
-import { FIELD_BOX, FIELD_OPEN } from '@/components/ui/fieldBox'
+import { fieldBoxTrigger } from '@/components/ui/fieldBox'
 import { Select } from '@/components/ui/Select'
-import { cn } from '@/lib/utils'
 import { draftClearJournal, draftPickJournal, draftPickV2Only, specParts } from '@/lib/dataFigureSpec'
 import { journalCatalogUi } from '@/lib/journalUi'
 import { currentProjectId } from '@/lib/session'
@@ -37,9 +36,6 @@ function draftTarget(ref: JournalPickTarget['ref']): JournalPickTarget {
     origin: () => `${currentProjectId()}\u0000${dataFigureEpoch()}`,
   }
 }
-
-/** 触发器长得和同一列里的下拉一样（同一个框、同高、同内边距） */
-const JOURNAL_TRIGGER = cn(FIELD_BOX, FIELD_OPEN, 'w-full rounded-sm px-2 active:bg-field data-[state=open]:bg-field')
 
 const baseName = (p: string): string => p.slice(p.lastIndexOf('/') + 1)
 /** 「不要横轴 / 不分组」的取值：不会和任何列名撞（列名里不会有控制字符） */
@@ -118,7 +114,7 @@ export function DataPanel() {
       {journalCatalogUi() && (
         <div data-data-role="journal" className="mb-3 flex flex-col gap-1">
           <Row label={t('journal.title', { ns: 'dialogs' })} labelWidth={LABEL_W}>
-            <JournalPicker target={target} triggerClassName={JOURNAL_TRIGGER} disabled={busy} />
+            <JournalPicker target={target} triggerClassName={fieldBoxTrigger} disabled={busy} />
           </Row>
           {figureStyle && (
             <p data-data-spec className="pl-[calc(44px+1rem)] text-xs text-balance text-ink-3 tabular-nums">
