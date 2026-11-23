@@ -1423,7 +1423,7 @@
       "evidence": [
         {
           "src": "XG",
-          "loc": "static/core/contract.md「Data-integrity gate」；references/asset-adaptation.md「Preserve data integrity」",
+          "loc": "static/core/contract.md「Data-integrity gate」；references 目录的 asset-adaptation.md「Preserve data integrity」",
           "tag": "二手"
         },
         {
@@ -1463,7 +1463,7 @@
         },
         {
           "src": "XG",
-          "loc": "references/qa-contract.md「Typography and PDF glyph floor」；scripts/audit_pdf_text.py（它写的 5 pt 是 单一期刊系列的做法，不引用）",
+          "loc": "references 目录的 qa-contract.md「Typography and PDF glyph floor」；scripts 目录的 audit_pdf_text.py（它写的 5 pt 是 单一期刊系列的做法，不引用）",
           "tag": "二手"
         }
       ],
@@ -1488,7 +1488,7 @@
       "evidence": [
         {
           "src": "XG",
-          "loc": "references/qa-contract.md「Uncertainty consistency」；references/multipanel-evidence-architecture.md「Assign visual hierarchy from evidence hierarchy」",
+          "loc": "references 目录的 qa-contract.md「Uncertainty consistency」；references 目录的 multipanel-evidence-architecture.md「Assign visual hierarchy from evidence hierarchy」",
           "tag": "二手"
         },
         {
@@ -1519,7 +1519,7 @@
       "evidence": [
         {
           "src": "XG",
-          "loc": "references/multipanel-evidence-architecture.md（原文自述是从少数几篇期刊论文归纳的风格指引，不是期刊要求）",
+          "loc": "references 目录的 multipanel-evidence-architecture.md（原文自述是从少数几篇期刊论文归纳的风格指引，不是期刊要求）",
           "tag": "二手"
         }
       ],
