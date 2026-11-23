@@ -198,12 +198,10 @@ def _home_to_tilde(
     variants = {home}
     if "\\" in home:
         variants.add(home.replace("\\", "/"))
+    flags = re.IGNORECASE if case_insensitive else 0
     for v in sorted(variants, key=len, reverse=True):
-        text = (
-            re.sub(re.escape(v), "~", text, flags=re.IGNORECASE)
-            if case_insensitive
-            else text.replace(v, "~")
-        )
+        # 后面紧跟的不是文件名字符才算家目录：`/Users/me` 不能把 `/Users/meg/…` 换成 `~g/…`；引号、空格、分隔符、结尾都行
+        text = re.sub(re.escape(v.rstrip("/\\")) + r"(?![\w.\-])", "~", text, flags=flags)
     return text
 
 

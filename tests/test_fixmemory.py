@@ -518,6 +518,13 @@ def test_risk_seen_earlier_in_the_session_outlives_an_overwrite(store, box):
         ("/users/me/lab", "/Users/me", True, "~/lab"),
         ("/home/Me/lab", "/home/me", False, "/home/Me/lab"),  # 分大小写的文件系统上不是同一处
         ("/home/me/lab", "/home/me", False, "~/lab"),
+        (
+            "/Users/meg/lab and /Users/me",
+            "/Users/me",
+            True,
+            "/Users/meg/lab and ~",
+        ),  # 前缀相同的别人家目录不换
+        ("path='/Users/me'", "/Users/me", True, "path='~'"),
     ],
 )
 def test_home_is_written_as_tilde_however_it_is_spelled(text, home, ci, want):
