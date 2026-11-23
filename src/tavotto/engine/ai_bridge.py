@@ -2037,6 +2037,10 @@ def run(
             )
             if cand is not None:
                 prompt += "\n\n" + ai_figure_edit.prompt_note(cand)
+            # 科学图形准则（docs/sciviz/）：只给改图，转换任务（ADR 0143）不加
+            from . import ai_prompt_pack
+
+            prompt += "\n\n" + ai_prompt_pack.sciviz_note()
         # 用户附的参考图（ADR 0175）：不附图时这一段一行都不执行
         ref_note, ref_dirs, attachment_count = _attach_attachments(
             sid, cand if convert is None else None, attachments

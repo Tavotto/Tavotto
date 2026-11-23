@@ -223,6 +223,10 @@ def test_without_images_prompt_workspace_and_history_are_what_they_always_were(e
     sid, sess = _run(env, attachments=refs)
     prompt = env["prompts"][0]
     expected = ai_bridge._build_prompt("fig1.py", "把标题改成 new", {}, str(env["figs"]))
+    # 改图提示词恒带科学图形准则一段（docs/sciviz/），它与附件无关；不附图时附件一段一行都不出现
+    sciviz = "\n\n" + ai_prompt_pack.sciviz_note()
+    assert prompt.endswith(sciviz)
+    prompt = prompt[: -len(sciviz)]
     if taf:
         assert prompt.startswith(expected)
         assert prompt.endswith(ai_prompt_pack.candidate_note(ai_prompt_pack.DEFAULT, env["figs"]))
