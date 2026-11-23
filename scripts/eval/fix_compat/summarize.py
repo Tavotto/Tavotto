@@ -135,7 +135,7 @@ def memory_pairs(data: dict[str, list[dict]]) -> str:
     if not m_rows:
         return "（没有 M 组结果）"
     lines = [
-        "| 乙题 | A 成功 | A 平均步数 | A 平均用时 s | M 成功 | M 平均步数 | M 平均用时 s | M 里甲修好 / 记下做法 |",
+        "| 乙题 | A 成功 | A 平均步数 | A 修复用时 s | M 成功 | M 平均步数 | M 修复用时 s | M 里甲修好 / 记下做法 |",
         "|---|---|---|---|---|---|---|---|",
     ]
 
@@ -144,7 +144,9 @@ def memory_pairs(data: dict[str, list[dict]]) -> str:
             return "-", "-", "-"
         ok = sum(1 for r in rs if r.get("success"))
         steps = [r.get("steps") or 0 for r in rs]
-        wall = [r.get("wall_s_total") or 0 for r in rs]
+        wall = [
+            r.get("wall_s") or 0 for r in rs
+        ]  # 只算修这一题的那段（M 组的 wall_s_total 含修「甲」）
         return (
             f"{ok}/{len(rs)}",
             str(round(sum(steps) / len(rs), 1)),
