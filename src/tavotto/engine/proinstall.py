@@ -442,15 +442,15 @@ def _funlock(fd: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 「正在使用」租约（跨进程）：sidecar 在跑期间，宿主持有 `pro/.inuse-<版本>.lock` 的文件锁；
+# 「正在使用」租约（跨进程）：每个跑着 sidecar 的宿主各持一个 `pro/.inuse-<版本>@<随机号>.lock` 的排他文件锁
+# （一人一个文件，几个宿主同跑一个版本也都各有租约；Windows 的 msvcrt 没有共享锁，所以不用「一个文件 + 共享锁」）。
 # 进程死了系统自动释放，不记 PID。锁文件放在版本目录外面：不改包内容，删目录也不被它挡住。
 # ---------------------------------------------------------------------------
 _INUSE_PREFIX = ".inuse-"
+_INUSE_SEP = "@"
 _INUSE_SUFFIX = ".lock"
-
-
-def _inuse_path(name: str) -> Path:
-    return pro_dir() / f"{_INUSE_PREFIX}{name}{_INUSE_SUFFIX}"
+#: 刚建出、还没来得及上锁的租约文件不当孤儿删（建文件与上锁之间有一瞬间的空档）
+_INUSE_FRESH_S = 60.0
 
 
 def _version_of_root(root: object) -> str | None:
@@ -462,65 +462,97 @@ def _version_of_root(root: object) -> str | None:
     return _valid_name(rel.parts[0]) if rel.parts else None
 
 
-def acquire_in_use(root: object) -> int | None:
-    """给 `root` 所在的已安装版本上「正在使用」租约，返回句柄（fd）；不是已安装版本 / 拿不到 = None（尽力而为，不抛）。
+def _lease_version(file_name: str) -> str | None:
+    """租约文件名 -> 版本目录名；不是租约文件 = None。"""
+    if not (file_name.startswith(_INUSE_PREFIX) and file_name.endswith(_INUSE_SUFFIX)):
+        return None
+    core = file_name[len(_INUSE_PREFIX) : -len(_INUSE_SUFFIX)]
+    name, sep, _token = core.rpartition(_INUSE_SEP)
+    return name if sep and name else None
+
+
+def acquire_in_use(root: object) -> tuple[int, Path] | None:
+    """给 `root` 所在的已安装版本上「正在使用」租约，返回句柄；不是已安装版本 / 拿不到 = None（尽力而为，不抛）。
     拿不到只会让别的进程少一道保护，不阻止本进程启动 sidecar。"""
     name = _version_of_root(root)
     if name is None:
         return None
+    path = pro_dir() / f"{_INUSE_PREFIX}{name}{_INUSE_SEP}{secrets.token_hex(8)}{_INUSE_SUFFIX}"
     fd = None
     try:
         pro_dir().mkdir(parents=True, exist_ok=True)
-        fd = os.open(_inuse_path(name), os.O_RDWR | os.O_CREAT, 0o600)
-        if _try_flock(fd):
-            return fd
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+        for _ in range(50):  # 别的进程正探这个文件时会短暂占着锁：稍等重试
+            if _try_flock(fd):
+                return fd, path
+            time.sleep(0.01)
     except OSError:
         pass
     if fd is not None:
         with contextlib.suppress(OSError):
             os.close(fd)
+        with contextlib.suppress(OSError):
+            path.unlink()
     return None
 
 
-def release_in_use(handle: int | None) -> None:
-    """放掉 `acquire_in_use` 给的租约；重复 / None 无害。"""
+def release_in_use(handle: tuple[int, Path] | None) -> None:
+    """放掉 `acquire_in_use` 给的租约并删掉自己的租约文件；重复 / None 无害。"""
     if handle is None:
         return
+    fd, path = handle
     with contextlib.suppress(OSError):
-        _funlock(handle)
+        path.unlink()  # POSIX 先删再放锁，探的人不会在放锁后、删除前误判；Windows 持着删不掉，放锁后再删一次
     with contextlib.suppress(OSError):
-        os.close(handle)
+        _funlock(fd)
+    with contextlib.suppress(OSError):
+        os.close(fd)
+    with contextlib.suppress(OSError):
+        path.unlink()
+
+
+def _lease_held(p: Path) -> bool:
+    """这个租约文件此刻有人持着锁吗？没人持着、又不是刚建的 = 孤儿，顺手删掉。探不了（IO 错）按「持着」算，宁可不删。"""
+    try:
+        fd = os.open(p, os.O_RDWR)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    try:
+        if not _try_flock(fd):
+            return True
+        try:
+            if time.time() - os.fstat(fd).st_mtime > _INUSE_FRESH_S:
+                with contextlib.suppress(OSError):
+                    p.unlink()  # Windows 上持着锁删不掉：留到下一轮
+        finally:
+            with contextlib.suppress(OSError):
+                _funlock(fd)
+        return False
+    finally:
+        os.close(fd)
+
+
+def _leases(name: str | None = None) -> list[Path]:
+    try:
+        children = list(pro_dir().iterdir())
+    except OSError:
+        return []
+    out = []
+    for p in children:
+        v = _lease_version(p.name)
+        if v is not None and (name is None or v == name):
+            out.append(p)
+    return out
 
 
 def _in_use_elsewhere(name: str) -> bool:
-    """别的进程（或本进程另一处）是否持着 `name` 的租约：探一下，拿到就立刻放。探不了（IO 错）按「在用」算，宁可不删。"""
-    try:
-        fd = os.open(_inuse_path(name), os.O_RDWR | os.O_CREAT, 0o600)
-    except OSError:
-        return True
-    try:
-        if _try_flock(fd):
-            with contextlib.suppress(OSError):
-                _funlock(fd)
-            return False
-        return True
-    finally:
-        os.close(fd)
-
-
-def _drop_stale_lease(p: Path) -> None:
-    try:
-        fd = os.open(p, os.O_RDWR, 0o600)
-    except OSError:
-        return
-    try:
-        if _try_flock(fd):
-            with contextlib.suppress(OSError):
-                p.unlink()  # Windows 上持着锁删不掉：留到下一轮
-            with contextlib.suppress(OSError):
-                _funlock(fd)
-    finally:
-        os.close(fd)
+    """有没有任何宿主（别的进程，或本进程另一处）持着 `name` 的租约；顺手清掉这个版本的孤儿租约文件。"""
+    held = False
+    for p in _leases(name):
+        held = _lease_held(p) or held  # 不短路：每个文件都探一遍，孤儿一并清
+    return held
 
 
 def _read_json(p: Path) -> dict:
@@ -614,10 +646,10 @@ def _prune(keep: set[str]) -> None:
             # 其它进程的 sidecar 可能正从这个目录跑：租约探不通就不删
             if n not in keep and n != running and not _in_use_elsewhere(n):
                 _discard(p)
-        elif n.startswith(_INUSE_PREFIX) and n.endswith(_INUSE_SUFFIX):
-            # 对应版本目录已不在的租约文件：能锁上（没人持有）才删
-            if not (pro_dir() / n[len(_INUSE_PREFIX) : -len(_INUSE_SUFFIX)]).exists():
-                _drop_stale_lease(p)
+        elif _lease_version(n) is not None:
+            # 对应版本目录已不在的租约文件：没人持有、又不是刚建的才删
+            if not (pro_dir() / str(_lease_version(n))).exists():
+                _lease_held(p)
         elif n.startswith((".dl-", ".tmp-")):
             try:
                 if now - p.stat().st_mtime > STALE_TMP_S:

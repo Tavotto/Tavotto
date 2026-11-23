@@ -1163,7 +1163,40 @@ def test_install_prune_keeps_version_leased_by_other_process(env, srv, rel_key):
         _stop_holder(holder)
     install_version(srv, rel_key, "1.3.0")  # 租约随进程释放，下一轮清掉
     assert not a.exists()
-    assert not (proinstall.pro_dir() / f".inuse-1.0.0-{PLAT}.lock").exists()  # 孤儿租约文件一并清
+    # 持有者是直接退出的（没调 release）：租约文件可能还在，但已没人持锁，过了宽限期由清理删掉
+    assert not any(proinstall._lease_held(p) for p in proinstall._leases(f"1.0.0-{PLAT}"))
+
+
+def test_every_host_running_a_version_keeps_its_own_lease(env, srv, rel_key):
+    """两个宿主跑同一个版本：先启动的那个退出后，后一个还在跑，这个版本仍不能被清掉。"""
+    install_version(srv, rel_key, "1.0.0")
+    a = proinstall.pro_dir() / f"1.0.0-{PLAT}"
+    first = _spawn_holder(a / "tavotto-pro")
+    second = _spawn_holder(a / "tavotto-pro")  # 第二个也拿到租约（_spawn_holder 断言 held）
+    try:
+        _stop_holder(first)
+        install_version(srv, rel_key, "1.1.0")
+        install_version(srv, rel_key, "1.2.0")
+        assert a.is_dir()
+    finally:
+        _stop_holder(second)
+    install_version(srv, rel_key, "1.3.0")
+    assert not a.exists()
+
+
+def test_orphan_lease_file_is_swept_but_fresh_one_is_kept(env, srv, rel_key):
+    """进程被强杀留下的租约文件：没人持锁、超过宽限期就清；刚建的（还没来得及上锁）不动。"""
+    install_version(srv, rel_key, "1.0.0")
+    name = f"1.0.0-{PLAT}"
+    old = proinstall.pro_dir() / f".inuse-{name}@dead.lock"
+    fresh = proinstall.pro_dir() / f".inuse-{name}@fresh.lock"
+    old.write_bytes(b"")
+    fresh.write_bytes(b"")
+    past = time.time() - 3600
+    os.utime(old, (past, past))
+    assert not proinstall._in_use_elsewhere(name)
+    assert not old.exists()
+    assert fresh.exists()
 
 
 def test_install_refuses_to_replace_dir_leased_elsewhere(env, srv, rel_key):
