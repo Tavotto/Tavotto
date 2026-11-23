@@ -2050,12 +2050,16 @@ def _resolve_roles_raw(
     nums = [c for c in cols if numeric_like(s.per_column[c]) and c not in ids]
     # 误差列（名字是 `sd` / `sem` / `mass_se` 一类）不是测量值：不进纵轴 / 横轴的候选——除非用户自己点了它（`picks`），
     # 或者去掉之后一个数值列都不剩（那就当普通数值列，别让表画不了）
-    asked = picks.get("y")
-    asked = set(asked) if isinstance(asked, list) else {asked}
-    asked.add(picks.get("x"))
+    py = picks.get("y")
+    asked = {
+        v for v in [*(py if isinstance(py, list) else [py]), picks.get("x")] if isinstance(v, str)
+    }
+    nums_all = list(nums)  # 下拉里仍然列得出误差列：用户自己点它是允许的
     errs = {c for c in error_columns(s) if c not in asked}
     if errs and any(c not in errs for c in nums):
         nums = [c for c in nums if c not in errs]
+    else:
+        errs = set()
     dates = [c for c in cols if s.per_column[c].kind == "date" and c not in ids]
     cats = [c for c in cols if c in s.groups and c not in ids]
     cats_all = list(cats)
@@ -2148,9 +2152,9 @@ def _resolve_roles_raw(
                 return NeedsChoice("pick_x", _col_options("x", xs, s), _unsure("x"))
     # 下拉里的分组：文字分组列，再加上客观上能当整数编码分组的列（不含此刻的测量值）。没有模型时默认选择不变，只是多一个可选项
     options = {
-        "y": list(nums),
+        "y": nums_all,
         "group": [c for c in cols if c in cats_all or (c in s.numcat and c not in ys)],
-        "x": list(xs),
+        "x": [c for c in cols if c in xs or (c in errs and c not in ys)],
     }
     return _Roles(
         tuple(ys),

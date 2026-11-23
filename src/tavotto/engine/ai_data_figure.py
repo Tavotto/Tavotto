@@ -1587,23 +1587,22 @@ def _id_name(name: str) -> bool:
     return any(w in name for w in _ID_CJK)
 
 
-#: 列名里「这是误差量」的词 → 它是哪一种（`unknown` = 是误差量、但名字没说是哪种）。强词单独出现就算；弱词（`std` / `se` / `err` / `error` / `ci`）
-#: 可能是别的意思（`std` 也是标准品、`se` 也是硒），只有表里另有「它所修饰的那一列」时才算（见 `error_kind`）
-_ERROR_STRONG = {
+#: 列名里「这是误差量」的词 → 它是哪一种（`unknown` = 是误差量、但名字没说是哪种）。判法见 `error_kind`
+_ERROR_WORDS = {
     "sd": "sd",
     "stdev": "sd",
     "stddev": "sd",
+    "std": "sd",
     "sem": "sem",
     "stderr": "sem",
-}
-_ERROR_WEAK = {
-    "std": "sd",
     "se": "sem",
     "err": "unknown",
     "error": "unknown",
     "ci": "ci",
     "ci95": "ci",
 }
+#: 整个列名就是这一个词时，单凭名字就算（`sem` / `se` / `std` / `ci` 不在里面：扫描电镜、硒、标准品、别的缩写）
+_ERROR_ALONE = frozenset({"sd", "stdev", "stddev", "stderr", "err", "error"})
 _ERROR_CJK = (("标准差", "sd"), ("标准误", "sem"), ("置信区间", "ci"), ("误差", "unknown"))
 _MEAN_WORDS = frozenset({"mean", "avg", "average"})
 
@@ -1614,27 +1613,30 @@ def _name_tokens(name: str) -> list[str]:
 
 def error_kind(name: str, others: list[str]) -> str | None:
     """这一列的名字是不是在说「我是误差量」（`sd` / `sem` / `ci` / `unknown`；不是 = None）。只看列名的**词**（驼峰与非字母数字处切开，
-    不做子串匹配：`residue`、`used` 不算）：
+    不做子串匹配：`residue`、`used`、`semester` 不算），宁可认不出、不可认错（认错 = 把一列真的测量值悄悄踢出候选）：
 
-    * 含强词（`sd` / `stdev` / `stddev` / `sem` / `stderr`）或中文词（标准差 / 标准误 / 置信区间 / 误差）→ 算；
-    * 含弱词（`std` / `se` / `err` / `error` / `ci` / `ci95`）→ 只有当 `others`（表里其它列名）里有它修饰的那一列时才算：去掉这个词后剩下的词
-      与某一列的词相同（`mass_se` ↔ `mass`），或者（去掉后什么都不剩时）有一列的名字里带 `mean` / `avg` / `average`。
+    * 含中文词（标准差 / 标准误 / 置信区间 / 误差）→ 算；
+    * 整个名字就是一个词，且在 `sd` / `stdev` / `stddev` / `stderr` / `err` / `error` 里 → 算；
+    * 其它含误差词的名字（`mass_sd`、`SEM_depth`、单独的 `sem` / `se` / `std` / `ci`）→ 只有表里另有**它修饰的那一列**时才算：
+      去掉这个词后剩下的词与某一列去掉 `mean` / `avg` / `average` 之后的词相同（`mass_sd` ↔ `mass`、`response_sem` ↔ `mean_response`）；
+      去掉后什么都不剩时，要有一列的名字里带 `mean` / `avg` / `average`（`mean, sem`）。`SEM_depth_nm`（扫描电镜测的深度）、`Se`（硒）
+      没有这样的搭档，不算。
 
     这只是名字上的线索：它让规则**不把这一列当测量值去画**，不替用户断定误差线的含义（名字只说 `err` 的记 `unknown`，绝不当成 SD）。"""
     for word, kind in _ERROR_CJK:
         if word in name:
             return kind
     tokens = _name_tokens(name)
+    if len(tokens) == 1 and tokens[0] in _ERROR_ALONE:
+        return _ERROR_WORDS[tokens[0]]
     for t in tokens:
-        if t in _ERROR_STRONG:
-            return _ERROR_STRONG[t]
-    for t in tokens:
-        if t in _ERROR_WEAK:
+        if t in _ERROR_WORDS:
             rest = [x for x in tokens if x != t]
             for other in others:
                 ot = _name_tokens(other)
-                if (rest and ot == rest) or (not rest and _MEAN_WORDS & set(ot)):
-                    return _ERROR_WEAK[t]
+                core = [x for x in ot if x not in _MEAN_WORDS]
+                if (rest and core == rest) or (not rest and _MEAN_WORDS & set(ot)):
+                    return _ERROR_WORDS[t]
     return None
 
 

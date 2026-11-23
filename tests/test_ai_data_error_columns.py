@@ -33,26 +33,38 @@ def isolate(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "name, others, want",
     [
+        # 整个名字就是这个词：单凭名字就算
         ("sd", ["dose", "mean_response"], "sd"),
-        ("mass_sd", ["mass"], "sd"),
         ("SD", [], "sd"),
-        ("stdev", [], "sd"),
-        ("SEM", [], "sem"),
-        ("response_sem", ["response"], "sem"),
+        ("stdev", ["x"], "sd"),
+        ("stderr", [], "sem"),
+        ("err", ["x", "y"], "unknown"),
+        ("error", [], "unknown"),
+        # 中文词
         ("标准差", [], "sd"),
         ("标准误", [], "sem"),
         ("误差", [], "unknown"),
-        # 弱词：要有它修饰的那一列
-        ("se", ["mean"], "sem"),
-        ("se", ["dose", "conc"], None),
+        # 其它：要有它修饰的那一列
+        ("mass_sd", ["mass"], "sd"),
+        ("response_sem", ["mean_response"], "sem"),
         ("mass_se", ["mass"], "sem"),
-        ("selenium_se", ["x"], None),
-        ("std", ["avg_height"], "sd"),
-        ("std_curve", ["x"], None),
         ("yErr", ["y"], "unknown"),
-        ("err", ["mean_y"], "unknown"),
-        ("error_rate", ["x"], None),
+        ("sem", ["time", "mean"], "sem"),
+        ("se", ["mean"], "sem"),
+        ("std", ["avg_height"], "sd"),
         ("ci95", ["avg"], "ci"),
+        ("SEM_depth", ["depth"], "sem"),
+        # 没有搭档：不算（扫描电镜、硒、标准品……宁可认不出）
+        ("sem", ["dose", "response"], None),
+        ("SEM", ["AFM"], None),
+        ("SEM_depth_nm", ["time"], None),
+        ("Se", ["Zn", "Cu"], None),
+        ("se", ["dose", "conc"], None),
+        ("std", ["x"], None),
+        ("std_curve", ["x"], None),
+        ("selenium_se", ["x"], None),
+        ("depth_sd", ["depth_nm"], None),
+        ("error_rate", ["x"], None),
         # 不是词：不算
         ("residue", ["x"], None),
         ("used", [], None),
@@ -137,3 +149,33 @@ def test_error_columns_lists_kinds_for_numeric_columns_only():
 
     got = R.error_columns(S)
     assert got.get("sd") == "sd" and "note_sd" not in got and "dose" not in got
+
+
+def test_the_error_column_stays_selectable_in_the_dropdowns(project):
+    """规则不拿它画，但右栏下拉里仍然列得出来——「用户自己点了才用」在界面上要成立。"""
+    _, client, figs, _ = project
+    put(figs, "data/dr.csv", HO18)
+    out = propose(client, render="lazy").get_json()
+    opts = out["roles"]["options"]
+    assert "sd" in opts["y"] and "sd" in opts["x"]
+    assert out["roles"]["y"] == ["mean_response"] and out["roles"]["x"] == "dose_uM"
+
+
+@pytest.mark.parametrize("bad", [[["sd"]], [1, 2], [None], {"a": 1}, 3])
+def test_malformed_picks_do_not_break_the_error_column_rule(project, bad):
+    _, client, figs, _ = project
+    put(figs, "data/dr.csv", HO18)
+    r = propose(client, render="lazy", answers={"y": bad})
+    assert r.status_code in (200, 400), r.get_json()
+    if r.status_code == 200 and r.get_json()["kind"] == "candidates":
+        assert all("sd" not in i.recipe.y for i in session_of(r.get_json()).items.values())
+
+
+def test_an_instrument_column_named_sem_is_not_dropped(project):
+    """`SEM_depth_nm`（扫描电镜测的深度）是测量值：没有它修饰的搭档列，不当误差列。"""
+    _, client, figs, _ = project
+    rows = [["time_min", "SEM_depth_nm"]] + [[t, round(3.1 * t + 2, 1)] for t in range(0, 50, 5)]
+    put(figs, "data/etch.csv", rows)
+    out = propose(client, render="lazy").get_json()
+    assert out["kind"] == "candidates", out
+    assert all(i.recipe.y == ("SEM_depth_nm",) for i in session_of(out).items.values())

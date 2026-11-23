@@ -14,7 +14,14 @@ import pytest
 
 from tavotto.engine import ai_data_figure as adf, ai_data_propose as P, ai_data_template as tpl
 from tavotto.engine.agent_runner import wires
-from tests.test_ai_data_propose import project, propose, put  # noqa: F401
+from tests.test_ai_data_propose import (  # noqa: F401
+    checks_of,
+    commit,
+    needs_worker,
+    project,
+    propose,
+    put,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -182,3 +189,34 @@ def test_one_empty_group_cell_does_not_cost_the_whole_trend_chart(project):
     out, _sess, by = recipes(client, answers={"x": "time", "y": "signal", "group": "sample"})
     assert "trend" in by
     assert "trend_too_few_x" not in [d["reason_code"] for d in out.get("dropped", [])]
+
+
+@needs_worker
+def test_a_blank_y_cell_is_missing_data_not_an_unmet_goal_but_an_empty_group_cell_is(project):
+    """提交后的核对：纵轴空着的行没有可画的点（缺失），不让「所有行都画了」判成没达成；分组空着的行有数据却没画上，照旧判没达成。
+    两种都如实列在结果的 `unplotted` 里。"""
+    _, client, figs, _ = project
+    blank_y = (
+        [["group", "value"]] + [[g, v] for g in "ABC" for v in (1.0, 1.2, 0.9, 1.1)] + [["A", ""]]
+    )
+    put(figs, "data/y.csv", blank_y)
+    out = propose(client, render="lazy").get_json()
+    first = out["items"][0]
+    assert first["unplotted"]["count"] == 1
+    done = commit(client, out["session"], first["id"]).get_json()
+    assert done["task"]["outcome"] == "completed", done
+    assert done["unplotted"]["count"] == 1 and done["unplotted"]["rows"][0]["reason"] == "y_missing"
+    assert checks_of(done["task"]["task_id"])["goal.rows_plotted"][0] == "verified"
+
+    blank_g = [["time", "signal", "sample"]] + TREND[1:]
+    put(figs, "data2/g.csv", blank_g)
+    out2 = propose(
+        client,
+        folder="data2",
+        render="lazy",
+        answers={"x": "time", "y": "signal", "group": "sample"},
+    ).get_json()
+    trend = next(i for i in out2["items"] if i["values"]["family"] == "trend")
+    done2 = commit(client, out2["session"], trend["id"]).get_json()
+    assert done2["task"]["outcome"] == "partial", done2
+    assert checks_of(done2["task"]["task_id"])["goal.rows_plotted"] == ("failed", "rows_not_plotted")

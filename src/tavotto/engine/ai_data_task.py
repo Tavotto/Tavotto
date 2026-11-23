@@ -852,14 +852,16 @@ class DataFigureV2Adapter:
             )
         )
         rows = prep.not_plotted
+        # 纵轴是空的行没有可画的点——那是缺失，不是「有数据没画上」，不让它把目标判成没达成（仍然如实列在 observed 里）
+        unmet_rows = [r for r in rows if r.get("reason") != "y_missing"]
         out.append(
             CheckResult(
                 id="goal.rows_plotted",
                 layer="L2",
                 stage=st,
                 role="goal",
-                verdict=FAILED if rows else VERIFIED,
-                reason_code="rows_not_plotted" if rows else None,
+                verdict=FAILED if unmet_rows else VERIFIED,
+                reason_code="rows_not_plotted" if unmet_rows else None,
                 observed={"rows": rows[:50], "total": ai_data_propose.unplotted_total(rows)},
             )
         )
