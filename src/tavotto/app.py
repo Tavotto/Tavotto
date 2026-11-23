@@ -163,6 +163,7 @@ from .engine import (
     projectcopy as engine_projectcopy,
     projectenv as engine_projectenv,
     projscan as engine_projscan,
+    quicklayout as engine_quicklayout,
     rasterhint as engine_rasterhint,
     readiness as engine_readiness,
     receipt as engine_receipt,
@@ -2711,6 +2712,8 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
         "w_mm": src.w_mm,
         "h_mm": src.h_mm,
         **({"overrides": src.overrides} if src.overrides else {}),
+        # 剪切蒙版裁这张图（ADR 0191）：与画布上被裁的对象同一条路（`plan._clipped`）
+        **({"clip": list(src.clip)} if src.clip else {}),
         **({"figure_snapshot": src.figure_snapshot} if src.figure_snapshot is not None else {}),
         **({"source_policy": src.source_policy} if src.source_policy is not None else {}),
         **({"expected_source": src.expected_source} if src.expected_source is not None else {}),
@@ -2882,6 +2885,13 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
             ),
             "clip_page": True,
         }
+    if src.clip:
+        # 剪切蒙版裁这张图（ADR 0191）：外 → 内逐条 clip（PostScript 的 clip 本来就取交集）
+        clip_text = ""
+        for m in src.clip:
+            outline = rc_plan.clip_outline(m, page_h_pt)
+            clip_text += epswriter.clip_ops(*(outline if outline else (None,)))
+        pad_extra["figure_clip"] = clip_text
     out = tmp_dir / "out_annotated.eps"
     out.write_bytes(
         engine_epsoverlay.compose(
@@ -2915,7 +2925,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     """
     req = job.request
     src = req.original
-    if src.objects or src.pad_mm:
+    if src.objects or src.pad_mm or src.clip:
         return _export_produce_original_annotated(job, tmp_dir, artifact_sources=artifact_sources)
     if (
         Path(src.figure_id).suffix.lower() in SVG_EXT
@@ -5819,6 +5829,8 @@ def _build_diagnostics_bundle(
         frontend=detail.frontend,
         registry=ctx.registry if ctx is not None else None,
         fix_journey=engine_prepsession.SESSIONS.fix_journeys(pid) if pid else None,
+        fix_sessions=engine_fixsession.SESSIONS.diagnostics_for(pid) if pid else None,
+        fix_memory=_fix_memory_entries(),
         fix_audit=engine_fixsession.audit_tail(engine_fixsession.SESSIONS.ids_for(pid))
         if pid
         else None,
@@ -8433,6 +8445,7 @@ def _materialize_runtime(
     run=None,
     pinned=None,
     patches_by_stem: dict | None = None,
+    origin_session=None,
 ) -> None:
     """把一次成功 build 捕获的每张图物化进 runtime cache（失败只记日志）。
 
@@ -8453,7 +8466,10 @@ def _materialize_runtime(
     # 取会话在锁外：取不到现成的会起一条新的、跑脚本——持锁执行脚本会把改指堵在一次 build 后面
     # `run`（T03）：产出这批图的那份运行配置——取的必须是同一条热会话，否则会为别的参数另起一次执行
     try:
-        if pinned is not None:
+        if origin_session is not None:
+            origin_session.check()
+            worker = origin_session.worker
+        elif pinned is not None:
             # 准备的一次运行：只物化**跑出这批图的那条热会话**。项目记录在运行之后被换了，也不为物化另起一条会话、
             # 在别的解释器里把脚本再跑一遍（Codex #820 r4234067402）
             worker = engine_pool.peek(script, root, run=run)
@@ -8475,7 +8491,8 @@ def _materialize_runtime(
                     continue
                 # The capture helper is generation-aware: even an edit's first
                 # build freezes the base once; subsequent gestures never recapture.
-                _capture_svg_snapshot(worker, desc)
+                if origin_session is None:
+                    _capture_svg_snapshot(worker, desc)
                 state = [] if patches_by_stem is None else patches_by_stem.get(stem)
                 engine_runtimeasset.materialize(
                     root,
@@ -8485,6 +8502,8 @@ def _materialize_runtime(
                     # 没有 patches_by_stem = 一次 build（显式运行 / 准备）：新的执行，旧变体作废
                     fresh_execution=patches_by_stem is None,
                 )
+            if origin_session is not None:
+                origin_session.check()
     except engine_inputremap.RemapChanged as exc:
         LOG.info("runtime 物化作废（%s）: %s", exc, script)
 
@@ -8964,7 +8983,12 @@ class NativeWorkerRefused(Exception):
 
 
 def _engine_worker(
-    rel_id: str, *, safe_only: bool = False, artifact_source=None, existing_only: bool = False
+    rel_id: str,
+    *,
+    safe_only: bool = False,
+    artifact_source=None,
+    existing_only: bool = False,
+    source_path_required: bool = True,
 ):
     """面板 id → (worker-like, stem)；非脚本面板 404。
 
@@ -8987,15 +9011,24 @@ def _engine_worker(
         rel_id,
         **_artifact_kwargs(artifact_source),
         **({"existing_only": True} if existing_only else {}),
+        **({"source_path_required": False} if not source_path_required else {}),
     )
     if safe_only and engine_enginesession.is_native(worker):
         raise NativeWorkerRefused(rel_id)
     return worker, stem
 
 
-def _resolve_engine_worker(rel_id: str, *, artifact_source=None, existing_only: bool = False):
+def _resolve_engine_worker(
+    rel_id: str,
+    *,
+    artifact_source=None,
+    existing_only: bool = False,
+    source_path_required: bool = True,
+):
     """`_engine_worker` 的本体（「谁来渲染」按档案解析，不设闸）。"""
     _assert_artifact_current(artifact_source)
+    if not source_path_required and (not existing_only or artifact_source is not None):
+        raise ValueError("Only an existing historical Figure may omit its disk original")
     root = str(require_project())
     if artifact_source is not None and engine_runtimeasset.is_runtime_id(rel_id):
         _refuse_artifact_policy(artifact_source["render_policy"])
@@ -9017,13 +9050,15 @@ def _resolve_engine_worker(rel_id: str, *, artifact_source=None, existing_only: 
             ),
             info["stem"],
         )
-    path = safe_resolve(rel_id)
+    path = safe_resolve(rel_id, **({"require_file": False} if not source_path_required else {}))
     disk_stem, info = _disk_panel(path)
     if info is None:
         if artifact_source is not None:
             raise engine_artifactcontext.ArtifactContextError(
                 "destination_unresolved", "Source script unavailable."
             )
+        if not source_path_required:
+            return None, disk_stem
         abort(404)
     # 磁盘面板永远是 safe：它有自己的原始产物，那是 safe worker 产出的世界。
     disk_run = _disk_panel_run(info["script"])
@@ -9546,6 +9581,146 @@ def api_engine_specfix():
     # （`replay_required`；`apply()` 把还原失败的键留在账上，重放时也会重试）
     out["worker_retired"] = not state["clean"] and _retire_hot_worker(state["worker"])
     out["replay_required"] = not state["clean"]
+    return jsonify(out)
+
+
+@app.post("/api/pro/quick-layout/plan")
+def api_pro_quick_layout_plan():
+    """一键排版（ADR 0199，高级功能 `quick-layout`）。**只算不写**，照 `/api/engine/specfix`：
+
+    请求：`{panels: [{key, id, patches, box}], fixed: [{key, box}], page: {w, h, margin}, target, gap_mm, profile, label_pt, fix_spec, columns?, canvas: keep|fit, ratios?: {cols, rows}}`。成功时另回 `grid`（行列、每张图的格子、比例），前端画分隔线用。
+    `patches` 是每张图此刻的全量 override 列表（B0），`box` 是画布上的摆放（mm）。
+    成功回 `{ok: true, panels: [{key, patches, box}], labels: [{key, x, y}], notes}`，由前端一次 commit；
+    失败回 `{ok: false, code}`，每张图的 worker 回到 B0（或作废），**文档一个字不改**。
+    权益判断在 `engine/quicklayout.py`（本路由不判，`test_license_callsites` 看护）。
+    """
+    body = request.get_json(force=True) or {}
+    raw_panels = body.get("panels")
+    if not isinstance(raw_panels, list):
+        return jsonify({"error": "panels 必须是列表", "code": "invalid_panels"}), 400
+    profile = body.get("profile")
+    if not isinstance(profile, dict) or not isinstance(profile.get("severity"), dict):
+        return jsonify({"error": "profile 必须是一份完整的规范", "code": "invalid_profile"}), 400
+    page = body.get("page") if isinstance(body.get("page"), dict) else {}
+    try:
+        page = {k: float(page[k]) for k in ("w", "h")} | {"margin": float(page.get("margin") or 0)}
+        label_pt = float(body.get("label_pt") or 8.0)
+        gap_mm = float(body.get("gap_mm") if body.get("gap_mm") is not None else 3.0)
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"error": "page / label_pt / gap_mm 不合规", "code": "invalid_options"}), 400
+    if not engine_quicklayout.licensed():
+        return jsonify({"ok": False, "code": "not_licensed"})
+
+    states: list[dict] = []
+    panels: list = []
+    fixed = [
+        {"key": str(f.get("key") or ""), "box": [float(v) for v in f.get("box")]}
+        for f in body.get("fixed") or []
+        if isinstance(f, dict) and isinstance(f.get("box"), list) and len(f["box"]) == 4
+    ]
+    seen: set[str] = set()
+    for raw in raw_panels:
+        if not isinstance(raw, dict) or not isinstance(raw.get("patches"), list):
+            return jsonify({"error": "panel 形状不对", "code": "invalid_panels"}), 400
+        rel_id, box = str(raw.get("id") or ""), raw.get("box")
+        if not (isinstance(box, list) and len(box) == 4):
+            return jsonify({"error": "box 形状不对", "code": "invalid_panels"}), 400
+        # 同一张图摆了两次、native 图：只当固定盒子参与排位（ADR 0199 §一 / §二）
+        if rel_id in seen or _specfix_profile(rel_id) == engine_enginesession.PROFILE_NATIVE:
+            fixed.append({"key": str(raw.get("key") or ""), "box": [float(v) for v in box]})
+            continue
+        try:
+            worker, stem = _engine_worker(rel_id, safe_only=True)
+        except NativeWorkerRefused:
+            fixed.append({"key": str(raw.get("key") or ""), "box": [float(v) for v in box]})
+            continue
+        seen.add(rel_id)
+        state = {
+            "id": rel_id,
+            "worker": worker,
+            "stem": stem,
+            "clean": True,
+            "base": list(raw["patches"]),
+        }
+
+        def render(patches: list, state=state) -> dict:
+            _require_route_unchanged(state["id"])
+            try:
+                wk, st, resp = _engine_attempt(
+                    state["id"],
+                    state["worker"],
+                    state["stem"],
+                    lambda w, s: w.override(s, patches, None),
+                    safe_only=True,
+                )
+            except BaseException:
+                state["clean"] = False
+                raise
+            state["worker"], state["stem"] = wk, st
+            if resp.get("warnings"):
+                state["clean"] = False
+            return resp
+
+        states.append(state)
+        panels.append(
+            engine_quicklayout.Panel(
+                key=str(raw.get("key") or ""),
+                rel_id=rel_id,
+                base=list(raw["patches"]),
+                box=[float(v) for v in box],
+                render=render,
+            )
+        )
+
+    def rollback() -> bool:
+        retired = False
+        for st in states:
+            if st["clean"]:
+                try:
+                    st_render = next(p.render for p in panels if p.rel_id == st["id"])
+                    st_render(st["base"])
+                except BaseException:  # noqa: BLE001 — 回不到 B0 就作废
+                    st["clean"] = False
+            if not st["clean"]:
+                retired = _retire_hot_worker(st["worker"]) or retired
+        return retired
+
+    ql_ctx = _request_ctx()  # 并行渲染线程没有 request context，要钉在发起请求的项目上
+    try:
+        out = engine_quicklayout.plan(
+            panels,
+            fixed,
+            page=page,
+            target=str(body.get("target") or "double"),
+            gap_mm=gap_mm,
+            profile=profile,
+            label_pt=label_pt,
+            fix_spec=body.get("fix_spec") is not False,
+            columns=int(body["columns"])
+            if isinstance(body.get("columns"), int) and not isinstance(body.get("columns"), bool)
+            else None,
+            canvas=str(body.get("canvas") or "fit"),
+            ratios=body.get("ratios") if isinstance(body.get("ratios"), dict) else None,
+            bind=(lambda: bound_project(ql_ctx)) if ql_ctx is not None else None,
+        )
+        for st in states:
+            _require_route_unchanged(st["id"])
+    except engine_quicklayout.QuickLayoutError as exc:
+        LOG.info("一键排版没有排好: %s", exc)
+        retired = rollback()
+        return jsonify({"ok": False, "code": exc.code, "replay_required": retired})
+    except (_SpecfixRouteChanged, NativeWorkerRefused, engine_pool.WorkerError) as exc:
+        LOG.warning("一键排版途中渲染失败: %s", exc)
+        retired = rollback()
+        return jsonify({"ok": False, "code": "render_failed", "replay_required": retired})
+    except BaseException:
+        rollback()
+        raise
+    retired = False
+    for st in states:
+        if not st["clean"]:
+            retired = _retire_hot_worker(st["worker"]) or retired
+    out["replay_required"] = retired
     return jsonify(out)
 
 
@@ -11149,6 +11324,59 @@ def api_ai_capabilities():
 _IS_WINDOWS = os.name == "nt"
 
 
+def _fix_memory_entries() -> list[dict]:
+    """诊断包用：本机记住的做法（读不了就空，不拖垮打包）。"""
+    try:
+        from .engine import fixmemory
+
+        return fixmemory.entries()
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _fix_memory_body():
+    from .engine import fixmemory
+
+    resp = jsonify({"enabled": fixmemory.enabled(), "entries": fixmemory.entries()})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/ai/fix-memory")
+def api_ai_fix_memory():
+    """设置 → 改图助手 →「记住修好的做法」：本机记下的修法（ADR 0197 第 3 层·在线）。只读本机文件，不出网。"""
+    return _fix_memory_body()
+
+
+@app.put("/api/ai/fix-memory")
+def api_ai_fix_memory_toggle():
+    from .engine import fixmemory
+
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("enabled"), bool):
+        abort(400)
+    fixmemory.set_enabled(body["enabled"])
+    return _fix_memory_body()
+
+
+@app.delete("/api/ai/fix-memory")
+def api_ai_fix_memory_clear():
+    from .engine import fixmemory
+
+    fixmemory.clear()
+    return _fix_memory_body()
+
+
+@app.delete("/api/ai/fix-memory/<entry_id>")
+def api_ai_fix_memory_delete(entry_id: str):
+    from .engine import fixmemory
+
+    if not re.fullmatch(r"[0-9a-f]{12}", entry_id or ""):
+        abort(400)
+    fixmemory.delete(entry_id)
+    return _fix_memory_body()
+
+
 @app.put("/api/ai/convert-unsandboxed")
 def api_ai_convert_unsandboxed():
     """Windows 设置里的开关「转换时允许 AI 不受沙盒限制」（默认关）。非 Windows 不接受：该设置在那里永远不生效，也不该被写出来。"""
@@ -12515,6 +12743,8 @@ def _preparation_runner(pl, before_retry=None):
         acquired.append(worker)
         engine_preparation.SERVICE.note_owner(pl.plan_id, worker, created)
 
+    from .engine import declaredinputs as engine_declaredinputs
+
     try:
         return engine_pool.build_owned(
             pl.script,
@@ -12526,7 +12756,20 @@ def _preparation_runner(pl, before_retry=None):
             **({"run": pl.run} if getattr(pl, "run", None) is not None else {}),
             # 这份计划自己的解释器（路径 + 来源 + 环境代）：取会话只认它，不再对共享的项目记录重新决定
             **({"pinned": _plan_pin(pl)} if _plan_pin(pl) is not None else {}),
+            # 计划冻结的精确声明选择：取到会话快失败一次，build 载荷构造处同一次读里权威核对
+            # （Codex #1925 P2），检查与出门之间没有第二次读
+            **(
+                {"input_declaration_state": pl.input_declaration_state}
+                if getattr(pl, "input_declaration_state", None) is not None
+                else {}
+            ),
         )
+    except engine_declaredinputs.DeclaredInputsConflict as exc:
+        # 载荷构造处的核对（Codex #1925 P2）：计划冻结的选择已不是存储此刻的选择——
+        # 与 native 分支同一折算，计划冲突，刷新救得回来
+        raise engine_pool.WorkerError(
+            "输入声明已变化，请刷新准备计划", code="preparation_plan_stale"
+        ) from exc
     finally:
         for worker in acquired:
             fact = _svg_execution_result(worker)
@@ -12546,6 +12789,8 @@ def _native_preparation_runner(pl, before_retry=None):
     `input()` 由界面经 `/api/native/sessions/<id>/input` 作答，这里不看）→ build 一次 → 绑活图路由。
     不重试、不换环境（`before_retry` 不用）：原环境的缺包 / 激活问题是上层准备的输入，适配器不猜包。
     """
+    from .engine import declaredinputs
+
     spec = getattr(pl, "native_spec", None)
     if spec is None:
         raise engine_pool.WorkerError(
@@ -12567,8 +12812,20 @@ def _native_preparation_runner(pl, before_retry=None):
                 project_epoch=pl.project_epoch,
                 launch_order=pl.launch_order,
                 cancelled=lambda: engine_preparation.SERVICE.launch_blocked(pl.plan_id),
+                **(
+                    {
+                        "input_declaration_state": pl.input_declaration_state,
+                        "input_remap_generation": pl.input_remap_generation,
+                    }
+                    if getattr(pl, "input_declaration_state", None) is not None
+                    else {}
+                ),
             )
         )
+    except declaredinputs.DeclaredInputsConflict as exc:
+        raise engine_pool.WorkerError(
+            "输入声明已变化，请刷新准备计划", code="preparation_plan_stale"
+        ) from exc
     except engine_runcodes.RunError as exc:
         raise engine_pool.WorkerError(str(exc), code=exc.code) from exc
     engine_preparation.SERVICE.note_owner(pl.plan_id, session, True)
@@ -13083,7 +13340,7 @@ def _preparation_execution_result(ctx: "ProjectCtx", sess) -> dict:
         return {}
 
 
-def _session_report(ctx: "ProjectCtx", sess) -> dict:
+def _session_report(ctx: "ProjectCtx", sess, *, include_input_declaration: bool = False) -> dict:
     waiting = _session_runtime_input(ctx, sess)
     # Keep the report and its run-scoped evidence on the same explicit run.
     with sess.lock:
@@ -13093,6 +13350,7 @@ def _session_report(ctx: "ProjectCtx", sess) -> dict:
             runtime_input=waiting,
             # 「允许并运行」的一次性 token 只交给页面 cookie 认证的读者（本机凭据头 / MCP / 无请求上下文一律拿不到）
             expose_confirm=has_request_context() and _page_authenticated(),
+            **({"include_input_declaration": True} if include_input_declaration else {}),
         )
         payload.update(_preparation_execution_result(ctx, sess))
         return payload
@@ -13314,7 +13572,17 @@ def api_engine_preparation_session_state(session_id: str):
         sess = engine_prepsession.SESSIONS.session(session_id, ctx.id)
     except engine_prepsession.SessionError as exc:
         return _session_error(exc)
-    resp = jsonify(_session_report(ctx, sess))
+    resp = jsonify(
+        _session_report(
+            ctx,
+            sess,
+            **(
+                {"include_input_declaration": True}
+                if request.args.get("include_input_declaration") == "1"
+                else {}
+            ),
+        )
+    )
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

@@ -55,7 +55,7 @@ PRODUCTION_ENDPOINT = "https://license.tavotto.cn"
 PRODUCTION_LIVE = False
 
 #: 功能键闭集（ADR 0193 §一）；加键要同步改 ADR §一。
-FEATURES: frozenset[str] = frozenset({"hosted-ai", "review-plus"})
+FEATURES: frozenset[str] = frozenset({"hosted-ai", "review-plus", "quick-layout"})
 #: 令牌公钥表 `kid -> 32 字节公钥`。正式签名密钥还没有（维护者本人生成后随发版加入；旧 kid 保留到它签出的令牌全部过期）。
 PUBLIC_KEYS: dict[str, bytes] = {}
 

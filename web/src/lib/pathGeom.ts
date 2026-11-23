@@ -415,6 +415,25 @@ type PathGeomInput = Pick<
   'subpaths' | 'fillRule' | 'stroke' | 'headStart' | 'headEnd' | 'headSizeStart' | 'headSizeEnd'
 >
 
+/**
+ * 路径实际生效的描边对齐（ADR 0185 M2）：设了内侧 / 外侧、有描边、而且每条画得出的子路径都闭合，才生效；否则 null（居中）。
+ * 后端 `geometry.path_stroke_align` 同一条判据。
+ */
+export function pathStrokeAlign(
+  o: Pick<PathObject, 'subpaths' | 'fillRule' | 'stroke' | 'headStart' | 'headEnd' | 'strokeAlign'>,
+): 'inside' | 'outside' | null {
+  if (o.strokeAlign !== 'inside' && o.strokeAlign !== 'outside') return null
+  const r = readPath(o)
+  if (!r.strokeOn) return null
+  const drawn = r.subpaths.filter((sp) => sp.nodes.length >= 2)
+  return drawn.length > 0 && drawn.every((sp) => sp.closed) ? o.strokeAlign : null
+}
+
+/** 外侧对齐的裁剪区：框四周各放出 `pad` 的大矩形 + 路径本身，按奇偶规则 = 路径外面那一圈（前后端同一个 pad 规则） */
+export function outsideClipPad(w: number, h: number, sw: number): number {
+  return Math.max(w, h) + 4 * sw
+}
+
 /** 路径在框空间（原点框左上、y 向下）里的几何。`w` / `h` / `sw` 同单位。与后端 `geometry.path_segments` 同源 */
 export function pathGeometry(o: PathGeomInput, w: number, h: number, sw: number): PathGeometry {
   const r = readPath(o)

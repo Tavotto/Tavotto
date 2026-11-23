@@ -685,7 +685,7 @@ def test_failure_codes_are_the_adr_closed_set():
     }  # fmt: skip
     assert set(lic.HTTP_STATUS) == set(lic.FAILURES)
     assert lic.OPS == {"activate", "refresh", "release", "renew", "ai_task"}
-    assert lic.FEATURES == {"hosted-ai", "review-plus"}
+    assert lic.FEATURES == {"hosted-ai", "review-plus", "quick-layout"}  # quick-layout：ADR 0199
 
 
 def test_background_refresh_thread_is_a_noop_when_disabled(monkeypatch):

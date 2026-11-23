@@ -1,6 +1,7 @@
 import type { PathNode, PathObject, PathSubpath } from '@/types/document'
 import { objectRotation, readPath } from '@/types/document'
 import { fitPathBox, rotateAbout } from './pathGeom'
+import { remapGradients } from './gradient'
 
 /**
  * 自由路径的锚点编辑（ADR 0185 §五 M1）——**纯函数、无界面、无 store**：画布的直接选择、右键菜单、命令面板、
@@ -80,7 +81,9 @@ export function pathFromMm(base: PathObject, subs: readonly MmSubpath[]): PathOb
   if (!kept.length) return null
   const box = fitPathBox(toPathSubpaths(kept), objectRotation(base), [base.x + base.w / 2, base.y + base.h / 2])
   if (!box) return null
-  return { ...base, x: box.x, y: box.y, w: box.w, h: box.h, subpaths: box.subpaths }
+  const next = { ...base, x: box.x, y: box.y, w: box.w, h: box.h, subpaths: box.subpaths }
+  // 渐变的比例坐标跟着新框换算（ADR 0186）：编辑锚点不让渐变在页面上挪动
+  return remapGradients(next, base, next, objectRotation(base))
 }
 
 const clone = (subs: readonly MmSubpath[]): MmSubpath[] =>

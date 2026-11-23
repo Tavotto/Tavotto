@@ -212,7 +212,7 @@ order: 240
   **当前图**与问题面板同一个判据（`useCurrentFigure`）；面板**不判规范、也不显示问题**（用户 2026-09-26：
   行尾的等级记号去掉，字号被阻断这类情况样式页不提示，问题只在左侧图标栏带计数角标的「问题」面板里看）。数字是**页面上
   的 pt**（× `panelScale`，写入 ÷ 回去，与样式应用同一个换算）；图内元素经 `useTextStyleAdapter`、画布标注经
-  `useCanvasTypography` 写（Inspector 同一条路，一次改动一次 commit）；多个值是「多个值」不压扁。滚动区最后一节是可折叠的
+  `useCanvasTypography` 写（Inspector 同一条路，一次改动一次 commit）；多个值是「多个值」不压扁。**2026-11-20 起顶上一个「画布 | 单图」开关（ADR 0081 §十四，维护者二次拍板）**：开关复用 `ui/Segmented`，**粘性**（`components/left/styleScope.ts`，只由用户点改、不随画布选中翻；从没选过时按面板打开那一刻有无选中图定起点，之后不再翻）。**画布**档 = `CanvasStyleLayer`（顶上唯一的「跟随样式」选择器 + 样式下拉的小样张与摘要 + 这套样式本身的值，行零件在 `styleRowParts`；改一格 = `editBoundStyle`，整张画布跟着变）。**单图**档 = 顶上一排图条（`FigureStrip`：当前画布上每张图一块、`readingOrder`、有子图序号写「a 图名」、横向滚动不换行、← → 走图、点一块 = 选中那张图）+ 选中图自己的值；**改一格永远只改这张图**，不论画布绑没绑样式：写这张图自己的 override（`useTextStyleAdapter` / 属性页手改同一条路，`releaseOwned` 注销登记，从此归用户，样式再改、重跑、对齐都不碰）；与画布样式不一样的行（`styleBinding.figureStyleDiff`）行末一颗「跟回画布」（`followCanvasStyle`：这几项换回样式的值、重新登记成样式写的，一次 commit 可撤销；没绑样式不出）。画布标注属整张画布：绑着样式时在画布档改，没绑才在单图档直接改。底部画布级动作 `StyleCanvasActions` 两档共用。样式写入（改样式 / 库更新跟上）不覆盖用户手改的 override（`changesFor(…, keepUserOwned)`）；绑定 / 恢复原样是整张重排，不在此列。下一句里「滚动区最后一节的可折叠节」是此前的形态，选择器已搬到画布档顶部、折叠节已删，其余语义（先存库、对齐、恢复、不跟随）照旧。滚动区最后一节是可折叠的
   **画布跟随样式**（2026-10-07 设计审计 §10.3：此前是钉在底部的约 150px 页脚；节头收起时仍说此刻跟着哪一套 / 有几处不一致，
   开合按本机记）（ADR 0081，唯一编排 `store/styleBinding.ts`；在途计数与欠账唯一持有者是叶子 `store/styleWork.ts`，原图准入直接读同一份）：选一套 = 绑定并立刻对齐整张画布（一次 commit）；已绑定时各格
   的改动改的是**这套样式本身**（先存库、存成功再一次 commit 对齐改了的那一项，内置样式先复制一份再改绑）；「不跟随
@@ -342,6 +342,8 @@ order: 240
   `envStore.setWorkdirMode(mode, {confirmed:true})`（与原对话框同一次 PATCH），会话随 `envStore` 订阅只读地 `recheck`，**不运行**；
   按钮说「用项目根目录」之类，不说「运行」（原对话框同改为「用这个目录」）。缺数据仍交 `envStore.requestMissingInput`；
   确认模式下的环境候选用 `envStore.adoptCandidate`。作答后**绝不认领 `run`**。
+- **随图输入选择也沿原卡**：`InputDeclarationControls` 放在准备卡折叠详情，仅显式展开时读取冻结声明 scope、整库 CAS 和已批准输入位置。参数草稿变化先用原检查流程得到新 scope，前端不算 rc_ID/cwd。picker/精确路径经后端核项目相对 ID，外部 file/prefix 只勾选原批准规则，不为临时选择调用立即生效的 addInputRemap。草稿不写文档/历史；取消零设置写，保存只沿原 recheck，不创建运行意图。409/503、同 scope 重查保留本地增删，异 scope 保稿但失去保存资格；项目代际、会话/配置及请求序号挡迟到。封存摘要只读后端实际 capture，草稿变化或保存后不能沿用旧摘要表示新选择已执行。看护 `InputDeclarationControls.test.tsx`、`api.inputDeclarations.test.ts` 及原 `PreparationCard.test.tsx`。
+  原脚本菜单的输入入口用 `open(..., {run:false})`，已确认运行目录、无准备条目的项目也能先设置输入。原“继续”改参数会暂时令 report=null，卡体以局部 checkpoint 保临时输入草稿，不保旧 report 作新事实；恢复后旧 scope 保稿且禁写，显式重读后才可采用新范围。取消/明确折叠清 checkpoint，项目代际失效不恢复。显示封存摘要还须同次声明行的非空 selection_revision 与冻结 context 相等，且 context 的已知 input_remap_generation 与实际读取批准表的 generation 相等；仅草稿等于当前行不足以证明当前选择及目标执行过。看护 `ScriptLibrary.inputDeclarations.test.tsx` 及原卡的 report=null 集成路径。
 - **自动进入编辑 + 只开一个标签页**（V2 PR4）：认领过「打开并运行」的条目带 `armed` 记号（只是这个窗口里的用户意图记号，不是后端事实）；会话
   `completed` 且恰好捕获一张图时由 `store/prepEnterEdit.enterEdit` 自动进入编辑（与卡片上「进入编辑」是同一份实现）；**只在用户正看着这张卡时**（聚焦且展开）——
   放到后台（角标）/ 收起 / 切去看别的卡之后他可能正在编辑别的图，不抢工作区，角标上仍有「进入编辑」；多张图要用户挑、这次替换掉了旧图名（`unlinked_stems`，恢复提示要看见）、

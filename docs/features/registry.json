@@ -1598,6 +1598,74 @@
           "title": "钢笔与锚点编辑 › P 钢笔点三个点再点回起点：画出一条闭合路径；Enter 进锚点编辑、拖一个锚点，形状真的变了"
         }
       ]
+    },
+    {
+      "id": "canvas.pathfinder",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "选中重叠的形状 / 路径，在属性栏「路径查找器」里做联集、减去顶层、交集、排除等，结果是一个路径",
+        "en-US": "With overlapping shapes or paths selected, Pathfinder in the inspector does unite, minus front, intersect, exclude and more, producing a path"
+      },
+      "entry": "画布 → 选中多个对象 → 右栏「路径查找器」",
+      "e2e": [
+        {
+          "spec": "vector-pathfinder.spec.ts",
+          "title": "路径查找器 › 选两个重叠矩形点「联集」：合成一个 path、框是两者合起来的范围；一次撤销回到两个矩形"
+        }
+      ]
+    },
+    {
+      "id": "canvas.gradient-fill",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "形状 / 路径的填充（与描边）可设为线性或径向渐变，画布与导出都按渐变画",
+        "en-US": "Fill (and stroke) of shapes and paths can be linear or radial gradients, drawn as gradients on the canvas and in exports"
+      },
+      "entry": "画布 → 选中矩形 → 右栏「外观」→ 填充类型",
+      "e2e": [
+        {
+          "spec": "vector-gradient.spec.ts",
+          "title": "渐变填充 › 矩形填充改成线性渐变：画布上填充引用渐变、色标不止一种颜色；导出 SVG 里是 linearGradient"
+        }
+      ]
+    },
+    {
+      "id": "canvas.nested-groups-clip",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "嵌套组与组内编辑（双击进组、Esc 退出），以及剪切蒙版（⌘7 建立、⌥⌘7 释放）",
+        "en-US": "Nested groups with in-group editing (double-click to enter, Esc to leave) and clipping masks (⌘7 to make, ⌥⌘7 to release)"
+      },
+      "entry": "画布 → 选中多个对象 → ⌘G；⌘7",
+      "e2e": [
+        {
+          "spec": "vector-groups.spec.ts",
+          "title": "嵌套组与剪切蒙版 › 两层嵌套组：点成员选中整组；双击一层层进组（组外淡出）、Esc 一层层退出"
+        },
+        {
+          "spec": "vector-groups.spec.ts",
+          "title": "嵌套组与剪切蒙版 › 剪切蒙版：⌘7 后大矩形只在蒙版范围内点得中（画面按蒙版裁）；⌥⌘7 释放后恢复"
+        }
+      ]
+    },
+    {
+      "id": "ai.fix-memory",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "记住修好的做法：AI 修复真修好后把这次的改动记在本机，别的项目遇到同类失败时作参考；设置里能看、逐条删、全部删除（先确认）、关掉",
+        "en-US": "Remember what fixed it: after AI repair really fixes a script, the change is kept on this computer as a reference for the same kind of failure elsewhere; Settings lists each one, deletes one or all (with confirmation) and turns it off"
+      },
+      "entry": "设置 → 改图助手 →「记住修好的做法」",
+      "e2e": [
+        {
+          "spec": "fix-memory.spec.ts",
+          "title": "记住修好的做法：设置里能看到每一条、逐条删、全部删除先确认、关掉开关后重新打开仍是关"
+        }
+      ]
     }
   ]
 }

@@ -16,8 +16,26 @@ export interface ObjectBase {
   locked?: boolean
   hidden?: boolean
   name?: string
-  /** 轻量成组：同 groupId 的对象一起选中、一起移动。不做嵌套组。 */
+  /**
+   * 成组：同 groupId 的对象一起选中、一起移动。嵌套组（ADR 0191）里它是对象所在的**最内层**组——
+   * 只认 groupId 的旧构建照样把最内层组当一层组用，对象一个不丢。
+   */
   groupId?: string
+  /**
+   * 嵌套组的完整链（ADR 0191）：外 → 内，末项必须等于 `groupId`。只有两层及以上才写；对不上（旧构建改过
+   * groupId）就按只有 `[groupId]` 一层读——判据唯一出处 `lib/groupTree.groupPathOf`。
+   */
+  groupPath?: string[]
+  /**
+   * 剪切蒙版（ADR 0191）：这个对象是它最内层组的剪切路径（只认闭合形状与路径，判据在 `lib/groupTree`）。
+   * 做蒙版时同时写 `hidden: true`：旧构建不画它、也不裁剪，内容照样都在。
+   */
+  clipMask?: true
+  /**
+   * 剪切路径本身被隐藏（ADR 0191）：在图层树上对蒙版点「隐藏」= 暂时不裁（Illustrator 同一做法），组里的内容全部露出来；
+   * 蒙版仍是 `hidden: true`（旧构建照旧）。只对 `clipMask` 的对象有意义。
+   */
+  clipOff?: true
   /**
    * 布局组成员的「固定当前位置」：重排时跳过该对象。
    * 只对 layoutGroups 里登记的组生效，普通成组不受影响。
@@ -413,12 +431,31 @@ export interface ShapeObject extends ObjectBase {
   miterLimit?: number
   /** 自定义虚线：线段 / 间隙交替的长度（pt，绝对值）；有它就不看 `dash`。缺省 / 空 = 不用 */
   dashPattern?: number[]
+  /** 填充渐变（ADR 0186）：有它且有填充时覆盖 `fill`；`fill` 仍留着做旧版本的降级色。读取只走 `lib/gradient.readGradient` */
+  fillGradient?: Gradient
+  /** 描边渐变（ADR 0186）：有它且有描边时覆盖 `color`（端型仍用 `color`） */
+  strokeGradient?: Gradient
   /**
    * 描边对齐（只对封闭形状）：缺省 = 内侧（描边整个在框里、外沿贴框，加属性之前就是这样）；
    * `center` = 骑在轮廓上（框边就是线的中线）；`outside` = 整个在框外。等于缺省不写
    */
   strokeAlign?: 'center' | 'outside'
 }
+
+/** 渐变的一个色标（ADR 0186）：位置 0–1、颜色 #rrggbb、不透明度缺省 1 */
+export interface GradientStop {
+  offset: number
+  color: string
+  opacity?: number
+}
+
+/**
+ * 渐变（ADR 0186）：坐标是对象包围盒的比例（与路径锚点同一套），随缩放一起走。线性 = 起点 → 终点；
+ * 径向 = 同心圆，半径按包围盒长边的比例。只做 pad（两端外面延续首尾色）。
+ */
+export type Gradient =
+  | { kind: 'linear'; stops: GradientStop[]; from: [number, number]; to: [number, number] }
+  | { kind: 'radial'; stops: GradientStop[]; center: [number, number]; radius: number }
 
 /** 路径上的一个点：包围盒比例坐标 [rx, ry]（与 `EndPoint` 同一套，可以落在 [0,1] 之外） */
 export type PathPoint = [number, number]
@@ -461,6 +498,15 @@ export interface PathObject extends ObjectBase {
   miterLimit?: number
   /** 自定义虚线：线段 / 间隙交替的长度（pt，绝对值）；有它就不看 `dash`。缺省 / 空 = 不用 */
   dashPattern?: number[]
+  /** 填充渐变（ADR 0186）：有它且有填充时覆盖 `fill`；`fill` 仍留着做旧版本的降级色。读取只走 `lib/gradient.readGradient` */
+  fillGradient?: Gradient
+  /** 描边渐变（ADR 0186）：有它且有描边时覆盖 `color`（端型仍用 `color`） */
+  strokeGradient?: Gradient
+  /**
+   * 描边对齐（ADR 0185 M2）：缺省居中（不写字段，与 Illustrator 的路径相同——注意形状的缺省是内侧）。只在**全部子路径
+   * 闭合**且有描边时生效（`pathGeom.pathStrokeAlign`）：内侧 = 两倍线宽的描边裁到填充区域里，外侧 = 裁到填充区域外
+   */
+  strokeAlign?: 'inside' | 'outside'
   headStart?: ArrowHeadType
   headEnd?: ArrowHeadType
   headSizeStart?: HeadSize
@@ -602,6 +648,34 @@ export interface PageSetup {
   transparent?: boolean
   /** 安全区域页边距（mm） */
   margin?: number
+  /**
+   * 用户自己定过这张画布的大小（属性栏宽高 / 预设 / 横竖 / 拖页面边）。可选，磁盘格式不升版；
+   * 一键排版「画布：自动」据此选「保持画布大小」。一键排版自己写页面尺寸时**不**置它。
+   */
+  userSized?: boolean
+}
+
+/**
+ * 一键排版留在画布上的「网格记忆」（ADR 0199，拖分隔线调比例用）。可选字段，旧文档没有；
+ * 只在每张 `cells` 里的图都还在、且位置与大小仍等于 `boxes`（0.05 mm 内）时才算有效——
+ * 用户挪过 / 缩过 / 删过任何一张就静默失效（`lib/quickLayoutGrid.quickLayoutValid`）。
+ */
+export interface QuickLayoutMemo {
+  rows: number
+  cols: number
+  /** 画布对象 id → [行, 列] */
+  cells: Record<string, [number, number]>
+  colRatios: number[]
+  rowRatios: number[]
+  /** 排完那一刻各图在页面上的框（mm，[x, y, w, h]） */
+  boxes: Record<string, [number, number, number, number]>
+  target: 'single' | 'double' | 'page'
+  gapMm: number
+  /** 那一次用的画布模式（已解析：保持 / 跟着内容） */
+  canvas: 'keep' | 'fit'
+  fixSpec: boolean
+  /** 那一次作为固定盒子（障碍物）参与的图 id（拖分隔线重排时照样带上） */
+  fixedIds?: string[]
 }
 
 /**
@@ -701,6 +775,8 @@ export interface FigureDocument {
   framePad?: FramePad
   /** 单图画布处在「紧凑」停靠点上的那几边（ADR 0161）：图幅变了按新的内容边缘重算，不保留旧 mm */
   framePadTight?: FramePadSide[]
+  /** 一键排版的网格记忆（见 `QuickLayoutMemo`）；缺省 = 没排过或已清掉 */
+  quickLayout?: QuickLayoutMemo
 }
 
 /**
@@ -738,6 +814,7 @@ export interface CanvasData {
   /** 单图编辑的画布留白（ADR 0161）；缺省 = 全 0 */
   framePad?: FramePad
   framePadTight?: FramePadSide[]
+  quickLayout?: QuickLayoutMemo
 }
 
 /**
@@ -771,6 +848,7 @@ export function canvasToDoc(c: CanvasData): FigureDocument {
     ...(c.style ? { style: c.style } : {}),
     ...(c.framePad ? { framePad: c.framePad } : {}),
     ...(c.framePadTight?.length ? { framePadTight: c.framePadTight } : {}),
+    ...(c.quickLayout ? { quickLayout: c.quickLayout } : {}),
   }
 }
 
@@ -786,6 +864,7 @@ export function docToCanvas(doc: FigureDocument, id: string): CanvasData {
     ...(doc.style ? { style: doc.style } : {}),
     ...(doc.framePad ? { framePad: doc.framePad } : {}),
     ...(doc.framePadTight?.length ? { framePadTight: doc.framePadTight } : {}),
+    ...(doc.quickLayout ? { quickLayout: doc.quickLayout } : {}),
   }
 }
 

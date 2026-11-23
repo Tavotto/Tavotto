@@ -26,7 +26,7 @@ order: 320
   落到 `ai_fix`。写路由时核修复工具集里有没有能改这件事的工具、AI 看不看得到关键事实；没有就补确定性的按钮或工具，
   或给 `feedback`。为什么：八个 PR 都是用户反馈里 AI 绕几轮没结果：读不了的依赖夹换两代环境也没用（#1507），
   外来 ABI 的文件夹去要别的 Python（#1564），改不了登记的入口（#1565），看不到内置环境（#1572），解释器被系统拒写
-  仍给 AI 入口（#1595），设不了 argv（#1605），看不到刚才的 AI 修改（#1608），图名冲突根本不在脚本里（#1642）。
+  仍给 AI 入口（#1595），设不了 argv（#1605），看不到刚才的 AI 修改（#1608），图名冲突根本不在脚本里（#1642）。看护：只靠人记。
 - **给一类结局配出口前，按脚本表达同一意图的常见写法逐个核用户最后落到哪（错题本 L-154 升级，2026-11-11）。**
   分类按机制划线（哪种调用、哪个画图库、有没有 argparse、出没出图）时，用例只证明「分对了」，不证明用户走得通。
   改结局、路由或成功判据前，先列同一意图的常见写法——先 `exists` 再自己 raise、按 `__file__` 拼路径、glob 整个
@@ -38,7 +38,7 @@ order: 320
   脚本解析后自己 `parser.error` 报找不到数据，被认成「需要参数」引去填参数（#1899）；stat / getsize / listdir 落空
   直接到终局的写法认领不到，能救回却到不了指认（#1909）——用例都只覆盖了其中一种写法。2026-11-16 一份用户反馈：只定义了画图函数的
   库模块被直接打开运行，跑完笼统说「没出图」并推荐 AI 修复——用例只放会画图的脚本，没有一条把「本来就不是入口的文件」放进打开并运行；
-  修复初版又在运行意图被授权边界撤销后让库模块卡盖住安装确认卡，评审报 P1（#1940）。
+  修复初版又在运行意图被授权边界撤销后让库模块卡盖住安装确认卡，评审报 P1（#1940）。看护：只靠人记。
 - **只定义了画图函数的库模块是不阻塞的提示，不是拦截（ADR 0188，TVD-Y5JF）**：`libmodule.is_library` 与产品挑入口共用
   `discover.entry_candidates_of` / `_toplevel_reaches_plot`，判不出就不说；`requirements_of` 多一条 `library_module`（`blocking: false`），
   phase / `derive` / 动作都不动，没出图的终局 `remedy` 为空。反查往项目外只读源码，以仓库标记为界、不到主目录与盘符根，只经
@@ -101,7 +101,30 @@ order: 320
   `grant` 比一次，不一致就 `preparation_plan_stale`，一行脚本不跑。缺包后自动接手换了解释器（ADR 0107：
   用户自己的 Python 默认在脚本目录跑）时，`pool.build_owned(before_retry=…)` 在**第二次执行之前**把授权 / 解释器 /
   数据绑定按同一份 `_stale_reason` 再比一次，不一致同样作废（`executed=True`：第一次按计划跑过），不在计划没写过的
-  解释器或 cwd 里重跑。
+  解释器或 cwd 里重跑。声明选择同在分派边界核对：带 `input_declaration_state` 的 `build_owned` 在每次取到会话时
+  先快失败一次（`_require_current_declaration` → `declaredinputs.current_selection`，与计划侧同一降级口径），把冻结
+  选择随请求下传到 build 载荷的构造处——`payload_for(expected_selection=…)` 在**同一次存储读**里核对并拼装，检查
+  与出门之间没有第二次读，选择变了抛 `DeclaredInputsConflict`、准备边界折算成 `preparation_plan_stale`
+  （`executed=False`），绝不把没批过的选择送进 build（Codex #1925 P2）——脚本不按计划没见过的选择执行，才轮到
+  执行后的核对兜底。就地吸收换过计划的换目录 / 换解释器重跑（ADR 0047 / 0107）由 `before_retry` 交回**重冻结**
+  的声明选择，重跑腿的核对与 build 载荷吃它——分派与回执挂的计划一致；两侧都观察到缺席的采纳重跑照常进行，
+  不再被旧计划的沙盒档 scope 拒成 stale（Codex #1925 P2-b；钉住行的重冻结与原份逐字相同，行修订哈希含 scope）。
+  看护 `test_dispatch_refuses_a_changed_selection_before_the_build_leaves`、
+  `test_payload_construction_carries_the_checked_selection`、
+  `test_adopt_retry_dispatches_the_refrozen_expectation`、
+  `test_before_retry_hands_the_refrozen_absence_selection_to_the_retry`。
+- **捕获回执带出处章（Codex #1925 P1）**：捕获的 fact 记下它 candidate 被批准时的声明行修订
+  （`selection_revision`），回执以私有 `captured_selection_revision` 携带同一出处。准备报告只在章与冻结选择的
+  修订相等时把这份封存摘要展示为当前选择的结果；缓存回放 / 复用的旧执行捕获（出处对不上）照旧留在回执里作历史，
+  只是不再冒名新选择。轮询只比字段，不读存储、不解析图。看护
+  `test_reused_archive_from_another_selection_never_certifies_the_new_choice`。
+- **不可移植脚本名只禁声明（Codex #1925 P1）**：本机文件系统收得下、但落不进可移植声明身份的脚本名
+  （macOS 冒号、Windows 尾随空格 / 点等）与读不了的声明存储，一律由 `declaredinputs.scope_selection_degraded`
+  降级成「观察到没有声明」——准备照常、声明控件不可用，绝不拦下计划或运行。整条链同一降级：分派边界的现读
+  （`current_selection`）对同一类名字观察到同样的缺席，build 照发；`figcapture.normalize_relative_script` 的盘符
+  判据只拒**盘根形**（`X:` / `X:/…`），`a:b.py` 这类 POSIX 相对文件名不在此列（Codex #1925 P1 二轮）。看护
+  `test_unportable_script_names_observe_absence_instead_of_failing`、
+  `test_dispatch_degrades_unportable_names_instead_of_crashing`。
 - **自报只收这一条会话的（U09，ADR 0070）**：worker 的 `runtime_report()` 带 `report_origin=build` 与 `pid`；
   `receipt.from_worker` 核 origin，并把 pid 与控制面自己起的那个子进程对（`EngineWorker.child_pid` /
   `WorkerdWorker.child_pid` / `NativeSession.child_pid`）。体检 / 探针 / 手拼的字典**一律拒收**：`runtime=None`、

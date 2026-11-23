@@ -300,6 +300,12 @@ describe('转为路径：画面逐点不动（双向 Hausdorff < 0.01 mm）', ()
     expect(arrowHeads(arrow({ head: 'both' }))).toEqual({ start: 'triangle', end: 'triangle' })
   })
 
+  it('剪切蒙版暂时关掉（clipOff）：转成路径后仍是关着的（Codex 线程 4614452868）', () => {
+    const p = toPathObject(shape('rect', { groupId: 'g1', clipMask: true, clipOff: true, hidden: true }))!
+    expect(p).toMatchObject({ clipMask: true, clipOff: true, hidden: true })
+    expect('clipOff' in toPathObject(shape('rect', { groupId: 'g1', clipMask: true }))!).toBe(false)
+  })
+
   it('文字 / 面板 / 已经是路径的不能转', () => {
     const t = { id: 't', type: 'text' } as TextObject
     expect(canConvertToPath(t)).toBe(false)

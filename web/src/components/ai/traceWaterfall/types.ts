@@ -23,8 +23,6 @@ export interface WaterfallFact {
 
 export interface WaterfallSpan {
   id: string
-  /** 费用的币种（`cost` 不为 null 时）：价格表估算是 USD，内置 AI 网关结算是 CNY；不知道 = null */
-  costCurrency?: string | null
   parentId?: string
   kind: WaterfallKind
   /** 已翻译的阶段名 */
@@ -40,8 +38,10 @@ export interface WaterfallSpan {
   /** attempt > 1：重试 / 修正轮 */
   retry: boolean
   icon: WaterfallIcon
-  /** 美元估算；null = 不知道 */
+  /** 估算费用（币种见 `costCurrency`，不换算）；null = 不知道 */
   cost: number | null
+  /** USD / CNY；没写按 USD */
+  costCurrency?: string | null
   tokensIn: number | null
   tokensOut: number | null
   /** 这是整条 Trace 的第一次失败（根因候选，不是「最慢」） */

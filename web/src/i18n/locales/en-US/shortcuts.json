@@ -53,7 +53,9 @@
     "anchors": "While editing anchors: add / delete / convert",
     "pathJoin": "Join paths / average anchor points",
     "appearance": "Default fill and stroke / swap fill and stroke / no fill",
-    "eyedropper": "Eyedropper"
+    "eyedropper": "Eyedropper",
+    "compoundPath": "Make / release compound path",
+    "shapeBuilder": "Shape builder"
   },
   "or": "or",
   "title": "Keyboard shortcuts",

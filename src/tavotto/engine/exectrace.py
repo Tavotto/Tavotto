@@ -160,7 +160,7 @@ _VOCABULARIES: dict[str, set[str]] = {
     "outcome": set(),
     "usage_source": {"reported", "estimated"},
     "pricing_version": set(),
-    "currency": {"USD", "CNY"},
+    "currency": {"USD", "CNY"},  # 币种原样记，不换算；加币种要同步 ai_pricing.CURRENCIES
     "refresh": set(),
     "failure_category": {"auth", "network", "not_installed", "bad_config", "crash", "other"},
     "runner_detail": set(RUNNER_DETAILS),

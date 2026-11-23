@@ -17,11 +17,20 @@ export interface TraceNode {
   depth: number
   /** 智能体色阶下标（子孙叶子沿用所在泳道） */
   lane: number
-  /** 汇总：自己有就用自己的，智能体没有则累加子孙已知的；全不知道 = null */
+  /** 汇总：自己有就用自己的，智能体没有则累加子孙已知的；全不知道（或子孙币种不一致）= null */
   cost: number | null
-  /** 汇总费用的币种（同一条轨迹里只有一个连接在花钱，币种一致）；不知道 = null */
-  currency: string | null
+  /** `cost` 的币种（USD / CNY，不换算）；cost 为 null 时也是 null */
+  costCurrency: string | null
   tokens: number | null
+}
+
+/** 累加费用：只有币种一致才加，混了币种就不知道（不换算、不把人民币当美元加） */
+const knownCost = (xs: { cost: number | null; currency: string | null }[]) => {
+  const ks = xs.filter((x): x is { cost: number; currency: string | null } => x.cost !== null)
+  if (!ks.length) return { cost: null, currency: null }
+  const cur = ks[0].currency ?? 'USD'
+  if (ks.some((k) => (k.currency ?? 'USD') !== cur)) return { cost: null, currency: null }
+  return { cost: ks.reduce((a, k) => a + k.cost, 0), currency: cur }
 }
 
 const known = (...xs: (number | null)[]) => {
@@ -33,7 +42,7 @@ const known = (...xs: (number | null)[]) => {
 export function buildTree(spans: WaterfallSpan[]): TraceNode[] {
   const nodes = new Map<string, TraceNode>()
   for (const span of spans) {
-    nodes.set(span.id, { span, children: [], depth: 0, lane: 0, cost: null, currency: null, tokens: null })
+    nodes.set(span.id, { span, children: [], depth: 0, lane: 0, cost: null, costCurrency: null, tokens: null })
   }
   const roots: TraceNode[] = []
   for (const node of nodes.values()) {
@@ -55,8 +64,16 @@ export function buildTree(spans: WaterfallSpan[]): TraceNode[] {
     const ownTokens = known(node.span.tokensIn, node.span.tokensOut)
     const kids = node.children.filter((c) => !seen.has(c.span.id))
     for (const child of kids) resolve(child, depth + 1, agentDepth + (child.span.kind === 'agent' ? 1 : 0), seen)
-    node.cost = own ?? (isAgent ? known(...kids.map((c) => c.cost)) : null)
-    node.currency = node.span.costCurrency ?? kids.find((c) => c.cost !== null)?.currency ?? null
+    if (own !== null) {
+      node.cost = own
+      node.costCurrency = node.span.costCurrency ?? 'USD'
+    } else {
+      const sum = isAgent
+        ? knownCost(kids.map((c) => ({ cost: c.cost, currency: c.costCurrency })))
+        : { cost: null, currency: null }
+      node.cost = sum.cost
+      node.costCurrency = sum.currency
+    }
     node.tokens = ownTokens ?? (isAgent ? known(...kids.map((c) => c.tokens)) : null)
   }
   roots.sort((a, b) => a.span.start - b.span.start)
@@ -224,10 +241,11 @@ export interface TraceMetrics {
 }
 
 export function computeMetrics(roots: TraceNode[], model: WaterfallModel, now: number): TraceMetrics {
+  const costSum = knownCost(roots.map((r) => ({ cost: r.cost, currency: r.costCurrency })))
   const m: TraceMetrics = {
     extent: model.duration,
-    cost: known(...roots.map((r) => r.cost)),
-    costCurrency: roots.find((r) => r.cost !== null)?.currency ?? null,
+    cost: costSum.cost,
+    costCurrency: costSum.currency,
     tokens: known(...roots.map((r) => r.tokens)),
     llmCalls: 0,
     toolCalls: 0,
@@ -329,9 +347,12 @@ export function formatTick(seconds: number) {
     : t('trace.ui.tick.seconds', { ns: 'ai', value: formatNumber(Number(seconds.toFixed(1))) })
 }
 
-export function formatCost(cost: number, currency?: string | null) {
+const CURRENCY_SYMBOL: Record<string, string> = { USD: '$', CNY: '¥' }
+
+export function formatCost(cost: number, currency: string | null = 'USD') {
   const digits = cost > 0 && cost < 0.01 ? 3 : 2
-  return `${currency === 'CNY' ? '¥' : '$'}${formatNumber(cost, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`
+  const code = currency ?? 'USD'
+  return `${CURRENCY_SYMBOL[code] ?? `${code} `}${formatNumber(cost, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`
 }
 
 export function formatTokens(n: number) {
@@ -348,5 +369,5 @@ export function spanFigure(node: TraceNode, now: number, replay = false): string
   // 回放中还没结束的：费用此刻不知道，只写已经过去的时长
   if (!settledAt(span, now, replay)) return text
   // 内置 AI（人民币结算）的钱只在总计里说一次，行尾不写，免得和条形 / 网格线挤在一起
-  return node.cost !== null && node.cost > 0 && node.currency !== 'CNY' ? `${text} · ${formatCost(node.cost, node.currency)}` : text
+  return node.cost !== null && node.cost > 0 && node.costCurrency !== 'CNY' ? `${text} · ${formatCost(node.cost, node.costCurrency)}` : text
 }

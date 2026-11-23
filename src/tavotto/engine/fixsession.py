@@ -84,7 +84,9 @@ programmer: talk in plain words, one short sentence at a time, no jargon.
 
 Work in this order:
 1. LOOK first. Call read_run_report, then use the read tools (read_file, list_dir, find_files, grep_files, \
-inspect_environment, list_environments, read_logs, lookup_package) until you know the cause. Do not guess.
+inspect_environment, list_environments, read_logs, lookup_package) until you know the cause. Do not guess. \
+When the report or a try_run result has a `hint`, start from it. Each try_run lists `attempts so far`: \
+never repeat an approach that left the same failure.
 2. TRY next. When you have a guess, test it cheaply with run_snippet before changing anything: a few lines of Python \
 in the project's environment, from the project folder, back in seconds (does this import work, what does argparse \
 require, what is in the data file). Experiments change nothing and never count as a fix. try_import checks an import \
@@ -447,6 +449,35 @@ _FIX_TRACE_END = {
 }
 
 
+def _remember_fix(s: FixSession) -> None:
+    """会话以「修好」收尾、且应用试运行真的验证过（`finish` 在有应用试运行时已要求这一点）：把这次做成的改动记在本机
+    （`engine/fixmemory`，ADR 0197 第 3 层·在线）。失败类型取第一次试运行之前的形状。不抛。"""
+    ctx = s.ctx
+    if (
+        s.outcome != OUTCOME_FIXED
+        or ctx is None
+        or getattr(ctx, "application_runner", None) is None
+    ):
+        return
+    attempts, made = getattr(ctx, "attempts", None), getattr(ctx, "fixes_made", None)
+    if not made or not attempts:
+        return
+    try:
+        from . import fixmemory
+
+        fixmemory.remember(
+            str(attempts[0].get("before") or ""),
+            list(made),
+            script=s.script,
+            sensitive_args=bool(getattr(ctx, "run_arguments_sensitive", False)),
+            scrub=fixtools.readscope.scrub,
+            secrets=frozenset(getattr(ctx, "fix_secrets", ()) or ()),
+            risky=bool(getattr(ctx, "fix_risky", False)),
+        )
+    except Exception:  # noqa: BLE001 - 记不下不影响修复结局
+        LOG.warning("记住修好的做法失败", exc_info=True)
+
+
 def _trace_settle(s: FixSession) -> None:
     try:
         status = _FIX_TRACE_END.get(s.outcome or "", "unknown")
@@ -539,6 +570,43 @@ class FixSessions:
         """这个项目名下（还留着的）修复会话 id：诊断包只取这些会话的审计，别的项目的记录不出项目。"""
         with self._lock:
             return {s.id for s in self._by_id.values() if s.scope == scope}
+
+    def diagnostics_for(self, scope: str) -> list[dict]:
+        """诊断包「修复经过（内容）」（ADR 0197 第 4 条）：这个项目名下还在内存里的修复会话——结局、AI 的总结、用的模型
+        （只有厂商 id 与模型名，不含地址与密钥）、试运行记录、工具返回的有界尾部（已过 `scrub`）、AI 写的启动脚本。
+        出门前诊断包再整体过一遍 `Scrubber`。不抛。"""
+        from . import launchscript
+
+        with self._lock:
+            sessions = [s for s in self._by_id.values() if s.scope == scope]
+        out: list[dict] = []
+        for s in sessions:
+            ctx = s.ctx
+            launcher = None
+            if ctx is not None and s.script:
+                try:
+                    launcher = launchscript.read(ctx.project_root, s.script)
+                except Exception:  # noqa: BLE001 - 读不到就不带
+                    launcher = None
+            out.append(
+                {
+                    "fix_id": s.id,
+                    "script": s.script,
+                    "state": s.state,
+                    "outcome": s.outcome,
+                    "reason": s.reason,
+                    "summary": s.summary,
+                    "steps": s.steps,
+                    "wire": "cli" if s.cli else "builtin",
+                    "model": (
+                        {"provider": s.endpoint[0], "model": s.endpoint[1]} if s.endpoint else None
+                    ),
+                    "attempts": list(ctx.attempts) if ctx is not None else [],
+                    "transcript": list(ctx.transcript) if ctx is not None else [],
+                    "launcher": launcher,
+                }
+            )
+        return out
 
     def active(self) -> FixSession | None:
         with self._lock:
@@ -768,6 +836,7 @@ class FixSessions:
             s.done.set()
         self._run_on_finish(s)
         _trace_settle(s)
+        _remember_fix(s)
         if s.ctx is not None:
             s.ctx.release_leases()  # change_python 持的旧代租约：会话结束才放（之后旧代才可能被清理）
         self._notify(s)

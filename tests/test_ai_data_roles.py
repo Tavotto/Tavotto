@@ -31,12 +31,12 @@ import data_figure_cases as D  # noqa: E402
 import data_figure_roles as DR  # noqa: E402
 
 from tavotto.engine import (  # noqa: E402
+    ai_agents,
     ai_connections,
     ai_data_figure as adf,
     ai_data_propose as P,
     ai_data_roles as R,
     ai_structured,
-    fixsession,
     telemetry,
 )
 from tavotto.engine.agent_runner import wires  # noqa: E402
@@ -58,6 +58,15 @@ def isolate(tmp_path, monkeypatch):
     monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("TAVOTTO_NO_TELEMETRY", "1")
     monkeypatch.setattr(P, "CANDIDATE_ROOT", tmp_path / "propose")
+    # CLI 连接的用例只注入假的「跑进程」；可执行文件的解析也要是假的，否则没装 Codex 的机器（CI）在起进程之前就得到
+    # `no_connection/not_installed`，这些用例根本测不到想测的行为
+    monkeypatch.setattr(
+        ai_agents,
+        "resolve",
+        lambda agent, probe_readiness=True: ai_agents.Resolution(
+            argv=[f"/fake/{agent.id}"], path=f"/fake/{agent.id}"
+        ),
+    )
     R.reset_for_tests()
     yield
     R.reset_for_tests()
@@ -85,19 +94,34 @@ def with_model(case, tmp_path, answer=None, wire="anthropic"):
 def test_role_cases_are_well_formed(tmp_path):
     assert 20 <= len(CASES) <= 24
     for c in CASES:
-        folder = DR.materialize(c, tmp_path / "proj")
-        entry = adf.profile_folder(tmp_path / "proj" / folder).tables[0]
-        cols = set(entry.summary.columns)
-        if c.get("header"):  # 嗅探的表头不是真表头：列名取真表头读出来的
-            tt = adf.read_text_table(
-                tmp_path / "proj" / folder / "t.csv", header_row=c["header"]["expect_header_row"]
-            )
-            cols = set(tt.summary.columns)
-        assert set(c["roles"]) == cols, c["id"]
-        assert all(r in R.ROLES for r in c["roles"].values())
-        exp = c["expect_default"]
-        assert {x for x in (exp["x"], exp["group"], *exp["y"]) if x} <= cols
-        R.validate_roles_shape(c["model_answer"])  # 录好的回答自己过形状校验
+        DR.check_case_shape(c, tmp_path)
+
+
+HOLDOUT = DR.load_role_cases(DR.HOLDOUT_CASES_FILE)
+
+
+def test_holdout_cases_are_well_formed_and_do_not_overlap_the_main_set(tmp_path):
+    assert 22 <= len(HOLDOUT) <= 26
+    for c in HOLDOUT:
+        DR.check_case_shape(c, tmp_path)
+    assert not {c["id"] for c in HOLDOUT} & {c["id"] for c in CASES}
+    tiers = [c["tier"] for c in HOLDOUT]
+    assert tiers.count("plain") == tiers.count("hard") == len(HOLDOUT) // 2
+    assert any(c.get("also_ok") for c in HOLDOUT)
+    # 留出集的表不能与主集的某张表逐字相同（换皮 / 抄题）
+    main_tables = {t for c in CASES for t in c["tables"].values()}
+    assert not any(t in main_tables for c in HOLDOUT for t in c["tables"].values())
+    assert DR.load_case_set("all") == [*DR.load_case_set("main"), *DR.load_case_set("holdout")]
+    assert {c["set"] for c in DR.load_case_set("all")} == {"main", "holdout"}
+
+
+def test_holdout_plain_tables_are_the_rules_territory_and_the_hard_ones_are_not(tmp_path):
+    runs = [run_case(c, tmp_path, conn=None) for c in HOLDOUT]
+    hits = {r.case["id"]: DR.default_hits(r.case, r.rules)["all"] for r in runs}
+    plain = [i for i, c in ((c["id"], c) for c in HOLDOUT) if c["tier"] == "plain"]
+    hard = [i for i, c in ((c["id"], c) for c in HOLDOUT) if c["tier"] == "hard"]
+    assert sum(hits[i] for i in plain) >= len(plain) - 1  # 普通表：规则几乎都对
+    assert sum(not hits[i] for i in hard) >= len(hard) * 2 // 3  # 难例：规则多半会错
 
 
 def test_the_rules_alone_get_most_of_the_new_cases_wrong_and_the_controls_right(tmp_path):
@@ -130,9 +154,18 @@ def lazy(tmp_path, case=None):
 
 
 @pytest.mark.parametrize("why", ["none", "cli_only", "builtin_off", "eager"])
-def test_no_usable_key_connection_means_no_understanding_key(tmp_path, monkeypatch, why):
+def test_no_usable_connection_means_no_understanding_key(tmp_path, monkeypatch, why):
+    """没有可用连接（没 Key、没有适配器支持的订阅登录 CLI）= 响应里没有 `understanding`。`cli_only`：有订阅登录但适配器不支持。"""
     monkeypatch.setattr(ai_connections, "first_key_connection", lambda refresh=False: None)
-    monkeypatch.setattr(fixsession, "cli_agent", lambda: "codex" if why == "cli_only" else None)
+    monkeypatch.setattr(
+        ai_structured,
+        "find_cli_connection",
+        lambda *, cached_only: (
+            (None, "unsupported_connection", "cli_only")
+            if why == "cli_only"
+            else (None, "no_connection", "none")
+        ),
+    )
     monkeypatch.setattr(
         ai_connections, "builtin_forced", lambda: False if why == "builtin_off" else None
     )
@@ -812,3 +845,674 @@ def test_a_corrupt_judgement_in_the_cache_is_a_miss():
     body["result"]["shape"] = {"columns": "x"}
     p.write_text(json.dumps(body), encoding="utf-8")
     assert R.cache_get("k") is None
+
+
+# --------------------------------------------------------------------------- 重复跑 / 完成率 / 耗时 / 门（评测支持代码）
+def test_percentile_is_nearest_rank_and_empty_is_none():
+    assert DR.percentile([], 50) is None
+    assert DR.percentile([5], 95) == 5
+    xs = list(range(1, 101))
+    assert (DR.percentile(xs, 50), DR.percentile(xs, 95), DR.percentile(xs, 100)) == (50, 95, 100)
+    assert DR.percentile([10, 1, 3], 50) == 3
+
+
+def test_fresh_runs_always_ask_the_model_again_and_never_touch_the_app_cache(tmp_path):
+    case = BY_ID["RC-01"]
+    wire = "anthropic"
+    app_cache = R.cache_dir()
+    for _ in range(3):
+        t = DR.scripted(case, wire)
+        run = DR.run_case(case, tmp_path / "proj", conn=D.fake_conn(wire), post=t, fresh=True)
+        assert run.state == "ready" and len(t.calls) == 1 and run.usage["requests"] == 1
+        assert [c.requests for c in run.calls] == [1]
+    assert not app_cache.exists() or not list(app_cache.glob("*.json"))
+    # 不 fresh：第二次命中缓存，不发请求（这正是重复跑必须绕过它的原因）
+    t1, t2 = DR.scripted(case, wire), DR.scripted(case, wire)
+    run_case(case, tmp_path, conn=D.fake_conn(wire), post=t1)
+    again = run_case(case, tmp_path, conn=D.fake_conn(wire), post=t2)
+    assert len(t1.calls) == 1 and len(t2.calls) == 0 and again.state == "ready"
+
+
+def test_a_failed_run_does_not_block_the_next_fresh_run_with_the_negative_cache(tmp_path):
+    case = BY_ID["RC-01"]
+    bad = DR.run_case(
+        case,
+        tmp_path / "proj",
+        conn=D.fake_conn("anthropic"),
+        post=D.FakeTransport([500]),
+        fresh=True,
+    )
+    assert bad.state == "failed" and not DR.completed(bad)
+    good = DR.run_case(
+        case,
+        tmp_path / "proj",
+        conn=D.fake_conn("anthropic"),
+        post=DR.scripted(case, "anthropic"),
+        fresh=True,
+    )
+    assert good.state == "ready" and DR.completed(good)
+
+
+def test_completion_needs_a_ready_job_and_all_three_defaults(tmp_path):
+    case = BY_ID["RC-01"]
+    ok = DR.run_case(
+        case,
+        tmp_path / "p",
+        conn=D.fake_conn("anthropic"),
+        post=DR.scripted(case, "anthropic"),
+        fresh=True,
+    )
+    off = DR.run_case(case, tmp_path / "p", conn=None, fresh=True)
+    assert DR.completed(ok) and not DR.completed(off) and off.state == "off"
+    noop = DR.run_case(
+        case,
+        tmp_path / "p",
+        conn=D.fake_conn("anthropic"),
+        post=DR.scripted(case, "anthropic", answer=DR.noop_answer(case)),
+        fresh=True,
+    )
+    assert noop.state == "ready" and not DR.completed(noop)  # 就绪了但没把默认改对
+    # also_ok 的另一种默认也算完成
+    assert DR.default_hits(
+        HOLDOUT_BY_ID["HO-21"], {"x": None, "y": ["activity_U"], "group": "temp_C"}
+    )["all"]
+
+
+HOLDOUT_BY_ID = {c["id"]: c for c in HOLDOUT}
+
+
+def test_breaking_a_default_the_rules_had_right_is_counted_on_any_case_set(tmp_path):
+    case = BY_ID["RC-21"]  # 身高 / 体重：规则本来对（对照用例）
+    wrong = {
+        "columns": [{"name": c, "role": r} for c, r in case["roles"].items()],
+        "picks": {"y": "height_cm", "x": "weight_kg", "group": "none"},
+    }
+    run = DR.run_case(
+        case,
+        tmp_path / "p",
+        conn=D.fake_conn("anthropic"),
+        post=DR.scripted(case, "anthropic", answer=wrong),
+        fresh=True,
+    )
+    assert DR.default_hits(case, run.rules)["all"] and not DR.default_hits(case, run.model)["all"]
+    assert DR.broke_rules(run) and not DR.completed(run)
+    plain_case = {**case, "control": False}  # 不是 control 也算
+    run2 = DR.RoleRun(plain_case, run.rules, run.model, "ready")
+    s = DR.summarize_repeats([run2])
+    assert s["rules_broken_runs"] == 1 and s["rules_broken_cases"] == ["RC-21"]
+    assert s["not_worse_than_rules_rate"] == 0.0 and DR.summarize([run2])["rules_broken"] == 1
+
+
+def test_summarize_repeats_counts_per_case_correct_runs_latency_and_cost(tmp_path):
+    case_a, case_b = BY_ID["RC-01"], BY_ID["RC-19"]
+    runs = []
+    for i, (case, answer) in enumerate(
+        [(case_a, None), (case_a, DR.noop_answer(case_a)), (case_b, None), (case_b, None)]
+    ):
+        r = DR.run_case(
+            case,
+            tmp_path / "p",
+            conn=D.fake_conn("anthropic"),
+            post=DR.scripted(case, "anthropic", answer=answer),
+            fresh=True,
+        )
+        r.calls[0] = ai_structured.StructuredResult(
+            True,
+            requests=1,
+            input_tokens=1000,
+            output_tokens=100,
+            cached_input_tokens=400,
+            elapsed_ms=100 * (i + 1),
+        )
+        r.usage = {
+            "requests": 1,
+            "input_tokens": 1000,
+            "output_tokens": 100,
+            "cost_usd": 0.01 * (i + 1),
+        }
+        runs.append(r)
+    s = DR.summarize_repeats(runs)
+    assert (s["cases"], s["runs"], s["repeats"]) == (2, 4, 2)
+    assert s["completion_rate"] == 0.75 and s["all_runs_correct_share"] == 0.5
+    assert s["per_case"]["RC-01"]["done"] == 1 and s["per_case"]["RC-19"]["done"] == 2
+    assert s["rules_broken_runs"] == 0 and s["not_worse_than_rules_rate"] == 1.0
+    assert s["latency_ms"]["per_call"] == {"n": 4, "p50": 200, "p95": 400, "max": 400}
+    assert s["cached_input_tokens"] == 1600 and s["requests_per_table"] == 1.0
+    assert s["cost_usd"] == pytest.approx(0.10) and s["cost_per_table_usd"] == pytest.approx(0.025)
+    assert s["tiers"]["main"]["cases"] == 1 and s["tiers"]["control"]["cases"] == 1
+
+
+def test_fake_modes_for_the_roles_suite_are_deterministic():
+    case = BY_ID["RC-01"]
+    assert DR.fake_answer(case, "good", 3) is case["model_answer"]
+    assert DR.fake_answer(case, "trap", 0) == DR.noop_answer(case)
+    assert [DR.fake_answer(case, "mixed", k) is case["model_answer"] for k in range(4)] == [
+        True,
+        False,
+        True,
+        False,
+    ]
+    R.validate_roles_shape(DR.noop_answer(case))
+
+
+# --------------------------------------------------------------------------- 「规则已经很确定」的门
+def gate_of(case, tmp_path, version):
+    entry, values, status = DR.gate_inputs(case, tmp_path / "g")
+    return DR.rules_unambiguous(version, entry, values, case.get("hint"), status)
+
+
+def test_gate_says_unambiguous_for_the_plain_shapes_and_ambiguous_for_traps(tmp_path):
+    clean = BY_ID["RC-19"]  # 分组 + 测量值
+    assert all(gate_of(clean, tmp_path, v) for v in DR.GATE_VERSIONS)
+    for cid in (
+        "RC-01",
+        "RC-02",
+        "RC-06",
+        "RC-22",
+        "RC-16",
+        "RC-17",
+    ):  # 批次 / 流水号 / 备注 / 编号 / 混合格 / 表头疑点
+        assert not any(gate_of(BY_ID[cid], tmp_path, v) for v in DR.GATE_VERSIONS), cid
+    hinted = {**clean, "hint": "compare groups"}  # 用户给了提示语：不跳过
+    assert not any(gate_of(hinted, tmp_path, v) for v in DR.GATE_VERSIONS)
+    # 「中」比「严」多放行：时间 + 信号（横轴列单调、测量列不单调）
+    assert gate_of(BY_ID["RC-21"], tmp_path, "medium") and not gate_of(
+        BY_ID["RC-21"], tmp_path, "strict"
+    )
+
+
+def test_gate_never_skips_a_table_where_the_rules_get_the_default_wrong(tmp_path):
+    """硬指标：「严」「中」两个版本在两个用例集上，被跳过的用例里规则错的必须是 0。`loose` 只报数、不设这条。"""
+    cases = DR.load_case_set("all")
+    out = DR.gate_measure(cases, tmp_path)
+    for v in ("strict", "medium"):
+        g = out["versions"][v]["all"]
+        assert g["skipped_but_rules_wrong"] == 0, (v, g["wrong_ids"])
+        assert g["skipped"] >= 3, v  # 不是靠什么都不跳来凑 0
+    assert (
+        out["versions"]["strict"]["all"]["skipped"] <= out["versions"]["medium"]["all"]["skipped"]
+    )
+    assert out["versions"]["medium"]["all"]["skipped"] <= out["versions"]["loose"]["all"]["skipped"]
+    assert {"main", "holdout", "holdout-plain", "holdout-hard", "all"} == set(
+        out["versions"]["strict"]
+    )
+
+
+# --------------------------------------------------------------------------- 模型的判断「够得到」规则的三处（留出集 HO-16 / HO-17 / HO-19）
+HBY = {c["id"]: c for c in HOLDOUT}
+
+
+def case_with(base, table, **changes):
+    """拿一条留出用例，换表（CSV 文本）与回答——没有的键沿用。"""
+    c = json.loads(json.dumps(base))
+    c["tables"] = {next(iter(base["tables"])): table}
+    c.update(changes)
+    return c
+
+
+def reach_answer(roles, **picks):
+    return {
+        "columns": [{"name": n, "role": r} for n, r in roles.items()],
+        "picks": {"y": "unsure", "x": "unsure", "group": "unsure", **picks},
+    }
+
+
+def candidates_of(tmp_path, case, answers):
+    resp = P.propose(
+        tmp_path / "proj",
+        project="p",
+        folder=DR.materialize(case, tmp_path / "proj"),
+        render="lazy",
+        answers=answers,
+    )
+    assert resp["kind"] == "candidates" and resp["items"], resp
+    return resp
+
+
+def test_ho17_repeat_columns_without_an_x_axis_stay_a_known_product_limit(tmp_path):
+    """HO-17（rep1 / rep2 / rep3 一起看、没有横轴）要「把列当分组」的画法，尚未支持：没有有序横轴时分布 / 比较类配方只画第一列，
+    多列纵轴不采纳（当没给，计入 dropped），`roles.y` 与候选实际画的列一致。标准答案不改。"""
+    case = HBY["HO-17"]
+    run, _ = with_model(case, tmp_path)
+    assert run.model != case["expect_default"] and run.state == "ready"
+    assert run.payload["dropped"] >= 1
+    assert run.payload["answers"].get("y") != ["rep1", "rep2", "rep3"]
+    assert len(run.model["y"]) == 1
+    # 直接送数组也一样：规则当没给
+    folder = DR.materialize(case, tmp_path / "proj")
+    plain = P.propose(tmp_path / "proj", project="p", folder=folder, render="lazy")
+    got = P.propose(
+        tmp_path / "proj",
+        project="p",
+        folder=folder,
+        render="lazy",
+        answers={"y": ["rep1", "rep2", "rep3"]},
+    )
+    assert got["roles"] == plain["roles"]
+    assert len(got["roles"]["y"]) == 1
+
+
+MULTI_Y_WITH_X = "sample,dose,r1,r2,r3\n" + "".join(
+    f"S{i},{i},{i + 1.0},{i + 1.5},{i + 2.2}\n" for i in range(1, 9)
+)
+
+
+def test_multi_y_with_an_ordered_x_is_adopted_and_every_trend_candidate_draws_all_columns(tmp_path):
+    case = case_with(
+        HBY["HO-17"],
+        MULTI_Y_WITH_X,
+        roles={
+            "sample": "row_id",
+            "dose": "ordered_x",
+            "r1": "measure",
+            "r2": "measure",
+            "r3": "measure",
+        },
+    )
+    ans = reach_answer(case["roles"], y=["r1", "r2", "r3"], x="dose", group="none")
+    run, _ = with_model(case, tmp_path, ans)
+    assert run.model["y"] == ["r1", "r2", "r3"] and run.model["x"] == "dose"
+    resp = candidates_of(tmp_path, case, run.payload["answers"])
+    assert resp["roles"]["y"] == ["r1", "r2", "r3"]
+    trend = [i for i in resp["items"] if i.get("family") == "trend" or "line" in i["title_code"]]
+    assert trend
+    for item in trend:
+        assert set(item["values"]["y"]) == {"r1", "r2", "r3"}, item
+
+
+def test_multi_y_is_not_adopted_when_the_model_also_says_there_is_no_x(tmp_path):
+    case = case_with(HBY["HO-17"], MULTI_Y_WITH_X, roles={})
+    roles = {
+        "sample": "row_id",
+        "dose": "ordered_x",
+        "r1": "measure",
+        "r2": "measure",
+        "r3": "measure",
+    }
+    run, _ = with_model(
+        case, tmp_path, reach_answer(roles, y=["r1", "r2", "r3"], x="none", group="none")
+    )
+    assert len(run.model["y"]) == 1 and run.model["x"] is None
+    assert run.payload["dropped"] >= 1
+    resp = candidates_of(tmp_path, case, run.payload["answers"])
+    assert resp["roles"]["y"] == run.model["y"]
+
+
+def test_ho17_multi_y_is_dropped_when_the_columns_are_not_objectively_fine(tmp_path):
+    case = HBY["HO-17"]
+    rules = run_case(case, tmp_path, conn=None).rules
+    roles = {"sample": "row_id", "rep1": "measure", "rep2": "measure", "rep3": "measure"}
+    bad = {
+        "ghost": ["rep1", "ghost"],  # 列不存在
+        "text column": ["rep1", "sample"],  # 文字列不是数值列
+        "duplicate": ["rep1", "rep1"],
+        "role vetoes": ["rep1", "rep2"],  # 下面单独改 rep2 的角色
+    }
+    for name, y in bad.items():
+        r = dict(roles, rep2="note") if name == "role vetoes" else roles
+        run, _ = with_model(case, tmp_path, reach_answer(r, y=y))
+        assert run.state == "ready" and run.model == rules, name
+    # 超过 3 列
+    wide = "sample,a,b,c,d\nA1,1,2,3,4\nA2,2,3,4,5\nB1,3,4,5,6\nB2,4,5,6,7\n"
+    c4 = case_with(case, wide)
+    r4 = {"sample": "row_id", "a": "measure", "b": "measure", "c": "measure", "d": "measure"}
+    base = run_case(c4, tmp_path, conn=None).rules
+    run, _ = with_model(c4, tmp_path, reach_answer(r4, y=["a", "b", "c", "d"]))
+    assert run.model == base
+    # 不同单位（双轴）不当一组纵轴
+    units = "sample,a_mg,b_mm,c_mg\nA1,1,2,3\nA2,2,3,4\nB1,3,4,5\nB2,4,5,6\n"
+    cu = case_with(case, units)
+    ru = {"sample": "row_id", "a_mg": "measure", "b_mm": "measure", "c_mg": "measure"}
+    base = run_case(cu, tmp_path, conn=None).rules
+    run, _ = with_model(cu, tmp_path, reach_answer(ru, y=["a_mg", "b_mm"]))
+    assert run.model == base
+
+
+def test_a_list_valued_y_answer_is_parsed_but_garbage_is_a_clean_error(tmp_path):
+    assert P.parse_answers({"y": ["a", "b"]}) == {"y": ["a", "b"]}
+    assert P.parse_answers({"y": ["a"]}) == {"y": "a"}
+    for bad in ([], ["a", "b", "c", "d"], ["a", 1], ["a", None], {"a": 1}):
+        with pytest.raises(P.ProposeError):
+            P.parse_answers({"y": bad})
+    # 别的键仍只认字符串
+    with pytest.raises(P.ProposeError):
+        P.parse_answers({"x": ["a"]})
+    # 用户在右栏点的单列（字符串）照旧
+    assert P.parse_answers({"y": "rep1"}) == {"y": "rep1"}
+
+
+def test_list_valued_y_that_is_not_usable_is_ignored_by_the_rules(tmp_path):
+    case = HBY["HO-17"]
+    folder = DR.materialize(case, tmp_path / "proj")
+    plain = P.propose(tmp_path / "proj", project="p", folder=folder, render="lazy")
+    for y in (["rep1", "ghost"], ["rep1", "sample"], ["rep1", "rep1"]):
+        got = P.propose(
+            tmp_path / "proj", project="p", folder=folder, render="lazy", answers={"y": y}
+        )
+        assert got["roles"] == plain["roles"], y
+
+
+def test_ho19_the_model_gives_the_x_axis_even_though_the_table_has_a_group(tmp_path):
+    case = HBY["HO-19"]
+    rules = run_case(case, tmp_path, conn=None).rules
+    assert rules["x"] is None
+    run, _ = with_model(case, tmp_path)
+    assert run.model == case["expect_default"] and run.payload["answers"]["x"] == "day"
+    candidates_of(tmp_path, case, run.payload["answers"])
+
+
+def test_ho19_x_is_dropped_unless_it_is_time_or_ordered_and_a_real_candidate(tmp_path):
+    case = HBY["HO-19"]
+    base = case["model_answer"]["columns"]
+    roles = {c["name"]: c["role"] for c in base}
+    for name, picks in {
+        "measure role": ({**roles, "sem": "measure"}, {"x": "sem"}),  # 不是 time / ordered_x
+        "the y itself": (roles, {"x": "mean_length_mm"}),
+        "a group column": (roles, {"x": "strain"}),  # 文字列，不是横轴候选
+        "none": (roles, {"x": "none"}),
+        "ghost": (roles, {"x": "ghost"}),
+    }.items():
+        r, pk = picks
+        run, _ = with_model(
+            case, tmp_path, reach_answer(r, y=["mean_length_mm"], group="strain", **pk)
+        )
+        assert (
+            run.state == "ready" and run.model["x"] is None and run.model["y"] == ["mean_length_mm"]
+        ), name
+
+
+def test_ho16_an_id_like_text_column_can_be_the_group_when_the_model_says_so(tmp_path):
+    case = HBY["HO-16"]
+    folder = DR.materialize(case, tmp_path / "proj")
+    s = adf.profile_folder(tmp_path / "proj" / folder).tables[0].summary
+    assert "sample" in s.id_like and "sample" in s.groups  # 卡点：规则把它判成编号
+    rules = run_case(case, tmp_path, conn=None).rules
+    assert rules["group"] is None
+    run, _ = with_model(case, tmp_path)
+    assert run.model == case["expect_default"] and run.payload["answers"]["group"] == "sample"
+    resp = candidates_of(tmp_path, case, run.payload["answers"])
+    assert resp["roles"]["unit"] is None
+    assert "sample" in resp["roles"]["options"]["group"]
+    # 点名之后它不再兼作「重复测量的个体编号」：不再问「同一对象重复测量吗」
+    assert all(i.get("kind") != "ask" for i in resp["items"])
+
+
+def test_ho16_only_when_the_model_says_group_and_the_column_really_repeats(tmp_path):
+    case = HBY["HO-16"]
+    rules = run_case(case, tmp_path, conn=None).rules
+    roles = {c["name"]: c["role"] for c in case["model_answer"]["columns"]}
+    for r in ({**roles, "sample": "replicate_unit"}, {**roles, "sample": "row_id"}):
+        run, _ = with_model(
+            case, tmp_path, reach_answer(r, y=["transmittance"], x="wavenumber_cm", group="sample")
+        )
+        assert run.model == rules, r["sample"]
+    # 每行都不同的样品名不是分组（`groups` 不收）：丢弃，回到规则
+    uniq = "sample,wavenumber_cm,transmittance\n" + "".join(
+        f"S{i},{4000 - 200 * i},{90 + i}\n" for i in range(12)
+    )
+    cu = case_with(case, uniq)
+    base = run_case(cu, tmp_path, conn=None).rules
+    run, _ = with_model(
+        cu, tmp_path, reach_answer(roles, y=["transmittance"], x="wavenumber_cm", group="sample")
+    )
+    assert run.model == base
+
+
+def test_without_a_model_pick_an_id_like_column_is_never_a_group_or_the_y(tmp_path):
+    """没有 `picks` 时规则逐字不变：编号样的列永不当分组；`answers.group` 点名才采纳。"""
+    case = HBY["HO-16"]
+    folder = DR.materialize(case, tmp_path / "proj")
+    a = P.propose(tmp_path / "proj", project="p", folder=folder, render="lazy")
+    b = P.propose(
+        tmp_path / "proj", project="p", folder=folder, render="lazy", answers={"group": "unsure"}
+    )
+    assert a["roles"]["group"] is None and b["roles"]["group"] is None
+    c = P.propose(
+        tmp_path / "proj", project="p", folder=folder, render="lazy", answers={"group": "sample"}
+    )
+    assert c["roles"]["group"] == "sample"
+
+
+def test_job_usage_records_cached_input_tokens(tmp_path):
+    case = HBY["HO-19"]
+    run, _ = with_model(case, tmp_path)
+    assert "cached_input_tokens" in run.usage and isinstance(run.usage["cached_input_tokens"], int)
+
+
+def test_a_replicate_veto_never_strips_the_only_group_the_rules_found(tmp_path):
+    """规则落定了分组列（板号），模型判它是 `replicate_unit` 并建议不分组：不采纳，结果与规则相同；判成备注的仍会去掉。"""
+    case = {
+        "id": "T-plate",
+        "tables": {
+            "t.csv": "plate,well,od450\n"
+            + "".join(
+                f"P{p},{r}{c},{0.2 + 0.1 * p + 0.01 * c}\n"
+                for p in (1, 2)
+                for r in "ABC"
+                for c in (1, 2, 3)
+            )
+        },
+        "hint": None,
+    }
+    folder = DR.materialize(case, tmp_path / "proj")
+    entry = adf.profile_folder(tmp_path / "proj" / folder).tables[0]
+
+    def picks(role):
+        shape = {
+            "columns": [
+                {"name": "plate", "role": role},
+                {"name": "well", "role": "row_id"},
+                {"name": "od450", "role": "measure"},
+            ],
+            "picks": {"y": ["od450"], "x": "none", "group": "none"},
+        }
+        roles, _ = R.valid_roles(entry.summary, R.validate_roles_shape(shape))
+        return R.suggest(entry, None, roles, shape["picks"], None)[0]
+
+    assert "group" not in picks("replicate_unit")
+    assert picks("note").get("group") == "none"
+
+
+# --------------------------------------------------------------------------- roles.y 必须等于每个候选实际画的列
+WIDE_RULES = "t,a,b,c\n" + "".join(
+    f"{i},{i + 1.0},{i * 2 + 0.5},{i * 3 + 1.2}\n" for i in range(1, 9)
+)
+LONG_GROUPED = "g,dose,r1,r2,r3\n" + "".join(
+    f"{g},{d},{d + k + 1.0},{d * 2 + k},{d * 3 - k + 2.0}\n"
+    for k, g in enumerate("AB")
+    for d in range(1, 9)
+)
+
+
+def propose_in(tmp_path, name, csv, **kw):
+    folder = tmp_path / "proj" / name
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "t.csv").write_text(csv, encoding="utf-8")
+    return P.propose(tmp_path / "proj", project="p", folder=name, render="lazy", **kw)
+
+
+def assert_every_candidate_draws_roles_y(resp):
+    assert resp["kind"] == "candidates" and resp["items"], resp
+    for item in resp["items"]:
+        assert list(item["values"]["y"]) == list(resp["roles"]["y"]), item
+
+
+def test_every_candidate_draws_exactly_roles_y_for_every_source_of_multi_y(tmp_path):
+    # 规则自己的宽表多 y（没有任何 picks）：从前 scatter_fit 只画第一列而 roles.y 报三列
+    r = propose_in(tmp_path, "rules", WIDE_RULES)
+    assert r["roles"]["y"] == ["a", "b", "c"]
+    assert_every_candidate_draws_roles_y(r)
+    assert [i["title_code"] for i in r["items"]] == ["line_points"]
+    assert r["dropped"], "被去掉的只画第一列的备选要记进 dropped"
+    # 用户点名（answers.y 数组）× 无 / 有分组
+    for name, csv, extra in (
+        ("user", MULTI_Y_WITH_X, {"group": "none"}),
+        ("user_g", LONG_GROUPED, {}),
+    ):
+        cols = ["r1", "r2", "r3"]
+        r = propose_in(tmp_path, name, csv, answers={"y": cols, "x": "dose", **extra})
+        assert r["roles"]["y"] == cols
+        assert_every_candidate_draws_roles_y(r)
+    # 模型点名 × 有分组：模型的回答走同一条落地路径（answers 原样并回）
+    case = case_with(
+        HBY["HO-17"],
+        LONG_GROUPED,
+        roles={
+            "g": "group",
+            "dose": "ordered_x",
+            "r1": "measure",
+            "r2": "measure",
+            "r3": "measure",
+        },
+    )
+    run, _ = with_model(
+        case, tmp_path, reach_answer(case["roles"], y=["r1", "r2", "r3"], x="dose", group="g")
+    )
+    r = candidates_of(tmp_path, case, run.payload["answers"])
+    assert_every_candidate_draws_roles_y(r)
+
+
+def test_when_no_candidate_can_draw_all_the_columns_fall_back_to_the_first_one(tmp_path):
+    # 量纲不同的几列（a_mg / b_mm）画不到同一张图：不出零备选，退回单列，roles.y 与图一致
+    csv = "t,a_mg,b_mm\n" + "".join(f"{i},{i + 1.0},{i * 2 + 0.5}\n" for i in range(1, 9))
+    r = propose_in(tmp_path, "units", csv)
+    assert r["roles"]["y"] == ["a_mg"]
+    assert_every_candidate_draws_roles_y(r)
+
+
+# --------------------------------------------------------------------------- 订阅登录（CLI）连接：同样自动跑，失败静默
+CLI_CONN = {"kind": "cli", "agent": "codex", "model": "gpt-test", "conn_id": "sub:codex"}
+
+
+class CliScript:
+    """假「跑进程」：Codex 形状（回复写进 `-o` 文件）。脚本项 = 回复文字 / `("exit", n)` / `"timeout"` / `"slow"`。"""
+
+    def __init__(self, items, gate=None):
+        self.items = list(items)
+        self.runs: list[ai_structured.CliRun] = []
+        self.active = [0, 0]
+        self.gate = gate
+        self.lock = threading.Lock()
+
+    def __call__(self, run):
+        with self.lock:
+            self.runs.append(run)
+            item = self.items.pop(0)
+            self.active[0] += 1
+            self.active[1] = max(self.active[1], self.active[0])
+        try:
+            if self.gate is not None:
+                self.gate.wait(5)
+            if item == "timeout":
+                return ai_structured.CliProc(None, timed_out=True)
+            if isinstance(item, tuple):
+                return ai_structured.CliProc(item[1], "")
+            out = run.argv[run.argv.index("-o") + 1]
+            Path(out).write_text(item, encoding="utf-8")
+            return ai_structured.CliProc(0, "")
+        finally:
+            with self.lock:
+                self.active[0] -= 1
+
+
+def _roles_inputs(tmp_path, case):
+    folder = DR.materialize(case, tmp_path / "proj")
+    entry = adf.profile_folder(tmp_path / "proj" / folder).tables[0]
+    values = adf.inspect_data_source(tmp_path / "proj" / folder / "t.csv", v2=True)
+    return entry, values
+
+
+def test_a_cli_connection_starts_the_job_and_the_answer_is_adopted(tmp_path):
+    case = BY_ID["RC-03"]
+    entry, values = _roles_inputs(tmp_path, case)
+    runner = CliScript([json.dumps(case["model_answer"], ensure_ascii=False)])
+    R.set_overrides(conn=CLI_CONN, runner=runner, sync=True)
+    out = R.start(project="p", entry=entry, values=values, hint=case["hint"], data_path=None)
+    assert out["state"] == "ready" and len(runner.runs) == 1
+    assert R.usage_of("p", out["id"])["usage_reported"] is False  # CLI 拿不到 token；请求数照计
+    assert R.usage_of("p", out["id"])["requests"] == 1
+
+
+@pytest.mark.parametrize(
+    ("items", "reason"),
+    [
+        ([("exit", 1)], "transport"),
+        (["timeout"], "timeout"),
+        (["not json", "still not"], "invalid_output"),
+    ],
+)
+def test_a_failing_cli_is_silent_failed_with_a_closed_reason_and_negative_cached(
+    tmp_path, items, reason
+):
+    case = BY_ID["RC-03"]
+    entry, values = _roles_inputs(tmp_path, case)
+    runner = CliScript(items)
+    R.set_overrides(conn=CLI_CONN, runner=runner, sync=True)
+    out = R.start(project="p", entry=entry, values=values, hint=case["hint"], data_path=None)
+    assert out["state"] == "failed" and out["reason"] == reason
+    again = R.start(project="p", entry=entry, values=values, hint=case["hint"], data_path=None)
+    assert again is None and len(runner.runs) == len(items)  # 负缓存 60 s：不再起进程
+
+
+def test_the_cli_connection_is_offered_when_no_key_connection_exists(monkeypatch):
+    monkeypatch.setattr(ai_connections, "first_key_connection", lambda refresh=False: None)
+    monkeypatch.setattr(ai_connections, "builtin_forced", lambda: None)
+    assert R._available_connection() is None  # conftest：没有 CLI 连接
+    monkeypatch.setattr(
+        ai_structured, "find_cli_connection", lambda *, cached_only: (CLI_CONN, "", "")
+    )
+    assert R._available_connection() == CLI_CONN
+    key = D.fake_conn()
+    monkeypatch.setattr(ai_connections, "first_key_connection", lambda refresh=False: key)
+    assert R._available_connection() == key  # Key 连接优先
+    monkeypatch.setattr(ai_connections, "builtin_forced", lambda: False)
+    assert R._available_connection() is None  # 运维开关一并关掉
+
+
+def test_the_cache_key_carries_the_cli_kind_and_model():
+    a = R._identity(CLI_CONN)
+    assert a == "cli:codex|gpt-test"
+    assert a != R._identity({**CLI_CONN, "model": "other"})
+    assert a != R._identity({**CLI_CONN, "agent": "claude"})
+    assert a != R._identity(D.fake_conn())
+
+
+def test_a_cli_connection_gets_the_cli_total_time_and_a_key_connection_keeps_the_old_one(tmp_path):
+    case = BY_ID["RC-01"]
+    entry, values = _roles_inputs(tmp_path, case)
+    seen = []
+
+    def spy(**kw):
+        seen.append((kw["limits"].timeout_s, kw.get("conn")))
+        return ai_structured.StructuredResult(False, reason="transport")
+
+    R.judge(entry, values, case["hint"], call=spy, conn=CLI_CONN)
+    R.judge(entry, values, case["hint"], call=spy, conn=None)
+    assert ai_structured.CLI_TIMEOUT_S > R.TIMEOUT_S
+    assert (
+        CLI_CONN == seen[0][1]
+        and ai_structured.CLI_TIMEOUT_S - 1 < seen[0][0] <= ai_structured.CLI_TIMEOUT_S
+    )
+    assert seen[1][1] is None and seen[1][0] <= R.TIMEOUT_S
+
+
+def test_two_cli_jobs_never_run_two_processes_at_once(tmp_path):
+    cases = [BY_ID["RC-01"], BY_ID["RC-03"]]
+    gate = threading.Event()
+    answers = [json.dumps(c["model_answer"], ensure_ascii=False) for c in cases]
+    runner = CliScript(answers, gate=gate)
+    R.set_overrides(conn=CLI_CONN, runner=runner)
+    jobs = []
+    for i, case in enumerate(cases):
+        entry, values = _roles_inputs(tmp_path / str(i), case)
+        jobs.append(
+            R.start(project="p", entry=entry, values=values, hint=case["hint"], data_path=None)
+        )
+    assert all(j["state"] == "pending" for j in jobs)
+    time.sleep(0.2)
+    gate.set()
+    deadline = time.time() + 10
+    while time.time() < deadline and any(R.get("p", j["id"])["state"] == "pending" for j in jobs):
+        time.sleep(0.02)
+    assert [R.get("p", j["id"])["state"] for j in jobs] == ["ready", "ready"]
+    assert runner.active[1] == 1 and len(runner.runs) == 2

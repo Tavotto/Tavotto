@@ -54,6 +54,18 @@ def _fields(raw, keys):
     return raw
 
 
+def _fields_open(raw, required, optional):
+    """Closed shape with named optional keys: required must all be present and
+    nothing outside required|optional may appear."""
+    if (
+        not isinstance(raw, dict)
+        or not set(required) <= set(raw)
+        or not set(raw) <= set(required) | set(optional)
+    ):
+        raise ValueError("Invalid declared input fields")
+    return raw
+
+
 def _text(raw):
     if not isinstance(raw, str) or not raw or "\0" in raw:
         raise ValueError("Invalid declared input identity")
@@ -105,12 +117,20 @@ def validate_candidate(raw) -> dict:
 
     IDs are opaque here. The parent uses the original portable member validator
     before producing them; this module never joins an ID to a filesystem path.
+    `revision` (optional) is the provenance stamp of the store row this
+    candidate was approved from; the capture made from it can name that row.
     """
-    _fields(
-        raw, ("version", "scope", "script_path", "files", "prefixes", "mappings", "rules", "limits")
+    _fields_open(
+        raw,
+        ("version", "scope", "script_path", "files", "prefixes", "mappings", "rules", "limits"),
+        ("revision",),
     )
     if type(raw["version"]) is not int or raw["version"] != VERSION:
         raise ValueError("Unsupported declared input version")
+    if "revision" in raw and (
+        not isinstance(raw["revision"], str) or not _DIGEST.fullmatch(raw["revision"])
+    ):
+        raise ValueError("Invalid declared input revision stamp")
     _scope(raw["scope"])
     if not os.path.isabs(_text(raw["script_path"])):
         raise ValueError("Declared script path must be absolute")
@@ -295,6 +315,11 @@ class Capture:
         self._archive = None
         self._saved_archive = None
 
+    @property
+    def candidate(self) -> dict:
+        """The approved candidate this capture was created under (private shape)."""
+        return copy.deepcopy(self._candidate)
+
     def entered(self, execution_id):
         if self._execution_id is not None or not executionfact.valid_id(execution_id):
             self._invalid = True
@@ -330,6 +355,10 @@ class Capture:
                 "revision": _revision(graph),
                 "declaration": copy.deepcopy(graph),
             }
+            if self._candidate.get("revision") is not None:
+                # Provenance stamp: which store row revision approved the
+                # candidate this capture froze (Codex #1925 P1).
+                fact["selection_revision"] = self._candidate["revision"]
             if reuse:
                 if (
                     verify_archive(
@@ -529,9 +558,22 @@ def canonical_graph_bytes(graph):
 
 
 def validate_fact(raw, *, execution_id=None):
-    """Validate detached evidence; never read paths supplied by a response."""
+    """Validate detached evidence; never read paths supplied by a response.
+
+    `selection_revision` (optional) names the store row revision the capture's
+    candidate was approved from; it certifies provenance, never content.
+    """
     try:
-        _fields(raw, ("version", "execution_id", "revision", "declaration"))
+        _fields_open(
+            raw,
+            ("version", "execution_id", "revision", "declaration"),
+            ("selection_revision",),
+        )
+        if "selection_revision" in raw and (
+            not isinstance(raw["selection_revision"], str)
+            or not _DIGEST.fullmatch(raw["selection_revision"])
+        ):
+            return None
         if (
             type(raw["version"]) is not int
             or raw["version"] != VERSION

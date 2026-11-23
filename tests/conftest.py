@@ -257,6 +257,29 @@ def _offline_protocol_probe(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _offline_structured_cli(monkeypatch):
+    """订阅登录（Codex / Claude Code CLI）的无工具单轮调用（`ai_structured._call_cli`，ADR 0178）会起真 CLI、花订阅额度。
+    本机装了登录过的 CLI 时，任何走到 `propose(render="lazy")` 的用例都可能把它放行：所以默认 ① 发现函数说「没有 CLI 连接」
+    （与没装一致）、② 真起进程的那一处（`_run_process`）被换成「记一笔、不起进程」，用例结束时记过就红。
+    **不能靠在里面抛异常**：`call_structured` 永不抛，会把它吞成 `transport/internal`，用例照样绿。
+    要测 CLI 路径的用例自己注入假连接与假 `runner`，永不真起进程。"""
+    from tavotto.engine import ai_structured
+
+    hits: list[tuple] = []
+
+    def refuse(*args, **_kw):
+        hits.append(args)
+        return ai_structured.CliProc(None, launch_failed=True)
+
+    monkeypatch.setattr(
+        ai_structured, "find_cli_connection", lambda *, cached_only: (None, "no_connection", "none")
+    )
+    monkeypatch.setattr(ai_structured, "_run_process", refuse)
+    yield
+    assert not hits, "a real structured CLI process would have been started"
+
+
+@pytest.fixture(autouse=True)
 def _pinned_pool_cap(monkeypatch):
     """worker 池上限按本机可用内存自适应（`pool.max_alive()`，ADR 0159）：测试机内存不同，淘汰 / 容量用例的
     结果就不同。默认钉成下限 3；测自适应本身的用例自己把 `pool.MAX_ALIVE` 置回 None。"""

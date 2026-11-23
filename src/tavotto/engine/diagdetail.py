@@ -206,6 +206,12 @@ class Sources:
     fix_journey: list[dict] | None = None
     #: AI 修复的本地审计尾部（`fixsession.audit_tail`，ADR 0149 §四）：哪个工具、什么档、谁批准、结果码；不含内容
     fix_audit: list[dict] | None = None
+    #: AI 修复经过的内容（`fixsession.SESSIONS.diagnostics_for`，ADR 0197 第 4 条）：总结、模型、试运行记录、工具返回尾部、
+    #: 启动脚本。维护者 11-19 裁决**不论勾没勾「脚本源码」都收**（脱敏后），发送框如实写明
+    fix_sessions: list[dict] | None = None
+    #: 本机记住修好的做法（`fixmemory.entries()`，ADR 0197 第 3 层·在线）：维护者 11-21「修好的做法要进诊断包，这样我们才能改」。
+    #: 与 `fix_sessions` 同口径：不论勾没勾「脚本源码」都收，整段过 `Scrubber`
+    fix_memory: list[dict] | None = None
     #: 脚本（项目相对路径）→ 它运行时从项目外加载过的本地 `.py` 模块的**候选**绝对路径（`diagexternal.modules_for`，
     #: 持久记录）。不信：`collect_source` 在父进程里逐个重新校验才收
     external_lookup: Callable[[str], list[str]] | None = None
@@ -2215,8 +2221,13 @@ def collect_runs(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Ite
             "fix_audit": [_audit_row(r) for r in src.fix_audit or ()],
             "log_events": recs,
         }
+        # AI 修复经过的内容：不勾「脚本源码」也收（维护者 11-19 裁决，发送框写明），所以不剥源码行；脱敏照常
+        fix_sessions = list(src.fix_sessions or [])
         doc = scrub.obj(doc)
-        return _dumps(doc if opts.source else _strip_obj(doc))
+        doc = doc if opts.source else _strip_obj(doc)
+        doc["fix_sessions"] = scrub.obj(fix_sessions)
+        doc["fix_memory"] = scrub.obj(list(src.fix_memory or []))
+        return _dumps(doc)
 
     return [Item("runs", "detail-runs.json", build(records), shrink=_list_shrinker(build, records))]
 

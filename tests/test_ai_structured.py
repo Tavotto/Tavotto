@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import socket
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -20,10 +21,11 @@ if str(SUPPORT) not in sys.path:
 
 import data_figure_cases as D  # noqa: E402
 
-from tavotto.engine import ai_connections, ai_structured as S, fixsession  # noqa: E402
+from tavotto.engine import ai_connections, ai_structured as S, fixsession  # noqa: E402,F401
 from tavotto.engine.agent_runner import loop, wires  # noqa: E402
 
 JSON_OK = '{"answer": 1}'
+_REAL_FIND_CLI = S.find_cli_connection  # conftest 的 autouse 会把模块上的换成「没有」
 
 
 @pytest.fixture(autouse=True)
@@ -159,13 +161,23 @@ def test_socket_timeout_and_total_deadline_both_map_to_timeout():
 
 
 def test_the_deadline_is_shared_by_both_attempts():
+    """第一次用掉大半总时限，第二次只拿到剩下的那点（不是重新给满）。不按墙钟判结局：第二次一直不回，
+    只有总时限能结束它；单次请求的超时是确定的「剩余」，慢 runner 上只会更小（#2085 合并组 macOS 抖红过）。"""
+    first_s, limit_s = 0.15, 0.2
+
     def slow_bad(body):
-        time.sleep(0.15)
+        time.sleep(first_s)
         return D.reply_body("anthropic", "no")
 
-    res, t = call([slow_bad, slow_bad], limits=S.Limits(timeout_s=0.2))
+    def never_answers(body):
+        threading.Event().wait(5)  # 远超总时限：要是迟到的回复被收下，结局就不是 timeout
+        return D.reply_body("anthropic", "no")
+
+    res, t = call([slow_bad, never_answers], limits=S.Limits(timeout_s=limit_s))
     assert res.reason == "timeout"
-    assert len(t.calls) <= 2
+    assert len(t.calls) in (1, 2)  # 慢机器上第一次就用完了总时限，第二次根本不发
+    if len(t.calls) == 2:
+        assert t.calls[1]["timeout"] <= limit_s - first_s
 
 
 def test_input_over_budget_sends_nothing():
@@ -278,17 +290,33 @@ def test_limits_are_validated():
 # --------------------------------------------------------------------------- 连接
 def test_resolve_connection_no_connection(monkeypatch):
     monkeypatch.setattr(ai_connections, "first_key_connection", lambda refresh=False: None)
-    monkeypatch.setattr(fixsession, "cli_agent", lambda: None)
     monkeypatch.setattr(ai_connections, "builtin_forced", lambda: None)
-    assert S.resolve_connection() == (None, "no_connection", "none")
+    assert S.resolve_connection() == (None, "no_connection", "none")  # conftest：没有 CLI 连接
     res = S.call_structured(system="s", user="u", validate=validate_answer)
     assert (res.reason, res.attempts) == ("no_connection", 0)
 
 
-def test_subscription_only_is_unsupported_connection(monkeypatch):
+def test_subscription_only_with_an_adapter_that_cannot_do_it_is_unsupported_connection(
+    monkeypatch,
+):
+    """订阅登录里适配器没覆写 `build_structured_command` = `unsupported_connection`（能做的那条路见 `test_ai_structured_cli.py`）。"""
+    from tavotto.engine import ai_agents, ai_bridge
+
+    monkeypatch.setattr(S, "find_cli_connection", _REAL_FIND_CLI)
     monkeypatch.setattr(ai_connections, "first_key_connection", lambda refresh=False: None)
-    monkeypatch.setattr(fixsession, "cli_agent", lambda: "codex")
     monkeypatch.setattr(ai_connections, "builtin_forced", lambda: None)
+    monkeypatch.setattr(
+        ai_bridge,
+        "capabilities",
+        lambda refresh=False: {
+            "connections": [{"id": "sub:codex", "state": "ready", "default_model": "m"}]
+        },
+    )
+    monkeypatch.setattr(
+        ai_agents.CodexAgent,
+        "build_structured_command",
+        ai_agents.AgentDefinition.build_structured_command,
+    )
     res = S.call_structured(system="s", user="u", validate=validate_answer)
     assert (res.reason, res.detail) == ("unsupported_connection", "cli_only")
 

@@ -23,6 +23,7 @@ export type PaletteSection = 'selection' | 'recent' | 'common' | 'other'
 export const COMMON_ORDER: readonly string[] = [
   'add-text',
   'sub-labels',
+  'quick-layout',
   'select-all',
   'edit-elements',
   'export',

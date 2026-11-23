@@ -410,7 +410,8 @@
     "saved": "Saved as a new layout: {{name}}",
     "saving": "Saving…",
     "savesIntoLabel": "Save into",
-    "rename": "Rename"
+    "rename": "Rename",
+    "computationalFormat": "Computational chart"
   },
   "mcp": {
     "exportBoth": "Export PDF+PNG",
@@ -651,6 +652,82 @@
       "eyedropper-tool": {
         "keywords": "eyedropper pick color sample",
         "label": "Eyedropper"
+      },
+      "pathfinder-unite": {
+        "keywords": "unite union merge combine pathfinder",
+        "label": "Unite"
+      },
+      "pathfinder-minus-front": {
+        "keywords": "minus front subtract pathfinder",
+        "label": "Minus front"
+      },
+      "pathfinder-intersect": {
+        "keywords": "intersect overlap pathfinder",
+        "label": "Intersect"
+      },
+      "pathfinder-exclude": {
+        "keywords": "exclude xor overlap pathfinder",
+        "label": "Exclude"
+      },
+      "pathfinder-divide": {
+        "keywords": "divide split pathfinder",
+        "label": "Divide"
+      },
+      "pathfinder-trim": {
+        "keywords": "trim hidden pathfinder",
+        "label": "Trim"
+      },
+      "make-compound": {
+        "keywords": "compound path hole",
+        "label": "Make compound path"
+      },
+      "release-compound": {
+        "keywords": "release compound path",
+        "label": "Release compound path"
+      },
+      "offset-path": {
+        "keywords": "offset path expand inset",
+        "label": "Offset path"
+      },
+      "outline-stroke": {
+        "keywords": "outline stroke expand",
+        "label": "Outline stroke"
+      },
+      "simplify-path": {
+        "keywords": "simplify smooth reduce anchors",
+        "label": "Simplify path"
+      },
+      "reverse-path": {
+        "keywords": "reverse path direction flip arrow",
+        "label": "Reverse path direction"
+      },
+      "shape-builder": {
+        "keywords": "shape builder merge regions",
+        "label": "Shape builder"
+      },
+      "make-clip-mask": {
+        "keywords": "clipping mask clip crop",
+        "label": "Make clipping mask"
+      },
+      "release-clip-mask": {
+        "keywords": "release clipping mask",
+        "label": "Release clipping mask"
+      },
+      "transform-again": {
+        "keywords": "transform again repeat",
+        "label": "Transform again"
+      },
+      "reflect-horizontal": {
+        "keywords": "reflect mirror flip horizontal",
+        "label": "Reflect horizontally"
+      },
+      "reflect-vertical": {
+        "keywords": "reflect mirror flip vertical",
+        "label": "Reflect vertically"
+      },
+      "quick-layout": {
+        "keywords": "quick layout auto arrange align yjpb",
+        "label": "Auto layout"
       }
     },
     "listLabel": "Commands",
@@ -1463,7 +1540,49 @@
       "viewGuide": "Read the guide",
       "defaultLabel": "Default assistant",
       "defaultNone": "No assistant available",
-      "convertUnsandboxed": "Let the AI run without a sandbox when converting"
+      "convertUnsandboxed": "Let the AI run without a sandbox when converting",
+      "fixMemory": {
+        "label": "Remember what fixed it",
+        "help": "After a script is fixed, Tavotto notes what worked on this computer, so another project with the same kind of problem can refer to it. Stays on this computer: never uploaded, never in problem reports.",
+        "count_one": "{{count}} remembered",
+        "count_other": "{{count}} remembered",
+        "none": "Nothing remembered yet",
+        "view": "View",
+        "title": "Remembered fixes",
+        "clearAll": "Delete all",
+        "delete": "Delete this fix",
+        "meta_one": "{{date}} · used {{count}} time",
+        "meta_other": "{{date}} · used {{count}} times",
+        "launcherText": "Show script",
+        "kind": {
+          "run_args": "Passed run arguments {{args}}",
+          "launcher": "Added a launcher",
+          "launcherEnv": "Launcher sets {{env}}",
+          "data_link": "Pointed {{asked}} at {{linked}}",
+          "execution": "Switched to {{mode}}"
+        },
+        "mode": {
+          "safe": "safe mode",
+          "native": "your own Python"
+        },
+        "shape": {
+          "env_var_missing": "Missing environment variable",
+          "script_needs_arguments": "Needs command-line arguments",
+          "script_needs_input": "Waits for typed input",
+          "input_eof": "Waits for typed input",
+          "missing_input": "Data file not found",
+          "relative_import": "Relative import failed",
+          "no_figure_captured": "Drew no figure",
+          "script_is_library": "Only defines functions",
+          "missing_dependency": "Missing package",
+          "script_uses_gui_dialog": "Opens a file dialog",
+          "safe_file_operation_blocked": "Safe mode blocked a file operation",
+          "other": "Other problem"
+        },
+        "clearBody_one": "Delete the {{count}} remembered fix? This can't be undone.",
+        "clearBody_other": "Delete all {{count}} remembered fixes? This can't be undone.",
+        "cancel": "Cancel"
+      }
     },
     "canvas": {
       "companionsExplain": "Companion elements are hand-placed titles, axis labels, legends, colorbar axes and twinx twins. Without this, they stay behind when the axes move; turn it off to move only the axes.",
@@ -1527,7 +1646,7 @@
           "detail_requests": "Recent backend requests (method, route, status, duration, error code only)",
           "detail_overrides": "Style edits of the figure being edited",
           "detail_render_env": "Render environment (Python, matplotlib, installed packages, fonts)",
-          "detail_runs": "Recent render, export and script test-run records",
+          "detail_runs": "Recent render, export and script test-run records, and what AI repair did",
           "detail_shell": "Desktop shell and install facts (versions, OS, architecture, update result)",
           "detail_storage": "Storage environment (free space, writable, sync folder)",
           "detail_console": "Recent errors and warnings from the interface console",
@@ -1537,7 +1656,7 @@
           "detail_crash_reports": "System crash reports (you ticked this)",
           "detail_corrupt_sessions": "Contents of corrupted session copies (you ticked this)"
         },
-        "notIncluded": "Not included by default: your scripts, data files, or the anonymous-statistics identifier. Errors and logs may mention folder names, file names and output printed by your script.",
+        "notIncluded": "Not included by default: your script files, data files, or the anonymous-statistics identifier. Errors and logs may mention folder names, file names and output printed by your script, and if you used AI repair, the parts of your script it read.",
         "save": "Save this bundle",
         "saved": "Saved",
         "saveFailed": "Could not save",
@@ -2135,6 +2254,43 @@
       "overwriteTitle": "Overwrite your edited skill in {{host}}?",
       "overwriteBody": "Your changes will be replaced with the version that ships with Tavotto.",
       "cancel": "Cancel"
+    },
+    "license": {
+      "label": "Premium",
+      "none": "Not activated",
+      "until": "Valid until {{date}}",
+      "codeLabel": "Activation code",
+      "state": {
+        "expired": "Expired on {{date}}",
+        "revoked": "This license is no longer valid",
+        "lapsed": "Needs a quick online check"
+      },
+      "action": {
+        "enter": "Enter code",
+        "buy": "Buy",
+        "activate": "Activate",
+        "release": "Unbind this computer",
+        "refresh": "Check now",
+        "renew": "Renew",
+        "retry": "Try again",
+        "cancel": "Cancel"
+      },
+      "failure": {
+        "invalid_code": "That code isn't right. Check it and try again",
+        "device_limit": "This license is already on its maximum number of computers. Unbind one of them first",
+        "revoked": "This license is no longer valid",
+        "expired": "This license has expired",
+        "price_unavailable": "Can't buy right now. Please try again later",
+        "rate_limited": "Too many tries. Wait a moment and try again",
+        "network": "Can't reach the license server. Check your network and try again",
+        "server": "The license service is unavailable. Please try again later",
+        "client_error": "That didn't go through. Please try again later"
+      },
+      "lock": {
+        "tip": "Premium feature. Click to learn more",
+        "aria": "Premium feature, learn about Premium"
+      },
+      "releaseTitle": "After unbinding, you can activate it on another computer"
     }
   },
   "style": {
@@ -2694,6 +2850,39 @@
       "info_text_height_mm": "Text height",
       "info_panel_label": "Panel label"
     }
+  },
+  "packageInstall": {
+    "entry": "Install project package to a new folder…",
+    "title": "Install computational chart package",
+    "description": "Inspect resources, then install a new project. Your current layout is preserved when opening it.",
+    "inspecting": "Inspecting project package…",
+    "installing": "Installing resources. Closing this window stops automatic opening; the installation result will be retained.",
+    "opening": "Opening the project and saving its working copy…",
+    "saved": "The working copy is saved. You can continue editing.",
+    "publicationUnconfirmed": "The folder was published, but installation checks are not fully confirmed. Review the resources after opening.",
+    "configurationReview": "Review this project's local run settings. Opening it will not run scripts.",
+    "reviewConfiguration": "Review local run settings",
+    "chooseAnother": "Choose another package…",
+    "close": "Close",
+    "continueEditing": "Continue editing",
+    "openInstalled": "Open installed project",
+    "install": "Install to new folder",
+    "contents": "Canvases: {{canvases}} · Resources: {{resources}} · Figure snapshots: {{snapshots}}",
+    "destination": "New project folder",
+    "chooseDestination": "Choose location…",
+    "pickParent": "Choose the parent folder for the new project",
+    "newDirectory": "Enter a full folder path that does not exist. Existing files will not be overwritten.",
+    "missing_one": "The package is missing {{count}} resource. Add it and export the package again.",
+    "missing_other": "The package is missing {{count}} resources. Add them and export the package again.",
+    "dependencies": "Run dependencies are not fully confirmed. Installation will not run scripts from the package.",
+    "installedAt": "Resources installed in",
+    "documentPending": "Saving the layout is not confirmed yet. Opening the project saves a working copy through the existing save process.",
+    "previous": "Other installation attempts",
+    "completionUnknown": "This installation has no confirmed result yet. Keep and inspect this directory; you can return to its path after closing this window. Select the package before installing again.",
+    "attemptedAt": "Requested installation directory",
+    "resultPending": "Result unconfirmed",
+    "receivedResult": "The installation result has arrived. Review it to continue.",
+    "viewResult": "Review installation result"
   },
   "review": {
     "button": "Share for review",

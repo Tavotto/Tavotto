@@ -443,7 +443,8 @@ def test_counter_proof_a_script_that_reduces_differently_turns_the_check_red(big
         )  # 脚本侧箱数不同：画出的点不是期望的那些
 
     monkeypatch.setattr(tpl, "_large_reader_expr", wrong)
-    body = propose(client).get_json()
+    # 点名单列纵轴：不点名时宽表是两列纵轴，只画第一列的散点会因 `roles.y` 与图一致的规则被去掉（2026-11-21）
+    body = propose(client, answers={"y": "signal_mV"}).get_json()
     # 趋势的备选（折线 + 点）被剔除；散点那张不受「箱数」影响，照常在（同一份数据在大表上有两类画法，只坏了其中一类）
     assert "line_points" not in _items(body), body
     assert any(d["reason_code"] == "candidate_fingerprint_mismatch" for d in body["dropped"]), body

@@ -22,7 +22,9 @@ import {
   markHeads,
   markSidesCapable,
   markStarCapable,
+  markPathAlignCapable,
   markStrokeAlignCapable,
+  strokeAlignOf,
   markFillRuleCapable,
   markStrokeOn,
   markStrokeToggle,
@@ -40,6 +42,7 @@ import { INSPECTOR_LABEL_W } from './layout'
 import { ColorField, NO_COLOR, NumberField, TextInput } from '../ui/Input'
 import { Popover } from '../ui/Popover'
 import { EffectToggle } from './controls/EffectToggle'
+import { GradientEditor, GradientKindSelect, gradientOf, GradientTools, RadialRows } from './controls/GradientControls'
 import { OptionGrid, type GridOption } from './controls/OptionGrid'
 import { PickerTrigger } from './controls/PickerTrigger'
 import { shared } from './common'
@@ -664,12 +667,28 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
     updateObjects(ids, label, (o) => {
       if (isFillStrokeMark(o)) fn(o)
     })
-  /** 描边对齐只写封闭形状（`markStrokeAlignCapable`）；填充规则只写有填充的路径 */
-  const aligned = objs.filter(markStrokeAlignCapable)
+  /** 渐变（ADR 0186）：填充渐变只给有填充的、描边渐变只给有描边的 */
+  const fillables = objs.filter((o) => markFillable(o) && !!o.fill)
+  const stroked = objs.filter(markStrokeOn)
+  // 这一侧的渐变以第一个对象为准（多选时编辑写给全部）
+  const fillGrad = fillables.map((o) => gradientOf(o, 'fill')).find(Boolean) ?? null
+  const strokeGrad = stroked.map((o) => gradientOf(o, 'stroke')).find(Boolean) ?? null
+  /** 径向的中心与半径在「更多」里：有径向时「更多」要在 */
+  const radialOn = fillGrad?.kind === 'radial' || strokeGrad?.kind === 'radial'
+  /** 描边对齐只写封闭形状与全闭合的路径；填充规则只写有填充的路径 */
+  const aligned = objs.filter((o) => markStrokeAlignCapable(o) || markPathAlignCapable(o)) as (ShapeObject | PathObject)[]
   const filledPaths = objs.filter(markFillRuleCapable)
-  const patchAligned = (label: UiMessage, fn: (o: ShapeObject) => void) =>
-    updateObjects(ids, label, (o) => {
-      if (isFillStrokeMark(o) && markStrokeAlignCapable(o)) fn(o)
+  /** 描边对齐写回：等于各自的缺省（形状内侧、路径居中）就删字段 */
+  const setAlign = (v: 'inside' | 'center' | 'outside') =>
+    updateObjects(ids, hist('setStrokeAlign'), (o) => {
+      if (!isFillStrokeMark(o)) return
+      if (markStrokeAlignCapable(o)) {
+        if (v === 'inside') delete o.strokeAlign
+        else o.strokeAlign = v
+      } else if (markPathAlignCapable(o)) {
+        if (v === 'center') delete o.strokeAlign
+        else o.strokeAlign = v
+      }
     })
   const patchPaths = (label: UiMessage, fn: (o: PathObject) => void) =>
     updateObjects(ids, label, (o) => {
@@ -699,7 +718,8 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
               onAdd={() => patch(hist('addFill'), (o) => (o.fill = '#FFFFFF'))}
               onOff={() => patch(hist('clearFill'), (o) => (o.fill = null))}
             />
-            {fillOn && (
+            {/* 渐变时（ADR 0186）色块与十六进制不显示（降级纯色自动取首个色标），这一行是类型下拉 + 角度 + 反向 */}
+            {fillOn && !fillGrad && (
               <ColorField
                 ariaLabel={sk('fill')}
                 mixed={fillMixed}
@@ -707,8 +727,12 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
                 onChange={(v) => patch(hist('setFill'), (o) => (o.fill = v))}
               />
             )}
+            {fillOn && <GradientKindSelect objs={fillables} target="fill" />}
+            {fillOn && fillGrad && <GradientTools objs={fillables} target="fill" />}
           </Row>
         )}
+        {/* 色带常显，紧跟在填充那一行下面（PPT 式：点空白加色标、拖动、往下拖出删除） */}
+        {hasFillable && fillOn && fillGrad && <GradientEditor objs={fillables} target="fill" />}
         {hasFillable && fillOn && (
           // 填充不透明度：填充自己的一行半列（此前挤在线宽那一行的右端，靠 index.css 的 40px 框）
           <div data-prop="fillOpacity">
@@ -750,7 +774,7 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
               onOff={() => patch(hist('clearStroke'), setMarkStrokeOff)}
             />
           )}
-          {(!hasFillable || strokeOn) && (
+          {(!hasFillable || strokeOn) && !strokeGrad && (
             <ColorField
               ariaLabel={sk('strokeColor')}
               mixed={strokeColor === undefined}
@@ -758,7 +782,10 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
               onChange={(v) => patch(hist('setStrokeColor'), (o) => (o.color = v))}
             />
           )}
+          {showStroke && <GradientKindSelect objs={stroked} target="stroke" />}
+          {showStroke && strokeGrad && <GradientTools objs={stroked} target="stroke" />}
         </Row>
+        {showStroke && strokeGrad && <GradientEditor objs={stroked} target="stroke" />}
         {showStroke && (
           <StrokeWidthRow
             value={shared(objs, (o) => (o as FillStrokeMark).strokePt)}
@@ -839,7 +866,7 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
           </Row>
         )}
     </AppearanceSection>
-    {(showStroke || filledPaths.length > 0) && (
+    {(showStroke || filledPaths.length > 0 || radialOn) && (
       // 低频描边项收进一行「更多」：描边不透明度、线端、拐角（ADR 0174）
       <MoreFold
         changed={countChanged([
@@ -849,24 +876,22 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
           objs.some((o) => o.lineJoin != null && o.lineJoin !== markDefaultJoin(o)),
           objs.some((o) => o.miterLimit != null),
           objs.some((o) => o.dashPattern != null),
-          objs.some((o) => o.type === 'shape' && o.strokeAlign != null),
+          objs.some((o) => (o.type === 'shape' || o.type === 'path') && o.strokeAlign != null),
           objs.some((o) => o.type === 'path' && o.fillRule != null),
         ])}
       >
+        {/* 径向渐变的中心与半径（ADR 0186）；色标与角度在色带那里 */}
+        <RadialRows objs={fillables} target="fill" />
+        <RadialRows objs={stroked} target="stroke" />
         {showStroke && headed.length > 0 && <HeadSizeRows objs={headed} patch={patchHeaded} />}
         {showStroke && aligned.length > 0 && (
-          // 描边对齐（只对封闭形状）：内侧（缺省，外沿贴框）/ 居中 / 外侧
+          // 描边对齐（封闭形状缺省内侧、外沿贴框；全闭合的路径缺省居中，ADR 0185 M2）：内侧 / 居中 / 外侧
           <ChoiceRow
             label={sk('alignRow')}
             group="align"
             values={ALIGN_VALUES}
-            value={shared(aligned, (o) => (o as ShapeObject).strokeAlign ?? 'inside') ?? null}
-            onChange={(v) =>
-              patchAligned(hist('setStrokeAlign'), (o) => {
-                if (v === 'inside') delete o.strokeAlign
-                else o.strokeAlign = v
-              })
-            }
+            value={shared(aligned, (o) => strokeAlignOf(o as ShapeObject | PathObject)) ?? null}
+            onChange={setAlign}
           />
         )}
         {filledPaths.length > 0 && (

@@ -7,9 +7,10 @@ D1 登记「看」「试」两组；D2a 加「改」组（change.py：装包 / �
 
 from __future__ import annotations
 
-from .. import exectrace
+from .. import exectrace, fixmemory as _fixmemory
 from ..agent_runner.tools import Tool
 from ..agent_runner.wires import ToolResult
+from . import runreport as _runreport
 from .ask import ASK_TOOLS
 from .audit import AuditLog
 from .base import BLOCKED_CODES, FIX_SESSION_TIERS, TIERS, FixContext, FixTool
@@ -34,6 +35,11 @@ REGISTRY: dict[str, FixTool] = {
     )
 }
 
+
+# 提示只点名本会话调得到的工具（ADR 0197 第 1 层）：注册表由这里交给 runreport，不让它反过来 import 本包（免得成环）
+_runreport.TOOL_TIERS.update({name: t.tier for name, t in REGISTRY.items()})
+# 「这台电脑上这样修好过」（ADR 0197 第 3 层·在线）：同样由包交给 runreport，runreport 不 import engine 的存储
+_runreport.REPLAY = _fixmemory.replay_text
 
 exectrace.register_vocabulary("tool", REGISTRY)
 exectrace.register_vocabulary("tier", TIERS)
@@ -70,6 +76,42 @@ REFUSED_BEFORE_ACTING = frozenset(
         "launcher_unsafe_dir",
     }
 )
+
+
+#: 修复经过（诊断包用）的上限：每条工具返回只留尾部这么多字符，整个会话最多这么多条（老的先丢）
+TRANSCRIPT_ENTRY_CHARS = 2000
+TRANSCRIPT_MAX_ENTRIES = 60
+
+
+def _remember(ctx: FixContext, tool: str, result: ToolResult) -> None:
+    """工具返回（已脱敏）进内存里的修复经过；只留尾部，条数有界。不抛。"""
+    try:
+        text = result.content or ""
+        if len(text) > TRANSCRIPT_ENTRY_CHARS:
+            text = "…" + text[-TRANSCRIPT_ENTRY_CHARS:]
+        ctx.transcript.append(
+            {"step": ctx.step, "tool": tool, "code": result.code or "", "text": text}
+        )
+        del ctx.transcript[:-TRANSCRIPT_MAX_ENTRIES]
+    except Exception:  # noqa: BLE001 - 记不下不影响工具调用
+        pass
+
+
+def _fix_made(tool: str, args: dict) -> tuple[str, dict] | None:
+    """真做成的一次改动 → (种类, 真实参数)，供「记住修好的做法」（ADR 0197 第 3 层·在线）。只认四种能在别的项目复用的改动"""
+    if tool == "set_run_arguments":
+        return ("run_args", {"args": list(args.get("argv") or [])})
+    if tool == "write_launcher":
+        return ("launcher", {"text": args.get("code")})
+    if tool == "link_data_file":
+        return ("data_link", {"asked": args.get("requested"), "linked": args.get("chosen")})
+    if tool == "switch_execution":
+        return ("execution", {"mode": args.get("mode")})
+    return None
+
+
+def _same_slot(a: tuple[str, dict], b: tuple[str, dict]) -> bool:
+    return a[0] == b[0]
 
 
 def run_tool(
@@ -117,6 +159,7 @@ def run_tool(
     if result.mutated:
         ctx.verification = None
     result.content = scrub(result.content)
+    _remember(ctx, tool.name, result)
     ctx.trace_tool_span = None
     approved_by = _approved_by(result, ctx)
     if (
@@ -127,6 +170,22 @@ def run_tool(
         and (result.mutated or (result.is_error and result.code not in REFUSED_BEFORE_ACTING))
     ):
         ctx.changes_attempted += 1
+        ctx.changes_since_try.append(tool.name)
+    if result.mutated and not result.is_error and isinstance(args, dict):
+        if tool.name == "rollback":
+            # 回滚撤掉了快照之后的改动：哪些还生效说不准，宁可都不记（Codex #2100 P2）
+            ctx.fixes_made.clear()
+        else:
+            made = _fix_made(tool.name, args)
+            if made is not None and made[0] == "launcher" and isinstance(made[1].get("text"), str):
+                ctx.fix_secrets |= _fixmemory.launcher_secrets(made[1]["text"])
+                ctx.fix_risky = ctx.fix_risky or _fixmemory.launcher_is_risky(made[1]["text"])
+            if made is not None:
+                # 同一种改动后来又改了：只留最后一次（数据指认也只留最后一次——前缀规则会互相顶替，按请求路径分不清哪条
+                # 还生效，Codex #2100 P2；少记一条只是少个参考，记错一条会把失效的做法当成「修好过」）
+                ctx.fixes_made[:] = [f for f in ctx.fixes_made if _same_slot(f, made) is False] + [
+                    made
+                ]
     # 等用户的那张卡已经有了决定（批准 / 拒绝）：工具这一层与它的 user_wait 说同一句话（审计的 approved_by 不动）
     decided = getattr(ctx, "trace_wait_decision", None)
     ctx.trace_wait_decision = None
@@ -155,6 +214,7 @@ def run_tool(
             approved_step=ctx.call_meta.get("approved_step"),
             sandbox=ctx.call_meta.get("sandbox"),
             command_tier=ctx.call_meta.get("command_tier"),
+            attempt=ctx.call_meta.get("attempt"),
         )
     return result
 

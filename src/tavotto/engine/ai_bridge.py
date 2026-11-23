@@ -772,6 +772,12 @@ def agent_caps(agent_id: str) -> dict | None:
     return None
 
 
+def capabilities_if_cached() -> dict | None:
+    """已有的能力缓存（**绝不触发探测**——探测要起 CLI 子进程）；还没探测过 = None。同步路径（`propose` 要立刻回响应）用。"""
+    with _CAPS_LOCK:
+        return _CAPS_CACHE or None
+
+
 def require_usable(agent_id: str) -> dict:
     """派活之前的最后一道闸。**判据就是 `usable` 那一个字段**。
 

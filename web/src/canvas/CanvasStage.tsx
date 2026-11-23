@@ -1,5 +1,5 @@
 import { visibleFigureCards } from '@/lib/figureGroup'
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { perfCount } from '@/perf/core'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
@@ -17,7 +17,10 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useExactPanelManifest } from '@/store/renderStore'
 import { frameCanvasOf, isZeroPad } from '@/lib/framePad'
-import type { PanelObject } from '@/types/document'
+import type { CanvasObject, PanelObject } from '@/types/document'
+import { clipChainOf, groupMasks, inScope, isActiveMask } from '@/lib/groupTree'
+import { clipPathCss, maskOutline } from '@/lib/clipMask'
+import { useIsolationStore, validPath } from '@/store/isolationStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -38,6 +41,7 @@ import { ContextBar } from './context-bar/ContextBar'
 import { QuickEdit } from './QuickEdit'
 import { SyncOverridesHost } from '@/components/inspector/SyncOverridesDialog'
 import { PageOutsideMask } from './PageOutsideMask'
+import { QuickLayoutGutters } from './QuickLayoutGutters'
 import { FigureEdgeHandles, LayoutFramePreview, PageEdgeHandles } from './PageEdgeResize'
 import { Rulers, RULER_SIZE } from './Rulers'
 import { CanvasContextMenu } from './CanvasContextMenu'
@@ -237,6 +241,11 @@ export function CanvasStage() {
   // 双击画布外侧灰色工作区 → 适应当前画布（对象/页面内容/各种编辑态不误触）
   const onDoubleClick = (e: React.MouseEvent) => {
     const ui = useUiStore.getState()
+    // 组内编辑时双击空白处 = 退出组内编辑（Illustrator 习惯），这一下不适应画布
+    if (useIsolationStore.getState().path.length && !(e.target as HTMLElement).closest('[data-object-id]')) {
+      useIsolationStore.getState().clear()
+      return
+    }
     const ok = shouldFitOnDoubleClick({
       tool,
       spaceDown,
@@ -366,6 +375,8 @@ export function CanvasStage() {
         {/* 拖页面四条边改画布大小：只在多图排版（单图编辑没有页面）；命中区在选框覆盖层之下 */}
         {layoutMode && <PageEdgeHandles />}
         {layoutMode && <LayoutFramePreview />}
+        {/* 一键排版之后的行 / 列分隔线（高级功能，没解锁不画）：拖动调比例 */}
+        {layoutMode && <QuickLayoutGutters />}
         {/* 单图编辑：直接拖这张图的四条边改图幅，手感与上面拖页面边一致 */}
         {fastEdit && <FigureEdgeHandles panelId={activePanelId} />}
 
@@ -475,6 +486,9 @@ function DropGhost({ box }: { box: { x: number; y: number; w: number; h: number 
  */
 function CanvasLayers() {
   const objects = useDocumentStore((s) => s.doc.objects)
+  // 组内编辑（ADR 0191）：只对激活画布生效；链失效的部分不算
+  const isoPath = useIsolationStore((s) => s.path)
+  const isolation = useMemo(() => validPath(isoPath, objects).at(-1) ?? null, [isoPath, objects])
   const openTabs = useDocumentStore((s) => s.openTabs)
   const activeId = useDocumentStore((s) => s.activeCanvasId)
   const canvases = useDocumentStore((s) => s.canvases)
@@ -492,11 +506,52 @@ function CanvasLayers() {
             className="absolute left-0 top-0"
             style={active ? undefined : { display: 'none' }}
           >
-            {objs.map((o) => (
-              <ObjectView key={o.id} obj={o} />
-            ))}
+            <LayerObjects objects={objs} isolation={active ? isolation : null} />
           </div>
         )
+      })}
+    </>
+  )
+}
+
+/**
+ * 一张画布的对象（ADR 0191）：剪切组里生效的蒙版不画（只拿来裁），被裁的对象外面一层层包上
+ * `clip-path`（外层组的蒙版在外）。包裹层是贴在世界原点、零尺寸的 div，所以蒙版轮廓直接用世界坐标，
+ * 不管对象自己转没转；`clip-path` 同时裁掉命中，点不到被裁掉的那部分。组内编辑时组外的对象变淡、不接指针。
+ */
+export function LayerObjects({ objects, isolation }: { objects: readonly CanvasObject[]; isolation: string | null }) {
+  const masks = useMemo(() => groupMasks(objects), [objects])
+  const clipCss = useMemo(() => {
+    const out = new Map<string, string>()
+    for (const m of masks.values()) {
+      const outline = maskOutline(m)
+      // 画不出轮廓的蒙版 = 什么都不剩（与后端 `plan._clipped` 同一条：空裁剪区）
+      out.set(m.id, outline ? clipPathCss(outline, mmToWorld(1)) : 'inset(50%)')
+    }
+    return out
+  }, [masks])
+  return (
+    <>
+      {objects.map((o) => {
+        if (isActiveMask(o, masks)) return null
+        const outside = !!isolation && !inScope(o, isolation)
+        let node = <ObjectView key={o.id} obj={o} outside={outside} />
+        const chain = clipChainOf(o, masks)
+        for (let i = chain.length - 1; i >= 0; i--) {
+          node = (
+            <div key={o.id} data-clip-by={chain[i].id} className="absolute left-0 top-0" style={{ clipPath: clipCss.get(chain[i].id) }}>
+              {node}
+            </div>
+          )
+        }
+        if (outside) {
+          node = (
+            <div key={o.id} data-isolation-outside className="absolute left-0 top-0 opacity-35" style={{ pointerEvents: 'none' }}>
+              {node}
+            </div>
+          )
+        }
+        return node
       })}
     </>
   )
