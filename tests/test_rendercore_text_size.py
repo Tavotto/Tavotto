@@ -254,7 +254,7 @@ def test_mathtext_scripts_are_smaller_than_the_fontsize_the_script_asked_for(tmp
     assert f["min_pt"] == pytest.approx(4.9, abs=0.011)
     assert any(abs(s - 7.0) < 0.011 for s, _n in f["smallest"])
     o = {"text_size": f}
-    assert I.text_size_verdict(o, 5.0) == ("failed", "below_min")  # Nature 一类的 5 pt 下限
+    assert I.text_size_verdict(o, 5.0) == ("failed", "below_min")  # 某些期刊的 5 pt 下限
     assert (
         I.text_size_verdict(o, 4.5)[0] == "verified"
     )  # 换一份下限更低的规范就过：阈值不在检查器里
