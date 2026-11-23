@@ -4,6 +4,7 @@ import { t as translate } from '@/i18n'
 import { formatDate } from '@/i18n/format'
 import type { LicenseFailureCode } from '@/lib/api'
 import { licenseVisible, useLicenseStore } from '@/store/licenseStore'
+import { FoundingPlate } from '../license/FoundingPlate'
 import { Button } from '../ui/Button'
 import { ICON_SIZE } from '../ui/Icon'
 import { ExternalLink } from '../ui/icons'
@@ -225,6 +226,8 @@ export function LicenseRow() {
                 autoComplete="off"
                 className="max-w-xs font-mono text-xs tracking-wider"
               />
+            ) : status.founding ? (
+              <FoundingPlate no={status.founding.no} since={status.founding.since} />
             ) : undefined
           }
           control="auto"

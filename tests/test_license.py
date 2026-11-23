@@ -55,6 +55,7 @@ class FakeServer:
         self.features = ["review-plus"]
         self.exp = int(now()) + 30 * 86400
         self.offline_days = 14
+        self.extra: dict = {}  # 额外的令牌键（创始标记等）
 
     @property
     def pubkey_b64(self) -> str:
@@ -72,6 +73,7 @@ class FakeServer:
             "refresh_after": iat + 86400,
             "offline_until": min(self.exp, iat + self.offline_days * 86400),
             "email_hint": "m***@gmail.com",
+            **self.extra,
             **over,
         }
         raw = json.dumps(payload, separators=(",", ":")).encode()
@@ -809,3 +811,84 @@ def test_route_failures_use_the_closed_codes(client, server):
     assert res.status_code == 400 and res.get_json()["error"] == "invalid_code"
     res = client.post("/api/license/checkout", json={})
     assert res.get_json()["error"] == "client_error"
+
+
+# ---------------------------------------------------------------------------
+# 创始会员标记（founding_no / founding_since）
+# ---------------------------------------------------------------------------
+FOUNDING = {"founding_no": 37, "founding_since": 1_763_000_000}
+
+
+def test_status_has_no_founding_for_a_regular_license(server):
+    activated(server)
+    assert "founding" not in lic.status()
+
+
+def test_status_carries_founding_when_the_signed_token_has_it(server):
+    server.extra = dict(FOUNDING)
+    activated(server)
+    st = lic.status()
+    assert st["founding"] == {"no": 37, "since": 1_763_000_000}
+    assert st["state"] == "active"
+    assert "37" not in json.dumps({k: v for k, v in st.items() if k != "founding"})
+
+
+def test_founding_survives_expiry_and_lapse_but_not_revocation(server, clock):
+    server.extra = dict(FOUNDING)
+    activated(server)
+    clock["now"] += 14 * 86400 + 5  # lapsed
+    st = lic.status()
+    assert st["state"] == "lapsed" and st["founding"]["no"] == 37
+    clock["now"] = server.exp + 5
+    st = lic.status()
+    assert st["state"] == "expired" and st["founding"]["no"] == 37
+    # 服务端判吊销：标记不给
+    rec = json.loads(lic._token_path().read_text())
+    rec["state"] = "revoked"
+    lic._token_path().write_text(json.dumps(rec))
+    st = lic.status()
+    assert st["state"] == "revoked" and "founding" not in st
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"founding_no": 0, "founding_since": 1_763_000_000},
+        {"founding_no": 1000, "founding_since": 1_763_000_000},
+        {"founding_no": -3, "founding_since": 1_763_000_000},
+        {"founding_no": True, "founding_since": 1_763_000_000},
+        {"founding_no": 5.0, "founding_since": 1_763_000_000},
+        {"founding_no": "5", "founding_since": 1_763_000_000},
+        {"founding_no": 5, "founding_since": 0},
+        {"founding_no": 5, "founding_since": -1},
+        {"founding_no": 5, "founding_since": True},
+        {"founding_no": 5, "founding_since": "1763000000"},
+        {"founding_no": 5},
+        {"founding_since": 1_763_000_000},
+    ],
+)
+def test_malformed_founding_is_treated_as_absent_and_never_raises(server, extra):
+    server.extra = extra
+    activated(server)
+    st = lic.status()
+    assert "founding" not in st
+    assert st["state"] == "active" and st["licensed"] is True  # 授权本身不受影响
+
+
+def test_founding_bounds_are_inclusive(server):
+    for no in (1, 999):
+        server.extra = {"founding_no": no, "founding_since": 1}
+        lic.activate(CODE)
+        assert lic.status()["founding"] == {"no": no, "since": 1}
+
+
+def test_unsigned_founding_cannot_be_forged_by_editing_the_token(server):
+    activated(server)
+
+    def tamper(env):
+        raw = json.loads(base64.b64decode(env["payload"]))
+        raw.update(FOUNDING)
+        env["payload"] = _b64(json.dumps(raw, separators=(",", ":")).encode())
+
+    _rewrite(tamper)
+    assert "founding" not in lic.status()

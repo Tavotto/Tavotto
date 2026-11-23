@@ -440,9 +440,26 @@ def has(feature: str) -> bool:
         return False
 
 
+#: 创始席位号上限：服务端只发 1–200；客户端放宽到 999（形状校验，不替服务端判额度）
+FOUNDING_NO_MAX = 999
+
+
+def _founding_of(payload: dict) -> dict | None:
+    """令牌里的创始会员标记（`founding_no` 席位号、`founding_since` 首次以创始价付款的 unix 秒）；两个都合规才算，永不抛。"""
+    try:
+        no, since = payload.get("founding_no"), payload.get("founding_since")
+        if not _is_int(no) or not 1 <= no <= FOUNDING_NO_MAX:
+            return None
+        if not _is_int(since) or since <= 0:
+            return None
+        return {"no": no, "since": since}
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def status() -> dict:
     """给前端的摘要（**不联网**）；不含令牌原文与设备密钥。`state`：none / active / expired / revoked / lapsed（过了断网宽限或
-    令牌对不上，需要联网刷新）。"""
+    令牌对不上，需要联网刷新）。创始会员另带 `founding: {no, since}`（吊销时没有）。"""
     if not enabled():
         return {"enabled": False}
     out = {
@@ -462,6 +479,10 @@ def status() -> dict:
         now = _now()
         out["exp"] = payload["exp"]
         out["email_hint"] = str(payload.get("email_hint") or "")[:64]
+        # 创始身份是永久的：active / expired / lapsed 都给，吊销（state 记为 revoked）不给；形状不对当没有
+        founding = _founding_of(payload) if state != "revoked" else None
+        if founding is not None:
+            out["founding"] = founding
         if state != "ok":
             out["state"] = state
         elif now >= payload["exp"]:

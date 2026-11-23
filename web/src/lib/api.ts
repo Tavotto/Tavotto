@@ -9328,6 +9328,8 @@ export type LicenseStatus =
       /** 打码后的邮箱（`m***@gmail.com`），只用于显示 */
       email_hint: string
       needs_refresh: boolean
+      /** 创始会员（令牌里签了席位号）：永久身份，过期也在，吊销时没有；常规授权没有这个键 */
+      founding?: { no: number; since: number }
     }
 
 const licenseBody = (body?: unknown): RequestInit => ({

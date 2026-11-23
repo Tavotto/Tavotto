@@ -3169,6 +3169,12 @@ export default interface Resources {
           "tip": "高级版功能，点一下了解"
         },
         "none": "还没激活",
+        "plate": {
+          "defaultName": "早期同行者",
+          "label": "创始会员",
+          "nameLabel": "刻在铭牌上的名字",
+          "nameTitle": "点一下改名，名字只存在这台电脑上"
+        },
         "releaseTitle": "解绑后可以在另一台电脑上激活",
         "state": {
           "expired": "已于 {{date}} 到期",
