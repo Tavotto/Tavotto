@@ -157,6 +157,7 @@ from .engine import (
     prewarm as engine_prewarm,
     probe as engine_probe,
     profilestore as engine_profilestore,
+    proinstall as engine_proinstall,
     project_refresh as engine_refresh,
     project_watch as engine_watch,
     projectcopy as engine_projectcopy,
@@ -20670,6 +20671,7 @@ def main():
         # 桌面模式的升级由 Tauri 层负责，Python updater 连后台检查都不跑
         engine_updater.check_in_background()  # 默认每天一次；设置里可关，关了不联网
     engine_contactsend.start_poller()  # 联系作者的回信：启动时 + 每 6 小时；没有已发的信就一次网络都不发
+    engine_proinstall.register()  # 高级版闭源组件（ADR 0198）：授权激活 / 刷新成功后与每日后台刷新各查一次更新（后台线程）
     engine_license.start_background_refresh()  # 高级版授权：启动后一次 + 每天一次；没有令牌就一次网络都不发
     engine_reviewshare.start_poller()  # 外部审阅的意见：启动时 + 每 30 分钟；没有未到期的分享就一次网络都不发
 

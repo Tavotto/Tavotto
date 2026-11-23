@@ -87,7 +87,7 @@ HTTP_STATUS: dict[str, int] = {
     "client_error": 400,
 }
 #: 设备签名的 op 闭集（服务端核对与端点一致）
-OPS = frozenset({"activate", "refresh", "release", "renew"})
+OPS = frozenset({"activate", "refresh", "release", "renew", "pro_manifest"})
 LOG_RESULTS = frozenset(FAILURES) | {"ok"}
 
 API_TIMEOUT_S = 15
@@ -597,7 +597,8 @@ def activate(code: object) -> dict:
             raise _fail("activate", fail) from None
         _LAST["attempt"] = _now()
         _log("activate", "ok")
-        return {"ok": True, **status()}
+    _notify_after_license()  # 激活成功后立刻查一次高级版组件（后台线程，不阻塞响应）
+    return {"ok": True, **status()}
 
 
 def _lid_of_local_token() -> str | None:
@@ -640,7 +641,77 @@ def refresh(*, force: bool = False) -> dict:
                 _mark(fail.code)
             raise _fail("refresh", fail) from None
         _log("refresh", "ok")
-        return {"ok": True, "refreshed": True, **status()}
+    _notify_after_license()  # 拿到新令牌后查一次高级版组件（后台线程，不阻塞响应）
+    return {"ok": True, "refreshed": True, **status()}
+
+
+#: 授权成功（激活 / 刷新拿到新令牌）或每日后台刷新之后要跑的回调（ADR 0198 §五：检查高级版组件更新）。注册而不是直接 import：
+#: `proinstall` 要 import 本模块，本模块不能反过来 import 它。回调在**后台守护线程**里跑，不阻塞激活 / 刷新的响应；回调自己负责「没有授权就不联网」。
+_AFTER_LICENSE: list = []
+
+
+def register_after_license(fn) -> None:
+    """登记一个授权后回调（幂等）；回调的异常一律吞掉、只记一行日志。"""
+    if fn not in _AFTER_LICENSE:
+        _AFTER_LICENSE.append(fn)
+
+
+def _notify_after_license() -> None:
+    """起一个守护线程依次跑已登记的回调（没有登记 = 什么都不做）。永不抛、不等回调。"""
+    fns = list(_AFTER_LICENSE)
+    if not fns:
+        return
+
+    def run() -> None:
+        for fn in fns:
+            try:
+                fn()
+            except Exception:  # noqa: BLE001 — 后台回调不允许把主进程带下水
+                LOG.warning("高级版授权: 授权后回调失败")
+
+    threading.Thread(target=run, name="tavotto-license-after", daemon=True).start()
+
+
+def pro_manifest(platform: str, pro_api: list[int]) -> dict:
+    """向服务端要高级版组件的发布清单与限时下载地址（ADR 0198 §五，`POST /v1/pro/manifest`，设备签名同 `refresh`）。
+    回 `{"release", "url", "app_update_needed"}` 或 `{"state": "none" | "revoked" | "expired"}`；**不验清单签名**（那是 `proinstall.verify_release` 的事）。
+    本机没有令牌 = `client_error`、零网络。"""
+    target = _target()
+    if (
+        not isinstance(platform, str)
+        or not _LOOKUP_KEY.match(platform)
+        or not isinstance(pro_api, list)
+        or not pro_api
+        or not all(_is_int(v) for v in pro_api)
+    ):
+        raise LicenseError("client_error")
+    with _OP_LOCK:
+        lid = _lid_of_local_token()
+        if lid is None:
+            raise LicenseError("client_error")
+        try:
+            body = _signed(
+                "pro_manifest",
+                {"license_id": lid, "platform": platform, "pro_api": sorted(set(pro_api))},
+            )
+            got = _call(target, "/v1/pro/manifest", body)
+            state = got.get("state")
+            if state is not None:
+                if state not in ("none", "revoked", "expired"):
+                    raise _Failure("server")
+                _log("pro_manifest", "ok")
+                return {"state": state}
+            release, url = got.get("release"), got.get("url")
+            if not isinstance(release, dict) or not isinstance(url, str):
+                raise _Failure("server")
+            _log("pro_manifest", "ok")
+            return {
+                "release": release,
+                "url": url,
+                "app_update_needed": got.get("app_update_needed") is True,
+            }
+        except _Failure as fail:
+            raise _fail("pro_manifest", fail) from None
 
 
 def maybe_refresh() -> None:
@@ -672,7 +743,12 @@ def start_background_refresh() -> None:
         _wake.wait(STARTUP_DELAY_S)
         while True:
             _wake.clear()
+            before = _LAST["attempt"]
             maybe_refresh()
+            if _LAST["attempt"] == before:
+                # 这轮没有刷新（还没到 refresh_after / 没有令牌）：令牌有效时也查一次高级版组件
+                # （启动后一次、之后每天最多一次，ADR 0198 §五）；刷新成功的那轮已在 `refresh()` 里触发过
+                _notify_after_license()
             _wake.wait(DAY_S)
 
     threading.Thread(target=loop, name="tavotto-license-refresh", daemon=True).start()
