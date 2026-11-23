@@ -209,7 +209,7 @@ def classify_stuck(rec: dict) -> str:
     fx = rec.get("fix") or {}
     if rec.get("agent_errors"):
         return "model_error"
-    if cond == "A":
+    if cond in ("A", "M"):
         if fx.get("reason") in ("ai_fix_unavailable", "no_connection"):
             return "no_connection"
         for c in rec.get("cards") or []:
@@ -530,6 +530,66 @@ def run_opencode(cwd: Path, prompt: str, timeout: int, config: str, log: Path) -
 # ---------------------------------------------------------------- 一次运行
 
 
+def _fix_and_judge(cond, project, work, item, before, timeout, rec) -> None:
+    """A / M 组的一次修复 + 判分（baseline 只判分）。轨迹只取这一次修复新增的审计行（M 组里 warmup 的不算）。"""
+    with sidecar(project, work) as app:
+        if cond in ("A", "M"):
+            rec["connection"] = connect_builtin(app)
+        prep = run_prep(app, item["script"])
+        if cond in ("A", "M"):
+            seen = len(read_audit(work))
+            fx = run_fix(app, work, prep, item, timeout)
+            rec.update(fx)
+            audit = read_audit(work)[seen:]
+            rec["trajectory"] = [
+                {
+                    "tool": a.get("tool"),
+                    "args": a.get("args"),
+                    "tier": a.get("tier"),
+                    "approved_by": a.get("approved_by"),
+                    "result": (a.get("result") or {}).get("code")
+                    or (a.get("result") or {}).get("ok"),
+                    # 应用试运行的记录（ADR 0197 第 1 层，只有码）：之前 / 之后的形状、给的提示 id、这之前做过的改动
+                    **({"attempt": a["attempt"]} if a.get("attempt") else {}),
+                }
+                for a in audit
+            ]
+            rec["steps"] = (rec.get("fix") or {}).get("steps")
+        rec.update(judge(app, project, item, before))
+        if cond in ("A", "M"):  # 密钥不留在一次性配置目录里
+            try:
+                app.call(f"/api/ai/connections/{CONN_VENDOR}", method="DELETE", timeout=30)
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _warmup(item: dict, work: Path, scratch: Path, timeout: int) -> dict:
+    """M 组的「甲」：在同一个 work 里修一遍，只记结局（成没成、几步），不进结果表。"""
+    warm_id = item["warmup"]
+    warm = load_corpus()[warm_id]
+    project = scratch / "warmup-project"
+    shutil.rmtree(project, ignore_errors=True)
+    materialize(warm, project)
+    rec: dict = {}
+    _fix_and_judge("M", project, work, warm, hash_tree(project), timeout, rec)
+    return {
+        "id": warm_id,
+        "success": rec.get("success"),
+        "steps": rec.get("steps"),
+        "outcome": (rec.get("fix") or {}).get("outcome"),
+    }
+
+
+def _memory_shapes(work: Path) -> list[dict]:
+    """修「乙」之前本机记住了什么：只要失败类型与改动种类（值不进结果）。"""
+    p = work / "data" / "ai" / "fix_memory.json"
+    try:
+        rows = json.loads(p.read_text(encoding="utf-8")).get("entries") or []
+    except (OSError, ValueError):
+        return []
+    return [{"shape": r.get("shape"), "kind": r.get("kind")} for r in rows if isinstance(r, dict)]
+
+
 def one_run(cond: str, pid: str, item: dict, rep: int, timeout: int) -> dict:
     base = RUNS / cond / f"{pid}__{rep}"
     scratch = SCRATCH / f"{cond}-{pid}-{rep}"
@@ -557,6 +617,8 @@ def one_run(cond: str, pid: str, item: dict, rep: int, timeout: int) -> dict:
     with sidecar(pre_proj, pre_work) as app:
         pre = summarize_report(run_prep(app, item["script"])["report"])
     rec["before"] = pre
+    if cond == "M" and not item.get("warmup"):
+        raise SystemExit(f"{pid} 没有 warmup：M 组只跑成对的「乙」题（corpus.json 里带 warmup 的）")
     if cond != "baseline" and pre["phase"] == "completed" and pre["figure_captured"] is True:
         rec.update(success=True, already_ok=True, final=pre, originals_changed=[], new_files=[])
         rec["wall_s_total"] = round(time.time() - t0, 1)
@@ -575,34 +637,11 @@ def one_run(cond: str, pid: str, item: dict, rep: int, timeout: int) -> dict:
         with sidecar(project, work) as app:
             rec.update(judge(app, project, item, before))
     else:
-        with sidecar(project, work) as app:
-            if cond == "A":
-                rec["connection"] = connect_builtin(app)
-            prep = run_prep(app, item["script"])
-            if cond == "A":
-                fx = run_fix(app, work, prep, item, timeout)
-                rec.update(fx)
-                audit = read_audit(work)
-                rec["trajectory"] = [
-                    {
-                        "tool": a.get("tool"),
-                        "args": a.get("args"),
-                        "tier": a.get("tier"),
-                        "approved_by": a.get("approved_by"),
-                        "result": (a.get("result") or {}).get("code")
-                        or (a.get("result") or {}).get("ok"),
-                        # 应用试运行的记录（ADR 0197 第 1 层，只有码）：之前 / 之后的形状、给的提示 id、这之前做过的改动
-                        **({"attempt": a["attempt"]} if a.get("attempt") else {}),
-                    }
-                    for a in audit
-                ]
-                rec["steps"] = (rec.get("fix") or {}).get("steps")
-            rec.update(judge(app, project, item, before))
-            if cond == "A":  # 密钥不留在一次性配置目录里
-                try:
-                    app.call(f"/api/ai/connections/{CONN_VENDOR}", method="DELETE", timeout=30)
-                except Exception:  # noqa: BLE001
-                    pass
+        if cond == "M":
+            # M：同一个数据目录里先修「甲」（warmup），本机记住的做法留在 work/data/ai/fix_memory.json，再修「乙」
+            rec["warmup"] = _warmup(item, work, scratch, timeout)
+            rec["memory_before"] = _memory_shapes(work)
+        _fix_and_judge(cond, project, work, item, before, timeout, rec)
     rec["wall_s_total"] = round(time.time() - t0, 1)
     rec["stuck"] = classify_stuck(rec)
     if rec["cond"] == "B":
@@ -683,7 +722,9 @@ def cmd_probe(args) -> None:
 
 def cmd_run(args) -> None:
     corpus = load_corpus()
-    ids = args.only or list(corpus)
+    ids = args.only or [
+        k for k, v in corpus.items() if args.cond != "M" or v.get("warmup")
+    ]  # M 组只跑带 warmup 的「乙」题
     done = set()
     path = RESULTS / f"{args.cond}.jsonl"
     if path.exists():
@@ -725,7 +766,7 @@ def main() -> None:
     p = sub.add_parser("probe")
     p.add_argument("--only", nargs="*")
     r = sub.add_parser("run")
-    r.add_argument("cond", choices=["baseline", "A", "B", "C"])
+    r.add_argument("cond", choices=["baseline", "A", "B", "C", "M"])
     r.add_argument("--only", nargs="*")
     r.add_argument("--reps", type=int, default=1)
     r.add_argument("--timeout", type=int, default=900)

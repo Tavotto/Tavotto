@@ -35,7 +35,7 @@ def is_ok_before(r: dict) -> bool:
 
 
 def table(data: dict[str, list[dict]]) -> str:
-    conds = [c for c in ("baseline", "A", "B", "C") if c in data]
+    conds = [c for c in ("baseline", "A", "M", "B", "C") if c in data]
     ids = sorted({r["id"] for rs in data.values() for r in rs})
     cell: dict[tuple[str, str], list[bool]] = defaultdict(list)
     for c, rs in data.items():
@@ -68,7 +68,7 @@ def table(data: dict[str, list[dict]]) -> str:
 
 def stuck_counts(data: dict[str, list[dict]]) -> str:
     lines = []
-    for c in ("A", "B", "C"):
+    for c in ("A", "M", "B", "C"):
         if c not in data:
             continue
         cnt = Counter(r.get("stuck", "?") for r in data[c] if not r["success"])
@@ -80,7 +80,7 @@ def stuck_counts(data: dict[str, list[dict]]) -> str:
 
 def tool_stats(data: dict[str, list[dict]]) -> str:
     lines = []
-    for c in ("A", "B", "C"):
+    for c in ("A", "M", "B", "C"):
         rs = [r for r in data.get(c, []) if not r.get("already_ok")]
         if not rs:
             continue
@@ -128,6 +128,40 @@ def hint_follow(data: dict[str, list[dict]]) -> str:
     return head + "\n" + "\n".join(rows)
 
 
+def memory_pairs(data: dict[str, list[dict]]) -> str:
+    """「乙」题 A 组（全新数据目录）对 M 组（同一个数据目录里先修过「甲」，ADR 0197 第 3 层·在线）：成功数、平均步数、平均用时。
+    M 组里「甲」没修好的那几次单独数：那时本机没记下做法，「乙」等于没得参考。"""
+    m_rows = data.get("M") or []
+    if not m_rows:
+        return "（没有 M 组结果）"
+    lines = [
+        "| 乙题 | A 成功 | A 平均步数 | A 平均用时 s | M 成功 | M 平均步数 | M 平均用时 s | M 里甲修好 / 记下做法 |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+
+    def agg(rs: list[dict]) -> tuple[str, str, str]:
+        if not rs:
+            return "-", "-", "-"
+        ok = sum(1 for r in rs if r.get("success"))
+        steps = [r.get("steps") or 0 for r in rs]
+        wall = [r.get("wall_s_total") or 0 for r in rs]
+        return (
+            f"{ok}/{len(rs)}",
+            str(round(sum(steps) / len(rs), 1)),
+            str(round(sum(wall) / len(rs), 1)),
+        )
+
+    for pid in sorted({r["id"] for r in m_rows}):
+        a = [r for r in data.get("A") or [] if r["id"] == pid]
+        m = [r for r in m_rows if r["id"] == pid]
+        warm_ok = sum(1 for r in m if (r.get("warmup") or {}).get("success"))
+        remembered = sum(1 for r in m if r.get("memory_before"))
+        lines.append(
+            f"| {pid} | {' | '.join(agg(a))} | {' | '.join(agg(m))} | {warm_ok}/{len(m)} · {remembered}/{len(m)} |"
+        )
+    return "\n".join(lines)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", default=str(HERE / "results"))
@@ -143,6 +177,8 @@ def main() -> None:
     print(tool_stats(data))
     print()
     print(hint_follow(data))
+    print()
+    print(memory_pairs(data))
 
 
 if __name__ == "__main__":
