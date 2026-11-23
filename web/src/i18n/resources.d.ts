@@ -3171,10 +3171,13 @@ export default interface Resources {
         "none": "还没激活",
         "plate": {
           "defaultName": "早期同行者",
+          "engrave": "刻上你的名字",
+          "issued": "ISSUED ON",
           "label": "创始会员",
           "nameLabel": "刻在铭牌上的名字",
-          "nameTitle": "点一下刻上你的名字，只保存在这台电脑上",
-          "thanks": "谢谢你在最初与 {{product}} 同行"
+          "nameTitle": "名字只保存在这台电脑上",
+          "rename": "改名",
+          "turnTitle": "拖一下可以翻面"
         },
         "releaseTitle": "解绑后可以在另一台电脑上激活",
         "state": {

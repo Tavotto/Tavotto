@@ -197,7 +197,7 @@ describe('创始会员铭牌', () => {
       await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
     }
     await typeAndEnter('  林小雨  ')
-    expect(q('[data-founding-name]')?.textContent).toBe('林小雨')
+    expect(q('[data-founding-shown]')?.textContent).toBe('林小雨')
     const posts = fetchMock.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === 'POST')
     expect(posts.map((c) => new URL(String(c[0]), 'http://x').pathname)).toEqual(['/api/license/plate-name'])
     expect(JSON.parse(String((posts[0][1] as RequestInit).body))).toEqual({ name: '林小雨' })

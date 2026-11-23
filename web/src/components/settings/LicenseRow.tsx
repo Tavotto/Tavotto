@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { formatDate } from '@/i18n/format'
-import { PRODUCT_NAME } from '@/lib/brand'
 import type { LicenseFailureCode } from '@/lib/api'
 import { licenseVisible, useLicenseStore } from '@/store/licenseStore'
 import { FoundingPlate } from '../license/FoundingPlate'
@@ -228,15 +227,12 @@ export function LicenseRow() {
                 className="max-w-xs font-mono text-xs tracking-wider"
               />
             ) : status.founding ? (
-              <div className="mt-1 flex flex-wrap items-end gap-x-5 gap-y-2">
-                <FoundingPlate
-                  no={status.founding.no}
-                  since={status.founding.since}
-                  name={status.founding.name}
-                  onName={(n) => void setPlateName(n)}
-                />
-                <span className="type-caption text-ink-3">{st('plate.thanks', { product: PRODUCT_NAME })}</span>
-              </div>
+              <FoundingPlate
+                no={status.founding.no}
+                since={status.founding.since}
+                name={status.founding.name}
+                onName={(n) => void setPlateName(n)}
+              />
             ) : undefined
           }
           control="auto"

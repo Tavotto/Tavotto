@@ -2303,8 +2303,11 @@
         "label": "Founding member",
         "defaultName": "Early supporter",
         "nameLabel": "Name engraved on the plate",
-        "nameTitle": "Click to engrave your name. It stays on this computer",
-        "thanks": "Thank you for backing {{product}} from the start"
+        "nameTitle": "The name stays on this computer",
+        "engrave": "Engrave your name",
+        "rename": "Change name",
+        "turnTitle": "Drag to turn it over",
+        "issued": "ISSUED ON"
       }
     }
   },
