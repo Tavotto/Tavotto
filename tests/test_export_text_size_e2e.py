@@ -162,7 +162,7 @@ def test_the_layout_scale_is_part_of_the_reading(project):
     assert mf["text_size"]["min_pt"] == pytest.approx(BODY_PT * SCRIPT_SHRINK * scale, abs=0.02)
 
 
-def test_without_a_profile_the_reading_is_unknown(project):
+def test_without_a_profile_the_reading_is_not_applicable(project):
     """standard 不带规范：量到了也只记录不判（`no_threshold`）→ not_applicable，不是 verified 也不是
     unknown；其余各项与改动前一样全 verified / n/a，整份不因这一项降成「未核验」。"""
     _m, client, _figs = project
