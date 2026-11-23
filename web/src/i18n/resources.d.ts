@@ -3173,7 +3173,8 @@ export default interface Resources {
           "defaultName": "早期同行者",
           "label": "创始会员",
           "nameLabel": "刻在铭牌上的名字",
-          "nameTitle": "点一下改名，名字只存在这台电脑上"
+          "nameTitle": "点一下刻上你的名字，只保存在这台电脑上",
+          "thanks": "谢谢你在最初与 {{product}} 同行"
         },
         "releaseTitle": "解绑后可以在另一台电脑上激活",
         "state": {

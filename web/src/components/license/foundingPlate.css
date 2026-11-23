@@ -15,6 +15,7 @@
   --etch-dim: #979fae;
   position: absolute;
   inset: 0;
+  color-scheme: dark; /* 金属不跟主题：行内输入框的原生选区 / 光标也走深色 */
   display: grid;
   grid-template-columns: 1fr auto;
   grid-template-rows: auto 1fr auto;
@@ -32,11 +33,38 @@
     ),
     radial-gradient(circle at 24% 20%, rgb(255 255 255 / 0.09), transparent 52%),
     linear-gradient(135deg, var(--face-a), var(--face-b) 52%, var(--face-c));
+  /* 微倒角：上、左受光亮边，下、右背光暗边，外圈一道极细轮廓 */
   box-shadow:
-    inset 0 0.5px 0 rgb(255 255 255 / 0.22),
-    inset 0 0 0 0.75px rgb(255 255 255 / 0.1),
+    inset 0 0.75px 0 rgb(255 255 255 / 0.24),
+    inset 0.75px 0 0 rgb(255 255 255 / 0.1),
+    inset 0 -0.75px 0 rgb(0 0 0 / 0.45),
+    inset -0.75px 0 0 rgb(0 0 0 / 0.24),
+    0 0 0 0.5px rgb(0 0 0 / 0.35),
     0 1px 2px rgb(16 19 24 / 0.22),
     0 6px 14px -6px rgb(16 19 24 / 0.38);
+}
+/* 暗色主题：接触阴影加深，铭牌稳稳落在底面上（与 index.css 的两个暗色钩子同一写法） */
+:root[data-theme='dark'] .tvp-card {
+  box-shadow:
+    inset 0 0.75px 0 rgb(255 255 255 / 0.24),
+    inset 0.75px 0 0 rgb(255 255 255 / 0.1),
+    inset 0 -0.75px 0 rgb(0 0 0 / 0.45),
+    inset -0.75px 0 0 rgb(0 0 0 / 0.24),
+    0 0 0 0.5px rgb(0 0 0 / 0.35),
+    0 2px 4px rgb(0 0 0 / 0.5),
+    0 10px 22px -8px rgb(0 0 0 / 0.72);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .tvp-card {
+    box-shadow:
+      inset 0 0.75px 0 rgb(255 255 255 / 0.24),
+      inset 0.75px 0 0 rgb(255 255 255 / 0.1),
+      inset 0 -0.75px 0 rgb(0 0 0 / 0.45),
+      inset -0.75px 0 0 rgb(0 0 0 / 0.24),
+      0 0 0 0.5px rgb(0 0 0 / 0.35),
+      0 2px 4px rgb(0 0 0 / 0.5),
+      0 10px 22px -8px rgb(0 0 0 / 0.72);
+  }
 }
 .tvp-mark,
 .tvp-label,
@@ -90,25 +118,45 @@
 .tvp-name[data-default] {
   color: var(--etch-dim);
 }
+/* 可点的暗示：不放铅笔图标，只在名字下留一条极轻的虚线（悬停 / 没刻名时可见） */
+button.tvp-name {
+  border-bottom: 1px dashed transparent;
+  transition:
+    color 160ms ease,
+    border-color 160ms ease;
+}
+button.tvp-name[data-default],
+.tvp-card:hover button.tvp-name {
+  border-bottom-color: rgb(207 213 223 / 0.24);
+}
 button.tvp-name:hover {
   color: #fff;
 }
-button.tvp-name:focus-visible,
-input.tvp-name:focus-visible {
+button.tvp-name:focus-visible {
   outline: 1px solid rgb(207 213 223 / 0.55);
   outline-offset: 3px;
   border-radius: 2px;
 }
+/* 编辑态：像在钛板上落笔，不是表单框 */
 input.tvp-name {
   width: 78%;
   max-width: 78%;
   caret-color: var(--etch);
+  outline: none;
+  border-bottom: 1px solid rgb(220 224 232 / 0.42);
+}
+input.tvp-name::selection {
+  background: rgb(226 232 242 / 0.22);
+  color: #f6f8fc;
+}
+input.tvp-name::placeholder {
+  color: rgb(151 159 174 / 0.55);
 }
 .tvp-no {
   grid-column: 1 / -1;
   justify-self: start;
-  font-size: clamp(6.5px, 1.86cqw, 7.6px);
-  letter-spacing: 0.28em;
+  font-size: clamp(8px, 3.1cqw, 9px);
+  letter-spacing: 0.16em;
   font-variant-numeric: tabular-nums;
 }
 /* 右下角的蚀刻徽记：凹下的上缘暗切 + 下缘亮边 */

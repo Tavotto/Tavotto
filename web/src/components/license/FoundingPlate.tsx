@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { PRODUCT_NAME } from '@/lib/brand'
@@ -44,11 +44,15 @@ export const plateSeat = (no: number): string => `NO. ${String(no).padStart(3, '
  */
 export function FoundingPlate({ no, since }: { no: number; since: number }) {
   useTranslation('dialogs')
+  const gid = useId().replace(/:/g, '')
   const [name, setName] = useState(loadPlateName)
   const [editing, setEditing] = useState(false)
   const input = useRef<HTMLInputElement>(null)
   useEffect(() => {
-    if (editing) input.current?.select()
+    if (editing) {
+      input.current?.focus()
+      input.current?.select()
+    }
   }, [editing])
 
   const commit = (raw: string) => {
@@ -83,6 +87,8 @@ export function FoundingPlate({ no, since }: { no: number; since: number }) {
             spellCheck={false}
             onBlur={(e) => commit(e.currentTarget.value)}
             onKeyDown={(e) => {
+              // 输入法选字时的回车不是提交
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return
               if (e.key === 'Enter') commit(e.currentTarget.value)
               if (e.key === 'Escape') {
                 e.stopPropagation()
@@ -112,24 +118,24 @@ export function FoundingPlate({ no, since }: { no: number; since: number }) {
           fillRule="evenodd"
         >
           <defs>
-            <linearGradient id="tvp-fm" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stopColor="#f8fbff" />
-              <stop offset="0.48" stopColor="#dde3ee" />
-              <stop offset="0.74" stopColor="#eff4fb" />
-              <stop offset="1" stopColor="#b8c2d2" />
+            <linearGradient id={`tvp-fm-${gid}`} x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stopColor="#bcc4d1" />
+              <stop offset="0.48" stopColor="#a8b0be" />
+              <stop offset="0.74" stopColor="#b3bbc8" />
+              <stop offset="1" stopColor="#7d8594" />
             </linearGradient>
-            <linearGradient id="tvp-fa" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stopColor="#cfd6e3" />
-              <stop offset="1" stopColor="#96a0b2" />
+            <linearGradient id={`tvp-fa-${gid}`} x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stopColor="#848c9a" />
+              <stop offset="1" stopColor="#606876" />
             </linearGradient>
           </defs>
           {BRAND_MARK_PATHS.map((p) => (
             <path
               key={p.role}
               d={p.d}
-              fill={p.role === 'ink' ? 'url(#tvp-fm)' : 'url(#tvp-fa)'}
-              stroke="rgb(255 255 255 / 0.45)"
-              strokeWidth="0.9"
+              fill={`url(#tvp-${p.role === 'ink' ? 'fm' : 'fa'}-${gid})`}
+              stroke="rgb(255 255 255 / 0.16)"
+              strokeWidth="0.6"
             />
           ))}
         </svg>

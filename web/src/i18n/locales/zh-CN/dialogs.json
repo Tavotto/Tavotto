@@ -2278,7 +2278,8 @@
         "label": "创始会员",
         "defaultName": "早期同行者",
         "nameLabel": "刻在铭牌上的名字",
-        "nameTitle": "点一下改名，名字只存在这台电脑上"
+        "nameTitle": "点一下刻上你的名字，只保存在这台电脑上",
+        "thanks": "谢谢你在最初与 {{product}} 同行"
       }
     }
   },
