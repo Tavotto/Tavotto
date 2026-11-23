@@ -508,3 +508,17 @@ def test_risk_seen_earlier_in_the_session_outlives_an_overwrite(store, box):
         "env_var_missing", ctx.fixes_made, secrets=ctx.fix_secrets, risky=ctx.fix_risky
     )
     assert "x7!" not in store.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("text", "home", "ci", "want"),
+    [
+        (r"c:\users\me\lab\data", r"C:\Users\Me", True, r"~\lab\data"),
+        ("C:/Users/Me/lab/data", r"C:\Users\Me", True, "~/lab/data"),
+        ("/users/me/lab", "/Users/me", True, "~/lab"),
+        ("/home/Me/lab", "/home/me", False, "/home/Me/lab"),  # 分大小写的文件系统上不是同一处
+        ("/home/me/lab", "/home/me", False, "~/lab"),
+    ],
+)
+def test_home_is_written_as_tilde_however_it_is_spelled(text, home, ci, want):
+    assert fixmemory._home_to_tilde(text, home, case_insensitive=ci) == want

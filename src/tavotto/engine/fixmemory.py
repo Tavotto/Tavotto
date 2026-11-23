@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -184,12 +185,31 @@ def _default_scrub(text: str) -> str:
     return diagnostictext.redact_text(text)
 
 
+def _home_to_tilde(
+    text: str, home: str | None = None, *, case_insensitive: bool | None = None
+) -> str:
+    """家目录写成 `~`。Windows / macOS 的默认文件系统不分大小写（`c:\\users\\Me` 与 `C:\\Users\\me` 是同一处），
+    Windows 上 `/` 与 `\\` 也是同一个分隔符：这两处都按同一处认（d2 #2100 提醒）。"""
+    home = os.path.expanduser("~") if home is None else home
+    if not home or home == "~":
+        return text
+    if case_insensitive is None:
+        case_insensitive = sys.platform in ("win32", "darwin")
+    variants = {home}
+    if "\\" in home:
+        variants.add(home.replace("\\", "/"))
+    for v in sorted(variants, key=len, reverse=True):
+        text = (
+            re.sub(re.escape(v), "~", text, flags=re.IGNORECASE)
+            if case_insensitive
+            else text.replace(v, "~")
+        )
+    return text
+
+
 def _tidy(text: str, limit: int, scrub: Callable[[str], str] = _default_scrub) -> str:
     # 先把家目录写成 `~`，再脱敏：脱敏会把 `C:\\Users\\<名字>` 里的用户名换掉，换完就认不出家目录了（Windows 合并组实测）
-    text = str(text or "")
-    home = os.path.expanduser("~")
-    if home and home != "~":
-        text = text.replace(home, "~")
+    text = _home_to_tilde(str(text or ""))
     text = scrub(text)
     return text if len(text) <= limit else text[:limit] + "…"
 
