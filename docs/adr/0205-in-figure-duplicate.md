@@ -31,8 +31,9 @@
 * **样式按引用、位置与文字按快照**：重放时新建 `Text(at, text)`，`update_from(源 artist)` 拿脚本原样的字体 / 颜色 / 对齐 / 转角；
   粘贴时前端把源上**已有的样式类 override** 原样抄一份到副本 gid（同一次提交），所以粘出来与源此刻画出来的一模一样，
   此后两边各改各的。脚本里改了源的样式，副本跟着变（它是「这一类文字」的一员）；这是有意的。
+* 加进宿主用公开的 `add_artist`：子图里副本排在 `ax.texts` 末尾，整张图上进 `fig.artists`（不进 `fig.texts`，所以 `fig.texts_N` 序号永不被挤动）。
 * 副本 `set_in_layout(False)`、`clip_on=False`，带私有标记 `_mm_copy`；`instrument` 的按序登记跳过带标记的 artist，
-  由副本自己的 gid 登记进 `state.index` 与 manifest，**角色沿用源的角色**（标题的副本仍是 `title`），所以「选中全部同类」、样式面板、
+  由副本自己的 gid 登记进 `state.index` 与 manifest（副本没有 identity：label 清空、`artist_identity` 为空；它的 gid 带随机串，本身就不会错认），**角色沿用源的角色**（标题的副本仍是 `title`），所以「选中全部同类」、样式面板、
   预检的字号检查都把它当同类。
 
 ### 二、引擎（重放）
