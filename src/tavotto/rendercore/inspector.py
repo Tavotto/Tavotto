@@ -1176,6 +1176,7 @@ def summary(manifest: dict) -> dict:
 _PUBLIC_SOURCE_KEYS = ("origin", "kind", "bytes_sha256", "receipt_identity", "patch_hash")
 _PUBLIC_RECEIPT_KEYS = (
     "receipt_identity",
+    "profile",
     "completeness",
     "runtime_rejected",
     "pid_check",

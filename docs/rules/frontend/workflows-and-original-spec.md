@@ -80,6 +80,8 @@ writer、第二份对象模型：一张图在文档里只有**一个**面板对�
   画布上的缩放 / 裁剪 / 旋转 / 翻转 / 透明度只进 `spec.ignored`，**绝不套进
   原图导出**——跟着缩的话字号会一起缩。`getOriginalOutputSpec()` 对不认识的
   id 回 `null`，不发明一张不存在的图。
+- 清单让位隐藏不等于文件不存在。缺清单事实的精确磁盘 id，可由原 `/api/panel-stem?original_spec=1` 取得只读 `original_spec`，与清单消费同一后端事实层；不把该文件重新加入素材清单。
+  精确事实复用 assetStore 的项目/代际/刷新生命周期，迟到正负结果不跨项目落地；批量准备等待查询后再冻结输入。原规格优先级不变，文档缺像素数时可补同源资产像素事实；这些事实不授予执行或几何写入资格。
 - 看护：`store/workspace.test.ts`、`lib/originalSpec.test.ts`、
   `canvas/fastEditStage.test.tsx`；后端事实层 `tests/test_original_spec.py`。
 
