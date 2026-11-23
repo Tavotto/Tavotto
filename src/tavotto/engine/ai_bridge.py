@@ -44,6 +44,7 @@ from . import (
     config,
     convertwrite,
     exectrace,
+    hosted_ai,
     logsafe,
     managedcli,
     projectenv,
@@ -1788,6 +1789,63 @@ def run(
     convert: dict | None = None,
     attachments: list[str] | None = None,
 ) -> str:
+    """启动一次 AI 修改任务，返回 session id（编排见 `_run`）。
+
+    **选了「Tavotto Agent」（`endpoint_id == hosted_ai.PROVIDER_ID`，内置 AI，ADR 0200）时在这里先开一个网关任务**：联网一次、放在脚本锁 / 请求锁
+    **之外**（同账号登录令牌的刷新，不卡住别的请求）；开不成不在这里抛——结果带进 `_run`，由它在去重查找**之后**抛 `ai_hosted_unavailable`
+    （已受理请求的重发仍得到既有会话，ADR 0132）。任务在会话收尾（`_pump` 的 finally，任何结局）时关；会话没起来就退出的每一条路在这里关。
+    选自己的 Key / 订阅登录的人一个字节都不经过这段。"""
+    lease = None
+    if agent == ai_agents.BUILTIN_ID and endpoint_id == hosted_ai.PROVIDER_ID:
+        try:
+            known = client_request_id and find_request(
+                str(Path(figures_dir).resolve()), client_request_id
+            )
+        except Exception:  # noqa: BLE001 — 只是省一次联网的预判；读不到就当没登记过（`_run` 里去重才是权威）
+            known = None
+        if not known:  # 已受理的重发不再开新任务（`_run` 里去重会直接返回既有会话）
+            lease = hosted_ai.lease("convert" if convert is not None else "figure_edit")
+    try:
+        return _run(
+            agent,
+            script,
+            user_prompt,
+            figures_dir,
+            context=context,
+            on_event=on_event,
+            model=model,
+            effort=effort,
+            endpoint_id=endpoint_id,
+            on_changed=on_changed,
+            client_request_id=client_request_id,
+            task_hooks=task_hooks,
+            convert=convert,
+            attachments=attachments,
+            hosted=lease,
+        )
+    except BaseException:
+        if lease is not None:
+            lease.close()
+        raise
+
+
+def _run(
+    agent: str,
+    script: str,
+    user_prompt: str,
+    figures_dir: str,
+    context: dict | None = None,
+    on_event=None,
+    model: str | None = None,
+    effort: str | None = None,
+    endpoint_id: str | None = None,
+    on_changed=None,
+    client_request_id: str | None = None,
+    task_hooks: dict | None = None,
+    convert: dict | None = None,
+    attachments: list[str] | None = None,
+    hosted: hosted_ai.Lease | None = None,
+) -> str:
     """启动一次 AI 修改任务，返回 session id。事件经 on_event(name, data) 回调。
 
     **先过 `require_usable`**：未知 / 未安装 / 被用户关掉的 Agent 在这里就被
@@ -1867,6 +1925,15 @@ def run(
             raise AgentError("ai_agent_not_usable", {"agent": agent})
         if needs_login is not None:
             raise AgentError("ai_endpoint_needs_login", needs_login)
+        if hosted_ai.is_hosted(chosen):
+            # Tavotto Agent：开任务失败（额度 / 每日上限 / 未授权 / 熔断 / 网络）= 一个安静的、带闭集码的结果（ADR 0200 §八），
+            # 前端据此给「改用我自己的 key」/「X 号再试」两条路；放在去重之后，已受理请求的重发不受影响
+            if (
+                hosted is None
+            ):  # 去重那一刻刚好翻了面（登记被删）：没有这次的任务，按网络不通处理，不带着空密钥去 spawn
+                raise AgentError("ai_hosted_unavailable", {"reason": "network", "retry_at": None})
+            if hosted.error is not None:
+                raise AgentError("ai_hosted_unavailable", hosted.error.public())
         if agent == ai_agents.BUILTIN_ID:
             # 内置执行器必须显式指到一条内置循环能用的连接（没有「当前选中」这回事）
             if ai_providers.builtin_conn(chosen, model) is None:
@@ -2044,7 +2111,10 @@ def run(
         if ref_note:
             prompt += "\n\n" + ref_note
         stderr_log = open(SNAP_DIR / f"{sid}.stderr.log", "wb", buffering=0)
-        endpoint = ai_providers.resolve(agent, endpoint_id)
+        # Tavotto Agent：换上这次任务的通行证与网关下发的上限（`_respawn` 的修正轮复用同一个 `endpoint`，也就是同一个任务）
+        endpoint = (hosted.record() if hosted is not None else None) or ai_providers.resolve(
+            agent, endpoint_id
+        )
         builtin = agent == ai_agents.BUILTIN_ID
         # 内置执行器要知道目标脚本（写权限收窄到它）；提示词走 stdin 不进 argv。两家 CLI 的调用形状一个字节不变
         # 转换任务（ADR 0143）：Agent 读候选里的原脚本副本、新建 `<原名>_matplotlib.py`；`check` 经 stdin/stdout 回调本进程的校验流水
@@ -2553,6 +2623,8 @@ def run(
         finally:
             if cand is not None:
                 _release_cand(cand)
+            if hosted is not None:
+                hosted.close()  # 内置 AI 任务：任何结局（完成 / 失败 / 取消 / 超时）都在这里关，网关立即记账
 
     threading.Thread(target=_pump, daemon=True, name=f"ai-{sid}").start()
     return sid

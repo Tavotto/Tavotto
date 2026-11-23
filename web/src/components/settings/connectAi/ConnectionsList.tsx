@@ -19,13 +19,34 @@ const HAIRLINE = 'relative before:absolute before:inset-x-4 before:top-0 before:
 export function ConnectionsList({ caps }: { caps: AiCapabilities }) {
   useTranslation('dialogs')
   const [manual, setManual] = useState(false)
-  const vendors = listedVendors(caps)
+  const allVendors = listedVendors(caps)
+  // 「Tavotto Agent」（内置 AI）是我们自己的，不属于国内 / 海外任何一组：单独放在最前，不带分组标题
+  const hostedVendors = allVendors.filter((v) => v.connect === 'hosted')
+  const vendors = allVendors.filter((v) => v.connect !== 'hosted')
   const groups = (isCnFirst() ? (['cn', 'global'] as const) : (['global', 'cn'] as const))
     .map((region) => ({ region, items: vendors.filter((v) => v.region === region) }))
     .filter((g) => g.items.length > 0)
 
   return (
     <div data-connect-list className="contents">
+      {hostedVendors.length > 0 && (
+        <FormSection data-connect-group="hosted">
+          <FieldGroup>
+            <ul className="flex flex-col p-0">
+              {hostedVendors.map((v, i) => (
+                <VendorRow
+                  key={v.id}
+                  vendor={v}
+                  className={cn(i > 0 && HAIRLINE)}
+                  connection={connectionOf(caps, v)}
+                  connections={connectionsOf(caps, v)}
+                  onConnected={() => undefined}
+                />
+              ))}
+            </ul>
+          </FieldGroup>
+        </FormSection>
+      )}
       {groups.map((g) => (
         <FormSection key={g.region} title={g.region === 'cn' ? cx('regionCn') : cx('regionGlobal')} data-connect-group={g.region}>
           <FieldGroup>

@@ -329,7 +329,8 @@ def project_attributes(attrs) -> tuple[dict, int]:
 def project_usage(usage) -> dict | None:
     """Token 与费用：没有可信数据就是 None（不是 0）。数字只收非负整数；来源必须说清（服务端报的 / 估算的）。
 
-    费用只在带币种、定价版本时收，且永远带 `estimated=True`——定价表算出来的不是账单。
+    费用只在带币种、定价版本时收；定价表算出来的永远带 `estimated=True`（不是账单）。唯一的例外是内置 AI 网关
+    （ADR 0200）回的权威结算值（`cost["authoritative"] is True`，币种 CNY）：那是网关实际扣的数，`estimated=False`。
     """
     if not isinstance(usage, dict):
         return None
@@ -356,7 +357,7 @@ def project_usage(usage) -> dict | None:
                 "amount": round(float(amount), 6),
                 "currency": currency,
                 "pricing_version": version,
-                "estimated": True,
+                "estimated": cost.get("authoritative") is not True,
             }
     if all(out[k] is None for k in ("input_tokens", "output_tokens", "cached_input_tokens")):
         return None if out["cost"] is None else out

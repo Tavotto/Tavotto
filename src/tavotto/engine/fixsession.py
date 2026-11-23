@@ -28,7 +28,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from . import cli_failure, exectrace, fixtools, folderrepair, pool
+from . import cli_failure, exectrace, fixtools, folderrepair, hosted_ai, pool
 from .agent_runner import loop
 from .agent_runner.redact import NO_REDACTION, Redactor
 from .agent_runner.tools import Limits, RunEnvelope, Tool
@@ -386,6 +386,9 @@ class FixSession:
     prep_session_id: str
     #: 这次修复用的连接 `(provider id, 型号)`：结束后把 runner 的自救回报落进这条记录（没有 = 不落）
     endpoint: tuple[str, str, str] | None = None
+    #: 会话收尾（任何结局：完成 / 失败 / 取消 / 超时 / 看门狗强收）时调一次的清理钩子——内置 AI 任务的关闭（`hosted_ai.Lease.close`）。
+    #: 钩子自己要幂等且不抛；这里仍兜一层
+    on_finish: Callable[[], None] | None = None
     state: str = STATE_RUNNING
     card: dict | None = None
     outcome: str | None = None
@@ -492,6 +495,13 @@ def _trace_settle(s: FixSession) -> None:
         pass
 
 
+def _hosted_endpoint(s: FixSession) -> dict | None:
+    """这次修复用的是不是内置 AI（Tavotto Agent）：是就给 `ai_pricing` 一个认得出它的最小记录（网关回的结算成本才作数）。"""
+    if s.endpoint and s.endpoint[0] == hosted_ai.PROVIDER_ID:
+        return {"id": hosted_ai.PROVIDER_ID, "hosted": True}
+    return None
+
+
 def _trace_model_turn(s: FixSession, event: dict) -> None:
     """内置执行器的一轮模型请求（同一进程里跑的循环报来的时长与用量）。修复会话的连接不过定价表：只记 Token。"""
     try:
@@ -505,7 +515,8 @@ def _trace_model_turn(s: FixSession, event: dict) -> None:
             duration_ms=event.get("ms"),
             parent=s.trace_agent,
             error_code=None if ok else "model_request_failed",
-            usage=ai_pricing.usage_with_cost(event, None, None),
+            usage=ai_pricing.usage_with_cost(event, _hosted_endpoint(s), None),
+            attributes=ai_pricing.model_attributes(_hosted_endpoint(s), None),
         )
     except Exception:  # noqa: BLE001
         pass
@@ -672,6 +683,7 @@ class FixSessions:
         background: bool = True,
         locale: object = None,
         endpoint: tuple[str, str, str] | None = None,
+        on_finish: Callable[[], None] | None = None,
     ) -> FixSession:
         with self._lock:
             cur = self.active()
@@ -685,6 +697,7 @@ class FixSessions:
                 script=script,
                 prep_session_id=prep_session_id,
                 endpoint=endpoint,
+                on_finish=on_finish,
                 token=secrets.token_urlsafe(32) if cli is not None else "",
                 tool_timeout=min(TOOL_TIMEOUT, (limits or FIX_LIMITS).max_seconds),
                 deadline=time.monotonic() + (limits or FIX_LIMITS).max_seconds,
@@ -821,11 +834,22 @@ class FixSessions:
             if s.outcome in (OUTCOME_NOT_FIXED, OUTCOME_FAILED):
                 s.repair_token = self._repair_token(s)
             s.done.set()
+        self._run_on_finish(s)
         _trace_settle(s)
         _remember_fix(s)
         if s.ctx is not None:
             s.ctx.release_leases()  # change_python 持的旧代租约：会话结束才放（之后旧代才可能被清理）
         self._notify(s)
+
+    @staticmethod
+    def _run_on_finish(s: FixSession) -> None:
+        hook, s.on_finish = s.on_finish, None
+        if hook is None:
+            return
+        try:
+            hook()
+        except Exception:  # noqa: BLE001 —— 清理钩子出错不影响收尾
+            LOG.debug("fix on_finish hook failed", exc_info=True)
 
     @staticmethod
     def _repair_token(s: FixSession) -> str:
@@ -1284,13 +1308,30 @@ def cli_agent() -> str | None:
         return None
 
 
+def hosted_limits(lease: hosted_ai.Lease) -> Limits:
+    """内置 AI 任务的修复预算：轮数 / 总 token / 单次输出取网关下发的（比自带 Key 紧），墙钟照旧（含用户读卡片的时间）。"""
+    lim = lease.limits()
+    if lim is None:
+        return FIX_LIMITS
+    return Limits(
+        max_turns=min(FIX_LIMITS.max_turns, lim.max_turns),
+        max_total_tokens=min(FIX_LIMITS.max_total_tokens, lim.max_total_tokens),
+        max_seconds=FIX_LIMITS.max_seconds,
+        max_output_tokens=min(FIX_LIMITS.max_output_tokens, lim.max_output_tokens),
+    )
+
+
 def available() -> bool:
-    """「使用你的 AI 来修复」能不能真的跑：有内置循环能用的 API 连接，或有可用的 Codex / Claude Code。"""
+    """「使用你的 AI 来修复」能不能真的跑：有内置循环能用的 API 连接，或有可用的 Codex / Claude Code，或本机有「Tavotto Agent」（最后兜底）。"""
     try:
         from . import ai_connections
 
         # 只问「有没有」：不联网（账号登录令牌的刷新留到真要开跑的 `connection()`）
-        return ai_connections.first_key_connection() is not None or cli_agent() is not None
+        return (
+            ai_connections.first_key_connection() is not None
+            or cli_agent() is not None
+            or hosted_ai.available()
+        )
     except Exception:  # noqa: BLE001 - 探测失败 = 不可用
         return False
 

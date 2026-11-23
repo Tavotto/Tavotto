@@ -32,6 +32,7 @@ from . import (
     ai_probe,
     ai_providers,
     config,
+    hosted_ai,
     netpolicy,
 )
 from .agent_runner.wires import check_base_url
@@ -46,6 +47,7 @@ SUBSCRIPTIONS: dict[str, tuple[str, str, str, str]] = {
 _OAUTH_VENDOR = {"minimax": "minimax"}
 
 ROUTE_BUILTIN = "builtin"
+HOSTED_METHOD_ID = f"{hosted_ai.PROVIDER_ID}:hosted"
 ENV_BUILTIN = "TAVOTTO_AI_BUILTIN"
 
 #: 保存连接时对 Key 的形状要求：可打印 ASCII、无空白（Key 会进 HTTP 头与环境变量，换行 / 空格都是注入面）
@@ -242,9 +244,11 @@ def vendors(agents_info: dict[str, dict]) -> list[dict]:
     ]
     other_global = [v for v in out if v["region"] == "global" and v not in login_global]
     custom = [v for v in out if v["region"] == "custom"]
+    hosted = _hosted_vendor()
+    lead_hosted = [hosted] if hosted is not None else []
     if locale_region() == "cn":
-        return [*cn, *login_global, *other_global, *custom]
-    return [*login_global, *other_global, *cn, *custom]
+        return [*lead_hosted, *cn, *login_global, *other_global, *custom]
+    return [*lead_hosted, *login_global, *other_global, *cn, *custom]
 
 
 # --------------------------------------------------------------------------- 路由
@@ -272,6 +276,11 @@ def route_for(rec: dict, agents_info: dict[str, dict]) -> tuple[str | None, str 
     """一条 provider 记录这次走哪条路 → `(route, 原因码)`；走不通 → `(None, 原因码)`。
 
     route ∈ `cli:codex` / `cli:claude` / `builtin`。"""
+    if hosted_ai.is_hosted(rec):
+        # Tavotto Agent（内置 AI）：只有内置循环这一条路（密钥是网关的任务通行证，CLI 注入不了）；强制关内置就是走不通
+        if builtin_forced() is False or ai_providers.builtin_conn(rec) is None:
+            return None, "builtin_unavailable"
+        return ROUTE_BUILTIN, None
     agent = str(rec.get("agent") or "")
     if ai_providers.builtin_only(rec):
         # Chat Completions 的记录 Codex 不认、注入不了：三个 CLI 出口（强制 CLI / 偏好 CLI / 内置走不通退回 CLI）一律关死，
@@ -376,6 +385,56 @@ def _subscription_connections(agents_info: dict[str, dict]) -> list[dict]:
     return out
 
 
+def _hosted_connection() -> dict | None:
+    """「Tavotto Agent」（内置 AI，ADR 0200）：只在 `hosted_ai.available()` 且没被强制关内置时出现；不落盘、没有 Key、型号固定。"""
+    rec = hosted_ai.virtual_record()
+    if rec is None or builtin_forced() is False:
+        return None
+    return {
+        "id": hosted_ai.PROVIDER_ID,
+        "vendor": hosted_ai.PROVIDER_ID,
+        "label": rec["label"],
+        "logo": hosted_ai.PROVIDER_ID,
+        "state": "ready",
+        # 不列型号：界面只显示产品名，不出现内部型号 `tavotto-auto`（型号清单为空 = 选中即切换连接，没有第二级）
+        "models": [],
+        "model_details": [],
+        "default_model": None,
+        "efforts": [],
+        "default_effort": None,
+        "route": ROUTE_BUILTIN,
+        "method": HOSTED_METHOD_ID,
+        "protocol": "anthropic",
+        "protocol_checked": False,
+        "hosted": True,
+    }
+
+
+def _hosted_vendor() -> dict | None:
+    """连接弹窗里的一行：没有 Key 表单、一句话说明，点它 = 选用这条连接。"""
+    conn = _hosted_connection()
+    if conn is None:
+        return None
+    return {
+        "id": hosted_ai.PROVIDER_ID,
+        "label": conn["label"],
+        "label_key": None,
+        "logo": hosted_ai.PROVIDER_ID,
+        "region": "global",
+        "connect": "hosted",
+        "available": True,
+        "methods": [
+            {
+                "id": HOSTED_METHOD_ID,
+                "kind": "hosted",
+                "label_key": "method.hosted",
+                "connection_id": hosted_ai.PROVIDER_ID,
+                "available": True,
+            }
+        ],
+    }
+
+
 def _key_connection(
     rec: dict,
     agents_info: dict[str, dict],
@@ -462,6 +521,9 @@ def connections(
 ) -> list[dict]:
     """已连接 / 需要重新登录的连接，订阅类在前。`transient` = `{连接 id: 原因码}`：刚保存时试取型号清单失败的那一次（不落盘）。"""
     out = _subscription_connections(agents_info)
+    hosted = _hosted_connection()
+    if hosted is not None:
+        out.append(hosted)
     vindex = {v["id"]: v for v in vendors(agents_info)}
     keys = []
     for rec in ai_providers.list_providers():
@@ -494,7 +556,7 @@ def resolve_connection(cid: str, agents_info: dict[str, dict]) -> tuple[str, dic
     走不通 → `ai_agent_not_usable`。"""
     if cid in SUBSCRIPTIONS:
         return SUBSCRIPTIONS[cid][0], None
-    rec = ai_providers.get(cid) if isinstance(cid, str) else None
+    rec = ai_providers.lookup(cid) if isinstance(cid, str) else None
     if rec is None:
         raise ConnectionRefused("connection_not_found", {}, 404)
     route, _why = route_for(rec, agents_info)
@@ -539,9 +601,28 @@ def first_key_connection(*, refresh: bool = False) -> dict | None:
     return None
 
 
+def display_of(
+    provider_id: str | None, cli_agent: str | None, connections_view: list[dict]
+) -> dict | None:
+    """一条连接在「连接 AI」列表里的显示名与种类 → `{"label", "kind"}`（`kind` = `key` / `subscription`）；找不到 = None。
+    `provider_id`：自己的 Key / 账号登录连接的 id；`cli_agent`：订阅登录（Codex → ChatGPT、Claude Code → Claude）。显示名不另写一份，取自连接视图。"""
+    if provider_id:
+        cid, kind = provider_id, "key"
+    else:
+        sub = next((k for k, v in SUBSCRIPTIONS.items() if v[0] == cli_agent), None)
+        if sub is None:
+            return None
+        cid, kind = sub, "subscription"
+    found = next((c for c in connections_view if c.get("id") == cid), None)
+    label = str(found.get("label") or "") if found else ""
+    return {"label": label, "kind": kind} if label else None
+
+
 def builtin_usable() -> bool:
     """`require_usable("builtin")` 的判据：没被运维开关强制关掉，且有可用的 Key 连接。"""
-    return builtin_forced() is not False and first_key_connection() is not None
+    return builtin_forced() is not False and (
+        first_key_connection() is not None or hosted_ai.available()
+    )
 
 
 # --------------------------------------------------------------------------- 写入口

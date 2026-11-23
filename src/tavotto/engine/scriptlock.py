@@ -7,7 +7,7 @@
 `script_guard` 的持有者——**全部**调用方（`tests/test_script_lock.py` 从源码里枚举出来与这张表对账；
 新增写脚本的入口先加到这里）：
 
-* `ai_bridge.run`：从「脚本在不在」到快照、起 Agent 进程、登记进 `SESSIONS`。之后由 Agent 进程自己写，
+* `ai_bridge._run`（`run` 的外壳先开内置 AI 任务再调它）：从「脚本在不在」到快照、起 Agent 进程、登记进 `SESSIONS`。之后由 Agent 进程自己写，
   它 `running` 期间改写 / 复原在锁里判 `script_busy` 让路。
 * `ai_bridge.revert`：「是不是 AI 改完的那一版」的判定到写回快照。
 * `ai_bridge.resume_figure_edit`：复核候选与项目基线、预留跨进程任务并登记续跑；锁序与 `run` 一致。

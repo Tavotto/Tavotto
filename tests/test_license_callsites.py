@@ -1,7 +1,7 @@
 """看护 ADR 0193 §一「付费只拦新功能」：全仓库对 `license.has(` 的调用点，只许出现在登记表里的模块。
 
-登记表 `REGISTERED_CALLERS` 现在只有一键排版（`quick-layout`，ADR 0199）；`hosted-ai` 内置 AI 额度、`review-plus` 外部审阅加量
-各自的 ADR / PR 才会加）。**加调用点要同步改 ADR 0193 §一**（登记新功能键与它的模块），并把模块写进下面的登记表；
+登记表 `REGISTERED_CALLERS` 现在有两项：一键排版（`quick-layout`，ADR 0199，`quicklayout.py`）与 `hosted-ai` 内置 AI「Tavotto Agent」（ADR 0200，`hosted_gateway.py`：它的 `available()` 是唯一的
+权益判断，功能代码里没有任何 `has()`）；`review-plus` 外部审阅加量的 PR 才会再加。**加调用点要同步改 ADR 0193 §一**（登记新功能键与它的模块），并把模块写进下面的登记表；
 凡随任何一个正式版免费发布过的能力，代码里都不许出现权益判断。
 """
 
@@ -12,8 +12,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-#: 登记过的、允许调用 `license.has(...)` 的模块（相对仓库根的 posix 路径）。空 = 现在零调用点。
-REGISTERED_CALLERS: frozenset[str] = frozenset({"src/tavotto/engine/quicklayout.py"})
+#: 登记过的、允许调用 `license.has(...)` 的模块（相对仓库根的 posix 路径）。
+REGISTERED_CALLERS: frozenset[str] = frozenset(
+    {"src/tavotto/engine/quicklayout.py", "src/tavotto/engine/hosted_gateway.py"}
+)
 LICENSE_MODULE = "src/tavotto/engine/license.py"
 SKIP_DIRS = {".venv", "node_modules", ".git", "target", "target-wincheck", ".pnpm-store", "dist"}
 
@@ -91,8 +93,10 @@ def test_has_is_called_only_from_registered_modules():
 
 
 def test_registry_lists_only_registered_new_features():
-    # 登记表与 ADR 0193 §一 的新功能一一对应：一键排版（ADR 0199）。加调用点要同时改这里与 ADR
-    assert REGISTERED_CALLERS == frozenset({"src/tavotto/engine/quicklayout.py"})
+    # 登记表与 ADR 0193 §一 的新功能一一对应：一键排版（ADR 0199）、内置 AI（ADR 0200）。加调用点要同时改这里与 ADR
+    assert REGISTERED_CALLERS == frozenset(
+        {"src/tavotto/engine/quicklayout.py", "src/tavotto/engine/hosted_gateway.py"}
+    )
 
 
 def test_the_scanner_actually_finds_call_sites():

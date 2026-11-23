@@ -72,7 +72,8 @@ function factsOf(dto: ExecTraceDto, span: ExecTraceSpanDto, isRoot: boolean): Wa
   }
   const u = span.usage
   if (u?.source === 'estimated') add('usage', t('ai:trace.fact.usageEstimated'))
-  if (u?.cost) add('cost', t('ai:trace.fact.costEstimated', { version: u.cost.pricing_version }))
+  // 内置 AI 网关实际结算的数（`estimated: false`）不是估算：另说一句，不拿「按定价表估算」冒充
+  if (u?.cost) add('cost', u.cost.estimated ? t('ai:trace.fact.costEstimated', { version: u.cost.pricing_version }) : t('ai:trace.fact.costCharged'))
   if (isRoot && dto.first_failure) add('firstFailure', label('span', dto.first_failure.name))
   return facts
 }

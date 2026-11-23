@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
-import { t as translate } from '@/i18n'
+import { formatMessage, t as translate } from '@/i18n'
+import { hostedFallbackMessage } from '@/lib/hostedAi'
 import { isDesktop, pickAnyFile, pickDirectory } from '@/lib/desktop'
 import { useAiFixStore, type AiFixEntry } from '@/store/aiFixStore'
 import { cn } from '@/lib/utils'
@@ -222,7 +223,16 @@ function buildAiFixFlow(
   if (entry.phase === 'running') {
     return {
       title: entry.activity ? activityLine(entry.activity) : ft('running'),
-      slot: <ProgressBar pct={null} label={ft('running')} data-prep-progress />,
+      slot: (
+        <>
+          <ProgressBar pct={null} label={ft('running')} data-prep-progress />
+          {entry.hostedFallback && (
+            <p data-ai-fix-hosted-fallback className="m-0 mt-1.5 text-xs text-ink-3">
+              {formatMessage(hostedFallbackMessage(entry.hostedFallback))}
+            </p>
+          )}
+        </>
+      ),
       ghost: (
         <Button variant="ghost" size="md" className="text-ink-2" data-ai-fix-cancel onClick={() => void store.cancel(fixKey)}>
           {ft('cancel')}

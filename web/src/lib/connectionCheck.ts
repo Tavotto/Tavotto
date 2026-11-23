@@ -1,5 +1,6 @@
 import { t as translate } from '@/i18n'
 import type { AiConnection } from '@/lib/api'
+import { HOSTED_AI_ID } from '@/lib/hostedAi'
 
 const cx = (key: string) => translate(`settings.connectAi.${key}`, { ns: 'dialogs' })
 
@@ -56,4 +57,4 @@ export const isCheckableError = (c: Pick<AiConnection, 'error'> | undefined | nu
 
 /** 这条连接能不能发 `/check`：只有 Key 类（订阅 / 账号登录类没有「地址 + Key」可探） */
 export const canCheckConnection = (c: Pick<AiConnection, 'id'> | undefined | null): boolean =>
-  !!c && !c.id.startsWith('sub:') && !c.id.endsWith('-oauth')
+  !!c && !c.id.startsWith('sub:') && !c.id.endsWith('-oauth') && c.id !== HOSTED_AI_ID

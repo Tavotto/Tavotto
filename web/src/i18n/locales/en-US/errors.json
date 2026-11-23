@@ -503,7 +503,8 @@
     "script_source_missing": "The script file itself is missing ({{script}}): it may have been moved or deleted. Put the script back in the project and run it again; Tavotto will not substitute another file with the same name.",
     "input_declaration_conflict": "Input declarations changed elsewhere. Reload them before saving.",
     "input_declaration_invalid": "The input declaration or selected resources are unavailable. Check the files, run configuration, and data locations.",
-    "input_declaration_unavailable": "Input declarations cannot be read or saved right now. Please try again later."
+    "input_declaration_unavailable": "Input declarations cannot be read or saved right now. Please try again later.",
+    "ai_hosted_unavailable": "The built-in AI isn’t available right now. You can use your own key instead."
   },
   "engine": {
     "apply": "Apply",

@@ -143,7 +143,8 @@
       "unauthorized": "{{name}}: the key is wrong",
       "quota": "{{name}}: the quota is used up",
       "no_model": "{{name}}: that model doesn’t exist",
-      "unreachable": "{{name}}: can’t reach this address"
+      "unreachable": "{{name}}: can’t reach this address",
+      "hosted": "{{name}} isn’t available right now"
     },
     "refillKey": "Re-enter key",
     "switchAi": "Use another AI",
@@ -319,7 +320,8 @@
         "modelCalls": "Model calls",
         "toolCalls": "Tool calls",
         "errors": "Errors",
-        "atLeast": "≥{{count}}"
+        "atLeast": "≥{{count}}",
+        "usage": "Usage"
       },
       "legend": {
         "model": "Model call",
@@ -377,7 +379,8 @@
         "tokensIn": "Tokens in",
         "tokensOut": "Tokens out",
         "steps": "Steps",
-        "attempt": "Attempt"
+        "attempt": "Attempt",
+        "usage": "Usage"
       },
       "note": {
         "reported": "Duration reported by another process",
@@ -521,7 +524,8 @@
       "usageEstimated": "Estimated (the service didn't report it)",
       "cost": "Cost",
       "costEstimated": "Estimated from the price table ({{version}}), not a bill",
-      "firstFailure": "First step that failed"
+      "firstFailure": "First step that failed",
+      "costCharged": "Cost actually charged by the gateway (CNY)"
     }
   },
   "dependency": {
@@ -726,5 +730,19 @@
       "failed": "Failed",
       "groupTitle": "{{count}} files"
     }
+  },
+  "hosted": {
+    "quota": "Your quota is used up. Please try again later.",
+    "quotaOn": "Your quota is used up. Please try again on {{when}}.",
+    "daily": "Today’s quota is used up. Please try again tomorrow.",
+    "notEntitled": "{{name}} isn’t available on this computer right now.",
+    "paused": "{{name}} is paused for now.",
+    "unavailable": "{{name}} can’t be reached right now. Try again later.",
+    "useOwnKey": "Use my own key",
+    "whenDate": "{{date}}",
+    "fallbackDailyKey": "Today’s quota is used up. Switched to your {{name}} key.",
+    "fallbackDailySub": "Today’s quota is used up. Switched to your {{name}} subscription.",
+    "fallbackQuotaKey": "Your quota is used up. Switched to your {{name}} key.",
+    "fallbackQuotaSub": "Your quota is used up. Switched to your {{name}} subscription."
   }
 }

@@ -2,6 +2,8 @@ import { Link2 } from '@/components/ui/icons'
 
 /** 通用图标（取别名：尺寸来自调用方的 size，而不是在这里写死的档位；与 `VendorIcon` 同一做法） */
 const Generic = Link2
+import { BrandMark } from '@/components/ui/BrandMark'
+import { HOSTED_AI_ID } from '@/lib/hostedAi'
 import { cn } from '@/lib/utils'
 import { BRAND_LOGOS } from './brandLogoData'
 import { VENDOR_GLYPHS } from './vendorIcons'
@@ -48,6 +50,14 @@ export function BrandLogo({
   const color = BRAND_LOGOS[key]
   const mono = VENDOR_GLYPHS[key]
   const glyph = size
+  // 「Tavotto Agent」（内置 AI）：用产品自己的图形标，不落进通用图标
+  if (logo === HOSTED_AI_ID) {
+    return (
+      <span aria-hidden data-brand-logo="tavotto" style={{ width: size, height: size }} className={cn('flex shrink-0 items-center justify-center', className)}>
+        <BrandMark size={glyph} />
+      </span>
+    )
+  }
   return (
     <span
       aria-hidden

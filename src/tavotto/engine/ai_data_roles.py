@@ -44,9 +44,11 @@ from . import (
     ai_data_figure as adf,
     ai_data_model as model_mod,
     ai_data_recipe as recipe_mod,
+    ai_providers,
     ai_structured,
     atomicio,
     config,
+    hosted_ai,
 )
 
 LOG = logging.getLogger(__name__)
@@ -819,6 +821,11 @@ def _available_connection() -> dict | None:
 
         if ai_connections.builtin_forced() is False:
             return None
+        # 「Tavotto Agent」（内置 AI，占位，真发请求前开任务）排第一；没有它才看自己的 Key，最后才是订阅登录（CLI）
+        virtual = hosted_ai.virtual_record()
+        hosted = ai_providers.builtin_conn(virtual) if virtual is not None else None
+        if hosted is not None:
+            return hosted
         key = ai_connections.first_key_connection(refresh=False)
         if key is not None:
             return key
@@ -1009,14 +1016,54 @@ def judge(
     conn: dict | None = None,
 ) -> tuple[Judgement, adf.TableEntry, adf.DataSummary] | tuple[str, str]:
     """订阅登录（CLI）连接同一时刻只许一个任务在跑（`ai_structured.cli_slot`）：先排队、拿到之后才开始计总时限——排队不吃预算。
-    其余连接直接 `_judge`。"""
+    其余连接走 `_judge_hosted`（连的是「Tavotto Agent」时在那里开 / 关网关任务）。"""
     if not ai_structured.is_cli_conn(_OVERRIDES.get("conn") or conn):
-        return _judge(entry, values, hint, data_path=data_path, job=job, call=call, conn=conn)
+        return _judge_hosted(
+            entry, values, hint, data_path=data_path, job=job, call=call, conn=conn
+        )
     try:
         with ai_structured.cli_slot(ai_structured.CLI_QUEUE_MAX_S):
             return _judge(entry, values, hint, data_path=data_path, job=job, call=call, conn=conn)
     except TimeoutError:
         return ("failed", "timeout")
+
+
+def _judge_hosted(
+    entry: adf.TableEntry,
+    values: adf.DataSummary,
+    hint: str | None,
+    *,
+    data_path: Path | None = None,
+    job: Job | None = None,
+    call: Callable[..., ai_structured.StructuredResult] | None = None,
+    conn: dict | None = None,
+) -> tuple[Judgement, adf.TableEntry, adf.DataSummary] | tuple[str, str]:
+    """连的是「Tavotto Agent」（内置 AI，ADR 0200）时**这一整次判断（表头那问 + 列角色那问）共用一个网关任务**，结束就关；
+    开不成任务就静默退到自己的 Key（没有 = 安静的失败结局，调用方本来就退回规则结果）。别的连接原样直通，一个字节都不多做。"""
+    lease = None
+    extra: dict = {}
+    if call is None and "conn" not in _OVERRIDES:
+        picked = conn
+        if picked is None:
+            picked, _why, _detail = ai_structured.resolve_connection(
+                0.0
+            )  # 预算 0 = 不联网刷新，只做本地挑选
+        if hosted_ai.needs_task(picked):
+            lease = hosted_ai.lease("data_roles")
+            if lease.ok:
+                extra = {"conn": lease.conn()}
+            else:
+                own = ai_structured.fallback_connection()  # 静默退到自己的 Key
+                if own is None:
+                    return ("failed", hosted_ai.structured_reason(lease.error))
+                extra = {"conn": own}
+    try:
+        return _judge(
+            entry, values, hint, data_path=data_path, job=job, call=call, conn=conn, extra=extra
+        )
+    finally:
+        if lease is not None:
+            lease.close()
 
 
 def _judge(
@@ -1028,6 +1075,7 @@ def _judge(
     job: Job | None = None,
     call: Callable[..., ai_structured.StructuredResult] | None = None,
     conn: dict | None = None,
+    extra: dict | None = None,
 ) -> tuple[Judgement, adf.TableEntry, adf.DataSummary] | tuple[str, str]:
     """向模型要判断 → `(Judgement, 采纳表头之后的 entry, values)`，或 `("failed", 闭集原因)`。**永不抛**。总时限 `TIMEOUT_S`（表头那次与列角色那次共用）。
 
@@ -1036,9 +1084,12 @@ def _judge(
     表头问失败不拖垮列角色（用嗅探的表头继续）；列角色问失败 = 整体失败（调用方什么都不改）。"""
     t0 = time.monotonic()
     kw = {k: _OVERRIDES[k] for k in ("conn", "post", "runner") if k in _OVERRIDES}
+    kw.update(extra or {})  # 内置 AI 任务（或退路）的连接：已换上通行证与上限
     cli = ai_structured.is_cli_conn(kw.get("conn") or conn)
-    if cli and "conn" not in kw:
-        kw["conn"] = conn  # 缓存键用的就是这一条（含型号）：别让 `call_structured` 再挑一次
+    if conn is not None and "conn" not in kw:
+        # 调用方显式给了连接（自己的 Key / 订阅登录）：就用它，缓存键用的也是这一条（含型号）——别让 `call_structured` 再挑一次
+        # （挑选是「内置 AI 排第一」，会绕开用户 / 调用方的选择并多开一个网关任务）
+        kw["conn"] = conn
     total = float(_OVERRIDES.get("timeout_s", ai_structured.CLI_TIMEOUT_S if cli else TIMEOUT_S))
     do_call = call or ai_structured.call_structured
     # 小型号 + 最低档策略（ADR 0178 2026-11-21）：产品里恒开；手动基准可经覆盖关掉，好显式比较型号 / 强度。

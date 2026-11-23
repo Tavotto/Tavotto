@@ -83,8 +83,8 @@ HTTP_STATUS: dict[str, int] = {
     "server": 502,
     "client_error": 400,
 }
-#: 设备签名的 op 闭集（服务端核对与端点一致）
-OPS = frozenset({"activate", "refresh", "release", "renew"})
+#: 设备签名的 op 闭集（服务端核对与端点一致）。`ai_task` 是内置 AI 网关开任务的那一次签名（ADR 0200 §四之一 A1，`hosted_ai.py` 用）
+OPS = frozenset({"activate", "refresh", "release", "renew", "ai_task"})
 LOG_RESULTS = frozenset(FAILURES) | {"ok"}
 
 API_TIMEOUT_S = 15
@@ -154,19 +154,25 @@ def _endpoint_override() -> str | None:
     return raw if raw is not None and raw.strip() else None
 
 
+def parse_service_endpoint(raw: str, hosts: frozenset[str]) -> diagsend.Target | None:
+    """某个高级版服务（授权 / 内置 AI 网关……）的**显式端点**（`TAVOTTO_*_ENDPOINT`）→ `Target`；不合规 = None（不回退内置端点）。
+    规则同授权端点：生产主机白名单 + https；回环（可以是 `http://`）只在开发模式 `TAVOTTO_DIAG_DEV_LOOPBACK=1` 下认。"""
+    dev = _flag(diagsend.ENV_DEV_LOOPBACK)
+    got = diagsend.parse_endpoint(raw, dev_loopback=dev, hosts=hosts)
+    if got is not None and got.loopback:
+        return _dev_endpoint(raw)  # 回环只有开发模式才走到这里
+    if got is None and dev:
+        return _dev_endpoint(raw)
+    return got
+
+
 def resolve_target() -> diagsend.Target | None:
     """此刻允许连的端点；None = 功能关闭（入口不出现、不联网）。设了 `TAVOTTO_LICENSE_ENDPOINT` 但不合规也是 None，不回退。"""
     if _flag(ENV_HARD_OFF):
         return None
     raw = _endpoint_override()
     if raw is not None:
-        dev = _flag(diagsend.ENV_DEV_LOOPBACK)
-        got = diagsend.parse_endpoint(raw, dev_loopback=dev, hosts=LICENSE_HOSTS)
-        if got is not None and got.loopback:
-            return _dev_endpoint(raw)  # 回环只有开发模式才走到这里
-        if got is None and dev:
-            return _dev_endpoint(raw)
-        return got
+        return parse_service_endpoint(raw, LICENSE_HOSTS)
     if not PRODUCTION_LIVE:
         return None
     return diagsend.parse_endpoint(PRODUCTION_ENDPOINT, dev_loopback=False, hosts=LICENSE_HOSTS)
@@ -305,6 +311,11 @@ def _signed(op: str, fields: dict) -> dict:
     return sign_body({**fields, "op": op, "ts": int(_now() * 1000)})
 
 
+def sign_op(op: str, fields: dict) -> dict:
+    """给其他高级版服务（`hosted_ai` 开任务，`op = "ai_task"`）的设备签名：补 `op` / `ts` / `device_pub` / `sig`。`op` 不在 `OPS` 里抛 `_Failure`。"""
+    return _signed(op, fields)
+
+
 # ---------------------------------------------------------------------------
 # 令牌：解包、验签、落盘
 # ---------------------------------------------------------------------------
@@ -438,6 +449,23 @@ def has(feature: str) -> bool:
         return feature in payload["features"]
     except Exception:  # noqa: BLE001 — 授权判断永远不许把调用方带下水
         return False
+
+
+def token_envelope() -> dict | None:
+    """本机**有效**授权令牌的信封（`{payload, sig, kid}`），给需要把令牌交给服务端核对的新功能模块（`hosted_ai`）；
+    本机不满足 `has()` 的前置条件（签名 / 设备 / 时间 / 状态）或功能关闭 = None。**不联网、不记日志；调用方不许落盘或打日志。**"""
+    try:
+        if not enabled():
+            return None
+        env, state = _load()
+        if env is None:
+            return None
+        payload = _open_token(env)
+        if payload is None or not _usable(payload, state, _now()):
+            return None
+        return {k: env[k] for k in ("payload", "sig", "kid") if k in env}
+    except Exception:  # noqa: BLE001 — 同 `has`：授权判断永远不许把调用方带下水
+        return None
 
 
 def status() -> dict:

@@ -30,12 +30,14 @@ import {
   type AiFixCard,
   type AiFixState,
 } from '@/lib/api'
+import { hostedFailureOfFix, hostedFallbackOfFix, type HostedFallback } from '@/lib/hostedAi'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { onCurrentProjectChange } from '@/lib/session'
 import { useAiStore } from '@/store/aiStore'
 import { useConvertStore } from '@/store/convertStore'
 import { requestConnectAi, useConnectAiStore } from '@/store/connectAiStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
+import { announceHostedFailure } from '@/store/hostedAiNotice'
 import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useUiStore } from '@/store/uiStore'
@@ -74,6 +76,8 @@ export interface AiFixEntry {
   sendBase?: number
   /** 回答请求在途（按钮置忙，防连点） */
   answering?: boolean
+  /** 内置 AI 因额度没开成、这次用的是自己的 Key（卡片里一行灰字） */
+  hostedFallback?: HostedFallback
   /** 进度与卡住（后端公开状态原样带过来；界面按它说一句话） */
   activity?: AiFixState['activity']
   stalled?: AiFixState['stalled']
@@ -225,9 +229,16 @@ export const useAiFixStore = create<AiFixStoreState>((set, get) => {
           return
         }
         if (res.ok) {
-          setPhase('running', { fixId: res.fix_id, pj: guard.pj ?? undefined })
+          // 内置 AI 因额度没开成、已静默退到自己的 Key：不弹胶囊、不给按钮，卡片里记一笔（一行灰字，见 `AiFixFlow`）
+          const fallback = hostedFallbackOfFix(res)
+          setPhase('running', { fixId: res.fix_id, pj: guard.pj ?? undefined, ...(fallback ? { hostedFallback: fallback } : {}) })
           schedule(key)
           void get().refresh(key)
+        } else if (hostedFailureOfFix(res)) {
+          // 「Tavotto Agent」（内置 AI）没能开任务（额度 / 每日上限 / 授权 / 暂时连不上）：不是「AI 不会修」。
+          // 卡片原样退回失败卡（用户还可以再点），一条安静的状态胶囊说原因 + 「改用我自己的 Key」
+          get().clear(key)
+          announceHostedFailure(hostedFailureOfFix(res)!)
         } else setPhase(res.reason === 'ai_fix_busy' ? 'busy' : 'unavailable')
       } catch {
         if (!guard.still()) return

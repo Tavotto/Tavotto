@@ -368,5 +368,6 @@ export function spanFigure(node: TraceNode, now: number, replay = false): string
   const text = formatSeconds(Math.max(0, endOf(span, now, replay) - span.start))
   // 回放中还没结束的：费用此刻不知道，只写已经过去的时长
   if (!settledAt(span, now, replay)) return text
-  return node.cost !== null && node.cost > 0 ? `${text} · ${formatCost(node.cost, node.costCurrency)}` : text
+  // 内置 AI（人民币结算）的钱只在总计里说一次，行尾不写，免得和条形 / 网格线挤在一起
+  return node.cost !== null && node.cost > 0 && node.costCurrency !== 'CNY' ? `${text} · ${formatCost(node.cost, node.costCurrency)}` : text
 }

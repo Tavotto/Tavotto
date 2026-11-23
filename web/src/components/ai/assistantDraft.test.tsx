@@ -103,6 +103,12 @@ const failedSession = (over: Partial<AiSession> = {}): AiSession => ({
 })
 
 let be: ReturnType<typeof createDraftBackend>
+const tomorrowNoon = () => {
+  const d = new Date()
+  d.setDate(d.getDate() + 1)
+  d.setHours(12, 0, 0, 0)
+  return d.getTime()
+}
 const SENT = { scope: 'figure', gid: null, label: null, target: '整张图' }
 
 beforeEach(async () => {
@@ -945,6 +951,45 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
       await settle()
       expect(aiRun).toHaveBeenCalledTimes(1)
       await expectAcceptedAndDraftCleared(stampAtRun)
+    })
+
+    it('Tavotto Agent（内置 AI）没能开任务：不是红色的「没有发出去」，一句话 + 「改用我自己的 Key」；额度类不再摆「重试」', async () => {
+      vi.mocked(aiRun).mockImplementationOnce(async (req) => {
+        be.dropRejectedPending((req as { client_request_id: string }).client_request_id)
+        throw new ApiError('quota', 409, { code: 'ai_hosted_unavailable', params: { reason: 'daily_limit', retry_at: tomorrowNoon() } })
+      })
+      await mount()
+      await typeText('把线条加粗一点')
+      await click(q('[data-ai-send="send"]'))
+      await settle()
+      expect(q('[data-ai-error="send"]')).toBeNull() // 不是「发送失败」那张红卡
+      const note = q('[data-ai-error="hosted"]')!
+      expect(note.tagName).toBe('P') // 一行灰字，不是 Notice 色块
+      expect(q('[data-notice]')).toBeNull()
+      expect(note.textContent).toContain('今日额度已用尽，请明天再试')
+      expect(note.textContent).not.toContain('Tavotto Agent')
+      expect(note.textContent).not.toContain('tavotto-auto')
+      expect(note.textContent).not.toContain('没有发出去')
+      expect(note.querySelector('[data-ai-retry]')).toBeNull() // 额度类原样重发只会再得到同一句
+      await click(note.querySelector('[data-ai-hosted-own-key]'))
+      expect(useUiStore.getState().settingsOpen).toBe(true) // 「改用我自己的 Key」= 连接 AI（这套夹具没有连接视图，退回设置页）
+      useUiStore.setState({ settingsOpen: false })
+      expect(input().value).toBe('把线条加粗一点') // 指令留着
+    })
+
+    it('Tavotto Agent 暂停服务：一句「暂停服务，稍后恢复」，只有「改用我自己的 Key」，没有重试；网络不通才给「重试」', async () => {
+      vi.mocked(aiRun).mockImplementationOnce(async (req) => {
+        be.dropRejectedPending((req as { client_request_id: string }).client_request_id)
+        throw new ApiError('paused', 409, { code: 'ai_hosted_unavailable', params: { reason: 'paused', retry_at: null } })
+      })
+      await mount()
+      await typeText('把线条加粗一点')
+      await click(q('[data-ai-send="send"]'))
+      await settle()
+      const note = q('[data-ai-error="hosted"]')!
+      expect(note.textContent).toContain('暂停服务，稍后恢复')
+      expect(note.querySelector('[data-ai-retry]')).toBeNull()
+      expect(note.querySelector('[data-ai-hosted-own-key]')).toBeTruthy()
     })
 
     it('run 回 409 后点重试：同样记草稿戳，被接受后草稿被清', async () => {

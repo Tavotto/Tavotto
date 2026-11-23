@@ -109,6 +109,30 @@ describe('执行追踪 DTO → Waterfall（只翻译不判断）', () => {
     expect(byId(m, 'priced').facts.some((f) => f.value.includes('2026-10-27'))).toBe(true)
   })
 
+  it('内置 AI 网关实际结算的费用：币种跟着走（CNY），不说成「按定价表估算」', () => {
+    const m = toWaterfall(
+      dto([
+        span({
+          span_id: 'charged',
+          kind: 'model',
+          name: 'model_request',
+          usage: {
+            source: 'reported',
+            input_tokens: 1000,
+            output_tokens: 10,
+            cached_input_tokens: 900,
+            cost: { amount: 0.001234, currency: 'CNY', pricing_version: 'gateway', estimated: false },
+          },
+        }),
+      ]),
+    )
+    const n = byId(m, 'charged')
+    expect(n.cost).toBeCloseTo(0.001234)
+    expect(n.costCurrency).toBe('CNY')
+    expect(n.facts.some((f) => f.value.includes('估算'))).toBe(false) // 不是「按定价表估算」
+    expect(n.facts.some((f) => f.value.includes('人民币'))).toBe(true) // 说的是网关实际结算（人民币），不是估算
+  })
+
   it('旧阶段轨迹的观察点是零宽的点，挂在所属 Span 下，不造区间', () => {
     const m = toWaterfall(
       dto([span({ span_id: 'run', name: 'script_run', kind: 'process', start_offset_ms: 0, end_offset_ms: 3000 })], {

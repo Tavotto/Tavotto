@@ -67,8 +67,10 @@ export function methodName(m: AiVendorMethod): string {
       return cx('method.apiKey')
     case 'method.account':
       return cx('method.account')
+    case 'method.hosted':
+      return cx('method.hosted')
   }
-  return m.kind === 'key' ? cx('method.apiKey') : m.kind === 'login' ? cx('method.subscription') : cx('method.account')
+  return m.kind === 'key' ? cx('method.apiKey') : m.kind === 'login' ? cx('method.subscription') : m.kind === 'hosted' ? cx('method.hosted') : cx('method.account')
 }
 
 /**
@@ -82,6 +84,7 @@ export function methodHint(v: AiVendor, m: AiVendorMethod): string {
     if (m.label_key === 'method.codingPlan') return cx('method.hintCodingPlan')
     return cx('method.hintKey', { name })
   }
+  if (m.kind === 'hosted') return cx('method.hintHosted')
   if (m.kind === 'oauth') return cx('method.hintAccount', { name })
   if (m.agent === 'codex') return cx('method.hintChatgpt')
   if (m.agent === 'claude') return cx('method.hintClaude')

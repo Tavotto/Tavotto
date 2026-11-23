@@ -140,7 +140,8 @@
       "unauthorized": "{{name}} 的密钥不对",
       "quota": "{{name}} 额度用完了",
       "no_model": "{{name}} 没有这个模型",
-      "unreachable": "{{name}} 连不上这个地址"
+      "unreachable": "{{name}} 连不上这个地址",
+      "hosted": "{{name}} 暂时用不了"
     },
     "refillKey": "重填密钥",
     "switchAi": "换个 AI",
@@ -314,7 +315,8 @@
         "modelCalls": "模型调用",
         "toolCalls": "工具调用",
         "errors": "失败",
-        "atLeast": "≥{{count}}"
+        "atLeast": "≥{{count}}",
+        "usage": "用量"
       },
       "legend": {
         "model": "模型调用",
@@ -372,7 +374,8 @@
         "tokensIn": "输入 Token",
         "tokensOut": "输出 Token",
         "steps": "步骤数",
-        "attempt": "尝试"
+        "attempt": "尝试",
+        "usage": "用量"
       },
       "note": {
         "reported": "耗时由其他进程上报",
@@ -514,7 +517,8 @@
       "usageEstimated": "估算（服务端没有报告）",
       "cost": "费用",
       "costEstimated": "按定价表估算（{{version}}），不是账单",
-      "firstFailure": "最先出错的一步"
+      "firstFailure": "最先出错的一步",
+      "costCharged": "网关实际结算的费用（人民币）"
     }
   },
   "dependency": {
@@ -719,5 +723,19 @@
       "failed": "失败",
       "groupTitle": "{{count}} 个文件"
     }
+  },
+  "hosted": {
+    "quota": "额度已用尽，请稍后再试",
+    "quotaOn": "额度已用尽，请 {{when}} 再试",
+    "daily": "今日额度已用尽，请明天再试",
+    "notEntitled": "这台电脑上的 {{name}} 暂时用不了。",
+    "paused": "{{name}} 暂停服务，稍后恢复。",
+    "unavailable": "{{name}} 暂时连不上，稍后再试。",
+    "useOwnKey": "改用我自己的 Key",
+    "whenDate": "{{date}}",
+    "fallbackDailyKey": "今日额度已用尽，已经切换到您的 {{name}} Key",
+    "fallbackDailySub": "今日额度已用尽，已经切换到您的 {{name}} 订阅",
+    "fallbackQuotaKey": "额度已用尽，已经切换到您的 {{name}} Key",
+    "fallbackQuotaSub": "额度已用尽，已经切换到您的 {{name}} 订阅"
   }
 }

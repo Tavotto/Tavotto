@@ -629,6 +629,22 @@ describe('任务结局（TAF Phase 3c）：只翻译 task.outcome', () => {
     }
   })
 
+  it('Tavotto Agent（内置 AI）连接类失败：没有密钥可重填、没有地址可改、不给「检查连接」——一句话 + 「换个 AI」（改用自己的 Key）', async () => {
+    useAiStore.setState({
+      caps: connectCapsOf([connection('tavotto-agent', { label: 'Tavotto Agent', hosted: true } as never)]),
+      connection: 'tavotto-agent',
+    } as never)
+    for (const error of ['agent_auth', 'agent_network', 'agent_quota']) {
+      await mount([session({ id: error, status: 'failed', changed: false, error, task: task('failed') })])
+      const card = q('[data-ai-error="session"]')!
+      expect(card.textContent).toContain(ai('notice.conn.hosted', { name: 'Tavotto Agent' }))
+      expect(card.querySelector('[data-ai-conn-action="switch_ai"]')!.textContent).toContain(ai('notice.switchAi'))
+      for (const sel of ['[data-ai-check-connection]', '[data-ai-conn-action="refill_key"]', '[data-ai-conn-action="edit_address"]', '[data-ai-retry]']) {
+        expect(card.querySelector(sel), sel).toBeNull()
+      }
+    }
+  })
+
   describe('「检查连接」调 /check（Key 连接）', () => {
     const check = vi.mocked(checkAiConnection)
     const probe = (reason: string | null) => ({ checked: true, protocol: null, requested: null, switched: false, reason, reasons: {} }) as never

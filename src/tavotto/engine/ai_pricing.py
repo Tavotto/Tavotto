@@ -17,11 +17,14 @@
 
 from __future__ import annotations
 
-from . import exectrace
+from . import exectrace, hosted_ai
 
 PRICING_VERSION = "2026-11-21"
 CURRENCY = "USD"  # 条目没写 `currency` 时的默认币种
 CURRENCIES = ("USD", "CNY")
+#: 内置 AI 网关（Tavotto Agent，ADR 0200）回的权威结算：人民币、不是定价表估算，`pricing_version` 固定这个标记
+GATEWAY_CURRENCY = "CNY"
+GATEWAY_VERSION = "gateway"
 
 #: 厂商 → 出处（核对日期即 `PRICING_VERSION`）。键是目录（`ai_catalog.json`）里的厂商 id 或官方端点的厂商名。
 SOURCES = {
@@ -155,9 +158,9 @@ TABLE: dict[tuple[str, str], dict] = {
     ("minimax-global", "MiniMax-M3.1-Flash"): _r(0.15, 0.015, 0.60),
 }
 
-exectrace.register_vocabulary("pricing_version", [PRICING_VERSION])
-exectrace.register_vocabulary("provider", sorted({v for v, _ in TABLE}))
-exectrace.register_vocabulary("model", sorted({m for _, m in TABLE}))
+exectrace.register_vocabulary("pricing_version", [PRICING_VERSION, GATEWAY_VERSION])
+exectrace.register_vocabulary("provider", sorted({v for v, _ in TABLE} | {hosted_ai.PROVIDER_ID}))
+exectrace.register_vocabulary("model", sorted({m for _, m in TABLE} | {hosted_ai.MODEL}))
 
 
 def vendor_of(endpoint) -> str | None:
@@ -219,7 +222,17 @@ def usage_with_cost(event: dict, endpoint, model) -> dict | None:
         "output_tokens": out,
         "cached_input_tokens": cached,
     }
-    if reported and inp is not None and out is not None:
+    charged = _count(event.get("charged_micro"))
+    if charged is not None and hosted_ai.is_hosted(endpoint):
+        # 内置 AI 网关实际结算的成本是权威值（比任何估算都准）；**只认连接确实是 Tavotto Agent 的**——第三方端点自己发的头不算数。
+        # 网关回了就以它为准（用量没报也成立：钱已经花了）
+        usage["cost"] = {
+            "amount": charged / 1_000_000,
+            "currency": GATEWAY_CURRENCY,
+            "pricing_version": GATEWAY_VERSION,
+            "authoritative": True,
+        }
+    elif reported and inp is not None and out is not None:
         amount = estimate(
             vendor_of(endpoint), model, input_tokens=inp, cached=cached or 0, output=out
         )
@@ -234,6 +247,10 @@ def usage_with_cost(event: dict, endpoint, model) -> dict | None:
 
 def model_attributes(endpoint, model) -> dict:
     """只有定价表里认得的厂商 / 模型才进 attributes（词表闭集）；自定义端点、别的模型什么都不带。"""
+    if hosted_ai.is_hosted(endpoint):
+        return {
+            "provider": hosted_ai.PROVIDER_ID
+        }  # 型号名是内部的，不进执行记录（界面会把它原样显示出来）
     vendor = vendor_of(endpoint)
     if vendor is None or (vendor, model) not in TABLE:
         return {}
