@@ -29,7 +29,7 @@ XG 是一份给编码 Agent 用的作图实践指引，不是原著，也不是�
 
 - **证据标记一律 [二手]**。它自述多面板部分是「从语料归纳的单一期刊风格指引，不是官方要求」（`references/multipanel-evidence-architecture.md`），数值是「针对单一期刊系列的保守默认值」（`references/qa-contract.md`）。只靠它支撑的条目，`strength` 不得标 `firm` 或 `strong`。
 - **它的数值不进本体系**：5 pt 字号下限、89 / 183 mm 栏宽、1.5 pt 对齐容差、600 dpi 都是它对 单一期刊系列的转述或自定默认值。期刊阈值只来自期刊原文（ADR 0155）；对齐容差以 ADR 0199 §六 为准。
-- **不复制代码与文字**：许可证是 Apache-2.0，但仓库内自相矛盾（README_EN.md` 与 仓库内一批第三方素材THIRD_PARTY_NOTICES.md` 称根许可证是 MIT），根 `LICENSE` 的版权人一栏也没填。Tavotto 只吸收做法、自己实现。仓库内一批第三方素材 是没有许可证的第三方材料，不读作依据、不引用。
+- **不复制代码与文字**：许可证是 Apache-2.0，但仓库内自相矛盾（README_EN.md` 与 仓库内一批第三方素材THIRD_PARTY_NOTICES.md` 称根许可证是 MIT），仓库也没有 `NOTICE` 文件。Tavotto 只吸收做法、自己实现。仓库内一批第三方素材 是没有许可证的第三方材料，不读作依据、不引用。
 - **阅读覆盖**：
   - 细读：`SKILL.md`、`static/core/contract.md`、`static/core/stance.md`、`references/qa-contract.md`、`references/asset-adaptation.md`、`references/multipanel-evidence-architecture.md`、`references/chart-types.md`、`scripts/audit_pdf_text.py`、`scripts/figure_safety.py`。
   - 只抽查：`references/design-theory.md`（只看了标题与带硬措辞的行）；`scripts/audit_panel_alignment.py`、`scripts/audit_figure_collisions.py`、`scripts/validate_figure.py`（读了函数表、阈值常量与核心判据段，没有逐行读完）。

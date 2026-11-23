@@ -23,13 +23,13 @@ XG 的阅读覆盖（哪些细读、哪些只抽查、哪些没读）登记在 `
 
 - 产物检查器现在能报出成品 PDF 里每段看得见的文字实际多大，含上下标与缩放后的面板。只观测，不改任何裁决。
 - 「排版与按规范修不改数据」第一次有了可执行的不变式：改图幅、挪坐标轴、改字号线宽之后，数据指纹逐个相等。
-- 一键排版的 0.1 pt 对齐线第一次被用例钉住。此前把它改成 1.5 pt，现有用例全绿（§4.3 的反证）。
+- 一键排版的 0.1 pt 对齐线被用例钉住。此前把它改成 1.5 pt，`tests/test_quicklayout.py` 全绿（§4.3 的反证；别的测试文件没有逐个试）。
 
 **哪些被有理由地拒绝？** 主要六样（全表见 §2）：
 
 - XG 的 1.5 pt 对齐容差：比 Tavotto 的 0.1 pt 松 15 倍。
 - 写死的 5 pt 字号下限、89 / 183 mm 栏宽：阈值只来自期刊。
-- 基于 PyMuPDF 的 PDF 碰撞审计：Tavotto 已有在真实渲染几何上的干涉检测，且渲染闭包不许有 PyMuPDF。
+- 基于 PyMuPDF 的 PDF 碰撞审计：渲染闭包不许有 PyMuPDF；Tavotto 已有在真实渲染几何上的干涉检测模块，只是目前只接在「保留式规范化」那条路径上（§3.4）。
 - 按源码正则猜「数据被丢 / 被伪造」：判的是脚本文字，不是数据。
 - 「一张图一个结论」「面板不许重复」做成检查：作者的论证选择，登记为品味（G-058）。
 - 它的图型代码片段：其中的雷达图逐轴归一化、对数轴柱、双 y 轴，正是 Tavotto 准则提醒要小心的画法。
@@ -55,7 +55,7 @@ Tavotto 是编辑器加确定性引擎：图在 worker 里渲染，manifest 是�
 | A3 | 面板对齐：行内上下边、列内左右边、等宽、等间距，容差 1.5 pt（`scripts/audit_panel_alignment.py:34-35`、`qa-contract.md:161-173`） | 行内上下边、列内左边，容差 0.1 pt（`engine/quicklayout.py:29`、`:309-324`）；间距、页边、贴边、重叠、缩放另判（`:325-361`） | `tests/test_quicklayout.py` 4 条；本分支加 18 条 | 列内**右边**不判；分组口径有洞（§3.2） | **已有且更严**，容差不动。右边与分组写进待拍板 |
 | A4 | 行内三四张图必须等宽，除非登记豁免（`qa-contract.md:165-166`） | 不要求：列宽比例可由用户拖分隔线定（ADR 0199 §一） | — | 无 | **拒绝**。版面选择，不是对错 |
 | A5 | 没有可比组时 `NOT AUDITABLE`，不算通过（`qa-contract.md:158-159`） | `check()` 没有这一档：没有任何一组可比时返回空表，与「全过」同形（`quicklayout.py:278-285`、`:309-324`） | 无 | **有**（§3.2） | **采用其原则，未实施**：要改验收行为，且在途 PR 在改同一文件，交维护者定 |
-| A6 | PDF 碰撞审计：文字压文字、线穿文字、文字出页（`scripts/audit_figure_collisions.py:379-489`，依赖 PyMuPDF） | 真实渲染几何上的干涉检测：`text-overlap` / `text-over-axes` / `legend-over-data`（`engine/interference.py:13-18`），区分「确定」与「风险」；元素出图幅 `element-outside-figure`（`preflight.py:1282-1330`，先折进 `clip_bbox`） | 有（`normalize.py:271` 等调用） | 线穿过文字一类未覆盖 | **已有，拒绝移植**。Tavotto 用的是 marker 级真实几何，比 PDF 包围盒准；PyMuPDF 不许进闭包（ADR 0072） |
+| A6 | PDF 碰撞审计：文字压文字、线穿文字、文字出页（`scripts/audit_figure_collisions.py:379-489`，依赖 PyMuPDF） | 真实渲染几何上的干涉检测模块：`text-overlap` / `text-over-axes` / `legend-over-data`（`engine/interference.py:13-18`），区分「确定」与「风险」。**调用方只有 `engine/normalize.py`**（`:271` 等），即保留式规范化；常规预检的两个求值器里没有这三个 id。元素出图幅 `element-outside-figure` 在常规预检里（`preflight.py:1282-1330`，先折进 `clip_bbox`） | `tests/test_normalize.py`、`tests/test_mcp_normalize.py` | **有**：三条干涉规则在规范表里有严重度（`publication.json:117-119`），但用户平时打开问题面板看不到它们（§3.4）。线穿过文字一类模块本身也未覆盖 | **模块已有，拒绝移植 XG 的实现**。Tavotto 用的是 marker 级真实几何，比 PDF 包围盒准；PyMuPDF 不许进闭包（ADR 0072）。接进常规预检是另一件事，待拍板 |
 | A7 | 文字出页：按 PDF 文字轨迹判（`audit_figure_collisions.py:468-487`） | 导出前：`element-outside-figure`（error）、`out-of-page`（`preflight.py:1047`）；导出后：检查器的 `clipping` 只判计划里有包围盒的对象，外来页内部记 unknown（`inspector.py` 头注「边界」） | 有 | 面板内部文字在成品里是否被裁，导出后无独立读数 | **已有（导出前）**；导出后那一半需要字形宽度，暂不做（§6） |
 | A8 | 审计结果三态加退出码：`FIX` / `REVIEW` / `NOT AUDITABLE`（`qa-contract.md:220-226`） | 四值：verified / failed / unknown / not_applicable，两档政策（`inspector.py` 的 `VERDICTS`、`REQUIRED`） | 有 | 无 | **已有且更细** |
 | A9 | 标签位置用固定 pt 偏移，不用轴分数（`qa-contract.md:198-200`） | 标签由求解器给页面 mm 坐标，验收要求不压墨迹（`quicklayout.py:356-360`） | 有 | 标签外框是估的：`lw = label_pt × 0.6 × 3`（`quicklayout.py:339`），不是量的 | **已有**；估算一事记入 §3.3 |
@@ -66,11 +66,11 @@ Tavotto 是编辑器加确定性引擎：图在 worker 里渲染，manifest 是�
 | # | XG 的做法（位置） | Tavotto 的对应（位置） | 真缺口 | 处置 |
 | --- | --- | --- | --- | --- |
 | B1 | 默认用全部观测；排除要记前后计数与规则（`contract.md:35-37`、`asset-adaptation.md:53-57`） | `unplotted_rows` 数横轴无效与 y 为文字的行（`engine/ai_data_propose.py:484-516`），响应带 `unplotted.count`（`:999-1001`） | 分组 / 分面 / 个体列为空的行被跳过但不计数；y 为空在散点与比较图里也不计数（§5.1） | **采用**，转交数据出图那条线 |
-| B2 | 不为了好画而抽样（`contract.md:35`） | 超行数上限拒绝而不截断；大表的降采样记在 `reduced`（`ai_data_propose.py:1005`） | 无 | **已有** |
+| B2 | 不为了好画而抽样（`contract.md:35`） | 超上限拒绝而不截断（`ai_data_figure.py:43` 的注释与 `MAX_ROWS`）；大表的降采样记在 `reduced`（`ai_data_propose.py:1005`） | 无 | **已有** |
 | B3 | 列的映射要显式、拿不准要问（`asset-adaptation.md:27-36`） | 闭集角色加 `NeedsChoice`（`engine/ai_data_recipe.py:1891`） | 现成的误差列可能被当成测量序列（§5.2） | **已有**；缺口已在数据出图那条线的在途工作里 |
-| B4 | 不确定性的定义要写明，不许猜（`qa-contract.md:327-332`） | `SUMMARIES` 闭集（`ai_data_recipe.py:73`）；SD 用 n−1（`ai_data_template.py:152-158`）；95% CI 用 t 分位数（`:212`） | 候选默认写死 `mean_sd`（`ai_data_recipe.py:2120-2121`、`:2216`），main 上没有「需要你确认」 | **已有规格**（V-004）；实现在途，不重复报 |
+| B4 | 不确定性的定义要写明，不许猜（`qa-contract.md:327-332`） | `SUMMARIES` 闭集（`ai_data_recipe.py:73`）；SD 用 n−1（`ai_data_template.py:152-158`）；95% CI 用 t 分位数（`:212`） | 候选默认写死 `mean_sd`（`ai_data_recipe.py:2120-2121`、`:2216`）；在 `engine/ai_data_*.py` 与 `web/src/components/datastudio` 里搜「需要你确认」`needs_confirm` 无命中 | **已有规格**（V-004）；实现在途，不重复报 |
 | B5 | 变换要有守卫：log 要正、归一化要有非零范围、插值要单调（`asset-adaptation.md:38-49`、`scripts/figure_safety.py:11-33`） | log 轴非正值是预检 V-001；配方里没有归一化；拟合只有最小二乘直线 | 拟合系数不进脚本头与响应 | **已有 / 不适用**；系数一事见 §5.3 |
-| B6 | 模板复用分四级，科学含义不同就不复用（`asset-adaptation.md:7-23`） | 闭集配方加拒绝码（`ai_data_recipe.py` 的 `REJECTIONS`）；同一横轴值有重复、个体未确认时不许逐点连线（`:932-949`） | 已汇总的表没有确定性守卫 | **已有**（G-052、G-053 已有准则）；守卫在途 |
+| B6 | 模板复用分四级，科学含义不同就不复用（`asset-adaptation.md:7-23`） | 闭集配方加拒绝码（`ai_data_recipe.py` 的 `REJECTIONS`）；同一横轴值有重复、个体未确认时不许逐点连线（`:932-949`） | 已汇总的表没有确定性守卫（在 `ai_data_recipe.py` 里按关键词搜无命中，**没有逐行通读，未亲核**） | **已有**（G-052、G-053 已有准则）；守卫在途 |
 | B7 | 源码正则：有 `dropna` 没有计数标记就警告；有随机数就警告「疑似模拟数据」（`scripts/validate_figure.py:526-555`） | 不适用：数据出图的脚本由模板生成，不含这些 | — | **拒绝**。判的是脚本文字，换个写法就绕过，也会冤枉正常脚本 |
 | B8 | 来源可追溯：脚本、源数据、QA 记录一起交付（`qa-contract.md:66`） | 脚本头注带数据 sha256 与完整配方（`ai_data_template.py:1205-1221`）；画出来的图用数据指纹对拍 | 误差线、误差带、箱线、小提琴四种图元不对拍（`ai_data_template.py:2035-2040`，原因写在注释里） | **已有**；四种未对拍的图元见 §5.4 |
 
@@ -143,7 +143,15 @@ axes shifted in same frame -> [{'metric': 'align_bottom', 'delta_mm': 1.0}]
 - **列内右边不判**。ADR 0199 §六 只写了下边与左边，代码多判了上边（`quicklayout.py:317-324`）。最右一列各图的绘图区右边可以参差。XG 判四条边。是否加，属于 ADR 0199 的修订（§9 第 2 条）。
 - **没有主轴的图**（纯文字、示意图）不参与对齐，也没有说明（`quicklayout.py:309`）。等比例轴有一行说明（`:601`），这种没有。影响小，记录。
 - **墨迹框缺失时按整张图幅算**（`quicklayout.py:152-157`），于是「贴边」一条会报。方向是保守的，本分支加了用例钉住。
-- **0.1 pt 这条线此前没有被任何用例钉住**，见 §4.3 的反证。
+- **0.1 pt 这条线在 `tests/test_quicklayout.py` 里没有被钉住**，见 §4.3 的反证。
+
+### 3.4 发现：干涉检测没有接进常规预检
+
+`engine/interference.py` 量的是「画出来有没有撞上」：文字互相重叠、装饰文字压进别的子图、图例压住数据。它的三个检查 id 在三份规范表里都有严重度（`profiles/publication.json:117-119`、`:293`、`:303-304`）。
+
+但在 main 上，`import interference` 的只有 `engine/normalize.py:40`；`engine/preflight.py` 与 `web/src/lib/preflight.ts` 里搜不到 `text-overlap`、`text-over-axes`、`legend-over-data`（[实测] `grep -rn` 无命中）。也就是说，这三类碰撞只在用户走「保留式规范化」时才被量；平时的问题面板与 MCP 的 `tavotto_preflight` 不报。
+
+这正是 XG 的碰撞审计想覆盖的场景，而 Tavotto 手里的判据比它好。**没有改**：接进常规预检要动两侧求值器、golden 向量与 i18n，与 V-002 的在途分支相撞，而且会让存量图多出一批提示，是产品决定（§9 第 3 条）。
 
 ## 4. 已实现的三项改动
 
@@ -152,11 +160,11 @@ axes shifted in same frame -> [{'metric': 'align_bottom', 'delta_mm': 1.0}]
 ### 4.1 成品 PDF 的实际字号观测（提交 `c1ab15df4`）
 
 - **改了什么**：`src/tavotto/rendercore/inspector.py`。`_walk` 在遍历内容流时多跟踪三样文字状态：`Tf` 字号、渲染模式、文字矩阵。每段看得见的文字记一个有效字号 = `|Tf|` × （文字矩阵 × 累计 CTM）在字高方向的缩放。`observe_pdf()` 的结果多一块 `text_size`；新增纯函数 `text_size_verdict(observed, min_pt, tol_pt=…)`。
-- **没改什么**：`CHECKS_PDF`、`REQUIRED`、`summary()`、`public_projection()`、任何裁决。前端与 i18n 一行没动。阈值不在检查器里。
-- **顺带的修正**：`q` / `Q` 现在连字体一起存取。字体属于图形状态，原来 `Q` 之后仍沿用 `q` 里面设的字体去解码文字层。相关用例全绿。
+- **没改什么**：`CHECKS_PDF`、`REQUIRED`、`summary()`、`public_projection()`、任何裁决、文字层的解码。前端与 i18n 一行没动。阈值不在检查器里。
+- **顺带看到、没有改的一处**：字体本身也属于图形状态，但 `_walk` 在 `Q` 之后仍沿用 `q` 里面最近一次 `Tf` 的字体去解码文字层。改它会影响 `text_lines` 与 `text_layer`，在 `strict` 下可能改变裁决，所以这次只让字号与渲染模式随 `q` / `Q` 存取，字体的行为原样保留（第一版提交曾连字体一起恢复，已由后续提交撤回）。是否修，另议。
 - **量不了的如实说**：不画只进文本层的文字（渲染模式 3 / 7，Tavotto 自己的公式就是这样写的，`rendercore/pdfwriter.py:962`）、FontMatrix 不是千分之一的 Type 3、退化矩阵、没有字体，各自计数，不进最小值；预算耗尽或没有 pikepdf 整项 unknown。
 - **已知漏报**：画成轮廓又不带文本层的字，在内容流里与普通路径分不开。
-- **实现来源**：按 PDF 规范与现有 `_walk` 的结构自己写的，没有搬 XG 的代码。与 XG 不同的三处：用字高方向的缩放而不是行列式开方（各向异性变换下更准）；`Tf` 与渲染模式随 `q` / `Q` 存取（XG 不恢复）；区分看得见与看不见的文字（XG 不分）。
+- **实现来源**：按 PDF 规范与现有 `_walk` 的结构自己写的，没有搬 XG 的代码。与 XG 不同的三处：用字高方向的缩放而不是行列式开方（各向异性变换下更准）；字号与渲染模式随 `q` / `Q` 存取（XG 不恢复）；区分看得见与看不见的文字（XG 不分）。
 - **测试**：`tests/test_rendercore_text_size.py`，18 条。正常 3、边界 5、错误 1、判不了 6、真 matplotlib 3（含防误报 1）。
 - **反证**：真 matplotlib 的 7 pt `$R^2$` 量出 4.9 pt，交 5 pt 下限得 failed，交 4.5 pt 得 verified——同一个文件，裁决只随调用方给的阈值变。同一张图去掉上下标与对数轴后量出 7 pt，不报。
 - **性能** [实测]：16 个面板、931 段文字、26,732 条指令的 PDF，`observe_pdf` 15 次的中位数：改动前 54.2 / 55.8 ms（两轮），改动后 54.5 / 56.0 / 56.4 ms（三轮）。差值在轮次间的抖动之内。
@@ -175,7 +183,7 @@ axes shifted in same frame -> [{'metric': 'align_bottom', 'delta_mm': 1.0}]
 - **改了什么**：只加测试，`tests/test_quicklayout_check_boundaries.py`，18 条，纯几何。
 - **覆盖**：0.1 pt 线本身（0.08 pt 过、0.12 pt 与 1.4 pt 抓）；不等宽两列；twin 轴、inset、色条、一张图内的并排子图；等比例轴只豁免对齐、不豁免间距；超长标签撑大墨迹框；标签伸出图框；保持画布时伸出页底；没有主轴的图；墨迹框缺失。
 - **反证** [实测]，三次改坏后各跑一遍：
-  - `ALIGN_TOL_MM` 改成 1.5 pt：新用例红 4 条，**`tests/test_quicklayout.py` 原有用例全绿**。也就是说此前把容差放宽 15 倍不会被任何测试发现。
+  - `ALIGN_TOL_MM` 改成 1.5 pt：新用例红 4 条，**`tests/test_quicklayout.py` 原有用例全绿**。也就是说此前把容差放宽 15 倍，这个文件发现不了。
   - `_main_axes` 不再排除色条：红 1 条。
   - 对齐不再排除等比例轴：红 1 条。
 - **没有覆盖**：§3.2 的分组漏洞。仓库的约定是已知分岔不用 xfail 接（`tests/test_override_sequences.py:17-20`），也不该写一条断言错误行为的用例，所以只写进本报告。
@@ -202,7 +210,7 @@ axes shifted in same frame -> [{'metric': 'align_bottom', 'delta_mm': 1.0}]
 | 分组、分面为空 | `ai_data_template.py:535-536`（关系） | 不计 |
 | y 为空或 NaN | `ai_data_template.py:290-292`、`:539-540` | 不计。理由写的是「折线在那里断开，不算没画」（`ai_data_propose.py:486`），这只对折线成立，对散点与分组比较不成立 |
 
-**建议**：`unplotted` 的计数按「模板实际跳过的行」算，原因码加两种（分组列为空、y 为空且不是折线）。对应准则 G-055、规格 V-003 的精神。风险低：只是多报，不改图。
+**建议**：`unplotted` 的计数按「模板实际跳过的行」算，原因码加两种（分组列为空、y 为空且不是折线）。对应准则 G-055（V-003 管的是轴范围外的点，是另一件事）。风险低：只是多报，不改图。
 
 ### 5.2 现成的误差列
 
@@ -211,9 +219,9 @@ axes shifted in same frame -> [{'metric': 'align_bottom', 'delta_mm': 1.0}]
 ### 5.3 可追溯性
 
 - 聚合与筛选：脚本头注带完整配方与数据 sha256（`ai_data_template.py:1205-1221`），够用。
-- 拟合：只有最小二乘直线，系数不进头注也不进响应。**建议**把斜率、截距、n 写进脚本头注，对应 G-016。
-- 归一化：配方里没有，不存在未记录的归一化。
-- n < 2 时误差线不画（`ai_data_template.py:349-352` 用 NaN 判断跳过），但候选说明文字不变。**建议**这种组在响应里标出来。
+- 拟合：最小二乘直线（`ai_data_template.py:262`），在生成的脚本运行时现算（`:1641`）。头注只有配方（`:1205-1221`），所以系数不在头注里；响应里有没有，**未亲核**。**建议**把斜率、截距、n 写进脚本头注，对应 G-016。
+- 归一化：在 `ai_data_recipe.py` 与 `ai_data_template.py` 里搜 `normaliz` / 「归一」，只命中小提琴形状的密度归一（`ai_data_template.py:253`），没有对数据做归一化的配方。
+- n < 2 时误差线不画（`ai_data_template.py:349-352` 用 NaN 判断跳过）。子代理说这时候选的说明文字仍写「标准差」，**这一句未亲核**。**建议**这种组在响应里标出来。
 
 ### 5.4 数据指纹没有覆盖的图元
 
@@ -225,7 +233,7 @@ manifest 一侧，误差线容器、填充带其实有指纹（`engine/manifest.
 
 ### 5.5 推荐理由
 
-P6 要求理由分三档（数据事实 / 感知依据 / 用户确认过的目的）。main 上的理由是每个候选码一段固定文案，配方的 `why` 限 80 字且不进脚本（`ai_data_template.py:1207-1208`）。三档未实现。这在 `docs/sciviz/principles.md` 的 P6 里已有登记，不是新发现；XG 在这一点上没有更好的做法可借。
+P6 要求理由分三档（数据事实 / 感知依据 / 用户确认过的目的）。main 上响应带的是候选码（`ai_data_propose.py:984` 的 `why_code`），文案按码取；配方的 `why` 限 80 字（`ai_data_recipe.py:65`）且不进脚本（`ai_data_template.py:1207-1208`）。三档未实现。这在 `docs/sciviz/principles.md` 的 P6 里已有登记，不是新发现；XG 在这一点上没有更好的做法可借。
 
 ## 6. 优先级与未实施的部分
 
@@ -237,6 +245,7 @@ P6 要求理由分三档（数据事实 / 感知依据 / 用户确认过的目�
 | 排版不改数据的不变式 | **已实现**（一键排版用到的键） |
 | 一键排版 0.1 pt 线与边界用例 | **已实现** |
 | 一键排版分组漏洞（§3.2） | **未实施**，待拍板 |
+| 干涉检测接进常规预检（§3.4） | **未实施**，待拍板；与 V-002 分支相撞 |
 | 没画的行计全（§5.1） | **未实施**，转交数据出图那条线 |
 | V-003 数据点落在轴范围外 | **未实施**。与 V-002 的在途分支在 `manifest.py`、两侧求值器、`publication.json`、i18n、golden 向量上全面相撞，等它合入后再做 |
 
@@ -270,7 +279,7 @@ P6 要求理由分三档（数据事实 / 感知依据 / 用户确认过的目�
 
 ## 7. 许可证与依赖
 
-- **XG 的许可证**：根 `LICENSE` 是 Apache-2.0 全文，但末尾的版权声明模板没有填（仍是 `Copyright [yyyy] [name of copyright owner]`），仓库没有 `NOTICE`。README_EN.md:81` 与 仓库内一批第三方素材THIRD_PARTY_NOTICES.md` 又把根许可证称作 MIT。Apache-2.0 与 MIT 都能单向并入 AGPL-3.0，但许可证表述不一致、版权人不明，所以**一行代码、一段文字都没有复制**，只吸收做法、自己实现。
+- **XG 的许可证**：根 `LICENSE` 是 Apache-2.0 全文，仓库没有 `NOTICE`。README_EN.md:81` 与 仓库内一批第三方素材THIRD_PARTY_NOTICES.md` 又把根许可证称作 MIT。Apache-2.0 与 MIT 都能单向并入 AGPL-3.0，但仓库自己的表述不一致，所以取保守做法：**一行代码、一段文字都没有复制**，只吸收做法、自己实现。
 - **仓库内一批第三方素材**：XG 自己的声明写明上游没有许可证、不授予复制与修改的权利。没有读作依据，没有引用。
 - **仓库内的引用**：`sciviz_guidance.json` 里指向 XG 的依据都只有路径与小节名，没有逐字引文。本报告里的英文短语都在 25 词以内，并写了出处。
 - **依赖**：没有新增任何依赖。XG 的碰撞审计依赖 PyMuPDF（`requirements.txt`），没有引入；`scripts/ci/retirement_scan.py` 的静态扫描不受影响。新观测用的 pikepdf 本来就在渲染闭包里。
@@ -278,7 +287,11 @@ P6 要求理由分三档（数据事实 / 感知依据 / 用户确认过的目�
 
 ## 8. 验证记录
 
-解释器 `/Volumes/Projects/Tavotto/.venv/bin/python`，在 worktree 根目录执行，`pytest.ini` 的 `pythonpath = src` 保证导入的是本 worktree 的代码（已核：`tavotto.__file__` 指向 worktree）。
+解释器 `/Volumes/Projects/Tavotto/.venv/bin/python`，在 worktree 根目录执行。这个 venv 以 editable 方式装的是旧主工作区，所以测的是哪棵树要分两头核：
+
+- pytest 父进程：`pytest.ini` 的 `pythonpath = src` 让它导入本 worktree 的代码（已核 `tavotto.__file__`）。
+- `pool.one_shot` 起的真 worker：[实测] 在本 worktree 的 `engine/manifest.py` 里临时让 `_fingerprint_parts` 对 `Line2D` 返回 None，`tests/test_layout_keeps_data_fingerprint.py` 红 2 条（退出码 1），还原后全绿。所以 worker 用的也是本 worktree 的引擎。
+- 不经 `pythonpath` 的干净子进程会落到旧主工作区，见下表 `test_retirement_scan` 一行。
 
 | 命令 | 结果 |
 | --- | --- |
@@ -286,8 +299,11 @@ P6 要求理由分三档（数据事实 / 感知依据 / 用户确认过的目�
 | `pytest tests/test_layout_keeps_data_fingerprint.py` | 6 通过，退出码 0 |
 | `pytest tests/test_quicklayout_check_boundaries.py` | 18 通过，退出码 0 |
 | `pytest tests/test_sciviz_guidance.py` | 通过，退出码 0 |
-| `pytest tests/test_rendercore_inspector.py tests/test_export_inspection.py tests/test_mcp_export_inspection.py tests/test_rendercore_svginspect.py tests/test_export_identity.py tests/test_rendercore_model.py` | 通过 |
-| `pytest tests/test_retirement_scan.py` | **1 条失败，与本分支无关**：`test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed` 起的干净子进程导入的是旧主工作区 `/Volumes/Projects/Tavotto/src`（editable 安装），那里缺三个 Noto 字体。暂存本分支改动后在同一提交上复跑，同样失败 |
+| `pytest tests/test_rendercore_*.py tests/test_foundation_*.py tests/test_export_inspection.py tests/test_mcp_export_inspection.py tests/test_export_identity.py -x`（44 个文件加 3 个） | 退出码 0（在撤回字体恢复之后的代码上跑的） |
+| `pytest tests/test_docs_references.py tests/test_docs_scope.py` | 通过，退出码 0 |
+| `python scripts/dev/agents_budget.py --check`、`python scripts/dev/gen_agents_sheets.py --check`、`ruff check src tests` | 退出码 0 |
+| `python scripts/ci/retirement_scan.py` | 静态两步 `PASS source`、`PASS deps`（文档里出现库名不触发）；`block` 步失败，原因同下一行，脚本退出码 1 |
+| `pytest tests/test_retirement_scan.py` | **1 条失败，与本分支无关**：`test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed` 起的干净子进程导入的是旧主工作区 `/Volumes/Projects/Tavotto/src`（editable 安装），那里缺三个 Noto 字体。在 `origin/main` 的代码上（不带本分支改动）复跑，同样失败 |
 | 反证：三次改坏 `quicklayout.py` | 各自变红（§4.3），退出码 1，改动已还原 |
 
 **未执行**：
@@ -304,7 +320,9 @@ P6 要求理由分三档（数据事实 / 感知依据 / 用户确认过的目�
 
 1. **一键排版的行列分组**（§3.2）：是否改成不依赖图框原点的分组，并加「有图可比却没比」这一档。需要先向闭源侧确认同一行的图框是否总在同一个 y 上。
 2. **列内右边要不要判**（§3.3）：ADR 0199 §六 的修订。
-3. **成品字号接成检查项**（ADR 0201）：是否落在科学图形检查族的豁免内；`strict` 下是否必需（草稿建议不必需）；界面多一行的稿子。
-4. **G-055 至 G-058 的编号**：如果在途 PR 已经占用，顺延即可；`sciviz_guidance.render()` 默认渲染全部条目，新增条目会进入全量渲染的文本。
-5. **ADR 0201 的编号**：写稿时的下一个空号，合入前复核。
-6. **§5 的建议**是否按原样转交数据出图那条线。
+3. **干涉检测要不要接进常规预检**（§3.4）：三条规则在规范表里有严重度，但平时不报。
+4. **成品字号接成检查项**（ADR 0201）：是否落在科学图形检查族的豁免内；`strict` 下是否必需（草稿建议不必需）；界面多一行的稿子。
+5. **G-055 至 G-058 的编号**：如果在途 PR 已经占用，顺延即可；`sciviz_guidance.render()` 默认渲染全部条目，新增条目会进入全量渲染的文本。
+6. **ADR 0201 的编号**：写稿时的下一个空号，合入前复核。
+7. **§5 的建议**是否按原样转交数据出图那条线。
+8. **检查器在 `Q` 之后不恢复字体**（§4.1）：要不要修。修了会影响文字层解码。
