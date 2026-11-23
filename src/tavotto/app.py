@@ -17389,6 +17389,8 @@ def api_ai_data_figure_propose():
                 client_request_id=rid,
                 render=body.get("render"),
                 tables=body.get("tables"),
+                spec=body.get("spec"),
+                font_range=body.get("font_range"),
             )
     except engine_ai_data_progress.Cancelled:
         return _cancelled_response()
@@ -17539,6 +17541,7 @@ def _data_figure_commit(ctx, project: str, session_id: str, item_id: str, rid):
             title_code=item.code,
             header_line=sess.header_line,
             merge=sess.merge,
+            style=sess.style,
         )
         prepared = engine_ai_data_task.prepare_v2(ctx.path, sel)
         env = engine_ai_data_task.envelope_for_v2(project_key=project, prepared=prepared, rid=rid)

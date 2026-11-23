@@ -560,6 +560,8 @@ class Selection:
     header_line: int | None = None
     #: 合画：各份与合成列（`table` / `sheet` / `data_sha256` 此时是第一份的路径 / 工作表与拼后的数据身份，`folder_rel` 是落点目录）；单份 = None
     merge: ai_data_merge.MergeSpec | None = None
+    #: 出备选时用的样式（`Session.style`）：落盘的脚本与选中的预览图同一份；None = 默认规范
+    style: dict | None = None
 
 
 @dataclass
@@ -601,7 +603,11 @@ def prepare_v2(root: Path, sel: Selection) -> PreparedV2:
     if problems:
         raise TaskError("recipe_invalid", problems[0].code)
     rendered = ai_data_template.render_recipe_script(
-        entry, sel.recipe, data_rel=ai_data_propose.script_data_rel(sel.table), stem=pl.stem
+        entry,
+        sel.recipe,
+        data_rel=ai_data_propose.script_data_rel(sel.table),
+        stem=pl.stem,
+        style=sel.style,
     )
     try:
         expected = ai_data_template.expected_fingerprints(values, sel.recipe)
@@ -669,7 +675,11 @@ def _prepare_merged(root: Path, sel: Selection) -> PreparedV2:
     if problems:
         raise TaskError("recipe_invalid", problems[0].code)
     rendered = ai_data_template.render_recipe_script(
-        entry, sel.recipe, data_rel=ai_data_propose.script_data_rel(first.rel), stem=pl.stem
+        entry,
+        sel.recipe,
+        data_rel=ai_data_propose.script_data_rel(first.rel),
+        stem=pl.stem,
+        style=sel.style,
     )
     return PreparedV2(
         selection=sel,

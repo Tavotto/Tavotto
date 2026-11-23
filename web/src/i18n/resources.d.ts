@@ -241,6 +241,16 @@ export default interface Resources {
         "unverifiable": "图画好了，但这类图没法逐项核对数据。",
         "verified": "图画好了，数据和文件逐项对上。"
       },
+      "spec": {
+        "fontMax": "≤ {{max}} pt 字号",
+        "fontMin": "≥ {{min}} pt 字号",
+        "fontOne": "{{min}} pt 字号",
+        "fontRange": "{{min}}–{{max}} pt 字号",
+        "join": "、",
+        "line": "按{{parts}}出图",
+        "widthOne": "图宽 {{single}} mm",
+        "widthTwo": "单栏 {{single}} mm、双栏 {{double}} mm"
+      },
       "suggest": {
         "apply": "试试建议",
         "connectHint": "连上后会帮你看懂每一列，选对横轴、纵轴和分组",

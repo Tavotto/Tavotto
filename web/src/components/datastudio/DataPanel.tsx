@@ -1,9 +1,45 @@
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+import { JournalPicker, type JournalPickTarget } from '@/components/journal/JournalPicker'
 import { Row } from '@/components/ui/Field'
+import { FIELD_BOX, FIELD_OPEN } from '@/components/ui/fieldBox'
 import { Select } from '@/components/ui/Select'
-import { overviewKeyOf, useDataFigureStore, type RoleKey } from '@/store/dataFigureStore'
+import { cn } from '@/lib/utils'
+import { draftClearJournal, draftPickJournal, draftPickV2Only, specParts } from '@/lib/dataFigureSpec'
+import { journalCatalogUi } from '@/lib/journalUi'
+import { currentProjectId } from '@/lib/session'
+import { dataFigureEpoch, overviewKeyOf, useDataFigureStore, type RoleKey } from '@/store/dataFigureStore'
+import { useDocumentStore } from '@/store/documentStore'
+import { useJournalCatalogStore } from '@/store/journalCatalogStore'
+import { useJournalV2Store } from '@/store/journalV2Store'
 import type { CellMode } from '@/lib/dataFigure'
 import { diffSuggestion } from '@/lib/dataUnderstanding'
+
+/**
+ * 右栏「期刊」一行的写入目标：只改草稿自己的规范绑定（`dataFigureStore.setSpecBinding`），不碰任何画布的 `doc.profile`、不进撤销栈。
+ * 读的都是**点选落定那一刻**的活值（选择器等下载期间草稿可能已经变了）；页宽只用来喂「不按期刊」的退路记录，草稿本身没有页面。
+ */
+function draftTarget(ref: JournalPickTarget['ref']): JournalPickTarget {
+  const pageW = () => useDocumentStore.getState().doc.page.w
+  const cur = () => useDataFigureStore.getState().specBinding
+  const set = (b: ReturnType<typeof cur>) => useDataFigureStore.getState().setSpecBinding(b)
+  return {
+    ref,
+    select: (id, v2) => {
+      useJournalV2Store.getState().remember(id, v2)
+      set(draftPickJournal(id, v2, cur(), pageW(), useJournalCatalogStore.getState().catalog))
+    },
+    selectV2Only: (entry, patch) => {
+      useJournalV2Store.getState().remember(entry.id, patch)
+      set(draftPickV2Only(entry, patch, cur(), pageW()))
+    },
+    clear: () => set(draftClearJournal(cur())),
+    origin: () => `${currentProjectId()}\u0000${dataFigureEpoch()}`,
+  }
+}
+
+/** 触发器长得和同一列里的下拉一样（同一个框、同高、同内边距） */
+const JOURNAL_TRIGGER = cn(FIELD_BOX, FIELD_OPEN, 'w-full rounded-sm px-2 active:bg-field data-[state=open]:bg-field')
 
 const baseName = (p: string): string => p.slice(p.lastIndexOf('/') + 1)
 /** 「不要横轴 / 不分组」的取值：不会和任何列名撞（列名里不会有控制字符） */
@@ -29,6 +65,9 @@ export function DataPanel() {
   const busy = useDataFigureStore((s) => s.drawingId != null)
   const understanding = useDataFigureStore((s) => s.understanding)
   const suggestion = useDataFigureStore((s) => s.suggestion)
+  const journalRef = useDataFigureStore((s) => s.specBinding?.journalRef)
+  const figureStyle = useDataFigureStore((s) => s.figureStyle)
+  const target = useMemo(() => draftTarget(journalRef), [journalRef])
   if (!selected) return null
   const ov = overviews[overviewKeyOf(selected, headerRows)]?.data ?? null
   // 合画：概览只有第一份的，行列数不代表整组，不显示
@@ -79,6 +118,22 @@ export function DataPanel() {
           </p>
         )}
       </header>
+      {journalCatalogUi() && (
+        <div data-data-role="journal" className="mb-3 flex flex-col gap-1">
+          <Row label={t('journal.title', { ns: 'dialogs' })} labelWidth={LABEL_W}>
+            <JournalPicker target={target} triggerClassName={JOURNAL_TRIGGER} disabled={busy} />
+          </Row>
+          {figureStyle && (
+            <p data-data-spec className="pl-[calc(44px+1rem)] text-xs text-balance text-ink-3 tabular-nums">
+              {t('dataFigureV2.spec.line', {
+                parts: specParts(figureStyle)
+                  .map((p) => t(`dataFigureV2.spec.${p.key}`, p.values))
+                  .join(t('dataFigureV2.spec.join')),
+              })}
+            </p>
+          )}
+        </div>
+      )}
       {roles && (
         <div data-data-roles className="flex flex-col gap-1">
           {roles.options.x.length > 0 && (
