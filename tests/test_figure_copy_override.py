@@ -645,3 +645,6 @@ def test_instrument_rerun_with_live_copies_does_not_register_them_again(probe):
     assert (
         "axes_0.copy_ab12cd34" in probe["before"] and "axes_0.copy_ab12cd34" not in probe["after"]
     )
+    # 重放同一份列表：副本回到登记表，图上仍各只有一段字（不叠第二份）
+    assert probe["warnings2"] == [] and len(probe["copies_live2"]) == 2
+    assert {"axes_0.copy_ab12cd34", "fig.copy_ef56gh78"} <= set(probe["again"])
