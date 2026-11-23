@@ -678,6 +678,13 @@ def test_checkout_url_must_be_a_stripe_https_page(server, url):
     assert e.value.code == "server"
 
 
+def test_checkout_url_with_stripe_fragment_is_accepted(server):
+    """Stripe 真实的 Checkout 地址末尾带 `#fid…` 片段（2026-11-23 测试环境实测）；拒了它，应用里的购买 / 续费就全坏。"""
+    url = "https://checkout.stripe.com/c/pay/cs_test_a1B2#fidkdWxOYHwnPyd1blpxYHZxWjA0"
+    server.script = [(200, {"url": url})]
+    assert lic.checkout("pro") == {"ok": True, "url": url}
+
+
 def test_failure_codes_are_the_adr_closed_set():
     assert set(lic.FAILURES) == {
         "invalid_code", "device_limit", "revoked", "expired", "price_unavailable",

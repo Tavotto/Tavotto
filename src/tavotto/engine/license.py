@@ -701,7 +701,8 @@ def _checkout_url_ok(url: object, target: diagsend.Target) -> bool:
         parts.port  # noqa: B018 — 非法端口在这里抛 ValueError
     except ValueError:
         return False
-    if parts.username is not None or "@" in parts.netloc or parts.fragment:
+    # 片段（#…）放行：Stripe 真实的 Checkout 地址末尾就带一段 `#fid…`（11-23 测试环境实测），片段不会发给服务器
+    if parts.username is not None or "@" in parts.netloc:
         return False
     if isinstance(target, _DevTarget) and host in _DEV_HOSTS and parts.scheme in ("http", "https"):
         return True
