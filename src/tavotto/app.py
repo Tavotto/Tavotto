@@ -522,23 +522,26 @@ def current_registry() -> engine_registry.Registry:
     return current_ctx().registry
 
 
-def safe_resolve(rel_id: str) -> Path:
+def safe_resolve(rel_id: str, *, require_file: bool = True) -> Path:
     """把面板 id（相对路径）解析回 figures 目录内的真实文件，禁止越权访问。
 
     TIFF 还要过支持范围（`tiffprobe.check`，issue #534）：缩略图、原文件、画布合成、原图导出、
     重渲染全都经这里取文件，所以范围之外的 TIFF 在**两个渲染后端之前**就被拦下，抛
     `tiffprobe.UnsupportedTiff`（HTTP 路上由 `_unsupported_tiff` 转成 422 + code，导出作业里
     由 `_resolve_panel_source` 转成作业的 code）——不交给后端去各出一张不同的错图。
+
+    `require_file=False`：归档出处只核引用与存档，允许磁盘原件已被替换/删除；项目内包含与
+    后缀校验照做，TIFF 只在文件确实存在时才探测。
     """
     root = require_project()
     p = (root / rel_id).resolve()
     if not p.is_relative_to(root.resolve()):
         abort(403)
-    if not p.is_file():
+    if require_file and not p.is_file():
         abort(404)
     if p.suffix.lower() not in PDF_EXT | IMG_EXT | SVG_EXT:
         abort(403)
-    if p.suffix.lower() in TIFF_EXT:
+    if p.suffix.lower() in TIFF_EXT and p.is_file():
         tiffprobe.check(p)
     return p
 
@@ -2048,7 +2051,19 @@ def _replay_figure_origin(rel_id, origin, record, ctx):
         # accepts an existing built session (existing_only refuses cold
         # workers), and building is exactly the ordinary runtime authorization
         # chain executing the user code once.
-        replay_worker, _replay_stem = _engine_worker(rel_id)
+        # 归档回执自己说它是 safe 还是 native：冷回放必须按那一档解析，
+        # 不能对磁盘面板一律走 safe（native 离线时由 resolve 拒绝，不静默降级）。
+        profile = record["receipt"].get("profile")
+        archived_profile = (
+            {"execution_profile": profile}
+            if profile
+            in (
+                engine_enginesession.PROFILE_SAFE,
+                engine_enginesession.PROFILE_NATIVE,
+            )
+            else {}
+        )
+        replay_worker, _replay_stem = _engine_worker(rel_id, **archived_profile)
         replay_worker.ensure_built()
         frozen = _execution_source(
             {"id": rel_id, "overrides": origin["patches"]},
@@ -3266,6 +3281,7 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
         # 剪切蒙版裁这张图（ADR 0191）：与画布上被裁的对象同一条路（`plan._clipped`）
         **({"clip": list(src.clip)} if src.clip else {}),
         **({"figure_snapshot": src.figure_snapshot} if src.figure_snapshot is not None else {}),
+        **({"figure_origin": src.figure_origin} if src.figure_origin is not None else {}),
         **({"source_policy": src.source_policy} if src.source_policy is not None else {}),
         **({"expected_source": src.expected_source} if src.expected_source is not None else {}),
         **(
@@ -3288,9 +3304,12 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
     # 也由 worker 现画，PDF / PNG / TIFF 与 EPS 的内层就出自同一次运行；没有脚本的图仍取磁盘文件（EPS 自己报 eps_needs_script）
     rerender_ids = frozenset(
         {src.figure_id}
-        if engine_exportroute.original_rerender(req.formats)
-        and Path(src.figure_id).suffix.lower() not in SVG_EXT
-        and _has_runnable_script(src.figure_id)
+        if src.figure_origin is not None
+        or (
+            engine_exportroute.original_rerender(req.formats)
+            and Path(src.figure_id).suffix.lower() not in SVG_EXT
+            and _has_runnable_script(src.figure_id)
+        )
         else ()
     )
     produced: list = []
@@ -3371,6 +3390,7 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
             tmp_dir,
             artifact_source=source_ctx,
             **({"existing_only": True} if engine_exportreq.FORMAT_SVG in req.formats else {}),
+            **({"figure_origin": src.figure_origin} if src.figure_origin is not None else {}),
         )
     if inner.tmp_path is None or not Path(inner.tmp_path).is_file():
         return inner  # 原图 EPS 本身给不出（没有脚本 / 冷 worker …）：沿用那一档的稳定码
@@ -3482,6 +3502,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
         Path(src.figure_id).suffix.lower() in SVG_EXT
         and not src.overrides
         and src.figure_snapshot is None
+        and src.figure_origin is None
     ):
         from . import svgasset
 
@@ -3528,6 +3549,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     if (
         req.formats == (engine_exportreq.FORMAT_SVG,)
         and src.figure_snapshot is None
+        and src.figure_origin is None
         and (
             engine_runtimeasset.is_runtime_id(src.figure_id)
             or src.overrides
@@ -3569,15 +3591,20 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     svg_text_source = None
     wants_svg = engine_exportreq.FORMAT_SVG in req.formats
     wants_snapshot = wants_svg or src.figure_snapshot is not None
-    execution_source = engine_exportroute.wants_execution(
-        runtime=engine_runtimeasset.is_runtime_id(src.figure_id), overrides=src.overrides
+    origin = src.figure_origin
+    execution_source = (
+        engine_exportroute.wants_execution(
+            runtime=engine_runtimeasset.is_runtime_id(src.figure_id), overrides=src.overrides
+        )
+        or origin is not None
     )
-    if wants_snapshot and execution_source:
+    if (wants_snapshot or origin is not None) and execution_source:
         frozen = _execution_source(
             {
                 "id": src.figure_id,
                 "overrides": src.overrides,
                 "figure_snapshot": src.figure_snapshot,
+                **({"figure_origin": origin} if origin is not None else {}),
             },
             dpi,
             job.warnings,
@@ -3621,6 +3648,9 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
             src.figure_id, [], tmp_dir, static_source=static, reference=src.figure_snapshot
         )
         if saved is not None:
+            # 显式引用 = 保存时那一版：PDF/PNG/TIFF 与 SVG 必须都从它出，不能换成
+            # 此刻同名的磁盘文件（`layout-versions-and-documents.md` 的引用一节）。
+            source_path = saved.path
             svg_source = saved.svg_representation()
         elif src.figure_snapshot is not None:
             raise engine_exportreq.ExportRequestError(
@@ -3645,6 +3675,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                         tmp_dir,
                         artifact_source=(artifact_sources or {}).get(src.figure_id),
                         **({"existing_only": True} if wants_svg else {}),
+                        **({"figure_origin": origin} if origin is not None else {}),
                     )
                 )
             elif fmt == engine_exportreq.FORMAT_SVG:
@@ -3812,6 +3843,7 @@ def _produce_original_eps(
     artifact_source=None,
     existing_only: bool = False,
     expect_receipt_id: str | None = None,
+    figure_origin=None,
 ):
     """`scope=original` 的 EPS：由 worker 的 matplotlib 直接序列化（ADR 0046）。
 
@@ -3830,6 +3862,7 @@ def _produce_original_eps(
         **_artifact_kwargs(artifact_source),
         **({"existing_only": True} if existing_only else {}),
         **({"expect_receipt_id": expect_receipt_id} if expect_receipt_id else {}),
+        **({"figure_origin": figure_origin} if figure_origin is not None else {}),
     )
     if path is None or not path.is_file():
         # `existing_only` 下 `None` 有两种成因：没有脚本，或脚本在但没有活 Figure（冷 worker）。
@@ -4918,6 +4951,7 @@ def _package_svg_assets(doc, root, archive) -> int:
                 remap_fingerprint=engine_inputremap.fingerprint(root),
                 storage_root=staging,
                 activate=True,
+                **_svg_input_archive_kwargs(record.get("captured_input_archive")),
             )
             count += 1
         if count:
@@ -9535,6 +9569,7 @@ def _engine_worker(
     artifact_source=None,
     existing_only: bool = False,
     source_path_required: bool = True,
+    execution_profile: str | None = None,
 ):
     """面板 id → (worker-like, stem)；非脚本面板 404。
 
@@ -9552,12 +9587,16 @@ def _engine_worker(
     **"谁来渲染"的判据只有一处**：`enginesession.resolve()`（ADR 0021 §5）。
     这里绝不写 `if 有 native 会话 … else pool.get(…)`——那个形状会在下一个
     端点上被漏掉一次，表现是"预览是 native 的、导出是 safe 的"。
+
+    `execution_profile` 只给**归档出处的冷回放**用：按回执记载的档位解析，而不是
+    磁盘面板固定的 safe。native 没有活会话时 `resolve` 直接报离线，不回退 safe。
     """
     worker, stem = _resolve_engine_worker(
         rel_id,
         **_artifact_kwargs(artifact_source),
         **({"existing_only": True} if existing_only else {}),
         **({"source_path_required": False} if not source_path_required else {}),
+        **({"execution_profile": execution_profile} if execution_profile is not None else {}),
     )
     if safe_only and engine_enginesession.is_native(worker):
         raise NativeWorkerRefused(rel_id)
@@ -9570,8 +9609,14 @@ def _resolve_engine_worker(
     artifact_source=None,
     existing_only: bool = False,
     source_path_required: bool = True,
+    execution_profile: str | None = None,
 ):
-    """`_engine_worker` 的本体（「谁来渲染」按档案解析，不设闸）。"""
+    """`_engine_worker` 的本体（「谁来渲染」按档案解析，不设闸）。
+
+    `execution_profile` 缺省时维持原判据（runtime 看描述符、磁盘恒 safe）；显式给出
+    时只用于冷回放按归档回执的档位解析。磁盘面板的 native 档不是「照常渲染」，
+    没有活会话就由 `resolve` 报 `native_session_offline`，绝不静默换成 safe。
+    """
     _assert_artifact_current(artifact_source)
     if not source_path_required and (not existing_only or artifact_source is not None):
         raise ValueError("Only an existing historical Figure may omit its disk original")
@@ -9590,7 +9635,8 @@ def _resolve_engine_worker(
                 script=info["script"],
                 entry=info["entry"],
                 stem=info["stem"],
-                execution_profile=engine_enginesession.profile_of(root, rel_id),
+                execution_profile=execution_profile
+                or engine_enginesession.profile_of(root, rel_id),
                 **({"existing_only": True} if existing_only else {}),
                 **({"run": run} if run is not None else {}),
             ),
@@ -9606,7 +9652,8 @@ def _resolve_engine_worker(
         if not source_path_required:
             return None, disk_stem
         abort(404)
-    # 磁盘面板永远是 safe：它有自己的原始产物，那是 safe worker 产出的世界。
+    # 磁盘面板默认 safe：它有自己的原始产物，那是 safe worker 产出的世界。
+    # 归档出处的冷回放例外——按回执自己的档位解析（native 离线就拒绝）。
     disk_run = _disk_panel_run(info["script"])
     return (
         engine_enginesession.resolve(
@@ -9614,7 +9661,7 @@ def _resolve_engine_worker(
             script=info["script"],
             entry=info["entry"],
             stem=disk_stem,
-            execution_profile=engine_enginesession.PROFILE_SAFE,
+            execution_profile=execution_profile or engine_enginesession.PROFILE_SAFE,
             **({"existing_only": True} if existing_only else {}),
             **({"run": disk_run} if disk_run is not None else {}),
             **_artifact_kwargs(artifact_source),

@@ -6,11 +6,12 @@ import json
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from tavotto import app as m
-from tavotto.engine import exportjob, figcapture, pool, project_watch
+from tavotto.engine import exportjob, figcapture, patchspec, pool, project_watch, svgstore
 
 SCRIPT = """import matplotlib.pyplot as plt
 
@@ -1064,3 +1065,111 @@ def test_canvas_svg_of_a_script_figure_with_user_gid_exports(project):
     body, outputs = output(client, spec(source, scope="canvas", formats=("svg", "pdf")))
     assert body["status"] == "done", body
     assert outputs["svg"]["status"] == "done", outputs["svg"]
+
+
+def _run_script_on_disk(root):
+    """按脚本自己的 cwd 跑一遍，让项目里真的有一份 `F.pdf`（probe 的 worker 在别处落产物）。"""
+    import os
+    import subprocess
+
+    subprocess.run(
+        [sys.executable, "-c", "import runpy; runpy.run_path('plot.py')['main']()"],
+        cwd=root,
+        env={**os.environ, "MPLBACKEND": "agg"},
+        check=True,
+    )
+
+
+def _disk_snapshot_reference(root):
+    """`F.pdf` 的独立接纳快照引用（捕获时按 static 字节绑定保存的磁盘别名）。"""
+    record = svgstore.load(
+        root,
+        "F.pdf",
+        patchspec.patch_hash([]),
+        static_sha256=figcapture.hash_file(root / "F.pdf")[0],
+        remap_fingerprint=m.engine_inputremap.fingerprint(root),
+        storage_root=m._svg_storage_root(root),
+    )
+    assert record is not None and record.get("snapshot_ref"), record
+    return record["snapshot_ref"]
+
+
+def test_original_pdf_only_uses_the_saved_snapshot_when_the_disk_file_changed(project):
+    """明确引用指向保存时的 PDF：磁盘同名文件被替换后，PDF-only 也必须交存档版本（Codex #1926 P1）。"""
+    import pikepdf
+
+    client, root = project
+    _run_script_on_disk(root)
+    run_script(client)
+    reference = _disk_snapshot_reference(root)
+    changed = pikepdf.new()
+    changed.add_blank_page(page_size=(300, 300))
+    changed.save(root / "F.pdf")
+    body, outputs = output(
+        client, spec("F.pdf", scope="original", formats=("pdf",), reference=reference)
+    )
+    assert outputs["pdf"]["status"] == "done", body
+    produced = Path(body["export_dir"]) / outputs["pdf"]["name"]
+    with pikepdf.open(produced) as pdf:
+        box = pdf.pages[0].MediaBox
+        width_pt = float(box[2]) - float(box[0])
+        height_pt = float(box[3]) - float(box[1])
+    # 脚本是 figsize=(3, 2) → 216×144pt；被替换的空白页是 300×300pt。
+    assert width_pt == pytest.approx(216.0)
+    assert height_pt == pytest.approx(144.0)
+
+
+def test_original_export_with_a_historical_input_rejects_a_cold_execution(project, monkeypatch):
+    """历史输入没有唯一活执行时拒绝，绝不退回磁盘同名文件（Codex #1926 P1）。"""
+    client, root = project
+    _run_script_on_disk(root)
+    run_script(client)
+    reference = _disk_snapshot_reference(root)
+    request = spec("F.pdf", scope="original", formats=("pdf",))
+    request["original"]["figure_origin"] = {
+        "version": 1,
+        "snapshot": reference,
+        "patches": [],
+    }
+    # 同进程、活 Figure 还在：出处准入成立，照常导出。
+    body, outputs = output(client, request)
+    assert outputs["pdf"]["status"] == "done", body
+    pool.shutdown_all(figures_dir=str(root), wait=True)
+    m.reset_projects()
+    m.open_project(str(root))
+    monkeypatch.setattr(
+        pool, "get", lambda *a, **k: pytest.fail("cold origin export executed code")
+    )
+    response = client.post("/api/export", json=request)
+    assert response.status_code >= 400, response.get_json()
+    payload = response.get_json()
+    assert payload["status"] == "failed", payload
+    assert payload["code"] == "svg_source_unavailable", payload
+
+
+def test_cold_origin_replay_requests_the_archived_execution_profile(project, monkeypatch):
+    """冷回放按归档回执的档位解析 worker；native 离线时拒绝，不静默降级到 safe（Codex #1926 P1）。"""
+    _client, root = project
+    _run_script_on_disk(root)
+    seen = []
+
+    def resolve(**kwargs):
+        seen.append(kwargs["execution_profile"])
+        if kwargs["execution_profile"] != m.engine_enginesession.PROFILE_NATIVE:
+            raise AssertionError("cold replay fell back to a safe session")
+        raise m.engine_runcodes.RunError(m.engine_runcodes.NATIVE_SESSION_OFFLINE)
+
+    monkeypatch.setattr(m.engine_enginesession, "resolve", resolve)
+    record = {
+        "receipt": {"profile": m.engine_enginesession.PROFILE_NATIVE},
+        "execution_owner": {"script": "plot.py", "run_config": None},
+    }
+    with pytest.raises(m.engine_runcodes.RunError) as excinfo:
+        m._replay_figure_origin(
+            "F.pdf",
+            {"version": 1, "snapshot": {}, "patches": []},
+            record,
+            SimpleNamespace(path=root),
+        )
+    assert excinfo.value.code == m.engine_runcodes.NATIVE_SESSION_OFFLINE
+    assert seen == [m.engine_enginesession.PROFILE_NATIVE]

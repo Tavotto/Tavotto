@@ -375,3 +375,42 @@ def test_private_bytes_do_not_relax_same_figure_companion_qualification(case, fi
             execution_owner=OWNER,
             captured_input_archive=case.archive,
         )
+
+
+def test_project_package_carries_captured_inputs_and_keeps_snapshot_id(case):
+    """打包重存 v2 快照时必须带上捕获的输入存档，否则 ID 变成 v1、文档引用在包里找不到（Codex #1926 P1）。"""
+    import io
+    import zipfile
+
+    saved = m._save_svg_snapshot(
+        _pair(case),
+        project_root=case.root,
+        execution_owner=OWNER,
+        captured_input_archive=case.archive,
+        activate=True,
+    )
+    reference = saved["snapshot_ref"]
+    doc = {
+        "schema": 2,
+        "objects": [
+            {
+                "id": "panel",
+                "type": "panel",
+                "fileId": case.source_id,
+                "overrides": [],
+                "figureSnapshot": reference,
+            }
+        ],
+    }
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        assert m._package_svg_assets(doc, case.root, archive) == 1
+    prefix = m._svg_storage_root(case.root).relative_to(case.root).as_posix()
+    snapshot_name = f"assets/{prefix}/snapshots/{reference['snapshotId']}.json"
+    buffer.seek(0)
+    with zipfile.ZipFile(buffer) as archive:
+        names = archive.namelist()
+        assert snapshot_name in names
+        payload = json.loads(archive.read(snapshot_name))["payload"]
+        assert "input_archive" in payload
+        assert any(name.startswith(f"assets/{prefix}/inputs/") for name in names)
