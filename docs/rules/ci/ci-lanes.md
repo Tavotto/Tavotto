@@ -175,3 +175,12 @@ check 名与闭集不变、`cancel-in-progress` 仍只对 PR、Gate 只读 actio
 改动另在 Lab 整文件跑相关测试。为什么：六个不同日子各被合并组踢一次，每次白烧约一小时
 （#214、#296、#314、#317、#319、#360、#725、#1587、#1604）。看护：只靠人记。
 2026-11-21 再犯：小实验的新用例按 `/` 比路径尾部，合并组 Windows 分片红、被踢一次，修成两种分隔符都认（#2064）。
+
+**合并组里没有任何 failure 的裸 cancelled，先核 job 时长是否贴着 `timeout-minutes`（错题本 L-114 升级，
+2026-11-24）。** 先读两个 Gate summary 的 `root_failures`（fast gate 的可能为空、根因只在 integration gate 里，
+两个都读）：有 failure 时 cancelled 是快速失败的收尾，按上面那段处理；都没有，再拿这条 job 的
+`startedAt` / `completedAt` 比它的 `timeout-minutes`，贴着上限就是超时，不是 flaky，也别直接重跑。套件变长要回头
+量最近几轮合并组的时长再定上限，绿的那几轮离上限多远一并写进 PR。为什么：Windows 腿 32 到 42 分钟顶着 45 分钟
+上限，被取消后聚合门禁红、被踢出队列，看着像抽风（#340、#345、#346）；fast gate 的 `root_failures` 为空、根因
+只在 integration gate 里（2026-11-17，#1991）；2026-11-23 `invariants` 跑到 30 分 17 秒被取消（上限 30 分钟），
+把无关的 #2130 踢出队列，前后几轮绿的合并组里它也跑了 29 分 41 秒、29 分 56 秒。看护：只靠人记。
