@@ -519,19 +519,22 @@ def _lease_held(p: Path) -> bool:
         return False
     except OSError:
         return True
+    orphan = False
     try:
         if not _try_flock(fd):
             return True
-        try:
-            if time.time() - os.fstat(fd).st_mtime > _INUSE_FRESH_S:
-                with contextlib.suppress(OSError):
-                    p.unlink()  # Windows 上持着锁删不掉：留到下一轮
-        finally:
-            with contextlib.suppress(OSError):
-                _funlock(fd)
-        return False
+        with contextlib.suppress(OSError):
+            orphan = time.time() - os.fstat(fd).st_mtime > _INUSE_FRESH_S
+        with contextlib.suppress(OSError):
+            _funlock(fd)
     finally:
         os.close(fd)
+    if orphan:
+        # 先关再删：Windows 不能删自己还开着的文件。租约文件名带随机号、只由持有者用 O_EXCL 建，
+        # 关掉之后不会有新持有者去锁这个旧文件，所以这里删的确实是孤儿
+        with contextlib.suppress(OSError):
+            p.unlink()
+    return False
 
 
 def _leases(name: str | None = None) -> list[Path]:
