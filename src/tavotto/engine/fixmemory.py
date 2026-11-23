@@ -188,20 +188,23 @@ def _default_scrub(text: str) -> str:
 def _home_to_tilde(
     text: str, home: str | None = None, *, case_insensitive: bool | None = None
 ) -> str:
-    """家目录写成 `~`。Windows / macOS 的默认文件系统不分大小写（`c:\\users\\Me` 与 `C:\\Users\\me` 是同一处），
-    Windows 上 `/` 与 `\\` 也是同一个分隔符：这两处都按同一处认（d2 #2100 提醒）。"""
+    """家目录写成 `~`。Windows 上大小写不同（`c:\\users\\Me` 与 `C:\\Users\\me`）、`/` 与 `\\` 写法不同，都是同一处
+    （d2 #2100 提醒）；别的平台精确匹配。"""
     home = os.path.expanduser("~") if home is None else home
     if not home or home == "~":
         return text
     if case_insensitive is None:
-        case_insensitive = sys.platform in ("win32", "darwin")
+        # 只认 Windows：macOS 可以是区分大小写的卷，`/Users/me` 与 `/Users/Me` 可能是两处（Codex #2120 P2）
+        case_insensitive = sys.platform == "win32"
     variants = {home}
     if "\\" in home:
         variants.add(home.replace("\\", "/"))
     flags = re.IGNORECASE if case_insensitive else 0
     for v in sorted(variants, key=len, reverse=True):
-        # 后面紧跟的不是文件名字符才算家目录：`/Users/me` 不能把 `/Users/meg/…` 换成 `~g/…`；引号、空格、分隔符、结尾都行
-        text = re.sub(re.escape(v.rstrip("/\\")) + r"(?![\w.\-])", "~", text, flags=flags)
+        # 只换完整的家目录前缀：前面不能紧挨着路径字符（`/x/Users/me` 不算），后面不能紧跟文件名字符
+        # （`/Users/me` 不把 `/Users/meg/…` 换成 `~g/…`）；引号、空格、`=`、分隔符、开头结尾都行（Codex #2120 P2）
+        pattern = r"(?<![\w.\-/\\])" + re.escape(v.rstrip("/\\")) + r"(?![\w.\-])"
+        text = re.sub(pattern, "~", text, flags=flags)
     return text
 
 
