@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「出版规范 profile 与预检」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_preflight.py`、`tests/test_preflight_log_axis.py`、`tests/test_preflight_bar_baseline.py`、`test_manifest_clip_bbox.py`、`test_profile_store.py`、`tests/golden/preflight_vectors.json`；期刊库（ADR 0155）：`tests/test_journal_catalog.py`、`web/src/lib/journals.test.ts`、`tests/golden/journal_vectors.json`；旧期刊底标签的新输出替换：`tests/test_mcp_dpi_attribution.py`、`web/src/lib/profile.test.ts` 与 `tests/golden/profile_display_vectors.json`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_preflight.py`、`tests/test_preflight_log_axis.py`、`tests/test_preflight_bar_baseline.py`、`tests/test_preflight_interference.py`、`tests/golden/interference_vectors.json`、`test_manifest_clip_bbox.py`、`test_profile_store.py`、`tests/golden/preflight_vectors.json`；期刊库（ADR 0155）：`tests/test_journal_catalog.py`、`web/src/lib/journals.test.ts`、`tests/golden/journal_vectors.json`；旧期刊底标签的新输出替换：`tests/test_mcp_dpi_attribution.py`、`web/src/lib/profile.test.ts` 与 `tests/golden/profile_display_vectors.json`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
@@ -93,6 +93,23 @@ order: 260
   （含仓库里其它含柱真脚本的防误报扫描），它重出的 `tests/golden/bar_baseline_real.json`（带那几个 editable 字段）由
   `web/src/lib/preflight.barBaseline.test.ts` 消费。已知会报、规格未裁决的写法（维护者待定，不加特例）：inset 放大图、
   断轴图的上半幅、逐柱循环画的瀑布 / 甘特图（每个容器只有一根柱，天然有「共同基线」）。
+- **干涉检测接进常规预检（V-011，用户 2026-11-23 裁决；1.0 豁免并在 V-001 那一行）**：`text-overlap` / `text-over-axes` /
+  `legend-over-data` 的判据只有 `engine/interference.detect` 一份（MCP、保留式规范化、改图验收逐对用的也是它）。`preflight.run`
+  在矢量面板上经 `_check_panel_interference` 把逐对结果折进 `_Sink`：文字重叠两段文字都是主语（排名 = 面积）；压到别的子图的
+  主语是那段文字、被压的子图进 `detail.against`；图例压数据的主语是图例，「确定」（真折线相交，`detail.certain`）与「风险」（只有
+  包围盒）同一 id、同一档位、两种文案，排名 = 命中数 + `INTERFERENCE_CERTAIN_RANK`，确定恒压过风险。文案不带 gid（问题行的主语已经是
+  那个元素），毫米数沿用 `detect` 格式化好的参数。档位沿用 `publication.json` 原有登记（warn），`fix: none`、问题面板归 `layout`。
+  **前端是逐行移植**（`web/src/lib/interference.ts`，不是消费后端结果：画布的预检只在浏览器求值，事实——`bbox` / `clip_bbox` /
+  `geometry` / `visible` / `position`——manifest 里都已经有，不加协议字段、老后端与 playground 照样成立），数值格式化与取整走
+  `pyFixed` / `pyRound`（Python 的取偶规则；`toFixed` 在 1.25 这种恰好的半值上进位）。**已经逐对调 `detect` 的调用方不许再收到聚合项**
+  （同一次碰撞两把键、会被当成新增问题挡掉事务）：`specfix.profile_issues` 与 `figureverify._issue_keys` 传 `with_interference=False`；
+  MCP 桥按 id 滤掉（`bridge._without_interference`——插件要能配没有这个参数的旧引擎）。整体隐藏的图例的条目不参与文字重叠
+  （`interference.hidden_legends`，与 `_hidden_legends` 同口径）。golden：`tests/golden/interference_vectors.json`
+  （`scripts/gen_interference_vectors.py --write`，逐对，pytest 与 `web/src/lib/interference.test.ts` 各跑一遍）+
+  `preflight_vectors.json` 的 `interference-*`（聚合）；其余旧向量的占位几何改成零面积点（只量规范、不量版面），结论逐条不变。
+  真 worker 看护 `tests/test_preflight_interference.py`（FigureBench 防误报、`multi_panel` 的真碰撞、长标签 / 竖排 / `loc="best"` /
+  inset / 色条 / 隐藏图例）。已知误报来源：误差棒容器的包围盒盖住整个数据范围（`errorbar_fit` 报「可能」）；非 90° 旋转的文字按
+  轴对齐的布局框判。
 - 文档里存**绑定 + 绑定那一刻的规则全文快照**（`FigureDocument.profile`，可选，
   schema 仍是 2）：`{id, journal?, snapshot?, snapshotVersion?, follow?}`。ADR 0029
   之前这里只存 `{id, journal}`，于是改一次全局规范，上个月定稿的图会**悄悄换一套

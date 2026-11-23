@@ -236,3 +236,43 @@ XG（来源登记见 `sources.md`）里另有几样明确不做成规则：
 - 面板重复、缺对照、「一张图一个结论」：见 G-058（`basis: taste`）。
 - 按源码里有没有 `dropna`、`sample`、随机数来猜数据被丢或被伪造（XG 的 `validate_figure.py`）：判的是脚本文字，不是数据，改个写法就绕过，也会冤枉正常脚本。
 - 行内三四张图必须等宽：版面选择，不是对错。
+
+### V-011 画出来的东西撞上了（干涉检测接进常规预检）
+
+- **预检 id**：`text-overlap` / `text-over-axes` / `legend-over-data` · **basis**：visual（版面，不是数据语义） ·
+  **状态**：已实现（维护者 2026-11-23 裁决「接」；1.0 豁免并在 V-001 那一行）。看护：`tests/test_preflight_interference.py`、
+  `web/src/lib/interference.test.ts`、`web/src/lib/validation.test.ts`「干涉检测接进常规检查」。
+- **依据**：文字压字、文字压进别的子图、图例盖住数据都是**测得出来的版面缺陷**——读者读不到被压住的那部分 [推导]；
+  不涉及科学判断，所以不在 `sciviz_guidance.json` 另起 G 条目。
+- **适用**：有引擎 manifest 的矢量面板（位图面板没有几何，不判）；隐藏的面板不判。
+- **检测所需信息**（都已有，不加协议字段）：元素 `bbox` 先折进 `clip_bbox`（画出来的部分）；数据的 `geometry`（真画出来的折线 /
+  路径）；`editable` 里的 `visible` 与顶层子图的 `position`。
+- **检测逻辑**：判据只有 `engine/interference.detect` 一份（MCP 与保留式规范化逐对用的也是它），`preflight.run` 把逐对结果折成聚合项：
+  - `text-overlap`：两段文字的布局框在两个方向都咬进 ≥ 0.25 mm（`MIN_OVERLAP_MM`，含等号）。同一图例的条目之间、条目与自己的框不算；
+    整体隐藏的图例的条目不算（条目自己仍报 visible）。主语是两段文字。
+  - `text-over-axes`：子图的装饰文字（标题 / 轴标题 / 刻度 / 图例）伸进**另一个顶层子图**的绘图区 ≥ 0.25 mm × 0.25 mm。自己的
+    插图、被自己包住的子图、没有 `position` 的次坐标轴 / 寄生轴不算；标注（`text`）不算。主语是那段文字，被压的子图进 `detail.against`。
+  - `legend-over-data`：图例框与**同一子图**数据的真实折线相交是「确定」（`detail.certain = true`）；只有包围盒（误差棒 / 茎叶系列
+    即使有 geometry 也按包围盒、图像、Collection）是「风险」（`certain = false`，文案说「可能」）。两种同一 id、同一档位。
+    聚合时确定恒排在风险前（`INTERFERENCE_CERTAIN_RANK`）。figure 级图例不判。主语是图例，被压的数据在 `detail.targets`。
+- **严重度**：沿用 `publication.json` 原有登记——`lab-publication-v1` / `journal-base-v1` 都是 warn，`free-form-v1` 没写、兜底 warn。
+  **修复**：`fix: none`（挪图例 / 重排外边距要真实渲染裁决、可能放不下，目标值不唯一，不进 safe_auto；MCP 的
+  `tavotto_normalize_figure` 仍是它们的修法）。问题面板归「版面」（`layout`）。
+- **误报风险**：
+  - 中：`legend-over-data` 的风险档——误差棒容器的包围盒盖住整个数据范围，图例在轴内的误差棒图基本都会报「可能」
+    （FigureBench `errorbar_fit` 就是）。
+  - 中：旋转（非 90° 整数倍）的文字按轴对齐的布局框判，45° 斜排的长刻度标签框会互相「重叠」，墨迹其实没碰。
+  - 低：其余写法（`loc="best"`、inset、色条、90° 竖排标签）在真 worker 上不报。
+- **两侧同源**：`engine/interference.detect` ↔ `web/src/lib/interference.ts` `detectInterference`（逐行移植，数值格式化与取整按
+  Python 的取偶规则 `pyFixed` / `pyRound`）；`preflight._check_panel_interference` ↔ `preflight.ts` `checkPanelInterference`。
+  golden：`tests/golden/interference_vectors.json`（逐对）与 `preflight_vectors.json` 的 `interference-*`（聚合）。
+- **不重复报**：已经逐对调 `detect` 的调用方传 `with_interference=False`（`specfix.profile_issues`、`figureverify._issue_keys`）；
+  MCP 桥按 id 滤掉聚合项（`bridge._without_interference`，插件要能配没有这个参数的旧引擎），对外仍是逐对清单。
+- **测试**：
+  - 正常：FigureBench `line_two_series` / `cjk_labels` / `log_decay` / `heatmap_colorbar` / `grouped_bars` 不报；
+    `loc="best"`、inset、色条不报；90° 竖排长标签不报。
+  - 错误：横排长刻度标签互相重叠；`loc="center"` 的图例压住两条线（确定）；`multi_panel`（没有 tight_layout，右列的 y 轴标题与刻度
+    画进了左列子图框里，肉眼可见）报恰好那 4 段文字。
+  - 边界：恰好 0.25 mm（含等号）、差一点、贴边；clip 折叠；单点 / 闭合回边 / 水平线段的路径；同图例家族；隐藏图例的条目；
+    恰好落在一半上的取整（1.25 → "1.2"）。
+  - 判不了：bbox 读不懂（布尔、字符串）的元素不参与；图幅读不出来什么都不报；只有包围盒时只说「可能」、不冒充确定。

@@ -24,7 +24,7 @@ import re
 from decimal import ROUND_HALF_UP, Decimal
 
 from .. import glyphplan
-from . import profiles as profiles_mod
+from . import interference as interference_mod, profiles as profiles_mod
 
 SPEC_DOC = """
 figure spec（两侧同源的规范化输入）：
@@ -1493,6 +1493,73 @@ def _check_panel_clipping(panel: dict, sink: _Sink) -> None:
         )
 
 
+#: 干涉检测（V-011）折进预检时，「确定」压住数据的图例永远排在「只是风险」前面：排名 = 命中数 + 这个数。
+#: 聚合项只留最糟那次的文案与 detail，不加这一档的话 3 个风险目标会压过 1 个确定目标，聚合项就说成「可能」。
+#: 与 `web/src/lib/interference.ts` 的 `CERTAIN_RANK` 同值（golden `interference-*` 看护）。
+INTERFERENCE_CERTAIN_RANK = 1_000_000
+
+
+def _check_panel_interference(panel: dict, profile: dict, sink: _Sink) -> None:
+    """V-011：真实渲染几何上的干涉（文字互相重叠 / 文字压到别的子图 / 图例压住数据）接进常规预检。
+
+    判据只有 `engine/interference.detect` 一份（MCP 与保留式规范化逐对用的也是它），这里只把它
+    逐对的结果折进 `_Sink`：
+
+    * `text-overlap`：两段文字都是主语（gids 两个）；排名 = 重叠面积。
+    * `text-over-axes`：主语是那段伸出去的文字，被压的子图写进 `detail.against`；排名 = 面积。
+    * `legend-over-data`：主语是图例，被压的数据在 `detail.targets`；「确定 / 风险」原样保留
+      （`detail.certain`、两种文案），排名让确定的恒大于风险。
+
+    文案不带 gid（问题行的主语已经是那个元素，界面不出现内部标识）；毫米数沿用 `detect` 自己
+    格式化好的那两个参数。与 `preflight.ts` 的 `checkPanelInterference` 逐条同源。
+    """
+    manifest = panel.get("manifest")
+    if not isinstance(manifest, dict):
+        return
+    pid = panel.get("id", "")
+    for it in interference_mod.detect(manifest, profile, panel_id=pid):
+        cid = it["id"]
+        gids = list(it.get("gids") or [])
+        detail = dict(it.get("detail") or {})
+        params = (it.get("message") or {}).get("params") or {}
+        if cid == interference_mod.CHECK_TEXT_OVERLAP:
+            sink.add(
+                "text-overlap",
+                it["text"],
+                message=("interferenceTextOverlap", {"w": params.get("w"), "h": params.get("h")}),
+                object_ids=[pid],
+                gids=gids,
+                detail=detail,
+                worse=_num_or(detail.get("overlap_mm2"), 0.0),
+            )
+        elif cid == interference_mod.CHECK_TEXT_OVER_AXES:
+            detail["against"] = gids[1] if len(gids) > 1 else ""
+            sink.add(
+                "text-over-axes",
+                it["text"],
+                message=("interferenceTextOverAxes", {"w": params.get("w"), "h": params.get("h")}),
+                object_ids=[pid],
+                gids=gids[:1],
+                detail=detail,
+                worse=_num_or(detail.get("overlap_mm2"), 0.0),
+            )
+        elif cid == interference_mod.CHECK_LEGEND_OVER_DATA:
+            certain = bool(detail.get("certain"))
+            count = len(detail.get("targets") or [])
+            sink.add(
+                "legend-over-data",
+                it["text"],
+                message=(
+                    "interferenceLegendOverData" if certain else "interferenceLegendOverDataRisk",
+                    {"count": count},
+                ),
+                object_ids=[pid],
+                gids=gids[:1],
+                detail=detail,
+                worse=count + (INTERFERENCE_CERTAIN_RANK if certain else 0),
+            )
+
+
 def _check_missing_manifest(panel: dict, sink: _Sink) -> None:
     sink.add(
         "panel-text-not-verifiable",
@@ -1502,8 +1569,13 @@ def _check_missing_manifest(panel: dict, sink: _Sink) -> None:
     )
 
 
-def run(spec: dict, profile: dict) -> list[dict]:
-    """跑一遍预检，返回问题清单（顺序即报告顺序）。"""
+def run(spec: dict, profile: dict, *, with_interference: bool = True) -> list[dict]:
+    """跑一遍预检，返回问题清单（顺序即报告顺序）。
+
+    `with_interference=False`：不折进干涉检测（V-011）。只给**已经逐对调过
+    `interference.detect`** 的调用方用（保留式规范化 / 按规范修图的事务、改图验收、MCP 的逐对清单）——
+    它们要按 `(规则, gid)` 配对前后两份清单，聚合项混进来会把同一次碰撞报两遍、还会被当成新增问题。
+    """
     sink = _Sink(profile)
     _check_page(spec, profile, sink)
     for panel in spec.get("panels") or []:
@@ -1518,6 +1590,8 @@ def run(spec: dict, profile: dict) -> list[dict]:
             _check_panel_fonts(panel, profile, sink)
             _check_panel_axes(panel, profile, sink)
             _check_panel_clipping(panel, sink)
+            if with_interference:
+                _check_panel_interference(panel, profile, sink)
     _check_texts(spec, profile, sink)
     _check_geometry(spec, sink)
     return sink.result()

@@ -176,6 +176,11 @@ const RULES: Record<
   'log-axis-nonpositive': { category: 'lines', context: 'document', fix: 'none' },
   // V-002 线性轴上柱的基线被截掉：绝不自动修（从 0 起还是改成点图是作者的决定）
   'bar-baseline-truncated': { category: 'lines', context: 'document', fix: 'none' },
+  // V-011 干涉（真实渲染几何上撞上了）：修法是挪图例 / 重排外边距，要真实渲染裁决、可能放不下
+  // （ADR 0051 的保留式规范化），目标值不唯一，不进 safe_auto；`specfix.FIXABLE_RULES` 也不含它们
+  'text-overlap': { category: 'layout', context: 'document', fix: 'none' },
+  'text-over-axes': { category: 'layout', context: 'document', fix: 'none' },
+  'legend-over-data': { category: 'layout', context: 'document', fix: 'none' },
   'axis-label-format': { category: 'text', context: 'document', fix: 'none' },
   'discouraged-colormap': { category: 'color', context: 'document', fix: 'none' },
   'palette-semantic': { category: 'color', context: 'document', fix: 'none' },

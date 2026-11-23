@@ -18,6 +18,13 @@ import { isSourceFont } from './sourceFont'
 import { sourceFontState } from './sourceFontCache'
 import { parseRuns } from './richText'
 import { embedsDiskBitmap, type ExportRoute, type ExportRouteScope } from './exportRoute'
+import {
+  CERTAIN_RANK,
+  CHECK_LEGEND_OVER_DATA,
+  CHECK_TEXT_OVER_AXES,
+  CHECK_TEXT_OVERLAP,
+  detectInterference,
+} from './interference'
 import type { CanvasObject, FigureDocument, FramePad, PanelObject, TextObject } from '@/types/document'
 import { panelFullSize } from '@/types/document'
 import type { Manifest, ManifestElement } from './api'
@@ -228,6 +235,11 @@ class Sink {
   private profile: PublicationProfile
   /** 每条规则下按「对象 + 元素」去重的命中排名（与聚合项同一把尺子） */
   private hitWorst = new Map<string, number>()
+  /**
+   * 同一把键 → 它在 `occurrences` 里的下标。命中多的规则（干涉检测：几百段互相压着的刻度文字）
+   * 逐条 `findIndex` 会让一次检查变成命中数的平方；键与去重判据是同一个，所以只是换了查法。
+   */
+  private hitIndex = new Map<string, number>()
 
   constructor(profile: PublicationProfile) {
     this.profile = profile
@@ -303,11 +315,10 @@ class Sink {
       // 各写一份的话下一个字段只会被加进其中一条（`worse` 差点就是这样）
       const hit: PreflightOccurrence = { objectId: oid, gid, prop, message, detail }
       if (opts.worse != null) hit.worse = opts.worse
-      const idx = item.occurrences.findIndex(
-        (o) => o.objectId === oid && o.gid === gid && o.prop === prop,
-      )
-      if (idx < 0) {
+      const idx = this.hitIndex.get(key)
+      if (idx == null) {
         if (opts.worse != null) this.hitWorst.set(key, opts.worse)
+        this.hitIndex.set(key, item.occurrences.length)
         item.occurrences.push(hit)
         continue
       }
@@ -1347,6 +1358,52 @@ function checkPanelClipping(panel: PreflightPanelSpec, sink: Sink): void {
   }
 }
 
+/**
+ * V-011：真实渲染几何上的干涉接进常规预检。判据只有 `lib/interference.ts`（`engine/interference.py`
+ * 的逐行移植）；这里只把逐对结果折进 `Sink`，与 `engine/preflight.py::_check_panel_interference`
+ * 逐条同源（golden `interference-*`）：文字重叠两段文字都是主语；压到别的子图的主语是那段文字
+ * （被压的子图进 `detail.against`）；图例压数据的主语是图例，「确定」恒排在「风险」前面。
+ * 文案不带 gid——问题行的主语已经是那个元素。
+ */
+function checkPanelInterference(panel: PreflightPanelSpec, profile: PublicationProfile, sink: Sink): void {
+  const manifest = panel.manifest
+  if (!manifest) return
+  const pid = panel.id
+  for (const it of detectInterference(manifest, profile, pid)) {
+    const detail = { ...it.detail }
+    const { w, h } = it.message.params
+    if (it.id === CHECK_TEXT_OVERLAP) {
+      sink.add('text-overlap', pf('interferenceTextOverlap', { w, h }), {
+        objectIds: [pid],
+        gids: it.gids,
+        detail,
+        worse: num(detail.overlap_mm2) ?? 0,
+      })
+    } else if (it.id === CHECK_TEXT_OVER_AXES) {
+      detail.against = it.gids.length > 1 ? it.gids[1] : ''
+      sink.add('text-over-axes', pf('interferenceTextOverAxes', { w, h }), {
+        objectIds: [pid],
+        gids: it.gids.slice(0, 1),
+        detail,
+        worse: num(detail.overlap_mm2) ?? 0,
+      })
+    } else if (it.id === CHECK_LEGEND_OVER_DATA) {
+      const certain = !!detail.certain
+      const count = Array.isArray(detail.targets) ? detail.targets.length : 0
+      sink.add(
+        'legend-over-data',
+        pf(certain ? 'interferenceLegendOverData' : 'interferenceLegendOverDataRisk', { count }),
+        {
+          objectIds: [pid],
+          gids: it.gids.slice(0, 1),
+          detail,
+          worse: count + (certain ? CERTAIN_RANK : 0),
+        },
+      )
+    }
+  }
+}
+
 function checkMissingManifest(panel: PreflightPanelSpec, sink: Sink): void {
   sink.add(
     'panel-text-not-verifiable',
@@ -1368,6 +1425,7 @@ export function runSpec(spec: PreflightSpec, profile: PublicationProfile): Prefl
       checkPanelFonts(panel, profile, sink)
       checkPanelAxes(panel, profile, sink)
       checkPanelClipping(panel, sink)
+      checkPanelInterference(panel, profile, sink)
     }
   }
   checkTexts(spec, profile, sink)

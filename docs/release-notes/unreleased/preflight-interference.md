@@ -1,0 +1,3 @@
+## Checks flag text and legends that collide
+
+The problem list now reports three layout collisions that used to be visible only to coding agents: text that overlaps other text, a subplot's labels or ticks running into the plotting area of a neighbouring subplot, and a legend that sits on top of the data. A legend that crosses a drawn line is reported as covering the data; when only the outer bounds of the data can be measured (error bars, images, collections), it says the legend may cover the data. Each one appears under Layout, points at the element that collides, and is a warning that does not block export. Tavotto does not move anything for you.

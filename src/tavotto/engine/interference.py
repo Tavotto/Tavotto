@@ -111,6 +111,21 @@ def is_visible(el: dict) -> bool:
     return _field(el, "visible") is not False
 
 
+def hidden_legends(elements: list) -> set[str]:
+    """被整体藏起来的图例的 gid。
+
+    图例条目（`legend_text`，含标题）的 `visible` 是**条目自己**的可见性，图例整体
+    `set_visible(False)` 时它们仍报 True——「这段字画没画出来」要回到图例本体上问。
+    与 `preflight._hidden_legends` / `preflight.ts` 的 `hiddenLegends` 同一口径（这里不能 import
+    preflight：preflight 反过来 import 本模块）。
+    """
+    return {
+        str(el.get("gid", ""))
+        for el in elements
+        if isinstance(el, dict) and el.get("role") == "legend" and _field(el, "visible") is False
+    }
+
+
 def visible_rect(el: dict) -> tuple[float, float, float, float] | None:
     """元素**画出来**占的框（figure 分数）：`bbox` 先折进 `clip_bbox`（有的话）。
 
@@ -222,24 +237,30 @@ def detect(manifest: dict, profile: dict | None = None, *, panel_id: str = "figu
     found: list[_Issue] = []
 
     # ---- 文字互相重叠 ----
+    hidden = hidden_legends(elements)
     texts = []
     for el in elements:
         gid = el.get("gid", "")
         if el.get("role") not in TEXT_ROLES:
             continue
+        if el.get("role") == "legend_text" and gid.rpartition(".")[0] in hidden:
+            continue  # 图例整体藏起来了，条目自己还报 visible=True，但一笔都没画
         r = visible_rect(el)
         if r is None:
             continue
         texts.append((gid, el.get("role"), r))
     texts.sort(key=lambda t: t[0])
+    # 两两比较是文字数的平方（密集组图几百段刻度文字）：先做便宜的相交测试，图例家族只为
+    # 真相交的那几对判；每段文字所属的图例预先算好。两步都是纯函数，先后不改结论。
+    fams = [legend_of(t[0]) for t in texts]
     for i in range(len(texts)):
         ga, ra, a = texts[i]
         for j in range(i + 1, len(texts)):
             gb, rb, b = texts[j]
-            if _same_legend_family(ga, gb):
-                continue
             hit = _intersect(a, b)
             if hit is None:
+                continue
+            if _same_legend_family_of(ga, fams[i], gb, fams[j]):
                 continue
             dx_mm = (hit[2] - hit[0]) * W
             dy_mm = (hit[3] - hit[1]) * H
@@ -400,7 +421,11 @@ def detect(manifest: dict, profile: dict | None = None, *, panel_id: str = "figu
 
 def _same_legend_family(ga: str, gb: str) -> bool:
     """同一个图例里的两个条目、或条目与它自己的框——matplotlib 排的，不算重叠。"""
-    la, lb = legend_of(ga), legend_of(gb)
+    return _same_legend_family_of(ga, legend_of(ga), gb, legend_of(gb))
+
+
+def _same_legend_family_of(ga: str, la: str, gb: str, lb: str) -> bool:
+    """`_same_legend_family`，两段文字所属的图例（`legend_of`）由调用方先算好。"""
     if la and lb and la == lb:
         return True
     return (la and la == gb) or (lb and lb == ga)
