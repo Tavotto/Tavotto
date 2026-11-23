@@ -827,7 +827,7 @@ def _two_deep_queue(tmp_path, *, shrink_after_calls=None, **state) -> "Rig":
 
 def test_deferred_group_waits_for_the_prefix_to_shrink_then_the_ordinary_judgement_passes(tmp_path):
     deferrals = 3
-    # 采集 2 次、每次延后后读 1 次位置；第 (2+3+1)=6 次读队列起前面的 PR41 已合入。
+    # 采集读 2 次队列、之后每圈读 1 次位置；第 (2+3+1)=6 次读队列起前面的 PR41 已合入。
     rig = _two_deep_queue(tmp_path, defer_requests=deferrals, shrink_after_calls=2 + deferrals + 1)
     assert rig.collect().returncode == 0
     assert _graphql_calls(rig) == 2
@@ -836,8 +836,8 @@ def test_deferred_group_waits_for_the_prefix_to_shrink_then_the_ordinary_judgeme
     assert (
         len(rig.requests()) == deferrals + 1 and proc.stdout.count("budget_deferred") == deferrals
     )
-    assert _graphql_calls(rig) == 2 + deferrals + 2, (
-        "每次延后读一次位置，等过之后整套重采（前后各一次）"
+    assert _graphql_calls(rig) == 2 + (deferrals + 1) + 2, (
+        "每圈先读一次位置，等过之后整套重采（前后各一次）"
     )
     snapshot = json.loads((rig.work / "tmp/group-snapshot.json").read_text(encoding="utf-8"))
     assert [p["before"]["number"] for p in snapshot["prs"]] == [PR], "快照必须是缩短后的前缀"
@@ -870,7 +870,8 @@ def test_group_that_is_not_deferred_asks_once_and_does_not_recollect(tmp_path):
     assert rig.collect().returncode == 0
     queue_reads = _graphql_calls(rig)
     assert _wait(rig).returncode == 0
-    assert len(rig.requests()) == 1 and _graphql_calls(rig) == queue_reads
+    # 只读了一次位置、问了一次服务，没有整套重采（重采是前后各一次）。
+    assert len(rig.requests()) == 1 and _graphql_calls(rig) == queue_reads + 1
 
 
 def test_deferred_then_unsigned_contributor_is_still_red(tmp_path):
@@ -894,8 +895,7 @@ def test_deferral_that_never_ends_stays_red_after_the_wait_limit(tmp_path):
     proc = _wait(rig, seconds=2, poll=0)
     assert proc.returncode == 0 and "等待上限" in proc.stdout
     # 循环转了几圈取决于机器快慢（上限按挂钟计）；「会反复问」由收缩用例用确定的次数证明。
-    assert len(rig.requests()) >= 1
-    assert len(rig.requests()) < 200, "按上限停止，不是无限循环"
+    assert 1 <= len(rig.requests()) <= 3, "同一位置最多问 3 次；位置不变就只读队列、不再问服务"
     rc, verdict, _ = rig.judge(EXTERNAL_COMMIT)
     assert (rc, verdict["status"]) == (1, "failure")
     assert "provider_eligibility_unavailable:budget_deferred" in verdict["problems"]
@@ -922,7 +922,7 @@ def test_vanished_candidate_during_wait_fails_instead_of_passing(tmp_path):
 def test_pull_request_behaviour_is_unchanged_and_has_no_wait_step():
     job = _contract._job(_contract.CI, _contract.CLA_JOB)
     block = job[job.index(f"- name: {WAIT}") :].split("run: |", 1)[0]
-    assert "if: github.event_name == 'merge_group'" in block
+    assert re.search(r"(?m)^        if: github\.event_name == 'merge_group'$", block), block
 
 
 def test_pull_request_deferral_still_fails_without_waiting(tmp_path):

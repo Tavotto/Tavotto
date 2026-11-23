@@ -355,8 +355,9 @@ jobs:
     runs-on: ubuntu-24.04
     # 含服务取数约两分钟的重试预算；元数据读取、最后一次判定另留余量。
     # 合并组在队列深处时服务会按预算报 budget_deferred（见下面「等服务有预算」一步），
-    # 那一步最多再等 120 分钟：总长必须落在合并队列 check_response_timeout（180 分钟）之内。
-    timeout-minutes: 150
+    # 那一步最多再等 120 分钟：job 超时加 fast gate 自身的 10 分钟必须 ≤ check_response_timeout（180）− 30 分钟余量，
+    # 所以是 140（merge_queue_ruleset.py 的关键路径看护用例会核）。
+    timeout-minutes: 140
     permissions:
       contents: read
       pull-requests: read
@@ -595,7 +596,7 @@ jobs:
       # 结论仍只由下一步「判定」给出，它重新取随机数、重新问、判定器逐字段核对，一行没动：
       # 到上限、探测失败、探测答复一律不会让本检查变绿；没签署的人照样在「判定」里红。
       # 全员豁免（预判 rc≠1）不问服务，这里也不等。上限 7200 秒 + 取数与判定的余量，
-      # 必须小于合并队列的 check_response_timeout（180 分钟），所以 job 超时是 150 分钟。
+      # 必须落进合并队列 check_response_timeout（180 分钟）的余量内，所以 job 超时是 140 分钟。
       - name: 等服务有预算（合并组，只延后不判定）
         if: github.event_name == 'merge_group'
         timeout-minutes: 130
@@ -633,10 +634,13 @@ jobs:
           fi
           limit="${CLA_GROUP_DEFER_SECONDS:-7200}"
           poll="${CLA_GROUP_DEFER_POLL_SECONDS:-90}"
-          front_tries="${CLA_GROUP_FRONT_TRIES:-3}"
+          # 同一个队列位置最多问服务这么多次：位置不变，答案不会变（深度决定预算），多问只是白耗
+          # 服务端每次约 35 个外部请求（算在 CLA App 的安装令牌上）；位置变小了才重新问。
+          tries="${CLA_GROUP_SAME_POSITION_TRIES:-3}"
           start=$(date +%s)
           waited=0
-          front=0
+          last_pos=""
+          seen=0
           # 候选在队列里的当前位置（只读 GitHub，与取数脚本同一条查询形状）；读不出就空。
           # shellcheck disable=SC2016
           queue_position() {
@@ -651,25 +655,26 @@ jobs:
                    | if length == 1 then .[0] else empty end'
           }
           while true; do
-            nonce=$(python3 -I -c 'import secrets; print(secrets.token_urlsafe(32))')
-            probe="$RUNNER_TEMP/cla-wait-probe.json"
-            echo '{"error":"fetch_failed"}' > "$probe"
-            # 只试一次（--budget-seconds 0）；答复只用来判断「还在不在 budget_deferred」，不进任何判定。
-            clean python3 -I "$TRUSTED/scripts/ci/cla_eligibility_fetch.py" \
-              --event merge_group --policy "$TRUSTED/.github/cla-policy.json" \
-              --base "$GROUP_BASE" --head "$GROUP_HEAD" --nonce="$nonce" \
-              --out "$probe" --budget-seconds 0 || true
-            code=$(jq -r 'if type == "object" and keys == ["error"] then .error else "" end' "$probe" 2>/dev/null || true)
-            if [ "$code" != "budget_deferred" ]; then
-              break
-            fi
-            waited=1
-            # 候选在队首：前面没有条目可等，前缀不会变浅——只再试几次（排除瞬时的时间预算），
-            # 不为它占住整条队列（max_entries_to_merge=1）。读不出位置就当作还在等。
-            position=$(queue_position || true)
-            if [ "$position" = 1 ]; then
-              front=$(( front + 1 ))
-              if [ "$front" -ge "$front_tries" ]; then
+            pos=$(queue_position || true)
+            pos="${pos:-?}"
+            if [ "$pos" = "$last_pos" ]; then seen=$(( seen + 1 )); else seen=1; last_pos="$pos"; fi
+            if [ "$seen" -le "$tries" ]; then
+              nonce=$(python3 -I -c 'import secrets; print(secrets.token_urlsafe(32))')
+              probe="$RUNNER_TEMP/cla-wait-probe.json"
+              echo '{"error":"fetch_failed"}' > "$probe"
+              # 只试一次（--budget-seconds 0）；答复只用来判断「还在不在 budget_deferred」，不进任何判定。
+              clean python3 -I "$TRUSTED/scripts/ci/cla_eligibility_fetch.py" \
+                --event merge_group --policy "$TRUSTED/.github/cla-policy.json" \
+                --base "$GROUP_BASE" --head "$GROUP_HEAD" --nonce="$nonce" \
+                --out "$probe" --budget-seconds 0 || true
+              code=$(jq -r 'if type == "object" and keys == ["error"] then .error else "" end' "$probe" 2>/dev/null || true)
+              if [ "$code" != "budget_deferred" ]; then
+                break
+              fi
+              waited=1
+              # 候选在队首：前面没有条目可等，前缀不会再变浅——只再试几次（排除瞬时的时间预算），
+              # 不为它占住整条队列（max_entries_to_merge=1）。
+              if [ "$pos" = 1 ] && [ "$seen" -ge "$tries" ]; then
                 echo "::warning::候选已在队首仍 budget_deferred，前缀不会再变浅；交给下一步按原规则判定（失败即红）。"
                 break
               fi
@@ -679,7 +684,7 @@ jobs:
               echo "::warning::服务连续 ${elapsed} 秒报 budget_deferred，到等待上限；交给下一步按原规则判定（失败即红）。"
               break
             fi
-            echo "服务按预算延后（budget_deferred，前面还有条目）：已等 ${elapsed} 秒，${poll} 秒后再问。"
+            echo "服务按预算延后（budget_deferred，候选在队列第 ${pos} 位）：已等 ${elapsed} 秒，${poll} 秒后再看。"
             sleep "$poll"
           done
           if [ "$waited" = 1 ]; then
