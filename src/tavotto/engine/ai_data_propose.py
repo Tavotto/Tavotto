@@ -180,6 +180,8 @@ class Item:
     #: 合画且文件里原本有可再拆的分组列时，成对出现的两种画法各自的标记：`{"kind": "split", "column": 列名}`（按它再拆开）/
     #: `{"kind": "by_file"}`（不拆、只按文件比较）；没有成对的另一张（两种画法画出来一样）就是 None
     variant: dict | None = None
+    #: 这张图上每条拟合线的系数（`tpl.fit_report`；没有拟合线 = 空，响应里没有这一项）
+    fits: list = field(default_factory=list)
     # 懒渲染的素材：候选脚本在会话目录里，这里记下渲染一张要的最少东西
     stem: str | None = None
     n: int = 0
@@ -769,7 +771,12 @@ def _plan_candidates(
         stem = f"cand_{n}"
         try:
             rendered = tpl.render_recipe_script(
-                entry, recipe, data_rel=data_rel, stem=stem, style=style
+                entry,
+                recipe,
+                data_rel=data_rel,
+                stem=stem,
+                style=style,
+                fits=tpl.fit_report(values, recipe),
             )
             expected = tpl.expected_fingerprints(values, recipe)
         except tpl.TemplateError:
@@ -1105,6 +1112,8 @@ def item_to_dict(sess: Session, item: Item, recommended: bool) -> dict:
         "thumbnail_url": f"/api/ai/data-figure/thumbnail/{sess.id}/{item.id}",
         "thumbnail_status": item.state,
         **({"reduced": item.reduced} if item.reduced is not None else {}),
+        # 有拟合线才有：每条线的截距 / 斜率 / n（描述性的最小二乘直线；对数轴那一维是 log10）
+        **({"fits": item.fits} if item.fits else {}),
         **({"variant": item.variant} if sess.merge is not None and sess.merge.splittable else {}),
     }
 
@@ -1415,6 +1424,7 @@ def propose(
             reduced=reduced_of(values, cand.recipe),
             state="pending" if planned is not None else "ready",
             variant=variants.get(id(cand.recipe)),
+            fits=tpl.fit_report(values, cand.recipe),
             stem=planned.stem if planned is not None else None,
             n=planned.n if planned is not None else 0,
             expected=planned.expected if planned is not None else [],

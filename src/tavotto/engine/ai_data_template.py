@@ -2288,16 +2288,24 @@ def render_recipe_script(
     data_rel: str,
     stem: str,
     style: dict | None = None,
+    fits: list[dict] | None = None,
 ) -> Rendered:
     """配方 → 短脚本 + 公共模块。`entry` 是配方指的那张表（来自 `profile_folder`，不带行数据：脚本运行时自己读文件）；
     `data_rel` 是数据文件相对**脚本所在目录**的 POSIX 路径（调用方保证不出数据文件夹）；`stem` 决定输出 `<stem>.pdf`；
     `style` 缺省取 `profiles.load()` 的默认出版规范。调用方须先 `validate_recipe`；对不认识的组合抛 `TemplateError`。
-    脚本里数据文字只以 `repr()` 字面量出现；公共模块不含任何数据。"""
+    脚本里数据文字只以 `repr()` 字面量出现；公共模块不含任何数据。`fits`（可选，`fit_report` 的结果）：生成那一刻的拟合线系数，
+    写成来源注释下面的一行注释（不给 / 为空时脚本逐字不变）。"""
     _check(entry, recipe)
     if style is None:
         style = style_from_profile()
     name, data = runtime_module()
-    return Rendered(RENDERERS[recipe.family](entry, recipe, data_rel, stem, style), name, data)
+    script = RENDERERS[recipe.family](entry, recipe, data_rel, stem, style)
+    if fits:  # 拟合线的系数写在来源注释下面一行（`fit_report` 给的；内容是 ASCII JSON，不会把数据里的文字带出注释）
+        lines = script.split("\n")
+        at = next(i for i, ln in enumerate(lines) if ln.startswith(SOURCE_COMMENT_PREFIX))
+        lines.insert(at + 1, fit_comment(fits))
+        script = "\n".join(lines)
+    return Rendered(script, name, data)
 
 
 # =========================================================================== 期望数据指纹（父进程；与脚本同一批函数）
@@ -2579,6 +2587,53 @@ def expected_fingerprints(values: adf.DataSummary, recipe: recipe_mod.FigureReci
     return _expected_trend(values, recipe)
 
 
+#: 脚本头里「拟合线系数」那一行注释的前缀（紧跟在来源注释后面；内容是一行 ASCII JSON）
+FIT_COMMENT_PREFIX = "# tavotto-fit: "
+
+
+def _fit_record(pool, logx: bool, logy: bool, group: str, panel: str, y: str) -> dict:
+    """一条拟合线的系数（与 `fit_segment` 同一份数据、同一个 `linear_fit`）：在**画出来的坐标**里 `y' = intercept + slope · x'`，
+    对数轴那一维 `x'` / `y'` 是 log10。描述性的最小二乘直线，不带显著性。"""
+    xs, ys = finite_pairs(*pool)
+    tx = [math.log10(x) for x in xs] if logx else xs
+    ty = [math.log10(v) for v in ys] if logy else ys
+    intercept, slope = linear_fit(tx, ty)
+    return {
+        "y": y,
+        "group": group or None,
+        "panel": panel or None,
+        "n": len(tx),
+        "intercept": intercept,
+        "slope": slope,
+        "log_x": logx,
+        "log_y": logy,
+    }
+
+
+def fit_report(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> list[dict]:
+    """这份配方画出来的每一条拟合线的系数（没有拟合线层 = 空）：`[{y, group, panel, n, intercept, slope, log_x, log_y}]`。
+    与期望指纹走同一条路（同样的规则、同样的数据准备函数），所以报的就是图上那条线。大表不画拟合线（汇总类），回空。"""
+    if not any(layer.mark == "fit_line" for layer in recipe.layers) or values.large is not None:
+        return []
+    values = recipe_mod.with_cells_applied(values, recipe)
+    fits: list[dict] = []
+    if recipe.family == "relationship":
+        _expected_relationship(values, recipe, fits)
+    elif recipe.family == "trend":
+        _expected_trend(values, recipe, fits)
+    return fits
+
+
+def fit_comment(fits: list[dict]) -> str:
+    """脚本头里的一行注释：生成那一刻的拟合线系数（之后数据变了它不会跟着变——脚本运行时仍然现算现画）。"""
+    return FIT_COMMENT_PREFIX + json.dumps(
+        {"at": "generation", "method": "least_squares", "fits": fits},
+        ensure_ascii=True,
+        sort_keys=True,
+        allow_nan=False,
+    )
+
+
 def _expected_comparison(values, recipe) -> list[dict]:
     d = comparison_data(
         values.columns, values.rows, recipe.x, recipe.y[0], recipe.group, recipe.facet, recipe.order
@@ -2614,7 +2669,7 @@ def _expected_comparison(values, recipe) -> list[dict]:
     return out
 
 
-def _expected_relationship(values, recipe) -> list[dict]:
+def _expected_relationship(values, recipe, fits: list | None = None) -> list[dict]:
     d = relationship_data(
         values.columns, values.rows, recipe.x, recipe.y[0], recipe.group, recipe.facet
     )
@@ -2633,6 +2688,8 @@ def _expected_relationship(values, recipe) -> list[dict]:
                     seg = fit_segment((xs, ys), logx, logy)
                     if seg:
                         out.append(_entry(lab, "xy", _interleave(*seg), (len(seg[0]), 2)))
+                        if fits is not None:
+                            fits.append(_fit_record((xs, ys), logx, logy, g, p, recipe.y[0]))
     return out
 
 
@@ -2674,7 +2731,7 @@ def _expected_distribution_x(values, recipe) -> list[dict]:
     return out
 
 
-def _expected_trend(values, recipe) -> list[dict]:
+def _expected_trend(values, recipe, fits: list | None = None) -> list[dict]:
     x_is_date = values.per_column[recipe.x].kind == "date"
     d = trend_data(
         values.columns,
@@ -2726,6 +2783,17 @@ def _expected_trend(values, recipe) -> list[dict]:
                         )
                         if seg:
                             out.append(_entry(lab, "xy", _interleave(*seg), (len(seg[0]), 2)))
+                            if fits is not None:
+                                fits.append(
+                                    _fit_record(
+                                        pool,
+                                        recipe.scale in ("log_x", "log_xy"),
+                                        recipe.scale in ("log_y", "log_xy"),
+                                        g,
+                                        p,
+                                        y,
+                                    )
+                                )
                     elif m == "hline_summary":
                         seg = hline_segment(pool, s)
                         if seg:

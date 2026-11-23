@@ -608,6 +608,7 @@ def prepare_v2(root: Path, sel: Selection) -> PreparedV2:
         data_rel=ai_data_propose.script_data_rel(sel.table),
         stem=pl.stem,
         style=sel.style,
+        fits=ai_data_template.fit_report(values, sel.recipe),
     )
     try:
         expected = ai_data_template.expected_fingerprints(values, sel.recipe)
@@ -680,6 +681,7 @@ def _prepare_merged(root: Path, sel: Selection) -> PreparedV2:
         data_rel=ai_data_propose.script_data_rel(first.rel),
         stem=pl.stem,
         style=sel.style,
+        fits=ai_data_template.fit_report(values, sel.recipe),
     )
     return PreparedV2(
         selection=sel,
