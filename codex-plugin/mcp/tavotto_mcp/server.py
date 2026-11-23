@@ -677,7 +677,7 @@ JOURNAL_ID_TOOLS = (
 
 
 def _share_review_tool() -> dict:
-    """`tavotto_share_review`（ADR 0203）：只在外部审阅开着（未被 `TAVOTTO_NO_REVIEW_SHARE` 硬关）且引擎带这条流程时出现。"""
+    """`tavotto_share_review`（ADR 0205）：只在外部审阅开着（未被 `TAVOTTO_NO_REVIEW_SHARE` 硬关）且引擎带这条流程时出现。"""
     return {
         "name": "tavotto_share_review",
         "title": "发给外部审阅（先问用户）",
@@ -2460,7 +2460,7 @@ HANDLERS = {
     "tavotto_fix_to_journal": _call_fix_to_journal,
     # 一步交付（ADR 0192 §1）：与 fix_to_journal 同一处置，同样**不进** `usage.TOOLS`
     "tavotto_make_journal_ready": _call_make_journal_ready,
-    # 外部审阅分享（ADR 0203）：受 `reviewshare.enabled()` 管（硬关 / 旧引擎 = 不出现、调用回 `review_share_disabled`）；
+    # 外部审阅分享（ADR 0205）：受 `reviewshare.enabled()` 管（硬关 / 旧引擎 = 不出现、调用回 `review_share_disabled`）；
     # 同样**不进** `usage.TOOLS`（走 `other` 桶，不升同意版本）
     "tavotto_share_review": _call_share_review,
 }

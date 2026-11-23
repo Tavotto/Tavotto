@@ -1,4 +1,4 @@
-"""`tavotto_share_review`（ADR 0203 一期）：Agent 把会话里的图发成外部审阅链接，先问用户再发。
+"""`tavotto_share_review`（ADR 0205 一期）：Agent 把会话里的图发成外部审阅链接，先问用户再发。
 
 对端是 `tests/support/review_fakes.py` 的本地模拟（HTTPS 回环 + 私有 CA，验设备签名），假 worker 出图，不真联网。
 判据的主语：

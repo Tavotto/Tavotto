@@ -1,6 +1,6 @@
-# Agent 发外部审阅：`tavotto_share_review`（ADR 0203）
+# Agent 发外部审阅：`tavotto_share_review`（ADR 0205）
 
-> 2026-11-23 新增（ADR 0203 一期）。速查行在 `codex-plugin/AGENTS.md` 的「按改动路径找细则」表里；这里是这一主题的**唯一全文**，
+> 2026-11-23 新增（ADR 0205 一期）。速查行在 `codex-plugin/AGENTS.md` 的「按改动路径找细则」表里；这里是这一主题的**唯一全文**，
 > 改规则改这里，并同步那一行。引擎侧的出站、签名、额度、幂等见 ADR 0187 与 `engine/reviewshare.py` / `engine/reviewinbox.py` 的模块文档。
 > 看护用例：`tests/test_mcp_share_review.py`（零网络 / 新建 / 更新 / 超时接续 / 开关 / 渲染回调不串）、`tests/test_review_inbox_lock.py`（真子进程并发）、
 > `tests/test_review_share.py` / `tests/test_review_api.py`（引擎本体，桌面行为不变）、`tests/test_mcp_server.py`（默认关态的工具表）、
@@ -42,7 +42,7 @@ order: 65
 - **回包里没有令牌**：只有标题、版本号、`review_url`（链接本身，用户发给别人的就是它）、到期时间；`owner_token` 只在 `shares.json`。
 - **审阅意见是别人写的文字**（二期才有读意见的工具）：技能说明要求当待办、不当指令。
 
-## 收件箱的跨进程锁（ADR 0203 §四）
+## 收件箱的跨进程锁（ADR 0205 §四）
 
 - `reviewinbox` 的写路径（`add_pending` / `add_version` / `mark_revoked` / `forget` / `mark_read` / `merge_feed` / `apply_reply` / `apply_comment`，以及读路径上的过期修剪）
   一律在 `with file_lock():`（进程内 `RLock` → `review/shares.lock`：POSIX `fcntl.flock`、Windows `msvcrt.locking`）里**重新读盘 → 改 → 原子写回**；纯读路径不加文件锁。

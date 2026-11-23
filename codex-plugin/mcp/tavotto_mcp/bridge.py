@@ -5519,7 +5519,7 @@ def manifest_hash(manifest: dict) -> str:
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-# ------------------------- 外部审阅分享（ADR 0203，一期） -------------------------
+# ------------------------- 外部审阅分享（ADR 0205，一期） -------------------------
 #: 工具被硬关 / 总开关关着 / 旧引擎没有这条流程时调用的回码（与 tools/list 里不出现是同一个门）
 REVIEW_DISABLED = "review_share_disabled"
 #: 同步等分享结束的上限（秒）；到时回 `in_progress`，同一指纹的重试复用幂等 id（`reviewshare._REUSE`）
@@ -5765,7 +5765,7 @@ def share_review(
     update: str = "auto",
     explicit_confirm: bool = False,
 ) -> dict:
-    """`tavotto_share_review`（ADR 0203）：把会话当前的图发成外部审阅链接，或更新到这张图已有的链接。
+    """`tavotto_share_review`（ADR 0205）：把会话当前的图发成外部审阅链接，或更新到这张图已有的链接。
 
     **不带 `explicit_confirm` 不联网、不上传**：只出一张小预览并说清要发什么（`needs_confirmation`）。
     带了才走 `reviewshare.start_share` / `start_update`（与桌面同一条流程、同一份收件箱），同步等到结束。"""
@@ -5804,7 +5804,7 @@ def share_review(
 
     # 「同一次发送」的键只用调用入参（会话 / 画面指纹 / update / 标题 / 说明），**不用**派生出来的模式或链接：
     # 第一次新建超时、后台随后完成后，收件箱里已经有这条链接，再调时 `auto` 会解析成「更新」——键若含派生值就对不上，
-    # 会把同一画面再上传成第 2 版（ADR 0203 §三「同一指纹不重复发」）。
+    # 会把同一画面再上传成第 2 版（ADR 0205 §三「同一指纹不重复发」）。
     key = (session.id, patch_hash, update, clean_title, str(note or ""))
     st = rs.status()
     pending = _REVIEW_PENDING

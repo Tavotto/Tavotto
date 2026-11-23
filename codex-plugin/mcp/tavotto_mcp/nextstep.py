@@ -390,7 +390,7 @@ BUILDERS: dict[str, Callable[[Ctx], dict | None]] = {
         "这个路径在已授权的工作区之外：请用户把它所在目录加入授权，或换一个工作区内的路径。"
     ),
     "path_denied": _ask("这个路径被安全策略拒绝：请用户换一个路径，不要尝试绕过。"),
-    # 外部审阅分享（ADR 0203）：发送要用户同意（explicit_confirm），重试照旧带着它
+    # 外部审阅分享（ADR 0205）：发送要用户同意（explicit_confirm），重试照旧带着它
     "review_quota_new_exhausted": _review_quota,
     "review_share_gone": _review_gone,
     "review_rate_limited": _review_retry("审阅服务限流：等几十秒后原样重试一次。"),
@@ -433,7 +433,7 @@ NO_NEXT: dict[str, str] = {
     "preview_failed": "预览失败的泛化码，原因在 error。",
     "environment_adoption_failed": "采用环境失败，原因在 error。",
     "requires_authorization": "规范化需要用户授权（Agent 不能替用户授权），见 recovery。",
-    # 外部审阅分享（ADR 0203）
+    # 外部审阅分享（ADR 0205）
     "review_share_disabled": "外部审阅被用户或安装关掉了，不是 Agent 能改的。",
     "review_too_large": "画面压缩后仍超过上传上限，重试也不会变。",
     "review_render_failed": "这张图出图失败，原因在 error；回脚本修好再发。",
