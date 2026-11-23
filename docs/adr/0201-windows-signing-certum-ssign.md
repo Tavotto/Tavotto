@@ -33,7 +33,8 @@ Windows 安装包一直没有 Authenticode 签名。原计划的 SignPath Founda
 - **实测**：2026-11-23 在维护者 Mac 上用一次性 6 位码签了 v0.21.3 的 `Tavotto-0.21.3-Windows-Setup.exe`：
   osslsigncode 2.16 重算摘要一致、时间戳与 CRL 通过；证书链 签名证书 → Certum Code Signing 2021 CA → Certum Trusted Network CA 2 加上该根后通过
   （macOS 自带的 `/etc/ssl/cert.pem` 里没有 CTNCA2，不加时报 unable to get local issuer certificate）；签过名的安装包在 Windows Lab
-  （run `20261123T051558Z-5eca56`，Server 2025，Defender 开）静默安装、起壳、冒烟、重装全部通过。Windows 自己对签名的判定在本 PR 合入前另核（见「后果·未验」）。
+  （run `20261123T051558Z-5eca56`，Server 2025，Defender 开）静默安装、起壳、冒烟、重装全部通过；同一份文件在 Lab 上 `Get-AuthenticodeSignature` 为 **Valid**，时间戳证书 Certum Timestamp 2026。
+  注意 Windows 把省份写成 `S=`（OpenSSL 写 `ST=`），`CERTUM_SIGNER_SUBJECT` 要取 Windows 的原样字符串。
 - **后备**：ssign 原生签名哪天在 Windows 上判不过，同一仓库的 `ssign-pkcs11` 模块配 osslsigncode（成熟的 Authenticode 实现）是现成的第二条路，换法只动签名那一步。
 
 ### 二、拓扑：签名进 build 矩阵的 Windows 腿，挂要人批准的 `windows-signing` 环境
@@ -79,6 +80,6 @@ Pro 组件的 Windows 可执行文件用同一张证书、同一个 ssign 版本
 - 好处：零额外机器与费用；签名在公开的托管 runner 上完成，可追溯到具体 run；更新包与清单天然算在签过名的字节上。
 - 代价：每次发行（含演练）要维护者在 Windows 腿开始前点一次批准；依赖一个年轻的第三方开源客户端（2026-07 首发），升级要重审。
 - 删除：`complete-windows-signing.yml`、`signpath/` 目录、`desktop-tauri.yml` 的 `signing-mode` 输入与 `SIGNPATH_API_TOKEN` 声明。
-- 未验（启用前要过）：Windows 自己对 ssign 签名的判定（`Get-AuthenticodeSignature` 为 Valid）；`aws-lc-sys` 在 `windows-latest` 的 MSVC 上能否编过；
-  空串环境名在 GitHub 上确实等于「不挂环境」；环境 secret 能进被 `workflow_call` 调起的 job。前一项在合入前核，后三项由第 3 步的演练核。
+- 未验（启用前要过）：`aws-lc-sys` 在 `windows-latest` 的 MSVC 上能否编过；
+  空串环境名在 GitHub 上确实等于「不挂环境」；环境 secret 能进被 `workflow_call` 调起的 job。三项都由「启用步骤」第 3 步的演练核。
 - SmartScreen 信誉要随下载量积累，新证书头几个版本仍可能出现提示。
