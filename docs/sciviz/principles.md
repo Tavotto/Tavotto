@@ -1,4 +1,4 @@
-# A. 科学可视化原则（P1–P8）
+# A. 科学可视化原则（P1–P9）
 
 每条原则按同一格式写：来源与证据 · 适用 · 不适用 · 工程意义 · 实现与验证。证据标记见 [README](README.md)。
 原则本身都是 **[推导]**，即从三本书交叉提炼出来的；依据里每一条单独标明来源。
@@ -129,3 +129,30 @@
 - **实现与验证**：
   - [core-implications](core-implications.md) 的短期第 3 条与长期部分。
   - G-016、G-017、G-034、G-037。
+
+### P9 组图：面板的顺序、分组、主次、对齐与共享
+
+- **来源与证据**：
+  - FDV 第 21 章区分两种组图：小倍数是「multiple panels arranged in a regular grid」（p.255），复合图是「assembled in an arbitrary arrangement」（p.255）[原文]。
+  - 同一种量并排比较，各面板用相同的轴范围：「it is important that each panel uses the same axis ranges and scaling」（p.257）[原文]；图 21-3 因各面板 y 范围不同被作者标成「bad」（p.258）[原文]。
+  - 面板顺序：「Always arrange the panels in a small multiples plot in a meaningful and logical order.」（p.260）[原文]；Trellis 的 main-effects 排序是按派生量（中位数）排序，让总趋势与离群一眼可见（VAD p.282–283）[原文]。
+  - 对齐：「The axes and other graphical elements of the individual panels should all be aligned to each other.」（p.264）[原文]；对齐的小倍数用于「comparison with the highest precision」（VAD p.273）[原文]，对齐比不对齐「higher-precision comparison」（VAD p.278）[原文]。
+  - 复合图的字母标注：约定用拉丁字母、从左上起按行排（FDV p.260–261）；标注「should not be the first thing you see」，作者把它比作页码（p.261）[原文]。小倍数不需要字母，因为分面变量已经标明了每个面板（p.260）[原文]。
+  - 视觉语言一致：同一对象在各面板颜色、顺序一致，图例只留一份（FDV p.261–263）[原文]。
+  - 书里**没有**的：面板的主次、大小或跨格（FDV 第 21 章不讨论；VAD §12.3.2 的大小窗口是交互式 overview–detail，不能当作静态组图的依据）；同一组放行还是放列；「省去重复轴标签」。这几处下面标 [推导]。
+- **适用**：
+  - 多面板的组图：一键排版的图内排版（ADR 0199）、Agent 拼图、预检。
+  - 小倍数与复合图两种都适用，但字母标注只对复合图适用。
+- **不适用**：
+  - 各面板的量纲或数量级本来就不同：FDV 对不同轴范围的态度是「generally recommend against」；确实避免不了时「at a minimum」要在图注里说明（p.259）[原文]。「不同量纲就不必统一范围」是 [推导]（见 G-027 的例外）。
+  - 面板之间没有比较关系，只是并列的独立结果：对齐与同尺只管有比较关系的那几组。
+  - 用户或期刊已指定顺序与版式：照做。
+- **工程意义**：
+  - **谁来定意图**：组图的目的（谁与谁比较、谁是主结果、叙事先后）是作者的目的，从图和数据里看不出来 [推导，同 P6]。Agent 依据轴标题、图型、数据类型和用户的话判断；说不清时按 [决策框架](decision-framework.md) 第 2 节出选择题，不自己猜。求解器只落实 Agent 给的 `intent`（`order` / `compare` / `emphasis`），自己不做判断。
+  - **主次**：主结果可以通过面板大小与位置体现 [推导]；这是 Tavotto 的设计取舍（ADR 0199 §十三：最多占 2 × 2 格、不超过整版一半），不是书里的结论。
+  - **不改数据范围**：同一 `compare` 组的 y 范围不一致，只按 V-006 提示，不替用户改 `ylim`（对齐靠排版，不靠改数据；P3、P4）。
+  - 排版层只动位置与大小，不动数据，属于 P4 里的「结构 / 样式」类编辑。
+- **实现与验证**：
+  - ADR 0199 §十三（修订草案 #2137）：`intent` 的核对与退回规则。
+  - V-006（小倍数面板 y 范围不一致，待评估）。
+  - Agent 准则 G-027、G-059、G-060、G-061、G-062；写法建议 G-058（一张图回答一个问题、各面板分担不同的论证，`taste`）与本条互补。
