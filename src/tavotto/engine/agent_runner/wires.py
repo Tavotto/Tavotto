@@ -38,8 +38,12 @@ EFFORTS = ("low", "medium", "high")
 #: anthropic adaptive 的 `output_config.effort` 还多两档：xhigh（5 系列 / opus-4-7 / opus-4-8）与 max
 ANTHROPIC_EFFORTS = (*EFFORTS, "xhigh", "max")
 #: 调用方声明「思考怎么传」（不由 runner 猜；第三方兼容网关各不相同）：adaptive=新模型，budget=旧模型，none=都不发
-#: Responses 的 `reasoning.effort` 取值（CLI 型号目录可能给 minimal / xhigh；没有 max，也不发 none）
+#: Responses 的 `reasoning.effort` 取值（CLI 型号目录可能给 minimal / xhigh；没有 max）——**用户能选的档位**：连接视图的过滤、改图 / 修复的
+#: `--effort` 校验都只认它，所以不含 none（界面没有它的文案，目录也没给它，改图 / 修复永远发不出 none）
 RESPONSES_EFFORTS = ("minimal", *EFFORTS, "xhigh")
+#: wire 层**能发**的 Responses 取值 = 上面 + `none`（`reasoning.effort: "none"` = 不思考；与 `THINKING_MODES` 的 `"none"`「不发思考参数」是两回事，
+#: 这个是**发出**一个值为 none 的 effort 字段）。只有一问一答的结构化调用（`ai_structured` 的小型号策略，ADR 0178）经连接的 `effort` 键送到这里。
+RESPONSES_WIRE_EFFORTS = (*RESPONSES_EFFORTS, "none")
 THINKING_MODES = ("adaptive", "budget", "none")
 #: anthropic 旧式 `thinking.budget_tokens`（仅 `--thinking budget`；新模型上已弃用，不许发）
 _THINKING_BUDGET = {"low": 1024, "medium": 4096, "high": 12000}
@@ -716,7 +720,7 @@ class OpenAIResponsesWire:
                 }
                 for t in tools
             ]
-        if effort in RESPONSES_EFFORTS:
+        if effort in RESPONSES_WIRE_EFFORTS:
             body["reasoning"] = {"effort": effort}
             body["include"] = ["reasoning.encrypted_content"]
         return Request(
