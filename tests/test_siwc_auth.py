@@ -174,14 +174,46 @@ def test_concurrent_requests_refresh_once():
     assert len(calls) == 1 and set(out) == {"acc-1"}
 
 
-def test_invalidate_only_accepts_closed_reasons():
+def test_rejection_forces_a_refresh_but_never_clears_credentials():
     clock = Clock()
-    p = sa.MemoryProvider(_ts(clock), clock=clock)
+    original = _ts(clock)  # 还有一小时
+    calls = []
+
+    def refresh(t):
+        calls.append(t)
+        return sa.TokenSet("acc-2", "ref-2", clock() + H, SCOPES)
+
+    p = sa.MemoryProvider(original, refresh=refresh, clock=clock)
     with pytest.raises(ValueError):
-        p.invalidate("network")  # 暂时性失败不许清凭据
-    assert p.status().signed_in
-    p.invalidate("plan_invalid_user")
-    assert not p.status().signed_in
+        p.mark_rejected("network")  # 暂时性失败不算被拒
+    p.mark_rejected("plan_invalid_user")
+    assert p._load() == original and p.status().signed_in  # 一次 401 不清凭据
+    assert p.access_token() == "acc-2" and len(calls) == 1  # 但下次先刷新
+    assert p.access_token() == "acc-2" and len(calls) == 1  # 刷新成功后恢复正常
+
+
+def test_rejection_then_terminal_refresh_clears():
+    clock = Clock()
+
+    def refresh(_t):
+        raise sa.RefreshError("refresh_token_invalidated")
+
+    p = sa.MemoryProvider(_ts(clock), refresh=refresh, clock=clock)
+    p.mark_rejected("http_401")
+    with pytest.raises(sa.NeedsLogin):
+        p.access_token()
+    assert p._load() is None
+
+
+def test_rejection_then_transient_refresh_keeps_credentials_and_stays_flagged():
+    clock = Clock()
+    original = _ts(clock)
+    p = sa.MemoryProvider(original, refresh=None, clock=clock)
+    p.mark_rejected("http_401")
+    for _ in range(2):
+        with pytest.raises(sa.TokenUnavailable):
+            p.access_token()
+    assert p._load() == original
 
 
 def test_no_token_in_repr_or_status():
@@ -192,22 +224,52 @@ def test_no_token_in_repr_or_status():
     assert ACCESS not in text and REFRESH not in text
 
 
+def _imports(tree) -> set[str]:
+    """模块里出现的每一个被导入名字的**每一段**：`import a.b` → a、b；`from .a.b import c` → a、b、c。"""
+    parts: set[str] = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Import):
+            for a in n.names:
+                parts |= set(a.name.split("."))
+        elif isinstance(n, ast.ImportFrom):
+            parts |= set((n.module or "").split("."))
+            parts |= {a.name for a in n.names}
+    return parts - {""}
+
+
+BANNED_IMPORTS = {
+    "urllib",
+    "http",
+    "socket",
+    "ssl",
+    "subprocess",
+    "ai_agents",
+    "ai_oauth",
+    "ai_providers",
+}
+
+
 def test_module_never_touches_codex_credentials_or_the_network():
-    src = Path(sa.__file__).read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    imported = {
-        (n.module or "") if isinstance(n, ast.ImportFrom) else a.name
-        for n in ast.walk(tree)
-        if isinstance(n, (ast.Import, ast.ImportFrom))
-        for a in n.names
-    }
-    banned = {"urllib", "http", "socket", "ssl", "subprocess"}
-    assert not {m.split(".")[0] for m in imported} & banned, imported
-    names = {a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) for a in n.names}
-    assert not names & {"ai_agents", "ai_oauth", "ai_providers"}, names
+    tree = ast.parse(Path(sa.__file__).read_text(encoding="utf-8"))
+    assert not _imports(tree) & BANNED_IMPORTS, _imports(tree) & BANNED_IMPORTS
     strings = [
         n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)
     ]
     # 文档串可以提到「不碰 ~/.codex」，但不许有任何把它当路径用的字符串常量
     code_strings = [s for s in strings if "\n" not in s]
     assert not [s for s in code_strings if ".codex" in s or "auth.json" in s]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "from .ai_oauth import ensure_fresh",
+        "import tavotto.engine.ai_agents",
+        "from . import ai_providers",
+        "import urllib.request",
+        "from http import client",
+    ],
+)
+def test_import_guard_catches_every_spelling(line):
+    """反证：守卫本身认得这些写法（不然上面那条恒真）。"""
+    assert _imports(ast.parse(line)) & BANNED_IMPORTS

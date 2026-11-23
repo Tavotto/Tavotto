@@ -3,7 +3,7 @@
 改图请求在 spawn 内置执行器之前向 `TokenProvider.access_token(min_valid_s=…)` 要一个够新的访问令牌，令牌只进子进程的
 环境变量 `TAVOTTO_AGENT_API_KEY`（与 Key / 账号登录连接同一出口，接入在 PR-3）。这里定下：
 
-* **接口**（`TokenProvider`）：`access_token` / `invalidate` / `status`。`status()` 只给登录态、额度许可与过期时刻，
+* **接口**（`TokenProvider`）：`access_token` / `mark_rejected` / `status`。`status()` 只给登录态、额度许可与过期时刻，
   **没有任何令牌字段**——它是唯一允许进前端状态、连接视图、诊断包的形状。
 * **刷新状态机**（`RefreshingProvider`）：按官方 sign-in / token-reference / errors-and-recovery 页（2026-11-23 读取）——
   - 访问令牌 1 小时；`min_valid_s` 缺省 `MIN_VALID_S` = 一次任务的最长时限（转换 900 s）+ 5 分钟余量。**不复用**
@@ -51,8 +51,9 @@ TERMINAL_REFRESH_ERRORS = frozenset(
 #: 配置错（client_id 不对）：不是用户的问题，也不清凭据
 CONFIG_REFRESH_ERRORS = frozenset({"invalid_client"})
 
-#: `invalidate(reason)` 的闭集：只有**确认**被拒之后才清（官方：只在确认撤销或终态刷新错误后才要求重新登录）
-INVALIDATE_REASONS = frozenset({"plan_invalid_user", "refresh_terminal", "signed_out"})
+#: `mark_rejected(reason)` 的闭集。**不清凭据**：官方 errors-and-recovery 要求「只在确认撤销或终态刷新错误后才要求重新登录」，
+#: 一次 401 只说明这个访问令牌不被接受——下一次 `access_token` 先刷新；刷新报终态错误才清（退出登录另走撤销流程，以后实现）
+REJECT_REASONS = frozenset({"plan_invalid_user", "http_401"})
 
 
 class NeedsLogin(RuntimeError):
@@ -119,8 +120,8 @@ class TokenProvider(Protocol):
         没登录 / 终态失效 → `NeedsLogin`；没有订阅范围 → `PlanUsageDisabled`；暂时失败 → `TokenUnavailable`。"""
         ...
 
-    def invalidate(self, reason: str) -> None:
-        """确认被拒后清掉凭据（`reason` ∈ `INVALIDATE_REASONS`）。暂时性失败绝不调它。"""
+    def mark_rejected(self, reason: str) -> None:
+        """服务端拒了当前访问令牌（`reason` ∈ `REJECT_REASONS`）：下次 `access_token` 强制刷新。不清凭据；暂时性失败绝不调它。"""
         ...
 
     def status(self) -> TokenStatus: ...
@@ -132,7 +133,7 @@ class DisabledProvider:
     def access_token(self, *, min_valid_s: int = MIN_VALID_S) -> str:
         raise NeedsLogin("not_signed_in")
 
-    def invalidate(self, reason: str) -> None:
+    def mark_rejected(self, reason: str) -> None:
         _check_reason(reason)
 
     def status(self) -> TokenStatus:
@@ -140,8 +141,8 @@ class DisabledProvider:
 
 
 def _check_reason(reason: str) -> None:
-    if reason not in INVALIDATE_REASONS:
-        raise ValueError("invalidate reason")
+    if reason not in REJECT_REASONS:
+        raise ValueError("reject reason")
 
 
 def _now_ms() -> int:
@@ -154,6 +155,8 @@ class RefreshingProvider:
     def __init__(self, *, clock: Callable[[], int] = _now_ms):
         self._clock = clock
         self._lock = threading.Lock()
+        #: 服务端拒过当前访问令牌：下次先刷新（不管剩余寿命）
+        self._rejected = False
 
     # -- 子类实现 --------------------------------------------------------
     def _load(self) -> TokenSet | None:
@@ -178,7 +181,7 @@ class RefreshingProvider:
                 raise PlanUsageDisabled()
             now = self._clock()
             need_ms = min_valid_s * 1000
-            if ts.expires_at_ms - now >= need_ms:
+            if not self._rejected and ts.expires_at_ms - now >= need_ms:
                 return ts.access
             if not ts.refresh:
                 raise NeedsLogin("refresh_terminal")
@@ -204,16 +207,17 @@ class RefreshingProvider:
                 earliest_refresh_at_ms=new.earliest_refresh_at_ms,
             )
             self._save(new)  # 四样一起替换
+            self._rejected = False
             if REQUIRED_SCOPE not in new.scopes:
                 raise PlanUsageDisabled()
             if new.expires_at_ms - self._clock() < need_ms:
                 raise TokenUnavailable("short_lived")
             return new.access
 
-    def invalidate(self, reason: str) -> None:
+    def mark_rejected(self, reason: str) -> None:
         _check_reason(reason)
         with self._lock:
-            self._clear()
+            self._rejected = True
 
     def status(self) -> TokenStatus:
         with self._lock:
