@@ -45,6 +45,25 @@ beforeEach(async () => {
 })
 
 describe('导出项目包失败', () => {
+  it('打包整份普通排版时提交全部画布进入可安装导出链', async () => {
+    const document = emptyProject()
+    const first = document.canvases[0]
+    document.canvases.push({ ...first, id: 'detail', name: 'Detail' })
+    document.activeCanvasId = 'detail'
+    await useDocumentStore.getState().switchDocument(document, 'mixed-native')
+    createPackage.mockResolvedValueOnce({ name: 'mixed.tavotto', assets: 2, document_format: 'v4', missing: [] })
+
+    await exportPackage()
+
+    expect(createPackage).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ schema: 3, activeCanvasId: 'detail' }),
+      {},
+      { pj: 'A', canvasIds: [first.id, 'detail'] },
+    )
+    expect(useDocumentStore.getState().buildProject().schema).toBe(3)
+  })
+
   it('提示带「再试一次」，点下去重做同一次导出，成功后收掉失败提示', async () => {
     createPackage.mockRejectedValueOnce(new Error('磁盘满了'))
     await exportPackage()

@@ -37,8 +37,12 @@ export async function exportPackage(scope: PackageScope = 'project', attempt = 0
   }
   try {
     const stem = canvasId === undefined ? doc.projectMeta.name || doc.doc.name : doc.doc.name
-    const selection = typeof scope === 'object' ? scope : undefined
-    const res = await createPackage(stem, doc.buildProject(), {}, { pj: projectId, canvasId, ...selection })
+    const project = doc.buildProject()
+    // 整份排版也走可安装的交换包，后端只在打包副本上写入包格式。
+    const selection = scope === 'project'
+      ? { canvasIds: project.canvases.map(canvas => canvas.id) }
+      : scope === 'canvas' ? { canvasId } : scope
+    const res = await createPackage(stem, project, {}, { pj: projectId, ...selection })
     if (!stillHere()) return
     const executionIncomplete = res.document_format === CHART_PACKAGE_FORMAT && res.execution_coverage?.state === 'incomplete'
     const message = res.document_format === CHART_PACKAGE_FORMAT && res.missing.length > 0

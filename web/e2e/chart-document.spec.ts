@@ -446,6 +446,14 @@ test('packages selected canvases and installs only their resources', {
     await expect(page.locator('[data-canvas-tab="private"]')).toHaveAttribute('aria-selected', 'true')
 
     await documentMenu.click()
+    const fullExport = page.waitForResponse(response => new URL(response.url()).pathname === '/api/package')
+    await page.getByRole('menuitem', { name: '导出项目包', exact: true }).click()
+    const fullPackage = await fullExport
+    expect(fullPackage.ok(), await fullPackage.text()).toBe(true)
+    expect(fullPackage.request().postDataJSON().canvas_ids).toEqual(['private', 'shared', 'detail'])
+    expect(await fullPackage.json()).toMatchObject({ document_format: 'v4', assets: 3 })
+
+    await documentMenu.click()
     await page.getByRole('menuitem', { name: '打包所选画布', exact: true }).click()
     const selection = page.getByRole('dialog', { name: '打包所选画布' })
     const submit = selection.getByRole('button', { name: '打包所选画布' })
