@@ -65,6 +65,10 @@ export interface InterferenceIssue {
  */
 export function pyFixed(x: number, nd: number): string {
   if (!Number.isFinite(x)) return String(x)
+  // 快路：离「恰好一半」远的数，toFixed 与 Python 一样按精确值取最近（只在恰好的半值上分叉）。
+  // 命中多的图（几百对互相压着的文字）每对要格式化四次，慢路的逐位运算占了大头
+  const scaled = Math.abs(x) * 10 ** nd
+  if (!Object.is(x, -0) && Math.abs(scaled - Math.floor(scaled) - 0.5) > 1e-6) return x.toFixed(nd)
   const neg = x < 0 || Object.is(x, -0)
   // 多取 30 位：double 在这里量得到的数值（≤ 1e6）与真正的半值至少差一个 ulp，远大于 1e-30
   const exact = Math.abs(x).toFixed(Math.min(100, nd + 30))
