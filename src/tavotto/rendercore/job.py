@@ -213,6 +213,11 @@ def produce(
                 files,
                 **({"bookmark_titles": rp.pdf_bookmark_titles} if rp.pdf_bookmark_titles else {}),
                 **(
+                    {"panel_layer_titles": rp.pdf_panel_layer_titles}
+                    if rp.pdf_panel_layer_titles
+                    else {}
+                ),
+                **(
                     {"annotation_indices": rp.pdf_annotation_indices}
                     if rp.pdf_annotation_indices
                     else {}

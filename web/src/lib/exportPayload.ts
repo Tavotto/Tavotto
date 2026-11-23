@@ -21,7 +21,7 @@ export function toExportObjects(
   objects: readonly CanvasObject[],
   /** 找剪切蒙版用的全集（蒙版本身是隐藏的，调用方给的列表可能已经把它滤掉了）；缺省 = `objects` */
   context: readonly CanvasObject[] = objects,
-  pdfPanelBookmarks = false,
+  includePanelTitles = false,
 ): ExportObject[] {
   // 不认识的类型（更新的构建写进来的）不进载荷：`toExportObject` 对它回 undefined，序列化成 null 后被后端
   // 静默丢掉。界面在导出前用 `newerObjectCount` 拦下，这里只保证载荷里没有空洞。
@@ -30,7 +30,7 @@ export function toExportObjects(
   return objects
     .filter((o) => !o.hidden && isKnownObject(o) && !isActiveMask(o, masks))
     .map((o) => {
-      const e = toExportObject(o, pdfPanelBookmarks)
+      const e = toExportObject(o, includePanelTitles)
       const chain = clipChainOf(o, masks)
       return chain.length ? { ...e, clip: chain.map(toExportClip) } : e
     })
@@ -100,7 +100,7 @@ function gradientExtras(
   return { ...(f ? { fill_gradient: f } : {}), ...(st ? { stroke_gradient: st } : {}) }
 }
 
-function toExportObject(o: CanvasObject, pdfPanelBookmarks: boolean): ExportObject {
+function toExportObject(o: CanvasObject, includePanelTitles: boolean): ExportObject {
   const box = { x_mm: o.x, y_mm: o.y, w_mm: o.w, h_mm: o.h }
 
   switch (o.type) {
@@ -117,7 +117,7 @@ function toExportObject(o: CanvasObject, pdfPanelBookmarks: boolean): ExportObje
         } : artifactRequestFields(o)),
         ...chartSourceFields(o.chartSource),
         id: o.fileId,
-        ...(pdfPanelBookmarks && o.name ? { bookmark_title: o.name } : {}),
+        ...(includePanelTitles && o.name ? { bookmark_title: o.name } : {}),
         ...(figureSnapshotFor(o) ? { figure_snapshot: figureSnapshotFor(o) } : {}),
         overrides: o.overrides.length ? o.overrides : undefined,
         crop: o.crop,

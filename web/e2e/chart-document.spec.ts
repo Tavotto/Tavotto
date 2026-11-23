@@ -571,7 +571,7 @@ test('canvas PDF export adds bookmarks to two instances of the same figure', {
 })
 
 test('canvas PDF export adds an annotation layer and a text attachment', {
-  tag: ['@feature:export.pdf-annotation-layer', '@feature:export.pdf-text-attachment'],
+  tag: ['@feature:export.pdf-annotation-layer', '@feature:export.pdf-text-attachment', '@feature:export.pdf-panel-layers'],
 }, async ({ app, page }) => {
   const project = mkdtempSync(path.join(os.tmpdir(), 'tavotto-pdf-annotation-layer-'))
   const name = 'LayeredCanvas'
@@ -588,9 +588,9 @@ test('canvas PDF export adds an annotation layer and a text attachment', {
         canvases: [{
           id: 'c1', name, schema: 2, page: { w: 140, h: 100 }, guides: [], updatedAt: 1,
           objects: [
-            { type: 'panel', id: 'figure', x: 15, y: 10, w: 70, h: 55,
+            { type: 'panel', id: 'figure', name: 'Main figure', x: 15, y: 10, w: 70, h: 55,
               fileId, fileKind: 'pdf', nativeW: 100, nativeH: 80, overrides: [] },
-            { type: 'panel', id: 'detail', x: 90, y: 10, w: 35, h: 27.5,
+            { type: 'panel', id: 'detail', name: 'Detail', x: 90, y: 10, w: 35, h: 27.5,
               fileId, fileKind: 'pdf', nativeW: 100, nativeH: 80, overrides: [] },
             { type: 'text', id: 'label', x: 15, y: 70, w: 55, h: 10,
               text: 'Canvas annotation', sizePt: 12, color: '#224466', bold: false, align: 'left' },
@@ -611,20 +611,26 @@ test('canvas PDF export adds an annotation layer and a text attachment', {
     const dialog = page.locator('[data-export-group="format"]')
     const pdf = dialog.locator('[data-export-format="pdf"] input')
     if (!(await pdf.isChecked())) await pdf.check()
+    const panelLayers = dialog.locator('[data-export-pdf-panel-layers]')
     const layer = dialog.locator('[data-export-pdf-annotation-layer]')
     const attachment = dialog.locator('[data-export-pdf-text-attachment]')
+    await expect(panelLayers).toBeVisible()
+    await expect(panelLayers).not.toBeChecked()
     await expect(layer).toBeVisible()
     await expect(layer).not.toBeChecked()
     await expect(attachment).toBeVisible()
     await expect(attachment).not.toBeChecked()
+    await panelLayers.check()
     await layer.check()
     await attachment.check()
     await page.keyboard.press('Escape')
     await expect(layer).toBeHidden()
     await page.locator('[data-onboarding-anchor="export"]').click()
     if (!(await pdf.isChecked())) await pdf.check()
+    await expect(panelLayers).not.toBeChecked()
     await expect(layer).not.toBeChecked()
     await expect(attachment).not.toBeChecked()
+    await panelLayers.check()
     await layer.check()
     await attachment.check()
     const started = page.waitForResponse(r =>
@@ -632,6 +638,11 @@ test('canvas PDF export adds an annotation layer and a text attachment', {
     await page.locator('[data-export-start]').click()
     const job = await started
     expect(job.ok(), await job.text()).toBe(true)
+    expect(job.request().postDataJSON().pdf_panel_layers).toBe(true)
+    expect(job.request().postDataJSON().canvas.objects
+      .filter((object: { type: string }) => object.type === 'panel')
+      .map((object: { bookmark_title?: string }) => object.bookmark_title))
+      .toEqual(['Main figure', 'Detail'])
     expect(job.request().postDataJSON().pdf_annotation_layer).toBe(true)
     expect(job.request().postDataJSON().pdf_text_attachment).toBe(true)
     const { export_dir } = await job.json()
@@ -640,7 +651,9 @@ test('canvas PDF export adds an annotation layer and a text attachment', {
     expect(files).toHaveLength(1)
     const published = readFileSync(path.join(export_dir, files[0])).toString('latin1')
     expect(published).toContain('/OCProperties')
-    expect(published).toContain('/Type /OCG')
+    expect(published.match(/\/Type \/OCG\b/g)).toHaveLength(3)
+    expect(published).toContain('/Name (1. Main figure)')
+    expect(published).toContain('/Name (2. Detail)')
     expect(published).toContain('/Name (Canvas annotations)')
     expect(published).toContain('/EmbeddedFiles')
     expect(published).toContain('/Type /EmbeddedFile')

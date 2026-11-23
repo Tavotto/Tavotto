@@ -293,6 +293,7 @@ interface ParkedState {
   withReport: boolean;
   withScript: boolean;
   pdfPanelBookmarks: boolean;
+  pdfPanelLayers: boolean;
   pdfAnnotationLayer: boolean;
   pdfTextAttachment: boolean;
   transparent: boolean;
@@ -370,6 +371,7 @@ export function ExportDialog() {
   // 修改后的 .py（ADR 0171）：每次都要重跑一遍脚本，所以不记进导出默认值
   const [withScript, setWithScript] = useState(false);
   const [pdfPanelBookmarks, setPdfPanelBookmarks] = useState(false);
+  const [pdfPanelLayers, setPdfPanelLayers] = useState(false);
   const [pdfAnnotationLayer, setPdfAnnotationLayer] = useState(false);
   const [pdfTextAttachment, setPdfTextAttachment] = useState(false);
   /** 严格核验产物（ADR 0068 的 `strict` 政策）：必需项失败或无法核验的那一项不发布 */
@@ -690,6 +692,7 @@ export function ExportDialog() {
       setWithReport(restore.withReport);
       setWithScript(restore.withScript);
       setPdfPanelBookmarks(restore.pdfPanelBookmarks);
+      setPdfPanelLayers(restore.pdfPanelLayers);
       setPdfAnnotationLayer(restore.pdfAnnotationLayer);
       setPdfTextAttachment(restore.pdfTextAttachment);
       setTransparent(restore.transparent);
@@ -697,6 +700,7 @@ export function ExportDialog() {
       return;
     }
     setPdfPanelBookmarks(false);
+    setPdfPanelLayers(false);
     setPdfAnnotationLayer(false);
     setPdfTextAttachment(false);
     if (journalKey && journalApplied.current !== journalKey) {
@@ -973,6 +977,7 @@ export function ExportDialog() {
       includeReport: reportOn,
       includeScript: withScript && script.ok,
       pdfPanelBookmarks,
+      pdfPanelLayers,
       pdfAnnotationLayer,
       pdfTextAttachment,
       strictInspection: strict,
@@ -1297,6 +1302,7 @@ export function ExportDialog() {
       withScript,
       script.ok,
       pdfPanelBookmarks,
+      pdfPanelLayers,
       pdfAnnotationLayer,
       pdfTextAttachment,
       scope,
@@ -1426,6 +1432,7 @@ export function ExportDialog() {
       withReport,
       withScript,
       pdfPanelBookmarks,
+      pdfPanelLayers,
       pdfAnnotationLayer,
       pdfTextAttachment,
       transparent,
@@ -2069,6 +2076,19 @@ export function ExportDialog() {
                       onChange={(event) => setPdfPanelBookmarks(event.currentTarget.checked)}
                     />
                     <span>{ex("pdfPanelBookmarks")}</span>
+                  </label>
+                </FormRow>
+              )}
+              {scope === "canvas" && formats.includes("pdf") &&
+                exportDoc.objects.some((o) => o.type === "panel" && !o.hidden) && (
+                <FormRow>
+                  <label className="flex min-h-7 items-center gap-2 text-ink">
+                    <Checkbox
+                      data-export-pdf-panel-layers
+                      checked={pdfPanelLayers}
+                      onChange={(event) => setPdfPanelLayers(event.currentTarget.checked)}
+                    />
+                    <span>{ex("pdfPanelLayers")}</span>
                   </label>
                 </FormRow>
               )}

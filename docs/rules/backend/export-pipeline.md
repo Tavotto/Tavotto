@@ -34,6 +34,10 @@ order: 210
     的绘制序号。PDF 写入器就地标记对应的绘制指令，共用一个默认显示的可选内容组（OCG），保持标注和图面板
     的相对次序。阅读器关闭该层时只隐藏画布标注。同步导出 PNG / TIFF 仍使用默认显示状态的同一份 PDF。
     看护 `tests/test_export_endpoint.py` 与 `web/e2e/chart-document.spec.ts`。
+  * **画布 PDF 图面板图层**由 `pdf_panel_layers: true` 独立开启。编译期按面板实例位置记录名称。隐藏、
+    全透明、目标框与页面无交集的面板跳过。PDF 写入器把每张面板的绘制指令就地放入独立可选内容组
+    （ISO 32000-1 §8.11），包括其裁剪与变换。图层按绘制顺序编号，默认显示。合成顺序和同步位图产物保持一致。
+    看护 `tests/test_export_endpoint.py` 与 `web/e2e/chart-document.spec.ts`。
   * **画布 PDF 文字附件**由 `pdf_text_attachment: true` 开启，只用于画布 PDF。编译后的画布文字对象
     按绘制顺序携带原文，包含公式标注的输入文字；隐藏、空白、图面板内文字与项目元数据不进入附件。
     无文字时显式请求生成空列表。标准 PDF 附件名为 `tavotto-canvas-text.json`，MIME 为

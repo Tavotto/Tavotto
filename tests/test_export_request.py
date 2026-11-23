@@ -102,6 +102,31 @@ def test_pdf_bookmarks_require_a_canvas_pdf_and_a_boolean(overrides):
     [
         {"formats": ["png"]},
         {"scope": "original", "original": {"figure_id": "Fig1.pdf"}},
+        {"pdf_panel_layers": "true"},
+    ],
+)
+def test_pdf_panel_layers_require_a_canvas_pdf_and_a_boolean(overrides):
+    spec = _canvas_spec(**{"pdf_panel_layers": True, **overrides})
+    with pytest.raises(exportreq.ExportRequestError, match="PDF panel layers"):
+        exportreq.normalize(spec)
+
+
+def test_pdf_panel_layers_are_opt_in_without_changing_the_visual_plan():
+    plain = exportreq.normalize(_canvas_spec())
+    layered = exportreq.normalize(_canvas_spec(pdf_panel_layers=True))
+    assert "pdf_panel_layers" not in plain.to_payload()
+    assert layered.to_payload()["pdf_panel_layers"] is True
+    assert (
+        exportreq.render_plan_ref(plain, [])["plan_identity"]
+        == exportreq.render_plan_ref(layered, [])["plan_identity"]
+    )
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"formats": ["png"]},
+        {"scope": "original", "original": {"figure_id": "Fig1.pdf"}},
         {"pdf_annotation_layer": "true"},
     ],
 )

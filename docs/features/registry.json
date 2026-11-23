@@ -961,6 +961,22 @@
       ]
     },
     {
+      "id": "export.pdf-panel-layers",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "画布 PDF 可将各个图面板导出为独立可开关的图层",
+        "en-US": "Export each figure panel on its own toggleable layer in a canvas PDF"
+      },
+      "entry": "导出 → 当前画布 → PDF → 将每个图面板放入独立的 PDF 图层",
+      "e2e": [
+        {
+          "spec": "chart-document.spec.ts",
+          "title": "canvas PDF export adds an annotation layer and a text attachment"
+        }
+      ]
+    },
+    {
       "id": "export.pdf-annotation-layer",
       "status": "active",
       "platform": "both",

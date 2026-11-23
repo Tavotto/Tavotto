@@ -254,6 +254,7 @@ export interface ExportRequestInput {
   /** 同时导出修改后的 .py（ADR 0171）。只对单张图有意义；调用方已按 `scriptAvailability` 收窄 */
   includeScript?: boolean
   pdfPanelBookmarks?: boolean
+  pdfPanelLayers?: boolean
   pdfAnnotationLayer?: boolean
   pdfTextAttachment?: boolean
   /**
@@ -352,14 +353,16 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
   }
   if (input.scope === 'canvas') {
     const pdfPanelBookmarks = input.pdfPanelBookmarks === true && formats.includes('pdf')
+    const pdfPanelLayers = input.pdfPanelLayers === true && formats.includes('pdf')
     if (pdfPanelBookmarks) request.pdf_panel_bookmarks = true
+    if (pdfPanelLayers) request.pdf_panel_layers = true
     if (input.pdfAnnotationLayer === true && formats.includes('pdf')) request.pdf_annotation_layer = true
     if (input.pdfTextAttachment === true && formats.includes('pdf')) request.pdf_text_attachment = true
     request.canvas = {
       page_w_mm: input.doc.page.w,
       page_h_mm: input.doc.page.h,
       // 顺序即 z 序（底 → 顶），隐藏对象不发 —— 与画布预览同一条投影
-      objects: toExportObjects(input.doc.objects, input.doc.objects, pdfPanelBookmarks).map((object): ExportObject =>
+      objects: toExportObjects(input.doc.objects, input.doc.objects, pdfPanelBookmarks || pdfPanelLayers).map((object): ExportObject =>
         // chart_render_profile 已由 toExportObjects 投影（单一出处）；
         // 这里只把 overrides 从文档对象上摘下来
         object.type === 'panel' && object.chart
@@ -470,6 +473,7 @@ export function snapshotRevision(request: ExportRequest): string {
     original: request.original ?? null,
     ...(request.merge_pdf ? { merge_pdf: request.merge_pdf } : {}),
     ...(request.pdf_panel_bookmarks ? { pdf_panel_bookmarks: true } : {}),
+    ...(request.pdf_panel_layers ? { pdf_panel_layers: true } : {}),
     ...(request.pdf_annotation_layer ? { pdf_annotation_layer: true } : {}),
     ...(request.pdf_text_attachment ? { pdf_text_attachment: true } : {}),
   })

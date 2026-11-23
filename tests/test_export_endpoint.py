@@ -157,6 +157,110 @@ def test_canvas_pdf_bookmarks_follow_the_published_panel_regions(client, tmp_pat
             )
 
 
+def test_canvas_pdf_panel_layers_toggle_instances_without_affecting_default_output(
+    client, tmp_path
+):
+    figures = _asym_panel_dir(tmp_path)
+    with pymupdf.open(figures / "asym.pdf") as source:
+        source[0].get_pixmap().save(figures / "raster.png")
+    m.open_project(str(figures))
+    base = {"type": "panel", "id": "asym.pdf", "y_mm": 18, "w_mm": 34, "h_mm": 24}
+    left = {**base, "x_mm": -4, "rotation": 90, "bookmark_title": "面板"}
+    right = {
+        **base,
+        "x_mm": 26,
+        "flip_h": True,
+        "opacity": 0.65,
+        "bookmark_title": "面板",
+        "crop": {"x": 0.05, "y": 0.12, "w": 0.7, "h": 0.56},
+        "clip": [
+            {
+                "type": "path",
+                "x_mm": 42,
+                "y_mm": 19,
+                "w_mm": 15,
+                "h_mm": 17,
+                "subpaths": [
+                    {
+                        "closed": True,
+                        "nodes": [
+                            {"p": [0, 0]},
+                            {"p": [1, 0]},
+                            {"p": [1, 1]},
+                            {"p": [0, 1]},
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    bitmap = {**base, "id": "raster.png", "x_mm": 80, "y_mm": 44}
+    caption = _text_obj("Canvas caption", y_mm=8)
+    # Interleave paint and keep repeat instances as separate objects.
+    visible = [left, caption, right, bitmap]
+    invisible = [
+        {**left, "hidden": True, "bookmark_title": "Hidden"},
+        {**left, "opacity": 0, "bookmark_title": "Transparent"},
+        {**left, "x_mm": 100, "bookmark_title": "Touches right edge"},
+    ]
+
+    def export(name, objects, *, layers=False, annotations=False):
+        response = client.post(
+            "/api/export",
+            json={
+                "scope": "canvas",
+                "filename": name,
+                "formats": ["pdf", "png"],
+                "ppi": 144,
+                "canvas": {"page_w_mm": 100, "page_h_mm": 50, "objects": objects},
+                "pdf_panel_layers": layers,
+                "pdf_annotation_layer": annotations,
+            },
+        )
+        assert response.status_code == 200, response.get_json()
+        body = response.get_json()
+        assert body["status"] == "done", body
+        root = Path(body["export_dir"])
+        return {Path(row["name"]).suffix: root / row["name"] for row in body["files"]}
+
+    plain = export("plain panels", visible + invisible)
+    layered = export("layered panels", visible + invisible, layers=True, annotations=True)
+    assert layered[".png"].read_bytes() == plain[".png"].read_bytes()
+    with pymupdf.open(layered[".pdf"]) as actual, pymupdf.open(plain[".pdf"]) as baseline:
+        assert baseline.get_ocgs() == {}
+        assert actual.get_toc() == []
+        layers = actual.layer_ui_configs()
+        assert [layer["text"] for layer in layers] == [
+            "1. 面板",
+            "Canvas annotations",
+            "2. 面板",
+            "3",
+        ]
+        assert all(layer["on"] and not layer["locked"] for layer in layers)
+        original = baseline[0].get_pixmap().samples
+        assert actual[0].get_pixmap().samples == original
+        assert "Canvas caption" in actual[0].get_text()
+        for index, layer in enumerate(layers):
+            reference = export(f"without layer {index}", visible[:index] + visible[index + 1 :])
+            with pymupdf.open(reference[".pdf"]) as expected:
+                actual.set_layer_ui_config(layer["number"], action=pymupdf.PDF_OC_OFF)
+                disabled = actual[0].get_pixmap().samples
+                omitted = expected[0].get_pixmap().samples
+                if layer["text"] == "2. 面板":
+                    # MuPDF composites the page edge one level differently when
+                    # the transparent Form is present but disabled.
+                    assert max(abs(a - b) for a, b in zip(disabled, omitted, strict=True)) <= 1
+                else:
+                    assert disabled == omitted
+                assert any(abs(a - b) > 32 for a, b in zip(disabled, original, strict=True))
+                actual.set_layer_ui_config(layer["number"], action=pymupdf.PDF_OC_ON)
+                assert actual[0].get_pixmap().samples == original
+
+    with pikepdf.Pdf.open(layered[".pdf"]) as pdf:
+        groups = list(pdf.Root.OCProperties.OCGs)
+        assert len({group.objgen for group in groups}) == 4
+
+
 def test_canvas_pdf_annotation_layer_toggles_marks_without_changing_default_pixels(
     client, tmp_path
 ):

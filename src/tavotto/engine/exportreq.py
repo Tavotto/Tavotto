@@ -393,6 +393,7 @@ class ExportRequest:
     #: 只对 `scope=original` 有意义；缺省 False 时请求、计划身份与产物与从前逐字节相同。
     eps_opaque: bool = False
     pdf_panel_bookmarks: bool = False
+    pdf_panel_layers: bool = False
     pdf_annotation_layer: bool = False
     pdf_text_attachment: bool = False
 
@@ -423,6 +424,7 @@ class ExportRequest:
             **({"merge_pdf": self.merge_pdf.to_payload()} if self.merge_pdf is not None else {}),
             **({"eps_opaque": True} if self.eps_opaque else {}),
             **({"pdf_panel_bookmarks": True} if self.pdf_panel_bookmarks else {}),
+            **({"pdf_panel_layers": True} if self.pdf_panel_layers else {}),
             **({"pdf_annotation_layer": True} if self.pdf_annotation_layer else {}),
             **({"pdf_text_attachment": True} if self.pdf_text_attachment else {}),
             **(
@@ -968,6 +970,9 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
     pdf_panel_bookmarks = spec.get("pdf_panel_bookmarks", False)
     if type(pdf_panel_bookmarks) is not bool or (pdf_panel_bookmarks and not canvas_pdf):
         raise ExportRequestError("bad_request", "PDF panel bookmarks require a canvas PDF", {})
+    pdf_panel_layers = spec.get("pdf_panel_layers", False)
+    if type(pdf_panel_layers) is not bool or (pdf_panel_layers and not canvas_pdf):
+        raise ExportRequestError("bad_request", "PDF panel layers require a canvas PDF", {})
     pdf_annotation_layer = spec.get("pdf_annotation_layer", False)
     if type(pdf_annotation_layer) is not bool or (pdf_annotation_layer and not canvas_pdf):
         raise ExportRequestError("bad_request", "PDF annotation layers require a canvas PDF", {})
@@ -1072,6 +1077,7 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
         include_script=include_script,
         eps_opaque=eps_opaque,
         pdf_panel_bookmarks=pdf_panel_bookmarks,
+        pdf_panel_layers=pdf_panel_layers,
         pdf_annotation_layer=pdf_annotation_layer,
         pdf_text_attachment=pdf_text_attachment,
     )

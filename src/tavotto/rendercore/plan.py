@@ -88,6 +88,7 @@ class CompiledPage:
     #: 用到的冻结源，按首次出现顺序（资源 key → FrozenSource）。
     sources: dict[str, FrozenSource]
     pdf_bookmark_titles: dict[int, str] = field(default_factory=dict)
+    pdf_panel_layer_titles: dict[int, str] = field(default_factory=dict)
     pdf_annotation_indices: frozenset[int] = frozenset()
     pdf_annotation_text: tuple[str, ...] | None = None
 
@@ -107,6 +108,7 @@ class RenderPlan:
     problems: tuple[dict, ...] = ()
     sources: dict[str, FrozenSource] = field(default_factory=dict)
     pdf_bookmark_titles: dict[int, str] = field(default_factory=dict)
+    pdf_panel_layer_titles: dict[int, str] = field(default_factory=dict)
     pdf_annotation_indices: frozenset[int] = frozenset()
     pdf_annotation_text: tuple[str, ...] | None = None
 
@@ -567,6 +569,7 @@ def compile_page(
     background: RGB | None = (1.0, 1.0, 1.0),
     math: dict | None = None,
     pdf_panel_bookmarks: bool = False,
+    pdf_panel_layers: bool = False,
     pdf_annotation_layer: bool = False,
     pdf_text_attachment: bool = False,
 ) -> CompiledPage:
@@ -581,6 +584,7 @@ def compile_page(
     dropped: list[str] = []
     children: list[Node] = []
     pdf_bookmark_titles: dict[int, str] = {}
+    panel_layer_titles: dict[int, str] = {}
     annotation_indices: set[int] = set()
     annotation_text: list[str] = []
     for o in objects:
@@ -619,15 +623,24 @@ def compile_page(
             raise PlanError(
                 "bad_object", f"不认识的对象类型: {kind!r}", {"id": str(o.get("id", ""))}
             )
+        panel = node if isinstance(node, (Image, ImportedPage)) else None
         if node is not None and o.get("clip"):
             node = _clipped(node, o.get("clip"), page_h)
         if node is not None:
-            if kind == "panel" and pdf_panel_bookmarks:
+            if panel is not None and (pdf_panel_bookmarks or pdf_panel_layers):
                 title = o.get("bookmark_title")
                 # Bind by emitted instance position, even when several panels share a source.
                 title = title[:120] if isinstance(title, str) else ""
                 title = "".join(ch for ch in title if ch.isprintable() or ch.isspace())
-                pdf_bookmark_titles[len(children)] = " ".join(title.split())
+                title = " ".join(title.split())
+                if pdf_panel_bookmarks:
+                    pdf_bookmark_titles[len(children)] = title
+                if pdf_panel_layers and panel.opacity > 0:
+                    # The same target rectangle holds the panel after crop, flip and
+                    # quarter turns. A mask may further clip its emitted instructions.
+                    x, y, w, h = panel.rect
+                    if max(0.0, x) < min(page_w, x + w) and max(0.0, y) < min(page_h, y + h):
+                        panel_layer_titles[len(children)] = title
             if pdf_annotation_layer and kind != "panel":
                 annotation_indices.add(len(children))
             if pdf_text_attachment and kind == "text":
@@ -640,6 +653,7 @@ def compile_page(
         tuple(problems),
         frozen,
         pdf_bookmark_titles=pdf_bookmark_titles,
+        pdf_panel_layer_titles=panel_layer_titles,
         pdf_annotation_indices=frozenset(annotation_indices),
         pdf_annotation_text=tuple(annotation_text) if pdf_text_attachment else None,
     )
@@ -668,6 +682,7 @@ def compile_plan(
         background=background,
         math=math,
         pdf_panel_bookmarks=req.pdf_panel_bookmarks,
+        pdf_panel_layers=req.pdf_panel_layers,
         pdf_annotation_layer=req.pdf_annotation_layer,
         pdf_text_attachment=req.pdf_text_attachment,
     )
@@ -691,6 +706,7 @@ def compile_plan(
         problems=compiled.problems,
         sources=compiled.sources,
         pdf_bookmark_titles=compiled.pdf_bookmark_titles,
+        pdf_panel_layer_titles=compiled.pdf_panel_layer_titles,
         pdf_annotation_indices=compiled.pdf_annotation_indices,
         pdf_annotation_text=compiled.pdf_annotation_text,
     )

@@ -1058,6 +1058,7 @@ export default interface Resources {
       "pdfAnnotationLayer": "将画布标注放入可开关的 PDF 图层",
       "pdfHint": "矢量",
       "pdfPanelBookmarks": "为图面板添加 PDF 书签",
+      "pdfPanelLayers": "将每个图面板放入独立的 PDF 图层",
       "pdfTextAttachment": "将画布文字标注作为 JSON 附件嵌入 PDF",
       "phase": {
         "cancelled": "已取消",

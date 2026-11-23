@@ -1138,6 +1138,7 @@ class PdfWriter:
         self,
         bookmark_titles: Mapping[int, str] | None = None,
         annotation_indices: frozenset[int] = frozenset(),
+        panel_layer_titles: Mapping[int, str] | None = None,
     ) -> None:
         import pikepdf
 
@@ -1147,16 +1148,27 @@ class PdfWriter:
             w, h = self.page.width_pt, self.page.height_pt
             rec.ops.append(f"q {_rgb(self.page.background)} rg 0 0 {_num(w)} {_num(h)} re f Q")
         bookmarks = []
-        annotation_property = "/CanvasAnnotations"
-        has_annotation_layer = False
+        layer_names: dict[str, str] = {}
+        panel_number = 0
         for index, child in enumerate(self.page.children):
-            start = len(rec.ops) if index in annotation_indices else None
+            start = len(rec.ops)
             placed = self._emit(child, rec, ir.IDENTITY, 1)
             # Keep each marked node in its original position in the paint stack.
-            if start is not None and len(rec.ops) > start:
-                rec.ops.insert(start, f"/OC {annotation_property} BDC")
-                rec.ops.append("EMC")
-                has_annotation_layer = True
+            if len(rec.ops) > start:
+                layer_property = None
+                if panel_layer_titles is not None and index in panel_layer_titles:
+                    panel_number += 1
+                    title = panel_layer_titles[index]
+                    layer_property = f"/CanvasPanel{panel_number}"
+                    layer_names[layer_property] = (
+                        f"{panel_number}. {title}" if title else str(panel_number)
+                    )
+                elif index in annotation_indices:
+                    layer_property = "/CanvasAnnotations"
+                    layer_names[layer_property] = "Canvas annotations"
+                if layer_property is not None:
+                    rec.ops.insert(start, f"/OC {layer_property} BDC")
+                    rec.ops.append("EMC")
             # Top-level panels share the page's coordinate system. The same
             # placement just emitted the crop and transform into the PDF.
             if (
@@ -1191,15 +1203,17 @@ class PdfWriter:
         self._build_fonts()
         content = self._serialize(rec)
         resources = self._resources(rec)
-        if has_annotation_layer:
-            group = self.pdf.make_indirect(
-                pikepdf.Dictionary(Type=pikepdf.Name.OCG, Name="Canvas annotations")
-            )
+        if layer_names:
+            groups = {
+                key: self.pdf.make_indirect(pikepdf.Dictionary(Type=pikepdf.Name.OCG, Name=title))
+                for key, title in layer_names.items()
+            }
+            layer_order = pikepdf.Array(list(groups.values()))
             self.pdf.Root.OCProperties = pikepdf.Dictionary(
-                OCGs=pikepdf.Array([group]),
-                D=pikepdf.Dictionary(BaseState=pikepdf.Name.ON, Order=pikepdf.Array([group])),
+                OCGs=layer_order,
+                D=pikepdf.Dictionary(BaseState=pikepdf.Name.ON, Order=layer_order),
             )
-            resources.Properties = pikepdf.Dictionary({annotation_property: group})
+            resources.Properties = pikepdf.Dictionary(groups)
         page = pikepdf.Dictionary(
             Type=pikepdf.Name.Page,
             MediaBox=pikepdf.Array([0, 0, float(self.page.width_pt), float(self.page.height_pt)]),
@@ -1217,11 +1231,12 @@ class PdfWriter:
         *,
         bookmark_titles: Mapping[int, str] | None = None,
         annotation_indices: frozenset[int] = frozenset(),
+        panel_layer_titles: Mapping[int, str] | None = None,
         annotation_text: tuple[str, ...] | None = None,
     ) -> WriteFacts:
         import pikepdf
 
-        self._build_document(bookmark_titles, annotation_indices)
+        self._build_document(bookmark_titles, annotation_indices, panel_layer_titles)
         out = Path(out)
         _compress_unfiltered(self.pdf)
         if annotation_text is not None:
@@ -1379,6 +1394,7 @@ def write_pdf(
     *,
     bookmark_titles: Mapping[int, str] | None = None,
     annotation_indices: frozenset[int] = frozenset(),
+    panel_layer_titles: Mapping[int, str] | None = None,
     annotation_text: tuple[str, ...] | None = None,
 ) -> WriteFacts:
     """IR → PDF 文件。`provider` 解析 `FontResource` → 已加载的脸（按 sha256 身份）；`files` 是
@@ -1387,5 +1403,6 @@ def write_pdf(
         out,
         bookmark_titles=bookmark_titles,
         annotation_indices=annotation_indices,
+        panel_layer_titles=panel_layer_titles,
         annotation_text=annotation_text,
     )
