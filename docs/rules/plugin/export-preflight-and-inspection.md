@@ -44,6 +44,7 @@ order: 90
 - **给模型看的文字里「未核验」永远不是「已核验」**：`server._inspection_summary` 三组各自点名
   （未通过 / 已核验 / 未核验），一组都不省；没有 manifest = 整份未核验。这条入口只有 standard 政策
   （必需 = 完整性 + 核心尺寸）；严格政策走 HTTP 的 `inspection` 段。
+  成品字号 `text_size`（ADR 0201）在这条入口上没有规范下限，恒为 `unknown`，照样列进「未核验」。
 - 桥新增 import `artifactinspect` → **三处同源**一起改：`scripts/make_plugin_manifest.BRIDGE_IMPORTS_AT_MIN`、
   `codex-plugin/mcp/server.py` 的 `_BRIDGE_IMPORT` 探测串（resolver 用它判老引擎够不够用，漏了它 = 交棒后桥
   ImportError 崩死；`test_mcp_resolver.py::test_bridge_import_probe_matches_the_bridge` 对拍）、桥本身；它晚于

@@ -1,7 +1,7 @@
 # ADR 0203：成品 PDF 的实际字号接成一项产物检查（`text_size`）
 
-日期：2026-11-23 · 状态：**Proposed（只定契约，不实施；观测那一半已在 `rendercore/inspector.py`，见下）**
-**1.0 收敛纪律：新增一项用户看得见的检查，需要维护者确认是否落在科学图形检查族的豁免之内（`docs/1.0-release-readiness.md` §1.8），或另给豁免。编号原拟 0201，因 0201 / 0202 已分别被 #2125 / #2127 占用，顺延为 0203（2026-11-23）。**
+日期：2026-11-23 · 状态：**Accepted（2026-11-23 维护者裁决「3.接」：按本稿实施；1.0 豁免并入科学图形检查族那一行，见 `docs/1.0-release-readiness.md` §1.8）**
+**编号：0201 写稿时是 main 上的下一个空号；远端另有分支（`ci/certum-windows-signing`、`docs/adr-0201-siwc`）也用了 0201，合入前若被占就顺延。**
 相关：[0068 产物检查器与 manifest](0068-artifact-inspector-and-manifest.md)（四值判据、两档政策、`checks` 闭集）、[0155 期刊标准库](0155-journal-catalog.md)（阈值只来自期刊）、[0072 PyMuPDF 退役](0072-default-render-backend-cutover-and-pymupdf-retirement.md)、[0152 文字编辑](0152-wysiwyg-text-editor.md)（公式画成轮廓 + 不画的文本层）；`docs/sciviz/validation-spec.md` V-009；`docs/research/external-figure-practice-absorption.md` §4.1。
 
 ## 问题
@@ -16,7 +16,7 @@
 
 这一半**只是观测**：不进 `checks`、不进 `summary()` 与 `public_projection()`、不改任何裁决，界面上看不到。同一份密集 PDF（16 个面板、931 段文字、26,732 条指令）遍历耗时的中位数改动前 54.2–55.8 ms、改动后 54.5–56.4 ms，在噪声之内。
 
-## 决定（待批）
+## 决定
 
 1. **`CHECKS_PDF` 加一项 `text_size`**，四值照 0068：
    - `failed`：成品里有一段看得见的文字小于规范下限；
@@ -54,4 +54,22 @@
 
 - 正面：字号这件事第一次有了成品上的独立读数；上下标太小在导出时就能看到，而不是等期刊退回。
 - 代价：检查项闭集多一项，前端与 i18n 各多一个键；带公式的 Tavotto 导出这一项长期是 `unknown`，需要一句说明免得用户以为出了问题。
-- 未做（NOT_RUN）：R / Cairo 产物的实测（只按写法造了手工 PDF）；真实导出管线（面板作为 Form 嵌进版面）上的端到端读数；界面稿。
+- 未做（NOT_RUN）：R / Cairo 产物的实测（只按写法造了手工 PDF）；界面稿（截图过 agy）。
+
+## 实施记录（2026-11-23）
+
+- `CHECKS_PDF` 末尾加 `text_size`；`_check_pdf` 经 `_check_text_size` 调 `text_size_verdict()`，下限取 `profile` 的
+  `min_effective_font_size_pt`，容差是 `inspect(text_size_tol_pt=…)`，`artifactinspect.inspect_produced` 交
+  `profiles.FONT_FLOOR_TOL_PT`。`REQUIRED` 两档都没动。
+- standard 政策下 `inspection_profile()` 照旧不解析规范（请求也不带 `profile_id`），所以这一项在普通导出里恒为
+  `unknown`（`no_threshold`），只在用户勾了严格核验时出结论。
+- `summary()` 多一个 `text_size: {reason, min_pt, floor_pt}`（界面那一句话的依据）；`public_projection()` 只经
+  `checks` 带四值，不带读数。
+- 界面：`artifactInspection.textSizeNote()` 是唯一解读。failed 时「核验未通过」那一行里换成
+  「成品里最小的文字是 4.9 pt，低于规范的 5 pt」；有规范却因公式轮廓量不全（`unmeasured_runs`）时同一位置一行
+  灰字「有文字画成了轮廓（比如公式），量不到它的字号」；通过、没有规范都不画（2026-11-06「核验只说失败」）。
+  灰字这一行是对那条细则的唯一例外，交维护者确认。
+- 真实导出路由的端到端读数（`tests/test_export_text_size_e2e.py`，worker 重画的面板作为 Form 嵌进版面）：7 pt 的
+  `$R^2$` 量到 4.9 pt；版面放大 1.25 倍量到 6.12 pt；画布公式标注是 `unknown`（`unmeasured_runs`）。
+- 读者核对：前端 `inspectionState()` 与 MCP `_inspection_summary()` 都**不按闭集过滤**，遍历 `checks` 的全部键，
+  未知键照样计入并以原键名显示（不会崩）。两者与后端同一份构建发出，没有版本错位，所以 `MANIFEST_VERSION` 不升。

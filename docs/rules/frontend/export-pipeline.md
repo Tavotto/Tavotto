@@ -68,6 +68,9 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
   SVG，其余走素材库同一条 `panelSrc`。「没选」（`no_figure`，让用户点一张）与
   「没得选」（`no_figures`，项目里一张图都没有）是两句话。
 - **导出回执的详情只放用户要用的**（2026-11-06 用户）：文件名、尺寸、保存位置；核验只说失败，「已核验」「未核验」「已覆盖」不上界面。
+  唯一例外是成品字号（`checks.text_size`，ADR 0201）：有规范下限却因公式画成轮廓量不全（`unmeasured_runs`）时，失败行那个位置一行灰字说原因；
+  它失败时那一行用两个数说清（「成品里最小的文字是 4.9 pt，低于规范的 5 pt」），解读只有 `artifactInspection.textSizeNote()` 一处；
+  没有规范（`no_threshold`）、通过都不画。
 - **产物核验的解读只有 `lib/artifactInspection.inspectionState()` 一处**（2026-09-21，统一实施包 U08，
   ADR 0068）：回执 `outputs[].manifest` 是服务端重新打开封口文件量出的逐项四值
   （`verified / failed / unknown / not_applicable`）。回执里只有 `failed` 上界面，红着列「核验未通过：…」

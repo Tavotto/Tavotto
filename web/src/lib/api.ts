@@ -2246,6 +2246,15 @@ export interface ArtifactManifestSummary {
   identity?: ArtifactIdentity | null
   /** 来源：源产物公开身份、回执公开事实、节点表（U09）；老服务端没有 */
   provenance?: ArtifactProvenance | null
+  /** 成品实测字号（`checks.text_size` 的依据，ADR 0201）：原因码 + 量到的最小字号 + 规范下限；老服务端没有 */
+  text_size?: ArtifactTextSize | null
+}
+
+export interface ArtifactTextSize {
+  /** `below_min` / `ok` / `no_threshold` / `not_observed` / `budget` / `no_reader` / `no_text` / `unmeasured_runs` */
+  reason: string
+  min_pt: number | null
+  floor_pt: number | null
 }
 
 export interface ArtifactIdentity {

@@ -25,9 +25,10 @@
   `unknown`（RC-069：碰不到的不声称 no clipping）。
 * **成品里的实际字号**（`observed.text_size`）量的是内容流里每一段**看得见的**文字：`Tf` 字号 × 文字矩阵 × 累计 CTM
   （含 Form 的 `/Matrix`）的纵向缩放 × 页面 `/UserUnit`；Form 继承调用处的字体 / 字号 / 渲染模式（画完不带回）。数学上下标在这里就是一段更小的 `Tf`（matplotlib 的 mathtext 约 0.7 倍），
-  面板被缩放摆上版面也已经乘在 CTM 里。**只观测、不进 `checks`**：阈值由调用方从出版规范交给 `text_size_verdict()`
-  （这里不写任何 pt 数）。量不了的不冒充量过：不画只进文本层的文字（渲染模式 3 / 7，画出来的是轮廓）、没有字体或
-  矩阵退化的段、FontMatrix 不是千分之一的 Type 3 各自计数；预算耗尽 / 没有读取器整项 `unknown`。画成轮廓又不带
+  面板被缩放摆上版面也已经乘在 CTM 里。检查项 `text_size`（ADR 0201）：阈值是调用方交进来的出版规范的
+  `min_effective_font_size_pt`、容差是 `inspect(text_size_tol_pt=…)`（这里不写任何 pt 数），判据本体是
+  `text_size_verdict()`；没有下限一律 `unknown`；两档政策里都**不是**必需项（failed 只写进说明，不拦导出）。
+  量不了的不冒充量过：不画只进文本层的文字（渲染模式 3 / 7，画出来的是轮廓）、没有字体或矩阵退化的段、FontMatrix 不是千分之一的 Type 3 各自计数；预算耗尽 / 没有读取器整项 `unknown`。画成轮廓又不带
   文本层的字在内容流里与普通路径无法区分，这一种量不到也数不到。
 * 文字层的判据是「期望的每一行都能从 ToUnicode（或 ActualText）抽回来」——ToUnicode 存在 ≠ 映射正确，所以比的是**抽出来的
   字符串**（05 §5）。没有期望值（旧后端路）→ `unknown`。
@@ -70,6 +71,7 @@ CARRIER_EMPTY = "empty"
 CARRIER_UNKNOWN = "unknown"
 
 #: 每个格式的检查项（闭集）。`standard` 必需的只有前两项；`strict` 必需的见 `REQUIRED`。
+#: `text_size`（ADR 0201）两档都不是必需项：上下标在许多期刊另有下限，公式轮廓天然 unknown。
 CHECKS_PDF = (
     "integrity",
     "size",
@@ -78,6 +80,7 @@ CHECKS_PDF = (
     "text_layer",
     "image_ppi",
     "clipping",
+    "text_size",
 )
 CHECKS_RASTER = ("integrity", "size", "dpi_tag", "raster_density")
 CHECKS_SVG = ("integrity", "size", "structure", "carrier", "fonts_embedded", "text_layer")
@@ -936,7 +939,30 @@ def _norm(s: str) -> str:
     return " ".join(str(s).split())
 
 
-def _check_pdf(observed: dict, plan: dict, profile: dict | None) -> tuple[dict, list[str]]:
+def _check_text_size(observed: dict, profile: dict | None, tol_pt: float, notes: list[str]) -> str:
+    """成品实测字号这一项（ADR 0201）：阈值只从出版规范的 `min_effective_font_size_pt` 来、容差由调用方给
+    （本模块不写 pt 数，RC-071）；判据本体是 `text_size_verdict()`。判定的原因码与两个数（量到的最小字号、
+    规范下限）记回 `observed.text_size`，`summary()` 只投影这三样，界面据此说一句人话。"""
+    floor = (profile or {}).get("min_effective_font_size_pt")
+    verdict, reason = text_size_verdict(observed, floor, tol_pt=tol_pt)
+    facts = observed.get("text_size")
+    if isinstance(facts, dict):
+        facts["verdict_reason"] = reason
+        facts["floor_pt"] = (
+            float(floor) if reason in ("below_min", "ok", "unmeasured_runs") else None
+        )
+        if verdict == FAILED:
+            notes.append(
+                f"成品里最小的文字 {facts.get('min_pt')} pt，低于规范的 {float(floor):g} pt"
+            )
+        elif reason == "unmeasured_runs":
+            notes.append("有文字没画出字形（公式轮廓 / 只进文本层）或 em 不明，成品字号量不全")
+    return verdict
+
+
+def _check_pdf(
+    observed: dict, plan: dict, profile: dict | None, *, text_size_tol_pt: float = 0.0
+) -> tuple[dict, list[str]]:
     checks: dict[str, str] = {}
     notes: list[str] = []
     checks["integrity"] = observed["integrity"]
@@ -1047,6 +1073,7 @@ def _check_pdf(observed: dict, plan: dict, profile: dict | None) -> tuple[dict, 
         if outside:
             notes.append(f"这些对象的包围盒越出页面（会被裁掉）：{outside[:5]}")
         notes.append("裁切只对计划里的对象判；外来页内部不分析（unknown）")
+    checks["text_size"] = _check_text_size(observed, profile, text_size_tol_pt, notes)
     return checks, notes
 
 
@@ -1112,11 +1139,13 @@ def inspect(
     probe=None,
     run_id: str | None = None,
     svg_budget: SVGBudget | None = None,
+    text_size_tol_pt: float = 0.0,
 ) -> dict:
     """封口产物 → ArtifactManifest（plan / observed / checks / policy 分开；`artifact.sha256` 是文件字节）。
 
     `plan` 由生产者给（不改）；`profile` 是出版规范（严格政策的阈值来源，调用方从 `profilestore` 解析）；
     `run_id` 是这次作业的 id（U09 四身份里的 `run`——只进 `identity.run`，不进语义 / render 身份）。
+    `text_size_tol_pt` 是字号下限判据的数值容差（调用方从 `profiles.FONT_FLOOR_TOL_PT` 给，ADR 0201）。
     """
     if policy not in POLICIES:
         raise ValueError(f"policy 非法: {policy!r}")
@@ -1137,7 +1166,7 @@ def inspect(
         sha256 = hashlib.sha256(data).hexdigest()
     if fmt == "pdf":
         observed = observe_pdf_any(path, probe=probe, budget=budget)
-        checks, notes = _check_pdf(observed, plan, profile)
+        checks, notes = _check_pdf(observed, plan, profile, text_size_tol_pt=text_size_tol_pt)
         kind = "pdf"
     elif fmt == "svg":
         observed = observe_svg(path, budget=svg_budget)
@@ -1303,6 +1332,18 @@ def summary(manifest: dict) -> dict:
         "text_outlined": manifest["plan"].get("text_outlined") is True,
         "identity": dict(manifest.get("identity") or {}),
         "provenance": dict(manifest.get("provenance") or {}),
+        "text_size": _text_size_summary(manifest["observed"].get("text_size")),
+    }
+
+
+def _text_size_summary(facts) -> dict | None:
+    """`checks.text_size` 那一句话要的三样（ADR 0201）：原因码、量到的最小字号、规范下限。不带字号表。"""
+    if not isinstance(facts, dict) or "verdict_reason" not in facts:
+        return None
+    return {
+        "reason": facts["verdict_reason"],
+        "min_pt": facts.get("min_pt"),
+        "floor_pt": facts.get("floor_pt"),
     }
 
 

@@ -273,6 +273,32 @@ def test_strict_inspection_takes_its_thresholds_from_the_publication_profile(env
     assert body["status"] == "failed" and body["error"]["code"] == "bad_inspection"
 
 
+def test_text_size_gets_the_profile_floor_and_the_shared_tolerance(env, monkeypatch):
+    """ADR 0201：成品字号的下限是规范里的 `min_effective_font_size_pt`、容差是预检同一个
+    `profiles.FONT_FLOOR_TOL_PT`，都由接线层交给检查器；`text_size` 在 strict 下也不是必需项。"""
+    from tavotto.engine import profiles
+
+    client, _ = env
+    seen: list = []
+    real_inspect = inspector.inspect
+
+    def spy(path, fmt, **kw):
+        seen.append(kw)
+        return real_inspect(path, fmt, **kw)
+
+    monkeypatch.setattr(inspector, "inspect", spy)
+    body = client.post(
+        "/api/export",
+        json=_canvas(formats=["pdf"], inspection={"mode": "strict", "profile_id": "free-form-v1"}),
+    ).get_json()
+    assert seen and seen[-1]["text_size_tol_pt"] == profiles.FONT_FLOOR_TOL_PT
+    assert seen[-1]["profile"]["min_effective_font_size_pt"] == 6.0
+    mf = _out(body, "pdf")["manifest"]
+    assert mf["checks"]["text_size"] in inspector.VERDICTS
+    assert mf["text_size"]["floor_pt"] in (6.0, None)
+    assert "text_size" not in mf["required"]
+
+
 def test_a_raster_export_under_strict_passes_when_the_ppi_meets_the_profile(env):
     """strict 对位图的必需项是完整性 / 尺寸 / 密度（ppi ≥ 规范）：600 ppi 的 PNG 过，150 的不过。"""
     client, _ = env
