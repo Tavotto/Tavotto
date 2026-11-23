@@ -595,6 +595,8 @@ _CLOSED_LISTS: dict[str, frozenset[str]] = {
             "space_pan",
             "shift_multi",
             "shortcut_help",
+            # 一键排版后拖分隔线（ADR 0199）
+            "quick_layout",
         }
     ),
 }

@@ -50,6 +50,7 @@ from __future__ import annotations
 import argparse
 import builtins
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -99,7 +100,7 @@ _PATH_BASELINE = list(sys.path)
 #: manifest / overrides**——它们在模块层 import matplotlib 与 numpy，而
 #: `import matplotlib` 会当场读 cwd 下的 matplotlibrc、钉死 rcParams，
 #: 用户脚本自己那句 `matplotlib.use(...)` 的语义就不一样了。
-_PHASE1 = ("figcapture", "patchspec", "executionfact", "cmddiag")
+_PHASE1 = ("figcapture", "patchspec", "executionfact", "inputdeclaration", "cmddiag")
 #: 第二阶段（屏障那一刻才装）：要 matplotlib/numpy 的那几个，而那时用户早就
 #: import 过了；外加只被它们平铺 import 到的纯标准库模块。
 #:
@@ -451,7 +452,9 @@ def _apply_stem_aliases() -> None:
 # ---------------------------------------------------------------------------
 # 用户上下文（与真实 python 对拍，见 tests/bridge/test_bridge_invocation.py）
 # ---------------------------------------------------------------------------
-def run_script(target: str, argv: list, on_start=None, source: str | None = None) -> None:
+def run_script(
+    target: str, argv: list, on_start=None, on_source=None, source: str | None = None
+) -> None:
     """等价于 `python <target> <argv…>`。
 
     **不用 `runpy.run_path`**：它把 `__file__` 设成传进去的原串、把
@@ -471,6 +474,8 @@ def run_script(target: str, argv: list, on_start=None, source: str | None = None
     # `source`（ADR 0194 启动脚本）：字节来自它，身份（`__file__` / 编译文件名 / argv[0]）仍是 target
     with io.open_code(os.path.abspath(source) if source else abspath) as f:
         code_bytes = f.read()
+    if on_source is not None:
+        on_source(abspath, code_bytes)
     # `dont_inherit=True` **是必须的**：本文件自己有 `from __future__ import
     # annotations`，而 `compile()` 默认会把**调用处生效的** future 语句一并
     # 传给被编译的代码。于是用户脚本会在不知情的情况下拿到 PEP 563 语义——
@@ -499,7 +504,7 @@ def run_script(target: str, argv: list, on_start=None, source: str | None = None
     exec(code, main_mod.__dict__)
 
 
-def run_script_entry(target: str, argv: list, entry: str, on_start=None) -> None:
+def run_script_entry(target: str, argv: list, entry: str, on_start=None, on_source=None) -> None:
     """库式模块的函数入口（ADR 0127 修订 2026-11-18，TVD-YB4Q）：整份模块执行完再调零参函数 `entry`。
 
     只在 `discover.native_entry_of` 判 `call` 时由父进程经 `--entry` 要：脚本没有 `if __name__` 守卫、顶层代码也不画图，
@@ -512,6 +517,9 @@ def run_script_entry(target: str, argv: list, entry: str, on_start=None) -> None
     sys.path.insert(0, os.path.dirname(abspath))
     with io.open_code(abspath) as f:
         source = f.read()
+    if on_source is not None:
+        # Declared-input capture binds the bytes this entry actually compiles.
+        on_source(abspath, source)
     code = compile(source, abspath, "exec", dont_inherit=True)
     name = os.path.splitext(os.path.basename(abspath))[0]
     mod = types.ModuleType(name)
@@ -561,7 +569,12 @@ def resolve_module_origin(target: str) -> str:
 
 
 def run_module(
-    target: str, argv: list, on_origin=None, on_start=None, path_root: str | None = None
+    target: str,
+    argv: list,
+    on_origin=None,
+    on_start=None,
+    path_root: str | None = None,
+    on_source=None,
 ) -> None:
     """等价于 `python -m <target> <argv…>`。
 
@@ -578,7 +591,7 @@ def run_module(
     `path_root`（ADR 0196，桌面拥有的 native 把包里的脚本按模块运行）：`sys.path[0]` 用它——包根的上一级，
     而不是 cwd（桌面的 cwd 是脚本目录或项目根，那里 import 不到 `plots`）；没给 = 与真实 `-m` 一样放 cwd。
     """
-    import runpy  # noqa: PLC0415 — 只有 module 目标才需要，脚本目标不必付这份 import
+    import runpy  # noqa: PLC0415 — 只有 module 目标才需要付这份 import
 
     sys.argv = [target, *argv]  # run_module(alter_sys=True) 会把 argv[0] 换成模块文件
     sys.path.insert(0, path_root or os.getcwd())
@@ -588,7 +601,13 @@ def run_module(
         _, spec, _cached = runpy._get_module_details(target)  # noqa: SLF001
         origin = spec.origin or ""
         with io.open_code(origin) as fh:
-            code = compile(fh.read(), origin, "exec", dont_inherit=True)
+            code_bytes = fh.read()
+        if on_source is not None:
+            # Only the target module's own source read binds the capture; the
+            # parent-package imports _get_module_details may have triggered are
+            # not target execution.
+            on_source(origin, code_bytes)
+        code = compile(code_bytes, origin, "exec", dont_inherit=True)
         if on_origin is not None:
             on_origin(origin)
         if on_start is not None:
@@ -686,6 +705,14 @@ class Control:
         resp = json.loads(line)
         if not resp.get("ok"):
             raise ConnectionError(f"握手被拒绝: {resp.get('code') or resp}")
+        self.input_declaration = None
+        if "input_declaration" in resp:
+            try:
+                self.input_declaration = _PKG.inputdeclaration.validate_candidate(
+                    resp["input_declaration"]
+                )
+            except (ValueError, TypeError):
+                pass  # Optional evidence never changes ordinary native execution.
 
     def _send(self, obj: dict) -> None:
         self._sendline(json.dumps(obj, ensure_ascii=False))
@@ -985,6 +1012,88 @@ class BridgeRun:
         #: 项目相对路径 → 进 `show()` 屏障那一刻的 sha256（先见者赢）。脚本停在屏障上时用户可能改了 helper / 数据，
         #: 进程执行的是旧内容；`freeze_inputs` 拿它跟最终定格的摘要比对，不一致就不报观察（Codex #1180 P2）
         self._input_digests: dict[str, str | None] = {}
+        self._input_capture = None
+        self._capture_source_sha256: str | None = None
+        self._captured_inputs: dict | None = None
+        self._captured_input_archive: dict | None = None
+
+    def begin_input_capture(self) -> None:
+        """Freeze the one approved lineage before the script's actual source read."""
+        if self.control is None or self.args.target_kind != "script":
+            return
+        if self.args.user_argv and not self.args.run_config:
+            return  # Terminal argument values have no verified portable configuration owner.
+        candidate = self.control.input_declaration
+        if candidate is None or candidate["scope"]["cwd_mode"] not in (
+            "project",
+            "project_root",
+        ):
+            return
+        with _engine_reads():
+            self._input_capture = _PKG.inputdeclaration.begin(
+                candidate,
+                # scope identity stays the original script; the byte identity is
+                # what this process actually reads and compiles (ADR 0194: the
+                # AI-repair launcher's bytes, original script's identity).
+                script=self.args.rel_target,
+                script_path=(
+                    os.path.abspath(self.args.script_source)
+                    if self.args.script_source
+                    else self.args.source_path
+                ),
+                cwd_mode=candidate["scope"]["cwd_mode"],
+                run_config=self.args.run_config or None,
+                remap_rules=(),
+                actual_cwd=os.getcwd(),
+                project_root=self.args.project_root or os.getcwd(),
+            )
+
+    def capture_source(self, origin: str, source: bytes) -> None:
+        """Remember the bytes passed to compile, without rereading the script path."""
+        if self._input_capture is not None:
+            self._capture_source_sha256 = hashlib.sha256(source).hexdigest()
+
+    def _freeze_input_capture(self) -> None:
+        self._captured_inputs = None
+        self._captured_input_archive = None
+        if self._input_capture is None:
+            return
+        if self._capture_source_sha256 is None:
+            # Pre-target barrier (Codex #1925 P2): a parent package imported by
+            # runpy._get_module_details may show a Figure before the target
+            # module's source is ever read. finish() would fail without
+            # sticking — no bound bytes yet — and discarding the still-healthy
+            # pending capture here would leave the real target boundary without
+            # evidence. Keep it armed: this barrier stays a plain control-plane
+            # release, and the target's own read boundary captures as designed.
+            return
+        try:
+            # Raw runner callers historically let the first preview create this
+            # owned output directory. Capture now precedes that preview.
+            os.makedirs(self.args.out_dir, exist_ok=True)
+        except OSError:
+            self._input_capture = None
+            return  # Optional evidence cannot prevent ordinary Figure editing.
+        fact = self._input_capture.finish(
+            self._capture_source_sha256,
+            archive_root=os.path.join(self.args.out_dir, _PKG.inputdeclaration.ARCHIVE_DIRNAME),
+        )
+        fact = _PKG.inputdeclaration.validate_fact(fact, execution_id=self.execution_id)
+        if fact is None or fact["declaration"]["scope"]["script"] != self.execution_script:
+            self._input_capture = None
+            return
+        self._captured_inputs = fact
+        self._captured_input_archive = _PKG.inputdeclaration.validate_archive_descriptor(
+            self._input_capture.archive_descriptor(), fact=fact
+        )
+
+    def _resume_input_capture(self) -> None:
+        self._captured_inputs = None
+        self._captured_input_archive = None
+        if self._input_capture is not None and not self._input_capture.resume(
+            self.execution_id, self._capture_source_sha256
+        ):
+            self._input_capture = None
 
     def execution_started(self, origin: str) -> None:
         """Report the compiled target's actual exec boundary once, without argv.
@@ -1013,6 +1122,8 @@ class BridgeRun:
             except ValueError:  # Different Windows volumes have no project-relative identity.
                 pass
         self.execution_script = script
+        if self._input_capture is not None:
+            self._input_capture.entered(self.execution_id)
         if self.control is not None:
             self.control.event("execution_started", execution_id=self.execution_id, script=script)
 
@@ -1088,6 +1199,47 @@ class BridgeRun:
             def build_result(self, timings: dict) -> dict:
                 return run.build_result()
 
+            def require_existing_execution(self, expected) -> None:
+                if not _PKG.executionfact.valid_id(expected):
+                    raise wireproto.ProtocolError(
+                        "bad_request", "expected_execution_id must be an execution fact."
+                    )
+                if (
+                    run.execution_id != expected
+                    or run.control is None
+                    or run.released
+                    or run._barrier_released
+                    or run.terminated
+                    or run.session is not self.session
+                ):
+                    raise wireproto.ProtocolError(
+                        "svg_source_unavailable", "The native Figure barrier no longer matches."
+                    )
+
+            def require_existing_figure(self, stem) -> None:
+                # Native captures are established before entering this main-thread
+                # control loop. They do not have a safe-worker build flag.
+                if stem not in self.session.states:
+                    raise wireproto.ProtocolError(
+                        "svg_source_unavailable", "The captured native Figure is unavailable."
+                    )
+
+            def handle_v1(self, req: dict) -> dict:
+                result = super().handle_v1(req)
+                if req.get("cmd") in {"render_existing", "export_existing", "preview_png_existing"}:
+                    # Read the actual run fact, never echo the requested identity.
+                    return {**result, "execution_id": run.execution_id}
+                if (
+                    isinstance(req.get("payload"), dict)
+                    and req["payload"].get("include_figure_execution") is True
+                    and _PKG.executionfact.valid_id(run.execution_id)
+                ):
+                    # Opt-in positive proof for the normal render this child actually
+                    # performed. No run fact (e.g. before target compilation) omits the
+                    # field; the normal result is unchanged either way.
+                    return {**result, "execution_id": run.execution_id}
+                return result
+
             def handle_extra(self, cmd, req, payload):
                 if cmd == "continue":
                     # **先恢复、恢复干净了才放行**（ADR 0021 §8.1，Codex #549 第九轮）：
@@ -1112,6 +1264,7 @@ class BridgeRun:
                     # Detach can close the controller before the later event
                     # arrives, so both channels carry the SAME execution fact.
                     run.execution_id = _PKG.executionfact.new_id()
+                    run._resume_input_capture()
                     return {
                         "released": True,
                         "execution_id": run.execution_id,
@@ -1366,6 +1519,8 @@ class BridgeRun:
 
     def barrier(self, reason: str) -> None:
         """屏障期间不跑用户代码：引擎自己的读（预览 / 导出）不进输入观察。"""
+        with _engine_reads():
+            self._freeze_input_capture()
         if reason != "script_end":  # script_end 在 freeze 之后，观察器已卸
             self._snapshot_inputs()
         with _engine_reads():
@@ -1398,6 +1553,20 @@ class BridgeRun:
             figure_facts=self.session.figure_facts(_SAVEFIG_OBSERVATIONS),
             script_error=self.script_error,
             rebase_warnings=self.rebase_warnings or None,
+            **(
+                {
+                    "execution_id": self.execution_id,
+                    "script": self.execution_script,
+                    "captured_inputs": self._captured_inputs,
+                }
+                if self._captured_inputs is not None
+                else {}
+            ),
+            **(
+                {"captured_input_archive": self._captured_input_archive}
+                if self._captured_inputs is not None and self._captured_input_archive is not None
+                else {}
+            ),
             **({"missing_read": self.missing_read} if self.missing_read else {}),
         )
         try:
@@ -1665,21 +1834,34 @@ def main(argv: list | None = None) -> int:
     exit_code = 0
     try:
         if args.as_module:
+            # Package script run as a module (ADR 0196): same declared-input
+            # capture, bound at the target module's own source read.
+            run.begin_input_capture()
             run_module(
                 args.as_module,
                 args.user_argv,
                 on_start=run.execution_started,
                 path_root=args.module_path_root,
+                on_source=run.capture_source if run._input_capture is not None else None,
             )
         elif args.target_kind == "script" and args.call_entry:
+            # Registered function entry (ADR 0127): same capture boundary at
+            # the module's actual source read.
+            run.begin_input_capture()
             run_script_entry(
-                args.target, args.user_argv, args.call_entry, on_start=run.execution_started
+                args.target,
+                args.user_argv,
+                args.call_entry,
+                on_start=run.execution_started,
+                on_source=run.capture_source if run._input_capture is not None else None,
             )
         elif args.target_kind == "script":
+            run.begin_input_capture()
             run_script(
                 args.target,
                 args.user_argv,
                 on_start=run.execution_started,
+                on_source=run.capture_source if run._input_capture is not None else None,
                 source=args.script_source,
             )
         else:

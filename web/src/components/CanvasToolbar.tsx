@@ -28,6 +28,7 @@ import { NOTICE_FIT_ROOM, TOOLBAR_FIT_CLEARANCE, useViewportStore } from '@/stor
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import { fitStage } from '@/store/zoomToSelection'
 import { PresetsDialog } from './PresetsDialog'
+import { QuickLayoutButton } from './QuickLayoutButton'
 import { Button } from './ui/Button'
 import { Menu, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator } from './ui/Menu'
 import { Tip } from './ui/Tooltip'
@@ -258,6 +259,8 @@ function Bar() {
           {label(t('workspace:canvasTools.subLabels'))}
         </Button>
       </Tip>
+
+      <QuickLayoutButton label={label} noFocusOnPointer={noFocusOnPointer} />
 
       <Tip label={t('workspace:topbar.fitCanvas')} shortcut={keyOf('zoomFit')}>
         <Button
