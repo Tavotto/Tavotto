@@ -68,6 +68,39 @@
    }
   },
   {
+   "title": "blend_length_in_data_cut",
+   "gid": "axes_27",
+   "role": "axes",
+   "editable": [
+    {
+     "prop": "visible",
+     "value": true
+    },
+    {
+     "prop": "ylim",
+     "value": [
+      4.0,
+      9.0
+     ]
+    },
+    {
+     "prop": "yscale",
+     "value": "linear"
+    }
+   ],
+   "bar_baseline": {
+    "y": {
+     "status": "ok",
+     "baselines": [
+      {
+       "value": 0.0,
+       "bars": 2
+      }
+     ]
+    }
+   }
+  },
+  {
    "title": "bottom100",
    "gid": "axes_17",
    "role": "axes",
@@ -652,6 +685,72 @@
    }
   },
   {
+   "title": "tiny_stacked_cut",
+   "gid": "axes_23",
+   "role": "axes",
+   "editable": [
+    {
+     "prop": "visible",
+     "value": true
+    },
+    {
+     "prop": "ylim",
+     "value": [
+      1e-10,
+      6e-10
+     ]
+    },
+    {
+     "prop": "yscale",
+     "value": "linear"
+    }
+   ],
+   "bar_baseline": {
+    "y": {
+     "status": "ok",
+     "baselines": [
+      {
+       "value": 0.0,
+       "bars": 2
+      }
+     ]
+    }
+   }
+  },
+  {
+   "title": "tiny_stacked_cut_x1e9",
+   "gid": "axes_24",
+   "role": "axes",
+   "editable": [
+    {
+     "prop": "visible",
+     "value": true
+    },
+    {
+     "prop": "ylim",
+     "value": [
+      0.1,
+      0.6
+     ]
+    },
+    {
+     "prop": "yscale",
+     "value": "linear"
+    }
+   ],
+   "bar_baseline": {
+    "y": {
+     "status": "ok",
+     "baselines": [
+      {
+       "value": 0.0,
+       "bars": 2
+      }
+     ]
+    }
+   }
+  },
+  {
    "title": "twin_left",
    "gid": "axes_16",
    "role": "axes",
@@ -686,7 +785,7 @@
   },
   {
    "title": "twin_right",
-   "gid": "axes_25",
+   "gid": "axes_30",
    "role": "axes",
    "editable": [
     {
@@ -726,7 +825,10 @@
   "axes_2",
   "axes_20",
   "axes_21",
-  "axes_25",
+  "axes_23",
+  "axes_24",
+  "axes_27",
+  "axes_30",
   "axes_7",
   "axes_9"
  ]

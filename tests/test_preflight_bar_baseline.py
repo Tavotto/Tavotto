@@ -73,7 +73,7 @@ import matplotlib.pyplot as plt
 
 
 def main():
-    fig, axs = plt.subplots(5, 5, figsize=(14, 11), dpi=50)
+    fig, axs = plt.subplots(6, 5, figsize=(14, 13), dpi=50)
     a = iter(axs.ravel())
 
     def nxt(name):
@@ -114,6 +114,18 @@ def main():
     ax = nxt("hist_horizontal_cut")
     ax.hist([1, 2, 2, 3, 3, 3], bins=3, orientation="horizontal"); ax.set_xlim(0.5, 3.5)
     ax = nxt("line_only"); ax.plot([0, 1], [5, 8]); ax.set_ylim(4, 9)
+    # 很小的柱高：堆叠判定的容差要随这一组柱的量级缩放，不能有绝对下限（Codex #2124）；放大 1e9 倍结论一致
+    ax = nxt("tiny_stacked_cut")
+    ax.bar([0, 1], [3e-10, 3e-10]); ax.bar([0, 1], [2e-10, 2e-10], bottom=3e-10); ax.set_ylim(1e-10, 6e-10)
+    ax = nxt("tiny_stacked_cut_x1e9")
+    ax.bar([0, 1], [0.3, 0.3]); ax.bar([0, 1], [0.2, 0.2], bottom=0.3); ax.set_ylim(0.1, 0.6)
+    # 柱长不在数据坐标里：与 ylim 无关，截不掉（Codex #2124）；混合变换只要长度那一维是数据坐标就照常判
+    ax = nxt("transaxes_bars"); ax.bar([0.2, 0.6], [0.4, 0.6], width=0.1, transform=ax.transAxes)
+    ax.set_ylim(4, 9)
+    ax = nxt("blend_length_in_axes")
+    ax.bar([0, 1], [0.4, 0.6], transform=ax.get_xaxis_transform()); ax.set_ylim(4, 9)
+    ax = nxt("blend_length_in_data_cut")
+    ax.bar([0.2, 0.6], [5, 8], width=0.1, transform=ax.get_yaxis_transform()); ax.set_ylim(4, 9)
     fig.savefig("BarCases.pdf")
 """
 
@@ -143,6 +155,11 @@ EXPECTED_FACTS = {
     "hist_cut": {"y": [(0.0, 3)]},
     "hist_horizontal_cut": {"x": [(0.0, 3)]},
     "line_only": None,
+    "tiny_stacked_cut": {"y": [(0.0, 2)]},
+    "tiny_stacked_cut_x1e9": {"y": [(0.0, 2)]},
+    "transaxes_bars": None,
+    "blend_length_in_axes": None,
+    "blend_length_in_data_cut": {"y": [(0.0, 2)]},
 }
 
 #: 该报的轴 → 期望的 detail（基线、截在哪一端）
@@ -157,6 +174,9 @@ EXPECTED_HITS = {
     "bottom100_cut": ("y", 100.0, 2),
     "hist_cut": ("y", 0.0, 3),
     "hist_horizontal_cut": ("x", 0.0, 3),
+    "tiny_stacked_cut": ("y", 0.0, 2),
+    "tiny_stacked_cut_x1e9": ("y", 0.0, 2),
+    "blend_length_in_data_cut": ("y", 0.0, 2),
 }
 
 

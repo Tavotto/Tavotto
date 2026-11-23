@@ -79,7 +79,7 @@ order: 260
   （`bar` / `barh` / `hist`）时出现；竖柱记 `y`、横柱（`orientation == "horizontal"`）记 `x`，说不出方向（手工构造的
   容器没有 `orientation`）两维都写 `unavailable`。`baselines` 只收**有共同基线**的容器：所有可见柱的底（竖柱
   `get_y()`、横柱 `get_x()`，即锚点——负值柱的底仍是 0）为有限值且精确相等；浮动柱 / 甘特图不收，堆叠柱的上层
-  （每根柱都正好叠在另一容器同位置那根的顶上，`_stacked_on_others`）不收；底相同的容器合并、柱数相加，数值不舍入。
+  （每根柱都正好叠在另一容器同位置那根的顶上，`_stacked_on_others`；「正好」的容差是这一组柱自身量级的 1e-9 倍，**没有绝对下限**——否则柱高 3e-10 的整组柱处处「相等」，最底层也被当成上层，Codex #2124）不收；**柱长那一维不经过该轴 `transData`**（`transform=ax.transAxes`、`get_xaxis_transform()` 上的竖柱；判据同 V-001 的 `contains_branch_seperately`，`_length_in_data`）的容器与轴范围无关，也不收，混合变换只要长度维是数据坐标就照常判；底相同的容器合并、柱数相加，数值不舍入。
   **事实只有基线**：规则从同一元素 editable 的 `[xy]lim` / `[xy]scale` 读范围与尺度——检查器里改 `ylim` 不改事实、
   只改结论；尺度必须**正是** `linear`（log / symlog / logit / asinh / 缺席一律不判，log 轴上的柱是 G-003 的事），
   范围两个有限数且 `lo < hi`（按 min / max，反转的轴一样），基线落在闭区间 `[lo, hi]` 外（容差为跨度的 1e-9）才报；
