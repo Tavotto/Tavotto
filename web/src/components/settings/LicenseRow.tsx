@@ -140,6 +140,7 @@ export function LicenseRow() {
     control = (
       <Button
         variant="ghost"
+        className="text-ink-2 hover:text-ink"
         loading={busy}
         title={st('releaseTitle')}
         onClick={() => void doRelease()}

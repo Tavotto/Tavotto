@@ -3,7 +3,7 @@
    metallic lettering, engraved mirror-silver emblem, and contact shadow beneath. */
 
 .fp {
-  --fp-w: 360px;
+  --fp-w: 320px;
   position: relative;
   width: min(100%, var(--fp-w));
   margin-inline: auto;

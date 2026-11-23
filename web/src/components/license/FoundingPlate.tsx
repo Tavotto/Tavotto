@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { PRODUCT_NAME } from '@/lib/brand'
+import { cn } from '@/lib/utils'
 import { TextInput } from '../ui/Input'
 import { LOGO_ACCENT, LOGO_MAIN } from './plate/plateLogo'
 import { attachHand, reducedMotion, type Apply } from './plate/plateHand'
@@ -180,7 +181,10 @@ export function FoundingPlate({
         data-default={name ? undefined : ''}
         title={st('nameTitle')}
         onClick={() => setEditing(true)}
-        className="type-caption rounded-sm px-1 text-ink-3 underline decoration-current/35 underline-offset-[3px] hover:text-ink hover:decoration-current focus-visible:focus-ring outline-none"
+        className={cn(
+          'type-caption rounded-sm px-1 underline-offset-4 decoration-current/35 hover:underline focus-visible:underline focus-visible:focus-ring outline-none',
+          name ? 'text-ink-3 hover:text-ink-2' : 'text-ink-2 hover:text-ink',
+        )}
       >
         {name ? st('rename') : st('engrave')}
       </button>
@@ -188,7 +192,7 @@ export function FoundingPlate({
   }
 
   return (
-    <div className="flex flex-col items-center gap-4 pb-4 pt-2" data-founding-plate>
+    <div className="flex flex-col items-center gap-6 pb-2 pt-7" data-founding-plate>
       <div
         ref={root}
         className="fp"
@@ -224,7 +228,7 @@ export function FoundingPlate({
           </div>
         </div>
       </div>
-      {action}
+      <div className="flex h-7 items-center justify-center">{action}</div>
     </div>
   )
 }
