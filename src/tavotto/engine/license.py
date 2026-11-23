@@ -15,7 +15,7 @@
   **与外部审阅的设备密钥是两把**）。请求体含 `op`（闭集）、`device_pub`（标准 base64）、`ts`（毫秒整数），对「去掉 `sig` 的规范化 JSON」
   按 `"<ts>\\n<sha256 hex>"` 签名；规则以服务端 README 与固定向量为准。
 * **令牌**：`{"payload": base64(JSON), "sig": base64(Ed25519(payload 字节)), "kid"}`（标准 base64）。公钥按 `kid` 内置在 `PUBLIC_KEYS`
-  （正式签名密钥还没有，现在是空表）；测试密钥只经 `TAVOTTO_LICENSE_TEST_PUBKEY` + 合规的 `TAVOTTO_LICENSE_ENDPOINT` 认，
+  （正式 kid `live-2026-11`）；测试密钥只经 `TAVOTTO_LICENSE_TEST_PUBKEY` + 合规的 `TAVOTTO_LICENSE_ENDPOINT` 认，
   正式安装永远不认测试服务端签的令牌。
 * **秘密不落地**：令牌原文、激活码、设备密钥只在 `data_dir()/license/` 的 0600 文件与内存里；`status()` / 日志里没有。日志模板是字面量，
   参数只有闭集里的操作名与结果码。`license/` 目录整个不进诊断包，激活码与令牌形状在脱敏规则里（`diagnostictext`）。
@@ -56,8 +56,11 @@ PRODUCTION_LIVE = False
 
 #: 功能键闭集（ADR 0193 §一）；加键要同步改 ADR §一。
 FEATURES: frozenset[str] = frozenset({"hosted-ai", "review-plus", "quick-layout"})
-#: 令牌公钥表 `kid -> 32 字节公钥`。正式签名密钥还没有（维护者本人生成后随发版加入；旧 kid 保留到它签出的令牌全部过期）。
-PUBLIC_KEYS: dict[str, bytes] = {}
+#: 令牌公钥表 `kid -> 32 字节公钥`。换密钥 = 发版加新 kid，旧 kid 保留到它签出的令牌全部过期（ADR 0193 §七）。
+#: live-2026-11：2026-11-23 生成，私钥只在正式函数 license-api 的环境变量里。
+PUBLIC_KEYS: dict[str, bytes] = {
+    "live-2026-11": base64.b64decode("xOJ+iCfgW9ZaYCQ/Phdt+pP+kj/47pHXuJN74eiFcFY="),
+}
 
 #: 失败码闭集（ADR 0193 §三；与前端 `license.failure.*` 对拍）。值 = 用户能不能再点一次。
 FAILURES: dict[str, bool] = {
