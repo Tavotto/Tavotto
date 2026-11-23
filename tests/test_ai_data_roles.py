@@ -1516,3 +1516,58 @@ def test_two_cli_jobs_never_run_two_processes_at_once(tmp_path):
         time.sleep(0.02)
     assert [R.get("p", j["id"])["state"] for j in jobs] == ["ready", "ready"]
     assert runner.active[1] == 1 and len(runner.runs) == 2
+
+
+# --------------------------------------------------------------------------- 小型号 + 最低档策略（ADR 0178，2026-11-21）
+def _official_conn(model="gpt-6.2-sol"):
+    return {
+        "wire": "openai-responses",
+        "base_url": "https://api.openai.com/v1",
+        "api_key": "sk-test-NOT-A-REAL-KEY",
+        "model": model,
+        "auth": "key",
+        "provider_id": "openai",
+    }
+
+
+def _no_header_case():
+    return next(c for c in CASES if not c.get("header"))
+
+
+def test_roles_call_uses_the_small_model_on_official_openai_and_records_it(tmp_path):
+    case = _no_header_case()
+    fresh()
+    t = DR.scripted(case, "openai-responses")
+    run = run_case(case, tmp_path, conn=_official_conn(), post=t)
+    assert run.state == "ready"
+    assert [c["body"]["model"] for c in t.calls] == ["gpt-6-luna"]
+    assert t.calls[0]["body"]["reasoning"] == {"effort": "none"}
+    assert run.usage["model"] == "gpt-6-luna" and "fell_back" not in run.usage
+
+
+def test_roles_call_falls_back_to_the_users_model_when_the_key_cannot_use_the_small_one(tmp_path):
+    case = _no_header_case()
+    fresh()
+    t = DR.scripted(case, "openai-responses")
+    t.script.insert(0, 404)  # 小型号：这把 Key 没有
+    run = run_case(case, tmp_path, conn=_official_conn(), post=t)
+    assert run.state == "ready"
+    assert [c["body"]["model"] for c in t.calls] == ["gpt-6-luna", "gpt-6.2-sol"]
+    assert (
+        run.usage["model"] == "gpt-6.2-sol"
+        and run.usage["fell_back"]
+        and run.usage["requests"] == 2
+    )
+
+
+def test_roles_cache_is_not_shared_between_the_small_model_and_the_users_model(tmp_path):
+    case = _no_header_case()
+    fresh()
+    run_case(case, tmp_path, conn=_official_conn(), post=DR.scripted(case, "openai-responses"))
+    # 同一数据换成「小型号用不了」之后的身份：缓存键不同，不会拿小型号的判断顶替
+    ai_structured.mark_small_unusable(_official_conn(), "gpt-6-luna")
+    R._JOBS.clear()
+    R._BY_KEY.clear()
+    t = DR.scripted(case, "openai-responses")
+    run = run_case(case, tmp_path, conn=_official_conn(), post=t)
+    assert run.state == "ready" and [c["body"]["model"] for c in t.calls] == ["gpt-6.2-sol"]
