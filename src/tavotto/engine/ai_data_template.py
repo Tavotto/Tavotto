@@ -1040,6 +1040,10 @@ SUMMARY_TEXT = {
 }
 
 
+def _num(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
 def style_from_profile(profile: dict | None = None) -> dict:
     """出版规范 profile → 模板要的数字。取不到的项才用具名默认（`_STYLE_DEFAULTS`）。"""
     if profile is None:
@@ -1055,8 +1059,30 @@ def style_from_profile(profile: dict | None = None) -> dict:
     w = profile.get("widths_mm") or {}
     pick("width_single_mm", w.get("single"))
     pick("width_double_mm", w.get("double"))
+    if not (_num(w.get("single")) and _num(w.get("double"))):
+        # 期刊只写了栏位（`page_columns`）或只规定了一档：栏宽按规范的唯一读法 `profiles.derive_page_columns` 取——最窄的一档当单栏、
+        # 最宽的一档当双栏；只有一档就两处都用它。一档都没规定才落到具名默认（期刊没写就是没写，ADR 0155 §2）
+        from . import profiles
+
+        cols = sorted(
+            float(c["width_mm"])
+            for c in profiles.derive_page_columns(profile)
+            if _num(c.get("width_mm")) and c["width_mm"] > 0
+        )
+        if cols:
+            if not _num(w.get("single")):
+                d["width_single_mm"] = cols[0]
+            if not _num(w.get("double")):
+                d["width_double_mm"] = cols[-1]
     pick("font_pt", profile.get("default_font_size_pt"))
-    pick("min_font_pt", profile.get("min_effective_font_size_pt"))
+    # 规范不一定规定「默认字号」（期刊只给上下限）：正文字号夹进规范允许的范围；下限 0 = 没规定（期刊中性底），不当成数字用
+    lo, hi = profile.get("min_effective_font_size_pt"), profile.get("max_font_size_pt")
+    if _num(lo) and lo > 0:
+        d["min_font_pt"] = float(lo)
+        d["font_pt"] = max(d["font_pt"], float(lo))
+    if _num(hi) and hi > 0:
+        d["font_pt"] = min(d["font_pt"], float(hi))
+    d["min_font_pt"] = min(d["min_font_pt"], d["font_pt"])
     lws = [v for v in (profile.get("line_widths_pt") or []) if isinstance(v, (int, float))]
     if lws:
         d["line_widths_pt"] = [float(v) for v in sorted(lws)]

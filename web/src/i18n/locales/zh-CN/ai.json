@@ -698,6 +698,10 @@
       "apply": "试试建议",
       "reading": "正在看各列…"
     },
+    "spec": {
+      "line": "单栏 {{single}} mm · 双栏 {{double}} mm · {{pt}} pt",
+      "lineSingle": "图宽 {{single}} mm · {{pt}} pt"
+    },
     "redraw": {
       "from": "用 {{file}} 画的",
       "again": "换个画法",

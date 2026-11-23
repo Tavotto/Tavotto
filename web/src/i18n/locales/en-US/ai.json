@@ -705,6 +705,10 @@
       "apply": "Try suggested",
       "reading": "Checking columns…"
     },
+    "spec": {
+      "line": "Single {{single}} mm · double {{double}} mm · {{pt}} pt",
+      "lineSingle": "Width {{single}} mm · {{pt}} pt"
+    },
     "redraw": {
       "from": "Drawn from {{file}}",
       "again": "Try another style",

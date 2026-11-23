@@ -50,6 +50,8 @@ export interface BatchHost {
   showData: () => void
   /** 项目文件夹可不可写；不知道回 undefined */
   projectWritable: () => boolean | undefined
+  /** 此刻激活画布的绑定解析出的出版规范（随每份的出候选请求发给后端，各画一张都按同一份栏宽与字号）；画布没有绑定 / 没注册 = 不带 */
+  canvasSpec?: () => Record<string, unknown> | null
 }
 let host: BatchHost = { refreshProject: async () => {}, runScript: async () => {}, showAssets: () => {}, showData: () => {}, quietGuideCard: () => {}, projectWritable: () => undefined }
 export const configureDataBatchHost = (h: BatchHost): void => {
@@ -133,7 +135,7 @@ function outcomeOf(done: AiDataCommitResult): One {
 }
 
 /** 一份表：（上次提交结果不确定就先用同一个请求号重发）出候选 → 提交第一张（它渲染不出来就依次试后面的）→ 放弃会话。不打开。 */
-async function drawOne(ref: TableRef, still: () => boolean, pj: string | null): Promise<One> {
+async function drawOne(ref: TableRef, still: () => boolean, pj: string | null, spec: Record<string, unknown> | null): Promise<One> {
   // 排队的回调轮到时先核一遍：这期间换过项目就什么都不发（A 的相对路径不能拿到 B 里去）
   if (!still()) return { ok: false, reason: null }
   const key = tableKey(ref)
@@ -170,7 +172,7 @@ async function drawOne(ref: TableRef, still: () => boolean, pj: string | null): 
     let res: AiDataProposeResponse
     try {
       res = await aiDataFigurePropose(
-        { table: ref.path, ...(ref.sheet == null ? {} : { sheet: ref.sheet }), render: 'lazy', ...(headers[ref.path] != null ? { header_rows: { [ref.path]: headers[ref.path]! } } : {}) },
+        { table: ref.path, ...(ref.sheet == null ? {} : { sheet: ref.sheet }), render: 'lazy', ...(headers[ref.path] != null ? { header_rows: { [ref.path]: headers[ref.path]! } } : {}), ...(spec ? { spec } : {}) },
         pj,
       )
     } catch (e) {
@@ -267,6 +269,8 @@ export const useDataBatchStore = create<BatchStore>((set, get) => ({
     const todo = get().selection.filter((r) => mode === 'all' || failedKeys.has(tableKey(r)))
     if (todo.length === 0) return
     host.quietGuideCard()
+    // 一轮开始时解析一次：这一批各画一张用同一份规范，中途用户切了画布 / 换了期刊也不让同一批的图宽窄不一
+    const spec = host.canvasSpec?.() ?? null
     const ep = epoch
     const guard = captureProjectEpoch(() => epoch)
     // 清掉这几份上一轮的标记（没画成的重做）；还没轮到的没有记录
@@ -290,7 +294,7 @@ export const useDataBatchStore = create<BatchStore>((set, get) => ({
       if (get().stopRequested) break // 「停下」：后面的不画
       const key = tableKey(ref)
       set((s) => ({ rows: { ...s.rows, [key]: { state: 'running' } } }))
-      const r = await runExclusive(() => drawOne(ref, guard.still, guard.pj))
+      const r = await runExclusive(() => drawOne(ref, guard.still, guard.pj, spec))
       if (!guard.still() || ep !== epoch) return
       if (r.ok) {
         await host.refreshProject().catch(() => undefined) // 图卡出现；不打开

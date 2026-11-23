@@ -238,6 +238,10 @@ export default interface Resources {
         "unverifiable": "图画好了，但这类图没法逐项核对数据。",
         "verified": "图画好了，数据和文件逐项对上。"
       },
+      "spec": {
+        "line": "单栏 {{single}} mm · 双栏 {{double}} mm · {{pt}} pt",
+        "lineSingle": "图宽 {{single}} mm · {{pt}} pt"
+      },
       "suggest": {
         "apply": "试试建议",
         "reading": "正在看各列…"

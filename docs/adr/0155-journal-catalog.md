@@ -280,6 +280,8 @@ Agent 宿主（Codex / Claude Code 插件、MCP 等）与 app 走**同一套接�
 * **不做（登记）**：图高上限（`info.max_height_mm`，种子里 5 本）仍只展示——要进判据得新增检查 id、两侧求值器与 golden 向量，并把数据从 `info` 搬进 `rules`（§3b 留的路），另起 PR；
   不在画布属性栏另起一处「超高」提示（「这份项目有什么问题」只有一条链）。
 
+**新消费者（2026-11-23，用户拍板）：「从数据到图」按画布的规范出图。** 数据页出候选与落盘脚本时取画布绑定解析后的规范（只读绑定、不查目录），栏宽与字号范围按它来；期刊没规定的项落到模板的具名默认，不拿别家规范补。细节在 ADR 0178「修订（2026-11-23）」。
+
 ## 13. 修订记录：规则带原文语气 `strength`（2026-11-15，用户拍板）
 
 * **口径**：期刊规则按原文语气记——must / required 记 `required`，should 记 `recommended`，prefer 记 `preferred`，are accepted 记 `permitted`，e.g. / such as 记 `example`，usually 记 `typical`，都没有记 `unspecified`。取代 11-06 的「should + 数值算硬性要求」。语气由两个模型独立判、一致才写入数据；不一致不写，界面就不标。

@@ -210,6 +210,8 @@ class Session:
     large: bool = False
     #: 合画（几份拼一张）：各份与合成列；单份 = None（`table` / `sheet` / `data_sha256` 在合画时是第一份的 / 拼后的身份，`folder_rel` 是落点目录）
     merge: merge_mod.MergeSpec | None = None
+    #: 出备选时用的样式（请求带了出版规范才有；None = 默认规范）。提交按同一份出脚本，预览与落盘的图同宽同字号
+    style: dict | None = None
 
     def item(self, item_id: str) -> Item | None:
         return self.items.get(item_id)
@@ -424,6 +426,29 @@ def parse_cells(raw) -> dict[str, recipe_mod.CellRule]:
         except recipe_mod.RecipeError as exc:
             raise ProposeError("propose_cells_invalid", params={"reason": exc.code}) from None
     return out
+
+
+#: 请求里那份出版规范的体积上限（内置最大的一份约 10 KB；期刊覆盖并入后同量级）
+SPEC_MAX_BYTES = 256 * 1024
+
+
+def parse_spec(raw) -> tuple[dict | None, str | None, bool]:
+    """请求带的出版规范 → `(模板样式 | None, 幂等摘要 | None, 是否退回了默认)`。不给 = `(None, None, False)`。
+    不是对象 / 过大 / 过不了 `profiles.validate_spec` 都算「不合法」：退回默认规范并如实标出，不抛错（出图不该因为规范坏了而失败）。"""
+    if raw is None:
+        return None, None, False
+    from . import profiles
+
+    try:
+        if not isinstance(raw, dict):
+            raise profiles.ProfileError("spec")
+        text = json.dumps(raw, ensure_ascii=False, sort_keys=True)
+        if len(text.encode("utf-8")) > SPEC_MAX_BYTES:
+            raise profiles.ProfileError("spec")
+        style = tpl.style_from_profile(profiles.validate_spec(json.loads(text)))
+    except (profiles.ProfileError, TypeError, ValueError, RecursionError):
+        return None, "invalid", True
+    return style, hashlib.sha256(text.encode("utf-8")).hexdigest(), False
 
 
 def parse_answers(answers) -> dict:
@@ -660,6 +685,7 @@ def _plan_candidates(
     entry: adf.TableEntry,
     values: adf.DataSummary,
     recipes: list[recipe_mod.FigureRecipe],
+    style: dict | None = None,
 ) -> list[_Planned]:
     """每个备选出脚本 + 公共模块写进候选目录、算期望指纹。**不渲染**（便宜，毫秒级）。"""
     figures = sdir / "tavotto_figures"
@@ -671,7 +697,9 @@ def _plan_candidates(
     for n, recipe in enumerate(recipes, start=1):
         stem = f"cand_{n}"
         try:
-            rendered = tpl.render_recipe_script(entry, recipe, data_rel=data_rel, stem=stem)
+            rendered = tpl.render_recipe_script(
+                entry, recipe, data_rel=data_rel, stem=stem, style=style
+            )
             expected = tpl.expected_fingerprints(values, recipe)
         except tpl.TemplateError:
             plan.append(_Planned(n, stem, recipe, "candidate_template_unsupported", []))
@@ -704,9 +732,10 @@ def _render_candidates(
     values: adf.DataSummary,
     recipes: list[recipe_mod.FigureRecipe],
     pin=None,
+    style: dict | None = None,
 ) -> list[tuple[recipe_mod.FigureRecipe, dict | None, str | None, Path | None, bool]]:
     """每个备选 → `(配方, 覆盖情况, 剔除原因 | None, 缩略图, 是否回退过解释器)`。覆盖情况 = `fingerprint_coverage`；剔除原因在 `DROP_REASONS` 里。"""
-    plan = _plan_candidates(sdir, entry, values, recipes)
+    plan = _plan_candidates(sdir, entry, values, recipes, style)
 
     def work(p: _Planned):
         if p.bad:
@@ -1020,6 +1049,7 @@ def propose(
     client_request_id: str | None = None,
     render: str | None = None,
     tables=None,
+    spec=None,
 ) -> dict:
     """出备选。返回三选一：`{"kind": "ask", question_code, options, unsure}` / `{"kind": "candidates", session, items, dropped}` /
     `{"kind": "nothing", reasons}`。数据读不了（文件夹不存在 / 不在项目内）抛 `DataSourceError`（app 转 400 + 稳定码）。
@@ -1034,7 +1064,11 @@ def propose(
     加一列合成的分组列（值是各份的文件标签），分组角色默认就是这一列；响应另有 `sources`（各份的路径 / 工作表 / 标签）与 `group_column`；
     单份请求的响应逐字不变。
 
-    **不往用户文件夹写任何东西**（候选目录在 `data_dir()/cache/`，见模块说明）；幂等：同一 `(项目, client_request_id)` 在 TTL 内回同一份响应。"""
+    **不往用户文件夹写任何东西**（候选目录在 `data_dir()/cache/`，见模块说明）；幂等：同一 `(项目, client_request_id)` 在 TTL 内回同一份响应。
+
+    `spec`（可选）：前端按画布绑定解析好的出版规范（期刊覆盖已并入；快照优先那套取舍在前端 `resolveDocumentSpec`，这里不重做）。
+    过 `profiles.validate_spec` 后只取模板要的数字（`tpl.style_from_profile`）；不给 = 默认规范，响应逐字不变。规范不合法**不让出图失败**：
+    退回默认规范，响应带 `spec_fallback: true`。规范有效时响应带 `figure_style`（实际用的栏宽与正文字号）。规范进幂等键：换了期刊必须重新出图。只在本机用，不进给模型的内容。"""
     sweep()
     progress.check()
     if render is not None and render not in RENDER_MODES:
@@ -1050,6 +1084,7 @@ def propose(
         ans
     )  # 懒模式的循环会往 `ans` 里补默认答案，所以在它之前记下请求原本带没带
     tabs = parse_tables(tables)
+    style, spec_digest, spec_bad = parse_spec(spec)
     if tabs is not None and table is not None:  # `table` 与 `tables` 只能给一个
         raise ProposeError("propose_input_invalid", "tables")
     # 幂等键 = (项目, 请求号, 请求内容的摘要)：同一请求号带了不同的回答（换了处理方式）必须重新出图，不回旧的
@@ -1058,6 +1093,8 @@ def propose(
         digest_parts.append("lazy")
     if tabs is not None:
         digest_parts.append(["tables", tabs])
+    if spec_digest is not None:
+        digest_parts.append(["spec", spec_digest])
     digest = hashlib.sha256(
         json.dumps(digest_parts, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
@@ -1263,13 +1300,13 @@ def propose(
                 tracked=values.large is not None,
             )
         if auto:
-            plan = _plan_candidates(sdir, chosen, values, [c.recipe for c in res.items])
+            plan = _plan_candidates(sdir, chosen, values, [c.recipe for c in res.items], style)
             for cand, p in zip(res.items, plan, strict=True):
                 cov = None if p.bad else tpl.fingerprint_coverage(p.recipe).to_dict()
                 ready.append((cand, cov, p.bad, None, p))
         else:
             rendered = _render_candidates(
-                sdir, chosen, values, [c.recipe for c in res.items], _project_pin(root)
+                sdir, chosen, values, [c.recipe for c in res.items], _project_pin(root), style
             )
             for cand, (_recipe, coverage, reason, png, fb) in zip(res.items, rendered, strict=True):
                 fallback = fallback or fb
@@ -1335,6 +1372,7 @@ def propose(
         root=Path(root),
         lazy=auto,
         large=values.large is not None,
+        style=style,
     )
     with _LOCK:
         _SESSIONS[sid] = sess
@@ -1345,6 +1383,17 @@ def propose(
         "dropped": dropped,
         # 诊断标记：至少有一张小图是项目解释器没画成、回退到默认链条画的
         "interpreter_fallback": fallback,
+        **({"spec_fallback": True} if spec_bad else {}),
+        # 带了规范才有：这批图实际用的栏宽与正文字号（面板上如实显示，前端不另算一遍）
+        **(
+            {
+                "figure_style": {
+                    k: style[k] for k in ("width_single_mm", "width_double_mm", "font_pt")
+                }
+            }
+            if style is not None
+            else {}
+        ),
         **basics(),
     }
     if auto and not hrows and not user_took_over:
