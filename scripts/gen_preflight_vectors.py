@@ -1474,7 +1474,8 @@ def cases() -> list[dict]:
 
 def evaluate(case: dict) -> list[dict]:
     profile = profiles.load(case.get("profile_id"), case.get("journal"))
-    issues = preflight.run(case["spec"], profile)
+    # 与 TS 的 runSpec 同一份输出：干涉检测（V-011）折进来（Python 生产调用方默认不折，见 `preflight.run`）
+    issues = preflight.run(case["spec"], profile, with_interference=True)
     # 比**判据**与**可翻译描述符**（message = key + params，issue #30：MCP 画布
     # 按 locale 渲染靠它），不比成文措辞：措辞是界面的事，两侧措辞各自演进。
     return [

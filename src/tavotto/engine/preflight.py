@@ -1569,12 +1569,14 @@ def _check_missing_manifest(panel: dict, sink: _Sink) -> None:
     )
 
 
-def run(spec: dict, profile: dict, *, with_interference: bool = True) -> list[dict]:
+def run(spec: dict, profile: dict, *, with_interference: bool = False) -> list[dict]:
     """跑一遍预检，返回问题清单（顺序即报告顺序）。
 
-    `with_interference=False`：不折进干涉检测（V-011）。只给**已经逐对调过
-    `interference.detect`** 的调用方用（保留式规范化 / 按规范修图的事务、改图验收、MCP 的逐对清单）——
-    它们要按 `(规则, gid)` 配对前后两份清单，聚合项混进来会把同一次碰撞报两遍、还会被当成新增问题。
+    `with_interference=True`：把干涉检测（V-011）折进聚合清单——与画布 / 导出对话框的 TS 求值器
+    （`preflight.ts` 的 `runSpec`，那一侧恒开）同一份输出，golden 对拍按 True 生成。**默认关**：Python 这边的
+    生产调用方（保留式规范化 / 按规范修图的事务、改图验收、MCP 桥）都已经逐对调 `interference.detect`，
+    它们按 `(规则, gid)` 配对前后两份清单，聚合项混进来会把同一次碰撞报两遍、还会被当成新增的确定性干涉挡掉
+    事务；而**已经发出去的插件**的桥调的是不带参数的 `run()`（插件只设引擎下限），默认开着它们改不到。
     """
     sink = _Sink(profile)
     _check_page(spec, profile, sink)

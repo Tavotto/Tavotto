@@ -118,7 +118,7 @@ def _crowded_manifest() -> dict:
 def test_run_folds_interference_and_the_opt_out_drops_exactly_those_ids():
     p = profiles.load("lab-publication-v1")
     spec = preflight.spec_from_manifest(_crowded_manifest())
-    with_ = preflight.run(spec, p)
+    with_ = preflight.run(spec, p, with_interference=True)
     without = preflight.run(spec, p, with_interference=False)
     got = {i["id"]: i for i in with_ if i["id"] in IDS}
     assert set(got) == {"text-overlap", "legend-over-data"}
@@ -131,6 +131,8 @@ def test_run_folds_interference_and_the_opt_out_drops_exactly_those_ids():
         assert not any("axes_" in str(v) for v in issue["message"]["params"].values())
     assert [i for i in with_ if i["id"] not in IDS] == without
     assert not IDS & {i["id"] for i in without}
+    # 默认不折：已发布插件的桥调的是不带参数的 run()（插件只设引擎下限），它们逐对另调 detect
+    assert preflight.run(spec, p) == without
 
 
 def test_specfix_and_figureverify_see_each_collision_once():
@@ -149,7 +151,7 @@ def test_mcp_bridge_keeps_its_per_pair_list_and_drops_the_folded_items():
 
     p = profiles.load("lab-publication-v1")
     spec = preflight.spec_from_manifest(_crowded_manifest())
-    kept = bridge._without_interference(preflight.run(spec, p))
+    kept = bridge._without_interference(preflight.run(spec, p, with_interference=True))
     assert not IDS & {i["id"] for i in kept}
     assert kept == preflight.run(spec, p, with_interference=False)
     # 旧引擎的 run() 没有 with_interference 参数：桥按 id 过滤，不传这个参数
@@ -178,7 +180,8 @@ def _render_fixture(tmp: Path, name: str) -> dict:
 
 def _interference(manifest: dict, profile_id: str = "lab-publication-v1") -> list[dict]:
     spec = preflight.spec_from_manifest(manifest, panel_id="p1")
-    return [i for i in preflight.run(spec, profiles.load(profile_id)) if i["id"] in IDS]
+    run = preflight.run(spec, profiles.load(profile_id), with_interference=True)
+    return [i for i in run if i["id"] in IDS]
 
 
 @needs_worker

@@ -156,7 +156,7 @@
 
 ### V-009 成品里的实际字号低于规范下限
 
-- **预检 id**：无（不是预检规则，是导出后对成品的观测）· **basis**：visual · **状态**：观测已实现（`rendercore/inspector.py` 的 `observed.text_size` 与 `text_size_verdict()`；看护 `tests/test_rendercore_text_size.py`）。2026-11-23 起接成产物检查项 `checks.text_size`（ADR 0203，Accepted）：下限只取出版规范的 `min_effective_font_size_pt`，两档政策都不是必需项、不拦导出；没有下限时 not_applicable（没被要求检查）、有下限却量不了时 unknown；界面只在失败时说一句（看护另有 `tests/test_export_text_size_e2e.py`）。
+- **预检 id**：无（不是预检规则，是导出后对成品的观测）· **basis**：visual · **状态**：观测已实现（`rendercore/inspector.py` 的 `observed.text_size` 与 `text_size_verdict()`；看护 `tests/test_rendercore_text_size.py`）。**不进 `checks`、不改导出裁决、界面不显示**；要不要接成一项检查见 ADR 0203（Proposed）。
 - **依据**：
   - FDV 第 24 章，文字大小要在最终尺寸下看（p.291）[原文]。
   - 上下标被排成更小的字：matplotlib 3.11.2 实测，7 pt 的 `$R^2$` 在 PDF 里有一段 4.9 pt 的文字 [推导]。
@@ -176,66 +176,6 @@
   - 错误：有一段小字，同时有量不了的段，仍是 failed。
   - 判不了：不画的文字、非标准 Type 3、退化矩阵、预算耗尽、没有读取器、没有下限。
   - 真 matplotlib：带上下标的图量出 4.9 pt（fonttype 3 与 42）；不带上下标的同一张图量出 7 pt，不报。
-
-### V-010 线条、标记与背景的对比度不够
-
-- **basis**：visual · **状态**：待评估（2026-11-23 登记，先评估误报再决定是否实现）。
-- **依据**：
-  - WCAG 2.2 SC 1.4.11：读图必需的图形对象与相邻颜色至少 3:1；SC 1.4.3：文字至少 4.5:1。经 KD 转述，[二手]。
-  - VAD §10.2.2：文字的亮度对比至少 3:1（p.223）[原文]。
-  - WCAG 是网页标准，期刊没有这项规定：本条只作可读性建议，`suggestion` 档，不进期刊判据。
-- **适用**：线、散点、柱、填充带这类数据元素与它所在 axes 的背景色。图的背景是透明时，按导出页面的白底算。
-- **检测所需信息**：
-  - 元素颜色与 alpha：manifest 有。
-  - axes 背景色：manifest 有 `facecolor`。
-  - 渲染后的实际混色：没有。半透明元素要按 alpha 与背景混合后再算。
-- **检测逻辑**：
-  - 按 WCAG 的相对亮度公式，算出元素颜色（与背景按 alpha 混合后）和背景色的对比度；数据元素低于 3:1 时报。
-  - 网格、参考线、被标为背景的元素不判（G-064 的例外）。
-  - 色图映射的元素不判，那归色图规则管。
-- **严重度**：suggestion · **修复**：none。
-- **误报风险**：中。
-  - 有意淡化的背景曲线（例如「其他组」灰线）会被报。
-  - 很细的线即使颜色够深也可能看不清，本条判不到。
-  - 先在 figurebench 和 compat 语料上量误报率，再决定实现。
-- **测试**（实现时）：
-  - 正常：黑线配白底。
-  - 错误：`#FFFF99` 细线配白底。
-  - 边界：alpha 0.2 的深色线、深色背景配浅色线、灰色背景线（例外）、色图散点（不判）、透明背景。
-  - 判不了：颜色字段缺失时不出 issue。
-
-## 评测方法：人为埋缺陷的图集（2026-11-23 立，思路借自 ARS）
-
-每条 V 规则在升级严重度、或从「待评估」进入实现之前，都要在一批已知答案的图上量过召回率和误报率。不能只靠手写的正例反例。
-
-- **图集**：在真实科研图结构上，每次只埋一个已知缺陷，例如：
-  - 对数轴上混入 0；
-  - 用 ylim 截掉柱底；
-  - 浅黄细线配白底；
-  - 小倍数用不同的 y 范围。
-  同时保留同一批图的「干净版」。
-  - 来源：figurebench、compat 语料，加上按需新写的夹具。
-  - 与 FigureBench 一样，夹具目录逐字节不变，在临时副本里运行。
-- **口径**：
-  - 召回率 = 埋了缺陷且被报的 / 埋了缺陷的；
-  - 误报率 = 干净版被报的 / 干净版总数。
-  - 量不了（status 不是 `ok`）的单独计数，不算进分子，也不算进分母。
-- **留出集**：调规则时只看开发集。另留一份调规则时不看的留出集，用来报最终的数，避免对着答案调参。
-- **门槛**：误报率的上限按 basis 定，在规则的规格里写明。V-010 先跑这一套，再决定是否实现。
-- **不做**：不用多模态模型看图打分代替这套确定性评测。
-
-## 不做成规则的条目
-
-依据与理由见 `sciviz_guidance.json` 中 `basis: taste` 的条目（G-042 至 G-051），以及 G-041（双 y 轴）。
-另外三条明确不做：
-- 「图上必须标 n」：三本书都没有这条。
-- 任何 pt 字号阈值：只来自期刊。
-- 凭 y 落在 [0, 1] 就猜「做过归一化」：伪规则。
-
-XG（来源登记见 `sources.md`）里另有几样明确不做成规则：
-- 面板重复、缺对照、「一张图一个结论」：见 G-058（`basis: taste`）。
-- 按源码里有没有 `dropna`、`sample`、随机数来猜数据被丢或被伪造（XG 的 `validate_figure.py`）：判的是脚本文字，不是数据，改个写法就绕过，也会冤枉正常脚本。
-- 行内三四张图必须等宽：版面选择，不是对错。
 
 ### V-011 画出来的东西撞上了（干涉检测接进常规预检）
 
@@ -269,8 +209,9 @@ XG（来源登记见 `sources.md`）里另有几样明确不做成规则：
 - **两侧同源**：`engine/interference.detect` ↔ `web/src/lib/interference.ts` `detectInterference`（逐行移植，数值格式化与取整按
   Python 的取偶规则 `pyFixed` / `pyRound`）；`preflight._check_panel_interference` ↔ `preflight.ts` `checkPanelInterference`。
   golden：`tests/golden/interference_vectors.json`（逐对）与 `preflight_vectors.json` 的 `interference-*`（聚合）。
-- **不重复报**：已经逐对调 `detect` 的调用方传 `with_interference=False`（`specfix.profile_issues`、`figureverify._issue_keys`）；
-  MCP 桥按 id 滤掉聚合项（`bridge._without_interference`，插件要能配没有这个参数的旧引擎），对外仍是逐对清单。
+- **不重复报**：Python 侧 `preflight.run` 的 `with_interference` 默认关（生产调用方——规范化 / 按规范修图事务、改图验收、
+  MCP 桥，含已发布插件里不带参数调 `run()` 的旧桥——都已逐对调 `detect`）；golden 生成器与对拍用例显式开，与 TS `runSpec` 同一份输出。
+  MCP 桥另按 id 滤掉聚合项（`bridge._without_interference`），对外仍是逐对清单。
 - **测试**：
   - 正常：FigureBench `line_two_series` / `cjk_labels` / `log_decay` / `heatmap_colorbar` / `grouped_bars` 不报；
     `loc="best"`、inset、色条不报；90° 竖排与 45° 斜排的长标签不报。
@@ -279,3 +220,16 @@ XG（来源登记见 `sources.md`）里另有几样明确不做成规则：
   - 边界：恰好 0.25 mm（含等号）、差一点、贴边；clip 折叠；单点 / 闭合回边 / 水平线段的路径；同图例家族；隐藏图例的条目；
     恰好落在一半上的取整（1.25 → "1.2"）。
   - 判不了：bbox 读不懂（布尔、字符串）的元素不参与；图幅读不出来什么都不报；只有包围盒时只说「可能」、不冒充确定。
+
+## 不做成规则的条目
+
+依据与理由见 `sciviz_guidance.json` 中 `basis: taste` 的条目（G-042 至 G-051），以及 G-041（双 y 轴）。
+另外三条明确不做：
+- 「图上必须标 n」：三本书都没有这条。
+- 任何 pt 字号阈值：只来自期刊。
+- 凭 y 落在 [0, 1] 就猜「做过归一化」：伪规则。
+
+XG（来源登记见 `sources.md`）里另有几样明确不做成规则：
+- 面板重复、缺对照、「一张图一个结论」：见 G-058（`basis: taste`）。
+- 按源码里有没有 `dropna`、`sample`、随机数来猜数据被丢或被伪造（XG 的 `validate_figure.py`）：判的是脚本文字，不是数据，改个写法就绕过，也会冤枉正常脚本。
+- 行内三四张图必须等宽：版面选择，不是对错。

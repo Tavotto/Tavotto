@@ -102,8 +102,10 @@ order: 260
   **前端是逐行移植**（`web/src/lib/interference.ts`，不是消费后端结果：画布的预检只在浏览器求值，事实——`bbox` / `clip_bbox` /
   `geometry` / `visible` / `position`——manifest 里都已经有，不加协议字段、老后端与 playground 照样成立），数值格式化与取整走
   `pyFixed` / `pyRound`（Python 的取偶规则；`toFixed` 在 1.25 这种恰好的半值上进位）。**已经逐对调 `detect` 的调用方不许再收到聚合项**
-  （同一次碰撞两把键、会被当成新增问题挡掉事务）：`specfix.profile_issues` 与 `figureverify._issue_keys` 传 `with_interference=False`；
-  MCP 桥按 id 滤掉（`bridge._without_interference`——插件要能配没有这个参数的旧引擎）。整体隐藏的图例的条目不参与文字重叠
+  （同一次碰撞两把键、会被当成新增的确定性干涉挡掉事务）：所以 Python 侧 `preflight.run(…, with_interference=False)` **默认关**，
+  只有 golden 生成器与对拍用例显式开（TS 的 `runSpec` 恒开，两边对的是开着的那份输出）——已经发出去的插件的桥调的是不带参数的
+  `run()` 再逐对加 `detect`，插件只设引擎下限，默认开着会让它们在新引擎上重复报并挡掉规范化事务。`specfix.profile_issues` /
+  `figureverify._issue_keys` 显式写 `False`；MCP 桥另按 id 滤掉（`bridge._without_interference`，不传这个参数——插件要能配旧引擎）。整体隐藏的图例的条目不参与文字重叠
   （`interference.hidden_legends`，与 `_hidden_legends` 同口径）。**斜排文字的复核只能否决**：布局框判为重叠、且一方是斜排
   （`text_block.rotation` 不是 90° 的整数倍、无 `clip_bbox`）时，按 `text_block` 的有向矩形在四条边法线上再量一次，阈值仍是
   `MIN_OVERLAP_MM`（轴对齐时退化成 dx / dy）；三角函数只产出布尔，detail / 文案不含它算出的数（跨平台末位差不进 golden），
