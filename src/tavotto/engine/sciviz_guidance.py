@@ -86,3 +86,75 @@ def render(ids: list[str] | None = None, bases: tuple[str, ...] | None = None) -
         out.append(f"## {_BASIS_HEADINGS[basis]}")
         out += [f"- [{e['id']}] {e['agent']}" for e in group]
     return "\n".join(out) + ("\n" if out else "")
+
+
+#: AI 改图助手（figure edit）提示词带上的子集：改图时最容易无意中引入的数据 / 编码错误、只能由作者确认的事、
+#: 以及全部品味条目（防止助手把偏好当成错误去「修」）。改动这张表会改变改图提示词——要同步跑改图评测。
+FIGURE_EDIT_IDS: tuple[str, ...] = (
+    "G-001",
+    "G-002",
+    "G-004",
+    "G-005",
+    "G-009",
+    "G-010",
+    "G-011",
+    "G-022",
+    "G-024",
+    "G-030",
+    "G-035",
+    "G-036",
+    "G-038",
+    "G-041",
+    "G-042",
+    "G-043",
+    "G-044",
+    "G-045",
+    "G-046",
+    "G-047",
+    "G-048",
+    "G-049",
+    "G-050",
+    "G-051",
+)
+
+#: 插件技能参考文件（由 `render_markdown()` 生成，`scripts/gen_sciviz_reference.py --check` 看护）
+SKILL_REFERENCE = "codex-plugin/skills/tavotto-figure/references/visualization-guidance.md"
+
+_STRENGTH_LABELS = {
+    "firm": "硬性",
+    "strong": "强建议",
+    "preference": "偏好",
+    "inference": "Tavotto 推导",
+}
+
+
+def render_markdown() -> str:
+    """插件技能里的参考文件全文：按类分组，每条给编号、标题、强度、一句准则、例外与出处（书 + 位置，不含引文）。确定输出。"""
+    doc = load()
+    out = [
+        "# 科学图形准则（选图、画图、改图前读）",
+        "",
+        "<!-- 由 src/tavotto/profiles/sciviz_guidance.json 生成（scripts/gen_sciviz_reference.py --write），不要手改 -->",
+        "",
+        "依据三本书（Wilkinson《The Grammar of Graphics》、Munzner《Visualization Analysis and Design》、"
+        "Wilke《Fundamentals of Data Visualization》）与 Tavotto 自己的推导。",
+        "「作者偏好」一类不是对错：按用户或期刊来，不要当成问题报告给用户，也不要擅自改掉。",
+        "「只能由作者确认」一类不要猜：问用户，或如实说不知道。",
+        "",
+    ]
+    for basis in BASES:
+        group = [e for e in doc["entries"] if e["basis"] == basis]
+        if not group:
+            continue
+        out += [f"## {_BASIS_HEADINGS[basis]}", ""]
+        for e in group:
+            out.append(
+                f"- **{e['id']} {e['title']}**（{_STRENGTH_LABELS[e['strength']]}）：{e['agent']}"
+            )
+            if e["exceptions"]:
+                out.append(f"  - 例外：{'；'.join(e['exceptions'])}")
+            srcs = "；".join(f"{ev['src']} {ev['loc']}" for ev in e["evidence"])
+            out.append(f"  - 出处：{srcs}")
+        out.append("")
+    out.append("书目：" + "；".join(f"{k} = {v}" for k, v in doc["sources"].items()))
+    return "\n".join(out) + "\n"
