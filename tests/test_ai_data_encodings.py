@@ -221,7 +221,7 @@ def test_the_common_module_did_not_change_so_its_hash_and_name_stay_put():
 #: 2026-11-19 大表（ADR 0178 修订）：`table_from_text` / `delimited_records` 改成流式 `iter_table` / `iter_records` 的整份文本版 → `tavotto_plot_98157f49.py`；
 #: 2026-11-21 整数编码的分组（`knockout` 0 / 1）：公共模块多了 `NumCat` / `apply_numcat`，`distinct` 遇到整列 `NumCat` 按数值升序 → `tavotto_plot_f7aa140e.py`；
 #: 2026-11-23 按期刊字号范围出图：公共模块多了 `fit_fonts` / `place_legends` / `build_legend` / `legend_hits_data`（图例图内放不下挪到图外；文字互相干涉时同一类一起退字号）→ 这一个）
-PINNED_RUNTIME_NAME = "tavotto_plot_fa823c21.py"
+PINNED_RUNTIME_NAME = "tavotto_plot_3e27763b.py"
 
 
 # =========================================================================== 接口

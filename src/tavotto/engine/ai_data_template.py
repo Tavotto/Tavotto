@@ -951,14 +951,13 @@ def pick_fonts(latin, cjk):
 
 
 def legend_hits_data(ax, leg, pad=1.0):
-    """图例有没有压到这个坐标区里画的数据（线、点、柱 / 箱、填充带）。图例一侧取**真正挡住数据的东西**（与预检 V-011 同一口径）：
+    """图例有没有压到这个坐标区里画的数据（线、点、柱 / 箱、填充带）。图例一侧取**真正挡住数据的东西**（与预检同一口径：`docs/sciviz/validation-spec.md` V-011「图例一侧的取法（与数据出图摆放共用）」）：
     画了不透明底框的，整块框都算（图例画在数据上面，框里的空白也把线盖住了）；没有底框或底框全透明的，只算每条文字和每个色块
     各自的外接框——空白处压着线不算。数据一侧用真实几何。调用前图要先排过版（`fig.draw_without_rendering()`）。"""
     from matplotlib.transforms import Bbox
 
-    frame = leg.get_frame()
-    alpha = frame.get_alpha()
-    if leg.get_frame_on() and (alpha is None or alpha > 0) and frame.get_facecolor()[3] > 0:
+    # 「有框且不透明」= `frameon` 为真且实际画出来的框颜色 alpha > 0（matplotlib 的 framealpha 直接替换颜色里的 alpha）
+    if leg.get_frame_on() and leg.get_frame().get_facecolor()[3] > 0:
         boxes = [leg.get_window_extent()]
     else:
         handles = getattr(leg, "legend_handles", None) or leg.legendHandles
