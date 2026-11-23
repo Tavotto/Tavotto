@@ -510,6 +510,14 @@ def _transport_failure(exc: BaseException) -> _Failure:
     return _Failure("network")
 
 
+def _response_socket(resp):
+    """响应底层的 socket（拿不到 = None，调用方退回只在两次读之间查总时限）。"""
+    try:
+        return resp.fp.raw._sock
+    except AttributeError:
+        return None
+
+
 def stream_get(
     url: str,
     *,
@@ -540,10 +548,18 @@ def stream_get(
             declared = (resp.headers.get("Content-Length") or "").strip()
             if declared.isdigit() and int(declared) > max_bytes:
                 raise _Failure("too_large")
+            sock = _response_socket(resp)
             while True:
-                if time.monotonic() - started > deadline_s:
+                remaining = deadline_s - (time.monotonic() - started)
+                if remaining <= 0:
                     raise _Failure("timeout")
-                block = resp.read(min(chunk_bytes, max_bytes - total + 1))
+                if sock is not None:  # 单次等待不超过剩余总时限：慢速滴灌也拖不过 deadline_s
+                    try:
+                        sock.settimeout(min(timeout, remaining))
+                    except OSError:  # 响应读完后连接已关：这一轮 read1 会直接返回空
+                        pass
+                # read1：有数据就返回，不像 read(n) 会一直等到攒够 n 字节
+                block = resp.read1(min(chunk_bytes, max_bytes - total + 1))
                 if not block:
                     return
                 total += len(block)

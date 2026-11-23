@@ -98,6 +98,8 @@ class _Sidecar:
         if cmd is None:
             raise ProUnavailable("missing", "no entry point")
         argv, env = cmd
+        # 已安装版本：先上「正在使用」租约再拉进程（别的宿主进程清理旧版本时据此跳过）；开发目录来源得 None
+        self._lease = proinstall.acquire_in_use(root)
         try:
             self.proc = subprocess.Popen(  # noqa: S603 — argv 来自本机组件目录，不经 shell
                 argv,
@@ -110,6 +112,7 @@ class _Sidecar:
                 creationflags=runtime.CREATE_NO_WINDOW,
             )
         except OSError as exc:
+            self._release_lease()
             raise ProUnavailable("missing", str(exc)) from None
         self.root = root
         self.last_used = time.monotonic()
@@ -127,6 +130,7 @@ class _Sidecar:
         except BaseException:
             if self.proc.poll() is None:
                 self.close()
+            self._release_lease()
             raise
         feats = hello.get("features")
         self.features = (
@@ -207,7 +211,17 @@ class _Sidecar:
             raise ProUnavailable("internal", "result not an object")
         return result
 
+    def _release_lease(self) -> None:
+        proinstall.release_in_use(self._lease)
+        self._lease = None
+
     def close(self) -> None:
+        try:
+            self._close_proc()
+        finally:
+            self._release_lease()
+
+    def _close_proc(self) -> None:
         try:
             if self.proc.stdin:
                 self.proc.stdin.close()

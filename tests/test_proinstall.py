@@ -88,6 +88,17 @@ class _Handler(BaseHTTPRequestHandler):
             except OSError:
                 pass
             return
+        if self.path.startswith("/pro/slowdrip"):  # 慢速滴灌：每 0.05 秒 1 字节，持续很久
+            self.send_response(200)
+            self.end_headers()
+            try:
+                for _ in range(600):
+                    self.wfile.write(b"x")
+                    self.wfile.flush()
+                    time.sleep(0.05)
+            except OSError:
+                pass
+            return
         data = srv.files.get(self.path.split("?")[0])
         if data is None:
             self.send_response(404)
@@ -1105,3 +1116,86 @@ def test_release_keys_table_only_serves_pro_kids(env, monkeypatch):
     with pytest.raises(proinstall.ProInstallError) as exc:
         proinstall.verify_release(sign_release(key, payload, kid="license-1"))
     assert exc.value.code == "unknown_kid"
+
+
+# ---------------------------------------------------------------------------
+# 跨进程「正在使用」租约（另一个宿主进程在跑旧版本时，本进程的清理不删它）
+# ---------------------------------------------------------------------------
+_HOLDER = (
+    "import sys, time\n"
+    "from tavotto.engine import proinstall\n"
+    "h = proinstall.acquire_in_use(sys.argv[1])\n"
+    "print('held' if h is not None else 'none', flush=True)\n"
+    "sys.stdin.readline()\n"
+)
+
+
+def _spawn_holder(root):
+    import subprocess
+    import sys
+
+    p = subprocess.Popen(  # noqa: S603
+        [sys.executable, "-c", _HOLDER, str(root)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+        env={**os.environ, "PYTHONPATH": str(Path(proinstall.__file__).parents[2])},
+    )
+    assert p.stdout.readline().strip() == "held"
+    return p
+
+
+def _stop_holder(p):
+    p.stdin.write("\n")
+    p.stdin.flush()
+    p.wait(timeout=10)
+
+
+def test_install_prune_keeps_version_leased_by_other_process(env, srv, rel_key):
+    install_version(srv, rel_key, "1.0.0")
+    a = proinstall.pro_dir() / f"1.0.0-{PLAT}"
+    holder = _spawn_holder(a / "tavotto-pro")
+    try:
+        install_version(srv, rel_key, "1.1.0")
+        install_version(srv, rel_key, "1.2.0")
+        assert a.is_dir()  # 另一个进程的 sidecar 还在用它
+    finally:
+        _stop_holder(holder)
+    install_version(srv, rel_key, "1.3.0")  # 租约随进程释放，下一轮清掉
+    assert not a.exists()
+    assert not (proinstall.pro_dir() / f".inuse-1.0.0-{PLAT}.lock").exists()  # 孤儿租约文件一并清
+
+
+def test_install_refuses_to_replace_dir_leased_elsewhere(env, srv, rel_key):
+    install_version(srv, rel_key, "1.0.0")
+    install_version(srv, rel_key, "1.1.0")
+    a = proinstall.pro_dir() / f"1.0.0-{PLAT}"
+    holder = _spawn_holder(a / "tavotto-pro")
+    try:
+        with pytest.raises(proinstall.ProInstallError) as exc:
+            install_version(srv, rel_key, "1.0.0")
+        assert exc.value.code == "busy"
+    finally:
+        _stop_holder(holder)
+
+
+def test_prohost_holds_lease_while_sidecar_runs(env, srv, rel_key, monkeypatch):
+    monkeypatch.setattr(prohost, "_codesign_ok", lambda root: True)
+    install_version(srv, rel_key, "1.0.0")
+    name = f"1.0.0-{PLAT}"
+    prohost.call("echo", {}, feature="quick-layout")
+    assert proinstall._in_use_elsewhere(name)  # 运行中：租约被持有
+    prohost.shutdown()
+    assert not proinstall._in_use_elsewhere(name)  # 退出：释放
+
+
+def test_stream_get_total_deadline_holds_against_slow_drip(env, srv):
+    """服务端每 0.05 秒滴 1 字节：每次 socket 操作都不超时，但总时限 0.3 秒必须按时到（不能等攒够一整块）。"""
+    t0 = time.monotonic()
+    with pytest.raises(diagsend._Failure) as exc:
+        for _ in diagsend.stream_get(
+            srv.base + "/pro/slowdrip", max_bytes=10**6, timeout=5.0, deadline_s=0.3
+        ):
+            pass
+    assert exc.value.code == "timeout"
+    assert time.monotonic() - t0 < 1.0

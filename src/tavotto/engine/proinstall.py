@@ -395,35 +395,132 @@ def _locked(timeout: float = LOCK_TIMEOUT_S):
             raise ProInstallError("io_error") from None
         deadline = time.monotonic() + timeout
         while True:
-            try:
-                if os.name == "nt":
-                    import msvcrt
-
-                    os.lseek(fd, 0, os.SEEK_SET)
-                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-                else:
-                    import fcntl
-
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if _try_flock(fd):
                 locked = True
                 break
-            except OSError:
-                if time.monotonic() >= deadline:
-                    raise ProInstallError("busy") from None
-                time.sleep(0.02)
+            if time.monotonic() >= deadline:
+                raise ProInstallError("busy") from None
+            time.sleep(0.02)
         yield
     finally:
         if fd is not None:
             try:
                 if locked:
-                    if os.name == "nt":
-                        os.lseek(fd, 0, os.SEEK_SET)
-                        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-                    else:
-                        fcntl.flock(fd, fcntl.LOCK_UN)
+                    _funlock(fd)
             finally:
                 os.close(fd)
         _THREAD_LOCK.release()
+
+
+def _try_flock(fd: int) -> bool:
+    """非阻塞地给 `fd` 上排他文件锁（POSIX `flock` / Windows `msvcrt.locking`）；拿到 True，被别人占着 False。进程死亡时系统自动释放。"""
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
+def _funlock(fd: int) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+# ---------------------------------------------------------------------------
+# 「正在使用」租约（跨进程）：sidecar 在跑期间，宿主持有 `pro/.inuse-<版本>.lock` 的文件锁；
+# 进程死了系统自动释放，不记 PID。锁文件放在版本目录外面：不改包内容，删目录也不被它挡住。
+# ---------------------------------------------------------------------------
+_INUSE_PREFIX = ".inuse-"
+_INUSE_SUFFIX = ".lock"
+
+
+def _inuse_path(name: str) -> Path:
+    return pro_dir() / f"{_INUSE_PREFIX}{name}{_INUSE_SUFFIX}"
+
+
+def _version_of_root(root: object) -> str | None:
+    """sidecar 根目录 -> 它所在的版本目录名（不在 `pro/` 下 = 开发目录来源 = None）。"""
+    try:
+        rel = Path(root).resolve().relative_to(pro_dir().resolve())  # type: ignore[arg-type]
+    except (ValueError, OSError):
+        return None
+    return _valid_name(rel.parts[0]) if rel.parts else None
+
+
+def acquire_in_use(root: object) -> int | None:
+    """给 `root` 所在的已安装版本上「正在使用」租约，返回句柄（fd）；不是已安装版本 / 拿不到 = None（尽力而为，不抛）。
+    拿不到只会让别的进程少一道保护，不阻止本进程启动 sidecar。"""
+    name = _version_of_root(root)
+    if name is None:
+        return None
+    fd = None
+    try:
+        pro_dir().mkdir(parents=True, exist_ok=True)
+        fd = os.open(_inuse_path(name), os.O_RDWR | os.O_CREAT, 0o600)
+        if _try_flock(fd):
+            return fd
+    except OSError:
+        pass
+    if fd is not None:
+        with contextlib.suppress(OSError):
+            os.close(fd)
+    return None
+
+
+def release_in_use(handle: int | None) -> None:
+    """放掉 `acquire_in_use` 给的租约；重复 / None 无害。"""
+    if handle is None:
+        return
+    with contextlib.suppress(OSError):
+        _funlock(handle)
+    with contextlib.suppress(OSError):
+        os.close(handle)
+
+
+def _in_use_elsewhere(name: str) -> bool:
+    """别的进程（或本进程另一处）是否持着 `name` 的租约：探一下，拿到就立刻放。探不了（IO 错）按「在用」算，宁可不删。"""
+    try:
+        fd = os.open(_inuse_path(name), os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError:
+        return True
+    try:
+        if _try_flock(fd):
+            with contextlib.suppress(OSError):
+                _funlock(fd)
+            return False
+        return True
+    finally:
+        os.close(fd)
+
+
+def _drop_stale_lease(p: Path) -> None:
+    try:
+        fd = os.open(p, os.O_RDWR, 0o600)
+    except OSError:
+        return
+    try:
+        if _try_flock(fd):
+            with contextlib.suppress(OSError):
+                p.unlink()  # Windows 上持着锁删不掉：留到下一轮
+            with contextlib.suppress(OSError):
+                _funlock(fd)
+    finally:
+        os.close(fd)
 
 
 def _read_json(p: Path) -> dict:
@@ -500,13 +597,7 @@ def _running_version() -> str | None:
     """正在运行的 sidecar 所在的版本目录名（开发目录来源 / 没有在跑 = None）。"""
     probe = _running_root
     root = probe() if probe is not None else None
-    if root is None:
-        return None
-    try:
-        rel = Path(root).resolve().relative_to(pro_dir().resolve())
-    except (ValueError, OSError):
-        return None
-    return _valid_name(rel.parts[0]) if rel.parts else None
+    return _version_of_root(root) if root is not None else None
 
 
 def _prune(keep: set[str]) -> None:
@@ -520,8 +611,13 @@ def _prune(keep: set[str]) -> None:
     for p in children:
         n = p.name
         if _VERSION_DIR.fullmatch(n):
-            if n not in keep and n != running:
+            # 其它进程的 sidecar 可能正从这个目录跑：租约探不通就不删
+            if n not in keep and n != running and not _in_use_elsewhere(n):
                 _discard(p)
+        elif n.startswith(_INUSE_PREFIX) and n.endswith(_INUSE_SUFFIX):
+            # 对应版本目录已不在的租约文件：能锁上（没人持有）才删
+            if not (pro_dir() / n[len(_INUSE_PREFIX) : -len(_INUSE_SUFFIX)]).exists():
+                _drop_stale_lease(p)
         elif n.startswith((".dl-", ".tmp-")):
             try:
                 if now - p.stat().st_mtime > STALE_TMP_S:
@@ -670,7 +766,7 @@ def install(zip_path: Path | str, envelope: object) -> dict:
                     "pro_version": payload["pro_version"],
                 }
             if final.exists():
-                if name == _running_version():
+                if name == _running_version() or _in_use_elsewhere(name):
                     raise ProInstallError("busy")  # 目标目录正有 sidecar 在跑：不动它
                 _discard(final)
             os.rename(tmp, final)
