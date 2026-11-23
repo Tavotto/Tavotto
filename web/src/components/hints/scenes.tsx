@@ -1013,6 +1013,77 @@ function HelpScene({ theme, play, onLoop }: SceneProps) {
   )
 }
 
+/* ───────── 13. 一键排版之后：拖图之间的空隙调比例 ───────── */
+
+type QuickS = { lw: number; hover: boolean; held: boolean; hide: boolean }
+const QUICK_INNER = 216
+const QUICK_GAP = 10
+const QUICK0: QuickS = { lw: 100, hover: false, held: false, hide: false }
+const QUICK_GO = 38
+
+const quickScript = async (a: Act<QuickS>) => {
+  await a.wait(700)
+  await a.move('gutter')
+  // 悬停：竖条变蓝（`QuickLayoutGutters` 的 group-hover）
+  await a.set({ hover: true })
+  await a.wait(500)
+  const from = a.center('gutter')
+  await a.set({ held: true })
+  await a.drag(
+    { x: from.x + QUICK_GO, y: from.y },
+    (p, o) => a.put({ lw: Math.round(QUICK0.lw + (p.x - o.x)) }),
+    { duration: 900, cursor: 'preserve' },
+  )
+  await a.set({ held: false })
+  await a.wait(1800)
+  await a.move(REST)
+  await a.set({ hover: false })
+  await fadeReset(a, QUICK0)
+}
+
+function QuickScene({ theme, play, onLoop }: SceneProps) {
+  return (
+    <Stage<QuickS>
+      specimen
+      unframed
+      width={W}
+      height={H}
+      theme={theme}
+      play={play}
+      className="hint-stage"
+      initial={QUICK0}
+      poster={{ ...QUICK0, lw: QUICK0.lw + QUICK_GO, hover: true }}
+      script={looped(quickScript, onLoop)}
+      cursor={{ at: REST, idle: false }}
+    >
+      {(s) => {
+        const rw = QUICK_INNER - QUICK_GAP - s.lw
+        return (
+          <div className="hint-work">
+            <div className="hint-fade" data-hide={s.hide || undefined}>
+              <div className="hint-page" style={{ left: 40, top: 22, width: 240, height: 116 }}>
+                <div style={{ position: 'absolute', left: 12, top: 12 }}>
+                  <MiniPlot w={s.lw} h={92} tag="a" />
+                </div>
+                <div style={{ position: 'absolute', left: 12 + s.lw + QUICK_GAP, top: 12 }}>
+                  <MiniPlot w={rw} h={92} tag="b" tone={1} />
+                </div>
+                <i
+                  className="hint-gutter"
+                  data-target="gutter"
+                  data-hover={s.hover || undefined}
+                  data-held={s.held || undefined}
+                  style={{ left: 12 + s.lw + QUICK_GAP / 2 - 4, top: 12, height: 92 }}
+                />
+              </div>
+            </div>
+          </div>
+        )
+      }}
+    </Stage>
+  )
+}
+
 const SCENES: Record<CardHintKind, (p: SceneProps) => React.JSX.Element> = {
   fit_canvas: FitScene,
   edge_crop: EdgeScene,
@@ -1026,6 +1097,7 @@ const SCENES: Record<CardHintKind, (p: SceneProps) => React.JSX.Element> = {
   space_pan: PanScene,
   shift_multi: MultiScene,
   shortcut_help: HelpScene,
+  quick_layout: QuickScene,
 }
 
 /** 一张卡的动画。`key` 由调用方给（换提示 / 重播时重挂） */

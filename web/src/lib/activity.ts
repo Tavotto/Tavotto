@@ -93,6 +93,10 @@ export type ActivityDetail =
   | { kind: 'view.wheel_struggled' }
   /** 双击图里的文字，打开了快速改字（`PanelView` 双击一处发） */
   | { kind: 'figure.text_quick_edit' }
+  /** 一键排版成功落地（`runQuickLayout` 一处发；失败 / 作废 / 过期不发） */
+  | { kind: 'quick_layout.applied' }
+  /** 拖分隔线调比例成功落地（`runQuickLayoutRatios` 一处发）：用过一次 = 已经知道分隔线能拖 */
+  | { kind: 'quick_layout.ratios_applied' }
 
 export type ActivityKind = ActivityDetail['kind']
 
@@ -129,6 +133,8 @@ export const ACTIVITY_KINDS: readonly ActivityKind[] = [
   'view.drag_panned',
   'view.wheel_struggled',
   'figure.text_quick_edit',
+  'quick_layout.applied',
+  'quick_layout.ratios_applied',
 ]
 
 /**
