@@ -453,7 +453,8 @@ test('packages selected canvases and installs only their resources', {
     expect(fullPackage.request().postDataJSON().canvas_ids).toEqual(['private', 'shared', 'detail'])
     expect(await fullPackage.json()).toMatchObject({ document_format: 'v4', assets: 3 })
 
-    await documentMenu.click()
+    await expect(documentMenu).toHaveAttribute('aria-expanded', 'false')
+    await documentMenu.press('ArrowDown')
     await page.getByRole('menuitem', { name: '打包所选画布', exact: true }).click()
     const selection = page.getByRole('dialog', { name: '打包所选画布' })
     const submit = selection.getByRole('button', { name: '打包所选画布' })
