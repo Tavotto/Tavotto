@@ -411,6 +411,98 @@ test('packages only the active canvas and reopens it in a fresh project', {
   }
 })
 
+test('packages selected canvases and installs only their resources', {
+  tag: '@feature:canvas.package-selection',
+}, async ({ app, page }) => {
+  const project = mkdtempSync(path.join(os.tmpdir(), 'tavotto-selected-canvases-'))
+  const layoutName = 'SelectedSharing'
+  let sender: Awaited<ReturnType<typeof startApp>> | undefined
+  try {
+    const pdf = readFileSync(path.join(import.meta.dirname, '..', '..', 'examples', 'figures', 'Fig1_kinetics.pdf'))
+    for (const id of ['private', 'shared', 'detail']) writeFileSync(path.join(project, id + '.pdf'), pdf)
+    sender = await startApp({ figures: project })
+    const canvases = ['private', 'shared', 'detail'].map(id => ({
+      id, name: id, schema: 2, page: { w: 120, h: 100 }, guides: [], updatedAt: 1,
+      objects: [{
+        id: id + '-panel', type: 'panel', x: 20, y: 20, w: 50, h: 40,
+        fileId: id + '.pdf', fileKind: 'pdf', nativeW: 73, nativeH: 58, overrides: [],
+      }],
+    }))
+    const layoutURL = sender.baseURL + '/api/layouts/' + layoutName
+    const seeded = await page.request.post(layoutURL + '?target=project', {
+      data: {
+        schema: 3, project: { id: 'sharing-selection', name: layoutName },
+        canvases, activeCanvasId: 'private', createdAt: 1, updatedAt: 1,
+      },
+    })
+    expect(seeded.ok(), await seeded.text()).toBe(true)
+    const before = await (await page.request.get(layoutURL)).text()
+    await page.goto(sender.baseURL)
+    const documentMenu = page.getByRole('button', { name: /^(文档|排版)：/ })
+    await documentMenu.click()
+    await page.getByRole('menuitem', { name: /^打开(文档|排版)/ }).click()
+    await page.getByRole('dialog').getByRole('button', { name: new RegExp(layoutName) }).click()
+    await waitForDocumentReady(page)
+    await expect(page.locator('[data-canvas-tab="private"]')).toHaveAttribute('aria-selected', 'true')
+
+    await documentMenu.click()
+    await page.getByRole('menuitem', { name: '打包所选画布', exact: true }).click()
+    const selection = page.getByRole('dialog', { name: '打包所选画布' })
+    const submit = selection.getByRole('button', { name: '打包所选画布' })
+    const privateCanvas = selection.locator('[data-package-canvas="private"]')
+    await expect(privateCanvas).toBeChecked()
+    await privateCanvas.uncheck()
+    await expect(submit).toBeDisabled()
+    await selection.locator('[data-package-canvas="detail"]').check()
+    await selection.locator('[data-package-canvas="shared"]').check()
+    const exporting = page.waitForResponse(response => new URL(response.url()).pathname === '/api/package')
+    await submit.click()
+    const packed = await exporting
+    expect(packed.ok(), await packed.text()).toBe(true)
+    expect(packed.request().postDataJSON().canvas_ids).toEqual(['shared', 'detail'])
+    const { name, url, assets } = await packed.json()
+    expect(assets).toBe(2)
+    await expect(selection).toBeHidden()
+    await expect(page.locator('[data-canvas-tab="private"]')).toHaveAttribute('aria-selected', 'true')
+    expect(await (await page.request.get(layoutURL)).text()).toBe(before)
+    const archive = await page.request.get(sender.baseURL + url)
+    expect(archive.ok()).toBe(true)
+    const buffer = await archive.body()
+    await sender.stop()
+    sender = undefined
+
+    const receiver = await app({ noProject: true })
+    const destination = path.join(receiver.home, 'received canvases')
+    await page.goto(receiver.baseURL)
+    const chooser = page.waitForEvent('filechooser')
+    await page.locator('[data-install-project-package]').click()
+    await (await chooser).setFiles({ name, mimeType: 'application/zip', buffer })
+    await page.locator('[data-project-package-destination]').fill(destination, { timeout: 60_000 })
+    const installation = page.waitForResponse(response =>
+      new URL(response.url()).pathname === '/api/package/install', { timeout: 90_000 })
+    await page.locator('[data-project-package-install]').click()
+    const installed = await installation
+    expect(installed.status(), await installed.text()).toBe(201)
+    const received = (await installed.json()).doc
+    expect(received.activeCanvasId).toBe('shared')
+    expect(received.canvases.map((item: { id: string }) => item.id)).toEqual(['shared', 'detail'])
+    expect(existsSync(path.join(destination, 'private.pdf'))).toBe(false)
+    for (const id of ['shared', 'detail']) expect(readFileSync(path.join(destination, id + '.pdf'))).toEqual(pdf)
+
+    await page.locator('[data-project-package-open]').click()
+    await page.locator('[data-project-package-continue]').click({ timeout: 80_000 })
+    await waitForDocumentReady(page)
+    await expect(page.locator('[data-canvas-stage] [data-object-id="shared-panel"]')).toBeVisible()
+    await page.locator('[data-all-canvases]').click()
+    await expect(page.locator('[data-all-canvases-item="private"]')).toHaveCount(0)
+    await page.locator('[data-all-canvases-item="detail"]').click()
+    await expect(page.locator('[data-canvas-stage] [data-object-id="detail-panel"]')).toBeVisible()
+  } finally {
+    await sender?.stop()
+    rmSync(project, { recursive: true, force: true })
+  }
+})
+
 test('canvas PDF export adds bookmarks to two instances of the same figure', {
   tag: '@feature:export.pdf-panel-bookmarks',
 }, async ({ app, page }) => {

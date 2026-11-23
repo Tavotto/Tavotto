@@ -8468,6 +8468,7 @@ export default interface Resources {
       "export": "导出",
       "exportCanvasPackage": "仅打包当前画布",
       "exportPackage": "导出项目包",
+      "exportSelectedCanvases": "打包所选画布",
       "exportTip": "导出 PNG / PDF",
       "fitCanvas": "适应画布",
       "foreignOpen": {
@@ -8493,6 +8494,7 @@ export default interface Resources {
       "newBlankDocument": "新建空白排版",
       "noOtherDocuments": "暂无其他排版",
       "openDocument": "打开排版…",
+      "packageCanvasDescription": "选择要分享的画布。项目包只包含所选画布及其引用的资源。",
       "presets": "科研预设与符号…",
       "projectDocuments": "项目里的排版",
       "projectFileUnsaved": "项目里的 {{file}} 有未保存的改动",

@@ -211,16 +211,86 @@ def test_package_can_select_one_canvas_before_collecting_assets(env, schema):
 
 
 @pytest.mark.parametrize(
-    ("canvas_id", "ids"), [(None, ["c1"]), ("missing", ["c1"]), ("c1", ["c1", "c1"])]
+    ("schema", "active", "expected_active"),
+    [
+        (documents.SCHEMA_PROJECT, "private", "shared"),
+        (documents.SCHEMA_CHART_PROJECT, "detail", "detail"),
+    ],
 )
-def test_package_cannot_fall_back_to_all_canvases_on_bad_selection(env, canvas_id, ids):
+def test_package_selected_canvases_share_resources_and_keep_document_order(
+    env, schema, active, expected_active
+):
+    client, figs, tmp = env
+    for file in ("private.pdf", "detail.pdf"):
+        (figs / file).write_bytes((figs / "p1.pdf").read_bytes())
+    private = {**_layout("private.pdf"), "id": "private", "name": "Private"}
+    shared = {**_layout(), "id": "shared", "name": "Shared"}
+    detail = {**_layout("detail.pdf"), "id": "detail", "name": "Detail"}
+    detail["objects"].append({**shared["objects"][0], "id": "shared-copy"})
+    doc = {
+        "schema": schema,
+        "project": {"id": "p1", "name": "Three canvases"},
+        "canvases": [private, shared, detail],
+        "activeCanvasId": active,
+    }
+    response = client.post("/api/package", json={"doc": doc, "canvas_ids": ["detail", "shared"]})
+    body = response.get_json()
+    assert response.status_code == 200, body
+    assert body["assets"] == 2
+    assert body["document_format"] == "v4"
+    package = figs / "tavottofile" / "export" / body["name"]
+    expected = {
+        **doc,
+        "schema": documents.SCHEMA_CHART_PROJECT,
+        "canvases": [shared, detail],
+        "activeCanvasId": expected_active,
+    }
+    with zipfile.ZipFile(package) as archive:
+        assert set(archive.namelist()) == {
+            "layout.json",
+            "package_manifest.json",
+            "assets/p1.pdf",
+            "assets/detail.pdf",
+        }
+        assert json.loads(archive.read("layout.json")) == expected
+
+    destination = tmp / "received canvases"
+    installed = _open_zip(
+        client,
+        package,
+        "/api/package/install",
+        options=json.dumps({"destination": str(destination)}),
+    )
+    assert installed.status_code == 201, installed.get_json()
+    assert installed.get_json()["doc"] == expected
+    assert (destination / "p1.pdf").read_bytes() == (figs / "p1.pdf").read_bytes()
+    assert (destination / "detail.pdf").read_bytes() == (figs / "detail.pdf").read_bytes()
+    assert not (destination / "private.pdf").exists()
+
+
+@pytest.mark.parametrize(
+    ("selection", "ids"),
+    [
+        ({"canvas_id": None}, ["c1"]),
+        ({"canvas_id": "missing"}, ["c1"]),
+        ({"canvas_id": "c1"}, ["c1", "c1"]),
+        ({"canvas_ids": []}, ["c1"]),
+        ({"canvas_ids": "c1"}, ["c1"]),
+        ({"canvas_ids": ["c1", []]}, ["c1"]),
+        ({"canvas_ids": ["c1", "c1"]}, ["c1"]),
+        ({"canvas_ids": ["c1", "unknown"]}, ["c1"]),
+        ({"canvas_ids": ["c1", "unknown"]}, ["c1", "c1"]),
+        ({"canvas_id": "c1", "canvas_ids": ["c1"]}, ["c1"]),
+    ],
+)
+def test_package_cannot_fall_back_to_all_canvases_on_bad_selection(env, selection, ids):
     client, figs, _ = env
     doc = {
         "schema": documents.SCHEMA_PROJECT,
         "canvases": [{**_layout(), "id": canvas} for canvas in ids],
         "activeCanvasId": "c1",
     }
-    response = client.post("/api/package", json={"doc": doc, "canvas_id": canvas_id})
+    response = client.post("/api/package", json={"doc": doc, **selection})
     assert response.status_code == 400
     assert response.get_json()["code"] == "invalid_document"
     assert not list((figs / "tavottofile" / "export").glob("*.tavotto"))

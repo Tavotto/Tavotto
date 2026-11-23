@@ -64,6 +64,7 @@ import { Tip } from './ui/Tooltip'
 import { useRenameFocusReturn } from './ui/useRenameFocusReturn'
 import type { StatusTone } from './ui/Notice'
 import { BuildMismatchChip } from './BuildMismatchChip'
+import { CanvasPackageDialog } from './CanvasPackageDialog'
 import { DesktopUpdateChip } from './DesktopUpdateChip'
 import { TutorialChip, useTutorialChipVisible } from './onboarding/TutorialChip'
 import { ContactButton } from './contact/ContactButton'
@@ -687,6 +688,7 @@ export function DocumentMenu() {
   const hasMultipleCanvases = useDocumentStore((s) => s.canvases.length > 1)
   const projectFile = useActiveProjectFile()
   const [editing, setEditing] = useState(false)
+  const [packageSelectionOpen, setPackageSelectionOpen] = useState(false)
   const [draft, setDraft] = useState(name)
   const triggerRef = useRef<HTMLButtonElement>(null)
   // Enter / Esc 收起改名把焦点还给文档名按钮；点别处收的（失焦）不还（Codex #833，判据见 `ui/useRenameFocusReturn`）
@@ -729,7 +731,7 @@ export function DocumentMenu() {
     )
   }
 
-  return (
+  const menu = (
     <Menu
       // 非模态：单击开菜单、双击改名（2026-10-07 设计审计 §10.1 P2）——模态菜单一开，第二下落不回触发器上
       modal={false}
@@ -781,7 +783,10 @@ export function DocumentMenu() {
       </MenuItem>
       <MenuItem onSelect={() => void exportPackage()}>{t('topbar.exportPackage')}</MenuItem>
       {hasMultipleCanvases && (
-        <MenuItem onSelect={() => void exportPackage('canvas')}>{t('topbar.exportCanvasPackage')}</MenuItem>
+        <>
+          <MenuItem onSelect={() => void exportPackage('canvas')}>{t('topbar.exportCanvasPackage')}</MenuItem>
+          <MenuItem onSelect={() => setPackageSelectionOpen(true)}>{t('topbar.exportSelectedCanvases')}</MenuItem>
+        </>
       )}
       <MenuItem onSelect={importPackage}>{t('topbar.importPackage')}</MenuItem>
 
@@ -816,6 +821,12 @@ export function DocumentMenu() {
         ))
       )}
     </Menu>
+  )
+  return (
+    <>
+      {menu}
+      {packageSelectionOpen && <CanvasPackageDialog onClose={() => setPackageSelectionOpen(false)} />}
+    </>
   )
 }
 

@@ -1074,6 +1074,8 @@
     "export": "导出",
     "exportPackage": "导出项目包",
     "exportCanvasPackage": "仅打包当前画布",
+    "exportSelectedCanvases": "打包所选画布",
+    "packageCanvasDescription": "选择要分享的画布。项目包只包含所选画布及其引用的资源。",
     "exportTip": "导出 PNG / PDF",
     "fitCanvas": "适应画布",
     "foreignOpen": {

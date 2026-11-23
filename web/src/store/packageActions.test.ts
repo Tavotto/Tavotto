@@ -104,6 +104,27 @@ describe('导出项目包失败', () => {
     await Promise.resolve()
     expect(createPackage).toHaveBeenCalledTimes(1)
   })
+
+  it('重试时仍打包用户选定的画布，即使当前画布已切换', async () => {
+    const document = emptyProject()
+    const first = document.canvases[0]
+    document.canvases.push({ ...first, id: 'detail', name: 'Detail' }, { ...first, id: 'private', name: 'Private' })
+    await useDocumentStore.getState().switchDocument(document, 'three-canvases')
+    createPackage.mockRejectedValueOnce(new Error('x'))
+    const scope = { canvasIds: [first.id, 'detail'] }
+    await exportPackage(scope)
+    const retry = ui().statusAction!
+    useDocumentStore.getState().switchCanvas('private')
+    createPackage.mockResolvedValueOnce({ name: 'x.tavotto', assets: 2 })
+    retry.run()
+    await vi.waitFor(() => expect(createPackage).toHaveBeenCalledTimes(2))
+    expect(createPackage).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.objectContaining({ activeCanvasId: 'private' }),
+      {},
+      { pj: 'A', canvasId: undefined, ...scope },
+    )
+  })
 })
 
 describe('打开项目包失败', () => {

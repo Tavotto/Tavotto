@@ -5989,16 +5989,18 @@ def api_package():
     打包只读 figures 目录，不写入任何源文件。
 
     整份排版按提交文档的 schema 选择包格式（#1921）。
-    单画布分享先从提交文档选取画布，再以同一条链生成可安装的 v4 便携包。
+    按画布分享先从提交文档选取画布，再以同一条链生成可安装的 v4 便携包。
     """
     root = require_project()
     body = request.get_json(force=True)
     doc = body.get("doc") if isinstance(body, dict) else None
-    if isinstance(body, dict) and "canvas_id" in body:
-        canvas_id = body["canvas_id"]
+    if isinstance(body, dict) and ("canvas_id" in body or "canvas_ids" in body):
+        canvas_ids = body["canvas_ids"] if "canvas_ids" in body else [body["canvas_id"]]
         if (
-            not isinstance(canvas_id, str)
-            or not canvas_id
+            ("canvas_id" in body and "canvas_ids" in body)
+            or not isinstance(canvas_ids, list)
+            or not canvas_ids
+            or any(not isinstance(cid, str) or not cid for cid in canvas_ids)
             or not isinstance(doc, dict)
             or doc.get("schema")
             not in (
@@ -6008,20 +6010,31 @@ def api_package():
             or not isinstance(doc.get("canvases"), list)
         ):
             raise engine_documents.DocumentError("invalid_document", "无效的项目包画布")
+        requested = set(canvas_ids)
         selected = [
             canvas
             for canvas in doc["canvases"]
-            if isinstance(canvas, dict) and canvas.get("id") == canvas_id
+            if isinstance(canvas, dict)
+            and isinstance(canvas.get("id"), str)
+            and canvas["id"] in requested
         ]
-        if len(selected) != 1:
-            raise engine_documents.DocumentError("invalid_document", "项目包画布必须唯一")
-        # A single-canvas share is installable even when the sender uses schema 3.
+        selected_ids = {canvas["id"] for canvas in selected}
+        if (
+            len(canvas_ids) != len(requested)
+            or len(selected) != len(requested)
+            or selected_ids != requested
+        ):
+            raise engine_documents.DocumentError("invalid_document", "项目包画布必须存在且唯一")
+        active = doc.get("activeCanvasId")
+        if not isinstance(active, str) or active not in selected_ids:
+            active = selected[0]["id"]
+        # A selection is installable even when the sender uses schema 3.
         # Collect files and execution dependencies only from the export copy.
         doc = {
             **doc,
             "schema": engine_documents.SCHEMA_CHART_PROJECT,
             "canvases": selected,
-            "activeCanvasId": canvas_id,
+            "activeCanvasId": active,
         }
         body = {**body, "doc": doc}
     if isinstance(doc, dict) and doc.get("schema") == engine_documents.SCHEMA_CHART_PROJECT:

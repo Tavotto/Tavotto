@@ -315,6 +315,22 @@
       ]
     },
     {
+      "id": "canvas.package-selection",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "选择多张画布及其引用的资源，打成一个可安装的项目包",
+        "en-US": "Share selected canvases and their resources in one installable project package"
+      },
+      "entry": "排版菜单 → 打包所选画布",
+      "e2e": [
+        {
+          "spec": "chart-document.spec.ts",
+          "title": "packages selected canvases and installs only their resources"
+        }
+      ]
+    },
+    {
       "id": "canvas.select-and-drag",
       "status": "active",
       "platform": "both",

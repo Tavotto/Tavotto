@@ -17,7 +17,9 @@ import { useUiStore } from './uiStore'
 /** 同一份文档连点两次导出：先发回执不许覆盖后发那次的结局。 */
 let packageExportSequence = 0
 
-export async function exportPackage(scope: 'project' | 'canvas' = 'project', attempt = 0): Promise<void> {
+type PackageScope = 'project' | 'canvas' | { canvasIds: readonly string[] }
+
+export async function exportPackage(scope: PackageScope = 'project', attempt = 0): Promise<void> {
   const ui = useUiStore.getState()
   const doc = useDocumentStore.getState()
   // 「再试一次」只重做**这一份**排版的导出：点的时候换了项目 / 排版就只收提示，不把别的东西打成包
@@ -35,7 +37,8 @@ export async function exportPackage(scope: 'project' | 'canvas' = 'project', att
   }
   try {
     const stem = canvasId === undefined ? doc.projectMeta.name || doc.doc.name : doc.doc.name
-    const res = await createPackage(stem, doc.buildProject(), {}, { pj: projectId, canvasId })
+    const selection = typeof scope === 'object' ? scope : undefined
+    const res = await createPackage(stem, doc.buildProject(), {}, { pj: projectId, canvasId, ...selection })
     if (!stillHere()) return
     const executionIncomplete = res.document_format === CHART_PACKAGE_FORMAT && res.execution_coverage?.state === 'incomplete'
     const message = res.document_format === CHART_PACKAGE_FORMAT && res.missing.length > 0

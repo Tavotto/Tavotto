@@ -80,8 +80,9 @@ order: 200
   读和 reserve 持自动保存槽位锁，核实际正文修订。confirm 持命名正文锁，复核保存回执和关联票据。
   schema 3 升级到 4 保留原槽位和关联，外部改写槽位后旧修订无法预留新关联。看护 `tests/test_layout_recovery_acceptance.py`。
 - **项目包**：`POST /api/package` 的整份排版导出按正文 schema 选号，旧包继续使用原素材 SHA-1 清单。
-  提供 `canvas_id` 时先按唯一画布 ID 裁取正文，再收集素材、快照和执行依赖，并生成可安装的 v4 包。
-  找不到唯一画布则拒绝打包。
+  `canvas_id` 指定单个画布，`canvas_ids` 指定多选范围。两者只能用一个。选择非空，且每个 ID
+  在请求与正文中各出现一次。保留正文画布顺序，当前画布未选时以第一张入包画布为打开项。
+  先裁取正文，再从导出副本收集素材、快照和执行依赖，并生成可安装的 v4 包。
   含计算图表的便携包在清单中带 `documentpackage.CHART_PACKAGE_FORMAT`。`/api/package/open`
   按内容分流，`/api/package/inspect` 只核验，`/api/package/install` 校验成员、重放计算图表并独占发布新目录。
   `packagebudget` 定义全部预算。安装仅发布资源，打开已安装的项目时由原文档 writer 提交正文。

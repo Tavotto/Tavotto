@@ -2626,12 +2626,12 @@ export const createPackage = (
   stem: string,
   doc: FigureDocument | ProjectDocument,
   settings: Record<string, unknown>,
-  opts?: { pj?: string | null; canvasId?: string },
+  opts?: { pj?: string | null; canvasId?: string; canvasIds?: readonly string[] },
 ) =>
   jsonFetch<PackageResult>('/api/package', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ stem, doc, settings, canvas_id: opts?.canvasId }),
+    body: JSON.stringify({ stem, doc, settings, canvas_id: opts?.canvasId, canvas_ids: opts?.canvasIds }),
   }, opts?.pj)
 
 export interface PackageOpenResult {

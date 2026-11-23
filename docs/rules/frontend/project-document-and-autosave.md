@@ -36,6 +36,8 @@ order: 200
   接收方项目、文档代次和安装回执在每次等待后复核。画布切换换入换出
   undo 栈（canvasSessions）与 UI 会话（`store/canvasSession.ts`）。
   标签页 openTabs 按 documentId 存本机。
+- 排版菜单的「打包所选画布」预选当前画布。确认时复核项目与文档代次，由项目包 API 从提交的排版里裁取
+  指定 ID。保存仍走原路径。重试继续使用原选择的画布 ID。
 - **图幅记号 `PanelObject.figureFrame`（ADR 0098 §三）**：缺席 = 升级前放上排版的面板。读档
   （`migrateToProject`）、布局版本恢复（`restoreLayoutVersion`）与剪贴板粘贴（`materializePaste`，
   负载可能出自升级前的标签页）都经

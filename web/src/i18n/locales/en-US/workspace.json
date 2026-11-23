@@ -1131,6 +1131,8 @@
     "export": "Export",
     "exportPackage": "Export project package",
     "exportCanvasPackage": "Package current canvas only",
+    "exportSelectedCanvases": "Package selected canvases",
+    "packageCanvasDescription": "Choose the canvases to include with the resources they reference.",
     "exportTip": "Export PNG / PDF",
     "fitCanvas": "Fit canvas",
     "foreignOpen": {
