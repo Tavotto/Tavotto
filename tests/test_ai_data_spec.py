@@ -150,7 +150,7 @@ def test_propose_with_spec_draws_at_journal_width_and_font(project):
         "width_double_mm": 183.0,
         "font_pt": 7.0,
     }
-    assert "fit_fonts" not in cand_script(body)  # 没带期刊字号范围：不退字号，脚本与从前同形
+    assert "tp.fit_fonts(fig)\n" in cand_script(body)  # 没带期刊字号范围：只摆图例，不退字号
     script = cand_script(body)
     assert figsize_single_mm(script) == 89.0
     assert '"font.size": 7.0' in script and '"legend.fontsize": 5.0' in script
@@ -273,7 +273,7 @@ def test_font_range_without_spec_is_ignored(project):
     _, client, figs, _ = project
     put(figs, "data/g.csv", ROWS)
     body = propose(client, render="lazy", font_range={"min_pt": 5, "max_pt": 7}).get_json()
-    assert "figure_style" not in body and "fit_fonts" not in cand_script(body)
+    assert "figure_style" not in body and "tp.fit_fonts(fig)\n" in cand_script(body)
 
 
 def _roles(fig):
@@ -310,3 +310,85 @@ def test_fit_fonts_shrinks_a_whole_role_only_when_crowded_and_never_below_the_fl
         assert len(ticks) == 1 and len(legend) == 1
         assert 5.0 <= min(ticks) < 12.0 and 5.0 <= min(legend) < 12.0
         plt.close("all")
+
+
+# =========================================================================== 图例：图内放得下就图内，压到数据才挪到图外（2026-11-23 用户决定）
+def _ecdf(width_mm):
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+
+    fig, ax = plt.subplots(figsize=(width_mm / 25.4, width_mm / 25.4 * 0.75))
+    for k, start in enumerate((46.0, 58.0, 71.0)):
+        xs = [start + 1.2 * i for i in range(8)]
+        ax.step(xs, [(i + 1) / 8 for i in range(8)], where="post", color=f"C{k}")
+    names = ("control", "low", "high")
+    ax.legend(handles=[Patch(facecolor=f"C{k}", label=n) for k, n in enumerate(names)])
+    fig.tight_layout()
+    return fig, ax
+
+
+def _outside(ax):
+    return ax.get_legend().get_bbox_to_anchor() is not ax.bbox
+
+
+def test_legend_stays_inside_when_it_fits_and_moves_outside_when_it_hits_data():
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg")
+    import warnings
+
+    import matplotlib.pyplot as plt
+
+    with plt.rc_context({"font.size": 9, "legend.fontsize": 9}), warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        wide, ax = _ecdf(150)
+        before = ax.get_legend()
+        tpl.fit_fonts(wide)
+        wide.draw_without_rendering()
+        assert not _outside(ax) and not tpl.legend_hits_data(ax, ax.get_legend())
+        assert ax.get_legend() is before  # 不压数据：原样不动
+
+        narrow, ax = _ecdf(57)
+        tpl.fit_fonts(narrow)
+        narrow.draw_without_rendering()
+        leg = ax.get_legend()
+        assert _outside(ax) and not tpl.legend_hits_data(ax, leg)
+        assert leg.get_window_extent().y0 >= ax.bbox.y1  # 在坐标区上方
+        assert leg.get_window_extent().width <= ax.bbox.width + 1
+        assert [t.get_text() for t in leg.get_texts()] == ["control", "low", "high"]
+        assert {t.get_fontsize() for t in leg.get_texts()} == {9.0}  # 没给下限：不退字号
+
+        fitted, ax = _ecdf(57)
+        tpl.fit_fonts(fitted, 5.0)
+        fitted.draw_without_rendering()
+        leg = ax.get_legend()
+        sizes = {t.get_fontsize() for t in leg.get_texts()}
+        assert len(sizes) == 1 and 5.0 <= min(sizes) < 9.0  # 图外的图例把图挤扁了：整类退字号
+        assert leg.get_window_extent().height <= 0.25 * ax.bbox.height + 1
+        plt.close("all")
+
+
+def test_only_what_really_covers_the_data_counts_as_a_hit():
+    """没有底框：框里的空白压着线不算，只看文字和色块；画了不透明底框：整块框都算（它确实把线盖住了）。"""
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    def legend_over_line(frameon):
+        fig, ax = plt.subplots(figsize=(4, 3))
+        ax.plot([0, 1], [0.5, 0.5], color="k")
+        ax.set_ylim(0, 1)
+        # 图例居中、内边距很大：线从底框中间穿过，文字 / 色块在线的上方
+        leg = ax.legend(
+            ["one"], loc="lower center", bbox_to_anchor=(0.5, 0.3), borderpad=5.0, frameon=frameon
+        )
+        fig.draw_without_rendering()
+        frame, line_y = leg.get_window_extent(), ax.transData.transform((0.5, 0.5))[1]
+        text = leg.get_texts()[0].get_window_extent()
+        assert frame.y0 < line_y < frame.y1 and line_y < text.y0 - 2
+        return ax, leg
+
+    ax, leg = legend_over_line(False)
+    assert tpl.legend_hits_data(ax, leg) is False
+    ax, leg = legend_over_line(True)
+    assert tpl.legend_hits_data(ax, leg) is True
+    plt.close("all")

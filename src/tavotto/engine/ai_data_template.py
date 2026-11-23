@@ -950,10 +950,139 @@ def pick_fonts(latin, cjk):
     ]
 
 
-def fit_fonts(fig, floor, step=0.5):
-    """排完版后，**同一类文字一起**往下退字号，直到互不干涉或退到 `floor`（期刊的字号下限）为止。三类各自一个字号：
-    刻度数字、轴标题（含子图标题）、图例。判「干涉」：相邻刻度数字的框相交；轴标题 / 图例伸出了图的边界；坐标区里的图例占了坐标区宽或高的四成以上（会压住数据）。
-    退的是整类（所有子图一起），所以同一类对象的字号始终一致；一类退到下限还干涉就不再动它。每退一步重新 `tight_layout()`。"""
+def legend_hits_data(ax, leg, pad=1.0):
+    """图例有没有压到这个坐标区里画的数据（线、点、柱 / 箱、填充带）。图例一侧取**真正挡住数据的东西**（与预检 V-011 同一口径）：
+    画了不透明底框的，整块框都算（图例画在数据上面，框里的空白也把线盖住了）；没有底框或底框全透明的，只算每条文字和每个色块
+    各自的外接框——空白处压着线不算。数据一侧用真实几何。调用前图要先排过版（`fig.draw_without_rendering()`）。"""
+    from matplotlib.transforms import Bbox
+
+    frame = leg.get_frame()
+    alpha = frame.get_alpha()
+    if leg.get_frame_on() and (alpha is None or alpha > 0) and frame.get_facecolor()[3] > 0:
+        boxes = [leg.get_window_extent()]
+    else:
+        handles = getattr(leg, "legend_handles", None) or leg.legendHandles
+        boxes = [t.get_window_extent() for t in leg.get_texts() if t.get_text()]
+        boxes += [h.get_window_extent() for h in handles]
+    boxes = [
+        Bbox.from_extents(b.x0 - pad, b.y0 - pad, b.x1 + pad, b.y1 + pad)
+        for b in boxes
+        if b.width > 0 and b.height > 0
+    ]
+    if not boxes:
+        return False
+
+    def path_hits(path, transform, filled):
+        shown = transform.transform_path(path)
+        return any(shown.intersects_bbox(b, filled=filled) for b in boxes)
+
+    def points_hit(points, radius):
+        return any(
+            b.x0 - radius <= x <= b.x1 + radius and b.y0 - radius <= y <= b.y1 + radius
+            for x, y in points
+            for b in boxes
+        )
+
+    scale = ax.figure.dpi / 72.0
+    for line in ax.lines:
+        if not line.get_visible():
+            continue
+        if line.get_linestyle() not in ("None", "none", " ", ""):
+            if path_hits(line.get_path(), line.get_transform(), False):
+                return True
+        if line.get_marker() not in ("None", "none", " ", "", None):
+            pts = line.get_transform().transform(line.get_xydata())
+            if points_hit(pts, line.get_markersize() * scale / 2):
+                return True
+    for col in ax.collections:
+        if not col.get_visible():
+            continue
+        offsets = col.get_offsets()
+        if len(offsets) and len(col.get_paths()) <= 1:  # 散点：一个记号形状 + 一批位置
+            sizes = col.get_sizes() if hasattr(col, "get_sizes") else []
+            radius = (max(sizes) ** 0.5 if len(sizes) else 3.0) * scale / 2
+            if points_hit(col.get_offset_transform().transform(offsets), radius):
+                return True
+        else:  # 填充带 / 线段集合（误差线的帽）
+            filled = bool(len(col.get_facecolor()))
+            if any(path_hits(path, col.get_transform(), filled) for path in col.get_paths()):
+                return True
+    for patch in ax.patches:
+        if patch.get_visible() and path_hits(patch.get_path(), patch.get_transform(), True):
+            return True
+    return False
+
+
+def build_legend(ax, loc=None, outside=False, fontsize=None):
+    """照原来的条目重建这个坐标区的图例（色块、间距跟着字号走）。`outside`：放到坐标区正上方，列数取「宽度不超过坐标区」的最大值。"""
+    old = ax.get_legend()
+    handles = getattr(old, "legend_handles", None) or old.legendHandles
+    labels = [t.get_text() for t in old.get_texts()]
+    size = fontsize if fontsize is not None else old.get_texts()[0].get_fontsize()
+    frame = old.get_frame_on()
+    if not outside:
+        return ax.legend(handles, labels, loc=loc or "best", fontsize=size, frameon=frame)
+    leg = None
+    for ncol in range(len(labels), 0, -1):
+        leg = ax.legend(
+            handles,
+            labels,
+            loc="lower left",
+            bbox_to_anchor=(0.0, 1.02),
+            borderaxespad=0.0,
+            ncol=ncol,
+            fontsize=size,
+            frameon=frame,
+        )
+        ax.figure.draw_without_rendering()
+        if leg.get_window_extent().width <= ax.bbox.width + 1:
+            break
+    return leg
+
+
+def place_legends(fig):
+    """每个坐标区的图例：**图内放得下就放图内**（现在的位置不压数据就不动；压了就把图内几个位置挨个试，第一个不压的就用），
+    **都放不下才挪到图外**——坐标区正上方排成一行（一行排不下就换行，宽度不超过坐标区），之后的 `tight_layout()` 会给它让出地方。
+    「压到」的判法在 `legend_hits_data`（无底框时只看文字和色块，有不透明底框时看整块框）。返回挪到图外的坐标区（退字号时照同样的摆法重建）。"""
+    inside = (
+        "upper right",
+        "upper left",
+        "lower right",
+        "lower left",
+        "center right",
+        "center left",
+        "upper center",
+        "lower center",
+    )
+    outside = []
+    for ax in fig.axes:
+        leg = ax.get_legend()
+        if leg is None or not leg.get_texts():
+            continue
+        fig.draw_without_rendering()
+        if not legend_hits_data(ax, leg):
+            continue
+        for loc in inside:
+            leg = build_legend(ax, loc=loc)
+            fig.draw_without_rendering()
+            if not legend_hits_data(ax, leg):
+                break
+        else:
+            build_legend(ax, outside=True)
+            outside.append(ax)
+    return outside
+
+
+def fit_fonts(fig, floor=None, step=0.5):
+    """排完版后的收尾：先摆图例（`place_legends`：图内放得下就图内，放不下挪到图外），再在给了 `floor`（期刊的字号下限）时，
+    让**同一类文字一起**往下退字号，直到互不干涉或退到下限为止。三类各自一个字号：刻度数字、轴标题（含子图标题）、图例。
+    判「干涉」：相邻刻度数字的框相交；轴标题 / 图例伸出了图的边界；图外的图例比坐标区还宽，或高过坐标区的四分之一。退的是整类（所有子图一起），
+    所以同一类对象的字号始终一致；一类退到下限还干涉就不再动它。每退一步重新 `tight_layout()`。"""
+    outside = place_legends(fig)
+    if outside:
+        fig.tight_layout()
+    if floor is None:
+        return
 
     def roles():
         ticks, labels, legends = [], [], []
@@ -964,6 +1093,11 @@ def fit_fonts(fig, floor, step=0.5):
             if leg is not None:
                 legends += [t for t in leg.get_texts() if t.get_text()]
         return {"tick": ticks, "label": labels, "legend": legends}
+
+    def beyond(b, whole):
+        return (
+            b.x0 < whole.x0 - 1 or b.y0 < whole.y0 - 1 or b.x1 > whole.x1 + 1 or b.y1 > whole.y1 + 1
+        )
 
     def crowded():
         fig.draw_without_rendering()
@@ -979,28 +1113,18 @@ def fit_fonts(fig, floor, step=0.5):
                 if any(a.overlaps(b) for a, b in zip(boxes, boxes[1:])):
                     bad.add("tick")
             for t in (ax.xaxis.label, ax.yaxis.label, ax.title):
-                if t.get_text():
-                    b = t.get_window_extent()
-                    if (
-                        b.x0 < whole.x0 - 1
-                        or b.y0 < whole.y0 - 1
-                        or b.x1 > whole.x1 + 1
-                        or b.y1 > whole.y1 + 1
-                    ):
-                        bad.add("label")
+                if t.get_text() and beyond(t.get_window_extent(), whole):
+                    bad.add("label")
             leg = ax.get_legend()
             if leg is not None:
-                b, area = leg.get_window_extent(), ax.bbox
-                if b.width > 0.4 * area.width or b.height > 0.4 * area.height:
+                b = leg.get_window_extent()
+                tall = (
+                    ax in outside and b.height > 0.25 * ax.bbox.height
+                )  # 图外的图例把坐标区挤扁了
+                if beyond(b, whole) or tall or (ax in outside and b.width > ax.bbox.width + 1):
                     bad.add("legend")
         for leg in fig.legends:
-            b = leg.get_window_extent()
-            if (
-                b.x0 < whole.x0 - 1
-                or b.y0 < whole.y0 - 1
-                or b.x1 > whole.x1 + 1
-                or b.y1 > whole.y1 + 1
-            ):
+            if beyond(leg.get_window_extent(), whole):
                 bad.add("legend")
         return bad
 
@@ -1013,18 +1137,9 @@ def fit_fonts(fig, floor, step=0.5):
             if size - step < floor - 1e-9:
                 continue
             if role == "legend":
-                # 图例整个按新字号重建：色块、间距都跟着字号走（只改文字字号，色块还是原来那么大）。模板里的图例都是默认位置
                 for ax in fig.axes:
-                    leg = ax.get_legend()
-                    if leg is not None:
-                        handles = getattr(leg, "legend_handles", None) or leg.legendHandles
-                        ax.legend(
-                            handles,
-                            [t.get_text() for t in leg.get_texts()],
-                            fontsize=size - step,
-                            frameon=leg.get_frame_on(),
-                        )
-                texts = roles()
+                    if ax.get_legend() is not None and ax.get_legend().get_texts():
+                        build_legend(ax, outside=ax in outside, fontsize=size - step)
                 for leg in fig.legends:
                     for t in leg.get_texts():
                         t.set_fontsize(size - step)
@@ -1108,6 +1223,9 @@ RUNTIME_FUNCTIONS = (
     reduce_file,
     read_reduced,
     pick_fonts,
+    legend_hits_data,
+    build_legend,
+    place_legends,
     fit_fonts,
 )
 #: 只有 XLSX 数据源的脚本才内嵌 `read_xlsx` 与 xlsxread；CSV / TSV 的脚本里没有它们
@@ -1315,13 +1433,12 @@ def _summary_layers(recipe: recipe_mod.FigureRecipe) -> list[str]:
 
 def _footer(recipe, style) -> list[str]:
     """图的收尾排版。**图里不写任何自动加的脚注**（2026-11-17 用户决定：没画的行、汇总 / 拟合的定义、n 都不进图；这些在界面右栏与响应字段里给）。
-    只做 `tight_layout()`，不为脚注留白。"""
-    out = ["    fig.tight_layout()"]
-    if (
-        style.get("fit_floor_pt") is not None
-    ):  # 按期刊字号范围出图：从范围内最大的字号起，挤了才整类往下退
-        out.append(f"    fit_fonts(fig, {style['fit_floor_pt']!r})")
-    return out
+    `tight_layout()` 之后交给公共模块的 `fit_fonts` 收尾，不为脚注留白。"""
+    # 图例：图内放得下就图内，文字或色块压到数据才挪到图外（2026-11-23 用户决定）；按期刊字号范围出图时（`fit_floor_pt`）
+    # 另从范围内最大的字号起，挤了才整类往下退
+    floor = style.get("fit_floor_pt")
+    call = f"fit_fonts(fig, {floor!r})" if floor is not None else "fit_fonts(fig)"
+    return ["    fig.tight_layout()", f"    {call}"]
 
 
 #: 脚本头的来源注释：生产（`_source_comment`、`_header`）与解析（`parse_source_comment`）共用这两个常量
