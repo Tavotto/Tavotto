@@ -1,7 +1,8 @@
 import { msg, type UiMessage } from '@/i18n'
 import type { KeyId } from '@/lib/keymap'
 import { applyTransform, canSkew, type Axis, type TransformOp } from '@/lib/transform'
-import { movableTargets, warnBlockedGroups } from './actions'
+import { expandGroups, movableTargets, warnBlockedGroups } from './actions'
+import { ARRAY_MAX, arrayCount, makeArray, type ArraySpec } from '@/lib/array'
 import { useDocumentStore } from './documentStore'
 import { finishActiveGesture } from './gestureCoordinator'
 import { activePathEdit } from './pathEditStore'
@@ -94,3 +95,27 @@ export const TRANSFORM_COMMANDS: readonly TransformCommand[] = [
   { id: 'reflect-horizontal', available: hasSelection, run: () => void reflectSelection('h') },
   { id: 'reflect-vertical', available: hasSelection, run: () => void reflectSelection('v') },
 ]
+
+/**
+ * 阵列（ADR 0185 M6，`lib/array`）：选区（组按单元补齐）当一个整体复制成网格 / 环形，副本追加在最上面，一次 commit，选中原件和全部副本。
+ * 与 ⌘D 的「重复复制」互不相干：不记 `lastDup`，之后的 ⌘D 照旧从头错开。
+ */
+export function arraySelection(spec: ArraySpec): boolean {
+  const ids = expandGroups(useSelectionStore.getState().ids)
+  if (!ids.length || activePathEdit()) return false
+  const n = arrayCount(spec)
+  if (n < 2) return false
+  if (n > ARRAY_MAX) {
+    say('arrayTooMany', { max: ARRAY_MAX })
+    return false
+  }
+  finishActiveGesture()
+  const objs = useDocumentStore.getState().doc.objects.filter((o) => ids.includes(o.id))
+  const copies = makeArray(objs, spec)
+  if (!copies.length) return false
+  useDocumentStore.getState().commit(hist('arrayCopies', { count: n - 1 }), (d) => {
+    d.objects.push(...copies)
+  })
+  useSelectionStore.getState().set([...ids, ...copies.map((o) => o.id)])
+  return true
+}

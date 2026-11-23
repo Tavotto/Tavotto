@@ -45,6 +45,7 @@ from .ai_data_figure import (
     SemicolonCell,
     apply_cells,
     apply_numcat,
+    apply_stack,
     date_number,
     delimited_records,
     iter_records,
@@ -951,14 +952,14 @@ def pick_fonts(latin, cjk):
 
 
 def legend_hits_data(ax, leg, pad=1.0):
-    """图例有没有压到这个坐标区里画的数据（线、点、柱 / 箱、填充带）。图例一侧取**真正挡住数据的东西**（与预检 V-011 同一口径）：
+    """图例有没有压到这个坐标区里画的数据（线、点、柱 / 箱、填充带）。图例一侧取**真正挡住数据的东西**（与预检同一口径：`docs/sciviz/validation-spec.md` V-011「图例一侧的取法（与数据出图摆放共用）」）：
     画了不透明底框的，整块框都算（图例画在数据上面，框里的空白也把线盖住了）；没有底框或底框全透明的，只算每条文字和每个色块
     各自的外接框——空白处压着线不算。数据一侧用真实几何。调用前图要先排过版（`fig.draw_without_rendering()`）。"""
+    from matplotlib.collections import PathCollection, PolyCollection
     from matplotlib.transforms import Bbox
 
-    frame = leg.get_frame()
-    alpha = frame.get_alpha()
-    if leg.get_frame_on() and (alpha is None or alpha > 0) and frame.get_facecolor()[3] > 0:
+    # 「有框且不透明」= `frameon` 为真且实际画出来的框颜色 alpha > 0（matplotlib 的 framealpha 直接替换颜色里的 alpha）
+    if leg.get_frame_on() and leg.get_frame().get_facecolor()[3] > 0:
         boxes = [leg.get_window_extent()]
     else:
         handles = getattr(leg, "legend_handles", None) or leg.legendHandles
@@ -997,14 +998,13 @@ def legend_hits_data(ax, leg, pad=1.0):
     for col in ax.collections:
         if not col.get_visible():
             continue
-        offsets = col.get_offsets()
-        if len(offsets) and len(col.get_paths()) <= 1:  # 散点：一个记号形状 + 一批位置
-            sizes = col.get_sizes() if hasattr(col, "get_sizes") else []
+        if isinstance(col, PathCollection):  # 散点：一个记号形状 + 一批位置
+            sizes = col.get_sizes()
             radius = (max(sizes) ** 0.5 if len(sizes) else 3.0) * scale / 2
-            if points_hit(col.get_offset_transform().transform(offsets), radius):
+            if points_hit(col.get_offset_transform().transform(col.get_offsets()), radius):
                 return True
-        else:  # 填充带 / 线段集合（误差线的帽）
-            filled = bool(len(col.get_facecolor()))
+        else:  # 填充带 / 小提琴（PolyCollection，哪怕只有一块）按填充路径；线段集合（误差线的帽）按线段
+            filled = isinstance(col, PolyCollection)
             if any(path_hits(path, col.get_transform(), filled) for path in col.get_paths()):
                 return True
     for patch in ax.patches:
@@ -1169,6 +1169,7 @@ RUNTIME_FUNCTIONS = (
     read_xlsx,
     apply_cells,
     apply_numcat,
+    apply_stack,
     group_key,
     merge_tables,
     distinct,
@@ -1377,6 +1378,18 @@ def _check(entry: adf.TableEntry, recipe: recipe_mod.FigureRecipe) -> None:
             "template_option_unsupported", "large"
         )  # 大表只有趋势的缩减实现（见 `recipe_mod.LARGE_MARKS`）
     cols = entry.summary.per_column
+    if recipe.stack:  # 把列当分组：被转的列在原表里，作图用的列在转换后的长表里（`stack_view`）
+        if (
+            recipe.family not in ("comparison", "distribution")
+            or recipe.cells
+            or recipe.numcat
+            or recipe.unit is not None
+            or entry.summary.large is not None
+            or _merge_of(entry) is not None
+            or any(c not in cols for c in recipe.stack)
+        ):
+            raise TemplateError("template_option_unsupported", "stack")
+        cols = recipe_mod.stack_view(entry.summary, recipe.stack).per_column
     named = [recipe.x, *recipe.y, recipe.group, recipe.facet, recipe.unit]
     if any(c is not None and c not in cols for c in named):
         raise TemplateError("template_recipe_mismatch", "column")
@@ -1600,6 +1613,8 @@ def _read_lines(recipe, reader: str) -> list[str]:
         out.append("    rows, _cell_notes, _cell_stats = apply_cells(header, rows, CELLS)")
     if recipe.numcat:
         out.append("    rows = apply_numcat(header, rows, NUMCATS)")
+    if recipe.stack:  # 把列当分组：宽表转长表（只剩 值 / 类别 两列），之后与别的长表一样画
+        out.append("    header, rows = apply_stack(header, rows, STACK, *STACK_NAMES)")
     return out
 
 
@@ -1631,6 +1646,11 @@ def _header(entry, recipe, data_rel, title, is_xlsx):
     cells = [f"CELLS = {[c.args() for c in recipe.cells]!r}"] if recipe.cells else []
     if recipe.numcat:  # 整数编码的类别列（读表后规范成整数写法，类别按数值升序）
         cells.append(f"NUMCATS = {list(recipe.numcat)!r}")
+    if (
+        recipe.stack
+    ):  # 把这几列当分组：被转成长表的列（顺序 = 类别顺序）与转换后「值 / 类别」两列的名字
+        cells.append(f"STACK = {list(recipe.stack)!r}")
+        cells.append(f"STACK_NAMES = {list(recipe_mod.stack_names(recipe.stack))!r}")
     return [
         f'"""由 Tavotto 根据数据生成的图（data_to_figure v2：{title}）。之后就是一份普通的绘图脚本，可以随意修改。\n\n'
         f'读表、汇总、布局的函数在同目录的 {name}.py 里（Tavotto 生成，别改它；它不含数据）。"""',
@@ -1771,13 +1791,21 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
     )
     if is_xlsx:
         L.append(f"SHEET = {recipe.sheet!r}")
+    # 把列当分组：类别轴是合成的占位列（`group`），不写轴标题；普通分组列 / numcat 不变
+    xlabel = (
+        ""
+        if recipe.stack and recipe.x == recipe_mod.STACK_CAT
+        else adf.axis_label(recipe.x)
+        if recipe.x
+        else ""
+    )
     L += [
         f"X = {recipe.x!r}",
         f"Y = {recipe.y[0]!r}",
         f"GROUP = {recipe.group!r}",
         f"FACET = {recipe.facet!r}",
         f"ORDER = {recipe.order!r}",
-        f"XLABEL = {adf.axis_label(recipe.x) if recipe.x else ''!r}",
+        f"XLABEL = {xlabel!r}",
         f"YLABEL = {adf.axis_label(recipe.y[0])!r}",
         f"PALETTE = {list(PALETTE)!r}",
     ]

@@ -9,7 +9,7 @@ Compress-Archive（默认 deflate，方法 8）重打更新包，插件解包当
 default-features=false 对线上 v0.10.0 更新包 EXTRACT FAILED，重打成
 STORED 后 EXTRACT OK。tauri-bundler 自己的 create_zip 用的正是
 CompressionMethod::Stored（tauri-cli-v2.11.4 updater_bundle.rs）——我们
-因为要装 SignPath 签过名的最终安装包而必须重打，重打就得守同一个约定。
+因为要装签过名的最终安装包而必须重打，重打就得守同一个约定。
 
 这里守三件事：脚本产物每个条目都是 STORED 且 exe 在顶层（插件解包后只在
 顶层 read_dir 找 .exe）；坏输入报错而不是安静产出坏包；workflow 真的在用

@@ -32,7 +32,7 @@ import math
 from dataclasses import dataclass, field
 
 from ..engine import exportreq
-from . import geometry, typography, vertical
+from . import geometry, pathtext, typography, vertical
 from .ir import (
     IDENTITY,
     RGB,
@@ -474,6 +474,111 @@ def _clipped(node: Node, clips: object, page_h: float) -> Node | None:
     return node
 
 
+def _object_faces(o: dict, faces: FaceProvider, problems: list[dict]) -> FaceSet:
+    """文字 / 路径文字对象用的那组脸（字体族、粗斜、原图字体）；取不到按 `fonts` 报出去。"""
+    try:
+        user_face, user_cjk = _user_faces(o, faces, problems)
+        return faces_for(
+            faces,
+            o.get("font_family"),
+            o.get("bold", False),
+            o.get("italic", False),
+            user_face=user_face,
+            user_cjk=user_cjk,
+        )
+    except Exception as exc:  # noqa: BLE001 —— FontsUnavailable 之类要带 code 出去
+        raise PlanError(
+            "fonts",
+            str(exc),
+            {"id": str(o.get("id", "")), "font_code": getattr(exc, "code", "")},
+        ) from exc
+
+
+def path_text_auto_offset(o: dict, faces: FaceProvider) -> float:
+    """路径文字的自动离线（pt）：与落字同一组脸、同一个式子（`pathtext.auto_offset_pt`）。属性栏的占位数从这里来。"""
+    return pathtext.auto_offset_pt(o, _object_faces(o, faces, []).primary.descender)
+
+
+def path_text_overflow(o: dict, faces: FaceProvider) -> bool:
+    """开放路径上有没有放不下的字（与落字同一次排字、同一个 `pathtext.layout`）。画布在路径末端画红「+」用。"""
+    fs = _object_faces(o, faces, [])
+    _x, _y, w, h = _box_pt(o, allow_zero=True)
+    pts, cum, closed = pathtext.path_of(o, w, h)
+    if len(pts) < 2 or cum[-1] <= 0:
+        return False
+    block = typography.layout_text(pathtext.line_text(o), fs, None)
+    if block is None or not block.lines:
+        return False
+    line = block.lines[0]
+    advances = [
+        g.x_advance * p.size / p.face.resource.units_per_em for p in line.pieces for g in p.glyphs
+    ]
+    return pathtext.layout(o, pts, closed, advances, pathtext.offset_pt(o, fs.primary.descender))[1]
+
+
+def _path_text_node(
+    o: dict,
+    page_h: float,
+    faces: FaceSet,
+    resources: dict[str, Resource],
+    problems: list[dict],
+) -> Node | None:
+    """路径文字（`pathtext`）：排成一行，再逐字落到路径上。每个字一个 `ShapedText`（基线原点在 0, 0），外面包一个组把字的
+    局部空间（x 沿切线、y 向上 = 切线的左法线）放到框空间、再经对象变换放到页面——IR 与三个写入器都不用认识新东西。"""
+    _x, _y, w, h = _box_pt(o, allow_zero=True)
+    pts, cum, closed = pathtext.path_of(o, w, h)
+    if len(pts) < 2 or cum[-1] <= 0:
+        return None
+    block = typography.layout_text(pathtext.line_text(o), faces, None)
+    if block is None or not block.lines:
+        return None
+    line = block.lines[0]
+    off = pathtext.offset_pt(o, faces.primary.descender)
+    advances = [
+        g.x_advance * p.size / p.face.resource.units_per_em for p in line.pieces for g in p.glyphs
+    ]
+    spots, _overflow = pathtext.layout(o, pts, closed, advances, off)
+    oid = str(o.get("id", ""))
+    color = Paint(hex2rgb(block.color))
+    to_page = _object_transform(o, page_h)
+    children: list[Node] = []
+    k = 0
+    for piece in line.pieces:
+        key = f"font:{piece.face.resource.face_id}"
+        resources.setdefault(key, piece.face.resource)
+        for g in piece.glyphs:
+            adv, spot = advances[k], spots[k]
+            k += 1
+            if spot is None or piece.invisible:
+                continue
+            mx, my, th = spot
+            c, sn = math.cos(th), math.sin(th)
+            # 局部（x 沿切线、y 向上）→ 框空间（y 向下）：x 轴 = (cos, sin)，y 轴 = (sin, −cos)；原点 = 中点往回退半个字宽
+            # （中点已经在离线后的平行线上）
+            local = (c, sn, sn, -c, mx - c * adv / 2, my - sn * adv / 2)
+            run = GlyphRun(
+                font=key,
+                size=piece.size,
+                glyphs=(g,),
+                rise=piece.rise,
+                actual_text=None,
+                invisible=False,
+                **_synth_of(piece.face),
+            )
+            children.append(
+                Group(
+                    (ShapedText(0.0, 0.0, (run,), color, oid),),
+                    transform=compose(local, to_page),
+                    object_id=oid,
+                )
+            )
+    if block.missing:
+        problems.append({"code": "glyph_missing", "object_id": oid, "chars": list(block.missing)})
+    if not children:
+        return None
+    return Group(tuple(children), object_id=oid)
+
+
 def _synth_of(face) -> dict[str, bool]:
     """这张脸要模拟的粗斜 → `GlyphRun` 的字段。"""
     return {
@@ -581,24 +686,13 @@ def compile_page(
         node: Node | None
         if kind == "panel":
             node = _panel_node(o, page_h, sources, resources, frozen)
-        elif kind == "text":
-            try:
-                user_face, user_cjk = _user_faces(o, faces, problems)
-                fs = faces_for(
-                    faces,
-                    o.get("font_family"),
-                    o.get("bold", False),
-                    o.get("italic", False),
-                    user_face=user_face,
-                    user_cjk=user_cjk,
-                )
-            except Exception as exc:  # noqa: BLE001 —— FontsUnavailable 之类要带 code 出去
-                raise PlanError(
-                    "fonts",
-                    str(exc),
-                    {"id": str(o.get("id", "")), "font_code": getattr(exc, "code", "")},
-                ) from exc
-            node = _text_node(o, page_h, fs, resources, problems, math)
+        elif kind in ("text", "pathText"):
+            fs = _object_faces(o, faces, problems)
+            node = (
+                _text_node(o, page_h, fs, resources, problems, math)
+                if kind == "text"
+                else _path_text_node(o, page_h, fs, resources, problems)
+            )
         elif kind in ("arrow", "shape"):
             node = _shape_node(o, page_h)
         elif kind == "path":

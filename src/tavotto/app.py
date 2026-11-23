@@ -4746,6 +4746,144 @@ def api_mathtext():
     )
 
 
+@app.post("/api/svg/import")
+def api_svg_import():
+    """外部 SVG → 画布上可编辑的对象（ADR 0189；`rendercore/svgimport.py`）。
+
+    body `{"svg": "<svg …>"}` → `{"ok": true, "objects": [...], "size_mm": [w, h], "unsupported": {code: n}}`；
+    `unsupported` 非空时前端把整个 SVG 当图片放进来并说原因。不联网、不读盘、不执行任何东西。"""
+    from .rendercore import svgimport
+
+    body = request.get_json(force=True, silent=True) or {}
+    svg = body.get("svg")
+    if not isinstance(svg, str) or not svg.strip():
+        return jsonify({"ok": False, "error": "not_svg"}), 400
+    try:
+        out = svgimport.import_svg(svg)
+    except svgimport.SvgImportError as exc:
+        return jsonify({"ok": False, "error": exc.code}), 200
+    return jsonify({"ok": True, **out})
+
+
+#: 复制为 SVG 的输入上限（ADR 0189 §四）：请求字节、对象数、每个对象的裁剪层数、全部路径锚点、每段文字的字数
+SVG_COPY_MAX_BYTES = 8 * 1024 * 1024
+SVG_COPY_MAX_OBJECTS = 2000
+#: IR 的嵌套上限是 16 层（`ir.MAX_DEPTH`）：每层剪切占一层组，对象自己再占一两层
+SVG_COPY_MAX_CLIP_DEPTH = 8
+SVG_COPY_MAX_NODES = 200_000
+SVG_COPY_MAX_TEXT = 20_000
+
+
+def _svg_copy_too_big(objs: list) -> bool:
+    if len(objs) > SVG_COPY_MAX_OBJECTS:
+        return True
+    nodes = 0
+    for o in objs:
+        clip = o.get("clip")
+        if clip is not None and (not isinstance(clip, list) or len(clip) > SVG_COPY_MAX_CLIP_DEPTH):
+            return True
+        for path in [o, *(clip or [])]:
+            subs = path.get("subpaths") if isinstance(path, dict) else None
+            for sp in subs if isinstance(subs, list) else ():
+                nodes += len(sp.get("nodes") or ()) if isinstance(sp, dict) else 0
+        text = o.get("text")
+        if isinstance(text, str) and len(text) > SVG_COPY_MAX_TEXT:
+            return True
+    return nodes > SVG_COPY_MAX_NODES
+
+
+@app.post("/api/svg/copy")
+def api_svg_copy():
+    """复制为 SVG（ADR 0189）：选中的标注 / 形状 / 路径 / 文字按**导出 SVG 的同一个写入器**写成一段 SVG 文本。
+    body `{"objects": [<导出载荷，坐标已平移到选区左上为原点>], "w_mm": w, "h_mm": h}` → `{"ok": true, "svg": "…"}`。
+    图（面板）不收——它的 SVG 要走导出（源文件、快照、产物验收那一套）。"""
+    import tempfile
+
+    from .rendercore import facade as rc_facade, ir as rc_ir, plan as rc_plan, svgwriter
+
+    # 输入是前端的导出载荷，但接口照样当不受信任处理（ADR 0189 §四）：先按字节数挡，再解析 JSON，再数对象 / 锚点 / 文字 / 裁剪层数
+    if (request.content_length or 0) > SVG_COPY_MAX_BYTES:
+        return jsonify({"ok": False, "error": "too_large"}), 413
+    body = request.get_json(force=True, silent=True) or {}
+    objs = body.get("objects")
+    try:
+        w_mm, h_mm = float(body.get("w_mm")), float(body.get("h_mm"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "bad_size"}), 400
+    if (
+        not isinstance(objs, list)
+        or not objs
+        or not all(
+            isinstance(o, dict) and o.get("type") in ("text", "arrow", "shape", "path", "pathText")
+            for o in objs
+        )
+        or not (
+            math.isfinite(w_mm) and math.isfinite(h_mm) and 0 < w_mm <= 5000 and 0 < h_mm <= 5000
+        )
+    ):
+        return jsonify({"ok": False, "error": "bad_objects"}), 400
+    if _svg_copy_too_big(objs):
+        return jsonify({"ok": False, "error": "too_large"}), 413
+    _prepare_source_fonts()
+    provider = rc_facade.provider()
+    try:
+        compiled = rc_plan.compile_page(
+            w_mm,
+            h_mm,
+            objs,
+            sources=None,  # type: ignore[arg-type]
+            faces=provider,
+            background=None,
+            math=engine_mathtypeset.layouts_for(objs, _mathtext_project()),
+        )
+        with tempfile.TemporaryDirectory(prefix="tavotto-svgcopy-") as tmp:
+            out = Path(tmp) / "copy.svg"
+            svgwriter.write_svg(compiled.page, out, provider)
+            svg = out.read_text(encoding="utf-8")
+    except (rc_plan.PlanError, rc_ir.IRError) as exc:
+        return jsonify({"ok": False, "error": exc.code}), 200
+    return jsonify({"ok": True, "svg": svg})
+
+
+#: `/api/text/outline` 一次最多转几个文字对象
+TEXT_OUTLINE_MAX = 200
+
+
+@app.post("/api/text/outline")
+def api_text_outline():
+    """文字转轮廓（ADR 0189；`rendercore/textoutline.py`）：字形取自导出用的同一份字体，转出来的路径与导出
+    的字逐点重合。body `{"objects": [<导出载荷形状的文字对象>]}` → `{"ok": true, "results": [{"paths": [...]} | {"error": code}]}`。"""
+    from .rendercore import facade as rc_facade, plan as rc_plan, textoutline
+
+    body = request.get_json(force=True, silent=True) or {}
+    objs = body.get("objects")
+    if (
+        not isinstance(objs, list)
+        or not objs
+        or len(objs) > TEXT_OUTLINE_MAX
+        or not all(isinstance(o, dict) and o.get("type") in ("text", "pathText") for o in objs)
+    ):
+        return jsonify({"ok": False, "error": "bad_objects"}), 400
+    if any(len(str(o.get("text") or "")) > SVG_COPY_MAX_TEXT for o in objs):
+        return jsonify({"ok": False, "error": "too_large"}), 413
+    _prepare_source_fonts()
+    provider = rc_facade.provider()
+    math = engine_mathtypeset.layouts_for(objs, _mathtext_project())
+    results = []
+    for o in objs:
+        try:
+            r: dict = {"paths": textoutline.outline_text(o, faces=provider, math=math)}
+            if o.get("type") == "pathText":
+                # 路径文字（ADR 0190）：自动离线算出来是多少——属性栏「离线」框用它做占位数
+                r["auto_offset_pt"] = round(rc_plan.path_text_auto_offset(o, provider), 4)
+                # 开放路径上放不下的字（ADR 0190）：画布在路径末端画红「+」
+                r["overflow"] = rc_plan.path_text_overflow(o, provider)
+            results.append(r)
+        except rc_plan.PlanError as exc:
+            results.append({"error": exc.code})
+    return jsonify({"ok": True, "results": results})
+
+
 def _prepare_source_fonts() -> None:
     """让「画布文字用原图字体」（ADR 0164）找得到原图那张脸：把项目解释器 / 内置 runtime 的 matplotlib
     字体目录登记为定位线索。**只算路径、不起进程、不改任何东西**；线索只影响「去哪找」，认脸仍只按 sha256。"""
@@ -17107,7 +17245,14 @@ def api_ai_data_files():
             else:
                 row["sheets"] = None
         files.append(row)
-    resp = jsonify({"files": files, "truncated": truncated})
+    # `understanding_available`：「读懂数据」此刻有没有可用连接（只读事实、不联网；前端据此决定要不要出「连接 AI」胶囊，连接状态变化后随清单重取）
+    resp = jsonify(
+        {
+            "files": files,
+            "truncated": truncated,
+            "understanding_available": engine_ai_data_roles.available(),
+        }
+    )
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -19602,7 +19747,8 @@ def _version_sketch(v: dict, max_objects: int, max_text: int) -> dict | None:
             item["text"] = text[:max_text]
         elif kind == "shape" and isinstance(o.get("shape"), str):
             item["shape"] = o["shape"]
-        elif kind == "path":
+        elif kind in ("path", "pathText"):
+            # 路径文字（ADR 0190）在草图里只画它那条路径（与前端小缩略图同一画法）
             subpaths = _sketch_subpaths(o.get("subpaths"))
             if subpaths is not None:
                 item["subpaths"] = subpaths

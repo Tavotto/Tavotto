@@ -154,6 +154,22 @@ order: 210
   形状与倾斜对象换成路径），所以导出端不用改。⌘D 是「创建副本」，副本被挪 / 转过后再按就按同样的位移与角度差再复制（`actions.duplicateStep`）；
   ⌥⌘D 再次变换（`useKeyboard` 里排在 ⌘D 前面，⌘D 只认没按 ⌥ 的）。看护 `store/transformActions.test.tsx`、`lib/transform.golden.test.ts`、
   `canvas/primarySelection.test.tsx`、`tests/test_transform_vectors.py`。
+- **SVG 导入（2026-11-15，ADR 0189）**：解析**只在后端**，而且只经受限解析器 `svgcheck.parse_svg(tolerant=True)`（与静态 SVG 素材、
+  外部 RFC #1877 的场景解析同一个；不许另起 XML 解析器、不许放宽任何安全规则）——`rendercore/svgimport`，`/api/svg/import`；前端不许把不受信任的 SVG
+  挂进页面去量样式，导入的文字 / 名字只当文本显示。前端只做两件事：`lib/svgImport.looksLikeSvg`（粘贴的是不是 SVG 标记）与 `placeImported`（只收认识的对象、id 与组 id
+  整批换新、平移到落点）；写入 `store/svgImportActions`（`pasteSvgText` 一次 commit；`explodeSvgPanel` 原位替换静态 SVG 图，判据
+  `canExplodeSvg`，右键菜单与命令面板同一个）。`unsupported` 非空一律不拆：粘贴时先当 SVG 素材、再不行栅格化（`lib/svgRaster`，`<img>`
+  模式）、都不行由素材导入那条路说原因；拆图时图不动。拖进来的 SVG 文件不走这里（照旧是图）。看护 `store/svgImportActions.test.tsx`、
+  `lib/svgImport.golden.test.ts`、`tests/test_svgimport.py`。
+- **文字转轮廓 ⇧⌘O、复制为 SVG（2026-11-15，ADR 0189）**：字形与 SVG 都只在后端生成（`rendercore/textoutline`、
+  `/api/svg/copy` 用 `svgwriter`），前端不许用浏览器字体自己描字形、不许自己拼 SVG——那样与导出不是同一份字。前端只发导出载荷
+  （`toExportObjects`，裁剪不随载荷走：转出来的路径留在原组里照样被同一个蒙版裁）、落位（`store/textOutlineActions`：原位替换、
+  多条成一个新组、留在原组里，一次 commit）与写剪贴板（`store/svgCopyActions`：`ClipboardItem` 收 Promise，退到 `writeText`）。
+  判据 `canOutlineText` / `canCopyAsSvg` 右键菜单、命令面板、快捷键共用。看护 `store/textOutlineActions.test.tsx`、`tests/test_text_outline.py`。
+- **关键对象、阵列（2026-11-15，ADR 0185 M6）**：关键对象 = 多选里再点一下（`store/keyObject.trackKeyClick`，`ObjectView` 只在「点的对象已在
+  多选里」时挂上），落成「选区末位 + 排列参照 `primary`」——没有第二份状态，对齐 / 等宽等高 / 间距（`setSelectionSpacing`）都读这两样；轮廓粗
+  一档在 `OverlaySvg`。阵列的几何唯一出处 `lib/array`（网格步长 = 看得见的外接框 + 间距；环形圆心在选区中心正下方），写入
+  `transformActions.arraySelection`（组按单元补齐、每份一套新组 id、一次 commit）。看护 `store/arrangeExtras.test.tsx`、`lib/array.golden.test.ts`。
 - **不认识的对象类型原样保留（2026-11-14，ADR 0185 的前置）**：更新的构建会往文档里写本构建没有的 `type`
   （第一例是自由路径 `path`）。判据只有 `types/document.isKnownObject`（`KNOWN_OBJECT_TYPES` 闭集）。读盘、保存、
   换画布、复制画布都不碰它（文档层本来就不按类型过滤，别加）；画布上 `ObjectView` 只画虚线占位框

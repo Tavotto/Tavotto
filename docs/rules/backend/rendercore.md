@@ -18,7 +18,7 @@ order: 330
 
 - **分层是硬边界**（`tests/support/importgraph.py` 的 `rendercore_model` / `rendercore_native`
   两层 + 层规则，`tests/test_rendercore_model.py` 钉外部名字）：纯模型（`ir` / `geometry` /
-  `typography` / `fonts` / `sources` / `plan` / `placement` / `raster` / `svgcheck`）**只许标准库**与仓库里
+  `typography` / `fonts` / `sources` / `plan` / `placement` / `raster` / `svgcheck` / `pathtext`）**只许标准库**与仓库里
   同样纯标准库的模块；候选包（pikepdf / fontTools / uharfbuzz / pypdfium2 / Pillow）只在 native 适配层
   （`hbshaper` / `pdfwriter` / `svgwriter` / `rasterio`）的函数 / 类里 import，PDFium **只在 `renderchild.child_main()` 里**（父进程
   import `renderchild` / `renderhost` / `preview` 不拉起任何候选包，`tests/test_rendercore_model.py` 钉着）；**整包零 `import pymupdf`**
@@ -128,6 +128,9 @@ order: 330
   时按 `svgcheck.repair_worker_ids` 给语法外 / 重复的 id 改名（用户 `set_gid("面板 A")`；引用只在 href / `url(#…)` / 选择器 id 记号这些结构位置跟着改，
   重复者让给第一个，选择器点名重复 id 时不改），改完仍过整道闸。
   任意导入文件不借这两条放行（`parse_svg` 本身照旧拒收）。
+  外部 SVG 导入成可编辑对象（ADR 0189，`svgimport`）只经 `parse_svg(tolerant=True)`：多删的只有没有内部子集的公共 SVG DTD、编辑器私有
+  命名空间与 metadata、无作用的 CSS 声明（`_INERT_CSS`），**安全规则一条不放**；导入另用更紧的 `svgimport.IMPORT_BUDGET`。不许在别处另起
+  XML 解析器读外部 SVG。看护 `tests/test_svgimport_security.py`。
   `svgwriter` 封口前再验整份组装结果，`inspector` 重新打开成品读物理尺寸、viewBox、轮廓 / 图片等字节事实。
   轮廓策略不把字体嵌入或文字检索判为 verified，text 策略也不判字体嵌入（只核 `font-family` 的首选族）；这也不等于已通过 Office 插入 / 重开 / 转 PDF 兼容性验证。
   看护：`tests/test_rendercore_svgwriter.py`、`tests/test_rendercore_svginspect.py`、`tests/test_worker_svg_pair.py`。
@@ -248,6 +251,7 @@ order: 330
 - 覆盖表 / 向量与退役前旧表（`evidence/u10/*.pymupdf.json`）的差异是闭集
 - U08 的 14 条 deselect 已在 U10 逐条处置（台账 `u10_disposition`）
 - `inspector.py` 重新打开封口产物量事实、plan / observed / policy 分开、unknown 不是 verified、standard 只拦完整性与尺寸、strict 必需 unknown 也拦、钩子在提交点之前、阈值只从出版规范来
+- 成品 PDF 的实际字号（`observed.text_size`，2026-11-23）：每段看得见的文字的 `Tf` × 文字矩阵 × 累计 CTM × 页面 `/UserUnit`（缺省 1；只乘在字号上，页面尺寸另算、不叠加）；Form XObject 继承调用处的字体 / Tf 字号 / Tr 渲染模式，画完调用方状态不变；**只观测**，不进 `checks` / `summary()` / `public_projection()`、不改裁决；阈值与容差由调用方交给 `text_size_verdict()`，检查器里不写 pt 数；不画的文字、em 不明的 Type 3、退化矩阵各自计数，不冒充量过（看护 `tests/test_rendercore_text_size.py`；接成检查项见 ADR 0203，Proposed）
 - HTTP 与 MCP 两个导出入口接的是同一份 `engine/artifactinspect` 接线，回执里的 `manifest` 原样带出、未核验不说成已核验
 - 四身份并列（run 不进 semantic / render，artifact 不回写进文件，字体政策版本进 render）
 - `provenance`（源 / 回执公开事实 / 节点表：对象 id + 实例序号、外来页 internal=unknown、有界）

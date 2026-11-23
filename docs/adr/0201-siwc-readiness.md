@@ -35,7 +35,7 @@ OpenAI 的 SIWC 计划允许开源、本机运行的应用让用户用自己的 
 
 ### 三、Token Provider 契约（PR-2，不实现登录）
 
-`engine/siwc_auth.py`：`access_token(min_valid_s)`（不够新就刷新，刷不动 → `NeedsLogin`）、`invalidate(reason)`（只在确认被拒后调）、`status()`（只给登录态与过期时刻，无令牌）。
+`engine/siwc_auth.py`：`access_token(min_valid_s)`（不够新就刷新，刷不动 → `NeedsLogin`）、`mark_rejected(reason)`（服务端拒了当前令牌：下次先刷新，**不清凭据**——官方要求只在确认撤销或终态刷新错误后才让用户重新登录）、`status()`（只给登录态与过期时刻，无令牌）。
 `min_valid_s` 至少覆盖一次任务的最长时限（900 s）加余量，**不复用** `ai_oauth` 的 10 分钟余量；刷新串行化。本阶段只有恒未登录的 `DisabledProvider` 与测试用 `StaticProvider`。
 **不读取、不迁移 Codex CLI 的令牌**；凭据存储（每个 client_id + 已验证 `sub` 一份、0600、原子写）只写进契约，不实现。
 

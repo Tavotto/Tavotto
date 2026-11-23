@@ -11,7 +11,8 @@
 * **四处「够得到」的采纳**（模型明确判断 + 列客观满足，否则丢该项回规则；谓词在 `ai_data_recipe`）：多列纵轴（`multi_y_ok`：2–3 个同单位数值列、非编号列、角色都是
   `measure`，`answers.y` 为数组）；有分组时的横轴（角色 `time` / `ordered_x`，且是规则的横轴候选）；编号样文字列当分组（角色 `group` 且 `id_group_ok`）；
   整数编码的数值列当分组（`knockout` 0 / 1：角色 `group` 且 `numcat_pick_ok`——非空值全是整数、2–6 个取值、有重复、不是编号样的列；规则从不自己把它当分组，
-  配方带 `numcat` 这条事实，见 ADR 0178）。
+  配方带 `numcat` 这条事实，见 ADR 0178）；把列当分组（宽表每列一个条件 / 一次重复：`picks.y` 给多列、没有有序横轴，`stack_ok`——2–8 个纯数值列、同单位、非编号；
+  配方带 `stack` 这条事实，转成长表后画分组比较 / 分布，见 ADR 0178）。
 * **表头行**：只在读表时 `status == "unsure"`（已有预览）且用户没指定表头行时问；答案必须是预览里的行号，按它重读要能读出合格的表，才采纳。
   **单位行不强制**（不动读表运行时，生成脚本的公共模块哈希不变）。
 * **用户的回答永远优先**：请求里已有 `answers.y / x / group / cells` 或 `header_rows` 时不起模型任务（用户已接管）。
@@ -110,7 +111,7 @@ def system_prompt() -> str:
         "- 已经汇总过的表里，均值旁边的 sd / sem / se / ci 这类列是 `error`，不是 `measure`，也不要放进 `picks.y`；"
         "样本量 `n` / `count` 这类列给 `other`。\n"
         "- 拿不准就给 `other`，不要猜。一列只能有一个角色。\n"
-        "- `picks` 是你建议的默认画法：`y` 是测量值的列名数组（最多 3 个，同单位才放多个），`x` 是横轴的列名，"
+        '- `picks` 是你建议的默认画法：`y` 是测量值的列名数组（同单位才放多个；有横轴时最多 3 个）。表里每一列是一个条件或一次重复、没有横轴也没有分组列时，把这几列都放进 `y`（最多 8 个），`x` 给 `"none"`。`x` 是横轴的列名，'
         '不该有有序横轴就给 `"none"`，`group` 是颜色 / 比较分组的列名，不该分组给 `"none"`。拿不准的角色给 `"unsure"`。'
         "`picks` 里的列必须与你给的 `columns` 角色一致。\n"
         "- `cells`：数值列里夹着少量文字格时（摘要里 `kind` 为 `mixed`），给处理规则。`mode`：`skip`（当缺失）、`extract`（取文字里的第一个数）、"
@@ -461,8 +462,9 @@ def _valid_pick(
     if key == "y":
         cols = value if isinstance(value, list) else [value]
         if len(cols) > 1:
-            # 多列纵轴：客观条件在 `recipe_mod.multi_y_ok`（数值列、2–3 列、同单位、无编号列），再加模型自己的角色不能否决（每列只能是 `measure`）
-            if not recipe_mod.multi_y_ok(s, cols) or any(
+            # 多列纵轴：客观条件在 `recipe_mod.multi_y_ok`（有横轴、每列一条线：数值列、2–3 列、同单位、无编号列）或 `recipe_mod.stack_ok`（没有横轴、
+            # 把列当分组：纯数值列、2–`STACK_MAX_COLUMNS` 列、同单位、无编号列）；再加模型自己的角色不能否决（每列只能是 `measure`）。落地时两种用哪一种由有没有有序横轴定
+            if not (recipe_mod.multi_y_ok(s, cols) or recipe_mod.stack_ok(s, cols)) or any(
                 roles.get(c) not in (None, "measure") for c in cols
             ):
                 return None
@@ -525,14 +527,24 @@ def _default_group_is_replicate(
     )
 
 
-def _multi_y_without_x(entry, hint, loop: dict, key: str, valid: dict) -> bool:
-    """模型给的多列纵轴，配上（模型给的 / 规则默认的）横轴后没有有序横轴吗？是 = 不采纳：分布 / 比较类配方只画第一列。"""
+def _stack_contradicts(roles: dict[str, str], ys: list[str]) -> bool:
+    """模型自己把 `ys` 之外的某一列判成 `time` / `ordered_x`（有序横轴）：它同时又说没有横轴、要把几列当分组，自相矛盾——不采纳（保守，回规则结果）。"""
+    return any(r in ("time", "ordered_x") for c, r in roles.items() if c not in ys)
+
+
+def _multi_y_without_x(
+    entry, hint, loop: dict, key: str, valid: dict, roles: dict[str, str] | None = None
+) -> bool:
+    """模型给的多列纵轴，配上（模型给的 / 规则默认的）横轴后能用吗？**不能 = 不采纳**（返回 True）。能用有两种：有有序横轴（趋势类每列一条线）；
+    或没有横轴、且这几列客观上能「当分组」（`recipe_mod.stack_ok`，落成 `Roles.stack`；模型的角色里没有另一列是有序横轴）。其余情形分布 / 比较类配方只画第一列，不采纳。"""
     if key != "y" or not isinstance(valid[key], list):
         return False
     trial = {**loop, "y": valid["y"]}
     if "x" not in trial:
         trial["x"] = valid.get("x", "unsure")
     res = recipe_mod.resolve_roles(entry, hint, trial)
+    if isinstance(res, recipe_mod.Roles) and res.stack:
+        return _stack_contradicts(roles or {}, valid["y"])
     return not (isinstance(res, recipe_mod.Roles) and res.x_ord is not None)
 
 
@@ -558,6 +570,22 @@ def suggest(
         valid[key] = v
     loop: dict = dict(fixed or {})  # 喂给规则的（含占位的 unsure）
     emit: dict = {}
+    # 「把列当分组」：模型把几列都判成测量值、且说没有有序横轴（或没提横轴而这几列之外没有横轴候选）——规则即使已落定了别的默认（如宽表第一列当横轴）也采纳；
+    # 条件各一处实现（`stack_ok` / `_stack_roles`），不满足 = 不采纳、回规则结果
+    y_stack = valid.get("y")
+    if (
+        isinstance(y_stack, list)
+        and "y" not in loop
+        and "x" not in loop
+        and not _stack_contradicts(roles, y_stack)
+    ):
+        trial = recipe_mod.resolve_roles(
+            entry, hint, {**loop, "y": y_stack, "x": valid.get("x", "unsure")}
+        )
+        if isinstance(trial, recipe_mod.Roles) and trial.stack:
+            loop["y"] = emit["y"] = y_stack
+            if valid.get("x") == "none":
+                loop["x"] = emit["x"] = "none"
     for _round in range(len(_QUESTION_KEY) + 3):
         res = recipe_mod.resolve_roles(entry, hint, loop)
         if isinstance(res, str):
@@ -566,7 +594,7 @@ def suggest(
             key = _QUESTION_KEY.get(res.question_code)
             if key is None or key in loop:
                 break
-            if key in valid and _multi_y_without_x(entry, hint, loop, key, valid):
+            if key in valid and _multi_y_without_x(entry, hint, loop, key, valid, roles):
                 dropped += 1
                 valid.pop(key)  # 不采纳：当模型没给这一项，规则默认
             if key in valid and not (
@@ -609,7 +637,7 @@ def suggest(
                     loop[key] = emit[key] = pick
                     changed = True
                 continue
-            if key in valid and _multi_y_without_x(entry, hint, loop, key, valid):
+            if key in valid and _multi_y_without_x(entry, hint, loop, key, valid, roles):
                 dropped += 1
                 valid.pop(key)
             if _vetoed(key, roles.get(col)) and key in valid and valid[key] != col:
@@ -825,6 +853,12 @@ def _available_connection() -> dict | None:
         return ai_structured.find_cli_connection(cached_only=True)[0]
     except Exception:  # noqa: BLE001 - 探测失败 = 没有
         return None
+
+
+def available() -> bool:
+    """「读懂数据」此刻有没有可用的连接——只读的布尔事实，给前端决定要不要提示「连接 AI」（不暴露连接内容）。
+    判据就是 `start()` 用的 `_available_connection()`：不联网、不刷新令牌（`first_key_connection(refresh=False)`）。"""
+    return _available_connection() is not None
 
 
 def _sweep(now: float) -> None:

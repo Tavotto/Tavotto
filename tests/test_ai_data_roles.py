@@ -101,12 +101,14 @@ HOLDOUT = DR.load_role_cases(DR.HOLDOUT_CASES_FILE)
 
 
 def test_holdout_cases_are_well_formed_and_do_not_overlap_the_main_set(tmp_path):
-    assert 22 <= len(HOLDOUT) <= 26
+    assert 22 <= len(HOLDOUT) <= 32
     for c in HOLDOUT:
         DR.check_case_shape(c, tmp_path)
     assert not {c["id"] for c in HOLDOUT} & {c["id"] for c in CASES}
     tiers = [c["tier"] for c in HOLDOUT]
-    assert tiers.count("plain") == tiers.count("hard") == len(HOLDOUT) // 2
+    # 2026-11-21 追加 6 条宽表（把列当分组）用例：5 条难例 + 1 条「不该触发」的反例（普通表、规则本来就对），两档都不少于 12 条
+    assert tiers.count("plain") >= 12 and tiers.count("hard") >= 12
+    assert len(tiers) == 30 and tiers.count("hard") == 17
     assert any(c.get("also_ok") for c in HOLDOUT)
     # 留出集的表不能与主集的某张表逐字相同（换皮 / 抄题）
     main_tables = {t for c in CASES for t in c["tables"].values()}
@@ -1069,16 +1071,18 @@ def candidates_of(tmp_path, case, answers):
     return resp
 
 
-def test_ho17_repeat_columns_without_an_x_axis_stay_a_known_product_limit(tmp_path):
-    """HO-17（rep1 / rep2 / rep3 一起看、没有横轴）要「把列当分组」的画法，尚未支持：没有有序横轴时分布 / 比较类配方只画第一列，
-    多列纵轴不采纳（当没给，计入 dropped），`roles.y` 与候选实际画的列一致。标准答案不改。"""
+def test_ho17_repeat_columns_without_an_x_axis_are_stacked_as_groups(tmp_path):
+    """HO-17（rep1 / rep2 / rep3 一起看、没有横轴）：模型判三列都是 `measure`、`x` 给 `none`，采纳为「把列当分组」（`FigureRecipe.stack`，宽表转长表）；
+    `roles.y` 就是这三列，与每个备选实际画的列一致（`item.values.y` / `stack`）。标准答案不改。"""
     case = HBY["HO-17"]
     run, _ = with_model(case, tmp_path)
-    assert run.model != case["expect_default"] and run.state == "ready"
-    assert run.payload["dropped"] >= 1
-    assert run.payload["answers"].get("y") != ["rep1", "rep2", "rep3"]
-    assert len(run.model["y"]) == 1
-    # 直接送数组也一样：规则当没给
+    assert run.model == case["expect_default"] and run.state == "ready"
+    assert run.payload["dropped"] == 0
+    assert run.payload["answers"]["y"] == ["rep1", "rep2", "rep3"]
+    resp = candidates_of(tmp_path, case, run.payload["answers"])
+    assert resp["roles"]["y"] == ["rep1", "rep2", "rep3"] and resp["roles"]["stack"] is True
+    assert all(i["values"]["y"] == resp["roles"]["y"] for i in resp["items"])
+    # 直接送数组（用户在右栏的将来写法）：没有横轴时同样是「列当分组」；没有这个数组（规则）逐字不变
     folder = DR.materialize(case, tmp_path / "proj")
     plain = P.propose(tmp_path / "proj", project="p", folder=folder, render="lazy")
     got = P.propose(
@@ -1088,8 +1092,8 @@ def test_ho17_repeat_columns_without_an_x_axis_stay_a_known_product_limit(tmp_pa
         render="lazy",
         answers={"y": ["rep1", "rep2", "rep3"]},
     )
-    assert got["roles"] == plain["roles"]
-    assert len(got["roles"]["y"]) == 1
+    assert got["roles"]["y"] == ["rep1", "rep2", "rep3"] and got["roles"]["stack"] is True
+    assert "stack" not in plain["roles"] and len(plain["roles"]["y"]) == 1
 
 
 MULTI_Y_WITH_X = "sample,dose,r1,r2,r3\n" + "".join(
@@ -1152,12 +1156,25 @@ def test_ho17_multi_y_is_dropped_when_the_columns_are_not_objectively_fine(tmp_p
         r = dict(roles, rep2="note") if name == "role vetoes" else roles
         run, _ = with_model(case, tmp_path, reach_answer(r, y=y))
         assert run.state == "ready" and run.model == rules, name
-    # 超过 3 列
+    # 超过 3 列：没有横轴时不再受「每列一条线」的 3 列限制——「把列当分组」可到 `STACK_MAX_COLUMNS`（8）列；超过 8 列才丢
     wide = "sample,a,b,c,d\nA1,1,2,3,4\nA2,2,3,4,5\nB1,3,4,5,6\nB2,4,5,6,7\n"
     c4 = case_with(case, wide)
     r4 = {"sample": "row_id", "a": "measure", "b": "measure", "c": "measure", "d": "measure"}
-    base = run_case(c4, tmp_path, conn=None).rules
     run, _ = with_model(c4, tmp_path, reach_answer(r4, y=["a", "b", "c", "d"]))
+    assert run.model["y"] == ["a", "b", "c", "d"] and run.model["x"] is None
+    nine = [f"c{i}" for i in range(9)]
+    big = (
+        "sample,"
+        + ",".join(nine)
+        + "\n"
+        + "".join(
+            f"S{r}," + ",".join(str(r + i * 0.5) for i in range(9)) + "\n" for r in range(1, 6)
+        )
+    )
+    c9 = case_with(case, big)
+    r9 = {"sample": "row_id", **{c: "measure" for c in nine}}
+    base = run_case(c9, tmp_path, conn=None).rules
+    run, _ = with_model(c9, tmp_path, reach_answer(r9, y=nine))
     assert run.model == base
     # 不同单位（双轴）不当一组纵轴
     units = "sample,a_mg,b_mm,c_mg\nA1,1,2,3\nA2,2,3,4\nB1,3,4,5\nB2,4,5,6\n"
@@ -1171,7 +1188,7 @@ def test_ho17_multi_y_is_dropped_when_the_columns_are_not_objectively_fine(tmp_p
 def test_a_list_valued_y_answer_is_parsed_but_garbage_is_a_clean_error(tmp_path):
     assert P.parse_answers({"y": ["a", "b"]}) == {"y": ["a", "b"]}
     assert P.parse_answers({"y": ["a"]}) == {"y": "a"}
-    for bad in ([], ["a", "b", "c", "d"], ["a", 1], ["a", None], {"a": 1}):
+    for bad in ([], [f"c{i}" for i in range(9)], ["a", 1], ["a", None], {"a": 1}):
         with pytest.raises(P.ProposeError):
             P.parse_answers({"y": bad})
     # 别的键仍只认字符串

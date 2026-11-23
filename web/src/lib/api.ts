@@ -1981,6 +1981,25 @@ export type ExportClipPath = ExportBox & {
 }
 
 type ExportObjectBody =
+  | (ExportBox & {
+      /** 路径文字（ADR 0190）：一行字沿自带的路径排开，后端 `rendercore/pathtext` 落字 */
+      type: 'pathText'
+      text: string
+      size_pt: number
+      bold: boolean
+      italic: boolean
+      color: string
+      font_family?: 'serif' | 'sans-serif' | 'monospace'
+      subpaths: { closed: boolean; nodes: { p: [number, number]; in?: [number, number]; out?: [number, number] }[] }[]
+      start_offset?: number
+      text_align?: 'center' | 'end'
+      flip?: true
+      /** 离线（pt）；缺席 = 自动 */
+      baseline_offset_pt?: number
+      /** 一起成组的那条线的描边宽度（pt）；0 不发 */
+      line_width_pt?: number
+      rotation_deg?: number
+    })
   | (ExportBox & ArtifactRequestFields & {
       type: 'panel'
       figure_snapshot?: FigureSnapshot
@@ -2462,6 +2481,42 @@ export const fetchSourceFontBytes = async (sha256: string, face: number): Promis
   if (!res.ok) throw new Error(`source font HTTP ${res.status}`)
   return res.arrayBuffer()
 }
+
+/** 外部 SVG 导入（ADR 0189）：后端 `rendercore/svgimport` 的结果。`unsupported` 非空 = 有做不准的东西，整个当图片放 */
+export interface SvgImportResult {
+  ok: boolean
+  error?: string
+  objects?: unknown[]
+  size_mm?: [number, number]
+  unsupported?: Record<string, number>
+}
+export const importSvg = (svg: string) =>
+  jsonFetch<SvgImportResult>('/api/svg/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ svg }),
+  })
+
+/** 复制为 SVG（ADR 0189）：导出 SVG 的同一个写入器写出来的一段 SVG 文本 */
+export const copyAsSvg = (objects: ExportObject[], w_mm: number, h_mm: number) =>
+  jsonFetch<{ ok: boolean; svg?: string; error?: string }>('/api/svg/copy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ objects, w_mm, h_mm }),
+  })
+
+/** 文字转轮廓（ADR 0189）：每个文字对象一份结果，路径对象是页面 mm、不带 id */
+export interface TextOutlineResult {
+  ok: boolean
+  /** 路径文字另带 `auto_offset_pt`：自动离线算出来是多少（ADR 0190） */
+  results: ({ paths: unknown[]; auto_offset_pt?: number; overflow?: boolean } | { error: string })[]
+}
+export const outlineText = (objects: ExportObject[]) =>
+  jsonFetch<TextOutlineResult>('/api/text/outline', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ objects }),
+  })
 
 export const typesetMath = (items: { src: string; family: string }[]) =>
   jsonFetch<{ ok: boolean; results: MathBox[] }>('/api/mathtext', {
@@ -5033,7 +5088,7 @@ export interface AiDataFileEntry {
 }
 
 export const aiDataFilesAll = (pj?: string | null) =>
-  jsonFetch<{ files: AiDataFileEntry[]; truncated: boolean }>('/api/ai/data-files?formats=all', undefined, pj)
+  jsonFetch<{ files: AiDataFileEntry[]; truncated: boolean; understanding_available?: boolean }>('/api/ai/data-files?formats=all', undefined, pj)
 
 export interface AiDataOverview {
   path: string

@@ -23,6 +23,12 @@
   复杂裁剪、着色、透明组的内部不分析（`carrier` 只按顶层对象种类分：vector / mixed / raster / empty / unknown）。
 * 「有没有被裁掉」只对**计划里知道包围盒的对象**判（画布上的文字 / 形状 / 箭头 / 面板框 vs 页面），外来页内部是
   `unknown`（RC-069：碰不到的不声称 no clipping）。
+* **成品里的实际字号**（`observed.text_size`）量的是内容流里每一段**看得见的**文字：`Tf` 字号 × 文字矩阵 × 累计 CTM
+  （含 Form 的 `/Matrix`）的纵向缩放 × 页面 `/UserUnit`；Form 继承调用处的字体 / 字号 / 渲染模式（画完不带回）。数学上下标在这里就是一段更小的 `Tf`（matplotlib 的 mathtext 约 0.7 倍），
+  面板被缩放摆上版面也已经乘在 CTM 里。**只观测、不进 `checks`**：阈值由调用方从出版规范交给 `text_size_verdict()`
+  （这里不写任何 pt 数）。量不了的不冒充量过：不画只进文本层的文字（渲染模式 3 / 7，画出来的是轮廓）、没有字体或
+  矩阵退化的段、FontMatrix 不是千分之一的 Type 3 各自计数；预算耗尽 / 没有读取器整项 `unknown`。画成轮廓又不带
+  文本层的字在内容流里与普通路径无法区分，这一种量不到也数不到。
 * 文字层的判据是「期望的每一行都能从 ToUnicode（或 ActualText）抽回来」——ToUnicode 存在 ≠ 映射正确，所以比的是**抽出来的
   字符串**（05 §5）。没有期望值（旧后端路）→ `unknown`。
 
@@ -297,6 +303,8 @@ class _Font:
     type3: bool
     key: tuple
     used: bool = False
+    #: `Tf` 的数就是字的大小（em）吗。Type 3 没有声明 em，只有 FontMatrix 是千分之一时才按惯例认（matplotlib / dvips 如此）
+    sized: bool = True
 
 
 @dataclass
@@ -313,6 +321,13 @@ class _Walk:
     lines: list = field(default_factory=list)
     undecodable_runs: int = 0
     fonts: dict = field(default_factory=dict)  # key → _Font
+    #: 看得见的文字段的有效字号（四舍五入到 0.01 pt）→ 段数；只有数，不带文字内容
+    text_sizes: dict = field(default_factory=dict)
+    text_hidden: int = 0  # 不画、只进文本层的段（渲染模式 3 / 7）
+    text_unsized: int = 0  # 量不了的段：没有字体、字号或矩阵退化、Type 3 的 em 不明
+    #: 页面的 `/UserUnit`（默认空间一个单位 = 多少 pt，缺省 1）。只乘在字号上：CTM 照旧从单位矩阵起步，
+    #: 别的观测（位图 ppi 等）的口径不因此改变；页面尺寸的换算在 `_visible_size` 里另算，两边不叠加
+    text_unit: float = 1.0
 
 
 def _font_record(name: str, obj, seen: dict) -> _Font:
@@ -349,8 +364,18 @@ def _font_record(name: str, obj, seen: dict) -> _Font:
         except Exception:  # noqa: BLE001 —— 坏 CMap = 没有可用映射
             mapping = None
     rec = _Font(name, base, subtype, embedded, subset, mapping, code_len, type3, key)
+    if type3:
+        rec.sized = _type3_em_is_standard(obj.get("/FontMatrix"))
     seen[key] = rec
     return rec
+
+
+def _type3_em_is_standard(matrix) -> bool:
+    try:
+        a, b, c, d = (float(v) for v in list(matrix)[:4])
+    except (TypeError, ValueError):
+        return False
+    return abs(a - 0.001) < 1e-9 and abs(d - 0.001) < 1e-9 and b == 0 and c == 0
 
 
 def _decode(font: _Font, raw: bytes) -> str | None:
@@ -371,6 +396,26 @@ def _decode(font: _Font, raw: bytes) -> str | None:
     return "".join(out)
 
 
+_IDENTITY = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+
+
+def _note_text_size(w: _Walk, font: _Font | None, size: float, mode: int, tm, ctm) -> None:
+    """记一段文字的有效字号：`|Tf|` × （文字矩阵 × CTM）把字高方向拉长了多少。只记数，不记内容。"""
+    if mode in (3, 7):
+        w.text_hidden += 1
+        return
+    if font is None or not font.sized or tm is None:
+        w.text_unsized += 1
+        return
+    m = _mul(tm, ctm)
+    eff = abs(size) * math.hypot(m[2], m[3]) * w.text_unit
+    if not (math.isfinite(eff) and eff > 0):
+        w.text_unsized += 1
+        return
+    key = round(eff, 2)
+    w.text_sizes[key] = w.text_sizes.get(key, 0) + 1
+
+
 def _mul(m1, m2):
     a1, b1, c1, d1, e1, f1 = m1
     a2, b2, c2, d2, e2, f2 = m2
@@ -384,7 +429,18 @@ def _mul(m1, m2):
     )
 
 
-def _walk(pikepdf, container, resources, ctm, depth: int, w: _Walk, fonts_seen: dict) -> None:
+def _walk(
+    pikepdf,
+    container,
+    resources,
+    ctm,
+    depth: int,
+    w: _Walk,
+    fonts_seen: dict,
+    inherited: tuple | None = None,
+) -> None:
+    """`inherited` = 调用处的（字体, Tf 字号, Tr 渲染模式）：Form XObject 按 PDF 规范继承调用时的图形与文字状态，
+    画完之后调用方的状态原样不动（这里的修改只在本层局部变量里）。页面本身从空状态起步。"""
     if depth > w.budget.max_depth:
         raise _BudgetExceeded("depth")
     try:
@@ -392,7 +448,13 @@ def _walk(pikepdf, container, resources, ctm, depth: int, w: _Walk, fonts_seen: 
     except Exception as exc:  # noqa: BLE001
         raise _BudgetExceeded(f"unparseable:{type(exc).__name__}") from exc
     stack: list = []
-    font: _Font | None = None
+    font: _Font | None = inherited[0] if inherited else None
+    # 文字状态里决定「字有多大、画不画」的三样：Tf 字号与渲染模式属于图形状态（q / Q 存取），文字矩阵每个 BT 重置。
+    # `font` 本身同样属于图形状态，但它决定文字层怎么解码：这里**不动**既有行为（Q 之后沿用最近一次 Tf 的字体），
+    # 免得一次只加观测的改动顺带改了 `text_layer` 的结论
+    font_size = inherited[1] if inherited else 0.0
+    text_mode = inherited[2] if inherited else 0
+    text_matrix = _IDENTITY
     in_text = False
     line: list[str] = []
     actual: list[list] = []  # [text, consumed]
@@ -408,10 +470,10 @@ def _walk(pikepdf, container, resources, ctm, depth: int, w: _Walk, fonts_seen: 
         op = str(ins.operator)
         args = ins.operands
         if op == "q":
-            stack.append(ctm)
+            stack.append((ctm, font_size, text_mode))
         elif op == "Q":
             if stack:
-                ctm = stack.pop()
+                ctm, font_size, text_mode = stack.pop()
         elif op == "cm" and len(args) == 6:
             ctm = _mul(tuple(float(a) for a in args), ctm)
         elif op in ("S", "s", "f", "F", "f*", "B", "B*", "b", "b*"):
@@ -420,11 +482,26 @@ def _walk(pikepdf, container, resources, ctm, depth: int, w: _Walk, fonts_seen: 
             w.shadings += 1
         elif op == "BT":
             in_text, line = True, []
+            text_matrix = _IDENTITY
+        elif op == "Tm" and len(args) == 6:
+            try:
+                text_matrix = tuple(float(a) for a in args)
+            except (TypeError, ValueError):
+                text_matrix = None  # 读不懂的矩阵：之后的段记「量不了」，不拿上一个矩阵顶替
+        elif op == "Tr" and args:
+            try:
+                text_mode = int(args[0])
+            except (TypeError, ValueError):
+                text_mode = 0
         elif op == "ET":
             if in_text and line:
                 w.lines.append("".join(line))
             in_text = False
         elif op == "Tf" and args:
+            try:
+                font_size = float(args[1]) if len(args) > 1 else 0.0
+            except (TypeError, ValueError):
+                font_size = 0.0
             name = str(args[0])
             fobj = res_fonts.get(name) if res_fonts is not None else None
             if fobj is None:
@@ -442,6 +519,7 @@ def _walk(pikepdf, container, resources, ctm, depth: int, w: _Walk, fonts_seen: 
                 actual.pop()
         elif op in ("Tj", "'", '"', "TJ"):
             w.texts += 1
+            _note_text_size(w, font, font_size, text_mode, text_matrix, ctm)
             pieces: list[bytes] = []
             if op == "TJ" and args and isinstance(args[-1], pikepdf.Array):
                 pieces = [bytes(a) for a in args[-1] if isinstance(a, pikepdf.String)]
@@ -487,6 +565,7 @@ def _walk(pikepdf, container, resources, ctm, depth: int, w: _Walk, fonts_seen: 
                     depth + 1,
                     w,
                     fonts_seen,
+                    (font, font_size, text_mode),
                 )
                 w.forms_seen.add(key)
 
@@ -565,6 +644,7 @@ def observe_pdf_basic(path: Path, probe) -> dict:
         images=[],
         text_lines=[],
         undecodable_runs=0,
+        text_size={"status": UNKNOWN, "reason": "no_reader"},
         reader="probe",
     )
     return out
@@ -619,7 +699,7 @@ def observe_pdf(path: Path, *, budget: Budget | None = None) -> dict:
         w_pt, h_pt, boxes = _visible_size(page, pikepdf)
         out.update(size_pt=[round(w_pt, 3), round(h_pt, 3)], **boxes)
         out["integrity"] = VERIFIED
-        walk = _Walk(budget)
+        walk = _Walk(budget, text_unit=boxes["user_unit"])
         fonts_seen: dict = {}
         declared: list[str] = []
         res = page.obj.get("/Resources")
@@ -668,7 +748,61 @@ def observe_pdf(path: Path, *, budget: Budget | None = None) -> dict:
         out["images"] = walk.images
         out["text_lines"] = walk.lines
         out["undecodable_runs"] = walk.undecodable_runs
+        out["text_size"] = _text_size_facts(walk, exceeded)
     return out
+
+
+#: `observed.text_size.smallest` 最多带几档（从小到大）：够定位「哪一档太小」，又不把整张字号表搬进 manifest
+TEXT_SIZE_BUCKETS = 8
+
+
+def _text_size_facts(walk: _Walk, exceeded: str | None) -> dict:
+    """成品 PDF 里看得见的文字实际有多大（`status`：`measured` 量到了 / `none` 没有可量的文字段 / `unknown` 没看完）。"""
+    if exceeded:
+        return {"status": UNKNOWN, "reason": "budget"}
+    sizes = sorted(walk.text_sizes.items())
+    return {
+        "status": "measured" if sizes else "none",
+        "min_pt": sizes[0][0] if sizes else None,
+        "runs": sum(n for _s, n in sizes),
+        "hidden_runs": walk.text_hidden,
+        "unsized_runs": walk.text_unsized,
+        "smallest": [[s, n] for s, n in sizes[:TEXT_SIZE_BUCKETS]],
+    }
+
+
+def text_size_verdict(
+    observed: dict, min_pt: float | None, *, tol_pt: float = 0.0
+) -> tuple[str, str]:
+    """成品里的最小实际字号对不对得上规范下限：回（四值判据，原因码）。
+
+    **阈值只从调用方来**（出版规范的字号下限；本模块不写任何 pt 数，RC-071）。`tol_pt` 同理，由调用方给规范那边
+    的数值容差。判据不对称是有意的——找到一段低于下限的字就是 `failed`（别的段量没量到都不改变这一点）；而
+    「量到的都够大」只有在**没有量不了的段**时才算 `verified`，否则是 `unknown`：不画只进文本层的字（画出来的是
+    轮廓）、em 不明的 Type 3、退化矩阵，都可能藏着更小的字。
+
+    原因码（闭集）：`below_min` / `ok` / `no_threshold` / `not_observed` / `budget` / `no_text` / `unmeasured_runs`。
+    """
+    facts = observed.get("text_size") if isinstance(observed, dict) else None
+    if not isinstance(facts, dict):
+        return UNKNOWN, "not_observed"
+    if facts.get("status") == UNKNOWN:
+        return UNKNOWN, str(facts.get("reason") or "budget")
+    try:
+        floor = float(min_pt) if min_pt is not None else 0.0
+    except (TypeError, ValueError):
+        floor = 0.0
+    if not (math.isfinite(floor) and floor > 0):
+        return UNKNOWN, "no_threshold"
+    unmeasured = int(facts.get("hidden_runs") or 0) + int(facts.get("unsized_runs") or 0)
+    smallest = facts.get("min_pt")
+    if smallest is not None and float(smallest) < floor - tol_pt:
+        return FAILED, "below_min"
+    if unmeasured:
+        return UNKNOWN, "unmeasured_runs"
+    if smallest is None:
+        return NOT_APPLICABLE, "no_text"
+    return VERIFIED, "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -1270,5 +1404,6 @@ __all__ = [
     "parse_tounicode",
     "public_projection",
     "summary",
+    "text_size_verdict",
     "uninspected",
 ]

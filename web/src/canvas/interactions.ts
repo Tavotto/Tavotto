@@ -111,6 +111,7 @@ import { displayedExactManifest } from '@/store/mountedSvgStore'
 import { exactPanelManifest, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
+import { createPathText, pathSourceAt } from '@/store/pathTextActions'
 import { DRAW_COLOR_DEFAULT } from '@/lib/drawDefaults'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
@@ -942,6 +943,15 @@ export function startDraw(e: ReactPointerEvent, tool: DrawTool) {
       // pointercancel：草稿丢掉，不落对象（工具也不该切回选择）
       if (fin.cancelled) return
 
+      // 文字工具点在一条路径 / 形状的轮廓上（不拖）= 在它上面放路径文字，起点就在点的地方（ADR 0190）
+      if (tool === 'text' && !moved) {
+        const onPath = pathSourceAt([start.x, start.y], snapTolMm(getTransform()))
+        if (onPath) {
+          useUiStore.getState().setTool('select')
+          createPathText(onPath.src, onPath.offset)
+          return
+        }
+      }
       const fallback = DEFAULT_DRAW[tool]
       const rect: Rect =
         moved && draft && draft.w > 0.5

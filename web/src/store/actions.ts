@@ -97,6 +97,7 @@ import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, st
 import { useSelectionStore } from './selectionStore'
 import { isolationScope } from './isolationStore'
 import { useTransformPrefs } from './transformPrefs'
+import { useArrangeStore } from './arrangeStore'
 import {
   gatherContiguous,
   gidOfKey,
@@ -128,6 +129,7 @@ import { hasPendingStyleWork } from './styleWork'
 import { canConvertToPath, toPathObject } from '@/lib/convertToPath'
 import { isFillStrokeMark, styleFamilyOf } from '@/lib/markStyle'
 import { fitStageNow } from '@/store/zoomToSelection'
+import { remapLineIds } from '@/lib/pathText'
 
 /** 本文件的历史标签与状态提示都在 workspace 命名空间下 */
 const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
@@ -529,6 +531,7 @@ export function duplicateSelected() {
   // 对任何 Proxy 都直接抛 DataCloneError（引擎级行为）——复制会 100% 静默失败。
   // 对已 finalize 的 plain object 克隆好再整体 push，与 clipboard.materializePaste 同一模式。
   const regroup = new Map<string, string>()
+  const renamed = new Map<string, string>()
   const sources = doc().objects.filter((o) => ids.includes(o.id))
   const step = duplicateStep(sources)
   const scope = isolationScope()
@@ -536,6 +539,7 @@ export function duplicateSelected() {
     .map((o) => {
       const copy = structuredClone(o)
       copy.id = newId(o.type[0])
+      renamed.set(o.id, copy.id)
       copy.x += step.dx
       copy.y += step.dy
       // 重复复制（ADR 0185 M4 第二批）：副本上次被转过，这一份再转同样的角度（面板只走 90°，不跟）
@@ -556,6 +560,7 @@ export function duplicateSelected() {
       return copy
     })
   if (!clones.length) return
+  remapLineIds(clones, renamed)
   commit(hist('duplicateObjects'), (d) => {
     d.objects.push(...clones)
   })
@@ -648,7 +653,13 @@ export const isSelectAllTarget = (o: CanvasObject): boolean => !o.hidden && !o.l
  * 走这一处——快速编辑里曾经把整版看不见的对象全选上，接着 Delete 就把它们从版上删掉（Codex #833）。
  */
 export function selectAllIds(objects: readonly CanvasObject[]): string[] {
-  return objects.filter(isSelectAllTarget).map((o) => o.id)
+  // 剪切组的蒙版是隐藏的（给旧构建的，ADR 0191），但它是组的一部分：组里有成员被全选，蒙版跟着进选区——
+  // 否则 ⌘A + Delete 删掉内容、蒙版被当成孤立的还原出来，平白多出一个形状
+  const base = objects.filter(isSelectAllTarget)
+  const gids = new Set(base.flatMap((o) => groupPathOf(o)))
+  return objects
+    .filter((o) => isSelectAllTarget(o) || (!!o.clipMask && !o.locked && !!o.groupId && gids.has(o.groupId)))
+    .map((o) => o.id)
 }
 
 export function selectAll() {
@@ -3051,6 +3062,10 @@ export function releaseOrphanMasks(d: FigureDocument) {
     delete o.clipMask
     delete o.clipOff
     delete o.hidden
+    // 组里只剩它自己：这一层组也拿掉（不留一个「组 · 1 个对象」）
+    const p = groupPathOf(o)
+    const gid = p[p.length - 1]
+    if (gid && !d.objects.some((x) => x.id !== o.id && groupPathOf(x).includes(gid))) setGroupPath(o, p.slice(0, -1))
   }
 }
 
@@ -3217,17 +3232,23 @@ export function alignSelectedTo(mode: AlignMode, ref: AlignRef) {
 export function setSelectionSpacing(axis: 'x' | 'y', gap: number) {
   const ids = useSelectionStore.getState().ids
   if (ids.length < 2) return
+  finishActiveGesture()
+  // 有关键对象（ADR 0185 M6）：它不动，其余的按间距排在它两边；没有就是第一个不动（原来的规则）
+  const key = useArrangeStore.getState().alignRef === 'primary' ? ids.at(-1) : undefined
   commit(hist(axis === 'x' ? 'spacingX' : 'spacingY'), (d) => {
     const objs = d.objects.filter((o) => ids.includes(o.id))
     const s = axis === 'x' ? 'w' : 'h'
     // 间距量的是看得见的盒（旋转过的标注取外接框），写回只平移
     const sorted = objs.slice().sort((a, b) => visualBounds(a)[axis] - visualBounds(b)[axis])
+    const starts = new Map<CanvasObject, number>()
     let cur = visualBounds(sorted[0])[axis]
     for (const o of sorted) {
-      const vb = visualBounds(o)
-      o[axis] += cur - vb[axis]
-      cur += vb[s] + gap
+      starts.set(o, cur)
+      cur += visualBounds(o)[s] + gap
     }
+    const anchor = sorted.find((o) => o.id === key)
+    const shift = anchor ? visualBounds(anchor)[axis] - starts.get(anchor)! : 0
+    for (const o of sorted) o[axis] += starts.get(o)! + shift - visualBounds(o)[axis]
   })
 }
 

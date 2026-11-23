@@ -392,3 +392,53 @@ def test_only_what_really_covers_the_data_counts_as_a_hit():
     ax, leg = legend_over_line(True)
     assert tpl.legend_hits_data(ax, leg) is True
     plt.close("all")
+
+
+def test_a_single_filled_band_or_violin_is_checked_by_its_shape_not_as_a_scatter():
+    """一整块 `fill_between` 误差带 / `fill_betweenx` 小提琴是只有一条路径的 PolyCollection，默认偏移是 (0, 0)：
+    不能当成散点去比那个假位置，要按填充形状比（Codex 评审 #2141）。"""
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    def legend_at(ax, loc):
+        leg = ax.legend(["series"], loc=loc, frameon=False)
+        ax.figure.draw_without_rendering()
+        return leg
+
+    fig, ax = plt.subplots(figsize=(4, 3))
+    ax.fill_between([0, 1, 2, 3], [0.2, 0.3, 0.4, 0.5], [0.8, 0.9, 1.0, 1.1], alpha=0.3)
+    ax.plot([0, 3], [-1.0, -1.0], color="none")  # 图例的条目；本身画在视野外
+    ax.set_xlim(0, 3)
+    ax.set_ylim(0, 2)
+    assert tpl.legend_hits_data(ax, legend_at(ax, "center")) is True  # 压在带子上
+    assert tpl.legend_hits_data(ax, legend_at(ax, "upper left")) is False  # 带子上方的空白
+
+    fig2, ax2 = plt.subplots(figsize=(4, 3))
+    ax2.fill_betweenx([0, 1, 2], [0.8, 0.5, 0.8], [1.2, 1.5, 1.2], alpha=0.35)  # 小提琴的一瓣
+    ax2.plot([5, 6], [5, 5], color="none")
+    ax2.set_xlim(0, 4)
+    ax2.set_ylim(0, 2)
+    assert tpl.legend_hits_data(ax2, legend_at(ax2, "center right")) is False
+    hit = ax2.legend(["series"], loc="center", bbox_to_anchor=(0.25, 0.5), frameon=False)
+    fig2.draw_without_rendering()
+    assert tpl.legend_hits_data(ax2, hit) is True
+    plt.close("all")
+
+
+def test_scatter_points_are_still_checked_by_position():
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(4, 3))
+    ax.scatter([0.5], [0.5], s=40, label="p")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    over = ax.legend(loc="center", frameon=False, handlelength=0, handletextpad=0)
+    fig.draw_without_rendering()
+    assert tpl.legend_hits_data(ax, over) is True
+    away = ax.legend(loc="upper left", frameon=False)
+    fig.draw_without_rendering()
+    assert tpl.legend_hits_data(ax, away) is False
+    plt.close(fig)
