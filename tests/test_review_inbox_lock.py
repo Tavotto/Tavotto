@@ -56,6 +56,8 @@ def _spawn_two(tmp_path: Path, n: int, extra: dict | None = None):
             env=env,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         for tag in ("A", "B")
     ]
@@ -101,6 +103,8 @@ def test_a_lock_that_cannot_be_taken_fails_as_a_write_error_and_writes_nothing(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     try:
         assert holder.stdout.readline().strip() == "held", holder.stderr.read()
@@ -167,6 +171,8 @@ def test_two_processes_first_using_the_device_key_end_up_with_the_same_key(tmp_p
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         for _ in range(4)
     ]
