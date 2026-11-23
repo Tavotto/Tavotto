@@ -188,6 +188,7 @@ def _snapshot_project_files(proj: Path, source_ids: set[str]) -> set[str]:
                     "observation",
                     "fidelity",
                     "binding",
+                    "profile",
                 }, path
                 found_sources.add(identity["source_id"])
                 kwargs = dict(

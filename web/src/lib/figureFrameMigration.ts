@@ -5,6 +5,7 @@
  */
 import type { CanvasObject, PanelObject, PanelOverride } from '@/types/document'
 import { isAdoptedPanel } from '@/lib/artifactValidation'
+import { figureOriginFor, validFigureOrigin } from '@/lib/figureSnapshot'
 
 /** 面板上的记号：这个面板按 ADR 0098 的图幅语义放上来 / 迁移过 */
 export const FIGURE_FRAME_VERSION = 1
@@ -34,7 +35,11 @@ export function migrateFigureFrames(objects: CanvasObject[]): CanvasObject[] {
     changed = true
     const next: PanelObject = { ...o, figureFrame: FIGURE_FRAME_VERSION }
     if (renderedByEngine(o) && !hasLegacyFrame(o)) {
+      const origin = figureOriginFor(o)
+      if (validFigureOrigin(origin, o.fileId)) next.figureOrigin = structuredClone(origin)
       next.overrides = [...o.overrides, { ...LEGACY_FRAME_OVERRIDE }]
+      // The archived pair belongs to the original patches; saving will capture this migrated state.
+      delete next.figureSnapshot
     }
     return next
   })
