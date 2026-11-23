@@ -1666,6 +1666,22 @@
           "title": "记住修好的做法：设置里能看到每一条、逐条删、全部删除先确认、关掉开关后重新打开仍是关"
         }
       ]
+    },
+    {
+      "id": "canvas.svg-paste",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "粘贴一段 SVG 得到可编辑对象（而不是一张图片）",
+        "en-US": "Pasting SVG markup yields editable objects instead of a picture"
+      },
+      "entry": "画布 → ⌘V（剪贴板里是 SVG）",
+      "e2e": [
+        {
+          "spec": "vector-svg.spec.ts",
+          "title": "粘贴 SVG › 粘贴一段 SVG：落成两个可编辑对象（不是图片），点中红的那个属性栏里是它的红色；一次撤销全撤回"
+        }
+      ]
     }
   ]
 }

@@ -437,6 +437,9 @@ class ExecutionReceipt:
         out = {
             "receipt_identity": self.public_identity(),
             "receipt_id": self.receipt_id,
+            # 冷回放要按归档执行自己的档位解析 worker（safe / native）；它已经是
+            # public_identity 的一部分，这里只是把原始值留给快照读者。
+            "profile": self.profile,
             "completeness": self.completeness,
             "runtime_rejected": self.runtime_rejected,
             "pid_check": self.pid_check,

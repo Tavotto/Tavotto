@@ -93,6 +93,9 @@ import { openArrangeInInspector } from './context-bar/openArrange'
 import { canConvertToPath } from '@/lib/convertToPath'
 import { PATH_COMMANDS } from '@/store/pathActions'
 import { blockedReason, PATHFINDER_COMMANDS } from '@/store/pathfinderActions'
+import { canExplodeSvg, explodeSvgPanel } from '@/store/svgImportActions'
+import { canOutlineText, outlineSelectedText } from '@/store/textOutlineActions'
+import { canCopyAsSvg, copySelectionAsSvg } from '@/store/svgCopyActions'
 import { canMakeClipMask, canReleaseClipMask, makeClipMask, releaseClipMask } from '@/store/groupActions'
 import { PATHFINDER_COMMAND_ICONS } from '@/components/pathfinderCommandIcons'
 import { loadVecops } from '@/lib/vecops/kernel'
@@ -218,6 +221,12 @@ export function ObjectContextMenu({
 
       {kind === 'panel' && <EditablePanelItems panel={obj as PanelObject} run={run} runAsync={runAsync} />}
       {kind === 'panel-layout-only' && <LayoutOnlyPanelItems panel={obj as PanelObject} run={run} />}
+      {/* 静态 SVG 图拆成可编辑对象（ADR 0189）：判据只有 `canExplodeSvg`，与命令面板同一个 */}
+      {!multi && canExplodeSvg(obj) && (
+        <MenuItem icon={Spline} data-quick-item="explode-svg" onSelect={runAsync(() => explodeSvgPanel(obj.id))}>
+          {translate('palette.commands.explode-svg.label', { ns: 'dialogs' })}
+        </MenuItem>
+      )}
       {kind === 'text' && (
         <MenuItem
           icon={Pencil}
@@ -225,6 +234,12 @@ export function ObjectContextMenu({
           onSelect={run(() => useUiStore.getState().setEditingText(obj.id))}
         >
           {qe('editText')}
+        </MenuItem>
+      )}
+      {/* 文字转轮廓（ADR 0189）：判据 `canOutlineText`（选区里有可转的文字），多选全是文字时也给 */}
+      {(kind === 'text' || (multi && selected.every((o) => o.type === 'text'))) && canOutlineText() && (
+        <MenuItem icon={Spline} shortcut={keyOf('outlineText')} data-quick-item="outline-text" onSelect={runAsync(outlineSelectedText)}>
+          {translate('palette.commands.outline-text.label', { ns: 'dialogs' })}
         </MenuItem>
       )}
       {kind === 'multi' && <MultiItems selected={selected} run={run} />}
@@ -630,6 +645,12 @@ function CommonTail({
       >
         {qe('copy')}
       </MenuItem>
+      {/* 复制为 SVG（ADR 0189）：判据 `canCopyAsSvg`（没有图），与命令面板同一个 */}
+      {canCopyAsSvg() && (
+        <MenuItem icon={Clipboard} data-quick-item="copy-as-svg" onSelect={runAsync(copySelectionAsSvg)}>
+          {translate('palette.commands.copy-as-svg.label', { ns: 'dialogs' })}
+        </MenuItem>
+      )}
       {canPasteFromMenu() && (
         <MenuItem
           icon={ClipboardPaste}

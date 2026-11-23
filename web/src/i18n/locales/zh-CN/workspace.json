@@ -485,7 +485,10 @@
     "transformSkew": "倾斜",
     "transformReflect": "镜像",
     "quickLayout": "一键排版",
-    "quickLayoutRatios": "调整排版比例"
+    "quickLayoutRatios": "调整排版比例",
+    "importSvg": "粘贴 SVG（{{count}} 个对象）",
+    "explodeSvg": "拆成可编辑对象",
+    "outlineText": "文字转轮廓（{{count}} 个）"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -1027,7 +1030,16 @@
       "text_weight": "字重",
       "other": "其他样式"
     },
-    "quickLayoutPageTooSmall": "画布放不下这几张图，可以减少列数或调大画布"
+    "quickLayoutPageTooSmall": "画布放不下这几张图，可以减少列数或调大画布",
+    "svgImported_other": "已变成 {{count}} 个可编辑对象",
+    "svgAsImage": "这个 SVG {{reason}}，已整体当图片放进来",
+    "svgExplodeFailed": "这张图{{reason}}，没有拆开",
+    "svgAsRaster": "这个 SVG {{reason}}，已整体当位图（{{dpi}} dpi）放进来",
+    "outlined_other": "{{count}} 个文字已转成轮廓",
+    "outlinePartial_other": "有 {{count}} 个文字没转成（字体不可用）",
+    "outlineFailed_other": "{{count}} 个文字没转成轮廓（字体不可用）",
+    "svgCopied": "已复制为 SVG，可以粘贴到 Illustrator、Inkscape、Figma",
+    "svgCopyFailed": "没能复制为 SVG"
   },
   "tabs": {
     "allCanvases": "全部画布",
@@ -1966,5 +1978,31 @@
     },
     "widthLockedTip": "保持画布大小时用画布的宽度",
     "gutterTip": "拖动调整比例"
+  },
+  "svgImport": {
+    "reason": {
+      "filter": "用了滤镜",
+      "mask": "用了蒙版（mask）",
+      "pattern": "用了图案填充",
+      "image": "里面有图片",
+      "foreign_object": "里面有网页内容（foreignObject）",
+      "text_path": "有沿路径排的文字",
+      "marker": "用了线端标记（marker）",
+      "external_ref": "引用了外部文件或实体",
+      "css_selector": "用了复杂的样式选择器",
+      "clip_units": "剪切路径按比例坐标写",
+      "text_layout": "文字逐字定位",
+      "skew_text": "有斜切的文字",
+      "symbol_viewbox": "符号自带缩放",
+      "bad_xml": "内容不是完整的 SVG",
+      "not_svg": "内容不是 SVG",
+      "too_large": "文件太大",
+      "too_many_elements": "元素太多",
+      "unreadable": "读不出来",
+      "unsupported_element": "用了 Tavotto 画不了的元素（比如滤镜）",
+      "script": "带脚本或事件",
+      "reference_cycle": "有循环引用",
+      "timeout": "太复杂、读不完"
+    }
   }
 }

@@ -204,3 +204,25 @@ def test_the_audit_keeps_only_codes(box, tmp_path):
         "changes": [],
     }
     assert "SECRET_X" not in json.dumps(rows)
+
+
+def test_a_change_that_resets_the_report_does_not_blank_the_failure_before(box):
+    """设好参数后报告被重置成「还没跑」：第一次试运行之前的形状退到会话开始时的（评测 11-23 发现记成了空）。"""
+    ctx = _app_ctx(
+        box,
+        [{"code": "", "report": {"phase": "completed"}, "verification": None}],
+        before={"phase": "awaiting_run"},  # 改动之后的样子：读不出形状
+    )
+    ctx.first_shape = "script_needs_arguments"
+    ctx.changes_since_try = ["set_run_arguments"]
+    r = call(ctx, "try_run", {"env": "e"})
+    assert "1. after set_run_arguments: script_needs_arguments -> ok" in r.content
+    assert ctx.attempts[0]["before"] == "script_needs_arguments"
+
+
+def test_the_first_message_records_the_starting_shape(box):
+    from tavotto.engine import fixsession
+
+    ctx = make_ctx(box, report=lambda: _failing("script_needs_arguments"))
+    fixsession._first_message(ctx, "fig.py")
+    assert ctx.first_shape == "script_needs_arguments"

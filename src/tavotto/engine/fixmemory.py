@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -184,12 +185,32 @@ def _default_scrub(text: str) -> str:
     return diagnostictext.redact_text(text)
 
 
+def _home_to_tilde(
+    text: str, home: str | None = None, *, case_insensitive: bool | None = None
+) -> str:
+    """家目录写成 `~`。Windows 上大小写不同（`c:\\users\\Me` 与 `C:\\Users\\me`）、`/` 与 `\\` 写法不同，都是同一处
+    （d2 #2100 提醒）；别的平台精确匹配。"""
+    home = os.path.expanduser("~") if home is None else home
+    if not home or home == "~":
+        return text
+    if case_insensitive is None:
+        # 只认 Windows：macOS 可以是区分大小写的卷，`/Users/me` 与 `/Users/Me` 可能是两处（Codex #2120 P2）
+        case_insensitive = sys.platform == "win32"
+    variants = {home}
+    if "\\" in home:
+        variants.add(home.replace("\\", "/"))
+    flags = re.IGNORECASE if case_insensitive else 0
+    for v in sorted(variants, key=len, reverse=True):
+        # 只换完整的家目录前缀：前面不能紧挨着路径字符（`/x/Users/me` 不算），后面不能紧跟文件名字符
+        # （`/Users/me` 不把 `/Users/meg/…` 换成 `~g/…`）；引号、空格、`=`、分隔符、开头结尾都行（Codex #2120 P2）
+        pattern = r"(?<![\w.\-/\\])" + re.escape(v.rstrip("/\\")) + r"(?![\w.\-])"
+        text = re.sub(pattern, "~", text, flags=flags)
+    return text
+
+
 def _tidy(text: str, limit: int, scrub: Callable[[str], str] = _default_scrub) -> str:
     # 先把家目录写成 `~`，再脱敏：脱敏会把 `C:\\Users\\<名字>` 里的用户名换掉，换完就认不出家目录了（Windows 合并组实测）
-    text = str(text or "")
-    home = os.path.expanduser("~")
-    if home and home != "~":
-        text = text.replace(home, "~")
+    text = _home_to_tilde(str(text or ""))
     text = scrub(text)
     return text if len(text) <= limit else text[:limit] + "…"
 
