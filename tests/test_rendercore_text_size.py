@@ -33,7 +33,15 @@ needs_matplotlib = pytest.mark.skipif(
 # ---------------------------------------------------------------------------
 # 手工 PDF：一页、一个简单字体，内容流由用例给
 # ---------------------------------------------------------------------------
-def _pdf(tmp_path, content: bytes, *, name="a.pdf", forms: dict | None = None, type3=None):
+def _pdf(
+    tmp_path,
+    content: bytes,
+    *,
+    name="a.pdf",
+    forms: dict | None = None,
+    type3=None,
+    user_unit: float | None = None,
+):
     import pikepdf
 
     pdf = pikepdf.new()
@@ -67,6 +75,8 @@ def _pdf(tmp_path, content: bytes, *, name="a.pdf", forms: dict | None = None, t
         xobjects[f"/{key}"] = pdf.make_indirect(form)
     page.obj["/Resources"] = pikepdf.Dictionary(Font=fonts, XObject=xobjects)
     page.obj["/Contents"] = pdf.make_indirect(pikepdf.Stream(pdf, content))
+    if user_unit is not None:
+        page.obj["/UserUnit"] = user_unit
     out = tmp_path / name
     pdf.save(str(out))
     return out
@@ -106,6 +116,41 @@ def test_a_scaled_panel_shrinks_its_text_through_cm_and_form_matrix(tmp_path):
     )
     f = _facts(p)
     assert f["smallest"] == [[3.0, 1], [9.0, 1]]
+
+
+def test_user_unit_scales_the_size_into_physical_points(tmp_path):
+    """`/UserUnit 2`：默认空间一个单位是 2 pt，`4 Tf` 的字读者看到的是 8 pt；页面尺寸照旧只乘一次。"""
+    p = _pdf(tmp_path, b"BT /F1 4 Tf (a) Tj ET", user_unit=2.0)
+    assert _facts(p)["min_pt"] == 8.0
+    assert I.observe_pdf(p)["size_pt"] == [400.0, 400.0]  # 200 × 2，不是 200 × 2 × 2
+    # 缺省按 1 计
+    assert _facts(_pdf(tmp_path, b"BT /F1 4 Tf (a) Tj ET", name="u1.pdf"))["min_pt"] == 4.0
+
+
+def test_a_form_inherits_the_callers_render_mode(tmp_path):
+    """Form XObject 继承调用处的文字状态（PDF 32000 §8.10.1）：页面上 `3 Tr` 之后画的 Form，里面那段 2 pt 的字
+    同样不画——算进 hidden_runs、结论 unknown，不是 failed。"""
+    p = _pdf(
+        tmp_path,
+        b"BT 3 Tr ET /P0 Do",
+        forms={"P0": (b"BT /F1 2 Tf (invisible) Tj ET", None)},
+    )
+    f = _facts(p)
+    assert f["hidden_runs"] == 1 and f["min_pt"] is None and f["runs"] == 0
+    assert I.text_size_verdict({"text_size": f}, 5.0) == ("unknown", "unmeasured_runs")
+
+
+def test_a_form_without_its_own_tf_inherits_font_and_size(tmp_path):
+    """Form 里没有自己的 `Tf`：用调用处的字体与字号（9 pt × Form 的 0.5 = 4.5 pt），不是「量不了」；
+    Form 画完以后调用处的状态不被 Form 里的改动带走（Form 里 `3 Tr` 之后，页面上的下一段仍看得见）。"""
+    p = _pdf(
+        tmp_path,
+        b"BT /F1 9 Tf ET /P0 Do BT (after) Tj ET",
+        forms={"P0": (b"BT (inside) Tj 3 Tr (gone) Tj ET", [0.5, 0, 0, 0.5, 0, 0])},
+    )
+    f = _facts(p)
+    assert f["unsized_runs"] == 0, f
+    assert f["smallest"] == [[4.5, 1], [9.0, 1]] and f["hidden_runs"] == 1
 
 
 # ---------------------------------------------------------------------------
