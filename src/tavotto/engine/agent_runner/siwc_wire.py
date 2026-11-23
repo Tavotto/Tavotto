@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from typing import Any
 
 from .wires import (
@@ -73,7 +72,6 @@ MAX_STREAM_BYTES = 64 * 1024 * 1024
 MAX_FRAME_BYTES = MAX_RESPONSE_BYTES
 
 _TERMINAL = ("response.completed", "response.failed", "response.incomplete", "error")
-_TYPE_PEEK = re.compile(rb'"type"\s*:\s*"([^"]{1,80})"')
 
 
 def enabled(env: dict[str, str] | None = None) -> bool:
@@ -181,10 +179,16 @@ class _Frames:
 
 
 def _frame_type(event: str, data: bytes) -> str:
+    """帧的事件类型：有 `event:` 行用它；只有 data 时解析 JSON 取**顶层** `type`（正则会抓到嵌套条目的 type，
+    或漏掉排在后面的 type——终态帧认不出来就停不下来，Codex #2132 P2）。解析不了 = 空串（原样保留，交给 `fold`）。"""
     if event:
         return event
-    m = _TYPE_PEEK.search(data[:4096])
-    return m.group(1).decode("ascii", errors="replace") if m else ""
+    try:
+        obj = json.loads(data.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return ""
+    kind = obj.get("type") if isinstance(obj, dict) else None
+    return kind if isinstance(kind, str) else ""
 
 
 def compact_sse(resp: Any) -> bytes:

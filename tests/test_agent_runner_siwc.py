@@ -449,6 +449,35 @@ def test_data_only_frame_whose_type_is_not_the_first_key_survives():
     assert folded["status"] == "completed" and folded["output"][0]["type"] == "message"
 
 
+class _ThenHang(io.RawIOBase):
+    """先给出全部字节，之后再读就当作「服务端不关连接」——读取器不该再读。"""
+
+    def __init__(self, data: bytes):
+        self.data = data
+
+    def read1(self, n=-1):
+        if not self.data:
+            raise AssertionError("read after terminal event")
+        piece, self.data = self.data[:n], self.data[n:]
+        return piece
+
+    read = read1
+
+
+@pytest.mark.parametrize("late", [True, False])
+def test_data_only_terminal_frame_stops_reading(late):
+    """只有 data 行的终态帧：type 在 4096 字节之后、或前面先出现嵌套条目的 type，都要认出终态立即返回（Codex #2132 P2）。"""
+    resp = {"output": [_msg("ok")], "id": "r", "status": "completed", "usage": _usage()}
+    frame = (
+        {"response": resp, "pad": "p" * 5000, "type": "response.completed"}
+        if late
+        else {"response": resp, "type": "response.completed"}
+    )
+    raw = ("data: " + json.dumps(frame) + "\n\n").encode()
+    kept = siwc_wire.compact_sse(_ThenHang(raw))
+    assert siwc_wire.fold(kept)["status"] == "completed"
+
+
 def test_multiline_data_frames_round_trip():
     resp = {"id": "r", "status": "completed", "output": [_msg("ok")], "usage": _usage()}
     text = json.dumps({"type": "response.completed", "response": resp}, indent=1)
