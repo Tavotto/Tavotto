@@ -183,7 +183,7 @@ class _Frames:
 def _frame_type(event: str, data: bytes) -> str:
     if event:
         return event
-    m = _TYPE_PEEK.search(data[:256])
+    m = _TYPE_PEEK.search(data[:4096])
     return m.group(1).decode("ascii", errors="replace") if m else ""
 
 
@@ -196,10 +196,16 @@ def compact_sse(resp: Any) -> bytes:
 
     def keep(items: list[tuple[str, bytes]]) -> bool:
         for event, data in items:
-            kind = _frame_type(event, data)
+            kind = _frame_type(
+                event, data
+            )  # 只用来决定丢不丢 / 停不停；原帧原样写回（`fold` 以 JSON 里的 type 为准）
             if kind.endswith(".delta") or data.strip() == b"[DONE]":
                 continue
-            piece = (f"event: {kind}\n" if kind else "").encode() + b"data: " + data + b"\n\n"
+            piece = (
+                (b"event: " + event.encode("utf-8") + b"\n" if event else b"")
+                + b"".join(b"data: " + line + b"\n" for line in data.split(b"\n"))
+                + b"\n"
+            )
             if len(kept) + len(piece) > MAX_RESPONSE_BYTES:
                 raise RunnerFailure("network", "response_too_large")
             kept.extend(piece)
@@ -207,8 +213,10 @@ def compact_sse(resp: Any) -> bytes:
                 return True
         return False
 
+    # `read1`：有多少给多少（分块传输时 `read(n)` 会一直等到凑满 n 字节，终态之后也停不下来）
+    read = getattr(resp, "read1", None) or resp.read
     while True:
-        chunk = resp.read(64 * 1024)
+        chunk = read(64 * 1024)
         if not chunk:
             keep(frames.close())
             return bytes(kept)
@@ -233,7 +241,9 @@ def fold(data: bytes) -> dict:
             raise RunnerFailure("network", "bad_response") from None
         if not isinstance(ev, dict):
             raise RunnerFailure("network", "bad_response")
-        kind = event or str(ev.get("type") or "")
+        kind = (
+            str(ev.get("type") or "") or event
+        )  # JSON 自己的 type 优先（event 行可能缺 / 与之不同）
         if kind == "response.output_item.done" and isinstance(ev.get("item"), dict):
             items.append(ev["item"])
         elif kind in _TERMINAL:

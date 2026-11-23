@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import io
 import json
+import logging
+import signal
 import threading
 import time
 from pathlib import Path
@@ -314,14 +316,55 @@ def test_error_codes(cand, status, data, reason, detail, attempts):
 
 
 def test_no_protocol_switch_or_field_degradation(cand):
-    """404 / 「字段不被接受」的 400 在别的协议上会换协议 / 剥字段重发；这里一律只发一次。"""
+    """404 / 「字段不被接受」的 400 在别的协议上会换到备选协议 / 剥字段重发。这里即使给了备选路由也一律只发一次、不换。"""
     for status, body in (
         (404, b"not found"),
         (400, b'{"error":{"message":"unsupported parameter: \\"include\\""}}'),
     ):
         server = Server([(status, body)] * 3)
-        res, _done, _ = _run(cand, server, max_attempts=3)
-        assert not res.ok and len(server.requests) == 1
+        res, done, _ = _run(
+            cand,
+            server,
+            max_attempts=3,
+            fallbacks=[(wires.WIRES["openai-responses"], siwc_wire.BASE_URL)],
+        )
+        assert not res.ok and len(server.requests) == 1, status
+        assert done.get("wire_switched_from", "") == ""
+        assert server.requests[0]["reader"] is siwc_wire.compact_sse
+
+
+def test_retried_requests_stay_compliant(cand):
+    server = Server(
+        [
+            (503, _err("subscription_sharing_usage_unavailable")),
+            (200, _sse()),  # 流断了
+            (200, _completed(_call("read_file", {"path": "fig.py"}, "c1"))),
+            (503, b"{}"),
+            (200, _completed(_msg("ok"))),
+        ]
+    )
+    res, done, _ = _run(cand, server, max_attempts=4)
+    assert res.ok, done
+    assert len(server.requests) == 5
+    for req in server.requests:
+        _assert_compliant(req)
+
+
+def test_server_side_truncation_discards_the_partial_turn(cand):
+    trunc = _sse(
+        {"type": "response.output_item.done", "item": _call("read_file", {"path": "fig.py"}, "c1")},
+        {
+            "type": "response.incomplete",
+            "response": {"id": "r", "incomplete_details": {"reason": "max_output_tokens"}},
+        },
+    )
+    server = Server([(200, trunc), (200, _completed(_msg("ok")))])
+    res, done, events = _run(cand, server)
+    assert res.ok, done
+    # 截断轮的工具调用不执行，也不进下一轮的回放
+    assert not any(e.get("type") == "tool" for e in events)
+    assert all(it.get("type") != "function_call" for it in server.requests[1]["body"]["input"])
+    _assert_compliant(server.requests[1])
 
 
 def test_incomplete_for_other_reasons_is_refused(cand):
@@ -393,6 +436,29 @@ def test_fold_handles_data_only_frames_and_crlf():
     assert siwc_wire.fold(siwc_wire.compact_sse(io.BytesIO(raw)))["status"] == "completed"
 
 
+def test_data_only_frame_whose_type_is_not_the_first_key_survives():
+    resp = {"id": "r", "status": "completed", "output": [_msg("ok")], "usage": _usage()}
+    big = {
+        "response": resp,
+        "padding": "p" * 5000,
+        "type": "response.completed",
+    }  # type 远在 peek 之外
+    item = {"item": _msg("ok"), "pad": "q" * 5000, "type": "response.output_item.done"}
+    raw = ("data: " + json.dumps(item) + "\n\n" + "data: " + json.dumps(big) + "\n\n").encode()
+    folded = siwc_wire.fold(siwc_wire.compact_sse(io.BytesIO(raw)))
+    assert folded["status"] == "completed" and folded["output"][0]["type"] == "message"
+
+
+def test_multiline_data_frames_round_trip():
+    resp = {"id": "r", "status": "completed", "output": [_msg("ok")], "usage": _usage()}
+    text = json.dumps({"type": "response.completed", "response": resp}, indent=1)
+    raw = (
+        "event: response.completed\n" + "".join(f"data: {ln}\n" for ln in text.split("\n")) + "\n"
+    ).encode()
+    kept = siwc_wire.compact_sse(io.BytesIO(raw))
+    assert siwc_wire.fold(kept)["output"][0]["content"][0]["text"] == "ok"
+
+
 def test_error_event_maps_closed_codes():
     raw = _sse({"type": "error", "code": "subscription_sharing_usage_limit_exceeded"})
     with pytest.raises(wires.RunnerFailure) as exc:
@@ -435,7 +501,17 @@ def _cli(monkeypatch, cand, tmp_path, capsys, *, flag: bool, extra=(), replies=(
         "--cwd", str(cand), "--target", "fig.py", "--wire", siwc_wire.WIRE_NAME,
         "--model", "gpt-test", "--prompt-file", str(prompt), *extra,
     ]  # fmt: skip
-    code = runner_cli.main(argv)
+    product = logging.getLogger("tavotto")
+    saved_log = (list(product.handlers), product.propagate)
+    saved_sig = {
+        n: signal.getsignal(getattr(signal, n)) for n in ("SIGTERM", "SIGINT") if hasattr(signal, n)
+    }
+    try:
+        code = runner_cli.main(argv)
+    finally:
+        product.handlers, product.propagate = saved_log
+        for n, h in saved_sig.items():
+            signal.signal(getattr(signal, n), h)
     out = capsys.readouterr()
     lines = [json.loads(x) for x in out.out.splitlines() if x.strip()]
     return code, lines, out, server
@@ -472,3 +548,126 @@ def test_cli_end_to_end_never_leaks_the_token(monkeypatch, cand, tmp_path, capsy
     assert code == 0 and lines[-1]["reason"] == "completed"
     assert server.requests[0]["headers"]["Authorization"] == f"Bearer {TOKEN}"  # 令牌确实发出去过
     assert TOKEN not in out.out and TOKEN not in out.err
+
+
+# --------------------------------------------------------------------------- 真实传输（本机回环，`wires.post_json` 默认路径）
+class _SseServer:
+    """127.0.0.1 上的假服务：分块写 SSE；`drop_after` 字节后断开；`hang_after` 字节后停住不动（连接不关）。"""
+
+    def __init__(self, bodies, *, chunk=5, drop_after=None, hang_after=None):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        self.bodies, self.requests = list(bodies), []
+        outer = self
+
+        class H(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                n = int(self.headers.get("Content-Length", "0"))
+                outer.requests.append(
+                    (
+                        {k.lower(): v for k, v in self.headers.items()},
+                        json.loads(self.rfile.read(n)),
+                    )
+                )
+                data = outer.bodies[min(len(outer.requests), len(outer.bodies)) - 1]
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+                sent = 0
+                for i in range(0, len(data), chunk):
+                    if hang_after is not None and sent >= hang_after:
+                        time.sleep(10)
+                        return
+                    if drop_after is not None and sent >= drop_after:
+                        self.close_connection = True
+                        return  # 不发终止块：流在中途断掉
+                    piece = data[i : i + chunk]
+                    self.wfile.write(f"{len(piece):x}\r\n".encode() + piece + b"\r\n")
+                    self.wfile.flush()
+                    sent += len(piece)
+                self.wfile.write(b"0\r\n\r\n")
+
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.httpd.daemon_threads = True
+        self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}/v1"
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+
+def _real(cand, srv, **kw):
+    events: list[dict] = []
+    model = loop.HttpModel(
+        siwc_wire.SiwcResponsesWire(),
+        base_url=srv.url,
+        api_key=TOKEN,
+        model="gpt-test",
+        retry_base=0.0,
+        **kw.pop("model_kw", {}),
+    )
+    res = loop.run(
+        model, tools.TOOLSETS["figure_edit"], _envelope(cand), events.append, kw.pop("cancel", None)
+    )
+    return res, events[-1]
+
+
+def test_real_transport_chunked_stream(cand):
+    srv = _SseServer(
+        [_completed(_call("read_file", {"path": "fig.py"}, "c1")), _completed(_msg("ok"))], chunk=7
+    )
+    try:
+        res, done = _real(cand, srv)
+    finally:
+        srv.close()
+    assert res.ok, done
+    headers, body = srv.requests[0]
+    assert (
+        headers["accept"] == "text/event-stream" and headers["authorization"] == f"Bearer {TOKEN}"
+    )
+    assert body["stream"] is True and "max_output_tokens" not in body
+
+
+def test_real_transport_connection_dropped_mid_stream(cand):
+    srv = _SseServer([_completed(_msg("never finishes"))], chunk=16, drop_after=64)
+    try:
+        res, done = _real(cand, srv, model_kw={"max_attempts": 2})
+    finally:
+        srv.close()
+    assert not res.ok and done["reason"] == "network", done
+    assert len(srv.requests) == 2  # 可重试，用尽后失败
+
+
+def test_real_transport_cancel_while_bytes_arrive(cand):
+    srv = _SseServer([_completed(_msg("slow"))], chunk=8, hang_after=40)
+    cancel = threading.Event()
+    threading.Timer(0.5, cancel.set).start()
+    t0 = time.monotonic()
+    try:
+        res, done = _real(cand, srv, cancel=cancel)
+    finally:
+        srv.close()
+    assert not res.ok and done["reason"] == "cancelled"
+    assert time.monotonic() - t0 < 5
+
+
+def test_real_transport_stops_reading_after_the_terminal_event(cand):
+    """终态帧之后服务端一直不关连接：读取器在终态处就停，不等到超时（证明传输层真的走了 `reader`）。"""
+    body = _completed(_msg("ok"))
+    srv = _SseServer(
+        [body + b"event: response.output_text.delta\ndata: {}\n\n"], chunk=8, hang_after=len(body)
+    )
+    t0 = time.monotonic()
+    try:
+        res, done = _real(cand, srv, model_kw={"request_timeout": 8})
+    finally:
+        srv.close()
+    assert res.ok, done
+    assert time.monotonic() - t0 < 4
