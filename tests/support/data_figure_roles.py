@@ -195,6 +195,7 @@ def run_case(
     post=None,
     request_budget: list | None = None,
     fresh: bool = False,
+    auto_small: bool | None = None,
 ) -> RoleRun:
     """一次 propose（lazy）→（有连接就）同步等模型 → 并进建议再 propose 一次。`conn=None` = 规则单臂（不起任务）。
     `fresh=True`：本次用独立的空缓存、清负缓存（重复跑 / 跑分用）；默认沿用当前缓存（测试要看缓存行为）。"""
@@ -207,9 +208,10 @@ def run_case(
                 post=post,
                 request_budget=request_budget,
                 fresh=False,
+                auto_small=auto_small,
             )
     with record_calls() as calls:
-        run = _run_case(case, project_root, conn, post, request_budget)
+        run = _run_case(case, project_root, conn, post, request_budget, auto_small)
     run.calls = calls
     return run
 
@@ -220,11 +222,14 @@ def _run_case(
     conn: dict | None,
     post,
     request_budget: list | None,
+    auto_small: bool | None = None,
 ) -> RoleRun:
     folder = materialize(case, project_root)
     extra = {"post": post} if post is not None else {}
     if request_budget is not None:
         extra["request_budget"] = request_budget
+    if auto_small is not None:
+        extra["auto_small"] = auto_small
     old = R.set_overrides(conn=conn, sync=True, **extra)
     try:
         first = P.propose(

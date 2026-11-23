@@ -95,6 +95,8 @@ def _legacy_values(runtime):
 # 来自 d0befe02 的实际旧 ExecutionReceipt，未以新实现推导期望值。
 # 原文件 SHA256: 353502a780469b25ebe7bcd2bc79a45d8456064c91c2f1201dcd3666e2363c63。
 # 同时定格无自报/有输入观察两种形态及公开、私有 JSON 的实际键顺序。
+# 2026-11-23：`public_facts()` 增加 `profile`（冷回放按归档档位解析），facts_wire 随之更新；
+# 身份 / public_wire / private_wire 不变。
 _LEGACY_ORACLE = {
     "partial": {
         "public_identity": "sha256:63aa407ba017387add9335b344c3f8bc1f4a1455854540603eb4db2fe45c5ef6",
@@ -102,7 +104,7 @@ _LEGACY_ORACLE = {
         "receipt_id": "sha256:95a8ae1d6d5c490f9343ede10a957fe890ad5678208422055410227169a151b1",
         "public_wire": "387fb5c61344c0da655cbeffac4ebfb4113678a386dbdf2f81bcca3596e81ab0",
         "private_wire": "dc3ee8bdcbdb900227a4aab4967fb11c6f0425d0e05efe0dbaf8fe10c728595f",
-        "facts_wire": "57473669db907899b553a25f6e3182c386f14573e98ef9995f6b99a920886792",
+        "facts_wire": "c5d179762fa1f175513f742a9a87023554dabdbc6284012f6e727c90ccb22bad",
     },
     "observed": {
         "public_identity": "sha256:3b386c0649c4504a70a6bf5347ecf5b157c6015f0f82368d7ca1a2174aee448b",
@@ -110,7 +112,7 @@ _LEGACY_ORACLE = {
         "receipt_id": "sha256:bab3dd1c70ba066bf4b84102be6834cf0f460b2acd3d7fdb570cd8a35e586c8c",
         "public_wire": "98ff666c04ffb4460daab7ce28cb1cf90d165750a177ca557aa043d9d02eaeca",
         "private_wire": "6c374bfb0729c2cc6734c2b208bf641c667a3b313d0c19d22a18b69e4e03a078",
-        "facts_wire": "f470a168a54be7ca0d1a16ac274bb2f47f99d7b71f36a9ef0cb841e94944b868",
+        "facts_wire": "8be1b4955ac76a8c5226b302903657a65cad99ea00cf7511e9094ffb1b2b40d9",
     },
 }
 

@@ -375,3 +375,113 @@ def test_private_bytes_do_not_relax_same_figure_companion_qualification(case, fi
             execution_owner=OWNER,
             captured_input_archive=case.archive,
         )
+
+
+def test_project_package_carries_captured_inputs_and_keeps_snapshot_id(case):
+    """打包重存 v2 快照时必须带上捕获的输入存档，否则 ID 变成 v1、文档引用在包里找不到（Codex #1926 P1）。"""
+    import io
+    import zipfile
+
+    saved = m._save_svg_snapshot(
+        _pair(case),
+        project_root=case.root,
+        execution_owner=OWNER,
+        captured_input_archive=case.archive,
+        activate=True,
+    )
+    reference = saved["snapshot_ref"]
+    doc = {
+        "schema": 2,
+        "objects": [
+            {
+                "id": "panel",
+                "type": "panel",
+                "fileId": case.source_id,
+                "overrides": [],
+                "figureSnapshot": reference,
+            }
+        ],
+    }
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        assert m._package_svg_assets(doc, case.root, archive) == 1
+    prefix = m._svg_storage_root(case.root).relative_to(case.root).as_posix()
+    snapshot_name = f"assets/{prefix}/snapshots/{reference['snapshotId']}.json"
+    buffer.seek(0)
+    with zipfile.ZipFile(buffer) as archive:
+        names = archive.namelist()
+        assert snapshot_name in names
+        payload = json.loads(archive.read(snapshot_name))["payload"]
+        assert "input_archive" in payload
+        assert any(name.startswith(f"assets/{prefix}/inputs/") for name in names)
+
+
+def test_saved_snapshot_records_its_profile_for_cold_replay(tmp_path, monkeypatch):
+    """真实保存的快照要带上执行档位；冷回放按它解析，不手工补 profile（Codex #1926 P1 残项）。"""
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
+    worker, _data = _frozen(tmp_path, native=True)
+    rcpt = _from_worker(worker)
+    assert rcpt.profile == "native"
+    root = Path(worker.spec.project_root)
+    (root / "F.pdf").write_bytes(PDF)
+    (root / "tavotto_registry.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "scripts": {
+                    "plot.py": {"entry": "main", "cost": "light", "notes": "", "stems": ["F"]}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    directory = tmp_path / "native-paired"
+    directory.mkdir()
+    pdf, svg = directory / "figure.pdf", directory / "figure.svg"
+    pdf.write_bytes(PDF)
+    svg.write_bytes(SVG)
+    frozen = sources.FrozenSource(
+        receipt.source_artifact_for(rcpt, pdf, source_id="F.pdf", patch_hash=PATCH),
+        pdf,
+        rcpt.public_facts(),
+        sources.FrozenSource(
+            receipt.source_artifact_for(rcpt, svg, source_id="F.pdf", patch_hash=PATCH),
+            svg,
+            rcpt.public_facts(),
+        ),
+    )
+    saved = m._save_svg_snapshot(frozen, project_root=root, execution_owner=OWNER, activate=True)
+    record = svgstore.load_document_snapshot(
+        root,
+        saved["snapshot_ref"],
+        source_id="F.pdf",
+        patch_hash=PATCH,
+        remap_fingerprint=m.engine_inputremap.fingerprint(root),
+        storage_root=m._svg_storage_root(root),
+    )
+    assert record is not None
+    assert record["receipt"]["profile"] == "native"
+    seen = []
+
+    def resolve(**kwargs):
+        seen.append(kwargs["execution_profile"])
+        if kwargs["execution_profile"] != m.engine_enginesession.PROFILE_NATIVE:
+            raise AssertionError("cold replay fell back to a safe session")
+        raise m.engine_runcodes.RunError(m.engine_runcodes.NATIVE_SESSION_OFFLINE)
+
+    monkeypatch.setattr(m.engine_enginesession, "resolve", resolve)
+    m.open_project(str(root))
+    try:
+        with pytest.raises(m.engine_runcodes.RunError) as excinfo:
+            m._replay_figure_origin(
+                "F.pdf",
+                {"version": 1, "snapshot": saved["snapshot_ref"], "patches": []},
+                record,
+                SimpleNamespace(path=root),
+            )
+    finally:
+        m.reset_projects()
+    assert excinfo.value.code == m.engine_runcodes.NATIVE_SESSION_OFFLINE
+    assert seen == [m.engine_enginesession.PROFILE_NATIVE]

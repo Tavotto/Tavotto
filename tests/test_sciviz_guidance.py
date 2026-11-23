@@ -106,3 +106,29 @@ def test_render_full_mentions_every_entry_once():
     text = sg.render()
     for e in sg.entries():
         assert text.count(f"[{e['id']}]") == 1
+
+
+def test_skill_reference_is_generated_from_the_json():
+    """插件技能参考文件与 JSON 一致（改了 JSON 忘了重出就红：`python scripts/gen_sciviz_reference.py --write`）。"""
+    have = (ROOT / sg.SKILL_REFERENCE).read_text(encoding="utf-8")
+    assert have == sg.render_markdown()
+    skill = (ROOT / "codex-plugin/skills/tavotto-figure/SKILL.md").read_text(encoding="utf-8")
+    assert "references/visualization-guidance.md" in skill, (
+        "SKILL.md 的参考表要点名它，否则 Agent 读不到"
+    )
+
+
+def test_figure_edit_subset_is_known_and_carries_every_taste_entry():
+    """改图助手的子集：编号都存在；**全部**品味条目都在（防助手把偏好当错误去「修」）；encoding 一类全在。"""
+    from tavotto.engine import ai_prompt_pack
+
+    ids = set(sg.FIGURE_EDIT_IDS)
+    known = {e["id"] for e in sg.entries()}
+    assert ids <= known
+    for e in sg.entries():
+        if e["basis"] in ("taste", "encoding"):
+            assert e["id"] in ids, f"{e['id']}（{e['basis']}）不在改图子集里"
+    note = ai_prompt_pack.sciviz_note()
+    for i in ids:
+        assert note.count(f"[{i}]") == 1
+    assert len(note) < 4000, "改图提示词每次都带这段：保持短"

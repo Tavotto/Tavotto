@@ -266,6 +266,49 @@ def test_key_file_run_with_a_fake_transport_reports_usage_and_never_leaks_the_ke
     assert not (tmp_path / "c0").exists() or not any((tmp_path / "c0").rglob("*"))
 
 
+def _role_rec():
+    import sys as _sys
+
+    _sys.path.insert(0, str(ROOT / "tests" / "support"))
+    import data_figure_roles as DR
+
+    case = next(c for c in DR.load_role_cases() if c["id"] == "RC-01")
+    return Recorder([json.dumps(case["model_answer"])])
+
+
+def test_auto_small_switches_model_and_effort_only_when_asked(tmp_path, monkeypatch, capsys):
+    rec = _role_rec()
+    rc, text, report = run_inproc(tmp_path, monkeypatch, capsys, rec, "--auto-small")
+    assert rc == 0, text
+    assert rec.calls[0]["body"]["model"] == "gpt-6-luna"
+    assert rec.calls[0]["body"]["reasoning"] == {"effort": "none"}
+    data = json.loads(report)
+    assert data["connection"]["effort"] is None  # 临时连接不带 effort：自动策略自己定
+
+
+def test_explicit_effort_none_is_sent_as_given_and_model_is_not_switched(
+    tmp_path, monkeypatch, capsys
+):
+    rec = _role_rec()
+    rc, text, _report = run_inproc(tmp_path, monkeypatch, capsys, rec, "--effort", "none")
+    assert rc == 0, text
+    assert rec.calls[0]["body"]["model"] == "gpt-5"
+    assert rec.calls[0]["body"]["reasoning"] == {"effort": "none"}
+
+
+def test_auto_small_flag_combinations_are_refused(tmp_path):
+    kf = key_file(tmp_path)
+    base = ["--real", "--key-file", str(kf), "--model", "gpt-5", "--max-calls", "50"]
+    for args in (
+        [*base, "--auto-small", "--effort", "low"],  # 与 --effort 互斥
+        ["--auto-small"],  # 没有 --real
+        [*base, "--suite", "recipes", "--auto-small"],  # 只给 roles
+    ):
+        done = bench(tmp_path, *args)
+        assert done.returncode == 2, args
+        assert KEY not in done.stdout + done.stderr
+
+
 @pytest.mark.parametrize("mode", ["leaky", "401"])
 def test_key_never_appears_in_outputs_even_when_errors_echo_it(
     tmp_path, monkeypatch, capsys, caplog, mode
