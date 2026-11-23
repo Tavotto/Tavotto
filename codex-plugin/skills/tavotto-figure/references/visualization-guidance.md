@@ -52,6 +52,12 @@
   - 出处：VAD §3.4.2.3 Derive, p.50–53；TAVOTTO 「只在用户同意后做」是 Tavotto 的约束
 - **G-053 已经汇总过的表不再汇总**（强建议）：表里已经是均值和误差列（sd、sem、ci）时，直接用这两列画点和误差线，误差类型按列名或用户确认；不要对均值再算均值和 SD，那会得到一个没有意义的数。误差列类型拿不准时按 G-005 处理，不默认成 SD。
   - 出处：GoG §3.5, p.52（预聚合后统计不可复原）；TAVOTTO 「对汇总表不再算 mean ± sd」是 Tavotto 据此的推导
+- **G-055 没画出来的观测要数得出来**（Tavotto 推导）：默认把用户给的每个观测都画出来。因为缺失、不是数、筛选、抽样或类别太多而没画的，要说清规则，并给出前后各有多少行；不为了好画或好看悄悄少画。数据太多时改用密度、分箱或栅格化，而不是抽样。
+  - 例外：用户明确要求只画一个子集：照做，仍然写明规则与计数
+  - 出处：XG static/core/contract.md「Data-integrity gate」；references 目录的 asset-adaptation.md「Preserve data integrity」；GoG §9.1.8, p.219；TAVOTTO 「给出前后计数」是 Tavotto 的工程约束；数据出图的 unplotted 计数是它的一部分实现
+- **G-057 可以互相比较的面板用同一种不确定性定义**（Tavotto 推导）：几个面板摆在一起让读者比较时，误差线或误差带要代表同一种量（都是 SD，或都是 95% CI），样本单位也一致；确实不同的要在图注里逐个写明。面板之间 n、分母或估计方法变了，同样要说。含义拿不准时问用户，不从图上猜。
+  - 例外：面板展示的本来就是不同性质的量
+  - 出处：XG references 目录的 qa-contract.md「Uncertainty consistency」；references 目录的 multipanel-evidence-architecture.md「Assign visual hierarchy from evidence hierarchy」；FDV ch.16 Visualizing Uncertainty, p.189；TAVOTTO 「跨面板一致」是从 P2 与 G-005 推出来的；判不了，只能由作者确认
 
 ## 感知建议（指导性原则，有例外）
 
@@ -110,6 +116,9 @@
 - **G-054 数据跨数量级或表示倍数时考虑对数轴**（强建议）：数据跨好几个数量级（剂量梯度、细菌载量、浓度），或者表示比值、倍数变化时，考虑用对数轴，否则小值会挤在一起看不出差别。含 0 或负值时不能用对数轴（见 G-001）；取对数后的汇总按 G-011。用对数轴是展示选择，要告诉用户，「跨几个数量级算多」是工程阈值。
   - 例外：含 0 或负值的数据
   - 出处：FDV ch.3 Coordinate Systems and Axes, p.17；FDV ch.3 Coordinate Systems and Axes, p.20
+- **G-056 上下标比正文小：按成品里的实际字号核**（Tavotto 推导）：数学上下标会被排成更小的字（matplotlib 的 mathtext 约为正文的 0.7 倍），脚本里的 fontsize 看不出来。期刊对最小字号有要求时，按导出的成品核最小的那一段字，而不是按脚本里的数；不够大时调大正文字号，或者改用不缩小的写法。下限的数值只来自期刊或出版规范。
+  - 例外：期刊单独给了上下标的下限时按那一条
+  - 出处：TAVOTTO matplotlib 3.11.2 实测：7 pt 的 $R^2$ 在 PDF 里有一段 4.9 pt 的 Tf；看护 tests/test_rendercore_text_size.py；XG references 目录的 qa-contract.md「Typography and PDF glyph floor」；scripts 目录的 audit_pdf_text.py（它写的 5 pt 是 单一期刊系列的做法，不引用）
 
 ## 只能由作者确认（不猜）
 
@@ -146,5 +155,7 @@
   - 出处：FDV ch.16 Visualizing Uncertainty, p.193
 - **G-051 不按心理物理指数修正大小**（偏好）：不要为了「感知准确」去按 Stevens 指数改写面积或大小映射；保持数据到大小的映射可解释，必要时限制变化范围。
   - 出处：GoG §10.1, p.258–259
+- **G-058 一张图回答一个问题、各面板分担不同的论证：写法建议**（偏好）：规划多面板图时，可以先请用户用一句话说出这张图要回答的问题，再看每个面板各自承担什么（主要证据、对照、另一种方法的验证、边界情况）。这是组织论证的一种写法，不是规定：面板怎么分、放不放进正文由作者定，不要把「面板重复」或「缺对照」当问题报告，也不要从数据的相关性替作者下因果结论。
+  - 出处：XG references 目录的 multipanel-evidence-architecture.md（原文自述是从少数几篇期刊论文归纳的风格指引，不是期刊要求）
 
-书目：GoG = Leland Wilkinson, The Grammar of Graphics, 2nd ed., Springer 2005；VAD = Tamara Munzner, Visualization Analysis and Design, CRC Press 2014；FDV = Claus O. Wilke, Fundamentals of Data Visualization, O'Reilly 2019（全文 https://clauswilke.com/dataviz/）；MATH = 数学事实（不归于任何一本书）；TAVOTTO = Tavotto 自己的工程推导
+书目：GoG = Leland Wilkinson, The Grammar of Graphics, 2nd ed., Springer 2005；VAD = Tamara Munzner, Visualization Analysis and Design, CRC Press 2014；FDV = Claus O. Wilke, Fundamentals of Data Visualization, O'Reilly 2019（全文 https://clauswilke.com/dataviz/）；MATH = 数学事实（不归于任何一本书）；TAVOTTO = Tavotto 自己的工程推导；XG = 外部作图实践指引仓库的作图技能目录（地址与版本号不入库，Apache-2.0）：一份作图实践指引，不是原著也不是期刊规定；只作二手参考，其中的 pt / mm 数值不引用

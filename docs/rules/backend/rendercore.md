@@ -251,6 +251,7 @@ order: 330
 - 覆盖表 / 向量与退役前旧表（`evidence/u10/*.pymupdf.json`）的差异是闭集
 - U08 的 14 条 deselect 已在 U10 逐条处置（台账 `u10_disposition`）
 - `inspector.py` 重新打开封口产物量事实、plan / observed / policy 分开、unknown 不是 verified、standard 只拦完整性与尺寸、strict 必需 unknown 也拦、钩子在提交点之前、阈值只从出版规范来
+- 成品 PDF 的实际字号（`observed.text_size`，2026-11-23）：每段看得见的文字的 `Tf` × 文字矩阵 × 累计 CTM × 页面 `/UserUnit`（缺省 1；只乘在字号上，页面尺寸另算、不叠加）；Form XObject 继承调用处的字体 / Tf 字号 / Tr 渲染模式，画完调用方状态不变；**只观测**，不进 `checks` / `summary()` / `public_projection()`、不改裁决；阈值与容差由调用方交给 `text_size_verdict()`，检查器里不写 pt 数；不画的文字、em 不明的 Type 3、退化矩阵各自计数，不冒充量过（看护 `tests/test_rendercore_text_size.py`；接成检查项见 ADR 0203，Proposed）
 - HTTP 与 MCP 两个导出入口接的是同一份 `engine/artifactinspect` 接线，回执里的 `manifest` 原样带出、未核验不说成已核验
 - 四身份并列（run 不进 semantic / render，artifact 不回写进文件，字体政策版本进 render）
 - `provenance`（源 / 回执公开事实 / 节点表：对象 id + 实例序号、外来页 internal=unknown、有界）
