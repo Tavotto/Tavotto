@@ -1422,6 +1422,21 @@
       ]
     },
     {
+      "id": "desktop.ggplot-axis-tick-text-color",
+      "status": "active",
+      "platform": "desktop",
+      "summary": {
+        "zh-CN": "按轴侧修改原生 ggplot2 的一组刻度文字颜色，并随排版保存和导出",
+        "en-US": "Recolor ggplot2 tick labels on a selected axis side, then save the layout and export"
+      },
+      "entry": "脚本 → 用 R 运行 → 图内元素 → 选一侧的刻度文字 → 颜色",
+      "e2e": [],
+      "desktop_manual": [
+        "用 R 运行有主轴与次轴的单面板图，改一侧的整组刻度文字颜色并撤销重做，核对刻度线、位置和其他轴。",
+        "保存排版，结束 R 会话后重开并导出 PDF，核对所选轴侧的刻度文字颜色。"
+      ]
+    },
+    {
       "id": "desktop.ggplot-subtitle-caption-color",
       "status": "active",
       "platform": "desktop",

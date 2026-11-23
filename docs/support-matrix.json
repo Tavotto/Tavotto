@@ -67,7 +67,7 @@
       "tested_runtime": "R 4.5.3",
       "tested_packages": { "ggplot2": "4.0.3", "svglite": "2.2.2", "jsonlite": "2.0.0" },
       "session": "desktop-owned",
-      "operations": ["plain-text plot title RGB color", "plain-text plot subtitle and caption RGB color", "plain-text axis title RGB color", "distinct plain-text legend title RGB color", "distinct plain-text keyed legend entry RGB color in a uniquely titled guide", "distinct single-strip plain-text facet label RGB color"],
+      "operations": ["plain-text plot title RGB color", "plain-text plot subtitle and caption RGB color", "plain-text axis title RGB color", "single-group plain-text axis tick labels RGB color per side on a single-panel plot", "distinct plain-text legend title RGB color", "distinct plain-text keyed legend entry RGB color in a uniquely titled guide", "distinct single-strip plain-text facet label RGB color"],
       "snapshot_representations": ["SVG preview", "Cairo PDF"],
       "documentation": "docs/implementation/tavotto-core-v02-ggplot2.md"
     }

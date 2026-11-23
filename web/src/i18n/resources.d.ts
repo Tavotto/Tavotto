@@ -5286,6 +5286,7 @@ export default interface Resources {
       "axes": "子图 {{value}}",
       "axesTwin": "子图 {{value}}（{{side}}{{ord}}）",
       "axisLabelNamed": "{{axis}} 轴 “{{value}}”",
+      "axisSideTickLabels": "{{side}}刻度文字",
       "bar": "柱 {{value}}",
       "barSeries": "柱形系列 {{value}}",
       "barSeriesNamed": "柱形系列 “{{value}}”",

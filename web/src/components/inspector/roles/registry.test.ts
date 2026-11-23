@@ -205,6 +205,19 @@ describe.each(['zh-CN', 'en-US'] as const)('%s', (locale) => {
     })
   })
 
+  it('原生 R 刻度标签组显示所在轴侧和可编辑的文字', async () => {
+    await inLocale(locale, () => {
+      for (const [label, english] of [
+        ['下轴刻度文字', 'bottom axis tick labels'],
+        ['上轴刻度文字', 'top axis tick labels'],
+        ['左轴刻度文字', 'left axis tick labels'],
+        ['右轴刻度文字', 'right axis tick labels'],
+      ]) {
+        expect(engineLabel(label)).toBe(locale === 'en-US' ? english : label)
+      }
+    })
+  })
+
   it('新角色 patch 有名字', async () => {
     await inLocale(locale, () => {
       const name = roleName('patch')

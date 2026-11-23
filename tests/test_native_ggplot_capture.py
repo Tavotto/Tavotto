@@ -34,6 +34,8 @@ ROOT = Path(__file__).resolve().parents[1]
 ADAPTER = ROOT / "src" / "tavotto" / "resources" / "native" / "ggplot2.R"
 SUBTITLE = "plot.subtitle"
 CAPTION = "plot.caption"
+TICKS_BOTTOM = "axis.x.bottom.ticks"
+TICKS_TOP = "axis.x.top.ticks"
 X_BOTTOM = "axis.x.bottom.title"
 Y_LEFT = "axis.y.left.title"
 LEGEND = "legend.right.1.title"
@@ -211,6 +213,57 @@ unsupported_secondary <- adapter$capture_ggplot(
   secondary_plot + ggplot2::labs(subtitle = expression(alpha)) +
     ggplot2::theme(plot.caption = ggplot2::element_blank()), c(432, 288))
 stopifnot(!any(names(secondary_edits) %in% names(unsupported_secondary$state$text_targets)))
+
+ticks_plot <- ggplot2::ggplot(data.frame(x = 1:3, y = 1:3), ggplot2::aes(x, y)) +
+  ggplot2::geom_point() +
+  ggplot2::scale_x_continuous(breaks = 1:3, labels = c("Jan", "Feb", "Mar"),
+    sec.axis = ggplot2::dup_axis(labels = c("First", "Second", "Third"))) +
+  ggplot2::scale_y_continuous(breaks = 1:3, sec.axis = ggplot2::dup_axis()) +
+  ggplot2::theme(axis.text.x.bottom = ggplot2::element_text(colour = "#314259", angle = 30, hjust = 1),
+    axis.text.x.top = ggplot2::element_text(colour = "#674284"),
+    axis.text.y.left = ggplot2::element_text(colour = "#735829"),
+    axis.text.y.right = ggplot2::element_text(colour = "#245477"),
+    axis.ticks = ggplot2::element_line(colour = "#050829"))
+axis_capture <- function(plot) adapter$capture_ggplot(plot, c(432, 288))
+tick_state <- axis_capture(ticks_plot)
+tick_edits <- list("axis.x.bottom.ticks" = "#A64184", "axis.x.top.ticks" = "#A12529",
+                   "axis.y.left.ticks" = "#834038", "axis.y.right.ticks" = "#254F29")
+tick_text <- list(c("Jan", "Feb", "Mar"), c("First", "Second", "Third"), c("1", "2", "3"), c("1", "2", "3"))
+stopifnot(all(names(tick_edits) %in% names(tick_state$state$text_targets)))
+tick_svg <- adapter$render_ggplot(tick_state$state, tick_edits)
+restored <- tick_svg
+for (index in seq_along(tick_edits)) {
+  gid <- names(tick_edits)[[index]]
+  target <- tick_state$state$text_targets[[gid]]
+  lines <- grep(paste0("fill: ", tick_edits[[gid]]), strsplit(tick_svg, "\n")[[1L]],
+                 fixed = TRUE, value = TRUE)
+  stopifnot(length(lines) == 3L, all(startsWith(lines, "<text ")),
+            identical(sub("^.*>([^<]*)</text>$", "\\1", lines), tick_text[[index]]),
+            identical(unlist(target$tick_labels), tick_text[[index]]))
+  bbox <- target$bbox * c(432, 288, 432, 288)
+  if (index == 1L) {
+    xy <- sub("^.*translate\\(([^)]+)\\).*", "\\1", lines)
+    anchors <- do.call(rbind, lapply(strsplit(xy, ","), as.numeric))
+  } else {
+    anchors <- cbind(as.numeric(sub(".* x='([^']+)'.*", "\\1", lines)),
+                     as.numeric(sub(".* y='([^']+)'.*", "\\1", lines)))
+  }
+  stopifnot(all(anchors[, 1] >= bbox[1] - 1 & anchors[, 1] <= bbox[1] + bbox[3] + 1),
+            all(anchors[, 2] >= bbox[2] - 1 & anchors[, 2] <= bbox[2] + bbox[4] + 1))
+  restored <- gsub(tick_edits[[gid]], target$color, restored, fixed = TRUE)
+}
+stopifnot(identical(restored, tick_state$svg),
+          identical(adapter$render_ggplot(tick_state$state), tick_state$svg))
+single_axis <- adapter$render_ggplot(tick_state$state, tick_edits[1L])
+stopifnot(identical(gsub(tick_edits[[1L]], "#314259", single_axis, fixed = TRUE), tick_state$svg))
+for (guide in list(ggplot2::guide_axis(n.dodge = 2L), ggplot2::guide_axis(check.overlap = TRUE))) {
+  irregular <- axis_capture(suppressWarnings(ticks_plot + ggplot2::guides(x = guide)))
+  stopifnot(is.null(irregular$state$text_targets[["axis.x.bottom.ticks"]]))
+}
+formula_ticks <- axis_capture(suppressWarnings(ticks_plot +
+  ggplot2::scale_x_continuous(breaks = 1:3, labels = expression(alpha, beta, gamma))))
+stopifnot(is.null(formula_ticks$state$text_targets[["axis.x.bottom.ticks"]]))
+stopifnot(!any(names(tick_edits) %in% names(baseline$state$text_targets)))
 
 bar <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
   ggplot2::geom_point() + ggplot2::labs(colour = "City mileage") +
@@ -403,6 +456,23 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy)) +
         assert top["label"] == bottom["label"] == "Engine displacement"
         assert top["identity"] != bottom["identity"]
         assert bottom["editable"][0]["value"] == "#6B6B6B"
+        tick_group = elements[TICKS_BOTTOM]
+        assert tick_group["label"] == "下轴刻度文字"
+        assert tick_group["role"] == "axis_label" and not tick_group["draggable"]
+        assert tick_group["identity"].startswith("r2:")
+        assert "tick_labels" not in tick_group
+        assert tick_group["identity"] != elements[TICKS_TOP]["identity"]
+        tick_patch = {"gid": TICKS_BOTTOM, "prop": "color", "value": "#A64184"}
+        for invalid_tick in (
+            tick_patch,
+            {**tick_patch, "identity": elements[TICKS_TOP]["identity"]},
+        ):
+            with pytest.raises(pool.WorkerError, match="text target changed"):
+                session.override(stem, [invalid_tick], inline_svg=True)
+        tick_patch["identity"] = tick_group["identity"]
+        tick_render = session.override(stem, [tick_patch], inline_svg=True)
+        assert "#A64184" in tick_render["svg"]
+        assert session.override(stem, [], inline_svg=True)["svg"] == baseline["svg"]
         invalid = [{"gid": "plot.title", "prop": "text", "value": "Unchanged"}]
         with pytest.raises(
             pool.WorkerError, match="supports RGB colors for supported text targets"

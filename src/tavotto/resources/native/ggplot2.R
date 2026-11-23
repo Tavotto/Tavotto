@@ -27,9 +27,14 @@ ggplot_text_slots <- c(
   "axis.y.right.title" = "ylab-r"
 )
 
-ggplot_text_target <- function(table, slots, role, title_child = NULL) {
+ggplot_text_target <- function(table, slots, role, title_child = NULL, group_label = NULL) {
   path <- character()
   for (slot in slots) {
+    if (is.character(slot)) {
+      path <- c(path, table$name)
+      table <- table$children[[slot]]
+      next
+    }
     box <- table$layout[slot, ]
     # gtable names its drawn cells in top-right-bottom-left order.
     cell <- paste0(box$name, ".", paste(c(box$t, box$r, box$b, box$l), collapse = "-"))
@@ -43,9 +48,13 @@ ggplot_text_target <- function(table, slots, role, title_child = NULL) {
   children <- table$children
   if (length(children) != 1L) return(NULL)
   text <- children[[1L]]
-  if (!inherits(text, "text") || !is.character(text$label) ||
-      length(text$label) != 1L || is.na(text$label) || !nzchar(text$label)) {
-    return(NULL)
+  if (!inherits(text, "text")) return(NULL)
+  label <- text$label
+  if (is.null(group_label)) {
+    if (!is.character(label) || length(label) != 1L || is.na(label) || !nzchar(label)) return(NULL)
+  } else {
+    if ((!is.character(label) && !is.numeric(label)) || !length(label) ||
+        anyNA(label) || any(!nzchar(label)) || isTRUE(text$check.overlap)) return(NULL)
   }
   # Resolve R color names (such as grey42) for the canvas color picker.
   rgb <- tryCatch(grDevices::col2rgb(text$gp$col, alpha = TRUE),
@@ -56,8 +65,37 @@ ggplot_text_target <- function(table, slots, role, title_child = NULL) {
                           maxColorValue = 255)
   edit_path <- if (is.null(title_child)) text$name else grid::gPath(table$name, text$name)
   list(slots = slots, parent_path = paste(c(path, table$name), collapse = "::"),
-       child = text$name, edit_path = edit_path, label = text$label,
+       child = text$name, edit_path = edit_path,
+       label = if (is.null(group_label)) label else group_label,
+       tick_labels = if (!is.null(group_label)) as.list(as.character(label)) else NULL,
        paint = text$gp, color = color, role = role)
+}
+
+ggplot_axis_ticks <- function(table) {
+  # A panel can repeat guides within a facet. Start with the four unique outer
+  # cells of a single-panel plot, even when a cell contains a secondary axis.
+  if (length(which(grepl("^panel(-[0-9]+-[0-9]+)?$", table$layout$name))) != 1L) return(list())
+  # Keep generated Chinese labels portable when R sources this file in a non-UTF-8 locale.
+  sides <- list(
+    "axis.x.bottom.ticks" = c("axis-b", "\u4e0b"),
+    "axis.x.top.ticks" = c("axis-t", "\u4e0a"),
+    "axis.y.left.ticks" = c("axis-l", "\u5de6"),
+    "axis.y.right.ticks" = c("axis-r", "\u53f3")
+  )
+  targets <- list()
+  for (gid in names(sides)) {
+    side <- sides[[gid]]
+    slot <- which(table$layout$name == side[[1L]])
+    if (length(slot) != 1L) next
+    axis <- table$grobs[[slot]]$children[["axis"]]
+    if (!inherits(axis, "gtable")) next
+    labels <- which(vapply(axis$grobs, inherits, logical(1L), "titleGrob"))
+    if (length(labels) != 1L) next
+    label <- paste0(side[[2L]], "\u8f74\u523b\u5ea6\u6587\u5b57")
+    targets[[gid]] <- ggplot_text_target(table, list(slot, "axis", labels), "axis_label",
+                                         group_label = label)
+  }
+  targets
 }
 
 ggplot_legend_entries <- function(table, slots, guide, prefix, title) {
@@ -156,7 +194,8 @@ ggplot_text_targets <- function(table, frame_pt) {
     role <- if (gid == "plot.title") "title" else if (startsWith(gid, "axis.")) "axis_label" else "text"
     targets[[gid]] <- ggplot_text_target(table, slot, role)
   }
-  targets <- c(targets, ggplot_legend_targets(table), ggplot_facet_labels(table))
+  targets <- c(targets, ggplot_legend_targets(table), ggplot_facet_labels(table),
+               ggplot_axis_ticks(table))
   if (!length(targets)) return(targets)
   drawn <- tryCatch({
     grid::grid.force()
@@ -200,7 +239,11 @@ capture_ggplot <- function(plot, frame_pt) {
 edit_ggplot_text <- function(table, slots, path, paint) {
   if (!length(slots)) return(grid::editGrob(table, path, gp = paint, strict = TRUE))
   slot <- slots[[1L]]
-  table$grobs[[slot]] <- edit_ggplot_text(table$grobs[[slot]], slots[-1L], path, paint)
+  if (is.character(slot)) {
+    table$children[[slot]] <- edit_ggplot_text(table$children[[slot]], slots[-1L], path, paint)
+  } else {
+    table$grobs[[slot]] <- edit_ggplot_text(table$grobs[[slot]], slots[-1L], path, paint)
+  }
   table
 }
 
@@ -265,6 +308,7 @@ ggplot_manifest <- function(state, stem, colors = list()) {
       editable = list(list(prop = "color", type = "color", value = color))
     )
     if (!is.null(target$legend_title)) element$legend_title <- target$legend_title
+    if (!is.null(target$tick_labels)) element$tick_labels <- target$tick_labels
     element
   })
   list(stem = stem, size_mm = as.list(state$frame_pt * 25.4 / 72), elements = elements)

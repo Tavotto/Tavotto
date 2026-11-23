@@ -12,7 +12,7 @@ from pathlib import Path
 from . import execspec, executionfact, figcapture, projectenv, runcodes
 
 _RESOURCES = Path(__file__).resolve().parents[1] / "resources" / "native"
-_LEGEND_ENTRY_IDENTITY_PREFIX = "r2:"
+_CONTEXTUAL_TEXT_IDENTITY_PREFIX = "r2:"
 
 
 @dataclass(frozen=True)
@@ -82,12 +82,17 @@ class GgplotTarget:
             raise pool.WorkerError("The R capture returned no matching SVG and manifest.")
         for element in manifest["elements"]:
             legend_title = element.pop("legend_title", None)
-            if legend_title is not None:
-                # Identical entry labels can belong to different guides at the same slot.
-                context = json.dumps([element["gid"], legend_title, element["label"]])
+            tick_labels = element.pop("tick_labels", None)
+            if legend_title is not None or tick_labels is not None:
+                # Use the owning guide or the observed labels as part of the target identity.
+                context = (
+                    [element["gid"], legend_title, element["label"]]
+                    if legend_title is not None
+                    else [element["gid"], tick_labels]
+                )
                 element["identity"] = (
-                    _LEGEND_ENTRY_IDENTITY_PREFIX
-                    + hashlib.sha256(context.encode("utf-8")).hexdigest()[:16]
+                    _CONTEXTUAL_TEXT_IDENTITY_PREFIX
+                    + hashlib.sha256(json.dumps(context).encode("utf-8")).hexdigest()[:16]
                 )
                 continue
             label = element["label"].encode("utf-8")
@@ -133,7 +138,7 @@ class GgplotTarget:
             gid = patch.get("gid")
             expected = identities.get(gid) if isinstance(gid, str) else None
             requires_identity = expected is not None and expected.startswith(
-                _LEGEND_ENTRY_IDENTITY_PREFIX
+                _CONTEXTUAL_TEXT_IDENTITY_PREFIX
             )
             if (identity is not None or requires_identity) and (
                 expected is None or identity != expected
