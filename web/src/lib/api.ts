@@ -4916,6 +4916,9 @@ export interface AiDataFigureStyle {
   width_single_mm: number
   width_double_mm: number
   font_pt: number
+  /** 后端接受的字号范围（可能缺：期刊没规定那一端） */
+  font_min_pt?: number
+  font_max_pt?: number
 }
 
 /** 懒模式响应里的公共部分（`candidates` 与 `nothing` 都有） */
@@ -4994,6 +4997,8 @@ export interface AiDataProposeBody {
   render?: 'lazy'
   /** 已按画布绑定解析好的出版规范全文（`resolveDocumentSpec(...).profile`，期刊覆盖已并入）：候选与落盘的图按它的栏宽与字号画；不给 = 默认规范，响应与从前逐字相同。规范不合法后端退回默认并回 `spec_fallback: true` */
   spec?: Record<string, unknown>
+  /** 期刊自己规定的字号上下限（pt，只放规定了的那一端；都没规定 / 没有期刊绑定就不带这个键） */
+  font_range?: { min_pt?: number; max_pt?: number }
 }
 
 export const aiDataFigurePropose = (body: AiDataProposeBody, pj?: string | null, signal?: AbortSignal) =>

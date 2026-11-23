@@ -55,6 +55,14 @@ const cands = (session: string, extra: Record<string, unknown> = {}): AiDataProp
 const STYLE = { width_single_mm: 85, width_double_mm: 178, font_pt: 7 }
 
 const bindingOf = (id: string): DocumentProfile => ({ id: 'journal-base-v1', journalRef: { id, catalogRev: 1, retrieved: '2026-11-01', label: id } })
+/** 带出处的绑定：`journalStyleTargets` 从 `journalSources` 读字号上下限 */
+const withFont = (min?: number, max?: number): DocumentProfile => ({
+  ...bindingOf('journal-f'),
+  journalSources: {
+    ...(min != null ? { min_effective_font_size_pt: { value: min } } : {}),
+    ...(max != null ? { max_font_size_pt: { value: max } } : {}),
+  } as never,
+})
 const A = bindingOf('journal-a')
 const B = bindingOf('journal-b')
 const canvasBinding = vi.fn<() => DocumentProfile | null>()
@@ -150,6 +158,27 @@ describe('草稿的绑定：取一次、之后自己持有', () => {
     expect(st().specBinding).toEqual(B)
     await run('b.csv')
     expect(bodyOf(propose.mock.calls.length - 1).spec).toEqual({ resolved: 'journal-b' })
+  })
+})
+
+describe('font_range：只放期刊自己规定的上下限', () => {
+  it('两端都有 / 只有一端 / 都没有 / 绑定为空', async () => {
+    propose.mockResolvedValue(cands('S1'))
+    canvasBinding.mockReturnValue(withFont(5, 7))
+    await run()
+    expect(bodyOf(0).font_range).toEqual({ min_pt: 5, max_pt: 7 })
+    st().setSpecBinding(withFont(6))
+    await flush()
+    expect(bodyOf(1).font_range).toEqual({ min_pt: 6 })
+    st().setSpecBinding(withFont(undefined, 8))
+    await flush()
+    expect(bodyOf(2).font_range).toEqual({ max_pt: 8 })
+    st().setSpecBinding(A) // 有期刊但没规定字号
+    await flush()
+    expect('font_range' in bodyOf(3)).toBe(false)
+    st().setSpecBinding(null)
+    await flush()
+    expect('font_range' in bodyOf(4)).toBe(false)
   })
 })
 
@@ -308,37 +337,68 @@ describe('画好之后带绑定去新画布', () => {
   })
 })
 
-describe('批量各画一张：同样带 spec（一轮开始时解析一次）', () => {
-  const batchHost = (canvasSpec?: () => Record<string, unknown> | null) =>
-    configureDataBatchHost({ refreshProject: async () => {}, runScript: async () => {}, showAssets: () => {}, showData: () => {}, quietGuideCard: () => {}, projectWritable: () => true, canvasSpec })
+describe('批量各画一张：读草稿的绑定（一轮开始时解析一次）', () => {
+  const batchCanvas = vi.fn<() => DocumentProfile | null>()
+  const batchHost = (withHost = true) =>
+    configureDataBatchHost({
+      refreshProject: async () => {}, runScript: async () => {}, showAssets: () => {}, showData: () => {}, quietGuideCard: () => {}, projectWritable: () => true,
+      ...(withHost ? { canvasBinding: batchCanvas, resolveSpec } : {}),
+    })
 
   beforeEach(() => {
+    batchCanvas.mockReset()
+    resolveSpec.mockClear()
     useDataBatchStore.getState().clear()
     propose.mockImplementation(async (b) => cands(`S-${b.table}`))
     commit.mockResolvedValue({ task: { outcome: 'completed' }, script: 'tavotto_figures/x.py', stem: 'x', data_check: 'verified' })
   })
-
-  it('每份的请求都带同一份 spec，宿主只被问一次', async () => {
-    const canvasSpec = vi.fn(() => ({ resolved: 'canvas' }))
-    batchHost(canvasSpec)
+  const toggle2 = () => {
     useDataBatchStore.getState().toggle(ref('a.csv'))
     useDataBatchStore.getState().toggle(ref('b.csv'))
+  }
+
+  it('草稿取过绑定就用草稿的（不看画布），每份都带同一份 spec，只解析一次', async () => {
+    batchHost()
+    batchCanvas.mockReturnValue(B)
+    useDataFigureStore.setState({ specBinding: A, bindingCaptured: true })
+    toggle2()
     await useDataBatchStore.getState().run()
     expect(propose).toHaveBeenCalledTimes(2)
-    expect(bodyOf(0).spec).toEqual({ resolved: 'canvas' })
-    expect(bodyOf(1).spec).toEqual({ resolved: 'canvas' })
-    expect(canvasSpec).toHaveBeenCalledTimes(1)
+    expect(bodyOf(0).spec).toEqual({ resolved: 'journal-a' })
+    expect(bodyOf(1).spec).toEqual({ resolved: 'journal-a' })
+    expect(resolveSpec).toHaveBeenCalledTimes(1)
+    expect(batchCanvas).not.toHaveBeenCalled()
   })
 
-  it('画布没有绑定 / 宿主没注册：不带 spec', async () => {
-    batchHost(() => null)
-    useDataBatchStore.getState().toggle(ref('a.csv'))
+  it('草稿取过、是 null（默认规范）：不带 spec，也不退回画布', async () => {
+    batchHost()
+    batchCanvas.mockReturnValue(B)
+    useDataFigureStore.setState({ specBinding: null, bindingCaptured: true })
+    toggle2()
     await useDataBatchStore.getState().run()
     expect('spec' in bodyOf(0)).toBe(false)
+    expect(batchCanvas).not.toHaveBeenCalled()
+  })
+
+  it('草稿没取过才退回此刻画布的绑定；宿主没注册则不带', async () => {
+    batchHost()
+    batchCanvas.mockReturnValue(B)
+    toggle2()
+    await useDataBatchStore.getState().run()
+    expect(bodyOf(0).spec).toEqual({ resolved: 'journal-b' })
     propose.mockClear()
-    batchHost(undefined)
-    useDataBatchStore.getState().toggle(ref('b.csv'))
+    batchHost(false)
+    useDataBatchStore.getState().toggle(ref('c.csv'))
     await useDataBatchStore.getState().run()
     expect('spec' in bodyOf(0)).toBe(false)
+  })
+
+  it('期刊规定了字号上下限：每份都带 font_range', async () => {
+    batchHost()
+    useDataFigureStore.setState({ specBinding: withFont(5, 7), bindingCaptured: true })
+    toggle2()
+    await useDataBatchStore.getState().run()
+    expect(bodyOf(0).font_range).toEqual({ min_pt: 5, max_pt: 7 })
+    expect(bodyOf(1).font_range).toEqual({ min_pt: 5, max_pt: 7 })
   })
 })

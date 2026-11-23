@@ -239,8 +239,14 @@ export default interface Resources {
         "verified": "图画好了，数据和文件逐项对上。"
       },
       "spec": {
-        "line": "单栏 {{single}} mm · 双栏 {{double}} mm · {{pt}} pt",
-        "lineSingle": "图宽 {{single}} mm · {{pt}} pt"
+        "fontMax": "≤ {{max}} pt 字号",
+        "fontMin": "≥ {{min}} pt 字号",
+        "fontOne": "{{min}} pt 字号",
+        "fontRange": "{{min}}–{{max}} pt 字号",
+        "join": "、",
+        "line": "按{{parts}}出图",
+        "widthOne": "图宽 {{single}} mm",
+        "widthTwo": "单栏 {{single}} mm、双栏 {{double}} mm"
       },
       "suggest": {
         "apply": "试试建议",

@@ -5,7 +5,7 @@ import { Row } from '@/components/ui/Field'
 import { FIELD_BOX, FIELD_OPEN } from '@/components/ui/fieldBox'
 import { Select } from '@/components/ui/Select'
 import { cn } from '@/lib/utils'
-import { draftClearJournal, draftPickJournal, draftPickV2Only, specNumber } from '@/lib/dataFigureSpec'
+import { draftClearJournal, draftPickJournal, draftPickV2Only, specParts } from '@/lib/dataFigureSpec'
 import { journalCatalogUi } from '@/lib/journalUi'
 import { currentProjectId } from '@/lib/session'
 import { dataFigureEpoch, overviewKeyOf, useDataFigureStore, type RoleKey } from '@/store/dataFigureStore'
@@ -115,6 +115,22 @@ export function DataPanel() {
           </p>
         )}
       </header>
+      {journalCatalogUi() && (
+        <div data-data-role="journal" className="mb-3 flex flex-col gap-1">
+          <Row label={t('journal.title', { ns: 'dialogs' })} labelWidth={LABEL_W}>
+            <JournalPicker target={target} triggerClassName={JOURNAL_TRIGGER} disabled={busy} />
+          </Row>
+          {figureStyle && (
+            <p data-data-spec className="pl-[calc(44px+1rem)] text-xs text-balance text-ink-3 tabular-nums">
+              {t('dataFigureV2.spec.line', {
+                parts: specParts(figureStyle)
+                  .map((p) => t(`dataFigureV2.spec.${p.key}`, p.values))
+                  .join(t('dataFigureV2.spec.join')),
+              })}
+            </p>
+          )}
+        </div>
+      )}
       {roles && (
         <div data-data-roles className="flex flex-col gap-1">
           {roles.options.x.length > 0 && (
@@ -157,20 +173,6 @@ export function DataPanel() {
                 />
               </Row>
             </div>
-          )}
-        </div>
-      )}
-      {journalCatalogUi() && (
-        <div data-data-role="journal" className="mt-3 flex flex-col gap-1">
-          <Row label={t('journal.title', { ns: 'dialogs' })} labelWidth={LABEL_W}>
-            <JournalPicker target={target} triggerClassName={JOURNAL_TRIGGER} disabled={busy} />
-          </Row>
-          {figureStyle && (
-            <p data-data-spec className="pl-[calc(44px+1rem)] text-xs text-ink-3 tabular-nums">
-              {figureStyle.width_single_mm === figureStyle.width_double_mm
-                ? t('dataFigureV2.spec.lineSingle', { single: specNumber(figureStyle.width_single_mm), pt: specNumber(figureStyle.font_pt) })
-                : t('dataFigureV2.spec.line', { single: specNumber(figureStyle.width_single_mm), double: specNumber(figureStyle.width_double_mm), pt: specNumber(figureStyle.font_pt) })}
-            </p>
           )}
         </div>
       )}

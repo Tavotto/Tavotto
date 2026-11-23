@@ -23,7 +23,7 @@ import { currentProjectId } from '@/lib/session'
 import { candidateIdentity, candidatesFromResponse, headerRowFromResponse, mixedFromResponse, rolesFromResponse, sourcesFromResponse, unitsRowFromResponse, type Candidate, type GroupSource, type ColumnRoles, type MixedColumn, type ThumbState } from '@/lib/dataFigureAdapter'
 import { MERGE_FAILURE_CODES, fileRows, hasNumericColumn, isStaleProposeCode, sameTable, tableKey, type CellMode, type TableRef } from '@/lib/dataFigure'
 import { SUGGEST_KEYS, diffSuggestion, suggestionFrom, type Suggestion, type SuggestionDiff } from '@/lib/dataUnderstanding'
-import { sameDraftBinding } from '@/lib/dataFigureSpec'
+import { fontRangeOf, sameDraftBinding } from '@/lib/dataFigureSpec'
 import type { DocumentProfile } from '@/types/document'
 import { msg, type UiMessage } from '@/i18n'
 
@@ -465,6 +465,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     ensureBinding()
     const binding = get().specBinding
     const spec = binding ? (host.resolveSpec?.(binding) ?? null) : null
+    const fontRange = fontRangeOf(binding)
     const group = get().group
     set({ phase: 'loading', error: null, candidates: [], session: null, thumbs: {} })
     const answers = get().answers
@@ -483,6 +484,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
           ...(Object.keys(answers).length ? { answers } : {}),
           ...(hasHeaders ? { header_rows: get().headerRows } : {}),
           ...(spec ? { spec } : {}),
+          ...(fontRange ? { font_range: fontRange } : {}),
         },
         pj,
         signal,

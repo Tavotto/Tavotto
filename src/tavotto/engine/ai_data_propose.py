@@ -430,9 +430,34 @@ def parse_cells(raw) -> dict[str, recipe_mod.CellRule]:
 
 #: 请求里那份出版规范的体积上限（内置最大的一份约 10 KB；期刊覆盖并入后同量级）
 SPEC_MAX_BYTES = 256 * 1024
+#: 期刊字号范围里一个数的合理区间（pt）
+FONT_PT_MIN, FONT_PT_MAX = 1.0, 72.0
 
 
-def parse_spec(raw) -> tuple[dict | None, str | None, bool]:
+def parse_font_range(raw) -> tuple[float | None, float | None] | None:
+    """请求带的期刊字号范围 `{min_pt?, max_pt?}` → `(下限, 上限)`；形状不对 / 数不合理 / 上下限写反 = 当作没给（不报错，按规范出图）。"""
+    if not isinstance(raw, dict):
+        return None
+    out = []
+    for key in ("min_pt", "max_pt"):
+        v = raw.get(key)
+        if v is None:
+            out.append(None)
+        elif (
+            isinstance(v, (int, float))
+            and not isinstance(v, bool)
+            and FONT_PT_MIN <= v <= FONT_PT_MAX
+        ):
+            out.append(float(v))
+        else:
+            return None
+    lo, hi = out
+    if (lo is None and hi is None) or (lo is not None and hi is not None and lo > hi):
+        return None
+    return lo, hi
+
+
+def parse_spec(raw, font_range=None) -> tuple[dict | None, str | None, bool]:
     """请求带的出版规范 → `(模板样式 | None, 幂等摘要 | None, 是否退回了默认)`。不给 = `(None, None, False)`。
     不是对象 / 过大 / 过不了 `profiles.validate_spec` 都算「不合法」：退回默认规范并如实标出，不抛错（出图不该因为规范坏了而失败）。"""
     if raw is None:
@@ -445,10 +470,22 @@ def parse_spec(raw) -> tuple[dict | None, str | None, bool]:
         text = json.dumps(raw, ensure_ascii=False, sort_keys=True)
         if len(text.encode("utf-8")) > SPEC_MAX_BYTES:
             raise profiles.ProfileError("spec")
-        style = tpl.style_from_profile(profiles.validate_spec(json.loads(text)))
+        fonts = parse_font_range(font_range)
+        style = tpl.style_from_profile(profiles.validate_spec(json.loads(text)), fonts)
     except (profiles.ProfileError, TypeError, ValueError, RecursionError):
         return None, "invalid", True
-    return style, hashlib.sha256(text.encode("utf-8")).hexdigest(), False
+    digest = hashlib.sha256((text + json.dumps(fonts)).encode("utf-8")).hexdigest()
+    return style, digest, False
+
+
+def figure_style(style: dict) -> dict:
+    out = {k: style[k] for k in ("width_single_mm", "width_double_mm", "font_pt")}
+    lo, hi = style.get("font_range") or (None, None)
+    if lo is not None:
+        out["font_min_pt"] = lo
+    if hi is not None:
+        out["font_max_pt"] = hi
+    return out
 
 
 def parse_answers(answers) -> dict:
@@ -1050,6 +1087,7 @@ def propose(
     render: str | None = None,
     tables=None,
     spec=None,
+    font_range=None,
 ) -> dict:
     """出备选。返回三选一：`{"kind": "ask", question_code, options, unsure}` / `{"kind": "candidates", session, items, dropped}` /
     `{"kind": "nothing", reasons}`。数据读不了（文件夹不存在 / 不在项目内）抛 `DataSourceError`（app 转 400 + 稳定码）。
@@ -1068,7 +1106,8 @@ def propose(
 
     `spec`（可选）：前端按画布绑定解析好的出版规范（期刊覆盖已并入；快照优先那套取舍在前端 `resolveDocumentSpec`，这里不重做）。
     过 `profiles.validate_spec` 后只取模板要的数字（`tpl.style_from_profile`）；不给 = 默认规范，响应逐字不变。规范不合法**不让出图失败**：
-    退回默认规范，响应带 `spec_fallback: true`。规范有效时响应带 `figure_style`（实际用的栏宽与正文字号）。规范进幂等键：换了期刊必须重新出图。只在本机用，不进给模型的内容。"""
+    退回默认规范，响应带 `spec_fallback: true`。规范有效时响应带 `figure_style`（实际用的栏宽、起始字号，以及接受了的期刊字号范围 `font_min_pt` / `font_max_pt`）。
+    `font_range`（可选，`{min_pt?, max_pt?}`，随 `spec` 一起才有意义）：期刊自己规定的字号上下限，读法见 `tpl.style_from_profile`。规范进幂等键：换了期刊必须重新出图。只在本机用，不进给模型的内容。"""
     sweep()
     progress.check()
     if render is not None and render not in RENDER_MODES:
@@ -1084,7 +1123,7 @@ def propose(
         ans
     )  # 懒模式的循环会往 `ans` 里补默认答案，所以在它之前记下请求原本带没带
     tabs = parse_tables(tables)
-    style, spec_digest, spec_bad = parse_spec(spec)
+    style, spec_digest, spec_bad = parse_spec(spec, font_range)
     if tabs is not None and table is not None:  # `table` 与 `tables` 只能给一个
         raise ProposeError("propose_input_invalid", "tables")
     # 幂等键 = (项目, 请求号, 请求内容的摘要)：同一请求号带了不同的回答（换了处理方式）必须重新出图，不回旧的
@@ -1384,16 +1423,8 @@ def propose(
         # 诊断标记：至少有一张小图是项目解释器没画成、回退到默认链条画的
         "interpreter_fallback": fallback,
         **({"spec_fallback": True} if spec_bad else {}),
-        # 带了规范才有：这批图实际用的栏宽与正文字号（面板上如实显示，前端不另算一遍）
-        **(
-            {
-                "figure_style": {
-                    k: style[k] for k in ("width_single_mm", "width_double_mm", "font_pt")
-                }
-            }
-            if style is not None
-            else {}
-        ),
+        # 带了规范才有：这批图实际用的栏宽、起始字号与期刊字号范围（面板上如实显示，前端不另算一遍）
+        **({"figure_style": figure_style(style)} if style is not None else {}),
         **basics(),
     }
     if auto and not hrows and not user_took_over:

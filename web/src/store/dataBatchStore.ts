@@ -12,7 +12,9 @@ import {
 import { runExclusive } from '@/lib/dataCommitQueue'
 import { isCommitInProgress, pollCommit } from '@/lib/dataCommitPoll'
 import { KNOWN_NOTHING_REASONS, MAX_MERGE_TABLES, isStaleProposeCode, sameTable, tableKey, type TableRef } from '@/lib/dataFigure'
+import { fontRangeOf } from '@/lib/dataFigureSpec'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
+import type { DocumentProfile } from '@/types/document'
 import { msg, type UiMessage } from '@/i18n'
 import { useDataFigureStore } from '@/store/dataFigureStore'
 
@@ -50,8 +52,10 @@ export interface BatchHost {
   showData: () => void
   /** 项目文件夹可不可写；不知道回 undefined */
   projectWritable: () => boolean | undefined
-  /** 此刻激活画布的绑定解析出的出版规范（随每份的出候选请求发给后端，各画一张都按同一份栏宽与字号）；画布没有绑定 / 没注册 = 不带 */
-  canvasSpec?: () => Record<string, unknown> | null
+  /** 此刻激活画布的规范绑定（深拷贝；没绑定 = null）。草稿还没取过绑定时才用它 */
+  canvasBinding?: () => DocumentProfile | null
+  /** 绑定 → 随请求发给后端的那份已解析规范；没注册 = 不带 */
+  resolveSpec?: (binding: DocumentProfile) => Record<string, unknown> | null
 }
 let host: BatchHost = { refreshProject: async () => {}, runScript: async () => {}, showAssets: () => {}, showData: () => {}, quietGuideCard: () => {}, projectWritable: () => undefined }
 export const configureDataBatchHost = (h: BatchHost): void => {
@@ -135,7 +139,9 @@ function outcomeOf(done: AiDataCommitResult): One {
 }
 
 /** 一份表：（上次提交结果不确定就先用同一个请求号重发）出候选 → 提交第一张（它渲染不出来就依次试后面的）→ 放弃会话。不打开。 */
-async function drawOne(ref: TableRef, still: () => boolean, pj: string | null, spec: Record<string, unknown> | null): Promise<One> {
+type SpecBody = { spec?: Record<string, unknown>; font_range?: { min_pt?: number; max_pt?: number } }
+
+async function drawOne(ref: TableRef, still: () => boolean, pj: string | null, specBody: SpecBody): Promise<One> {
   // 排队的回调轮到时先核一遍：这期间换过项目就什么都不发（A 的相对路径不能拿到 B 里去）
   if (!still()) return { ok: false, reason: null }
   const key = tableKey(ref)
@@ -172,7 +178,7 @@ async function drawOne(ref: TableRef, still: () => boolean, pj: string | null, s
     let res: AiDataProposeResponse
     try {
       res = await aiDataFigurePropose(
-        { table: ref.path, ...(ref.sheet == null ? {} : { sheet: ref.sheet }), render: 'lazy', ...(headers[ref.path] != null ? { header_rows: { [ref.path]: headers[ref.path]! } } : {}), ...(spec ? { spec } : {}) },
+        { table: ref.path, ...(ref.sheet == null ? {} : { sheet: ref.sheet }), render: 'lazy', ...(headers[ref.path] != null ? { header_rows: { [ref.path]: headers[ref.path]! } } : {}), ...specBody },
         pj,
       )
     } catch (e) {
@@ -269,8 +275,13 @@ export const useDataBatchStore = create<BatchStore>((set, get) => ({
     const todo = get().selection.filter((r) => mode === 'all' || failedKeys.has(tableKey(r)))
     if (todo.length === 0) return
     host.quietGuideCard()
-    // 一轮开始时解析一次：这一批各画一张用同一份规范，中途用户切了画布 / 换了期刊也不让同一批的图宽窄不一
-    const spec = host.canvasSpec?.() ?? null
+    // 一轮开始时解析一次：这一批各画一张用同一份规范，中途换了期刊也不让同一批的图宽窄不一。
+    // 绑定以草稿的为准（右栏「期刊」一行改的就是它；取过就用，哪怕是 null = 默认规范），草稿从没取过才退回此刻画布的绑定
+    const df = useDataFigureStore.getState()
+    const binding = df.bindingCaptured ? df.specBinding : (host.canvasBinding?.() ?? null)
+    const spec = binding ? (host.resolveSpec?.(binding) ?? null) : null
+    const fontRange = fontRangeOf(binding)
+    const specBody: SpecBody = { ...(spec ? { spec } : {}), ...(fontRange ? { font_range: fontRange } : {}) }
     const ep = epoch
     const guard = captureProjectEpoch(() => epoch)
     // 清掉这几份上一轮的标记（没画成的重做）；还没轮到的没有记录
@@ -294,7 +305,7 @@ export const useDataBatchStore = create<BatchStore>((set, get) => ({
       if (get().stopRequested) break // 「停下」：后面的不画
       const key = tableKey(ref)
       set((s) => ({ rows: { ...s.rows, [key]: { state: 'running' } } }))
-      const r = await runExclusive(() => drawOne(ref, guard.still, guard.pj, spec))
+      const r = await runExclusive(() => drawOne(ref, guard.still, guard.pj, specBody))
       if (!guard.still() || ep !== epoch) return
       if (r.ok) {
         await host.refreshProject().catch(() => undefined) // 图卡出现；不打开

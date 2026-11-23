@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
 import { ChevronDown } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { Spinner } from '@/components/ui/Spinner'
 import { Button } from '../ui/Button'
 import { EmptyLine } from '../ui/EmptyLine'
 import { Popover } from '../ui/Popover'
@@ -74,6 +75,7 @@ export function JournalPicker({ target, triggerClassName, disabled }: { target?:
   const sameOrigin = (o: string) => originOf() === o
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
+  const [pending, setPending] = useState<{ seq: number; label: string } | null>(null)
   const v2Index = useJournalV2Store((s) => s.index)
   const v1 = useMemo(() => listJournals(catalog), [catalog])
   // 只在 v2 里有的刊（v1 目录没有）并进同一个列表；index 取不到就是没有这些行，别的照旧
@@ -92,12 +94,10 @@ export function JournalPicker({ target, triggerClassName, disabled }: { target?:
     return () => controller.abort()
   }, [open])
 
-  const chooseV2Only = async (id: string) => {
+  /** 这本刊只有 v2：没有 v2 内容就没有东西可绑，所以不设 2 秒上限，等到有结果 */
+  const runV2Only = async (id: string, seq: number, origin: string) => {
     const entry = v2Only.find((j) => j.journal_id === id)
     if (!entry) return
-    const seq = ++pickSeq
-    const origin = originOf()
-    // 这本刊只有 v2：没有 v2 内容就没有东西可绑，所以不设 2 秒上限，等到有结果
     const out = await fetchJournalV2Outcome(id)
     if (seq !== pickSeq || !sameOrigin(origin)) return
     if (out.state !== 'ready' || !out.patch) {
@@ -109,20 +109,14 @@ export function JournalPicker({ target, triggerClassName, disabled }: { target?:
           out.state === 'quota' ? msg('journal.quotaLater', undefined, 'dialogs') : msg('journal.needsNetwork', undefined, 'dialogs'),
           'info',
         )
-      setOpen(false)
       return
     }
     write.selectV2Only({ id, label: entry.label }, out.patch)
-    setOpen(false)
-    setQuery('')
   }
 
-  const choose = async (id: string) => {
-    if (v2Only.some((j) => j.journal_id === id)) return chooseV2Only(id)
+  const runV1 = async (id: string, seq: number, origin: string) => {
     // 远程目录里还没下载的刊：先向服务端取这一本的标准（种子 / 已下载的不发请求）。
     // 额度用完 → 这本刊暂时按「不按期刊」；没网又没缓存 → 保持现状。两种都只用一条胶囊提示。
-    const seq = ++pickSeq
-    const origin = originOf()
     const ready = await ensureJournalReady(id)
     // 等下载时被新选择取代，或文档已经换了：丢弃（下载下来的刊包已并入目录，那是目录的事，与绑定无关）
     if (seq !== pickSeq || !sameOrigin(origin)) return
@@ -136,7 +130,6 @@ export function JournalPicker({ target, triggerClassName, disabled }: { target?:
             : msg('journal.needsNetwork', undefined, 'dialogs'),
           'info',
         )
-      setOpen(false)
       return
     }
     // v2 事实（取不到就是 null，照 v1 选）：同样要防「等的时候被取代 / 文档换了」
@@ -144,8 +137,26 @@ export function JournalPicker({ target, triggerClassName, disabled }: { target?:
     const v2 = await Promise.race([fetchJournalV2(id), new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000))])
     if (seq !== pickSeq || !sameOrigin(origin)) return
     write.select(id, v2)
+  }
+
+  /**
+   * 点一项：**立刻**关浮层、触发器立刻显示所选刊名（等下载 / v2 的这段时间文字转灰、箭头换成小转圈，`pending`）；
+   * 取到后照旧提交。失败 / 额度用完 / 被新选择取代 / 归属变了：`pending` 撤掉，触发器回到 `ref` 的刊名。
+   * `pending` 带自己的序号，只撤自己那一份（被取代的那次结束时不会把后来者的撤掉）。
+   */
+  const choose = async (id: string) => {
+    const label = all.find((j) => j.journal_id === id)?.label ?? id
+    const seq = ++pickSeq
+    const origin = originOf()
+    setPending({ seq, label })
     setOpen(false)
     setQuery('')
+    try {
+      if (v2Only.some((j) => j.journal_id === id)) await runV2Only(id, seq, origin)
+      else await runV1(id, seq, origin)
+    } finally {
+      setPending((p) => (p?.seq === seq ? null : p))
+    }
   }
 
   return (
@@ -163,12 +174,17 @@ export function JournalPicker({ target, triggerClassName, disabled }: { target?:
           variant="secondary"
           size="md"
           disabled={disabled}
+          aria-busy={pending ? true : undefined}
           // 设置里的那一个保留 id / 锚点；草稿的那一个换自己的锚点（设置对话框可能开在数据页上面，同一个 id / 锚点出现两次选择器会认不出谁）
           {...(target ? { 'data-draft-journal-picker': '' } : { id: 'journal-picker', 'data-journal-picker': '' })}
           className={cn('w-65 min-w-0 shrink justify-between', triggerClassName)}
         >
-          <span className="min-w-0 truncate">{ref?.label ?? jt('pick')}</span>
-          <ChevronDown size={ICON_SIZE.xs} aria-hidden className="shrink-0 text-ink-3" />
+          <span className={cn('min-w-0 truncate', pending && 'text-ink-3')}>{pending?.label ?? ref?.label ?? jt('pick')}</span>
+          {pending ? (
+            <Spinner size={ICON_SIZE.xs} aria-hidden className="shrink-0 text-ink-3" />
+          ) : (
+            <ChevronDown size={ICON_SIZE.xs} aria-hidden className="shrink-0 text-ink-3" />
+          )}
         </Button>
       }
     >
@@ -204,6 +220,7 @@ export function JournalPicker({ target, triggerClassName, disabled }: { target?:
                 data-journal-none
                 onClick={() => {
                   pickSeq++
+                  setPending(null)
                   write.clear()
                   setOpen(false)
                 }}

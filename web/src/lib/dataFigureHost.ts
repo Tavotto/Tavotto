@@ -61,8 +61,9 @@ configureDataBatchHost({
     if (scan) markAutoShown(scan.project_id)
   },
   projectWritable: () => useProjectStore.getState().project?.writable,
-  canvasSpec: () => {
+  canvasBinding: () => {
     const p = useDocumentStore.getState().doc.profile
-    return p ? resolveSpec(p) : null
+    return p ? structuredClone(p) : null
   },
+  resolveSpec,
 })

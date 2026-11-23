@@ -950,6 +950,93 @@ def pick_fonts(latin, cjk):
     ]
 
 
+def fit_fonts(fig, floor, step=0.5):
+    """排完版后，**同一类文字一起**往下退字号，直到互不干涉或退到 `floor`（期刊的字号下限）为止。三类各自一个字号：
+    刻度数字、轴标题（含子图标题）、图例。判「干涉」：相邻刻度数字的框相交；轴标题 / 图例伸出了图的边界；坐标区里的图例占了坐标区宽或高的四成以上（会压住数据）。
+    退的是整类（所有子图一起），所以同一类对象的字号始终一致；一类退到下限还干涉就不再动它。每退一步重新 `tight_layout()`。"""
+
+    def roles():
+        ticks, labels, legends = [], [], []
+        for ax in fig.axes:
+            ticks += [t for t in ax.get_xticklabels() + ax.get_yticklabels() if t.get_text()]
+            labels += [t for t in (ax.xaxis.label, ax.yaxis.label, ax.title) if t.get_text()]
+        for leg in [*fig.legends, *(ax.get_legend() for ax in fig.axes)]:
+            if leg is not None:
+                legends += [t for t in leg.get_texts() if t.get_text()]
+        return {"tick": ticks, "label": labels, "legend": legends}
+
+    def crowded():
+        fig.draw_without_rendering()
+        whole = fig.bbox
+        bad = set()
+        for ax in fig.axes:
+            for axis in (ax.xaxis, ax.yaxis):
+                boxes = [
+                    t.get_window_extent()
+                    for t in axis.get_ticklabels()
+                    if t.get_visible() and t.get_text()
+                ]
+                if any(a.overlaps(b) for a, b in zip(boxes, boxes[1:])):
+                    bad.add("tick")
+            for t in (ax.xaxis.label, ax.yaxis.label, ax.title):
+                if t.get_text():
+                    b = t.get_window_extent()
+                    if (
+                        b.x0 < whole.x0 - 1
+                        or b.y0 < whole.y0 - 1
+                        or b.x1 > whole.x1 + 1
+                        or b.y1 > whole.y1 + 1
+                    ):
+                        bad.add("label")
+            leg = ax.get_legend()
+            if leg is not None:
+                b, area = leg.get_window_extent(), ax.bbox
+                if b.width > 0.4 * area.width or b.height > 0.4 * area.height:
+                    bad.add("legend")
+        for leg in fig.legends:
+            b = leg.get_window_extent()
+            if (
+                b.x0 < whole.x0 - 1
+                or b.y0 < whole.y0 - 1
+                or b.x1 > whole.x1 + 1
+                or b.y1 > whole.y1 + 1
+            ):
+                bad.add("legend")
+        return bad
+
+    for _ in range(200):
+        bad = crowded()
+        moved = False
+        texts = roles()
+        for role in sorted(bad):
+            size = max((t.get_fontsize() for t in texts[role]), default=0.0)
+            if size - step < floor - 1e-9:
+                continue
+            if role == "legend":
+                # 图例整个按新字号重建：色块、间距都跟着字号走（只改文字字号，色块还是原来那么大）。模板里的图例都是默认位置
+                for ax in fig.axes:
+                    leg = ax.get_legend()
+                    if leg is not None:
+                        handles = getattr(leg, "legend_handles", None) or leg.legendHandles
+                        ax.legend(
+                            handles,
+                            [t.get_text() for t in leg.get_texts()],
+                            fontsize=size - step,
+                            frameon=leg.get_frame_on(),
+                        )
+                texts = roles()
+                for leg in fig.legends:
+                    for t in leg.get_texts():
+                        t.set_fontsize(size - step)
+            else:
+                for t in texts[role]:
+                    t.set_fontsize(size - step)
+            moved = True
+        if not moved:
+            break
+        fig.tight_layout()
+
+
 RUNTIME_FUNCTIONS = (
     SemicolonCell,
     NumCat,
@@ -1021,6 +1108,7 @@ RUNTIME_FUNCTIONS = (
     reduce_file,
     read_reduced,
     pick_fonts,
+    fit_fonts,
 )
 #: 只有 XLSX 数据源的脚本才内嵌 `read_xlsx` 与 xlsxread；CSV / TSV 的脚本里没有它们
 
@@ -1044,8 +1132,14 @@ def _num(v) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
-def style_from_profile(profile: dict | None = None) -> dict:
-    """出版规范 profile → 模板要的数字。取不到的项才用具名默认（`_STYLE_DEFAULTS`）。"""
+def style_from_profile(
+    profile: dict | None = None, font_range: tuple[float | None, float | None] | None = None
+) -> dict:
+    """出版规范 profile → 模板要的数字。取不到的项才用具名默认（`_STYLE_DEFAULTS`）。
+
+    `font_range`（期刊自己规定的字号 `(下限, 上限)`，没规定的一端是 None）：有它时字号的首要条件是落在这个范围里，并且取范围内最大的
+    （只规定了下限就取默认字号与下限中较大的）；刻度、轴标题、图例三类都从这个字号起，画完后由脚本里的 `fit_fonts` 在互相干涉时
+    整类往下退（`fit_floor_pt`，不低于下限）。没有它 = 从前的读法（默认字号夹进规范范围、图例用小一号），脚本逐字不变。"""
     if profile is None:
         from . import profiles
 
@@ -1083,6 +1177,15 @@ def style_from_profile(profile: dict | None = None) -> dict:
     if _num(hi) and hi > 0:
         d["font_pt"] = min(d["font_pt"], float(hi))
     d["min_font_pt"] = min(d["min_font_pt"], d["font_pt"])
+    if font_range is not None and (font_range[0] is not None or font_range[1] is not None):
+        lo_j, hi_j = font_range
+        d["font_pt"] = float(hi_j) if hi_j is not None else max(d["font_pt"], float(lo_j))
+        d["min_font_pt"] = d["font_pt"]  # 图例与正文同一起点；挤的时候各类自己退
+        # 没规定下限：最多退到从前的小字字号，不无限缩小
+        d["fit_floor_pt"] = (
+            float(lo_j) if lo_j is not None else min(d["font_pt"], _STYLE_DEFAULTS["min_font_pt"])
+        )
+        d["font_range"] = [lo_j, hi_j]
     lws = [v for v in (profile.get("line_widths_pt") or []) if isinstance(v, (int, float))]
     if lws:
         d["line_widths_pt"] = [float(v) for v in sorted(lws)]
@@ -1213,7 +1316,12 @@ def _summary_layers(recipe: recipe_mod.FigureRecipe) -> list[str]:
 def _footer(recipe, style) -> list[str]:
     """图的收尾排版。**图里不写任何自动加的脚注**（2026-11-17 用户决定：没画的行、汇总 / 拟合的定义、n 都不进图；这些在界面右栏与响应字段里给）。
     只做 `tight_layout()`，不为脚注留白。"""
-    return ["    fig.tight_layout()"]
+    out = ["    fig.tight_layout()"]
+    if (
+        style.get("fit_floor_pt") is not None
+    ):  # 按期刊字号范围出图：从范围内最大的字号起，挤了才整类往下退
+        out.append(f"    fit_fonts(fig, {style['fit_floor_pt']!r})")
+    return out
 
 
 #: 脚本头的来源注释：生产（`_source_comment`、`_header`）与解析（`parse_source_comment`）共用这两个常量

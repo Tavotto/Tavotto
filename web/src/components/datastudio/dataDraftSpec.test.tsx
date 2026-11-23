@@ -48,7 +48,7 @@ const click = async (el: Element | null) => {
 }
 const flush = () => act(async () => { await new Promise((r) => setTimeout(r, 0)) })
 
-const cands = (style?: { width_single_mm: number; width_double_mm: number; font_pt: number }): AiDataProposeResponse =>
+const cands = (style?: Record<string, number>): AiDataProposeResponse =>
   ({
     kind: 'candidates', session: 'S', dropped: [], render: 'lazy', header_row: 1, defaults: [], mixed_cells: [],
     items: [{ id: 'i1', title_code: 'line_band', why_code: 'line_band', recommended: true, unplotted: { count: 0, code: null }, thumbnail_url: '/t/i1', thumbnail_status: 'pending' }],
@@ -93,7 +93,7 @@ describe('一行「期刊」', () => {
     seed()
     await mount()
     const order = [...document.querySelectorAll('[data-data-role]')].map((e) => e.getAttribute('data-data-role'))
-    expect(order).toEqual(['x', 'y', 'group', 'journal'])
+    expect(order).toEqual(['journal', 'x', 'y', 'group'])
     const row = q('[data-data-role="journal"]')!
     expect(row.textContent).toContain('期刊')
     expect(row.querySelector('[data-draft-journal-picker]')!.textContent).toContain('选择期刊')
@@ -193,27 +193,47 @@ describe('选刊只改草稿', () => {
   })
 })
 
-describe('控件下面一行真实数字', () => {
+describe('控件下面一行灰字（按 … 出图）', () => {
   const lineOf = () => q('[data-data-spec]')?.textContent
-  it('单栏 / 双栏 / 字号；不带多余的 0', async () => {
-    seed({ figureStyle: { width_single_mm: 85, width_double_mm: 178.5, font_pt: 7.0 } })
+  const S = (extra: Record<string, number> = {}) => ({ width_single_mm: 89, width_double_mm: 183, font_pt: 6, ...extra })
+  it('单栏、双栏、字号范围；不带多余的 0', async () => {
+    seed({ figureStyle: S({ font_min_pt: 5, font_max_pt: 7.0, width_double_mm: 183.5 }) })
     await mount()
-    expect(lineOf()).toBe('单栏 85 mm · 双栏 178.5 mm · 7 pt')
+    expect(lineOf()).toBe('按单栏 89 mm、双栏 183.5 mm、5–7 pt 字号出图')
   })
 
-  it('单栏 = 双栏：写成「图宽」', async () => {
-    seed({ figureStyle: { width_single_mm: 120, width_double_mm: 120, font_pt: 6.5 } })
+  it('单栏 = 双栏写「图宽」；上下限相同只写一个', async () => {
+    seed({ figureStyle: S({ width_double_mm: 89, font_min_pt: 6.5, font_max_pt: 6.5 }) })
     await mount()
-    expect(lineOf()).toBe('图宽 120 mm · 6.5 pt')
+    expect(lineOf()).toBe('按图宽 89 mm、6.5 pt 字号出图')
+  })
+
+  it('只有下限 / 只有上限 / 都没有（没有字号部分）', async () => {
+    seed({ figureStyle: S({ font_min_pt: 5 }) })
+    await mount()
+    expect(lineOf()).toBe('按单栏 89 mm、双栏 183 mm、≥ 5 pt 字号出图')
+    act(() => useDataFigureStore.setState({ figureStyle: S({ font_max_pt: 8 }) }))
+    expect(lineOf()).toBe('按单栏 89 mm、双栏 183 mm、≤ 8 pt 字号出图')
+    act(() => useDataFigureStore.setState({ figureStyle: S() }))
+    expect(lineOf()).toBe('按单栏 89 mm、双栏 183 mm出图')
+  })
+
+  it('灰字在「期刊」那一行下面，与框内文字左对齐的缩进', async () => {
+    seed({ figureStyle: S() })
+    await mount()
+    const row = q('[data-data-role="journal"]')!
+    expect(row.lastElementChild).toBe(q('[data-data-spec]'))
+    expect(q('[data-data-spec]')!.className).toContain('pl-[calc(44px+1rem)]')
+    expect(row.className).toContain('mb-3')
   })
 
   it('换到别的刊之后新响应的数字替换旧的', async () => {
-    seed({ figureStyle: { width_single_mm: 85, width_double_mm: 178, font_pt: 7 } })
-    propose.mockResolvedValue(cands({ width_single_mm: 90, width_double_mm: 190, font_pt: 8 }))
+    seed({ figureStyle: S() })
+    propose.mockResolvedValue(cands({ width_single_mm: 90, width_double_mm: 190, font_pt: 8, font_min_pt: 6, font_max_pt: 8 }))
     await mount()
     await click(q('[data-draft-journal-picker]'))
     await click(q('[data-journal-option="fx-beta"]'))
     await flush()
-    expect(lineOf()).toBe('单栏 90 mm · 双栏 190 mm · 8 pt')
+    expect(lineOf()).toBe('按单栏 90 mm、双栏 190 mm、6–8 pt 字号出图')
   })
 })

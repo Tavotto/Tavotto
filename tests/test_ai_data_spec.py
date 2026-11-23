@@ -150,6 +150,7 @@ def test_propose_with_spec_draws_at_journal_width_and_font(project):
         "width_double_mm": 183.0,
         "font_pt": 7.0,
     }
+    assert "fit_fonts" not in cand_script(body)  # 没带期刊字号范围：不退字号，脚本与从前同形
     script = cand_script(body)
     assert figsize_single_mm(script) == 89.0
     assert '"font.size": 7.0' in script and '"legend.fontsize": 5.0' in script
@@ -190,3 +191,122 @@ def test_committed_script_uses_the_same_style_as_the_preview(project):
     assert done["task"]["outcome"] == "completed", done
     script = (figs / done["script"]).read_text(encoding="utf-8")
     assert figsize_single_mm(script) == 89.0 and '"font.size": 7.0' in script
+
+
+# =========================================================================== 期刊字号范围（2026-11-23 用户决定：符合范围是首要条件，不干涉时取范围内最大）
+@pytest.mark.parametrize(
+    "rng, font, floor",
+    [
+        ((5.0, 7.0), 7.0, 5.0),
+        ((6.0, None), 9.0, 6.0),  # 只有下限：默认字号与下限取大
+        ((10.0, None), 10.0, 10.0),
+        ((None, 12.0), 12.0, 8.0),  # 只有上限：最多退到从前的小字字号
+        ((None, 6.0), 6.0, 6.0),
+    ],
+)
+def test_font_range_picks_the_largest_allowed_and_sets_the_floor(rng, font, floor):
+    d = tpl.style_from_profile(profiles.validate_spec(journal_spec()), rng)
+    assert (d["font_pt"], d["min_font_pt"], d["fit_floor_pt"]) == (font, font, floor)
+    assert d["font_range"] == list(rng)
+
+
+def test_no_font_range_means_no_fitting_and_identical_style():
+    assert "fit_floor_pt" not in tpl.style_from_profile()
+    assert tpl.style_from_profile(None, (None, None)) == tpl.style_from_profile()
+
+
+@pytest.mark.parametrize(
+    "raw, want",
+    [
+        ({"min_pt": 5, "max_pt": 7}, (5.0, 7.0)),
+        ({"min_pt": 5}, (5.0, None)),
+        ({"max_pt": 7.5}, (None, 7.5)),
+        ({}, None),
+        ({"min_pt": 8, "max_pt": 6}, None),  # 写反了：当作没给
+        ({"min_pt": "5"}, None),
+        ({"min_pt": True}, None),
+        ({"max_pt": 500}, None),
+        ([5, 7], None),
+        (None, None),
+    ],
+)
+def test_parse_font_range(raw, want):
+    assert P.parse_font_range(raw) == want
+
+
+def test_propose_with_font_range_starts_at_the_maximum_and_fits(project):
+    _, client, figs, _ = project
+    put(figs, "data/g.csv", ROWS)
+    spec = journal_spec(**NATURE_LIKE)
+    body = propose(
+        client, render="lazy", spec=spec, font_range={"min_pt": 5, "max_pt": 7}
+    ).get_json()
+    assert body["figure_style"] == {
+        "width_single_mm": 89.0,
+        "width_double_mm": 183.0,
+        "font_pt": 7.0,
+        "font_min_pt": 5.0,
+        "font_max_pt": 7.0,
+    }
+    script = cand_script(body)
+    assert '"font.size": 7.0' in script and '"legend.fontsize": 7.0' in script
+    assert "tp.fit_fonts(fig, 5.0)" in script
+    # 范围进幂等键：同一请求号换了范围要重新出图
+    a = propose(
+        client,
+        render="lazy",
+        spec=spec,
+        font_range={"min_pt": 5, "max_pt": 7},
+        client_request_id="rid-font-0001",
+    ).get_json()
+    b = propose(
+        client,
+        render="lazy",
+        spec=spec,
+        font_range={"min_pt": 6, "max_pt": 8},
+        client_request_id="rid-font-0001",
+    ).get_json()
+    assert a["session"] != b["session"] and '"font.size": 8.0' in cand_script(b)
+
+
+def test_font_range_without_spec_is_ignored(project):
+    _, client, figs, _ = project
+    put(figs, "data/g.csv", ROWS)
+    body = propose(client, render="lazy", font_range={"min_pt": 5, "max_pt": 7}).get_json()
+    assert "figure_style" not in body and "fit_fonts" not in cand_script(body)
+
+
+def _roles(fig):
+    ax = fig.axes[0]
+    ticks = {t.get_fontsize() for t in ax.get_xticklabels() + ax.get_yticklabels() if t.get_text()}
+    legend = {t.get_fontsize() for t in ax.get_legend().get_texts()}
+    return ticks, legend
+
+
+def test_fit_fonts_shrinks_a_whole_role_only_when_crowded_and_never_below_the_floor():
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg")
+    import warnings
+
+    import matplotlib.pyplot as plt
+
+    rc = {k: 12 for k in ("font.size", "xtick.labelsize", "ytick.labelsize", "axes.labelsize")}
+    with plt.rc_context({**rc, "legend.fontsize": 12}), warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        roomy, ax = plt.subplots(figsize=(3.5, 2.6))
+        ax.plot(["a", "b", "c"], [1, 2, 3], label="x")
+        ax.legend()
+        roomy.tight_layout()
+        tpl.fit_fonts(roomy, 5.0)
+        assert _roles(roomy) == ({12.0}, {12.0})  # 不干涉：保持范围内最大
+
+        tight, ax = plt.subplots(figsize=(2.0, 1.5))
+        ax.plot([f"condition_{i}" for i in range(8)], range(8), label="a very long legend entry")
+        ax.legend()
+        tight.tight_layout()
+        tpl.fit_fonts(tight, 5.0)
+        ticks, legend = _roles(tight)
+        # 同一类一个字号；退了，但不低于下限
+        assert len(ticks) == 1 and len(legend) == 1
+        assert 5.0 <= min(ticks) < 12.0 and 5.0 <= min(legend) < 12.0
+        plt.close("all")

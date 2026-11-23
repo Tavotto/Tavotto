@@ -16230,6 +16230,7 @@ def api_ai_data_figure_propose():
                 render=body.get("render"),
                 tables=body.get("tables"),
                 spec=body.get("spec"),
+                font_range=body.get("font_range"),
             )
     except engine_ai_data_progress.Cancelled:
         return _cancelled_response()

@@ -8,6 +8,7 @@
 import type { JournalCatalog } from './journals'
 import { applyV2, pickV2OnlyJournal, type V2IndexEntry, type V2Patch } from './journalV2'
 import { pickJournal } from './journalPick'
+import { journalStyleTargets } from './journalStyle'
 import { sameRules, type JournalPrev } from './specBinding'
 import type { DocumentProfile } from '@/types/document'
 
@@ -44,6 +45,33 @@ export function draftClearJournal(cur: DocumentProfile | null): DocumentProfile 
 
 /** 两份绑定是不是同一套（内容比较，`sameRules` 那一把尺；null = 默认规范） */
 export const sameDraftBinding = (a: DocumentProfile | null, b: DocumentProfile | null): boolean => (a === null || b === null ? a === b : sameRules(a, b))
+
+/** 请求里的 `font_range`：只放期刊自己规定的上下限（`journalStyleTargets` 那一把尺）；绑定为空 / 两端都没规定 = null（不带这个键） */
+export function fontRangeOf(binding: DocumentProfile | null): { min_pt?: number; max_pt?: number } | null {
+  const t = journalStyleTargets(binding)
+  if (!t || (t.minPt === null && t.maxPt === null)) return null
+  return { ...(t.minPt !== null ? { min_pt: t.minPt } : {}), ...(t.maxPt !== null ? { max_pt: t.maxPt } : {}) }
+}
+
+/** 灰字：「按 … 出图」里用的各部分（宽度、字号）；key 与参数交给调用方翻译 */
+export function specParts(s: { width_single_mm: number; width_double_mm: number; font_min_pt?: number; font_max_pt?: number }) {
+  const width =
+    s.width_single_mm === s.width_double_mm
+      ? ({ key: 'widthOne', values: { single: specNumber(s.width_single_mm) } } as const)
+      : ({ key: 'widthTwo', values: { single: specNumber(s.width_single_mm), double: specNumber(s.width_double_mm) } } as const)
+  const { font_min_pt: lo, font_max_pt: hi } = s
+  const font =
+    lo != null && hi != null
+      ? lo === hi
+        ? ({ key: 'fontOne', values: { min: specNumber(lo) } } as const)
+        : ({ key: 'fontRange', values: { min: specNumber(lo), max: specNumber(hi) } } as const)
+      : lo != null
+        ? ({ key: 'fontMin', values: { min: specNumber(lo) } } as const)
+        : hi != null
+          ? ({ key: 'fontMax', values: { max: specNumber(hi) } } as const)
+          : null
+  return [width, ...(font ? [font] : [])]
+}
 
 /** 数字不带多余的 0（7 / 6.5 / 85.5） */
 export const specNumber = (n: number): string => String(Math.round(n * 100) / 100)
