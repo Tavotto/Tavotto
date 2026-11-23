@@ -201,6 +201,50 @@ function segmentInRect(
   return t0 <= t1
 }
 
+/** 有向矩形（mm，y 向下）：中心、阅读方向单位向量、沿阅读方向的半宽、半高（`interference._rotated_box` 同形） */
+type Obb = [number, number, number, number, number, number]
+
+/** 斜排文字（`text_block.rotation` 不是 90° 的整数倍）真正占的有向矩形；其余回 null（照布局框判） */
+function rotatedBox(el: ManifestElement, W: number, H: number): Obb | null {
+  if (el.clip_bbox != null) return null
+  const tb = (el as { text_block?: unknown }).text_block
+  if (!tb || typeof tb !== 'object' || Array.isArray(tb)) return null
+  const t = tb as { rotation?: unknown; center?: unknown; w?: unknown; h?: unknown }
+  const rot = num(t.rotation)
+  const center = t.center
+  if (rot == null || Math.abs(rot) % 90 === 0) return null
+  if (!Array.isArray(center) || center.length !== 2) return null
+  const cx = num(center[0])
+  const cy = num(center[1])
+  const w = num(t.w)
+  const h = num(t.h)
+  if (cx == null || cy == null || w == null || h == null || w < 0 || h < 0) return null
+  const th = rot * (Math.PI / 180) // 与 CPython 的 math.radians 同一个乘法
+  // 逆时针为正、y 向下：阅读方向是 (cos θ, −sin θ)
+  return [cx * W, cy * H, Math.cos(th), -Math.sin(th), (w * W) / 2, (h * H) / 2]
+}
+
+function axisBox(r: Rect, W: number, H: number): Obb {
+  return [((r[0] + r[2]) / 2) * W, ((r[1] + r[3]) / 2) * H, 1.0, 0.0, ((r[2] - r[0]) * W) / 2, ((r[3] - r[1]) * H) / 2]
+}
+
+/** 四条边法线上的投影都重叠 ≥ `MIN_OVERLAP_MM`（`interference._boxes_overlap`）；只作否决，结果只是布尔 */
+function boxesOverlap(a: Obb, b: Obb): boolean {
+  for (const box of [a, b]) {
+    const ux = box[2]
+    const uy = box[3]
+    for (const [nx, ny] of [[ux, uy], [-uy, ux]]) {
+      const spans = [a, b].map(([cx, cy, bx, by, hw, hh]) => {
+        const p = cx * nx + cy * ny
+        const r = hw * Math.abs(bx * nx + by * ny) + hh * Math.abs(-by * nx + bx * ny)
+        return [p - r, p + r]
+      })
+      if (Math.min(spans[0][1], spans[1][1]) - Math.max(spans[0][0], spans[1][0]) < MIN_OVERLAP_MM) return false
+    }
+  }
+  return true
+}
+
 /** 折线的任一线段是否穿过矩形（Liang–Barsky），与 `interference._segments_hit_rect` 同源 */
 function segmentsHitRect(paths: unknown[], r: Rect): boolean {
   const [x0, y0, x1, y1] = r
@@ -267,6 +311,7 @@ export function detectInterference(
   // ---- 文字互相重叠 ----
   const hidden = hiddenLegends(elements)
   const texts: [string, string, Rect][] = []
+  const turnedOf = new Map<number, Obb | null>()
   for (const el of elements) {
     const gid = gidOf(el)
     if (!TEXT_ROLES.includes(el.role)) continue
@@ -274,9 +319,14 @@ export function detectInterference(
     const r = visibleRect(el)
     if (r == null) continue
     texts.push([gid, el.role, r])
+    turnedOf.set(texts.length - 1, rotatedBox(el, W, H))
   }
   // Python 的 `sort(key=gid)` 是稳定排序，JS 的 Array.prototype.sort 也是
-  texts.sort((a, b) => byCodePoint(a[0], b[0]))
+  const order = texts.map((_, k) => k).sort((p, q) => byCodePoint(texts[p][0], texts[q][0]))
+  const turned = order.map((k) => turnedOf.get(k) ?? null)
+  const sorted = order.map((k) => texts[k])
+  texts.length = 0
+  texts.push(...sorted)
   // 两两比较是文字数的平方：先做便宜的相交测试，图例家族只为真相交的那几对判（与 Python 同序，结论不变）
   const fams = texts.map((t) => legendOf(t[0]))
   for (let i = 0; i < texts.length; i++) {
@@ -289,6 +339,10 @@ export function detectInterference(
       const dxMm = (hit[2] - hit[0]) * W
       const dyMm = (hit[3] - hit[1]) * H
       if (dxMm < MIN_OVERLAP_MM || dyMm < MIN_OVERLAP_MM) continue
+      // 斜排文字：布局框只是外接框，按真正的有向矩形复核一次，只能否决、不能新增
+      const ta = turned[i]
+      const tb = turned[j]
+      if ((ta || tb) && !boxesOverlap(ta ?? axisBox(a, W, H), tb ?? axisBox(b, W, H))) continue
       found.push({
         id: CHECK_TEXT_OVERLAP,
         gids: [ga, gb],

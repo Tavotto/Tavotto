@@ -241,6 +241,21 @@ def long_rot90():
     fig.savefig("LongRot90.pdf")
 
 
+def long_rot45():
+    fig, ax = plt.subplots(figsize=(4.0, 3.2))
+    ax.bar(range(6), [3, 4, 5, 4, 3, 2])
+    ax.set_xticks(range(6), LONG, rotation=45, ha="right")
+    fig.tight_layout()
+    fig.savefig("LongRot45.pdf")
+
+
+def dense_rot45():
+    fig, ax = plt.subplots(figsize=(1.6, 2.4))
+    ax.bar(range(14), range(14))
+    ax.set_xticks(range(14), [f"Sample {k:02d}" for k in range(14)], rotation=45, ha="right")
+    fig.savefig("DenseRot45.pdf")
+
+
 def legend_best():
     fig, ax = plt.subplots(figsize=(3.5, 2.6))
     x = np.linspace(0, 10, 50)
@@ -302,6 +317,16 @@ def test_long_horizontal_tick_labels_overlap_and_rotating_them_90_clears_it(tmp_
     assert all(g.startswith("axes_0.xticklabels_") for g in flat[0]["gids"])
     assert len(flat[0]["gids"]) == 6
     assert _interference(_render_edge(tmp_path / "b", "long_rot90", "LongRot90")) == []
+
+
+@needs_worker
+def test_45_degree_labels_are_judged_by_their_rotated_box(tmp_path):
+    """45° 斜排的长标签：布局框（轴对齐外接框）互相咬得很深，墨迹没碰——按 `text_block` 的有向矩形复核后不报；
+    排得太密、墨迹真叠上的 45° 标签照报。"""
+    assert _interference(_render_edge(tmp_path / "a", "long_rot45", "LongRot45")) == []
+    dense = _interference(_render_edge(tmp_path / "b", "dense_rot45", "DenseRot45"))
+    assert [i["id"] for i in dense] == ["text-overlap"]
+    assert all(g.startswith("axes_0.xticklabels_") for g in dense[0]["gids"])
 
 
 @needs_worker

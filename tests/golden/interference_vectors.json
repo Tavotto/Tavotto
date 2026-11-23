@@ -916,6 +916,606 @@
    "expected": []
   },
   {
+   "name": "rotated-45-parallel-labels-vetoed",
+   "profile_id": "lab-publication-v1",
+   "panel_id": "p1",
+   "manifest": {
+    "stem": "Fig1",
+    "size_mm": [
+     128.0,
+     64.0
+    ],
+    "elements": [
+     {
+      "gid": "axes_0.xticklabels_0",
+      "role": "ticklabel",
+      "label": "axes_0.xticklabels_0",
+      "draggable": false,
+      "bbox": [
+       0.20056310889564175,
+       0.3011262177912835,
+       0.1988737822087165,
+       0.397747564417433
+      ],
+      "text_block": {
+       "center": [
+        0.3,
+        0.5
+       ],
+       "w": 0.25,
+       "h": 0.0625,
+       "rotation": 45.0,
+       "text": "axes_0.xticklabels_0"
+      }
+     },
+     {
+      "gid": "axes_0.xticklabels_1",
+      "role": "ticklabel",
+      "label": "axes_0.xticklabels_1",
+      "draggable": false,
+      "bbox": [
+       0.2943131088956418,
+       0.3011262177912835,
+       0.1988737822087165,
+       0.397747564417433
+      ],
+      "text_block": {
+       "center": [
+        0.39375,
+        0.5
+       ],
+       "w": 0.25,
+       "h": 0.0625,
+       "rotation": 45.0,
+       "text": "axes_0.xticklabels_1"
+      }
+     }
+    ]
+   },
+   "expected": []
+  },
+  {
+   "name": "rotated-minus-45-parallel-labels-vetoed",
+   "profile_id": "lab-publication-v1",
+   "panel_id": "p1",
+   "manifest": {
+    "stem": "Fig1",
+    "size_mm": [
+     128.0,
+     64.0
+    ],
+    "elements": [
+     {
+      "gid": "axes_0.xticklabels_0",
+      "role": "ticklabel",
+      "label": "axes_0.xticklabels_0",
+      "draggable": false,
+      "bbox": [
+       0.20056310889564175,
+       0.3011262177912835,
+       0.1988737822087165,
+       0.397747564417433
+      ],
+      "text_block": {
+       "center": [
+        0.3,
+        0.5
+       ],
+       "w": 0.25,
+       "h": 0.0625,
+       "rotation": -45.0,
+       "text": "axes_0.xticklabels_0"
+      }
+     },
+     {
+      "gid": "axes_0.xticklabels_1",
+      "role": "ticklabel",
+      "label": "axes_0.xticklabels_1",
+      "draggable": false,
+      "bbox": [
+       0.2943131088956418,
+       0.3011262177912835,
+       0.1988737822087165,
+       0.397747564417433
+      ],
+      "text_block": {
+       "center": [
+        0.39375,
+        0.5
+       ],
+       "w": 0.25,
+       "h": 0.0625,
+       "rotation": -45.0,
+       "text": "axes_0.xticklabels_1"
+      }
+     }
+    ]
+   },
+   "expected": []
+  },
+  {
+   "name": "rotated-45-dense-labels-still-reported",
+   "profile_id": "lab-publication-v1",
+   "panel_id": "p1",
+   "manifest": {
+    "stem": "Fig1",
+    "size_mm": [
+     128.0,
+     64.0
+    ],
+    "elements": [
+     {
+      "gid": "axes_0.xticklabels_0",
+      "role": "ticklabel",
+      "label": "axes_0.xticklabels_0",
+      "draggable": false,
+      "bbox": [
+       0.20056310889564175,
+       0.3011262177912835,
+       0.1988737822087165,
+       0.397747564417433
+      ],
+      "text_block": {
+       "center": [
+        0.3,
+        0.5
+       ],
+       "w": 0.25,
+       "h": 0.0625,
+       "rotation": 45.0,
+       "text": "axes_0.xticklabels_0"
+      }
+     },
+     {
+      "gid": "axes_0.xticklabels_1",
+      "role": "ticklabel",
+      "label": "axes_0.xticklabels_1",
+      "draggable": false,
+      "bbox": [
+       0.22400060889564175,
+       0.3011262177912835,
+       0.1988737822087165,
+       0.397747564417433
+      ],
+      "text_block": {
+       "center": [
+        0.3234375,
+        0.5
+       ],
+       "w": 0.25,
+       "h": 0.0625,
+       "rotation": 45.0,
+       "text": "axes_0.xticklabels_1"
+      }
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "text-overlap",
+     "severity": "warn",
+     "message": {
+      "key": "textOverlap",
+      "params": {
+       "a": "axes_0.xticklabels_0",
+       "b": "axes_0.xticklabels_1",
+       "w": "22.5",
+       "h": "25.5"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.xticklabels_0",
+      "axes_0.xticklabels_1"
+     ],
+     "detail": {
+      "overlap_mm": [
+       22.456,
+       25.456
+      ],
+      "overlap_mm2": 571.632,
+      "certain": true,
+      "basis": "bbox",
+      "roles": [
+       "ticklabel",
+       "ticklabel"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "rotated-45-vs-horizontal-text",
+   "profile_id": "lab-publication-v1",
+   "panel_id": "p1",
+   "manifest": {
+    "stem": "Fig1",
+    "size_mm": [
+     128.0,
+     64.0
+    ],
+    "elements": [
+     {
+      "gid": "axes_0.xticklabels_0",
+      "role": "ticklabel",
+      "label": "axes_0.xticklabels_0",
+      "draggable": false,
+      "bbox": [
+       0.20056310889564175,
+       0.3011262177912835,
+       0.1988737822087165,
+       0.397747564417433
+      ],
+      "text_block": {
+       "center": [
+        0.3,
+        0.5
+       ],
+       "w": 0.25,
+       "h": 0.0625,
+       "rotation": 45.0,
+       "text": "axes_0.xticklabels_0"
+      }
+     },
+     {
+      "gid": "axes_0.xlabel",
+      "role": "axis_label",
+      "label": "axes_0.xlabel",
+      "draggable": false,
+      "bbox": [
+       0.346875,
+       0.34375,
+       0.0625,
+       0.0625
+      ]
+     },
+     {
+      "gid": "axes_1.xticklabels_0",
+      "role": "ticklabel",
+      "label": "axes_1.xticklabels_0",
+      "draggable": false,
+      "bbox": [
+       0.6005631088956417,
+       0.3011262177912835,
+       0.1988737822087165,
+       0.397747564417433
+      ],
+      "text_block": {
+       "center": [
+        0.7,
+        0.5
+       ],
+       "w": 0.25,
+       "h": 0.0625,
+       "rotation": 45.0,
+       "text": "axes_1.xticklabels_0"
+      }
+     },
+     {
+      "gid": "axes_1.xlabel",
+      "role": "axis_label",
+      "label": "axes_1.xlabel",
+      "draggable": false,
+      "bbox": [
+       0.746875,
+       0.59375,
+       0.0625,
+       0.0625
+      ]
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "text-overlap",
+     "severity": "warn",
+     "message": {
+      "key": "textOverlap",
+      "params": {
+       "a": "axes_0.xlabel",
+       "b": "axes_0.xticklabels_0",
+       "w": "6.7",
+       "h": "4.0"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.xlabel",
+      "axes_0.xticklabels_0"
+     ],
+     "detail": {
+      "overlap_mm": [
+       6.728,
+       4.0
+      ],
+      "overlap_mm2": 26.912,
+      "certain": true,
+      "basis": "bbox",
+      "roles": [
+       "axis_label",
+       "ticklabel"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "rotated-without-block-or-clipped-or-90-uses-bbox",
+   "profile_id": "lab-publication-v1",
+   "panel_id": "p1",
+   "manifest": {
+    "stem": "Fig1",
+    "size_mm": [
+     128.0,
+     64.0
+    ],
+    "elements": [
+     {
+      "gid": "axes_0.xticklabels_0",
+      "role": "ticklabel",
+      "label": "axes_0.xticklabels_0",
+      "draggable": false,
+      "bbox": [
+       0.20056310889564175,
+       0.3011262177912835,
+       0.1988737822087165,
+       0.397747564417433
+      ]
+     },
+     {
+      "gid": "axes_0.xticklabels_1",
+      "role": "ticklabel",
+      "label": "axes_0.xticklabels_1",
+      "draggable": false,
+      "bbox": [
+       0.2943131088956418,
+       0.3011262177912835,
+       0.1988737822087165,
+       0.397747564417433
+      ]
+     },
+     {
+      "gid": "axes_1.xticklabels_0",
+      "role": "ticklabel",
+      "label": "axes_1.xticklabels_0",
+      "draggable": false,
+      "bbox": [
+       0.6005631088956417,
+       0.3011262177912835,
+       0.1988737822087165,
+       0.397747564417433
+      ],
+      "clip_bbox": [
+       0,
+       0,
+       1,
+       1
+      ],
+      "text_block": {
+       "center": [
+        0.7,
+        0.5
+       ],
+       "w": 0.25,
+       "h": 0.0625,
+       "rotation": 45.0,
+       "text": "axes_1.xticklabels_0"
+      }
+     },
+     {
+      "gid": "axes_1.xticklabels_1",
+      "role": "ticklabel",
+      "label": "axes_1.xticklabels_1",
+      "draggable": false,
+      "bbox": [
+       0.6943131088956417,
+       0.3011262177912835,
+       0.1988737822087165,
+       0.397747564417433
+      ],
+      "clip_bbox": [
+       0,
+       0,
+       1,
+       1
+      ],
+      "text_block": {
+       "center": [
+        0.79375,
+        0.5
+       ],
+       "w": 0.25,
+       "h": 0.0625,
+       "rotation": 45.0,
+       "text": "axes_1.xticklabels_1"
+      }
+     },
+     {
+      "gid": "axes_2.xticklabels_0",
+      "role": "ticklabel",
+      "label": "axes_2.xticklabels_0",
+      "draggable": false,
+      "bbox": [
+       0.484375,
+       -0.04999999999999999,
+       0.031250000000000014,
+       0.5
+      ],
+      "text_block": {
+       "center": [
+        0.5,
+        0.2
+       ],
+       "w": 0.25,
+       "h": 0.0625,
+       "rotation": -90.0,
+       "text": "axes_2.xticklabels_0"
+      }
+     },
+     {
+      "gid": "axes_2.xticklabels_1",
+      "role": "ticklabel",
+      "label": "axes_2.xticklabels_1",
+      "draggable": false,
+      "bbox": [
+       0.4921875,
+       -0.04999999999999999,
+       0.031250000000000014,
+       0.5
+      ],
+      "text_block": {
+       "center": [
+        0.5078125,
+        0.2
+       ],
+       "w": 0.25,
+       "h": 0.0625,
+       "rotation": 90.0,
+       "text": "axes_2.xticklabels_1"
+      }
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "text-overlap",
+     "severity": "warn",
+     "message": {
+      "key": "textOverlap",
+      "params": {
+       "a": "axes_0.xticklabels_0",
+       "b": "axes_0.xticklabels_1",
+       "w": "13.5",
+       "h": "25.5"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.xticklabels_0",
+      "axes_0.xticklabels_1"
+     ],
+     "detail": {
+      "overlap_mm": [
+       13.456,
+       25.456
+      ],
+      "overlap_mm2": 342.53,
+      "certain": true,
+      "basis": "bbox",
+      "roles": [
+       "ticklabel",
+       "ticklabel"
+      ]
+     }
+    },
+    {
+     "id": "text-overlap",
+     "severity": "warn",
+     "message": {
+      "key": "textOverlap",
+      "params": {
+       "a": "axes_0.xticklabels_1",
+       "b": "axes_2.xticklabels_0",
+       "w": "1.1",
+       "h": "9.5"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.xticklabels_1",
+      "axes_2.xticklabels_0"
+     ],
+     "detail": {
+      "overlap_mm": [
+       1.128,
+       9.528
+      ],
+      "overlap_mm2": 10.747,
+      "certain": true,
+      "basis": "bbox",
+      "roles": [
+       "ticklabel",
+       "ticklabel"
+      ]
+     }
+    },
+    {
+     "id": "text-overlap",
+     "severity": "warn",
+     "message": {
+      "key": "textOverlap",
+      "params": {
+       "a": "axes_1.xticklabels_0",
+       "b": "axes_1.xticklabels_1",
+       "w": "13.5",
+       "h": "25.5"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_1.xticklabels_0",
+      "axes_1.xticklabels_1"
+     ],
+     "detail": {
+      "overlap_mm": [
+       13.456,
+       25.456
+      ],
+      "overlap_mm2": 342.53,
+      "certain": true,
+      "basis": "bbox",
+      "roles": [
+       "ticklabel",
+       "ticklabel"
+      ]
+     }
+    },
+    {
+     "id": "text-overlap",
+     "severity": "warn",
+     "message": {
+      "key": "textOverlap",
+      "params": {
+       "a": "axes_2.xticklabels_0",
+       "b": "axes_2.xticklabels_1",
+       "w": "3.0",
+       "h": "32.0"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_2.xticklabels_0",
+      "axes_2.xticklabels_1"
+     ],
+     "detail": {
+      "overlap_mm": [
+       3.0,
+       32.0
+      ],
+      "overlap_mm2": 96.0,
+      "certain": true,
+      "basis": "bbox",
+      "roles": [
+       "ticklabel",
+       "ticklabel"
+      ]
+     }
+    }
+   ]
+  },
+  {
    "name": "text-over-axes-ylabel-into-neighbour",
    "profile_id": "lab-publication-v1",
    "panel_id": "p1",

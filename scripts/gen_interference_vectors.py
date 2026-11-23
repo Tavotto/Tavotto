@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -202,6 +203,73 @@ def cases() -> list[dict]:
             _el("axes_0.title", "title", [0.25, 0.25, 0.125, 0.0625]),
             _el("axes_0.xlabel", "axis_label", [0.25, 0.25, 0.125, 0.0625]),
             size=(0.0, H_MM),
+        ),
+    )
+
+    # ---------------- 斜排文字：有向矩形复核（只否决） ----------------
+    def _turned(gid, cx, cy, rot, *, clip=None, with_block=True):
+        # 32 mm × 4 mm 的文字块；布局框写成它的轴对齐外接框（与真 manifest 一致：45° 时各向半径 12.73 mm）
+        hw, hh = 16.0, 2.0
+        c, s_ = abs(math.cos(math.radians(rot))), abs(math.sin(math.radians(rot)))
+        ex, ey = (hw * c + hh * s_) / W_MM, (hw * s_ + hh * c) / H_MM
+        el = _el(gid, "ticklabel", [cx - ex, cy - ey, 2 * ex, 2 * ey], clip=clip)
+        if with_block:
+            el["text_block"] = {
+                "center": [cx, cy],
+                "w": 2 * hw / W_MM,
+                "h": 2 * hh / H_MM,
+                "rotation": rot,
+                "text": gid,
+            }
+        return el
+
+    step = 12.0 / W_MM  # 相邻两段沿横向错开 12 mm：垂直于阅读方向相距 8.5 mm，远大于 4 mm 的字高
+    add(
+        "rotated-45-parallel-labels-vetoed",
+        _m(
+            _turned("axes_0.xticklabels_0", 0.3, 0.5, 45.0),
+            _turned("axes_0.xticklabels_1", 0.3 + step, 0.5, 45.0),
+        ),
+    )
+    add(
+        "rotated-minus-45-parallel-labels-vetoed",
+        _m(
+            _turned("axes_0.xticklabels_0", 0.3, 0.5, -45.0),
+            _turned("axes_0.xticklabels_1", 0.3 + step, 0.5, -45.0),
+        ),
+    )
+    # 只错开 3 mm：墨迹真叠上了，照报（detail / 文案仍是布局框那组数）
+    add(
+        "rotated-45-dense-labels-still-reported",
+        _m(
+            _turned("axes_0.xticklabels_0", 0.3, 0.5, 45.0),
+            _turned("axes_0.xticklabels_1", 0.3 + 3.0 / W_MM, 0.5, 45.0),
+        ),
+    )
+    # 斜排与横排：横排文字按自己的布局框参与复核——落在阅读方向上（右上）报，落在字的侧面（右下）否决
+    add(
+        "rotated-45-vs-horizontal-text",
+        _m(
+            _turned("axes_0.xticklabels_0", 0.3, 0.5, 45.0),
+            _el(
+                "axes_0.xlabel", "axis_label", [0.3 + 6.0 / W_MM, 0.5 - 10.0 / H_MM, 0.0625, 0.0625]
+            ),
+            _turned("axes_1.xticklabels_0", 0.7, 0.5, 45.0),
+            _el(
+                "axes_1.xlabel", "axis_label", [0.7 + 6.0 / W_MM, 0.5 + 6.0 / H_MM, 0.0625, 0.0625]
+            ),
+        ),
+    )
+    # 没有 text_block / 有 clip_bbox / 正好 90°：照布局框判（报）
+    add(
+        "rotated-without-block-or-clipped-or-90-uses-bbox",
+        _m(
+            _turned("axes_0.xticklabels_0", 0.3, 0.5, 45.0, with_block=False),
+            _turned("axes_0.xticklabels_1", 0.3 + step, 0.5, 45.0, with_block=False),
+            _turned("axes_1.xticklabels_0", 0.7, 0.5, 45.0, clip=[0, 0, 1, 1]),
+            _turned("axes_1.xticklabels_1", 0.7 + step, 0.5, 45.0, clip=[0, 0, 1, 1]),
+            _turned("axes_2.xticklabels_0", 0.5, 0.2, -90.0),
+            _turned("axes_2.xticklabels_1", 0.5 + 1.0 / W_MM, 0.2, 90.0),
         ),
     )
 

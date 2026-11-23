@@ -249,7 +249,9 @@ XG（来源登记见 `sources.md`）里另有几样明确不做成规则：
   路径）；`editable` 里的 `visible` 与顶层子图的 `position`。
 - **检测逻辑**：判据只有 `engine/interference.detect` 一份（MCP 与保留式规范化逐对用的也是它），`preflight.run` 把逐对结果折成聚合项：
   - `text-overlap`：两段文字的布局框在两个方向都咬进 ≥ 0.25 mm（`MIN_OVERLAP_MM`，含等号）。同一图例的条目之间、条目与自己的框不算；
-    整体隐藏的图例的条目不算（条目自己仍报 visible）。主语是两段文字。
+    整体隐藏的图例的条目不算（条目自己仍报 visible）。斜排文字（`text_block.rotation` 不是 90° 的整数倍、没有 `clip_bbox`）
+    布局框命中后再按 `text_block` 的有向矩形复核一次（四条边法线上的投影都 ≥ 0.25 mm 才算），**只否决不新增**，
+    detail 与文案仍是布局框那组数。主语是两段文字。
   - `text-over-axes`：子图的装饰文字（标题 / 轴标题 / 刻度 / 图例）伸进**另一个顶层子图**的绘图区 ≥ 0.25 mm × 0.25 mm。自己的
     插图、被自己包住的子图、没有 `position` 的次坐标轴 / 寄生轴不算；标注（`text`）不算。主语是那段文字，被压的子图进 `detail.against`。
   - `legend-over-data`：图例框与**同一子图**数据的真实折线相交是「确定」（`detail.certain = true`）；只有包围盒（误差棒 / 茎叶系列
@@ -261,7 +263,8 @@ XG（来源登记见 `sources.md`）里另有几样明确不做成规则：
 - **误报风险**：
   - 中：`legend-over-data` 的风险档——误差棒容器的包围盒盖住整个数据范围，图例在轴内的误差棒图基本都会报「可能」
     （FigureBench `errorbar_fit` 就是）。
-  - 中：旋转（非 90° 整数倍）的文字按轴对齐的布局框判，45° 斜排的长刻度标签框会互相「重叠」，墨迹其实没碰。
+  - 低：斜排文字有 `text_block` 时按有向矩形复核（45° 长标签不再报，排得太密真叠上的照报）；没有 `text_block`
+    （wrap / usetex / 排不出的文字）或带 `clip_bbox` 的斜排文字仍按布局框判，可能多报。`text-over-axes` 不做这层复核。
   - 低：其余写法（`loc="best"`、inset、色条、90° 竖排标签）在真 worker 上不报。
 - **两侧同源**：`engine/interference.detect` ↔ `web/src/lib/interference.ts` `detectInterference`（逐行移植，数值格式化与取整按
   Python 的取偶规则 `pyFixed` / `pyRound`）；`preflight._check_panel_interference` ↔ `preflight.ts` `checkPanelInterference`。
@@ -270,8 +273,8 @@ XG（来源登记见 `sources.md`）里另有几样明确不做成规则：
   MCP 桥按 id 滤掉聚合项（`bridge._without_interference`，插件要能配没有这个参数的旧引擎），对外仍是逐对清单。
 - **测试**：
   - 正常：FigureBench `line_two_series` / `cjk_labels` / `log_decay` / `heatmap_colorbar` / `grouped_bars` 不报；
-    `loc="best"`、inset、色条不报；90° 竖排长标签不报。
-  - 错误：横排长刻度标签互相重叠；`loc="center"` 的图例压住两条线（确定）；`multi_panel`（没有 tight_layout，右列的 y 轴标题与刻度
+    `loc="best"`、inset、色条不报；90° 竖排与 45° 斜排的长标签不报。
+  - 错误：横排长刻度标签互相重叠；排得太密的 45° 标签墨迹叠上；`loc="center"` 的图例压住两条线（确定）；`multi_panel`（没有 tight_layout，右列的 y 轴标题与刻度
     画进了左列子图框里，肉眼可见）报恰好那 4 段文字。
   - 边界：恰好 0.25 mm（含等号）、差一点、贴边；clip 折叠；单点 / 闭合回边 / 水平线段的路径；同图例家族；隐藏图例的条目；
     恰好落在一半上的取整（1.25 → "1.2"）。

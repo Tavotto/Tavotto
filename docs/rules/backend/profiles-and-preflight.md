@@ -104,12 +104,15 @@ order: 260
   `pyFixed` / `pyRound`（Python 的取偶规则；`toFixed` 在 1.25 这种恰好的半值上进位）。**已经逐对调 `detect` 的调用方不许再收到聚合项**
   （同一次碰撞两把键、会被当成新增问题挡掉事务）：`specfix.profile_issues` 与 `figureverify._issue_keys` 传 `with_interference=False`；
   MCP 桥按 id 滤掉（`bridge._without_interference`——插件要能配没有这个参数的旧引擎）。整体隐藏的图例的条目不参与文字重叠
-  （`interference.hidden_legends`，与 `_hidden_legends` 同口径）。golden：`tests/golden/interference_vectors.json`
+  （`interference.hidden_legends`，与 `_hidden_legends` 同口径）。**斜排文字的复核只能否决**：布局框判为重叠、且一方是斜排
+  （`text_block.rotation` 不是 90° 的整数倍、无 `clip_bbox`）时，按 `text_block` 的有向矩形在四条边法线上再量一次，阈值仍是
+  `MIN_OVERLAP_MM`（轴对齐时退化成 dx / dy）；三角函数只产出布尔，detail / 文案不含它算出的数（跨平台末位差不进 golden），
+  向量离阈值远。golden：`tests/golden/interference_vectors.json`
   （`scripts/gen_interference_vectors.py --write`，逐对，pytest 与 `web/src/lib/interference.test.ts` 各跑一遍）+
   `preflight_vectors.json` 的 `interference-*`（聚合）；其余旧向量的占位几何改成零面积点（只量规范、不量版面），结论逐条不变。
   真 worker 看护 `tests/test_preflight_interference.py`（FigureBench 防误报、`multi_panel` 的真碰撞、长标签 / 竖排 / `loc="best"` /
-  inset / 色条 / 隐藏图例）。已知误报来源：误差棒容器的包围盒盖住整个数据范围（`errorbar_fit` 报「可能」）；非 90° 旋转的文字按
-  轴对齐的布局框判。
+  inset / 色条 / 隐藏图例）。已知误报来源：误差棒容器的包围盒盖住整个数据范围（`errorbar_fit` 报「可能」）；没有 `text_block`
+  的斜排文字仍按轴对齐的布局框判；`text-over-axes` 不做斜排复核。
 - 文档里存**绑定 + 绑定那一刻的规则全文快照**（`FigureDocument.profile`，可选，
   schema 仍是 2）：`{id, journal?, snapshot?, snapshotVersion?, follow?}`。ADR 0029
   之前这里只存 `{id, journal}`，于是改一次全局规范，上个月定稿的图会**悄悄换一套

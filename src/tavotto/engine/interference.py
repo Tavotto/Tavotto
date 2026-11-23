@@ -27,6 +27,8 @@
 
 from __future__ import annotations
 
+import math
+
 from . import profiles as profiles_mod
 
 #: 两个文字框要在两个方向上都至少咬进这么多 mm 才算重叠。布局框（`get_window_extent`）
@@ -178,6 +180,62 @@ class _Issue:
         self.worse = worse
 
 
+def _rotated_box(el: dict, W: float, H: float) -> tuple | None:
+    """斜排文字（`text_block.rotation` 不是 90° 的整数倍）真正占的有向矩形（mm，y 向下）：
+    `(cx, cy, ux, uy, hw, hh)`——中心、阅读方向的单位向量、沿阅读方向的半宽、半高。
+
+    布局框（`bbox`）只是它的轴对齐外接框：45° 斜排的长刻度标签外接框互相咬得很深，墨迹却没碰。
+    `text_block` 是 manifest 已有的事实（中心与 `w` 按图宽、`h` 按图高的分数，`rotation` 逆时针为正；
+    在真 manifest 上由它重建的外接框与 `bbox` 逐位相同）。有 `clip_bbox` 的、`text_block` 读不懂的、
+    不是斜排的一律回 None——照布局框判。
+    """
+    if el.get("clip_bbox") is not None:
+        return None
+    tb = el.get("text_block")
+    if not isinstance(tb, dict):
+        return None
+    rot = _num(tb.get("rotation"))
+    center = tb.get("center")
+    if rot is None or abs(rot) % 90.0 == 0:
+        return None
+    if not isinstance(center, (list, tuple)) or len(center) != 2:
+        return None
+    cx, cy, w, h = _num(center[0]), _num(center[1]), _num(tb.get("w")), _num(tb.get("h"))
+    if cx is None or cy is None or w is None or h is None or w < 0 or h < 0:
+        return None
+    th = math.radians(rot)
+    # 逆时针为正、y 向下：阅读方向是 (cos θ, −sin θ)（与真渲染的墨迹核过）
+    return (cx * W, cy * H, math.cos(th), -math.sin(th), w * W / 2, h * H / 2)
+
+
+def _axis_box(r, W: float, H: float) -> tuple:
+    """轴对齐的框（figure 分数 `(x0, y0, x1, y1)`）→ `_rotated_box` 同形的有向矩形（mm）。"""
+    return (
+        (r[0] + r[2]) / 2 * W,
+        (r[1] + r[3]) / 2 * H,
+        1.0,
+        0.0,
+        (r[2] - r[0]) * W / 2,
+        (r[3] - r[1]) * H / 2,
+    )
+
+
+def _boxes_overlap(a: tuple, b: tuple) -> bool:
+    """两个有向矩形在四条边法线上的投影都重叠 ≥ `MIN_OVERLAP_MM`——轴对齐时就是 dx / dy 那两条，
+    阈值不变。只给斜排文字的「重叠」作否决用；结果只是布尔，detail / 文案仍取布局框那组数。"""
+    for box in (a, b):
+        ux, uy = box[2], box[3]
+        for nx, ny in ((ux, uy), (-uy, ux)):
+            spans = []
+            for cx, cy, bx, by, hw, hh in (a, b):
+                p = cx * nx + cy * ny
+                r = hw * abs(bx * nx + by * ny) + hh * abs(-by * nx + bx * ny)
+                spans.append((p - r, p + r))
+            if min(spans[0][1], spans[1][1]) - max(spans[0][0], spans[1][0]) < MIN_OVERLAP_MM:
+                return False
+    return True
+
+
 def _segments_hit_rect(paths: list, rect) -> bool:
     """折线的任一线段是否穿过矩形（figure 分数）。Liang–Barsky 裁剪。"""
     x0, y0, x1, y1 = rect
@@ -248,8 +306,10 @@ def detect(manifest: dict, profile: dict | None = None, *, panel_id: str = "figu
         r = visible_rect(el)
         if r is None:
             continue
-        texts.append((gid, el.get("role"), r))
+        texts.append((gid, el.get("role"), r, _rotated_box(el, W, H)))
     texts.sort(key=lambda t: t[0])
+    turned = [t[3] for t in texts]
+    texts = [t[:3] for t in texts]
     # 两两比较是文字数的平方（密集组图几百段刻度文字）：先做便宜的相交测试，图例家族只为
     # 真相交的那几对判；每段文字所属的图例预先算好。两步都是纯函数，先后不改结论。
     fams = [legend_of(t[0]) for t in texts]
@@ -265,6 +325,11 @@ def detect(manifest: dict, profile: dict | None = None, *, panel_id: str = "figu
             dx_mm = (hit[2] - hit[0]) * W
             dy_mm = (hit[3] - hit[1]) * H
             if dx_mm < MIN_OVERLAP_MM or dy_mm < MIN_OVERLAP_MM:
+                continue
+            # 斜排文字：布局框只是外接框，按真正的有向矩形复核一次，只能否决、不能新增
+            if (turned[i] or turned[j]) and not _boxes_overlap(
+                turned[i] or _axis_box(a, W, H), turned[j] or _axis_box(b, W, H)
+            ):
                 continue
             area = round(dx_mm * dy_mm, 3)
             found.append(
