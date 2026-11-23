@@ -9,6 +9,9 @@ const baseName = (p: string): string => p.slice(p.lastIndexOf('/') + 1)
 /** 「不要横轴 / 不分组」的取值：不会和任何列名撞（列名里不会有控制字符） */
 const NONE = '\u0000none'
 
+/** 标题行右端的小胶囊（「试试建议」） */
+const CAPSULE = 'h-6 shrink-0 rounded-full border border-border bg-surface-hover px-2.5 text-xs font-medium text-ink outline-none hover:bg-border focus-visible:focus-ring'
+
 /**
  * 右侧面板在临时标签激活时显示的这份数据：文件名、行列数；横轴 / 纵轴 / 分组三个下拉（值与可选的列来自响应的 `roles`，
  * 某个角色没有可选的列就不显示那一行；横轴多一项「不要横轴」，分组多一项「不分组」）；有非数字格时一行「N 格不是数字」+ 下拉
@@ -56,7 +59,7 @@ export function DataPanel() {
               data-data-suggest
               title={diffTitle || undefined}
               onClick={() => useDataFigureStore.getState().applySuggestion()}
-              className="h-6 shrink-0 rounded-full border border-border bg-surface-hover px-2.5 text-xs font-medium text-ink outline-none hover:bg-border focus-visible:focus-ring"
+              className={CAPSULE}
             >
               {t('dataFigureV2.suggest.apply')}
             </button>
