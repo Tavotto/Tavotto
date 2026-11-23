@@ -361,8 +361,19 @@ def test_min_font_size_only_lifts_text_below_the_floor(tmp_path):
 
 
 # ------------------------------ 缩小宽度 --------------------------------------
+#: `SCRIPT_TWO` 但左图 y 轴下方多留一段空白：右下角的图例离误差棒的墨迹远（不在边界上）。
+#: 「缩宽度只动子图落位」这条要的是确定的结论：原图的图例缩到 120 mm 后离橙色误差棒只差一点，
+#: 压没压上随 matplotlib 版本的 tight_layout 落位而变（3.8 不压、3.11 压上——#2140 的 3.10 腿），
+#: 那是另一件事（图例被挪开见 `test_new_collisions_are_detected_and_an_unsolvable_width_exits_cleanly`）。
+SCRIPT_TWO_ROOMY = SCRIPT_TWO.replace(
+    '    ax1.legend(loc="lower right", frameon=False)',
+    '    ax1.set_ylim(-0.9, 1.1)\n    ax1.legend(loc="lower right", frameon=False)',
+)
+assert SCRIPT_TWO_ROOMY != SCRIPT_TWO
+
+
 def test_shrinking_width_keeps_structure_and_adapts_margins_within_budget(tmp_path):
-    project = _project(tmp_path, "two", SCRIPT_TWO, "Two")
+    project = _project(tmp_path, "two", SCRIPT_TWO_ROOMY, "Two")
     sid = _open(project, "Two")
     out = bridge.normalize_figure(
         sid,
@@ -378,12 +389,11 @@ def test_shrinking_width_keeps_structure_and_adapts_margins_within_budget(tmp_pa
     v = out["verdict"]
     assert v["protected_changes"] == [] and v["structure"]["missing"] == []
     assert v["budget"]["over"] == [] and 0 < v["budget"]["max_edge_shift_mm"] <= 0.15 * 120
-    # 误差棒按真实几何判（V-011，维护者 2026-11-23）：缩到 120 mm 后左图图例真压住了橙色误差棒的
-    # 误差线段，图例候选里换到一个干净的位置——一条 `loc` 调整，其余仍只是子图落位
-    assert {a["gid"] for a in out["adjustments"]} == {"axes_0", "axes_1", "axes_0.legend"}
-    assert all(
-        a["prop"] == ("loc" if a["gid"].endswith(".legend") else "position")
-        for a in out["adjustments"]
+    assert {a["gid"] for a in out["adjustments"]} == {"axes_0", "axes_1"}
+    assert all(a["prop"] == "position" for a in out["adjustments"])
+    # 图例离数据远：哪一轮都没有「图例压数据」
+    assert not any(
+        b["id"] == "legend-over-data" for r in out["rounds"] for b in r.get("blocking") or []
     )
     assert _visible_inside(out["manifest"])
     # 两个子图仍并排、各自的图例仍在自己子图里
@@ -397,7 +407,7 @@ def test_shrinking_width_keeps_structure_and_adapts_margins_within_budget(tmp_pa
         out["acceptance"]["png"]["size_ok"] is True and out["acceptance"]["png"]["dpi_ok"] is True
     )
     # 数据 / 颜色 / 范围一个都没动
-    assert {p["prop"] for p in out["patches"]} == {"size_mm", "position", "loc"}
+    assert {p["prop"] for p in out["patches"]} == {"size_mm", "position"}
 
 
 @pytest.mark.parametrize(
