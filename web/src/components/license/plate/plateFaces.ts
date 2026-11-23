@@ -1,7 +1,7 @@
 // 创始会员铭牌的贴图：每一面画成三张 SVG 数据贴图（颜色 / 高度 / 粗糙度），交给 WebGL 的 PBR 材质。
 // 逐字移植自官网 Tavotto_website `src/scripts/foundingPlate.ts`（质感与版式要与官网完全一致）；只改了类型与导出。
 import { LOGO_ACCENT, LOGO_MAIN } from './plateLogo'
-import { NAME_AVAIL, nameFit } from './plateName'
+import { NAME_AVAIL, nameFitMeasured, type Measure } from './plateName'
 
 const W = 1020
 const H = 642
@@ -150,7 +150,23 @@ function engraving(side: 'front' | 'back', kind: Kind, silver: boolean): string 
   )
 }
 
-export function face(side: 'front' | 'back', d: Record<string, string>, kind: Kind): string {
+/** 用真实字体（浏览器此刻实际用的那个，含回退）量名字宽度；没有 canvas（测试 / 无头）返回 undefined，退回估宽 */
+export function canvasMeasure(): Measure | undefined {
+  if (typeof document === 'undefined') return undefined
+  const ctx = document.createElement('canvas').getContext('2d')
+  if (!ctx) return undefined
+  return (text, size, ls) => {
+    ctx.font = `500 ${size}px 'PingFang SC','Source Han Sans SC','Noto Sans SC','Helvetica Neue','Segoe UI',sans-serif`
+    return ctx.measureText(text).width + [...text].length * ls
+  }
+}
+
+export function face(
+  side: 'front' | 'back',
+  d: Record<string, string>,
+  kind: Kind,
+  measure?: Measure,
+): string {
   const SANS =
     "'PingFang SC','Source Han Sans SC','Noto Sans SC','Helvetica Neue','Segoe UI',sans-serif"
   const MONO = "ui-monospace,'SF Mono',Menlo,Consolas,monospace"
@@ -212,7 +228,7 @@ export function face(side: 'front' | 'back', d: Record<string, string>, kind: Ki
       `<path d="${LOGO_MAIN}" fill="url(#lm)"/><path d="${LOGO_ACCENT}" fill="url(#la)"/></g></g>`
     )
   }
-  const nameFx = nameFit(d.name ?? '')
+  const nameFx = nameFitMeasured(d.name ?? '', measure)
   const dateOp = d.dateEmpty ? 0.25 : undefined
   const words =
     side === 'front'

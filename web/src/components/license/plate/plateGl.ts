@@ -2,7 +2,7 @@
 // 移植自官网 `foundingPlate.ts` 的 `boot`（材质、灯箱环境、相机、比例逐字一致），差别：返回 `dispose`，并认 `AbortSignal`。
 // 这个文件只被动态 import；`three` 又只在这里动态 import，所以主包里没有它们。
 import type { Group, WebGLRenderer } from 'three'
-import { face, PALETTE, SHADOW_SVG, type Kind } from './plateFaces'
+import { canvasMeasure, face, PALETTE, SHADOW_SVG, type Kind } from './plateFaces'
 import type { Apply } from './plateHand'
 
 export async function bootGl(
@@ -126,9 +126,17 @@ export async function bootGl(
     ),
   )
 
+  // 字体就位后再量名字：系统缺中文字体会回退到更宽的字体，估宽会偏小，贴图要按实测缩放
+  await document.fonts?.ready
+  if (signal.aborted) {
+    renderer.dispose()
+    renderer.domElement.remove()
+    return null
+  }
+  const measure = canvasMeasure()
   const load = new THREE.TextureLoader()
   const tex = async (side: 'front' | 'back', kind: Kind) => {
-    const t = await load.loadAsync(face(side, d, kind))
+    const t = await load.loadAsync(face(side, d, kind, measure))
     t.anisotropy = 8
     if (kind === 'color') t.colorSpace = THREE.SRGBColorSpace
     return t

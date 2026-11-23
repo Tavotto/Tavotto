@@ -58,3 +58,32 @@ export function nameCqw(name: string): number {
   const em = nameEm(name) + n * 0.04 // 字距 0.04em
   return Math.min(6.27, Math.floor((84.8 / em) * 100) / 100)
 }
+
+/** 用真实字体量一段字的宽度（贴图坐标、给定字号与字距）；量不了（没有 canvas）就别传，退回估宽 */
+export type Measure = (text: string, size: number, ls: number) => number
+
+/**
+ * 贴图用的量法：先按估宽定字号；有测量函数时按**实测**再校一次（系统缺中文字体回退到更宽的字体时，估宽会偏小）：
+ * 实测超出可用宽度就按比例缩小，缩一次后还超就交给 `textLength` 兜底。
+ */
+export function nameFitMeasured(name: string, measure?: Measure): NameFit {
+  const est = nameFit(name)
+  if (!measure || !name) return est
+  const n = [...name].length
+  let { size, ls } = est
+  let width = measure(name, size, ls)
+  // 字距是固定量，只有字形部分随字号缩放：解 size' · glyph/size + n·ls = 可用宽度，最多校两次
+  for (let i = 0; i < 2 && width > NAME_AVAIL; i++) {
+    const glyph = Math.max(1, width - n * ls)
+    size = Math.max(12, Math.floor(((size * (NAME_AVAIL - n * ls)) / glyph) * 0.995 * 10) / 10)
+    if (size < NAME_SIZE_MIN) ls = Math.max(0, ls * (size / NAME_SIZE_MIN))
+    width = measure(name, size, ls)
+  }
+  return { size, ls, width, clamp: width > NAME_AVAIL + 0.5 }
+}
+
+/** CSS 回退版的实测缩放：渲染后内容宽（scrollWidth）大于容器宽（clientWidth）就返回要乘上的比例，否则 1 */
+export function overflowRatio(scrollWidth: number, clientWidth: number): number {
+  if (!(clientWidth > 0) || !(scrollWidth > clientWidth + 0.5)) return 1
+  return Math.max(0.3, (clientWidth / scrollWidth) * 0.99)
+}

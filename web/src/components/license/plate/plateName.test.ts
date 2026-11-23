@@ -2,10 +2,22 @@
  * 铭牌刻名的量法：允许范围内（≤ 24 字）的名字完整落在牌面上——贴图（1020 宽 SVG）与 CSS 回退版都不裁、不溢出。
  * 主语：估宽 ≤ 可用宽度、字号不低于下限；贴图 SVG 里写进去的字号就是量出来的那个。
  */
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { PLATE_NAME_MAX } from '../FoundingPlate'
 import { face } from './plateFaces'
-import { NAME_AVAIL, NAME_SIZE, NAME_SIZE_MIN, nameCqw, nameEm, nameFit } from './plateName'
+import {
+  NAME_AVAIL,
+  NAME_SIZE,
+  NAME_SIZE_MIN,
+  nameCqw,
+  nameEm,
+  nameFit,
+  nameFitMeasured,
+  overflowRatio,
+  type Measure,
+} from './plateName'
 
 const CJK24 = '林'.repeat(PLATE_NAME_MAX)
 const LATIN_WIDE = 'W'.repeat(PLATE_NAME_MAX)
@@ -62,5 +74,42 @@ describe('铭牌刻名：最长的名字也完整显示', () => {
     }
     expect(nameCqw('林小雨')).toBe(6.27)
     expect(nameCqw('')).toBe(6.27)
+  })
+})
+
+describe('实测兜底：估宽偏小（缺字体回退到更宽的字体）时不靠估算定生死', () => {
+  // 假「宽字体」：实际每个字比估宽宽 45%（24 个 W 在 DejaVu Sans 里就是这种量级）
+  const wide: Measure = (text, size, ls) => nameEm(text) * 1.45 * size + [...text].length * ls
+
+  it.each([['24 个 W', LATIN_WIDE], ['24 个汉字', CJK24], ['大写', LATIN_UPPER]])(
+    '贴图 %s：实测超宽就按比例缩小，缩完仍在可用宽度内',
+    (_n, name) => {
+      const est = nameFit(name)
+      const got = nameFitMeasured(name, wide)
+      expect(wide(name, est.size, est.ls)).toBeGreaterThan(NAME_AVAIL) // 前提：估算版真的会超
+      expect(got.size).toBeLessThan(est.size)
+      expect(wide(name, got.size, got.ls)).toBeLessThanOrEqual(NAME_AVAIL)
+    },
+  )
+
+  it('没有测量函数（无头 / 测试）退回估宽；实测够窄时不缩', () => {
+    expect(nameFitMeasured(CJK24)).toEqual(nameFit(CJK24))
+    const narrow: Measure = (text, size, ls) => nameEm(text) * 0.5 * size + [...text].length * ls
+    expect(nameFitMeasured(CJK24, narrow).size).toBe(nameFit(CJK24).size)
+  })
+
+  it('CSS 回退版：实测内容宽超过容器宽就返回缩小比例，没超返回 1', () => {
+    expect(overflowRatio(300, 200)).toBeCloseTo(0.66, 2)
+    expect(overflowRatio(200, 200)).toBe(1)
+    expect(overflowRatio(100, 200)).toBe(1)
+    expect(overflowRatio(100, 0)).toBe(1)
+    expect(overflowRatio(10_000, 200)).toBeGreaterThanOrEqual(0.3)
+  })
+
+  it('CSS 里 .fp-name 不再 overflow:hidden（放不下就缩，不静默裁字）', () => {
+    const css = readFileSync(join(process.cwd(), 'src/components/license/plate/foundingPlate.css'), 'utf8')
+    const block = css.match(/\.fp-name\s*\{[^}]*\}/g)?.join('\n') ?? ''
+    expect(block).toContain('--fp-name-fit')
+    expect(block).not.toMatch(/overflow\s*:\s*hidden/)
   })
 })

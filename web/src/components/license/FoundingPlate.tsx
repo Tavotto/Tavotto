@@ -5,7 +5,7 @@ import { PRODUCT_NAME } from '@/lib/brand'
 import { cn } from '@/lib/utils'
 import { TextInput } from '../ui/Input'
 import { LOGO_ACCENT, LOGO_MAIN } from './plate/plateLogo'
-import { nameCqw } from './plate/plateName'
+import { nameCqw, overflowRatio } from './plate/plateName'
 import { attachHand, reducedMotion, type Apply } from './plate/plateHand'
 import './plate/foundingPlate.css'
 
@@ -85,6 +85,7 @@ export function FoundingPlate({
   const card = useRef<HTMLDivElement>(null)
   const apply = useRef<Apply>(() => {})
   const hand = useRef<ReturnType<typeof attachHand> | null>(null)
+  const nameEl = useRef<HTMLElement>(null)
   const [editing, setEditing] = useState(false)
 
   const shown = name || st('defaultName')
@@ -106,6 +107,33 @@ export function FoundingPlate({
       hand.current = null
     }
   }, [])
+
+  // CSS 回退版刻名：不靠估算定生死——渲染后实测（scrollWidth / clientWidth），放不下就按比例缩小，最多迭代 3 次；
+  // 字体加载完成与容器尺寸变化时重算。从不 overflow:hidden 静默裁字
+  useEffect(() => {
+    const el = nameEl.current
+    const box = root.current
+    if (!el || !box) return
+    const fit = () => {
+      el.style.removeProperty('--fp-name-fit')
+      let scale = 1
+      for (let i = 0; i < 3; i++) {
+        const r = overflowRatio(el.scrollWidth, el.clientWidth)
+        if (r >= 1) break
+        scale *= r
+        el.style.setProperty('--fp-name-fit', scale.toFixed(4))
+      }
+    }
+    fit()
+    let live = true
+    void document.fonts?.ready.then(() => live && fit())
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(fit) : null
+    ro?.observe(box)
+    return () => {
+      live = false
+      ro?.disconnect()
+    }
+  }, [shown])
 
   // WebGL：进视野才加载 three；刻字 / 席位 / 日期变了就整块重画
   useEffect(() => {
@@ -211,6 +239,7 @@ export function FoundingPlate({
               <span className="fp-mark">{PRODUCT_NAME.toUpperCase()}</span>
               <span className="fp-label">{label}</span>
               <b
+                ref={nameEl}
                 className="fp-name"
                 data-founding-shown
                 style={{ ['--fp-name-size' as string]: `${nameCqw(shown)}cqw` }}

@@ -149,12 +149,12 @@
     -apple-system,
     sans-serif;
   /* 字号由 FoundingPlate 按名字长度写进 --fp-name-size（plateName.nameCqw），24 个字也落在牌面里 */
-  font-size: var(--fp-name-size, clamp(17px, 6.27cqw, 25px));
+  font-size: calc(var(--fp-name-size, 6.27cqw) * var(--fp-name-fit, 1));
   font-weight: 400;
   letter-spacing: 0.04em;
   max-width: 100%;
   white-space: nowrap;
-  overflow: hidden;
+  /* 不裁字：放不下就缩（FoundingPlate 渲染后实测，字体到位 / 容器变化时重算，写进 --fp-name-fit） */
 }
 .fp-no {
   grid-column: 1 / -1;
