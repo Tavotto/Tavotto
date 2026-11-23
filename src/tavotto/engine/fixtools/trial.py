@@ -728,12 +728,20 @@ def _never_ran(code: object, report: dict) -> bool:
 
 
 def _current_shape(ctx: FixContext) -> str:
+    """这次试运行之前的失败形状。改动会把报告重置成「还没跑」：那时读不到形状，就用上一次试运行之后的形状，
+    还没试过就用会话开始时的（`ctx.first_shape`）。"""
     from . import hints
 
     try:
-        return hints.shape_of_report(ctx.report() if ctx.report is not None else None)
-    except Exception:  # noqa: BLE001 — 报告读不到就不记形状
-        return ""
+        shape = hints.shape_of_report(ctx.report() if ctx.report is not None else None)
+    except Exception:  # noqa: BLE001 — 报告读不到就退到下面
+        shape = ""
+    if shape:
+        return shape
+    if ctx.attempts:
+        last = str(ctx.attempts[-1].get("after") or "")
+        return "" if last == "ok" else last
+    return ctx.first_shape
 
 
 def _after_shape(report: dict) -> str:

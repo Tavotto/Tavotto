@@ -144,6 +144,9 @@ class FixContext:
     fix_secrets: set = field(default_factory=set)
     #: 本会话有哪一版启动脚本碰过凭据（`fixmemory.launcher_is_risky`）：碰过就不记运行参数与数据路径，覆盖 / 回滚后也不撤
     fix_risky: bool = False
+    #: 会话开始时报告里的失败形状（`hints.shape_of_report`）：改动之后报告会被重置成「还没跑」，第一次试运行前读不到形状，
+    #: 试运行记录与「记住修好的做法」就以它为准（评测 11-23：设好参数再试运行，失败类型读成空，做法一条都没记）
+    first_shape: str = ""
     case_insensitive: bool | None = None
     extra_deny: list[Path] | None = None
 
