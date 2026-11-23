@@ -219,4 +219,7 @@ def test_a_blank_y_cell_is_missing_data_not_an_unmet_goal_but_an_empty_group_cel
     trend = next(i for i in out2["items"] if i["values"]["family"] == "trend")
     done2 = commit(client, out2["session"], trend["id"]).get_json()
     assert done2["task"]["outcome"] == "partial", done2
-    assert checks_of(done2["task"]["task_id"])["goal.rows_plotted"] == ("failed", "rows_not_plotted")
+    assert checks_of(done2["task"]["task_id"])["goal.rows_plotted"] == (
+        "failed",
+        "rows_not_plotted",
+    )
