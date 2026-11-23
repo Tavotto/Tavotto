@@ -1,6 +1,6 @@
 # Sign in with ChatGPT（SIWC）架构兼容性：审计与最小改造方案
 
-日期：2026-11-23 · 状态：**方案，待维护者拍板（1.0 豁免 + ADR 0147 §六修订）后才动代码**
+日期：2026-11-23 · 状态：**已拍板（2026-11-23，第 0–4 条全部同意，意向表已提交）→ [ADR 0201](../../adr/0201-siwc-readiness.md)**
 基线：`origin/main` e9d70b094；相关在途 PR：#2103（ADR 0200 Tavotto Agent，草稿）。
 
 官方文档（2026-11-23 读取。全文：overview、`models-and-inference`、`preview-limitations`、`errors-and-recovery`、`token-reference`、
