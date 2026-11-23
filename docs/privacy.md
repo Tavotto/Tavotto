@@ -590,7 +590,10 @@ cancelled, closed or failed send is never resumed on its own.
 looking at into a link that other people can open in a browser and comment on,
 without installing Tavotto or signing in. It uploads **only when you press
 *Create link* or *Update this link***; opening the window uploads nothing, and a
-cancelled or failed upload is never resumed on its own.
+cancelled or failed upload is never resumed on its own. An agent in the Tavotto
+plugin (Codex, Claude Code…) can also start the same upload, but only after it has
+asked you and you have said yes; without your approval it only shows a preview and
+sends nothing.
 
 * **What is uploaded.** A rendered picture of the current figure or layout (PNG,
   at most 3000 px on the long side), a list of the elements on that picture —
@@ -627,7 +630,7 @@ cancelled or failed upload is never resumed on its own.
   every minute while the *Review* tab is open; with no such link it makes no
   request at all.
 * **Turning it off.** `TAVOTTO_NO_REVIEW_SHARE=1` removes the feature and all of
-  its network requests.
+  its network requests (the plugin passes this switch on to its agent tool).
 
 ## Local service
 
