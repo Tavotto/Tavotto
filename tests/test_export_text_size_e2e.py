@@ -1,4 +1,4 @@
-"""成品字号检查（`checks.text_size`，ADR 0201）在**真实导出路由**上的端到端读数（真 matplotlib worker）。
+"""成品字号检查（`checks.text_size`，ADR 0203）在**真实导出路由**上的端到端读数（真 matplotlib worker）。
 
 主语是 `/api/export` 交付的那份 PDF 的回执 manifest：脚本是 7 pt 的轴标签 `$R^2$`，matplotlib 的 mathtext
 把上标排成约 0.7 倍的另一段字。面板经 worker 重画后作为 Form 嵌进版面，检查器量的是成品内容流里

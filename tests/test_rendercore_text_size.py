@@ -293,7 +293,7 @@ _OK_PLAN = {
 
 @pytest.mark.parametrize("policy", ["standard", "strict"])
 def test_text_size_is_a_check_but_never_a_required_one(tmp_path, policy):
-    """ADR 0201 §3：`text_size` 进 `checks`，failed 写进说明，两档政策都不拦导出（不在 `required` 里）。"""
+    """ADR 0203 §3：`text_size` 进 `checks`，failed 写进说明，两档政策都不拦导出（不在 `required` 里）。"""
     p = _strict_ok_pdf(tmp_path, b"BT /F1 9 Tf 10 10 Td (a) Tj /F1 2 Tf (b) Tj ET")
     m = I.inspect(
         p,
@@ -319,7 +319,7 @@ def test_text_size_is_a_check_but_never_a_required_one(tmp_path, policy):
 def test_required_sets_never_list_text_size():
     for policy in I.POLICIES:
         assert "text_size" not in I.REQUIRED[policy]["pdf"]
-    assert "text_size" not in I.CHECKS_SVG  # ADR 0201 §5：SVG 不做
+    assert "text_size" not in I.CHECKS_SVG  # ADR 0203 §5：SVG 不做
 
 
 def test_the_four_verdicts_through_inspect(tmp_path):
@@ -358,7 +358,7 @@ def test_the_four_verdicts_through_inspect(tmp_path):
 
 
 def test_a_standard_all_green_pdf_keeps_its_overall_verdict(tmp_path):
-    """ADR 0201 §1：standard 不带规范时，原本每一项 verified / n/a 的 PDF，加了这一项之后 summary 的
+    """ADR 0203 §1：standard 不带规范时，原本每一项 verified / n/a 的 PDF，加了这一项之后 summary 的
     总体结论不变——没有任何一项 unknown、verdict 仍 accepted、`optional_unknown` 仍为空；公式轮廓
     （量不了的段）在没有下限时同样不让它降级。"""
     for name, body in (

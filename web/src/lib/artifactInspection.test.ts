@@ -84,7 +84,7 @@ describe('noticeTone', () => {
   })
 })
 
-describe('成品实测字号 text_size（ADR 0201）', () => {
+describe('成品实测字号 text_size（ADR 0203）', () => {
   const m = (verdict: string, ts: ArtifactManifestSummary['text_size']): ArtifactManifestSummary => ({
     ...base,
     checks: { integrity: 'verified', size: 'verified', text_size: verdict as 'failed' },

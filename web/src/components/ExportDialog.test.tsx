@@ -1625,7 +1625,7 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     expect(badge()?.className).toContain('text-danger')
   })
 
-  // 成品实测字号（ADR 0201）：唯一带数的一项——失败时说出界面上显示的两个数；
+  // 成品实测字号（ADR 0203）：唯一带数的一项——失败时说出界面上显示的两个数；
   // 通过、没规范（not_applicable）、量不全（unknown）都不画（核验只说失败，2026-11-06）
   const sized = (verdict: string, textSize: Record<string, unknown> | undefined) => ({
     ...manifest({ integrity: 'verified', size: 'verified', text_size: verdict }),

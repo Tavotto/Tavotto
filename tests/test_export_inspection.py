@@ -274,7 +274,7 @@ def test_strict_inspection_takes_its_thresholds_from_the_publication_profile(env
 
 
 def test_text_size_gets_the_profile_floor_and_the_shared_tolerance(env, monkeypatch):
-    """ADR 0201：成品字号的下限是规范里的 `min_effective_font_size_pt`、容差是预检同一个
+    """ADR 0203：成品字号的下限是规范里的 `min_effective_font_size_pt`、容差是预检同一个
     `profiles.FONT_FLOOR_TOL_PT`，都由接线层交给检查器；`text_size` 在 strict 下也不是必需项。"""
     from tavotto.engine import profiles
 

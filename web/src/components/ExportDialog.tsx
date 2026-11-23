@@ -3546,7 +3546,7 @@ function ScriptSkipped({ report }: { report: ExportScriptReport }) {
  * 解读只有 `lib/artifactInspection.inspectionState()` 一份。核验过、没核验都不画：用户不需要理解这些，
  * 「未核验不显示绿」照样成立（2026-11-06 用户：用户不需要理解的东西不用放上去）。
  *
- * 成品字号（ADR 0201）是唯一带数的一项：失败时它在这一行里说「最小的字多小、规范要多少」，不再只报名字
+ * 成品字号（ADR 0203）是唯一带数的一项：失败时它在这一行里说「最小的字多小、规范要多少」，不再只报名字
  * （`textSizeNote()`）；它的 unknown 与别的 unknown 一样不说。
  */
 function InspectionLine({ manifest }: { manifest: ExportOutput["manifest"] }) {
