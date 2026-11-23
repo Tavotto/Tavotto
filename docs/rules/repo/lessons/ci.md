@@ -190,16 +190,11 @@
 ### L-113 入队前验按队列次序累积 merge 出的树，不只是分支
 - 类: 照这样
 - 触发: *
-- Seen: 2026-08-27
-- 为什么: 并行 PR 的 hunk 原样插进重排后的文件，合并态可能不合规；两两验过不等于组合验过，新增文件也不在全仓格式化的覆盖集里。
-- 证据: #175, #177, #186
+- Seen: 2026-08-27, 2026-11-22
+- 为什么: 并行 PR 的 hunk 原样插进重排后的文件，合并态可能不合规；两两验过不等于组合验过，新增文件也不在全仓格式化的覆盖集里。11-22 两个 PR 各给根 AGENTS.md 加一段，各自在体积棘轮上限内，叠加后超限，合并组三条后端分片红、被踢一次（#2105 与 #2084）。
+- 证据: #175, #177, #186, #2105
 
-### L-114 合并组里裸 cancelled 先核 job 时长是否贴 timeout-minutes
-- 类: 照这样
-- 触发: .github/workflows/ci.yml, .github/workflows/desktop-tauri.yml, docs/rules/ci/ci-lanes.md, scripts/ci/aggregate_gate.py
-- Seen: 2026-09-13, 2026-11-17
-- 为什么: Windows 腿 32 到 42 分钟顶着 45 分钟上限，被取消后聚合门禁红、被踢出队列，易误读为 flaky；套件变长要回头量时长再定上限。快速失败会取消其余腿（ci-lanes.md）：summary 有 `root_failures` 时 cancelled 是收尾，无 failure 才按本条核。fast gate 的 `root_failures` 可能为空、根因只在 integration gate 里，两个 gate 都读（#1991）。
-- 证据: #340, #345, #346, #1991
+### L-114 合并组里裸 cancelled 先核 job 时长是否贴 timeout-minutes → docs/rules/ci/ci-lanes.md
 
 ### L-134 碰上游 API 与边缘行为写成新旧都认：CI 装当天最新版，本地按锁文件
 - 类: 别这样
