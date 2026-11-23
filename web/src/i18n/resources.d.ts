@@ -58,6 +58,15 @@ export default interface Resources {
       "unconfirmedHint": "上一次的结果还没确认，请先在对话里查询结果。"
     },
     "dataFigureV2": {
+      "basis": {
+        "groupsEqual": "{{drawn}} 个值，分成 {{groups}} 组，每组 {{n}} 个。",
+        "groupsRange": "{{drawn}} 个值，分成 {{groups}} 组，每组 {{min}}–{{max}} 个。",
+        "line": "依据：{{text}}",
+        "points": "{{drawn}} 个点，每行一个。",
+        "unplotted": "另有 {{count}} 行没画。",
+        "xAlso": "横轴有 {{x}} 个不同取值。",
+        "xOnly": "{{drawn}} 个值，横轴有 {{x}} 个不同取值。"
+      },
       "batch": {
         "done": "已完成",
         "draw": "分别作图",
@@ -136,6 +145,19 @@ export default interface Resources {
           "why": "看每组数值分布的形状，点保留了每个观测。"
         }
       },
+      "confirm": {
+        "design": "重复",
+        "error": "误差线",
+        "option": {
+          "ci95": "95% 置信区间",
+          "independent": "各行互相独立",
+          "repeated": "同一对象测了多次",
+          "sd": "标准差 (SD)",
+          "sem": "标准误 (SEM)",
+          "unsure": "不确定"
+        },
+        "title": "需要你确认"
+      },
       "connect": {
         "pill": "连接 AI 以供智能分析"
       },
@@ -143,12 +165,14 @@ export default interface Resources {
         "allText": "这张表里都是文字，没有能画的数字。",
         "cancelled": "已取消，这个文件没读完。",
         "collapse": "收起",
+        "create": "创建可编辑图",
         "expand": "展开",
         "failed": "这次没画出来，数据没问题。",
         "guessRow": "把第 {{n}} 行当作列名。不对就点对的那一行。",
         "pickLead": "点一张，放进画布接着改。",
         "readAgain": "重新读取",
         "stripInfo": "前 {{shown}} 行，共 {{total}} 行 · {{columns}} 列",
+        "switchLabel": "候选画法",
         "unreadable": "这个文件不是表格，读不了。"
       },
       "list": {

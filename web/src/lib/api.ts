@@ -5160,6 +5160,23 @@ export interface AiDataProposeItem {
   thumbnail_status?: 'pending' | 'ready'
   /** 合画且文件里原本有分组列、文件内有多个取值时，候选成对出现（同一个 `title_code` / `why_code`）：`split` = 再按那一列分开，`by_file` = 只按文件比较；单份响应和没有这种列的合画没有这个键。`column` 是用户数据里的列名：只做文本渲染 */
   variant?: { kind: 'split'; column: string } | { kind: 'by_file' } | null
+  /** 这张图是按什么数出来的（「依据」那句话的素材）：表里的行数、画进去的行数、组数、每组观测数范围、不同横轴取值个数；大表 / 把列当分组时没有这一项 */
+  facts?: AiDataFacts
+  /** 这张图有误差线 / 误差带时才有：画的是哪一种 */
+  error?: AiDataErrorKind
+  /** 拟合线（有才有；界面暂不用） */
+  fits?: unknown[]
+}
+
+export type AiDataErrorKind = 'sd' | 'sem' | 'ci95'
+
+export interface AiDataFacts {
+  rows: number
+  drawn: number
+  groups: number | null
+  n_min: number | null
+  n_max: number | null
+  x_values: number | null
 }
 
 /** 懒模式（`render: "lazy"`）响应里说清这次用了什么：列角色与每个角色可换成的列 */
@@ -5199,6 +5216,8 @@ export interface AiDataLazyInfo {
   defaults?: { question_code: string; answer?: Record<string, unknown> }[]
   /** 数值列里夹着文字的列：默认不画那几行（`skip`），用户可改成取数字（`extract`） */
   mixed_cells?: { column: string; non_numeric: number; rows: number; mode: 'skip' | 'extract' }[]
+  /** 用户点选过误差类型（请求的 `answers.error`）才有；没有 = 误差线画的是哪一种还没被确认 */
+  error_confirmed?: boolean
   /** 请求带了出版规范且有效时才有：这批图实际用的栏宽（mm）与正文字号（pt），界面如实显示、不另算 */
   figure_style?: AiDataFigureStyle
   /** 请求带的规范不合法、后端退回了默认规范（此时没有 `figure_style`） */

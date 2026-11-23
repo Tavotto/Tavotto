@@ -674,6 +674,8 @@
       "mismatchNext": "它的脚本还留在项目里：可以换一种画法重画，或者去文件夹里把这份脚本删掉。"
     },
     "draft": {
+      "create": "创建可编辑图",
+      "switchLabel": "候选画法",
       "pickLead": "点一张，放进画布接着改。",
       "guessRow": "把第 {{n}} 行当作列名。不对就点对的那一行。",
       "allText": "这张表里都是文字，没有能画的数字。",
@@ -711,6 +713,28 @@
       "fontOne": "{{min}} pt 字号",
       "fontMin": "≥ {{min}} pt 字号",
       "fontMax": "≤ {{max}} pt 字号"
+    },
+    "basis": {
+      "line": "依据：{{text}}",
+      "points": "{{drawn}} 个点，每行一个。",
+      "groupsEqual": "{{drawn}} 个值，分成 {{groups}} 组，每组 {{n}} 个。",
+      "groupsRange": "{{drawn}} 个值，分成 {{groups}} 组，每组 {{min}}–{{max}} 个。",
+      "xAlso": "横轴有 {{x}} 个不同取值。",
+      "xOnly": "{{drawn}} 个值，横轴有 {{x}} 个不同取值。",
+      "unplotted": "另有 {{count}} 行没画。"
+    },
+    "confirm": {
+      "title": "需要你确认",
+      "error": "误差线",
+      "design": "重复",
+      "option": {
+        "sd": "标准差 (SD)",
+        "sem": "标准误 (SEM)",
+        "ci95": "95% 置信区间",
+        "unsure": "不确定",
+        "independent": "各行互相独立",
+        "repeated": "同一对象测了多次"
+      }
     },
     "redraw": {
       "from": "用 {{file}} 画的",

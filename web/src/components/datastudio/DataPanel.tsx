@@ -8,7 +8,8 @@ import { cn } from '@/lib/utils'
 import { draftClearJournal, draftPickJournal, draftPickV2Only, specParts } from '@/lib/dataFigureSpec'
 import { journalCatalogUi } from '@/lib/journalUi'
 import { currentProjectId } from '@/lib/session'
-import { dataFigureEpoch, overviewKeyOf, useDataFigureStore, type RoleKey } from '@/store/dataFigureStore'
+import { previewOf } from '@/lib/dataFigureAdapter'
+import { dataFigureEpoch, overviewKeyOf, useDataFigureStore, type ConfirmKey, type RoleKey } from '@/store/dataFigureStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useJournalCatalogStore } from '@/store/journalCatalogStore'
 import { useJournalV2Store } from '@/store/journalV2Store'
@@ -68,6 +69,12 @@ export function DataPanel() {
   const journalRef = useDataFigureStore((s) => s.specBinding?.journalRef)
   const figureStyle = useDataFigureStore((s) => s.figureStyle)
   const target = useMemo(() => draftTarget(journalRef), [journalRef])
+  const candidates = useDataFigureStore((s) => s.candidates)
+  const thumbs = useDataFigureStore((s) => s.thumbs)
+  const previewKey = useDataFigureStore((s) => s.previewKey)
+  const errorConfirmed = useDataFigureStore((s) => s.errorConfirmed)
+  const designAsked = useDataFigureStore((s) => s.designAsked)
+  const answers = useDataFigureStore((s) => s.answers)
   if (!selected) return null
   const ov = overviews[overviewKeyOf(selected, headerRows)]?.data ?? null
   // 合画：概览只有第一份的，行列数不代表整组，不显示
@@ -86,6 +93,32 @@ export function DataPanel() {
         })
         .join(' · ')
     : ''
+  // 「需要你确认」：事实在后端（候选带 `error`、响应带 `error_confirmed`、`defaults` 里有 `pick_design`），这里只翻译成行。
+  // 误差线看的是**此刻预览的那一张**；重复测量一旦问过就留着（确认后后端不再问，但那一行要能再改）
+  const shownCand = previewOf(candidates, thumbs, previewKey)
+  const errKind = shownCand?.error ?? null
+  const errorDone = errKind != null && (errorConfirmed || isErrorKind(answers.error))
+  const designDone = answers.design === 'independent' || answers.design === 'repeated'
+  const pendingError = errKind != null && !errorDone
+  const pendingDesign = designAsked && !designDone
+  const confirm = (key: ConfirmKey) => (v: string) => useDataFigureStore.getState().setConfirm(key, v)
+  const optLabel = (v: string) => t(`dataFigureV2.confirm.option.${v}`)
+  /** 一行确认项：待确认时控件是空值 + 把当前取值写在触发器上（选任何一项，包括仍选当前这个，才算确认） */
+  const confirmRow = (key: ConfirmKey, kinds: readonly string[], now: string, done: boolean) => (
+    <div key={key} data-data-role={key} className="contents">
+      <Row label={t(`dataFigureV2.confirm.${key}`)} labelWidth={LABEL_W}>
+        <Select
+          value={done ? now : ''}
+          disabled={busy}
+          ariaLabel={t(`dataFigureV2.confirm.${key}`)}
+          onChange={confirm(key)}
+          options={kinds.map((k) => ({ value: k, label: optLabel(k) }))}
+          // 待确认时值是空的（选「当前这个」也要算一次选择），当前取值写在占位上
+          placeholder={done ? undefined : optLabel(now)}
+        />
+      </Row>
+    </div>
+  )
   const asOptions = (list: string[], none?: string) => [...(none ? [{ value: NONE, label: none }] : []), ...list.map((c) => ({ value: c, label: c }))]
   return (
     <div data-data-panel className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-3 pt-2">
@@ -177,6 +210,17 @@ export function DataPanel() {
               </Row>
             </div>
           )}
+          {errorDone && confirmRow('error', ERROR_KINDS, isErrorKind(answers.error) ? answers.error : errKind!, true)}
+          {designAsked && designDone && confirmRow('design', DESIGNS, String(answers.design), true)}
+        </div>
+      )}
+      {(pendingError || pendingDesign) && (
+        <div data-data-confirm className="mt-3 flex flex-col gap-1">
+          <p data-data-confirm-title className="flex h-6 items-center type-caption">
+            {t('dataFigureV2.confirm.title')}
+          </p>
+          {pendingError && confirmRow('error', ERROR_KINDS, errKind!, false)}
+          {pendingDesign && confirmRow('design', DESIGNS, 'unsure', false)}
         </div>
       )}
       {mixed && count > 0 && (
@@ -202,3 +246,7 @@ export function DataPanel() {
 }
 
 const LABEL_W = 44
+
+const ERROR_KINDS = ['sd', 'sem', 'ci95'] as const
+const DESIGNS = ['unsure', 'independent', 'repeated'] as const
+const isErrorKind = (v: unknown): v is (typeof ERROR_KINDS)[number] => typeof v === 'string' && (ERROR_KINDS as readonly string[]).includes(v)

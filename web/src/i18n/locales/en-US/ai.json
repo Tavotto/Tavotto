@@ -681,6 +681,8 @@
       "mismatchNext": "Its script is still in the project: draw it another way, or delete that script from the folder."
     },
     "draft": {
+      "create": "Create editable figure",
+      "switchLabel": "Chart types",
       "pickLead": "Pick one to put it on the canvas and keep editing.",
       "guessRow": "Row {{n}} is used as the column names. If that's wrong, click the right row.",
       "allText": "This table is all text, so there is nothing numeric to draw.",
@@ -718,6 +720,28 @@
       "fontOne": "{{min}} pt text",
       "fontMin": "≥ {{min}} pt text",
       "fontMax": "≤ {{max}} pt text"
+    },
+    "basis": {
+      "line": "Basis: {{text}}",
+      "points": "{{drawn}} points, one per row.",
+      "groupsEqual": "{{drawn}} values in {{groups}} groups, {{n}} each.",
+      "groupsRange": "{{drawn}} values in {{groups}} groups, {{min}}–{{max}} each.",
+      "xAlso": "{{x}} distinct x values.",
+      "xOnly": "{{drawn}} values, {{x}} distinct x values.",
+      "unplotted": "{{count}} more rows not drawn."
+    },
+    "confirm": {
+      "title": "Needs your confirmation",
+      "error": "Error",
+      "design": "Repeats",
+      "option": {
+        "sd": "Standard deviation (SD)",
+        "sem": "Standard error (SEM)",
+        "ci95": "95% confidence interval",
+        "unsure": "Not sure",
+        "independent": "Rows are independent",
+        "repeated": "Same subject measured repeatedly"
+      }
     },
     "redraw": {
       "from": "Drawn from {{file}}",

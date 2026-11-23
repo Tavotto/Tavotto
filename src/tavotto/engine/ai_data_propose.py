@@ -90,7 +90,8 @@ MAX_SESSIONS = 6
 #: 新会话放不下就先丢最老的（用户已经往前走了的）。小表（≤ `adf.SMALL_BYTES`）不计入。
 LARGE_STAGE_BUDGET = 1024 * 1024 * 1024
 #: 缩略图宽度（像素）与单张字节上限
-THUMB_WIDTH_PX = 640
+#: 候选图的渲染宽度（像素）：主图在 2 倍屏上约 700 CSS 像素宽，640 放大了会糊（2026-11-24 改成一张主图 + 小图切换）
+THUMB_WIDTH_PX = 1440
 MAX_THUMB_BYTES = 4 * 1024 * 1024
 #: 同时渲染几个备选（每个一条 worker；池自己还有上限）。懒渲染下是「全进程同时在画的缩略图」上限（`_RENDER_SLOTS`）
 MAX_PARALLEL = 2
@@ -106,7 +107,10 @@ UNPLOTTED_CODE = "rows_not_plotted"
 _ID = re.compile(r"[0-9a-f]{12}")
 _SESSION_ID = re.compile(r"[0-9a-f]{24}")
 _HINT_MAX = 400
-_ANSWER_KEYS = ("table", "sheet", "y", "group", "x", "design", "unit")
+_ANSWER_KEYS = ("table", "sheet", "y", "group", "x", "design", "unit", "error")
+#: `answers.error`：用户点选的「误差线 / 误差带画的是什么」→ 配方里的汇总方式。**只有用户点了才有**（模型的建议不写这个键）；
+#: 没点 = 模板的默认（均值 ± 标准差），响应里 `error.confirmed` 为 False
+ERROR_SUMMARY = {"sd": "mean_sd", "sem": "mean_sem", "ci95": "mean_ci95"}
 _ANSWER_MAX = 400
 
 
@@ -180,6 +184,8 @@ class Item:
     #: 合画且文件里原本有可再拆的分组列时，成对出现的两种画法各自的标记：`{"kind": "split", "column": 列名}`（按它再拆开）/
     #: `{"kind": "by_file"}`（不拆、只按文件比较）；没有成对的另一张（两种画法画出来一样）就是 None
     variant: dict | None = None
+    #: 给界面「依据」那句话用的数（`candidate_facts`；大表 / 把列当分组 = None，响应里没有这一项）
+    facts: dict | None = None
     #: 这张图上每条拟合线的系数（`tpl.fit_report`；没有拟合线 = 空，响应里没有这一项）
     fits: list = field(default_factory=list)
     # 懒渲染的素材：候选脚本在会话目录里，这里记下渲染一张要的最少东西
@@ -478,6 +484,66 @@ def parse_spec(raw, font_range=None) -> tuple[dict | None, str | None, bool]:
         return None, "invalid", True
     digest = hashlib.sha256((text + json.dumps(fonts)).encode("utf-8")).hexdigest()
     return style, digest, False
+
+
+def with_error_summary(recipe: recipe_mod.FigureRecipe, error: str | None):
+    """把配方里「均值 ± 某种误差」的层换成用户点选的那一种（`sd` / `sem` / `ci95`）；没点 / 不认识 / 配方里没有这样的层 = 原样。
+    只换误差的定义，中心仍是均值（中位数 + 四分位距的层不动）。"""
+    target = ERROR_SUMMARY.get(error or "")
+    if target is None or not any(
+        layer.summary in ERROR_SUMMARY.values() for layer in recipe.layers
+    ):
+        return recipe
+    layers = tuple(
+        replace(layer, summary=target) if layer.summary in ERROR_SUMMARY.values() else layer
+        for layer in recipe.layers
+    )
+    return replace(recipe, layers=layers)
+
+
+def error_of(recipe: recipe_mod.FigureRecipe) -> str | None:
+    """这份配方的误差线 / 误差带画的是哪一种（`sd` / `sem` / `ci95`）；没有这样的层 = None。"""
+    back = {v: k for k, v in ERROR_SUMMARY.items()}
+    for layer in recipe.layers:
+        if layer.summary in back and layer.mark in ("errorbar", "band"):
+            return back[layer.summary]
+    return None
+
+
+def candidate_facts(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> dict | None:
+    """这张图是按什么数出来的——给界面那句「依据」用的**数**（只有数与列名，文案在前端按封闭句式拼）：
+    `{rows: 表里的行数, drawn: 画进去的行数, groups: 组数 | None, n_min / n_max: 每组（每个类别 × 分组 × 分面格子）的观测数范围 | None,
+    x_values: 不同横轴取值的个数 | None}`。大表不逐行数（None）；把列当分组的也先不给。"""
+    if values.large is not None or recipe.stack:
+        return None
+    rows = recipe_mod.drawn_rows(recipe, values)
+    idx = {c: i for i, c in enumerate(values.columns)}
+    y = recipe.y[0]
+    usable = [r for r in rows if adf.parse_cell(r[idx[y]])[0] == "numeric"]
+    out: dict = {
+        "rows": len(values.rows),
+        "drawn": len(usable),
+        "groups": None,
+        "n_min": None,
+        "n_max": None,
+        "x_values": None,
+    }
+    by = [c for c in (recipe.group, recipe.facet) if c]
+    if recipe.family == "comparison" and recipe.x:
+        by = [recipe.x, *by]
+    if by:
+        cells: dict[tuple, int] = {}
+        for r in usable:
+            key = tuple(r[idx[c]].strip() for c in by)
+            cells[key] = cells.get(key, 0) + 1
+        if cells:
+            out["groups"] = len(cells)
+            out["n_min"], out["n_max"] = min(cells.values()), max(cells.values())
+    if recipe.family in ("trend", "relationship") and recipe.x:
+        out["x_values"] = len(
+            {r[idx[recipe.x]].strip() for r in usable if r[idx[recipe.x]].strip()}
+        )
+    return out
 
 
 def figure_style(style: dict) -> dict:
@@ -1114,6 +1180,9 @@ def item_to_dict(sess: Session, item: Item, recommended: bool) -> dict:
         **({"reduced": item.reduced} if item.reduced is not None else {}),
         # 有拟合线才有：每条线的截距 / 斜率 / n（描述性的最小二乘直线；对数轴那一维是 log10）
         **({"fits": item.fits} if item.fits else {}),
+        **({"facts": item.facts} if item.facts is not None else {}),
+        # 有误差线 / 误差带才有：画的是哪一种（`sd` / `sem` / `ci95`）
+        **({"error": error_of(r)} if error_of(r) is not None else {}),
         **({"variant": item.variant} if sess.merge is not None and sess.merge.splittable else {}),
     }
 
@@ -1318,6 +1387,15 @@ def propose(
     ):
         res, variants = _with_file_only_variants(res, merged, values, confirmed, hint, picks, rules)
 
+    if ans.get("error") in ERROR_SUMMARY and res.items:
+        # 用户点选了误差线 / 误差带画哪一种：换掉每个备选里「均值 ± 某种误差」的层（其余不动）
+        res = replace(
+            res,
+            items=tuple(
+                replace(c, recipe=with_error_summary(c.recipe, ans["error"])) for c in res.items
+            ),
+        )
+
     def merged_info() -> dict:
         """合画：各份是哪几份（路径与请求里一致）、各自的标签、合成的分组列名；单份没有这两项。"""
         if merged is None:
@@ -1350,6 +1428,8 @@ def propose(
             "roles": res.roles,
             "defaults": defaults,
             "mixed_cells": mixed_auto,
+            # 用户亲手点过「误差线画的是什么」才有这一项（没有 = 模板默认的均值 ± 标准差，界面把它列进「需要你确认」）
+            **({"error_confirmed": True} if ans.get("error") in ERROR_SUMMARY else {}),
         }
 
     if not res.items:
@@ -1425,6 +1505,7 @@ def propose(
             state="pending" if planned is not None else "ready",
             variant=variants.get(id(cand.recipe)),
             fits=tpl.fit_report(values, cand.recipe),
+            facts=candidate_facts(values, cand.recipe),
             stem=planned.stem if planned is not None else None,
             n=planned.n if planned is not None else 0,
             expected=planned.expected if planned is not None else [],
