@@ -396,6 +396,9 @@ LAYERS: dict[str, tuple[str, ...]] = {
         # ADR 0163：竖排列版面（纯标准库 + 本层 typography / ir；HarfBuzz 竖排塑形在 hbshaper，native 层）。
         # 依赖方向单向：vertical → typography；排向分派在 plan，typography 不依赖 vertical（不成环）
         "tavotto/rendercore/vertical.py",
+        # ADR 0190：路径文字沿路径落字的几何（纯标准库 + 本层 geometry；字形塑形仍在 hbshaper，native 层）。
+        # plan 编译路径文字时调用它，依赖方向单向：plan → pathtext → geometry
+        "tavotto/rendercore/pathtext.py",
     ),
     "rendercore_native": ("tavotto/rendercore/",),
 }

@@ -55,7 +55,8 @@
     "path": "Path",
     "shape": "Shape",
     "text": "Text",
-    "unknown": "Newer object"
+    "unknown": "Newer object",
+    "pathText": "Text on path"
   },
   "presetText": {
     "annotation": "Label",

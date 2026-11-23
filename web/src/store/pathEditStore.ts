@@ -27,9 +27,12 @@ export const usePathEditStore = create<PathEditState>((set) => ({
   setAnchors: (keys) => set({ anchors: [...new Set(keys)] }),
 }))
 
-/** 能不能进锚点编辑：路径、没锁、没隐藏 */
+/**
+ * 能不能进锚点编辑：路径（或路径文字自带的那份路径，ADR 0190——字段与路径同一套：框 + 比例坐标锚点 + 旋转）、没锁、没隐藏。
+ * 路径文字按路径的样子交给直接选择工具；它多出来的文字字段原样跟着走（`pathFromMm` 展开原对象）。
+ */
 export const canEditAnchors = (o: { type: string; locked?: boolean; hidden?: boolean } | undefined): o is PathObject =>
-  !!o && o.type === 'path' && !o.locked && !o.hidden
+  !!o && (o.type === 'path' || o.type === 'pathText') && !o.locked && !o.hidden
 
 /** 此刻生效的锚点编辑（见上）；没有 = null */
 export function activePathEdit(

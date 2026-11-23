@@ -581,6 +581,8 @@ describe('文字 / 箭头 / 形状', () => {
       expect(itemKeys()).toEqual([
         'change-kind',
         'convert-to-path',
+        // 路径文字（ADR 0190）：能放字的路径 / 形状 / 箭头都给
+        'add-path-text',
         // 封闭形状能偏移路径 / 轮廓化描边（ADR 0185 M2），收在「路径查找器 ›」里；箭头两样都不适用
         ...(id === 's1' ? ['pathfinder'] : []),
         'open-inspector',
@@ -596,6 +598,17 @@ describe('文字 / 箭头 / 形状', () => {
       expect(menu()?.querySelector('input')).toBeNull()
     },
   )
+
+  it('在路径上加文字：放一段路径文字、和它成组、进入输入', async () => {
+    await openOn('s1')
+    await click(item('add-path-text'))
+    const made = objs().at(-1)!
+    expect(objs().map((o) => o.id).indexOf(made.id)).toBe(objs().findIndex((o) => o.id === 's1') + 1)
+    expect(made.type).toBe('pathText')
+    expect(made.groupId).toBeDefined()
+    expect(byId('s1').groupId).toBe(made.groupId)
+    expect(useUiStore.getState().editingTextId).toBe(made.id)
+  })
 
   // Codex #833：菜单的粘贴只能走异步 readText；WebKit（Safari / 桌面壳）不给非编辑区读、Firefox 默认没有，
   // 那里点了只会报「无法读取剪贴板」——不提供这一项（⌘V 的原生事件照常）
