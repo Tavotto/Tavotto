@@ -134,7 +134,7 @@ def render_markdown() -> str:
     out = [
         "# 科学图形准则（选图、画图、改图前读）",
         "",
-        "<!-- 由 src/tavotto/profiles/sciviz_guidance.json 生成（scripts/gen_sciviz_reference.py --write），不要手改 -->",
+        "<!-- 由 Tavotto 仓库的 src/tavotto/profiles/sciviz_guidance.json 生成，不要手改 -->",
         "",
         "依据三本书（Wilkinson《The Grammar of Graphics》、Munzner《Visualization Analysis and Design》、"
         "Wilke《Fundamentals of Data Visualization》）与 Tavotto 自己的推导。",
