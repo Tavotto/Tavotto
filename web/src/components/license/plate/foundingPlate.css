@@ -148,9 +148,13 @@
     'Microsoft YaHei',
     -apple-system,
     sans-serif;
-  font-size: clamp(17px, 6.27cqw, 25px);
+  /* 字号由 FoundingPlate 按名字长度写进 --fp-name-size（plateName.nameCqw），24 个字也落在牌面里 */
+  font-size: var(--fp-name-size, clamp(17px, 6.27cqw, 25px));
   font-weight: 400;
   letter-spacing: 0.04em;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
 }
 .fp-no {
   grid-column: 1 / -1;

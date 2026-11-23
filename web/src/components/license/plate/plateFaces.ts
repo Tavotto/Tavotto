@@ -1,6 +1,7 @@
 // 创始会员铭牌的贴图：每一面画成三张 SVG 数据贴图（颜色 / 高度 / 粗糙度），交给 WebGL 的 PBR 材质。
 // 逐字移植自官网 Tavotto_website `src/scripts/foundingPlate.ts`（质感与版式要与官网完全一致）；只改了类型与导出。
 import { LOGO_ACCENT, LOGO_MAIN } from './plateLogo'
+import { NAME_AVAIL, nameFit } from './plateName'
 
 const W = 1020
 const H = 642
@@ -164,13 +165,16 @@ export function face(side: 'front' | 'back', d: Record<string, string>, kind: Ki
     w?: number
     dim?: boolean
     op?: number
+    /** 兜底：文字总宽压到这个值（SVG textLength，只在估宽放不下时给） */
+    fit?: number
   }
   // Every word is cut and polished the way the emblem is: sunk in the height map, mirror-smooth in
   // the roughness map, and silver with a dark cut-shadow and a bright lip in the colour map.
   const text = (x: number, y: number, size: number, body: string, o: Opt = {}) => {
     const a =
       `x="${x}" y="${y}" font-size="${size}" font-weight="${o.w ?? 500}" font-family="${o.mono ? MONO : SANS}" letter-spacing="${o.ls ?? 0}"` +
-      (o.end ? ' text-anchor="end"' : o.mid ? ' text-anchor="middle"' : '')
+      (o.end ? ' text-anchor="end"' : o.mid ? ' text-anchor="middle"' : '') +
+      (o.fit ? ` textLength="${o.fit}" lengthAdjust="spacingAndGlyphs"` : '')
     const op = o.op != null ? ` opacity="${kind === 'color' ? o.op : 0.4 + o.op * 0.6}"` : ''
     const t = esc(body)
     const lip = Math.max(0.5, size / 64)
@@ -208,12 +212,16 @@ export function face(side: 'front' | 'back', d: Record<string, string>, kind: Ki
       `<path d="${LOGO_MAIN}" fill="url(#lm)"/><path d="${LOGO_ACCENT}" fill="url(#la)"/></g></g>`
     )
   }
+  const nameFx = nameFit(d.name ?? '')
   const dateOp = d.dateEmpty ? 0.25 : undefined
   const words =
     side === 'front'
       ? text(78, 106, 24, 'TAVOTTO', { ls: 13, w: 500, dim: true }) +
         text(W - 78, 105, 20, d.label ?? '', { end: true, ls: 7, dim: true }) +
-        text(76, 424, 64, d.name ?? '', { ls: 2.5 }) +
+        text(76, 424, nameFx.size, d.name ?? '', {
+          ls: nameFx.ls,
+          fit: nameFx.clamp ? NAME_AVAIL : undefined,
+        }) +
         text(78, 554, 19, d.serial ?? '', { mono: true, ls: 5.5, dim: true })
       : text(W / 2, 322, 17, 'ISSUED ON', {
           mid: true,

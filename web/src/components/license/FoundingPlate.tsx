@@ -5,6 +5,7 @@ import { PRODUCT_NAME } from '@/lib/brand'
 import { cn } from '@/lib/utils'
 import { TextInput } from '../ui/Input'
 import { LOGO_ACCENT, LOGO_MAIN } from './plate/plateLogo'
+import { nameCqw } from './plate/plateName'
 import { attachHand, reducedMotion, type Apply } from './plate/plateHand'
 import './plate/foundingPlate.css'
 
@@ -209,7 +210,11 @@ export function FoundingPlate({
             <div className="fp-face fp-front">
               <span className="fp-mark">{PRODUCT_NAME.toUpperCase()}</span>
               <span className="fp-label">{label}</span>
-              <b className="fp-name" data-founding-shown>
+              <b
+                className="fp-name"
+                data-founding-shown
+                style={{ ['--fp-name-size' as string]: `${nameCqw(shown)}cqw` }}
+              >
                 {shown}
               </b>
               <span className="fp-no" data-founding-seat>
