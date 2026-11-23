@@ -583,7 +583,13 @@ def _extract(zip_path: Path, dest: Path) -> None:
         seen: set[str] = set()
         for info in infos:
             name = info.filename
-            if _unsafe_name(name) or name in seen or info.flag_bits & 0x1:
+            # Windows 上 zipfile 读入时把 `\\` 规范成 `/`，原始条目名在 orig_filename 里，两个都查
+            if (
+                _unsafe_name(name)
+                or _unsafe_name(info.orig_filename)
+                or name in seen
+                or info.flag_bits & 0x1
+            ):
                 raise ProInstallError("bad_package")
             seen.add(name)
             if name.split("/", 1)[0] not in (PACKAGE_DIR, RELEASE_FILE):

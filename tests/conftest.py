@@ -179,6 +179,15 @@ _INTERPRETER_ENV = ("TAVOTTO_WORKER_PYTHON",)
 
 
 @pytest.fixture(autouse=True)
+def _no_after_license_hooks(monkeypatch):
+    """授权后回调（`proinstall.register` 在 `app.py` 导入时登记）清空：否则同一进程里先导入过 app 的用例之后，
+    每次激活 / 刷新都会起后台线程去要 `/v1/pro/manifest`，打乱假服务器的请求记录与排队响应。要测回调的用例自己登记。"""
+    from tavotto.engine import license as _lic
+
+    monkeypatch.setattr(_lic, "_AFTER_LICENSE", [])
+
+
+@pytest.fixture(autouse=True)
 def _isolated_interpreter_env():
     """每个用例结束后把渲染解释器相关的环境变量恢复原状。
 

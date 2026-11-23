@@ -236,7 +236,11 @@ def make_zip(
             inner.update(inner_override or {})
             z.writestr("release.json", json.dumps(inner))
         for name, data in (extra or {}).items():
-            z.writestr(name, data)
+            info = zipfile.ZipInfo("placeholder")
+            info.filename = (
+                name  # 绕过 Windows 上 ZipInfo 把 `\\` 换成 `/` 的规范化，条目名原样写进 zip
+            )
+            z.writestr(info, data)
         if symlink:
             info = zipfile.ZipInfo("tavotto-pro/link")
             info.external_attr = (stat.S_IFLNK | 0o777) << 16
