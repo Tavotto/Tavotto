@@ -1,47 +1,60 @@
 # Code signing policy
 
-Free code signing provided by SignPath.io, certificate by SignPath Foundation.
-
 This policy applies to Tavotto releases published from
 <https://github.com/Tavotto/Tavotto>.
+
+Windows installers are signed with the project maintainer's own Certum
+code signing certificate ("Standard Code Signing in the Cloud", issued by
+Certum Code Signing 2021 CA) once signing is enabled for releases. The private
+key stays in Certum's cloud HSM and cannot be exported. Earlier releases were
+published unsigned under the per-tag waiver below; the notes of every release
+state whether its Windows installer is signed. The decision record is
+[ADR 0201](adr/0201-windows-signing-certum-ssign.md).
 
 ## Project and scope
 
 Tavotto is an open-source scientific-figure layout and editing application for
-Matplotlib. The project is released under AGPL-3.0-only. This subscription is
+Matplotlib. The project is released under AGPL-3.0-only. The certificate is
 used only for Tavotto artifacts built from this repository, currently the Windows
-NSIS installer named `Tavotto-<version>-Windows-Setup.exe`.
+NSIS installer named `Tavotto-<version>-Windows-Setup.exe`, and for the
+maintainer's own Tavotto add-on components.
 
-The project team does not submit binaries from other projects or binaries built
-from a source tree that is not this repository. Third-party open-source
-components may be included in the installer, but they are not presented as
-Tavotto-authored source and are not independently signed with this subscription.
+The project does not sign binaries from other projects or binaries built from a
+source tree that is not this repository. Third-party open-source components may
+be included in the installer, but they are not presented as Tavotto-authored
+source and are not independently signed.
 
 ## Build and release process
 
-1. A version tag is checked out by the public GitHub Actions workflow
-   `.github/workflows/desktop-tauri.yml`.
+1. The release workflow `.github/workflows/release.yml` resolves the release
+   tag to an exact commit that must already be on the protected `main` branch,
+   and calls `.github/workflows/desktop-tauri.yml` with that commit.
 2. The Windows build runs on a GitHub-hosted `windows-latest` runner and builds
    the Tauri application, PyInstaller sidecar and bundled rendering runtime from
    the checked-out source.
-3. The final installer is uploaded as a GitHub Actions artifact and submitted to
-   SignPath for signing using the configured artifact, source and build policies.
-4. Each release is manually approved by the project approver before the signed
-   installer is attached to the corresponding GitHub Release.
+3. When signing is enabled (`vars.CERTUM_SIGNING_ENABLED`), that Windows job
+   runs in the protected GitHub environment `windows-signing`. The job does not
+   start until the project approver approves it, and the environment only accepts
+   runs from `main` and `v*` tags. The signing credentials are secrets of that
+   environment and are passed to the single signing step only.
+4. The installer is signed with [ssign](https://github.com/Le-Syl21/ssign), a
+   pinned open-source client for the SimplySign cloud, built from source on the
+   runner. Every signature carries an RFC 3161 timestamp from Certum.
+5. Windows itself then checks the result: the signature must be `Valid`, the
+   signer must match the expected certificate subject, and a timestamp must be
+   present. Only then are the update package, provenance attestation and
+   artifact manifest produced from the signed installer.
 
-The workflow is fail-closed when SignPath signing is enabled: a release build
-that has the variables set but cannot obtain a valid signature fails rather
-than attaching an unsigned file.
+A release build with signing enabled that cannot produce a valid, timestamped
+signature from the expected signer fails rather than attaching an unsigned file.
 
-Without a configured SignPath subscription, a release build fails instead of
-attaching an unsigned Windows installer. The gate emits a `::error` annotation,
-writes the reason to the job summary, and exits non-zero — the release is
-stopped, not shipped. The temporary exception granted on 2026-08-22 has been
-revoked: shipping unsigned is no longer permitted by default.
+Without signing enabled, a release build fails instead of attaching an unsigned
+Windows installer. The gate emits a `::error` annotation, writes the reason to
+the job summary, and exits non-zero — the release is stopped, not shipped.
 
 The only exception is a maintainer waiver that names one exact release tag:
 when the repository variable `WINDOWS_UNSIGNED_WAIVER_TAG` equals the tag
-being built (for example `v0.19.0`) and SignPath is not enabled, the gate
+being built (for example `v0.19.0`) and signing is not enabled, the gate
 emits a `::warning` instead of failing, for that version only. The next
 version no longer matches and is stopped again. A waived release is published
 with the "not code signed" disclosure, and the waiver does not relax the
@@ -55,13 +68,16 @@ this does not authorize publishing them as a release. The signing gate is skippe
 only when `IS_RELEASE_BUILD` is not `1`, and the late Windows guard uses the same
 release-only boundary.
 
-An unsigned installer must never be described as a signed release.
+An unsigned installer must never be described as a signed release. The release
+notes state whether the Windows installer of that release is signed.
 `tests/test_runtime_build.py` executes the gate with isolated fixture values to
-guard missing credentials, fail-closed releases and unsigned non-release trials.
+guard missing credentials, fail-closed releases and unsigned non-release trials;
+`tests/test_release_workflow_contract.py` guards where the signing credentials
+can reach and what the signature check requires.
 
 ## macOS artifacts (out of scope for this subscription)
 
-The macOS `.dmg` is **not** signed with the SignPath certificate. It is signed
+The macOS `.dmg` is **not** signed with the Certum certificate. It is signed
 with an Apple Developer ID Application certificate held by the maintainer and
 notarized by Apple, in the same workflow but on a separate runner. It is listed
 here only so the two chains are not confused with each other.
@@ -84,7 +100,7 @@ code, so `--deep` neither signs nor verifies them.
 
 The project currently has one maintainer, who performs these responsibilities.
 Changes from outside contributors are reviewed before merge, and every signing
-request is reviewed before approval.
+run is approved by the maintainer before it starts.
 
 ## Privacy
 
