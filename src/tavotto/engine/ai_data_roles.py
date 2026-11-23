@@ -1071,8 +1071,10 @@ def _judge(
     kw = {k: _OVERRIDES[k] for k in ("conn", "post", "runner") if k in _OVERRIDES}
     kw.update(extra or {})  # 内置 AI 任务（或退路）的连接：已换上通行证与上限
     cli = ai_structured.is_cli_conn(kw.get("conn") or conn)
-    if cli and "conn" not in kw:
-        kw["conn"] = conn  # 缓存键用的就是这一条（含型号）：别让 `call_structured` 再挑一次
+    if conn is not None and "conn" not in kw:
+        # 调用方显式给了连接（自己的 Key / 订阅登录）：就用它，缓存键用的也是这一条（含型号）——别让 `call_structured` 再挑一次
+        # （挑选是「内置 AI 排第一」，会绕开用户 / 调用方的选择并多开一个网关任务）
+        kw["conn"] = conn
     total = float(_OVERRIDES.get("timeout_s", ai_structured.CLI_TIMEOUT_S if cli else TIMEOUT_S))
     do_call = call or ai_structured.call_structured
 

@@ -1143,3 +1143,29 @@ def test_a_judge_falls_back_to_the_own_key_when_the_task_cannot_open(gw, monkeyp
     gw.script.append(err(402, "quota_exhausted"))
     ai_data_roles.judge(object(), object(), None, data_path=None)
     assert [c["provider_id"] for c in convs] == ["mine"]
+
+
+def test_an_explicit_connection_is_used_as_is_and_never_opens_a_hosted_task(gw, monkeypatch):
+    """调用方显式给了连接：`call_structured` / `judge` 就用它，不再「内置 AI 排第一」地重新挑，也不开网关任务。"""
+    from tavotto.engine import ai_data_roles
+
+    _own_key()
+    own = ai_structured.fallback_connection()
+    assert own["provider_id"] == "mine" and hosted_ai.available()
+    post = FakePost([_ok_reply()])
+    res = ai_structured.call_structured(
+        system="S", user="U", validate=_validate, conn=own, post=post
+    )
+    assert res.ok and post.calls[0]["headers"]["x-api-key"] == "sk-test-1234567890"
+    assert gw.calls == []  # 没有 /v1/task，也没有 close
+
+    seen = []
+
+    def fake_call(**kw):
+        seen.append(kw.get("conn"))
+        return ai_structured.StructuredResult(False, reason="invalid_output", detail="x")
+
+    monkeypatch.setattr(ai_data_roles, "build_request", lambda *a, **k: ("S", "U"))
+    monkeypatch.setattr(ai_structured, "call_structured", fake_call)
+    ai_data_roles.judge(object(), object(), None, data_path=None, conn=own)
+    assert [c["provider_id"] for c in seen] == ["mine"] and gw.calls == []
