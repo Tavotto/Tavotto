@@ -8199,6 +8199,7 @@ export default interface Resources {
       "scaleProxiedTip": "位置和大小属于宿主子图「{{label}}」，缩放改的是它",
       "scaleTip": "绕子图中心缩放，每次 5%",
       "scaleUp": "放大 5%",
+      "selectSameKind_other": "选中全部同类（{{count}} 个）",
       "show": "显示",
       "unhide": "恢复显示",
       "unlock": "解锁",
