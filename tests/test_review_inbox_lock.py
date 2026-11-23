@@ -73,17 +73,37 @@ def test_two_processes_each_adding_records_lose_nothing(tmp_path, monkeypatch):
     assert len(ids) == 50
 
 
-@pytest.mark.skipif(os.name == "nt", reason="用 fcntl 在测试里占住锁；Windows 的 msvcrt 路径靠真机")
+HOLDER = textwrap.dedent(
+    """
+    import sys, time
+    from pathlib import Path
+    from tavotto.engine import reviewinbox
+    release = Path(sys.argv[1])
+    with reviewinbox.file_lock():
+        print("held", flush=True)
+        deadline = time.monotonic() + 30
+        while not release.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+    """
+)
+
+
 def test_a_lock_that_cannot_be_taken_fails_as_a_write_error_and_writes_nothing(
     tmp_path, monkeypatch
 ):
-    import fcntl
-
+    """另一个**真进程**用产品自己的 `file_lock` 占着锁（POSIX 走 fcntl、Windows 走 msvcrt，同一条用例两边都跑）。"""
     monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setattr(reviewinbox, "LOCK_TIMEOUT_S", 0.2)
-    reviewinbox.lock_path().parent.mkdir(parents=True)
-    with open(reviewinbox.lock_path(), "a+b") as other:  # 另一个「进程」占着（独立的打开文件描述）
-        fcntl.flock(other.fileno(), fcntl.LOCK_EX)
+    release = tmp_path / "release"
+    holder = subprocess.Popen(
+        [sys.executable, "-c", HOLDER, str(release)],
+        env=_env(tmp_path / "data"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout.readline().strip() == "held", holder.stderr.read()
         t0 = time.monotonic()
         with pytest.raises(OSError):
             reviewinbox.add_pending(
@@ -97,7 +117,22 @@ def test_a_lock_that_cannot_be_taken_fails_as_a_write_error_and_writes_nothing(
                 expires_ts=time.time() + 3600,
             )
         assert time.monotonic() - t0 < 3
-    assert not reviewinbox.path().exists()  # 绝不跳过锁直接写
+        assert not reviewinbox.path().exists()  # 绝不跳过锁直接写
+    finally:
+        release.write_text("go")
+        holder.communicate(timeout=60)
+    assert holder.returncode == 0
+    # 对方放手之后照常能写
+    assert reviewinbox.add_pending(
+        share_id="rs_AAAAAAAAAAAAAAAA",
+        owner_token="t" * 22,
+        review_url="https://x/r/" + "a" * 20,
+        kind="figure",
+        target_id="fig",
+        title="T",
+        note="",
+        expires_ts=time.time() + 3600,
+    )
 
 
 def test_the_lock_is_reentrant_inside_one_process(tmp_path, monkeypatch):
