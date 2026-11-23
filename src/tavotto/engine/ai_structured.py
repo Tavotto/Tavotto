@@ -560,7 +560,9 @@ def _call(
             system, user, validate, limits, conn, t0, max_requests, effort, runner, schema
         )
     if not hosted_ai.needs_task(conn):
-        return _call_with_conn(system, user, validate, limits, conn, post, t0, max_requests, effort)
+        return _call_with_conn(
+            system, user, validate, limits, conn, post, t0, max_requests, effort, auto_small
+        )
     # Tavotto Agent（内置 AI）：先开一个任务（联网一次），用它的通行证与网关下发的上限发请求，结束（任何结局）就关。
     # 开不成 = 安静的失败结局（调用方本来就静默退回规则结果），不抛、不卡
     lease = hosted_ai.lease("data_roles")
@@ -572,7 +574,7 @@ def _call(
                     system, user, validate, limits, own, t0, max_requests, effort, runner, schema
                 )
             return _call_with_conn(
-                system, user, validate, limits, own, post, t0, max_requests, effort
+                system, user, validate, limits, own, post, t0, max_requests, effort, auto_small
             )
         return StructuredResult(
             False,
@@ -587,7 +589,7 @@ def _call(
                 False, reason="transport", detail="internal", elapsed_ms=_ms(t0)
             )
         return _call_with_conn(
-            system, user, validate, limits, granted, post, t0, max_requests, effort
+            system, user, validate, limits, granted, post, t0, max_requests, effort, auto_small
         )
     finally:
         lease.close()
@@ -603,6 +605,7 @@ def _call_with_conn(
     t0: float,
     max_requests: int | None,
     effort: str | None = None,
+    auto_small: bool = False,
 ) -> StructuredResult:
     from dataclasses import replace
 
