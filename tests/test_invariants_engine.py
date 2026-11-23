@@ -307,8 +307,14 @@ def test_in_figure_edits_do_not_change_data(hot, stem):
     assert before, f"{stem}：manifest 里一个带 data_fingerprint 的元素都没有，「全相等」恒真"
 
     changed, keys, applied, unknown = [], set(), 0, 0
+    # 每个 (role, prop) 只施加一次（尺度类每个选项一次）：同一 handler 在同类元素上重复施加不增加覆盖，
+    # 却让 CI 的 invariants 作业逼近超时（#2123 合入后「结构性不变式」由 11–16 分钟涨到 24–26 分钟）
+    seen: set[tuple] = set()
     for gid, field in _editable_targets(base):
         prop = field["prop"]
+        if (role_of[gid], prop) in seen:
+            continue
+        seen.add((role_of[gid], prop))
         if prop in _PAIR_SAMPLES and field.get("type") == "pair" and field.get("value"):
             patches = [[{"gid": gid, "prop": prop, "value": _PAIR_SAMPLES[prop](field["value"])}]]
         elif prop in _EVERY_OPTION_PROPS and field.get("type") == "enum":
@@ -351,8 +357,8 @@ def test_in_figure_edits_do_not_change_data(hot, stem):
     print(f"[data-fingerprint] {stem}: elements={len(before)} applied={applied}", end=" ")
     print(f"keys={len(keys)} unknown={unknown}")
     # 前提：覆盖不能薄到让「没发现改数据」只是因为没怎么改。
-    # 下限取 2026-11-23 实测各 stem 最小值（Inv3DS：32 条 / 19 个 (role, prop)）往下留余量
-    assert applied >= 25 and len(keys) >= 15, (
+    # 下限取 2026-11-23 实测各 stem 最小值（Inv3DS：19 个 (role, prop)）往下留余量；每个键至少施加一次
+    assert applied >= len(keys) and len(keys) >= 15, (
         f"{stem}：只施加了 {applied} 条编辑、{len(keys)} 个 (role, prop)，覆盖太薄"
     )
     assert not changed, (
