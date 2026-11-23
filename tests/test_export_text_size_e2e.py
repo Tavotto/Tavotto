@@ -174,20 +174,44 @@ def test_without_a_profile_the_reading_is_unknown(project):
     assert mf["text_size"]["min_pt"] == pytest.approx(BODY_PT * SCRIPT_SHRINK, abs=0.011)
 
 
-def test_a_tavotto_formula_annotation_makes_the_reading_unknown(project):
-    """画布上的公式标注（ADR 0152：轮廓 + 不画的文本层）：可见的字都够大也不许说 verified。"""
-    _m, client, _figs = project
-    formula = {
+def _annotation(latex: bool) -> dict:
+    obj = {
         "type": "text",
         "id": "eq1",
-        "text": "fit $y = a x^2$",
-        "text_format": "latex",
+        "text": "fit $y = a x^2$" if latex else "fit y = a x2",
         "x_mm": 90,
         "y_mm": 10,
         "w_mm": 38,
         "h_mm": 10,
         "size_pt": 10,
     }
+    if latex:
+        obj["text_format"] = "latex"
+    return obj
+
+
+def test_a_plain_text_annotation_is_measured_and_verified(project):
+    """对照：同一块画布、同一处标注换成普通文字（不是公式）——量得到，verified。下一条的 unknown
+    因此确实来自公式，不是来自标注本身。"""
+    _m, client, _figs = project
+    out, _body = _export(
+        client,
+        "Plain",
+        _title_patch(client),
+        scale=1.25,
+        inspection=STRICT_FREE_FORM,
+        extra=(_annotation(False),),
+    )
+    mf = out["manifest"]
+    print("E2E plain annotation:", json.dumps({k: mf[k] for k in ("checks", "text_size")}))
+    assert mf["checks"]["text_size"] == "verified"
+    assert mf["text_size"]["reason"] == "ok"
+
+
+def test_a_tavotto_formula_annotation_makes_the_reading_unknown(project):
+    """画布上的公式标注（ADR 0152：轮廓 + 不画的文本层）：可见的字都够大也不许说 verified。"""
+    _m, client, _figs = project
+    formula = _annotation(True)
     out, _body = _export(
         client,
         "Formula",

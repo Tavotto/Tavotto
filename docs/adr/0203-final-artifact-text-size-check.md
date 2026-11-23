@@ -69,7 +69,9 @@
   「成品里最小的文字是 4.9 pt，低于规范的 5 pt」；有规范却因公式轮廓量不全（`unmeasured_runs`）时同一位置一行
   灰字「有文字画成了轮廓（比如公式），量不到它的字号」；通过、没有规范都不画（2026-11-06「核验只说失败」）。
   灰字这一行是对那条细则的唯一例外，交维护者确认。
+- 多页 PDF 的边界：`inspect_produced` 对各页只留拦截码、回执的 manifest 来自合并文件的检查，而检查器只读首页；
+  `text_size` 不是必需项，所以第 2 页起的小字既不拦也不进回执——这一项的结论只覆盖首页（未实测）。
 - 真实导出路由的端到端读数（`tests/test_export_text_size_e2e.py`，worker 重画的面板作为 Form 嵌进版面）：7 pt 的
-  `$R^2$` 量到 4.9 pt；版面放大 1.25 倍量到 6.12 pt；画布公式标注是 `unknown`（`unmeasured_runs`）。
+  `$R^2$` 量到 4.9 pt；版面放大 1.25 倍量到 6.12 pt；画布公式标注是 `unknown`（`unmeasured_runs`），同一处换成普通文字是 `verified`（对照）。
 - 读者核对：前端 `inspectionState()` 与 MCP `_inspection_summary()` 都**不按闭集过滤**，遍历 `checks` 的全部键，
   未知键照样计入并以原键名显示（不会崩）。两者与后端同一份构建发出，没有版本错位，所以 `MANIFEST_VERSION` 不升。
