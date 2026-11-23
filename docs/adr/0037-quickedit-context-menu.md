@@ -104,3 +104,19 @@ src/tavotto/app.py                  POST /api/engine/invalidate
 | 命名 | ADR 0094 的「写回脚本」（改用户脚本源码）是另一件事：界面里「写回」永远指「写回原始文件」，「写回记录」永远指图的原始文件的写回历史，两者不混 |
 | 磁盘格式 / 后端 | **不升版**，不新增文档字段、端点、错误码 |
 | 看护 | `canvas/objectContextMenu.test.tsx` 末节（出现条件与位置）、`components/inspector/syncOverrides.test.tsx`（合并 / 走标准窗口 / 基线合并 / 取消）、`components/inspector/writeBackRecords.test.tsx`（页何时出现 / 恢复仍是原路）、`components/inspector/panelPageOrder.test.tsx` 与 `sourceAdvanced.test.tsx`（属性栏不再有「历史」「同步修改」）；真浏览器 `e2e/writeback-records.spec.ts`（真写回后记录页）、`e2e/sync-overrides.spec.ts`（一个脚本两张图：菜单项出现条件 → 选目标 → 标准写回窗口 → 目标 PDF 磁盘字节真变，chromium + chromium-en） |
+
+## 2026-11-23 修订：图内元素弹层多一个「选中全部同类」（来信 TVM-CKRH）
+
+来信想「对于相同的文字或其他元素，统一选取并修改字号、字体」。批量改样式早就有（多选同类 → 属性页公共样式），
+缺的是「把同一类一下全选上」——只能 ⇧ 一个个点。本 ADR 的元素弹层因此多一项，其余裁决不动。1.0 豁免见
+`docs/1.0-release-readiness.md` §1.8。
+
+| 问题 | 裁决 |
+|---|---|
+| 弹层里多了什么 | 图内元素弹层（`QuickEdit.ElementQuick`）分隔线下第一项 **「选中全部同类（N 个）」**（`data-quick-item="select-same-kind"`，图标 `CopyCheck`），排在「复制为标注」之前。文案与位置用户 2026-11-23 拍板 |
+| 「同类」是什么 | **同一张图里 `role` 相同**的元素（标题、轴标题、刻度组、曲线……）。判据唯一出处 `lib/elementGeom.sameKindGids`；能不能进多选与框选同一份 `isMultiSelectable`（不收整张图、已隐藏、已锁定）。不按文字内容分，也不跨图 |
+| 选区顺序 | 右键的那个排**最后**——末位是主选（`IdentityHeader` / `ElementInspector` 都读 `at(-1)`），属性页标题仍是右键的那一个 |
+| 点完之后 | `setSelectedGids` + 切到「属性」页签（与「打开全部属性」同一做法），弹层关掉；改样式走既有批量表单，一次修改一条历史 |
+| 什么时候不出现 | 这一类只有它自己、或这一类已经全选着。**不做置灰**，与「同步修改」同一先例：没有作用的项不出现 |
+| 磁盘格式 / 后端 | **不升版**，不新增文档字段、端点、错误码 |
+| 看护 | `canvas/objectContextMenu.test.tsx`「选中全部同类」一节（范围 / 主选 / 不出现的两种情况）、`e2e/select-same-kind.spec.ts`（右键轴标题 → 全选 → 改一次字号两条都变 → 撤销一次都回去） |
