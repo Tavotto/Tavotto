@@ -325,6 +325,28 @@ interface Found {
   detail: Record<string, unknown>
 }
 
+/**
+ * 横向区间**严格**重叠的全部下标对 `[i, j]`（i < j），按 `(i, j)` 字典序——与两重循环同一个顺序，只是按左边界
+ * 排序后扫描、只看左边界落在当前区间里的那些。候选对仍要过 `intersect` 的完整判定。`interference._overlapping_pairs` 同源。
+ */
+function overlappingPairs(rects: Rect[]): Int32Array[] {
+  // 返回每个 i 的伙伴表（j > i，升序）：外层按 i、内层按 j 走，就是两重循环的顺序
+  const n = rects.length
+  const order = Array.from({ length: n }, (_, k) => k).sort((p, q) => rects[p][0] - rects[q][0] || p - q)
+  const adj: number[][] = Array.from({ length: n }, () => [])
+  for (let a = 0; a < n; a++) {
+    const p = order[a]
+    const x1 = rects[p][2]
+    for (let b = a + 1; b < n; b++) {
+      const q = order[b]
+      if (rects[q][0] >= x1) break
+      if (p < q) adj[p].push(q)
+      else adj[q].push(p)
+    }
+  }
+  return adj.map((l) => Int32Array.from(l).sort())
+}
+
 /** Python 的 `sorted()` 对 str 的序：码点序（gid 是 ASCII，与 UTF-16 码元序相同） */
 const byCodePoint = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
 
@@ -336,11 +358,35 @@ export function detectInterference(
   manifest: Manifest,
   profile: PublicationProfile | null,
   panelId = 'figure',
+  /**
+   * 文字重叠 / 压到别的子图的每一对在**造条目之前**先问一次，回 false 就不造（判据、顺序不变）。
+   * 与 Python `detect(…, keep=)` 同一个口子；预检折叠用它跳过对聚合结果是空操作的那些对。
+   */
+  keep?: (checkId: string, a: string, b: string, overlapMm2: number) => boolean,
 ): InterferenceIssue[] {
   const size = Array.isArray(manifest.size_mm) ? manifest.size_mm : []
   const W = num(size[0]) || 0.0
   const H = num(size[1]) || 0.0
   if (W <= 0 || H <= 0) return []
+  // 同一次检测里反复出现的数（同一种字号的标签互相压着时每对都一样）只格式化一次；结果与逐个算相同
+  const fixedMemo = new Map<number, string>()
+  const roundMemo = new Map<number, number>()
+  const fixed1 = (x: number): string => {
+    let v = fixedMemo.get(x)
+    if (v == null) {
+      v = pyFixed(x, 1)
+      fixedMemo.set(x, v)
+    }
+    return v
+  }
+  const round3 = (x: number): number => {
+    let v = roundMemo.get(x)
+    if (v == null) {
+      v = pyRound(x, 3)
+      roundMemo.set(x, v)
+    }
+    return v
+  }
   const elements = (manifest.elements ?? []).filter(
     (e) => !!e && typeof e === 'object' && !Array.isArray(e),
   )
@@ -369,30 +415,44 @@ export function detectInterference(
   texts.push(...sorted)
   // 两两比较是文字数的平方：先做便宜的相交测试，图例家族只为真相交的那几对判（与 Python 同序，结论不变）
   const fams = texts.map((t) => legendOf(t[0]))
+  const partners = overlappingPairs(texts.map((t) => t[2]))
+  // 热循环（几十段文字压成一团时每面板几百对）：不解构、不分配，判据与 Python 逐行相同
   for (let i = 0; i < texts.length; i++) {
-    const [ga, ra, a] = texts[i]
-    for (let j = i + 1; j < texts.length; j++) {
-      const [gb, rb, b] = texts[j]
-      const hit = intersect(a, b)
-      if (hit == null) continue
-      if (sameLegendFamily(ga, fams[i], gb, fams[j])) continue
-      const dxMm = (hit[2] - hit[0]) * W
-      const dyMm = (hit[3] - hit[1]) * H
+    const ti = texts[i]
+    const ga = ti[0]
+    const a = ti[2]
+    const fa = fams[i]
+    const pi = partners[i]
+    for (let k = 0; k < pi.length; k++) {
+      const j = pi[k]
+      const tj = texts[j]
+      const b = tj[2]
+      const ix0 = a[0] > b[0] ? a[0] : b[0]
+      const iy0 = a[1] > b[1] ? a[1] : b[1]
+      const ix1 = a[2] < b[2] ? a[2] : b[2]
+      const iy1 = a[3] < b[3] ? a[3] : b[3]
+      if (ix1 <= ix0 || iy1 <= iy0) continue
+      const gb = tj[0]
+      if ((fa || fams[j]) && sameLegendFamily(ga, fa, gb, fams[j])) continue
+      const dxMm = (ix1 - ix0) * W
+      const dyMm = (iy1 - iy0) * H
       if (dxMm < MIN_OVERLAP_MM || dyMm < MIN_OVERLAP_MM) continue
       // 斜排文字：布局框只是外接框，按真正的有向矩形复核一次，只能否决、不能新增
       const ta = turned[i]
       const tb = turned[j]
       if ((ta || tb) && !boxesOverlap(ta ?? axisBox(a, W, H), tb ?? axisBox(b, W, H))) continue
+      const area = round3(dxMm * dyMm)
+      if (keep && !keep(CHECK_TEXT_OVERLAP, ga, gb, area)) continue
       found.push({
         id: CHECK_TEXT_OVERLAP,
         gids: [ga, gb],
-        message: ['textOverlap', { a: ga, b: gb, w: pyFixed(dxMm, 1), h: pyFixed(dyMm, 1) }],
+        message: ['textOverlap', { a: ga, b: gb, w: fixed1(dxMm), h: fixed1(dyMm) }],
         detail: {
-          overlap_mm: [pyRound(dxMm, 3), pyRound(dyMm, 3)],
-          overlap_mm2: pyRound(dxMm * dyMm, 3),
+          overlap_mm: [round3(dxMm), round3(dyMm)],
+          overlap_mm2: area,
           certain: true,
           basis: 'bbox',
-          roles: [ra, rb],
+          roles: [ti[1], tj[1]],
         },
       })
     }
@@ -422,13 +482,15 @@ export function detectInterference(
       const dxMm = (hit[2] - hit[0]) * W
       const dyMm = (hit[3] - hit[1]) * H
       if (dxMm < MIN_OVERLAP_MM || dyMm < MIN_OVERLAP_MM) continue
+      const area = round3(dxMm * dyMm)
+      if (keep && !keep(CHECK_TEXT_OVER_AXES, gid, axGid, area)) continue
       found.push({
         id: CHECK_TEXT_OVER_AXES,
         gids: [gid, axGid],
-        message: ['textOverAxes', { a: gid, b: axGid, w: pyFixed(dxMm, 1), h: pyFixed(dyMm, 1) }],
+        message: ['textOverAxes', { a: gid, b: axGid, w: fixed1(dxMm), h: fixed1(dyMm) }],
         detail: {
-          overlap_mm: [pyRound(dxMm, 3), pyRound(dyMm, 3)],
-          overlap_mm2: pyRound(dxMm * dyMm, 3),
+          overlap_mm: [round3(dxMm), round3(dyMm)],
+          overlap_mm2: area,
           certain: true,
           basis: 'bbox',
           roles: [role, 'axes'],
@@ -438,6 +500,16 @@ export function detectInterference(
   }
 
   // ---- 图例压住同一子图里的数据 ----
+  // 先按所属子图把数据分好组、把条目文字挑出来（各一遍，原顺序不变）——与 Python 同
+  const dataByOwner = new Map<string, ManifestElement[]>()
+  for (const d of elements) {
+    if (!DATA_ROLES.includes(d.role)) continue
+    const o = ownerAxes(gidOf(d))
+    const list = dataByOwner.get(o)
+    if (list) list.push(d)
+    else dataByOwner.set(o, [d])
+  }
+  const legendTexts = elements.filter((t) => t.role === 'legend_text')
   for (const el of elements) {
     if (el.role !== 'legend') continue
     const legGid = gidOf(el)
@@ -447,13 +519,12 @@ export function detectInterference(
     if (!owner) continue // figure 级图例：它压谁是排版决定，这里不猜
     const ownerRect = allAxesRect.get(owner) ?? null
     if (ownerRect != null && intersect(legRect, ownerRect) == null) continue // 放在坐标区外：压不到数据
-    const { hard, soft, basis: legendBasis } = legendCoverRects(el, elements, W, H)
+    const { hard, soft, basis: legendBasis } = legendCoverRects(el, legendTexts, W, H)
     const covers = [...hard, ...soft]
     const certainHits: string[] = []
     const riskHits: string[] = []
-    for (const d of elements) {
+    for (const d of dataByOwner.get(owner) ?? []) {
       const dg = gidOf(d)
-      if (!DATA_ROLES.includes(d.role) || ownerAxes(dg) !== owner) continue
       const dr = visibleRect(d)
       if (dr == null || !covers.some((c) => intersect(dr, c) != null)) continue
       if (RECT_BASIS_ROLES.includes(d.role)) {
@@ -499,14 +570,23 @@ export function detectInterference(
     })
   }
 
-  return found.map((it) => ({
-    id: it.id,
-    severity: profile ? severityOf(profile, it.id) : DEFAULT_SEVERITY,
-    message: { key: it.message[0], params: { ...it.message[1] } },
-    object_ids: [panelId],
-    gids: [...it.gids],
-    detail: { ...it.detail },
-  }))
+  // 每条都是这里新造的对象，直接交出去（不再整份复制一遍）；严重度按检查 id 只查一次
+  const severity = new Map<string, Severity>()
+  return found.map((it) => {
+    let sev = severity.get(it.id)
+    if (sev == null) {
+      sev = profile ? severityOf(profile, it.id) : DEFAULT_SEVERITY
+      severity.set(it.id, sev)
+    }
+    return {
+      id: it.id,
+      severity: sev,
+      message: { key: it.message[0], params: it.message[1] },
+      object_ids: [panelId],
+      gids: it.gids,
+      detail: it.detail,
+    }
+  })
 }
 
 /**

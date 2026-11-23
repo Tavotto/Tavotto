@@ -331,8 +331,15 @@ def _segment_in_rect(ax, ay, bx, by, x0, y0, x1, y1) -> bool:
     return t0 <= t1
 
 
-def detect(manifest: dict, profile: dict | None = None, *, panel_id: str = "figure") -> list[dict]:
-    """跑一遍干涉检测，返回预检形状的问题清单（顺序稳定：按 gid 排序）。"""
+def detect(
+    manifest: dict, profile: dict | None = None, *, panel_id: str = "figure", keep=None
+) -> list[dict]:
+    """跑一遍干涉检测，返回预检形状的问题清单（顺序稳定：按 gid 排序）。
+
+    `keep(check_id, a, b, overlap_mm2) -> bool`（可选；a / b 是这一对的两个 gid）：文字重叠 / 压到别的子图的每一对在**造条目之前**
+    先问一次，回 False 就不造这一条（判据、顺序都不变，只是少交几条）。预检折叠（`preflight._check_panel_interference`）
+    用它跳过对聚合结果是空操作的那些对——几十段文字压成一团时每面板几百对。图例压数据不经过它。
+    """
     size = manifest.get("size_mm") or [0.0, 0.0]
     W = _num(size[0] if len(size) > 0 else None) or 0.0
     H = _num(size[1] if len(size) > 1 else None) or 0.0
@@ -358,12 +365,13 @@ def detect(manifest: dict, profile: dict | None = None, *, panel_id: str = "figu
     texts.sort(key=lambda t: t[0])
     turned = [t[3] for t in texts]
     texts = [t[:3] for t in texts]
-    # 两两比较是文字数的平方（密集组图几百段刻度文字）：先做便宜的相交测试，图例家族只为
-    # 真相交的那几对判；每段文字所属的图例预先算好。两步都是纯函数，先后不改结论。
+    # 两两比较是文字数的平方（密集组图几百段刻度文字）：按左边界扫描只取横向相交的候选对
+    # （顺序同两重循环），图例家族只为真相交的那几对判、每段文字所属的图例预先算好。都不改结论。
     fams = [legend_of(t[0]) for t in texts]
+    partners = _overlapping_partners([t[2] for t in texts])
     for i in range(len(texts)):
         ga, ra, a = texts[i]
-        for j in range(i + 1, len(texts)):
+        for j in partners[i]:
             gb, rb, b = texts[j]
             hit = _intersect(a, b)
             if hit is None:
@@ -380,6 +388,8 @@ def detect(manifest: dict, profile: dict | None = None, *, panel_id: str = "figu
             ):
                 continue
             area = round(dx_mm * dy_mm, 3)
+            if keep is not None and not keep(CHECK_TEXT_OVERLAP, ga, gb, area):
+                continue
             found.append(
                 _Issue(
                     CHECK_TEXT_OVERLAP,
@@ -431,6 +441,8 @@ def detect(manifest: dict, profile: dict | None = None, *, panel_id: str = "figu
             if dx_mm < MIN_OVERLAP_MM or dy_mm < MIN_OVERLAP_MM:
                 continue
             area = round(dx_mm * dy_mm, 3)
+            if keep is not None and not keep(CHECK_TEXT_OVER_AXES, gid, ax_gid, area):
+                continue
             found.append(
                 _Issue(
                     CHECK_TEXT_OVER_AXES,
@@ -453,6 +465,13 @@ def detect(manifest: dict, profile: dict | None = None, *, panel_id: str = "figu
             )
 
     # ---- 图例压住同一子图里的数据 ----
+    # 先按所属子图把数据分好组、把条目文字挑出来（各一遍，原顺序不变）：图例 × 全部元素是
+    # 图例数 × 元素数，密集组图上几十个图例各扫一遍几百个元素
+    data_by_owner: dict[str, list] = {}
+    for d in elements:
+        if d.get("role") in DATA_ROLES:
+            data_by_owner.setdefault(owner_axes(d.get("gid", "")), []).append(d)
+    legend_texts = [t for t in elements if t.get("role") == "legend_text"]
     for el in elements:
         if el.get("role") != "legend":
             continue
@@ -466,14 +485,12 @@ def detect(manifest: dict, profile: dict | None = None, *, panel_id: str = "figu
         owner_rect = all_axes_rect.get(owner)
         if owner_rect is not None and _intersect(leg_rect, owner_rect) is None:
             continue  # 放在坐标区外的图例：数据画在坐标区里，压不到
-        hard, soft, legend_basis = legend_cover_rects(el, elements, W, H)
+        hard, soft, legend_basis = legend_cover_rects(el, legend_texts, W, H)
         covers = hard + soft
         certain_hits: list[str] = []
         risk_hits: list[str] = []
-        for d in elements:
+        for d in data_by_owner.get(owner, ()):
             dg = d.get("gid", "")
-            if d.get("role") not in DATA_ROLES or owner_axes(dg) != owner:
-                continue
             dr = visible_rect(d)
             if dr is None or not any(_intersect(dr, c) is not None for c in covers):
                 continue
@@ -545,6 +562,28 @@ def detect(manifest: dict, profile: dict | None = None, *, panel_id: str = "figu
             }
         )
     return out
+
+
+def _overlapping_partners(rects: list) -> list[list[int]]:
+    """每个下标 i 的伙伴表：横向区间与它**严格**重叠的 j（j > i，升序）。外层按 i、内层按 j 走，就是两重循环
+    `for i: for j > i` 的顺序，只是不再逐对比较：按左边界排序后扫描，只看左边界落在当前区间里的那些
+    （`x0_q < x1_p`，与 `_intersect` 的严格判据同向）。候选仍要过 `_intersect` 的完整判定。
+    与 `web/src/lib/interference.ts` 的 `overlappingPairs` 同源。"""
+    n = len(rects)
+    order = sorted(range(n), key=lambda k: (rects[k][0], k))
+    adj: list[list[int]] = [[] for _ in range(n)]
+    for a, p in enumerate(order):
+        x1 = rects[p][2]
+        for q in order[a + 1 :]:
+            if rects[q][0] >= x1:
+                break
+            if p < q:
+                adj[p].append(q)
+            else:
+                adj[q].append(p)
+    for lst in adj:
+        lst.sort()
+    return adj
 
 
 def _same_legend_family(ga: str, gb: str) -> bool:

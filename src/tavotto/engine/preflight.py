@@ -1517,11 +1517,42 @@ def _check_panel_interference(panel: dict, profile: dict, sink: _Sink) -> None:
     if not isinstance(manifest, dict):
         return
     pid = panel.get("id", "")
-    for it in interference_mod.detect(manifest, profile, panel_id=pid):
+    # 只把**会改变结果**的那几对交给 `_Sink`：带来新主语、让某个主语或这一面板更糟的。其余各对在 `_Sink`
+    # 里本来就是空操作（主语已在、排名不更大），跳过它们结论逐字不变——几十段文字压成一团时（每面板几百对）
+    # 每对一次 `add` 是这条检查的大头。与 `preflight.ts` 的 `checkPanelInterference` 同一规则。
+    seen: dict[tuple[str, str], float] = {}
+    top: dict[str, float] = {}
+
+    def changes(cid: str, subjects: list[str], worse: float) -> bool:
+        hit = False
+        for g in subjects:
+            prev = seen.get((cid, g))
+            if prev is None or worse > prev:
+                seen[(cid, g)] = worse
+                hit = True
+        if cid not in top or worse > top[cid]:
+            top[cid] = worse
+            hit = True
+        return hit
+
+    def keep(cid: str, a: str, b: str, area: float) -> bool:
+        # 文字重叠两段文字都是主语；压到别的子图只有那段文字（b 是被压的子图）
+        subjects = [a, b] if cid == interference_mod.CHECK_TEXT_OVERLAP else [a]
+        return changes(cid, subjects, area)
+
+    for it in interference_mod.detect(manifest, profile, panel_id=pid, keep=keep):
         cid = it["id"]
         gids = list(it.get("gids") or [])
         detail = dict(it.get("detail") or {})
         params = (it.get("message") or {}).get("params") or {}
+        if cid == interference_mod.CHECK_LEGEND_OVER_DATA:
+            rank = len(detail.get("targets") or []) + (
+                INTERFERENCE_CERTAIN_RANK if detail.get("certain") else 0
+            )
+            if not changes(cid, gids[:1], rank):
+                continue
+        else:
+            rank = _num_or(detail.get("overlap_mm2"), 0.0)
         if cid == interference_mod.CHECK_TEXT_OVERLAP:
             sink.add(
                 "text-overlap",
@@ -1530,7 +1561,7 @@ def _check_panel_interference(panel: dict, profile: dict, sink: _Sink) -> None:
                 object_ids=[pid],
                 gids=gids,
                 detail=detail,
-                worse=_num_or(detail.get("overlap_mm2"), 0.0),
+                worse=rank,
             )
         elif cid == interference_mod.CHECK_TEXT_OVER_AXES:
             detail["against"] = gids[1] if len(gids) > 1 else ""
@@ -1541,7 +1572,7 @@ def _check_panel_interference(panel: dict, profile: dict, sink: _Sink) -> None:
                 object_ids=[pid],
                 gids=gids[:1],
                 detail=detail,
-                worse=_num_or(detail.get("overlap_mm2"), 0.0),
+                worse=rank,
             )
         elif cid == interference_mod.CHECK_LEGEND_OVER_DATA:
             certain = bool(detail.get("certain"))
@@ -1556,7 +1587,7 @@ def _check_panel_interference(panel: dict, profile: dict, sink: _Sink) -> None:
                 object_ids=[pid],
                 gids=gids[:1],
                 detail=detail,
-                worse=count + (INTERFERENCE_CERTAIN_RANK if certain else 0),
+                worse=rank,
             )
 
 

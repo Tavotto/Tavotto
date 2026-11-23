@@ -1369,7 +1369,44 @@ function checkPanelInterference(panel: PreflightPanelSpec, profile: PublicationP
   const manifest = panel.manifest
   if (!manifest) return
   const pid = panel.id
-  for (const it of detectInterference(manifest, profile, pid)) {
+  // 只把**会改变结果**的那几对交给 Sink：带来新主语、让某个主语或这一面板更糟的。其余各对在 Sink 里本来就是
+  // 空操作（主语已在、排名不更大），跳过它们结论逐字不变——几十段文字压成一团时每对一次 add 是大头。
+  // 与 `engine/preflight.py::_check_panel_interference` 同一规则
+  const seen = new Map<string, Map<string, number>>()
+  const top = new Map<string, number>()
+  // 主语 g 的排名第一次出现或更糟 → 记下并回 true
+  const bump = (cid: string, g: string, worse: number): boolean => {
+    let mine = seen.get(cid)
+    if (!mine) seen.set(cid, (mine = new Map()))
+    const prev = mine.get(g)
+    if (prev != null && !(worse > prev)) return false
+    mine.set(g, worse)
+    return true
+  }
+  const bumpTop = (cid: string, worse: number): boolean => {
+    const t = top.get(cid)
+    if (t != null && !(worse > t)) return false
+    top.set(cid, worse)
+    return true
+  }
+  // 文字重叠两段文字都是主语；压到别的子图只有那段文字（b 是被压的子图）。三项都要记，不能短路
+  const keep = (cid: string, a: string, b: string, area: number): boolean => {
+    const ha = bump(cid, a, area)
+    const hb = cid === CHECK_TEXT_OVERLAP ? bump(cid, b, area) : false
+    const ht = bumpTop(cid, area)
+    return ha || hb || ht
+  }
+  for (const it of detectInterference(manifest, profile, pid, keep)) {
+    const certain = !!it.detail.certain
+    const count = Array.isArray(it.detail.targets) ? it.detail.targets.length : 0
+    const isLegend = it.id === CHECK_LEGEND_OVER_DATA
+    const rank = isLegend ? count + (certain ? CERTAIN_RANK : 0) : (num(it.detail.overlap_mm2) ?? 0)
+    // 文字两类已经在 detect 里经 keep 问过（再问一遍会因「不更大」被挡掉）；图例每个一条，这里问
+    if (isLegend) {
+      const hg = bump(it.id, it.gids[0], rank)
+      const ht = bumpTop(it.id, rank)
+      if (!hg && !ht) continue
+    }
     const detail = { ...it.detail }
     const { w, h } = it.message.params
     if (it.id === CHECK_TEXT_OVERLAP) {
@@ -1377,7 +1414,7 @@ function checkPanelInterference(panel: PreflightPanelSpec, profile: PublicationP
         objectIds: [pid],
         gids: it.gids,
         detail,
-        worse: num(detail.overlap_mm2) ?? 0,
+        worse: rank,
       })
     } else if (it.id === CHECK_TEXT_OVER_AXES) {
       detail.against = it.gids.length > 1 ? it.gids[1] : ''
@@ -1385,11 +1422,9 @@ function checkPanelInterference(panel: PreflightPanelSpec, profile: PublicationP
         objectIds: [pid],
         gids: it.gids.slice(0, 1),
         detail,
-        worse: num(detail.overlap_mm2) ?? 0,
+        worse: rank,
       })
     } else if (it.id === CHECK_LEGEND_OVER_DATA) {
-      const certain = !!detail.certain
-      const count = Array.isArray(detail.targets) ? detail.targets.length : 0
       sink.add(
         'legend-over-data',
         pf(certain ? 'interferenceLegendOverData' : 'interferenceLegendOverDataRisk', { count }),
@@ -1397,7 +1432,7 @@ function checkPanelInterference(panel: PreflightPanelSpec, profile: PublicationP
           objectIds: [pid],
           gids: it.gids.slice(0, 1),
           detail,
-          worse: count + (certain ? CERTAIN_RANK : 0),
+          worse: rank,
         },
       )
     }
