@@ -728,6 +728,18 @@
       "quick-layout": {
         "keywords": "quick layout auto arrange align yjpb",
         "label": "Auto layout"
+      },
+      "explode-svg": {
+        "keywords": "explode svg editable vector",
+        "label": "Make editable"
+      },
+      "outline-text": {
+        "keywords": "outline text create outlines path",
+        "label": "Create outlines"
+      },
+      "copy-as-svg": {
+        "keywords": "copy svg clipboard illustrator",
+        "label": "Copy as SVG"
       }
     },
     "listLabel": "Commands",
