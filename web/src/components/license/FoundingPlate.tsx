@@ -8,27 +8,9 @@ import './foundingPlate.css'
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.license.plate.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
-/** 刻字的名字只存本机（不上传、不进令牌 / 项目 / 诊断包）；与 `tavotto.locale` 同一类偏好存储 */
-export const PLATE_NAME_KEY = 'tavotto.founding.plateName'
 export const PLATE_NAME_MAX = 24
 /** 创始名额总数（官网同值；只用于「NO. 037 / 200」的版面） */
 const SEATS = 200
-
-export function loadPlateName(): string {
-  try {
-    return (window.localStorage.getItem(PLATE_NAME_KEY) ?? '').slice(0, PLATE_NAME_MAX)
-  } catch {
-    return ''
-  }
-}
-function savePlateName(name: string): void {
-  try {
-    if (name) window.localStorage.setItem(PLATE_NAME_KEY, name)
-    else window.localStorage.removeItem(PLATE_NAME_KEY)
-  } catch {
-    /* 存不下就只在这次打开里有效 */
-  }
-}
 
 /** 「YYYY · MM · DD」，按本机时区 */
 export function plateDate(sinceSeconds: number): string {
@@ -39,13 +21,23 @@ export function plateDate(sinceSeconds: number): string {
 export const plateSeat = (no: number): string => `NO. ${String(no).padStart(3, '0')} / ${SEATS}`
 
 /**
- * 创始会员铭牌（ADR 0193 / 维护者 2026-11-23）：深空钛、蚀刻字；名字可点一下改（只存本机），没填时刻「早期同行者」。
+ * 创始会员铭牌（ADR 0193 / 维护者 2026-11-23）：深空钛、蚀刻字；名字可点一下改（存在引擎的本机文件里，不上传），没填时刻「早期同行者」。
  * 只在授权令牌带创始标记时渲染（`LicenseRow` 判断）；创始身份是永久的，过期了铭牌也在。
  */
-export function FoundingPlate({ no, since }: { no: number; since: number }) {
+export function FoundingPlate({
+  no,
+  since,
+  name,
+  onName,
+}: {
+  no: number
+  since: number
+  /** 已刻的名字（引擎里的本机文件）；没刻 = 空串 */
+  name: string
+  onName: (name: string) => void
+}) {
   useTranslation('dialogs')
   const gid = useId().replace(/:/g, '')
-  const [name, setName] = useState(loadPlateName)
   const [editing, setEditing] = useState(false)
   const input = useRef<HTMLInputElement>(null)
   useEffect(() => {
@@ -57,9 +49,8 @@ export function FoundingPlate({ no, since }: { no: number; since: number }) {
 
   const commit = (raw: string) => {
     const next = raw.trim().slice(0, PLATE_NAME_MAX)
-    setName(next)
-    savePlateName(next)
     setEditing(false)
+    if (next !== name) onName(next)
   }
   const shown = name || st('defaultName')
   const label = st('label')

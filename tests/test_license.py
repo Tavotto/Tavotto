@@ -828,7 +828,7 @@ def test_status_carries_founding_when_the_signed_token_has_it(server):
     server.extra = dict(FOUNDING)
     activated(server)
     st = lic.status()
-    assert st["founding"] == {"no": 37, "since": 1_763_000_000}
+    assert st["founding"] == {"no": 37, "since": 1_763_000_000, "name": ""}
     assert st["state"] == "active"
     assert "37" not in json.dumps({k: v for k, v in st.items() if k != "founding"})
 
@@ -879,7 +879,7 @@ def test_founding_bounds_are_inclusive(server):
     for no in (1, 999):
         server.extra = {"founding_no": no, "founding_since": 1}
         lic.activate(CODE)
-        assert lic.status()["founding"] == {"no": no, "since": 1}
+        assert lic.status()["founding"] == {"no": no, "since": 1, "name": ""}
 
 
 def test_unsigned_founding_cannot_be_forged_by_editing_the_token(server):
@@ -892,3 +892,60 @@ def test_unsigned_founding_cannot_be_forged_by_editing_the_token(server):
 
     _rewrite(tamper)
     assert "founding" not in lic.status()
+
+
+# ---------------------------------------------------------------------------
+# 铭牌刻字：只存本机，不联网，不进令牌 / 诊断包
+# ---------------------------------------------------------------------------
+def test_plate_name_roundtrip_is_local_only_and_in_the_license_dir(server):
+    server.extra = dict(FOUNDING)
+    activated(server)
+    assert lic.status()["founding"]["name"] == ""
+    n = len(server.calls)
+    out = lic.set_plate_name("  林小雨  ")
+    assert out["founding"]["name"] == "林小雨" and lic.plate_name() == "林小雨"
+    assert len(server.calls) == n  # 零网络
+    p = lic._plate_path()
+    assert p.parent == lic._token_path().parent and p.parent.name == "license"
+    if os.name != "nt":
+        assert stat.S_IMODE(p.stat().st_mode) == 0o600
+    # 令牌文件里没有名字
+    assert "林小雨" not in lic._token_path().read_text(encoding="utf-8")
+    lic.set_plate_name("")
+    assert not p.exists() and lic.status()["founding"]["name"] == ""
+
+
+def test_plate_name_is_cleaned_and_capped(server):
+    server.extra = dict(FOUNDING)
+    activated(server)
+    lic.set_plate_name("a\n\tb\x00c" + "x" * 100)
+    got = lic.plate_name()
+    assert len(got) == lic.PLATE_NAME_MAX
+    assert "\n" not in got and "\x00" not in got and "\t" not in got
+    with pytest.raises(lic.LicenseError) as e:
+        lic.set_plate_name(123)  # type: ignore[arg-type]
+    assert e.value.code == "client_error"
+
+
+def test_plate_name_survives_release_and_reactivation_and_junk_file_is_empty(server):
+    server.extra = dict(FOUNDING)
+    activated(server)
+    lic.set_plate_name("林小雨")
+    lic.release()
+    assert lic.plate_name() == "林小雨"
+    lic._plate_path().write_text("{not json", encoding="utf-8")
+    assert lic.plate_name() == ""
+    lic._plate_path().write_text(json.dumps({"name": ["x"]}), encoding="utf-8")
+    assert lic.plate_name() == ""
+
+
+def test_plate_name_is_not_in_status_for_non_founders_and_route_is_gated(
+    server, monkeypatch, client
+):
+    activated(server)
+    lic.set_plate_name("路人")
+    assert "founding" not in lic.status()
+    r = client.post("/api/license/plate-name", json={"name": "林小雨"})
+    assert r.status_code == 200 and r.get_json()["ok"] is True
+    monkeypatch.setenv(lic.ENV_HARD_OFF, "1")
+    assert client.post("/api/license/plate-name", json={"name": "x"}).status_code == 404

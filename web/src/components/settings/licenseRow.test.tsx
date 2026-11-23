@@ -161,9 +161,8 @@ describe('付费功能的灰态', () => {
 
 
 describe('创始会员铭牌', () => {
-  const FOUNDER = { ...ACTIVE, founding: { no: 37, since: 1_763_000_000 } }
+  const FOUNDER = { ...ACTIVE, founding: { no: 37, since: 1_763_000_000, name: '' } }
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
-  beforeEach(() => window.localStorage.removeItem('tavotto.founding.plateName'))
 
   it('非创始会员：什么都不显示', async () => {
     vi.stubGlobal('fetch', vi.fn(() => json(ACTIVE)))
@@ -171,7 +170,7 @@ describe('创始会员铭牌', () => {
     expect(q('[data-founding-plate]')).toBeNull()
   })
 
-  it('创始会员：席位号 NO. 037 / 200，没填名字时用默认名；过期了铭牌还在', async () => {
+  it('创始会员：席位号 NO. 037 / 200，没刻名字时用默认名；过期了铭牌还在', async () => {
     vi.stubGlobal('fetch', vi.fn(() => json({ ...FOUNDER, state: 'expired', licensed: false })))
     await render()
     expect(q('[data-founding-plate]')).not.toBeNull()
@@ -179,30 +178,31 @@ describe('创始会员铭牌', () => {
     expect(q('[data-founding-name]')?.hasAttribute('data-default')).toBe(true)
   })
 
-  it('改名：只写本机存储、不发任何请求；清空回到默认名', async () => {
-    const fetchMock = vi.fn((_u: string, _i?: RequestInit) => json(FOUNDER))
+  it('改名：POST 到本机引擎的 plate-name（不碰 localStorage、不碰别的端点）；清空回到默认名', async () => {
+    let name = ''
+    const fetchMock = vi.fn((u: string, init?: RequestInit) => {
+      if (u.includes('/api/license/plate-name')) name = JSON.parse(String(init?.body)).name
+      return json({ ...FOUNDER, founding: { ...FOUNDER.founding, name } })
+    })
     vi.stubGlobal('fetch', fetchMock)
+    window.localStorage.clear()
     await render()
-    const before = fetchMock.mock.calls.length
-    await act(async () => q('[data-founding-name]')!.click())
-    const input = q('[data-founding-name-input]') as HTMLInputElement
-    await act(async () => {
-      setter.call(input, '  林小雨  ')
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+    const typeAndEnter = async (text: string) => {
+      await act(async () => q('[data-founding-name]')!.click())
+      const input = q('[data-founding-name-input]') as HTMLInputElement
+      await act(async () => {
+        setter.call(input, text)
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+    }
+    await typeAndEnter('  林小雨  ')
     expect(q('[data-founding-name]')?.textContent).toBe('林小雨')
-    expect(window.localStorage.getItem('tavotto.founding.plateName')).toBe('林小雨')
-    expect(fetchMock.mock.calls.length).toBe(before)
-    // 清空 → 回到默认名，存储里也删掉
-    await act(async () => q('[data-founding-name]')!.click())
-    const again = q('[data-founding-name-input]') as HTMLInputElement
-    await act(async () => {
-      setter.call(again, '')
-      again.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    await act(async () => again.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+    const posts = fetchMock.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === 'POST')
+    expect(posts.map((c) => new URL(String(c[0]), 'http://x').pathname)).toEqual(['/api/license/plate-name'])
+    expect(JSON.parse(String((posts[0][1] as RequestInit).body))).toEqual({ name: '林小雨' })
+    expect(window.localStorage.length).toBe(0)
+    await typeAndEnter('')
     expect(q('[data-founding-name]')?.hasAttribute('data-default')).toBe(true)
-    expect(window.localStorage.getItem('tavotto.founding.plateName')).toBeNull()
   })
 })

@@ -457,6 +457,59 @@ def _founding_of(payload: dict) -> dict | None:
         return None
 
 
+# ---------------------------------------------------------------------------
+# 铭牌刻字（只存本机）
+# ---------------------------------------------------------------------------
+PLATE_FILE = "plate.json"
+PLATE_NAME_MAX = 24
+
+
+def _plate_path():
+    # 放在 `license/` 里：这个目录整个不进诊断包 / 遥测，名字绝不出机
+    return config.data_path(DIR_NAME, PLATE_FILE)
+
+
+def _clean_plate_name(raw: object) -> str:
+    if not isinstance(raw, str):
+        return ""
+    text = "".join(ch for ch in raw if ch.isprintable() or ch == " ")
+    return " ".join(text.split())[:PLATE_NAME_MAX]
+
+
+def plate_name() -> str:
+    """用户刻在铭牌上的名字；没有 / 文件坏了 = 空串。永不抛。"""
+    with _STORE_LOCK:
+        try:
+            rec = json.loads(_plate_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return ""
+    return _clean_plate_name(rec.get("name")) if isinstance(rec, dict) else ""
+
+
+def set_plate_name(name: object) -> dict:
+    """刻名字（空串 = 清掉，回到默认）。只写本机文件，不联网；返回新的 `status()`。"""
+    _target()  # 入口没开：404
+    if not isinstance(name, str):
+        raise LicenseError("client_error")
+    clean = _clean_plate_name(name)
+    p = _plate_path()
+    with _STORE_LOCK:
+        try:
+            if clean:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                atomicio.write_bytes(
+                    p,
+                    json.dumps({"v": 1, "name": clean}, ensure_ascii=False).encode("utf-8"),
+                    mode=0o600,
+                )
+            else:
+                p.unlink(missing_ok=True)
+        except OSError:
+            LOG.warning("高级版授权: 铭牌名字写入失败")
+            raise LicenseError("client_error") from None
+    return {"ok": True, **status()}
+
+
 def status() -> dict:
     """给前端的摘要（**不联网**）；不含令牌原文与设备密钥。`state`：none / active / expired / revoked / lapsed（过了断网宽限或
     令牌对不上，需要联网刷新）。创始会员另带 `founding: {no, since}`（吊销时没有）。"""
@@ -482,7 +535,7 @@ def status() -> dict:
         # 创始身份是永久的：active / expired / lapsed 都给，吊销（state 记为 revoked）不给；形状不对当没有
         founding = _founding_of(payload) if state != "revoked" else None
         if founding is not None:
-            out["founding"] = founding
+            out["founding"] = {**founding, "name": plate_name()}
         if state != "ok":
             out["state"] = state
         elif now >= payload["exp"]:

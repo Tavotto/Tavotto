@@ -50,7 +50,7 @@ export function LicenseRow() {
   const status = useLicenseStore((s) => s.status)
   const failure = useLicenseStore((s) => s.failure)
   const busy = useLicenseStore((s) => s.busy)
-  const { load, activate, refresh, release, buy, clearFailure } = useLicenseStore.getState()
+  const { load, activate, refresh, release, buy, setPlateName, clearFailure } = useLicenseStore.getState()
   const [entering, setEntering] = useState(false)
   const [code, setCode] = useState('')
   /** 上一次联网做的是哪一件：失败后的「重试」重做那一件，不拿刷新顶替解绑（Codex #2071 P2） */
@@ -229,7 +229,12 @@ export function LicenseRow() {
               />
             ) : status.founding ? (
               <div className="mt-1 flex flex-wrap items-end gap-x-5 gap-y-2">
-                <FoundingPlate no={status.founding.no} since={status.founding.since} />
+                <FoundingPlate
+                  no={status.founding.no}
+                  since={status.founding.since}
+                  name={status.founding.name}
+                  onName={(n) => void setPlateName(n)}
+                />
                 <span className="type-caption text-ink-3">{st('plate.thanks', { product: PRODUCT_NAME })}</span>
               </div>
             ) : undefined
