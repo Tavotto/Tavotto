@@ -85,14 +85,14 @@ describe('bar-baseline-truncated：真 worker 的 bar_baseline', () => {
     const one = (title: string) => hitsOf(SNAPSHOT.elements.filter((e) => e.title === title))[0]
     setLocale('zh-CN')
     expect(formatMessage(one('cut').message)).toBe(
-      '柱子从 0 起，纵轴却只显示 4 到 9，柱长不再和数值成比例',
+      '柱子从 0 画起，但纵轴只显示 4 到 9，0 不在图里，每根柱子都被切掉一截，高矮看起来和数值不成比例了',
     )
     expect(formatMessage(one('barh_cut').message)).toBe(
-      '柱子从 0 起，横轴却只显示 4 到 9，柱长不再和数值成比例',
+      '柱子从 0 画起，但横轴只显示 4 到 9，0 不在图里，每根柱子都被切掉一截，长短看起来和数值不成比例了',
     )
     setLocale('en-US')
     expect(formatMessage(one('cut').message)).toBe(
-      'The bars start at 0, but the vertical axis only shows 4 to 9, so bar lengths no longer match the values',
+      'The bars are drawn from 0, but the vertical axis only shows 4 to 9, so 0 is off the plot and every bar is cut short: bar heights no longer match the values',
     )
     setLocale('zh-CN')
   })

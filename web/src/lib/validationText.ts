@@ -121,8 +121,6 @@ const VALUES: Record<
   'discouraged-colormap': { current: 'cmap', expected: 'recommended' },
   'unapplied-override': { current: 'count' },
   'log-axis-nonpositive': { current: 'count' },
-  // 当前值 = 被越过的那一端（多数是轴的起点）。不写「要求」：从 0 起还是改点图由作者定，不替他选
-  'bar-baseline-truncated': { current: 'edge' },
   // 「当前值」是真正画出汉字的那张脸（回退链接手时 ≠ 正文族，ADR 0045）
   'cjk-fallback-missing': { current: 'face' },
   'axis-label-format': { current: 'label', expected: 'want' },

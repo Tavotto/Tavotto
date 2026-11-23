@@ -809,8 +809,9 @@ def _check_bar_baseline_truncated(
             word = "纵轴" if dim == "y" else "横轴"
             sink.add(
                 "bar-baseline-truncated",
-                f"柱子从 {_axis_num(base)} 起，{word}却只显示 {_axis_num(lo)} 到 {_axis_num(hi)}，"
-                "柱长不再和数值成比例",
+                f"柱子从 {_axis_num(base)} 画起，但{word}只显示 {_axis_num(lo)} 到 {_axis_num(hi)}，"
+                f"{_axis_num(base)} 不在图里，每根柱子都被切掉一截，"
+                f"{'高矮' if dim == 'y' else '长短'}看起来和数值不成比例了",
                 message=(
                     f"barBaselineTruncated{dim.upper()}",
                     {

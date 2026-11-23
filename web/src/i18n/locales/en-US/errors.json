@@ -947,8 +947,8 @@
   },
   "preflight": {
     "axisLabelFormat": "The axis title “{{label}}” isn't in the profile's “{{want}}” form.",
-    "barBaselineTruncatedX": "The bars start at {{baseline}}, but the horizontal axis only shows {{low}} to {{high}}, so bar lengths no longer match the values",
-    "barBaselineTruncatedY": "The bars start at {{baseline}}, but the vertical axis only shows {{low}} to {{high}}, so bar lengths no longer match the values",
+    "barBaselineTruncatedX": "The bars are drawn from {{baseline}}, but the horizontal axis only shows {{low}} to {{high}}, so {{baseline}} is off the plot and every bar is cut short: bar lengths no longer match the values",
+    "barBaselineTruncatedY": "The bars are drawn from {{baseline}}, but the vertical axis only shows {{low}} to {{high}}, so {{baseline}} is off the plot and every bar is cut short: bar heights no longer match the values",
     "barWithoutErrorbar": "The bar chart has no error bars. If the bars are means of repeated measurements, the profile expects the error shown.",
     "cjkFallbackMissing": "Text with CJK characters uses {{family}} with no CJK fallback declared. It exports as boxes in the PDF.",
     "cjkFallbackUnaccepted": "Text with CJK characters is drawn by {{face}} (body font {{family}}), not among the CJK fonts the profile accepts.",
