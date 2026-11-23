@@ -3546,29 +3546,22 @@ function ScriptSkipped({ report }: { report: ExportScriptReport }) {
  * 解读只有 `lib/artifactInspection.inspectionState()` 一份。核验过、没核验都不画：用户不需要理解这些，
  * 「未核验不显示绿」照样成立（2026-11-06 用户：用户不需要理解的东西不用放上去）。
  *
- * 成品字号（ADR 0201）是唯一带数的一项：失败时它在这一行里说「最小的字多小、规范要多少」，不再只报名字；
- * 有规范却因公式画成轮廓量不全时，同一个位置一行灰字说明原因（`textSizeNote()`），别的 unknown 照旧不说。
+ * 成品字号（ADR 0201）是唯一带数的一项：失败时它在这一行里说「最小的字多小、规范要多少」，不再只报名字
+ * （`textSizeNote()`）；它的 unknown 与别的 unknown 一样不说。
  */
 function InspectionLine({ manifest }: { manifest: ExportOutput["manifest"] }) {
   useTranslation("dialogs");
   const state = inspectionState(manifest);
+  if (state.tone !== "failed") return null;
   const sizeNote = textSizeNote(manifest);
-  if (state.tone !== "failed") {
-    if (sizeNote?.kind !== "unmeasured") return null;
-    return (
-      <p data-inspection="text-size-unmeasured" className="type-caption">
-        {ex("inspection.textSizeUnmeasured")}
-      </p>
-    );
-  }
-  const named = sizeNote?.kind === "below" ? state.failed.filter((k) => k !== "text_size") : state.failed;
+  const named = sizeNote ? state.failed.filter((k) => k !== "text_size") : state.failed;
   const parts = [
     named.length
       ? ex("inspection.failedItems", {
           items: named.map((k) => ex(`inspection.check.${k}`, { defaultValue: k })).join("、"),
         })
       : null,
-    sizeNote?.kind === "below" ? ex("inspection.textSizeBelow", { min: sizeNote.min, floor: sizeNote.floor }) : null,
+    sizeNote ? ex("inspection.textSizeBelow", { min: sizeNote.min, floor: sizeNote.floor }) : null,
   ].filter((x): x is string => x !== null);
   return (
     <p

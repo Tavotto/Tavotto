@@ -1625,8 +1625,8 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     expect(badge()?.className).toContain('text-danger')
   })
 
-  // 成品实测字号（ADR 0201）：唯一带数的一项——失败时说出界面上显示的两个数；公式量不全时一行灰字；
-  // 通过与「没规范只记录」都不画
+  // 成品实测字号（ADR 0201）：唯一带数的一项——失败时说出界面上显示的两个数；
+  // 通过、没规范（not_applicable）、量不全（unknown）都不画（核验只说失败，2026-11-06）
   const sized = (verdict: string, textSize: Record<string, unknown> | undefined) => ({
     ...manifest({ integrity: 'verified', size: 'verified', text_size: verdict }),
     ...(textSize ? { text_size: textSize } : {}),
@@ -1662,20 +1662,11 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     expect(badge()?.textContent).toBe('核验未通过：字号')
   })
 
-  it('有规范却因公式轮廓量不全：一行灰字说原因，不是红', async () => {
-    jobOutputs = [output(sized('unknown', { reason: 'unmeasured_runs', min_pt: 9, floor_pt: 6 }))]
-    await setup(9)
-    await click(button('开始导出')!)
-    await openResultDetail()
-    expect(badge()?.dataset.inspection).toBe('text-size-unmeasured')
-    expect(badge()?.textContent).toBe('有文字画成了轮廓（比如公式），量不到它的字号')
-    expect(badge()?.className).not.toContain('text-danger')
-  })
-
   it.each([
     ['verified', { reason: 'ok', min_pt: 7, floor_pt: 6 }],
-    ['unknown', { reason: 'no_threshold', min_pt: 4.9, floor_pt: null }],
-  ] as const)('字号 %s（通过 / 没有规范只记录）：都不画', async (verdict, ts) => {
+    ['not_applicable', { reason: 'no_threshold', min_pt: 4.9, floor_pt: null }],
+    ['unknown', { reason: 'unmeasured_runs', min_pt: 9, floor_pt: 6 }],
+  ] as const)('字号 %s（通过 / 没有规范 / 公式量不全）：都不画', async (verdict, ts) => {
     jobOutputs = [output(sized(verdict, ts))]
     await setup(9)
     await click(button('开始导出')!)

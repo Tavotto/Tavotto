@@ -1052,8 +1052,7 @@ export default interface Resources {
           "text_size": "字号"
         },
         "failedItems": "核验未通过：{{items}}",
-        "textSizeBelow": "成品里最小的文字是 {{min}} pt，低于规范的 {{floor}} pt",
-        "textSizeUnmeasured": "有文字画成了轮廓（比如公式），量不到它的字号"
+        "textSizeBelow": "成品里最小的文字是 {{min}} pt，低于规范的 {{floor}} pt"
       },
       "jobLost": "这次导出在中途中断。部分文件可能已写出，请检查导出文件夹或重新导出。",
       "journalDpi": "{{journal}} 要求（dpi）\n{{detail}}",

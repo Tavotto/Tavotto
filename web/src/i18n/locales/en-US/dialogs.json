@@ -332,8 +332,7 @@
         "raster_density": "pixel density",
         "text_size": "text size"
       },
-      "textSizeBelow": "The smallest text in the file is {{min}} pt, below the {{floor}} pt the spec asks for",
-      "textSizeUnmeasured": "Some text is drawn as outlines (formulas, for example), so its size can't be measured"
+      "textSizeBelow": "The smallest text in the file is {{min}} pt, below the {{floor}} pt the spec asks for"
     },
     "cancelPending": "Requesting cancellation…",
     "cancelRequested": "Cancellation requested",

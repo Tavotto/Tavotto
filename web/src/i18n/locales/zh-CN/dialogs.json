@@ -321,8 +321,7 @@
         "raster_density": "像素密度",
         "text_size": "字号"
       },
-      "textSizeBelow": "成品里最小的文字是 {{min}} pt，低于规范的 {{floor}} pt",
-      "textSizeUnmeasured": "有文字画成了轮廓（比如公式），量不到它的字号"
+      "textSizeBelow": "成品里最小的文字是 {{min}} pt，低于规范的 {{floor}} pt"
     },
     "cancelPending": "正在请求取消…",
     "cancelRequested": "已请求取消",

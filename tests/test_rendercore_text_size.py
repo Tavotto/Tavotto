@@ -239,8 +239,10 @@ def test_no_reader_no_threshold_and_no_text_are_each_their_own_answer(tmp_path):
     )
     assert I.text_size_verdict(probe_only, 5.0) == ("unknown", "no_reader")
     seen = {"text_size": _facts(_pdf(tmp_path, b"BT /F1 9 Tf (a) Tj ET", name="b.pdf"))}
+    # 没有下限 = 没被要求检查：not_applicable，连没量成的观测也一样（不让普通导出降成「未核验」）
     for no_floor in (None, 0, 0.0, float("nan"), "x"):
-        assert I.text_size_verdict(seen, no_floor) == ("unknown", "no_threshold"), no_floor
+        assert I.text_size_verdict(seen, no_floor) == ("not_applicable", "no_threshold"), no_floor
+        assert I.text_size_verdict(probe_only, no_floor) == ("not_applicable", "no_threshold")
     empty = {"text_size": _facts(_pdf(tmp_path, b"0 0 10 10 re f", name="c.pdf"))}
     assert empty["text_size"]["status"] == "none"
     assert I.text_size_verdict(empty, 5.0) == ("not_applicable", "no_text")
@@ -281,7 +283,12 @@ def _strict_ok_pdf(tmp_path, content: bytes, *, name="ok.pdf"):
     return out
 
 
-_OK_PLAN = {"page_pt": [200, 200], "vector": True, "text": ["a", "b"], "object_boxes": []}
+_OK_PLAN = {
+    "page_pt": [200, 200],
+    "vector": True,
+    "text": ["a", "b"],
+    "object_boxes": [{"id": "t1", "bbox": [10, 10, 50, 30]}],
+}
 
 
 @pytest.mark.parametrize("policy", ["standard", "strict"])
@@ -334,16 +341,41 @@ def test_the_four_verdicts_through_inspect(tmp_path):
         {"reason": "ok", "min_pt": 7.0, "floor_pt": 6.0},
     )
     assert verdict(b"BT /F1 7 Tf (a) Tj /F1 4.9 Tf (b) Tj ET", floor, "f.pdf")[0] == "failed"
-    # 下限是 0（中性底 journal-base-v1）/ 没给规范（standard）：unknown，不是 verified
+    # 下限是 0（中性底 journal-base-v1）/ 没给规范（standard）：没被要求检查 → not_applicable，
+    # 不是 verified、也不是 unknown——连 4 pt 的字也不判
     for i, prof in enumerate(({"min_effective_font_size_pt": 0.0}, None, {})):
-        got = verdict(b"BT /F1 7 Tf (a) Tj ET", prof, f"n{i}.pdf")
-        assert got == ("unknown", {"reason": "no_threshold", "min_pt": 7.0, "floor_pt": None})
+        got = verdict(b"BT /F1 4 Tf (a) Tj ET", prof, f"n{i}.pdf")
+        assert got == (
+            "not_applicable",
+            {"reason": "no_threshold", "min_pt": 4.0, "floor_pt": None},
+        )
     assert verdict(b"0 0 10 10 re f", floor, "e.pdf") == (
         "not_applicable",
         {"reason": "no_text", "min_pt": None, "floor_pt": None},
     )
     # 容差是调用方的：5.996 对 6 pt 在 0.005 的容差里
     assert verdict(b"BT /F1 5.996 Tf (a) Tj ET", floor, "t.pdf")[0] == "verified"
+
+
+def test_a_standard_all_green_pdf_keeps_its_overall_verdict(tmp_path):
+    """ADR 0201 §1：standard 不带规范时，原本每一项 verified / n/a 的 PDF，加了这一项之后 summary 的
+    总体结论不变——没有任何一项 unknown、verdict 仍 accepted、`optional_unknown` 仍为空；公式轮廓
+    （量不了的段）在没有下限时同样不让它降级。"""
+    for name, body in (
+        ("g.pdf", b"BT /F1 2 Tf (a) Tj /F1 9 Tf (b) Tj ET"),
+        ("h.pdf", b"BT /F1 9 Tf (a) Tj ET BT 3 Tr /F1 9 Tf (b) Tj 0 Tr ET"),
+    ):
+        m = I.inspect(_strict_ok_pdf(tmp_path, body, name=name), "pdf", plan=_OK_PLAN)
+        s = I.summary(m)
+        assert s["checks"]["text_size"] == "not_applicable", name
+        assert "unknown" not in s["checks"].values() and "failed" not in s["checks"].values()
+        before = {k: v for k, v in s["checks"].items() if k != "text_size"}
+        assert (
+            set(before.values()) <= {"verified", "not_applicable"} and "verified" in before.values()
+        )
+        assert s["verdict"] == "accepted"
+        assert m["policy"]["optional_unknown"] == [] and m["policy"]["optional_failed"] == []
+        assert not any("字号" in n or "pt" in n for n in s["notes"]), s["notes"]
 
 
 def test_tavotto_formula_outlines_with_a_hidden_text_layer_are_unknown(tmp_path):

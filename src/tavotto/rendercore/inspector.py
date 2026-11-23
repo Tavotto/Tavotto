@@ -27,7 +27,7 @@
   （含 Form 的 `/Matrix`）的纵向缩放 × 页面 `/UserUnit`；Form 继承调用处的字体 / 字号 / 渲染模式（画完不带回）。数学上下标在这里就是一段更小的 `Tf`（matplotlib 的 mathtext 约 0.7 倍），
   面板被缩放摆上版面也已经乘在 CTM 里。检查项 `text_size`（ADR 0201）：阈值是调用方交进来的出版规范的
   `min_effective_font_size_pt`、容差是 `inspect(text_size_tol_pt=…)`（这里不写任何 pt 数），判据本体是
-  `text_size_verdict()`；没有下限一律 `unknown`；两档政策里都**不是**必需项（failed 只写进说明，不拦导出）。
+  `text_size_verdict()`；没有下限是 `not_applicable`（没被要求检查），有下限却量不了才是 `unknown`；两档政策里都**不是**必需项（failed 只写进说明，不拦导出）。
   量不了的不冒充量过：不画只进文本层的文字（渲染模式 3 / 7，画出来的是轮廓）、没有字体或矩阵退化的段、FontMatrix 不是千分之一的 Type 3 各自计数；预算耗尽 / 没有读取器整项 `unknown`。画成轮廓又不带
   文本层的字在内容流里与普通路径无法区分，这一种量不到也数不到。
 * 文字层的判据是「期望的每一行都能从 ToUnicode（或 ActualText）抽回来」——ToUnicode 存在 ≠ 映射正确，所以比的是**抽出来的
@@ -784,19 +784,23 @@ def text_size_verdict(
     「量到的都够大」只有在**没有量不了的段**时才算 `verified`，否则是 `unknown`：不画只进文本层的字（画出来的是
     轮廓）、em 不明的 Type 3、退化矩阵，都可能藏着更小的字。
 
+    **没有下限 = 这一项没被要求检查 → `not_applicable`**（ADR 0201 §1），不是 `unknown`：standard 档不带规范，
+    中性底的下限是 0，让它们记 unknown 会把原本全 verified 的普通导出整份降成「未核验」。`unknown` 只留给
+    「有下限却量不了」（预算耗尽 / 没有读取器 / 量不了的段）；文件打不开由 `_check_pdf` 的完整性分支整项 unknown。
+
     原因码（闭集）：`below_min` / `ok` / `no_threshold` / `not_observed` / `budget` / `no_text` / `unmeasured_runs`。
     """
-    facts = observed.get("text_size") if isinstance(observed, dict) else None
-    if not isinstance(facts, dict):
-        return UNKNOWN, "not_observed"
-    if facts.get("status") == UNKNOWN:
-        return UNKNOWN, str(facts.get("reason") or "budget")
     try:
         floor = float(min_pt) if min_pt is not None else 0.0
     except (TypeError, ValueError):
         floor = 0.0
     if not (math.isfinite(floor) and floor > 0):
-        return UNKNOWN, "no_threshold"
+        return NOT_APPLICABLE, "no_threshold"
+    facts = observed.get("text_size") if isinstance(observed, dict) else None
+    if not isinstance(facts, dict):
+        return UNKNOWN, "not_observed"
+    if facts.get("status") == UNKNOWN:
+        return UNKNOWN, str(facts.get("reason") or "budget")
     unmeasured = int(facts.get("hidden_runs") or 0) + int(facts.get("unsized_runs") or 0)
     smallest = facts.get("min_pt")
     if smallest is not None and float(smallest) < floor - tol_pt:

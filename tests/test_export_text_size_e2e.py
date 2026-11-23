@@ -5,7 +5,7 @@
 `Tf × 文字矩阵 × 累计 CTM`——期望值按「字号 × 上下标比例 × 版面缩放」算，不写死。
 
 阈值只从出版规范来：strict + `free-form-v1`（下限 6 pt）时正文 7 pt 过、上标不过 → failed，且**不拦**导出
-（两档政策都不把它当必需项）；standard 没有规范 → unknown（`no_threshold`）。
+（两档政策都不把它当必需项）；standard 没有规范 → not_applicable（`no_threshold`：没被要求检查，不让整份降成「未核验」）。
 """
 
 from __future__ import annotations
@@ -163,13 +163,15 @@ def test_the_layout_scale_is_part_of_the_reading(project):
 
 
 def test_without_a_profile_the_reading_is_unknown(project):
-    """standard 不带规范：量到了也只记录不判（`no_threshold`），不是 verified。"""
+    """standard 不带规范：量到了也只记录不判（`no_threshold`）→ not_applicable，不是 verified 也不是
+    unknown；其余各项与改动前一样全 verified / n/a，整份不因这一项降成「未核验」。"""
     _m, client, _figs = project
     out, _body = _export(client, "Std", _title_patch(client), scale=1.0)
     mf = out["manifest"]
     print("E2E standard:", json.dumps({k: mf[k] for k in ("checks", "verdict", "text_size")}))
     assert out["status"] == "done"
-    assert mf["checks"]["text_size"] == "unknown"
+    assert mf["checks"]["text_size"] == "not_applicable"
+    assert "unknown" not in mf["checks"].values() and mf["verdict"] == "accepted"
     assert mf["text_size"]["reason"] == "no_threshold" and mf["text_size"]["floor_pt"] is None
     assert mf["text_size"]["min_pt"] == pytest.approx(BODY_PT * SCRIPT_SHRINK, abs=0.011)
 

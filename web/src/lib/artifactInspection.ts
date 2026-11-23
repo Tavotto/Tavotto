@@ -55,17 +55,11 @@ export const CHECK_NAMES = [
 ] as const
 
 /**
- * 成品实测字号（`checks.text_size`，ADR 0201）那一项要说的一句话：
- *
- * * `below`：失败时用界面上会显示的两个数说清「最小的字多小、规范要多少」；
- * * `unmeasured`：有规范下限，但有文字画成了轮廓（Tavotto 的公式）或 em 不明，量不全——单说一句，免得用户
- *   以为出了错；
- * * 其余（通过、没规范、老服务端没带 `text_size`）→ `null`：不说话。通过与「没规范只记录」都不上界面
- *   （核验只说失败，2026-11-06 用户）。
+ * 成品实测字号（`checks.text_size`，ADR 0201）失败时要说的那一句话：用界面上会显示的两个数说清「最小的字
+ * 多小、规范要多少」。其余（通过、没规范、量不全、老服务端没带 `text_size`）→ `null`：不说话——核验只说
+ * 失败（2026-11-06 用户），失败了而老服务端没带读数时界面退回只报名字。
  */
-export type TextSizeNote =
-  | { kind: 'below'; min: string; floor: string }
-  | { kind: 'unmeasured' }
+export type TextSizeNote = { kind: 'below'; min: string; floor: string }
 
 export function textSizeNote(manifest: ArtifactManifestSummary | null | undefined): TextSizeNote | null {
   const verdict = manifest?.checks?.text_size
@@ -74,7 +68,6 @@ export function textSizeNote(manifest: ArtifactManifestSummary | null | undefine
   if (verdict === 'failed' && ts.reason === 'below_min' && isNum(ts.min_pt) && isNum(ts.floor_pt)) {
     return { kind: 'below', ...ptPair(ts.min_pt, ts.floor_pt) }
   }
-  if (verdict === 'unknown' && ts.reason === 'unmeasured_runs') return { kind: 'unmeasured' }
   return null
 }
 
