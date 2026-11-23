@@ -323,8 +323,14 @@ def test_builtin_public_keys_take_precedence_over_the_test_key(server, monkeypat
     assert lic.has("review-plus") is True
 
 
-def test_production_public_keys_start_empty():
-    assert lic.PUBLIC_KEYS == {}  # 正式签名密钥还没有；加了要同步 ADR / 发版
+def test_production_public_keys_are_pinned():
+    # 只有正式 kid；测试密钥的公钥绝不进这张表（ADR 0193 §七）。换 / 加 kid 要同步 ADR 与发版
+    assert set(lic.PUBLIC_KEYS) == {"live-2026-11"}
+    assert all(len(v) == 32 for v in lic.PUBLIC_KEYS.values())
+    assert (
+        lic.PUBLIC_KEYS["live-2026-11"].hex()
+        == "c4e27e8827e05bd65a60243f3e176dfa93fe923ff8ee91d7b8937be1e8857056"
+    )
 
 
 # ---------------------------------------------------------------------------
