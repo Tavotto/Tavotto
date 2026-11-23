@@ -1171,6 +1171,374 @@
      "group": "species"
     }
    }
+  },
+  {
+   "id": "HO-25",
+   "title": "每列一个处理组：对照 / 药物 A / 药物 B，没有样品名列",
+   "tier": "hard",
+   "tags": [
+    "cols-as-groups",
+    "no-label-col"
+   ],
+   "tables": {
+    "t.csv": "ctrl,drugA,drugB\n95.8,100.8,75.7\n102.5,75.6,71.8\n94.7,91.6,71.9\n94.0,81.3,81.4\n92.5,79.6,76.5\n96.2,86.8,65.4\n86.2,93.2,70.4\n96.0,81.4,72.1\n112.7,81.0,72.9\n90.5,68.6,72.2\n104.8,75.2,80.3\n96.0,84.9,70.5\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "ctrl": "measure",
+    "drugA": "measure",
+    "drugB": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "ctrl",
+     "drugA",
+     "drugB"
+    ],
+    "group": null
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "ctrl",
+      "role": "measure"
+     },
+     {
+      "name": "drugA",
+      "role": "measure"
+     },
+     {
+      "name": "drugB",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "ctrl",
+      "drugA",
+      "drugB"
+     ],
+     "x": "none",
+     "group": "none"
+    }
+   }
+  },
+  {
+   "id": "HO-26",
+   "title": "每行一个菌株编号 + run1..run4 四次重复",
+   "tier": "hard",
+   "tags": [
+    "rep-wide",
+    "unique-names"
+   ],
+   "tables": {
+    "t.csv": "isolate,run1,run2,run3,run4\nI-01,5.29,5.67,5.22,5.12\nI-02,4.92,4.16,5.33,4.87\nI-03,4.75,4.93,5.39,5.94\nI-04,5.32,5.0,5.32,5.27\nI-05,5.79,5.95,5.45,4.69\nI-06,5.03,5.19,5.36,4.86\nI-07,5.0,5.47,5.07,5.13\nI-08,5.18,5.08,5.46,5.72\nI-09,4.88,4.55,5.18,5.31\nI-10,5.45,4.68,4.79,5.87\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "isolate": "row_id",
+    "run1": "measure",
+    "run2": "measure",
+    "run3": "measure",
+    "run4": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "run1",
+     "run2",
+     "run3",
+     "run4"
+    ],
+    "group": null
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "isolate",
+      "role": "row_id"
+     },
+     {
+      "name": "run1",
+      "role": "measure"
+     },
+     {
+      "name": "run2",
+      "role": "measure"
+     },
+     {
+      "name": "run3",
+      "role": "measure"
+     },
+     {
+      "name": "run4",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "run1",
+      "run2",
+      "run3",
+      "run4"
+     ],
+     "x": "none",
+     "group": "none"
+    }
+   }
+  },
+  {
+   "id": "HO-27",
+   "title": "中文：每列一个剂量组，没有编号列",
+   "tier": "hard",
+   "tags": [
+    "cols-as-groups",
+    "cjk"
+   ],
+   "tables": {
+    "t.csv": "对照,低剂量,中剂量,高剂量\n48.7,41.7,33.6,24.1\n49.4,39.8,33.2,25.4\n46.3,38.9,35.0,24.3\n49.0,41.1,30.9,23.0\n47.2,41.3,31.0,30.8\n49.2,44.8,29.7,22.1\n50.0,45.3,33.5,26.3\n49.5,42.4,36.2,19.2\n48.7,38.5,33.0,26.0\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "对照": "measure",
+    "低剂量": "measure",
+    "中剂量": "measure",
+    "高剂量": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "对照",
+     "低剂量",
+     "中剂量",
+     "高剂量"
+    ],
+    "group": null
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "对照",
+      "role": "measure"
+     },
+     {
+      "name": "低剂量",
+      "role": "measure"
+     },
+     {
+      "name": "中剂量",
+      "role": "measure"
+     },
+     {
+      "name": "高剂量",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "对照",
+      "低剂量",
+      "中剂量",
+      "高剂量"
+     ],
+     "x": "none",
+     "group": "none"
+    }
+   }
+  },
+  {
+   "id": "HO-28",
+   "title": "八个品系各一列，每列 6 次测量",
+   "tier": "hard",
+   "tags": [
+    "cols-as-groups",
+    "many-cols"
+   ],
+   "tables": {
+    "t.csv": "WT,KO1,KO2,KO3,KO4,OE1,OE2,OE3\n5.98,3.93,4.39,4.75,3.76,6.45,7.44,7.13\n5.92,4.53,4.27,4.28,4.27,7.46,7.33,7.09\n6.13,4.26,3.65,3.87,4.13,6.66,8.25,7.8\n6.34,3.81,3.46,4.62,3.64,6.62,7.39,7.51\n5.78,3.53,3.55,3.94,3.71,6.9,8.84,7.97\n6.31,3.72,3.16,4.86,3.92,6.83,7.17,7.14\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "WT": "measure",
+    "KO1": "measure",
+    "KO2": "measure",
+    "KO3": "measure",
+    "KO4": "measure",
+    "OE1": "measure",
+    "OE2": "measure",
+    "OE3": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "WT",
+     "KO1",
+     "KO2",
+     "KO3",
+     "KO4",
+     "OE1",
+     "OE2",
+     "OE3"
+    ],
+    "group": null
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "WT",
+      "role": "measure"
+     },
+     {
+      "name": "KO1",
+      "role": "measure"
+     },
+     {
+      "name": "KO2",
+      "role": "measure"
+     },
+     {
+      "name": "KO3",
+      "role": "measure"
+     },
+     {
+      "name": "KO4",
+      "role": "measure"
+     },
+     {
+      "name": "OE1",
+      "role": "measure"
+     },
+     {
+      "name": "OE2",
+      "role": "measure"
+     },
+     {
+      "name": "OE3",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "WT",
+      "KO1",
+      "KO2",
+      "KO3",
+      "KO4",
+      "OE1",
+      "OE2",
+      "OE3"
+     ],
+     "x": "none",
+     "group": "none"
+    }
+   }
+  },
+  {
+   "id": "HO-29",
+   "title": "反例：身高与体重是两种不同的量，每行一个人",
+   "tier": "plain",
+   "tags": [
+    "different-quantities"
+   ],
+   "tables": {
+    "t.csv": "height_cm,weight_kg\n184.0,70.7\n173.0,58.7\n156.0,56.1\n168.0,63.9\n164.0,45.0\n168.0,55.6\n167.0,61.5\n164.0,59.9\n164.0,60.6\n167.0,60.2\n181.0,68.3\n182.0,79.0\n155.0,49.6\n178.0,70.6\n182.0,75.4\n172.0,64.7\n157.0,48.5\n168.0,68.0\n150.0,44.2\n164.0,57.0\n"
+   },
+   "hint": null,
+   "control": true,
+   "roles": {
+    "height_cm": "ordered_x",
+    "weight_kg": "measure"
+   },
+   "expect_default": {
+    "x": "height_cm",
+    "y": [
+     "weight_kg"
+    ],
+    "group": null
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "height_cm",
+      "role": "ordered_x"
+     },
+     {
+      "name": "weight_kg",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "weight_kg"
+     ],
+     "x": "height_cm",
+     "group": "none"
+    }
+   }
+  },
+  {
+   "id": "HO-30",
+   "title": "酶活：三个浓度各一列、长短不一（有空格子），带孔位名",
+   "tier": "hard",
+   "tags": [
+    "cols-as-groups",
+    "ragged",
+    "unit-suffix"
+   ],
+   "tables": {
+    "t.csv": "well,ctrl_mM,low_mM,high_mM\nW01,1.71,2.33,3.34\nW02,2.0,2.35,3.74\nW03,2.17,2.91,3.43\nW04,2.05,2.27,3.65\nW05,1.96,2.66,3.66\nW06,1.82,2.63,3.38\nW07,2.17,2.5,3.47\nW08,1.93,2.89,3.01\nW09,1.74,,2.85\nW10,2.13,,\n"
+   },
+   "hint": null,
+   "control": false,
+   "roles": {
+    "well": "row_id",
+    "ctrl_mM": "measure",
+    "low_mM": "measure",
+    "high_mM": "measure"
+   },
+   "expect_default": {
+    "x": null,
+    "y": [
+     "ctrl_mM",
+     "low_mM",
+     "high_mM"
+    ],
+    "group": null
+   },
+   "model_answer": {
+    "columns": [
+     {
+      "name": "well",
+      "role": "row_id"
+     },
+     {
+      "name": "ctrl_mM",
+      "role": "measure"
+     },
+     {
+      "name": "low_mM",
+      "role": "measure"
+     },
+     {
+      "name": "high_mM",
+      "role": "measure"
+     }
+    ],
+    "picks": {
+     "y": [
+      "ctrl_mM",
+      "low_mM",
+      "high_mM"
+     ],
+     "x": "none",
+     "group": "none"
+    }
+   }
   }
  ]
 }
