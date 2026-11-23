@@ -1587,6 +1587,57 @@ def _id_name(name: str) -> bool:
     return any(w in name for w in _ID_CJK)
 
 
+#: 列名里「这是误差量」的词 → 它是哪一种（`unknown` = 是误差量、但名字没说是哪种）。强词单独出现就算；弱词（`std` / `se` / `err` / `error` / `ci`）
+#: 可能是别的意思（`std` 也是标准品、`se` 也是硒），只有表里另有「它所修饰的那一列」时才算（见 `error_kind`）
+_ERROR_STRONG = {
+    "sd": "sd",
+    "stdev": "sd",
+    "stddev": "sd",
+    "sem": "sem",
+    "stderr": "sem",
+}
+_ERROR_WEAK = {
+    "std": "sd",
+    "se": "sem",
+    "err": "unknown",
+    "error": "unknown",
+    "ci": "ci",
+    "ci95": "ci",
+}
+_ERROR_CJK = (("标准差", "sd"), ("标准误", "sem"), ("置信区间", "ci"), ("误差", "unknown"))
+_MEAN_WORDS = frozenset({"mean", "avg", "average"})
+
+
+def _name_tokens(name: str) -> list[str]:
+    return [t for t in re.split(r"[^a-z0-9]+", _CAMEL.sub(" ", name).lower()) if t]
+
+
+def error_kind(name: str, others: list[str]) -> str | None:
+    """这一列的名字是不是在说「我是误差量」（`sd` / `sem` / `ci` / `unknown`；不是 = None）。只看列名的**词**（驼峰与非字母数字处切开，
+    不做子串匹配：`residue`、`used` 不算）：
+
+    * 含强词（`sd` / `stdev` / `stddev` / `sem` / `stderr`）或中文词（标准差 / 标准误 / 置信区间 / 误差）→ 算；
+    * 含弱词（`std` / `se` / `err` / `error` / `ci` / `ci95`）→ 只有当 `others`（表里其它列名）里有它修饰的那一列时才算：去掉这个词后剩下的词
+      与某一列的词相同（`mass_se` ↔ `mass`），或者（去掉后什么都不剩时）有一列的名字里带 `mean` / `avg` / `average`。
+
+    这只是名字上的线索：它让规则**不把这一列当测量值去画**，不替用户断定误差线的含义（名字只说 `err` 的记 `unknown`，绝不当成 SD）。"""
+    for word, kind in _ERROR_CJK:
+        if word in name:
+            return kind
+    tokens = _name_tokens(name)
+    for t in tokens:
+        if t in _ERROR_STRONG:
+            return _ERROR_STRONG[t]
+    for t in tokens:
+        if t in _ERROR_WEAK:
+            rest = [x for x in tokens if x != t]
+            for other in others:
+                ot = _name_tokens(other)
+                if (rest and ot == rest) or (not rest and _MEAN_WORDS & set(ot)):
+                    return _ERROR_WEAK[t]
+    return None
+
+
 def _structure(
     header: list[str],
     rows: list[list[str]],

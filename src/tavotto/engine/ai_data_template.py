@@ -687,6 +687,8 @@ def reduce_trend(header, body, spec):
     gap_over = False
     n_rows = 0
     x_invalid = 0
+    key_empty = 0  # 横轴有值、但分组 / 分面 / 个体那一格是空的行（归不到任何一条线 / 一组点里）
+    y_invalid = 0  # 只有散点类会加：横轴有值、纵轴不是数的行
     examples = []
     ystat = [[0, None, None] for _ in yis]
     for ln, r in body:
@@ -717,6 +719,9 @@ def reduce_trend(header, body, spec):
             continue
         key = tuple(r[k].strip() for k in kis)
         if "" in key:
+            key_empty += 1
+            if len(examples) < 100:
+                examples.append(ln)
             continue
         st = series.get(key)
         if st is None:
@@ -796,6 +801,8 @@ def reduce_trend(header, body, spec):
         "kept": len(rows),
         "ords": ords,
         "x_invalid": x_invalid,
+        "key_empty": key_empty,
+        "y_invalid": y_invalid,
         "examples": examples,
         "series": len(series),
         "y": [tuple(s) for s in ystat],
@@ -824,6 +831,8 @@ def reduce_relationship(header, body, spec):
     series = {}
     n_rows = 0
     x_invalid = 0
+    key_empty = 0  # 横轴有值、但分组 / 分面 / 个体那一格是空的行（归不到任何一条线 / 一组点里）
+    y_invalid = 0  # 只有散点类会加：横轴有值、纵轴不是数的行
     examples = []
     xstat = [0, None, None]
     ystat = [0, None, None]
@@ -852,9 +861,16 @@ def reduce_relationship(header, body, spec):
             elif vy > ystat[2]:
                 ystat[2] = vy
         if kx != "numeric" or ky != "numeric":
+            if kx == "numeric":  # 横轴有值、纵轴没有：这个点也画不出来（横轴不是值的上面已经记过）
+                y_invalid += 1
+                if len(examples) < 100:
+                    examples.append(ln)
             continue
         key = tuple(r[k].strip() for k in kis)
         if "" in key:
+            key_empty += 1
+            if len(examples) < 100:
+                examples.append(ln)
             continue
         st = series.get(key)
         if st is None:
@@ -892,6 +908,8 @@ def reduce_relationship(header, body, spec):
         "kept": len(rows),
         "ords": ords,
         "x_invalid": x_invalid,
+        "key_empty": key_empty,
+        "y_invalid": y_invalid,
         "examples": examples,
         "series": len(series),
         "x": tuple(xstat),
@@ -2522,14 +2540,21 @@ def large_reduce_pending(values: adf.DataSummary, recipes) -> int:
 
 def large_unplotted(
     values: adf.DataSummary, recipe: recipe_mod.FigureRecipe
-) -> tuple[int, list[int]]:
-    """大表上画不出的行：`(总数, 前 100 个文件行号)`。横轴不是值（空 / NaN / 不是数或日期）的行——总数取自概览扫描（精确），行号取自缩减那一遍。"""
+) -> tuple[int, list[int], bool]:
+    """大表上画不出的行：`(总数, 前 100 个文件行号, 是不是全都因为横轴不是值)`，都取自缩减那一遍（精确）：横轴不是值（空 / NaN / 不是数或日期）、
+    分组 / 分面 / 个体那一格是空的、散点类里纵轴不是数的。折线的纵轴空格是缺失（线在那里断开），不算没画。"""
     s = values.per_column[recipe.x]
-    total = s.empty + s.nan + (s.text_count if s.kind != "date" else 0)
-    if total == 0:
-        return 0, []
+    roles = [c for c in (recipe.group, recipe.facet, recipe.unit) if c]
+    maybe = s.empty + s.nan + (s.text_count if s.kind != "date" else 0)
+    maybe += sum(values.per_column[c].empty for c in roles)
+    if recipe.family == "relationship":
+        sy = values.per_column[recipe.y[0]]
+        maybe += sy.empty + sy.nan + sy.text_count
+    if maybe == 0:  # 概览扫描已经说明没有任何一格会让行画不出来：不用为计数再缩减一遍
+        return 0, [], True
     _rows, info = large_reduce(values, recipe)
-    return total, list(info["examples"])
+    total = info["x_invalid"] + info["key_empty"] + info["y_invalid"]
+    return total, list(info["examples"]), total == info["x_invalid"]
 
 
 def expected_fingerprints(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> list[dict]:

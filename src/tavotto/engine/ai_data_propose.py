@@ -169,7 +169,7 @@ class Item:
     recipe: recipe_mod.FigureRecipe
     coverage: dict
     thumb: Path | None = None
-    unplotted: int = 0  # 有多少行因为横轴没有值而没画（稳定码 `rows_not_plotted` + 计数）
+    unplotted: int = 0  # 有多少行没画（`unplotted_rows` 的总数；稳定码 `rows_not_plotted` + 计数）
     cells: list | None = None  # 处理规则作用的统计（没有规则 = None）
     #: 大表：画出来的是缩减后的点 `{"rows": 整表行数, "kept": 留下的行数}`；小表 = None（响应里没有这一项）
     reduced: dict | None = None
@@ -545,21 +545,41 @@ def unplotted_total(rows: list[dict]) -> int:
 
 
 def unplotted_rows(values: adf.DataSummary, recipe) -> list[dict]:
-    """配方画不出来的行（`row` 是文件里的行号，表头算第 1 行，XLSX 是表内行号）：横轴（trend / relationship）没有值（空 / NaN / 不是数或日期）的行
-    画不到坐标里。y 列的空 / NaN 是缺失，折线在那里断开，不算没画；夹着文字格的数值列用户已选了处理方式（`recipe.cells`），
-    那些格子是用户明确决定过的，不在这里报（统计在 `cell_stats`）。"""
+    """配方画不出来的行（`row` 是文件里的行号，表头算第 1 行，XLSX 是表内行号）。**脚本里每一处跳过一行的地方，这里都有对应的一条**
+    （sciviz G-055「没画的观测要有计数和规则」；每行只记一个原因）：
+
+    * `x_not_a_value`：折线 / 散点的横轴没有值（空 / NaN / 不是数或日期），画不到坐标里；
+    * `category_empty`：比较类的类别那一格是空的；
+    * `group_empty` / `facet_empty` / `unit_empty`：分组 / 分面 / 个体那一格是空的，归不到任何一组里；
+    * `not_a_number`：纵轴那一格是文字（用户还没选处理方式的）；
+    * `y_missing`：比较类 / 分布类 / 散点类的纵轴是空的或 NaN——这一行没有可画的点。
+
+    折线的纵轴空 / NaN 是缺失（线在那里断开，看得见），不算没画；夹着文字格的数值列用户已选了处理方式（`recipe.cells`）的，
+    那些格子是用户明确决定过的，不在这里报（统计在 `cell_stats`）。大表只给总数与前 100 个行号，不逐行分原因（全都是横轴不是值时仍记 `x_not_a_value`，否则 `row_not_plotted`）。"""
     if (
         recipe.stack
     ):  # 把列当分组：被转的列都是纯数值列，空格 / NaN 是缺失（不是「没画」），没有横轴
         return []
     if values.large is not None:
-        total, numbers = tpl.large_unplotted(values, recipe)
-        ex = Examples({"row": n, "column": recipe.x, "reason": "x_not_a_value"} for n in numbers)
+        total, numbers, only_x = tpl.large_unplotted(values, recipe)
+        why = "x_not_a_value" if only_x else "row_not_plotted"
+        ex = Examples({"row": n, "column": recipe.x, "reason": why} for n in numbers)
         ex.total = total
         return ex
     out: list[dict] = []
     idx = {c: i for i, c in enumerate(values.columns)}
     x = recipe.x if recipe.family in ("trend", "relationship") else None
+    category = recipe.x if recipe.family == "comparison" else None
+    keys = [
+        (category, "category_empty"),
+        (recipe.group, "group_empty"),
+        (recipe.facet, "facet_empty"),
+    ]
+    if recipe.family == "trend":
+        keys.append((recipe.unit, "unit_empty"))
+    keys = [(c, why) for c, why in keys if c and c in idx]
+    # 比较 / 分布（都走 `comparison_data`）与散点：一行一个点，纵轴没有数就没有这个点；折线的缺失是断开，不在此列
+    point_needs_y = recipe.family != "trend"
     covered = {c.column for c in recipe.cells}
     # 横轴列有处理规则时按**规则作用之后**的格子判：「取数字部分」取出了数的行画得出来，不算；「不画那几行」之后是空格，算没画
     applied = (
@@ -577,9 +597,18 @@ def unplotted_rows(values: adf.DataSummary, recipe) -> list[dict]:
             if not ok:
                 out.append(_unplotted(values, n, x, "x_not_a_value"))
                 continue
+        empty = next(((c, why) for c, why in keys if not row[idx[c]].strip()), None)
+        if empty is not None:
+            out.append(_unplotted(values, n, *empty))
+            continue
         for y in recipe.y:
-            if y not in covered and adf.parse_cell(row[idx[y]])[0] == "text":
+            if y in covered:
+                continue
+            kind = adf.parse_cell(row[idx[y]])[0]
+            if kind == "text":
                 out.append(_unplotted(values, n, y, "not_a_number"))
+            elif kind != "numeric" and point_needs_y:
+                out.append(_unplotted(values, n, y, "y_missing"))
     return out
 
 
