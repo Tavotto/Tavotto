@@ -149,7 +149,7 @@
 
 ### V-009 成品里的实际字号低于规范下限
 
-- **预检 id**：无（不是预检规则，是导出后对成品的观测）· **basis**：visual · **状态**：观测已实现（`rendercore/inspector.py` 的 `observed.text_size` 与 `text_size_verdict()`；看护 `tests/test_rendercore_text_size.py`）。**不进 `checks`、不改导出裁决、界面不显示**；要不要接成一项检查见 ADR 0201（Proposed）。
+- **预检 id**：无（不是预检规则，是导出后对成品的观测）· **basis**：visual · **状态**：观测已实现（`rendercore/inspector.py` 的 `observed.text_size` 与 `text_size_verdict()`；看护 `tests/test_rendercore_text_size.py`）。**不进 `checks`、不改导出裁决、界面不显示**；要不要接成一项检查见 ADR 0203（Proposed）。
 - **依据**：
   - FDV 第 24 章，文字大小要在最终尺寸下看（p.291）[原文]。
   - 上下标被排成更小的字：matplotlib 3.11.2 实测，7 pt 的 `$R^2$` 在 PDF 里有一段 4.9 pt 的文字 [推导]。

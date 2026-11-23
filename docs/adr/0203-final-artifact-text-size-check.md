@@ -1,7 +1,7 @@
-# ADR 0201：成品 PDF 的实际字号接成一项产物检查（`text_size`）
+# ADR 0203：成品 PDF 的实际字号接成一项产物检查（`text_size`）
 
 日期：2026-11-23 · 状态：**Proposed（只定契约，不实施；观测那一半已在 `rendercore/inspector.py`，见下）**
-**1.0 收敛纪律：新增一项用户看得见的检查，需要维护者确认是否落在科学图形检查族的豁免之内（`docs/1.0-release-readiness.md` §1.8），或另给豁免。编号 0201 是写本稿时 main 与远端分支上的下一个空号（0200 已被 `docs/adr-0200-hosted-ai` 占用），合入前若被占就顺延。**
+**1.0 收敛纪律：新增一项用户看得见的检查，需要维护者确认是否落在科学图形检查族的豁免之内（`docs/1.0-release-readiness.md` §1.8），或另给豁免。编号原拟 0201，因 0201 / 0202 已分别被 #2125 / #2127 占用，顺延为 0203（2026-11-23）。**
 相关：[0068 产物检查器与 manifest](0068-artifact-inspector-and-manifest.md)（四值判据、两档政策、`checks` 闭集）、[0155 期刊标准库](0155-journal-catalog.md)（阈值只来自期刊）、[0072 PyMuPDF 退役](0072-default-render-backend-cutover-and-pymupdf-retirement.md)、[0152 文字编辑](0152-wysiwyg-text-editor.md)（公式画成轮廓 + 不画的文本层）；`docs/sciviz/validation-spec.md` V-009；`docs/research/external-figure-practice-absorption.md` §4.1。
 
 ## 问题
