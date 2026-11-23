@@ -64,8 +64,10 @@ release.yml ─workflow_call→ desktop-tauri.yml::build（matrix）
 
 ### 三、高级版（0198）
 
-Pro 组件的 Windows 可执行文件用同一张证书、同一个 ssign 版本签。GitHub 的环境 secret 按仓库存：Pro 若在别的仓库构建，那边要单独建一个同样保护规则的环境、
-存第二份种子——这是要维护者定的事，不默认。0198 里「Windows 未签名，沿用发版豁免」一句随本 ADR 改。
+Pro 组件的 Windows 可执行文件用同一张证书、同一个 ssign 版本签。Pro 在私有仓库 `Tavotto/pro` 构建（2026-11-23 维护者确认；那边还没有 workflow）。
+GitHub 的环境 secret 按仓库存，那边要存第二份种子；而组织是 free 计划，**私有仓库的环境不能设「必须批准」**，
+所以那边的接法（不设批准的仓库 secret / 每次发 Pro 时维护者在本机用一次性码手签 / 升级组织计划）等 Pro 发版流程成形时由维护者定，不默认。
+Pro 的二进制不进本仓库的 workflow 签——本仓库的 artifact 对任何登录用户可下。0198 里「Windows 未签名，沿用发版豁免」一句随本 ADR 改。
 
 ## 启用步骤（维护者）
 
