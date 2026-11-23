@@ -9,7 +9,7 @@ Certum Code Signing 2021 CA) once signing is enabled for releases. The private
 key stays in Certum's cloud HSM and cannot be exported. Earlier releases were
 published unsigned under the per-tag waiver below; the notes of every release
 state whether its Windows installer is signed. The decision record is
-[ADR 0201](adr/0201-windows-signing-certum-ssign.md).
+[ADR 0202](adr/0202-windows-signing-certum-ssign.md).
 
 ## Project and scope
 

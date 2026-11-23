@@ -556,7 +556,7 @@ jobs:
           # 版本会顺便丢掉必须的披露（Codex 评审在 #107 上指出）：
           #  · 「下载与支持平台」段：从唯一权威 docs/support-matrix.json 生成
           #    （issue #34），每版手写的平台清单必然与矩阵漂移；
-          #  · Code signing policy 段：措辞按 CERTUM_SIGNING_ENABLED 分岔（ADR 0201）
+          #  · Code signing policy 段：措辞按 CERTUM_SIGNING_ENABLED 分岔（ADR 0202）
           #    ——把未签名的包描述成已签名，正是 policy 里明令禁止的那件事。
           #    第一段的发行构建在这个变量为 true 时验过签名者与时间戳才产出安装包，
           #    为 false 时只有点名豁免的那一版能走到这里。

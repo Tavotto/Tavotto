@@ -519,7 +519,7 @@ sidecar → Tauri bundler）。CI 门禁打的是最终产物：sidecar 真二�
 |---|---|---|
 | macOS（Apple Silicon） | `Tavotto-X.Y.Z-macOS.dmg` | Tauri .app（内嵌 sidecar）；**含内置渲染 runtime**；arm64，`macos-latest` 上构建；签名 + 公证复用下述同一套 secret 与流程 |
 | macOS（Intel） | `Tavotto-X.Y.Z-macOS-Intel.dmg` | 同上，x86_64，**只在原生 Intel runner `macos-26-intel` 上构建与冒烟**（ADR 0076） |
-| Windows | `Tavotto-X.Y.Z-Windows-Setup.exe` | NSIS（收集时改成与 wheel/dmg 一致的命名），装到用户目录；**含内置渲染 runtime**；`CERTUM_SIGNING_ENABLED` 打开后由维护者的 Certum 证书签名（ADR 0201） |
+| Windows | `Tavotto-X.Y.Z-Windows-Setup.exe` | NSIS（收集时改成与 wheel/dmg 一致的命名），装到用户目录；**含内置渲染 runtime**；`CERTUM_SIGNING_ENABLED` 打开后由维护者的 Certum 证书签名（ADR 0202） |
 
 macOS 签名注意：sidecar 是 `.app` 里 `Resources/sidecar/` 下的 PyInstaller
 onedir，签名必须继续「签**所有**嵌套 Mach-O、自内向外」——只签壳本体公证会
@@ -772,7 +772,7 @@ PyInstaller 留下的 adhoc 签名同样能通过 verify；流水线里已加了
 ### Windows 签名
 
 Windows 安装包用维护者自购的 Certum 云证书（SimplySign）签，签名客户端是钉版本、在 runner 上从源码编的
-[ssign](https://github.com/Le-Syl21/ssign)；决定与审过的版本见 [ADR 0201](adr/0201-windows-signing-certum-ssign.md)。
+[ssign](https://github.com/Le-Syl21/ssign)；决定与审过的版本见 [ADR 0202](adr/0202-windows-signing-certum-ssign.md)。
 
 - 仓库环境 `windows-signing`：secret `CERTUM_EMAIL`、`CERTUM_OTP`（激活二维码里的 `otpauth://…` 原样）；
   保护规则 = 维护者批准、只放行 `main` 与 `v*` tag。

@@ -20,7 +20,7 @@ runtime / 输入兼容性，并同步 `tests/test_release_workflow_contract.py` 
 
 初始迁移更新 `release.yml`、`release-publish.yml`、`desktop-tauri.yml` 的 action 版本，
 将它们及 `lab-ci.yml` 的 13 个 Linux hosted job 固定为 `ubuntu-24.04`。
-SignPath 的 submit-signing-request action 曾在此表中（v3，`f6d04783…`）；2026-11-23 起 Windows 签名改用 Certum + ssign（ADR 0201），该 action 已从发布链删除。
+SignPath 的 submit-signing-request action 曾在此表中（v3，`f6d04783…`）；2026-11-23 起 Windows 签名改用 Certum + ssign（ADR 0202），该 action 已从发布链删除。
 `lab-ci.yml` 的 checkout、其它 workflow、macOS / Windows 矩阵、项目的 Node 22 / Python 3.13 /
 pnpm 11.27.1 工具链版本均不属于此次迁移。
 后续 alert #217 引出的两个限定加固见下节，不再把最终补丁声称为纯版本替换。

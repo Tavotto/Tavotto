@@ -1,4 +1,4 @@
-# ADR 0201：Windows 安装包签名改用维护者自购的 Certum 云证书 + ssign，在 GitHub 托管 runner 上签
+# ADR 0202：Windows 安装包签名改用维护者自购的 Certum 云证书 + ssign，在 GitHub 托管 runner 上签
 
 日期：2026-11-23 · 状态：**Accepted（实现随本 ADR 同一 PR；`vars.CERTUM_SIGNING_ENABLED` 打开前发版行为与从前一字不差）**
 相关：`docs/code-signing-policy.md`（对外政策）、`.github/workflows/desktop-tauri.yml`（签名与验签）、

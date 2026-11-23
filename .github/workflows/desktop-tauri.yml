@@ -77,7 +77,7 @@ on:
         required: false
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
         required: false
-      # Windows Authenticode（ADR 0201）。这两个是 `windows-signing` **环境**的 secret：
+      # Windows Authenticode（ADR 0202）。这两个是 `windows-signing` **环境**的 secret：
       # 调用方的 `secrets: inherit` 传不了环境 secret，job 级 `environment:` 挂上之后
       # GitHub 用的是环境里那一份。声明在这里只为让 actionlint 认得这两个名字。
       CERTUM_EMAIL:
@@ -209,7 +209,7 @@ jobs:
     timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
     runs-on: ${{ matrix.os }}
     # Windows 发行构建且 Certum 签名已使能时，这条腿挂在 `windows-signing` 环境下：
-    # 开始前要维护者批准，种子（CERTUM_OTP）只在那个环境里（ADR 0201）。其余腿与
+    # 开始前要维护者批准，种子（CERTUM_OTP）只在那个环境里（ADR 0202）。其余腿与
     # 签名未使能时求值为空串 = 不挂任何环境，行为与从前一样。**不许换成占位名**：
     # GitHub 会把不存在的环境名当场建成一个无保护的环境。
     environment: ${{ (matrix.os == 'windows-latest' && inputs.release_build && vars.CERTUM_SIGNING_ENABLED == 'true') && 'windows-signing' || '' }}
@@ -274,7 +274,7 @@ jobs:
         # 非发行试构建（workflow_dispatch + release_build=false）不受影响。
         #
         # Windows Authenticode 与 macOS / minisign 一样都是发行硬要求。
-        # Certum 签名（vars.CERTUM_SIGNING_ENABLED，ADR 0201）未使能时独立报错、
+        # Certum 签名（vars.CERTUM_SIGNING_ENABLED，ADR 0202）未使能时独立报错、
         # 写作业摘要并退出；不再沿用 2026-08-22 的临时未签名发行例外。非发行试构建仍可产出诊断 artifact。
         # 唯一的放行口是**按 tag 点名**的维护者豁免：仓库变量
         # WINDOWS_UNSIGNED_WAIVER_TAG 恰好等于本次 RELEASE_TAG 时只发 warning
@@ -781,7 +781,7 @@ jobs:
           [System.IO.File]::AppendAllText($env:GITHUB_ENV, "APP_VERSION=$ver`n")
           Get-ChildItem out | Format-Table Name, Length
 
-      # ---------------- Windows Authenticode：Certum 云证书 + ssign（ADR 0201） ----------------
+      # ---------------- Windows Authenticode：Certum 云证书 + ssign（ADR 0202） ----------------
       # 这条腿在 CERTUM_SIGNING_ENABLED 打开的发行构建里挂在 `windows-signing` 环境下
       # （见本 job 的 environment:），开始之前要维护者在 GitHub 上点批准；种子与邮箱是那个
       # 环境的 secret，**只进下面「签名」那一步的 env**，不进 job 级 env。

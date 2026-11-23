@@ -2107,7 +2107,7 @@ def test_the_diag_contract_gate_runs_on_the_resolved_sha_for_every_trigger():
     assert '--ack "${ACK:-}"' in last and "||" not in last, "判定那一行的退出码必须原样决定这一步"
 
 
-# ── Windows Authenticode：Certum 云证书 + ssign（ADR 0201） ──────────────────
+# ── Windows Authenticode：Certum 云证书 + ssign（ADR 0202） ──────────────────
 #
 # 种子（CERTUM_OTP）加邮箱就能以维护者本人的名义签任何东西，所以这几条看的是
 # 「它能到哪里」：只有 Windows 发行腿在使能时挂上要人批准的 windows-signing 环境，
@@ -2187,7 +2187,7 @@ def test_ssign_is_pinned_built_apart_from_the_seed_and_the_signature_is_judged_b
     run = _wf(DESKTOP).job_runs("build")
     install_run = next(r for r in run if "cargo install ssign" in r)
     assert "--version 0.1.11" in install_run and "--locked" in install_run, (
-        "ssign 钉到审过源码的版本、按它的锁文件编（ADR 0201 记了审的是哪一版）"
+        "ssign 钉到审过源码的版本、按它的锁文件编（ADR 0202 记了审的是哪一版）"
     )
     assert "secrets." not in install, "编 ssign 时跑的 build.rs 不许看见任何 secret"
     sign_run = next(r for r in run if 'ssign.exe" $exe' in r)

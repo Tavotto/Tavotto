@@ -58,7 +58,7 @@ license.py          has(feature)（0193，已合入）
 
 - 用 **Nuitka** 编成按平台的独立可执行文件（不发 `.py` / `.pyc`，不需要内置 runtime 或用户的 Python）。平台以 `docs/support-matrix.json` 的桌面目标为准：`macos-arm64`、`macos-x86_64`、`windows-x64`。pip / pipx / uvx 装的 wheel 与无头 Linux **首版不提供**：宿主照常工作，清单里没有这个平台就当作没有这个组件（功能保持置灰，悬停一句「这台电脑暂不支持」）。
 - macOS：用与桌面版同一个 Developer ID 签名并公证（hardened runtime）。不依赖主程序 `entitlements.plist` 里的 `disable-library-validation`。
-- Windows：与桌面版用同一张 Certum 证书、同一个 ssign 版本签（[0201](0201-windows-signing-certum-ssign.md) §三；私有仓库 `Tavotto/pro` 另建同样保护规则的签名环境、存第二份种子，workflow 随 Pro 发版流程接）。**每次发高级版前在 Windows Lab 上跑一遍 Defender 扫描与启动冒烟**，Nuitka 产物容易被误报。
+- Windows：与桌面版用同一张 Certum 证书、同一个 ssign 版本签（[0202](0202-windows-signing-certum-ssign.md) §三；私有仓库 `Tavotto/pro` 另建同样保护规则的签名环境、存第二份种子，workflow 随 Pro 发版流程接）。**每次发高级版前在 Windows Lab 上跑一遍 Defender 扫描与启动冒烟**，Nuitka 产物容易被误报。
 - 包格式：一个 zip，内含 `tavotto-pro/`（可执行文件及其目录）与 `release.json`（§五 的发布清单原文）。**不加密**：密钥终究要到客户端，加密挡不住人；完整性靠签名。
 
 ### 五、发布清单与下载
