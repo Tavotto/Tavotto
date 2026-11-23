@@ -1139,6 +1139,7 @@ def _spawn_holder(root):
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
         env={**os.environ, "PYTHONPATH": str(Path(proinstall.__file__).parents[2])},
     )
     assert p.stdout.readline().strip() == "held"
