@@ -338,10 +338,15 @@ class Understanding:
     header_row: int | None = None
     #: 因不合格被丢掉的字段个数（角色 / 选择 / 规则 / 表头）
     dropped: int = 0
+    #: G-018：规则（含模型的选择）此刻选作横轴的那一列，模型判它是 `measure`（与纵轴是两个独立测量，不是有序自变量）→ 列名；否则 None。
+    #: 不是对下拉的改动（`picks` 不含它），`to_payload` 里是 `answers.x_measure`，`propose` 据此不出趋势类
+    x_measure: str | None = None
 
     def to_payload(self, table: str) -> dict:
         """给前端的「建议」：`answers`（可原样并进下一次 propose 的 `answers`）、`header_rows`、列角色标注、丢弃数。"""
         answers: dict = dict(self.picks)
+        if self.x_measure is not None:
+            answers["x_measure"] = self.x_measure
         if self.cells:
             answers["cells"] = {
                 c: {k: v for k, v in r.to_dict().items() if k != "column"}
@@ -356,7 +361,9 @@ class Understanding:
 
     @property
     def empty(self) -> bool:
-        return not (self.picks or self.cells or self.header_row is not None)
+        return not (
+            self.picks or self.cells or self.header_row is not None or self.x_measure is not None
+        )
 
 
 @dataclass(frozen=True)
@@ -401,6 +408,7 @@ def derive(
         out.cells,
         judgement.header_row,
         out.dropped + judgement.header_dropped,
+        out.x_measure,
     )
 
 
@@ -652,6 +660,29 @@ def suggest(
     return emit, dropped
 
 
+def _x_measure(
+    entry: adf.TableEntry, hint: str | None, roles: dict[str, str], picks: dict, fixed: dict | None
+) -> str | None:
+    """G-018：按规则此刻的结果（采纳 `picks` 之后；还要问的问题答「不确定」，与 lazy 的 `propose` 同一口径）选作有序横轴的那一列，模型判它是 `measure` → 列名。
+    **事实只来自模型已校验的列角色**（`valid_roles` 已保证 `measure` 只给得到数值列）。用户已定了横轴（`fixed.x`）= 用户的选择优先，不给；
+    没有横轴（规则落成没有 / 把列当分组）= None。模型判 `time` / `ordered_x` 或没给角色 = None（现状）。"""
+    if "x" in (fixed or {}):
+        return None
+    trial = {**(fixed or {}), **picks}
+    for _ in range(len(_QUESTION_KEY) + 1):
+        res = recipe_mod.resolve_roles(entry, hint, trial)
+        if isinstance(res, recipe_mod.NeedsChoice):
+            key = _QUESTION_KEY.get(res.question_code)
+            if key is None or key in trial:
+                return None
+            trial[key] = "unsure"
+            continue
+        if not isinstance(res, recipe_mod.Roles) or res.stack or res.x_ord is None:
+            return None
+        return res.x_ord if roles.get(res.x_ord) == "measure" else None
+    return None
+
+
 def interpret(
     entry: adf.TableEntry,
     values: adf.DataSummary,
@@ -682,7 +713,9 @@ def interpret(
             continue
         cells[rule.column] = rule
     ordered = tuple((c, roles[c]) for c in s.columns if c in roles)
-    return Understanding(ordered, picks, cells, None, dropped)
+    return Understanding(
+        ordered, picks, cells, None, dropped, _x_measure(entry, hint, roles, picks, fixed)
+    )
 
 
 # --------------------------------------------------------------------------- 缓存
