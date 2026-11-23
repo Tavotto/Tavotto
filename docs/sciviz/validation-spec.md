@@ -61,7 +61,8 @@
   直方图（`hist` 也是 `BarContainer`）按同一规则判。全文见 `docs/rules/backend/profiles-and-preflight.md`。
 - **严重度**：warn · **修复**：none（MCP 手修提示只说两种改法：从 0 起，或改成点图）· **误报风险**：中。
   已知会报、尚未裁决的写法：inset 放大图、断轴图的上半幅、逐柱循环画的瀑布 / 甘特图（每个容器一根柱，天然有共同基线）。
-  仓库里含柱的真脚本（figurebench、examples、compat、acceptance 共 11 份）实测都不报。
+  仓库里含柱的真脚本实测都不报：figurebench `grouped_bars` 与 examples / compat / acceptance 共 10 份量到了柱；
+  `ca_projections` 只有极坐标柱，不发事实；另 5 份跑不起来（要命令行参数、没有 `main` 入口、缺 pandas），未执行。
 - **测试**：
   - 正常：0 可见。
   - 错误：柱高 5、8，ylim 设为 4–9。

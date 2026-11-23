@@ -97,7 +97,8 @@ def main():
     ax = nxt("negative_cut"); ax.bar([0, 1], [-3, -5]); ax.set_ylim(-6, -1)
     ax = nxt("inverted_cut"); ax.bar([0, 1], [5, 8]); ax.set_ylim(9, 4)
     ax = nxt("inverted_normal"); ax.bar([0, 1], [5, 8]); ax.invert_yaxis()
-    ax = nxt("log"); ax.bar([0, 1], [5, 50]); ax.set_yscale("log")
+    # 显式范围：自动算出的 log 范围经 pow / log10，末位随平台 libm 变，快照要逐字比对
+    ax = nxt("log"); ax.bar([0, 1], [5, 50]); ax.set_yscale("log"); ax.set_ylim(4, 60)
     ax = nxt("symlog_cut"); ax.bar([0, 1], [5, 50]); ax.set_yscale("symlog"); ax.set_ylim(2, 60)
     ax = nxt("hidden")
     bars = ax.bar([0, 1], [5, 8])
@@ -277,21 +278,28 @@ def test_real_snapshot_for_the_frontend_is_what_the_worker_emits(cases_manifest)
     assert json.loads(REAL_SNAPSHOT.read_text(encoding="utf-8")) == _snapshot(cases_manifest)
 
 
-_SNAPSHOT_PROPS = ("visible", "xlim", "ylim", "xscale", "yscale")
+def _snapshot_fields(el: dict) -> list[dict]:
+    """只留规则读的那几格、只留 `{prop, value}`：`options` 是本机 matplotlib 注册的尺度清单，换版本就变；
+    不相关那一维的自动范围也不进（快照要跨平台逐字相等）。"""
+    dims = sorted(el["bar_baseline"])
+    keep = {"visible", *(f"{d}lim" for d in dims), *(f"{d}scale" for d in dims)}
+    return [
+        {"prop": f["prop"], "value": f["value"]} for f in el["editable"] if f.get("prop") in keep
+    ]
 
 
 def _snapshot(cases_manifest) -> dict:
     axes = _axes_by_title(cases_manifest)
     return {
         "comment": "真 worker 渲染 tests/test_preflight_bar_baseline.py 的 CASES_SCRIPT 得到的 axes 元素"
-        "（只留 gid / role / bar_baseline 与 visible / [xy]lim / [xy]scale 这几个 editable 字段）。"
+        "（只留 gid / role / bar_baseline 与 visible、柱那一维的 lim / scale 这几格 editable 的 prop / value）。"
         "pytest 重渲染逐字比对；web/src/lib/preflight.barBaseline.test.ts 消费它。",
         "elements": [
             {
                 "title": t,
                 "gid": axes[t]["gid"],
                 "role": "axes",
-                "editable": [f for f in axes[t]["editable"] if f.get("prop") in _SNAPSHOT_PROPS],
+                "editable": _snapshot_fields(axes[t]),
                 "bar_baseline": axes[t]["bar_baseline"],
             }
             for t in sorted(axes)

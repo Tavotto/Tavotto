@@ -5262,22 +5262,42 @@ def _close(a: float, b: float) -> bool:
     return abs(a - b) <= 1e-9 * max(1.0, abs(a), abs(b))
 
 
-def _stacked_on_others(rects, others) -> bool:
-    """这个容器的**每一根**柱都正好叠在另一个容器某根柱的顶上（同一位置）——堆叠柱的上层。
+class _BarTops:
+    """所有容器柱顶的索引：按位置中心排序，查「某个位置上有没有别的容器的柱顶正好在这个高度」只二分一次。
+
+    柱数受配额约束（`FINGERPRINT_BUDGET` 量级），逐对比较是平方级，每次 override 都要重量一次，所以必须是
+    O(n log n)。"""
+
+    def __init__(self, rects: list[list[tuple[float, float, float]]]) -> None:
+        import bisect  # noqa: PLC0415
+
+        self._bisect = bisect
+        entries = sorted(
+            (center, top, k)
+            for k, rs in enumerate(rects)
+            for _base, top, center in rs
+            if math.isfinite(top) and math.isfinite(center)
+        )
+        self._centers = [e[0] for e in entries]
+        self._entries = entries
+
+    def has_top(self, center: float, height: float, skip: int) -> bool:
+        tol = 1e-9 * max(1.0, abs(center))
+        i = self._bisect.bisect_left(self._centers, center - tol)
+        while i < len(self._entries) and self._entries[i][0] <= center + tol:
+            c2, top2, k2 = self._entries[i]
+            if k2 != skip and _close(center, c2) and _close(height, top2):
+                return True
+            i += 1
+        return False
+
+
+def _stacked_on_others(rects, k: int, tops: _BarTops) -> bool:
+    """第 k 个容器的**每一根**柱都正好叠在另一个容器某根柱的顶上（同一位置）——堆叠柱的上层。
 
     上层的底各不相同时本来就没有共同基线；这里兜的是「下层柱高全相同」时上层底恰好统一的那种，
     它的「基线」是下层的顶，不是柱长的起点，不判。"""
-    if not others:
-        return False
-    for base, _top, center in rects:
-        if not any(
-            _close(center, c2) and _close(base, top2)
-            for rs in others
-            for _b2, top2, c2 in rs
-            if math.isfinite(top2) and math.isfinite(c2)
-        ):
-            return False
-    return True
+    return all(tops.has_top(center, base, k) for base, _top, center in rects)
 
 
 def bar_baseline(ax, budget: list[int]) -> dict | None:
@@ -5331,12 +5351,13 @@ def bar_baseline(ax, budget: list[int]) -> dict | None:
         budget[0] -= size
         try:
             rects = [_bar_rects(ps, dim == "x") for ps in conts]
+            tops = _BarTops(rects) if len(rects) > 1 else None
             baselines: list[dict] = []
             for k, rs in enumerate(rects):
                 bases = [b for b, _t, _c in rs]
                 if not all(math.isfinite(b) for b in bases) or any(b != bases[0] for b in bases):
                     continue  # 浮动柱 / 甘特图 / 底里有 NaN：没有共同基线，不判
-                if _stacked_on_others(rs, rects[:k] + rects[k + 1 :]):
+                if tops is not None and _stacked_on_others(rs, k, tops):
                     continue
                 value = bases[0] + 0.0  # -0.0 → 0.0
                 hit = next((e for e in baselines if e["value"] == value), None)

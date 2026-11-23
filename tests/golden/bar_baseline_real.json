@@ -1,5 +1,5 @@
 {
- "comment": "真 worker 渲染 tests/test_preflight_bar_baseline.py 的 CASES_SCRIPT 得到的 axes 元素（只留 gid / role / bar_baseline 与 visible / [xy]lim / [xy]scale 这几个 editable 字段）。pytest 重渲染逐字比对；web/src/lib/preflight.barBaseline.test.ts 消费它。",
+ "comment": "真 worker 渲染 tests/test_preflight_bar_baseline.py 的 CASES_SCRIPT 得到的 axes 元素（只留 gid / role / bar_baseline 与 visible、柱那一维的 lim / scale 这几格 editable 的 prop / value）。pytest 重渲染逐字比对；web/src/lib/preflight.barBaseline.test.ts 消费它。",
  "elements": [
   {
    "title": "barh_cut",
@@ -8,48 +8,18 @@
    "editable": [
     {
      "prop": "visible",
-     "type": "bool",
      "value": true
     },
     {
      "prop": "xlim",
-     "type": "pair",
      "value": [
       4.0,
       9.0
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "ylim",
-     "type": "pair",
-     "value": [
-      -0.49,
-      1.49
-     ],
-     "group": "数据范围"
+     ]
     },
     {
      "prop": "xscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "yscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     "value": "linear"
     }
    ],
    "bar_baseline": {
@@ -71,48 +41,18 @@
    "editable": [
     {
      "prop": "visible",
-     "type": "bool",
      "value": true
     },
     {
      "prop": "xlim",
-     "type": "pair",
      "value": [
       0.0,
       8.4
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "ylim",
-     "type": "pair",
-     "value": [
-      -0.49,
-      1.49
-     ],
-     "group": "数据范围"
+     ]
     },
     {
      "prop": "xscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "yscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     "value": "linear"
     }
    ],
    "bar_baseline": {
@@ -134,48 +74,18 @@
    "editable": [
     {
      "prop": "visible",
-     "type": "bool",
      "value": true
     },
     {
-     "prop": "xlim",
-     "type": "pair",
-     "value": [
-      -0.49,
-      1.49
-     ],
-     "group": "数据范围"
-    },
-    {
      "prop": "ylim",
-     "type": "pair",
      "value": [
       88.5,
       121.5
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "xscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     ]
     },
     {
      "prop": "yscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     "value": "linear"
     }
    ],
    "bar_baseline": {
@@ -197,48 +107,18 @@
    "editable": [
     {
      "prop": "visible",
-     "type": "bool",
      "value": true
     },
     {
-     "prop": "xlim",
-     "type": "pair",
-     "value": [
-      -0.49,
-      1.49
-     ],
-     "group": "数据范围"
-    },
-    {
      "prop": "ylim",
-     "type": "pair",
      "value": [
       105.0,
       135.0
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "xscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     ]
     },
     {
      "prop": "yscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     "value": "linear"
     }
    ],
    "bar_baseline": {
@@ -260,48 +140,18 @@
    "editable": [
     {
      "prop": "visible",
-     "type": "bool",
      "value": true
     },
     {
-     "prop": "xlim",
-     "type": "pair",
-     "value": [
-      -0.49,
-      1.49
-     ],
-     "group": "数据范围"
-    },
-    {
      "prop": "ylim",
-     "type": "pair",
      "value": [
       4.0,
       9.0
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "xscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     ]
     },
     {
      "prop": "yscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     "value": "linear"
     }
    ],
    "bar_baseline": {
@@ -323,48 +173,18 @@
    "editable": [
     {
      "prop": "visible",
-     "type": "bool",
      "value": true
     },
     {
-     "prop": "xlim",
-     "type": "pair",
-     "value": [
-      -0.54,
-      2.5400000000000005
-     ],
-     "group": "数据范围"
-    },
-    {
      "prop": "ylim",
-     "type": "pair",
      "value": [
       -3.4,
       5.4
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "xscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     ]
     },
     {
      "prop": "yscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     "value": "linear"
     }
    ],
    "bar_baseline": {
@@ -386,48 +206,18 @@
    "editable": [
     {
      "prop": "visible",
-     "type": "bool",
      "value": true
     },
     {
-     "prop": "xlim",
-     "type": "pair",
-     "value": [
-      -0.49,
-      1.49
-     ],
-     "group": "数据范围"
-    },
-    {
      "prop": "ylim",
-     "type": "pair",
      "value": [
       1.0,
       6.0
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "xscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     ]
     },
     {
      "prop": "yscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     "value": "linear"
     }
    ],
    "bar_baseline": {
@@ -449,48 +239,18 @@
    "editable": [
     {
      "prop": "visible",
-     "type": "bool",
      "value": true
     },
     {
-     "prop": "xlim",
-     "type": "pair",
-     "value": [
-      -0.54,
-      2.5400000000000005
-     ],
-     "group": "数据范围"
-    },
-    {
      "prop": "ylim",
-     "type": "pair",
      "value": [
       4.5,
       10.0
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "xscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     ]
     },
     {
      "prop": "yscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     "value": "linear"
     }
    ],
    "bar_baseline": {
@@ -507,48 +267,18 @@
    "editable": [
     {
      "prop": "visible",
-     "type": "bool",
      "value": true
     },
     {
      "prop": "xlim",
-     "type": "pair",
      "value": [
       1.5,
       8.0
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "ylim",
-     "type": "pair",
-     "value": [
-      -0.54,
-      2.5400000000000005
-     ],
-     "group": "数据范围"
+     ]
     },
     {
      "prop": "xscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "yscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     "value": "linear"
     }
    ],
    "bar_baseline": {
@@ -565,48 +295,18 @@
    "editable": [
     {
      "prop": "visible",
-     "type": "bool",
      "value": true
     },
     {
-     "prop": "xlim",
-     "type": "pair",
-     "value": [
-      0.9,
-      3.1
-     ],
-     "group": "数据范围"
-    },
-    {
      "prop": "ylim",
-     "type": "pair",
      "value": [
       0.0,
       3.15
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "xscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     ]
     },
     {
      "prop": "yscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     "value": "linear"
     }
    ],
    "bar_baseline": {
@@ -628,48 +328,18 @@
    "editable": [
     {
      "prop": "visible",
-     "type": "bool",
      "value": true
     },
     {
-     "prop": "xlim",
-     "type": "pair",
-     "value": [
-      0.9,
-      3.1
-     ],
-     "group": "数据范围"
-    },
-    {
      "prop": "ylim",
-     "type": "pair",
      "value": [
       0.5,
       3.5
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "xscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     ]
     },
     {
      "prop": "yscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     "value": "linear"
     }
    ],
    "bar_baseline": {
@@ -691,48 +361,18 @@
    "editable": [
     {
      "prop": "visible",
-     "type": "bool",
      "value": true
     },
     {
      "prop": "xlim",
-     "type": "pair",
      "value": [
       0.5,
       3.5
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "ylim",
-     "type": "pair",
-     "value": [
-      0.9,
-      3.1
-     ],
-     "group": "数据范围"
+     ]
     },
     {
      "prop": "xscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "yscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     "value": "linear"
     }
    ],
    "bar_baseline": {
@@ -754,48 +394,18 @@
    "editable": [
     {
      "prop": "visible",
-     "type": "bool",
      "value": true
     },
     {
-     "prop": "xlim",
-     "type": "pair",
-     "value": [
-      -0.49,
-      1.49
-     ],
-     "group": "数据范围"
-    },
-    {
      "prop": "ylim",
-     "type": "pair",
      "value": [
       9.0,
       4.0
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "xscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     ]
     },
     {
      "prop": "yscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     "value": "linear"
     }
    ],
    "bar_baseline": {
@@ -817,48 +427,18 @@
    "editable": [
     {
      "prop": "visible",
-     "type": "bool",
      "value": true
     },
     {
-     "prop": "xlim",
-     "type": "pair",
-     "value": [
-      -0.49,
-      1.49
-     ],
-     "group": "数据范围"
-    },
-    {
      "prop": "ylim",
-     "type": "pair",
      "value": [
       8.4,
       0.0
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "xscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     ]
     },
     {
      "prop": "yscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     "value": "linear"
     }
    ],
    "bar_baseline": {
@@ -880,48 +460,18 @@
    "editable": [
     {
      "prop": "visible",
-     "type": "bool",
      "value": true
     },
     {
-     "prop": "xlim",
-     "type": "pair",
-     "value": [
-      -0.49,
-      1.49
-     ],
-     "group": "数据范围"
-    },
-    {
      "prop": "ylim",
-     "type": "pair",
      "value": [
-      4.456254690668729,
-      56.100922715098214
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "xscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+      4.0,
+      60.0
+     ]
     },
     {
      "prop": "yscale",
-     "type": "enum",
-     "value": "log",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     "value": "log"
     }
    ],
    "bar_baseline": {
@@ -943,48 +493,18 @@
    "editable": [
     {
      "prop": "visible",
-     "type": "bool",
      "value": true
     },
     {
-     "prop": "xlim",
-     "type": "pair",
-     "value": [
-      -0.49,
-      1.49
-     ],
-     "group": "数据范围"
-    },
-    {
      "prop": "ylim",
-     "type": "pair",
      "value": [
       -6.0,
       -1.0
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "xscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     ]
     },
     {
      "prop": "yscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     "value": "linear"
     }
    ],
    "bar_baseline": {
@@ -1006,48 +526,18 @@
    "editable": [
     {
      "prop": "visible",
-     "type": "bool",
      "value": true
     },
     {
-     "prop": "xlim",
-     "type": "pair",
-     "value": [
-      -0.49,
-      1.49
-     ],
-     "group": "数据范围"
-    },
-    {
      "prop": "ylim",
-     "type": "pair",
      "value": [
       0.0,
       8.4
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "xscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     ]
     },
     {
      "prop": "yscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     "value": "linear"
     }
    ],
    "bar_baseline": {
@@ -1069,48 +559,18 @@
    "editable": [
     {
      "prop": "visible",
-     "type": "bool",
      "value": true
     },
     {
-     "prop": "xlim",
-     "type": "pair",
-     "value": [
-      -0.49,
-      1.49
-     ],
-     "group": "数据范围"
-    },
-    {
      "prop": "ylim",
-     "type": "pair",
      "value": [
       1.0,
       7.0
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "xscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     ]
     },
     {
      "prop": "yscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     "value": "linear"
     }
    ],
    "bar_baseline": {
@@ -1132,48 +592,18 @@
    "editable": [
     {
      "prop": "visible",
-     "type": "bool",
      "value": true
     },
     {
-     "prop": "xlim",
-     "type": "pair",
-     "value": [
-      -0.49,
-      1.49
-     ],
-     "group": "数据范围"
-    },
-    {
      "prop": "ylim",
-     "type": "pair",
      "value": [
       0.0,
       2.5
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "xscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     ]
     },
     {
      "prop": "yscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     "value": "linear"
     }
    ],
    "bar_baseline": {
@@ -1195,48 +625,18 @@
    "editable": [
     {
      "prop": "visible",
-     "type": "bool",
      "value": true
     },
     {
-     "prop": "xlim",
-     "type": "pair",
-     "value": [
-      -0.49,
-      1.49
-     ],
-     "group": "数据范围"
-    },
-    {
      "prop": "ylim",
-     "type": "pair",
      "value": [
       2.0,
       60.0
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "xscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     ]
     },
     {
      "prop": "yscale",
-     "type": "enum",
-     "value": "symlog",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     "value": "symlog"
     }
    ],
    "bar_baseline": {
@@ -1258,48 +658,18 @@
    "editable": [
     {
      "prop": "visible",
-     "type": "bool",
      "value": true
     },
     {
-     "prop": "xlim",
-     "type": "pair",
-     "value": [
-      -0.4975,
-      1.6474999999999997
-     ],
-     "group": "数据范围"
-    },
-    {
      "prop": "ylim",
-     "type": "pair",
      "value": [
       0.0,
       8.4
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "xscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     ]
     },
     {
      "prop": "yscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     "value": "linear"
     }
    ],
    "bar_baseline": {
@@ -1321,48 +691,18 @@
    "editable": [
     {
      "prop": "visible",
-     "type": "bool",
      "value": true
     },
     {
-     "prop": "xlim",
-     "type": "pair",
-     "value": [
-      -0.4975,
-      1.6474999999999997
-     ],
-     "group": "数据范围"
-    },
-    {
      "prop": "ylim",
-     "type": "pair",
      "value": [
       40.0,
       90.0
-     ],
-     "group": "数据范围"
-    },
-    {
-     "prop": "xscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     ]
     },
     {
      "prop": "yscale",
-     "type": "enum",
-     "value": "linear",
-     "options": [
-      "linear",
-      "log",
-      "symlog"
-     ],
-     "group": "数据范围"
+     "value": "linear"
     }
    ],
    "bar_baseline": {
