@@ -157,7 +157,7 @@ def outline_text(obj: dict, *, faces, math: dict | None = None) -> list[dict]:
     """一个文字对象（导出载荷的形状，`exportPayload.toExportObject`）→ 页面 mm 的路径对象列表（不带 id）。
 
     排不出来（空文字）= 空列表。字体不可用等问题与导出同一种异常（`plan.PlanError`）原样抛出。"""
-    if obj.get("type") != "text":
+    if obj.get("type") not in ("text", "pathText"):
         raise plan.PlanError("bad_object", "只有文字对象能转轮廓", {"id": str(obj.get("id", ""))})
     y_mm = float(obj.get("y_mm") or 0) + float(obj.get("h_mm") or 0)
     page_h_mm = max(y_mm + 1000.0, 1000.0)
@@ -187,6 +187,17 @@ def outline_text(obj: dict, *, faces, math: dict | None = None) -> list[dict]:
         if geom is not None:
             out.append({"type": "path", **geom, **fields})
 
+    # 相邻的字（同色、同一种模拟粗体）并成一条复合路径：一行字是一段 ShapedText，路径文字是每个字一段——两种都并成一条；
+    # 中间夹着底框 / 下划线这类路径时先把攒着的字落下，保持 IR 的绘制顺序
+    pending: dict[tuple, list[dict]] = {}
+    pending_fields: dict[tuple, dict] = {}
+
+    def flush() -> None:
+        for key, subs in pending.items():
+            emit(subs, pending_fields[key])
+        pending.clear()
+        pending_fields.clear()
+
     def visit(node, m: ir.Matrix) -> None:
         if isinstance(node, ir.Group):
             # 先内后外：子节点的点先过这一层的变换，再过外层累积的（`compose(m1, m2)` = 先 m1 后 m2）
@@ -195,6 +206,7 @@ def outline_text(obj: dict, *, faces, math: dict | None = None) -> list[dict]:
                 visit(c, mm)
             return
         if isinstance(node, ir.Path):
+            flush()
             subs = _segs_to_subs(node.segments, m)
             fields = _paint_fields(node.fill, node.stroke)
             if node.fill_rule == "evenodd":
@@ -203,8 +215,6 @@ def outline_text(obj: dict, *, faces, math: dict | None = None) -> list[dict]:
             return
         if isinstance(node, ir.ShapedText):
             pen_x = node.x
-            groups: dict[bool, list[dict]] = {}
-            widths: dict[bool, float] = {}
             for run in node.runs:
                 face = face_of(run.font)
                 scale = run.size / face.upem
@@ -212,6 +222,14 @@ def outline_text(obj: dict, *, faces, math: dict | None = None) -> list[dict]:
                     if run.font not in glyph_sets:
                         glyph_sets[run.font] = face._tt.getGlyphSet()
                     gs = glyph_sets[run.font]
+                    width = ir.synth_bold_width(run.size) if run.synth_bold else 0.0
+                    key = (node.paint, round(width, 9))
+                    if key not in pending:
+                        pending[key] = []
+                        pending_fields[key] = _paint_fields(
+                            node.paint,
+                            ir.Stroke(node.paint, width, join="round") if width else None,
+                        )
                     gx = pen_x
                     for g in run.glyphs:
                         gm = (
@@ -224,19 +242,13 @@ def outline_text(obj: dict, *, faces, math: dict | None = None) -> list[dict]:
                         )
                         col = _Collect(gs, ir.compose(gm, m))
                         gs[face.glyph_name(g.gid)].draw(col.pen)
-                        groups.setdefault(run.synth_bold, []).extend(col.subs)
-                        if run.synth_bold:
-                            widths[True] = ir.synth_bold_width(run.size)
+                        pending[key].extend(col.subs)
                         gx += g.x_advance * scale
                 pen_x += sum(g.x_advance for g in run.glyphs) * scale
-            for bold, subs in groups.items():
-                fields = _paint_fields(
-                    node.paint, ir.Stroke(node.paint, widths[True], join="round") if bold else None
-                )
-                emit(subs, fields)
             return
         # 位图 / 置入页不会出现在文字对象里
 
     for child in page.children:
         visit(child, ir.IDENTITY)
+    flush()
     return out
