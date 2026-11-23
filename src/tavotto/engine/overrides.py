@@ -16,6 +16,7 @@ import hashlib
 import math
 import numbers
 import os
+import re
 import sys
 import weakref
 
@@ -5972,6 +5973,201 @@ for _p in legendmodel.LEGEND_ENTRY_STYLE_PROPS:
 _RESTORE.update(_PENDING_RESTORES)
 
 
+# ---------------------------------------------------------------------------
+# 图内副本（ADR 0205）：`{gid: "<宿主>.copy_<8 位>", prop: "copy_of", value: {src, text, at}}`
+#
+# 这是 override 里唯一**新增** artist 的一类（3D 轴箭头是改造已有的轴）。副本 = 一段普通 `Text`：
+# `Text(*at, text)` + `update_from(源)` + 宿主的变换（子图 `transAxes` / 整图 `transFigure`），
+# `set_clip_on(False)` + `set_in_layout(False)`（不参与布局引擎，布局输入与没有副本时逐位相同），
+# 私有标记 `_mm_copy = gid`。之后对副本 gid 的一切修改都是普通 text override，走既有 HANDLERS。
+#
+# **为什么不走 `_apply` 里「先 resolve 再找 handler」的常规路**：副本的 gid 在它被创建之前解不出对象。
+# `_apply` 在 resolve 之前对 `copy_of` 单走 `_ensure_copy`（创建 / 复用 / 值变了就重建），随后与别的
+# prop 一样经 `HANDLERS` → `state.applied` / `originals` 记账；还原走 `_RESTORE`（`_restore_copy`）。
+#
+# **加进宿主的方式**：`host.add_artist(t)`（公开 API，3D 轴箭头同一先例）。子图里它仍出现在
+# `ax.texts`（按类型过滤）、排在脚本的文字之后；整图上它进 `fig.artists` 而不是 `fig.texts`——
+# 所以 `fig.texts_j` 的序号永远不被副本挤动，用 `fig.texts.append` 反而要手补 `_remove_method` 与
+# figure 归属这两件私有的事。`instrument` 的按序登记跳过带 `_mm_copy` 的 artist（见 manifest）。
+# ---------------------------------------------------------------------------
+COPY_PROP = "copy_of"
+#: 副本登记名的尾巴（`manifest._relabel` 换字时保留它）
+COPY_LABEL_SUFFIX = " 的副本"
+_COPY_GID = re.compile(r"^(axes_\d+|fig)\.copy_[a-z0-9]{8}$")
+#: 元素表登记函数（`manifest._register`）：manifest 在 import 时登记进来（反过来 import 会成环）
+_ELEMENT_REGISTRAR = None
+
+
+def set_element_registrar(registrar) -> None:
+    global _ELEMENT_REGISTRAR
+    _ELEMENT_REGISTRAR = registrar
+
+
+def _copy_value(value) -> dict:
+    """规范化 `copy_of` 的值；形状不对就抛（落成「应用失败」warning）。"""
+    if not isinstance(value, dict):
+        raise ValueError("copy_of 的值必须是 {src, text, at}")
+    src, text, at = value.get("src"), value.get("text"), value.get("at")
+    if not isinstance(src, str) or not src or not isinstance(text, str):
+        raise ValueError("copy_of 需要字符串 src 与 text")
+    if not (
+        isinstance(at, (list, tuple))
+        and len(at) == 2
+        and all(
+            isinstance(v, numbers.Real) and not isinstance(v, bool) and math.isfinite(v) for v in at
+        )
+    ):
+        raise ValueError("copy_of.at 必须是两个有限数 [x, y]")
+    return {"src": src, "text": text, "at": [float(at[0]), float(at[1])]}
+
+
+def _copy_source_supported(host_gid: str, src_gid: str) -> bool:
+    """第一期能当源的 gid 形状：宿主子图的标题 / 轴标题 / `ax.texts`，或整图的 `fig.texts`。"""
+    if host_gid == "fig":
+        return re.fullmatch(r"fig\.texts_\d+", src_gid) is not None
+    pat = re.escape(host_gid) + r"\.(?:title|title_left|title_right|xlabel|ylabel|texts_\d+)"
+    return re.fullmatch(pat, src_gid) is not None
+
+
+def _drop_copy(state: FigState, gid: str, *, purge: bool = False) -> None:
+    """摘掉副本：从图上 `remove()`，并从 index / 元素表 / identity 摘掉。
+
+    `purge=True`（值变了要重建）时连这个 gid 上所有已应用修改的账一起清：新对象是全新的，
+    旧对象上的 applied / originals 对它不再成立。还原路径不清（`_apply` 的还原循环自己销账）。"""
+    t = state.index.pop(gid, None)
+    if t is not None:
+        t.remove()
+        state.elements[:] = [e for e in state.elements if e["artist"] is not t]
+    state.identity.pop(gid, None)
+    if state.pristine_fields is not None:
+        state.pristine_fields.pop(gid, None)
+    state.index_generation += 1
+    if purge:
+        for k in [k for k in state.applied if k[0] == gid]:
+            _forget_key(state, k)
+
+
+def _forget_key(state: FigState, key: tuple) -> None:
+    state.applied.pop(key, None)
+    state.originals.pop(key, None)
+    state.original_values.pop(key, None)
+    state.alias_seeded.discard(key)
+    state.unrestored.discard(key)
+
+
+def _ensure_copy(state: FigState, gid: str, value, warnings: list[str]):
+    """让 `gid` 这个副本按 `value` 存在于图上。返回 `(artist | None, created)`。
+
+    已存在且值相同 → 原样复用；值不同 → 摘掉重建。不支持 / 源不在 → 记 warning 返回 `(None, False)`，
+    不抛（与别的 prop 同一出口：一条 warning 阻断写回，界面列为失效修改）。"""
+    cur = state.index.get(gid)
+    spec = _copy_value(value)
+    if cur is not None and getattr(cur, "_mm_copy", None) == gid:
+        if getattr(cur, "_mm_copy_value", None) == spec:
+            return cur, False
+        _drop_copy(state, gid, purge=True)
+    m = _COPY_GID.match(gid)
+    host_gid = m.group(1) if m else ""
+    host = state.fig if host_gid == "fig" else state.index.get(host_gid)
+    if m is None or (host_gid != "fig" and not isinstance(host, Axes)):
+        if m is not None and host is None:
+            warnings.append(f"元素不存在（脚本可能已改动）: {gid}")
+        else:
+            warnings.append(f"属性不支持: {gid}.{COPY_PROP}")
+        return None, False
+    if host_gid != "fig" and (getattr(host, "name", "") == "3d" or host in state.colorbar_axes):
+        warnings.append(f"属性不支持: {gid}.{COPY_PROP}")
+        return None, False
+    src_gid = spec["src"]
+    if not _copy_source_supported(host_gid, src_gid):
+        warnings.append(f"属性不支持: {gid}.{COPY_PROP}")
+        return None, False
+    src = state.index.get(src_gid)
+    if src is None:
+        warnings.append(f"元素不存在（脚本可能已改动）: {src_gid}")
+        return None, False
+    if _cls_key(src) != "text" or getattr(src, "_mm_copy", None):
+        warnings.append(f"属性不支持: {gid}.{COPY_PROP}")
+        return None, False
+
+    t = Text(spec["at"][0], spec["at"][1], spec["text"])
+    t.update_from(src)  # 字体 / 颜色 / 对齐 / 转角 / 可见 / alpha / 描边特效（样式按引用）
+    # `update_from` 不管的几项：轴标题的 `rotation_mode='anchor'` 不抄的话竖排标题的锚点语义变了
+    t.set_rotation_mode(src.get_rotation_mode())
+    t.set_zorder(src.get_zorder())
+    t.set_wrap(src.get_wrap())
+    t.set_parse_math(src.get_parse_math())
+    t.set_label("")  # `update_from` 把源的 label 也抄了过来
+    t.set_path_effects(list(src.get_path_effects()))
+    bp = src.get_bbox_patch()
+    # 底框同口径：源上的底框若是 Tavotto 现建的（`_mm_bbox_created`）= 脚本原样没有，副本也不带
+    if bp is not None and not getattr(src, "_mm_bbox_created", False):
+        t.set_bbox(
+            {
+                "boxstyle": bp.get_boxstyle(),
+                "facecolor": bp.get_facecolor(),
+                "edgecolor": bp.get_edgecolor(),
+                "linewidth": bp.get_linewidth(),
+                "linestyle": bp.get_linestyle(),
+                "alpha": bp.get_alpha(),
+            }
+        )
+    # **样式按引用的是「脚本原样的源」，不是此刻的源**：冷重放里 `copy_of`（`_RANK_COPY`）先于源上的样式修改，
+    # 副本抄到的是脚本原样；热会话里源可能早被改过，`update_from` 抄到的是改过的样子。把源上已应用的文字样式
+    # 按它们各自记下的原样落回副本（`text` 副本自己有、`pos_frac` 位置归 `at`），两边就是同一个副本。
+    for (g, prop), orig in list(state.originals.items()):
+        if (
+            g != src_gid
+            or (g, prop) not in state.applied
+            or prop in ("text", COPY_PROP, "pos_frac")
+        ):
+            continue
+        if prop in _BBOX_PROPS:
+            # 底框六条写同一个 patch，还原函数要数「源上还剩几条」（状态耦合）——这里只把脚本原样的值写回副本自己的框
+            if t.get_bbox_patch() is not None and orig is not _NO_BBOX:
+                _BBOX_PROPS[prop][1](t.get_bbox_patch(), orig)
+            continue
+        restore = _RESTORE.get(("text", prop))
+        fn = restore if restore is not None else HANDLERS[("text", prop)][1]
+        if getattr(fn, "_needs_state", False):
+            fn(t, orig, state)
+        else:
+            fn(t, orig)
+    t.set_transform(state.fig.transFigure if host_gid == "fig" else host.transAxes)
+    host.add_artist(t)
+    t.set_clip_on(False)  # `add_artist` 会补上子图的裁剪路径；副本可以落在子图外
+    t.set_in_layout(False)
+    t._mm_copy = gid  # noqa: SLF001
+    t._mm_copy_value = spec  # noqa: SLF001
+    role = next((e["role"] for e in state.elements if e["artist"] is src), "text")
+    src_label = next((e["label"] for e in state.elements if e["artist"] is src), "文字")
+    if _ELEMENT_REGISTRAR is None:
+        raise RuntimeError("元素登记函数未接线（manifest 没有 import）")
+    _ELEMENT_REGISTRAR(state, gid, t, role, f"{src_label}{COPY_LABEL_SUFFIX}", draggable=True)
+    state.index_generation += 1
+    return t, True
+
+
+def _get_copy(a):
+    return dict(a._mm_copy_value)  # noqa: SLF001
+
+
+def _set_copy(a, v) -> None:
+    """创建在 `_ensure_copy`；到这里只核对「解出来的就是按这个值建的那个副本」。"""
+    if getattr(a, "_mm_copy_value", None) != _copy_value(v):
+        raise RuntimeError("副本与 copy_of 的值不一致")
+
+
+def _restore_copy(a, orig, state: FigState) -> None:
+    """撤销 / 删掉 `copy_of` = 把副本摘掉。这个 gid 上其余修改的账由还原循环自己销。"""
+    _drop_copy(state, a._mm_copy)  # noqa: SLF001
+
+
+_restore_copy._needs_state = True  # noqa: SLF001
+HANDLERS[("text", COPY_PROP)] = (_get_copy, _set_copy)
+_RESTORE[("text", COPY_PROP)] = _restore_copy
+
+
 #: manifest 里颜色字段的「没有颜色」取值：alpha 为 0 的颜色（`'none'`、没设边色的 patch、
 #: `fill=False` 的面、空心 marker）**不显示成它的 RGB**。`mcolors.to_hex` 默认丢掉 alpha，
 #: 于是透明黑变成 `#000000`——检查器摆出一条并不存在的黑边（#427），一个语义错的精确值。
@@ -6293,7 +6489,7 @@ for _mkey in ("collection", "image"):
 #
 #   * `[xy]scale` → `[xy]lim`：`set_yscale("log")` 会重新自动缩放，于是 `ylim`
 #     的原样是在坐标范围已经变过之后采的。**两个列表序都坏**——`_apply_rank`
-#     把 scale（第 4 档）钉死在 lim（第 6 档）之前，规范顺序把「可能被污染」
+#     把 scale（第 4 档）钉死在 lim（「其余」档）之前，规范顺序把「可能被污染」
 #     变成了「必然被污染」。实测 yscale+ylim 撤销后 20 处 manifest 字段不同
 #     （含 ylim、刻度值、刻度文字与一串 bbox），xscale+xlim 12 处；**各自单独
 #     应用则完全干净**。
@@ -6403,15 +6599,18 @@ def alias_covers(
 #:   2 色条 extend 延伸三角要占地方；必须**在方向之后**，因为方向要拿色条
 #:                当前的矩形反解厚度与间距
 #:   3 子图落位   axes position
-#:   4 刻度类型   set_[xy]scale 会把 locator/formatter 整套换掉，必须先于 6
-#:   5 其余       列表序
-#:   6 刻度定位   locator / formatter 模型（依赖 4 与 5 的 xlim）
-#:   7 刻度文字   冻结整条轴，必须最后（先冻的会被后来的 locator 换掉）
+#:   4 刻度类型   set_[xy]scale 会把 locator/formatter 整套换掉，必须先于 7
+#:   5 图内副本   `copy_of`（ADR 0205）：几何组之后、其余之前——副本落在宿主的 transAxes /
+#:                transFigure 上，宿主先到位；对副本 gid 的其它修改都在「其余」档，创建总先于改样式
+#:   6 其余       列表序
+#:   7 刻度定位   locator / formatter 模型（依赖 4 与 6 的 xlim）
+#:   8 刻度文字   冻结整条轴，必须最后（先冻的会被后来的 locator 换掉）
 #: 图幅语义（`figure.frame`）排在一切之前：图幅尺寸、子图 position、figure 分数的换算都以它为准
 _RANK_FRAME = -1
 _RANK_FIGURE_SIZE, _RANK_CB_ORIENT, _RANK_CB_EXTEND = 0, 1, 2
 _RANK_POSITION, _RANK_SCALE = 3, 4
-_RANK_REST, _RANK_TICK_MODEL, _RANK_TICK_TEXT = 5, 6, 7
+_RANK_COPY = 5
+_RANK_REST, _RANK_TICK_MODEL, _RANK_TICK_TEXT = 6, 7, 8
 
 
 def _apply_rank(prop: str, artist, gid: str = "") -> int:
@@ -6420,6 +6619,9 @@ def _apply_rank(prop: str, artist, gid: str = "") -> int:
     # ——按对象归档会把它错排到刻度定位前面，于是永远解不出来
     if prop == "text" and tickmodel.TICKLABEL_GID.match(gid or ""):
         return _RANK_TICK_TEXT
+    # 副本按 **prop 名** 归档：排序发生在整轮 apply 之前，这条 gid 此刻还解不出对象（副本还没建）
+    if prop == COPY_PROP:
+        return _RANK_COPY
     if prop == "frame" and isinstance(artist, Figure):
         return _RANK_FRAME
     if prop == "size_mm" and isinstance(artist, Figure):
@@ -6499,8 +6701,8 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
 def _apply(state: FigState, patches: list[dict]) -> list[str]:
     """把全量 patch 列表同步到 Figure。返回 warning 列表（孤儿 gid 等）。
 
-    应用顺序是**规范化**的，七个档位见 `_apply_rank` 的表：图幅 → 结构改造
-    （色条方向）→ 子图 position → 刻度类型 → 其余（列表序）→ 刻度定位 →
+    应用顺序是**规范化**的，各档位（-1 起）见 `_apply_rank` 的表：图幅 → 结构改造
+    （色条方向）→ 子图 position → 刻度类型 → 图内副本 → 其余（列表序）→ 刻度定位 →
     刻度文字。figure 锚定的 prop 依赖应用那一刻的几何，只有先把几何放到位、
     且几何变过就重放它们，热会话的增量应用才与冷启动的全量重放收敛到同一
     状态——「所见 == 文档重放 == 写回 == 重开」这条链靠它成立。
@@ -6687,7 +6889,7 @@ def _apply(state: FigState, patches: list[dict]) -> list[str]:
         state.original_values.pop(_nkey, None)
         state.alias_seeded.discard(_nkey)
 
-    # 应用新值：七档规范顺序（组内保持列表序，sorted 稳定）
+    # 应用新值：规范档位顺序（见 `_apply_rank`；组内保持列表序，sorted 稳定）
     def _rank(item):
         (gid, prop), _value = item
         # 次序位：组内成员必须排在**它的广播 prop 之后**。同一组 patch 无论
@@ -6735,8 +6937,29 @@ def _apply(state: FigState, patches: list[dict]) -> list[str]:
     try:
         for key, value in sorted(new.items(), key=_rank):
             gid, prop = key
-            artist = state.resolve(gid)
+            if prop == COPY_PROP:
+                # 副本此刻还不存在：先建（或复用），随后与别的 prop 一样记账
+                try:
+                    artist, _created = _ensure_copy(state, gid, value, warnings)
+                except Exception as exc:  # noqa: BLE001
+                    warnings.append(f"应用失败 {gid}.{prop}: {exc}")
+                    continue
+                if artist is None:
+                    continue
+                if _created:
+                    # 新对象是它自己的「脚本原样」：读一次、记进 pristine 与本轮快照，
+                    # 热态（副本早已存在）与冷重放（本轮新建）的 `value_original` 才同一口径
+                    _field_snap.pop(gid, None)
+                    _snapshot(gid)
+                    if state.pristine_fields is not None:
+                        state.pristine_fields[gid] = _field_snap[gid]
+            else:
+                artist = state.resolve(gid)
             if artist is None:
+                if _COPY_GID.match(gid):
+                    # 副本没有了（`copy_of` 被去掉）而它的其它修改还在：旧账作废，下次副本回来时重新落
+                    for _k in [k for k in state.applied if k[0] == gid]:
+                        _forget_key(state, _k)
                 warnings.append(f"元素不存在（脚本可能已改动）: {gid}")
                 continue
             handler = HANDLERS.get((_cls_key(artist), prop))

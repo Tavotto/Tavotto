@@ -92,13 +92,41 @@ order: 70
   tick kw 与已建刻度线是**两份独立状态**各自还原（脚本可 `ax.grid(color=red)` 后 `plt.setp(线, color=blue)`）：kw 有值写回、没表态删键；已建的线不管 kw 一律写回**首次捕获时的实际值**（不回头读 rcParams：脚本在 `rc_context` 里建的网格，退出上下文后 kw 里没键、线上却带着当时的值）。manifest 的读数（`_grid_prop`）不是原样，别拿来还原。
   看护 `tests/test_prop_override_idempotent.py::test_removing_a_grid_style_edit_restores_the_original_hot_vs_fresh`；
   随机域已含 2D `axes`（`tests/support/overridesample._editable_targets`）。
+- **副本（ADR 0205）= override 里唯一「新增 artist」的一类，`copy_of`**：
+  `{gid: "<宿主>.copy_<8 位 [a-z0-9]>", prop: "copy_of", value: {src, text, at}}`；宿主是 `axes_N`（`at` 为该子图
+  axes 分数，`transAxes`）或 `fig`（figure 分数，`transFigure`）。**命名**不用 `texts_N`：用户以后在脚本里加一个
+  `ax.text` 会占掉那个序号，副本的修改就落到别人身上。第一期源只认子图标题 / 左右标题 / `xlabel` / `ylabel` /
+  `ax.texts_*`（注释文字只建普通 `Text`，不带箭头）/ `fig.texts_*`；刻度数字、图例文字、箭头、3D 子图、色条轴、
+  宿主与源不在同一处、副本再抄副本 → 记「属性不支持」warning 并跳过（不抛、不留半个副本）；源不在 → 「元素不存在」。
+  * **排序**：`_apply_rank` 新开一档 `_RANK_COPY`，在几何组（图幅 / 结构 / position / scale）**之后**、`_RANK_REST`
+    **之前**；按 **prop 名**归档（副本的 gid 在创建前解不出对象）。对副本 gid 的其它修改都在「其余」档，创建总先于改样式。
+    脚本侧镜像（`scriptadjust._rank`，同源对）本期不用：`copy_of` 在 `NOT_WRITABLE`，PR 2 接创建型语句时排在全部属性语句之前。
+  * **应用**：`_apply` 对 `copy_of` 在 resolve 之前单走 `overrides._ensure_copy`（创建 / 同值复用 / 值变了重建并清这个
+    gid 上的旧账），随后与别的 prop 一样经 `HANDLERS[("text","copy_of")]` 记 applied / originals。副本 = `Text(*at, text)`
+    + `update_from(源)`（再补 `update_from` 不管的 `rotation_mode` / `zorder` / `wrap` / `parse_math` / 底框）+ 宿主变换
+    + `set_clip_on(False)` + `set_in_layout(False)`（不进布局引擎，布局输入与没有副本时逐位相同）+ 私有标记
+    `_mm_copy = gid`，经 `host.add_artist` 加入宿主——公开 API；整图副本落在 `fig.artists` 而不是 `fig.texts`，
+    所以 `fig.texts_j` 的序号永远不被挤动。
+  * **样式按引用的是「脚本原样的源」**：冷重放里 `copy_of` 先于源上的样式修改建出；热会话里源可能早被改过，所以建副本时
+    把源上已应用的文字样式按 `state.originals` 记下的原样落回副本（`text` / `pos_frac` 除外；底框六条只写副本自己的框，
+    源上的底框是 Tavotto 现建的就不带——还原函数数的是源的账，不能直接用在副本上）。看护 `test_copy_takes_the_scripts_source_not_its_edited_state`。
+  * **登记**：副本由 `_ensure_copy` 经 `manifest._register`（`overrides.set_element_registrar` 接线）登记进
+    `state.index` / identity / 元素表，**角色沿用源的角色**，显示名 = 源的名字 + 「 的副本」（`manifest._relabel` 换字时保留尾巴）。
+    **`instrument` 的按序登记（`axes_i.texts_j`、`fig.texts_j`、`fig.artists_j`）跳过带 `_mm_copy` 的 artist**（序号照数、不挪位），
+    不让副本再以序号名登记一次。
+  * **还原**：上次有、这次没有的 `copy_of` → `_RESTORE[("text","copy_of")]`（`_needs_state`）`remove()` 并从 index / 元素表摘掉。
+    副本 gid 上还留着的其它修改报「元素不存在」，其旧账（applied / originals）当场作废，副本回来时重新落。
+  * **`value_original`**：新建的副本在创建那一刻读一次字段当它的「脚本原样」（记进 `pristine_fields` 与本轮快照），
+    热态（副本早已存在）与冷重放（本轮新建）同一口径。
+  看护 `tests/test_figure_copy_override.py`（源 × 布局引擎热冷对拍、撤销、登记、不支持的源 / 宿主、数据指纹、写回验证门）。
 - **应用顺序规范化 + figure 锚定 prop 的重放（2026-08-17，数据损坏级）**：
-  `overrides.apply` 按**七档规范顺序**应用（`_apply_rank` 是唯一出处；ADR 0098 在最前面加了
+  `overrides.apply` 按**分档规范顺序**应用（`_apply_rank` 是唯一出处；ADR 0098 在最前面加了
   一档 `figure.frame`（`_RANK_FRAME = -1`：图幅按 figsize 还是按脚本存盘的裁切框——之后每一档
   的尺寸与分数都以它为准；它这一轮换了，`_FRAME_RELATIVE` 里的 `size_mm` / `position` /
   三个 `*_frac` 值没变也重放）：
   图幅 size_mm → 色条方向 → 色条 extend → 子图 position → 刻度类型
-  （set_[xy]scale 会把 locator/formatter 整套换掉）→ 其余（列表序）→
+  （set_[xy]scale 会把 locator/formatter 整套换掉）→ **图内副本 `copy_of`（ADR 0205，`_RANK_COPY`）**
+  → 其余（列表序）→
   刻度定位模型 → 单条刻度文字（冻结整条轴，必须最后）。色条方向必须先于
   extend：方向要拿色条**当前**的矩形反解厚度与间距。跨档的先后不是
   口味问题：顺序一乱，同一组 patch 在热会话与全量重放里会落成两张图。
