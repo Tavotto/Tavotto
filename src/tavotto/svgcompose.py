@@ -481,7 +481,7 @@ def _native_manifest_context(
     return out
 
 
-def _native_dom_facts(scene, fragment, scaffold):
+def _native_dom_facts(scene, fragment, scaffold, *, outline_class=None):
     """Actual final DOM targets and paint facts; never a second geometry ruler.
 
     Native axes may now own pieces in several source paint slots. The original
@@ -527,6 +527,22 @@ def _native_dom_facts(scene, fragment, scaffold):
 
     ranks, painted, counter = {}, {}, [0]
 
+    # Matplotlib applies FreeType's scale to glyph definitions. Marker and
+    # collection definitions bake their transforms into the path instead.
+    glyph_refs = (
+        {
+            f"#{path.attrib['id']}"
+            for path in fragment.findall(".//s:defs/s:path", NS)
+            if "id" in path.attrib and "transform" in path.attrib
+        }
+        if outline_class is not None
+        else set()
+    )
+
+    def glyph_run_child(node):
+        href = node.get("href") or node.get("{http://www.w3.org/1999/xlink}href")
+        return node.tag == f"{{{SVG_NS}}}use" and href in glyph_refs
+
     def rank(node):
         if node.tag in {f"{{{SVG_NS}}}defs", f"{{{SVG_NS}}}metadata", f"{{{SVG_NS}}}style"}:
             return set()
@@ -545,7 +561,20 @@ def _native_dom_facts(scene, fragment, scaffold):
         }:
             mine.add(counter[0])
             counter[0] += 1
+        outline_group = (
+            outline_class is not None
+            and node.tag == f"{{{SVG_NS}}}g"
+            and "transform" in node.attrib
+            and outline_class in node.get("class", "").split()
+        )
+        seen_glyph = False
         for child in node:
+            if outline_group and glyph_run_child(child):
+                # All the glyphs in a single draw_text run occupy one paint
+                # position, just like the text node in the vector representation.
+                if seen_glyph:
+                    continue
+                seen_glyph = True
             mine.update(rank(child))
         if node.get("id") in original and mine:
             ranks[node.get("id")] = max(mine)
@@ -657,7 +686,9 @@ def _hidden_native_containers(fragment, roles, manifest, main_role):
     return hidden_axes
 
 
-def compose_native_scene(source_svg: bytes, binding: dict, scaffold: dict, model: dict) -> dict:
+def compose_native_scene(
+    source_svg: bytes, binding: dict, scaffold: dict, model: dict, *, outline_text: bool = False
+) -> dict:
     """物理 pt scaffold → 场景与配对 manifest；旧 compose_scene 不经过此分支。
 
     原 scene index 在隔离之前持有 Element 引用，原 source/绑定身份始终不变。
@@ -987,7 +1018,9 @@ def compose_native_scene(source_svg: bytes, binding: dict, scaffold: dict, model
 
     # The final DOM is the sole authority for actual preview target membership
     # and cross-placement paint facts. No browser geometry is remeasured.
-    svg_targets, ranks, painted = _native_dom_facts(scene, fragment, scaffold)
+    svg_targets, ranks, painted = _native_dom_facts(
+        scene, fragment, scaffold, outline_class=native_class if outline_text else None
+    )
     if new_axes:
         anchor = next(p for p in placements if p["role"].startswith("series:"))
         placements.append(

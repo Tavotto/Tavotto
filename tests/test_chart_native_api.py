@@ -64,7 +64,7 @@ def project(tmp_path, monkeypatch):
         renderhost.shutdown_shared()
 
 
-def _bind(client, y=0.25):
+def _bind_evidence(y):
     evidence = {
         "p1_user": 0.0,
         "p1_value": 0.0,
@@ -72,26 +72,35 @@ def _bind(client, y=0.25):
         "p2_value": 1.0,
         "scale": "linear",
     }
+    return {
+        "axes_id": "ax1",
+        "rect": [10.0, 10.0, 80.0, 80.0],
+        "x": evidence,
+        "y": evidence,
+        "axes_nodes": ["old_axis"],
+        "series": [
+            {
+                "node": "curve",
+                "x_col": "x",
+                "y_col": "y",
+                "kind": "line",
+                "style": {"color": "#0000ff", "linewidth": 3.0},
+            }
+        ],
+        "completeness": "self-contained",
+        "dataset_text": f"x,y\n0,{y}\n1,{y}\n",
+    }
+
+
+def _bind(client, y=0.25):
+    inspected = client.get("/api/svg/chart/inspect?id=chart.svg")
+    assert inspected.status_code == 200, inspected.get_json()
     response = client.post(
         "/api/svg/chart/bind",
         json={
+            **_bind_evidence(y),
             "file": "chart.svg",
-            "axes_id": "ax1",
-            "rect": [10.0, 10.0, 80.0, 80.0],
-            "x": evidence,
-            "y": evidence,
-            "axes_nodes": ["old_axis"],
-            "series": [
-                {
-                    "node": "curve",
-                    "x_col": "x",
-                    "y_col": "y",
-                    "kind": "line",
-                    "style": {"color": "#0000ff", "linewidth": 3.0},
-                }
-            ],
-            "completeness": "self-contained",
-            "dataset_text": f"x,y\n0,{y}\n1,{y}\n",
+            "scene_digest": inspected.get_json()["scene_digest"],
         },
     )
     assert response.status_code == 200, response.get_json()
@@ -110,7 +119,10 @@ def test_chart_http_entries_respect_install_lease_and_recover_without_source_cha
     chart_worker = pool.acquire_chart(root)
     assert chart_worker.task_kind == "chart"
     requests = [
-        ("/api/svg/chart/bind", {"file": "chart.svg"}),
+        (
+            "/api/svg/chart/bind",
+            {"file": "chart.svg", "scene_digest": chart["model"]["scene_digest"]},
+        ),
         ("/api/svg/chart/compute", {"file": "chart.svg", **chart}),
         ("/api/engine/render", {"id": "chart.svg", "chart": chart, "patches": []}),
         ("/api/engine/preview_png", {"id": "chart.svg", "chart": chart, "patches": []}),
@@ -307,6 +319,50 @@ def test_compute_default_contract_stays_legacy_and_native_returns_measured_manif
     assert (root / "chart.svg").read_bytes() == SOURCE
 
 
+def test_replay_and_restore_find_bound_nodes_beyond_the_inspection_inventory(project):
+    from tavotto import svgscene
+    from tavotto.engine import chartbind, chartprocess
+
+    client, root = project
+    source = ET.fromstring(SOURCE)
+    filler = ET.Element(NS + "defs")
+    for _ in range(svgscene.MAX_INVENTORY_NODES):
+        ET.SubElement(filler, NS + "rect")
+    source.insert(0, filler)
+    data = ET.tostring(source)
+    (root / "chart.svg").write_bytes(data)
+    response = client.get("/api/svg/chart/inspect?id=chart.svg")
+    assert response.status_code == 200, response.get_json()
+    scene = response.get_json()
+    assert scene["truncated"]
+    assert "curve" not in {node["id"] for node in scene["nodes"]}
+
+    # 已有模型可以来自完整场景索引，盘点上限只约束检视响应。
+    index = svgscene.build_node_index(source)
+    probe = chartprocess.run_request(root, {"probe": True}, timeout=20)
+    assert probe["ok"], probe
+    bound = chartbind.build_model_and_binding(
+        {
+            **_bind_evidence(0.25),
+            "scene_digest": scene["scene_digest"],
+            "nodes": [
+                {"id": node_id, "tag": index[node_id].tag.removeprefix(NS)}
+                for node_id in ("old_axis", "curve")
+            ],
+        },
+        engine_identity=probe["engine"],
+    )
+    chart = {key: bound[key] for key in ("model", "binding")}
+    rendered = _compute(client, chart, profile=chartprofile.NATIVE_PROFILE)
+    bundle = chartbundle.embed_chart(
+        rendered["svg"].encode("utf-8"), data, chart, render_profile=chartprofile.NATIVE_PROFILE
+    )
+    (root / "portable.svg").write_bytes(bundle)
+    restored = client.get("/api/svg/chart/inspect?id=portable.svg")
+    assert restored.status_code == 200, restored.get_json()
+    assert restored.get_json()["restored_chart"] == chart
+
+
 def test_two_models_and_full_edit_lists_do_not_share_the_last_render(project):
     client, _root = project
     first_chart, second_chart = _bind(client, 0.25), _bind(client, 0.75)
@@ -352,6 +408,59 @@ def test_png_dimensions_pixels_manifest_and_revision_belong_to_the_requested_mod
     _assert_pixel(image_b, y=0.75, color="green")
     _assert_pixel(image_again, y=0.25, color="red")
     assert image_a.tobytes() == image_again.tobytes()
+
+
+def test_png_rasterizes_worker_glyph_outlines_with_the_measured_manifest(project, monkeypatch):
+    from tavotto.rendercore import svgir
+
+    client, _root = project
+    chart = _bind(client)
+    axes = chart["model"]["axes"][0]
+    axes["xlabel"] = "WWW"
+    axes["rect"][3] = 55  # 让轴标签落在 /1 的固定画幅内。
+    label = "axes_0.xlabel"
+    patches = [
+        {"gid": label, "prop": "fontfamily", "value": "DejaVu Sans"},
+        {"gid": label, "prop": "color", "value": "#ff0000"},
+    ]
+    vector = _render(client, chart, patches)
+    converter_inputs = []
+    convert = svgir.svg_to_ir
+
+    def record(svg, *args, **kwargs):
+        converter_inputs.append(ET.fromstring(svg))
+        return convert(svg, *args, **kwargs)
+
+    monkeypatch.setattr(svgir, "svg_to_ir", record)
+    response, image = _png(client, chart, patches)
+
+    assert response["manifest"] == vector["manifest"]
+    assert response["chart_revision"] == vector["chart_revision"]
+    (raster_source,) = converter_inputs
+    by_id = {element.get("id"): element for element in raster_source.iter() if element.get("id")}
+    glyph_links = [
+        use.get("href") or use.get("{http://www.w3.org/1999/xlink}href")
+        for use in by_id[label].iter(NS + "use")
+    ]
+    assert len(glyph_links) == 3 and len(set(glyph_links)) == 1
+    (glyph_ref,) = set(glyph_links)
+    assert glyph_ref.startswith("#DejaVuSans-")
+    assert by_id[glyph_ref[1:]].tag == NS + "path"
+    assert by_id[glyph_ref[1:]].get("d")
+    assert any(
+        "".join(text.itertext()) == "Source keep" for text in raster_source.iter(NS + "text")
+    )
+    x, y, w, h = _element(response, label)["bbox"]
+    crop = image.crop(
+        (
+            round(x * image.width),
+            round(y * image.height),
+            round((x + w) * image.width),
+            round((y + h) * image.height),
+        )
+    )
+    colors = crop.getcolors(crop.width * crop.height)
+    assert any(r > 160 and g < 100 and b < 100 for _, (r, g, b) in colors)
 
 
 @pytest.mark.parametrize(
@@ -450,6 +559,9 @@ def test_native_v2_restores_complete_edits_without_the_original_file(project):
     restored = _render(client, bundle.chart, bundle.overrides, file=path.name)
     assert restored["chart_revision"] == native["chart_revision"]
     assert restored["svg"] == native["svg"] and restored["manifest"] == native["manifest"]
+    png, _pixels = _png(client, bundle.chart, bundle.overrides, file=path.name)
+    assert png["chart_revision"] == native["chart_revision"]
+    assert png["manifest"] == native["manifest"]
     assert path.read_bytes() == data
 
 
