@@ -194,10 +194,16 @@ def test_rebinding_cannot_apply_old_edits_before_owner_validation(
     assert (root / "chart.svg").read_bytes() == SOURCE
 
 
-def _render(client, chart, patches=(), *, file="chart.svg"):
+def _render(client, chart, patches=(), *, file="chart.svg", profile=None):
     response = client.post(
         "/api/engine/render",
-        json={"id": file, "chart": chart, "patches": list(patches), "inline_svg": True},
+        json={
+            "id": file,
+            "chart": chart,
+            "patches": list(patches),
+            "inline_svg": True,
+            **({"render_profile": profile} if profile is not None else {}),
+        },
     )
     assert response.status_code == 200, response.get_json()
     result = response.get_json()
@@ -410,20 +416,38 @@ def test_png_dimensions_pixels_manifest_and_revision_belong_to_the_requested_mod
     assert image_a.tobytes() == image_again.tobytes()
 
 
-def test_png_rasterizes_worker_glyph_outlines_with_the_measured_manifest(project, monkeypatch):
+@pytest.mark.parametrize(
+    ("profile", "depth", "label_text"),
+    [
+        (chartprofile.NATIVE_PROFILE, 0, "WWW"),
+        (chartprofile.NATIVE_PROFILE, 7, "WWW"),
+        (chartprofile.NATIVE_PROFILE, 8, "WWW"),
+        (chartprofile.COMPLETE_PROFILE, 6, "WWW\nWWW"),
+        (chartprofile.COMPLETE_PROFILE, 7, "WWW\nWWW"),
+    ],
+    ids=["shallow", "v1-depth-7", "v1-depth-8", "v2-depth-6", "v2-depth-7"],
+)
+def test_png_rasterizes_worker_glyph_outlines_with_the_measured_manifest(
+    project, monkeypatch, profile, depth, label_text
+):
+    from PIL import Image
+
     from tavotto.rendercore import svgir
 
-    client, _root = project
+    client, root = project
+    source = SOURCE.replace(b'<g id="old_axis">', b"<g>" * depth + b'<g id="old_axis">')
+    source = source.replace(b'<text id="keep"', b"</g>" * depth + b'<text id="keep"')
+    (root / "chart.svg").write_bytes(source)
     chart = _bind(client)
     axes = chart["model"]["axes"][0]
-    axes["xlabel"] = "WWW"
+    axes["xlabel"] = label_text
     axes["rect"][3] = 55  # 让轴标签落在 /1 的固定画幅内。
     label = "axes_0.xlabel"
     patches = [
         {"gid": label, "prop": "fontfamily", "value": "DejaVu Sans"},
         {"gid": label, "prop": "color", "value": "#ff0000"},
     ]
-    vector = _render(client, chart, patches)
+    vector = _render(client, chart, patches, profile=profile)
     converter_inputs = []
     convert = svgir.svg_to_ir
 
@@ -432,17 +456,35 @@ def test_png_rasterizes_worker_glyph_outlines_with_the_measured_manifest(project
         return convert(svg, *args, **kwargs)
 
     monkeypatch.setattr(svgir, "svg_to_ir", record)
-    response, image = _png(client, chart, patches)
+    request = {
+        "id": "chart.svg",
+        "chart": chart,
+        "patches": patches,
+        "render_profile": profile,
+        "w": 230,
+    }
+    raw = client.post("/api/engine/preview_png", json=request)
+    wrapped = client.post("/api/engine/preview_png", json={**request, "with_manifest": True})
+    assert (raw.status_code, wrapped.status_code) == (200, 200), (
+        raw.get_json(silent=True),
+        wrapped.get_json(silent=True) if wrapped.status_code != 200 else None,
+    )
+    assert raw.mimetype == "image/png"
+    response = wrapped.get_json()
+    assert raw.data == base64.b64decode(response["png"], validate=True)
+    with Image.open(io.BytesIO(raw.data)) as raster:
+        image = raster.convert("RGB")
 
     assert response["manifest"] == vector["manifest"]
     assert response["chart_revision"] == vector["chart_revision"]
-    (raster_source,) = converter_inputs
+    raster_source, wrapped_raster_source = converter_inputs
+    assert ET.tostring(raster_source) == ET.tostring(wrapped_raster_source)
     by_id = {element.get("id"): element for element in raster_source.iter() if element.get("id")}
     glyph_links = [
         use.get("href") or use.get("{http://www.w3.org/1999/xlink}href")
         for use in by_id[label].iter(NS + "use")
     ]
-    assert len(glyph_links) == 3 and len(set(glyph_links)) == 1
+    assert len(glyph_links) == label_text.count("W")
     (glyph_ref,) = set(glyph_links)
     assert glyph_ref.startswith("#DejaVuSans-")
     assert by_id[glyph_ref[1:]].tag == NS + "path"

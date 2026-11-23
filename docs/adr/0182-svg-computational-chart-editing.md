@@ -32,10 +32,12 @@
 
 HTTP 绑定请求携带校准时 `/api/svg/chart/inspect` 返回的 `scene_digest`。摘要缺失时返回 422，
 重新读取的场景摘要不符时返回 409 `chart_source_changed`，调用方需重新检查并校准。
-重放按完整场景索引验证绑定节点，检视清单的展示上限只影响检视响应。
+重放按完整场景索引验证绑定节点。新建绑定目前仍受检视清单上限约束，见 [#2147](https://github.com/Tavotto/Tavotto/issues/2147)。
 
 计算仍由 Matplotlib 的 locator、formatter、scale、norm 和既有 override/manifest 权威完成。
 组合器替换明确归属的区域，并保持 defs/use、clip、透明度和层序；未绑定内容不被整体重画。
+PNG 预览与 manifest 使用同一次 worker 绘制。预览转为 RenderCore 路径时，
+字形定义的缩放和各实例的位移直接并入无描边的轮廓坐标，避免为这两种变换增加分组。
 
 与 ADR 0178 的关系：两者都需要确定性计算和数据事实，但本方案服务于“已有 SVG 的显式绑定”，
 不增加模型写代码或任意执行入口。配方、统计规则、数据出图工具集继续以 ADR 0178 为唯一权威；

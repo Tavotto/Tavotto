@@ -4137,6 +4137,7 @@ def _chart_canonical(snapshot: _ChartSnapshot, tmp_dir: Path):
         ),
         provider,
         files=files,
+        compact_path_instances=True,
     )
     stem = "chart-" + snapshot.render_revision
     pdf_path, svg_path = tmp_dir / (stem + ".pdf"), tmp_dir / (stem + ".svg")
