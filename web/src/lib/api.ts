@@ -970,9 +970,10 @@ export const fetchLayoutNames = () =>
  * 只给「打开」列表的元信息用；顺序仍是 `layouts` 的（新的在前）。
  */
 export const fetchLayoutList = () =>
-  jsonFetch<{ layouts: string[]; modified?: Record<string, number> }>('/api/layouts').then((r) => ({
+  jsonFetch<{ layouts: string[]; modified?: Record<string, number>; document_dir?: unknown }>('/api/layouts').then((r) => ({
     names: r.layouts,
     modified: r.modified ?? {},
+    ...(typeof r.document_dir === 'string' ? { documentDir: r.document_dir } : {}),
   }))
 
 /** 读到的一份画布文件：`revision` 来自响应头，是后续覆盖它的基线 */
@@ -2598,6 +2599,41 @@ export const fetchSourceFontBytes = async (sha256: string, face: number): Promis
   if (!res.ok) throw new Error(`source font HTTP ${res.status}`)
   return res.arrayBuffer()
 }
+
+/** 外部 SVG 导入（ADR 0189）：后端 `rendercore/svgimport` 的结果。`unsupported` 非空 = 有做不准的东西，整个当图片放 */
+export interface SvgImportResult {
+  ok: boolean
+  error?: string
+  objects?: unknown[]
+  size_mm?: [number, number]
+  unsupported?: Record<string, number>
+}
+export const importSvg = (svg: string) =>
+  jsonFetch<SvgImportResult>('/api/svg/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ svg }),
+  })
+
+/** 复制为 SVG（ADR 0189）：导出 SVG 的同一个写入器写出来的一段 SVG 文本 */
+export const copyAsSvg = (objects: ExportObject[], w_mm: number, h_mm: number) =>
+  jsonFetch<{ ok: boolean; svg?: string; error?: string }>('/api/svg/copy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ objects, w_mm, h_mm }),
+  })
+
+/** 文字转轮廓（ADR 0189）：每个文字对象一份结果，路径对象是页面 mm、不带 id */
+export interface TextOutlineResult {
+  ok: boolean
+  results: ({ paths: unknown[] } | { error: string })[]
+}
+export const outlineText = (objects: ExportObject[]) =>
+  jsonFetch<TextOutlineResult>('/api/text/outline', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ objects }),
+  })
 
 export const typesetMath = (items: { src: string; family: string }[]) =>
   jsonFetch<{ ok: boolean; results: MathBox[] }>('/api/mathtext', {
@@ -4837,6 +4873,44 @@ export const setConvertUnsandboxedWindows = (enabled: boolean) =>
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled }),
+  })
+
+/** 「记住修好的做法」的一条（ADR 0197 第 3 层·在线；`engine/fixmemory.py`）。`fields` 按 `kind` 取用 */
+export interface FixMemoryEntry {
+  id: string
+  shape: string
+  kind: 'run_args' | 'launcher' | 'data_link' | 'execution'
+  fields: {
+    args?: string[]
+    env?: { name: string; value?: string }[]
+    text?: string
+    asked?: string
+    linked?: string
+    mode?: string
+  }
+  script: string
+  created: number
+  last_used: number
+  times: number
+}
+
+export interface FixMemoryState {
+  enabled: boolean
+  entries: FixMemoryEntry[]
+}
+
+export const fetchFixMemory = () => jsonFetch<FixMemoryState>('/api/ai/fix-memory')
+
+export const setFixMemoryEnabled = (enabled: boolean) =>
+  jsonFetch<FixMemoryState>('/api/ai/fix-memory', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  })
+
+export const deleteFixMemory = (id?: string) =>
+  jsonFetch<FixMemoryState>(id ? `/api/ai/fix-memory/${encodeURIComponent(id)}` : '/api/ai/fix-memory', {
+    method: 'DELETE',
   })
 
 export const fetchAiCapabilities = (refresh = false) =>

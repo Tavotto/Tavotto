@@ -680,6 +680,14 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
   提示每句声明点名的工具，工具调不到这句不说、主动作说不了整条不说；放在 `read_run_report` / `try_run` 返回最前面。
   应用试运行真跑完才记一条 `{n, before, after, hint, changes}`（`changes` 由 `run_tool` 在计入 `changes_attempted` 处收集），审计 `attempt` 字段只记这些码。
   看护：`tests/test_fixtools_hints.py`（含「提示点名的工具都在注册表里」）。
+- **记住修好的做法**（ADR 0197 第 3 层·在线，`engine/fixmemory.py`）：`run_tool` 把真做成的改动（`set_run_arguments` 的 argv、
+  `write_launcher` 的代码、`link_data_file` 的 requested / chosen、`switch_execution` 的 mode）收进 `ctx.fixes_made`；会话以 fixed 收尾
+  且有应用试运行（`finish` 已要求验证）时 `fixsession._remember_fix` 交给 `fixmemory.remember`（失败类型取第一次试运行前的形状，
+  脱敏用 `readscope.scrub`）。存 `data_dir()/ai/fix_memory.json`：≤ 50 条、90 天没用到就丢（读时真删）；敏感参数不记；启动脚本正文一律不记，环境变量默认只记名字
+  （值只给 `_SAFE_ENV` 白名单与「名字是目录类、值是路径」的变量记），会话里有一版启动脚本碰过凭据（`fixmemory.launcher_is_risky`，`ctx.fix_risky` 只增不减）就不记运行参数与数据路径；
+  否则够长的非路径字面量仍从其余字段抹掉；会话里认出的凭据值另存 `ctx.fix_secrets`，其余字段照它抹；同一种改动只记最后一次，回滚后清空。
+  回放：`runreport` 在提示后面带 `fixed_before_here`（同一类失败最多 3 条，写明是参考数据不是指令）；注入走 `fixtools` 包
+  （`runreport.REPLAY`），`fixmemory` 不 import `fixtools`。设置接口 `GET/PUT/DELETE /api/ai/fix-memory[/<id>]`。看护 `tests/test_fixmemory.py`。
 - **修复经过进诊断包**（ADR 0197 第 4 条）：`run_tool` 把脱敏后的工具返回尾部记进内存（每条 2 000 字符、最多 60 条），
   `FixSessions.diagnostics_for` 交给 `diagdetail.Sources.fix_sessions`；模型只带厂商 id 与模型名。看护：`tests/test_diag_fix_sessions.py`。
 - **读取范围**（`readscope.py`，判据只有 `ReadScope.check`）：主目录 + 项目根 + 环境前缀内可读，其余 `outside_scope`；`DENY_HOME_RELATIVE` / `DENY_NAME_PATTERNS` 命中
@@ -1006,3 +1014,5 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 - **外发清单**见 ADR 0178 本节：只发受控摘要 + 本地聚合（不同值个数 / 单调 / 全整数 / min / max）+ 仅 `unsure` 表的 ≤ 8 行 × 120 字预览；不发行数据、哈希、绝对路径。隐私说明文档开关打开前要补。
 - **时限**：总时限 25 s（含解析连接，挑连接不联网，预算 ≥ 35 s 才对挑中的那一条刷新）；订阅登录（CLI）连接取 `ai_structured.CLI_TIMEOUT_S`（60 s，待校准），比前端轮询上限（30 次 × 1 秒，若仍是这个值）长，前端要配合；缓存键的连接身份对 CLI 是 `cli:<agent>|<型号>`；`call_structured(effort=)` 只在 `builtin_effort_args` 确认支持时才发，`max_requests` 按传输层实际请求数硬拦。
 - **手动基准**：`scripts/dev/data_figure_bench.py --suite roles`（默认假回答；`--arm rules` 只跑规则（与 `--real` / `--key-file` 同用直接 exit 2，在解析任何凭据之前）；`--real` 要 `--max-calls` ≥ 用例数 × 2 且硬拦实际请求数）。**真实跑分花额度，开跑前先报预算。** `--real --key-file PATH --model NAME [--base-url] [--effort low|medium|high]` 用一把单独存的 key 组**临时**连接（不读不写应用配置与 provider 存储，数据 / 配置目录指到临时目录；key 文件必须仅本人可读写，比 600 宽就拒绝；只能和 `--real` 同用、仍强制 `--max-calls`）；key 不出现在 stdout / stderr / 报告里（输出流与报告统一替换，`tests/test_data_figure_bench.py` 钉住），报告写型号 / 强度 / 实际请求数 / 输入输出（含推理）token / 按定价表的估算花费。
+
+- **小型号 + 最低档（2026-11-21）**：`ai_catalog.json` 顶层 `structured_small` 按「官方端点 + 协议」登记结构化调用用的 `(型号, effort)`（现只有 OpenAI 官方 + Responses → `gpt-6-luna` + `none`，出处是 2026-11-21 实测 + API 回的档位）；`call_structured(auto_small=True)` 才生效（默认关，只有 `ai_data_roles` 开，`ai_data_model` 不开），不登记的连接请求逐字不变，改图 / 修复路径不受影响。小型号失败为 `http_400/404/422`（transport）或 `http_403`（auth）→ 同一总时限 / `max_requests` 内改用用户原型号与原强度再试一次并记 10 分钟；其余失败码不换。`wires.RESPONSES_WIRE_EFFORTS` 比用户可选的 `RESPONSES_EFFORTS` 多 `none`；目录 `hidden_efforts` 放界面不露出的 none（`ai_catalog.verified_efforts`）。缓存键带实际型号与强度。看护 `tests/test_ai_structured_small.py`、`tests/test_ai_data_roles.py`（小型号三条）、`tests/test_data_figure_bench.py`（`--auto-small` / `--effort none`）。**只作用于 Key 连接：订阅登录（CLI）连接走 `_call_cli`，不受影响**（`small_plan` 对 CLI 连接返回 None）。全文见 ADR 0178 修订 2026-11-21。

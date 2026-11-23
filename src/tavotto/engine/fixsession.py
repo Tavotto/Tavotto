@@ -240,6 +240,11 @@ commands, file paths and error messages exactly as they are.\n"
 
 
 def _first_message(ctx: fixtools.FixContext, script: str) -> str:
+    if not ctx.first_shape and ctx.report is not None:
+        try:
+            ctx.first_shape = fixtools.hints.shape_of_report(ctx.report())
+        except Exception:  # noqa: BLE001 - 读不到就留空
+            pass
     report = read_run_report(ctx, {})
     body = report.content if not report.is_error else "(no report available; call read_run_report)"
     return (
@@ -444,6 +449,38 @@ _FIX_TRACE_END = {
     "cancelled": "cancelled",
     "failed": "failed",
 }
+
+
+def _remember_fix(s: FixSession) -> None:
+    """会话以「修好」收尾、且应用试运行真的验证过（`finish` 在有应用试运行时已要求这一点）：把这次做成的改动记在本机
+    （`engine/fixmemory`，ADR 0197 第 3 层·在线）。失败类型取第一次试运行之前的形状。不抛。"""
+    ctx = s.ctx
+    if (
+        s.outcome != OUTCOME_FIXED
+        or ctx is None
+        or getattr(ctx, "application_runner", None) is None
+    ):
+        return
+    attempts, made = getattr(ctx, "attempts", None), getattr(ctx, "fixes_made", None)
+    if not made or not attempts:
+        return
+    try:
+        from . import fixmemory
+
+        shape = next((str(a.get("before")) for a in attempts if a.get("before")), "") or getattr(
+            ctx, "first_shape", ""
+        )
+        fixmemory.remember(
+            shape,
+            list(made),
+            script=s.script,
+            sensitive_args=bool(getattr(ctx, "run_arguments_sensitive", False)),
+            scrub=fixtools.readscope.scrub,
+            secrets=frozenset(getattr(ctx, "fix_secrets", ()) or ()),
+            risky=bool(getattr(ctx, "fix_risky", False)),
+        )
+    except Exception:  # noqa: BLE001 - 记不下不影响修复结局
+        LOG.warning("记住修好的做法失败", exc_info=True)
 
 
 def _trace_settle(s: FixSession) -> None:
@@ -793,6 +830,7 @@ class FixSessions:
                 s.repair_token = self._repair_token(s)
             s.done.set()
         _trace_settle(s)
+        _remember_fix(s)
         if s.ctx is not None:
             s.ctx.release_leases()  # change_python 持的旧代租约：会话结束才放（之后旧代才可能被清理）
         self._notify(s)

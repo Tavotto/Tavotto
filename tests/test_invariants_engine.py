@@ -220,6 +220,149 @@ def test_every_enum_option_can_actually_be_applied(hot, stem):
     )
 
 
+# ---------------------------------------------------------------------------
+# 不变式 1 的另一面：图内编辑不改数据（P4 / 科学图形七问第 1 问）
+# ---------------------------------------------------------------------------
+#: **允许改动数据指纹**的编辑，`(role, prop) → 理由`。判据是「这条编辑的本意就是改数据」，
+#: 不是「它改了数据所以放过」——往里加一条之前先确认产品本来就打算开放这条数据编辑
+#: （P4 的「数据」一类），否则那是该点名上报的 handler 缺陷，不是例外。
+#: 2026-11-23 立表时实测为空：现有开放的样式 / 结构 / 尺度编辑一条都不动指纹。
+_DATA_CHANGING_PROPS: dict[tuple[str, str], str] = {}
+
+#: 编辑之后**量不到**（不是「变了」）的那几种：`(prop, value) → 理由`。只放过「数据元素从元素表里消失、
+#: 且 manifest 在同一根轴的 `unsupported` 里如实报了 `not_finite` / `no_geometry`」这一种形状——
+#: 它的数组没被 setter 动过，只是这一刻画不出有限几何、指纹跟着元素一起没出。parts 变了、
+#: 状态变了、或者消失却没报，照样红。这些算 unknown，计数打印出来，不冒充「比过、相等」。
+_LOGIT_WHY = "logit 把 0 / 1 及区间外的值映成 ±∞：落在那里的线没有有限几何，元素被丢进 unsupported"
+_UNMEASURABLE_AFTER_EDIT: dict[tuple[str, str], str] = {
+    ("xscale", "logit"): _LOGIT_WHY,  # InvCbarH 的 `plot([0, 1], …)` 实测命中
+    ("yscale", "logit"): _LOGIT_WHY,
+}
+_UNMEASURABLE_REASONS = frozenset({"not_finite", "no_geometry"})
+
+#: 采样器（`_sample_value`）挑不出值的 **pair** 类结构编辑，这里按当前值现算一个不同的值。
+#: 只放这一条用例要的：不进共享的 `_SAMPLE_OVERRIDE`，免得改动能力真实 / 逐字还原 / 操作序列的覆盖。
+#: 范围取当前区间的中间 60%——缩放 / 平移视窗正是「只改展示、不改数据」的典型（GoG：坐标编辑不改统计）。
+_PAIR_SAMPLES = {
+    "xlim": lambda v: [round(v[0] + 0.2 * (v[1] - v[0]), 4), round(v[1] - 0.2 * (v[1] - v[0]), 4)],
+    "ylim": lambda v: [round(v[0] + 0.2 * (v[1] - v[0]), 4), round(v[1] - 0.2 * (v[1] - v[0]), 4)],
+}
+
+#: 尺度类不只挑一个值：每个选项都施加一遍（log / symlog / logit / asinh / function… 都只是变换）。
+_EVERY_OPTION_PROPS = frozenset({"xscale", "yscale", "zscale"})
+
+
+def _fingerprints(man) -> dict:
+    """`{gid: data_fingerprint}`——manifest 里带指纹字段的元素（不带的不是数据类元素）。"""
+    return {e["gid"]: e["data_fingerprint"] for e in man["elements"] if "data_fingerprint" in e}
+
+
+def _fingerprint_diff(before: dict, after: dict, vanish_ok=frozenset()) -> list[str]:
+    """两份指纹表的差：消失 / 新增 / 状态变 / 某几块 parts 变，各说一句。空列表 = 逐项相等。
+    `vanish_ok` 里的 gid 消失不算差（调用方已核过它是「量不到」而不是「变了」）。"""
+    out = []
+    for gid in sorted(before.keys() | after.keys()):
+        a, b = before.get(gid), after.get(gid)
+        if a == b or (b is None and gid in vanish_ok):
+            continue
+        if b is None:
+            out.append(f"{gid} 的数据元素消失了")
+        elif a is None:
+            out.append(f"{gid} 多出一个数据元素（{b.get('status')}）")
+        elif a.get("status") != b.get("status"):
+            out.append(f"{gid} 指纹状态 {a.get('status')} → {b.get('status')}")
+        else:
+            pa, pb = a.get("parts") or {}, b.get("parts") or {}
+            changed = sorted(k for k in pa.keys() | pb.keys() if pa.get(k) != pb.get(k))
+            out.append(f"{gid} 的 {'/'.join(changed)} 变了")
+    return out
+
+
+@pytest.mark.parametrize("stem", (*STEMS, "InvScale"))
+def test_in_figure_edits_do_not_change_data(hot, stem):
+    """应用一条图内编辑之后，**worker 那张活 Figure 上每个数据元素的 `data_fingerprint`** 与编辑前逐项相等。
+
+    主语：`hot.override(stem, patch)` 回的 manifest——真实的 override 应用路径（`HANDLERS` 的 setter）
+    跑完之后、在热态 Figure 上现量的指纹；时刻：同一个 worker 上「只有这一条（连同使能项）」对
+    「一条都没有」；维度：每个数据元素的 `parts` 逐块相等，数据元素集合与各自的 `status` 也不变。
+
+    为什么：颜色、线宽、字体、xlim / ylim、xscale / yscale、柱宽、图例位置……这些样式 / 结构 / 尺度
+    编辑都不该动绘图数组（`docs/sciviz/principles.md` P4；GoG：尺度与坐标编辑只改展示、不改统计）。
+    能改数据的编辑本来就不开放（`overrides.py`：挪柱子「不给 bar」）。
+
+    取值与能力真实那条**同一份采样器**（`_editable_targets` + `_patch_for`），只补 pair 类的
+    `xlim` / `ylim`；尺度类每个选项都施加。`InvScale` 是严格为正的数据，log 尺度在那里不被夹住。
+    盲点：`_editable_targets` 跳过的 figure / axes3d / ticks / ticklabel 与采样器挑不出值的结构化类型
+    （rect / order / number_list）不在这条里。
+    """
+    base = _man(hot, stem)
+    before = _fingerprints(base)
+    advertised = {el["gid"]: {f["prop"] for f in el["editable"]} for el in base["elements"]}
+    role_of = {el["gid"]: el["role"] for el in base["elements"]}
+
+    # 前提：有东西可比，且基线上每个数据元素这次都真量了——over_budget / unavailable 记 unknown，
+    # 在它们上面比「相等」是空转
+    unmeasured = sorted(g for g, fp in before.items() if fp.get("status") != "ok")
+    assert not unmeasured, f"{stem}：夹具里有没量出来的数据指纹，比较会空转：{unmeasured}"
+    assert before, f"{stem}：manifest 里一个带 data_fingerprint 的元素都没有，「全相等」恒真"
+
+    changed, keys, applied, unknown = [], set(), 0, 0
+    for gid, field in _editable_targets(base):
+        prop = field["prop"]
+        if prop in _PAIR_SAMPLES and field.get("type") == "pair" and field.get("value"):
+            patches = [[{"gid": gid, "prop": prop, "value": _PAIR_SAMPLES[prop](field["value"])}]]
+        elif prop in _EVERY_OPTION_PROPS and field.get("type") == "enum":
+            patches = [
+                [{"gid": gid, "prop": prop, "value": opt}]
+                for opt in field.get("options") or []
+                if opt != field.get("value")
+            ]
+        else:
+            _enablers, patch = _patch_for(gid, field, advertised)
+            patches = [patch] if patch is not None else []
+        for patch in patches:
+            resp = hot.override(stem, patch)
+            # 报了 warning 就是没应用上——在没应用的编辑上比出「相等」不算数
+            assert not (resp.get("warnings") or []), (
+                f"{stem} {gid}.{prop} = {patch[-1]['value']!r} 报了 warning：{resp['warnings']}"
+            )
+            after = _fingerprints(resp["manifest"])
+            vanish_ok = frozenset()
+            value = patch[-1]["value"]
+            if isinstance(value, str) and (prop, value) in _UNMEASURABLE_AFTER_EDIT:
+                reported = {
+                    row.get("where")
+                    for row in resp["manifest"].get("unsupported") or []
+                    if row.get("reason") in _UNMEASURABLE_REASONS
+                }
+                vanish_ok = frozenset(
+                    g for g in before.keys() - after.keys() if g.split(".", 1)[0] in reported
+                )
+                unknown += len(vanish_ok)
+            diff = _fingerprint_diff(before, after, vanish_ok)
+            if diff and (role_of[gid], prop) not in _DATA_CHANGING_PROPS:
+                changed.append(f"{gid}.{prop} = {value!r} → " + "；".join(diff))
+            keys.add((role_of[gid], prop))
+            applied += 1
+
+    # 全撤之后指纹也得回到基线（不把状态留给下一个用例，也顺带验撤销不动数据）
+    back = _fingerprint_diff(before, _fingerprints(_man(hot, stem)))
+
+    print(f"[data-fingerprint] {stem}: elements={len(before)} applied={applied}", end=" ")
+    print(f"keys={len(keys)} unknown={unknown}")
+    # 前提：覆盖不能薄到让「没发现改数据」只是因为没怎么改。
+    # 下限取 2026-11-23 实测各 stem 最小值（Inv3DS：32 条 / 19 个 (role, prop)）往下留余量
+    assert applied >= 25 and len(keys) >= 15, (
+        f"{stem}：只施加了 {applied} 条编辑、{len(keys)} 个 (role, prop)，覆盖太薄"
+    )
+    assert not changed, (
+        f"{stem}：这些图内编辑改动了数据指纹——样式 / 结构 / 尺度编辑不许动绘图数组。"
+        f"是 handler 缺陷就修 handler；确属有意开放的数据编辑，才往 _DATA_CHANGING_PROPS 写理由：\n  "
+        + "\n  ".join(changed)
+    )
+    assert back == [], f"{stem} 全撤后指纹没回基线：{back}"
+
+
 def test_colormap_controls_appear_only_while_the_mapping_is_live(hot):
     """cmap / vmin / vmax 只在**映射此刻真的在决定颜色**时才出现。
 

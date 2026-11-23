@@ -872,11 +872,12 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
         assert r["overrides"] == patches
         reference = r["figureSnapshot"]
         archive = {"id": source, "patches": patches, "figure_snapshot": reference}
-        preview = client.post("/api/figure-preview", json=archive)
-        assert preview.status_code == 200, preview.get_json()
-        assert preview.get_json()["svg"] == svg
-        mismatch = client.post("/api/figure-preview", json={**archive, "patches": []})
-        assert mismatch.status_code == 422, mismatch.get_json()
+        for endpoint in ("/api/figure-preview", "/api/documents/v4/figure-preview"):
+            preview = client.post(endpoint, json=archive)
+            assert preview.status_code == 200, preview.get_json()
+            assert preview.get_json()["svg"] == svg
+            mismatch = client.post(endpoint, json={**archive, "patches": []})
+            assert mismatch.status_code == 422, mismatch.get_json()
 
         exported = client.post(
             "/api/export",

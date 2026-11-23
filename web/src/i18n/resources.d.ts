@@ -1557,6 +1557,10 @@ export default interface Resources {
           "keywords": "convert path zwlj 路径 钢笔",
           "label": "转为路径"
         },
+        "copy-as-svg": {
+          "keywords": "copy svg clipboard illustrator fzwsvg 复制为 SVG 矢量",
+          "label": "复制为 SVG"
+        },
         "cut-path": {
           "keywords": "cut scissors jd 剪刀 断开",
           "label": "在锚点处断开"
@@ -1580,6 +1584,10 @@ export default interface Resources {
         "edit-elements": {
           "keywords": "edit element tnys tuneiyuansu",
           "label": "编辑所选图的图内元素"
+        },
+        "explode-svg": {
+          "keywords": "explode svg editable vector cckbj 拆成 可编辑 矢量 SVG",
+          "label": "拆成可编辑对象"
         },
         "export": {
           "keywords": "export pdf png dc daochu",
@@ -1656,6 +1664,10 @@ export default interface Resources {
         "outline-stroke": {
           "keywords": "outline stroke expand lkhmb 轮廓化 描边 扩展",
           "label": "轮廓化描边"
+        },
+        "outline-text": {
+          "keywords": "outline text create outlines path wzzlk 文字转轮廓 转曲",
+          "label": "文字转轮廓"
         },
         "pathfinder-divide": {
           "keywords": "divide split fg 分割 切开 路径查找器",
@@ -2611,6 +2623,45 @@ export default interface Resources {
           "regionCustom": "其他",
           "regionGlobal": "海外",
           "requiredAria": "必填"
+        },
+        "fixMemory": {
+          "cancel": "取消",
+          "clearAll": "全部删除",
+          "clearBody_other": "删掉全部 {{count}} 条？删了找不回。",
+          "count_other": "已记住 {{count}} 条",
+          "delete": "删除这条",
+          "help": "修好脚本后，在本机记下这次的做法；别的项目遇到同类问题时可直接参考。只存在本机，不上传，也不进诊断包。",
+          "kind": {
+            "data_link": "把 {{asked}} 指到 {{linked}}",
+            "execution": "改用{{mode}}运行",
+            "launcher": "加启动脚本",
+            "launcherEnv": "启动脚本里设 {{env}}",
+            "run_args": "传入运行参数 {{args}}"
+          },
+          "label": "记住修好的做法",
+          "launcherText": "查看脚本",
+          "meta_other": "{{date}} · 用过 {{count}} 次",
+          "mode": {
+            "native": "本机 Python",
+            "safe": "安全模式"
+          },
+          "none": "还没有记住的做法",
+          "shape": {
+            "env_var_missing": "缺环境变量",
+            "input_eof": "等待键盘输入",
+            "missing_dependency": "缺少包",
+            "missing_input": "找不到数据文件",
+            "no_figure_captured": "没画出图",
+            "other": "其他问题",
+            "relative_import": "相对导入失败",
+            "safe_file_operation_blocked": "安全模式拦下了文件操作",
+            "script_is_library": "只定义了函数",
+            "script_needs_arguments": "需要命令行参数",
+            "script_needs_input": "等待键盘输入",
+            "script_uses_gui_dialog": "会弹文件对话框"
+          },
+          "title": "记住的做法",
+          "view": "查看"
         },
         "install": {
           "action": "用 npm 安装 {{name}}",
@@ -7048,6 +7099,7 @@ export default interface Resources {
       "duplicateObjects": "复制对象",
       "editStyle": "修改样式「{{name}}」",
       "editText": "编辑文字",
+      "explodeSvg": "拆成可编辑对象",
       "eyedropper": "吸管上色",
       "fillPanel": "填满当前框",
       "fitContentCrop": "贴合内容",
@@ -7060,6 +7112,7 @@ export default interface Resources {
       "hideLegendEntry": "隐藏图例项 “{{label}}”",
       "hideObject": "隐藏对象",
       "hideObjects": "隐藏 {{count}} 个对象",
+      "importSvg": "粘贴 SVG（{{count}} 个对象）",
       "insertPreset": "插入{{name}}",
       "insertShape": "插入{{name}}",
       "insertSymbol": "插入符号 {{symbol}}",
@@ -7084,6 +7137,7 @@ export default interface Resources {
       "moveObjects": "移动 {{count}} 个对象",
       "offsetPath": "偏移路径",
       "outlineStroke": "轮廓化描边",
+      "outlineText": "文字转轮廓（{{count}} 个）",
       "pasteObjects_other": "粘贴 {{count}} 个对象",
       "pasteStyle": "粘贴样式",
       "pathfinder": {
@@ -8291,6 +8345,9 @@ export default interface Resources {
       "nudgeNotMovable": "选中的图内元素不能移动",
       "objectCopied": "已复制 {{name}}",
       "objectsCopied": "已复制 {{count}} 个对象",
+      "outlineFailed_other": "{{count}} 个文字没转成轮廓（字体不可用）",
+      "outlinePartial_other": "有 {{count}} 个文字没转成（字体不可用）",
+      "outlined_other": "{{count}} 个文字已转成轮廓",
       "overridesCleared": "已清空这张图的图内修改",
       "packageDrift_other": "已打开项目包。{{count}} 个素材与打包时不一致，请核对。",
       "packageFailed": "无法打包。{{error}}",
@@ -8357,6 +8414,12 @@ export default interface Resources {
       "stylePasteNoTarget": "选区里没有可粘贴的{{kind}}",
       "stylePasted_other": "已粘贴样式到 {{count}} 个对象",
       "subLabelsAdded_other": "已添加 {{count}} 个序号标签",
+      "svgAsImage": "这个 SVG {{reason}}，已整体当图片放进来",
+      "svgAsRaster": "这个 SVG {{reason}}，已整体当位图（{{dpi}} dpi）放进来",
+      "svgCopied": "已复制为 SVG，可以粘贴到 Illustrator、Inkscape、Figma",
+      "svgCopyFailed": "没能复制为 SVG",
+      "svgExplodeFailed": "这张图{{reason}}，没有拆开",
+      "svgImported_other": "已变成 {{count}} 个可编辑对象",
       "undone": "撤销：{{label}}"
     },
     "stylePanel": {
@@ -8436,6 +8499,32 @@ export default interface Resources {
       "unboundHint": "选一套样式，这张画布上的图就按它显示。",
       "upgradedLegacy": "样式「{{name}}」是旧版本存的，已改为按页面上的实际大小计",
       "waitingRender": "这张图的这一版还在渲染，渲染完才能改"
+    },
+    "svgImport": {
+      "reason": {
+        "bad_xml": "内容不是完整的 SVG",
+        "clip_units": "剪切路径按比例坐标写",
+        "css_selector": "用了复杂的样式选择器",
+        "external_ref": "引用了外部文件或实体",
+        "filter": "用了滤镜",
+        "foreign_object": "里面有网页内容（foreignObject）",
+        "image": "里面有图片",
+        "marker": "用了线端标记（marker）",
+        "mask": "用了蒙版（mask）",
+        "not_svg": "内容不是 SVG",
+        "pattern": "用了图案填充",
+        "reference_cycle": "有循环引用",
+        "script": "带脚本或事件",
+        "skew_text": "有斜切的文字",
+        "symbol_viewbox": "符号自带缩放",
+        "text_layout": "文字逐字定位",
+        "text_path": "有沿路径排的文字",
+        "timeout": "太复杂、读不完",
+        "too_large": "文件太大",
+        "too_many_elements": "元素太多",
+        "unreadable": "读不出来",
+        "unsupported_element": "用了 Tavotto 画不了的元素（比如滤镜）"
+      }
     },
     "tabs": {
       "allCanvases": "全部画布",

@@ -532,6 +532,9 @@ def safe_resolve(rel_id: str, *, require_file: bool = True) -> Path:
     重渲染全都经这里取文件，所以范围之外的 TIFF 在**两个渲染后端之前**就被拦下，抛
     `tiffprobe.UnsupportedTiff`（HTTP 路上由 `_unsupported_tiff` 转成 422 + code，导出作业里
     由 `_resolve_panel_source` 转成作业的 code）——不交给后端去各出一张不同的错图。
+
+    `require_file=False`：归档出处只核引用与存档，允许磁盘原件已被替换/删除；项目内包含与
+    后缀校验照做，TIFF 只在文件确实存在时才探测。
     """
     root = require_project()
     p = (root / rel_id).resolve()
@@ -2644,7 +2647,19 @@ def _replay_figure_origin(rel_id, origin, record, ctx):
         # accepts an existing built session (existing_only refuses cold
         # workers), and building is exactly the ordinary runtime authorization
         # chain executing the user code once.
-        replay_worker, _replay_stem = _engine_worker(rel_id)
+        # 归档回执自己说它是 safe 还是 native：冷回放必须按那一档解析，
+        # 不能对磁盘面板一律走 safe（native 离线时由 resolve 拒绝，不静默降级）。
+        profile = record["receipt"].get("profile")
+        archived_profile = (
+            {"execution_profile": profile}
+            if profile
+            in (
+                engine_enginesession.PROFILE_SAFE,
+                engine_enginesession.PROFILE_NATIVE,
+            )
+            else {}
+        )
+        replay_worker, _replay_stem = _engine_worker(rel_id, **archived_profile)
         replay_worker.ensure_built()
         frozen = _execution_source(
             {"id": rel_id, "overrides": origin["patches"]},
@@ -2652,6 +2667,7 @@ def _replay_figure_origin(rel_id, origin, record, ctx):
             sink,
             Path(temporary),
             include_svg=True,
+            **archived_profile,
         )
         if frozen is None:
             raise _FigureOriginError("The historical Figure input cannot be replayed.")
@@ -2753,6 +2769,7 @@ def _serialize_figure_with_worker(
     svg_text: bool = False,
     source_path_required: bool = True,
     figure_origin=None,
+    execution_profile: str | None = None,
 ) -> tuple[Path, object, str] | None:
     """`_serialize_figure` 的本体：多回 `(路径, worker-like, 脚本)`——候选后端的执行侧源解析器要拿
     worker 装配回执（`engine/receipt`），旧调用方只取路径。"""
@@ -2771,16 +2788,24 @@ def _serialize_figure_with_worker(
             existing_only=True,
             **_artifact_kwargs(artifact_source),
             **({"source_path_required": False} if not source_path_required else {}),
+            **({"execution_profile": execution_profile} if execution_profile is not None else {}),
         )
         if worker is None:
             return None
         info = current_registry().for_stem(stem)
         script = str(info["script"]) if info else ""
     elif artifact_source is not None:
-        worker, stem = _engine_worker(rel_id, artifact_source=artifact_source)
+        worker, stem = _engine_worker(
+            rel_id,
+            artifact_source=artifact_source,
+            **({"execution_profile": execution_profile} if execution_profile is not None else {}),
+        )
         script = str(current_registry().for_stem(stem)["script"])
     elif engine_runtimeasset.is_runtime_id(rel_id):
-        worker, stem = _engine_worker(rel_id)
+        worker, stem = _engine_worker(
+            rel_id,
+            **({"execution_profile": execution_profile} if execution_profile is not None else {}),
+        )
         info = _resolve_runtime_asset(rel_id)
         script = str(info["script"]) if info else ""
     else:
@@ -2789,7 +2814,10 @@ def _serialize_figure_with_worker(
         if info is None:
             return None
         script = str(info["script"])
-        worker = _safe_worker(info["script"], info["entry"], stem)
+        if execution_profile is not None:
+            worker, _ = _engine_worker(rel_id, execution_profile=execution_profile)
+        else:
+            worker = _safe_worker(info["script"], info["entry"], stem)
 
     def assert_expected_execution() -> None:
         # 调用方（SVG 素材的 EPS）核过的是「某一次执行」的绑定：拿到 worker 之后、导出前后各核一次回执，
@@ -2986,6 +3014,7 @@ def _execution_source(
     include_svg: bool = False,
     snapshot_only: bool = False,
     with_text_svg: bool = False,
+    execution_profile: str | None = None,
 ):
     """候选后端的执行侧源：带 override / runtime 素材的面板 → 当次权威 worker 现画的 PDF +
     **回执**（`origin=execution`，`receipt_id` / `receipt_identity` / `patch_hash` 进 RenderPlan 的
@@ -2993,6 +3022,9 @@ def _execution_source(
 
     没有脚本的磁盘面板带着 override 走到这里 = 画不出用户看到的那张图：抛 `source_needs_execution`
     而不是退回磁盘原件（那是「拿旧文件冒充本次执行」，RC-017）。
+
+    `execution_profile` 只由归档出处的冷回放传：重放后的第二次取会话（`include_svg` 那条）
+    也必须按回执的档位解析，不能退回磁盘面板默认的 safe。
     """
     from .rendercore import sources as rc_sources
 
@@ -3008,6 +3040,21 @@ def _execution_source(
                 f"{rel_id}: the saved Figure snapshot no longer matches this source or edit.",
                 {"id": rel_id},
             )
+        if origin is not None:
+            # 保存的输出版本不是历史输入的授权：出处必须仍有唯一活执行，
+            # 且两者指向同一次执行（同一份不可变配对）。
+            try:
+                _admit_figure_origin(rel_id, origin)
+            except engine_pool.WorkerError as exc:
+                raise engine_exportreq.ExportRequestError(
+                    exc.code, str(exc), {"id": rel_id}
+                ) from exc
+            if saved.receipt.get("receipt_id") != origin["snapshot"]["receiptId"]:
+                raise engine_exportreq.ExportRequestError(
+                    "bad_request",
+                    "Historical and saved Figure inputs conflict.",
+                    {"id": rel_id},
+                )
         return saved
     try:
         rendered = _serialize_figure_with_worker(
@@ -3021,6 +3068,7 @@ def _execution_source(
             **({"include_svg": True, "snapshot_only": snapshot_only} if include_svg else {}),
             **({"svg_text": True} if include_svg and with_text_svg else {}),
             **({"figure_origin": origin} if origin is not None else {}),
+            **({"execution_profile": execution_profile} if execution_profile is not None else {}),
         )
     except engine_pool.WorkerError as exc:
         if origin is not None:
@@ -4003,6 +4051,7 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
         # 剪切蒙版裁这张图（ADR 0191）：与画布上被裁的对象同一条路（`plan._clipped`）
         **({"clip": list(src.clip)} if src.clip else {}),
         **({"figure_snapshot": src.figure_snapshot} if src.figure_snapshot is not None else {}),
+        **({"figure_origin": src.figure_origin} if src.figure_origin is not None else {}),
         **({"source_policy": src.source_policy} if src.source_policy is not None else {}),
         **({"expected_source": src.expected_source} if src.expected_source is not None else {}),
         **(
@@ -4025,9 +4074,12 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
     # 也由 worker 现画，PDF / PNG / TIFF 与 EPS 的内层就出自同一次运行；没有脚本的图仍取磁盘文件（EPS 自己报 eps_needs_script）
     rerender_ids = frozenset(
         {src.figure_id}
-        if engine_exportroute.original_rerender(req.formats)
-        and Path(src.figure_id).suffix.lower() not in SVG_EXT
-        and _has_runnable_script(src.figure_id)
+        if src.figure_origin is not None
+        or (
+            engine_exportroute.original_rerender(req.formats)
+            and Path(src.figure_id).suffix.lower() not in SVG_EXT
+            and _has_runnable_script(src.figure_id)
+        )
         else ()
     )
     produced: list = []
@@ -4107,7 +4159,11 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
     fmt = engine_exportreq.FORMAT_EPS
     dpi = req.ppi or engine_exportreq.PPI_DEFAULT
     source_ctx = (artifact_sources or {}).get(src.figure_id)
-    if Path(src.figure_id).suffix.lower() in SVG_EXT and not src.overrides:
+    if (
+        Path(src.figure_id).suffix.lower() in SVG_EXT
+        and not src.overrides
+        and src.figure_origin is None
+    ):
         inner = _produce_svg_asset_eps(job, src, dpi, tmp_dir, artifact_source=source_ctx)
     else:
         inner = _produce_original_eps(
@@ -4117,6 +4173,7 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
             tmp_dir,
             artifact_source=source_ctx,
             **({"existing_only": True} if engine_exportreq.FORMAT_SVG in req.formats else {}),
+            **({"figure_origin": src.figure_origin} if src.figure_origin is not None else {}),
         )
     if inner.tmp_path is None or not Path(inner.tmp_path).is_file():
         return inner  # 原图 EPS 本身给不出（没有脚本 / 冷 worker …）：沿用那一档的稳定码
@@ -4404,6 +4461,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
         Path(src.figure_id).suffix.lower() in SVG_EXT
         and not src.overrides
         and src.figure_snapshot is None
+        and src.figure_origin is None
     ):
         from . import svgasset
 
@@ -4450,6 +4508,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     if (
         req.formats == (engine_exportreq.FORMAT_SVG,)
         and src.figure_snapshot is None
+        and src.figure_origin is None
         and (
             engine_runtimeasset.is_runtime_id(src.figure_id)
             or src.overrides
@@ -4491,15 +4550,20 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     svg_text_source = None
     wants_svg = engine_exportreq.FORMAT_SVG in req.formats
     wants_snapshot = wants_svg or src.figure_snapshot is not None
-    execution_source = engine_exportroute.wants_execution(
-        runtime=engine_runtimeasset.is_runtime_id(src.figure_id), overrides=src.overrides
+    origin = src.figure_origin
+    execution_source = (
+        engine_exportroute.wants_execution(
+            runtime=engine_runtimeasset.is_runtime_id(src.figure_id), overrides=src.overrides
+        )
+        or origin is not None
     )
-    if wants_snapshot and execution_source:
+    if (wants_snapshot or origin is not None) and execution_source:
         frozen = _execution_source(
             {
                 "id": src.figure_id,
                 "overrides": src.overrides,
                 "figure_snapshot": src.figure_snapshot,
+                **({"figure_origin": origin} if origin is not None else {}),
             },
             dpi,
             job.warnings,
@@ -4543,6 +4607,9 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
             src.figure_id, [], tmp_dir, static_source=static, reference=src.figure_snapshot
         )
         if saved is not None:
+            # 显式引用 = 保存时那一版：PDF/PNG/TIFF 与 SVG 必须都从它出，不能换成
+            # 此刻同名的磁盘文件（`layout-versions-and-documents.md` 的引用一节）。
+            source_path = saved.path
             svg_source = saved.svg_representation()
         elif src.figure_snapshot is not None:
             raise engine_exportreq.ExportRequestError(
@@ -4550,6 +4617,15 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                 "Saved Figure snapshot no longer matches the static source",
                 {"id": src.figure_id},
             )
+    # 有明确快照引用时，source_path 是存档那一页；位图格式的回报尺寸也必须来自它，
+    # 不能沿用请求里替换文件的 w/h（存档可能经 `_execution_source` 或上面的手工分支加载）。
+    page_mm_override = None
+    if src.figure_snapshot is not None and source_path.suffix.lower() == ".pdf":
+        archived_page = pdfbackend.probe_asset(source_path, "pdf")
+        page_mm_override = (
+            round(archived_page["w_pt"] * 25.4 / 72.0, 3),
+            round(archived_page["h_pt"] * 25.4 / 72.0, 3),
+        )
     raster_source = source_path.suffix.lower() != ".pdf"
     page_pt = _original_page_pt(source_path, src) if raster_source else None
     disk_source = _original_disk_source_manifest(src, source_path)
@@ -4567,6 +4643,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                         tmp_dir,
                         artifact_source=(artifact_sources or {}).get(src.figure_id),
                         **({"existing_only": True} if wants_svg else {}),
+                        **({"figure_origin": origin} if origin is not None else {}),
                     )
                 )
             elif fmt == engine_exportreq.FORMAT_SVG:
@@ -4624,8 +4701,8 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                         tmp_path=tmp,
                         width_px=facts["px_w"],
                         height_px=facts["px_h"],
-                        width_mm=src.w_mm,
-                        height_mm=src.h_mm,
+                        width_mm=page_mm_override[0] if page_mm_override else src.w_mm,
+                        height_mm=page_mm_override[1] if page_mm_override else src.h_mm,
                         vector=False,
                         manifest=disk_source,
                     )
@@ -4734,6 +4811,7 @@ def _produce_original_eps(
     artifact_source=None,
     existing_only: bool = False,
     expect_receipt_id: str | None = None,
+    figure_origin=None,
 ):
     """`scope=original` 的 EPS：由 worker 的 matplotlib 直接序列化（ADR 0046）。
 
@@ -4752,6 +4830,7 @@ def _produce_original_eps(
         **_artifact_kwargs(artifact_source),
         **({"existing_only": True} if existing_only else {}),
         **({"expect_receipt_id": expect_receipt_id} if expect_receipt_id else {}),
+        **({"figure_origin": figure_origin} if figure_origin is not None else {}),
     )
     if path is None or not path.is_file():
         # `existing_only` 下 `None` 有两种成因：没有脚本，或脚本在但没有活 Figure（冷 worker）。
@@ -5025,7 +5104,9 @@ def _export_produce_merged_pdf(job, tmp_dir: Path, *, artifact_sources=None) -> 
     for i, src in enumerate(pages):
         job.check_cancelled()
         key = json.dumps(
-            [src.figure_id, src.overrides, src.figure_snapshot], sort_keys=True, default=str
+            [src.figure_id, src.overrides, src.figure_snapshot, src.figure_origin],
+            sort_keys=True,
+            default=str,
         )
         path = done.get(key)
         if path is None:
@@ -5636,6 +5717,138 @@ def api_mathtext():
     return jsonify(
         {"ok": True, "results": [got[engine_mathtypeset.key_of(s_, f)] for s_, f in pairs]}
     )
+
+
+@app.post("/api/svg/import")
+def api_svg_import():
+    """外部 SVG → 画布上可编辑的对象（ADR 0189；`rendercore/svgimport.py`）。
+
+    body `{"svg": "<svg …>"}` → `{"ok": true, "objects": [...], "size_mm": [w, h], "unsupported": {code: n}}`；
+    `unsupported` 非空时前端把整个 SVG 当图片放进来并说原因。不联网、不读盘、不执行任何东西。"""
+    from .rendercore import svgimport
+
+    body = request.get_json(force=True, silent=True) or {}
+    svg = body.get("svg")
+    if not isinstance(svg, str) or not svg.strip():
+        return jsonify({"ok": False, "error": "not_svg"}), 400
+    try:
+        out = svgimport.import_svg(svg)
+    except svgimport.SvgImportError as exc:
+        return jsonify({"ok": False, "error": exc.code}), 200
+    return jsonify({"ok": True, **out})
+
+
+#: 复制为 SVG 的输入上限（ADR 0189 §四）：请求字节、对象数、每个对象的裁剪层数、全部路径锚点、每段文字的字数
+SVG_COPY_MAX_BYTES = 8 * 1024 * 1024
+SVG_COPY_MAX_OBJECTS = 2000
+#: IR 的嵌套上限是 16 层（`ir.MAX_DEPTH`）：每层剪切占一层组，对象自己再占一两层
+SVG_COPY_MAX_CLIP_DEPTH = 8
+SVG_COPY_MAX_NODES = 200_000
+SVG_COPY_MAX_TEXT = 20_000
+
+
+def _svg_copy_too_big(objs: list) -> bool:
+    if len(objs) > SVG_COPY_MAX_OBJECTS:
+        return True
+    nodes = 0
+    for o in objs:
+        clip = o.get("clip")
+        if clip is not None and (not isinstance(clip, list) or len(clip) > SVG_COPY_MAX_CLIP_DEPTH):
+            return True
+        for path in [o, *(clip or [])]:
+            subs = path.get("subpaths") if isinstance(path, dict) else None
+            for sp in subs if isinstance(subs, list) else ():
+                nodes += len(sp.get("nodes") or ()) if isinstance(sp, dict) else 0
+        text = o.get("text")
+        if isinstance(text, str) and len(text) > SVG_COPY_MAX_TEXT:
+            return True
+    return nodes > SVG_COPY_MAX_NODES
+
+
+@app.post("/api/svg/copy")
+def api_svg_copy():
+    """复制为 SVG（ADR 0189）：选中的标注 / 形状 / 路径 / 文字按**导出 SVG 的同一个写入器**写成一段 SVG 文本。
+    body `{"objects": [<导出载荷，坐标已平移到选区左上为原点>], "w_mm": w, "h_mm": h}` → `{"ok": true, "svg": "…"}`。
+    图（面板）不收——它的 SVG 要走导出（源文件、快照、产物验收那一套）。"""
+    import tempfile
+
+    from .rendercore import facade as rc_facade, ir as rc_ir, plan as rc_plan, svgwriter
+
+    # 输入是前端的导出载荷，但接口照样当不受信任处理（ADR 0189 §四）：先按字节数挡，再解析 JSON，再数对象 / 锚点 / 文字 / 裁剪层数
+    if (request.content_length or 0) > SVG_COPY_MAX_BYTES:
+        return jsonify({"ok": False, "error": "too_large"}), 413
+    body = request.get_json(force=True, silent=True) or {}
+    objs = body.get("objects")
+    try:
+        w_mm, h_mm = float(body.get("w_mm")), float(body.get("h_mm"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "bad_size"}), 400
+    if (
+        not isinstance(objs, list)
+        or not objs
+        or not all(
+            isinstance(o, dict) and o.get("type") in ("text", "arrow", "shape", "path")
+            for o in objs
+        )
+        or not (
+            math.isfinite(w_mm) and math.isfinite(h_mm) and 0 < w_mm <= 5000 and 0 < h_mm <= 5000
+        )
+    ):
+        return jsonify({"ok": False, "error": "bad_objects"}), 400
+    if _svg_copy_too_big(objs):
+        return jsonify({"ok": False, "error": "too_large"}), 413
+    _prepare_source_fonts()
+    provider = rc_facade.provider()
+    try:
+        compiled = rc_plan.compile_page(
+            w_mm,
+            h_mm,
+            objs,
+            sources=None,  # type: ignore[arg-type]
+            faces=provider,
+            background=None,
+            math=engine_mathtypeset.layouts_for(objs, _mathtext_project()),
+        )
+        with tempfile.TemporaryDirectory(prefix="tavotto-svgcopy-") as tmp:
+            out = Path(tmp) / "copy.svg"
+            svgwriter.write_svg(compiled.page, out, provider)
+            svg = out.read_text(encoding="utf-8")
+    except (rc_plan.PlanError, rc_ir.IRError) as exc:
+        return jsonify({"ok": False, "error": exc.code}), 200
+    return jsonify({"ok": True, "svg": svg})
+
+
+#: `/api/text/outline` 一次最多转几个文字对象
+TEXT_OUTLINE_MAX = 200
+
+
+@app.post("/api/text/outline")
+def api_text_outline():
+    """文字转轮廓（ADR 0189；`rendercore/textoutline.py`）：字形取自导出用的同一份字体，转出来的路径与导出
+    的字逐点重合。body `{"objects": [<导出载荷形状的文字对象>]}` → `{"ok": true, "results": [{"paths": [...]} | {"error": code}]}`。"""
+    from .rendercore import facade as rc_facade, plan as rc_plan, textoutline
+
+    body = request.get_json(force=True, silent=True) or {}
+    objs = body.get("objects")
+    if (
+        not isinstance(objs, list)
+        or not objs
+        or len(objs) > TEXT_OUTLINE_MAX
+        or not all(isinstance(o, dict) and o.get("type") == "text" for o in objs)
+    ):
+        return jsonify({"ok": False, "error": "bad_objects"}), 400
+    if any(len(str(o.get("text") or "")) > SVG_COPY_MAX_TEXT for o in objs):
+        return jsonify({"ok": False, "error": "too_large"}), 413
+    _prepare_source_fonts()
+    provider = rc_facade.provider()
+    math = engine_mathtypeset.layouts_for(objs, _mathtext_project())
+    results = []
+    for o in objs:
+        try:
+            results.append({"paths": textoutline.outline_text(o, faces=provider, math=math)})
+        except rc_plan.PlanError as exc:
+            results.append({"error": exc.code})
+    return jsonify({"ok": True, "results": results})
 
 
 def _prepare_source_fonts() -> None:
@@ -8038,6 +8251,7 @@ def _build_diagnostics_bundle(
         registry=ctx.registry if ctx is not None else None,
         fix_journey=engine_prepsession.SESSIONS.fix_journeys(pid) if pid else None,
         fix_sessions=engine_fixsession.SESSIONS.diagnostics_for(pid) if pid else None,
+        fix_memory=_fix_memory_entries(),
         fix_audit=engine_fixsession.audit_tail(engine_fixsession.SESSIONS.ids_for(pid))
         if pid
         else None,
@@ -11276,6 +11490,7 @@ def _engine_worker(
     artifact_source=None,
     existing_only: bool = False,
     source_path_required: bool = True,
+    execution_profile: str | None = None,
 ):
     """面板 id → (worker-like, stem)；非脚本面板 404。
 
@@ -11293,12 +11508,16 @@ def _engine_worker(
     **"谁来渲染"的判据只有一处**：`enginesession.resolve()`（ADR 0021 §5）。
     这里绝不写 `if 有 native 会话 … else pool.get(…)`——那个形状会在下一个
     端点上被漏掉一次，表现是"预览是 native 的、导出是 safe 的"。
+
+    `execution_profile` 只给**归档出处的冷回放**用：按回执记载的档位解析，而不是
+    磁盘面板固定的 safe。native 没有活会话时 `resolve` 直接报离线，不回退 safe。
     """
     worker, stem = _resolve_engine_worker(
         rel_id,
         **_artifact_kwargs(artifact_source),
         **({"existing_only": True} if existing_only else {}),
         **({"source_path_required": False} if not source_path_required else {}),
+        **({"execution_profile": execution_profile} if execution_profile is not None else {}),
     )
     if safe_only and engine_enginesession.is_native(worker):
         raise NativeWorkerRefused(rel_id)
@@ -11311,8 +11530,14 @@ def _resolve_engine_worker(
     artifact_source=None,
     existing_only: bool = False,
     source_path_required: bool = True,
+    execution_profile: str | None = None,
 ):
-    """`_engine_worker` 的本体（「谁来渲染」按档案解析，不设闸）。"""
+    """`_engine_worker` 的本体（「谁来渲染」按档案解析，不设闸）。
+
+    `execution_profile` 缺省时维持原判据（runtime 看描述符、磁盘恒 safe）；显式给出
+    时只用于冷回放按归档回执的档位解析。磁盘面板的 native 档不是「照常渲染」，
+    没有活会话就由 `resolve` 报 `native_session_offline`，绝不静默换成 safe。
+    """
     _assert_artifact_current(artifact_source)
     if not source_path_required and (not existing_only or artifact_source is not None):
         raise ValueError("Only an existing historical Figure may omit its disk original")
@@ -11328,7 +11553,7 @@ def _resolve_engine_worker(
         profile = (
             engine_enginesession.PROFILE_NATIVE
             if Path(info["script"]).suffix.lower() == ".r"
-            else engine_enginesession.profile_of(root, rel_id)
+            else execution_profile or engine_enginesession.profile_of(root, rel_id)
         )
         return (
             engine_enginesession.resolve(
@@ -11352,7 +11577,8 @@ def _resolve_engine_worker(
         if not source_path_required:
             return None, disk_stem
         abort(404)
-    # 磁盘面板永远是 safe：它有自己的原始产物，那是 safe worker 产出的世界。
+    # 磁盘面板默认 safe：它有自己的原始产物，那是 safe worker 产出的世界。
+    # 归档出处的冷回放例外——按回执自己的档位解析（native 离线就拒绝）。
     disk_run = _disk_panel_run(info["script"])
     return (
         engine_enginesession.resolve(
@@ -11360,7 +11586,7 @@ def _resolve_engine_worker(
             script=info["script"],
             entry=info["entry"],
             stem=disk_stem,
-            execution_profile=engine_enginesession.PROFILE_SAFE,
+            execution_profile=execution_profile or engine_enginesession.PROFILE_SAFE,
             **({"existing_only": True} if existing_only else {}),
             **({"run": disk_run} if disk_run is not None else {}),
             **_artifact_kwargs(artifact_source),
@@ -12289,6 +12515,7 @@ def _figure_preview_source(body, directory, *, png=False):
 
 
 @app.post("/api/figure-preview")
+@app.post("/api/documents/v4/figure-preview")
 def api_figure_snapshot_preview():
     """Display exact archived artwork without claiming an editable manifest."""
     body = request.get_json(force=True)
@@ -14004,6 +14231,59 @@ def api_ai_capabilities():
 
 #: 「转换时允许 AI 不受沙盒限制」只在 Windows 存在；做成模块常量，测试不必改全局 `os.name`
 _IS_WINDOWS = os.name == "nt"
+
+
+def _fix_memory_entries() -> list[dict]:
+    """诊断包用：本机记住的做法（读不了就空，不拖垮打包）。"""
+    try:
+        from .engine import fixmemory
+
+        return fixmemory.entries()
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _fix_memory_body():
+    from .engine import fixmemory
+
+    resp = jsonify({"enabled": fixmemory.enabled(), "entries": fixmemory.entries()})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/ai/fix-memory")
+def api_ai_fix_memory():
+    """设置 → 改图助手 →「记住修好的做法」：本机记下的修法（ADR 0197 第 3 层·在线）。只读本机文件，不出网。"""
+    return _fix_memory_body()
+
+
+@app.put("/api/ai/fix-memory")
+def api_ai_fix_memory_toggle():
+    from .engine import fixmemory
+
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("enabled"), bool):
+        abort(400)
+    fixmemory.set_enabled(body["enabled"])
+    return _fix_memory_body()
+
+
+@app.delete("/api/ai/fix-memory")
+def api_ai_fix_memory_clear():
+    from .engine import fixmemory
+
+    fixmemory.clear()
+    return _fix_memory_body()
+
+
+@app.delete("/api/ai/fix-memory/<entry_id>")
+def api_ai_fix_memory_delete(entry_id: str):
+    from .engine import fixmemory
+
+    if not re.fullmatch(r"[0-9a-f]{12}", entry_id or ""):
+        abort(400)
+    fixmemory.delete(entry_id)
+    return _fix_memory_body()
 
 
 @app.put("/api/ai/convert-unsandboxed")

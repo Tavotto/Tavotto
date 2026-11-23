@@ -37,6 +37,7 @@ description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖�
 | 情况 | 读 |
 | --- | --- |
 | 写任何画图脚本之前 | `references/figure-contract.md`（契约详解 + 模板）、`references/publication-style.md`（默认值 / 克制 / 组图 / 开工三问细则 / 按期刊） |
+| 决定画什么图、汇总怎么表达、用户问「这样画对不对」 | `references/visualization-guidance.md`（科学图形准则：错误 / 统计 / 感知 / 待确认 / 作者偏好，按编号引用） |
 | 工具缺失、引擎不可用、要装/升级/provision、工作区授权 | `references/first-run-and-recovery.md` |
 | 宿主不是 Codex（Cursor / Claude / VS Code / Trae / Antigravity / DSH / WorkBuddy / ZCode …）的安装、重载、能力差异 | `references/other-hosts.md` |
 | 用户已有一张图，要改宽度 / 字体 / 最小字号而不重画 | `references/normalize-existing.md` |

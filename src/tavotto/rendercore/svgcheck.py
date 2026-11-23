@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import base64
 import binascii
+import math
 import re
 import struct
+import time
 from dataclasses import dataclass
 from xml.etree import ElementTree as ET
 
@@ -108,6 +110,29 @@ _ID = re.compile(r"[A-Za-z_][A-Za-z0-9_.:-]*\Z")
 _URL = re.compile(r"url\(\s*(['\"]?)(#[A-Za-z_][A-Za-z0-9_.:-]*)\1\s*\)", re.I)
 _SELECTOR = re.compile(r"[A-Za-z0-9_.*#\s,>\-]+\Z")
 _RULE = re.compile(r"([^{}]+)\{([^{}]*)\}")
+_BRACE = re.compile(r"[{}]")
+
+
+def _iter_rules(css: str):
+    """线性扫描 `选择器{声明}`，产出 (start, end, selector, body)，与 `_RULE.finditer` 同一语义。
+
+    不能直接 `_RULE.finditer` / `.sub`：`[^{}]+` 无锚点，遇到「一大段没有花括号的文字」会在每个起点重试，平方级回溯（ReDoS）。
+    这里只按花括号切一遍：选择器 = 上一个花括号之后的、非空的无花括号一段，后面紧跟 `{`、无花括号的声明、`}`。"""
+    prev_end = 0  # 上一个花括号之后
+    sel_start = open_at = -1  # 当前候选规则的起点 / `{` 的位置（-1 = 没有）
+    sel = ""
+    for m in _BRACE.finditer(css):
+        if m.group() == "{":
+            if m.start() > prev_end:
+                sel_start, open_at, sel = prev_end, m.start(), css[prev_end : m.start()]
+            else:
+                open_at = -1
+        elif open_at >= 0:
+            yield sel_start, m.end(), sel, css[open_at + 1 : m.start()]
+            open_at = -1
+        prev_end = m.end()
+
+
 _DECLARATION = re.compile(r"\s*([a-z][a-z-]*)\s*:\s*(.*)\Z", re.S | re.I)
 _MATPLOTLIB_DOCTYPE = (
     b'<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"\n'
@@ -127,6 +152,8 @@ class SVGBudget:
     max_image_bytes: int = 16 * 1024 * 1024
     max_image_pixels: int = 100_000_000
     max_expanded_elements: int = 1_000_000
+    #: `<style>` 里规则条数的上限（None = 不限，静态素材照旧；外部 SVG 导入会设，Codex 线程 4656678188）
+    max_css_rules: int | None = None
 
 
 class SVGError(ValueError):
@@ -135,6 +162,12 @@ class SVGError(ValueError):
     def __init__(self, code: str):
         self.code = code
         super().__init__(code)
+
+
+def _check_deadline(deadline: float) -> None:
+    """墙钟过了 `deadline`（`time.monotonic()` 刻度，缺省 inf = 不限）就抛 `svg_timeout`。"""
+    if time.monotonic() > deadline:
+        raise SVGError("svg_timeout")
 
 
 def strip_matplotlib_doctype(data: bytes) -> bytes:
@@ -223,10 +256,10 @@ def repair_worker_ids(data: bytes, *, budget: SVGBudget | None = None) -> bytes:
         out = []
         last = 0
         try:
-            for rule in _RULE.finditer(css):
-                head = _REPAIR_SELECTOR_ID.sub(token, rule.group(1))
-                out.append(css[last : rule.start()] + head + "{" + url(rule.group(2)) + "}")
-                last = rule.end()
+            for start, end, sel, body in _iter_rules(css):
+                head = _REPAIR_SELECTOR_ID.sub(token, sel)
+                out.append(css[last:start] + head + "{" + url(body) + "}")
+                last = end
         except LookupError:
             return None
         out.append(css[last:])
@@ -258,9 +291,10 @@ _REPAIR_SELECTOR_ID = re.compile(r"#([^\s,>+~.#:\[\]*{}()]+)")
 
 
 class _BoundedBuilder(ET.TreeBuilder):
-    def __init__(self, budget: SVGBudget):
+    def __init__(self, budget: SVGBudget, deadline: float = math.inf):
         super().__init__()
         self.budget = budget
+        self.deadline = deadline
         self.depth = self.elements = self.attribute_chars = self.text_chars = 0
 
     def start(self, tag, attrs):
@@ -274,6 +308,8 @@ class _BoundedBuilder(ET.TreeBuilder):
             or self.attribute_chars > self.budget.max_attribute_chars
         ):
             raise SVGError("svg_resource_limit")
+        if not self.elements & 0x3FF:
+            _check_deadline(self.deadline)
         return super().start(tag, attrs)
 
     def end(self, tag):
@@ -316,9 +352,11 @@ def _css_value(value: str) -> list[str]:
     return refs
 
 
-def _declarations(css: str) -> list[str]:
+def _declarations(css: str, deadline: float = math.inf) -> list[str]:
     refs: list[str] = []
-    for part in css.split(";"):
+    for n, part in enumerate(css.split(";")):
+        if not n & 0xFF:
+            _check_deadline(deadline)  # 一个 `style` 属性 / 一条规则里可以塞几十万条声明
         if not part.strip():
             continue
         match = _DECLARATION.fullmatch(part)
@@ -328,18 +366,35 @@ def _declarations(css: str) -> list[str]:
     return refs
 
 
-def _stylesheet(css: str) -> list[str]:
+_TRAILING_SPACE = re.compile(r"\s*")
+
+
+def _stylesheet(
+    css: str,
+    max_rules: int | None = None,
+    deadline: float = math.inf,
+    counted: list[int] | None = None,
+) -> list[str]:
+    """逐条规则校验。只用下标推进：不切片复制剩余全文（原来每条规则 `css[pos:].strip()` 复制一遍，几十万条短规则平方级）。"""
     refs: list[str] = []
     pos = 0
+    rules = 0
     while pos < len(css):
-        if not css[pos:].strip():
+        if _TRAILING_SPACE.match(css, pos).end() == len(css):
             break
+        rules += 1
+        if counted is not None:
+            counted[0] += 1
+        if max_rules is not None and rules > max_rules:
+            raise SVGError("svg_resource_limit")
+        if not rules & 0xFF:
+            _check_deadline(deadline)
         match = _RULE.match(css, pos)
         if not match or not _SELECTOR.fullmatch(match.group(1).strip()):
             raise SVGError("svg_unsafe_css")
         if any(not selector.strip() for selector in match.group(1).split(",")):
             raise SVGError("svg_unsafe_css")
-        refs.extend(_declarations(match.group(2)))
+        refs.extend(_declarations(match.group(2), deadline))
         pos = match.end()
     return refs
 
@@ -389,7 +444,7 @@ def _image_data(value: str, budget: SVGBudget) -> tuple[int, int]:
     return len(raw), width * height
 
 
-def _references(nodes, edges, refs, ids, budget):
+def _references(nodes, edges, refs, ids, budget, deadline: float = math.inf):
     for index, names in refs.items():
         for name in names:
             if name not in ids:
@@ -399,9 +454,15 @@ def _references(nodes, edges, refs, ids, budget):
     # indirect gradient/pattern cycles. Memoized expansion also bounds exponential use DAGs.
     done: dict[int, int] = {}
     active: set[int] = set()
+    tick = 0
     for root in range(len(nodes)):
         stack = [(root, False)]
         while stack:
+            tick += 1
+            if not tick & 0x3FF:
+                _check_deadline(
+                    deadline
+                )  # 全图遍历：几万个节点 + 引用边，慢机器上整段不查墙钟会多等一截
             node, finish = stack.pop()
             if node in done:
                 continue
@@ -419,9 +480,105 @@ def _references(nodes, edges, refs, ids, budget):
             stack.extend((child, False) for child in reversed(edges[node]))
 
 
-def parse_svg(data: bytes, *, budget: SVGBudget | None = None) -> ET.Element:
-    """Parse a bounded safe static SVG, validating every local resource reference."""
+#: 编辑器写进来的、对画面没有作用的 CSS 声明（Illustrator 的 `enable-background`、Inkscape 的 `-inkscape-*`、clipPath 里 use 上的
+#: `overflow`……）。只在 `tolerant` 模式里**删掉**它们再验证；其余没见过的属性照旧拒绝。
+_INERT_CSS = {
+    "enable-background",
+    "overflow",
+    "line-height",
+    "text-align",
+    "font-variation-settings",
+    "font-feature-settings",
+    "-inkscape-font-specification",
+    "-inkscape-stroke",
+    "solid-color",
+    "solid-opacity",
+}
+_INERT_CSS_VALUES = {("isolation", "auto"), ("mix-blend-mode", "normal")}
+#: 公共 SVG DTD 声明（没有内部子集，所以没有实体）：Illustrator 老版本的「另存为」会写它
+_PUBLIC_SVG_DOCTYPE = re.compile(
+    r"<!DOCTYPE\s+svg\s+PUBLIC\s+\"[^\"\[\]<>]*\"\s+\"[^\"\[\]<>]*\"\s*>", re.I
+)
+
+
+_INERT_DECLARATION = re.compile(r"\s*(-?[a-z][a-z-]*)\s*:\s*(.*)\Z", re.S | re.I)
+
+
+def _inert(decl: str) -> bool:
+    m = _INERT_DECLARATION.fullmatch(decl)
+    if not m:
+        return False
+    prop, value = m.group(1).lower(), m.group(2).strip().lower()
+    return prop in _INERT_CSS or (prop, value) in _INERT_CSS_VALUES
+
+
+def _drop_inert(css_body: str, deadline: float = math.inf) -> str:
+    kept = []
+    for n, d in enumerate(css_body.split(";")):
+        if not n & 0xFF:
+            _check_deadline(deadline)
+        if d.strip() and not _inert(d):
+            kept.append(d)
+    return ";".join(kept)
+
+
+def _tolerate(root: ET.Element, deadline: float = math.inf) -> None:
+    """`tolerant` 模式的清理（外部 SVG 导入用，ADR 0189）：编辑器的私有命名空间元素与属性、整段 metadata、对画面没作用的
+    CSS 声明删掉；**安全规则一条不放**——脚本、事件属性、外链、DTD / 实体、引用环、预算照旧由后面的验证拒绝。"""
+    # 每个父节点一趟过滤、整体替换子节点列表：逐个 `parent.remove(child)` 每次都要线性找一遍，大量保留节点后跟大量要删的节点时
+    # 是平方级（Codex 线程 4656770810）；墙钟按子节点计数检查，一个父节点下挂几万个子节点也查得到
+    tick = 0
+    for parent in list(root.iter()):
+        kept = []
+        dropped = False
+        for child in parent:
+            tick += 1
+            if not tick & 0xFF:
+                _check_deadline(deadline)
+            ns, tag = _name(child.tag) if isinstance(child.tag, str) else ("", "")
+            if (
+                not isinstance(child.tag, str)
+                or (ns not in ("", SVG_NS))
+                or (tag == "metadata" and ns in ("", SVG_NS))
+            ):
+                dropped = True
+            else:
+                kept.append(child)
+        if dropped:
+            parent[:] = kept
+    for tick, node in enumerate(root.iter()):
+        if not tick & 0xFF:
+            _check_deadline(deadline)
+        for key in list(node.attrib):
+            ans, _attr = _name(key)
+            if ans not in ("", _XML_NS, XLINK_NS):
+                del node.attrib[key]
+        if "style" in node.attrib:
+            node.set("style", _drop_inert(node.get("style") or "", deadline))
+        if _name(node.tag)[1] == "style" and node.text:
+            text, out, last = node.text, [], 0
+            for n, (start, end, sel, body) in enumerate(_iter_rules(text)):
+                if not n & 0xFF:
+                    _check_deadline(deadline)
+                out.append(text[last:start] + sel + "{" + _drop_inert(body, deadline) + "}")
+                last = end
+            out.append(text[last:])
+            node.text = "".join(out)
+
+
+def parse_svg(
+    data: bytes,
+    *,
+    budget: SVGBudget | None = None,
+    tolerant: bool = False,
+    deadline: float = math.inf,
+) -> ET.Element:
+    """Parse a bounded safe static SVG, validating every local resource reference.
+
+    `tolerant`（外部 SVG 导入，ADR 0189）：先删掉公共 SVG DTD 声明（没有内部子集）、编辑器私有命名空间、metadata 与对画面没作用的
+    CSS 声明，再做与严格模式**完全相同**的验证。实体、外链、脚本、事件属性、引用环、预算不放宽。"""
     budget = budget or SVGBudget()
+    _check_deadline(deadline)
     if len(data) > budget.max_bytes:
         raise SVGError("svg_resource_limit")
     try:
@@ -430,25 +587,34 @@ def parse_svg(data: bytes, *, budget: SVGBudget | None = None) -> ET.Element:
         raise SVGError("svg_encoding_unsupported") from exc
     if "\x00" in text:
         raise SVGError("svg_encoding_unsupported")
+    if tolerant:
+        text = _PUBLIC_SVG_DOCTYPE.sub("", text, count=1)
     if re.search(r"<!\s*(?:DOCTYPE|ENTITY)\b", text, re.I):
         raise SVGError("svg_dtd_forbidden")
     encoding = re.match(r"\s*<\?xml\b[^?]*\bencoding\s*=\s*(['\"])(.*?)\1", text, re.I)
     if encoding and encoding.group(2).lower().replace("-", "") != "utf8":
         raise SVGError("svg_encoding_unsupported")
     try:
-        root = ET.fromstring(text, parser=ET.XMLParser(target=_BoundedBuilder(budget)))
+        root = ET.fromstring(text, parser=ET.XMLParser(target=_BoundedBuilder(budget, deadline)))
     except (ET.ParseError, LookupError) as exc:
         raise SVGError("svg_unparseable") from exc
+    _check_deadline(deadline)
     if _name(root.tag) not in ((SVG_NS, "svg"), ("", "svg")):
         raise SVGError("svg_invalid_root")
+    if tolerant:
+        _tolerate(root, deadline)
     nodes = list(root.iter())
     indices = {id(node): i for i, node in enumerate(nodes)}
     edges = [[indices[id(child)] for child in node] for node in nodes]
+    _check_deadline(deadline)
     ids: dict[str, int] = {}
     refs: dict[int, list[str]] = {}
     metadata: set[int] = set()
     image_bytes = image_pixels = 0
+    css_rules = [0]  # 全文档 `<style>` 规则累计
     for index, node in enumerate(nodes):
+        if not index & 0xFF:
+            _check_deadline(deadline)
         ns, tag = _name(node.tag)
         in_metadata = index in metadata or (ns in ("", SVG_NS) and tag == "metadata")
         if in_metadata:
@@ -461,7 +627,8 @@ def parse_svg(data: bytes, *, budget: SVGBudget | None = None) -> ET.Element:
         if tag == "style":
             if node.get("type", "text/css") != "text/css" or len(node):
                 raise SVGError("svg_unsafe_css")
-            refs[index] = _stylesheet(node.text or "")
+            left = None if budget.max_css_rules is None else budget.max_css_rules - css_rules[0]
+            refs[index] = _stylesheet(node.text or "", left, deadline, css_rules)
         for key, value in node.attrib.items():
             ans, attr = _name(key)
             if attr.lower().startswith("on") or (ans == _XML_NS and attr == "base"):
@@ -489,7 +656,7 @@ def parse_svg(data: bytes, *, budget: SVGBudget | None = None) -> ET.Element:
                 else:
                     raise SVGError("svg_external_resource")
             elif attr == "style":
-                refs.setdefault(index, []).extend(_declarations(value))
+                refs.setdefault(index, []).extend(_declarations(value, deadline))
             elif attr.lower() in ("src", "base"):
                 raise SVGError("svg_external_resource")
             elif attr in _CSS_PROPERTIES or (
@@ -500,7 +667,8 @@ def parse_svg(data: bytes, *, budget: SVGBudget | None = None) -> ET.Element:
             _name(k)[1] == "href" for k in node.attrib
         ):
             raise SVGError("svg_missing_reference")
-    _references(nodes, edges, refs, ids, budget)
+    _check_deadline(deadline)
+    _references(nodes, edges, refs, ids, budget, deadline)
     return root
 
 

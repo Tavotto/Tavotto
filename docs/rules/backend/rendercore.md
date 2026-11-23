@@ -128,6 +128,9 @@ order: 330
   时按 `svgcheck.repair_worker_ids` 给语法外 / 重复的 id 改名（用户 `set_gid("面板 A")`；引用只在 href / `url(#…)` / 选择器 id 记号这些结构位置跟着改，
   重复者让给第一个，选择器点名重复 id 时不改），改完仍过整道闸。
   任意导入文件不借这两条放行（`parse_svg` 本身照旧拒收）。
+  外部 SVG 导入成可编辑对象（ADR 0189，`svgimport`）只经 `parse_svg(tolerant=True)`：多删的只有没有内部子集的公共 SVG DTD、编辑器私有
+  命名空间与 metadata、无作用的 CSS 声明（`_INERT_CSS`），**安全规则一条不放**；导入另用更紧的 `svgimport.IMPORT_BUDGET`。不许在别处另起
+  XML 解析器读外部 SVG。看护 `tests/test_svgimport_security.py`。
   `svgwriter` 封口前再验整份组装结果，`inspector` 重新打开成品读物理尺寸、viewBox、轮廓 / 图片等字节事实。
   轮廓策略不把字体嵌入或文字检索判为 verified，text 策略也不判字体嵌入（只核 `font-family` 的首选族）；这也不等于已通过 Office 插入 / 重开 / 转 PDF 兼容性验证。
   看护：`tests/test_rendercore_svgwriter.py`、`tests/test_rendercore_svginspect.py`、`tests/test_worker_svg_pair.py`。
