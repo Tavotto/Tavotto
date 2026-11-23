@@ -220,7 +220,11 @@ def make_zip(
     symlink: str | None = None,
 ) -> bytes:
     """zip = `tavotto-pro/tavotto_pro/*`（开源示例扩展，或自定义 `__main__`）+ `release.json`。"""
-    main = main_py if main_py is not None else (ECHO / "tavotto_pro" / "__main__.py").read_text()
+    main = (
+        main_py
+        if main_py is not None
+        else (ECHO / "tavotto_pro" / "__main__.py").read_text(encoding="utf-8")
+    )
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         if not skip_pkg:
@@ -529,7 +533,7 @@ def test_install_prune_leaves_foreign_entries(env, srv, rel_key):
     d = proinstall.pro_dir()
     d.mkdir(parents=True)
     (d / "notes").mkdir()
-    (d / "readme.txt").write_text("x")
+    (d / "readme.txt").write_text("x", encoding="utf-8")
     for v in ("1.0.0", "1.1.0", "1.2.0"):
         install_version(srv, rel_key, v)
     assert (d / "notes").is_dir() and (d / "readme.txt").is_file()
@@ -758,7 +762,7 @@ def test_codesign_failure_rolls_back(env, srv, rel_key, monkeypatch):
 
 def test_codesign_command_shape(monkeypatch, tmp_path):
     exe = tmp_path / "tavotto-pro"
-    exe.write_text("x")
+    exe.write_text("x", encoding="utf-8")
     monkeypatch.setattr(prohost, "_is_macos", lambda: True)
     calls = []
 
@@ -791,7 +795,7 @@ def test_dev_dir_source_skips_install_checks(host, env, monkeypatch, srv, rel_ke
     install_version(srv, rel_key, "1.0.0")
     bad = Path(os.environ["TAVOTTO_DATA_DIR"]) / "devpro"
     (bad / "tavotto_pro").mkdir(parents=True)
-    (bad / "tavotto_pro" / "__main__.py").write_text(CRASH_MAIN)
+    (bad / "tavotto_pro" / "__main__.py").write_text(CRASH_MAIN, encoding="utf-8")
     monkeypatch.setenv(prohost.ENV_PRO_DIR, str(bad))
     with pytest.raises(prohost.ProUnavailable):
         prohost.call("echo", {}, feature="quick-layout")

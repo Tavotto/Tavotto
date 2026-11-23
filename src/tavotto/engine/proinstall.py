@@ -13,12 +13,12 @@
 * **`release.json` 对账口径**：包内 `release.json` 是发布清单的负载 JSON，但**不含 `sha256` 与 `size`**（这两项描述 zip 自己，不可能写进 zip 里）。
   比较时两边都去掉这两个键，再各自按 `license.canonicalize`（键排序、紧凑、无浮点）规范化成 UTF-8 字节，逐字节相等才算一致。
 * **安装持锁**（进程内 `threading.Lock` + `pro/.lock` 文件锁，跨进程）；只保留 current 与 previous 两个版本目录，更早的删；**正在运行的
-  sidecar 所在目录不删**（问 `prohost._current.root`）。任何一步失败：清理临时目录、`current.json` 不动。
+  sidecar 所在目录不删**（问 prohost 登记的 `register_running_root`）。任何一步失败：清理临时目录、`current.json` 不动。
 * **`bad.json`**：健康检查失败过的版本目录名。`install` 不装 bad 里的版本；服务端推荐的版本不在 bad 里（= 推荐版本变了）就把 bad 清空
   （`_sync_bad`，ADR 0198 §六「服务端换了推荐版本后清空」的简化口径）。
 
-纯标准库（`nacl` 只经 `ed25519util` 延后 import）；Flask 父进程 import 链上的模块。`prohost` 反过来 import 本模块，所以本模块只在函数体里
-延后 import `prohost`（避免环）。
+纯标准库（`nacl` 只经 `ed25519util` 延后 import）；Flask 父进程 import 链上的模块。依赖只朝一个方向：`prohost` import 本模块，本模块
+**不** import `prohost`（正在运行的版本由 prohost 经 `register_running_root` 登记查询函数）。
 """
 
 from __future__ import annotations
@@ -132,6 +132,20 @@ STATUSES = frozenset(
 _LOG_CODES = FAILURES | frozenset(engine_license.FAILURES) | {""}
 
 
+#: 宿主认得的 pro 协议版本（ADR 0198 §三）。唯一出处在这里，`SUPPORTED_PRO_API` 引用它
+#: （依赖只朝一个方向：prohost → proinstall，本模块不 import prohost）。
+SUPPORTED_PRO_API = frozenset({1})
+
+#: 「此刻在跑的 sidecar 根目录」的查询函数，由 prohost 在导入时登记（`register_running_root`）；没登记 = 当作没在跑
+_running_root = None
+
+
+def register_running_root(fn) -> None:
+    """prohost 登记一个无参函数：返回正在运行的 sidecar 的根目录（`Path`），没有在跑返回 None。"""
+    global _running_root
+    _running_root = fn
+
+
 class ProInstallError(Exception):
     """下载 / 验签 / 安装失败。`code` ∈ `FAILURES`。"""
 
@@ -224,8 +238,6 @@ def verify_release(envelope: object) -> dict:
     """发布清单信封 `{"payload": b64(JSON), "sig": b64, "kid"}` → 通过验证的负载字典；任一项不对抛 `ProInstallError`（闭集码）。
     核：kid（`pro-` 前缀且已知）、Ed25519 签名、`v == 1`、`platform == platform_key()`、`pro_api` 是支持的整数、`features` ⊆ 功能键闭集、
     `sha256` 64 位小写 hex、`size` ∈ [1, `MAX_PRO_BYTES`]、`released_at` 整数、`pro_version` 只含能当目录名的安全字符。"""
-    from . import prohost  # 延后：prohost 反过来 import 本模块
-
     if not isinstance(envelope, dict):
         raise ProInstallError("bad_envelope")
     pub = _release_pubkey(envelope.get("kid"))
@@ -247,7 +259,7 @@ def verify_release(envelope: object) -> dict:
     if payload.get("platform") != platform_key():
         raise ProInstallError("platform_mismatch")
     api = payload.get("pro_api")
-    if not _is_int(api) or api not in prohost.SUPPORTED_PRO_API:
+    if not _is_int(api) or api not in SUPPORTED_PRO_API:
         raise ProInstallError("unsupported_api")
     feats = payload.get("features")
     if (
@@ -486,13 +498,12 @@ def _sync_bad(recommended: str) -> None:
 
 def _running_version() -> str | None:
     """正在运行的 sidecar 所在的版本目录名（开发目录来源 / 没有在跑 = None）。"""
-    from . import prohost
-
-    cur = prohost._current
-    if cur is None or not cur.alive():
+    probe = _running_root
+    root = probe() if probe is not None else None
+    if root is None:
         return None
     try:
-        rel = Path(cur.root).resolve().relative_to(pro_dir().resolve())
+        rel = Path(root).resolve().relative_to(pro_dir().resolve())
     except (ValueError, OSError):
         return None
     return _valid_name(rel.parts[0]) if rel.parts else None
@@ -708,8 +719,6 @@ def check_for_update() -> dict:
 
 
 def _check() -> dict:
-    from . import prohost
-
     if not engine_license.enabled():
         return _result("disabled")
     plat = platform_key()
@@ -718,7 +727,7 @@ def _check() -> dict:
     if not any(engine_license.has(k) for k in sorted(engine_license.FEATURES)):
         return _result("unlicensed")
     try:
-        got = engine_license.pro_manifest(plat, sorted(prohost.SUPPORTED_PRO_API))
+        got = engine_license.pro_manifest(plat, sorted(SUPPORTED_PRO_API))
     except engine_license.LicenseError as exc:
         return _result("manifest_failed", exc.code if exc.code in engine_license.FAILURES else "")
     if "state" in got:

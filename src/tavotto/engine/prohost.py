@@ -35,7 +35,7 @@ LOG = logging.getLogger("tavotto.prohost")
 ENV_PRO_DIR = "TAVOTTO_PRO_DIR"
 PROTOCOL_VERSION = 1
 #: 宿主认得的 pro 协议版本（ADR 0198 §三）。
-SUPPORTED_PRO_API = frozenset({1})
+SUPPORTED_PRO_API = proinstall.SUPPORTED_PRO_API
 #: 协议失败码闭集（ADR 0198 §三）。
 FAILURES = frozenset({"bad_request", "unsupported", "license", "timeout", "internal"})
 
@@ -301,6 +301,17 @@ def _start() -> _Sidecar:
 
 _LOCK = threading.Lock()
 _current: _Sidecar | None = None
+
+
+def _running_root():
+    """此刻在跑的 sidecar 的根目录（给 proinstall 判「运行中的版本目录不删」）；没在跑 = None。"""
+    cur = _current
+    if cur is None or not cur.alive():
+        return None
+    return cur.root
+
+
+proinstall.register_running_root(_running_root)
 _crashes = 0
 
 
