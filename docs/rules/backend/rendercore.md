@@ -18,7 +18,7 @@ order: 330
 
 - **分层是硬边界**（`tests/support/importgraph.py` 的 `rendercore_model` / `rendercore_native`
   两层 + 层规则，`tests/test_rendercore_model.py` 钉外部名字）：纯模型（`ir` / `geometry` /
-  `typography` / `fonts` / `sources` / `plan` / `placement` / `raster` / `svgcheck`）**只许标准库**与仓库里
+  `typography` / `fonts` / `sources` / `plan` / `placement` / `raster` / `svgcheck` / `pathtext`）**只许标准库**与仓库里
   同样纯标准库的模块；候选包（pikepdf / fontTools / uharfbuzz / pypdfium2 / Pillow）只在 native 适配层
   （`hbshaper` / `pdfwriter` / `svgwriter` / `rasterio`）的函数 / 类里 import，PDFium **只在 `renderchild.child_main()` 里**（父进程
   import `renderchild` / `renderhost` / `preview` 不拉起任何候选包，`tests/test_rendercore_model.py` 钉着）；**整包零 `import pymupdf`**
