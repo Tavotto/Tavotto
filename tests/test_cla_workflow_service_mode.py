@@ -88,7 +88,7 @@ else:
 
 # 真实 fetch 模块的 Request、read_once、重试与 main 全跑，只替换 HTTPS opener 与时钟。
 _TRANSPORT = r"""
-import importlib.util, json, os, sys, urllib.error
+import importlib.util, io, json, os, sys, urllib.error
 from urllib.parse import urlsplit, parse_qs
 from pathlib import Path
 spec = importlib.util.spec_from_file_location("fetch_impl", Path(__file__).with_name("fetch_impl.py"))
@@ -111,6 +111,10 @@ class Opener:
         count = len(log.read_text(encoding="utf-8").splitlines())
         clock[0] += 40
         fault = st.get("fault")
+        if count <= st.get("defer_requests", 0):  # 服务按预算延后：前 N 次请求都回 budget_deferred
+            raise urllib.error.HTTPError(
+                request.full_url, 503, "deferred", {}, io.BytesIO(b'{"error":"budget_deferred"}')
+            )
         if fault == "fetch_crash": raise RuntimeError("simulated fetch failure")
         if fault == "down" or fault == "recover" and count == 1:
             raise urllib.error.HTTPError(request.full_url, 503, "down", {}, None)
@@ -370,6 +374,7 @@ class Rig:
         return [json.loads(ln) for ln in self.http_log.read_text(encoding="utf-8").splitlines()]
 
 
+WAIT = "等服务有预算（合并组，只延后不判定）"
 HOLDER_COMMIT = [_commit(HEAD, "erwanjun", HOLDER)]
 EXTERNAL_COMMIT = [_commit(HEAD, "someone", EXTERNAL)]
 
@@ -749,10 +754,189 @@ def test_repository_policy_stays_disabled(tmp_path, event):
 def test_fetch_budget_fits_inside_job_timeout_and_uses_only_trusted_source():
     job = _contract._job(_contract.CI, _contract.CLA_JOB)
     timeout = int(re.search(r"(?m)^    timeout-minutes: (\d+)$", job).group(1))
-    budget = int(re.search(r"--budget-seconds (\d+)", job).group(1))
-    assert budget == 120 and timeout == 10 and budget + 20 < timeout * 60
     script = _step_script("判定")
+    budget = int(re.search(r"--budget-seconds (\d+)", script).group(1))
+    # 单次判定的取数预算 + 余量必须落在 job 超时内；加上「等服务有预算」的上限
+    # 仍要小于合并队列的 check_response_timeout（180 分钟，留 20 分钟以上余量）。
+    wait = int(re.search(r"CLA_GROUP_DEFER_SECONDS:-(\d+)", _step_script(WAIT)).group(1))
+    assert budget == 120 and budget + 20 < timeout * 60
+    assert wait + 2 * (budget + 300) <= timeout * 60 <= (180 - 20) * 60
     assert 'python3 -I "$TRUSTED/scripts/ci/cla_eligibility_fetch.py"' in script
     assert "--provider-checks-json" not in script and "check-runs" not in script
     block = job[job.index("- name: 判定") :].split("run: |", 1)[0]
     assert "GH_TOKEN:" not in block and "github.token" not in block
+
+
+# ── 合并组在队列深处被服务按预算延后（budget_deferred，#2064）────────────────────────────
+def _graphql_calls(rig) -> int:
+    return rig.log.read_text(encoding="utf-8").splitlines().count("graphql")
+
+
+def _wait(rig, seconds=100, poll=0):
+    return rig._bash(
+        _step_script(WAIT),
+        CLA_GROUP_DEFER_SECONDS=str(seconds),
+        CLA_GROUP_DEFER_POLL_SECONDS=str(poll),
+    )
+
+
+def _member(number: int, head: str, login: str, uid: int) -> dict:
+    pr = {
+        "number": number,
+        "state": "open",
+        "head": {"sha": head},
+        "base": {"sha": BASE, "ref": "main", "repo": {"id": REPO_ID}},
+        "commits": 1,
+        "user": {"login": login, "id": uid},
+    }
+    return {
+        "before": pr,
+        "after": copy.deepcopy(pr),
+        "commits": [_commit(head, login, uid)],
+        "total_commits": 1,
+        "compare_base": BASE,
+    }
+
+
+def _two_deep_queue(tmp_path, *, shrink_after_calls=None, **state) -> "Rig":
+    """候选在第 2 位（前面还有 PR41）。`shrink_after_calls`：第 N 次 GraphQL 起 PR41 已合入离队。"""
+    rig = Rig(
+        tmp_path,
+        "merge_group",
+        commits=EXTERNAL_COMMIT,
+        group_prs=[
+            _member(41, "9" * 40, "other", EXTERNAL + 1),
+            _member(PR, "c" * 40, "someone", EXTERNAL),
+        ],
+        **state,
+    )
+    doc = json.loads(rig.state.read_text(encoding="utf-8"))
+    full = doc["queue_before"]
+    assert [
+        n["position"] for n in full[0]["data"]["repository"]["mergeQueue"]["entries"]["nodes"]
+    ] == [1, 2]
+    if shrink_after_calls is not None:
+        short = copy.deepcopy(full)
+        entries = short[0]["data"]["repository"]["mergeQueue"]["entries"]
+        entries["nodes"] = [{**entries["nodes"][1], "position": 1}]
+        entries["totalCount"] = 1
+        doc["queue_sequence"] = [full] * (shrink_after_calls - 1) + [short]
+        rig.state.write_text(json.dumps(doc), encoding="utf-8")
+    return rig
+
+
+def test_deferred_group_waits_for_the_prefix_to_shrink_then_the_ordinary_judgement_passes(tmp_path):
+    deferrals = 3
+    # 采集 2 次、每次延后后读 1 次位置；第 (2+3+1)=6 次读队列起前面的 PR41 已合入。
+    rig = _two_deep_queue(tmp_path, defer_requests=deferrals, shrink_after_calls=2 + deferrals + 1)
+    assert rig.collect().returncode == 0
+    assert _graphql_calls(rig) == 2
+    proc = _wait(rig)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert (
+        len(rig.requests()) == deferrals + 1 and proc.stdout.count("budget_deferred") == deferrals
+    )
+    assert _graphql_calls(rig) == 2 + deferrals + 2, (
+        "每次延后读一次位置，等过之后整套重采（前后各一次）"
+    )
+    snapshot = json.loads((rig.work / "tmp/group-snapshot.json").read_text(encoding="utf-8"))
+    assert [p["before"]["number"] for p in snapshot["prs"]] == [PR], "快照必须是缩短后的前缀"
+    rc, verdict, _ = rig.judge(EXTERNAL_COMMIT)
+    assert (rc, verdict["status"]) == (0, "success"), verdict
+    assert len(rig.requests()) == deferrals + 2  # 判定自己另问一次，不复用探测的回答
+
+
+def test_stale_snapshot_without_recollection_would_not_match_the_shorter_prefix(tmp_path):
+    """反面：前缀缩短后若还拿旧快照判定，成员对不上，判红（所以等过必须重采）。"""
+    rig = _two_deep_queue(tmp_path, defer_requests=0)
+    assert rig.collect().returncode == 0
+    rc, verdict, _ = rig.judge(EXTERNAL_COMMIT)  # 服务回答只含候选自己，快照含 PR41
+    assert rc == 1 and "provider_eligibility_invalid" in verdict["problems"]
+
+
+def test_candidate_at_the_queue_front_stops_waiting_after_a_few_tries(tmp_path):
+    rig = Rig(tmp_path, "merge_group", commits=EXTERNAL_COMMIT, defer_requests=10**6)
+    assert rig.collect().returncode == 0
+    proc = _wait(rig, seconds=1000, poll=0)
+    assert proc.returncode == 0 and "队首" in proc.stdout
+    assert len(rig.requests()) == 3, "队首只再试 3 次，不占住整条队列"
+    rc, verdict, _ = rig.judge(EXTERNAL_COMMIT)
+    assert (rc, verdict["status"]) == (1, "failure")
+    assert "provider_eligibility_unavailable:budget_deferred" in verdict["problems"]
+
+
+def test_group_that_is_not_deferred_asks_once_and_does_not_recollect(tmp_path):
+    rig = Rig(tmp_path, "merge_group", commits=EXTERNAL_COMMIT)
+    assert rig.collect().returncode == 0
+    queue_reads = _graphql_calls(rig)
+    assert _wait(rig).returncode == 0
+    assert len(rig.requests()) == 1 and _graphql_calls(rig) == queue_reads
+
+
+def test_deferred_then_unsigned_contributor_is_still_red(tmp_path):
+    rig = Rig(
+        tmp_path,
+        "merge_group",
+        commits=EXTERNAL_COMMIT,
+        defer_requests=2,
+        answer_override={"eligible": False},
+    )
+    assert rig.collect().returncode == 0
+    assert _wait(rig).returncode == 0
+    rc, verdict, _ = rig.judge(EXTERNAL_COMMIT)
+    assert (rc, verdict["status"]) == (1, "failure")
+    assert "provider_not_eligible" in verdict["problems"]
+
+
+def test_deferral_that_never_ends_stays_red_after_the_wait_limit(tmp_path):
+    rig = _two_deep_queue(tmp_path, defer_requests=10**6)
+    assert rig.collect().returncode == 0
+    proc = _wait(rig, seconds=2, poll=0)
+    assert proc.returncode == 0 and "等待上限" in proc.stdout
+    # 循环转了几圈取决于机器快慢（上限按挂钟计）；「会反复问」由收缩用例用确定的次数证明。
+    assert len(rig.requests()) >= 1
+    assert len(rig.requests()) < 200, "按上限停止，不是无限循环"
+    rc, verdict, _ = rig.judge(EXTERNAL_COMMIT)
+    assert (rc, verdict["status"]) == (1, "failure")
+    assert "provider_eligibility_unavailable:budget_deferred" in verdict["problems"]
+
+
+def test_all_exempt_group_neither_asks_nor_waits(tmp_path):
+    rig = Rig(tmp_path, "merge_group", commits=HOLDER_COMMIT, defer_requests=10**6)
+    assert rig.collect().returncode == 0
+    proc = _wait(rig, seconds=1000, poll=1000)
+    assert proc.returncode == 0 and rig.requests() == []
+
+
+def test_vanished_candidate_during_wait_fails_instead_of_passing(tmp_path):
+    rig = Rig(tmp_path, "merge_group", commits=EXTERNAL_COMMIT, defer_requests=1)
+    assert rig.collect().returncode == 0
+    rig.state.write_text(
+        json.dumps({**json.loads(rig.state.read_text(encoding="utf-8")), "queue_down": True}),
+        encoding="utf-8",
+    )
+    proc = _wait(rig)
+    assert proc.returncode != 0, "重采失败（候选已不在队列）必须让这一步红"
+
+
+def test_pull_request_behaviour_is_unchanged_and_has_no_wait_step():
+    job = _contract._job(_contract.CI, _contract.CLA_JOB)
+    block = job[job.index(f"- name: {WAIT}") :].split("run: |", 1)[0]
+    assert "if: github.event_name == 'merge_group'" in block
+
+
+def test_pull_request_deferral_still_fails_without_waiting(tmp_path):
+    rig = Rig(tmp_path, "pull_request", commits=EXTERNAL_COMMIT, defer_requests=10**6)
+    rc, verdict, _ = rig.judge(EXTERNAL_COMMIT)
+    assert (rc, verdict["status"]) == (1, "failure")
+    assert "provider_eligibility_unavailable:budget_deferred" in verdict["problems"]
+    assert len(rig.requests()) == 3  # 原有的 120 秒取数预算，一次不多
+
+
+def test_wait_step_never_hands_the_github_token_to_gate_or_fetch():
+    script = _step_script(WAIT)
+    for call in ("cla_gate.py", "cla_eligibility_fetch.py"):
+        line = next(ln for ln in script.splitlines() if call in ln)
+        context = script[max(0, script.index(line) - 120) : script.index(line) + len(line)]
+        assert "clean python3" in context, call
+    assert "env -u GH_TOKEN -u GITHUB_TOKEN -u ACTIONS_RUNTIME_TOKEN" in script

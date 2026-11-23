@@ -226,5 +226,5 @@
 - 类: 照这样
 - 触发: .github/workflows/ci.yml, docs/ci/parallel-prs.md, docs/rules/ci/ci-lanes.md
 - Seen: 2026-11-12, 2026-11-21
-- 为什么: 一次 Actions 故障里，合并组单独 rerun 带 needs 的 gate job 直接 startup_failure；PR 上「no checks reported」是事件被吞，等不来；checks_timed_out 与 runner shutdown signal 踢出的 PR 自身 CI 绿、head 未变，按原 head 重排一次即过，同因再踢才查。照这三步把一批 14 个 PR 一夜合完。11-21 队列第 3 位的 CLA 判定报 budget_deferred（服务按合并前缀控预算）整组红，同理不改代码，等前序合入后按原 head 重排（#2064）。
+- 为什么: 一次 Actions 故障里，合并组单独 rerun 带 needs 的 gate job 直接 startup_failure；PR 上「no checks reported」是事件被吞，等不来；checks_timed_out 与 runner shutdown signal 踢出的 PR 自身 CI 绿、head 未变，按原 head 重排一次即过，同因再踢才查。照这三步把一批 14 个 PR 一夜合完。11-21 队列第 3 位的 CLA 判定报 budget_deferred（服务按合并前缀深度控预算）整组红，当时按原 head 重排（#2064）；11-23 起 cla-check 在合并组上自己等前缀变浅（ADR 0172 修订），不必再手动压队列深度。
 - 证据: #1857, #1864, #1866, #2064

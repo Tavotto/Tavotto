@@ -354,7 +354,9 @@ jobs:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-24.04
     # 含服务取数约两分钟的重试预算；元数据读取、最后一次判定另留余量。
-    timeout-minutes: 10
+    # 合并组在队列深处时服务会按预算报 budget_deferred（见下面「等服务有预算」一步），
+    # 那一步最多再等 120 分钟：总长必须落在合并队列 check_response_timeout（180 分钟）之内。
+    timeout-minutes: 150
     permissions:
       contents: read
       pull-requests: read
@@ -483,6 +485,9 @@ jobs:
             echo "服务未启用：合并组判 not_applicable，不需要提交列表。"
             exit 0
           fi
+          # 取数逻辑写成脚本落盘再执行：「等服务有预算」一步在队列变化后要原样重采一遍。
+          cat > "$RUNNER_TEMP/cla-collect-group.sh" <<'COLLECT_GROUP'
+          set -euo pipefail
           if ! [[ "$GROUP_BASE" =~ ^[0-9a-f]{40}$ && "$GROUP_HEAD" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::读不出合并组的 base / head：「$GROUP_BASE」「$GROUP_HEAD」"
             exit 1
@@ -575,6 +580,112 @@ jobs:
             > "$RUNNER_TEMP/group-snapshot.json"
           echo "CLA_EXPECTED_COMMITS=$got" >> "$GITHUB_ENV"
           echo "提交数核对通过：$got（compare ${GROUP_BASE:0:8}...${GROUP_HEAD:0:8}）"
+          COLLECT_GROUP
+          bash "$RUNNER_TEMP/cla-collect-group.sh"
+
+      # 合并组在队列深处时，服务一次读不完整个前缀：它在一次 Worker 调用里把「队首到候选」的
+      # 每个 PR 读两遍，外部请求约 16 + 6×前缀长度 + 2×贡献者查询，上限 35（Cloudflare Free 的
+      # 子请求预算）——前缀 2 个约 28~32、3 个约 34~35、4 个必超，超了回 `budget_deferred`。这由
+      # 深度决定、不是瞬时故障：15 秒 × 4 次重试没用，要等前面的条目合入、前缀变浅（服务每次
+      # 现读队列、按候选的 base / head 重新截前缀）。以前这里直接判红，整组被踢（#2064）。
+      # 候选已在队首仍延后（贡献者太多）时前缀不会再浅：只再试几次就交给下一步，不拖住整条队列。
+      #
+      # 本步**只延后、不判定**：反复问服务，直到回答不再是 budget_deferred（不论是真回答还是别的
+      # 错误）、或到上限，然后——若等过——把合并组快照整套重采（前缀已变，旧快照与服务的成员表对不上）。
+      # 结论仍只由下一步「判定」给出，它重新取随机数、重新问、判定器逐字段核对，一行没动：
+      # 到上限、探测失败、探测答复一律不会让本检查变绿；没签署的人照样在「判定」里红。
+      # 全员豁免（预判 rc≠1）不问服务，这里也不等。上限 7200 秒 + 取数与判定的余量，
+      # 必须小于合并队列的 check_response_timeout（180 分钟），所以 job 超时是 150 分钟。
+      - name: 等服务有预算（合并组，只延后不判定）
+        if: github.event_name == 'merge_group'
+        timeout-minutes: 130
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REPOSITORY_ID: ${{ github.event.repository.id }}
+          GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+          GROUP_HEAD: ${{ github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+          if [ "${CLA_SERVICE_MODE:-no}" != "yes" ]; then
+            echo "服务未启用：不需要等。"
+            exit 0
+          fi
+          # GitHub 令牌只给重采用；判定器与取回答的脚本都不继承它。
+          clean() { env -u GH_TOKEN -u GITHUB_TOKEN -u ACTIONS_RUNTIME_TOKEN "$@"; }
+          # 与下一步「判定」的预判同一组参数（预判只负责全员 id 豁免与输入错误）。
+          ARGS=(--event merge_group
+                --policy "$TRUSTED/.github/cla-policy.json"
+                --repo-root "$TRUSTED"
+                --commits-json "$RUNNER_TEMP/group-commits.json"
+                --expected-commits "$CLA_EXPECTED_COMMITS"
+                --group-snapshot-json "$RUNNER_TEMP/group-snapshot.json"
+                --verification-base "$GROUP_BASE"
+                --verification-head "$GROUP_HEAD"
+                --verification-repository-id "$REPOSITORY_ID")
+          verdict="$RUNNER_TEMP/cla-wait-prejudge.json"
+          rc=0
+          GITHUB_STEP_SUMMARY="$RUNNER_TEMP/cla-wait-summary.md" \
+            clean python3 -I "$TRUSTED/scripts/ci/cla_gate.py" "${ARGS[@]}" > "$verdict" || rc=$?
+          if [ "$rc" -ne 1 ] || jq -e '.problems | any(startswith("unresolved:"))' "$verdict" > /dev/null; then
+            echo "预判已有结论（全员豁免或输入有误），不问服务，不等。"
+            exit 0
+          fi
+          limit="${CLA_GROUP_DEFER_SECONDS:-7200}"
+          poll="${CLA_GROUP_DEFER_POLL_SECONDS:-90}"
+          front_tries="${CLA_GROUP_FRONT_TRIES:-3}"
+          start=$(date +%s)
+          waited=0
+          front=0
+          # 候选在队列里的当前位置（只读 GitHub，与取数脚本同一条查询形状）；读不出就空。
+          # shellcheck disable=SC2016
+          queue_position() {
+            gh api graphql --paginate -f query='query($owner:String!,$name:String!,$branch:String!,$endCursor:String) {
+              repository(owner:$owner,name:$name) { mergeQueue(branch:$branch) {
+                entries(first:100,after:$endCursor) { pageInfo { hasNextPage endCursor }
+                  nodes { position baseCommit { oid } headCommit { oid } } } } } }' \
+              -f owner="${REPO%%/*}" -f name="${REPO#*/}" -f branch=main \
+              | jq -s -r --arg base "$GROUP_BASE" --arg head "$GROUP_HEAD" \
+                  '[.[].data.repository.mergeQueue.entries.nodes[]
+                    | select(.baseCommit.oid == $base and .headCommit.oid == $head) | .position]
+                   | if length == 1 then .[0] else empty end'
+          }
+          while true; do
+            nonce=$(python3 -I -c 'import secrets; print(secrets.token_urlsafe(32))')
+            probe="$RUNNER_TEMP/cla-wait-probe.json"
+            echo '{"error":"fetch_failed"}' > "$probe"
+            # 只试一次（--budget-seconds 0）；答复只用来判断「还在不在 budget_deferred」，不进任何判定。
+            clean python3 -I "$TRUSTED/scripts/ci/cla_eligibility_fetch.py" \
+              --event merge_group --policy "$TRUSTED/.github/cla-policy.json" \
+              --base "$GROUP_BASE" --head "$GROUP_HEAD" --nonce="$nonce" \
+              --out "$probe" --budget-seconds 0 || true
+            code=$(jq -r 'if type == "object" and keys == ["error"] then .error else "" end' "$probe" 2>/dev/null || true)
+            if [ "$code" != "budget_deferred" ]; then
+              break
+            fi
+            waited=1
+            # 候选在队首：前面没有条目可等，前缀不会变浅——只再试几次（排除瞬时的时间预算），
+            # 不为它占住整条队列（max_entries_to_merge=1）。读不出位置就当作还在等。
+            position=$(queue_position || true)
+            if [ "$position" = 1 ]; then
+              front=$(( front + 1 ))
+              if [ "$front" -ge "$front_tries" ]; then
+                echo "::warning::候选已在队首仍 budget_deferred，前缀不会再变浅；交给下一步按原规则判定（失败即红）。"
+                break
+              fi
+            fi
+            elapsed=$(( $(date +%s) - start ))
+            if [ $(( elapsed + poll )) -ge "$limit" ]; then
+              echo "::warning::服务连续 ${elapsed} 秒报 budget_deferred，到等待上限；交给下一步按原规则判定（失败即红）。"
+              break
+            fi
+            echo "服务按预算延后（budget_deferred，前面还有条目）：已等 ${elapsed} 秒，${poll} 秒后再问。"
+            sleep "$poll"
+          done
+          if [ "$waited" = 1 ]; then
+            echo "等过一段时间，队列前缀可能已变：重采合并组快照。"
+            bash "$RUNNER_TEMP/cla-collect-group.sh"
+          fi
 
       # -I（隔离模式）：不把脚本目录挂进 sys.path、无视 PYTHONPATH——
       # 与两个 Gate 同一双保险。
