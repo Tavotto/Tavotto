@@ -362,6 +362,19 @@ def _fill(text: str, paths: list[str]) -> str:
     )
 
 
+def sciviz_note() -> str:
+    """改图助手的「科学图形准则」一段（docs/sciviz/；唯一出处 `profiles/sciviz_guidance.json`）。
+
+    与 `attachments_note` 一样不进 V1 闭集：V1 的模板与冻结旧实现逐字节对拍不变，这一段由 `ai_bridge` 接在改图提示词后面
+    （转换任务不加）。文字只经 `sciviz_guidance.render()` 取，不在这里另抄；子集是 `sciviz_guidance.FIGURE_EDIT_IDS`。"""
+    from . import sciviz_guidance
+
+    return (
+        "科学图形准则（按编号引用；改图时不要引入下面的数据或编码错误；「作者偏好」不是错误，用户没要求就不要改）：\n\n"
+        + sciviz_guidance.render(ids=list(sciviz_guidance.FIGURE_EDIT_IDS))
+    ).rstrip("\n")
+
+
 def attachments_note(images: list[str], files: list[str]) -> str:
     """附在改图提示词末尾的一段：参考图与数据 / 其他附件分别列出路径。两者都空时调用方不该调用（返回空串兜底）。"""
     parts = []
