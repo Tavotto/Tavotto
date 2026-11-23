@@ -719,16 +719,6 @@
       "fontMin": "≥ {{min}} pt text",
       "fontMax": "≤ {{max}} pt text"
     },
-    "spec": {
-      "line": "Drawn at {{parts}}",
-      "join": ", ",
-      "widthTwo": "{{single}} mm single / {{double}} mm double column",
-      "widthOne": "{{single}} mm width",
-      "fontRange": "{{min}}–{{max}} pt text",
-      "fontOne": "{{min}} pt text",
-      "fontMin": "≥ {{min}} pt text",
-      "fontMax": "≤ {{max}} pt text"
-    },
     "redraw": {
       "from": "Drawn from {{file}}",
       "again": "Try another style",

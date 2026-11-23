@@ -712,16 +712,6 @@
       "fontMin": "≥ {{min}} pt 字号",
       "fontMax": "≤ {{max}} pt 字号"
     },
-    "spec": {
-      "line": "按{{parts}}出图",
-      "join": "、",
-      "widthTwo": "单栏 {{single}} mm、双栏 {{double}} mm",
-      "widthOne": "图宽 {{single}} mm",
-      "fontRange": "{{min}}–{{max}} pt 字号",
-      "fontOne": "{{min}} pt 字号",
-      "fontMin": "≥ {{min}} pt 字号",
-      "fontMax": "≤ {{max}} pt 字号"
-    },
     "redraw": {
       "from": "用 {{file}} 画的",
       "again": "换个画法",
