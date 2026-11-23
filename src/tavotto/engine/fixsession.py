@@ -240,6 +240,11 @@ commands, file paths and error messages exactly as they are.\n"
 
 
 def _first_message(ctx: fixtools.FixContext, script: str) -> str:
+    if not ctx.first_shape and ctx.report is not None:
+        try:
+            ctx.first_shape = fixtools.hints.shape_of_report(ctx.report())
+        except Exception:  # noqa: BLE001 - 读不到就留空
+            pass
     report = read_run_report(ctx, {})
     body = report.content if not report.is_error else "(no report available; call read_run_report)"
     return (
@@ -462,8 +467,11 @@ def _remember_fix(s: FixSession) -> None:
     try:
         from . import fixmemory
 
+        shape = next((str(a.get("before")) for a in attempts if a.get("before")), "") or getattr(
+            ctx, "first_shape", ""
+        )
         fixmemory.remember(
-            str(attempts[0].get("before") or ""),
+            shape,
             list(made),
             script=s.script,
             sensitive_args=bool(getattr(ctx, "run_arguments_sensitive", False)),
