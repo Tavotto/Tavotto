@@ -36249,6 +36249,7 @@
        "axes_7.lines_0"
       ],
       "risk_only": [],
+      "legend_basis": "frame",
       "legend_rect_mm": [
        40.0,
        7.5,
@@ -36547,9 +36548,9 @@
          "editable": []
         },
         {
-         "gid": "axes_8.images_0",
-         "role": "image",
-         "label": "axes_8.images_0",
+         "gid": "axes_8.collections_0",
+         "role": "collection",
+         "label": "axes_8.collections_0",
          "draggable": false,
          "bbox": [
           0.125,
@@ -36604,9 +36605,10 @@
       "certain": false,
       "basis": "bbox",
       "targets": [
-       "axes_8.images_0"
+       "axes_8.collections_0"
       ],
       "risk_only": [],
+      "legend_basis": "frame",
       "legend_rect_mm": [
        40.0,
        37.5,

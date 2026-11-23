@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import vectors from '../../../tests/golden/interference_vectors.json'
 import {
+  BBOX_BASIS_ROLES,
+  DATA_ROLES,
+  DECORATION_ROLES,
   INTERFERENCE_CHECK_IDS,
+  RECT_BASIS_ROLES,
+  TEXT_ROLES,
   MIN_OVERLAP_MM,
   detectInterference,
   pyFixed,
@@ -37,6 +42,11 @@ describe('interference golden vectors（与 engine/interference.py 逐对对齐�
   it('常量与 Python 同值', () => {
     expect(MIN_OVERLAP_MM).toBe(data.constants.MIN_OVERLAP_MM)
     expect(INTERFERENCE_CHECK_IDS).toEqual(data.constants.CHECK_IDS)
+    expect(DECORATION_ROLES).toEqual(data.constants.DECORATION_ROLES)
+    expect(TEXT_ROLES).toEqual(data.constants.TEXT_ROLES)
+    expect(DATA_ROLES).toEqual(data.constants.DATA_ROLES)
+    expect(BBOX_BASIS_ROLES).toEqual(data.constants.BBOX_BASIS_ROLES)
+    expect(RECT_BASIS_ROLES).toEqual(data.constants.RECT_BASIS_ROLES)
   })
 
   for (const c of data.cases) {

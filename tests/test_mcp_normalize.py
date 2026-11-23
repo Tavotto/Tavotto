@@ -378,8 +378,13 @@ def test_shrinking_width_keeps_structure_and_adapts_margins_within_budget(tmp_pa
     v = out["verdict"]
     assert v["protected_changes"] == [] and v["structure"]["missing"] == []
     assert v["budget"]["over"] == [] and 0 < v["budget"]["max_edge_shift_mm"] <= 0.15 * 120
-    assert {a["gid"] for a in out["adjustments"]} == {"axes_0", "axes_1"}
-    assert all(a["prop"] == "position" for a in out["adjustments"])
+    # 误差棒按真实几何判（V-011，维护者 2026-11-23）：缩到 120 mm 后左图图例真压住了橙色误差棒的
+    # 误差线段，图例候选里换到一个干净的位置——一条 `loc` 调整，其余仍只是子图落位
+    assert {a["gid"] for a in out["adjustments"]} == {"axes_0", "axes_1", "axes_0.legend"}
+    assert all(
+        a["prop"] == ("loc" if a["gid"].endswith(".legend") else "position")
+        for a in out["adjustments"]
+    )
     assert _visible_inside(out["manifest"])
     # 两个子图仍并排、各自的图例仍在自己子图里
     man = out["manifest"]
@@ -392,7 +397,7 @@ def test_shrinking_width_keeps_structure_and_adapts_margins_within_budget(tmp_pa
         out["acceptance"]["png"]["size_ok"] is True and out["acceptance"]["png"]["dpi_ok"] is True
     )
     # 数据 / 颜色 / 范围一个都没动
-    assert {p["prop"] for p in out["patches"]} == {"size_mm", "position"}
+    assert {p["prop"] for p in out["patches"]} == {"size_mm", "position", "loc"}
 
 
 @pytest.mark.parametrize(
@@ -435,7 +440,7 @@ def test_manual_layout_only_gets_bounded_margin_adjustments(tmp_path):
 
 # ------------------------------ 检测与正确退出 --------------------------------
 def test_new_collisions_are_detected_and_an_unsolvable_width_exits_cleanly(tmp_path):
-    """150 → 80 mm、字号不许缩：装饰物装得下，但图例在自己子图的八个预设位置都压数据。
+    """150 → 80 mm、字号不许缩：装饰物装得下，但左图图例在自己子图的八个预设位置都压着东西。
     退出，会话回到 B0，磁盘上什么都没多出来。"""
     project = _project(tmp_path, "two", SCRIPT_TWO, "Two")
     sid = _open(project, "Two")
@@ -472,9 +477,12 @@ def test_new_collisions_are_detected_and_an_unsolvable_width_exits_cleanly(tmp_p
         for b in left
         if b["id"] == "element-outside-figure"
     )
-    # 没有一个预设位置让图例干干净净：一条图例调整都不许记成「已做的局部调整」
-    # （换到一个还在压别的东西的位置不叫修好，只是把问题换了个地方）
-    assert not any(a["prop"] == "loc" for a in out["adjustments"])
+    # 还挡着事务的那个图例：没有一个预设位置让它干干净净，它的调整不许记成「已做的局部调整」
+    # （换到一个还在压别的东西的位置不叫修好，只是把问题换了个地方）。另一个图例找得到干净位置
+    # 时可以有（V-011 图例一侧按真实挡住的东西判之后，右图图例就是这样）
+    stuck = {g for b in left for g in b["gids"] if g.endswith(".legend")}
+    assert stuck
+    assert not any(a["prop"] == "loc" and a["gid"] in stuck for a in out["adjustments"])
     assert out["rolled_back"] is True
     s = bridge.get_session(sid)
     assert s.patches == [] and s.patch_hash() == b0_hash

@@ -70,6 +70,33 @@ def _poly(*points, closed=False) -> dict:
     }
 
 
+def _eb_geom(points) -> dict:
+    """误差棒组几何的写法（`pathgeom.series_group_geometry`）：每个点一颗实心方 marker（闭合）、
+    一根竖误差线段（两点）、上下两个帽（两点横线）。`points` = [(x, y, 半长)]（figure 分数，y 向下）。"""
+    paths = []
+    m, cap = 1 / 128, 1 / 128
+    for x, y, e in points:
+        paths.append(
+            {
+                "points": [[x - m, y - m], [x + m, y - m], [x + m, y + m], [x - m, y + m]],
+                "closed": True,
+            }
+        )
+        paths.append({"points": [[x, y - e], [x, y + e]], "closed": False})
+        for yy in (y - e, y + e):
+            paths.append({"points": [[x - cap, yy], [x + cap, yy]], "closed": False})
+    return {"kind": "multi_path", "paths": paths, "fill": True, "stroke": True}
+
+
+def _eb_bbox(points) -> list:
+    m = 1 / 128
+    x0 = min(x - m for x, _, _ in points)
+    x1 = max(x + m for x, _, _ in points)
+    y0 = min(y - max(e, m) for _, y, e in points)
+    y1 = max(y + max(e, m) for _, y, e in points)
+    return [x0, y0, x1 - x0, y1 - y0]
+
+
 def _m(*elements, size=(W_MM, H_MM)) -> dict:
     return {"stem": "Fig1", "size_mm": list(size), "elements": list(elements)}
 
@@ -344,15 +371,43 @@ def cases() -> list[dict]:
             )
         ),
     )
-    # 误差棒带着 geometry 也只按包围盒（风险）；图像没有 geometry（风险）
+    # 误差棒按真实几何判（维护者 2026-11-23）：geometry 是成员的并——数据点（实心 marker）、每一根
+    # 误差线段、帽（`pathgeom.series_group_geometry`）。点都落在图例外：包围盒罩住图例也不报
+    far = [(0.2, 0.8, 0.05), (0.85, 0.2, 0.05)]
     add(
-        "legend-over-data-errorbar-and-image-risk",
+        "legend-over-data-errorbar-only-bbox-blank-not-reported",
+        _legend_axes(_el("axes_0.errorbar_0", "errorbar", _eb_bbox(far), geometry=_eb_geom(far))),
+    )
+    # 一根误差线段穿过图例框（点本身在框外）：确定
+    crossing = [*far, (0.6, 0.6, 0.3)]
+    add(
+        "legend-over-data-errorbar-segment-certain",
+        _legend_axes(
+            _el("axes_0.errorbar_0", "errorbar", _eb_bbox(crossing), geometry=_eb_geom(crossing))
+        ),
+    )
+    # 给不出 geometry（超预算 / 超 MAX_MARKERS）的误差棒：只有包围盒，仍只标风险
+    add(
+        "legend-over-data-errorbar-without-geometry-risk",
+        _legend_axes(_el("axes_0.errorbar_0", "errorbar", _eb_bbox(far))),
+    )
+    # 茎叶系列同理（茎是两点线段）；图像的包围盒就是画出来的矩形：相交即确定
+    add(
+        "legend-over-data-stem-and-image-certain",
         _legend_axes(
             _el(
-                "axes_0.errorbar_0",
-                "errorbar",
+                "axes_0.stemseries_0",
+                "stem_series",
                 [0.125, 0.125, 0.75, 0.75],
-                geometry=_poly((0.125, 0.875), (0.875, 0.125)),
+                geometry={
+                    "kind": "multi_path",
+                    "paths": [
+                        {"points": [[0.6, 0.875], [0.6, 0.25]], "closed": False},
+                        {"points": [[0.2, 0.875], [0.2, 0.5]], "closed": False},
+                    ],
+                    "fill": False,
+                    "stroke": True,
+                },
             ),
             _el("axes_0.images_0", "image", [0.125, 0.125, 0.75, 0.75]),
         ),
@@ -403,6 +458,103 @@ def cases() -> list[dict]:
                 "line",
                 [0.125, 0.125, 0.75, 0.75],
                 geometry={"kind": "polyline", "paths": [{"points": [[0.6, True], "x"]}, 3]},
+            ),
+        ),
+    )
+    # ---------------- 图例一侧的取法（与数据出图摆放共用） ----------------
+    # 图例框 x 0.5..0.75 / y 0.125..0.375；示意格在左上，条目文字在右上，下半是框内空白。
+    # 1 px = 0.25 mm（`px_mm`）= 2U 宽 / 4U 高（图幅 128 × 64 mm）。
+    handle = [0.5 + 4 * U, 0.125 + 8 * U, 32 * U, 16 * U]
+    text_box = [0.5 + 48 * U, 0.125 + 8 * U, 48 * U, 16 * U]
+
+    def _legend_with_cover(*data, opaque, status="ok", gid="axes_0.legend"):
+        cover = {"status": status}
+        if status == "ok":
+            cover.update(
+                {
+                    "opaque": opaque,
+                    "face_alpha": 0.8 if opaque else 0.0,
+                    "px_mm": 0.25,
+                    "handles": [handle],
+                }
+            )
+        m = _legend_axes(*data)
+        m["elements"][1]["legend_cover"] = cover
+        m["elements"].append(_el(f"{gid}.texts_0", "legend_text", text_box))
+        return m
+
+    def _hline(gid, y):
+        return _el(gid, "line", [0.125, 0.125, 0.75, 0.75], geometry=_poly((0.125, y), (0.875, y)))
+
+    blank_y = 0.3  # 只穿过框内空白（示意与文字都在 y < 0.1875 之上）
+    add(
+        "legend-cover-opaque-frame-covers-line",
+        _legend_with_cover(_hline("axes_0.lines_0", blank_y), opaque=True),
+    )
+    add(
+        "legend-cover-frameless-blank-not-reported",
+        _legend_with_cover(_hline("axes_0.lines_0", blank_y), opaque=False),
+    )
+    # 竖线只穿过条目文字的框：只能说「可能」
+    add(
+        "legend-cover-frameless-text-over-line-risk",
+        _legend_with_cover(
+            _el(
+                "axes_0.lines_0",
+                "line",
+                [0.125, 0.125, 0.75, 0.75],
+                geometry=_poly((0.5 + 64 * U, 0.125), (0.5 + 64 * U, 0.875)),
+            ),
+            opaque=False,
+        ),
+    )
+    # 竖线穿过示意格：确定
+    add(
+        "legend-cover-frameless-handle-over-line-certain",
+        _legend_with_cover(
+            _el(
+                "axes_0.lines_0",
+                "line",
+                [0.125, 0.125, 0.75, 0.75],
+                geometry=_poly((0.5 + 16 * U, 0.125), (0.5 + 16 * U, 0.875)),
+            ),
+            opaque=False,
+        ),
+    )
+    # 外扩 1 px：离示意格下沿 0.5 px 的水平线算压到（确定）；离 1.5 px 的不算
+    hy = 0.125 + 24 * U
+    add(
+        "legend-cover-frameless-one-pixel-grow",
+        _legend_with_cover(
+            _hline("axes_0.lines_0", hy + 2 * U),
+            _hline("axes_0.lines_1", hy + 6 * U),
+            opaque=False,
+        ),
+    )
+    # 图像压到示意 = 确定；只擦到文字框 = 可能（两张图像，一张只在文字下面）
+    add(
+        "legend-cover-frameless-image-under-text-risk",
+        _legend_with_cover(
+            _el("axes_0.images_0", "image", [0.5 + 60 * U, 0.125 + 10 * U, 8 * U, 8 * U]),
+            opaque=False,
+        ),
+    )
+    # 量不了（status 不是 ok）：退回整块框，框内空白也算
+    add(
+        "legend-cover-unavailable-falls-back-to-frame",
+        _legend_with_cover(_hline("axes_0.lines_0", blank_y), opaque=False, status="unavailable"),
+    )
+    # 图例放在坐标区外：数据的包围盒（clip_on=False 的线）伸过去也不报
+    add(
+        "legend-outside-axes-not-reported",
+        _m(
+            _el("axes_0", "axes", [0.125, 0.125, 0.5, 0.75], position=[0.125, 0.125, 0.5, 0.75]),
+            _el("axes_0.legend", "legend", [0.7, 0.125, 0.25, 0.25]),
+            _el(
+                "axes_0.lines_0",
+                "line",
+                [0.125, 0.125, 0.85, 0.75],
+                geometry=_poly((0.125, 0.25), (0.975, 0.25)),
             ),
         ),
     )
@@ -464,6 +616,7 @@ def build() -> dict:
             "TEXT_ROLES": list(interference.TEXT_ROLES),
             "DATA_ROLES": list(interference.DATA_ROLES),
             "BBOX_BASIS_ROLES": list(interference.BBOX_BASIS_ROLES),
+            "RECT_BASIS_ROLES": list(interference.RECT_BASIS_ROLES),
             "CHECK_IDS": list(interference.CHECK_IDS),
         },
         "cases": [{**c, "expected": evaluate(c)} for c in cases()],

@@ -22,9 +22,9 @@ import { DEFAULT_SEVERITY, severityOf, type PublicationProfile, type Severity } 
 /** 两个文字框要在两个方向上都至少咬进这么多 mm 才算重叠（`interference.MIN_OVERLAP_MM`）。 */
 export const MIN_OVERLAP_MM = 0.25
 
-const DECORATION_ROLES = ['title', 'axis_label', 'ticklabel', 'legend_text']
-const TEXT_ROLES = [...DECORATION_ROLES, 'text', 'legend']
-const DATA_ROLES = [
+export const DECORATION_ROLES = ['title', 'axis_label', 'ticklabel', 'legend_text']
+export const TEXT_ROLES = [...DECORATION_ROLES, 'text', 'legend']
+export const DATA_ROLES = [
   'line',
   'errorbar',
   'scatter',
@@ -37,8 +37,10 @@ const DATA_ROLES = [
   'bar_series',
   'stem_series',
 ]
-/** 有 geometry 也按包围盒（只标风险）判的角色——`interference.BBOX_BASIS_ROLES` */
-const BBOX_BASIS_ROLES = ['errorbar', 'stem_series']
+/** 有 geometry 也按包围盒（只标风险）判的角色——`interference.BBOX_BASIS_ROLES`（现在为空：误差棒 / 茎叶按真实几何判） */
+export const BBOX_BASIS_ROLES: string[] = []
+/** 包围盒就是画出来的那块的角色（图像）——`interference.RECT_BASIS_ROLES`，相交即「确定」 */
+export const RECT_BASIS_ROLES = ['image']
 
 export const CHECK_TEXT_OVERLAP = 'text-overlap'
 export const CHECK_TEXT_OVER_AXES = 'text-over-axes'
@@ -203,6 +205,40 @@ function segmentInRect(
     }
   }
   return t0 <= t1
+}
+
+/**
+ * 图例一侧**真正挡住数据的东西**（V-011「图例一侧的取法（与数据出图摆放共用）」）——
+ * `interference.legend_cover_rects` 的逐行移植：框画出来且背景不透明（`legend_cover.opaque`）取整块框
+ * （`frame`）；无框或背景完全透明取每格示意（hard）与每条条目文字（soft，只能说「可能」）的框，各外扩
+ * 1 个显示像素（`entries`）；量不了退回整块框。
+ */
+export function legendCoverRects(
+  leg: ManifestElement,
+  elements: ManifestElement[],
+  W: number,
+  H: number,
+): { hard: Rect[]; soft: Rect[]; basis: 'frame' | 'entries' } {
+  const whole = visibleRect(leg)
+  const frame = { hard: whole != null ? [whole] : [], soft: [] as Rect[], basis: 'frame' as const }
+  const cover: unknown = leg.legend_cover
+  if (!cover || typeof cover !== 'object' || Array.isArray(cover)) return frame
+  const c = cover as { status?: unknown; opaque?: unknown; px_mm?: unknown; handles?: unknown }
+  if (c.status !== 'ok' || c.opaque !== false) return frame
+  const px = num(c.px_mm)
+  if (px == null || px < 0 || !Array.isArray(c.handles)) return frame
+  const dx = px / W
+  const dy = px / H
+  const grow = (r: Rect): Rect => [r[0] - dx, r[1] - dy, r[2] + dx, r[3] + dy]
+  const hard = c.handles.map(rect).filter((r): r is Rect => r != null).map(grow)
+  const prefix = `${gidOf(leg)}.`
+  const soft: Rect[] = []
+  for (const t of elements) {
+    if (t.role !== 'legend_text' || !gidOf(t).startsWith(prefix)) continue
+    const r = visibleRect(t)
+    if (r != null) soft.push(grow(r))
+  }
+  return { hard, soft, basis: 'entries' }
 }
 
 /** 有向矩形（mm，y 向下）：中心、阅读方向单位向量、沿阅读方向的半宽、半高（`interference._rotated_box` 同形） */
@@ -409,19 +445,30 @@ export function detectInterference(
     if (legRect == null) continue
     const owner = ownerAxes(legGid)
     if (!owner) continue // figure 级图例：它压谁是排版决定，这里不猜
+    const ownerRect = allAxesRect.get(owner) ?? null
+    if (ownerRect != null && intersect(legRect, ownerRect) == null) continue // 放在坐标区外：压不到数据
+    const { hard, soft, basis: legendBasis } = legendCoverRects(el, elements, W, H)
+    const covers = [...hard, ...soft]
     const certainHits: string[] = []
     const riskHits: string[] = []
     for (const d of elements) {
       const dg = gidOf(d)
       if (!DATA_ROLES.includes(d.role) || ownerAxes(dg) !== owner) continue
       const dr = visibleRect(d)
-      if (dr == null || intersect(dr, legRect) == null) continue
+      if (dr == null || !covers.some((c) => intersect(dr, c) != null)) continue
+      if (RECT_BASIS_ROLES.includes(d.role)) {
+        // 画出来的就是这个矩形：压到框 / 示意即确定；只擦到条目文字的框是可能
+        if (hard.some((c) => intersect(dr, c) != null)) certainHits.push(dg)
+        else riskHits.push(dg)
+        continue
+      }
       let geom: unknown = d.geometry
       if (BBOX_BASIS_ROLES.includes(d.role)) geom = undefined
       const paths =
         geom && typeof geom === 'object' && !Array.isArray(geom) ? (geom as { paths?: unknown }).paths : undefined
       if (Array.isArray(paths)) {
-        if (segmentsHitRect(paths, legRect)) certainHits.push(dg)
+        if (hard.some((c) => segmentsHitRect(paths, c))) certainHits.push(dg)
+        else if (soft.some((c) => segmentsHitRect(paths, c))) riskHits.push(dg)
       } else {
         riskHits.push(dg)
       }
@@ -441,6 +488,7 @@ export function detectInterference(
         basis: certain ? 'geometry' : 'bbox',
         targets: hits,
         risk_only: certain ? riskHits : [],
+        legend_basis: legendBasis,
         legend_rect_mm: [
           pyRound(legRect[0] * W, 3),
           pyRound(legRect[1] * H, 3),

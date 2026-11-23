@@ -29,9 +29,9 @@
    "bar_series",
    "stem_series"
   ],
-  "BBOX_BASIS_ROLES": [
-   "errorbar",
-   "stem_series"
+  "BBOX_BASIS_ROLES": [],
+  "RECT_BASIS_ROLES": [
+   "image"
   ],
   "CHECK_IDS": [
    "text-overlap",
@@ -2134,6 +2134,7 @@
        "axes_0.lines_0"
       ],
       "risk_only": [],
+      "legend_basis": "frame",
       "legend_rect_mm": [
        64.0,
        8.0,
@@ -2232,7 +2233,7 @@
    "expected": []
   },
   {
-   "name": "legend-over-data-errorbar-and-image-risk",
+   "name": "legend-over-data-errorbar-only-bbox-blank-not-reported",
    "profile_id": "lab-publication-v1",
    "panel_id": "p1",
    "manifest": {
@@ -2284,23 +2285,609 @@
       "label": "axes_0.errorbar_0",
       "draggable": false,
       "bbox": [
+       0.1921875,
+       0.15000000000000002,
+       0.6656249999999999,
+       0.7000000000000001
+      ],
+      "geometry": {
+       "kind": "multi_path",
+       "paths": [
+        {
+         "points": [
+          [
+           0.1921875,
+           0.7921875
+          ],
+          [
+           0.2078125,
+           0.7921875
+          ],
+          [
+           0.2078125,
+           0.8078125
+          ],
+          [
+           0.1921875,
+           0.8078125
+          ]
+         ],
+         "closed": true
+        },
+        {
+         "points": [
+          [
+           0.2,
+           0.75
+          ],
+          [
+           0.2,
+           0.8500000000000001
+          ]
+         ],
+         "closed": false
+        },
+        {
+         "points": [
+          [
+           0.1921875,
+           0.75
+          ],
+          [
+           0.2078125,
+           0.75
+          ]
+         ],
+         "closed": false
+        },
+        {
+         "points": [
+          [
+           0.1921875,
+           0.8500000000000001
+          ],
+          [
+           0.2078125,
+           0.8500000000000001
+          ]
+         ],
+         "closed": false
+        },
+        {
+         "points": [
+          [
+           0.8421875,
+           0.1921875
+          ],
+          [
+           0.8578125,
+           0.1921875
+          ],
+          [
+           0.8578125,
+           0.2078125
+          ],
+          [
+           0.8421875,
+           0.2078125
+          ]
+         ],
+         "closed": true
+        },
+        {
+         "points": [
+          [
+           0.85,
+           0.15000000000000002
+          ],
+          [
+           0.85,
+           0.25
+          ]
+         ],
+         "closed": false
+        },
+        {
+         "points": [
+          [
+           0.8421875,
+           0.15000000000000002
+          ],
+          [
+           0.8578125,
+           0.15000000000000002
+          ]
+         ],
+         "closed": false
+        },
+        {
+         "points": [
+          [
+           0.8421875,
+           0.25
+          ],
+          [
+           0.8578125,
+           0.25
+          ]
+         ],
+         "closed": false
+        }
+       ],
+       "fill": true,
+       "stroke": true
+      }
+     }
+    ]
+   },
+   "expected": []
+  },
+  {
+   "name": "legend-over-data-errorbar-segment-certain",
+   "profile_id": "lab-publication-v1",
+   "panel_id": "p1",
+   "manifest": {
+    "stem": "Fig1",
+    "size_mm": [
+     128.0,
+     64.0
+    ],
+    "elements": [
+     {
+      "gid": "axes_0",
+      "role": "axes",
+      "label": "axes_0",
+      "draggable": false,
+      "bbox": [
+       0.125,
+       0.125,
+       0.75,
+       0.75
+      ],
+      "editable": [
+       {
+        "prop": "position",
+        "type": "rect",
+        "value": [
+         0.125,
+         0.125,
+         0.75,
+         0.75
+        ]
+       }
+      ]
+     },
+     {
+      "gid": "axes_0.legend",
+      "role": "legend",
+      "label": "axes_0.legend",
+      "draggable": false,
+      "bbox": [
+       0.5,
+       0.125,
+       0.25,
+       0.25
+      ]
+     },
+     {
+      "gid": "axes_0.errorbar_0",
+      "role": "errorbar",
+      "label": "axes_0.errorbar_0",
+      "draggable": false,
+      "bbox": [
+       0.1921875,
+       0.15000000000000002,
+       0.6656249999999999,
+       0.7499999999999999
+      ],
+      "geometry": {
+       "kind": "multi_path",
+       "paths": [
+        {
+         "points": [
+          [
+           0.1921875,
+           0.7921875
+          ],
+          [
+           0.2078125,
+           0.7921875
+          ],
+          [
+           0.2078125,
+           0.8078125
+          ],
+          [
+           0.1921875,
+           0.8078125
+          ]
+         ],
+         "closed": true
+        },
+        {
+         "points": [
+          [
+           0.2,
+           0.75
+          ],
+          [
+           0.2,
+           0.8500000000000001
+          ]
+         ],
+         "closed": false
+        },
+        {
+         "points": [
+          [
+           0.1921875,
+           0.75
+          ],
+          [
+           0.2078125,
+           0.75
+          ]
+         ],
+         "closed": false
+        },
+        {
+         "points": [
+          [
+           0.1921875,
+           0.8500000000000001
+          ],
+          [
+           0.2078125,
+           0.8500000000000001
+          ]
+         ],
+         "closed": false
+        },
+        {
+         "points": [
+          [
+           0.8421875,
+           0.1921875
+          ],
+          [
+           0.8578125,
+           0.1921875
+          ],
+          [
+           0.8578125,
+           0.2078125
+          ],
+          [
+           0.8421875,
+           0.2078125
+          ]
+         ],
+         "closed": true
+        },
+        {
+         "points": [
+          [
+           0.85,
+           0.15000000000000002
+          ],
+          [
+           0.85,
+           0.25
+          ]
+         ],
+         "closed": false
+        },
+        {
+         "points": [
+          [
+           0.8421875,
+           0.15000000000000002
+          ],
+          [
+           0.8578125,
+           0.15000000000000002
+          ]
+         ],
+         "closed": false
+        },
+        {
+         "points": [
+          [
+           0.8421875,
+           0.25
+          ],
+          [
+           0.8578125,
+           0.25
+          ]
+         ],
+         "closed": false
+        },
+        {
+         "points": [
+          [
+           0.5921875,
+           0.5921875
+          ],
+          [
+           0.6078125,
+           0.5921875
+          ],
+          [
+           0.6078125,
+           0.6078125
+          ],
+          [
+           0.5921875,
+           0.6078125
+          ]
+         ],
+         "closed": true
+        },
+        {
+         "points": [
+          [
+           0.6,
+           0.3
+          ],
+          [
+           0.6,
+           0.8999999999999999
+          ]
+         ],
+         "closed": false
+        },
+        {
+         "points": [
+          [
+           0.5921875,
+           0.3
+          ],
+          [
+           0.6078125,
+           0.3
+          ]
+         ],
+         "closed": false
+        },
+        {
+         "points": [
+          [
+           0.5921875,
+           0.8999999999999999
+          ],
+          [
+           0.6078125,
+           0.8999999999999999
+          ]
+         ],
+         "closed": false
+        }
+       ],
+       "fill": true,
+       "stroke": true
+      }
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "legend-over-data",
+     "severity": "warn",
+     "message": {
+      "key": "legendOverData",
+      "params": {
+       "legend": "axes_0.legend",
+       "targets": "axes_0.errorbar_0",
+       "count": "1"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend",
+      "axes_0.errorbar_0"
+     ],
+     "detail": {
+      "certain": true,
+      "basis": "geometry",
+      "targets": [
+       "axes_0.errorbar_0"
+      ],
+      "risk_only": [],
+      "legend_basis": "frame",
+      "legend_rect_mm": [
+       64.0,
+       8.0,
+       32.0,
+       16.0
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "legend-over-data-errorbar-without-geometry-risk",
+   "profile_id": "lab-publication-v1",
+   "panel_id": "p1",
+   "manifest": {
+    "stem": "Fig1",
+    "size_mm": [
+     128.0,
+     64.0
+    ],
+    "elements": [
+     {
+      "gid": "axes_0",
+      "role": "axes",
+      "label": "axes_0",
+      "draggable": false,
+      "bbox": [
+       0.125,
+       0.125,
+       0.75,
+       0.75
+      ],
+      "editable": [
+       {
+        "prop": "position",
+        "type": "rect",
+        "value": [
+         0.125,
+         0.125,
+         0.75,
+         0.75
+        ]
+       }
+      ]
+     },
+     {
+      "gid": "axes_0.legend",
+      "role": "legend",
+      "label": "axes_0.legend",
+      "draggable": false,
+      "bbox": [
+       0.5,
+       0.125,
+       0.25,
+       0.25
+      ]
+     },
+     {
+      "gid": "axes_0.errorbar_0",
+      "role": "errorbar",
+      "label": "axes_0.errorbar_0",
+      "draggable": false,
+      "bbox": [
+       0.1921875,
+       0.15000000000000002,
+       0.6656249999999999,
+       0.7000000000000001
+      ]
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "legend-over-data",
+     "severity": "warn",
+     "message": {
+      "key": "legendOverDataRisk",
+      "params": {
+       "legend": "axes_0.legend",
+       "targets": "axes_0.errorbar_0",
+       "count": "1"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend",
+      "axes_0.errorbar_0"
+     ],
+     "detail": {
+      "certain": false,
+      "basis": "bbox",
+      "targets": [
+       "axes_0.errorbar_0"
+      ],
+      "risk_only": [],
+      "legend_basis": "frame",
+      "legend_rect_mm": [
+       64.0,
+       8.0,
+       32.0,
+       16.0
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "legend-over-data-stem-and-image-certain",
+   "profile_id": "lab-publication-v1",
+   "panel_id": "p1",
+   "manifest": {
+    "stem": "Fig1",
+    "size_mm": [
+     128.0,
+     64.0
+    ],
+    "elements": [
+     {
+      "gid": "axes_0",
+      "role": "axes",
+      "label": "axes_0",
+      "draggable": false,
+      "bbox": [
+       0.125,
+       0.125,
+       0.75,
+       0.75
+      ],
+      "editable": [
+       {
+        "prop": "position",
+        "type": "rect",
+        "value": [
+         0.125,
+         0.125,
+         0.75,
+         0.75
+        ]
+       }
+      ]
+     },
+     {
+      "gid": "axes_0.legend",
+      "role": "legend",
+      "label": "axes_0.legend",
+      "draggable": false,
+      "bbox": [
+       0.5,
+       0.125,
+       0.25,
+       0.25
+      ]
+     },
+     {
+      "gid": "axes_0.stemseries_0",
+      "role": "stem_series",
+      "label": "axes_0.stemseries_0",
+      "draggable": false,
+      "bbox": [
        0.125,
        0.125,
        0.75,
        0.75
       ],
       "geometry": {
-       "kind": "polyline",
+       "kind": "multi_path",
        "paths": [
         {
          "points": [
           [
-           0.125,
+           0.6,
            0.875
           ],
           [
-           0.875,
-           0.125
+           0.6,
+           0.25
+          ]
+         ],
+         "closed": false
+        },
+        {
+         "points": [
+          [
+           0.2,
+           0.875
+          ],
+          [
+           0.2,
+           0.5
           ]
          ],
          "closed": false
@@ -2329,10 +2916,10 @@
      "id": "legend-over-data",
      "severity": "warn",
      "message": {
-      "key": "legendOverDataRisk",
+      "key": "legendOverData",
       "params": {
        "legend": "axes_0.legend",
-       "targets": "axes_0.errorbar_0、axes_0.images_0",
+       "targets": "axes_0.stemseries_0、axes_0.images_0",
        "count": "2"
       }
      },
@@ -2341,17 +2928,18 @@
      ],
      "gids": [
       "axes_0.legend",
-      "axes_0.errorbar_0",
+      "axes_0.stemseries_0",
       "axes_0.images_0"
      ],
      "detail": {
-      "certain": false,
-      "basis": "bbox",
+      "certain": true,
+      "basis": "geometry",
       "targets": [
-       "axes_0.errorbar_0",
+       "axes_0.stemseries_0",
        "axes_0.images_0"
       ],
       "risk_only": [],
+      "legend_basis": "frame",
       "legend_rect_mm": [
        64.0,
        8.0,
@@ -2483,6 +3071,7 @@
       "risk_only": [
        "axes_0.collections_0"
       ],
+      "legend_basis": "frame",
       "legend_rect_mm": [
        64.0,
        8.0,
@@ -2727,6 +3316,7 @@
        "axes_0.lines_1"
       ],
       "risk_only": [],
+      "legend_basis": "frame",
       "legend_rect_mm": [
        64.0,
        8.0,
@@ -2736,6 +3326,1063 @@
      }
     }
    ]
+  },
+  {
+   "name": "legend-cover-opaque-frame-covers-line",
+   "profile_id": "lab-publication-v1",
+   "panel_id": "p1",
+   "manifest": {
+    "stem": "Fig1",
+    "size_mm": [
+     128.0,
+     64.0
+    ],
+    "elements": [
+     {
+      "gid": "axes_0",
+      "role": "axes",
+      "label": "axes_0",
+      "draggable": false,
+      "bbox": [
+       0.125,
+       0.125,
+       0.75,
+       0.75
+      ],
+      "editable": [
+       {
+        "prop": "position",
+        "type": "rect",
+        "value": [
+         0.125,
+         0.125,
+         0.75,
+         0.75
+        ]
+       }
+      ]
+     },
+     {
+      "gid": "axes_0.legend",
+      "role": "legend",
+      "label": "axes_0.legend",
+      "draggable": false,
+      "bbox": [
+       0.5,
+       0.125,
+       0.25,
+       0.25
+      ],
+      "legend_cover": {
+       "status": "ok",
+       "opaque": true,
+       "face_alpha": 0.8,
+       "px_mm": 0.25,
+       "handles": [
+        [
+         0.5078125,
+         0.140625,
+         0.0625,
+         0.03125
+        ]
+       ]
+      }
+     },
+     {
+      "gid": "axes_0.lines_0",
+      "role": "line",
+      "label": "axes_0.lines_0",
+      "draggable": false,
+      "bbox": [
+       0.125,
+       0.125,
+       0.75,
+       0.75
+      ],
+      "geometry": {
+       "kind": "polyline",
+       "paths": [
+        {
+         "points": [
+          [
+           0.125,
+           0.3
+          ],
+          [
+           0.875,
+           0.3
+          ]
+         ],
+         "closed": false
+        }
+       ],
+       "fill": false,
+       "stroke": true
+      }
+     },
+     {
+      "gid": "axes_0.legend.texts_0",
+      "role": "legend_text",
+      "label": "axes_0.legend.texts_0",
+      "draggable": false,
+      "bbox": [
+       0.59375,
+       0.140625,
+       0.09375,
+       0.03125
+      ]
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "legend-over-data",
+     "severity": "warn",
+     "message": {
+      "key": "legendOverData",
+      "params": {
+       "legend": "axes_0.legend",
+       "targets": "axes_0.lines_0",
+       "count": "1"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend",
+      "axes_0.lines_0"
+     ],
+     "detail": {
+      "certain": true,
+      "basis": "geometry",
+      "targets": [
+       "axes_0.lines_0"
+      ],
+      "risk_only": [],
+      "legend_basis": "frame",
+      "legend_rect_mm": [
+       64.0,
+       8.0,
+       32.0,
+       16.0
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "legend-cover-frameless-blank-not-reported",
+   "profile_id": "lab-publication-v1",
+   "panel_id": "p1",
+   "manifest": {
+    "stem": "Fig1",
+    "size_mm": [
+     128.0,
+     64.0
+    ],
+    "elements": [
+     {
+      "gid": "axes_0",
+      "role": "axes",
+      "label": "axes_0",
+      "draggable": false,
+      "bbox": [
+       0.125,
+       0.125,
+       0.75,
+       0.75
+      ],
+      "editable": [
+       {
+        "prop": "position",
+        "type": "rect",
+        "value": [
+         0.125,
+         0.125,
+         0.75,
+         0.75
+        ]
+       }
+      ]
+     },
+     {
+      "gid": "axes_0.legend",
+      "role": "legend",
+      "label": "axes_0.legend",
+      "draggable": false,
+      "bbox": [
+       0.5,
+       0.125,
+       0.25,
+       0.25
+      ],
+      "legend_cover": {
+       "status": "ok",
+       "opaque": false,
+       "face_alpha": 0.0,
+       "px_mm": 0.25,
+       "handles": [
+        [
+         0.5078125,
+         0.140625,
+         0.0625,
+         0.03125
+        ]
+       ]
+      }
+     },
+     {
+      "gid": "axes_0.lines_0",
+      "role": "line",
+      "label": "axes_0.lines_0",
+      "draggable": false,
+      "bbox": [
+       0.125,
+       0.125,
+       0.75,
+       0.75
+      ],
+      "geometry": {
+       "kind": "polyline",
+       "paths": [
+        {
+         "points": [
+          [
+           0.125,
+           0.3
+          ],
+          [
+           0.875,
+           0.3
+          ]
+         ],
+         "closed": false
+        }
+       ],
+       "fill": false,
+       "stroke": true
+      }
+     },
+     {
+      "gid": "axes_0.legend.texts_0",
+      "role": "legend_text",
+      "label": "axes_0.legend.texts_0",
+      "draggable": false,
+      "bbox": [
+       0.59375,
+       0.140625,
+       0.09375,
+       0.03125
+      ]
+     }
+    ]
+   },
+   "expected": []
+  },
+  {
+   "name": "legend-cover-frameless-text-over-line-risk",
+   "profile_id": "lab-publication-v1",
+   "panel_id": "p1",
+   "manifest": {
+    "stem": "Fig1",
+    "size_mm": [
+     128.0,
+     64.0
+    ],
+    "elements": [
+     {
+      "gid": "axes_0",
+      "role": "axes",
+      "label": "axes_0",
+      "draggable": false,
+      "bbox": [
+       0.125,
+       0.125,
+       0.75,
+       0.75
+      ],
+      "editable": [
+       {
+        "prop": "position",
+        "type": "rect",
+        "value": [
+         0.125,
+         0.125,
+         0.75,
+         0.75
+        ]
+       }
+      ]
+     },
+     {
+      "gid": "axes_0.legend",
+      "role": "legend",
+      "label": "axes_0.legend",
+      "draggable": false,
+      "bbox": [
+       0.5,
+       0.125,
+       0.25,
+       0.25
+      ],
+      "legend_cover": {
+       "status": "ok",
+       "opaque": false,
+       "face_alpha": 0.0,
+       "px_mm": 0.25,
+       "handles": [
+        [
+         0.5078125,
+         0.140625,
+         0.0625,
+         0.03125
+        ]
+       ]
+      }
+     },
+     {
+      "gid": "axes_0.lines_0",
+      "role": "line",
+      "label": "axes_0.lines_0",
+      "draggable": false,
+      "bbox": [
+       0.125,
+       0.125,
+       0.75,
+       0.75
+      ],
+      "geometry": {
+       "kind": "polyline",
+       "paths": [
+        {
+         "points": [
+          [
+           0.625,
+           0.125
+          ],
+          [
+           0.625,
+           0.875
+          ]
+         ],
+         "closed": false
+        }
+       ],
+       "fill": false,
+       "stroke": true
+      }
+     },
+     {
+      "gid": "axes_0.legend.texts_0",
+      "role": "legend_text",
+      "label": "axes_0.legend.texts_0",
+      "draggable": false,
+      "bbox": [
+       0.59375,
+       0.140625,
+       0.09375,
+       0.03125
+      ]
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "legend-over-data",
+     "severity": "warn",
+     "message": {
+      "key": "legendOverDataRisk",
+      "params": {
+       "legend": "axes_0.legend",
+       "targets": "axes_0.lines_0",
+       "count": "1"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend",
+      "axes_0.lines_0"
+     ],
+     "detail": {
+      "certain": false,
+      "basis": "bbox",
+      "targets": [
+       "axes_0.lines_0"
+      ],
+      "risk_only": [],
+      "legend_basis": "entries",
+      "legend_rect_mm": [
+       64.0,
+       8.0,
+       32.0,
+       16.0
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "legend-cover-frameless-handle-over-line-certain",
+   "profile_id": "lab-publication-v1",
+   "panel_id": "p1",
+   "manifest": {
+    "stem": "Fig1",
+    "size_mm": [
+     128.0,
+     64.0
+    ],
+    "elements": [
+     {
+      "gid": "axes_0",
+      "role": "axes",
+      "label": "axes_0",
+      "draggable": false,
+      "bbox": [
+       0.125,
+       0.125,
+       0.75,
+       0.75
+      ],
+      "editable": [
+       {
+        "prop": "position",
+        "type": "rect",
+        "value": [
+         0.125,
+         0.125,
+         0.75,
+         0.75
+        ]
+       }
+      ]
+     },
+     {
+      "gid": "axes_0.legend",
+      "role": "legend",
+      "label": "axes_0.legend",
+      "draggable": false,
+      "bbox": [
+       0.5,
+       0.125,
+       0.25,
+       0.25
+      ],
+      "legend_cover": {
+       "status": "ok",
+       "opaque": false,
+       "face_alpha": 0.0,
+       "px_mm": 0.25,
+       "handles": [
+        [
+         0.5078125,
+         0.140625,
+         0.0625,
+         0.03125
+        ]
+       ]
+      }
+     },
+     {
+      "gid": "axes_0.lines_0",
+      "role": "line",
+      "label": "axes_0.lines_0",
+      "draggable": false,
+      "bbox": [
+       0.125,
+       0.125,
+       0.75,
+       0.75
+      ],
+      "geometry": {
+       "kind": "polyline",
+       "paths": [
+        {
+         "points": [
+          [
+           0.53125,
+           0.125
+          ],
+          [
+           0.53125,
+           0.875
+          ]
+         ],
+         "closed": false
+        }
+       ],
+       "fill": false,
+       "stroke": true
+      }
+     },
+     {
+      "gid": "axes_0.legend.texts_0",
+      "role": "legend_text",
+      "label": "axes_0.legend.texts_0",
+      "draggable": false,
+      "bbox": [
+       0.59375,
+       0.140625,
+       0.09375,
+       0.03125
+      ]
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "legend-over-data",
+     "severity": "warn",
+     "message": {
+      "key": "legendOverData",
+      "params": {
+       "legend": "axes_0.legend",
+       "targets": "axes_0.lines_0",
+       "count": "1"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend",
+      "axes_0.lines_0"
+     ],
+     "detail": {
+      "certain": true,
+      "basis": "geometry",
+      "targets": [
+       "axes_0.lines_0"
+      ],
+      "risk_only": [],
+      "legend_basis": "entries",
+      "legend_rect_mm": [
+       64.0,
+       8.0,
+       32.0,
+       16.0
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "legend-cover-frameless-one-pixel-grow",
+   "profile_id": "lab-publication-v1",
+   "panel_id": "p1",
+   "manifest": {
+    "stem": "Fig1",
+    "size_mm": [
+     128.0,
+     64.0
+    ],
+    "elements": [
+     {
+      "gid": "axes_0",
+      "role": "axes",
+      "label": "axes_0",
+      "draggable": false,
+      "bbox": [
+       0.125,
+       0.125,
+       0.75,
+       0.75
+      ],
+      "editable": [
+       {
+        "prop": "position",
+        "type": "rect",
+        "value": [
+         0.125,
+         0.125,
+         0.75,
+         0.75
+        ]
+       }
+      ]
+     },
+     {
+      "gid": "axes_0.legend",
+      "role": "legend",
+      "label": "axes_0.legend",
+      "draggable": false,
+      "bbox": [
+       0.5,
+       0.125,
+       0.25,
+       0.25
+      ],
+      "legend_cover": {
+       "status": "ok",
+       "opaque": false,
+       "face_alpha": 0.0,
+       "px_mm": 0.25,
+       "handles": [
+        [
+         0.5078125,
+         0.140625,
+         0.0625,
+         0.03125
+        ]
+       ]
+      }
+     },
+     {
+      "gid": "axes_0.lines_0",
+      "role": "line",
+      "label": "axes_0.lines_0",
+      "draggable": false,
+      "bbox": [
+       0.125,
+       0.125,
+       0.75,
+       0.75
+      ],
+      "geometry": {
+       "kind": "polyline",
+       "paths": [
+        {
+         "points": [
+          [
+           0.125,
+           0.17578125
+          ],
+          [
+           0.875,
+           0.17578125
+          ]
+         ],
+         "closed": false
+        }
+       ],
+       "fill": false,
+       "stroke": true
+      }
+     },
+     {
+      "gid": "axes_0.lines_1",
+      "role": "line",
+      "label": "axes_0.lines_1",
+      "draggable": false,
+      "bbox": [
+       0.125,
+       0.125,
+       0.75,
+       0.75
+      ],
+      "geometry": {
+       "kind": "polyline",
+       "paths": [
+        {
+         "points": [
+          [
+           0.125,
+           0.18359375
+          ],
+          [
+           0.875,
+           0.18359375
+          ]
+         ],
+         "closed": false
+        }
+       ],
+       "fill": false,
+       "stroke": true
+      }
+     },
+     {
+      "gid": "axes_0.legend.texts_0",
+      "role": "legend_text",
+      "label": "axes_0.legend.texts_0",
+      "draggable": false,
+      "bbox": [
+       0.59375,
+       0.140625,
+       0.09375,
+       0.03125
+      ]
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "legend-over-data",
+     "severity": "warn",
+     "message": {
+      "key": "legendOverData",
+      "params": {
+       "legend": "axes_0.legend",
+       "targets": "axes_0.lines_0",
+       "count": "1"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend",
+      "axes_0.lines_0"
+     ],
+     "detail": {
+      "certain": true,
+      "basis": "geometry",
+      "targets": [
+       "axes_0.lines_0"
+      ],
+      "risk_only": [],
+      "legend_basis": "entries",
+      "legend_rect_mm": [
+       64.0,
+       8.0,
+       32.0,
+       16.0
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "legend-cover-frameless-image-under-text-risk",
+   "profile_id": "lab-publication-v1",
+   "panel_id": "p1",
+   "manifest": {
+    "stem": "Fig1",
+    "size_mm": [
+     128.0,
+     64.0
+    ],
+    "elements": [
+     {
+      "gid": "axes_0",
+      "role": "axes",
+      "label": "axes_0",
+      "draggable": false,
+      "bbox": [
+       0.125,
+       0.125,
+       0.75,
+       0.75
+      ],
+      "editable": [
+       {
+        "prop": "position",
+        "type": "rect",
+        "value": [
+         0.125,
+         0.125,
+         0.75,
+         0.75
+        ]
+       }
+      ]
+     },
+     {
+      "gid": "axes_0.legend",
+      "role": "legend",
+      "label": "axes_0.legend",
+      "draggable": false,
+      "bbox": [
+       0.5,
+       0.125,
+       0.25,
+       0.25
+      ],
+      "legend_cover": {
+       "status": "ok",
+       "opaque": false,
+       "face_alpha": 0.0,
+       "px_mm": 0.25,
+       "handles": [
+        [
+         0.5078125,
+         0.140625,
+         0.0625,
+         0.03125
+        ]
+       ]
+      }
+     },
+     {
+      "gid": "axes_0.images_0",
+      "role": "image",
+      "label": "axes_0.images_0",
+      "draggable": false,
+      "bbox": [
+       0.6171875,
+       0.14453125,
+       0.015625,
+       0.015625
+      ]
+     },
+     {
+      "gid": "axes_0.legend.texts_0",
+      "role": "legend_text",
+      "label": "axes_0.legend.texts_0",
+      "draggable": false,
+      "bbox": [
+       0.59375,
+       0.140625,
+       0.09375,
+       0.03125
+      ]
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "legend-over-data",
+     "severity": "warn",
+     "message": {
+      "key": "legendOverDataRisk",
+      "params": {
+       "legend": "axes_0.legend",
+       "targets": "axes_0.images_0",
+       "count": "1"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend",
+      "axes_0.images_0"
+     ],
+     "detail": {
+      "certain": false,
+      "basis": "bbox",
+      "targets": [
+       "axes_0.images_0"
+      ],
+      "risk_only": [],
+      "legend_basis": "entries",
+      "legend_rect_mm": [
+       64.0,
+       8.0,
+       32.0,
+       16.0
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "legend-cover-unavailable-falls-back-to-frame",
+   "profile_id": "lab-publication-v1",
+   "panel_id": "p1",
+   "manifest": {
+    "stem": "Fig1",
+    "size_mm": [
+     128.0,
+     64.0
+    ],
+    "elements": [
+     {
+      "gid": "axes_0",
+      "role": "axes",
+      "label": "axes_0",
+      "draggable": false,
+      "bbox": [
+       0.125,
+       0.125,
+       0.75,
+       0.75
+      ],
+      "editable": [
+       {
+        "prop": "position",
+        "type": "rect",
+        "value": [
+         0.125,
+         0.125,
+         0.75,
+         0.75
+        ]
+       }
+      ]
+     },
+     {
+      "gid": "axes_0.legend",
+      "role": "legend",
+      "label": "axes_0.legend",
+      "draggable": false,
+      "bbox": [
+       0.5,
+       0.125,
+       0.25,
+       0.25
+      ],
+      "legend_cover": {
+       "status": "unavailable"
+      }
+     },
+     {
+      "gid": "axes_0.lines_0",
+      "role": "line",
+      "label": "axes_0.lines_0",
+      "draggable": false,
+      "bbox": [
+       0.125,
+       0.125,
+       0.75,
+       0.75
+      ],
+      "geometry": {
+       "kind": "polyline",
+       "paths": [
+        {
+         "points": [
+          [
+           0.125,
+           0.3
+          ],
+          [
+           0.875,
+           0.3
+          ]
+         ],
+         "closed": false
+        }
+       ],
+       "fill": false,
+       "stroke": true
+      }
+     },
+     {
+      "gid": "axes_0.legend.texts_0",
+      "role": "legend_text",
+      "label": "axes_0.legend.texts_0",
+      "draggable": false,
+      "bbox": [
+       0.59375,
+       0.140625,
+       0.09375,
+       0.03125
+      ]
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "legend-over-data",
+     "severity": "warn",
+     "message": {
+      "key": "legendOverData",
+      "params": {
+       "legend": "axes_0.legend",
+       "targets": "axes_0.lines_0",
+       "count": "1"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend",
+      "axes_0.lines_0"
+     ],
+     "detail": {
+      "certain": true,
+      "basis": "geometry",
+      "targets": [
+       "axes_0.lines_0"
+      ],
+      "risk_only": [],
+      "legend_basis": "frame",
+      "legend_rect_mm": [
+       64.0,
+       8.0,
+       32.0,
+       16.0
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "legend-outside-axes-not-reported",
+   "profile_id": "lab-publication-v1",
+   "panel_id": "p1",
+   "manifest": {
+    "stem": "Fig1",
+    "size_mm": [
+     128.0,
+     64.0
+    ],
+    "elements": [
+     {
+      "gid": "axes_0",
+      "role": "axes",
+      "label": "axes_0",
+      "draggable": false,
+      "bbox": [
+       0.125,
+       0.125,
+       0.5,
+       0.75
+      ],
+      "editable": [
+       {
+        "prop": "position",
+        "type": "rect",
+        "value": [
+         0.125,
+         0.125,
+         0.5,
+         0.75
+        ]
+       }
+      ]
+     },
+     {
+      "gid": "axes_0.legend",
+      "role": "legend",
+      "label": "axes_0.legend",
+      "draggable": false,
+      "bbox": [
+       0.7,
+       0.125,
+       0.25,
+       0.25
+      ]
+     },
+     {
+      "gid": "axes_0.lines_0",
+      "role": "line",
+      "label": "axes_0.lines_0",
+      "draggable": false,
+      "bbox": [
+       0.125,
+       0.125,
+       0.85,
+       0.75
+      ],
+      "geometry": {
+       "kind": "polyline",
+       "paths": [
+        {
+         "points": [
+          [
+           0.125,
+           0.25
+          ],
+          [
+           0.975,
+           0.25
+          ]
+         ],
+         "closed": false
+        }
+       ],
+       "fill": false,
+       "stroke": true
+      }
+     }
+    ]
+   },
+   "expected": []
   },
   {
    "name": "legend-over-data-scope",
@@ -2986,6 +4633,7 @@
        "axes_0.collections_4"
       ],
       "risk_only": [],
+      "legend_basis": "frame",
       "legend_rect_mm": [
        -0.125,
        -0.062,
@@ -3062,7 +4710,7 @@
      "id": "legend-over-data",
      "severity": "warn",
      "message": {
-      "key": "legendOverDataRisk",
+      "key": "legendOverData",
       "params": {
        "legend": "axes_0.legend",
        "targets": "axes_0.images_0",
@@ -3077,12 +4725,13 @@
       "axes_0.images_0"
      ],
      "detail": {
-      "certain": false,
-      "basis": "bbox",
+      "certain": true,
+      "basis": "geometry",
       "targets": [
        "axes_0.images_0"
       ],
       "risk_only": [],
+      "legend_basis": "frame",
       "legend_rect_mm": [
        64.0,
        8.0,
@@ -3159,7 +4808,7 @@
      "id": "legend-over-data",
      "severity": "warn",
      "message": {
-      "key": "legendOverDataRisk",
+      "key": "legendOverData",
       "params": {
        "legend": "axes_0.legend",
        "targets": "axes_0.images_0",
@@ -3174,12 +4823,13 @@
       "axes_0.images_0"
      ],
      "detail": {
-      "certain": false,
-      "basis": "bbox",
+      "certain": true,
+      "basis": "geometry",
       "targets": [
        "axes_0.images_0"
       ],
       "risk_only": [],
+      "legend_basis": "frame",
       "legend_rect_mm": [
        64.0,
        8.0,

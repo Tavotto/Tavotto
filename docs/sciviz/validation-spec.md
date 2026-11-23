@@ -194,15 +194,35 @@
     detail 与文案仍是布局框那组数。主语是两段文字。
   - `text-over-axes`：子图的装饰文字（标题 / 轴标题 / 刻度 / 图例）伸进**另一个顶层子图**的绘图区 ≥ 0.25 mm × 0.25 mm。自己的
     插图、被自己包住的子图、没有 `position` 的次坐标轴 / 寄生轴不算；标注（`text`）不算。主语是那段文字，被压的子图进 `detail.against`。
-  - `legend-over-data`：图例框与**同一子图**数据的真实折线相交是「确定」（`detail.certain = true`）；只有包围盒（误差棒 / 茎叶系列
-    即使有 geometry 也按包围盒、图像、Collection）是「风险」（`certain = false`，文案说「可能」）。两种同一 id、同一档位。
+  - `legend-over-data`：图例框与**同一子图**数据的真实几何相交是「确定」（`detail.certain = true`）。真实几何是 manifest 的
+    `geometry`：曲线折线、散点每颗 marker、**误差棒每个点 / 每根误差线段 / 每个帽**、茎叶的茎与 markerline（维护者 2026-11-23
+    裁决：误差棒 / 茎叶不再按容器包围盒判，`BBOX_BASIS_ROLES` 清空）；图像的包围盒就是它画出来的矩形（`RECT_BASIS_ROLES`），
+    相交也是确定。给不出 geometry 的（超预算 / 超 `MAX_MARKERS`、柱形系列里单根柱的元素、没有路径的 Collection）只有包围盒，
+    是「风险」（`certain = false`，文案说「可能」）。两种同一 id、同一档位。
     聚合时确定恒排在风险前（`INTERFERENCE_CERTAIN_RANK`）。figure 级图例不判。主语是图例，被压的数据在 `detail.targets`。
+- **图例一侧的取法（与数据出图摆放共用）**（维护者 2026-11-23，与数据出图 tavotto-46 同一口径）：`legend-over-data` 量的是
+  图例**真正挡住数据的东西**，不是图例的整块外框。唯一实现 `interference.legend_cover_rects` ↔ `interference.ts`
+  `legendCoverRects`，数据出图给图例找位置时复用同一个函数，不另写一份。
+  - 框画出来且背景不透明（`frameon` 为真、框可见、背景此刻的有效不透明度 > 0）：用整块图例框（图例默认 zorder 5，
+    框确实盖在数据上面）。有效不透明度取 `frame.get_facecolor()` 的 alpha——matplotlib 的 `framealpha` 是**替换**
+    颜色里的 alpha，不是相乘，这就是画出来的那个数；`facecolor="none"` 为 0。
+  - 无框或背景完全透明：只用每条条目文字（本图例的 `legend_text`）的框，加上每一格示意（色块 / 线段 / marker）的框，
+    各外扩 1 个显示像素，不用整块框。
+  - 图例和所在坐标区的数据区不相交（放在轴外）：一律不报。
+  - 「确定」与「可能」沿用原写法：数据的真实几何（或图像的矩形）压到整块框 / 示意格是确定；只擦到条目文字的框、
+    字形本身未必压住的，归「可能」；数据给不出几何、只有包围盒相交的，仍是「可能」。
+  - 事实来源：manifest 只读事实 `legend_cover`（`engine/manifest.legend_cover`，legend 元素上；`status`
+    闭集 `LEGEND_COVER_STATUSES` = `ok` / `over_budget` / `unavailable`，`opaque` / `face_alpha` / `px_mm` / `handles`）。
+    单个图例条目数上限同 `pathgeom.MAX_MARKERS`，整图与 geometry 同一个上限、另一份计数器（同 V-001）；量不了
+    （老 manifest 没有这条、`status` 不是 `ok`）退回整块图例框。`detail.legend_basis` 写明用的是 `frame` 还是 `entries`。
+  - 测试：有框、线只穿过框内空白（报，确定）；无框、同一摆法（不报）；无框、文字压住线（报，可能）；无框、示意压住线
+    （报，确定）；外扩 1 px 的边界；图例在轴外、`clip_on=False` 的线伸过去（不报）；事实量不了时退回整块框。
 - **严重度**：沿用 `publication.json` 原有登记——`lab-publication-v1` / `journal-base-v1` 都是 warn，`free-form-v1` 没写、兜底 warn。
   **修复**：`fix: none`（挪图例 / 重排外边距要真实渲染裁决、可能放不下，目标值不唯一，不进 safe_auto；MCP 的
   `tavotto_normalize_figure` 仍是它们的修法）。问题面板归「版面」（`layout`）。
 - **误报风险**：
-  - 中：`legend-over-data` 的风险档——误差棒容器的包围盒盖住整个数据范围，图例在轴内的误差棒图基本都会报「可能」
-    （FigureBench `errorbar_fit` 就是）。
+  - 低：`legend-over-data` 的风险档只剩给不出 geometry 的元素；误差棒按真实几何判后，`errorbar_fit`（`loc="best"`）不再报。
+    单根柱（`bar` 元素）没有自己的 geometry，图例整个落在一根柱的内部时只说「可能」（压到柱边时柱形系列的 geometry 报确定）。
   - 低：斜排文字有 `text_block` 时按有向矩形复核（45° 长标签不再报，排得太密真叠上的照报）；没有 `text_block`
     （wrap / usetex / 排不出的文字）或带 `clip_bbox` 的斜排文字仍按布局框判，可能多报。`text-over-axes` 不做这层复核。
   - 低：其余写法（`loc="best"`、inset、色条、90° 竖排标签）在真 worker 上不报。
@@ -214,8 +234,8 @@
   MCP 桥另按 id 滤掉聚合项（`bridge._without_interference`），对外仍是逐对清单。
 - **测试**：
   - 正常：FigureBench `line_two_series` / `cjk_labels` / `log_decay` / `heatmap_colorbar` / `grouped_bars` 不报；
-    `loc="best"`、inset、色条不报；90° 竖排与 45° 斜排的长标签不报。
-  - 错误：横排长刻度标签互相重叠；排得太密的 45° 标签墨迹叠上；`loc="center"` 的图例压住两条线（确定）；`multi_panel`（没有 tight_layout，右列的 y 轴标题与刻度
+    `loc="best"`、inset、色条不报；90° 竖排与 45° 斜排的长标签不报；`errorbar_fit` 与「图例只落在误差棒包围盒里的空白处」不报。
+  - 错误：横排长刻度标签互相重叠；图例压住一根误差线段（点在框外）判「确定」；排得太密的 45° 标签墨迹叠上；`loc="center"` 的图例压住两条线（确定）；`multi_panel`（没有 tight_layout，右列的 y 轴标题与刻度
     画进了左列子图框里，肉眼可见）报恰好那 4 段文字。
   - 边界：恰好 0.25 mm（含等号）、差一点、贴边；clip 折叠；单点 / 闭合回边 / 水平线段的路径；同图例家族；隐藏图例的条目；
     恰好落在一半上的取整（1.25 → "1.2"）。

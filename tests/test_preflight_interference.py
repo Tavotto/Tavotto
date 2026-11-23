@@ -211,14 +211,15 @@ def test_figurebench_multi_panel_reports_the_real_collision_and_nothing_else(tmp
 
 
 @needs_worker
-def test_figurebench_errorbar_fit_is_only_a_risk(tmp_path):
-    """误差棒容器只按包围盒判（`BBOX_BASIS_ROLES`），它的框盖住整个数据范围：`loc="best"` 的图例
-    落在空白处也只能说「可能」。钉住现状（待维护者裁决的噪音来源，见交接报告）。"""
-    got = _interference(_render_fixture(tmp_path, "errorbar_fit"))
-    assert len(got) == 1
-    assert got[0]["id"] == "legend-over-data"
-    assert got[0]["detail"]["certain"] is False
-    assert got[0]["message"]["key"] == "interferenceLegendOverDataRisk"
+def test_figurebench_errorbar_fit_legend_in_the_blank_is_not_reported(tmp_path):
+    """误差棒按真实几何判（维护者 2026-11-23）：`loc="best"` 的图例落在空白处，没压住任何点、误差线段或帽；
+    以前按容器包围盒（罩住整个数据范围）说成「可能压住」，现在不报。"""
+    man = _render_fixture(tmp_path, "errorbar_fit")
+    eb = next(e for e in man["elements"] if e["role"] == "errorbar")
+    assert isinstance(eb.get("geometry"), dict)  # 量得到真实几何，不是退回 bbox
+    leg = next(e for e in man["elements"] if e["role"] == "legend")
+    assert interference._intersect(interference.visible_rect(eb), interference.visible_rect(leg))
+    assert _interference(man) == []
 
 
 EDGE_SCRIPT = """\
@@ -257,6 +258,62 @@ def dense_rot45():
     ax.bar(range(14), range(14))
     ax.set_xticks(range(14), [f"Sample {k:02d}" for k in range(14)], rotation=45, ha="right")
     fig.savefig("DenseRot45.pdf")
+
+
+def errorbar_blank():
+    fig, ax = plt.subplots(figsize=(3.5, 2.6))
+    ax.errorbar([0, 1, 9, 10], [10, 9, 1, 0], yerr=0.3, fmt="o", capsize=2, label="measured")
+    ax.legend(loc="upper right")
+    fig.savefig("ErrorbarBlank.pdf")
+
+
+def errorbar_on_segment():
+    fig, ax = plt.subplots(figsize=(3.5, 2.6))
+    ax.errorbar([0, 5, 10], [1, 8, 1], yerr=[0.2, 8.0, 0.2], fmt="o", capsize=2, label="measured")
+    ax.set_ylim(-1, 10)
+    ax.legend(loc="lower center")
+    fig.savefig("ErrorbarOnSegment.pdf")
+
+
+def _gap_legend(ax, frameon):
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.plot([0.1, 0.2], [0.9, 0.95], label="first entry")
+    ax.plot([0.1, 0.2], [0.05, 0.1], label="second entry")
+    ax.axhline(0.5, color="k", lw=1.0)  # 正好穿过两行条目之间的空白
+    ax.legend(loc="center", bbox_to_anchor=(0.5, 0.5), labelspacing=4, frameon=frameon)
+
+
+def gap_framed():
+    fig, ax = plt.subplots(figsize=(3.5, 2.6))
+    _gap_legend(ax, True)
+    fig.savefig("GapFramed.pdf")
+
+
+def gap_frameless():
+    fig, ax = plt.subplots(figsize=(3.5, 2.6))
+    _gap_legend(ax, False)
+    fig.savefig("GapFrameless.pdf")
+
+
+def text_over_line_frameless():
+    fig, ax = plt.subplots(figsize=(3.5, 2.6))
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.plot([0.05, 0.1], [0.9, 0.95], label="a rather long legend entry label")
+    ax.axvline(0.65, color="k", lw=1.0)  # 穿过条目文字，不碰左边的示意
+    ax.legend(loc="center", bbox_to_anchor=(0.5, 0.5), handlelength=1.0, frameon=False)
+    fig.savefig("TextOverLine.pdf")
+
+
+def legend_outside():
+    fig, ax = plt.subplots(figsize=(4.5, 2.6))
+    ax.plot([0, 1.6], [0.8, 0.8], clip_on=False, label="runs past the axes")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.legend(loc="upper left", bbox_to_anchor=(1.02, 0.9))
+    fig.subplots_adjust(right=0.6)
+    fig.savefig("LegendOutside.pdf")
 
 
 def legend_best():
@@ -340,6 +397,76 @@ def test_45_degree_labels_are_judged_by_their_rotated_box(tmp_path):
 def test_boundary_layouts_without_collisions_report_nothing(tmp_path, func, stem):
     """`loc="best"` 躲开了曲线；inset 在父图里是包含不是干涉；色条与它的标题不撞。"""
     assert _interference(_render_edge(tmp_path, func, stem)) == []
+
+
+@needs_worker
+def test_errorbar_legend_over_blank_in_its_bbox_is_not_reported(tmp_path):
+    """图例只落在误差棒包围盒里的空白处（点沿对角线、没有连线）：不报。"""
+    man = _render_edge(tmp_path, "errorbar_blank", "ErrorbarBlank")
+    eb = next(e for e in man["elements"] if e["role"] == "errorbar")
+    leg = next(e for e in man["elements"] if e["role"] == "legend")
+    assert interference._intersect(interference.visible_rect(eb), interference.visible_rect(leg))
+    assert _interference(man) == []
+
+
+@needs_worker
+def test_errorbar_legend_on_an_error_segment_is_certain(tmp_path):
+    """图例压住一根误差线段（点本身在图例外）：报，且是「确定」。"""
+    got = _interference(_render_edge(tmp_path, "errorbar_on_segment", "ErrorbarOnSegment"))
+    assert [i["id"] for i in got] == ["legend-over-data"]
+    assert got[0]["detail"]["certain"] is True
+    assert got[0]["detail"]["targets"] == ["axes_0.errorbar_0"]
+    assert got[0]["message"]["key"] == "interferenceLegendOverData"
+
+
+@needs_worker
+def test_opaque_legend_frame_over_a_line_in_its_blank_is_certain(tmp_path):
+    """图例一侧的取法：框画出来且背景不透明（默认 frameon、framealpha 0.8）——整块框盖在数据上，线只穿过框内
+    两行条目之间的空白也算压住（确定）。"""
+    man = _render_edge(tmp_path, "gap_framed", "GapFramed")
+    leg = next(e for e in man["elements"] if e["role"] == "legend")
+    assert leg["legend_cover"]["status"] == "ok" and leg["legend_cover"]["opaque"] is True
+    got = _interference(man)
+    assert [i["id"] for i in got] == ["legend-over-data"]
+    assert got[0]["detail"]["certain"] is True
+    assert got[0]["detail"]["legend_basis"] == "frame"
+
+
+@needs_worker
+def test_frameless_legend_with_only_blank_over_a_line_is_not_reported(tmp_path):
+    """同一摆法、无框：只有条目文字与示意挡得住东西，线穿过的是两行之间的空白——不报。"""
+    man = _render_edge(tmp_path, "gap_frameless", "GapFrameless")
+    leg = next(e for e in man["elements"] if e["role"] == "legend")
+    assert leg["legend_cover"]["opaque"] is False
+    assert _interference(man) == []
+
+
+@needs_worker
+def test_frameless_legend_text_over_a_line_is_only_a_risk(tmp_path):
+    """无框、条目文字压在线上（示意没碰到）：只擦到文字框、字形未必压住——报「可能」。"""
+    man = _render_edge(tmp_path, "text_over_line_frameless", "TextOverLine")
+    leg = next(e for e in man["elements"] if e["role"] == "legend")
+    line = next(e for e in man["elements"] if e["gid"] == "axes_0.lines_1")
+    for h in leg["legend_cover"]["handles"]:
+        hr = interference._rect(h)
+        assert not interference._segments_hit_rect(line["geometry"]["paths"], hr)
+    got = _interference(man)
+    assert [i["id"] for i in got] == ["legend-over-data"]
+    assert got[0]["detail"]["certain"] is False
+    assert got[0]["detail"]["targets"] == ["axes_0.lines_1"]
+    assert got[0]["message"]["key"] == "interferenceLegendOverDataRisk"
+
+
+@needs_worker
+def test_legend_outside_the_axes_is_not_reported(tmp_path):
+    """图例放在坐标区外：哪怕一条 `clip_on=False` 的线伸到了它下面，也不报。"""
+    man = _render_edge(tmp_path, "legend_outside", "LegendOutside")
+    leg = next(e for e in man["elements"] if e["role"] == "legend")
+    line = next(e for e in man["elements"] if e["gid"] == "axes_0.lines_0")
+    assert interference._segments_hit_rect(
+        line["geometry"]["paths"], interference.visible_rect(leg)
+    )
+    assert _interference(man) == []
 
 
 @needs_worker

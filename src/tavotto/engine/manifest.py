@@ -5138,6 +5138,91 @@ def data_fingerprint(artist, budget: list[int]) -> dict | None:
 #: `scale_domain` 每一维的 `status` 闭集（V-001 `log-axis-nonpositive` 读它；不是 `ok` 一律不判）
 SCALE_DOMAIN_STATUSES = ("ok", "over_budget", "unavailable")
 
+#: V-011「图例一侧的取法」只读事实 `legend_cover` 的 `status` 闭集（与 `scale_domain` 同形）。
+LEGEND_COVER_STATUSES = ("ok", "over_budget", "unavailable")
+
+
+def _legend_handle_cells(leg) -> list | None:
+    """图例每一格示意（handle）的 `DrawingArea`；读不出结构回 None（= 量不了）。
+
+    matplotlib 的排法（`Legend._init_legend_box`）：`_legend_handle_box` 是列的 HPacker，每列是条目的
+    VPacker，每个条目是 `[handlebox, textbox]`（`markerfirst=False` 时反过来）的 HPacker，handlebox 是
+    `DrawingArea`。私有属性，换版本读不出时如实说量不了，不猜。"""
+    from matplotlib.offsetbox import DrawingArea  # noqa: PLC0415
+
+    box = getattr(leg, "_legend_handle_box", None)
+    if box is None:
+        return None
+    cells = []
+    for col in box.get_children():
+        for row in col.get_children():
+            cells.extend(c for c in row.get_children() if isinstance(c, DrawingArea))
+    return cells
+
+
+def legend_cover(leg, renderer, W: float, H: float, dpi: float, budget: list[int]) -> dict:
+    """图例**真正挡住数据的东西**的只读事实（V-011「图例一侧的取法」；不进 `editable`、不进文档）。
+
+    `{"status": "ok", "opaque": bool, "face_alpha": a, "px_mm": p, "handles": [[x, y, w, h], …]}`：
+
+    * `opaque`：框画出来（`frameon`、框可见）且背景此刻的有效不透明度 `face_alpha > 0`。`face_alpha` 取
+      `frame.get_facecolor()` 的 alpha——matplotlib 的 `framealpha`（`Patch.set_alpha`）是**替换**颜色里的
+      alpha 而不是相乘，这就是画出来的那个数；`facecolor="none"` 时为 0。
+    * `handles`：每一格示意（色块 / 线段 / marker）的框，figure 分数、y 向下：`DrawingArea` 的格子并上格里每个
+      artist 的实际范围（大 marker 会伸出格子）。条目文字的框不在这里——它们本来就是 `legend_text` 元素的 `bbox`。
+    * `px_mm`：一个显示像素是多少 mm（`25.4 / dpi`），判据按它把条目框各外扩 1 px。
+
+    单个图例的条目数上限与 `pathgeom.MAX_MARKERS` 相同，整图累计记在调用方给的那份配额上（与 geometry 的
+    `pathgeom.TOTAL_BUDGET` 同一个上限、**另一份计数器**，同 V-001 的做法）；超了 `over_budget`，读不出
+    结构 `unavailable`——这两种都没有 `opaque` / `handles`，判据退回整块图例框（与没有这条事实时相同）。"""
+    try:
+        frame = leg.get_frame()
+        face_alpha = float(frame.get_facecolor()[3]) if frame.get_visible() else 0.0
+        opaque = bool(leg.get_frame_on()) and bool(frame.get_visible()) and face_alpha > 0
+        cells = _legend_handle_cells(leg)
+    except Exception:  # noqa: BLE001 —— 只读事实，量不了就如实说
+        return {"status": "unavailable"}
+    if cells is None:
+        return {"status": "unavailable"}
+    if len(cells) > pathgeom.MAX_MARKERS or len(cells) > budget[0]:
+        return {"status": "over_budget"}
+    budget[0] -= len(cells)
+    handles = []
+    for cell in cells:
+        try:
+            boxes = [cell.get_window_extent(renderer)]
+            for a in cell.get_children():
+                if a.get_visible():
+                    boxes.append(a.get_window_extent(renderer))
+        except Exception:  # noqa: BLE001
+            return {"status": "unavailable"}
+        good = [
+            b
+            for b in boxes
+            if all(math.isfinite(v) for v in (b.x0, b.y0, b.x1, b.y1)) and b.width >= 0
+        ]
+        if not good:
+            continue
+        x0 = min(b.x0 for b in good)
+        x1 = max(b.x1 for b in good)
+        y0 = min(b.y0 for b in good)
+        y1 = max(b.y1 for b in good)
+        handles.append(
+            [
+                round(x0 / W, 5),
+                round(1.0 - y1 / H, 5),
+                round((x1 - x0) / W, 5),
+                round((y1 - y0) / H, 5),
+            ]
+        )
+    return {
+        "status": "ok",
+        "opaque": opaque,
+        "face_alpha": round(face_alpha, 3),
+        "px_mm": round(25.4 / float(dpi), 5),
+        "handles": handles,
+    }
+
 
 def _scale_domain_sources(ax) -> list[tuple[str, object, object]]:
     """这根轴上**参与 V-001 计数**的可见元素：`(kind, 经过的变换, 数组)`。
@@ -6344,6 +6429,8 @@ def _measure_manifest(
     scale_domain_budget = [FINGERPRINT_BUDGET]
     #: V-002 的计数配额：同一个上限、第三份计数器（见 `bar_baseline`）
     bar_baseline_budget = [FINGERPRINT_BUDGET]
+    #: V-011 图例一侧的取法：条目数配额（与 geometry 同一个上限、另一份计数器，见 `legend_cover`）
+    legend_cover_budget = [pathgeom.TOTAL_BUDGET]
     for el in state.elements:
         artist = el["artist"]
         if not _owner_axis_drawn(el):
@@ -6390,6 +6477,9 @@ def _measure_manifest(
             if info is not None:
                 entry["legend_entry"] = info
         if el["role"] == "legend":
+            entry["legend_cover"] = legend_cover(
+                artist, renderer, W, H, fig.dpi, legend_cover_budget
+            )
             # 脚本的锚框这个模型摆不出来时**说得出为什么**（4 元组锚框 /
             # 非父容器变换，判据见 `overrides.legend_anchor_state`）。字段
             # 已经在 `_legend_fields` 里让出来了，这里补上那句理由——少一个

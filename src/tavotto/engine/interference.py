@@ -16,8 +16,9 @@
   **另一个**顶层子图的绘图区。自己的插图、被自己包住的子图不算（插图本来就
   在父图里）。
 * `legend-over-data`——图例框与**同一子图里**数据的真实几何相交。拿得到
-  `geometry`（曲线的折线、散点每颗 marker）时是**确定**的（`detail.certain`），
-  只有包围盒（误差棒容器、图像、Collection）时只标**风险**，不当阻断。
+  `geometry`（曲线的折线、散点每颗 marker、误差棒每一根误差线段与帽）时是**确定**的
+  （`detail.certain`）；图像的包围盒就是它画出来的矩形，也是确定的。只有包围盒（给不出
+  geometry 的：超预算 / 超 `MAX_MARKERS`、柱形系列里单根柱的元素）时只标**风险**，不当阻断。
 
 曲线相交、注释（`text` 角色）压在数据上、箭头连到目标、父子包含——一律不报：
 那些是画图的常态，不是缺陷。看不见的（`visible: false`）一个都不参与。
@@ -55,11 +56,17 @@ DATA_ROLES = (
     "stem_series",
 )
 
-#: 有 `geometry` 也仍按包围盒（只标风险）判的数据角色。误差棒 / 茎叶系列的 geometry
-#: 是 ADR 0086 为**选中轮廓**加的；拿它把「图例压住数据」从风险升成确定，会让保形归一化
-#: 在它们身上从「完成」变成「约束冲突」（`test_mcp_normalize` 的 Two：缩到 120 mm 后图例
-#: 左上角压着橙色误差棒的折线）——那是归一化契约的改变，要单独裁决，不搭选中轮廓的车。
-BBOX_BASIS_ROLES = ("errorbar", "stem_series")
+#: 有 `geometry` 也仍按包围盒（只标风险）判的数据角色——**现在一个都没有**。
+#: 误差棒 / 茎叶系列曾经在这里：它们的容器包围盒罩住整个数据范围，`loc="best"` 的图例落在
+#: 空白处也被说成「可能压住数据」。它们的 geometry（ADR 0086，`pathgeom.series_group_geometry`）
+#: 就是**真画出来的**那些成员的并：数据点 / 连线、每一根误差线段、帽（茎叶：markerline、茎），
+#: 与 Line2D 同一套口径、同一份预算（给不出时整组退回 bbox = 仍只标风险）。维护者 2026-11-23
+#: 裁决改按真实几何判，保形归一化在它们身上随之按「确定」挡事务。
+BBOX_BASIS_ROLES: tuple[str, ...] = ()
+
+#: 包围盒（折进 `clip_bbox` 之后）**就是**画出来的那块的数据角色：图像（`imshow` 的
+#: `AxesImage` 铺满自己的 extent）。图例框与它相交就是确定地压住了数据，不必再要 geometry。
+RECT_BASIS_ROLES = ("image",)
 
 CHECK_TEXT_OVERLAP = "text-overlap"
 CHECK_TEXT_OVER_AXES = "text-over-axes"
@@ -234,6 +241,47 @@ def _boxes_overlap(a: tuple, b: tuple) -> bool:
             if min(spans[0][1], spans[1][1]) - max(spans[0][0], spans[1][0]) < MIN_OVERLAP_MM:
                 return False
     return True
+
+
+def legend_cover_rects(leg: dict, elements: list, W: float, H: float) -> tuple[list, list, str]:
+    """图例一侧**真正挡住数据的东西**（V-011「图例一侧的取法（与数据出图摆放共用）」）：`(hard, soft, basis)`。
+
+    * 框画出来且背景不透明（manifest 只读事实 `legend_cover.opaque`，`manifest.legend_cover`）：整块图例框，
+      `basis = "frame"`——图例默认 zorder 5，框确实盖在数据上面。
+    * 无框或背景完全透明：只取每一格示意（`legend_cover.handles`）与每条画出来的条目文字（本图例的
+      `legend_text` 元素）的框，各外扩 1 个显示像素（`legend_cover.px_mm`），`basis = "entries"`。示意是
+      **hard**（色块 / 线段就是墨迹）；条目文字是 **soft**——只擦到文字框、字形本身未必压住，只能说「可能」。
+    * 量不了（老 manifest 没有这条事实、`status` 不是 `ok`、读不懂）：整块图例框，`basis = "frame"`。
+
+    返回的矩形都是 figure 分数 `(x0, y0, x1, y1)`。与 `web/src/lib/interference.ts` 的 `legendCoverRects` 同源。"""
+    whole = visible_rect(leg)
+    frame = ([whole] if whole is not None else [], [], "frame")
+    cover = leg.get("legend_cover")
+    if (
+        not isinstance(cover, dict)
+        or cover.get("status") != "ok"
+        or cover.get("opaque") is not False
+    ):
+        return frame
+    px = _num(cover.get("px_mm"))
+    handles = cover.get("handles")
+    if px is None or px < 0 or not isinstance(handles, list):
+        return frame
+    dx, dy = px / W, px / H
+
+    def grow(r):
+        return (r[0] - dx, r[1] - dy, r[2] + dx, r[3] + dy)
+
+    hard = [grow(r) for r in (_rect(h) for h in handles) if r is not None]
+    prefix = str(leg.get("gid", "")) + "."
+    soft = []
+    for t in elements:
+        if t.get("role") != "legend_text" or not str(t.get("gid", "")).startswith(prefix):
+            continue
+        r = visible_rect(t)
+        if r is not None:
+            soft.append(grow(r))
+    return hard, soft, "entries"
 
 
 def _segments_hit_rect(paths: list, rect) -> bool:
@@ -415,6 +463,11 @@ def detect(manifest: dict, profile: dict | None = None, *, panel_id: str = "figu
         owner = owner_axes(leg_gid)
         if not owner:
             continue  # figure 级图例：它压谁是排版决定，这里不猜
+        owner_rect = all_axes_rect.get(owner)
+        if owner_rect is not None and _intersect(leg_rect, owner_rect) is None:
+            continue  # 放在坐标区外的图例：数据画在坐标区里，压不到
+        hard, soft, legend_basis = legend_cover_rects(el, elements, W, H)
+        covers = hard + soft
         certain_hits: list[str] = []
         risk_hits: list[str] = []
         for d in elements:
@@ -422,14 +475,23 @@ def detect(manifest: dict, profile: dict | None = None, *, panel_id: str = "figu
             if d.get("role") not in DATA_ROLES or owner_axes(dg) != owner:
                 continue
             dr = visible_rect(d)
-            if dr is None or _intersect(dr, leg_rect) is None:
+            if dr is None or not any(_intersect(dr, c) is not None for c in covers):
+                continue
+            if d.get("role") in RECT_BASIS_ROLES:
+                # 画出来的就是这个矩形：压到框 / 示意即确定；只擦到条目文字的框（字形未必压住）是可能
+                if any(_intersect(dr, c) is not None for c in hard):
+                    certain_hits.append(dg)
+                else:
+                    risk_hits.append(dg)
                 continue
             geom = d.get("geometry")
             if d.get("role") in BBOX_BASIS_ROLES:
                 geom = None
             if isinstance(geom, dict) and isinstance(geom.get("paths"), list):
-                if _segments_hit_rect(geom["paths"], leg_rect):
+                if any(_segments_hit_rect(geom["paths"], c) for c in hard):
                     certain_hits.append(dg)
+                elif any(_segments_hit_rect(geom["paths"], c) for c in soft):
+                    risk_hits.append(dg)
             else:
                 risk_hits.append(dg)
         if not certain_hits and not risk_hits:
@@ -454,6 +516,7 @@ def detect(manifest: dict, profile: dict | None = None, *, panel_id: str = "figu
                     "basis": "geometry" if certain else "bbox",
                     "targets": hits,
                     "risk_only": risk_hits if certain else [],
+                    "legend_basis": legend_basis,
                     "legend_rect_mm": [
                         round(leg_rect[0] * W, 3),
                         round(leg_rect[1] * H, 3),

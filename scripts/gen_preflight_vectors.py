@@ -1462,7 +1462,7 @@ def cases() -> list[dict]:
             "interference-legend-risk-only",
             [
                 _box("axes_8.legend", "legend", [0.5, 0.625, 0.25, 0.25]),
-                _box("axes_8.images_0", "image", [0.125, 0.5, 0.75, 0.5]),
+                _box("axes_8.collections_0", "collection", [0.125, 0.5, 0.75, 0.5]),
             ],
         )
     )

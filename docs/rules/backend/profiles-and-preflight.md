@@ -113,7 +113,13 @@ order: 260
   （`scripts/gen_interference_vectors.py --write`，逐对，pytest 与 `web/src/lib/interference.test.ts` 各跑一遍）+
   `preflight_vectors.json` 的 `interference-*`（聚合）；其余旧向量的占位几何改成零面积点（只量规范、不量版面），结论逐条不变。
   真 worker 看护 `tests/test_preflight_interference.py`（FigureBench 防误报、`multi_panel` 的真碰撞、长标签 / 竖排 / `loc="best"` /
-  inset / 色条 / 隐藏图例）。已知误报来源：误差棒容器的包围盒盖住整个数据范围（`errorbar_fit` 报「可能」）；没有 `text_block`
+  inset / 色条 / 隐藏图例）。误差棒 / 茎叶按真实几何（`pathgeom.series_group_geometry` 的成员并：点、误差线段、帽、茎）判，
+  `BBOX_BASIS_ROLES` 已清空（维护者 2026-11-23）；图像按包围盒判「确定」（`RECT_BASIS_ROLES`）。仍只标风险的：给不出 geometry 的元素、
+  单根柱。**图例一侧的取法**（与数据出图摆放共用，唯一实现 `interference.legend_cover_rects` ↔ `legendCoverRects`）：
+  框画出来且背景不透明用整块框；无框 / 背景全透明只用条目文字框（soft，只能说「可能」）与示意格（hard）各外扩 1 px；
+  图例与所在坐标区不相交一律不报。事实是 manifest 只读 `legend_cover`（产生者只有 `engine/manifest.legend_cover`，
+  `LEGEND_COVER_STATUSES` 闭集，单图例条目数上限同 `pathgeom.MAX_MARKERS`、整图与 geometry 同上限另一份计数器），
+  量不了退回整块框。已知误报来源：没有 `text_block`
   的斜排文字仍按轴对齐的布局框判；`text-over-axes` 不做斜排复核。
 - 文档里存**绑定 + 绑定那一刻的规则全文快照**（`FigureDocument.profile`，可选，
   schema 仍是 2）：`{id, journal?, snapshot?, snapshotVersion?, follow?}`。ADR 0029
