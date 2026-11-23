@@ -1158,3 +1158,26 @@ def test_svgcheck_declaration_loops_check_the_wall_clock():
     with pytest.raises(svgcheck.SVGError):
         svgcheck._drop_inert(body, past)
     assert svgcheck._drop_inert("overflow:hidden;fill:red") == "fill:red"
+
+
+def test_reference_graph_walk_checks_the_wall_clock():
+    """引用环检测的全图遍历（`svgcheck._references`）也按间隔查墙钟：墙钟已过时，几千个节点的图在遍历中途就报超时，
+    不等整张图走完（#2034 合并组 rects 用例在慢 runner 上超时后多等了 1 秒）"""
+    n = 5000
+    nodes = list(range(n))
+    edges = [[i + 1] if i + 1 < n else [] for i in range(n)]
+    with pytest.raises(svgcheck.SVGError) as ei:
+        svgcheck._references(nodes, edges, {}, {}, svgcheck.SVGBudget(), deadline=0.0)
+    assert ei.value.code == "svg_timeout"
+
+
+def test_style_cascade_checks_the_wall_clock_per_rule_batch():
+    """一个元素对整张规则表逐条比的级联（`_computed`）也按规则数查墙钟：墙钟已过时，规则一多当场报超时"""
+    from xml.etree import ElementTree as ET
+
+    rules = svgimport.parse_css("".join(f".c{i}{{fill:red}}" for i in range(1000)), {})
+    ctx = svgimport._Ctx(ids={}, rules=rules, deadline=0.0)
+    el = ET.Element("rect", {"class": "c1"})
+    with pytest.raises(svgimport.SvgImportError) as ei:
+        svgimport._computed(el, {}, ctx)
+    assert ei.value.code == "timeout"

@@ -761,15 +761,19 @@ def _computed(el, parent: dict, ctx: _Ctx) -> dict:
     tag = _local(el.tag)
     cls = set(_classes(el))
     ident = el.get("id")
-    matched = [
-        r
-        for r in ctx.rules
-        if (r.tag is None or r.tag == tag)
-        and all(c in cls for c in r.classes)
-        and (r.ident is None or r.ident == ident)
-    ]
-    for r in matched:  # `ctx.rules` 在建 ctx 时已按 (spec, order) 排好序，这里不再每个元素排一遍
-        st.update(r.decls)
+    # 每个元素都要对整张规则表逐条比（最多 1 万条选择器）：每 256 条查一次墙钟，一个元素自己就能吃掉 0.1 s 以上，
+    # 不查的话超时触发后要等这个元素比完才返回
+    for n, r in enumerate(
+        ctx.rules
+    ):  # `ctx.rules` 在建 ctx 时已按 (spec, order) 排好序，这里不再每个元素排一遍
+        if not n & 0xFF:
+            _check_clock(ctx)
+        if (
+            (r.tag is None or r.tag == tag)
+            and all(c in cls for c in r.classes)
+            and (r.ident is None or r.ident == ident)
+        ):
+            st.update(r.decls)
     if el.get("style"):
         st.update(_parse_decls(el.get("style")))
     if st.get("fill", "").strip().lower() == "inherit":

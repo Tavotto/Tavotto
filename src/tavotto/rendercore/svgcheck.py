@@ -444,7 +444,7 @@ def _image_data(value: str, budget: SVGBudget) -> tuple[int, int]:
     return len(raw), width * height
 
 
-def _references(nodes, edges, refs, ids, budget):
+def _references(nodes, edges, refs, ids, budget, deadline: float = math.inf):
     for index, names in refs.items():
         for name in names:
             if name not in ids:
@@ -454,9 +454,15 @@ def _references(nodes, edges, refs, ids, budget):
     # indirect gradient/pattern cycles. Memoized expansion also bounds exponential use DAGs.
     done: dict[int, int] = {}
     active: set[int] = set()
+    tick = 0
     for root in range(len(nodes)):
         stack = [(root, False)]
         while stack:
+            tick += 1
+            if not tick & 0x3FF:
+                _check_deadline(
+                    deadline
+                )  # 全图遍历：几万个节点 + 引用边，慢机器上整段不查墙钟会多等一截
             node, finish = stack.pop()
             if node in done:
                 continue
@@ -600,6 +606,7 @@ def parse_svg(
     nodes = list(root.iter())
     indices = {id(node): i for i, node in enumerate(nodes)}
     edges = [[indices[id(child)] for child in node] for node in nodes]
+    _check_deadline(deadline)
     ids: dict[str, int] = {}
     refs: dict[int, list[str]] = {}
     metadata: set[int] = set()
@@ -660,7 +667,8 @@ def parse_svg(
             _name(k)[1] == "href" for k in node.attrib
         ):
             raise SVGError("svg_missing_reference")
-    _references(nodes, edges, refs, ids, budget)
+    _check_deadline(deadline)
+    _references(nodes, edges, refs, ids, budget, deadline)
     return root
 
 
