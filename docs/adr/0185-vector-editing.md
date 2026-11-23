@@ -93,6 +93,8 @@ Illustrator 用户最常按的三个颜色键）。两项都按其余项的频�
 - 没做：竖直倾斜（Illustrator 可选轴）；旋转过的对象非等比缩放时按它自己的框缩（Illustrator 会斜切出来）；对齐到关键对象、按指定间距分布、
   阵列（矩阵里仍是 ⬜，留到后面）。
 
+**修订（2026-11-15，M5：SVG 导入、文字转轮廓、复制为 SVG）**：覆盖率 87.0% → **91.2%**。设计在 [ADR 0189](0189-svg-interop.md)。
+
 ### 二、新对象类型 `path`
 
 ```ts
@@ -176,7 +178,7 @@ interface PathNode {
 - **M3 渐变**：见 [ADR 0186](0186-gradients.md)（扩 `ir.Paint` 闭集：PDF Shading Pattern、SVG `<linearGradient>`、EPS `shfill`）。
 - **M4 剪切蒙版与嵌套组**：现在的 `groupId` 是平铺一层；~~文档级加 `groups: { id, parentId?, clipBy? }[]`~~（2026-11-15 修订：改成对象上的 `groupPath` / `clipMask`，见 [ADR 0191](0191-nested-groups-and-clipping-masks.md)），导出映射到 `ir.Group(clip=…)`。
   必须与 `LayoutGroup`（行 / 列 / 网格排版组）分开，不许变成第二套组模型。另开 ADR。
-- **M5 SVG 互通**：粘贴 / 拖入 SVG 落成可编辑对象，复制为 SVG。
+- **M5 SVG 互通**：粘贴 / 拖入 SVG 落成可编辑对象，复制为 SVG。设计见 [ADR 0189](0189-svg-interop.md)。
 
 ### 六、旧构建的兜底（M0 第一个 PR，先于 `path` 发出）
 
