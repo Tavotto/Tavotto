@@ -21,6 +21,7 @@ import {
 } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useExactPanelManifest, usePanelDisplayManifest } from '@/store/renderStore'
+import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { propLabel } from '@/components/inspector/roles/registry'
@@ -359,6 +360,12 @@ function ElementQuick({
   const canSelectSameKind = sameKind.length >= 2 && !sameKind.every((g) => selectedGids.includes(g))
   const selectSameKind = () => {
     const ui = useUiStore.getState()
+    // 混排进来的画布标注（⇧ 点的文字 / 箭头 / 形状）一并放下：选区里有标注时属性页只给混排对齐、不出批量表单，
+    // 这一项要的正是那张批量表单（Codex #2150）
+    const sel = useSelectionStore.getState()
+    const objects = useDocumentStore.getState().doc.objects
+    const keep = sel.ids.filter((id) => objects.find((o) => o.id === id)?.type === 'panel')
+    if (keep.length !== sel.ids.length) sel.set(keep)
     ui.setSelectedGids(sameKind)
     ui.setRightTab('properties')
     close()

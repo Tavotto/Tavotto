@@ -1350,6 +1350,18 @@ describe('图内元素弹层的「选中全部同类」（来信 TVM-CKRH）', (
     expect(useUiStore.getState().rightTab).toBe('properties')
   })
 
+  it('混排进来的画布标注一并放下，属性页才出批量表单（Codex #2150）', async () => {
+    await seedTitles([title('axes_0.title'), title('axes_1.title')])
+    const note = { id: 'n1', type: 'text', x: 0, y: 0, w: 10, h: 5, text: 'x' }
+    await act(async () => {
+      useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: [...s.doc.objects, note as never] } }))
+      useSelectionStore.getState().set(['p1', 'n1'])
+    })
+    await click(item())
+    expect(useSelectionStore.getState().ids).toEqual(['p1'])
+    expect(useUiStore.getState().selectedGids).toEqual(['axes_0.title', 'axes_1.title'])
+  })
+
   it('这一类已经全选着时不摆这一项', async () => {
     useUiStore.getState().setSelectedGids(['axes_0.title', 'axes_1.title'])
     await seedTitles([title('axes_0.title'), title('axes_1.title')])
