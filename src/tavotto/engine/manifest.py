@@ -5237,6 +5237,119 @@ def scale_domain(ax, budget: list[int]) -> dict | None:
     return out
 
 
+#: `bar_baseline` 每一维的 `status` 闭集（V-002 `bar-baseline-truncated` 读它；不是 `ok` 一律不判）
+BAR_BASELINE_STATUSES = ("ok", "over_budget", "unavailable")
+
+
+def _bar_rects(patches, horizontal: bool) -> list[tuple[float, float, float]]:
+    """一个柱容器里可见柱的 `(底, 顶, 位置中心)`，按柱长那一维取。
+
+    竖柱的底是 `get_y()`、横柱是 `get_x()`：`Rectangle` 存的是锚点 + 有符号的高 / 宽，负值柱
+    `bar(x, -3)` 的锚点仍是 0、高是 -3，所以「底」就是锚点，不是包围盒的下沿。"""
+    out = []
+    for p in patches:
+        if horizontal:
+            base, length = float(p.get_x()), float(p.get_width())
+            center = float(p.get_y()) + float(p.get_height()) / 2.0
+        else:
+            base, length = float(p.get_y()), float(p.get_height())
+            center = float(p.get_x()) + float(p.get_width()) / 2.0
+        out.append((base, base + length, center))
+    return out
+
+
+def _close(a: float, b: float) -> bool:
+    return abs(a - b) <= 1e-9 * max(1.0, abs(a), abs(b))
+
+
+def _stacked_on_others(rects, others) -> bool:
+    """这个容器的**每一根**柱都正好叠在另一个容器某根柱的顶上（同一位置）——堆叠柱的上层。
+
+    上层的底各不相同时本来就没有共同基线；这里兜的是「下层柱高全相同」时上层底恰好统一的那种，
+    它的「基线」是下层的顶，不是柱长的起点，不判。"""
+    if not others:
+        return False
+    for base, _top, center in rects:
+        if not any(
+            _close(center, c2) and _close(base, top2)
+            for rs in others
+            for _b2, top2, c2 in rs
+            if math.isfinite(top2) and math.isfinite(c2)
+        ):
+            return False
+    return True
+
+
+def bar_baseline(ax, budget: list[int]) -> dict | None:
+    """线性轴上柱的共同基线的只读事实（V-002；不进 `editable`、不进文档，同 `scale_domain`）。
+
+    只在这根轴上有**可见**的 `BarContainer`（`bar` / `barh` / `hist`）时出现，按柱长那一维分：竖柱记 `y`、
+    横柱（`orientation == "horizontal"`）记 `x`：`{"y": {"status": "ok", "baselines": [{"value": 0.0, "bars": 2}]}}`。
+    `baselines` 只收**有共同基线**的容器——容器里所有可见柱的底（有限值）精确相等；浮动柱 / 甘特图（底各不相同）、
+    堆叠柱的上层（`_stacked_on_others`）不收。底相同的容器合并成一项、柱数相加，按首次出现排序；数值不舍入。
+
+    事实**只有基线**：轴范围与尺度由规则从同一个 axes 元素的 `xlim` / `ylim` / `xscale` / `yscale` 读，
+    所以在检查器里改 `ylim` 不改事实、只改结论。只判直角坐标轴（`ax.name == "rectilinear"`，twin / inset 都是）：
+    3D 的 `bar`、极坐标的玫瑰图也是 `BarContainer`，但「柱底」在那里不是同一个概念，不发。
+
+    `budget` 与数据指纹同一个上限（`FINGERPRINT_BUDGET`），是**第三份**计数器（与指纹、`scale_domain` 各自独立）；
+    按柱数扣，超出写 `over_budget` 且不扣；说不出方向（手工构造的 `BarContainer` 没有 `orientation`）或量的时候
+    抛错写 `unavailable`，规则见到这两种一律不判。"""
+    try:
+        if getattr(ax, "name", "") != "rectilinear":
+            return None
+        containers = [c for c in ax.containers if isinstance(c, BarContainer)]
+    except Exception:  # noqa: BLE001 —— 自定义 Axes 什么都可能抛；量不了就不发
+        return None
+    groups: dict[str, list[list]] = {"x": [], "y": []}
+    unknown = False
+    try:
+        for c in containers:
+            patches = [p for p in c.patches if p.get_visible()]
+            if not patches:
+                continue
+            orient = getattr(c, "orientation", None)
+            if orient == "vertical":
+                groups["y"].append(patches)
+            elif orient == "horizontal":
+                groups["x"].append(patches)
+            else:
+                unknown = True
+    except Exception:  # noqa: BLE001
+        unknown = True
+    if unknown:
+        return {"x": {"status": "unavailable"}, "y": {"status": "unavailable"}}
+    out: dict[str, dict] = {}
+    for dim in ("x", "y"):
+        conts = groups[dim]
+        if not conts:
+            continue
+        size = sum(len(ps) for ps in conts)
+        if size > budget[0]:
+            out[dim] = {"status": "over_budget"}
+            continue
+        budget[0] -= size
+        try:
+            rects = [_bar_rects(ps, dim == "x") for ps in conts]
+            baselines: list[dict] = []
+            for k, rs in enumerate(rects):
+                bases = [b for b, _t, _c in rs]
+                if not all(math.isfinite(b) for b in bases) or any(b != bases[0] for b in bases):
+                    continue  # 浮动柱 / 甘特图 / 底里有 NaN：没有共同基线，不判
+                if _stacked_on_others(rs, rects[:k] + rects[k + 1 :]):
+                    continue
+                value = bases[0] + 0.0  # -0.0 → 0.0
+                hit = next((e for e in baselines if e["value"] == value), None)
+                if hit is None:
+                    baselines.append({"value": value, "bars": len(rs)})
+                else:
+                    hit["bars"] += len(rs)
+            out[dim] = {"status": "ok", "baselines": baselines}
+        except Exception:  # noqa: BLE001
+            out[dim] = {"status": "unavailable"}
+    return out or None
+
+
 _MIN_HIT_PX = 4.0  # 扁平元素最小命中厚度（display 像素）
 
 #: 3D 轴上登记的数据图元的角色（ADR 0135）；`_refresh_hidden_3d_projections` 只看这几种。
@@ -6179,6 +6292,8 @@ def _measure_manifest(
     fingerprint_budget = [FINGERPRINT_BUDGET]
     #: V-001 的计数配额：与指纹同一个上限、另一份计数器（见 `scale_domain`）
     scale_domain_budget = [FINGERPRINT_BUDGET]
+    #: V-002 的计数配额：同一个上限、第三份计数器（见 `bar_baseline`）
+    bar_baseline_budget = [FINGERPRINT_BUDGET]
     for el in state.elements:
         artist = el["artist"]
         if not _owner_axis_drawn(el):
@@ -6267,6 +6382,11 @@ def _measure_manifest(
                 domain = scale_domain(artist, scale_domain_budget)
                 if domain:
                     entry["scale_domain"] = domain
+                # 柱的共同基线（V-002 `bar-baseline-truncated`）：只读事实，只在轴上有可见的柱时出现；
+                # 范围与尺度由规则从本元素的 editable 读。没有柱时键整个缺席，预检输出逐字节不变
+                baseline = bar_baseline(artist, bar_baseline_budget)
+                if baseline:
+                    entry["bar_baseline"] = baseline
             # 只读事实（不在 editable、不进文档）：这根轴的范围此刻是不是自动缩放算出来的。`set_[xy]lim` 会把它关掉。
             # TAF 的「目标范围外改动」靠它区分「自动缩放跟着变」与「显式改了坐标范围」（figureverify._auto_prop）。
             # `peers`：共享这根轴范围的兄弟轴（sharex / twinx 的另一半），它们的范围会跟着这根轴的目标一起变。

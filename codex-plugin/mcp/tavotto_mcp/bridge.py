@@ -4661,6 +4661,7 @@ FIX_MANUAL_HINTS = {
     "raster-dpi": "导出时把 dpi 调到规范要求以上。",
     "line-width-below-min": "把数据线加粗到期刊要求的线宽以上，回脚本改。",
     "log-axis-nonpositive": "对数轴画不出 ≤ 0 的值；换轴的尺度还是处理这些数据，由作者回脚本决定。",
+    "bar-baseline-truncated": "柱底被轴范围截掉，柱长不再和数值成比例；两种改法：轴从 0 起，或改成点图，由作者回脚本决定。",
 }
 
 

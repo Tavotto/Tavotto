@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「出版规范 profile 与预检」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_preflight.py`、`tests/test_preflight_log_axis.py`、`test_manifest_clip_bbox.py`、`test_profile_store.py`、`tests/golden/preflight_vectors.json`；期刊库（ADR 0155）：`tests/test_journal_catalog.py`、`web/src/lib/journals.test.ts`、`tests/golden/journal_vectors.json`；旧期刊底标签的新输出替换：`tests/test_mcp_dpi_attribution.py`、`web/src/lib/profile.test.ts` 与 `tests/golden/profile_display_vectors.json`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_preflight.py`、`tests/test_preflight_log_axis.py`、`tests/test_preflight_bar_baseline.py`、`test_manifest_clip_bbox.py`、`test_profile_store.py`、`tests/golden/preflight_vectors.json`；期刊库（ADR 0155）：`tests/test_journal_catalog.py`、`web/src/lib/journals.test.ts`、`tests/golden/journal_vectors.json`；旧期刊底标签的新输出替换：`tests/test_mcp_dpi_attribution.py`、`web/src/lib/profile.test.ts` 与 `tests/golden/profile_display_vectors.json`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
@@ -73,6 +73,26 @@ order: 260
   问题面板归 `lines`。求值器 `_check_log_axis_nonpositive` ↔ `preflight.ts` `checkLogAxisNonpositive`（计数口径
   `_domain_count` ↔ `domainCount`），golden `log-axis-*`；真 worker 看护 `tests/test_preflight_log_axis.py`，
   它重出的 `tests/golden/scale_domain_real.json` 由 `web/src/lib/preflight.logAxis.test.ts` 消费。
+- **`bar-baseline-truncated`（V-002，线性轴上柱的共同基线被截掉；与 V-001 同一行 1.0 豁免）**：事实是 axes 元素上的只读
+  `bar_baseline`，产生者只有 `engine/manifest.bar_baseline`（不进 `editable`、不进文档），只在**直角坐标轴**
+  （`ax.name == "rectilinear"`，twin / inset 都是；极坐标玫瑰图、3D 的 `bar` 不发）上有**可见**的 `BarContainer`
+  （`bar` / `barh` / `hist`）时出现；竖柱记 `y`、横柱（`orientation == "horizontal"`）记 `x`，说不出方向（手工构造的
+  容器没有 `orientation`）两维都写 `unavailable`。`baselines` 只收**有共同基线**的容器：所有可见柱的底（竖柱
+  `get_y()`、横柱 `get_x()`，即锚点——负值柱的底仍是 0）为有限值且精确相等；浮动柱 / 甘特图不收，堆叠柱的上层
+  （每根柱都正好叠在另一容器同位置那根的顶上，`_stacked_on_others`）不收；底相同的容器合并、柱数相加，数值不舍入。
+  **事实只有基线**：规则从同一元素 editable 的 `[xy]lim` / `[xy]scale` 读范围与尺度——检查器里改 `ylim` 不改事实、
+  只改结论；尺度必须**正是** `linear`（log / symlog / logit / asinh / 缺席一律不判，log 轴上的柱是 G-003 的事），
+  范围两个有限数且 `lo < hi`（按 min / max，反转的轴一样），基线落在闭区间 `[lo, hi]` 外（容差为跨度的 1e-9）才报；
+  差值柱（0 在范围内）自然不报。配额与 `FINGERPRINT_BUDGET` 同一个上限、**第三份计数器**（按柱数扣，超了写 `over_budget`
+  不扣）；`status` 不是 `ok` 一律不判。三张 severity 表都是 `warn`，`fix: none`（从 0 起还是改点图是作者的决定，MCP
+  手修提示只列两种改法），问题面板归 `lines`，定位到那一维的 `[xy]lim`。detail `{axis, baseline, lim_low, lim_high, bars}`，
+  `worse` 是截掉的距离占跨度的比例；message key 竖柱 `barBaselineTruncatedY`（纵轴）、横柱 `barBaselineTruncatedX`（横轴），
+  数字经 `_axis_num` ↔ `axisNum` 写成字符串（分档定小数位、对精确二进制值四舍五入远离 0——Python 用 `Decimal`
+  `ROUND_HALF_UP`，因为 `f"{v:.nf}"` 正好一半时取偶，会与 JS `toFixed` 分叉）。求值器 `_check_bar_baseline_truncated` ↔
+  `preflight.ts` `checkBarBaselineTruncated`，golden `bar-baseline-*`；真 worker 看护 `tests/test_preflight_bar_baseline.py`
+  （含仓库里其它含柱真脚本的防误报扫描），它重出的 `tests/golden/bar_baseline_real.json`（带那几个 editable 字段）由
+  `web/src/lib/preflight.barBaseline.test.ts` 消费。已知会报、规格未裁决的写法（维护者待定，不加特例）：inset 放大图、
+  断轴图的上半幅、逐柱循环画的瀑布 / 甘特图（每个容器只有一根柱，天然有「共同基线」）。
 - 文档里存**绑定 + 绑定那一刻的规则全文快照**（`FigureDocument.profile`，可选，
   schema 仍是 2）：`{id, journal?, snapshot?, snapshotVersion?, follow?}`。ADR 0029
   之前这里只存 `{id, journal}`，于是改一次全局规范，上个月定稿的图会**悄悄换一套

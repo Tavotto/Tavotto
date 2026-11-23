@@ -2784,6 +2784,13 @@ export interface ScaleDomainFact {
   errorbar_low_nonpositive?: number
 }
 
+/** `ManifestElement.bar_baseline` 的一维（`engine/manifest.BAR_BASELINE_STATUSES` 是 `status` 的闭集）。 */
+export interface BarBaselineFact {
+  status: 'ok' | 'over_budget' | 'unavailable'
+  /** 有共同基线的柱容器：底相同的合并、柱数相加，按首次出现排序；数值不舍入 */
+  baselines?: { value: number; bars: number }[]
+}
+
 export interface ManifestElement {
   gid: string
   role: string
@@ -2879,6 +2886,13 @@ export interface ManifestElement {
    * `engine/manifest.scale_domain`；消费者只有 `lib/preflight.ts` 的 `checkLogAxisNonpositive`。
    */
   scale_domain?: Partial<Record<'x' | 'y', ScaleDomainFact>>
+  /**
+   * 柱的共同基线的只读事实（V-002 `bar-baseline-truncated`）：只在 axes 元素、且这根直角坐标轴上有可见的柱时
+   * 出现；竖柱记 `y`、横柱记 `x`。浮动柱 / 堆叠的上层没有共同基线，不进 `baselines`。只有基线——范围与尺度
+   * 由预检从本元素的 `xlim` / `ylim` / `xscale` / `yscale` 读。产生者只有 `engine/manifest.bar_baseline`；
+   * 消费者只有 `lib/preflight.ts` 的 `checkBarBaselineTruncated`。
+   */
+  bar_baseline?: Partial<Record<'x' | 'y', BarBaselineFact>>
   /** 该 axes 其实是色条轴；属性页应改用它的色条元素 */
   is_colorbar?: boolean
   colorbar_gid?: string
