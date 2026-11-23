@@ -435,7 +435,9 @@ def _walk(pikepdf, container, resources, ctm, depth: int, w: _Walk, fonts_seen: 
         raise _BudgetExceeded(f"unparseable:{type(exc).__name__}") from exc
     stack: list = []
     font: _Font | None = None
-    # 文字状态里决定「字有多大、画不画」的三样：Tf 字号与渲染模式属于图形状态（q / Q 存取），文字矩阵每个 BT 重置
+    # 文字状态里决定「字有多大、画不画」的三样：Tf 字号与渲染模式属于图形状态（q / Q 存取），文字矩阵每个 BT 重置。
+    # `font` 本身同样属于图形状态，但它决定文字层怎么解码：这里**不动**既有行为（Q 之后沿用最近一次 Tf 的字体），
+    # 免得一次只加观测的改动顺带改了 `text_layer` 的结论
     font_size = 0.0
     text_mode = 0
     text_matrix = _IDENTITY
@@ -454,10 +456,10 @@ def _walk(pikepdf, container, resources, ctm, depth: int, w: _Walk, fonts_seen: 
         op = str(ins.operator)
         args = ins.operands
         if op == "q":
-            stack.append((ctm, font, font_size, text_mode))
+            stack.append((ctm, font_size, text_mode))
         elif op == "Q":
             if stack:
-                ctm, font, font_size, text_mode = stack.pop()
+                ctm, font_size, text_mode = stack.pop()
         elif op == "cm" and len(args) == 6:
             ctm = _mul(tuple(float(a) for a in args), ctm)
         elif op in ("S", "s", "f", "F", "f*", "B", "B*", "b", "b*"):
