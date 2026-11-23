@@ -179,3 +179,18 @@ def test_an_instrument_column_named_sem_is_not_dropped(project):
     out = propose(client, render="lazy").get_json()
     assert out["kind"] == "candidates", out
     assert all(i.recipe.y == ("SEM_depth_nm",) for i in session_of(out).items.values())
+
+
+def test_a_column_named_in_the_instruction_is_not_filtered_out(project):
+    """话里按词点名的列同样算「用户自己点了」：`plot stderr` 要画的就是 stderr（Codex 评审 #2158）。"""
+    _, client, figs, _ = project
+    rows = [["dose", "mean_response", "stderr"]] + [
+        [d, round(10 + 8 * i, 1), round(0.5 + 0.1 * i, 2)]
+        for i, d in enumerate((1, 2, 4, 8, 16, 32))
+    ]
+    put(figs, "data/dr.csv", rows)
+    plain = propose(client, render="lazy").get_json()
+    assert all(i.recipe.y == ("mean_response",) for i in session_of(plain).items.values())
+    named = propose(client, render="lazy", hint="plot stderr").get_json()
+    assert named["kind"] == "candidates", named
+    assert all(i.recipe.y == ("stderr",) for i in session_of(named).items.values())

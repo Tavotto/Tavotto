@@ -2027,7 +2027,7 @@ def _resolve_roles_raw(
     """列角色的挑选规则（**一处文字定义，下面是实现**；保守：能由结构或用户点名唯一确定就确定，有歧义就问，绝不猜）。
 
     记号：`ids` = `id_like` 列（**永不**当 y / x / 分组，只可能经用户确认成 `unit`）；`nums` = 数值列（`numeric_like`：全是数，或夹着不超过 20% 文字格的，去掉 ids，
-    再去掉名字在说「我是误差量」的列（`error_columns`：`sd` / `sem` / `mass_se` 一类——误差量不是测量值；用户自己点了它、或去掉后一个数值列都不剩时不去）；夹着的文字格那行不画并报告）；
+    再去掉名字在说「我是误差量」的列（`error_columns`：`sd` / `sem` / `mass_se` 一类——误差量不是测量值；用户自己点了它（`picks` 或 `hint` 里点名）、或去掉后一个数值列都不剩时不去）；夹着的文字格那行不画并报告）；
     `dates` = 日期列；`cats` = `groups` 里的列（去掉 ids，列顺序）。`hint` 里按词点名的列（`ai_data_figure._mentioned`，
     不做语义猜测）和选择题的回答 `picks`（键 `y` / `group` / `x`，值是列名或 `unsure`）都算「指定」。
 
@@ -2054,6 +2054,8 @@ def _resolve_roles_raw(
     asked = {
         v for v in [*(py if isinstance(py, list) else [py]), picks.get("x")] if isinstance(v, str)
     }
+    # 用户在话里按词点名的列（`hint`）同样算「自己点了」：`plot stderr` 要画的就是 stderr 那一列
+    asked |= set(adf._mentioned(hint, cols)) if hint else set()
     nums_all = list(nums)  # 下拉里仍然列得出误差列：用户自己点它是允许的
     errs = {c for c in error_columns(s) if c not in asked}
     if errs and any(c not in errs for c in nums):

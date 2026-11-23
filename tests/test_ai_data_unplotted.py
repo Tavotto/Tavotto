@@ -223,3 +223,52 @@ def test_a_blank_y_cell_is_missing_data_not_an_unmet_goal_but_an_empty_group_cel
         "failed",
         "rows_not_plotted",
     )
+
+
+def _large_relationship(tmp_path, monkeypatch, extra: str):
+    from tavotto.engine import ai_data_recipe as R
+
+    monkeypatch.setattr(adf, "SMALL_BYTES", 0)
+    monkeypatch.setattr(adf, "SMALL_ROWS", 50)
+    body = "".join(f"{i * 0.37 + 1:.3f},{(i * 7) % 13 + 0.5:.2f}\n" for i in range(400))
+    p = tmp_path / "cloud.csv"
+    p.write_text("dose_mg,response_mV\n" + body + extra, encoding="utf-8")
+    values = adf.read_text_table(p).summary
+    assert values.large is not None
+    recipe = R.FigureRecipe.from_dict(
+        {
+            "table": "cloud.csv",
+            "family": "relationship",
+            "layers": [{"mark": "points"}],
+            "x": "dose_mg",
+            "y": ["response_mV"],
+            "why": "x",
+        }
+    )
+    return values, recipe
+
+
+def test_on_a_large_table_a_blank_y_is_still_missing_data_not_an_unmet_goal(tmp_path, monkeypatch):
+    """大表与小表同一口径（Codex 评审 #2158）：只有纵轴空着的行没画 → 原因是 `y_missing`、「有数据却没画上」的行数是 0。"""
+    values, recipe = _large_relationship(tmp_path, monkeypatch, "200.5,\n201.5,nan\n")
+    rows = P.unplotted_rows(values, recipe)
+    assert P.unplotted_total(rows) == 2 and {r["reason"] for r in rows} == {"y_missing"}
+    assert P.unplotted_unmet(rows) == 0
+
+
+def test_on_a_large_table_rows_with_data_that_are_not_drawn_still_count_as_unmet(
+    tmp_path, monkeypatch
+):
+    values, recipe = _large_relationship(tmp_path, monkeypatch, "200.5,\n,3.0\noops,4.0\n")
+    rows = P.unplotted_rows(values, recipe)
+    assert P.unplotted_total(rows) == 3 and {r["reason"] for r in rows} == {"row_not_plotted"}
+    assert P.unplotted_unmet(rows) == 2  # 横轴不是值的两行；纵轴空着的那一行不算
+
+
+def test_unplotted_unmet_on_a_small_table_counts_by_reason():
+    rows = [
+        {"row": 2, "column": "y", "reason": "y_missing"},
+        {"row": 3, "column": "g", "reason": "group_empty"},
+        {"row": 4, "column": "x", "reason": "x_not_a_value"},
+    ]
+    assert P.unplotted_unmet(rows) == 2 and P.unplotted_unmet([]) == 0
