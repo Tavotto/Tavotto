@@ -930,6 +930,28 @@ def test_many_tspans_are_joined_in_linear_time(monkeypatch):
 
 SHORT_DEADLINE_S = 0.3
 SHORT_MARGIN_S = 1.0
+#: 余量还要随本机速度放大：墙钟查不进去的那几段（C 的 XML 解析、解析前对全文的正则扫描）耗时与机器快慢成正比，
+#: 负载高的 CI 分片上一份 1.7 MB 的输入光这些就能吃掉 1 秒（#2034 合并组 3.13 分片 1.30 s 被踢）。
+#: 以「同一份输入不带任何检查直接解析一遍」的耗时作单位：真正漏查墙钟的循环是超线性的（修前 4 s 到 500 s 以上），照样抓得住
+SHORT_CALIBRATION_FACTOR = 5.0
+
+
+def _parse_unit(text: str) -> float:
+    """本机把这份输入直接交给 XML 解析器（不经任何预算、墙钟检查）要多久：两次取快的那次"""
+    from xml.etree import ElementTree as ET
+
+    data = text.encode()
+    best = float("inf")
+    for _ in range(2):
+        t0 = time.monotonic()
+        try:
+            ET.fromstring(data)
+        except ET.ParseError:
+            pass
+        best = min(best, time.monotonic() - t0)
+    return best
+
+
 _OK_CODES = {"timeout", "too_many_elements", "too_large"}
 _XMLNS = 'xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"'
 
@@ -1064,6 +1086,7 @@ def test_short_wall_clock_bounds_every_construction(name, monkeypatch):
     monkeypatch.setattr(svgimport, "DEADLINE_S", SHORT_DEADLINE_S)
     text = _SHORT_CASES[name]()
     assert len(text.encode()) <= svgimport.MAX_BYTES, "构造超过了 MAX_BYTES：先调小再比"
+    unit = _parse_unit(text)
     t0 = time.monotonic()
     try:
         r = svgimport.import_svg(text)
@@ -1072,7 +1095,10 @@ def test_short_wall_clock_bounds_every_construction(name, monkeypatch):
         got = e.code
         assert got in _OK_CODES, got
     elapsed = time.monotonic() - t0
-    assert elapsed <= SHORT_DEADLINE_S + SHORT_MARGIN_S, f"{name}: {elapsed:.2f}s ({got})"
+    allowed = SHORT_DEADLINE_S + SHORT_MARGIN_S + SHORT_CALIBRATION_FACTOR * unit
+    assert elapsed <= allowed, (
+        f"{name}: {elapsed:.2f}s ({got}), 允许 {allowed:.2f}s（解析单位 {unit:.3f}s）"
+    )
 
 
 # ---- 第三轮枚举补充：没有墙钟可查的循环要么设上限、要么查墙钟 ----
