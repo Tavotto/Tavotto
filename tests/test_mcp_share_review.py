@@ -53,10 +53,13 @@ class ShareWorker(FakeWorker):
     def __init__(self) -> None:
         super().__init__()
         self.snapshots: list[tuple] = []
+        self.frame_dpi: float | None = (
+            None  # 换一个值 = 「同样的 patches，画面却不同」（换了运行配置 / 数据变了）
+        )
 
     def preview_png_snapshot(self, stem, patches, width_px, **_kw):
         self.snapshots.append((stem, list(patches), width_px))
-        png = artifactbytes.solid_png(1200, 900)
+        png = artifactbytes.solid_png(1200, 900, dpi=self.frame_dpi)
         return {"png": base64.b64encode(png).decode("ascii"), "manifest": self._manifest(patches)}
 
     def preview_png(self, stem, patches, width, tag):  # 旧引擎路径 / 不带确认的小预览
@@ -308,6 +311,31 @@ def test_a_render_failure_is_reported_with_the_adr_failure_code(on, project, wor
     assert res["isError"] is True and body["code"] == "review_network"
     assert body["failure"] == "network" and body["retryable"] is True
     assert body["next"]["tool"] == TOOL and body["next"]["args"]["explicit_confirm"] is True
+
+
+def test_a_retry_after_a_failure_never_uploads_the_previous_cached_frame(
+    on, project, worker, monkeypatch
+):
+    """Codex #2148 P1：网络失败可再试，`reviewshare` 按指纹复用上一次的渲染产物。patches / 标题 / 说明都没变、
+    画面却不同（换了运行配置、数据文件变了）时，指纹必须不同——上传的是这一次真画出来的画面，不是缓存里的旧画面。"""
+    sid = _open(project)
+    real = reviewshare._init_share
+    fails = iter([True])
+
+    def flaky(*a, **k):
+        if next(fails, False):
+            raise reviewshare._Failure("network")
+        return real(*a, **k)
+
+    monkeypatch.setattr(reviewshare, "_init_share", flaky)
+    first = _share(sid, title="t", explicit_confirm=True)
+    assert first["isError"] is True and _body(first)["failure"] == "network"
+    worker.frame_dpi = 300.0  # 同一会话、同样的 patches，画出来的画面不同
+    fresh = artifactbytes.solid_png(1200, 900, dpi=300.0)
+    out = _body(_share(sid, title="t", explicit_confirm=True))
+    assert out["status"] == "shared", out
+    (share,) = on.shares.values()
+    assert share.uploads[f"{share.share_id}/1"] == fresh
 
 
 def test_the_hard_off_switch_stops_a_confirmed_call_cold(project, worker, monkeypatch, srv, trust):

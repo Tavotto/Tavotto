@@ -5625,16 +5625,22 @@ def _review_renderer(rs, session: Session, patches: list):
         png, manifest = frame
         return rs.Rendered(png, rs.manifest_elements(manifest), rs.manifest_size_mm(manifest))
 
-    return render
+    return render, first[0]
 
 
-def _review_render_descriptor(session: Session) -> dict:
-    """上传记录里的「出图描述」：只有画面指纹（会话里改没改过），不含路径与脚本内容。"""
+def _review_render_descriptor(session: Session, frame_png: bytes) -> dict:
+    """上传记录里的「出图描述」：只有画面指纹，不含路径与脚本内容。
+
+    它也是 `reviewshare` 重试时复用上一次渲染产物的指纹（`_Spec.fingerprint`）。所以必须带上**这一次真画出来的画面**
+    （`frame_sha256`）：同一脚本换了运行配置 / 数据文件变了、patches 不变时，画面不同指纹就不同，绝不会把上一次缓存的
+    旧画面当成这一张发出去（Codex #2148 P1）。运行配置 id 一并记下，便于排查。"""
     return {
         "source": "agent",
         "stem": session.stem,
         "patch_hash": session.patch_hash(),
         "script_sha1": session.script_sha1,
+        "run_config": session.run_config_id,
+        "frame_sha256": hashlib.sha256(frame_png).hexdigest(),
     }
 
 
@@ -5818,8 +5824,8 @@ def share_review(
         _REVIEW_PENDING = None
         done = None
         patches = list(session.patches)
-        renderer = _review_renderer(rs, session, patches)
-        render = _review_render_descriptor(session)
+        renderer, first_png = _review_renderer(rs, session, patches)
+        render = _review_render_descriptor(session, first_png)
         scope_project = project_id(session.project)
         try:
             if rec is None:
