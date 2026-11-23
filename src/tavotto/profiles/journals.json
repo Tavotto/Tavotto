@@ -597,6 +597,13 @@
       "width": 801
      }
     },
+    "info.panel_label": {
+     "value": "8 pt bold, upright (not italic) a, b, c",
+     "strength": "recommended",
+     "stage": "production",
+     "src": "s1",
+     "quote": "Separate panels in multi-part figures should each be labelled with 8 pt bold, upright (not italic) a, b, c."
+    },
     "info.color_mode": {
      "value": "RGB recommended, CMYK accepted",
      "qualifier": "recommended",
