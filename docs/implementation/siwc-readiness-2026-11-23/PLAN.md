@@ -131,8 +131,8 @@ ADR 0147 修订（§六「流式回复不做」改为「SIWC wire 消费 SSE、�
 
 ## 四、风险
 
-1. **工具形状未公开**：文档只说函数工具「放进 namespace 或 `additional_tools` 输入条目」，没有 JSON 示例。Mock 只能验我们自己的假设；`build` 里把工具打包做成一个函数，真服务验证时只改这一处。
-2. **`response.completed` 是否带完整 `output`、`response.incomplete` 的载荷**：文档未写 → 两种都实现并测，标「未经真服务验证」。
+1. **工具形状只有通用指南的示例**：SIWC 页只说「放进 namespace 或 `additional_tools`」，namespace 的 JSON 取自通用 function-calling 指南；SIWC 路由上接不接受、扁平工具会不会被拒，都没验证。工具打包集中在 `build` 里一个函数，真服务验证时只改这一处。
+2. **`response.completed` 是否带完整 `output`、`response.output_item.done` 与 `response.incomplete` 的载荷**：SIWC 页与 streaming 指南都没写字段 → 两种都实现并测，标「未经真服务验证」。
 3. **`reasoning` / `include` 未提及**：本阶段不发思考强度；以后要发需真服务确认。
 4. **与 #2103 冲突**：两者都改 `loop.py` 的错误分类、`ai_connections` 的路由与 `vendors` 排序。拆开：PR-1 / PR-2 只需要十几行的 `_error_code`，可以先独立做（谁后合谁解冲突，`_error_code` 合并成一份）；
    PR-3 需要它的虚拟记录写法，**等 #2103 合入后再叠**，避免两套「虚拟连接」。
