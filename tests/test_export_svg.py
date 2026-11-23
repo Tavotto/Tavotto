@@ -1080,13 +1080,13 @@ def _run_script_on_disk(root):
     )
 
 
-def _disk_snapshot_reference(root):
-    """`F.pdf` 的独立接纳快照引用（捕获时按 static 字节绑定保存的磁盘别名）。"""
+def _disk_snapshot_reference(root, source="F.pdf"):
+    """磁盘别名（`F.pdf` / `F.svg`）的独立接纳快照引用（捕获时按 static 字节绑定保存）。"""
     record = svgstore.load(
         root,
-        "F.pdf",
+        source,
         patchspec.patch_hash([]),
-        static_sha256=figcapture.hash_file(root / "F.pdf")[0],
+        static_sha256=figcapture.hash_file(root / source)[0],
         remap_fingerprint=m.engine_inputremap.fingerprint(root),
         storage_root=m._svg_storage_root(root),
     )
@@ -1173,3 +1173,149 @@ def test_cold_origin_replay_requests_the_archived_execution_profile(project, mon
         )
     assert excinfo.value.code == m.engine_runcodes.NATIVE_SESSION_OFFLINE
     assert seen == [m.engine_enginesession.PROFILE_NATIVE]
+
+
+def test_original_export_checks_the_origin_even_with_a_saved_snapshot(project, monkeypatch):
+    """同时带快照与出处时，快照不是出处授权：冷进程没有唯一活执行就拒绝（Codex #1926 P1 残项）。"""
+    client, root = project
+    _run_script_on_disk(root)
+    run_script(client)
+    reference = _disk_snapshot_reference(root)
+    request = spec("F.pdf", scope="original", formats=("pdf",), reference=reference)
+    request["original"]["figure_origin"] = {
+        "version": 1,
+        "snapshot": reference,
+        "patches": [],
+    }
+    body, outputs = output(client, request)
+    assert outputs["pdf"]["status"] == "done", body
+    pool.shutdown_all(figures_dir=str(root), wait=True)
+    m.reset_projects()
+    m.open_project(str(root))
+    monkeypatch.setattr(
+        pool, "get", lambda *a, **k: pytest.fail("cold origin export executed code")
+    )
+    response = client.post("/api/export", json=request)
+    assert response.status_code >= 400, response.get_json()
+    payload = response.get_json()
+    assert payload["status"] == "failed", payload
+    assert payload["code"] == "svg_source_unavailable", payload
+
+
+def test_annotated_eps_for_a_historical_svg_asset_uses_its_origin(project):
+    """未编辑 `.svg` 的带标注 EPS 有出处时走出处执行，不再按当前文件绑定（Codex #1926 P1 残项）。"""
+    client, root = project
+    _disk_svg_from_script(root, (3, 2))
+    run_script(client)
+    reference = _disk_snapshot_reference(root, "F.svg")
+    # 当前文件字节改掉：按当前文件绑定的那条路会 eps_source_unverified，存档出处不受影响。
+    (root / "F.svg").write_bytes(SVG_ASSET)
+    request = spec("F.svg", scope="original", formats=("eps",))
+    request["original"].update(
+        {
+            "w_mm": 76.2,
+            "h_mm": 50.8,
+            "objects": [
+                {
+                    "id": "note",
+                    "type": "text",
+                    "text": "note",
+                    "x_mm": 5,
+                    "y_mm": 5,
+                    "w_mm": 40,
+                    "h_mm": 8,
+                    "size_pt": 10,
+                }
+            ],
+            "figure_origin": {"version": 1, "snapshot": reference, "patches": []},
+        }
+    )
+    body, outputs = output(client, request)
+    assert outputs["eps"]["status"] == "done", body
+
+
+def test_merged_pdf_page_cache_distinguishes_a_historical_origin(project):
+    """多页 PDF 的页缓存键必须带出处：两页同 id/overrides/快照字段时不能复用另一页的历史渲染（Codex #1926 新 P1）。"""
+    import pikepdf
+    import pymupdf
+
+    client, root = project
+    _run_script_on_disk(root)
+    run_script(client)
+    reference = _disk_snapshot_reference(root)
+    changed = pikepdf.new()
+    changed.add_blank_page(page_size=(300, 300))
+    changed.save(root / "F.pdf")
+    request = {
+        "scope": "original",
+        "filename": "merged",
+        "formats": ["pdf"],
+        "merge_pdf": {
+            "pages": [
+                {
+                    "figure_id": "F.pdf",
+                    "source_kind": "vector",
+                    "figure_origin": {
+                        "version": 1,
+                        "snapshot": reference,
+                        "patches": [],
+                    },
+                },
+                {"figure_id": "F.pdf", "source_kind": "vector"},
+            ]
+        },
+    }
+    body, outputs = output(client, request)
+    assert outputs["pdf"]["status"] == "done", body
+    produced = Path(body["export_dir"]) / outputs["pdf"]["name"]
+    with pymupdf.open(produced) as pdf:
+        sizes = [(round(page.rect.width), round(page.rect.height)) for page in pdf]
+    assert sizes == [(216, 144), (300, 300)], sizes
+
+
+def test_archived_pdf_raster_reports_the_archived_page_size(project):
+    """存档 PDF 出 PNG/TIFF 时，回报尺寸必须是存档那一页，不是请求里替换文件的 w/h（Codex #1926 P2）。"""
+    import pikepdf
+
+    client, root = project
+    _run_script_on_disk(root)
+    run_script(client)
+    reference = _disk_snapshot_reference(root)
+    changed = pikepdf.new()
+    changed.add_blank_page(page_size=(288, 288))
+    changed.save(root / "F.pdf")
+    request = spec("F.pdf", scope="original", formats=("png",), reference=reference)
+    request["original"]["w_mm"] = 101.6
+    request["original"]["h_mm"] = 101.6
+    body, outputs = output(client, request)
+    assert outputs["png"]["status"] == "done", body
+    assert outputs["png"]["dimensions"]["mm"] == pytest.approx([76.2, 50.8], abs=0.01)
+
+
+def test_execution_source_forwards_the_archived_profile_to_the_replay_lookup(monkeypatch):
+    """冷回放的第二次取会话也要带归档档位，不能退回 safe（Codex #1926 P1 残项）。"""
+    calls = []
+    monkeypatch.setattr(m, "_serialize_figure_with_worker", lambda *a, **k: calls.append(k))
+    monkeypatch.setattr(m, "_load_svg_snapshot", lambda *a, **k: None)
+    with pytest.raises(m.engine_exportreq.ExportRequestError):
+        m._execution_source(
+            {"id": "F.pdf"}, 600, None, None, include_svg=True, execution_profile="native"
+        )
+    assert calls and calls[0]["execution_profile"] == "native"
+
+
+def test_serialize_figure_with_worker_forwards_the_archived_profile(monkeypatch):
+    seen = []
+
+    def engine_worker(rel_id, **kwargs):
+        seen.append(kwargs)
+        return None, "F"
+
+    monkeypatch.setattr(m, "_engine_worker", engine_worker)
+    assert (
+        m._serialize_figure_with_worker(
+            "F.pdf", [], "pdf", 600, include_svg=True, execution_profile="native"
+        )
+        is None
+    )
+    assert seen == [{"existing_only": True, "execution_profile": "native"}]

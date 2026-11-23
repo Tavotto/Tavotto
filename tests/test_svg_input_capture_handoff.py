@@ -414,3 +414,74 @@ def test_project_package_carries_captured_inputs_and_keeps_snapshot_id(case):
         payload = json.loads(archive.read(snapshot_name))["payload"]
         assert "input_archive" in payload
         assert any(name.startswith(f"assets/{prefix}/inputs/") for name in names)
+
+
+def test_saved_snapshot_records_its_profile_for_cold_replay(tmp_path, monkeypatch):
+    """真实保存的快照要带上执行档位；冷回放按它解析，不手工补 profile（Codex #1926 P1 残项）。"""
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
+    worker, _data = _frozen(tmp_path, native=True)
+    rcpt = _from_worker(worker)
+    assert rcpt.profile == "native"
+    root = Path(worker.spec.project_root)
+    (root / "F.pdf").write_bytes(PDF)
+    (root / "tavotto_registry.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "scripts": {
+                    "plot.py": {"entry": "main", "cost": "light", "notes": "", "stems": ["F"]}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    directory = tmp_path / "native-paired"
+    directory.mkdir()
+    pdf, svg = directory / "figure.pdf", directory / "figure.svg"
+    pdf.write_bytes(PDF)
+    svg.write_bytes(SVG)
+    frozen = sources.FrozenSource(
+        receipt.source_artifact_for(rcpt, pdf, source_id="F.pdf", patch_hash=PATCH),
+        pdf,
+        rcpt.public_facts(),
+        sources.FrozenSource(
+            receipt.source_artifact_for(rcpt, svg, source_id="F.pdf", patch_hash=PATCH),
+            svg,
+            rcpt.public_facts(),
+        ),
+    )
+    saved = m._save_svg_snapshot(frozen, project_root=root, execution_owner=OWNER, activate=True)
+    record = svgstore.load_document_snapshot(
+        root,
+        saved["snapshot_ref"],
+        source_id="F.pdf",
+        patch_hash=PATCH,
+        remap_fingerprint=m.engine_inputremap.fingerprint(root),
+        storage_root=m._svg_storage_root(root),
+    )
+    assert record is not None
+    assert record["receipt"]["profile"] == "native"
+    seen = []
+
+    def resolve(**kwargs):
+        seen.append(kwargs["execution_profile"])
+        if kwargs["execution_profile"] != m.engine_enginesession.PROFILE_NATIVE:
+            raise AssertionError("cold replay fell back to a safe session")
+        raise m.engine_runcodes.RunError(m.engine_runcodes.NATIVE_SESSION_OFFLINE)
+
+    monkeypatch.setattr(m.engine_enginesession, "resolve", resolve)
+    m.open_project(str(root))
+    try:
+        with pytest.raises(m.engine_runcodes.RunError) as excinfo:
+            m._replay_figure_origin(
+                "F.pdf",
+                {"version": 1, "snapshot": saved["snapshot_ref"], "patches": []},
+                record,
+                SimpleNamespace(path=root),
+            )
+    finally:
+        m.reset_projects()
+    assert excinfo.value.code == m.engine_runcodes.NATIVE_SESSION_OFFLINE
+    assert seen == [m.engine_enginesession.PROFILE_NATIVE]

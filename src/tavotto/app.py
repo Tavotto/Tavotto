@@ -2071,6 +2071,7 @@ def _replay_figure_origin(rel_id, origin, record, ctx):
             sink,
             Path(temporary),
             include_svg=True,
+            **archived_profile,
         )
         if frozen is None:
             raise _FigureOriginError("The historical Figure input cannot be replayed.")
@@ -2172,6 +2173,7 @@ def _serialize_figure_with_worker(
     svg_text: bool = False,
     source_path_required: bool = True,
     figure_origin=None,
+    execution_profile: str | None = None,
 ) -> tuple[Path, object, str] | None:
     """`_serialize_figure` 的本体：多回 `(路径, worker-like, 脚本)`——候选后端的执行侧源解析器要拿
     worker 装配回执（`engine/receipt`），旧调用方只取路径。"""
@@ -2190,16 +2192,24 @@ def _serialize_figure_with_worker(
             existing_only=True,
             **_artifact_kwargs(artifact_source),
             **({"source_path_required": False} if not source_path_required else {}),
+            **({"execution_profile": execution_profile} if execution_profile is not None else {}),
         )
         if worker is None:
             return None
         info = current_registry().for_stem(stem)
         script = str(info["script"]) if info else ""
     elif artifact_source is not None:
-        worker, stem = _engine_worker(rel_id, artifact_source=artifact_source)
+        worker, stem = _engine_worker(
+            rel_id,
+            artifact_source=artifact_source,
+            **({"execution_profile": execution_profile} if execution_profile is not None else {}),
+        )
         script = str(current_registry().for_stem(stem)["script"])
     elif engine_runtimeasset.is_runtime_id(rel_id):
-        worker, stem = _engine_worker(rel_id)
+        worker, stem = _engine_worker(
+            rel_id,
+            **({"execution_profile": execution_profile} if execution_profile is not None else {}),
+        )
         info = _resolve_runtime_asset(rel_id)
         script = str(info["script"]) if info else ""
     else:
@@ -2208,7 +2218,10 @@ def _serialize_figure_with_worker(
         if info is None:
             return None
         script = str(info["script"])
-        worker = _safe_worker(info["script"], info["entry"], stem)
+        if execution_profile is not None:
+            worker, _ = _engine_worker(rel_id, execution_profile=execution_profile)
+        else:
+            worker = _safe_worker(info["script"], info["entry"], stem)
 
     def assert_expected_execution() -> None:
         # 调用方（SVG 素材的 EPS）核过的是「某一次执行」的绑定：拿到 worker 之后、导出前后各核一次回执，
@@ -2405,6 +2418,7 @@ def _execution_source(
     include_svg: bool = False,
     snapshot_only: bool = False,
     with_text_svg: bool = False,
+    execution_profile: str | None = None,
 ):
     """候选后端的执行侧源：带 override / runtime 素材的面板 → 当次权威 worker 现画的 PDF +
     **回执**（`origin=execution`，`receipt_id` / `receipt_identity` / `patch_hash` 进 RenderPlan 的
@@ -2412,6 +2426,9 @@ def _execution_source(
 
     没有脚本的磁盘面板带着 override 走到这里 = 画不出用户看到的那张图：抛 `source_needs_execution`
     而不是退回磁盘原件（那是「拿旧文件冒充本次执行」，RC-017）。
+
+    `execution_profile` 只由归档出处的冷回放传：重放后的第二次取会话（`include_svg` 那条）
+    也必须按回执的档位解析，不能退回磁盘面板默认的 safe。
     """
     from .rendercore import sources as rc_sources
 
@@ -2427,6 +2444,21 @@ def _execution_source(
                 f"{rel_id}: the saved Figure snapshot no longer matches this source or edit.",
                 {"id": rel_id},
             )
+        if origin is not None:
+            # 保存的输出版本不是历史输入的授权：出处必须仍有唯一活执行，
+            # 且两者指向同一次执行（同一份不可变配对）。
+            try:
+                _admit_figure_origin(rel_id, origin)
+            except engine_pool.WorkerError as exc:
+                raise engine_exportreq.ExportRequestError(
+                    exc.code, str(exc), {"id": rel_id}
+                ) from exc
+            if saved.receipt.get("receipt_id") != origin["snapshot"]["receiptId"]:
+                raise engine_exportreq.ExportRequestError(
+                    "bad_request",
+                    "Historical and saved Figure inputs conflict.",
+                    {"id": rel_id},
+                )
         return saved
     try:
         rendered = _serialize_figure_with_worker(
@@ -2440,6 +2472,7 @@ def _execution_source(
             **({"include_svg": True, "snapshot_only": snapshot_only} if include_svg else {}),
             **({"svg_text": True} if include_svg and with_text_svg else {}),
             **({"figure_origin": origin} if origin is not None else {}),
+            **({"execution_profile": execution_profile} if execution_profile is not None else {}),
         )
     except engine_pool.WorkerError as exc:
         if origin is not None:
@@ -3380,7 +3413,11 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
     fmt = engine_exportreq.FORMAT_EPS
     dpi = req.ppi or engine_exportreq.PPI_DEFAULT
     source_ctx = (artifact_sources or {}).get(src.figure_id)
-    if Path(src.figure_id).suffix.lower() in SVG_EXT and not src.overrides:
+    if (
+        Path(src.figure_id).suffix.lower() in SVG_EXT
+        and not src.overrides
+        and src.figure_origin is None
+    ):
         inner = _produce_svg_asset_eps(job, src, dpi, tmp_dir, artifact_source=source_ctx)
     else:
         inner = _produce_original_eps(
@@ -3658,6 +3695,15 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                 "Saved Figure snapshot no longer matches the static source",
                 {"id": src.figure_id},
             )
+    # 有明确快照引用时，source_path 是存档那一页；位图格式的回报尺寸也必须来自它，
+    # 不能沿用请求里替换文件的 w/h（存档可能经 `_execution_source` 或上面的手工分支加载）。
+    page_mm_override = None
+    if src.figure_snapshot is not None and source_path.suffix.lower() == ".pdf":
+        archived_page = pdfbackend.probe_asset(source_path, "pdf")
+        page_mm_override = (
+            round(archived_page["w_pt"] * 25.4 / 72.0, 3),
+            round(archived_page["h_pt"] * 25.4 / 72.0, 3),
+        )
     raster_source = source_path.suffix.lower() != ".pdf"
     page_pt = _original_page_pt(source_path, src) if raster_source else None
     disk_source = _original_disk_source_manifest(src, source_path)
@@ -3733,8 +3779,8 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                         tmp_path=tmp,
                         width_px=facts["px_w"],
                         height_px=facts["px_h"],
-                        width_mm=src.w_mm,
-                        height_mm=src.h_mm,
+                        width_mm=page_mm_override[0] if page_mm_override else src.w_mm,
+                        height_mm=page_mm_override[1] if page_mm_override else src.h_mm,
                         vector=False,
                         manifest=disk_source,
                     )
@@ -4099,7 +4145,9 @@ def _export_produce_merged_pdf(job, tmp_dir: Path, *, artifact_sources=None) -> 
     for i, src in enumerate(pages):
         job.check_cancelled()
         key = json.dumps(
-            [src.figure_id, src.overrides, src.figure_snapshot], sort_keys=True, default=str
+            [src.figure_id, src.overrides, src.figure_snapshot, src.figure_origin],
+            sort_keys=True,
+            default=str,
         )
         path = done.get(key)
         if path is None:
