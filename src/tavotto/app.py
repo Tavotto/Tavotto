@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import contextvars
 import dataclasses
 import errno
 import functools
@@ -2590,22 +2591,116 @@ def _save_svg_snapshot(
     if companion is None:
         return
     root = project_root if project_root is not None else require_project()
-    return svgstore.save(
-        root,
-        frozen.artifact.source_id,
-        frozen.artifact.patch_hash,
-        pdf=read_frozen(frozen),
-        svg=read_frozen(companion),
-        artifact=frozen.artifact.to_payload(),
-        receipt=frozen.receipt,
-        static_sha256=static_sha256,
-        execution_owner=execution_owner,
-        remap_fingerprint=engine_inputremap.fingerprint(root),
-        storage_root=_svg_storage_root(root),
-        # 缺省调用形状逐字不变（看护：test_svg_input_capture_handoff 的精确 kwargs）
-        **({"activate": True} if activate else {}),
-        **_svg_input_archive_kwargs(captured_input_archive),
+    pdf = read_frozen(frozen)
+    svg = read_frozen(companion)
+
+    def save():
+        return svgstore.save(
+            root,
+            frozen.artifact.source_id,
+            frozen.artifact.patch_hash,
+            pdf=pdf,
+            svg=svg,
+            artifact=frozen.artifact.to_payload(),
+            receipt=frozen.receipt,
+            static_sha256=static_sha256,
+            execution_owner=execution_owner,
+            remap_fingerprint=engine_inputremap.fingerprint(root),
+            storage_root=_svg_storage_root(root),
+            # 缺省调用形状逐字不变（看护：test_svg_input_capture_handoff 的精确 kwargs）
+            **({"activate": True} if activate else {}),
+            **_svg_input_archive_kwargs(captured_input_archive),
+        )
+
+    try:
+        return save()
+    except svgstore.SnapshotBudgetExceeded:
+        # 项目里的导出快照满了：回收没有任何文档 / 版本引用的旧变体再试一次；
+        # 引用扫不全就一个都不删，照旧报满（细则「项目配对存储与不可变 archive」）。
+        if not _reclaim_svg_snapshots(root, incoming_bytes=len(pdf) + len(svg)):
+            raise
+        return save()
+
+
+#: 正在冻结、尚未落盘的文档正文：同一次保存里前一个面板刚写下的引用还不在磁盘上，
+#: 回收必须把它算作「被引用」。
+_SVG_PENDING_DOCUMENT: contextvars.ContextVar = contextvars.ContextVar(
+    "svg_pending_document", default=None
+)
+_SVG_REFERENCE_SCAN_MAX_FILES = 20000
+_SVG_REFERENCE_SCAN_MAX_FILE_BYTES = 128 * 1024 * 1024
+_SVG_REFERENCE_SCAN_MAX_BYTES = 2 * 1024 * 1024 * 1024
+_SVG_REFERENCE_ID = re.compile(rb"(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])")
+
+
+def _svg_reference_corpus(root: Path) -> frozenset[bytes] | None:
+    """所有可能引用本项目导出快照的已存文档里出现过的 64 位十六进制串；扫不全返回 None（调用方据此不删）。
+
+    不按键名解析（`figureSnapshot` / `figure_origin` / 版本历史里的整份文档……），
+    快照 ID 作为独立的十六进制串出现就算被引用：宁可多留，不误删。
+    """
+    from .engine import svgstore
+
+    store = engine_config.project_store_dir(root)
+    snapshot_dir = store / svgstore.STORE_DIRNAME
+    found: set[bytes] = set()
+    pending = _SVG_PENDING_DOCUMENT.get()
+    if pending is not None:
+        found.update(_SVG_REFERENCE_ID.findall(json.dumps(pending).encode("utf-8")))
+    files = 0
+    total = 0
+    try:
+        for base in (store, Path(root) / "canvases", LAYOUT_DIR):
+            if not base.is_dir():
+                continue
+            for directory, dirnames, filenames in os.walk(base, onerror=_raise_walk_error):
+                here = Path(directory)
+                if here == snapshot_dir or snapshot_dir in here.parents:
+                    dirnames[:] = []
+                    continue
+                for name in filenames:
+                    if ".json" not in name:
+                        continue
+                    path = here / name
+                    files += 1
+                    try:
+                        size = path.stat().st_size
+                    except FileNotFoundError:
+                        continue
+                    total += size
+                    if (
+                        files > _SVG_REFERENCE_SCAN_MAX_FILES
+                        or size > _SVG_REFERENCE_SCAN_MAX_FILE_BYTES
+                        or total > _SVG_REFERENCE_SCAN_MAX_BYTES
+                    ):
+                        return None
+                    try:
+                        found.update(_SVG_REFERENCE_ID.findall(path.read_bytes()))
+                    except FileNotFoundError:
+                        continue
+    except OSError:
+        return None
+    return frozenset(found)
+
+
+def _raise_walk_error(error: OSError) -> None:
+    raise error
+
+
+def _reclaim_svg_snapshots(root, *, incoming_bytes: int) -> int:
+    from .engine import svgstore
+
+    corpus = _svg_reference_corpus(Path(root))
+    if corpus is None:
+        LOG.info("Figure snapshot store is full; reference scan incomplete, nothing reclaimed")
+        return 0
+    removed = svgstore.reclaim(
+        _svg_storage_root(root),
+        referenced=lambda snapshot_id: snapshot_id.encode("ascii") in corpus,
+        incoming_bytes=incoming_bytes,
     )
+    LOG.info("Figure snapshot store was full; reclaimed %d unreferenced variants", removed)
+    return removed
 
 
 def _svg_worker_owner(worker, script=None):
@@ -3172,7 +3267,12 @@ def _freeze_document_svg_sources_best_effort(document: dict) -> list[str]:
     warnings = set()
     directory = engine_config.data_path("svg-snapshot-staging")
     directory.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="save-", dir=directory) as temporary:
+    pending = _SVG_PENDING_DOCUMENT.set(document)
+    with (
+        contextlib.ExitStack() as cleanup,
+        tempfile.TemporaryDirectory(prefix="save-", dir=directory) as temporary,
+    ):
+        cleanup.callback(_SVG_PENDING_DOCUMENT.reset, pending)
         for obj in _doc_objects(document):
             if obj.get("type") != "panel" or not obj.get("fileId"):
                 continue

@@ -1319,3 +1319,94 @@ def test_serialize_figure_with_worker_forwards_the_archived_profile(monkeypatch)
         is None
     )
     assert seen == [{"existing_only": True, "execution_profile": "native"}]
+
+
+def _title_gid(client, source):
+    response = client.post("/api/engine/render", json={"id": source, "patches": []})
+    assert response.status_code == 200, response.get_json()
+    return next(
+        el["gid"]
+        for el in response.get_json()["manifest"]["elements"]
+        for prop in el.get("editable", [])
+        if prop["prop"] == "text" and prop.get("value") == "Source title"
+    )
+
+
+def _save_edit(client, source, gid, index, name="work"):
+    patches = [{"gid": gid, "prop": "text", "value": f"Edited title {index}"}]
+    response = client.post("/api/engine/render", json={"id": source, "patches": patches})
+    assert response.status_code == 200, response.get_json()
+    saved = client.post(f"/api/layouts/{name}?target=project", json=document(source, patches))
+    assert saved.status_code == 200, saved.get_json()
+    return patches, saved.get_json()
+
+
+def _snapshot_store_bytes(root):
+    store = root / "tavottofile" / "figure_snapshots"
+    return sum(p.stat().st_size for p in store.rglob("*") if p.is_file() and p.name != ".lock")
+
+
+def test_full_project_snapshot_store_reclaims_unreferenced_edits_on_save(project, monkeypatch):
+    """One user's report: repeated edits filled the project store; SVG export had no way out."""
+    from tavotto.engine import svgstore
+
+    client, root = project
+    monkeypatch.setattr(svgstore, "RECLAIM_GRACE_SECONDS", 0, raising=False)
+    source = run_script(client)
+    kept = client.post("/api/layouts/kept?target=project", json=document(source, []))
+    assert kept.status_code == 200, kept.get_json()
+    kept_ref = kept.get_json()["figure_snapshots"]["panel"]
+    gid = _title_gid(client, source)
+    first_patches, first = _save_edit(client, source, gid, 1)
+    first_ref = first["figure_snapshots"]["panel"]
+    for index in (2, 3):
+        _save_edit(client, source, gid, index)
+    monkeypatch.setattr(svgstore, "MAX_TOTAL_BYTES", _snapshot_store_bytes(root) + 200)
+    _, full = _save_edit(client, source, gid, 4)
+    assert not full.get("svg_snapshot_warnings"), full
+    assert full["figure_snapshots"]["panel"]["snapshotId"]
+    archives = {p.stem for p in (root / "tavottofile" / "figure_snapshots" / "snapshots").glob("*")}
+    # A saved document still references this one; it is never reclaimed.
+    assert kept_ref["snapshotId"] in archives
+    # The overwritten edit is referenced by nothing any more.
+    assert first_ref["snapshotId"] not in archives
+    body, outputs = output(client, spec(source, scope="original", reference=kept_ref))
+    assert_svg(body, outputs["svg"])
+    # A reference whose variant was reclaimed asks for a rerun in one line, like any
+    # missing snapshot; it is never an unexplained failure.
+    stale = client.post(
+        "/api/export",
+        json=spec(source, scope="original", patches=first_patches, reference=first_ref),
+    )
+    assert stale.get_json()["code"] == "svg_snapshot_missing", stale.get_json()
+
+
+def test_full_project_snapshot_store_deletes_nothing_when_documents_cannot_be_scanned(
+    project, monkeypatch
+):
+    from tavotto.engine import svgstore
+
+    client, root = project
+    monkeypatch.setattr(svgstore, "RECLAIM_GRACE_SECONDS", 0, raising=False)
+    source = run_script(client)
+    gid = _title_gid(client, source)
+    for index in (1, 2, 3):
+        _save_edit(client, source, gid, index)
+    monkeypatch.setattr(svgstore, "MAX_TOTAL_BYTES", _snapshot_store_bytes(root) + 200)
+    monkeypatch.setattr(m, "_svg_reference_corpus", lambda root: None, raising=False)
+    store = root / "tavottofile" / "figure_snapshots"
+    before = sorted(p.name for p in store.rglob("*") if p.is_file())
+    _, full = _save_edit(client, source, gid, 4)
+    assert full["svg_snapshot_warnings"] == [source], full
+    assert sorted(p.name for p in store.rglob("*") if p.is_file()) == before
+
+
+def test_reclaim_keeps_references_frozen_earlier_in_the_same_save(project):
+    client, root = project
+    pending = {"objects": [{"figureSnapshot": {"snapshotId": "f" * 64}}]}
+    token = m._SVG_PENDING_DOCUMENT.set(pending)
+    try:
+        corpus = m._svg_reference_corpus(root)
+    finally:
+        m._SVG_PENDING_DOCUMENT.reset(token)
+    assert corpus is not None and ("f" * 64).encode() in corpus

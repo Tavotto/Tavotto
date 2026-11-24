@@ -103,9 +103,17 @@ order: 200
   `snapshots/` 的内容寻址 ID 覆盖完整来源 identity、执行回执身份及 generation、PDF/SVG 两份字节 hash与可选 owner；
   归档与 blob 读回均核完整性。新运行 `activate` 只撤销旧代 current lookup，**不删除不可变 archive**，
   历史文档的明确引用仍可在其授权条件下读到保存版本；archive 的保留不等于旧图获准冒充当前运行。
-  项目资产**没有 TTL，也不为新资产自动驱逐已有 archive**。容量先判再写，`MAX_SNAPSHOTS=256` 数的是
+  项目资产**没有 TTL，也不为新资产驱逐被引用的 archive**。容量先判再写，`MAX_SNAPSHOTS=256` 数的是
   current 与 archive 元数据**合计**（首次保存一个变体通常占两条），并非 256 个都可同时激活的变体；
-  总预算 512 MiB，相同内容的 blob 共用字节成本。满额只拒新增，已有归档及其引用的字节保持原样。
+  总预算 512 MiB，相同内容的 blob 共用字节成本。`svgstore.save` 满额只拒新增（`SnapshotBudgetExceeded`），
+  不动任何已有字节。**满额回收（2026-11-24 维护者裁决，一份用户反馈：同一次运行里每拖一次就多一个
+  current 变体，单变体 SVG 约 12 MB，三十来次编辑占满后该项目再也导不出 SVG）**：只有
+  `app._save_svg_snapshot` 在拒绝后调 `svgstore.reclaim`，再重试一次。回收单位是**变体**（current 条目
+  与它的 archive 共用 blob，一起删）；始终保留：任一已存文档 / 排版版本 / 自动保存 / 本次待写正文里
+  以子串出现其快照 ID 的（`app._svg_reference_corpus` 扫项目 `tavottofile/`、旧 `canvases/` 与数据目录
+  `layouts/`，不按键名解析，宁多留不误删）、每个来源最新的一个、`RECLAIM_GRACE_SECONDS` 内新写的、
+  带输入捕获的 v2 记录。从最旧删到两项预算都回到一半以下；**扫不全（超限 / 读错）或删光候选也放不下
+  这一对，就一个都不删**，照旧报满。被回收的旧引用导出 SVG 时走普通的 `svg_snapshot_missing`。
   磁盘写入沿用锁、受限路径与 `atomicio`，只读项目副本也可核验不可变引用，不因读档创建写锁文件。
   自动捕获 / 保存 / 导出不暗中运行脚本。旧项目无明确引用时，执行源需当前进程已观察的回执，
   否则由用户明确再运行并接纳，不能借 current marker 或 preview metadata 猜旧配对仍是当前版本。

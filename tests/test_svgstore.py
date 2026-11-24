@@ -1487,3 +1487,108 @@ def test_reference_optional_owner_uses_same_closed_privacy_schema(store, durable
     with pytest.raises(ValueError):
         svgstore.validate_reference(reference)
     assert _load_snapshot(store, durable, reference) is None
+
+
+def _variant_patch(index):
+    return "sha256:" + hashlib.sha256(f"variant-{index}".encode()).hexdigest()
+
+
+def _save_variant(store, durable, index, *, source=SOURCE, generation=1, activate=False):
+    patch = _variant_patch(index)
+    args = _args(
+        source,
+        patch,
+        pdf=b"%PDF-variant-" + str(index).encode() + b"-" + b"p" * 400,
+        svg=b"<svg>variant-" + str(index).encode() + b"-" + b"s" * 400 + b"</svg>",
+        generation=generation,
+    )
+    return svgstore.save(store[0], source, patch, storage_root=durable, activate=activate, **args)
+
+
+def _fill_with_edits(store, durable, monkeypatch, count, **kwargs):
+    """Same run, one variant per edit: every variant stays current (one user's report)."""
+    now = [1000.0]
+    monkeypatch.setattr(svgstore.time, "time", lambda: now[0])
+    saved = []
+    for index in range(count):
+        now[0] += 60
+        saved.append(_save_variant(store, durable, index, **kwargs))
+    now[0] += svgstore.RECLAIM_GRACE_SECONDS + 1
+    return saved, now
+
+
+def _store_bytes(durable):
+    return sum(p.stat().st_size for p in durable.rglob("*") if p.is_file() and p.name != ".lock")
+
+
+def test_full_store_of_one_runs_edits_reclaims_unreferenced_variants(store, durable, monkeypatch):
+    saved, _ = _fill_with_edits(store, durable, monkeypatch, 8)
+    monkeypatch.setattr(svgstore, "MAX_TOTAL_BYTES", _store_bytes(durable) + 100)
+    with pytest.raises(svgstore.SnapshotBudgetExceeded):
+        _save_variant(store, durable, 99)
+    kept_ref = saved[1]["snapshot_ref"]["snapshotId"]
+    removed = svgstore.reclaim(durable, referenced=lambda sid: sid == kept_ref, incoming_bytes=1000)
+    assert removed > 0
+    assert _store_bytes(durable) <= svgstore.MAX_TOTAL_BYTES // 2 + 4096
+    # The next edit is admitted again.
+    assert _save_variant(store, durable, 99)["pdf"].startswith(b"%PDF-variant-99")
+    # A document reference and the newest variant of the source survive.
+    for kept in (saved[1], saved[-1]):
+        loaded = svgstore.load_snapshot(
+            store[0],
+            kept["snapshot_ref"],
+            source_id=SOURCE,
+            patch_hash=kept["snapshot_ref"]["patchHash"],
+            storage_root=durable,
+        )
+        assert loaded is not None and loaded["pdf"] == kept["pdf"]
+    # The oldest unreferenced variant is gone together with its current entry.
+    assert svgstore.load(store[0], SOURCE, _variant_patch(0), storage_root=durable) is None
+    archives = {p.stem for p in (durable / "snapshots").glob("*.json")}
+    assert saved[0]["snapshot_ref"]["snapshotId"] not in archives
+    blobs = {p.name for p in (durable / "blobs").iterdir()}
+    assert saved[0]["pdf_path"].name not in blobs
+
+
+def test_reclaim_after_reruns_drops_old_generation_archives(store, durable, monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(svgstore.time, "time", lambda: now[0])
+    old = []
+    for generation in range(1, 6):
+        now[0] += 600
+        old.append(_save_variant(store, durable, generation, generation=generation, activate=True))
+    now[0] += svgstore.RECLAIM_GRACE_SECONDS + 1
+    monkeypatch.setattr(svgstore, "MAX_TOTAL_BYTES", _store_bytes(durable) + 100)
+    with pytest.raises(svgstore.SnapshotBudgetExceeded):
+        _save_variant(store, durable, 99, generation=6, activate=True)
+    assert svgstore.reclaim(durable, referenced=lambda sid: False, incoming_bytes=1000) > 0
+    _save_variant(store, durable, 99, generation=6, activate=True)
+    archives = {p.stem for p in (durable / "snapshots").glob("*.json")}
+    assert old[0]["snapshot_ref"]["snapshotId"] not in archives
+
+
+def test_reclaim_removes_nothing_when_protected_variants_still_do_not_fit(
+    store, durable, monkeypatch
+):
+    _fill_with_edits(store, durable, monkeypatch, 4)
+    monkeypatch.setattr(svgstore, "MAX_TOTAL_BYTES", _store_bytes(durable) + 100)
+    before = _tree_bytes(durable)
+    # Every variant is referenced: there is nothing to reclaim.
+    assert svgstore.reclaim(durable, referenced=lambda sid: True, incoming_bytes=1000) == 0
+    # Reclaiming every candidate still could not admit this incoming pair.
+    huge = svgstore.MAX_TOTAL_BYTES
+    assert svgstore.reclaim(durable, referenced=lambda sid: False, incoming_bytes=huge) == 0
+    assert _tree_bytes(durable) == before
+
+
+def test_reclaim_keeps_recent_variants_and_other_sources_newest(store, durable, monkeypatch):
+    saved, now = _fill_with_edits(store, durable, monkeypatch, 3)
+    now[0] += 60
+    other = _save_variant(store, durable, 50, source="other")
+    recent = _save_variant(store, durable, 51)
+    monkeypatch.setattr(svgstore, "MAX_TOTAL_BYTES", _store_bytes(durable) + 100)
+    svgstore.reclaim(durable, referenced=lambda sid: False, incoming_bytes=1000)
+    archives = {p.stem for p in (durable / "snapshots").glob("*.json")}
+    assert other["snapshot_ref"]["snapshotId"] in archives  # newest of its source
+    assert recent["snapshot_ref"]["snapshotId"] in archives  # inside the grace window
+    assert saved[0]["snapshot_ref"]["snapshotId"] not in archives
