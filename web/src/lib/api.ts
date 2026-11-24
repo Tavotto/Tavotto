@@ -4100,6 +4100,152 @@ export async function quickLayoutPlan(body: QuickLayoutRequest): Promise<QuickLa
   return out as unknown as QuickLayoutResponse
 }
 
+// --- 修改方案（ADR 0206 §一）：后端只算不写；这里只有类型与薄封装，界面在后续 PR ---
+
+export type ChangePlanSource = 'review' | 'quick_layout' | 'journal_fix' | 'assistant'
+
+/** 没处理的意见的一句话原因（闭集短码；文案归界面） */
+export type ChangePlanUnhandledReason =
+  | 'needs_script'
+  | 'unclear'
+  | 'out_of_scope'
+  | 'no_change_needed'
+  | 'unknown_element'
+  | 'not_editable'
+  | 'bad_value'
+  | 'over_limit'
+  | 'conflict'
+  | 'not_applied'
+  | 'no_effect'
+  | 'not_addressed'
+
+export interface ChangePlanBox {
+  gid: string
+  /** 图分数坐标 [x, y, 宽, 高]，y 向下 */
+  box: [number, number, number, number]
+}
+
+/** 一条 override 条目（规范化之后的形状） */
+export interface ChangePlanPatch {
+  gid: string
+  prop: string
+  value: unknown
+  identity?: string
+}
+
+export interface ChangePlanChange {
+  target_gid: string
+  prop: string
+  /** manifest 的展示值（格式可能与 override 的值不同，只用来显示） */
+  before: unknown
+  after: unknown
+  /** 应用时写进文档的那条 override（进入候选列表、规范化之后） */
+  patch: ChangePlanPatch
+}
+
+export interface ChangePlanGroup {
+  key: string
+  label: string
+  comment_id?: string
+  note_id?: string
+  atomic: boolean
+  changes: ChangePlanChange[]
+  boxes: { before?: ChangePlanBox[]; after: ChangePlanBox[] }
+}
+
+export interface ChangePlan {
+  id: string
+  version: number
+  source: ChangePlanSource
+  base: { target: string; fingerprint: string }
+  /** 请求时的 B0 全量 override（规范化后） */
+  base_patches: ChangePlanPatch[]
+  /** B0 ⊕ 全部组的 `patch`（规范化后）：「全部应用」直接写它；逐组取消勾选时前端用 `base_patches` ⊕ 勾选组的 `patch` 重算（与后端 `changeplan.apply_groups` 同源） */
+  candidate_patches: ChangePlanPatch[]
+  groups: ChangePlanGroup[]
+  unhandled: { comment_id?: string; reason: ChangePlanUnhandledReason }[]
+  /** 两张图的地址（`GET /api/change-plans/<id>/<before|after>.png`，带项目头 / `pj`） */
+  preview: { before: string; after: string }
+}
+
+/** `POST /api/change-plans` 的回包：任务已受理，轮询 `getChangePlan` */
+export interface ChangePlanTask {
+  plan_id: string
+  /** 新任务恒为 running；同一 `client_request_id` 重发时回它此刻的状态 */
+  state: 'running' | 'ready' | 'failed'
+  phase?: string
+}
+
+/** `GET /api/change-plans/<id>`：终态也是 200 + 稳定 code（`failed`、或 `ready` 但没有一条能落成修改的 `change_plan_empty`） */
+export type ChangePlanView =
+  | { plan_id: string; state: 'running'; phase: string }
+  | { plan_id: string; state: 'failed'; code: string; error: string; detail?: string; params?: Record<string, unknown> }
+  | { plan_id: string; state: 'ready'; plan: ChangePlan; code?: 'change_plan_empty'; error?: string }
+
+export interface CreateChangePlanBody {
+  /** 单图面板 id */
+  id: string
+  /** 这张图此刻的全量 override 列表（B0） */
+  patches: unknown[]
+  source: 'review'
+  /** 审阅意见（只取未处理的）；与 `share_id` 二选一 */
+  comments?: ReviewComment[]
+  /** 本机分享记录 id：后端取最新版本的未处理意见；与 `comments` 二选一 */
+  share_id?: string
+  client_request_id?: string
+}
+
+async function changePlanFetch(path: string, init?: RequestInit): Promise<Record<string, unknown>> {
+  const res = await fetch(apiUrl(path), withProject(init ?? {}))
+  const out = await res.json().catch(() => ({}) as Record<string, unknown>)
+  if (!res.ok) {
+    noteProjectGone(res.status, out)
+    throw new EngineError(
+      (out.error as string) || t('render.failed', { ns: 'errors', status: res.status }),
+      (out.traceback as string) || '',
+      (out.code as string) || '',
+      (out.module as string) || '',
+      undefined,
+      undefined,
+      { params: out.params as Record<string, unknown> | undefined },
+    )
+  }
+  return out
+}
+
+/** 生成一份修改方案：立刻回任务（202）；同一 `client_request_id` 回同一个任务。失败（native / 没连 AI / 同图忙…）抛带稳定 code 的 `EngineError`。 */
+export async function createChangePlan(body: CreateChangePlanBody): Promise<ChangePlanTask> {
+  const out = await changePlanFetch('/api/change-plans', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!isStr(out.plan_id) || (out.state !== 'running' && out.state !== 'ready' && out.state !== 'failed')) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
+  }
+  return out as unknown as ChangePlanTask
+}
+
+/** 轮询 / 读取一份方案。 */
+export async function getChangePlan(planId: string): Promise<ChangePlanView> {
+  const out = await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}`)
+  if (
+    !isStr(out.plan_id) ||
+    (out.state === 'ready' ? !isRec(out.plan) : out.state !== 'running' && !(out.state === 'failed' && isStr(out.code)))
+  ) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
+  }
+  return out as unknown as ChangePlanView
+}
+
+/** 放弃一份方案（幂等）。 */
+export async function discardChangePlan(planId: string): Promise<{ discarded: boolean }> {
+  const out = await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}/discard`, {
+    method: 'POST',
+  })
+  return { discarded: out.discarded === true }
+}
+
 /**
  * 作废这张图的热会话（QuickEdit「重新构建」）：下一次 `engineRender` 从头跑
  * 脚本。后端只让会话过期——不起 worker、不动源脚本、不写回、不清 override。
