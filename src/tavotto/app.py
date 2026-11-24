@@ -7613,6 +7613,12 @@ def api_license_release():
     return _license_result(engine_license.release)
 
 
+@app.post("/api/license/plate-name")
+def api_license_plate_name():
+    """创始会员铭牌上的刻字：只写本机 `license/plate.json`，不联网（ADR 0193）。"""
+    return _license_result(engine_license.set_plate_name, _review_body().get("name"))
+
+
 @app.post("/api/license/checkout")
 def api_license_checkout():
     body = _review_body()

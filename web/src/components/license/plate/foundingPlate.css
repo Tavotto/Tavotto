@@ -1,0 +1,243 @@
+/* The founding nameplate (FoundingPlate.astro). CNC-machined space-titanium
+   (or cold raw silver) with a razor-thin 45° micro-chamfer, laser-etched
+   metallic lettering, engraved mirror-silver emblem, and contact shadow beneath. */
+
+.fp {
+  --fp-w: 320px;
+  position: relative;
+  width: min(100%, var(--fp-w));
+  margin-inline: auto;
+  text-align: left;
+  cursor: grab;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.fp:active {
+  cursor: grabbing;
+}
+.fp:focus-visible {
+  outline: 2px solid var(--accent, #2c73de);
+  outline-offset: 8px;
+  border-radius: 10px;
+}
+.fp-stage {
+  position: relative;
+  aspect-ratio: 3.4 / 2.14;
+  perspective: 960px;
+  container-type: inline-size;
+}
+/* Diffused tabletop contact shadow beneath the CSS card; crossfades to WebGL's shadow. */
+.fp-stage::before {
+  content: '';
+  position: absolute;
+  inset: 73% -10% -20%;
+  pointer-events: none;
+  background: radial-gradient(
+    50% 50% at 50% 44%,
+    rgb(16 19 24 / 0.3),
+    rgb(16 19 24 / 0.14) 50%,
+    rgb(16 19 24 / 0.04) 75%,
+    transparent 98%
+  );
+  filter: blur(6px);
+  transition: opacity 500ms ease;
+}
+.fp-card {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+}
+.fp-face {
+  --face-a: #1f242c;
+  --face-b: #2c323d;
+  --face-c: #21262f;
+  --etch: #cfd5df;
+  --etch-dim: #979fae;
+  --band: rgb(236 243 255 / 0.19);
+  --band-edge: rgb(236 243 255 / 0.05);
+  --glow: rgb(255 255 255 / 0.09);
+  --pos: calc(var(--mx, 22%) * 0.8 + var(--my, 18%) * 0.2);
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto 1fr auto;
+  padding: 7.4% 7.6%;
+  border-radius: 3.7% / 5.9%;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  color: var(--etch);
+  background:
+    linear-gradient(
+      114deg,
+      transparent calc(var(--pos) - 23%),
+      var(--band-edge) calc(var(--pos) - 10%),
+      var(--band) var(--pos),
+      var(--band-edge) calc(var(--pos) + 10%),
+      transparent calc(var(--pos) + 23%)
+    ),
+    radial-gradient(circle at var(--mx, 24%) var(--my, 20%), var(--glow), transparent 52%),
+    linear-gradient(135deg, var(--face-a), var(--face-b) 52%, var(--face-c));
+  box-shadow:
+    inset 0 0.5px 0 rgb(255 255 255 / 0.22),
+    inset 0 0 0 0.75px rgb(255 255 255 / 0.1);
+}
+.fp[data-tone='silver'] .fp-face {
+  --face-a: #cfd4dc;
+  --face-b: #e4e8ee;
+  --face-c: #d4d9e1;
+  --etch: #3b414b;
+  --etch-dim: #5a616e;
+  --band: rgb(255 255 255 / 0.54);
+  --band-edge: rgb(255 255 255 / 0.16);
+  --glow: rgb(255 255 255 / 0.36);
+  box-shadow:
+    inset 0 0.5px 0 rgb(255 255 255 / 0.75),
+    inset 0 0 0 0.75px rgb(255 255 255 / 0.42),
+    0 0.5px 1px rgb(20 24 30 / 0.08);
+}
+.fp-mark,
+.fp-label,
+.fp-no,
+.fp-issued {
+  font-family: var(--mono, ui-monospace, 'SF Mono', Menlo, Consolas, monospace);
+  font-weight: 400;
+  color: var(--etch-dim);
+  text-transform: uppercase;
+}
+.fp-mark {
+  font-family: -apple-system, 'SF Pro Display', 'PingFang SC', sans-serif;
+  font-size: clamp(8px, 2.35cqw, 9.5px);
+  font-weight: 500;
+  letter-spacing: 0.52em;
+}
+.fp-label {
+  justify-self: end;
+  font-family:
+    'PingFang SC',
+    'Source Han Sans SC',
+    'Noto Sans SC',
+    -apple-system,
+    sans-serif;
+  font-size: clamp(7.5px, 1.96cqw, 8px);
+  letter-spacing: 0.34em;
+}
+/* Micro-etched metallic sheen: subtle dark upper cut and faint specular lower lip. */
+.fp-mark,
+.fp-label,
+.fp-name,
+.fp-date,
+.fp-no,
+.fp-issued {
+  text-shadow:
+    0 -0.5px 0 rgb(0 0 0 / 0.36),
+    0 0.5px 0 rgb(255 255 255 / 0.12);
+}
+.fp[data-tone='silver'] :is(.fp-mark, .fp-label, .fp-name, .fp-date, .fp-no, .fp-issued) {
+  text-shadow: 0 0.5px 0 rgb(255 255 255 / 0.55);
+}
+.fp-name {
+  grid-column: 1 / -1;
+  align-self: end;
+  margin-bottom: 5.8%;
+  font-family:
+    'PingFang SC',
+    'Source Han Sans SC',
+    'Noto Sans SC',
+    'Microsoft YaHei',
+    -apple-system,
+    sans-serif;
+  /* 字号由 FoundingPlate 按名字长度写进 --fp-name-size（plateName.nameCqw），24 个字也落在牌面里 */
+  font-size: calc(var(--fp-name-size, 6.27cqw) * var(--fp-name-fit, 1));
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  max-width: 100%;
+  white-space: nowrap;
+  /* 不裁字：放不下就缩（FoundingPlate 渲染后实测，字体到位 / 容器变化时重算，写进 --fp-name-fit） */
+}
+.fp-no {
+  grid-column: 1 / -1;
+  justify-self: start;
+  font-size: clamp(7px, 1.86cqw, 7.6px);
+  letter-spacing: 0.28em;
+  font-variant-numeric: tabular-nums;
+}
+/* Engraved polished-silver emblem: recessed upper cut + bright lower chamfer lip. */
+.fp-anchor,
+.fp-emblem {
+  height: auto;
+  pointer-events: none;
+  filter: drop-shadow(0 -0.7px 0.4px rgb(0 0 0 / 0.6))
+    drop-shadow(0 0.7px 0.3px rgb(255 255 255 / 0.34));
+}
+.fp-anchor {
+  position: absolute;
+  right: 6.1%;
+  bottom: 10.9%;
+  width: 10.5cqw;
+}
+.fp-back {
+  transform: rotateY(180deg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2.6%;
+  text-align: center;
+}
+.fp-emblem {
+  width: 9.8cqw;
+  margin-bottom: 1.6%;
+}
+.fp-issued {
+  font-size: clamp(6.5px, 1.66cqw, 6.8px);
+  letter-spacing: 0.52em;
+  opacity: 0.82;
+}
+.fp-date {
+  font-family: var(--mono, ui-monospace, 'SF Mono', Menlo, Consolas, monospace);
+  font-size: clamp(10.5px, 3.04cqw, 12.2px);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+}
+.fp-date.is-empty {
+  opacity: 0.25;
+  text-shadow: none;
+}
+.fp-back .fp-no {
+  margin-top: 2.2%;
+  font-size: clamp(6.5px, 1.66cqw, 6.8px);
+  letter-spacing: 0.35em;
+  opacity: 0.68;
+}
+
+/* WebGL stage extends past the card so the 3D flip and soft shadow never clip. */
+.fp-gl {
+  position: absolute;
+  /* Generous room: an edge-on card in perspective reaches well past its box. Top/bottom keep
+     the stage centre 5% below the card centre (foundingPlate.ts relies on it). */
+  inset: -40% -30% -50% -30%;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 500ms ease;
+}
+.fp-gl canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.fp-on .fp-gl {
+  opacity: 1;
+}
+.fp-on .fp-card,
+.fp-on .fp-stage::before {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fp-gl,
+  .fp-stage::before {
+    transition: none;
+  }
+}

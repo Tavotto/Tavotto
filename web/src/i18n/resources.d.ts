@@ -3184,9 +3184,19 @@ export default interface Resources {
           "tip": "高级版功能，点一下了解"
         },
         "none": "还没激活",
+        "plate": {
+          "defaultName": "早期同行者",
+          "engrave": "刻上你的名字",
+          "issued": "ISSUED ON",
+          "label": "创始会员",
+          "nameLabel": "刻在铭牌上的名字",
+          "nameTitle": "名字只保存在这台电脑上",
+          "rename": "重新刻名",
+          "turnTitle": "拖一下可以翻面"
+        },
         "releaseTitle": "解绑后可以在另一台电脑上激活",
         "state": {
-          "expired": "已于 {{date}} 到期",
+          "expired": "已于{{date}}到期",
           "lapsed": "需要联网确认一下授权",
           "revoked": "这份授权已失效"
         },

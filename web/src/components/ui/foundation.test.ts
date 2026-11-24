@@ -330,6 +330,8 @@ const RULES: Rule[] = [
       '/src/canvas/context-bar/ElementBar.tsx': { count: 1, why: '文档数据：取色框没有值时的 #000000' },
       '/src/canvas/context-bar/textQuick.tsx': { count: 1, why: '文档数据：文字颜色缺省 #000000' },
       '/src/canvas/interactions.ts': { count: 1, why: '文档数据：新画的文字的缺省颜色（标注的缺省墨色在 lib/drawDefaults）' },
+      '/src/components/license/FoundingPlate.tsx': { count: 7, why: '实物：创始会员铭牌上蚀刻的镜面银徽记（一块金属，浅 / 深两个主题同一块，不跟主题走；官网同款）' },
+      '/src/components/license/plate/plateFaces.ts': { count: 46, why: '实物：铭牌的 PBR 贴图（深空钛 / 蚀刻字 / 镜面银的物理色，逐字移植自官网；不是界面色）' },
     },
   },
   {
