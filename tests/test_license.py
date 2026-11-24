@@ -844,7 +844,21 @@ def test_status_carries_founding_when_the_signed_token_has_it(server):
     st = lic.status()
     assert st["founding"] == {"no": 37, "since": 1_763_000_000, "name": ""}
     assert st["state"] == "active"
-    assert "37" not in json.dumps({k: v for k, v in st.items() if k != "founding"})
+
+    # 创始编号只出现在 founding 里：逐个字段比值，不用子串（时间戳 / 令牌里碰巧有「37」会假红）
+    def leaves(v):
+        if isinstance(v, dict):
+            for x in v.values():
+                yield from leaves(x)
+        elif isinstance(v, (list, tuple)):
+            for x in v:
+                yield from leaves(x)
+        else:
+            yield v
+
+    rest = [x for k, v in st.items() if k != "founding" for x in leaves(v)]
+    assert not any(x == 37 and not isinstance(x, bool) for x in rest)
+    assert 1_763_000_000 not in rest
 
 
 def test_founding_survives_expiry_and_lapse_but_not_revocation(server, clock):
