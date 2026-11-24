@@ -49,6 +49,9 @@ order: 50
   同一文件两边能差一个数量级（`tests/test_conda_launch_context.py`：Ubuntu 1587 秒、Windows 124 秒、旧表 3.69 秒），
   旧表下 backend-fast 最慢片（第 6 片）实测 54–69 分钟、其余片 30–45 分钟。一张表同时喂 6 片（Ubuntu）和 8 片（Windows / macOS），
   取最大值保证任何一边都不会把某个重文件低估成近似 0。以后重算也要两个 lane 一起量，别再只按一个 OS。
+  **2026-11-24 按同一口径重算**（10 个合并组，旧表 687 个文件、当时 973 个，286 个走默认权重）：留一法模拟最慢片
+  pytest 时间 backend-fast 6 片 p50 53→49、最坏 68→55 分钟；Windows 8 片 p50 58→51 分钟。同时 `weights_from_junit`
+  认收集阶段条目（整模块 importorskip，junit 里 `classname=""`、模块在 `name`），否则 3.10 的 junit 喂不进来。
   改任一个 job 的片数
   要同步改：`tests/test_merge_queue_workflows.py::test_pytest_shards_agree_between_the_matrix_and_the_command`
   按 job_id 各自的期望片数、`tests/test_ci_baseline.py` 里对 `live_workflow[...]["matrix"]`
