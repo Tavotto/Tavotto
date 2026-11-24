@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { cropToVisibleContent, croppedDocument, visibleContentBounds } from './exportCrop'
 import { buildExportRequest, type ExportRequestInput } from './exportRequest'
-import type { ArrowObject, CanvasObject, FigureDocument, PanelObject, TextObject } from '@/types/document'
+import type { ArrowObject, CanvasObject, FigureDocument, PanelObject, PathTextObject, TextObject } from '@/types/document'
 import { emptyDocument } from '@/types/document'
 
 const panel = (over: Partial<PanelObject> = {}): PanelObject => ({
@@ -146,5 +146,31 @@ describe('croppedDocument', () => {
     expect([c.page.w, c.page.h]).toEqual([90, 85])
     expect(c.objects[0].x).toBe(10)
     expect(doc.page.w).toBe(180)
+  })
+})
+
+describe('路径文字的离线进导出范围（Codex 线程 4614422921）', () => {
+  const pt = (over: Partial<PathTextObject> = {}): PathTextObject =>
+    ({
+      id: 'pt1', type: 'pathText', text: 'abc', x: 50, y: 50, w: 40, h: 0.001, sizePt: 10, bold: false, color: '#000',
+      subpaths: [{ closed: false, nodes: [{ p: [0, 0] }, { p: [1, 0] }] }], ...over,
+    }) as PathTextObject
+  const PT_MM = 25.4 / 72
+  it('手动离线 200 pt 的字落在原路径之外 200 pt 仍在范围里', () => {
+    const b = visibleContentBounds([pt({ baselineOffsetPt: 200 })])!
+    expect(b.y).toBeLessThanOrEqual(50 - 200 * PT_MM)
+    expect(b.y + b.h).toBeGreaterThanOrEqual(50 + 200 * PT_MM)
+  })
+  it('负离线同样', () => {
+    const b = visibleContentBounds([pt({ baselineOffsetPt: -150 })])!
+    expect(b.y).toBeLessThanOrEqual(50 - 150 * PT_MM)
+  })
+  it('自动离线带上那条线的线宽', () => {
+    const line = { id: 'l1', type: 'arrow', x: 50, y: 50, w: 40, h: 0, strokePt: 80, color: '#000', head: 'none' } as unknown as ArrowObject
+    const withLine = visibleContentBounds([pt({ lineId: 'l1' }), line])!
+    const unlinked = visibleContentBounds([pt(), line])!
+    // 线宽 80 pt 的一半（40 pt）落在自动离线里：认得那条线的比不认得的多留出这一半
+    expect(withLine.h).toBeGreaterThan(unlinked.h)
+    expect(withLine.y).toBeLessThanOrEqual(50 - (40 + 2 * 10) * PT_MM)
   })
 })

@@ -614,10 +614,19 @@ def confirmed_from(answers: dict[str, str]) -> tuple[recipe_mod.Confirmed, dict]
     return recipe_mod.Confirmed(), picks
 
 
+def unplotted_unmet(rows: list[dict]) -> int:
+    """没画的行里「有数据却没画上」的有多少（`goal.rows_plotted` 看这个数）：纵轴空着的行（`y_missing`）没有可画的点，是缺失，不算。
+    大表的清单只有前 100 个样例、不逐行分原因，这个数由缩减那一遍单独记（`Examples.unmet`）。"""
+    unmet = getattr(rows, "unmet", None)
+    return unmet if unmet is not None else sum(1 for r in rows if r.get("reason") != "y_missing")
+
+
 class Examples(list):
     """大表上「没画的行」只给前 100 个例子；`total` 是精确的总数（来自概览扫描）。小表直接是普通列表（`total` 同长度）。"""
 
     total: int = 0
+    #: 「有数据却没画上」的行数（见 `unplotted_unmet`）；None = 没单独记，按每行的原因数
+    unmet: int | None = None
 
 
 def unplotted_total(rows: list[dict]) -> int:
@@ -635,16 +644,23 @@ def unplotted_rows(values: adf.DataSummary, recipe) -> list[dict]:
     * `y_missing`：比较类 / 分布类 / 散点类的纵轴是空的或 NaN——这一行没有可画的点。
 
     折线的纵轴空 / NaN 是缺失（线在那里断开，看得见），不算没画；夹着文字格的数值列用户已选了处理方式（`recipe.cells`）的，
-    那些格子是用户明确决定过的，不在这里报（统计在 `cell_stats`）。大表只给总数与前 100 个行号，不逐行分原因（全都是横轴不是值时仍记 `x_not_a_value`，否则 `row_not_plotted`）。"""
+    那些格子是用户明确决定过的，不在这里报（统计在 `cell_stats`）。大表只给总数与前 100 个行号，不逐行分原因（全都是横轴不是值记 `x_not_a_value`，全都是纵轴空着记 `y_missing`，混着的记 `row_not_plotted`；「有数据却没画上」的行数另记在 `Examples.unmet`）。"""
     if (
         recipe.stack
     ):  # 把列当分组：被转的列都是纯数值列，空格 / NaN 是缺失（不是「没画」），没有横轴
         return []
     if values.large is not None:
-        total, numbers, only_x = tpl.large_unplotted(values, recipe)
-        why = "x_not_a_value" if only_x else "row_not_plotted"
-        ex = Examples({"row": n, "column": recipe.x, "reason": why} for n in numbers)
+        total, numbers, counts = tpl.large_unplotted(values, recipe)
+        if total == counts["x"]:
+            why, col = "x_not_a_value", recipe.x
+        elif total == counts["y"]:
+            why, col = "y_missing", recipe.y[0]
+        else:
+            why, col = "row_not_plotted", recipe.x
+        ex = Examples({"row": n, "column": col, "reason": why} for n in numbers)
         ex.total = total
+        # 「有数据却没画上」的行数（横轴不是值、分组 / 分面 / 个体空）：纵轴空着的是缺失，不算（与小表同一口径）
+        ex.unmet = counts["x"] + counts["key"]
         return ex
     out: list[dict] = []
     idx = {c: i for i, c in enumerate(values.columns)}

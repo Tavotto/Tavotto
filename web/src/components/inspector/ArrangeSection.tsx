@@ -37,6 +37,8 @@ import {
   type ZMove,
 } from '@/store/actions'
 import { useArrangeStore } from '@/store/arrangeStore'
+import { arraySelection } from '@/store/transformActions'
+import { ARRAY_MAX, arrayCount, type ArraySpec } from '@/lib/array'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -241,6 +243,7 @@ export function ArrangeSection({
         {/* 层级是低频的：收成摘要行（设计稿 A1），点开是原来的四个键 */}
         {fold('zorder', ar('zorderLabel'), <ZOrderToolbar />, layerValue)}
         {pathfinderFold()}
+        {fold('array', ar('arrayLabel'), <ArrayRows />)}
       </>
     )
   }
@@ -267,6 +270,7 @@ export function ArrangeSection({
       {fold('spacingGroup', ar('foldSpacingGroup'), <MultiSpacingGroupLayout />)}
       {fold('style', ar('foldStyle'), <MultiStyleRow />)}
       {pathfinderFold()}
+      {fold('array', ar('arrayLabel'), <ArrayRows />)}
     </>
   )
 }
@@ -380,6 +384,81 @@ function ArrangeToolbar({
 }
 
 /** 摘要行「间距、成组、排成行 / 列 / 网格」展开后的内容 */
+/**
+ * 阵列（ADR 0185 M6）：选区当一个整体复制成网格（行 × 列 + 间距）或环形（份数 + 半径，可跟着转）。收在「阵列」摘要行里，
+ * 点开才有这几行；设置只在这一屏里记着，「生成」才写文档（一次 commit）。与 ⌘D 的重复复制互不相干。
+ */
+function ArrayRows() {
+  useTranslation('inspector')
+  const [kind, setKind] = useState<'grid' | 'radial'>('grid')
+  const [rows, setRows] = useState(2)
+  const [cols, setCols] = useState(3)
+  const [gapX, setGapX] = useState(2)
+  const [gapY, setGapY] = useState(2)
+  const [count, setCount] = useState(6)
+  const [radius, setRadius] = useState(20)
+  const [rotate, setRotate] = useState(true)
+  const spec: ArraySpec =
+    kind === 'grid' ? { kind, rows, cols, gapX, gapY } : { kind, count, radius, rotate }
+  const n = arrayCount(spec)
+  return (
+    <ArrangeGrid>
+      <ArrangeRow label={ar('arrayKind')}>
+        <Segmented
+          ariaLabel={ar('arrayKind')}
+          value={kind}
+          onChange={setKind}
+          items={[
+            { value: 'grid', label: ar('arrayGrid') },
+            { value: 'radial', label: ar('arrayRadial') },
+          ]}
+          data-array-kind=""
+        />
+      </ArrangeRow>
+      {kind === 'grid' ? (
+        <>
+          <ArrangeRow label={ar('arrayRowsCols')}>
+            <div className="grid w-full min-w-0 grid-cols-2 gap-1.5">
+              <NumberField fill min={1} max={50} step={1} precision={0} value={rows} ariaLabel={ar('arrayRows')} prefix="↓" prefixInside dataProp="array.rows" onChange={(v) => setRows(Math.round(v))} />
+              <NumberField fill min={1} max={50} step={1} precision={0} value={cols} ariaLabel={ar('arrayCols')} prefix="→" prefixInside dataProp="array.cols" onChange={(v) => setCols(Math.round(v))} />
+            </div>
+          </ArrangeRow>
+          <ArrangeRow label={ar('spacing')}>
+            <div className="grid w-full min-w-0 grid-cols-2 gap-1.5">
+              <NumberField fill unit="mm" step={0.5} precision={1} value={gapX} ariaLabel={ar('spacingH')} prefix={<MoveHorizontal size={ICON_SIZE.sm} aria-hidden />} dataProp="array.gapX" onChange={setGapX} />
+              <NumberField fill unit="mm" step={0.5} precision={1} value={gapY} ariaLabel={ar('spacingV')} prefix={<MoveVertical size={ICON_SIZE.sm} aria-hidden />} dataProp="array.gapY" onChange={setGapY} />
+            </div>
+          </ArrangeRow>
+        </>
+      ) : (
+        <>
+          <ArrangeRow label={ar('arrayCountRadius')}>
+            <div className="grid w-full min-w-0 grid-cols-2 gap-1.5">
+              <NumberField fill min={2} max={120} step={1} precision={0} value={count} ariaLabel={ar('arrayCount')} prefix="#" prefixInside dataProp="array.count" onChange={(v) => setCount(Math.round(v))} />
+              <NumberField fill min={0.5} step={1} precision={1} unit="mm" value={radius} ariaLabel={ar('arrayRadius')} prefix="R" prefixInside dataProp="array.radius" onChange={setRadius} />
+            </div>
+          </ArrangeRow>
+          <ArrangeRow label={ar('arrayRotate')}>
+            <Toggle checked={rotate} onChange={setRotate} aria-label={ar('arrayRotate')} />
+          </ArrangeRow>
+        </>
+      )}
+      <ArrangeRow label="">
+        <Button
+          variant="secondary"
+          size="sm"
+          data-array-make=""
+          disabled={n < 2 || n > ARRAY_MAX}
+          title={n > ARRAY_MAX ? ar('arrayTooMany', { max: ARRAY_MAX }) : undefined}
+          onClick={() => void arraySelection(spec)}
+        >
+          {ar('arrayMake', { count: n - 1 })}
+        </Button>
+      </ArrangeRow>
+    </ArrangeGrid>
+  )
+}
+
 function MultiSpacingGroupLayout() {
   useTranslation('inspector')
   const objs = useSelectedObjects()

@@ -228,7 +228,7 @@ Send Codex this message, in full:
 
 Rendering, composition and export are local; Tavotto does not upload your figures, scripts, projects or data. It makes two requests on its own: a once-a-day check of GitHub Releases for a new version (or the project's China mirror, `dl.tavotto.cn`, depending on your time zone; switch it off under **Settings → Check for updates**), and anonymous usage statistics that stay **off until you say yes** and can never contain figures, scripts, paths or text. Diagnostics bundles are saved locally, redacted, and sent only if you confirm. Details: [docs/privacy.md](docs/privacy.md) and the [event contract](docs/analytics/telemetry-events.md). Where Tavotto keeps its files: [docs/guide/files-and-data.md](docs/guide/files-and-data.md).
 
-Free code signing is provided by SignPath.io, certificate by SignPath Foundation; see the [code signing policy](docs/code-signing-policy.md). Report security issues through [private reporting](https://github.com/Tavotto/Tavotto/security/advisories/new), not a public issue.
+Windows installers are signed with the maintainer's Certum code signing certificate once signing is enabled for a release (each release's notes say whether it is); see the [code signing policy](docs/code-signing-policy.md). Report security issues through [private reporting](https://github.com/Tavotto/Tavotto/security/advisories/new), not a public issue.
 
 ## Contributing
 

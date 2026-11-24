@@ -19,6 +19,7 @@ import {
   Pencil,
   Shapes,
   Slash,
+  PathText,
   Spline,
   Square,
   Star,
@@ -63,6 +64,7 @@ const ICONS = {
   star: Star,
   arc: Arc,
   path: Spline,
+  pathText: PathText,
 } as const
 
 function iconFor(o: CanvasObject) {

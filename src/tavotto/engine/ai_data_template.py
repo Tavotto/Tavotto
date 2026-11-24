@@ -2548,8 +2548,8 @@ def large_reduce_pending(values: adf.DataSummary, recipes) -> int:
 
 def large_unplotted(
     values: adf.DataSummary, recipe: recipe_mod.FigureRecipe
-) -> tuple[int, list[int], bool]:
-    """大表上画不出的行：`(总数, 前 100 个文件行号, 是不是全都因为横轴不是值)`，都取自缩减那一遍（精确）：横轴不是值（空 / NaN / 不是数或日期）、
+) -> tuple[int, list[int], dict]:
+    """大表上画不出的行：`(总数, 前 100 个文件行号, 各原因的行数 {x, key, y})`，都取自缩减那一遍（精确）：横轴不是值（空 / NaN / 不是数或日期）、
     分组 / 分面 / 个体那一格是空的、散点类里纵轴不是数的。折线的纵轴空格是缺失（线在那里断开），不算没画。"""
     s = values.per_column[recipe.x]
     roles = [c for c in (recipe.group, recipe.facet, recipe.unit) if c]
@@ -2559,10 +2559,10 @@ def large_unplotted(
         sy = values.per_column[recipe.y[0]]
         maybe += sy.empty + sy.nan + sy.text_count
     if maybe == 0:  # 概览扫描已经说明没有任何一格会让行画不出来：不用为计数再缩减一遍
-        return 0, [], True
+        return 0, [], {"x": 0, "key": 0, "y": 0}
     _rows, info = large_reduce(values, recipe)
-    total = info["x_invalid"] + info["key_empty"] + info["y_invalid"]
-    return total, list(info["examples"]), total == info["x_invalid"]
+    counts = {"x": info["x_invalid"], "key": info["key_empty"], "y": info["y_invalid"]}
+    return sum(counts.values()), list(info["examples"]), counts
 
 
 def expected_fingerprints(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> list[dict]:

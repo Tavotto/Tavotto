@@ -853,7 +853,7 @@ class DataFigureV2Adapter:
         )
         rows = prep.not_plotted
         # 纵轴是空的行没有可画的点——那是缺失，不是「有数据没画上」，不让它把目标判成没达成（仍然如实列在 observed 里）
-        unmet_rows = [r for r in rows if r.get("reason") != "y_missing"]
+        unmet_rows = ai_data_propose.unplotted_unmet(rows)
         out.append(
             CheckResult(
                 id="goal.rows_plotted",
