@@ -1122,7 +1122,8 @@
     "outlineFailed_other": "{{count}} texts could not be converted to outlines (font unavailable)",
     "svgCopied": "Copied as SVG — paste into Illustrator, Inkscape or Figma",
     "svgCopyFailed": "Could not copy as SVG",
-    "arrayTooMany": "At most {{max}} copies at once"
+    "arrayTooMany": "At most {{max}} copies at once",
+    "quickLayoutNoPreview": "Couldn't make the comparison preview, so it was applied directly"
   },
   "tabs": {
     "allCanvases": "All canvases",

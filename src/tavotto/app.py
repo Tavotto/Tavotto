@@ -8270,6 +8270,14 @@ def _review_render(target: dict, render: dict, long_edge: int):
             ],
         }
         spec = {"scope": engine_exportreq.SCOPE_CANVAS, "canvas": export_seg}
+    data, job = _export_png_bytes(spec, long_mm, long_edge)
+    elements, size_mm = _review_elements(kind, job.request, seg)
+    return engine_reviewshare.Rendered(data, elements, size_mm)
+
+
+def _export_png_bytes(spec: dict, long_mm: float, long_edge: int):
+    """导出管线出一张 PNG（长边约 `long_edge` px），**不写项目导出目录**：中间文件全在私有临时目录。→ `(PNG 字节, job)`。
+    外部审阅的出图回调与修改方案的整版预览（`/api/change-plans/layout-preview`）共用这一处。"""
     ppi = round(long_edge / (long_mm / 25.4)) if long_mm > 0 else round(long_edge / 12)
     spec.update(
         {
@@ -8296,9 +8304,7 @@ def _review_render(target: dict, render: dict, long_edge: int):
         )
         if png is None:
             raise ValueError("render_no_png")
-        data = Path(png.tmp_path).read_bytes()
-        elements, size_mm = _review_elements(kind, job.request, seg)
-        return engine_reviewshare.Rendered(data, elements, size_mm)
+        return Path(png.tmp_path).read_bytes(), job
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -11954,7 +11960,7 @@ def _change_plan_comments(body: dict, rel_id: str) -> list[dict] | None:
 
 @app.post("/api/change-plans")
 def api_change_plans_create():
-    """按审阅意见生成一份修改方案（**只算不写**）。请求：`{id, patches, source: "review", comments | share_id, client_request_id?}`——
+    """按审阅意见生成一份修改方案（**只算不写**）。请求：`{id, patches, source: "review", comments | share_id, client_request_id?}`；`source: "assistant"` 改带 `instruction`（改图助手里用户的原话）与可选的 `target`（选中元素 gid）——
     `patches` 是这张图此刻的全量 override 列表（B0）。同步只做能立刻判的事：请求形状、native（409 `change_plan_native_unsupported`）、
     没有脚本的图（409 `change_plan_not_editable`）、没连 AI（409 `change_plan_no_connection` 等）、同一张图已有方案任务（409 `change_plan_busy`）；
     其余交给后台线程，回 202 `{plan_id, state: "running"}`，用 `GET /api/change-plans/<plan_id>` 轮询。同一 `client_request_id` 回同一个任务。"""
@@ -11963,11 +11969,12 @@ def api_change_plans_create():
         return _change_plan_error("invalid_change_plan")
     rel_id, base = body.get("id"), body.get("patches")
     rid = body.get("client_request_id")
+    source = body.get("source")
     if (
         not isinstance(rel_id, str)
         or not rel_id
         or not isinstance(base, list)
-        or body.get("source") != "review"
+        or source not in engine_changeplan.SOURCES
         or (
             rid is not None
             and not (isinstance(rid, str) and engine_changeplan.REQUEST_ID.match(rid))
@@ -11977,7 +11984,13 @@ def api_change_plans_create():
         return _change_plan_error("invalid_change_plan")
     if engine_patchspec.canonicalize_with_diagnostics(base)[1]:
         return jsonify({"error": "patches 含无效条目", "code": "invalid_patches"}), 400
-    comments = _change_plan_comments(body, rel_id)
+    if source == "assistant":
+        # 助手的一条指令 = 唯一一条「意见」；不带审阅意见 / 分享记录
+        if any(k in body for k in ("comments", "share_id")):
+            return _change_plan_error("invalid_change_plan")
+        comments = engine_changeplan.assistant_comments(body.get("instruction"), body.get("target"))
+    else:
+        comments = _change_plan_comments(body, rel_id)
     if comments is None:
         return _change_plan_error("invalid_change_plan")
     if not comments:
@@ -12008,7 +12021,7 @@ def api_change_plans_create():
     if created:
         threading.Thread(
             target=_change_plan_thread,
-            args=(ctx, task, rel_id, list(base), comments),
+            args=(ctx, task, rel_id, list(base), comments, source),
             name=f"change-plan-{task.id[:8]}",
             daemon=True,
         ).start()
@@ -12073,7 +12086,7 @@ def api_change_plans_revise(plan_id: str):
     if created:
         threading.Thread(
             target=_change_plan_thread,
-            args=(ctx, task, rel_id, list(base), notes, prev),
+            args=(ctx, task, rel_id, list(base), notes, "review", prev),
             name=f"change-plan-{task.id[:8]}",
             daemon=True,
         ).start()
@@ -12084,12 +12097,14 @@ def api_change_plans_revise(plan_id: str):
     return resp
 
 
-def _change_plan_thread(ctx, task, rel_id, base, comments, prev=None) -> None:
+def _change_plan_thread(ctx, task, rel_id, base, comments, source="review", prev=None) -> None:
     """后台线程：钉在发起请求的项目上；任何结局都落成终态并放掉这张图的互斥。"""
     code, detail = "", ""
     try:
         with bound_project(ctx):
-            plan, before_png, after_png = _change_plan_compute(task, rel_id, base, comments, prev)
+            plan, before_png, after_png = _change_plan_compute(
+                task, rel_id, base, comments, source, prev
+            )
             engine_changeplan.publish(task, ctx.id, plan, before_png, after_png)
     except engine_changeplan.PlanFailure as exc:
         code, detail = exc.code, exc.detail
@@ -12117,7 +12132,12 @@ def _change_plan_snapshot(resp) -> tuple[bytes, dict]:
 
 
 def _change_plan_compute(
-    task, rel_id: str, base: list, comments: list[dict], prev: dict | None = None
+    task,
+    rel_id: str,
+    base: list,
+    comments: list[dict],
+    source: str = "review",
+    prev: dict | None = None,
 ):
     """渲染 B0 → 问模型 → 候选渲染 → 现算有效改动 → 方案。→ `(plan, before_png, after_png)`；失败抛 `PlanFailure`。
 
@@ -12184,7 +12204,10 @@ def _change_plan_compute(
             start_png, start_man = snapshot(start)
             previous = ec.previous_summary(prev)
         task.phase = "model"
-        proposal = ec.ask_model(comments, start_man, previous)
+        # 续改用审阅那份提示（它带续改说明）；助手来源的首版用助手提示
+        proposal = ec.ask_model(
+            comments, start_man, "review" if prev is not None else source, previous
+        )
         if revision() != rev0:
             raise ec.PlanFailure("change_plan_figure_changed")
         cand, proposal = ec.candidate_patches(start, proposal, start_man)
@@ -12230,6 +12253,7 @@ def _change_plan_compute(
             groups=groups,
             unhandled=unhandled,
             base_patches=base,
+            source=source,
         )
     else:
         # 上一版没被批注改掉的审阅意见（组与未处理）带着走；组的标签取上一版的（批注组取批注文字）
@@ -12331,6 +12355,41 @@ def api_change_plans_discard(plan_id: str):
     if engine_changeplan.PLAN_ID.match(plan_id) is None:
         return _change_plan_error("change_plan_unknown")
     return jsonify({"discarded": engine_changeplan.discard(current_ctx().id, plan_id)})
+
+
+@app.post("/api/change-plans/layout-preview")
+def api_change_plans_layout_preview():
+    """一键排版方案卡的整版预览（ADR 0206 §一 `source: quick_layout`，前端算好方案、后端只出图）：`{canvas: {page_w_mm, page_h_mm, objects}, long_edge?}`
+    → 一张 PNG。走导出管线（与外部审阅出排版图同一处 `_export_png_bytes`），**不写项目导出目录、不登记、不提交**；
+    前端把「修改前」「修改后」两份画布各发一次。失败回稳定码 `change_plan_render_failed`，图一个字没动。"""
+    body = request.get_json(force=True, silent=True)
+    seg = body.get("canvas") if isinstance(body, dict) else None
+    objs = seg.get("objects") if isinstance(seg, dict) else None
+    if (
+        not isinstance(objs, list)
+        or len(objs) > 400
+        or not all(isinstance(o, dict) for o in objs)
+        or not all(
+            isinstance(seg.get(k), (int, float)) and not isinstance(seg.get(k), bool)
+            for k in ("page_w_mm", "page_h_mm")
+        )
+    ):
+        return _change_plan_error("invalid_change_plan")
+    edge = body.get("long_edge", 1600)
+    if not isinstance(edge, int) or isinstance(edge, bool):
+        return _change_plan_error("invalid_change_plan")
+    edge = max(400, min(2400, edge))
+    long_mm = max(float(seg["page_w_mm"]), float(seg["page_h_mm"]))
+    spec = {"scope": engine_exportreq.SCOPE_CANVAS, "canvas": dict(seg)}
+    pdfbackend.selected()
+    try:
+        data, _job = _export_png_bytes(spec, long_mm, edge)
+    except Exception:  # noqa: BLE001 - 预览出不来只是没有对比图：稳定码，不是 500
+        LOG.warning("整版预览渲染失败", exc_info=True)
+        return _change_plan_error("change_plan_render_failed")
+    resp = Response(data, mimetype="image/png")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.post("/api/engine/invalidate")
@@ -14206,6 +14265,8 @@ def api_ai_capabilities():
         {
             **engine_ai.capabilities(refresh=refresh),
             "taf_enabled": engine_ai_figure_edit.enabled(),
+            # 「改图助手先出修改方案卡」的开关（ADR 0206 §一；默认开，`ai.change_plan.enabled = false` 才关）
+            "change_plan_enabled": engine_changeplan.enabled(),
             # 「使用你的 AI 来修复」的 AI 环境修复任务能不能真的跑（ADR 0148 / 0149）：有内置执行器能直接用的 API 连接，
             # 或有可用的 Codex / Claude Code（经 MCP 修复模式，D3）时为 true；都没有则按钮照常出现，点击走「这个问题 AI 暂时还不会修」降级
             "ai_fix_available": engine_fixsession.available(),

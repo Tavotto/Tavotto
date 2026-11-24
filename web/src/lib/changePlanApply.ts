@@ -100,7 +100,9 @@ export function sameSource(a: PlanSource, b: PlanSource): boolean {
 
 /** 卡片 / 弹窗 / 应用判据共用的状态来源（`PlanEntry` 的结构子集，免得 lib 反过来依赖 store） */
 export interface PlanStatusInput {
-  status: 'generating' | 'ready' | 'applied' | 'discarded' | 'stale' | 'failed'
+  status: 'generating' | 'ready' | 'applied' | 'discarded' | 'stale' | 'failed' | 'handoff'
+  /** 'layout' = 一键排版的整版方案：不挂在某张图上，基线由应用那一刻的 `layout.apply` 自己核 */
+  kind?: 'figure' | 'layout'
   plan?: { base_patches: readonly unknown[]; base?: { target: string } }
   appliedPatches?: readonly unknown[]
   source?: PlanSource
@@ -118,6 +120,7 @@ export function effectiveStatus(
   source?: PlanSource | null,
 ): PlanStatusInput['status'] {
   if ((e.status !== 'ready' && e.status !== 'applied') || !e.plan) return e.status
+  if (e.kind === 'layout') return e.status
   if (!current) return 'stale'
   if (source) {
     if (e.source && !sameSource(e.source, source)) return 'stale'

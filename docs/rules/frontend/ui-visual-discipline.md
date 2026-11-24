@@ -49,7 +49,7 @@ OptionGrid 与 Segmented 同皮；说明条只有 `Notice`；页签 属性 | 画
 新原语：`Card`、`Notice`（恢复）、`StatusPill`、`dropZoneClass`（拖放接收态：静态不画、拖入才是 1px accent 虚线 + accent-subtle + 外发光）、`FormSection` + `FieldGroup`（`SettingRow layout="balanced"`）、EmptyState v2、`listRowClass({ size })`
 + `rowMetaClass` + `dropLineClass`、`useRowMenu` + `RowMenu`（⋯ / 右键 / ⇧F10 同一份菜单）；Dialog 宽度 sm 400 / md 480 / lg 560 / xl 760 / shell、
 页脚 `{ start, secondary, primary }` 三槽、浮动毛玻璃页脚、`onEscape`（Esc = 安全答案）、栈底才画遮罩；**每个上下文一颗主按钮**；**主按钮例外（维护者 2026-11-24 批，ADR 0206 §三）**：助手里除「发送」外，**最新一张待确认修改方案卡的「查看」**也是实心；更早的卡
-（后面还有更新的待确认卡）降为次级——一屏至多这两颗主按钮，判据是 `ChangePlanTranscript` 算出的 `latest`（`data-change-plan-view` 的 `data-variant`）；对话框页脚的破坏性动作是
+（后面还有更新的待确认卡）降为次级——一屏至多这两颗主按钮，判据是 `changePlan/ChangePlanTranscript.tsx` 的 `useLatestReadyKey` 算出的 `latest`（助手面板与改脚本会话按时间穿插排，一键排版的整版卡也参与）（`data-change-plan-view` 的 `data-variant`）；对话框页脚的破坏性动作是
 `Button variant="danger-tinted"`（浅底危险胶囊，永不实心红）；按钮层级的稳定判据是 `data-variant`。门禁全在 `foundation.test`（含逐页阶段的 `LATER_PHASE` 豁免）。
 
 **2026-10-07 改图助手重做（宪法第十八节「2026-10-07 重做」小节）**：转录是一段对话而不是一轮一张卡——用户消息右对齐气泡（超 3 行折叠，hover 出复制 / 重新发送），

@@ -18,7 +18,7 @@ import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
 import { apiUrlFor, onCurrentProjectChange } from '@/lib/session'
 import { releaseOwned } from '@/lib/styleOwned'
 import type { PanelObject, PanelOverride } from '@/types/document'
-import { newRequestId } from './aiStore'
+import { newRequestId, useAiStore, type AiScope } from './aiStore'
 import { useAssetStore } from './assetStore'
 import { useDocumentStore } from './documentStore'
 import { useReviewStore } from './reviewStore'
@@ -33,7 +33,7 @@ import { requestRender } from './renderScheduler'
  * - 按「项目 + 图」分键：条目带发起时的 `pj` 与面板对象 id；换项目整表清空并作废在途轮询（项目代际，`lib/projectEpoch`）。
  * - 应用前核基线：这张图此刻的 override（规范化）≠ 方案的 `base_patches` → 卡片转 stale，**不写**。
  */
-export type PlanStatus = 'generating' | 'ready' | 'applied' | 'discarded' | 'stale' | 'failed'
+export type PlanStatus = 'generating' | 'ready' | 'applied' | 'discarded' | 'stale' | 'failed' | 'handoff'
 
 export interface PlanFailure {
   /** 后端的稳定码（`change_plan_*`），或本地的 `change_plan_poll_timeout` */
@@ -41,12 +41,15 @@ export interface PlanFailure {
   params?: Record<string, unknown>
 }
 
-/** 交给后端的意见来源：整批意见（快照）或本机分享记录 id（后端取最新版本的未处理意见） */
+/** 交给后端的意见来源：整批意见（快照）或本机分享记录 id（后端取最新版本的未处理意见）；助手来源是用户的一条指令 */
 export interface PlanRequest {
   comments?: ReviewComment[]
   share_id?: string
   /** 审阅页签里这些意见的编号（意见 id → 页签上的序号）：审阅意见卡与改动清单用它，与页签上看到的编号一致 */
   numbers?: Record<string, number>
+  /** 助手来源（ADR 0206 PR 4）：用户在改图助手里的原话与选中的元素 gid */
+  instruction?: string
+  target?: string
 }
 
 /** 高级版：在某一版「修改后」的图上写的一条批注（只存本机，不上传审阅服务）；`label` 是元素名 / 「框选」/ 「整体」的显示名 */
@@ -66,9 +69,57 @@ export interface PlanVersionRec {
   unchecked: Record<string, boolean>
 }
 
+/** 一键排版方案卡的两个动作：应用 = 现有的那一次 commit（一步撤销不变）；重来 = 按同样的选项再排一次 */
+export interface LayoutHandle {
+  apply: () => ApplyResult
+  regenerate: () => void
+  /** 参与排版的图的张数（卡片一句话用） */
+  count: number
+}
+
+/**
+ * 助手来源的「改脚本」后路（现有改脚本路径，`aiStore.start`）所需的发送快照：发送那一刻固定下来，
+ * 之后不读此刻的面板选择 / 草稿（轮询期间用户可能已经换了元素 / 范围）。
+ */
+export interface ScriptFallback {
+  project: string | null
+  generation: number
+  prompt: string
+  fileId: string
+  panelId: string
+  gid: string | null
+  label: string | null
+  scope: AiScope
+  target: string
+  canvas: string
+  script: string | null
+}
+
+/** 助手来源的方案请求在这些后端码下**不算失败**：这条路不适用（没连上能用的模型 / native / 没脚本），照旧走改脚本路径 */
+export const ASSISTANT_FALLTHROUGH_CODES: ReadonlySet<string> = new Set([
+  'change_plan_no_connection',
+  'change_plan_unsupported_connection',
+  'change_plan_native_unsupported',
+  'change_plan_not_editable',
+  'invalid_change_plan',
+  'change_plan_too_large',
+])
+
 export interface PlanEntry {
   /** 本地键 = `client_request_id`（同一请求去重，也是卡片的 React key） */
   key: string
+  /** 方案从哪来：审阅意见（默认）/ 改图助手里的一条指令 / 一键排版 */
+  from?: 'review' | 'assistant' | 'quick_layout'
+  /** `layout` = 一键排版的整版方案（不挂在某张图上，`panelId` 为空）；缺省 = 一张图的方案 */
+  kind?: 'figure' | 'layout'
+  /** 一键排版方案的落地与重来（由 `quickLayoutActions` 交进来；store 不 import 它，免得成环） */
+  layout?: LayoutHandle
+  /** 助手来源：用户的原话（对话里的用户气泡；改动清单里这一组的标题） */
+  instruction?: string
+  /** 助手来源的改脚本后路（见 `ScriptFallback`） */
+  fallback?: ScriptFallback
+  /** 助手来源：已经把这条指令交给改脚本那条路了（卡上不再给「改脚本做剩下的」；全是要改脚本时卡只剩一行灰字） */
+  scriptStarted?: boolean
   pj: string | null
   /** 画布上的面板对象 id */
   panelId: string
@@ -156,8 +207,17 @@ interface ChangePlanState {
 
   /** 为某张图发起一次方案；同一张图同一批意见的在途 / 待确认方案直接聚焦（返回它的键） */
   requestFromReview: (panelId: string, req: PlanRequest) => Promise<string | null>
+  /**
+   * 改图助手里的一条指令先出方案（ADR 0206 PR 4）。→ 方案键；`'fallthrough'` = 这条路不适用（没连上能用的模型 / native / 没脚本…，
+   * 同步就被拒），调用方照旧走改脚本路径（本函数没留下任何卡）；null = 没发（同一张图已有一份在途 / 图不在了）。
+   */
+  requestFromAssistant: (panelId: string, req: { instruction: string; target?: string }, fallback: ScriptFallback) => Promise<string | null | 'fallthrough'>
+  /** 把这条助手指令交给现有的改脚本路径（`aiStore.start`）：「改脚本做剩下的」/ 全部都要改脚本时自动续走 / 失败后的「改脚本做」 */
+  runScript: (key: string) => Promise<boolean>
   /** 失败后「重试」/ 图改过后「重新生成」：用同一份请求再来一份，旧卡换成新卡 */
   regenerate: (key: string) => Promise<string | null>
+  /** 一键排版出的整版方案（`quickLayoutActions` 调）：条目已带方案与两张预览图的 blob 地址，直接是待确认 */
+  addLayoutEntry: (e: PlanEntry) => void
   openDialog: (key: string) => void
   closeDialog: () => void
   toggleGroup: (key: string, groupKey: string) => void
@@ -197,6 +257,17 @@ export function panelOf(e: Pick<PlanEntry, 'panelId' | 'documentId' | 'loadSeq' 
 
 const pending = new Set<string>()
 
+/** 一键排版方案的两张预览图是 blob 地址（本机内存里的 PNG）：条目没了就放掉 */
+function revokeLayoutImages(e: PlanEntry | undefined): void {
+  if (e?.kind !== 'layout') return
+  for (const u of [e.beforeSrc, e.afterSrc]) if (u?.startsWith('blob:')) URL.revokeObjectURL(u)
+}
+
+/** 这份方案一处图内修改都没有、没处理的全是「要改脚本」（助手来源据此把整条指令交给改脚本那条路） */
+function allNeedScript(plan: ChangePlan): boolean {
+  return plan.groups.length === 0 && plan.unhandled.length > 0 && plan.unhandled.every((u) => u.reason === 'needs_script')
+}
+
 /** 这张图此刻的图源身份（磁盘素材带修订；runtime 面板没有稳定修订，只认文件 + 脚本） */
 export function sourceOf(panel: PanelObject, mtime = useAssetStore.getState().byId[panel.fileId]?.mtime): PlanSource {
   return { fileId: panel.fileId, script: panel.script ?? null, ...(panel.fileKind !== 'runtime' && mtime !== undefined ? { mtime } : {}) }
@@ -216,6 +287,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     set((s) => (s.entries[key] ? { entries: { ...s.entries, [key]: { ...s.entries[key], ...p } } } : {}))
   const drop = (key: string) =>
     set((s) => {
+      revokeLayoutImages(s.entries[key])
       const { [key]: _gone, ...rest } = s.entries
       return { entries: rest, order: s.order.filter((k) => k !== key), dialogKey: s.dialogKey === key ? null : s.dialogKey }
     })
@@ -277,6 +349,13 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         if ((view as { replay_required?: boolean }).replay_required) replay(e)
         return
       }
+      // 助手来源：整条指令都要改脚本（没有一处图内修改、没有别的原因）= 不算失败，接着走现有的改脚本路径
+      if (e.from === 'assistant' && view.code === 'change_plan_empty' && allNeedScript(plan)) {
+        if ((view as { replay_required?: boolean }).replay_required) replay(e)
+        patch(key, { plan })
+        void get().runScript(key)
+        return
+      }
       patch(key, {
         versions: [{ planId, plan, beforeSrc: src(plan.preview.before), afterSrc: src(plan.preview.after), unchecked: {} }],
         plan,
@@ -291,7 +370,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     }
   }
 
-  const start = async (panelId: string, req: PlanRequest): Promise<string | null> => {
+  const start = async (panelId: string, req: PlanRequest, fallback?: ScriptFallback, keepOnFallthrough = false): Promise<string | null | 'fallthrough'> => {
     const ds = useDocumentStore.getState()
     const panel = ds.doc.objects.find((o): o is PanelObject => o.id === panelId && o.type === 'panel')
     if (!panel) return null
@@ -300,8 +379,10 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     // 只给了分享记录 id（后端取最新版本的未处理意见）：界面上的编号 / 称呼取审阅页签里同一份记录的未处理意见
     const detail = useReviewStore.getState().detail
     const comments = req.comments ?? (req.share_id && detail?.share_id === req.share_id ? detail.comments.filter((c) => !c.resolved) : [])
+    const assistant = typeof req.instruction === 'string'
     const entry: PlanEntry = {
       key,
+      ...(assistant ? { from: 'assistant' as const, instruction: req.instruction, fallback } : {}),
       pj: guard.pj,
       panelId,
       fileId: panel.fileId,
@@ -321,6 +402,10 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     try {
       refuseArtifactOperation(panel)
     } catch {
+      if (assistant && !keepOnFallthrough) {
+        drop(key)
+        return 'fallthrough'
+      }
       fail(key, 'change_plan_not_editable')
       return key
     }
@@ -328,8 +413,9 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       const task = await createChangePlan({
         id: panel.fileId,
         patches: panel.overrides,
-        source: 'review',
-        ...(req.comments ? { comments: req.comments } : { share_id: req.share_id }),
+        ...(assistant
+          ? { source: 'assistant' as const, instruction: req.instruction, ...(req.target ? { target: req.target } : {}) }
+          : { source: 'review' as const, ...(req.comments ? { comments: req.comments } : { share_id: req.share_id }) }),
         client_request_id: key,
       })
       if (!guard.still() || !get().entries[key]) return key
@@ -338,6 +424,11 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     } catch (err) {
       if (!guard.still() || !get().entries[key]) return key
       const code = err instanceof EngineError && err.code ? err.code : 'change_plan_failed'
+      // 助手来源：这条路不适用就悄悄撤掉这张卡，让调用方走旧路径（用户的指令一个字不丢）
+      if (assistant && !keepOnFallthrough && ASSISTANT_FALLTHROUGH_CODES.has(code)) {
+        drop(key)
+        return 'fallthrough'
+      }
       fail(key, code, err instanceof EngineError ? err.params : undefined)
     }
     return key
@@ -368,13 +459,68 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       }
     },
 
+    requestFromAssistant: async (panelId, req, fallback) => {
+      // 同一时刻只发一份（与审阅来源共用这把门）；同一张图已有在途方案时不再起第二份
+      const busy = get().order.some((k) => get().entries[k]?.panelId === panelId && get().entries[k]?.status === 'generating')
+      if (busy || pending.has(panelId)) return null
+      pending.add(panelId)
+      try {
+        return await start(panelId, req, fallback)
+      } finally {
+        pending.delete(panelId)
+      }
+    },
+
+    runScript: async (key) => {
+      const e = get().entries[key]
+      const fb = e?.fallback
+      if (!e || !fb || e.from !== 'assistant') return false
+      // 发送那一刻的项目 / 文档 / 面板：途中换了就不替他发（换项目整表已清；换文档 / 画布 / 面板被删这里挡）
+      const panel = panelOf(e)
+      const ai = useAiStore.getState()
+      if (!panel || panel.fileId !== fb.fileId || ai.generation !== fb.generation) {
+        fail(key, 'change_plan_script_failed')
+        return false
+      }
+      try {
+        await ai.start({
+          project: fb.project,
+          generation: fb.generation,
+          prompt: fb.prompt,
+          fileId: fb.fileId,
+          panelId: fb.panelId,
+          gid: fb.gid,
+          label: fb.label,
+          scope: fb.scope,
+          target: fb.target,
+          overrides: panel.overrides,
+          canvas: fb.canvas,
+          script: fb.script,
+        })
+      } catch {
+        // 没发出去（没有可用的 Agent / 还有没落定的提交 / 账本写不进…）：卡上一句话 + 重试，指令不丢
+        patch(key, { status: 'failed', failure: { code: 'change_plan_script_failed' } })
+        return false
+      }
+      // 全部都要改脚本：这张卡只剩一行灰字（用户的气泡由那一轮会话自己画）；部分能改的卡留着，只收起「改脚本做剩下的」
+      patch(key, e.plan && e.plan.groups.length > 0 ? { scriptStarted: true } : { status: 'handoff', scriptStarted: true, failure: undefined })
+      return true
+    },
+
     regenerate: async (key) => {
       const e = get().entries[key]
       if (!e) return null
+      if (e.kind === 'layout') {
+        drop(key)
+        e.layout?.regenerate()
+        return null
+      }
       const ids = allPlanIds(e)
       drop(key)
       for (const id of ids) void discardChangePlan(id).catch(() => undefined)
-      return start(e.panelId, e.request)
+      // 助手来源：「重新生成」不再悄悄绕去旧路径——这条路不适用时留一张带「改脚本做」的失败卡
+      const out = await start(e.panelId, e.request, e.fallback, e.from === 'assistant')
+      return out === 'fallthrough' ? null : out
     },
 
     openDialog: (key) => set({ dialogKey: key }),
@@ -385,10 +531,23 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         return e ? { entries: { ...s.entries, [key]: { ...e, unchecked: { ...e.unchecked, [groupKey]: !e.unchecked[groupKey] } } } } : {}
       }),
 
+    addLayoutEntry: (entry) => set((s) => ({ entries: { ...s.entries, [entry.key]: entry }, order: [...s.order, entry.key] })),
+
     apply: (key, opts) => {
       const e = get().entries[key]
       const plan = e?.plan
       if (!e || !plan) return 'failed'
+      // 一键排版：落地就是现有的那一次 commit（核对「图还是出发时那样」也在里面）；对不上 = 「图已改过」，不写
+      if (e.kind === 'layout') {
+        if (e.status !== 'ready' || !e.layout) return 'failed'
+        const r = e.layout.apply()
+        if (r === 'applied') {
+          patch(key, { status: 'applied', notice: undefined })
+          set((s) => (s.dialogKey === key ? { dialogKey: null } : {}))
+        } else if (r === 'stale') patch(key, { status: 'stale', notice: undefined })
+        else patch(key, { notice: 'apply_failed' })
+        return r
+      }
       const panel = panelOf(e)
       // 以文档为准：⌘Z 撤回过的「已应用」又是待确认，可以再应用；对不上方案的改前（生成之后这张图被改过）就不写
       const st = effectiveStatus(e, panel?.overrides ?? null, panel ? sourceOf(panel) : null)
@@ -444,6 +603,8 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     discard: (key) => {
       const e = get().entries[key]
       if (!e) return
+      // 一键排版的方案没有后端那一份，也没有「已放弃」的卡可留：直接收掉（再排一次只要几秒）
+      if (e.kind === 'layout') return drop(key)
       patch(key, { status: 'discarded' })
       set((s) => (s.dialogKey === key ? { dialogKey: null } : {}))
       // 后端那几份（各版）可以收了；卡上的图仍是已经取到的地址，过期也只是图不显示，卡片文字不变
@@ -514,7 +675,10 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     patchEntry: (key, p) => patch(key, p),
 
     // 不去后端放弃：此刻的项目已经不是发起时那个，请求会落到别的项目上；后端有 TTL 与条数上限
-    clear: () => set({ entries: {}, order: [], dialogKey: null }),
+    clear: () => {
+      for (const e of Object.values(get().entries)) revokeLayoutImages(e)
+      set({ entries: {}, order: [], dialogKey: null })
+    },
   }
 })
 

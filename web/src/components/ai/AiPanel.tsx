@@ -69,8 +69,12 @@ import { holdAssistantTabForNextSelection } from '@/hooks/useSelectionRouting'
 import { useAiDraft } from './useAiDraft'
 import { Turn } from './Transcript'
 import { ChangePlanDialog } from '../changePlan/ChangePlanDialog'
-import { ChangePlanTranscript } from '../changePlan/ChangePlanTranscript'
+import { ChangePlanTurn, useLatestReadyKey, usePanelPlanEntries } from '../changePlan/ChangePlanTranscript'
 import { useHasChangePlans } from '../changePlan/usePlanFigure'
+import { assistantUsesPlan } from '@/lib/assistantPlanRoute'
+import { deleteAiDraftIf } from '@/lib/api'
+import { engineTransport } from '@/lib/engineTransport'
+import { useChangePlanStore } from '@/store/changePlanStore'
 import { DataFigureForm } from './DataFigureForm'
 
 export { TaskHistory }
@@ -448,10 +452,20 @@ function AssistantPanelBody() {
   // 「从数据出图」的轮次不属于任何面板（它新建脚本）：无论选没选图都在对话里，按发起时间与本面板的轮次合排
   const dataTurns = sessions.filter(isDataFigureSession)
   const hasPlans = useHasChangePlans(panel?.id)
+  const planEntries = usePanelPlanEntries(panel?.id)
+  const latestPlanKey = useLatestReadyKey(planEntries, panel?.id ?? '')
+  // 这张图上有方案在生成：与「脚本正在被改」一样锁住发送（后端对同一张图也是一次一份）
+  const planBusy = planEntries.some((e) => e.status === 'generating')
   const mine = panel ? sessions.filter((s) => isSessionOf(s, panel)) : []
   const turns = dataTurns.length
     ? [...mine, ...dataTurns].sort((a, b) => a.startedAt - b.startedAt)
     : mine
+  // 方案卡与改脚本的会话按发起时间穿插（先出卡再续走改脚本时，次序就是用户看到的次序）
+  type Item = { at: number; turn: AiSession } | { at: number; plan: (typeof planEntries)[number] }
+  const items: Item[] = [
+    ...turns.map((turn): Item => ({ at: turn.startedAt, turn })),
+    ...planEntries.map((plan): Item => ({ at: plan.createdAt, plan })),
+  ].sort((a, b) => a.at - b.at)
   const tafEnabled = !!caps?.taf_enabled
   const [dataFormOpen, setDataFormOpen] = useState(false)
   // 只有「同一个脚本正在被改」才该挡住发送——别的面板在跑与这里无关
@@ -465,7 +479,7 @@ function AssistantPanelBody() {
   const noAgent = caps !== null && !hasUsableAi(caps)
   // 有一条提交还没落定（在路上 / 未确认 / 没收到待重发）= 不许再发新的：未确认时后端可能已经在执行它
   // 账本恢复没成功之前（读着 / 读失败）不许发：原任务可能已结束，放行会用新 id 把同一条修改再执行一遍
-  const canSend = !!panel && !noAgent && !submission && !runningHere && !finishingHere && ledgerState === 'ok'
+  const canSend = !!panel && !noAgent && !submission && !runningHere && !finishingHere && !planBusy && ledgerState === 'ok'
 
   // 原先每个 delta 都把视口拽回底部——往上翻看旧回答时等于不让人看。
   // 换了目标面板视作重新贴底。jsdom 里 scrollHeight 恒 0，gap 恒 0，一律贴底。
@@ -576,6 +590,46 @@ function AssistantPanelBody() {
         return
       }
       // 只有输入框里发的才带参考图（历史里「重新发送 / 重试」的是那一轮的原话）；还在上传的图等它们落定
+      // 先出修改方案卡（ADR 0206 PR 4）：判据在 `assistantUsesPlan`；后端同步说「这条路不适用」时落回下面照旧的改脚本路径
+      if (
+        assistantUsesPlan({
+          enabled: caps?.change_plan_enabled,
+          source,
+          pinned: !!pinned,
+          hasRefs: source === 'composer' && refItems.length > 0,
+          length: text.length,
+          panel,
+          embedded: !!engineTransport(),
+          planBusy,
+        })
+      ) {
+        const planned = await useChangePlanStore.getState().requestFromAssistant(
+          panel.id,
+          { instruction: text, ...(ctx.gid ? { target: ctx.gid } : {}) },
+          {
+            project: pinnedProject,
+            generation: pinnedGeneration,
+            prompt: text,
+            fileId: panel.fileId,
+            panelId: panel.id,
+            gid: ctx.gid,
+            label: ctx.label,
+            scope: ctx.scope,
+            target: ctx.target,
+            canvas: useDocumentStore.getState().activeCanvasId,
+            script: panel.script ?? null,
+          },
+        )
+        if (projectMoved()) return
+        if (planned !== 'fallthrough') {
+          // 方案任务已受理（或这张图已有一份在途，没发）：输入框里的这条算发出去了。后端草稿也删掉，免得对账又把它放回输入框
+          if (planned !== null && source === 'composer' && snap.stamp !== null) {
+            void deleteAiDraftIf(panel.fileId, prompt, pinnedProject).catch(() => undefined)
+            clearIfUnchanged(snap.seq)
+          }
+          return
+        }
+      }
       const taken = source === 'composer' ? await useAiAttachStore.getState().settle(refKey) : []
       const refs = taken.map((x) => ({ id: x.serverId as string, kind: x.kind, name: x.name, ext: x.ext, thumb: x.thumb }))
       if (projectMoved()) return
@@ -752,19 +806,22 @@ function AssistantPanelBody() {
               data-ai-transcript
               className="flex flex-col gap-(--turn-gap) [--item-gap:8px] [--turn-gap:16px]"
             >
-              {turns.map((s) => (
-                <Turn
-                  key={s.id}
-                  session={s}
-                  onResend={(text) => void send({ source: 'history', text })}
-                  onRetry={(t) => void retrySession(t)}
-                  canResend={canSend && !isDataFigureSession(s)}
-                  canRetry={canSend && !isDataFigureSession(s) && s.panelId === panel?.id}
-                  onCancel={(t) => void useAiStore.getState().cancel(t.id)}
-                  onRetryStalled={isDataFigureSession(s) || s.panelId !== panel?.id ? undefined : (t) => void retryStalled(t)}
-                />
-              ))}
-              {panel && <ChangePlanTranscript panelId={panel.id} />}
+              {items.map((it) =>
+                'turn' in it ? (
+                  <Turn
+                    key={it.turn.id}
+                    session={it.turn}
+                    onResend={(text) => void send({ source: 'history', text })}
+                    onRetry={(t) => void retrySession(t)}
+                    canResend={canSend && !isDataFigureSession(it.turn)}
+                    canRetry={canSend && !isDataFigureSession(it.turn) && it.turn.panelId === panel?.id}
+                    onCancel={(t) => void useAiStore.getState().cancel(t.id)}
+                    onRetryStalled={isDataFigureSession(it.turn) || it.turn.panelId !== panel?.id ? undefined : (t) => void retryStalled(t)}
+                  />
+                ) : (
+                  <ChangePlanTurn key={it.plan.key} entry={it.plan} latest={it.plan.key === latestPlanKey} />
+                ),
+              )}
             </div>
           ) : (
             /* 还没发过任务：中间是空态 + 至多三条可点的示例提示（§6.7）——点一下填进输入框，改完再发 */
@@ -1068,7 +1125,7 @@ function AssistantPanelBody() {
                     !panel ||
                     (runningHere
                       ? false
-                      : noAgent || !!submission || finishingHere || !prompt.trim() || ledgerState !== 'ok' || tooLarge)
+                      : noAgent || !!submission || finishingHere || planBusy || !prompt.trim() || ledgerState !== 'ok' || tooLarge)
                   }
                   aria-busy={sending || runningHere || undefined}
                   onClick={runningHere ? stopRunning : () => send({ source: 'composer' })}

@@ -809,7 +809,19 @@
       "retry": "Try again",
       "dismiss": "Dismiss",
       "summaryNotes": "{{n}} notes led to {{places}} more changes",
-      "revising": "Redoing with your notes…"
+      "revising": "Redoing with your notes…",
+      "generatingAssistant": "Working on your request…",
+      "summaryAssistant": "Changed {{places}} places",
+      "summaryAssistantScript": "Changed {{places}} places; the rest needs the script, so it wasn't touched",
+      "summaryAssistantOther": "Changed {{places}} places; the rest couldn't be changed directly",
+      "appliedAssistant": "Applied · changed {{places}} places",
+      "emptyAssistant": "This can't be done directly in the figure, so nothing changed",
+      "handoff": "This one needs the script, so it's going to the Agent.",
+      "runScript": "Edit the script for the rest",
+      "runScriptAll": "Edit the script instead",
+      "scriptFailed": "Couldn't hand this to the Agent; the figure is unchanged",
+      "summaryLayout": "{{count}} figures re-laid out",
+      "appliedLayout": "Applied · {{count}} figures re-laid out"
     },
     "dialog": {
       "title": "Change plan",
@@ -870,7 +882,8 @@
       "conflict": "Conflicts with another change; left alone this time",
       "not_applied": "Didn't take effect; left alone this time",
       "no_effect": "No visible difference; left alone this time",
-      "not_addressed": "This one wasn't handled"
+      "not_addressed": "This one wasn't handled",
+      "unclearAssistant": "The request wasn't specific enough, so nothing changed"
     },
     "draft": {
       "thisOne": "this item",
@@ -908,6 +921,7 @@
         "center": "center"
       },
       "many": "these {{count}} items"
-    }
+    },
+    "layoutGroup": "Layout"
   }
 }

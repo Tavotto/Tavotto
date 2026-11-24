@@ -5,6 +5,9 @@
  * 纪律照 `issueFixActions`（ADR 0080）：
  *
  * * **一次排版一条历史**：所有面板的覆盖、摆放与标签在同一个 `commit` 里落下，⌘Z 一步撤回。
+ * * **先出卡再落地**（ADR 0206 §一，`ai.change_plan.enabled` 默认开；拖分隔线调比例不出卡）：求解回来后不直接 commit，
+ *   而是把「排版」做成一张修改方案卡（一个 `atomic` 组）+ 前后两张整版预览，用户在弹窗里「应用」才走**同一个** `commitPlan`。
+ *   预览出不来 / 开关关着 = 照旧直接落地（预览失败多一句灰字）。
  * * **等待期间文档被改过就丢弃**：发请求前记下每张相关面板的整个对象、页面与规范，回来对不上就不写，
  *   并把共享 worker 按此刻的列表重放（后端说通过时 worker 停在候选上）。
  * * **失败什么都不改**：不弹窗、不报红，一句话说「没排好」；请求抛了 / 形状不对是「不知道」，同样重放。
@@ -14,10 +17,12 @@
  */
 import { create } from 'zustand'
 import { emitActivity } from '@/lib/activity'
+import { currentProjectId } from '@/lib/session'
 import { effectiveOverride } from '@/lib/effectiveOverride'
 import { releaseOwned } from '@/lib/styleOwned'
 import { literal, msg, t as translate, type UiMessage } from '@/i18n'
-import { quickLayoutPlan, type QuickLayoutRequest, type QuickLayoutResponse } from '@/lib/api'
+import { fetchLayoutPreviewPng, quickLayoutPlan, type ChangePlan, type QuickLayoutRequest, type QuickLayoutResponse } from '@/lib/api'
+import { canvasSegmentOf } from '@/lib/exportRequest'
 import { ArtifactValidationError, refuseArtifactOperation } from '@/lib/artifactValidation'
 import { engineTransport } from '@/lib/engineTransport'
 import { takeCheckpoint } from '@/lib/timelineCheckpoint'
@@ -26,6 +31,8 @@ import { canvasTextDefaults } from '@/lib/typography'
 import type { FigureDocument, PanelObject, PanelOverride } from '@/types/document'
 import { panelRotation } from '@/types/document'
 import { makeSubLabel, movableTargets } from './actions'
+import { newRequestId, useAiStore } from './aiStore'
+import { useChangePlanStore, type PlanEntry } from './changePlanStore'
 import { useDocumentStore } from './documentStore'
 import { finishActiveGesture } from './gestureCoordinator'
 import { useLicenseStore } from './licenseStore'
@@ -99,6 +106,8 @@ export type QuickLayoutOutcome =
   | 'stale'
   | 'failed'
   | 'not_licensed'
+  /** 方案已出成一张修改方案卡（ADR 0206），等用户在弹窗里「应用」；这一刻文档一个字没动 */
+  | 'planned'
 
 /** 成功胶囊多留一会儿：那一行灰字要读得完（带动作的胶囊本来不自己走） */
 const DONE_DISMISS_MS = 10_000
@@ -196,9 +205,9 @@ function specLine(res: Extract<QuickLayoutResponse, { ok: true }>, specName: str
   return translate('status.quickLayoutSpecDone', { ns: 'workspace', spec, what })
 }
 
-function noteLine(res: Extract<QuickLayoutResponse, { ok: true }>, specName: string): UiMessage | undefined {
+function noteLine(res: Extract<QuickLayoutResponse, { ok: true }>, specName: string, extra?: string): UiMessage | undefined {
   const seen = new Set<string>()
-  const lines: string[] = []
+  const lines: string[] = extra ? [extra] : []
   const spec = specLine(res, specName)
   if (spec) lines.push(spec)
   for (const n of res.notes) {
@@ -408,8 +417,13 @@ async function runPlan(run: PlanRun): Promise<QuickLayoutOutcome> {
     ...(run.ratios ? { ratios: run.ratios } : {}),
   }
 
+  // 先出卡再落地（拖分隔线调比例不出卡）：这时检查点留到「应用」那一刻取（还没改任何东西，取早了只会多一个没用的检查点）
+  const cardMode = run.announce && layoutCardEnabled()
   // 排版时间线的自动检查点（ADR 0101 / 0199 §七）：快照在任何 await 之前取，失败不打扰
-  if (run.checkpoint) void takeCheckpoint({ auto: true }).catch(() => undefined)
+  const checkpoint = () => {
+    if (run.checkpoint) void takeCheckpoint({ auto: true }).catch(() => undefined)
+  }
+  if (!cardMode) checkpoint()
 
   useQuickLayoutStore.setState({ busy: true })
   let res: QuickLayoutResponse | null = null
@@ -462,18 +476,23 @@ async function runPlan(run: PlanRun): Promise<QuickLayoutOutcome> {
     }
 
     // ---- 回来之后：这次用到的每一样输入都还是出发时那一份，才写 ----
-    const moved =
-      !sameLoad ||
-      now.activeCanvasId !== ctx.canvasId ||
-      // 别的手势的事务开着：commit 会把整个排版并进那条事务（取消拖动就连排版一起丢），这次结果作废
-      now.txn != null ||
-      same(now.doc.page) !== pageAtStart ||
-      same(currentSpec()) !== specAtStart ||
-      [...b0].some(([id, before]) => {
-        const o = now.doc.objects.find((x) => x.id === id)
-        return !o || same(o) !== before
-      })
-    if (moved) {
+    const isMoved = (): boolean => {
+      const cur = useDocumentStore.getState()
+      return (
+        cur.loadSeq !== ctx.loadSeq ||
+        cur.documentId !== ctx.documentId ||
+        cur.activeCanvasId !== ctx.canvasId ||
+        // 别的手势的事务开着：commit 会把整个排版并进那条事务（取消拖动就连排版一起丢），这次结果作废
+        cur.txn != null ||
+        same(cur.doc.page) !== pageAtStart ||
+        same(currentSpec()) !== specAtStart ||
+        [...b0].some(([id, before]) => {
+          const o = cur.doc.objects.find((x) => x.id === id)
+          return !o || same(o) !== before
+        })
+      )
+    }
+    if (isMoved()) {
       replay(sentKeys)
       say(note('quickLayoutStale'), 'info')
       return 'stale'
@@ -483,37 +502,194 @@ async function runPlan(run: PlanRun): Promise<QuickLayoutOutcome> {
     const cropOf = new Map(involved.map((p) => [p.id, p.crop] as const))
     const shown = (key: string, b: Box): Box => visibleBox(cropOf.get(key), [...b] as Box)
     const memo = memoOf(res, sentKeys, run, canvasMode, fixed, shown)
-    commitPlan(res, run.label, memo)
-    run.observer?.onCommitted(Object.fromEntries(res.panels.map((p) => [p.key, shown(p.key, p.box)])))
-    // 重渲染：返回的每张图；后端说热态不干净时，其余发出去的也按全量列表重放一次
-    const rendered = new Set(res.panels.map((p) => p.key))
-    const after = useDocumentStore.getState()
-    for (const id of res.replay_required ? sentKeys : rendered) {
-      const p = after.doc.objects.find((o) => o.id === id)
-      if (p?.type === 'panel') requestRender(p, true)
+    const okRes = res
+    /** 写文档（一次 commit）+ 重渲染 + 胶囊。直接落地与「应用」共用这一处 */
+    const land = (extra?: string): QuickLayoutOutcome => {
+      commitPlan(okRes, run.label, memo)
+      run.observer?.onCommitted(Object.fromEntries(okRes.panels.map((p) => [p.key, shown(p.key, p.box)])))
+      // 重渲染：返回的每张图；后端说热态不干净时，其余发出去的也按全量列表重放一次
+      const rendered = new Set(okRes.panels.map((p) => p.key))
+      const after = useDocumentStore.getState()
+      for (const id of okRes.replay_required ? sentKeys : rendered) {
+        const p = after.doc.objects.find((o) => o.id === id)
+        if (p?.type === 'panel') requestRender(p, true)
+      }
+      return finishApplied(okRes, run, profile.label, extra)
     }
 
-    emitActivity({ kind: run.announce ? 'quick_layout.applied' : 'quick_layout.ratios_applied' })
-    if (!run.announce) return 'applied'
-    // 「撤销」只在同一文档 / 画布、且栈顶还是这一条历史时撤；之后又改了别的，撤的就是别的了，只收胶囊
-    const entry = after.past.at(-1)
-    const doneCtx = contextNow()
-    say(note('quickLayoutDone'), 'done', {
-      subline: noteLine(res, profile.label),
-      dismissMs: DONE_DISMISS_MS,
-      action: {
-        label: note('quickLayoutUndo'),
-        run: () => {
-          const cur = useDocumentStore.getState()
-          if (sameContext(doneCtx) && entry && cur.past.at(-1) === entry) undoRunner?.()
-          else useUiStore.getState().setStatus(null)
+    if (cardMode) {
+      // 后端说通过时 worker 停在候选上：落地被推迟了，先按此刻的列表把它们放回（用户还没点「应用」）
+      replay(sentKeys)
+      const shownPanels = new Map(okRes.panels.map((p) => [p.key, shown(p.key, p.box)]))
+      const carded = await presentLayoutCard({
+        res: okRes,
+        memo,
+        shownPanels,
+        involvedCount: okRes.panels.length,
+        ctx,
+        apply: () => {
+          if (isMoved()) {
+            replay(sentKeys)
+            say(note('quickLayoutStale'), 'info')
+            return 'stale'
+          }
+          checkpoint()
+          land()
+          return 'applied'
         },
-      },
-    })
-    return 'applied'
+        regenerate: () => void runQuickLayout(run.target, run.gapMm),
+      })
+      if (carded) return 'planned'
+      // 预览出不来：不卡住，退回直接落地 + 一句灰字（用户要的是排版，不是预览）
+      if (isMoved()) {
+        replay(sentKeys)
+        say(note('quickLayoutStale'), 'info')
+        return 'stale'
+      }
+      checkpoint()
+      return land(translate('status.quickLayoutNoPreview', { ns: 'workspace' }))
+    }
+    return land()
   } finally {
     useQuickLayoutStore.setState({ busy: false, preview: null, live: null, drag: null })
   }
+}
+
+/** 落地之后的收尾：活动信号、「已排好 · 撤销」胶囊（拖分隔线静默）。`extra` 是排在备注前面的一句灰字 */
+function finishApplied(
+  res: Extract<QuickLayoutResponse, { ok: true }>,
+  run: PlanRun,
+  specName: string,
+  extra?: string,
+): QuickLayoutOutcome {
+  emitActivity({ kind: run.announce ? 'quick_layout.applied' : 'quick_layout.ratios_applied' })
+  if (!run.announce) return 'applied'
+  // 「撤销」只在同一文档 / 画布、且栈顶还是这一条历史时撤；之后又改了别的，撤的就是别的了，只收胶囊
+  const entry = useDocumentStore.getState().past.at(-1)
+  const doneCtx = contextNow()
+  say(note('quickLayoutDone'), 'done', {
+    subline: noteLine(res, specName, extra),
+    dismissMs: DONE_DISMISS_MS,
+    action: {
+      label: note('quickLayoutUndo'),
+      run: () => {
+        const cur = useDocumentStore.getState()
+        if (sameContext(doneCtx) && entry && cur.past.at(-1) === entry) undoRunner?.()
+        else useUiStore.getState().setStatus(null)
+      },
+    },
+  })
+  return 'applied'
+}
+
+/** 「先出修改方案卡」的开关（`ai.change_plan.enabled`，助手面板探测到的能力里带；没探测到 = 默认开） */
+function layoutCardEnabled(): boolean {
+  return useAiStore.getState().caps?.change_plan_enabled !== false
+}
+
+/** 预览出图的页面：前后两份画布放在同一个页框里（取两者的并集），对比的两张图才对得齐 */
+function previewDoc(doc: FigureDocument, w: number, h: number): Pick<FigureDocument, 'page' | 'objects'> {
+  return { page: { ...doc.page, w, h }, objects: doc.objects }
+}
+
+interface LayoutCard {
+  res: Extract<QuickLayoutResponse, { ok: true }>
+  memo: QuickLayoutMemo | undefined
+  /** 每张参与排版的图排完之后在页面上的可见框（mm） */
+  shownPanels: Map<string, Box>
+  involvedCount: number
+  ctx: OpContext
+  apply: () => 'applied' | 'stale' | 'failed'
+  regenerate: () => void
+}
+
+/**
+ * 把一次排版方案做成一张修改方案卡并弹出对比（ADR 0206 §一）。前后两份画布各走一次导出管线的整版出图（状态中立，不登记不提交）。
+ * → 卡片已经出现 = true；预览出不来（任何原因）= false，由调用方退回直接落地。
+ */
+async function presentLayoutCard(c: LayoutCard): Promise<boolean> {
+  const { res, ctx } = c
+  const now = useDocumentStore.getState()
+  if (!sameContext(ctx)) return false
+  const before = now.doc
+  // 「应用之后」的那份文档：与 `commitPlan` 是同一个改写函数、改在一份拷贝上（不碰真文档）
+  const after = structuredClone(before)
+  applyPlanToDoc(after, res, c.memo)
+  const pageW = Math.max(before.page.w, after.page.w)
+  const pageH = Math.max(before.page.h, after.page.h)
+  let beforeSrc = ''
+  let afterSrc = ''
+  try {
+    const [b, a] = await Promise.all([
+      fetchLayoutPreviewPng(canvasSegmentOf(previewDoc(before, pageW, pageH))),
+      fetchLayoutPreviewPng(canvasSegmentOf(previewDoc(after, pageW, pageH))),
+    ])
+    beforeSrc = URL.createObjectURL(b)
+    afterSrc = URL.createObjectURL(a)
+  } catch {
+    return false
+  }
+  // 出图期间文档动过：这次方案作废（调用方按「图改过了」处理，不落地）
+  if (!sameContext(ctx)) {
+    URL.revokeObjectURL(beforeSrc)
+    URL.revokeObjectURL(afterSrc)
+    return false
+  }
+  const frac = (b: Box): [number, number, number, number] => [b[0] / pageW, b[1] / pageH, b[2] / pageW, b[3] / pageH]
+  const beforeBoxes = [...c.shownPanels.keys()].flatMap((id) => {
+    const o = before.objects.find((x) => x.id === id)
+    return o ? [{ gid: id, box: frac([o.x, o.y, o.w, o.h]) }] : []
+  })
+  const afterBoxes = [...c.shownPanels].map(([id, b]) => ({ gid: id, box: frac(b) }))
+  const key = newRequestId()
+  const plan: ChangePlan = {
+    id: key,
+    version: 1,
+    source: 'quick_layout',
+    base: { target: '', fingerprint: '' },
+    base_patches: [],
+    candidate_patches: [],
+    groups: [
+      {
+        key: 'layout',
+        label: translate('changePlan.layoutGroup', { ns: 'ai' }),
+        atomic: true,
+        changes: [],
+        boxes: { before: beforeBoxes, after: afterBoxes },
+      },
+    ],
+    unhandled: [],
+    preview: { before: beforeSrc, after: afterSrc },
+  }
+  const entry: PlanEntry = {
+    key,
+    from: 'quick_layout',
+    kind: 'layout',
+    pj: currentProjectId(),
+    panelId: '',
+    fileId: '',
+    source: { fileId: '', script: null },
+    documentId: ctx.documentId,
+    loadSeq: ctx.loadSeq,
+    canvasId: ctx.canvasId,
+    createdAt: Date.now(),
+    status: 'ready',
+    plan,
+    beforeSrc,
+    afterSrc,
+    unchecked: {},
+    request: {},
+    comments: [],
+    commentCount: 0,
+    drafts: {},
+    layout: { apply: c.apply, regenerate: c.regenerate, count: c.involvedCount },
+  }
+  const store = useChangePlanStore.getState()
+  store.addLayoutEntry(entry)
+  // 弹窗住在助手页签里：切过去，方案卡也留在那里（关掉弹窗 = 方案留着，卡片仍待确认）
+  useUiStore.getState().setRightTab('assistant')
+  store.openDialog(key)
+  return true
 }
 
 /** 网格记忆：后端回了网格、且格子里的图都是发出去的才记；否则这一轮不留记忆（旧的也清掉） */
@@ -559,83 +735,90 @@ function commitPlan(
   label: 'quickLayout' | 'quickLayoutRatios',
   memo: QuickLayoutMemo | undefined,
 ): void {
-  useDocumentStore.getState().commit(hist(label), (d) => {
-    // 旧的子图标签（「(a)」这类，与样式系统同一判据 `isSubLabel`）落在**这次真拿到新标签的那几张图**
-    // 原来的范围里（被裁剪的图按整图框，求解器的标签相对整图摆；外扩 5 mm）的，换成这次算好位置的新标签：重复点不叠标签，手加的 (a)(b) 也跟着落到对的地方。
-    // 固定的图（位图 / 旋转…）后端不回标签，它的旧标签原样留着
-    const labelled = new Set(res.labels.map((l) => l.key))
-    const before = d.objects
-      .filter((o): o is PanelObject => o.type === 'panel' && labelled.has(o.id))
-      .map(fullBoxOf)
-    const near = (x: number, y: number) =>
-      before.some(([bx, by, bw, bh]) => x >= bx - 5 && x <= bx + bw + 5 && y >= by - 5 && y <= by + bh + 5)
-    d.objects = d.objects.filter((o) => !(o.type === 'text' && isSubLabel(o) && near(o.x, o.y)))
-    // 参与排版的图离开它们原来的布局组：否则尺寸一变，自动重排（`startLayoutAutoReflow`）120 ms 后
-    // 会按旧组的排布把方案盖掉。与「取消成组」同写法：成员少于 2 个的布局组连同约束一起移除；同一次 commit，⌘Z 一并回去
-    const moving = new Set(res.panels.map((p) => p.key))
-    const gids = new Set<string>()
-    for (const o of d.objects) {
-      if (moving.has(o.id) && o.groupId && d.layoutGroups?.some((g) => g.id === o.groupId)) {
-        gids.add(o.groupId)
-        o.groupId = undefined
-      }
+  useDocumentStore.getState().commit(hist(label), (d) => applyPlanToDoc(d, res, memo))
+}
+
+/** 把排版方案写进一份文档草稿（真提交与「应用之后」的预览拷贝共用这一个改写，不会各算各的） */
+function applyPlanToDoc(
+  d: FigureDocument,
+  res: Extract<QuickLayoutResponse, { ok: true }>,
+  memo: QuickLayoutMemo | undefined,
+): void {
+  // 旧的子图标签（「(a)」这类，与样式系统同一判据 `isSubLabel`）落在**这次真拿到新标签的那几张图**
+  // 原来的范围里（被裁剪的图按整图框，求解器的标签相对整图摆；外扩 5 mm）的，换成这次算好位置的新标签：重复点不叠标签，手加的 (a)(b) 也跟着落到对的地方。
+  // 固定的图（位图 / 旋转…）后端不回标签，它的旧标签原样留着
+  const labelled = new Set(res.labels.map((l) => l.key))
+  const before = d.objects
+    .filter((o): o is PanelObject => o.type === 'panel' && labelled.has(o.id))
+    .map(fullBoxOf)
+  const near = (x: number, y: number) =>
+    before.some(([bx, by, bw, bh]) => x >= bx - 5 && x <= bx + bw + 5 && y >= by - 5 && y <= by + bh + 5)
+  d.objects = d.objects.filter((o) => !(o.type === 'text' && isSubLabel(o) && near(o.x, o.y)))
+  // 参与排版的图离开它们原来的布局组：否则尺寸一变，自动重排（`startLayoutAutoReflow`）120 ms 后
+  // 会按旧组的排布把方案盖掉。与「取消成组」同写法：成员少于 2 个的布局组连同约束一起移除；同一次 commit，⌘Z 一并回去
+  const moving = new Set(res.panels.map((p) => p.key))
+  const gids = new Set<string>()
+  for (const o of d.objects) {
+    if (moving.has(o.id) && o.groupId && d.layoutGroups?.some((g) => g.id === o.groupId)) {
+      gids.add(o.groupId)
+      o.groupId = undefined
     }
-    if (gids.size && d.layoutGroups) {
-      const dead = new Set(
-        d.layoutGroups.filter((g) => gids.has(g.id) && d.objects.filter((o) => o.groupId === g.id).length < 2).map((g) => g.id),
-      )
-      for (const o of d.objects) if (o.groupId && dead.has(o.groupId)) o.groupId = undefined
-      d.layoutGroups = d.layoutGroups.filter((g) => !dead.has(g.id))
-      if (!d.layoutGroups.length) delete d.layoutGroups
-    }
-    for (const p of res.panels) {
-      const obj = d.objects.find((o) => o.id === p.key)
-      if (obj?.type !== 'panel') continue
-      const next: PanelOverride[] = p.patches.map((x) => ({ ...x }))
-      // 这次改过 / 删掉的那几条从「样式写的」登记里注销（ADR 0081 §十三）：与手改一致，脚本重跑不让位
-      const eff = (list: PanelOverride[], x: PanelOverride) => effectiveOverride(list, x.gid, x.prop)
-      const written = [...obj.overrides, ...next].filter((x) => {
-        const a = eff(obj.overrides, x)
-        const b = eff(next, x)
-        return !a || !b || JSON.stringify(a.value) !== JSON.stringify(b.value)
-      })
-      obj.overrides = next
-      releaseOwned(d, obj, written)
-      const [x, y, w, h] = visibleBox(obj.crop, [...p.box] as Box)
-      const fullW = obj.crop ? w / obj.crop.w : w
-      const fullH = obj.crop ? h / obj.crop.h : h
-      const size = effectiveOverride(next, 'figure', 'size_mm')?.value
-      const [sw, sh] = Array.isArray(size) ? (size as unknown[]) : []
-      obj.x = x
-      obj.y = y
-      if (obj.nativeW > 0 && obj.nativeH > 0 && typeof sw === 'number' && typeof sh === 'number' && sw > 0 && sh > 0) {
-        // 整图在页面上按 nativeW / sw 缩放，可见框 = 它乘 crop 比例（crop 不动，渲染回来的 native 同步不改比例）
-        obj.w = ((fullW * obj.nativeW) / sw) * (obj.crop?.w ?? 1)
-        obj.h = ((fullH * obj.nativeH) / sh) * (obj.crop?.h ?? 1)
-      } else {
-        obj.w = w
-        obj.h = h
-      }
-    }
-    res.labels.forEach((l, i) => {
-      d.objects.push(makeSubLabel(i, l.x, l.y))
+  }
+  if (gids.size && d.layoutGroups) {
+    const dead = new Set(
+      d.layoutGroups.filter((g) => gids.has(g.id) && d.objects.filter((o) => o.groupId === g.id).length < 2).map((g) => g.id),
+    )
+    for (const o of d.objects) if (o.groupId && dead.has(o.groupId)) o.groupId = undefined
+    d.layoutGroups = d.layoutGroups.filter((g) => !dead.has(g.id))
+    if (!d.layoutGroups.length) delete d.layoutGroups
+  }
+  for (const p of res.panels) {
+    const obj = d.objects.find((o) => o.id === p.key)
+    if (obj?.type !== 'panel') continue
+    const next: PanelOverride[] = p.patches.map((x) => ({ ...x }))
+    // 这次改过 / 删掉的那几条从「样式写的」登记里注销（ADR 0081 §十三）：与手改一致，脚本重跑不让位
+    const eff = (list: PanelOverride[], x: PanelOverride) => effectiveOverride(list, x.gid, x.prop)
+    const written = [...obj.overrides, ...next].filter((x) => {
+      const a = eff(obj.overrides, x)
+      const b = eff(next, x)
+      return !a || !b || JSON.stringify(a.value) !== JSON.stringify(b.value)
     })
-    // 页面跟着内容收紧（同一条历史，⌘Z 一次撤回）
-    // 注意：这里**不**置 `page.userSized`——那是「用户自己定过画布大小」的记号，排版自己写的不算
-    // 没参与排版的对象（只排选中一部分时的别的图 / 标注 / 形状，固定的图）原地不动：页面至少要包得住它们，
-    // 否则导出按页面裁掉原来看得见的内容（页边口径与请求里发的 margin 一致）
-    const margin = d.page.margin ?? 0
-    let needW = res.page.w
-    let needH = res.page.h
-    for (const o of d.objects) {
-      if (moving.has(o.id) || o.hidden) continue
-      needW = Math.max(needW, o.x + o.w + margin)
-      needH = Math.max(needH, o.y + o.h + margin)
+    obj.overrides = next
+    releaseOwned(d, obj, written)
+    const [x, y, w, h] = visibleBox(obj.crop, [...p.box] as Box)
+    const fullW = obj.crop ? w / obj.crop.w : w
+    const fullH = obj.crop ? h / obj.crop.h : h
+    const size = effectiveOverride(next, 'figure', 'size_mm')?.value
+    const [sw, sh] = Array.isArray(size) ? (size as unknown[]) : []
+    obj.x = x
+    obj.y = y
+    if (obj.nativeW > 0 && obj.nativeH > 0 && typeof sw === 'number' && typeof sh === 'number' && sw > 0 && sh > 0) {
+      // 整图在页面上按 nativeW / sw 缩放，可见框 = 它乘 crop 比例（crop 不动，渲染回来的 native 同步不改比例）
+      obj.w = ((fullW * obj.nativeW) / sw) * (obj.crop?.w ?? 1)
+      obj.h = ((fullH * obj.nativeH) / sh) * (obj.crop?.h ?? 1)
+    } else {
+      obj.w = w
+      obj.h = h
     }
-    d.page.w = needW
-    d.page.h = needH
-    // 网格记忆与排版同一次提交（⌘Z 一起回去）；这一轮没有网格 = 旧的也不再作数
-    if (memo) d.quickLayout = memo
-    else delete d.quickLayout
+  }
+  res.labels.forEach((l, i) => {
+    d.objects.push(makeSubLabel(i, l.x, l.y))
   })
+  // 页面跟着内容收紧（同一条历史，⌘Z 一次撤回）
+  // 注意：这里**不**置 `page.userSized`——那是「用户自己定过画布大小」的记号，排版自己写的不算
+  // 没参与排版的对象（只排选中一部分时的别的图 / 标注 / 形状，固定的图）原地不动：页面至少要包得住它们，
+  // 否则导出按页面裁掉原来看得见的内容（页边口径与请求里发的 margin 一致）
+  const margin = d.page.margin ?? 0
+  let needW = res.page.w
+  let needH = res.page.h
+  for (const o of d.objects) {
+    if (moving.has(o.id) || o.hidden) continue
+    needW = Math.max(needW, o.x + o.w + margin)
+    needH = Math.max(needH, o.y + o.h + margin)
+  }
+  d.page.w = needW
+  d.page.h = needH
+  // 网格记忆与排版同一次提交（⌘Z 一起回去）；这一轮没有网格 = 旧的也不再作数
+  if (memo) d.quickLayout = memo
+  else delete d.quickLayout
 }
