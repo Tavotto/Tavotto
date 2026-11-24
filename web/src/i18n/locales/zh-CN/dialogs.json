@@ -2241,7 +2241,7 @@
       "cancel": "取消"
     },
     "license": {
-      "label": "高级版",
+      "label": "{{pro}}",
       "none": "还没激活",
       "until": "有效期至 {{date}}",
       "codeLabel": "激活码",
@@ -2273,8 +2273,8 @@
         "client_error": "没能完成，请稍后再试"
       },
       "lock": {
-        "tip": "高级版功能，点一下了解",
-        "aria": "高级版功能，了解高级版"
+        "tip": "{{pro}} 功能，点一下了解",
+        "aria": "{{pro}} 功能，了解 {{pro}}"
       },
       "releaseTitle": "解绑后可以在另一台电脑上激活",
       "plate": {
@@ -2286,7 +2286,8 @@
         "rename": "重新刻名",
         "turnTitle": "拖一下可以翻面",
         "issued": "ISSUED ON"
-      }
+      },
+      "open": "打开 {{pro}}"
     }
   },
   "style": {
@@ -2947,7 +2948,7 @@
     "notePlaceholder": "给审阅者的话（选填）…"
   },
   "pro": {
-    "title": "高级版",
+    "title": "{{pro}}",
     "tier": {
       "label": "类型",
       "year": "年度通行证",
@@ -2966,22 +2967,19 @@
     "usage": {
       "title": "用量",
       "expired": "续费后恢复",
-      "unknown": "暂时看不到用量",
+      "unknown": "用量暂不可用",
       "nearEnd": "快用完了，用完后会改用你自己的连接",
       "agentBar": "{{name}} 本期已用",
-      "used": "已用 {{pct}}%",
-      "lockedAgent": "内置 AI，不用自己申请密钥",
-      "lockedReview": "更多分享审阅的链接额度"
+      "used": "已用 {{pct}}%"
     },
     "review": {
       "label": "外部审阅",
       "left": "今天还可新建 {{count}} 个链接"
     },
-    "chip": {
-      "none": "高级版",
-      "expired": "高级版 · 已到期",
-      "soon": "高级版 · 剩 {{count}} 天"
-    },
-    "pass": "通行证"
+    "pass": "通行证",
+    "learn": {
+      "line": "{{pro}} 内置 AI，也有更多审阅额度",
+      "link": "了解 {{pro}}"
+    }
   }
 }

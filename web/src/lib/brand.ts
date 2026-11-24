@@ -10,6 +10,9 @@
  */
 export const PRODUCT_NAME = 'Tavotto'
 
+/** 付费版的名字（维护者 2026-11-24：中英文界面都叫 Pro）。界面任何地方不得手写，文案里写 `{{pro}}`、调用处传这个常量 */
+export const PRO_NAME = 'Pro'
+
 /** 仓库与发行地址（与 `engine/brand.py` 的 REPO_URL 同源） */
 export const REPO_URL = 'https://github.com/Tavotto/Tavotto'
 export const RELEASES_LATEST_URL = `${REPO_URL}/releases/latest`

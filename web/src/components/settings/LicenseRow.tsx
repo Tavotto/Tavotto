@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { formatDate } from '@/i18n/format'
+import { PRO_NAME } from '@/lib/brand'
 import type { LicenseFailureCode } from '@/lib/api'
 import { licenseVisible, useLicenseStore } from '@/store/licenseStore'
 import { FoundingPlate } from '../license/FoundingPlate'
@@ -13,7 +14,7 @@ import { TextInput } from '../ui/Input'
 import { SettingRow } from './SettingRow'
 
 const st = (key: string, values?: Record<string, unknown>) =>
-  translate(`settings.license.${key}`, { ns: 'dialogs', ...(values ?? {}) })
+  translate(`settings.license.${key}`, { ns: 'dialogs', pro: PRO_NAME, ...(values ?? {}) })
 
 /** 失败码 → 那一句话下面的唯一一颗按钮做什么：再提交一次 / 去付款页 / 去续费 */
 const FAILURE_ACTION: Record<LicenseFailureCode, 'retry' | 'buy' | 'renew'> = {
@@ -215,7 +216,7 @@ export function LicenseRow({
     <FormSection title={title} data-settings-anchor="about.license" data-license-state={failure ? `failed:${failure}` : state}>
       <FieldGroup>
         <SettingRow
-          label={label ?? st('label')}
+          label={label ?? st('label', { pro: PRO_NAME })}
           description={<span data-license-line>{line}</span>}
           below={
             entering && !active ? (

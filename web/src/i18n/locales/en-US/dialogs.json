@@ -2266,7 +2266,7 @@
       "cancel": "Cancel"
     },
     "license": {
-      "label": "Premium",
+      "label": "{{pro}}",
       "none": "Not activated",
       "until": "Valid until {{date}}",
       "codeLabel": "Activation code",
@@ -2298,8 +2298,8 @@
         "client_error": "That didn't go through. Please try again later"
       },
       "lock": {
-        "tip": "Premium feature. Click to learn more",
-        "aria": "Premium feature, learn about Premium"
+        "tip": "{{pro}} feature. Click to learn more",
+        "aria": "{{pro}} feature, learn about {{pro}}"
       },
       "releaseTitle": "After unbinding, you can activate it on another computer",
       "plate": {
@@ -2311,7 +2311,8 @@
         "rename": "Change name",
         "turnTitle": "Drag to turn it over",
         "issued": "ISSUED ON"
-      }
+      },
+      "open": "Open {{pro}}"
     }
   },
   "style": {
@@ -2978,7 +2979,7 @@
     "notePlaceholder": "Note for reviewers (optional)…"
   },
   "pro": {
-    "title": "Premium",
+    "title": "{{pro}}",
     "tier": {
       "label": "Plan",
       "year": "Annual pass",
@@ -2997,22 +2998,19 @@
     "usage": {
       "title": "Usage",
       "expired": "Comes back after you renew",
-      "unknown": "Usage isn't available right now",
+      "unknown": "Usage is unavailable for now",
       "nearEnd": "Almost used up. It will switch to your own connection when it runs out",
       "agentBar": "{{name}} used this period",
-      "used": "{{pct}}% used",
-      "lockedAgent": "Built-in AI, no key of your own needed",
-      "lockedReview": "More shared-review links per day"
+      "used": "{{pct}}% used"
     },
     "review": {
       "label": "External review",
       "left": "{{count}} new links left today"
     },
-    "chip": {
-      "none": "Premium",
-      "expired": "Premium · expired",
-      "soon": "Premium · {{count}} days left"
-    },
-    "pass": "Pass"
+    "pass": "Pass",
+    "learn": {
+      "line": "{{pro}} brings built-in AI and more review quota",
+      "link": "Learn about {{pro}}"
+    }
   }
 }

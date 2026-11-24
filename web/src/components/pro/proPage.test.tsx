@@ -1,5 +1,5 @@
 /**
- * 高级版页：四种状态（未激活 / 已激活 / 创始 / 已过期）各自该有什么、不该有什么。
+ * Pro 页：四种状态（未激活 / 已激活 / 创始 / 已过期）各自该有什么、不该有什么。
  * 主语：`data-pro-*` 稳定锚点，不认文案；数据由 `/api/license/{status,usage}` 的假响应给。
  */
 import { act } from 'react'
@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useLicenseStore } from '@/store/licenseStore'
 import { useUiStore } from '@/store/uiStore'
+import { ProLinkRow } from '../settings/ProLinkRow'
 import { ProDialog } from './ProDialog'
 import { ProPage } from './ProPage'
 
@@ -28,20 +29,22 @@ const ACTIVE = {
   features: ['hosted-ai', 'review-plus'],
   exp: EXP,
   email_hint: 'l***@qq.com',
-  tier: { key: 'year', term_days: 365 },
-  devices: { used: 1, limit: 2 },
 }
+const ACCOUNT = { ok: true, tier: { key: 'year', term_days: 365 }, devices: { used: 1, limit: 2 }, paid_at: 1_760_000_000, exp: EXP }
 const FOUNDING = { no: 37, since: 1_763_000_000, name: '' }
 
 const json = (body: unknown, status = 200) =>
   Promise.resolve({ ok: status < 400, status, json: () => Promise.resolve(body), headers: new Headers() })
 
-function mockApi(status: unknown, usage: unknown | null) {
+/** `usage`：`{agent_used, review_new_left}` 或 null（取不到）；`account`：账户详情或 null（取不到） */
+function mockApi(status: unknown, usage: { agent_used: number | null; review_new_left: number | null } | null, account: unknown | null = ACCOUNT) {
   vi.stubGlobal(
     'fetch',
     vi.fn((u: string) => {
       const path = new URL(u, 'http://x').pathname
-      if (path.endsWith('/license/usage')) return usage ? json(usage) : json({ error: 'x' }, 404)
+      if (path.endsWith('/license/usage')) return usage ? json({ agent_used: usage.agent_used }) : json({ error: 'x' }, 404)
+      if (path.endsWith('/review/quota')) return usage ? json({ new_left: usage.review_new_left, update_left: null }) : json({ error: 'x' }, 404)
+      if (path.endsWith('/license/account')) return account ? json(account) : json({ ok: false })
       return json(status)
     }),
   )
@@ -65,15 +68,19 @@ afterEach(async () => {
   document.body.innerHTML = ''
 })
 
-describe('高级版页', () => {
-  it('未激活：没有铭牌与通行证详情；用量两行只写「激活后可用」，不画进度条', async () => {
+describe('Pro 页', () => {
+  it('未激活：没有铭牌与通行证详情，不画用量；只有一句话加「了解 Pro」链接', async () => {
     mockApi(BASE, null)
     await render()
     expect(q('[data-pro-state="none"]')).not.toBeNull()
     expect(q('[data-founding-plate]')).toBeNull()
     expect(q('[data-pro-row]')).toBeNull()
     expect(q('[role="progressbar"]')).toBeNull()
-    expect(document.querySelectorAll('[data-pro-usage-note]').length).toBe(2)
+    expect(q('[data-pro-usage]')).toBeNull()
+    const open = vi.fn()
+    vi.stubGlobal('open', open)
+    await act(async () => q('[data-pro-learn] button')!.click())
+    expect(String(open.mock.calls[0][0])).toMatch(/\/premium\/$/)
   })
 
   it('已激活：类型写在通行证那一行的名字上，下面剩余 / 电脑两行；Agent 用量进度条是已用比例；外部审阅一行字', async () => {
@@ -97,7 +104,7 @@ describe('高级版页', () => {
     await act(async () => root.unmount())
     document.body.innerHTML = ''
     useLicenseStore.setState(useLicenseStore.getInitialState())
-    mockApi(ACTIVE, null)
+    mockApi(ACTIVE, { agent_used: null, review_new_left: null })
     await render()
     expect(q('[role="progressbar"]')).toBeNull()
     expect(q('[data-pro-usage="agent"] [data-pro-usage-note]')).not.toBeNull()
@@ -122,10 +129,7 @@ describe('高级版页', () => {
   })
 
   it('服务端没给类型 / 设备名额（现在就是这样）：电脑行不出现，不臆造', async () => {
-    const { tier: _t, devices: _d, ...bare } = ACTIVE
-    void _t
-    void _d
-    mockApi(bare, { agent_used: 0.2, review_new_left: 2 })
+    mockApi(ACTIVE, { agent_used: 0.2, review_new_left: 2 }, null)
     await render()
     expect([...document.querySelectorAll('[data-pro-row]')].map((e) => (e as HTMLElement).dataset.proRow)).toEqual(['days'])
   })
@@ -135,5 +139,24 @@ describe('高级版页', () => {
     useUiStore.setState({ proOpen: true })
     await render(<ProDialog />)
     expect(document.querySelector('[role="dialog"]')).toBeNull()
+  })
+})
+
+describe('设置里的 Pro 一行链接', () => {
+  it('入口开着：一行名字 + 现状 + 「打开」，点它收设置、开 Pro 页；没开：不渲染', async () => {
+    mockApi(ACTIVE, null)
+    useUiStore.setState({ settingsOpen: true, proOpen: false })
+    await render(<ProLinkRow />)
+    expect(q('[data-license-link]')).not.toBeNull()
+    expect(q('[data-license-line]')?.textContent).toContain('20')
+    await act(async () => q('[data-license-open]')!.click())
+    expect(useUiStore.getState().proOpen).toBe(true)
+    expect(useUiStore.getState().settingsOpen).toBe(false)
+    await act(async () => root.unmount())
+    document.body.innerHTML = ''
+    useLicenseStore.setState(useLicenseStore.getInitialState())
+    mockApi({ enabled: false }, null)
+    await render(<ProLinkRow />)
+    expect(q('[data-license-link]')).toBeNull()
   })
 })

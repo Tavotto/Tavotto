@@ -3,12 +3,14 @@ import {
   ApiError,
   activateLicense,
   fetchLicenseStatus,
+  fetchLicenseAccount,
   fetchLicenseUsage,
+  fetchReviewQuota,
   refreshLicense,
   releaseLicense,
   setLicensePlateName,
   type LicenseFailureCode,
-  type LicenseUsage,
+  type LicenseAccount,
   type LicenseStatus,
 } from '@/lib/api'
 import { currentLocale } from '@/i18n'
@@ -40,8 +42,11 @@ interface LicenseState {
   status: LicenseStatus | null
   failure: LicenseFailureCode | null
   busy: boolean
-  /** 用量：null = 还没取 / 取不到（界面不画） */
-  usage: LicenseUsage | null
+  /** 账户详情（类型 / 设备名额）：null = 还没取 / 取不到（那几行不画） */
+  account: Extract<LicenseAccount, { ok: true }> | null
+  /** 用量：`null` = 还没取；字段 `null` = 暂时算不准（界面写「用量暂不可用」） */
+  usage: { agent_used: number | null; review_new_left: number | null } | null
+  loadAccount: () => Promise<void>
   loadUsage: () => Promise<void>
   load: () => Promise<void>
   activate: (code: string) => Promise<boolean>
@@ -71,13 +76,27 @@ export const useLicenseStore = create<LicenseState>((set, get) => {
     status: null,
     failure: null,
     busy: false,
+    account: null,
     usage: null,
-    loadUsage: async () => {
+    loadAccount: async () => {
       try {
-        set({ usage: await fetchLicenseUsage() })
+        const a = await fetchLicenseAccount()
+        set({ account: a.ok ? a : null })
       } catch {
-        set({ usage: null })
+        set({ account: null })
       }
+    },
+    loadUsage: async () => {
+      // 两个来源互不拖累：任何一个失败都只是那一项「暂不可用」
+      const [agent, review] = await Promise.allSettled([fetchLicenseUsage(), fetchReviewQuota()])
+      const used = agent.status === 'fulfilled' ? agent.value.agent_used : null
+      const left = review.status === 'fulfilled' ? review.value.new_left : null
+      set({
+        usage: {
+          agent_used: typeof used === 'number' && Number.isFinite(used) ? Math.min(1, Math.max(0, used)) : null,
+          review_new_left: typeof left === 'number' ? left : null,
+        },
+      })
     },
     load: async () => {
       try {

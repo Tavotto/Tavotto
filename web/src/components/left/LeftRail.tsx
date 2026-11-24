@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { ChartLine, Folder, Images, LayoutList, ListChecks, Paintbrush, Settings, Sparkles } from '@/components/ui/icons'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { PRO_NAME } from '@/lib/brand'
 import { cn } from '@/lib/utils'
 import { RAIL_ICON_ONLY, RAIL_W, useUiStore, type LeftTab } from '@/store/uiStore'
 import { useValidationStore } from '@/store/validationStore'
@@ -155,17 +156,17 @@ export function LeftRail() {
           分区之间只靠留白（`mt-auto` 把它推到底），不画分隔线（左栏审计 L17） */}
       {/* 高级版：授权入口开着（`PRODUCTION_LIVE` / 测试端点）才出现；开的是对话框，与设置同一类，不进 ITEMS */}
       {proVisible && (
-        <Tip label={t('rail.pro')} side="right">
+        <Tip label={t('rail.pro', { pro: PRO_NAME })} side="right">
           <button
             data-rail="pro"
             onClick={() => useUiStore.getState().setProOpen(true)}
-            aria-label={t('rail.pro')}
+            aria-label={t('rail.pro', { pro: PRO_NAME })}
             className={cn(RAIL_BUTTON, iconOnly && RAIL_BUTTON_ICON, RAIL_IDLE, 'mt-auto')}
           >
             <Sparkles size={ICON_SIZE.md} />
             {!iconOnly && (
               <span aria-hidden className="max-w-full truncate px-0.5 text-xs leading-none">
-                {t('rail.short.pro')}
+                {t('rail.short.pro', { pro: PRO_NAME })}
               </span>
             )}
           </button>

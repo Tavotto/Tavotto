@@ -1993,11 +1993,6 @@ export default interface Resources {
       "title": "科研预设"
     },
     "pro": {
-      "chip": {
-        "expired": "高级版 · 已到期",
-        "none": "高级版",
-        "soon": "高级版 · 剩 {{count}} 天"
-      },
       "days": {
         "label": "剩余天数",
         "value": "{{count}} 天"
@@ -2005,6 +2000,10 @@ export default interface Resources {
       "devices": {
         "label": "电脑",
         "value": "已用 {{used}} / {{limit}} 台"
+      },
+      "learn": {
+        "line": "{{pro}} 内置 AI，也有更多审阅额度",
+        "link": "了解 {{pro}}"
       },
       "pass": "通行证",
       "review": {
@@ -2018,15 +2017,13 @@ export default interface Resources {
         "team": "课题组通行证",
         "year": "年度通行证"
       },
-      "title": "高级版",
+      "title": "{{pro}}",
       "usage": {
         "agentBar": "{{name}} 本期已用",
         "expired": "续费后恢复",
-        "lockedAgent": "内置 AI，不用自己申请密钥",
-        "lockedReview": "更多分享审阅的链接额度",
         "nearEnd": "快用完了，用完后会改用你自己的连接",
         "title": "用量",
-        "unknown": "暂时看不到用量",
+        "unknown": "用量暂不可用",
         "used": "已用 {{pct}}%"
       }
     },
@@ -3219,12 +3216,13 @@ export default interface Resources {
           "revoked": "这份授权已失效",
           "server": "授权服务暂时不可用，请稍后再试"
         },
-        "label": "高级版",
+        "label": "{{pro}}",
         "lock": {
-          "aria": "高级版功能，了解高级版",
-          "tip": "高级版功能，点一下了解"
+          "aria": "{{pro}} 功能，了解 {{pro}}",
+          "tip": "{{pro}} 功能，点一下了解"
         },
         "none": "还没激活",
+        "open": "打开 {{pro}}",
         "plate": {
           "defaultName": "早期同行者",
           "engrave": "刻上你的名字",
@@ -8121,7 +8119,7 @@ export default interface Resources {
       "elements": "图内元素",
       "navLabel": "工作区侧栏",
       "outline": "大纲",
-      "pro": "高级版",
+      "pro": "{{pro}}",
       "problems": "问题",
       "problemsBlocking_other": "问题 · {{count}} 项阻断（共 {{total}}）",
       "problemsCount_other": "问题 · {{count}}",
@@ -8131,7 +8129,7 @@ export default interface Resources {
         "data": "数据",
         "elements": "图内",
         "outline": "大纲",
-        "pro": "高级版",
+        "pro": "{{pro}}",
         "problems": "问题",
         "settings": "设置",
         "style": "样式",

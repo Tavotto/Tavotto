@@ -9683,10 +9683,6 @@ export type LicenseStatus =
       email_hint: string
       needs_refresh: boolean
       /** 创始会员（令牌里签了席位号）：永久身份，过期也在，吊销时没有；常规授权没有这个键 */
-      /** 通行证类型与时长（服务端令牌 / 读接口还没提供：缺就不显示这一行）。`key` 是档名：year / season / sprint / team */
-      tier?: { key: string; term_days: number }
-      /** 这份授权的设备名额（同上，缺就不显示） */
-      devices?: { used: number; limit: number }
       founding?: { no: number; since: number; /** 刻在铭牌上的名字（只存本机；没刻 = 空串） */ name: string }
     }
 
@@ -9706,10 +9702,22 @@ export const releaseLicense = () => jsonFetch<LicenseStatus>('/api/license/relea
 export const licenseCheckout = (lookupKey: string, locale: string, renew = false) =>
   jsonFetch<{ ok: true; url: string }>('/api/license/checkout', licenseBody({ lookup_key: lookupKey, locale, renew }))
 
-/** 用量（内置 AI / 外部审阅）。引擎的 `/api/license/usage` 还没有（缺口见 Pro 页方案）：404 / 失败 = 取不到，界面不画这一行。
- *  `agent_used` 是 0–1 的已用比例（ADR 0200 §二：界面只显示比例，不显示 token 与钱）；`review_new_left` 是今天还可新建的审阅链接数。 */
+/**
+ * 账户详情（`GET /api/license/account`，引擎包一层 infra `POST /v1/me`，设备签名 `op = "me"`；失败一律静默降级成 `{ok:false}`）：
+ * `tier.key` 是档名（year / season / sprint / other；创始年度也归 year，创始身份看 `status.founding`），`term_days` 是那一笔的时长，
+ * `devices` 是这份授权的设备名额，`paid_at` / `exp` 是秒。拿不到 = 这几行不显示。
+ */
+export type LicenseAccount =
+  | { ok: true; tier: { key: string; term_days: number }; devices: { used: number; limit: number }; paid_at: number; exp: number }
+  | { ok: false }
+export const fetchLicenseAccount = () => jsonFetch<LicenseAccount>('/api/license/account')
+
+/**
+ * 内置 AI 用量（`GET /api/license/usage`，引擎包一层 infra `POST /v1/ai/usage`，设备签名 `op = "ai_usage"`）：
+ * `agent_used` = 1 − remaining，0–1 两位小数；`null` = 额度暂时算不准（界面写「用量暂不可用」）。失败 / 403 一律静默降级成 `null`，不报错。
+ * 外部审阅今天还剩几次走现有 `GET /api/review/quota` 的 `new_left`，不在这里。
+ */
 export interface LicenseUsage {
   agent_used: number | null
-  review_new_left: number | null
 }
 export const fetchLicenseUsage = () => jsonFetch<LicenseUsage>('/api/license/usage')
