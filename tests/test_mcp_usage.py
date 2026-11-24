@@ -54,6 +54,9 @@ def test_tool_names_mirror_handlers_and_engine_enum():
         "tavotto_fix_to_journal",
         "tavotto_make_journal_ready",  # ADR 0192 §1：同上，走 `other` 桶
         "tavotto_share_review",  # ADR 0205：同上，走 `other` 桶，不升同意版本
+        "tavotto_review_feedback",  # ADR 0205 二期：同上
+        "tavotto_reply_review",
+        "tavotto_resolve_review",
         "tavotto_get_journal_facts",
     }
     assert set(tel.EVENTS["mcp_tool_call"]["tool"]["values"]) == set(usage.TOOLS) | {"other"}
