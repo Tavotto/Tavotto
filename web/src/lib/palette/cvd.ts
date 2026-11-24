@@ -32,6 +32,15 @@ const MACHADO_100: Record<Exclude<Vision, 'normal'>, Mat3> = {
   ],
 }
 
+/**
+ * SVG `feColorMatrix` 的 20 个值（画布上的色觉预览用，只改显示）：滤镜在 `linearRGB` 里算，
+ * 与上面的模拟同一个矩阵、同一个色彩空间；越界由滤镜自己夹回 [0, 1]，与 `toUcs` 的夹回一致。
+ */
+export function cvdFilterValues(vision: Exclude<Vision, 'normal'>): string {
+  const m = MACHADO_100[vision]
+  return [...m.map((r) => [...r, 0, 0]), [0, 0, 0, 1, 0]].flat().join(' ')
+}
+
 function mul(m: Mat3, v: Vec3): Vec3 {
   return [
     m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],

@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { currentLocale, t as translate } from '@/i18n'
 import { fetchBuildVersion, type TelemetrySettings } from '@/lib/api'
 import { PRIVACY_DOC_URL, PRODUCT_NAME, REPO_URL, supportPageUrl } from '@/lib/brand'
+import { paletteSource } from '@/lib/palette/catalog'
+import { paletteUi } from '@/lib/paletteUi'
 import { TELEMETRY_DISCLOSED_EVENTS } from '@/lib/telemetryDisclosure'
 import { useContactStore } from '@/store/contactStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
@@ -99,6 +101,8 @@ function ProductBlock({ version }: { version?: string }) {
             </a>
             {st('about.licenseAfter')}
           </p>
+          {/* 推荐配色的来源致谢（ADR 0210 §三：Crameri 要求引用）；入口没开时不出现 */}
+          {paletteUi() && <PaletteCredits />}
         </div>
       </div>
       {/* 只是一条去官网的链接：点了才出网，由系统浏览器打开；页内不嵌任何捐赠服务 */}
@@ -115,6 +119,25 @@ function ProductBlock({ version }: { version?: string }) {
         <ExternalLink size={ICON_SIZE.xs} aria-hidden />
       </a>
     </div>
+  )
+}
+
+/** 推荐配色收录的方案来源：一句话 + Crameri 要求的引用（引文是出版物原文，不翻译） */
+function PaletteCredits() {
+  const crameri = paletteSource('crameri')
+  return (
+    <p className="type-meta" data-about-palette-credits>
+      {st('about.paletteCredits')}
+      {crameri?.cite && (
+        <>
+          {' '}
+          <span data-about-palette-cite>
+            {crameri.cite}
+            {crameri.doi ? ` doi:${crameri.doi}` : ''}
+          </span>
+        </>
+      )}
+    </p>
   )
 }
 
