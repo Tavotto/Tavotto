@@ -790,6 +790,7 @@
       "groupMeta": "{{who}} · {{count}}",
       "groupMetaNoWho": "{{count}}",
       "groupN": "Comment {{n}}",
+      "previewStale": "The preview didn't update; what gets applied follows your checkmarks",
       "checkTip": "Uncheck to skip this change",
       "discard": "Discard",
       "apply": "Apply"

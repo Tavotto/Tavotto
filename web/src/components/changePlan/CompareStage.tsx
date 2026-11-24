@@ -77,6 +77,7 @@ export function CompareStage({
   mode,
   groups,
   activeId,
+  afterBusy = false,
 }: {
   before: string
   after: string
@@ -85,6 +86,8 @@ export function CompareStage({
   /** 勾选了的改动（没勾的这一处不改，也就不画框） */
   groups: GroupView[]
   activeId: string | null
+  /** 「修改后」正在按勾选重新出图：保留旧图，淡一档（不做呼吸） */
+  afterBusy?: boolean
 }) {
   useTranslation('ai')
   // 按住空格看修改前只在「切换」里：滑动 / 并排本来就同时看得到两边
@@ -136,6 +139,7 @@ export function CompareStage({
       }),
     )
 
+  const busyCls = afterBusy ? 'opacity-60' : undefined
   const cap = (text: string) => <span className="type-meta">{text}</span>
   const effectiveView = hold ? 'before' : view
   // 三种模式共用一条纵向骨架：上一行说明（占位等高）· 图面 · 下一行控制（占位等高），图面顶边与大小不随模式跳
@@ -153,7 +157,7 @@ export function CompareStage({
         <div ref={frameRef} className="relative w-full">
           <Frame width="100%" aspect={aspect}>
             <Img src={before} />
-            <Img src={after} className={cn(!dragging && 'transition-[clip-path] duration-base')} style={{ clipPath: `inset(0 0 0 ${p}%)` }} />
+            <Img src={after} className={cn(!dragging && 'transition-[clip-path] duration-base', busyCls)} style={{ clipPath: `inset(0 0 0 ${p}%)` }} />
             <div className="absolute inset-0">
               {boxes('before', (b) => b[0] + b[2] / 2 < p / 100)}
               {boxes('after', (b) => b[0] + b[2] / 2 >= p / 100)}
@@ -211,7 +215,7 @@ export function CompareStage({
             {boxes('before')}
           </Frame>
           <Frame width={half} aspect={aspect}>
-            <Img src={after} />
+            <Img src={after} className={busyCls} />
             {boxes('after')}
           </Frame>
         </div>
@@ -223,7 +227,7 @@ export function CompareStage({
       <div className="flex flex-col gap-1.5" style={{ width: one }}>
         <div className={cn(row, 'justify-center')}>{cap(cp(effectiveView === 'before' ? 'dialog.before' : 'dialog.after'))}</div>
         <Frame width="100%" aspect={aspect}>
-          <Img src={effectiveView === 'before' ? before : after} />
+          <Img src={effectiveView === 'before' ? before : after} className={effectiveView === 'after' ? busyCls : undefined} />
           {boxes(effectiveView)}
         </Frame>
         <div className="flex justify-center pt-1">

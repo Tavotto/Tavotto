@@ -86,21 +86,43 @@ export function toOverrides(patches: readonly ChangePlanPatch[]): PanelOverride[
   return patches.map((p) => ({ gid: p.gid, prop: p.prop, value: p.value, ...(p.identity ? { identity: p.identity } : {}) }))
 }
 
+/** 图源身份：方案是为「这个文件 + 这份脚本（+ 磁盘修订）」算的；换素材 / 脚本改了，方案就不再适用 */
+export interface PlanSource {
+  fileId: string
+  script: string | null
+  /** 磁盘素材的修订（mtime）；两边都有才比（还没读到不算变了） */
+  mtime?: number
+}
+
+export function sameSource(a: PlanSource, b: PlanSource): boolean {
+  return a.fileId === b.fileId && (a.script ?? null) === (b.script ?? null) && (a.mtime === undefined || b.mtime === undefined || a.mtime === b.mtime)
+}
+
 /** 卡片 / 弹窗 / 应用判据共用的状态来源（`PlanEntry` 的结构子集，免得 lib 反过来依赖 store） */
 export interface PlanStatusInput {
   status: 'generating' | 'ready' | 'applied' | 'discarded' | 'stale' | 'failed'
-  plan?: { base_patches: readonly unknown[] }
+  plan?: { base_patches: readonly unknown[]; base?: { target: string } }
   appliedPatches?: readonly unknown[]
+  source?: PlanSource
 }
 
 /**
- * 卡片此刻的状态：存着的状态 + 这张图**此刻**的 override（`current`，图不在了 = null）。
+ * 卡片此刻的状态：存着的状态 + 这张图**此刻**的 override（`current`，图不在了 = null）+ 图源身份（`source`，此刻的）。
  * 待确认 / 已应用的方案以文档为准——⌘Z 把应用撤回了就又是「待确认」，重做回来又是「已应用」，
- * 既不是方案的改前也不是我们写的那份就是「图已改过」（对不上了）。其余状态照存着的。
+ * 既不是方案的改前也不是我们写的那份就是「图已改过」（对不上了）。**换了素材 / 脚本**（图源身份对不上，或后端记的 `base.target` 不是这个文件）
+ * 同样是「图已改过」——换素材后 overrides 可能恰好也是空的，只比 override 会把为原图算的 patch 写进新图。其余状态照存着的。
  */
-export function effectiveStatus(e: PlanStatusInput, current: readonly unknown[] | null): PlanStatusInput['status'] {
+export function effectiveStatus(
+  e: PlanStatusInput,
+  current: readonly unknown[] | null,
+  source?: PlanSource | null,
+): PlanStatusInput['status'] {
   if ((e.status !== 'ready' && e.status !== 'applied') || !e.plan) return e.status
   if (!current) return 'stale'
+  if (source) {
+    if (e.source && !sameSource(e.source, source)) return 'stale'
+    if (e.plan.base && e.plan.base.target !== source.fileId) return 'stale'
+  }
   if (e.status === 'applied' && e.appliedPatches && samePatches(current, e.appliedPatches)) return 'applied'
   return samePatches(current, e.plan.base_patches) ? 'ready' : 'stale'
 }

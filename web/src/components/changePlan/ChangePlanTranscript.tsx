@@ -3,7 +3,7 @@ import { useChangePlanStore } from '@/store/changePlanStore'
 import { ChangePlanCard } from './ChangePlanCard'
 import { effectiveStatus } from './changePlanModel'
 import { ReviewNoteCard } from './ReviewNoteCard'
-import { usePlanPanel } from './usePlanFigure'
+import { usePlanPanel, usePlanSource } from './usePlanFigure'
 
 /**
  * 助手转录里这张图的方案卡（数据来自 `changePlanStore`，按项目 + 图分键；切图 / 换项目跟着走）：
@@ -15,7 +15,8 @@ export function ChangePlanTranscript({ panelId }: { panelId: string }) {
   const entries = useChangePlanStore((s) => s.entries)
   const mine = useMemo(() => order.map((k) => entries[k]).filter((e) => e && e.panelId === panelId), [order, entries, panelId])
   const panel = usePlanPanel(mine[0] ?? { panelId, documentId: '', loadSeq: 0, canvasId: '' })
-  const latest = [...mine].reverse().find((e) => effectiveStatus(e, panel?.overrides ?? null) === 'ready')?.key
+  const source = usePlanSource(panel)
+  const latest = [...mine].reverse().find((e) => effectiveStatus(e, panel?.overrides ?? null, source) === 'ready')?.key
   return (
     <>
       {mine.map((e) => (

@@ -41,6 +41,7 @@ export default interface Resources {
         "groupN": "第 {{n}} 条意见",
         "hold": "按住",
         "holdBefore": "看修改前",
+        "previewStale": "预览没更新，应用结果以勾选为准",
         "side": "并排",
         "slide": "滑动",
         "space": "空格",

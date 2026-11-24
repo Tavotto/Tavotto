@@ -13,6 +13,11 @@ import { emptyProject, type PanelObject } from '@/types/document'
 
 vi.mock('@/hooks/useVariantPng', () => ({ useVariantPng: () => ({ url: null, loading: false, approximate: false }), variantNeedsRender: () => false }))
 vi.mock('@/hooks/useRuntimePreview', () => ({ useRuntimePreview: () => ({ url: null, exact: false }) }))
+const previewSnapshot = vi.fn()
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api')>()),
+  enginePreviewPngSnapshot: (...a: unknown[]) => previewSnapshot(...a),
+}))
 const connectAi = vi.fn()
 vi.mock('@/store/connectAiStore', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/store/connectAiStore')>()),
@@ -79,6 +84,7 @@ const entry = (key: string, over: Partial<PlanEntry> = {}): PlanEntry => {
     pj: null,
     panelId: 'p1',
     fileId: 'f_p1',
+    source: { fileId: 'f_p1', script: 'fig.py' },
     documentId: s.documentId,
     loadSeq: s.loadSeq,
     canvasId: s.activeCanvasId,
@@ -108,6 +114,7 @@ beforeEach(async () => {
   document.body.appendChild(host)
   root = createRoot(host)
   connectAi.mockReset()
+  previewSnapshot.mockReset()
   useChangePlanStore.setState({ entries: {}, order: [], dialogKey: null })
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_change_plan_ui')
   useDocumentStore.getState().commit(literal('放入'), (d) => {
@@ -272,4 +279,82 @@ it('弹窗：滑动 / 并排 / 切换；按住空格看修改前只在「切换�
   act(() => void q('[data-change-group]')!.dispatchEvent(new Event('focusin', { bubbles: true })))
   expect(box().dataset.active).toBe('true')
   expect(box().className).toContain('opacity-100')
+})
+
+const TWO: ChangePlan = {
+  ...PLAN,
+  groups: [
+    PLAN.groups[0],
+    { ...PLAN.groups[0], key: 'g2', comment_id: 'c2', changes: [{ target_gid: 'ax.legend', prop: 'loc', before: 'a', after: 'b', patch: { gid: 'ax.legend', prop: 'loc', value: 'upper left' } }] },
+  ],
+}
+const stageAfter = () => q('[data-change-plan-stage] [data-change-plan-frame]')!.querySelectorAll('img')[1].getAttribute('src')
+
+it('弹窗：取消勾选部分组后「修改后」按勾选组合出图（applyGroups 的结果），加载中保留旧图 + 轻遮罩；全选回到全量图', async () => {
+  vi.useFakeTimers()
+  try {
+    let resolve!: (v: unknown) => void
+    previewSnapshot.mockReturnValue(new Promise((r) => (resolve = r)))
+    put(entry('a', { plan: TWO }))
+    act(() => useChangePlanStore.getState().openDialog('a'))
+    render(<ChangePlanDialog />)
+    expect(stageAfter()).toBe('/a.png')
+    act(() => (qa('[data-change-group] input')[1] as HTMLInputElement).click())
+    // 防抖之前不发请求；旧图保留
+    expect(previewSnapshot).not.toHaveBeenCalled()
+    await act(async () => void (await vi.advanceTimersByTimeAsync(400)))
+    expect(previewSnapshot).toHaveBeenCalledTimes(1)
+    const [id, patches] = previewSnapshot.mock.calls[0]
+    expect(id).toBe('f_p1')
+    expect(patches).toEqual([{ gid: 'ax.title', prop: 'fontsize', value: 14 }])
+    expect(stageAfter()).toBe('/a.png')
+    expect(q('[data-change-plan-stage] [data-change-plan-frame] img:nth-of-type(2)')!.className).toContain('opacity-60')
+    await act(async () => resolve({ url: 'data:image/png;base64,AAA', manifest: {} }))
+    expect(stageAfter()).toBe('data:image/png;base64,AAA')
+    // 应用时把这张图交给卡片
+    act(() => (q('[data-change-plan-confirm]') as HTMLButtonElement).click())
+    const e = useChangePlanStore.getState().entries.a
+    expect(e.appliedPartial).toBe(true)
+    expect(e.appliedSrc).toBe('data:image/png;base64,AAA')
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('弹窗：按勾选出图失败 = 回退全量图 + 一句灰字；应用后的卡不挂全量图', async () => {
+  vi.useFakeTimers()
+  try {
+    previewSnapshot.mockRejectedValue(new Error('x'))
+    put(entry('a', { plan: TWO }))
+    act(() => useChangePlanStore.getState().openDialog('a'))
+    render(<ChangePlanDialog />)
+    act(() => (qa('[data-change-group] input')[1] as HTMLInputElement).click())
+    await act(async () => void (await vi.advanceTimersByTimeAsync(400)))
+    expect(stageAfter()).toBe('/a.png')
+    expect(q('[data-change-plan-preview-failed]')!.textContent).toContain('预览没更新')
+    act(() => (q('[data-change-plan-confirm]') as HTMLButtonElement).click())
+    const e = useChangePlanStore.getState().entries.a
+    expect(e.appliedPartial).toBe(true)
+    expect(e.appliedSrc).toBeUndefined()
+    render(<ChangePlanCard entry={e} />)
+    expect(q('[data-change-plan-card] img')!.getAttribute('src')).not.toBe('/a.png')
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('替换素材后（面板 id 不变、overrides 为空）：待确认的方案转「图已改过」，且不应用', () => {
+  put(entry('a', { plan: { ...PLAN, base_patches: [] }, source: { fileId: 'f_p1', script: 'fig.py' } }))
+  act(() =>
+    useDocumentStore.getState().commit(literal('替换素材'), (d) => {
+      const o = d.objects.find((x) => x.id === 'p1') as PanelObject
+      o.fileId = 'f_other'
+      o.script = 'other.py'
+      o.overrides = []
+    }),
+  )
+  render(<ChangePlanCard entry={useChangePlanStore.getState().entries.a} />)
+  expect(q('[data-change-plan-card]')!.dataset.changePlanCard).toBe('stale')
+  expect(useChangePlanStore.getState().apply('a')).toBe('stale')
+  expect((useDocumentStore.getState().doc.objects.find((x) => x.id === 'p1') as PanelObject).overrides).toEqual([])
 })

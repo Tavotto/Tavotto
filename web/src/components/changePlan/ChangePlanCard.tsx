@@ -11,7 +11,7 @@ import { StatusPill } from '../ui/StatusPill'
 import { ThinkingOrb } from '../ui/ThinkingOrb'
 import { cp, effectiveStatus, failureAction, failureText, planTally, summaryLine, unhandledViews } from './changePlanModel'
 import { FigureThumb } from './FigureThumb'
-import { useImageAspect, usePanelThumbSrc, usePlanPanel } from './usePlanFigure'
+import { useImageAspect, usePanelThumbSrc, usePlanPanel, usePlanSource } from './usePlanFigure'
 
 /**
  * 助手里的「修改方案」卡（助手一侧，占栏宽）：修改后的缩略图是主体，标题行「修改方案」+ 右侧版本，一句话说改了什么，
@@ -22,12 +22,12 @@ import { useImageAspect, usePanelThumbSrc, usePlanPanel } from './usePlanFigure'
 export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; latest?: boolean }) {
   useTranslation('ai')
   const panel = usePlanPanel(entry)
-  const status = effectiveStatus(entry, panel?.overrides ?? null)
+  const status = effectiveStatus(entry, panel?.overrides ?? null, usePlanSource(panel))
   const plan = entry.plan
   // 历史栈顶：「撤销」只在它还是应用那一次 commit 时给（订阅它，之后改了别的这里跟着收起）
   useDocumentStore((s) => s.past.at(-1))
   // 方案出来之后卡面用方案自己的两张图；只有还没有（生成中）/ 已放弃时才为缩略图出图
-  const thumb = usePanelThumbSrc(panel, !entry.beforeSrc || entry.status === 'discarded')
+  const thumb = usePanelThumbSrc(panel, !entry.beforeSrc || entry.status === 'discarded' || (entry.status === 'applied' && !!entry.appliedPartial && !entry.appliedSrc))
   const beforeSrc = entry.beforeSrc ?? thumb
   const aspect = useImageAspect(entry.afterSrc ?? beforeSrc)
   const store = useChangePlanStore.getState
@@ -39,6 +39,8 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
   const generating = status === 'generating' || !plan
   // 已放弃：后端那份已经收了，卡面画这张图此刻的样子（不再挂方案的图）
   const showAfter = !generating && !!entry.afterSrc && status !== 'discarded'
+  // 已应用且只应用了部分组：挂实际应用的那一张（弹窗里按勾选出的图；没有就挂这张图此刻的样子），不挂全量候选图
+  const shownAfter = entry.status === 'applied' && entry.appliedPartial ? (entry.appliedSrc ?? thumb) : entry.afterSrc
   const dim = status === 'discarded' || status === 'stale'
   const handled = plan ? planTally(entry).done : 0
   // 「撤销」只在这张图还是我们写的那一份时给：用户之后又改过它，就不替他回到改前
@@ -55,7 +57,7 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
     >
       <div className="group/thumb" title={showAfter ? cp('card.holdBefore') : undefined}>
         <FigureThumb
-          src={showAfter ? entry.afterSrc : status === 'discarded' ? thumb : beforeSrc}
+          src={showAfter ? shownAfter : status === 'discarded' ? thumb : beforeSrc}
           alt={cp('card.thumbAlt')}
           aspect={status === 'discarded' ? 2.8 : aspect}
           dim={dim}

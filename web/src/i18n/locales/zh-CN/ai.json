@@ -780,6 +780,7 @@
       "groupMeta": "{{who}} · {{count}} 处",
       "groupMetaNoWho": "{{count}} 处",
       "groupN": "第 {{n}} 条意见",
+      "previewStale": "预览没更新，应用结果以勾选为准",
       "checkTip": "取消勾选，这一处就不改",
       "discard": "放弃",
       "apply": "应用"

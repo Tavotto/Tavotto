@@ -10,13 +10,14 @@ import {
   type ReviewComment,
 } from '@/lib/api'
 import { refuseArtifactOperation } from '@/lib/artifactValidation'
-import { applyGroups, canonicalPatches, effectiveStatus, samePatches, toOverrides } from '@/lib/changePlanApply'
+import { applyGroups, canonicalPatches, effectiveStatus, samePatches, toOverrides, type PlanSource } from '@/lib/changePlanApply'
 import { effectiveOverride } from '@/lib/effectiveOverride'
 import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
 import { apiUrlFor, onCurrentProjectChange } from '@/lib/session'
 import { releaseOwned } from '@/lib/styleOwned'
 import type { PanelObject, PanelOverride } from '@/types/document'
 import { newRequestId } from './aiStore'
+import { useAssetStore } from './assetStore'
 import { useDocumentStore } from './documentStore'
 import { useReviewStore } from './reviewStore'
 import { requestRender } from './renderScheduler'
@@ -51,6 +52,8 @@ export interface PlanEntry {
   /** 画布上的面板对象 id */
   panelId: string
   fileId: string
+  /** 发起时的图源身份（文件 + 脚本 + 磁盘修订）：换素材 / 脚本改了就不再适用 */
+  source: PlanSource
   documentId: string
   loadSeq: number
   canvasId: string
@@ -72,6 +75,10 @@ export interface PlanEntry {
   appliedPatches?: ChangePlanPatch[]
   /** 应用那一次 commit 的历史条目：「撤销」只在它还是栈顶时撤（之后又改了别的，撤的就是别的了） */
   appliedEntry?: unknown
+  /** 实际应用的那一张图（只应用了部分组时，对比里按勾选组合出的那张）；没有 = 全量候选图 / 现场缩略图 */
+  appliedSrc?: string
+  /** 只应用了一部分组：卡片挂的不能是全量候选图 */
+  appliedPartial?: boolean
   /** 一次动作没成时卡片上的一句灰字（下一次动作会清掉） */
   notice?: 'apply_failed' | 'undo_failed'
 }
@@ -92,7 +99,8 @@ interface ChangePlanState {
   openDialog: (key: string) => void
   closeDialog: () => void
   toggleGroup: (key: string, groupKey: string) => void
-  apply: (key: string) => ApplyResult
+  /** `previewSrc`：弹窗里按勾选组合出的那张图（只应用部分组时给，卡片据此挂实际应用的那一张） */
+  apply: (key: string, opts?: { previewSrc?: string }) => ApplyResult
   undo: (key: string) => boolean
   discard: (key: string) => void
   /** 收起一张失败 / 空方案的卡 */
@@ -118,6 +126,11 @@ function panelOf(e: Pick<PlanEntry, 'panelId' | 'documentId' | 'loadSeq' | 'canv
 }
 
 const pending = new Set<string>()
+
+/** 这张图此刻的图源身份（磁盘素材带修订；runtime 面板没有稳定修订，只认文件 + 脚本） */
+export function sourceOf(panel: PanelObject, mtime = useAssetStore.getState().byId[panel.fileId]?.mtime): PlanSource {
+  return { fileId: panel.fileId, script: panel.script ?? null, ...(panel.fileKind !== 'runtime' && mtime !== undefined ? { mtime } : {}) }
+}
 
 /**
  * 「撤销」走 `runUndoRedo`（唯一的撤销入口，让位判据在那里）。它的模块（`hooks/useKeyboard`）反过来 import 命令面板与一堆 store，
@@ -203,6 +216,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       pj: guard.pj,
       panelId,
       fileId: panel.fileId,
+      source: sourceOf(panel),
       documentId: ds.documentId,
       loadSeq: ds.loadSeq,
       canvasId: ds.activeCanvasId,
@@ -280,13 +294,13 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         return e ? { entries: { ...s.entries, [key]: { ...e, unchecked: { ...e.unchecked, [groupKey]: !e.unchecked[groupKey] } } } } : {}
       }),
 
-    apply: (key) => {
+    apply: (key, opts) => {
       const e = get().entries[key]
       const plan = e?.plan
       if (!e || !plan) return 'failed'
       const panel = panelOf(e)
       // 以文档为准：⌘Z 撤回过的「已应用」又是待确认，可以再应用；对不上方案的改前（生成之后这张图被改过）就不写
-      const st = effectiveStatus(e, panel?.overrides ?? null)
+      const st = effectiveStatus(e, panel?.overrides ?? null, panel ? sourceOf(panel) : null)
       if (st === 'stale') {
         patch(key, { status: 'stale', notice: undefined })
         return 'stale'
@@ -307,6 +321,8 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         status: 'applied',
         appliedPatches: canonicalPatches(after.overrides),
         appliedEntry: useDocumentStore.getState().past.at(-1),
+        appliedPartial: keys.length !== plan.groups.length,
+        appliedSrc: keys.length !== plan.groups.length ? opts?.previewSrc : undefined,
         notice: undefined,
       })
       set({ dialogKey: null })
