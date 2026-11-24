@@ -739,7 +739,8 @@
         }
       ],
       "principles": [
-        "P5"
+        "P5",
+        "P9"
       ],
       "spec": [
         "V-006"
@@ -778,7 +779,7 @@
       "evidence": [
         {
           "src": "VAD",
-          "loc": "§12.2 Juxtapose vs Superimpose, p.267",
+          "loc": "§12.2 Juxtapose vs Superimpose, p.266",
           "tag": "原文",
           "quote": "two is very feasible and three is possible with care"
         }
@@ -1527,6 +1528,151 @@
       ],
       "principles": [
         "P7"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-059",
+      "title": "小倍数的面板按有逻辑的顺序排",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "小倍数里的面板按一条看得出的规则排：时间或剂量递增、类别从高到低等，不要随手按文件顺序。合成组图时，阅读顺序（左到右、上到下）要与你想讲的先后一致；顺序拿不准时问用户，不自己猜。",
+      "exceptions": [
+        "用户或期刊已指定顺序",
+        "各面板之间没有天然顺序时，按数据派生的量（如中位数）排也可以"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.21 Multipanel Figures, p.260",
+          "tag": "原文",
+          "quote": "Always arrange the panels in a small multiples plot in a meaningful and logical order."
+        },
+        {
+          "src": "VAD",
+          "loc": "§12.4.3 Matrix Alignments, p.283",
+          "tag": "原文",
+          "quote": "a data-driven way to spatially order information so that both general trends and outliers can be spotted"
+        },
+        {
+          "src": "TAVOTTO",
+          "loc": "复合图（compound figure）的阅读顺序应服从叙事：书里只给了字母标注从左上起、按行依次的约定（FDV p.261），没有明说顺序要服从叙事",
+          "tag": "推导"
+        }
+      ],
+      "principles": [
+        "P9"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-060",
+      "title": "要互相比较的面板并排，轴线对齐",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "要让读者互相比较的面板，放在同一行或同一列，让它们的轴线和图形元素对齐，并共用同一把尺（同量纲时范围也一致，见 G-027）。对齐靠排版保证，不要靠改数据范围凑；范围不一致只提示，不替用户改。",
+      "exceptions": [
+        "各面板量纲不同，范围本来就该不同（见 G-027）",
+        "面板之间没有比较关系"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.21 Multipanel Figures, p.264",
+          "tag": "原文",
+          "quote": "The axes and other graphical elements of the individual panels should all be aligned to each other."
+        },
+        {
+          "src": "VAD",
+          "loc": "§12.3.2 Share Data, p.273",
+          "tag": "原文",
+          "quote": "Small multiples are often aligned into a list or matrix to support comparison with the highest precision."
+        },
+        {
+          "src": "VAD",
+          "loc": "§12.3.5 Juxtapose Views, p.278",
+          "tag": "原文",
+          "quote": "to support higher-precision comparison than unaligned views"
+        },
+        {
+          "src": "TAVOTTO",
+          "loc": "「同一组放同一行或同一列」是上面两条的工程落实，书里没有把行与列分开讨论",
+          "tag": "推导"
+        }
+      ],
+      "principles": [
+        "P9"
+      ],
+      "spec": [
+        "V-006"
+      ],
+      "checks": []
+    },
+    {
+      "id": "G-061",
+      "title": "组图里同一对象用同一套视觉语言",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "一张组图里，同一个对象（某一组、某一性别、某种处理）在各面板用同样的颜色、符号、先后顺序，图例只留一份。合成多张图时先对齐这些，再谈版面；面板字母标注要小、字体与全图一致、全文统一大小写。",
+      "exceptions": [
+        "各面板讲的是互不相干的数据"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.21 Multipanel Figures, p.261",
+          "tag": "原文",
+          "quote": "the same things look the same or at least substantively similar across figures"
+        },
+        {
+          "src": "FDV",
+          "loc": "ch.21 Multipanel Figures, p.262",
+          "tag": "原文",
+          "quote": "The order of the boxplots in panel (c) should be switched so it matches panels (a) and (b)."
+        },
+        {
+          "src": "FDV",
+          "loc": "ch.21 Multipanel Figures, p.261（面板标注像页码，不应抢眼）",
+          "tag": "原文",
+          "quote": "The labels should not be the first thing you see when you look at a compound figure."
+        }
+      ],
+      "principles": [
+        "P9"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-062",
+      "title": "组图的主次与叙事顺序由作者的目的定",
+      "basis": "undecidable",
+      "strength": "inference",
+      "decidable": "no",
+      "agent": "哪个面板是主结果、哪些面板要互相比较、先讲哪一个，从图和数据里看不出来，是作者的目的。用户没说清时，出一道选择题（比较各组 / 看趋势 / 补充说明等）再排；不要自己猜，也不要为了让某个面板更醒目去改它的数据范围。主次只通过面板大小和位置体现。",
+      "exceptions": [
+        "用户已明说主次与顺序"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.21 Multipanel Figures, p.260（复合图是为了「一个总的要点」）",
+          "tag": "原文",
+          "quote": "combine several independent panels into a figure that conveys one overarching point"
+        },
+        {
+          "src": "TAVOTTO",
+          "loc": "书里没有讨论面板的主次、大小或跨格；这一条是 Tavotto 的推导，依据是目的由用户确认（decision-framework 第 2 节、VAD p.78）",
+          "tag": "推导"
+        }
+      ],
+      "principles": [
+        "P9"
       ],
       "spec": [],
       "checks": []
