@@ -1,17 +1,178 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { useTranslation } from 'react-i18next'
+import { pickElementStack } from '@/canvas/interactions'
+import type { Manifest, ManifestElement, ReviewAnchor } from '@/lib/api'
+import type { PlanNote } from '@/store/changePlanStore'
 import { cn } from '@/lib/utils'
-import { ChevronRight } from '../ui/icons'
+import { ReviewMark } from '../review/ReviewMark'
+import { ChevronRight, Pencil } from '../ui/icons'
 import { ICON_SIZE } from '../ui/Icon'
 import { Kbd } from '../ui/Kbd'
+import { Popover } from '../ui/Popover'
 import { Segmented } from '../ui/Segmented'
 import { cp, type GroupView, type PlanBox } from './changePlanModel'
+import { NoteEditor } from './NoteEditor'
+import { elementTarget, type NoteTarget } from './noteTarget'
+
+export type { NoteTarget }
 
 export type CompareMode = 'slide' | 'side' | 'toggle'
+/** 舞台的四种画法：三种对比 + 批注（只有「修改后」的大图，点元素 / 框选 / 整体写批注） */
+export type StageMode = CompareMode | 'annotate'
+
+
+/** 正在写 / 改的批注：`id` 有 = 改已有的 */
+export interface NoteEditing {
+  id?: string
+  target: NoteTarget
+}
+
+/** 对比模式下，高级版在「修改后」一侧的元素上直接开始写批注 */
+export interface QuickNote {
+  manifest: Manifest | null
+  /** 鼠标第一次进到图上：去取元素表 */
+  onArm: () => void
+  onPick: (target: NoteTarget) => void
+}
+
+export interface CompareNoting {
+  manifest: Manifest | null
+  notes: PlanNote[]
+  editing: NoteEditing | null
+  onEdit: (e: NoteEditing | null) => void
+  onSave: (id: string | undefined, target: NoteTarget, text: string) => void
+  onRemove: (id: string) => void
+}
+
+const ELEMENT_BOX_MIN = 0.004
+const DRAG_PX = 4
+
+/** 批注框在图上的锚位：元素 / 框选 = 它的框；整体 = 图顶边中点 */
+const anchorBox = (a: ReviewAnchor): PlanBox => (a.kind === 'overall' ? [0.5, 0.02, 0, 0] : (a.box as PlanBox))
 
 const pctOf = (r: number) => Math.round(Math.min(1, Math.max(0, r)) * 1e4) / 100
 const pct = (n: number) => `${n * 100}%`
 const boxStyle = (b: PlanBox) => ({ left: pct(b[0]), top: pct(b[1]), width: pct(b[2]), height: pct(b[3]) })
+
+/**
+ * 「修改后」的图上点选的一层（盖在画框里）：悬停 = 元素细描边轻高亮（`pickElementStack` 与画布同一套命中）；
+ * `annotate`：点一下选元素、拖一下框一块（`onRegion`）；`quick`（对比模式）：高亮 + 一枚「写批注」小胶囊，点一下去批注。
+ * `left`：只盖分隔线右侧的百分比（滑动对比里只有分隔线右边是「修改后」）。
+ */
+function PickLayer({
+  manifest,
+  mode,
+  left = 0,
+  onArm,
+  onPick,
+  onRegion,
+}: {
+  manifest: Manifest | null
+  mode: 'annotate' | 'quick'
+  left?: number
+  onArm?: () => void
+  onPick: (target: NoteTarget) => void
+  onRegion?: (target: NoteTarget) => void
+}) {
+  const [hover, setHover] = useState<ManifestElement | null>(null)
+  const [drag, setDrag] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
+  const down = useRef<{ x: number; y: number } | null>(null)
+  const at = (e: ReactPointerEvent): [number, number] | null => {
+    const r = e.currentTarget.closest('[data-change-plan-frame]')?.getBoundingClientRect()
+    if (!r || r.width <= 0 || r.height <= 0) return null
+    return [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))]
+  }
+  const pickAt = (f: [number, number]) => pickElementStack(manifest, f[0], f[1])[0] ?? null
+  const hb = hover ? hover.bbox : null
+  return (
+    <div
+      data-change-plan-pick={mode}
+      className={cn('absolute inset-y-0 right-0 touch-none', mode === 'annotate' && 'cursor-crosshair')}
+      style={{ left: `${left}%` }}
+      onPointerEnter={() => onArm?.()}
+      onPointerLeave={() => !down.current && setHover(null)}
+      onPointerDown={(e) => {
+        if (mode !== 'annotate' || e.button !== 0) return
+        const f = at(e)
+        if (!f) return
+        e.currentTarget.setPointerCapture(e.pointerId)
+        down.current = { x: e.clientX, y: e.clientY }
+        setDrag({ x0: f[0], y0: f[1], x1: f[0], y1: f[1] })
+      }}
+      onPointerMove={(e) => {
+        const f = at(e)
+        if (!f) return
+        if (down.current) {
+          setDrag((d) => (d ? { ...d, x1: f[0], y1: f[1] } : d))
+          return
+        }
+        setHover(pickAt(f))
+      }}
+      onPointerUp={(e) => {
+        const start = down.current
+        down.current = null
+        const f = at(e)
+        const d = drag
+        setDrag(null)
+        if (!start || !f || !d) return
+        if (Math.hypot(e.clientX - start.x, e.clientY - start.y) < DRAG_PX) {
+          const el = pickAt(f)
+          if (el) onPick(elementTarget(el))
+          return
+        }
+        const x = Math.min(d.x0, f[0])
+        const y = Math.min(d.y0, f[1])
+        const w = Math.abs(f[0] - d.x0)
+        const h = Math.abs(f[1] - d.y0)
+        if (w >= ELEMENT_BOX_MIN && h >= ELEMENT_BOX_MIN) onRegion?.({ anchor: { kind: 'region', box: [x, y, w, h].map((v) => Math.round(v * 1e4) / 1e4) as PlanBox }, label: cp('dialog.noteRegion') })
+      }}
+      onPointerCancel={() => {
+        down.current = null
+        setDrag(null)
+      }}
+      onClick={(e) => {
+        // 对比模式：点一下 = 去写批注（annotate 的点选在 pointerup 里做）
+        if (mode !== 'quick' || !hover) return
+        e.stopPropagation()
+        onPick(elementTarget(hover))
+      }}
+    >
+      {hb && !drag && (
+        <span
+          aria-hidden
+          data-change-plan-hover={hover?.gid}
+          className="pointer-events-none absolute rounded-xs bg-sel/6 inset-ring inset-ring-sel/60"
+          style={{ left: `${(hb[0] * 100 - left) / (1 - left / 100)}%`, top: pct(hb[1]), width: `${(hb[2] * 100) / (1 - left / 100)}%`, height: pct(hb[3]) }}
+        >
+          {mode === 'quick' && (
+            <span
+              data-change-plan-quick={hover?.gid}
+              className={cn(
+                'absolute left-0 inline-flex h-5 items-center gap-1 whitespace-nowrap rounded-full bg-surface px-2 text-xs text-ink shadow-pop',
+                hb[1] > 0.08 ? '-top-6' : 'top-full mt-1',
+              )}
+            >
+              <Pencil size={ICON_SIZE.sm} aria-hidden />
+              {cp('dialog.writeNote')}
+            </span>
+          )}
+        </span>
+      )}
+      {drag && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute rounded-xs bg-sel/6 inset-ring inset-ring-sel/60"
+          style={{
+            left: `${(Math.min(drag.x0, drag.x1) * 100 - left) / (1 - left / 100)}%`,
+            top: pct(Math.min(drag.y0, drag.y1)),
+            width: `${(Math.abs(drag.x1 - drag.x0) * 100) / (1 - left / 100)}%`,
+            height: pct(Math.abs(drag.y1 - drag.y0)),
+          }}
+        />
+      )}
+    </div>
+  )
+}
 
 /** 按住空格 = 看修改前（输入框 / 按钮上的空格是它们自己的，不抢） */
 function useHoldSpace(enabled: boolean): boolean {
@@ -79,18 +240,26 @@ export function CompareStage({
   groups,
   activeId,
   afterBusy = false,
+  noting,
+  quick,
 }: {
   before: string
   after: string
   aspect?: number
-  mode: CompareMode
+  mode: StageMode
   /** 勾选了的改动（没勾的这一处不改，也就不画框） */
   groups: GroupView[]
   activeId: string | null
   /** 「修改后」正在按勾选重新出图：保留旧图，淡一档（不做呼吸） */
   afterBusy?: boolean
+  /** 批注模式（`mode === 'annotate'`）：点选 / 框选写批注、已有批注的编号 */
+  noting?: CompareNoting
+  /** 对比模式：高级版悬停「修改后」一侧的元素 = 轻高亮 +「写批注」小胶囊 */
+  quick?: QuickNote
 }) {
   useTranslation('ai')
+  // 批注框以图卡的边为界：靠近边沿向内翻转，不跨出图卡
+  const [frameEl, setFrameEl] = useState<HTMLDivElement | null>(null)
   // 按住空格看修改前只在「切换」里：滑动 / 并排本来就同时看得到两边
   const hold = useHoldSpace(mode === 'toggle')
   const [pos, setPos] = useState(50)
@@ -155,6 +324,60 @@ export function CompareStage({
       }),
     )
 
+  /** 批注模式：已有批注的编号（点一下回到它的批注框改）+ 正在写的那一处的批注框（`Popover` 锚在那一处） */
+  const noteLayer = () => {
+    if (!noting) return null
+    const { editing } = noting
+    const existing = editing?.id ? noting.notes.find((n) => n.id === editing.id) : undefined
+    const box = editing ? anchorBox(editing.target.anchor) : null
+    return (
+      <>
+        {noting.notes.map((n, i) => {
+          const a = n.anchor
+          const open = () => noting.onEdit({ id: n.id, target: { anchor: a, label: n.label } })
+          if (a.kind === 'overall')
+            return (
+              <button key={n.id} type="button" data-change-plan-mark={n.id} aria-label={n.label} title={n.label} onClick={open} className="absolute -left-2 -top-2 rounded-full outline-none focus-visible:focus-ring">
+                <ReviewMark n={i + 1} overall onPaper solid />
+              </button>
+            )
+          return (
+            <span key={n.id} className="pointer-events-none absolute" style={boxStyle(a.box as PlanBox)}>
+              {a.kind === 'region' && <span aria-hidden className="absolute inset-0 rounded-xs inset-ring inset-ring-ink/50" />}
+              <button type="button" data-change-plan-mark={n.id} aria-label={n.label} title={n.label} onClick={open} className="pointer-events-auto absolute -right-2 -top-2 rounded-full outline-none focus-visible:focus-ring">
+                <ReviewMark n={i + 1} onPaper solid />
+              </button>
+            </span>
+          )
+        })}
+        {editing && box && (
+          <Popover
+            key={editing.id ?? JSON.stringify(editing.target.anchor)}
+            width={240}
+            arrow
+            boundary={frameEl}
+            side={box[0] + box[2] / 2 < 0.2 ? 'left' : 'bottom'}
+            align="center"
+            open
+            onOpenChange={(v) => !v && noting.onEdit(null)}
+            trigger={<span aria-hidden className="pointer-events-none absolute" style={boxStyle(box)} />}
+          >
+            <NoteEditor
+              label={editing.target.label}
+              initial={existing?.text}
+              onSave={(text) => noting.onSave(editing.id, editing.target, text)}
+              onRemove={existing ? () => noting.onRemove(existing.id) : undefined}
+              onDone={() => noting.onEdit(null)}
+            />
+          </Popover>
+        )}
+      </>
+    )
+  }
+
+  /** 对比模式：「修改后」一侧的点选层（`left`：滑动对比里只盖分隔线右边） */
+  const quickLayer = (left = 0) => (quick ? <PickLayer manifest={quick.manifest} mode="quick" left={left} onArm={quick.onArm} onPick={quick.onPick} /> : null)
+
   const busyCls = afterBusy ? 'opacity-60' : undefined
   const cap = (text: string) => <span className="type-meta">{text}</span>
   const effectiveView = hold ? 'before' : view
@@ -178,6 +401,7 @@ export function CompareStage({
               {boxes('before', p / 100)}
               {boxes('after', p / 100)}
             </div>
+            {!hold && quickLayer(p)}
             <div
               className={cn('absolute inset-y-0 -ml-4 flex w-8 touch-none justify-center', dragging ? 'cursor-grabbing' : 'cursor-grab')}
               style={{ left: `${p}%` }}
@@ -214,6 +438,18 @@ export function CompareStage({
         <div className={row} />
       </div>
     )
+  } else if (mode === 'annotate') {
+    body = (
+      <div className="flex flex-col gap-1.5" style={{ width: one }}>
+        <div className={row} />
+        <Frame width="100%" aspect={aspect} innerRef={setFrameEl}>
+          <Img src={after} />
+          {noting && <PickLayer manifest={noting.manifest} mode="annotate" onPick={(t) => noting.onEdit({ target: t })} onRegion={(t) => noting.onEdit({ target: t })} />}
+          {noteLayer()}
+        </Frame>
+        <div className={row} />
+      </div>
+    )
   } else if (mode === 'side') {
     body = (
       <div className="flex w-full flex-col gap-1.5">
@@ -233,6 +469,7 @@ export function CompareStage({
           <Frame width={half} aspect={aspect}>
             <Img src={after} className={busyCls} />
             {boxes('after')}
+            {quickLayer()}
           </Frame>
         </div>
         <div className={row} />
@@ -245,6 +482,7 @@ export function CompareStage({
         <Frame width="100%" aspect={aspect}>
           <Img src={effectiveView === 'before' ? before : after} className={effectiveView === 'after' ? busyCls : undefined} />
           {boxes(effectiveView)}
+          {effectiveView === 'after' && quickLayer()}
         </Frame>
         <div className="flex justify-center pt-1">
           <Segmented<'before' | 'after'>

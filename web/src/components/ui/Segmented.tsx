@@ -1,4 +1,4 @@
-import { useRef, type KeyboardEvent, type ReactNode } from 'react'
+import { Fragment, useRef, type KeyboardEvent, type ReactElement, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { useSlidingIndicator } from './slidingIndicator'
 import { Tip } from './Tooltip'
@@ -19,6 +19,11 @@ export interface SegmentedItem<T extends string> {
    */
   disabled?: boolean
   title?: string
+  /**
+   * 给这一格套一层外壳（付费功能的锁 `PremiumLock`：没解锁时整格置灰、悬停一句话、点击不选中）。
+   * 收到的是这一格的按钮，返回包好的元素；不给就是原样。
+   */
+  wrap?: (btn: ReactElement) => ReactElement
 }
 
 interface SegmentedProps<T extends string> {
@@ -166,13 +171,8 @@ export function Segmented<T extends string>({
             {item.label}
           </button>
         )
-        return item.tip ? (
-          <Tip key={item.value} label={item.tip}>
-            {btn}
-          </Tip>
-        ) : (
-          btn
-        )
+        const tipped = item.tip ? <Tip label={item.tip}>{btn}</Tip> : btn
+        return <Fragment key={item.value}>{item.wrap ? item.wrap(tipped) : tipped}</Fragment>
       })}
     </div>
   )

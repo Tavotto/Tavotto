@@ -646,6 +646,11 @@ figure changes when you press *Apply*.
   their current values, and its position on the picture. **Reviewers' display
   names are not sent.** Scripts, data, project files, file paths and computer
   details are not sent either.
+* **Notes on the revised figure (Premium).** *Redo with notes* sends the notes you
+  wrote on the "After" picture (their text and the element or area each one
+  points at), the table of elements as they look after the previous version, and
+  a short list of what the previous version changed, to the same AI connection.
+  The notes themselves are never uploaded to the review service.
 * **What stays on your computer.** The plan, the before/after pictures and your
   edits to it. When you apply a plan, the app automatically marks the matching
   comments as resolved and syncs that to the review service (undoing the plan

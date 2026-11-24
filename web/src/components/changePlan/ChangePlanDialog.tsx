@@ -1,30 +1,69 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useChangePlanStore } from '@/store/changePlanStore'
+import { MAX_NOTE_CHARS, notesOf, useChangePlanStore, versionNumber, versionsOf, type PlanNote } from '@/store/changePlanStore'
+import { PremiumLock } from '../license/PremiumLock'
 import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
+import { Lock, Pencil } from '../ui/icons'
+import { ICON_SIZE } from '../ui/Icon'
 import { Segmented } from '../ui/Segmented'
-import { ChangeList } from './ChangeList'
-import { cp, effectiveStatus, groupViews, unhandledViews } from './changePlanModel'
-import { CompareStage, type CompareMode } from './CompareStage'
-import { useImageAspect, usePlanPanel, usePlanSource, useSelectionPreview } from './usePlanFigure'
+import { Select } from '../ui/Select'
+import { ChangeList, NoteList } from './ChangeList'
+import { CHANGE_PLAN_FEATURE, cp, effectiveStatus, failureText, groupViews, markNoteHintSeen, noteHintSeen, unhandledViews, useChangePlanAccess } from './changePlanModel'
+import { CompareStage, type CompareMode, type NoteEditing, type NoteTarget } from './CompareStage'
+import { useImageAspect, usePlanManifest, usePlanPanel, usePlanSource, useSelectionPreview } from './usePlanFigure'
+
+type View = 'compare' | 'annotate'
+
+const newNoteId = () => `n${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`
 
 /**
  * 修改方案弹窗（`ui/Dialog` 的 shell 外壳，按窗口取大：宽 min(1280, 92vw)、高 min(860, 90vh)）：左侧对比舞台、右侧改动清单。
- * 顶栏只有「修改方案」+ ×（Esc / × = 关闭，方案留着、卡片仍待确认）；页脚「放弃」+「应用」，**主按钮是「应用」**。
+ * 顶栏左「修改方案」+ 版本切换（出过第 2 版才有：两版紧凑分段，更多版收成下拉），右「对比 / 批注」切换（位置固定）；Esc / × = 关闭，方案留着、卡片仍待确认。
+ * - 对比：滑动 / 并排 / 切换，右栏是改动清单，页脚「放弃」｜「写批注」（次级）+「应用」（**主按钮**）。
+ * - 批注（高级版 `change-plan-rerun`，ADR 0206 §五）：舞台只有「修改后」的大图，点元素 / 框选 / 整体写批注（`Popover` 锚在那一处）；右栏是批注列表；
+ *   页脚「放弃」｜「应用」（次级）+「按批注重改 · N」（N = 0 禁用、次级样式；N ≥ 1 主）。出好后自动回到「对比」并选中新版本。
+ *   没解锁的用户：切换项与「写批注」带锁（`PremiumLock`），点了不进入；授权入口没出现（上线开关关着）时这些入口整个不画。
  * 「应用」= 一次 commit 进排版时间线，⌘Z 一步撤回（`changePlanStore.apply`）；全部取消勾选时禁用。
- * 批注、版本切换是高级版（ADR 0206 §五），不在这一期。
  */
 export function ChangePlanDialog() {
   useTranslation('ai')
   const key = useChangePlanStore((s) => s.dialogKey)
   const entry = useChangePlanStore((s) => (s.dialogKey ? s.entries[s.dialogKey] : undefined))
   const [mode, setMode] = useState<CompareMode>('slide')
+  const [view, setView] = useState<View>('compare')
+  const [editing, setEditing] = useState<NoteEditing | null>(null)
+  const [armed, setArmed] = useState(false)
   const [activeId, setActiveId] = useState<string | null>(null)
+  const { visible, pro } = useChangePlanAccess()
   const panel = usePlanPanel(entry ?? { panelId: '', documentId: '', loadSeq: 0, canvasId: '' })
   const aspect = useImageAspect(entry?.afterSrc)
-  // 换一份方案 / 重新打开：高亮不带过去
-  useEffect(() => setActiveId(null), [key])
+  // 换一份方案 / 换版本 / 重新打开：高亮与批注框不带过去，新版本出来回到「对比」
+  const planId = entry?.planId
+  useEffect(() => {
+    setActiveId(null)
+    setEditing(null)
+    setView('compare')
+  }, [key, planId])
+  // 第一次打开（高级版）：「写批注」上方出一次轻提示，点任意处或 5 秒后消失，本机记住
+  const [hint, setHint] = useState(false)
+  const shown = !!key
+  useEffect(() => {
+    if (!shown || !pro || view !== 'compare' || noteHintSeen()) return
+    setHint(true)
+    const done = () => {
+      setHint(false)
+      markNoteHintSeen()
+    }
+    const t = window.setTimeout(done, 5000)
+    window.addEventListener('pointerdown', done, { once: true, capture: true })
+    return () => {
+      window.clearTimeout(t)
+      window.removeEventListener('pointerdown', done, { capture: true })
+    }
+  }, [shown, pro, view])
+  const annotating = pro && view === 'annotate'
+  const manifest = usePlanManifest(entry, pro && (armed || annotating))
   const store = useChangePlanStore.getState
   const plan = entry?.plan
   // 弹窗开着时图被改了：基线对不上，不让点「应用」（卡片也已转「图已改过」）
@@ -45,60 +84,207 @@ export function ChangePlanDialog() {
   const keysSig = chosen.map((g) => g.key).join('\u0000')
   const appliedSrc = partial && !preview.loading && !preview.failed && preview.sig === keysSig ? (preview.url ?? undefined) : undefined
 
+  const notes = notesOf(entry)
+  const revising = entry.revising !== undefined
+  const recs = versionsOf(entry)
+  const current = versionNumber(entry)
+  const reviseError = entry.reviseError
+    ? entry.reviseError.code === 'not_licensed'
+      ? cp('dialog.reviseNotLicensed')
+      : failureText(entry.reviseError.code, entry.reviseError.params)
+    : undefined
+  const edit = (n: PlanNote) => setEditing({ id: n.id, target: { anchor: n.anchor, label: n.label } })
+  const saveNote = (id: string | undefined, target: NoteTarget, text: string) =>
+    store().saveNote(entry.key, { id: id ?? newNoteId(), anchor: target.anchor, label: target.label, text: text.slice(0, MAX_NOTE_CHARS) })
+  const toVersion = (v: string) => store().setViewVersion(entry.key, v)
+  const versionOptions = recs.map((v, i) => ({ value: v.planId, label: cp('dialog.versionN', { n: i + 1 }) }))
+  // 版本切换在左上、紧挨标题（两版用紧凑分段，更多版收成下拉）；「对比 / 批注」固定在右上，不随版本出现而挪位
+  const versionSwitch =
+    recs.length > 2 ? (
+      <Select<string> value={entry.planId ?? ''} onChange={toVersion} ariaLabel={cp('dialog.versionLabel')} className="w-24" options={versionOptions} />
+    ) : (
+      <Segmented<string> compact value={entry.planId ?? ''} onChange={toVersion} ariaLabel={cp('dialog.versionLabel')} className="w-32 font-normal" items={versionOptions} />
+    )
+  const lockTip = (
+    <>
+      {cp('dialog.lockTip')}
+      <span className="mt-2 block text-ink">{cp('dialog.lockLearn')}</span>
+    </>
+  )
+  const applyBtn = (
+    <Button
+      variant={annotating ? 'secondary' : 'primary'}
+      size="lg"
+      onClick={() => void store().apply(entry.key, { previewSrc: appliedSrc })}
+      disabled={!canApply || revising}
+      data-change-plan-confirm
+    >
+      {cp('dialog.apply')}
+    </Button>
+  )
+
   return (
     <Dialog
       open={open}
       onOpenChange={(v) => !v && store().closeDialog()}
-      title={cp('dialog.title')}
+      title={
+        <span className="flex items-center gap-3">
+          {cp('dialog.title')}
+          {recs.length > 1 && versionSwitch}
+        </span>
+      }
       chrome="shell"
       width="min(1280px, 92vw)"
       height="min(860px, 90vh)"
       anchor="change-plan"
+      headerEnd={
+        visible ? (
+          <Segmented<View>
+            value={annotating ? 'annotate' : 'compare'}
+            onChange={setView}
+            ariaLabel={cp('dialog.modeLabel')}
+            className="w-40"
+            items={[
+              { value: 'compare', label: cp('dialog.modeCompare') },
+              {
+                value: 'annotate',
+                label: (
+                  <>
+                    {!pro && <Lock size={ICON_SIZE.xs} aria-hidden className="text-ink-2" />}
+                    <span className={pro ? undefined : 'text-ink-2'}>{cp('dialog.modeAnnotate')}</span>
+                  </>
+                ),
+                wrap: (btn) => (
+                  <PremiumLock feature={CHANGE_PLAN_FEATURE} side="bottom" align="end" alignOffset={-40} arrow soft tip={lockTip}>
+                    {btn}
+                  </PremiumLock>
+                ),
+              },
+            ]}
+          />
+        ) : undefined
+      }
       footer={{
         start: (
           <Button variant="ghost" size="lg" className="-ml-3.5" onClick={() => store().discard(entry.key)} data-change-plan-discard>
             {cp('dialog.discard')}
           </Button>
         ),
-        primary: (
-          <Button variant="primary" size="lg" onClick={() => void store().apply(entry.key, { previewSrc: appliedSrc })} disabled={!canApply} data-change-plan-confirm>
-            {cp('dialog.apply')}
+        // 右侧两个位置在两个模式间连续：左边是「写批注」（对比）/「按批注重改 · N」（批注），右边是「应用」；每屏只有一颗主按钮
+        secondary: annotating ? (
+          <Button
+            variant={notes.length === 0 ? 'secondary' : 'primary'}
+            size="lg"
+            data-change-plan-rerun
+            loading={revising}
+            loadingLabel={cp('dialog.rerunning')}
+            disabled={notes.length === 0}
+            title={notes.length === 0 ? cp('dialog.rerunNeedNote') : undefined}
+            onClick={() => void store().revise(entry.key)}
+          >
+            {notes.length === 0 ? cp('dialog.rerun') : cp('dialog.annotateRerun', { count: notes.length })}
           </Button>
-        ),
+        ) : visible ? (
+          <span className="relative inline-flex">
+            {hint && (
+              <span
+                data-change-plan-first-hint
+                role="status"
+                className="pointer-events-none absolute bottom-full right-0 mb-2 inline-flex h-7 items-center whitespace-nowrap rounded-full bg-surface px-3 text-xs text-ink shadow-pop inset-ring inset-ring-border"
+              >
+                {cp('dialog.firstHint')}
+              </span>
+            )}
+            <PremiumLock feature={CHANGE_PLAN_FEATURE} side="top" align="center" arrow soft tip={lockTip}>
+              <Button variant="secondary" size="lg" className="rounded-full inset-ring inset-ring-border" data-change-plan-write-note onClick={() => setView('annotate')}>
+                <Pencil size={ICON_SIZE.sm} aria-hidden />
+                {cp('dialog.writeNote')}
+              </Button>
+            </PremiumLock>
+          </span>
+        ) : undefined,
+        primary: applyBtn,
       }}
     >
-      <div className="flex min-h-0 flex-1" data-change-plan-dialog>
+      <div className="flex min-h-0 flex-1" data-change-plan-dialog data-change-plan-dialog-view={annotating ? 'annotate' : 'compare'} data-change-plan-version={current}>
         <div className="flex min-w-0 flex-1 flex-col bg-canvas">
           <div className="flex h-11 shrink-0 items-end justify-center px-5">
-            <Segmented<CompareMode>
-              value={mode}
-              onChange={setMode}
-              ariaLabel={cp('dialog.compareLabel')}
-              compact
-              className="w-60"
-              items={[
-                { value: 'slide', label: cp('dialog.slide') },
-                { value: 'side', label: cp('dialog.side') },
-                { value: 'toggle', label: cp('dialog.toggle') },
-              ]}
-            />
+            {!annotating && (
+              <Segmented<CompareMode>
+                value={mode}
+                onChange={setMode}
+                ariaLabel={cp('dialog.compareLabel')}
+                compact
+                className="w-60"
+                items={[
+                  { value: 'slide', label: cp('dialog.slide') },
+                  { value: 'side', label: cp('dialog.side') },
+                  { value: 'toggle', label: cp('dialog.toggle') },
+                ]}
+              />
+            )}
           </div>
-          <CompareStage before={entry.beforeSrc} after={after} afterBusy={previewBusy} aspect={aspect} mode={mode} groups={chosen} activeId={activeId} />
+          <CompareStage
+            before={entry.beforeSrc}
+            // 批注写在这一版完整的「修改后」上（重改从它出发），不按勾选的组合出图
+            after={annotating ? entry.afterSrc : after}
+            afterBusy={!annotating && previewBusy}
+            aspect={aspect}
+            mode={annotating ? 'annotate' : mode}
+            groups={chosen}
+            activeId={activeId}
+            quick={
+              pro && !annotating
+                ? {
+                    manifest,
+                    onArm: () => setArmed(true),
+                    onPick: (target) => {
+                      setView('annotate')
+                      setEditing({ target })
+                    },
+                  }
+                : undefined
+            }
+            noting={
+              annotating
+                ? {
+                    manifest,
+                    notes,
+                    editing,
+                    onEdit: setEditing,
+                    onSave: saveNote,
+                    onRemove: (id) => store().removeNote(entry.key, id),
+                  }
+                : undefined
+            }
+          />
         </div>
         <div className="flex w-[19rem] shrink-0 flex-col border-l border-border">
-          {partial && preview.failed && (
-            <p className="shrink-0 px-4 pt-3 type-meta" data-change-plan-preview-failed>
-              {cp('dialog.previewStale')}
-            </p>
+          {annotating ? (
+            <NoteList
+              notes={notes}
+              onOpenNote={edit}
+              onRemove={(id) => store().removeNote(entry.key, id)}
+              onOverall={() => setEditing({ target: { anchor: { kind: 'overall' }, label: cp('dialog.noteOverallLabel') } })}
+              error={reviseError}
+            />
+          ) : (
+            <>
+              {partial && preview.failed && (
+                <p className="shrink-0 px-4 pt-3 type-meta" data-change-plan-preview-failed>
+                  {cp('dialog.previewStale')}
+                </p>
+              )}
+              <ChangeList
+                groups={groups}
+                unhandled={unhandledViews(entry)}
+                unchecked={entry.unchecked}
+                onToggle={(g) => store().toggleGroup(entry.key, g)}
+                activeId={activeId}
+                onActive={setActiveId}
+              />
+            </>
           )}
-          <ChangeList
-            groups={groups}
-            unhandled={unhandledViews(entry)}
-            unchecked={entry.unchecked}
-            onToggle={(g) => store().toggleGroup(entry.key, g)}
-            activeId={activeId}
-            onActive={setActiveId}
-          />
         </div>
       </div>
     </Dialog>

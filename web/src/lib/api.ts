@@ -4164,6 +4164,8 @@ export interface ChangePlanGroup {
   label: string
   comment_id?: string
   note_id?: string
+  /** 续改出的版本才有：这一组是按审阅意见改的（`review`）还是按用户在上一版上写的批注改的（`note`） */
+  origin?: 'review' | 'note'
   atomic: boolean
   changes: ChangePlanChange[]
   boxes: { before?: ChangePlanBox[]; after: ChangePlanBox[] }
@@ -4172,6 +4174,8 @@ export interface ChangePlanGroup {
 export interface ChangePlan {
   id: string
   version: number
+  /** 批注重改的版本才有：它是从哪一版续改来的（每一版是自己的方案，各有 `id` 与两张图） */
+  parent?: string
   source: ChangePlanSource
   base: { target: string; fingerprint: string }
   /** 请求时的 B0 全量 override（规范化后） */
@@ -4236,6 +4240,33 @@ export async function createChangePlan(body: CreateChangePlanBody): Promise<Chan
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
+  if (!isStr(out.plan_id) || (out.state !== 'running' && out.state !== 'ready' && out.state !== 'failed')) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
+  }
+  return out as unknown as ChangePlanTask
+}
+
+/** 批注重改的一条批注（高级版 `change-plan-rerun`）：锚点与审阅意见同形，元素锚带画面框 */
+export interface ChangePlanNoteBody {
+  id: string
+  anchor: ReviewAnchor
+  text: string
+}
+
+/**
+ * 按批注重改（ADR 0206 §五）：在 `planId` 那一版的「修改后」上写的批注 → 同一张卡的下一版（新的 `plan_id`，轮询同 `getChangePlan`）。
+ * 没解锁回 `{ ok: false, code: 'not_licensed' }`（与一键排版同口径）；其余失败抛带稳定 code 的 `EngineError`。
+ */
+export async function reviseChangePlan(
+  planId: string,
+  body: { notes: ChangePlanNoteBody[]; client_request_id?: string },
+): Promise<ChangePlanTask | { ok: false; code: 'not_licensed' }> {
+  const out = await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}/revise`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (out.ok === false && out.code === 'not_licensed') return { ok: false, code: 'not_licensed' }
   if (!isStr(out.plan_id) || (out.state !== 'running' && out.state !== 'ready' && out.state !== 'failed')) {
     throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
   }
