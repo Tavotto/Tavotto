@@ -1129,3 +1129,17 @@ def test_pro_page_routes_are_gated_and_silent(server, client, monkeypatch):
     monkeypatch.setenv(lic.ENV_HARD_OFF, "1")
     assert client.get("/api/license/account").status_code == 404
     assert client.get("/api/license/usage").status_code == 404
+
+
+def test_pro_name_is_one_constant_on_both_sides():
+    """`engine/brand.py` 与 `web/src/lib/brand.ts` 的 `PRO_NAME` 是同一个名字（严格同源对，维护者 2026-11-24：中英文都叫 Pro）。"""
+    import re
+    from pathlib import Path
+
+    from tavotto.engine import brand as engine_brand
+
+    brand_ts = (Path(__file__).resolve().parent.parent / "web/src/lib/brand.ts").read_text(
+        encoding="utf-8"
+    )
+    (ts,) = re.findall(r"^export const PRO_NAME = '([^']+)'$", brand_ts, re.M)
+    assert engine_brand.PRO_NAME == ts == "Pro"
