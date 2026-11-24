@@ -88,7 +88,6 @@ from legendmodel import (
 )
 from overrides import (
     _ARROWSTYLES,
-    _unit_scalar,
     _FONT_PRESENT as _FONT_PRESENT,  # 测试要清的那张探测缓存（显式再导出）
     BBOX_DEFAULTS,
     HATCHES,
@@ -105,6 +104,7 @@ from overrides import (
     _linecoll_linestyle_name,
     _linestyle_name,
     _stroke_state,
+    _unit_scalar,
     alias_covers,
     alias_pure,
     annotation_arrow_display,
