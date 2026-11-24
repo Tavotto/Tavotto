@@ -246,8 +246,11 @@ def element_table(
             "gid": el["gid"],
             "label": _clip(el.get("label", ""), MAX_LABEL_CHARS),
             "role": _clip(el.get("role", ""), 40),
-            "props": props,
         }
+        box = _box_of(el)
+        if box is not None:
+            entry["bbox"] = [round(v, 4) for v in box]
+        entry["props"] = props
         size = len(_dumps(entry)) + 1
         if used + size > max_chars:
             break
@@ -258,7 +261,7 @@ def element_table(
 
 # --------------------------------------------------------------------------- 提示词
 def open_comments(comments: object) -> list[dict]:
-    """未处理的意见（`resolved` 不为真）、至多 `MAX_COMMENTS` 条，按原顺序；形状不合格的略过。"""
+    """未处理的意见（`resolved` 不为真）、按原顺序；形状不合格的略过。**不截断**：超过 `MAX_COMMENTS` 的由 `partition` 分出去。"""
     out: list[dict] = []
     for c in comments if isinstance(comments, list) else []:
         if (
@@ -270,9 +273,13 @@ def open_comments(comments: object) -> list[dict]:
             and c.get("resolved") is not True
         ):
             out.append(c)
-        if len(out) >= MAX_COMMENTS:
-            break
     return out
+
+
+def partition(comments: object) -> tuple[list[dict], list[dict]]:
+    """未处理的意见 → `(发给模型的前 MAX_COMMENTS 条, 超出上限的)`。超出的不发给模型，但**必须出现在结果里**（`unhandled(over_limit)`）。"""
+    rows = open_comments(comments)
+    return rows[:MAX_COMMENTS], rows[MAX_COMMENTS:]
 
 
 def _anchor_view(anchor: dict) -> dict:
@@ -295,8 +302,8 @@ def system_prompt() -> str:
         "不能改数据、不能改脚本、不能新增元素。\n\n"
         "## 输入\n"
         "- `<comments>` 块：审阅意见列表（JSON）。每条有 `id`、`anchor`（`element` 带 `gid` 与画面框 `box`，`region` 只有画面框，`overall` 指整张图）与 `text`。\n"
-        "- `<elements>` 块：这张图当前的元素表（JSON）。每个元素有 `gid`、`label`、`role` 与可改属性 `props`（`prop`、`type`、当前 `value`，"
-        "`enum` 有 `options`，`number` 可能有 `min` / `max`）。画面框是图的分数坐标 `[x, y, 宽, 高]`，y 向下。\n\n"
+        "- `<elements>` 块：这张图当前的元素表（JSON）。每个元素有 `gid`、`label`、`role`、画面框 `bbox` 与可改属性 `props`（`prop`、`type`、当前 `value`，"
+        "`enum` 有 `options`，`number` 可能有 `min` / `max`）。意见的 `box` 与元素的 `bbox` 是**同一个坐标系**（整张图的分数坐标 `[x, y, 宽, 高]`，y 向下）：`region` 或 `overall` 意见没有指名元素时，用意见的 `box` 与各元素 `bbox` 的重叠 / 包含关系找出它说的是哪个（些）元素；同名元素只能靠位置区分。\n\n"
         "## 怎么改\n"
         "- 只改 `<elements>` 里出现的 `gid` 与它的 `props` 里列出的 `prop`；值要符合 `type`：`bool` 给 true / false，`number` 给数（在 `min` / `max` 内），"
         "`enum` 取 `options` 之一，`color` 给 `#RRGGBB`，`text` 给字符串，`pair` / `rect` / `number_list` 给数组。\n"
@@ -325,7 +332,7 @@ def build_review_prompt(comments: object, table: list[dict]) -> tuple[str, str]:
             "anchor": _anchor_view(c["anchor"]),
             "text": _clip(c["text"], MAX_COMMENT_CHARS),
         }
-        for c in open_comments(comments)
+        for c in partition(comments)[0]
     ]
     system = system_prompt()
     elements = list(table)
@@ -375,8 +382,9 @@ def _check_value(field_: dict, value: object) -> bool:
     if kind in ("pair", "rect", "number_list"):
         if not isinstance(value, list) or not 1 <= len(value) <= 64 or not all(map(_finite, value)):
             return False
-        cur = field_.get("value")
-        want = {"pair": 2, "rect": 4}.get(kind) or (len(cur) if isinstance(cur, list) else None)
+        want = {"pair": 2, "rect": 4}.get(
+            kind
+        )  # 只有 pair / rect 元数固定；number_list（如刻度位置）可变长
         return want is None or len(value) == want
     return False  # gradient / order / 未知类型：这一期不收
 
@@ -728,7 +736,7 @@ def connection_failure() -> str | None:
 
 def ask_model(comments: object, manifest: object) -> dict:
     """问一次模型 → 已过 `validate_proposal` 的提议；失败抛 `PlanFailure(稳定码)`。"""
-    rows = open_comments(comments)
+    rows, over = partition(comments)
     if not rows:
         raise PlanFailure("change_plan_no_comments")
     ids = frozenset(c["id"] for c in rows)
@@ -757,7 +765,12 @@ def ask_model(comments: object, manifest: object) -> dict:
         raise PlanFailure(
             MODEL_FAILURE_CODES.get(res.reason, "change_plan_model_failed"), res.detail
         )
-    return res.value
+    proposal = res.value
+    # 超出上限的意见没发给模型，但每条提交的意见都要有去处
+    proposal["unhandled"] = list(proposal["unhandled"]) + [
+        {"comment_id": c["id"], "reason": "over_limit"} for c in over
+    ]
+    return proposal
 
 
 # --------------------------------------------------------------------------- 任务登记（进程内）
@@ -895,6 +908,16 @@ def save(project: str, plan: dict, before_png: bytes, after_png: bytes) -> None:
     sweep(project)
 
 
+def publish(task: "Task", project: str, plan: dict, before_png: bytes, after_png: bytes) -> bool:
+    """取消检查与落盘发布在**同一把锁**里（`discard` 也持它）：要么这里先发布、随后 discard 把它删掉，要么 discard 先标取消、这里什么都不写。
+    → 是否真的发布了。"""
+    with _LOCK:
+        if task.cancelled:
+            return False
+        save(project, plan, before_png, after_png)
+        return True
+
+
 def load(project: str, plan_id: str) -> dict | None:
     """读方案；没有 / 过期 / 坏了 → None（别的项目的目录根本不会被碰到）。"""
     try:
@@ -916,21 +939,22 @@ def image_path(project: str, plan_id: str, which: str) -> Path | None:
 
 def discard(project: str, plan_id: str) -> bool:
     """放弃一份方案：删目录、标记运行中的任务作废。幂等；返回「这次是否真的有东西被放弃」。"""
-    hit = False
-    task = task_of(project, plan_id)
-    if task is not None:
-        hit = True
-        task.cancelled = True
-        if task.state != "running":
-            forget_task(task)
-    try:
-        d = plan_dir(project, plan_id)
-    except ValueError:
+    with _LOCK:  # 与 `publish` 同一把锁：取消与发布不会交错
+        hit = False
+        task = task_of(project, plan_id)
+        if task is not None:
+            hit = True
+            task.cancelled = True
+            if task.state != "running":
+                forget_task(task)
+        try:
+            d = plan_dir(project, plan_id)
+        except ValueError:
+            return hit
+        if d.exists():
+            hit = True
+            _rmtree(d)
         return hit
-    if d.exists():
-        hit = True
-        _rmtree(d)
-    return hit
 
 
 def sweep(project: str | None = None, now: float | None = None) -> None:

@@ -673,3 +673,111 @@ def test_a_no_effect_change_is_not_in_the_candidate_the_frontend_applies():
         base_patches=base,
     )
     assert plan["candidate_patches"] == [] and plan["groups"] == []
+
+
+# --------------------------------------------------------------------------- Codex #2180 首轮
+def test_comments_beyond_the_cap_are_kept_as_over_limit_in_the_result(fake_model):
+    many = [
+        {"id": f"k{i}", "anchor": {"kind": "overall"}, "text": f"意见 {i}", "resolved": False}
+        for i in range(cp.MAX_COMMENTS + 1)
+    ]
+    seen = fake_model(
+        {
+            "groups": [{"comment_id": "k0", "changes": [ch("ax0.line0", "linewidth", 3)]}],
+            "unhandled": [],
+        }
+    )
+    proposal = cp.ask_model(many, BASE)
+    assert "k30" not in seen["user"] and "k29" in seen["user"]  # 第 31 条没发给模型
+    assert {"comment_id": "k30", "reason": "over_limit"} in proposal["unhandled"]
+    plan = cp.build_plan(
+        plan_id="a" * 24,
+        target="F",
+        base_fingerprint="x",
+        comments=cp.open_comments(many),
+        groups=[],
+        unhandled=proposal["unhandled"],
+        base_patches=[],
+    )
+    placed = {u["comment_id"] for u in plan["unhandled"]}
+    assert placed == {c["id"] for c in many}  # 每条提交的意见都在结果里
+
+
+def test_number_list_may_change_length_but_pair_and_rect_may_not():
+    m = manifest(
+        el(
+            "ax0.xaxis",
+            "axis",
+            [
+                field("major_values", "number_list", [0, 1, 2, 3, 4]),
+                field("lim", "pair", [0, 1]),
+                field("box", "rect", [0, 0, 1, 1]),
+            ],
+        )
+    )
+    ok = cp.validate_proposal(_p(ch("ax0.xaxis", "major_values", [0, 2, 4])), m)
+    assert ok["groups"][0]["changes"] == [ch("ax0.xaxis", "major_values", [0, 2, 4])]
+    for bad in ([0, float("nan")], [], list(range(65)), ["a"]):
+        assert cp.validate_proposal(_p(ch("ax0.xaxis", "major_values", bad)), m)["groups"] == []
+    assert cp.validate_proposal(_p(ch("ax0.xaxis", "lim", [0, 1, 2])), m)["groups"] == []
+    assert cp.validate_proposal(_p(ch("ax0.xaxis", "box", [0, 1])), m)["groups"] == []
+    assert cp.validate_proposal(_p(ch("ax0.xaxis", "lim", [0, 5])), m)["groups"]
+
+
+def test_elements_with_the_same_label_differ_in_the_model_input_by_position():
+    a = manifest(
+        el("ax0.a", label="Series", bbox=(0.1, 0.1, 0.2, 0.2)),
+        el("ax1.a", label="Series", bbox=(0.6, 0.1, 0.2, 0.2)),
+    )
+    b = manifest(
+        el("ax0.a", label="Series", bbox=(0.6, 0.1, 0.2, 0.2)),
+        el("ax1.a", label="Series", bbox=(0.1, 0.1, 0.2, 0.2)),
+    )
+    ta, tb = cp.element_table(a), cp.element_table(b)
+    assert ta[0]["bbox"] == [0.1, 0.1, 0.2, 0.2] and ta[1]["bbox"] == [0.6, 0.1, 0.2, 0.2]
+    ua = cp.build_review_prompt(COMMENTS, ta)[1]
+    ub = cp.build_review_prompt(COMMENTS, tb)[1]
+    assert ua != ub
+    assert (
+        cp.element_table(manifest({"gid": "g", "editable": [field("c", "color", "#000000")]}))[
+            0
+        ].get("bbox")
+        is None
+    )
+    system = cp.build_review_prompt(COMMENTS, ta)[0]
+    assert "同一个坐标系" in system and "bbox" in system
+
+
+def test_publish_after_a_discard_writes_nothing_and_a_discard_during_publish_removes_it(
+    store, monkeypatch
+):
+    monkeypatch.setattr(cp, "_TASKS", {})
+    monkeypatch.setattr(cp, "_BY_FIGURE", {})
+    monkeypatch.setattr(cp, "_BY_RID", {})
+    task, _ = cp.begin("projA", "F.pdf", None)
+    plan = _plan(task.id)
+    # 先取消、后发布：什么都不写
+    assert cp.discard("projA", task.id) is True
+    assert cp.publish(task, "projA", plan, b"B", b"A") is False
+    assert cp.load("projA", task.id) is None
+    # 取消在「检查之后、save 之前」到达：discard 等发布完成，再把它删掉
+    import threading
+
+    task2, _ = cp.begin("projA", "G.pdf", None)
+    plan2 = _plan(task2.id)
+    real_save, hit = cp.save, {}
+
+    def save_with_late_discard(project, p, b, a):
+        t = threading.Thread(target=lambda: hit.setdefault("r", cp.discard(project, task2.id)))
+        t.start()
+        hit["thread"] = t
+        import time as _t
+
+        _t.sleep(0.1)  # 让 discard 真的撞上这把锁
+        real_save(project, p, b, a)
+
+    monkeypatch.setattr(cp, "save", save_with_late_discard)
+    assert cp.publish(task2, "projA", plan2, b"B", b"A") is True
+    hit["thread"].join(10)
+    assert hit["r"] is True
+    assert cp.load("projA", task2.id) is None and not cp.plan_dir("projA", task2.id).exists()

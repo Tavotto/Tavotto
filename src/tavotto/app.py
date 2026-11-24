@@ -11441,8 +11441,7 @@ def _change_plan_thread(ctx, task, rel_id, base, comments) -> None:
     try:
         with bound_project(ctx):
             plan, before_png, after_png = _change_plan_compute(task, rel_id, base, comments)
-            if not task.cancelled:
-                engine_changeplan.save(ctx.id, plan, before_png, after_png)
+            engine_changeplan.publish(task, ctx.id, plan, before_png, after_png)
     except engine_changeplan.PlanFailure as exc:
         code, detail = exc.code, exc.detail
         LOG.info("修改方案没有生成: %s %s", exc.code, exc.detail)

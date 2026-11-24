@@ -638,3 +638,31 @@ def test_a_running_assistant_session_on_the_script_makes_the_figure_busy(env, mo
     resp = post(client)
     assert resp.status_code == 409 and resp.get_json()["code"] == "change_plan_busy"
     assert worker.calls == [] and model.calls == 0 and cp._TASKS == {}
+
+
+def test_a_discard_arriving_between_the_cancel_check_and_the_publish_leaves_nothing(
+    env, monkeypatch
+):
+    _m, client, *_ = env
+    real_save, box = cp.save, {}
+
+    def late(project, plan, b, a):
+        # 取消检查已过、目录还没发布：此刻 discard 到达（它要等发布完成才拿得到锁）
+        box["t"] = threading.Thread(
+            target=lambda: box.setdefault(
+                "resp", client.post(f"/api/change-plans/{plan['id']}/discard")
+            )
+        )
+        box["t"].start()
+        time.sleep(0.1)
+        real_save(project, plan, b, a)
+
+    monkeypatch.setattr(cp, "save", late)
+    plan_id = post(client).get_json()["plan_id"]
+    deadline = time.time() + 10
+    while time.time() < deadline and "resp" not in box:
+        time.sleep(0.01)
+    box["t"].join(10)
+    assert box["resp"].get_json() == {"discarded": True}
+    assert client.get(f"/api/change-plans/{plan_id}").status_code == 404
+    assert client.get(f"/api/change-plans/{plan_id}/after.png").status_code == 404
