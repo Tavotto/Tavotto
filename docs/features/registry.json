@@ -1113,6 +1113,22 @@
       ]
     },
     {
+      "id": "preflight.canvas-line-width",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "画布上的箭头、形状、路径也按期刊最小线宽检查（「线条太细」），点那一行选中对象、焦点落到线宽",
+        "en-US": "Arrows, shapes and paths on the canvas are checked against the journal's minimum line width (\"Line too thin\"); clicking the row selects the object and focuses its line width"
+      },
+      "entry": "问题 → 线条太细（选了规定最小线宽的期刊后）",
+      "e2e": [
+        {
+          "spec": "canvas-line-width-locate.spec.ts",
+          "title": "画布上的细箭头：问题清单出「线条太细」，点它选中箭头、焦点落到线宽"
+        }
+      ]
+    },
+    {
       "id": "style.journal-adjust",
       "status": "active",
       "platform": "both",

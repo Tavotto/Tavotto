@@ -26,7 +26,9 @@ import {
   detectInterference,
 } from './interference'
 import type { CanvasObject, FigureDocument, FramePad, PanelObject, TextObject } from '@/types/document'
-import { panelFullSize } from '@/types/document'
+import { panelFullSize, readPath, shapeStrokeOn } from '@/types/document'
+import { strokeOpacityOf } from './shapeGeometry'
+import { effectiveStrokeGradient } from './gradient'
 import type { Manifest, ManifestElement } from './api'
 
 /**
@@ -209,6 +211,8 @@ export interface PreflightSpec {
     type: string
     rect_mm: [number, number, number, number]
     hidden: boolean
+    /** 只有画得出描边的箭头 / 形状 / 路径才带（缺席 = 没有描边，ADR 0208）；页面上的绝对 pt */
+    stroke_pt?: number
   }[]
 }
 
@@ -1155,6 +1159,48 @@ function checkGeometry(spec: PreflightSpec, sink: Sink): void {
   if (hidden.length) sink.add('hidden', pf('hidden'), { objectIds: hidden })
 }
 
+/**
+ * 画布上判线宽下限的对象类型（ADR 0208 §四 第 7 条：所有画布上的箭头 / 形状 / 路径都管，包括用户自己画的）。
+ * 严格同源对：`engine/preflight.py` 的 `CANVAS_STROKE_TYPES`。
+ */
+export const CANVAS_STROKE_TYPES = ['arrow', 'shape', 'path']
+
+/**
+ * 画布对象的描边 < 期刊线宽下限（`min_line_width_pt`）→ `line-width-below-min`。与数据线同一条检查，
+ * 文案另一句；`stroke_pt` 已是页面上的绝对 pt，不乘缩放；缺席 = 没有描边，不判；等于下限不报。
+ * 严格同源对：`engine/preflight.py` `_check_canvas_strokes`。
+ */
+function checkCanvasStrokes(spec: PreflightSpec, profile: PublicationProfile, sink: Sink): void {
+  const minLw = num(profile.min_line_width_pt) ?? 0
+  if (minLw <= 0) return
+  for (const o of spec.objects) {
+    if (o.hidden || !CANVAS_STROKE_TYPES.includes(o.type)) continue
+    const lw = num(o.stroke_pt)
+    if (lw == null || lw <= 0 || lw >= minLw - 1e-9) continue
+    sink.add(
+      'line-width-below-min',
+      pf('canvasLineWidthBelowMin', { effective: lw.toFixed(2), min: g(minLw) }),
+      { objectIds: [o.id], detail: { effective_pt: r2(lw) }, worse: minLw - lw, prop: 'strokePt' },
+    )
+  }
+}
+
+/** 画布对象画得出的描边宽度（pt）；没有描边（关掉 / 全透明 / 不是能描边的类型）回 undefined */
+export function canvasStrokePt(o: CanvasObject): number | undefined {
+  let on: boolean
+  if (o.type === 'arrow') on = true
+  else if (o.type === 'shape') on = shapeStrokeOn(o)
+  else if (o.type === 'path') on = readPath(o).strokeOn
+  else return undefined
+  if (!on || strokeOpacityOf(o.strokeOpacity) === 0) return undefined
+  // 描边渐变的色标全透明：画出来也是全透明（`canvas/gradientPaint.usePaints` 同一份读法），不算有描边（Codex #2195）
+  if (o.type !== 'arrow') {
+    const g = effectiveStrokeGradient(o, on)
+    if (g && g.stops.every((st) => st.opacity === 0)) return undefined
+  }
+  return Number.isFinite(o.strokePt) && o.strokePt > 0 ? o.strokePt : undefined
+}
+
 function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink): void {
   const strict = num(profile.min_effective_font_size_pt) ?? FALLBACK_MIN_FONT_SIZE_PT
   const floor = num(profile.absolute_min_font_size_pt) ?? FALLBACK_MIN_FONT_SIZE_PT
@@ -1464,6 +1510,7 @@ export function runSpec(spec: PreflightSpec, profile: PublicationProfile): Prefl
     }
   }
   checkTexts(spec, profile, sink)
+  checkCanvasStrokes(spec, profile, sink)
   checkGeometry(spec, sink)
   return sink.result()
 }
@@ -1675,12 +1722,16 @@ export function buildSpec(
         rect_mm: rect(o),
         hidden: !!o.hidden,
       })),
-    objects: doc.objects.map((o) => ({
-      id: o.id,
-      type: o.type,
-      rect_mm: rect(o),
-      hidden: !!o.hidden,
-    })),
+    objects: doc.objects.map((o) => {
+      const strokePt = canvasStrokePt(o)
+      return {
+        id: o.id,
+        type: o.type,
+        rect_mm: rect(o),
+        hidden: !!o.hidden,
+        ...(strokePt != null ? { stroke_pt: strokePt } : {}),
+      }
+    }),
   }
 }
 

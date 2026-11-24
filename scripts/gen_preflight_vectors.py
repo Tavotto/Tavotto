@@ -551,6 +551,60 @@ def cases() -> list[dict]:
     _el_with(m, "axes_0.lines_0", visible=False)
     out.append(_lw_case("journal-min-line-width-hidden-line-skipped", 2.0, m))
 
+    # 9j'. 画布上的箭头 / 形状 / 路径（ADR 0208 §四 第 7 条，「都管」）：同一条 `line-width-below-min`，
+    #      读 spec.objects 的 `stroke_pt`（页面绝对 pt，不乘缩放）；缺席 = 没有描边，不判；等于下限不报；
+    #      隐藏的不判；文字 / 面板不判。数据线够粗，只看画布对象。
+    def _canvas_lw_case(name: str, floor, objs: list[dict]) -> dict:
+        m = _clean_manifest()
+        _el_with(m, "axes_0.lines_0", linewidth=3.0)
+        _el_with(m, "axes_0.lines_1", linewidth=3.0)
+        base = _lw_case(name, floor, m)
+        base["spec"] = _spec([_panel("p1", manifest=m)], extra_objects=objs)
+        return base
+
+    def _obj(oid: str, typ: str, stroke_pt=None, hidden=False) -> dict:
+        o = {"id": oid, "type": typ, "rect_mm": [5.0, 5.0, 10.0, 6.0], "hidden": hidden}
+        if stroke_pt is not None:
+            o["stroke_pt"] = stroke_pt
+        return o
+
+    out.append(
+        _canvas_lw_case(
+            "canvas-line-width-thin-objects-reported",
+            0.5,
+            [_obj("a1", "arrow", 0.25), _obj("s1", "shape", 0.4), _obj("q1", "path", 0.1)],
+        )
+    )
+    out.append(
+        _canvas_lw_case(
+            "canvas-line-width-equal-hidden-nostroke-skipped",
+            0.5,
+            [
+                _obj("a1", "arrow", 0.5),  # 正好等于下限
+                _obj("s1", "shape", 0.2, hidden=True),  # 隐藏
+                _obj("s2", "shape"),  # 没有描边（字段缺席）
+                _obj("t1", "text", 0.1),  # 文字不在判的类型里
+            ],
+        )
+    )
+    out.append(
+        _canvas_lw_case(
+            "canvas-line-width-floor-not-set-no-report", None, [_obj("a1", "arrow", 0.1)]
+        )
+    )
+    out.append(  # 新建箭头 / 形状 / 钢笔路径的默认线宽都是 1 pt：常见期刊下限（0.25–0.5 pt）下不报
+        _canvas_lw_case(
+            "canvas-line-width-defaults-not-reported",
+            0.5,
+            [_obj("a1", "arrow", 1.0), _obj("s1", "shape", 1.0), _obj("q1", "path", 1.0)],
+        )
+    )
+    m = _clean_manifest()  # 数据线与画布对象都细：一条检查，最糟的那次（画布 0.1）决定文案与 detail
+    _el_with(m, "axes_0.lines_0", linewidth=0.3)
+    mixed = _lw_case("canvas-line-width-mixed-with-data-line", 0.5, m)
+    mixed["spec"] = _spec([_panel("p1", manifest=m)], extra_objects=[_obj("q1", "path", 0.1)])
+    out.append(mixed)
+
     # 9k. V-001 对数轴上有 ≤ 0 的值（`log-axis-nonpositive`）：事实只读 axes 元素的 `scale_domain`
     #     （`engine/manifest.scale_domain`）。那一维 `status == "ok"` 且两个计数之和 > 0 才报；
     #     超预算 / 量不了 / 缺 status / 计数不是非负整数一律不判。每个（axes, 维）一次命中，x 先于 y，

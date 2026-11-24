@@ -50,7 +50,8 @@ figure spec（两侧同源的规范化输入）：
                "source_font_missing": {"family": str, "reason": str},  # 原图字体此刻用不了（缺席 = 能用 / 没有）
                "source_font_in_use": bool,  # 文字由原图字体（本机用户脸）排：批准字体的覆盖表不适用，字形缺失以导出的 glyph_missing 为准
                "rect_mm": [x,y,w,h], "hidden": bool}],
-  "objects": [{"id": str, "type": str, "rect_mm": [x,y,w,h], "hidden": bool}]
+  "objects": [{"id": str, "type": str, "rect_mm": [x,y,w,h], "hidden": bool,
+               "stroke_pt": float}]   # 只有画得出描边的箭头 / 形状 / 路径才带（缺席 = 没有描边，ADR 0208）
 }
 """
 
@@ -1232,6 +1233,36 @@ def _canvas_coverage() -> glyphplan.Coverage:
     return _COVERAGE
 
 
+#: 画布上判线宽下限的对象类型（ADR 0208 §四 第 7 条：所有画布上的箭头 / 形状 / 路径都管，
+#: 包括用户自己画的）。严格同源对：`preflight.ts` 的 `CANVAS_STROKE_TYPES`。
+CANVAS_STROKE_TYPES = ("arrow", "shape", "path")
+
+
+def _check_canvas_strokes(spec: dict, profile: dict, sink: _Sink) -> None:
+    """画布对象的描边 < 期刊线宽下限（`min_line_width_pt`）→ `line-width-below-min`。
+
+    与数据线同一条检查（期刊的最小线宽不分是谁画的），严重级别与期刊抬级照旧；文案另一句。
+    画布对象的 `stroke_pt` 已是页面上的绝对 pt（拖图时标注的线宽已按比例写回），不再乘缩放。
+    `stroke_pt` 缺席 = 这个对象没有画得出的描边（关了描边 / 描边全透明），不判；等于下限不报。"""
+    min_lw = _num(profile.get("min_line_width_pt")) or 0.0
+    if min_lw <= 0:
+        return
+    for o in spec.get("objects") or []:
+        if o.get("hidden") or o.get("type") not in CANVAS_STROKE_TYPES:
+            continue
+        lw = _num(o.get("stroke_pt"))
+        if lw is None or lw <= 0 or lw >= min_lw - 1e-9:
+            continue
+        sink.add(
+            "line-width-below-min",
+            f"画布上的线条线宽 {lw:.2f}pt，规范要求至少 {min_lw:g}pt",
+            message=("canvasLineWidthBelowMin", {"effective": f"{lw:.2f}", "min": f"{min_lw:g}"}),
+            object_ids=[o.get("id", "")],
+            detail={"effective_pt": _r2(lw)},
+            worse=min_lw - lw,
+        )
+
+
 def _check_texts(spec: dict, profile: dict, sink: _Sink) -> None:
     strict = _num_or(
         profile.get("min_effective_font_size_pt"), profiles_mod.FALLBACK_MIN_FONT_SIZE_PT
@@ -1626,6 +1657,7 @@ def run(spec: dict, profile: dict, *, with_interference: bool = False) -> list[d
             if with_interference:
                 _check_panel_interference(panel, profile, sink)
     _check_texts(spec, profile, sink)
+    _check_canvas_strokes(spec, profile, sink)
     _check_geometry(spec, sink)
     return sink.result()
 
