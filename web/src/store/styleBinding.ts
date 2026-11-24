@@ -72,6 +72,7 @@ import {
 import type { DocumentStyle, FigureDocument, PanelObject, StyleOwnedOverride } from '@/types/document'
 import { renderStylePlan, writeStylePlan } from './actions'
 import { isCopiedBakedBaseline } from '@/lib/bakedBaseline'
+import { engineTransport } from '@/lib/engineTransport'
 import { hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
 import { useAssetStore } from './assetStore'
 import { useDocumentStore } from './documentStore'
@@ -373,7 +374,7 @@ function owe(
       else keep.delete(fig)
     }
     map.set(fig, mergeDelta(prev, owed))
-    if (prepareArchived && p.fileKind !== 'runtime' && hasFigureSnapshotPreview(p)) prepare.push(p)
+    if (prepareArchived && !engineTransport() && p.fileKind !== 'runtime' && hasFigureSnapshotPreview(p)) prepare.push(p)
   }
   if (map.size) pending.set(key, map)
   if (keep.size) keeping.set(key, keep)

@@ -17,6 +17,7 @@ import {
   type PanelObject,
 } from '@/types/document'
 import type { Manifest, PanelInfo } from '@/lib/api'
+import { setEngineTransport } from '@/lib/engineTransport'
 import { panelScale } from '@/lib/preflight'
 import { startCropDrag, startResizeDrag } from '@/canvas/interactions'
 import { startLayoutAutoReflow } from '@/store/actions'
@@ -100,6 +101,12 @@ describe('renderTargets：按变体去重，不再裁一个赢家', () => {
     }
     expect(renderTargets([archived], null, {}, {}, {}, true)).toEqual([])
     expect(renderTargets([archived], 'saved', {}, {}, {}, true)).toEqual([archived])
+    const restoreTransport = setEngineTransport({ render: vi.fn(), previewPngUrl: vi.fn(), panelSrc: vi.fn() })
+    try {
+      expect(renderTargets([archived], null, {}, {}, {}, true)).toEqual([archived])
+    } finally {
+      restoreTransport()
+    }
   })
 
   it('没有脚本的面板永远不进队列', () => {
