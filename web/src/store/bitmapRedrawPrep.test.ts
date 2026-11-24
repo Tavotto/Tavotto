@@ -9,8 +9,8 @@ import { useUiStore } from './uiStore'
 import { useEnvStore } from './envStore'
 import { useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
-import { usePngAdmissionMemory } from './pngAdmissionMemory'
-import { prepareScriptedBitmapsForRedraw } from './actions'
+import { pngRefusalOf, usePngAdmissionMemory } from './pngAdmissionMemory'
+import { prepareScriptedBitmapsForRedraw, redrawWithScript } from './actions'
 import { FIGSIZE_SOURCE_POLICY, SCRIPT_BACKED_SOURCE_POLICY } from '@/lib/artifactValidation'
 import { setCurrentProjectId } from '@/lib/session'
 
@@ -52,7 +52,7 @@ beforeEach(async () => {
   useRenderStore.getState().clear()
   useUiStore.getState().setElementPanel(null)
   useSelectionStore.getState().clear()
-  usePngAdmissionMemory.setState({ byFile: {} })
+  usePngAdmissionMemory.getState().clear()
   useEnvStore.getState().resetProject()
   setCurrentProjectId('A')
   await seed()
@@ -84,6 +84,28 @@ describe('prepareScriptedBitmapsForRedraw', () => {
     expect(S().past).toHaveLength(0)
     expect(await prepareScriptedBitmapsForRedraw(['p'])).toEqual({ p: 'kept' })
     expect(render).toHaveBeenCalledTimes(1)
+    // 这条拒绝只挡精确：不进共享的采用记忆，角标与进图内编辑仍能走到来源驱动的对照
+    expect(pngRefusalOf('plot.png')).toBeNull()
+  })
+
+  it('只挡精确的拒绝之后，「用脚本重画」照样走到来源驱动的对照', async () => {
+    render.mockImplementation(async (_id: unknown, _p: unknown, opts?: { source_policy?: string }) => {
+      if (opts?.source_policy === FIGSIZE_SOURCE_POLICY) throw refused('source_mismatch')
+      throw refused('unsupported_artist')
+    })
+    expect(await prepareScriptedBitmapsForRedraw(['p'])).toEqual({ p: 'kept' })
+    render.mockClear()
+    await redrawWithScript('p')
+    const policies = render.mock.calls.map((c) => (c[2] as { source_policy?: string } | undefined)?.source_policy)
+    expect(policies).toEqual([FIGSIZE_SOURCE_POLICY, SCRIPT_BACKED_SOURCE_POLICY])
+  })
+
+  it('换了项目代际：导出前那条只挡精确的记录作废，再导出会重试', async () => {
+    render.mockRejectedValue(refused('source_mismatch'))
+    await prepareScriptedBitmapsForRedraw(['p'])
+    usePngAdmissionMemory.getState().clear()
+    await prepareScriptedBitmapsForRedraw(['p'])
+    expect(render).toHaveBeenCalledTimes(2)
   })
 
   it('要先回答环境问题的：保留原件，不在导出途中弹出工作目录 / 依赖对话框', async () => {
