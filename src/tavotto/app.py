@@ -86,6 +86,7 @@ from .engine import (
     bootstrap as engine_bootstrap,
     brand as engine_brand,
     capabilities as engine_capabilities,
+    changeplan as engine_changeplan,
     cli as engine_cli,
     config as engine_config,
     contactinbox as engine_contactinbox,
@@ -11310,6 +11311,326 @@ def _retire_hot_worker(worker) -> bool:
 #: 事务本体在 `engine/specfix.transaction()`（ADR 0180：MCP 与桌面同一份）；
 #: 这个名字留给端点与 `tests/test_specfix_real.py`。
 _specfix_transaction = engine_specfix.transaction
+
+
+# --- 修改方案（ADR 0206 §一，PR 1：后端契约与引擎；默认没有前端入口）------------------------------
+# 长任务 = 后台线程 + 轮询（与 `ai_data_roles` 的 job / `understanding/<id>` 同一形状）：POST 立刻回 202 + 方案 id，
+# 前端轮询 GET；终态（`ready` / `failed`）都是 200 + 稳定 code，不抛 500。只算不写：不碰文档、不落盘到用户目录、不写回源文件。
+_CHANGE_PLAN_STATUS = {
+    "invalid_change_plan": 400,
+    "change_plan_no_comments": 400,
+    "change_plan_unknown": 404,
+}
+#: 方案里两张图的宽度（`RENDER_BUCKETS` 里的一档）
+_CHANGE_PLAN_WIDTH = 1600
+
+
+def _change_plan_params(code: str) -> dict:
+    """文案占位符的参数（只有 native 那条要产品名，与 `specfix_native_unsupported` 同一口径）。"""
+    if code == "change_plan_native_unsupported":
+        return {"params": {"product": engine_brand.PRODUCT_NAME}}
+    return {}
+
+
+def _change_plan_error(code: str, status: int | None = None):
+    body = {
+        "error": engine_changeplan.MESSAGES.get(code, code),
+        "code": code,
+        **_change_plan_params(code),
+    }
+    return jsonify(body), status or _CHANGE_PLAN_STATUS.get(code, 409)
+
+
+def _change_plan_comments(body: dict, rel_id: str) -> list[dict] | None:
+    """请求里的意见 → 清洗过的未处理意见列表；形状不对 None。`comments`（客户端给）与 `share_id`（后端按本机分享记录取最新版本）二选一。
+    `share_id` 的记录必须就是**这个项目里这张图**的分享（别的图 / 别的项目 / 排版的意见不发给模型）。"""
+    raw, share_id = body.get("comments"), body.get("share_id")
+    if (raw is None) == (share_id is None):
+        return None
+    if share_id is not None:
+        if not isinstance(share_id, str) or engine_reviewinbox.SHARE_ID.match(share_id) is None:
+            return None
+        rec = engine_reviewinbox.get(share_id)
+        if (
+            rec is None
+            or not rec["delivered"]
+            or rec["kind"] != "figure"
+            or rec["target_id"] != rel_id
+            or rec["project"] != _review_project()
+        ):
+            return None
+        cleaned = [c for c in rec["comments"] if c["v"] == rec["latest_version"]]
+    else:
+        if not isinstance(raw, list) or len(raw) > 200:
+            return None
+        cleaned = [c for c in map(engine_reviewinbox.clean_comment, raw) if c is not None]
+    return engine_changeplan.open_comments(cleaned)
+
+
+@app.post("/api/change-plans")
+def api_change_plans_create():
+    """按审阅意见生成一份修改方案（**只算不写**）。请求：`{id, patches, source: "review", comments | share_id, client_request_id?}`——
+    `patches` 是这张图此刻的全量 override 列表（B0）。同步只做能立刻判的事：请求形状、native（409 `change_plan_native_unsupported`）、
+    没有脚本的图（409 `change_plan_not_editable`）、没连 AI（409 `change_plan_no_connection` 等）、同一张图已有方案任务（409 `change_plan_busy`）；
+    其余交给后台线程，回 202 `{plan_id, state: "running"}`，用 `GET /api/change-plans/<plan_id>` 轮询。同一 `client_request_id` 回同一个任务。"""
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict):
+        return _change_plan_error("invalid_change_plan")
+    rel_id, base = body.get("id"), body.get("patches")
+    rid = body.get("client_request_id")
+    if (
+        not isinstance(rel_id, str)
+        or not rel_id
+        or not isinstance(base, list)
+        or body.get("source") != "review"
+        or (
+            rid is not None
+            and not (isinstance(rid, str) and engine_changeplan.REQUEST_ID.match(rid))
+        )
+        or any(k in body for k in ("figure_origin", "chart", "chart_source"))
+    ):
+        return _change_plan_error("invalid_change_plan")
+    if engine_patchspec.canonicalize_with_diagnostics(base)[1]:
+        return jsonify({"error": "patches 含无效条目", "code": "invalid_patches"}), 400
+    comments = _change_plan_comments(body, rel_id)
+    if comments is None:
+        return _change_plan_error("invalid_change_plan")
+    if not comments:
+        return _change_plan_error("change_plan_no_comments")
+    _refuse_artifact_policy(body.get("source_policy"), body.get("expected_source"))
+    _refuse_adopted_source(rel_id)
+    # native 图一次渲染都不做（同 specfix：用户自己的进程不能作废重起）；没有脚本的图（位图 / 无脚本面板）也在这里挡
+    if _specfix_profile(rel_id) == engine_enginesession.PROFILE_NATIVE:
+        return _change_plan_error("change_plan_native_unsupported")
+    try:
+        worker, _stem = _engine_worker(rel_id, safe_only=True)
+    except NativeWorkerRefused:
+        return _change_plan_error("change_plan_native_unsupported")
+    except NotFound:
+        return _change_plan_error("change_plan_not_editable")
+    # 该脚本正有改图助手会话在跑：让路（与改写脚本同一个判据 `ai_bridge.script_busy`）
+    script_name = getattr(worker, "script_name", None)
+    if script_name and engine_ai.script_busy(require_project() / script_name):
+        return _change_plan_error("change_plan_busy")
+    failure = engine_changeplan.connection_failure()
+    if failure is not None:
+        return _change_plan_error(failure)
+    ctx = current_ctx()
+    try:
+        task, created = engine_changeplan.begin(ctx.id, rel_id, rid)
+    except engine_changeplan.PlanFailure as exc:
+        return _change_plan_error(exc.code)
+    if created:
+        threading.Thread(
+            target=_change_plan_thread,
+            args=(ctx, task, rel_id, list(base), comments),
+            name=f"change-plan-{task.id[:8]}",
+            daemon=True,
+        ).start()
+    # 新建的任务一律回 running（线程可能在这行之前就跑完了，终态留给轮询）；去重命中的回它此刻的状态
+    state = "running" if created else task.state
+    resp = jsonify({"plan_id": task.id, "state": state, "phase": task.phase})
+    resp.status_code = 202 if state == "running" else 200
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _change_plan_thread(ctx, task, rel_id, base, comments) -> None:
+    """后台线程：钉在发起请求的项目上；任何结局都落成终态并放掉这张图的互斥。"""
+    code, detail = "", ""
+    try:
+        with bound_project(ctx):
+            plan, before_png, after_png = _change_plan_compute(task, rel_id, base, comments)
+            if not task.cancelled:
+                engine_changeplan.save(ctx.id, plan, before_png, after_png)
+    except engine_changeplan.PlanFailure as exc:
+        code, detail = exc.code, exc.detail
+        LOG.info("修改方案没有生成: %s %s", exc.code, exc.detail)
+    except BaseException:  # noqa: BLE001 - 线程里不许丢结局：落成 change_plan_failed
+        code = "change_plan_failed"
+        LOG.exception("修改方案任务异常")
+    finally:
+        engine_changeplan.finish(task, code=code, detail=detail)
+        if task.cancelled:
+            engine_changeplan.forget_task(task)
+
+
+def _change_plan_snapshot(resp) -> tuple[bytes, dict]:
+    import base64
+
+    try:
+        png = base64.b64decode(resp["png"], validate=True)
+        manifest = resp["manifest"]
+    except (KeyError, TypeError, ValueError):
+        raise engine_changeplan.PlanFailure("change_plan_render_failed", "snapshot") from None
+    if not png or not isinstance(manifest, dict) or not isinstance(manifest.get("elements"), list):
+        raise engine_changeplan.PlanFailure("change_plan_render_failed", "snapshot")
+    return png, manifest
+
+
+def _change_plan_compute(task, rel_id: str, base: list, comments: list[dict]):
+    """渲染 B0 → 问模型 → 候选渲染 → 现算有效改动 → 方案。→ `(plan, before_png, after_png)`；失败抛 `PlanFailure`。
+
+    B0 / 候选的图与 manifest 都走**状态中立**的 `preview_png_snapshot`（应用 → 出图 → 还原）。它不回 warnings，所以另走 specfix 式的
+    `override`（带 warnings）两次：`override(B0)` 取基线 warning → `override(候选)`。候选比基线**多出来**的 warning = 不出方案。
+    **只要对热 worker 做过 `override`，任务结束（成功或失败）一律 `_retire_hot_worker`、不还原**：B0 是请求时的列表，模型调用期间用户可能已经改过图，
+    写回它会让画布与热态分叉；作废后下一次交互由前端按自己手里的全量列表冷重放。此时 `task.replay_required` / `plan["replay_required"]` 为真（与 specfix 同名同义）。
+    候选不存在（没有一条能落成改动）时没有 `override`，热态一个字没动。"""
+    ec = engine_changeplan
+    try:
+        worker, stem = _engine_worker(rel_id, safe_only=True)
+    except NativeWorkerRefused:
+        raise ec.PlanFailure("change_plan_native_unsupported") from None
+    except NotFound:
+        raise ec.PlanFailure("change_plan_not_editable") from None
+    state = {"worker": worker, "stem": stem}
+    root = str(require_project())
+
+    def revision() -> str:
+        try:
+            return (
+                engine_preparation._script_revision(
+                    root, getattr(state["worker"], "script_name", None)
+                )
+                or ""
+            )
+        except Exception:  # noqa: BLE001 - 读不到修订 = 两次都读不到，相等
+            return "unknown"
+
+    def call(action):
+        _require_route_unchanged(rel_id)
+        wk, st, resp = _engine_attempt(
+            rel_id, state["worker"], state["stem"], action, safe_only=True
+        )
+        state["worker"], state["stem"] = wk, st
+        return resp
+
+    def snapshot(patches: list):
+        return _change_plan_snapshot(
+            call(lambda w, s: w.preview_png_snapshot(s, patches, _CHANGE_PLAN_WIDTH))
+        )
+
+    def override(patches: list) -> dict:
+        return call(lambda w, s: w.override(s, patches, None))
+
+    def warned(resp: dict) -> set[str]:
+        return {json.dumps(w, sort_keys=True, default=str) for w in (resp.get("warnings") or [])}
+
+    touched = False  # 对热 worker 做过 override
+    try:
+        rev0 = revision()
+        task.phase = "render_before"
+        before_png, before_man = snapshot(base)
+        task.phase = "model"
+        proposal = ec.ask_model(comments, before_man)
+        if revision() != rev0:
+            raise ec.PlanFailure("change_plan_figure_changed")
+        cand, proposal = ec.candidate_patches(base, proposal, before_man)
+        if ec.change_count(proposal) == 0:
+            groups, unhandled, after_png = [], proposal["unhandled"], before_png
+        else:
+            task.phase = "render_after"
+            touched = True
+            base_warned = warned(override(base))  # 基线：B0 自己本来就有的 warning
+            cand_resp = override(cand)
+            after_png, after_man = snapshot(cand)
+            if warned(cand_resp) - base_warned:
+                raise ec.PlanFailure("change_plan_render_failed", "warning")
+            groups, unhandled = ec.effective_changes(before_man, after_man, proposal)
+        if revision() != rev0:
+            raise ec.PlanFailure("change_plan_figure_changed")
+        _require_route_unchanged(rel_id)
+    except (_SpecfixRouteChanged, NativeWorkerRefused):
+        raise ec.PlanFailure("change_plan_native_unsupported") from None
+    except engine_pool.WorkerError as exc:
+        LOG.warning("修改方案渲染失败: %s: %s", stem, exc)
+        raise ec.PlanFailure("change_plan_render_failed", "error") from None
+    finally:
+        if touched:
+            task.replay_required = True
+            _retire_hot_worker(state["worker"])
+    plan = ec.build_plan(
+        plan_id=task.id,
+        target=rel_id,
+        base_fingerprint=ec.fingerprint(rev0, base),
+        comments=comments,
+        groups=groups,
+        unhandled=unhandled,
+    )
+    plan["replay_required"] = task.replay_required
+    return plan, before_png, after_png
+
+
+def _change_plan_view(ctx, plan_id: str):
+    project = ctx.id
+    if engine_changeplan.PLAN_ID.match(plan_id) is None:
+        return _change_plan_error("change_plan_unknown")
+    task = engine_changeplan.task_of(project, plan_id)
+    if task is not None and task.state == "running":
+        return jsonify({"plan_id": plan_id, "state": "running", "phase": task.phase})
+    if task is not None and task.state == "failed":
+        return jsonify(
+            {
+                "plan_id": plan_id,
+                "state": "failed",
+                "code": task.code,
+                "error": engine_changeplan.MESSAGES.get(task.code, task.code),
+                "detail": task.detail,
+                "replay_required": task.replay_required,
+                **_change_plan_params(task.code),
+            }
+        )
+    plan = engine_changeplan.load(project, plan_id)
+    if plan is None:
+        return _change_plan_error("change_plan_unknown")
+    out = {
+        "plan_id": plan_id,
+        "state": "ready",
+        "replay_required": plan.get("replay_required") is True,
+        "plan": {
+            **plan,
+            "preview": {
+                name: f"/api/change-plans/{plan_id}/{name}.png"
+                for name in engine_changeplan.IMAGE_NAMES
+            },
+        },
+    }
+    if not plan["groups"]:
+        out["code"] = "change_plan_empty"
+        out["error"] = engine_changeplan.MESSAGES["change_plan_empty"]
+    return jsonify(out)
+
+
+@app.get("/api/change-plans/<plan_id>")
+def api_change_plans_get(plan_id: str):
+    """轮询一份方案：`running`（带阶段）/ `failed`（稳定 code）/ `ready`（方案 + 两张图的地址；没有一条能落成修改时另带 `code: change_plan_empty`）。"""
+    resp = _change_plan_view(current_ctx(), plan_id)
+    if isinstance(resp, tuple):
+        return resp
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/change-plans/<plan_id>/<which>.png")
+def api_change_plans_image(plan_id: str, which: str):
+    path = (
+        engine_changeplan.image_path(current_ctx().id, plan_id, which)
+        if engine_changeplan.PLAN_ID.match(plan_id)
+        else None
+    )
+    if path is None:
+        return _change_plan_error("change_plan_unknown")
+    resp = send_file(path, mimetype="image/png")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/change-plans/<plan_id>/discard")
+def api_change_plans_discard(plan_id: str):
+    """放弃一份方案（幂等）：删它的目录；还在生成的任务标成作废，生成完不落盘。"""
+    if engine_changeplan.PLAN_ID.match(plan_id) is None:
+        return _change_plan_error("change_plan_unknown")
+    return jsonify({"discarded": engine_changeplan.discard(current_ctx().id, plan_id)})
 
 
 @app.post("/api/engine/invalidate")
