@@ -624,7 +624,7 @@ function AssistantPanelBody() {
           source === 'composer' && snap.stamp !== null
             ? () => {
                 void deleteAiDraftIf(panel.fileId, prompt, pinnedProject).catch(() => undefined)
-                clearIfUnchanged(snap.seq)
+                clearIfUnchanged(snap.seq, { project: pinnedProject, fileId: panel.fileId })
               }
             : undefined,
         )

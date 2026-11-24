@@ -345,7 +345,10 @@ export function useAiDraft(panel: PanelObject | null) {
    * 提交被接受之后清输入框：**只看本地有没有再动过（`seq` 没变），不比文本**。仅在发送时拿到了草稿戳
    * （后端会据此删草稿）才调用；之后后端的清理结果经 `mm:ai-draft-changed` 的对账回到输入框。
    */
-  const clearIfUnchanged = useCallback((seqAtSubmit: number) => {
+  const clearIfUnchanged = useCallback((seqAtSubmit: number, pinned?: { project: string | null; fileId: string | null }) => {
+    // 延迟清（方案落定时）：发起时钉住的草稿目标（项目 + 图文件）此刻还是输入框绑着的那一个才清——
+    // 换到别的图后序号会归零重数，只比序号可能撞上，清掉别的图正在写的字
+    if (pinned && (key.current.project !== pinned.project || key.current.fileId !== pinned.fileId)) return
     if (seq.current !== seqAtSubmit) return
     text.current = ''
     draftStamp.current = null

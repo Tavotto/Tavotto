@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { MAX_NOTE_CHARS, notesOf, useChangePlanStore, versionNumber, versionsOf, type PlanNote } from '@/store/changePlanStore'
 import { PremiumLock } from '../license/PremiumLock'
+import { useDocumentStore } from '@/store/documentStore'
 import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { Lock, Pencil } from '../ui/icons'
@@ -68,6 +69,8 @@ export function ChangePlanDialog() {
   const plan = entry?.plan
   // 弹窗开着时图被改了：基线对不上，不让点「应用」（卡片也已转「图已改过」）
   const source = usePlanSource(panel)
+  useDocumentStore((s) => s.past.at(-1))
+  useDocumentStore((s) => s.future.at(-1))
   const status = entry ? effectiveStatus(entry, panel?.overrides ?? null, source) : 'stale'
   const open = !!entry && !!plan && !!entry.beforeSrc && !!entry.afterSrc && status === 'ready'
   // 「修改后」跟着勾选的组合走：与「应用」写入的是同一份

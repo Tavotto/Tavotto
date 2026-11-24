@@ -80,6 +80,7 @@ const seed = (): PanelObject => {
   })
   return p
 }
+const overridesNow = () => (ds().doc.objects.find((o) => o.id === 'p1') as PanelObject).overrides
 const tick = (ms = 1300) => vi.advanceTimersByTimeAsync(ms)
 const start = vi.fn()
 const ask = () => cps().requestFromAssistant('p1', { instruction: FALLBACK.prompt, target: 'ax.line' }, { ...FALLBACK, canvas: ds().activeCanvasId, generation: useAiStore.getState().generation })
@@ -223,7 +224,7 @@ describe('部分能改、部分要改脚本', () => {
     expect(summaryLine(cps().entries[key])).toContain('剩下的要改脚本')
     expect(await cps().runScript(key)).toBe(true)
     expect(start).toHaveBeenCalledOnce()
-    expect(cps().entries[key]).toMatchObject({ status: 'ready', scriptStarted: true })
+    expect(cps().entries[key]).toMatchObject({ status: 'applied', scriptStarted: true }) // 点之前先应用了图内修改
   })
 
   it('应用 = 一次 commit，⌘Z 一步回（与审阅来源同一条）', async () => {
@@ -270,19 +271,58 @@ describe('用输入框选的那条连接与型号', () => {
 })
 
 describe('改脚本做剩下的：把图内已改的部分写进指令', () => {
-  it('未应用：写明用户还没应用；应用后再点：写明已经改好；原话仍在最前', async () => {
+  it('未应用时点：先把勾选的图内修改应用（一次 commit 进时间线）再续走，上下文写「已在图内改好」；原话仍在最前', async () => {
     getChangePlan.mockResolvedValue(ready(partial))
     const key = (await ask()) as string
     await tick()
+    const depth = ds().past.length
+    start.mockImplementation(async () => {
+      // 续走发出时图内修改已经落到文档里
+      expect(overridesNow()).toEqual(partial.candidate_patches)
+      return 'accepted'
+    })
+    expect(await cps().runScript(key)).toBe(true)
+    expect(ds().past.length).toBe(depth + 1)
+    const prompt = start.mock.calls[0][0].prompt as string
+    expect(prompt.startsWith(FALLBACK.prompt)).toBe(true)
+    expect(prompt).toContain('已经在图内改好（不必再改）')
+    expect(prompt).toContain('ax.line · linewidth → 3')
+    expect(start.mock.calls[0][0].overrides).toEqual(partial.candidate_patches)
+    expect(cps().entries[key].status).toBe('applied')
+  })
+
+  it('应用没成（图在生成之后被改过）：不续走改脚本，不写', async () => {
+    getChangePlan.mockResolvedValue(ready(partial))
+    const key = (await ask()) as string
+    await tick()
+    ds().commit(literal('手改'), (d) => {
+      ;(d.objects.find((o) => o.id === 'p1') as PanelObject).overrides = [{ gid: 'ax.title', prop: 'fontsize', value: 12 }]
+    })
+    expect(await cps().runScript(key)).toBe(false)
+    expect(start).not.toHaveBeenCalled()
+    expect(cps().entries[key].status).toBe('stale')
+  })
+
+  it('已应用时点：不再 commit，上下文写「已经改好」', async () => {
+    getChangePlan.mockResolvedValue(ready(partial))
+    const key = (await ask()) as string
+    await tick()
+    cps().apply(key)
+    const depth = ds().past.length
     await cps().runScript(key)
-    const first = start.mock.calls[0][0].prompt as string
-    expect(first.startsWith(FALLBACK.prompt)).toBe(true)
-    expect(first).toContain('还没应用，不要在脚本里重复它们')
-    expect(first).toContain('ax.line · linewidth → 3')
-    cps().patchEntry(key, { scriptStarted: false })
-    expect(cps().apply(key)).toBe('applied')
+    expect(ds().past.length).toBe(depth)
+    expect(start.mock.calls[0][0].prompt).toContain('已经在图内改好（不必再改）')
+  })
+
+  it('取消勾选的组不应用也不写进上下文', async () => {
+    getChangePlan.mockResolvedValue(ready(partial))
+    const key = (await ask()) as string
+    await tick()
+    cps().toggleGroup(key, 'g1')
+    const depth = ds().past.length
     await cps().runScript(key)
-    expect(start.mock.calls[1][0].prompt).toContain('已经在图内改好（不必再改）')
+    expect(ds().past.length).toBe(depth)
+    expect(start.mock.calls[0][0].prompt).toBe(FALLBACK.prompt)
   })
 
   it('整条都要改脚本：指令原样，一个字不加', async () => {

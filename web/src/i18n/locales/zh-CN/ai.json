@@ -811,7 +811,8 @@
       "runScriptAll": "改脚本来做",
       "scriptFailed": "没能交给 Agent 改脚本，图没有改动",
       "summaryLayout": "{{count}} 张图重新排了版",
-      "appliedLayout": "已应用 · {{count}} 张图重新排了版"
+      "appliedLayout": "已应用 · {{count}} 张图重新排了版",
+      "runScriptTip": "会先应用这些图内修改"
     },
     "dialog": {
       "title": "修改方案",

@@ -821,7 +821,8 @@
       "runScriptAll": "Edit the script instead",
       "scriptFailed": "Couldn't hand this to the Agent; the figure is unchanged",
       "summaryLayout": "{{count}} figures re-laid out",
-      "appliedLayout": "Applied · {{count}} figures re-laid out"
+      "appliedLayout": "Applied · {{count}} figures re-laid out",
+      "runScriptTip": "Applies these in-figure changes first"
     },
     "dialog": {
       "title": "Change plan",

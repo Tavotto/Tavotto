@@ -105,6 +105,8 @@ export interface PlanStatusInput {
   kind?: 'figure' | 'layout'
   plan?: { base_patches: readonly unknown[]; base?: { target: string } }
   appliedPatches?: readonly unknown[]
+  /** 应用那一次 commit 的历史条目（一键排版卡用它从文档历史派生状态） */
+  appliedEntry?: unknown
   source?: PlanSource
 }
 
@@ -118,9 +120,17 @@ export function effectiveStatus(
   e: PlanStatusInput,
   current: readonly unknown[] | null,
   source?: PlanSource | null,
+  /** 一键排版卡按文档历史派生状态用（调用方从 `documentStore` 取；别的卡不看） */
+  history?: { past: readonly unknown[]; future: readonly unknown[] },
 ): PlanStatusInput['status'] {
   if ((e.status !== 'ready' && e.status !== 'applied') || !e.plan) return e.status
-  if (e.kind === 'layout') return e.status
+  if (e.kind === 'layout') {
+    // 与审阅卡一样以文档为准：应用那次 commit 还在历史里 = 已应用；⌘Z 撤回了（在重做栈里）= 又是待确认，可再查看 / 应用；
+    // 两处都不在（撤回后又改了别的）= 图已改过。从没应用过的待确认卡由 `layout.apply` 应用那一刻自己核基线
+    if (!history || !e.appliedEntry) return e.status
+    if (history.past.includes(e.appliedEntry)) return 'applied'
+    return history.future.includes(e.appliedEntry) ? 'ready' : 'stale'
+  }
   if (!current) return 'stale'
   if (source) {
     if (e.source && !sameSource(e.source, source)) return 'stale'

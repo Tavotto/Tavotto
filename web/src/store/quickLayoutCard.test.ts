@@ -46,6 +46,7 @@ import { useSelectionStore } from './selectionStore'
 import { useUiStore } from './uiStore'
 import { useAiStore } from './aiStore'
 import { useChangePlanStore } from './changePlanStore'
+import { effectiveStatus } from '@/components/changePlan/changePlanModel'
 
 globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
 
@@ -207,6 +208,37 @@ describe('出卡：求解回来后文档一个字不动', () => {
     await vi.waitFor(() => expect(entries()).toHaveLength(1))
     expect(entries()[0].key).not.toBe(first.key)
     expect(quickLayoutPlan).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('排版卡按文档派生状态', () => {
+  const st = (key: string) => effectiveStatus(useChangePlanStore.getState().entries[key], null, null)
+
+  it('应用 → ⌘Z 回到待确认且能再应用 → ⌘⇧Z 回到已应用；撤回后又改了别的 = 图已改过', async () => {
+    seed(panel('p1'), panel('p2', { x: 120 }))
+    quickLayoutPlan.mockResolvedValue(okPlan())
+    await runQuickLayout('double', 3)
+    const [e] = entries()
+    const cps = useChangePlanStore.getState()
+    expect(st(e.key)).toBe('ready')
+    expect(cps.apply(e.key)).toBe('applied')
+    expect(st(e.key)).toBe('applied')
+    s().undo()
+    expect(st(e.key)).toBe('ready')
+    expect(texts()).toHaveLength(0)
+    s().redo()
+    expect(st(e.key)).toBe('applied')
+    s().undo()
+    expect(useChangePlanStore.getState().apply(e.key)).toBe('applied') // 再应用：又一次 commit
+    expect(texts()).toHaveLength(2)
+    expect(st(e.key)).toBe('applied')
+    s().undo()
+    s().commit(literal('手改'), (d) => {
+      d.objects.find((o) => o.id === 'p1')!.x += 5
+    })
+    expect(st(e.key)).toBe('stale')
+    expect(useChangePlanStore.getState().apply(e.key)).toBe('stale')
+    expect(texts()).toHaveLength(0)
   })
 })
 

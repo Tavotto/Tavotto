@@ -4,7 +4,14 @@ import { backendCodeMsg, type ChangePlanBox, type ChangePlanGroup, type ChangePl
 import { POLL_TIMEOUT, type PlanEntry } from '@/store/changePlanStore'
 import { licenseHas, licenseVisible, useLicenseStore } from '@/store/licenseStore'
 
-export { effectiveStatus } from '@/lib/changePlanApply'
+import { effectiveStatus as effectiveStatusOf, type PlanSource } from '@/lib/changePlanApply'
+import { useDocumentStore } from '@/store/documentStore'
+
+/** 卡片此刻的状态（`lib/changePlanApply.effectiveStatus`）；一键排版卡另按文档历史派生 */
+export function effectiveStatus(e: Parameters<typeof effectiveStatusOf>[0], current: readonly unknown[] | null, source?: PlanSource | null) {
+  const h = useDocumentStore.getState()
+  return effectiveStatusOf(e, current, source, e.kind === 'layout' ? { past: h.past, future: h.future } : undefined)
+}
 
 /** 修改方案的文案助手：命名空间 + 前缀固定在这一处，调用点只写最后一段 */
 export const cp = (key: string, values?: Record<string, unknown>) => translate(`changePlan.${key}`, { ns: 'ai', ...(values ?? {}) })

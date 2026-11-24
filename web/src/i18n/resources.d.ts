@@ -24,6 +24,7 @@ export default interface Resources {
         "revising": "正在按批注重改…",
         "runScript": "改脚本做剩下的",
         "runScriptAll": "改脚本来做",
+        "runScriptTip": "会先应用这些图内修改",
         "scriptFailed": "没能交给 Agent 改脚本，图没有改动",
         "stale": "原图改过了，这版对不上",
         "summary": "按 {{done}} 条意见改了 {{places}} 处，{{script}} 条要改脚本",

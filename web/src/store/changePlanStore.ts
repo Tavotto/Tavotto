@@ -492,17 +492,25 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       const fb = e?.fallback
       if (!e || !fb || e.from !== 'assistant') return false
       // 发送那一刻的项目 / 文档 / 面板：途中换了就不替他发（换项目整表已清；换文档 / 画布 / 面板被删这里挡）
-      const panel = panelOf(e)
+      let panel = panelOf(e)
       const ai = useAiStore.getState()
       if (!panel || panel.fileId !== fb.fileId || ai.generation !== fb.generation) {
         fail(key, 'change_plan_script_failed')
         return false
       }
+      // 还没应用的图内修改先应用（同一次 commit、正常进时间线）再改脚本：脚本一改图源就变了，待确认的方案会判「图已改过」再也应用不了，
+      // 图内那部分就丢了。应用没成（图已改过 / 写不进）= 不续走，卡上说一句
+      if (e.status === 'ready' && e.plan && e.plan.groups.some((g) => !e.unchecked[g.key] && g.changes.length > 0)) {
+        const r = get().apply(key)
+        if (r === 'stale' || r === 'failed') return false
+        panel = panelOf(e) ?? panel
+      }
+      const e2 = get().entries[key] ?? e
       // 图内已经改（或待用户应用）的部分，确定性地写进指令：Agent 不在脚本里重做它们（`lib/assistantScriptContext`）
       const manifest = exactPanelManifest(useRenderStore.getState(), panel)
       const labels = new Map((manifest?.elements ?? []).map((x) => [x.gid, x.label ? engineLabel(x.label).trim() : '']))
       const prompt = scriptHandoffPrompt(fb.prompt, e.plan, {
-        applied: e.status === 'applied',
+        applied: e2.status === 'applied',
         unchecked: e.unchecked,
         labelOf: (gid) => labels.get(gid) || undefined,
       })
@@ -563,10 +571,17 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       if (!e || !plan) return 'failed'
       // 一键排版：落地就是现有的那一次 commit（核对「图还是出发时那样」也在里面）；对不上 = 「图已改过」，不写
       if (e.kind === 'layout') {
-        if (e.status !== 'ready' || !e.layout) return 'failed'
+        const h = useDocumentStore.getState()
+        // ⌘Z 撤回过的「已应用」又是待确认：可以再应用（派生状态见 `effectiveStatus`）
+        const st = effectiveStatus(e, null, null, { past: h.past, future: h.future })
+        if (st === 'stale') {
+          patch(key, { status: 'stale', notice: undefined })
+          return 'stale'
+        }
+        if (st !== 'ready' || !e.layout) return 'failed'
         const r = e.layout.apply()
         if (r === 'applied') {
-          patch(key, { status: 'applied', notice: undefined })
+          patch(key, { status: 'applied', appliedEntry: useDocumentStore.getState().past.at(-1), notice: undefined })
           set((s) => (s.dialogKey === key ? { dialogKey: null } : {}))
         } else if (r === 'stale') patch(key, { status: 'stale', notice: undefined })
         else patch(key, { notice: 'apply_failed' })

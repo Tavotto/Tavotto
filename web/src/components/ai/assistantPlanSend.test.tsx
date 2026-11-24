@@ -251,4 +251,25 @@ describe('发送路由', () => {
     await act(async () => document.body.querySelector<HTMLElement>('[data-change-plan-confirm]')!.click())
     expect(apply).toHaveBeenCalledOnce()
   })
+
+  it('A 图发起、切到 B 图并在 B 的输入框里写了字：A 的方案落定时不清 B 的输入框', async () => {
+    useChangePlanStore.getState().clear()
+    vi.mocked(getChangePlan).mockResolvedValueOnce({ plan_id: 'pl1', state: 'running', phase: 'model' }).mockResolvedValue(NEEDS_SCRIPT)
+    vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    try {
+      await mount()
+      await typeText('A 的指令')
+      await click(q('[data-ai-send="send"]'))
+      await settle()
+      await act(async () => useSelectionStore.setState({ ids: ['p2'] } as never))
+      await settle()
+      await typeText('B 的草稿')
+      await act(async () => void vi.advanceTimersByTimeAsync(2600)) // A 的方案落定（整条要改脚本，续走）
+      await settle()
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(input().value).toBe('B 的草稿')
+  })
 })

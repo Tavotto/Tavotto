@@ -26,6 +26,7 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
   const plan = entry.plan
   // 历史栈顶：「撤销」只在它还是应用那一次 commit 时给（订阅它，之后改了别的这里跟着收起）
   useDocumentStore((s) => s.past.at(-1))
+  useDocumentStore((s) => s.future.at(-1)) // 一键排版卡：⌘Z / ⌘⇧Z 之后状态跟着变
   // 方案出来之后卡面用方案自己的两张图；只有还没有（生成中）/ 已放弃时才为缩略图出图
   const thumb = usePanelThumbSrc(panel, !entry.beforeSrc || entry.status === 'discarded' || (entry.status === 'applied' && !!entry.appliedPartial && !entry.appliedSrc))
   const beforeSrc = entry.beforeSrc ?? thumb
@@ -133,7 +134,7 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
               </Button>
             )}
             {entry.from === 'assistant' && !entry.scriptStarted && (status === 'ready' || status === 'applied') && (plan?.unhandled ?? []).some((u) => u.reason === 'needs_script') && (
-              <Button variant="ghost" size="md" className="rounded-full" onClick={() => void store().runScript(entry.key)} data-change-plan-run-script>
+              <Button variant="ghost" size="md" className="rounded-full" title={status === 'ready' ? cp('card.runScriptTip') : undefined} onClick={() => void store().runScript(entry.key)} data-change-plan-run-script>
                 {cp('card.runScript')}
               </Button>
             )}

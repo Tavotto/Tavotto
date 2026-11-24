@@ -30,6 +30,8 @@ export function usePanelPlanEntries(panelId: string | undefined): PlanEntry[] {
 export function useLatestReadyKey(mine: PlanEntry[], panelId: string): string | undefined {
   const panel = usePlanPanel(mine.find((e) => e.kind !== 'layout') ?? { panelId, documentId: '', loadSeq: 0, canvasId: '' })
   const source = usePlanSource(panel)
+  useDocumentStore((s) => s.past.at(-1))
+  useDocumentStore((s) => s.future.at(-1))
   return [...mine].reverse().find((e) => effectiveStatus(e, panel?.overrides ?? null, source) === 'ready')?.key
 }
 
