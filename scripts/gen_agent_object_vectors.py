@@ -37,6 +37,7 @@ def _force_utf8() -> None:
             except (ValueError, OSError):
                 pass
 
+
 BOX = {"x": 10.0, "y": 12.0, "w": 30.0, "h": 8.0}
 SQUARE = [{"closed": True, "nodes": [{"p": [0, 0]}, {"p": [1, 0]}, {"p": [1, 1]}, {"p": [0, 1]}]}]
 CURVE = [
