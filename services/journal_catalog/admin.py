@@ -76,6 +76,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("state", choices=("on", "off"))
     p = sub.add_parser("top")
     p.add_argument("--n", type=int, default=10)
+    p = sub.add_parser("index-stats", help="签名索引按日计数（200 / 304），只读")
+    p.add_argument("--days", type=int, default=7)
     return ap
 
 
@@ -134,6 +136,13 @@ def run(
                 print(store.clear_cidr(parse_cidr(args.target), actor, now), file=out)
         elif args.cmd == "kill-switch":
             print(store.set_kill_switch(args.state == "on", actor, now), file=out)
+        elif args.cmd == "index-stats":
+            print("日期(UTC)  版本   200    304   304占比", file=out)
+            for day, version, n200, n304 in store.index_stats(now, max(1, args.days)):
+                total = n200 + n304
+                share = f"{100 * n304 / total:.0f}%" if total else "-"
+                date = time.strftime("%Y-%m-%d", time.gmtime(day * 86400))
+                print(f"{date}  {version:<4} {n200:>6} {n304:>6}   {share}", file=out)
         elif args.cmd == "top":
             for key, devices, denied in store.top_ips(now, max(1, args.n)):
                 den = " ".join(f"{c}={n}" for c, n in sorted(denied.items())) or "-"

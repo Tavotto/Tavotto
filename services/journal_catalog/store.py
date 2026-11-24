@@ -187,6 +187,36 @@ class Store:
         finally:
             con.close()
 
+    def count_index(self, now: int, version: str, status: int) -> None:
+        """签名索引按日计数（200 / 304）。单条 upsert，不开事务；**永不抛**——计数失败不能影响索引响应。"""
+        if version not in ("v1", "v2") or status not in (200, 304):
+            return
+        con = None
+        try:
+            con = self._connect()
+            con.execute(
+                "INSERT INTO index_hits (day, version, n200, n304) VALUES (?,?,?,?) "
+                "ON CONFLICT(day, version) DO UPDATE SET n200=n200+excluded.n200, n304=n304+excluded.n304",
+                (now // DAY, version, int(status == 200), int(status == 304)),
+            )
+        except sqlite3.Error:
+            pass
+        finally:
+            if con is not None:
+                con.close()
+
+    def index_stats(self, now: int, days: int) -> list[tuple[int, str, int, int]]:
+        """最近 `days` 天（含今天，UTC）的 `[(天数, 版本, n200, n304)]`，新的在前。只读。"""
+        con = self._connect()
+        try:
+            return con.execute(
+                "SELECT day, version, n200, n304 FROM index_hits WHERE day>? "
+                "ORDER BY day DESC, version",
+                (now // DAY - days,),
+            ).fetchall()
+        finally:
+            con.close()
+
     def purge(self, now: int) -> dict[str, int]:
         """到期删除：reads 满 1 年；ip_events 满 48 小时；
         devices 在「自身已满 1 年且已无任何 reads」后删除。"""
@@ -203,6 +233,9 @@ class Store:
                     f"DELETE FROM {table} WHERE ts<=?",  # noqa: S608 - 表名是上面的常量
                     (now - IP_EVENT_RETENTION_S,),
                 ).rowcount
+            e += con.execute(
+                "DELETE FROM index_hits WHERE day<=?", ((now - READ_RETENTION_S) // DAY,)
+            ).rowcount
             d = con.execute(
                 "DELETE FROM devices WHERE created_at<=? AND NOT EXISTS "
                 "(SELECT 1 FROM reads WHERE reads.token_hash=devices.token_hash)",
