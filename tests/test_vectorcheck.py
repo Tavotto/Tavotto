@@ -266,3 +266,60 @@ def test_text_family_must_match_the_figure():
     item = {"kind": "text", "name": "t", "text": "ok", "at": _at(60, 26), "attach": "nw"}
     assert _status(run(item), "style", "t") == ["pass"]  # 缺省跟着图走：衬线
     assert _status(run({**item, "fontFamily": "sans-serif"}), "style", "t") == ["fail"]
+
+
+def test_arrowhead_and_stroke_count_for_the_page_check():
+    """箭头贴着页面上边缘：中线在页内，但端型的一个顶点与描边伸出页外——要判出页（Codex #2201）。"""
+    v = _run(
+        [
+            {
+                "kind": "arrow",
+                "name": "a",
+                "from": _at(10, 0.1),
+                "to": _at(20, 0.1),
+                "headEnd": "triangle",
+            }
+        ]
+    )
+    assert _status(v, "page", "a") == ["fail"]
+    # 离边缘留够端型的半宽：页内
+    v = _run(
+        [
+            {
+                "kind": "arrow",
+                "name": "a",
+                "from": _at(10, 2.0),
+                "to": _at(20, 2.0),
+                "headEnd": "triangle",
+            }
+        ]
+    )
+    assert _status(v, "page", "a") == ["pass"]
+
+
+def test_arrowhead_over_a_tick_label_is_a_clash():
+    """杆从刻度文字下方擦过（中线离文字底边 0.5 mm，杆本身碰不到），但端型的半宽约 1.2 mm，伸进文字——
+    压字（Codex #2201）。刻度文字在画布 x 11.6–17.2、y 38–40。"""
+    item = {
+        "kind": "arrow",
+        "name": "a",
+        "from": _at(24, 40.5),
+        "to": _at(15, 40.5),
+        "headEnd": "triangle",
+        "strokePt": 2.0,
+    }
+    assert _status(_run([item]), "text", "a") == ["fail"]
+    # 同一根箭头不带端型：杆离文字 0.5 mm、半线宽 0.35 mm，不压字
+    assert _status(_run([{**item, "head": "none", "headEnd": "none"}]), "text", "a") == ["pass"]
+
+
+def test_short_arrow_between_two_anchored_ends_does_not_crash():
+    """两端都锚在元素上、只有 1 mm 长：让出两头的尖端余量后没有取样点——判 pass，不抛错（Codex #2201）。"""
+    tip = {"anchor": {"element": {"panel": "P1", "gid": "axes_0.bar_0", "point": "n"}}}
+    v = _run([{"kind": "arrow", "name": "a", "from": {**tip, "offset_mm": [1.0, 0.0]}, "to": tip}])
+    data = [f for f in v["facts"] if f["check"] == "data" and f.get("item") == "a"]
+    assert (
+        data
+        and data[0]["status"] == "pass"
+        and data[0]["detail"]["reason"] == "within_tip_allowance"
+    )

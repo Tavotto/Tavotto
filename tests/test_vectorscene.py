@@ -308,3 +308,19 @@ def test_element_anchor_records_carry_the_identity():
         [{"kind": "shape", "name": "s", "at": at, "size_mm": [1, 1]}], panels, measure=_measure
     )
     assert r["anchors"][0]["identity"] == "l1:0123456789abcdef"
+
+
+def test_multiline_text_gets_the_height_of_all_its_lines():
+    """多行文字：高按行数、宽按最宽的一行（Codex #2201）。"""
+    one = vectorscene.solve(
+        [{"kind": "text", "name": "t", "text": "a", "sizePt": 8, "at": {"anchor": DATA}}],
+        _panels(),
+        measure=_measure,
+    )["objects"][0]
+    two = vectorscene.solve(
+        [{"kind": "text", "name": "t", "text": "a\nb", "sizePt": 8, "at": {"anchor": DATA}}],
+        _panels(),
+        measure=_measure,
+    )["objects"][0]
+    assert two["h"] == pytest.approx(2 * one["h"])
+    assert two["w"] == pytest.approx(one["w"])

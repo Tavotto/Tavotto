@@ -52,12 +52,76 @@ def _box(e: dict) -> tuple[float, float, float, float]:
     return (e["x_mm"], e["y_mm"], e["x_mm"] + e["w_mm"], e["y_mm"] + e["h_mm"])
 
 
+_PT = 72.0 / 25.4  # mm → pt
+_MM = 25.4 / 72.0  # pt → mm
+
+
+def _arrow_geom_mm(e: dict) -> dict:
+    """箭头的导出几何（端点、端型轮廓），换成画布毫米。`arrow_geometry` 的框与线宽都按 pt 算（与 `plan` 一致）：
+    把毫米框直接喂进去会把端型放大 72 / 25.4 倍（Codex #2201）。"""
+    g = geometry.arrow_geometry(e, e["w_mm"] * _PT, e["h_mm"] * _PT)
+
+    def mm(p):
+        return (e["x_mm"] + p[0] * _MM, e["y_mm"] + p[1] * _MM)
+
+    return {
+        "a": mm(g["a"]),
+        "b": mm(g["b"]),
+        "heads": [
+            (_head_points(h, mm), which)
+            for h, which in ((g["start_head"], "from"), (g["end_head"], "to"))
+        ],
+    }
+
+
+def _head_points(head, mm) -> list[tuple[float, float]]:
+    """端型几何（`geometry.head_geometry` 的形状）→ 轮廓上的点（画布毫米）。"""
+    if head is None:
+        return []
+    if head[0] == "dot":
+        _, cx, cy, r = head
+        return [
+            mm((cx + r * math.cos(2 * math.pi * k / 12), cy + r * math.sin(2 * math.pi * k / 12)))
+            for k in range(12)
+        ]
+    pts = [mm(q) for q in head[1]]
+    out: list[tuple[float, float]] = []
+    for a, b in zip(pts, pts[1:] + pts[:1]):
+        out += _samples(a, b, 0.0, 0.0)
+    return out or pts
+
+
+def _path_heads(e: dict) -> list[tuple[list[tuple[float, float]], str]]:
+    """开放路径两端的端型轮廓（画布毫米），与 `geometry.head_geometry` 同一个形状、同一个线宽口径（pt）。"""
+    pts = _path_points(e)
+    if len(pts) < 2:
+        return []
+    sw = max(float(e.get("stroke_pt", 1.0)), 0.05)
+    out = []
+    for key, tip, prev, sign in (
+        ("head_end", pts[-1], pts[-2], 1.0),
+        ("head_start", pts[0], pts[1], -1.0),
+    ):
+        kind = e.get(key)
+        if not kind or kind == "none":
+            continue
+        a, b = (prev, tip) if sign > 0 else (tip, prev)
+        dx, dy = (b[0] - a[0]) * _PT, (b[1] - a[1]) * _PT
+        ln = math.hypot(dx, dy) or 1.0
+        tip_pt = (tip[0] * _PT, tip[1] * _PT)
+        which = "end" if sign > 0 else "start"
+        head, _trim = geometry.head_geometry(
+            kind, tip_pt, sign, (dx / ln, dy / ln), sw, geometry._head_size(e, which)
+        )  # noqa: SLF001
+        out.append(
+            (_head_points(head, lambda q: (q[0] * _MM, q[1] * _MM)), "to" if sign > 0 else "from")
+        )
+    return out
+
+
 def _arrow_ends(e: dict) -> tuple[tuple[float, float], tuple[float, float]]:
-    g = geometry.arrow_geometry(e, e["w_mm"], e["h_mm"])
-    return (
-        (e["x_mm"] + g["a"][0], e["y_mm"] + g["a"][1]),
-        (e["x_mm"] + g["b"][0], e["y_mm"] + g["b"][1]),
-    )
+    g = _arrow_geom_mm(e)
+    return g["a"], g["b"]
 
 
 def _attach_point(e: dict, attach: str) -> tuple[float, float]:
@@ -183,30 +247,53 @@ def check(
             residual_mm=round(res, 6),
         )
 
-    # ---- 每个对象在画布上占的地方：文字 / 形状 = 框；箭头 = 沿杆的取样点（锚在数据 / 元素上的端头让出余量）
-    def footprint(name: str, e: dict):
+    # ---- 每个对象在画布上占的地方（导出几何）：文字 / 有填充的形状 = 框；箭头 / 路径 / 只有描边的形状 = 沿线的取样点 +
+    #      端型轮廓，每个点按半个线宽外扩。`full` 给页面与压字核对；`data` 在锚到数据 / 元素的那一端让出尖端余量
+    #      （端型落在余量里的也让出），给不遮数据核对。
+    def footprint(name: str, e: dict) -> dict:
+        half = max(float(e.get("stroke_pt", 0.0)) * _MM / 2, 0.05)
         if e["type"] == "shape" and not e.get("fill"):
-            return ("points", _outline_samples(e))  # 只有描边：占的是那一圈线，不是整个框
+            pts = _outline_samples(e)  # 只有描边：占的是那一圈线，不是整个框
+            return {"kind": "points", "full": pts, "data": pts, "half": half}
         it = spec.get(name, {})
-        soft = lambda key: (  # noqa: E731
-            TIP_ALLOWANCE_MM
-            if isinstance((it.get(key) or {}).get("anchor"), dict)
-            and next(iter(it[key]["anchor"]), None) in ("data", "element")
-            else 0.0
-        )
+
+        def soft(key: str) -> float:
+            anchor = (it.get(key) or {}).get("anchor")
+            return (
+                TIP_ALLOWANCE_MM
+                if isinstance(anchor, dict) and next(iter(anchor), None) in ("data", "element")
+                else 0.0
+            )
+
         if e["type"] == "path":
             pts = _path_points(e)
-            out: list[tuple[float, float]] = []
+            full: list[tuple[float, float]] = []
+            data: list[tuple[float, float]] = []
             last = len(pts) - 2
-            for i, (a, b) in enumerate(zip(pts, pts[1:])):
-                out += _samples(
-                    a, b, soft("from") if i == 0 else 0.0, soft("to") if i == last else 0.0
+            for i, (p0, p1) in enumerate(zip(pts, pts[1:])):
+                full += _samples(p0, p1, 0.0, 0.0)
+                data += _samples(
+                    p0, p1, soft("from") if i == 0 else 0.0, soft("to") if i == last else 0.0
                 )
-            return ("points", out or pts)
-        if e["type"] != "arrow":
-            return ("rect", _box(e))
-        a, b = _arrow_ends(e)
-        return ("points", _samples(a, b, soft("from"), soft("to")))
+            ends = {"from": pts[0], "to": pts[-1]} if pts else {}
+            heads = _path_heads(e)
+        elif e["type"] == "arrow":
+            g = _arrow_geom_mm(e)
+            full = _samples(g["a"], g["b"], 0.0, 0.0)
+            data = _samples(g["a"], g["b"], soft("from"), soft("to"))
+            ends = {"from": g["a"], "to": g["b"]}
+            heads = g["heads"]
+        else:
+            return {"kind": "rect", "full": _box(e), "data": _box(e), "half": 0.0}
+        for hp, which in heads:
+            full += hp
+            tip, allow = ends.get(which), soft(which)
+            data += [
+                q
+                for q in hp
+                if not (allow and tip and math.hypot(q[0] - tip[0], q[1] - tip[1]) <= allow)
+            ]
+        return {"kind": "points", "full": full or list(ends.values()), "data": data, "half": half}
 
     feet = {n: footprint(n, e) for n, e in by_name.items()}
 
@@ -214,13 +301,18 @@ def check(
     for pid, p in panels.items():
         pf = _PanelFrac(p["panel"])
         elements = (p.get("draw_manifest") or {}).get("elements", [])
-        for name, (kind, foot) in feet.items():
+        for name, ft in feet.items():
+            kind, foot, half = ft["kind"], ft["data"], ft["half"]
             if spec.get(name, {}).get("over_data") is True:
                 facts.add("data", "waived", name, panel=pid)
                 continue
-            fbox = foot if kind == "rect" else _bounds(foot)
-            if not _touch(fbox, pf.box):
+            whole = ft["full"] if kind == "rect" else _bounds(ft["full"], ft["half"])
+            if not _touch(whole, pf.box):
                 continue  # 不在这个子图上
+            if kind == "points" and not foot:
+                # 很短的箭头 / 连线：除了锚定端允许的尖端余量，没有别的部分可能碰到数据
+                facts.add("data", "pass", name, panel=pid, reason="within_tip_allowance")
+                continue
             if not pf.ok:
                 facts.add("data", "unknown", name, panel=pid, reason="panel_transformed")
                 continue
@@ -231,10 +323,10 @@ def check(
                 vis = interference.visible_rect(el)
                 paths = (el.get("geometry") or {}).get("paths")
                 if el.get("role") in interference.BBOX_BASIS_ROLES or not paths:
-                    if vis is not None and _foot_touches_rect(kind, foot, pf, vis):
+                    if vis is not None and _foot_touches_rect(kind, foot, pf, vis, half):
                         unknown.append(el["gid"])
                     continue
-                if _foot_hits(kind, foot, pf, paths):
+                if _foot_hits(kind, foot, pf, paths, half):
                     hit.append(el["gid"])
             if hit:
                 facts.add("data", "fail", name, panel=pid, gids=hit)
@@ -270,7 +362,8 @@ def check(
     for name, e in by_name.items():
         if e["type"] == "text":
             texts.append((name, _box(e)))
-    for name, (kind, foot) in feet.items():
+    for name, ft in feet.items():
+        kind, foot, half = ft["kind"], ft["full"], ft["half"]
         clash = []
         for other, r in texts:
             if other == name or (name, other) in linked:
@@ -278,14 +371,17 @@ def check(
             if kind == "rect":
                 if _overlaps(foot, r, MIN_OVERLAP_MM):
                     clash.append(other)
-            elif any(r[0] < x < r[2] and r[1] < y < r[3] for x, y in foot):
+            elif any(
+                r[0] < x + half and x - half < r[2] and r[1] < y + half and y - half < r[3]
+                for x, y in foot
+            ):
                 clash.append(other)
         facts.add("text", "fail" if clash else "pass", name, **({"with": clash} if clash else {}))
 
     # ---- page：不出页面
     if page:
-        for name, (kind, foot) in feet.items():
-            b = foot if kind == "rect" else _bounds(foot)
+        for name, ft in feet.items():
+            b = ft["full"] if ft["kind"] == "rect" else _bounds(ft["full"], ft["half"])
             inside = (
                 b[0] >= -1e-9
                 and b[1] >= -1e-9
@@ -406,27 +502,26 @@ def _outline_samples(e: dict) -> list[tuple[float, float]]:
     return out
 
 
-def _bounds(points) -> tuple[float, float, float, float]:
+def _bounds(points, half: float = 0.0) -> tuple[float, float, float, float]:
+    """取样点的外接框，按半个线宽外扩（画出来的描边比中线宽）。"""
     xs, ys = [p[0] for p in points], [p[1] for p in points]
-    return (min(xs), min(ys), max(xs), max(ys))
+    return (min(xs) - half, min(ys) - half, max(xs) + half, max(ys) + half)
 
 
-def _foot_touches_rect(kind: str, foot, pf: _PanelFrac, vis) -> bool:
+def _foot_touches_rect(kind: str, foot, pf: _PanelFrac, vis, half: float = 0.05) -> bool:
     """只有外框的数据元素：占位本身（框，或沿线的取样点）碰到它的可见框才算「量不了」——
     用整体外接范围会把「框住一整张子图」的描边框判成碰到里面所有的柱子。"""
     if kind == "rect":
         return _touch(pf.rect(foot), vis)
-    half = 0.05
     return any(_touch(pf.rect((x - half, y - half, x + half, y + half)), vis) for x, y in foot)
 
 
-def _foot_hits(kind: str, foot, pf: _PanelFrac, paths: list) -> bool:
+def _foot_hits(kind: str, foot, pf: _PanelFrac, paths: list, half: float = 0.05) -> bool:
     if kind == "rect":
         r = pf.rect(foot)
         cx, cy = (r[0] + r[2]) / 2, (r[1] + r[3]) / 2
         return interference._segments_hit_rect(paths, r) or _point_in_closed(paths, cx, cy)  # noqa: SLF001
-    half = 0.05  # mm：取样点按细线的半宽判
-    for x, y in foot:
+    for x, y in foot:  # 每个取样点按半个线宽外扩
         r = pf.rect((x - half, y - half, x + half, y + half))
         if interference._segments_hit_rect(paths, r) or _point_in_closed(
             paths, (r[0] + r[2]) / 2, (r[1] + r[3]) / 2

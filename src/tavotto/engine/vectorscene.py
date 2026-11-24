@@ -354,10 +354,14 @@ def _text(it: dict, ctx: _Ctx, name: str, faces) -> dict:
     size = float(it.get("sizePt", 8))
     bold, italic = bool(it.get("bold", False)), bool(it.get("italic", False))
     family = it.get("fontFamily", ctx.family)
-    natural_mm = faces(text, size, bold, italic, family) * PT_TO_MM
+    # 多行（`\n`）：宽取最宽的一行，高按行数——只给一行高时，导出会画出全部行、桌面打开后又把框撑高而不重新落位（Codex #2201）
+    lines = text.split("\n")
+    natural_mm = max(faces(line, size, bold, italic, family) for line in lines) * PT_TO_MM
     em = size * PT_TO_MM
     w = natural_mm * 1.04 + 0.5 * em  # 与前端 `textFit.fitWidthMm` 同一个余量
-    h = size * 1.25 * PT_TO_MM  # 行高缺省 1.25（`TextView` / `typography.layout_text`）
+    h = (
+        len(lines) * size * 1.25 * PT_TO_MM
+    )  # 行高缺省 1.25（`TextView` / `typography.layout_text`）
     px, py = _position(it.get("at"), ctx, name)
     attach = it.get("attach", "w")
     if attach not in POINTS:
