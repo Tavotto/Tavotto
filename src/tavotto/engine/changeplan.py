@@ -231,7 +231,7 @@ def element_table(
         for prop, f in _fields(el).items():
             if f.get("type") not in _TABLE_TYPES or "value" not in f:
                 continue
-            row: dict = {"prop": prop, "type": f["type"], "value": _brief_value(f["value"])}
+            row: dict = {"prop": prop, "type": f["type"], "current": _brief_value(f["value"])}
             if f["type"] == "enum" and isinstance(f.get("options"), list):
                 row["options"] = [_clip(o, 40) for o in f["options"][:24]]
             for bound in ("min", "max"):
@@ -302,7 +302,7 @@ def system_prompt() -> str:
         "不能改数据、不能改脚本、不能新增元素。\n\n"
         "## 输入\n"
         "- `<comments>` 块：审阅意见列表（JSON）。每条有 `id`、`anchor`（`element` 带 `gid` 与画面框 `box`，`region` 只有画面框，`overall` 指整张图）与 `text`。\n"
-        "- `<elements>` 块：这张图当前的元素表（JSON）。每个元素有 `gid`、`label`、`role`、画面框 `bbox` 与可改属性 `props`（`prop`、`type`、当前 `value`，"
+        "- `<elements>` 块：这张图当前的元素表（JSON）。每个元素有 `gid`、`label`、`role`、画面框 `bbox` 与可改属性 `props`（`prop`、`type`、当前值 `current`，"
         "`enum` 有 `options`，`number` 可能有 `min` / `max`）。意见的 `box` 与元素的 `bbox` 是**同一个坐标系**（整张图的分数坐标 `[x, y, 宽, 高]`，y 向下）：`region` 或 `overall` 意见没有指名元素时，用意见的 `box` 与各元素 `bbox` 的重叠 / 包含关系找出它说的是哪个（些）元素；同名元素只能靠位置区分。\n\n"
         "## 怎么改\n"
         "- 只改 `<elements>` 里出现的 `gid` 与它的 `props` 里列出的 `prop`；值要符合 `type`：`bool` 给 true / false，`number` 给数（在 `min` / `max` 内），"
