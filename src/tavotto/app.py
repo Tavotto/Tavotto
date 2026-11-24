@@ -2687,19 +2687,39 @@ def _raise_walk_error(error: OSError) -> None:
     raise error
 
 
+#: 回收不出空间后多久内不再扫文档（每次编辑都会保存，满了又回收不动时别每次都扫两遍）
+_SVG_RECLAIM_BACKOFF_SECONDS = 300.0
+_SVG_RECLAIM_BACKOFF: dict[str, float] = {}
+_SVG_RECLAIM_BACKOFF_LOCK = threading.Lock()
+
+
 def _reclaim_svg_snapshots(root, *, incoming_bytes: int) -> int:
+    """满额时回收一次；任何失败都只记日志、返回 0，调用方照旧抛原来的满额错误。"""
     from .engine import svgstore
 
-    corpus = _svg_reference_corpus(Path(root))
-    if corpus is None:
-        LOG.info("Figure snapshot store is full; reference scan incomplete, nothing reclaimed")
-        return 0
-    removed = svgstore.reclaim(
-        _svg_storage_root(root),
-        referenced=lambda snapshot_id: snapshot_id.encode("ascii") in corpus,
-        incoming_bytes=incoming_bytes,
-    )
-    LOG.info("Figure snapshot store was full; reclaimed %d unreferenced variants", removed)
+    key = str(Path(root).resolve())
+    now = time.monotonic()
+    with _SVG_RECLAIM_BACKOFF_LOCK:
+        if now < _SVG_RECLAIM_BACKOFF.get(key, 0.0):
+            return 0
+    removed = 0
+    try:
+        corpus = _svg_reference_corpus(Path(root))
+        if corpus is None:
+            LOG.info("Figure snapshot store is full; reference scan incomplete, nothing reclaimed")
+        else:
+            removed = svgstore.reclaim(
+                _svg_storage_root(root),
+                referenced=lambda snapshot_id: snapshot_id.encode("ascii") in corpus,
+                incoming_bytes=incoming_bytes,
+            )
+            LOG.info("Figure snapshot store was full; reclaimed %d unreferenced variants", removed)
+    except Exception:
+        LOG.info("Figure snapshot store is full; reclaim failed", exc_info=True)
+        removed = 0
+    if not removed:
+        with _SVG_RECLAIM_BACKOFF_LOCK:
+            _SVG_RECLAIM_BACKOFF[key] = time.monotonic() + _SVG_RECLAIM_BACKOFF_SECONDS
     return removed
 
 
@@ -5948,6 +5968,8 @@ def reset_projects(wait: bool = False) -> None:
         DEFAULT_PROJECT = None
     for pid in ids:
         close_project(pid, wait=wait)
+    with _SVG_RECLAIM_BACKOFF_LOCK:
+        _SVG_RECLAIM_BACKOFF.clear()
     # native 会话：**只放手，不杀**（ADR 0021 §8.1）。用户的脚本是他自己的
     # 进程，关掉 Tavotto 不该把它一起带走——runner 看到控制通道 EOF 会先把
     # Figure 恢复成脚本原样，再放开屏障让脚本跑完。这就是「关掉 App 默认

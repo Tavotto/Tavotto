@@ -1399,6 +1399,31 @@ def test_full_project_snapshot_store_deletes_nothing_when_documents_cannot_be_sc
     _, full = _save_edit(client, source, gid, 4)
     assert full["svg_snapshot_warnings"] == [source], full
     assert sorted(p.name for p in store.rglob("*") if p.is_file()) == before
+    # A store that could not be reclaimed is not rescanned on every following edit.
+    monkeypatch.setattr(
+        m, "_svg_reference_corpus", lambda root: pytest.fail("rescanned inside the backoff")
+    )
+    _, again = _save_edit(client, source, gid, 5)
+    assert again["svg_snapshot_warnings"] == [source], again
+
+
+def test_reclaim_failure_still_reports_the_original_full_store(project, monkeypatch):
+    from tavotto.engine import svgstore
+
+    client, root = project
+    monkeypatch.setattr(svgstore, "RECLAIM_GRACE_SECONDS", 0, raising=False)
+    source = run_script(client)
+    gid = _title_gid(client, source)
+    for index in (1, 2, 3):
+        _save_edit(client, source, gid, index)
+    monkeypatch.setattr(svgstore, "MAX_TOTAL_BYTES", _snapshot_store_bytes(root) + 200)
+
+    def busy(*args, **kwargs):
+        raise TimeoutError("Figure snapshot store is busy")
+
+    monkeypatch.setattr(svgstore, "reclaim", busy, raising=False)
+    _, full = _save_edit(client, source, gid, 4)
+    assert full["svg_snapshot_warnings"] == [source], full
 
 
 def test_reclaim_keeps_references_frozen_earlier_in_the_same_save(project):
