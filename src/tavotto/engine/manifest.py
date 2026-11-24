@@ -104,6 +104,7 @@ from overrides import (
     _linecoll_linestyle_name,
     _linestyle_name,
     _stroke_state,
+    _unit_scalar,
     alias_covers,
     alias_pure,
     annotation_arrow_display,
@@ -6231,11 +6232,92 @@ def capture_preview_manifest(state: FigState, stem: str, *, vector_metrics: bool
                 state, stem, lambda _r: None, fig, renderer, min_hit, vector_metrics
             )
 
+    def measured_points(requests: list) -> list[dict]:
+        """数据点 → 这次预览里的位置（ADR 0208 §二）：与 `measured()` 同一个渲染器、同一个图幅坐标。"""
+        if not drawn:
+            raise RuntimeError("preview did not report its completed draw")
+        renderer, dpi = drawn[0]
+        with fig._cm_set(dpi=dpi), pathgeom.in_frame(fig, renderer):  # noqa: SLF001
+            return measure_data_points(state, requests)
+
+    measured.data_points = measured_points  # type: ignore[attr-defined]
     cid = fig.canvas.mpl_connect("draw_event", observe)
     try:
         yield measured
     finally:
         fig.canvas.mpl_disconnect(cid)
+
+
+def _in_scale_domain(scale: str, v: float) -> bool:
+    if not math.isfinite(v):
+        return False
+    if scale == "log":
+        return v > 0
+    if scale == "logit":
+        return 0 < v < 1
+    return True
+
+
+def _axis_value(axis, v) -> float | None:
+    """一个坐标值 → 这根轴的数值（换不了回 None）。**不许改动坐标轴**：分类轴的换算器碰到没画过的组名会把它
+    永久加进轴的单位映射（多出一个刻度、导出还原不回来，Codex #2197），所以字符串只在已有的映射里查。
+    数值照 `convert_units`（日期等），结果经 `_unit_scalar`（分类换算可能回单元素数组，NumPy 2.4 直接 float() 会报错）。"""
+    if isinstance(v, str):
+        mapping = getattr(getattr(axis, "units", None), "_mapping", None)
+        if not isinstance(mapping, dict) or v not in mapping:
+            return None
+        return float(mapping[v])
+    try:
+        return _unit_scalar(axis.convert_units(v))
+    except Exception:  # noqa: BLE001 — 单位换不过去就是换不了，不猜
+        return None
+
+
+def measure_data_points(state: FigState, requests: list) -> list[dict]:
+    """数据坐标 → 图幅分数（top-origin，与 manifest 的 `bbox` 同一套：显示像素 / `fig.bbox`）。
+
+    **以 matplotlib 为准**：用那根坐标轴自己的 `transData`，不按 `xlim / xscale` 在外面重算——
+    对数、symlog、日期、分类、翻转轴都由它自己负责。调用方必须已在测量上下文里（`in_frame`、
+    出图那次的 dpi；布局在那次 draw 里已经跑完）。逐点给结果：
+    `{"status": "ok", "xy": [x, y], "in_view": bool}` 或 `{"status": "unresolvable", "reason": …}`，
+    reason ∈ `not_axes`（gid 不是一根可换算的二维坐标轴，含 3D）/ `units`（值换不成这根轴的单位）/
+    `out_of_domain`（对数轴上 ≤ 0、logit 轴上不在 (0, 1) 里）/ `not_finite`（换出来不是有限数）。视野外的点照算，带 `in_view: false`。"""
+    fig = state.fig
+    w, h = float(fig.bbox.width), float(fig.bbox.height)
+    out: list[dict] = []
+    for req in requests:
+        ax = state.index.get(req["axes"])
+        if ax is None or not hasattr(ax, "transData") or getattr(ax, "name", "") == "3d":
+            out.append({"status": "unresolvable", "reason": "not_axes"})
+            continue
+        xv = _axis_value(ax.xaxis, req["x"])
+        yv = _axis_value(ax.yaxis, req["y"])
+        if xv is None or yv is None:
+            out.append({"status": "unresolvable", "reason": "units"})
+            continue
+        # 对数 / logit 轴的变换会把定义域外的值截成一个有限的远点（`nonpositive="clip"`），
+        # 换出来是有限数却毫无意义：按刻度类型先判定义域
+        if not (_in_scale_domain(ax.get_xscale(), xv) and _in_scale_domain(ax.get_yscale(), yv)):
+            out.append({"status": "unresolvable", "reason": "out_of_domain"})
+            continue
+        try:
+            dx, dy = (float(v) for v in ax.transData.transform((xv, yv)))
+        except Exception:  # noqa: BLE001
+            out.append({"status": "unresolvable", "reason": "not_finite"})
+            continue
+        if not (math.isfinite(dx) and math.isfinite(dy) and w > 0 and h > 0):
+            out.append({"status": "unresolvable", "reason": "not_finite"})
+            continue
+        x0, x1 = sorted(float(v) for v in ax.get_xlim())
+        y0, y1 = sorted(float(v) for v in ax.get_ylim())
+        out.append(
+            {
+                "status": "ok",
+                "xy": [dx / w, 1.0 - dy / h],
+                "in_view": x0 <= xv <= x1 and y0 <= yv <= y1,
+            }
+        )
+    return out
 
 
 def build_manifest(state: FigState, stem: str, *, timings: dict | None = None) -> dict:
