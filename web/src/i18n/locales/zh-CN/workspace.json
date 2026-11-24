@@ -653,7 +653,7 @@
     },
     "style": "样式",
     "workspace": "项目",
-    "problemsBlocking_other": "问题 · {{count}} 项阻断（共 {{total}}）",
+    "problemsBlocking_other": "问题 · {{count}} 项要改（共 {{total}}）",
     "data": "数据"
   },
   "readiness": {

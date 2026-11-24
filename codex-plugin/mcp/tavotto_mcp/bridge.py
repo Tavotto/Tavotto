@@ -3681,7 +3681,7 @@ def export(
     )
     if checks["needs_confirm"] and not explicit_confirm:
         raise BridgeError(
-            f"预检有 {len(checks['errors'])} 类阻断性问题、"
+            f"投稿前检查有 {len(checks['errors'])} 类要改的问题、"
             f"{len(checks['not_verifiable'])} 类无法核验项，未导出。"
             "修好它们，或者在用户明确要求后带 explicit_confirm=true 再调一次。",
             code="preflight_blocked",

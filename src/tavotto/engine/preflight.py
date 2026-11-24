@@ -457,19 +457,19 @@ def _advise_font(profile: dict, eff: float, sink: _Sink, ids: dict, detail_eff: 
         text = (
             f"{journal} 的参考记录列出 {body['value_pt']:g} pt（正文）、"
             f"{script['value_pt']:g} pt（上下标）；这些数值不一定是期刊规定的下限，"
-            "预检以正文数值比较，未区分文字类型"
+            "投稿前检查以正文数值比较，未区分文字类型"
         )
     elif body:
         key = "fontSizeAdvisedBody"
         text = (
             f"{journal} 的参考记录以 {body['value_pt']:g} pt 作为正文比较值；"
-            "该数值不一定是期刊规定的下限，预检未区分文字类型"
+            "该数值不一定是期刊规定的下限，投稿前检查未区分文字类型"
         )
     else:
         key = "fontSizeAdvisedScript"
         text = (
             f"{journal} 的参考记录以 {script['value_pt']:g} pt 作为上下标比较值；"
-            "该数值不一定是期刊规定的下限，预检未区分文字类型"
+            "该数值不一定是期刊规定的下限，投稿前检查未区分文字类型"
         )
     params = {
         "journal": journal,

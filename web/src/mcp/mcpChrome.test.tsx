@@ -53,12 +53,12 @@ describe('PreflightPill', () => {
     expect(pill().dataset.statusPill).toBe(tone)
   })
 
-  it('整枚是一颗按钮，点它 = 重跑预检；文字仍是那句计数（e2e 按名字找它）', () => {
+  it('整枚是一颗按钮，点它 = 重跑投稿前检查；文字仍是那句计数（e2e 按名字找它）', () => {
     const onClick = vi.fn()
     render(<PreflightPill counts={{ error: 0, warn: 1 }} stale={false} loading={false} onClick={onClick} />)
     const btn = container.querySelector<HTMLButtonElement>('button[data-preflight-pill]')!
     expect(btn.contains(pill())).toBe(true)
-    expect(btn.textContent).toMatch(/0 阻断 · 1 警告/)
+    expect(btn.textContent).toMatch(/0 项要改 · 1 项需留意/)
     act(() => btn.click())
     expect(onClick).toHaveBeenCalledTimes(1)
   })
@@ -109,7 +109,7 @@ describe('IssueList', () => {
     expect(rows[0].className).toContain('hover:bg-surface-hover')
     expect(rows[0].className).toContain('focus-visible:focus-ring')
     // 等级也用文字说一遍（读屏）
-    expect(rows[0].textContent).toContain('阻断')
+    expect(rows[0].textContent).toContain('要改')
     expect(rows[1].disabled).toBe(true)
     act(() => rows[0].click())
     expect(useUiStore.getState().selectedGids).toEqual(['g-title'])

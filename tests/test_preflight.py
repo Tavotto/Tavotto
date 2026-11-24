@@ -212,9 +212,9 @@ def test_approximate_font_advice_is_not_described_as_a_journal_minimum(roles, ke
     )
     assert "不一定是期刊规定的下限" in advice["text"]
     if len(roles) == 2:
-        assert "预检以正文数值比较，未区分文字类型" in advice["text"]
+        assert "投稿前检查以正文数值比较，未区分文字类型" in advice["text"]
     else:
-        assert "预检未区分文字类型" in advice["text"]
+        assert "投稿前检查未区分文字类型" in advice["text"]
     assert "期刊规定的最小字号" not in advice["text"]
     # Existing threshold and issue shape remain unchanged; no conclusion is made
     # about whether a value above the comparison point satisfies the source.

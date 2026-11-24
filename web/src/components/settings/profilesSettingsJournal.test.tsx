@@ -133,7 +133,7 @@ describe('规范库里的「按期刊」条目', () => {
     }))
     await mount()
     expect(q('[data-journal-jper-stage-warning]')?.textContent).toContain('历史录用稿最终版')
-    expect(q('[data-journal-jper-stage-warning]')?.textContent).toContain('预检未区分投稿阶段')
+    expect(q('[data-journal-jper-stage-warning]')?.textContent).toContain('投稿前检查未区分投稿阶段')
   })
 
   it('期刊有自己的栏位表：单 / 双栏两行并成一行「栏宽」，列出全部栏位', async () => {
@@ -271,7 +271,7 @@ it('shows a saved-source LEUKOS scope warning in the spec settings without chang
   await mount()
   const warning = q('[data-leukos-scope-warning]')
   expect(warning?.textContent).toContain('历史来源针对终稿并区分图类')
-  expect(warning?.textContent).toContain('预检未区分投稿阶段和图类')
+  expect(warning?.textContent).toContain('投稿前检查未区分投稿阶段和图类')
   expect(warning?.textContent).toContain('现行要求未知')
   expect(useDocumentStore.getState().doc.profile).toEqual(before)
 })

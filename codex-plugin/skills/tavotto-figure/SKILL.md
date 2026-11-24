@@ -1,6 +1,6 @@
 ---
 name: tavotto-figure
-description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖图例、改字号线宽、调刻度、按出版规范预检、导出矢量 PDF）；也把用户**已经画好的图**按投稿要求改宽度 / 字体 / 最小字号而不重画（保留式规范化）。用户要画图、出图、做 figure、画折线/柱状/散点/误差棒、做论文配图、scientific plot / publication figure，要把现有图改成 8 cm / 换 Times New Roman / 字号不小于 8 pt，或提到 Tavotto 时使用。
+description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖图例、改字号线宽、调刻度、按出版规范做投稿前检查、导出矢量 PDF）；也把用户**已经画好的图**按投稿要求改宽度 / 字体 / 最小字号而不重画（保留式规范化）。用户要画图、出图、做 figure、画折线/柱状/散点/误差棒、做论文配图、scientific plot / publication figure，要把现有图改成 8 cm / 换 Times New Roman / 字号不小于 8 pt，或提到 Tavotto 时使用。
 ---
 
 # Tavotto Figure
