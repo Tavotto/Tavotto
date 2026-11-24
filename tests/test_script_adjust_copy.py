@@ -363,6 +363,7 @@ def figure():
     ax.text(0.2, 0.8, r"$\\alpha$ boxed", fontsize=9, linespacing=1.7, parse_math=False, rotation_mode="anchor",
             rotation=20, ha="left", va="top", bbox=dict(boxstyle="round,pad=0.4", fc="#ffeeaa", ec="k", lw=1.5, alpha=0.6))
     ax.annotate("note", xy=(0.5, 0.5), xytext=(0.6, 0.2), arrowprops=dict(arrowstyle="->"))
+    ax.text(0.3, 0.3, "ghost", bbox=dict(boxstyle="round", fc="y", ec="k", visible=False))
     fig.text(0.5, 0.02, "fig text", color="C2", ha="center")
     return fig, ax
 
@@ -373,6 +374,8 @@ CASES = [
     ("axes_0.copy_ab12cd36", "axes_0.texts_0", "axes_0"),
     ("axes_0.copy_ab12cd37", "axes_0.texts_1", "axes_0"),
     ("fig.copy_ab12cd38", "fig.texts_0", "fig"),
+    # 脚本里藏着的底框（Codex #2152）：副本的底框也藏着，引擎与脚本同一口径
+    ("axes_0.copy_ab12cd39", "axes_0.texts_2", "axes_0"),
 ]
 NAMES = ["text", "color", "rotation", "rotation_mode", "horizontalalignment", "verticalalignment", "zorder",
          "wrap", "parse_math", "label", "alpha", "visible", "in_layout", "clip_on", "linespacing", "fontsize",
@@ -393,7 +396,7 @@ def dump(t, host, fig):
     out["bbox"] = None if bp is None else {
         "style": type(bp.get_boxstyle()).__name__ + repr(vars(bp.get_boxstyle())),
         "fc": repr(bp.get_facecolor()), "ec": repr(bp.get_edgecolor()), "lw": bp.get_linewidth(),
-        "ls": repr(bp.get_linestyle()), "alpha": bp.get_alpha()}
+        "ls": repr(bp.get_linestyle()), "alpha": bp.get_alpha(), "visible": bp.get_visible()}
     out["transform_is_host"] = bool(t.get_transform() == (fig.transFigure if host is fig else host.transAxes))
     out["parent"] = "fig.artists" if t in fig.artists else ("ax.texts" if t in host.texts else "?")
     out["clip_path"] = t.get_clip_path() is None
@@ -469,11 +472,11 @@ def parity(tmp_path_factory):
     return json.loads(out.stdout.strip().splitlines()[-1])
 
 
-_CASE_IDS = ["title", "ylabel", "text-boxed", "annotate", "figtext"]
+_CASE_IDS = ["title", "ylabel", "text-boxed", "annotate", "figtext", "text-hidden-box"]
 
 
 @real_worker
-@pytest.mark.parametrize("k", range(5), ids=_CASE_IDS)
+@pytest.mark.parametrize("k", range(len(_CASE_IDS)), ids=_CASE_IDS)
 def test_script_copy_equals_the_engines_copy_property_by_property(parity, k):
     """同源对：`scriptadjust._copy_of`（脚本里的）↔ `overrides._ensure_copy`（引擎里的）。
 

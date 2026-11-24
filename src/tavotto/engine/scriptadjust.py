@@ -1449,6 +1449,7 @@ def _copy_of(fig, gid, host, src, at, text):
                 "linewidth": box.get_linewidth(),
                 "linestyle": box.get_linestyle(),
                 "alpha": box.get_alpha(),
+                "visible": box.get_visible(),
             }
         )
     t.set_transform(fig.transFigure if host is fig else host.transAxes)
