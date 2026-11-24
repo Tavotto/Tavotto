@@ -505,6 +505,8 @@
     "transformReflect": "Reflect",
     "quickLayout": "Auto layout",
     "quickLayoutRatios": "Adjust layout proportions",
+    "applyChangePlan": "Apply change plan",
+    "undoChangePlan": "Undo change plan",
     "importSvg": "Paste SVG ({{count}} objects)",
     "explodeSvg": "Make editable",
     "outlineText": "Create outlines ({{count}})",

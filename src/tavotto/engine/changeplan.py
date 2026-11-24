@@ -619,7 +619,8 @@ def attach_patches(groups: list[dict], candidate: list) -> list[dict]:
 def apply_groups(base: list, groups: list[dict], keys: object) -> list[dict]:
     """B0 ⊕ 勾选的那些组的 `patch`（规范化后的全量列表）。**前端「逐组取消勾选」重算用同一个定义**。
 
-    同源对：`web/src/lib/` 里前端实现（后续 PR 加）与本函数逐条对拍；`keys` 是被勾选的组 `key` 集合。
+    **同源对**：`web/src/lib/changePlanApply.ts` 的 `applyGroups` 与本函数各读 `tests/golden/change_plan_apply_vectors.json` 逐条对拍
+    （本侧 `tests/test_changeplan_golden.py`，前端 `changePlanApply.golden.test.ts`）；改任何一侧都要同步另一侧与向量。`keys` 是被勾选的组 `key` 集合。
     不勾选任何组 = 规范化后的 B0；勾选全部 = 方案的 `candidate_patches`（`build_plan` 就是这样算的）。"""
     chosen = set(keys) if isinstance(keys, (set, frozenset, list, tuple)) else set()
     out = list(base)

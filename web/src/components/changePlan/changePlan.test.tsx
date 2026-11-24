@@ -1,0 +1,275 @@
+/**
+ * 修改方案卡与弹窗（changePlan/）：两张助手卡的各个状态、弹窗的对比三模式与清单、失败卡的下一步、主按钮唯一（ADR 0206 §三例外）。
+ * 图片在 jsdom 里不加载，只看结构与 `data-change-plan-*` 锚点。状态机与应用 / 撤销的细节在 `store/changePlanStore.test.ts`。
+ */
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { literal } from '@/i18n'
+import type { ChangePlan, ReviewComment } from '@/lib/api'
+import { useChangePlanStore, type PlanEntry } from '@/store/changePlanStore'
+import { useDocumentStore } from '@/store/documentStore'
+import { emptyProject, type PanelObject } from '@/types/document'
+
+vi.mock('@/hooks/useVariantPng', () => ({ useVariantPng: () => ({ url: null, loading: false, approximate: false }), variantNeedsRender: () => false }))
+vi.mock('@/hooks/useRuntimePreview', () => ({ useRuntimePreview: () => ({ url: null, exact: false }) }))
+const connectAi = vi.fn()
+vi.mock('@/store/connectAiStore', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/store/connectAiStore')>()),
+  requestConnectAi: (...a: unknown[]) => connectAi(...a),
+}))
+
+import { TooltipProvider } from '../ui/Tooltip'
+import { ChangePlanCard } from './ChangePlanCard'
+import { ChangePlanDialog } from './ChangePlanDialog'
+import { ChangePlanTranscript } from './ChangePlanTranscript'
+import { ReviewNoteCard } from './ReviewNoteCard'
+
+declare global {
+  // eslint-disable-next-line no-var
+  var IS_REACT_ACT_ENVIRONMENT: boolean
+}
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+globalThis.ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+const BASE = [{ gid: 'ax.title', prop: 'fontsize', value: 9 }]
+const comment = (i: number, anchor: ReviewComment['anchor']): ReviewComment => ({
+  id: `c${i}`,
+  v: 1,
+  anchor,
+  author: i === 1 ? '林悦' : '王工',
+  text: i === 1 ? '标题太小' : '图例挡住了曲线',
+  resolved: false,
+  created_at: '2026-11-23T10:00:00+08:00',
+  replies: [],
+})
+const COMMENTS = [comment(1, { kind: 'region', box: [0.1, 0.1, 0.2, 0.2] }), comment(2, { kind: 'overall' }), comment(3, { kind: 'overall' })]
+const PLAN: ChangePlan = {
+  id: 'p1',
+  version: 1,
+  source: 'review',
+  base: { target: 'f_p1', fingerprint: 'fp' },
+  base_patches: BASE,
+  candidate_patches: [{ gid: 'ax.title', prop: 'fontsize', value: 14 }],
+  groups: [
+    {
+      key: 'g1',
+      label: '标题太小',
+      comment_id: 'c1',
+      atomic: false,
+      changes: [{ target_gid: 'ax.title', prop: 'fontsize', before: 9, after: 14, patch: { gid: 'ax.title', prop: 'fontsize', value: 14 } }],
+      boxes: { before: [{ gid: 'ax.title', box: [0.1, 0.1, 0.2, 0.2] }], after: [{ gid: 'ax.title', box: [0.1, 0.1, 0.3, 0.2] }] },
+    },
+  ],
+  unhandled: [
+    { comment_id: 'c2', reason: 'needs_script' },
+    { comment_id: 'c3', reason: 'unclear' },
+  ],
+  preview: { before: '/b.png', after: '/a.png' },
+}
+
+const entry = (key: string, over: Partial<PlanEntry> = {}): PlanEntry => {
+  const s = useDocumentStore.getState()
+  return {
+    key,
+    pj: null,
+    panelId: 'p1',
+    fileId: 'f_p1',
+    documentId: s.documentId,
+    loadSeq: s.loadSeq,
+    canvasId: s.activeCanvasId,
+    createdAt: 1,
+    status: 'ready',
+    plan: PLAN,
+    beforeSrc: '/b.png',
+    afterSrc: '/a.png',
+    unchecked: {},
+    request: { comments: COMMENTS },
+    comments: COMMENTS,
+    commentCount: 3,
+    ...over,
+  }
+}
+const put = (...es: PlanEntry[]) =>
+  act(() => useChangePlanStore.setState({ entries: Object.fromEntries(es.map((e) => [e.key, e])), order: es.map((e) => e.key), dialogKey: null }))
+
+let host: HTMLDivElement
+let root: Root
+const render = (el: React.ReactNode) => act(() => root.render(<TooltipProvider>{el}</TooltipProvider>))
+const q = (sel: string) => document.body.querySelector<HTMLElement>(sel)
+const qa = (sel: string) => [...document.body.querySelectorAll<HTMLElement>(sel)]
+
+beforeEach(async () => {
+  host = document.createElement('div')
+  document.body.appendChild(host)
+  root = createRoot(host)
+  connectAi.mockReset()
+  useChangePlanStore.setState({ entries: {}, order: [], dialogKey: null })
+  await useDocumentStore.getState().switchDocument(emptyProject(), 'd_change_plan_ui')
+  useDocumentStore.getState().commit(literal('放入'), (d) => {
+    d.objects.push({ id: 'p1', type: 'panel', x: 0, y: 0, w: 80, h: 60, fileId: 'f_p1', fileKind: 'pdf', nativeW: 80, nativeH: 60, script: 'fig.py', overrides: BASE } as PanelObject)
+  })
+})
+afterEach(() => {
+  act(() => root.unmount())
+  host.remove()
+})
+
+it('审阅意见卡：条数、审阅者；整体意见不画圆点', () => {
+  put(entry('a'))
+  render(<ReviewNoteCard entry={useChangePlanStore.getState().entries.a} />)
+  const card = q('[data-change-plan-note-card]')!
+  expect(card.textContent).toContain('3')
+  expect(card.textContent).toContain('林悦')
+  expect(card.querySelectorAll('[data-review-mark]')).toHaveLength(1)
+})
+
+it('方案卡：生成中没有按钮；待确认「查看」实心 +「直接应用」次级，一句话说清改了几处与几条没改', () => {
+  put(entry('a', { status: 'generating', plan: undefined, afterSrc: undefined, beforeSrc: undefined }))
+  render(<ChangePlanCard entry={useChangePlanStore.getState().entries.a} />)
+  const card = () => q('[data-change-plan-card]')!
+  expect(card().dataset.changePlanCard).toBe('generating')
+  expect(q('[data-thinking-orb]')).not.toBeNull()
+  expect(card().querySelector('button')).toBeNull()
+
+  put(entry('a'))
+  render(<ChangePlanCard entry={useChangePlanStore.getState().entries.a} />)
+  expect(card().dataset.changePlanCard).toBe('ready')
+  expect([...card().querySelectorAll('button')].map((b) => b.dataset.variant)).toEqual(['primary', 'secondary'])
+  // 有一条要改脚本、一条没法直接改 → 「没法直接改」那一句
+  expect(card().textContent).toContain('按 1 条意见改了 1 处，2 条没法直接改')
+})
+
+it('方案卡：已应用（还是我们写的那份才给「撤销」）· 已放弃 · 图已改过（基线对不上）', () => {
+  put(entry('a', { status: 'applied', appliedPatches: PLAN.candidate_patches }))
+  render(<ChangePlanCard entry={useChangePlanStore.getState().entries.a} />)
+  // 图此刻还是 B0（⌘Z 撤回过）：卡片以文档为准，又是待确认
+  expect(q('[data-change-plan-card]')!.dataset.changePlanCard).toBe('ready')
+  act(() =>
+    useDocumentStore.getState().commit(literal('应用'), (d) => {
+      ;(d.objects.find((x) => x.id === 'p1') as PanelObject).overrides = PLAN.candidate_patches
+    }),
+  )
+  // 重做回来 = 已应用；但栈顶不是记下的那次 commit 时不给「撤销」
+  expect(q('[data-change-plan-card]')!.dataset.changePlanCard).toBe('applied')
+  expect(q('[data-change-plan-undo]')).toBeNull()
+  put(entry('a', { status: 'applied', appliedPatches: PLAN.candidate_patches, appliedEntry: useDocumentStore.getState().past.at(-1) }))
+  render(<ChangePlanCard entry={useChangePlanStore.getState().entries.a} />)
+  expect(q('[data-change-plan-undo]')).not.toBeNull()
+
+  put(entry('a', { status: 'discarded' }))
+  render(<ChangePlanCard entry={useChangePlanStore.getState().entries.a} />)
+  expect(q('[data-change-plan-card]')!.dataset.changePlanCard).toBe('discarded')
+  expect(q('[data-change-plan-card]')!.querySelector('button')).toBeNull()
+
+  // 待确认，但这张图被改过：自己转「图已改过」，主按钮是「重新生成」
+  put(entry('a'))
+  act(() =>
+    useDocumentStore.getState().commit(literal('手改'), (d) => {
+      ;(d.objects.find((x) => x.id === 'p1') as PanelObject).overrides = [{ gid: 'ax.title', prop: 'fontsize', value: 40 }]
+    }),
+  )
+  render(<ChangePlanCard entry={useChangePlanStore.getState().entries.a} />)
+  expect(q('[data-change-plan-card]')!.dataset.changePlanCard).toBe('stale')
+  expect(q('[data-change-plan-regenerate]')).not.toBeNull()
+  expect(q('[data-change-plan-view]')).toBeNull()
+})
+
+it('失败卡：一句灰字 + 一个下一步（没连 AI → 连接 AI；额度 → 重试；没法改 → 收起）', () => {
+  const fail = (code: string) => entry('a', { status: 'failed', plan: undefined, failure: { code } })
+  put(fail('change_plan_no_connection'))
+  render(<ChangePlanCard entry={useChangePlanStore.getState().entries.a} />)
+  const act1 = () => q('[data-change-plan-failed-action]')!
+  expect(act1().dataset.changePlanFailedAction).toBe('connect')
+  expect(q('[data-change-plan-card]')!.textContent).toContain('还没有连接 AI')
+  act(() => act1().click())
+  expect(connectAi).toHaveBeenCalledTimes(1)
+
+  put(fail('change_plan_model_quota'))
+  render(<ChangePlanCard entry={useChangePlanStore.getState().entries.a} />)
+  expect(act1().dataset.changePlanFailedAction).toBe('retry')
+
+  put(fail('change_plan_native_unsupported'))
+  render(<ChangePlanCard entry={useChangePlanStore.getState().entries.a} />)
+  expect(act1().dataset.changePlanFailedAction).toBe('dismiss')
+  act(() => act1().click())
+  expect(useChangePlanStore.getState().entries.a).toBeUndefined()
+})
+
+it('「没有一条意见能落成修改」：一句话 + 并列列出没处理的意见与原因', () => {
+  put(entry('a', { status: 'failed', failure: { code: 'change_plan_empty' }, plan: { ...PLAN, groups: [] } }))
+  render(<ChangePlanCard entry={useChangePlanStore.getState().entries.a} />)
+  const card = q('[data-change-plan-card]')!
+  expect(card.textContent).toContain('这些意见没法直接改图')
+  expect(card.querySelectorAll('[data-change-plan-unhandled]')).toHaveLength(2)
+  expect(card.textContent).toContain('图例挡住了曲线')
+})
+
+it('主按钮唯一：两张待确认卡，只有最新一张的「查看」实心，旧的降次级', () => {
+  put(entry('a', { createdAt: 1 }), entry('b', { createdAt: 2 }))
+  render(<ChangePlanTranscript panelId="p1" />)
+  const views = qa('[data-change-plan-view]')
+  expect(views.map((v) => v.dataset.variant)).toEqual(['secondary', 'primary'])
+  expect(qa('[data-variant="primary"]')).toHaveLength(1)
+})
+
+it('弹窗：顶栏只有标题；清单逐组勾选、未处理灰字；应用 / 放弃在页脚；取消全部勾选禁用「应用」', () => {
+  put(entry('a'))
+  act(() => useChangePlanStore.getState().openDialog('a'))
+  render(<ChangePlanDialog />)
+  expect(q('[data-change-plan-dialog]')).not.toBeNull()
+  // 没有批注 / 版本切换：顶栏没有分段控件，对比子切换只有「滑动 / 并排 / 切换」三个
+  expect(qa('[role="radiogroup"]').map((g) => g.querySelectorAll('[role="radio"]').length)).toEqual([3])
+  expect(qa('[data-change-group]')).toHaveLength(1)
+  expect(qa('[data-change-plan-unhandled]')).toHaveLength(2)
+  const apply = () => q('[data-change-plan-confirm]') as HTMLButtonElement
+  expect(apply().dataset.variant).toBe('primary')
+  expect(apply().disabled).toBe(false)
+  act(() => (q('[data-change-group] input') as HTMLInputElement).click())
+  expect(useChangePlanStore.getState().entries.a.unchecked.g1).toBe(true)
+  expect(apply().disabled).toBe(true)
+  act(() => (q('[data-change-plan-discard]') as HTMLButtonElement).click())
+  expect(useChangePlanStore.getState().entries.a.status).toBe('discarded')
+})
+
+it('弹窗：滑动 / 并排 / 切换；按住空格看修改前只在「切换」；清单悬停才淡入对应细框', () => {
+  put(entry('a'))
+  act(() => useChangePlanStore.getState().openDialog('a'))
+  render(<ChangePlanDialog />)
+  const stage = () => q('[data-change-plan-stage]')!
+  expect(stage().dataset.changePlanStage).toBe('slide')
+  expect(q('[data-change-plan-divider]')).not.toBeNull()
+  const modes = qa('[role="radio"]')
+  const space = (type: 'keydown' | 'keyup') => act(() => void window.dispatchEvent(new KeyboardEvent(type, { code: 'Space', bubbles: true })))
+
+  // 滑动里按空格：不换图、没有提示
+  space('keydown')
+  expect(stage().textContent).not.toContain('按住')
+  space('keyup')
+
+  act(() => modes[1].click())
+  expect(stage().dataset.changePlanStage).toBe('side')
+  expect(qa('[data-change-plan-frame]')).toHaveLength(2)
+
+  act(() => modes[2].click())
+  expect(stage().dataset.changePlanStage).toBe('toggle')
+  expect(stage().textContent).toContain('按住')
+  const shown = () => stage().querySelector('[data-change-plan-frame] img')!.getAttribute('src')
+  expect(shown()).toBe('/a.png')
+  space('keydown')
+  expect(shown()).toBe('/b.png')
+  space('keyup')
+  expect(shown()).toBe('/a.png')
+
+  // 细框默认不显（opacity-0），清单悬停那一组才亮
+  const box = () => stage().querySelector<HTMLElement>('[data-change-plan-box="g1"]')!
+  expect(box().className).toContain('opacity-0')
+  act(() => void q('[data-change-group]')!.dispatchEvent(new PointerEvent('pointerover', { bubbles: true })))
+  act(() => void q('[data-change-group]')!.dispatchEvent(new Event('focusin', { bubbles: true })))
+  expect(box().dataset.active).toBe('true')
+  expect(box().className).toContain('opacity-100')
+})

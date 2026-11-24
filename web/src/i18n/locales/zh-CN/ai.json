@@ -733,5 +733,70 @@
       "failed": "失败",
       "groupTitle": "{{count}} 个文件"
     }
+  },
+  "changePlan": {
+    "reviewNote": {
+      "title_other": "审阅意见 · {{count}} 条",
+      "open": "看意见 ›"
+    },
+    "card": {
+      "title": "修改方案",
+      "version": "第 {{n}} 版",
+      "summary": "按 {{done}} 条意见改了 {{places}} 处，{{script}} 条要改脚本",
+      "summaryAll": "按 {{done}} 条意见改了 {{places}} 处",
+      "summaryOther": "按 {{done}} 条意见改了 {{places}} 处，{{rest}} 条没法直接改",
+      "view": "查看",
+      "applyNow": "直接应用",
+      "undo": "撤销",
+      "discarded": "已放弃这一版",
+      "stale": "原图改过了，这版对不上",
+      "regenerate": "重新生成",
+      "thumbAlt": "修改后的图",
+      "beforeAlt": "当前的图",
+      "holdBefore": "按住看修改前",
+      "generatingAny": "正在按意见修改…",
+      "generating_other": "正在按 {{count}} 条意见修改…",
+      "applied_other": "已应用 · {{count}} 条意见已处理",
+      "applyFailed": "没能应用，图没有改动",
+      "undoFailed": "图在应用之后又改过，没有替你撤回",
+      "empty": "这些意见没法直接改图，图没有改动",
+      "connect": "连接 AI",
+      "retry": "重试",
+      "dismiss": "收起"
+    },
+    "dialog": {
+      "title": "修改方案",
+      "compareLabel": "对比方式",
+      "slide": "滑动",
+      "side": "并排",
+      "toggle": "切换",
+      "before": "修改前",
+      "after": "修改后",
+      "dragHandle": "拖动分隔线",
+      "hold": "按住",
+      "space": "空格",
+      "holdBefore": "看修改前",
+      "changes": "改动 · {{count}} 处",
+      "groupMeta": "{{who}} · {{count}} 处",
+      "groupMetaNoWho": "{{count}} 处",
+      "groupN": "第 {{n}} 条意见",
+      "checkTip": "取消勾选，这一处就不改",
+      "discard": "放弃",
+      "apply": "应用"
+    },
+    "unhandled": {
+      "needs_script": "要改脚本，这次没动",
+      "unclear": "意见不够具体，这次没动",
+      "out_of_scope": "不在图内修改的范围，这次没动",
+      "no_change_needed": "看起来不用改，这次没动",
+      "unknown_element": "找不到对应的元素，这次没动",
+      "not_editable": "这一项不能直接改，这次没动",
+      "bad_value": "给出的改法不可用，这次没动",
+      "over_limit": "改动太多，这条没动",
+      "conflict": "与别的改动冲突，这次没动",
+      "not_applied": "没能生效，这次没动",
+      "no_effect": "改了也看不出变化，这次没动",
+      "not_addressed": "这条没有处理到"
+    }
   }
 }
