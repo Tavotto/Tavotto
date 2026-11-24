@@ -390,6 +390,7 @@ _ENGINE_MODULES = (
     "tickmodel",
     "colorbarmodel",
     "legendmodel",
+    "mixedtext",
     "overrides",
     "manifest",
     "previewbudget",

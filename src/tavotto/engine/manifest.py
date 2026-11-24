@@ -51,6 +51,7 @@ from matplotlib.text import Text
 from matplotlib.textpath import text_to_path
 from matplotlib.transforms import Bbox, IdentityTransform
 
+import mixedtext
 import pathgeom
 from axestraversal import axis_drawn, frame_drawn, ordered_axes
 from colorbarmodel import (
@@ -1650,11 +1651,12 @@ def _glyph_scan(
 ) -> tuple[list[str], list[str], list[str]]:
     """(画不出来的, 换了脸的非中日韩字符, 画了中日韩字符的那几张脸) —— 一次扫出来。
 
-    `mathtext`：这段文字整串由 mathtext 排（`drawn_by_mathtext`）。那时 `$` 外的字只由
-    正文第一张脸画，mathtext 自己的后备字体集（STIX / Computer Modern）没有中日韩字形，
-    回退链也不参与——**中日韩字符问的是第一张脸**，它没有就是方框（实测「浓度 ($\\mu$mol/L)」
-    导出成 `¤¤ (μmol/L)`），既进 `glyphs_missing`，也不报 `cjk_family`。非中日韩字符照旧
-    （mathtext 的 STIX 后备可能接得住，判不准就不改判）。
+    `mathtext`：这段文字整串由 mathtext 排（`drawn_by_mathtext`）**且没有分段排**（`mixedtext` 未武装，
+    即脚本自己保存的那一刻）。那时 `$` 外的字只由正文第一张脸画，mathtext 自己的后备字体集（STIX /
+    Computer Modern）没有中日韩字形，回退链也不参与——**中日韩字符问的是第一张脸**，它没有就是方框
+    （实测「浓度 ($\\mu$mol/L)」导出成 `¤¤ (μmol/L)`），既进 `glyphs_missing`，也不报 `cjk_family`。
+    非中日韩字符照旧（mathtext 的 STIX 后备可能接得住，判不准就不改判）。分段排武装时（Tavotto 渲染的
+    每一刻）调用方传 False：正文脸画不出的中日韩字由回退链画，与普通文字同一个判法。
 
     `$…$` 里的片段跳过（那是 mathtext 字体集画的，见 `_MATH_SPAN`）。
     解析不出任何字体时三张单子都空：**判不了就不判**，不拿一个量错对象的
@@ -6941,7 +6943,9 @@ def _measure_manifest(
                     font_file,
                 )
             )
-            by_mathtext = drawn_by_mathtext(live_text)
+            # 分段排武装时（`mixedtext`，Tavotto 渲染的每一刻），`$` 外正文脸画不出的中日韩字交给回退链画：
+            # 判法与普通文字相同；没武装（脚本自己的保存）才是「整行 mathtext、只问正文脸」
+            by_mathtext = drawn_by_mathtext(live_text) and not mixedtext.armed()
             gone, subst, cjk_faces = _glyph_scan(
                 live_text.get_text(),
                 live_text.get_fontfamily() or [],

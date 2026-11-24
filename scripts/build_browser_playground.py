@@ -61,6 +61,7 @@ ENGINE_FILES = [
     "figcapture.py",
     "legendmodel.py",
     "manifest.py",
+    "mixedtext.py",
     "overrides.py",
     "patchspec.py",
     "pathgeom.py",

@@ -135,6 +135,7 @@ _TOPLEVEL_TO_RESTORE = (
     "preview_complexity",
     "preview_hybrid",
     "teedraw",
+    "mixedtext",
 )
 
 

@@ -516,8 +516,11 @@ def test_cjk_character_class_is_the_same_on_both_processes():
     pf = (ROOT / "src/tavotto/engine/preflight.py").read_text(encoding="utf-8")
     a = re.search(r'_CJK_CHAR = re\.compile\("(\[[^"]+\])"\)', man)
     b = re.search(r'_CJK = re\.compile\("(\[[^"]+\])"\)', pf)
-    assert a and b, (a, b)
-    assert a.group(1) == b.group(1)
+    # 分段排（`mixedtext`）认的「外来字」也只能是这一类：多一份就是第三处各认一套
+    mt = (ROOT / "src/tavotto/engine/mixedtext.py").read_text(encoding="utf-8")
+    c = re.search(r'CJK_CHAR = re\.compile\("(\[[^"]+\])"\)', mt)
+    assert a and b and c, (a, b, c)
+    assert a.group(1) == b.group(1) == c.group(1)
 
 
 #: 「我们打开的那张脸 == matplotlib 注册它时叫的名字」——跑在 worker 解释器里。
@@ -957,13 +960,13 @@ def test_fname_release_keeps_latin_pixels_and_reports_unreleasable_honestly():
     assert out.stdout.strip().endswith("OK")
 
 
-# --- 公式与中文混排（摸底 T-001）------------------------------------------------
+# --- 公式与中文混排（摸底 T-001 / T-002）---------------------------------------
 #
-# 串里只要有成对的 `$`，matplotlib 就把**整串**交给 mathtext：`$` 外面的「浓度」也只由
-# 正文第一张脸画，回退链不参与。改造前 manifest 按回退链判，说「浓度由中文脸画出、
-# 没有缺字」，而 PDF 文本层读回的是 `¤¤ (μmol/L)`——预检对一张错图一盏灯不亮。
+# 串里只要有成对的 `$`，matplotlib 就把**整行**交给 mathtext：`$` 外面的「浓度」也只由
+# 正文第一张脸画，回退链不参与——脚本自己存的图里是 `¤¤ (μmol/L)`。Tavotto 渲染时
+# 分段排（`mixedtext`，ADR 0045 §7）：正文脸画不出的中日韩字连成的段交给回退链。
 # 尺子是**导出的 PDF 文本层**（独立于 manifest 的判据）：manifest 报缺的字 == PDF
-# 里读不回的字；同一张图纯中文标题仍由回退链画出、照旧不报。
+# 里读不回的字；装了中文字体时两边都应是「一个不缺」，没装时两边都应是「浓度」。
 
 MIXED_LIBRARY = """\
 import matplotlib.pyplot as plt
@@ -979,7 +982,7 @@ def main():
 """
 
 
-def test_mathtext_mixed_cjk_is_reported_missing_like_the_pdf_shows(tmp_path, installed_cjk):
+def test_mathtext_mixed_cjk_manifest_matches_what_the_pdf_shows(tmp_path, installed_cjk):
     figs = tmp_path / "mixed figs"
     figs.mkdir()
     (figs / "fig_mix.py").write_text(MIXED_LIBRARY, encoding="utf-8")
@@ -996,17 +999,54 @@ def test_mathtext_mixed_cjk_is_reported_missing_like_the_pdf_shows(tmp_path, ins
         text = " ".join(p.get_text() for p in doc)
     ylabel = _el(man, "axes_0.ylabel")
     unread = [ch for ch in "浓度" if ch not in text]
-    # 尺子先验活：本机 mathtext 的正文脸画不出汉字（若哪天画出来了，这条要换一张缺字的脸）
-    assert unread == ["浓", "度"], text
-    assert ylabel.get("glyphs_missing") == unread, ylabel
-    assert "cjk_family" not in ylabel, ylabel
-    assert "cjk_src" not in ylabel, ylabel
+    assert "mol/L" in text, text  # 公式段照旧由 mathtext 排出来
     issues = preflight.run(preflight.spec_from_manifest(man), profiles.load("lab-publication-v1"))
     hit = [i for i in issues if i["id"] == "glyph-missing"]
-    assert hit, issues
-    # 反向对照：纯中文标题走普通文字路径，回退链接得住，仍然不报缺字
+    if installed_cjk:
+        # 分段排：「浓度」交给回退链里的中文脸，PDF 读得回、manifest 不报缺、报出由谁画
+        assert unread == [], text
+        assert "glyphs_missing" not in ylabel, ylabel
+        assert ylabel.get("cjk_family") in installed_cjk, ylabel
+        assert not hit, issues
+    else:
+        # 没有一张中文脸：切不切都是方框，两把尺子都说缺
+        assert unread == ["浓", "度"], text
+        assert ylabel.get("glyphs_missing") == unread, ylabel
+        assert hit, issues
     if installed_cjk:
         title = _el(man, "axes_0.title")
         assert "中文标题" in text
         assert "glyphs_missing" not in title, title
         assert title.get("cjk_family") in installed_cjk, title
+
+
+_UNARMED_SCAN = """\
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import matplotlib
+matplotlib.use("Agg")
+import manifest, mixedtext, overrides
+assert not mixedtext.armed()
+fams = ["DejaVu Sans", *overrides.fallback_tail()]
+gone, subst, cjk = manifest._glyph_scan("浓度 ($\\\\mu$mol/L)", fams, mathtext=True)
+gone2, _, cjk2 = manifest._glyph_scan("浓度 ($\\\\mu$mol/L)", fams, mathtext=False)
+print(json.dumps([gone, cjk, gone2, cjk2]))
+"""
+
+
+def test_unarmed_mathtext_scan_asks_the_primary_face(installed_cjk):
+    """没有分段排的那一刻（脚本自己保存的样子）：整行 mathtext，`$` 外的汉字只问正文脸——
+    链尾的中文脸画得出也轮不到它（T-001 的判法，manifest 在 `mixedtext` 未武装时用它）。"""
+    if not installed_cjk:
+        pytest.skip("worker 的解释器找不到任何中日韩候选字体")
+    out = subprocess.run(
+        [WORKER_PY, "-c", _UNARMED_SCAN, str(ENGINE_DIR)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert out.returncode == 0, out.stderr
+    gone, cjk, gone2, cjk2 = json.loads(out.stdout.strip().splitlines()[-1])
+    assert gone == ["浓", "度"] and cjk == []
+    assert gone2 == [] and cjk2 and cjk2[0] in installed_cjk

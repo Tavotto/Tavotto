@@ -119,3 +119,32 @@ ADR 0152 的文字编辑器仍以原字符串为权威，公式沿用既有 math
 模型。ADR 0144 的可编辑 SVG 使用原字体族名，不嵌字体；接收端缺字体可能替换。PDF
 由 worker 子集嵌入。macOS 用户自带 Matplotlib 3.10.8 的宋体 TTC 可能匹配 Black；
 内置运行时 3.11.1 可识别多面，本次不改写系统字体。
+
+## 7. 补充（2026-11-24）：公式与汉字同一行——分段排
+
+§6 说 mathtext 不在范围；这条只补一件事：一行字里有成对的 `$`，matplotlib 把**整行**交给 mathtext，
+`$` 外面的汉字也只用正文脸（`findfont(prop)`）画、没有逐字形回退，所以「浓度 ($\mu$mol/L)」在正文脸
+是西文字体时画成方框（摸底 T-002；T-001 先让检查把它报出来）。
+
+**裁决**：Tavotto 接手渲染的时段里，这样的行**按段排**（`engine/mixedtext.py`），与文字处理软件的混排
+同一个思路——正文脸画不出、回退链画得出的中日韩字连成的段走普通文字（逐字形退到中文脸），含 `$…$`
+的段原样交给 mathtext，共用一条基线。切点是渲染器的「量字」与「画字」两个入口
+（`get_text_width_height_descent` / `draw_text`），所以排版、tight / constrained、命中框、各后端落笔
+同一条路；只用 renderer 的公开协议，3.8–3.11 同一份。
+
+| 问题 | 裁决 |
+|---|---|
+| 哪些行会切 | 同时满足：`ismath is True`（不碰 usetex）、行里有成对 `$`、`$` 外有中日韩字、其中至少一个正文脸没有而回退链有。其余原样交给 matplotlib，**字节不变**（PNG / PDF / SVG 两种看护） |
+| 公式里的汉字 | 不切：归 mathtext 的字体集（`mathtext.fontset` / `mathtext.rm`）管，与原来一样 |
+| 什么时候生效 | worker：`instrument_all` 定完图幅之后、采 baseline 之前武装；native：只在屏障内武装，`release_barrier` 放行前撤（与 §1 尾巴同一条纪律）——脚本自己的 `savefig` 拿到的仍是它在终端里会得到的那份 |
+| 图幅 / 脚本 savefig 时的 tight 布局 | 按**不切**的度量算（`mixedtext.suspended()`）：那是原件那一刻的事实（ADR 0098），零编辑导出的图幅与原件一致；只有文字本身换成画得出的样子 |
+| 缺字检查（T-001） | 武装时 `$` 外的中日韩字按普通文字对回退链判定（就是这么画的）；不武装时（浏览器演示、native 放行后）仍按 mathtext 的正文脸判定 |
+| 度量缓存 | 武装 / 撤除时清 matplotlib 的文字度量缓存（键里没有「切不切」）：3.8–3.10 的全局 lru、3.11 的按渲染器 lru 都认 |
+| 浏览器演示（Pyodide） | 带上模块但不武装：演示里的行为与 T-001 之前一致 |
+
+**已知差别**：mathtext 的正文与普通文字的字距 / 字偶不完全一样，切开的行在段界处可能与「正文脸恰好有汉字
+时 mathtext 整行排」差零点几个像素；比方框好，且只出现在原本就会画成方框的行上。
+
+看护：`tests/test_mixed_math_cjk_runs.py`（切段规则、四种产物逐字节不变、PDF 文本层读回汉字（不武装时
+读不回，尺子先验活）、0° / 90° / 30° 与三种对齐下 Agg 墨迹落在 `get_window_extent` 里）；
+`tests/test_cjk_figure_text.py` 的 `test_mathtext_mixed_cjk_*`（manifest 与 PDF 说同一件事）。
