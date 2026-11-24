@@ -511,7 +511,7 @@ it('草稿：同一说法的多处合并成一句、中英文之间补空格、�
   // 改法不同不合并；两类之内都写，第三类起并成计数（按处数）
   expect(d(ch('a', 'fontsize', 5, 9), ch('b', 'fontsize', 6, 9))).toContain('；')
   const three = d(ch('a', 'fontsize', 5, 9), ch('l', 'visible', true, false), ch('k', 'linewidth', 1, 2), ch('b', 'linewidth', 1, 2))
-  expect(three).toBe('已把 Y 轴 “Conversion (mM)” 的字号从 5 pt 改到 9 pt；已隐藏图例（另有 2 处）')
+  expect(three).toBe('已把 Y 轴 “Conversion (mM)”的字号从 5 pt 改到 9 pt；已隐藏图例（另有 2 处）')
   // 中文与英文 / 数字相邻处有空格
   expect(spaceCjk('已把Y轴改到9')).toBe('已把 Y 轴改到 9')
 })
