@@ -359,3 +359,14 @@ TikZ 一类（DeTikZify）结构好但在 LaTeX 里。这正是本 ADR 让 Agent
   插件与改图助手共用一个引擎、一个写入口，与 0199 §十三、0206 是同一套「只算不写 → 看过再应用」的契约。
 - 代价：引擎要新写求解与核对；worker 协议多一条查询；后端第一次有对象级校验，要和前端一起改；`anchor` 改变了一部分标注的跟随规则。
 - 风险：空白区按 manifest 的角色认数据元素，角色认错（例如把画数据的 `fill_between` 认成装饰）会让标注压到数据上——角色闭集与 manifest 同源，认不出的元素一律当数据占位。
+
+## 修订（2026-11-24，第 1 期实现：与上文写法不同的地方）
+
+1. **数据锚点不是新 worker 命令，而是 `export` 上的可选字段 `data_points`**（加字段协议，ADR 0003 不升版；Python 池、workerd、
+   native 只在传了时带上，workerd 原样透传、**Rust 不改**）。回包多 `data_points` 与 `draw_manifest`（这次导出绘制量出的 manifest，
+   元素锚点的框也取它）。为什么挂在导出上：2026-11-24 实测 tight / constrained 布局下，PNG 预览与 PDF 成品的坐标轴差 0.08–0.33 mm，
+   画布用的矢量 manifest 与出 PDF 那次绘制也差约 0.07 mm——对齐的真值是成品。同日实测：换算点与导出 PDF 里实画的点差 ≤ 0.002 mm；
+   这次导出与脚本自己 `savefig(bbox_inches="tight")` 存下的磁盘原件（没改动的子图合成时用它）差 ≤ 0.004 mm；重复导出稳定；带改动同样成立
+   （看护 `tests/test_export_data_points_truth.py`）。不与 `snapshot_only`、`svg_path` / `svg_text_path` 同用。细则：
+   `docs/rules/backend/worker-protocol-and-lifecycle.md`。§二「worker 协议上新的一条只读命令」一句与分期第 1 条的「worker 新命令（含 `workerd/`）」以本条为准。
+
