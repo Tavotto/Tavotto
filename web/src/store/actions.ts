@@ -10,7 +10,7 @@ import { engineTransport } from '@/lib/engineTransport'
 import { msg, t, type UiMessage } from '@/i18n'
 import { classifyArtifactFailure, classifyArtifactReason, isDefiniteRefusal, sourceBackedEligible, type ArtifactFailure } from '@/lib/artifactReason'
 import { registerReconstructionNotifier, registerSourceBackedReviewRunner, runSourceBackedReview, sourceReviewOwner, useSourceBackedReview } from '@/store/sourceBackedReview'
-import { pngAdmitOwner, pngRefusalOf, runPngRebuild, usePngAdmissionMemory } from '@/store/pngAdmissionMemory'
+import { pngAdmitOwner, pngIdentityOf, pngRefusalOf, runPngRebuild, usePngAdmissionMemory } from '@/store/pngAdmissionMemory'
 import { pdfFontFactsOf } from '@/store/pdfFontFacts'
 import { rescueFocus } from '@/lib/focusRescue'
 import { newId } from '@/lib/id'
@@ -2629,11 +2629,20 @@ export async function prepareScriptedBitmapsForRedraw(panelIds: readonly string[
   return out
 }
 
+/**
+ * 导出前只试精确策略；被「只挡精确」的理由（像素对不上 / 白名单）拒过的图，同一项目代际、同一磁盘身份内
+ * 下次导出不再重跑脚本。它与 `usePngAdmissionMemory` 分开记：那份会挡住角标与进图内编辑，而这两条路
+ * 仍该走到来源驱动的对照确认。
+ */
+const exactOnlyRefusedForExport = new Map<string, string>()
+const exportRefusalKey = (fileId: string) => `${usePngAdmissionMemory.getState().epoch}:${pngIdentityOf(fileId)}`
+
 async function adoptBitmapForRedraw(panel: PanelObject): Promise<BitmapRedrawOutcome> {
   finishActiveGesture()
   if (isAdoptedPanel(panel) || !isUnadoptedPngSource(panel) || engineTransport()) return 'kept'
   if (!useAssetStore.getState().byId[panel.fileId]?.script) return 'kept'
   if (pngRefusalOf(panel.fileId)) return 'kept'
+  if (exactOnlyRefusedForExport.get(panel.fileId) === exportRefusalKey(panel.fileId)) return 'kept'
   if (swapToVectorPrimary(panel)) return 'vector'
   const initial = useDocumentStore.getState()
   const epoch = renderEpoch()
@@ -2661,8 +2670,12 @@ async function adoptBitmapForRedraw(panel: PanelObject): Promise<BitmapRedrawOut
   } catch (error) {
     if (renderEpoch() === epoch && currentProjectId() === pj && error instanceof EngineError &&
         error.code === 'artifact_source_unavailable') {
-      // 与进图内编辑共用同一份会话记忆：脚本已为此跑过一遍，同一张图不再重跑
-      usePngAdmissionMemory.getState().remember(panel.fileId, classifyArtifactFailure(error))
+      // 与进图内编辑共用同一份会话记忆：脚本已为此跑过一遍，同一张图不再重跑。
+      // 但这里只试了精确策略：只挡精确、仍可转来源驱动的拒绝（像素对不上 / 白名单）不能记，
+      // 否则角标「用脚本重画」与进图内编辑都会被这条记忆挡住，永远到不了对照确认。
+      const failure = classifyArtifactFailure(error)
+      if (sourceBackedEligible(failure.reason)) exactOnlyRefusedForExport.set(panel.fileId, exportRefusalKey(panel.fileId))
+      else usePngAdmissionMemory.getState().remember(panel.fileId, failure)
     }
     return 'kept'
   }
