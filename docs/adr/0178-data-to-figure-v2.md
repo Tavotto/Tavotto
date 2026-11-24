@@ -470,3 +470,22 @@ interval / trajectories / dose_response / profile）。批次 2 / 3 在本 PR �
 **文案**（全部由用户看过本地真页面后定，2026-11-24：「可以，继续推进」）：主按钮「创建可编辑图」；小标题「需要你确认」；标签「误差线」「重复测量」；选项见上。
 
 **还没做**：图创建之后在问题面板里切换误差线类型（11-21 批的那一处，涉及改已有脚本）；已汇总的表画成均值 + 现成误差列的误差线；某组 n < 2 时的说明；「重复测量」选「是」而表里不止一个编号列时让用户选哪一列。
+
+## 修订（2026-11-24）：已汇总的表——把现成的误差列画成误差线（`ai_data_recipe.paired_error` / `FigureRecipe.err`、`ai_data_template`、`ai_data_propose`）
+
+**起因**：上一条修订把名字在说「我是误差量」的列从纵轴 / 横轴里踢了出去，但只是忽略它：`dose_uM, mean_response, sd` 只画了均值、误差没了；`group, mean, sd, n`（一行一个组）仍按「每个均值是一次原始观测」去算均值 ± 标准差、箱线、分布。用户批的顺序是「……再把现成的误差列画成误差线」，且「误差列类型不明时给『不确定』选项、绝不默认成 SD；名字写了 sd / sem 的就按名字」。依据：sciviz **G-053**（误差量不是观测，汇总过的数据不能再汇总）、**G-065**（误差线必须写明 SD / SEM / CI 以及 n 数的是什么）、G-055（没画的观测要有计数）。
+
+**事实**（都由规则按列名与行数据判，模型 / 用户点名不写；不新增子开关，仍在 `ai.taf.enabled` 后面）：
+
+1. **配对**：`paired_error(摘要, y, axes)` 回答「`y` 配着哪个误差列」。名字规则只有一份——`adf.error_match`（`error_kind` 是它的第一个返回值）：`mass_sd` ↔ `mass`、`response_sem` ↔ `mean_response`；光秃秃的 `sd` / `sem` / `err` / 中文词配「恰好一个测量列」（去掉误差列、样本量列、编号列与 `axes`——横轴等不是测量的列），多个时只认名字带 `mean` / `avg` / `average` 的那一列；**同一个测量列有不止一个误差列、或配对有歧义 = 不配**（宁可不画，不猜）。`SEM_depth_nm` 一类仍不是误差列（判据没放宽）。名字恰好是 `n` / `count`、表里又有误差列陪着的数值列是**样本量列**，规则不当它纵轴 / 横轴（用户自己点了照点）。
+2. **配方**：`FigureRecipe.err`（误差列名，默认空）与 `err_kind`（闭集 `sd` / `sem` / `ci95` / `unknown`）。贯穿校验 → 脚本（来源注释里有配方、脚本多一行 `ERR = '…'`）→ 提交。空 = 与从前逐字相同（脚本、配方字典、期望指纹都对拍过）。校验：只许比较 / 趋势类、恰好一个 `y`；`err` 是另一列、纯数值列；与个体编号 / 配对 / 把列当分组互斥；图元只许点（比较）/ 点、线、阶梯线（趋势）且都不带汇总；画的行里（纵轴有值的）误差不能为负；每个位置恰好一行。`err_kind` 与 `err` 同有同无（G-065）。比较类带 `err` 时横轴可以是「每格都不同的文字列」（本来要有重复取值才算分组）——只对 `err` 配方放宽。模型的配方带 `err` / `err_kind` 一律丢掉（`recipe_unknown_key`）：模型说的「这是 SD」没有依据。
+3. **备选**（`default_candidates`）：表是「已汇总」的形状——配得上误差列、且每个位置恰好一行（有序横轴：分组 × 分面 × 横轴取值；否则类别 × 分组；没有分组列时表里**恰好一个**每格都不同的文字列当类别轴）——才多出：`line_err`（趋势：点 + 线，误差线取自误差列）与 `points_err`（比较：一类一个点），排第一。这种表**不再给**均值 ± 误差、箱线、小提琴、ECDF、直方图、核密度、均值线（备选闭集里剔掉，`dropped` 记 `summarised_not_raw`，`detail` 是被剔的图元）；只画给定点的散点 / 普通折线仍可在 `*_err` 之后。有重复测量的表**行为不变**（误差列照旧被忽略）。`err_kind` 取自列名（`sd` / `sem` / `ci` → `ci95` / 只说「误差」→ `unknown`），用户的 `answers.error` 覆盖（列不变、`err_kind` 换成他点的）。
+4. **画法**：`ax.errorbar(x, y, yerr=误差列的值, fmt='none', …)`，线宽 / 帽 / 颜色与「均值 ± 误差」的误差线同一套；误差格是空 / NaN（或运行时变成了负数 / 文字）的点照画、只是没有误差线。公共模块多了 `comparison_error_points` / `trend_error_points`，`comparison_data` / `trend_data` 多一个可选 `err`（与取值同一份行过滤，不另写一遍）。
+5. **响应**：`error` 报 `sd` / `sem` / `ci95` / `unknown`；多 `error_source`（`column` 取自现成误差列 / `computed` 用重复值算的）、`error_column`、`error_stated: true`（种类是**列名自己说的**——不是 `unknown`、不是用户点的；界面据此写「取自列名」而不是「需要你确认」）。`error_confirmed` 语义不变：只有用户发了 `answers.error` 才是 true。`facts` 数的是画进去的行；误差格缺失的行是画了的、不算没画（`unplotted_rows` 不变）。
+6. **算出来的误差线 n < 2**（同一批审计里的另一条，只给事实）：均值 ± 误差的 `errorbar` / `band` 层里，只有一个值的位置没有误差线 / 带——每个这样的备选多 `error_missing_for: [标签…]`（比较类是类别 / 分组 / 分面，趋势类是横轴取值；用的是脚本画图的同一批函数；至多 50 个；空则没有这一项）。不写文案、不改界面。
+
+**核什么、不核什么**：点与线两层照旧按 label 对指纹（`expected_fingerprints` 与没有 `err` 的同一份配方逐项相同）；取自误差列的误差线与现有的误差线层一样**没有 label、核不了**——`fingerprint_coverage` 在最后多列一条 `{mark: errorbar, checked: false, reason: errorbar_has_no_label}`（序号在配方的层之后）。所以提交后 `data_check` 是 `verified` 的含义是「点与线对上了数据」，不含误差线的数；误差线的数由 `tests/test_ai_data_err_column.py` 里真执行脚本、量 `Axes.errorbar` 收到的 `yerr` 来保证。
+
+**新增的闭集**：配方 `err` / `err_kind`（`ERR_KINDS`）；备选码 `line_err` / `points_err`；拒绝码 `summarised_not_raw` / `error_values_negative` / `error_cells_not_unique`（`REJECTIONS`，前端 `errors:backend.<码>` 文案由前端那一步补）；响应键 `error_source` / `error_column` / `error_stated` / `error_missing_for`。
+
+**没做**：已汇总的表上「柱 + 现成误差线」；多个 y 列、有个体编号、合画、大表的现成误差列；误差类型 `unknown` 时右栏「需要你确认」里加「不确定」之外的选项文案（前端）；图创建之后切换误差线类型；n 数写进图注（图里仍不写任何自动脚注）。

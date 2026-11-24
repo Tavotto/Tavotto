@@ -25,6 +25,7 @@ Flask 父进程 import；**不调模型**（模型工具集是下一个 PR，复
 
 from __future__ import annotations
 
+import datetime
 import errno
 import hashlib
 import json
@@ -188,6 +189,10 @@ class Item:
     facts: dict | None = None
     #: 这张图上每条拟合线的系数（`tpl.fit_report`；没有拟合线 = 空，响应里没有这一项）
     fits: list = field(default_factory=list)
+    #: 误差线 / 误差带是**算出来的**（均值 ± 误差）时，哪些位置因为 n < 2 没有误差线 / 带（标签与图上一致；`error_missing_for`）；没有 = 空，响应里没有这一项
+    error_missing: list = field(default_factory=list)
+    #: 误差线取自现成的误差列、而且「是哪一种」是**列名自己说的**（不是用户点的、也不是 `unknown`）：界面据此写「取自列名」而不是「需要你确认」
+    error_stated: bool = False
     # 懒渲染的素材：候选脚本在会话目录里，这里记下渲染一张要的最少东西
     stem: str | None = None
     n: int = 0
@@ -488,8 +493,10 @@ def parse_spec(raw, font_range=None) -> tuple[dict | None, str | None, bool]:
 
 def with_error_summary(recipe: recipe_mod.FigureRecipe, error: str | None):
     """把配方里「均值 ± 某种误差」的层换成用户点选的那一种（`sd` / `sem` / `ci95`）；没点 / 不认识 / 配方里没有这样的层 = 原样。
-    只换误差的定义，中心仍是均值（中位数 + 四分位距的层不动）。"""
+    只换误差的定义，中心仍是均值（中位数 + 四分位距的层不动）。误差线取自现成的误差列（`recipe.err`）的配方：用户点选的覆盖列名说的那一种（`err_kind`），画的数不变。"""
     target = ERROR_SUMMARY.get(error or "")
+    if target is not None and recipe.err is not None:
+        return replace(recipe, err_kind=error)
     if target is None or not any(
         layer.summary in ERROR_SUMMARY.values() for layer in recipe.layers
     ):
@@ -502,12 +509,107 @@ def with_error_summary(recipe: recipe_mod.FigureRecipe, error: str | None):
 
 
 def error_of(recipe: recipe_mod.FigureRecipe) -> str | None:
-    """这份配方的误差线 / 误差带画的是哪一种（`sd` / `sem` / `ci95`）；没有这样的层 = None。"""
+    """这份配方的误差线 / 误差带画的是哪一种（`sd` / `sem` / `ci95`；取自现成误差列、名字没说是哪种的是 `unknown`——绝不当成 SD）；没有这样的层 = None。"""
+    if recipe.err is not None:
+        return recipe.err_kind
     back = {v: k for k, v in ERROR_SUMMARY.items()}
     for layer in recipe.layers:
         if layer.summary in back and layer.mark in ("errorbar", "band"):
             return back[layer.summary]
     return None
+
+
+def error_source(recipe: recipe_mod.FigureRecipe) -> str | None:
+    """误差线 / 误差带从哪来：`column` = 取自表里现成的误差列；`computed` = 用这份数据的重复值算出来的均值 ± 误差；没有误差线 = None。"""
+    if recipe.err is not None:
+        return "column"
+    return "computed" if error_of(recipe) is not None else None
+
+
+def error_stated_of(
+    summary: adf.DataSummary, recipe: recipe_mod.FigureRecipe, answers: dict
+) -> bool:
+    """误差线取自现成的误差列、而且是哪一种**由列名自己说明**：`err_kind` 不是 `unknown`、与列名说的一致、用户没点选过别的（`answers.error`）。
+    名字没说（`unknown`）从来不算「已说明」——界面要问用户，不替他定成 SD。"""
+    return (
+        recipe.err is not None
+        and recipe.err_kind not in (None, "unknown")
+        and answers.get("error") not in ERROR_SUMMARY
+        and recipe_mod.error_kind_of(summary, recipe.err) == recipe.err_kind
+    )
+
+
+#: `error_missing_for` 最多列几个标签（超出的不列；图上一个位置也没有误差线的情形不会让响应变得很大）
+ERROR_MISSING_MAX = 50
+
+
+def _x_text(x: float, is_date: bool) -> str:
+    if is_date:
+        return (adf._EPOCH + datetime.timedelta(days=round(x))).isoformat()
+    return f"{x:.12g}"
+
+
+def error_missing_for(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> list[str]:
+    """误差线 / 误差带是算出来的（均值 ± SD / SEM / 95% CI 的 `errorbar` / `band` 层）时，**图上哪些位置没有误差线 / 带**：该位置只有 1 个值（n < 2，没有标准差）。
+    用的是脚本画图的同一批函数（`summarize` / `trend_centers`），所以报的就是图上缺的那几处。标签与图上的写法一致：比较类是类别（有分组 / 分面再加上，用 ` / ` 连），
+    趋势类是横轴取值（日期用 ISO 日期）；多个 y 列再加列名。没有这样的层、取自现成误差列的、大表 = 空（响应里没有这一项）。"""
+    summaries = {
+        layer.summary
+        for layer in recipe.layers
+        if layer.mark in ("errorbar", "band") and layer.summary in ERROR_SUMMARY.values()
+    }
+    if not summaries or recipe.err is not None or values.large is not None:
+        return []
+    summary = sorted(summaries)[0]
+    values = recipe_mod.with_cells_applied(values, recipe)
+    out: list[str] = []
+
+    def label(*parts) -> str:
+        return " / ".join(str(p) for p in parts if p)
+
+    if recipe.family == "comparison":
+        d = tpl.comparison_data(
+            values.columns,
+            values.rows,
+            recipe.x,
+            recipe.y[0],
+            recipe.group,
+            recipe.facet,
+            recipe.order,
+        )
+        for p in d["panels"]:
+            for g in d["groups"]:
+                for ci, vals in tpl.comparison_cells(d, p, g):
+                    _c, lo, hi = tpl.summarize(vals, summary)
+                    if not (lo == lo and hi == hi):
+                        out.append(label(d["cats"][ci], g, p if recipe.facet else ""))
+    elif recipe.family == "trend" and recipe.x:
+        is_date = values.per_column[recipe.x].kind == "date"
+        d = tpl.trend_data(
+            values.columns,
+            values.rows,
+            recipe.x,
+            list(recipe.y),
+            recipe.group,
+            recipe.facet,
+            recipe.unit,
+            is_date,
+        )
+        for p in d["panels"]:
+            for g in d["groups"]:
+                for y in recipe.y:
+                    cx, cc, lo, hi = tpl.trend_centers(tpl.trend_pool(d, p, g, y), summary)
+                    for x, c, a, b in zip(cx, cc, lo, hi):
+                        if c == c and not (a == a and b == b):
+                            out.append(
+                                label(
+                                    y if len(recipe.y) > 1 else "",
+                                    g,
+                                    p if recipe.facet else "",
+                                    _x_text(x, is_date),
+                                )
+                            )
+    return list(dict.fromkeys(out))[:ERROR_MISSING_MAX]
 
 
 def candidate_facts(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> dict | None:
@@ -1211,6 +1313,12 @@ def item_to_dict(sess: Session, item: Item, recommended: bool) -> dict:
         **({"facts": item.facts} if item.facts is not None else {}),
         # 有误差线 / 误差带才有：画的是哪一种（`sd` / `sem` / `ci95`）
         **({"error": error_of(r)} if error_of(r) is not None else {}),
+        # 误差线从哪来（`column` 现成的误差列 / `computed` 用重复值算的）；取自列的另带列名与「列名自己说明了是哪一种」
+        **({"error_source": error_source(r)} if error_source(r) is not None else {}),
+        **({"error_column": r.err} if r.err is not None else {}),
+        **({"error_stated": True} if item.error_stated else {}),
+        # 算出来的误差线 / 带里 n < 2 因而没有误差线的位置（标签与图上一致）
+        **({"error_missing_for": item.error_missing} if item.error_missing else {}),
         **({"variant": item.variant} if sess.merge is not None and sess.merge.splittable else {}),
     }
 
@@ -1533,6 +1641,8 @@ def propose(
             state="pending" if planned is not None else "ready",
             variant=variants.get(id(cand.recipe)),
             fits=tpl.fit_report(values, cand.recipe),
+            error_missing=error_missing_for(values, cand.recipe),
+            error_stated=error_stated_of(chosen.summary, cand.recipe, ans),
             facts=candidate_facts(values, cand.recipe),
             stem=planned.stem if planned is not None else None,
             n=planned.n if planned is not None else 0,

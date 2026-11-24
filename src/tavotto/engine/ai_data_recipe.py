@@ -87,6 +87,15 @@ SCALES = ("linear", "log_y", "log_x", "log_xy")
 #: 层的角色：main = 这一层是图的主体；overlay = 叠在主体上的汇总 / 拟合 / 误差；reference = 参考线
 LAYER_ROLES = ("main", "overlay", "reference")
 DESIGNS = ("independent", "paired", "repeated")
+#: 「误差线来自表里这一列」时它是哪一种（`FigureRecipe.err_kind`，闭集；sciviz G-065：误差线必须写明 SD / SEM / 95% CI）。`unknown` = 名字只说「是误差」、
+#: 没说是哪种——照画，但**不当成 SD**，也不当成已确认（界面把它列进「需要你确认」）
+ERR_KINDS = ("sd", "sem", "ci95", "unknown")
+#: `adf.error_kind` 的种类 → `ERR_KINDS`（`ci` 在名字上不分 95%，这里按列名认作 `ci95`；`unknown` 原样）
+ERR_KIND_OF_NAME = {"sd": "sd", "sem": "sem", "ci": "ci95", "unknown": "unknown"}
+#: 名字恰好是这些（不分大小写）、又有误差列「陪着」的数值列是样本量列：不当纵轴 / 横轴（`sample_size_columns`）
+SAMPLE_SIZE_NAMES = frozenset({"n", "count"})
+#: 带 `err`（误差线取自现成误差列）的配方只许这些图元，且都不带汇总：比较类只画点（一个类别一个点，抖动会让误差线对不上点），趋势类的点 / 线 / 阶梯线
+ERR_MARKS = {"comparison": frozenset({"points"}), "trend": frozenset({"points", "line", "step"})}
 
 
 @dataclass(frozen=True)
@@ -190,6 +199,10 @@ REJECTIONS: dict[str, str] = {
     "bar_before_raw_points": "能露出原始点时，只有柱加误差线的画法不许排在含原始点的画法前面。",
     "duplicate_candidate": "这个备选和前面的某个备选画法完全相同。",
     "too_many_candidates": f"备选最多给 {MAX_CANDIDATES} 个，多出来的被丢弃。",
+    "summarised_not_raw": "这张表每个位置只有一行、还带着现成的误差列（已经汇总过）：不再对它的值算均值 ± 误差、箱线、分布或均值线（sciviz G-053：汇总值不是观测，不能再汇总一次）。",
+    # 误差线取自现成的误差列（`FigureRecipe.err`）
+    "error_values_negative": "误差列里有负数：误差是离散程度的大小，不能为负。",
+    "error_cells_not_unique": "误差线取自现成的误差列时，每个位置（类别 × 分组 × 分面，趋势是分组 × 分面 × 横轴取值）只能有一行；有重复测量的表不画现成的误差列。",
     # 族专属
     "trend_too_few_x": f"不同的横轴取值少于 {MIN_X_TREND} 个时画不出趋势，改画分组比较。",
     "paired_incomplete": "配对要求横轴恰好两个条件、每个个体在两个条件下各一个值。",
@@ -561,6 +574,8 @@ _RECIPE_KEYS = (
     "cells",
     "numcat",
     "stack",
+    "err",
+    "err_kind",
 )
 _CELL_KEYS = ("column", "mode", "map", "rest")
 _RECIPE_REQUIRED = ("table", "family", "layers", "y", "why")
@@ -681,6 +696,13 @@ class FigureRecipe:
     #: 一列类别（第二个，取值 = 原来的列名原文、顺序 = `stack` 里的顺序）；`y` 是那个值列、类别列做 `x`（比较类）或 `group`（分布类）。这一条事实贯穿
     #: 校验（`validate_recipe` 按转换后的长表看）→ 脚本（读表后 `apply_stack`）→ 落盘再校验 → 指纹核对。空 = 与从前逐字相同；规则永远不写它。
     stack: tuple[str, ...] = ()
+    #: 「误差线取自表里这一列」：被点名的现成误差列（数值列，名字在说「我是误差量」或用户点了它；每个位置只有一行，已汇总的表）。这一条事实贯穿
+    #: 校验（`validate_recipe`：列要存在、是数值列、不是别的角色、画的行里非负、每个位置一行）→ 脚本（读表后按同一份行过滤取值，`ax.errorbar(..., yerr=列的值)`）→
+    #: 来源注释。空 = 与从前逐字相同；规则只在 `paired_error` 配上了一列、且表是「每个位置一行」时才写它，模型 / 用户点名不写。
+    err: str | None = None
+    #: 上一列是哪一种误差（`ERR_KINDS`）：名字说了就是名字说的（`sd` / `sem` / `ci` → `ci95`），名字只说「误差」记 `unknown`（**绝不当成 SD**），
+    #: 用户点选的（`answers.error`）覆盖名字。`err` 给了就必须有它（G-065：误差线必须写明是哪一种）。
+    err_kind: str | None = None
 
     @classmethod
     def from_dict(cls, data) -> FigureRecipe:
@@ -747,6 +769,12 @@ class FigureRecipe:
             cells=_cells_from(data.get("cells", [])),
             numcat=_names(data.get("numcat", []), "numcat"),
             stack=_names(data.get("stack", []), "stack", STACK_MAX_COLUMNS),
+            err=_name(data.get("err"), "err", optional=True),
+            err_kind=(
+                None
+                if data.get("err_kind") is None
+                else _choice(data["err_kind"], ERR_KINDS, "err_kind")
+            ),
         )
 
     def to_dict(self) -> dict:
@@ -768,6 +796,8 @@ class FigureRecipe:
             **({"cells": [c.to_dict() for c in self.cells]} if self.cells else {}),
             **({"numcat": list(self.numcat)} if self.numcat else {}),
             **({"stack": list(self.stack)} if self.stack else {}),
+            **({"err": self.err} if self.err is not None else {}),
+            **({"err_kind": self.err_kind} if self.err_kind is not None else {}),
         }
 
 
@@ -955,6 +985,34 @@ def _stack_problems(recipe: FigureRecipe, s: adf.DataSummary) -> list[Problem]:
     return P
 
 
+def _err_problems(recipe: FigureRecipe, spec: FamilySpec, s: adf.DataSummary) -> list[Problem]:
+    """`recipe.err` / `recipe.err_kind` 的结构校验：只有比较 / 趋势类、恰好一个 `y`；`err` 是另一列（不是 x / y / 分组 / 分面 / 个体）、是纯数值列；
+    不与个体编号 / 配对 / 把列当分组并用；`err_kind` 在闭集里且与 `err` 同有同无（G-065：误差线必须写明是哪一种）；
+    图元只许 `ERR_MARKS` 里的、不带汇总（带汇总 = 对已汇总的值再汇总一次，G-053）。"""
+    P: list[Problem] = []
+    if recipe.err is None:
+        return [Problem("roles_invalid", "err_kind", "no_err")]
+    if recipe.err_kind is None:
+        P.append(Problem("summary_missing", "err_kind"))
+    if spec.key not in ERR_MARKS:
+        P.append(Problem("roles_invalid", "err", "family"))
+    if len(recipe.y) != 1:
+        P.append(Problem("roles_invalid", "err", "y"))
+    if recipe.err in (recipe.x, recipe.group, recipe.facet, recipe.unit, *recipe.y):
+        P.append(Problem("roles_invalid", "err", "role"))
+    if recipe.unit is not None or recipe.paired or recipe.stack:
+        P.append(Problem("roles_invalid", "err", "exclusive"))
+    if recipe.err not in s.per_column:
+        P.append(Problem("column_not_found", "err"))
+    elif s.per_column[recipe.err].kind != "numeric":
+        P.append(Problem("column_type_mismatch", "err", "num"))
+    allowed = ERR_MARKS.get(spec.key, frozenset())
+    for i, layer in enumerate(recipe.layers):
+        if layer.mark not in allowed or layer.summary != SUMMARY_NONE:
+            P.append(Problem("mark_not_allowed", f"layers[{i}].mark", f"err:{layer.mark}"))
+    return P
+
+
 # --------------------------------------------------------------------------- 取值（需要带行数据的 DataSummary）
 class _Values:
     def __init__(self, s: adf.DataSummary, rows: list | None = None):
@@ -1135,6 +1193,31 @@ def _value_problems(
     if spec.key == "dose_response" and r.x is not None:
         if any(x <= 0 for x in v.nums(r.x) if x is not None):
             P.append(Problem("dose_nonpositive", "x"))
+    if r.err is not None and r.err in v.idx and y0 in v.idx:
+        P.extend(_err_value_problems(r, spec, v))
+    return P
+
+
+def _err_value_problems(r: FigureRecipe, spec: FamilySpec, v: _Values) -> list[Problem]:
+    """现成误差列（`recipe.err`）的取值规则，只看这份配方真会画的行里纵轴有值的那些：误差不能为负（空 / NaN 的误差格只是「这个点没有误差线」，不拒绝；
+    数值列里的格子要么是有限数要么是缺失，没有 inf）；每个位置恰好一行（比较类：类别 × 分组 × 分面；趋势类：分组 × 分面 × 横轴取值）——有重复测量的表
+    误差线对不上点，不画。"""
+    P: list[Problem] = []
+    ys, es = v.nums(r.y[0]), v.nums(r.err)
+    if any(y is not None and e is not None and e < 0 for y, e in zip(ys, es)):
+        P.append(Problem("error_values_negative", "err"))
+    if spec.key == "comparison":
+        keys = v.keys([r.x, r.group, r.facet])
+    else:
+        keys = list(zip(v.keys([r.group, r.facet]), v.nums(r.x)))
+    seen: set = set()
+    for k, y in zip(keys, ys):
+        if y is None:
+            continue
+        if k in seen:
+            P.append(Problem("error_cells_not_unique", "err"))
+            break
+        seen.add(k)
     return P
 
 
@@ -1251,6 +1334,8 @@ def _large_problems(recipe: FigureRecipe, s: adf.DataSummary) -> list[Problem]:
         out.append(Problem("mark_not_allowed", "stack", "large"))
     if recipe.unit is not None:
         out.append(Problem("mark_not_allowed", "unit", "large"))
+    if recipe.err is not None:  # 现成误差列：大表没有行数据可逐行对齐
+        out.append(Problem("mark_not_allowed", "err", "large"))
     # 取值类规则里只靠「整表最小 / 最大」就能精确判的：对数轴上的非正值（概览扫描留下了每列的精确最小值）。
     # 要整表流过才知道的（折线的 x 重复 / 没排序、系列的 x 个数）在缩减那一遍判（`ai_data_template.large_reduce` 的 `LargeRuleError`）。
     if s.large is not None:
@@ -1345,7 +1430,11 @@ def validate_recipe(
     if spec.order_required and recipe.order == "as_given":
         P.append(Problem("ranking_needs_order", "order"))
     # 列存在与类型
-    cols_ok &= need(recipe.x, "x", spec.x_types) if recipe.x is not None and spec.x_types else True
+    # 已汇总的表（`err`）里每个类别只有一行：类别列的每个取值都不同，不在 `groups`（要有重复才算分组）里，按「标签」（任何文字列）认
+    x_tokens = spec.x_types + (
+        ("label",) if recipe.err is not None and spec.key == "comparison" else ()
+    )
+    cols_ok &= need(recipe.x, "x", x_tokens) if recipe.x is not None and spec.x_types else True
     for i, c in enumerate(recipe.y):
         cols_ok &= need(c, f"y[{i}]", spec.y_types)
     cols_ok &= (
@@ -1356,6 +1445,10 @@ def validate_recipe(
     )
     if recipe.unit is not None:
         cols_ok &= _unit_col_ok(s, recipe.unit, P)
+    if recipe.err is not None or recipe.err_kind is not None:
+        bad = _err_problems(recipe, spec, s)
+        P.extend(bad)
+        cols_ok &= not bad
     # 画法组合
     marks = [layer.mark for layer in recipe.layers]
     for i, layer in enumerate(recipe.layers):
@@ -1718,6 +1811,8 @@ QUESTION_CODES = (
     "mixed_cells",
 )
 CANDIDATE_CODES = (
+    "line_err",  # 已汇总的趋势（每个位置一行 + 现成误差列）：点加线，误差线取自误差列
+    "points_err",  # 已汇总的分组（每个类别一行 + 现成误差列）：一个类别一个点，误差线取自误差列
     "points_mean",
     "box_points",
     "violin_points",
@@ -2021,6 +2116,67 @@ def error_columns(s: adf.DataSummary) -> dict[str, str]:
     return out
 
 
+def _owners(s: adf.DataSummary, skip: set[str]) -> dict[str, str | None]:
+    """每个误差列 → 它修饰的测量列（认不准 = None）；测量列池 = 数值列去掉 `skip`。名字规则是 `adf.error_match`（与 `error_kind` 同一份）。"""
+    errs = error_columns(s)
+    measures = [c for c in s.columns if numeric_like(s.per_column[c]) and c not in skip | set(errs)]
+    out: dict[str, str | None] = {}
+    for e in errs:
+        _kind, partners = adf.error_match(e, [o for o in s.columns if o != e])
+        if partners:
+            out[e] = partners[0] if len(partners) == 1 and partners[0] in measures else None
+        elif len(measures) == 1:
+            # 唯一的「测量列」若叫 n / count，多半是样本量、误差列修饰的是别的列（`group, value, sd, n` 里 `value` 被当横轴 / 标签时）：不猜
+            only = measures[0]
+            out[e] = None if only.strip().lower() in SAMPLE_SIZE_NAMES else only
+        else:
+            means = [m for m in measures if adf._MEAN_WORDS & set(adf._name_tokens(m))]
+            out[e] = means[0] if len(means) == 1 else None
+    return out
+
+
+def sample_size_columns(s: adf.DataSummary) -> list[str]:
+    """样本量列：名字恰好是 `n` / `count`（不分大小写）的数值列，**且表里有一个误差列明确配着另一列**（把它们也算进测量列池再配对）——已汇总的表
+    `group, mean, sd, n` 里的 `n` 是每个均值背后的样本数，不是测量值也不是横轴。`n` / `count` 自己就是某个误差列的配对对象（`group, count, sd`）、
+    或配对有歧义（`group, value, sd, n`、`time, count, sd`）时它仍是普通数值列，规则不动它。"""
+    cands = [
+        c
+        for c in s.columns
+        if c.strip().lower() in SAMPLE_SIZE_NAMES and numeric_like(s.per_column[c])
+    ]
+    if not cands or not error_columns(s):
+        return []
+    owners = _owners(s, set(s.id_like))
+    if not any(o is not None and o not in cands for o in owners.values()):
+        return []
+    taken = {o for o in owners.values() if o is not None}
+    return [c for c in cands if c not in taken]
+
+
+def error_owners(s: adf.DataSummary, axes: tuple[str, ...] = ()) -> dict[str, str | None]:
+    """每个误差列（`error_columns`）→ 它修饰的测量列；**认不准就是 None（不猜）**：
+
+    * 名字里的误差词有它修饰的那一列（`mass_sd` ↔ `mass`、`response_sem` ↔ `mean_response`、`sem` ↔ 名字带 `mean` / `avg` 的列）：恰好一个、且是测量列才算；多个 = None；
+    * 光秃秃的 `sd` / `sem` / `err` / 中文词：表里（去掉误差列、样本量列、编号列和 `axes`）恰好一个数值测量列就是它；多个时只认名字带
+      `mean` / `avg` / `average` 的那一列，不唯一 = None。
+
+    `axes`：这次画图里不是测量值的列（有序横轴等）；列角色还没定时传空。"""
+    return _owners(s, {*sample_size_columns(s), *s.id_like, *axes})
+
+
+def paired_error(s: adf.DataSummary, y: str, axes: tuple[str, ...] = ()) -> str | None:
+    """测量列 `y` 配着的误差列（名字规则同 `adf.error_kind`，见 `error_owners`）；**同一个测量列有不止一个误差列、或配对有歧义 = None**（宁可不画，不猜）。
+    sciviz G-053：误差列是误差量、不是观测——这一对关系只用来「把现成的误差画成误差线」，不放宽哪一列算误差列。"""
+    mine = [e for e, owner in error_owners(s, axes).items() if owner == y]
+    return mine[0] if len(mine) == 1 else None
+
+
+def error_kind_of(s: adf.DataSummary, err: str) -> str:
+    """误差列名字说的是哪一种（`ERR_KINDS`）；名字没说（`unknown`）或认不出都记 `unknown`——**绝不当成 SD**。"""
+    kind = adf.error_kind(err, [o for o in s.columns if o != err])
+    return ERR_KIND_OF_NAME.get(kind or "", "unknown")
+
+
 def _resolve_roles_raw(
     entry: adf.TableEntry, hint: str | None, picks: dict
 ) -> _Roles | NeedsChoice | str:
@@ -2062,6 +2218,13 @@ def _resolve_roles_raw(
         nums = [c for c in nums if c not in errs]
     else:
         errs = set()
+    # 已汇总的表里的样本量列（`n` / `count`，有误差列明确配着另一列）也不是测量值 / 横轴；用户自己点了它则不去。分两步：去掉它绝不会把误差列放回来
+    sizes = {c for c in sample_size_columns(s) if c not in asked} if errs else set()
+    if sizes and any(c not in sizes for c in nums):
+        nums = [c for c in nums if c not in sizes]
+    else:
+        sizes = set()
+    errs_and_sizes = errs | sizes
     dates = [c for c in cols if s.per_column[c].kind == "date" and c not in ids]
     cats = [c for c in cols if c in s.groups and c not in ids]
     cats_all = list(cats)
@@ -2156,7 +2319,7 @@ def _resolve_roles_raw(
     options = {
         "y": nums_all,
         "group": [c for c in cols if c in cats_all or (c in s.numcat and c not in ys)],
-        "x": [c for c in cols if c in xs or (c in errs and c not in ys)],
+        "x": [c for c in cols if c in xs or (c in errs_and_sizes and c not in ys)],
     }
     return _Roles(
         tuple(ys),
@@ -2188,6 +2351,110 @@ def _recipe(entry: adf.TableEntry, code: str, family: str, layers, ys, **roles) 
         why=code,  # 确定性备选的 `why` 就是理由码（前端按码取文案）；模型备选才是一句话
         **roles,
     )
+
+
+#: 对值算汇总 / 分布的图元：已汇总的表（每个位置一行、带现成误差列）不画它们（`summarised_not_raw`）。带汇总方式的层（均值 ± 误差、均值线）另外按 `summary` 认
+_SUMMARISING_MARKS = frozenset(
+    {"box", "violin", "hist", "ecdf", "density", "band", "errorbar", "hline_summary"}
+)
+
+
+def summarising_mark(rec: FigureRecipe) -> str | None:
+    """这份配方里第一个「对 y 值算汇总 / 分布」的层（`图元` 或 `图元:汇总方式`）（均值 ± 误差、箱线、小提琴、ECDF、直方图、核密度、误差带 / 误差线、均值线；带汇总方式的层也算）；没有 = None。"""
+    for layer in rec.layers:
+        if layer.summary != SUMMARY_NONE:
+            return f"{layer.mark}:{layer.summary}"
+        if layer.mark in _SUMMARISING_MARKS:
+            return layer.mark
+    return None
+
+
+def _one_row_per_cell(
+    values: adf.DataSummary, cols: list[str], y: str, x: str | None = None
+) -> bool:
+    """这份表「每个位置恰好一行」：只看真会画的行（`cols` 的格子都非空、纵轴有数、`x`（趋势的数值 / 日期横轴）有值），这些行的（`cols` 取值[, x 取值]）互不相同，
+    且至少两行。已汇总的表（均值 + 误差，一行一个均值）才满足；有重复测量的表不满足。"""
+    v = _Values(values)
+    ys = v.nums(y)
+    keys = v.keys(list(cols))
+    xs = v.nums(x) if x is not None else [0.0] * len(ys)
+    seen: set = set()
+    for k, yv, xv in zip(keys, ys, xs):
+        if yv is None or xv is None or any(not part for part in k):
+            continue
+        key = (k, xv)
+        if key in seen:
+            return False
+        seen.add(key)
+    return len(seen) >= 2
+
+
+def _summarised_shape(
+    entry: adf.TableEntry, values: adf.DataSummary | None, roles: _Roles, unit: str | None
+) -> dict | None:
+    """表是不是「已汇总」的形状：**只有这两种都满足才是**——①单个测量列配着一个误差列（`paired_error`，名字规则同 `adf.error_kind`，配不准 = 不是）；
+    ②每个位置恰好一行（`_one_row_per_cell`；有序横轴时是分组 × 分面 × 横轴取值，否则是类别 × 分组）。返回
+    `{"shape": "trend" | "category", "err", "kind", "x", "group", "facet"}`（给 `line_err` / `points_err` 用的列角色），不是 = None。
+    没有有序横轴、也没有分组列时，表里**恰好一个**每格都不同的文字列（一行一个组，`group, mean, sd, n`）当类别轴——只用于这里的 `*_err` 备选，规则别处仍把它当标签。
+    要带行数据的小表；个体编号（`unit`）、合画、把列当分组、多列纵轴一概不是（宁可不画误差线，不猜）。"""
+    s = entry.summary
+    if (
+        values is None
+        or not values.rows
+        or s.large is not None
+        or roles.stack
+        or unit is not None
+        or getattr(entry, "merge", None) is not None
+        or len(roles.ys) != 1
+    ):
+        return None
+    y, x, cats = roles.ys[0], roles.x_ord, roles.cats
+    err = paired_error(s, y, (x,) if x else ())
+    if err is None:
+        return None
+    if (
+        s.per_column[err].kind != "numeric"
+    ):  # 夹着文字 / 日期的误差列：校验不会放行，别为它剔掉别的备选
+        return None
+    ev, yv = _Values(values), _Values(values).nums(y)
+    if any(e is not None and e < 0 and yy is not None for e, yy in zip(ev.nums(err), yv)):
+        return None
+    kind = error_kind_of(s, err)
+    group = cats[0] if cats else None
+    facet = cats[1] if len(cats) == 2 else None
+    if x is not None:
+        if not _one_row_per_cell(values, [c for c in (group, facet) if c], y, x):
+            return None
+        return {"shape": "trend", "err": err, "kind": kind, "x": x, "group": group, "facet": facet}
+    if cats:  # 类别 × 分组各一行（`cats[0]` 是比较的横轴，恰好两个分组列时另一个做颜色分组）
+        if not _one_row_per_cell(values, [c for c in (cats[0], facet) if c], y):
+            return None
+        return {
+            "shape": "category",
+            "err": err,
+            "kind": kind,
+            "x": cats[0],
+            "group": facet,
+            "facet": None,
+        }
+    v = _Values(values)
+    labels = []
+    for c in s.columns:
+        if s.per_column[c].kind != "text" or c in s.groups or c in s.id_like or c == err:
+            continue
+        cells = [t for t in v.cells(c) if t]
+        if 2 <= len(cells) <= MAX_RANKING_ITEMS and len(set(cells)) == len(cells):
+            labels.append(c)
+    if len(labels) == 1 and _one_row_per_cell(values, [labels[0]], y):
+        return {
+            "shape": "category",
+            "err": err,
+            "kind": kind,
+            "x": labels[0],
+            "group": None,
+            "facet": None,
+        }
+    return None
 
 
 def default_candidates(
@@ -2304,6 +2571,44 @@ def default_candidates(
         groups.append(list(alts))
 
     cats = roles.cats
+    # 已汇总的表（每个位置一行 + 现成误差列）：先给「按现成误差列画误差线」的那一张；下面对值再算汇总 / 分布的备选一律不给（G-053）
+    summ = _summarised_shape(entry, values, roles, unit) if view_entry is entry else None
+    if summ is not None:
+        err_roles = {"err": summ["err"], "err_kind": summ["kind"]}
+        if summ["shape"] == "trend":
+            if "trend" in ok_families:
+                grp(
+                    (
+                        "line_err",
+                        _recipe(
+                            entry,
+                            "line_err",
+                            "trend",
+                            [("points", "none", "main"), ("line", "none", "overlay")],
+                            roles.ys,
+                            x=summ["x"],
+                            **({"group": summ["group"]} if summ["group"] else {}),
+                            **({"facet": summ["facet"]} if summ["facet"] else {}),
+                            **err_roles,
+                        ),
+                    )
+                )
+        else:
+            grp(
+                (
+                    "points_err",
+                    _recipe(
+                        entry,
+                        "points_err",
+                        "comparison",
+                        [("points", "none", "main")],
+                        roles.ys,
+                        x=summ["x"],
+                        group=summ["group"],
+                        **err_roles,
+                    ),
+                )
+            )
     # 有序横轴在时：趋势 / 关系图是主图，分组列做颜色分组、恰好两个分组列时另一个做分面；没有横轴时分组列是比较的横轴
     gx = {"group": cats[0], **({"facet": cats[1]} if len(cats) == 2 else {})} if cats else {}
     if roles.x_ord is not None:
@@ -2469,6 +2774,16 @@ def default_candidates(
     dropped: list[Dropped] = []
     y_filtered = False
     for gi, alts in enumerate(groups):
+        if summ is not None:
+            # 已汇总的表：均值 ± 误差、箱线、分布、均值线都是对「汇总值」再算一次——一个也不给（连同「按顺序试」里还没轮到的），记下为什么（G-053）
+            kept: list[tuple[str, FigureRecipe]] = []
+            for code, rec in alts:
+                bad = None if rec.err is not None else summarising_mark(rec)
+                if bad:
+                    dropped.append(Dropped(gi, (Problem("summarised_not_raw", "layers", bad),)))
+                else:
+                    kept.append((code, rec))
+            alts = kept
         for code, rec in alts:
             used_cols = (
                 *rec.y,
