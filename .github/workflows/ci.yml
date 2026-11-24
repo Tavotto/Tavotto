@@ -39,7 +39,7 @@ name: CI
 # 真实合并组的实测（资格中位 56.9 → 26.4 分钟）也在那里。
 #
 # pytest 分片（CI03a，2026-09-16）：backend-fast / backend-platforms 的 matrix 各加一根
-# `shard` 轴，目前 backend-fast 是 `[1..6]`（`--shard=K/6`）、backend-platforms 是 `[1..8]`（`--shard=K/8`），
+# `shard` 轴，目前 backend-fast 是 `[1..12]`（`--shard=K/12`）、backend-platforms 是 `[1..8]`（`--shard=K/8`），
 # 每档全量 pytest 拆成并行 job（按文件分、不拆文件、
 # 每个进程先算全部各片并自验并集 == 全集）。**覆盖一条没减**：漏片在进程里
 # 就是 rc 4；任一片不 success，`needs.backend-fast.result` 就不是 success，Gate
@@ -1130,7 +1130,7 @@ jobs:
   #   * 为什么 4 片：2026-10-09 两个合并组（#853，run 37900187745 / 37906698476）
   #     的 Linux 3.10 / 3.14 分片 1 分别撞上 60 分钟，当时由 2 片改为 3 片；3 片后合并组
   #     每片仍实测 46–59.5 分钟（#896），2026-10-12 再加到 4 片。不加 -n。
-  #   * 自验做了什么：`--shard=K/6` 在**同一进程 collection 之后**做（tests/conftest.py
+  #   * 自验做了什么：`--shard=K/12` 在**同一进程 collection 之后**做（tests/conftest.py
   #     → tests/support/shard.py），每个进程都算出全部四片，断言 nodeid 集合的并集 ==
   #     全集、两两不交、每片非空、无重复，任一条不成立 rc 4——不是静默跑全集，也不是
   #     静默跑空集。
@@ -1153,7 +1153,7 @@ jobs:
       # os 固定 ubuntu-24.04，写在 runs-on 上，不再是 matrix 的一维。
       matrix:
         python: ["3.10", "3.13", "3.14"]
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     # 分片后每片实测 10–20 分钟（合入后三个真实合并组 35061049078 / 35069266028 /
     # 35073686963 的 18 片：610–1201s）；分片前整档中位 29–35 分钟、max 36。
     # 2026-09-25 用例增长后分片 1 在 hosted runner 上实测 35–40 分钟，两个合并组
@@ -1172,6 +1172,10 @@ jobs:
     # backend-platforms 压到约 38 分钟后，合并组最长腿是这里（4 片实测 62–63 分钟 / 片）。按三个合并组
     # 的 junit 用新表模拟最重片：3.10 4 片 38/52/54 → 6 片 28/38/35，3.14 49/56/50 → 34/38/34，与 Windows
     # 8 片持平；再加到 8 片（~30）就被 Windows 那条腿盖住、只多耗 runner。超时仍不收回，等实测。
+    # 2026-11-24 由 6 片加到 12 片（交付提速方案 B2）：普通 PR 不跑 backend-platforms，PR 的 CI 墙钟就是这条腿
+    # （6 片实测 41–58 分钟 / 片，其中准备约 10 分钟）。按 11-24 权重表留一法模拟，最慢片 pytest 时间 p50 49 → 27、
+    # 最坏 55 → 28 分钟；runner 排队实测 ≈ 0（公开仓库 + Enterprise 500 并发），只多耗 runner 分钟。合并组里仍被
+    # backend-platforms 的 Windows 腿盖住，那条另开 PR 按系统拆片数。
     timeout-minutes: 90
     runs-on: ubuntu-24.04
     steps:
@@ -1217,7 +1221,7 @@ jobs:
         run: |
           python scripts/fetch_fonts.py
           python scripts/fetch_fonts.py --check
-      # `--shard=K/6` 的 6 与上面 matrix.shard 的长度必须是同一个数
+      # `--shard=K/12` 的 12 与上面 matrix.shard 的长度必须是同一个数
       # （tests/test_merge_queue_workflows.py 对拍）；`-rs` 让 skip 理由进日志
       # （CI00 记录：三条腿都没带，CI 侧 skip 理由拿不到）。
       # **两个 conftest 选项必须写成 `--opt=值`**（本机实测，rc 4）：它们在 tests/conftest.py
@@ -1235,7 +1239,7 @@ jobs:
         env:
           TAVOTTO_TEST_HANG_SECONDS: "900"
         run: >-
-          python -m pytest --shard=${{ matrix.shard }}/6
+          python -m pytest --shard=${{ matrix.shard }}/12
           --shard-manifest="${{ runner.temp }}/shard-manifest.json"
           --junitxml "${{ runner.temp }}/junit.xml"
           --durations=50 -rs

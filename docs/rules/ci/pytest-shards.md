@@ -52,6 +52,9 @@ order: 50
   **2026-11-24 按同一口径重算**（10 个合并组，旧表 687 个文件、当时 973 个，286 个走默认权重）：留一法模拟最慢片
   pytest 时间 backend-fast 6 片 p50 53→49、最坏 68→55 分钟；Windows 8 片 p50 58→51 分钟。同时 `weights_from_junit`
   认收集阶段条目（整模块 importorskip，junit 里 `classname=""`、模块在 `name`），否则 3.10 的 junit 喂不进来。
+  **2026-11-24 起 `backend-fast` 是 12 片**（`--shard=K/12`）：普通 PR 不跑 backend-platforms，PR 的 CI 墙钟就是这条腿；
+  6 片实测 41–58 分钟 / 片（准备约 10 分钟）。同一权重表留一法模拟最慢片 pytest 时间 p50 49→27、最坏 55→28 分钟。
+  合并组里仍被 backend-platforms 的 Windows 腿盖住，按系统拆片数另开 PR。
   改任一个 job 的片数
   要同步改：`tests/test_merge_queue_workflows.py::test_pytest_shards_agree_between_the_matrix_and_the_command`
   按 job_id 各自的期望片数、`tests/test_ci_baseline.py` 里对 `live_workflow[...]["matrix"]`
