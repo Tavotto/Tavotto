@@ -3853,6 +3853,7 @@ export default interface Resources {
       "chart_model_unsupported": "当前不支持这份计算图表的模型或编辑方式。",
       "chart_render_pair_missing": "计算图表没有返回同一版的图像与几何，暂未应用本次渲染。",
       "chart_render_unsupported": "当前无法完整渲染这张计算图表。",
+      "chart_source_changed": "计算图表的源文件已变化，本次操作未应用。请恢复匹配的源文件或重新导入。",
       "column_not_found": "这张表里没有这一列。",
       "column_type_mismatch": "这一列的类型不适合画在这个位置，比如把文字当数值用。",
       "composition_negative": "占比图里有负数，不能画。",

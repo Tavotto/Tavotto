@@ -234,14 +234,18 @@ def render_pdf(tmp_path, page, provider, files=None):
     return image, text
 
 
-def test_written_pdf_pixels_prove_use_ctm_relative_path_and_group_opacity(tmp_path, provider):
+@pytest.mark.parametrize("compact_path_instances", [False, True], ids=["grouped", "compact"])
+def test_written_pdf_pixels_prove_use_ctm_relative_path_and_group_opacity(
+    tmp_path, provider, compact_path_instances
+):
     page, _ = svg_to_ir(
         svg(
-            '<defs><path id="tile" d="m0 0 h20 v20 h-20 z"/></defs><g opacity=".5" transform="translate(10 10)"><use href="#tile" fill="red"/><use href="#tile" x="10" fill="red"/></g>'
+            '<defs><path id="tile" transform="scale(2)" d="m0 0 h10 v10 h-10 z"/></defs><g opacity=".5" transform="translate(10 10)"><use href="#tile" fill="red"/><use href="#tile" x="10" fill="red"/></g>'
         ),
         100,
         100,
         provider,
+        compact_path_instances=compact_path_instances,
     )
     image, _ = render_pdf(tmp_path, page, provider)
     # Transparent group: overlap has the same alpha as either single region.

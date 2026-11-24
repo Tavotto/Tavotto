@@ -32,6 +32,7 @@ def scaffold_fragment(
     render_profile: str = LEGACY_PROFILE,
     patches=(),
     legend=(),
+    outline_text: bool = False,
 ) -> dict:
     """保持旧渲染协议；native 的 Figure、属性与 manifest 都在场景物理 pt 中。
 
@@ -55,6 +56,7 @@ def scaffold_fragment(
             salt=salt,
             native=True,
             patches=edits,
+            outline_text=outline_text,
             **({"complete_frame": True} if profile == chartprofile.COMPLETE_PROFILE else {}),
             **({"legend": list(legend)} if legend else {}),
         )
@@ -69,6 +71,7 @@ def _scaffold_fragment(
     patches=(),
     complete_frame: bool = False,
     legend=(),
+    outline_text: bool = False,
 ) -> dict:
     """模型 + 场景框 → ``{"fragment": bytes, "facts": {...}}``。
 
@@ -285,6 +288,7 @@ def _scaffold_fragment(
             salt=salt,
             coordinate_space="scene-viewport-pt",
             legend_follow=legend_follow,
+            outline_text=outline_text,
             **({"complete_frame": True} if complete_frame else {}),
         )
     else:
@@ -502,6 +506,9 @@ def execute_request(req: dict) -> dict:
             elif req.get("probe"):
                 out = {"engine": engine}
             else:
+                outline_text = req.get("outline_text", False)
+                if not isinstance(outline_text, bool):
+                    raise ValueError("outline_text must be a boolean")
                 result = scaffold_fragment(
                     req.get("model", {}),
                     req.get("frame", {}),
@@ -509,6 +516,7 @@ def execute_request(req: dict) -> dict:
                     render_profile=req.get("render_profile", LEGACY_PROFILE),
                     patches=req.get("patches", ()),
                     legend=req.get("legend", ()),
+                    outline_text=outline_text,
                 )
                 out = {
                     "fragment_b64": base64.b64encode(result["fragment"]).decode("ascii"),
