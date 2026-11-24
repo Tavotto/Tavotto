@@ -23,7 +23,7 @@ import { TimelinePanel } from '@/components/VersionDialog'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { isTimelineOpen, useUiStore } from '@/store/uiStore'
-import { emptyProject, type CanvasObject } from '@/types/document'
+import { emptyProject, type CanvasObject, type PanelObject } from '@/types/document'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -145,6 +145,29 @@ describe('版本列表的缩略图', () => {
     // mtime 来自素材库、不在草图里 —— 草图带上它才是把 /api/panels 的职责抄一份
     expect(href).toContain('m=7')
   })
+})
+
+it('uses the saved Figure for an export thumbnail without running the source', async () => {
+  const panel: PanelObject = {
+    ...docObjects[0] as PanelObject,
+    figureSnapshot: { version: 1, sourceId: 'a.pdf', snapshotId: 'saved', receiptId: 'receipt', patchHash: 'patch' },
+  }
+  const createUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:saved-thumb')
+  try {
+    await vi.mocked(fetch).withImplementation(async (url) => String(url).includes('/api/figure-preview')
+      ? Response.json({ preview_source: 'figure_snapshot', figure_snapshot: panel.figureSnapshot,
+        size_mm: [40, 30], svg: '<svg viewBox="0 0 40 30"></svg>' })
+      : Response.json({}), async () => {
+      const svg = await render(<CanvasThumb page={PAGE} objects={[panel]} editedPanel={() => panel} />)
+      expect(svg.querySelector('[data-thumb-panel]')?.getAttribute('href')).toBe('blob:saved-thumb')
+      const posts = vi.mocked(fetch).mock.calls.filter(([, request]) => request?.method === 'POST')
+      expect(posts.some(([url, request]) => String(url).includes('/api/figure-preview') &&
+        JSON.parse(String(request?.body)).figure_snapshot.snapshotId === 'saved')).toBe(true)
+      expect(posts.some(([url]) => String(url).includes('/api/engine/preview_png'))).toBe(false)
+    })
+  } finally {
+    createUrl.mockRestore()
+  }
 })
 
 describe('透明背景（导出对话框用）：默认行为一字不变', () => {

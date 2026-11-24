@@ -144,6 +144,7 @@ import { useEpsOpacityGate } from "./EpsOpacityPrompt";
 import { annotationsBelow, annotationsOf, figureClipOf, singleAnnotatedDocument } from "@/lib/singleExportDoc";
 import { useOriginalAvailability } from "@/hooks/useOriginalSpec";
 import { useRuntimePreview } from "@/hooks/useRuntimePreview";
+import { figureSnapshotFor } from "@/lib/figureSnapshot";
 import { engineTransport } from "@/lib/engineTransport";
 import { useVariantPng } from "@/hooks/useVariantPng";
 import { isJustBakedBaseline } from "@/store/actions";
@@ -2339,12 +2340,13 @@ function useFigureThumbSource(
   const render = usePanelRender(figure.panel);
   const tracked = useRenderStore((s) => !!s.tracked[figure.figureId]);
   const panel = figure.panel;
+  const archived = panel && !engineTransport() ? figureSnapshotFor(panel) : undefined;
   const needsEngine =
     !!panel && (showsEdits(panel) || tracked || figure.kind === "runtime");
   // runtime 图只认**自己这一版**的 SVG（QA-WIN-30）：`usePanelRender` 在自己这版没画过时退回同文件 `latest`
   // 的另一版（恢复的草稿、刚关掉的排版），那是别的状态的图——预览不许拿它冒充；没有就走下面按状态取的 cache 预览
   const ownSvg = useRenderStore((s) => (panel ? (s.byKey[renderKeyOf(panel)]?.svg ?? null) : null));
-  const svg = needsEngine ? (figure.kind === "runtime" ? ownSvg : (render?.svg ?? null)) : null;
+  const svg = needsEngine && !archived ? (figure.kind === "runtime" ? ownSvg : (render?.svg ?? null)) : null;
   // 同一份字符串复用同一个 `{__html}`：缩略格随对话框重渲时不必把整张 SVG 重新解析一遍
   const svgMarkup = useHtmlMarkup(svg);
   // 引擎 SVG 不在手边（位图档没有矢量 payload、或被字节预算清掉了）：按 overrides 现出一张位图，
@@ -2353,21 +2355,22 @@ function useFigureThumbSource(
     panel?.fileId ?? figure.figureId,
     panel?.overrides ?? NO_OVERRIDES,
     bucket,
-    !!panel && !svg && showsEdits(panel),
+    !!panel && !archived && !svg && showsEdits(panel),
     figure.stamp ?? 0,
     panel ? adoptionGuardOf(panel) : undefined,
   );
   // runtime 图的退路是 cache 预览：后端 GET 版给的是「最近一次渲染」，撤销回一个前端已画过的变体时它停在
   // 撤销前（QA-WIN-21）。按此刻的 overrides 取，不是这个状态的图就不挂（预览只是示意，空着比旧图诚实）
-  const runtimeByState = figure.kind === "runtime" && !!panel && !!figure.cached && !engineTransport();
+  const runtimeByState = !!archived || (figure.kind === "runtime" && !!panel && !!figure.cached && !engineTransport());
   const runtimePreview = useRuntimePreview(
     figure.figureId,
     panel?.overrides ?? NO_OVERRIDES,
     runtimeByState,
     figure.stamp ?? 0,
+    archived,
   );
   const src =
-    variant.url ??
+    (archived ? null : variant.url) ??
     (runtimeByState
       ? runtimePreview.exact === true
         ? runtimePreview.url
@@ -2395,7 +2398,8 @@ function editedPanelOf(o: ThumbObject): PanelObject | null {
   const obj = o as CanvasObject;
   // runtime 面板即使没有图内修改也走这条：它没有磁盘原图，后端 GET 版给的是「最近一次渲染」（可能是别的排版 /
   // 草稿的状态，QA-WIN-30），按此刻的 overrides（含空）取才是「这个状态的图」
-  return obj.type === "panel" && (showsEdits(obj) || (obj.fileKind === "runtime" && !engineTransport())) ? obj : null;
+  return obj.type === "panel" && (showsEdits(obj) || (!engineTransport() &&
+    (obj.fileKind === "runtime" || !!figureSnapshotFor(obj)))) ? obj : null;
 }
 
 /** 整版预览里的文字按导出出来的样子画：字体、字号、粗细都取对象自己的（喂给 `CanvasThumb` 的 `exportedText`） */

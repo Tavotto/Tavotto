@@ -254,20 +254,22 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // runtime 面板的 cache 预览**按此刻的 overrides 取**（QA-WIN-21）：后端 GET 版给的是「最近一次渲染」，
   // 撤销回一个前端已画过的变体时它停在撤销前，冷画布就会显示撤销前的图。内嵌画布（transport）没有
   // 这条 HTTP 路，照旧。取到之前 / 没命中这个状态时见 `approxPreview`。
-  const archivedRuntime = runtime && obj.source?.captureSource === 'ggplot2' ? figureSnapshotFor(obj) : undefined
+  const archived = !computed && !originalPixels && !transport ? figureSnapshotFor(obj) : undefined
   const runtimePreview = useRuntimePreview(
-    obj.fileId, obj.overrides, runtime && !transport && (!!runtimeState?.cached || !!archivedRuntime),
-    previewNonce, archivedRuntime,
+    obj.fileId, obj.overrides, !transport && (!!archived || (runtime && !!runtimeState?.cached)),
+    previewNonce, archived,
   )
   const fileSrc =
     kind === 'unknown'
       ? null
       : transport
         ? runtime && !runtimeState?.cached ? null : transport.panelSrc(obj.fileId, kind, bucket, mtime)
-        : runtime
-          ? (runtimePreview.url ?? (!archivedRuntime && runtimeState?.cached && runtimePreview.failed
-            ? panelSrc(obj.fileId, kind, bucket, mtime) : null))
-          : panelSrc(obj.fileId, kind, bucket, mtime)
+        : archived
+          ? runtimePreview.url
+          : runtime
+            ? (runtimePreview.url ?? (runtimeState?.cached && runtimePreview.failed
+              ? panelSrc(obj.fileId, kind, bucket, mtime) : null))
+            : panelSrc(obj.fileId, kind, bucket, mtime)
   const src = (useEnginePng && enginePng) || fileSrc || ''
   // `/api/render` 在候选后端下会以 503 表达背压（child 队列满）；<img> 只看得到「失败」，
   // 有界重试同一地址（`lib/imgRetry`），blob / 磁盘原件失败不在此列
@@ -361,7 +363,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 「最近一次」），同样要说出来——否则就是 QA-WIN-21 的无提示旧图。
   const approxPreview =
     (!showSvg && imageLoadFailed) ||
-    (!runtime && needsEngine && !showSvg && !(useEnginePng && enginePng) && !!fileSrc) ||
+    (!runtime && needsEngine && !showSvg && !(useEnginePng && enginePng) && !!fileSrc && !archived) ||
     (runtime && !transport && !showSvg && !(useEnginePng && enginePng) && !!fileSrc &&
       runtimePreview.exact !== true)
 

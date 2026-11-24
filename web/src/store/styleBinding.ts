@@ -72,6 +72,7 @@ import {
 import type { DocumentStyle, FigureDocument, PanelObject, StyleOwnedOverride } from '@/types/document'
 import { renderStylePlan, writeStylePlan } from './actions'
 import { isCopiedBakedBaseline } from '@/lib/bakedBaseline'
+import { hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
 import { useAssetStore } from './assetStore'
 import { useDocumentStore } from './documentStore'
 import { finishActiveGesture } from './gestureCoordinator'
@@ -344,6 +345,8 @@ function owe(
   full: StyleProfileData,
   /** 改样式 / 跟上样式库：补的时候不碰用户手改的 override（明确绑定传 false，照旧覆盖） */
   keepUserOwned = false,
+  /** 只有用户明确绑定或修改样式时，才为归档的磁盘面板打开编辑引擎。 */
+  prepareArchived = false,
 ) {
   const ids = new Set(missingIds)
   const missing = panelsOf(doc).filter((p) => ids.has(figKey(p)))
@@ -352,6 +355,7 @@ function owe(
   const assets = useAssetStore.getState().byId
   const map = pending.get(key) ?? new Map<string, StyleProfileData>()
   const keep = keeping.get(key) ?? new Map<string, StyleProfileData>()
+  const prepare: PanelObject[] = []
   for (const p of missing) {
     // 对齐过的图带着样式写的 override，合样式的图欠整份等于只欠这一笔：只看 override 就够
     const fresh = !p.overrides.length || isCopiedBakedBaseline(p.overrides, assets[p.fileId])
@@ -369,10 +373,14 @@ function owe(
       else keep.delete(fig)
     }
     map.set(fig, mergeDelta(prev, owed))
+    if (prepareArchived && p.fileKind !== 'runtime' && hasFigureSnapshotPreview(p)) prepare.push(p)
   }
   if (map.size) pending.set(key, map)
   if (keep.size) keeping.set(key, keep)
   else keeping.delete(key)
+  for (const p of prepare) {
+    if (useRenderStore.getState().get(renderKeyOf(p)).wantPatches !== JSON.stringify(p.overrides)) requestRender(p, true)
+  }
 }
 
 /** `a` 里去掉 `b` 也有的项（图内角色按 role × prop，配色整体算一项） */
@@ -641,7 +649,7 @@ function bindNow(recordId: string | null): void {
     },
     plan,
   )
-  owe(docNow(), delta, missing, delta)
+  owe(docNow(), delta, missing, delta, false, true)
   markSeen(docNow(), shown)
   markTextsSeen()
 }
@@ -792,7 +800,7 @@ export function editBoundStyleAll(edits: StyleEdit[], label?: (name: string) => 
       if (redirectKey) redirects.delete(redirectKey)
       throw e
     }
-    owe(docNow(), delta, missing, presetDelta(null, data), true)
+    owe(docNow(), delta, missing, presetDelta(null, data), true, true)
     if (copied) useUiStore.getState().setStatus(msg('stylePanel.copiedBuiltin', { name }, 'workspace'), 'done')
     else if (upgraded) useUiStore.getState().setStatus(msg('stylePanel.upgradedLegacy', { name }, 'workspace'), 'done')
     return true

@@ -7,6 +7,7 @@ import { artifactValidationIssue, isUnadoptedPngSource, artifactEntryPending, ar
  */
 import { useEffect } from 'react'
 import { isJustBakedBaselineOf, type BakedBaselineFacts } from '@/lib/bakedBaseline'
+import { hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
 import { useAssetStore } from '@/store/assetStore'
 import {
   registerOverrideStamper,
@@ -68,6 +69,10 @@ export function renderTargets(
   const targets: PanelObject[] = []
   for (const o of objects) {
     if (o.type !== 'panel' || (!o.script && !o.chart && o.chartSource === undefined)) continue
+    // Opening a saved output is read-only. Running its source here can retire
+    // the very archive the canvas and export are about to read.
+    if (hasFigureSnapshotPreview(o) && o.id !== editingId && !neighbours.has(o.id) &&
+        !tracked[o.fileId] && !liveNativeAssets.has(o.fileId)) continue
     // runtime 面板（ADR 0013 lazy rehydrate）：**重开文档绝不自动执行脚本**。
     // 正在编辑、前端已有渲染，或样式绑定要读取已停在屏障的 native Figure，才进同步。
     // 带着 overrides 重开的文档先显示 cache 占位，进入编辑 / 显式重跑那一刻

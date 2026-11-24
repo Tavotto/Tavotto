@@ -91,6 +91,17 @@ describe('renderTargets：按变体去重，不再裁一个赢家', () => {
     expect(renderTargets([panel('a', 'Fig1.pdf', 0)], null, { 'Fig1.pdf': true })).toHaveLength(1)
   })
 
+  it('reopening a saved Figure on a styled canvas does not start its script', () => {
+    const archived: PanelObject = {
+      ...panel('saved', 'Fig1.pdf', 1),
+      figureSnapshot: {
+        version: 1, sourceId: 'Fig1.pdf', patchHash: 'patch', receiptId: 'receipt', snapshotId: 'saved',
+      },
+    }
+    expect(renderTargets([archived], null, {}, {}, {}, true)).toEqual([])
+    expect(renderTargets([archived], 'saved', {}, {}, {}, true)).toEqual([archived])
+  })
+
   it('没有脚本的面板永远不进队列', () => {
     const raster = { ...panel('a', 'photo.png', 3), script: undefined } as PanelObject
     expect(renderTargets([raster], 'a', {})).toEqual([])
