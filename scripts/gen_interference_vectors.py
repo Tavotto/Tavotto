@@ -238,7 +238,9 @@ def cases() -> list[dict]:
         # 32 mm × 4 mm 的文字块；布局框写成它的轴对齐外接框（与真 manifest 一致：45° 时各向半径 12.73 mm）
         hw, hh = 16.0, 2.0
         c, s_ = abs(math.cos(math.radians(rot))), abs(math.sin(math.radians(rot)))
-        ex, ey = (hw * c + hh * s_) / W_MM, (hw * s_ + hh * c) / H_MM
+        # 写进 golden 的是输入：三角函数末位在 Windows CRT 与 glibc 上可能差 1 ulp，取 9 位小数让两平台逐字节一致
+        ex = round((hw * c + hh * s_) / W_MM, 9)
+        ey = round((hw * s_ + hh * c) / H_MM, 9)
         el = _el(gid, "ticklabel", [cx - ex, cy - ey, 2 * ex, 2 * ey], clip=clip)
         if with_block:
             el["text_block"] = {
