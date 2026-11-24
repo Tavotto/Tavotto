@@ -82,7 +82,14 @@ class _Errors:
 
 
 def _is_num(v: object) -> bool:
-    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+    """有限的数（布尔不算）。JSON 里的超大整数（如 10**400）转 float 会抛 OverflowError：当成不是数，
+    走结构化拒绝，不让校验本身崩掉（Codex #2196）。"""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return False
+    try:
+        return math.isfinite(float(v))
+    except OverflowError:
+        return False
 
 
 def _check_point(v: object, lim: float) -> bool:
@@ -267,9 +274,11 @@ def validate_new_objects(
 
 
 def _mint(objs: list, taken: set[str], prefix: dict) -> dict:
-    """局部 id / 组名 → 正式 id。组名按整条路径认（不同父组下同名的组是两个组）。"""
+    """局部 id / 组名 → 正式 id。组名按整条路径认（不同父组下同名的组是两个组）；路径按元组认，不拼字符串——
+    组名里可以有 `/`，`['a/b']` 与 `['a', 'b']` 是两个组（Codex #2196）。`group_map` 回成
+    `[{"path": [组名…], "id": 正式 id}]`。"""
     id_map: dict[str, str] = {}
-    group_map: dict[str, str] = {}
+    groups: dict[tuple, str] = {}
     out: list[dict] = []
     for o in objs:
         real = new_id(prefix[o["type"]], taken)
@@ -280,19 +289,20 @@ def _mint(objs: list, taken: set[str], prefix: dict) -> dict:
         if path:
             chain: list[str] = []
             for depth in range(len(path)):
-                key = "/".join(path[: depth + 1])
-                if key not in group_map:
-                    group_map[key] = new_id(prefix["group"], taken)
-                chain.append(group_map[key])
+                key = tuple(path[: depth + 1])
+                if key not in groups:
+                    groups[key] = new_id(prefix["group"], taken)
+                chain.append(groups[key])
             n["groupId"] = chain[-1]
             if len(chain) >= 2:  # 只有两层及以上才写 groupPath（`types/document.ObjectBase`）
                 n["groupPath"] = chain
         out.append(n)
+    group_map = [{"path": list(k), "id": v} for k, v in groups.items()]
     return {"ok": True, "objects": out, "id_map": id_map, "group_map": group_map, "errors": []}
 
 
 def _result(errs: _Errors) -> dict:
-    return {"ok": False, "objects": [], "id_map": {}, "group_map": {}, "errors": errs.items}
+    return {"ok": False, "objects": [], "id_map": {}, "group_map": [], "errors": errs.items}
 
 
 # ------------------------------------------------------------------ 导出载荷

@@ -121,8 +121,8 @@ def test_ids_format_and_no_collision():
     # 同一条路径前缀 = 同一个组；两层的写 groupPath，一层的只写 groupId
     assert t["groupPath"][0] == a["groupId"] and t["groupId"] == t["groupPath"][-1]
     assert "groupPath" not in a
-    assert set(r["group_map"]) == {"机理图", "机理图/细胞"}
-    assert all(re.fullmatch(r"g_[a-z0-9]{8}", g) for g in r["group_map"].values())
+    assert [g["path"] for g in r["group_map"]] == [["机理图"], ["机理图", "细胞"]]
+    assert all(re.fullmatch(r"g_[a-z0-9]{8}", g["id"]) for g in r["group_map"])
 
 
 def test_same_group_name_under_different_parents_are_two_groups():
@@ -176,3 +176,44 @@ def test_errors_do_not_echo_input():
     # 字段名本身会出现在错误里（它是定位信息）；字段值永远不出现
     r = agentobjects.validate_new_objects([{"id": "x", "type": "text", "text": 5, "color": secret}])
     assert secret not in json.dumps(r)
+
+
+def test_group_names_with_a_slash_do_not_collide():
+    """`['a/b']` 与 `['a', 'b']` 是两个组：路径按元组认，不拼字符串（Codex #2196）。"""
+    base = {
+        "type": "shape",
+        "x": 0,
+        "y": 0,
+        "w": 1,
+        "h": 1,
+        "shape": "rect",
+        "strokePt": 1,
+        "color": "#000000",
+        "fill": None,
+    }
+    r = agentobjects.validate_new_objects(
+        [{**base, "id": "u", "groupPath": ["a/b"]}, {**base, "id": "v", "groupPath": ["a", "b"]}]
+    )
+    assert r["ok"]
+    u, v = r["objects"]
+    assert u["groupId"] != v["groupId"]
+    assert sorted(map(tuple, (g["path"] for g in r["group_map"]))) == [("a",), ("a", "b"), ("a/b",)]
+
+
+def test_huge_integer_is_rejected_not_crashing():
+    """JSON 里的超大整数转 float 会溢出：回结构化拒绝，不抛 OverflowError（Codex #2196）。"""
+    item = {
+        "id": "t",
+        "type": "text",
+        "x": 10**400,
+        "y": 0,
+        "w": 1,
+        "h": 1,
+        "text": "a",
+        "sizePt": 8,
+        "bold": False,
+        "color": "#000000",
+        "align": "left",
+    }
+    r = agentobjects.validate_new_objects([item])
+    assert r["errors"] == [{"code": "bad_value", "index": 0, "field": "x"}]
