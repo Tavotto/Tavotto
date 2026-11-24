@@ -318,8 +318,10 @@
         "image_ppi": "图像分辨率",
         "clipping": "裁切",
         "dpi_tag": "分辨率标签",
-        "raster_density": "像素密度"
-      }
+        "raster_density": "像素密度",
+        "text_size": "字号"
+      },
+      "textSizeBelow": "成品里最小的文字是 {{min}} pt，低于规范的 {{floor}} pt"
     },
     "cancelPending": "正在请求取消…",
     "cancelRequested": "已请求取消",
