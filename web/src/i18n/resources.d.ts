@@ -4696,6 +4696,8 @@ export default interface Resources {
     },
     "preflight": {
       "axisLabelFormat": "坐标轴标题「{{label}}」不是规范的「{{want}}」形式",
+      "barBaselineTruncatedX": "柱子从 {{baseline}} 画起，但横轴只显示 {{low}} 到 {{high}}，{{baseline}} 不在图里，每根柱子都被切掉一截，长短看起来和数值不成比例了",
+      "barBaselineTruncatedY": "柱子从 {{baseline}} 画起，但纵轴只显示 {{low}} 到 {{high}}，{{baseline}} 不在图里，每根柱子都被切掉一截，高矮看起来和数值不成比例了",
       "barWithoutErrorbar": "柱状图没有误差棒。柱子若是多次测量的均值，规范要求标出误差。",
       "cjkFallbackMissing": "含中日韩字符的文字用了 {{family}}，没有声明回退字体，导出 PDF 里是方框。",
       "cjkFallbackUnaccepted": "含中日韩字符的文字由 {{face}} 画出（正文字体 {{family}}），不在规范接受的中文字体里。",
@@ -4885,6 +4887,7 @@ export default interface Resources {
       "tierUnverifiable": "无法自动检查",
       "title": {
         "axis-label-format": "坐标轴标题格式不符",
+        "bar-baseline-truncated": "柱子的起点被截掉",
         "bar-without-errorbar": "柱状图没有误差棒",
         "cjk-fallback-missing": "缺中文字体回退",
         "discouraged-colormap": "不推荐的色谱",

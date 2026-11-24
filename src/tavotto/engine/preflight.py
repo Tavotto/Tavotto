@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import math
 import re
+from decimal import ROUND_HALF_UP, Decimal
 
 from .. import glyphplan
 from . import profiles as profiles_mod
@@ -709,6 +710,130 @@ def _check_log_axis_nonpositive(
             )
 
 
+def _finite(value: object) -> float | None:
+    got = _num(value)
+    return got if got is not None and math.isfinite(got) else None
+
+
+#: `_axis_num` 的量级分档：第 n 档（`|v| >= edge`）保留 n 位小数，约 4 位有效数字；比最后一档还小的保留 16 位
+_AXIS_NUM_EDGES = (
+    1000,
+    100,
+    10,
+    1,
+    0.1,
+    0.01,
+    1e-3,
+    1e-4,
+    1e-5,
+    1e-6,
+    1e-7,
+    1e-8,
+    1e-9,
+    1e-10,
+    1e-11,
+    1e-12,
+)
+
+
+def _axis_num(value: float) -> str:
+    """轴上的数（柱的基线、轴范围的两端）写进文案的样子：约 4 位有效数字、去掉末尾的 0。
+
+    与 `preflight.ts` 的 `axisNum` 同源（golden 连 message params 一起比）：小数位数按量级分档取（不用 log10，
+    两种语言在 10 的整次幂上可能差一个 ulp），舍入是「对精确二进制值四舍五入、正好一半远离 0」——`Decimal` 的
+    `ROUND_HALF_UP` 就是 JS `toFixed` 的规则；`f"{v:.2f}"` 遇到正好一半时取偶，会与 JS 分叉。"""
+    a = abs(value)
+    if (
+        a >= 1e21
+    ):  # JS 的 toFixed 在这里改写指数形式；两侧都退回各自的默认写法（轴范围到不了这么大）
+        return f"{value:g}"
+    places = next((n for n, edge in enumerate(_AXIS_NUM_EDGES) if a >= edge), len(_AXIS_NUM_EDGES))
+    text = f"{Decimal(value).quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP):f}"
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return "0" if text == "-0" else text
+
+
+def _check_bar_baseline_truncated(
+    manifest: dict, pid: str, hidden_legends: set[str], sink: _Sink
+) -> None:
+    """V-002：线性轴上柱的共同基线落在可见范围之外（柱底被截，柱长不再和数值成比例）。
+
+    事实读 axes 元素的 `bar_baseline`（产生者只有 `engine/manifest.bar_baseline`）：那一维 `status` 是 `ok`，
+    且同一元素 editable 里那一维的尺度**正是** `linear`、范围是两个有限数（`lo < hi`，按 min / max 判，反转的轴一样）
+    才判；缺范围 / 缺尺度 / log / symlog / logit / 其它尺度一律不判。基线落在闭区间 `[lo, hi]` 外（容差为跨度的
+    1e-9，只吃浮点噪声）就报。每个（axes, 维）一次命中，x 先于 y，那一维里截得最远的基线决定 detail；
+    `worse` 是截掉的距离占跨度的比例（不同轴之间可比）。与 `preflight.ts` 的 `checkBarBaselineTruncated` 同源。"""
+    for el in manifest.get("elements") or []:
+        if el.get("role") != "axes" or not _is_drawn(el, hidden_legends):
+            continue
+        facts = el.get("bar_baseline")
+        if not isinstance(facts, dict):
+            continue
+        gid = str(el.get("gid", ""))
+        for dim in ("x", "y"):
+            fact = facts.get(dim)
+            if not isinstance(fact, dict) or fact.get("status") != "ok":
+                continue
+            if _field(el, f"{dim}scale") != "linear":
+                continue
+            lim = _field(el, f"{dim}lim")
+            if not isinstance(lim, list) or len(lim) != 2:
+                continue
+            a, b = _finite(lim[0]), _finite(lim[1])
+            if a is None or b is None:
+                continue
+            lo, hi = min(a, b), max(a, b)
+            span = hi - lo
+            if not span > 0:
+                continue
+            eps = span * 1e-9
+            entries = fact.get("baselines")
+            if not isinstance(entries, list):
+                continue
+            worst: tuple[float, float, int] | None = None
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                base = _finite(entry.get("value"))
+                bars = _domain_count(entry.get("bars"))
+                if base is None or bars <= 0 or lo - eps <= base <= hi + eps:
+                    continue
+                dist = lo - base if base < lo else base - hi
+                if worst is None or dist > worst[0]:
+                    worst = (dist, base, bars)
+            if worst is None:
+                continue
+            dist, base, bars = worst
+            edge = lo if base < lo else hi
+            word = "纵轴" if dim == "y" else "横轴"
+            sink.add(
+                "bar-baseline-truncated",
+                f"柱子从 {_axis_num(base)} 画起，但{word}只显示 {_axis_num(lo)} 到 {_axis_num(hi)}，"
+                f"{_axis_num(base)} 不在图里，每根柱子都被切掉一截，"
+                f"{'高矮' if dim == 'y' else '长短'}看起来和数值不成比例了",
+                message=(
+                    f"barBaselineTruncated{dim.upper()}",
+                    {
+                        "baseline": _axis_num(base),
+                        "low": _axis_num(lo),
+                        "high": _axis_num(hi),
+                        "edge": _axis_num(edge),
+                    },
+                ),
+                object_ids=[pid],
+                gids=[gid],
+                detail={
+                    "axis": dim,
+                    "baseline": base,
+                    "lim_low": lo,
+                    "lim_high": hi,
+                    "bars": bars,
+                },
+                worse=dist / span,
+            )
+
+
 def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
     manifest = panel.get("manifest")
     if not isinstance(manifest, dict):
@@ -976,6 +1101,8 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
 
     # --- 数据与编码客观不一致（V-001）：数学上可判定，进 warn；不自动修（改 symlog / 删点是科学决策） ---
     _check_log_axis_nonpositive(manifest, pid, hidden_legends, sink)
+    # V-002 线性轴上柱的共同基线被截掉：同属这一档，同样不自动修（从 0 起还是改点图由作者定）
+    _check_bar_baseline_truncated(manifest, pid, hidden_legends, sink)
 
     # --- 数据语义：只给建议，绝不替用户裁决 ---
     for ax, roles in sorted(roles_by_axes.items()):

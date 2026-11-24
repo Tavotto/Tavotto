@@ -755,6 +755,89 @@ function checkLogAxisNonpositive(
   }
 }
 
+/**
+ * 轴上的数（柱的基线、轴范围的两端）写进文案的样子：约 4 位有效数字、去掉末尾的 0。
+ * 同源对：`engine/preflight.py` 的 `_axis_num`（golden 连 message params 一起比）。小数位数按量级分档取
+ * （不用 log10，两种语言在 10 的整次幂上可能差一个 ulp）；`toFixed` 对精确二进制值舍入、正好一半远离 0，
+ * Python 侧用 `Decimal` 的 `ROUND_HALF_UP` 照做。
+ */
+const AXIS_NUM_EDGES = [
+  1000, 100, 10, 1, 0.1, 0.01, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10, 1e-11, 1e-12,
+]
+export function axisNum(v: number): string {
+  const a = Math.abs(v)
+  if (a >= 1e21) return String(v) // toFixed 在这里改写指数形式；轴范围到不了这么大
+  const idx = AXIS_NUM_EDGES.findIndex((edge) => a >= edge)
+  let text = v.toFixed(idx < 0 ? AXIS_NUM_EDGES.length : idx)
+  if (text.includes('.')) text = text.replace(/0+$/, '').replace(/\.$/, '')
+  return text === '-0' ? '0' : text
+}
+
+/**
+ * V-002：线性轴上柱的共同基线落在可见范围之外（柱底被截，柱长不再和数值成比例）。事实读 axes 元素的
+ * `bar_baseline`（产生者只有 `engine/manifest.bar_baseline`）：那一维 `status` 是 `ok`，且同一元素 editable 里
+ * 那一维的尺度正是 `linear`、范围是两个有限数（`lo < hi`，按 min / max 判）才判；缺范围 / 缺尺度 / 其它尺度一律
+ * 不判。基线落在闭区间 `[lo, hi]` 外（容差为跨度的 1e-9）就报，每个（axes, 维）一次命中，x 先于 y，截得最远的
+ * 基线决定 detail，`worse` 是截掉的距离占跨度的比例。与 `engine/preflight.py` 的
+ * `_check_bar_baseline_truncated` 同源（golden `bar-baseline-*`）。
+ */
+function checkBarBaselineTruncated(
+  manifest: Manifest,
+  pid: string,
+  hidden: Set<string>,
+  sink: Sink,
+): void {
+  for (const el of manifest.elements ?? []) {
+    if (el.role !== 'axes' || !isDrawn(el, hidden)) continue
+    const facts = el.bar_baseline
+    if (!facts || typeof facts !== 'object' || Array.isArray(facts)) continue
+    for (const dim of ['x', 'y'] as const) {
+      const fact = facts[dim]
+      if (!fact || typeof fact !== 'object' || fact.status !== 'ok') continue
+      if (field(el, `${dim}scale`) !== 'linear') continue
+      const lim = field(el, `${dim}lim`)
+      if (!Array.isArray(lim) || lim.length !== 2) continue
+      const a = num(lim[0])
+      const b = num(lim[1])
+      if (a == null || b == null) continue
+      const lo = Math.min(a, b)
+      const hi = Math.max(a, b)
+      const span = hi - lo
+      if (!(span > 0)) continue
+      const eps = span * 1e-9
+      const entries = fact.baselines
+      if (!Array.isArray(entries)) continue
+      let worst: { dist: number; base: number; bars: number } | null = null
+      for (const entry of entries) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue
+        const base = num(entry.value)
+        const bars = domainCount(entry.bars)
+        if (base == null || bars <= 0 || (lo - eps <= base && base <= hi + eps)) continue
+        const dist = base < lo ? lo - base : base - hi
+        if (worst == null || dist > worst.dist) worst = { dist, base, bars }
+      }
+      if (worst == null) continue
+      const edge = worst.base < lo ? lo : hi
+      sink.add(
+        'bar-baseline-truncated',
+        pf(dim === 'y' ? 'barBaselineTruncatedY' : 'barBaselineTruncatedX', {
+          baseline: axisNum(worst.base),
+          low: axisNum(lo),
+          high: axisNum(hi),
+          edge: axisNum(edge),
+        }),
+        {
+          objectIds: [pid],
+          gids: [el.gid],
+          detail: { axis: dim, baseline: worst.base, lim_low: lo, lim_high: hi, bars: worst.bars },
+          worse: worst.dist / span,
+          prop: `${dim}lim`,
+        },
+      )
+    }
+  }
+}
+
 function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, sink: Sink): void {
   const manifest = panel.manifest
   if (!manifest) return
@@ -970,6 +1053,8 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
 
   // --- 数据与编码客观不一致（V-001）：数学上可判定，进 warn；不自动修（改 symlog / 删点是科学决策） ---
   checkLogAxisNonpositive(manifest, pid, hidden, sink)
+  // V-002 线性轴上柱的共同基线被截掉：同属这一档，同样不自动修（从 0 起还是改点图由作者定）
+  checkBarBaselineTruncated(manifest, pid, hidden, sink)
 
   // --- 数据语义：只给建议，绝不替用户裁决 ---
   for (const ax of [...rolesByAxes.keys()].sort()) {

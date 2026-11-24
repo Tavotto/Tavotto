@@ -81,7 +81,9 @@
       "spec": [
         "V-002"
       ],
-      "checks": []
+      "checks": [
+        "bar-baseline-truncated"
+      ]
     },
     {
       "id": "G-003",

@@ -624,6 +624,198 @@ def cases() -> list[dict]:
         )
     )
 
+    # 9l. V-002 线性轴上柱的共同基线被截掉（`bar-baseline-truncated`）：事实只读 axes 元素的 `bar_baseline`
+    #     （`engine/manifest.bar_baseline`，只有基线），范围与尺度从同一元素的 `[xy]lim` / `[xy]scale` 读。
+    #     那一维 `status == "ok"`、尺度**正是** linear、范围两个有限数且 lo < hi、基线落在闭区间外才报；
+    #     每个（axes, 维）一次命中，x 先于 y，截得最远的基线决定 detail，跨轴按「截掉的距离 / 跨度」比最糟。
+    #     message params 是 `_axis_num` ↔ `axisNum` 写出来的字符串，量级与正好一半的舍入在下面几条里各压一次
+    def _axes_el(gid: str, *, xlim=None, ylim=None, xscale=None, yscale=None) -> dict:
+        el = _el(gid, "axes")
+        for prop, value, typ in (
+            ("xlim", xlim, "pair"),
+            ("ylim", ylim, "pair"),
+            ("xscale", xscale, "enum"),
+            ("yscale", yscale, "enum"),
+        ):
+            if value is not None:
+                el["editable"].append({"prop": prop, "type": typ, "value": value})
+        return el
+
+    def _bar_case(name: str, axes: list[tuple[dict, dict]], *, profile_id="lab-publication-v1"):
+        m = _clean_manifest()
+        m["elements"] = [e for e in m["elements"] if e["gid"] != "axes_0"]
+        for el, facts in axes:
+            el["bar_baseline"] = facts
+            m["elements"].insert(0, el) if el["gid"] == "axes_0" else m["elements"].append(el)
+        return {"name": name, "profile_id": profile_id, "spec": _spec([_panel("p1", manifest=m)])}
+
+    def _bok(*entries) -> dict:
+        return {"status": "ok", "baselines": [{"value": v, "bars": n} for v, n in entries]}
+
+    def _vy(gid="axes_0", ylim=(4.0, 9.0), yscale="linear", **kw) -> dict:
+        return _axes_el(gid, ylim=list(ylim) if ylim is not None else None, yscale=yscale, **kw)
+
+    out.append(_bar_case("bar-baseline-cut-y", [(_vy(), {"y": _bok((0.0, 2))})]))
+    out.append(
+        _bar_case(
+            "bar-baseline-cut-x-barh",
+            [(_axes_el("axes_0", xlim=[4.0, 9.0], xscale="linear"), {"x": _bok((0.0, 3))})],
+        )
+    )
+    out.append(
+        _bar_case("bar-baseline-visible-no-report", [(_vy(ylim=(0.0, 8.4)), {"y": _bok((0.0, 2))})])
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-on-the-edge-no-report",
+            # 自动范围下 sticky edge 让下端恰好等于基线（闭区间）；统一的非 0 基线（指数柱 100）同理
+            [(_vy(ylim=(100.0, 150.0)), {"y": _bok((100.0, 4))})],
+        )
+    )
+    out.append(
+        _bar_case("bar-baseline-nonzero-cut", [(_vy(ylim=(120.0, 150.0)), {"y": _bok((100.0, 4))})])
+    )
+    out.append(
+        _bar_case("bar-baseline-inverted-lim", [(_vy(ylim=(9.0, 4.0)), {"y": _bok((0.0, 2))})])
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-above-the-top",
+            # 负值柱从 0 往下，范围却停在 -2：越过的是上端
+            [(_vy(ylim=(-9.0, -2.0)), {"y": _bok((0.0, 2))})],
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-nonlinear-or-missing-scale-no-report",
+            [
+                (_vy("axes_0", yscale="log"), {"y": _bok((0.0, 2))}),
+                (_vy("axes_1", yscale="symlog"), {"y": _bok((0.0, 2))}),
+                (_vy("axes_2", yscale="logit"), {"y": _bok((0.0, 2))}),
+                (_vy("axes_3", yscale="asinh"), {"y": _bok((0.0, 2))}),
+                (_vy("axes_4", yscale=None), {"y": _bok((0.0, 2))}),
+                (_vy("axes_5", ylim=None), {"y": _bok((0.0, 2))}),
+            ],
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-bad-lim-no-report",
+            [
+                (_vy("axes_0", ylim=(5.0, 5.0)), {"y": _bok((0.0, 2))}),
+                (_axes_el("axes_1", ylim=[4.0], yscale="linear"), {"y": _bok((0.0, 2))}),
+                (_axes_el("axes_2", ylim=[4.0, "9"], yscale="linear"), {"y": _bok((0.0, 2))}),
+                (_axes_el("axes_3", ylim=[True, 9.0], yscale="linear"), {"y": _bok((0.0, 2))}),
+            ],
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-not-measured-no-report",
+            [
+                (
+                    _vy("axes_0"),
+                    {"y": {"status": "over_budget", "baselines": [{"value": 0, "bars": 2}]}},
+                ),
+                (
+                    _vy("axes_1"),
+                    {"y": {"status": "unavailable", "baselines": [{"value": 0, "bars": 2}]}},
+                ),
+                (_vy("axes_2"), {"y": {"baselines": [{"value": 0, "bars": 2}]}}),
+                (_vy("axes_3"), {"y": [0, 2]}),
+                (_vy("axes_4"), []),
+            ],
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-bad-entries-no-report",
+            [
+                (_vy("axes_0"), {"y": {"status": "ok", "baselines": {"value": 0, "bars": 2}}}),
+                (
+                    _vy("axes_1"),
+                    {
+                        "y": {
+                            "status": "ok",
+                            "baselines": [
+                                {"value": "0", "bars": 2},
+                                {"value": True, "bars": 2},
+                                {"value": 0, "bars": 0},
+                                {"value": 0, "bars": 1.5},
+                                {"value": 0, "bars": True},
+                                {"bars": 2},
+                                [0, 2],
+                            ],
+                        }
+                    },
+                ),
+                (_vy("axes_2"), {"y": {"status": "ok", "baselines": []}}),
+            ],
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-wrong-dim-no-report",
+            # 竖柱的事实只在 y：x 范围截不截与它无关
+            [
+                (
+                    _axes_el(
+                        "axes_0", xlim=[4.0, 9.0], xscale="linear", ylim=[0.0, 9.0], yscale="linear"
+                    ),
+                    {"y": _bok((0.0, 2))},
+                )
+            ],
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-worst-wins",
+            [
+                # 同一维两个基线：截得最远的（0，离 120 有 120）决定 detail
+                (_vy("axes_0", ylim=(120.0, 200.0)), {"y": _bok((100.0, 1), (0.0, 3))}),
+                # 另一根轴截得比例更大（(9 - 0) / 1 = 9 倍跨度 vs 1.5 倍）：它决定整条的 detail
+                (_vy("axes_1", ylim=(9.0, 10.0)), {"y": _bok((0.0, 2))}),
+                (_axes_el("axes_2", xlim=[1.0, 2.0], xscale="linear"), {"x": _bok((0.0, 5))}),
+            ],
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-hidden-axes-no-report",
+            [(_axes_el("axes_0", ylim=[4.0, 9.0], yscale="linear"), {"y": _bok((0.0, 2))})],
+        )
+    )
+    out[-1]["spec"]["panels"][0]["manifest"]["elements"][0]["editable"].append(
+        {"prop": "visible", "type": "bool", "value": False}
+    )
+    for i, (lim, base) in enumerate(
+        (
+            ((123456.7, 1e7), 0.0),
+            ((1e-7, 3e-7), 0.0),
+            ((0.1 + 0.2, 0.9), 0.0),
+            ((1000.5, 2000.0), 12345.5),
+            ((2.0005, 3.0), 0.0),
+            ((-0.0000004, -0.0000001), 0.0),
+        )
+    ):
+        out.append(
+            _bar_case(f"bar-baseline-number-format-{i}", [(_vy(ylim=lim), {"y": _bok((base, 1))})])
+        )
+    out.append(
+        _bar_case(
+            "bar-baseline-free-form",
+            [(_vy(), {"y": _bok((0.0, 2))})],
+            profile_id="free-form-v1",
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-journal-base",
+            [(_vy(), {"y": _bok((0.0, 2))})],
+            profile_id="journal-base-v1",
+        )
+    )
+
     # 10. free-form profile：同一份输入，等级整体降一档（severity 表说了算）。
     #     4pt 才低于它的 6pt 下限——同样一张图在严格 profile 下是 error。
     m = _clean_manifest()
