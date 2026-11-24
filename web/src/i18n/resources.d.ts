@@ -58,6 +58,21 @@ export default interface Resources {
       "unconfirmedHint": "上一次的结果还没确认，请先在对话里查询结果。"
     },
     "dataFigureV2": {
+      "basis": {
+        "groupsEqual": "按 {{groups}} 组各 {{n}} 个数值绘制",
+        "groupsRange": "按 {{groups}} 组、每组 {{min}}–{{max}} 个数值绘制",
+        "join": "；",
+        "line": "依据：{{text}}。",
+        "plain": "按 {{drawn}} 个数值绘制",
+        "points": "按 {{drawn}} 个点绘制，每行一个点",
+        "skippedAll": "另有 {{count}} 行未计入",
+        "skippedBoth": "另有 {{missing}} 行因缺值、{{other}} 行因不是数值未计入",
+        "skippedMissing": "另有 {{count}} 行因缺值未计入",
+        "skippedOther": "另有 {{count}} 行因不是数值未计入",
+        "then": "，",
+        "xAlso": "横轴有 {{x}} 个不同取值",
+        "xOnly": "按 {{drawn}} 个数值绘制，横轴有 {{x}} 个不同取值"
+      },
       "batch": {
         "done": "已完成",
         "draw": "分别作图",
@@ -77,7 +92,7 @@ export default interface Resources {
       "candidate": {
         "bar_error": {
           "title": "柱 + 误差线",
-          "why": "各组均值一目了然，误差线是标准差；个别点会藏在柱里。"
+          "why": "各组均值一目了然，误差线是{{error}}；个别点会藏在柱里。"
         },
         "box_points": {
           "title": "箱线 + 原始点",
@@ -105,7 +120,7 @@ export default interface Resources {
         },
         "line_band": {
           "title": "均值线 + 误差带",
-          "why": "每个横轴位置取均值，带是标准差，看总体趋势和波动。"
+          "why": "每个横轴位置取均值，带是{{error}}，看总体趋势和波动。"
         },
         "line_points": {
           "title": "点 + 折线",
@@ -136,6 +151,19 @@ export default interface Resources {
           "why": "看每组数值分布的形状，点保留了每个观测。"
         }
       },
+      "confirm": {
+        "design": "重复测量",
+        "error": "误差线",
+        "option": {
+          "ci95": "95% 置信区间",
+          "independent": "不是，每行是不同的样本",
+          "repeated": "是，同一个样本测了多次",
+          "sd": "标准差 (SD)",
+          "sem": "标准误 (SEM)",
+          "unsure": "还不确定"
+        },
+        "title": "需要你确认"
+      },
       "connect": {
         "pill": "连接 AI 以供智能分析"
       },
@@ -143,13 +171,20 @@ export default interface Resources {
         "allText": "这张表里都是文字，没有能画的数字。",
         "cancelled": "已取消，这个文件没读完。",
         "collapse": "收起",
+        "create": "创建可编辑图",
         "expand": "展开",
         "failed": "这次没画出来，数据没问题。",
         "guessRow": "把第 {{n}} 行当作列名。不对就点对的那一行。",
         "pickLead": "点一张，放进画布接着改。",
         "readAgain": "重新读取",
         "stripInfo": "前 {{shown}} 行，共 {{total}} 行 · {{columns}} 列",
+        "switchLabel": "候选画法",
         "unreadable": "这个文件不是表格，读不了。"
+      },
+      "errorName": {
+        "ci95": "95% 置信区间",
+        "sd": "标准差",
+        "sem": "标准误"
       },
       "list": {
         "empty": "这个文件夹里没找到数据文件。",
