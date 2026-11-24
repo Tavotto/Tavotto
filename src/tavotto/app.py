@@ -11310,6 +11310,10 @@ REPLAY_SIZE_TOL = 0.01
 POST_CHECK_SIZE_TOL = 0.5
 #: 分歧清单最多回多少条（够定位问题，又不至于把响应撑成一页 JSON）。
 REPLAY_DIFF_LIMIT = 20
+#: 几何分歧最多记几行日志：409 让用户「报告给开发者」，诊断包里得看得出是哪个元素分岔。
+REPLAY_DIFF_LOG_LIMIT = 5
+#: 几何分歧的字段闭集（`_compare_manifests` 只产出这几种），日志里明文放行。
+REPLAY_DIFF_FIELDS = ("size_mm", "bbox", "anchor", "missing_in_replay", "missing_in_hot")
 #: 像素门探针的目标像素宽（热态与重放各出一张，逐 RGBA 通道比差异）。
 #: 3×2 英寸的图在这一档约 66 万像素——线型 / 字形级的差异足够显影，
 #: 两张探针图合计也只要几十毫秒，相对整个写回（重跑一遍脚本）可以忽略。
@@ -11404,6 +11408,31 @@ def _compare_manifests(hot: dict, fresh: dict) -> tuple[list[dict], int]:
             elif any(abs(x - y) > REPLAY_GEOM_TOL for x, y in zip(va, vb)):
                 diffs.append({"gid": gid, "field": field, "hot": va, "fresh": vb})
     return diffs, len(common)
+
+
+def _log_replay_divergence(stem: str, diffs: list[dict]) -> None:
+    """几何分歧逐条进日志（前 `REPLAY_DIFF_LOG_LIMIT` 条）：元素 gid、字段、两边的数值。
+
+    像素门发现分歧时本来就打 WARNING；几何这道以前只把 `diffs` 放进 409 响应体，
+    服务端一个字不记，用户照提示发来的诊断包里查不到是哪个元素分岔（反馈包 WY3Y）。
+    gid 是结构名、数值是 figure 分数坐标，不含文件内容与文字。
+    """
+    # 位置 / 尺寸分歧排在元素增减之前：挪位通常是根因，刻度文字多一个少一个往往是它的连带
+    geom = sorted(
+        (d for d in diffs if d.get("field") in REPLAY_DIFF_FIELDS),
+        key=lambda d: REPLAY_DIFF_FIELDS.index(d["field"]),
+    )
+    for i, d in enumerate(geom[:REPLAY_DIFF_LOG_LIMIT], 1):
+        LOG.warning(
+            "写回几何门发现分歧 %d/%d: %s %s %s 热态=%s 重放=%s",
+            i,
+            len(geom),
+            stem,
+            d.get("gid") or "<figure>",
+            engine_logsafe.known(d.get("field"), REPLAY_DIFF_FIELDS),
+            d.get("hot"),
+            d.get("fresh"),
+        )
 
 
 def _replay_pixel_diff(worker, fresh, stem: str) -> dict | None:
@@ -11791,6 +11820,7 @@ def _write_source_files(
         if future_props:
             raise WriteBackFutureError(future_props)
         if diffs:
+            _log_replay_divergence(stem, diffs)
             raise ReplayDivergenceError(diffs[:REPLAY_DIFF_LIMIT])
     except BaseException:
         _discard_updating(tmps)
