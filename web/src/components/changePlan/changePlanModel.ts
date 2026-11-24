@@ -29,12 +29,19 @@ export interface UnhandledView {
   reason: string
 }
 
+/** 一条意见在界面上的编号：审阅页签给的（与页签一致）优先，没有就按这批意见里的位置 */
+export const commentNumber = (e: Pick<PlanEntry, 'comments' | 'request'>, id?: string): number => {
+  if (!id) return 0
+  const n = e.request.numbers?.[id]
+  return n ?? e.comments.findIndex((c) => c.id === id) + 1
+}
+
 const clip = (s: string, n = 40) => (s.length > n ? `${s.slice(0, n)}…` : s)
 
 export function groupViews(e: PlanEntry): GroupView[] {
   const plan = e.plan
   if (!plan) return []
-  const numberOf = (id?: string) => (id ? e.comments.findIndex((c) => c.id === id) + 1 : 0)
+  const numberOf = (id?: string) => commentNumber(e, id)
   return plan.groups.map((g: ChangePlanGroup, i) => {
     const c = g.comment_id ? e.comments.find((x) => x.id === g.comment_id) : undefined
     const n = numberOf(g.comment_id)

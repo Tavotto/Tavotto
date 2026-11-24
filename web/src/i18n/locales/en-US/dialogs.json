@@ -2976,7 +2976,17 @@
     "shareNote": "Anyone with the link can view and comment · expires {{date}}",
     "privacyFoot": "Only the picture is uploaded; scripts and data stay on this computer",
     "dailyNew": "1 new link per day",
-    "notePlaceholder": "Note for reviewers (optional)…"
+    "notePlaceholder": "Note for reviewers (optional)…",
+    "changePlan": {
+      "pill": "Hand to Agent",
+      "pillTip": "Have the Agent revise the figure from these comments. Your figure stays as is until you apply",
+      "pillUpdate": "Update same link",
+      "pillUpdateTip": "The review link doesn't have the new version yet. Update it; the link stays the same",
+      "pillUpdated": "Link updated",
+      "resolveFailed": "Couldn't mark the comments as resolved",
+      "resolveRetry": "Retry",
+      "draftLabel": "Draft reply"
+    }
   },
   "pro": {
     "title": "{{pro}}",

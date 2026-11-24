@@ -14,6 +14,11 @@ import { Button } from '../ui/Button'
 import { EmptyLine } from '../ui/EmptyLine'
 import { TextInput } from '../ui/Input'
 import { Segmented } from '../ui/Segmented'
+import { scrollFadeStyle, useScrollFade } from '../ui/scrollFade'
+import { ChangePlanPill } from '../changePlan/ChangePlanPill'
+import { ReplyDraftBox } from '../changePlan/ReplyDraftBox'
+import { retryResolveSync, useResolveFailedKey } from '../changePlan/reviewSync'
+import { useReviewPill } from '../changePlan/useReviewPill'
 import { ReviewMark } from './ReviewMark'
 import { commentWhen, rs } from './reviewText'
 import { useReviewPlacements, type PlacedComment } from './useReviewPlacements'
@@ -116,6 +121,7 @@ function CommentCard({ p, detail, live }: { p: PlacedComment; detail: ReviewShar
             {r.text}
           </p>
         ))}
+        {live && c.resolved && <ReplyDraftBox commentId={c.id} />}
         {live && replying && (
           <form
             className="flex items-center gap-1.5"
@@ -167,6 +173,10 @@ export function ReviewPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasElementComments, objects])
   const shareId = share?.share_id
+  const listRef = useRef<HTMLDivElement>(null)
+  const { fade } = useScrollFade(listRef, 'y')
+  const pill = useReviewPill(placed)
+  const resolveFailedKey = useResolveFailedKey()
 
   // 区域意见的坐标只在画布与最新版一致时才画：页签开着时，画布每改一下（停手 0.8 秒后）问引擎一次（本机比对、不联网）
   // 判据是「会影响 render 的全部输入」的签名（页面尺寸、留白、对象……都算），不是只看对象数组；
@@ -219,11 +229,37 @@ export function ReviewPanel() {
           ]}
         />
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto border-t border-border">
-        {detail && shown.length > 0 ? (
-          shown.map((p) => <CommentCard key={p.comment.id} p={p} detail={detail} live={live} />)
-        ) : (
-          <EmptyLine data-review-empty>{rs(filter === 'open' && placed.length > 0 ? 'tab.emptyOpen' : 'tab.empty')}</EmptyLine>
+      {resolveFailedKey && (
+        <div className="flex shrink-0 items-center gap-2 px-3 pb-2" data-change-plan-resolve-failed>
+          <span className="min-w-0 flex-1 truncate text-xs text-ink-3">{rs('changePlan.resolveFailed')}</span>
+          <button type="button" className={actionClass} onClick={() => retryResolveSync(resolveFailedKey)} data-change-plan-resolve-retry>
+            {rs('changePlan.resolveRetry')}
+          </button>
+        </div>
+      )}
+      <div className="relative min-h-0 flex-1 border-t border-border">
+        <div
+          ref={listRef}
+          data-review-list
+          className={cn('size-full overflow-y-auto', pill && 'pb-16')}
+          style={pill ? scrollFadeStyle({ start: false, end: fade.end }, 'y', 40) : undefined}
+        >
+          {detail && shown.length > 0 ? (
+            shown.map((p) => <CommentCard key={p.comment.id} p={p} detail={detail} live={live} />)
+          ) : (
+            <EmptyLine data-review-empty>{rs(filter === 'open' && placed.length > 0 ? 'tab.emptyOpen' : 'tab.empty')}</EmptyLine>
+          )}
+        </div>
+        {pill && (
+          <>
+            {/* 面板底色 → 透明的渐隐托底：列表滚到胶囊后面时不与胶囊打架 */}
+            <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-linear-to-t from-surface to-transparent" />
+            <div data-review-floating className="pointer-events-none absolute inset-x-0 bottom-3 z-sticky flex justify-center">
+              <div className="pointer-events-auto">
+                <ChangePlanPill pill={pill} />
+              </div>
+            </div>
+          </>
         )}
       </div>
     </div>

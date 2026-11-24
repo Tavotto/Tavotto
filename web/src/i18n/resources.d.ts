@@ -48,6 +48,42 @@ export default interface Resources {
         "title": "修改方案",
         "toggle": "切换"
       },
+      "draft": {
+        "alpha": "已调整{{el}}的透明度",
+        "bold": "已把{{el}}加粗",
+        "color": "已改了{{el}}的颜色",
+        "fallback": "已按意见调整",
+        "fontsize": "已把{{el}}的字号从 {{from}} pt 改到 {{to}} pt",
+        "fontsizeTo": "已把{{el}}的字号改到 {{to}} pt",
+        "frameOff": "已去掉{{el}}的边框",
+        "frameOn": "已给{{el}}加上边框",
+        "hide": "已隐藏{{el}}",
+        "join": "；",
+        "linewidth": "已把{{el}}的线宽从 {{from}} 改到 {{to}}",
+        "linewidthTo": "已把{{el}}的线宽改到 {{to}}",
+        "loc": {
+          "best": "合适的位置",
+          "center": "正中",
+          "center_left": "左侧中间",
+          "center_right": "右侧中间",
+          "lower_center": "下方中间",
+          "lower_left": "左下角",
+          "lower_right": "右下角",
+          "right": "右侧",
+          "upper_center": "上方中间",
+          "upper_left": "左上角",
+          "upper_right": "右上角"
+        },
+        "markersize": "已把{{el}}的标记改到 {{to}}",
+        "more": "（另有 {{count}} 处）",
+        "move": "已把{{el}}挪到{{where}}",
+        "moveOther": "已调整{{el}}的位置",
+        "ncol": "已把{{el}}排成 {{to}} 列",
+        "show": "已显示{{el}}",
+        "text": "已把{{el}}的文字改成「{{to}}」",
+        "thisOne": "这一处",
+        "unbold": "已取消{{el}}的加粗"
+      },
       "reviewNote": {
         "open": "看意见 ›",
         "title_other": "审阅意见 · {{count}} 条"
@@ -2430,6 +2466,16 @@ export default interface Resources {
       "capsuleClose": "收起",
       "capsuleOpen": "查看",
       "capsule_other": "{{author}}留了 {{count}} 条意见",
+      "changePlan": {
+        "draftLabel": "回复草稿",
+        "pill": "交给 Agent 修改",
+        "pillTip": "让 Agent 按这些意见改一版，改好之前不会动你的图",
+        "pillUpdate": "更新到同一链接",
+        "pillUpdateTip": "新版还没发到审阅链接，点一下更新，链接不变",
+        "pillUpdated": "链接已更新",
+        "resolveFailed": "没能把意见标成已处理",
+        "resolveRetry": "重试"
+      },
       "changed": "画布有新改动",
       "close": "关闭",
       "comment": {

@@ -632,6 +632,27 @@ sends nothing.
 * **Turning it off.** `TAVOTTO_NO_REVIEW_SHARE=1` removes the feature and all of
   its network requests (the plugin passes this switch on to its agent tool).
 
+## Handing review comments to the Agent
+
+*Hand to Agent* (the *Review* tab, shown when the figure has unresolved comments)
+asks the AI connection **you** selected to draft a change plan from those comments.
+It sends nothing until you press it, and what it produces is only a plan: your
+figure changes when you press *Apply*.
+
+* **What is sent.** To the AI connection you chose (the same kind of connection as
+  in *Optional AI assistant* above, so it follows that connection's terms): the
+  text of the unresolved comments and where each one points, and a table of the
+  elements of this figure — each element's label, its editable properties with
+  their current values, and its position on the picture. **Reviewers' display
+  names are not sent.** Scripts, data, project files, file paths and computer
+  details are not sent either.
+* **What stays on your computer.** The plan, the before/after pictures and your
+  edits to it. Marking comments as resolved and the drafted reply are local until
+  you press *Send* on a reply or *Update same link* (the existing review upload,
+  described above); the reply draft is composed in the app without calling any model.
+* **Turning it off.** Not connecting an AI is enough; there is no other network
+  request for this feature.
+
 ## Paid edition components
 
 These requests exist only on a computer where a paid-edition license has been

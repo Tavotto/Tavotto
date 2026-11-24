@@ -94,6 +94,7 @@ const entry = (key: string, over: Partial<PlanEntry> = {}): PlanEntry => {
     beforeSrc: '/b.png',
     afterSrc: '/a.png',
     unchecked: {},
+    drafts: {},
     request: { comments: COMMENTS },
     comments: COMMENTS,
     commentCount: 3,

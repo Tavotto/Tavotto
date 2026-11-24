@@ -3,7 +3,7 @@ import type { PlanEntry } from '@/store/changePlanStore'
 import { useUiStore } from '@/store/uiStore'
 import { ReviewMark } from '../review/ReviewMark'
 import { listJoin } from '@/i18n/format'
-import { cp } from './changePlanModel'
+import { commentNumber, cp } from './changePlanModel'
 import { FigureThumb } from './FigureThumb'
 import { useImageAspect, usePanelThumbSrc, usePlanPanel } from './usePlanFigure'
 
@@ -32,9 +32,9 @@ export function ReviewNoteCard({ entry }: { entry: PlanEntry }) {
   const count = comments.length || entry.commentCount
   if (!count) return null
   const marks = spreadMarks(
-    comments.flatMap((c, i) => {
+    comments.flatMap((c) => {
       const a = c.anchor
-      return a.kind === 'overall' ? [] : [{ n: i + 1, x: a.box[0] + a.box[2] / 2, y: a.box[1] + a.box[3] / 2, id: c.id }]
+      return a.kind === 'overall' ? [] : [{ n: commentNumber(entry, c.id), x: a.box[0] + a.box[2] / 2, y: a.box[1] + a.box[3] / 2, id: c.id }]
     }),
   )
   const who = listJoin([...new Set(comments.map((c) => c.author))])

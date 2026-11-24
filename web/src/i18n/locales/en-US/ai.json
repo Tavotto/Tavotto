@@ -843,6 +843,42 @@
       "not_applied": "Didn't take effect; left alone this time",
       "no_effect": "No visible difference; left alone this time",
       "not_addressed": "This one wasn't handled"
+    },
+    "draft": {
+      "thisOne": "this item",
+      "fallback": "Adjusted as suggested",
+      "join": "; ",
+      "more": " (and {{count}} more)",
+      "fontsize": "Changed the {{el}} font size from {{from}} pt to {{to}} pt",
+      "fontsizeTo": "Set the {{el}} font size to {{to}} pt",
+      "linewidth": "Changed the {{el}} line width from {{from}} to {{to}}",
+      "linewidthTo": "Set the {{el}} line width to {{to}}",
+      "color": "Changed the {{el}} color",
+      "show": "Showed the {{el}}",
+      "hide": "Hid the {{el}}",
+      "frameOn": "Added a frame to the {{el}}",
+      "frameOff": "Removed the frame from the {{el}}",
+      "move": "Moved the {{el}} to the {{where}}",
+      "moveOther": "Adjusted the position of the {{el}}",
+      "text": "Changed the {{el}} text to \"{{to}}\"",
+      "bold": "Made the {{el}} bold",
+      "unbold": "Removed bold from the {{el}}",
+      "alpha": "Adjusted the {{el}} transparency",
+      "markersize": "Set the {{el}} marker size to {{to}}",
+      "ncol": "Arranged the {{el}} in {{to}} columns",
+      "loc": {
+        "best": "best spot",
+        "upper_right": "upper right",
+        "upper_left": "upper left",
+        "lower_left": "lower left",
+        "lower_right": "lower right",
+        "right": "right side",
+        "center_left": "middle left",
+        "center_right": "middle right",
+        "lower_center": "bottom center",
+        "upper_center": "top center",
+        "center": "center"
+      }
     }
   }
 }

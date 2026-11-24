@@ -43,6 +43,8 @@ export interface PlanFailure {
 export interface PlanRequest {
   comments?: ReviewComment[]
   share_id?: string
+  /** 审阅页签里这些意见的编号（意见 id → 页签上的序号）：审阅意见卡与改动清单用它，与页签上看到的编号一致 */
+  numbers?: Record<string, number>
 }
 
 export interface PlanEntry {
@@ -81,6 +83,12 @@ export interface PlanEntry {
   appliedPartial?: boolean
   /** 一次动作没成时卡片上的一句灰字（下一次动作会清掉） */
   notice?: 'apply_failed' | 'undo_failed'
+  /** 应用后由这张卡标成「已处理」的意见 id（撤销时只还原这几条） */
+  resolvedIds?: string[]
+  /** 标已处理 / 还原没成：审阅页签上一句灰字 + 重试（不自动再试，免得失败时反复打后端） */
+  resolveFailed?: boolean
+  /** 回复草稿：意见 id → 用户改过的文字；null = 已发送（不再出草稿框） */
+  drafts: Record<string, string | null>
 }
 
 export type ApplyResult = 'applied' | 'stale' | 'nothing' | 'failed'
@@ -106,6 +114,8 @@ interface ChangePlanState {
   /** 收起一张失败 / 空方案的卡 */
   dismiss: (key: string) => void
   clear: () => void
+  /** 收尾状态（标已处理的记录、草稿）直接并进条目 */
+  patchEntry: (key: string, p: Partial<PlanEntry>) => void
 }
 
 const POLL_MS = 1200
@@ -118,7 +128,7 @@ const hist = (key: string, values?: Record<string, unknown>) => msg(`history.${k
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 /** 文档里的这张图（只认当前这份文档、当前这张画布） */
-function panelOf(e: Pick<PlanEntry, 'panelId' | 'documentId' | 'loadSeq' | 'canvasId'>): PanelObject | null {
+export function panelOf(e: Pick<PlanEntry, 'panelId' | 'documentId' | 'loadSeq' | 'canvasId'>): PanelObject | null {
   const s = useDocumentStore.getState()
   if (s.documentId !== e.documentId || s.loadSeq !== e.loadSeq || s.activeCanvasId !== e.canvasId) return null
   const o = s.doc.objects.find((x) => x.id === e.panelId)
@@ -223,6 +233,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       createdAt: Date.now(),
       status: 'generating',
       unchecked: {},
+      drafts: {},
       request: req,
       comments,
       commentCount: comments.length,
@@ -263,6 +274,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         e.panelId === panelId &&
         (e.status === 'generating' || e.status === 'ready') &&
         e.request.share_id === req.share_id &&
+        JSON.stringify(Object.keys(e.request.numbers ?? {}).sort()) === JSON.stringify(Object.keys(req.numbers ?? {}).sort()) &&
         JSON.stringify((e.request.comments ?? []).map((c) => c.id)) === JSON.stringify((req.comments ?? []).map((c) => c.id))
       const hit = get().order.map((k) => get().entries[k]).find(same)
       if (hit) return hit.key
@@ -364,6 +376,8 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       drop(key)
       if (e?.planId) void discardChangePlan(e.planId).catch(() => undefined)
     },
+
+    patchEntry: (key, p) => patch(key, p),
 
     // 不去后端放弃：此刻的项目已经不是发起时那个，请求会落到别的项目上；后端有 TTL 与条数上限
     clear: () => set({ entries: {}, order: [], dialogKey: null }),
