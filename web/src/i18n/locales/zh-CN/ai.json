@@ -560,6 +560,14 @@
         "title": "均值线 + 误差带",
         "why": "每个横轴位置取均值，带是{{error}}，看总体趋势和波动。"
       },
+      "points_err": {
+        "title": "点 + 误差线",
+        "why": "表里已经是各组的均值，直接画出来，误差线取自「{{column}}」列。"
+      },
+      "line_err": {
+        "title": "点 + 折线 + 误差线",
+        "why": "表里已经是每个位置的均值，按顺序连起来，误差线取自「{{column}}」列。"
+      },
       "line_units": {
         "title": "每个对象一条线",
         "why": "同一对象的重复测量连成线，看每个对象各自怎么变。"
@@ -715,6 +723,12 @@
       "fontMax": "≤ {{max}} pt 字号"
     },
     "basis": {
+      "rowsErr": "按表里的 {{drawn}} 行绘制，每行一个点",
+      "errColumn": "误差线取自「{{column}}」列",
+      "errMissing": "{{count}} 处只有 1 个数值，画不出误差线",
+      "bandMissing": "{{count}} 处只有 1 个数值，画不出误差带",
+      "listJoin": "、",
+      "etc": "等",
       "line": "依据：{{text}}。",
       "then": "，",
       "join": "；",

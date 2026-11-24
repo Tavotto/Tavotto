@@ -59,12 +59,18 @@ export default interface Resources {
     },
     "dataFigureV2": {
       "basis": {
+        "bandMissing": "{{count}} 处只有 1 个数值，画不出误差带",
+        "errColumn": "误差线取自「{{column}}」列",
+        "errMissing": "{{count}} 处只有 1 个数值，画不出误差线",
+        "etc": "等",
         "groupsEqual": "按 {{groups}} 组各 {{n}} 个数值绘制",
         "groupsRange": "按 {{groups}} 组、每组 {{min}}–{{max}} 个数值绘制",
         "join": "；",
         "line": "依据：{{text}}。",
+        "listJoin": "、",
         "plain": "按 {{drawn}} 个数值绘制",
         "points": "按 {{drawn}} 个点绘制，每行一个点",
+        "rowsErr": "按表里的 {{drawn}} 行绘制，每行一个点",
         "skippedAll": "另有 {{count}} 行未计入",
         "skippedBoth": "另有 {{missing}} 行因缺值、{{other}} 行因不是数值未计入",
         "skippedMissing": "另有 {{count}} 行因缺值未计入",
@@ -122,6 +128,10 @@ export default interface Resources {
           "title": "均值线 + 误差带",
           "why": "每个横轴位置取均值，带是{{error}}，看总体趋势和波动。"
         },
+        "line_err": {
+          "title": "点 + 折线 + 误差线",
+          "why": "表里已经是每个位置的均值，按顺序连起来，误差线取自「{{column}}」列。"
+        },
         "line_points": {
           "title": "点 + 折线",
           "why": "按顺序连起来，看量怎么随横轴变化。"
@@ -133,6 +143,10 @@ export default interface Resources {
         "other": {
           "title": "这种画法",
           "why": "用这份数据画出来的一种样子。"
+        },
+        "points_err": {
+          "title": "点 + 误差线",
+          "why": "表里已经是各组的均值，直接画出来，误差线取自「{{column}}」列。"
         },
         "points_mean": {
           "title": "原始点 + 均值",

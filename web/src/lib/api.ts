@@ -5646,11 +5646,20 @@ export interface AiDataProposeItem {
   facts?: AiDataFacts
   /** 这张图有误差线 / 误差带时才有：画的是哪一种 */
   error?: AiDataErrorKind
+  /** 误差线从哪来：`column` = 表里现成的误差列（`error_column` 是列名），`computed` = 用重复值算的 */
+  error_source?: 'column' | 'computed'
+  /** 取自表里现成的列时，那一列的名字（用户数据：只当文本渲染） */
+  error_column?: string
+  /** 误差线的种类是列名自己说明的（如列名叫 sd） */
+  error_stated?: boolean
+  /** 算出来的误差线 / 带里因为只有 1 个值而没有误差线的位置标签（最多 50 个；没有就没有这个键） */
+  error_missing_for?: string[]
   /** 拟合线（有才有；界面暂不用） */
   fits?: unknown[]
 }
 
-export type AiDataErrorKind = 'sd' | 'sem' | 'ci95'
+/** `unknown` = 现成的误差列没说明是哪一种（只出现在 `points_err` / `line_err`） */
+export type AiDataErrorKind = 'sd' | 'sem' | 'ci95' | 'unknown'
 
 export interface AiDataFacts {
   rows: number
