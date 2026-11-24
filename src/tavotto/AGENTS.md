@@ -26,7 +26,7 @@ TS + Tailwind v4）。
   → commit，任一环不过 409 且原件零改动；worker 一条 warning 即阻断。
 - **会话认证**旁路只有三个（pytest test_client / `--insecure-no-auth` /
   `TAVOTTO_INSECURE_NO_AUTH=1`），新端点不得绕过 guard。
-- **热会话状态 == 全量重放**：override 按 `_apply_rank` 七档顺序应用，figure
+- **热会话状态 == 全量重放**：override 按 `_apply_rank` 的分档顺序应用，figure
   锚定 prop 每次重放；「有哪些 axes」只有 `axestraversal.ordered_axes` 一处（AST 门禁）。
 - **worker 生命周期**：请求一律有超时；状态未知的 worker 绝不复用；`kill()` 之后
   必须 reap；一次性目录删除不许 `ignore_errors=True`。
@@ -48,7 +48,7 @@ TS + Tailwind v4）。
 | `engine/updater.py`、`/api/update/*` | 检查更新 → `update-check.md` | 纯标准库；升级永不静默、升级后 `restart_required`；桌面模式整个关掉；HTTPS 只经 `tlstrust` |
 | `engine/figcapture.py`、`artifactcontext.py`、`execspec.py`、`runconfig.py`、`scriptargs.py`、`workdir.py`、`databinding.py`、`inputremap.py`、`inputcopy.py`、`worker.py` 的 savefig 拦截与 sys.argv | Figure 捕获、执行描述与 live-figure 会话 → `figure-capture-and-execution.md` | 捕获三条入口同源；`safe_spec()` / `worker_argv()` 唯一出处、argv 只经 `safe_spec`；表单 schema 是建议不是门槛 |
 | `engine/pool.py`、`executionfact.py`、`wireproto.py`、`workerd_client.py`、`texdiag.py`、`loginpath.py`、超时 / 关停 / 计时 | worker 协议、计时、超时与关停、TeX 分类 → `worker-protocol-and-lifecycle.md` | 协议 v1 信封原样回显、`request_id` 对不上 kill；patch 规范化唯一权威 `patchspec.py`；kill 之后必 reap；TeX 先于缺依赖判 |
-| `engine/overrides.py` 的 `apply` / `_apply_rank` / `_FRAC_ANCHORED`、tight 布局、字体脸、`normalize.py` 三模块、`specfix.py` | override 语义、应用顺序与全量重放 → `override-application-and-replay.md` | override 是全量列表；七档顺序是契约；刻度类与 frac 锚定 prop 每次重放；带 `identity` 的 patch 对不上身份就不应用 |
+| `engine/overrides.py` 的 `apply` / `_apply_rank` / `_FRAC_ANCHORED`、tight 布局、字体脸、`normalize.py` 三模块、`specfix.py` | override 语义、应用顺序与全量重放 → `override-application-and-replay.md` | override 是全量列表；分档顺序是契约；刻度类与 frac 锚定 prop 每次重放；带 `identity` 的 patch 对不上身份就不应用 |
 | `axestraversal.ordered_axes`、`spinemodel`、`tickmodel`、`colorbarmodel`、`legendmodel`、`_cls_key`、能力表、3D 数据图元 / 箭头 / marker | axes 遍历、特殊 artist 与 artist family 能力层 → `axes-and-artist-families.md` | `fig.axes` 只许出现在白名单函数里；族模块是叶子；能力按真实 getter 实况判不按类名 |
 | `_marker_field` / `marker_current` / `marker_original`、`engine/pathgeom.py`、`manifest.vector_text_metrics` | 标记形状事实与路径几何 → `marker-and-path-geometry.md` | 形状是只读派生事实不是取值；geometry 不进文档；超过 `MAX_MARKERS` 整组退回 bbox |
 | `legendmodel.py`（`LegendEntries`、`rebuild_legend`、`legend_pos_cfg`）、`FigState.reapply` | 图例条目模型与位置模型 → `legend-model.md` | `texts_j` 的 j 是原始序号；重建型 prop 一律 `rebuild_legend`；三条位置 prop 写槽位再整体重建 |

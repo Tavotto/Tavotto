@@ -90,6 +90,7 @@ from overrides import (
     _ARROWSTYLES,
     _FONT_PRESENT as _FONT_PRESENT,  # 测试要清的那张探测缓存（显式再导出）
     BBOX_DEFAULTS,
+    COPY_LABEL_SUFFIX,
     HATCHES,
     LINE_POINTS_MAX,
     FigState,
@@ -143,6 +144,7 @@ from overrides import (
     register_font_name_aliases,
     remember_axis_directions,
     scale_options,
+    set_element_registrar,
     set_original_reader,
     state_reverse_index,
     sync_font_caches,
@@ -301,7 +303,7 @@ def _register_figure_level(state: FigState, owner, prefix: str, counts: dict[str
         _register(state, gid, ln, "line", nice or f"曲线 {nth('line')}", draggable=True)
 
     for i, t in enumerate(owner.texts):
-        if id(t) not in known:
+        if id(t) not in known and not getattr(t, "_mm_copy", None):
             register_text(f"{prefix}.texts_{i}", t)
     for i, leg in enumerate(getattr(owner, "legends", []) or []):
         if id(leg) not in known:
@@ -318,7 +320,8 @@ def _register_figure_level(state: FigState, owner, prefix: str, counts: dict[str
     # `fig.add_artist(...)` 不按类型改道（Axes 会把 Patch / Line2D 分进 patches / lines，Figure
     # 不会），所以这里什么都可能有：按族分派到与子图里同一套角色
     for j, art in enumerate(getattr(owner, "artists", []) or []):
-        if id(art) in known:
+        # 图内副本（ADR 0207）带着自己的 gid 由 `overrides._ensure_copy` 登记，不再以序号名登记一次
+        if id(art) in known or getattr(art, "_mm_copy", None):
             continue
         gid = f"{prefix}.artists_{j}"
         if isinstance(art, (AnchoredOffsetbox, AnnotationBbox)):
@@ -453,7 +456,9 @@ def _legend_proxy_names_safe(fig) -> dict[int, str]:
 def _relabel(registered: str, text: str) -> str:
     """把登记名里引号中的那段换成当前文字（前缀是角色名，原样保留）。"""
     head = registered.split("“", 1)[0]
-    return f"{head}“{_snippet(text)}”"
+    # 图内副本（ADR 0207）的登记名以「 的副本」收尾：换字时尾巴保留，元素树里才分得清源与副本
+    tail = COPY_LABEL_SUFFIX if registered.endswith(COPY_LABEL_SUFFIX) else ""
+    return f"{head}“{_snippet(text)}”{tail}"
 
 
 def _svg_group(art) -> None:
@@ -984,6 +989,9 @@ def instrument(state: FigState) -> None:
                     draggable=True,
                 )
         for j, t in enumerate(ax.texts):
+            # 图内副本（ADR 0207）：自己的 gid 在 `overrides._ensure_copy` 登记。序号照数（不因跳过而挪位）
+            if getattr(t, "_mm_copy", None):
+                continue
             if t.get_text():
                 _register(
                     state,
@@ -7192,3 +7200,5 @@ def _measure_manifest(
 
 # `overrides.apply` 采「脚本原样」时按这里的字段读法记下 `value_original`（见 `_field_values`）
 set_original_reader(_field_values)
+# 图内副本（ADR 0207）在 `overrides._ensure_copy` 里建出来，登记走同一个 `_register`
+set_element_registrar(_register)
