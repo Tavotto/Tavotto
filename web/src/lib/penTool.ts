@@ -29,7 +29,8 @@ export type PenState =
 
 export type PenEvent =
   | { type: 'down'; at: XY; shift?: boolean }
-  | { type: 'move'; at: XY; alt?: boolean; shift?: boolean }
+  /** `mod`（⌘ / Ctrl）：折线模式——按着拖不拉手柄，这个点就是尖角、跟着指针走（ADR 0185 M7） */
+  | { type: 'move'; at: XY; alt?: boolean; shift?: boolean; mod?: boolean }
   /** 续画（钢笔点在一条开放路径的端点上）：从这些点接着画，最后一个点是被点中的端点 */
   | { type: 'resume'; nodes: MmNode[] }
   | { type: 'up'; at: XY }
@@ -107,6 +108,13 @@ export function penReduce(s: PenState, ev: PenEvent, opts: PenOptions): { state:
       if (!press.dragged && dist(ev.at, press.at) <= opts.dragTolMm) return { state: s }
       const nodes = s.nodes.slice()
       const n = nodes[press.index]
+      // 折线模式（⌘ / Ctrl）：只折不弯——按下的这个点挪到指针处，仍是尖角；⇧ 相对上一个点锁 45°。闭合 / 续画那一下不挪点
+      if (ev.mod && !press.closing && !press.resume) {
+        const prev = press.index > 0 ? nodes[press.index - 1].p : null
+        const to = ev.shift && prev ? lock45(prev, ev.at) : ev.at
+        nodes[press.index] = corner(to)
+        return { state: { ...s, nodes, press: { ...press, at: to, dragged: true } } }
+      }
       const p = n.p
       // ⇧：手柄方向锁在 45° 的倍数上
       const h = ev.shift ? lock45(p, ev.at) : ev.at

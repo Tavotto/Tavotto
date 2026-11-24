@@ -1,0 +1,3 @@
+## Smart guides, outline stroke, format painter and the pencil
+
+While dragging, smart guides also snap to the anchors and segment midpoints of other paths and to the data points of lines and scatter plots in figures. Outline stroke now handles dashes, arrowheads, caps and inside/outside alignment, and matches the original stroke exactly. The format painter copies gradients, every stroke setting and fonts, and works between arrows and paths and between text and text on a path. Hold ⌘ while dragging with the pen to place sharp corners. Rounded path corners stay adjustable after moving, scaling, rotating or mirroring. The pencil (N, next to the pen) draws freehand and smooths the stroke into a clean curve when you let go; hold ⌥ to keep the raw points.

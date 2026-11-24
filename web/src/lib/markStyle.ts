@@ -117,10 +117,13 @@ export function setMarkHeadSize(o: HeadedMark, which: 'start' | 'end', v: HeadSi
  * 样式剪贴板（格式刷）的「族」：同族之间能互刷。形状与路径的填充 / 描边字段同名同义，是一族；
  * 其余类型各自一族。
  */
-export type StyleFamily = 'panel' | 'text' | 'arrow' | 'fillStroke'
+export type StyleFamily = 'panel' | 'text' | 'stroke'
+/** 格式刷互刷的族（ADR 0185 M7 补全）：描边一族 = 箭头 / 形状 / 路径；文字一族 = 文字 / 路径文字；图自成一族 */
 export const styleFamilyOf = (type: string): StyleFamily | null =>
-  type === 'shape' || type === 'path'
-    ? 'fillStroke'
-    : type === 'panel' || type === 'text' || type === 'arrow'
-      ? type
-      : null
+  type === 'shape' || type === 'path' || type === 'arrow'
+    ? 'stroke'
+    : type === 'text' || type === 'pathText'
+      ? 'text'
+      : type === 'panel'
+        ? 'panel'
+        : null

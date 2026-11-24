@@ -135,7 +135,9 @@
     "pen": "钢笔",
     "select": "选择",
     "subLabels": "序号",
-    "quickLayout": "一键排版"
+    "quickLayout": "一键排版",
+    "pencil": "铅笔",
+    "pathTools": "钢笔与铅笔"
   },
   "confirm": {
     "docLossBody": "浏览器存储不可用或已满，切换后无法从「本机最近的排版」取回。仍要继续吗？",
@@ -493,7 +495,8 @@
     "addPathText": "在路径上加文字",
     "pathTextStart": "移动路径文字起点",
     "pathTextGap": "调整路径文字离线",
-    "editPathTextPath": "编辑路径文字的路径"
+    "editPathTextPath": "编辑路径文字的路径",
+    "drawPencil": "铅笔画线"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -1069,7 +1072,8 @@
     "rect": "拖动绘制矩形；Esc 取消",
     "star": "拖动画出星形；Esc 取消",
     "text": "拖动绘制文字框，或单击按默认大小放置；Esc 取消",
-    "triangle": "拖动画出三角形；Esc 取消"
+    "triangle": "拖动画出三角形；Esc 取消",
+    "pencil": "按住拖动画线，松手自动平滑；回到起点闭合，按住 {{alt}} 松手保留原样"
   },
   "topbar": {
     "addSubLabels": "添加序号标签",
