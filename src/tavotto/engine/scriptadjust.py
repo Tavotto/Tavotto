@@ -386,7 +386,7 @@ NOT_WRITABLE: dict[str, str] = {
     # 渐变色带的两端色：要认出「一摞逐条一色的长条」、保留深浅节奏重新配色并带着图例色块，不是一句公开 API
     "collection": "gradient pos_frac",
     "linecoll": "pos_frac",
-    # 图内副本（ADR 0205）是**创建型**修改：要在所有属性语句之前写出 `ax.text(...)` + `update_from(源)`，
+    # 图内副本（ADR 0207）是**创建型**修改：要在所有属性语句之前写出 `ax.text(...)` + `update_from(源)`，
     # 本期（PR 1 引擎）还没有这种语句——留作重放；PR 2 接创建型语句时把它挪进 WRITES
     "text": "copy_of",
 }
@@ -881,7 +881,7 @@ def _rank(prop: str, kind: str | None) -> float:
     8. 改名（`label`）：最后落。
 
     引擎在几何组（图幅 / 结构 / position / scale）与「其余」之间新开了 `_RANK_COPY` 一档给图内副本
-    （`copy_of`，ADR 0205）：它是创建型修改，本期在 `NOT_WRITABLE`（留作重放），所以这里没有对应的数字；
+    （`copy_of`，ADR 0207）：它是创建型修改，本期在 `NOT_WRITABLE`（留作重放），所以这里没有对应的数字；
     PR 2 接创建型语句时，它们排在**全部**属性语句之前（先建出对象，后面的修改才有地方落），再回来给这份表加一档。
 
     箭头端点**不单列一档**：figure 分数换成数据坐标用的是落那一刻的坐标范围，引擎也是这样（端点排在 `ylim` 前，

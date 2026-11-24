@@ -92,7 +92,7 @@ order: 70
   tick kw 与已建刻度线是**两份独立状态**各自还原（脚本可 `ax.grid(color=red)` 后 `plt.setp(线, color=blue)`）：kw 有值写回、没表态删键；已建的线不管 kw 一律写回**首次捕获时的实际值**（不回头读 rcParams：脚本在 `rc_context` 里建的网格，退出上下文后 kw 里没键、线上却带着当时的值）。manifest 的读数（`_grid_prop`）不是原样，别拿来还原。
   看护 `tests/test_prop_override_idempotent.py::test_removing_a_grid_style_edit_restores_the_original_hot_vs_fresh`；
   随机域已含 2D `axes`（`tests/support/overridesample._editable_targets`）。
-- **副本（ADR 0205）= override 里唯一「新增 artist」的一类，`copy_of`**：
+- **副本（ADR 0207）= override 里唯一「新增 artist」的一类，`copy_of`**：
   `{gid: "<宿主>.copy_<8 位 [a-z0-9]>", prop: "copy_of", value: {src, text, at}}`；宿主是 `axes_N`（`at` 为该子图
   axes 分数，`transAxes`）或 `fig`（figure 分数，`transFigure`）。**命名**不用 `texts_N`：用户以后在脚本里加一个
   `ax.text` 会占掉那个序号，副本的修改就落到别人身上。第一期源只认子图标题 / 左右标题 / `xlabel` / `ylabel` /
@@ -125,7 +125,7 @@ order: 70
   的尺寸与分数都以它为准；它这一轮换了，`_FRAME_RELATIVE` 里的 `size_mm` / `position` /
   三个 `*_frac` 值没变也重放）：
   图幅 size_mm → 色条方向 → 色条 extend → 子图 position → 刻度类型
-  （set_[xy]scale 会把 locator/formatter 整套换掉）→ **图内副本 `copy_of`（ADR 0205，`_RANK_COPY`）**
+  （set_[xy]scale 会把 locator/formatter 整套换掉）→ **图内副本 `copy_of`（ADR 0207，`_RANK_COPY`）**
   → 其余（列表序）→
   刻度定位模型 → 单条刻度文字（冻结整条轴，必须最后）。色条方向必须先于
   extend：方向要拿色条**当前**的矩形反解厚度与间距。跨档的先后不是

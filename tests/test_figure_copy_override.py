@@ -1,4 +1,4 @@
-"""ADR 0205 PR 1：图内副本 `copy_of` 的引擎行为（真 matplotlib，worker 解释器）。
+"""ADR 0207 PR 1：图内副本 `copy_of` 的引擎行为（真 matplotlib，worker 解释器）。
 
 副本是一条普通 override——`{gid: "<宿主>.copy_<8 位>", prop: "copy_of", value: {src, text, at}}`——
 重放时新建一段 `Text`（样式按引用抄源、位置与文字按快照），之后对副本 gid 的修改都走既有 text handler。
@@ -57,7 +57,7 @@ def main():
 """
 
 #: 源 → (副本的宿主前缀, 源 gid, 落点)。落点是宿主的分数（子图 axes 分数 / figure 分数），
-#: 取源附近错开的一点；热冷对拍与「同尺寸」只要求按 `at` 落，锚点怎么算是前端的事（ADR 0205 §二）
+#: 取源附近错开的一点；热冷对拍与「同尺寸」只要求按 `at` 落，锚点怎么算是前端的事（ADR 0207 §二）
 SOURCES = {
     "title": ("axes_0", "axes_0.title", [0.5, 0.7]),
     "ylabel": ("axes_0", "axes_0.ylabel", [-0.14, 0.4]),

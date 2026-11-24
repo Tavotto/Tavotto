@@ -5974,7 +5974,7 @@ _RESTORE.update(_PENDING_RESTORES)
 
 
 # ---------------------------------------------------------------------------
-# 图内副本（ADR 0205）：`{gid: "<宿主>.copy_<8 位>", prop: "copy_of", value: {src, text, at}}`
+# 图内副本（ADR 0207）：`{gid: "<宿主>.copy_<8 位>", prop: "copy_of", value: {src, text, at}}`
 #
 # 这是 override 里唯一**新增** artist 的一类（3D 轴箭头是改造已有的轴）。副本 = 一段普通 `Text`：
 # `Text(*at, text)` + `update_from(源)` + 宿主的变换（子图 `transAxes` / 整图 `transFigure`），
@@ -6604,7 +6604,7 @@ def alias_covers(
 #:                当前的矩形反解厚度与间距
 #:   3 子图落位   axes position
 #:   4 刻度类型   set_[xy]scale 会把 locator/formatter 整套换掉，必须先于 7
-#:   5 图内副本   `copy_of`（ADR 0205）：几何组之后、其余之前——副本落在宿主的 transAxes /
+#:   5 图内副本   `copy_of`（ADR 0207）：几何组之后、其余之前——副本落在宿主的 transAxes /
 #:                transFigure 上，宿主先到位；对副本 gid 的其它修改都在「其余」档，创建总先于改样式
 #:   6 其余       列表序
 #:   7 刻度定位   locator / formatter 模型（依赖 4 与 6 的 xlim）
