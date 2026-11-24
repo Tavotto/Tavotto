@@ -855,3 +855,77 @@ def test_the_settings_switch_is_stored_and_read_back_by_capabilities(env, monkey
 def test_the_settings_switch_refuses_anything_but_a_boolean(env, body):
     _m, client, *_ = env
     assert client.put("/api/ai/change-plan", json=body).status_code == 400
+
+
+# --------------------------------------------------------------------------- 用输入框选的那条连接与型号
+def test_the_selected_connection_model_and_effort_reach_the_resolver_and_the_call(env, monkeypatch):
+    _m, client, _figs, _worker, model, _retired = env
+    seen = {}
+
+    def resolve(budget=None, conn_id=None, model=None):
+        seen["resolve"] = (conn_id, model)
+        return {"kind": "fake"}, "", ""
+
+    monkeypatch.setattr(cp, "_RESOLVE", resolve)
+    monkeypatch.setattr(cp, "_PRECHECK", lambda cid=None: (True, ""))
+    real = model.__call__
+
+    def spy(**kw):
+        seen["effort"] = kw.get("effort")
+        return real(**kw)
+
+    cp._CALL = spy
+    out = run_assistant(client, connection="prov1", model="m-1", effort="high")
+    assert out["state"] == "ready"
+    assert seen["resolve"] == ("prov1", "m-1") and seen["effort"] == "high"
+
+
+def test_without_a_selection_the_old_pick_is_used(env):
+    _m, client, *_ = env
+    assert (
+        run_assistant(client)["state"] == "ready"
+    )  # 假 _RESOLVE 只收 budget：不带选择时不传 conn_id
+
+
+def test_the_precheck_gets_the_selected_connection_and_refusals_keep_their_codes(env, monkeypatch):
+    _m, client, *_ = env
+    got = []
+    monkeypatch.setattr(
+        cp, "_PRECHECK", lambda cid=None: got.append(cid) or (False, "unsupported_connection")
+    )
+    resp = post_assistant(client, connection="prov1")
+    assert got == ["prov1"]
+    assert (
+        resp.status_code == 409 and resp.get_json()["code"] == "change_plan_unsupported_connection"
+    )
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"connection": ""},
+        {"connection": 5},
+        {"connection": "a" * 200},
+        {"model": 3, "connection": "x"},
+    ],
+)
+def test_a_malformed_selection_is_refused(env, over):
+    _m, client, _figs, worker, model, _retired = env
+    resp = post_assistant(client, **over)
+    assert resp.status_code == 400 and resp.get_json()["code"] == "invalid_change_plan"
+    assert model.calls == 0
+
+
+def test_review_source_takes_the_selection_too(env, monkeypatch):
+    _m, client, *_ = env
+    monkeypatch.setattr(cp, "_PRECHECK", lambda cid=None: (True, ""))
+    seen = {}
+    monkeypatch.setattr(
+        cp,
+        "_RESOLVE",
+        lambda budget=None, conn_id=None, model=None: (
+            seen.setdefault("c", conn_id) and ({"kind": "fake"}, "", "")
+        ),
+    )
+    assert run(client, connection="prov2")["state"] == "ready"
+    assert seen["c"] == "prov2"

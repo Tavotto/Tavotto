@@ -12010,7 +12010,10 @@ def api_change_plans_create():
     script_name = getattr(worker, "script_name", None)
     if script_name and engine_ai.script_busy(require_project() / script_name):
         return _change_plan_error("change_plan_busy")
-    failure = engine_changeplan.connection_failure()
+    selection = engine_changeplan.clean_selection(body)
+    if selection is None:
+        return _change_plan_error("invalid_change_plan")
+    failure = engine_changeplan.connection_failure(selection)
     if failure is not None:
         return _change_plan_error(failure)
     ctx = current_ctx()
@@ -12021,7 +12024,7 @@ def api_change_plans_create():
     if created:
         threading.Thread(
             target=_change_plan_thread,
-            args=(ctx, task, rel_id, list(base), comments, source),
+            args=(ctx, task, rel_id, list(base), comments, source, selection),
             name=f"change-plan-{task.id[:8]}",
             daemon=True,
         ).start()
@@ -12076,7 +12079,10 @@ def api_change_plans_revise(plan_id: str):
     script_name = getattr(worker, "script_name", None)
     if script_name and engine_ai.script_busy(require_project() / script_name):
         return _change_plan_error("change_plan_busy")
-    failure = engine_changeplan.connection_failure()
+    selection = engine_changeplan.clean_selection(body)
+    if selection is None:
+        return _change_plan_error("invalid_change_plan")
+    failure = engine_changeplan.connection_failure(selection)
     if failure is not None:
         return _change_plan_error(failure)
     try:
@@ -12086,7 +12092,7 @@ def api_change_plans_revise(plan_id: str):
     if created:
         threading.Thread(
             target=_change_plan_thread,
-            args=(ctx, task, rel_id, list(base), notes, "review", prev),
+            args=(ctx, task, rel_id, list(base), notes, "review", prev, selection),
             name=f"change-plan-{task.id[:8]}",
             daemon=True,
         ).start()
@@ -12097,13 +12103,15 @@ def api_change_plans_revise(plan_id: str):
     return resp
 
 
-def _change_plan_thread(ctx, task, rel_id, base, comments, source="review", prev=None) -> None:
+def _change_plan_thread(
+    ctx, task, rel_id, base, comments, source="review", prev=None, selection=None
+) -> None:
     """后台线程：钉在发起请求的项目上；任何结局都落成终态并放掉这张图的互斥。"""
     code, detail = "", ""
     try:
         with bound_project(ctx):
             plan, before_png, after_png = _change_plan_compute(
-                task, rel_id, base, comments, source, prev
+                task, rel_id, base, comments, source, prev, selection
             )
             engine_changeplan.publish(task, ctx.id, plan, before_png, after_png)
     except engine_changeplan.PlanFailure as exc:
@@ -12138,6 +12146,7 @@ def _change_plan_compute(
     comments: list[dict],
     source: str = "review",
     prev: dict | None = None,
+    selection: dict | None = None,
 ):
     """渲染 B0 → 问模型 → 候选渲染 → 现算有效改动 → 方案。→ `(plan, before_png, after_png)`；失败抛 `PlanFailure`。
 
@@ -12206,7 +12215,11 @@ def _change_plan_compute(
         task.phase = "model"
         # 续改用审阅那份提示（它带续改说明）；助手来源的首版用助手提示
         proposal = ec.ask_model(
-            comments, start_man, "review" if prev is not None else source, previous
+            comments,
+            start_man,
+            "review" if prev is not None else source,
+            previous,
+            selection,
         )
         if revision() != rev0:
             raise ec.PlanFailure("change_plan_figure_changed")

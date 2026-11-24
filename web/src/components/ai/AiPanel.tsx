@@ -620,14 +620,17 @@ function AssistantPanelBody() {
             canvas: useDocumentStore.getState().activeCanvasId,
             script: panel.script ?? null,
           },
+          // 方案一落定才放掉输入框里的指令与后端草稿：生成中刷新页面，指令还在输入框里
+          source === 'composer' && snap.stamp !== null
+            ? () => {
+                void deleteAiDraftIf(panel.fileId, prompt, pinnedProject).catch(() => undefined)
+                clearIfUnchanged(snap.seq)
+              }
+            : undefined,
         )
         if (projectMoved()) return
         if (planned !== 'fallthrough') {
-          // 方案任务已受理（或这张图已有一份在途，没发）：输入框里的这条算发出去了。后端草稿也删掉，免得对账又把它放回输入框
-          if (planned !== null && source === 'composer' && snap.stamp !== null) {
-            void deleteAiDraftIf(panel.fileId, prompt, pinnedProject).catch(() => undefined)
-            clearIfUnchanged(snap.seq)
-          }
+          // 方案任务已受理（或这张图已有一份在途，没发）。草稿与输入框先不动，方案落定时才清（见 `onSettle`）
           return
         }
       }

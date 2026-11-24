@@ -291,6 +291,22 @@ def set_enabled(value: bool) -> bool:
     return bool(value)
 
 
+def clean_selection(body: dict) -> dict | None:
+    """请求里的 `connection` / `model` / `effort`（输入框选的）→ 规整后的选择；形状不对 None。三项都可缺省（缺省 = 旧的挑法）。"""
+    out: dict = {}
+    for key, limit in (("connection", 128), ("model", 200), ("effort", 32)):
+        v = body.get(key)
+        if v is None:
+            continue
+        if not isinstance(v, str) or not 0 < len(v) <= limit or _CONTROL.search(v):
+            return None
+        out[key] = v
+    if ("model" in out or "effort" in out) and "connection" not in out:
+        out.pop("model", None)
+        out.pop("effort", None)
+    return out
+
+
 def assistant_comments(instruction: object, target: object) -> list[dict] | None:
     """助手的一条指令 → 只有一条「意见」的列表（形状同 `open_comments` 认的）；指令不合格 None。
     `target` = 用户选中的元素 gid（没有 = 整张图）。"""
@@ -876,15 +892,33 @@ _CALL: Callable = _default_call
 _RESOLVE: Callable = _default_resolve
 
 
-def _default_precheck() -> tuple[bool, str]:
+def _default_precheck(conn_id: str | None = None) -> tuple[bool, str]:
     """同步预检用的**只读缓存**判断（不联网、不刷新令牌、**不探测 CLI**——探测要起子进程）→ `(没问题或判不了, 原因码)`。
     与 `ai_data_roles._available_connection` 同一口径：Key 连接在 = 没问题；订阅登录的能力缓存还没有 = 判不了（交给线程里的真解析，
     那里可以探测）；缓存有、却没有可用连接 = 判得定。"""
-    from . import ai_bridge, ai_connections
+    from . import ai_agents, ai_bridge, ai_connections, ai_providers
 
     try:
         if ai_connections.builtin_forced() is False:
             return False, "no_connection"
+        if conn_id:
+            # 用户选的那一条：订阅类看适配器支不支持无工具单轮，Key / 账号登录类看内置循环能不能直接用；不顺延到别的连接
+            sub = ai_connections.SUBSCRIPTIONS.get(conn_id)
+            if sub is not None:
+                agent = ai_agents.get_agent(sub[0])
+                return (
+                    (True, "")
+                    if agent is not None and agent.supports_structured()
+                    else (False, "unsupported_connection")
+                )
+            rec = ai_providers.get(conn_id)
+            if rec is None:
+                return False, "no_connection"
+            return (
+                (True, "")
+                if ai_providers.builtin_conn(rec) is not None
+                else (False, "unsupported_connection")
+            )
         if ai_connections.first_key_connection(refresh=False) is not None:
             return True, ""
         if ai_bridge.capabilities_if_cached() is None:
@@ -895,12 +929,13 @@ def _default_precheck() -> tuple[bool, str]:
         return True, ""
 
 
-_PRECHECK: Callable[[], tuple[bool, str]] = _default_precheck
+_PRECHECK: Callable[..., tuple[bool, str]] = _default_precheck
 
 
-def connection_failure() -> str | None:
+def connection_failure(selection: dict | None = None) -> str | None:
     """同步预检：**判得定**没有可用连接时回稳定码，否则 None（判不了的也放行，由后台线程里的真解析落成失败码）。"""
-    ok, reason = _PRECHECK()
+    conn_id = (selection or {}).get("connection")
+    ok, reason = _PRECHECK(conn_id) if conn_id else _PRECHECK()
     return None if ok else MODEL_FAILURE_CODES.get(reason, "change_plan_model_failed")
 
 
@@ -909,6 +944,7 @@ def ask_model(
     manifest: object,
     source: str = "review",
     previous: list[dict] | None = None,
+    selection: dict | None = None,
 ) -> dict:
     """问一次模型 → 已过 `validate_proposal` 的提议；失败抛 `PlanFailure(稳定码)`。`previous` 给了 = 续改（批注重改）：
     `manifest` 是上一版改完之后的渲染，`previous` 是上一版的改动摘要（`previous_summary`）。"""
@@ -924,7 +960,14 @@ def ask_model(
     system, user = build_review_prompt(
         rows, element_table(manifest, focus_gids=focus), source, previous
     )
-    conn, reason, detail = _RESOLVE(MODEL_TIMEOUT_S)
+    sel = selection or {}
+    # 用户在输入框选的那条连接与型号：结构化调用用同一条（没选 = 旧的挑法）
+    if sel.get("connection"):
+        conn, reason, detail = _RESOLVE(
+            MODEL_TIMEOUT_S, conn_id=sel["connection"], model=sel.get("model")
+        )
+    else:
+        conn, reason, detail = _RESOLVE(MODEL_TIMEOUT_S)
     if conn is None:
         raise PlanFailure(MODEL_FAILURE_CODES.get(reason, "change_plan_model_failed"), detail)
     cli = ai_structured.is_cli_conn(conn)
@@ -945,6 +988,7 @@ def ask_model(
             timeout_s=ai_structured.CLI_TIMEOUT_S if cli else MODEL_TIMEOUT_S,
         ),
         conn=conn,
+        **({"effort": sel["effort"]} if sel.get("effort") and not cli else {}),
     )
     if not res.ok or not isinstance(res.value, dict):
         raise PlanFailure(

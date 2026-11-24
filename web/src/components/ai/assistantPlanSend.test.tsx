@@ -130,15 +130,37 @@ const sendText = async (text: string) => {
 }
 
 describe('发送路由', () => {
-  it('默认（开关开）：走方案路径——带原话与图，不起改脚本会话；输入框与后端草稿清掉；原话出现在对话里；卡片在生成', async () => {
+  it('默认（开关开）：走方案路径——带原话与图，不起改脚本会话；原话出现在对话里；卡片在生成；生成中草稿与输入框先留着（刷新不丢）', async () => {
     await sendText('把线条加粗')
     expect(aiRun).not.toHaveBeenCalled()
     expect(createChangePlan).toHaveBeenCalledOnce()
     expect(vi.mocked(createChangePlan).mock.calls[0][0]).toMatchObject({ source: 'assistant', id: 'Fig1.pdf', instruction: '把线条加粗', patches: [] })
-    expect(input().value).toBe('')
-    expect(be.draft('pa', 'Fig1.pdf')).toBeUndefined()
+    expect(input().value).toBe('把线条加粗')
+    expect(be.draft('pa', 'Fig1.pdf')).toBe('把线条加粗')
     expect(q('[data-change-plan-user]')?.textContent).toBe('把线条加粗')
     expect(q('[data-change-plan-card="generating"]')).toBeTruthy()
+  })
+
+  it('方案出来（落定）：这时才清输入框与后端草稿', async () => {
+    vi.mocked(getChangePlan).mockResolvedValue({
+      plan_id: 'pl1', state: 'ready',
+      plan: { id: 'pl1', version: 1, source: 'assistant', base: { target: 'Fig1.pdf', fingerprint: 'x' }, base_patches: [], candidate_patches: [],
+        groups: [{ key: 'g1', label: 'x', comment_id: 'a1', atomic: false, changes: [], boxes: { after: [] } }], unhandled: [], preview: { before: '/b.png', after: '/a.png' } },
+    } as never)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    try {
+      await mount()
+      await typeText('把线条加粗')
+      await click(q('[data-ai-send="send"]'))
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('把线条加粗')
+      await act(async () => void vi.advanceTimersByTimeAsync(1500))
+      await settle()
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(input().value).toBe('')
+    expect(be.draft('pa', 'Fig1.pdf')).toBeUndefined()
   })
 
   it('方案在生成：发送被锁（同一张图一次一份），不会起第二个任务', async () => {

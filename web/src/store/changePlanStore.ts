@@ -19,7 +19,10 @@ import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
 import { apiUrlFor, onCurrentProjectChange } from '@/lib/session'
 import { releaseOwned } from '@/lib/styleOwned'
 import type { PanelObject, PanelOverride } from '@/types/document'
-import { newRequestId, useAiStore, type AiScope } from './aiStore'
+import { currentRunSelection, newRequestId, useAiStore, type AiScope } from './aiStore'
+import { scriptHandoffPrompt } from '@/lib/assistantScriptContext'
+import { engineLabel } from '@/components/inspector/roles/registry'
+import { exactPanelManifest, useRenderStore } from './renderStore'
 import { useAssetStore } from './assetStore'
 import { useDocumentStore } from './documentStore'
 import { useReviewStore } from './reviewStore'
@@ -119,6 +122,11 @@ export interface PlanEntry {
   instruction?: string
   /** 助手来源的改脚本后路（见 `ScriptFallback`） */
   fallback?: ScriptFallback
+  /**
+   * 助手来源：方案一落定（出卡 / 失败 / 交给改脚本）就调一次、随即清掉——输入框里的指令与后端草稿留到这一刻才删，
+   * 方案生成中刷新页面指令还在输入框里，不会丢。
+   */
+  onSettle?: () => void
   /** 助手来源：已经把这条指令交给改脚本那条路了（卡上不再给「改脚本做剩下的」；全是要改脚本时卡只剩一行灰字） */
   scriptStarted?: boolean
   pj: string | null
@@ -212,7 +220,12 @@ interface ChangePlanState {
    * 改图助手里的一条指令先出方案（ADR 0206 PR 4）。→ 方案键；`'fallthrough'` = 这条路不适用（没连上能用的模型 / native / 没脚本…，
    * 同步就被拒），调用方照旧走改脚本路径（本函数没留下任何卡）；null = 没发（同一张图已有一份在途 / 图不在了）。
    */
-  requestFromAssistant: (panelId: string, req: { instruction: string; target?: string }, fallback: ScriptFallback) => Promise<string | null | 'fallthrough'>
+  requestFromAssistant: (
+    panelId: string,
+    req: { instruction: string; target?: string },
+    fallback: ScriptFallback,
+    onSettle?: () => void,
+  ) => Promise<string | null | 'fallthrough'>
   /** 把这条助手指令交给现有的改脚本路径（`aiStore.start`）：「改脚本做剩下的」/ 全部都要改脚本时自动续走 / 失败后的「改脚本做」 */
   runScript: (key: string) => Promise<boolean>
   /** 失败后「重试」/ 图改过后「重新生成」：用同一份请求再来一份，旧卡换成新卡 */
@@ -371,7 +384,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     }
   }
 
-  const start = async (panelId: string, req: PlanRequest, fallback?: ScriptFallback, keepOnFallthrough = false): Promise<string | null | 'fallthrough'> => {
+  const start = async (panelId: string, req: PlanRequest, fallback?: ScriptFallback, keepOnFallthrough = false, onSettle?: () => void): Promise<string | null | 'fallthrough'> => {
     const ds = useDocumentStore.getState()
     const panel = ds.doc.objects.find((o): o is PanelObject => o.id === panelId && o.type === 'panel')
     if (!panel) return null
@@ -383,7 +396,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     const assistant = typeof req.instruction === 'string'
     const entry: PlanEntry = {
       key,
-      ...(assistant ? { from: 'assistant' as const, instruction: req.instruction, fallback } : {}),
+      ...(assistant ? { from: 'assistant' as const, instruction: req.instruction, fallback, onSettle } : {}),
       pj: guard.pj,
       panelId,
       fileId: panel.fileId,
@@ -417,6 +430,8 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         ...(assistant
           ? { source: 'assistant' as const, instruction: req.instruction, ...(req.target ? { target: req.target } : {}) }
           : { source: 'review' as const, ...(req.comments ? { comments: req.comments } : { share_id: req.share_id }) }),
+        // 输入框选的那条连接与型号：结构化调用用同一条，不顺延到别的（审阅来源同理）
+        ...currentRunSelection(),
         client_request_id: key,
       })
       if (!guard.still() || !get().entries[key]) return key
@@ -460,13 +475,13 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       }
     },
 
-    requestFromAssistant: async (panelId, req, fallback) => {
+    requestFromAssistant: async (panelId, req, fallback, onSettle) => {
       // 同一时刻只发一份（与审阅来源共用这把门）；同一张图已有在途方案时不再起第二份
       const busy = get().order.some((k) => get().entries[k]?.panelId === panelId && get().entries[k]?.status === 'generating')
       if (busy || pending.has(panelId)) return null
       pending.add(panelId)
       try {
-        return await start(panelId, req, fallback)
+        return await start(panelId, req, fallback, false, onSettle)
       } finally {
         pending.delete(panelId)
       }
@@ -483,11 +498,19 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         fail(key, 'change_plan_script_failed')
         return false
       }
+      // 图内已经改（或待用户应用）的部分，确定性地写进指令：Agent 不在脚本里重做它们（`lib/assistantScriptContext`）
+      const manifest = exactPanelManifest(useRenderStore.getState(), panel)
+      const labels = new Map((manifest?.elements ?? []).map((x) => [x.gid, x.label ? engineLabel(x.label).trim() : '']))
+      const prompt = scriptHandoffPrompt(fb.prompt, e.plan, {
+        applied: e.status === 'applied',
+        unchecked: e.unchecked,
+        labelOf: (gid) => labels.get(gid) || undefined,
+      })
       try {
         await ai.start({
           project: fb.project,
           generation: fb.generation,
-          prompt: fb.prompt,
+          prompt,
           fileId: fb.fileId,
           panelId: fb.panelId,
           gid: fb.gid,
@@ -718,4 +741,19 @@ onCurrentProjectChange(() => {
 useAiStore.subscribe((s, prev) => {
   const v = s.caps?.change_plan_enabled
   if (typeof v === 'boolean' && v !== prev.caps?.change_plan_enabled) writeChangePlanCache(v)
+})
+
+// 助手来源的方案一落定（不再是「生成中」），把输入框里那条指令与后端草稿放掉（`PlanEntry.onSettle`）
+useChangePlanStore.subscribe((s) => {
+  for (const e of Object.values(s.entries)) {
+    if (e.onSettle && e.status !== 'generating') {
+      const fn = e.onSettle
+      useChangePlanStore.setState((cur) => (cur.entries[e.key] ? { entries: { ...cur.entries, [e.key]: { ...cur.entries[e.key], onSettle: undefined } } } : {}))
+      try {
+        fn()
+      } catch {
+        /* 清草稿失败不影响方案 */
+      }
+    }
+  }
 })

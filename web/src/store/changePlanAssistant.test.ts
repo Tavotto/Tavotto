@@ -28,6 +28,7 @@ import { setCurrentProjectId } from '@/lib/session'
 import { useAiStore } from './aiStore'
 import { useDocumentStore } from './documentStore'
 import { useChangePlanStore, type ScriptFallback } from './changePlanStore'
+import { connection, connectCapsOf } from '@/components/settings/testCaps'
 import { summaryLine, failureAction } from '@/components/changePlan/changePlanModel'
 
 const ds = () => useDocumentStore.getState()
@@ -240,5 +241,82 @@ describe('部分能改、部分要改脚本', () => {
     const key = (await ask()) as string
     await tick()
     expect(summaryLine(cps().entries[key])).toBe('改了 1 处')
+  })
+})
+
+
+describe('用输入框选的那条连接与型号', () => {
+  it('助手与审阅两种来源的请求都带 connection / model / effort（没有连接视图 = 不带，后端按旧的挑法）', async () => {
+    await ask()
+    expect('connection' in createChangePlan.mock.calls[0][0]).toBe(false)
+    cps().clear()
+    useAiStore.setState({
+      caps: connectCapsOf([connection('sub:codex', { route: 'cli:codex', models: ['gpt-x'], default_model: 'gpt-x' }), connection('prov2', { models: ['m-2'], default_model: 'm-2' })]),
+      connection: 'prov2',
+      models: { prov2: 'm-2' },
+    })
+    await ask()
+    expect(createChangePlan.mock.calls[1][0]).toMatchObject({ source: 'assistant', connection: 'prov2', model: 'm-2' })
+    cps().clear()
+    await cps().requestFromReview('p1', { comments: [{ id: 'c1', text: 't', author: 'a', anchor: { kind: 'overall' } } as never] })
+    expect(createChangePlan.mock.calls[2][0]).toMatchObject({ source: 'review', connection: 'prov2', model: 'm-2' })
+    useAiStore.setState({ caps: null, connection: null, models: {} })
+  })
+
+  it('选中的连接不支持结构化调用（后端 unsupported_connection）：落回改脚本路径，不留卡', async () => {
+    createChangePlan.mockRejectedValue(new EngineError('x', '', 'change_plan_unsupported_connection', ''))
+    expect(await ask()).toBe('fallthrough')
+  })
+})
+
+describe('改脚本做剩下的：把图内已改的部分写进指令', () => {
+  it('未应用：写明用户还没应用；应用后再点：写明已经改好；原话仍在最前', async () => {
+    getChangePlan.mockResolvedValue(ready(partial))
+    const key = (await ask()) as string
+    await tick()
+    await cps().runScript(key)
+    const first = start.mock.calls[0][0].prompt as string
+    expect(first.startsWith(FALLBACK.prompt)).toBe(true)
+    expect(first).toContain('还没应用，不要在脚本里重复它们')
+    expect(first).toContain('ax.line · linewidth → 3')
+    cps().patchEntry(key, { scriptStarted: false })
+    expect(cps().apply(key)).toBe('applied')
+    await cps().runScript(key)
+    expect(start.mock.calls[1][0].prompt).toContain('已经在图内改好（不必再改）')
+  })
+
+  it('整条都要改脚本：指令原样，一个字不加', async () => {
+    getChangePlan.mockResolvedValue(ready(onlyScript, { code: 'change_plan_empty' }))
+    await ask()
+    await tick()
+    expect(start.mock.calls[0][0].prompt).toBe(FALLBACK.prompt)
+  })
+})
+
+describe('草稿与输入框留到方案落定', () => {
+  it('onSettle：生成中不调；落定（出卡）时调一次且只一次', async () => {
+    const settle = vi.fn()
+    getChangePlan.mockResolvedValueOnce({ plan_id: 'p1', state: 'running', phase: 'model' }).mockResolvedValue(ready(plan()))
+    await cps().requestFromAssistant('p1', { instruction: FALLBACK.prompt }, FALLBACK, settle)
+    expect(settle).not.toHaveBeenCalled()
+    await tick(1300)
+    expect(settle).not.toHaveBeenCalled()
+    await tick(1300)
+    expect(settle).toHaveBeenCalledOnce()
+    await tick(3000)
+    expect(settle).toHaveBeenCalledOnce()
+  })
+
+  it('失败也算落定；同步被拒落回旧路径时不调（旧路径的账本自己清草稿）', async () => {
+    const settle = vi.fn()
+    getChangePlan.mockResolvedValue({ plan_id: 'p1', state: 'failed', code: 'change_plan_model_failed' })
+    await cps().requestFromAssistant('p1', { instruction: 'x' }, FALLBACK, settle)
+    await tick()
+    expect(settle).toHaveBeenCalledOnce()
+    cps().clear()
+    const settle2 = vi.fn()
+    createChangePlan.mockRejectedValue(new EngineError('x', '', 'change_plan_no_connection', ''))
+    expect(await cps().requestFromAssistant('p1', { instruction: 'x' }, FALLBACK, settle2)).toBe('fallthrough')
+    expect(settle2).not.toHaveBeenCalled()
   })
 })
