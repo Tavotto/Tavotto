@@ -140,8 +140,10 @@ def _items():
             "text": "(a)",
             "bold": True,
             "sizePt": 9,
-            "at": {"anchor": {"panel": {"id": "P1", "point": "nw"}}, "offset_mm": [0.6, 0.6]},
-            "attach": "nw",
+            # 子图框正上方：放在框内左上角时，刻度文字的位置随字体 / matplotlib 版本变（Linux CI 上压到了纵轴刻度，
+            # 核对拦过），框外上方与环境无关
+            "at": {"anchor": {"panel": {"id": "P1", "point": "nw"}}, "offset_mm": [0.0, -0.6]},
+            "attach": "sw",
         },
         # 右图缩放 0.8 后纵轴顶端的刻度贴着左上角（放里面会压字，核对拦过）：放在子图框正上方
         {
