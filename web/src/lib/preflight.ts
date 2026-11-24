@@ -1179,7 +1179,7 @@ function checkCanvasStrokes(spec: PreflightSpec, profile: PublicationProfile, si
     sink.add(
       'line-width-below-min',
       pf('canvasLineWidthBelowMin', { effective: lw.toFixed(2), min: g(minLw) }),
-      { objectIds: [o.id], detail: { effective_pt: r2(lw) }, worse: minLw - lw },
+      { objectIds: [o.id], detail: { effective_pt: r2(lw) }, worse: minLw - lw, prop: 'strokePt' },
     )
   }
 }
