@@ -1767,11 +1767,14 @@ def _review_feedback_lines(out: dict) -> list[str]:
     for ver in out["versions"]:
         for vd in ver["verdicts"]:
             label = "通过" if vd["decision"] == "approved" else "需要修改"
-            lines.append(
-                f"[第 {ver['version']} 版结论 · 审阅者 {vd['reviewer']}] {label}：{vd['note']}"[
-                    :300
-                ]
-            )
+            line = f"[第 {ver['version']} 版结论 · 审阅者 {vd['reviewer']}] {label}：{vd['note']}"[
+                :300
+            ]
+            budget -= len(line.encode("utf-8"))  # 结论也计入摘要预算（Codex #2165 P2）
+            if budget < 0:
+                lines.append("…（其余见 structuredContent）")
+                return lines
+            lines.append(line)
         for c in ver["comments"]:
             a = c["anchor"]
             where = (

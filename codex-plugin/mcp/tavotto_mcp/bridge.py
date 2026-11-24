@@ -6054,7 +6054,16 @@ def review_feedback(
         range(len(views)), key=lambda i: (not views[i]["resolved"], views[i]["version"], -i)
     )
 
-    def assemble(dropped: set[int]) -> dict:
+    # 结论也要进预算（Codex #2165 P2：一条链接最多 500 条结论，只丢意见压不住）。意见丢完仍超限才丢结论：
+    # 旧版本的先丢，同一版本里先写的先丢（每个版本最新的结论最后才丢）
+    verdict_keys = [(v, j) for v, lst in verdicts.items() for j in range(len(lst))]
+    verdict_drop_order = sorted(verdict_keys, key=lambda k: (k[0], k[1]))
+
+    def assemble(dropped: set[int], dropped_verdicts: set[tuple[int, int]] = frozenset()) -> dict:
+        kept_verdicts = {
+            v: [vd for j, vd in enumerate(lst) if (v, j) not in dropped_verdicts]
+            for v, lst in verdicts.items()
+        }
         by_v: dict[int, list[dict]] = {}
         for i, view in enumerate(views):
             if i not in dropped:
@@ -6062,7 +6071,7 @@ def review_feedback(
         shown = sorted(
             {int(v["v"]) for v in detail["versions"] if version in (None, v["v"])}
             | set(by_v)
-            | {v for v in verdicts if version in (None, v)},
+            | {v for v, lst in kept_verdicts.items() if lst and version in (None, v)},
             reverse=True,
         )
         out = {
@@ -6081,7 +6090,7 @@ def review_feedback(
             },
             "bbox_unit": "画面比例 [x, y, w, h]（y 向下）；gid 是那个版本的元素 id，改图时用 tavotto_apply_overrides 的 gid",
             "versions": [
-                {"version": v, "verdicts": verdicts.get(v, []), "comments": by_v.get(v, [])}
+                {"version": v, "verdicts": kept_verdicts.get(v, []), "comments": by_v.get(v, [])}
                 for v in shown
             ],
         }
@@ -6092,17 +6101,30 @@ def review_feedback(
         return out
 
     dropped: set[int] = set()
-    out = assemble(dropped)
+    dropped_verdicts: set[tuple[int, int]] = set()
+
+    def build() -> dict:
+        # 「省略了几条」的说明本身也占预算：量大小时连它一起量（不然压线之后再加它又超了）
+        res = assemble(dropped, dropped_verdicts)
+        if dropped or dropped_verdicts:
+            res["truncated"] = {
+                "omitted_comments": len(dropped),
+                "omitted_verdicts": len(dropped_verdicts),
+                "why": "结果太长，先省略了已处理 / 较旧版本的意见，仍太长再省略较旧的结论；用 version 或 include_resolved=false 缩小范围再读。",
+            }
+        return res
+
+    out = build()
     for i in drop_order:
         if _review_compact_size(out) <= REVIEW_FEEDBACK_BUDGET_BYTES:
             break
         dropped.add(i)
-        out = assemble(dropped)
-    if dropped:
-        out["truncated"] = {
-            "omitted_comments": len(dropped),
-            "why": "结果太长，先省略了已处理 / 较旧版本的意见；用 version 或 include_resolved=false 缩小范围再读。",
-        }
+        out = build()
+    for k in verdict_drop_order:
+        if _review_compact_size(out) <= REVIEW_FEEDBACK_BUDGET_BYTES:
+            break
+        dropped_verdicts.add(k)
+        out = build()
     return out
 
 

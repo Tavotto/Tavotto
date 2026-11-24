@@ -282,6 +282,37 @@ def test_a_big_inbox_is_truncated_to_the_budget_and_says_so(on, project, worker)
     )
 
 
+def test_many_verdicts_alone_are_also_held_to_the_budget(on, project, worker):
+    """Codex #2165 P2：只有结论、没有意见时也要压在预算里并说明省略了几条；文字摘要同样有上限。"""
+    sid = _open(project)
+    share_id = _shared(sid)
+    for i in range(60):
+        on.push(
+            share_id,
+            {
+                "type": "verdict",
+                "verdict": {
+                    "v": 1,
+                    "decision": "changes",
+                    "note": "改" * 200,
+                    "author": f"审阅者{i}",
+                    "at": f"2026-11-15T09:{i:02d}:00Z",
+                },
+            },
+        )
+    res = _feedback(sid)
+    body = _body(res)
+    size = len(json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    assert size <= bridge.REVIEW_FEEDBACK_BUDGET_BYTES
+    kept = [vd for v in body["versions"] for vd in v["verdicts"]]
+    assert 0 < len(kept) < 60
+    assert body["truncated"]["omitted_verdicts"] == 60 - len(kept)
+    assert body["truncated"]["omitted_comments"] == 0
+    assert kept[-1]["reviewer"] == "审阅者59"  # 最新的结论留着，先写的先丢
+    text = " ".join(c["text"] for c in res["content"] if c["type"] == "text")
+    assert len(text.encode("utf-8")) < 10_000
+
+
 # --------------------------------------------------------------------------- 回复
 def test_reply_without_confirmation_sends_nothing_and_asks_the_user(on, project, worker):
     sid = _open(project)
