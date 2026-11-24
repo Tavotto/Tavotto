@@ -51,6 +51,7 @@ def main():
     ax.text(0.2, 0.8, "data text", fontsize=9, color="C3")
     ax.annotate("note", xy=(0.5, 0.5), xytext=(0.6, 0.2), arrowprops=dict(arrowstyle="->"))
     ax.text(0.7, 0.9, "boxed", bbox=dict(boxstyle="round", fc="w", ec="k"))
+    ax.text(0.2, 0.3, "ghostbox", bbox=dict(boxstyle="round", fc="y", ec="k", visible=False))
     ax.legend()
     fig.text(0.5, 0.02, "fig text")
     fig.savefig("Dup.pdf")
@@ -64,6 +65,8 @@ SOURCES = {
     "datatext": ("axes_0", "axes_0.texts_0", [0.3, 0.6]),
     "annotate": ("axes_0", "axes_0.texts_1", [0.7, 0.3]),
     "boxed": ("axes_0", "axes_0.texts_2", [0.5, 0.5]),
+    # 脚本里底框存在但藏着（`bbox=dict(visible=False)`）：副本的底框也得藏着（Codex #2152 P1）
+    "ghostbox": ("axes_0", "axes_0.texts_3", [0.4, 0.35]),
     "figtext": ("fig", "fig.texts_0", [0.5, 0.1]),
 }
 LAYOUTS = {"none": None, "tight": "tight", "constrained": "constrained"}
@@ -128,6 +131,7 @@ def _text_of(src_key: str) -> str:
         "datatext": "data text",
         "annotate": "note",
         "boxed": "boxed",
+        "ghostbox": "ghostbox",
         "figtext": "fig text",
     }[src_key]
 
@@ -226,7 +230,7 @@ SOURCE_EDITS = [
 ]
 
 
-@pytest.mark.parametrize("src_key", ["title", "datatext", "boxed", "figtext"])
+@pytest.mark.parametrize("src_key", ["title", "datatext", "boxed", "ghostbox", "figtext"])
 def test_copy_takes_the_scripts_source_not_its_edited_state(rig, src_key):
     """热会话里源早已被改过样式、之后才加副本：副本仍是脚本原样的源（冷重放里副本先于源的修改建出）。"""
     layout, hot, cold = rig

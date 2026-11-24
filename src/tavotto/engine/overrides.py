@@ -6114,6 +6114,9 @@ def _ensure_copy(state: FigState, gid: str, value, warnings: list[str]):
                 "linewidth": bp.get_linewidth(),
                 "linestyle": bp.get_linestyle(),
                 "alpha": bp.get_alpha(),
+                # 脚本写了 `bbox=dict(visible=False)` 的底框是藏着的：不抄这一项，副本会凭空多出一个看得见的框，
+                # 而且「先把源的底框打开、再加副本」在热态（原样落回副本）与冷重放（副本先建）间分岔（Codex #2152）
+                "visible": bp.get_visible(),
             }
         )
     # **样式按引用的是「脚本原样的源」，不是此刻的源**：冷重放里 `copy_of`（`_RANK_COPY`）先于源上的样式修改，
