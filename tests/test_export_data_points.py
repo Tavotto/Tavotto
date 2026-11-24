@@ -72,9 +72,14 @@ for layout in [None, 'tight', 'constrained']:
   reqs += [{'axes': 'no_such_gid', 'x': 0, 'y': 0}, {'axes': 'figure', 'x': 0, 'y': 0}]
   reqs += [{'axes': gid['lin'], 'x': c[0], 'y': c[1]} for c in [(0, 0), (10, 0), (0, 5), (10, 5)]]
   state = s.snapshot('F')
+  cats_before = dict(axes['cat'].xaxis.units._mapping)
   pdf = out_dir / f'{layout}.pdf'
-  res = s.do_export('F', [], str(pdf), 'pdf', 300, data_points=reqs)
+  res = s.do_export('F', [], str(pdf), 'pdf', 300, data_points=reqs + [{'axes': gid['cat'], 'x': 'zzz', 'y': 1}])
   assert s.snapshot('F') == state, 'export must stay state-neutral'
+  # 没画过的组名：换算不了，而且**不许**被加进分类轴（否则多出一个刻度、还原不回来）
+  assert res['data_points'][-1] == {'status': 'unresolvable', 'reason': 'units'}
+  assert dict(axes['cat'].xaxis.units._mapping) == cats_before
+  res['data_points'] = res['data_points'][:-1]
   plain = s.do_export('F', [], str(out_dir / f'{layout}-plain.pdf'), 'pdf', 300)
   assert 'data_points' not in plain and 'draw_manifest' not in plain
   man = {e['gid']: e for e in res['draw_manifest']['elements']}

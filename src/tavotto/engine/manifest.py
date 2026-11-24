@@ -88,6 +88,7 @@ from legendmodel import (
 )
 from overrides import (
     _ARROWSTYLES,
+    _unit_scalar,
     _FONT_PRESENT as _FONT_PRESENT,  # 测试要清的那张探测缓存（显式再导出）
     BBOX_DEFAULTS,
     HATCHES,
@@ -6172,6 +6173,21 @@ def _in_scale_domain(scale: str, v: float) -> bool:
     return True
 
 
+def _axis_value(axis, v) -> float | None:
+    """一个坐标值 → 这根轴的数值（换不了回 None）。**不许改动坐标轴**：分类轴的换算器碰到没画过的组名会把它
+    永久加进轴的单位映射（多出一个刻度、导出还原不回来，Codex #2197），所以字符串只在已有的映射里查。
+    数值照 `convert_units`（日期等），结果经 `_unit_scalar`（分类换算可能回单元素数组，NumPy 2.4 直接 float() 会报错）。"""
+    if isinstance(v, str):
+        mapping = getattr(getattr(axis, "units", None), "_mapping", None)
+        if not isinstance(mapping, dict) or v not in mapping:
+            return None
+        return float(mapping[v])
+    try:
+        return _unit_scalar(axis.convert_units(v))
+    except Exception:  # noqa: BLE001 — 单位换不过去就是换不了，不猜
+        return None
+
+
 def measure_data_points(state: FigState, requests: list) -> list[dict]:
     """数据坐标 → 图幅分数（top-origin，与 manifest 的 `bbox` 同一套：显示像素 / `fig.bbox`）。
 
@@ -6189,10 +6205,9 @@ def measure_data_points(state: FigState, requests: list) -> list[dict]:
         if ax is None or not hasattr(ax, "transData") or getattr(ax, "name", "") == "3d":
             out.append({"status": "unresolvable", "reason": "not_axes"})
             continue
-        try:
-            xv = float(ax.xaxis.convert_units(req["x"]))
-            yv = float(ax.yaxis.convert_units(req["y"]))
-        except Exception:  # noqa: BLE001 — 单位换不过去就是换不了，不猜
+        xv = _axis_value(ax.xaxis, req["x"])
+        yv = _axis_value(ax.yaxis, req["y"])
+        if xv is None or yv is None:
             out.append({"status": "unresolvable", "reason": "units"})
             continue
         # 对数 / logit 轴的变换会把定义域外的值截成一个有限的远点（`nonpositive="clip"`），
