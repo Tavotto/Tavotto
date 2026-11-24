@@ -117,9 +117,9 @@
 ### L-126 新 worktree 先补齐 gitignore 的内置字体，大片同类红先单跑看 stderr
 - 类: 别这样
 - 触发: scripts/fetch_fonts.py
-- Seen: 2026-11-03
-- 为什么: git worktree add 不带被忽略的 src/tavotto/resources/fonts，约 170 条导出、公式、字体用例假红（backend_unavailable、child_failed），看着像改坏了。先跑 scripts/fetch_fonts.py 或从主工作区拷。
-- 证据: （会话记录，无编号）
+- Seen: 2026-11-03, 2026-11-23
+- 为什么: git worktree add 不带被忽略的 src/tavotto/resources/fonts，约 170 条导出、公式、字体用例假红（backend_unavailable、child_failed），看着像改坏了。先跑 scripts/fetch_fonts.py 或从主工作区拷。11-23 新 worktree 30 条后端用例红、main 上同样红，被当成本机环境问题放过，补字体后全过：「main 上也红」不等于环境问题。
+- 证据: #1927
 
 ### L-128 带锁的不变式用确定性交错反证，多线程跑几轮没红不算证据
 - 类: 别这样

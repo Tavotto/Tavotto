@@ -65,7 +65,18 @@ const DOC_TARGET: JournalPickTarget = {
  * 期刊选择器：可搜索（名称 / 缩写 / ISSN），按出版社分组。选中 = `selectJournal`（一次提交：绑定 + 页宽跟栏，
  * 撤销一步全回去）。目录空（种子为空且没有缓存）时只有一行中性的话，不写任何解释。
  */
-export function JournalPicker({ target, triggerClassName, disabled }: { target?: JournalPickTarget; triggerClassName?: string; disabled?: boolean } = {}) {
+export function JournalPicker({
+  target,
+  triggerClassName,
+  disabled,
+  anchor,
+}: {
+  target?: JournalPickTarget
+  triggerClassName?: string
+  disabled?: boolean
+  /** 触发器自己的锚点属性名（如 `data-issues-journal-picker`）：给了就用它、不再占 `id="journal-picker"`（设置里的那一个独占） */
+  anchor?: `data-${string}`
+} = {}) {
   useTranslation('dialogs')
   const catalog = useJournalCatalogStore((s) => s.catalog)
   const docRef = useDocumentStore((s) => s.doc.profile?.journalRef)
@@ -176,7 +187,7 @@ export function JournalPicker({ target, triggerClassName, disabled }: { target?:
           disabled={disabled}
           aria-busy={pending ? true : undefined}
           // 设置里的那一个保留 id / 锚点；草稿的那一个换自己的锚点（设置对话框可能开在数据页上面，同一个 id / 锚点出现两次选择器会认不出谁）
-          {...(target ? { 'data-draft-journal-picker': '' } : { id: 'journal-picker', 'data-journal-picker': '' })}
+          {...(anchor ? { [anchor]: '' } : target ? { 'data-draft-journal-picker': '' } : { id: 'journal-picker', 'data-journal-picker': '' })}
           className={cn('w-65 min-w-0 shrink justify-between', triggerClassName)}
         >
           <span className={cn('min-w-0 truncate', pending && 'text-ink-3')}>{pending?.label ?? ref?.label ?? jt('pick')}</span>

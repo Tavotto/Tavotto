@@ -2244,7 +2244,7 @@
       "until": "有效期至 {{date}}",
       "codeLabel": "激活码",
       "state": {
-        "expired": "已于 {{date}} 到期",
+        "expired": "已于{{date}}到期",
         "revoked": "这份授权已失效",
         "lapsed": "需要联网确认一下授权"
       },
@@ -2273,7 +2273,17 @@
         "tip": "高级版功能，点一下了解",
         "aria": "高级版功能，了解高级版"
       },
-      "releaseTitle": "解绑后可以在另一台电脑上激活"
+      "releaseTitle": "解绑后可以在另一台电脑上激活",
+      "plate": {
+        "label": "创始会员",
+        "defaultName": "早期同行者",
+        "nameLabel": "刻在铭牌上的名字",
+        "nameTitle": "名字只保存在这台电脑上",
+        "engrave": "刻上你的名字",
+        "rename": "重新刻名",
+        "turnTitle": "拖一下可以翻面",
+        "issued": "ISSUED ON"
+      }
     }
   },
   "style": {

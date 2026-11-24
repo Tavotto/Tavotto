@@ -158,3 +158,51 @@ describe('付费功能的灰态', () => {
     expect(q('[data-premium-lock]')).toBeNull()
   })
 })
+
+
+describe('创始会员铭牌', () => {
+  const FOUNDER = { ...ACTIVE, founding: { no: 37, since: 1_763_000_000, name: '' } }
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+
+  it('非创始会员：什么都不显示', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => json(ACTIVE)))
+    await render()
+    expect(q('[data-founding-plate]')).toBeNull()
+  })
+
+  it('创始会员：席位号 NO. 037 / 200，没刻名字时用默认名；过期了铭牌还在', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => json({ ...FOUNDER, state: 'expired', licensed: false })))
+    await render()
+    expect(q('[data-founding-plate]')).not.toBeNull()
+    expect(q('[data-founding-seat]')?.textContent).toContain('NO. 037 / 200')
+    expect(q('[data-founding-name]')?.hasAttribute('data-default')).toBe(true)
+  })
+
+  it('改名：POST 到本机引擎的 plate-name（不碰 localStorage、不碰别的端点）；清空回到默认名', async () => {
+    let name = ''
+    const fetchMock = vi.fn((u: string, init?: RequestInit) => {
+      if (u.includes('/api/license/plate-name')) name = JSON.parse(String(init?.body)).name
+      return json({ ...FOUNDER, founding: { ...FOUNDER.founding, name } })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    window.localStorage.clear()
+    await render()
+    const typeAndEnter = async (text: string) => {
+      await act(async () => q('[data-founding-name]')!.click())
+      const input = q('[data-founding-name-input]') as HTMLInputElement
+      await act(async () => {
+        setter.call(input, text)
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+    }
+    await typeAndEnter('  林小雨  ')
+    expect(q('[data-founding-shown]')?.textContent).toBe('林小雨')
+    const posts = fetchMock.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === 'POST')
+    expect(posts.map((c) => new URL(String(c[0]), 'http://x').pathname)).toEqual(['/api/license/plate-name'])
+    expect(JSON.parse(String((posts[0][1] as RequestInit).body))).toEqual({ name: '林小雨' })
+    expect(window.localStorage.length).toBe(0)
+    await typeAndEnter('')
+    expect(q('[data-founding-name]')?.hasAttribute('data-default')).toBe(true)
+  })
+})
