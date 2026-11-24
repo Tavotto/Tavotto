@@ -1625,6 +1625,55 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     expect(badge()?.className).toContain('text-danger')
   })
 
+  // 成品实测字号（ADR 0203）：唯一带数的一项——失败时说出界面上显示的两个数；
+  // 通过、没规范（not_applicable）、量不全（unknown）都不画（核验只说失败，2026-11-06）
+  const sized = (verdict: string, textSize: Record<string, unknown> | undefined) => ({
+    ...manifest({ integrity: 'verified', size: 'verified', text_size: verdict }),
+    ...(textSize ? { text_size: textSize } : {}),
+  })
+
+  it('字号 failed：一句话说出最小的字和规范下限，不只报名字', async () => {
+    jobOutputs = [output(sized('failed', { reason: 'below_min', min_pt: 4.9, floor_pt: 5 }))]
+    await setup(9)
+    await click(button('开始导出')!)
+    await openResultDetail()
+    expect(badge()?.dataset.inspection).toBe('failed')
+    expect(badge()?.textContent).toBe('成品里最小的文字是 4.9 pt，低于规范的 5 pt')
+  })
+
+  it('字号 failed 与别的项一起失败：同一行里两样都说', async () => {
+    jobOutputs = [
+      output({
+        ...sized('failed', { reason: 'below_min', min_pt: 4.9, floor_pt: 6 }),
+        checks: { integrity: 'verified', size: 'verified', dpi_tag: 'failed', text_size: 'failed' },
+      }),
+    ]
+    await setup(9)
+    await click(button('开始导出')!)
+    await openResultDetail()
+    expect(badge()?.textContent).toBe('核验未通过：分辨率标签；成品里最小的文字是 4.9 pt，低于规范的 6 pt')
+  })
+
+  it('字号 failed 但老服务端没带读数：退回只报名字', async () => {
+    jobOutputs = [output(sized('failed', undefined))]
+    await setup(9)
+    await click(button('开始导出')!)
+    await openResultDetail()
+    expect(badge()?.textContent).toBe('核验未通过：字号')
+  })
+
+  it.each([
+    ['verified', { reason: 'ok', min_pt: 7, floor_pt: 6 }],
+    ['not_applicable', { reason: 'no_threshold', min_pt: 4.9, floor_pt: null }],
+    ['unknown', { reason: 'unmeasured_runs', min_pt: 9, floor_pt: 6 }],
+  ] as const)('字号 %s（通过 / 没有规范 / 公式量不全）：都不画', async (verdict, ts) => {
+    jobOutputs = [output(sized(verdict, ts))]
+    await setup(9)
+    await click(button('开始导出')!)
+    await openResultDetail()
+    expect(badge()).toBeNull()
+  })
+
   it('SVG 的文字转成了轮廓（text_outlined）：回执摘要里说一句不能再当文字编辑；没转就不出现', async () => {
     const svg = (extra: Record<string, unknown>) => ({
       ...output(manifest({ integrity: 'verified', size: 'verified' })),

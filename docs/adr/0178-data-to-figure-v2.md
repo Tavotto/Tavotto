@@ -451,6 +451,38 @@ interval / trajectories / dose_response / profile）。批次 2 / 3 在本 PR �
 
 **还没做**（同一批审计里属实的）：已汇总的表（均值 + 误差 + n）还没有专门的画法（应画成均值 + 现成误差列的误差线，而不是把均值当原始观测）；某一组 n < 2 时柱照画、误差线不画，说明文字仍写「误差线是标准差」。这两条要动画法与文案，和「依据 + 需要你确认」一起做。
 
+## 修订（2026-11-22）：第 2 步之一——不该连线的折线（准则 G-018 / G-052；`ai_data_recipe.default_candidates` / `ai_data_roles._x_measure` / `ai_data_propose.parse_answers`）
+
+**问题**。第 2 步考卷（`tests/fixtures/data_figure_cases/recommend_cases.json`，41 条）的天花板测量里，规则给出的候选含 `forbidden` 画法 6 条，其中 3 条被标「推荐」（P03B、P04B、H01）——都是「两个独立测量值之间画了折线」。规则看到一个数值列能当横轴就把趋势类排在最前，只判到「列是数值」，没有判「有序自变量」（G-018：折线只用于时间、剂量、浓度这类有序横轴；两个独立测量的量之间没有 key，用散点、不连线）。
+
+**不靠模型：判不了，规则臂不变**。在考卷 41 条 + 读懂数据 52 条里、规则会选出数值横轴的那些表上，逐列看数据事实（不同取值占比、是否按行序单调、是否带小数）：
+* 带小数不是线索：`time_min`（HO-02）13 个互异、单调、全带小数，是时间；
+* 行序单调不是线索：`height_cm`（RC-21）、`count`（RC-04）单调却是测量值；`height_cm`（HO-29）不单调、全带小数，标准答案却是有序量；
+* 同名同量也不是线索：`grain_size_um` 在 HO-04 是有序量、在 P04B 是测量值；P08A（温度 4 / 25 / 37）与 P08B（批号 1 / 2 / 3）连整数列的形状都相同。
+
+「互异（占比 ≥ 0.8）且行序不单调」在这些表上没有反例，但那是文件的行序、不是变量的性质（乱序的时间序列、按别的列排序的剂量曲线都会被误判），而误判的代价是把规则本来对的时间序列 / 剂量曲线改成散点。所以**不加启发式**：没有模型判断时，规则的结果与从前逐字相同（测试钉住）。
+
+**靠模型的列角色：判得了**。模型把规则（含模型自己的选择）此刻选作横轴的那一列判成 `measure`（`time` / `ordered_x` / 没给角色 = 现状）→ 趋势类（`line_points` / `line_band` / `line_units`）不出，关系类（`scatter_fit`、`scatter`）排前，`roles` 与候选一致。实现：
+* 事实由**已校验的列角色**在 `ai_data_roles.interpret` 里派生（`Understanding.x_measure`，不改提示词、`validate_roles_shape`、缓存格式；缓存只存原始判断，照旧现算），经 `to_payload` 进 `answers.x_measure`——值是**列名**。它不是对 x / y / group 下拉的改动（不进 `picks`、不算「用户动过下拉」）；`ai_data_propose` 把 `x_measure` 加进 `_ANSWER_KEYS`（否则被 `parse_answers` 静默丢掉、也进不了幂等摘要）、经 `confirmed_from` 进 `picks`，并算 `_user_took_over`（请求已带模型建议，不再起模型任务，避免「采纳 → 再来一次 → 再起任务」的循环）。
+* **用户优先靠绑定列名**：`default_candidates` 只在 `roles.x_ord == picks.x_measure` 时生效；用户在右栏换了横轴、或请求只带 `x` 不带这个键，折线照常。`interpret(fixed={x: …})`（用户已定横轴）不派生。
+* 不会出零候选：x 不是数值（日期）、或关系图资格不过时不拿掉趋势类；同一组里 `scatter_fit` 不合格退到 `scatter`，第二组的 `scatter` 不重复出。拿掉的趋势类记进 `dropped`，复用 `roles_invalid`（`detail=x_is_measure`，先例 `multi_y_not_drawn`），**不新增错误码、不新增界面文案**；理由码复用 `scatter_fit` / `scatter`。
+* 备选理由里「两个量都是测量值」这一档（G-039 的 data_fact）目前没有专用的理由码：建议另议（见本次汇报，由维护者定文案）。
+
+**G-052（同一个 x 有重复观测时不逐点连线）**：规则一直有——`line_duplicate_x_unconfirmed`（逐点连线按「分组 + x」查重复，没有确认的个体编号就剔除，只剩汇总线 + 误差带 + 原始点）。核对考卷 P09A / P09B / P10B / P08A 与 N03、P04B：P09B 的候选是 `line_band`、`scatter_fit`，`line_points` 在 `dropped`；没有需要改的代码，只补了看护。
+
+**前端依赖（必须另做）**：现有前端（`web/src/lib/dataUnderstanding.ts`，origin/main 与 d2f-roles-ui 一致）的 `suggestionFrom` 只拷 `x` / `y` / `group` 三个键，`diffSuggestion` 在三项无差别时返回 null 不再出候选——P03B、P04B、N03、H01 正好是模型与规则的 x / y 一致、只有角色不同。所以本修订在**产品里还没有效果**：旧前端不会出错（多出的键被忽略），但要前端把 `answers.x_measure` 并回 `propose` 才生效（建议 `Suggestion` 多带这一个键，「与当前 `answers.x_measure` 不同」算一处差别，且不计入「用户动过下拉」）。
+
+**度量**（`scripts/dev/data_figure_bench.py --suite recommend --arm rules [--ideal-roles]`；`--ideal-roles` 把标准答案里每列的角色当「理想模型」走真的 `interpret` 回放，只打印、不写回）：
+| 数字 | 规则臂（不变） | 理想列角色 |
+|---|---|---|
+| ① 第一名在 `acceptable_top`（基线） | 25 / 41 | 27 / 41（+P04B、N03） |
+| ② 只重排现有候选最多 | 28 / 41 | 28 / 41 |
+| ③ 换进合法全集最多 | 29 / 41 | 29 / 41 |
+| ④ 需新能力 | 12 / 41 | 12 / 41 |
+| forbidden 被标推荐 / 出现在候选里 | 3 / 6 | **0** / 3（余下是 P02A / P02B / P07B 的 `bar_error`，不在本步范围） |
+
+P03B 与 H01 的第一名仍不对：标准答案要 `scatter_identity`（等比例 + y = x）或配对连线，模板还没有（第 2 步之四）。
+
 ## 修订（2026-11-24，用户决定）：一张主图 + 依据 + 需要你确认（`components/datastudio/CandidateStage.tsx`、`DataPanel.tsx`、`ai_data_propose.candidate_facts`）
 
 **起因**：用户 11-23 原话——「我希望从数据到图这个功能，同时具备好入手和科学性。就像一个老师或者科研助理在给建议，而不是直接画完了，结果画出来的图不够科学严谨。」四宫格是「替你画完」；严谨做了也看不见。顺序他定的是：先堵漏洞（上一条修订）→ 这一步 → 按科学任务推荐 → 补画法。
