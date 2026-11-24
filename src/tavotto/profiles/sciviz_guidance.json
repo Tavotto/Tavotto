@@ -7,7 +7,10 @@
     "FDV": "Claus O. Wilke, Fundamentals of Data Visualization, O'Reilly 2019（全文 https://clauswilke.com/dataviz/）",
     "MATH": "数学事实（不归于任何一本书）",
     "TAVOTTO": "Tavotto 自己的工程推导",
-    "XG": "外部作图实践指引仓库的作图技能目录（地址与版本号不入库，Apache-2.0）：一份作图实践指引，不是原著也不是期刊规定；只作二手参考，其中的 pt / mm 数值不引用"
+    "XG": "外部作图实践指引仓库的作图技能目录（地址与版本号不入库，Apache-2.0）：一份作图实践指引，不是原著也不是期刊规定；只作二手参考，其中的 pt / mm 数值不引用",
+    "KD": "K-Dense AI, scientific-agent-skills: skills/scientific-visualization（MIT，ec59a29a，2026-11-16）",
+    "WCAG": "W3C, Web Content Accessibility Guidelines (WCAG) 2.2（经 KD 转述，未直接核原文）",
+    "ARS": "imbad0202, academic-research-skills（CC BY-NC 4.0，d169ec5c；只借思路，不引原文）"
   },
   "entries": [
     {
@@ -1673,6 +1676,201 @@
       ],
       "principles": [
         "P9"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-063",
+      "title": "缺失、零、删失、被排除要分开表达",
+      "basis": "statistics",
+      "strength": "inference",
+      "decidable": "context",
+      "agent": "缺失值不是 0，被排除的点也不是缺失：画图时让它们看得出区别（缺失处断开、不连线；被排除的点说明规则与个数；低于检出限的值单独标注），不要把缺失悄悄连成一条线，也不要把空格当 0 画。",
+      "exceptions": [
+        "用户明确要求插值时，用不同线型标出插值段"
+      ],
+      "evidence": [
+        {
+          "src": "KD",
+          "loc": "SKILL.md「Choose an honest encoding」",
+          "tag": "原文",
+          "quote": "distinguish missing, zero, censored, and excluded"
+        },
+        {
+          "src": "TAVOTTO",
+          "loc": "Tavotto 采纳为 Agent 准则（三本书未覆盖或未明说），只靠二手来源支撑，因此不判对错",
+          "tag": "推导"
+        }
+      ],
+      "principles": [
+        "P1",
+        "P2"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-064",
+      "title": "线条、标记与背景要有足够对比度",
+      "basis": "visual",
+      "strength": "inference",
+      "decidable": "auto",
+      "agent": "读图必需的线条、标记、色块与背景的对比度至少约 3:1，文字至少约 4.5:1（WCAG 2.2 的网页标准；期刊没有这项规定，作为可读性参考）。浅黄、浅灰的细线在白底上最常不够，加深颜色或加粗。",
+      "exceptions": [
+        "背景参考线、网格这类本来就该退后的元素",
+        "期刊或用户指定的配色"
+      ],
+      "evidence": [
+        {
+          "src": "KD",
+          "loc": "SKILL.md「Design accessibility in, not after」（转述 WCAG 2.2 SC 1.4.3 / 1.4.11）",
+          "tag": "原文",
+          "quote": "3:1 for graphical objects required for understanding"
+        },
+        {
+          "src": "WCAG",
+          "loc": "SC 1.4.3 / SC 1.4.11（未直接核 W3C 原文）",
+          "tag": "二手"
+        },
+        {
+          "src": "VAD",
+          "loc": "§10.2.2 Luminance, p.223（文字最低 3:1）",
+          "tag": "原文"
+        },
+        {
+          "src": "TAVOTTO",
+          "loc": "Tavotto 采纳为 Agent 准则与视觉建议级检查（期刊无此规定）",
+          "tag": "推导"
+        }
+      ],
+      "principles": [
+        "P5"
+      ],
+      "spec": [
+        "V-010"
+      ],
+      "checks": []
+    },
+    {
+      "id": "G-065",
+      "title": "不确定性写明 n 和重复的单位",
+      "basis": "undecidable",
+      "strength": "inference",
+      "decidable": "no",
+      "agent": "写明误差线是 SD、SEM 还是 CI 之外，还要写明 n，以及 n 数的是什么（独立的动物、独立实验，还是同一样品的技术重复）。这只能由作者提供：不知道就问，不要从数据行数推断 n。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "KD",
+          "loc": "SKILL.md「Choose an honest encoding」",
+          "tag": "原文",
+          "quote": "state `n` and the unit of replication"
+        },
+        {
+          "src": "TAVOTTO",
+          "loc": "Tavotto 采纳为 Agent 准则（三本书未覆盖或未明说），只靠二手来源支撑，因此不判对错",
+          "tag": "推导"
+        }
+      ],
+      "principles": [
+        "P2"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-066",
+      "title": "气泡和面积按面积缩放，不按半径",
+      "basis": "encoding",
+      "strength": "inference",
+      "decidable": "no",
+      "agent": "用气泡大小表示数值时，让面积和数值成比例，不要让半径或直径和数值成比例（那会把差异放大成平方）。matplotlib 的 scatter 参数 s 本来就是面积；脚本里先算半径再平方的写法要检查。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "KD",
+          "loc": "SKILL.md「Choose an honest encoding」",
+          "tag": "原文",
+          "quote": "scale area/volume, not radius/diameter"
+        },
+        {
+          "src": "GoG",
+          "loc": "§10.5, p.278（大小表示面积是数据属性）",
+          "tag": "原文"
+        },
+        {
+          "src": "TAVOTTO",
+          "loc": "Tavotto 采纳为 Agent 准则（三本书未覆盖或未明说），只靠二手来源支撑，因此不判对错",
+          "tag": "推导"
+        }
+      ],
+      "principles": [
+        "P1"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-067",
+      "title": "复杂图附文字描述，网页发布附数据",
+      "basis": "visual",
+      "strength": "inference",
+      "decidable": "no",
+      "agent": "用于网页、报告或无障碍场景时，复杂的图应附一段替代文字（说明图里比较了什么、主要结论落在哪），网页发布时附底层数据表。用户需要时可以帮忙起草，但结论措辞以作者为准。",
+      "exceptions": [
+        "只用于期刊投稿、期刊没有此要求时"
+      ],
+      "evidence": [
+        {
+          "src": "KD",
+          "loc": "SKILL.md「Design accessibility in, not after」",
+          "tag": "原文",
+          "quote": "Provide alt text, a longer description for complex figures, and underlying data for web delivery."
+        },
+        {
+          "src": "TAVOTTO",
+          "loc": "Tavotto 采纳为 Agent 准则（三本书未覆盖或未明说），只靠二手来源支撑，因此不判对错",
+          "tag": "推导"
+        }
+      ],
+      "principles": [
+        "P8"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-068",
+      "title": "数据太少时用文字或表格",
+      "basis": "visual",
+      "strength": "inference",
+      "decidable": "context",
+      "agent": "只有一两个数、一个百分比或一个均值时，画图往往不如一句话或一张小表清楚；数据点很少（例如少于 3 个）时，先建议用户考虑文字或表格，用户仍要画就照做，并把每个点画出来、标上数值。",
+      "exceptions": [
+        "图是组图里与其他面板对照的一格",
+        "用户明确要画"
+      ],
+      "evidence": [
+        {
+          "src": "ARS",
+          "loc": "academic-paper/references 目录的 statistical_visualization_standards.md「When NOT to Visualize」（转述，不引原文）",
+          "tag": "二手"
+        },
+        {
+          "src": "FDV",
+          "loc": "ch.6 Visualizing Amounts, p.53（数据少时可直接标出数值）",
+          "tag": "原文"
+        },
+        {
+          "src": "TAVOTTO",
+          "loc": "「先建议、不阻止」与阈值是 Tavotto 的推导；具体阈值由数据出图规则定义",
+          "tag": "推导"
+        }
+      ],
+      "principles": [
+        "P5",
+        "P7"
       ],
       "spec": [],
       "checks": []
