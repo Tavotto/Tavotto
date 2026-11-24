@@ -87,6 +87,32 @@ describe('CandidateStage：一张主图 + 一排切换', () => {
     onPreview.mockReset()
   })
 
+  it('说明里的误差类型跟着这张图实际画的那一种走：没点过 = 标准差，点了标准误 / 置信区间就改口（Codex 评审 #2176）', async () => {
+    for (const [error, word] of [[undefined, '标准差'], ['sd', '标准差'], ['sem', '标准误'], ['ci95', '95% 置信区间']] as const) {
+      const items = candidatesFromResponse([item('a', 'line_band', error ? { error } : {})], 'pa')
+      await mount(<Harness items={items} thumbs={allReady(items)} />)
+      expect(q('[data-candidate-why]')!.textContent).toBe(`每个横轴位置取均值，带是${word}，看总体趋势和波动。`)
+      act(() => root.unmount())
+      root = createRoot(host)
+    }
+    const bar = candidatesFromResponse([item('b', 'bar_error', { error: 'sem' })], 'pa')
+    await mount(<Harness items={bar} thumbs={allReady(bar)} />)
+    expect(q('[data-candidate-why]')!.textContent).toBe('各组均值一目了然，误差线是标准误；个别点会藏在柱里。')
+  })
+
+  it('切换排永远一行：候选多了（合画最多 8 张）在这一排里横向滚动，不换行、不把区域撑高', async () => {
+    const codes = ['points_mean', 'box_points', 'violin_points', 'ecdf_groups', 'bar_error', 'line_points', 'line_band', 'scatter']
+    const items = candidatesFromResponse(codes.map((c, i) => item(`m${i}`, c)), 'pa')
+    await mount(<Harness items={items} thumbs={allReady(items)} />)
+    const wrap = q('[data-candidate-switch]') as HTMLElement
+    expect(wrap.className).toContain('overflow-x-auto')
+    const grid = wrap.querySelector('[data-option-grid]') as HTMLElement
+    expect(grid.querySelectorAll('[role="radio"]')).toHaveLength(8)
+    // 8 列 = 一行；内层按 8 × 150 定宽，超出外层就滚动
+    expect(grid.style.gridTemplateColumns).toBe('repeat(8, minmax(0, 1fr))')
+    expect((grid.parentElement as HTMLElement).style.width).toBe('1200px')
+  })
+
   it('默认主图是第一张（推荐）：标题 +「推荐」+ 说明 + 依据；创建按钮在标题行右端', async () => {
     const items = list()
     await mount(<Harness items={items} thumbs={allReady(items)} />)
@@ -97,18 +123,18 @@ describe('CandidateStage：一张主图 + 一排切换', () => {
     const head = q('[data-candidate-title]')!.parentElement!
     expect(head.lastElementChild).toBe(q('[data-candidate-create]'))
     expect(q('[data-candidate-create]')!.textContent).toBe('创建可编辑图')
-    expect(qa('[data-candidate]')).toHaveLength(3)
+    expect(qa('[data-candidate-switch] [data-value]')).toHaveLength(3)
   })
 
   it('点切换项只换主图，不创建；点「创建可编辑图」才创建选中的那一张', async () => {
     const items = list()
     await mount(<Harness items={items} thumbs={allReady(items)} />)
-    await click(qa('[data-candidate]')[1]!)
+    await click(qa('[data-candidate-switch] [data-value]')[1]!)
     expect(onPreview).toHaveBeenCalledWith('b')
     expect(onCreate).not.toHaveBeenCalled()
     expect(q('[data-candidate-title]')!.textContent).toBe('散点 + 拟合线')
     expect(q('[data-candidate-stage]')!.textContent).not.toContain('推荐') // 推荐小标只在第一张
-    expect(qa('[data-candidate]')[1]!.getAttribute('aria-checked')).toBe('true')
+    expect(qa('[data-candidate-switch] [data-value]')[1]!.getAttribute('aria-checked')).toBe('true')
     expect(q('[data-candidate-basis]')).toBeNull() // 没有 facts 就没有这一行
     await click(q('[data-candidate-create]'))
     expect(onCreate).toHaveBeenCalledTimes(1)
@@ -118,8 +144,8 @@ describe('CandidateStage：一张主图 + 一排切换', () => {
   it('图没到的项不可选；主图的创建按钮在选中的图到之前也不可点', async () => {
     const items = list()
     await mount(<Harness items={items} thumbs={{ a: 'ready', b: 'pending', c: 'pending' }} />)
-    expect(qa<HTMLButtonElement>('[data-candidate]').map((b) => b.disabled)).toEqual([false, true, true])
-    await click(qa('[data-candidate]')[1]!)
+    expect(qa<HTMLButtonElement>('[data-candidate-switch] [data-value]').map((b) => b.disabled)).toEqual([false, true, true])
+    await click(qa('[data-candidate-switch] [data-value]')[1]!)
     expect(onPreview).not.toHaveBeenCalled()
     act(() => root.unmount())
     host.remove()
@@ -156,7 +182,7 @@ describe('CandidateStage：一张主图 + 一排切换', () => {
     const items = list().slice(0, 1)
     await mount(<Harness items={items} thumbs={allReady(items)} />)
     expect(q('[data-candidate-switch]')).toBeNull()
-    expect(qa('[data-candidate]')).toHaveLength(0)
+    expect(qa('[data-candidate-switch] [data-value]')).toHaveLength(0)
     expect(q('[data-candidate-create]')).not.toBeNull()
   })
 
@@ -164,7 +190,7 @@ describe('CandidateStage：一张主图 + 一排切换', () => {
     const items = list()
     await mount(<Harness items={items} thumbs={allReady(items)} drawingId="a" />)
     expect(q('[data-candidate-stage] .animate-sweep')).not.toBeNull()
-    expect(qa<HTMLButtonElement>('[data-candidate]').every((b) => b.disabled)).toBe(true)
+    expect(qa<HTMLButtonElement>('[data-candidate-switch] [data-value]').every((b) => b.disabled)).toBe(true)
     expect(q<HTMLButtonElement>('[data-candidate-create]')!.disabled).toBe(true)
   })
 
@@ -181,7 +207,7 @@ describe('CandidateStage：一张主图 + 一排切换', () => {
       'pa',
     )
     await mount(<Harness items={items} thumbs={allReady(items)} />)
-    expect(qa('[data-candidate] [data-candidate-variant]').map((e) => e.textContent)).toEqual([`按文件 +「${col}」分组`, '只按文件分组'])
+    expect(qa('[data-candidate-switch] [data-value] [data-candidate-variant]').map((e) => e.textContent)).toEqual([`按文件 +「${col}」分组`, '只按文件分组'])
     expect(q('[data-candidate-stage] > div [data-candidate-variant]')!.textContent).toBe(`按文件 +「${col}」分组`)
     expect(q('[data-candidate-stage] b')).toBeNull()
   })

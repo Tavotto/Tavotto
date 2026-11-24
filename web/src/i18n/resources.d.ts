@@ -92,7 +92,7 @@ export default interface Resources {
       "candidate": {
         "bar_error": {
           "title": "柱 + 误差线",
-          "why": "各组均值一目了然，误差线是标准差；个别点会藏在柱里。"
+          "why": "各组均值一目了然，误差线是{{error}}；个别点会藏在柱里。"
         },
         "box_points": {
           "title": "箱线 + 原始点",
@@ -120,7 +120,7 @@ export default interface Resources {
         },
         "line_band": {
           "title": "均值线 + 误差带",
-          "why": "每个横轴位置取均值，带是标准差，看总体趋势和波动。"
+          "why": "每个横轴位置取均值，带是{{error}}，看总体趋势和波动。"
         },
         "line_points": {
           "title": "点 + 折线",
@@ -180,6 +180,11 @@ export default interface Resources {
         "stripInfo": "前 {{shown}} 行，共 {{total}} 行 · {{columns}} 列",
         "switchLabel": "候选画法",
         "unreadable": "这个文件不是表格，读不了。"
+      },
+      "errorName": {
+        "ci95": "95% 置信区间",
+        "sd": "标准差",
+        "sem": "标准误"
       },
       "list": {
         "empty": "这个文件夹里没找到数据文件。",
@@ -1078,9 +1083,11 @@ export default interface Resources {
           "integrity": "完整性",
           "raster_density": "像素密度",
           "size": "尺寸",
-          "text_layer": "文字层"
+          "text_layer": "文字层",
+          "text_size": "字号"
         },
-        "failedItems": "核验未通过：{{items}}"
+        "failedItems": "核验未通过：{{items}}",
+        "textSizeBelow": "成品里最小的文字是 {{min}} pt，低于规范的 {{floor}} pt"
       },
       "jobLost": "这次导出在中途中断。部分文件可能已写出，请检查导出文件夹或重新导出。",
       "journalDpi": "{{journal}} 要求（dpi）\n{{detail}}",
@@ -3887,6 +3894,22 @@ export default interface Resources {
       "cell_map_too_large": "映射规则写得太多了，最多 50 项。",
       "cell_map_value_invalid": "映射到的值要是一个数，或者写成缺失。",
       "cell_rule_invalid": "这条处理规则不对：要针对这次画图用到、夹着文字的数值列，每列只写一条。",
+      "change_plan_busy": "这张图正在生成修改方案，请稍等。",
+      "change_plan_empty": "这些意见里没有能直接落成图内修改的，图没有改动。",
+      "change_plan_failed": "生成修改方案失败，图没有改动。可以再试一次。",
+      "change_plan_figure_changed": "生成期间这张图被改过了，请重新生成。",
+      "change_plan_model_auth": "AI 连接的密钥被拒绝了，请检查后再试。",
+      "change_plan_model_failed": "AI 没有给出可用的修改方案，图没有改动。可以再试一次。",
+      "change_plan_model_quota": "AI 的额度用完了，或被暂时限流。稍后再试，图没有改动。",
+      "change_plan_model_timeout": "AI 响应太慢，没有生成修改方案，图没有改动。",
+      "change_plan_native_unsupported": "用 {{product}} Run 打开的图暂不支持修改方案，图没有改动。",
+      "change_plan_no_comments": "没有未处理的审阅意见可以交给 Agent。",
+      "change_plan_no_connection": "还没有连接 AI，连接后才能按意见生成修改方案。",
+      "change_plan_not_editable": "这张图没有可改的脚本，暂时不能出修改方案。",
+      "change_plan_render_failed": "渲染修改后的图时出了问题，没有生成修改方案，图没有改动。",
+      "change_plan_too_large": "意见或图太长，超出了一次能处理的范围，图没有改动。",
+      "change_plan_unknown": "这份修改方案不存在或已过期。",
+      "change_plan_unsupported_connection": "当前的 AI 连接暂不支持生成修改方案，可以换一个连接。",
       "chart_engine_mismatch": "当前绘图环境与计算图表要求不一致。请使用匹配的绘图环境后重试。",
       "chart_engine_unavailable": "计算图表的渲染引擎正忙，请稍后重试。",
       "chart_model_invalid": "计算图表的模型或来源引用无效，无法应用本次操作。",
@@ -4009,6 +4032,7 @@ export default interface Resources {
       "interpreter_worker_import_failed": "{{path}} 可导入 matplotlib，但无法在其中启动渲染组件：{{detail}}",
       "interval_bounds_invalid": "有的行不满足 下限 ≤ 估计值 ≤ 上限。",
       "invalid_argv": "运行参数不合法：必须是字符串列表（每个参数一项，不能含空字符，数量和总长度有上限）。",
+      "invalid_change_plan": "修改方案的请求不合规，没有生成。",
       "invalid_consent": "匿名统计偏好设置无效，请重新选择。",
       "invalid_document": "这份排版文件格式已损坏或不受支持，无法打开。",
       "invalid_entry": "入口函数名称无效：{{entry}}",

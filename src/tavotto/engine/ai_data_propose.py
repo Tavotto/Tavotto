@@ -108,7 +108,8 @@ UNPLOTTED_CODE = "rows_not_plotted"
 _ID = re.compile(r"[0-9a-f]{12}")
 _SESSION_ID = re.compile(r"[0-9a-f]{24}")
 _HINT_MAX = 400
-_ANSWER_KEYS = ("table", "sheet", "y", "group", "x", "design", "unit", "error")
+#: `x_measure`（G-018，读懂数据派生）：模型判「规则选作横轴的那一列是测量值、不是有序自变量」时给出的**列名**；不是用户动过的下拉（不进 `picks` 的 x / y / group）
+_ANSWER_KEYS = ("table", "sheet", "y", "group", "x", "design", "unit", "x_measure", "error")
 #: `answers.error`：用户点选的「误差线 / 误差带画的是什么」→ 配方里的汇总方式。**只有用户点了才有**（模型的建议不写这个键）；
 #: 没点 = 模板的默认（均值 ± 标准差），响应里 `error.confirmed` 为 False
 ERROR_SUMMARY = {"sd": "mean_sd", "sem": "mean_sem", "ci95": "mean_ci95"}
@@ -619,10 +620,18 @@ def candidate_facts(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) ->
     两个 skipped 加起来就是 `unplotted_rows` 的总数。大表不逐行数（None）；把列当分组的也先不给。"""
     if values.large is not None or recipe.stack:
         return None
-    rows = recipe_mod.drawn_rows(recipe, values)
+    # 「画进去的行」与出图用同一套判据：先套用户选的处理规则（「取数字部分」取出了数的格子算数），再去掉 `unplotted_rows` 里的行
+    # （横轴不是值、分组 / 分面 / 个体空、纵轴空……），剩下的行里纵轴是数的才是一个画出来的值（折线的纵轴空格是断开，不算画进去）
+    applied = recipe_mod.with_cells_applied(values, recipe) if recipe.cells else values
     idx = {c: i for i, c in enumerate(values.columns)}
     y = recipe.y[0]
-    usable = [r for r in rows if adf.parse_cell(r[idx[y]])[0] == "numeric"]
+    skipped = unplotted_rows(values, recipe)
+    gone = {item["row"] for item in skipped}
+    usable = [
+        r
+        for n, r in enumerate(applied.rows)
+        if values.row_number(n) not in gone and adf.parse_cell(r[idx[y]])[0] == "numeric"
+    ]
     out: dict = {
         "rows": len(values.rows),
         "drawn": len(usable),
@@ -634,7 +643,7 @@ def candidate_facts(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) ->
         "skipped_other": 0,
     }
     row_at = {values.row_number(n): n for n in range(len(values.rows))}
-    for item in unplotted_rows(values, recipe):
+    for item in skipped:
         cell = ""
         n = row_at.get(item["row"])
         if n is not None and item["column"] in idx:
@@ -707,6 +716,8 @@ def confirmed_from(answers: dict[str, str]) -> tuple[recipe_mod.Confirmed, dict]
         picks["design"] = "unsure"
     if "unit" in answers:
         picks["unit"] = answers["unit"]
+    if "x_measure" in answers:
+        picks["x_measure"] = answers["x_measure"]
     if design == "repeated":
         return recipe_mod.Confirmed(
             "repeated", answers.get("unit") if "unit" in answers else None
@@ -1525,12 +1536,14 @@ def propose(
 
     if ans.get("error") in ERROR_SUMMARY and res.items:
         # 用户点选了误差线 / 误差带画哪一种：换掉每个备选里「均值 ± 某种误差」的层（其余不动）
-        res = replace(
-            res,
-            items=tuple(
-                replace(c, recipe=with_error_summary(c.recipe, ans["error"])) for c in res.items
-            ),
-        )
+        swapped = []
+        for c in res.items:
+            new = with_error_summary(c.recipe, ans["error"])
+            if new is not c.recipe and id(c.recipe) in variants:
+                # 合画里成对候选的标记是按配方对象记的：换了配方要把标记带过去，否则两张成对的图分不清是哪一张
+                variants[id(new)] = variants.pop(id(c.recipe))
+            swapped.append(replace(c, recipe=new))
+        res = replace(res, items=tuple(swapped))
 
     def merged_info() -> dict:
         """合画：各份是哪几份（路径与请求里一致）、各自的标签、合成的分组列名；单份没有这两项。"""
@@ -1708,7 +1721,7 @@ def propose(
 
 def _user_took_over(ans: dict) -> bool:
     """请求里已有用户（或前端替用户带上的模型建议）定下的列角色 / 处理规则：不再起模型任务，也避免「采纳建议 → 再来一次 → 再起任务」的循环。"""
-    return any(k in ans for k in ("y", "x", "group", "cells"))
+    return any(k in ans for k in ("y", "x", "group", "cells", "x_measure"))
 
 
 def _answers_digest(ans: dict) -> dict:

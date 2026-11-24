@@ -83,6 +83,8 @@ _CODE_REGISTRIES = (
     "tavotto.engine.pathignore",
     "tavotto.engine.assetimport",
     "tavotto.engine.notebookscript",
+    # 修改方案（ADR 0206）：码由 `changeplan.ERROR_CODES` 报，app 的 `_change_plan_error` 漏斗转成 JSON
+    "tavotto.engine.changeplan",
 )
 
 
@@ -329,6 +331,24 @@ USER_VISIBLE_CODES = {
     "invalid_profile": set(),
     "invalid_only": set(),
     "specfix_native_unsupported": {"product"},
+    # --- ADR 0206 修改方案：码闭集在 `changeplan.ERROR_CODES`，文案按 code 取 ---
+    "invalid_change_plan": set(),
+    "change_plan_no_comments": set(),
+    "change_plan_native_unsupported": {"product"},
+    "change_plan_not_editable": set(),
+    "change_plan_busy": set(),
+    "change_plan_unknown": set(),
+    "change_plan_no_connection": set(),
+    "change_plan_unsupported_connection": set(),
+    "change_plan_model_auth": set(),
+    "change_plan_model_quota": set(),
+    "change_plan_model_timeout": set(),
+    "change_plan_model_failed": set(),
+    "change_plan_too_large": set(),
+    "change_plan_render_failed": set(),
+    "change_plan_figure_changed": set(),
+    "change_plan_empty": set(),
+    "change_plan_failed": set(),
     "invalid_patches": set(),
     "invalid_purpose": {"value"},
     "invalid_width": {"value"},

@@ -19,8 +19,13 @@ SSE 处理：传输层（`wires.post_json(reader=…)`）边读边用 `compact_s
 `response.output_item.done` 等结构帧（总读入 `MAX_STREAM_BYTES`、留下 `wires.MAX_RESPONSE_BYTES` 各有上限）；
 `decode` 把留下的帧折叠成一个最终响应对象，再交给 `OpenAIResponsesWire.parse`。界面不做流式显示（ADR 0147 §六 修订）。
 
-**真服务未验证**（不得写成已验证）：namespace 工具形状、函数调用回来时名字带不带命名空间、`response.completed` 是否带完整
-`output`（不带时用累积的 `output_item.done` 条目）、`response.incomplete` 的载荷、`error` 事件的形状。
+**真服务核对（2026-11-24，维护者本人的 ChatGPT 账号，一次性脚本，令牌只在内存、跑完已撤销；型号 `gpt-6.2-sol`）**：
+动态注册（`client_id=dynamic_agent_client` → 回调给 `oaiapp_…`）、授权码 + PKCE 换令牌（`expires_in=3600`，带 `earliest_refresh_at`，
+授权范围含 `chatgpt.tokens.use.direct`）、`GET /v1/models`（`models[]` + `slug`）、本协议经 https 真实传输的单轮 / namespace 工具调用 /
+回填工具结果的多轮都 200 且以 `response.completed` 收尾；`completed` **带完整 `output`**；namespace 工具被接受，函数调用回来时
+`name` 是裸名、另有 `namespace: "tavotto"` 字段（`_bare_name` 只是兜底）；带 `namespace` 字段原样回放的 `function_call` 被接受；撤销刷新令牌 200。
+**仍未真服务验证**（不得写成已验证）：`response.failed` / 用量超限等错误码、`response.incomplete` 与 `error` 事件的载荷、刷新令牌轮换、
+流到一半取消（https）、`reasoning` 回放。
 """
 
 from __future__ import annotations
@@ -282,7 +287,7 @@ def fold(data: bytes) -> dict:
 
 # --------------------------------------------------------------------------- 协议
 def _pack_tools(tools: list[dict]) -> list[dict]:
-    """函数工具 → 一个 namespace（官方：「Group function/custom tools in namespaces」）。真服务未验证。"""
+    """函数工具 → 一个 namespace（官方：「Group function/custom tools in namespaces」）。2026-11-24 真服务核对：被接受。"""
     return [
         {
             "type": "namespace",

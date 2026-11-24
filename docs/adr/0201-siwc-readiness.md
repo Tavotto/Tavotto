@@ -50,6 +50,7 @@ OpenAI 的 SIWC 计划允许开源、本机运行的应用让用户用自己的 
 
 ## 后果
 
-- 验证全部是 Mock（runner 测试的合成 SSE）；真服务未验证项：namespace 工具形状在 SIWC 路由上是否被接受、`response.completed` 是否带 `output`、
-  `response.output_item.done` / `response.incomplete` 载荷、`reasoning` 回放。上线前必须逐条真服务确认，不得写成已验证。
+- 用例全部是 Mock（runner 测试的合成 SSE）。**2026-11-24 真服务核对**（维护者本人账号、一次性脚本、令牌只在内存且跑完撤销）：动态注册、授权码 + PKCE、
+  型号清单、单轮 / namespace 工具调用 / 多轮回放都通过，`response.completed` 带完整 `output`，函数调用回来是裸名 + `namespace` 字段；细节见 `siwc_wire` 模块说明。
+  **仍未真服务验证**：错误码（含用量超限）、`response.incomplete` / `error` 载荷、刷新令牌轮换、https 下流到一半取消、`reasoning` 回放。上线前逐条确认，不得写成已验证。
 - 我们自己多维护一条协议的字段细节；官方 preview 限制变化时只改 `siwc-responses` 一处。

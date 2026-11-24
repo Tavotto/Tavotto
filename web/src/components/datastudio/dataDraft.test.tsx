@@ -258,8 +258,8 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
   const roles = { x: 'day', y: ['tumor_volume'], group: 'group', facet: null, unit: null, options: { x: ['day'], y: ['tumor_volume', 'day'], group: ['group'] } }
   const cands = (n = 4) => ({ kind: 'candidates' as const, session: 'S1', items: items(n), dropped: [], render: 'lazy' as const, header_row: 1, roles, defaults: [], mixed_cells: [] })
   /** jsdom 不取图：模拟缩略图到了（ok）/ 取不到（!ok，后端 422） */
-  const thumb = async (i: number, ok = true) => act(async () => { qa('[data-candidate] img')[i]!.dispatchEvent(new Event(ok ? 'load' : 'error')) })
-  const allThumbs = async () => { for (let i = qa('[data-candidate] img').length - 1; i >= 0; i--) await thumb(i) }
+  const thumb = async (i: number, ok = true) => act(async () => { qa('[data-candidate-switch] [data-value] img')[i]!.dispatchEvent(new Event(ok ? 'load' : 'error')) })
+  const allThumbs = async () => { for (let i = qa('[data-candidate-switch] [data-value] img').length - 1; i >= 0; i--) await thumb(i) }
   const tbl = (path: string, status: 'ok' | 'unsure' | 'unreadable' = 'ok') => ({
     path,
     size: 1,
@@ -293,14 +293,14 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     expect(propose).toHaveBeenCalledTimes(1)
     expect(propose.mock.calls[0]![0]).toMatchObject({ table: 'growth.csv' })
     expect(q('[data-studio-start]')).toBeNull()
-    const tiles = qa('[data-candidate]')
+    const tiles = qa('[data-candidate-switch] [data-value]')
     expect(tiles).toHaveLength(4) // 切换排
     expect(tiles[0]!.textContent).toContain('均值线 + 误差带')
     expect(q('[data-candidate-stage]')!.textContent).toContain('均值线 + 误差带') // 主图的标题
     expect(q('[data-candidate-stage]')!.textContent).toContain('推荐')
     await allThumbs()
     expect(q('[data-draft-lead]')!.textContent).toBe('') // 「点一张，放进画布接着改。」不再显示
-    expect(qa<HTMLImageElement>('[data-candidate] img').map((i) => i.getAttribute('src'))).toEqual(['/t/1?pj=pa', '/t/2?pj=pa', '/t/3?pj=pa', '/t/4?pj=pa'])
+    expect(qa<HTMLImageElement>('[data-candidate-switch] [data-value] img').map((i) => i.getAttribute('src'))).toEqual(['/t/1?pj=pa', '/t/2?pj=pa', '/t/3?pj=pa', '/t/4?pj=pa'])
     expect(q('[data-data-strip]')).not.toBeNull()
     expect(q('[data-data-panel] h2')!.textContent).toContain('growth.csv')
     expect(q('[data-data-panel-meta]')!.textContent).toBe('144 行 · 3 列')
@@ -310,12 +310,12 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     propose.mockResolvedValue(cands())
     await start()
     await open(0)
-    expect(qa('[data-candidate]')).toHaveLength(4)
-    expect(qa<HTMLButtonElement>('[data-candidate]').every((b) => b.disabled)).toBe(true)
+    expect(qa('[data-candidate-switch] [data-value]')).toHaveLength(4)
+    expect(qa<HTMLButtonElement>('[data-candidate-switch] [data-value]').every((b) => b.disabled)).toBe(true)
     expect(q('[data-draft-lead]')!.textContent).toBe('正在画…')
     await thumb(0)
-    expect(qa<HTMLButtonElement>('[data-candidate]')[0]!.disabled).toBe(false)
-    expect(qa<HTMLButtonElement>('[data-candidate]')[1]!.disabled).toBe(true)
+    expect(qa<HTMLButtonElement>('[data-candidate-switch] [data-value]')[0]!.disabled).toBe(false)
+    expect(qa<HTMLButtonElement>('[data-candidate-switch] [data-value]')[1]!.disabled).toBe(true)
     expect(q('[data-draft-lead]')!.textContent).toBe('正在画…')
     await thumb(1); await thumb(2); await thumb(3)
     expect(q('[data-draft-lead]')!.textContent).toBe('')
@@ -326,7 +326,7 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     await start()
     await open(0)
     await thumb(0, false)
-    expect(qa('[data-candidate]')).toHaveLength(2)
+    expect(qa('[data-candidate-switch] [data-value]')).toHaveLength(2)
     expect(q('[data-candidate-stage]')!.textContent).toContain('推荐') // 推荐小标挪给剩下的第一张（主图上）
     expect(q('[data-candidate-title]')!.textContent).toContain('散点 + 拟合线')
     await thumb(0, false)
@@ -361,7 +361,7 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     await act(async () => useDataFigureStore.getState().setMixedMode('extract'))
     await flush()
     expect(propose.mock.calls.at(-1)![0]).toMatchObject({ answers: { cells: { value: { mode: 'extract' }, v2: { mode: 'extract' } } } })
-    expect(qa('[data-candidate]')).toHaveLength(3)
+    expect(qa('[data-candidate-switch] [data-value]')).toHaveLength(3)
   })
 
   it('只有说明行、没有单位行（猜不出表头）：不出候选，只一句「点一下每列名字所在的那一行。」，数据条里没有猜的那一行；点一行才出', async () => {
@@ -375,7 +375,7 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     expect(q('[data-studio-pickrow]')!.textContent).toBe('点一下每列名字所在的那一行。')
     expect(q('[data-data-strip-info]')!.textContent).toBe('点一下每列名字所在的那一行。')
     expect(qa('label[data-checked]')).toHaveLength(0)
-    expect(qa('[data-candidate]')).toHaveLength(0)
+    expect(qa('[data-candidate-switch] [data-value]')).toHaveLength(0)
   })
 
   it('读不了：一句话、没有数据条，抽屉里该行置灰；全是文字：一句话、不出候选、数据条展开', async () => {
@@ -390,7 +390,7 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     expect(q('[data-studio-text-only]')!.textContent).toBe('这张表里都是文字，没有能画的数字。')
     expect(propose).not.toHaveBeenCalled()
     expect(q('[data-data-strip]')!.hasAttribute('data-open')).toBe(true)
-    expect(qa('[data-candidate]')).toHaveLength(0)
+    expect(qa('[data-candidate-switch] [data-value]')).toHaveLength(0)
   })
 
   it('列名没认准：照样按猜的那一行出候选；数据条自动展开成原始行，一句「把第 N 行当作列名」；点别的行重来', async () => {
@@ -400,7 +400,7 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     propose.mockResolvedValue({ ...cands(), header_row: 3 })
     await start()
     await open(0)
-    expect(qa('[data-candidate]')).toHaveLength(4)
+    expect(qa('[data-candidate-switch] [data-value]')).toHaveLength(4)
     expect(q('[data-data-strip]')!.hasAttribute('data-open')).toBe(true)
     expect(q('[data-data-strip-info]')!.textContent).toBe('把第 3 行当作列名。不对就点对的那一行。')
     await click(q('[data-look-line="2"] input'))
@@ -420,13 +420,13 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     await start(<><DataDrawer /><DataDraft /><RedrawPill /></>)
     await open(0)
     await allThumbs()
-    await click(qa('[data-candidate]')[1]!) // 只预览
+    await click(qa('[data-candidate-switch] [data-value]')[1]!) // 只预览
     expect(commit).not.toHaveBeenCalled()
     await click(q('[data-candidate-create]'))
     expect(commit.mock.calls[0]![0]).toMatchObject({ session: 'S1', id: 'i2' })
     expect(q('[data-candidate-stage] .animate-sweep')).not.toBeNull() // 主图带扫光
     expect(q('[data-candidate-switch]')!.className).toContain('opacity-60')
-    expect(qa<HTMLButtonElement>('[data-candidate]').every((b) => b.disabled)).toBe(true)
+    expect(qa<HTMLButtonElement>('[data-candidate-switch] [data-value]').every((b) => b.disabled)).toBe(true)
     expect(q<HTMLButtonElement>('[data-candidate-create]')!.disabled).toBe(true)
     expect(q('[data-draft-lead]')!.textContent).toBe('正在画…')
     release({ task: { outcome: 'completed' }, script: 'tavotto_figures/g.py', stem: 'g', data_check: 'verified' })
@@ -496,9 +496,10 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     await start()
     await open(0)
     await allThumbs()
-    const tiles = qa<HTMLButtonElement>('[data-candidate]')
+    const tiles = qa<HTMLButtonElement>('[data-candidate-switch] [data-value]')
     tiles[0]!.focus()
-    const key = async (el: HTMLElement, k: string) => act(async () => { el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true })) })
+    // OptionGrid 的焦点跟随放在下一帧（requestAnimationFrame）：每次按键之后等一帧再断言
+    const key = async (el: HTMLElement, k: string) => act(async () => { el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true })); await new Promise((r) => requestAnimationFrame(r)) })
     await key(tiles[0]!, 'ArrowRight')
     expect(document.activeElement).toBe(tiles[1])
     expect(tiles[1]!.getAttribute('aria-checked')).toBe('true')
@@ -644,7 +645,7 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     await groupTwo()
     expect(useDataBatchStore.getState()).toMatchObject({ pickMode: false, selection: [] })
     expect(propose.mock.calls.at(-1)![0]).toEqual({ tables: [{ path: 'growth.csv' }, { path: 'names.csv' }], render: 'lazy' })
-    expect(qa('[data-candidate]')).toHaveLength(4)
+    expect(qa('[data-candidate-switch] [data-value]')).toHaveLength(4)
     expect(q('[data-data-draft]')!.getAttribute('aria-label')).toBe('2 个文件')
     expect(q('[data-data-panel] h2')!.textContent).toBe('2 个文件')
     expect(q('[data-data-panel-meta]')).toBeNull() // 第一份的行列数不代表整组
@@ -754,7 +755,7 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     }))
     propose.mockResolvedValue({ ...cands(), items: eight })
     await groupTwo()
-    const tiles = qa('[data-candidate]')
+    const tiles = qa('[data-candidate-switch] [data-value]')
     expect(tiles).toHaveLength(8)
     expect(tiles[0]!.querySelector('[data-candidate-variant]')!.textContent).toBe(`按文件 +「${col}」分组`)
     expect(tiles[1]!.querySelector('[data-candidate-variant]')!.textContent).toBe('只按文件分组')
