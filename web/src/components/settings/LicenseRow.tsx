@@ -48,7 +48,9 @@ export function LicenseRow({
   plate = true,
   extra,
   label,
-}: { plate?: boolean; extra?: ReactNode; label?: string } = {}) {
+  title,
+  renewable = false,
+}: { plate?: boolean; extra?: ReactNode; label?: string; title?: string; renewable?: boolean } = {}) {
   useTranslation('dialogs')
   const status = useLicenseStore((s) => s.status)
   const failure = useLicenseStore((s) => s.failure)
@@ -142,16 +144,23 @@ export function LicenseRow({
     )
   } else if (active) {
     control = (
-      <Button
-        variant="ghost"
-        className="text-ink-2 hover:text-ink"
-        loading={busy}
-        title={st('releaseTitle')}
-        onClick={() => void doRelease()}
-        data-license-action="release"
-      >
-        {st('action.release')}
-      </Button>
+      <div className="flex items-center gap-2">
+        {renewable && (
+          <Button variant="secondary" loading={busy} onClick={() => void buy()} data-license-action="renew">
+            {st('action.renew')}
+          </Button>
+        )}
+        <Button
+          variant="ghost"
+          className="text-ink-2 hover:text-ink"
+          loading={busy}
+          title={st('releaseTitle')}
+          onClick={() => void doRelease()}
+          data-license-action="release"
+        >
+          {st('action.release')}
+        </Button>
+      </div>
     )
   } else if (state === 'lapsed') {
     control = (
@@ -164,9 +173,9 @@ export function LicenseRow({
     control = (
       <div className="flex items-center gap-2">
         <Button variant="ghost" loading={busy} onClick={() => void doRefresh()} data-license-action="refresh">
-          {st('action.refresh')}
+          {st('action.renewed')}
         </Button>
-        <Button variant="secondary" loading={busy} onClick={() => void buy()} data-license-action="renew">
+        <Button variant="primary" loading={busy} onClick={() => void buy()} data-license-action="renew">
           {st('action.renew')}
         </Button>
       </div>
@@ -203,7 +212,7 @@ export function LicenseRow({
   }
 
   return (
-    <FormSection data-settings-anchor="about.license" data-license-state={failure ? `failed:${failure}` : state}>
+    <FormSection title={title} data-settings-anchor="about.license" data-license-state={failure ? `failed:${failure}` : state}>
       <FieldGroup>
         <SettingRow
           label={label ?? st('label')}

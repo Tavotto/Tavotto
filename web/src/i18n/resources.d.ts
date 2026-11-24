@@ -1999,8 +1999,8 @@ export default interface Resources {
         "soon": "高级版 · 剩 {{count}} 天"
       },
       "days": {
-        "label": "剩余",
-        "value": "还剩 {{count}} 天"
+        "label": "剩余天数",
+        "value": "{{count}} 天"
       },
       "devices": {
         "label": "电脑",
@@ -2021,8 +2021,9 @@ export default interface Resources {
       "title": "高级版",
       "usage": {
         "agentBar": "{{name}} 本期已用",
-        "expired": "已到期",
-        "locked": "激活后可用",
+        "expired": "续费后恢复",
+        "lockedAgent": "内置 AI，不用自己申请密钥",
+        "lockedReview": "更多分享审阅的链接额度",
         "nearEnd": "快用完了，用完后会改用你自己的连接",
         "title": "用量",
         "unknown": "暂时看不到用量",
@@ -3203,6 +3204,7 @@ export default interface Resources {
           "refresh": "现在确认",
           "release": "解绑这台电脑",
           "renew": "续费",
+          "renewed": "我已续费",
           "retry": "再试一次"
         },
         "codeLabel": "激活码",

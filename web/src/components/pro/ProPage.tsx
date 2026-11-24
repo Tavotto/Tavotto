@@ -48,10 +48,8 @@ export function ProPage() {
   const expired = state === 'expired'
   const daysLeft = status.exp ? Math.max(0, Math.ceil((status.exp * 1000 - Date.now()) / DAY_MS)) : null
 
+  const tierName = (active || expired) && status.tier && TIER_KEYS.has(status.tier.key) ? ps(`tier.${status.tier.key}`) : undefined
   const rows: ReactNode[] = []
-  if ((active || expired) && status.tier && TIER_KEYS.has(status.tier.key)) {
-    rows.push(<SettingValueRow key="tier" data-pro-row="tier" label={ps('tier.label')} value={ps(`tier.${status.tier.key}`)} />)
-  }
   if (active && daysLeft !== null) {
     rows.push(<SettingValueRow key="days" data-pro-row="days" label={ps('days.label')} value={ps('days.value', { count: daysLeft })} />)
   }
@@ -69,7 +67,7 @@ export function ProPage() {
   const agentName = `${PRODUCT_NAME} Agent`
   const used = usage?.agent_used ?? null
   const reviewLeft = usage?.review_new_left ?? null
-  const idle = ps(expired ? 'usage.expired' : 'usage.locked')
+  const lockedNote = (kind: 'Agent' | 'Review') => ps(expired ? 'usage.expired' : `usage.locked${kind}`)
 
   return (
     <div className="flex flex-col gap-6" data-pro-page data-pro-state={state}>
@@ -81,14 +79,20 @@ export function ProPage() {
           onName={(n) => void useLicenseStore.getState().setPlateName(n)}
         />
       )}
-      <LicenseRow plate={false} label={ps('pass')} extra={rows.length ? rows : undefined} />
+      <LicenseRow
+        plate={false}
+        title={ps('pass')}
+        label={tierName}
+        renewable={active}
+        extra={rows.length ? rows : undefined}
+      />
       <FormSection title={ps('usage.title')}>
         <FieldGroup>
           <SettingRow
             label={agentName}
             description={
               !active ? (
-                <span data-pro-usage-note>{idle}</span>
+                <span data-pro-usage-note>{lockedNote('Agent')}</span>
               ) : used === null ? (
                 <span data-pro-usage-note>{ps('usage.unknown')}</span>
               ) : used >= NEAR_END ? (
@@ -108,15 +112,15 @@ export function ProPage() {
           </SettingRow>
           <SettingRow
             label={ps('review.label')}
-            description={
-              active && reviewLeft !== null ? (
-                <span data-pro-usage-note>{ps('review.left', { count: reviewLeft })}</span>
-              ) : (
-                <span data-pro-usage-note>{active ? ps('usage.unknown') : idle}</span>
-              )
-            }
+            description={!active ? <span data-pro-usage-note>{lockedNote('Review')}</span> : undefined}
             data-pro-usage="review"
-          />
+          >
+            {active && (
+              <span className="block w-full text-right text-sm tabular-nums text-ink-2" data-pro-usage-note>
+                {reviewLeft !== null ? ps('review.left', { count: reviewLeft }) : ps('usage.unknown')}
+              </span>
+            )}
+          </SettingRow>
         </FieldGroup>
       </FormSection>
       {/* 到期日只在通行证那一块里说；这里不重复 */}

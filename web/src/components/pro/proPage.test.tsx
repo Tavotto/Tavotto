@@ -76,14 +76,14 @@ describe('高级版页', () => {
     expect(document.querySelectorAll('[data-pro-usage-note]').length).toBe(2)
   })
 
-  it('已激活：类型 / 剩余 / 电脑三行；Agent 用量进度条是已用比例；外部审阅一行字', async () => {
+  it('已激活：类型写在通行证那一行的名字上，下面剩余 / 电脑两行；Agent 用量进度条是已用比例；外部审阅一行字', async () => {
     mockApi(ACTIVE, { agent_used: 0.37, review_new_left: 3 })
     await render()
     expect([...document.querySelectorAll('[data-pro-row]')].map((e) => (e as HTMLElement).dataset.proRow)).toEqual([
-      'tier',
       'days',
       'devices',
     ])
+    expect(q('[data-license-action="renew"]')).not.toBeNull() // 通行证块里有续费入口
     expect(q('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('37')
     expect(q('[data-pro-usage-pct]')?.textContent).toContain('37')
     expect(q('[data-pro-usage="review"]')?.textContent).toContain('3')
@@ -114,14 +114,14 @@ describe('高级版页', () => {
     await render()
     expect(q('[data-founding-plate]')).not.toBeNull()
     expect([...document.querySelectorAll('[data-pro-row]')].map((e) => (e as HTMLElement).dataset.proRow)).toEqual([
-      'tier',
       'devices',
     ])
+    expect(q('[data-license-action="renew"]')).not.toBeNull()
     expect(q('[role="progressbar"]')).toBeNull()
     expect(document.querySelectorAll('[data-pro-usage-note]').length).toBe(2)
   })
 
-  it('服务端没给类型 / 设备名额（现在就是这样）：这两行不出现，不臆造', async () => {
+  it('服务端没给类型 / 设备名额（现在就是这样）：电脑行不出现，不臆造', async () => {
     const { tier: _t, devices: _d, ...bare } = ACTIVE
     void _t
     void _d

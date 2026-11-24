@@ -7,8 +7,8 @@ const NOW = Date.UTC(2026, 10, 24)
 const inDays = (n: number) => Math.floor((NOW + n * 86_400_000) / 1000)
 
 describe('顶栏胶囊文案', () => {
-  it('未激活：「高级版」；过期 / 作废：「已到期」', () => {
-    expect(proChipText('none', null, NOW)).toEqual({ kind: 'none' })
+  it('未激活：不出现（免费用户的顶栏不放商业入口）；过期 / 作废：「已到期」', () => {
+    expect(proChipText('none', null, NOW)).toBeNull()
     expect(proChipText('expired', inDays(-3), NOW)).toEqual({ kind: 'expired' })
     expect(proChipText('revoked', null, NOW)).toEqual({ kind: 'expired' })
   })

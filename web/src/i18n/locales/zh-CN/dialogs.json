@@ -2258,7 +2258,8 @@
         "refresh": "现在确认",
         "renew": "续费",
         "retry": "再试一次",
-        "cancel": "取消"
+        "cancel": "取消",
+        "renewed": "我已续费"
       },
       "failure": {
         "invalid_code": "激活码不对，核对一下再试",
@@ -2955,8 +2956,8 @@
       "team": "课题组通行证"
     },
     "days": {
-      "label": "剩余",
-      "value": "还剩 {{count}} 天"
+      "label": "剩余天数",
+      "value": "{{count}} 天"
     },
     "devices": {
       "label": "电脑",
@@ -2964,12 +2965,13 @@
     },
     "usage": {
       "title": "用量",
-      "locked": "激活后可用",
-      "expired": "已到期",
+      "expired": "续费后恢复",
       "unknown": "暂时看不到用量",
       "nearEnd": "快用完了，用完后会改用你自己的连接",
       "agentBar": "{{name}} 本期已用",
-      "used": "已用 {{pct}}%"
+      "used": "已用 {{pct}}%",
+      "lockedAgent": "内置 AI，不用自己申请密钥",
+      "lockedReview": "更多分享审阅的链接额度"
     },
     "review": {
       "label": "外部审阅",

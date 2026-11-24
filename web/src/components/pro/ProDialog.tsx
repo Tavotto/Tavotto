@@ -16,9 +16,9 @@ export function ProDialog() {
       open
       onOpenChange={(v) => useUiStore.getState().setProOpen(v)}
       title={translate('pro.title', { ns: 'dialogs' })}
-      size="xl"
+      width={640}
     >
-      <div className="mx-auto w-full max-w-[560px] py-1">
+      <div className="py-1">
         <ProPage />
       </div>
     </Dialog>

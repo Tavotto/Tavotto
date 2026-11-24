@@ -10,13 +10,12 @@ const DAY_MS = 86_400_000
 /** 到期前多少天起，顶栏胶囊开始说「剩 N 天」 */
 export const PRO_CHIP_WARN_DAYS = 14
 
-/** 胶囊上写什么：未激活「高级版」、过期「已到期」、到期前两周「剩 N 天」；平时（已激活且不临近）不出现。纯函数，测试直接断言 */
+/** 胶囊上写什么：过期「已到期」、到期前两周「剩 N 天」；平时（未激活、已激活且不临近）不出现——免费用户的顶栏不放商业入口（agy 审核）。纯函数，测试直接断言 */
 export function proChipText(
   state: string,
   exp: number | null,
   now: number = Date.now(),
-): { kind: 'none' | 'expired' | 'soon'; days?: number } | null {
-  if (state === 'none') return { kind: 'none' }
+): { kind: 'expired' | 'soon'; days?: number } | null {
   if (state === 'expired' || state === 'revoked') return { kind: 'expired' }
   if (state === 'active' && exp) {
     const days = Math.ceil((exp * 1000 - now) / DAY_MS)
@@ -38,7 +37,7 @@ export function ProChip() {
   const label =
     t.kind === 'soon'
       ? translate('pro.chip.soon', { ns: 'dialogs', count: t.days })
-      : translate(t.kind === 'expired' ? 'pro.chip.expired' : 'pro.chip.none', { ns: 'dialogs' })
+      : translate('pro.chip.expired', { ns: 'dialogs' })
   return (
     <button
       type="button"
@@ -46,7 +45,7 @@ export function ProChip() {
       aria-label={label}
       onClick={() => useUiStore.getState().setProOpen(true)}
       className={cn(
-        'inline-flex h-6 shrink-0 items-center gap-1 rounded-full px-2 text-xs font-medium outline-none',
+        'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium outline-none',
         'bg-surface-active text-ink-2 hover:bg-surface-hover focus-visible:focus-ring',
       )}
     >

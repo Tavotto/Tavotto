@@ -2283,7 +2283,8 @@
         "refresh": "Check now",
         "renew": "Renew",
         "retry": "Try again",
-        "cancel": "Cancel"
+        "cancel": "Cancel",
+        "renewed": "I have renewed"
       },
       "failure": {
         "invalid_code": "That code isn't right. Check it and try again",
@@ -2986,8 +2987,8 @@
       "team": "Lab pass"
     },
     "days": {
-      "label": "Remaining",
-      "value": "{{count}} days left"
+      "label": "Days left",
+      "value": "{{count}}"
     },
     "devices": {
       "label": "Computers",
@@ -2995,12 +2996,13 @@
     },
     "usage": {
       "title": "Usage",
-      "locked": "Available after activation",
-      "expired": "Expired",
+      "expired": "Comes back after you renew",
       "unknown": "Usage isn't available right now",
       "nearEnd": "Almost used up. It will switch to your own connection when it runs out",
       "agentBar": "{{name}} used this period",
-      "used": "{{pct}}% used"
+      "used": "{{pct}}% used",
+      "lockedAgent": "Built-in AI, no key of your own needed",
+      "lockedReview": "More shared-review links per day"
     },
     "review": {
       "label": "External review",
