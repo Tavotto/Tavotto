@@ -1632,18 +1632,28 @@ _CJK_CHAR = re.compile("[⺀-⻿぀-ヿ㐀-䶿一-鿿豈-﫿＀-￯]")
 
 
 def drawn_by_mathtext(t: Text) -> bool:
-    """这个 Text **整串**是不是由 mathtext 排的（matplotlib `Text._preprocess_math` 的同一个判据）。
+    """这个 Text 有没有**哪一行**由 mathtext 排（matplotlib `Text._preprocess_math` 的同一个判据）。
 
-    只要串里有成对的 `$`，matplotlib 就把整串交给 mathtext——`$` **外面**的字也一样，
-    而 mathtext 的正文部分只用一张脸（`findfont(prop)`，族列表的第一环），没有逐字形
-    回退链（ADR 0045 的中文尾巴在这里不起作用）。usetex 的文字是 TeX 排的，不在此列。
+    matplotlib 逐行判（`Text._get_layout` 对每一行调 `_preprocess_math`）：一行里有成对的 `$`，
+    这**一行**就交给 mathtext——`$` **外面**的字也一样，而 mathtext 的正文部分只用一张脸
+    （`findfont(prop)`，族列表的第一环），没有逐字形回退链（ADR 0045 的中文尾巴在这里不起作用）；
+    别的行照常走回退链。哪一行是哪种由 `_math_lines` 逐行给出，这里只是「要不要逐行看」的总闸。
+    usetex 的文字是 TeX 排的，不在此列。
     """
     if t.get_usetex():
         return False
     parse_math = getattr(t, "get_parse_math", None)
     if parse_math is not None and not parse_math():
         return False
-    return bool(mcbook.is_math_text(t.get_text()))
+    return any(math for _line, math in _math_lines(t.get_text()))
+
+
+def _math_lines(text: str) -> list[tuple[str, bool]]:
+    """按行切开，每行带「这一行是不是 mathtext 排的」（与 matplotlib 逐行的 `_preprocess_math` 同一判据）。
+
+    只在调用方已确认这段文字会解析数学（`drawn_by_mathtext` 为真）时，第二项才是 matplotlib 的真实行为；
+    `$…$` 跨行的串每一行都没有成对的 `$`，matplotlib 整段按普通文字排，这里也一样。"""
+    return [(line, bool(mcbook.is_math_text(line))) for line in text.split("\n")]
 
 
 def _glyph_scan(
@@ -1651,8 +1661,9 @@ def _glyph_scan(
 ) -> tuple[list[str], list[str], list[str]]:
     """(画不出来的, 换了脸的非中日韩字符, 画了中日韩字符的那几张脸) —— 一次扫出来。
 
-    `mathtext`：这段文字整串由 mathtext 排（`drawn_by_mathtext`）**且没有分段排**（`mixedtext` 未武装，
-    即脚本自己保存的那一刻）。那时 `$` 外的字只由正文第一张脸画，mathtext 自己的后备字体集（STIX /
+    `mathtext`：这段文字会解析数学（`drawn_by_mathtext`）**且没有分段排**（`mixedtext` 未武装，即脚本自己
+    保存的那一刻）。matplotlib 逐行判，所以这里也逐行（`_math_lines`）：只有带成对 `$` 的那几行由 mathtext 排，
+    别的行照常走回退链。那几行里 `$` 外的字只由正文第一张脸画，mathtext 自己的后备字体集（STIX /
     Computer Modern）没有中日韩字形，回退链也不参与——**中日韩字符问的是第一张脸**，它没有就是方框
     （实测「浓度 ($\\mu$mol/L)」导出成 `¤¤ (μmol/L)`），既进 `glyphs_missing`，也不报 `cjk_family`。
     非中日韩字符照旧（mathtext 的 STIX 后备可能接得住，判不准就不改判）。分段排武装时（Tavotto 渲染的
@@ -1681,7 +1692,10 @@ def _glyph_scan(
     gone: dict[str, None] = {}
     subst: dict[str, None] = {}
     cjk_faces: dict[str, None] = {}
-    for ch in _MATH_SPAN.sub("", text):
+    lines = _math_lines(text) if mathtext else [(text, False)]
+    for ch, line_math in (
+        (ch, line_math) for line, line_math in lines for ch in _MATH_SPAN.sub("", line)
+    ):
         if ch.isspace() or ch in gone or ch in subst:
             continue
         if primary.get_char_index(ord(ch)):
@@ -1691,7 +1705,7 @@ def _glyph_scan(
             if len(gone) < MAX_MISSING_GLYPHS:
                 gone[ch] = None
         elif _CJK_CHAR.match(ch):
-            if mathtext:
+            if line_math:
                 # mathtext 不走回退链：链尾那张中文脸画得出，也轮不到它画
                 if len(gone) < MAX_MISSING_GLYPHS:
                     gone[ch] = None
@@ -1769,10 +1783,14 @@ def face_sources(text: str, families, file=None, props=None, *, mathtext: bool =
     src = _face_source(*resolved[0])
     if src is not None:
         out["face_src"] = src
-    # mathtext 排的文字不走回退链（见 `_glyph_scan`）：链尾的中文脸没画任何字，不报它的身份
-    if isinstance(text, str) and text.strip() and not mathtext:
+    # mathtext 排的行不走回退链（见 `_glyph_scan`，逐行）：那几行里链尾的中文脸没画任何字；
+    # 只看普通文字的行，那里画了汉字的脸才是真身份
+    if isinstance(text, str) and text.strip():
         primary, rest = resolved[0][2], resolved[1:]
-        for ch in _MATH_SPAN.sub("", text):
+        plain = "".join(
+            line for line, math in (_math_lines(text) if mathtext else [(text, False)]) if not math
+        )
+        for ch in _MATH_SPAN.sub("", plain):
             if not _CJK_CHAR.match(ch) or primary.get_char_index(ord(ch)):
                 continue
             hit = next((r for r in rest if r[2].get_char_index(ord(ch))), None)

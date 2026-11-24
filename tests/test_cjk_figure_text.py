@@ -962,11 +962,12 @@ def test_fname_release_keeps_latin_pixels_and_reports_unreleasable_honestly():
 
 # --- 公式与中文混排（摸底 T-001 / T-002）---------------------------------------
 #
-# 串里只要有成对的 `$`，matplotlib 就把**整行**交给 mathtext：`$` 外面的「浓度」也只由
-# 正文第一张脸画，回退链不参与——脚本自己存的图里是 `¤¤ (μmol/L)`。Tavotto 渲染时
-# 分段排（`mixedtext`，ADR 0045 §7）：正文脸画不出的中日韩字连成的段交给回退链。
-# 尺子是**导出的 PDF 文本层**（独立于 manifest 的判据）：manifest 报缺的字 == PDF
-# 里读不回的字；装了中文字体时两边都应是「一个不缺」，没装时两边都应是「浓度」。
+# 一行里只要有成对的 `$`，matplotlib 就把**这一行**交给 mathtext（逐行判，`Text._get_layout`）：`$` 外面的
+# 「浓度」也只由正文第一张脸画，回退链不参与——脚本自己存的图里是 `¤¤ (μmol/L)`；同一段文字里没有 `$`
+# 的行照常走回退链。Tavotto 渲染时分段排（`mixedtext`，ADR 0045 §7）：正文脸画不出的中日韩字连成的段
+# 交给回退链。尺子是**导出的 PDF 文本层**（独立于 manifest 的判据）：manifest 报缺的字 == PDF
+# 里读不回的字；装了中文字体时两边都应是「一个不缺」，没装时两边都应是「浓度」。两行标题
+# 「中文标题\n$x$」第一行没有 `$`，由回退链画出、照旧不报（Codex #2167：整段按一个开关判，会把它也报成缺字）。
 
 MIXED_LIBRARY = """\
 import matplotlib.pyplot as plt
@@ -975,7 +976,7 @@ import matplotlib.pyplot as plt
 def main():
     fig, ax = plt.subplots(figsize=(4.0, 3.0), layout="constrained")
     ax.plot([0, 1], [0, 1])
-    ax.set_title("中文标题")
+    ax.set_title("中文标题\\n$x$")
     ax.set_ylabel("浓度 ($\\\\mu$mol/L)")
     ax.set_xlabel("time (s)")
     fig.savefig("MixFig.pdf")
@@ -1013,6 +1014,7 @@ def test_mathtext_mixed_cjk_manifest_matches_what_the_pdf_shows(tmp_path, instal
         assert unread == ["浓", "度"], text
         assert ylabel.get("glyphs_missing") == unread, ylabel
         assert hit, issues
+    # 反向对照：标题第一行没有 `$`，走普通文字路径，回退链接得住，仍然不报缺字、照报中文脸
     if installed_cjk:
         title = _el(man, "axes_0.title")
         assert "中文标题" in text
