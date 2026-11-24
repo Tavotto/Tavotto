@@ -29,6 +29,12 @@ describe('canvasStrokePt', () => {
     expect(canvasStrokePt(obj({ type: 'arrow', strokePt: Number.NaN }))).toBeUndefined()
   })
 
+  it('SVG 导入的纯填充形状没有描边（svgimport 写 stroke: false），不会被误报成「线条太细」', () => {
+    // 形状取自 rendercore.svgimport.import_svg 对 <rect fill="#f00"/> 的真实产出
+    const imported = { type: 'path', subpaths: [], strokePt: 1, stroke: false, fill: '#ff0000', color: '#000000' }
+    expect(canvasStrokePt(obj(imported))).toBeUndefined()
+  })
+
   it('文字与面板不判', () => {
     expect(canvasStrokePt(obj({ type: 'text', text: 'a', sizePt: 8 }))).toBeUndefined()
     expect(CANVAS_STROKE_TYPES).toEqual(['arrow', 'shape', 'path'])

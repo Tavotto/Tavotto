@@ -592,6 +592,13 @@ def cases() -> list[dict]:
             "canvas-line-width-floor-not-set-no-report", None, [_obj("a1", "arrow", 0.1)]
         )
     )
+    out.append(  # 新建箭头 / 形状 / 钢笔路径的默认线宽都是 1 pt：常见期刊下限（0.25–0.5 pt）下不报
+        _canvas_lw_case(
+            "canvas-line-width-defaults-not-reported",
+            0.5,
+            [_obj("a1", "arrow", 1.0), _obj("s1", "shape", 1.0), _obj("q1", "path", 1.0)],
+        )
+    )
     m = _clean_manifest()  # 数据线与画布对象都细：一条检查，最糟的那次（画布 0.1）决定文案与 detail
     _el_with(m, "axes_0.lines_0", linewidth=0.3)
     mixed = _lw_case("canvas-line-width-mixed-with-data-line", 0.5, m)
