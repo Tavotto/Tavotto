@@ -1,0 +1,2554 @@
+{
+ "_doc": "由 scripts/gen_agent_object_vectors.py 生成，勿手改（ADR 0208 §五）",
+ "error_codes": [
+  "not_a_list",
+  "too_many",
+  "not_an_object",
+  "unknown_type",
+  "missing_field",
+  "unknown_field",
+  "reserved_field",
+  "bad_value",
+  "out_of_range",
+  "duplicate_id",
+  "bad_group_path"
+ ],
+ "cases": [
+  {
+   "name": "ok-minimal-each-type",
+   "input": [
+    {
+     "id": "t1",
+     "type": "text",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "text": "Receptor",
+     "sizePt": 8,
+     "bold": false,
+     "color": "#000000",
+     "align": "left"
+    },
+    {
+     "id": "a1",
+     "type": "arrow",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "strokePt": 1,
+     "color": "#000000",
+     "head": "end"
+    },
+    {
+     "id": "s1",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "rect",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": "#E69F00"
+    },
+    {
+     "id": "p1",
+     "type": "path",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          1
+         ]
+        }
+       ]
+      }
+     ],
+     "strokePt": 0.5,
+     "color": "#333333",
+     "fill": "#56B4E9"
+    }
+   ],
+   "ok": true,
+   "objects": [
+    {
+     "id": "t_00000001",
+     "type": "text",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "text": "Receptor",
+     "sizePt": 8,
+     "bold": false,
+     "color": "#000000",
+     "align": "left"
+    },
+    {
+     "id": "a_00000002",
+     "type": "arrow",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "strokePt": 1,
+     "color": "#000000",
+     "head": "end"
+    },
+    {
+     "id": "s_00000003",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "rect",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": "#E69F00"
+    },
+    {
+     "id": "p_00000004",
+     "type": "path",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          1
+         ]
+        }
+       ]
+      }
+     ],
+     "strokePt": 0.5,
+     "color": "#333333",
+     "fill": "#56B4E9"
+    }
+   ],
+   "export": [
+    {
+     "x_mm": 10.0,
+     "y_mm": 12.0,
+     "w_mm": 30.0,
+     "h_mm": 8.0,
+     "type": "text",
+     "text": "Receptor",
+     "size_pt": 8,
+     "bold": false,
+     "italic": false,
+     "color": "#000000",
+     "align": "left"
+    },
+    {
+     "x_mm": 10.0,
+     "y_mm": 12.0,
+     "w_mm": 30.0,
+     "h_mm": 8.0,
+     "type": "arrow",
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "stroke_pt": 1,
+     "color": "#000000",
+     "head": "end"
+    },
+    {
+     "x_mm": 10.0,
+     "y_mm": 12.0,
+     "w_mm": 30.0,
+     "h_mm": 8.0,
+     "type": "shape",
+     "shape": "rect",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00"
+    },
+    {
+     "x_mm": 10.0,
+     "y_mm": 12.0,
+     "w_mm": 30.0,
+     "h_mm": 8.0,
+     "type": "path",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          1
+         ]
+        }
+       ]
+      }
+     ],
+     "stroke_pt": 0.5,
+     "color": "#333333",
+     "fill": "#56B4E9"
+    }
+   ]
+  },
+  {
+   "name": "ok-text-all-optional",
+   "input": [
+    {
+     "id": "t1",
+     "type": "text",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "text": "Receptor",
+     "sizePt": 8,
+     "bold": false,
+     "color": "#000000",
+     "align": "left",
+     "fontFamily": "sans-serif",
+     "interpretation": "scientific",
+     "textFormat": "latex",
+     "italic": true,
+     "underline": true,
+     "lineHeight": 1.2,
+     "padding": 1.5,
+     "bg": "#FFFFFF",
+     "borderColor": "#000000",
+     "name": "标签 EGFR",
+     "rotationDeg": 15
+    }
+   ],
+   "ok": true,
+   "objects": [
+    {
+     "id": "t_00000001",
+     "type": "text",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "text": "Receptor",
+     "sizePt": 8,
+     "bold": false,
+     "color": "#000000",
+     "align": "left",
+     "fontFamily": "sans-serif",
+     "interpretation": "scientific",
+     "textFormat": "latex",
+     "italic": true,
+     "underline": true,
+     "lineHeight": 1.2,
+     "padding": 1.5,
+     "bg": "#FFFFFF",
+     "borderColor": "#000000",
+     "name": "标签 EGFR",
+     "rotationDeg": 15
+    }
+   ],
+   "export": [
+    {
+     "x_mm": 10.0,
+     "y_mm": 12.0,
+     "w_mm": 30.0,
+     "h_mm": 8.0,
+     "type": "text",
+     "text": "Receptor",
+     "size_pt": 8,
+     "bold": false,
+     "italic": true,
+     "color": "#000000",
+     "align": "left",
+     "font_family": "sans-serif",
+     "interpretation": "scientific",
+     "text_format": "latex",
+     "underline": true,
+     "line_height": 1.2,
+     "padding_mm": 1.5,
+     "bg": "#FFFFFF",
+     "border_color": "#000000",
+     "border_pt": 0.75,
+     "rotation_deg": 15
+    }
+   ]
+  },
+  {
+   "name": "ok-text-border-default-width",
+   "input": [
+    {
+     "id": "t1",
+     "type": "text",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "text": "Receptor",
+     "sizePt": 8,
+     "bold": false,
+     "color": "#000000",
+     "align": "left",
+     "borderColor": "#000000"
+    }
+   ],
+   "ok": true,
+   "objects": [
+    {
+     "id": "t_00000001",
+     "type": "text",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "text": "Receptor",
+     "sizePt": 8,
+     "bold": false,
+     "color": "#000000",
+     "align": "left",
+     "borderColor": "#000000"
+    }
+   ],
+   "export": [
+    {
+     "x_mm": 10.0,
+     "y_mm": 12.0,
+     "w_mm": 30.0,
+     "h_mm": 8.0,
+     "type": "text",
+     "text": "Receptor",
+     "size_pt": 8,
+     "bold": false,
+     "italic": false,
+     "color": "#000000",
+     "align": "left",
+     "border_color": "#000000",
+     "border_pt": 0.75
+    }
+   ]
+  },
+  {
+   "name": "ok-arrow-all-optional",
+   "input": [
+    {
+     "id": "a1",
+     "type": "arrow",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "strokePt": 1,
+     "color": "#000000",
+     "head": "end",
+     "headStart": "dot",
+     "headEnd": "stealth",
+     "headSizeStart": "small",
+     "headSizeEnd": "large",
+     "dash": "dashed",
+     "strokeOpacity": 0.5,
+     "lineCap": "butt",
+     "lineJoin": "miter",
+     "miterLimit": 4,
+     "dashPattern": [
+      2,
+      1
+     ]
+    }
+   ],
+   "ok": true,
+   "objects": [
+    {
+     "id": "a_00000001",
+     "type": "arrow",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "strokePt": 1,
+     "color": "#000000",
+     "head": "end",
+     "headStart": "dot",
+     "headEnd": "stealth",
+     "headSizeStart": "small",
+     "headSizeEnd": "large",
+     "dash": "dashed",
+     "strokeOpacity": 0.5,
+     "lineCap": "butt",
+     "lineJoin": "miter",
+     "miterLimit": 4,
+     "dashPattern": [
+      2,
+      1
+     ]
+    }
+   ],
+   "export": [
+    {
+     "x_mm": 10.0,
+     "y_mm": 12.0,
+     "w_mm": 30.0,
+     "h_mm": 8.0,
+     "type": "arrow",
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "stroke_pt": 1,
+     "color": "#000000",
+     "head": "end",
+     "head_start": "dot",
+     "head_end": "stealth",
+     "head_size_start": "small",
+     "head_size_end": "large",
+     "dash": "dashed",
+     "stroke_opacity": 0.5,
+     "line_cap": "butt",
+     "line_join": "miter",
+     "miter_limit": 4.0,
+     "dash_pattern": [
+      2.0,
+      1.0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ok-arrow-defaults-not-sent",
+   "input": [
+    {
+     "id": "a1",
+     "type": "arrow",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "strokePt": 1,
+     "color": "#000000",
+     "head": "end",
+     "headSizeEnd": "medium",
+     "dash": "solid",
+     "lineCap": "round",
+     "lineJoin": "round",
+     "miterLimit": 10,
+     "strokeOpacity": 1
+    }
+   ],
+   "ok": true,
+   "objects": [
+    {
+     "id": "a_00000001",
+     "type": "arrow",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "strokePt": 1,
+     "color": "#000000",
+     "head": "end",
+     "headSizeEnd": "medium",
+     "dash": "solid",
+     "lineCap": "round",
+     "lineJoin": "round",
+     "miterLimit": 10,
+     "strokeOpacity": 1
+    }
+   ],
+   "export": [
+    {
+     "x_mm": 10.0,
+     "y_mm": 12.0,
+     "w_mm": 30.0,
+     "h_mm": 8.0,
+     "type": "arrow",
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "stroke_pt": 1,
+     "color": "#000000",
+     "head": "end"
+    }
+   ]
+  },
+  {
+   "name": "ok-shape-variants",
+   "input": [
+    {
+     "id": "s1",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "polygon",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": "#E69F00"
+    },
+    {
+     "id": "s2",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "star",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "sides": 7,
+     "starRatio": 0.5
+    },
+    {
+     "id": "s3",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "star",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": "#E69F00"
+    },
+    {
+     "id": "s4",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "line",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": null,
+     "start": {
+      "rx": 0,
+      "ry": 0
+     },
+     "end": {
+      "rx": 1,
+      "ry": 1
+     }
+    },
+    {
+     "id": "s5",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "ellipse",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "stroke": false,
+     "fillOpacity": 0.4,
+     "fillGradient": {
+      "kind": "linear",
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#ffffff"
+       },
+       {
+        "offset": 1,
+        "color": "#0072B2",
+        "opacity": 0.5
+       }
+      ],
+      "from": [
+       0,
+       0.5
+      ],
+      "to": [
+       1,
+       0.5
+      ]
+     }
+    },
+    {
+     "id": "s6",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "rect",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "cornerRadius": 2,
+     "strokeAlign": "outside",
+     "strokeGradient": {
+      "kind": "linear",
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#ffffff"
+       },
+       {
+        "offset": 1,
+        "color": "#0072B2",
+        "opacity": 0.5
+       }
+      ],
+      "from": [
+       0,
+       0.5
+      ],
+      "to": [
+       1,
+       0.5
+      ]
+     }
+    },
+    {
+     "id": "s7",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "brace",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": null,
+     "stroke": false,
+     "strokeAlign": "outside"
+    }
+   ],
+   "ok": true,
+   "objects": [
+    {
+     "id": "s_00000001",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "polygon",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": "#E69F00"
+    },
+    {
+     "id": "s_00000002",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "star",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "sides": 7,
+     "starRatio": 0.5
+    },
+    {
+     "id": "s_00000003",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "star",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": "#E69F00"
+    },
+    {
+     "id": "s_00000004",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "line",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": null,
+     "start": {
+      "rx": 0,
+      "ry": 0
+     },
+     "end": {
+      "rx": 1,
+      "ry": 1
+     }
+    },
+    {
+     "id": "s_00000005",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "ellipse",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "stroke": false,
+     "fillOpacity": 0.4,
+     "fillGradient": {
+      "kind": "linear",
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#ffffff"
+       },
+       {
+        "offset": 1,
+        "color": "#0072B2",
+        "opacity": 0.5
+       }
+      ],
+      "from": [
+       0,
+       0.5
+      ],
+      "to": [
+       1,
+       0.5
+      ]
+     }
+    },
+    {
+     "id": "s_00000006",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "rect",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "cornerRadius": 2,
+     "strokeAlign": "outside",
+     "strokeGradient": {
+      "kind": "linear",
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#ffffff"
+       },
+       {
+        "offset": 1,
+        "color": "#0072B2",
+        "opacity": 0.5
+       }
+      ],
+      "from": [
+       0,
+       0.5
+      ],
+      "to": [
+       1,
+       0.5
+      ]
+     }
+    },
+    {
+     "id": "s_00000007",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "brace",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": null,
+     "stroke": false,
+     "strokeAlign": "outside"
+    }
+   ],
+   "export": [
+    {
+     "x_mm": 10.0,
+     "y_mm": 12.0,
+     "w_mm": 30.0,
+     "h_mm": 8.0,
+     "type": "shape",
+     "shape": "polygon",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "sides": 6
+    },
+    {
+     "x_mm": 10.0,
+     "y_mm": 12.0,
+     "w_mm": 30.0,
+     "h_mm": 8.0,
+     "type": "shape",
+     "shape": "star",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "sides": 7,
+     "star_ratio": 0.5
+    },
+    {
+     "x_mm": 10.0,
+     "y_mm": 12.0,
+     "w_mm": 30.0,
+     "h_mm": 8.0,
+     "type": "shape",
+     "shape": "star",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "sides": 5
+    },
+    {
+     "x_mm": 10.0,
+     "y_mm": 12.0,
+     "w_mm": 30.0,
+     "h_mm": 8.0,
+     "type": "shape",
+     "shape": "line",
+     "start": {
+      "rx": 0,
+      "ry": 0
+     },
+     "end": {
+      "rx": 1,
+      "ry": 1
+     },
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": null
+    },
+    {
+     "x_mm": 10.0,
+     "y_mm": 12.0,
+     "w_mm": 30.0,
+     "h_mm": 8.0,
+     "type": "shape",
+     "shape": "ellipse",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "fill_opacity": 0.4,
+     "stroke": false,
+     "fill_gradient": {
+      "kind": "linear",
+      "stops": [
+       {
+        "offset": 0.0,
+        "color": "#ffffff",
+        "opacity": 1.0
+       },
+       {
+        "offset": 1.0,
+        "color": "#0072B2",
+        "opacity": 0.5
+       }
+      ],
+      "from": [
+       0.0,
+       0.5
+      ],
+      "to": [
+       1.0,
+       0.5
+      ]
+     }
+    },
+    {
+     "x_mm": 10.0,
+     "y_mm": 12.0,
+     "w_mm": 30.0,
+     "h_mm": 8.0,
+     "type": "shape",
+     "shape": "rect",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "corner_radius_mm": 2,
+     "stroke_align": "outside",
+     "stroke_gradient": {
+      "kind": "linear",
+      "stops": [
+       {
+        "offset": 0.0,
+        "color": "#ffffff",
+        "opacity": 1.0
+       },
+       {
+        "offset": 1.0,
+        "color": "#0072B2",
+        "opacity": 0.5
+       }
+      ],
+      "from": [
+       0.0,
+       0.5
+      ],
+      "to": [
+       1.0,
+       0.5
+      ]
+     }
+    },
+    {
+     "x_mm": 10.0,
+     "y_mm": 12.0,
+     "w_mm": 30.0,
+     "h_mm": 8.0,
+     "type": "shape",
+     "shape": "brace",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": null
+    }
+   ]
+  },
+  {
+   "name": "ok-path-curve-and-heads",
+   "input": [
+    {
+     "id": "p1",
+     "type": "path",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.3,
+          -0.2
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.7,
+          1.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ],
+     "strokePt": 0.5,
+     "color": "#333333",
+     "fill": null,
+     "headEnd": "triangle",
+     "headStart": "none",
+     "fillRule": "evenodd",
+     "strokeAlign": "inside",
+     "lineJoin": "miter"
+    }
+   ],
+   "ok": true,
+   "objects": [
+    {
+     "id": "p_00000001",
+     "type": "path",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.3,
+          -0.2
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.7,
+          1.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ],
+     "strokePt": 0.5,
+     "color": "#333333",
+     "fill": null,
+     "headEnd": "triangle",
+     "headStart": "none",
+     "fillRule": "evenodd",
+     "strokeAlign": "inside",
+     "lineJoin": "miter"
+    }
+   ],
+   "export": [
+    {
+     "x_mm": 10.0,
+     "y_mm": 12.0,
+     "w_mm": 30.0,
+     "h_mm": 8.0,
+     "type": "path",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.3,
+          -0.2
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.7,
+          1.2
+         ]
+        }
+       ]
+      }
+     ],
+     "fill_rule": "evenodd",
+     "stroke_pt": 0.5,
+     "color": "#333333",
+     "fill": null,
+     "line_join": "miter",
+     "stroke_align": "inside",
+     "head_end": "triangle"
+    }
+   ]
+  },
+  {
+   "name": "ok-path-no-stroke-gradient",
+   "input": [
+    {
+     "id": "p1",
+     "type": "path",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          1
+         ]
+        }
+       ]
+      }
+     ],
+     "strokePt": 0.5,
+     "color": "#333333",
+     "fill": "#56B4E9",
+     "stroke": false,
+     "fillGradient": {
+      "kind": "linear",
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#ffffff"
+       },
+       {
+        "offset": 1,
+        "color": "#0072B2",
+        "opacity": 0.5
+       }
+      ],
+      "from": [
+       0,
+       0.5
+      ],
+      "to": [
+       1,
+       0.5
+      ]
+     },
+     "strokeGradient": {
+      "kind": "linear",
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#ffffff"
+       },
+       {
+        "offset": 1,
+        "color": "#0072B2",
+        "opacity": 0.5
+       }
+      ],
+      "from": [
+       0,
+       0.5
+      ],
+      "to": [
+       1,
+       0.5
+      ]
+     }
+    }
+   ],
+   "ok": true,
+   "objects": [
+    {
+     "id": "p_00000001",
+     "type": "path",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          1
+         ]
+        }
+       ]
+      }
+     ],
+     "strokePt": 0.5,
+     "color": "#333333",
+     "fill": "#56B4E9",
+     "stroke": false,
+     "fillGradient": {
+      "kind": "linear",
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#ffffff"
+       },
+       {
+        "offset": 1,
+        "color": "#0072B2",
+        "opacity": 0.5
+       }
+      ],
+      "from": [
+       0,
+       0.5
+      ],
+      "to": [
+       1,
+       0.5
+      ]
+     },
+     "strokeGradient": {
+      "kind": "linear",
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#ffffff"
+       },
+       {
+        "offset": 1,
+        "color": "#0072B2",
+        "opacity": 0.5
+       }
+      ],
+      "from": [
+       0,
+       0.5
+      ],
+      "to": [
+       1,
+       0.5
+      ]
+     }
+    }
+   ],
+   "export": [
+    {
+     "x_mm": 10.0,
+     "y_mm": 12.0,
+     "w_mm": 30.0,
+     "h_mm": 8.0,
+     "type": "path",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          1
+         ]
+        }
+       ]
+      }
+     ],
+     "stroke_pt": 0.5,
+     "color": "#333333",
+     "fill": "#56B4E9",
+     "stroke": false,
+     "fill_gradient": {
+      "kind": "linear",
+      "stops": [
+       {
+        "offset": 0.0,
+        "color": "#ffffff",
+        "opacity": 1.0
+       },
+       {
+        "offset": 1.0,
+        "color": "#0072B2",
+        "opacity": 0.5
+       }
+      ],
+      "from": [
+       0.0,
+       0.5
+      ],
+      "to": [
+       1.0,
+       0.5
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "ok-groups-nested-and-shared",
+   "input": [
+    {
+     "id": "s1",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "rect",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "groupPath": [
+      "机理图",
+      "细胞"
+     ],
+     "name": "细胞膜"
+    },
+    {
+     "id": "p1",
+     "type": "path",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          1
+         ]
+        }
+       ]
+      }
+     ],
+     "strokePt": 0.5,
+     "color": "#333333",
+     "fill": "#56B4E9",
+     "groupPath": [
+      "机理图",
+      "细胞"
+     ],
+     "name": "受体"
+    },
+    {
+     "id": "a1",
+     "type": "arrow",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "strokePt": 1,
+     "color": "#000000",
+     "head": "end",
+     "groupPath": [
+      "机理图"
+     ],
+     "name": "激活箭头"
+    },
+    {
+     "id": "t1",
+     "type": "text",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "text": "Receptor",
+     "sizePt": 8,
+     "bold": false,
+     "color": "#000000",
+     "align": "left",
+     "groupPath": [
+      "标签"
+     ],
+     "name": "受体 EGFR"
+    }
+   ],
+   "ok": true,
+   "objects": [
+    {
+     "id": "s_00000001",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "rect",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "name": "细胞膜",
+     "groupId": "g_00000002",
+     "groupPath": [
+      "g_00000003",
+      "g_00000002"
+     ]
+    },
+    {
+     "id": "p_00000004",
+     "type": "path",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          1
+         ]
+        }
+       ]
+      }
+     ],
+     "strokePt": 0.5,
+     "color": "#333333",
+     "fill": "#56B4E9",
+     "name": "受体",
+     "groupId": "g_00000002",
+     "groupPath": [
+      "g_00000003",
+      "g_00000002"
+     ]
+    },
+    {
+     "id": "a_00000005",
+     "type": "arrow",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "strokePt": 1,
+     "color": "#000000",
+     "head": "end",
+     "name": "激活箭头",
+     "groupId": "g_00000003"
+    },
+    {
+     "id": "t_00000006",
+     "type": "text",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "text": "Receptor",
+     "sizePt": 8,
+     "bold": false,
+     "color": "#000000",
+     "align": "left",
+     "name": "受体 EGFR",
+     "groupId": "g_00000007"
+    }
+   ],
+   "export": [
+    {
+     "x_mm": 10.0,
+     "y_mm": 12.0,
+     "w_mm": 30.0,
+     "h_mm": 8.0,
+     "type": "shape",
+     "shape": "rect",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00"
+    },
+    {
+     "x_mm": 10.0,
+     "y_mm": 12.0,
+     "w_mm": 30.0,
+     "h_mm": 8.0,
+     "type": "path",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          1
+         ]
+        }
+       ]
+      }
+     ],
+     "stroke_pt": 0.5,
+     "color": "#333333",
+     "fill": "#56B4E9"
+    },
+    {
+     "x_mm": 10.0,
+     "y_mm": 12.0,
+     "w_mm": 30.0,
+     "h_mm": 8.0,
+     "type": "arrow",
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "stroke_pt": 1,
+     "color": "#000000",
+     "head": "end"
+    },
+    {
+     "x_mm": 10.0,
+     "y_mm": 12.0,
+     "w_mm": 30.0,
+     "h_mm": 8.0,
+     "type": "text",
+     "text": "Receptor",
+     "size_pt": 8,
+     "bold": false,
+     "italic": false,
+     "color": "#000000",
+     "align": "left"
+    }
+   ]
+  },
+  {
+   "name": "bad-not-a-list",
+   "input": {
+    "type": "text"
+   },
+   "ok": false,
+   "errors": [
+    {
+     "code": "not_a_list"
+    }
+   ]
+  },
+  {
+   "name": "bad-unknown-type",
+   "input": [
+    {
+     "id": "x",
+     "type": "panel",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0
+    }
+   ],
+   "ok": false,
+   "errors": [
+    {
+     "code": "unknown_type",
+     "index": 0,
+     "field": "type"
+    }
+   ]
+  },
+  {
+   "name": "bad-missing-field",
+   "input": [
+    {
+     "id": "t1",
+     "type": "text",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "text": "Receptor",
+     "bold": false,
+     "color": "#000000",
+     "align": "left"
+    }
+   ],
+   "ok": false,
+   "errors": [
+    {
+     "code": "missing_field",
+     "index": 0,
+     "field": "sizePt"
+    }
+   ]
+  },
+  {
+   "name": "bad-unknown-field",
+   "input": [
+    {
+     "id": "t1",
+     "type": "text",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "text": "Receptor",
+     "sizePt": 8,
+     "bold": false,
+     "color": "#000000",
+     "align": "left",
+     "locked": true
+    }
+   ],
+   "ok": false,
+   "errors": [
+    {
+     "code": "unknown_field",
+     "index": 0,
+     "field": "locked"
+    }
+   ]
+  },
+  {
+   "name": "bad-withheld-field",
+   "input": [
+    {
+     "id": "t1",
+     "type": "text",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "text": "Receptor",
+     "sizePt": 8,
+     "bold": false,
+     "color": "#000000",
+     "align": "left",
+     "sourceFont": {
+      "family": "Arial"
+     }
+    }
+   ],
+   "ok": false,
+   "errors": [
+    {
+     "code": "unknown_field",
+     "index": 0,
+     "field": "sourceFont"
+    }
+   ]
+  },
+  {
+   "name": "bad-reserved-field",
+   "input": [
+    {
+     "id": "a1",
+     "type": "arrow",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "strokePt": 1,
+     "color": "#000000",
+     "head": "end",
+     "anchor": {
+      "to": "o_x"
+     }
+    }
+   ],
+   "ok": false,
+   "errors": [
+    {
+     "code": "reserved_field",
+     "index": 0,
+     "field": "anchor"
+    }
+   ]
+  },
+  {
+   "name": "bad-out-of-range",
+   "input": [
+    {
+     "id": "t1",
+     "type": "text",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "text": "Receptor",
+     "sizePt": 1,
+     "bold": false,
+     "color": "#000000",
+     "align": "left"
+    },
+    {
+     "id": "a1",
+     "type": "arrow",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "strokePt": 25,
+     "color": "#000000",
+     "head": "end"
+    },
+    {
+     "id": "s1",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "polygon",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "sides": 40
+    }
+   ],
+   "ok": false,
+   "errors": [
+    {
+     "code": "out_of_range",
+     "index": 0,
+     "field": "sizePt"
+    },
+    {
+     "code": "out_of_range",
+     "index": 1,
+     "field": "strokePt"
+    },
+    {
+     "code": "out_of_range",
+     "index": 2,
+     "field": "sides"
+    }
+   ]
+  },
+  {
+   "name": "bad-not-finite",
+   "input": [
+    {
+     "id": "t1",
+     "type": "text",
+     "x": 1e999,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "text": "Receptor",
+     "sizePt": 8,
+     "bold": false,
+     "color": "#000000",
+     "align": "left"
+    }
+   ],
+   "ok": false,
+   "errors": [
+    {
+     "code": "bad_value",
+     "index": 0,
+     "field": "x"
+    }
+   ]
+  },
+  {
+   "name": "bad-color",
+   "input": [
+    {
+     "id": "t1",
+     "type": "text",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "text": "Receptor",
+     "sizePt": 8,
+     "bold": false,
+     "color": "red",
+     "align": "left"
+    },
+    {
+     "id": "s1",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "rect",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": "#12345"
+    }
+   ],
+   "ok": false,
+   "errors": [
+    {
+     "code": "bad_value",
+     "index": 0,
+     "field": "color"
+    },
+    {
+     "code": "bad_value",
+     "index": 1,
+     "field": "fill"
+    }
+   ]
+  },
+  {
+   "name": "bad-enum",
+   "input": [
+    {
+     "id": "a1",
+     "type": "arrow",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "strokePt": 1,
+     "color": "#000000",
+     "head": "start"
+    },
+    {
+     "id": "s1",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "hexagon",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": "#E69F00"
+    }
+   ],
+   "ok": false,
+   "errors": [
+    {
+     "code": "bad_value",
+     "index": 0,
+     "field": "head"
+    },
+    {
+     "code": "bad_value",
+     "index": 1,
+     "field": "shape"
+    }
+   ]
+  },
+  {
+   "name": "bad-bool-as-number",
+   "input": [
+    {
+     "id": "t1",
+     "type": "text",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "text": "Receptor",
+     "sizePt": 8,
+     "bold": 1,
+     "color": "#000000",
+     "align": "left"
+    }
+   ],
+   "ok": false,
+   "errors": [
+    {
+     "code": "bad_value",
+     "index": 0,
+     "field": "bold"
+    }
+   ]
+  },
+  {
+   "name": "bad-duplicate-id",
+   "input": [
+    {
+     "id": "same",
+     "type": "text",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "text": "Receptor",
+     "sizePt": 8,
+     "bold": false,
+     "color": "#000000",
+     "align": "left"
+    },
+    {
+     "id": "same",
+     "type": "arrow",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "strokePt": 1,
+     "color": "#000000",
+     "head": "end"
+    }
+   ],
+   "ok": false,
+   "errors": [
+    {
+     "code": "duplicate_id",
+     "index": 1,
+     "field": "id"
+    }
+   ]
+  },
+  {
+   "name": "bad-group-path",
+   "input": [
+    {
+     "id": "s1",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "rect",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "groupPath": []
+    },
+    {
+     "id": "a1",
+     "type": "arrow",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "strokePt": 1,
+     "color": "#000000",
+     "head": "end",
+     "groupPath": [
+      "a",
+      "b",
+      "c",
+      "d",
+      "e"
+     ]
+    },
+    {
+     "id": "p1",
+     "type": "path",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          1
+         ]
+        }
+       ]
+      }
+     ],
+     "strokePt": 0.5,
+     "color": "#333333",
+     "fill": "#56B4E9",
+     "groupPath": [
+      "a",
+      "a"
+     ]
+    }
+   ],
+   "ok": false,
+   "errors": [
+    {
+     "code": "bad_group_path",
+     "index": 0,
+     "field": "groupPath"
+    },
+    {
+     "code": "bad_group_path",
+     "index": 1,
+     "field": "groupPath"
+    },
+    {
+     "code": "bad_group_path",
+     "index": 2,
+     "field": "groupPath"
+    }
+   ]
+  },
+  {
+   "name": "bad-subpaths",
+   "input": [
+    {
+     "id": "p1",
+     "type": "path",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "subpaths": [],
+     "strokePt": 0.5,
+     "color": "#333333",
+     "fill": "#56B4E9"
+    },
+    {
+     "id": "p2",
+     "type": "path",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0
+         ]
+        }
+       ]
+      }
+     ],
+     "strokePt": 0.5,
+     "color": "#333333",
+     "fill": "#56B4E9"
+    },
+    {
+     "id": "p3",
+     "type": "path",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ],
+         "smooth": false
+        }
+       ]
+      }
+     ],
+     "strokePt": 0.5,
+     "color": "#333333",
+     "fill": "#56B4E9"
+    }
+   ],
+   "ok": false,
+   "errors": [
+    {
+     "code": "bad_value",
+     "index": 0,
+     "field": "subpaths"
+    },
+    {
+     "code": "bad_value",
+     "index": 1,
+     "field": "subpaths"
+    },
+    {
+     "code": "bad_value",
+     "index": 2,
+     "field": "subpaths"
+    }
+   ]
+  },
+  {
+   "name": "bad-ratio-too-far",
+   "input": [
+    {
+     "id": "p1",
+     "type": "path",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          50,
+          0
+         ]
+        }
+       ]
+      }
+     ],
+     "strokePt": 0.5,
+     "color": "#333333",
+     "fill": "#56B4E9"
+    }
+   ],
+   "ok": false,
+   "errors": [
+    {
+     "code": "bad_value",
+     "index": 0,
+     "field": "subpaths"
+    }
+   ]
+  },
+  {
+   "name": "bad-dash-pattern",
+   "input": [
+    {
+     "id": "a1",
+     "type": "arrow",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "strokePt": 1,
+     "color": "#000000",
+     "head": "end",
+     "dashPattern": [
+      0,
+      0
+     ]
+    },
+    {
+     "id": "a2",
+     "type": "arrow",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "strokePt": 1,
+     "color": "#000000",
+     "head": "end",
+     "dashPattern": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13
+     ]
+    }
+   ],
+   "ok": false,
+   "errors": [
+    {
+     "code": "bad_value",
+     "index": 0,
+     "field": "dashPattern"
+    },
+    {
+     "code": "bad_value",
+     "index": 1,
+     "field": "dashPattern"
+    }
+   ]
+  },
+  {
+   "name": "bad-gradient",
+   "input": [
+    {
+     "id": "s1",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "rect",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "fillGradient": {
+      "kind": "conic",
+      "stops": []
+     }
+    },
+    {
+     "id": "s2",
+     "type": "shape",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "shape": "rect",
+     "strokePt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "fillGradient": {
+      "kind": "linear",
+      "stops": [
+       {
+        "offset": 2,
+        "color": "#fff"
+       }
+      ],
+      "from": [
+       0,
+       0.5
+      ],
+      "to": [
+       1,
+       0.5
+      ]
+     }
+    }
+   ],
+   "ok": false,
+   "errors": [
+    {
+     "code": "bad_value",
+     "index": 0,
+     "field": "fillGradient"
+    },
+    {
+     "code": "bad_value",
+     "index": 1,
+     "field": "fillGradient"
+    }
+   ]
+  },
+  {
+   "name": "bad-name",
+   "input": [
+    {
+     "id": "t1",
+     "type": "text",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "text": "Receptor",
+     "sizePt": 8,
+     "bold": false,
+     "color": "#000000",
+     "align": "left",
+     "name": ""
+    },
+    {
+     "id": "a1",
+     "type": "arrow",
+     "x": 10.0,
+     "y": 12.0,
+     "w": 30.0,
+     "h": 8.0,
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "strokePt": 1,
+     "color": "#000000",
+     "head": "end",
+     "name": "x\u0001y"
+    }
+   ],
+   "ok": false,
+   "errors": [
+    {
+     "code": "bad_value",
+     "index": 0,
+     "field": "name"
+    },
+    {
+     "code": "bad_value",
+     "index": 1,
+     "field": "name"
+    }
+   ]
+  }
+ ]
+}

@@ -28,6 +28,7 @@
       "@/*": ["./src/*"],
       "@profiles": ["../src/tavotto/profiles/publication.json"],
       "@journals": ["../src/tavotto/profiles/journals.json"],
+      "@agentObjects": ["../src/tavotto/profiles/agent_objects.json"],
       "@glyphcoverage": ["../src/tavotto/pdfbackend/canvas_coverage.json"],
       "@playground-runtime": ["../packaging/playground-runtime.json"]
     }
