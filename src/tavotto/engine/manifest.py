@@ -1630,8 +1630,31 @@ def _resolved_font_paths(families, file=None, props=None) -> list[tuple[str, int
 _CJK_CHAR = re.compile("[⺀-⻿぀-ヿ㐀-䶿一-鿿豈-﫿＀-￯]")
 
 
-def _glyph_scan(text: str, families, file=None) -> tuple[list[str], list[str], list[str]]:
+def drawn_by_mathtext(t: Text) -> bool:
+    """这个 Text **整串**是不是由 mathtext 排的（matplotlib `Text._preprocess_math` 的同一个判据）。
+
+    只要串里有成对的 `$`，matplotlib 就把整串交给 mathtext——`$` **外面**的字也一样，
+    而 mathtext 的正文部分只用一张脸（`findfont(prop)`，族列表的第一环），没有逐字形
+    回退链（ADR 0045 的中文尾巴在这里不起作用）。usetex 的文字是 TeX 排的，不在此列。
+    """
+    if t.get_usetex():
+        return False
+    parse_math = getattr(t, "get_parse_math", None)
+    if parse_math is not None and not parse_math():
+        return False
+    return bool(mcbook.is_math_text(t.get_text()))
+
+
+def _glyph_scan(
+    text: str, families, file=None, *, mathtext: bool = False
+) -> tuple[list[str], list[str], list[str]]:
     """(画不出来的, 换了脸的非中日韩字符, 画了中日韩字符的那几张脸) —— 一次扫出来。
+
+    `mathtext`：这段文字整串由 mathtext 排（`drawn_by_mathtext`）。那时 `$` 外的字只由
+    正文第一张脸画，mathtext 自己的后备字体集（STIX / Computer Modern）没有中日韩字形，
+    回退链也不参与——**中日韩字符问的是第一张脸**，它没有就是方框（实测「浓度 ($\\mu$mol/L)」
+    导出成 `¤¤ (μmol/L)`），既进 `glyphs_missing`，也不报 `cjk_family`。非中日韩字符照旧
+    （mathtext 的 STIX 后备可能接得住，判不准就不改判）。
 
     `$…$` 里的片段跳过（那是 mathtext 字体集画的，见 `_MATH_SPAN`）。
     解析不出任何字体时三张单子都空：**判不了就不判**，不拿一个量错对象的
@@ -1666,7 +1689,12 @@ def _glyph_scan(text: str, families, file=None) -> tuple[list[str], list[str], l
             if len(gone) < MAX_MISSING_GLYPHS:
                 gone[ch] = None
         elif _CJK_CHAR.match(ch):
-            cjk_faces.setdefault(str(face.family_name), None)
+            if mathtext:
+                # mathtext 不走回退链：链尾那张中文脸画得出，也轮不到它画
+                if len(gone) < MAX_MISSING_GLYPHS:
+                    gone[ch] = None
+            else:
+                cjk_faces.setdefault(str(face.family_name), None)
         elif len(subst) < MAX_MISSING_GLYPHS:
             subst[ch] = None
     return list(gone), list(subst), list(cjk_faces)
@@ -1718,7 +1746,7 @@ def _face_source(path: str, face_index: int, ft) -> dict | None:
     }
 
 
-def face_sources(text: str, families, file=None, props=None) -> dict:
+def face_sources(text: str, families, file=None, props=None, *, mathtext: bool = False) -> dict:
     """这段文字实际由哪几张**文件级**的脸画：`face_src`（正文脸，族链解析到的第一张）与
     `cjk_src`（回退链上画了第一个中日韩字符的那张；正文脸自己画得出汉字时没有）。
 
@@ -1739,7 +1767,8 @@ def face_sources(text: str, families, file=None, props=None) -> dict:
     src = _face_source(*resolved[0])
     if src is not None:
         out["face_src"] = src
-    if isinstance(text, str) and text.strip():
+    # mathtext 排的文字不走回退链（见 `_glyph_scan`）：链尾的中文脸没画任何字，不报它的身份
+    if isinstance(text, str) and text.strip() and not mathtext:
         primary, rest = resolved[0][2], resolved[1:]
         for ch in _MATH_SPAN.sub("", text):
             if not _CJK_CHAR.match(ch) or primary.get_char_index(ord(ch)):
@@ -6912,8 +6941,12 @@ def _measure_manifest(
                     font_file,
                 )
             )
+            by_mathtext = drawn_by_mathtext(live_text)
             gone, subst, cjk_faces = _glyph_scan(
-                live_text.get_text(), live_text.get_fontfamily() or [], font_file
+                live_text.get_text(),
+                live_text.get_fontfamily() or [],
+                font_file,
+                mathtext=by_mathtext,
             )
             if gone:
                 entry["glyphs_missing"] = gone
@@ -6933,6 +6966,7 @@ def _measure_manifest(
                         live_text.get_fontfamily() or [],
                         font_file,
                         live_text.get_fontproperties(),
+                        mathtext=by_mathtext,
                     )
                 )
             except Exception:  # noqa: BLE001 —— 身份是附加事实：采集失败只是少一个键，绝不拖垮 manifest

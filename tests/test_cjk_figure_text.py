@@ -955,3 +955,58 @@ def test_fname_release_keeps_latin_pixels_and_reports_unreleasable_honestly():
     )
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip().endswith("OK")
+
+
+# --- 公式与中文混排（摸底 T-001）------------------------------------------------
+#
+# 串里只要有成对的 `$`，matplotlib 就把**整串**交给 mathtext：`$` 外面的「浓度」也只由
+# 正文第一张脸画，回退链不参与。改造前 manifest 按回退链判，说「浓度由中文脸画出、
+# 没有缺字」，而 PDF 文本层读回的是 `¤¤ (μmol/L)`——预检对一张错图一盏灯不亮。
+# 尺子是**导出的 PDF 文本层**（独立于 manifest 的判据）：manifest 报缺的字 == PDF
+# 里读不回的字；同一张图纯中文标题仍由回退链画出、照旧不报。
+
+MIXED_LIBRARY = """\
+import matplotlib.pyplot as plt
+
+
+def main():
+    fig, ax = plt.subplots(figsize=(4.0, 3.0), layout="constrained")
+    ax.plot([0, 1], [0, 1])
+    ax.set_title("中文标题")
+    ax.set_ylabel("浓度 ($\\\\mu$mol/L)")
+    ax.set_xlabel("time (s)")
+    fig.savefig("MixFig.pdf")
+"""
+
+
+def test_mathtext_mixed_cjk_is_reported_missing_like_the_pdf_shows(tmp_path, installed_cjk):
+    figs = tmp_path / "mixed figs"
+    figs.mkdir()
+    (figs / "fig_mix.py").write_text(MIXED_LIBRARY, encoding="utf-8")
+    w = pool.one_shot("fig_mix.py", str(figs), ENTRY)
+    try:
+        w.ensure_built()
+        resp = w.override("MixFig", [])
+        man = resp["manifest"]
+        pdf = tmp_path / "mix.pdf"
+        w.export("MixFig", [], str(pdf), "pdf")
+    finally:
+        pool.discard(w)
+    with pymupdf.open(pdf) as doc:
+        text = " ".join(p.get_text() for p in doc)
+    ylabel = _el(man, "axes_0.ylabel")
+    unread = [ch for ch in "浓度" if ch not in text]
+    # 尺子先验活：本机 mathtext 的正文脸画不出汉字（若哪天画出来了，这条要换一张缺字的脸）
+    assert unread == ["浓", "度"], text
+    assert ylabel.get("glyphs_missing") == unread, ylabel
+    assert "cjk_family" not in ylabel, ylabel
+    assert "cjk_src" not in ylabel, ylabel
+    issues = preflight.run(preflight.spec_from_manifest(man), profiles.load("lab-publication-v1"))
+    hit = [i for i in issues if i["id"] == "glyph-missing"]
+    assert hit, issues
+    # 反向对照：纯中文标题走普通文字路径，回退链接得住，仍然不报缺字
+    if installed_cjk:
+        title = _el(man, "axes_0.title")
+        assert "中文标题" in text
+        assert "glyphs_missing" not in title, title
+        assert title.get("cjk_family") in installed_cjk, title
