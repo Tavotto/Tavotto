@@ -11,11 +11,10 @@ import { shareLive } from '@/lib/reviewPlacement'
 import { cn } from '@/lib/utils'
 import { TAB_REFRESH_MS, useReviewStore } from '@/store/reviewStore'
 import { Button } from '../ui/Button'
-import { Check } from '../ui/icons'
-import { ICON_SIZE } from '../ui/Icon'
 import { EmptyLine } from '../ui/EmptyLine'
 import { TextInput } from '../ui/Input'
 import { Segmented } from '../ui/Segmented'
+import { ReviewMark } from './ReviewMark'
 import { commentWhen, rs } from './reviewText'
 import { useReviewPlacements, type PlacedComment } from './useReviewPlacements'
 
@@ -52,28 +51,9 @@ function MovedNote({ shareId, c }: { shareId: string; c: ReviewComment }) {
 const actionClass =
   'rounded-sm text-xs text-ink-3 outline-none transition-colors duration-fast hover:text-ink focus-visible:focus-ring'
 
-/** 左侧序号小圆：与画布圆点对应；整体意见「全」；已处理换 ✓；选中 = 近黑实心 */
+/** 左侧序号小圆（样式在 `ReviewMark`，助手里的审阅意见卡共用） */
 function Mark({ p, selected }: { p: PlacedComment; selected: boolean }) {
-  const c = p.comment
-  if (c.resolved)
-    return (
-      <span className="mt-0.5 inline-grid size-4 shrink-0 place-items-center text-ok" data-review-check>
-        <Check size={ICON_SIZE.sm} aria-label={rs('comment.done')} />
-      </span>
-    )
-  const overall = p.placement === 'overall'
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        'mt-0.5 inline-grid size-4 shrink-0 place-items-center rounded-full text-xs leading-none tabular-nums',
-        selected ? 'bg-ink text-surface' : 'inset-ring inset-ring-border-strong text-ink-2',
-      )}
-      data-review-mark={overall ? 'all' : p.n}
-    >
-      {overall ? rs('comment.allMark') : p.n > 9 ? '9+' : p.n}
-    </span>
-  )
+  return <ReviewMark n={p.n} overall={p.placement === 'overall'} resolved={p.comment.resolved} selected={selected} className="mt-0.5" />
 }
 
 function CommentCard({ p, detail, live }: { p: PlacedComment; detail: ReviewShareDetail; live: boolean }) {

@@ -488,6 +488,8 @@
     "transformReflect": "镜像",
     "quickLayout": "一键排版",
     "quickLayoutRatios": "调整排版比例",
+    "applyChangePlan": "应用修改方案",
+    "undoChangePlan": "撤销修改方案",
     "importSvg": "粘贴 SVG（{{count}} 个对象）",
     "explodeSvg": "拆成可编辑对象",
     "outlineText": "文字转轮廓（{{count}} 个）",

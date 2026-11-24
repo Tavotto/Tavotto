@@ -775,5 +775,74 @@
       "failed": "Failed",
       "groupTitle": "{{count}} files"
     }
+  },
+  "changePlan": {
+    "reviewNote": {
+      "title_one": "Comments · {{count}}",
+      "title_other": "Comments · {{count}}",
+      "open": "See comments ›"
+    },
+    "card": {
+      "title": "Change plan",
+      "version": "Version {{n}}",
+      "summary": "Changed {{places}} places from {{done}} comments; {{script}} need the script",
+      "summaryAll": "Changed {{places}} places from {{done}} comments",
+      "summaryOther": "Changed {{places}} places from {{done}} comments; {{rest}} couldn't be changed directly",
+      "view": "View",
+      "applyNow": "Apply now",
+      "undo": "Undo",
+      "discarded": "Discarded this version",
+      "stale": "The figure changed, so this plan no longer fits",
+      "regenerate": "Regenerate",
+      "thumbAlt": "Figure after changes",
+      "beforeAlt": "Current figure",
+      "holdBefore": "Hold to see before",
+      "generating_one": "Working on {{count}} comment…",
+      "generatingAny": "Working on the comments…",
+      "generating_other": "Working on {{count}} comments…",
+      "applied_one": "Applied · {{count}} comment handled",
+      "applied_other": "Applied · {{count}} comments handled",
+      "applyFailed": "Couldn't apply it; the figure is unchanged",
+      "undoFailed": "The figure changed after applying, so it wasn't rolled back",
+      "empty": "None of these comments can be changed directly; the figure is unchanged",
+      "connect": "Connect AI",
+      "retry": "Try again",
+      "dismiss": "Dismiss"
+    },
+    "dialog": {
+      "title": "Change plan",
+      "compareLabel": "Compare mode",
+      "slide": "Slider",
+      "side": "Side by side",
+      "toggle": "Toggle",
+      "before": "Before",
+      "after": "After",
+      "dragHandle": "Drag the divider",
+      "hold": "Hold",
+      "space": "Space",
+      "holdBefore": "to see before",
+      "changes": "Changes · {{count}}",
+      "groupMeta": "{{who}} · {{count}}",
+      "groupMetaNoWho": "{{count}}",
+      "groupN": "Comment {{n}}",
+      "previewStale": "The preview didn't update; what gets applied follows your checkmarks",
+      "checkTip": "Uncheck to skip this change",
+      "discard": "Discard",
+      "apply": "Apply"
+    },
+    "unhandled": {
+      "needs_script": "Needs a script change; left alone this time",
+      "unclear": "Not specific enough; left alone this time",
+      "out_of_scope": "Outside what can be changed in the figure; left alone this time",
+      "no_change_needed": "Looks fine as it is; left alone this time",
+      "unknown_element": "Couldn't find the element; left alone this time",
+      "not_editable": "Can't be changed directly; left alone this time",
+      "bad_value": "The suggested change isn't usable; left alone this time",
+      "over_limit": "Too many changes; this one was left alone",
+      "conflict": "Conflicts with another change; left alone this time",
+      "not_applied": "Didn't take effect; left alone this time",
+      "no_effect": "No visible difference; left alone this time",
+      "not_addressed": "This one wasn't handled"
+    }
   }
 }
