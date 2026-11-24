@@ -277,7 +277,7 @@ describe('动作走 store/actions', () => {
 
   it('对齐（主选）：末位 id 不动，其余贴到它', async () => {
     await select(['t1', 't2', 't3'])
-    await click(radio(multiBar()!.querySelector('[data-align-ref-picker]')!, '最后选中'))
+    await click(radio(multiBar()!.querySelector('[data-align-ref-picker]')!, '关键对象'))
     await click(btn('[data-align-mode="left"]'))
     expect(byId('t3').x).toBe(90)
     expect(byId('t1').x).toBe(90)
@@ -285,7 +285,7 @@ describe('动作走 store/actions', () => {
 
   it('等宽 / 等高（主选）：文字高度由内容决定，等高对文字是 no-op、不占历史', async () => {
     await select(['t1', 't2', 't3'])
-    await click(radio(multiBar()!.querySelector('[data-align-ref-picker]')!, '最后选中'))
+    await click(radio(multiBar()!.querySelector('[data-align-ref-picker]')!, '关键对象'))
     await click(btn('[data-align-mode="samew"]'))
     expect(objs().map((o) => o.w)).toEqual([10, 10, 10])
     await click(btn('[data-align-mode="sameh"]'))
@@ -622,11 +622,11 @@ describe('与 ArrangeSection 共用参照', () => {
     expect(useArrangeStore.getState().alignRef).toBe('page')
     await click(inPanel())
     const option = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find((o) =>
-      o.textContent?.includes('最后选中'),
+      o.textContent?.includes('关键对象'),
     )!
-    expect(option, '下拉没打开或没有「最后选中」这一项').toBeTruthy()
+    expect(option, '下拉没打开或没有「关键对象」这一项').toBeTruthy()
     await click(option)
-    expect(radio(inBar(), '最后选中').getAttribute('aria-checked')).toBe('true')
+    expect(radio(inBar(), '关键对象').getAttribute('aria-checked')).toBe('true')
     // 参照切换不进历史、不动文档
     expect(past()).toHaveLength(0)
   })
@@ -773,7 +773,8 @@ describe('多选属性页：低频项各是一行摘要（设计稿 A9，2026-10
     await act(async () => root.unmount())
     await mount(<ArrangeSection count={2} multi />)
     await select(['t1', 't2'])
-    expect(folds()).toEqual(['distribute', 'zorder', 'spacingGroup', 'style'])
+    // 阵列（ADR 0185 M6）同样收在一行摘要里
+    expect(folds()).toEqual(['distribute', 'zorder', 'spacingGroup', 'style', 'array'])
     // 面上：对齐 + 统一尺寸两条工具带；其余不在 DOM 里
     const labels = [...mountEl.querySelectorAll('[role="toolbar"]')].map((t) => t.getAttribute('aria-label'))
     expect(labels).toContain('统一尺寸')

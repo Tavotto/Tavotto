@@ -565,6 +565,37 @@ export interface PathObject extends ObjectBase {
   headSizeEnd?: HeadSize
 }
 
+/**
+ * 路径文字（ADR 0190）：一行字沿一条路径排开。**路径是自带的一份**（`subpaths`，框比例坐标，
+ * 与 `PathObject` 同一套），不引用别的对象——原来那条线删了、挪了，字都还在原处；从一条路径 / 形状生成时与它成一个组（一起挪）。
+ * 字的落位只在后端（`rendercore/pathtext`：按弧长逐字落到路径上），画布照后端给的字形轮廓画。文字样式字段与 `TextObject` 同名同义。
+ * 旧构建不认识这个类型：显示占位、不让导出（`isKnownObject`），不会悄悄排成普通文字。
+ */
+export interface PathTextObject extends ObjectBase {
+  type: 'pathText'
+  text: string
+  sizePt: number
+  bold: boolean
+  italic?: boolean
+  color: string
+  fontFamily?: 'serif' | 'sans-serif' | 'monospace'
+  /** 字排在这条路径上（只用第一条画得出的子路径）；路径本身不画 */
+  subpaths: PathSubpath[]
+  /** 起点：路径全长的比例 0–1；缺省 0（不写） */
+  startOffset?: number
+  /** 字串以起点为准的对齐：start（缺省，不写）/ center / end */
+  textAlign?: 'center' | 'end'
+  /** 翻到路径另一侧（沿反方向走）；只写 true */
+  flip?: true
+  /**
+   * 离线（pt）：基线离开路径中心线多远，沿字的上方量；0 = 基线贴在线上，负 = 往线上压。没写 = 自动（线宽 / 2 + 0.2 em +
+   * 降部深度，字不碰线；只在后端算，`rendercore/pathtext.auto_offset_pt`）
+   */
+  baselineOffsetPt?: number
+  /** 生成时一起成组的那条线（只用来取它的描边宽度算自动离线；那条线没了 / 隐藏 / 没描边 = 0） */
+  lineId?: string
+}
+
 /** `readPath` 读出来的锚点：手柄缺省已补成锚点本身 */
 export interface ResolvedPathNode {
   p: PathPoint
@@ -674,14 +705,14 @@ export function lineEndpoints(o: { start?: EndPoint; end?: EndPoint }): {
 export const objectRotation = (o: CanvasObject): number =>
   o.type === 'panel' ? 0 : (o.rotationDeg ?? 0)
 
-export type CanvasObject = PanelObject | TextObject | ArrowObject | ShapeObject | PathObject
+export type CanvasObject = PanelObject | TextObject | ArrowObject | ShapeObject | PathObject | PathTextObject
 
 /**
  * 这个构建认得的对象类型（闭集）。更新的构建可能往文档里写进新类型（自由路径 `path` 是 ADR 0185 加进来的第一例）；
  * 本构建读到不认识的类型时**原样保留**（读盘、保存、换画布都不碰它），只画一个占位框，
  * 不让它被选中、移动、删除，也不让它在导出里静默消失（导出前拦下）。判据只有这一处。
  */
-export const KNOWN_OBJECT_TYPES: ReadonlySet<string> = new Set(['panel', 'text', 'arrow', 'shape', 'path'])
+export const KNOWN_OBJECT_TYPES: ReadonlySet<string> = new Set(['panel', 'text', 'arrow', 'shape', 'path', 'pathText'])
 
 /** 本构建认得这个对象（否则是更新的构建写进来的，见 `KNOWN_OBJECT_TYPES`） */
 export const isKnownObject = (o: { type: string }): boolean => KNOWN_OBJECT_TYPES.has(o.type)
@@ -1081,6 +1112,8 @@ export function objectLabel(o: CanvasObject): string {
       return t(`shape.${o.shape}`)
     case 'path':
       return t('objectType.path')
+    case 'pathText':
+      return o.text.trim().slice(0, 18) || t('objectType.pathText')
     default:
       // 更新的构建写进来的类型（`isKnownObject`）：不许回 undefined（图层树、版本差异会显示成空）
       return t('objectType.unknown')

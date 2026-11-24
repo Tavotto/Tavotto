@@ -308,7 +308,8 @@ _STEP_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "overhead",
         re.compile(
-            r"^(Set up job|Complete job)$|^merge_group 快速失败|^快速失败归因|^取消旧 SHA 的 run"
+            r"^(Set up job|Complete job)$|^merge_group 快速失败|^快速失败归因|^取消旧 SHA 的 run|"
+            r"^等服务有预算"
         ),
     ),
     ("post", re.compile(r"^Post ")),

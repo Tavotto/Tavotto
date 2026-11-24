@@ -1,5 +1,6 @@
 """U10 against the authenticated desktop sidecar, optionally in a built app."""
 
+import hashlib
 import json
 import os
 import time
@@ -7,9 +8,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from xml.etree import ElementTree
 
 import pymupdf
 import pytest
+from PIL import Image
 from werkzeug.datastructures import FileStorage
 from werkzeug.test import encode_multipart
 
@@ -95,45 +98,72 @@ def _panel(id_, asset, x, patches):
     }
 
 
-def _export_pdf(app, doc, filename):
+def _canvas_export_request(doc, filename):
     (canvas,) = doc["canvases"]
-    _, result = app.call(
-        "/api/export",
-        {
-            "scope": "canvas",
-            "filename": filename,
-            "formats": ["pdf"],
-            "canvas": {
-                "page_w_mm": canvas["page"]["w"],
-                "page_h_mm": canvas["page"]["h"],
-                "objects": [
-                    {
-                        "type": "panel",
-                        "id": panel["fileId"],
-                        "x_mm": panel["x"],
-                        "y_mm": panel["y"],
-                        "w_mm": panel["w"],
-                        "h_mm": panel["h"],
-                        "overrides": panel["overrides"],
-                        "figure_snapshot": panel["figureSnapshot"],
-                    }
-                    for panel in canvas["objects"]
-                ],
-            },
+    return {
+        "scope": "canvas",
+        "filename": filename,
+        "formats": ["pdf", "svg", "png"],
+        "ppi": 144,
+        "canvas": {
+            "page_w_mm": canvas["page"]["w"],
+            "page_h_mm": canvas["page"]["h"],
+            "objects": [
+                {
+                    "type": "panel",
+                    "id": panel["fileId"],
+                    "x_mm": panel["x"],
+                    "y_mm": panel["y"],
+                    "w_mm": panel["w"],
+                    "h_mm": panel["h"],
+                    "overrides": panel["overrides"],
+                    "figure_snapshot": panel["figureSnapshot"],
+                }
+                for panel in canvas["objects"]
+            ],
         },
-    )
-    assert result["status"] == "done", result
-    (output,) = result["outputs"]
-    assert output["status"] == "done" and output["format"] == "pdf", output
-    return Path(result["export_dir"]) / output["name"]
+    }
+
+
+def _export_files(app, request, *, svg_unavailable=None):
+    _, result = app.call("/api/export", request)
+    assert result["status"] == ("partial" if svg_unavailable else "done"), result
+    out_dir = Path(result["export_dir"])
+    outputs = {out["format"]: out for out in result["outputs"]}
+    assert set(outputs) == set(request["formats"])
+    if svg_unavailable:
+        failed = outputs.pop("svg")
+        assert failed["status"] == "failed"
+        assert failed["error"]["code"] == "svg_source_unsupported"
+        assert failed["error"]["params"]["id"] == svg_unavailable
+        assert not (out_dir / f"{request['filename']}.svg").exists()
+    files = {}
+    semantics = set()
+    for fmt, out in outputs.items():
+        assert out["status"] == "done", out
+        path = out_dir / out["name"]
+        data = path.read_bytes()
+        manifest = out["manifest"]
+        assert manifest["format"] == fmt and manifest["checks"]["integrity"] == "verified"
+        assert manifest["bytes"] == len(data)
+        assert manifest["sha256"] == hashlib.sha256(data).hexdigest()
+        assert manifest["identity"]["run"] == result["job_id"]
+        semantics.add(manifest["identity"]["semantic"])
+        files[fmt] = path
+    assert len(semantics) == 1 and None not in semantics
+    return files
+
+
+def _assert_canvas_size(page):
+    assert page.rect.width == pytest.approx(170 * 72 / 25.4, abs=0.01)
+    assert page.rect.height == pytest.approx(61 * 72 / 25.4, abs=0.01)
 
 
 def _pdf_pixels(path):
     with pymupdf.open(path) as pdf:
         assert len(pdf) == 1
         (page,) = pdf
-        assert page.rect.width == pytest.approx(170 * 72 / 25.4, abs=0.01)
-        assert page.rect.height == pytest.approx(61 * 72 / 25.4, abs=0.01)
+        _assert_canvas_size(page)
         lines = [
             line["spans"]
             for block in page.get_text("dict")["blocks"]
@@ -147,6 +177,48 @@ def _pdf_pixels(path):
         assert min(span["bbox"][0] for span in ggplot) > page.rect.width / 2
         assert {span["color"] for span in ggplot} == {int(R_EDIT[1:], 16)}
         return page.get_pixmap().samples
+
+
+def _format_pixels(files):
+    svg_tree = ElementTree.parse(files["svg"]).getroot()
+    ns = "{http://www.w3.org/2000/svg}"
+    assert svg_tree.tag == f"{ns}svg"
+    assert svg_tree.find(f".//{ns}path") is not None
+    assert svg_tree.find(f".//{ns}image") is None
+    (title,) = [node for node in svg_tree.iter(f"{ns}text") if node.text == "Fuel economy"]
+    assert R_EDIT.lower() in title.attrib["style"].lower()
+    with pymupdf.open(files["svg"]) as svg:
+        assert len(svg) == 1
+        _assert_canvas_size(svg[0])
+        svg_pixels = svg[0].get_pixmap().samples
+    return _pdf_pixels(files["pdf"]), svg_pixels, _png_pixels(files["png"])
+
+
+def _png_pixels(path):
+    with Image.open(path) as png:
+        assert png.size == (964, 346)
+        assert png.info["dpi"] == pytest.approx((144, 144), abs=0.01)
+        rgba = png.convert("RGBA")
+    right = rgba.crop((rgba.width // 2, 0, rgba.width, rgba.height))
+    title_color = (*bytes.fromhex(R_EDIT[1:]), 255)
+    assert any(rgb == title_color for _, rgb in right.getcolors(right.width * right.height))
+    return rgba.tobytes()
+
+
+def _assert_partial_svg_export(app, doc, project):
+    supplement = "supplement.pdf"
+    with pymupdf.open() as pdf:
+        page = pdf.new_page(width=96, height=24)
+        page.insert_text((6, 16), "Supplement", fontsize=9)
+        pdf.save(project / supplement)
+    request = _canvas_export_request(doc, "With supplement")
+    request["canvas"]["objects"].append(
+        {"type": "panel", "id": supplement, "x_mm": 135, "y_mm": 53, "w_mm": 24, "h_mm": 6}
+    )
+    files = _export_files(app, request, svg_unavailable=supplement)
+    with pymupdf.open(files["pdf"]) as pdf:
+        assert "Supplement" in pdf[0].get_text()
+    _png_pixels(files["png"])
 
 
 def _install(app, package, destination):
@@ -257,7 +329,9 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         assert set(saved["figure_snapshots"]) == {"mpl", "r"}
         _, confirmed = app.call(LAYOUT)
         expected_previews = _archived_previews(app, confirmed)
-        expected = _pdf_pixels(_export_pdf(app, confirmed, "Before transfer"))
+        expected = _format_pixels(
+            _export_files(app, _canvas_export_request(confirmed, "Before transfer"))
+        )
         canvas_ids = [canvas["id"] for canvas in confirmed["canvases"]]
         _, packed = app.call("/api/package", {"doc": confirmed, "canvas_ids": canvas_ids})
         assert packed["document_format"] == "v4", packed
@@ -283,8 +357,9 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         _, reopened = app.call(LAYOUT)
         assert reopened["canvases"] == confirmed["canvases"]
         assert _archived_previews(app, reopened) == expected_previews
-        exported = _export_pdf(app, reopened, "After transfer")
-        assert _pdf_pixels(exported) == expected
+        exported = _export_files(app, _canvas_export_request(reopened, "After transfer"))
+        assert _format_pixels(exported) == expected
+        _assert_partial_svg_export(app, reopened, receiver)
         query = urllib.parse.urlencode({"project_root": str(receiver.resolve())})
         _, sessions = app.call(f"/api/native/sessions?{query}")
         assert sessions["sessions"] == []

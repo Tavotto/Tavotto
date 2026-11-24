@@ -599,6 +599,16 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
     执行器特有的部分（只写一个新文件、不运行脚本、check ≤ 3 次）写在 `tools.py`。`ai_prompt_pack` 是纯标准库，所以 `agent_runner` 对它的 import 不破坏依赖方向（`test_import_architecture` 兜底）。
   - 看护 `tests/test_agent_runner_convert.py`（Demo 协议端到端 + 单元）。
 
+### SIWC 专用协议 `siwc-responses`（`agent_runner/siwc_wire.py`，ADR 0201，默认关）
+
+- **不是第四条普通协议**：不在 `wires.WIRES` / `ai_providers.PROTOCOLS` 里（保存时探测、`--fallback`、AI 修复 `build_model`、用户记录都写不出它），只有 `runner_cli` 的 `--wire` 多认这个名字；
+  起跑硬约束（`siwc_wire.runner_args_ok`）：`TAVOTTO_EXPERIMENTAL_SIWC=1`、`--auth bearer`、`--base-url` 恰为 `https://api.openai.com/v1`、无 `--fallback` / `--effort` / `--thinking`，否则 `bad_args` 零请求。
+- **请求体白名单**（`_ALLOWED_FIELDS`）：`model / instructions / input / tools / store:false / stream:true`；官方禁用清单 `FORBIDDEN_FIELDS`（含循环总会传入的 `max_output_tokens`）、`reasoning` / `include`、回放里的 `reasoning` 条目、`role:"system"` 条目一律不出现；函数工具包进 namespace `tavotto`。
+- **SSE**：`Request.reader = compact_sse` → `wires.post_json(reader=…)` 对 2xx 边读边丢 `*.delta` 帧、终态后停读（总读入 64 MiB、留下 8 MiB 上限）；`HttpModel` 对带 `decode` 的协议用它折叠成最终响应再交 `OpenAIResponsesWire.parse`。只有 `response.completed` 是成功；无终态 = 可重试 `network/stream_incomplete`。三条原协议的 `post` 调用形状逐字不变（不传 `reader`）。
+- **错误码闭集**（`failure_for_code`，预流与流中 `response.failed` / `error` 同一张表）：用量超限 → `quota/plan_usage_limit` 不重试；`…usage_unavailable` / `…user_unavailable` → 可重试 `network`；`…user_not_eligible` → `refused/plan_not_eligible`（**不是 auth**）；403 无码 → `refused/plan_forbidden`；
+  `…unsupported_capability` / `…route_not_supported` / `chatpass_v2_*` → `internal`；`…invalid_user` → `auth`。带 `classify` 的协议**不走换协议与字段降级**（官方：不得静默切换计费方式）。
+- 看护 `tests/test_agent_runner_siwc.py`（全 Mock）。真服务未验证项见模块说明，不得写成已验证。
+
 ### 连接（`engine/ai_connections.py`，ADR 0147 第二阶段）
 
 界面不讲「执行器 / CLI / agent」，只讲「连接 AI」。`ai_connections` 在 `ai.providers[]` 与两家 CLI 的官方登录态之上给一份**视图**，**不迁移存储**
@@ -657,6 +667,13 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
   **已知缺依赖的候选**：check 把 `missing_dependency` 与当时的候选字节 SHA-256 绑定；提交前只有字节仍相同才按同一个失败停住，不能以 partial 写回。依赖决定复用 `convertdeps` 与同一张授权卡；用户回显影响摘要后，在新的 AI 任务中保留跨进程脚本占用、重跑同一候选并核 worker 实际执行字节的摘要，通过才经原有提交 / 验证 / 回滚链写回。候选、原脚本或项目在期间改变就拒绝；重复点击同一张卡只接回同一个续跑。其他 partial 路径不变。看护 `tests/test_ai_figure_edit.py::test_dependency_*` 与 `tests/test_ai_connections.py::test_builtin_missing_dependency_holds_candidate_until_install_and_recheck`。
   `/api/ai/convert` 与 `/api/ai/run` 一样接受 `connection`。**思考强度**：`ai_catalog.efforts_for(agent, base_url, model)` 声明「来源 + 型号」确认支持（行级 `efforts` / 顶层 `effort_origins[].models` 型号前缀），内置路由才给 `efforts`（默认型号的档位；每个型号的在 `model_details[].efforts`），传 runner 前按实际型号再核一遍。AI 修复的 `first_key_connection` 跳过 `last_error: unauthorized` 的记录。遥测 `ai_assistant_invoked.agent` 对 `builtin` 落成 `other`。
 - **AI 修复**：`fixsession.connection()` 改为 `ai_connections.first_key_connection()`——第一个内置循环能直接用的 Key 连接（老用户旧版「选中」的接口排最前，其余按保存顺序），不再只看各家族的 active provider。
+
+### SIWC 令牌提供方（`engine/siwc_auth.py`，ADR 0201 §三，本阶段不实现登录）
+
+- **接口** `TokenProvider`：`access_token(min_valid_s=MIN_VALID_S)` / `mark_rejected(reason)` / `status()`；`mark_rejected`（一次 401 / `plan_invalid_user`）只让下次先刷新、**不清凭据**——只有终态刷新错误才清（官方：确认撤销或终态刷新错误后才要求重新登录）；`status().public()` 是唯一能离开模块的形状（无令牌）。本阶段 `provider()` 恒 `DisabledProvider`（开关开着也一样）。
+- **刷新状态机** `RefreshingProvider`：`MIN_VALID_S` = 最长任务 900 s + 300 s（**不复用** `ai_oauth` 的 10 分钟）；进程内串行刷新；`TokenSet` 四样整体替换、刷新没回 scope = 授权不变；
+  终态刷新错误（`TERMINAL_REFRESH_ERRORS`）才清凭据，`invalid_client` 不清，暂时失败保留凭据（`TokenUnavailable`）；缺 `chatgpt.tokens.use.direct` → `PlanUsageDisabled`（已登录、不许用订阅额度、不换计费方式）；`earliest_refresh_at` 之前不刷新（含义官方未定义，未经真服务确认）。
+- **不碰 Codex CLI 的令牌**、不 import 网络模块 / `ai_agents` / `ai_oauth` / `ai_providers`（看护 `tests/test_siwc_auth.py` 按 AST 钉）。
 
 ## AI 修复工具箱（`engine/fixtools/`，ADR 0149 提议，D1：注册表 + 「看」「试」）
 
@@ -1006,8 +1023,8 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 模型只给**列判断**（`ROLES` 闭集：`time` / `ordered_x` / `measure` / `group` / `replicate_unit` / `row_id` / `error`（sd / sem 这类误差列：不当纵轴，2026-11-21 加）/ `unit_label` / `note` / `other`），翻译成 `propose` 本来就收的 `answers.y / x / group`、`header_rows`、`answers.cells`；配方仍由 `default_candidates` 生成、过 `validate_recipe` / `enforce_order`。看护 `tests/test_ai_data_roles.py`、`tests/test_data_figure_bench.py`。
 
 - **逐字段降级**：形状层严格（未知键整份拒收），取值层一个字段一个字段判（列不存在 / 角色不在枚举 / 与列类型对不上 / 选择与自己给的角色矛盾 / 规则键对不上），丢了只记个数、回规则默认。**`replicate_unit` 永不变成用户事实**（建议里没有 `design` / `unit`）。采纳策略在 `suggest`：规则会问的地方用模型的选择；规则唯一确定的角色只在模型明确否决那一列时才换。
-- **四处「够得到」的采纳（2026-11-21）**：没有 `picks` 时规则逐字不变；每条都是「模型明确判断 + 列客观满足」，谓词只在 `ai_data_recipe`（`suggest` 采纳、`_resolve_roles` 落地共用），不满足 = 丢该项回规则结果、不报错。① 多列纵轴：`picks.y` 数组 2–3 列（`MULTI_Y_MAX`），`multi_y_ok`＝互不相同 / 数值列 / 非编号列 / 单位至多一种，且模型对每列的角色只能是 `measure`，**且有有序横轴**（没有横轴时不采纳——分布 / 比较类配方只画第一列；没有横轴的宽表重复列要「把列当分组」，尚未支持，HO-17）；`answers.y` 因此可以是 1–3 个列名的数组（`parse_answers` 只对 `y` 接受数组，规则不认的数组当没给），只在规则要问「选哪个值」或选中的列被否决时采纳。② 有分组时的横轴：模型判 `time` / `ordered_x`、该列是规则此刻的横轴候选（日期 / 数值、不是 y / 编号列）。③ 编号样文字列当分组：模型判 `group` 且 `id_group_ok`（在 `s.groups` 里，即文字、2–12 个取值、有重复）；`answers.group` 点名才进 `cats`，`roles.options.group` 带上它，且它不再兼作重复测量的个体编号（全部编号列都被当分组时不再问 `pick_design`）。④ 整数编码的数值列当分组（HO-20，`knockout` 0 / 1）：`FigureRecipe.numcat` 这条事实贯穿配方→`validate_recipe`（`numcat_view`）→脚本（`apply_numcat`、类别按数值升序）→落盘再校验→指纹核对；客观条件 `DataSummary.numcat`（`adf.numcat_levels`，≤ `NUMCAT_MAX_LEVELS`=6），用户选或模型判 `group`（`numcat_pick_ok`）才进，规则从不自己用；`roles.options.group` 会列出它；大表 / 合画暂不支持、回规则结果（ADR 0178）。
-- **`roles.y` = 每个备选实际画的列（2026-11-21）**：`default_candidates` 里最终 `ys` 多于一列时（规则宽表 / 模型点名 / 用户点名一视同仁）只留画全这些列的备选（现在只有趋势类），其余记进 `dropped`（`roles_invalid`，`detail=multi_y_not_drawn`，不加新码）；全被去掉（如量纲不同退到第一列）就用 `picks.y = ys[0]` 重算，不出零备选。看护 `tests/test_ai_data_roles.py` 的 `*_draws_*` 两条。
+- **四处「够得到」的采纳（2026-11-21）**：没有 `picks` 时规则逐字不变；每条都是「模型明确判断 + 列客观满足」，谓词只在 `ai_data_recipe`（`suggest` 采纳、`_resolve_roles` 落地共用），不满足 = 丢该项回规则结果、不报错。① 多列纵轴：`picks.y` 数组 2–3 列（`MULTI_Y_MAX`），`multi_y_ok`＝互不相同 / 数值列 / 非编号列 / 单位至多一种，且模型对每列的角色只能是 `measure`，**有有序横轴时**每列一条线（趋势类，至多 3 列）；**没有横轴时**改为「把列当分组」（宽表转长表：`FigureRecipe.stack`，客观条件 `stack_ok`＝2–`STACK_MAX_COLUMNS`(8) 个纯数值列 / 同单位 / 非编号 / 每列 ≥ 2 个数值格；转换只有运行时函数 `adf.apply_stack` 一份，脚本与 `with_cells_applied` 同源，类别顺序 = 列顺序、标签 = 列名；`roles.y` = 这几列、只在这时多 `roles.stack: true`，前端发 `answers = {y: [列…], x: "none"}`；有文字分组列 / 点名分组 / 合画 / 大表回规则结果；HO-17 / HO-25..30，ADR 0178）；`answers.y` 因此可以是 1–8 个列名的数组（`parse_answers` 只对 `y` 接受数组，规则不认的数组当没给），只在规则要问「选哪个值」、选中的列被否决、或模型明确要把几列当分组时采纳。② 有分组时的横轴：模型判 `time` / `ordered_x`、该列是规则此刻的横轴候选（日期 / 数值、不是 y / 编号列）。③ 编号样文字列当分组：模型判 `group` 且 `id_group_ok`（在 `s.groups` 里，即文字、2–12 个取值、有重复）；`answers.group` 点名才进 `cats`，`roles.options.group` 带上它，且它不再兼作重复测量的个体编号（全部编号列都被当分组时不再问 `pick_design`）。④ 整数编码的数值列当分组（HO-20，`knockout` 0 / 1）：`FigureRecipe.numcat` 这条事实贯穿配方→`validate_recipe`（`numcat_view`）→脚本（`apply_numcat`、类别按数值升序）→落盘再校验→指纹核对；客观条件 `DataSummary.numcat`（`adf.numcat_levels`，≤ `NUMCAT_MAX_LEVELS`=6），用户选或模型判 `group`（`numcat_pick_ok`）才进，规则从不自己用；`roles.options.group` 会列出它；大表 / 合画暂不支持、回规则结果（ADR 0178）。
+- **`roles.y` = 每个备选实际画的列（2026-11-21）**：`default_candidates` 里最终 `ys` 多于一列时（规则宽表 / 模型点名 / 用户点名一视同仁）只留画全这些列的备选（现在只有趋势类），其余记进 `dropped`（`roles_invalid`，`detail=multi_y_not_drawn`，不加新码）；全被去掉（如量纲不同退到第一列）就用 `picks.y = ys[0]` 重算，不出零备选。看护 `tests/test_ai_data_roles.py` 的 `*_draws_*` 两条。「把列当分组」（`stack`）不在此列：它的备选画的是转换后的值列，`roles.y` 报的是被当分组的那几列，由 `roles.stack` 标明。
 - **用户永远优先**：请求带 `answers.y / x / group / cells` 或 `header_rows` 就不起任务（`ai_data_propose._user_took_over`，必须在懒模式循环往 `ans` 补默认答案**之前**记下）。
 - **响应不变量**：没有可用连接（没连、订阅登录里适配器不支持 / 缓存里还没有、运维关内置）或非 lazy 时，响应里**没有** `understanding` 键；有连接时只多这一个键。后台线程不碰按项目绑定的状态（只读数据文件、联网、写缓存目录），所以没用 `bound_project`——将来加了任何按项目绑定的状态要补。
 - **缓存 / 单飞 / 负缓存**：缓存只存模型的**原始判断**（`Judgement`），建议每次按当前完整提示 + 规则现算（`derive`）——别把派生结果缓存起来；`data_dir()/cache/ai_data_roles/`（原子写、TTL 30 天、≤ 200 条）；key 含协议版本 + 系统提示哈希 + 数据字节哈希 + 表头行 + 模型看到的提示 + 连接身份（不含密钥 / 地址）；单飞只在 pending 期间、键含完整提示摘要；失败只做 60 s 内存负缓存；同 `(项目, key)` 在途单飞。缓存里有列名：**不进诊断包、不进遥测**（测试钉住）。

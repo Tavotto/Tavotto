@@ -160,6 +160,7 @@ from .engine import (
     prewarm as engine_prewarm,
     probe as engine_probe,
     profilestore as engine_profilestore,
+    proinstall as engine_proinstall,
     project_refresh as engine_refresh,
     project_watch as engine_watch,
     projectcopy as engine_projectcopy,
@@ -5787,7 +5788,7 @@ def api_svg_copy():
         not isinstance(objs, list)
         or not objs
         or not all(
-            isinstance(o, dict) and o.get("type") in ("text", "arrow", "shape", "path")
+            isinstance(o, dict) and o.get("type") in ("text", "arrow", "shape", "path", "pathText")
             for o in objs
         )
         or not (
@@ -5834,7 +5835,7 @@ def api_text_outline():
         not isinstance(objs, list)
         or not objs
         or len(objs) > TEXT_OUTLINE_MAX
-        or not all(isinstance(o, dict) and o.get("type") == "text" for o in objs)
+        or not all(isinstance(o, dict) and o.get("type") in ("text", "pathText") for o in objs)
     ):
         return jsonify({"ok": False, "error": "bad_objects"}), 400
     if any(len(str(o.get("text") or "")) > SVG_COPY_MAX_TEXT for o in objs):
@@ -5845,7 +5846,13 @@ def api_text_outline():
     results = []
     for o in objs:
         try:
-            results.append({"paths": textoutline.outline_text(o, faces=provider, math=math)})
+            r: dict = {"paths": textoutline.outline_text(o, faces=provider, math=math)}
+            if o.get("type") == "pathText":
+                # 路径文字（ADR 0190）：自动离线算出来是多少——属性栏「离线」框用它做占位数
+                r["auto_offset_pt"] = round(rc_plan.path_text_auto_offset(o, provider), 4)
+                # 开放路径上放不下的字（ADR 0190）：画布在路径末端画红「+」
+                r["overflow"] = rc_plan.path_text_overflow(o, provider)
+            results.append(r)
         except rc_plan.PlanError as exc:
             results.append({"error": exc.code})
     return jsonify({"ok": True, "results": results})
@@ -19007,7 +19014,14 @@ def api_ai_data_files():
             else:
                 row["sheets"] = None
         files.append(row)
-    resp = jsonify({"files": files, "truncated": truncated})
+    # `understanding_available`：「读懂数据」此刻有没有可用连接（只读事实、不联网；前端据此决定要不要出「连接 AI」胶囊，连接状态变化后随清单重取）
+    resp = jsonify(
+        {
+            "files": files,
+            "truncated": truncated,
+            "understanding_available": engine_ai_data_roles.available(),
+        }
+    )
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -19144,6 +19158,8 @@ def api_ai_data_figure_propose():
                 client_request_id=rid,
                 render=body.get("render"),
                 tables=body.get("tables"),
+                spec=body.get("spec"),
+                font_range=body.get("font_range"),
             )
     except engine_ai_data_progress.Cancelled:
         return _cancelled_response()
@@ -19294,6 +19310,7 @@ def _data_figure_commit(ctx, project: str, session_id: str, item_id: str, rid):
             title_code=item.code,
             header_line=sess.header_line,
             merge=sess.merge,
+            style=sess.style,
         )
         prepared = engine_ai_data_task.prepare_v2(ctx.path, sel)
         env = engine_ai_data_task.envelope_for_v2(project_key=project, prepared=prepared, rid=rid)
@@ -21885,7 +21902,8 @@ def _version_sketch(v: dict, max_objects: int, max_text: int) -> dict | None:
             item["text"] = text[:max_text]
         elif kind == "shape" and isinstance(o.get("shape"), str):
             item["shape"] = o["shape"]
-        elif kind == "path":
+        elif kind in ("path", "pathText"):
+            # 路径文字（ADR 0190）在草图里只画它那条路径（与前端小缩略图同一画法）
             subpaths = _sketch_subpaths(o.get("subpaths"))
             if subpaths is not None:
                 item["subpaths"] = subpaths
@@ -22814,6 +22832,7 @@ def main():
         # 桌面模式的升级由 Tauri 层负责，Python updater 连后台检查都不跑
         engine_updater.check_in_background()  # 默认每天一次；设置里可关，关了不联网
     engine_contactsend.start_poller()  # 联系作者的回信：启动时 + 每 6 小时；没有已发的信就一次网络都不发
+    engine_proinstall.register()  # 高级版闭源组件（ADR 0198）：授权激活 / 刷新成功后与每日后台刷新各查一次更新（后台线程）
     engine_license.start_background_refresh()  # 高级版授权：启动后一次 + 每天一次；没有令牌就一次网络都不发
     engine_reviewshare.start_poller()  # 外部审阅的意见：启动时 + 每 30 分钟；没有未到期的分享就一次网络都不发
 

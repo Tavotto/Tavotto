@@ -115,6 +115,7 @@ FIGURE_EDIT_IDS: tuple[str, ...] = (
     "G-049",
     "G-050",
     "G-051",
+    "G-058",
 )
 
 #: 插件技能参考文件（由 `render_markdown()` 生成，`scripts/gen_sciviz_reference.py --check` 看护）

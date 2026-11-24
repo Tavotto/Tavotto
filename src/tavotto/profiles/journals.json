@@ -568,8 +568,21 @@
      "quote": "Maximum text size for all other text should be 7 pt; minimum text size should be 5 pt.",
      "snapshot": {
       "file": "snapshots/d242b4c364f3719d60609c8d0ccb39cedac973e4ea098f222c5a4bd800b70da2.webp",
-      "width": 804,
-      "height": 408
+      "height": 408,
+      "width": 804
+     }
+    },
+    "max_font_size_pt": {
+     "value": 7,
+     "qualifier": "recommended",
+     "stage": "production",
+     "mark": "7 pt",
+     "src": "s1",
+     "quote": "Maximum text size for all other text should be 7 pt; minimum text size should be 5 pt.",
+     "snapshot": {
+      "file": "snapshots/d242b4c364f3719d60609c8d0ccb39cedac973e4ea098f222c5a4bd800b70da2.webp",
+      "height": 408,
+      "width": 804
      }
     },
     "info.font_names_raw": {
@@ -580,20 +593,28 @@
      "quote": "Lettering should be in a sans-serif typeface, preferably Helvetica or Arial, the same font throughout all figures in the paper.",
      "snapshot": {
       "file": "snapshots/f564d86266677df24cdfe4c6384302413ba4f9bc617d742585e7a6b282c131a8.webp",
-      "width": 801,
-      "height": 456
+      "height": 456,
+      "width": 801
      }
+    },
+    "info.panel_label": {
+     "value": "8 pt bold, upright (not italic) a, b, c",
+     "strength": "recommended",
+     "stage": "production",
+     "src": "s1",
+     "quote": "Separate panels in multi-part figures should each be labelled with 8 pt bold, upright (not italic) a, b, c."
     },
     "info.color_mode": {
      "value": "RGB recommended, CMYK accepted",
      "qualifier": "recommended",
+     "strength": "recommended",
      "stage": "production",
      "src": "s1",
      "quote": "Colour artwork can be provided in RGB (recommended) or CMYK format.",
      "snapshot": {
       "file": "snapshots/2f82f297381b8bc7907d8730fbd7cab1b597010d4ce23861ec90492541b0cdf2.webp",
-      "width": 797,
-      "height": 408
+      "height": 408,
+      "width": 797
      }
     },
     "info.formats_raw": {
@@ -612,21 +633,23 @@
      "quote": "If these formats are not possible, we can also accept the following formats: JPEG (high-resolution, 300–600 dpi), CorelDraw (up to version 8), Microsoft Word, Excel or PowerPoint.",
      "snapshot": {
       "file": "snapshots/82dee935934585f1b6e7ee8878da62a81bce71ad3a53d37eea65e1fc1a6a0217.webp",
-      "width": 785,
-      "height": 504
-     }
+      "height": 504,
+      "width": 785
+     },
+     "strength": "permitted"
     },
     "min_raster_dpi": {
      "value": 300,
      "qualifier": "min",
+     "strength": "required",
      "stage": "production",
      "mark": "300 dpi",
      "src": "s1",
      "quote": "All photographic images must be supplied at a minimum of 300 dpi at the maximum size they can be used.",
      "snapshot": {
       "file": "snapshots/779160a29e6d39f5cfccb3b79392530e0ffeb54cb1c4ad09faac6117416e92de.webp",
-      "width": 800,
-      "height": 408
+      "height": 408,
+      "width": 800
      }
     },
     "info.one_half_mm": {
@@ -635,13 +658,14 @@
       136
      ],
      "qualifier": "range",
+     "strength": "permitted",
      "stage": "production",
      "src": "s1",
      "quote": "Figures can also be a column-and-a-half where necessary (120–136 mm).",
      "snapshot": {
       "file": "snapshots/3460b79e6e6de4977c5a835727a36cb185f07bb220ee3946bfa10218fb68ba7d.webp",
-      "width": 779,
-      "height": 408
+      "height": 408,
+      "width": 779
      }
     },
     "page_columns": {
@@ -668,7 +692,8 @@
      "stage": "production",
      "mark": "89 mm",
      "src": "s1",
-     "quote": "For guidance, *Nature*'s standard figure sizes are 89 mm wide (single column) and 183 mm wide (double column)."
+     "quote": "For guidance, *Nature*'s standard figure sizes are 89 mm wide (single column) and 183 mm wide (double column).",
+     "strength": "unspecified"
     }
    }
   },

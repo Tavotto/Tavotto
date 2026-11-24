@@ -14,7 +14,7 @@
   },
   "alignRef": {
     "page": "Canvas",
-    "primary": "Last selected",
+    "primary": "Key object",
     "selection": "Selection"
   },
   "arrange": {
@@ -78,7 +78,21 @@
     "zTop": "Bring to front",
     "zUp": "Bring forward",
     "zorderLabel": "Layer",
-    "pathfinderLabel": "Pathfinder"
+    "pathfinderLabel": "Pathfinder",
+    "arrayLabel": "Repeat",
+    "arrayKind": "Mode",
+    "arrayGrid": "Grid",
+    "arrayRadial": "Radial",
+    "arrayRowsCols": "Rows · columns",
+    "arrayRows": "Rows",
+    "arrayCols": "Columns",
+    "arrayCountRadius": "Copies · radius",
+    "arrayCount": "Copies (incl. original)",
+    "arrayRadius": "Radius",
+    "arrayRotate": "Rotate copies",
+    "arrayMake_one": "Make {{count}} copy",
+    "arrayMake_other": "Make {{count}} copies",
+    "arrayTooMany": "At most {{max}} copies at once"
   },
   "assistantRunningTip": "Assistant is running",
   "autoHideAria": "Right panel auto-hides; click to pin it",
@@ -675,7 +689,10 @@
     "setStrokeAlign": "Change stroke alignment",
     "setFillRule": "Change fill rule",
     "setGradientKind": "Change paint type",
-    "setGradient": "Edit gradient"
+    "setGradient": "Edit gradient",
+    "flipPathText": "Flip text on path",
+    "pathTextStart": "Move text start",
+    "pathTextOffset": "Change text-on-path offset"
   },
   "lock": "Lock",
   "locked": "Locked",
@@ -1434,5 +1451,19 @@
     "strokeCenterX": "Stroke center X",
     "strokeCenterY": "Stroke center Y",
     "strokeRadius": "Stroke radius"
+  },
+  "pathText": {
+    "title": "Text on path",
+    "start": "Start",
+    "alignStart": "Start at the start point",
+    "alignCenter": "Center on the start point",
+    "alignEnd": "End at the start point",
+    "flip": "Flip to the other side",
+    "offset": "Offset",
+    "offsetTip": "Distance from the line to the baseline: 0 sits on the line, negative overlaps it; clear for auto",
+    "offsetAuto": "Auto {{value}}",
+    "offsetAutoBare": "Auto",
+    "offsetReset": "Auto",
+    "editPathTip": "Edit the text. To reshape its path, {{mod}}-double-click the text on the canvas"
   }
 }

@@ -53,3 +53,33 @@ GET /eligibility/group?base=<sha>&head=<sha>&nonce=<随机串>
 - 生产只需登录、签署页和这个接口；webhook、定时任务、发检查、自动发布都不开，App 只需读权限（`checks: read`，令牌申请时固定要这一项）。
 - 合并组判定仍需 `CLA_MERGE_PREFIX_ASSESSMENT_ENABLED` 与 `CLA_MERGE_PREFIX_READ_SESSION_ENABLED`。
 - 发布、确认、撤回、重发的代码留在仓库、不启用，要不要删以后再定。`_service_verdict` 与 `ci-candidate.mjs` 同样保留。
+
+## 修订（2026-11-23）：合并组遇到 `budget_deferred` 先等前缀变浅，不再约 2 分钟就判红
+
+事实：服务在一次 Worker 调用里把「队首到候选」的每个 PR 读两遍，外部请求约 `16 + 6P + 2L`，
+上限 35（Cloudflare Free 的子请求预算，见 `docs/implementation/cla-prefix-read-session/`）。前缀 P=4 必超、
+P=3 带共同作者就超，回 `budget_deferred`。这由**队列深度**决定，15 秒 × 4 次重试没用；2026-11-21 合并队列第 3 位
+（#2064）因此整组被踢，之后只能把同时在队的数量手动压到 2 个。
+
+决定：`cla-check` 在合并组上新增一步「等服务有预算」，**只延后、不判定**——反复问服务（每 90 秒一次，每次一次请求、
+不重试），直到回答不再是 `budget_deferred`，或候选已在队首（再等前缀也不会变浅，只再试 3 次）、或到 7200 秒上限；
+等过之后把合并组快照整套重采（前缀变了，旧快照与服务的成员表对不上）。结论仍只由原来的「判定」一步给出：
+重新取随机数、重新问服务、判定器逐字段核对，一行没动。因此「到上限」「探测失败」「重采失败（候选已离队）」都不会
+让检查变绿，没签署的人仍在「判定」里红；全员豁免仍不问服务、也不等。job 超时 10 → 150 分钟，等待 + 取数 + 判定
+的总长小于合并队列 `check_response_timeout`（180 分钟）。代价：每个非全员豁免的合并组多问服务一次（限流器 10 次/分钟）。
+
+不做：只判「这一组新增的那段前缀」。那要改服务端的前缀评估与 `members` 协议（本 ADR 与 ADR 0137 的纵深防御：
+不靠前面条目的检查结论），属于另一个决定。
+
+## 修订（2026-11-23）：外部请求预算随 Workers 付费计划调整
+
+事实：合并组在队列深处被服务按预算延后（`budget_deferred`，#2064）。服务每次调用的外部请求上限按 Free 计划（50 个子请求）
+定为 35 / 40。维护者已开通 Workers Paid（单次调用默认 10,000 个子请求）。
+
+决定：新增部署开关 `CLA_WORKERS_PAID_BUDGET=true`（与其它开关一样随 `wrangler deploy --var` 给出，默认关），只对三个 CI 只读接口
+（`/eligibility/*`、`/verification/*`）把外部请求上限由 35 / 40 提到 480 / 500；SQL 与时间上限不随计划变，后台与 webhook 路径
+仍按 Free 数。生产清单另写 `limits.subrequests: 1000` 作平台层兜底（也让在 Free 计划上误部署直接失败）。
+上限仍有限：前缀过大照旧整体拒绝（`budget_deferred`），绝不截断成员；应答形状、`members` 对账与判定器都不变，
+所以安全模型不变——只是同一个只读评估在更宽的预算里完成。服务对 `budget_deferred` 的 403 应答额外带 `reason`
+（time / external / sql / confirmation_capacity）并写一行日志，CI 端只读 `error`，不受影响。
+

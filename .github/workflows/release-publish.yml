@@ -546,7 +546,7 @@ jobs:
         id: notes
         env:
           TAG: ${{ needs.trust2.outputs.tag }}
-          SIGNPATH_ENABLED: ${{ vars.SIGNPATH_ENABLED }}
+          CERTUM_SIGNING_ENABLED: ${{ vars.CERTUM_SIGNING_ENABLED }}
         run: |
           set -euo pipefail
           # 手写正文（docs/release-notes/<tag>.md）有就用、没有就让 GitHub 把
@@ -556,9 +556,10 @@ jobs:
           # 版本会顺便丢掉必须的披露（Codex 评审在 #107 上指出）：
           #  · 「下载与支持平台」段：从唯一权威 docs/support-matrix.json 生成
           #    （issue #34），每版手写的平台清单必然与矩阵漂移；
-          #  · Code signing policy 段：SignPath Foundation 的条件要求这个词组
-          #    出现在下载/发布页；措辞按 SIGNPATH_ENABLED 分岔——把未签名的
-          #    包描述成已签名，正是 policy 里明令禁止的那件事。
+          #  · Code signing policy 段：措辞按 CERTUM_SIGNING_ENABLED 分岔（ADR 0202）
+          #    ——把未签名的包描述成已签名，正是 policy 里明令禁止的那件事。
+          #    第一段的发行构建在这个变量为 true 时验过签名者与时间戳才产出安装包，
+          #    为 false 时只有点名豁免的那一版能走到这里。
           # 待发条目（docs/release-notes/unreleased/*.md 片段与 UNRELEASED.md）必须先并进这一版的
           # 正文。行为变更与存量数据的迁移提示写在 PR 正文的「遗留」段里，
           # 发版那天没人会回头翻——issue #244 就是这么漏掉的：用户升级后
@@ -580,8 +581,8 @@ jobs:
           python scripts/make_release_support_section.py >> "$B"
           {
             printf '\n### Code signing policy\n\n'
-            if [ "$SIGNPATH_ENABLED" = "true" ]; then
-              printf 'The Windows installer in this release is code signed. Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).\n\n'
+            if [ "$CERTUM_SIGNING_ENABLED" = "true" ]; then
+              printf 'The Windows installer in this release is Authenticode code signed with the maintainer'"'"'s Certum code signing certificate, with an RFC 3161 timestamp.\n\n'
             else
               printf '**The Windows installer in this release is not code signed**, so Windows will show a SmartScreen warning on first run. Verify it against this workflow run if you want to check what you downloaded.\n\n'
             fi

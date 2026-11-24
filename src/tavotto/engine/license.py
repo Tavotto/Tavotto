@@ -15,7 +15,7 @@
   **与外部审阅的设备密钥是两把**）。请求体含 `op`（闭集）、`device_pub`（标准 base64）、`ts`（毫秒整数），对「去掉 `sig` 的规范化 JSON」
   按 `"<ts>\\n<sha256 hex>"` 签名；规则以服务端 README 与固定向量为准。
 * **令牌**：`{"payload": base64(JSON), "sig": base64(Ed25519(payload 字节)), "kid"}`（标准 base64）。公钥按 `kid` 内置在 `PUBLIC_KEYS`
-  （正式签名密钥还没有，现在是空表）；测试密钥只经 `TAVOTTO_LICENSE_TEST_PUBKEY` + 合规的 `TAVOTTO_LICENSE_ENDPOINT` 认，
+  （正式 kid `live-2026-11`）；测试密钥只经 `TAVOTTO_LICENSE_TEST_PUBKEY` + 合规的 `TAVOTTO_LICENSE_ENDPOINT` 认，
   正式安装永远不认测试服务端签的令牌。
 * **秘密不落地**：令牌原文、激活码、设备密钥只在 `data_dir()/license/` 的 0600 文件与内存里；`status()` / 日志里没有。日志模板是字面量，
   参数只有闭集里的操作名与结果码。`license/` 目录整个不进诊断包，激活码与令牌形状在脱敏规则里（`diagnostictext`）。
@@ -56,8 +56,11 @@ PRODUCTION_LIVE = False
 
 #: 功能键闭集（ADR 0193 §一）；加键要同步改 ADR §一。
 FEATURES: frozenset[str] = frozenset({"hosted-ai", "review-plus", "quick-layout"})
-#: 令牌公钥表 `kid -> 32 字节公钥`。正式签名密钥还没有（维护者本人生成后随发版加入；旧 kid 保留到它签出的令牌全部过期）。
-PUBLIC_KEYS: dict[str, bytes] = {}
+#: 令牌公钥表 `kid -> 32 字节公钥`。换密钥 = 发版加新 kid，旧 kid 保留到它签出的令牌全部过期（ADR 0193 §七）。
+#: live-2026-11：2026-11-23 生成，私钥只在正式函数 license-api 的环境变量里。
+PUBLIC_KEYS: dict[str, bytes] = {
+    "live-2026-11": base64.b64decode("xOJ+iCfgW9ZaYCQ/Phdt+pP+kj/47pHXuJN74eiFcFY="),
+}
 
 #: 失败码闭集（ADR 0193 §三；与前端 `license.failure.*` 对拍）。值 = 用户能不能再点一次。
 FAILURES: dict[str, bool] = {
@@ -84,7 +87,7 @@ HTTP_STATUS: dict[str, int] = {
     "client_error": 400,
 }
 #: 设备签名的 op 闭集（服务端核对与端点一致）
-OPS = frozenset({"activate", "refresh", "release", "renew"})
+OPS = frozenset({"activate", "refresh", "release", "renew", "pro_manifest"})
 LOG_RESULTS = frozenset(FAILURES) | {"ok"}
 
 API_TIMEOUT_S = 15
@@ -594,7 +597,8 @@ def activate(code: object) -> dict:
             raise _fail("activate", fail) from None
         _LAST["attempt"] = _now()
         _log("activate", "ok")
-        return {"ok": True, **status()}
+    _notify_after_license()  # 激活成功后立刻查一次高级版组件（后台线程，不阻塞响应）
+    return {"ok": True, **status()}
 
 
 def _lid_of_local_token() -> str | None:
@@ -637,7 +641,77 @@ def refresh(*, force: bool = False) -> dict:
                 _mark(fail.code)
             raise _fail("refresh", fail) from None
         _log("refresh", "ok")
-        return {"ok": True, "refreshed": True, **status()}
+    _notify_after_license()  # 拿到新令牌后查一次高级版组件（后台线程，不阻塞响应）
+    return {"ok": True, "refreshed": True, **status()}
+
+
+#: 授权成功（激活 / 刷新拿到新令牌）或每日后台刷新之后要跑的回调（ADR 0198 §五：检查高级版组件更新）。注册而不是直接 import：
+#: `proinstall` 要 import 本模块，本模块不能反过来 import 它。回调在**后台守护线程**里跑，不阻塞激活 / 刷新的响应；回调自己负责「没有授权就不联网」。
+_AFTER_LICENSE: list = []
+
+
+def register_after_license(fn) -> None:
+    """登记一个授权后回调（幂等）；回调的异常一律吞掉、只记一行日志。"""
+    if fn not in _AFTER_LICENSE:
+        _AFTER_LICENSE.append(fn)
+
+
+def _notify_after_license() -> None:
+    """起一个守护线程依次跑已登记的回调（没有登记 = 什么都不做）。永不抛、不等回调。"""
+    fns = list(_AFTER_LICENSE)
+    if not fns:
+        return
+
+    def run() -> None:
+        for fn in fns:
+            try:
+                fn()
+            except Exception:  # noqa: BLE001 — 后台回调不允许把主进程带下水
+                LOG.warning("高级版授权: 授权后回调失败")
+
+    threading.Thread(target=run, name="tavotto-license-after", daemon=True).start()
+
+
+def pro_manifest(platform: str, pro_api: list[int]) -> dict:
+    """向服务端要高级版组件的发布清单与限时下载地址（ADR 0198 §五，`POST /v1/pro/manifest`，设备签名同 `refresh`）。
+    回 `{"release", "url", "app_update_needed"}` 或 `{"state": "none" | "revoked" | "expired"}`；**不验清单签名**（那是 `proinstall.verify_release` 的事）。
+    本机没有令牌 = `client_error`、零网络。"""
+    target = _target()
+    if (
+        not isinstance(platform, str)
+        or not _LOOKUP_KEY.match(platform)
+        or not isinstance(pro_api, list)
+        or not pro_api
+        or not all(_is_int(v) for v in pro_api)
+    ):
+        raise LicenseError("client_error")
+    with _OP_LOCK:
+        lid = _lid_of_local_token()
+        if lid is None:
+            raise LicenseError("client_error")
+        try:
+            body = _signed(
+                "pro_manifest",
+                {"license_id": lid, "platform": platform, "pro_api": sorted(set(pro_api))},
+            )
+            got = _call(target, "/v1/pro/manifest", body)
+            state = got.get("state")
+            if state is not None:
+                if state not in ("none", "revoked", "expired"):
+                    raise _Failure("server")
+                _log("pro_manifest", "ok")
+                return {"state": state}
+            release, url = got.get("release"), got.get("url")
+            if not isinstance(release, dict) or not isinstance(url, str):
+                raise _Failure("server")
+            _log("pro_manifest", "ok")
+            return {
+                "release": release,
+                "url": url,
+                "app_update_needed": got.get("app_update_needed") is True,
+            }
+        except _Failure as fail:
+            raise _fail("pro_manifest", fail) from None
 
 
 def maybe_refresh() -> None:
@@ -669,7 +743,12 @@ def start_background_refresh() -> None:
         _wake.wait(STARTUP_DELAY_S)
         while True:
             _wake.clear()
+            before = _LAST["attempt"]
             maybe_refresh()
+            if _LAST["attempt"] == before:
+                # 这轮没有刷新（还没到 refresh_after / 没有令牌）：令牌有效时也查一次高级版组件
+                # （启动后一次、之后每天最多一次，ADR 0198 §五）；刷新成功的那轮已在 `refresh()` 里触发过
+                _notify_after_license()
             _wake.wait(DAY_S)
 
     threading.Thread(target=loop, name="tavotto-license-refresh", daemon=True).start()

@@ -52,6 +52,12 @@
   - 出处：VAD §3.4.2.3 Derive, p.50–53；TAVOTTO 「只在用户同意后做」是 Tavotto 的约束
 - **G-053 已经汇总过的表不再汇总**（强建议）：表里已经是均值和误差列（sd、sem、ci）时，直接用这两列画点和误差线，误差类型按列名或用户确认；不要对均值再算均值和 SD，那会得到一个没有意义的数。误差列类型拿不准时按 G-005 处理，不默认成 SD。
   - 出处：GoG §3.5, p.52（预聚合后统计不可复原）；TAVOTTO 「对汇总表不再算 mean ± sd」是 Tavotto 据此的推导
+- **G-055 没画出来的观测要数得出来**（Tavotto 推导）：默认把用户给的每个观测都画出来。因为缺失、不是数、筛选、抽样或类别太多而没画的，要说清规则，并给出前后各有多少行；不为了好画或好看悄悄少画。数据太多时改用密度、分箱或栅格化，而不是抽样。
+  - 例外：用户明确要求只画一个子集：照做，仍然写明规则与计数
+  - 出处：XG static/core/contract.md「Data-integrity gate」；references 目录的 asset-adaptation.md「Preserve data integrity」；GoG §9.1.8, p.219；TAVOTTO 「给出前后计数」是 Tavotto 的工程约束；数据出图的 unplotted 计数是它的一部分实现
+- **G-057 可以互相比较的面板用同一种不确定性定义**（Tavotto 推导）：几个面板摆在一起让读者比较时，误差线或误差带要代表同一种量（都是 SD，或都是 95% CI），样本单位也一致；确实不同的要在图注里逐个写明。面板之间 n、分母或估计方法变了，同样要说。含义拿不准时问用户，不从图上猜。
+  - 例外：面板展示的本来就是不同性质的量
+  - 出处：XG references 目录的 qa-contract.md「Uncertainty consistency」；references 目录的 multipanel-evidence-architecture.md「Assign visual hierarchy from evidence hierarchy」；FDV ch.16 Visualizing Uncertainty, p.189；TAVOTTO 「跨面板一致」是从 P2 与 G-005 推出来的；判不了，只能由作者确认
 
 ## 感知建议（指导性原则，有例外）
 
@@ -83,7 +89,7 @@
 - **G-028 多面板视觉语言一致**（强建议）：同一个类别在所有面板里用同一种颜色、同样的顺序；面板标签的字体、大小、位置一致；轴要对齐。
   - 出处：FDV ch.21 Multi-Panel Figures, p.261–265
 - **G-029 叠加不超过两三层，多了改并排**（强建议）：一个坐标系里叠两层很容易读，三层要小心；更多系列时考虑拆成小倍数并排。书里没有给精确的系列数阈值。
-  - 出处：VAD §12.2 Juxtapose vs Superimpose, p.267
+  - 出处：VAD §12.2 Juxtapose vs Superimpose, p.266
 - **G-030 没有理由不用 3D**（硬性）：3D 柱、3D 饼这类装饰性 3D 会扭曲数值，不要画。数据本身是三维形状（地形、结构）时才用 3D；抽象数据的第三个变量改用颜色、分面或热图。
   - 例外：真实三维对象；可交互旋转的展示
   - 出处：FDV ch.26 Don’t Go 3D, p.305；VAD §6.3 No Unjustified 3D, p.117
@@ -110,6 +116,18 @@
 - **G-054 数据跨数量级或表示倍数时考虑对数轴**（强建议）：数据跨好几个数量级（剂量梯度、细菌载量、浓度），或者表示比值、倍数变化时，考虑用对数轴，否则小值会挤在一起看不出差别。含 0 或负值时不能用对数轴（见 G-001）；取对数后的汇总按 G-011。用对数轴是展示选择，要告诉用户，「跨几个数量级算多」是工程阈值。
   - 例外：含 0 或负值的数据
   - 出处：FDV ch.3 Coordinate Systems and Axes, p.17；FDV ch.3 Coordinate Systems and Axes, p.20
+- **G-056 上下标比正文小：按成品里的实际字号核**（Tavotto 推导）：数学上下标会被排成更小的字（matplotlib 的 mathtext 约为正文的 0.7 倍），脚本里的 fontsize 看不出来。期刊对最小字号有要求时，按导出的成品核最小的那一段字，而不是按脚本里的数；不够大时调大正文字号，或者改用不缩小的写法。下限的数值只来自期刊或出版规范。
+  - 例外：期刊单独给了上下标的下限时按那一条
+  - 出处：TAVOTTO matplotlib 3.11.2 实测：7 pt 的 $R^2$ 在 PDF 里有一段 4.9 pt 的 Tf；看护 tests/test_rendercore_text_size.py；XG references 目录的 qa-contract.md「Typography and PDF glyph floor」；scripts 目录的 audit_pdf_text.py（它写的 5 pt 是 单一期刊系列的做法，不引用）
+- **G-059 小倍数的面板按有逻辑的顺序排**（强建议）：小倍数里的面板按一条看得出的规则排：时间或剂量递增、类别从高到低等，不要随手按文件顺序。合成组图时，阅读顺序（左到右、上到下）要与你想讲的先后一致；顺序拿不准时问用户，不自己猜。
+  - 例外：用户或期刊已指定顺序；各面板之间没有天然顺序时，按数据派生的量（如中位数）排也可以
+  - 出处：FDV ch.21 Multipanel Figures, p.260；VAD §12.4.3 Matrix Alignments, p.283；TAVOTTO 复合图（compound figure）的阅读顺序应服从叙事：书里只给了字母标注从左上起、按行依次的约定（FDV p.261），没有明说顺序要服从叙事
+- **G-060 要互相比较的面板并排，轴线对齐**（强建议）：要让读者互相比较的面板，放在同一行或同一列，让它们的轴线和图形元素对齐，并共用同一把尺（同量纲时范围也一致，见 G-027）。对齐靠排版保证，不要靠改数据范围凑；范围不一致只提示，不替用户改。
+  - 例外：各面板量纲不同，范围本来就该不同（见 G-027）；面板之间没有比较关系
+  - 出处：FDV ch.21 Multipanel Figures, p.264；VAD §12.3.2 Share Data, p.273；VAD §12.3.5 Juxtapose Views, p.278；TAVOTTO 「同一组放同一行或同一列」是上面两条的工程落实，书里没有把行与列分开讨论
+- **G-061 组图里同一对象用同一套视觉语言**（强建议）：一张组图里，同一个对象（某一组、某一性别、某种处理）在各面板用同样的颜色、符号、先后顺序，图例只留一份。合成多张图时先对齐这些，再谈版面；面板字母标注要小、字体与全图一致、全文统一大小写。
+  - 例外：各面板讲的是互不相干的数据
+  - 出处：FDV ch.21 Multipanel Figures, p.261；FDV ch.21 Multipanel Figures, p.262；FDV ch.21 Multipanel Figures, p.261（面板标注像页码，不应抢眼）
 
 ## 只能由作者确认（不猜）
 
@@ -121,6 +139,9 @@
   - 出处：FDV ch.4 Color Scales, p.30；VAD §2.5 Attribute Types（diverging）, p.33
 - **G-038 数据含义由用户确认，不从数值猜**（硬性）：光看数值无法知道列的含义：哪一列是自变量、是否为时间、样本是独立还是重复测量、误差列是 SD 还是 SEM，都要用户确认。拿不准时问选择题；用户说不确定，就走最保守的画法。
   - 出处：VAD §2.2 / §2.6.1, p.22, p.36, p.39；GoG ch.19 Reader, p.612（没有元数据就分不清独立组与重复测量）
+- **G-062 组图的主次与叙事顺序由作者的目的定**（Tavotto 推导）：哪个面板是主结果、哪些面板要互相比较、先讲哪一个，从图和数据里看不出来，是作者的目的。用户没说清时，出一道选择题（比较各组 / 看趋势 / 补充说明等）再排；不要自己猜，也不要为了让某个面板更醒目去改它的数据范围。主次只通过面板大小和位置体现。
+  - 例外：用户已明说主次与顺序
+  - 出处：FDV ch.21 Multipanel Figures, p.260（复合图是为了「一个总的要点」）；TAVOTTO 书里没有讨论面板的主次、大小或跨格；这一条是 Tavotto 的推导，依据是目的由用户确认（decision-framework 第 2 节、VAD p.78）
 
 ## 作者偏好（不是对错：按用户或期刊，不要当问题报告）
 
@@ -146,5 +167,7 @@
   - 出处：FDV ch.16 Visualizing Uncertainty, p.193
 - **G-051 不按心理物理指数修正大小**（偏好）：不要为了「感知准确」去按 Stevens 指数改写面积或大小映射；保持数据到大小的映射可解释，必要时限制变化范围。
   - 出处：GoG §10.1, p.258–259
+- **G-058 一张图回答一个问题、各面板分担不同的论证：写法建议**（偏好）：规划多面板图时，可以先请用户用一句话说出这张图要回答的问题，再看每个面板各自承担什么（主要证据、对照、另一种方法的验证、边界情况）。这是组织论证的一种写法，不是规定：面板怎么分、放不放进正文由作者定，不要把「面板重复」或「缺对照」当问题报告，也不要从数据的相关性替作者下因果结论。
+  - 出处：XG references 目录的 multipanel-evidence-architecture.md（原文自述是从少数几篇期刊论文归纳的风格指引，不是期刊要求）
 
-书目：GoG = Leland Wilkinson, The Grammar of Graphics, 2nd ed., Springer 2005；VAD = Tamara Munzner, Visualization Analysis and Design, CRC Press 2014；FDV = Claus O. Wilke, Fundamentals of Data Visualization, O'Reilly 2019（全文 https://clauswilke.com/dataviz/）；MATH = 数学事实（不归于任何一本书）；TAVOTTO = Tavotto 自己的工程推导
+书目：GoG = Leland Wilkinson, The Grammar of Graphics, 2nd ed., Springer 2005；VAD = Tamara Munzner, Visualization Analysis and Design, CRC Press 2014；FDV = Claus O. Wilke, Fundamentals of Data Visualization, O'Reilly 2019（全文 https://clauswilke.com/dataviz/）；MATH = 数学事实（不归于任何一本书）；TAVOTTO = Tavotto 自己的工程推导；XG = 外部作图实践指引仓库的作图技能目录（地址与版本号不入库，Apache-2.0）：一份作图实践指引，不是原著也不是期刊规定；只作二手参考，其中的 pt / mm 数值不引用

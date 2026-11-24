@@ -136,6 +136,9 @@ export default interface Resources {
           "why": "看每组数值分布的形状，点保留了每个观测。"
         }
       },
+      "connect": {
+        "pill": "连接 AI 以供智能分析"
+      },
       "draft": {
         "allText": "这张表里都是文字，没有能画的数字。",
         "cancelled": "已取消，这个文件没读完。",
@@ -238,8 +241,19 @@ export default interface Resources {
         "unverifiable": "图画好了，但这类图没法逐项核对数据。",
         "verified": "图画好了，数据和文件逐项对上。"
       },
+      "spec": {
+        "fontMax": "≤ {{max}} pt 字号",
+        "fontMin": "≥ {{min}} pt 字号",
+        "fontOne": "{{min}} pt 字号",
+        "fontRange": "{{min}}–{{max}} pt 字号",
+        "join": "、",
+        "line": "按{{parts}}出图",
+        "widthOne": "图宽 {{single}} mm",
+        "widthTwo": "单栏 {{single}} mm、双栏 {{double}} mm"
+      },
       "suggest": {
         "apply": "试试建议",
+        "connectHint": "连上后会帮你看懂每一列，选对横轴、纵轴和分组",
         "reading": "正在看各列…"
       },
       "variant": {
@@ -777,6 +791,7 @@ export default interface Resources {
       "emptyText": "空文字",
       "panel": "图",
       "path": "路径",
+      "pathText": "路径文字",
       "shape": "形状",
       "text": "文字",
       "unknown": "新版对象"
@@ -4699,6 +4714,8 @@ export default interface Resources {
     },
     "preflight": {
       "axisLabelFormat": "坐标轴标题「{{label}}」不是规范的「{{want}}」形式",
+      "barBaselineTruncatedX": "柱子从 {{baseline}} 画起，但横轴只显示 {{low}} 到 {{high}}，{{baseline}} 不在图里，每根柱子都被切掉一截，长短看起来和数值不成比例了",
+      "barBaselineTruncatedY": "柱子从 {{baseline}} 画起，但纵轴只显示 {{low}} 到 {{high}}，{{baseline}} 不在图里，每根柱子都被切掉一截，高矮看起来和数值不成比例了",
       "barWithoutErrorbar": "柱状图没有误差棒。柱子若是多次测量的均值，规范要求标出误差。",
       "cjkFallbackMissing": "含中日韩字符的文字用了 {{family}}，没有声明回退字体，导出 PDF 里是方框。",
       "cjkFallbackUnaccepted": "含中日韩字符的文字由 {{face}} 画出（正文字体 {{family}}），不在规范接受的中文字体里。",
@@ -4888,6 +4905,7 @@ export default interface Resources {
       "tierUnverifiable": "无法自动检查",
       "title": {
         "axis-label-format": "坐标轴标题格式不符",
+        "bar-baseline-truncated": "柱子的起点被截掉",
         "bar-without-errorbar": "柱状图没有误差棒",
         "cjk-fallback-missing": "缺中文字体回退",
         "discouraged-colormap": "不推荐的色谱",
@@ -4976,7 +4994,7 @@ export default interface Resources {
     },
     "alignRef": {
       "page": "画布",
-      "primary": "最后选中",
+      "primary": "关键对象",
       "selection": "选区"
     },
     "arrange": {
@@ -4989,6 +5007,19 @@ export default interface Resources {
       "alignStartCol": "左",
       "alignStartRow": "上",
       "alignToolbar": "对齐",
+      "arrayCols": "列数",
+      "arrayCount": "份数（含原件）",
+      "arrayCountRadius": "份数 · 半径",
+      "arrayGrid": "网格",
+      "arrayKind": "方式",
+      "arrayLabel": "阵列",
+      "arrayMake_other": "生成 {{count}} 份",
+      "arrayRadial": "环形",
+      "arrayRadius": "半径",
+      "arrayRotate": "跟着转",
+      "arrayRows": "行数",
+      "arrayRowsCols": "行 · 列",
+      "arrayTooMany": "一次最多 {{max}} 份",
       "columns": "列",
       "copyStyle": "复制样式",
       "copyStyleTip": "复制最后选中对象的样式",
@@ -5615,9 +5646,12 @@ export default interface Resources {
       "clearTextBorder": "清除文字描边",
       "editText": "编辑文字",
       "flipH": "水平翻转",
+      "flipPathText": "翻转路径文字",
       "flipV": "垂直翻转",
       "insertNewline": "插入换行",
       "matchFigureSize": "对齐图内字号",
+      "pathTextOffset": "修改路径文字离线",
+      "pathTextStart": "移动路径文字起点",
       "resetTextProp": "恢复文字属性",
       "restoreVersion": "恢复历史版本",
       "reverseArrow": "反转箭头方向",
@@ -5800,6 +5834,20 @@ export default interface Resources {
       "unknown": "未知"
     },
     "panelLabel": "右侧面板",
+    "pathText": {
+      "alignCenter": "以起点居中",
+      "alignEnd": "到起点结束",
+      "alignStart": "从起点开始",
+      "editPathTip": "改字；要改字排的那条路径，在画布上 {{mod}} 双击这段字",
+      "flip": "翻到路径另一侧",
+      "offset": "离线",
+      "offsetAuto": "自动 {{value}}",
+      "offsetAutoBare": "自动",
+      "offsetReset": "自动",
+      "offsetTip": "基线离开线多远：0 贴线，负数压到线上；清空回到自动",
+      "start": "起点",
+      "title": "路径文字"
+    },
     "pathfinder": {
       "modes": "形状模式",
       "offsetDistance": "偏移距离",
@@ -7062,6 +7110,7 @@ export default interface Resources {
       "addArrow": "添加箭头",
       "addGuide": "添加参考线",
       "addPanel": "加入图 {{name}}",
+      "addPathText": "在路径上加文字",
       "addShape": "添加{{shape}}",
       "addSubLabels": "添加序号标签",
       "addText": "添加文字",
@@ -7073,6 +7122,7 @@ export default interface Resources {
       "alignToStyle": "按样式「{{name}}」对齐",
       "alignWithRef": "{{mode}}（{{ref}}）",
       "applyStyle": "应用样式「{{name}}」",
+      "arrayCopies_other": "阵列（{{count}} 份）",
       "arrowEndpoint": "调整箭头端点",
       "autoReflow": "自动重排布局组",
       "averageAnchors": "平均锚点",
@@ -7097,6 +7147,7 @@ export default interface Resources {
       "drawPath": "画路径",
       "duplicateCanvasSuffix": "{{name}} 副本",
       "duplicateObjects": "复制对象",
+      "editPathTextPath": "编辑路径文字的路径",
       "editStyle": "修改样式「{{name}}」",
       "editText": "编辑文字",
       "explodeSvg": "拆成可编辑对象",
@@ -7140,6 +7191,8 @@ export default interface Resources {
       "outlineText": "文字转轮廓（{{count}} 个）",
       "pasteObjects_other": "粘贴 {{count}} 个对象",
       "pasteStyle": "粘贴样式",
+      "pathTextGap": "调整路径文字离线",
+      "pathTextStart": "移动路径文字起点",
       "pathfinder": {
         "crop": "裁剪",
         "divide": "分割",
@@ -7959,6 +8012,7 @@ export default interface Resources {
       }
     },
     "quickEdit": {
+      "addPathText": "在路径上加文字",
       "aria": "快捷编辑",
       "arrange": "对齐与分布",
       "arrangeRef": "参照：{{ref}}",
@@ -8283,6 +8337,7 @@ export default interface Resources {
     "status": {
       "alignAllLocked": "选中的对象都已锁定，先解锁再排列",
       "alignLockedSkipped_other": "已跳过 {{count}} 个锁定对象",
+      "arrayTooMany": "一次最多阵列 {{max}} 份",
       "assetReplaced": "已替换为「{{name}}」，位置与尺寸保持不变",
       "bakedSeeded_other": "已载入写回文件时的基线（{{count}} 项）",
       "blankCreated": "已新建空白排版，原来的排版可从「本机最近的排版」取回",

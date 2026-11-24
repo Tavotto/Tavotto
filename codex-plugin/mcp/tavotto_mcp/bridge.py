@@ -161,6 +161,8 @@ OPTIONAL_ENGINE_MODULES = (
     "journalfacts_remote",
     "journals",
     "nativefallback",
+    "reviewinbox",
+    "reviewshare",
     "runconfig",
     "scriptargs",
     "specfix",
@@ -4661,6 +4663,7 @@ FIX_MANUAL_HINTS = {
     "raster-dpi": "导出时把 dpi 调到规范要求以上。",
     "line-width-below-min": "把数据线加粗到期刊要求的线宽以上，回脚本改。",
     "log-axis-nonpositive": "对数轴画不出 ≤ 0 的值；换轴的尺度还是处理这些数据，由作者回脚本决定。",
+    "bar-baseline-truncated": "柱底被轴范围截掉，柱长不再和数值成比例；两种改法：轴从 0 起，或改成点图，由作者回脚本决定。",
 }
 
 
@@ -5515,3 +5518,356 @@ def manifest_hash(manifest: dict) -> str:
         manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str
     )
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+# ------------------------- 外部审阅分享（ADR 0205，一期） -------------------------
+#: 工具被硬关 / 总开关关着 / 旧引擎没有这条流程时调用的回码（与 tools/list 里不出现是同一个门）
+REVIEW_DISABLED = "review_share_disabled"
+#: 同步等分享结束的上限（秒）；到时回 `in_progress`，同一指纹的重试复用幂等 id（`reviewshare._REUSE`）
+REVIEW_WAIT_S = 120.0
+REVIEW_POLL_S = 0.2
+#: 不带确认时给用户看的小预览的宽度（px）；真正上传的长边由 `reviewshare.LONG_EDGE_PX` 定
+REVIEW_PREVIEW_WIDTH_PX = 800
+REVIEW_UPDATE_MODES = ("auto", "new")
+#: 引擎里这条流程要有的名字；缺任何一个（旧引擎）当「关」，绝不抛 AttributeError
+_REVIEW_SHARE_API = (
+    "start_share",
+    "start_update",
+    "status",
+    "dismiss",
+    "enabled",
+    "manifest_elements",
+    "manifest_size_mm",
+    "Rendered",
+    "ReviewError",
+    "LONG_EDGE_PX",
+    "TITLE_MAX",
+)
+_REVIEW_INBOX_API = ("for_target", "summary", "is_expired", "file_lock")
+#: 本进程里「调用方已经确认、还没等到结论」的那一次分享，以及各会话预览时的画面指纹（只在内存里）
+_REVIEW_PENDING: dict | None = None
+_REVIEW_PREVIEWED: dict[str, str] = {}
+
+
+def _review_engine():
+    """(`reviewshare`, `reviewinbox`)；旧引擎没有 / 缺 API / 硬关 / 端点不合规 → None。"""
+    rs, ri = _optional_engine("reviewshare"), _optional_engine("reviewinbox")
+    if rs is None or ri is None:
+        return None
+    if not all(hasattr(rs, n) for n in _REVIEW_SHARE_API):
+        return None
+    if not all(hasattr(ri, n) for n in _REVIEW_INBOX_API):
+        return None
+    # `renderer=` 随这一次分享走（不碰桌面注册的那个）；旧引擎没有这个参数就不能用
+    for fn in (rs.start_share, rs.start_update):
+        if "renderer" not in inspect.signature(fn).parameters:
+            return None
+    return (rs, ri) if rs.enabled() else None
+
+
+def review_share_available() -> bool:
+    """`tavotto_share_review` 出现在 tools/list 的条件（与桌面「分享审阅」入口同一个开关）。"""
+    return _review_engine() is not None
+
+
+def _review_target(session: Session) -> dict:
+    """与桌面同一个 figure id：单图 = 引擎认图的 stem（前端 `resolveReviewTarget` 的 `{kind:'figure', id: stem}`）。"""
+    return {"kind": "figure", "id": session.stem}
+
+
+def _review_live_record(ri, session: Session) -> dict | None:
+    """这张图在**本项目**里还有效（已投递、没停止、没到期）的最新链接；没有 None。"""
+    rec = ri.for_target("figure", session.stem, project_id(session.project))
+    if rec is None or rec.get("revoked") or ri.is_expired(rec):
+        return None
+    return rec
+
+
+def _review_width_px(manifest: object, edge: int) -> int:
+    """长边 ≈ `edge` px 的位图宽度（`preview_png` / `preview_png_snapshot` 按宽度出图）。"""
+    size = manifest.get("size_mm") if isinstance(manifest, dict) else None
+    try:
+        w, h = float(size[0]), float(size[1])
+    except (TypeError, ValueError, IndexError):
+        return int(edge)
+    if w <= 0 or h <= 0 or w >= h:
+        return int(edge)
+    return max(1, round(edge * w / h))
+
+
+def _review_frame(session: Session, patches: list, edge: int) -> tuple[bytes, object]:
+    """会话在这组 patches 下的 (PNG 字节, manifest)。像素与元素表来自**同一次绘制**
+    （`preview_png_snapshot`）；老引擎没有就退回 `preview_png` + 会话里那份 manifest。"""
+    width = _review_width_px(session.manifest, edge)
+    worker = session.acquire()
+    snapshot = getattr(worker, "preview_png_snapshot", None)
+    if snapshot is None:
+        return base64.b64decode(preview_png(session, patches, width)), session.manifest
+    try:
+        frame = snapshot(session.stem, patches, width)
+    except engine_pool.WorkerError as exc:
+        raise BridgeError(
+            str(exc), code=exc.code or "preview_failed", traceback=exc.traceback_text
+        ) from exc
+    return base64.b64decode(frame["png"]), frame["manifest"]
+
+
+def _review_renderer(rs, session: Session, patches: list):
+    """这一次分享的出图回调（`reviewshare._Spec.renderer`，**不改**模块级 `set_renderer`）。
+
+    回调在 reviewshare 的后台线程里跑，而调用线程只是睡着等 `status()`，不持有任何会话锁，所以这里直接取 worker 不会死锁。
+    即便如此，首张图（长边 `LONG_EDGE_PX`）先在调用线程里出好、交给闭包，后台线程只在超限降档重出时才再碰 worker。"""
+    first_edge = rs.LONG_EDGE_PX
+    first = _review_frame(session, patches, first_edge)
+    cache = {first_edge: first}
+
+    def render(_target: dict, _render: dict, edge: int):
+        frame = cache.get(edge) or _review_frame(session, patches, edge)
+        png, manifest = frame
+        return rs.Rendered(png, rs.manifest_elements(manifest), rs.manifest_size_mm(manifest))
+
+    return render, first[0]
+
+
+def _review_render_descriptor(session: Session, frame_png: bytes) -> dict:
+    """上传记录里的「出图描述」：只有画面指纹，不含路径与脚本内容。
+
+    它也是 `reviewshare` 重试时复用上一次渲染产物的指纹（`_Spec.fingerprint`）。所以必须带上**这一次真画出来的画面**
+    （`frame_sha256`）：同一脚本换了运行配置 / 数据文件变了、patches 不变时，画面不同指纹就不同，绝不会把上一次缓存的
+    旧画面当成这一张发出去（Codex #2148 P1）。运行配置 id 一并记下，便于排查。"""
+    return {
+        "source": "agent",
+        "stem": session.stem,
+        "patch_hash": session.patch_hash(),
+        "script_sha1": session.script_sha1,
+        "run_config": session.run_config_id,
+        "frame_sha256": hashlib.sha256(frame_png).hexdigest(),
+    }
+
+
+def _review_overview(summary: dict) -> dict:
+    """给 Agent 看的已有链接概况：标题、当前版本、链接本身（令牌从不在这里：`summary` 没有它）。"""
+    return {
+        "title": summary["title"],
+        "version": summary["latest_version"],
+        "review_url": summary["review_url"],
+        "expires_at": summary["expires_at"],
+    }
+
+
+def _review_clean_title(rs, title: object, *, required: bool) -> str:
+    text = title.replace("\x00", "").strip() if isinstance(title, str) else ""
+    if (required and not text) or len(text) > rs.TITLE_MAX:
+        raise BridgeError(
+            f"新建审阅链接要给一个 1 到 {rs.TITLE_MAX} 字的标题（title）。", code="bad_arguments"
+        )
+    return text
+
+
+def _review_failure(fail: str, *, mode: str) -> BridgeError:
+    """ADR 0187 的失败码闭集 → 带稳定 code 的 BridgeError（`failure` / `retryable` 原样带上，nextstep 按 code 给下一步）。"""
+    extra = {"failure": fail, "mode": mode}
+    if fail == "quota_new_exhausted":
+        return BridgeError(
+            "今天新建审阅链接的额度用完了；已有的链接仍可以更新，明天额度恢复。",
+            code="review_quota_new_exhausted",
+            retryable=False,
+            **extra,
+        )
+    if fail == "share_gone":
+        return BridgeError(
+            "这条审阅链接已经停止分享或过期，不能再更新。",
+            code="review_share_gone",
+            retryable=False,
+            **extra,
+        )
+    if fail == "too_large":
+        return BridgeError(
+            "这张图的画面太大，压缩后仍超过上传上限，没有发出。",
+            code="review_too_large",
+            retryable=False,
+            **extra,
+        )
+    if fail == "rate_limited":
+        return BridgeError(
+            "审阅服务请求太频繁，稍后再试。", code="review_rate_limited", retryable=True, **extra
+        )
+    if fail == "network":
+        return BridgeError(
+            "连不上审阅服务（网络问题），没有发出。", code="review_network", retryable=True, **extra
+        )
+    if fail == "server":
+        return BridgeError(
+            "审阅服务或本机记录出了问题，没有发出；稍后可以再试。",
+            code="review_server",
+            retryable=True,
+            **extra,
+        )
+    if fail == "render_failed":
+        return BridgeError(
+            "这张图出图失败，没有发出。", code="review_render_failed", retryable=True, **extra
+        )
+    return BridgeError(
+        "审阅分享没有成功（客户端错误）。", code="review_client_error", retryable=False, **extra
+    )
+
+
+def _review_wait(rs, key: tuple) -> dict | None:
+    """同步等这次分享结束；到上限返回 None（还在进行，`_REVIEW_PENDING` 留着给下一次调用接上）。"""
+    deadline = time.monotonic() + REVIEW_WAIT_S
+    while True:
+        st = rs.status()
+        if st["stage"] in ("done", "failed", "idle"):
+            return st
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(REVIEW_POLL_S)
+
+
+def _review_finish(rs, st: dict, mode: str) -> dict:
+    """分享结束的收尾：成功给链接与版本号，失败抛带 ADR 0187 失败码的 BridgeError。"""
+    global _REVIEW_PENDING
+    _REVIEW_PENDING = None
+    rs.dismiss()
+    if st["stage"] == "done" and st.get("share"):
+        share = st["share"]
+        return {
+            "ok": True,
+            "status": "shared",
+            "mode": mode,
+            "title": share["title"],
+            "version": share["latest_version"],
+            "review_url": share["review_url"],
+            "expires_at": share["expires_at"],
+        }
+    if st.get("failure"):
+        raise _review_failure(str(st["failure"]), mode=mode)
+    raise BridgeError("这次分享被取消了，没有发出。", code="review_client_error", mode=mode)
+
+
+def require_review_engine():
+    """`tavotto_share_review` 的总门（与 tools/list 里不出现是同一个条件）：硬关 / 旧引擎回 `review_share_disabled`。
+    在按 session_id 取会话**之前**先过，关着时不会因为会话号而换一种错。"""
+    engine = _review_engine()
+    if engine is None:
+        raise BridgeError(
+            "外部审阅在这台机器上不可用（被关闭，或 Tavotto 引擎太旧）；没有发出任何东西。",
+            code=REVIEW_DISABLED,
+        )
+    return engine
+
+
+@_synced
+def share_review(
+    session_id: str,
+    *,
+    title: object = None,
+    note: object = None,
+    update: str = "auto",
+    explicit_confirm: bool = False,
+) -> dict:
+    """`tavotto_share_review`（ADR 0205）：把会话当前的图发成外部审阅链接，或更新到这张图已有的链接。
+
+    **不带 `explicit_confirm` 不联网、不上传**：只出一张小预览并说清要发什么（`needs_confirmation`）。
+    带了才走 `reviewshare.start_share` / `start_update`（与桌面同一条流程、同一份收件箱），同步等到结束。"""
+    global _REVIEW_PENDING
+    rs, ri = require_review_engine()
+    if update not in REVIEW_UPDATE_MODES:
+        raise BridgeError(
+            f"update 只能是 {' / '.join(REVIEW_UPDATE_MODES)}。", code="bad_arguments"
+        )
+    session = get_session(session_id)
+    rec = _review_live_record(ri, session) if update == "auto" else None
+    mode = "update" if rec is not None else "new"
+    clean_title = _review_clean_title(rs, title, required=mode == "new")
+    patch_hash = session.patch_hash()
+    existing = _review_overview(ri.summary(rec)) if rec is not None else None
+
+    if not explicit_confirm:
+        out: dict = {
+            "ok": True,
+            "status": "needs_confirmation",
+            "code": "review_confirmation_required",
+            "mode": mode,
+            "title": existing["title"] if existing else clean_title,
+            "upload": "只上传画面（一张 PNG）与元素位置表；不含脚本、数据与本机路径。",
+        }
+        if existing:
+            out["existing"] = existing
+        _REVIEW_PREVIEWED[session.id] = patch_hash
+        try:
+            out["_previews"] = {
+                "preview": preview_png(session, list(session.patches), REVIEW_PREVIEW_WIDTH_PX)
+            }
+        except BridgeError as exc:
+            out["previews_error"] = exc.code or "preview_failed"
+        return out
+
+    # 「同一次发送」的键只用调用入参（会话 / 画面指纹 / update / 标题 / 说明），**不用**派生出来的模式或链接：
+    # 第一次新建超时、后台随后完成后，收件箱里已经有这条链接，再调时 `auto` 会解析成「更新」——键若含派生值就对不上，
+    # 会把同一画面再上传成第 2 版（ADR 0205 §三「同一指纹不重复发」）。
+    key = (session.id, patch_hash, update, clean_title, str(note or ""))
+    st = rs.status()
+    pending = _REVIEW_PENDING
+    mine = pending is not None and pending["key"] == key
+    if mine:
+        mode = pending["mode"]  # 以第一次决定的模式收尾（回包文案、`mode` 字段）
+    if st["stage"] in ("rendering", "uploading"):
+        if not mine:
+            raise BridgeError(
+                "另一次审阅分享还在进行，稍等它结束后再试。", code="review_in_progress"
+            )
+        done = _review_wait(rs, key)
+    elif st["stage"] in ("done", "failed") and mine:
+        done = st  # 上一次调用等超时了，这次接上它的结论（不重复发）
+    else:
+        rs.dismiss()
+        _REVIEW_PENDING = None
+        done = None
+        patches = list(session.patches)
+        renderer, first_png = _review_renderer(rs, session, patches)
+        render = _review_render_descriptor(session, first_png)
+        scope_project = project_id(session.project)
+        try:
+            if rec is None:
+                rs.start_share(
+                    {
+                        "target": _review_target(session),
+                        "title": clean_title,
+                        "note": note,
+                        "render": render,
+                    },
+                    project=scope_project,
+                    renderer=renderer,
+                )
+            else:
+                rs.start_update(
+                    {"share_id": rec["share_id"], "note": note, "render": render},
+                    project=scope_project,
+                    renderer=renderer,
+                )
+        except rs.ReviewError as exc:
+            if exc.code == "disabled":
+                raise BridgeError("外部审阅被关闭了。", code=REVIEW_DISABLED) from exc
+            if exc.code == "in_progress":
+                raise BridgeError(
+                    "另一次审阅分享还在进行，稍等它结束后再试。", code="review_in_progress"
+                ) from exc
+            if exc.code == "share_gone":
+                raise _review_failure("share_gone", mode=mode) from exc
+            if exc.code == "not_found":
+                raise BridgeError("这条审阅链接不属于当前项目的这张图。", code="not_found") from exc
+            raise BridgeError(f"分享参数不合法（{exc.code}）。", code="bad_arguments") from exc
+        _REVIEW_PENDING = {"key": key, "mode": mode}
+        done = _review_wait(rs, key)
+    if done is None:
+        return {
+            "ok": True,
+            "status": "in_progress",
+            "mode": mode,
+            "waited_s": int(REVIEW_WAIT_S),
+        }
+    out = _review_finish(rs, done, mode)
+    if _REVIEW_PREVIEWED.pop(session.id, patch_hash) != patch_hash:
+        out["sent_latest"] = True  # 预览之后图又改过：发出去的是最新的样子
+    return out

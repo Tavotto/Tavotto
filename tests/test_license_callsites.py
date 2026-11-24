@@ -13,7 +13,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 #: 登记过的、允许调用 `license.has(...)` 的模块（相对仓库根的 posix 路径）。空 = 现在零调用点。
-REGISTERED_CALLERS: frozenset[str] = frozenset({"src/tavotto/engine/quicklayout.py"})
+REGISTERED_CALLERS: frozenset[str] = frozenset(
+    {"src/tavotto/engine/quicklayout.py", "src/tavotto/engine/proinstall.py"}
+)
 LICENSE_MODULE = "src/tavotto/engine/license.py"
 SKIP_DIRS = {".venv", "node_modules", ".git", "target", "target-wincheck", ".pnpm-store", "dist"}
 
@@ -92,7 +94,9 @@ def test_has_is_called_only_from_registered_modules():
 
 def test_registry_lists_only_registered_new_features():
     # 登记表与 ADR 0193 §一 的新功能一一对应：一键排版（ADR 0199）。加调用点要同时改这里与 ADR
-    assert REGISTERED_CALLERS == frozenset({"src/tavotto/engine/quicklayout.py"})
+    assert REGISTERED_CALLERS == frozenset(
+        {"src/tavotto/engine/quicklayout.py", "src/tavotto/engine/proinstall.py"}
+    )
 
 
 def test_the_scanner_actually_finds_call_sites():

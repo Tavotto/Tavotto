@@ -45,6 +45,7 @@ from .ai_data_figure import (
     SemicolonCell,
     apply_cells,
     apply_numcat,
+    apply_stack,
     date_number,
     delimited_records,
     iter_records,
@@ -950,6 +951,207 @@ def pick_fonts(latin, cjk):
     ]
 
 
+def legend_hits_data(ax, leg, pad=1.0):
+    """图例有没有压到这个坐标区里画的数据（线、点、柱 / 箱、填充带）。图例一侧取**真正挡住数据的东西**（与预检同一口径：`docs/sciviz/validation-spec.md` V-011「图例一侧的取法（与数据出图摆放共用）」）：
+    画了不透明底框的，整块框都算（图例画在数据上面，框里的空白也把线盖住了）；没有底框或底框全透明的，只算每条文字和每个色块
+    各自的外接框——空白处压着线不算。数据一侧用真实几何。调用前图要先排过版（`fig.draw_without_rendering()`）。"""
+    from matplotlib.collections import PathCollection, PolyCollection
+    from matplotlib.transforms import Bbox
+
+    # 「有框且不透明」= `frameon` 为真且实际画出来的框颜色 alpha > 0（matplotlib 的 framealpha 直接替换颜色里的 alpha）
+    if leg.get_frame_on() and leg.get_frame().get_facecolor()[3] > 0:
+        boxes = [leg.get_window_extent()]
+    else:
+        handles = getattr(leg, "legend_handles", None) or leg.legendHandles
+        boxes = [t.get_window_extent() for t in leg.get_texts() if t.get_text()]
+        boxes += [h.get_window_extent() for h in handles]
+    boxes = [
+        Bbox.from_extents(b.x0 - pad, b.y0 - pad, b.x1 + pad, b.y1 + pad)
+        for b in boxes
+        if b.width > 0 and b.height > 0
+    ]
+    if not boxes:
+        return False
+
+    def path_hits(path, transform, filled):
+        shown = transform.transform_path(path)
+        return any(shown.intersects_bbox(b, filled=filled) for b in boxes)
+
+    def points_hit(points, radius):
+        return any(
+            b.x0 - radius <= x <= b.x1 + radius and b.y0 - radius <= y <= b.y1 + radius
+            for x, y in points
+            for b in boxes
+        )
+
+    scale = ax.figure.dpi / 72.0
+    for line in ax.lines:
+        if not line.get_visible():
+            continue
+        if line.get_linestyle() not in ("None", "none", " ", ""):
+            if path_hits(line.get_path(), line.get_transform(), False):
+                return True
+        if line.get_marker() not in ("None", "none", " ", "", None):
+            pts = line.get_transform().transform(line.get_xydata())
+            if points_hit(pts, line.get_markersize() * scale / 2):
+                return True
+    for col in ax.collections:
+        if not col.get_visible():
+            continue
+        if isinstance(col, PathCollection):  # 散点：一个记号形状 + 一批位置
+            sizes = col.get_sizes()
+            radius = (max(sizes) ** 0.5 if len(sizes) else 3.0) * scale / 2
+            if points_hit(col.get_offset_transform().transform(col.get_offsets()), radius):
+                return True
+        else:  # 填充带 / 小提琴（PolyCollection，哪怕只有一块）按填充路径；线段集合（误差线的帽）按线段
+            filled = isinstance(col, PolyCollection)
+            if any(path_hits(path, col.get_transform(), filled) for path in col.get_paths()):
+                return True
+    for patch in ax.patches:
+        if patch.get_visible() and path_hits(patch.get_path(), patch.get_transform(), True):
+            return True
+    return False
+
+
+def build_legend(ax, loc=None, outside=False, fontsize=None):
+    """照原来的条目重建这个坐标区的图例（色块、间距跟着字号走）。`outside`：放到坐标区正上方，列数取「宽度不超过坐标区」的最大值。"""
+    old = ax.get_legend()
+    handles = getattr(old, "legend_handles", None) or old.legendHandles
+    labels = [t.get_text() for t in old.get_texts()]
+    size = fontsize if fontsize is not None else old.get_texts()[0].get_fontsize()
+    frame = old.get_frame_on()
+    if not outside:
+        return ax.legend(handles, labels, loc=loc or "best", fontsize=size, frameon=frame)
+    leg = None
+    for ncol in range(len(labels), 0, -1):
+        leg = ax.legend(
+            handles,
+            labels,
+            loc="lower left",
+            bbox_to_anchor=(0.0, 1.02),
+            borderaxespad=0.0,
+            ncol=ncol,
+            fontsize=size,
+            frameon=frame,
+        )
+        ax.figure.draw_without_rendering()
+        if leg.get_window_extent().width <= ax.bbox.width + 1:
+            break
+    return leg
+
+
+def place_legends(fig):
+    """每个坐标区的图例：**图内放得下就放图内**（现在的位置不压数据就不动；压了就把图内几个位置挨个试，第一个不压的就用），
+    **都放不下才挪到图外**——坐标区正上方排成一行（一行排不下就换行，宽度不超过坐标区），之后的 `tight_layout()` 会给它让出地方。
+    「压到」的判法在 `legend_hits_data`（无底框时只看文字和色块，有不透明底框时看整块框）。返回挪到图外的坐标区（退字号时照同样的摆法重建）。"""
+    inside = (
+        "upper right",
+        "upper left",
+        "lower right",
+        "lower left",
+        "center right",
+        "center left",
+        "upper center",
+        "lower center",
+    )
+    outside = []
+    for ax in fig.axes:
+        leg = ax.get_legend()
+        if leg is None or not leg.get_texts():
+            continue
+        fig.draw_without_rendering()
+        if not legend_hits_data(ax, leg):
+            continue
+        for loc in inside:
+            leg = build_legend(ax, loc=loc)
+            fig.draw_without_rendering()
+            if not legend_hits_data(ax, leg):
+                break
+        else:
+            build_legend(ax, outside=True)
+            outside.append(ax)
+    return outside
+
+
+def fit_fonts(fig, floor=None, step=0.5):
+    """排完版后的收尾：先摆图例（`place_legends`：图内放得下就图内，放不下挪到图外），再在给了 `floor`（期刊的字号下限）时，
+    让**同一类文字一起**往下退字号，直到互不干涉或退到下限为止。三类各自一个字号：刻度数字、轴标题（含子图标题）、图例。
+    判「干涉」：相邻刻度数字的框相交；轴标题 / 图例伸出了图的边界；图外的图例比坐标区还宽，或高过坐标区的四分之一。退的是整类（所有子图一起），
+    所以同一类对象的字号始终一致；一类退到下限还干涉就不再动它。每退一步重新 `tight_layout()`。"""
+    outside = place_legends(fig)
+    if outside:
+        fig.tight_layout()
+    if floor is None:
+        return
+
+    def roles():
+        ticks, labels, legends = [], [], []
+        for ax in fig.axes:
+            ticks += [t for t in ax.get_xticklabels() + ax.get_yticklabels() if t.get_text()]
+            labels += [t for t in (ax.xaxis.label, ax.yaxis.label, ax.title) if t.get_text()]
+        for leg in [*fig.legends, *(ax.get_legend() for ax in fig.axes)]:
+            if leg is not None:
+                legends += [t for t in leg.get_texts() if t.get_text()]
+        return {"tick": ticks, "label": labels, "legend": legends}
+
+    def beyond(b, whole):
+        return (
+            b.x0 < whole.x0 - 1 or b.y0 < whole.y0 - 1 or b.x1 > whole.x1 + 1 or b.y1 > whole.y1 + 1
+        )
+
+    def crowded():
+        fig.draw_without_rendering()
+        whole = fig.bbox
+        bad = set()
+        for ax in fig.axes:
+            for axis in (ax.xaxis, ax.yaxis):
+                boxes = [
+                    t.get_window_extent()
+                    for t in axis.get_ticklabels()
+                    if t.get_visible() and t.get_text()
+                ]
+                if any(a.overlaps(b) for a, b in zip(boxes, boxes[1:])):
+                    bad.add("tick")
+            for t in (ax.xaxis.label, ax.yaxis.label, ax.title):
+                if t.get_text() and beyond(t.get_window_extent(), whole):
+                    bad.add("label")
+            leg = ax.get_legend()
+            if leg is not None:
+                b = leg.get_window_extent()
+                tall = (
+                    ax in outside and b.height > 0.25 * ax.bbox.height
+                )  # 图外的图例把坐标区挤扁了
+                if beyond(b, whole) or tall or (ax in outside and b.width > ax.bbox.width + 1):
+                    bad.add("legend")
+        for leg in fig.legends:
+            if beyond(leg.get_window_extent(), whole):
+                bad.add("legend")
+        return bad
+
+    for _ in range(200):
+        bad = crowded()
+        moved = False
+        texts = roles()
+        for role in sorted(bad):
+            size = max((t.get_fontsize() for t in texts[role]), default=0.0)
+            if size - step < floor - 1e-9:
+                continue
+            if role == "legend":
+                for ax in fig.axes:
+                    if ax.get_legend() is not None and ax.get_legend().get_texts():
+                        build_legend(ax, outside=ax in outside, fontsize=size - step)
+                for leg in fig.legends:
+                    for t in leg.get_texts():
+                        t.set_fontsize(size - step)
+            else:
+                for t in texts[role]:
+                    t.set_fontsize(size - step)
+            moved = True
+        if not moved:
+            break
+        fig.tight_layout()
+
+
 RUNTIME_FUNCTIONS = (
     SemicolonCell,
     NumCat,
@@ -967,6 +1169,7 @@ RUNTIME_FUNCTIONS = (
     read_xlsx,
     apply_cells,
     apply_numcat,
+    apply_stack,
     group_key,
     merge_tables,
     distinct,
@@ -1021,6 +1224,10 @@ RUNTIME_FUNCTIONS = (
     reduce_file,
     read_reduced,
     pick_fonts,
+    legend_hits_data,
+    build_legend,
+    place_legends,
+    fit_fonts,
 )
 #: 只有 XLSX 数据源的脚本才内嵌 `read_xlsx` 与 xlsxread；CSV / TSV 的脚本里没有它们
 
@@ -1040,8 +1247,18 @@ SUMMARY_TEXT = {
 }
 
 
-def style_from_profile(profile: dict | None = None) -> dict:
-    """出版规范 profile → 模板要的数字。取不到的项才用具名默认（`_STYLE_DEFAULTS`）。"""
+def _num(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def style_from_profile(
+    profile: dict | None = None, font_range: tuple[float | None, float | None] | None = None
+) -> dict:
+    """出版规范 profile → 模板要的数字。取不到的项才用具名默认（`_STYLE_DEFAULTS`）。
+
+    `font_range`（期刊自己规定的字号 `(下限, 上限)`，没规定的一端是 None）：有它时字号的首要条件是落在这个范围里，并且取范围内最大的
+    （只规定了下限就取默认字号与下限中较大的）；刻度、轴标题、图例三类都从这个字号起，画完后由脚本里的 `fit_fonts` 在互相干涉时
+    整类往下退（`fit_floor_pt`，不低于下限）。没有它 = 从前的读法（默认字号夹进规范范围、图例用小一号），脚本逐字不变。"""
     if profile is None:
         from . import profiles
 
@@ -1055,8 +1272,39 @@ def style_from_profile(profile: dict | None = None) -> dict:
     w = profile.get("widths_mm") or {}
     pick("width_single_mm", w.get("single"))
     pick("width_double_mm", w.get("double"))
+    if not (_num(w.get("single")) and _num(w.get("double"))):
+        # 期刊只写了栏位（`page_columns`）或只规定了一档：栏宽按规范的唯一读法 `profiles.derive_page_columns` 取——最窄的一档当单栏、
+        # 最宽的一档当双栏；只有一档就两处都用它。一档都没规定才落到具名默认（期刊没写就是没写，ADR 0155 §2）
+        from . import profiles
+
+        cols = sorted(
+            float(c["width_mm"])
+            for c in profiles.derive_page_columns(profile)
+            if _num(c.get("width_mm")) and c["width_mm"] > 0
+        )
+        if cols:
+            if not _num(w.get("single")):
+                d["width_single_mm"] = cols[0]
+            if not _num(w.get("double")):
+                d["width_double_mm"] = cols[-1]
     pick("font_pt", profile.get("default_font_size_pt"))
-    pick("min_font_pt", profile.get("min_effective_font_size_pt"))
+    # 规范不一定规定「默认字号」（期刊只给上下限）：正文字号夹进规范允许的范围；下限 0 = 没规定（期刊中性底），不当成数字用
+    lo, hi = profile.get("min_effective_font_size_pt"), profile.get("max_font_size_pt")
+    if _num(lo) and lo > 0:
+        d["min_font_pt"] = float(lo)
+        d["font_pt"] = max(d["font_pt"], float(lo))
+    if _num(hi) and hi > 0:
+        d["font_pt"] = min(d["font_pt"], float(hi))
+    d["min_font_pt"] = min(d["min_font_pt"], d["font_pt"])
+    if font_range is not None and (font_range[0] is not None or font_range[1] is not None):
+        lo_j, hi_j = font_range
+        d["font_pt"] = float(hi_j) if hi_j is not None else max(d["font_pt"], float(lo_j))
+        d["min_font_pt"] = d["font_pt"]  # 图例与正文同一起点；挤的时候各类自己退
+        # 没规定下限：最多退到从前的小字字号，不无限缩小
+        d["fit_floor_pt"] = (
+            float(lo_j) if lo_j is not None else min(d["font_pt"], _STYLE_DEFAULTS["min_font_pt"])
+        )
+        d["font_range"] = [lo_j, hi_j]
     lws = [v for v in (profile.get("line_widths_pt") or []) if isinstance(v, (int, float))]
     if lws:
         d["line_widths_pt"] = [float(v) for v in sorted(lws)]
@@ -1130,6 +1378,18 @@ def _check(entry: adf.TableEntry, recipe: recipe_mod.FigureRecipe) -> None:
             "template_option_unsupported", "large"
         )  # 大表只有趋势的缩减实现（见 `recipe_mod.LARGE_MARKS`）
     cols = entry.summary.per_column
+    if recipe.stack:  # 把列当分组：被转的列在原表里，作图用的列在转换后的长表里（`stack_view`）
+        if (
+            recipe.family not in ("comparison", "distribution")
+            or recipe.cells
+            or recipe.numcat
+            or recipe.unit is not None
+            or entry.summary.large is not None
+            or _merge_of(entry) is not None
+            or any(c not in cols for c in recipe.stack)
+        ):
+            raise TemplateError("template_option_unsupported", "stack")
+        cols = recipe_mod.stack_view(entry.summary, recipe.stack).per_column
     named = [recipe.x, *recipe.y, recipe.group, recipe.facet, recipe.unit]
     if any(c is not None and c not in cols for c in named):
         raise TemplateError("template_recipe_mismatch", "column")
@@ -1186,8 +1446,12 @@ def _summary_layers(recipe: recipe_mod.FigureRecipe) -> list[str]:
 
 def _footer(recipe, style) -> list[str]:
     """图的收尾排版。**图里不写任何自动加的脚注**（2026-11-17 用户决定：没画的行、汇总 / 拟合的定义、n 都不进图；这些在界面右栏与响应字段里给）。
-    只做 `tight_layout()`，不为脚注留白。"""
-    return ["    fig.tight_layout()"]
+    `tight_layout()` 之后交给公共模块的 `fit_fonts` 收尾，不为脚注留白。"""
+    # 图例：图内放得下就图内，文字或色块压到数据才挪到图外（2026-11-23 用户决定）；按期刊字号范围出图时（`fit_floor_pt`）
+    # 另从范围内最大的字号起，挤了才整类往下退
+    floor = style.get("fit_floor_pt")
+    call = f"fit_fonts(fig, {floor!r})" if floor is not None else "fit_fonts(fig)"
+    return ["    fig.tight_layout()", f"    {call}"]
 
 
 #: 脚本头的来源注释：生产（`_source_comment`、`_header`）与解析（`parse_source_comment`）共用这两个常量
@@ -1349,6 +1613,8 @@ def _read_lines(recipe, reader: str) -> list[str]:
         out.append("    rows, _cell_notes, _cell_stats = apply_cells(header, rows, CELLS)")
     if recipe.numcat:
         out.append("    rows = apply_numcat(header, rows, NUMCATS)")
+    if recipe.stack:  # 把列当分组：宽表转长表（只剩 值 / 类别 两列），之后与别的长表一样画
+        out.append("    header, rows = apply_stack(header, rows, STACK, *STACK_NAMES)")
     return out
 
 
@@ -1380,6 +1646,11 @@ def _header(entry, recipe, data_rel, title, is_xlsx):
     cells = [f"CELLS = {[c.args() for c in recipe.cells]!r}"] if recipe.cells else []
     if recipe.numcat:  # 整数编码的类别列（读表后规范成整数写法，类别按数值升序）
         cells.append(f"NUMCATS = {list(recipe.numcat)!r}")
+    if (
+        recipe.stack
+    ):  # 把这几列当分组：被转成长表的列（顺序 = 类别顺序）与转换后「值 / 类别」两列的名字
+        cells.append(f"STACK = {list(recipe.stack)!r}")
+        cells.append(f"STACK_NAMES = {list(recipe_mod.stack_names(recipe.stack))!r}")
     return [
         f'"""由 Tavotto 根据数据生成的图（data_to_figure v2：{title}）。之后就是一份普通的绘图脚本，可以随意修改。\n\n'
         f'读表、汇总、布局的函数在同目录的 {name}.py 里（Tavotto 生成，别改它；它不含数据）。"""',
@@ -1520,13 +1791,21 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
     )
     if is_xlsx:
         L.append(f"SHEET = {recipe.sheet!r}")
+    # 把列当分组：类别轴是合成的占位列（`group`），不写轴标题；普通分组列 / numcat 不变
+    xlabel = (
+        ""
+        if recipe.stack and recipe.x == recipe_mod.STACK_CAT
+        else adf.axis_label(recipe.x)
+        if recipe.x
+        else ""
+    )
     L += [
         f"X = {recipe.x!r}",
         f"Y = {recipe.y[0]!r}",
         f"GROUP = {recipe.group!r}",
         f"FACET = {recipe.facet!r}",
         f"ORDER = {recipe.order!r}",
-        f"XLABEL = {adf.axis_label(recipe.x) if recipe.x else ''!r}",
+        f"XLABEL = {xlabel!r}",
         f"YLABEL = {adf.axis_label(recipe.y[0])!r}",
         f"PALETTE = {list(PALETTE)!r}",
     ]

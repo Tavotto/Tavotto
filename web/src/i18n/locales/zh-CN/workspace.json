@@ -488,7 +488,12 @@
     "quickLayoutRatios": "调整排版比例",
     "importSvg": "粘贴 SVG（{{count}} 个对象）",
     "explodeSvg": "拆成可编辑对象",
-    "outlineText": "文字转轮廓（{{count}} 个）"
+    "outlineText": "文字转轮廓（{{count}} 个）",
+    "arrayCopies_other": "阵列（{{count}} 份）",
+    "addPathText": "在路径上加文字",
+    "pathTextStart": "移动路径文字起点",
+    "pathTextGap": "调整路径文字离线",
+    "editPathTextPath": "编辑路径文字的路径"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -622,7 +627,8 @@
     "paste": "粘贴",
     "copyAsAnnotation": "复制为标注",
     "pasteAsAnnotation": "粘贴为标注",
-    "pathfinder": "路径查找器"
+    "pathfinder": "路径查找器",
+    "addPathText": "在路径上加文字"
   },
   "rail": {
     "assets": "素材",
@@ -1051,7 +1057,8 @@
     "outlinePartial_other": "有 {{count}} 个文字没转成（字体不可用）",
     "outlineFailed_other": "{{count}} 个文字没转成轮廓（字体不可用）",
     "svgCopied": "已复制为 SVG，可以粘贴到 Illustrator、Inkscape、Figma",
-    "svgCopyFailed": "没能复制为 SVG"
+    "svgCopyFailed": "没能复制为 SVG",
+    "arrayTooMany": "一次最多阵列 {{max}} 份"
   },
   "tabs": {
     "allCanvases": "全部画布",

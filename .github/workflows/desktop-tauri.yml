@@ -54,16 +54,6 @@ on:
         required: false
         default: false
         type: boolean
-      signing-mode:
-        description: >-
-          Windows SignPath 签名模式。'wait'（默认）：提交后等待签名完成，
-          适合测试证书或能及时手动批准的场景。'submit-only'：只提交签名请求
-          不等待，把审批链接输出到 step summary，由人工在 SignPath UI 批准后，
-          再手动触发 complete-windows-signing.yml 完成下载/校验/重打更新包。
-          生产证书要求每次手动批准，长时间等待会占住 runner，用 submit-only 拆开。
-        required: false
-        default: 'wait'
-        type: string
     # **每一个 secret 都显式声明。** `secrets: inherit` 只能写在**调用方**
     # （`jobs.<id>.secrets: inherit`），写在被调用方是语法错误——actionlint
     # 当场逮到了。显式列一遍还有第二个好处：这份清单就是「桌面发布链需要
@@ -87,7 +77,12 @@ on:
         required: false
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
         required: false
-      SIGNPATH_API_TOKEN:
+      # Windows Authenticode（ADR 0202）。这两个是 `windows-signing` **环境**的 secret：
+      # 调用方的 `secrets: inherit` 传不了环境 secret，job 级 `environment:` 挂上之后
+      # GitHub 用的是环境里那一份。声明在这里只为让 actionlint 认得这两个名字。
+      CERTUM_EMAIL:
+        required: false
+      CERTUM_OTP:
         required: false
 
   # 单独跑桌面构建（排查用）。**不挂 Release**——挂 Release 只有一条路，
@@ -213,6 +208,11 @@ jobs:
           - { os: windows-latest, bundles: nsis, artifact: nsis,      arch: x86_64 }
     timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
     runs-on: ${{ matrix.os }}
+    # Windows 发行构建且 Certum 签名已使能时，这条腿挂在 `windows-signing` 环境下：
+    # 开始前要维护者批准，种子（CERTUM_OTP）只在那个环境里（ADR 0202）。其余腿与
+    # 签名未使能时求值为空串 = 不挂任何环境，行为与从前一样。**不许换成占位名**：
+    # GitHub 会把不存在的环境名当场建成一个无保护的环境。
+    environment: ${{ (matrix.os == 'windows-latest' && inputs.release_build && vars.CERTUM_SIGNING_ENABLED == 'true') && 'windows-signing' || '' }}
     permissions:
       # **不再需要 contents: write**：这条腿只把产物传成 workflow artifact，
       # 挂 Release 归 release.yml 的 publish job。留着一个用不上的写权限，
@@ -274,8 +274,8 @@ jobs:
         # 非发行试构建（workflow_dispatch + release_build=false）不受影响。
         #
         # Windows Authenticode 与 macOS / minisign 一样都是发行硬要求。
-        # SignPath 未使能时独立报错、写作业摘要并退出；不再沿用 2026-08-22
-        # 的临时未签名发行例外。非发行试构建仍可产出诊断 artifact。
+        # Certum 签名（vars.CERTUM_SIGNING_ENABLED，ADR 0202）未使能时独立报错、
+        # 写作业摘要并退出；不再沿用 2026-08-22 的临时未签名发行例外。非发行试构建仍可产出诊断 artifact。
         # 唯一的放行口是**按 tag 点名**的维护者豁免：仓库变量
         # WINDOWS_UNSIGNED_WAIVER_TAG 恰好等于本次 RELEASE_TAG 时只发 warning
         # 放行这一版；下一个版本号对不上，自动回到拦停。
@@ -290,7 +290,7 @@ jobs:
             [ -n "${MACOS_CERTIFICATE:-}" ]   || missing+=("MACOS_CERTIFICATE")
             [ -n "${MACOS_SIGN_IDENTITY:-}" ] || missing+=("MACOS_SIGN_IDENTITY")
             [ -n "${APPLE_ID:-}" ]            || missing+=("APPLE_ID（公证）")
-          elif [ "${SIGNPATH_ENABLED_VAR:-}" != "true" ] && [ -n "${RELEASE_TAG:-}" ] \
+          elif [ "${CERTUM_SIGNING_ENABLED_VAR:-}" != "true" ] && [ -n "${RELEASE_TAG:-}" ] \
                && [ "${WINDOWS_UNSIGNED_WAIVER_TAG:-}" = "$RELEASE_TAG" ]; then
             echo "::warning title=Windows 安装包未签名（维护者豁免 $RELEASE_TAG）::vars.WINDOWS_UNSIGNED_WAIVER_TAG 点名豁免本版——Windows 安装包没有 Authenticode 签名，用户首次运行会看到 SmartScreen 警告。更新包仍有 minisign 签名。"
             {
@@ -298,17 +298,17 @@ jobs:
               echo
               echo "\`vars.WINDOWS_UNSIGNED_WAIVER_TAG\` 点名豁免了这一版；下一版 tag 对不上会自动回到拦停。"
             } >> "$GITHUB_STEP_SUMMARY"
-          elif [ "${SIGNPATH_ENABLED_VAR:-}" != "true" ]; then
+          elif [ "${CERTUM_SIGNING_ENABLED_VAR:-}" != "true" ]; then
             # 独立失败分支：运行页 annotation 与摘要都必须说清拦停原因。
-            echo "::error title=Windows 安装包未签名::vars.SIGNPATH_ENABLED 未开启——本次发行的 Windows 安装包没有 Authenticode 签名。fail-closed：拒绝继续。"
+            echo "::error title=Windows 安装包未签名::vars.CERTUM_SIGNING_ENABLED 未开启——本次发行的 Windows 安装包没有 Authenticode 签名。fail-closed：拒绝继续。"
             {
               echo "### ❌ Windows 安装包未签名——已拦停"
               echo
-              echo "\`vars.SIGNPATH_ENABLED\` 未开启，本次发行的 \`Tavotto-*-Windows-Setup.exe\` **没有 Authenticode 签名**。"
+              echo "\`vars.CERTUM_SIGNING_ENABLED\` 未开启，本次发行的 \`Tavotto-*-Windows-Setup.exe\` **没有 Authenticode 签名**。"
               echo
               echo "fail-closed：未签名的 Windows 安装包不再放行，签名门禁在这里直接失败。"
               echo
-              echo "配好 SignPath 之后这条会自动消失，见 \`docs/code-signing-policy.md\`。"
+              echo "配好 Certum 签名（windows-signing 环境 + vars.CERTUM_SIGNING_ENABLED）之后这条会自动消失，见 \`docs/code-signing-policy.md\`。"
             } >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
@@ -318,7 +318,7 @@ jobs:
           fi
           echo "✅ 签名门禁通过（产物签名仍须在构建后验证）"
         env:
-          SIGNPATH_ENABLED_VAR: ${{ vars.SIGNPATH_ENABLED }}
+          CERTUM_SIGNING_ENABLED_VAR: ${{ vars.CERTUM_SIGNING_ENABLED }}
           WINDOWS_UNSIGNED_WAIVER_TAG: ${{ vars.WINDOWS_UNSIGNED_WAIVER_TAG }}
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -771,107 +771,91 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path out | Out-Null
           # 命名与 wheel / dmg 一致（Tavotto-<ver>-Windows-Setup.exe），不用 NSIS
-          # 默认的 Tavotto_<ver>_x64-setup.exe。**SignPath 的 artifact 配置按这个
-          # 文件名匹配**（signpath/windows-installer.artifact-configuration.xml），
-          # 改名字要两处一起改，否则签名步骤找不到文件、发出去的是未签名安装包。
+          # 默认的 Tavotto_<ver>_x64-setup.exe。后面签名与验签两步都按这个文件名找，
+          # 改名字要一起改，否则签名步骤找不到文件、发出去的是未签名安装包。
           $ver = "$env:RELEASE_TAG" -replace '^v', ''
           $nsis = @(Get-ChildItem src-tauri\target\release\bundle\nsis\*.exe)
           if ($nsis.Count -ne 1) { throw "NSIS 产物数量异常（$($nsis.Count) 个）" }
           Copy-Item $nsis[0].FullName "out\Tavotto-$ver-Windows-Setup.exe"
-          # 更新包不在这里收：它要装**签过名的**那个 exe，而签名要等 SignPath
-          # 回来（见后面「Windows 更新包」那步）。此刻 out/ 整个目录会被当成
-          # 签名请求的输入，多塞一个 zip 进去只会让 SignPath 那边对不上。
+          # 更新包不在这里收：它要装**签过名的**那个 exe（见后面「Windows 更新包」那步）。
           [System.IO.File]::AppendAllText($env:GITHUB_ENV, "APP_VERSION=$ver`n")
           Get-ChildItem out | Format-Table Name, Length
 
-      - name: 上传待签名 Windows 安装包
-        if: runner.os == 'Windows'
-        id: upload-unsigned-windows-artifact
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        with:
-          name: windows-installer-signing-input-${{ github.run_id }}
-          path: out/*
-          if-no-files-found: error
-
-      - name: 提交 Windows 安装包到 SignPath
-        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED == 'true'
-        id: signpath-windows
-        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
-          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
-          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
-          github-artifact-id: ${{ steps.upload-unsigned-windows-artifact.outputs.artifact-id }}
-          # submit-only 模式：只提交不等待，人工批准后由 complete-windows-signing.yml 接手。
-          # wait 模式：等待签名完成（默认，适合测试证书）。
-          wait-for-completion: ${{ inputs.signing-mode != 'submit-only' }}
-          output-artifact-directory: signed-out
-          parameters: |
-            version: "${{ env.APP_VERSION }}"
-
-      - name: 输出签名审批链接（submit-only 模式）
-        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED == 'true' && inputs.signing-mode == 'submit-only'
+      # ---------------- Windows Authenticode：Certum 云证书 + ssign（ADR 0202） ----------------
+      # 这条腿在 CERTUM_SIGNING_ENABLED 打开的发行构建里挂在 `windows-signing` 环境下
+      # （见本 job 的 environment:），开始之前要维护者在 GitHub 上点批准；种子与邮箱是那个
+      # 环境的 secret，**只进下面「签名」那一步的 env**，不进 job 级 env。
+      # 装 ssign 与签名拆成两步：编译时跑的 build.rs 碰不到种子。
+      - name: 装 ssign（Certum SimplySign 云签名客户端，钉版本、按锁文件从源码编）
+        if: runner.os == 'Windows' && vars.CERTUM_SIGNING_ENABLED == 'true' && env.IS_RELEASE_BUILD == '1'
         shell: pwsh
         run: |
-          $requestId = "${{ steps.signpath-windows.outputs.signing-request-id }}"
-          $webUrl = "${{ steps.signpath-windows.outputs.signing-request-web-url }}"
-          Write-Host "SignPath 签名请求已提交，等待人工批准：$webUrl"
-          @{
-            signing_request_id = $requestId
-            signing_request_web_url = $webUrl
-            app_version = "$env:APP_VERSION"
-            source_run_id = "$env:GITHUB_RUN_ID"
-            submitted_at = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
-          } | ConvertTo-Json | Out-File -FilePath "signpath-pending.json" -Encoding utf8
-          Get-Content "signpath-pending.json"
-          {
-            echo "## 等待人工批准 Windows 签名"
-            echo ""
-            echo "签名请求已提交到 SignPath，**请在 SignPath UI 手动批准**（生产证书要求每次手动批准）："
-            echo ""
-            echo "$webUrl"
-            echo ""
-            echo "批准后，手动触发 complete-windows-signing.yml workflow 完成后续步骤，填入："
-            echo "- signing-request-id: $requestId"
-            echo "- source-run-id: $env:GITHUB_RUN_ID"
-            echo "- app-version: $env:APP_VERSION"
-          } >> $env:GITHUB_STEP_SUMMARY
+          $ErrorActionPreference = "Stop"
+          # 独立的 CARGO_HOME / target：不碰 rust-cache 管着的那两份目录。
+          $env:CARGO_HOME = "$env:RUNNER_TEMP\ssign-cargo-home"
+          cargo install ssign --version 0.1.11 --locked `
+            --root "$env:RUNNER_TEMP\ssign" --target-dir "$env:RUNNER_TEMP\ssign-target"
+          if ($LASTEXITCODE -ne 0) { throw "cargo install ssign 失败（退出码 $LASTEXITCODE）" }
+          & "$env:RUNNER_TEMP\ssign\bin\ssign.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw "ssign 装上了却跑不起来" }
 
-      - name: 上传待签名信息（submit-only 模式）
-        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED == 'true' && inputs.signing-mode == 'submit-only'
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        with:
-          name: signpath-pending-${{ github.run_id }}
-          path: signpath-pending.json
-          if-no-files-found: error
-
-      - name: 替换为 SignPath 签名结果
-        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED == 'true' && inputs.signing-mode != 'submit-only'
+      - name: 签名 Windows 安装包（Certum 云证书）
+        if: runner.os == 'Windows' && vars.CERTUM_SIGNING_ENABLED == 'true' && env.IS_RELEASE_BUILD == '1'
         shell: pwsh
+        env:
+          CERTUM_EMAIL: ${{ secrets.CERTUM_EMAIL }}
+          CERTUM_OTP: ${{ secrets.CERTUM_OTP }}
         run: |
-          $signed = @(Get-ChildItem signed-out -Recurse -File -Filter "Tavotto-$env:APP_VERSION-Windows-Setup.exe")
-          if ($signed.Count -ne 1) {
-            throw "SignPath 返回的签名安装包数量异常（$($signed.Count) 个）"
+          $ErrorActionPreference = "Stop"
+          if (-not $env:CERTUM_EMAIL -or -not $env:CERTUM_OTP) {
+            throw "windows-signing 环境里缺 CERTUM_EMAIL / CERTUM_OTP（或这条腿没挂上那个环境）"
           }
-          Copy-Item $signed[0].FullName "out\Tavotto-$env:APP_VERSION-Windows-Setup.exe" -Force
-          $signature = Get-AuthenticodeSignature "out\Tavotto-$env:APP_VERSION-Windows-Setup.exe"
-          if ($signature.Status -ne 'Valid') {
-            throw "SignPath 返回的安装包签名无效：$($signature.Status)"
+          # ssign 登录后把会话令牌（约 30 分钟有效）缓存进 $XDG_RUNTIME_DIR；在 Windows 上它
+          # 不查目录属主，所以给它一个本步私有的目录，结束时连同令牌一起删掉。
+          $sess = Join-Path $env:RUNNER_TEMP ("ssign-session-" + [guid]::NewGuid())
+          New-Item -ItemType Directory -Path $sess | Out-Null
+          $env:XDG_RUNTIME_DIR = $sess
+          $exe = "out\Tavotto-$env:APP_VERSION-Windows-Setup.exe"
+          if (!(Test-Path $exe)) { throw "找不到待签名安装包: $exe" }
+          try {
+            # 一次调用签完：一个 6 位码 Certum 只认一次，别连着登录两次。
+            & "$env:RUNNER_TEMP\ssign\bin\ssign.exe" $exe `
+              --name "Tavotto Windows installer" --url "https://github.com/Tavotto/Tavotto"
+            if ($LASTEXITCODE -ne 0) { throw "ssign 签名失败（退出码 $LASTEXITCODE）" }
+          } finally {
+            Remove-Item -Recurse -Force $sess -ErrorAction SilentlyContinue
           }
-          Write-Host "SignPath 签名有效：$($signature.SignerCertificate.Subject)"
+
+      - name: 验签（Windows 自己判：Valid + 签名者 + 时间戳）
+        # 只看 Status 的话，任何一张有效证书都能过。签名者主题与期望值比对（仓库变量，
+        # 证书每年续期时指纹会变、主题不变），并要求有 RFC 3161 时间戳——没有时间戳的签名
+        # 在证书过期那天一起失效。
+        if: runner.os == 'Windows' && vars.CERTUM_SIGNING_ENABLED == 'true' && env.IS_RELEASE_BUILD == '1'
+        shell: pwsh
+        env:
+          EXPECTED_SIGNER: ${{ vars.CERTUM_SIGNER_SUBJECT }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not $env:EXPECTED_SIGNER) { throw "vars.CERTUM_SIGNER_SUBJECT 没配：没有期望值就验不了签名者" }
+          $exe = "out\Tavotto-$env:APP_VERSION-Windows-Setup.exe"
+          $sig = Get-AuthenticodeSignature -LiteralPath $exe
+          if ($sig.Status -ne 'Valid') { throw "安装包签名无效：$($sig.Status) $($sig.StatusMessage)" }
+          if ($sig.SignerCertificate.Subject -ne $env:EXPECTED_SIGNER) {
+            throw "签名者不对：$($sig.SignerCertificate.Subject)（期望 $env:EXPECTED_SIGNER）"
+          }
+          if (-not $sig.TimeStamperCertificate) { throw "签名没有时间戳" }
+          Write-Host "签名有效：$($sig.SignerCertificate.Subject)，指纹 $($sig.SignerCertificate.Thumbprint)，时间戳 $($sig.TimeStamperCertificate.Subject)"
 
       - name: 未签名即拦停（fail-closed）
-        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED != 'true' && env.IS_RELEASE_BUILD == '1' && vars.WINDOWS_UNSIGNED_WAIVER_TAG != env.RELEASE_TAG
+        if: runner.os == 'Windows' && vars.CERTUM_SIGNING_ENABLED != 'true' && env.IS_RELEASE_BUILD == '1' && vars.WINDOWS_UNSIGNED_WAIVER_TAG != env.RELEASE_TAG
         shell: pwsh
-        run: throw "SIGNPATH_ENABLED 未开启：Windows 安装包没有 Authenticode 签名，fail-closed 拒绝继续"
+        run: throw "CERTUM_SIGNING_ENABLED 未开启：Windows 安装包没有 Authenticode 签名，fail-closed 拒绝继续"
 
-      - name: Windows 更新包（必须在 SignPath 签名之后重做）
+      - name: Windows 更新包（必须在签名之后重做）
         # 与 macOS 同一条道理：打包器顺手打的那个 nsis.zip 装的是**还没签名**的
         # 安装器，自动更新推给用户的就成了一个 SmartScreen 会拦的 exe——新装的人
         # 拿到签名版、升级的人拿到未签名版，比不签更难查。所以这里用 out/ 里那份
-        # 最终安装包（SignPath 换过的那个）现做一个 zip，再用 minisign 签它。
+        # 最终安装包（上面签过名的那个）现做一个 zip，再用 minisign 签它。
         #
         # zip 里放什么名字不影响更新器：它解开后找第一个 .exe 执行。但 **zip 自己
         # 的文件名要能被 make_updater_manifest.py 认出来**（*-setup.nsis.zip）。
@@ -882,7 +866,7 @@ jobs:
         # 装出去的每一次应用内更新都会在下载完成后报「无法安装更新」——
         # v0.7.0 到 v0.10.0 的 Windows 更新包全是这么坏的，而整条链全绿。
         # 判据与复现记录见 make_updater_zip.py 抬头与 tests/test_updater_zip.py。
-        if: runner.os == 'Windows' && env.TAURI_SIGNING_PRIVATE_KEY != '' && inputs.signing-mode != 'submit-only'
+        if: runner.os == 'Windows' && env.TAURI_SIGNING_PRIVATE_KEY != ''
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"

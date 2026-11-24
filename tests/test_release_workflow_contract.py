@@ -281,7 +281,6 @@ _NODE24_RELEASE_ACTION_PINS = {
     "actions/download-artifact": "37930b1c2abaa49bbe596cd826c3c89aef350131",
     "pnpm/action-setup": "0977fd99725f1db4007ccb2928dbb4e90d06cc86",
     "softprops/action-gh-release": "efb35369e0ad2afab669f228072c1b0d510eae64",
-    "signpath/github-action-submit-signing-request": "f6d04783b4569d051e0c80105fe66e82819d0092",
 }
 
 
@@ -544,23 +543,6 @@ def test_desktop_is_reachable_only_through_release():
     assert not re.search(r"^\s*push:", head, re.M), "桌面链不该再由 tag 自己触发"
     rel = _wf(RELEASE)
     assert "desktop-tauri.yml" in rel.jobs["desktop"]
-
-
-def test_desktop_signing_mode_is_a_string_input_for_reusable_calls():
-    """choice/options 只属于 dispatch；写进 workflow_call 会让 GitHub 拒绝整个工作流。
-
-    按本模块的缩进读取器约定，只量去注释后的 call 输入块，不拿 dispatch 的类型作证。
-    """
-    head = _strip_comments(DESKTOP.read_text(encoding="utf-8")).split("\njobs:")[0]
-    call = re.search(r"(?ms)^  workflow_call:\s*\n(.*?)(?=^  [\w-]+:|^\S|\Z)", head)
-    assert call, "桌面链切不出 workflow_call 块"
-    mode = re.search(
-        r"(?ms)^      signing-mode:\s*\n(.*?)(?=^      [\w-]+:|^    \S|\Z)",
-        call.group(1),
-    )
-    assert mode, "workflow_call 没有 signing-mode 输入"
-    assert re.search(r"^        type:\s*string\s*$", mode.group(1), re.M), mode.group(1)
-    assert not re.search(r"^        options:", mode.group(1), re.M), mode.group(1)
 
 
 def test_desktop_never_writes_to_a_release_itself():
@@ -2123,3 +2105,103 @@ def test_the_diag_contract_gate_runs_on_the_resolved_sha_for_every_trigger():
     assert 'git show "$SHA:src/tavotto/engine/diagsend.py"' in run
     last = [ln for ln in run.splitlines() if ln.strip()][-1]
     assert '--ack "${ACK:-}"' in last and "||" not in last, "判定那一行的退出码必须原样决定这一步"
+
+
+# ── Windows Authenticode：Certum 云证书 + ssign（ADR 0202） ──────────────────
+#
+# 种子（CERTUM_OTP）加邮箱就能以维护者本人的名义签任何东西，所以这几条看的是
+# 「它能到哪里」：只有 Windows 发行腿在使能时挂上要人批准的 windows-signing 环境，
+# 种子只进签名那一步的 env，编 ssign 的那一步碰不到它，签完由 Windows 自己判
+# 签名者与时间戳（不是只看 Valid）。
+
+#: 环境名表达式：其余腿与未使能时求值为空串 = 不挂环境。**不许换成占位名**——
+#: GitHub 会把不存在的环境名当场建成一个无保护的环境。
+_SIGNING_ENV_EXPR = (
+    "${{ (matrix.os == 'windows-latest' && inputs.release_build"
+    " && vars.CERTUM_SIGNING_ENABLED == 'true') && 'windows-signing' || '' }}"
+)
+_SIGNING_STEP_IF = (
+    "runner.os == 'Windows' && vars.CERTUM_SIGNING_ENABLED == 'true' && env.IS_RELEASE_BUILD == '1'"
+)
+_SIGN_STEP = "签名 Windows 安装包（Certum 云证书）"
+
+
+def _build_step(prefix: str) -> tuple[int, str]:
+    steps = _wf(DESKTOP).steps("build")
+    hits = [
+        (i, s) for i, s in enumerate(steps) if (_Workflow.field(s, "name") or "").startswith(prefix)
+    ]
+    assert len(hits) == 1, f"build 里以「{prefix}」开头的步骤应恰好一个，实际 {len(hits)}"
+    return hits[0]
+
+
+def _job_head(body: str) -> str:
+    """job 里 `steps:` 之前的部分（runs-on / environment / env …）。"""
+    return re.split(r"^    steps:\s*$", body, maxsplit=1, flags=re.M)[0]
+
+
+def test_only_the_windows_release_leg_enters_the_signing_environment():
+    environments = {}
+    for path in sorted(WF.glob("*.yml")):
+        for job, body in _wf(path).jobs.items():
+            for value in re.findall(r"^    environment:[ \t]*(\S.*?)\s*$", _job_head(body), re.M):
+                environments[(path.name, job)] = value
+    signing = {k: v for k, v in environments.items() if "windows-signing" in v}
+    assert signing == {("desktop-tauri.yml", "build"): _SIGNING_ENV_EXPR}, signing
+    assert re.search(r"\{ os: windows-latest,", _wf(DESKTOP).jobs["build"]), (
+        "环境表达式按 matrix.os == 'windows-latest' 判，矩阵里那条腿的 os 字面量变了它就永远挂不上"
+    )
+
+
+def test_the_certum_seed_reaches_only_the_signing_step():
+    hits = []
+    for path in sorted(WF.glob("*.yml")):
+        wf = _wf(path)
+        for job, body in wf.jobs.items():
+            assert "secrets.CERTUM_" not in _job_head(body), (
+                f"{path.name}::{job} 把 Certum secret 放进了 job 级——那样 job 里每一步都拿得到种子"
+            )
+            for step in wf.steps(job):
+                if "secrets.CERTUM_" in step:
+                    hits.append((path.name, job, wf.field(step, "name")))
+    assert hits == [("desktop-tauri.yml", "build", _SIGN_STEP)], hits
+    _, step = _build_step(_SIGN_STEP)
+    env = step.split("\n        env:\n", 1)
+    assert len(env) == 2, "签名那一步的 secret 必须走 step 级 env:"
+    assert re.search(r"^          CERTUM_OTP: \$\{\{ secrets\.CERTUM_OTP \}\}$", env[1], re.M)
+    assert "--otp" not in step, "种子不许进命令行（进程列表看得见），只走环境变量"
+
+
+def test_ssign_is_pinned_built_apart_from_the_seed_and_the_signature_is_judged_by_windows():
+    i_install, install = _build_step("装 ssign")
+    i_sign, sign = _build_step(_SIGN_STEP)
+    i_verify, verify = _build_step("验签")
+    i_late, _ = _build_step("未签名即拦停")
+    i_zip, _ = _build_step("Windows 更新包")
+    i_up, _ = _build_step("上传最终桌面产物")
+    assert i_install < i_sign < i_verify < i_late < i_zip < i_up, (
+        "顺序必须是 装 → 签 → 验 → 晚期拦停 → 重打更新包 → 上传：更新包与清单都得算在签过名的字节上"
+    )
+    for step in (install, sign, verify):
+        assert _Workflow.field(step, "if") == _SIGNING_STEP_IF, _Workflow.field(step, "if")
+    run = _wf(DESKTOP).job_runs("build")
+    install_run = next(r for r in run if "cargo install ssign" in r)
+    assert "--version 0.1.11" in install_run and "--locked" in install_run, (
+        "ssign 钉到审过源码的版本、按它的锁文件编（ADR 0202 记了审的是哪一版）"
+    )
+    assert "secrets." not in install, "编 ssign 时跑的 build.rs 不许看见任何 secret"
+    sign_run = next(r for r in run if 'ssign.exe" $exe' in r)
+    assert "XDG_RUNTIME_DIR" in sign_run and "finally" in sign_run and "Remove-Item" in sign_run, (
+        "ssign 的会话令牌必须落在本步私有目录、结束时删掉，别留给后面 pnpm dlx 那一步"
+    )
+    verify_run = next(r for r in run if "Get-AuthenticodeSignature -LiteralPath $exe" in r)
+    for needle in (
+        "-ne 'Valid'",
+        "SignerCertificate.Subject -ne $env:EXPECTED_SIGNER",
+        "-not $sig.TimeStamperCertificate",
+        "-not $env:EXPECTED_SIGNER",
+    ):
+        assert needle in verify_run, f"验签少了 {needle!r}"
+    assert re.search(
+        r"^          EXPECTED_SIGNER: \$\{\{ vars\.CERTUM_SIGNER_SUBJECT \}\}$", verify, re.M
+    )

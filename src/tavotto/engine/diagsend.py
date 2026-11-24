@@ -510,6 +510,70 @@ def _transport_failure(exc: BaseException) -> _Failure:
     return _Failure("network")
 
 
+def _response_socket(resp):
+    """响应底层的 socket（拿不到 = None，调用方退回只在两次读之间查总时限）。"""
+    try:
+        return resp.fp.raw._sock
+    except AttributeError:
+        return None
+
+
+def stream_get(
+    url: str,
+    *,
+    max_bytes: int,
+    timeout: float,
+    deadline_s: float,
+    chunk_bytes: int = 64 * 1024,
+):
+    """流式 GET（高级版组件下载，ADR 0198 §五）：生成器，逐块交出字节。出站约束与 `_send` 一致——经 `_opener()`（平台证书校验、
+    **不跟随重定向**：任何 3xx 都当失败），调用方先把地址钉死在白名单里（本函数不判主机）。
+
+    * 只认 200；`Content-Length` 声明超过 `max_bytes` 立刻失败（一个字节都不读）；
+    * 实际读到的字节数**一超过 `max_bytes` 就中止**（读上限 + 1 字节来判断，不读完整个响应）；
+    * `timeout` 是每次 socket 操作的超时，`deadline_s` 是整个下载的总时限；
+    * 失败抛 `_Failure`：`network` / `timeout` / `tls` / `too_large`（超过上限）/ `unexpected_response`（非 200）。
+    调用方提前停止消费（`break` / 抛错）时生成器被关闭，连接随 `with` 退出。"""
+    req = urllib.request.Request(  # noqa: S310 — 调用方已把地址钉死为白名单主机
+        url,
+        method="GET",
+        headers={"User-Agent": "Tavotto-pro-install/1", "Accept": "application/octet-stream"},
+    )
+    started = time.monotonic()
+    total = 0
+    try:
+        with _opener().open(req, timeout=timeout) as resp:
+            if resp.status != 200:
+                raise _Failure("unexpected_response")
+            declared = (resp.headers.get("Content-Length") or "").strip()
+            if declared.isdigit() and int(declared) > max_bytes:
+                raise _Failure("too_large")
+            sock = _response_socket(resp)
+            while True:
+                remaining = deadline_s - (time.monotonic() - started)
+                if remaining <= 0:
+                    raise _Failure("timeout")
+                if sock is not None:  # 单次等待不超过剩余总时限：慢速滴灌也拖不过 deadline_s
+                    try:
+                        sock.settimeout(min(timeout, remaining))
+                    except OSError:  # 响应读完后连接已关：这一轮 read1 会直接返回空
+                        pass
+                # read1：有数据就返回，不像 read(n) 会一直等到攒够 n 字节
+                block = resp.read1(min(chunk_bytes, max_bytes - total + 1))
+                if not block:
+                    return
+                total += len(block)
+                if total > max_bytes:
+                    raise _Failure("too_large")
+                yield block
+    except urllib.error.HTTPError:
+        raise _Failure("unexpected_response") from None  # 含被拦下的 3xx
+    except _Failure:
+        raise
+    except Exception as exc:  # noqa: BLE001 — urllib / ssl / socket / http.client 的失败形状很多，统一归并
+        raise _transport_failure(exc) from None
+
+
 def _json_request(target: Target, path: str, payload: dict, timeout: float) -> _Response:
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     req = urllib.request.Request(  # noqa: S310 — 地址由 Target 钉死为白名单主机的 https

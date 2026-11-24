@@ -1869,6 +1869,22 @@
           "title": "粘贴 SVG › 粘贴一段 SVG：落成两个可编辑对象（不是图片），点中红的那个属性栏里是它的红色；一次撤销全撤回"
         }
       ]
+    },
+    {
+      "id": "canvas.path-text",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "文字工具点在路径上打字，字沿路径排出来（路径文字）",
+        "en-US": "With the text tool, click a path and type: the text runs along the path (text on a path)"
+      },
+      "entry": "画布工具栏 → 文字（T）→ 点在路径上",
+      "e2e": [
+        {
+          "spec": "vector-path-text.spec.ts",
+          "title": "路径文字 › 文字工具点在斜线路径上打字：字沿路径斜着排出来；撤销后路径文字消失"
+        }
+      ]
     }
   ]
 }

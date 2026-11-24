@@ -5237,6 +5237,169 @@ def scale_domain(ax, budget: list[int]) -> dict | None:
     return out
 
 
+#: `bar_baseline` 每一维的 `status` 闭集（V-002 `bar-baseline-truncated` 读它；不是 `ok` 一律不判）
+BAR_BASELINE_STATUSES = ("ok", "over_budget", "unavailable")
+
+
+def _bar_rects(patches, horizontal: bool) -> list[tuple[float, float, float, float]]:
+    """一个柱容器里可见柱的 `(底, 顶, 位置中心, 柱宽)`，按柱长那一维取。
+
+    竖柱的底是 `get_y()`、横柱是 `get_x()`：`Rectangle` 存的是锚点 + 有符号的高 / 宽，负值柱
+    `bar(x, -3)` 的锚点仍是 0、高是 -3，所以「底」就是锚点，不是包围盒的下沿。"""
+    out = []
+    for p in patches:
+        if horizontal:
+            base, length = float(p.get_x()), float(p.get_width())
+            width = float(p.get_height())
+            center = float(p.get_y()) + width / 2.0
+        else:
+            base, length = float(p.get_y()), float(p.get_height())
+            width = float(p.get_width())
+            center = float(p.get_x()) + width / 2.0
+        out.append((base, base + length, center, abs(width)))
+    return out
+
+
+#: 堆叠判定「端点相等 / 同一位置」的相对容差：乘的是**这一组柱自己的数值量级**（`_BarTops`），没有绝对下限——
+#: 固定的绝对下限会让柱高 3e-10 的整组柱「处处相等」，把最底层也当成上层（Codex #2124）
+_STACK_REL_TOL = 1e-9
+
+
+def _scale_of(values) -> float:
+    """一组数的量级：有限值里最大的绝对值（全是 0 / 没有有限值时为 0，容差随之为 0，即精确相等）。"""
+    return max((abs(v) for v in values if math.isfinite(v)), default=0.0)
+
+
+class _BarTops:
+    """所有容器柱顶的索引：按位置中心排序，查「某个位置上有没有别的容器的柱顶正好在这个高度」只二分一次。
+
+    柱数受配额约束（`FINGERPRINT_BUDGET` 量级），逐对比较是平方级，每次 override 都要重量一次，所以必须是
+    O(n log n)。容差按这一维这一组柱的量级取相对比例：长度方向看所有底 / 顶，位置方向看所有中心与柱宽，
+    同一张图整体放大 1e9 倍结论不变。"""
+
+    def __init__(self, rects: list[list[tuple[float, float, float, float]]]) -> None:
+        import bisect  # noqa: PLC0415
+
+        self._bisect = bisect
+        flat = [r for rs in rects for r in rs]
+        self._len_tol = _STACK_REL_TOL * _scale_of(v for b, t, _c, _w in flat for v in (b, t))
+        self._pos_tol = _STACK_REL_TOL * max(
+            _scale_of(c for _b, _t, c, _w in flat), _scale_of(w for _b, _t, _c, w in flat)
+        )
+        entries = sorted(
+            (center, top, k)
+            for k, rs in enumerate(rects)
+            for _base, top, center, _w in rs
+            if math.isfinite(top) and math.isfinite(center)
+        )
+        self._centers = [e[0] for e in entries]
+        self._entries = entries
+
+    def has_top(self, center: float, height: float, skip: int) -> bool:
+        if not (math.isfinite(center) and math.isfinite(height)):
+            return False
+        i = self._bisect.bisect_left(self._centers, center - self._pos_tol)
+        while i < len(self._entries) and self._entries[i][0] <= center + self._pos_tol:
+            _c2, top2, k2 = self._entries[i]
+            if k2 != skip and abs(height - top2) <= self._len_tol:
+                return True
+            i += 1
+        return False
+
+
+def _stacked_on_others(rects, k: int, tops: _BarTops) -> bool:
+    """第 k 个容器的**每一根**柱都正好叠在另一个容器某根柱的顶上（同一位置）——堆叠柱的上层。
+
+    上层的底各不相同时本来就没有共同基线；这里兜的是「下层柱高全相同」时上层底恰好统一的那种，
+    它的「基线」是下层的顶，不是柱长的起点，不判。"""
+    return all(tops.has_top(center, base, k) for base, _top, center, _w in rects)
+
+
+def _length_in_data(patches, axis_index: int, data) -> bool:
+    """柱长那一维是否真的经过这根轴的 `transData`（V-001 同一判据 `contains_branch_seperately`）。
+
+    `bar(..., transform=ax.transAxes)` 或 `get_xaxis_transform()` 这种长度在轴坐标里的柱，与 `ylim` 无关，
+    截不掉；混合变换只要长度那一维是数据坐标就照常判（Codex #2124）。说不出来的当作不经过，不判。"""
+    try:
+        return all(p.get_transform().contains_branch_seperately(data)[axis_index] for p in patches)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def bar_baseline(ax, budget: list[int]) -> dict | None:
+    """线性轴上柱的共同基线的只读事实（V-002；不进 `editable`、不进文档，同 `scale_domain`）。
+
+    只在这根轴上有**可见**的 `BarContainer`（`bar` / `barh` / `hist`）时出现，按柱长那一维分：竖柱记 `y`、
+    横柱（`orientation == "horizontal"`）记 `x`：`{"y": {"status": "ok", "baselines": [{"value": 0.0, "bars": 2}]}}`。
+    `baselines` 只收**有共同基线**的容器——容器里所有可见柱的底（有限值）精确相等；浮动柱 / 甘特图（底各不相同）、
+    堆叠柱的上层（`_stacked_on_others`）不收。底相同的容器合并成一项、柱数相加，按首次出现排序；数值不舍入。
+
+    事实**只有基线**：轴范围与尺度由规则从同一个 axes 元素的 `xlim` / `ylim` / `xscale` / `yscale` 读，
+    所以在检查器里改 `ylim` 不改事实、只改结论。只判直角坐标轴（`ax.name == "rectilinear"`，twin / inset 都是）：
+    3D 的 `bar`、极坐标的玫瑰图也是 `BarContainer`，但「柱底」在那里不是同一个概念，不发。柱长那一维不经过
+    `transData` 的容器（`transform=ax.transAxes`、`get_xaxis_transform()` 上的竖柱）与轴范围无关，不收（`_length_in_data`）。
+
+    `budget` 与数据指纹同一个上限（`FINGERPRINT_BUDGET`），是**第三份**计数器（与指纹、`scale_domain` 各自独立）；
+    按柱数扣，超出写 `over_budget` 且不扣；说不出方向（手工构造的 `BarContainer` 没有 `orientation`）或量的时候
+    抛错写 `unavailable`，规则见到这两种一律不判。"""
+    try:
+        if getattr(ax, "name", "") != "rectilinear":
+            return None
+        containers = [c for c in ax.containers if isinstance(c, BarContainer)]
+    except Exception:  # noqa: BLE001 —— 自定义 Axes 什么都可能抛；量不了就不发
+        return None
+    groups: dict[str, list[list]] = {"x": [], "y": []}
+    unknown = False
+    try:
+        data = ax.transData
+        for c in containers:
+            patches = [p for p in c.patches if p.get_visible()]
+            if not patches:
+                continue
+            orient = getattr(c, "orientation", None)
+            if orient not in ("vertical", "horizontal"):
+                unknown = True
+                continue
+            dim = "y" if orient == "vertical" else "x"
+            # 柱长不在数据坐标里（transAxes / 轴坐标混合变换）：与这根轴的范围无关，这个容器不发基线
+            if _length_in_data(patches, 1 if dim == "y" else 0, data):
+                groups[dim].append(patches)
+    except Exception:  # noqa: BLE001
+        unknown = True
+    if unknown:
+        return {"x": {"status": "unavailable"}, "y": {"status": "unavailable"}}
+    out: dict[str, dict] = {}
+    for dim in ("x", "y"):
+        conts = groups[dim]
+        if not conts:
+            continue
+        size = sum(len(ps) for ps in conts)
+        if size > budget[0]:
+            out[dim] = {"status": "over_budget"}
+            continue
+        budget[0] -= size
+        try:
+            rects = [_bar_rects(ps, dim == "x") for ps in conts]
+            tops = _BarTops(rects) if len(rects) > 1 else None
+            baselines: list[dict] = []
+            for k, rs in enumerate(rects):
+                bases = [b for b, _t, _c, _w in rs]
+                if not all(math.isfinite(b) for b in bases) or any(b != bases[0] for b in bases):
+                    continue  # 浮动柱 / 甘特图 / 底里有 NaN：没有共同基线，不判
+                if tops is not None and _stacked_on_others(rs, k, tops):
+                    continue
+                value = bases[0] + 0.0  # -0.0 → 0.0
+                hit = next((e for e in baselines if e["value"] == value), None)
+                if hit is None:
+                    baselines.append({"value": value, "bars": len(rs)})
+                else:
+                    hit["bars"] += len(rs)
+            out[dim] = {"status": "ok", "baselines": baselines}
+        except Exception:  # noqa: BLE001
+            out[dim] = {"status": "unavailable"}
+    return out or None
+
+
 _MIN_HIT_PX = 4.0  # 扁平元素最小命中厚度（display 像素）
 
 #: 3D 轴上登记的数据图元的角色（ADR 0135）；`_refresh_hidden_3d_projections` 只看这几种。
@@ -6179,6 +6342,8 @@ def _measure_manifest(
     fingerprint_budget = [FINGERPRINT_BUDGET]
     #: V-001 的计数配额：与指纹同一个上限、另一份计数器（见 `scale_domain`）
     scale_domain_budget = [FINGERPRINT_BUDGET]
+    #: V-002 的计数配额：同一个上限、第三份计数器（见 `bar_baseline`）
+    bar_baseline_budget = [FINGERPRINT_BUDGET]
     for el in state.elements:
         artist = el["artist"]
         if not _owner_axis_drawn(el):
@@ -6267,6 +6432,11 @@ def _measure_manifest(
                 domain = scale_domain(artist, scale_domain_budget)
                 if domain:
                     entry["scale_domain"] = domain
+                # 柱的共同基线（V-002 `bar-baseline-truncated`）：只读事实，只在轴上有可见的柱时出现；
+                # 范围与尺度由规则从本元素的 editable 读。没有柱时键整个缺席，预检输出逐字节不变
+                baseline = bar_baseline(artist, bar_baseline_budget)
+                if baseline:
+                    entry["bar_baseline"] = baseline
             # 只读事实（不在 editable、不进文档）：这根轴的范围此刻是不是自动缩放算出来的。`set_[xy]lim` 会把它关掉。
             # TAF 的「目标范围外改动」靠它区分「自动缩放跟着变」与「显式改了坐标范围」（figureverify._auto_prop）。
             # `peers`：共享该方向范围的其他已登记轴。空列表是实际观测，缺键是未取得证据。

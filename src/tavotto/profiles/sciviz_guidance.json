@@ -6,7 +6,8 @@
     "VAD": "Tamara Munzner, Visualization Analysis and Design, CRC Press 2014",
     "FDV": "Claus O. Wilke, Fundamentals of Data Visualization, O'Reilly 2019（全文 https://clauswilke.com/dataviz/）",
     "MATH": "数学事实（不归于任何一本书）",
-    "TAVOTTO": "Tavotto 自己的工程推导"
+    "TAVOTTO": "Tavotto 自己的工程推导",
+    "XG": "外部作图实践指引仓库的作图技能目录（地址与版本号不入库，Apache-2.0）：一份作图实践指引，不是原著也不是期刊规定；只作二手参考，其中的 pt / mm 数值不引用"
   },
   "entries": [
     {
@@ -80,7 +81,9 @@
       "spec": [
         "V-002"
       ],
-      "checks": []
+      "checks": [
+        "bar-baseline-truncated"
+      ]
     },
     {
       "id": "G-003",
@@ -736,7 +739,8 @@
         }
       ],
       "principles": [
-        "P5"
+        "P5",
+        "P9"
       ],
       "spec": [
         "V-006"
@@ -775,7 +779,7 @@
       "evidence": [
         {
           "src": "VAD",
-          "loc": "§12.2 Juxtapose vs Superimpose, p.267",
+          "loc": "§12.2 Juxtapose vs Superimpose, p.266",
           "tag": "原文",
           "quote": "two is very feasible and three is possible with care"
         }
@@ -1405,6 +1409,270 @@
       "principles": [
         "P3",
         "P5"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-055",
+      "title": "没画出来的观测要数得出来",
+      "basis": "statistics",
+      "strength": "inference",
+      "decidable": "context",
+      "agent": "默认把用户给的每个观测都画出来。因为缺失、不是数、筛选、抽样或类别太多而没画的，要说清规则，并给出前后各有多少行；不为了好画或好看悄悄少画。数据太多时改用密度、分箱或栅格化，而不是抽样。",
+      "exceptions": [
+        "用户明确要求只画一个子集：照做，仍然写明规则与计数"
+      ],
+      "evidence": [
+        {
+          "src": "XG",
+          "loc": "static/core/contract.md「Data-integrity gate」；references 目录的 asset-adaptation.md「Preserve data integrity」",
+          "tag": "二手"
+        },
+        {
+          "src": "GoG",
+          "loc": "§9.1.8, p.219",
+          "tag": "原文",
+          "quote": "the frame should always cover the data on which the graphs are based"
+        },
+        {
+          "src": "TAVOTTO",
+          "loc": "「给出前后计数」是 Tavotto 的工程约束；数据出图的 unplotted 计数是它的一部分实现",
+          "tag": "推导"
+        }
+      ],
+      "principles": [
+        "P1",
+        "P8"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-056",
+      "title": "上下标比正文小：按成品里的实际字号核",
+      "basis": "visual",
+      "strength": "inference",
+      "decidable": "auto",
+      "agent": "数学上下标会被排成更小的字（matplotlib 的 mathtext 约为正文的 0.7 倍），脚本里的 fontsize 看不出来。期刊对最小字号有要求时，按导出的成品核最小的那一段字，而不是按脚本里的数；不够大时调大正文字号，或者改用不缩小的写法。下限的数值只来自期刊或出版规范。",
+      "exceptions": [
+        "期刊单独给了上下标的下限时按那一条"
+      ],
+      "evidence": [
+        {
+          "src": "TAVOTTO",
+          "loc": "matplotlib 3.11.2 实测：7 pt 的 $R^2$ 在 PDF 里有一段 4.9 pt 的 Tf；看护 tests/test_rendercore_text_size.py",
+          "tag": "推导"
+        },
+        {
+          "src": "XG",
+          "loc": "references 目录的 qa-contract.md「Typography and PDF glyph floor」；scripts 目录的 audit_pdf_text.py（它写的 5 pt 是 单一期刊系列的做法，不引用）",
+          "tag": "二手"
+        }
+      ],
+      "principles": [
+        "P7"
+      ],
+      "spec": [
+        "V-009"
+      ],
+      "checks": []
+    },
+    {
+      "id": "G-057",
+      "title": "可以互相比较的面板用同一种不确定性定义",
+      "basis": "statistics",
+      "strength": "inference",
+      "decidable": "no",
+      "agent": "几个面板摆在一起让读者比较时，误差线或误差带要代表同一种量（都是 SD，或都是 95% CI），样本单位也一致；确实不同的要在图注里逐个写明。面板之间 n、分母或估计方法变了，同样要说。含义拿不准时问用户，不从图上猜。",
+      "exceptions": [
+        "面板展示的本来就是不同性质的量"
+      ],
+      "evidence": [
+        {
+          "src": "XG",
+          "loc": "references 目录的 qa-contract.md「Uncertainty consistency」；references 目录的 multipanel-evidence-architecture.md「Assign visual hierarchy from evidence hierarchy」",
+          "tag": "二手"
+        },
+        {
+          "src": "FDV",
+          "loc": "ch.16 Visualizing Uncertainty, p.189",
+          "tag": "原文"
+        },
+        {
+          "src": "TAVOTTO",
+          "loc": "「跨面板一致」是从 P2 与 G-005 推出来的；判不了，只能由作者确认",
+          "tag": "推导"
+        }
+      ],
+      "principles": [
+        "P2"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-058",
+      "title": "一张图回答一个问题、各面板分担不同的论证：写法建议",
+      "basis": "taste",
+      "strength": "preference",
+      "decidable": "no",
+      "agent": "规划多面板图时，可以先请用户用一句话说出这张图要回答的问题，再看每个面板各自承担什么（主要证据、对照、另一种方法的验证、边界情况）。这是组织论证的一种写法，不是规定：面板怎么分、放不放进正文由作者定，不要把「面板重复」或「缺对照」当问题报告，也不要从数据的相关性替作者下因果结论。",
+      "exceptions": [],
+      "evidence": [
+        {
+          "src": "XG",
+          "loc": "references 目录的 multipanel-evidence-architecture.md（原文自述是从少数几篇期刊论文归纳的风格指引，不是期刊要求）",
+          "tag": "二手"
+        }
+      ],
+      "principles": [
+        "P7"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-059",
+      "title": "小倍数的面板按有逻辑的顺序排",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "小倍数里的面板按一条看得出的规则排：时间或剂量递增、类别从高到低等，不要随手按文件顺序。合成组图时，阅读顺序（左到右、上到下）要与你想讲的先后一致；顺序拿不准时问用户，不自己猜。",
+      "exceptions": [
+        "用户或期刊已指定顺序",
+        "各面板之间没有天然顺序时，按数据派生的量（如中位数）排也可以"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.21 Multipanel Figures, p.260",
+          "tag": "原文",
+          "quote": "Always arrange the panels in a small multiples plot in a meaningful and logical order."
+        },
+        {
+          "src": "VAD",
+          "loc": "§12.4.3 Matrix Alignments, p.283",
+          "tag": "原文",
+          "quote": "a data-driven way to spatially order information so that both general trends and outliers can be spotted"
+        },
+        {
+          "src": "TAVOTTO",
+          "loc": "复合图（compound figure）的阅读顺序应服从叙事：书里只给了字母标注从左上起、按行依次的约定（FDV p.261），没有明说顺序要服从叙事",
+          "tag": "推导"
+        }
+      ],
+      "principles": [
+        "P9"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-060",
+      "title": "要互相比较的面板并排，轴线对齐",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "要让读者互相比较的面板，放在同一行或同一列，让它们的轴线和图形元素对齐，并共用同一把尺（同量纲时范围也一致，见 G-027）。对齐靠排版保证，不要靠改数据范围凑；范围不一致只提示，不替用户改。",
+      "exceptions": [
+        "各面板量纲不同，范围本来就该不同（见 G-027）",
+        "面板之间没有比较关系"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.21 Multipanel Figures, p.264",
+          "tag": "原文",
+          "quote": "The axes and other graphical elements of the individual panels should all be aligned to each other."
+        },
+        {
+          "src": "VAD",
+          "loc": "§12.3.2 Share Data, p.273",
+          "tag": "原文",
+          "quote": "Small multiples are often aligned into a list or matrix to support comparison with the highest precision."
+        },
+        {
+          "src": "VAD",
+          "loc": "§12.3.5 Juxtapose Views, p.278",
+          "tag": "原文",
+          "quote": "to support higher-precision comparison than unaligned views"
+        },
+        {
+          "src": "TAVOTTO",
+          "loc": "「同一组放同一行或同一列」是上面两条的工程落实，书里没有把行与列分开讨论",
+          "tag": "推导"
+        }
+      ],
+      "principles": [
+        "P9"
+      ],
+      "spec": [
+        "V-006"
+      ],
+      "checks": []
+    },
+    {
+      "id": "G-061",
+      "title": "组图里同一对象用同一套视觉语言",
+      "basis": "visual",
+      "strength": "strong",
+      "decidable": "context",
+      "agent": "一张组图里，同一个对象（某一组、某一性别、某种处理）在各面板用同样的颜色、符号、先后顺序，图例只留一份。合成多张图时先对齐这些，再谈版面；面板字母标注要小、字体与全图一致、全文统一大小写。",
+      "exceptions": [
+        "各面板讲的是互不相干的数据"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.21 Multipanel Figures, p.261",
+          "tag": "原文",
+          "quote": "the same things look the same or at least substantively similar across figures"
+        },
+        {
+          "src": "FDV",
+          "loc": "ch.21 Multipanel Figures, p.262",
+          "tag": "原文",
+          "quote": "The order of the boxplots in panel (c) should be switched so it matches panels (a) and (b)."
+        },
+        {
+          "src": "FDV",
+          "loc": "ch.21 Multipanel Figures, p.261（面板标注像页码，不应抢眼）",
+          "tag": "原文",
+          "quote": "The labels should not be the first thing you see when you look at a compound figure."
+        }
+      ],
+      "principles": [
+        "P9"
+      ],
+      "spec": [],
+      "checks": []
+    },
+    {
+      "id": "G-062",
+      "title": "组图的主次与叙事顺序由作者的目的定",
+      "basis": "undecidable",
+      "strength": "inference",
+      "decidable": "no",
+      "agent": "哪个面板是主结果、哪些面板要互相比较、先讲哪一个，从图和数据里看不出来，是作者的目的。用户没说清时，出一道选择题（比较各组 / 看趋势 / 补充说明等）再排；不要自己猜，也不要为了让某个面板更醒目去改它的数据范围。主次只通过面板大小和位置体现。",
+      "exceptions": [
+        "用户已明说主次与顺序"
+      ],
+      "evidence": [
+        {
+          "src": "FDV",
+          "loc": "ch.21 Multipanel Figures, p.260（复合图是为了「一个总的要点」）",
+          "tag": "原文",
+          "quote": "combine several independent panels into a figure that conveys one overarching point"
+        },
+        {
+          "src": "TAVOTTO",
+          "loc": "书里没有讨论面板的主次、大小或跨格；这一条是 Tavotto 的推导，依据是目的由用户确认（decision-framework 第 2 节、VAD p.78）",
+          "tag": "推导"
+        }
+      ],
+      "principles": [
+        "P9"
       ],
       "spec": [],
       "checks": []

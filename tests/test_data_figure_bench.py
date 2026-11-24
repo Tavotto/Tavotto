@@ -443,7 +443,7 @@ def test_mixed_fake_answers_make_the_per_case_counts_vary(tmp_path):
 
 def test_cases_flag_selects_the_set_and_the_report_names_it(tmp_path):
     hold, _ = roles_report(tmp_path, "--fake", "good", "--cases", "holdout")
-    assert hold["case_set"] == "holdout" and hold["stats"]["cases"] == 24
+    assert hold["case_set"] == "holdout" and hold["stats"]["cases"] == 30
     assert {c["id"][:3] for c in hold["cases"]} == {"HO-"}
     both, _ = roles_report(tmp_path, "--fake", "good", "--cases", "all", "--only", "RC-01,HO-01")
     assert [c["id"] for c in both["cases"]] == ["RC-01", "HO-01"]
@@ -534,5 +534,5 @@ def test_arm_rules_prints_the_gate_table_and_the_hard_zero(tmp_path):
     assert set(gate["versions"]) == {"strict", "medium", "loose"}
     for v in ("strict", "medium"):
         assert gate["versions"][v]["all"]["skipped_but_rules_wrong"] == 0
-    assert gate["rules_right"]["all"]["cases"] == 46
+    assert gate["rules_right"]["all"]["cases"] == 52
     assert "必须 0" in text and "holdout-plain" in text

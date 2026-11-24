@@ -590,7 +590,10 @@ cancelled, closed or failed send is never resumed on its own.
 looking at into a link that other people can open in a browser and comment on,
 without installing Tavotto or signing in. It uploads **only when you press
 *Create link* or *Update this link***; opening the window uploads nothing, and a
-cancelled or failed upload is never resumed on its own.
+cancelled or failed upload is never resumed on its own. An agent in the Tavotto
+plugin (Codex, Claude Code…) can also start the same upload, but only after it has
+asked you and you have said yes; without your approval it only shows a preview and
+sends nothing.
 
 * **What is uploaded.** A rendered picture of the current figure or layout (PNG,
   at most 3000 px on the long side), a list of the elements on that picture —
@@ -627,6 +630,23 @@ cancelled or failed upload is never resumed on its own.
   every minute while the *Review* tab is open; with no such link it makes no
   request at all.
 * **Turning it off.** `TAVOTTO_NO_REVIEW_SHARE=1` removes the feature and all of
+  its network requests (the plugin passes this switch on to its agent tool).
+
+## Paid edition components
+
+These requests exist only on a computer where a paid-edition license has been
+activated; without a license the app makes none of them.
+
+* **Fetching the component release list.** The app sends the license number,
+  this device's public key, a signature, a timestamp, the system platform and
+  the protocol versions it supports, to get the release list and a short-lived
+  download address for the paid-feature component. **It does not send your
+  projects, scripts, data, file paths or computer details.**
+* **Downloading the component.** The component is downloaded from Tavotto's
+  download server, which records the IP address and time, as it does for in-app
+  updates. The component runs on this computer as a separate program and does
+  not connect to the network.
+* **Turning it off.** `TAVOTTO_NO_LICENSE=1` removes the paid edition and all of
   its network requests.
 
 ## Local service

@@ -701,9 +701,23 @@
       "noX": "No X axis",
       "noGroup": "No grouping"
     },
+    "connect": {
+      "pill": "Connect AI for smart analysis"
+    },
     "suggest": {
       "apply": "Try suggested",
-      "reading": "Checking columns…"
+      "reading": "Checking columns…",
+      "connectHint": "Once connected, it works out what each column is and picks the X axis, Y axis and grouping."
+    },
+    "spec": {
+      "line": "Drawn at {{parts}}",
+      "join": ", ",
+      "widthTwo": "{{single}} mm single / {{double}} mm double column",
+      "widthOne": "{{single}} mm width",
+      "fontRange": "{{min}}–{{max}} pt text",
+      "fontOne": "{{min}} pt text",
+      "fontMin": "≥ {{min}} pt text",
+      "fontMax": "≤ {{max}} pt text"
     },
     "redraw": {
       "from": "Drawn from {{file}}",

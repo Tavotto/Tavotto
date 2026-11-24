@@ -929,7 +929,10 @@ def test_many_tspans_are_joined_in_linear_time(monkeypatch):
 # 允许的结局：正常成功 / 做不准 / timeout / too_many_elements / too_large；不允许的是挂很久。
 
 SHORT_DEADLINE_S = 0.3
-SHORT_MARGIN_S = 1.0
+SHORT_MARGIN_S = 2.0
+#: 计时用**本进程 CPU 时间**（`time.process_time`），不用墙钟：CI runner 被抢 CPU 时，墙钟里会混进排队等 CPU 的时间
+#: （小输入、解析单位≈0 时照样 1.30 s 被踢，#2035 合并组 clip-many-children）；真正漏查墙钟的循环会实打实烧 CPU
+#: （修前 4 s 到 500 s 以上），按 CPU 时间照样抓得住。被测代码自己的墙钟只会让它更早停，不会让 CPU 时间变长
 #: 余量还要随本机速度放大：墙钟查不进去的那几段（C 的 XML 解析、解析前对全文的正则扫描）耗时与机器快慢成正比，
 #: 负载高的 CI 分片上一份 1.7 MB 的输入光这些就能吃掉 1 秒（#2034 合并组 3.13 分片 1.30 s 被踢）。
 #: 以「同一份输入不带任何检查直接解析一遍」的耗时作单位：真正漏查墙钟的循环是超线性的（修前 4 s 到 500 s 以上），照样抓得住
@@ -943,12 +946,12 @@ def _parse_unit(text: str) -> float:
     data = text.encode()
     best = float("inf")
     for _ in range(2):
-        t0 = time.monotonic()
+        t0 = time.process_time()
         try:
             ET.fromstring(data)
         except ET.ParseError:
             pass
-        best = min(best, time.monotonic() - t0)
+        best = min(best, time.process_time() - t0)
     return best
 
 
@@ -1087,17 +1090,17 @@ def test_short_wall_clock_bounds_every_construction(name, monkeypatch):
     text = _SHORT_CASES[name]()
     assert len(text.encode()) <= svgimport.MAX_BYTES, "构造超过了 MAX_BYTES：先调小再比"
     unit = _parse_unit(text)
-    t0 = time.monotonic()
+    w0, c0 = time.monotonic(), time.process_time()
     try:
         r = svgimport.import_svg(text)
         got = "ok" if not r["unsupported"] else "unsupported"
     except svgimport.SvgImportError as e:
         got = e.code
         assert got in _OK_CODES, got
-    elapsed = time.monotonic() - t0
+    cpu, wall = time.process_time() - c0, time.monotonic() - w0
     allowed = SHORT_DEADLINE_S + SHORT_MARGIN_S + SHORT_CALIBRATION_FACTOR * unit
-    assert elapsed <= allowed, (
-        f"{name}: {elapsed:.2f}s ({got}), 允许 {allowed:.2f}s（解析单位 {unit:.3f}s）"
+    assert cpu <= allowed, (
+        f"{name}: CPU {cpu:.2f}s / 墙钟 {wall:.2f}s ({got}), 允许 {allowed:.2f}s（解析单位 {unit:.3f}s）"
     )
 
 

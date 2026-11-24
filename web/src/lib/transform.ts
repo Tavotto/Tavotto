@@ -1,4 +1,4 @@
-import type { CanvasObject, EndPoint, Gradient, PanelObject, PathObject, ShapeObject, TextObject } from '@/types/document'
+import type { CanvasObject, EndPoint, Gradient, PanelObject, PathObject, PathTextObject, ShapeObject, TextObject } from '@/types/document'
 import { lineEndpoints, objectRotation, panelRotation } from '@/types/document'
 import { toPathObject } from './convertToPath'
 import { pathToMm, rotatePoint, toPathSubpaths, type MmSubpath, type XY } from './pathEdit'
@@ -71,10 +71,10 @@ export function visibleBounds(objs: readonly CanvasObject[], all: readonly Canva
 
 /* ------------------------------------- 缩放 ------------------------------------- */
 
-/** 「缩放描边和效果」：线宽、圆角、文字边框 / 内边距跟着 √(kx·ky) 走 */
+/** 「缩放描边和效果」：线宽、圆角、文字边框 / 内边距、路径文字的手动离线跟着 √(kx·ky) 走 */
 function scaleStrokes<T extends CanvasObject>(o: T, k: number): T {
   const c = o as unknown as Record<string, number | undefined>
-  for (const f of ['strokePt', 'cornerRadius', 'borderPt', 'padding'] as const) {
+  for (const f of ['strokePt', 'cornerRadius', 'borderPt', 'padding', 'baselineOffsetPt'] as const) {
     if (typeof c[f] === 'number') c[f] = (c[f] as number) * k
   }
   return o
@@ -113,6 +113,8 @@ export function scaleObject<T extends CanvasObject>(o: T, kx: number, ky: number
   } else {
     out.w *= Math.abs(sx)
     out.h *= Math.abs(sy)
+    // 路径文字（ADR 0190）：路径跟着框缩；整组缩放时字号也跟着变（与横排文字同一条）
+    if (out.type === 'pathText' && opt.text === 'size') (out as unknown as PathTextObject).sizePt *= k
   }
   out.x = ncx - out.w / 2
   out.y = ncy - out.h / 2
@@ -201,6 +203,39 @@ function flipPathLocal(p: PathObject, axis: Axis): PathObject {
 }
 
 /**
+ * 路径文字镜像（ADR 0190）：路径翻过来，字不倒、不变反字。上下翻 = 只翻路径（字仍从左往右读，落到路径另一侧的上方）；
+ * 左右翻 = 翻路径后再把走向倒过来（否则字会倒着走），起点比例跟着换成 1 − 起点、对齐的起止对调——字仍在原来那一侧
+ */
+function flipPathTextLocal(p: PathTextObject, axis: Axis): PathTextObject {
+  const subpaths = p.subpaths.map((sp) => {
+    const nodes = sp.nodes.map((n) => ({
+      ...n,
+      p: flipPt(n.p, axis),
+      ...(n.in ? { in: flipPt(n.in, axis) } : {}),
+      ...(n.out ? { out: flipPt(n.out, axis) } : {}),
+    }))
+    if (axis === 'v') return { ...sp, nodes }
+    // 倒过来走：进出手柄对调；闭合路径保住起点（n0, nk, …, n1），开放路径从原来的终点起
+    const swap = (n: (typeof nodes)[number]) => {
+      const { in: i, out: o, ...rest } = n
+      return { ...rest, ...(o ? { in: o } : {}), ...(i ? { out: i } : {}) }
+    }
+    const rev = sp.closed ? [nodes[0], ...nodes.slice(1).reverse()] : [...nodes].reverse()
+    return { ...sp, nodes: rev.map(swap) }
+  })
+  const out: PathTextObject = { ...p, subpaths }
+  if (axis === 'h') {
+    const off = 1 - (p.startOffset ?? 0)
+    if (off > 0 && off < 1) out.startOffset = Math.round(off * 10000) / 10000
+    else if (off >= 1) out.startOffset = 1
+    else delete out.startOffset
+    if (p.textAlign === 'end') delete out.textAlign
+    else if (!p.textAlign) out.textAlign = 'end'
+  }
+  return out
+}
+
+/**
  * 沿过 `ref` 的竖线（`h`，左右翻）/ 横线（`v`，上下翻）镜像。页面上的镜像 = 自身框里同一根轴的镜像 + 角度取反
  * （F·R(θ) = R(−θ)·F），所以：框关于 ref 翻过去、角度取反、再在自身框里翻——路径翻锚点、箭头 / 直线翻端点、面板切
  * flipH / flipV（面板的落位是「先翻再转」）、文字只翻位置（字不倒过来）、自身对称的形状不用动几何、不对称的先换成路径。
@@ -218,6 +253,7 @@ export function reflectObject(o: CanvasObject, axis: Axis, ref: XY): CanvasObjec
       if (p) out = flipPathLocal(p, axis)
     }
   } else if (out.type === 'path') out = flipPathLocal(out as PathObject, axis)
+  else if (out.type === 'pathText') out = flipPathTextLocal(out as PathTextObject, axis)
   else if (out.type === 'arrow') {
     out.start = flipEnd(out.start, axis)
     out.end = flipEnd(out.end, axis)

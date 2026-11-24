@@ -11,7 +11,7 @@ import type { CanvasObject, PanelObject } from '@/types/document'
  * 也不漂）、框尺寸、以及所有按**页面 pt / mm 计的量**一起乘同一个比例。
  *
  * 要乘的字段是一张表，不按对象类型 switch：对象上有哪个就乘哪个（字号 `sizePt`、线宽
- * `strokePt`、文本框描边 `borderPt`、文本框内边距 `padding`、圆角 `cornerRadius`）。
+ * `strokePt`、文本框描边 `borderPt`、文本框内边距 `padding`、圆角 `cornerRadius`、路径文字手动离线 `baselineOffsetPt`）。
  * 端点 `start` / `end` 是相对框的比例，不变。新增一个按页面尺寸计的字段，加进这张表。
  */
 export const ANNOTATION_SCALED_FIELDS = [
@@ -20,6 +20,7 @@ export const ANNOTATION_SCALED_FIELDS = [
   'borderPt',
   'padding',
   'cornerRadius',
+  'baselineOffsetPt',
 ] as const
 
 type ScaledField = (typeof ANNOTATION_SCALED_FIELDS)[number]
