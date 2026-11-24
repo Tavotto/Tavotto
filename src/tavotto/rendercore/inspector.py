@@ -454,6 +454,26 @@ def _notdef_probe(obj, subtype: str):
     return lambda code: True if names.get(code) == ".notdef" else None
 
 
+#: matplotlib < 3.11 的 Type 3：码位 > 255 的字不进 `Tj`，画成名为 `/<字体资源名>-<PostScript 名>-<字形名>` 的
+#: Form XObject（`backend_pdf.RendererPdf.draw_text` 的 multibyte 分支）。缺字时字形名是 `.notdef`。
+_MPL_TYPE3_GLYPH_FORM = re.compile(r"^/([^-/]+)-.+-(?P<glyph>[^-]+)$")
+
+
+def _note_type3_glyph_form(w, name: str, res_fonts, fonts_seen: dict) -> None:
+    """一个 `Do` 若是 matplotlib Type 3 的字形 Form：记到那个字体上（用到了；字形名是 `.notdef` 就是缺字方块）。"""
+    m = _MPL_TYPE3_GLYPH_FORM.match(name)
+    if m is None or res_fonts is None:
+        return
+    fobj = res_fonts.get("/" + m.group(1))
+    if fobj is None or str(fobj.get("/Subtype", "")) != "/Type3":
+        return
+    font = _font_record("/" + m.group(1), fobj, fonts_seen)
+    font.used = True
+    w.fonts[font.key] = font
+    if m.group("glyph") == ".notdef":
+        font.notdef += 1
+
+
 def _note_notdef(font: _Font, raw: bytes) -> None:
     """一段文字里有几个码落到 `.notdef`（缺字方块）；判不了的码让这个字体记「未核」。"""
     probe = font.notdef_of
@@ -650,6 +670,7 @@ def _walk(
             xobj = res_xobj.get(name) if res_xobj is not None else None
             if xobj is None:
                 continue
+            _note_type3_glyph_form(w, name, res_fonts, fonts_seen)
             sub = str(xobj.get("/Subtype", ""))
             if sub == "/Image":
                 w.images.append(_image_facts(xobj, ctm))

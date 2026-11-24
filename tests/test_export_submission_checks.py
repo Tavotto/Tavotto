@@ -70,7 +70,8 @@ def test_a_figure_drawn_without_a_cjk_font_fails_the_glyph_check(tmp_path, fontt
     bad = I.inspect(_mpl_pdf(tmp_path / "cjk.pdf", "A浓", fonttype=fonttype), "pdf", plan=PLAN)
     assert bad["checks"]["glyphs"] == "failed", bad["observed"]["fonts_used"]
     assert any("缺字" in n for n in bad["notes"])
-    assert any(f["last_resort"] for f in bad["observed"]["fonts_used"])
+    # matplotlib ≥ 3.11 退到 LastResort；更早的版本画成 DejaVu 的 `.notdef`（Type 3 是一个字形 Form XObject）
+    assert any(f["last_resort"] or f["notdef"] for f in bad["observed"]["fonts_used"])
     # standard 下照样交付（文件能打开），但失败要说出来：可选项失败
     assert "glyphs" in bad["policy"]["optional_failed"]
     # 反证：字都在 → glyphs verified
