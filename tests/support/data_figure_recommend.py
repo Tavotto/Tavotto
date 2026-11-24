@@ -591,6 +591,8 @@ def tally(rows: Sequence[tuple[dict, dict]]) -> dict:
     for c, m in rows:
         if c["tier"] == "pair":
             pairs.setdefault(c["pair"]["id"], []).append((c, m))
+    # 只跑一部分用例（`--only`）时一对可能只来了一边：成对的统计只算两边都在的，那一条仍计入上面的逐条合计
+    pairs = {pid: ab for pid, ab in pairs.items() if len(ab) == 2}
     same_top = sum(1 for ab in pairs.values() if ab[0][1]["rules_top"] == ab[1][1]["rules_top"])
     shape_same = [
         pid for pid, ab in pairs.items() if _role_shape(ab[0][0]) == _role_shape(ab[1][0])

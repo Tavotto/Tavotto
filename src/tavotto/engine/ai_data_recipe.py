@@ -2250,13 +2250,15 @@ def default_candidates(
             return NeedsChoice("pick_unit", _col_options("unit", ids, s), _unsure("unit"))
     # G-018：折线只用于有序横轴。读懂数据判过「规则选作横轴的这一列是测量值」（`picks.x_measure` = 那一列的列名）时，这一列与纵轴是两个独立测量，
     # 趋势类不出、关系类（散点）排第一。事实绑在列名上：用户换了横轴（`roles.x_ord` 不是它）就不生效；没带这个键 = 与从前逐字相同。
-    # 没有关系图可换（x 不是数值 / 关系图资格不过）就不拿掉趋势类——宁可保留从前的结果，也不出零备选
+    # 没有关系图可换（x 不是数值 / 关系图资格不过）或纵轴是多列（散点画不全这几列）就不拿掉趋势类——宁可保留从前的结果，也不出零备选、不丢列
     x_independent = (
         roles.x_ord is not None
         and roles.x_numeric
         and isinstance(picks.get("x_measure"), str)
         and picks["x_measure"] == roles.x_ord
         and not roles.stack
+        # 多列纵轴只有趋势类画得全（每列一条线）：拿掉趋势类会把选好的列悄悄丢成一列，所以这时不生效、保持从前的结果
+        and len(roles.ys) == 1
     )
     can_trend = roles.x_ord is not None and not x_independent
     repeats = s.repeats and not (promoted and set(s.id_like) <= set(promoted))

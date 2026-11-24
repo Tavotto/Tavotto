@@ -336,3 +336,13 @@ def test_duplicate_x_only_inside_a_colour_group_is_not_a_duplicate(tmp_path):
         rows += [[d, "ctrl", 0.1 * d], [d, "drug", 0.2 * d]]
     res, *_ = cands(tmp_path, rows)
     assert codes(res)[0] == "line_points"
+
+
+def test_multi_y_keeps_every_selected_column_even_when_x_is_judged_a_measure(tmp_path):
+    """多列纵轴只有趋势类画得全：这时 `x_measure` 不生效，选好的列一列都不丢（Codex 评审 #2159）。"""
+    rows = [["a", "b", "c"]] + [[i * 1.5 + 0.2, 2 + 0.7 * i, 9 - 0.4 * i] for i in range(10)]
+    base, *_ = cands(tmp_path, rows, picks={"x": "a", "y": ["b", "c"]})
+    res, *_ = cands(tmp_path, rows, picks={"x": "a", "y": ["b", "c"], "x_measure": "a"})
+    assert res.roles["y"] == ["b", "c"] == base.roles["y"]
+    assert res.items and all(tuple(c.recipe.y) == ("b", "c") for c in res.items)
+    assert codes(res) == codes(base)

@@ -82,3 +82,13 @@ def test_ideal_column_roles_remove_every_recommended_forbidden_trend_line(tmp_pa
         assert RC.rules_run(case, tmp_path / "c" / cid)["recommended"] in lines  # 规则臂不变
         ideal = RC.rules_run(case, tmp_path / "d" / cid, ideal_roles=True)
         assert ideal["recommended"] == "scatter_fit" and not set(ideal["methods"]) & lines
+
+
+def test_tally_survives_a_filtered_run_with_only_one_side_of_a_pair():
+    """`--only RC-P03B` 这样只跑一对里的一边：成对的统计只算两边都在的，不崩；那一条仍计入逐条合计（Codex 评审 #2159）。"""
+    one = [c for c in CASES if c["id"] == "RC-P03B"]
+    assert len(one) == 1 and one[0]["tier"] == "pair"
+    t = RC.tally(RC.run_all(one))
+    assert t["cases"] == 1
+    whole = RC.tally(RC.run_all([c for c in CASES if c["id"] in ("RC-P03A", "RC-P03B")]))
+    assert whole["cases"] == 2
