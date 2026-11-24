@@ -62,6 +62,19 @@ def test_chinese_without_a_cjk_face_is_reported_as_missing_glyphs(tmp_path):
     assert facts["readable"] and facts["missing_glyphs"], facts
 
 
+def test_last_resort_that_never_paints_is_not_missing_glyphs(tmp_path, monkeypatch):
+    from tavotto.rendercore import inspector
+
+    pdf = tmp_path / "layer.pdf"
+    _figure_pdf(pdf, fonttype=42)
+    font = {"name": "LastResort", "type3": False, "last_resort": True, "notdef": False}
+    for painted, expected in ((False, False), (True, True)):
+        artifactinspect._FONT_FACTS.clear()
+        seen = {"integrity": inspector.VERIFIED, "fonts_used": [{**font, "painted": painted}]}
+        monkeypatch.setattr(inspector, "observe_pdf", lambda p, **kw: seen)
+        assert artifactinspect.original_font_facts(pdf)["missing_glyphs"] is expected
+
+
 def test_unreadable_files_are_not_called_problematic(tmp_path):
     bad = tmp_path / "bad.pdf"
     bad.write_bytes(b"%PDF-1.4 not really")

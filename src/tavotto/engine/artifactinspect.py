@@ -357,8 +357,13 @@ def original_font_facts(path: Path) -> dict:
         facts = {
             "readable": True,
             "type3": any(f.get("type3") for f in used),
+            # LastResort 只在真落了笔时才算缺字（检查器给 `painted` 时；选了没画、或只用在不可见的文本层里不算）
             "missing_glyphs": any(
-                f.get("last_resort") or f.get("notdef") or "LastResort" in (f.get("name") or "")
+                f.get("notdef")
+                or (
+                    (f.get("last_resort") or "LastResort" in (f.get("name") or ""))
+                    and f.get("painted", True)
+                )
                 for f in used
             ),
         }
