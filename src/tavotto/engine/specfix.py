@@ -118,7 +118,8 @@ def profile_issues(manifest: dict, profile: dict, scale: float) -> list[dict]:
     """
     spec = preflight.spec_from_manifest(manifest, scale=scale)
     out: list[dict] = []
-    for issue in preflight.run(spec, profile):
+    # 干涉（V-011）不进来：事务的几何清单 `normalize.geometry_issues()` 已经逐对算过一遍
+    for issue in preflight.run(spec, profile, with_interference=False):
         if issue.get("id") == "element-outside-figure":
             continue
         gids = issue.get("gids") or []

@@ -18,6 +18,13 @@ import { isSourceFont } from './sourceFont'
 import { sourceFontState } from './sourceFontCache'
 import { parseRuns } from './richText'
 import { embedsDiskBitmap, type ExportRoute, type ExportRouteScope } from './exportRoute'
+import {
+  CERTAIN_RANK,
+  CHECK_LEGEND_OVER_DATA,
+  CHECK_TEXT_OVER_AXES,
+  CHECK_TEXT_OVERLAP,
+  detectInterference,
+} from './interference'
 import type { CanvasObject, FigureDocument, FramePad, PanelObject, TextObject } from '@/types/document'
 import { panelFullSize } from '@/types/document'
 import type { Manifest, ManifestElement } from './api'
@@ -228,6 +235,11 @@ class Sink {
   private profile: PublicationProfile
   /** 每条规则下按「对象 + 元素」去重的命中排名（与聚合项同一把尺子） */
   private hitWorst = new Map<string, number>()
+  /**
+   * 同一把键 → 它在 `occurrences` 里的下标。命中多的规则（干涉检测：几百段互相压着的刻度文字）
+   * 逐条 `findIndex` 会让一次检查变成命中数的平方；键与去重判据是同一个，所以只是换了查法。
+   */
+  private hitIndex = new Map<string, number>()
 
   constructor(profile: PublicationProfile) {
     this.profile = profile
@@ -303,11 +315,10 @@ class Sink {
       // 各写一份的话下一个字段只会被加进其中一条（`worse` 差点就是这样）
       const hit: PreflightOccurrence = { objectId: oid, gid, prop, message, detail }
       if (opts.worse != null) hit.worse = opts.worse
-      const idx = item.occurrences.findIndex(
-        (o) => o.objectId === oid && o.gid === gid && o.prop === prop,
-      )
-      if (idx < 0) {
+      const idx = this.hitIndex.get(key)
+      if (idx == null) {
         if (opts.worse != null) this.hitWorst.set(key, opts.worse)
+        this.hitIndex.set(key, item.occurrences.length)
         item.occurrences.push(hit)
         continue
       }
@@ -1347,6 +1358,87 @@ function checkPanelClipping(panel: PreflightPanelSpec, sink: Sink): void {
   }
 }
 
+/**
+ * V-011：真实渲染几何上的干涉接进常规预检。判据只有 `lib/interference.ts`（`engine/interference.py`
+ * 的逐行移植）；这里只把逐对结果折进 `Sink`，与 `engine/preflight.py::_check_panel_interference`
+ * 逐条同源（golden `interference-*`）：文字重叠两段文字都是主语；压到别的子图的主语是那段文字
+ * （被压的子图进 `detail.against`）；图例压数据的主语是图例，「确定」恒排在「风险」前面。
+ * 文案不带 gid——问题行的主语已经是那个元素。
+ */
+function checkPanelInterference(panel: PreflightPanelSpec, profile: PublicationProfile, sink: Sink): void {
+  const manifest = panel.manifest
+  if (!manifest) return
+  const pid = panel.id
+  // 只把**会改变结果**的那几对交给 Sink：带来新主语、让某个主语或这一面板更糟的。其余各对在 Sink 里本来就是
+  // 空操作（主语已在、排名不更大），跳过它们结论逐字不变——几十段文字压成一团时每对一次 add 是大头。
+  // 与 `engine/preflight.py::_check_panel_interference` 同一规则
+  const seen = new Map<string, Map<string, number>>()
+  const top = new Map<string, number>()
+  // 主语 g 的排名第一次出现或更糟 → 记下并回 true
+  const bump = (cid: string, g: string, worse: number): boolean => {
+    let mine = seen.get(cid)
+    if (!mine) seen.set(cid, (mine = new Map()))
+    const prev = mine.get(g)
+    if (prev != null && !(worse > prev)) return false
+    mine.set(g, worse)
+    return true
+  }
+  const bumpTop = (cid: string, worse: number): boolean => {
+    const t = top.get(cid)
+    if (t != null && !(worse > t)) return false
+    top.set(cid, worse)
+    return true
+  }
+  // 文字重叠两段文字都是主语；压到别的子图只有那段文字（b 是被压的子图）。三项都要记，不能短路
+  const keep = (cid: string, a: string, b: string, area: number): boolean => {
+    const ha = bump(cid, a, area)
+    const hb = cid === CHECK_TEXT_OVERLAP ? bump(cid, b, area) : false
+    const ht = bumpTop(cid, area)
+    return ha || hb || ht
+  }
+  for (const it of detectInterference(manifest, profile, pid, keep)) {
+    const certain = !!it.detail.certain
+    const count = Array.isArray(it.detail.targets) ? it.detail.targets.length : 0
+    const isLegend = it.id === CHECK_LEGEND_OVER_DATA
+    const rank = isLegend ? count + (certain ? CERTAIN_RANK : 0) : (num(it.detail.overlap_mm2) ?? 0)
+    // 文字两类已经在 detect 里经 keep 问过（再问一遍会因「不更大」被挡掉）；图例每个一条，这里问
+    if (isLegend) {
+      const hg = bump(it.id, it.gids[0], rank)
+      const ht = bumpTop(it.id, rank)
+      if (!hg && !ht) continue
+    }
+    const detail = { ...it.detail }
+    const { w, h } = it.message.params
+    if (it.id === CHECK_TEXT_OVERLAP) {
+      sink.add('text-overlap', pf('interferenceTextOverlap', { w, h }), {
+        objectIds: [pid],
+        gids: it.gids,
+        detail,
+        worse: rank,
+      })
+    } else if (it.id === CHECK_TEXT_OVER_AXES) {
+      detail.against = it.gids.length > 1 ? it.gids[1] : ''
+      sink.add('text-over-axes', pf('interferenceTextOverAxes', { w, h }), {
+        objectIds: [pid],
+        gids: it.gids.slice(0, 1),
+        detail,
+        worse: rank,
+      })
+    } else if (it.id === CHECK_LEGEND_OVER_DATA) {
+      sink.add(
+        'legend-over-data',
+        pf(certain ? 'interferenceLegendOverData' : 'interferenceLegendOverDataRisk', { count }),
+        {
+          objectIds: [pid],
+          gids: it.gids.slice(0, 1),
+          detail,
+          worse: rank,
+        },
+      )
+    }
+  }
+}
+
 function checkMissingManifest(panel: PreflightPanelSpec, sink: Sink): void {
   sink.add(
     'panel-text-not-verifiable',
@@ -1368,6 +1460,7 @@ export function runSpec(spec: PreflightSpec, profile: PublicationProfile): Prefl
       checkPanelFonts(panel, profile, sink)
       checkPanelAxes(panel, profile, sink)
       checkPanelClipping(panel, sink)
+      checkPanelInterference(panel, profile, sink)
     }
   }
   checkTexts(spec, profile, sink)
