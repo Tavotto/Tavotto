@@ -606,7 +606,7 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
 - **SSE**：`Request.reader = compact_sse` → `wires.post_json(reader=…)` 对 2xx 边读边丢 `*.delta` 帧、终态后停读（总读入 64 MiB、留下 8 MiB 上限）；`HttpModel` 对带 `decode` 的协议用它折叠成最终响应再交 `OpenAIResponsesWire.parse`。只有 `response.completed` 是成功；无终态 = 可重试 `network/stream_incomplete`。三条原协议的 `post` 调用形状逐字不变（不传 `reader`）。
 - **错误码闭集**（`failure_for_code`，预流与流中 `response.failed` / `error` 同一张表）：用量超限 → `quota/plan_usage_limit` 不重试；`…usage_unavailable` / `…user_unavailable` → 可重试 `network`；`…user_not_eligible` → `refused/plan_not_eligible`（**不是 auth**）；403 无码 → `refused/plan_forbidden`；
   `…unsupported_capability` / `…route_not_supported` / `chatpass_v2_*` → `internal`；`…invalid_user` → `auth`。带 `classify` 的协议**不走换协议与字段降级**（官方：不得静默切换计费方式）。
-- 看护 `tests/test_agent_runner_siwc.py`（全 Mock）。真服务未验证项见模块说明，不得写成已验证。
+- 看护 `tests/test_agent_runner_siwc.py`（全 Mock）。2026-11-24 真服务核对过单轮 / 工具调用 / 多轮与 completed 带 output；仍未验证的项见模块说明，不得写成已验证。
 
 ### 连接（`engine/ai_connections.py`，ADR 0147 第二阶段）
 
