@@ -56,7 +56,7 @@ import { useUiStore } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { groupViews } from './changePlanModel'
-import { useReviewResolveSync } from './reviewSync'
+import { elementLabelOf, useReviewResolveSync } from './reviewSync'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -484,4 +484,18 @@ it('卡上的意见编号取审阅页签给的（没有才按这批里的位置�
   const e = entry({ comments: [cm('c2'), cm('c3')] })
   expect(groupViews(e).map((g) => g.commentNumbers)).toEqual([[2], [3]])
   expect(groupViews({ ...e, request: { share_id: 'sh_1' } }).map((g) => g.commentNumbers)).toEqual([[1], [2]])
+})
+
+it('回复草稿里的元素名走元素树同一个显示名：mathtext 读作 min⁻¹，普通标签原样，没有名字退回「这一处」', () => {
+  const detail = detailOf([])
+  detail.versions[0].elements.push(
+    { gid: 'ax.k', label: '曲线 “k = 0.1 min$^{-1}$”', bbox: [0, 0, 0.1, 0.1] },
+    { gid: 'ax.blank', label: '', bbox: [0, 0, 0.1, 0.1] },
+  )
+  const labelOf = elementLabelOf(detail)
+  const text = draftReply([ch('ax.k', 'color', '#000', '#f00')], labelOf)
+  expect(text).toContain('min⁻¹')
+  expect(text).not.toContain('$')
+  expect(draftReply([ch('ax.legend', 'color', '#000', '#f00')], labelOf)).toBe('已改了图例的颜色')
+  expect(draftReply([ch('ax.blank', 'color', '#000', '#f00')], labelOf)).toBe('已改了这一处的颜色')
 })

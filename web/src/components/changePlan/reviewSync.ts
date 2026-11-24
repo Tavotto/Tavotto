@@ -10,6 +10,7 @@ import { resolveReviewComment, type ChangePlanChange, type ReviewShareDetail } f
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { draftReply } from '@/lib/changePlanReplyDraft'
 import { effectiveStatus } from '@/lib/changePlanApply'
+import { engineLabel } from '../inspector/roles/registry'
 import type { PlanSource } from '@/lib/changePlanApply'
 import { panelOf, sourceOf, useChangePlanStore, type PlanEntry } from '@/store/changePlanStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -125,7 +126,9 @@ export function elementLabelOf(detail: ReviewShareDetail | null): (gid: string) 
   return (gid) => {
     for (const v of [...(detail?.versions ?? [])].sort((a, b) => b.v - a.v)) {
       const hit = v.elements.find((x) => x.gid === gid)
-      if (hit?.label) return hit.label
+      // 与左侧元素树同一个显示名出口（`engineLabel`：mathtext 读作 min⁻¹、按界面语言重组），不另写
+      const name = hit?.label ? engineLabel(hit.label).trim() : ''
+      if (name) return name
     }
     return undefined
   }
