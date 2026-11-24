@@ -28,6 +28,7 @@ import {
 import type { CanvasObject, FigureDocument, FramePad, PanelObject, TextObject } from '@/types/document'
 import { panelFullSize, readPath, shapeStrokeOn } from '@/types/document'
 import { strokeOpacityOf } from './shapeGeometry'
+import { effectiveStrokeGradient } from './gradient'
 import type { Manifest, ManifestElement } from './api'
 
 /**
@@ -1192,6 +1193,11 @@ export function canvasStrokePt(o: CanvasObject): number | undefined {
   else if (o.type === 'path') on = readPath(o).strokeOn
   else return undefined
   if (!on || strokeOpacityOf(o.strokeOpacity) === 0) return undefined
+  // 描边渐变的色标全透明：画出来也是全透明（`canvas/gradientPaint.usePaints` 同一份读法），不算有描边（Codex #2195）
+  if (o.type !== 'arrow') {
+    const g = effectiveStrokeGradient(o, on)
+    if (g && g.stops.every((st) => st.opacity === 0)) return undefined
+  }
   return Number.isFinite(o.strokePt) && o.strokePt > 0 ? o.strokePt : undefined
 }
 

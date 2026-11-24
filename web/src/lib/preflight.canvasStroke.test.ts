@@ -35,6 +35,19 @@ describe('canvasStrokePt', () => {
     expect(canvasStrokePt(obj(imported))).toBeUndefined()
   })
 
+  it('描边渐变的色标全透明：画出来是透明的，不算有描边（Codex #2195）', () => {
+    const stops = (a: number, b: number) => [
+      { offset: 0, color: '#000000', opacity: a },
+      { offset: 1, color: '#ffffff', opacity: b },
+    ]
+    const shape = { type: 'shape', shape: 'rect', strokePt: 0.3 }
+    const lin = (a: number, b: number) => ({ kind: 'linear', stops: stops(a, b), from: [0, 0.5], to: [1, 0.5] })
+    expect(canvasStrokePt(obj({ ...shape, strokeGradient: lin(0, 0) }))).toBeUndefined()
+    expect(canvasStrokePt(obj({ ...shape, strokeGradient: lin(0, 0.5) }))).toBe(0.3)
+    const path = { type: 'path', subpaths: [], strokePt: 0.2, color: '#000', fill: null }
+    expect(canvasStrokePt(obj({ ...path, strokeGradient: lin(0, 0) }))).toBeUndefined()
+  })
+
   it('文字与面板不判', () => {
     expect(canvasStrokePt(obj({ type: 'text', text: 'a', sizePt: 8 }))).toBeUndefined()
     expect(CANVAS_STROKE_TYPES).toEqual(['arrow', 'shape', 'path'])
