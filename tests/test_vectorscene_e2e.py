@@ -86,7 +86,7 @@ def test_arrow_tip_lands_on_the_data_point_in_the_exported_pdf(tmp_path):
             {
                 "kind": "arrow",
                 "name": "peak_arrow",
-                "from": {"anchor": peak, "offset_mm": [12.0, -9.0]},
+                "from": {"anchor": peak, "offset_mm": [7.0, 3.0]},
                 "to": {"anchor": peak},
                 "head": "end",
                 "headEnd": "triangle",
@@ -96,13 +96,13 @@ def test_arrow_tip_lands_on_the_data_point_in_the_exported_pdf(tmp_path):
             {
                 "kind": "text",
                 "name": "peak_label",
-                "text": "Peak 3.2 eV",
+                "text": "3.2 eV",
                 "at": {
                     "anchor": {"item": {"name": "peak_arrow", "point": "ne"}},
                     "offset_mm": [1.0, 0.0],
                 },
                 "attach": "w",
-                "sizePt": 7,
+                "sizePt": 8,
             },
             {
                 "kind": "shape",
@@ -113,6 +113,7 @@ def test_arrow_tip_lands_on_the_data_point_in_the_exported_pdf(tmp_path):
                 "fill": None,
                 "strokePt": 0.5,
                 "color": "#0000FF",
+                "over_data": True,  # 故意圈住数据点
             },
         ]
         panels = {
@@ -128,6 +129,31 @@ def test_arrow_tip_lands_on_the_data_point_in_the_exported_pdf(tmp_path):
         assert solved["ok"], solved["errors"]
         checked = agentobjects.validate_new_objects(solved["objects"])
         assert checked["ok"], checked["errors"]
+        # 量过才交：在导出几何上核对（锚点残差、不遮数据、不压字、不出页、期刊字号线宽）
+        from tavotto.engine import profiles, vectorcheck
+
+        verdict = vectorcheck.check(
+            solved,
+            checked["objects"],
+            panels,
+            items,
+            page={"w": w_mm, "h": h_mm},
+            profile=profiles.load("journal-base-v1"),
+        )
+        bad = [f for f in verdict["facts"] if f["status"] in ("fail", "unknown")]
+        assert verdict["ok"] and verdict["verified"], (row["layout"], bad)
+        assert {f["check"] for f in verdict["facts"]} >= {
+            "anchor",
+            "data",
+            "text",
+            "page",
+            "journal",
+        }
+        assert all(
+            f["detail"]["residual_mm"] <= vectorcheck.RESIDUAL_MM
+            for f in verdict["facts"]
+            if f["check"] == "anchor"
+        )
         pdf = Path(row["pdf"])
         red_mm = _red_marker_center_mm(pdf)
         facade.annotate_asset(pdf, None, agentobjects.to_export_objects(checked["objects"]))

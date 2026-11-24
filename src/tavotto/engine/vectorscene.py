@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 PT_TO_MM = 25.4 / 72.0
@@ -45,7 +46,16 @@ ERROR_CODES = (
     "anchor_unresolvable",  # 数据点换算不了（worker 回 unresolvable / 没回）
     "panel_transformed",  # 子图旋转或翻转过：这一版不给子元素锚点
     "bad_point",  # 方位名不认识
+    "needs_confirmation",  # 统计标注（星号 / n.s. / p 值 / n）没写明来自用户或数据：不由 Agent 编（ADR 0208 §四）
 )
+
+#: 统计标注的文字（ADR 0208 §四，维护者 2026-11-24 定）：只能来自用户的话或脚本 / 数据里的结果，
+#: 描述里要写 `"provenance": "user" | "data"`；没写的整批不落地，回 `needs_confirmation`。
+_STAT_TEXT = re.compile(
+    r"^\s*(\*{1,4}|n\.?\s?s\.?|ns)\s*$|\bp\s*[<>=≤≥]|\bp\s*-?\s*value|\bn\s*=\s*\d",
+    re.IGNORECASE,
+)
+PROVENANCES = ("user", "data")
 
 
 class SceneError(Exception):
@@ -276,6 +286,8 @@ def _text(it: dict, ctx: _Ctx, name: str, faces) -> dict:
     text = it.get("text")
     if not isinstance(text, str) or not text:
         raise SceneError("bad_item", name, "text")
+    if _STAT_TEXT.search(text) and it.get("provenance") not in PROVENANCES:
+        raise SceneError("needs_confirmation", name, "statistical_text")
     size = float(it.get("sizePt", 8))
     bold, italic = bool(it.get("bold", False)), bool(it.get("italic", False))
     family = it.get("fontFamily", "sans-serif")
@@ -394,6 +406,7 @@ def solve(items: object, panels: dict, *, measure=_measure_text_mm) -> dict:
                             "role": key,
                             "anchor": pos["anchor"],
                             "offset_mm": pos.get("offset_mm", [0.0, 0.0]),
+                            "attach": it.get("attach", "w" if kind == "text" else "center"),
                         }
                     )
     except SceneError as exc:
