@@ -85,6 +85,12 @@ export const useLicenseStore = create<LicenseState>((set, get) => {
       } catch {
         set({ account: null })
       }
+      // 引擎在 `/v1/me` 回「已作废」时会把本机令牌标为 revoked：取完账户再读一次本机状态（纯本机、不联网），页面才跟着变
+      try {
+        set({ status: await fetchLicenseStatus() })
+      } catch {
+        /* 读不到就保持现状 */
+      }
     },
     loadUsage: async () => {
       // 两个来源互不拖累：任何一个失败都只是那一项「暂不可用」

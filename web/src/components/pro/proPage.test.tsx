@@ -134,6 +134,29 @@ describe('Pro 页', () => {
     expect([...document.querySelectorAll('[data-pro-row]')].map((e) => (e as HTMLElement).dataset.proRow)).toEqual(['days'])
   })
 
+  it('打开时账户接口发现已作废、引擎把本机令牌标了 revoked：页面跟着变成未激活的样子（不再显示有效通行证）', async () => {
+    let accountCalled = false
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((u: string) => {
+        const path = new URL(u, 'http://x').pathname
+        if (path.endsWith('/license/account')) {
+          accountCalled = true
+          return json({ ok: false })
+        }
+        if (path.endsWith('/license/usage')) return json({ agent_used: 0.2 })
+        if (path.endsWith('/review/quota')) return json({ new_left: 1, update_left: null })
+        // 账户接口调过之后，本机令牌已被标作废
+        return json(accountCalled ? { ...BASE, state: 'revoked' } : ACTIVE)
+      }),
+    )
+    await render()
+    expect(q('[data-pro-state="revoked"]')).not.toBeNull()
+    expect(q('[data-pro-row]')).toBeNull()
+    expect(q('[role="progressbar"]')).toBeNull()
+    expect(q('[data-license-action="enter"]')).not.toBeNull() // 重新输入激活码的口子
+  })
+
   it('入口没开：对话框整个不渲染', async () => {
     mockApi({ enabled: false }, null)
     useUiStore.setState({ proOpen: true })
