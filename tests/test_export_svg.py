@@ -1435,3 +1435,37 @@ def test_reclaim_keeps_references_frozen_earlier_in_the_same_save(project):
     finally:
         m._SVG_PENDING_DOCUMENT.reset(token)
     assert corpus is not None and ("f" * 64).encode() in corpus
+
+
+def _checkpoint(client, source, patches, reference, **kind):
+    body = document(source, patches)
+    body["canvases"][0]["objects"][0]["figureSnapshot"] = reference
+    response = client.post("/api/versions/work-doc", json={"doc": body, **kind})
+    assert response.status_code == 200, response.get_json()
+
+
+def test_auto_checkpoints_do_not_pin_snapshots_but_named_versions_do(project, monkeypatch):
+    """Long sessions write an auto checkpoint every few minutes; they must not refill the store."""
+    from tavotto.engine import svgstore
+
+    client, root = project
+    monkeypatch.setattr(svgstore, "RECLAIM_GRACE_SECONDS", 0, raising=False)
+    source = run_script(client)
+    gid = _title_gid(client, source)
+    named_patches, named = _save_edit(client, source, gid, 0)
+    named_ref = named["figure_snapshots"]["panel"]
+    _checkpoint(client, source, named_patches, named_ref, name="Submitted version")
+    patches, first = _save_edit(client, source, gid, 1)
+    _checkpoint(client, source, patches, first["figure_snapshots"]["panel"], auto=True)
+    # Room for three variants: the named one, the newest one and the incoming edit.
+    monkeypatch.setattr(svgstore, "MAX_TOTAL_BYTES", _snapshot_store_bytes(root) * 3 // 2 + 200)
+    auto_refs = []
+    for index in range(2, 9):  # several times what the budget holds
+        patches, saved = _save_edit(client, source, gid, index)
+        assert not saved.get("svg_snapshot_warnings"), (index, saved)
+        reference = saved["figure_snapshots"]["panel"]
+        auto_refs.append(reference["snapshotId"])
+        _checkpoint(client, source, patches, reference, auto=True)
+    archives = {p.stem for p in (root / "tavottofile" / "figure_snapshots" / "snapshots").glob("*")}
+    assert named_ref["snapshotId"] in archives
+    assert not set(auto_refs[:-2]) <= archives

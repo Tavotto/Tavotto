@@ -2634,21 +2634,33 @@ _SVG_REFERENCE_ID = re.compile(rb"(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])")
 
 
 def _svg_reference_corpus(root: Path) -> frozenset[bytes] | None:
-    """所有可能引用本项目导出快照的已存文档里出现过的 64 位十六进制串；扫不全返回 None（调用方据此不删）。
+    """已存文档里出现过的 64 位十六进制串（快照 ID 的候选）；扫不全返回 None（调用方据此不删）。
 
-    不按键名解析（`figureSnapshot` / `figure_origin` / 版本历史里的整份文档……），
-    快照 ID 作为独立的十六进制串出现就算被引用：宁可多留，不误删。
+    不按键名解析（`figureSnapshot` / `figure_origin` / 版本里的整份文档……），快照 ID 作为独立的
+    十六进制串出现就算被引用：宁可多留，不误删。版本时间线里只有**自动检查点**不算引用
+    （维护者 2026-11-24 裁决：它们每两分钟一条、最多上百条，算的话长时间编辑大图会再次占满）；
+    命名 / 手动 / 时刻节点照算，读不懂的版本按原始字节保守地算。
     """
     from .engine import svgstore
 
     store = engine_config.project_store_dir(root)
     snapshot_dir = store / svgstore.STORE_DIRNAME
+    versions_dirs = {store / "versions", LAYOUT_DIR / engine_documents.VERSIONS_DIRNAME}
     found: set[bytes] = set()
     pending = _SVG_PENDING_DOCUMENT.get()
     if pending is not None:
         found.update(_SVG_REFERENCE_ID.findall(json.dumps(pending).encode("utf-8")))
-    files = 0
-    total = 0
+    budget = {"files": 0, "bytes": 0}
+
+    def admit(size: int) -> bool:
+        budget["files"] += 1
+        budget["bytes"] += size
+        return (
+            budget["files"] <= _SVG_REFERENCE_SCAN_MAX_FILES
+            and size <= _SVG_REFERENCE_SCAN_MAX_FILE_BYTES
+            and budget["bytes"] <= _SVG_REFERENCE_SCAN_MAX_BYTES
+        )
+
     try:
         for base in (store, Path(root) / "canvases", LAYOUT_DIR):
             if not base.is_dir():
@@ -2658,21 +2670,20 @@ def _svg_reference_corpus(root: Path) -> frozenset[bytes] | None:
                 if here == snapshot_dir or snapshot_dir in here.parents:
                     dirnames[:] = []
                     continue
+                if here in versions_dirs:
+                    dirnames[:] = []
+                    if not _svg_version_references(here, found, admit):
+                        return None
+                    continue
                 for name in filenames:
                     if ".json" not in name:
                         continue
                     path = here / name
-                    files += 1
                     try:
                         size = path.stat().st_size
                     except FileNotFoundError:
                         continue
-                    total += size
-                    if (
-                        files > _SVG_REFERENCE_SCAN_MAX_FILES
-                        or size > _SVG_REFERENCE_SCAN_MAX_FILE_BYTES
-                        or total > _SVG_REFERENCE_SCAN_MAX_BYTES
-                    ):
+                    if not admit(size):
                         return None
                     try:
                         found.update(_SVG_REFERENCE_ID.findall(path.read_bytes()))
@@ -2681,6 +2692,76 @@ def _svg_reference_corpus(root: Path) -> frozenset[bytes] | None:
     except OSError:
         return None
     return frozenset(found)
+
+
+def _svg_version_references(versions_dir: Path, found: set, admit) -> bool:
+    """版本时间线（旧单文件与 `.vx` 新存储）里非自动检查点的引用；超出扫描预算返回 False。"""
+
+    def raw(path: Path) -> bool:
+        try:
+            data = path.read_bytes()
+        except FileNotFoundError:
+            return True
+        if not admit(len(data)):
+            return False
+        found.update(_SVG_REFERENCE_ID.findall(data))
+        return True
+
+    def entry(version) -> bool:
+        if isinstance(version, dict) and engine_versionstore.kind(version) == "auto":
+            return True
+        data = json.dumps(version).encode("utf-8")
+        if not admit(len(data)):
+            return False
+        found.update(_SVG_REFERENCE_ID.findall(data))
+        return True
+
+    names = os.listdir(versions_dir)
+    suffix = engine_versionstore.STORE_SUFFIX
+    stores = {name[: -len(suffix)] for name in names if name.endswith(suffix)}
+    for name in sorted(names):
+        path = versions_dir / name
+        if name.endswith(suffix):
+            doc_id = name[: -len(suffix)]
+            try:
+                index = engine_versionstore.list_index(versions_dir, doc_id)
+            except Exception:
+                index = None
+            if index is None:
+                # 读不懂的新存储：信封全部按原始字节算
+                for child in sorted((path / engine_versionstore.ENVELOPE_DIR).glob("*.json")):
+                    if not raw(child):
+                        return False
+                continue
+            for meta in index["entries"]:
+                public = engine_versionstore.public_entry(meta)
+                if engine_versionstore.kind(public) == "auto":
+                    continue
+                try:
+                    version = engine_versionstore.read(versions_dir, doc_id, meta["id"])
+                except Exception:
+                    if not raw(engine_versionstore._meta_path(path, meta)):
+                        return False
+                    continue
+                if not entry(version):
+                    return False
+        elif name.endswith(".json") and name[:-5] not in stores:
+            # 旧单文件；已迁到 `.vx` 的旧文件冻结不用，不再算引用
+            try:
+                data = engine_documents.loads_document(path.read_bytes())
+                versions = data.get("versions") if isinstance(data, dict) else None
+                if not isinstance(versions, list):
+                    raise ValueError("not a version file")
+            except FileNotFoundError:
+                continue
+            except Exception:
+                if not raw(path):
+                    return False
+                continue
+            for version in versions:
+                if not entry(version):
+                    return False
+    return True
 
 
 def _raise_walk_error(error: OSError) -> None:
