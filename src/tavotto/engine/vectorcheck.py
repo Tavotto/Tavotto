@@ -85,8 +85,11 @@ def _head_points(head, mm) -> list[tuple[float, float]]:
             for k in range(12)
         ]
     pts = [mm(q) for q in head[1]]
+    # 只有实心多边形（triangle / stealth / diamond）闭合；开口 V（open）与短线（bar）导出时是不闭合的折线
+    # （`geometry.arrow_paths` 的 `polyline_segments(..., False)`），连回起点会多出一条并不存在的底边（Codex #2201）
+    closed = head[0] == "poly"
     out: list[tuple[float, float]] = []
-    for a, b in zip(pts, pts[1:] + pts[:1]):
+    for a, b in zip(pts, pts[1:] + (pts[:1] if closed else [])):
         out += _samples(a, b, 0.0, 0.0)
     return out or pts
 
@@ -372,9 +375,8 @@ def check(
                 if _overlaps(foot, r, MIN_OVERLAP_MM):
                     clash.append(other)
             elif any(
-                r[0] < x + half and x - half < r[2] and r[1] < y + half and y - half < r[3]
-                for x, y in foot
-            ):
+                _dist_to_rect(x, y, r) < half for x, y in foot
+            ):  # 描边是圆头：按点到框的距离判
                 clash.append(other)
         facts.add("text", "fail" if clash else "pass", name, **({"with": clash} if clash else {}))
 
@@ -500,6 +502,13 @@ def _outline_samples(e: dict) -> list[tuple[float, float]]:
     for a, b in zip(corners, corners[1:] + corners[:1]):
         out += _samples(a, b, 0.0, 0.0)
     return out
+
+
+def _dist_to_rect(x: float, y: float, r) -> float:
+    """点到矩形（x0, y0, x1, y1）的距离；在框里为 0。"""
+    dx = max(r[0] - x, 0.0, x - r[2])
+    dy = max(r[1] - y, 0.0, y - r[3])
+    return math.hypot(dx, dy)
 
 
 def _bounds(points, half: float = 0.0) -> tuple[float, float, float, float]:

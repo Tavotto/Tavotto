@@ -323,3 +323,27 @@ def test_short_arrow_between_two_anchored_ends_does_not_crash():
         and data[0]["status"] == "pass"
         and data[0]["detail"]["reason"] == "within_tip_allowance"
     )
+
+
+def test_open_arrowhead_has_no_phantom_base():
+    """开口 V 端型导出时不闭合（Codex #2201 复核给的例子）：10 pt 粗的水平箭头 (20, 40) → (40, 40)，开口端型长
+    4 × 10 pt ≈ 14 mm、半宽 1.7 × 10 pt ≈ 6 mm，两臂从 (26, 34) / (26, 46) 收到尖端；V 口处 (26, 42.6) 放一个 3 pt 的小字（离杆的上沿与臂的内沿各约 0.2 mm），
+    它离两条臂和杆（半线宽 1.76 mm）都远——只有把 V 口连成一条底边时才会「压字」。"""
+    item = {
+        "kind": "arrow",
+        "name": "a",
+        "from": _at(20, 40),
+        "to": _at(40, 40),
+        "headEnd": "open",
+        "strokePt": 10,
+    }
+    label = {
+        "kind": "text",
+        "name": "t",
+        "text": "x",
+        "sizePt": 3,
+        "attach": "center",
+        "at": _at(26, 42.6),
+    }
+    v = _run([item, label])
+    assert _status(v, "text", "a") == ["pass"], v["facts"]
