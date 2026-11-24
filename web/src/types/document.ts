@@ -848,6 +848,35 @@ export interface StyleOwnedOverride {
   base?: unknown
 }
 
+/* ---------------------- 推荐配色的色键表（ADR 0210 §四） ---------------------- */
+
+/** 一组占的槽：数字 = 方案里第几个颜色；`neutral` = 方案的中性灰（对照组，用户确认后才设） */
+export type ColorSlot = number | 'neutral'
+
+export interface ColorKey {
+  /** 表内稳定 id（`k1`、`k2`…），只增不复用 */
+  key: string
+  slot: ColorSlot
+  /** 归入这一组的显式 label 身份（`l1:` + 16 位十六进制）；并入别的组时把对方的抄进来 */
+  identities: string[]
+}
+
+/** 配色写下的一条 override：此刻 override 的值仍是 `value` 才算配色的，否则就是用户手改过的 */
+export interface ColorKeyOwned {
+  panel: string
+  gid: string
+  prop: string
+  value: string
+}
+
+export interface ColorKeyTable {
+  version: 1
+  /** 当前方案的目录 id */
+  scheme: string
+  keys: ColorKey[]
+  owned: ColorKeyOwned[]
+}
+
 export interface FigureDocument {
   schema: 2
   name: string
@@ -866,6 +895,8 @@ export interface FigureDocument {
   framePadTight?: FramePadSide[]
   /** 一键排版的网格记忆（见 `QuickLayoutMemo`）；缺省 = 没排过或已清掉 */
   quickLayout?: QuickLayoutMemo
+  /** 推荐配色的色键表（ADR 0210）；缺省 = 这张画布没用过推荐配色，旧文档逐字不变 */
+  colorKeys?: ColorKeyTable
 }
 
 /**
@@ -904,6 +935,8 @@ export interface CanvasData {
   framePad?: FramePad
   framePadTight?: FramePadSide[]
   quickLayout?: QuickLayoutMemo
+  /** 每张画布各自的推荐配色色键表（ADR 0210）；缺省 = 没用过 */
+  colorKeys?: ColorKeyTable
 }
 
 /**
@@ -940,6 +973,7 @@ export function canvasToDoc(c: CanvasData): FigureDocument {
     ...(c.framePad ? { framePad: c.framePad } : {}),
     ...(c.framePadTight?.length ? { framePadTight: c.framePadTight } : {}),
     ...(c.quickLayout ? { quickLayout: c.quickLayout } : {}),
+    ...(c.colorKeys ? { colorKeys: c.colorKeys } : {}),
   }
 }
 
@@ -956,6 +990,7 @@ export function docToCanvas(doc: FigureDocument, id: string): CanvasData {
     ...(doc.framePad ? { framePad: doc.framePad } : {}),
     ...(doc.framePadTight?.length ? { framePadTight: doc.framePadTight } : {}),
     ...(doc.quickLayout ? { quickLayout: doc.quickLayout } : {}),
+    ...(doc.colorKeys ? { colorKeys: doc.colorKeys } : {}),
   }
 }
 
