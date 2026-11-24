@@ -1592,3 +1592,33 @@ def test_reclaim_keeps_recent_variants_and_other_sources_newest(store, durable, 
     assert other["snapshot_ref"]["snapshotId"] in archives  # newest of its source
     assert recent["snapshot_ref"]["snapshotId"] in archives  # inside the grace window
     assert saved[0]["snapshot_ref"]["snapshotId"] not in archives
+
+
+def test_reclaim_that_fails_part_way_reports_what_it_already_removed(store, durable, monkeypatch):
+    _fill_with_edits(store, durable, monkeypatch, 8)
+    monkeypatch.setattr(svgstore, "MAX_TOTAL_BYTES", _store_bytes(durable) + 100)
+    real_unlink = Path.unlink
+    calls = []
+
+    def flaky(self, missing_ok=False):
+        calls.append(self)
+        if len(calls) == 3:  # third file: like a Windows sharing violation
+            raise PermissionError("in use")
+        return real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", flaky)
+    assert svgstore.reclaim(durable, referenced=lambda sid: False, incoming_bytes=1000) >= 1
+
+
+def test_reclaim_that_fails_before_removing_anything_raises(store, durable, monkeypatch):
+    _fill_with_edits(store, durable, monkeypatch, 8)
+    monkeypatch.setattr(svgstore, "MAX_TOTAL_BYTES", _store_bytes(durable) + 100)
+    before = _tree_bytes(durable)
+
+    def refuse(self, missing_ok=False):
+        raise PermissionError("in use")
+
+    monkeypatch.setattr(Path, "unlink", refuse)
+    with pytest.raises(PermissionError):
+        svgstore.reclaim(durable, referenced=lambda sid: False, incoming_bytes=1000)
+    assert _tree_bytes(durable) == before

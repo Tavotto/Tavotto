@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -1341,6 +1342,16 @@ def _save_edit(client, source, gid, index, name="work"):
     return patches, saved.get_json()
 
 
+def _save_edit_through_reclaim(client, source, gid, index, name="work"):
+    """The save that finds the store full starts a background reclaim (it holds a document
+    lock, so it cannot wait for every lock); the next save of the same edit gets in."""
+    patches, saved = _save_edit(client, source, gid, index, name)
+    if saved.get("svg_snapshot_warnings"):
+        m._wait_svg_reclaim()
+        patches, saved = _save_edit(client, source, gid, index, name)
+    return patches, saved
+
+
 def _snapshot_store_bytes(root):
     store = root / "tavottofile" / "figure_snapshots"
     return sum(p.stat().st_size for p in store.rglob("*") if p.is_file() and p.name != ".lock")
@@ -1362,7 +1373,7 @@ def test_full_project_snapshot_store_reclaims_unreferenced_edits_on_save(project
     for index in (2, 3):
         _save_edit(client, source, gid, index)
     monkeypatch.setattr(svgstore, "MAX_TOTAL_BYTES", _snapshot_store_bytes(root) + 200)
-    _, full = _save_edit(client, source, gid, 4)
+    _, full = _save_edit_through_reclaim(client, source, gid, 4)
     assert not full.get("svg_snapshot_warnings"), full
     assert full["figure_snapshots"]["panel"]["snapshotId"]
     archives = {p.stem for p in (root / "tavottofile" / "figure_snapshots" / "snapshots").glob("*")}
@@ -1398,6 +1409,7 @@ def test_full_project_snapshot_store_deletes_nothing_when_documents_cannot_be_sc
     before = sorted(p.name for p in store.rglob("*") if p.is_file())
     _, full = _save_edit(client, source, gid, 4)
     assert full["svg_snapshot_warnings"] == [source], full
+    m._wait_svg_reclaim()
     assert sorted(p.name for p in store.rglob("*") if p.is_file()) == before
     # A store that could not be reclaimed is not rescanned on every following edit.
     monkeypatch.setattr(
@@ -1424,6 +1436,9 @@ def test_reclaim_failure_still_reports_the_original_full_store(project, monkeypa
     monkeypatch.setattr(svgstore, "reclaim", busy, raising=False)
     _, full = _save_edit(client, source, gid, 4)
     assert full["svg_snapshot_warnings"] == [source], full
+    m._wait_svg_reclaim()
+    _, again = _save_edit(client, source, gid, 4)
+    assert again["svg_snapshot_warnings"] == [source], again
 
 
 def test_reclaim_keeps_references_frozen_earlier_in_the_same_save(project):
@@ -1461,7 +1476,7 @@ def test_auto_checkpoints_do_not_pin_snapshots_but_named_versions_do(project, mo
     monkeypatch.setattr(svgstore, "MAX_TOTAL_BYTES", _snapshot_store_bytes(root) * 3 // 2 + 200)
     auto_refs = []
     for index in range(2, 9):  # several times what the budget holds
-        patches, saved = _save_edit(client, source, gid, index)
+        patches, saved = _save_edit_through_reclaim(client, source, gid, index)
         assert not saved.get("svg_snapshot_warnings"), (index, saved)
         reference = saved["figure_snapshots"]["panel"]
         auto_refs.append(reference["snapshotId"])
@@ -1469,3 +1484,75 @@ def test_auto_checkpoints_do_not_pin_snapshots_but_named_versions_do(project, mo
     archives = {p.stem for p in (root / "tavottofile" / "figure_snapshots" / "snapshots").glob("*")}
     assert named_ref["snapshotId"] in archives
     assert not set(auto_refs[:-2]) <= archives
+
+
+def test_reference_scan_reads_the_legacy_file_while_a_migration_is_pending(project):
+    client, root = project
+    versions = root / "tavottofile" / "versions"
+    store = versions / "doc.vx"
+    store.mkdir(parents=True)
+    (store / "migration.json").write_text(json.dumps({"state": "pending"}), encoding="utf-8")
+    named = "a" * 64
+    auto = "b" * 64
+    legacy = {
+        "versions": [
+            {"id": "v1-1", "name": "Submitted", "doc": {"ref": {"snapshotId": named}}},
+            {"id": "v2-2", "auto": True, "doc": {"ref": {"snapshotId": auto}}},
+        ]
+    }
+    (versions / "doc.json").write_text(json.dumps(legacy), encoding="utf-8")
+    corpus = m._svg_reference_corpus(root)
+    assert corpus is not None
+    assert named.encode() in corpus
+    assert auto.encode() not in corpus
+
+
+def test_reference_scan_fails_closed_when_version_envelopes_cannot_be_listed(project, monkeypatch):
+    client, root = project
+    store = root / "tavottofile" / "versions" / "doc.vx"
+    (store / "s").mkdir(parents=True)
+    (store / "index.json").write_text("{}", encoding="utf-8")
+
+    def unreadable(*args, **kwargs):
+        raise m.engine_versionstore.IndexUnreadable("permission denied")
+
+    real_listdir = os.listdir
+
+    def listdir(path):
+        if Path(path) == store / "s":
+            raise PermissionError("permission denied")
+        return real_listdir(path)
+
+    monkeypatch.setattr(m.engine_versionstore, "list_index", unreadable)
+    monkeypatch.setattr(m.os, "listdir", listdir)
+    assert m._svg_reference_corpus(root) is None
+
+
+def test_reclaim_excludes_document_and_version_commits_from_scan_to_delete(project, monkeypatch):
+    """A named version committed while reclaim runs waits for it, never lands between scan and delete."""
+    from tavotto.engine import svgstore
+
+    client, root = project
+    seen = {}
+    real = svgstore.reclaim
+
+    def observed(*args, **kwargs):
+        # Every document lock stripe is held by the reclaiming thread right now.
+        seen["held"] = all(lock.locked() for lock in m._DOCUMENT_LOCKS)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(svgstore, "reclaim", observed)
+    (root / "tavottofile" / "figure_snapshots").mkdir(parents=True)
+    m._reclaim_svg_snapshots_now(root, 0)
+    assert seen == {"held": True}
+    assert not any(lock.locked() for lock in m._DOCUMENT_LOCKS)
+
+
+def test_reclaim_requested_under_a_document_lock_runs_in_the_background(project, monkeypatch):
+    client, root = project
+    ran = []
+    monkeypatch.setattr(m, "_reclaim_svg_snapshots_now", lambda r, n: ran.append(r) or 0)
+    with m._document_lock(root / "tavottofile" / "x.json"):
+        assert m._reclaim_svg_snapshots(root, incoming_bytes=1) == 0
+    m._wait_svg_reclaim()
+    assert ran == [root]

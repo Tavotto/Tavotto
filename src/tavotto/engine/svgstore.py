@@ -893,14 +893,27 @@ def reclaim(storage_root: Path, *, referenced, incoming_bytes: int) -> int:
         count, total = usage(removed)
         if not removed or count > MAX_SNAPSHOTS or total > MAX_TOTAL_BYTES:
             return 0
-        for sid in removed:
-            # Current entry first: an interrupted reclaim leaves an archive
-            # (still a valid historical version), never a current entry
-            # without the archive its ownership scan requires.
-            for path, _ in sorted(variants[sid], key=lambda item: item[0].parent.name):
-                path.unlink(missing_ok=True)
-        _durable_cleanup(root)
-        return len(removed)
+        touched = 0  # variants with at least one file removed
+        try:
+            for sid in sorted(removed, key=lambda sid: created[sid]):
+                # Current entry first: an interrupted reclaim leaves an archive
+                # (still a valid historical version), never a current entry
+                # without the archive its ownership scan requires.
+                for number, (path, _) in enumerate(
+                    sorted(variants[sid], key=lambda item: item[0].parent.name)
+                ):
+                    path.unlink(missing_ok=True)
+                    if number == 0:
+                        touched += 1
+        except OSError:
+            # E.g. a Windows sharing violation part-way through. Every chosen
+            # variant was reclaimable; report what is already gone, never 0.
+            if not touched:
+                raise
+        with contextlib.suppress(OSError, ValueError):
+            # Orphan blobs left by a failure here are collected by the next save.
+            _durable_cleanup(root)
+        return touched
 
 
 @contextlib.contextmanager
