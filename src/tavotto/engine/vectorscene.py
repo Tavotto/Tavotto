@@ -195,6 +195,45 @@ def _require_untransformed(p: dict, item: str) -> None:
         raise SceneError("panel_transformed", item)
 
 
+#: 元素框本身就贴着墨迹的角色：文字类（`_text_ink_extent`）、坐标轴（绘图区）、图例、色条。
+#: 其余元素的 `bbox` 是撑大过的点击热区（`manifest._padded_bbox`）或只是数据范围（散点不含标记大小），
+#: 锚上去会差出零点几毫米——它们只认真实轮廓 `geometry.paths`。
+INK_BOX_ROLES = (
+    "axes",
+    "title",
+    "axis_label",
+    "ticklabel",
+    "legend",
+    "legend_text",
+    "text",
+    "colorbar",
+    "suptitle",
+)
+
+
+def element_ink_box(p: dict, gid: object, item: str) -> list[float]:
+    """图内元素的**墨迹**框（图幅分数 [x, y, w, h]）：有真实轮廓取轮廓点的范围，文字 / 坐标轴类用 `bbox`，其余拒绝。"""
+    el = next(
+        (e for e in (p.get("draw_manifest") or {}).get("elements", []) if e.get("gid") == gid),
+        None,
+    )
+    if el is None:
+        raise SceneError("unknown_ref", item, "element")
+    pts = [
+        q
+        for path in ((el.get("geometry") or {}).get("paths") or [])
+        if isinstance(path, dict)
+        for q in (path.get("points") or [])
+        if isinstance(q, (list, tuple)) and len(q) == 2
+    ]
+    if pts:
+        xs, ys = [float(q[0]) for q in pts], [float(q[1]) for q in pts]
+        return [min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)]
+    if el.get("role") in INK_BOX_ROLES and isinstance(el.get("bbox"), list):
+        return [float(v) for v in el["bbox"]]
+    raise SceneError("anchor_unresolvable", item, "no_ink_geometry")
+
+
 def resolve_anchor(anchor: dict, ctx: _Ctx, item: str) -> tuple[float, float]:
     """锚点 → 画布毫米。数据点只认 worker 在导出绘制上换算的结果，不在这里重算。"""
     if not isinstance(anchor, dict) or len(anchor) != 1:
@@ -216,19 +255,8 @@ def resolve_anchor(anchor: dict, ctx: _Ctx, item: str) -> tuple[float, float]:
     if kind == "element":
         p = _panel_of(ctx, spec.get("panel"), item)
         _require_untransformed(p, item)
-        el = next(
-            (
-                e
-                for e in (p.get("draw_manifest") or {}).get("elements", [])
-                if e.get("gid") == spec.get("gid")
-            ),
-            None,
-        )
-        if el is None or not isinstance(el.get("bbox"), list):
-            raise SceneError("unknown_ref", item, "element")
-        return _box_point(
-            panel_rect_to_page(p["panel"], el["bbox"]), spec.get("point", "center"), item
-        )
+        box = element_ink_box(p, spec.get("gid"), item)
+        return _box_point(panel_rect_to_page(p["panel"], box), spec.get("point", "center"), item)
     if kind == "panel":
         p = _panel_of(ctx, spec.get("id"), item)
         pn = p["panel"]
@@ -476,17 +504,7 @@ def _target_box(target: object, ctx: _Ctx, name: str) -> tuple[float, float, flo
     if kind == "element":
         p = _panel_of(ctx, spec.get("panel"), name)
         _require_untransformed(p, name)
-        el = next(
-            (
-                e
-                for e in (p.get("draw_manifest") or {}).get("elements", [])
-                if e.get("gid") == spec.get("gid")
-            ),
-            None,
-        )
-        if el is None or not isinstance(el.get("bbox"), list):
-            raise SceneError("unknown_ref", name, "element")
-        x, y, w, h = panel_rect_to_page(p["panel"], el["bbox"])
+        x, y, w, h = panel_rect_to_page(p["panel"], element_ink_box(p, spec.get("gid"), name))
         return (x, y, x + w, y + h)
     if kind == "item":
         box = ctx.items.get(spec.get("name"))  # type: ignore[arg-type]
@@ -523,6 +541,31 @@ def _box(it: dict, ctx: _Ctx, name: str) -> tuple[dict, dict]:
     return obj, {"item": name, "targets": targets, "boxes": boxes}
 
 
+_STYLE = {"strokePt", "color"}
+#: 每种元素允许的键（闭集）：写错的键（如给箭头写 `dash`）不静默丢掉，整批回 `bad_item`。
+ITEM_KEYS = {
+    "arrow": {"kind", "name", "from", "to", "head", "headEnd", "over_data"} | _STYLE,
+    "text": {
+        "kind",
+        "name",
+        "text",
+        "at",
+        "attach",
+        "sizePt",
+        "bold",
+        "italic",
+        "fontFamily",
+        "color",
+        "provenance",
+        "over_data",
+    },
+    "shape": {"kind", "name", "shape", "at", "size_mm", "attach", "fill", "over_data"} | _STYLE,
+    "bracket": {"kind", "name", "between", "side", "gap_mm", "tick_mm", "over_data"} | _STYLE,
+    "connector": {"kind", "name", "from", "to", "route", "headEnd", "over_data"} | _STYLE,
+    "box": {"kind", "name", "fit", "padding_mm", "dash", "cornerRadius"} | _STYLE,
+}
+
+
 def solve(items: object, panels: dict, *, measure=_measure_text_mm) -> dict:
     """场景描述 → 文档对象（局部 id = 元素名）+ 锚点记录。整批要么全解出、要么全拒（`ok` 为假时 `objects` 为空）。
 
@@ -549,6 +592,11 @@ def solve(items: object, panels: dict, *, measure=_measure_text_mm) -> dict:
                 raise SceneError("duplicate_name", name)
             seen.add(name)
             kind = it.get("kind")
+            if kind not in ITEM_KEYS:
+                raise SceneError("bad_item", name, "kind")
+            unknown = sorted(set(it) - ITEM_KEYS[kind])
+            if unknown:
+                raise SceneError("bad_item", name, "unknown_key")
             records: list[dict] | None = None
             if kind == "arrow":
                 obj = _arrow(it, ctx, name)
@@ -584,5 +632,25 @@ def solve(items: object, panels: dict, *, measure=_measure_text_mm) -> dict:
                         }
                     )
     except SceneError as exc:
-        return {"ok": False, "objects": [], "anchors": [], "fits": [], "errors": [exc.as_dict()]}
-    return {"ok": True, "objects": objects, "anchors": anchors, "fits": fits, "errors": []}
+        return {
+            "ok": False,
+            "objects": [],
+            "anchors": [],
+            "fits": [],
+            "statistical": [],
+            "errors": [exc.as_dict()],
+        }
+    # 统计标注即使写了来源，也单独列出来交给宿主给用户确认（来源是 Agent 自己填的，不等于用户确认过）
+    statistical = [
+        {"item": it["name"], "provenance": it.get("provenance")}
+        for it in items
+        if it.get("kind") == "text" and _STAT_TEXT.search(it.get("text", ""))
+    ]
+    return {
+        "ok": True,
+        "objects": objects,
+        "anchors": anchors,
+        "fits": fits,
+        "statistical": statistical,
+        "errors": [],
+    }

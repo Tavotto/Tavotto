@@ -245,7 +245,7 @@ def check(
 
     # ---- text：不压字
     linked = {
-        (a["item"], next(iter(a["anchor"]["item"].values())))
+        (a["item"], a["anchor"]["item"].get("name"))
         for a in solved["anchors"]
         if "item" in a["anchor"]
     }

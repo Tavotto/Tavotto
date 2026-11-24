@@ -201,6 +201,9 @@ def _fill_axes(items, axes):
             d = v.get("data")
             if isinstance(d, dict) and d.get("axes") == AXES:
                 d["axes"] = axes[d["panel"]]
+            el = v.get("element")
+            if isinstance(el, dict) and el.get("gid") == AXES:
+                el["gid"] = axes[el["panel"]]
             for x in v.values():
                 walk(x)
         elif isinstance(v, list):
@@ -211,18 +214,111 @@ def _fill_axes(items, axes):
     return out
 
 
-def test_five_real_tasks_end_to_end(tmp_path):
-    from PIL import Image
+def _data(panel, x, y, **kw):
+    return {"anchor": {"data": {"panel": panel, "axes": AXES, "x": x, "y": y}}, **kw}
 
-    from tavotto.rendercore import facade, pdfwriter, plan, sources
 
-    items = _items()
+def _label_b_above():
+    return {
+        "kind": "text",
+        "name": "label_b",
+        "text": "(b)",
+        "bold": True,
+        "sizePt": 9,
+        "at": {"anchor": {"panel": {"id": "P2", "point": "nw"}}, "offset_mm": [0.0, -0.6]},
+        "attach": "sw",
+    }
+
+
+#: 必须被拦下的反例：(描述, 哪一项核对, 哪个元素)。前三个是调试五个任务时核对真实拦下过的摆法。
+NEGATIVES = {
+    "off_page": (
+        [
+            {
+                "kind": "arrow",
+                "name": "bad",
+                "from": _data("P1", 3.2, 1.0, offset_mm=[7.0, -40.0]),
+                "to": _data("P1", 3.2, 1.0),
+                "headEnd": "triangle",
+            }
+        ],
+        "page",
+        "bad",
+    ),
+    "neighbor_tick_labels": (
+        [
+            {
+                "kind": "text",
+                "name": "bad",
+                "text": "label",
+                "sizePt": 8,
+                "attach": "e",
+                "at": {
+                    "anchor": {"element": {"panel": "P2", "gid": AXES, "point": "w"}},
+                    "offset_mm": [-0.5, 0.0],
+                },
+            }
+        ],
+        "text",
+        "bad",
+    ),
+    "frame_through_label": (
+        [
+            _label_b_above(),
+            {
+                "kind": "box",
+                "name": "bad",
+                "fit": [{"panel": {"id": "P1"}}, {"panel": {"id": "P2"}}],
+                "padding_mm": 2.0,
+                "dash": "dashed",
+                "strokePt": 0.5,
+            },
+        ],
+        "text",
+        "bad",
+    ),
+    "text_inside_bar": (
+        [
+            {
+                "kind": "text",
+                "name": "bad",
+                "text": "x",
+                "sizePt": 6,
+                "attach": "center",
+                "at": _data("P2", "drugB", 2.0),
+            }
+        ],
+        "data",
+        "bad",
+    ),
+    "text_on_curve": (
+        [
+            {
+                "kind": "text",
+                "name": "bad",
+                "text": "here",
+                "sizePt": 8,
+                "attach": "center",
+                "at": _data("P1", 2.6, 0.3012),
+            }
+        ],
+        "data",
+        "bad",
+    ),
+}
+
+
+@pytest.fixture(scope="module")
+def world(tmp_path_factory):
+    """worker 只跑一次：两张子图各导出一次，数据点请求是正例与全部反例的并集。"""
+    tmp = tmp_path_factory.mktemp("tasks")
+    every = _items() + [it for items, _c, _n in NEGATIVES.values() for it in items]
     req = {
         pid: [{"x": q["x"], "y": q["y"]} for q in qs]
-        for pid, qs in vectorscene.required_data_points(items).items()
+        for pid, qs in vectorscene.required_data_points(every).items()
     }
     proc = subprocess.run(
-        [WORKER_PY, "-c", DRIVER, str(Path(pool.__file__).parent), str(tmp_path), json.dumps(req)],
+        [WORKER_PY, "-c", DRIVER, str(Path(pool.__file__).parent), str(tmp), json.dumps(req)],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -231,9 +327,6 @@ def test_five_real_tasks_end_to_end(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr[-4000:]
     rows = json.loads(proc.stdout.strip().splitlines()[-1])
-    items = _fill_axes(items, {pid: r["axes"] for pid, r in rows.items()})
-
-    page = {"w": 180.0, "h": 90.0}
     w1, h1 = rows["P1"]["draw_manifest"]["size_mm"]
     w2, h2 = rows["P2"]["draw_manifest"]["size_mm"]
     placed = {
@@ -249,16 +342,52 @@ def test_five_real_tasks_end_to_end(tmp_path):
         }
         for pid, r in rows.items()
     }
-    solved = vectorscene.solve(items, panels)
-    assert solved["ok"], solved["errors"]
-    checked = agentobjects.validate_new_objects(solved["objects"])
-    assert checked["ok"], checked["errors"]
     profile = profiles.load(
         "journal-base-v1", journal={"min_line_width_pt": 0.25, "min_effective_font_size_pt": 6}
     )
-    verdict = vectorcheck.check(
-        solved, checked["objects"], panels, items, page=page, profile=profile
+    return {
+        "tmp": tmp,
+        "rows": rows,
+        "placed": placed,
+        "panels": panels,
+        "profile": profile,
+        "page": {"w": 180.0, "h": 90.0},
+        "axes": {pid: r["axes"] for pid, r in rows.items()},
+    }
+
+
+def _verdict(world, items):
+    items = _fill_axes(items, world["axes"])
+    solved = vectorscene.solve(items, world["panels"])
+    assert solved["ok"], solved["errors"]
+    checked = agentobjects.validate_new_objects(solved["objects"])
+    assert checked["ok"], checked["errors"]
+    v = vectorcheck.check(
+        solved,
+        checked["objects"],
+        world["panels"],
+        items,
+        page=world["page"],
+        profile=world["profile"],
     )
+    return solved, checked, v
+
+
+@pytest.mark.parametrize("case", sorted(NEGATIVES))
+def test_bad_placements_are_caught(world, case):
+    items, check, name = NEGATIVES[case]
+    _solved, _checked, v = _verdict(world, json.loads(json.dumps(items)))
+    got = [f["status"] for f in v["facts"] if f["check"] == check and f.get("item") == name]
+    assert "fail" in got and not v["ok"], (case, v["facts"])
+
+
+def test_five_real_tasks_end_to_end(world):
+    from PIL import Image
+
+    from tavotto.rendercore import facade, pdfwriter, plan, sources
+
+    tmp_path, rows, placed, page = world["tmp"], world["rows"], world["placed"], world["page"]
+    solved, checked, verdict = _verdict(world, _items())
     bad = [f for f in verdict["facts"] if f["status"] in ("fail", "unknown")]
     assert verdict["ok"] and verdict["verified"], bad
     assert {f["check"] for f in verdict["facts"]} >= {
@@ -269,6 +398,7 @@ def test_five_real_tasks_end_to_end(tmp_path):
         "journal",
         "fit",
     }
+    assert solved["statistical"] == [{"item": "sig_label", "provenance": "user"}]
 
     # 真画布合成：两张导出的 PDF 当子图源，Agent 的对象叠在上面
     objects = [

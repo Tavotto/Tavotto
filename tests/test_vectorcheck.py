@@ -223,3 +223,18 @@ def test_statistical_text_needs_provenance(text):
     assert not r["ok"] and r["errors"][0]["code"] == "needs_confirmation"
     r = vectorscene.solve([{**item, "provenance": "user"}], _panels(), measure=_measure)
     assert r["ok"]
+
+
+def test_item_anchor_link_does_not_depend_on_key_order():
+    items = [
+        {"kind": "arrow", "name": "a", "from": _at(85, 25), "to": _at(80, 30)},
+        # point 写在 name 前面：配对仍按 name 认
+        {
+            "kind": "text",
+            "name": "t",
+            "text": "x",
+            "at": {"anchor": {"item": {"point": "ne", "name": "a"}}},
+        },
+    ]
+    v = _run(items)
+    assert _status(v, "text", "a") == ["pass"] and _status(v, "text", "t") == ["pass"]

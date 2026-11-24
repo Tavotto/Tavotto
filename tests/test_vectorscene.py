@@ -212,3 +212,75 @@ def test_required_data_points_groups_and_dedupes():
 def test_error_codes_are_a_closed_set():
     with pytest.raises(AssertionError):
         vectorscene.SceneError("made_up")
+
+
+def test_unknown_key_rejects_the_batch():
+    item = {
+        "kind": "arrow",
+        "name": "a",
+        "from": {"anchor": DATA},
+        "to": {"anchor": DATA},
+        "dash": "dashed",
+    }
+    r = vectorscene.solve([item], _panels(), measure=_measure)
+    assert not r["ok"] and r["errors"][0] == {
+        "code": "bad_item",
+        "item": "a",
+        "detail": "unknown_key",
+    }
+
+
+def test_element_anchor_needs_ink_geometry():
+    manifest = {
+        "size_mm": [80, 40],
+        "elements": [
+            {"gid": "axes_0", "role": "axes", "bbox": [0.1, 0.1, 0.8, 0.7]},
+            # 散点：bbox 只是数据范围（不含标记大小），没有 geometry → 不许锚
+            {"gid": "axes_0.collections_0", "role": "scatter", "bbox": [0.2, 0.2, 0.1, 0.1]},
+            # 有真实轮廓的线：锚轮廓点的范围，不锚撑大过的 bbox
+            {
+                "gid": "axes_0.lines_0",
+                "role": "line",
+                "bbox": [0.0, 0.0, 1.0, 1.0],
+                "geometry": {"paths": [{"points": [[0.25, 0.5], [0.75, 0.25]]}]},
+            },
+        ],
+    }
+    panels = {"P1": {"panel": PANEL, "draw_manifest": manifest, "requests": [], "data_points": []}}
+
+    def at(gid, point):
+        return {"anchor": {"element": {"panel": "P1", "gid": gid, "point": point}}}
+
+    r = vectorscene.solve(
+        [{"kind": "shape", "name": "s", "at": at("axes_0.collections_0", "n"), "size_mm": [1, 1]}],
+        panels,
+        measure=_measure,
+    )
+    assert r["errors"][0] == {
+        "code": "anchor_unresolvable",
+        "item": "s",
+        "detail": "no_ink_geometry",
+    }
+    r = vectorscene.solve(
+        [{"kind": "shape", "name": "s", "at": at("axes_0.lines_0", "ne"), "size_mm": [1, 1]}],
+        panels,
+        measure=_measure,
+    )
+    s = r["objects"][0]
+    # ne = (0.75, 0.25) → 画布 (10 + 60, 20 + 10)
+    assert (s["x"] + s["w"] / 2, s["y"] + s["h"] / 2) == pytest.approx((70.0, 30.0))
+
+
+def test_statistical_texts_are_listed_for_the_user_even_with_provenance():
+    items = [
+        {
+            "kind": "text",
+            "name": "stars",
+            "text": "**",
+            "provenance": "user",
+            "at": {"anchor": DATA},
+        },
+        {"kind": "text", "name": "plain", "text": "peak", "at": {"anchor": DATA}},
+    ]
+    r = vectorscene.solve(items, _panels(), measure=_measure)
+    assert r["ok"] and r["statistical"] == [{"item": "stars", "provenance": "user"}]
