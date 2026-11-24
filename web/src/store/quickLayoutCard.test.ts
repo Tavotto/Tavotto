@@ -39,7 +39,7 @@ vi.mock('@/store/renderStore', async (importOriginal) => {
 
 import { useDocumentStore } from './documentStore'
 import { runUndoRedo } from '@/hooks/useKeyboard' // 加载它 = 把「撤销」交给一键排版的胶囊
-import { runQuickLayout, runQuickLayoutRatios, useQuickLayoutStore } from './quickLayoutActions'
+import { PREVIEW_TIMEOUT_MS, runQuickLayout, runQuickLayoutRatios, useQuickLayoutStore } from './quickLayoutActions'
 
 void runUndoRedo
 import { useSelectionStore } from './selectionStore'
@@ -141,6 +141,11 @@ describe('出卡：求解回来后文档一个字不动', () => {
     const [b, a] = fetchLayoutPreviewPng.mock.calls.map((c) => c[0] as { objects: { type: string }[] })
     expect(b.objects.filter((o) => o.type === 'text')).toHaveLength(0)
     expect(a.objects.filter((o) => o.type === 'text')).toHaveLength(2)
+    // 「应用之后」那份画布里每张图是最终的框：图幅变了（原生 80、排版后 85）的图也按 85 画在新位置，不是按旧大小
+    const rect = (c: { objects: { type: string }[] }) =>
+      c.objects.filter((o) => o.type === 'panel').map((o) => [(o as never as { x_mm: number }).x_mm, (o as never as { w_mm: number }).w_mm])
+    expect(rect(b as never)).toEqual([[10, 80], [120, 80]])
+    expect(rect(a as never)).toEqual([[10, 85], [98, 85]])
     // 求解让后端的 worker 停在候选上：推迟落地时先按此刻的列表放回
     expect(requestRender.mock.calls.map((c) => (c[0] as PanelObject).id).sort()).toEqual(['p1', 'p2'])
   })
@@ -222,6 +227,26 @@ describe('预览出不来：不卡住', () => {
     expect(texts()).toHaveLength(2)
     expect(formatMessage(useUiStore.getState().statusSubline)).toContain('预览')
     expect(URL.createObjectURL).not.toHaveBeenCalled() // 两张都到了才建地址：半张不留
+  })
+
+  it('预览出图卡住：到点放弃预览、直接落地，按钮不会一直转', async () => {
+    vi.useFakeTimers()
+    try {
+      seed(panel('p1'), panel('p2', { x: 120 }))
+      quickLayoutPlan.mockResolvedValue(okPlan())
+      fetchLayoutPreviewPng.mockImplementation(
+        (_c: unknown, signal?: AbortSignal) =>
+          new Promise((_resolve, reject) => signal?.addEventListener('abort', () => reject(new Error('aborted')))),
+      )
+      const run = runQuickLayout('double', 3)
+      await vi.advanceTimersByTimeAsync(PREVIEW_TIMEOUT_MS + 1000)
+      expect(await run).toBe('applied')
+      expect(entries()).toHaveLength(0)
+      expect(texts()).toHaveLength(2)
+      expect(useQuickLayoutStore.getState().busy).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('出图期间图被改过：不落地、不出卡（一句「图改过了」）', async () => {

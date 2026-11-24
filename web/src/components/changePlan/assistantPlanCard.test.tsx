@@ -26,6 +26,7 @@ vi.mock('@/store/connectAiStore', async (importOriginal) => ({
 }))
 
 import { TooltipProvider } from '../ui/Tooltip'
+import { pendingSync } from './reviewSync'
 import { ChangePlanDialog } from './ChangePlanDialog'
 import { ChangePlanTranscript } from './ChangePlanTranscript'
 
@@ -234,4 +235,12 @@ it('一键排版的卡：不属于当前画布时不出现；弹窗里「应用�
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_other')
   await render(<ChangePlanTranscript panelId="" />)
   expect(q('[data-change-plan-card]')).toBeNull()
+})
+
+it('不牵连审阅页签：助手 / 一键排版的卡应用后不会去标「已处理」意见（没有分享记录 id）', () => {
+  const detail = { share_id: 's1', comments: COMMENTS.map((c) => ({ ...c, resolved: false })) } as never
+  const overrides = [...BASE, { gid: 'ax.title', prop: 'fontsize', value: 14 }]
+  const applied = assistant('a', { status: 'applied', appliedPatches: overrides })
+  expect(pendingSync(applied, overrides, detail, null)).toBeNull()
+  expect(pendingSync(layoutEntry({ status: 'applied' }), overrides, detail, null)).toBeNull()
 })

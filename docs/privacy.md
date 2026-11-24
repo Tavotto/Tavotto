@@ -678,9 +678,9 @@ the plan step has said so.
   in this step. Instructions with attached reference images skip the plan step.
 * **One-click layout.** The comparison pictures are drawn on your computer by the
   export engine; nothing about them is sent anywhere.
-* **Turning it off.** Set `ai.change_plan.enabled` to `false` in the app's settings
-  file and the assistant and one-click layout behave as before (edit the script /
-  apply directly).
+* **Turning it off.** Settings → Assistant → Advanced → *Show a change plan before
+  editing*. Off means the assistant and one-click layout behave as before (edit the
+  script / apply directly).
 
 ## Paid edition components
 

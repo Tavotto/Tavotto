@@ -285,6 +285,12 @@ def enabled() -> bool:
     return not (isinstance(cfg, dict) and cfg.get("enabled") is False)
 
 
+def set_enabled(value: bool) -> bool:
+    """设置里的开关（`PUT /api/ai/change-plan`）：存用户的选择，回存下的值。"""
+    config.set_ai_settings({"change_plan": {"enabled": bool(value)}})
+    return bool(value)
+
+
 def assistant_comments(instruction: object, target: object) -> list[dict] | None:
     """助手的一条指令 → 只有一条「意见」的列表（形状同 `open_comments` 认的）；指令不合格 None。
     `target` = 用户选中的元素 gid（没有 = 整张图）。"""

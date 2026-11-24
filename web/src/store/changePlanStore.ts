@@ -14,6 +14,7 @@ import {
 import { refuseArtifactOperation } from '@/lib/artifactValidation'
 import { applyGroups, canonicalPatches, effectiveStatus, samePatches, toOverrides, type PlanSource } from '@/lib/changePlanApply'
 import { effectiveOverride } from '@/lib/effectiveOverride'
+import { writeChangePlanCache } from '@/lib/changePlanSwitch'
 import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
 import { apiUrlFor, onCurrentProjectChange } from '@/lib/session'
 import { releaseOwned } from '@/lib/styleOwned'
@@ -711,4 +712,10 @@ function writeOverrides(panelId: string, patches: readonly ChangePlanPatch[], la
 onCurrentProjectChange(() => {
   pending.clear()
   useChangePlanStore.getState().clear()
+})
+
+// 探测到的能力里带着开关：记一份在本机，下次还没探测完时（比如一进来就点一键排版）也按用户的选择办（`lib/changePlanSwitch`）
+useAiStore.subscribe((s, prev) => {
+  const v = s.caps?.change_plan_enabled
+  if (typeof v === 'boolean' && v !== prev.caps?.change_plan_enabled) writeChangePlanCache(v)
 })

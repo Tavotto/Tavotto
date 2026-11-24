@@ -72,6 +72,7 @@ import { ChangePlanDialog } from '../changePlan/ChangePlanDialog'
 import { ChangePlanTurn, useLatestReadyKey, usePanelPlanEntries } from '../changePlan/ChangePlanTranscript'
 import { useHasChangePlans } from '../changePlan/usePlanFigure'
 import { assistantUsesPlan } from '@/lib/assistantPlanRoute'
+import { changePlanEnabled } from '@/lib/changePlanSwitch'
 import { deleteAiDraftIf } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
 import { useChangePlanStore } from '@/store/changePlanStore'
@@ -593,7 +594,7 @@ function AssistantPanelBody() {
       // 先出修改方案卡（ADR 0206 PR 4）：判据在 `assistantUsesPlan`；后端同步说「这条路不适用」时落回下面照旧的改脚本路径
       if (
         assistantUsesPlan({
-          enabled: caps?.change_plan_enabled,
+          enabled: changePlanEnabled(caps),
           source,
           pinned: !!pinned,
           hasRefs: source === 'composer' && refItems.length > 0,

@@ -2706,6 +2706,7 @@ export default interface Resources {
           "failed": "检测失败。显示上次结果。"
         },
         "backAria": "返回改图助手列表",
+        "changePlan": "改图前先给我看修改方案",
         "codexInstall": {
           "action": "安装 Codex 集成",
           "announce": {

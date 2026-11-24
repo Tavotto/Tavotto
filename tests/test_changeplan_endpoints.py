@@ -834,3 +834,24 @@ def test_layout_preview_render_failure_is_a_stable_code_not_a_500(env, monkeypat
     monkeypatch.setattr(m, "_export_png_bytes", boom)
     resp = client.post("/api/change-plans/layout-preview", json={"canvas": _canvas()})
     assert resp.status_code == 409 and resp.get_json()["code"] == "change_plan_render_failed"
+
+
+def test_the_settings_switch_is_stored_and_read_back_by_capabilities(env, monkeypatch):
+    m, client, *_ = env
+    store: dict = {}
+    monkeypatch.setattr(m.engine_ai, "capabilities", lambda refresh=False: {})
+    monkeypatch.setattr(cp.config, "ai_settings", lambda: store)
+    monkeypatch.setattr(cp.config, "set_ai_settings", lambda patch: store.update(patch) or store)
+    resp = client.put("/api/ai/change-plan", json={"enabled": False})
+    assert resp.status_code == 200 and resp.get_json() == {"change_plan_enabled": False}
+    assert client.get("/api/ai/capabilities").get_json()["change_plan_enabled"] is False
+    assert client.put("/api/ai/change-plan", json={"enabled": True}).get_json() == {
+        "change_plan_enabled": True
+    }
+    assert client.get("/api/ai/capabilities").get_json()["change_plan_enabled"] is True
+
+
+@pytest.mark.parametrize("body", [None, {}, {"enabled": "yes"}, {"enabled": 1}, [True]])
+def test_the_settings_switch_refuses_anything_but_a_boolean(env, body):
+    _m, client, *_ = env
+    assert client.put("/api/ai/change-plan", json=body).status_code == 400

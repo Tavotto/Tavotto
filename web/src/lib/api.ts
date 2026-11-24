@@ -5036,6 +5036,14 @@ export const setConvertUnsandboxedWindows = (enabled: boolean) =>
     body: JSON.stringify({ enabled }),
   })
 
+/** 设置里的开关「改图前先给我看修改方案」（`ai.change_plan.enabled`，默认开） */
+export const setChangePlanEnabled = (enabled: boolean) =>
+  jsonFetch<{ change_plan_enabled: boolean }>('/api/ai/change-plan', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  })
+
 /** 「记住修好的做法」的一条（ADR 0197 第 3 层·在线；`engine/fixmemory.py`）。`fields` 按 `kind` 取用 */
 export interface FixMemoryEntry {
   id: string

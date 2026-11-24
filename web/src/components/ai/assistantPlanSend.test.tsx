@@ -206,4 +206,27 @@ describe('发送路由', () => {
     expect(createChangePlan).not.toHaveBeenCalled()
     expect(aiRun).toHaveBeenCalledOnce()
   })
+
+  it('一键排版的弹窗不依赖 AI：没连任何 Agent、也没选图时，助手页签里照样弹出（否则「应用」点不到）', async () => {
+    useAiStore.setState({ caps: capsOf([], { change_plan_enabled: true }) })
+    useSelectionStore.setState({ ids: [] } as never)
+    const apply = vi.fn(() => 'applied' as const)
+    const doc = useDocumentStore.getState()
+    useChangePlanStore.getState().addLayoutEntry({
+      key: 'L1', from: 'quick_layout', kind: 'layout', pj: null, panelId: '', fileId: '', source: { fileId: '', script: null },
+      documentId: doc.documentId, loadSeq: doc.loadSeq, canvasId: doc.activeCanvasId, createdAt: 1, status: 'ready',
+      plan: {
+        id: 'L1', version: 1, source: 'quick_layout', base: { target: '', fingerprint: '' }, base_patches: [], candidate_patches: [],
+        groups: [{ key: 'layout', label: '排版', atomic: true, changes: [], boxes: { after: [] } }], unhandled: [], preview: { before: 'blob:a', after: 'blob:b' },
+      },
+      beforeSrc: 'blob:a', afterSrc: 'blob:b', unchecked: {}, request: {}, comments: [], commentCount: 0, drafts: {},
+      layout: { apply, regenerate: vi.fn(), count: 2 },
+    })
+    await mount()
+    expect(q('[data-change-plan-card="ready"]')).toBeTruthy() // 没选图也在对话里
+    await act(async () => useChangePlanStore.getState().openDialog('L1'))
+    expect(document.body.querySelector('[data-change-plan-dialog]')).toBeTruthy()
+    await act(async () => document.body.querySelector<HTMLElement>('[data-change-plan-confirm]')!.click())
+    expect(apply).toHaveBeenCalledOnce()
+  })
 })

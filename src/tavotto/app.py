@@ -14358,6 +14358,18 @@ def api_ai_convert_unsandboxed():
     return resp
 
 
+@app.put("/api/ai/change-plan")
+def api_ai_change_plan_switch():
+    """设置里的开关「改图前先给我看修改方案」（`ai.change_plan.enabled`，默认开；ADR 0206）：关了 = 改图助手与一键排版回到旧行为。"""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("enabled"), bool):
+        abort(400)
+    value = engine_changeplan.set_enabled(body["enabled"])
+    resp = jsonify({"change_plan_enabled": value})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 def _fix_error(exc: "engine_fixsession.FixError"):
     return jsonify({"error": exc.code, "code": exc.code}), exc.status
 

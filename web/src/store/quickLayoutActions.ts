@@ -22,6 +22,7 @@ import { effectiveOverride } from '@/lib/effectiveOverride'
 import { releaseOwned } from '@/lib/styleOwned'
 import { literal, msg, t as translate, type UiMessage } from '@/i18n'
 import { fetchLayoutPreviewPng, quickLayoutPlan, type ChangePlan, type QuickLayoutRequest, type QuickLayoutResponse } from '@/lib/api'
+import { changePlanEnabled } from '@/lib/changePlanSwitch'
 import { canvasSegmentOf } from '@/lib/exportRequest'
 import { ArtifactValidationError, refuseArtifactOperation } from '@/lib/artifactValidation'
 import { engineTransport } from '@/lib/engineTransport'
@@ -584,8 +585,11 @@ function finishApplied(
 
 /** 「先出修改方案卡」的开关（`ai.change_plan.enabled`，助手面板探测到的能力里带；没探测到 = 默认开） */
 function layoutCardEnabled(): boolean {
-  return useAiStore.getState().caps?.change_plan_enabled !== false
+  return changePlanEnabled(useAiStore.getState().caps)
 }
+
+/** 整版预览最多等多久（前后两份并行；到点放弃预览、直接落地） */
+export const PREVIEW_TIMEOUT_MS = 45_000
 
 /** 预览出图的页面：前后两份画布放在同一个页框里（取两者的并集），对比的两张图才对得齐 */
 function previewDoc(doc: FigureDocument, w: number, h: number): Pick<FigureDocument, 'page' | 'objects'> {
@@ -615,19 +619,31 @@ async function presentLayoutCard(c: LayoutCard): Promise<boolean> {
   // 「应用之后」的那份文档：与 `commitPlan` 是同一个改写函数、改在一份拷贝上（不碰真文档）
   const after = structuredClone(before)
   applyPlanToDoc(after, res, c.memo)
+  // 真提交里面板的 w / h 是「渲染回来按原生图幅再乘一遍之后正好是 box」的预除值（`commitPlan` 的注释）；拷贝上没有那一步渲染同步，
+  // 所以预览直接摆最终的框，不然改了图幅的图会按旧大小画在新位置
+  for (const [id, [x, y, w, h]] of c.shownPanels) {
+    const o = after.objects.find((x2) => x2.id === id)
+    if (o) Object.assign(o, { x, y, w, h })
+  }
   const pageW = Math.max(before.page.w, after.page.w)
   const pageH = Math.max(before.page.h, after.page.h)
   let beforeSrc = ''
   let afterSrc = ''
+  // 出图慢得离谱（导出管线卡住 / 图太重）也不让按钮一直转：到点就放弃预览，调用方直接落地
+  const abort = new AbortController()
+  const timer = setTimeout(() => abort.abort(), PREVIEW_TIMEOUT_MS)
   try {
     const [b, a] = await Promise.all([
-      fetchLayoutPreviewPng(canvasSegmentOf(previewDoc(before, pageW, pageH))),
-      fetchLayoutPreviewPng(canvasSegmentOf(previewDoc(after, pageW, pageH))),
+      fetchLayoutPreviewPng(canvasSegmentOf(previewDoc(before, pageW, pageH)), abort.signal),
+      fetchLayoutPreviewPng(canvasSegmentOf(previewDoc(after, pageW, pageH)), abort.signal),
     ])
     beforeSrc = URL.createObjectURL(b)
     afterSrc = URL.createObjectURL(a)
   } catch {
+    abort.abort() // 另一份还在路上的也一并掐掉
     return false
+  } finally {
+    clearTimeout(timer)
   }
   // 出图期间文档动过：这次方案作废（调用方按「图改过了」处理，不落地）
   if (!sameContext(ctx)) {
