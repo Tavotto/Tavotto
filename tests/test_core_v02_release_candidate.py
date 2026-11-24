@@ -42,6 +42,7 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy)) +
 LAYOUT = "/api/layouts/Mixed%20native"
 MPL_EDIT = "Reviewed signal"
 R_EDIT = "#6C3799"
+AXIS_FACES = {"weight": "bold", "style": "italic"}
 
 
 def _run_ggplot(app, script, rscript):
@@ -97,6 +98,23 @@ def _panel(id_, asset, x, patches):
         "figureFrame": 1,
         "overrides": patches,
     }
+
+
+def _axis_face_patches(render):
+    titles = [
+        element for element in render["manifest"]["elements"] if element["role"] == "axis_label"
+    ]
+    assert len(titles) == 2
+    return [
+        {
+            "gid": element["gid"],
+            "prop": prop,
+            "value": value,
+            **({"identity": element["identity"]} if "identity" in element else {}),
+        }
+        for element in titles
+        for prop, value in AXIS_FACES.items()
+    ]
 
 
 def _canvas_export_request(doc, filename):
@@ -177,6 +195,13 @@ def _pdf_pixels(path):
         assert max(span["bbox"][2] for span in mpl) < page.rect.width / 2
         assert min(span["bbox"][0] for span in ggplot) > page.rect.width / 2
         assert {span["color"] for span in ggplot} == {int(R_EDIT[1:], 16)}
+        bold_italic = pymupdf.TEXT_FONT_BOLD | pymupdf.TEXT_FONT_ITALIC
+        for title in ("Time (min)", "Signal (mV)", "Displacement (L)", "Highway mileage"):
+            assert all(
+                span["flags"] & bold_italic == bold_italic
+                for span in by_text[title]
+                if span["text"].strip()
+            ), by_text[title]
         return page.get_pixmap().samples
 
 
@@ -188,6 +213,10 @@ def _format_pixels(files):
     assert svg_tree.find(f".//{ns}image") is None
     (title,) = [node for node in svg_tree.iter(f"{ns}text") if node.text == "Fuel economy"]
     assert R_EDIT.lower() in title.attrib["style"].lower()
+    for label in ("Displacement (L)", "Highway mileage"):
+        (axis_title,) = [node for node in svg_tree.iter(f"{ns}text") if node.text == label]
+        assert "font-weight: bold" in axis_title.attrib["style"]
+        assert "font-style: italic" in axis_title.attrib["style"]
     with pymupdf.open(files["svg"]) as svg:
         assert len(svg) == 1
         _assert_canvas_size(svg[0])
@@ -363,8 +392,10 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         (mpl,) = [item for item in run["descriptors"] if item["stem"] == "Signal"]
         mpl_asset = mpl["asset_id"]
         r_asset = _run_ggplot(app, "fuel.R", rscript)
-        mpl_title = _title(_render(app, mpl_asset, []), "text")
-        r_title = _title(_render(app, r_asset, []), "color")
+        mpl_baseline = _render(app, mpl_asset, [])
+        r_baseline = _render(app, r_asset, [])
+        mpl_title = _title(mpl_baseline, "text")
+        r_title = _title(r_baseline, "color")
         mpl_patch = {"gid": mpl_title["gid"], "prop": "text", "value": MPL_EDIT}
         r_patch = {
             "gid": r_title["gid"],
@@ -390,8 +421,8 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
                     "page": {"w": 170, "h": 61},
                     "guides": [],
                     "objects": [
-                        _panel("mpl", mpl_asset, 5, [mpl_patch]),
-                        _panel("r", r_asset, 88, [r_patch]),
+                        _panel("mpl", mpl_asset, 5, [mpl_patch, *_axis_face_patches(mpl_baseline)]),
+                        _panel("r", r_asset, 88, [r_patch, *_axis_face_patches(r_baseline)]),
                     ],
                 }
             ],

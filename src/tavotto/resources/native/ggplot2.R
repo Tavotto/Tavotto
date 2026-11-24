@@ -63,12 +63,18 @@ ggplot_text_target <- function(table, slots, role, title_child = NULL, group_lab
   color <- grDevices::rgb(rgb[1L], rgb[2L], rgb[3L],
                           alpha = if (rgb[4L] != 255L) rgb[4L] else NULL,
                           maxColorValue = 255)
+  font <- text$gp$font
+  face <- NULL
+  if (is.null(group_label) && length(font) == 1L && font %in% 1:4) {
+    face <- list(weight = if (font %in% c(2L, 4L)) "bold" else "normal",
+                 style = if (font %in% c(3L, 4L)) "italic" else "normal")
+  }
   edit_path <- if (is.null(title_child)) text$name else grid::gPath(table$name, text$name)
   list(slots = slots, parent_path = paste(c(path, table$name), collapse = "::"),
        child = text$name, edit_path = edit_path,
        label = if (is.null(group_label)) label else group_label,
        tick_labels = if (!is.null(group_label)) as.list(as.character(label)) else NULL,
-       paint = text$gp, color = color, role = role)
+       paint = text$gp, color = color, face = face, role = role)
 }
 
 ggplot_axis_ticks <- function(table) {
@@ -92,7 +98,7 @@ ggplot_axis_ticks <- function(table) {
     labels <- which(vapply(axis$grobs, inherits, logical(1L), "titleGrob"))
     if (length(labels) != 1L) next
     label <- paste0(side[[2L]], "\u8f74\u523b\u5ea6\u6587\u5b57")
-    targets[[gid]] <- ggplot_text_target(table, list(slot, "axis", labels), "axis_label",
+    targets[[gid]] <- ggplot_text_target(table, list(slot, "axis", labels), "ticks",
                                          group_label = label)
   }
   targets
@@ -228,6 +234,10 @@ ggplot_text_targets <- function(table, frame_pt, colourbar_titles) {
   }
   targets <- c(targets, ggplot_legend_targets(table, colourbar_titles), ggplot_facet_labels(table),
                ggplot_axis_ticks(table))
+  measure_ggplot_targets(targets, frame_pt)
+}
+
+measure_ggplot_targets <- function(targets, frame_pt) {
   if (!length(targets)) return(targets)
   drawn <- tryCatch({
     grid::grid.force()
@@ -279,25 +289,48 @@ edit_ggplot_text <- function(table, slots, path, paint) {
   table
 }
 
-ggplot_table_for <- function(state, colors) {
+ggplot_face_options <- list(weight = c("normal", "bold"), style = c("normal", "italic"))
+
+ggplot_text_paint <- function(target, edits) {
+  paint <- target$paint
+  face <- target$face
+  for (prop in names(edits)) {
+    value <- edits[[prop]]
+    if (!is.character(value) || length(value) != 1L || is.na(value)) {
+      stop("Invalid native R text style.")
+    }
+    if (prop == "color") {
+      if (!grepl("^#[0-9A-Fa-f]{6}$", value)) {
+        stop("The native R text color must be an RGB hex color.")
+      }
+      paint$col <- value
+    } else if (!is.null(face[[prop]]) && value %in% ggplot_face_options[[prop]]) {
+      face[[prop]] <- value
+    } else {
+      stop("The requested native R text style is unavailable.")
+    }
+  }
+  if (!identical(face, target$face)) {
+    # grid encodes both attributes in one font slot. Undo and partial changes
+    # always start from the captured grob, including its other face attribute.
+    paint$font <- 1L + as.integer(face$weight == "bold") + 2L * as.integer(face$style == "italic")
+  }
+  list(paint = paint, face = face)
+}
+
+ggplot_table_for <- function(state, edits) {
   table <- state$table
-  for (gid in names(colors)) {
+  for (gid in names(edits)) {
     target <- state$text_targets[[gid]]
     if (is.null(target)) stop("The requested native R text is unavailable.")
-    color <- colors[[gid]]
-    if (!is.character(color) || length(color) != 1L ||
-        is.na(color) || !grepl("^#[0-9A-Fa-f]{6}$", color)) {
-      stop("The native R text color must be an RGB hex color.")
-    }
-    paint <- target$paint
-    paint$col <- color
+    paint <- ggplot_text_paint(target, edits[[gid]])$paint
     table <- edit_ggplot_text(table, target$slots, target$edit_path, paint)
   }
   table
 }
 
-render_ggplot <- function(state, colors = list()) {
-  table <- ggplot_table_for(state, colors)
+render_ggplot <- function(state, edits = list()) {
+  table <- ggplot_table_for(state, edits)
   with_svg_frame(state$frame_pt, function() {
     grid::grid.newpage()
     grid::grid.draw(table)
@@ -321,8 +354,8 @@ open_ggplot_pdf <- function(frame_pt, path) {
   after
 }
 
-export_ggplot_pdf <- function(state, colors, path) {
-  table <- ggplot_table_for(state, colors)
+export_ggplot_pdf <- function(state, edits, path) {
+  table <- ggplot_table_for(state, edits)
   device <- open_ggplot_pdf(state$frame_pt, path)
   on.exit(grDevices::dev.off(which = device))
   grid::grid.newpage()
@@ -330,14 +363,36 @@ export_ggplot_pdf <- function(state, colors, path) {
   invisible(NULL)
 }
 
-ggplot_manifest <- function(state, stem, colors = list()) {
+ggplot_manifest <- function(state, stem, edits = list()) {
+  face_gids <- names(Filter(function(edit) any(names(edit) %in% names(ggplot_face_options)), edits))
+  measured <- list()
+  if (length(face_gids)) {
+    table <- ggplot_table_for(state, edits)
+    measured <- with_svg_frame(state$frame_pt, function() {
+      grid::grid.newpage()
+      grid::grid.draw(table)
+      measure_ggplot_targets(state$text_targets[face_gids], state$frame_pt)
+    })$value
+    if (length(measured) != length(face_gids)) {
+      stop("The edited native R text could not be measured.")
+    }
+  }
   elements <- lapply(names(state$text_targets), function(gid) {
     target <- state$text_targets[[gid]]
-    color <- if (is.null(colors[[gid]])) target$color else colors[[gid]]
+    patch <- edits[[gid]]
+    color <- if (is.null(patch$color)) target$color else patch$color
+    face <- ggplot_text_paint(target, patch)$face
+    bbox <- if (is.null(measured[[gid]])) target$bbox else measured[[gid]]$bbox
+    editable <- list(list(prop = "color", type = "color", value = color))
+    for (prop in names(face)) {
+      field <- list(prop = prop, type = "enum", value = face[[prop]],
+                    options = as.list(ggplot_face_options[[prop]]), strict_options = TRUE)
+      if (!is.null(patch[[prop]])) field$value_original <- target$face[[prop]]
+      editable[[length(editable) + 1L]] <- field
+    }
     element <- list(
       gid = gid, role = target$role, label = target$label,
-      bbox = as.list(target$bbox), draggable = FALSE,
-      editable = list(list(prop = "color", type = "color", value = color))
+      bbox = as.list(bbox), draggable = FALSE, editable = editable
     )
     if (!is.null(target$legend_title)) element$legend_title <- target$legend_title
     if (!is.null(target$tick_labels)) element$tick_labels <- target$tick_labels

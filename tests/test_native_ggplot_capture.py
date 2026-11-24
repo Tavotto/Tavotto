@@ -64,6 +64,9 @@ if (!requireNamespace("ggplot2", quietly = TRUE) ||
   quit(status = 77L)
 }
 
+color_edits <- function(colors) lapply(colors, function(value) list(color = value))
+render_colors <- function(state, colors = list()) adapter$render_ggplot(state, color_edits(colors))
+
 summary_calls <- 0L
 tracked_mean <- function(values) {
   summary_calls <<- summary_calls + 1L
@@ -130,8 +133,8 @@ stopifnot(summary_calls > 0L, length(baseline$state$layers) == 2L,
                            character(1L)), facets))
 count_at_capture <- summary_calls
 rng_at_capture <- .Random.seed
-edited <- adapter$render_ggplot(baseline$state, colors)
-undone <- adapter$render_ggplot(baseline$state)
+edited <- render_colors(baseline$state, colors)
+undone <- render_colors(baseline$state)
 restored <- edited
 for (i in seq_along(labels)) {
   gid <- names(labels)[[i]]
@@ -162,7 +165,33 @@ stopifnot(lengths(gregexpr("<svg ", baseline$svg, fixed = TRUE)) == 1L,
           identical(restored, baseline$svg),
           identical(undone, baseline$svg))
 
-bad_value <- tryCatch(adapter$render_ggplot(baseline$state, list("plot.title" = "not-a-colour")),
+axis_titles <- names(labels)[2:5]
+faces <- setNames(rep(list(list(weight = "bold", style = "italic")), 4L), axis_titles)
+faced_svg <- adapter$render_ggplot(baseline$state, faces)
+faced <- adapter$ggplot_manifest(baseline$state, "baseline", faces)$elements
+for (gid in axis_titles) {
+  item <- Filter(function(el) identical(el$gid, gid), faced)[[1L]]
+  target <- baseline$state$text_targets[[gid]]
+  line <- grep(paste0(">", target$label, "</text>"),
+               strsplit(faced_svg, "\n")[[1L]], value = TRUE, fixed = TRUE)
+  stopifnot(length(line) == 1L, grepl("font-weight: bold", line, fixed = TRUE),
+            grepl("font-style: italic", line, fixed = TRUE),
+            !identical(item$bbox, as.list(target$bbox)),
+            identical(item$editable[[2L]]$value, "bold"),
+            identical(item$editable[[3L]]$value_original, "normal"))
+}
+axis_variant <- function(face) {
+  svg <- adapter$render_ggplot(baseline$state, list("axis.x.bottom.title" = face))
+  grep(">Engine displacement</text>", strsplit(svg, "\n")[[1L]], value = TRUE, fixed = TRUE)
+}
+stopifnot(grepl("font-weight: bold", axis_variant(list(weight = "bold")), fixed = TRUE),
+          !grepl("font-style: italic", axis_variant(list(weight = "bold")), fixed = TRUE),
+          grepl("font-style: italic", axis_variant(list(style = "italic")), fixed = TRUE),
+          !grepl("font-weight: bold", axis_variant(list(style = "italic")), fixed = TRUE),
+          identical(adapter$render_ggplot(baseline$state), baseline$svg),
+          summary_calls == count_at_capture, identical(.Random.seed, rng_at_capture))
+
+bad_value <- tryCatch(render_colors(baseline$state, list("plot.title" = "not-a-colour")),
                       error = conditionMessage)
 stopifnot(identical(bad_value, "The native R text color must be an RGB hex color."))
 limited <- adapter$capture_ggplot(
@@ -172,7 +201,7 @@ limited <- adapter$capture_ggplot(
 stopifnot(identical(names(limited$state$text_targets),
                     c("axis.x.top.title", "axis.y.right.title", names(facets))),
           length(grep(">Shared</text>", strsplit(limited$svg, "\n")[[1L]], fixed = TRUE)) == 2L)
-bad_target <- tryCatch(adapter$render_ggplot(limited$state, colors),
+bad_target <- tryCatch(render_colors(limited$state, colors),
                        error = conditionMessage)
 stopifnot(identical(bad_target, "The requested native R text is unavailable."),
           identical(grDevices::dev.cur(), c("null device" = 1L)))
@@ -191,7 +220,7 @@ secondary <- adapter$capture_ggplot(secondary_plot, c(432, 288))
 count_at_capture <- summary_calls
 rng_at_capture <- .Random.seed
 secondary_edits <- list("plot.subtitle" = "#B04964", "plot.caption" = "#2B7984")
-edited <- adapter$render_ggplot(secondary$state, secondary_edits)
+edited <- render_colors(secondary$state, secondary_edits)
 restored <- edited
 anchors <- c("plot.subtitle" = .5, "plot.caption" = 1)
 for (gid in names(secondary_edits)) {
@@ -208,7 +237,7 @@ for (gid in names(secondary_edits)) {
   restored <- sub(secondary_edits[[gid]], target$color, restored, fixed = TRUE)
 }
 stopifnot(identical(restored, secondary$svg),
-          identical(adapter$render_ggplot(secondary$state), secondary$svg),
+          identical(render_colors(secondary$state), secondary$svg),
           count_at_capture == summary_calls, identical(rng_at_capture, .Random.seed))
 unsupported_secondary <- adapter$capture_ggplot(
   secondary_plot + ggplot2::labs(subtitle = expression(alpha)) +
@@ -231,7 +260,7 @@ tick_edits <- list("axis.x.bottom.ticks" = "#A64184", "axis.x.top.ticks" = "#A12
                    "axis.y.left.ticks" = "#834038", "axis.y.right.ticks" = "#254F29")
 tick_text <- list(c("Jan", "Feb", "Mar"), c("First", "Second", "Third"), c("1", "2", "3"), c("1", "2", "3"))
 stopifnot(all(names(tick_edits) %in% names(tick_state$state$text_targets)))
-tick_svg <- adapter$render_ggplot(tick_state$state, tick_edits)
+tick_svg <- render_colors(tick_state$state, tick_edits)
 restored <- tick_svg
 for (index in seq_along(tick_edits)) {
   gid <- names(tick_edits)[[index]]
@@ -254,8 +283,8 @@ for (index in seq_along(tick_edits)) {
   restored <- gsub(tick_edits[[gid]], target$color, restored, fixed = TRUE)
 }
 stopifnot(identical(restored, tick_state$svg),
-          identical(adapter$render_ggplot(tick_state$state), tick_state$svg))
-single_axis <- adapter$render_ggplot(tick_state$state, tick_edits[1L])
+          identical(render_colors(tick_state$state), tick_state$svg))
+single_axis <- render_colors(tick_state$state, tick_edits[1L])
 stopifnot(identical(gsub(tick_edits[[1L]], "#314259", single_axis, fixed = TRUE), tick_state$svg))
 for (guide in list(ggplot2::guide_axis(n.dodge = 2L), ggplot2::guide_axis(check.overlap = TRUE))) {
   irregular <- axis_capture(suppressWarnings(ticks_plot + ggplot2::guides(x = guide)))
@@ -274,7 +303,7 @@ bar_state <- adapter$capture_ggplot(bar, c(432, 288))$state
 gid <- "legend.bottom.1.title"
 stopifnot(identical(bar_state$text_targets[[gid]]$label, "City mileage"),
           !length(entries(bar_state)))
-bar_edited <- adapter$render_ggplot(bar_state, setNames(list("#26838F"), gid))
+bar_edited <- render_colors(bar_state, setNames(list("#26838F"), gid))
 bar_title <- grep(">City mileage</text>", strsplit(bar_edited, "\n")[[1L]],
                   value = TRUE, fixed = TRUE)
 stopifnot(length(bar_title) == 1L, grepl("#26838F", bar_title, fixed = TRUE))
@@ -302,13 +331,13 @@ for (index in seq_along(bar_ids)) {
             identical(unlist(target$tick_labels), bar_labels[[index]]),
             all(target$bbox[3:4] > 0))
   color <- bar_colours[[index]]
-  svg <- adapter$render_ggplot(captured_bars$state, setNames(list(color), id))
+  svg <- render_colors(captured_bars$state, setNames(list(color), id))
   lines <- grep(paste0("fill: ", color), strsplit(svg, "\n")[[1L]], fixed = TRUE, value = TRUE)
   stopifnot(all(startsWith(lines, "<text ")),
             identical(sub("^.*>([^<]*)</text>$", "\\1", lines), bar_labels[[index]]),
             identical(gsub(color, target$color, svg, fixed = TRUE), captured_bars$svg))
 }
-stopifnot(identical(adapter$render_ggplot(captured_bars$state), captured_bars$svg))
+stopifnot(identical(render_colors(captured_bars$state), captured_bars$svg))
 bar_ticks <- function(plot) {
   captured <- adapter$capture_ggplot(plot, c(432, 288))
   grep("\\.colourbar\\.ticks$", names(captured$state$text_targets), value = TRUE)
@@ -343,7 +372,7 @@ separate <- adapter$capture_ggplot(separate_guides, c(432, 288))
 shared <- Filter(function(target) identical(target$label, "Shared entry"), entries(separate$state))
 stopifnot(length(shared) == 2L, identical(shared[[1L]]$legend_title, "Drive"),
           identical(shared[[2L]]$legend_title, "Cylinders"))
-separate_edited <- adapter$render_ggplot(separate$state, setNames(list("#934896"), names(shared)[[2L]]))
+separate_edited <- render_colors(separate$state, setNames(list("#934896"), names(shared)[[2L]]))
 shared_lines <- function(svg) grep(">Shared entry</text>", strsplit(svg, "\n")[[1L]],
                                    fixed = TRUE, value = TRUE)
 stopifnot(identical(shared_lines(separate_edited)[[1L]], shared_lines(separate$svg)[[1L]]),
@@ -355,7 +384,7 @@ bottom_entries <- entries(wrapped$state)
 stopifnot(length(bottom_entries) == 3L, all(startsWith(names(bottom_entries), "legend.bottom.")))
 bottom_gid <- names(bottom_entries)[[3L]]
 bottom_label <- paste0(">", bottom_entries[[3L]]$label, "</text>")
-wrapped_edited <- adapter$render_ggplot(wrapped$state, setNames(list("#6F2A9B"), bottom_gid))
+wrapped_edited <- render_colors(wrapped$state, setNames(list("#6F2A9B"), bottom_gid))
 wrapped_line <- grep(bottom_label, strsplit(wrapped_edited, "\n")[[1L]], fixed = TRUE, value = TRUE)
 stopifnot(length(wrapped_line) == 1L, grepl("#6F2A9B", wrapped_line, fixed = TRUE))
 
@@ -378,7 +407,7 @@ across <- grid$state$text_targets[["facet.t.2.label"]]
 down <- grid$state$text_targets[["facet.r.2.label"]]
 stopifnot(across$label == "Shared", down$label == "Shared",
           across$color == "#375994", down$color == "#4F7152")
-grid_edit <- adapter$render_ggplot(grid$state, list("facet.r.2.label" = "#BC4964"))
+grid_edit <- render_colors(grid$state, list("facet.r.2.label" = "#BC4964"))
 row <- grep("#BC4964", strsplit(grid_edit, "\n")[[1L]], value = TRUE, fixed = TRUE)
 bbox <- down$bbox * c(432, 288, 432, 288)
 anchor <- as.numeric(strsplit(sub(".*translate\\(([^)]+)\\).*", "\\1", row), ",")[[1L]])
@@ -402,7 +431,7 @@ if (capabilities("cairo")) {
   cairo_pdf <- grDevices::cairo_pdf
   utils::assignInNamespace("cairo_pdf", function(...) warning("fixture missing Cairo"), "grDevices")
   failed_pdf <- suppressWarnings(tryCatch(
-    adapter$export_ggplot_pdf(baseline$state, colors, "unavailable.pdf"),
+    adapter$export_ggplot_pdf(baseline$state, color_edits(colors), "unavailable.pdf"),
     error = conditionMessage
   ))
   utils::assignInNamespace("cairo_pdf", cairo_pdf, "grDevices")
@@ -504,7 +533,11 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
         assert title["identity"] == "r1:568c4e10e2a02cd8"
         x, y, width, height = title["bbox"]
         assert 0 <= x < x + width <= 1 and 0 <= y < y + height <= 1
-        assert title["editable"] == [{"prop": "color", "type": "color", "value": "#112233"}]
+        assert {item["prop"]: item["value"] for item in title["editable"]} == {
+            "color": "#112233",
+            "weight": "normal",
+            "style": "normal",
+        }
         top = elements["axis.x.top.title"]
         bottom = elements[X_BOTTOM]
         assert top["label"] == bottom["label"] == "Engine displacement"
@@ -512,7 +545,7 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
         assert bottom["editable"][0]["value"] == "#6B6B6B"
         tick_group = elements[TICKS_BOTTOM]
         assert tick_group["label"] == "下轴刻度文字"
-        assert tick_group["role"] == "axis_label" and not tick_group["draggable"]
+        assert tick_group["role"] == "ticks" and not tick_group["draggable"]
         assert tick_group["identity"].startswith("r2:")
         assert "tick_labels" not in tick_group
         assert tick_group["identity"] != elements[TICKS_TOP]["identity"]
@@ -539,11 +572,11 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
         bar_preview = session.override(stem, [bar_patch], inline_svg=True)["svg"]
         assert bar_preview.count("#C32146") == 3
         assert session.override(stem, [], inline_svg=True)["svg"] == baseline["svg"]
-        invalid = [{"gid": "plot.title", "prop": "text", "value": "Unchanged"}]
-        with pytest.raises(
-            pool.WorkerError, match="supports RGB colors for supported text targets"
-        ):
-            session.override(stem, invalid, inline_svg=True)
+        for prop, value in (("text", "Unchanged"), ("weight", "semibold")):
+            with pytest.raises(pool.WorkerError, match="text style is unavailable"):
+                session.override(
+                    stem, [{"gid": "plot.title", "prop": prop, "value": value}], inline_svg=True
+                )
         with pytest.raises(pool.WorkerError, match="text is unavailable"):
             session.override(
                 stem,

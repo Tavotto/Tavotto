@@ -2924,6 +2924,8 @@ export interface EditableField {
   step?: number
   unit?: string
   options?: string[]
+  /** This renderer only accepts the listed values for this field. */
+  strict_options?: boolean
   /**
    * `options` 里**这个运行时画不出来**的那几个。
    *

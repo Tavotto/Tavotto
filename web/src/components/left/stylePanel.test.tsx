@@ -14,15 +14,16 @@
  * 拼版」的情形；标题脚本值 15 pt，读者量到 9 pt。
  */
 import { act } from 'react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
 import { literal, setLocale } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
+import { stampOverrideIdentities } from '@/lib/overrideIdentity'
 import { useAssetStore } from '@/store/assetStore'
-import { useDocumentStore } from '@/store/documentStore'
+import { registerOverrideStamper, useDocumentStore } from '@/store/documentStore'
 import { useProfileStore } from '@/store/profileStore'
-import { useRenderStore } from '@/store/renderStore'
+import { panelRender, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { runValidation, useValidationStore } from '@/store/validationStore'
@@ -227,6 +228,61 @@ describe('改字号：按缩放比换算回脚本值，一次 commit', () => {
     expect(s().undo()).not.toBeNull()
     expect(current().overrides).toEqual([])
   })
+})
+
+it('画布样式的轴标题粗体和斜体分别写进 Matplotlib 与原生 ggplot2 面板', async () => {
+  onTestFinished(registerOverrideStamper((draft, base, next) =>
+    stampOverrideIdentities(draft, base, next, (p) => panelRender(useRenderStore.getState(), p)?.manifest),
+  ))
+  const mplGid = 'axes_0.xlabel'
+  const rGid = 'axis.x.bottom.title'
+  const rIdentity = 'r1:axis-title'
+  const face = (prop: string, on: string) => ({
+    prop, type: 'enum', value: 'normal', options: ['normal', on],
+  })
+  const fields = [face('weight', 'bold'), face('style', 'italic')]
+  await seed(panel, { ...manifest(), elements: [el(mplGid, 'axis_label', fields)] })
+  const rPanel: PanelObject = { ...panel, id: 'r', fileId: 'runtime:r', fileKind: 'runtime', script: 'fuel.R' }
+  const rManifest = {
+    ...manifest(),
+    elements: [
+      { ...el(rGid, 'axis_label', fields.map((f) => ({ ...f, strict_options: true }))), identity: rIdentity },
+      el('axis.x.bottom.ticks', 'ticks', [{ prop: 'color', type: 'color', value: '#223344' }]),
+    ],
+  }
+  const record = { ...styleRecord, data: { element: {}, pt_basis: 'page' } }
+  useProfileStore.setState({
+    styles: [record as never],
+    save: async (_kind, _id, data) => {
+      const saved = { ...record, data } as never
+      useProfileStore.setState({ styles: [saved] })
+      return saved
+    },
+  })
+  resetStyleBindingSession()
+  s().commit(literal('混排'), (doc) => {
+    doc.objects.push(rPanel)
+    doc.style = { id: record.id, snapshot: record.data }
+  })
+  seedExactRender(rPanel, rManifest as never)
+  useSelectionStore.getState().clear()
+  await mount()
+  const before = s().past.length
+  const toggle = (prop: string) => container.querySelector(`[data-style-face="axis_label.${prop}"] button`)!
+  await click(toggle('weight'))
+  const rCurrent = () => s().doc.objects.find((o) => o.id === rPanel.id) as PanelObject
+  expect(current().overrides).toEqual([{ gid: mplGid, prop: 'weight', value: 'bold' }])
+  expect(rCurrent().overrides).toEqual([{ gid: rGid, prop: 'weight', value: 'bold', identity: rIdentity }])
+  expect(s().past.length - before).toBe(1)
+  seedExactRender(current(), { ...manifest(), elements: [el(mplGid, 'axis_label', fields)] } as never)
+  seedExactRender(rCurrent(), rManifest as never)
+  await click(toggle('style'))
+  expect(current().overrides).toContainEqual({ gid: mplGid, prop: 'style', value: 'italic' })
+  expect(rCurrent().overrides).toContainEqual({ gid: rGid, prop: 'style', value: 'italic', identity: rIdentity })
+  expect(s().past.length - before).toBe(2)
+  await act(async () => { s().undo() })
+  expect(current().overrides).toHaveLength(1)
+  expect(rCurrent().overrides).toHaveLength(1)
 })
 
 describe('画布跟随样式（ADR 0081）：底部选择器 = 绑定，绑定后改值 = 改样式本身', () => {
