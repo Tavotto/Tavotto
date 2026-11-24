@@ -183,6 +183,20 @@ def cases() -> list[dict]:
             "ok-path-no-stroke-gradient",
             [path(stroke=False, fillGradient=LINEAR, strokeGradient=LINEAR)],
         ),
+        # 求解器会产出零宽 / 零高的对象（竖直箭头、水平连线、括号的横线）：要能编译、与前端同一份载荷
+        (
+            "ok-zero-width-and-zero-height",
+            [
+                arrow(w=0.0, h=10.0, start={"rx": 0.5, "ry": 0}, end={"rx": 0.5, "ry": 1}),
+                path(
+                    "p2",
+                    h=0.0,
+                    fill=None,
+                    subpaths=[{"closed": False, "nodes": [{"p": [0, 0.5]}, {"p": [1, 0.5]}]}],
+                    headEnd="triangle",
+                ),
+            ],
+        ),
         (
             "ok-groups-nested-and-shared",
             [
