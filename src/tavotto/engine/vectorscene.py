@@ -14,7 +14,12 @@
   （元素框的 9 个方位点）、`{"panel": {"id", "point"}}`（子图框的方位点）、`{"item": {"name", "point"}}`（本批里先声明的元素）；
 - 元素：`{"kind": "arrow", "name", "from": 位置, "to": 位置, ...样式}`、`{"kind": "text", "name", "text", "at": 位置,
   "attach": 方位, ...样式}`、`{"kind": "shape", "name", "shape", "at": 位置, "size_mm": [w, h], "attach": 方位, ...样式}`
-  （圈出一个点、框一块区域）；位置 = `{"anchor": 锚点, "offset_mm": [dx, dy]}`（偏移可省）。
+  （圈出一个点、框一块区域）、`{"kind": "bracket", "name", "between": [位置, 位置], "side": "above"|"below", "gap_mm",
+  "tick_mm"}`（显著性括号：开口朝向两个点，横线在较高的那个点之上留 `gap_mm`）、`{"kind": "connector", "name", "from",
+  "to", "route": "straight"|"elbow-h"|"elbow-v"}`（连线，直角折线先横后竖 / 先竖后横，末端缺省带箭头）、
+  `{"kind": "box", "name", "fit": [目标…], "padding_mm"}`（框住一组：子图 / 图内元素 / 本批元素的并集外扩内边距）；
+  位置 = `{"anchor": 锚点, "offset_mm": [dx, dy]}`（偏移可省）；目标 = `{"panel": {"id"}}` / `{"element": {"panel", "gid"}}` /
+  `{"item": {"name"}}`。产物只用现有对象类型（箭头 / 文字 / 形状 / 路径），路径只有直线段、锚点最少。
 """
 
 from __future__ import annotations
@@ -163,8 +168,10 @@ def _anchors_of(it: object) -> list:
     if not isinstance(it, dict):
         return []
     found = []
-    for key in ("from", "to", "at"):
-        pos = it.get(key)
+    positions = [it.get(k) for k in ("from", "to", "at")]
+    if isinstance(it.get("between"), list):
+        positions += it["between"]
+    for pos in positions:
         if isinstance(pos, dict) and isinstance(pos.get("anchor"), dict):
             found.append(pos["anchor"])
     return found
@@ -362,6 +369,160 @@ def _measure_text_mm(text: str, size_pt: float, bold: bool, italic: bool, family
     return float(facade.text_width(text, size_pt, bold=bold, italic=italic, family=fam))
 
 
+def _num_arg(it: dict, key: str, default: float, name: str, lo: float = 0.0) -> float:
+    v = it.get(key, default)
+    if not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v) or v < lo:
+        raise SceneError("bad_item", name, key)
+    return float(v)
+
+
+def _path_from_points(name: str, it: dict, pts: list[tuple[float, float]], **extra) -> dict:
+    """画布上的一条折线 → `path` 对象（比例坐标、包围盒 = 折线范围；零宽 / 零高的那一维放在 0.5）。"""
+    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+    x0, y0 = min(xs), min(ys)
+    w, h = max(xs) - x0, max(ys) - y0
+
+    def rel(v: float, lo: float, span: float) -> float:
+        return (v - lo) / span if span > 1e-9 else 0.5
+
+    return {
+        "id": name,
+        "type": "path",
+        "x": x0,
+        "y": y0,
+        "w": w,
+        "h": h,
+        "subpaths": [
+            {"closed": False, "nodes": [{"p": [rel(x, x0, w), rel(y, y0, h)]} for x, y in pts]}
+        ],
+        "strokePt": float(it.get("strokePt", 0.75)),
+        "color": it.get("color", "#000000"),
+        "fill": None,
+        "lineJoin": "miter",
+        **extra,
+    }
+
+
+def _node_records(name: str, pts, refs) -> list[dict]:
+    """路径节点 k 应该落在 锚点 + 位移：位移 = 节点 − 锚点（求解时已知），核对在导出几何上重新解锚点再比。"""
+    out = []
+    for k, (pos, anchor_xy) in refs:
+        out.append(
+            {
+                "item": name,
+                "role": "node",
+                "node": k,
+                "anchor": pos["anchor"],
+                # 节点相对锚点本身（不含位置偏移）的位移：位置偏移已经算进节点里了
+                "offset_mm": [pts[k][0] - anchor_xy[0], pts[k][1] - anchor_xy[1]],
+                "attach": "center",
+            }
+        )
+    return out
+
+
+def _bracket(it: dict, ctx: _Ctx, name: str) -> tuple[dict, list[dict]]:
+    between = it.get("between")
+    if not isinstance(between, list) or len(between) != 2:
+        raise SceneError("bad_item", name, "between")
+    (ax, ay), (bx, by) = (_position(p, ctx, name) for p in between)
+    gap = _num_arg(it, "gap_mm", 1.0, name)
+    tick = _num_arg(it, "tick_mm", 1.0, name)
+    side = it.get("side", "above")
+    if side == "above":
+        yl = min(ay, by) - gap - tick
+        pts = [(ax, yl + tick), (ax, yl), (bx, yl), (bx, yl + tick)]
+    elif side == "below":
+        yl = max(ay, by) + gap + tick
+        pts = [(ax, yl - tick), (ax, yl), (bx, yl), (bx, yl - tick)]
+    else:
+        raise SceneError("bad_item", name, "side")
+    obj = _path_from_points(name, it, pts, lineCap="butt")
+    raw = [(p, resolve_anchor(p["anchor"], ctx, name)) for p in between]
+    return obj, _node_records(name, pts, [(0, raw[0]), (3, raw[1])])
+
+
+def _connector(it: dict, ctx: _Ctx, name: str) -> tuple[dict, list[dict]]:
+    a = _position(it.get("from"), ctx, name)
+    b = _position(it.get("to"), ctx, name)
+    route = it.get("route", "straight")
+    if route == "straight":
+        pts = [a, b]
+    elif route == "elbow-h":
+        pts = [a, (b[0], a[1]), b]
+    elif route == "elbow-v":
+        pts = [a, (a[0], b[1]), b]
+    else:
+        raise SceneError("bad_item", name, "route")
+    head = it.get("headEnd", "triangle")
+    obj = _path_from_points(name, it, pts, **({"headEnd": head} if head != "none" else {}))
+    refs = [
+        (0, (it["from"], resolve_anchor(it["from"]["anchor"], ctx, name))),
+        (len(pts) - 1, (it["to"], resolve_anchor(it["to"]["anchor"], ctx, name))),
+    ]
+    return obj, _node_records(name, pts, refs)
+
+
+def _target_box(target: object, ctx: _Ctx, name: str) -> tuple[float, float, float, float]:
+    """「框住」的一个目标 → 画布外接框（x0, y0, x1, y1）。"""
+    if not isinstance(target, dict) or len(target) != 1:
+        raise SceneError("bad_item", name, "fit")
+    kind, spec = next(iter(target.items()))
+    if not isinstance(spec, dict):
+        raise SceneError("bad_item", name, "fit")
+    if kind == "panel":
+        pn = _panel_of(ctx, spec.get("id"), name)["panel"]
+        return (pn["x"], pn["y"], pn["x"] + pn["w"], pn["y"] + pn["h"])
+    if kind == "element":
+        p = _panel_of(ctx, spec.get("panel"), name)
+        _require_untransformed(p, name)
+        el = next(
+            (
+                e
+                for e in (p.get("draw_manifest") or {}).get("elements", [])
+                if e.get("gid") == spec.get("gid")
+            ),
+            None,
+        )
+        if el is None or not isinstance(el.get("bbox"), list):
+            raise SceneError("unknown_ref", name, "element")
+        x, y, w, h = panel_rect_to_page(p["panel"], el["bbox"])
+        return (x, y, x + w, y + h)
+    if kind == "item":
+        box = ctx.items.get(spec.get("name"))  # type: ignore[arg-type]
+        if box is None:
+            raise SceneError("unknown_ref", name, "item")
+        return (box[0], box[1], box[0] + box[2], box[1] + box[3])
+    raise SceneError("bad_item", name, "fit")
+
+
+def _box(it: dict, ctx: _Ctx, name: str) -> tuple[dict, dict]:
+    targets = it.get("fit")
+    if not isinstance(targets, list) or not targets:
+        raise SceneError("bad_item", name, "fit")
+    boxes = [_target_box(t, ctx, name) for t in targets]
+    pad = _num_arg(it, "padding_mm", 1.5, name)
+    x0 = min(b[0] for b in boxes) - pad
+    y0 = min(b[1] for b in boxes) - pad
+    x1 = max(b[2] for b in boxes) + pad
+    y1 = max(b[3] for b in boxes) + pad
+    obj = {
+        "id": name,
+        "type": "shape",
+        "x": x0,
+        "y": y0,
+        "w": x1 - x0,
+        "h": y1 - y0,
+        "shape": "rect",
+        "strokePt": float(it.get("strokePt", 0.75)),
+        "color": it.get("color", "#000000"),
+        "fill": None,
+        **({"dash": it["dash"]} if "dash" in it else {}),
+        **({"cornerRadius": it["cornerRadius"]} if "cornerRadius" in it else {}),
+    }
+    return obj, {"item": name, "targets": targets, "boxes": boxes}
+
+
 def solve(items: object, panels: dict, *, measure=_measure_text_mm) -> dict:
     """场景描述 → 文档对象（局部 id = 元素名）+ 锚点记录。整批要么全解出、要么全拒（`ok` 为假时 `objects` 为空）。
 
@@ -377,6 +538,7 @@ def solve(items: object, panels: dict, *, measure=_measure_text_mm) -> dict:
         }
     objects: list[dict] = []
     anchors: list[dict] = []
+    fits: list[dict] = []
     seen: set[str] = set()
     try:
         for it in items:
@@ -387,16 +549,28 @@ def solve(items: object, panels: dict, *, measure=_measure_text_mm) -> dict:
                 raise SceneError("duplicate_name", name)
             seen.add(name)
             kind = it.get("kind")
+            records: list[dict] | None = None
             if kind == "arrow":
                 obj = _arrow(it, ctx, name)
             elif kind == "text":
                 obj = _text(it, ctx, name, measure)
             elif kind == "shape":
                 obj = _shape(it, ctx, name)
+            elif kind == "bracket":
+                obj, records = _bracket(it, ctx, name)
+            elif kind == "connector":
+                obj, records = _connector(it, ctx, name)
+            elif kind == "box":
+                obj, fit = _box(it, ctx, name)
+                fits.append(fit)
+                records = []
             else:
                 raise SceneError("bad_item", name, "kind")
             ctx.items[name] = (obj["x"], obj["y"], obj["w"], obj["h"])
             objects.append(obj)
+            if records is not None:
+                anchors += records
+                continue
             for key in ("from", "to", "at"):
                 pos = it.get(key)
                 if isinstance(pos, dict) and isinstance(pos.get("anchor"), dict):
@@ -410,5 +584,5 @@ def solve(items: object, panels: dict, *, measure=_measure_text_mm) -> dict:
                         }
                     )
     except SceneError as exc:
-        return {"ok": False, "objects": [], "anchors": [], "errors": [exc.as_dict()]}
-    return {"ok": True, "objects": objects, "anchors": anchors, "errors": []}
+        return {"ok": False, "objects": [], "anchors": [], "fits": [], "errors": [exc.as_dict()]}
+    return {"ok": True, "objects": objects, "anchors": anchors, "fits": fits, "errors": []}

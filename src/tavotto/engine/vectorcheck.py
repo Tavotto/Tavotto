@@ -65,7 +65,18 @@ def _attach_point(e: dict, attach: str) -> tuple[float, float]:
     return (e["x_mm"] + px * e["w_mm"], e["y_mm"] + py * e["h_mm"])
 
 
-def _actual(e: dict, role: str, attach: str) -> tuple[float, float]:
+def _path_points(e: dict) -> list[tuple[float, float]]:
+    """导出载荷里路径的节点（画布毫米；Agent 的路径只有直线段，手柄不参与）。"""
+    return [
+        (e["x_mm"] + n["p"][0] * e["w_mm"], e["y_mm"] + n["p"][1] * e["h_mm"])
+        for sp in e["subpaths"]
+        for n in sp["nodes"]
+    ]
+
+
+def _actual(e: dict, role: str, attach: str, node: int | None = None) -> tuple[float, float]:
+    if role == "node":
+        return _path_points(e)[node]  # type: ignore[index]
     if e["type"] == "arrow":
         a, b = _arrow_ends(e)
         return a if role == "from" else b
@@ -162,7 +173,7 @@ def check(
             facts.add("anchor", "unknown", rec["item"], role=rec["role"], reason=exc.code)
             continue
         tx, ty = tx + rec["offset_mm"][0], ty + rec["offset_mm"][1]
-        ax, ay = _actual(e, rec["role"], rec["attach"])
+        ax, ay = _actual(e, rec["role"], rec["attach"], rec.get("node"))
         res = math.hypot(ax - tx, ay - ty)
         facts.add(
             "anchor",
@@ -176,9 +187,6 @@ def check(
     def footprint(name: str, e: dict):
         if e["type"] == "shape" and not e.get("fill"):
             return ("points", _outline_samples(e))  # 只有描边：占的是那一圈线，不是整个框
-        if e["type"] != "arrow":
-            return ("rect", _box(e))
-        a, b = _arrow_ends(e)
         it = spec.get(name, {})
         soft = lambda key: (  # noqa: E731
             TIP_ALLOWANCE_MM
@@ -186,6 +194,18 @@ def check(
             and next(iter(it[key]["anchor"]), None) in ("data", "element")
             else 0.0
         )
+        if e["type"] == "path":
+            pts = _path_points(e)
+            out: list[tuple[float, float]] = []
+            last = len(pts) - 2
+            for i, (a, b) in enumerate(zip(pts, pts[1:])):
+                out += _samples(
+                    a, b, soft("from") if i == 0 else 0.0, soft("to") if i == last else 0.0
+                )
+            return ("points", out or pts)
+        if e["type"] != "arrow":
+            return ("rect", _box(e))
+        a, b = _arrow_ends(e)
         return ("points", _samples(a, b, soft("from"), soft("to")))
 
     feet = {n: footprint(n, e) for n, e in by_name.items()}
@@ -211,7 +231,7 @@ def check(
                 vis = interference.visible_rect(el)
                 paths = (el.get("geometry") or {}).get("paths")
                 if el.get("role") in interference.BBOX_BASIS_ROLES or not paths:
-                    if vis is not None and _touch(pf.rect(fbox), vis):
+                    if vis is not None and _foot_touches_rect(kind, foot, pf, vis):
                         unknown.append(el["gid"])
                     continue
                 if _foot_hits(kind, foot, pf, paths):
@@ -320,6 +340,27 @@ def check(
                 "journal", "fail" if bad else "pass", name, **({"checks": bad} if bad else {})
             )
 
+    # ---- fit：框住的目标都在框里
+    for fit in solved.get("fits") or []:
+        e = by_name[fit["item"]]
+        b = _box(e)
+        outside = [
+            i
+            for i, t in enumerate(fit["boxes"])
+            if not (
+                t[0] >= b[0] - 1e-9
+                and t[1] >= b[1] - 1e-9
+                and t[2] <= b[2] + 1e-9
+                and t[3] <= b[3] + 1e-9
+            )
+        ]
+        facts.add(
+            "fit",
+            "fail" if outside else "pass",
+            fit["item"],
+            **({"outside": outside} if outside else {}),
+        )
+
     statuses = {f["status"] for f in facts.items}
     return {
         "ok": "fail" not in statuses,
@@ -347,6 +388,15 @@ def _outline_samples(e: dict) -> list[tuple[float, float]]:
 def _bounds(points) -> tuple[float, float, float, float]:
     xs, ys = [p[0] for p in points], [p[1] for p in points]
     return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _foot_touches_rect(kind: str, foot, pf: _PanelFrac, vis) -> bool:
+    """只有外框的数据元素：占位本身（框，或沿线的取样点）碰到它的可见框才算「量不了」——
+    用整体外接范围会把「框住一整张子图」的描边框判成碰到里面所有的柱子。"""
+    if kind == "rect":
+        return _touch(pf.rect(foot), vis)
+    half = 0.05
+    return any(_touch(pf.rect((x - half, y - half, x + half, y + half)), vis) for x, y in foot)
 
 
 def _foot_hits(kind: str, foot, pf: _PanelFrac, paths: list) -> bool:
