@@ -39,7 +39,8 @@ import {
 } from '@/lib/tickSides'
 import { diagnosticHash } from '@/diagnostics'
 import { applyTickSidePlan, isJustBakedBaseline, redrawWithScript } from '@/store/actions'
-import { redrawOffered } from '@/lib/scriptedBitmaps'
+import { pdfFontProblem, pdfRedrawCandidate, redrawOffered } from '@/lib/scriptedBitmaps'
+import { pdfFontFactsOf, usePdfFontFacts } from '@/store/pdfFontFacts'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useAssetStore } from '@/store/assetStore'
 import { useInteractionStore } from '@/store/interactionStore'
@@ -1282,7 +1283,15 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
   // 画布上挂的是有脚本的位图原件（T-005）：**只在单选这张图时**说，给「用脚本重画」。
   // 不在打开项目时跑任何东西（ADR 0013 §6）——点了才重画；常驻在每张 PNG 上只会教人忽略角标
   const soleSelected = useSelectionStore((s) => s.ids.length === 1 && s.ids[0] === obj.id)
-  const offerRedraw = soleSelected && !editing && redrawOffered(obj)
+  // PDF 原件（T-005 补充）：单选时才问一次后端它的字体事实（只读文件），用了 Type 3 / 有缺字才给同一个按钮
+  const pdfCandidate = soleSelected && !editing && pdfRedrawCandidate(obj)
+  const pdfMtime = useAssetStore((s) => (pdfCandidate ? s.byId[obj.fileId]?.mtime : undefined))
+  const pdfFacts = usePdfFontFacts((s) => (pdfCandidate ? pdfFontFactsOf(obj.fileId, s.byKey) : undefined))
+  useEffect(() => {
+    if (pdfCandidate && pdfMtime !== undefined) usePdfFontFacts.getState().request(obj.fileId)
+  }, [pdfCandidate, pdfMtime, obj.fileId])
+  const offerRedraw = soleSelected && !editing && redrawOffered(obj, pdfFacts)
+  const pdfProblem = obj.fileKind === 'pdf' ? pdfFontProblem(pdfFacts) : null
 
   // 角标画在世界层里，反向缩放保持屏幕上恒定大小
   const scale = 1 / zoom
@@ -1395,10 +1404,12 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
       }
     }
     if (offerRedraw) {
-      return { tone: 'info', cold: false, text: badge('bitmapOriginal'), hint: badge('redrawHint'), redraw: true }
+      return pdfProblem
+        ? { tone: 'info', cold: false, text: badge(pdfProblem), hint: badge('pdfRedrawHint'), redraw: true }
+        : { tone: 'info', cold: false, text: badge('bitmapOriginal'), hint: badge('redrawHint'), redraw: true }
     }
     return null
-  }, [render, relevant, building, runtimeBadge, nativeState, rerunScript, rasterEditing, approx, retainedAfterFailure, quietBusy, slowBusy, frameLegacy, frameBlocked, framePending, offerRedraw])
+  }, [render, relevant, building, runtimeBadge, nativeState, rerunScript, rasterEditing, approx, retainedAfterFailure, quietBusy, slowBusy, frameLegacy, frameBlocked, framePending, offerRedraw, pdfProblem])
 
   // 退场那 90ms 里 info 已经是 null 了，留住最后一版才播得完
   const last = useRef(info)

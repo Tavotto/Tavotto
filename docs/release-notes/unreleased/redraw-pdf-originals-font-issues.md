@@ -1,0 +1,3 @@
+## PDF figures with Type 3 fonts or missing characters can be redrawn by their script
+
+A PDF that a script saved with matplotlib's default Type 3 fonts, or with boxes where characters were missing, used to be placed and exported exactly as saved. Selecting such a figure now says "Original uses Type 3 fonts" or "Original has missing characters" and offers "Redraw with script": the canvas and every export then use the script's redraw, in the same frame, so nothing moves on the page. Tavotto only reads the PDF to decide this, when you select the figure; nothing runs when a project is opened, and undo goes back to the original file.
