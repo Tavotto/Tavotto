@@ -8391,6 +8391,7 @@ export default interface Resources {
       "overridesCleared": "已清空这张图的图内修改",
       "packageDrift_other": "已打开项目包。{{count}} 个素材与打包时不一致，请核对。",
       "packageFailed": "无法打包。{{error}}",
+      "packageIncomplete": "项目包有 {{count}} 份图表来源缺失或损坏，请补齐后重试。",
       "packageOpenFailed": "无法打开项目包。{{error}}",
       "packageOpened": "已打开项目包（{{createdAt}}），素材全部就位",
       "packageTooNew": "这个项目包来自更新的 {{product}}，本版本无法打开。",

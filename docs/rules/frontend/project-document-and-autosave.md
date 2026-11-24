@@ -35,6 +35,10 @@ order: 200
   按 schema 号分派，schema 2/3/4 走同一个入口；项目包按同一 `SUPPORTED_SCHEMAS`
   集合准入（来源附件随包封存、检视时按摘要安装到项目 `chart_sources/`）。画布切换换入换出
   undo 栈（canvasSessions）与 UI 会话（`store/canvasSession.ts`）。
+  整份还原在备份前和安装前均过写入闸，不能解除只读窗口的编辑锁；空画布也显式落同一槽位，
+  等 writer 确认后才报成功。放大预览携带节点自己的 chart、附件与 profile，并纳入缓存身份。
+  项目包上传到打开之间核项目代际；缺图表附件明确报不完整，只有后端已核实的完整引用免于普通重链接。
+  看护：`components/layoutSnapshotChart.test.tsx`、`store/restoreLayoutVersion.test.ts`、`lib/packageImport.test.ts`。
   标签页 openTabs 按 documentId 存本机。
 - **图幅记号 `PanelObject.figureFrame`（ADR 0098 §三）**：缺席 = 升级前放上排版的面板。读档
   （`migrateToProject`）、布局版本恢复（`restoreLayoutVersion`）与剪贴板粘贴（`materializePaste`，

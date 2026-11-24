@@ -26,6 +26,8 @@ from support import linkkit
 from tavotto import app as m
 from tavotto.engine import atomicio, documents, layoutsession, project_watch as engine_watch
 from test_chart_document_assets import (
+    SCENE_DIGEST,
+    SOURCE,
     SOURCE_ID,
     chart as chart_state,
     reference as chart_reference,
@@ -767,6 +769,10 @@ def test_candidates_list_schema3_and_schema4_slots_side_by_side(client, tmp_path
     """同一份找回列表里 schema 3 与 schema 4 都读得出来、都不是 invalid：
     单一存储后它们只由正文 schema 号区分，没有哪个版本要被置灰。"""
     pj = _project(client, tmp_path, "p")
+    from tavotto.engine import documentassets
+
+    root = m.project_layout_dir(m.PROJECTS[pj["id"]])
+    ref = documentassets.freeze_source(root, SOURCE_ID, SOURCE, scene_digest=SCENE_DIGEST)
     three = _doc(1, "三")
     three["canvases"][0]["objects"] = [
         {"id": "o1", "type": "panel", "fileId": "a.svg", "chartSource": {"schema": 1}}
@@ -786,10 +792,20 @@ def test_candidates_list_schema3_and_schema4_slots_side_by_side(client, tmp_path
     atomicio.write_json(_slot("d_three"), three)
     atomicio.write_json(_slot("d_four"), four)
 
-    body = _candidates(client, pj, "unknown")
-    by_id = {item["doc_id"]: item for item in body["items"]}
+    def candidates():
+        return {
+            item["doc_id"]: item
+            for scope in ("unknown", "project")
+            for item in _candidates(client, pj, scope)["items"]
+        }
+
+    by_id = candidates()
     assert by_id["d_three"]["status"] == "ok" and by_id["d_three"]["schema"] == 3
     assert by_id["d_four"]["status"] == "ok" and by_id["d_four"]["schema"] == 4
+    documentassets.source_path(root, ref).unlink()
+    missing = candidates()
+    assert missing["d_four"]["status"] == "invalid"
+    assert missing["d_three"]["status"] == "ok"
 
 
 def test_candidates_owned_by_another_project_appear_in_neither_scope(client, tmp_path):

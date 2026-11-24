@@ -15,7 +15,8 @@ import { runDiscreteAction } from '@/store/gestureCoordinator'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useUiStore } from '@/store/uiStore'
-import type { CanvasObject, LayoutGroup, PanelObject } from '@/types/document'
+import type { CanvasObject, ChartSourceRef, LayoutGroup, PanelObject } from '@/types/document'
+import { sameRules } from '@/lib/specBinding'
 import { isRuntimePanel, objectLabel } from '@/types/document'
 import { modKey } from '@/lib/utils'
 import { DUPLICATE_OFFSET_MM } from '@/lib/units'
@@ -354,11 +355,12 @@ function panelSourceKnown(p: PanelObject): boolean {
 }
 
 /** 项目包导入后：把当前文档里缺失素材的面板交给重链接对话框处理 */
-export function requestRelinkMissing(): number {
+export function requestRelinkMissing(verifiedChartSources: readonly ChartSourceRef[] = []): number {
   const { doc } = useDocumentStore.getState()
   const missingMap = new Map<string, MissingAsset>()
   for (const o of doc.objects) {
     if (o.type !== 'panel' || panelSourceKnown(o)) continue
+    if (o.chartSource && verifiedChartSources.some(ref => sameRules(ref, o.chartSource))) continue
     const cur = missingMap.get(o.fileId)
     if (cur) cur.count += 1
     else {

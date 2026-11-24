@@ -4035,6 +4035,16 @@ def _freeze_document_sources(document: dict, *, capture_figures: bool = True) ->
         for obj in _doc_objects(document):
             if obj.get("chart") is None:
                 continue
+            if _request_ctx() is None and "chartSource" in obj:
+                # 本机保存已有附件不需要起项目 worker；来源身份仍逐项核验。
+                documentassets.load_source(
+                    project_layout_dir(),
+                    obj["chartSource"],
+                    source_id=obj["fileId"],
+                    scene_digest=obj["chart"]["model"]["scene_digest"],
+                )
+                obj.pop("figureSnapshot", None)
+                continue
             snapshot = _render_chart_snapshot(
                 obj["fileId"],
                 obj["chart"],
@@ -6114,14 +6124,15 @@ def _package_svg_assets(doc, root, archive) -> int:
             if obj.get("type") != "panel" or not obj.get("fileId"):
                 continue
             source_id, patches = obj["fileId"], obj.get("overrides") or []
+            reference = obj.get("figureSnapshot")
             static_hash = None
-            if not patches and not engine_runtimeasset.is_runtime_id(source_id):
+            static = not patches and not engine_runtimeasset.is_runtime_id(source_id)
+            if static and reference is None:
                 try:
                     static_hash = engine_figcapture.hash_file(safe_resolve(source_id))[0]
                 except Exception:
                     continue
             patch_hash = engine_patchspec.patch_hash(patches)
-            reference = obj.get("figureSnapshot")
             key = (source_id, patch_hash, static_hash, (reference or {}).get("snapshotId"))
             if key in seen:
                 continue
@@ -6132,8 +6143,14 @@ def _package_svg_assets(doc, root, archive) -> int:
                 storage_root=_svg_storage_root(root),
             )
             if reference is not None:
-                record = svgstore.load_snapshot(
-                    root, reference, source_id=source_id, patch_hash=patch_hash, **kwargs
+                record = svgstore.load_document_snapshot(
+                    root,
+                    reference,
+                    source_id=source_id,
+                    patch_hash=patch_hash,
+                    remap_fingerprint=engine_inputremap.fingerprint(root),
+                    storage_root=_svg_storage_root(root),
+                    include_identity=True,
                 )
             else:
                 record = svgstore.load(root, source_id, patch_hash, **kwargs)
@@ -6142,7 +6159,7 @@ def _package_svg_assets(doc, root, archive) -> int:
                 source_id,
                 record,
                 explicit=reference is not None,
-                static=static_hash is not None,
+                static=static,
             ):
                 continue
             svgstore.save(
@@ -6154,7 +6171,9 @@ def _package_svg_assets(doc, root, archive) -> int:
                 artifact=record["pdf_artifact"],
                 receipt=record["receipt"],
                 execution_owner=record.get("execution_owner"),
-                static_sha256=static_hash,
+                static_sha256=record["snapshot_identity"]["static_sha256"]
+                if reference is not None
+                else static_hash,
                 remap_fingerprint=engine_inputremap.fingerprint(root),
                 storage_root=staging,
                 activate=True,
@@ -6193,9 +6212,11 @@ def _chart_source_entries(document: dict) -> list[dict]:
                 "sceneDigest": reference.get("sceneDigest"),
                 "panels": [],
                 "_reference": reference,
+                "_references": [],
             },
         )
         panel = obj.get("id")
+        entry["_references"].append(reference)
         if isinstance(panel, str) and panel not in entry["panels"]:
             entry["panels"].append(panel)
     return [entries[digest] for digest in sorted(entries)]
@@ -6263,12 +6284,12 @@ def api_package():
         from .engine import documentassets
 
         for entry in chart_entries:
-            reference = entry.pop("_reference")
+            entry.pop("_reference")
+            references = entry.pop("_references")
             try:
-                path = documentassets.source_path(project_layout_dir(), reference)
-                data = path.read_bytes()
-                if hashlib.sha256(data).hexdigest() != entry["sha256"]:
-                    raise ValueError("chart source bytes changed")
+                for reference in references:
+                    source = documentassets.load_source(project_layout_dir(), reference)
+                data = source.input_svg
             except (
                 OSError,
                 ValueError,
@@ -6357,6 +6378,7 @@ def api_package_open():
         ), 400
     import io
     import zipfile  # noqa: PLC0415
+    import zlib  # noqa: PLC0415
 
     try:
         z = zipfile.ZipFile(io.BytesIO(file.read()))
@@ -6398,6 +6420,7 @@ def api_package_open():
             }
         ), 400
 
+    doc = _validate_storage_document(doc)
     root = require_project()
     missing, drifted = [], []
     for entry in manifest.get("assets", []):
@@ -6413,6 +6436,7 @@ def api_package_open():
             drifted.append(rel_id)
 
     missing_chart_sources: list[str] = []
+    verified_chart_sources: list[dict] = []
     chart_entries = _chart_source_entries(doc)
     if chart_entries:
         from .engine import documentassets
@@ -6420,24 +6444,26 @@ def api_package_open():
         for entry in chart_entries:
             digest = entry["sha256"]
             reference = entry.pop("_reference")
+            references = entry.pop("_references")
             data = None
             try:
                 # 有界读取：包是上传上来的，不能先解压进内存再问大小。
                 with z.open(f"chart_sources/{digest}.svg") as stream:
                     data = stream.read(documentassets.MAX_SOURCE_BYTES + 1)
-            except KeyError:
+            except (KeyError, zipfile.BadZipFile, zlib.error, EOFError, OSError, RuntimeError):
                 data = None
             if data is not None and len(data) > documentassets.MAX_SOURCE_BYTES:
                 data = None
             if data is not None and hashlib.sha256(data).hexdigest() == digest:
                 try:
+                    for ref in references:
+                        documentassets.verify_source_bytes(data, ref)
                     documentassets.freeze_source(
                         project_layout_dir(),
                         reference.get("sourceId"),
                         data,
                         scene_digest=reference.get("sceneDigest"),
                     )
-                    continue
                 except (
                     OSError,
                     engine_documents.DocumentError,
@@ -6447,12 +6473,10 @@ def api_package_open():
             # 包里没带 / 带的不对：当前项目里已经有一份内容相同的也算可用
             # （同机重新打开自己打的包、或之前已经安装过）。
             try:
-                installed = documentassets.source_path(project_layout_dir(), reference)
-                if (
-                    installed.is_file()
-                    and hashlib.sha256(installed.read_bytes()).hexdigest() == digest
-                ):
-                    continue
+                for ref in references:
+                    documentassets.load_source(project_layout_dir(), ref)
+                verified_chart_sources.extend(references)
+                continue
             except (
                 OSError,
                 engine_documents.DocumentError,
@@ -6471,6 +6495,7 @@ def api_package_open():
             "drifted": drifted,
             # 来源附件装不上时明确报出来：这份文档打开后能看，但下一次保存会失败。
             "missing_chart_sources": missing_chart_sources,
+            "verified_chart_sources": verified_chart_sources,
         }
     )
 
@@ -19204,7 +19229,34 @@ def api_layouts():
     return jsonify({"layouts": names, "modified": {n: seen[n] for n in names}})
 
 
-def serve_document(path: Path):
+def _verify_document_chart_sources(document: dict, storage_root: Path) -> None:
+    if not _has_chart_state(document):
+        return
+    from .engine import documentassets
+
+    try:
+        for obj in _doc_objects(document):
+            if obj.get("chart") is not None:
+                documentassets.load_source(
+                    storage_root,
+                    obj["chartSource"],
+                    source_id=obj["fileId"],
+                    scene_digest=obj["chart"]["model"]["scene_digest"],
+                )
+    except documentassets.DocumentAssetError as exc:
+        raise engine_documents.DocumentError(exc.code, exc.detail, status=422) from exc
+
+
+def _autosave_source_store(path: Path) -> Path:
+    state, _status = engine_layoutsession.read_readonly()
+    owners = state["owners"]
+    if path.stem not in owners:
+        return project_layout_dir()
+    owner = owners[path.stem]
+    return LAYOUT_DIR if owner is None else engine_config.project_store_dir(Path(owner))
+
+
+def serve_document(path: Path, *, source_storage: Path | None = None):
     """把一份文档原样交出去，并附上**它这一份**的内容修订号。
 
     自动保存与命名画布文件走同一份实现，因为三条纪律对两者一字不差：
@@ -19232,6 +19284,9 @@ def serve_document(path: Path):
         and document.get("schema") == engine_documents.SCHEMA_CHART_PROJECT
     ):
         _validate_storage_document(document)
+        _verify_document_chart_sources(
+            document, source_storage if source_storage is not None else project_layout_dir()
+        )
     resp = app.response_class(data, mimetype="application/json")
     resp.headers["Cache-Control"] = "no-store"
     # 内容 hash 放 header 而不是塞进 body——body 就是文档本身，多一个字段会
@@ -19552,7 +19607,7 @@ def api_autosave_get(doc_id):
     # `absent` 为基线，把一份确实存在、只是此刻读不出来的文件整份盖掉。
     # 交出去的三条纪律（读一次就发这一份 / 不把文件句柄交出去 / 读侧的非有限数
     # 闸）见 `serve_document`——命名画布文件那条路一字不差，所以只有一份实现。
-    return serve_document(p)
+    return serve_document(p, source_storage=_autosave_source_store(p))
 
 
 def _autosave_newer_than(p: Path, base) -> int | None:
@@ -20053,7 +20108,9 @@ def _slot_recoverable(path: Path) -> tuple[bool, str | None]:
         return False, None
     revision = engine_atomicio.revision_of(raw)
     try:
-        _validate_storage_document(engine_documents.loads_document(raw))
+        document = _validate_storage_document(engine_documents.loads_document(raw))
+        if _has_chart_state(document):
+            _verify_document_chart_sources(document, _autosave_source_store(path))
     except (ValueError, RecursionError):
         return False, revision
     return True, revision
@@ -20466,6 +20523,8 @@ def _candidate_item_locked(row: tuple[int, str, int, Path], ctx, key, scope: str
             schema = loaded.get("schema")
             try:
                 doc = _validate_storage_document(loaded)
+                if _has_chart_state(doc):
+                    _verify_document_chart_sources(doc, _autosave_source_store(path))
             except engine_documents.DocumentError as exc:
                 status = "too_new" if exc.code == "schema_too_new" else "invalid"
             except (ValueError, RecursionError):

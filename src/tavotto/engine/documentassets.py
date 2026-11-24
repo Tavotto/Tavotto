@@ -145,12 +145,19 @@ def load_source(
         data = _read(path)
     except OSError as exc:
         raise DocumentAssetError("chart_source_mismatch", "chart source unavailable") from exc
+    source = verify_source_bytes(data, ref)
+    return ChartDocumentSource(path, data, source, ref)
+
+
+def verify_source_bytes(data: bytes, reference: dict) -> bytes:
+    """核验一个引用的完整身份；包导入在任何安装之前逐引用调用。"""
+    ref = _reference(reference)
     if len(data) != ref["sizeBytes"] or hashlib.sha256(data).hexdigest() != ref["bytesSha256"]:
         _invalid("chart input bytes changed")
     source, actual_scene = _source(data)
     if actual_scene != ref["sceneDigest"]:
         _invalid("chart original scene changed")
-    return ChartDocumentSource(path, data, source, ref)
+    return source
 
 
 def freeze_source(

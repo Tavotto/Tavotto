@@ -9,7 +9,6 @@ import json
 import os
 import stat
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -370,27 +369,16 @@ def _chart_document(panel=None):
     }
 
 
-def _fake_chart_snapshot(tmp_path):
-    """不 spawn worker：只提供 `_freeze_document_sources` 需要的三片（输入字节 / 场景 / 校验路径）。"""
-    digest = hashlib.sha256(SOURCE).hexdigest()
+def _install_chart_source(tmp_path):
+    from tavotto.engine import documentassets
 
-    def snapshot(file_id, chart, **kwargs):
-        return SimpleNamespace(
-            input_svg=SOURCE,
-            scene={"scene_digest": SCENE_DIGEST},
-            path=tmp_path / "chart_sources" / f"{digest}.svg",
-            source_sha256=digest,
-        )
-
-    return snapshot
+    documentassets.freeze_source(tmp_path, SOURCE_ID, SOURCE, scene_digest=SCENE_DIGEST)
 
 
-def test_schema4_named_save_freezes_the_chart_source_at_the_document_root(
-    client, tmp_path, monkeypatch
-):
+def test_schema4_named_save_verifies_the_chart_source_at_the_document_root(client, tmp_path):
     """未打开项目也是合法保存路径：来源附件落到文档同根 `layouts/chart_sources/`，
     保存响应的 `chart_sources` 说得出它是哪一张画布、哪一个面板的哪一份来源。"""
-    monkeypatch.setattr(m, "_render_chart_snapshot", _fake_chart_snapshot(tmp_path))
+    _install_chart_source(tmp_path)
     doc = _chart_document()
     resp = client.post("/api/layouts/图表", json=doc)
     assert resp.status_code == 200, resp.get_json()
@@ -411,8 +399,8 @@ def test_schema4_named_save_freezes_the_chart_source_at_the_document_root(
     assert saved["canvases"][0]["objects"][0]["chartSource"] == chart_reference()
 
 
-def test_schema4_autosave_freezes_the_chart_source_before_the_body(client, tmp_path, monkeypatch):
-    monkeypatch.setattr(m, "_render_chart_snapshot", _fake_chart_snapshot(tmp_path))
+def test_schema4_autosave_verifies_the_chart_source_before_the_body(client, tmp_path):
+    _install_chart_source(tmp_path)
     resp = client.put("/api/autosave/d_chart", json=_chart_document())
     assert resp.status_code == 200, resp.get_json()
     assert resp.get_json()["chart_sources"][0]["chart_source"] == chart_reference()

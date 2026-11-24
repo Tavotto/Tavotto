@@ -1,5 +1,7 @@
 """可复现项目包：打包（布局+素材+清单）与检视（缺失/漂移对照）。"""
 
+import copy
+import hashlib
 import io
 import json
 import zipfile
@@ -16,6 +18,46 @@ from test_chart_document_assets import (
     SOURCE_ID,
     chart as chart_state,
 )
+
+
+def test_package_keeps_historical_static_pair_after_pdf_replacement(env):
+    from tavotto.engine import patchspec, svgstore
+    from test_svgstore import _args
+
+    client, figs, _ = env
+    source = "p1.pdf"
+    original = (figs / source).read_bytes()
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"/>'
+    patch = patchspec.patch_hash([])
+    root = figs / "tavottofile" / "figure_snapshots"
+    svgstore.save(
+        figs,
+        source,
+        patch,
+        **_args(source, patch, pdf=original, svg=svg),
+        static_sha256=hashlib.sha256(original).hexdigest(),
+        storage_root=root,
+    )
+    saved = client.post("/api/layouts/history?target=project", json=_layout())
+    assert saved.status_code == 200, saved.get_json()
+    ref = saved.get_json()["figure_snapshots"]["o1"]
+    layout = client.get("/api/layouts/history").get_json()
+    (figs / source).write_bytes(b"replacement PDF bytes")
+    response = client.post("/api/package", json={"doc": layout, "stem": "history"})
+    assert response.status_code == 200, response.get_json()
+    with zipfile.ZipFile(figs / "tavottofile" / "export" / response.get_json()["name"]) as archive:
+        assert json.loads(archive.read("package_manifest.json"))["figure_snapshots"] == 1
+        assert json.loads(archive.read("layout.json"))["objects"][0]["figureSnapshot"] == ref
+        assert archive.read("assets/p1.pdf") == b"replacement PDF bytes"
+        prefix = "assets/tavottofile/figure_snapshots/"
+        payload = json.loads(archive.read(prefix + "snapshots/" + ref["snapshotId"] + ".json"))[
+            "payload"
+        ]
+        assert payload["identity"]["static_sha256"] == hashlib.sha256(original).hexdigest()
+        blobs = [
+            archive.read(name) for name in archive.namelist() if name.startswith(prefix + "blobs/")
+        ]
+        assert original in blobs and svg in blobs
 
 
 @pytest.fixture
@@ -412,6 +454,41 @@ def test_package_open_reports_a_tampered_chart_source(env):
     ).get_json()
     assert opened["missing_chart_sources"] == [digest]
     assert not (root / "chart_sources" / f"{digest}.svg").exists()
+
+
+@pytest.mark.parametrize("bad", ["size", "second_size", "source_id", "crc"])
+def test_package_checks_every_chart_reference_and_damaged_member(env, bad):
+    from test_chart_document_assets import reference
+
+    client, figs, _ = env
+    ref = reference()
+    doc = _chart_project_document(ref)
+    panels = doc["canvases"][0]["objects"]
+    if bad == "second_size":
+        panels.append(copy.deepcopy(panels[0]))
+        panels[-1]["id"] = "o2"
+    if bad in ("size", "second_size"):
+        panels[-1]["chartSource"]["sizeBytes"] += 1
+    elif bad == "source_id":
+        panels[0]["chartSource"]["sourceId"] = "other.svg"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as archive:
+        archive.writestr("layout.json", json.dumps(doc))
+        archive.writestr("package_manifest.json", json.dumps({"assets": []}))
+        archive.writestr(f"chart_sources/{ref['bytesSha256']}.svg", SOURCE)
+    raw = buf.getvalue()
+    if bad == "crc":
+        raw = raw.replace(SOURCE, SOURCE.replace(b"blue", b"pink"))
+    response = client.post(
+        "/api/package/open", data={"package": (io.BytesIO(raw), "broken.tavotto")}
+    )
+    if bad == "source_id":
+        assert response.status_code == 400
+    else:
+        assert response.status_code == 200, response.get_json()
+        assert response.get_json()["missing_chart_sources"] == [ref["bytesSha256"]]
+        assert response.get_json()["verified_chart_sources"] == []
+    assert not documentassets.source_path(figs / "tavottofile", ref).exists()
 
 
 @pytest.mark.parametrize("schema", [1, "4", None, True])

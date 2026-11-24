@@ -157,6 +157,10 @@ order: 200
   不写正文），不冒充前端备份接线——不要把它读成那条行为已有看护。
   版本节点正文按 schema 分派：
   2 是单画布检查点，3 / 4 是整份项目；恢复整份项目节点换的是同一 documentId 的全部画布。
+  无项目时已有冻结附件经 `documentassets.load_source` 核验后可直接保存，不起项目 worker。
+  槽位恢复与读取核验所属存储中的实际附件字节；包导入先校验正文，再逐面板核完整引用，
+  仅 blob 写入按摘要去重。损坏 ZIP 附件进入缺失清单，`verified_chart_sources` 只列已核实引用。
+  看护：`tests/test_chart_document_upgrade.py`、`tests/test_package.py`。
 - **目录派生唯一权威 `engine/documentformat.py`，守卫收紧到每一级**：`named_dir` / `autosave_dir` /
   `versions_dir` 是命名文档、自动保存槽位与版本时间线路径的唯一出处；调用方传
   `project_layout_dir()`（项目 `tavottofile/`）或数据目录 `layouts/`，不得自己拼。schema 3 / 4

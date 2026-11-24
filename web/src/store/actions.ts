@@ -84,6 +84,7 @@ import {
   saveNowWithResult,
   setProjectFile,
   useDocumentStore,
+  writesBlocked,
   type CommitOptions,
   type HistoryEntry,
 } from './documentStore'
@@ -480,21 +481,27 @@ export function restoreLayoutVersion(
   label: UiMessage,
   version: FigureDocument | ProjectDocument,
 ): boolean | Promise<boolean> {
+  if (writesBlocked()) return false
   if (version.schema !== 2) {
     const pd = migrateToProject(version)
     if (!pd) return false
     // 恢复的是同一份排版：documentId 不变，时间线 / 最近文档 / 项目归属都跟着这份走
     const docId = useDocumentStore.getState().documentId
-    return useDocumentStore.getState().switchDocument(pd, docId).then((ok) => {
+    const project = captureProjectEpoch()
+    return useDocumentStore.getState().switchDocument(pd, docId, undefined, {
+      editCurrent: true,
+      beforeInstall: async () => project.still(),
+    }).then(async (ok) => {
       // 换进来的正文与项目文件里那份不同了：绑定还在的话要标脏，否则 ⌘S 会以为
       // 「已经存过」——恢复后的内容只在自动保存槽位里，项目文件还是旧的。
       // 走 `markProjectFileDirty()`：它同时推进编辑代次，正在飞的项目文件保存
       // 回来时 `projectFileSnapshot()` 才看得见这次变化，不会把 dirty 洗回 false。
       // 等回来的这一下也可能已经换了排版：那就不碰新排版的绑定。
-      if (ok && useDocumentStore.getState().documentId === docId) {
+      if (ok && project.still() && useDocumentStore.getState().documentId === docId && !writesBlocked()) {
         if (activeProjectFile()) markProjectFileDirty()
+        return (await saveNowWithResult(true)).wrote
       }
-      return ok
+      return false
     })
   }
   commit(
@@ -818,6 +825,11 @@ export async function newBlankDocument(): Promise<void> {
   status(note('blankCreated'), 'done')
 }
 
+export function reportLayoutOpenSkipped(name = ''): false {
+  useUiStore.getState().setStatus(msg('layout.openSkipped', { name }, 'dialogs'), 'error')
+  return false
+}
+
 /**
  * 载入画布文件：每次载入都是一个新的编辑会话，因此给一个新的文档身份。
  *
@@ -831,10 +843,7 @@ export async function openLayoutDocument(
   // 入口那一刻的上下文（调用方 `doLoad` 刚核过）：下面每个 await（探测占用、读槽位、丢失确认）之后、
   // 安装之前都要再核，项目或排版变了就不装（Codex #1734 P1：旧项目的排版不能装进新选的工作区）
   const ctx = captureSaveContext()
-  const skipped = (): false => {
-    useUiStore.getState().setStatus(msg('layout.openSkipped', { name: projectFile?.name ?? '' }, 'dialogs'), 'error')
-    return false
-  }
+  const skipped = () => reportLayoutOpenSkipped(projectFile?.name)
   // 重开同一个项目文件沿用上次的身份：时间线按 documentId 分存，新建身份会看不到命名节点（QA-WIN-46）
   let reuse: string | null = null
   if (projectFile) {

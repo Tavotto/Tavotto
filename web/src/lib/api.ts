@@ -1284,7 +1284,7 @@ export async function probeAutosave(docId: string, pj?: string | null): Promise<
   if (!res.ok) {
     const body = await errorBody(res)
     noteProjectGone(res.status, body)
-    if (res.status === 400) {
+    if (res.status === 400 || res.status === 422) {
       return { kind: 'invalid', code: typeof body.code === 'string' ? body.code : null }
     }
     return { kind: 'unavailable', status: res.status }
@@ -2672,6 +2672,7 @@ export interface PackageResult {
   assets: number
   missing: string[]
   chart_sources?: number
+  missing_chart_sources?: string[]
   execution_coverage?: {
     state: 'incomplete' | 'complete'
     issues: { script: string; reason: string }[]
@@ -2705,10 +2706,12 @@ export interface PackageOpenResult {
   /** 存在但内容与打包时不一致（sha1 漂移） */
   drifted: string[]
   /**
-   * schema 4 的来源附件没能装进当前项目（包损坏 / 项目只读）：文档能打开，但下一次
-   * 保存会因缺来源失败。缺省 = 没有这条问题（旧后端不发这个键）。
+   * schema 4 的来源附件没能装进当前项目（包损坏 / 项目只读）：这次包不完整，
+   * 打开入口明确报告失败。缺省 = 旧后端没有提供此事实。
    */
   missing_chart_sources?: string[]
+  /** 后端逐面板核实的完整附件引用，只有这些面板免于普通素材重链接。 */
+  verified_chart_sources?: ChartSourceRef[]
 }
 
 /**

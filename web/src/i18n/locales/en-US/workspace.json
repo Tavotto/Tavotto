@@ -1012,6 +1012,7 @@
     "packageOpenFailed": "Couldn’t open the project package. {{error}}",
     "packageTooNew": "This project package is from a newer {{product}} and this build can’t open it.",
     "packageOpened": "Project package opened ({{createdAt}}); every asset is present",
+    "packageIncomplete": "{{count}} chart sources are missing or damaged in the package. Restore them and try again.",
     "packaged_one": "Created project package {{name}} ({{count}} asset)",
     "packaged_other": "Created project package {{name}} ({{count}} assets)",
     "pasteNothing": "Nothing to paste. Objects with missing assets were skipped.",
