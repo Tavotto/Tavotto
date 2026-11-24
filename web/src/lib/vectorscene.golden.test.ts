@@ -9,7 +9,7 @@ import type { PanelObject } from '@/types/document'
  * （裁剪、90° 旋转、翻转）。向量由 `scripts/gen_vectorscene_vectors.py` 生成。
  */
 type Case = { panel: Record<string, unknown>; rects: { x: number; y: number; w: number; h: number }[] }
-const { boxes, cases } = vectors as { boxes: Rect4[]; cases: Case[] }
+const { boxes, cases } = vectors as unknown as { boxes: Rect4[]; cases: Case[] }
 
 describe('vectorscene ↔ elementRectOnPage（golden）', () => {
   cases.forEach((c, i) => {

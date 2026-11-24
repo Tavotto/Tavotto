@@ -369,4 +369,27 @@ TikZ 一类（DeTikZify）结构好但在 LaTeX 里。这正是本 ADR 让 Agent
    这次导出与脚本自己 `savefig(bbox_inches="tight")` 存下的磁盘原件（没改动的子图合成时用它）差 ≤ 0.004 mm；重复导出稳定；带改动同样成立
    （看护 `tests/test_export_data_points_truth.py`）。不与 `snapshot_only`、`svg_path` / `svg_text_path` 同用。细则：
    `docs/rules/backend/worker-protocol-and-lifecycle.md`。§二「worker 协议上新的一条只读命令」一句与分期第 1 条的「worker 新命令（含 `workerd/`）」以本条为准。
-
+2. **后端新增导出转换**（#2196）：后端原来没有「文档对象 → 导出载荷」这一步（只在前端 `lib/exportPayload.ts`）。第 1 期加了
+   `engine/agentobjects.py`：字段表 `profiles/agent_objects.json`（唯一出处，前后端共读；数值上下限取属性栏现有范围，预算取现有接口上限）、
+   严格校验（未知 / 不给 Agent / 保留字段、越界一律整批拒绝，错误码闭集、不回显输入）、id（`<类型首字母>_` + 8 位，与前端 `newId` 同格式）、
+   `to_export_objects`（与前端 `toExportObject` 对 text / arrow / shape / path 逐字段同源，golden `tests/golden/agent_object_vectors.json`；
+   通过的对象另交 `rendercore.plan.compile_page` 真编译）。前端 `lib/agentObjects.ts` 是逐键覆盖表：对象接口加了字段而没标去向，tsc 红。
+3. **已实现的描述闭集**（`engine/vectorscene.py`）：锚点 `data` / `element` / `panel` / `item`；元素 `arrow` / `text` / `shape` / `bracket`
+   （显著性括号）/ `connector`（直线、先横后竖、先竖后横）/ `box`（`fit` 框住一组）；每种元素的键是闭集，写错的键整批 `bad_item`。
+   §三 的 `align` / `distribute` / `between` / `glyph` / `graph` 还没做。**元素锚点只锚墨迹**：有真实轮廓 `geometry` 的取轮廓点的范围，
+   文字 / 坐标轴 / 图例 / 色条类用 `bbox`，其余（撑大过的点击框、只含数据范围的散点框）回 `anchor_unresolvable`。
+   图幅分数 → 画布毫米的 `panel_rect_to_page` 与前端 `canvas/elementGeometry.elementRectOnPage` 逐数同源（裁剪、四种旋转、两种翻转，
+   golden `tests/golden/vectorscene_vectors.json`）；翻转 / 旋转过的子图仍只给外框。
+4. **读场景**：`vectorscene.build_scene` 给短号 + 画布毫米（子图、坐标轴、带 gid 元素的墨迹框）、空白区（0.5 mm 网格标出数据墨迹与文字，
+   反复取最大空矩形，每块 ≥ 2 × 2 mm）、样式记号（字体族、刻度 / 轴标题字号与轴线线宽都已乘子图缩放）、已有标注、`fingerprint`；
+   `solve(..., fingerprint=…)` 对不上回 `scene_stale`。锚点记录带元素的 `identity`（有 `label=` 才有），供以后脚本重跑后认回。
+5. **核对**（`engine/vectorcheck.py`）：`data`（数据角色用 `interference.DATA_ROLES`；有轮廓的按轮廓 + 闭合填充内部判，只有外框的判 unknown；
+   只有描边的形状按那一圈线判）、`text`（不压字；彼此锚定的一对不算）、`page`、`journal`（直接跑 `preflight.run` 的字号 / 线宽规则）、
+   `style`（字体族与原图同一类；求解缺省就用图里的那一类）。**`anchor` 与 `fit` 两项比的是求解的数与导出载荷几何换算之后的数**——
+   它们证明的是导出转换没有走样，不是独立测量；独立的保证在端到端用例：真 worker 导出 → 求解 → 校验 → 真画布合成，锚点与
+   matplotlib 实画的点差 ≤ 0.005 mm（`tests/test_vectorscene_e2e.py`、`tests/test_vectorscene_tasks.py`，五个真实任务全部核对通过；
+   出页、压邻图刻度、框线穿字、字落在柱子里、字压曲线五个反例都被拦下）。成品字号按 0203 的 `observe_pdf` 实测还没接（第 1 期用预检的字号规则；画布线宽规则见 #2195）。
+6. **统计标注**：星号 / n.s. / p 值 / n 没写 `provenance`（`user` / `data`）的整批 `needs_confirmation`；写了的也单列在 `statistical` 里，
+   交给宿主让用户确认（来源是 Agent 自己填的，不等于用户确认过）。
+7. **第 1 期没做**（按分期）：插件与改图助手的工具（第 2、3 期）、`anchor` 字段写进文档与「可能没对准」提示（第 2、4 期）、svgimport 的 marker / tspan
+   与导出保留组 / 名字（第 5 期）、机理图图元与通路布局（第 6 期）、Windows 上的 Illustrator（§十三 第 6 项）。
