@@ -2320,6 +2320,9 @@ def _serialize_figure_with_worker(
         _normalize_worker_svg(tmp)
         if companion_args.get("svg_fonttype") == "none":
             _extend_text_svg_families(tmp)
+    if fmt == engine_exportreq.FORMAT_PDF and tmp.is_file():
+        # matplotlib 把 .otf（CFF）字体写进 TrueType 槽：交出去之前换成真 TrueType（摸底 T-003）
+        engine_artifactinspect.normalize_worker_pdf(tmp)
     if text_svg is not None:
         info = resp.get("svg_text") or {}
         try:
