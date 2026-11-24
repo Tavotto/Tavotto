@@ -21,6 +21,8 @@
   - 出处：FDV ch.11 Visualizing Nested Proportions, p.105
 - **G-036 数据约束的属性不按美观改**（硬性）：柱高、点的位置、表示数值的气泡面积由数据决定，编辑图时不能为了好看去改；颜色、线宽、字体、图例位置是样式，可以随意改。用户要改前者时，告诉他应该改数据或脚本。
   - 出处：GoG §10.5, p.278；GoG ch.18 ViZml（数据 / 结构 / 样式三层）, p.589–609
+- **G-066 气泡和面积按面积缩放，不按半径**（Tavotto 推导）：用气泡大小表示数值时，让面积和数值成比例，不要让半径或直径和数值成比例（那会把差异放大成平方）。matplotlib 的 scatter 参数 s 本来就是面积；脚本里先算半径再平方的写法要检查。
+  - 出处：KD SKILL.md「Choose an honest encoding」；GoG §10.5, p.278（大小表示面积是数据属性）；TAVOTTO Tavotto 采纳为 Agent 准则（三本书未覆盖或未明说），只靠二手来源支撑，因此不判对错
 
 ## 统计表达（依赖上下文，说明而不替用户定）
 
@@ -58,6 +60,9 @@
 - **G-057 可以互相比较的面板用同一种不确定性定义**（Tavotto 推导）：几个面板摆在一起让读者比较时，误差线或误差带要代表同一种量（都是 SD，或都是 95% CI），样本单位也一致；确实不同的要在图注里逐个写明。面板之间 n、分母或估计方法变了，同样要说。含义拿不准时问用户，不从图上猜。
   - 例外：面板展示的本来就是不同性质的量
   - 出处：XG references 目录的 qa-contract.md「Uncertainty consistency」；references 目录的 multipanel-evidence-architecture.md「Assign visual hierarchy from evidence hierarchy」；FDV ch.16 Visualizing Uncertainty, p.189；TAVOTTO 「跨面板一致」是从 P2 与 G-005 推出来的；判不了，只能由作者确认
+- **G-063 缺失、零、删失、被排除要分开表达**（Tavotto 推导）：缺失值不是 0，被排除的点也不是缺失：画图时让它们看得出区别（缺失处断开、不连线；被排除的点说明规则与个数；低于检出限的值单独标注），不要把缺失悄悄连成一条线，也不要把空格当 0 画。
+  - 例外：用户明确要求插值时，用不同线型标出插值段
+  - 出处：KD SKILL.md「Choose an honest encoding」；TAVOTTO Tavotto 采纳为 Agent 准则（三本书未覆盖或未明说），只靠二手来源支撑，因此不判对错
 
 ## 感知建议（指导性原则，有例外）
 
@@ -128,6 +133,15 @@
 - **G-061 组图里同一对象用同一套视觉语言**（强建议）：一张组图里，同一个对象（某一组、某一性别、某种处理）在各面板用同样的颜色、符号、先后顺序，图例只留一份。合成多张图时先对齐这些，再谈版面；面板字母标注要小、字体与全图一致、全文统一大小写。
   - 例外：各面板讲的是互不相干的数据
   - 出处：FDV ch.21 Multipanel Figures, p.261；FDV ch.21 Multipanel Figures, p.262；FDV ch.21 Multipanel Figures, p.261（面板标注像页码，不应抢眼）
+- **G-064 线条、标记与背景要有足够对比度**（Tavotto 推导）：读图必需的线条、标记、色块与背景的对比度至少约 3:1，文字至少约 4.5:1（WCAG 2.2 的网页标准；期刊没有这项规定，作为可读性参考）。浅黄、浅灰的细线在白底上最常不够，加深颜色或加粗。
+  - 例外：背景参考线、网格这类本来就该退后的元素；期刊或用户指定的配色
+  - 出处：KD SKILL.md「Design accessibility in, not after」（转述 WCAG 2.2 SC 1.4.3 / 1.4.11）；WCAG SC 1.4.3 / SC 1.4.11（未直接核 W3C 原文）；VAD §10.2.2 Luminance, p.223（文字最低 3:1）；TAVOTTO Tavotto 采纳为 Agent 准则与视觉建议级检查（期刊无此规定）
+- **G-067 复杂图附文字描述，网页发布附数据**（Tavotto 推导）：用于网页、报告或无障碍场景时，复杂的图应附一段替代文字（说明图里比较了什么、主要结论落在哪），网页发布时附底层数据表。用户需要时可以帮忙起草，但结论措辞以作者为准。
+  - 例外：只用于期刊投稿、期刊没有此要求时
+  - 出处：KD SKILL.md「Design accessibility in, not after」；TAVOTTO Tavotto 采纳为 Agent 准则（三本书未覆盖或未明说），只靠二手来源支撑，因此不判对错
+- **G-068 数据太少时用文字或表格**（Tavotto 推导）：只有一两个数、一个百分比或一个均值时，画图往往不如一句话或一张小表清楚；数据点很少（例如少于 3 个）时，先建议用户考虑文字或表格，用户仍要画就照做，并把每个点画出来、标上数值。
+  - 例外：图是组图里与其他面板对照的一格；用户明确要画
+  - 出处：ARS academic-paper/references 目录的 statistical_visualization_standards.md「When NOT to Visualize」（转述，不引原文）；FDV ch.6 Visualizing Amounts, p.53（数据少时可直接标出数值）；TAVOTTO 「先建议、不阻止」与阈值是 Tavotto 的推导；具体阈值由数据出图规则定义
 
 ## 只能由作者确认（不猜）
 
@@ -142,6 +156,8 @@
 - **G-062 组图的主次与叙事顺序由作者的目的定**（Tavotto 推导）：哪个面板是主结果、哪些面板要互相比较、先讲哪一个，从图和数据里看不出来，是作者的目的。用户没说清时，出一道选择题（比较各组 / 看趋势 / 补充说明等）再排；不要自己猜，也不要为了让某个面板更醒目去改它的数据范围。主次只通过面板大小和位置体现。
   - 例外：用户已明说主次与顺序
   - 出处：FDV ch.21 Multipanel Figures, p.260（复合图是为了「一个总的要点」）；TAVOTTO 书里没有讨论面板的主次、大小或跨格；这一条是 Tavotto 的推导，依据是目的由用户确认（decision-framework 第 2 节、VAD p.78）
+- **G-065 不确定性写明 n 和重复的单位**（Tavotto 推导）：写明误差线是 SD、SEM 还是 CI 之外，还要写明 n，以及 n 数的是什么（独立的动物、独立实验，还是同一样品的技术重复）。这只能由作者提供：不知道就问，不要从数据行数推断 n。
+  - 出处：KD SKILL.md「Choose an honest encoding」；TAVOTTO Tavotto 采纳为 Agent 准则（三本书未覆盖或未明说），只靠二手来源支撑，因此不判对错
 
 ## 作者偏好（不是对错：按用户或期刊，不要当问题报告）
 
@@ -170,4 +186,4 @@
 - **G-058 一张图回答一个问题、各面板分担不同的论证：写法建议**（偏好）：规划多面板图时，可以先请用户用一句话说出这张图要回答的问题，再看每个面板各自承担什么（主要证据、对照、另一种方法的验证、边界情况）。这是组织论证的一种写法，不是规定：面板怎么分、放不放进正文由作者定，不要把「面板重复」或「缺对照」当问题报告，也不要从数据的相关性替作者下因果结论。
   - 出处：XG references 目录的 multipanel-evidence-architecture.md（原文自述是从少数几篇期刊论文归纳的风格指引，不是期刊要求）
 
-书目：GoG = Leland Wilkinson, The Grammar of Graphics, 2nd ed., Springer 2005；VAD = Tamara Munzner, Visualization Analysis and Design, CRC Press 2014；FDV = Claus O. Wilke, Fundamentals of Data Visualization, O'Reilly 2019（全文 https://clauswilke.com/dataviz/）；MATH = 数学事实（不归于任何一本书）；TAVOTTO = Tavotto 自己的工程推导；XG = 外部作图实践指引仓库的作图技能目录（地址与版本号不入库，Apache-2.0）：一份作图实践指引，不是原著也不是期刊规定；只作二手参考，其中的 pt / mm 数值不引用
+书目：GoG = Leland Wilkinson, The Grammar of Graphics, 2nd ed., Springer 2005；VAD = Tamara Munzner, Visualization Analysis and Design, CRC Press 2014；FDV = Claus O. Wilke, Fundamentals of Data Visualization, O'Reilly 2019（全文 https://clauswilke.com/dataviz/）；MATH = 数学事实（不归于任何一本书）；TAVOTTO = Tavotto 自己的工程推导；XG = 外部作图实践指引仓库的作图技能目录（地址与版本号不入库，Apache-2.0）：一份作图实践指引，不是原著也不是期刊规定；只作二手参考，其中的 pt / mm 数值不引用；KD = K-Dense AI, scientific-agent-skills: skills/scientific-visualization（MIT，ec59a29a，2026-11-16）；WCAG = W3C, Web Content Accessibility Guidelines (WCAG) 2.2（经 KD 转述，未直接核原文）；ARS = imbad0202, academic-research-skills（CC BY-NC 4.0，d169ec5c；只借思路，不引原文）

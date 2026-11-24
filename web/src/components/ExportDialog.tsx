@@ -83,7 +83,7 @@ import {
   writeExportDefaults,
 } from "@/lib/exportDefaults";
 import { adoptionGuardOf, artifactValidationIssue } from "@/lib/artifactValidation";
-import { inspectionState } from "@/lib/artifactInspection";
+import { inspectionState, textSizeNote } from "@/lib/artifactInspection";
 import { RetryImg } from "@/components/ui/RetryImg";
 import {
   contextFigureId,
@@ -3625,11 +3625,24 @@ function ScriptSkipped({ report }: { report: ExportScriptReport }) {
  * 这一件产物核验没过（ADR 0068）：standard 政策下文件照样交付了，用户投出去之前得知道。
  * 解读只有 `lib/artifactInspection.inspectionState()` 一份。核验过、没核验都不画：用户不需要理解这些，
  * 「未核验不显示绿」照样成立（2026-11-06 用户：用户不需要理解的东西不用放上去）。
+ *
+ * 成品字号（ADR 0203）是唯一带数的一项：失败时它在这一行里说「最小的字多小、规范要多少」，不再只报名字
+ * （`textSizeNote()`）；它的 unknown 与别的 unknown 一样不说。
  */
 function InspectionLine({ manifest }: { manifest: ExportOutput["manifest"] }) {
   useTranslation("dialogs");
   const state = inspectionState(manifest);
   if (state.tone !== "failed") return null;
+  const sizeNote = textSizeNote(manifest);
+  const named = sizeNote ? state.failed.filter((k) => k !== "text_size") : state.failed;
+  const parts = [
+    named.length
+      ? ex("inspection.failedItems", {
+          items: named.map((k) => ex(`inspection.check.${k}`, { defaultValue: k })).join("、"),
+        })
+      : null,
+    sizeNote ? ex("inspection.textSizeBelow", { min: sizeNote.min, floor: sizeNote.floor }) : null,
+  ].filter((x): x is string => x !== null);
   return (
     <p
       data-inspection="failed"
@@ -3638,9 +3651,7 @@ function InspectionLine({ manifest }: { manifest: ExportOutput["manifest"] }) {
       <IconSlot>
         <TriangleAlert size={ICON_SIZE.xs} aria-hidden />
       </IconSlot>
-      {ex("inspection.failedItems", {
-        items: state.failed.map((k) => ex(`inspection.check.${k}`, { defaultValue: k })).join("、"),
-      })}
+      {parts.join("；")}
     </p>
   );
 }

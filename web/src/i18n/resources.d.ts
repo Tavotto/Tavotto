@@ -1048,9 +1048,11 @@ export default interface Resources {
           "integrity": "完整性",
           "raster_density": "像素密度",
           "size": "尺寸",
-          "text_layer": "文字层"
+          "text_layer": "文字层",
+          "text_size": "字号"
         },
-        "failedItems": "核验未通过：{{items}}"
+        "failedItems": "核验未通过：{{items}}",
+        "textSizeBelow": "成品里最小的文字是 {{min}} pt，低于规范的 {{floor}} pt"
       },
       "jobLost": "这次导出在中途中断。部分文件可能已写出，请检查导出文件夹或重新导出。",
       "journalDpi": "{{journal}} 要求（dpi）\n{{detail}}",
