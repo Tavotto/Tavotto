@@ -312,6 +312,8 @@ class _Font:
     notdef: int = 0
     #: 有画出来的码判不了是不是 `.notdef`
     notdef_unchecked: bool = False
+    #: 用它**上墨**画过字（非空的一段、渲染模式不是 3 / 7，或是一个字形 Form）。只被 `Tf` 选中、只进文字层的不算
+    painted: bool = False
 
 
 @dataclass
@@ -469,6 +471,7 @@ def _note_type3_glyph_form(w, name: str, res_fonts, fonts_seen: dict) -> None:
         return
     font = _font_record("/" + m.group(1), fobj, fonts_seen)
     font.used = True
+    font.painted = True  # 字形 Form 是上了墨的
     w.fonts[font.key] = font
     if m.group("glyph") == ".notdef":
         font.notdef += 1
@@ -560,8 +563,8 @@ def _walk(
     fonts_seen: dict,
     inherited: tuple | None = None,
 ) -> None:
-    """`inherited` = 调用处的（字体, Tf 字号, Tr 渲染模式）：Form XObject 按 PDF 规范继承调用时的图形与文字状态，
-    画完之后调用方的状态原样不动（这里的修改只在本层局部变量里）。页面本身从空状态起步。"""
+    """`inherited` = 调用处的（字体, Tf 字号, Tr 渲染模式, 图形状态里的字体）：Form XObject 按 PDF 规范继承调用时的
+    图形与文字状态，画完之后调用方的状态原样不动（这里的修改只在本层局部变量里）。页面本身从空状态起步。"""
     if depth > w.budget.max_depth:
         raise _BudgetExceeded("depth")
     try:
@@ -575,6 +578,9 @@ def _walk(
     # 免得一次只加观测的改动顺带改了 `text_layer` 的结论
     font_size = inherited[1] if inherited else 0.0
     text_mode = inherited[2] if inherited else 0
+    # 缺字核验要的是**按规范**此刻在画的那张脸：它随 q / Q 存取（`/F1 Tf q /F2 Tf … Q (A) Tj` 的 A 是 F1 画的）。
+    # 与上面的 `font` 分开记，文字层的解码沿用既有行为不变（Codex #2169）
+    paint_font: _Font | None = inherited[3] if inherited and len(inherited) > 3 else font
     text_matrix = _IDENTITY
     in_text = False
     line: list[str] = []
@@ -591,10 +597,10 @@ def _walk(
         op = str(ins.operator)
         args = ins.operands
         if op == "q":
-            stack.append((ctm, font_size, text_mode))
+            stack.append((ctm, font_size, text_mode, paint_font))
         elif op == "Q":
             if stack:
-                ctm, font_size, text_mode = stack.pop()
+                ctm, font_size, text_mode, paint_font = stack.pop()
         elif op == "cm" and len(args) == 6:
             ctm = _mul(tuple(float(a) for a in args), ctm)
         elif op in ("S", "s", "f", "F", "f*", "B", "B*", "b", "b*"):
@@ -632,6 +638,7 @@ def _walk(
                 font = _font_record(name, fobj, fonts_seen)
                 font.used = True
                 w.fonts[font.key] = font
+            paint_font = font
         elif op == "BDC" and len(args) == 2 and isinstance(args[1], pikepdf.Dictionary):
             at = args[1].get("/ActualText")
             actual.append([str(at) if at is not None else None, False])
@@ -646,10 +653,12 @@ def _walk(
                 pieces = [bytes(a) for a in args[-1] if isinstance(a, pikepdf.String)]
             elif args and isinstance(args[-1], pikepdf.String):
                 pieces = [bytes(args[-1])]
-            if font is not None and text_mode not in (3, 7):
+            if paint_font is not None and text_mode not in (3, 7):
                 # 缺字只看**画出来**的字（渲染模式 3 / 7 只进文字层、不上墨）；与 ActualText 无关——那只是检索用的文字
                 for raw in pieces:
-                    _note_notdef(font, raw)
+                    _note_notdef(paint_font, raw)
+                if any(pieces):
+                    paint_font.painted = True
             scope = actual[-1] if actual else None
             if scope is not None and scope[0] is not None:
                 if not scope[1]:
@@ -691,7 +700,7 @@ def _walk(
                     depth + 1,
                     w,
                     fonts_seen,
-                    (font, font_size, text_mode),
+                    (font, font_size, text_mode, paint_font),
                 )
                 w.forms_seen.add(key)
 
@@ -868,6 +877,7 @@ def observe_pdf(path: Path, *, budget: Budget | None = None) -> dict:
                 "tounicode": f.tounicode is not None,
                 "type3": f.type3,
                 "last_resort": is_last_resort(f.base),
+                "painted": f.painted,
                 "notdef": f.notdef,
                 "notdef_unchecked": f.notdef_unchecked,
             }
@@ -1121,7 +1131,14 @@ def _check_pdf(observed: dict, plan: dict, profile: dict | None) -> tuple[dict, 
             notes.append("有 Type 3 字体（字形在 CharProcs 里），嵌入这一维记 unknown")
         else:
             checks["fonts_embedded"] = VERIFIED
-        tofu = sorted({f["name"] for f in used if f.get("last_resort") or f.get("notdef")})
+        # LastResort 只有**上墨**画过字才是图上的方块：只被选中、只进文字层（Tr 3 / 7）的不算（Codex #2169）
+        tofu = sorted(
+            {
+                f["name"]
+                for f in used
+                if (f.get("last_resort") and f.get("painted", True)) or f.get("notdef")
+            }
+        )
         if not used:
             checks["glyphs"] = NOT_APPLICABLE
         elif tofu:

@@ -142,6 +142,74 @@ def test_notdef_is_read_through_the_cid_to_gid_map(tmp_path):
     assert hidden["checks"]["glyphs"] == "verified"
 
 
+def _two_font_pdf(path: Path, stream: bytes, *, f1, f2) -> Path:
+    """两个 Type0 / Identity-H 字体的最小 PDF：`f1` / `f2` = (BaseFont, CIDToGIDMap 流)。"""
+    import pikepdf
+
+    pdf = pikepdf.new()
+    page = pdf.add_blank_page(page_size=(144, 72))
+
+    def font(base: str, c2g: bytes):
+        kid = pikepdf.Dictionary(
+            Type=pikepdf.Name.Font,
+            Subtype=pikepdf.Name.CIDFontType2,
+            BaseFont=pikepdf.Name("/" + base),
+            CIDSystemInfo=pikepdf.Dictionary(Registry="Adobe", Ordering="Identity", Supplement=0),
+            FontDescriptor=pikepdf.Dictionary(
+                Type=pikepdf.Name.FontDescriptor,
+                FontName=pikepdf.Name("/" + base),
+                FontFile2=pikepdf.Stream(pdf, b"\x00\x01\x00\x00"),
+            ),
+            CIDToGIDMap=pikepdf.Stream(pdf, c2g),
+        )
+        return pdf.make_indirect(
+            pikepdf.Dictionary(
+                Type=pikepdf.Name.Font,
+                Subtype=pikepdf.Name.Type0,
+                BaseFont=pikepdf.Name("/" + base),
+                Encoding=pikepdf.Name("/Identity-H"),
+                DescendantFonts=[pdf.make_indirect(kid)],
+            )
+        )
+
+    page.obj["/Resources"] = pikepdf.Dictionary(Font=pikepdf.Dictionary(F1=font(*f1), F2=font(*f2)))
+    page.obj["/Contents"] = pdf.make_indirect(pikepdf.Stream(pdf, stream))
+    pdf.save(str(path))
+    return path
+
+
+@needs_pikepdf
+def test_after_q_the_glyph_check_uses_the_restored_font(tmp_path):
+    """`/F1 Tf q /F2 Tf (B) Tj Q (A) Tj`：A 是 F1 画的（字体属于图形状态，Q 还原）。
+    F1 认得码 1、不认得码 2；F2 反过来。两个字都画得出来，核验不能说缺字；反过来摆就是真缺字。"""
+    only1 = struct.pack(">HHH", 0, 7, 0)  # CID 1 → GID 7，CID 2 → .notdef
+    only2 = struct.pack(">HHH", 0, 0, 7)  # CID 2 → GID 7，CID 1 → .notdef
+    ok = b"BT /F1 10 Tf q /F2 10 Tf 5 5 Td <0002> Tj Q <0001> Tj ET"
+    bad = b"BT /F1 10 Tf q /F2 10 Tf 5 5 Td <0002> Tj Q <0002> Tj ET"
+    fonts = {"f1": ("AAAAAA+One", only1), "f2": ("BBBBBB+Two", only2)}
+    good = I.inspect(_two_font_pdf(tmp_path / "ok.pdf", ok, **fonts), "pdf", plan=PLAN)
+    assert good["checks"]["glyphs"] == "verified", good["notes"]
+    wrong = I.inspect(_two_font_pdf(tmp_path / "bad.pdf", bad, **fonts), "pdf", plan=PLAN)
+    assert wrong["checks"]["glyphs"] == "failed"
+
+
+@needs_pikepdf
+def test_last_resort_only_counts_when_it_paints(tmp_path):
+    """LastResort 只被选中、或只用 Tr 3 写进文字层：图上没有方块，不报缺字；上墨画了一个字才报。"""
+    ident = struct.pack(">HHH", 0, 7, 7)
+    fonts = {"f1": ("AAAAAA+Plain", ident), "f2": ("CCCCCC+LastResort", ident)}
+    hidden = b"BT /F1 10 Tf 5 5 Td <0001> Tj /F2 10 Tf 3 Tr <0001> Tj ET"
+    selected = b"BT /F1 10 Tf 5 5 Td <0001> Tj /F2 10 Tf ET"
+    painted = b"BT /F1 10 Tf 5 5 Td <0001> Tj /F2 10 Tf <0001> Tj ET"
+    for name, stream, want in (
+        ("hidden", hidden, "verified"),
+        ("selected", selected, "verified"),
+        ("painted", painted, "failed"),
+    ):
+        got = I.inspect(_two_font_pdf(tmp_path / f"{name}.pdf", stream, **fonts), "pdf", plan=PLAN)
+        assert got["checks"]["glyphs"] == want, (name, got["notes"])
+
+
 @needs_pikepdf
 def test_a_font_whose_glyphs_cannot_be_checked_is_unknown_not_verified(tmp_path):
     """简单 TrueType 没有 Differences：码 → 字形要读字体程序的 cmap，这里判不了——记 unknown（RC-088）。"""
