@@ -272,4 +272,27 @@ describe('发送路由', () => {
     }
     expect(input().value).toBe('B 的草稿')
   })
+
+  it('A 发起 → 切 B → 切回 A 写新稿：编辑序号不复用，A 落定时不清这份没提交的新稿', async () => {
+    useChangePlanStore.getState().clear()
+    vi.mocked(getChangePlan).mockResolvedValueOnce({ plan_id: 'pl1', state: 'running', phase: 'model' }).mockResolvedValue(NEEDS_SCRIPT)
+    vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    try {
+      await mount()
+      await typeText('A 的指令')
+      await click(q('[data-ai-send="send"]'))
+      await settle()
+      await act(async () => useSelectionStore.setState({ ids: ['p2'] } as never))
+      await settle()
+      await act(async () => useSelectionStore.setState({ ids: ['p1'] } as never))
+      await settle()
+      await typeText('A 的新稿')
+      await act(async () => void vi.advanceTimersByTimeAsync(2600))
+      await settle()
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(input().value).toBe('A 的新稿')
+  })
 })

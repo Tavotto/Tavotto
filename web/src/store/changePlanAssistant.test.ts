@@ -314,6 +314,41 @@ describe('改脚本做剩下的：把图内已改的部分写进指令', () => {
     expect(start.mock.calls[0][0].prompt).toContain('已经在图内改好（不必再改）')
   })
 
+  it('应用后 ⌘Z 撤回（卡片显示待确认）再点：按有效状态判，先重新 commit 再 start，上下文是「已改好」', async () => {
+    getChangePlan.mockResolvedValue(ready(partial))
+    const key = (await ask()) as string
+    await tick()
+    expect(cps().apply(key)).toBe('applied')
+    ds().undo()
+    expect(overridesNow()).toEqual(BASE)
+    expect(cps().entries[key].status).toBe('applied') // 存着的状态是旧的，有效状态是待确认
+    const depth = ds().past.length
+    start.mockImplementation(async () => {
+      expect(overridesNow()).toEqual(partial.candidate_patches)
+      return 'accepted'
+    })
+    expect(await cps().runScript(key)).toBe(true)
+    expect(ds().past.length).toBe(depth + 1)
+    expect(start.mock.calls[0][0].prompt).toContain('已经在图内改好（不必再改）')
+    expect(start.mock.calls[0][0].overrides).toEqual(partial.candidate_patches)
+  })
+
+  it('应用后 ⌘Z 撤回、图又被改过：不续走，不写', async () => {
+    getChangePlan.mockResolvedValue(ready(partial))
+    const key = (await ask()) as string
+    await tick()
+    cps().apply(key)
+    ds().undo()
+    ds().commit(literal('手改'), (d) => {
+      ;(d.objects.find((o) => o.id === 'p1') as PanelObject).overrides = [{ gid: 'ax.title', prop: 'fontsize', value: 12 }]
+    })
+    const depth = ds().past.length
+    expect(await cps().runScript(key)).toBe(false)
+    expect(start).not.toHaveBeenCalled()
+    expect(ds().past.length).toBe(depth)
+    expect(cps().entries[key].status).toBe('stale')
+  })
+
   it('取消勾选的组不应用也不写进上下文', async () => {
     getChangePlan.mockResolvedValue(ready(partial))
     const key = (await ask()) as string

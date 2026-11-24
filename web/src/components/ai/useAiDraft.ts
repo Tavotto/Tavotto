@@ -267,7 +267,9 @@ export function useAiDraft(panel: PanelObject | null) {
     setDraftReplaced(false)
     replacePending.current = false
     text.current = ''
-    seq.current = 0
+    // 编辑序号跨目标切换**单调递增、不归零**：延迟清（方案落定时）靠「序号没变」判输入框没被动过，
+    // 归零会让 A → B → 回 A 再写新稿之后的序号撞上提交时的序号，清掉没提交的新稿
+    seq.current++
     draftStamp.current = null
     setDraftRead(project && fileId ? 'loading' : 'ok') // 没有可读的目标（无项目认领 / 无面板）= 没有要载入的草稿
     // 发件箱里还留着这个目标没落定的版本（上一个实例退役时没写成）：先显示它，不是服务器上的旧值；对账也不会覆盖它

@@ -500,17 +500,32 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       }
       // 还没应用的图内修改先应用（同一次 commit、正常进时间线）再改脚本：脚本一改图源就变了，待确认的方案会判「图已改过」再也应用不了，
       // 图内那部分就丢了。应用没成（图已改过 / 写不进）= 不续走，卡上说一句
-      if (e.status === 'ready' && e.plan && e.plan.groups.some((g) => !e.unchecked[g.key] && g.changes.length > 0)) {
-        const r = get().apply(key)
-        if (r === 'stale' || r === 'failed') return false
+      // 与卡片 / `apply()` 同一个有效状态（⌘Z 撤回过的「已应用」又是待确认，存着的 `e.status` 不算数）
+      const hasChanges = !!e.plan && e.plan.groups.some((g) => !e.unchecked[g.key] && g.changes.length > 0)
+      const statusNow = () => {
+        const cur = get().entries[key] ?? e
+        const p = panelOf(cur)
+        return effectiveStatus(cur, p?.overrides ?? null, p ? sourceOf(p) : null)
+      }
+      if (hasChanges) {
+        const st = statusNow()
+        if (st === 'stale') {
+          patch(key, { status: 'stale', notice: undefined })
+          return false
+        }
+        if (st === 'ready') {
+          const r = get().apply(key)
+          if (r !== 'applied') return false
+        }
         panel = panelOf(e) ?? panel
       }
-      const e2 = get().entries[key] ?? e
+      // 上下文按**实际**情况写：真正落在文档里的才写「已改好」
+      const appliedNow = hasChanges && statusNow() === 'applied'
       // 图内已经改（或待用户应用）的部分，确定性地写进指令：Agent 不在脚本里重做它们（`lib/assistantScriptContext`）
       const manifest = exactPanelManifest(useRenderStore.getState(), panel)
       const labels = new Map((manifest?.elements ?? []).map((x) => [x.gid, x.label ? engineLabel(x.label).trim() : '']))
       const prompt = scriptHandoffPrompt(fb.prompt, e.plan, {
-        applied: e2.status === 'applied',
+        applied: appliedNow,
         unchecked: e.unchecked,
         labelOf: (gid) => labels.get(gid) || undefined,
       })
