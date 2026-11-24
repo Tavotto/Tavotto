@@ -18,6 +18,7 @@ import {
 import { computedFrameAuthority, panelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { computedFramePatch, matchesComputedFrame, type PairedFrameAuthority } from '@/lib/chartFrame'
 import { requestRender } from '@/store/renderScheduler'
+import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { sampleDisplayState } from '@/diagnostics'
 import { useUiStore } from '@/store/uiStore'
 import { currentVisibleRectMm } from '@/store/viewportStore'
@@ -38,6 +39,7 @@ import type { RenderPurpose } from '@/lib/renderPurpose'
  * 去重只剩「完全相同的两个副本共用一次渲染」这一条。
  */
 const NO_NEIGHBOURS: ReadonlySet<string> = new Set()
+const NO_LIVE_ASSETS: ReadonlySet<string> = new Set()
 
 export function renderTargets(
   objects: readonly CanvasObject[],
@@ -50,7 +52,7 @@ export function renderTargets(
    * 这张画布绑定了样式（ADR 0081）。绑定说的是「这张画布上的图长成那套样式的样子」，
    * 要对齐一张图就得先读到它的 manifest——所以绑定画布上「只带基线、还没动过」的
    * 面板也渲染一次。这不是「白跑」：用户选绑定的那一刻就是在要这个结果。
-   * runtime 面板照旧（重开文档绝不自动执行脚本）。
+   * 已停在屏障且有后端描述符的 native 图可读取当前会话，其余 runtime 图照旧。
    */
   styleBound = false,
   /**
@@ -60,13 +62,14 @@ export function renderTargets(
    * （重开文档绝不自动执行脚本）。谁算邻居由调用方按当前状态给，这里保持纯函数。
    */
   neighbours: ReadonlySet<string> = NO_NEIGHBOURS,
+  liveNativeAssets: ReadonlySet<string> = NO_LIVE_ASSETS,
 ): PanelObject[] {
   const seen = new Set<string>()
   const targets: PanelObject[] = []
   for (const o of objects) {
     if (o.type !== 'panel' || (!o.script && !o.chart && o.chartSource === undefined)) continue
     // runtime 面板（ADR 0013 lazy rehydrate）：**重开文档绝不自动执行脚本**。
-    // 只有「正在编辑」或「本会话已经跑过一次（latest 里有它）」才进同步——
+    // 正在编辑、前端已有渲染，或样式绑定要读取已停在屏障的 native Figure，才进同步。
     // 带着 overrides 重开的文档先显示 cache 占位，进入编辑 / 显式重跑那一刻
     // 才 build 并重放。tracked（脚本变更）对 runtime 只表达 stale 提示，
     // 不构成自动重跑的理由。
@@ -83,7 +86,7 @@ export function renderTargets(
     const wants =
       o.chart || o.chartSource !== undefined ||
       (o.fileKind === 'runtime'
-        ? o.id === editingId || latest[o.fileId] != null
+        ? o.id === editingId || latest[o.fileId] != null || (styleBound && liveNativeAssets.has(o.fileId))
         : // 编辑中 / 有图内修改 / 脚本已领先磁盘文件（AI 改过）。
           // 「只带基线、还没动过」的面板不渲染：磁盘文件本身就是那个样子，
           // 白跑一次引擎（heavy 脚本要几分钟）没有意义。
@@ -220,6 +223,13 @@ export function syncEngine(objects: readonly CanvasObject[], editingId: string |
   const assets = useAssetStore.getState().byId
   const style = useDocumentStore.getState().doc.style
   const styleBound = !!style && !style.detached
+  const liveNativeAssets = new Set<string>()
+  if (styleBound) {
+    for (const session of Object.values(useNativeSessionStore.getState().sessions)) {
+      if (session.state !== 'barrier' || !session.editable) continue
+      for (const figure of session.descriptors) liveNativeAssets.add(figure.asset_id)
+    }
+  }
   const neighbours = crossFigureNeighbours(
     objects,
     editingId,
@@ -235,6 +245,7 @@ export function syncEngine(objects: readonly CanvasObject[], editingId: string |
     assets,
     styleBound,
     neighbours,
+    liveNativeAssets,
   )) {
     const want = JSON.stringify(panel.overrides)
     const state = store.byKey[renderKeyOf(panel)]
@@ -324,10 +335,11 @@ function useEngineRenderSync() {
   const objects = useDocumentStore((s) => s.doc.objects)
   const byKey = useRenderStore((s) => s.byKey)
   const tracked = useRenderStore((s) => s.tracked)
+  const nativeSessions = useNativeSessionStore((s) => s.sessions)
 
   useEffect(() => {
     syncEngine(useDocumentStore.getState().doc.objects, useUiStore.getState().elementPanelId)
-  }, [byKey, tracked])
+  }, [byKey, tracked, nativeSessions])
 
   const txnOpen = useDocumentStore((s) => s.txn != null)
 

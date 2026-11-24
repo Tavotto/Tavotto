@@ -108,6 +108,14 @@ describe('绑定了样式的画布（ADR 0081）', () => {
     const rt = { ...panel('r', 'runtime:x', 0), fileKind: 'runtime' } as PanelObject
     expect(renderTargets([rt], null, {}, {}, {}, true)).toEqual([])
   })
+
+  it('绑定只补取当前已打开的 native 图清单，缓存里的 runtime 图保持静止', () => {
+    const live = { ...panel('r', 'runtime:source.R#plot', 0), fileKind: 'runtime' } as PanelObject
+    const archived = { ...panel('cold', 'runtime:archive.R#plot', 1), fileKind: 'runtime' } as PanelObject
+    const openAssets = new Set([live.fileId])
+    expect(renderTargets([live, archived], null, {}, {}, {}, true, undefined, openAssets)).toEqual([live])
+    expect(renderTargets([live, archived], null, {}, {}, {}, false, undefined, openAssets)).toEqual([])
+  })
 })
 
 describe('baked 基线的有效性（isJustBakedBaseline 经由 renderTargets）', () => {
