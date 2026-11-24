@@ -49,9 +49,18 @@ MAX_TOTAL_BYTES = 512 * 1024 * 1024
 MAX_SNAPSHOTS = 256
 MAX_SOURCES = 256
 MAX_AGE_SECONDS = 30 * 24 * 60 * 60
+#: A full durable store is reclaimed down to half of each budget, so that a
+#: project that keeps editing does not rescan its documents on every save.
+RECLAIM_GRACE_SECONDS = 120.0
 _LOCK_TIMEOUT_SECONDS = 5.0
 _MAX_DIRECTORY_ENTRIES = 4096
 _LOCK = threading.Lock()
+
+
+class SnapshotBudgetExceeded(ValueError):
+    """A durable project store is full; established records were left untouched."""
+
+
 _HEX = re.compile(r"[0-9a-f]{64}\Z")
 _BLOB = re.compile(r"[0-9a-f]{64}\.(?:pdf|svg)\Z")
 _METADATA = re.compile(r"[0-9a-f]{64}\.json\Z")
@@ -651,6 +660,39 @@ def _durable_state(root: Path) -> tuple[dict, dict, dict]:
     return markers, records, snapshots
 
 
+def _durable_bytes(
+    root: Path,
+    markers: dict,
+    metadata: list,
+    *,
+    marker_size,
+    record_size,
+    incoming=frozenset(),
+    lstat=Path.lstat,
+) -> int:
+    """The one final-state byte measure: metadata plus unique, verified blobs."""
+    total = sum(marker_size(key, path) for key, (path, _) in markers.items())
+    blobs = {}
+    for path, record in metadata:
+        total += record_size(path, record)
+        for name in ("pdf_artifact", "svg_artifact"):
+            artifact = record[name]
+            blob = _blob_path(root, artifact)
+            if blob.name in blobs and blobs[blob.name] != artifact["size_bytes"]:
+                raise ValueError("inconsistent durable Figure blob size")
+            blobs[blob.name] = artifact["size_bytes"]
+    for name, size in blobs.items():
+        try:
+            info = lstat(root / "blobs" / name)
+        except FileNotFoundError:
+            if name in incoming:
+                continue
+            raise ValueError("missing durable Figure snapshot blob") from None
+        if not stat.S_ISREG(info.st_mode) or info.st_size != size:
+            raise ValueError("unsafe or changed durable Figure snapshot blob")
+    return total + sum(blobs.values())
+
+
 def _durable_admission(
     root: Path,
     identity: dict,
@@ -698,37 +740,26 @@ def _durable_admission(
         snapshot = _snapshot_id(payload)
         snapshots.setdefault(snapshot, (root / "snapshots" / (snapshot + ".json"), payload))
     if len(markers) > MAX_SOURCES or len(kept) + len(snapshots) > MAX_SNAPSHOTS:
-        raise ValueError("durable Figure snapshot budget exceeded")
-    total = sum(
-        len(marker_bytes) if key == group and not archive_only else path.lstat().st_size
-        for key, (path, _) in markers.items()
-    )
-    blobs = {}
-    for path, record in (*kept.values(), *snapshots.values()):
-        total += len(encoded) if record is payload else path.lstat().st_size
-        for name in ("pdf_artifact", "svg_artifact"):
-            artifact = record[name]
-            blob = _blob_path(root, artifact)
-            if blob.name in blobs and blobs[blob.name] != artifact["size_bytes"]:
-                raise ValueError("inconsistent durable Figure blob size")
-            blobs[blob.name] = artifact["size_bytes"]
+        raise SnapshotBudgetExceeded("durable Figure snapshot budget exceeded")
     incoming = (
         {_blob_path(root, payload[name]).name for name in ("pdf_artifact", "svg_artifact")}
         if payload is not None
         else set()
     )
-    for name, size in blobs.items():
-        try:
-            info = (root / "blobs" / name).lstat()
-        except FileNotFoundError:
-            if name in incoming:
-                continue
-            raise ValueError("missing durable Figure snapshot blob") from None
-        if not stat.S_ISREG(info.st_mode) or info.st_size != size:
-            raise ValueError("unsafe or changed durable Figure snapshot blob")
-    total += sum(blobs.values())
+    total = _durable_bytes(
+        root,
+        markers,
+        [*kept.values(), *snapshots.values()],
+        marker_size=lambda key, path: (
+            len(marker_bytes) if key == group and not archive_only else path.lstat().st_size
+        ),
+        record_size=lambda path, record: (
+            len(encoded) if record is payload else path.lstat().st_size
+        ),
+        incoming=incoming,
+    )
     if total > MAX_TOTAL_BYTES:
-        raise ValueError("durable Figure snapshot budget exceeded")
+        raise SnapshotBudgetExceeded("durable Figure snapshot budget exceeded")
     final_payloads = [record for _, record in (*kept.values(), *snapshots.values())]
     try:
         (root / svgstore_inputs.DIRNAME).lstat()
@@ -785,6 +816,104 @@ def _durable_cleanup(
                 path.unlink(missing_ok=True)
     if any("input_archive" in record for record in input_payloads):
         svgstore_inputs.cleanup(root, input_payloads, budget=_input_policy(input_budget))
+
+
+def reclaim(storage_root: Path, *, referenced, incoming_bytes: int) -> int:
+    """Make room in a full durable project store by dropping unreferenced variants.
+
+    A variant is one exported Figure pair: its current entry and immutable
+    archive share blobs, so they are reclaimed together. Kept unconditionally:
+    variants ``referenced(snapshot_id)`` reports (the caller scans every saved
+    document, version and pending body), each source's newest variant,
+    anything newer than ``RECLAIM_GRACE_SECONDS`` and input-capture (v2)
+    records. Oldest candidates go first until the store is back under half of
+    its budgets. If even every candidate would not make room for the incoming
+    pair, nothing is removed. Returns the number of variants removed.
+    """
+    if type(incoming_bytes) is not int or incoming_bytes < 0:
+        raise ValueError("invalid incoming Figure snapshot size")
+    root = _root(create=False, storage_root=storage_root)
+    with _guard(root):
+        markers, records, snapshots = _durable_state(root)
+        variants: dict[str, list] = {}
+        for path, record in (*records.values(), *snapshots.values()):
+            variants.setdefault(_snapshot_id(record), []).append((path, record))
+        created = {
+            sid: max(record["created_at"] for _, record in items) for sid, items in variants.items()
+        }
+        newest = {}
+        for sid, items in variants.items():
+            group = _key(_source_identity(items[0][1]["identity"]))
+            if group not in newest or created[sid] > created[newest[group]]:
+                newest[group] = sid
+        now = time.time()
+        candidates = sorted(
+            (created[sid], sid)
+            for sid, items in variants.items()
+            if sid not in newest.values()
+            and now - created[sid] >= RECLAIM_GRACE_SECONDS
+            and all(
+                record["version"] == VERSION and "input_archive" not in record
+                for _, record in items
+            )
+            and not referenced(sid)
+        )
+        sizes: dict[Path, os.stat_result] = {}
+
+        def lstat(path: Path) -> os.stat_result:
+            if path not in sizes:
+                sizes[path] = path.lstat()
+            return sizes[path]
+
+        def usage(removed: set) -> tuple[int, int]:
+            metadata = [
+                item for sid, items in variants.items() if sid not in removed for item in items
+            ]
+            total = _durable_bytes(
+                root,
+                markers,
+                metadata,
+                marker_size=lambda key, path: lstat(path).st_size,
+                record_size=lambda path, record: lstat(path).st_size,
+                lstat=lstat,
+            )
+            return len(metadata) + 2, total + incoming_bytes + incoming_metadata
+
+        # The incoming pair writes an entry and an archive about as large as ours.
+        incoming_metadata = 2 * max(
+            (lstat(path).st_size for items in variants.values() for path, _ in items),
+            default=0,
+        )
+        removed: set[str] = set()
+        for _, sid in candidates:
+            count, total = usage(removed)
+            if count <= MAX_SNAPSHOTS // 2 and total <= MAX_TOTAL_BYTES // 2:
+                break
+            removed.add(sid)
+        count, total = usage(removed)
+        if not removed or count > MAX_SNAPSHOTS or total > MAX_TOTAL_BYTES:
+            return 0
+        touched = 0  # variants with at least one file removed
+        try:
+            for sid in sorted(removed, key=lambda sid: created[sid]):
+                # Current entry first: an interrupted reclaim leaves an archive
+                # (still a valid historical version), never a current entry
+                # without the archive its ownership scan requires.
+                for number, (path, _) in enumerate(
+                    sorted(variants[sid], key=lambda item: item[0].parent.name)
+                ):
+                    path.unlink(missing_ok=True)
+                    if number == 0:
+                        touched += 1
+        except OSError:
+            # E.g. a Windows sharing violation part-way through. Every chosen
+            # variant was reclaimable; report what is already gone, never 0.
+            if not touched:
+                raise
+        with contextlib.suppress(OSError, ValueError):
+            # Orphan blobs left by a failure here are collected by the next save.
+            _durable_cleanup(root)
+        return touched
 
 
 @contextlib.contextmanager
