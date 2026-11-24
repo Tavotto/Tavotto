@@ -4,6 +4,7 @@
 「渲染失败（HTTP 500）」「作业仍可能完成」「已通过干净重放校验」「工作进程已重启」。
 这里只钉这批 key，不对整份语言包下禁令（别处的「入口」「会话」可能是正当用法）。
 插值参数一个不能少：前后端按参数名传值，改名要另行确认。
+`export_render_failed` 的 `{{id}}` 换成 `{{name}}`（图名）是确认过的（后端同时补发 `name`）。
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ KEYS: dict[tuple[str, str], set[str]] = {
     ("errors.json", "code.execution_timeout"): {"entry"},
     ("errors.json", "code.script_no_figure"): {"entry"},
     ("errors.json", "render.failed"): {"status"},
-    ("errors.json", "code.export_render_failed"): {"id", "reason"},
+    ("errors.json", "code.export_render_failed"): {"name", "reason"},
     ("errors.json", "code.script_changed"): set(),
     ("errors.json", "code.worker_build_timeout"): set(),
     ("errors.json", "code.worker_timeout"): set(),

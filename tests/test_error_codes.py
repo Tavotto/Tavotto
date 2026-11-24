@@ -267,7 +267,7 @@ USER_VISIBLE_CODES = {
     "read_failed": {"reason"},
     "internal_error": {"reason"},
     "backend_unavailable": {"reason"},
-    "export_render_failed": {"id", "reason"},
+    "export_render_failed": {"id", "name", "reason"},
     "invalid_document": set(),
     "package_file_missing": set(),
     "package_invalid": {"reason"},
@@ -876,7 +876,12 @@ NON_UI_CODES = {
 
 
 #: 只给前端程序用、不进文案的 params（不要求占位符）。`session`：占着脚本的那次会话 id，前端据此接上它。
-DATA_ONLY_PARAMS = {"ai_script_busy": {"session"}, "eps_annotations_unsupported": {"operation"}}
+DATA_ONLY_PARAMS = {
+    "ai_script_busy": {"session"},
+    "eps_annotations_unsupported": {"operation"},
+    # `id` 是文件 id，前端据它定位那张图；文案只按 `name`（图名）说话（T-009）
+    "export_render_failed": {"id"},
+}
 
 
 def _response_dicts(text: str):
