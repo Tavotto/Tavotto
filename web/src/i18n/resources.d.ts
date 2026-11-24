@@ -8134,7 +8134,10 @@ export default interface Resources {
     },
     "renderProgress": {
       "elapsed": "{{message}} · 已用时 {{seconds}} 秒",
-      "preparing": "正在准备图表…"
+      "preparing": "正在准备图表…",
+      "stepEnvironment": "第 1 步，共 3 步：正在找运行环境…",
+      "stepRunning": "第 3 步，共 3 步：正在运行脚本、生成可编辑元素，第一次可能需要几分钟…",
+      "stepStarting": "第 2 步，共 3 步：正在启动 Python…"
     },
     "restore": {
       "autoAdopted": "已打开本机找到的排版“{{name}}”",

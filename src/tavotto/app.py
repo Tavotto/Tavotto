@@ -6219,6 +6219,31 @@ def sse_publish(event: str, data: dict) -> None:
             pass
 
 
+#: 「准备中」的子阶段先后（#479）：只前进不后退，同一阶段只发一次
+_PREPARING_STAGE_ORDER = (engine_pool.STAGE_ENVIRONMENT, engine_pool.STAGE_STARTING)
+
+
+def _preparing_stage_relay(pj: str, rel_id: str):
+    """取会话期间把池报的阶段转成带 `stage` 的 `render.preparing`（#479）。
+
+    热路径只会走到「找运行环境」那一步，而且一闪而过；冷启动才会看到「启动 Python」。
+    阶段只前进：取会话里解析解释器可能在起子进程之后再碰一次，不能让界面倒回去。
+    """
+    reached = -1
+
+    def relay(stage: str) -> None:
+        nonlocal reached
+        if stage not in _PREPARING_STAGE_ORDER:
+            return
+        rank = _PREPARING_STAGE_ORDER.index(stage)
+        if rank <= reached:
+            return
+        reached = rank
+        sse_publish("render.preparing", {"pj": pj, "id": rel_id, "stage": stage})
+
+    return relay
+
+
 @contextlib.contextmanager
 def _relay_build_progress(worker, pj: str, rel_id: str):
     """这条渲染请求在等 build 的期间，把引擎的「日志仍在增长」转成 `render.progress`（#1207）。
@@ -10993,12 +11018,18 @@ def _api_engine_render_body(body, *, include_figure_execution=False):
     # 此时还不知道 worker.built，不把「准备中」谎报成冷启动。
     pj = current_ctx().id
     # 后台补渲染可能被暂缓（不起会话）：没有人在等它，不报「准备中」，免得暂缓时还要补一个终局事件
-    if engine_pool.current_purpose() == engine_pool.PURPOSE_FOREGROUND:
+    foreground = engine_pool.current_purpose() == engine_pool.PURPOSE_FOREGROUND
+    if foreground:
         sse_publish("render.preparing", {"pj": pj, "id": rel_id})
     acquire_mark = engine_pool.acquire_mark()
     try:
         # 前台取会话期间后台预热让路（不开新的；已在飞的在池锁上与这一路合并成同一条会话）
-        with engine_prewarm.PREWARM.foreground():
+        with (
+            engine_prewarm.PREWARM.foreground(),
+            engine_pool.stage_observer(_preparing_stage_relay(pj, rel_id))
+            if foreground
+            else contextlib.nullcontext(),
+        ):
             # 渲染端点独有冷重放：活会话照常准入；冷进程沿 runtime 渲染同一授权链
             # 重放归档输入并核验后采用新 receipt（PR03）。specfix/PNG/导出等其余
             # origin 消费者维持严格准入，由采用后的活 receipt 自然恢复。

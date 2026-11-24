@@ -95,4 +95,39 @@ describe('跨过冷启动取会话与脚本执行的持久进度', () => {
     await act(async () => useRenderStore.getState().clear())
     expect(progress()).toHaveLength(0)
   })
+
+  it('冷启动按三步走：找运行环境 → 启动 Python → 运行脚本并生成可编辑元素；乱序的早一步不倒回去', async () => {
+    await act(async () => root.render(<TooltipProvider><ElementInspector panel={panel} /><ElementTree /></TooltipProvider>))
+    await act(async () => event('render.preparing'))
+    for (const node of progress()) expect(node.textContent).toContain('正在准备图表')
+    await act(async () => event('render.preparing', { stage: 'environment' }))
+    for (const node of progress()) expect(node.textContent).toContain('第 1 步，共 3 步：正在找运行环境')
+    await act(async () => vi.advanceTimersByTime(3000))
+    await act(async () => event('render.preparing', { stage: 'starting' }))
+    for (const node of progress()) {
+      expect(node.textContent).toContain('第 2 步，共 3 步：正在启动 Python')
+      expect(node.textContent).toContain('已用时 3 秒')
+    }
+    // 迟到的早一步 / 不带 stage 的准备事件（同一文件的另一次请求）不让界面倒回去
+    await act(async () => event('render.preparing', { stage: 'environment' }))
+    await act(async () => event('render.preparing'))
+    for (const node of progress()) expect(node.textContent).toContain('第 2 步')
+    await act(async () => event('render.started', { cold: true, cost: 'medium' }))
+    for (const node of progress()) {
+      expect(node.textContent).toContain('第 3 步，共 3 步：正在运行脚本、生成可编辑元素')
+      expect(node.textContent).toContain('已用时 3 秒')
+    }
+    expect(useRenderStore.getState().building[panel.fileId]?.stage).toBeUndefined()
+  })
+
+  it('热会话的重画不报步数：准备一闪而过，之后只说正在构建', async () => {
+    await act(async () => root.render(<TooltipProvider><ElementInspector panel={panel} /><ElementTree /></TooltipProvider>))
+    await act(async () => event('render.preparing', { stage: 'environment' }))
+    await act(async () => event('render.started', { cold: false, cost: '' }))
+    expect(progress()).toHaveLength(2)
+    for (const node of progress()) {
+      expect(node.textContent).not.toContain('步')
+      expect(node.textContent).toContain('正在构建')
+    }
+  })
 })

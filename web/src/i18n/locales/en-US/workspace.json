@@ -1948,6 +1948,9 @@
     }
   },
   "renderProgress": {
+    "stepEnvironment": "Step 1 of 3: finding the Python environment…",
+    "stepStarting": "Step 2 of 3: starting Python…",
+    "stepRunning": "Step 3 of 3: running the script and building editable elements. The first run can take a few minutes…",
     "preparing": "Preparing the figure…",
     "elapsed": "{{message}} · {{seconds}} s elapsed"
   },
