@@ -1628,6 +1628,55 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     expect(badge()?.className).toContain('text-danger')
   })
 
+  // 成品实测字号（ADR 0203）：唯一带数的一项——失败时说出界面上显示的两个数；
+  // 通过、没规范（not_applicable）、量不全（unknown）都不画（核验只说失败，2026-11-06）
+  const sized = (verdict: string, textSize: Record<string, unknown> | undefined) => ({
+    ...manifest({ integrity: 'verified', size: 'verified', text_size: verdict }),
+    ...(textSize ? { text_size: textSize } : {}),
+  })
+
+  it('字号 failed：一句话说出最小的字和规范下限，不只报名字', async () => {
+    jobOutputs = [output(sized('failed', { reason: 'below_min', min_pt: 4.9, floor_pt: 5 }))]
+    await setup(9)
+    await click(button('开始导出')!)
+    await openResultDetail()
+    expect(badge()?.dataset.inspection).toBe('failed')
+    expect(badge()?.textContent).toBe('成品里最小的文字是 4.9 pt，低于规范的 5 pt')
+  })
+
+  it('字号 failed 与别的项一起失败：同一行里两样都说', async () => {
+    jobOutputs = [
+      output({
+        ...sized('failed', { reason: 'below_min', min_pt: 4.9, floor_pt: 6 }),
+        checks: { integrity: 'verified', size: 'verified', dpi_tag: 'failed', text_size: 'failed' },
+      }),
+    ]
+    await setup(9)
+    await click(button('开始导出')!)
+    await openResultDetail()
+    expect(badge()?.textContent).toBe('核验未通过：分辨率标签；成品里最小的文字是 4.9 pt，低于规范的 6 pt')
+  })
+
+  it('字号 failed 但老服务端没带读数：退回只报名字', async () => {
+    jobOutputs = [output(sized('failed', undefined))]
+    await setup(9)
+    await click(button('开始导出')!)
+    await openResultDetail()
+    expect(badge()?.textContent).toBe('核验未通过：字号')
+  })
+
+  it.each([
+    ['verified', { reason: 'ok', min_pt: 7, floor_pt: 6 }],
+    ['not_applicable', { reason: 'no_threshold', min_pt: 4.9, floor_pt: null }],
+    ['unknown', { reason: 'unmeasured_runs', min_pt: 9, floor_pt: 6 }],
+  ] as const)('字号 %s（通过 / 没有规范 / 公式量不全）：都不画', async (verdict, ts) => {
+    jobOutputs = [output(sized(verdict, ts))]
+    await setup(9)
+    await click(button('开始导出')!)
+    await openResultDetail()
+    expect(badge()).toBeNull()
+  })
+
   it('SVG 的文字转成了轮廓（text_outlined）：回执摘要里说一句不能再当文字编辑；没转就不出现', async () => {
     const svg = (extra: Record<string, unknown>) => ({
       ...output(manifest({ integrity: 'verified', size: 'verified' })),
@@ -3133,7 +3182,7 @@ describe('每张图单独导出：依次发多个作业（后端协议不变）'
   it('画布上有更新的构建写进来的对象：逐张导出也灰着，并说清原因（Codex #1913）', async () => {
     await setupTwo({ select: [] })
     const doc = useDocumentStore.getState().doc
-    const newer = { id: 'n1', type: 'path', x: 5, y: 5, w: 10, h: 10, subpaths: [] } as never
+    const newer = { id: 'n1', type: 'futureThing', x: 5, y: 5, w: 10, h: 10 } as never
     useDocumentStore.setState({ doc: { ...doc, objects: [...doc.objects, newer] } } as never)
     await click(originalRadio())
     expect(document.body.querySelector('[data-export-batch-names]')).toBeTruthy()
@@ -4472,16 +4521,25 @@ describe('导出左栏「版面预览」（论文真尺寸入版预览）', () =
       }
     }
 
-    // 切到单张 80 × 60 mm 图：保持「版面预览」，自动排入左上单栏（80 mm）
+    // 切到单张 80 × 60 mm 图：保持「版面预览」，默认落右上单栏且可点「换位置」轮换版位，周围无灰块或定位角标，预览上悬浮示例说明胶囊
     await click(q('[data-export-preview-tab="Fig1.pdf"]')!)
     expect(q('[data-export-manuscript]')?.getAttribute('data-placement')).toBe('single')
+    expect(q('[data-export-manuscript]')?.getAttribute('data-slot-variant')).toBe('top-right')
+    expect(q('[data-export-manuscript-slot]')).toBeNull()
     expect(q('[data-export-preview-size]')?.textContent).toContain('80 × 60 mm · 默认规范 · 单栏 80 mm')
+    expect(q('[data-export-manuscript-note]')?.textContent).toContain('版面预览不会被导出')
 
-    // 关闭并重开对话框：回到「原图」默认态
+    await click(q('[data-export-manuscript-cycle]')!)
+    expect(q('[data-export-manuscript]')?.getAttribute('data-slot-variant')).toBe('mid-left')
+    await click(q('[data-export-manuscript-cycle]')!)
+    expect(q('[data-export-manuscript]')?.getAttribute('data-slot-variant')).toBe('bottom-right')
+
+    // 关闭并重开对话框：回到「原图」默认态，示例说明随之收起
     await act(async () => useUiStore.getState().setExportOpen(false))
     await act(async () => useUiStore.getState().setExportOpen(true))
     expect(q('[data-export-preview-toolbar]')?.getAttribute('data-export-preview-mode')).toBe('figure')
     expect(q('[data-export-manuscript]')).toBeNull()
+    expect(q('[data-export-manuscript-note]')).toBeNull()
   })
 
   it('图幅超出版芯宽度时：标出越界虚线并在底栏如实提示超出版芯；期刊未规定栏宽时不冒充期刊栏宽', async () => {

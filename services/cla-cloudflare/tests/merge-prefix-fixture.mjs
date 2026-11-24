@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {GitHub} from '../src/native/github.ts';
 import {LiveService} from '../src/native/service.ts';
 import {LiveStore} from '../src/native/store.ts';
-import {InvocationBudget} from '../src/native/budget.ts';
+import {InvocationBudget,PAID_EXTERNAL} from '../src/native/budget.ts';
 import {canonical,sha256} from '../src/core/crypto.ts';
 import {fixture as signingFixture} from './delegation-fixture.mjs';
 
@@ -20,7 +20,7 @@ async function appKey(){
 }
 export function queueEntry(position){return {id:'QE:'+position,position,baseCommit:{oid:sha(9000+position)},headCommit:{oid:sha(9100+position)},pullRequest:{number:10+position,headRefOid:sha(1000+position),baseRefName:'main'}};}
 
-export async function fixture({prefix=2,tail=0,pageSize=100,signed=true,enabled=true}={}){
+export async function fixture({prefix=2,tail=0,pageSize=100,signed=true,enabled=true,paid=false}={}){
  const f=await signingFixture();
  if(signed){await f.install();await f.sign(await f.create());}
  const c={...f.c,githubEnabled:true,mergePrefixAssessmentEnabled:enabled};
@@ -30,7 +30,7 @@ export async function fixture({prefix=2,tail=0,pageSize=100,signed=true,enabled=
  const prs=new Map(entries.map(e=>[e.pullRequest.number,{number:e.pullRequest.number,state:'open',user:user(2,'contributor'),commits:1,head:{sha:e.pullRequest.headRefOid},base:{repo:{id:c.repositoryId},ref:'main',sha:sha(2000+e.position)}}]));
  const commits=new Map(entries.map(e=>[e.pullRequest.number,[{sha:e.pullRequest.headRefOid,author:user(2,'contributor'),commit:{author:{email:'2+contributor@users.noreply.github.com'},message:'SYNTHETIC PREFIX COMMIT'}}]]));
  const state={queueRounds:0,branchReads:0,metadataReads:0,tokenReads:0,installationReads:0,userReads:0,prReads:new Map(),compareReads:new Map()};
- const budget=new InvocationBudget(()=>0,()=>f.now()*1000);
+ const budget=new InvocationBudget(()=>0,()=>f.now()*1000,paid?PAID_EXTERNAL:undefined);
  const tracked=(raw,query)=>({
   bind:(...values)=>tracked(raw.bind(...values),query),
   first:async()=>{sqlReads.push(query);return raw.first();},

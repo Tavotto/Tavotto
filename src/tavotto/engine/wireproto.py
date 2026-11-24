@@ -277,6 +277,9 @@ class V1Handler:
         if cmd == "cancel":
             return self.cancel(payload)
 
+        if cmd in self.unbuilt_commands():
+            return self.handle_extra(cmd, req, payload)
+
         existing_command = {
             "render_existing": "render",
             "export_existing": "export",
@@ -288,9 +291,6 @@ class V1Handler:
             self.require_existing_figure(req.get("stem"))
             # Reuse the same renderer, patch validation, timings and response shape.
             cmd = existing_command
-
-        if cmd in self.unbuilt_commands():
-            return self.handle_extra(cmd, req, payload)
 
         patches = payload.get("patches", [])
         if cmd in PATCH_COMMANDS and not isinstance(patches, list):

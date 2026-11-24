@@ -140,8 +140,12 @@
   "canvasTools": {
     "fit": "Fit",
     "label": "Canvas tools",
+    "pen": "Pen",
     "select": "Select",
-    "subLabels": "Labels"
+    "subLabels": "Labels",
+    "quickLayout": "Auto layout",
+    "pencil": "Pencil",
+    "pathTools": "Pen and pencil"
   },
   "confirm": {
     "docLossBody": "Browser storage is unavailable or full, so you won’t be able to get this layout back from “Recent layouts on this computer” after switching. Continue anyway?",
@@ -401,6 +405,18 @@
     "resetOverrides": "Reset figure edits",
     "switchKind": "Change to {{name}}",
     "switchKindCount": "Change {{count}} objects to {{name}}",
+    "convertToPath": "Convert to Path",
+    "convertToPathCount": "Convert {{count}} objects to paths",
+    "drawPath": "Draw path",
+    "continuePath": "Continue path",
+    "moveAnchors": "Move anchors",
+    "moveHandle": "Adjust handle",
+    "addAnchors": "Add anchor points",
+    "deleteAnchors": "Delete {{count}} anchor points",
+    "convertAnchors": "Convert anchor points",
+    "cutPath": "Cut path at anchor points",
+    "joinPaths": "Join paths",
+    "averageAnchors": "Average anchor points",
     "resizeAxes": "Resize {{count}} axes",
     "resizePatch": "Resize box",
     "scaleLegend": "Scale legend",
@@ -408,7 +424,6 @@
     "restoreAspect": "Restore original ratio",
     "restoreNativeSize": "Restore original size",
     "adoptScriptFrame": "Use the figure size the script saved",
-    "adoptComputedFrame": "Use the rendered computed frame",
     "restoreStyle": "Restore original and stop following style",
     "alignNewFigure": "Match new figure to style",
     "alignNewText": "Match new annotation to style",
@@ -417,6 +432,7 @@
     "unbindStyle": "Stop following a style",
     "bindStyle": "Lay out this canvas with style “{{name}}”",
     "alignToStyle": "Match to style “{{name}}”",
+    "followCanvas": "Follow style “{{name}}” again",
     "scriptWinsOverStyle": "Script changes take precedence over style",
     "rotate": "Rotate {{deg}}°",
     "rotateObjects": "Rotate objects",
@@ -428,6 +444,7 @@
     "setPublicationProfile": "Set publication profile",
     "clearJournal": "Clear journal",
     "setJournal": "Set journal",
+    "refreshJournalV2": "Update journal requirements",
     "showObject": "Show object",
     "spacingX": "Set horizontal spacing",
     "spacingY": "Set vertical spacing",
@@ -454,7 +471,50 @@
     "hideObjects": "Hide {{count}} objects",
     "showObjects": "Show {{count}} objects",
     "setFramePad": "Change canvas margin",
-    "journalStyle": "Adjust style “{{name}}” using the {{journal}} record"
+    "journalStyle": "Adjust style “{{name}}” using the {{journal}} record",
+    "adoptComputedFrame": "Use the rendered computed frame",
+    "defaultAppearance": "Default fill and stroke",
+    "swapFillStroke": "Swap fill and stroke",
+    "clearFill": "No fill",
+    "eyedropper": "Eyedropper",
+    "pathfinder": {
+      "unite": "Unite",
+      "minusFront": "Minus front",
+      "intersect": "Intersect",
+      "exclude": "Exclude",
+      "divide": "Divide",
+      "trim": "Trim",
+      "merge": "Merge",
+      "crop": "Crop",
+      "minusBack": "Minus back"
+    },
+    "makeCompound": "Make compound path",
+    "releaseCompound": "Release compound path",
+    "offsetPath": "Offset path",
+    "outlineStroke": "Outline stroke",
+    "reversePath": "Reverse path direction",
+    "simplifyPath": "Simplify path",
+    "roundCorners": "Round corners",
+    "shapeBuilder": "Shape builder",
+    "makeClipMask": "Make clipping mask",
+    "releaseClipMask": "Release clipping mask",
+    "transformMove": "Move",
+    "transformScale": "Scale",
+    "transformRotate": "Rotate",
+    "transformSkew": "Skew",
+    "transformReflect": "Reflect",
+    "quickLayout": "Auto layout",
+    "quickLayoutRatios": "Adjust layout proportions",
+    "importSvg": "Paste SVG ({{count}} objects)",
+    "explodeSvg": "Make editable",
+    "outlineText": "Create outlines ({{count}})",
+    "arrayCopies_one": "Repeat ({{count}} copy)",
+    "arrayCopies_other": "Repeat ({{count}} copies)",
+    "addPathText": "Add text on path",
+    "pathTextStart": "Move text start",
+    "pathTextGap": "Adjust text-on-path offset",
+    "editPathTextPath": "Edit text path",
+    "drawPencil": "Draw with pencil"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -480,7 +540,11 @@
     "rowActions": "Actions for {{label}}",
     "moveUp": "Bring forward",
     "moveDown": "Send backward",
-    "rename": "Rename"
+    "rename": "Rename",
+    "clipGroupLabel_one": "Clip group · {{count}} object",
+    "clipGroupLabel_other": "Clip group · {{count}} objects",
+    "clipPath": "Clipping path",
+    "clipPathTip": "This shape only clips the other objects in the group; it is not drawn"
   },
   "layoutKind": {
     "col": "column layout",
@@ -530,7 +594,9 @@
     "memoryEfficientPreview": "Memory-efficient preview",
     "memoryEfficientPreviewHint": "This figure is complex, so Tavotto switched to a memory-efficient editing preview. Export quality is unaffected.",
     "nativeInconsistent": "Some edits couldn’t be undone — re-run the original command to keep editing",
-    "nativeOffline": "Session ended — re-run the original command to keep editing",
+    "nativeOffline": "Run ended",
+    "nativeRerun": "Run again",
+    "nativeRerunHint": "Run this script again to keep editing this figure",
     "nativeRunning": "Script is running — editing resumes when it stops",
     "rendering": "Rendering…",
     "runtimeMissingEnvironment": "No rendering environment available",
@@ -546,6 +612,7 @@
   "quickEdit": {
     "aria": "Quick edit",
     "changeKind": "Change to",
+    "convertToPath": "Convert to Path",
     "editElements": "Edit figure elements",
     "hide": "Hide this element",
     "hideObject": "Hide",
@@ -587,7 +654,9 @@
     "copy": "Copy",
     "paste": "Paste",
     "copyAsAnnotation": "Copy as annotation",
-    "pasteAsAnnotation": "Paste as annotation"
+    "pasteAsAnnotation": "Paste as annotation",
+    "pathfinder": "Pathfinder",
+    "addPathText": "Add text on path"
   },
   "rail": {
     "assets": "Assets",
@@ -700,11 +769,11 @@
     "projectConflict": "{{file}} in the project was changed elsewhere, so nothing was written. Decide in the dialog.",
     "projectConflictElsewhere": "{{file}} in the project was changed elsewhere, so nothing was written. Go back to that layout and save again to decide what to do.",
     "projectFailed": "Couldn’t save {{file}} in the project: {{reason}}",
-    "projectBindingUnavailable": "The project file link is not confirmed. No named file was written this time. Your changes remain on this computer; retry or reopen the layout.",
-    "projectBindingSuperseded": "Wrote {{file}}, but the destination for the next save is not confirmed. Any later destination is preserved. Reopen this layout before saving again.",
     "projectSkipped": "{{file}} in the project wasn’t written: you switched layouts or projects after pressing Save. Go back to that layout and save again.",
     "reloadFailed": "Couldn’t read the version on disk",
-    "skippedSwitched": "You switched layouts or projects after pressing Save, so nothing was written to the project. Go back to that layout and save again."
+    "skippedSwitched": "You switched layouts or projects after pressing Save, so nothing was written to the project. Go back to that layout and save again.",
+    "projectBindingUnavailable": "The project file link is not confirmed. No named file was written this time. Your changes remain on this computer; retry or reopen the layout.",
+    "projectBindingSuperseded": "Wrote {{file}}, but the destination for the next save is not confirmed. Any later destination is preserved. Reopen this layout before saving again."
   },
   "scrim": {
     "collapse": "Collapse side panels"
@@ -796,8 +865,6 @@
     "emptyFromData": "Draw from data"
   },
   "stylePanel": {
-    "emptyTitle": "Select a figure on the canvas to see its style here",
-    "emptyAction": "Choose from layers",
     "noManifest": "This figure has no readable elements yet.",
     "needRender": "This figure needs one render before its style can be read.",
     "building": "Building the figure…",
@@ -857,6 +924,24 @@
       "fontsize": "size",
       "fontfamily": "font",
       "linewidth": "line width"
+    },
+    "canvasFollows": "This canvas follows",
+    "canvasUnbound": "This canvas follows no style",
+    "modeLabel": "Style scope",
+    "modeCanvas": "Canvas",
+    "modeFigure": "Figure",
+    "modeCanvasTip": "Edits the canvas style; every figure follows",
+    "modeFigureTip": "Edits only the selected figure; the canvas style stays",
+    "figuresLabel": "Figures on this canvas",
+    "pickFigure": "Pick a figure above to see its style",
+    "followBack": "Follow canvas",
+    "followBackOf": "{{row}}: follow canvas",
+    "summary": {
+      "size": "{{sizes}} pt",
+      "axisBold": "bold axis titles",
+      "titleBold": "bold titles",
+      "line": "line {{width}} pt",
+      "frame": "line {{width}} pt"
     }
   },
   "status": {
@@ -927,11 +1012,6 @@
     "packageOpenFailed": "Couldn’t open the project package. {{error}}",
     "packageTooNew": "This project package is from a newer {{product}} and this build can’t open it.",
     "packageOpened": "Project package opened ({{createdAt}}); every asset is present",
-    "packagedIncomplete_one": "Created project package {{name}} with {{count}} missing asset. Add the missing asset before restoring.",
-    "packagedIncomplete_other": "Created project package {{name}} with {{count}} missing assets. Add the missing assets before restoring.",
-    "packagedExecutionIncomplete": "Created project package {{name}}. Runtime dependencies have not been fully confirmed. Check data and run configurations before moving the project.",
-    "packagedIncompleteWithExecution_one": "Created project package {{name}} with {{count}} missing asset and unconfirmed runtime dependencies. Add the asset and check data and run configurations before moving the project.",
-    "packagedIncompleteWithExecution_other": "Created project package {{name}} with {{count}} missing assets and unconfirmed runtime dependencies. Add the assets and check data and run configurations before moving the project.",
     "packaged_one": "Created project package {{name}} ({{count}} asset)",
     "packaged_other": "Created project package {{name}} ({{count}} assets)",
     "pasteNothing": "Nothing to paste. Objects with missing assets were skipped.",
@@ -953,12 +1033,14 @@
     "scriptChanged_other": "Script changed. {{count}} figures re-rendered.",
     "sourceLinked_one": "Source script found ({{count}} figure)",
     "sourceLinked_other": "Source script found ({{count}} figures)",
-    "sourceLostEditing": "The link to this figure’s source script is gone; you’re back on the canvas. The image and layout weren’t deleted.",
+    "sourceLostEditing": "You may have moved this figure’s script. It needs to be relinked.",
+    "sourceLostRelink": "Relink script",
     "sourceLost_one": "Source script link is gone. {{count}} figure is now a plain image — your image and layout stay.",
     "sourceLost_other": "The link to the source script is gone. {{count}} figures are now plain images. The images and layout weren’t deleted.",
     "styleCopiedArrow": "Copied arrow style",
     "styleCopiedPanel": "Copied figure style",
     "styleCopiedShape": "Copied shape style",
+    "styleCopiedPath": "Copied path style",
     "styleCopiedText": "Copied text style",
     "styleCopyNeedSelection": "Select an object to copy its style.",
     "stylePasteNoTarget": "Nothing in the selection can take a {{kind}} style",
@@ -976,7 +1058,60 @@
       "incomplete": "Some members have no position in this render, so the group can't be moved or scaled right now"
     },
     "copyDetails": "Copy details",
-    "copiedDetails": "Copied"
+    "copiedDetails": "Copied",
+    "packagedIncomplete_one": "Created project package {{name}} with {{count}} missing asset. Add the missing asset before restoring.",
+    "packagedIncomplete_other": "Created project package {{name}} with {{count}} missing assets. Add the missing assets before restoring.",
+    "packagedExecutionIncomplete": "Created project package {{name}}. Runtime dependencies have not been fully confirmed. Check data and run configurations before moving the project.",
+    "packagedIncompleteWithExecution_one": "Created project package {{name}} with {{count}} missing asset and unconfirmed runtime dependencies. Add the asset and check data and run configurations before moving the project.",
+    "packagedIncompleteWithExecution_other": "Created project package {{name}} with {{count}} missing assets and unconfirmed runtime dependencies. Add the assets and check data and run configurations before moving the project.",
+    "eyedropperNothing": "No color to pick here",
+    "eyedropperNoTarget": "Select a shape, path or arrow to color first",
+    "pathfinderUnavailable": "Pathfinder isn’t available here",
+    "pathfinderEmpty": "The result is empty, so nothing changed",
+    "simplifyNothing": "Nothing to simplify",
+    "clipNeedTwo": "Select at least 2 objects to make a clipping mask",
+    "clipNeedPathOnTop": "The top object must be a path or a closed shape to act as the clipping mask",
+    "clipMade": "Clipping mask made",
+    "skewUnsupported": "Text and figures cannot be skewed",
+    "skewSkipped_one": "{{count}} text or figure was not skewed",
+    "skewSkipped_other": "{{count}} texts or figures were not skewed",
+    "rotatePanelUnsupported": "Figures rotate in 90° steps only",
+    "rotatePanelSkipped_one": "{{count}} figure was not rotated (figures rotate in 90° steps only)",
+    "rotatePanelSkipped_other": "{{count}} figures were not rotated (figures rotate in 90° steps only)",
+    "quickLayoutDone": "Laid out",
+    "quickLayoutUndo": "Undo",
+    "quickLayoutTooFew": "Need at least two figures",
+    "quickLayoutStale": "The figures just changed. Run Auto layout again.",
+    "quickLayoutFailed": "Couldn't lay these out. Try again.",
+    "quickLayoutNoteEqualAspect": "Figure {{label}} has equal-aspect axes, so its axes weren't aligned",
+    "quickLayoutNoteSpecNotFixed": "Some font sizes in figure {{label}} are still below the spec — see Issues",
+    "quickLayoutSpecDone": "Fixed {{what}} to “{{spec}}”",
+    "quickLayoutSpecFallback": "current spec",
+    "quickLayoutSpecSep": ", ",
+    "quickLayoutSpec": {
+      "font_family": "font",
+      "font_size": "font size",
+      "line_width": "line width",
+      "tick_direction": "tick direction",
+      "legend_frame": "legend frame",
+      "text_weight": "font weight",
+      "other": "other styles"
+    },
+    "quickLayoutPageTooSmall": "The figures don't fit this canvas. Try fewer columns or a larger canvas.",
+    "svgImported_one": "Turned into {{count}} editable object",
+    "svgImported_other": "Turned into {{count}} editable objects",
+    "svgAsImage": "Placed as an image because {{reason}}",
+    "svgExplodeFailed": "Kept as a figure because {{reason}}",
+    "svgAsRaster": "Placed as a {{dpi}} dpi bitmap because {{reason}}",
+    "outlined_one": "{{count}} text converted to outlines",
+    "outlined_other": "{{count}} texts converted to outlines",
+    "outlinePartial_one": "{{count}} text could not be converted (font unavailable)",
+    "outlinePartial_other": "{{count}} texts could not be converted (font unavailable)",
+    "outlineFailed_one": "{{count}} text could not be converted to outlines (font unavailable)",
+    "outlineFailed_other": "{{count}} texts could not be converted to outlines (font unavailable)",
+    "svgCopied": "Copied as SVG — paste into Illustrator, Inkscape or Figma",
+    "svgCopyFailed": "Could not copy as SVG",
+    "arrayTooMany": "At most {{max}} copies at once"
   },
   "tabs": {
     "allCanvases": "All canvases",
@@ -987,11 +1122,20 @@
     "unopened": "Not open"
   },
   "toolHint": {
+    "arc": "Drag to draw an arc; Esc to cancel",
     "arrow": "Drag to draw an arrow; hold Shift to snap to 15°. Esc to cancel.",
+    "brace": "Drag to draw a brace; Esc to cancel",
+    "diamond": "Drag to draw a diamond; Esc to cancel",
     "ellipse": "Drag to draw an ellipse. Esc to cancel.",
+    "eyedropper": "Click anything on the canvas to give its colors to the selection; Esc to exit",
     "line": "Drag to draw a line. Esc to cancel.",
+    "pen": "Click to add a corner point, drag for a smooth point; click the start point to close, Enter or Esc to finish",
+    "polygon": "Drag to draw a polygon; Esc to cancel",
     "rect": "Drag to draw a rectangle. Esc to cancel.",
-    "text": "Drag to draw a text box, or click for the default size. Esc to cancel."
+    "star": "Drag to draw a star; Esc to cancel",
+    "text": "Drag to draw a text box, or click for the default size. Esc to cancel.",
+    "triangle": "Drag to draw a triangle; Esc to cancel",
+    "pencil": "Drag to draw; the line is smoothed when you release. End at the start to close; hold {{alt}} to keep the raw stroke"
   },
   "topbar": {
     "addSubLabels": "Add panel labels",
@@ -1013,7 +1157,6 @@
     "fromOtherProject": "· another project",
     "fromProject": "· in {{name}}",
     "importPackage": "Import project package…",
-    "insertShape": "Insert shape",
     "more": "More",
     "moreGroup": {
       "file": "File",
@@ -1069,7 +1212,10 @@
     "documentRenameHint": "Click for layout actions; double-click or F2 to rename",
     "zoomValueInput": "Zoom (%)",
     "zoomSelection": "Zoom to selection",
-    "journalTitle": "Checked against {{journal}} · open journal spec"
+    "journalTitle": "Checked against {{journal}} · open journal spec",
+    "quickLayout": "Auto layout",
+    "quickLayoutTip": "Arrange these figures, their sizes and labels in one go",
+    "quickLayoutOptions": "Auto layout options"
   },
   "tutorialChip": {
     "label": "Tutorial"
@@ -1103,7 +1249,8 @@
     "shift_multi": "⇧-click several, then change them all",
     "shortcut_help": "Press ? for all shortcuts",
     "shortcutHelpOpen": "Open",
-    "pageBoundsOpen": "Open Canvas tab"
+    "pageBoundsOpen": "Open Canvas tab",
+    "quick_layout": "Drag the gaps between figures to change how much room each gets"
   },
   "prep": {
     "aria": "Prepare {{script}}",
@@ -1676,6 +1823,7 @@
         "select_environment": "Switching environment",
         "convert_script": "Making an editable version",
         "link_data_file": "Connecting the data file",
+        "set_run_arguments": "Filling in the run arguments",
         "ignore_import_folder": "Skipping this folder",
         "run_command": "Running a command…",
         "rollback": "Undoing the last change",
@@ -1709,6 +1857,21 @@
         "other": "The AI couldn't fix it this time"
       }
     },
+    "hint": {
+      "copyRun": "Copies the {{source}} you pointed to into {{target}}. The original stays untouched.",
+      "grantCopy": "Shows the system permission prompt, then copies. The original stays untouched.",
+      "openPrivacy": "Turn on {{product}} under Privacy & Security → Full Disk Access, then come back and run again."
+    },
+    "folder": {
+      "desktop": "Desktop",
+      "documents": "Documents",
+      "downloads": "Downloads",
+      "icloud": "iCloud Drive"
+    },
+    "library": {
+      "partial": "Only some files were checked; other scripts may call it too",
+      "openFailed": "Couldn’t open that folder"
+    },
     "inputs": {
       "title": "Captured inputs",
       "hint": "Choose inputs to record on the next explicit run. Saving only rechecks; it does not run the script.",
@@ -1737,21 +1900,6 @@
       "scopeUnknown": "The current execution scope is not known.",
       "notScript": "This target is not a script with declarable inputs.",
       "captured": "Input summary recorded by execution: {{revision}}"
-    },
-    "hint": {
-      "copyRun": "Copies the {{source}} you pointed to into {{target}}. The original stays untouched.",
-      "grantCopy": "Shows the system permission prompt, then copies. The original stays untouched.",
-      "openPrivacy": "Turn on {{product}} under Privacy & Security → Full Disk Access, then come back and run again."
-    },
-    "folder": {
-      "desktop": "Desktop",
-      "documents": "Documents",
-      "downloads": "Downloads",
-      "icloud": "iCloud Drive"
-    },
-    "library": {
-      "partial": "Only some files were checked; other scripts may call it too",
-      "openFailed": "Couldn’t open that folder"
     }
   },
   "canvasMenu": {
@@ -1808,6 +1956,9 @@
     "fitContent": "Fit to content",
     "clearPad": "Remove margin",
     "notWrittenBack": "Margins apply to Tavotto exports only and are not written back to the script"
+  },
+  "dataDrawer": {
+    "count": "{{count}} data files"
   },
   "chartBind": {
     "title": "Bind data as computational chart",
@@ -1883,7 +2034,65 @@
       "image": "Heatmap / grid"
     }
   },
-  "dataDrawer": {
-    "count": "{{count}} data files"
+  "pathfinder": {
+    "blockedEmbedded": "Not available here. Open this in the Tavotto app or a browser",
+    "blockedFailed": "Pathfinder couldn’t load on this computer"
+  },
+  "isolation": {
+    "label": "Editing group",
+    "exit": "Exit group editing",
+    "exitTip": "Press Esc to go up one level"
+  },
+  "quickLayout": {
+    "targetLabel": "Width",
+    "target": {
+      "double": "Double column",
+      "page": "Full page",
+      "single": "Single column"
+    },
+    "gapLabel": "Gap",
+    "gap": "{{mm}} mm",
+    "fixSpec": "Also fix text and lines to the spec",
+    "columnsLabel": "Arrangement",
+    "columns": {
+      "auto": "By current position",
+      "1": "1 column",
+      "2": "2 columns",
+      "3": "3 columns"
+    },
+    "canvasLabel": "Canvas",
+    "canvas": {
+      "auto": "Auto",
+      "keep": "Keep canvas size",
+      "fit": "Fit to content"
+    },
+    "widthLockedTip": "Width follows the canvas when keeping its size",
+    "gutterTip": "Drag to adjust proportions"
+  },
+  "svgImport": {
+    "reason": {
+      "filter": "it uses filters",
+      "mask": "it uses masks",
+      "pattern": "it uses pattern fills",
+      "image": "it contains images",
+      "foreign_object": "it contains web content (foreignObject)",
+      "text_path": "it has text on a path",
+      "marker": "it uses line markers",
+      "external_ref": "it references external files or entities",
+      "css_selector": "it uses complex style selectors",
+      "clip_units": "a clipping path uses relative units",
+      "text_layout": "text is positioned letter by letter",
+      "skew_text": "it has skewed text",
+      "symbol_viewbox": "a symbol has its own scaling",
+      "bad_xml": "the SVG is incomplete",
+      "not_svg": "it is not SVG",
+      "too_large": "the file is too large",
+      "too_many_elements": "it has too many elements",
+      "unreadable": "it could not be read",
+      "unsupported_element": "it uses elements Tavotto cannot draw (such as filters)",
+      "script": "it contains scripts or event handlers",
+      "reference_cycle": "it has circular references",
+      "timeout": "it is too complex to read in time"
+    }
   }
 }

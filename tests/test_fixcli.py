@@ -233,6 +233,17 @@ def test_ai_fix_availability_ignores_a_cli_the_user_cannot_use(box, monkeypatch)
     assert fixsession.available() is False
 
 
+def test_a_huge_report_is_cut_but_the_rules_and_language_never_are(box, monkeypatch):
+    """命令行装不下时只截准备报告：规则、语言段与 CLI 说明一个字不丢（规则变长后旧写法会把截断落进规则里）。"""
+    ctx = FixContext.for_fix_session("s", box.proj, home=box.home)
+    monkeypatch.setattr(fixsession, "_first_message", lambda *_a: "R" * 50_000)
+    lang = "\nLANGUAGE. Write in Simplified Chinese.\n"
+    text = fixsession.cli_prompt(ctx, "fig.py", lang)
+    assert text.startswith(fixsession.SYSTEM_PROMPT + lang + fixsession.CLI_ADDENDUM)
+    assert text.endswith("[truncated; call read_run_report for the full report]")
+    assert len(text) <= fixsession.CLI_PROMPT_MAX
+
+
 def test_prompt_is_the_same_text_as_the_builtin_loop_plus_a_cli_note(box):
     ctx = FixContext.for_fix_session("s", box.proj, home=box.home)
     text = fixsession.cli_prompt(ctx, "fig.py")

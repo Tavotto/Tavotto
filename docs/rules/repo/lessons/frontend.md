@@ -181,9 +181,9 @@
 ### L-155 改界面行为前在 web/e2e 里搜被改的文案与锚点，钉旧行为的一并改
 - 类: 别这样
 - 触发: web/e2e/, web/src/components/PreparationCard.tsx
-- Seen: 2026-11-11
-- 为什么: 失败卡主按钮从「再试一次」改成别的，jsdom 用例全改了，PR 没碰 e2e 所以 PR 上不跑 posix-e2e；一条钉着旧按钮的 e2e 在合并队列里红，被连踢三次，前两次还被当成机器故障重排；同日改工作目录默认行为的 PR 又因一条钉旧流程的 e2e 被踢四次。改行为前 grep 被改的 data-* 与文案，命中的 spec 一起改、PR 上跑一次。
-- 证据: #1828, #1846
+- Seen: 2026-11-11, 2026-11-21
+- 为什么: 失败卡主按钮从「再试一次」改成别的，jsdom 用例全改了，PR 没碰 e2e 所以 PR 上不跑 posix-e2e；一条钉着旧按钮的 e2e 在合并队列里红，被连踢三次，前两次还被当成机器故障重排；同日改工作目录默认行为的 PR 又因一条钉旧流程的 e2e 被踢四次。改行为前 grep 被改的 data-* 与文案，命中的 spec 一起改、PR 上跑一次。11-21 矢量叠放栈给工具条加了钢笔，别人的 spec 里写死 5 颗钮，下层合入后上层首轮 CI 才红；叠放栈在栈顶本地跑一次全量 e2e，挂的先在 main 上对照。
+- 证据: #1828, #1846, #2030
 
 ### L-158 给失败配出口按错误来源列全产出路径，断言钉死结构化码不放兜底码
 - 类: 别这样
@@ -198,3 +198,31 @@
 - Seen: 2026-11-13
 - 为什么: 两窗口接管时让出方保存失败，「拿回来编辑」仍按 dirty 为假、摘要相同判成没有改动，重新加载把这个窗口没存进去的改动丢掉、也不进恢复；自动保存写完本地兜底就清 dirty，磁盘请求还没成功。评审报 P1。丢弃前的保护判断带上 save_error / conflict 这类未成功的持久化状态，用例先摆一次保存失败再走丢弃路径。
 - 证据: #1870
+
+### L-172 设计内的拒绝码（如会话已结束的 409）显式排除出失败档，角标相邻两档写排序用例
+- 类: 别这样
+- 触发: web/src/canvas/PanelView.tsx, web/src/canvas/PanelView.badge.test.tsx
+- Seen: 2026-11-18
+- 为什么: 角标优先级用例只量了 native 与 stale 的排序，没量 failure 与 native；选中面板会发渲染、拿到设计内的 409，失败档排在前面，把「运行已结束」顶成「渲染失败」，一份用户反馈才暴露。每档各自有用例，两档同时成立没人测；再补一条「该码不落失败档」的负向用例。
+- 证据: #2020
+
+### L-173 新增或改 e2e spec 后跑 cd web && npx tsc -b，build 红时不信 e2e 结论
+- 类: 别这样
+- 触发: web/e2e/, web/tsconfig.e2e.json
+- Seen: 2026-11-18
+- 为什么: Playwright 用 esbuild 不查类型，新 spec 在 playwright 里跑得过；pnpm build 的 tsc -b 把 web/e2e 一起类型检查，在 SVGElement | HTMLElement 上取 ownerSVGElement 报 TS2339，整层前端构建红；之后跑的 e2e 用的是旧前端产物，假红一片。逐层跑 e2e 先看 build 的退出码。
+- 证据: （会话记录，无编号）
+
+### L-175 e2e 等到「可见过一次」不算稳定，会重挂载的视图在每次动作前重新展开、点击带短超时
+- 类: 别这样
+- 触发: web/e2e/coding-agents.spec.ts, web/src/components/settings/CodingAgentsSection.tsx
+- Seen: 2026-11-18, 2026-11-19
+- 为什么: 设置页的 `toPass` 只等清单可见一次，随后能力接口 1 秒内刷新多次、重挂载视图把「高级」收回，后面的点击落在隐藏元素上；点击没有短超时，每次白烧约 3 分钟到用例超时，Windows 打包版分片两天里踢出合并队列 8 次以上。每次需要前置状态的交互都在动作里重新确立它，并整段重试。
+- 证据: #2059
+
+### L-178 本地 e2e 或登记检查报行号对不上，先清 Playwright 编译缓存
+- 类: 别这样
+- 触发: scripts/ci/feature_registry.py, web/playwright.config.ts
+- Seen: 2026-11-22
+- 为什么: Playwright 的 transform 缓存在 $TMPDIR，所有 worktree 共用；来回切提交后拿到旧的编译结果。feature_registry check 在 main 上也报「扫描器与 Playwright 对不上位置」（说用例在 76 行，源码在 64 行），CI 是绿的。跑 playwright clear-cache 后即过；多 worktree 并行时先清缓存再判红。
+- 证据: #2034

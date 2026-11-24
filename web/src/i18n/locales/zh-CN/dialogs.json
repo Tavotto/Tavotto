@@ -176,8 +176,11 @@
     "partialSummary": "{{ok}} 个成功，{{failed}} 个失败",
     "previewFit": "适合大小",
     "previewModeLabel": "预览方式",
-    "previewModeFigure": "原图",
+    "previewModeFigure": "原图预览",
     "previewModeLayout": "版面预览",
+    "previewLayoutCycle": "换位置",
+    "previewLayoutCycleHint": "切换图表在论文版面中的排布位置",
+    "previewLayoutSampleNote": "仅作为排版参考，版面预览不会被导出",
     "previewLayoutUnavailable": "当前无法读取图幅尺寸，暂不支持按真实比例入版预览",
     "previewLayoutSlotSpec": "{{w}} × {{h}} mm · {{spec}} · {{column}} {{colW}} mm",
     "previewLayoutSlotGeneric": "{{w}} × {{h}} mm · 双栏版面 · {{column}} {{colW}} mm",
@@ -315,8 +318,10 @@
         "image_ppi": "图像分辨率",
         "clipping": "裁切",
         "dpi_tag": "分辨率标签",
-        "raster_density": "像素密度"
-      }
+        "raster_density": "像素密度",
+        "text_size": "字号"
+      },
+      "textSizeBelow": "成品里最小的文字是 {{min}} pt，低于规范的 {{floor}} pt"
     },
     "cancelPending": "正在请求取消…",
     "cancelRequested": "已请求取消",
@@ -458,6 +463,42 @@
         "keywords": "canvas page settings hbsz huabu",
         "label": "画布设置"
       },
+      "convert-to-path": {
+        "keywords": "convert path zwlj 路径 钢笔",
+        "label": "转为路径"
+      },
+      "pen-tool": {
+        "keywords": "pen gb 路径 贝塞尔",
+        "label": "钢笔"
+      },
+      "edit-anchors": {
+        "keywords": "anchor direct bjmd 直接选择 锚点",
+        "label": "编辑锚点"
+      },
+      "add-anchor": {
+        "keywords": "add anchor tjmd 加点",
+        "label": "添加锚点"
+      },
+      "delete-anchor": {
+        "keywords": "delete anchor scmd 删点",
+        "label": "删除锚点"
+      },
+      "convert-anchor": {
+        "keywords": "convert anchor smooth corner zhmd 平滑 尖角",
+        "label": "转换锚点"
+      },
+      "cut-path": {
+        "keywords": "cut scissors jd 剪刀 断开",
+        "label": "在锚点处断开"
+      },
+      "join-paths": {
+        "keywords": "join connect lj 连接 闭合",
+        "label": "连接"
+      },
+      "average-anchors": {
+        "keywords": "average align pjmd 平均 对齐",
+        "label": "平均锚点"
+      },
       "cycle-overlap": {
         "keywords": "cycle overlap twin axis lh lunhuan cd chongdie sszx shuangzongzhou",
         "label": "在重叠的图内元素之间轮换选中"
@@ -585,6 +626,110 @@
       "zoom-selection": {
         "label": "缩放到选中对象",
         "keywords": "zoom selection sfxz suofang xuanzhong"
+      },
+      "default-appearance": {
+        "keywords": "default fill stroke mrtsms 默认 填色 描边",
+        "label": "默认填色描边"
+      },
+      "swap-fill-stroke": {
+        "keywords": "swap fill stroke hhtsms 互换",
+        "label": "互换填色和描边"
+      },
+      "clear-fill": {
+        "keywords": "no fill none wtc 无填充",
+        "label": "无填充"
+      },
+      "eyedropper-tool": {
+        "keywords": "eyedropper pick color xg 吸管 取色",
+        "label": "吸管"
+      },
+      "pathfinder-unite": {
+        "keywords": "unite union merge combine hb 合并 联集 路径查找器",
+        "label": "合并"
+      },
+      "pathfinder-minus-front": {
+        "keywords": "minus front subtract jqdc 减去 顶层 路径查找器",
+        "label": "减去顶层"
+      },
+      "pathfinder-intersect": {
+        "keywords": "intersect overlap xj 相交 交集 路径查找器",
+        "label": "相交"
+      },
+      "pathfinder-exclude": {
+        "keywords": "exclude xor pccd 排除 重叠 路径查找器",
+        "label": "排除重叠"
+      },
+      "pathfinder-divide": {
+        "keywords": "divide split fg 分割 切开 路径查找器",
+        "label": "分割"
+      },
+      "pathfinder-trim": {
+        "keywords": "trim hide xb 修边 去掉被盖住的 路径查找器",
+        "label": "修边"
+      },
+      "make-compound": {
+        "keywords": "compound path hole jlfhlj 复合路径 挖洞",
+        "label": "建立复合路径"
+      },
+      "release-compound": {
+        "keywords": "release compound sffhlj 释放 复合路径",
+        "label": "释放复合路径"
+      },
+      "offset-path": {
+        "keywords": "offset path expand inset pylj 偏移 外扩 内缩",
+        "label": "偏移路径"
+      },
+      "outline-stroke": {
+        "keywords": "outline stroke expand lkhmb 轮廓化 描边 扩展",
+        "label": "轮廓化描边"
+      },
+      "simplify-path": {
+        "keywords": "simplify smooth reduce anchors jhlj 简化 删锚点 平滑",
+        "label": "简化路径"
+      },
+      "reverse-path": {
+        "keywords": "reverse path direction flip arrow fzlj 反转 方向 箭头",
+        "label": "反转路径方向"
+      },
+      "shape-builder": {
+        "keywords": "shape builder merge regions xszcq 形状生成器 合并 区域",
+        "label": "形状生成器"
+      },
+      "make-clip-mask": {
+        "keywords": "clipping mask clip crop jqmb 剪切蒙版 裁剪",
+        "label": "建立剪切蒙版"
+      },
+      "release-clip-mask": {
+        "keywords": "release clipping mask sfjqmb 释放 剪切蒙版",
+        "label": "释放剪切蒙版"
+      },
+      "transform-again": {
+        "keywords": "transform again repeat zcbh 再次变换 重复",
+        "label": "再次变换"
+      },
+      "reflect-horizontal": {
+        "keywords": "reflect mirror flip horizontal spjx 水平镜像 翻转",
+        "label": "水平镜像"
+      },
+      "reflect-vertical": {
+        "keywords": "reflect mirror flip vertical czjx 垂直镜像 翻转",
+        "label": "垂直镜像"
+      },
+      "quick-layout": {
+        "keywords": "一键排版 yjpb yijianpaiban auto layout arrange align",
+        "label": "一键排版"
+      },
+      "explode-svg": {
+        "keywords": "explode svg editable vector cckbj 拆成 可编辑 矢量 SVG",
+        "label": "拆成可编辑对象"
+      },
+      "outline-text": {
+        "keywords": "outline text create outlines path wzzlk 文字转轮廓 转曲",
+        "label": "文字转轮廓"
+      },
+      "copy-as-svg": {
+        "keywords": "copy svg clipboard illustrator fzwsvg 复制为 SVG 矢量",
+        "label": "复制为 SVG"
       }
     },
     "listLabel": "命令",
@@ -1391,7 +1536,46 @@
       "viewGuide": "查看使用指南",
       "defaultLabel": "默认助手",
       "defaultNone": "没有可用的助手",
-      "convertUnsandboxed": "转换时允许 AI 不受沙盒限制"
+      "convertUnsandboxed": "转换时允许 AI 不受沙盒限制",
+      "fixMemory": {
+        "label": "记住修好的做法",
+        "help": "修好脚本后，在本机记下这次的做法；别的项目遇到同类问题时可直接参考。只存在本机，不上传，也不进诊断包。",
+        "count_other": "已记住 {{count}} 条",
+        "none": "还没有记住的做法",
+        "view": "查看",
+        "title": "记住的做法",
+        "clearAll": "全部删除",
+        "delete": "删除这条",
+        "meta_other": "{{date}} · 用过 {{count}} 次",
+        "launcherText": "查看脚本",
+        "kind": {
+          "run_args": "传入运行参数 {{args}}",
+          "launcher": "加启动脚本",
+          "launcherEnv": "启动脚本里设 {{env}}",
+          "data_link": "把 {{asked}} 指到 {{linked}}",
+          "execution": "改用{{mode}}运行"
+        },
+        "mode": {
+          "safe": "安全模式",
+          "native": "本机 Python"
+        },
+        "shape": {
+          "env_var_missing": "缺环境变量",
+          "script_needs_arguments": "需要命令行参数",
+          "script_needs_input": "等待键盘输入",
+          "input_eof": "等待键盘输入",
+          "missing_input": "找不到数据文件",
+          "relative_import": "相对导入失败",
+          "no_figure_captured": "没画出图",
+          "script_is_library": "只定义了函数",
+          "missing_dependency": "缺少包",
+          "script_uses_gui_dialog": "会弹文件对话框",
+          "safe_file_operation_blocked": "安全模式拦下了文件操作",
+          "other": "其他问题"
+        },
+        "clearBody_other": "删掉全部 {{count}} 条？删了找不回。",
+        "cancel": "取消"
+      }
     },
     "canvas": {
       "companionsExplain": "关联元素是手动摆过位置的标题、轴标签、图例，以及色条轴与 twinx 孪生轴。不带它们，挪动子图时会留在原地；关掉则只动子图本身。",
@@ -1454,7 +1638,7 @@
           "detail_requests": "最近的后端请求记录（只有方法、路由、状态码、耗时、错误码）",
           "detail_overrides": "正在编辑的图的样式改动",
           "detail_render_env": "渲染环境（Python、matplotlib、已装包、字体）",
-          "detail_runs": "最近的渲染、导出、脚本试运行记录",
+          "detail_runs": "最近的渲染、导出、脚本试运行记录，以及 AI 修复的经过",
           "detail_shell": "桌面壳与安装信息（版本、系统、架构、更新结果）",
           "detail_storage": "存储环境（剩余空间、可写、是否在同步目录）",
           "detail_console": "界面控制台的最近报错与警告",
@@ -1464,7 +1648,7 @@
           "detail_crash_reports": "系统崩溃报告（你勾选了）",
           "detail_corrupt_sessions": "会话损坏副本的内容（你勾选了）"
         },
-        "notIncluded": "默认不含脚本、数据文件和匿名统计标识；报错与日志里可能出现文件夹名、文件名和脚本打印出的内容。",
+        "notIncluded": "默认不含脚本文件、数据文件和匿名统计标识；报错与日志里可能出现文件夹名、文件名和脚本打印出的内容，用过 AI 修复时还会带上它读过的脚本片段。",
         "save": "保存这份诊断包",
         "saved": "已保存",
         "saveFailed": "没能保存",
@@ -2055,6 +2239,53 @@
       "overwriteTitle": "覆盖 {{host}} 里改过的技能？",
       "overwriteBody": "你改的内容会换成 Tavotto 自带的版本。",
       "cancel": "取消"
+    },
+    "license": {
+      "label": "高级版",
+      "none": "还没激活",
+      "until": "有效期至 {{date}}",
+      "codeLabel": "激活码",
+      "state": {
+        "expired": "已于{{date}}到期",
+        "revoked": "这份授权已失效",
+        "lapsed": "需要联网确认一下授权"
+      },
+      "action": {
+        "enter": "输入激活码",
+        "buy": "购买",
+        "activate": "激活",
+        "release": "解绑这台电脑",
+        "refresh": "现在确认",
+        "renew": "续费",
+        "retry": "再试一次",
+        "cancel": "取消"
+      },
+      "failure": {
+        "invalid_code": "激活码不对，核对一下再试",
+        "device_limit": "这份授权的电脑已经满了，先在另一台上解绑",
+        "revoked": "这份授权已失效",
+        "expired": "这份授权已经到期",
+        "price_unavailable": "现在还不能购买，请稍后再试",
+        "rate_limited": "试得太频繁了，过一会儿再试",
+        "network": "连不上授权服务器，检查网络后再试",
+        "server": "授权服务暂时不可用，请稍后再试",
+        "client_error": "没能完成，请稍后再试"
+      },
+      "lock": {
+        "tip": "高级版功能，点一下了解",
+        "aria": "高级版功能，了解高级版"
+      },
+      "releaseTitle": "解绑后可以在另一台电脑上激活",
+      "plate": {
+        "label": "创始会员",
+        "defaultName": "早期同行者",
+        "nameLabel": "刻在铭牌上的名字",
+        "nameTitle": "名字只保存在这台电脑上",
+        "engrave": "刻上你的名字",
+        "rename": "重新刻名",
+        "turnTitle": "拖一下可以翻面",
+        "issued": "ISSUED ON"
+      }
     }
   },
   "style": {
@@ -2518,6 +2749,8 @@
     "hasRequirement": "有要求",
     "strengthRequired": "必须",
     "strengthRecommended": "建议",
+    "strengthExample": "举例",
+    "strengthTypical": "约",
     "unset": "本刊不适用",
     "noJournal": "不按期刊",
     "cleared": "已不按期刊检查",
@@ -2530,7 +2763,10 @@
     "formatsAccepted": "可接受 {{list}}",
     "source": "出处",
     "sourceOf": "{{name}}的出处",
+    "snapshotZoom": "点击放大",
+    "snapshotAlt": "原文截图",
     "picked": "已按「{{name}}」检查",
+    "v2Updated": "「{{name}}」有新的期刊要求，已按它检查",
     "pickedWidth": "已按「{{name}}」检查，页宽改为 {{w}} mm",
     "card": {
       "adviceBoth": "字号记录，请参阅来源原文",
@@ -2544,10 +2780,28 @@
       },
       "open": "打开原网页",
       "archive": "存档",
+      "fromV2": "新版",
       "aria": "出处"
+    },
+    "confirm": {
+      "title": "需要你确认（{{count}}）",
+      "condition": "原文条件：{{text}}",
+      "aria": "需要你确认的要求"
     },
     "field": {
       "page_columns": "栏宽",
+      "v2_raster_dpi_dpi": "位图",
+      "v2_font_family": "字体",
+      "v2_font_size_pt": "字号",
+      "v2_file_format": "文件格式",
+      "v2_color_mode": "色彩模式",
+      "v2_min_line_width_pt": "线宽",
+      "v2_width_mm": "图宽",
+      "v2_width_in": "图宽",
+      "v2_figure_piece_width_mm": "单图宽",
+      "v2_figure_piece_width_in": "单图宽",
+      "v2_figure_size_max_mm": "图幅上限",
+      "v2_figure_size_max_in": "图幅上限",
       "widths_mm_single": "单栏",
       "widths_mm_double": "双栏",
       "widths_mm_tolerance_mm": "栏宽容差",
@@ -2557,6 +2811,7 @@
       "max_font_size_pt": "最大字号",
       "min_script_font_size_pt": "上下标最小字号",
       "min_raster_dpi": "位图分辨率",
+      "min_line_width_pt": "最小线宽",
       "line_widths_pt": "线宽",
       "font_family_latin_accepted": "字体",
       "preferred_formats_export_default": "默认导出格式",

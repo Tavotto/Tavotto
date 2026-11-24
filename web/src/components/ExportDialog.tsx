@@ -48,6 +48,7 @@ import {
   FileExclamationPoint,
   ImageOff,
   Info,
+  RefreshCw,
   TriangleAlert,
   X,
 } from "@/components/ui/icons";
@@ -82,7 +83,7 @@ import {
   writeExportDefaults,
 } from "@/lib/exportDefaults";
 import { adoptionGuardOf, artifactValidationIssue } from "@/lib/artifactValidation";
-import { inspectionState } from "@/lib/artifactInspection";
+import { inspectionState, textSizeNote } from "@/lib/artifactInspection";
 import { RetryImg } from "@/components/ui/RetryImg";
 import {
   contextFigureId,
@@ -140,7 +141,7 @@ import { boundedCount, captureTelemetry } from "@/lib/telemetry";
 import { cn } from "@/lib/utils";
 import { canRevealInFileManager, isDesktop, revealExportedFile } from "@/lib/desktop";
 import { useEpsOpacityGate } from "./EpsOpacityPrompt";
-import { annotationsBelow, annotationsOf, singleAnnotatedDocument } from "@/lib/singleExportDoc";
+import { annotationsBelow, annotationsOf, figureClipOf, singleAnnotatedDocument } from "@/lib/singleExportDoc";
 import { useOriginalAvailability } from "@/hooks/useOriginalSpec";
 import { useRuntimePreview } from "@/hooks/useRuntimePreview";
 import { engineTransport } from "@/lib/engineTransport";
@@ -170,7 +171,7 @@ import { useProjectStore } from "@/store/projectStore";
 import { useDocumentStore } from "@/store/documentStore";
 import { askConfirm, dialogCovered, EXPORT_DONE_DISMISS_MS, useUiStore } from "@/store/uiStore";
 import { useWorkspaceStore } from "@/store/workspace";
-import { isRuntimePanel, type ArrowObject, type CanvasObject, type FigureDocument, type PanelObject, type ShapeObject, type TextObject } from "@/types/document";
+import { isRuntimePanel, type ArrowObject, type CanvasObject, type FigureDocument, type PanelObject, type PathObject, type ShapeObject, type TextObject } from "@/types/document";
 import type { ThumbObject } from "@/types/thumb";
 import { cropToVisibleContent, croppedDocument } from "@/lib/exportCrop";
 import { frameCanvasOf, isZeroPad } from "@/lib/framePad";
@@ -357,6 +358,7 @@ export function ExportDialog() {
   /** 多图时左栏预览挑的那一项（"page" = 整版，否则是 figureId）；null = 跟着导出内容走。只换预览，不改导出内容 */
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [previewMode, setPreviewMode] = useState<ExportPreviewMode>("figure");
+  const [slotStep, setSlotStep] = useState(0);
   const parked = useRef<ParkedState | null>(null);
   const [withReport, setWithReport] = useState(
     () => readExportDefaults().withProof,
@@ -514,6 +516,7 @@ export function ExportDialog() {
   );
   const annotations = useMemo(() => (annotatedDoc ? annotationsOf(annotatedDoc) : undefined), [annotatedDoc]);
   const annotationsUnder = useMemo(() => (annotatedDoc ? annotationsBelow(annotatedDoc) : 0), [annotatedDoc]);
+  const figureClip = useMemo(() => (annotatedDoc ? figureClipOf(annotatedDoc) : undefined), [annotatedDoc]);
   /** 单图退路导出的区域 = 可见对象并集包围盒（`lib/exportCrop`）；预览与尺寸读它，与请求同一份 */
   const fallbackCrop = useMemo(
     () =>
@@ -656,6 +659,7 @@ export function ExportDialog() {
     const snap = useDocumentStore.getState().doc;
     setPreviewId(null);
     setPreviewMode("figure");
+    setSlotStep(0);
     const prior = useExportStore.getState();
     setSettledJobId(prior.job && !prior.running ? prior.job.job_id : null);
     setRevealError(null);
@@ -967,6 +971,7 @@ export function ExportDialog() {
       spec: availability.spec,
       annotations,
       annotationsBelow: annotationsUnder,
+      figureClip,
       framePad,
       route,
       exportDir: exportDirNow,
@@ -1851,6 +1856,8 @@ export function ExportDialog() {
         signoffFormats={signoffFormats}
         previewMode={previewMode}
         onPreviewModeChange={setPreviewMode}
+        slotStep={slotStep}
+        onCycleSlot={() => setSlotStep((s) => s + 1)}
         profile={profile}
         specName={checkSpecName}
         onShow={showPreview}
@@ -2318,9 +2325,9 @@ function exportedTextOf(o: ThumbObject): TextObject | null {
 }
 
 /** 整版预览里的箭头 / 形状按导出出来的样子画：端点、填色、线型、旋转都取对象自己的（喂给 `CanvasThumb` 的 `exportedShape`） */
-function exportedShapeOf(o: ThumbObject): ArrowObject | ShapeObject | null {
+function exportedShapeOf(o: ThumbObject): ArrowObject | ShapeObject | PathObject | null {
   const obj = o as CanvasObject;
-  return obj.type === "arrow" || obj.type === "shape" ? obj : null;
+  return obj.type === "arrow" || obj.type === "shape" || obj.type === "path" ? obj : null;
 }
 
 /**
@@ -2398,6 +2405,8 @@ function ExportPreviewPane({
   signoffFormats,
   previewMode,
   onPreviewModeChange,
+  slotStep,
+  onCycleSlot,
   profile,
   specName,
   onShow,
@@ -2422,6 +2431,8 @@ function ExportPreviewPane({
   signoffFormats?: string | null;
   previewMode: ExportPreviewMode;
   onPreviewModeChange: (mode: ExportPreviewMode) => void;
+  slotStep: number;
+  onCycleSlot: () => void;
   profile: PublicationProfile;
   specName: string;
   onShow: (id: string) => void;
@@ -2446,9 +2457,9 @@ function ExportPreviewPane({
   const manuscriptLayout = useMemo(
     () =>
       effectiveMode === "manuscript" && sizeW > 0 && sizeH > 0
-        ? computeManuscriptLayout([sizeW, sizeH], profile)
+        ? computeManuscriptLayout([sizeW, sizeH], profile, slotStep)
         : null,
-    [effectiveMode, sizeW, sizeH, profile],
+    [effectiveMode, sizeW, sizeH, profile, slotStep],
   );
   const flagged = (f: ExportableFigure) => !!f.panel && flaggedObjectIds.has(f.panel.id);
   const pageSize = fallbackCrop?.page ?? doc.page;
@@ -2536,14 +2547,14 @@ function ExportPreviewPane({
       <div
         data-export-preview-toolbar
         data-export-preview-mode={effectiveMode}
-        className="mb-2 flex items-center justify-between gap-2"
+        className="relative mb-2.5 flex items-center justify-center"
       >
         <Segmented<ExportPreviewMode>
           value={effectiveMode}
           onChange={onPreviewModeChange}
           ariaLabel={ex("previewModeLabel")}
           data-testid="export-preview-mode"
-          className="w-auto shrink-0"
+          className="grid w-44 shrink-0 grid-cols-2"
           items={[
             { value: "figure", label: ex("previewModeFigure") },
             {
@@ -2554,6 +2565,19 @@ function ExportPreviewPane({
             },
           ]}
         />
+        {manuscriptLayout && manuscriptLayout.placement !== "overflow" && (
+          <Button
+            variant="ghost"
+            size="sm"
+            data-export-manuscript-cycle
+            title={ex("previewLayoutCycleHint")}
+            onClick={onCycleSlot}
+            className="absolute right-0 gap-1 px-2 text-xs text-ink-3 hover:text-ink"
+          >
+            <RefreshCw size={ICON_SIZE.xs} aria-hidden />
+            <span>{ex("previewLayoutCycle")}</span>
+          </Button>
+        )}
       </div>
       <div
         className={cn(
@@ -2622,6 +2646,15 @@ function ExportPreviewPane({
             <div className="flex h-full items-center justify-center">
               <ImageOff size={ICON_SIZE.md} className="text-ink-3" aria-hidden />
             </div>
+          )}
+          {/* 版面预览：周围正文只是示例——悬浮小胶囊说一句，不占预览框外的行、不撑高左栏 */}
+          {manuscriptLayout && (
+            <span
+              data-export-manuscript-note
+              className="pointer-events-none absolute bottom-2 left-1/2 max-w-[calc(100%-1rem)] -translate-x-1/2 truncate rounded-full border border-border bg-surface/85 px-2.5 py-0.5 type-meta text-ink-2 shadow-thumb backdrop-blur"
+            >
+              {ex("previewLayoutSampleNote")}
+            </span>
           )}
         </div>
       </div>
@@ -3512,11 +3545,24 @@ function ScriptSkipped({ report }: { report: ExportScriptReport }) {
  * 这一件产物核验没过（ADR 0068）：standard 政策下文件照样交付了，用户投出去之前得知道。
  * 解读只有 `lib/artifactInspection.inspectionState()` 一份。核验过、没核验都不画：用户不需要理解这些，
  * 「未核验不显示绿」照样成立（2026-11-06 用户：用户不需要理解的东西不用放上去）。
+ *
+ * 成品字号（ADR 0203）是唯一带数的一项：失败时它在这一行里说「最小的字多小、规范要多少」，不再只报名字
+ * （`textSizeNote()`）；它的 unknown 与别的 unknown 一样不说。
  */
 function InspectionLine({ manifest }: { manifest: ExportOutput["manifest"] }) {
   useTranslation("dialogs");
   const state = inspectionState(manifest);
   if (state.tone !== "failed") return null;
+  const sizeNote = textSizeNote(manifest);
+  const named = sizeNote ? state.failed.filter((k) => k !== "text_size") : state.failed;
+  const parts = [
+    named.length
+      ? ex("inspection.failedItems", {
+          items: named.map((k) => ex(`inspection.check.${k}`, { defaultValue: k })).join("、"),
+        })
+      : null,
+    sizeNote ? ex("inspection.textSizeBelow", { min: sizeNote.min, floor: sizeNote.floor }) : null,
+  ].filter((x): x is string => x !== null);
   return (
     <p
       data-inspection="failed"
@@ -3525,9 +3571,7 @@ function InspectionLine({ manifest }: { manifest: ExportOutput["manifest"] }) {
       <IconSlot>
         <TriangleAlert size={ICON_SIZE.xs} aria-hidden />
       </IconSlot>
-      {ex("inspection.failedItems", {
-        items: state.failed.map((k) => ex(`inspection.check.${k}`, { defaultValue: k })).join("、"),
-      })}
+      {parts.join("；")}
     </p>
   );
 }

@@ -519,7 +519,7 @@ sidecar → Tauri bundler）。CI 门禁打的是最终产物：sidecar 真二�
 |---|---|---|
 | macOS（Apple Silicon） | `Tavotto-X.Y.Z-macOS.dmg` | Tauri .app（内嵌 sidecar）；**含内置渲染 runtime**；arm64，`macos-latest` 上构建；签名 + 公证复用下述同一套 secret 与流程 |
 | macOS（Intel） | `Tavotto-X.Y.Z-macOS-Intel.dmg` | 同上，x86_64，**只在原生 Intel runner `macos-26-intel` 上构建与冒烟**（ADR 0076） |
-| Windows | `Tavotto-X.Y.Z-Windows-Setup.exe` | NSIS（收集时改成与 wheel/dmg 一致的命名），装到用户目录；**含内置渲染 runtime**；SignPath 启用后由 SignPath Foundation 证书签名 |
+| Windows | `Tavotto-X.Y.Z-Windows-Setup.exe` | NSIS（收集时改成与 wheel/dmg 一致的命名），装到用户目录；**含内置渲染 runtime**；`CERTUM_SIGNING_ENABLED` 打开后由维护者的 Certum 证书签名（ADR 0202） |
 
 macOS 签名注意：sidecar 是 `.app` 里 `Resources/sidecar/` 下的 PyInstaller
 onedir，签名必须继续「签**所有**嵌套 Mach-O、自内向外」——只签壳本体公证会
@@ -771,29 +771,19 @@ PyInstaller 留下的 adhoc 签名同样能通过 verify；流水线里已加了
 
 ### Windows 签名
 
-Windows 签名通过 SignPath Foundation 的开源项目订阅完成。仓库中的
-`signpath/windows-installer.artifact-configuration.xml` 描述上传的 GitHub
-Actions ZIP 中应签名的 NSIS 安装包及其产品/版本元数据。
+Windows 安装包用维护者自购的 Certum 云证书（SimplySign）签，签名客户端是钉版本、在 runner 上从源码编的
+[ssign](https://github.com/Le-Syl21/ssign)；决定与审过的版本见 [ADR 0202](adr/0202-windows-signing-certum-ssign.md)。
 
-获批并在 SignPath 中创建项目后：
-
-1. 安装 SignPath GitHub App，并允许它访问本仓库。
-2. 在仓库中创建以下变量：
-   `SIGNPATH_ENABLED=true`、`SIGNPATH_ORGANIZATION_ID`、
-   `SIGNPATH_PROJECT_SLUG`、`SIGNPATH_SIGNING_POLICY_SLUG`、
-   `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG`。
-3. 创建仓库 secret `SIGNPATH_API_TOKEN`。Token 只保存在 GitHub Secrets，
-   不写入仓库或日志。
-4. 在 SignPath 的 artifact configuration 中导入
-   `signpath/windows-installer.artifact-configuration.xml`，并把 slug 填入
-   `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG`。
-5. 对 tag 运行 `Desktop apps (Tauri)`。工作流会先把未签名安装包作为 GitHub
-   Actions artifact 提交签名，再下载签名结果并把它挂到同一个 GitHub Release。
-
-`SIGNPATH_ENABLED` 未开启时，工作流仍可生成测试用的未签名安装包，但会明确标记
-为未签名；不要把该产物当作正式发行版。当前配置签名的是下载给用户的 NSIS 外层
-安装包；若以后需要对安装包内部的每个 PE 文件做深度签名，应改用 SignPath 支持
-深度签名的 MSI 发行链。
+- 仓库环境 `windows-signing`：secret `CERTUM_EMAIL`、`CERTUM_OTP`（激活二维码里的 `otpauth://…` 原样）；
+  保护规则 = 维护者批准、只放行 `main` 与 `v*` tag。
+- 仓库变量：`CERTUM_SIGNING_ENABLED=true` 打开签名；`CERTUM_SIGNER_SUBJECT` = 期望的签名者主题（Windows 上
+  `(Get-AuthenticodeSignature <已签文件>).SignerCertificate.Subject` 的原样字符串）。
+- 打开后，每次发行构建（含 `publish=false` 演练）的 Windows 腿开始前都要在 Actions 页面批准一次。
+  签完由 Windows 判：Valid、签名者主题对得上、有时间戳，三样缺一就失败；更新包与产物清单都在这之后、按签过名的字节做。
+- **第一次打开开关后先跑演练**，不要拿正式 tag 首测签名路径。
+- 没打开时：发行构建在签名门禁处拦停；只有 `vars.WINDOWS_UNSIGNED_WAIVER_TAG` 点名的那一个 tag 能以未签名发出。
+- 只签用户下载的 NSIS 外层安装包；内层 exe 要签得改成打包前签，另立决定。
+- 证书 2027-11-22 到期，续期后主题变了就改 `CERTUM_SIGNER_SUBJECT`。
 
 ### 改图标
 

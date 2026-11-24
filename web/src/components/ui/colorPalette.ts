@@ -12,6 +12,10 @@ export interface ColorFieldHost {
   rich: boolean
   /** 本文档里已在用的颜色（去重、小写 #rrggbb），面板里的第一组 */
   documentColors: readonly string[]
+  /** 当前画布上各张图里用到的颜色（`lib/swatches.figureColorsOf`）；没有 = 不出这一组 */
+  figureColors?: readonly string[]
+  /** 推荐配色（`lib/swatches.recommendedSwatches`）；没有 = 不出这一组 */
+  recommended?: { colors: readonly string[]; journal: string | null }
 }
 
 export const ColorFieldContext = createContext<ColorFieldHost | null>(null)

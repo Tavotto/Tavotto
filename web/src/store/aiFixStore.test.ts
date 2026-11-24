@@ -21,6 +21,7 @@ import { useUiStore } from '@/store/uiStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { setCurrentProjectId } from '@/lib/session'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
+import { useScriptArgvStore } from '@/store/scriptArgvStore'
 
 const KEY = 'script:plot.py'
 const REF = { session_id: 'psess-1', script: 'plot.py', attemptId: 'a1' }
@@ -179,6 +180,22 @@ describe('结束', () => {
     vi.mocked(fetchAiFix).mockResolvedValue(state({ state: 'finished', outcome: 'fixed', summary: '好了' }))
     await useAiFixStore.getState().refresh(KEY)
     expect(open).toHaveBeenCalledWith(target, { run: true, rerun: true, placeIn })
+  })
+
+  it('fixed 且 AI 定下了运行参数：填进这个脚本的「运行参数」，按它重跑验证', async () => {
+    await start()
+    const open = vi.fn(async () => {})
+    useProjectPreparationStore.setState({ entries: { [KEY]: { target: { script: 'plot.py' } } } as never, open } as never)
+    vi.mocked(fetchAiFix).mockResolvedValue(
+      state({ state: 'finished', outcome: 'fixed', summary: '好了', run_argv: ['--data', 'a b.csv'] }),
+    )
+    await useAiFixStore.getState().refresh(KEY)
+    expect(useScriptArgvStore.getState().drafts['plot.py']?.tokens).toEqual(['--data', 'a b.csv'])
+    expect(open).toHaveBeenCalledWith(
+      { script: 'plot.py', argv: ['--data', 'a b.csv'], argv_sensitive: false },
+      { run: true, rerun: true, placeIn: null },
+    )
+    useScriptArgvStore.getState().clearScript('plot.py')
   })
 
   it('convert：清掉修复条目、记下交接、启动既有的「生成可编辑版本」；不重跑准备会话', async () => {

@@ -196,6 +196,39 @@
           "default": "medium"
         },
         {
+          "prefix": "gpt-6-luna",
+          "efforts": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "default": "medium",
+          "hidden_efforts": [
+            "none"
+          ]
+        },
+        {
+          "prefix": "gpt-6.1-terra",
+          "efforts": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "default": "medium",
+          "hidden_efforts": [
+            "none"
+          ]
+        },
+        {
+          "prefix": "gpt-6.2-sol",
+          "efforts": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "default": "medium"
+        },
+        {
           "prefix": "gpt-6",
           "efforts": [
             "low",
@@ -232,7 +265,17 @@
           "default": "medium"
         }
       ],
-      "source": "https://developers.openai.com/api/docs/guides/reasoning（2026-10-25 核对：reasoning.effort 取值 none/minimal/low/medium/high/xhigh/max 且按型号不同，页面没有完整清单；保守取交集 low/medium/high，不给 none/minimal/xhigh/max，直到逐型号核实；gpt-5-chat 等非推理型号不给）"
+      "source": "https://developers.openai.com/api/docs/guides/reasoning（2026-10-25 核对：reasoning.effort 取值 none/minimal/low/medium/high/xhigh/max 且按型号不同，页面没有完整清单；保守取交集 low/medium/high，不给 none/minimal/xhigh/max，直到逐型号核实；gpt-5-chat 等非推理型号不给。2026-11-21 逐型号向 API 核对了三个：gpt-6-luna 与 gpt-6.1-terra 认 none/low/medium/high/xhigh/max（不认 minimal），gpt-6.2-sol 认 low/medium/high/xhigh/max（none、minimal 都不认）；这三个在更宽的 gpt-6 前缀之前单列，界面可选的档位仍是 low/medium/high（xhigh / max 未核 wire 与界面，不加），none 记在 hidden_efforts：界面没有它的文案，只有结构化调用经 structured_small 能发；其余 GPT-6 / 5.6 型号未逐个核，仍用 gpt-6 / gpt-5 前缀的保守交集）"
+    }
+  ],
+  "structured_small": [
+    {
+      "origin": "https://api.openai.com",
+      "agent": "codex",
+      "wire": "openai-responses",
+      "model": "gpt-6-luna",
+      "effort": "none",
+      "source": "2026-11-21 本机实测（46 条用例重复跑，OpenAI 官方端点、Responses 协议，读懂数据一问一答）：gpt-6-luna/none 230 次完成率 99.6%、改坏规则本来对的 0、每张表约 0.00005 美元；gpt-6-luna/low 97.4%；gpt-6.1-terra/none 138 次 98.6%、约 0.0004 美元；gpt-6.2-sol/low 100%、约 0.0034 美元。API 回的 gpt-6-luna 支持档位 none/low/medium/high/xhigh/max（见 effort_origins 的 source）。这里只登记官方 OpenAI；其它厂商、第三方 / 自定义端点、订阅登录不登记 = 用用户连接里选的型号与原有强度逻辑"
     }
   ],
   "vendors": [
@@ -403,8 +446,8 @@
       "wire_api": "responses",
       "key_url": "https://platform.openai.com/api-keys",
       "models_hint": [
-        "gpt-5",
-        "gpt-5-mini"
+        "gpt-6.2-sol",
+        "gpt-6-luna"
       ],
       "source": "https://platform.openai.com/docs/api-reference/responses",
       "oauth": null,

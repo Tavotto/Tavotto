@@ -568,8 +568,21 @@
      "quote": "Maximum text size for all other text should be 7 pt; minimum text size should be 5 pt.",
      "snapshot": {
       "file": "snapshots/d242b4c364f3719d60609c8d0ccb39cedac973e4ea098f222c5a4bd800b70da2.webp",
-      "width": 804,
-      "height": 408
+      "height": 408,
+      "width": 804
+     }
+    },
+    "max_font_size_pt": {
+     "value": 7,
+     "qualifier": "recommended",
+     "stage": "production",
+     "mark": "7 pt",
+     "src": "s1",
+     "quote": "Maximum text size for all other text should be 7 pt; minimum text size should be 5 pt.",
+     "snapshot": {
+      "file": "snapshots/d242b4c364f3719d60609c8d0ccb39cedac973e4ea098f222c5a4bd800b70da2.webp",
+      "height": 408,
+      "width": 804
      }
     },
     "info.font_names_raw": {
@@ -580,20 +593,28 @@
      "quote": "Lettering should be in a sans-serif typeface, preferably Helvetica or Arial, the same font throughout all figures in the paper.",
      "snapshot": {
       "file": "snapshots/f564d86266677df24cdfe4c6384302413ba4f9bc617d742585e7a6b282c131a8.webp",
-      "width": 801,
-      "height": 456
+      "height": 456,
+      "width": 801
      }
+    },
+    "info.panel_label": {
+     "value": "8 pt bold, upright (not italic) a, b, c",
+     "strength": "recommended",
+     "stage": "production",
+     "src": "s1",
+     "quote": "Separate panels in multi-part figures should each be labelled with 8 pt bold, upright (not italic) a, b, c."
     },
     "info.color_mode": {
      "value": "RGB recommended, CMYK accepted",
      "qualifier": "recommended",
+     "strength": "recommended",
      "stage": "production",
      "src": "s1",
      "quote": "Colour artwork can be provided in RGB (recommended) or CMYK format.",
      "snapshot": {
       "file": "snapshots/2f82f297381b8bc7907d8730fbd7cab1b597010d4ce23861ec90492541b0cdf2.webp",
-      "width": 797,
-      "height": 408
+      "height": 408,
+      "width": 797
      }
     },
     "info.formats_raw": {
@@ -612,21 +633,23 @@
      "quote": "If these formats are not possible, we can also accept the following formats: JPEG (high-resolution, 300–600 dpi), CorelDraw (up to version 8), Microsoft Word, Excel or PowerPoint.",
      "snapshot": {
       "file": "snapshots/82dee935934585f1b6e7ee8878da62a81bce71ad3a53d37eea65e1fc1a6a0217.webp",
-      "width": 785,
-      "height": 504
-     }
+      "height": 504,
+      "width": 785
+     },
+     "strength": "permitted"
     },
     "min_raster_dpi": {
      "value": 300,
      "qualifier": "min",
+     "strength": "required",
      "stage": "production",
      "mark": "300 dpi",
      "src": "s1",
      "quote": "All photographic images must be supplied at a minimum of 300 dpi at the maximum size they can be used.",
      "snapshot": {
       "file": "snapshots/779160a29e6d39f5cfccb3b79392530e0ffeb54cb1c4ad09faac6117416e92de.webp",
-      "width": 800,
-      "height": 408
+      "height": 408,
+      "width": 800
      }
     },
     "info.one_half_mm": {
@@ -635,13 +658,14 @@
       136
      ],
      "qualifier": "range",
+     "strength": "permitted",
      "stage": "production",
      "src": "s1",
      "quote": "Figures can also be a column-and-a-half where necessary (120–136 mm).",
      "snapshot": {
       "file": "snapshots/3460b79e6e6de4977c5a835727a36cb185f07bb220ee3946bfa10218fb68ba7d.webp",
-      "width": 779,
-      "height": 408
+      "height": 408,
+      "width": 779
      }
     },
     "page_columns": {
@@ -668,7 +692,8 @@
      "stage": "production",
      "mark": "89 mm",
      "src": "s1",
-     "quote": "For guidance, *Nature*'s standard figure sizes are 89 mm wide (single column) and 183 mm wide (double column)."
+     "quote": "For guidance, *Nature*'s standard figure sizes are 89 mm wide (single column) and 183 mm wide (double column).",
+     "strength": "unspecified"
     }
    }
   },
@@ -784,9 +809,9 @@
    "issn": "1476-1122",
    "sources": {
     "s1": {
-     "url": "https://www.nature.com/nmat/submission-guidelines/aip-and-formatting",
      "kind": "html",
-     "retrieved": "2026-10-31"
+     "retrieved": "2026-10-31",
+     "url": "https://www.nature.com/nmat/submission-guidelines/aip-and-formatting"
     }
    },
    "rules": {
@@ -797,60 +822,51 @@
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
-      "width": 809,
-      "height": 408
-     }
+      "height": 408,
+      "width": 809
+     },
+     "strength": "unspecified"
     },
     "min_effective_font_size_pt": {
      "value": 5,
      "qualifier": "range",
+     "strength": "unspecified",
      "stage": "production",
      "mark": "5–7 pt",
      "src": "s1",
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     },
     "max_font_size_pt": {
      "value": 7,
      "qualifier": "range",
+     "strength": "unspecified",
      "stage": "production",
      "mark": "5–7 pt",
      "src": "s1",
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     },
     "min_raster_dpi": {
      "value": 300,
      "qualifier": "recommended",
+     "strength": "recommended",
      "stage": "production",
      "mark": "300 dpi",
      "src": "s1",
      "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
      "snapshot": {
       "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
-      "width": 809,
-      "height": 408
-     }
-    },
-    "info.width_double_mm": {
-     "value": 180,
-     "qualifier": "max",
-     "stage": "production",
-     "mark": "180 mm",
-     "src": "s1",
-     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
-     "snapshot": {
-      "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     }
    }
@@ -861,9 +877,9 @@
    "issn": "1748-3387",
    "sources": {
     "s1": {
-     "url": "https://www.nature.com/nnano/submission-guidelines/aip-and-formatting",
      "kind": "html",
-     "retrieved": "2026-10-31"
+     "retrieved": "2026-10-31",
+     "url": "https://www.nature.com/nnano/submission-guidelines/aip-and-formatting"
     }
    },
    "rules": {
@@ -874,60 +890,51 @@
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
-      "width": 809,
-      "height": 408
-     }
+      "height": 408,
+      "width": 809
+     },
+     "strength": "unspecified"
     },
     "min_effective_font_size_pt": {
      "value": 5,
      "qualifier": "range",
+     "strength": "unspecified",
      "stage": "production",
      "mark": "5–7 pt",
      "src": "s1",
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     },
     "max_font_size_pt": {
      "value": 7,
      "qualifier": "range",
+     "strength": "unspecified",
      "stage": "production",
      "mark": "5–7 pt",
      "src": "s1",
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     },
     "min_raster_dpi": {
      "value": 300,
      "qualifier": "min",
+     "strength": "recommended",
      "stage": "production",
      "mark": "300 dpi",
      "src": "s1",
      "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
      "snapshot": {
       "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
-      "width": 809,
-      "height": 408
-     }
-    },
-    "info.width_double_mm": {
-     "value": 180,
-     "qualifier": "max",
-     "stage": "production",
-     "mark": "180 mm",
-     "src": "s1",
-     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
-     "snapshot": {
-      "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     }
    }
@@ -938,9 +945,9 @@
    "issn": "2058-7546",
    "sources": {
     "s1": {
-     "url": "https://www.nature.com/nenergy/submission-guidelines/aip-and-formatting",
      "kind": "html",
-     "retrieved": "2026-10-31"
+     "retrieved": "2026-10-31",
+     "url": "https://www.nature.com/nenergy/submission-guidelines/aip-and-formatting"
     }
    },
    "rules": {
@@ -951,47 +958,37 @@
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
-      "width": 809,
-      "height": 408
-     }
+      "height": 408,
+      "width": 809
+     },
+     "strength": "unspecified"
     },
     "min_effective_font_size_pt": {
      "value": 5,
      "qualifier": "range",
+     "strength": "unspecified",
      "stage": "production",
      "mark": "5–7 pt",
      "src": "s1",
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     },
     "max_font_size_pt": {
      "value": 7,
      "qualifier": "range",
+     "strength": "unspecified",
      "stage": "production",
      "mark": "5–7 pt",
      "src": "s1",
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
-      "width": 809,
-      "height": 408
-     }
-    },
-    "info.width_double_mm": {
-     "value": 180,
-     "qualifier": "max",
-     "stage": "production",
-     "mark": "180 mm",
-     "src": "s1",
-     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
-     "snapshot": {
-      "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     }
    }
@@ -1002,9 +999,9 @@
    "issn": "1755-4330",
    "sources": {
     "s1": {
-     "url": "https://www.nature.com/nchem/submission-guidelines/aip-and-formatting",
      "kind": "html",
-     "retrieved": "2026-10-31"
+     "retrieved": "2026-10-31",
+     "url": "https://www.nature.com/nchem/submission-guidelines/aip-and-formatting"
     }
    },
    "rules": {
@@ -1015,60 +1012,51 @@
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/ebfff18fd875f9500e431a1986738c0efa1c4351d85906b49dd7775521f056e0.webp",
-      "width": 809,
-      "height": 408
-     }
+      "height": 408,
+      "width": 809
+     },
+     "strength": "unspecified"
     },
     "min_effective_font_size_pt": {
      "value": 5,
      "qualifier": "range",
+     "strength": "unspecified",
      "stage": "production",
      "mark": "5–7 pt",
      "src": "s1",
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/ebfff18fd875f9500e431a1986738c0efa1c4351d85906b49dd7775521f056e0.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     },
     "max_font_size_pt": {
      "value": 7,
      "qualifier": "range",
+     "strength": "unspecified",
      "stage": "production",
      "mark": "5–7 pt",
      "src": "s1",
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/ebfff18fd875f9500e431a1986738c0efa1c4351d85906b49dd7775521f056e0.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     },
     "min_raster_dpi": {
      "value": 300,
      "qualifier": "min",
+     "strength": "recommended",
      "stage": "production",
      "mark": "300 dpi",
      "src": "s1",
      "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
      "snapshot": {
       "file": "snapshots/a921b62be6a29c1909f8d0991c90f6723b378d4504b1aee49312b22c86cd27ae.webp",
-      "width": 809,
-      "height": 408
-     }
-    },
-    "info.width_double_mm": {
-     "value": 180,
-     "qualifier": "max",
-     "stage": "production",
-     "mark": "180 mm",
-     "src": "s1",
-     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
-     "snapshot": {
-      "file": "snapshots/a921b62be6a29c1909f8d0991c90f6723b378d4504b1aee49312b22c86cd27ae.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     }
    }
@@ -1079,9 +1067,9 @@
    "issn": "1745-2473",
    "sources": {
     "s1": {
-     "url": "https://www.nature.com/nphys/submission-guidelines/aip-and-formatting",
      "kind": "html",
-     "retrieved": "2026-10-31"
+     "retrieved": "2026-10-31",
+     "url": "https://www.nature.com/nphys/submission-guidelines/aip-and-formatting"
     }
    },
    "rules": {
@@ -1092,60 +1080,51 @@
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
-      "width": 809,
-      "height": 408
-     }
+      "height": 408,
+      "width": 809
+     },
+     "strength": "unspecified"
     },
     "min_effective_font_size_pt": {
      "value": 5,
      "qualifier": "range",
+     "strength": "unspecified",
      "stage": "production",
      "mark": "5–7 pt",
      "src": "s1",
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     },
     "max_font_size_pt": {
      "value": 7,
      "qualifier": "range",
+     "strength": "unspecified",
      "stage": "production",
      "mark": "5–7 pt",
      "src": "s1",
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     },
     "min_raster_dpi": {
      "value": 300,
      "qualifier": "min",
+     "strength": "recommended",
      "stage": "production",
      "mark": "300 dpi",
      "src": "s1",
      "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
      "snapshot": {
       "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
-      "width": 809,
-      "height": 408
-     }
-    },
-    "info.width_double_mm": {
-     "value": 180,
-     "qualifier": "max",
-     "stage": "production",
-     "mark": "180 mm",
-     "src": "s1",
-     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
-     "snapshot": {
-      "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     }
    }
@@ -1156,9 +1135,9 @@
    "issn": "1749-4885",
    "sources": {
     "s1": {
-     "url": "https://www.nature.com/nphoton/submission-guidelines/aip-and-formatting",
      "kind": "html",
-     "retrieved": "2026-10-31"
+     "retrieved": "2026-10-31",
+     "url": "https://www.nature.com/nphoton/submission-guidelines/aip-and-formatting"
     }
    },
    "rules": {
@@ -1169,60 +1148,51 @@
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
-      "width": 809,
-      "height": 408
-     }
+      "height": 408,
+      "width": 809
+     },
+     "strength": "unspecified"
     },
     "min_effective_font_size_pt": {
      "value": 5,
      "qualifier": "range",
+     "strength": "unspecified",
      "stage": "production",
      "mark": "5–7 pt",
      "src": "s1",
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     },
     "max_font_size_pt": {
      "value": 7,
      "qualifier": "range",
+     "strength": "unspecified",
      "stage": "production",
      "mark": "5–7 pt",
      "src": "s1",
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     },
     "min_raster_dpi": {
      "value": 300,
      "qualifier": "min",
+     "strength": "recommended",
      "stage": "production",
      "mark": "300 dpi",
      "src": "s1",
      "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
      "snapshot": {
       "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
-      "width": 809,
-      "height": 408
-     }
-    },
-    "info.width_double_mm": {
-     "value": 180,
-     "qualifier": "max",
-     "stage": "production",
-     "mark": "180 mm",
-     "src": "s1",
-     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
-     "snapshot": {
-      "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     }
    }
@@ -1233,9 +1203,9 @@
    "issn": "1548-7091",
    "sources": {
     "s1": {
-     "url": "https://www.nature.com/nmeth/submission-guidelines/aip-and-formatting",
      "kind": "html",
-     "retrieved": "2026-10-31"
+     "retrieved": "2026-10-31",
+     "url": "https://www.nature.com/nmeth/submission-guidelines/aip-and-formatting"
     }
    },
    "rules": {
@@ -1246,60 +1216,51 @@
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
-      "width": 809,
-      "height": 408
-     }
+      "height": 408,
+      "width": 809
+     },
+     "strength": "unspecified"
     },
     "min_effective_font_size_pt": {
      "value": 5,
      "qualifier": "range",
+     "strength": "unspecified",
      "stage": "production",
      "mark": "5–7 pt",
      "src": "s1",
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     },
     "max_font_size_pt": {
      "value": 7,
      "qualifier": "range",
+     "strength": "unspecified",
      "stage": "production",
      "mark": "5–7 pt",
      "src": "s1",
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     },
     "min_raster_dpi": {
      "value": 300,
      "qualifier": "min",
+     "strength": "recommended",
      "stage": "production",
      "mark": "300 dpi",
      "src": "s1",
      "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
      "snapshot": {
       "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
-      "width": 809,
-      "height": 408
-     }
-    },
-    "info.width_double_mm": {
-     "value": 180,
-     "qualifier": "max",
-     "stage": "production",
-     "mark": "180 mm",
-     "src": "s1",
-     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
-     "snapshot": {
-      "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     }
    }
@@ -1310,9 +1271,9 @@
    "issn": "1078-8956",
    "sources": {
     "s1": {
-     "url": "https://www.nature.com/nm/submission-guidelines/aip-and-formatting",
      "kind": "html",
-     "retrieved": "2026-10-31"
+     "retrieved": "2026-10-31",
+     "url": "https://www.nature.com/nm/submission-guidelines/aip-and-formatting"
     }
    },
    "rules": {
@@ -1323,60 +1284,51 @@
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
-      "width": 809,
-      "height": 408
-     }
+      "height": 408,
+      "width": 809
+     },
+     "strength": "unspecified"
     },
     "min_effective_font_size_pt": {
      "value": 5,
      "qualifier": "range",
+     "strength": "unspecified",
      "stage": "production",
      "mark": "5–7 pt",
      "src": "s1",
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     },
     "max_font_size_pt": {
      "value": 7,
      "qualifier": "range",
+     "strength": "unspecified",
      "stage": "production",
      "mark": "5–7 pt",
      "src": "s1",
      "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
      "snapshot": {
       "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     },
     "min_raster_dpi": {
      "value": 300,
      "qualifier": "min",
+     "strength": "recommended",
      "stage": "production",
      "mark": "300 dpi",
      "src": "s1",
      "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
      "snapshot": {
       "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
-      "width": 809,
-      "height": 408
-     }
-    },
-    "info.width_double_mm": {
-     "value": 180,
-     "qualifier": "max",
-     "stage": "production",
-     "mark": "180 mm",
-     "src": "s1",
-     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
-     "snapshot": {
-      "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
-      "width": 809,
-      "height": 408
+      "height": 408,
+      "width": 809
      }
     }
    }
@@ -2420,25 +2372,37 @@
    "issn": "2192-8606",
    "sources": {
     "s1": {
-     "url": "https://www.degruyterbrill.com/journal/key/nanoph/html",
      "kind": "html",
-     "retrieved": "2026-11-03"
+     "retrieved": "2026-11-03",
+     "url": "https://www.degruyterbrill.com/journal/key/nanoph/html"
+    },
+    "s2": {
+     "kind": "html",
+     "retrieved": "2026-11-21",
+     "url": "https://onlinelibrary.wiley.com/page/journal/21928614/homepage/author-guidelines"
     }
    },
    "rules": {
     "info.font_names_raw": {
      "value": "sans serif typeface such as Helvetica",
      "qualifier": "recommended",
+     "strength": "preferred",
      "src": "s1",
      "quote": "The lettering of all figures within the article should be uniform in style (preferably a sans serif typeface\nsuch as Helvetica) and of sufficient size (approximately 8pt)."
     },
     "min_raster_dpi": {
-     "value": 600,
+     "value": 300,
      "qualifier": "min",
-     "mark": "600DPI",
-     "src": "s1",
-     "quote": "Figures (greyscale and colour) should have a minimum resolution of 600DPI and be of good contrast.",
-     "anchor": "#:~:text=Figures%20%28greyscale%20and%20colour%29%20should%20have"
+     "strength": "required",
+     "mark": "300 dpi",
+     "src": "s2",
+     "quote": "Bitmap graphic images such as photographs and electron microscope images should be saved as TIFF or PNG files; each figure part must have a resolution of at least 300 dpi (1000 pixels wide when the image is typeset at a single column width).",
+     "anchor": "#:~:text=Bitmap%20graphic%20images%20such%20as%20photographs",
+     "snapshot": {
+      "file": "snapshots/86f5133bb7469060eeba69a0adfa1a50ed7d1a88a60dc77a237cb5f72c521ced.webp",
+      "height": 411,
+      "width": 1073
+     }
     }
    }
   },

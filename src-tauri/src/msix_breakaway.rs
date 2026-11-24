@@ -21,6 +21,12 @@
 //! （`handoff._launch_desktop_via_spawn`，观察窗口 `LAUNCH_CRASH_WINDOW`）看到的仍是「这个进程」的结局：
 //! 替身崩了报 launch_failed，而不是把任何 0 退出都当成转发完成。
 //!
+//! 包私有区里的**安装副本**（#961 与同类现场）：Tavotto 若曾在宿主包身份下安装 / 更新，`%LOCALAPPDATA%\\Tavotto`
+//! 的新文件被写进 `Packages\\<pfn>\\LocalCache\\Local\\Tavotto`，留下半套安装；之后从宿主拉起时系统选中这份副本，
+//! sidecar 照副本目录找文件、缺件即崩。因此壳发现 `current_exe()` 在这种副本里、且真实安装的同名文件在时，
+//! 也当作要重新拉起，并且换成真实路径（[`real_install_exe`]）；同一个 guard 防循环。副本本身不删（数据善后见
+//! `engine/msixmigrate.py`）。
+//!
 //! 与 Python 侧 `engine/msixbreakaway.py` 是同一份契约的两种语言实现（常量、策略值一致）。
 
 #![cfg_attr(not(windows), allow(dead_code))]
@@ -55,24 +61,59 @@ pub fn handoff_exit_code(replacement_exit: Option<u32>) -> i32 {
 /// 启动时该做什么。
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Decision {
-    /// 没有包身份：照常启动。
+    /// 没有包身份、也不在包私有区副本里：照常启动。
     Proceed,
-    /// 有包身份、还没试过：脱离包重新拉起自己后退出。
+    /// 有包身份或正从包私有区副本启动、还没试过：脱离包（并换到真实安装路径）重新拉起后退出。
     Relaunch,
     /// 有包身份、已经重新拉起过一次还在包里：不再重试，照常启动（并把事实交给诊断）。
     ProceedStillPackaged,
 }
 
 /// 纯判据（各平台都编译、都有单测）：`has_identity` 来自 `GetCurrentPackageFullName`，
-/// `guard` 是 [`GUARD_ENV`] 此刻的值。
-pub fn decide(has_identity: bool, guard: Option<&str>) -> Decision {
-    if !has_identity {
-        return Decision::Proceed;
+/// `guard` 是 [`GUARD_ENV`] 此刻的值，`in_redirected_copy` = 本进程正从包私有区里的安装副本启动且真实安装在
+/// （见 [`real_install_exe`]）。guard 一旦置位就绝不再拉起，防循环。
+pub fn decide(has_identity: bool, guard: Option<&str>, in_redirected_copy: bool) -> Decision {
+    let tried = !matches!(guard, None | Some(""));
+    if !tried && (has_identity || in_redirected_copy) {
+        return Decision::Relaunch;
     }
-    match guard {
-        None | Some("") => Decision::Relaunch,
-        Some(_) => Decision::ProceedStillPackaged,
+    if has_identity && tried {
+        return Decision::ProceedStillPackaged;
     }
+    Decision::Proceed
+}
+
+/// 包私有区里的安装副本 → 真实安装路径（纯字符串变换，各平台都编译、都有单测；是否存在由调用方判）。
+///
+/// 为什么要有（#961 / TVM 现场）：Tavotto 曾在 MSIX 宿主（Codex 桌面版）的包身份下安装 / 更新过，`%LOCALAPPDATA%`
+/// 下新建的文件被重定向进 `<LOCALAPPDATA>\Packages\<包族名>\LocalCache\Local\...`，留下**半套**安装。之后从宿主
+/// 拉起时系统选中这份副本，`current_exe()` 就是副本路径；脱包后 sidecar 照着副本目录找文件，缺件即崩
+/// （`ai_catalog.json` / `figcapture.py` 读不到）。把 `<LOCALAPPDATA>\Packages\<pfn>\LocalCache\Local\<rest>`
+/// 映回 `<LOCALAPPDATA>\<rest>`；不是这个形状、或 `local_appdata` 不是它的前缀（大小写不敏感），回 `None`。
+pub fn real_install_exe(exe: &str, local_appdata: &str) -> Option<String> {
+    let norm = |p: &str| p.replace('/', "\\").trim_end_matches('\\').to_string();
+    let exe = norm(exe);
+    let base = norm(local_appdata);
+    if base.is_empty() {
+        return None;
+    }
+    let head = exe.get(..base.len())?;
+    if !head.eq_ignore_ascii_case(&base) {
+        return None;
+    }
+    let rest = exe.get(base.len()..)?.strip_prefix('\\')?;
+    let segs: Vec<&str> = rest.split('\\').collect();
+    // Packages \ <pfn> \ LocalCache \ Local \ <至少一段>
+    if segs.len() < 5
+        || !segs[0].eq_ignore_ascii_case("Packages")
+        || segs[1].is_empty()
+        || !segs[2].eq_ignore_ascii_case("LocalCache")
+        || !segs[3].eq_ignore_ascii_case("Local")
+        || segs[4..].iter().any(|s| s.is_empty() || *s == "..")
+    {
+        return None;
+    }
+    Some(format!("{base}\\{}", segs[4..].join("\\")))
 }
 
 /// 按 MSVCRT 规则给一个参数加引号，拼成 `CreateProcessW` 的命令行片段。
@@ -122,18 +163,28 @@ pub fn relaunch_outside_package_if_needed() {}
 #[cfg(windows)]
 pub fn relaunch_outside_package_if_needed() {
     let guard = std::env::var(GUARD_ENV).ok();
-    match decide(has_package_identity(), guard.as_deref()) {
+    let real_exe = redirected_copy_target();
+    match decide(has_package_identity(), guard.as_deref(), real_exe.is_some()) {
         Decision::Proceed => {}
         Decision::ProceedStillPackaged => std::env::set_var(GUARD_ENV, STILL_PACKAGED),
         Decision::Relaunch => {
             // 先置标记再拉起：新进程继承它；拉起失败再改成 failed。
             std::env::set_var(GUARD_ENV, RELAUNCHED);
-            match spawn_self_outside_package() {
+            match spawn_self_outside_package(real_exe.as_deref()) {
                 Ok(replacement_exit) => std::process::exit(handoff_exit_code(replacement_exit)),
                 Err(_) => std::env::set_var(GUARD_ENV, FAILED),
             }
         }
     }
+}
+
+/// 本进程正从包私有区副本启动、且真实安装的同名可执行文件在：回真实路径；否则 `None`（照旧用 `current_exe()`）。
+#[cfg(windows)]
+fn redirected_copy_target() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let local = std::env::var("LOCALAPPDATA").ok()?;
+    let real = std::path::PathBuf::from(real_install_exe(&exe.to_string_lossy(), &local)?);
+    real.is_file().then_some(real)
 }
 
 #[cfg(windows)]
@@ -148,7 +199,9 @@ fn has_package_identity() -> bool {
 }
 
 #[cfg(windows)]
-fn spawn_self_outside_package() -> Result<Option<u32>, String> {
+fn spawn_self_outside_package(
+    exe_override: Option<&std::path::Path>,
+) -> Result<Option<u32>, String> {
     use std::os::windows::ffi::OsStrExt;
     use windows::core::{PCWSTR, PWSTR};
     use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
@@ -159,7 +212,10 @@ fn spawn_self_outside_package() -> Result<Option<u32>, String> {
         STARTUPINFOEXW,
     };
 
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe = match exe_override {
+        Some(p) => p.to_path_buf(),
+        None => std::env::current_exe().map_err(|e| e.to_string())?,
+    };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cmd = command_line(&exe.to_string_lossy(), &args);
     let mut cmd_w: Vec<u16> = std::ffi::OsStr::new(&cmd)
@@ -243,22 +299,78 @@ mod tests {
 
     #[test]
     fn no_identity_always_proceeds() {
-        assert_eq!(decide(false, None), Decision::Proceed);
-        assert_eq!(decide(false, Some(RELAUNCHED)), Decision::Proceed);
+        assert_eq!(decide(false, None, false), Decision::Proceed);
+        assert_eq!(decide(false, Some(RELAUNCHED), false), Decision::Proceed);
     }
 
     #[test]
     fn identity_without_guard_relaunches_once() {
-        assert_eq!(decide(true, None), Decision::Relaunch);
-        assert_eq!(decide(true, Some("")), Decision::Relaunch);
+        assert_eq!(decide(true, None, false), Decision::Relaunch);
+        assert_eq!(decide(true, Some(""), false), Decision::Relaunch);
+        assert_eq!(decide(true, None, true), Decision::Relaunch);
     }
 
     /// 防循环：重新拉起后仍带包身份（guard 已置位）不再重试。
     #[test]
     fn identity_with_guard_never_relaunches_again() {
         for g in [RELAUNCHED, STILL_PACKAGED, FAILED, "anything"] {
-            assert_eq!(decide(true, Some(g)), Decision::ProceedStillPackaged, "{g}");
+            assert_eq!(
+                decide(true, Some(g), false),
+                Decision::ProceedStillPackaged,
+                "{g}"
+            );
+            assert_eq!(
+                decide(true, Some(g), true),
+                Decision::ProceedStillPackaged,
+                "{g}"
+            );
+            assert_eq!(decide(false, Some(g), true), Decision::Proceed, "{g}");
         }
+    }
+
+    /// 不带包身份、但正从包私有区副本启动（宿主脱包拉起时系统仍选中了副本）：换到真实安装重新拉起一次。
+    #[test]
+    fn redirected_copy_without_identity_relaunches_once() {
+        assert_eq!(decide(false, None, true), Decision::Relaunch);
+    }
+
+    #[test]
+    fn redirected_copy_maps_back_to_the_real_install() {
+        let local = "C:\\Users\\28908\\AppData\\Local";
+        assert_eq!(
+            real_install_exe(
+                "C:\\Users\\28908\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\Tavotto\\Tavotto.exe",
+                local
+            )
+            .as_deref(),
+            Some("C:\\Users\\28908\\AppData\\Local\\Tavotto\\Tavotto.exe")
+        );
+        // 大小写、正斜杠、LOCALAPPDATA 末尾反斜杠都不影响
+        assert_eq!(
+            real_install_exe(
+                "c:/users/u/appdata/local/packages/P_x/localcache/local/Tavotto/Tavotto.exe",
+                "C:\\Users\\u\\AppData\\Local\\"
+            )
+            .as_deref(),
+            Some("C:\\Users\\u\\AppData\\Local\\Tavotto\\Tavotto.exe")
+        );
+    }
+
+    #[test]
+    fn non_copy_paths_are_left_alone() {
+        let local = "C:\\Users\\u\\AppData\\Local";
+        for exe in [
+            "C:\\Users\\u\\AppData\\Local\\Tavotto\\Tavotto.exe",
+            "C:\\Program Files\\Tavotto\\Tavotto.exe",
+            "C:\\Users\\u\\AppData\\Local\\Packages\\P_x\\LocalCache\\Roaming\\Tavotto\\Tavotto.exe",
+            "C:\\Users\\u\\AppData\\Local\\Packages\\P_x\\LocalCache\\Local",
+            "C:\\Users\\u\\AppData\\Local\\Packages\\P_x\\LocalCache\\Local\\..\\x.exe",
+            "D:\\Users\\u\\AppData\\Local\\Packages\\P_x\\LocalCache\\Local\\Tavotto\\Tavotto.exe",
+            "C:\\Users\\u\\AppData\\LocalX\\Packages\\P_x\\LocalCache\\Local\\Tavotto\\Tavotto.exe",
+        ] {
+            assert_eq!(real_install_exe(exe, local), None, "{exe}");
+        }
+        assert_eq!(real_install_exe("C:\\a\\Tavotto.exe", ""), None);
     }
 
     #[test]

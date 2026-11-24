@@ -36,7 +36,8 @@ import { useAiStore } from '@/store/aiStore'
 import { useConvertStore } from '@/store/convertStore'
 import { requestConnectAi, useConnectAiStore } from '@/store/connectAiStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
-import { useProjectPreparationStore } from '@/store/projectPreparationStore'
+import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
+import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useUiStore } from '@/store/uiStore'
 
 export type AiFixPhase =
@@ -160,7 +161,12 @@ export const useAiFixStore = create<AiFixStoreState>((set, get) => {
       get().clear(key)
       // 重跑准备会话：这一次是验证，不是用户新点的「运行」之外的东西——只重新检查并按报告说话
       const prep = useProjectPreparationStore.getState()
-      const target = prep.entries[key]?.target
+      let target = prep.entries[key]?.target
+      if (st.run_argv && target && !('id' in target) && still()) {
+        // AI 定下了运行参数：填进这个脚本的「运行参数」（用户之后看得见、改得了），按它重跑验证
+        useScriptArgvStore.getState().setTokens(target.script, st.run_argv)
+        target = scriptTarget(target.script)
+      }
       // 验证重跑是同一个意图的延续：拖到画布上发起的，修好后照样放进那张画布
       if (target && still()) void prep.open(target, { run: true, rerun: true, placeIn: prep.entries[key]?.placeIn ?? null })
       return

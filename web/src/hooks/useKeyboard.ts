@@ -1,3 +1,6 @@
+import { exitGroupLevel, GROUP_COMMANDS } from '@/store/groupActions'
+import { TRANSFORM_COMMANDS } from '@/store/transformActions'
+import { canOutlineText, outlineSelectedText } from '@/store/textOutlineActions'
 import { useEffect } from 'react'
 import { formatMessage, msg } from '@/i18n'
 import { usePalette } from '@/components/CommandPalette'
@@ -18,6 +21,13 @@ import {
   closeTimeline,
 } from '@/store/actions'
 import { finishNudge, nudgeKeyDown, nudgeKeyUp } from '@/canvas/nudge'
+import { penFinish } from '@/canvas/penController'
+import { deleteAnchorPoints, editAnchors, exitAnchorEdit, PATH_COMMANDS } from '@/store/pathActions'
+import { activePathEdit } from '@/store/pathEditStore'
+import { APPEARANCE_COMMANDS } from '@/store/appearanceActions'
+import { PATHFINDER_COMMANDS } from '@/store/pathfinderActions'
+import { finishShapeBuilder, shapeBuilderActive } from '@/store/shapeBuilder'
+import { bindingFor } from '@/lib/keymap'
 import { useDocumentStore } from '@/store/documentStore'
 import {
   cancelActivePointerGesture,
@@ -33,6 +43,8 @@ import { useTimelineStore } from '@/store/timelineStore'
 import { isTimelineOpen, useUiStore, type Tool } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { fitStage, zoomToSelection } from '@/store/zoomToSelection'
+import { setQuickLayoutUndoRunner } from '@/store/quickLayoutActions'
+import { canNudgeGap, nudgePathTextGap } from '@/store/pathTextActions'
 
 
 const TOOL_KEYS: Record<string, Tool> = {
@@ -42,6 +54,8 @@ const TOOL_KEYS: Record<string, Tool> = {
   r: 'rect',
   o: 'ellipse',
   l: 'line',
+  p: 'pen',
+  n: 'pencil',
 }
 
 /**
@@ -76,6 +90,11 @@ const inEditableTarget = (e: KeyboardEvent) => yieldsCanvasShortcuts(e.target)
  */
 export function deleteSelection() {
   if (isCanvasCovered()) return // 画布被「数据」临时标签盖住：不改看不见的文档（顶栏 / 命令面板 / 菜单 / 键盘共用这个入口）
+  // 锚点编辑里选着锚点：删的是锚点，不是整条路径（ADR 0185 M1）
+  if (activePathEdit()?.anchors.length) {
+    deleteAnchorPoints()
+    return
+  }
   const ui = useUiStore.getState()
   if (ui.elementPanelId && ui.selectedGids.length) {
     hideSelectedElements(ui.elementPanelId, ui.selectedGids)
@@ -169,6 +188,9 @@ export function runUndoRedo(redo: boolean) {
   }
 }
 
+// 一键排版胶囊上的「撤销」（ADR 0199 §七）：那一处不能 import 本模块（成环），在这里交进去
+setQuickLayoutUndoRunner(() => runUndoRedo(false))
+
 export function useKeyboard() {
   useEffect(() => {
     // 保存是应用级动作：富文本编辑器会截住冒泡阶段的键，必须在捕获阶段认领。
@@ -243,7 +265,25 @@ export function useKeyboard() {
         }
         return
       }
-      if (mod && e.key.toLowerCase() === 'd') {
+      // ⇧⌘O 文字转轮廓（ADR 0189）：选着文字时才消费
+      if (mod && e.shiftKey && !e.altKey && e.code === 'KeyO') {
+        if (canOutlineText()) {
+          e.preventDefault()
+          void outlineSelectedText()
+        }
+        return
+      }
+      // ⌥⌘D 再次变换（ADR 0185 M4 第二批）：排在 ⌘D 前面——Windows 上 Ctrl+Alt+D 的 key 仍是 d
+      if (mod && e.altKey && !e.shiftKey && e.code === 'KeyD') {
+        if (e.getModifierState?.('AltGraph')) return
+        const again = TRANSFORM_COMMANDS.find((c) => c.id === 'transform-again')!
+        if (again.available()) {
+          e.preventDefault()
+          again.run()
+        }
+        return
+      }
+      if (mod && !e.altKey && e.key.toLowerCase() === 'd') {
         e.preventDefault()
         // 快速编辑里不加副本（副本落在版面上、这一屏看不见）：判据在 `duplicateSelected` 里
         duplicateSelected()
@@ -293,7 +333,21 @@ export function useKeyboard() {
         return
       }
 
-      if (mod) return
+      // 路径命令的 ⌘ 组合（连接 ⌘J、平均 ⌥⌘J，ADR 0185 M1）：命令表说了算，此刻不可用的不消费。
+      // Windows 上 AltGr 报成 Ctrl+Alt：那是在打字，不认
+      if (mod) {
+        const bound = e.getModifierState?.('AltGraph') ? null : bindingFor(e)
+        const cmd = bound
+          ? (PATH_COMMANDS.find((c) => c.key === bound) ??
+            PATHFINDER_COMMANDS.find((c) => c.key === bound) ??
+            GROUP_COMMANDS.find((c) => c.key === bound))
+          : undefined
+        if (cmd?.available()) {
+          e.preventDefault()
+          cmd.run()
+        }
+        return
+      }
 
       // ⇧2 = 缩放到选区（`lib/keymap` 的 zoomSelection）。按 code 认：⇧ 把 key 改成 @ / " 因布局而异；
       // ⌥ 组合是在打字，不认
@@ -303,6 +357,14 @@ export function useKeyboard() {
         return
       }
 
+      // 形状生成器（⇧M）开着：Esc / Enter 收尾退出（有改动就落一条历史），其余键先不响应，免得删除 / 工具键改掉正在拼的那组对象
+      if (shapeBuilderActive()) {
+        if (e.key === 'Escape' || e.key === 'Enter') {
+          e.preventDefault()
+          finishShapeBuilder()
+        }
+        return
+      }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
         deleteSelection()
@@ -310,6 +372,8 @@ export function useKeyboard() {
       }
       if (e.key === 'Escape') {
         e.preventDefault()
+        // 钢笔画到一半：Esc 结束成开放路径（Illustrator 习惯），这一下不做别的
+        if (penFinish()) return
         // 最上层浮层优先：时间线在预览就先退预览，再关抽屉
         if (isTimelineOpen(ui) && useTimelineStore.getState().preview) {
           useTimelineStore.getState().setPreview(null)
@@ -327,7 +391,10 @@ export function useKeyboard() {
             useSelectionStore.getState().set([pid])
           }
         } else if (ui.cropTargetId) cancelCrop()
+        else if (activePathEdit()) exitAnchorEdit()
         else if (ui.tool !== 'select') ui.setTool('select')
+        // 组内编辑（ADR 0191）：Esc 退一层，选中刚退出的那个组
+        else if (exitGroupLevel()) return
         else useSelectionStore.getState().clear()
         return
       }
@@ -337,6 +404,11 @@ export function useKeyboard() {
         // 又触发「进入图内编辑」——键盘用户一步被瞬移进编辑态）。
         // 处理过 Enter 的 widget（素材卡/图层树/元素树）都 preventDefault。
         if (e.defaultPrevented) return
+        // 钢笔画到一半：Enter 结束成开放路径
+        if (penFinish()) {
+          e.preventDefault()
+          return
+        }
         // 焦点在按钮/链接/菜单项上时 Enter 的意思是「激活它」，不是画布捷径。
         // 抢走（preventDefault）的话浏览器不再合成 click——键盘用户选中一个
         // 面板后，顶栏的每一颗按钮都按不动了（审计 P1-09 实测撞见：焦点在
@@ -351,17 +423,30 @@ export function useKeyboard() {
         }
         if (ids.length === 1) {
           const obj = doc.doc.objects.find((o) => o.id === ids[0])
-          if (obj?.type === 'text') {
+          if (obj?.type === 'text' || obj?.type === 'pathText') {
             e.preventDefault()
             ui.setEditingText(obj.id)
           } else if (obj?.type === 'panel') {
             e.preventDefault()
             if (obj.script) enterElementEdit(obj.id)
             else beginCrop(obj.id)
+          } else if (obj?.type === 'path' && !activePathEdit()) {
+            // 路径：Enter 进锚点编辑（直接选择），与文字 Enter 改字、面板 Enter 进图内编辑同一个手势
+            e.preventDefault()
+            editAnchors(obj.id)
           }
         }
         return
       }
+      // 路径文字的离线（ADR 0190）：选区全是路径文字时 ⌥⇧↑ / ⌥⇧↓ 调字与线的间隙；别的选区照旧是 ⇧ 大步微调
+      if (e.altKey && e.shiftKey && !mod && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && !arrowOwnedByWidget(e)) {
+        if (canNudgeGap()) {
+          e.preventDefault()
+          nudgePathTextGap(e.key === 'ArrowUp' ? 1 : -1)
+          return
+        }
+      }
+
       if (e.key.startsWith('Arrow')) {
         // 方向键微调（ADR 0093）：图内编辑态推图内选中的元素，否则推画布选区；
         // 快速编辑里画布对象不动（`canvas/nudge.ts`）。归了微调就不让它冒出去滚界面
@@ -373,6 +458,21 @@ export function useKeyboard() {
       if (e.key === '?') {
         e.preventDefault()
         ui.setShortcutHelpOpen(true)
+        return
+      }
+
+      // 路径命令的单键（+ / − / ⇧C；P 在下面的工具键里）：命令表 `PATH_COMMANDS` 说了算，此刻不可用的不消费
+      const bound = bindingFor(e)
+      const cmd = bound
+        ? (PATH_COMMANDS.find((c) => c.key === bound && c.id !== 'pen-tool') ??
+          APPEARANCE_COMMANDS.find((c) => c.key === bound) ??
+          PATHFINDER_COMMANDS.find((c) => c.key === bound))
+        : undefined
+      if (cmd) {
+        if (cmd.available()) {
+          e.preventDefault()
+          cmd.run()
+        }
         return
       }
 

@@ -1,5 +1,6 @@
 /**
- * 更新的构建写进文档的对象类型（第一例：自由路径 `path`，ADR 0185），本构建读到时的兜底。
+ * 更新的构建写进文档的对象类型（第一例是自由路径 `path`，ADR 0185；本构建已经认得它，这里用虚构的
+ * `futureThing` 代表「更新的构建写进来的类型」），本构建读到时的兜底。
  *
  * 修之前（旧构建打开带 `type: 'path'` 的文档）：读盘、保存都原样保留——但图层树 `iconFor` 拿到 undefined，
  * `<Icon/>` 抛错让整个界面落进错误边界；导出时 `toExportObject` 回 undefined → 载荷里是 null → 后端静默丢掉，
@@ -22,7 +23,7 @@ import { deleteSelected, selectAllIds } from '@/store/actions'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
-import { emptyDocument, emptyProject, isKnownObject, objectLabel, type CanvasObject } from '@/types/document'
+import { emptyDocument, emptyProject, isKnownObject, KNOWN_OBJECT_TYPES, objectLabel, type CanvasObject } from '@/types/document'
 import { buildExportRequest, type ExportRequestInput } from './exportRequest'
 import { newerObjectCount, toExportObjects } from './exportPayload'
 
@@ -42,8 +43,8 @@ globalThis.fetch = vi.fn(async () => new Response('{}', { status: 200 })) as typ
 /** 更新的构建写进来的对象：本构建的类型里没有它，只能经 unknown 造出来 */
 const newer = (over: Record<string, unknown> = {}): CanvasObject =>
   ({
-    id: 'n1', type: 'path', x: 10, y: 10, w: 30, h: 20,
-    subpaths: [{ closed: true, nodes: [{ p: [0, 0] }, { p: [1, 0] }, { p: [1, 1] }] }],
+    id: 'n1', type: 'futureThing', x: 10, y: 10, w: 30, h: 20,
+    payload: [{ closed: true, nodes: [{ p: [0, 0] }, { p: [1, 0] }, { p: [1, 1] }] }],
     ...over,
   }) as unknown as CanvasObject
 const text = (over: Partial<CanvasObject> = {}): CanvasObject =>
@@ -65,9 +66,9 @@ afterEach(async () => {
 })
 
 describe('判据', () => {
-  it('四种已知类型认得，别的都不认得', () => {
-    for (const type of ['panel', 'text', 'arrow', 'shape']) expect(isKnownObject({ type })).toBe(true)
-    expect(isKnownObject({ type: 'path' })).toBe(false)
+  it('六种已知类型认得，别的都不认得', () => {
+    for (const type of ['panel', 'text', 'arrow', 'shape', 'path', 'pathText']) expect(isKnownObject({ type })).toBe(true)
+    expect(isKnownObject({ type: 'futureThing' })).toBe(false)
     expect(isKnownObject({ type: '' })).toBe(false)
   })
 
@@ -178,5 +179,44 @@ describe('导出', () => {
       doc: emptyDocument(), figureId: 'a.pdf', annotations: [text(), newer()],
     } as ExportRequestInput)
     expect(built.newerObjects).toBe(1)
+  })
+})
+
+/**
+ * 路径文字（`pathText`，ADR 0190）是第一个**真正**由更新的构建写进来的类型：#1913 发出去的判据只认五种。这里把本构建的已知类型
+ * 临时退回 #1913 那一版（就是旧版本自己的 `isKnownObject`），看旧版本打开带路径文字的项目时会怎样：画布上是占位框、选不中
+ * （所以删不掉、拖不动，文档原样保留），导出报出个数、不让开始。图层树那一行显示「新版对象」由旧版本的 `objectLabel` 兜底
+ * （它没有 `pathText` 这一支，落到 default），上面「图层树」一节用虚构类型已经核过。
+ */
+describe('旧版本（#1913 的判据）打开路径文字', () => {
+  /** #1913（fa5786694，ADR 0185 §六）发出去的已知类型 */
+  const RELEASED_1913 = ['panel', 'text', 'arrow', 'shape', 'path']
+  const known = KNOWN_OBJECT_TYPES as Set<string>
+  const pathText = (): CanvasObject =>
+    ({
+      id: 'pt1', type: 'pathText', x: 10, y: 10, w: 40, h: 10, text: 'Label', sizePt: 10, bold: false, color: '#000000',
+      subpaths: [{ closed: false, nodes: [{ p: [0, 1] }, { p: [1, 1] }] }],
+    }) as CanvasObject
+  beforeEach(() => known.delete('pathText'))
+  afterEach(() => {
+    known.add('pathText')
+  })
+
+  it('#1913 的已知类型里没有 pathText；退回之后本构建的判据与它逐项相同', () => {
+    expect(RELEASED_1913).not.toContain('pathText')
+    expect([...known].sort()).toEqual([...RELEASED_1913].sort())
+    expect(isKnownObject(pathText())).toBe(false)
+  })
+
+  it('画布上只画占位框、不接指针；全选不收它', async () => {
+    await act(async () => root.render(<ObjectView obj={pathText()} />))
+    expect((container.querySelector('[data-object-id]') as HTMLDivElement).style.pointerEvents).toBe('none')
+    expect(container.querySelector('[data-unknown-object]')).not.toBeNull()
+    expect(selectAllIds([text(), pathText()])).toEqual(['t1'])
+  })
+
+  it('导出报出个数（界面据此灰掉），载荷里没有它', () => {
+    expect(newerObjectCount([text(), pathText()])).toBe(1)
+    expect(toExportObjects([text(), pathText()])).toHaveLength(1)
   })
 })

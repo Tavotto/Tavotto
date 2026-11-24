@@ -50,7 +50,7 @@ const tick = async () => {
  * `switchDocument` 换进来就 `flushAutosave()` 一次，那次 PUT 没回来之前往下走的话，
  * 它会在**后面某个用例的断言窗口里**才落地：`puts` 多出一条 `d_close`，`afterWriteOk`
  * 还会把用例刚设的 `saveState` 推成 `saved`（冲突那条因此被判成「没有未保存的工作」而放行关窗）。
- * 这是 CI 上 5 条红的原因，本机靠固定 12 次微任务轮询碰巧躲过去——轮询次数不是屏障。
+ * 本机靠固定 12 次微任务轮询碰巧躲过去——轮询次数不是屏障。
  */
 const settleInitialSnapshot = async () => {
   await vi.waitFor(() => expect(s().saveState).toBe('saved'))

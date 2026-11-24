@@ -486,6 +486,336 @@ def cases() -> list[dict]:
             }
         )
 
+    # 9j. 数据线线宽下限（`min_line_width_pt`，ADR 0155 §14 修订）：只判数据线——折线 / 线集 / 误差棒 /
+    #     有可见描边的柱；坐标轴脊线、刻度、图例示意线、只画点的线、散点 / 填充（manifest 分不出有没有描边）不判。
+    #     按最终有效值（线宽 × 面板缩放）比，等于下限不报
+    def _lw_case(name: str, floor, manifest: dict, *, scale: float = 1.0) -> dict:
+        return {
+            "name": name,
+            "profile_id": "journal-base-v1",
+            "journal": {} if floor is None else {"min_line_width_pt": floor},
+            "spec": _spec([_panel("p1", manifest=manifest, scale=scale)]),
+        }
+
+    def _el_with(manifest: dict, gid: str, **props) -> None:
+        el = next(e for e in manifest["elements"] if e["gid"] == gid)
+        for k, v in props.items():
+            for f in el["editable"]:
+                if f["prop"] == k:
+                    f["value"] = v
+                    break
+            else:
+                el["editable"].append({"prop": k, "type": "number", "value": v})
+
+    out.append(_lw_case("journal-min-line-width-thin-lines-reported", 2.0, _clean_manifest()))
+    out.append(_lw_case("journal-min-line-width-not-set-no-report", None, _clean_manifest()))
+    out.append(_lw_case("journal-min-line-width-zero-no-report", 0, _clean_manifest()))
+    m = _clean_manifest()  # 脊线 0.75、刻度、图例都细，数据线够粗：不报
+    _el_with(m, "axes_0.lines_0", linewidth=2.5)
+    _el_with(m, "axes_0.lines_1", linewidth=3.0)
+    m["elements"][-1]["editable"].append(
+        {"prop": "handle_linewidth", "type": "number", "value": 0.5}
+    )
+    out.append(_lw_case("journal-min-line-width-only-axes-and-ticks-thin", 2.0, m))
+    m = _clean_manifest()
+    _el_with(m, "axes_0.lines_0", linewidth=2.0)  # 正好等于下限
+    _el_with(m, "axes_0.lines_1", linewidth=2.0)
+    out.append(_lw_case("journal-min-line-width-equal-to-floor", 2.0, m))
+    m = _clean_manifest()
+    _el_with(m, "axes_0.lines_0", linewidth=1.25)  # 1.25 x 0.4 = 0.5，缩放后正好等于下限
+    _el_with(m, "axes_0.lines_1", linewidth=1.0)  # 1.0 x 0.4 = 0.4，低于
+    out.append(_lw_case("journal-min-line-width-judged-after-scale", 0.5, m, scale=0.4))
+    m = _clean_manifest()
+    _el_with(m, "axes_0.lines_0", linestyle="None")  # 只画点：线宽是设置器，不判
+    out.append(_lw_case("journal-min-line-width-marker-only-line-skipped", 2.0, m))
+    bar_manifest = _clean_manifest()
+    bar_manifest["elements"] += [
+        _el("axes_0.barseries_0", "bar_series", linewidth=0.5, edgecolor="#000000"),
+        _el("axes_0.barseries_0.bar_0", "bar", linewidth=0.5, edgecolor="#000000"),
+        _el("axes_0.barseries_1", "bar_series", linewidth=1.0, edgecolor="none"),
+        _el("axes_0.barseries_1.bar_0", "bar", linewidth=1.0, edgecolor="none"),
+        _el("axes_0.scatter_0", "scatter", linewidth=0.5, edgecolor="#000000"),
+        _el("axes_0.fill_0", "fill", linewidth=0.5, edgecolor="#000000"),
+        _el("axes_0.errorbar_0", "errorbar", linewidth=0.5),
+        _el("axes_0.linecoll_0", "linecoll", linewidth=0.5),
+        _el("axes_0.annotation_0", "arrow_patch", linewidth=0.5),
+    ]
+    for e in bar_manifest["elements"]:  # 两条折线先放粗，只看后加的图元
+        if e["gid"] in ("axes_0.lines_0", "axes_0.lines_1"):
+            e["editable"][0]["value"] = 3.0
+    out.append(_lw_case("journal-min-line-width-bar-scatter-errorbar-linecoll", 2.0, bar_manifest))
+    m = _clean_manifest()  # 隐藏的细线不在导出里：不报
+    _el_with(m, "axes_0.lines_0", visible=False)
+    out.append(_lw_case("journal-min-line-width-hidden-line-skipped", 2.0, m))
+
+    # 9k. V-001 对数轴上有 ≤ 0 的值（`log-axis-nonpositive`）：事实只读 axes 元素的 `scale_domain`
+    #     （`engine/manifest.scale_domain`）。那一维 `status == "ok"` 且两个计数之和 > 0 才报；
+    #     超预算 / 量不了 / 缺 status / 计数不是非负整数一律不判。每个（axes, 维）一次命中，x 先于 y，
+    #     最糟（合计最大）的那次决定 detail。三张 severity 表都是 warn（漏登记会兜底成 warn，
+    #     所以 severity 本身测不出漏登记——那一条由 `tests/test_preflight.py` 直接读表看护）
+    def _log_case(name: str, domains: dict, *, profile_id: str = "lab-publication-v1") -> dict:
+        m = _clean_manifest()
+        for gid, domain in domains.items():
+            el = next((e for e in m["elements"] if e["gid"] == gid), None)
+            if el is None:
+                el = _el(gid, "axes")
+                m["elements"].append(el)
+            el["scale_domain"] = domain
+        return {"name": name, "profile_id": profile_id, "spec": _spec([_panel("p1", manifest=m)])}
+
+    def _ok(points, low=0) -> dict:
+        return {"status": "ok", "nonpositive": points, "errorbar_low_nonpositive": low}
+
+    out.append(_log_case("log-axis-nonpositive-points", {"axes_0": {"y": _ok(2)}}))
+    out.append(_log_case("log-axis-errorbar-low-only", {"axes_0": {"y": _ok(0, 1)}}))
+    out.append(_log_case("log-axis-all-positive-no-report", {"axes_0": {"y": _ok(0, 0)}}))
+    out.append(
+        _log_case(
+            "log-axis-not-measured-no-report",
+            {
+                "axes_0": {
+                    # 超预算却带着计数：不许冒充判过
+                    "x": {"status": "over_budget", "nonpositive": 5},
+                    "y": {"status": "unavailable", "nonpositive": 3, "errorbar_low_nonpositive": 1},
+                }
+            },
+        )
+    )
+    out.append(
+        _log_case("log-axis-status-missing-no-report", {"axes_0": {"y": {"nonpositive": 3}}})
+    )
+    out.append(
+        _log_case(
+            "log-axis-bad-counts-no-report",
+            {
+                "axes_0": {
+                    "x": {"status": "ok", "nonpositive": 1.5, "errorbar_low_nonpositive": -2},
+                    "y": {"status": "ok", "nonpositive": "3", "errorbar_low_nonpositive": True},
+                }
+            },
+        )
+    )
+    out.append(_log_case("log-axis-integral-float-count", {"axes_0": {"y": _ok(2.0)}}))
+    out.append(_log_case("log-axis-not-a-dict-no-report", {"axes_0": {"y": [2, 0]}}))
+    out.append(
+        _log_case(
+            "log-axis-two-dims-two-axes",
+            {
+                "axes_0": {"x": _ok(1), "y": _ok(3, 1)},
+                "axes_1": {"y": _ok(2)},
+            },
+        )
+    )
+    m_case = _log_case("log-axis-hidden-axes-no-report", {"axes_0": {"y": _ok(2)}})
+    m_case["spec"]["panels"][0]["manifest"]["elements"][0]["editable"].append(
+        {"prop": "visible", "type": "bool", "value": False}
+    )
+    out.append(m_case)
+    out.append(
+        _log_case(
+            "log-axis-nonpositive-free-form", {"axes_0": {"y": _ok(2)}}, profile_id="free-form-v1"
+        )
+    )
+    out.append(
+        _log_case(
+            "log-axis-nonpositive-journal-base",
+            {"axes_0": {"y": _ok(2)}},
+            profile_id="journal-base-v1",
+        )
+    )
+
+    # 9l. V-002 线性轴上柱的共同基线被截掉（`bar-baseline-truncated`）：事实只读 axes 元素的 `bar_baseline`
+    #     （`engine/manifest.bar_baseline`，只有基线），范围与尺度从同一元素的 `[xy]lim` / `[xy]scale` 读。
+    #     那一维 `status == "ok"`、尺度**正是** linear、范围两个有限数且 lo < hi、基线落在闭区间外才报；
+    #     每个（axes, 维）一次命中，x 先于 y，截得最远的基线决定 detail，跨轴按「截掉的距离 / 跨度」比最糟。
+    #     message params 是 `_axis_num` ↔ `axisNum` 写出来的字符串，量级与正好一半的舍入在下面几条里各压一次
+    def _axes_el(gid: str, *, xlim=None, ylim=None, xscale=None, yscale=None) -> dict:
+        el = _el(gid, "axes")
+        for prop, value, typ in (
+            ("xlim", xlim, "pair"),
+            ("ylim", ylim, "pair"),
+            ("xscale", xscale, "enum"),
+            ("yscale", yscale, "enum"),
+        ):
+            if value is not None:
+                el["editable"].append({"prop": prop, "type": typ, "value": value})
+        return el
+
+    def _bar_case(name: str, axes: list[tuple[dict, dict]], *, profile_id="lab-publication-v1"):
+        m = _clean_manifest()
+        m["elements"] = [e for e in m["elements"] if e["gid"] != "axes_0"]
+        for el, facts in axes:
+            el["bar_baseline"] = facts
+            m["elements"].insert(0, el) if el["gid"] == "axes_0" else m["elements"].append(el)
+        return {"name": name, "profile_id": profile_id, "spec": _spec([_panel("p1", manifest=m)])}
+
+    def _bok(*entries) -> dict:
+        return {"status": "ok", "baselines": [{"value": v, "bars": n} for v, n in entries]}
+
+    def _vy(gid="axes_0", ylim=(4.0, 9.0), yscale="linear", **kw) -> dict:
+        return _axes_el(gid, ylim=list(ylim) if ylim is not None else None, yscale=yscale, **kw)
+
+    out.append(_bar_case("bar-baseline-cut-y", [(_vy(), {"y": _bok((0.0, 2))})]))
+    out.append(
+        _bar_case(
+            "bar-baseline-cut-x-barh",
+            [(_axes_el("axes_0", xlim=[4.0, 9.0], xscale="linear"), {"x": _bok((0.0, 3))})],
+        )
+    )
+    out.append(
+        _bar_case("bar-baseline-visible-no-report", [(_vy(ylim=(0.0, 8.4)), {"y": _bok((0.0, 2))})])
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-on-the-edge-no-report",
+            # 自动范围下 sticky edge 让下端恰好等于基线（闭区间）；统一的非 0 基线（指数柱 100）同理
+            [(_vy(ylim=(100.0, 150.0)), {"y": _bok((100.0, 4))})],
+        )
+    )
+    out.append(
+        _bar_case("bar-baseline-nonzero-cut", [(_vy(ylim=(120.0, 150.0)), {"y": _bok((100.0, 4))})])
+    )
+    out.append(
+        _bar_case("bar-baseline-inverted-lim", [(_vy(ylim=(9.0, 4.0)), {"y": _bok((0.0, 2))})])
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-above-the-top",
+            # 负值柱从 0 往下，范围却停在 -2：越过的是上端
+            [(_vy(ylim=(-9.0, -2.0)), {"y": _bok((0.0, 2))})],
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-nonlinear-or-missing-scale-no-report",
+            [
+                (_vy("axes_0", yscale="log"), {"y": _bok((0.0, 2))}),
+                (_vy("axes_1", yscale="symlog"), {"y": _bok((0.0, 2))}),
+                (_vy("axes_2", yscale="logit"), {"y": _bok((0.0, 2))}),
+                (_vy("axes_3", yscale="asinh"), {"y": _bok((0.0, 2))}),
+                (_vy("axes_4", yscale=None), {"y": _bok((0.0, 2))}),
+                (_vy("axes_5", ylim=None), {"y": _bok((0.0, 2))}),
+            ],
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-bad-lim-no-report",
+            [
+                (_vy("axes_0", ylim=(5.0, 5.0)), {"y": _bok((0.0, 2))}),
+                (_axes_el("axes_1", ylim=[4.0], yscale="linear"), {"y": _bok((0.0, 2))}),
+                (_axes_el("axes_2", ylim=[4.0, "9"], yscale="linear"), {"y": _bok((0.0, 2))}),
+                (_axes_el("axes_3", ylim=[True, 9.0], yscale="linear"), {"y": _bok((0.0, 2))}),
+            ],
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-not-measured-no-report",
+            [
+                (
+                    _vy("axes_0"),
+                    {"y": {"status": "over_budget", "baselines": [{"value": 0, "bars": 2}]}},
+                ),
+                (
+                    _vy("axes_1"),
+                    {"y": {"status": "unavailable", "baselines": [{"value": 0, "bars": 2}]}},
+                ),
+                (_vy("axes_2"), {"y": {"baselines": [{"value": 0, "bars": 2}]}}),
+                (_vy("axes_3"), {"y": [0, 2]}),
+                (_vy("axes_4"), []),
+            ],
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-bad-entries-no-report",
+            [
+                (_vy("axes_0"), {"y": {"status": "ok", "baselines": {"value": 0, "bars": 2}}}),
+                (
+                    _vy("axes_1"),
+                    {
+                        "y": {
+                            "status": "ok",
+                            "baselines": [
+                                {"value": "0", "bars": 2},
+                                {"value": True, "bars": 2},
+                                {"value": 0, "bars": 0},
+                                {"value": 0, "bars": 1.5},
+                                {"value": 0, "bars": True},
+                                {"bars": 2},
+                                [0, 2],
+                            ],
+                        }
+                    },
+                ),
+                (_vy("axes_2"), {"y": {"status": "ok", "baselines": []}}),
+            ],
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-wrong-dim-no-report",
+            # 竖柱的事实只在 y：x 范围截不截与它无关
+            [
+                (
+                    _axes_el(
+                        "axes_0", xlim=[4.0, 9.0], xscale="linear", ylim=[0.0, 9.0], yscale="linear"
+                    ),
+                    {"y": _bok((0.0, 2))},
+                )
+            ],
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-worst-wins",
+            [
+                # 同一维两个基线：截得最远的（0，离 120 有 120）决定 detail
+                (_vy("axes_0", ylim=(120.0, 200.0)), {"y": _bok((100.0, 1), (0.0, 3))}),
+                # 另一根轴截得比例更大（(9 - 0) / 1 = 9 倍跨度 vs 1.5 倍）：它决定整条的 detail
+                (_vy("axes_1", ylim=(9.0, 10.0)), {"y": _bok((0.0, 2))}),
+                (_axes_el("axes_2", xlim=[1.0, 2.0], xscale="linear"), {"x": _bok((0.0, 5))}),
+            ],
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-hidden-axes-no-report",
+            [(_axes_el("axes_0", ylim=[4.0, 9.0], yscale="linear"), {"y": _bok((0.0, 2))})],
+        )
+    )
+    out[-1]["spec"]["panels"][0]["manifest"]["elements"][0]["editable"].append(
+        {"prop": "visible", "type": "bool", "value": False}
+    )
+    for i, (lim, base) in enumerate(
+        (
+            ((123456.7, 1e7), 0.0),
+            ((1e-7, 3e-7), 0.0),
+            ((0.1 + 0.2, 0.9), 0.0),
+            ((1000.5, 2000.0), 12345.5),
+            ((2.0005, 3.0), 0.0),
+            ((-0.0000004, -0.0000001), 0.0),
+        )
+    ):
+        out.append(
+            _bar_case(f"bar-baseline-number-format-{i}", [(_vy(ylim=lim), {"y": _bok((base, 1))})])
+        )
+    out.append(
+        _bar_case(
+            "bar-baseline-free-form",
+            [(_vy(), {"y": _bok((0.0, 2))})],
+            profile_id="free-form-v1",
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-journal-base",
+            [(_vy(), {"y": _bok((0.0, 2))})],
+            profile_id="journal-base-v1",
+        )
+    )
+
     # 10. free-form profile：同一份输入，等级整体降一档（severity 表说了算）。
     #     4pt 才低于它的 6pt 下限——同样一张图在严格 profile 下是 error。
     m = _clean_manifest()

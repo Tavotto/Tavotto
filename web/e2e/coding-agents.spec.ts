@@ -2,7 +2,29 @@ import AxeBuilder from '@axe-core/playwright'
 import { expect, test } from './fixtures'
 import { lowContrastNodes as sharedLowContrastNodes } from './contrast'
 import { horizontalOffenders } from './overflow'
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
+
+/**
+ * 把「高级」折叠展开，直到执行器清单可见（老后端没有这块折叠，`count()` 为 0 就原样往下走，这是导航，不是断言）。
+ * 每一步都带短超时：某次点击落在刚被重新挂载的元素上时，快速失败让 toPass 重试，而不是烧满 180 秒用例超时。
+ */
+async function expandAgentList(dialog: Locator) {
+  await expect(async () => {
+    const adv = dialog.locator('[data-connect-advanced]')
+    if ((await adv.count()) > 0 && (await adv.getAttribute('open')) === null) {
+      await adv.locator('> summary').click({ timeout: 5_000 })
+    }
+    await expect(dialog.locator('[data-agent-section="in-app"]')).toBeVisible({ timeout: 2_000 })
+  }).toPass({ timeout: 30_000 })
+}
+
+/** 需要清单的每一次交互都走这里：先重新展开，再做动作；动作失败（元素被重挂载）整段重试。 */
+async function withAgentList(dialog: Locator, act: () => Promise<void>) {
+  await expect(async () => {
+    await expandAgentList(dialog)
+    await act()
+  }).toPass({ timeout: 45_000 })
+}
 
 /**
  * 设置 → 编码 Agent 的黄金路径（真浏览器，真后端探测）。
@@ -30,17 +52,12 @@ async function openAgentSettings(page: Page, baseURL: string) {
   // 分区 id 是持久化格式的一部分（AiPanel 的「打开设置」按它跳转），
   // 比导航项上那句会被改名的文案稳得多
   await dialog.getByRole('navigation').locator('[data-section="ai"]').click()
-  // 「连接 AI」视图（后端给了 vendors / connections）下，执行器清单与诊断收在页底「高级」里：
-  // 先展开它。capabilities 是异步到的：探测回来之前页面按「老后端」渲染（执行器清单直接可见），回来后整块换成连接视图，
-  // 清单被收进**重新挂载、默认收起**的「高级」折叠。所以不能数一次就走——重试到「高级」展开（或确认是老后端）
-  // 且执行器清单真的可见为止（老后端没有这块，`count()` 为 0 就原样往下走，这是导航，不是断言）
-  await expect(async () => {
-    const adv = dialog.locator('[data-connect-advanced]')
-    if ((await adv.count()) > 0 && (await adv.getAttribute('open')) === null) {
-      await adv.locator('> summary').click()
-    }
-    await expect(dialog.locator('[data-agent-section="in-app"]')).toBeVisible({ timeout: 1_000 })
-  }).toPass({ timeout: 30_000 })
+  // 展开「高级」并确认清单可见：capabilities 会在 1 秒内刷新多次（Windows 打包版实测 3 次），
+  // 每次刷新都可能重新挂载「连接 AI」视图、「高级」回到默认收起。所以先等清单稳住，
+  // 再由 `withAgentList` 在每次需要清单的交互前重新展开
+  await expandAgentList(dialog)
+  await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {})
+  await expandAgentList(dialog)
   return dialog
 }
 
@@ -65,9 +82,11 @@ test('编码 Agent：列表 → 详情 → 返回，状态与滚动都还在', a
 
   // 行主体点进详情
   const row = dialog.locator('[data-agent-open="codex"]')
-  await expect(row).toBeVisible()
-  await row.click()
-  await expect(dialog.locator('[data-agent-detail="codex"]')).toBeVisible()
+  await withAgentList(dialog, async () => {
+    await expect(row).toBeVisible({ timeout: 5_000 })
+    await row.click({ timeout: 5_000 })
+    await expect(dialog.locator('[data-agent-detail="codex"]')).toBeVisible({ timeout: 5_000 })
+  })
   // 头部常驻的**只有状态**（2026-09-15 全面打磨 D20：版本号在它旁边，「最近检测」
   // 不再在这里重复第三遍）；「来源 / 可执行文件 / 上次检测」收进高级设置的「概览」折叠。
   await expect(dialog.locator('[data-agent-field="state"]')).toBeVisible()
@@ -106,7 +125,7 @@ test('编码 Agent：开关是独立控件，不会顺手打开详情', async ({
   const dialog = await openAgentSettings(page, a.baseURL)
 
   const toggle = dialog.getByRole('switch').first()
-  await expect(toggle).toBeVisible()
+  await withAgentList(dialog, () => expect(toggle).toBeVisible({ timeout: 5_000 }))
   // 嵌套交互元素：任何 button 里都不该再有 button（HTML 非法，键盘行为不可预期）
   expect(await dialog.locator('button button').count()).toBe(0)
 
@@ -126,9 +145,9 @@ test('编码 Agent：重新检测有播报，且不发生布局跳动', async ({
   // 量的必须是**同一个东西**：`ul` 的第一个在探测没回来时是骨架屏、回来之后
   // 才是真列表，那样量到的是两个元素，不是同一块内容有没有跳。
   const list = dialog.locator('[data-agent-section="in-app"] ul')
-  await expect(list).toBeVisible({ timeout: 30_000 })
+  await withAgentList(dialog, () => expect(list).toBeVisible({ timeout: 5_000 }))
   const before = await list.boundingBox()
-  await dialog.locator('[data-agent-rescan]').click()
+  await dialog.locator('[data-agent-rescan]').click({ timeout: 15_000 })
   await expect(dialog.locator('[data-agent-last-checked]')).toBeVisible({ timeout: 30_000 })
   const after = await list.boundingBox()
   // **先证明两次都真的量到了。** `boundingBox()` 量不到时返回 null，原先那句
@@ -154,8 +173,10 @@ test('编码 Agent：1024×768 窄窗口不横向溢出', async ({ app, page }) 
   expect(await horizontalOffenders(page, '[role="dialog"]')).toEqual([])
 
   // 详情页同样：长路径靠省略，不把面板撑开
-  await dialog.locator('[data-agent-open]').first().click()
-  await expect(dialog.locator('[data-agent-detail]')).toBeVisible()
+  await withAgentList(dialog, async () => {
+    await dialog.locator('[data-agent-open]').first().click({ timeout: 5_000 })
+    await expect(dialog.locator('[data-agent-detail]')).toBeVisible({ timeout: 5_000 })
+  })
   expect(await horizontalOffenders(page, '[role="dialog"]')).toEqual([])
 })
 
@@ -177,8 +198,10 @@ test('编码 Agent：axe 无 critical/serious 违规（列表与详情各一次�
   expect(await sharedLowContrastNodes(page, '[role="dialog"]')).toEqual([])
 
   // 详情页：概览、模型服务单选、两个折叠区
-  await dialog.locator('[data-agent-open]').first().click()
-  await expect(dialog.locator('[data-agent-detail]')).toBeVisible()
+  await withAgentList(dialog, async () => {
+    await dialog.locator('[data-agent-open]').first().click({ timeout: 5_000 })
+    await expect(dialog.locator('[data-agent-detail]')).toBeVisible({ timeout: 5_000 })
+  })
   for (const d of await dialog.locator('details').all()) {
     await d.locator('summary').click()
   }

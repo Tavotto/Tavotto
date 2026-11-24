@@ -17,6 +17,8 @@ import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { isRightOverlay, useUiStore } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspace'
+import { useIsolationStore, validPath } from '@/store/isolationStore'
+import { exitAllGroups } from '@/store/groupActions'
 import type { PanelObject } from '@/types/document'
 
 /**
@@ -60,15 +62,22 @@ export function WorkspaceContextBar() {
   )
   const editingHere = !!panel && elementPanelId === panel.id
   const manifest = usePanelDisplayManifest(editingHere ? panel : null)
-  if (!panel || dataDraftActive) return null
+  // 组内编辑（ADR 0191）也是「我在改哪一层」：同一条浮条说，出口是「退出组内编辑」（Esc 退一层）
+  const isoPath = useIsolationStore((s) => s.path)
+  const objects = useDocumentStore((s) => s.doc.objects)
+  const isolating = !editingHere && validPath(isoPath, objects).length > 0
+  if (dataDraftActive) return null
+  if (!panel && !isolating) return null
 
-  const name = panel.name ?? panel.fileId
-  const editable = !!panel.script
+  const name = panel ? (panel.name ?? panel.fileId) : null
+  const editable = !!panel?.script
   const gid = editingHere ? selectedGids.at(-1) : undefined
   const element = gid ? manifest?.elements.find((e) => e.gid === gid) : undefined
   // 图内编辑里没选元素时，当前对象就是「整张图」（右栏头部也这么写）：面包屑
   // 只剩图名的话，「现在改的是图内还是排版」这一层就没了（2026-09-13 审计 B43）
-  const objectCrumb = !editingHere
+  const objectCrumb = isolating
+    ? t('isolation.label')
+    : !editingHere
     ? null
     : selectedGids.length > 1
       ? translate('elementsSelected', { ns: 'inspector', count: selectedGids.length })
@@ -83,9 +92,15 @@ export function WorkspaceContextBar() {
    * 与 `useKeyboard` 里 Esc 的最后一层同一件事。单图编辑里没在图内编辑就没有出口（没有排版可回）
    */
   const back = () => {
+    if (isolating) {
+      exitAllGroups()
+      return
+    }
+    if (!panel) return
     useUiStore.getState().setElementPanel(null)
     useSelectionStore.getState().set([panel.id])
   }
+  const hasExit = isolating || editingHere || !fastEdit
 
   return (
     <div
@@ -108,7 +123,7 @@ export function WorkspaceContextBar() {
         // 是多行浮动面板 = 圆角 12
         className={cn(
           'pointer-events-auto flex w-max min-w-0 max-w-full flex-col gap-1 bg-surface p-1 text-sm text-ink shadow-pop',
-          fastEdit && !editable ? 'rounded-lg' : 'rounded-full',
+          fastEdit && !editable && !isolating ? 'rounded-lg' : 'rounded-full',
         )}
       >
         {/* 单行：出口按钮 + 面包屑。浮条按内容量宽，这一行默认正好装下，
@@ -123,12 +138,12 @@ export function WorkspaceContextBar() {
           <div
             className={cn(
               'flex min-w-0 flex-auto items-center gap-1 pe-3',
-              !(editingHere || !fastEdit) && 'ps-3',
+              !hasExit && 'ps-3',
             )}
           >
             {/* `data-exit-element-edit`：图内编辑态的**唯一**退出入口——e2e 拿它判「进了
                 图内编辑」，属性页的「编辑图内元素」按钮进编辑后把焦点交到这里。单图编辑且不在图内编辑时没有它 */}
-            {(editingHere || !fastEdit) && (
+            {hasExit && (
               <>
                 <Button
                   size="md"
@@ -136,13 +151,14 @@ export function WorkspaceContextBar() {
                   className="shrink-0 whitespace-nowrap"
                   data-context-back
                   data-exit-element-edit={editingHere ? '' : undefined}
-                  title={t('stage.exitTitle')}
+                  data-exit-isolation={isolating ? '' : undefined}
+                  title={isolating ? t('isolation.exitTip') : t('stage.exitTitle')}
                   onClick={back}
                 >
                   <ArrowLeft size={ICON_SIZE.sm} />
-                  {fastEdit ? t('stage.exitElementEdit') : t('stage.backToCanvas')}
+                  {isolating ? t('isolation.exit') : fastEdit ? t('stage.exitElementEdit') : t('stage.backToCanvas')}
                   {/* 键位提示只有一种：`ui/Kbd`（宪法第十三节）。此前是钮内一段手写 mono */}
-                  {editingHere && <Kbd>{translate('keycap.esc')}</Kbd>}
+                  {(editingHere || isolating) && <Kbd>{translate('keycap.esc')}</Kbd>}
                 </Button>
                 <Sep />
               </>
@@ -151,14 +167,18 @@ export function WorkspaceContextBar() {
               aria-label={t('stage.crumbsLabel')}
               className="type-body flex min-w-0 flex-1 items-center gap-1"
             >
-              <li className="min-w-0 truncate font-medium text-ink" title={name}>
-                {name}
-              </li>
+              {name && (
+                <li className="min-w-0 truncate font-medium text-ink" title={name}>
+                  {name}
+                </li>
+              )}
               {objectCrumb && (
                 <>
-                  <li aria-hidden className="shrink-0 text-ink-faint">
-                    /
-                  </li>
+                  {name && (
+                    <li aria-hidden className="shrink-0 text-ink-faint">
+                      /
+                    </li>
+                  )}
                   <li
                     className="min-w-0 truncate text-ink-2"
                     data-context-object
@@ -173,7 +193,7 @@ export function WorkspaceContextBar() {
         </div>
 
         {/* 进不了图内编辑时诚实说明，并给出下一步——**不画成错误** */}
-        {fastEdit && !editable && (
+        {fastEdit && panel && !editable && !isolating && (
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border pt-0.5 text-ink-2">
             <span className="min-w-0 flex-1 basis-40 truncate">
               {capability

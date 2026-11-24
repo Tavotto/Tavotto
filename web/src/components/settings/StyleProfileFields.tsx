@@ -101,9 +101,9 @@ export const STYLE_TEXT_ROWS: readonly TextRowSpec[] = [
 ]
 
 /** 数字格的值域与步长（按属性；与面板的步长同一档：字号 0.5、线宽类 0.05） */
-const NUMBER_SPEC: Record<string, { min: number; max: number; step: number }> = {
-  fontsize: { min: 3, max: 72, step: 0.5 },
-  sizePt: { min: 3, max: 72, step: 0.5 },
+export const NUMBER_SPEC: Record<string, { min: number; max: number; step: number }> = {
+  fontsize: { min: 3, max: 200, step: 0.5 },
+  sizePt: { min: 3, max: 200, step: 0.5 },
   linewidth: { min: 0.1, max: 10, step: 0.05 },
   spine_linewidth: { min: 0.1, max: 10, step: 0.05 },
   length: { min: 0, max: 20, step: 0.5 },

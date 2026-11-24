@@ -381,6 +381,84 @@ def _to_frac(points: np.ndarray, W: float, H: float) -> list:
     return np.round(a, _ND).tolist()
 
 
+def collection_uses_offsets(coll) -> bool:
+    """集合的落位是不是由 offsets 决定（散点：每个点一个 offset、路径是 marker 形状）。
+
+    `LineCollection` / `PatchCollection` 不传 offsets 时 matplotlib 给一行 (0, 0) 占位，位置
+    全在路径顶点里——与 manifest 的数据指纹同一条判据。"""
+    offs = coll.get_offsets()
+    if offs is None or not len(offs):
+        return False
+    return not (len(offs) == 1 and not np.any(np.asarray(offs, dtype=float)))
+
+
+def layout_extent(artist):
+    """按 transform 平移拖动的元素（集合、子图里的位图）此刻落在哪：display 像素的 Bbox，量不出 None。
+
+    拖动的锚点（manifest）与平移量（`overrides._place_translated`）**同一把尺**，否则第一次拖动就
+    跳一格。集合的 `get_window_extent()` 在 transform 不含 transData 时是 ±inf，不能用：offsets
+    决定落位的量 offset 点，否则量路径顶点（贝塞尔控制点也算在内，略大于墨迹，两侧一致即可）。"""
+    if isinstance(artist, Collection):
+        try:
+            if collection_uses_offsets(artist):
+                pts = artist.get_offset_transform().transform(
+                    np.asarray(artist.get_offsets(), dtype=float)
+                )
+            else:
+                tr = artist.get_transform()
+                parts = [tr.transform(p.vertices) for p in artist.get_paths() if len(p.vertices)]
+                if not parts:
+                    return None
+                pts = np.concatenate(parts)
+        except Exception:  # noqa: BLE001
+            return None
+        pts = pts[np.isfinite(pts).all(axis=1)]
+        if not len(pts):
+            return None
+        lo, hi = pts.min(axis=0), pts.max(axis=0)
+        return Bbox.from_extents(lo[0], lo[1], hi[0], hi[1])
+    try:
+        bb = artist.get_window_extent()
+    except Exception:  # noqa: BLE001
+        return None
+    if not np.all(np.isfinite([bb.x0, bb.y0, bb.x1, bb.y1])):
+        return None
+    return bb
+
+
+def layout_ink_extent(artist):
+    """选中框用：`layout_extent` 再算上散点 marker 自己的大小（display 像素）。
+
+    拖动的锚点仍是 `layout_extent`（offset 点，与 setter 同一把尺）；只有一个点的散点（手画图例点
+    最常见的写法）offset 范围是零面积，单拿它当选中框会被当成「量不出」、退回整块子图。"""
+    bb = layout_extent(artist)
+    if bb is None or not isinstance(artist, Collection) or not collection_uses_offsets(artist):
+        return bb
+    # marker 的像素大小在逐点变换 `get_transforms()` 里（`set_sizes` 写的 √s·dpi/72 缩放矩阵），
+    # 整体 transform 只是接在后面的仿射——与 `_marker_subpaths` 同一个渲染顺序
+    try:
+        master = artist.get_transform()
+        if not master.is_affine:
+            return bb
+        m = np.asarray(master.get_matrix(), dtype=float)
+        per = np.asarray(artist.get_transforms(), dtype=float).reshape(-1, 3, 3)
+        if not len(per):
+            per = np.eye(3)[None]
+        verts = [np.asarray(p.vertices, dtype=float) for p in artist.get_paths() if len(p.vertices)]
+    except Exception:  # noqa: BLE001
+        return bb
+    if not verts:
+        return bb
+    v = np.concatenate(verts)
+    stamped = np.einsum("nij,kj->nki", per[:, :2, :2], v) + per[:, None, :2, 2]
+    pts = stamped.reshape(-1, 2) @ m[:2, :2].T + m[:2, 2]
+    pts = pts[np.isfinite(pts).all(axis=1)]
+    if not len(pts):
+        return bb
+    lo, hi = pts.min(axis=0), pts.max(axis=0)
+    return Bbox.from_extents(bb.x0 + lo[0], bb.y0 + lo[1], bb.x1 + hi[0], bb.y1 + hi[1])
+
+
 def root_figure(fig):
     """`artist.get_figure()` 在 SubFigure 里的 axes 上回的是那个 **SubFigure**；而 manifest
     的 W / H、anchor、pos_frac 全按**根 Figure** 算。拿子图幅的 bbox 去换算 figure 分数，

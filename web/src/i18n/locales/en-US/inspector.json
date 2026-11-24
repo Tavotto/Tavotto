@@ -14,7 +14,7 @@
   },
   "alignRef": {
     "page": "Canvas",
-    "primary": "Last selected",
+    "primary": "Key object",
     "selection": "Selection"
   },
   "arrange": {
@@ -77,7 +77,22 @@
     "zDown": "Send backward",
     "zTop": "Bring to front",
     "zUp": "Bring forward",
-    "zorderLabel": "Layer"
+    "zorderLabel": "Layer",
+    "pathfinderLabel": "Pathfinder",
+    "arrayLabel": "Repeat",
+    "arrayKind": "Mode",
+    "arrayGrid": "Grid",
+    "arrayRadial": "Radial",
+    "arrayRowsCols": "Rows · columns",
+    "arrayRows": "Rows",
+    "arrayCols": "Columns",
+    "arrayCountRadius": "Copies · radius",
+    "arrayCount": "Copies (incl. original)",
+    "arrayRadius": "Radius",
+    "arrayRotate": "Rotate copies",
+    "arrayMake_one": "Make {{count}} copy",
+    "arrayMake_other": "Make {{count}} copies",
+    "arrayTooMany": "At most {{max}} copies at once"
   },
   "assistantRunningTip": "Assistant is running",
   "autoHideAria": "Right panel auto-hides; click to pin it",
@@ -665,7 +680,17 @@
     "toggleBold": "Toggle bold",
     "toggleItalic": "Toggle italic",
     "toggleUnderline": "Toggle underline",
-    "transformCase": "Change letter case"
+    "transformCase": "Change letter case",
+    "setStarRatio": "Change inner radius",
+    "setMiterLimit": "Change miter limit",
+    "setDashPattern": "Change custom dash",
+    "setStrokeAlign": "Change stroke alignment",
+    "setFillRule": "Change fill rule",
+    "setGradientKind": "Change paint type",
+    "setGradient": "Edit gradient",
+    "flipPathText": "Flip text on path",
+    "pathTextStart": "Move text start",
+    "pathTextOffset": "Change text-on-path offset"
   },
   "lock": "Lock",
   "locked": "Locked",
@@ -1012,7 +1037,25 @@
     "start": "Start",
     "startSize": "Start size",
     "strokeColor": "Stroke",
-    "strokeOpacity": "Stroke opacity"
+    "strokeOpacity": "Stroke opacity",
+    "points": "Points",
+    "starRatio": "Inner radius",
+    "starRatioTip": "Distance of the inner points from the center, as a share of the outer points",
+    "miterLimit": "Miter limit",
+    "dashPattern": "Custom dash",
+    "dashPatternTip": "Dash and gap lengths in pt, separated by spaces, e.g. \"4 2\"; clear it to use the dash style above",
+    "dashPatternPlaceholder": "e.g. 4 2",
+    "alignRow": "Align stroke",
+    "align": {
+      "inside": "Inside",
+      "center": "Center",
+      "outside": "Outside"
+    },
+    "fillRuleRow": "Fill rule",
+    "fillRule": {
+      "nonzero": "Non-zero",
+      "evenodd": "Even-odd"
+    }
   },
   "summaryMarks": "{{count}} annotations",
   "summaryPanels": "{{count}} figures",
@@ -1191,7 +1234,33 @@
     "summary": "X {{x}} · Y {{y}} mm",
     "textHeightAuto": "Height follows the content",
     "textWidthAuto": "Vertical text: width follows the columns",
-    "title": "Position and size"
+    "title": "Position and size",
+    "refPoint": {
+      "label": "Reference point",
+      "tl": "Top left",
+      "t": "Top center",
+      "tr": "Top right",
+      "l": "Middle left",
+      "c": "Center",
+      "r": "Middle right",
+      "bl": "Bottom left",
+      "b": "Bottom center",
+      "br": "Bottom right"
+    },
+    "refPointTip": "Reference point: {{point}}. X / Y report this point; scale, rotate, skew and reflect keep it fixed",
+    "lockRatio": "Lock aspect ratio",
+    "ratioLocked": "Aspect ratio locked",
+    "ratioUnlocked": "Aspect ratio unlocked",
+    "rotationSkew": "Rotate · skew",
+    "skew": "Horizontal skew",
+    "skewTip": "Horizontal skew: shapes become paths",
+    "skewUnsupported": "Text and figures cannot be skewed",
+    "rotatePanelHint": "Rotate figures in 90° steps in the Figure section",
+    "reflectH": "Reflect horizontally",
+    "reflectV": "Reflect vertically",
+    "scaleStrokes": "Scale strokes and effects",
+    "scaleStrokesOn": "Stroke widths and corners scale with the object",
+    "scaleStrokesOff": "Stroke widths and corners stay the same when scaling"
   },
   "unlock": "Unlock",
   "unsupported": {
@@ -1343,5 +1412,56 @@
     "legendAria": "{{field}} – legend swatch that follows",
     "swatchN": "Swatch {{n}}",
     "followSwatch": "Recolour the “{{name}}” legend swatch too"
+  },
+  "pathfinder": {
+    "modes": "Shape modes",
+    "ops": "Path",
+    "offsetDistance": "Offset distance",
+    "offsetDistanceTip": "Positive grows outward, negative shrinks inward"
+  },
+  "gradient": {
+    "mixed": "Mixed",
+    "fillKind": "Fill type",
+    "strokeKind": "Stroke type",
+    "kindTip": "Solid, linear gradient or radial gradient",
+    "kind": {
+      "solid": "Solid",
+      "linear": "Linear",
+      "radial": "Radial"
+    },
+    "stopColor": "Stop {{n}} color",
+    "stopOffset": "Stop {{n}} position",
+    "stopOpacity": "Stop {{n}} opacity",
+    "stopOpacityTip": "Opacity of this stop",
+    "angle": "Gradient angle",
+    "angleTip": "0° runs left to right, counterclockwise",
+    "radiusTip": "Percent of the object’s longer side",
+    "stop": "Stop {{n}}",
+    "fillBar": "Fill gradient bar",
+    "strokeBar": "Stroke gradient bar",
+    "barTip": "Click an empty spot to add a stop; drag a stop down off the bar to remove it",
+    "reverse": "Reverse",
+    "fillCenter": "Fill center",
+    "fillCenterX": "Fill center X",
+    "fillCenterY": "Fill center Y",
+    "fillRadius": "Fill radius",
+    "strokeCenter": "Stroke center",
+    "strokeCenterX": "Stroke center X",
+    "strokeCenterY": "Stroke center Y",
+    "strokeRadius": "Stroke radius"
+  },
+  "pathText": {
+    "title": "Text on path",
+    "start": "Start",
+    "alignStart": "Start at the start point",
+    "alignCenter": "Center on the start point",
+    "alignEnd": "End at the start point",
+    "flip": "Flip to the other side",
+    "offset": "Offset",
+    "offsetTip": "Distance from the line to the baseline: 0 sits on the line, negative overlaps it; clear for auto",
+    "offsetAuto": "Auto {{value}}",
+    "offsetAutoBare": "Auto",
+    "offsetReset": "Auto",
+    "editPathTip": "Edit the text. To reshape its path, {{mod}}-double-click the text on the canvas"
   }
 }

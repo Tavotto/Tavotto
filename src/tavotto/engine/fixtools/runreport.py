@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 from ..agent_runner.wires import ToolResult
+from . import hints
 from .base import FixContext, err, home_relative, ok, shadow_note
 
 REPORT_MAX_CHARS = 8000
@@ -176,6 +178,34 @@ def _data_links_fact(ctx: FixContext) -> dict | None:
     }
 
 
+#: 工具名 → 档位；`fixtools/__init__` 建好注册表后填（本模块不 import 包本身，免得成环）
+TOOL_TIERS: dict[str, str] = {}
+#: 失败形状 → 「这台电脑上这样修好过」的一段（`engine/fixmemory.replay_text`，由包注入）；没注入 = 不带
+REPLAY: Callable[[str], str] | None = None
+
+
+def _replay(shape: str) -> str:
+    if not shape or REPLAY is None:
+        return ""
+    try:
+        return REPLAY(shape)
+    except Exception:  # noqa: BLE001 - 本机记录读不了就不带
+        return ""
+
+
+def tool_available(ctx: FixContext) -> callable:
+    """提示里能点名的工具：注册表里有、本会话的档位放行。"""
+    allowed = getattr(ctx, "allowed_tiers", frozenset())
+    return lambda name: TOOL_TIERS.get(name) in allowed
+
+
+def hint_of(report: object, ctx: FixContext) -> tuple[str, str, str] | None:
+    """(形状, 提示 id, 正文)；这次失败没有对症提示回 None（ADR 0197 第 1 层）。"""
+    shape = hints.shape_of_report(report)
+    got = hints.hint_for(shape, tool_available(ctx)) if shape else None
+    return (shape, *got) if got else None
+
+
 def project_run_report(report: dict | None, ctx: FixContext) -> ToolResult:
     """The same bounded projection for read_run_report and application try_run."""
     if not isinstance(report, dict):
@@ -187,6 +217,19 @@ def project_run_report(report: dict | None, ctx: FixContext) -> ToolResult:
         for k in ("phase", "outcome", "facts")
         if report.get(k) not in (None, "", [], {})
     }
+    # 对症提示放最前（报告被截断时它不跟着丢）：只是方向，会改东西的工具照常各自问用户
+    hint = hint_of(report, ctx)
+    if hint is not None:
+        picked = {"hint": {"for": hint[0], "id": hint[1], "next": hint[2]}, **picked}
+    # 本机修好过同一类失败（维护者 11-21 同意随提示发给所选 AI）：当参考数据给，紧跟提示；改动照常各自过批准
+    shape = hints.shape_of_report(report)
+    seen = _replay(shape)
+    if seen:
+        picked = {
+            **({"hint": picked.pop("hint")} if "hint" in picked else {}),
+            "fixed_before_here": seen,
+            **picked,
+        }
     result = report.get("result") or {}
     error = result.get("error") if isinstance(result, dict) else None
     error = error or report.get("error")

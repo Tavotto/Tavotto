@@ -1,5 +1,7 @@
 import type { ExportObject } from './api'
+import { isStrokeOnlyShape } from '@/types/document'
 import { buildExportRequest, type ExportRequestInput } from './exportRequest'
+import { readGradient } from './gradient'
 
 /**
  * EPS 与半透明（导出前提醒的判定，ADR 0174 后续）。
@@ -14,19 +16,35 @@ import { buildExportRequest, type ExportRequestInput } from './exportRequest'
  *   `stroke_opacity < 1` 且有描边（`stroke !== false`，line / brace 恒有）→ 描边 alpha；
  * - 箭头：`stroke_opacity < 1` → 整支箭头是透明组（`Group.opacity`）；
  * - 文字：颜色 / 底色 / 边框都没有 alpha，永远不算；
- * - 面板不进 `original.objects`（标注只有 text / arrow / shape）。
+ * - 路径：填充 `fill_opacity < 1` 且有填充；`stroke_opacity < 1` 且有描边（有端型时它是透明组，同样算）；
+ * - 面板不进 `original.objects`（标注只有 text / arrow / shape / path）。
+ * - 渐变（ADR 0186）：生效的填充 / 描边渐变里任一色标 opacity < 1，同样算。
  * `_unit()`：非有限数、布尔、≥ 1 都按不透明。
  */
 const translucent = (v: unknown): boolean =>
   typeof v === 'number' && Number.isFinite(v) && v < 1
 
+/** 渐变里有没有色标带透明（ADR 0186：后端 `ir.paint_translucent` 同一条——任一色标 alpha < 1） */
+const gradientTranslucent = (g: unknown): boolean => readGradient(g)?.stops.some((st) => st.opacity < 1) ?? false
+
 /** 这个标注对象里有没有 EPS 画不出的半透明 */
 export function isEpsTranslucent(o: ExportObject): boolean {
   if (o.type === 'arrow') return translucent(o.stroke_opacity)
+  if (o.type === 'path') {
+    // 路径（ADR 0185）：填充 alpha / 描边 alpha（有端型时是透明组，同样画不进 EPS）；渐变色标的透明同样算（ADR 0186）
+    const strokeOn = o.stroke !== false
+    return (
+      (!!o.fill && (translucent(o.fill_opacity) || gradientTranslucent(o.fill_gradient))) ||
+      (strokeOn && (translucent(o.stroke_opacity) || gradientTranslucent(o.stroke_gradient)))
+    )
+  }
   if (o.type === 'shape') {
-    const lineLike = o.shape === 'line' || o.shape === 'brace'
+    const lineLike = isStrokeOnlyShape(o.shape)
     const strokeOn = lineLike || o.stroke !== false
-    return (!lineLike && !!o.fill && translucent(o.fill_opacity)) || (strokeOn && translucent(o.stroke_opacity))
+    return (
+      (!lineLike && !!o.fill && (translucent(o.fill_opacity) || gradientTranslucent(o.fill_gradient))) ||
+      (strokeOn && (translucent(o.stroke_opacity) || gradientTranslucent(o.stroke_gradient)))
+    )
   }
   return false
 }

@@ -35,7 +35,8 @@ import { ThumbMathLine, ThumbRun } from '@/components/ThumbMathLine'
 import { canvasFontStack, effectiveCanvasFamily, WRITING_MODE_VERTICAL } from '@/lib/typography'
 import { MM_PER_PT } from '@/lib/units'
 import { ThumbShape } from '@/components/ThumbShape'
-import type { ArrowObject, PanelObject, ShapeObject, TextObject } from '@/types/document'
+import type { ArrowObject, PanelObject, PathObject, ShapeObject, TextObject } from '@/types/document'
+import { pathD, pathGeometry } from '@/lib/pathGeom'
 import type { ThumbObject, ThumbPage } from '@/types/thumb'
 
 /**
@@ -112,7 +113,7 @@ export function CanvasThumb({
    * 填色、描边色、线宽、虚线、旋转，取法与画布 `ArrowView` / `ShapeView` 同一套几何函数；层级就是对象顺序。
    * 不给 / 返回 null = 缩略图的示意画法（灰色外框线）：草图里没有这些字段，DOM 与不带这个 prop 之前逐字相同。
    */
-  exportedShape?: (o: ThumbObject) => ArrowObject | ShapeObject | null
+  exportedShape?: (o: ThumbObject) => ArrowObject | ShapeObject | PathObject | null
 }) {
   const { w, h } = page
   const byId = useAssetStore((s) => s.byId)
@@ -251,6 +252,11 @@ export function CanvasThumb({
             stroke: 'currentColor',
             strokeWidth: Math.max(w, h) / 150,
             className: 'text-paper-ink-3',
+          }
+          if ((o.type === 'path' || o.type === 'pathText') && Array.isArray(o.subpaths)) {
+            // 自由路径的示意：沿它自己的轮廓画一圈灰线（同一个 `pathGeometry`，不画端型、不填色）
+            const d = pathD(pathGeometry({ subpaths: o.subpaths }, o.w, o.h, 0).fill)
+            if (d) return <path key={key} {...common} d={d} transform={`translate(${o.x} ${o.y})`} />
           }
           if (o.type === 'shape' && o.shape === 'ellipse') {
             return <ellipse key={key} {...common} cx={o.x + o.w / 2} cy={o.y + o.h / 2} rx={o.w / 2} ry={o.h / 2} />

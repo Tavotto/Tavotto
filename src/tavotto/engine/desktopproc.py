@@ -120,6 +120,9 @@ class OwnedLaunch:
     cancelled: object | None = None
     #: Private exact-scope metadata observed by preparation; never argv or public state.
     input_declaration_state: dict | None = dataclasses.field(default=None, repr=False)
+    #: The approved input remap generation observed with that selection; None = unknown,
+    #: only the live table is compared.
+    input_remap_generation: int | None = dataclasses.field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         spec = self.spec
@@ -680,18 +683,6 @@ def start(
         raise RunError(runcodes.DESKTOP_RUN_LAUNCH_INVALID, reason="cwd 不是一个目录")
     if not os.path.isfile(spec.interpreter):
         raise RunError(runcodes.INTERPRETER_NOT_EXECUTABLE, interpreter=spec.interpreter)
-    try:
-        input_payload = declaredinputs.payload_for_native(
-            spec, expected_selection=launch.input_declaration_state
-        )
-    except declaredinputs.DeclaredInputsConflict:
-        raise
-    except declaredinputs.DeclaredInputsError as exc:
-        if launch.input_declaration_state is not None:
-            raise declaredinputs.DeclaredInputsConflict(
-                "Input declaration is no longer available for this launch"
-            ) from exc
-        input_payload = {}
     # 租约键 = 会话 id：每次启动唯一（launch_id + 随机后缀），不同所有者之间互相删不掉对方的租约
     # 完整 128 位随机（不截断）：同一 launch_id 反复复用时也不会生日碰撞回到旧目录 / 旧回执身份
     session_id = f"native-owned-{launch.launch_id}-{uuid.uuid4().hex}"
@@ -750,6 +741,25 @@ def start(
             base_env = launcher.activate_env(spec.interpreter, dict(os.environ))
         except launcher.LauncherUnavailable as exc:
             raise RunError(runcodes.CONDA_LAUNCHER_UNAVAILABLE, reason=str(exc)[:200]) from exc
+        # 声明批准的现表对照在**激活之后**取（Codex #1925 P1）：激活要跑 conda 与
+        # activate.d，期间改指表可以被动到——在这里取快照，激活窗口里删掉 / 换代的
+        # 规则到不了子进程的捕获握手。冲突仍照旧是计划冲突（只有刷新救得回来）；
+        # 资源缺失这类只降级成无捕获，照常启动。
+        try:
+            input_payload = declaredinputs.payload_for_native(
+                spec,
+                expected_selection=launch.input_declaration_state,
+                expected_remap_generation=launch.input_remap_generation,
+            )
+        except declaredinputs.DeclaredInputsConflict:
+            # The approval itself changed (selection revision or remap table): only
+            # a refresh fixes this, so it stays a plan conflict.
+            raise
+        except declaredinputs.DeclaredInputsError:
+            # Optional evidence: a moved or deleted resource is not a selection
+            # change, and refresh cannot fix it. The launch proceeds without a
+            # capture, exactly like the terminal and safe paths.
+            input_payload = {}
         relay = nativerelay.NativeRelay()
         argv = execspec.bridge_argv(
             spec,

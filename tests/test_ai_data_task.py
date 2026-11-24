@@ -289,6 +289,14 @@ def test_stem_choice_is_case_insensitive(project):
     assert ai_data_task.place(figs, "data/standard.csv").stem == "standard_figure_2"
 
 
+def test_the_51st_figure_of_the_same_data_still_gets_a_name(project):
+    """同一份数据画满 50 张之后第 51 张照样建得出来（名字 `_51`），不再是「同名太多」的死胡同。"""
+    m, client, figs, _ = project
+    stems = ["standard_figure"] + [f"standard_figure_{n}" for n in range(2, 51)]
+    discover.register(figs, "x.py", stems)
+    assert ai_data_task.place(figs, "data/standard.csv").stem == "standard_figure_51"
+
+
 # --------------------------------------------------------------------------- 写入口与 Task Core 的放行规则
 def test_create_script_never_overwrites_and_needs_the_guard(tmp_path):
     target = tmp_path / "new.py"

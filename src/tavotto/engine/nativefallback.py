@@ -26,9 +26,11 @@ from pathlib import Path
 
 from . import (
     desktopproc,
+    discover,
     execpolicy,
     execspec,
     figcapture,
+    launchscript,
     nativesession,
     pathignore,
     pool,
@@ -64,9 +66,34 @@ class Verdict:
     reason: str
 
 
-def decide(project: str, cause_code: str, *, python: str) -> Verdict:
-    """MCP 这一次打开（一次运行）里，safe 以 `cause_code` 收场后能不能换 native。纯判定，不起进程。"""
+def _native_entry(project: str, script: str, entry: str | None) -> tuple[str, str | None]:
+    """与桌面 `preparation.native_entry_for` 同一份判据（`discover.native_entry_of`）；算不出按原样跑整份模块。"""
+    try:
+        path = Path(project) / figcapture.normalize_relative_script(script)
+        return discover.native_entry_of(path, entry)
+    except Exception:  # noqa: BLE001 — 判不出就不改（原行为）
+        return discover.NATIVE_RUN_MODULE, None
+
+
+def decide(
+    project: str,
+    cause_code: str,
+    *,
+    python: str,
+    script: str | None = None,
+    entry: str | None = None,
+) -> Verdict:
+    """MCP 这一次打开（一次运行）里，safe 以 `cause_code` 收场后能不能换 native。纯判定，不起进程。
+
+    `script` / `entry`（ADR 0127 修订 2026-11-18）：safe 当时调的入口。原样运行够不到它（`unreachable`）就不回退，
+    与桌面同一个理由码 `plan_unavailable`。"""
     if not python:
+        return Verdict(False, execpolicy.REASON_PLAN_UNAVAILABLE)
+    if (
+        script
+        and not launchscript.source_for(project, script)
+        and _native_entry(project, script, entry)[0] == discover.NATIVE_ENTRY_UNREACHABLE
+    ):
         return Verdict(False, execpolicy.REASON_PLAN_UNAVAILABLE)
     ledger = execpolicy.AttemptLedger()
     ledger.begin_run()
@@ -196,6 +223,7 @@ def launch(
     run=None,
     heavy: bool = False,
     start=None,
+    entry: str | None = None,
 ) -> NativeWorker:
     """起一个真实 Python 跑 `script`，等它停在屏障上并 build 一次；返回 Worker-like 的 `NativeWorker`。
 
@@ -211,6 +239,12 @@ def launch(
         stdin=execspec.STDIN_NULL,
         env={"PYTHONUNBUFFERED": "1"},
         ignored_paths=pathignore.paths_for(root),
+        registered_entry=entry,  # ADR 0196：不给 = 整份脚本，判据照常
+        # 启动脚本（ADR 0194）优先：执行它的字节、身份仍是这个脚本；否则库式模块跑完模块再调函数入口（ADR 0127 修订 2026-11-18）
+        script_source=launchscript.source_for(root, script),
+        entry=None
+        if launchscript.source_for(root, script)
+        else _native_entry(root, script, entry)[1],
         **execspec.run_kwargs(run),
     )
     try:

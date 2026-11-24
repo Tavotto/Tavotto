@@ -94,6 +94,15 @@ class FixContext:
     on_ignored_paths_changed: Callable[[], None] | None = None
     #: 登记的入口被 `fix_entry` 纠正后 `(脚本项目相对路径) -> None`：应用侧据此刷新项目（重载注册表、作废旧 worker）。None = 没有应用
     on_registry_changed: Callable[[str], None] | None = None
+    #: 换运行参数 `(argv 元组) -> None`（`set_run_arguments`）：应用侧把这次修复的验证运行换到带这组参数的准备会话上。
+    #: 空元组 = 不带参数。None = 没有应用（测试 / 无界面），工具如实报做不了
+    on_run_arguments_changed: Callable[[tuple], None] | None = None
+    #: 这次修复的验证运行此刻用的参数（会话开始时取自准备会话；`set_run_arguments` / 回滚更新）。None = 不带参数
+    run_arguments: tuple | None = None
+    #: 本会话里 `set_run_arguments` 是否改过参数（修好后界面据此把参数填进「运行参数」再重跑）
+    run_arguments_changed: bool = False
+    #: 准备会话的运行参数被用户标成敏感（密码 / 令牌）：值不进上下文、不进快照，AI 不许改（只有用户在「运行参数」里改）
+    run_arguments_sensitive: bool = False
     #: 环境 id → 叠加环境（`list_environments` 登记；`select_environment` 记住环境时要带上）
     environment_overlays: dict[str, dict] = field(default_factory=dict)
     #: 本次调用的元信息：`run_tool` 每次调用前清空，工具写 `approved_by`（"user"）与 `snapshot`（快照 id），审计读它
@@ -118,6 +127,26 @@ class FixContext:
     #: 本次调用里用户对卡片的决定（`user` / `denied`），只给执行追踪用；`run_tool` 读完即清
     trace_wait_decision: str | None = None
     step: int = 0
+    #: 本会话里真正尝试过的改动次数（会改变执行的档、且没被策略挡下；`prepare_diagnostics` 的闸门读它）
+    changes_attempted: int = 0
+    #: 试运行记录（ADR 0197 第 1 层）：每次应用试运行一条 `{n, before, after, hint, changes}`，只有形状码与工具名，没有内容
+    attempts: list = field(default_factory=list)
+    #: 上一次试运行之后真做过的改动（工具名），下一次试运行把它们记进那一条
+    changes_since_try: list = field(default_factory=list)
+    #: 修复经过的内容（ADR 0197 第 4 条，维护者 11-19 裁决「总是收，脱敏后」）：每次工具调用返回给模型的文字（已过 `scrub`）
+    #: 的有界尾部，**只在内存**——不落盘（ADR 0149 §六 3），会话还在时诊断包才取得到
+    transcript: list = field(default_factory=list)
+    #: 本会话真做成的改动（种类, 真实参数）——会话以「修好」收尾时交给 `engine/fixmemory` 记在本机（ADR 0197 第 3 层·在线）。
+    #: 只在内存；记不记、记什么由 fixmemory 决定（敏感参数不记、像凭据的变量不记值）
+    fixes_made: list = field(default_factory=list)
+    #: 本会话启动脚本里认出过的凭据值：与 `fixes_made` 分开累积，被覆盖 / 回滚的改动丢了它们也还在（Codex #2100 P1），
+    #: 记住做法时其余字段照它抹。只在内存
+    fix_secrets: set = field(default_factory=set)
+    #: 本会话有哪一版启动脚本碰过凭据（`fixmemory.launcher_is_risky`）：碰过就不记运行参数与数据路径，覆盖 / 回滚后也不撤
+    fix_risky: bool = False
+    #: 会话开始时报告里的失败形状（`hints.shape_of_report`）：改动之后报告会被重置成「还没跑」，第一次试运行前读不到形状，
+    #: 试运行记录与「记住修好的做法」就以它为准（评测 11-23：设好参数再试运行，失败类型读成空，做法一条都没记）
+    first_shape: str = ""
     case_insensitive: bool | None = None
     extra_deny: list[Path] | None = None
 

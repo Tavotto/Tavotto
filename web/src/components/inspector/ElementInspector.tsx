@@ -257,7 +257,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
   const selIds = useSelectionStore((s) => s.ids)
   const docObjects = useDocumentStore((s) => s.doc.objects)
   const annotations = docObjects.filter(
-    (o) => selIds.includes(o.id) && (o.type === 'text' || o.type === 'arrow' || o.type === 'shape'),
+    (o) => selIds.includes(o.id) && (o.type === 'text' || o.type === 'arrow' || o.type === 'shape' || o.type === 'path' || o.type === 'pathText'),
   )
   const annEntries = annotationAlignEntries(panel, annotations)
   /**

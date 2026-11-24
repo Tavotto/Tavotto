@@ -94,6 +94,8 @@ export interface PublicationProfile {
   min_script_font_size_pt?: number | null
   advisories?: Advisory[]
   min_raster_dpi: number
+  /** 数据线最细线宽（pt，按最终有效值判）；缺席 / 0 = 不判。只有期刊覆盖会写，不进必填键 */
+  min_line_width_pt?: number
   preferred_formats: {
     vector: string[]
     raster: string[]
@@ -138,6 +140,7 @@ export interface JournalOverride {
   min_effective_font_size_pt?: number
   absolute_min_font_size_pt?: number
   min_raster_dpi?: number
+  min_line_width_pt?: number
   allowed_aspect_ratios?: AspectRatio[]
   line_widths_pt?: number[]
   page_columns?: PageColumnSpec[]
@@ -390,6 +393,10 @@ export function validateSpecShape(profile: unknown): string | null {
     if (!Array.isArray(p[k])) return `${k} 必须是数组`
   }
   if (!(p.line_widths_pt as unknown[]).every(isNumber)) return 'line_widths_pt 必须全是数字'
+  // 可选键：缺席 / null = 没规定；同源对 profiles.py `_validate`
+  if (p.min_line_width_pt != null && !isNumber(p.min_line_width_pt)) {
+    return 'min_line_width_pt 必须是数字或缺席'
+  }
   const fmts = p.preferred_formats as Record<string, unknown>
   for (const k of ['vector', 'raster', 'export_default']) {
     const v = fmts[k]

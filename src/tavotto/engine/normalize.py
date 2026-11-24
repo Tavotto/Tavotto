@@ -231,8 +231,31 @@ def protected_snapshot(manifest: dict) -> dict[str, dict]:
             "bbox": list(el.get("bbox") or []),
             "face": el.get("face"),
             "math_face": el.get("math_face"),
+            # 广播型别名「盖着谁」（manifest 的 `alias_covers`）：比对时别名本身不单独算受保护属性
+            "alias_covers": el.get("alias_covers") or {},
         }
     return out
+
+
+def _alias_explained(snap0: dict, snap1: dict, s0: dict, prop: str, ok_keys) -> bool:
+    """`prop` 是这个元素的广播型别名（如色条的 `tick_fontsize` 盖着两组刻度的 `fontsize`），而且它
+    盖着的项里**确实有改动、每一处改动都在允许集合里**：别名的值只是跟着它们变，不是另一处改动。
+    盖着的一项都没变、别名自己却变了，那就是另一处改动，照样报。真正的值在被盖的那几项上逐个比
+    ——越权改了照样当场报，这里只是不重复计一次。"""
+    covers = (s0.get("alias_covers") or {}).get(prop)
+    if not covers:
+        return False
+    moved = False
+    for tprop, gids in covers.items():
+        for tgid in gids:
+            a = (snap0.get(tgid) or {}).get("props", {}).get(tprop)
+            b = (snap1.get(tgid) or {}).get("props", {}).get(tprop)
+            if _same(a, b):
+                continue
+            if (tgid, tprop) not in ok_keys:
+                return False
+            moved = True
+    return moved
 
 
 def _rect_of(el: dict):
@@ -633,8 +656,11 @@ def compare(
             if role == "legend" and gid in relocated and prop in ("loc", "loc_frac", "loc_anchor"):
                 continue
             v1 = s1["props"][prop]
-            if not _same(v0, v1):
-                protected_changes.append({"gid": gid, "prop": prop, "before": v0, "after": v1})
+            if _same(v0, v1):
+                continue
+            if _alias_explained(snap0, snap1, s0, prop, ok_keys):
+                continue  # 别名跟着它盖着的合法改动变（#2081 走查：色条刻度字号整组回滚）
+            protected_changes.append({"gid": gid, "prop": prop, "before": v0, "after": v1})
 
     # ---- 字体真的落成了那张脸 ----
     font_unresolved = []

@@ -35,6 +35,10 @@ import {
   SquareMousePointer,
   Tags,
   Type,
+  Spline,
+  ArrowLeftRight,
+  Ban,
+  Pipette,
   Ungroup,
 } from '@/components/ui/icons'
 import type { ComponentType } from 'react'
@@ -46,6 +50,16 @@ import { keyOf } from '@/lib/keymap'
 import { useWorkspaceStore } from '@/store/workspace'
 import { canZoomToSelectionNow, fitStage, zoomToSelection } from '@/store/zoomToSelection'
 import { objectLabel } from '@/types/document'
+import { canConvertToPath } from '@/lib/convertToPath'
+import { PATH_COMMANDS } from '@/store/pathActions'
+import { APPEARANCE_COMMANDS } from '@/store/appearanceActions'
+import { PATHFINDER_COMMANDS } from '@/store/pathfinderActions'
+import { GROUP_COMMANDS } from '@/store/groupActions'
+import { canExplodeSvg, explodeSvgPanel } from '@/store/svgImportActions'
+import { canOutlineText, outlineSelectedText } from '@/store/textOutlineActions'
+import { canCopyAsSvg, copySelectionAsSvg } from '@/store/svgCopyActions'
+import { TRANSFORM_COMMANDS } from '@/store/transformActions'
+import { PATH_COMMAND_ICONS } from './pathCommandIcons'
 import { rankCommands, type PaletteSection } from '@/lib/commandRanking'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { cn } from '@/lib/utils'
@@ -54,14 +68,16 @@ import {
   addText,
   createLayoutGroup,
   enterElementEdit,
-  groupSelected,
   newBlankDocument,
   runManualSave,
   selectAll,
-  ungroupSelected,
+  convertToPath,
   startNamedNode,
   openTimeline,
 } from '@/store/actions'
+import { licenseHas, useLicenseStore } from '@/store/licenseStore'
+import { runQuickLayout } from '@/store/quickLayoutActions'
+import { readQuickLayoutPrefs } from '@/lib/quickLayoutPrefs'
 import { canCycleOverlapSelection, cycleOverlapSelection } from '@/canvas/interactions'
 import {
   ensureTutorialStatus,
@@ -180,9 +196,62 @@ const COMMANDS: Command[] = [
   { id: 'new-doc', run: () => void newBlankDocument() },
   { id: 'add-text', shortcut: keyOf('toolText'), run: () => void addText() },
   { id: 'sub-labels', run: addSubLabels },
+  // 高级功能：授权入口没出现 / 没解锁时不列（置灰是工具条的画法，命令面板里没有灰条目）
+  {
+    id: 'quick-layout',
+    available: () => licenseHas(useLicenseStore.getState().status, 'quick-layout'),
+    run: () => {
+      const { target, gapMm } = readQuickLayoutPrefs() // fixSpec 由 runQuickLayout 自己读同一份偏好
+      void runQuickLayout(target, gapMm)
+    },
+  },
   { id: 'select-all', shortcut: keyOf('selectAll'), run: selectAll },
-  { id: 'group', needsSelection: true, run: groupSelected },
-  { id: 'ungroup', needsSelection: true, run: ungroupSelected },
+  // 成组 / 取消成组 / 剪切蒙版（ADR 0191）：表在 `GROUP_COMMANDS`，右键菜单与快捷键读同一份
+  // 再次变换 / 镜像（ADR 0185 M4 第二批）：表在 `TRANSFORM_COMMANDS`
+  ...TRANSFORM_COMMANDS.map((c) => ({ id: c.id, shortcut: c.key ? keyOf(c.key) : undefined, needsSelection: true, available: c.available, run: c.run })),
+  ...GROUP_COMMANDS.map((c) => ({ id: c.id, shortcut: keyOf(c.key), needsSelection: true, available: c.available, run: c.run })),
+  // 路径编辑（ADR 0185 M1）：钢笔 / 编辑锚点 / 加删转换锚点——整张表来自 `PATH_COMMANDS`，右键菜单与快捷键读同一份
+  // 外观（ADR 0185 第二批）：D / ⇧X / / / I，表在 `APPEARANCE_COMMANDS`，快捷键读同一份
+  ...APPEARANCE_COMMANDS.map((c) => ({ id: c.id, shortcut: keyOf(c.key), available: c.available, run: c.run })),
+  ...PATH_COMMANDS.map((c) => ({
+    id: c.id,
+    shortcut: c.key ? keyOf(c.key) : undefined,
+    available: c.available,
+    run: c.run,
+  })),
+  // 路径查找器（ADR 0185 M2）：表在 `PATHFINDER_COMMANDS`，右键菜单、属性栏、快捷键读同一份。内核加载不了时这几条照样列，
+  // 点了只说一句（命令面板没有灰掉的样式）
+  ...PATHFINDER_COMMANDS.map((c) => ({
+    id: c.id,
+    shortcut: c.key ? keyOf(c.key) : undefined,
+    available: c.available,
+    run: c.run,
+  })),
+  // 复制为 SVG（ADR 0189）：判据 `canCopyAsSvg`，与右键菜单同一个
+  { id: 'copy-as-svg', needsSelection: true, available: canCopyAsSvg, run: () => void copySelectionAsSvg() },
+  // 文字转轮廓（ADR 0189）：判据 `canOutlineText`，与右键菜单、快捷键同一个
+  { id: 'outline-text', shortcut: keyOf('outlineText'), needsSelection: true, available: canOutlineText, run: () => void outlineSelectedText() },
+  // 静态 SVG 图拆成可编辑对象（ADR 0189）：判据 `canExplodeSvg`，与右键菜单同一个
+  {
+    id: 'explode-svg',
+    needsSelection: true,
+    available: () => {
+      const ids = useSelectionStore.getState().ids
+      return ids.length === 1 && canExplodeSvg(useDocumentStore.getState().doc.objects.find((o) => o.id === ids[0]))
+    },
+    run: () => void explodeSvgPanel(useSelectionStore.getState().ids[0]),
+  },
+  // 转为路径（ADR 0185）：判据与右键菜单同一个（`canConvertToPath`，选区里每个都能转才出现），写入只有 `convertToPath`
+  {
+    id: 'convert-to-path',
+    needsSelection: true,
+    available: () => {
+      const ids = useSelectionStore.getState().ids
+      const objs = useDocumentStore.getState().doc.objects.filter((o) => ids.includes(o.id))
+      return objs.length > 0 && objs.every(canConvertToPath)
+    },
+    run: () => convertToPath(useSelectionStore.getState().ids),
+  },
   { id: 'layout-row', needsSelection: true, run: () => createLayoutGroup('row') },
   { id: 'layout-col', needsSelection: true, run: () => createLayoutGroup('col') },
   { id: 'layout-grid', needsSelection: true, run: () => createLayoutGroup('grid') },
@@ -255,9 +324,16 @@ const COMMAND_ICONS: Record<string, ComponentType<{ size?: number; className?: s
   'new-doc': Plus,
   'add-text': Type,
   'sub-labels': Tags,
+  'quick-layout': LayoutGrid,
   'select-all': ListChecks,
   group: Group,
   ungroup: Ungroup,
+  'convert-to-path': Spline,
+  ...PATH_COMMAND_ICONS,
+  'default-appearance': RotateCcw,
+  'swap-fill-stroke': ArrowLeftRight,
+  'clear-fill': Ban,
+  'eyedropper-tool': Pipette,
   'layout-row': AlignHorizontalDistributeCenter,
   'layout-col': AlignVerticalDistributeCenter,
   'layout-grid': LayoutGrid,
@@ -297,6 +373,11 @@ export function CommandPalette() {
   const sampleStatus = useTutorialStore((s) => s.status)
   // 「缩放到选中」的可用判据看的是选区里**可见**的对象：隐藏 / 换选不一定改 ids 的长度
   const docObjects = useDocumentStore((s) => s.doc.objects)
+  // 「一键排版」在授权解锁时才列：状态变了要重算；没问过就问一次
+  const licenseStatus = useLicenseStore((s) => s.status)
+  useEffect(() => {
+    if (open && useLicenseStore.getState().status === null) void useLicenseStore.getState().load()
+  }, [open])
   const selectionIds = useSelectionStore((s) => s.ids)
   // ……也看工作区模式：快速编辑里只认正在编辑的那张图（`zoomToSelection.selectionBoxOf`）
   const fastEditPanelId = useWorkspaceStore((s) => s.activePanelId)
@@ -342,9 +423,9 @@ export function CommandPalette() {
         })
       : pool
     return rankCommands(hit, { hasSelection, recent })
-    // `onboardingStatus` / `projectPhase` / `sampleStatus` / `docObjects` / `selectionIds` / `fastEditPanelId` 是让 memo 在状态变化时重算的信号，不是入参
+    // `onboardingStatus` / `projectPhase` / `sampleStatus` / `docObjects` / `selectionIds` / `fastEditPanelId` / `licenseStatus` 是让 memo 在状态变化时重算的信号，不是入参
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, hasSelection, recent, t, onboardingStatus, projectPhase, sampleStatus, docObjects, selectionIds, fastEditPanelId])
+  }, [q, hasSelection, recent, t, onboardingStatus, projectPhase, sampleStatus, docObjects, selectionIds, fastEditPanelId, licenseStatus])
   const matches = useMemo(() => sections.flatMap((s) => s.items), [sections])
   const showHeaders = !q
 

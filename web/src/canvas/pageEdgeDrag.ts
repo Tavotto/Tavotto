@@ -2,7 +2,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import { msg, type UiMessage } from '@/i18n'
 import { columnName, resolvePageColumns, type PageColumn } from '@/lib/pageColumns'
 import { resizePageEdge, type PageEdge } from '@/lib/pageEdgeResize'
-import { applyPageSize } from '@/store/actions'
+import { applyPageSize, markPageUserSized } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
@@ -70,9 +70,10 @@ export function startPageEdgeResize(e: ReactPointerEvent, edge: PageEdge) {
         columns,
         noSnap: ev.altKey,
       })
-      store.txnUpdate((d) =>
-        applyPageSize(d, res.w, res.h, { x: res.shiftX, y: res.shiftY, base }),
-      )
+      store.txnUpdate((d) => {
+        applyPageSize(d, res.w, res.h, { x: res.shiftX, y: res.shiftY, base })
+        markPageUserSized(d)
+      })
       // 每一帧都经 setPan：停掉在飞的取景补间并退出「适应画布」——页面已经不是 `lastFit` 描述的那一页，
       // 之后开关侧栏 / 缩窗口不能再按旧取景重放把页面挪走。右 / 下边平移量为 0（屏幕上的页面不跳），左 / 上边反向补偿
       useViewportStore

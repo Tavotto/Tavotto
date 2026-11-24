@@ -86,6 +86,7 @@ export const SETTINGS_REGISTRY: readonly SettingsEntry[] = [
   // ---- 改图助手 ----
   { id: 'ai.default', section: 'ai', label: () => st('agents.defaultLabel'), keywords: () => st('search.kw.agents'), anchors: ['ai.default', 'ai.agents'] },
   { id: 'ai.codex', section: 'ai', label: () => st('agents.codexIntegrationName', { product: PRODUCT_NAME }) },
+  { id: 'ai.fixMemory', section: 'ai', label: () => st('agents.fixMemory.label'), anchors: ['ai.fixMemory', 'ai.agents'] },
   // ---- Python 库 ----
   { id: 'packages.env', section: 'packages', label: () => st('packages.envTitle', { product: PRODUCT_NAME }), anchors: ['packages.env', 'packages.install'] },
   { id: 'packages.install', section: 'packages', label: () => st('packages.userTitle'), keywords: () => st('search.kw.packages') },

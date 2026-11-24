@@ -7,7 +7,7 @@
 <!-- agents-route
 sheet: codex-plugin/AGENTS.md
 order: 55
-改到: `tavotto_fix_to_journal`、`bridge.fix_to_journal()`、`bridge.issue_fix()` / `annotate_preflight_fix()`（preflight 结果的 `fix`）
+改到: `tavotto_fix_to_journal`、`tavotto_make_journal_ready`、`bridge.fix_to_journal()`、`bridge.issue_fix()` / `annotate_preflight_fix()`（preflight 结果的 `fix`）
 主题: Agent 一步改到期刊合规 → `fix-to-journal.md`
 必守要点: 只拼 normalize + `specfix.transaction`，不写第二份判据；整体提交或回 B0；`fix` 只在 MCP 整形层
 -->
@@ -42,3 +42,27 @@ order: 55
   基准图没能完整重放（`unsupported`）没有元素可指，点名渲染告警原文。拿不到的字段不给、不编；`exit` / `stage` / `detail` 的取值不变。
 - **失败回包的 `next`** 由 `nextstep.fix_next` 在 `_call_fix_to_journal` 里加：`column_choice_required` / `font_unavailable` 要用户决定（`ask_user`，
   栏位候选来自 `columns`），其余没改成的（含图幅步骤出界）必须回脚本改（`edit_script`，`why` 指向 `conflicts`）。成功的回包不带 `next` 与 `conflicts`。
+
+## 一步交付 `tavotto_make_journal_ready`（ADR 0192 第 1 条）
+
+- **只编排、不新写逻辑，编排放在 server 层**（`server._call_make_journal_ready`）：打开 = `_call_open`、改 = `bridge.fix_to_journal`（**不带 `formats`**）、
+  导出 = `_call_export`。理由：参数校验与结果整形（含草稿带回说明、产物核验行、更新提醒、proof）本来就在这三个工具处理器里，
+  编排放 bridge 要么复制第二份整形、要么让 bridge 反向依赖 server；bridge 仍是「一个工具对一个会话」的原语。bridge 只多了
+  `require_fix_engine()`（总开关 + 引擎有修复事务的门，`fix_to_journal` 与本工具共用，本工具在**打开会话之前**先过它，关着时不留会话）。
+- **fix 与导出分开两步，不用 `fix_to_journal(formats=…)`**：后者导出被挡会把整个改动回到 B0；一步交付要的是「改动留着、停在预检、把决定交给用户」。
+  所以 fix 通过即提交，之后 `_call_export` 走同一条预检门 + 产物核验；挡了 → `stage=preflight`、不出文件、改动留在会话（没导出的改动关会话也存草稿）。
+- **绝不替用户确认**：不接受也不转发 `explicit_confirm`（传了也被忽略）。`preflight_blocked` 回 `ok:false, stage:"preflight"`（非 isError）、
+  `blocking` / `not_verifiable`（各最多 `MJR_BLOCKING_SHOWN`）与 `next={action:ask_user}`，选项里点明「用户明确同意后用 tavotto_export 带 explicit_confirm=true」。
+- **`stage`**：`open` / `fix` / `preflight` / `export` / `done`，是**停下的那一步**（成功 = `done`）。`dry_run` 跑完 fix 即停（`ok:true, stage:"fix"`），回到改前、不出文件。
+  fix 没过（`column_choice_required`、冲突等）= `ok:false, stage:"fix"`，带 `fix_exit`、`conflicts` / `columns`、`next`（`nextstep.fix_next`）、`introduced`（有则）。
+  任一步的 `BridgeError` 照常变 isError，只是 `stage` / `session_id`（已打开时）写进载荷，`next` 由 `call_tool` 挂。
+- **回包要短**（result-budget）：改动按规则合并成 `changes:[{rule,count}]` + `changes_total`，`remaining` 按规则合并（`count`，最多 `MJR_REMAINING_SHOWN` 行）+
+  `remaining_total`，导出只留 `{format,path,status,verdict}`；没有 manifest / patches，要明细用 `tavotto_session_state`。预览图沿用 image 内容块（`previews:false` 不附）。
+- **草稿没带回就停在 open**：open 回 `draft_restore_failed` 时不改、不导出（`ok:false, stage:"open"`，`next={action:ask_user}`：保留草稿稍后再试，或带 `discard_draft=true` 重来）。
+  理由：导出成功会清掉这张图的草稿，接着走下去等于替用户丢掉没带回的改动。按脚本原样打开的那个会话**当场关掉**（`session_closed:true`）：
+  留着的话下次调用会复用它，而复用分支不尝试带回草稿。
+- **以导出作业的结论为准**：文件都 `done` 但回执 `ok:false` / 有 `proof_error`（作业 `partial`，留档没写成）→ `ok:false, stage:"export"`，不报 `done`。
+- **会话不关**，成功也不关；草稿带回（`restored_draft`）、`discard_draft` 与 open 同一条路。入参：期刊三选一（`journal_id` / `profile_id` / `journal`，必给，与 fix 同名）、
+  `stem`、`column`、`formats` / `out_dir`（缺省与 `tavotto_export` 一致）、`dpi`、`previews`、`dry_run`，加 open 的运行参数（workdir / argv 等）；不接受 `stems`。
+- **开关与遥测**：与 `tavotto_fix_to_journal` 同一处置（总开关 + 引擎有 specfix 才出现；关着调用回 `journal_catalog_disabled`）；不进 `usage.TOOLS`；
+  降级 server 的 `NORMAL_TOOLS` 有它。看护 `tests/test_mcp_make_journal_ready.py`（真链路：成功落盘 + 页宽、停在 fix / preflight 不出文件、dry_run、草稿、开关）。

@@ -55,7 +55,7 @@ from __future__ import annotations
 
 import hashlib
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -99,6 +99,8 @@ class WriteFacts:
     paths: int = 0
     groups: int = 0
     transparency_groups: int = 0
+    #: 渐变 Shading Pattern 的个数（ADR 0186）
+    gradients: int = 0
     actualtext_spans: int = 0
     notdef_codes: int = 0
     #: 每个 ImportedPage 一条：可见框 / 落位矩阵 / 裁剪 / 是否包了透明组（evidence 与测试读）。
@@ -165,6 +167,10 @@ class _Recorder:
     xobjects: dict[str, Any] = field(default_factory=dict)
     extgstates: dict[str, Any] = field(default_factory=dict)
     fonts: set[str] = field(default_factory=set)
+    #: 渐变的 Shading Pattern（ADR 0186）
+    patterns: dict[str, Any] = field(default_factory=dict)
+    #: 这条内容流的缺省坐标空间（页面 = 单位阵；透明组的 form = Do 那一刻的 CTM）。Pattern 的 /Matrix 相对它
+    base: ir.Matrix = ir.IDENTITY
 
 
 @dataclass
@@ -268,7 +274,7 @@ class PdfWriter:
         for op in ir.operations_of(node):
             self._check(op, getattr(node, "object_id", ""))
         if isinstance(node, ir.Path):
-            rec.ops.append(self._path_ops(node, rec))
+            rec.ops.append(self._path_ops(node, rec, ctm))
             self.facts.paths += 1
         elif isinstance(node, ir.ShapedText):
             rec.ops.append(self._text_op(node, rec))
@@ -529,6 +535,10 @@ class PdfWriter:
                 "encoding": "dct",
                 "smask": False,
             }
+            if jpeg["orientation"] != 1:
+                # 字节没动、像素还是存储方向：`_image` 按它在单位正方形里补一个摆正矩阵（解码路回来的已经摆正）；
+                # 没有方向标记就不出这个键（facts 形状与以前一字不差）
+                fact["orientation"] = jpeg["orientation"]
             hit = (self.pdf.make_indirect(obj), fact)
             self._image_objs[node.resource] = hit
             return hit
@@ -593,6 +603,13 @@ class PdfWriter:
         if node.crop not in (None, (0, 0, 1, 1)):
             cx, cy, cw, ch = pl.clip
             parts.append(f"{_num(cx)} {_num(cy)} {_num(cw)} {_num(ch)} re W n")
+        # 直通的 JPEG 带方向标记：单位正方形 → 单位正方形的摆正矩阵排在裁剪之后（裁剪框是按摆正后的图算的）、
+        # `Do` 之前，字节不重编码（`rasterio.ORIENTATION_MATRIX`）
+        orientation = int(fact.get("orientation", 1))
+        if orientation != 1:
+            parts.append(
+                " ".join(_num(v) for v in rasterio.ORIENTATION_MATRIX[orientation]) + " cm"
+            )
         parts += [f"/{name} Do", "Q"]
         rec.ops.append(" ".join(parts))
         self.facts.images.append(
@@ -627,7 +644,7 @@ class PdfWriter:
         if node.opacity < 1.0:
             # 透明组：children 进一个带 /Group 的 Form XObject（组内 alpha 从 1 起算），整组以 opacity 合成。
             # form 的内容空间 = 父空间（cm 写在 form 里面），BBox 取页面矩形经父空间逆变换的包围盒。
-            form_rec = _Recorder()
+            form_rec = _Recorder(base=ctm)
             form_rec.ops.append("\n".join(inner))
             for child in node.children:
                 self._emit(child, form_rec, local, depth + 1)
@@ -659,7 +676,7 @@ class PdfWriter:
         local = ir.compose(node.transform, ctm)
         bbox = _page_bbox_in(ctm, self.page)
         transform = " ".join(_num(v) for v in node.transform) + " cm"
-        content = _Recorder(ops=["q", transform])
+        content = _Recorder(ops=["q", transform], base=ctm)
         for child in node.children:
             self._emit(child, content, local, depth + 1)
         content.ops.append("Q")
@@ -696,7 +713,145 @@ class PdfWriter:
         rec.ops.append(f"q /{gs_name} gs /{name} Do Q")
         self.facts.transparency_groups += 2
 
-    def _path_ops(self, node: ir.Path, rec: _Recorder) -> str:
+    # -- 渐变（ADR 0186）-------------------------------------------------
+    def _function(self, stops: tuple, gray: bool):
+        """色标 → PDF 函数：两段以内一个 Type 2（指数插值，N = 1），多段用 Type 3 缝合。首尾不在 0 / 1 时
+        补一个同色的端点（pad 语义：两端外面延续首尾色）。`gray` = 只取 alpha（软蒙版用的灰度）。"""
+        import pikepdf
+
+        st = list(stops)
+        if st[0].offset > 0:
+            st.insert(0, replace(st[0], offset=0.0))
+        if st[-1].offset < 1:
+            st.append(replace(st[-1], offset=1.0))
+
+        def val(x: ir.GradientStop) -> list[float]:
+            return [float(x.alpha)] if gray else [float(c) for c in x.rgb]
+
+        funcs = [
+            pikepdf.Dictionary(FunctionType=2, Domain=[0.0, 1.0], C0=val(a), C1=val(b), N=1.0)
+            for a, b in zip(st, st[1:])
+        ]
+        if len(funcs) == 1:
+            return funcs[0]
+        return pikepdf.Dictionary(
+            FunctionType=3,
+            Domain=[0.0, 1.0],
+            Functions=pikepdf.Array(funcs),
+            Bounds=[float(x.offset) for x in st[1:-1]],
+            Encode=[0.0, 1.0] * len(funcs),
+        )
+
+    def _shading(self, g, gray: bool):
+        import pikepdf
+
+        if isinstance(g, ir.LinearGradient):
+            kind, coords = 2, [*g.p0, *g.p1]
+        else:
+            cx, cy = g.center
+            kind, coords = 3, [cx, cy, 0.0, cx, cy, g.radius]
+        return self.pdf.make_indirect(
+            pikepdf.Dictionary(
+                ShadingType=kind,
+                ColorSpace=pikepdf.Name.DeviceGray if gray else pikepdf.Name.DeviceRGB,
+                Coords=[float(v) for v in coords],
+                Function=self._function(g.stops, gray),
+                Extend=[True, True],
+            )
+        )
+
+    def _pattern(self, rec: _Recorder, g, ctm: ir.Matrix) -> str:
+        """渐变 → 这条内容流里的一个 Shading Pattern 资源名。渐变的坐标在对象框空间（路径段所在的空间 = 此刻的
+        CTM）；Pattern 的 /Matrix 映到这条内容流的缺省空间，所以是 ctm · base⁻¹。"""
+        import pikepdf
+
+        m = ir.compose(ctm, _invert(rec.base))
+        name = self._name("P")
+        rec.patterns[name] = self.pdf.make_indirect(
+            pikepdf.Dictionary(
+                Type=pikepdf.Name.Pattern,
+                PatternType=2,
+                Shading=self._shading(g, gray=False),
+                Matrix=[float(v) for v in m],
+            )
+        )
+        self.facts.gradients += 1
+        return name
+
+    def _alpha_mask(self, rec: _Recorder, g, segments: tuple, pad: float) -> str:
+        """色标带 alpha 的渐变：luminosity 软蒙版（同一几何的灰度渐变）。蒙版的坐标 = 设 gs 那一刻的 CTM，
+        也就是路径段所在的框空间；BBox 取路径段的包围盒外扩 `pad`。"""
+        import pikepdf
+
+        xs = [v for seg in segments for v in seg[1::2]]
+        ys = [v for seg in segments for v in seg[2::2]]
+        bbox = [min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad]
+        form = pikepdf.Stream(self.pdf, b"/Sh0 sh\n")
+        form["/Type"] = pikepdf.Name.XObject
+        form["/Subtype"] = pikepdf.Name.Form
+        form["/BBox"] = [float(v) for v in bbox]
+        form["/Resources"] = pikepdf.Dictionary(
+            Shading=pikepdf.Dictionary({"/Sh0": self._shading(g, gray=True)})
+        )
+        form["/Group"] = pikepdf.Dictionary(S=pikepdf.Name.Transparency, CS=pikepdf.Name.DeviceGray)
+        gs = self.pdf.make_indirect(
+            pikepdf.Dictionary(
+                Type=pikepdf.Name.ExtGState,
+                SMask=pikepdf.Dictionary(
+                    Type=pikepdf.Name.Mask,
+                    S=pikepdf.Name.Luminosity,
+                    G=self.pdf.make_indirect(form),
+                ),
+            )
+        )
+        name = self._name("GSm")
+        rec.extgstates[name] = gs
+        return name
+
+    def _gradient_path_ops(self, node: ir.Path, rec: _Recorder, ctm: ir.Matrix) -> str:
+        """有渐变的路径：填充与描边各自一段 q…Q（各自的 Pattern、各自的软蒙版），先填后描——与 `B` 的次序相同。"""
+        out: list[str] = []
+        segs = _path_segments(node.segments)
+        star = "*" if node.fill_rule == "evenodd" else ""
+        if node.fill is not None:
+            parts = ["q"]
+            if ir.is_gradient(node.fill):
+                if ir.paint_translucent(node.fill):
+                    parts.append(f"/{self._alpha_mask(rec, node.fill, node.segments, 1.0)} gs")
+                parts.append(f"/Pattern cs /{self._pattern(rec, node.fill, ctm)} scn")
+            else:
+                if node.fill.alpha < 1.0:
+                    parts.append(f"/{self._gs(rec, node.fill.alpha, 1.0)} gs")
+                parts.append(f"{_rgb(node.fill.rgb)} rg")
+            parts += [segs, f"f{star}", "Q"]
+            out.append(" ".join(parts))
+        if node.stroke is not None:
+            s = node.stroke
+            parts = ["q"]
+            if ir.is_gradient(s.paint):
+                if ir.paint_translucent(s.paint):
+                    pad = s.width * max(s.miter_limit, 1.0) + 1.0
+                    parts.append(f"/{self._alpha_mask(rec, s.paint, node.segments, pad)} gs")
+                parts.append(f"/Pattern CS /{self._pattern(rec, s.paint, ctm)} SCN")
+            else:
+                if s.paint.alpha < 1.0:
+                    parts.append(f"/{self._gs(rec, 1.0, s.paint.alpha)} gs")
+                parts.append(f"{_rgb(s.paint.rgb)} RG")
+            parts.append(f"{_num(s.width)} w")
+            parts.append(
+                f"{ir.LINE_CAPS.index(s.cap)} J {ir.LINE_JOINS.index(s.join)} j {_num(s.miter_limit)} M"
+            )
+            if s.dash:
+                parts.append("[" + " ".join(_num(v) for v in s.dash) + f"] {_num(s.dash_phase)} d")
+            parts += [segs, "S", "Q"]
+            out.append(" ".join(parts))
+        return "\n".join(out)
+
+    def _path_ops(self, node: ir.Path, rec: _Recorder, ctm: ir.Matrix = ir.IDENTITY) -> str:
+        if ir.is_gradient(node.fill) or (
+            node.stroke is not None and ir.is_gradient(node.stroke.paint)
+        ):
+            return self._gradient_path_ops(node, rec, ctm)
         parts = ["q"]
         fill_a = node.fill.alpha if node.fill is not None else 1.0
         stroke_a = node.stroke.paint.alpha if node.stroke is not None else 1.0
@@ -948,6 +1103,8 @@ class PdfWriter:
             )
         if rec.extgstates:
             res["/ExtGState"] = pikepdf.Dictionary({"/" + k: v for k, v in rec.extgstates.items()})
+        if rec.patterns:
+            res["/Pattern"] = pikepdf.Dictionary({"/" + k: v for k, v in rec.patterns.items()})
         if rec.fonts:
             res["/Font"] = pikepdf.Dictionary(
                 {"/" + self._fonts[k].name: self._fonts[k].obj for k in sorted(rec.fonts)}
@@ -1065,6 +1222,15 @@ def _compress_unfiltered(pdf) -> None:
         packed = deflate.zlib_compress(data)
         if len(packed) < len(data):
             obj.write(packed, filter=pikepdf.Name.FlateDecode)
+
+
+def _invert(m: ir.Matrix) -> ir.Matrix:
+    a, b, c, d, e, f = m
+    det = a * d - b * c
+    if abs(det) < 1e-12:  # validate() 已挡不可逆矩阵；这里只是兜底
+        return ir.IDENTITY
+    ia, ib, ic, id_ = d / det, -b / det, -c / det, a / det
+    return (ia, ib, ic, id_, -(e * ia + f * ic), -(e * ib + f * id_))
 
 
 def _path_segments(segments: tuple) -> str:

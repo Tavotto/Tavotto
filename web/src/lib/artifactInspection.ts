@@ -51,7 +51,43 @@ export const CHECK_NAMES = [
   'clipping',
   'dpi_tag',
   'raster_density',
+  'text_size',
 ] as const
+
+/**
+ * 成品实测字号（`checks.text_size`，ADR 0203）失败时要说的那一句话：用界面上会显示的两个数说清「最小的字
+ * 多小、规范要多少」。其余（通过、没规范、量不全、老服务端没带 `text_size`）→ `null`：不说话——核验只说
+ * 失败（2026-11-06 用户），失败了而老服务端没带读数时界面退回只报名字。
+ */
+export type TextSizeNote = { kind: 'below'; min: string; floor: string }
+
+export function textSizeNote(manifest: ArtifactManifestSummary | null | undefined): TextSizeNote | null {
+  const verdict = manifest?.checks?.text_size
+  const ts = manifest?.text_size
+  if (!ts) return null
+  if (verdict === 'failed' && ts.reason === 'below_min' && isNum(ts.min_pt) && isNum(ts.floor_pt)) {
+    return { kind: 'below', ...ptPair(ts.min_pt, ts.floor_pt) }
+  }
+  return null
+}
+
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+
+/** 去掉末尾的 0：`5` 不写成 `5.0`，`5.25` 原样 */
+const trim = (v: number, digits: number) => String(Number(v.toFixed(digits)))
+
+/**
+ * 「4.9 pt，低于规范的 5 pt」的两个数：下限照规范写（至多两位小数）；最小字号先给一位小数，
+ * 四舍五入后不再小于下限（4.996 → 5.0 对 5）就多给一位，直到读得出「更小」——绝不显示「5 pt 低于 5 pt」。
+ */
+export function ptPair(minPt: number, floorPt: number): { min: string; floor: string } {
+  const floor = trim(floorPt, 2)
+  for (const digits of [1, 2, 3]) {
+    const min = trim(minPt, digits)
+    if (Number(min) < Number(floor)) return { min, floor }
+  }
+  return { min: String(minPt), floor }
+}
 
 /**
  * 一批已发布文件的核验汇总（Codex 内嵌画布的一句话提示用）：哪些文件有失败项、哪些文件

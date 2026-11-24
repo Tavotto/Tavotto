@@ -57,15 +57,16 @@ afterEach(async () => {
 })
 
 describe('浮动工具条', () => {
-  it('带着 data-tool / data-fit-canvas 钩子：选择 / 文字 / 标注 / 序号 / 适应一个不少', async () => {
+  it('带着 data-tool / data-fit-canvas 钩子：选择 / 文字 / 标注 / 钢笔 / 序号 / 适应一个不少', async () => {
     await mount(<CanvasToolbar />)
     const bar = q('[data-canvas-toolbar]')
     expect(bar, '浮动工具条没渲染').toBeTruthy()
     expect(bar!.querySelectorAll('[data-tool="select"]')).toHaveLength(1)
     expect(bar!.querySelectorAll('[data-tool="text"]')).toHaveLength(1)
     expect(bar!.querySelectorAll('[data-fit-canvas]')).toHaveLength(1)
-    // 选择 / 文字 / 标注 ▾ / 序号 / 适应 = 五颗按钮
-    expect(bar!.querySelectorAll('button')).toHaveLength(5)
+    expect(bar!.querySelectorAll('[data-tool="pen"]')).toHaveLength(1)
+    // 选择 / 文字 / 标注 ▾ / 钢笔与铅笔 ▾ / 序号 / 适应 = 六颗按钮
+    expect(bar!.querySelectorAll('button')).toHaveLength(6)
   })
 
   it('点「文字」切到文字工具，再点一次回到选择；点「选择」回到选择', async () => {
@@ -206,7 +207,7 @@ describe('浮动工具条：工具 vs 动作', () => {
   it('条里 → / End 挪焦点，事件被认领（不推画布上的选中对象）', async () => {
     await mount(<CanvasToolbar />)
     const items = [...host.querySelectorAll<HTMLElement>('[data-toolbar-item]')]
-    expect(items.length).toBe(5)
+    expect(items.length).toBe(6)
     items[0].focus()
     const ev = new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
     act(() => {
@@ -217,7 +218,7 @@ describe('浮动工具条：工具 vs 动作', () => {
     act(() => {
       items[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }))
     })
-    expect(document.activeElement).toBe(items[4])
+    expect(document.activeElement).toBe(items[5])
   })
 
   // Codex #833：鼠标打开标注菜单、点「插入形状」——Radix 关菜单时默认把焦点还给触发器，下一个 ← / → 就被
@@ -234,16 +235,13 @@ describe('浮动工具条：工具 vs 动作', () => {
       }
     })
     const trigger = () => q('[data-tool-menu="annotate"]')!
-    const firstShape = () =>
-      [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((el) =>
-        el.textContent?.includes('三角'),
-      )!
-    const shapes = () => useDocumentStore.getState().doc.objects.length
+    const firstShape = () => document.body.querySelector<HTMLElement>('[data-mark-tool="triangle"]')!
+    const shapes = () => (useUiStore.getState().tool === 'triangle' ? 1 : 0)
 
     it.each([
       ['焦点原在别处', true],
       ['焦点原在 body', false],
-    ])('鼠标打开、插入形状（%s）：焦点不落回触发器', async (_n, elsewhere) => {
+    ])('鼠标打开、选一个形状工具（%s）：焦点不落回触发器', async (_n, elsewhere) => {
       await mount(<CanvasToolbar />)
       const other = document.createElement('button')
       document.body.appendChild(other)
@@ -260,7 +258,7 @@ describe('浮动工具条：工具 vs 动作', () => {
       if (elsewhere) expect(document.activeElement).toBe(other)
     })
 
-    it('键盘打开、插入形状：焦点回到触发器', async () => {
+    it('键盘打开、选一个形状工具：焦点回到触发器', async () => {
       await mount(<CanvasToolbar />)
       trigger().focus()
       await act(async () => {
@@ -282,5 +280,70 @@ describe('浮动工具条：工具 vs 动作', () => {
       q('[data-tool="select"]')!.dispatchEvent(ev)
     })
     expect(ev.defaultPrevented).toBe(true)
+  })
+})
+
+describe('标注菜单：一张形状列表 + 预设；钢笔单独一格', () => {
+  const openMenu = async () => {
+    await mount(<CanvasToolbar />)
+    await act(async () => {
+      q('[data-tool-menu="annotate"]')!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, ctrlKey: false }))
+    })
+    return document.body.querySelector<HTMLElement>('[role="menu"]')!
+  }
+
+  it('十种形状同一组单选（都是拖画工具），有键位的带键位；没有「插入形状」那一段；预设在分隔线下面', async () => {
+    const menu = await openMenu()
+    const radios = [...menu.querySelectorAll<HTMLElement>('[role="menuitemradio"]')]
+    expect(radios.map((r) => r.dataset.markTool)).toEqual([
+      'arrow', 'line', 'rect', 'ellipse', 'triangle', 'diamond', 'polygon', 'star', 'brace', 'arc',
+    ])
+    expect(new Set(radios.map((r) => r.closest('[role="group"]')))).toHaveProperty('size', 1)
+    expect(radios.find((r) => r.dataset.markTool === 'rect')!.textContent).toContain('R')
+    expect(menu.querySelector('[data-insert-shape]')).toBeNull()
+    expect(menu.textContent).not.toContain('插入形状')
+    expect(menu.querySelector('[role="menuitemradio"][data-mark-tool="pen"]')).toBeNull()
+    const presets = menu.querySelector<HTMLElement>('[data-perf-open-presets]')!
+    expect(presets.previousElementSibling?.getAttribute('role')).toBe('separator')
+    expect([...menu.querySelectorAll('[role="menuitem"]')]).toEqual([presets])
+  })
+
+  it('点三角形 = 切到三角形工具（拖着画），不在画布中心直接落一个', async () => {
+    const menu = await openMenu()
+    await act(async () => menu.querySelector<HTMLElement>('[data-mark-tool="triangle"]')!.click())
+    expect(useUiStore.getState().tool).toBe('triangle')
+    expect(useDocumentStore.getState().doc.objects).toHaveLength(0)
+  })
+
+  it('钢笔与铅笔收在同一格（不多一颗一级按钮）：菜单里两把单选、带键位；选了就切过去，再选一次回到选择；格子显示正在用 / 上次用的那把', async () => {
+    await mount(<CanvasToolbar />)
+    const trigger = () => q('[data-tool-menu="path"]')!
+    expect(trigger().getAttribute('data-tool')).toBe('pen')
+    const open = async () => {
+      await act(async () => {
+        trigger().dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, ctrlKey: false }))
+      })
+      return document.body.querySelector<HTMLElement>('[role="menu"]')!
+    }
+    let menu = await open()
+    // 点格子只打开菜单、不换工具（与「标注 ▾」同一个做法：整颗钮是菜单的触发器）
+    expect(menu).toBeTruthy()
+    expect(useUiStore.getState().tool).toBe('select')
+    const radios = [...menu.querySelectorAll<HTMLElement>('[role="menuitemradio"]')]
+    expect(radios.map((r) => r.dataset.pathTool)).toEqual(['pen', 'pencil'])
+    expect(radios[0].textContent).toContain('P')
+    expect(radios[1].textContent).toContain('N')
+    await act(async () => radios[1].click())
+    expect(useUiStore.getState().tool).toBe('pencil')
+    expect(trigger().getAttribute('aria-pressed')).toBe('true')
+    expect(trigger().getAttribute('data-tool')).toBe('pencil')
+    menu = await open()
+    await act(async () => menu.querySelector<HTMLElement>('[data-path-tool="pencil"]')!.click())
+    expect(useUiStore.getState().tool).toBe('select')
+    // 没在用时显示上次用的那把
+    expect(trigger().getAttribute('data-tool')).toBe('pencil')
+    // 快捷键切到钢笔：格子跟着换
+    await act(async () => useUiStore.getState().setTool('pen'))
+    expect(trigger().getAttribute('data-tool')).toBe('pen')
   })
 })

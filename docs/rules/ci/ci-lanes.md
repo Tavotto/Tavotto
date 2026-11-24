@@ -15,7 +15,7 @@ order: 10
 
 CI 按**发生时机**分工（`.github/workflows/ci.yml` 抬头有全图，2026-08-25
 Merge Queue 定版）：PR = 快速反馈（python-lint / invariants / backend-fast /
-frontend / workerd / **desktop-shell** / compat-smoke / CodeQL）；merge_group = 完整合并资格的唯一常规执行
+frontend / workerd / vecops / **desktop-shell** / compat-smoke / CodeQL）；merge_group = 完整合并资格的唯一常规执行
 点（backend-platforms / package ×3 / 两个真产物冒烟，Merge Queue 对「最新
 main + 前序 PR + 当前 PR」的组合提交验证）；`full-ci` 标签 = 在 PR 自己的
 SHA 上提前跑全套；push main = 轻量落地审计（main-landing-audit，不重复打
@@ -37,7 +37,7 @@ codeql.yml 的 `cancel-in-progress` **只对 PR 开**：merge_group 候选与 ma
 
 **docs-only 快车道（`docs-scope` job，2026-10-31）。** 只改 `docs/release-notes/**.md`（**不含**
 `UNRELEASED.md` 与 `unreleased/` 片段目录：`test_claude_plugin.py` / `test_dsh_bundle.py` / `test_install_commands_from_brand.py` 读它们；只此一条，不扩到整个
-`docs/`）的 PR 与队列候选不再跑 invariants / backend-fast / frontend / plugin-candidate / workerd /
+`docs/`）的 PR 与队列候选不再跑 invariants / backend-fast / frontend / plugin-candidate / workerd / vecops /
 desktop-shell / compat-smoke 和五个重型资格；python-lint / cla-check / release-note-gate / `docs-scope`
 照跑，`docs-scope` 在 docs-only 时另跑 `tests/test_docs_references.py`（发行说明相对链接）。
 **Gate 怎么有据地接受这些 skipped**（CI01 §4 ① 说的「前置 filter + 短路会让 Gate 判红」的解法）：
@@ -157,6 +157,14 @@ test_same_sha_events_queue_and_never_cancel_each_other`、`TestConcurrency`。
 check 名与闭集不变、`cancel-in-progress` 仍只对 PR、Gate 只读 actions、归因步骤只在 merge_group 且取不到不打红、
 归因经环境变量）、`TestMergeGroupFailFastAttribution`、`TestFailFastRootFromRunJobs`。
 
+**cla-check 在合并组上会等（2026-11-23，ADR 0172 修订）。** 事实：队列深处的候选，CLA 服务一次读不完整个前缀，回
+`budget_deferred`（P=4 必超、P=3 带共同作者就超；#2064 在第 3 位整组被踢）。做法：`cla-check` 在合并组上多一步
+「等服务有预算（只延后不判定）」——每圈先读候选的队列位置，同一位置最多问服务 3 次，位置变小才再问；候选已在队首仍延后
+就只再试 3 次、不占住队列；等过之后整套重采合并组快照，结论仍只由原来的「判定」一步给出。上限 7200 秒、job 超时 140 分钟：
+fast gate 关键路径 150 分钟，正好等于 `check_response_timeout`(180) − 30 的余量，**改这里的超时要先跑 `merge_queue_ruleset.py verify-live`**。
+代价：一个 runner 槽最长占 2 小时（免费计划共 20 槽）；非全员豁免的合并组多问服务一次。看护：
+`tests/test_cla_workflow_service_mode.py` 的延后用例（收缩后通过 / 只延后不判定 / 到上限仍红 / 队首截止 / PR 事件不受影响）。
+
 **main 红时修复插到队首（2026-11-03）。** 事实：10-13 ~ 11-02 Windows 腿红的 194 个合并组 run 里约 67%
 是**连坐**——一个坏提交（两个各自绿的 PR 的组合、或没带 full-ci 的 Windows-only 缺陷）进了 main 或排在队列前面，
 之后每个组都带着它红；只对应 84 个独立事件。10-31 两个 PR 撞了同一个 ADR 号 0154，合入后 main 红，修复 PR 排在
@@ -173,4 +181,14 @@ check 名与闭集不变、`cancel-in-progress` 仍只对 PR、Gate 只读 actio
 2026-11-03）。** PR 级 CI 不跑 Windows 后端，只在 Windows 显形的缺陷（fsync 只读句柄、cp1252 编码、
 非法文件名、文件占用）到合并组才第一次红；入队前确认 Windows 后端腿真跑过且绿，只在 Windows 生效的
 改动另在 Lab 整文件跑相关测试。为什么：六个不同日子各被合并组踢一次，每次白烧约一小时
-（#214、#296、#314、#317、#319、#360、#725、#1587、#1604）。
+（#214、#296、#314、#317、#319、#360、#725、#1587、#1604）。看护：只靠人记。
+2026-11-21 再犯：小实验的新用例按 `/` 比路径尾部，合并组 Windows 分片红、被踢一次，修成两种分隔符都认（#2064）。
+
+**合并组里没有任何 failure 的裸 cancelled，先核 job 时长是否贴着 `timeout-minutes`（错题本 L-114 升级，
+2026-11-24）。** 先读两个 Gate summary 的 `root_failures`（fast gate 的可能为空、根因只在 integration gate 里，
+两个都读）：有 failure 时 cancelled 是快速失败的收尾，按上面那段处理；都没有，再拿这条 job 的
+`startedAt` / `completedAt` 比它的 `timeout-minutes`，贴着上限就是超时，不是 flaky，也别直接重跑。套件变长要回头
+量最近几轮合并组的时长再定上限，绿的那几轮离上限多远一并写进 PR。为什么：Windows 腿 32 到 42 分钟顶着 45 分钟
+上限，被取消后聚合门禁红、被踢出队列，看着像抽风（#340、#345、#346）；fast gate 的 `root_failures` 为空、根因
+只在 integration gate 里（2026-11-17，#1991）；2026-11-23 `invariants` 跑到 30 分 17 秒被取消（上限 30 分钟），
+把无关的 #2130 踢出队列，前后几轮绿的合并组里它也跑了 29 分 41 秒、29 分 56 秒。看护：只靠人记。

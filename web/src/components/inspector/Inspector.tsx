@@ -13,7 +13,8 @@ import { ResizeHandle } from '@/components/ui/ResizeHandle'
 import { tryRegisterPointerCancel } from '@/store/gestureCoordinator'
 import { useDocumentStore } from '@/store/documentStore'
 import { RIGHT_DEFAULT, RIGHT_MAX, RIGHT_MIN, isRightPinned, useUiStore, type RightTab } from '@/store/uiStore'
-import type { ArrowObject, PanelObject, ShapeObject, TextObject } from '@/types/document'
+import type { ArrowObject, PanelObject, PathTextObject, TextObject } from '@/types/document'
+import { isFillStrokeMark } from '@/lib/markStyle'
 import { useAiStore } from '@/store/aiStore'
 import { TimelinePanel } from '../VersionDialog'
 import { assistantTabLabel, AssistantPanel } from '../ai/AiPanel'
@@ -26,13 +27,15 @@ import { useReviewStore } from '@/store/reviewStore'
 import { Tip } from '../ui/Tooltip'
 import { ArrangeSection } from './ArrangeSection'
 import { CanvasPage } from './CanvasPage'
-import { useDocumentColors } from './documentColors'
+import { useDocumentColors, useFigureColors } from './documentColors'
+import { recommendedSwatches } from '@/lib/swatches'
 import { PanelElementPage } from './GroupPage'
 import { IdentityHeader } from './IdentityHeader'
 import { INSPECTOR_CONTAINER } from './layout'
 import { PageBoundsHint } from './PageBoundsHint'
 import { PanelSection } from './PanelSection'
 import { ArrowSection, ShapeSection } from './StrokeSection'
+import { PathTextSection } from './PathTextSection'
 import { TextSection } from './TextSection'
 import { TransformSection } from './TransformSection'
 import { useSelectedObjects } from './common'
@@ -91,7 +94,12 @@ export function Inspector({
   const motion = drawerMotion({ state, overlay, width, side: 'right' })
   // 属性栏里的 ColorField 带可编辑 hex 与取色面板（文档颜色 / 最近 / 系统取色器）；浮动栏不挂这层
   const documentColors = useDocumentColors()
-  const colorHost = useMemo(() => ({ rich: true, documentColors }), [documentColors])
+  const figureColors = useFigureColors()
+  const journalLabel = useDocumentStore((s) => s.doc.profile?.journalRef?.label ?? null)
+  const colorHost = useMemo(
+    () => ({ rich: true, documentColors, figureColors, recommended: recommendedSwatches(journalLabel) }),
+    [documentColors, figureColors, journalLabel],
+  )
 
   return (
     <aside
@@ -263,8 +271,10 @@ function PropertiesPage() {
 
   const panels = objs.filter((o): o is PanelObject => o.type === 'panel')
   const texts = objs.filter((o): o is TextObject => o.type === 'text')
+  const pathTexts = objs.filter((o): o is PathTextObject => o.type === 'pathText')
   const arrows = objs.filter((o): o is ArrowObject => o.type === 'arrow')
-  const shapes = objs.filter((o): o is ShapeObject => o.type === 'shape')
+  // 形状与自由路径共用一套外观控件（填充 / 描边字段逐字相同，ADR 0185；判据在 `lib/markStyle`）
+  const shapes = objs.filter(isFillStrokeMark)
   const onlyType = (n: number) => n > 0 && objs.length === n
   // 面板选区的位置与尺寸由 PanelSection 自己出（含宽高比锁），
   // 这里再来一份 TransformSection 就重复了
@@ -311,6 +321,7 @@ function PropertiesPage() {
         {onlyType(arrows.length) && <ArrowSection objs={arrows} />}
         {arrowsOnly && <TransformSection objs={objs} foldKey="arrow-transform" />}
         {onlyType(shapes.length) && <ShapeSection objs={shapes} />}
+        {onlyType(pathTexts.length) && <PathTextSection objs={pathTexts} />}
         {/* 第三层：排列（对齐 + 层级）。单选面板的排列由 PanelSection 自己摆在
             图片适配之后、更多之前（变换 → 内容适配 → 排列 → 源文件，审计 B09） */}
         {!(panelsOnly && objs.length === 1) && (

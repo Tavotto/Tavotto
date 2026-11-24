@@ -183,6 +183,9 @@
     "previewModeLabel": "Preview mode",
     "previewModeFigure": "Figure",
     "previewModeLayout": "In-page",
+    "previewLayoutCycle": "Position",
+    "previewLayoutCycleHint": "Cycle figure placement on the manuscript page",
+    "previewLayoutSampleNote": "Layout reference only, the page preview is not exported",
     "previewLayoutUnavailable": "Figure size isn’t available yet for true-scale page preview",
     "previewLayoutSlotSpec": "{{w}} × {{h}} mm · {{spec}} · {{column}} {{colW}} mm",
     "previewLayoutSlotGeneric": "{{w}} × {{h}} mm · Two-column page · {{column}} {{colW}} mm",
@@ -326,8 +329,10 @@
         "image_ppi": "image resolution",
         "clipping": "clipping",
         "dpi_tag": "resolution tag",
-        "raster_density": "pixel density"
-      }
+        "raster_density": "pixel density",
+        "text_size": "text size"
+      },
+      "textSizeBelow": "The smallest text in the file is {{min}} pt, below the {{floor}} pt the spec asks for"
     },
     "cancelPending": "Requesting cancellation…",
     "cancelRequested": "Cancellation requested",
@@ -470,6 +475,42 @@
         "keywords": "canvas page settings size",
         "label": "Canvas settings"
       },
+      "convert-to-path": {
+        "keywords": "convert path outline bezier vector",
+        "label": "Convert to Path"
+      },
+      "pen-tool": {
+        "keywords": "pen path bezier draw",
+        "label": "Pen"
+      },
+      "edit-anchors": {
+        "keywords": "anchor direct selection points",
+        "label": "Edit Anchor Points"
+      },
+      "add-anchor": {
+        "keywords": "add anchor point plus",
+        "label": "Add Anchor Point"
+      },
+      "delete-anchor": {
+        "keywords": "delete remove anchor point minus",
+        "label": "Delete Anchor Point"
+      },
+      "convert-anchor": {
+        "keywords": "convert anchor smooth corner",
+        "label": "Convert Anchor Point"
+      },
+      "cut-path": {
+        "keywords": "cut scissors split break",
+        "label": "Cut Path at Anchor Points"
+      },
+      "join-paths": {
+        "keywords": "join connect close",
+        "label": "Join"
+      },
+      "average-anchors": {
+        "keywords": "average align anchors",
+        "label": "Average Anchor Points"
+      },
       "cycle-overlap": {
         "keywords": "cycle overlap overlapping twin axis behind stack",
         "label": "Cycle through overlapping figure elements"
@@ -597,6 +638,110 @@
       "zoom-selection": {
         "label": "Zoom to selection",
         "keywords": "zoom selection focus frame view fit selected"
+      },
+      "default-appearance": {
+        "keywords": "default fill stroke reset",
+        "label": "Default Fill and Stroke"
+      },
+      "swap-fill-stroke": {
+        "keywords": "swap fill stroke",
+        "label": "Swap Fill and Stroke"
+      },
+      "clear-fill": {
+        "keywords": "no fill none clear",
+        "label": "No Fill"
+      },
+      "eyedropper-tool": {
+        "keywords": "eyedropper pick color sample",
+        "label": "Eyedropper"
+      },
+      "pathfinder-unite": {
+        "keywords": "unite union merge combine pathfinder",
+        "label": "Unite"
+      },
+      "pathfinder-minus-front": {
+        "keywords": "minus front subtract pathfinder",
+        "label": "Minus front"
+      },
+      "pathfinder-intersect": {
+        "keywords": "intersect overlap pathfinder",
+        "label": "Intersect"
+      },
+      "pathfinder-exclude": {
+        "keywords": "exclude xor overlap pathfinder",
+        "label": "Exclude"
+      },
+      "pathfinder-divide": {
+        "keywords": "divide split pathfinder",
+        "label": "Divide"
+      },
+      "pathfinder-trim": {
+        "keywords": "trim hidden pathfinder",
+        "label": "Trim"
+      },
+      "make-compound": {
+        "keywords": "compound path hole",
+        "label": "Make compound path"
+      },
+      "release-compound": {
+        "keywords": "release compound path",
+        "label": "Release compound path"
+      },
+      "offset-path": {
+        "keywords": "offset path expand inset",
+        "label": "Offset path"
+      },
+      "outline-stroke": {
+        "keywords": "outline stroke expand",
+        "label": "Outline stroke"
+      },
+      "simplify-path": {
+        "keywords": "simplify smooth reduce anchors",
+        "label": "Simplify path"
+      },
+      "reverse-path": {
+        "keywords": "reverse path direction flip arrow",
+        "label": "Reverse path direction"
+      },
+      "shape-builder": {
+        "keywords": "shape builder merge regions",
+        "label": "Shape builder"
+      },
+      "make-clip-mask": {
+        "keywords": "clipping mask clip crop",
+        "label": "Make clipping mask"
+      },
+      "release-clip-mask": {
+        "keywords": "release clipping mask",
+        "label": "Release clipping mask"
+      },
+      "transform-again": {
+        "keywords": "transform again repeat",
+        "label": "Transform again"
+      },
+      "reflect-horizontal": {
+        "keywords": "reflect mirror flip horizontal",
+        "label": "Reflect horizontally"
+      },
+      "reflect-vertical": {
+        "keywords": "reflect mirror flip vertical",
+        "label": "Reflect vertically"
+      },
+      "quick-layout": {
+        "keywords": "quick layout auto arrange align yjpb",
+        "label": "Auto layout"
+      },
+      "explode-svg": {
+        "keywords": "explode svg editable vector",
+        "label": "Make editable"
+      },
+      "outline-text": {
+        "keywords": "outline text create outlines path",
+        "label": "Create outlines"
+      },
+      "copy-as-svg": {
+        "keywords": "copy svg clipboard illustrator",
+        "label": "Copy as SVG"
       }
     },
     "listLabel": "Commands",
@@ -1409,7 +1554,49 @@
       "viewGuide": "Read the guide",
       "defaultLabel": "Default assistant",
       "defaultNone": "No assistant available",
-      "convertUnsandboxed": "Let the AI run without a sandbox when converting"
+      "convertUnsandboxed": "Let the AI run without a sandbox when converting",
+      "fixMemory": {
+        "label": "Remember what fixed it",
+        "help": "After a script is fixed, Tavotto notes what worked on this computer, so another project with the same kind of problem can refer to it. Stays on this computer: never uploaded, never in problem reports.",
+        "count_one": "{{count}} remembered",
+        "count_other": "{{count}} remembered",
+        "none": "Nothing remembered yet",
+        "view": "View",
+        "title": "Remembered fixes",
+        "clearAll": "Delete all",
+        "delete": "Delete this fix",
+        "meta_one": "{{date}} · used {{count}} time",
+        "meta_other": "{{date}} · used {{count}} times",
+        "launcherText": "Show script",
+        "kind": {
+          "run_args": "Passed run arguments {{args}}",
+          "launcher": "Added a launcher",
+          "launcherEnv": "Launcher sets {{env}}",
+          "data_link": "Pointed {{asked}} at {{linked}}",
+          "execution": "Switched to {{mode}}"
+        },
+        "mode": {
+          "safe": "safe mode",
+          "native": "your own Python"
+        },
+        "shape": {
+          "env_var_missing": "Missing environment variable",
+          "script_needs_arguments": "Needs command-line arguments",
+          "script_needs_input": "Waits for typed input",
+          "input_eof": "Waits for typed input",
+          "missing_input": "Data file not found",
+          "relative_import": "Relative import failed",
+          "no_figure_captured": "Drew no figure",
+          "script_is_library": "Only defines functions",
+          "missing_dependency": "Missing package",
+          "script_uses_gui_dialog": "Opens a file dialog",
+          "safe_file_operation_blocked": "Safe mode blocked a file operation",
+          "other": "Other problem"
+        },
+        "clearBody_one": "Delete the {{count}} remembered fix? This can't be undone.",
+        "clearBody_other": "Delete all {{count}} remembered fixes? This can't be undone.",
+        "cancel": "Cancel"
+      }
     },
     "canvas": {
       "companionsExplain": "Companion elements are hand-placed titles, axis labels, legends, colorbar axes and twinx twins. Without this, they stay behind when the axes move; turn it off to move only the axes.",
@@ -1473,7 +1660,7 @@
           "detail_requests": "Recent backend requests (method, route, status, duration, error code only)",
           "detail_overrides": "Style edits of the figure being edited",
           "detail_render_env": "Render environment (Python, matplotlib, installed packages, fonts)",
-          "detail_runs": "Recent render, export and script test-run records",
+          "detail_runs": "Recent render, export and script test-run records, and what AI repair did",
           "detail_shell": "Desktop shell and install facts (versions, OS, architecture, update result)",
           "detail_storage": "Storage environment (free space, writable, sync folder)",
           "detail_console": "Recent errors and warnings from the interface console",
@@ -1483,7 +1670,7 @@
           "detail_crash_reports": "System crash reports (you ticked this)",
           "detail_corrupt_sessions": "Contents of corrupted session copies (you ticked this)"
         },
-        "notIncluded": "Not included by default: your scripts, data files, or the anonymous-statistics identifier. Errors and logs may mention folder names, file names and output printed by your script.",
+        "notIncluded": "Not included by default: your script files, data files, or the anonymous-statistics identifier. Errors and logs may mention folder names, file names and output printed by your script, and if you used AI repair, the parts of your script it read.",
         "save": "Save this bundle",
         "saved": "Saved",
         "saveFailed": "Could not save",
@@ -2077,6 +2264,53 @@
       "overwriteTitle": "Overwrite your edited skill in {{host}}?",
       "overwriteBody": "Your changes will be replaced with the version that ships with Tavotto.",
       "cancel": "Cancel"
+    },
+    "license": {
+      "label": "Premium",
+      "none": "Not activated",
+      "until": "Valid until {{date}}",
+      "codeLabel": "Activation code",
+      "state": {
+        "expired": "Expired on {{date}}",
+        "revoked": "This license is no longer valid",
+        "lapsed": "Needs a quick online check"
+      },
+      "action": {
+        "enter": "Enter code",
+        "buy": "Buy",
+        "activate": "Activate",
+        "release": "Unbind this computer",
+        "refresh": "Check now",
+        "renew": "Renew",
+        "retry": "Try again",
+        "cancel": "Cancel"
+      },
+      "failure": {
+        "invalid_code": "That code isn't right. Check it and try again",
+        "device_limit": "This license is already on its maximum number of computers. Unbind one of them first",
+        "revoked": "This license is no longer valid",
+        "expired": "This license has expired",
+        "price_unavailable": "Can't buy right now. Please try again later",
+        "rate_limited": "Too many tries. Wait a moment and try again",
+        "network": "Can't reach the license server. Check your network and try again",
+        "server": "The license service is unavailable. Please try again later",
+        "client_error": "That didn't go through. Please try again later"
+      },
+      "lock": {
+        "tip": "Premium feature. Click to learn more",
+        "aria": "Premium feature, learn about Premium"
+      },
+      "releaseTitle": "After unbinding, you can activate it on another computer",
+      "plate": {
+        "label": "Founding member",
+        "defaultName": "Early supporter",
+        "nameLabel": "Name engraved on the plate",
+        "nameTitle": "The name stays on this computer",
+        "engrave": "Engrave your name",
+        "rename": "Change name",
+        "turnTitle": "Drag to turn it over",
+        "issued": "ISSUED ON"
+      }
     }
   },
   "style": {
@@ -2544,6 +2778,8 @@
     "hasRequirement": "Has a requirement",
     "strengthRequired": "Required",
     "strengthRecommended": "Recommended",
+    "strengthExample": "Example",
+    "strengthTypical": "About",
     "unset": "Does not apply to this journal",
     "noJournal": "No journal",
     "cleared": "No longer checking against a journal",
@@ -2556,7 +2792,10 @@
     "formatsAccepted": "Accepted: {{list}}",
     "source": "Source",
     "sourceOf": "Source of {{name}}",
+    "snapshotZoom": "Click to enlarge",
+    "snapshotAlt": "Screenshot of the source text",
     "picked": "Now checking against {{name}}",
+    "v2Updated": "{{name}} has newer requirements; checking against them",
     "pickedWidth": "Now checking against {{name}}; page width set to {{w}} mm",
     "card": {
       "adviceBoth": "Text size records: see source text",
@@ -2570,10 +2809,28 @@
       },
       "open": "Open original page",
       "archive": "Archive",
+      "fromV2": "Newer",
       "aria": "Source"
+    },
+    "confirm": {
+      "title": "Needs your check ({{count}})",
+      "condition": "Condition in the source: {{text}}",
+      "aria": "Requirements to check yourself"
     },
     "field": {
       "page_columns": "Column widths",
+      "v2_raster_dpi_dpi": "Bitmap",
+      "v2_font_family": "Font",
+      "v2_font_size_pt": "Font size",
+      "v2_file_format": "File format",
+      "v2_color_mode": "Colour mode",
+      "v2_min_line_width_pt": "Line width",
+      "v2_width_mm": "Figure width",
+      "v2_width_in": "Figure width",
+      "v2_figure_piece_width_mm": "Piece width",
+      "v2_figure_piece_width_in": "Piece width",
+      "v2_figure_size_max_mm": "Max figure size",
+      "v2_figure_size_max_in": "Max figure size",
       "widths_mm_single": "Single column",
       "widths_mm_double": "Double column",
       "widths_mm_tolerance_mm": "Width tolerance",
@@ -2583,6 +2840,7 @@
       "max_font_size_pt": "Maximum font size",
       "min_script_font_size_pt": "Minimum sub/superscript size",
       "min_raster_dpi": "Raster resolution",
+      "min_line_width_pt": "Minimum line width",
       "line_widths_pt": "Line widths",
       "font_family_latin_accepted": "Fonts",
       "preferred_formats_export_default": "Default export format",

@@ -746,12 +746,18 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
         "lookup_package",
         "try_import",
         "try_run",
+        # ADR 0197：小实验（细节见 tests/test_fixtools_snippet.py）
+        "run_snippet",
         # D2a 的「改」组（细节见 tests/test_fixtools_change.py）
         "install_packages",
         "switch_execution",
         "switch_workdir",
         # TVD-CHR5：脚本被改写后登记的入口过时（细节见 tests/test_entry_fresh.py）
         "fix_entry",
+        # ADR 0194：启动脚本（细节见 tests/test_launchscript.py）
+        "write_launcher",
+        # 填运行参数（与「运行参数」框同一份运行配置，T03；细节见 tests/test_fixtools_run_args.py）
+        "set_run_arguments",
         "change_python",
         "select_environment",
         "convert_script",
@@ -773,6 +779,7 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
         "inspect_environment",
         "try_import",
         "try_run",
+        "run_snippet",
     }
     assert {t.tier for t in REGISTRY.values()} == {
         "observe",

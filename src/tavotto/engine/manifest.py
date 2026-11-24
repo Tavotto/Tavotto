@@ -20,7 +20,13 @@ from contextlib import contextmanager
 from functools import lru_cache
 
 import matplotlib as mpl
-from matplotlib import cbook as mcbook, colors as mcolors, font_manager, text as mtext
+from matplotlib import (
+    cbook as mcbook,
+    collections as mcollections,
+    colors as mcolors,
+    font_manager,
+    text as mtext,
+)
 from matplotlib.axes import Axes
 from matplotlib.axis import Axis
 from matplotlib.collections import (
@@ -40,6 +46,7 @@ from matplotlib.markers import MarkerStyle
 from matplotlib.offsetbox import AnchoredOffsetbox, AnnotationBbox, OffsetBox, TextArea
 from matplotlib.patches import ConnectionPatch, FancyArrowPatch, Patch
 from matplotlib.path import Path
+from matplotlib.table import Table
 from matplotlib.text import Text
 from matplotlib.textpath import text_to_path
 from matplotlib.transforms import Bbox, IdentityTransform
@@ -84,6 +91,7 @@ from overrides import (
     _FONT_PRESENT as _FONT_PRESENT,  # 测试要清的那张探测缓存（显式再导出）
     BBOX_DEFAULTS,
     HATCHES,
+    LINE_POINTS_MAX,
     FigState,
     SeriesGroup,
     _arrow_style,
@@ -102,6 +110,7 @@ from overrides import (
     annotation_arrow_owner,
     annotation_text_draggable,
     artist_identity,
+    aspect_text,
     cjk_fallback_candidates,
     collection_caps,
     collection_edge_rgba,
@@ -330,10 +339,12 @@ def _register_figure_level(state: FigState, owner, prefix: str, counts: dict[str
         elif isinstance(art, Line2D):
             register_line(gid, art)
         elif isinstance(art, Collection):
+            # 图上的集合位置都是排版（没有 transData）：与图级的形状、线一样可拖
+            drag = _layout_anchored_artist(art)
             if is_linecoll_family(art):
-                _register(state, gid, art, "linecoll", f"线组 {nth('linecoll')}")
+                _register(state, gid, art, "linecoll", f"线组 {nth('linecoll')}", draggable=drag)
             else:
-                _register(state, gid, art, "collection", _coll_label(art, j))
+                _register(state, gid, art, "collection", _coll_label(art, j), draggable=drag)
         elif isinstance(art, (AxesImage, FigureImage)):
             _register(state, gid, art, "image", f"图像 {nth('image')}")
         else:
@@ -341,6 +352,87 @@ def _register_figure_level(state: FigState, owner, prefix: str, counts: dict[str
             _register(state, gid, art, "artist", f"{type(art).__name__} {j + 1}")
     for k, sub in enumerate(getattr(owner, "subfigs", []) or []):
         _register_figure_level(state, sub, f"{prefix}.subfigs_{k}", counts)
+
+
+def _depends_on(t, node) -> bool:
+    """`t` 是不是 `node`、或经 matplotlib 的 transform 依赖图挂在 `node` 上。
+
+    沿 `node._parents` 往上走：`a + b`（Composite）、`blended_transform_factory`（Blended）、
+    `TransformWrapper` 构造时都 `set_children`，依赖 `node` 的 transform 一律在这张图里。"""
+    seen: set[int] = set()
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if n is t:
+            return True
+        if id(n) in seen:
+            continue
+        seen.add(id(n))
+        for ref in list(getattr(n, "_parents", {}).values()):
+            parent = ref()
+            if parent is not None:
+                stack.append(parent)
+    return False
+
+
+def _layout_anchored_transform(t, fig, ax=None) -> bool:
+    """这条 transform 落的是不是排版坐标：不经过 `ax.transData`（有 ax 时），并且挂在认得的排版
+    坐标系上（子图框 / 子图幅 / 图幅 / 英寸）。没登记依赖的自定义 transform 判不出来，按数据处理。"""
+    if ax is not None and _depends_on(t, ax.transData):
+        return False
+    roots = [] if ax is None else [ax.transAxes]
+    if fig is not None:
+        roots.append(fig.transSubfigure)
+        root = pathgeom.root_figure(fig)
+        roots.extend((root.transFigure, root.dpi_scale_trans))
+    return any(_depends_on(t, r) for r in roots)
+
+
+def _layout_anchored_line(ln, ax) -> bool:
+    """子图里这条线的位置是不是排版而不是数据（ADR 0100 修订 2026-11-18）。
+
+    两条都要成立：x、y 都不经过 `transData`（`axhline` 一边是数据、`transData + 平移`
+    整条是数据，都不算）；并且落在认得的排版坐标系上（子图框 / 图幅 / 英寸）——
+    没登记依赖关系的自定义 transform 判不出来，按数据处理、不宣称可拖。"""
+    return _layout_anchored_transform(ln.get_transform(), ax.get_figure(), ax)
+
+
+def _layout_anchored_artist(a, ax=None) -> bool:
+    """集合 / 位图的位置是不是排版（同一修订）。落位用的那条 transform 判排版坐标：散点是 offset
+    transform（路径 transform 只是 marker 的像素尺，但也不许经过数据），线组 / 图形集合 / 位图是
+    artist 自己的 transform；还要量得出位置（`pathgeom.layout_extent`，与拖动同一把尺）。
+
+    等值线（`ContourSet`）不拖：它的 `clabel` 文字是另外的元素，不会跟着走。"""
+    if isinstance(a, ContourSet):
+        return False
+    fig = a.get_figure()
+    tr = a.get_transform()
+    if isinstance(a, Collection) and pathgeom.collection_uses_offsets(a):
+        if ax is not None and _depends_on(tr, ax.transData):
+            return False
+        pos = a.get_offset_transform()
+    elif isinstance(a, (Collection, AxesImage, Table)):
+        pos = tr
+    else:
+        return False
+    if not _layout_anchored_transform(pos, fig, ax):
+        return False
+    return pathgeom.layout_extent(a) is not None
+
+
+def _line_points_frac(ln, W: float, H: float) -> list[list[float]] | None:
+    """可拖的线的每个顶点此刻落在哪（figure 分数、top-origin）：前端按段 / 按点拖它们，写
+    `("line", "points_frac")`（ADR 0100 修订 2026-11-19）。2 到 `LINE_POINTS_MAX` 个、全是有限值才给；
+    更长的是曲线，只整条平移。坐标与 `anchor` 同一套换算（显示像素 / 图幅）。"""
+    try:
+        disp = ln.get_transform().transform(ln.get_xydata())
+    except Exception:  # noqa: BLE001
+        return None
+    if not 2 <= len(disp) <= LINE_POINTS_MAX or not all(
+        math.isfinite(v) for row in disp for v in row
+    ):
+        return None
+    return [[float(x) / W, 1.0 - float(y) / H] for x, y in disp]
 
 
 def _snippet(text: str, n: int = 18) -> str:
@@ -387,6 +479,19 @@ def _svg_group(art) -> None:
 
     art.draw = draw
     art._mm_svg_group = True  # noqa: SLF001
+
+
+def _own_svg_image(im) -> None:
+    """可拖的位图（贴在子图框里的图片）在预览 SVG 里要有自己的 `<g id=gid>`：拖动时前端平移的是它。
+
+    两件事：`_svg_group` 包一层 draw（matplotlib 的 SVG 后端不给 `<image>` 写 gid）；
+    不参与合成——矢量后端把同一子图里相邻的位图合成一张、根本不调各自的 draw（底图也是位图时，
+    比如地图上贴照片，就是这样），组包了也开不出来。不合成时每张照原样各画各的，画面相同；
+    矢量文件里是两张图而不是合成的一张。Agg（PNG）本来就不合成。"""
+    _svg_group(im)
+    if not im.__dict__.get("_mm_no_composite"):
+        im.can_composite = lambda: False
+        im._mm_no_composite = True  # noqa: SLF001
 
 
 def _register(
@@ -805,6 +910,7 @@ def instrument(state: FigState) -> None:
             label,
             position_locked=position_locked,
             limits_slaved=secondary,
+            colorbar_owned=ax in cbar_of_ax,
             inset_of=(gid_of_ax.get(parent_of.get(id(ax))) if is_child and not secondary else None),
             # 寄生轴的 `set_visible(False)` 同样是个死开关：宿主的 draw 无条件
             # 把 `ax.get_children()` 接过去画，**从不看寄生轴自己的 visible**
@@ -971,10 +1077,24 @@ def instrument(state: FigState) -> None:
             if not lab or lab.startswith("_"):
                 lab = proxy_names.get(id(ln), "")  # 图例代理句柄借来的显示名
             nice = f"曲线 “{_snippet(lab)}”" if lab and not lab.startswith("_") else f"曲线 {j + 1}"
-            _register(state, f"axes_{i}.lines_{j}", ln, "line", nice)
+            # 位置不是数据的线（`transform=ax.transAxes` 画的引线 / 标注线）是排版，与图级的线
+            # 同一套 `("line", "pos_frac")` 可拖；数据坐标的曲线（含 axhline / 数据 + 平移）照旧不拖
+            _register(
+                state,
+                f"axes_{i}.lines_{j}",
+                ln,
+                "line",
+                nice,
+                draggable=not is3d and ax not in cbar_of_ax and _layout_anchored_line(ln, ax),
+            )
         if not is3d:
             for j, im in enumerate(ax.images):
-                _register(state, f"axes_{i}.images_{j}", im, "image", f"图像 {j + 1}")
+                im_drag = ax not in cbar_of_ax and _layout_anchored_artist(im, ax)
+                if im_drag:
+                    _own_svg_image(im)
+                _register(
+                    state, f"axes_{i}.images_{j}", im, "image", f"图像 {j + 1}", draggable=im_drag
+                )
         # Collection family：三条 gid 分支的**唯一理由是向后兼容**——
         # `axes_i.scatter_j` 与 `axes_i.fill_j` 是已经发出去的名字，历史
         # 文档里有针对它们的 override，不能换。序号 j 是 `ax.collections`
@@ -994,6 +1114,8 @@ def instrument(state: FigState) -> None:
             # 叫什么」，两边分开写会让历史 override 悄悄变成孤儿。
             prefix = _collection_gid_prefix(coll)
             gid = f"axes_{i}.{prefix}_{j}"
+            # 位置不是数据的集合（`transform=ax.transAxes` 手画的图例点、线组）是排版，可拖
+            coll_drag = not is3d and _layout_anchored_artist(coll, ax)
             if prefix == "scatter":
                 lab = str(coll.get_label())
                 if not lab or lab.startswith("_"):
@@ -1003,9 +1125,9 @@ def instrument(state: FigState) -> None:
                     if lab and not lab.startswith("_")
                     else f"散点系列 {j + 1}"
                 )
-                _register(state, gid, coll, "scatter", nice)
+                _register(state, gid, coll, "scatter", nice, draggable=coll_drag)
             elif prefix == "fill":
-                _register(state, gid, coll, "fill", _coll_label(coll, j))
+                _register(state, gid, coll, "fill", _coll_label(coll, j), draggable=coll_drag)
             elif prefix == "linecoll":
                 # 线组：`hlines`/`vlines` 的参考线、`stem` 的竖线、
                 # `eventplot` 的事件线（EventCollection 是它的子类）、
@@ -1031,9 +1153,9 @@ def instrument(state: FigState) -> None:
                     if lab and not lab.startswith("_")
                     else f"线组 {j + 1}"
                 )
-                _register(state, gid, coll, "linecoll", nice)
+                _register(state, gid, coll, "linecoll", nice, draggable=coll_drag)
             else:
-                _register(state, gid, coll, "collection", _coll_label(coll, j))
+                _register(state, gid, coll, "collection", _coll_label(coll, j), draggable=coll_drag)
         if not is3d:
             # 脚本直接 add_patch 的独立箭头（XPS 峰位标注这类画法）与独立形状。
             # 形状按 **Patch family** 认，不逐个列类名：`ax.fill()` 的 Polygon、
@@ -1096,7 +1218,15 @@ def instrument(state: FigState) -> None:
             )
             _register_offsetbox_texts(state, f"axes_{i}.artists_{j}", art)
         for j, tbl in enumerate(getattr(ax, "tables", []) or []):
-            _register(state, f"axes_{i}.tables_{j}", tbl, "artist", f"表格 {j + 1}")
+            # 表格画在子图框坐标里（`loc` / `bbox`），位置是排版：与位图同一条判据，可拖
+            _register(
+                state,
+                f"axes_{i}.tables_{j}",
+                tbl,
+                "artist",
+                f"表格 {j + 1}",
+                draggable=not is3d and _layout_anchored_artist(tbl, ax),
+            )
         leg = ax.get_legend()
         if leg is not None:
             _register_legend(state, f"axes_{i}.legend", leg)
@@ -2024,7 +2154,7 @@ def _text_fields(t) -> list[dict]:
             "type": "number",
             "value": round(float(t.get_fontsize()), 2),
             "min": 3,
-            "max": 36,
+            "max": 200,
             "step": 0.5,
             "unit": "pt",
         },
@@ -3525,7 +3655,7 @@ def _colorbar_fields(p, state: FigState, gid: str) -> list[dict]:
             "type": "number",
             "value": round(_cb_tick_fontsize(p), 2),
             "min": 3,
-            "max": 24,
+            "max": 200,
             "step": 0.5,
             "unit": "pt",
             "group": "刻度",
@@ -3573,7 +3703,7 @@ def _legend_fields(leg) -> list[dict]:
             "type": "number",
             "value": round(size, 2) if size > 0 else 8,
             "min": 3,
-            "max": 24,
+            "max": 200,
             "step": 0.5,
             "unit": "pt",
         },
@@ -3585,7 +3715,7 @@ def _legend_fields(leg) -> list[dict]:
             "type": "number",
             "value": round(float(leg.get_title().get_fontsize()), 2),
             "min": 3,
-            "max": 24,
+            "max": 200,
             "step": 0.5,
             "unit": "pt",
             "group": "样式",
@@ -3909,7 +4039,7 @@ def _tick_fields(ts: TickSet) -> list[dict]:
             "type": "number",
             "value": round(float(ts._first(lambda t: t.get_fontsize(), 8.5)), 2),
             "min": 3,
-            "max": 24,
+            "max": 200,
             "step": 0.5,
             "unit": "pt",
         },
@@ -4280,12 +4410,18 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
 
     两条标记的**理由不同**，所以是两个字段而不是一个「这是子 axes」：
     插图的 xlim / scale 是真能改的，只有落位不能。
+
+    * `colorbar_owned` —— 色条轴：范围、刻度、外框归 `Colorbar` 管（色条元素的 vmin / vmax /
+      orientation / 刻度字号 / outline_*）。实测（#2005）这根轴上其余的 axes 字段几乎全是死开关：
+      spines 被色条藏起来、外框是另一条 `outline`，网格、底色被色块盖住；`invert_x`、短轴那侧的
+      刻度开关、`grid_x` 读回来就不是写进去的值；长轴 `xscale` / `aspect` 撤销后刻度回不到原样；
+      长轴的 `ylim` / `yscale` 改得动，却是在色标与数据的对应关系之外另开一条通道。只留落位与显隐
+      ——界面选中色条轴本来就换成色条元素（`ElementInspector`），这里与它对齐，MCP / 预检 / 样式
+      预设也就不会把一根色条轴当子图去「补全边框」。
     """
     flags = el or {}
-    x0, x1 = ax.get_xlim()
-    y0, y1 = ax.get_ylim()
-    aspect = ax.get_aspect()
-    fields = [
+    # 落位与显隐：色条轴也只留这两条
+    frame = [
         *(
             []
             if flags.get("position_locked")
@@ -4308,6 +4444,13 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
             if flags.get("visible_locked")
             else [{"prop": "visible", "type": "bool", "value": bool(ax.get_visible())}]
         ),
+    ]
+    if flags.get("colorbar_owned"):
+        return frame
+    x0, x1 = ax.get_xlim()
+    y0, y1 = ax.get_ylim()
+    fields = [
+        *frame,
         *(
             []
             if flags.get("limits_slaved")
@@ -4330,14 +4473,14 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
                     "prop": "xscale",
                     "type": "enum",
                     "value": str(ax.get_xscale()),
-                    "options": scale_options(ax.get_xscale()),
+                    "options": scale_options(ax.get_xscale(), ax, "x"),
                     "group": "数据范围",
                 },
                 {
                     "prop": "yscale",
                     "type": "enum",
                     "value": str(ax.get_yscale()),
-                    "options": scale_options(ax.get_yscale()),
+                    "options": scale_options(ax.get_yscale(), ax, "y"),
                     "group": "数据范围",
                 },
                 {
@@ -4355,7 +4498,7 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
                 {
                     "prop": "aspect",
                     "type": "text",
-                    "value": aspect if isinstance(aspect, str) else str(round(float(aspect), 3)),
+                    "value": aspect_text(ax),
                     "group": "数据范围",
                 },
             ]
@@ -4992,6 +5135,271 @@ def data_fingerprint(artist, budget: list[int]) -> dict | None:
         return {"status": "unavailable"}
 
 
+#: `scale_domain` 每一维的 `status` 闭集（V-001 `log-axis-nonpositive` 读它；不是 `ok` 一律不判）
+SCALE_DOMAIN_STATUSES = ("ok", "over_budget", "unavailable")
+
+
+def _scale_domain_sources(ax) -> list[tuple[str, object, object]]:
+    """这根轴上**参与 V-001 计数**的可见元素：`(kind, 经过的变换, 数组)`。
+
+    只收三类：折线（`Line2D.get_xydata()`）、散点（`PathCollection` 的 offsets，变换取 offset transform）、
+    误差线（`ErrorbarContainer` 的线段集合，`kind == "bar"`，只数下端）。刻意不收：
+    柱 / 直方图（log 轴上柱底就是 0）、`fill_between` 等填充（画到 0 多是有意填到底）、色条与 LogNorm、
+    别的 `LineCollection`（`vlines(x, 0, y)` / stem 的茎从 0 起画）、stem 的基线（y = 0 的一条线）、
+    误差棒的帽（它的位置就是误差线端点，算进来会把同一个下端数两遍）。"""
+    import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
+
+    skip: set[int] = set()
+    bar_cols: list = []
+    for c in ax.containers:
+        if isinstance(c, ErrorbarContainer):
+            _data_line, caplines, barlinecols = c.lines
+            skip.update(id(cap) for cap in caplines)
+            bar_cols.extend(barlinecols)
+        elif isinstance(c, StemContainer):
+            skip.add(id(c.baseline))
+    out: list[tuple[str, object, object]] = []
+    for line in ax.lines:
+        if id(line) in skip or not line.get_visible():
+            continue
+        out.append(("point", line.get_transform(), line.get_xydata()))
+    for col in ax.collections:
+        if not (isinstance(col, PathCollection) and col.get_visible()):
+            continue
+        offsets = col.get_offsets()
+        # 没设 offsets 的集合默认是一个 (0, 0)，但它的 offset transform 是 IdentityTransform、不经 transData，
+        # 后面按维的 `contains_branch_seperately` 本来就把它排除；**不能**按「单个 (0, 0)」排除——
+        # 用户显式画在原点的 `scatter([0], [0])` 也长这样，那是真数据（Codex #2111）
+        if offsets is None or not len(offsets):
+            continue
+        out.append(("point", col.get_offset_transform(), offsets))
+    for col in bar_cols:
+        if not col.get_visible():
+            continue
+        segs = [np.asarray(s, dtype=float) for s in col.get_segments()]
+        segs = [s for s in segs if s.ndim == 2 and s.shape[0] >= 2 and s.shape[1] >= 2]
+        if segs:
+            out.append(("bar", col.get_transform(), segs))
+    return out
+
+
+def scale_domain(ax, budget: list[int]) -> dict | None:
+    """对数轴上「画不出来的值」的只读事实（V-001；不进 `editable`、不进文档，同 `data_fingerprint`）。
+
+    只在某一维尺度是 `log` 时出现：`{"y": {"status": "ok", "nonpositive": N, "errorbar_low_nonpositive": M}}`。
+    `nonpositive` 数线 / 散点上有限且 ≤ 0 的坐标，`errorbar_low_nonpositive` 数下端 ≤ 0 的误差线（沿这一维的段）；
+    NaN / 掩码值不算。只数**这一维真正经过该轴 `transData`** 的坐标（`contains_branch_seperately`）：`axvline` /
+    `axhspan` 在轴坐标那一维上的 0–1、`transAxes` 画的线都不算。twin 轴各数各的（`ax.lines` 本来就分轴）。
+    `budget` 与数据指纹同一个上限（`FINGERPRINT_BUDGET`），但是**另一份**计数器：共用会让原本量得了的指纹被挤成
+    `over_budget`。超出写 `over_budget`、量不了写 `unavailable`，规则见到这两种一律不判（「没量」不是「没有」）。"""
+    try:
+        dims = [(d, i) for d, i in (("x", 0), ("y", 1)) if getattr(ax, f"get_{d}scale")() == "log"]
+    except Exception:  # noqa: BLE001 —— 自定义 Axes 什么都可能抛；量不了就不发
+        return None
+    if not dims:
+        return None
+    try:
+        import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
+
+        sources = _scale_domain_sources(ax)
+        data = ax.transData
+        branches = [tr.contains_branch_seperately(data) for _, tr, _ in sources]
+    except Exception:  # noqa: BLE001
+        return {d: {"status": "unavailable"} for d, _ in dims}
+    out: dict[str, dict] = {}
+    for dim, i in dims:
+        try:
+            picked = [(k, arr) for (k, _, arr), br in zip(sources, branches) if br[i]]
+            size = sum(
+                sum(int(s.shape[0]) for s in arr) if k == "bar" else int(np.shape(arr)[0])
+                for k, arr in picked
+            )
+            if size > budget[0]:
+                out[dim] = {"status": "over_budget"}
+                continue
+            budget[0] -= size
+            points = low = 0
+            for k, arr in picked:
+                if k == "bar":
+                    for seg in arr:
+                        v = seg[:, i]
+                        v = v[np.isfinite(v)]
+                        # 只数沿这一维的误差线：xerr 的水平段在 y 维上两端相同，它的 y 就是数据点本身（线里已数过）
+                        if v.size >= 2 and v.min() < v.max() and v.min() <= 0:
+                            low += 1
+                    continue
+                v = np.ma.filled(np.ma.asarray(arr, dtype=float), np.nan)
+                v = v[:, i] if v.ndim == 2 and v.shape[1] > i else np.zeros(0)
+                points += int((np.isfinite(v) & (v <= 0)).sum())
+            out[dim] = {"status": "ok", "nonpositive": points, "errorbar_low_nonpositive": low}
+        except Exception:  # noqa: BLE001
+            out[dim] = {"status": "unavailable"}
+    return out
+
+
+#: `bar_baseline` 每一维的 `status` 闭集（V-002 `bar-baseline-truncated` 读它；不是 `ok` 一律不判）
+BAR_BASELINE_STATUSES = ("ok", "over_budget", "unavailable")
+
+
+def _bar_rects(patches, horizontal: bool) -> list[tuple[float, float, float, float]]:
+    """一个柱容器里可见柱的 `(底, 顶, 位置中心, 柱宽)`，按柱长那一维取。
+
+    竖柱的底是 `get_y()`、横柱是 `get_x()`：`Rectangle` 存的是锚点 + 有符号的高 / 宽，负值柱
+    `bar(x, -3)` 的锚点仍是 0、高是 -3，所以「底」就是锚点，不是包围盒的下沿。"""
+    out = []
+    for p in patches:
+        if horizontal:
+            base, length = float(p.get_x()), float(p.get_width())
+            width = float(p.get_height())
+            center = float(p.get_y()) + width / 2.0
+        else:
+            base, length = float(p.get_y()), float(p.get_height())
+            width = float(p.get_width())
+            center = float(p.get_x()) + width / 2.0
+        out.append((base, base + length, center, abs(width)))
+    return out
+
+
+#: 堆叠判定「端点相等 / 同一位置」的相对容差：乘的是**这一组柱自己的数值量级**（`_BarTops`），没有绝对下限——
+#: 固定的绝对下限会让柱高 3e-10 的整组柱「处处相等」，把最底层也当成上层（Codex #2124）
+_STACK_REL_TOL = 1e-9
+
+
+def _scale_of(values) -> float:
+    """一组数的量级：有限值里最大的绝对值（全是 0 / 没有有限值时为 0，容差随之为 0，即精确相等）。"""
+    return max((abs(v) for v in values if math.isfinite(v)), default=0.0)
+
+
+class _BarTops:
+    """所有容器柱顶的索引：按位置中心排序，查「某个位置上有没有别的容器的柱顶正好在这个高度」只二分一次。
+
+    柱数受配额约束（`FINGERPRINT_BUDGET` 量级），逐对比较是平方级，每次 override 都要重量一次，所以必须是
+    O(n log n)。容差按这一维这一组柱的量级取相对比例：长度方向看所有底 / 顶，位置方向看所有中心与柱宽，
+    同一张图整体放大 1e9 倍结论不变。"""
+
+    def __init__(self, rects: list[list[tuple[float, float, float, float]]]) -> None:
+        import bisect  # noqa: PLC0415
+
+        self._bisect = bisect
+        flat = [r for rs in rects for r in rs]
+        self._len_tol = _STACK_REL_TOL * _scale_of(v for b, t, _c, _w in flat for v in (b, t))
+        self._pos_tol = _STACK_REL_TOL * max(
+            _scale_of(c for _b, _t, c, _w in flat), _scale_of(w for _b, _t, _c, w in flat)
+        )
+        entries = sorted(
+            (center, top, k)
+            for k, rs in enumerate(rects)
+            for _base, top, center, _w in rs
+            if math.isfinite(top) and math.isfinite(center)
+        )
+        self._centers = [e[0] for e in entries]
+        self._entries = entries
+
+    def has_top(self, center: float, height: float, skip: int) -> bool:
+        if not (math.isfinite(center) and math.isfinite(height)):
+            return False
+        i = self._bisect.bisect_left(self._centers, center - self._pos_tol)
+        while i < len(self._entries) and self._entries[i][0] <= center + self._pos_tol:
+            _c2, top2, k2 = self._entries[i]
+            if k2 != skip and abs(height - top2) <= self._len_tol:
+                return True
+            i += 1
+        return False
+
+
+def _stacked_on_others(rects, k: int, tops: _BarTops) -> bool:
+    """第 k 个容器的**每一根**柱都正好叠在另一个容器某根柱的顶上（同一位置）——堆叠柱的上层。
+
+    上层的底各不相同时本来就没有共同基线；这里兜的是「下层柱高全相同」时上层底恰好统一的那种，
+    它的「基线」是下层的顶，不是柱长的起点，不判。"""
+    return all(tops.has_top(center, base, k) for base, _top, center, _w in rects)
+
+
+def _length_in_data(patches, axis_index: int, data) -> bool:
+    """柱长那一维是否真的经过这根轴的 `transData`（V-001 同一判据 `contains_branch_seperately`）。
+
+    `bar(..., transform=ax.transAxes)` 或 `get_xaxis_transform()` 这种长度在轴坐标里的柱，与 `ylim` 无关，
+    截不掉；混合变换只要长度那一维是数据坐标就照常判（Codex #2124）。说不出来的当作不经过，不判。"""
+    try:
+        return all(p.get_transform().contains_branch_seperately(data)[axis_index] for p in patches)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def bar_baseline(ax, budget: list[int]) -> dict | None:
+    """线性轴上柱的共同基线的只读事实（V-002；不进 `editable`、不进文档，同 `scale_domain`）。
+
+    只在这根轴上有**可见**的 `BarContainer`（`bar` / `barh` / `hist`）时出现，按柱长那一维分：竖柱记 `y`、
+    横柱（`orientation == "horizontal"`）记 `x`：`{"y": {"status": "ok", "baselines": [{"value": 0.0, "bars": 2}]}}`。
+    `baselines` 只收**有共同基线**的容器——容器里所有可见柱的底（有限值）精确相等；浮动柱 / 甘特图（底各不相同）、
+    堆叠柱的上层（`_stacked_on_others`）不收。底相同的容器合并成一项、柱数相加，按首次出现排序；数值不舍入。
+
+    事实**只有基线**：轴范围与尺度由规则从同一个 axes 元素的 `xlim` / `ylim` / `xscale` / `yscale` 读，
+    所以在检查器里改 `ylim` 不改事实、只改结论。只判直角坐标轴（`ax.name == "rectilinear"`，twin / inset 都是）：
+    3D 的 `bar`、极坐标的玫瑰图也是 `BarContainer`，但「柱底」在那里不是同一个概念，不发。柱长那一维不经过
+    `transData` 的容器（`transform=ax.transAxes`、`get_xaxis_transform()` 上的竖柱）与轴范围无关，不收（`_length_in_data`）。
+
+    `budget` 与数据指纹同一个上限（`FINGERPRINT_BUDGET`），是**第三份**计数器（与指纹、`scale_domain` 各自独立）；
+    按柱数扣，超出写 `over_budget` 且不扣；说不出方向（手工构造的 `BarContainer` 没有 `orientation`）或量的时候
+    抛错写 `unavailable`，规则见到这两种一律不判。"""
+    try:
+        if getattr(ax, "name", "") != "rectilinear":
+            return None
+        containers = [c for c in ax.containers if isinstance(c, BarContainer)]
+    except Exception:  # noqa: BLE001 —— 自定义 Axes 什么都可能抛；量不了就不发
+        return None
+    groups: dict[str, list[list]] = {"x": [], "y": []}
+    unknown = False
+    try:
+        data = ax.transData
+        for c in containers:
+            patches = [p for p in c.patches if p.get_visible()]
+            if not patches:
+                continue
+            orient = getattr(c, "orientation", None)
+            if orient not in ("vertical", "horizontal"):
+                unknown = True
+                continue
+            dim = "y" if orient == "vertical" else "x"
+            # 柱长不在数据坐标里（transAxes / 轴坐标混合变换）：与这根轴的范围无关，这个容器不发基线
+            if _length_in_data(patches, 1 if dim == "y" else 0, data):
+                groups[dim].append(patches)
+    except Exception:  # noqa: BLE001
+        unknown = True
+    if unknown:
+        return {"x": {"status": "unavailable"}, "y": {"status": "unavailable"}}
+    out: dict[str, dict] = {}
+    for dim in ("x", "y"):
+        conts = groups[dim]
+        if not conts:
+            continue
+        size = sum(len(ps) for ps in conts)
+        if size > budget[0]:
+            out[dim] = {"status": "over_budget"}
+            continue
+        budget[0] -= size
+        try:
+            rects = [_bar_rects(ps, dim == "x") for ps in conts]
+            tops = _BarTops(rects) if len(rects) > 1 else None
+            baselines: list[dict] = []
+            for k, rs in enumerate(rects):
+                bases = [b for b, _t, _c, _w in rs]
+                if not all(math.isfinite(b) for b in bases) or any(b != bases[0] for b in bases):
+                    continue  # 浮动柱 / 甘特图 / 底里有 NaN：没有共同基线，不判
+                if tops is not None and _stacked_on_others(rs, k, tops):
+                    continue
+                value = bases[0] + 0.0  # -0.0 → 0.0
+                hit = next((e for e in baselines if e["value"] == value), None)
+                if hit is None:
+                    baselines.append({"value": value, "bars": len(rs)})
+                else:
+                    hit["bars"] += len(rs)
+            out[dim] = {"status": "ok", "baselines": baselines}
+        except Exception:  # noqa: BLE001
+            out[dim] = {"status": "unavailable"}
+    return out or None
+
+
 _MIN_HIT_PX = 4.0  # 扁平元素最小命中厚度（display 像素）
 
 #: 3D 轴上登记的数据图元的角色（ADR 0135）；`_refresh_hidden_3d_projections` 只看这几种。
@@ -5117,6 +5525,11 @@ def _collection_datalim(artist):
                 return None
             own = artist.get_transform()
             bb = own.transform_bbox(artist.get_datalim(own))
+        elif _layout_anchored_artist(artist, ax):
+            # 子图里位置不是数据的集合（transAxes 手画的图例点、线组）：`get_datalim(transData)`
+            # 是空框，从前退回 tightbbox = 整块子图，点子图里任何地方都选中它。量它自己的落位，
+            # 与拖动同一把尺；散点再算上 marker 的大小（单点散点不至于零面积）
+            bb = pathgeom.layout_ink_extent(artist)
         else:
             bb = ax.transData.transform_bbox(artist.get_datalim(ax.transData))
     except Exception:  # noqa: BLE001
@@ -5455,6 +5868,29 @@ def _ensure_agg_canvas(fig):
     return fig.canvas.get_renderer()
 
 
+def _refresh_hidden_marker_sizes(state: FigState) -> None:
+    """没被这次 draw 画到的散点 / 标记集合，把标记大小按**当前文档 dpi** 重算一遍。
+
+    `PathCollection.draw` 每次开头 `set_sizes(self._sizes, self.figure.dpi)`，把「点」换算成像素的
+    结果冻在 `_transforms` 里。集合自己隐藏、或住在隐藏的 axes 里时 draw 被跳过，`_transforms`
+    于是停在上一次画它那回的 dpi（预览是 380 px 那一档）——热会话里「先出过预览、再隐藏 axes」
+    与冷启动重放量出两套标记轮廓（像素相同，因为本来就不画）。与隐藏图例现排（#413）同一族。"""
+    for el in state.elements:
+        art = el["artist"]
+        if not isinstance(art, mcollections._CollectionWithSizes):  # noqa: SLF001
+            continue
+        ax = getattr(art, "axes", None)
+        if art.get_visible() and (ax is None or ax.get_visible()):
+            continue
+        try:
+            # 走基类的 `set_sizes`：只按 `_sizes` 与 dpi 重算 `_transforms`。`Path3DCollection.set_sizes`
+            # 在 draw 之外会把参数写进规范的 `_sizes3d`，而此刻的 `_sizes` 是深度序，覆盖它会打乱
+            # 逐点大小（`overrides.collection_sizes`）。
+            mcollections._CollectionWithSizes.set_sizes(art, art._sizes, art.figure.dpi)  # noqa: SLF001
+        except Exception:  # noqa: BLE001 — 补算失败只是标记轮廓偏旧，不拦渲染
+            pass
+
+
 def _refresh_hidden_3d_projections(state: FigState) -> None:
     """隐藏的 3D 数据图元，几何按**此刻的视角**重投影（ADR 0135）。
 
@@ -5748,6 +6184,7 @@ def prepare_preview(state: FigState, *, timings: dict | None = None) -> None:
             arm(renderer)
             _layout_legends_for_measure(state, fig)
             _refresh_hidden_3d_projections(state)
+            _refresh_hidden_marker_sizes(state)
             sync_tick_elements(state)
             if timings is not None:
                 timings["manifest_layout_ms"] = round((measured - start) * 1000, 3)
@@ -5842,6 +6279,7 @@ def _measure_manifest(
     _layout_legends_for_measure(state, fig, vector_metrics)
     # 没被这次 draw 投影到的 3D 数据图元（隐藏的、或住在隐藏的 3D 轴里）按**当前**视角补投影
     _refresh_hidden_3d_projections(state)
+    _refresh_hidden_marker_sizes(state)
     # 刻度伪元素按**当前**刻度状态对齐（必须在 draw 之后：标签的文字是 draw
     # 那一刻由 Formatter 填进去的）
     sync_tick_elements(state)
@@ -5902,6 +6340,10 @@ def _measure_manifest(
         state.pristine_fields = pristine_fields
 
     fingerprint_budget = [FINGERPRINT_BUDGET]
+    #: V-001 的计数配额：与指纹同一个上限、另一份计数器（见 `scale_domain`）
+    scale_domain_budget = [FINGERPRINT_BUDGET]
+    #: V-002 的计数配额：同一个上限、第三份计数器（见 `bar_baseline`）
+    bar_baseline_budget = [FINGERPRINT_BUDGET]
     for el in state.elements:
         artist = el["artist"]
         if not _owner_axis_drawn(el):
@@ -5984,6 +6426,17 @@ def _measure_manifest(
                 entry["follow_gids"] = follow
             if el.get("inset_of"):
                 entry["inset_of"] = el["inset_of"]
+            # 对数轴上画不出来的值（V-001 `log-axis-nonpositive`）：只读事实，只在某一维是 log 时出现。
+            # 色条轴（值来自色阶）与 3D 轴不发——两维都不是 log 时键整个缺席，预检输出逐字节不变
+            if el["role"] == "axes" and artist not in state.colorbar_axes:
+                domain = scale_domain(artist, scale_domain_budget)
+                if domain:
+                    entry["scale_domain"] = domain
+                # 柱的共同基线（V-002 `bar-baseline-truncated`）：只读事实，只在轴上有可见的柱时出现；
+                # 范围与尺度由规则从本元素的 editable 读。没有柱时键整个缺席，预检输出逐字节不变
+                baseline = bar_baseline(artist, bar_baseline_budget)
+                if baseline:
+                    entry["bar_baseline"] = baseline
             # 只读事实（不在 editable、不进文档）：这根轴的范围此刻是不是自动缩放算出来的。`set_[xy]lim` 会把它关掉。
             # TAF 的「目标范围外改动」靠它区分「自动缩放跟着变」与「显式改了坐标范围」（figureverify._auto_prop）。
             # `peers`：共享这根轴范围的兄弟轴（sharex / twinx 的另一半），它们的范围会跟着这根轴的目标一起变。
@@ -6018,7 +6471,9 @@ def _measure_manifest(
                     **({"peers": peers} if peers else {}),
                     **({"expected": expected} if expected else {}),
                 }
-        elif el["role"] == "image" or _is_area_field(artist):
+        elif not el["draggable"] and (el["role"] == "image" or _is_area_field(artist)):
+            # 可拖的位图 / 集合（位置不是数据，不铺满宿主）：几何编辑归它自己，不代理回子图——
+            # 前端 `inFigureMoveOf` 先看 `resizable`，代理着的话拖它会拖走整个子图
             # imshow 位图铺满宿主 axes，会在命中测试里盖住它——把几何编辑
             # 代理回宿主 axes（前端对 geom_gid 发 position override）。
             # **面状的色图集合同理**（2026-09-24，用户的 PRB 三联图 (b)(c)：
@@ -6403,8 +6858,13 @@ def _measure_manifest(
                     dx, dy = bb.x0, bb.y0
                     drag_prop = "pos_frac"
                 elif isinstance(artist, Line2D):
-                    # 图级的线（只有它们宣称可拖）：包围盒左下角，与 `overrides._place_line` 同一把尺
+                    # 图级的线与子图里位置不是数据的线：包围盒左下角，与 `overrides._place_line` 同一把尺
                     bb = artist.get_window_extent()
+                    dx, dy = bb.x0, bb.y0
+                    drag_prop = "pos_frac"
+                elif isinstance(artist, (Collection, AxesImage, Table)):
+                    # 位置不是数据的集合 / 位图 / 表格：与 `overrides._place_translated` 同一把尺
+                    bb = pathgeom.layout_extent(artist)
                     dx, dy = bb.x0, bb.y0
                     drag_prop = "pos_frac"
                 elif isinstance(artist, Patch):
@@ -6424,6 +6884,10 @@ def _measure_manifest(
                     raise ValueError("anchor 不是有限值")
                 entry["anchor"] = anchor
                 entry["drag_prop"] = drag_prop
+                if isinstance(artist, Line2D):
+                    pts = _line_points_frac(artist, W, H)
+                    if pts is not None:
+                        entry["line_points"] = pts
             except Exception:
                 entry["draggable"] = False
         # 缺字形：判据的主语是**真正会被画出来的那个 Text**。

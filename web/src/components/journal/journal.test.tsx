@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import vectors from '../../../../tests/golden/journal_vectors.json'
 import { literal, msg, setLocale } from '@/i18n'
 import { journalProfile, journalSources, loadCatalog } from '@/lib/journals'
+import { legacyNatureCatalog } from '@/lib/__fixtures__/legacyNatureCatalog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
 import { BUNDLED_ASSET_BASE, useJournalCatalogStore } from '@/store/journalCatalogStore'
@@ -514,8 +515,10 @@ describe('远程目录里还没下载的刊：选中时的胶囊提示', () => {
   /** 可手动放行的下载：返回 release(body)，在它被调用之前 fetch 一直挂着 */
   const deferred = () => {
     const releases: ((body: unknown) => void)[] = []
-    globalThis.fetch = (() =>
-      new Promise<Response>((resolve) => {
+    globalThis.fetch = ((input: RequestInfo | URL) =>
+      String(input).includes('/api/journal-facts/')
+        ? Promise.resolve(new Response('{}', { status: 404 })) // v2 取不到：照 v1 选
+        : new Promise<Response>((resolve) => {
         releases.push((body) => resolve(new Response(JSON.stringify(body), { status: 200 })))
       })) as typeof fetch
     return releases
@@ -549,7 +552,9 @@ describe('远程目录里还没下载的刊：选中时的胶囊提示', () => {
     await click(q('[data-journal-picker]'))
     await click(q('[data-journal-option="fx-beta"]')) // 要下载，挂起
     expect(releases).toHaveLength(1)
-    await click(q('[data-journal-option="fx-alpha"]')) // 已在本地：立刻绑定
+    await click(q('[data-journal-picker]')) // 点选即关浮层：再开一次改选别的
+    await click(q('[data-journal-option="fx-alpha"]')) // 已在本地：取 v2（取不到 = null）后绑定
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)) })
     expect(useDocumentStore.getState().doc.profile?.journalRef?.id).toBe('fx-alpha')
     await act(async () => releases[0]({ state: 'ready', bundle: bundleOf('fx-beta') }))
     expect(useDocumentStore.getState().doc.profile?.journalRef?.id).toBe('fx-alpha')
@@ -562,6 +567,7 @@ describe('远程目录里还没下载的刊：选中时的胶囊提示', () => {
     await mount(<JournalPicker />)
     await click(q('[data-journal-picker]'))
     await click(q('[data-journal-option="fx-beta"]'))
+    await click(q('[data-journal-picker]')) // 点选即关浮层：再开一次点「不按期刊」
     await click(q('[data-journal-none]'))
     await act(async () => releases[0]({ state: 'ready', bundle: bundleOf('fx-beta') }))
     expect(useDocumentStore.getState().doc.profile?.journalRef).toBeUndefined()
@@ -582,7 +588,7 @@ describe('远程目录里还没下载的刊：选中时的胶囊提示', () => {
 
 describe('historical panel width display', () => {
   it.each(['nature-chemistry', 'nature-energy', 'nature-materials', 'nature-medicine', 'nature-methods', 'nature-nanotechnology', 'nature-photonics', 'nature-physics'])('shows historical panel advice from the saved binding for %s', async (id) => {
-    useJournalCatalogStore.setState({ catalog: loadCatalog() })
+    useJournalCatalogStore.setState({ catalog: legacyNatureCatalog() })
     act(() => selectJournal(id))
     const before = structuredClone(useDocumentStore.getState().doc.profile)
     await mount(<JournalRequirements />)
@@ -603,7 +609,7 @@ describe('historical panel width display', () => {
   })
 
   it('does not reclassify evidence with a submission stage', async () => {
-    useJournalCatalogStore.setState({ catalog: loadCatalog() })
+    useJournalCatalogStore.setState({ catalog: legacyNatureCatalog() })
     act(() => selectJournal('nature-chemistry'))
     const profile = structuredClone(useDocumentStore.getState().doc.profile!)
     profile.journalSources!['info.width_double_mm'].stage = 'submission'
@@ -615,12 +621,25 @@ describe('historical panel width display', () => {
   })
 
   it('explains the historical-source limitation in English', async () => {
-    useJournalCatalogStore.setState({ catalog: loadCatalog() })
+    useJournalCatalogStore.setState({ catalog: legacyNatureCatalog() })
     act(() => selectJournal('nature-chemistry'))
     await setLocale('en-US')
     await mount(<JournalRequirements />)
     const row = q('[data-journal-row="info.width_double_mm"]')!
     expect(row.textContent).toContain('Panel max (historical AIP advice)')
     expect(row.querySelector('[data-journal-panel-history]')?.textContent).toContain('Current requirements are unverified')
+  })
+})
+
+describe('Nature 种子：字号区间与子图标签', () => {
+  it('最小 / 最大字号各一行（5 / 7 pt），子图标签 8 pt 粗体一行单独列出', async () => {
+    useJournalCatalogStore.setState({ catalog: loadCatalog() })
+    act(() => selectJournal('nature'))
+    await mount(<JournalRequirements />)
+    expect(q('[data-journal-row="min_effective_font_size_pt"]')!.textContent).toContain('5 pt')
+    expect(q('[data-journal-row="max_font_size_pt"]')!.textContent).toContain('7 pt')
+    const label = q('[data-journal-row="info.panel_label"]')!
+    expect(label.textContent).toContain('子图标签')
+    expect(label.textContent).toContain('8 pt bold, upright (not italic) a, b, c')
   })
 })

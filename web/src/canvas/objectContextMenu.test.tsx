@@ -568,20 +568,26 @@ describe('文字 / 箭头 / 形状', () => {
   it('文字：编辑文字 / 全部属性 ── 副本 / 锁 / 隐藏 / 层级 ── 删除；编辑文字 → setEditingText', async () => {
     await openOn('t1')
     expect(menu()?.dataset.quickMenu).toBe('text')
-    expect(itemKeys()).toEqual(['edit-text', 'open-inspector', 'copy', 'paste', 'duplicate', 'lock', 'hide', 'z-order', 'delete'])
+    expect(itemKeys()).toEqual(['edit-text', 'outline-text', 'open-inspector', 'copy', 'copy-as-svg', 'paste', 'duplicate', 'lock', 'hide', 'z-order', 'delete'])
     await click(item('edit-text'))
     expect(useUiStore.getState().editingTextId).toBe('t1')
   })
 
   it.each(['a1', 's1'])(
-    '%s：更改为 > / 全部属性 ── 副本 / 锁 / 隐藏 / 层级 ── 删除（颜色 / 线宽留给 ContextBar）',
+    '%s：更改为 > / 转为路径 / 全部属性 ── 副本 / 锁 / 隐藏 / 层级 ── 删除（颜色 / 线宽留给 ContextBar）',
     async (id) => {
       await openOn(id)
       expect(menu()?.dataset.quickMenu).toBe('mark')
       expect(itemKeys()).toEqual([
         'change-kind',
+        'convert-to-path',
+        // 路径文字（ADR 0190）：能放字的路径 / 形状 / 箭头都给
+        'add-path-text',
+        // 「路径查找器 ›」：封闭形状能偏移路径 / 轮廓化描边（ADR 0185 M2）；箭头从 M7 起也能轮廓化描边（端型一起转）
+        'pathfinder',
         'open-inspector',
         'copy',
+        'copy-as-svg',
         'paste',
         'duplicate',
         'lock',
@@ -592,6 +598,17 @@ describe('文字 / 箭头 / 形状', () => {
       expect(menu()?.querySelector('input')).toBeNull()
     },
   )
+
+  it('在路径上加文字：放一段路径文字、和它成组、进入输入', async () => {
+    await openOn('s1')
+    await click(item('add-path-text'))
+    const made = objs().at(-1)!
+    expect(objs().map((o) => o.id).indexOf(made.id)).toBe(objs().findIndex((o) => o.id === 's1') + 1)
+    expect(made.type).toBe('pathText')
+    expect(made.groupId).toBeDefined()
+    expect(byId('s1').groupId).toBe(made.groupId)
+    expect(useUiStore.getState().editingTextId).toBe(made.id)
+  })
 
   // Codex #833：菜单的粘贴只能走异步 readText；WebKit（Safari / 桌面壳）不给非编辑区读、Firefox 默认没有，
   // 那里点了只会报「无法读取剪贴板」——不提供这一项（⌘V 的原生事件照常）
@@ -751,7 +768,7 @@ describe('更改为 ›：类型切换', () => {
   it('形状：子菜单给整个形状族，当前那一种带勾（radio 语义）', async () => {
     await openOn('s1')
     await openChangeKind()
-    expect(kindItems()).toEqual(['rect', 'ellipse', 'triangle', 'diamond', 'polygon', 'brace'])
+    expect(kindItems()).toEqual(['rect', 'ellipse', 'triangle', 'diamond', 'polygon', 'star', 'brace', 'arc'])
     for (const el of items().filter((e) => e.dataset.quickItem?.startsWith('change-to-'))) {
       expect(el.getAttribute('role')).toBe('menuitemradio')
     }
@@ -873,12 +890,15 @@ describe('多选', () => {
     expect(menu()?.dataset.quickMenuCount).toBe('3')
     expect(document.querySelector('[data-quick-heading]')?.textContent).toBe('已选 3 个对象')
     expect(itemKeys()).toEqual([
+      // 三个都是文字：文字转轮廓（ADR 0189）
+      'outline-text',
       'arrange',
       'align-samew',
       'align-sameh',
       'group',
       'open-arrange',
       'copy',
+      'copy-as-svg',
       'paste',
       'duplicate',
       'lock',
@@ -1060,7 +1080,7 @@ describe('键盘、关闭与无障碍', () => {
     await key('ArrowDown', menu())
     expect(document.activeElement).toBe(item('edit-text'))
     await key('ArrowDown')
-    expect(document.activeElement).toBe(item('open-inspector'))
+    expect(document.activeElement).toBe(item('outline-text'))
     await key('ArrowUp')
     expect(document.activeElement).toBe(item('edit-text'))
     await key('End')

@@ -89,6 +89,45 @@ describe('schema 2 → 3 迁移', () => {
   })
 })
 
+describe('userSized / quickLayout 可选字段（ADR 0199）：磁盘格式不升版、随画布往返', () => {
+  const memo = {
+    rows: 1, cols: 2, cells: { o1: [0, 0], o2: [0, 1] } as Record<string, [number, number]>,
+    colRatios: [1, 2], rowRatios: [1],
+    boxes: { o1: [1, 2, 30, 20], o2: [34, 2, 60, 20] } as Record<string, [number, number, number, number]>,
+    target: 'double' as const, gapMm: 3, canvas: 'keep' as const, fixSpec: true, fixedIds: ['o9'],
+  }
+
+  it('canvasToDoc / docToCanvas 带着 page.userSized 与 quickLayout 往返不丢', () => {
+    const d = legacyDoc()
+    d.page.userSized = true
+    d.quickLayout = memo
+    const canvas = docToCanvas(d, 'c_q')
+    expect(canvas.page.userSized).toBe(true)
+    expect(canvas.quickLayout).toEqual(memo)
+    const back = canvasToDoc(canvas)
+    expect(back.page.userSized).toBe(true)
+    expect(back.quickLayout).toEqual(memo)
+    expect(docToCanvas(back, 'c_q')).toEqual(canvas)
+  })
+
+  it('没有记忆 / 没有 userSized 时画布上也没有这两个键（老文档不变）', () => {
+    const canvas = docToCanvas(legacyDoc(), 'c_q')
+    expect('quickLayout' in canvas).toBe(false)
+    expect('userSized' in canvas.page).toBe(false)
+    expect('quickLayout' in canvasToDoc(canvas)).toBe(false)
+  })
+
+  it('经 JSON（落盘）与 migrateToProject（读档）一圈回来仍在；schema 仍是 3', () => {
+    const d = legacyDoc()
+    d.page.userSized = true
+    d.quickLayout = memo
+    const pd = migrateToProject(JSON.parse(JSON.stringify({ ...emptyProject(), canvases: [docToCanvas(d, 'c_q')], activeCanvasId: 'c_q' })))!
+    expect(pd.schema).toBe(3)
+    expect(pd.canvases[0].quickLayout).toEqual(memo)
+    expect(pd.canvases[0].page.userSized).toBe(true)
+  })
+})
+
 describe('AssetSource 双形态（ADR 0013）', () => {
   const runtimePanel = (): PanelObject => ({
     id: 'r1', type: 'panel',

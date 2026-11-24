@@ -64,6 +64,8 @@
 新运行 `activate` 可以撤销旧 current lookup，但不会删历史 archive。项目资产无 TTL、不按容量驱逐；
 预算 256 条是 current 与 archive 元数据合计，首次变体通常占两条，总字节预算 512 MiB、相同 blob 去重。
 容量满只拒新增，保存过的 archive 与字节不动；保留历史版本不等于授权它冒充当前执行。
+（2026-11-24 修订：满额时应用会回收没有任何文档引用的旧变体后重试一次，被引用的 archive 照旧不动；全文见
+`docs/rules/backend/layout-versions-and-documents.md`「项目配对存储与不可变 archive」。）
 项目包打开仍只检视，不能借打开包自动安装素材。
 持久化权威细则见 [layout-versions-and-documents.md](../../../rules/backend/layout-versions-and-documents.md)。
 

@@ -27,7 +27,8 @@ VM 用完即毁所以从没暴露（docs/implementation/ci-foundation/04_BUILD_T
   「端口 P 被占用，改用 Q」），对面已是一个 Tavotto 时直接退 0（「已在 … 运行」），只有
   `resolve_port` 与 `app.run` 之间那几毫秒被抢才是 bind 抛 EADDRINUSE。三种形状都按「日志里
   出现占用类文案」认成**租约丢了**，换号重来（≤ `--attempts`）；别的退出原因一律失败并把
-  日志尾打到 stderr。
+  日志尾打到 stderr。「换号」是真换：系统可能把刚丢租约、又空出来的同一个号再发一次，
+  所以已经用过的号跳过（`fresh_port`，#2099）。
 * **就绪**：`/api/version` 200 且 body 是 JSON 对象——**而且应答的是我们起的那个进程**。
   后一半靠 ADR 0008 的本机凭据：产品在 bind 之前把 `port-<P>.json` 写进**本实例的** data
   dir，脚本用 `smoke_app.adopt_session_credentials`（唯一实现）读它，再打一次带凭据的
@@ -462,6 +463,24 @@ def run_isolated_command(
     return {"exit_code": proc.returncode, "timed_out": timed_out, "cleanup": cleanup}
 
 
+#: 向系统重租时最多取几次号：取到的都在「用过的」里就放弃换号（实际上一两次就够）。
+FRESH_PORT_TRIES = 50
+
+
+def fresh_port(used: set[int]) -> int:
+    """向系统租一个没在本次冒烟里用过的端口。
+
+    `bind(("127.0.0.1", 0))` 取号再释放：上一次尝试丢了租约、进程退出后那个号又空了，
+    系统可能原样再发一次，「换端口重试」就成了在同一个号上重试（#2099）。取不到新号时
+    返回最后一次取到的（它此刻至少是空的），由下一次尝试照常判。"""
+    port = SA._free_port()
+    for _ in range(FRESH_PORT_TRIES - 1):
+        if port not in used:
+            break
+        port = SA._free_port()
+    return port
+
+
 def run_attempt(n: int, cmd: list[str], attempt_dir: Path, port: int, timeout: float) -> dict:
     """起一次、等就绪、打两条请求、终止。每次尝试各自一套 data / config / 日志。"""
     data_dir = attempt_dir / "data"
@@ -647,8 +666,10 @@ def main(argv: list[str] | None = None) -> int:
     }
     rc = 1
     try:
+        used: set[int] = set()
         for n in range(1, args.attempts + 1):
-            port = SA._free_port()
+            port = fresh_port(used)
+            used.add(port)
             cmd = build_command(args.python, args.launch, port)
             record = run_attempt(n, cmd, workdir / f"attempt-{n}", port, args.timeout)
             history.append(record)

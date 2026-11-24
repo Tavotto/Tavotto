@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from tavotto import app as m
-from tavotto.engine import exportjob, figcapture, pool, project_watch
+from tavotto.engine import exportjob, figcapture, patchspec, pool, project_watch, svgstore
 
 SCRIPT = """import matplotlib.pyplot as plt
 
@@ -1064,3 +1066,493 @@ def test_canvas_svg_of_a_script_figure_with_user_gid_exports(project):
     body, outputs = output(client, spec(source, scope="canvas", formats=("svg", "pdf")))
     assert body["status"] == "done", body
     assert outputs["svg"]["status"] == "done", outputs["svg"]
+
+
+def _run_script_on_disk(root):
+    """按脚本自己的 cwd 跑一遍，让项目里真的有一份 `F.pdf`（probe 的 worker 在别处落产物）。"""
+    import os
+    import subprocess
+
+    subprocess.run(
+        [sys.executable, "-c", "import runpy; runpy.run_path('plot.py')['main']()"],
+        cwd=root,
+        env={**os.environ, "MPLBACKEND": "agg"},
+        check=True,
+    )
+
+
+def _disk_snapshot_reference(root, source="F.pdf"):
+    """磁盘别名（`F.pdf` / `F.svg`）的独立接纳快照引用（捕获时按 static 字节绑定保存）。"""
+    record = svgstore.load(
+        root,
+        source,
+        patchspec.patch_hash([]),
+        static_sha256=figcapture.hash_file(root / source)[0],
+        remap_fingerprint=m.engine_inputremap.fingerprint(root),
+        storage_root=m._svg_storage_root(root),
+    )
+    assert record is not None and record.get("snapshot_ref"), record
+    return record["snapshot_ref"]
+
+
+def test_original_pdf_only_uses_the_saved_snapshot_when_the_disk_file_changed(project):
+    """明确引用指向保存时的 PDF：磁盘同名文件被替换后，PDF-only 也必须交存档版本（Codex #1926 P1）。"""
+    import pikepdf
+
+    client, root = project
+    _run_script_on_disk(root)
+    run_script(client)
+    reference = _disk_snapshot_reference(root)
+    changed = pikepdf.new()
+    changed.add_blank_page(page_size=(300, 300))
+    changed.save(root / "F.pdf")
+    body, outputs = output(
+        client, spec("F.pdf", scope="original", formats=("pdf",), reference=reference)
+    )
+    assert outputs["pdf"]["status"] == "done", body
+    produced = Path(body["export_dir"]) / outputs["pdf"]["name"]
+    with pikepdf.open(produced) as pdf:
+        box = pdf.pages[0].MediaBox
+        width_pt = float(box[2]) - float(box[0])
+        height_pt = float(box[3]) - float(box[1])
+    # 脚本是 figsize=(3, 2) → 216×144pt；被替换的空白页是 300×300pt。
+    assert width_pt == pytest.approx(216.0)
+    assert height_pt == pytest.approx(144.0)
+
+
+def test_original_export_with_a_historical_input_rejects_a_cold_execution(project, monkeypatch):
+    """历史输入没有唯一活执行时拒绝，绝不退回磁盘同名文件（Codex #1926 P1）。"""
+    client, root = project
+    _run_script_on_disk(root)
+    run_script(client)
+    reference = _disk_snapshot_reference(root)
+    request = spec("F.pdf", scope="original", formats=("pdf",))
+    request["original"]["figure_origin"] = {
+        "version": 1,
+        "snapshot": reference,
+        "patches": [],
+    }
+    # 同进程、活 Figure 还在：出处准入成立，照常导出。
+    body, outputs = output(client, request)
+    assert outputs["pdf"]["status"] == "done", body
+    pool.shutdown_all(figures_dir=str(root), wait=True)
+    m.reset_projects()
+    m.open_project(str(root))
+    monkeypatch.setattr(
+        pool, "get", lambda *a, **k: pytest.fail("cold origin export executed code")
+    )
+    response = client.post("/api/export", json=request)
+    assert response.status_code >= 400, response.get_json()
+    payload = response.get_json()
+    assert payload["status"] == "failed", payload
+    assert payload["code"] == "svg_source_unavailable", payload
+
+
+def test_cold_origin_replay_requests_the_archived_execution_profile(project, monkeypatch):
+    """冷回放按归档回执的档位解析 worker；native 离线时拒绝，不静默降级到 safe（Codex #1926 P1）。"""
+    _client, root = project
+    _run_script_on_disk(root)
+    seen = []
+
+    def resolve(**kwargs):
+        seen.append(kwargs["execution_profile"])
+        if kwargs["execution_profile"] != m.engine_enginesession.PROFILE_NATIVE:
+            raise AssertionError("cold replay fell back to a safe session")
+        raise m.engine_runcodes.RunError(m.engine_runcodes.NATIVE_SESSION_OFFLINE)
+
+    monkeypatch.setattr(m.engine_enginesession, "resolve", resolve)
+    record = {
+        "receipt": {"profile": m.engine_enginesession.PROFILE_NATIVE},
+        "execution_owner": {"script": "plot.py", "run_config": None},
+    }
+    with pytest.raises(m.engine_runcodes.RunError) as excinfo:
+        m._replay_figure_origin(
+            "F.pdf",
+            {"version": 1, "snapshot": {}, "patches": []},
+            record,
+            SimpleNamespace(path=root),
+        )
+    assert excinfo.value.code == m.engine_runcodes.NATIVE_SESSION_OFFLINE
+    assert seen == [m.engine_enginesession.PROFILE_NATIVE]
+
+
+def test_original_export_checks_the_origin_even_with_a_saved_snapshot(project, monkeypatch):
+    """同时带快照与出处时，快照不是出处授权：冷进程没有唯一活执行就拒绝（Codex #1926 P1 残项）。"""
+    client, root = project
+    _run_script_on_disk(root)
+    run_script(client)
+    reference = _disk_snapshot_reference(root)
+    request = spec("F.pdf", scope="original", formats=("pdf",), reference=reference)
+    request["original"]["figure_origin"] = {
+        "version": 1,
+        "snapshot": reference,
+        "patches": [],
+    }
+    body, outputs = output(client, request)
+    assert outputs["pdf"]["status"] == "done", body
+    pool.shutdown_all(figures_dir=str(root), wait=True)
+    m.reset_projects()
+    m.open_project(str(root))
+    monkeypatch.setattr(
+        pool, "get", lambda *a, **k: pytest.fail("cold origin export executed code")
+    )
+    response = client.post("/api/export", json=request)
+    assert response.status_code >= 400, response.get_json()
+    payload = response.get_json()
+    assert payload["status"] == "failed", payload
+    assert payload["code"] == "svg_source_unavailable", payload
+
+
+def test_annotated_eps_for_a_historical_svg_asset_uses_its_origin(project):
+    """未编辑 `.svg` 的带标注 EPS 有出处时走出处执行，不再按当前文件绑定（Codex #1926 P1 残项）。"""
+    client, root = project
+    _disk_svg_from_script(root, (3, 2))
+    run_script(client)
+    reference = _disk_snapshot_reference(root, "F.svg")
+    # 当前文件字节改掉：按当前文件绑定的那条路会 eps_source_unverified，存档出处不受影响。
+    (root / "F.svg").write_bytes(SVG_ASSET)
+    request = spec("F.svg", scope="original", formats=("eps",))
+    request["original"].update(
+        {
+            "w_mm": 76.2,
+            "h_mm": 50.8,
+            "objects": [
+                {
+                    "id": "note",
+                    "type": "text",
+                    "text": "note",
+                    "x_mm": 5,
+                    "y_mm": 5,
+                    "w_mm": 40,
+                    "h_mm": 8,
+                    "size_pt": 10,
+                }
+            ],
+            "figure_origin": {"version": 1, "snapshot": reference, "patches": []},
+        }
+    )
+    body, outputs = output(client, request)
+    assert outputs["eps"]["status"] == "done", body
+
+
+def test_merged_pdf_page_cache_distinguishes_a_historical_origin(project):
+    """多页 PDF 的页缓存键必须带出处：两页同 id/overrides/快照字段时不能复用另一页的历史渲染（Codex #1926 新 P1）。"""
+    import pikepdf
+    import pymupdf
+
+    client, root = project
+    _run_script_on_disk(root)
+    run_script(client)
+    reference = _disk_snapshot_reference(root)
+    changed = pikepdf.new()
+    changed.add_blank_page(page_size=(300, 300))
+    changed.save(root / "F.pdf")
+    request = {
+        "scope": "original",
+        "filename": "merged",
+        "formats": ["pdf"],
+        "merge_pdf": {
+            "pages": [
+                {
+                    "figure_id": "F.pdf",
+                    "source_kind": "vector",
+                    "figure_origin": {
+                        "version": 1,
+                        "snapshot": reference,
+                        "patches": [],
+                    },
+                },
+                {"figure_id": "F.pdf", "source_kind": "vector"},
+            ]
+        },
+    }
+    body, outputs = output(client, request)
+    assert outputs["pdf"]["status"] == "done", body
+    produced = Path(body["export_dir"]) / outputs["pdf"]["name"]
+    with pymupdf.open(produced) as pdf:
+        sizes = [(round(page.rect.width), round(page.rect.height)) for page in pdf]
+    assert sizes == [(216, 144), (300, 300)], sizes
+
+
+def test_archived_pdf_raster_reports_the_archived_page_size(project):
+    """存档 PDF 出 PNG/TIFF 时，回报尺寸必须是存档那一页，不是请求里替换文件的 w/h（Codex #1926 P2）。"""
+    import pikepdf
+
+    client, root = project
+    _run_script_on_disk(root)
+    run_script(client)
+    reference = _disk_snapshot_reference(root)
+    changed = pikepdf.new()
+    changed.add_blank_page(page_size=(288, 288))
+    changed.save(root / "F.pdf")
+    request = spec("F.pdf", scope="original", formats=("png",), reference=reference)
+    request["original"]["w_mm"] = 101.6
+    request["original"]["h_mm"] = 101.6
+    body, outputs = output(client, request)
+    assert outputs["png"]["status"] == "done", body
+    assert outputs["png"]["dimensions"]["mm"] == pytest.approx([76.2, 50.8], abs=0.01)
+
+
+def test_execution_source_forwards_the_archived_profile_to_the_replay_lookup(monkeypatch):
+    """冷回放的第二次取会话也要带归档档位，不能退回 safe（Codex #1926 P1 残项）。"""
+    calls = []
+    monkeypatch.setattr(m, "_serialize_figure_with_worker", lambda *a, **k: calls.append(k))
+    monkeypatch.setattr(m, "_load_svg_snapshot", lambda *a, **k: None)
+    with pytest.raises(m.engine_exportreq.ExportRequestError):
+        m._execution_source(
+            {"id": "F.pdf"}, 600, None, None, include_svg=True, execution_profile="native"
+        )
+    assert calls and calls[0]["execution_profile"] == "native"
+
+
+def test_serialize_figure_with_worker_forwards_the_archived_profile(monkeypatch):
+    seen = []
+
+    def engine_worker(rel_id, **kwargs):
+        seen.append(kwargs)
+        return None, "F"
+
+    monkeypatch.setattr(m, "_engine_worker", engine_worker)
+    assert (
+        m._serialize_figure_with_worker(
+            "F.pdf", [], "pdf", 600, include_svg=True, execution_profile="native"
+        )
+        is None
+    )
+    assert seen == [{"existing_only": True, "execution_profile": "native"}]
+
+
+def _title_gid(client, source):
+    response = client.post("/api/engine/render", json={"id": source, "patches": []})
+    assert response.status_code == 200, response.get_json()
+    return next(
+        el["gid"]
+        for el in response.get_json()["manifest"]["elements"]
+        for prop in el.get("editable", [])
+        if prop["prop"] == "text" and prop.get("value") == "Source title"
+    )
+
+
+def _save_edit(client, source, gid, index, name="work"):
+    patches = [{"gid": gid, "prop": "text", "value": f"Edited title {index}"}]
+    response = client.post("/api/engine/render", json={"id": source, "patches": patches})
+    assert response.status_code == 200, response.get_json()
+    saved = client.post(f"/api/layouts/{name}?target=project", json=document(source, patches))
+    assert saved.status_code == 200, saved.get_json()
+    return patches, saved.get_json()
+
+
+def _save_edit_through_reclaim(client, source, gid, index, name="work"):
+    """The save that finds the store full starts a background reclaim (it holds a document
+    lock, so it cannot wait for every lock); the next save of the same edit gets in."""
+    patches, saved = _save_edit(client, source, gid, index, name)
+    if saved.get("svg_snapshot_warnings"):
+        m._wait_svg_reclaim()
+        patches, saved = _save_edit(client, source, gid, index, name)
+    return patches, saved
+
+
+def _snapshot_store_bytes(root):
+    store = root / "tavottofile" / "figure_snapshots"
+    return sum(p.stat().st_size for p in store.rglob("*") if p.is_file() and p.name != ".lock")
+
+
+def test_full_project_snapshot_store_reclaims_unreferenced_edits_on_save(project, monkeypatch):
+    """One user's report: repeated edits filled the project store; SVG export had no way out."""
+    from tavotto.engine import svgstore
+
+    client, root = project
+    monkeypatch.setattr(svgstore, "RECLAIM_GRACE_SECONDS", 0, raising=False)
+    source = run_script(client)
+    kept = client.post("/api/layouts/kept?target=project", json=document(source, []))
+    assert kept.status_code == 200, kept.get_json()
+    kept_ref = kept.get_json()["figure_snapshots"]["panel"]
+    gid = _title_gid(client, source)
+    first_patches, first = _save_edit(client, source, gid, 1)
+    first_ref = first["figure_snapshots"]["panel"]
+    for index in (2, 3):
+        _save_edit(client, source, gid, index)
+    monkeypatch.setattr(svgstore, "MAX_TOTAL_BYTES", _snapshot_store_bytes(root) + 200)
+    _, full = _save_edit_through_reclaim(client, source, gid, 4)
+    assert not full.get("svg_snapshot_warnings"), full
+    assert full["figure_snapshots"]["panel"]["snapshotId"]
+    archives = {p.stem for p in (root / "tavottofile" / "figure_snapshots" / "snapshots").glob("*")}
+    # A saved document still references this one; it is never reclaimed.
+    assert kept_ref["snapshotId"] in archives
+    # The overwritten edit is referenced by nothing any more.
+    assert first_ref["snapshotId"] not in archives
+    body, outputs = output(client, spec(source, scope="original", reference=kept_ref))
+    assert_svg(body, outputs["svg"])
+    # A reference whose variant was reclaimed asks for a rerun in one line, like any
+    # missing snapshot; it is never an unexplained failure.
+    stale = client.post(
+        "/api/export",
+        json=spec(source, scope="original", patches=first_patches, reference=first_ref),
+    )
+    assert stale.get_json()["code"] == "svg_snapshot_missing", stale.get_json()
+
+
+def test_full_project_snapshot_store_deletes_nothing_when_documents_cannot_be_scanned(
+    project, monkeypatch
+):
+    from tavotto.engine import svgstore
+
+    client, root = project
+    monkeypatch.setattr(svgstore, "RECLAIM_GRACE_SECONDS", 0, raising=False)
+    source = run_script(client)
+    gid = _title_gid(client, source)
+    for index in (1, 2, 3):
+        _save_edit(client, source, gid, index)
+    monkeypatch.setattr(svgstore, "MAX_TOTAL_BYTES", _snapshot_store_bytes(root) + 200)
+    monkeypatch.setattr(m, "_svg_reference_corpus", lambda root: None, raising=False)
+    store = root / "tavottofile" / "figure_snapshots"
+    before = sorted(p.name for p in store.rglob("*") if p.is_file())
+    _, full = _save_edit(client, source, gid, 4)
+    assert full["svg_snapshot_warnings"] == [source], full
+    m._wait_svg_reclaim()
+    assert sorted(p.name for p in store.rglob("*") if p.is_file()) == before
+    # A store that could not be reclaimed is not rescanned on every following edit.
+    monkeypatch.setattr(
+        m, "_svg_reference_corpus", lambda root: pytest.fail("rescanned inside the backoff")
+    )
+    _, again = _save_edit(client, source, gid, 5)
+    assert again["svg_snapshot_warnings"] == [source], again
+
+
+def test_reclaim_failure_still_reports_the_original_full_store(project, monkeypatch):
+    from tavotto.engine import svgstore
+
+    client, root = project
+    monkeypatch.setattr(svgstore, "RECLAIM_GRACE_SECONDS", 0, raising=False)
+    source = run_script(client)
+    gid = _title_gid(client, source)
+    for index in (1, 2, 3):
+        _save_edit(client, source, gid, index)
+    monkeypatch.setattr(svgstore, "MAX_TOTAL_BYTES", _snapshot_store_bytes(root) + 200)
+
+    def busy(*args, **kwargs):
+        raise TimeoutError("Figure snapshot store is busy")
+
+    monkeypatch.setattr(svgstore, "reclaim", busy, raising=False)
+    _, full = _save_edit(client, source, gid, 4)
+    assert full["svg_snapshot_warnings"] == [source], full
+    m._wait_svg_reclaim()
+    _, again = _save_edit(client, source, gid, 4)
+    assert again["svg_snapshot_warnings"] == [source], again
+
+
+def test_reclaim_keeps_references_frozen_earlier_in_the_same_save(project):
+    client, root = project
+    pending = {"objects": [{"figureSnapshot": {"snapshotId": "f" * 64}}]}
+    token = m._SVG_PENDING_DOCUMENT.set(pending)
+    try:
+        corpus = m._svg_reference_corpus(root)
+    finally:
+        m._SVG_PENDING_DOCUMENT.reset(token)
+    assert corpus is not None and ("f" * 64).encode() in corpus
+
+
+def _checkpoint(client, source, patches, reference, **kind):
+    body = document(source, patches)
+    body["canvases"][0]["objects"][0]["figureSnapshot"] = reference
+    response = client.post("/api/versions/work-doc", json={"doc": body, **kind})
+    assert response.status_code == 200, response.get_json()
+
+
+def test_auto_checkpoints_do_not_pin_snapshots_but_named_versions_do(project, monkeypatch):
+    """Long sessions write an auto checkpoint every few minutes; they must not refill the store."""
+    from tavotto.engine import svgstore
+
+    client, root = project
+    monkeypatch.setattr(svgstore, "RECLAIM_GRACE_SECONDS", 0, raising=False)
+    source = run_script(client)
+    gid = _title_gid(client, source)
+    named_patches, named = _save_edit(client, source, gid, 0)
+    named_ref = named["figure_snapshots"]["panel"]
+    _checkpoint(client, source, named_patches, named_ref, name="Submitted version")
+    patches, first = _save_edit(client, source, gid, 1)
+    _checkpoint(client, source, patches, first["figure_snapshots"]["panel"], auto=True)
+    # Room for three variants: the named one, the newest one and the incoming edit.
+    monkeypatch.setattr(svgstore, "MAX_TOTAL_BYTES", _snapshot_store_bytes(root) * 3 // 2 + 200)
+    auto_refs = []
+    for index in range(2, 9):  # several times what the budget holds
+        patches, saved = _save_edit_through_reclaim(client, source, gid, index)
+        assert not saved.get("svg_snapshot_warnings"), (index, saved)
+        reference = saved["figure_snapshots"]["panel"]
+        auto_refs.append(reference["snapshotId"])
+        _checkpoint(client, source, patches, reference, auto=True)
+    archives = {p.stem for p in (root / "tavottofile" / "figure_snapshots" / "snapshots").glob("*")}
+    assert named_ref["snapshotId"] in archives
+    assert not set(auto_refs[:-2]) <= archives
+
+
+def test_reference_scan_reads_the_legacy_file_while_a_migration_is_pending(project):
+    client, root = project
+    versions = root / "tavottofile" / "versions"
+    store = versions / "doc.vx"
+    store.mkdir(parents=True)
+    (store / "migration.json").write_text(json.dumps({"state": "pending"}), encoding="utf-8")
+    named = "a" * 64
+    auto = "b" * 64
+    legacy = {
+        "versions": [
+            {"id": "v1-1", "name": "Submitted", "doc": {"ref": {"snapshotId": named}}},
+            {"id": "v2-2", "auto": True, "doc": {"ref": {"snapshotId": auto}}},
+        ]
+    }
+    (versions / "doc.json").write_text(json.dumps(legacy), encoding="utf-8")
+    corpus = m._svg_reference_corpus(root)
+    assert corpus is not None
+    assert named.encode() in corpus
+    assert auto.encode() not in corpus
+
+
+def test_reference_scan_fails_closed_when_version_envelopes_cannot_be_listed(project, monkeypatch):
+    client, root = project
+    store = root / "tavottofile" / "versions" / "doc.vx"
+    (store / "s").mkdir(parents=True)
+    (store / "index.json").write_text("{}", encoding="utf-8")
+
+    def unreadable(*args, **kwargs):
+        raise m.engine_versionstore.IndexUnreadable("permission denied")
+
+    real_listdir = os.listdir
+
+    def listdir(path):
+        if Path(path) == store / "s":
+            raise PermissionError("permission denied")
+        return real_listdir(path)
+
+    monkeypatch.setattr(m.engine_versionstore, "list_index", unreadable)
+    monkeypatch.setattr(m.os, "listdir", listdir)
+    assert m._svg_reference_corpus(root) is None
+
+
+def test_reclaim_excludes_document_and_version_commits_from_scan_to_delete(project, monkeypatch):
+    """A named version committed while reclaim runs waits for it, never lands between scan and delete."""
+    from tavotto.engine import svgstore
+
+    client, root = project
+    seen = {}
+    real = svgstore.reclaim
+
+    def observed(*args, **kwargs):
+        # Every document lock stripe is held by the reclaiming thread right now.
+        seen["held"] = all(lock.locked() for lock in m._DOCUMENT_LOCKS)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(svgstore, "reclaim", observed)
+    (root / "tavottofile" / "figure_snapshots").mkdir(parents=True)
+    m._reclaim_svg_snapshots_now(root, 0)
+    assert seen == {"held": True}
+    assert not any(lock.locked() for lock in m._DOCUMENT_LOCKS)
+
+
+def test_reclaim_requested_under_a_document_lock_runs_in_the_background(project, monkeypatch):
+    client, root = project
+    ran = []
+    monkeypatch.setattr(m, "_reclaim_svg_snapshots_now", lambda r, n: ran.append(r) or 0)
+    with m._document_lock(root / "tavottofile" / "x.json"):
+        assert m._reclaim_svg_snapshots(root, incoming_bytes=1) == 0
+    m._wait_svg_reclaim()
+    assert ran == [root]

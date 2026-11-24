@@ -1,11 +1,14 @@
+import { useArrangeStore } from '@/store/arrangeStore'
+import { clipChainOf, groupMasks, isActiveMask } from '@/lib/groupTree'
+import { visibleBounds } from '@/lib/transform'
 import { Fragment, useLayoutEffect } from 'react'
 import { perfCount } from '@/perf/core'
 import type { ElementGeometry, ManifestElement } from '@/lib/api'
 import type { Rect4 } from '@/lib/axesLayout'
-import { geomPathD, translateGeom } from '@/lib/pathGeom'
-import { PATH_HIT_SHAPES, shapeInset, shapeOutline } from '@/lib/shapeGeometry'
+import { geomPathD, pathOutline, translateGeom } from '@/lib/pathGeom'
+import { outlineOf, PATH_HIT_SHAPES, shapeInset } from '@/lib/shapeGeometry'
 import { MM_PER_PT } from '@/lib/units'
-import { arrowEndpointsOf, geomTarget, panelFullRect, resolveGroup } from '@/lib/elementGeom'
+import { arrowEndpointsOf, geomTarget, linePointsOf, panelFullRect, resolveGroup } from '@/lib/elementGeom'
 import { patchBoundsOf } from '@/lib/patchResize'
 import { ALL_DIRS, boundsOf, dirsFor, ROTATE_KNOB_GAP, visualBounds, type ResizeDir } from '@/lib/geometry'
 import { useDocumentStore } from '@/store/documentStore'
@@ -32,7 +35,9 @@ import type { CanvasObject, LinearObject, PanelObject } from '@/types/document'
 import { isLinear, lineEndpoints, objectRotation } from '@/types/document'
 import {
   guardStale,
+  removeLineBend,
   startArrowDrag,
+  startLineEdit,
   startAxesDrag,
   startCropDrag,
   startEndpointDrag,
@@ -48,6 +53,13 @@ import { contentDirOnPage, elementOverlayTransform } from './elementGeometry'
 import { openQuickEdit } from './quickEditStore'
 import { IssueElementHighlight, IssueOverlay } from './IssueOverlay'
 import { ReviewOverlay } from './ReviewOverlay'
+import { AnchorEdit, AnchorMarquee, PenDraft } from './PathEditOverlay'
+import { GradientHandles } from './GradientHandles'
+import { pathTextFrame, usePathTextGlyphStore } from '@/store/pathTextGlyphStore'
+import { PathTextHandles } from './PathTextHandles'
+import { LiveCorners } from './LiveCorners'
+import { ShapeBuilderOverlay } from './ShapeBuilderOverlay'
+import { useActivePathEdit } from '@/store/pathEditStore'
 
 /**
  * 覆盖层语法（2026-10-07 设计审计 §10.1，值在 index.css 的画布覆盖层 token）：
@@ -152,6 +164,8 @@ export function OverlaySvg() {
   const editingTextId = useUiStore((s) => s.editingTextId)
   const elementPanelId = useUiStore((s) => s.elementPanelId)
   const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
+  // 钢笔工具下不画缩放手柄：刚画完的路径还选着，它的框角正好落在路径端点上，会把「点端点续画」截成缩放
+  const tool = useUiStore((s) => s.tool)
   const activePanelId = useWorkspaceStore((s) => s.activePanelId)
   const issueHighlight = useUiStore((s) => s.issueHighlight)
   // 预览线按「持有预览账本的面板」画，不按图内编辑态（见 PreviewLines）
@@ -172,15 +186,28 @@ export function OverlaySvg() {
   // 主选 = 选区末位（对齐 / 等宽等高的「主选」参照）。多选时它的轮廓略粗——
   // 联合框只说「选了这一片」，说不出「以谁为基准」
   const primaryId = selectedIds.at(-1) ?? null
+  // 排列参照是「主选对象」= 有关键对象（`store/keyObject`）
+  const keyRef = useArrangeStore((s) => s.alignRef === 'primary')
   const multi = selected.length > 1
   const cropTarget = objects.find((o) => o.id === cropTargetId && o.type === 'panel')
   const elementPanel = objects.find((o) => o.id === elementPanelId && o.type === 'panel')
   // 图内编辑时不显示对象缩放手柄，避免和元素选择混淆
-  const single = selected.length === 1 && !cropTarget && !elementPanel ? selected[0] : null
+  // 选中的是剪切组（ADR 0185 M4 第二批）：选框按蒙版范围、描的是蒙版的轮廓，不给被裁对象的单个缩放手柄
+  const masks = groupMasks(objects)
+  const selMasks = objects.filter((o) => selectedIds.includes(o.id) && isActiveMask(o, masks))
+  const clipSel = selMasks.length > 0 && selected.length > 0 && selected.every((o) => clipChainOf(o, masks).length > 0)
+  const outlined = clipSel ? selMasks : selected
+  const single = selected.length === 1 && !clipSel && !cropTarget && !elementPanel ? selected[0] : null
+  // 路径文字的选框把字也包进去：字的范围画完才知道，订阅它（`pathTextGlyphStore`）
+  const glyphBounds = usePathTextGlyphStore((st) => st.bounds)
+  const singleFrame = single?.type === 'pathText' ? pathTextFrame(single, glyphBounds[single.id]) : null
   // 单图编辑里那张图的缩放手柄不画（ADR 0161）：拖它的角 / 边是改画布（`FigureEdgeHandles` 的角柄与边带，
   // 贴在画布框上），不是视觉缩放 / 拉伸；两套手柄叠在一起时这一层在上、会抢走指针。选区轮廓照画
   const fastEditFigure = single?.type === 'panel' && fastEdit && single.id === activePanelId
-  const groupBounds = selected.length > 1 ? boundsOf(selected.map(visualBounds)) : null
+  // 锚点编辑（直接选择，ADR 0185 M1）里不画缩放手柄：拖的是锚点，不是框
+  const anchorEditId = useActivePathEdit()?.path.id ?? null
+  // 剪切组按蒙版范围（ADR 0185 M4 第二批）：被裁的对象只算看得见的那一块
+  const groupBounds = selected.length > 1 || clipSel ? (visibleBounds(selected, objects) ?? boundsOf(selected.map(visualBounds))) : null
   const hovered =
     hoverId && !selectedIds.includes(hoverId) && dragKind === 'none'
       ? objects.find((o) => o.id === hoverId && !o.hidden)
@@ -295,13 +322,14 @@ export function OverlaySvg() {
 
       {/* 选择框；同上——形状对象只有沿真实轮廓的描示，没有矩形外框 */}
       {!cropTarget &&
-        selected.map((o) => (
+        outlined.map((o) => (
           <ObjectOutline
             key={o.id}
             obj={o}
             t={t}
             dashed={o.id === editingTextId}
             primary={multi && o.id === primaryId}
+            keyObject={multi && keyRef && o.id === primaryId}
           />
         ))}
 
@@ -320,15 +348,15 @@ export function OverlaySvg() {
       )}
 
       {/* 缩放手柄 + 线状对象端点（箭头 / 直线）：整组绕包围盒中心转到对象朝向 */}
-      {single && !single.locked && !fastEditFigure && (
+      {single && !single.locked && !fastEditFigure && single.id !== anchorEditId && tool !== 'pen' && (
         <g
-          transform={spinOf(single, toScreen(single, t))}
+          transform={spinOf(single, toScreen(singleFrame ?? single, t))}
           // 手柄 / 命中带 / 端点不在 `[data-object-id]` 底下：右键它们要开**这个对象**的菜单，
           // 不能冒到 CanvasStage 被当成空白处（Codex #833）。它就是唯一的选中，选区不用动
           onContextMenu={(e) => onHandleContextMenu(e, single.id, editingTextId === single.id)}
         >
           <EdgeStrips
-            box={toScreen(single, t)}
+            box={toScreen(singleFrame ?? single, t)}
             dirs={dirsFor(single)}
             cursor={(dir) => cursorFor(dir, objectRotation(single))}
             onPointerDown={(e, dir) => startPanelHandleDrag(e, single.id, dir)}
@@ -336,7 +364,7 @@ export function OverlaySvg() {
           {dirsFor(single).map((dir) => (
             <HandleMark
               key={dir}
-              at={handlePos(toScreen(single, t), dir)}
+              at={handlePos(toScreen(singleFrame ?? single, t), dir)}
               hook={{ 'data-handle': dir }}
               cursor={cursorFor(dir, objectRotation(single))}
               onPointerDown={(e) => startPanelHandleDrag(e, single.id, dir)}
@@ -348,8 +376,8 @@ export function OverlaySvg() {
 
       {/* 文字标注的旋转柄（ADR 0163）：选框顶边中点外一枚圆点 + 一条短线，整组跟着对象一起转 */}
       {single && single.type === 'text' && !single.locked && !cropTarget && editingTextId !== single.id && (
-        <g transform={spinOf(single, toScreen(single, t))} data-rotate-handle-group>
-          <RotateKnob box={toScreen(single, t)} onPointerDown={(e) => startRotateDrag(e, single.id)} />
+        <g transform={spinOf(single, toScreen(singleFrame ?? single, t))} data-rotate-handle-group>
+          <RotateKnob box={toScreen(singleFrame ?? single, t)} onPointerDown={(e) => startRotateDrag(e, single.id)} />
         </g>
       )}
 
@@ -401,6 +429,17 @@ export function OverlaySvg() {
             style={DASH}
           />
         ))}
+
+      {/* 自由路径：锚点编辑的锚点与手柄、钢笔画到一半的草稿（预览平面） */}
+      <AnchorEdit t={t} />
+      <AnchorMarquee t={t} />
+      <PenDraft t={t} />
+      {/* 实时圆角的圆点、渐变柄（ADR 0185 M3 第二批 / ADR 0186 第二期）：渐变柄在最上面，与圆角点重叠时先拿到指针 */}
+      <LiveCorners t={t} />
+      <GradientHandles t={t} />
+      <PathTextHandles t={t} />
+      {/* 形状生成器（⇧M）开着时的区域：盖在最上面 */}
+      <ShapeBuilderOverlay t={t} />
 
       {cropTarget && cropTarget.type === 'panel' && <CropFrame obj={cropTarget} t={t} />}
 
@@ -509,9 +548,12 @@ function ObjectOutline({
   hover,
   dashed,
   primary,
+  keyObject,
 }: {
   obj: CanvasObject
   t: ViewTransform
+  /** 关键对象（ADR 0185 M6）：再粗一档（3px），挂 `data-key-object`——对齐 / 间距以它为准 */
+  keyObject?: boolean
   /** 悬停预示：描边按 `--sel-hover-opacity` 淡一档 */
   hover?: boolean
   dashed?: boolean
@@ -519,18 +561,18 @@ function ObjectOutline({
   primary?: boolean
 }) {
   if (isLinear(obj)) return <LinearOutline obj={obj} t={t} hover={hover} primary={primary} />
-  const box = toScreen(obj, t)
-  const strokeWidth = primary ? 2 : 1
-  const anchor = primary ? { 'data-primary-selection': obj.id } : {}
+  // 路径文字：框把字也包进去（离线以后字常伸出路径的框，ADR 0190）
+  const box = toScreen(obj.type === 'pathText' ? pathTextFrame(obj) : obj, t)
+  const strokeWidth = keyObject ? 3 : primary ? 2 : 1
+  const anchor = {
+    ...(primary ? { 'data-primary-selection': obj.id } : {}),
+    ...(keyObject ? { 'data-key-object': obj.id } : {}),
+  }
   const outline =
-    obj.type === 'shape' && PATH_HIT_SHAPES.has(obj.shape)
-      ? shapeOutline(
-          obj.shape,
-          box.w,
-          box.h,
-          shapeInset(obj, Math.max(mmToPx(obj.strokePt * MM_PER_PT, t), 0.05)),
-          obj.sides,
-        )
+    obj.type === 'path'
+      ? pathOutline(obj, box.w, box.h, Math.max(mmToPx(obj.strokePt * MM_PER_PT, t), 0.05))
+      : obj.type === 'shape' && PATH_HIT_SHAPES.has(obj.shape)
+      ? outlineOf(obj, box.w, box.h, shapeInset(obj, Math.max(mmToPx(obj.strokePt * MM_PER_PT, t), 0.05)))
       : null
   if (!outline) {
     return (
@@ -843,6 +885,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   const gidDrag = useInteractionStore((s) => s.gidDrag)
   const preview = useInteractionStore((s) => s.elementPreview)
   const arrowPreview = useInteractionStore((s) => s.arrowPreview)
+  const linePreview = useInteractionStore((s) => s.linePreview)
   const snapFeedback = useInteractionStore((s) => s.snapFeedback)
   const selectedGids = useUiStore((s) => s.selectedGids)
   const selectedGid = selectedGids.at(-1) ?? null
@@ -929,6 +972,10 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   // 单选图内独立箭头 → 两个端点手柄（画布原生箭头的同款交互）
   const arrowEl = !groupBox && primary?.target.arrow_endpoints ? primary.target : null
   const arrowPts = arrowEl ? arrowEndpointsOf(panel, arrowEl) : null
+  // 单选可逐段编辑的线（引线）→ 每个顶点一个方块手柄；拖段由命中层按下分派（PanelView）
+  const lineEl = !groupBox && primary?.target.line_points && primary.target.draggable ? primary.target : null
+  const linePts = lineEl ? linePointsOf(panel, lineEl) : null
+  const linePreviewPts = lineEl && linePreview?.gid === lineEl.gid ? linePreview.pts : null
   const toPoint = (p: [number, number]) => {
     const b = toBox([p[0], p[1], 0, 0])
     return { x: b.x, y: b.y }
@@ -1002,8 +1049,11 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
           r.target.arrow_endpoints ? (
             <Fragment key={key}>{arrowOutline(r.target)}</Fragment>
           ) : r.geom ? (
-            <GeometryOutline key={key} id={`sel-${panel.id}-${key}`} geom={r.geom}
-              toPoint={toPoint} />
+            // 拖引线的一段时，下方的虚线折线（linePreview）接管选中描示
+            linePreview?.gid === r.target.gid ? null : (
+              <GeometryOutline key={key} id={`sel-${panel.id}-${key}`} geom={r.geom}
+                toPoint={toPoint} />
+            )
           ) : (
             <rect
               key={key}
@@ -1116,6 +1166,51 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
               onPointerDown={guarded((e) => startLegendScale(e, panel, primary.target, layout, dir))}
             />
           ))}
+
+        {lineEl && linePts && (
+          <>
+            {linePreviewPts && (
+              <polyline
+                data-line-preview
+                points={linePreviewPts.map((p) => {
+                  const pt = toPoint(p)
+                  return `${pt.x},${pt.y}`
+                }).join(' ')}
+                fill="none"
+                stroke="var(--color-sel)"
+                strokeWidth={1}
+                style={DASH}
+              />
+            )}
+            {(linePreviewPts ?? linePts).map((p, i) => {
+              const shifted: [number, number] =
+                gidDrag?.gid === lineEl.gid ? [p[0] + gidDrag.dfx, p[1] + gidDrag.dfy] : [p[0], p[1]]
+              const pt = toPoint(shifted)
+              const s = 7
+              return (
+                <rect
+                  key={i}
+                  data-line-vertex={i}
+                  x={pt.x - s / 2}
+                  y={pt.y - s / 2}
+                  width={s}
+                  height={s}
+                  stroke="var(--color-sel)"
+                  strokeWidth={1}
+                  style={{ fill: 'var(--handle-fill)', pointerEvents: 'all', cursor: 'crosshair' }}
+                  onPointerDown={guarded((e) =>
+                    startLineEdit(e, panel, lineEl, layout, { kind: 'vertex', index: i }),
+                  )}
+                  // 双击拐点 = 删掉它（至少留两个点）；不冒到命中层，免得又在原处加回一个
+                  onDoubleClick={guardStale(panel, (e: React.MouseEvent) => {
+                    e.stopPropagation()
+                    removeLineBend(panel, lineEl, i)
+                  })}
+                />
+              )
+            })}
+          </>
+        )}
 
         {arrowEl && arrowPts && (
           <>

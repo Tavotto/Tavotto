@@ -22,7 +22,14 @@ const st = (key: string, values?: Record<string, unknown>) =>
  * 所以「9 pt 与 7 pt 差多少」在示例里与真图上的比例一致。它只是示例——
  * 真图里有哪些元素、配色循环到第几个，都不在这里保证。
  */
-export function StyleSamplePreview({ data }: { data: Record<string, unknown> | null | undefined }) {
+export function StyleSamplePreview({
+  data,
+  thumb = false,
+}: {
+  data: Record<string, unknown> | null | undefined
+  /** 缩略图：左栏样式下拉 / 画布层名字旁用的小样张（无外框说明、读屏跳过；名字与摘要已经在旁边） */
+  thumb?: boolean
+}) {
   useTranslation('dialogs')
   const raw = styleSampleGeometry(data)
   // 读屏那句话说的是**样式里的真实数字**，示例图画的是缩过的——缩放是示例自己
@@ -42,12 +49,15 @@ export function StyleSamplePreview({ data }: { data: Record<string, unknown> | n
   const lay = sampleLayout(g)
   const { box, bottom, tickIn, tickOut, legend } = lay
   return (
-    <figure data-style-preview className="m-0 flex flex-col items-center gap-1">
+    <figure data-style-preview={thumb ? 'thumb' : ''} className={thumb ? 'm-0 w-14 shrink-0' : 'm-0 flex flex-col items-center gap-1'}>
       <svg
-        role="img"
-        aria-label={label}
+        {...(thumb ? { 'aria-hidden': true } : { role: 'img', 'aria-label': label })}
         viewBox={lay.viewBox.join(' ')}
-        className="h-auto w-full max-w-[360px] rounded-sm border border-border bg-paper"
+        className={
+          thumb
+            ? 'block h-auto w-full rounded-sm border border-border bg-paper'
+            : 'h-auto w-full max-w-[360px] rounded-sm border border-border bg-paper'
+        }
         style={{ aspectRatio: `${SAMPLE_VIEW.w} / ${SAMPLE_VIEW.h}` }}
       >
         <text x={box.x + box.w / 2} y={lay.titleY} fontSize={g.titlePt} textAnchor="middle" fill="#111" {...faceAttrs(g.faces.title)}>

@@ -132,8 +132,12 @@
   "canvasTools": {
     "fit": "适应",
     "label": "画布工具",
+    "pen": "钢笔",
     "select": "选择",
-    "subLabels": "序号"
+    "subLabels": "序号",
+    "quickLayout": "一键排版",
+    "pencil": "铅笔",
+    "pathTools": "钢笔与铅笔"
   },
   "confirm": {
     "docLossBody": "浏览器存储不可用或已满，切换后无法从「本机最近的排版」取回。仍要继续吗？",
@@ -384,6 +388,18 @@
     "resetOverrides": "重置图内修改",
     "switchKind": "改为{{name}}",
     "switchKindCount": "把 {{count}} 个对象改为{{name}}",
+    "convertToPath": "转为路径",
+    "convertToPathCount": "把 {{count}} 个对象转为路径",
+    "drawPath": "画路径",
+    "continuePath": "续画路径",
+    "moveAnchors": "移动锚点",
+    "moveHandle": "调整手柄",
+    "addAnchors": "添加锚点",
+    "deleteAnchors": "删除 {{count}} 个锚点",
+    "convertAnchors": "转换锚点",
+    "cutPath": "在锚点处断开",
+    "joinPaths": "连接路径",
+    "averageAnchors": "平均锚点",
     "resizeAxes": "缩放 {{count}} 个子图",
     "resizePatch": "调整图框大小",
     "scaleLegend": "缩放图例",
@@ -391,7 +407,6 @@
     "restoreAspect": "恢复原始比例",
     "restoreNativeSize": "恢复原始尺寸",
     "adoptScriptFrame": "改用脚本保存时的图幅",
-    "adoptComputedFrame": "采用计算渲染外框",
     "restoreStyle": "恢复原样并解除样式跟随",
     "alignNewFigure": "按样式对齐新图",
     "alignNewText": "按样式对齐新标注",
@@ -400,6 +415,7 @@
     "unbindStyle": "不再跟随样式",
     "bindStyle": "给当前画布套用样式「{{name}}」",
     "alignToStyle": "按样式「{{name}}」对齐",
+    "followCanvas": "按样式「{{name}}」跟回画布",
     "scriptWinsOverStyle": "脚本改动优先于样式",
     "rotate": "旋转 {{deg}}°",
     "rotateObjects": "旋转对象",
@@ -411,6 +427,7 @@
     "setPublicationProfile": "设置出版规范",
     "clearJournal": "取消按期刊检查",
     "setJournal": "选择期刊",
+    "refreshJournalV2": "更新期刊要求",
     "showObject": "显示对象",
     "spacingX": "设置水平间距",
     "spacingY": "设置垂直间距",
@@ -437,7 +454,49 @@
     "hideObjects": "隐藏 {{count}} 个对象",
     "showObjects": "显示 {{count}} 个对象",
     "setFramePad": "修改画布留白",
-    "journalStyle": "参考 {{journal}} 的记录调整样式「{{name}}」"
+    "journalStyle": "参考 {{journal}} 的记录调整样式「{{name}}」",
+    "adoptComputedFrame": "采用计算渲染外框",
+    "defaultAppearance": "默认填色描边",
+    "swapFillStroke": "互换填色和描边",
+    "clearFill": "无填充",
+    "eyedropper": "吸管上色",
+    "pathfinder": {
+      "unite": "合并",
+      "minusFront": "减去顶层",
+      "intersect": "相交",
+      "exclude": "排除重叠",
+      "divide": "分割",
+      "trim": "修边",
+      "merge": "合并同色",
+      "crop": "裁剪",
+      "minusBack": "减去后方"
+    },
+    "makeCompound": "建立复合路径",
+    "releaseCompound": "释放复合路径",
+    "offsetPath": "偏移路径",
+    "outlineStroke": "轮廓化描边",
+    "reversePath": "反转路径方向",
+    "simplifyPath": "简化路径",
+    "roundCorners": "圆角",
+    "shapeBuilder": "形状生成器",
+    "makeClipMask": "建立剪切蒙版",
+    "releaseClipMask": "释放剪切蒙版",
+    "transformMove": "移动",
+    "transformScale": "缩放",
+    "transformRotate": "旋转",
+    "transformSkew": "倾斜",
+    "transformReflect": "镜像",
+    "quickLayout": "一键排版",
+    "quickLayoutRatios": "调整排版比例",
+    "importSvg": "粘贴 SVG（{{count}} 个对象）",
+    "explodeSvg": "拆成可编辑对象",
+    "outlineText": "文字转轮廓（{{count}} 个）",
+    "arrayCopies_other": "阵列（{{count}} 份）",
+    "addPathText": "在路径上加文字",
+    "pathTextStart": "移动路径文字起点",
+    "pathTextGap": "调整路径文字离线",
+    "editPathTextPath": "编辑路径文字的路径",
+    "drawPencil": "铅笔画线"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -460,7 +519,10 @@
     "rowActions": "{{label}} 的操作",
     "moveUp": "上移一层",
     "moveDown": "下移一层",
-    "rename": "重命名"
+    "rename": "重命名",
+    "clipGroupLabel_other": "剪切组 · {{count}} 个对象",
+    "clipPath": "剪切路径",
+    "clipPathTip": "这个形状只用来裁剪组里的其他对象，不会画出来"
   },
   "layoutKind": {
     "col": "列布局",
@@ -509,7 +571,9 @@
     "memoryEfficientPreview": "低内存编辑预览",
     "memoryEfficientPreviewHint": "图形较复杂，Tavotto 已改用低内存编辑预览。导出质量不受影响。",
     "nativeInconsistent": "有改动没能还原，重新运行原命令可继续编辑",
-    "nativeOffline": "会话已结束，重新运行原命令可继续编辑",
+    "nativeOffline": "运行已结束",
+    "nativeRerun": "重新运行",
+    "nativeRerunHint": "重新运行这个脚本，之后就能继续编辑这张图",
     "nativeRunning": "脚本正在运行，停下来才能编辑",
     "rendering": "渲染中…",
     "runtimeMissingEnvironment": "找不到可用的渲染环境",
@@ -525,6 +589,7 @@
   "quickEdit": {
     "aria": "快捷编辑",
     "changeKind": "更改为",
+    "convertToPath": "转为路径",
     "editElements": "改图里的内容",
     "hide": "隐藏此元素",
     "hideObject": "隐藏",
@@ -564,7 +629,9 @@
     "copy": "复制",
     "paste": "粘贴",
     "copyAsAnnotation": "复制为标注",
-    "pasteAsAnnotation": "粘贴为标注"
+    "pasteAsAnnotation": "粘贴为标注",
+    "pathfinder": "路径查找器",
+    "addPathText": "在路径上加文字"
   },
   "rail": {
     "assets": "素材",
@@ -672,11 +739,11 @@
     "projectConflict": "项目里的 {{file}} 已在别处改过，这次没有写入。请在弹出的对话框里决定。",
     "projectConflictElsewhere": "项目里的 {{file}} 已在别处改过，这次没有写入。回到那份排版再保存，就能决定怎么处理。",
     "projectFailed": "没能存进项目里的 {{file}}：{{reason}}",
-    "projectBindingUnavailable": "项目文件关联尚未确认，本次还没有写入命名文件。改动仍在本机，请重试或重新打开排版。",
-    "projectBindingSuperseded": "已写入 {{file}}，但下次保存目标尚未确认。较晚选择的目标会保留，请重新打开这份排版后继续保存。",
     "projectSkipped": "没有写入项目里的 {{file}}：按下保存之后切换了排版或项目。回到那份排版再保存一次。",
     "reloadFailed": "没能读到磁盘上的那一版",
-    "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。"
+    "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。",
+    "projectBindingUnavailable": "项目文件关联尚未确认，本次还没有写入命名文件。改动仍在本机，请重试或重新打开排版。",
+    "projectBindingSuperseded": "已写入 {{file}}，但下次保存目标尚未确认。较晚选择的目标会保留，请重新打开这份排版后继续保存。"
   },
   "scrim": {
     "collapse": "收起侧栏"
@@ -764,8 +831,6 @@
     "emptyFromData": "用数据画一张"
   },
   "stylePanel": {
-    "emptyTitle": "在画布上选中一张图，这里显示它的样式",
-    "emptyAction": "从图层中选择",
     "noManifest": "这张图还没有可读的图内元素。",
     "needRender": "要读出这张图的样式，需要渲染一次。",
     "building": "正在构建图表…",
@@ -823,6 +888,24 @@
       "fontsize": "字号",
       "fontfamily": "字体",
       "linewidth": "线宽"
+    },
+    "canvasFollows": "这张画布跟随",
+    "canvasUnbound": "这张画布没有跟随样式",
+    "modeLabel": "样式范围",
+    "modeCanvas": "画布",
+    "modeFigure": "单图",
+    "modeCanvasTip": "改画布样式，这张画布上的图都跟着变",
+    "modeFigureTip": "只改选中的那张图，不动画布样式",
+    "figuresLabel": "这张画布上的图",
+    "pickFigure": "点上面一张图，看它的样式",
+    "followBack": "跟回画布",
+    "followBackOf": "{{row}}跟回画布",
+    "summary": {
+      "size": "{{sizes}} pt",
+      "axisBold": "轴标题加粗",
+      "titleBold": "标题加粗",
+      "line": "线 {{width}} pt",
+      "frame": "线 {{width}} pt"
     }
   },
   "status": {
@@ -884,9 +967,6 @@
     "packageOpenFailed": "无法打开项目包。{{error}}",
     "packageTooNew": "这个项目包来自更新的 {{product}}，本版本无法打开。",
     "packageOpened": "已打开项目包（{{createdAt}}），素材全部就位",
-    "packagedIncomplete_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材。恢复前请补齐。",
-    "packagedExecutionIncomplete": "已生成项目包 {{name}}。运行依赖尚未确认完整，迁移前请检查数据与运行配置。",
-    "packagedIncompleteWithExecution_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材，运行依赖也尚未确认完整。迁移前请补齐素材并检查数据与运行配置。",
     "packaged_other": "已生成项目包 {{name}}（{{count}} 个素材）",
     "pasteNothing": "没有可粘贴的对象。缺失素材的对象已跳过。",
     "pastedWithSkips_other": "已粘贴 {{count}} 个对象，跳过 {{skipped}} 张缺失素材的图。{{undo}} 可撤销。",
@@ -902,11 +982,13 @@
     "renderFailedWithError": "无法渲染 {{name}}。{{error}}",
     "scriptChanged_other": "脚本已更新，{{count}} 张图已重新渲染",
     "sourceLinked_other": "已找到源脚本（{{count}} 张）",
-    "sourceLostEditing": "源脚本关系已失效，已返回画布。图片和它在画布上的摆放都保留着。",
+    "sourceLostEditing": "你可能移动了该图脚本，需要重新关联。",
+    "sourceLostRelink": "重新关联脚本",
     "sourceLost_other": "源脚本关系已失效，{{count}} 张图已改为普通图片。图片和它们在画布上的摆放都保留着。",
     "styleCopiedArrow": "已复制箭头样式",
     "styleCopiedPanel": "已复制图的样式",
     "styleCopiedShape": "已复制形状样式",
+    "styleCopiedPath": "已复制路径样式",
     "styleCopiedText": "已复制文字样式",
     "styleCopyNeedSelection": "先选中要复制样式的对象",
     "stylePasteNoTarget": "选区里没有可粘贴的{{kind}}",
@@ -922,7 +1004,52 @@
       "incomplete": "组里有成员这一版拿不到位置，暂时不能整组移动或缩放"
     },
     "copyDetails": "复制详情",
-    "copiedDetails": "已复制"
+    "copiedDetails": "已复制",
+    "packagedIncomplete_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材。恢复前请补齐。",
+    "packagedExecutionIncomplete": "已生成项目包 {{name}}。运行依赖尚未确认完整，迁移前请检查数据与运行配置。",
+    "packagedIncompleteWithExecution_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材，运行依赖也尚未确认完整。迁移前请补齐素材并检查数据与运行配置。",
+    "eyedropperNothing": "这里没有能吸的颜色",
+    "eyedropperNoTarget": "先选中要上色的形状、路径或箭头",
+    "pathfinderUnavailable": "这里用不了路径查找器",
+    "pathfinderEmpty": "算出来是空的，没有改动",
+    "simplifyNothing": "已经很简单了，没有可删的锚点",
+    "clipNeedTwo": "至少选中 2 个对象才能建立剪切蒙版",
+    "clipNeedPathOnTop": "最上面的对象要是路径或封闭形状，才能当剪切蒙版",
+    "clipMade": "已建立剪切蒙版",
+    "skewUnsupported": "文字和图不能倾斜",
+    "skewSkipped_other": "有 {{count}} 个文字或图没有倾斜",
+    "rotatePanelUnsupported": "图只能按 90° 旋转",
+    "rotatePanelSkipped_other": "有 {{count}} 张图没有旋转（图只能按 90° 旋转）",
+    "quickLayoutDone": "已排好",
+    "quickLayoutUndo": "撤销",
+    "quickLayoutTooFew": "至少要两张图",
+    "quickLayoutStale": "图刚刚变了，再点一次一键排版",
+    "quickLayoutFailed": "这次没排好，再试一次",
+    "quickLayoutNoteEqualAspect": "图 {{label}} 是等比例坐标，没参与轴线对齐",
+    "quickLayoutNoteSpecNotFixed": "图 {{label}} 还有几处字号没修到规范，可在「问题」里看",
+    "quickLayoutSpecDone": "已按「{{spec}}」改了{{what}}",
+    "quickLayoutSpecFallback": "当前规范",
+    "quickLayoutSpecSep": "、",
+    "quickLayoutSpec": {
+      "font_family": "字体",
+      "font_size": "字号",
+      "line_width": "线宽",
+      "tick_direction": "刻度方向",
+      "legend_frame": "图例边框",
+      "text_weight": "字重",
+      "other": "其他样式"
+    },
+    "quickLayoutPageTooSmall": "画布放不下这几张图，可以减少列数或调大画布",
+    "svgImported_other": "已变成 {{count}} 个可编辑对象",
+    "svgAsImage": "这个 SVG {{reason}}，已整体当图片放进来",
+    "svgExplodeFailed": "这张图{{reason}}，没有拆开",
+    "svgAsRaster": "这个 SVG {{reason}}，已整体当位图（{{dpi}} dpi）放进来",
+    "outlined_other": "{{count}} 个文字已转成轮廓",
+    "outlinePartial_other": "有 {{count}} 个文字没转成（字体不可用）",
+    "outlineFailed_other": "{{count}} 个文字没转成轮廓（字体不可用）",
+    "svgCopied": "已复制为 SVG，可以粘贴到 Illustrator、Inkscape、Figma",
+    "svgCopyFailed": "没能复制为 SVG",
+    "arrayTooMany": "一次最多阵列 {{max}} 份"
   },
   "tabs": {
     "allCanvases": "全部画布",
@@ -933,11 +1060,20 @@
     "unopened": "未打开"
   },
   "toolHint": {
+    "arc": "拖动画出弧线；Esc 取消",
     "arrow": "拖动画出箭头，Shift 吸附 15° 角；Esc 取消",
+    "brace": "拖动画出大括号；Esc 取消",
+    "diamond": "拖动画出菱形；Esc 取消",
     "ellipse": "拖动画出椭圆；Esc 取消",
+    "eyedropper": "点画布上的东西，把它的颜色给选中的对象；Esc 退出",
     "line": "拖动画出直线；Esc 取消",
+    "pen": "点一下加尖角点，按住拖拉出平滑点；点起点闭合，Enter / Esc 结束",
+    "polygon": "拖动画出多边形；Esc 取消",
     "rect": "拖动绘制矩形；Esc 取消",
-    "text": "拖动绘制文字框，或单击按默认大小放置；Esc 取消"
+    "star": "拖动画出星形；Esc 取消",
+    "text": "拖动绘制文字框，或单击按默认大小放置；Esc 取消",
+    "triangle": "拖动画出三角形；Esc 取消",
+    "pencil": "按住拖动画线，松手自动平滑；回到起点闭合，按住 {{alt}} 松手保留原样"
   },
   "topbar": {
     "addSubLabels": "添加序号标签",
@@ -959,7 +1095,6 @@
     "fromOtherProject": "· 其他项目",
     "fromProject": "· 项目 {{name}}",
     "importPackage": "导入项目包…",
-    "insertShape": "插入形状",
     "more": "更多",
     "moreGroup": {
       "file": "文件",
@@ -1013,7 +1148,10 @@
     "documentRenameHint": "单击打开排版菜单；双击或按 F2 重命名",
     "zoomValueInput": "缩放比例（%）",
     "zoomSelection": "缩放到选中对象",
-    "journalTitle": "按「{{journal}}」检查 · 点开期刊规范"
+    "journalTitle": "按「{{journal}}」检查 · 点开期刊规范",
+    "quickLayout": "一键排版",
+    "quickLayoutTip": "一次排好这几张图的位置、大小和标签",
+    "quickLayoutOptions": "一键排版选项"
   },
   "tutorialChip": {
     "label": "新手教程"
@@ -1047,7 +1185,8 @@
     "shift_multi": "⇧ 点击多选，一次改完",
     "shortcut_help": "按 ? 看全部快捷键",
     "shortcutHelpOpen": "打开",
-    "pageBoundsOpen": "打开画布页"
+    "pageBoundsOpen": "打开画布页",
+    "quick_layout": "拖动图之间的空隙，可以调整各图占的比例"
   },
   "prep": {
     "aria": "准备 {{script}}",
@@ -1605,6 +1744,7 @@
         "select_environment": "正在切换环境",
         "convert_script": "正在生成可编辑版本",
         "link_data_file": "正在接入数据文件",
+        "set_run_arguments": "正在填写运行参数",
         "ignore_import_folder": "正在跳过这个文件夹",
         "run_command": "正在运行命令…",
         "rollback": "正在撤销刚才的改动",
@@ -1638,6 +1778,21 @@
         "other": "AI 这次没能修好"
       }
     },
+    "hint": {
+      "copyRun": "会把你指认的 {{source}} 复制一份到 {{target}}，原文件不动。",
+      "grantCopy": "会弹出系统的授权窗口，同意后再复制；原文件不动。",
+      "openPrivacy": "在“隐私与安全性 → 完全磁盘访问”里勾上 {{product}}，再回来重新运行。"
+    },
+    "folder": {
+      "desktop": "桌面",
+      "documents": "文稿",
+      "downloads": "下载",
+      "icloud": "iCloud 云盘"
+    },
+    "library": {
+      "partial": "只查了一部分文件，可能还有别的脚本调用它",
+      "openFailed": "没能打开那个文件夹"
+    },
     "inputs": {
       "title": "捕获输入",
       "hint": "选择下一次明确运行时要记录的输入。保存仅重新检查，不运行脚本。",
@@ -1666,21 +1821,6 @@
       "scopeUnknown": "当前运行范围尚未确定。",
       "notScript": "当前目标不是可声明输入的脚本。",
       "captured": "实际运行记录的输入摘要：{{revision}}"
-    },
-    "hint": {
-      "copyRun": "会把你指认的 {{source}} 复制一份到 {{target}}，原文件不动。",
-      "grantCopy": "会弹出系统的授权窗口，同意后再复制；原文件不动。",
-      "openPrivacy": "在“隐私与安全性 → 完全磁盘访问”里勾上 {{product}}，再回来重新运行。"
-    },
-    "folder": {
-      "desktop": "桌面",
-      "documents": "文稿",
-      "downloads": "下载",
-      "icloud": "iCloud 云盘"
-    },
-    "library": {
-      "partial": "只查了一部分文件，可能还有别的脚本调用它",
-      "openFailed": "没能打开那个文件夹"
     }
   },
   "canvasMenu": {
@@ -1737,6 +1877,9 @@
     "fitContent": "贴合内容",
     "clearPad": "去掉留白",
     "notWrittenBack": "留白只在 Tavotto 导出时生效，不写回脚本"
+  },
+  "dataDrawer": {
+    "count": "{{count}} 个数据文件"
   },
   "chartBind": {
     "title": "绑定数据为计算图表",
@@ -1812,7 +1955,65 @@
       "image": "热图 / 网格"
     }
   },
-  "dataDrawer": {
-    "count": "{{count}} 个数据文件"
+  "pathfinder": {
+    "blockedEmbedded": "在这里用不了，请在 Tavotto 桌面版或浏览器里打开",
+    "blockedFailed": "这台电脑上没能加载路径查找器"
+  },
+  "isolation": {
+    "label": "组内编辑",
+    "exit": "退出组内编辑",
+    "exitTip": "按 Esc 退出一层"
+  },
+  "quickLayout": {
+    "targetLabel": "宽度",
+    "target": {
+      "double": "双栏",
+      "page": "整页",
+      "single": "单栏"
+    },
+    "gapLabel": "图间距",
+    "gap": "{{mm}} mm",
+    "fixSpec": "同时按规范修文字和线条",
+    "columnsLabel": "排列",
+    "columns": {
+      "auto": "按摆放位置",
+      "1": "1 列",
+      "2": "2 列",
+      "3": "3 列"
+    },
+    "canvasLabel": "画布",
+    "canvas": {
+      "auto": "自动",
+      "keep": "保持画布大小",
+      "fit": "跟着内容调整"
+    },
+    "widthLockedTip": "保持画布大小时用画布的宽度",
+    "gutterTip": "拖动调整比例"
+  },
+  "svgImport": {
+    "reason": {
+      "filter": "用了滤镜",
+      "mask": "用了蒙版（mask）",
+      "pattern": "用了图案填充",
+      "image": "里面有图片",
+      "foreign_object": "里面有网页内容（foreignObject）",
+      "text_path": "有沿路径排的文字",
+      "marker": "用了线端标记（marker）",
+      "external_ref": "引用了外部文件或实体",
+      "css_selector": "用了复杂的样式选择器",
+      "clip_units": "剪切路径按比例坐标写",
+      "text_layout": "文字逐字定位",
+      "skew_text": "有斜切的文字",
+      "symbol_viewbox": "符号自带缩放",
+      "bad_xml": "内容不是完整的 SVG",
+      "not_svg": "内容不是 SVG",
+      "too_large": "文件太大",
+      "too_many_elements": "元素太多",
+      "unreadable": "读不出来",
+      "unsupported_element": "用了 Tavotto 画不了的元素（比如滤镜）",
+      "script": "带脚本或事件",
+      "reference_cycle": "有循环引用",
+      "timeout": "太复杂、读不完"
+    }
   }
 }

@@ -84,8 +84,13 @@ programmer: talk in plain words, one short sentence at a time, no jargon.
 
 Work in this order:
 1. LOOK first. Call read_run_report, then use the read tools (read_file, list_dir, find_files, grep_files, \
-inspect_environment, list_environments, read_logs, lookup_package) until you know the cause. Do not guess.
-2. TRY next. try_import checks an import in a guarded temporary process. try_run verifies through Tavotto's actual \
+inspect_environment, list_environments, read_logs, lookup_package) until you know the cause. Do not guess. \
+When the report or a try_run result has a `hint`, start from it. Each try_run lists `attempts so far`: \
+never repeat an approach that left the same failure.
+2. TRY next. When you have a guess, test it cheaply with run_snippet before changing anything: a few lines of Python \
+in the project's environment, from the project folder, back in seconds (does this import work, what does argparse \
+require, what is in the data file). Experiments change nothing and never count as a fix. try_import checks an import \
+in a guarded temporary process. try_run verifies through Tavotto's actual \
 preparation session, using the project's selected environment and execution settings, after a separate run approval. \
 mode=diagnostic uses a temporary copy in a candidate environment; it does not prove Tavotto is fixed.
 3. CHANGE only what you must, and only with the tools you are given. Before any change to the user's environment \
@@ -99,7 +104,7 @@ unless you know one is needed), then install_packages for anything still missing
 change_python returned, then try_run to check, then finish with outcome `fixed`. Only if that path fails call \
 prepare_diagnostics and finish with `not_fixed`.
 3c. ARBITRARY COMMANDS. Prefer the dedicated tools: install_packages, change_python, select_environment, \
-switch_execution, switch_workdir, fix_entry, convert_script. Only when none of them can do it, use run_command. By default it runs in a \
+switch_execution, switch_workdir, fix_entry, set_run_arguments, write_launcher, convert_script. Only when none of them can do it, use run_command. By default it runs in a \
 protective sandbox (the project is read-only for it; it can write only to its own scratch folder, this project's \
 Python environment and pip/conda caches; it has network access). Only if the command must write somewhere else, \
 call it again with `outside_sandbox: true` and a one-sentence `reason` in plain words: the user is asked in a \
@@ -108,6 +113,31 @@ work around.
 3c2. STALE ENTRY. If the report has `entry_stale` (or the error code is `script_entry_missing`): the script was rewritten \
 and the function Tavotto registered as its entry no longer exists. Call fix_entry (it re-detects the entry and updates \
 only the registry), then try_run. Never edit the script.
+3c3. GLUE IS MISSING: WRITE A LAUNCHER. When the script is fine but cannot produce its figure as Tavotto runs it, and \
+you know why (you read the script and the report), write_launcher instead of reporting a defect or asking the user \
+to change anything. The launcher runs AS the script (`__file__` is the script, the figure belongs to it); \
+`run_original()` inside it runs the user's real script. Use exactly one of these shapes, adapted:
+  (a) Drawing functions are only defined, never called: `from <script module> import plot; plot()`.
+  (b) Something must be set BEFORE the script runs, then run the script's own code unchanged: put the glue first and
+      end the launcher with `run_original()` (Tavotto provides it; it runs the user's real script in the launcher's
+      globals — never use runpy.run_path(__file__)). The glue:
+      - environment variable it reads (os.environ["X"] / KeyError): `os.environ.setdefault("X", <real folder or value>)`;
+      - it asks with input() (EOFError / script_needs_input): `import builtins; _a = iter(["<answer>"]); \
+        builtins.input = lambda prompt="": next(_a)` with a sensible answer taken from the script or the data (ask_user \
+        only if no sensible value exists);
+      - relative imports (`from .helpers import x`, "attempted relative import with no known parent package"): \
+        `sys.path.insert(0, <folder above the package>)` and `__package__ = "<package name>"`;
+      - an extra folder on sys.path or a working folder (os.chdir) it expects.
+Never copy the script's plotting code into the launcher. Then try_run; if it still fails, read the result and adjust \
+the launcher once or twice, or rollback. For command-line arguments use set_run_arguments, not a launcher. Report a \
+product defect (step 5) only in addition, when Tavotto itself behaved wrongly. If you finish `fixed` with a launcher, the \
+finish sentence must say that Tavotto now runs this script through a small launcher saved in its own folder, and that \
+the script itself was not changed.
+3c4. RUN ARGUMENTS. If the report says `script_needs_arguments`, or the script reads `sys.argv` / has required argparse \
+options: read the script to learn what each argument means, find real files for any paths (relative to the script's \
+working folder), then call set_run_arguments with the exact list and try_run. Do not ask the user to type them and \
+never suggest editing the script to add defaults. Only if a value cannot be inferred (a name only the user knows), \
+ask_user for it, then set it. When it works, finish `fixed` and say which arguments you set.
 3d. THE SCRIPT RUNS BUT DRAWS WITH ANOTHER LIBRARY. If the script itself runs but its figure is drawn with Pillow, \
 OpenCV, imageio, scikit-image, plotly or ROOT (so Tavotto cannot edit it), call convert_script, then finish with \
 outcome `convert`. Do not install matplotlib or change the environment for this.
@@ -210,6 +240,11 @@ commands, file paths and error messages exactly as they are.\n"
 
 
 def _first_message(ctx: fixtools.FixContext, script: str) -> str:
+    if not ctx.first_shape and ctx.report is not None:
+        try:
+            ctx.first_shape = fixtools.hints.shape_of_report(ctx.report())
+        except Exception:  # noqa: BLE001 - 读不到就留空
+            pass
     report = read_run_report(ctx, {})
     body = report.content if not report.is_error else "(no report available; call read_run_report)"
     return (
@@ -226,16 +261,19 @@ You are running inside a command-line AI tool. Your repair tools are the MCP too
 Your own shell and editor are read-only here and anything done with them is neither recorded nor undoable. \
 What you write in your reply is not shown to the user: the only way to report the result is the `finish` tool.
 """
-#: 提示词进命令行（Windows 约 32 KB 上限）：准备报告太长就截断，让模型自己调 read_run_report 读全文
-CLI_PROMPT_MAX = 12000
+#: 提示词进命令行（Windows 约 32 K 字符上限，其余参数另占）：准备报告太长就截断，让模型自己调 read_run_report 读全文
+CLI_PROMPT_MAX = 20000
+_TRUNCATED = "\n[truncated; call read_run_report for the full report]"
 
 
 def cli_prompt(ctx: fixtools.FixContext, script: str, language: str = "") -> str:
-    # 语言那一段放在准备报告之前：报告太长被截断时它不跟着丢
-    text = SYSTEM_PROMPT + language + CLI_ADDENDUM + "\n" + _first_message(ctx, script)
-    if len(text) > CLI_PROMPT_MAX:
-        text = text[:CLI_PROMPT_MAX] + "\n[truncated; call read_run_report for the full report]"
-    return text
+    # 只截准备报告：规则、语言那一段与 CLI 说明一个字都不丢（规则变长时截断也不会落进规则里）
+    head = SYSTEM_PROMPT + language + CLI_ADDENDUM + "\n"
+    report = _first_message(ctx, script)
+    room = max(CLI_PROMPT_MAX - len(head), 0)
+    if len(report) > room:
+        report = report[: max(room - len(_TRUNCATED), 0)] + _TRUNCATED
+    return head + report
 
 
 class FixToolset:
@@ -243,6 +281,12 @@ class FixToolset:
 
     task_type = "fix_environment"
     default_limits = FIX_LIMITS
+    #: 预算过半 / 过四分之三时循环追加的一句（`loop.run` 读它）：弱模型最常见的失败是巡视到预算耗尽
+    budget_hint = (
+        "Stop exploring: act on what you already know. Make the one change that best matches the cause, then "
+        "try_run. If nothing applicable is left, finish with outcome not_fixed and one plain sentence. "
+        "These reminders do not extend any limit."
+    )
 
     def __init__(
         self,
@@ -407,6 +451,38 @@ _FIX_TRACE_END = {
 }
 
 
+def _remember_fix(s: FixSession) -> None:
+    """会话以「修好」收尾、且应用试运行真的验证过（`finish` 在有应用试运行时已要求这一点）：把这次做成的改动记在本机
+    （`engine/fixmemory`，ADR 0197 第 3 层·在线）。失败类型取第一次试运行之前的形状。不抛。"""
+    ctx = s.ctx
+    if (
+        s.outcome != OUTCOME_FIXED
+        or ctx is None
+        or getattr(ctx, "application_runner", None) is None
+    ):
+        return
+    attempts, made = getattr(ctx, "attempts", None), getattr(ctx, "fixes_made", None)
+    if not made or not attempts:
+        return
+    try:
+        from . import fixmemory
+
+        shape = next((str(a.get("before")) for a in attempts if a.get("before")), "") or getattr(
+            ctx, "first_shape", ""
+        )
+        fixmemory.remember(
+            shape,
+            list(made),
+            script=s.script,
+            sensitive_args=bool(getattr(ctx, "run_arguments_sensitive", False)),
+            scrub=fixtools.readscope.scrub,
+            secrets=frozenset(getattr(ctx, "fix_secrets", ()) or ()),
+            risky=bool(getattr(ctx, "fix_risky", False)),
+        )
+    except Exception:  # noqa: BLE001 - 记不下不影响修复结局
+        LOG.warning("记住修好的做法失败", exc_info=True)
+
+
 def _trace_settle(s: FixSession) -> None:
     try:
         status = _FIX_TRACE_END.get(s.outcome or "", "unknown")
@@ -492,6 +568,43 @@ class FixSessions:
         with self._lock:
             return {s.id for s in self._by_id.values() if s.scope == scope}
 
+    def diagnostics_for(self, scope: str) -> list[dict]:
+        """诊断包「修复经过（内容）」（ADR 0197 第 4 条）：这个项目名下还在内存里的修复会话——结局、AI 的总结、用的模型
+        （只有厂商 id 与模型名，不含地址与密钥）、试运行记录、工具返回的有界尾部（已过 `scrub`）、AI 写的启动脚本。
+        出门前诊断包再整体过一遍 `Scrubber`。不抛。"""
+        from . import launchscript
+
+        with self._lock:
+            sessions = [s for s in self._by_id.values() if s.scope == scope]
+        out: list[dict] = []
+        for s in sessions:
+            ctx = s.ctx
+            launcher = None
+            if ctx is not None and s.script:
+                try:
+                    launcher = launchscript.read(ctx.project_root, s.script)
+                except Exception:  # noqa: BLE001 - 读不到就不带
+                    launcher = None
+            out.append(
+                {
+                    "fix_id": s.id,
+                    "script": s.script,
+                    "state": s.state,
+                    "outcome": s.outcome,
+                    "reason": s.reason,
+                    "summary": s.summary,
+                    "steps": s.steps,
+                    "wire": "cli" if s.cli else "builtin",
+                    "model": (
+                        {"provider": s.endpoint[0], "model": s.endpoint[1]} if s.endpoint else None
+                    ),
+                    "attempts": list(ctx.attempts) if ctx is not None else [],
+                    "transcript": list(ctx.transcript) if ctx is not None else [],
+                    "launcher": launcher,
+                }
+            )
+        return out
+
     def active(self) -> FixSession | None:
         with self._lock:
             for s in self._by_id.values():
@@ -523,6 +636,12 @@ class FixSessions:
                     }
                 }
                 if s.outcome == OUTCOME_CONVERT and s.ctx is not None and s.ctx.handoff
+                else {}
+            ),
+            #: 仅 outcome == fixed 且本会话 `set_run_arguments` 改过参数：AI 定下的运行参数（界面填进「运行参数」框再重跑；空列表 = 清掉）
+            **(
+                {"run_argv": list(getattr(s.ctx, "run_arguments", None) or ())}
+                if s.outcome == OUTCOME_FIXED and getattr(s.ctx, "run_arguments_changed", False)
                 else {}
             ),
             "steps": s.steps,
@@ -711,6 +830,7 @@ class FixSessions:
                 s.repair_token = self._repair_token(s)
             s.done.set()
         _trace_settle(s)
+        _remember_fix(s)
         if s.ctx is not None:
             s.ctx.release_leases()  # change_python 持的旧代租约：会话结束才放（之后旧代才可能被清理）
         self._notify(s)
@@ -1227,15 +1347,17 @@ def _wire_for(name: str, conn: dict):
     return WIRES[name]
 
 
-def build_model(conn: dict):
+def build_model(conn: dict, **model_kwargs):
     """连接 → `HttpModel`。密钥只放进模型对象（`repr` 不含），返回的 `Redactor` 用于过滤卡片里的回显。
-    自填地址带备选协议（`conn["fallbacks"]`，与改图的 `--fallback` 同一份）：第一轮「协议不对」时换。"""
+    自填地址带备选协议（`conn["fallbacks"]`，与改图的 `--fallback` 同一份）：第一轮「协议不对」时换。
+    `model_kwargs` 原样交给 `HttpModel`（重试次数 / 超时 / 注入的 `post`；`ai_structured` 的单轮调用用）；默认不传 = 行为不变。"""
     model = loop.HttpModel(
         _wire_for(conn["wire"], conn),
         base_url=conn["base_url"],
         api_key=conn["api_key"],
         model=conn["model"],
         fallbacks=[(_wire_for(w, conn), u) for w, u in conn.get("fallbacks") or ()],
+        **model_kwargs,
     )
     return model, Redactor(conn["api_key"])
 

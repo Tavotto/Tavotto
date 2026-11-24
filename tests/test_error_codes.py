@@ -66,8 +66,6 @@ _CODE_REGISTRIES = (
     "tavotto.engine.preparation",
     "tavotto.engine.deprepair",
     "tavotto.engine.envadvice",
-    # U10（ADR 0072）：`TAVOTTO_RENDER_BACKEND` 指着退役 / 不认识的后端——`BackendSelectionError.code`
-    "tavotto.pdfbackend",
     "tavotto.engine.inputremap",
     "tavotto.engine.ai_data_figure",
     "tavotto.engine.xlsxread",
@@ -235,7 +233,6 @@ USER_VISIBLE_CODES = {
     # Journal facts inspection may return a bounded result error.
     "result_too_large": set(),
     "journal_catalog_disabled": set(),
-    "svg_scene_invalid": set(),
     # --- ADR 0175：改图助手附文件（`POST /api/ai/attachments`）；固定文案 ---
     "attachment_too_large": set(),
     "attachment_empty": set(),
@@ -253,11 +250,11 @@ USER_VISIBLE_CODES = {
     "svg_asset_export_unsupported": set(),
     "chart_engine_mismatch": set(),
     "chart_engine_unavailable": set(),
-    "chart_model_invalid": set(),
     "chart_model_unsupported": set(),
     "chart_render_unsupported": set(),
     "chart_source_changed": set(),
     "svg_resource_limit": set(),
+    "svg_scene_invalid": set(),
     "no_project": set(),
     "missing_path": set(),
     "mkdir_failed": {"reason"},
@@ -269,17 +266,14 @@ USER_VISIBLE_CODES = {
     "permission_denied": {"path"},
     "read_failed": {"reason"},
     "internal_error": {"reason"},
-    # U10（ADR 0072）：退役 / 不认识的渲染后端名，params 带原始取值
-    "backend_retired": {"value"},
-    "backend_unknown": {"value"},
     "backend_unavailable": {"reason"},
     "export_render_failed": {"id", "reason"},
     "invalid_document": set(),
     "package_file_missing": set(),
     "package_invalid": {"reason"},
     "package_schema_unsupported": set(),
-    "figure_snapshot_unavailable": set(),
     "package_schema_too_new": {"schema"},
+    "figure_snapshot_unavailable": set(),
     "scan_failed": {"reason"},
     "perf_report_rejected": {"reason"},
     "perf_report_write_failed": set(),
@@ -311,6 +305,8 @@ USER_VISIBLE_CODES = {
     "repair_has_links": set(),
     "repair_too_large": set(),
     "export_raster_too_large": {"height", "max_pixels", "width"},
+    # TeX 工具链（`texdiag`）：参数来自错误转换合同 `pool.recovery_params`；`tex_failed` 的 `{{error}}`
+    # 与 `script_error` 同一来源（traceback 末行，前端 `engineErrorMsg` 填）
     "tex_command_missing": {"command"},
     "tex_package_missing": {"file"},
     "tex_compile_failed": {"line"},
@@ -347,9 +343,17 @@ USER_VISIBLE_CODES = {
     "input_remap_requested_invalid": set(),
     "input_remap_rule_unknown": {"source"},
     "input_remap_changed": set(),
+    # ADR 0182 §2：显式输入声明（`/api/engine/input-declarations`，`engine/declaredinputs` 的三个异常
+    # 由 app 的漏斗转成 JSON）。全部是固定文案、不带参数——路径与脚本名不进响应
     "input_declaration_conflict": set(),
     "input_declaration_invalid": set(),
     "input_declaration_unavailable": set(),
+    # ADR 0182：图表模型 / 来源引用不合法（`engine/chartmodel` 的 `ChartModelError`
+    # 与 `chartbundle` 的 `ChartBundleError`）。`detail` 带字段级原因，只进日志不进界面
+    "chart_model_invalid": set(),
+    # ADR 0110：经确认改写脚本里的数据路径（`scriptbackup` / `scriptedit` 的 `ScriptEditError(code)`
+    # 由 app 的 409 漏斗转出）。`script_edit_nothing_to_change` 另带结构化的 `skipped`（对话框逐条列），
+    # 不作占位符
     "script_is_symlink": {"script"},
     "script_hardlinked": {"script"},
     "script_readonly": {"script"},
@@ -435,6 +439,10 @@ USER_VISIBLE_CODES = {
     "propose_input_invalid": set(),
     "propose_cells_invalid": set(),
     "propose_cells_need_rule": set(),
+    # 合画（ADR 0178 2026-11-18）：几份列名不一样拼不成一张 / 份数超上限
+    "tables_columns_differ": set(),
+    "tables_limit_exceeded": {"max"},
+    "tables_labels_collide": set(),
     "data_figure_recipe_invalid": set(),
     "data_path_outside_project": set(),
     "data_not_found": set(),
@@ -543,6 +551,9 @@ USER_VISIBLE_CODES = {
     "dir_fsync_failed": {"reason"},
     "write_back_disabled": set(),
     "write_back_warnings": set(),
+    "write_back_future_props": set(),
+    # issue #252 / QA 2026-09-24 SCI-05-B1：commit 的落盘准备（备份 + fsync）没过，
+    # 任何 replace 之前，原件零改动
     "write_back_persist_failed": {"reason"},
     "profile_bad_kind": set(),
     "profile_bad_payload": set(),
@@ -803,8 +814,16 @@ SCANNED = [n for n in _SOURCE_FILES if (SRC_DIR / n).is_file()]
 #: 分诊）。会话 guard 那几个的拒绝对象是攻击页面/畸形请求，正常界面路径由
 #: main.tsx 的专用启动页兜住；401 的 session_auth_required 另有 backend 文案。
 NON_UI_CODES = {
+    # 一键排版方案（ADR 0199）`POST /api/pro/quick-layout/plan`：前端不读这几个码的文案——not_licensed 转成授权灰态，
+    # 其余三个一律说「排不了，再试一次」（quickLayoutFailed），文档不改
+    "invalid_panels",
+    "invalid_options",
+    "not_licensed",
+    "render_failed",
     # 数据出图懒渲染（ADR 0178 修订）：取某张缩略图 422——前端只据此静默去掉这一张卡，不展示文案
     "propose_thumbnail_failed",
+    # 数据出图大表取消（ADR 0178 修订·进度）：用户自己点的取消，原请求回 409——前端据此静默收起进度，不展示文案
+    "propose_cancelled",
     # 视图范围加脚本（ADR 0184）：前端只在后台顺手发、名字已是项目相对路径，失败不出界面
     "invalid_script_name",
     # Conversion-run diagnostics are mapped by ai_convert._failure_check to the
@@ -1238,6 +1257,7 @@ def test_every_worker_error_response_carries_a_failure_status():
     # ADR 0080 的 /api/engine/specfix 渲染半路死了那一处 `, 500`，10 → 11。
     # #779: paired PNG snapshot adds one explicit HTTP 500 error response, 11 → 12.
     # ADR 0181: the SVG scene export path adds one explicit failure response, 12 → 13.
+    # #1944 ADR 0182：声明输入的 SVG 面板检查 / 绑定路径也有一处显式失败响应（与上一行两路合并后实测仍为 13）。
     assert len(seen) == 13, (
         f"`_worker_error_payload` 的调用点从 13 变成了 {len(seen)}：{seen}\n"
         "  新增出口 → 把这个数改成新的实测值，并确认它带了状态码；\n"

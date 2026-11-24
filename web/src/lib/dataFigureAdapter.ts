@@ -15,6 +15,16 @@ export interface Candidate extends AiDataProposeItem {
   thumb: string
 }
 
+/**
+ * 一张候选的身份：`title_code` + `variant`（kind；`split` 还要比 `column`）。合并作图成对的两张 `title_code` / `why_code` 故意相同，
+ * 光比 `title_code` 会把「只按文件比较」认成「再分开」。会话过期 / 数据变了、刷新候选后按画法找回「原来点的那张」时只许用它；
+ * 单份流程没有 `variant`，与只比 `title_code` 等价。
+ */
+export function candidateIdentity(c: Pick<AiDataProposeItem, 'title_code' | 'variant'>): string {
+  const v = c.variant
+  return JSON.stringify([c.title_code, v?.kind ?? null, v?.kind === 'split' ? v.column : null])
+}
+
 /** 响应里的候选 → 界面用的候选（地址钉在发起那一刻的项目上；就绪状态在 store 里按张记） */
 export function candidatesFromResponse(items: AiDataProposeItem[], pj: string | null): Candidate[] {
   return items.map((it) => ({ ...it, thumb: aiDataThumbnailUrl(it.thumbnail_url, pj) }))
@@ -24,10 +34,14 @@ export function candidatesFromResponse(items: AiDataProposeItem[], pj: string | 
 export interface ColumnRoles {
   /** 有序横轴；null = 这次没有横轴 */
   x: string | null
-  /** 纵轴（后端给数组：宽表可能把 2–3 列当作纵轴；界面先按第一个显示） */
+  /** 纵轴的第一列（下拉的取值） */
   y: string | null
-  /** 额外有几列当纵轴（界面不显示，只用来在汇报里说清） */
+  /** 纵轴的全部列（后端给数组：宽表 2–3 列各一条线；`stack` 时是被当分组的 2–8 列），顺序有意义；没有 = 空数组 */
+  yAll: string[]
+  /** 额外有几列当纵轴 */
   yExtra: number
+  /** 「把列当分组」：此时 `x` / `group` 为 null，`yAll` 是那几列 */
+  stack: boolean
   /** 分组；null = 不分组 */
   group: string | null
   options: { x: string[]; y: string[]; group: string[] }
@@ -39,6 +53,8 @@ export function rolesFromResponse(res: AiDataProposeResponse): ColumnRoles | nul
   return {
     x: r.x ?? null,
     y: r.y?.[0] ?? null,
+    yAll: [...(r.y ?? [])],
+    stack: r.stack === true,
     yExtra: Math.max(0, (r.y?.length ?? 0) - 1),
     group: r.group ?? null,
     options: { x: r.options?.x ?? [], y: r.options?.y ?? [], group: r.options?.group ?? [] },
@@ -59,6 +75,20 @@ export function mixedFromResponse(res: AiDataProposeResponse): MixedColumn[] {
 /** 这次实际用的表头物理行号（XLSX / 没给 = null） */
 export function headerRowFromResponse(res: AiDataProposeResponse): number | null {
   return res.kind === 'ask' ? null : (res.header_row ?? null)
+}
+
+export interface GroupSource {
+  path: string
+  sheet: string | null
+  label: string
+  headerRow: number | null
+  unitsRow: boolean
+}
+
+/** 合画响应里每份文件的显示名与各自的表头行 / 单位行；单份 / 没给 = null（前端按路径自己取名） */
+export function sourcesFromResponse(res: AiDataProposeResponse): GroupSource[] | null {
+  if (res.kind === 'ask' || !Array.isArray(res.sources)) return null
+  return res.sources.map((s) => ({ path: s.path, sheet: s.sheet ?? null, label: s.label, headerRow: s.header_row ?? null, unitsRow: s.units_row === true }))
 }
 
 /** 表头后紧跟的单位行（`header_row + 1` 那一行）已被后端切掉：数据条里把它显示成次要文字色、不参与数据行；字段缺失按 false */

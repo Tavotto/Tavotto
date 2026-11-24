@@ -5,6 +5,8 @@ import { t as translate } from '@/i18n'
 import { ArrowUpRight, BookOpen } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Button, IconButton } from '../ui/Button'
+import { SnapshotThumb } from './SnapshotThumb'
+import { isV2Source, journalFactSnapshotUrl, v2StrengthNote } from '@/lib/journalV2'
 import { Popover } from '../ui/Popover'
 import type { JournalFieldSource } from '@/lib/journals'
 import {
@@ -67,13 +69,20 @@ function Snapshot({ source, onFail }: { source: JournalFieldSource; onFail: () =
 /** 一条出处的「证据」：快照图优先，没有或加载失败退回摘录 */
 function Evidence({ source }: { source: JournalFieldSource }) {
   const [failed, setFailed] = useState(false)
-  if (source.snapshot && !failed) return <Snapshot source={source} onFail={() => setFailed(true)} />
+  // v2 的截图不在随包资产里：它只以缩略图出现在卡片底部（`SnapshotThumb`），顶上仍是摘录
+  if (source.snapshot && !failed && !isV2Source(source)) return <Snapshot source={source} onFail={() => setFailed(true)} />
   return <Quote source={source} />
 }
 
 /** 一条来源的域名、采集日期与类型，不暗示期刊归属。 */
 function SourceMeta({ source }: { source: JournalFieldSource }) {
-  const parts = [sourceHost(source.url), source.retrieved, source.kind === 'pdf' ? 'PDF' : ''].filter(Boolean)
+  const v2 = isV2Source(source)
+  const parts = [
+    v2 ? sourceHost(source.url).replace(/^www\./, '') : sourceHost(source.url),
+    source.retrieved,
+    source.kind === 'pdf' ? 'PDF' : '',
+    v2 ? jt('card.fromV2') : '',
+  ].filter(Boolean)
   return (
     <p data-journal-meta className="type-caption flex flex-wrap gap-x-1">
       {parts.map((part, i) => (
@@ -88,6 +97,8 @@ function SourceMeta({ source }: { source: JournalFieldSource }) {
 
 /** 来源范围可能来自目录默认值；它不能证明该期刊采用了这条指南。 */
 function SourceCoverage({ source }: { source: JournalFieldSource }) {
+  // v2 事实已逐条复核、带摘录与截图：「范围未核实」那句既矛盾又堆字，不画
+  if (isV2Source(source)) return null
   const coverage = source.coverage
   const key = coverage === 'publisher_general' ? 'publisher'
     : coverage === 'journal_specific' ? 'journal'
@@ -130,15 +141,18 @@ function SourceLinks({ source, name }: { source: JournalFieldSource; name?: stri
 export function SourceCardBody({
   journal,
   entries,
+  journalId,
 }: {
   journal: string
   entries: [string, JournalFieldSource][]
+  /** 期刊 id：v2 条目的原文截图经本地 `/api/journal-facts/snapshot` 取，要靠它；不给就不画缩略图 */
+  journalId?: string
 }) {
   const advice = adviceSentence(journal, Object.fromEntries(entries))
   const multi = entries.length > 1
   // 语气标签跟在结论后面（同一行、小号灰字）：建议性字号那一句取第一条的语气，其余每条各带各的
   const tag = (s: JournalFieldSource) => {
-    const label = strengthLabel(s)
+    const label = strengthLabel(s) ?? (isV2Source(s) ? v2StrengthNote(s.strength) : null)
     return label ? (
       <>
         {' '}
@@ -187,6 +201,17 @@ export function SourceCardBody({
         </div>
         {!multi && <SourceLinks source={entries[0][1]} />}
       </div>
+      {journalId &&
+        entries.map(([path, source]) =>
+          isV2Source(source) && source.snapshot ? (
+            <SnapshotThumb
+              key={path}
+              src={journalFactSnapshotUrl(journalId, source.snapshot.file)}
+              alt={source.quote}
+              className="px-3.5 pb-3"
+            />
+          ) : null,
+        )}
     </div>
   )
 }
@@ -200,9 +225,12 @@ export function SourceButton({
   entries,
   name,
   compact = false,
+  journalId,
 }: {
   journal: string
   entries: [string, JournalFieldSource][]
+  /** 期刊 id（v2 条目取原文截图用） */
+  journalId?: string
   /** 这个值叫什么（可达名「<名>的出处」） */
   name: string
   /** 窄处（问题树的尾随格）：只画一枚小图标，文字「出处」留给可达名与悬停提示 */
@@ -241,7 +269,7 @@ export function SourceButton({
         )
       }
     >
-      <SourceCardBody journal={journal} entries={entries} />
+      <SourceCardBody journal={journal} entries={entries} journalId={journalId} />
     </Popover>
   )
 }

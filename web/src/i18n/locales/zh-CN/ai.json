@@ -527,6 +527,10 @@
       "skip": "不画这 {{count}} 行",
       "extract": "只用里面的数字"
     },
+    "variant": {
+      "split": "按文件 +「{{column}}」分组",
+      "by_file": "只按文件分组"
+    },
     "candidate": {
       "points_mean": {
         "title": "原始点 + 均值",
@@ -633,7 +637,14 @@
     "working": {
       "reading": "正在读…",
       "drawing": "正在画…",
-      "slow": "还在画，数据多会久一点。"
+      "slow": "还在画，数据多会久一点。",
+      "readingLarge": "正在读一个大文件，要一会儿…",
+      "cancel": "取消",
+      "cancelHint": "不再等这次读取，随时可以重新读。"
+    },
+    "reduced": {
+      "text": "{{rows}}行里取{{kept}}个点",
+      "hint": "整张表{{rows}}行，这张图画的是其中有代表性的{{kept}}个点，最大最小值都留着。"
     },
     "preview": {
       "headerPick": "哪一行是每列的名字",
@@ -668,6 +679,8 @@
       "allText": "这张表里都是文字，没有能画的数字。",
       "unreadable": "这个文件不是表格，读不了。",
       "failed": "这次没画出来，数据没问题。",
+      "cancelled": "已取消，这个文件没读完。",
+      "readAgain": "重新读取",
       "stripInfo": "前 {{shown}} 行，共 {{total}} 行 · {{columns}} 列",
       "expand": "展开",
       "collapse": "收起"
@@ -681,10 +694,44 @@
       "noX": "不要横轴",
       "noGroup": "不分组"
     },
+    "connect": {
+      "pill": "连接 AI 以供智能分析"
+    },
+    "suggest": {
+      "apply": "试试建议",
+      "reading": "正在看各列…",
+      "connectHint": "连上后会帮你看懂每一列，选对横轴、纵轴和分组"
+    },
+    "spec": {
+      "line": "按{{parts}}出图",
+      "join": "、",
+      "widthTwo": "单栏 {{single}} mm、双栏 {{double}} mm",
+      "widthOne": "图宽 {{single}} mm",
+      "fontRange": "{{min}}–{{max}} pt 字号",
+      "fontOne": "{{min}} pt 字号",
+      "fontMin": "≥ {{min}} pt 字号",
+      "fontMax": "≤ {{max}} pt 字号"
+    },
     "redraw": {
       "from": "用 {{file}} 画的",
       "again": "换个画法",
       "undo": "撤销"
+    },
+    "batch": {
+      "pick": "多选",
+      "idle": "未选择",
+      "selected": "已选 {{count}} 个",
+      "progress": "作图中 {{done}}/{{total}}",
+      "partial": "已完成 {{done}} 张，{{failed}} 张失败",
+      "draw": "分别作图",
+      "merge": "合并作图",
+      "stop": "停止",
+      "showDone": "查看素材",
+      "retry": "重试",
+      "queued": "排队中",
+      "done": "已完成",
+      "failed": "失败",
+      "groupTitle": "{{count}} 个文件"
     }
   }
 }

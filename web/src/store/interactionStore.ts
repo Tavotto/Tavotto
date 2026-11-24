@@ -7,7 +7,15 @@ import type { UiMessage } from '@/i18n'
 export type DragKind =
   | 'none' | 'move' | 'resize' | 'marquee' | 'pan'
   | 'guide' | 'draw' | 'crop' | 'endpoint' | 'element' | 'pageedge' | 'figureedge' | 'framepad'
-  | 'rotate'
+  | 'rotate' | 'anchor'
+  /** 拖画布渐变柄（ADR 0186 第二期）/ 拖实时圆角圆点（ADR 0185 M3）：拖的过程中单选浮动栏让开（2026-11-15 用户拍板） */
+  | 'gradient' | 'corner'
+  /** 拖一键排版的行列分隔线（ADR 0199） */
+  | 'gutter'
+  /** 拖路径文字的起点柄（ADR 0190） */
+  | 'pathTextStart'
+  /** 拖路径文字的间隙柄（离线，ADR 0190） */
+  | 'pathTextGap'
 
 export type DraftPreview = Rect & {
   tool: string
@@ -65,6 +73,11 @@ interface InteractionState {
   /** 框选矩形（mm） */
   marquee: Rect | null
   /**
+   * 锚点编辑里框选锚点的矩形（mm，ADR 0185 M1）。与对象框选分开：它只画一道细线框、不铺底（Illustrator 的样子），
+   * 被框住的锚点当场变实心；松手（`end()`）就没了
+   */
+  anchorMarquee: Rect | null
+  /**
    * 正在绘制的新对象预览（mm）。箭头 / 直线额外带真实端点：预览画的是
    * 最终那条线（含箭头帽），不是包围盒虚线框；松手落对象也用同一对端点，
    * 保证「预览什么就得到什么」（吸附 / shift 角度锁都已折算在内）。
@@ -85,6 +98,8 @@ interface InteractionState {
   gidDrag: { gid: string; dfx: number; dfy: number } | null
   /** 图内独立箭头端点拖动中的预览端点（figure 分数、top-origin） */
   arrowPreview: { gid: string; a: [number, number]; b: [number, number] } | null
+  /** 拖引线的一段 / 一个顶点：覆盖层画的虚线折线（全部顶点，figure 分数） */
+  linePreview: { gid: string; pts: [number, number][] } | null
   /**
    * 子图拖动 / 缩放的预览框（figure 分数、top-origin），按 gid 索引。
    * 成组缩放时同时给出组框，单个子图拖动时只有 boxes 里的一项。
@@ -126,12 +141,14 @@ interface InteractionState {
   begin: (kind: DragKind) => void
   end: () => void
   setMarquee: (r: Rect | null) => void
+  setAnchorMarquee: (r: Rect | null) => void
   setDraft: (d: DraftPreview | null) => void
   setSnap: (xs: number[], ys: number[], feedback?: SnapFeedback[]) => void
   setHover: (id: string | null) => void
   setHoverGid: (gid: string | null) => void
   setGidDrag: (d: { gid: string; dfx: number; dfy: number } | null) => void
   setArrowPreview: (p: { gid: string; a: [number, number]; b: [number, number] } | null) => void
+  setLinePreview: (p: { gid: string; pts: [number, number][] } | null) => void
   setElementPreview: (p: ElementPreview | null) => void
   setCursor: (c: { x: number; y: number } | null) => void
   setNudge: (n: { dx: number; dy: number } | null) => void
@@ -145,6 +162,7 @@ interface InteractionState {
 export const useInteractionStore = create<InteractionState>((set) => ({
   kind: 'none',
   marquee: null,
+  anchorMarquee: null,
   draft: null,
   snapXs: [],
   snapYs: [],
@@ -153,6 +171,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   hoverGid: null,
   gidDrag: null,
   arrowPreview: null,
+  linePreview: null,
   elementPreview: null,
   cursor: null,
   nudge: null,
@@ -172,6 +191,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
     set({
       kind: 'none',
       marquee: null,
+      anchorMarquee: null,
       draft: null,
       snapXs: [],
       snapYs: [],
@@ -182,10 +202,12 @@ export const useInteractionStore = create<InteractionState>((set) => ({
       dragStatus: null,
       gidDrag: null,
       arrowPreview: null,
+      linePreview: null,
       elementPreview: null,
     })
   },
   setMarquee: (marquee) => set({ marquee }),
+  setAnchorMarquee: (anchorMarquee) => set({ anchorMarquee }),
   setDraft: (draft) => set({ draft }),
   setSnap: (snapXs, snapYs, snapFeedback = NO_FEEDBACK) =>
     set((s) =>
@@ -201,6 +223,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   setHoverGid: (hoverGid) => set((s) => (s.hoverGid === hoverGid ? s : { hoverGid })),
   setGidDrag: (gidDrag) => set({ gidDrag }),
   setArrowPreview: (arrowPreview) => set({ arrowPreview }),
+  setLinePreview: (linePreview) => set({ linePreview }),
   setElementPreview: (elementPreview) => set({ elementPreview }),
   setCursor: (cursor) => set({ cursor }),
   setNudge: (nudge) => set({ nudge }),

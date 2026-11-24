@@ -29,6 +29,7 @@
  * | 画的矩形差一点就是正方 / 线差一点就是水平 | 按住 ⇧ 画正的、直的 | ⇧ 画过一次 |
  * | 放大着的时候用鼠标滚轮一格一格地挪 | 按住空格拖动平移 | 拖着平移过一次 |
  * | 连着给两个元素改同一个样式属性 | ⇧ 点击多选，一次改完 | 图内多选过一次 |
+ * | 一键排版第一次成功落地（每台机器只出这一次） | 拖图之间的空隙调比例 | 拖过一次分隔线 |
  * | 刚学会一条手势，且学会 / 关掉的卡累计到 5 张（点 × 的那一刻不出） | 按 ? 看全部快捷键 | 打开过快捷键帮助 |
  *
  * 节奏：每条最多出 `CARD_MAX_SHOWS` 次、两次之间至少隔 `CARD_MIN_GAP_MS`；每次启动最多 `CARD_SESSION_BUDGET` 张；
@@ -37,6 +38,7 @@
 import { create } from 'zustand'
 import { onActivity, type ActivityDetail } from '@/lib/activity'
 import { createDismissTimer } from '@/lib/dismissTimer'
+import { quickLayoutValid } from '@/lib/quickLayoutGrid'
 import { useDialogLayerStore } from '@/store/dialogLayerStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { feedbackCornerBusy } from '@/store/feedbackCorner'
@@ -75,6 +77,7 @@ export const CARD_HINTS = [
   'space_pan',
   'shift_multi',
   'shortcut_help',
+  'quick_layout',
 ] as const satisfies readonly HintKind[]
 export type CardHintKind = (typeof CARD_HINTS)[number]
 export const isCardHint = (k: HintKind | null): k is CardHintKind =>
@@ -94,11 +97,14 @@ export const CARD_TIER: Record<CardHintKind, 1 | 2 | 3> = {
   space_pan: 2,
   shift_multi: 3,
   shortcut_help: 3,
+  quick_layout: 1,
 }
 /** 每一层要求累计用过几天（本地日期计）才解锁 */
 export const TIER_MIN_DAYS: Record<1 | 2 | 3, number> = { 1: 0, 2: 2, 3: 5 }
 /** 每条最多出几次；× 关掉或自己学会就不再出 */
 export const CARD_MAX_SHOWS = 2
+/** 个别卡的上限更低：一键排版的那张是「第一次成功时说一声」，每台机器只出一次 */
+export const CARD_MAX_SHOWS_OF: Partial<Record<CardHintKind, number>> = { quick_layout: 1 }
 /** 同一条两次之间至少隔这么久（20 小时 ≈「至少隔一天」，又不卡在整点上） */
 export const CARD_MIN_GAP_MS = 20 * 60 * 60 * 1000
 /** 每次启动最多出几张卡 */
@@ -185,6 +191,11 @@ export function zoomedInNow(): boolean {
 export function cardApplicable(kind: CardHintKind): boolean {
   if (kind === 'fit_canvas') return canvasDriftedNow()
   if (kind === 'space_pan') return zoomedInNow()
+  // 刚排好的网格还作数、还在多图排版里（记忆失效 = 没有分隔线可拖）
+  if (kind === 'quick_layout') {
+    const d = useDocumentStore.getState().doc
+    return useWorkspaceStore.getState().mode === 'layout' && quickLayoutValid(d.quickLayout, d.objects)
+  }
   // 吸附关着的时候谈不上「暂时不吸附」
   if (kind === 'no_snap') return useUiStore.getState().snapEnabled
   // 拖边裁剪与标尺只在多图排版里成立：拖边裁剪是排版手势，标尺在单图编辑里不画
@@ -208,7 +219,7 @@ export function showCardHint(kind: CardHintKind, now: number = Date.now()): bool
   if (sessionCards >= CARD_SESSION_BUDGET) return false
   if (ob.activeDays < TIER_MIN_DAYS[CARD_TIER[kind]]) return false
   const stat = ob.hintStats[kind]
-  if (stat?.done || (stat?.shows ?? 0) >= CARD_MAX_SHOWS) return false
+  if (stat?.done || (stat?.shows ?? 0) >= (CARD_MAX_SHOWS_OF[kind] ?? CARD_MAX_SHOWS)) return false
   if (stat && stat.shows > 0 && now - stat.lastAt < CARD_MIN_GAP_MS) return false
   if (!cardApplicable(kind)) return false
   ob.recordHintShown(kind)
@@ -397,6 +408,12 @@ function onSignal(d: ActivityDetail): void {
       return
     case 'view.wheel_struggled':
       showCardHint('space_pan')
+      return
+    case 'quick_layout.applied':
+      showCardHint('quick_layout')
+      return
+    case 'quick_layout.ratios_applied':
+      learnCardHint('quick_layout')
       return
     case 'figure.text_quick_edit':
       quickEditAt = Date.now()

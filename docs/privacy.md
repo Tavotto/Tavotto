@@ -22,7 +22,8 @@ not mean that every feature is offline.
 Tavotto does not upload figure files, source scripts, project files, layouts,
 exports, or the contents of a user's scientific data to the Tavotto project or to
 any service operated by the maintainers. The one thing a user can choose to send
-is a redacted diagnostics bundle, which contains none of those and is never sent
+is a redacted diagnostics bundle, which contains none of those (except, if you used AI
+repair, the parts of your script the repair assistant read — see below) and is never sent
 automatically — see [Diagnostics bundle](#diagnostics-bundle).
 
 This holds for the anonymous usage statistics too. The event schema physically
@@ -218,6 +219,26 @@ deleted within an hour), are never added to your project, to usage statistics or
 diagnostics bundle, and go only to the AI you connected.
 When the project is checked against a journal, the request also carries that journal's
 name and figure requirements (font sizes, fonts, line width, figure widths, resolution).
+When AI repair meets a kind of failure it has fixed before on this computer, the request also
+carries up to three of those earlier fixes from *Remember what fixed it* (see below): the run
+arguments, the data path a file was pointed at, the environment variables a launcher set, or the
+execution mode, possibly from another project. Variables whose names look like credentials are sent
+by name only. Turn the setting off or delete entries to stop this.
+
+**Remember what fixed it.** After AI repair really fixes a script (its test run in Tavotto
+succeeded), Tavotto keeps a note of what it changed in `ai/fix_memory.json` in its own data folder:
+run arguments (not when the script's arguments are marked sensitive), the environment variables a
+launcher it wrote sets (the launcher text itself is not kept), which file a missing data path was
+pointed at, or the execution mode, with the script's file name, the failure type and dates. Secrets
+are removed and your home folder is written as `~` before saving. For environment variables only the
+names are kept, except for a short list of harmless display settings (such as the plotting backend,
+language or thread count) and variables that name a folder whose value is a path; other values set by
+the launcher are also removed wherever else they appear in the note. If a launcher in that repair
+touched anything that looks like a credential, the run arguments and data paths from that repair are
+not kept at all. At most 50 notes are kept, and
+a note not used for 90 days is deleted. Settings → Figure assistants → *Remember what fixed it* lists
+every note, deletes one or all, and turns the feature off. The notes never leave the computer except
+as described above and in a diagnostics bundle you choose to send.
 Tavotto itself does not upload AI prompts, responses or diffs anywhere (see "Data
 Tavotto does not upload"). The AI service, or the command-line tool in the first
 case, has its own network, account and privacy behavior and is not a background
@@ -404,7 +425,14 @@ Offering the option uploads nothing; sending does:
   duration and error code only — no request bodies, query strings or arguments), the
   style edits of the figure being edited, the render environment (Python and matplotlib
   versions, installed packages, non-default matplotlib settings, missing fonts), recent
-  render/export/test-run records, desktop-shell and install facts (app, Tauri and
+  render/export/test-run records, what AI repair did in this app session (the outcome, the
+  assistant's own summary, the provider and model name — never its address or key — each
+  test run's failure type and the hint it was given, the last part of every tool result
+  the assistant saw, which can include parts of your script it read and the source lines
+  of error messages, and any launcher it wrote; kept only in memory, so nothing remains after
+  Tavotto restarts, and included whether or not *script source* is ticked), the notes kept by
+  *Remember what fixed it* (see "Optional AI assistant"; also included whether or not *script source*
+  is ticked, with secrets and your home folder removed), desktop-shell and install facts (app, Tauri and
   WebView versions, OS version, CPU architecture, Rosetta, install method, update result
   and whether the mirror or GitHub was used when known), storage facts (free disk space,
   writability, whether the project is in a cloud-sync folder, the Windows long-path
@@ -424,7 +452,7 @@ Offering the option uploads nothing; sending does:
   a conversion left in Tavotto's local cache, and the local Python modules those scripts loaded from outside the project folder when they last ran — only `.py` modules that were really loaded from a folder the script itself added to Python's search path, never third-party packages or Python's own; never files sitting directly in your home folder or at the root of a drive, never anything under the credential folders Tavotto's AI helpers are also barred from (such as `.ssh`), never through a symbolic link; at most 20 per script, each cut at 1 MiB and counted in the same 100-file limit as the scripts; Tavotto remembers only the paths of these modules, in its own data folder for 30 days, and reads their contents only when you tick this box — attached as they are — **secret removal in scripts is best
   effort and cannot be guaranteed, so do not tick it if your scripts contain secrets**;
   without it the bundle contains no script source at all, including the source lines normally
-  printed inside tracebacks), *system crash
+  printed inside tracebacks, apart from the AI-repair record described above), *system crash
   reports* (Tavotto, sidecar and render-Python crash reports from the last 7 days:
   macOS reports and Windows WER reports are redacted text, but Windows crash dumps
   (`.dmp`) are snapshots of the program's memory that may contain the contents and
@@ -562,7 +590,10 @@ cancelled, closed or failed send is never resumed on its own.
 looking at into a link that other people can open in a browser and comment on,
 without installing Tavotto or signing in. It uploads **only when you press
 *Create link* or *Update this link***; opening the window uploads nothing, and a
-cancelled or failed upload is never resumed on its own.
+cancelled or failed upload is never resumed on its own. An agent in the Tavotto
+plugin (Codex, Claude Code…) can also start the same upload, but only after it has
+asked you and you have said yes; without your approval it only shows a preview and
+sends nothing.
 
 * **What is uploaded.** A rendered picture of the current figure or layout (PNG,
   at most 3000 px on the long side), a list of the elements on that picture —
@@ -599,6 +630,23 @@ cancelled or failed upload is never resumed on its own.
   every minute while the *Review* tab is open; with no such link it makes no
   request at all.
 * **Turning it off.** `TAVOTTO_NO_REVIEW_SHARE=1` removes the feature and all of
+  its network requests (the plugin passes this switch on to its agent tool).
+
+## Paid edition components
+
+These requests exist only on a computer where a paid-edition license has been
+activated; without a license the app makes none of them.
+
+* **Fetching the component release list.** The app sends the license number,
+  this device's public key, a signature, a timestamp, the system platform and
+  the protocol versions it supports, to get the release list and a short-lived
+  download address for the paid-feature component. **It does not send your
+  projects, scripts, data, file paths or computer details.**
+* **Downloading the component.** The component is downloaded from Tavotto's
+  download server, which records the IP address and time, as it does for in-app
+  updates. The component runs on this computer as a separate program and does
+  not connect to the network.
+* **Turning it off.** `TAVOTTO_NO_LICENSE=1` removes the paid edition and all of
   its network requests.
 
 ## Local service

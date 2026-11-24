@@ -135,6 +135,16 @@ def test_pdf_stitching_imports_resolve_as_installable(tmp_path, import_name):
     assert req.installable
 
 
+@pytest.mark.parametrize("import_name", ["pygal", "pygal_maps_world"])
+def test_pygal_world_map_resolves_to_its_own_distribution(tmp_path, import_name):
+    """`import pygal_maps_world`：登记前「不认识它」，用户手填成 `pygal` 装完仍 import 不到。"""
+    req = depresolve.resolve(tmp_path, import_name)
+    assert req is not None, f"{import_name} 应该解析得出来"
+    assert req.distribution == import_name
+    assert req.resolution_source == depresolve.SOURCE_CURATED
+    assert req.installable
+
+
 def test_an_unknown_import_is_never_installable(tmp_path):
     """**负向反证 #3**：未知 import 不许按同名装。
 

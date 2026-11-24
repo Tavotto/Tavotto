@@ -52,6 +52,11 @@ def test_tool_names_mirror_handlers_and_engine_enum():
     assert set(usage.TOOLS) == set(srv.HANDLERS) - {
         "tavotto_guide",
         "tavotto_fix_to_journal",
+        "tavotto_make_journal_ready",  # ADR 0192 §1：同上，走 `other` 桶
+        "tavotto_share_review",  # ADR 0205：同上，走 `other` 桶，不升同意版本
+        "tavotto_review_feedback",  # ADR 0205 二期：同上
+        "tavotto_reply_review",
+        "tavotto_resolve_review",
         "tavotto_get_journal_facts",
     }
     assert set(tel.EVENTS["mcp_tool_call"]["tool"]["values"]) == set(usage.TOOLS) | {"other"}
@@ -64,6 +69,12 @@ def test_tool_names_mirror_handlers_and_engine_enum():
         usage.properties("tavotto_fix_to_journal", "ok", seconds=0.1, client_name=None)["tool"]
         == "other"
     )
+    assert (
+        usage.properties("tavotto_share_review", "ok", seconds=0.1, client_name=None)["tool"]
+        == "other"
+    )
+    # 不带确认的回包是「需要输入」类（ADR 0205），不是 other
+    assert usage.error_class("review_confirmation_required") == "needs_input"
 
 
 def test_ok_call_emits_closed_set_only(monkeypatch, captured):

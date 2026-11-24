@@ -24,11 +24,13 @@
     {"path": "tests/test_docs_only_fast_lane.py", "why": "docs-only 快车道的看护"},
     {"path": "tests/test_agents_rules_index.py", "why": "速查表 ↔ 细则与每份指令的棘轮上限"},
     {"path": "tests/test_legal_contribution_policy.py", "why": "CLA 判定链的看护"},
+    {"path": "tests/test_cla_workflow_service_mode.py", "why": "cla-check 步骤原样执行的看护（含合并组 budget_deferred 的等待步：只延后不判定）"},
     {"path": "tests/test_judge_guard.py", "why": "本分类器的看护"},
     {"path": "tests/test_compat_guardian*", "why": "Guardian 判据与 workflow 的看护"},
     {"path": "tests/test_compat_explore*", "why": "Guardian 探索的看护"},
     {"path": "tests/test_compat_triage*", "why": "Guardian 分诊的看护"},
     {"path": "tests/test_compat_minimize*", "why": "Guardian 最小化的看护"},
+    {"path": "tests/test_compat_drag.py", "why": "CompatBench 拖动阶段判据的看护"},
     {"path": "docs/ci/compat-guardian.md", "why": "Guardian 比对口径与评审边界"}
   ]
 }

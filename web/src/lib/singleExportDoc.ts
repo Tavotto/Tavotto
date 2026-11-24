@@ -3,6 +3,9 @@ import { panelFullSize, panelRotation } from '@/types/document'
 import type { OriginalOutputSpec } from './originalSpec'
 import { isZeroPad, ZERO_PAD } from './framePad'
 import type { FramePad } from '@/types/document'
+import type { ExportClipPath } from './api'
+import { toExportClip } from './exportPayload'
+import { clipChainOf, groupMasks, isActiveMask } from './groupTree'
 
 /**
  * 单图编辑（原图口径）带入画布上的标注（QA-WIN-20）。
@@ -37,7 +40,9 @@ export function singleAnnotatedDocument(
   if (!panel || panel.hidden) return null
   const visible = doc.objects.filter((o) => !o.hidden)
   if (visible.filter((o) => o.type === 'panel').length !== 1) return null
-  if (!visible.some((o) => o.type !== 'panel') && isZeroPad(pad)) return null
+  // 图被剪切蒙版裁着（ADR 0191）：蒙版本身是隐藏的，但这一张图要裁，同样走合成路径
+  const clipped = clipChainOf(panel, groupMasks(doc.objects)).length > 0
+  if (!visible.some((o) => o.type !== 'panel') && isZeroPad(pad) && !clipped) return null
   if (!visible.some((o) => o.id === panel.id)) return null
 
   const full = panelFullSize(panel)
@@ -84,7 +89,10 @@ function scaleLengths(o: CanvasObject, k: number): CanvasObject {
         ...(o.borderColor ? { borderPt: (o.borderPt ?? 0.75) * k } : o.borderPt != null ? { borderPt: o.borderPt * k } : {}),
       }
     case 'arrow':
+    case 'path':
       return { ...o, strokePt: o.strokePt * k }
+    case 'pathText':
+      return { ...o, sizePt: o.sizePt * k }
     case 'shape':
       return {
         ...o,
@@ -98,7 +106,16 @@ function scaleLengths(o: CanvasObject, k: number): CanvasObject {
 
 /** 合成文档里的标注部分（非面板、可见）——就是请求里 `original.objects` 要带的那些，坐标已在原图图幅里 */
 export function annotationsOf(annotated: FigureDocument): CanvasObject[] {
-  return annotated.objects.filter((o) => o.type !== 'panel' && !o.hidden)
+  // 剪切组里生效的蒙版（隐藏的）也带上：`toExportObjects` 要靠它给被裁的标注算 `clip`，它自己不进载荷（ADR 0191）
+  const masks = groupMasks(annotated.objects)
+  return annotated.objects.filter((o) => o.type !== 'panel' && (!o.hidden || isActiveMask(o, masks)))
+}
+
+/** 裁这张图的蒙版轮廓（外 → 内，坐标已在原图图幅里）：请求的 `original.clip`；没被裁 = 空 */
+export function figureClipOf(annotated: FigureDocument): ExportClipPath[] {
+  const panel = annotated.objects.find((o) => o.type === 'panel' && !o.hidden)
+  if (!panel) return []
+  return clipChainOf(panel, groupMasks(annotated.objects)).map(toExportClip)
 }
 
 /** `annotationsOf` 里有几个在图的**下面**（z 序里排在面板前面）：请求的 `original.objects_below` */

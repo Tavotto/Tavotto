@@ -33,6 +33,7 @@ import { newId } from '@/lib/id'
 import { boundedCount, captureTelemetry, classifyEditKind } from '@/lib/telemetry'
 import { documentDigest, recordDiagnosticEvent } from '@/diagnostics'
 import { patchRefs } from '@/diagnostics/patches'
+import { remapGroupPath } from '@/lib/groupTree'
 import { defaultCanvasName, type CanvasData, type FigureDocument, type FigureExecutionOwner, type FigureSnapshot, type PanelObject, type ProjectDocument } from '@/types/document'
 import {
   SCHEMA_CURRENT,
@@ -42,6 +43,8 @@ import {
   emptyProject,
   migrateToProject,
 } from '@/types/document'
+import { remapLineIds } from '@/lib/pathText'
+import { pruneLiveCorners } from '@/lib/liveCornerRecord'
 
 enablePatches()
 
@@ -155,6 +158,8 @@ function produceStamped(
   const [stamped, more, moreInverse] = produceWithPatches(next, (d) => {
     stamp?.(d, base, next)
     clearChangedFigureSnapshots(d, base)
+    // 路径实时圆角的记录：几何改过、对不上就删（集中在这一处，ADR 0185 M7 方案 B）
+    pruneLiveCorners(d, base, next)
   })
   return [stamped, [...patches, ...more], [...moreInverse, ...inverse]]
 }
@@ -624,6 +629,11 @@ interface DocumentState {
    * 用处：松手后按权威渲染的实测补正一次落点（图例整体缩放钉对角）。
    */
   amendLast: (entry: HistoryEntry, recipe: Recipe) => boolean
+  /**
+   * 把撤销栈顶上的 `count` 条并成一条（标签换成 `label`）：撤销一次退掉这一整段。只在没有事务开着时做；不够两条什么都不做。
+   * 用处：一次「编辑路径文字的路径」里拖了好几下锚点，整次编辑只记一步（ADR 0190）。
+   */
+  squashTop: (count: number, label: UiMessage) => boolean
 
   /* ---------------- 画布（Canvas）操作 ---------------- */
   /** 当前完整项目文档快照（激活画布从 doc 同步） */
@@ -843,6 +853,21 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
     set({ doc: next, past: [...state.past.slice(0, -1), merged] })
     noteCommit(entry.label, state, next, patches, false)
+    return true
+  },
+
+  squashTop: (count, label) => {
+    const state = get()
+    if (state.txn || count < 2 || count > state.past.length) return false
+    const top = state.past.slice(-count)
+    const merged: HistoryEntry = {
+      label,
+      patches: top.flatMap((e) => e.patches),
+      // 撤销按倒序退：后来的那条先退
+      inverse: [...top].reverse().flatMap((e) => e.inverse),
+      ...(top.some((e) => e.sizeBasis?.length) ? { sizeBasis: top.flatMap((e) => e.sizeBasis ?? []) } : {}),
+    }
+    set({ past: [...state.past.slice(0, -count), merged] })
     return true
   },
 
@@ -1122,12 +1147,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       const copy = structuredClone(o)
       copy.id = newId(o.type[0])
       idMap.set(o.id, copy.id)
-      if (copy.groupId) {
-        if (!groupMap.has(copy.groupId)) groupMap.set(copy.groupId, newId('g'))
-        copy.groupId = groupMap.get(copy.groupId)
-      }
+      remapGroupPath(copy, (g) => {
+        if (!groupMap.has(g)) groupMap.set(g, newId('g'))
+        return groupMap.get(g)!
+      })
       return copy
     })
+    remapLineIds(objects, idMap)
     const layoutGroups = synced.layoutGroups
       ?.filter((g) => groupMap.has(g.id))
       .map((g) => ({

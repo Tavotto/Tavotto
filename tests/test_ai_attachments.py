@@ -159,6 +159,8 @@ def test_stage_takes_any_file_and_keeps_its_name(env):
         ),
         (b"x" * (ai_attachments.MAX_FILE_BYTES + 1), "attachment_too_large"),
     ],
+    # 不给 ids 时 pytest 把整段字节当用例 id（26 MB），Windows 上撑爆环境变量上限
+    ids=["empty", "image-too-large", "file-too-large"],
 )
 def test_stage_refuses_empty_and_oversized(env, raw, code):
     with pytest.raises(ai_attachments.AttachmentError) as exc:
@@ -221,6 +223,10 @@ def test_without_images_prompt_workspace_and_history_are_what_they_always_were(e
     sid, sess = _run(env, attachments=refs)
     prompt = env["prompts"][0]
     expected = ai_bridge._build_prompt("fig1.py", "把标题改成 new", {}, str(env["figs"]))
+    # 改图提示词恒带科学图形准则一段（docs/sciviz/），它与附件无关；不附图时附件一段一行都不出现
+    sciviz = "\n\n" + ai_prompt_pack.sciviz_note()
+    assert prompt.endswith(sciviz)
+    prompt = prompt[: -len(sciviz)]
     if taf:
         assert prompt.startswith(expected)
         assert prompt.endswith(ai_prompt_pack.candidate_note(ai_prompt_pack.DEFAULT, env["figs"]))

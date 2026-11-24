@@ -5,7 +5,8 @@ import { useAssetStore } from '@/store/assetStore'
 import { panelRender, useRenderStore } from '@/store/renderStore'
 import { strokeOpacityOf } from '@/lib/shapeGeometry'
 import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
-import { shapeStrokeOn } from '@/types/document'
+import { readPath, shapeStrokeOn } from '@/types/document'
+import { pathD, pathGeometry } from '@/lib/pathGeom'
 
 /**
  * 时间线节点的缩略图（ADR 0101）：拍节点**那一刻**画布的样子，合成成一张小位图。
@@ -269,11 +270,43 @@ function drawObject(ctx: CanvasRenderingContext2D, o: Exclude<CanvasObject, Pane
     ctx.restore()
     return
   }
+  if (o.type === 'pathText') {
+    // 路径文字：缩略图只画那条路径的细线（字形要后端排，缩略图不等它）
+    const d = pathD(pathGeometry(o, w, h, 0).fill)
+    if (d && typeof Path2D !== 'undefined') {
+      ctx.save()
+      ctx.translate(x, y)
+      ctx.strokeStyle = o.color || '#000'
+      ctx.lineWidth = 0.5
+      ctx.stroke(new Path2D(d))
+      ctx.restore()
+    }
+    return
+  }
   ctx.save()
   ctx.strokeStyle = o.color || '#000'
   ctx.lineWidth = Math.max(0.5, o.strokePt * MM_PER_PT * scale)
   // 描边不透明度与无边框：缩略图也守（无边框的封闭形状只填不描）
   ctx.globalAlpha = strokeOpacityOf(o.strokeOpacity) ?? 1
+  if (o.type === 'path') {
+    // 自由路径（ADR 0185）：同一个 `pathGeometry` 的轮廓；端型不画（缩略图从来不画箭头帽）
+    const r = readPath(o)
+    const d = pathD(pathGeometry(o, w, h, 0).fill)
+    if (d && typeof Path2D !== 'undefined') {
+      ctx.translate(x, y)
+      const p = new Path2D(d)
+      if (o.fill) {
+        ctx.save()
+        ctx.globalAlpha = 1
+        ctx.fillStyle = o.fill
+        ctx.fill(p, r.fillRule)
+        ctx.restore()
+      }
+      if (r.strokeOn) ctx.stroke(p)
+    }
+    ctx.restore()
+    return
+  }
   const strokeOn = o.type === 'arrow' || shapeStrokeOn(o)
   const ends = o.type === 'arrow' || o.shape === 'line' ? { start: o.start, end: o.end } : null
   if (ends?.start && ends.end) {

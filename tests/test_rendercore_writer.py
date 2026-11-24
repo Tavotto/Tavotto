@@ -516,6 +516,15 @@ def _page_with(op: str, provider) -> tuple[ir.Page, dict[str, bytes]]:
         return ir.Page(20, 20, (), {}, (1.0, 1.0, 1.0)), {}
     if op == "path_fill":
         return ir.Page(20, 20, (rect,), {}, None), {}
+    if op in ("gradient_fill", "gradient_stroke"):
+        stops = (ir.GradientStop(0, (1, 0, 0)), ir.GradientStop(1, (0, 0, 1)))
+        g = ir.LinearGradient(stops, (1, 1), (10, 1))
+        node = (
+            ir.Path(rect.segments, fill=g)
+            if op == "gradient_fill"
+            else ir.Path(rect.segments, stroke=ir.Stroke(g, 1.0))
+        )
+        return ir.Page(20, 20, (node,), {}, None), {}
     if op == "path_stroke":
         return ir.Page(
             20, 20, (ir.Path(rect.segments, stroke=ir.Stroke(black, 1.0)),), {}, None
@@ -573,6 +582,9 @@ MARKERS = {
     "imported_page": b"/Subtype /Form",
     # 镜像 = cm 里的负缩放：Image 的落位矩阵 a 分量为负（`-5 0 0 5 … cm`）
     "flip": b"-5 0 0 5 ",
+    # 渐变（ADR 0186）：Shading Pattern，填充用 scn、描边用 SCN
+    "gradient_fill": b"/Pattern cs",
+    "gradient_stroke": b"/Pattern CS",
 }
 
 

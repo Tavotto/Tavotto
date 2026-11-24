@@ -79,10 +79,11 @@ Apps → tavotto-cla → review the permission request).
 ## P3 — turn the service on (before the policy PR merges)
 
     $W deploy $C --var CLA_GITHUB_ENABLED:true --var CLA_OAUTH_ENABLED:true --var CLA_UI_ENABLED:true --var CLA_SIGNING_ENABLED:true \
-      --var CLA_CI_VERIFICATION_ENABLED:true --var CLA_MERGE_PREFIX_ASSESSMENT_ENABLED:true --var CLA_MERGE_PREFIX_READ_SESSION_ENABLED:true
+      --var CLA_CI_VERIFICATION_ENABLED:true --var CLA_MERGE_PREFIX_ASSESSMENT_ENABLED:true --var CLA_MERGE_PREFIX_READ_SESSION_ENABLED:true \
+      --var CLA_WORKERS_PAID_BUDGET:true
 
 `--var` applies to that deploy only: **every later deploy repeats this full flag set**, or the
-service returns to all-off. Never set `CLA_CHECK_PUBLISHING_ENABLED`, `CLA_BACKGROUND_ENABLED`,
+service returns to all-off. `CLA_WORKERS_PAID_BUDGET:true` (Workers Paid only) raises the per-invocation external-request caps of the three CI read routes from 35/40 to 480/500 so deep merge-queue prefixes are answered instead of `budget_deferred`; the manifest's `limits.subrequests: 1000` is the platform backstop and makes a deploy on the Free plan fail loudly. Without the var the Free numbers apply. Never set `CLA_CHECK_PUBLISHING_ENABLED`, `CLA_BACKGROUND_ENABLED`,
 `CLA_AUTOMATIC_*`, `CLA_CONFIRMATION_SLOT_ENABLED`, `CLA_DELEGATED_COUNTERSIGNING_ENABLED` or
 `CLA_AGREEMENT_ACTIVATION_ENABLED` here.
 

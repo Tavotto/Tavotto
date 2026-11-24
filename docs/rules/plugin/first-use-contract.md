@@ -18,7 +18,8 @@ order: 10
   `run.sh`/测试套件/editable install。README 的「在 Codex 中第一次使用
   Tavotto」是普通用户的唯一入口；源码安装只留给贡献者。
 - **技能的会话入口是「先检查，不安装」**（SKILL.md 最前部的状态机）：
-  `tavotto_health` 健康时本会话零安装、零联网；缺什么修什么（缺插件才装
+  直接开始（第一次成功的 `tavotto_open_figure` 回包带引擎版本与更新提醒，ADR 0192 §4），只有工具缺失或报引擎错误才调
+  `tavotto_health`，健康时本会话零安装、零联网；缺什么修什么（缺插件才装
   插件、缺引擎才 provision/装引擎）；`desktop_only` 不说「没装 Tavotto」；
   插件更新只在收尾提醒一次；工具缺失 = 给两条安装命令 + 要求新开会话 + 停止。
   **不许把「每会话自动 marketplace add」加回来**——同一会话工具不重载，
@@ -38,8 +39,8 @@ order: 10
   `marketplace upgrade`，升级是 `tavotto codex upgrade`。看护 `tests/test_codex_install_cli.py`
   （#722 那一节）。**不改发行分支本身**：分支根上那份 `local ./codex-plugin` 市场清单正是这条路
   能成立的前提。
-- SKILL.md 收敛为「触发条件 + 会话入口状态机 + 核心图文件契约 + MCP 工具
-  顺序 + 完成判据」，细节按需读 `skills/tavotto-figure/references/`：
+- SKILL.md（2026-11-17 瘦身：199 → 约 135 行）收敛为「触发条件 + 会话入口状态机 + 核心图文件契约 + MCP 工具
+  顺序 + 完成判据」，已有图规范化的全文在 `references/normalize-existing.md`，细节按需读 `skills/tavotto-figure/references/`：
   first-run-and-recovery（安装/provision/错误码/新会话）、figure-contract
   （同目录/静态产物名/main()/模板）、publication-style（尺寸/字号/克制/组图）、
   desktop-handoff（交接与退出码）、issue-reporting（脱敏草稿 + 用户同意）、

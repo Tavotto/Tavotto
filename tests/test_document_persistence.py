@@ -317,6 +317,13 @@ def test_schema3_and_schema4_share_one_directory_and_one_list(client, tmp_path):
         assert (versions_dir / f"{doc_id}{engine_versionstore.STORE_SUFFIX}").is_dir()
 
 
+def test_figure_snapshot_preview_uses_the_shared_document_route(client):
+    """前端统一预览 URL 必须进入归档预览校验，而不是落到 404。"""
+    response = client.post("/api/figure-preview", json={})
+    assert response.status_code == 400
+    assert response.get_json()["code"] == "invalid_preview_options"
+
+
 def test_schema4_save_reports_figure_snapshots_from_its_canvases(client):
     """schema 4 的保存响应带上面板的 `figure_snapshots` 与 `chart_sources`；
     同一份正文改成 schema 3 时 `figure_snapshots` 一样（同一套存储），只少图表附加字段。"""

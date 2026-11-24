@@ -119,7 +119,18 @@ def _kill_own(proc: subprocess.Popen) -> None:
 
 GUARD_EXIT_CODE = 97
 _GUARDED_SRC = r"""
-import json, os, sys
+import sys
+# 守卫装好之前只从解释器自己的标准库导入（Codex #2064 P1）：`-c` 让当前目录（''）排在最前、PYTHONPATH 也在标准库前面，
+# 当前目录或 PYTHONPATH 里的 json.py / tempfile.py 会在任何守卫之前执行。先只留标准库位置，守卫与 site 装好后再还原（'' 不还原）
+# 守卫装好之前只从解释器自己的默认位置导入（Codex #2064 P1 ×3）：父进程起子进程时把 PYTHONPATH 挪到私有变量里，解释器启动时
+# 根本看不到它，所以这里的 sys.path 只有解释器自己算出的位置——不必猜哪些条目来自环境（猜不全：CPython 会把条目展开、规范化）。
+# 再去掉 ''（`-c` 的当前目录）与启动目录（试跑目录）下的条目作纵深；PYTHONPATH 等守卫与 site 装好后才按解释器的方式放回
+_osmod = __import__("nt" if sys.platform == "win32" else "posix")
+_cwd = _osmod.getcwd().rstrip("/\\")
+_sep = "\\" if sys.platform == "win32" else "/"
+sys.path[:] = [p for p in sys.path if p and not (p.rstrip("/\\") == _cwd or p.startswith(_cwd + _sep))]
+del _osmod, _cwd, _sep
+import json, os
 guard, root, out, target = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 # 先把后面要用的标准库导进来，再装守卫：守卫只管「写」，读不受限
 import runpy, traceback, importlib.util, tempfile, re, threading, errno
@@ -138,9 +149,77 @@ try:
             _spawns.append(event)
             raise PermissionError("Tavotto trial: starting other processes is not allowed")
     sys.addaudithook(_no_spawn)
+    # 实验（run_snippet，ADR 0197）多两道：不许联网、不许读凭据位置（与 AI 读取范围的硬拦表同一份清单，父进程给出）。
+    # 有操作系统沙盒时它在外层同样拦；没有（Windows）时只有这一层，C 扩展可绕过——如实写在 ADR 里
+    _blocked_net, _blocked_reads = [], []
+    _strict = os.environ.pop("TAVOTTO_TRIAL_STRICT", None)
+    if _strict:
+        # 判据的数据与要用的函数全部在装 hook 时以默认参数捕获，hook 自己不读任何全局：被执行的代码改模块属性、改已结束帧的
+        # 局部变量都动不到它（Codex #2064 P1）。装好后删掉所有名字；拿到函数对象只剩 gc 一条路，一并拦下
+        def _make(deny, names, exempt, fold, realpath, basename, isdir, fsdecode, pathlike, sep, net_log, read_log):
+            _NET = ("socket.connect", "socket.bind", "socket.sendto", "socket.sendmsg", "socket.getaddrinfo", "socket.gethostbyname", "socket.gethostbyaddr")
+            _INTROSPECT = ("gc.get_objects", "gc.get_referrers", "gc.get_referents")
+            _FUNC_ATTRS = ("__code__", "__defaults__", "__kwdefaults__", "__globals__")
+            def _hook(event, args, _deny=deny, _names=names, _exempt=exempt, _fold=fold, _realpath=realpath,
+                      _base=basename, _isdir=isdir, _fsdecode=fsdecode,
+                      _pathlike=pathlike, _sep=sep, _net=_NET, _intro=_INTROSPECT, _fattrs=_FUNC_ATTRS,
+                      _nlog=net_log, _rlog=read_log, _str=str, _bytes=bytes, _isinst=isinstance, _any=any, _type=type):
+                if event in _net:
+                    _nlog.append(event)
+                    raise PermissionError("Tavotto experiment: network access is not allowed")
+                if event in _intro:
+                    raise PermissionError("Tavotto experiment: inspecting the interpreter's objects is not allowed")
+                if event == "object.__setattr__" and args and _type(args[0]).__name__ == "function" and len(args) > 1 and args[1] in _fattrs:
+                    raise PermissionError("Tavotto experiment: rewriting functions is not allowed")
+                if event in ("open", "os.listdir", "os.scandir") and args and _isinst(args[0], (_str, _bytes, _pathlike)):
+                    try:
+                        raw = _fold(_fsdecode(args[0]))
+                        rp = _fold(_realpath(_fsdecode(args[0])))
+                    except Exception:
+                        return
+                    if _any(rp == d or rp.startswith(d.rstrip(_sep) + _sep) for d in _deny):
+                        _rlog.append(event)
+                        raise PermissionError("Tavotto experiment: this location holds credentials and cannot be read")
+                    # 文件夹不许当成文件打开：拿不到目录描述符，也就没法 `dir_fd=` 相对它去读（审计事件里看不到 dir_fd，Codex #2064 P1）
+                    if event == "open" and _isdir(rp):
+                        _rlog.append(event)
+                        raise PermissionError("Tavotto experiment: opening a folder as a file is not allowed")
+                    # 文件名形状（`.env*`、`*.pem`、`id_*`……）与 AI 读取范围同一套规则，只对文件：要的名字与链接指到的名字都看
+                    if event == "open":
+                        for n in (_base(raw), _base(rp)):
+                            if not n.endswith(_exempt) and _any(m(n) for m in _names):
+                                _rlog.append(event)
+                                raise PermissionError("Tavotto experiment: this file looks like it holds credentials and cannot be read")
+            return _hook
+        # macOS / Windows 的默认文件系统不分大小写：`~/.SSH/id_rsa` 打开的就是 `~/.ssh/id_rsa`，比较前一律 casefold
+        _fold = (lambda p, _n=os.path.normcase: _n(p).casefold()) if sys.platform in ("darwin", "win32") else os.path.normcase
+        _spec = json.loads(_strict)
+        # 名字模式装 hook 时就编成正则、只留匹配方法：不经 fnmatch 模块的全局缓存，被执行的代码改模块属性也动不到
+        import fnmatch as _fnm, re as _re
+        sys.addaudithook(_make(
+            tuple(_fold(os.path.realpath(p)) for p in _spec["roots"]),
+            tuple(_re.compile(_fnm.translate(_fold(p))).match for p in _spec["names"]),
+            tuple(_fold(x) for x in _spec["exempt"]),
+            _fold, os.path.realpath, os.path.basename, os.path.isdir,
+            os.fsdecode, os.PathLike, os.sep, _blocked_net, _blocked_reads,
+        ))
+        del _make, _fold, _spec, _fnm, _re
+    del _strict
+    _path0 = os.environ.pop("TAVOTTO_TRIAL_PATH0", None)
     # 两个守卫都装好之后才做 site 初始化：site-packages、.pth、sitecustomize / usercustomize 都在守卫之下执行
     import site
     site.main()
+    # 用户环境里的 PYTHONPATH：守卫与 site 都装好之后才放回，位置与解释器原本一致（标准库之前），相对条目按启动目录展开
+    _pp = os.environ.pop("TAVOTTO_TRIAL_PYTHONPATH", None)
+    if _pp:
+        _extra = [os.path.abspath(e) for e in _pp.split(os.pathsep) if e]
+        sys.path[:] = [e for e in _extra if e not in sys.path] + sys.path
+        os.environ["PYTHONPATH"] = _pp  # 被测代码看到的环境与原来一致
+    _pc = os.environ.pop("TAVOTTO_TRIAL_PYCACHEPREFIX", None)
+    if _pc:
+        sys.pycache_prefix = os.path.abspath(_pc)  # 之后的 import 与原来一样从那里读缓存
+        os.environ["PYTHONPYCACHEPREFIX"] = _pc
+    del _pp, _pc
     # 数据改指（ADR 0106）：项目里记着的规则要在试跑里也生效，否则接上的数据在这里读不到、验证不了。
     # 与 worker 同一份实现（`figcapture.install_input_remap`，纯标准库，按文件加载）；加载不了如实标 unavailable，不静默当没有
     remap = "none"
@@ -178,6 +257,12 @@ except BaseException:
 sys.modules.pop("_tavotto_trial_guard", None)
 code = 0
 sys.argv = [target] + sys.argv[5:]
+# 与 `python script.py` 一致：脚本所在目录排最前（`run_path` 跑普通 .py 不会替我们加；'' 已经不在了，Codex #2064 复核 P2）
+sys.path.insert(0, os.path.dirname(os.path.abspath(target)))
+if _path0:
+    # 项目根：守卫装好之后才进去——当前目录换成项目根（相对路径读数据），项目能 import（run_path 再把目标所在目录放到它前面）
+    os.chdir(_path0)
+    sys.path.insert(0, _path0)
 try:
     runpy.run_path(target, run_name="__main__")
 except SystemExit as exc:
@@ -193,7 +278,7 @@ if "matplotlib.pyplot" in sys.modules:
         figs = None
 try:
     with open(out, "w", encoding="utf-8") as f:
-        json.dump({"guarded": True, "remap": remap, "figures": figs, "blocked_writes": wt.violations(), "blocked_spawns": _spawns}, f)
+        json.dump({"guarded": True, "remap": remap, "figures": figs, "blocked_writes": wt.violations(), "blocked_spawns": _spawns, "blocked_network": len(_blocked_net), "blocked_reads": len(_blocked_reads)}, f)
 except OSError:
     pass
 sys.exit(code)
@@ -218,6 +303,8 @@ def run_python(
     trial_dir: Path | None = None,
     extra_env: dict | None = None,
     input_remap: list | None = None,
+    strict_deny: list[str] | None = None,
+    cwd: str | None = None,
 ) -> dict:
     """fixtools 唯一的起 Python 子进程的入口：目标（`code` 源码，或 `trial_dir/work` 里的 `script`）一律在写入根绊线下执行。
 
@@ -251,8 +338,23 @@ def run_python(
             "TAVOTTO_TRIAL_INPUT_REMAP": json.dumps(input_remap),
             "TAVOTTO_TRIAL_ENGINE_DIR": str(Path(figcapture.__file__).resolve().parent),
         }
+    if strict_deny is not None:
+        # 实验模式（ADR 0197）：断网 + 凭据位置不可读（进程内守卫与操作系统沙盒两层同一份清单）+ 凭据形状的文件名不可读（只在进程内，与 read_file 同一套名字规则）
+        from .readscope import _NAME_EXEMPT_SUFFIX, DENY_NAME_PATTERNS
+
+        strict = {
+            "roots": list(strict_deny),
+            "names": list(DENY_NAME_PATTERNS),
+            "exempt": list(_NAME_EXEMPT_SUFFIX),
+        }
+        extra_env = {**(extra_env or {}), "TAVOTTO_TRIAL_STRICT": json.dumps(strict)}
+    if cwd is not None:
+        extra_env = {**(extra_env or {}), "TAVOTTO_TRIAL_PATH0": cwd}
     try:
-        res = _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empty)
+        res = _run_guarded(
+            python, trial_dir, timeout, code, script, argv, extra_env, empty,
+            strict_deny=strict_deny, cwd=cwd,
+        )  # fmt: skip
     finally:
         pending = not _remove_tree(trial_dir) if own else False
     if own:
@@ -278,20 +380,46 @@ def _sbpl_quote(path: str) -> str:
     return '"' + path.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def macos_profile(trial_dir: str) -> str:
-    """只许写本次试跑目录（含专用 TMPDIR / mpl 配置 / 副本，均在其下）与 /dev/null、/dev/tty；其余写一律拒绝。读、网络不动。"""
+def macos_profile(trial_dir: str, deny: list[str] | None = None) -> str:
+    """只许写本次试跑目录（含专用 TMPDIR / mpl 配置 / 副本，均在其下）与 /dev/null、/dev/tty；其余写一律拒绝。
+    `deny` 为 None（试跑 / 探 import）时读、网络不动；给了清单（实验，ADR 0197）再断网并拒读清单里的位置。"""
     real = os.path.realpath(trial_dir)  # /var → /private/var
-    return (
+    profile = (
         "(version 1)(allow default)(deny file-write*)"
         f"(allow file-write* (subpath {_sbpl_quote(real)}) "
         '(literal "/dev/null") (literal "/dev/tty"))'
     )
+    if deny is not None:
+        profile += "(deny network*)"
+        for p in deny:
+            profile += f"(deny file-read* (subpath {_sbpl_quote(os.path.realpath(p))}))"
+    return profile
 
 
-def _sandbox_args(kind: str, tool: str, trial_dir: str) -> list[str]:
+def _sandbox_args(kind: str, tool: str, trial_dir: str, deny: list[str] | None = None) -> list[str]:
     real = os.path.realpath(trial_dir)
     if kind == "macos-sandbox-exec":
-        return [tool, "-p", macos_profile(trial_dir)]
+        return [tool, "-p", macos_profile(trial_dir, deny)]
+    if deny is not None:
+        # 实验（ADR 0197）：另开空网络命名空间；凭据目录盖一层空 tmpfs、凭据文件盖 /dev/null（看得见名字、读不到内容）
+        hide: list[str] = []
+        for p in deny:
+            rp = os.path.realpath(p)
+            if os.path.isdir(rp):
+                hide += ["--tmpfs", rp]
+            elif os.path.isfile(rp):
+                hide += ["--ro-bind", "/dev/null", rp]
+        return [
+            tool,
+            "--ro-bind", "/", "/",
+            "--dev", "/dev",
+            "--proc", "/proc",
+            "--tmpfs", "/tmp",
+            "--bind", real, real,
+            *hide,
+            "--unshare-net",
+            "--die-with-parent",
+        ]  # fmt: skip
     # bwrap：整盘只读，/tmp 换成空 tmpfs，仅试跑目录可写；不动网络命名空间
     return [
         tool,
@@ -326,9 +454,10 @@ def probe_command() -> list[str]:
     return [sys.executable, "-c", "pass"]  # 找不到任何固定程序：保持旧行为，探测失败即不可用
 
 
-def _probe(kind: str, tool: str) -> bool:
-    """这台机器上沙盒真能起（嵌套在别的沙盒里、用户命名空间被禁都会失败）。同一个工具只探一次。"""
-    key = (kind, tool)
+def _probe(kind: str, tool: str, strict: bool = False) -> bool:
+    """这台机器上沙盒真能起（嵌套在别的沙盒里、用户命名空间被禁都会失败）。同一个工具、同一种口径只探一次——
+    实验口径（断网，`--unshare-net` 在禁了网络命名空间的机器上会失败）单独探。"""
+    key = (kind, tool, strict)
     if key not in _PROBE_CACHE:
         # 探测目录也放 Tavotto 缓存、走同一套有重试 + 标记 + 清扫的清理（不在系统临时目录里留 tavotto-sbx-probe-*）
         try:
@@ -337,7 +466,7 @@ def _probe(kind: str, tool: str) -> bool:
             _PROBE_CACHE[key] = False
             return False
         try:
-            args = _sandbox_args(kind, tool, probe_dir)
+            args = _sandbox_args(kind, tool, probe_dir, *([[]] if strict else []))
             r = subprocess.run(  # noqa: S603 - 固定的系统沙盒命令
                 [*args, *probe_command()],
                 stdin=subprocess.DEVNULL,
@@ -353,16 +482,20 @@ def _probe(kind: str, tool: str) -> bool:
     return _PROBE_CACHE[key]
 
 
-def _os_sandbox_prefix(trial_dir: Path) -> tuple[str, list[str]]:
+def _os_sandbox_prefix(trial_dir: Path, deny: list[str] | None = None) -> tuple[str, list[str]]:
     """(名字, 命令前缀)。没有可用沙盒 → ("none", [])，调用方退回进程内绊线。"""
     for kind in ("macos-sandbox-exec", "bwrap"):
         tool = _find_tool(kind)
-        if tool and _probe(kind, tool):
-            return kind, _sandbox_args(kind, tool, str(trial_dir))
+        if tool and _probe(kind, tool, strict=deny is not None):
+            return kind, _sandbox_args(
+                kind, tool, str(trial_dir), *([deny] if deny is not None else [])
+            )
     return "none", []
 
 
-def _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empty) -> dict:
+def _run_guarded(
+    python, trial_dir, timeout, code, script, argv, extra_env, empty, *, strict_deny=None, cwd=None
+) -> dict:
     from .. import launcher, runtime
 
     out_file = str(trial_dir / "out" / "result.json")
@@ -390,9 +523,17 @@ def _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empt
         return {"status": "env_unavailable", **empty}
     env = dict(os.environ if env is None else env)
     env.update(MPLBACKEND="Agg", TMPDIR=tmp, TEMP=tmp, TMP=tmp, MPLCONFIGDIR=str(trial_dir / "mpl"))
+    # PYTHONPATH 不让解释器在启动时看到：守卫前导装好守卫之后才把它放回（Codex #2064 P1：启动阶段的执行窗口）
+    pythonpath = env.pop("PYTHONPATH", None)
+    if pythonpath:
+        env["TAVOTTO_TRIAL_PYTHONPATH"] = pythonpath
+    # 字节码缓存前缀同理：启动时从那里读 .pyc 也是守卫之前执行的代码（Codex #2064 P1）；守卫装好后前导再放回
+    pycache = env.pop("PYTHONPYCACHEPREFIX", None)
+    if pycache:
+        env["TAVOTTO_TRIAL_PYCACHEPREFIX"] = pycache
     if extra_env:
         env.update(extra_env)
-    sandbox, sandbox_prefix = _os_sandbox_prefix(trial_dir)
+    sandbox, sandbox_prefix = _os_sandbox_prefix(trial_dir, strict_deny)
     try:
         proc = subprocess.Popen(
             [
@@ -411,7 +552,7 @@ def _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empt
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL,
-            cwd=work,
+            cwd=work,  # 一律从试跑目录起；实验要的项目根由守卫前导在守卫装好后才切过去（Codex #2064 P1）
             env=env,
             creationflags=runtime.CREATE_NO_WINDOW,
             start_new_session=(os.name != "nt"),
@@ -469,6 +610,8 @@ def _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empt
         "input_remap": info.get("remap") or "none",
         "blocked_writes": info.get("blocked_writes") or [],
         "blocked_spawns": info.get("blocked_spawns") or [],
+        "blocked_network": int(info.get("blocked_network") or 0),
+        "blocked_reads": int(info.get("blocked_reads") or 0),
         "cleanup_pending": False,
     }
 
@@ -558,6 +701,154 @@ def try_import(ctx: FixContext, args: dict) -> ToolResult:
         + shadow_note(ctx, res["stderr"], project_on_path=False),
         "import failed",
     )
+
+
+# --------------------------------------------------------------------------- 试运行记录（ADR 0197 第 1 层）
+ATTEMPTS_SHOWN = 8
+#: 应用试运行根本没跑的结局（没批准 / 取消 / 环境没选中 / 起不来）：不算一次尝试
+NOT_RUN_CODES = frozenset(
+    {
+        "needs_approval",
+        "cancelled",
+        "environment_not_selected",
+        "application_not_runnable",
+        "application_run_not_claimed",
+        "preparation_plan_stale",  # 批准卡停留期间脚本 / 环境变了：认领时就拒了，脚本没跑（Codex #2079）
+    }
+)
+
+
+def _never_ran(code: object, report: dict) -> bool:
+    """这次应用试运行根本没执行脚本：没跑的结局码，或准备阶段明确写着 `executed: false`（如 Conda 起不来，Codex #2079）。"""
+    if str(code or "") in NOT_RUN_CODES:
+        return True
+    result = report.get("result") if isinstance(report, dict) else None
+    error = result.get("error") if isinstance(result, dict) else None
+    return isinstance(error, dict) and error.get("executed") is False
+
+
+def _current_shape(ctx: FixContext) -> str:
+    """这次试运行之前的失败形状。改动会把报告重置成「还没跑」：那时读不到形状，就用上一次试运行之后的形状，
+    还没试过就用会话开始时的（`ctx.first_shape`）。"""
+    from . import hints
+
+    try:
+        shape = hints.shape_of_report(ctx.report() if ctx.report is not None else None)
+    except Exception:  # noqa: BLE001 — 报告读不到就退到下面
+        shape = ""
+    if shape:
+        return shape
+    if ctx.attempts:
+        last = str(ctx.attempts[-1].get("after") or "")
+        return "" if last == "ok" else last
+    return ctx.first_shape
+
+
+def _after_shape(report: dict) -> str:
+    from . import hints
+
+    phase = report.get("phase") if isinstance(report, dict) else None
+    return hints.shape_of_report(report) or ("ok" if phase == "completed" else str(phase or ""))
+
+
+def _record_attempt(ctx: FixContext, before: str, after: str, report: dict) -> str:
+    """记一条试运行（只有形状码、提示 id、这之前真做过的改动的工具名），审计同一条；返回给模型看的记录表。"""
+    from .runreport import hint_of
+
+    hint = hint_of(report, ctx) if after != "ok" else None
+    entry = {
+        "n": len(ctx.attempts) + 1,
+        "before": before,
+        "after": after,
+        "hint": hint[1] if hint else "",
+        "changes": list(ctx.changes_since_try),
+    }
+    ctx.attempts.append(entry)
+    ctx.changes_since_try = []
+    ctx.call_meta["attempt"] = entry
+    lines = []
+    for a in ctx.attempts[-ATTEMPTS_SHOWN:]:
+        did = ", ".join(a["changes"]) or "no change"
+        moved = (
+            "same failure"
+            if a["before"] == a["after"]
+            else f"{a['before'] or '?'} -> {a['after'] or '?'}"
+        )
+        lines.append(f"{a['n']}. after {did}: {moved}")
+    repeated = len(ctx.attempts) >= 2 and all(
+        a["after"] == after and a["after"] != "ok" for a in ctx.attempts[-2:]
+    )
+    tail = (
+        "\nThe same failure came back twice in a row: do not repeat that approach; take the hint or try another cause."
+        if repeated
+        else ""
+    )
+    return "\n\nattempts so far:\n" + "\n".join(lines) + tail
+
+
+# --------------------------------------------------------------------------- run_snippet（ADR 0197）
+SNIPPET_TIMEOUT_DEFAULT_S = 20.0
+SNIPPET_TIMEOUT_MAX_S = 30.0
+SNIPPET_MAX_CHARS = 20_000
+SNIPPET_OUTPUT_CHARS = 6_000
+
+
+def _clip(text: str, limit: int = SNIPPET_OUTPUT_CHARS) -> str:
+    text = text or ""
+    return text if len(text) <= limit else "…(earlier output cut)\n" + text[-limit:]
+
+
+def run_snippet(ctx: FixContext, args: dict) -> ToolResult:
+    """在一个环境里跑一小段模型写的 Python，几秒拿结果——AI 的「试错」（ADR 0197）。不改任何东西、不弹卡（维护者 11-19 裁决）：
+    与试跑同一个受保护的子进程（写入绊线 + 禁起进程 + 有就套操作系统沙盒），另加断网、凭据位置与凭据形状的文件不可读、更短的时限；
+    当前目录是项目根、项目根在 `sys.path` 上，所以能读项目里的数据、能 import 项目自己的模块，但一个文件都写不进项目。"""
+    python = ctx.python_of(args.get("env"))
+    if python is None:
+        return err(
+            "env_unknown",
+            "Unknown environment id. Call list_environments first and use one of its ids.",
+        )
+    code = args.get("code")
+    if not isinstance(code, str) or not code.strip() or "\x00" in code:
+        return err("bad_arguments", "`code` must be non-empty Python source text.")
+    if len(code) > SNIPPET_MAX_CHARS:
+        return err(
+            "snippet_too_large",
+            f"Keep experiments short (at most {SNIPPET_MAX_CHARS} characters); write a launcher for real fixes.",
+        )
+    try:
+        compile(code, "<experiment>", "exec", dont_inherit=True)
+    except (SyntaxError, ValueError) as exc:
+        return err("snippet_syntax_error", f"The experiment does not parse: {exc}")
+    try:
+        timeout = float(args.get("timeout_s") or SNIPPET_TIMEOUT_DEFAULT_S)
+    except (TypeError, ValueError):
+        timeout = SNIPPET_TIMEOUT_DEFAULT_S
+    timeout = max(1.0, min(timeout, SNIPPET_TIMEOUT_MAX_S))
+    root = os.fspath(ctx.project_root)
+    res = run_python(
+        python,
+        code=code,
+        timeout=timeout,
+        session_id=ctx.session_id,
+        strict_deny=ctx.scope.deny_roots(),
+        cwd=root,
+    )
+    note = guard_note(res)
+    if res.get("blocked_network"):
+        note += "\nblocked_network: experiments cannot use the network"
+    if res.get("blocked_reads"):
+        note += "\nblocked_reads: credential locations and credential-like files cannot be read"
+    if res["status"] == "timeout":
+        return err("timeout", f"The experiment did not finish within {timeout:g} s.{note}")
+    if res["status"] != "ok":
+        return err(res["status"], f"The experiment did not run ({res['status']}).{note}")
+    body = f"exit {res['returncode']}"
+    if res.get("stdout"):
+        body += "\n--- stdout ---\n" + _clip(res["stdout"])
+    if res.get("stderr"):
+        body += "\n--- stderr ---\n" + _clip(res["stderr"])
+    return ok(body + note, "experiment ok" if res["returncode"] == 0 else "experiment failed")
 
 
 # --------------------------------------------------------------------------- try_run
@@ -869,10 +1160,16 @@ def try_run(ctx: FixContext, args: dict) -> ToolResult:
         def approve_run(summary, details):
             return approve(ctx, "try_run", summary, details=details) is None
 
+        before = _current_shape(ctx)
         result = ctx.application_runner(python, timeout, ctx.cancel, approve_run)
         report = result.get("report") or {}
         rendered = project_run_report(report, ctx).content
         code = result.get("code")
+        if not _never_ran(code, report):
+            after = (
+                _after_shape(report) if code in ("", None, "application_run_failed") else str(code)
+            )
+            rendered += _record_attempt(ctx, before, after or str(code or ""), report)
         if code:
             guidance = (
                 " Select that environment explicitly before verifying it, or use mode=diagnostic."
@@ -1022,6 +1319,28 @@ TRIAL_TOOLS: tuple[FixTool, ...] = (
             ["env", "module"],
         ),
         try_import,
+        tier="run",
+    ),
+    FixTool(
+        "run_snippet",
+        "Run a short Python experiment (a few lines) in one environment and see its output within seconds. "
+        "Use it to test a guess before changing anything: does this import work, what does argparse require, "
+        "what is in the first rows of the data file, does this function exist. The working directory is the "
+        "project root and the project is importable, so relative data paths work. It cannot change anything: "
+        "writes go nowhere, other processes, the network and credential locations are blocked; at most 30 s. "
+        "An experiment never counts as a fix — verify real changes with try_run.",
+        obj(
+            {
+                "env": _ENV,
+                "code": {"type": "string", "description": "Python source to run."},
+                "timeout_s": {
+                    "type": "integer",
+                    "description": "Seconds before giving up (default 20, max 30).",
+                },
+            },
+            ["env", "code"],
+        ),
+        run_snippet,
         tier="run",
     ),
     FixTool(

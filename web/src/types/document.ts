@@ -16,8 +16,26 @@ export interface ObjectBase {
   locked?: boolean
   hidden?: boolean
   name?: string
-  /** 轻量成组：同 groupId 的对象一起选中、一起移动。不做嵌套组。 */
+  /**
+   * 成组：同 groupId 的对象一起选中、一起移动。嵌套组（ADR 0191）里它是对象所在的**最内层**组——
+   * 只认 groupId 的旧构建照样把最内层组当一层组用，对象一个不丢。
+   */
   groupId?: string
+  /**
+   * 嵌套组的完整链（ADR 0191）：外 → 内，末项必须等于 `groupId`。只有两层及以上才写；对不上（旧构建改过
+   * groupId）就按只有 `[groupId]` 一层读——判据唯一出处 `lib/groupTree.groupPathOf`。
+   */
+  groupPath?: string[]
+  /**
+   * 剪切蒙版（ADR 0191）：这个对象是它最内层组的剪切路径（只认闭合形状与路径，判据在 `lib/groupTree`）。
+   * 做蒙版时同时写 `hidden: true`：旧构建不画它、也不裁剪，内容照样都在。
+   */
+  clipMask?: true
+  /**
+   * 剪切路径本身被隐藏（ADR 0191）：在图层树上对蒙版点「隐藏」= 暂时不裁（Illustrator 同一做法），组里的内容全部露出来；
+   * 蒙版仍是 `hidden: true`（旧构建照旧）。只对 `clipMask` 的对象有意义。
+   */
+  clipOff?: true
   /**
    * 布局组成员的「固定当前位置」：重排时跳过该对象。
    * 只对 layoutGroups 里登记的组生效，普通成组不受影响。
@@ -401,6 +419,10 @@ export interface ArrowObject extends ObjectBase {
   /** 线端 / 拐角；缺省 = 圆头 / 圆角（现在的画法），不写字段 */
   lineCap?: LineCap
   lineJoin?: LineJoin
+  /** 尖角的斜接上限（≥ 1）；缺省 = `shapeGeometry.STROKE_MITER_LIMIT`（10），等于缺省不写 */
+  miterLimit?: number
+  /** 自定义虚线：线段 / 间隙交替的长度（pt，绝对值）；有它就不看 `dash`。缺省 / 空 = 不用 */
+  dashPattern?: number[]
 }
 
 export type ShapeKind =
@@ -411,6 +433,18 @@ export type ShapeKind =
   | 'diamond'
   | 'polygon'
   | 'brace'
+  /** 星形（ADR 0185 M1）：`sides` = 角数（缺省 5），`starRatio` = 内径比（缺省 `DEFAULT_STAR_RATIO`） */
+  | 'star'
+  /** 弧线（ADR 0185 M1）：框的左下角到右上角的四分之一椭圆弧，只有描边 */
+  | 'arc'
+
+/** 星形的缺省角数与内径比（正五角星的内外径比 ≈ 0.382）；与后端 `geometry.DEFAULT_STAR_POINTS / DEFAULT_STAR_RATIO` 同源 */
+export const DEFAULT_STAR_POINTS = 5
+export const DEFAULT_STAR_RATIO = 0.382
+
+/** 只有描边、没有填充也没有描边开关的形状（直线 / 大括号 / 弧线）；判据只有这一处，后端 `geometry.STROKE_ONLY_SHAPES` 同一张表 */
+export const STROKE_ONLY_SHAPES: ReadonlySet<string> = new Set(['line', 'brace', 'arc'])
+export const isStrokeOnlyShape = (shape: string): boolean => STROKE_ONLY_SHAPES.has(shape)
 
 export interface ShapeObject extends ObjectBase {
   type: 'shape'
@@ -428,8 +462,10 @@ export interface ShapeObject extends ObjectBase {
   end?: EndPoint
   /** 圆角半径 mm（rect 专用） */
   cornerRadius?: number
-  /** 正多边形边数（polygon 专用，3–12） */
+  /** 正多边形边数（polygon 专用，3–12）；星形的角数（star，3–12，缺省 5） */
   sides?: number
+  /** 星形内径比（star 专用，0.05–0.95；缺省 `DEFAULT_STAR_RATIO`，等于缺省不写字段） */
+  starRatio?: number
   /** 填充透明度 0–1；缺省 1 */
   fillOpacity?: number
   dash?: DashStyle
@@ -443,6 +479,156 @@ export interface ShapeObject extends ObjectBase {
   /** 线端 / 拐角；缺省见 `lib/shapeGeometry`，等于缺省就不写字段 */
   lineCap?: LineCap
   lineJoin?: LineJoin
+  /** 尖角的斜接上限（≥ 1）；缺省 = `shapeGeometry.STROKE_MITER_LIMIT`（10），等于缺省不写 */
+  miterLimit?: number
+  /** 自定义虚线：线段 / 间隙交替的长度（pt，绝对值）；有它就不看 `dash`。缺省 / 空 = 不用 */
+  dashPattern?: number[]
+  /** 填充渐变（ADR 0186）：有它且有填充时覆盖 `fill`；`fill` 仍留着做旧版本的降级色。读取只走 `lib/gradient.readGradient` */
+  fillGradient?: Gradient
+  /** 描边渐变（ADR 0186）：有它且有描边时覆盖 `color`（端型仍用 `color`） */
+  strokeGradient?: Gradient
+  /**
+   * 描边对齐（只对封闭形状）：缺省 = 内侧（描边整个在框里、外沿贴框，加属性之前就是这样）；
+   * `center` = 骑在轮廓上（框边就是线的中线）；`outside` = 整个在框外。等于缺省不写
+   */
+  strokeAlign?: 'center' | 'outside'
+}
+
+/** 渐变的一个色标（ADR 0186）：位置 0–1、颜色 #rrggbb、不透明度缺省 1 */
+export interface GradientStop {
+  offset: number
+  color: string
+  opacity?: number
+}
+
+/**
+ * 渐变（ADR 0186）：坐标是对象包围盒的比例（与路径锚点同一套），随缩放一起走。线性 = 起点 → 终点；
+ * 径向 = 同心圆，半径按包围盒长边的比例。只做 pad（两端外面延续首尾色）。
+ */
+export type Gradient =
+  | { kind: 'linear'; stops: GradientStop[]; from: [number, number]; to: [number, number] }
+  | { kind: 'radial'; stops: GradientStop[]; center: [number, number]; radius: number }
+
+/** 路径上的一个点：包围盒比例坐标 [rx, ry]（与 `EndPoint` 同一套，可以落在 [0,1] 之外） */
+export type PathPoint = [number, number]
+
+/** 路径的一个锚点（ADR 0185 §二）。手柄是绝对坐标（同一坐标系）；缺省 = 与锚点重合 */
+export interface PathNode {
+  p: PathPoint
+  in?: PathPoint
+  out?: PathPoint
+  /** 平滑点（拖一侧手柄另一侧共线）；缺省尖角，不写字段 */
+  smooth?: true
+}
+
+export interface PathSubpath {
+  closed: boolean
+  nodes: PathNode[]
+  /**
+   * 实时圆角的记录（ADR 0185 M7 方案 B）：`nodes` 照旧是圆过之后的几何（导出、旧版本都只读它），这里另记圆之前的尖角锚点
+   * （同一套框比例坐标）与每个尖角的半径（相对框的长边 `max(w, h)`，0 = 没圆）——再调圆角时从尖角重新圆一遍。
+   * **只经 `lib/liveCornerRecord.liveCornerRecord` 读**：记录与 `nodes` 对不上（别的操作改过几何）就当没有。
+   */
+  liveCorners?: { sharp: PathNode[]; radii: number[] }
+}
+
+/**
+ * 自由路径（ADR 0185 §二）。`x/y/w/h` 仍是权威包围盒（按曲线实际范围算，不按控制点），
+ * 锚点与手柄是它的比例坐标。填充 / 描边字段与 `ShapeObject` 逐字相同（ADR 0174），
+ * 端型字段与 `ArrowObject` 同名同义、只对开放子路径生效。读取缺省值一律走 `readPath()`。
+ */
+export interface PathObject extends ObjectBase {
+  type: 'path'
+  subpaths: PathSubpath[]
+  /** 缺省 nonzero，不写字段 */
+  fillRule?: 'evenodd'
+  strokePt: number
+  color: string
+  fill: string | null
+  fillOpacity?: number
+  /** 只有 `false` 会落盘（= 无描边） */
+  stroke?: boolean
+  strokeOpacity?: number
+  dash?: DashStyle
+  lineCap?: LineCap
+  lineJoin?: LineJoin
+  /** 尖角的斜接上限（≥ 1）；缺省 = `shapeGeometry.STROKE_MITER_LIMIT`（10），等于缺省不写 */
+  miterLimit?: number
+  /** 自定义虚线：线段 / 间隙交替的长度（pt，绝对值）；有它就不看 `dash`。缺省 / 空 = 不用 */
+  dashPattern?: number[]
+  /** 填充渐变（ADR 0186）：有它且有填充时覆盖 `fill`；`fill` 仍留着做旧版本的降级色。读取只走 `lib/gradient.readGradient` */
+  fillGradient?: Gradient
+  /** 描边渐变（ADR 0186）：有它且有描边时覆盖 `color`（端型仍用 `color`） */
+  strokeGradient?: Gradient
+  /**
+   * 描边对齐（ADR 0185 M2）：缺省居中（不写字段，与 Illustrator 的路径相同——注意形状的缺省是内侧）。只在**全部子路径
+   * 闭合**且有描边时生效（`pathGeom.pathStrokeAlign`）：内侧 = 两倍线宽的描边裁到填充区域里，外侧 = 裁到填充区域外
+   */
+  strokeAlign?: 'inside' | 'outside'
+  headStart?: ArrowHeadType
+  headEnd?: ArrowHeadType
+  headSizeStart?: HeadSize
+  headSizeEnd?: HeadSize
+}
+
+/**
+ * 路径文字（ADR 0190）：一行字沿一条路径排开。**路径是自带的一份**（`subpaths`，框比例坐标，
+ * 与 `PathObject` 同一套），不引用别的对象——原来那条线删了、挪了，字都还在原处；从一条路径 / 形状生成时与它成一个组（一起挪）。
+ * 字的落位只在后端（`rendercore/pathtext`：按弧长逐字落到路径上），画布照后端给的字形轮廓画。文字样式字段与 `TextObject` 同名同义。
+ * 旧构建不认识这个类型：显示占位、不让导出（`isKnownObject`），不会悄悄排成普通文字。
+ */
+export interface PathTextObject extends ObjectBase {
+  type: 'pathText'
+  text: string
+  sizePt: number
+  bold: boolean
+  italic?: boolean
+  color: string
+  fontFamily?: 'serif' | 'sans-serif' | 'monospace'
+  /** 字排在这条路径上（只用第一条画得出的子路径）；路径本身不画 */
+  subpaths: PathSubpath[]
+  /** 起点：路径全长的比例 0–1；缺省 0（不写） */
+  startOffset?: number
+  /** 字串以起点为准的对齐：start（缺省，不写）/ center / end */
+  textAlign?: 'center' | 'end'
+  /** 翻到路径另一侧（沿反方向走）；只写 true */
+  flip?: true
+  /**
+   * 离线（pt）：基线离开路径中心线多远，沿字的上方量；0 = 基线贴在线上，负 = 往线上压。没写 = 自动（线宽 / 2 + 0.2 em +
+   * 降部深度，字不碰线；只在后端算，`rendercore/pathtext.auto_offset_pt`）
+   */
+  baselineOffsetPt?: number
+  /** 生成时一起成组的那条线（只用来取它的描边宽度算自动离线；那条线没了 / 隐藏 / 没描边 = 0） */
+  lineId?: string
+}
+
+/** `readPath` 读出来的锚点：手柄缺省已补成锚点本身 */
+export interface ResolvedPathNode {
+  p: PathPoint
+  in: PathPoint
+  out: PathPoint
+}
+
+/** 路径的缺省值统一读取（画布、命中、缩略图、导出载荷同用这一处；后端 `geometry.read_path` 同一规则） */
+export function readPath(
+  o: Pick<PathObject, 'subpaths' | 'fillRule' | 'stroke' | 'headStart' | 'headEnd'>,
+): {
+  subpaths: { closed: boolean; nodes: ResolvedPathNode[] }[]
+  fillRule: 'nonzero' | 'evenodd'
+  strokeOn: boolean
+  headStart: ArrowHeadType
+  headEnd: ArrowHeadType
+} {
+  return {
+    subpaths: (o.subpaths ?? []).map((sp) => ({
+      closed: sp.closed === true,
+      nodes: (sp.nodes ?? []).map((n) => ({ p: n.p, in: n.in ?? n.p, out: n.out ?? n.p })),
+    })),
+    fillRule: o.fillRule === 'evenodd' ? 'evenodd' : 'nonzero',
+    strokeOn: o.stroke !== false,
+    headStart: o.headStart ?? 'none',
+    headEnd: o.headEnd ?? 'none',
+  }
 }
 
 /**
@@ -493,7 +679,7 @@ export function legacyHead(heads: {
 
 /** 形状此刻有没有描边。直线 / 大括号只有描边，不看 `stroke` 字段（画布、缩略图、导出同用这一处） */
 export function shapeStrokeOn(o: Pick<ShapeObject, 'shape' | 'stroke'>): boolean {
-  return o.shape === 'line' || o.shape === 'brace' || o.stroke !== false
+  return isStrokeOnlyShape(o.shape) || o.stroke !== false
 }
 
 /** 直线形状（端点语义只对这一种 shape 生效） */
@@ -525,14 +711,14 @@ export function lineEndpoints(o: { start?: EndPoint; end?: EndPoint }): {
 export const objectRotation = (o: CanvasObject): number =>
   o.type === 'panel' ? 0 : (o.rotationDeg ?? 0)
 
-export type CanvasObject = PanelObject | TextObject | ArrowObject | ShapeObject
+export type CanvasObject = PanelObject | TextObject | ArrowObject | ShapeObject | PathObject | PathTextObject
 
 /**
- * 这个构建认得的对象类型（闭集）。更新的构建可能往文档里写进新类型（例如自由路径 `path`，ADR 0185）；
+ * 这个构建认得的对象类型（闭集）。更新的构建可能往文档里写进新类型（自由路径 `path` 是 ADR 0185 加进来的第一例）；
  * 本构建读到不认识的类型时**原样保留**（读盘、保存、换画布都不碰它），只画一个占位框，
  * 不让它被选中、移动、删除，也不让它在导出里静默消失（导出前拦下）。判据只有这一处。
  */
-export const KNOWN_OBJECT_TYPES: ReadonlySet<string> = new Set(['panel', 'text', 'arrow', 'shape'])
+export const KNOWN_OBJECT_TYPES: ReadonlySet<string> = new Set(['panel', 'text', 'arrow', 'shape', 'path', 'pathText'])
 
 /** 本构建认得这个对象（否则是更新的构建写进来的，见 `KNOWN_OBJECT_TYPES`） */
 export const isKnownObject = (o: { type: string }): boolean => KNOWN_OBJECT_TYPES.has(o.type)
@@ -551,6 +737,34 @@ export interface PageSetup {
   transparent?: boolean
   /** 安全区域页边距（mm） */
   margin?: number
+  /**
+   * 用户自己定过这张画布的大小（属性栏宽高 / 预设 / 横竖 / 拖页面边）。可选，磁盘格式不升版；
+   * 一键排版「画布：自动」据此选「保持画布大小」。一键排版自己写页面尺寸时**不**置它。
+   */
+  userSized?: boolean
+}
+
+/**
+ * 一键排版留在画布上的「网格记忆」（ADR 0199，拖分隔线调比例用）。可选字段，旧文档没有；
+ * 只在每张 `cells` 里的图都还在、且位置与大小仍等于 `boxes`（0.05 mm 内）时才算有效——
+ * 用户挪过 / 缩过 / 删过任何一张就静默失效（`lib/quickLayoutGrid.quickLayoutValid`）。
+ */
+export interface QuickLayoutMemo {
+  rows: number
+  cols: number
+  /** 画布对象 id → [行, 列] */
+  cells: Record<string, [number, number]>
+  colRatios: number[]
+  rowRatios: number[]
+  /** 排完那一刻各图在页面上的框（mm，[x, y, w, h]） */
+  boxes: Record<string, [number, number, number, number]>
+  target: 'single' | 'double' | 'page'
+  gapMm: number
+  /** 那一次用的画布模式（已解析：保持 / 跟着内容） */
+  canvas: 'keep' | 'fit'
+  fixSpec: boolean
+  /** 那一次作为固定盒子（障碍物）参与的图 id（拖分隔线重排时照样带上） */
+  fixedIds?: string[]
 }
 
 /**
@@ -650,6 +864,8 @@ export interface FigureDocument {
   framePad?: FramePad
   /** 单图画布处在「紧凑」停靠点上的那几边（ADR 0161）：图幅变了按新的内容边缘重算，不保留旧 mm */
   framePadTight?: FramePadSide[]
+  /** 一键排版的网格记忆（见 `QuickLayoutMemo`）；缺省 = 没排过或已清掉 */
+  quickLayout?: QuickLayoutMemo
 }
 
 /**
@@ -687,6 +903,7 @@ export interface CanvasData {
   /** 单图编辑的画布留白（ADR 0161）；缺省 = 全 0 */
   framePad?: FramePad
   framePadTight?: FramePadSide[]
+  quickLayout?: QuickLayoutMemo
 }
 
 /**
@@ -722,6 +939,7 @@ export function canvasToDoc(c: CanvasData): FigureDocument {
     ...(c.style ? { style: c.style } : {}),
     ...(c.framePad ? { framePad: c.framePad } : {}),
     ...(c.framePadTight?.length ? { framePadTight: c.framePadTight } : {}),
+    ...(c.quickLayout ? { quickLayout: c.quickLayout } : {}),
   }
 }
 
@@ -737,6 +955,7 @@ export function docToCanvas(doc: FigureDocument, id: string): CanvasData {
     ...(doc.style ? { style: doc.style } : {}),
     ...(doc.framePad ? { framePad: doc.framePad } : {}),
     ...(doc.framePadTight?.length ? { framePadTight: doc.framePadTight } : {}),
+    ...(doc.quickLayout ? { quickLayout: doc.quickLayout } : {}),
   }
 }
 
@@ -897,6 +1116,10 @@ export function objectLabel(o: CanvasObject): string {
       return t('objectType.arrow')
     case 'shape':
       return t(`shape.${o.shape}`)
+    case 'path':
+      return t('objectType.path')
+    case 'pathText':
+      return o.text.trim().slice(0, 18) || t('objectType.pathText')
     default:
       // 更新的构建写进来的类型（`isKnownObject`）：不许回 undefined（图层树、版本差异会显示成空）
       return t('objectType.unknown')

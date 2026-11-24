@@ -80,6 +80,10 @@ os.environ["TAVOTTO_NO_CONTACT"] = "1"
 # 开关并指向回环模拟端，生产主机由下面的会话级探针兜底。
 os.environ["TAVOTTO_NO_REVIEW_SHARE"] = "1"
 
+# 「高级版授权」（ADR 0193）同理：内置端点是生产主机 license.tavotto.cn（且 `PRODUCTION_LIVE = False`），测试进程里硬关；
+# 它的用例（tests/test_license*.py）自己摘掉开关并打桩 `diagsend._send`，生产主机由下面的会话级探针兜底。
+os.environ["TAVOTTO_NO_LICENSE"] = "1"
+
 # macOS：出图子进程共用一份 `system_profiler SPFontsDataType` 输出。每个用例给子进程的新
 # `MPLCONFIGDIR` 都会让 matplotlib 重建字体缓存，而重建的开销几乎全在这一条命令上（单次约 12 s
 # CPU）；同样必须在 collection 之前就位，模块级 spawn 的子进程也要继承到。原理与边界见模块文档。
@@ -114,6 +118,7 @@ _DIAG_LEAKS: list[str] = []
 def _refuse_telemetry_open(self, fullurl, *args, **kwargs):
     from tavotto.engine.contactsend import CONTACT_HOSTS  # 地址唯一出处；调用时才 import
     from tavotto.engine.diagsend import PRODUCTION_ENDPOINT  # 地址唯一出处；调用时才 import
+    from tavotto.engine.license import LICENSE_HOSTS  # 地址唯一出处；调用时才 import
     from tavotto.engine.reviewshare import REVIEW_HOSTS  # 地址唯一出处；调用时才 import
     from tavotto.engine.telemetry import DEFAULT_ENDPOINT  # 地址唯一出处；调用时才 import
 
@@ -122,6 +127,7 @@ def _refuse_telemetry_open(self, fullurl, *args, **kwargs):
         urllib.parse.urlsplit(PRODUCTION_ENDPOINT).hostname,
         *CONTACT_HOSTS,
         *REVIEW_HOSTS,
+        *LICENSE_HOSTS,
     }:
         current = os.environ.get("PYTEST_CURRENT_TEST", "（不在任何用例里）")
         _DIAG_LEAKS.append(f"{threading.current_thread().name} | {current} | {target}")
@@ -170,6 +176,15 @@ def _fail_session_on_telemetry_leaks(session) -> None:
 
 #: 会改变「渲染解释器选谁」的进程级环境变量。用例之间必须互不影响。
 _INTERPRETER_ENV = ("TAVOTTO_WORKER_PYTHON",)
+
+
+@pytest.fixture(autouse=True)
+def _no_after_license_hooks(monkeypatch):
+    """授权后回调（`proinstall.register` 在 `app.py` 导入时登记）清空：否则同一进程里先导入过 app 的用例之后，
+    每次激活 / 刷新都会起后台线程去要 `/v1/pro/manifest`，打乱假服务器的请求记录与排队响应。要测回调的用例自己登记。"""
+    from tavotto.engine import license as _lic
+
+    monkeypatch.setattr(_lic, "_AFTER_LICENSE", [])
 
 
 @pytest.fixture(autouse=True)
@@ -242,6 +257,29 @@ def _offline_protocol_probe(monkeypatch):
             "conclusive": False,
         },
     )
+
+
+@pytest.fixture(autouse=True)
+def _offline_structured_cli(monkeypatch):
+    """订阅登录（Codex / Claude Code CLI）的无工具单轮调用（`ai_structured._call_cli`，ADR 0178）会起真 CLI、花订阅额度。
+    本机装了登录过的 CLI 时，任何走到 `propose(render="lazy")` 的用例都可能把它放行：所以默认 ① 发现函数说「没有 CLI 连接」
+    （与没装一致）、② 真起进程的那一处（`_run_process`）被换成「记一笔、不起进程」，用例结束时记过就红。
+    **不能靠在里面抛异常**：`call_structured` 永不抛，会把它吞成 `transport/internal`，用例照样绿。
+    要测 CLI 路径的用例自己注入假连接与假 `runner`，永不真起进程。"""
+    from tavotto.engine import ai_structured
+
+    hits: list[tuple] = []
+
+    def refuse(*args, **_kw):
+        hits.append(args)
+        return ai_structured.CliProc(None, launch_failed=True)
+
+    monkeypatch.setattr(
+        ai_structured, "find_cli_connection", lambda *, cached_only: (None, "no_connection", "none")
+    )
+    monkeypatch.setattr(ai_structured, "_run_process", refuse)
+    yield
+    assert not hits, "a real structured CLI process would have been started"
 
 
 @pytest.fixture(autouse=True)

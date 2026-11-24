@@ -297,9 +297,9 @@
       $('retryRow').hidden = false
       $('more').hidden = false
       if (status.reinstall) {
-        // 文件丢失（sidecar_not_found）/ 系统拒绝运行（sidecar_spawn_failed）：重启修不好，主按钮换成「重新安装」；
-        // 重启退到「其他选项」。能不能重装由壳回答（status.reinstall），这里只按码挑正文
-        say('body', status.code === 'sidecar_spawn_failed' ? s.bodyBlocked : s.bodyMissing)
+        // 文件丢失 / 被系统阻止（含引擎没握手、核对出安装文件缺或读不了，TVD-MHQJ）：重启修不好，主按钮换成「重新安装」；
+        // 重启退到「其他选项」。能不能重装、说哪一种都由壳回答（status.reinstall / reinstall_reason），页面不自己猜
+        say('body', status.reinstall_reason === 'blocked' ? s.bodyBlocked : s.bodyMissing)
         $('reinstall').hidden = false
         $('retry').classList.remove('primary')
         $('moreRow').prepend($('retry'))

@@ -60,8 +60,13 @@ export const KEYMAP = {
   redo: k(`⇧${MOD}Z`, { key: 'z', mod: true, shift: true }, { key: 'y', mod: true }),
   copy: native(`${MOD}C`),
   paste: native(`${MOD}V`),
-  duplicate: k(`${MOD}D`, { key: 'd', mod: true }),
+  duplicate: k(`${MOD}D`, { key: 'd', mod: true, alt: false }),
+  // 再次变换 ⌥⌘D（ADR 0185 M4 第二批）：⌥ 会改写 key，按 code 认；有上一次变换、有选区时才消费
+  transformAgain: k(`${ALT}${MOD}D`, { code: 'KeyD', mod: true, shift: false, alt: true }),
   delete: k('Delete', { key: 'delete' }, { key: 'backspace' }),
+  // 路径文字的离线（字与线的间隙，ADR 0190）：选区全是路径文字时 ⌥⇧↑ / ⌥⇧↓ 每次 0.5 pt（Illustrator 调基线偏移同一组键）。
+  // ⌥↑ / ⌥↓ 已是细微调（0.1 mm），不占；排在 nudge 前面，`bindingFor` 才认得出它
+  pathTextGap: k(`${ALT}⇧↑ / ${ALT}⇧↓`, { key: 'arrowup', alt: true, shift: true }, { key: 'arrowdown', alt: true, shift: true }),
   nudge: k(
     '↑ ↓ ← →',
     { key: 'arrowup' },
@@ -91,6 +96,34 @@ export const KEYMAP = {
   toolRect: k('R', { key: 'r' }),
   toolEllipse: k('O', { key: 'o' }),
   toolLine: k('L', { key: 'l' }),
+  // 自由路径（ADR 0185 M1，Illustrator 习惯）：P 钢笔；锚点编辑里 + / − 加删锚点、⇧C 转换锚点。
+  // 直接选择 A 与既有的箭头工具 A 冲突，没有单键（双击路径 / Enter / 右键「编辑锚点」进入）
+  toolPen: k('P', { key: 'p' }),
+  // 铅笔（ADR 0185 M8）：Illustrator 的 N
+  toolPencil: k('N', { key: 'n' }),
+  addAnchor: k('+', { key: '+' }, { key: '=', shift: false }),
+  deleteAnchor: k('−', { key: '-', shift: false }),
+  convertAnchor: k('⇧C', { key: 'c', shift: true }),
+  // 连接 ⌘J、平均 ⌥⌘J（Illustrator 的键位）：选着两个端点 / 两条开放路径、选着几个锚点时才消费。⌥ 会改写 key，按 code 认
+  joinPaths: k(`${MOD}J`, { code: 'KeyJ', mod: true, shift: false, alt: false }),
+  averageAnchors: k(`${ALT}${MOD}J`, { code: 'KeyJ', mod: true, shift: false, alt: true }),
+  // 复合路径 ⌘8 / 释放 ⌥⇧⌘8（Illustrator 的键位，ADR 0185 M2）：选着两个以上能参与的对象 / 一个多子路径的路径时才消费。按 code 认
+  makeCompound: k(`${MOD}8`, { code: 'Digit8', mod: true, shift: false, alt: false }),
+  releaseCompound: k(`${ALT}⇧${MOD}8`, { code: 'Digit8', mod: true, shift: true, alt: true }),
+  // 成组 ⌘G / 取消成组 ⇧⌘G、剪切蒙版 ⌘7 / 释放 ⌥⌘7（Illustrator 的键位，ADR 0191）：选区够条件时才消费。按 code 认
+  groupObjects: k(`${MOD}G`, { code: 'KeyG', mod: true, shift: false, alt: false }),
+  ungroupObjects: k(`⇧${MOD}G`, { code: 'KeyG', mod: true, shift: true, alt: false }),
+  makeClipMask: k(`${MOD}7`, { code: 'Digit7', mod: true, shift: false, alt: false }),
+  releaseClipMask: k(`${ALT}${MOD}7`, { code: 'Digit7', mod: true, shift: false, alt: true }),
+  // 文字转轮廓 ⇧⌘O（Illustrator 的键位，ADR 0189）：选着文字时才消费。按 code 认
+  outlineText: k(`⇧${MOD}O`, { code: 'KeyO', mod: true, shift: true, alt: false }),
+  // 形状生成器 ⇧M（Illustrator 的键位，ADR 0185 M3）：选着两个以上能参与的对象时才消费
+  shapeBuilder: k('⇧M', { key: 'm', shift: true, mod: false, alt: false }),
+  // 外观（Illustrator 习惯）：D 默认填色描边、⇧X 互换填色和描边、/ 无填充、I 吸管。选着能上色的标注时才消费（I 一直可用）
+  defaultAppearance: k('D', { key: 'd', shift: false }),
+  swapFillStroke: k('⇧X', { key: 'x', shift: true }),
+  clearFill: k('/', { key: '/', shift: false }),
+  toolEyedropper: k('I', { key: 'i', shift: false }),
   // 画布标签（焦点在标签上时；`CanvasTabs` 自己处理，不经全局 keydown）
   tabRename: native('F2'),
   tabClose: native(`${MOD}W`),

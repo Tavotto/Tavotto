@@ -249,6 +249,20 @@ FIXED: list[tuple[str, str, list[list[dict]]]] = [
             ],
         ],
     ),
+    (
+        # 脊线：先开右脊并设线宽，再隐藏整个 axes——热态 scatter 的 geometry.paths 与清空重放不同。
+        # InvMix 随机种子 28（lab 放宽种子）。
+        "seq28-spine-right-then-axes-hidden",
+        "InvMix",
+        [
+            [_p("axes_0", "spine_right", True), _p("axes_0", "spine_right_linewidth", 2.78)],
+            [
+                _p("axes_0", "spine_right", True),
+                _p("axes_0", "spine_right_linewidth", 2.78),
+                _p("axes_0", "visible", False),
+            ],
+        ],
+    ),
 ]
 
 
@@ -307,7 +321,7 @@ def _candidates(base: dict) -> tuple[list[list[dict]], dict[tuple[str, str], dic
     advertised = {el["gid"]: {f["prop"] for f in el["editable"]} for el in base["elements"]}
     fields = {(el["gid"], f["prop"]): f for el in base["elements"] for f in el["editable"]}
     out = []
-    for gid, field in _editable_targets(base, include_axes=True):
+    for gid, field in _editable_targets(base):
         _enablers, full = _patch_for(gid, field, advertised)
         if full:
             out.append(full)

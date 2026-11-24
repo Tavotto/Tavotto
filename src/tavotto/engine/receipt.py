@@ -149,6 +149,21 @@ def project_import_skips(raw, *, include_private: bool = False) -> list[dict]:
     return out
 
 
+_GUI_BACKEND_NAME = re.compile(r"[a-z0-9]{1,16}\Z")
+
+
+def project_gui_backends(raw) -> list[str]:
+    """worker 自报的 `gui_backends_neutralized`（ADR 0195：被中和的 GUI 后端名）→ 投影。
+    自报是不可信输入：只收短小写字母数字名（登记表里的后端名都是这个形状）、去重、最多 8 条；其余丢弃，不抛。"""
+    out: list[str] = []
+    if not isinstance(raw, list):
+        return out
+    for name in raw[:32]:
+        if isinstance(name, str) and _GUI_BACKEND_NAME.match(name) and name not in out:
+            out.append(name)
+    return out[:8]
+
+
 def project_fidelity(raw) -> dict | None:
     """worker 自报的 `fidelity` → 公开投影。**这是它进入回执公开面的唯一一处。**
 
@@ -239,6 +254,14 @@ class ExecutionReceipt:
     #: Verified bytes in the control plane's own cache. Never serialized or
     #: included in either identity; the public revision already names the graph.
     captured_input_archive: InputArchive | None = dataclasses.field(
+        default=None, repr=False, compare=False
+    )
+    #: Which declaration row revision the capture's own candidate recorded (the
+    #: capture's provenance stamp). Private projection input only: the report
+    #: may present this capture as a selection's result only when it equals that
+    #: selection's frozen revision. None = the capture carries no stamp (old or
+    #: hand-built evidence), which certifies nothing.
+    captured_selection_revision: str | None = dataclasses.field(
         default=None, repr=False, compare=False
     )
 
@@ -414,6 +437,9 @@ class ExecutionReceipt:
         out = {
             "receipt_identity": self.public_identity(),
             "receipt_id": self.receipt_id,
+            # 冷回放要按归档执行自己的档位解析 worker（safe / native）；它已经是
+            # public_identity 的一部分，这里只是把原始值留给快照读者。
+            "profile": self.profile,
             "completeness": self.completeness,
             "runtime_rejected": self.runtime_rejected,
             "pid_check": self.pid_check,
@@ -456,6 +482,11 @@ class ExecutionReceipt:
                 "import_skips": project_import_skips(
                     rt["import_skips"], include_private=include_private
                 ),
+            }
+        if rt is not None and "gui_backends_neutralized" in rt:
+            rt = {
+                **rt,
+                "gui_backends_neutralized": project_gui_backends(rt["gui_backends_neutralized"]),
             }
         if rt is not None and not include_private:
             rt = {
@@ -541,20 +572,35 @@ def from_worker(
     `binding` 是控制面在预检那一刻记下的数据绑定（`databinding.binding_for()`）。
     """
     spec = worker.spec
-    raw = build_resp.get("runtime") if isinstance(build_resp, dict) else None
-    runtime, rejected, pid_check = accept_runtime(raw, expected_pid=worker_pid(worker))
-    descriptors = (
-        tuple(d for d in (build_resp.get("descriptors") or []) if isinstance(d, dict))
-        if isinstance(build_resp, dict)
-        else ()
-    )
     # Supervisor child restarts and retries can reuse the pool generation.
     execution_id = (
         build_resp["execution_id"]
         if isinstance(build_resp, dict) and "execution_id" in build_resp
         else getattr(worker, "execution_id", None)
     )
+    # 缓存回包只复封存的 build capsule（worker 执行账）：同一执行、同一封存档案的回执
+    # 身份不吃第二次 build 现量的顶层 runtime（worker-protocol 合同）。
+    capsule = getattr(worker, "last_captured_build", None)
+    ledger = (
+        capsule
+        if (
+            isinstance(capsule, dict)
+            and executionfact.valid_id(execution_id)
+            and capsule.get("execution_id") == execution_id
+        )
+        else build_resp
+        if isinstance(build_resp, dict)
+        else None
+    )
+    raw = ledger.get("runtime") if ledger is not None else None
+    runtime, rejected, pid_check = accept_runtime(raw, expected_pid=worker_pid(worker))
+    descriptors = (
+        tuple(d for d in (ledger.get("descriptors") or []) if isinstance(d, dict))
+        if ledger is not None
+        else ()
+    )
     captured_inputs, captured_input_archive = None, None
+    captured_selection_revision = None
     latest_id = getattr(worker, "execution_id", None) or getattr(
         worker, "last_build_execution_id", None
     )
@@ -562,14 +608,16 @@ def from_worker(
         # Native continues can reach a newer barrier after this response was
         # returned. Only an explicitly stamped response belongs to this fact.
         if isinstance(build_resp, dict) and build_resp.get("execution_id") == latest_id:
-            captured_inputs, captured_input_archive = _native_captured_inputs(
-                worker,
-                spec,
-                script=spec.target,
-                runtime=runtime,
-                rejected=rejected,
-                pid_check=pid_check,
-                expected_execution_id=latest_id,
+            captured_inputs, captured_input_archive, captured_selection_revision = (
+                _native_captured_inputs(
+                    worker,
+                    spec,
+                    script=spec.target,
+                    runtime=runtime,
+                    rejected=rejected,
+                    pid_check=pid_check,
+                    expected_execution_id=latest_id,
+                )
             )
     elif (
         runtime is not None
@@ -591,6 +639,7 @@ def from_worker(
         }
         if fact is not None and fact["declaration"]["scope"] == expected_scope:
             captured_inputs = inputdeclaration.public_fact(fact)
+            captured_selection_revision = _selection_revision_of(fact)
             descriptor = getattr(worker, "last_captured_input_archive", None)
             captured_input_archive = _verified_input_archive(worker, fact, descriptor)
             if descriptor is not None and (
@@ -620,7 +669,16 @@ def from_worker(
         instance=execution_id if executionfact.valid_id(execution_id) else "",
         captured_inputs=captured_inputs,
         captured_input_archive=captured_input_archive,
+        captured_selection_revision=captured_selection_revision,
     )
+
+
+def _selection_revision_of(fact):
+    """Which declaration row revision produced this capture, per its own stamp."""
+    if not isinstance(fact, dict):
+        return None
+    revision = fact.get("selection_revision")
+    return revision if isinstance(revision, str) else None
 
 
 def _session_env(worker) -> dict | None:
@@ -696,12 +754,12 @@ def _native_captured_inputs(
         and (expected_execution_id is None or expected_execution_id == execution_id)
         and (expected_epoch is None or expected_epoch == epoch)
     ):
-        return None, None
+        return None, None, None
     from . import inputdeclaration
 
     fact = inputdeclaration.validate_fact(reader(script=script), execution_id=execution_id)
     if fact is None:
-        return None, None
+        return None, None, None
     scope = fact["declaration"]["scope"]
     mode = scope["cwd_mode"]
     if (
@@ -723,9 +781,9 @@ def _native_captured_inputs(
             or reader(script=script) != fact
             or (callable(archive_reader) and archive_reader(script=script) != descriptor)
         ):
-            return None, None
-        return inputdeclaration.public_fact(fact), archive
-    return None, None
+            return None, None, None
+        return inputdeclaration.public_fact(fact), archive, _selection_revision_of(fact)
+    return None, None, None
 
 
 def from_native_session(session, script: str, *, grant: dict | None = None) -> ExecutionReceipt:
@@ -766,7 +824,7 @@ def from_native_session(session, script: str, *, grant: dict | None = None) -> E
         d for d in (getattr(session, "descriptors", None) or []) if isinstance(d, dict)
     )
     snapshot_epoch = getattr(session, "snapshot_epoch", 0)
-    captured_inputs, captured_input_archive = _native_captured_inputs(
+    captured_inputs, captured_input_archive, captured_selection_revision = _native_captured_inputs(
         session,
         spec,
         script=script,
@@ -792,6 +850,7 @@ def from_native_session(session, script: str, *, grant: dict | None = None) -> E
         instance=(str(getattr(session, "session_id", "") or "") + ":" + str(snapshot_epoch)),
         captured_inputs=captured_inputs,
         captured_input_archive=captured_input_archive,
+        captured_selection_revision=captured_selection_revision,
     )
 
 

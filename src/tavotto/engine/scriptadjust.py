@@ -370,11 +370,12 @@ NOT_WRITABLE: dict[str, str] = {
     # artist = `ax.add_artist` 放进来的锚定框 / 插框（AnchoredText、比例尺……）与表格。显隐、层次写得进；
     # 位置要改锚框的 loc / bbox_to_anchor / xybox，各类各一套（引擎 `_place_offsetbox`），不写
     "artist": "pos_frac",
-    "line": "pos_frac",
+    "line": "pos_frac points_frac",
     "axes": "visible position aspect elev azim roll "
     "proj_type axis_arrows arrow_color arrow_width arrow_head axline_color "
     "axline_width pane_visible pane_color",
-    "image": "gradient_color origin",
+    # `pos_frac`（transAxes 位图的平移）与线 / 形状同一结论：落位要改 transform，不写
+    "image": "gradient_color origin pos_frac",
     "figure": "size_mm frame transparent",
     # 方向 / 延伸三角只能靠私有 API（`cb._draw_all()`、`_inside`、重算落位），永远不写（ADR 0094 Q10）：
     # 留作 override，由 Tavotto 在重放时作用。
@@ -383,7 +384,8 @@ NOT_WRITABLE: dict[str, str] = {
     # 一条 override 里不会出现它们；没有可采样的字段就验证不了等价，不写
     "bar": "linestyle fill zorder",
     # 渐变色带的两端色：要认出「一摞逐条一色的长条」、保留深浅节奏重新配色并带着图例色块，不是一句公开 API
-    "collection": "gradient",
+    "collection": "gradient pos_frac",
+    "linecoll": "pos_frac",
 }
 
 

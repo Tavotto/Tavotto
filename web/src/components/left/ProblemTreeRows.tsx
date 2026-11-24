@@ -25,8 +25,10 @@ import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Popover } from '../ui/Popover'
 import { FixButton, runBatchFix, useBatchable } from './IssueFixButton'
-import { SourceButton } from '../journal/SourceButton'
-import { dpiSourceMatches, sourcesForCheck } from '@/lib/journalPick'
+import { SourceButton, SourceCardBody } from '../journal/SourceButton'
+import { dpiSourceMatches, fieldLabel, sourcesForCheck, valueText } from '@/lib/journalPick'
+import { confirmEntries, v2StrengthNote, type V2ConfirmRow } from '@/lib/journalV2'
+import { useJournalV2Store } from '@/store/journalV2Store'
 import { journalCatalogUi } from '@/lib/journalUi'
 
 /** 组头的 6px 等级记号：要改 / 留意 = 带色实心圆，建议 / 无法核验 = 灰色空心方块——形状也说出等级（与导出检查的计数芯片同一语言） */
@@ -400,7 +402,7 @@ export function IssueJournalSource({ issue }: { issue: ValidationIssue }) {
     ? matching.filter(([, source]) => dpiSourceMatches(source, issue.message.values?.min))
     : matching
   if (!journalCatalogUi() || !ref || !entries.length) return null
-  return <SourceButton compact journal={ref.label} entries={entries} name={issueTitle(issue)} />
+  return <SourceButton compact journal={ref.label} journalId={ref.id} entries={entries} name={issueTitle(issue)} />
 }
 
 /**
@@ -437,5 +439,84 @@ function TechPopover({
         ))}
       </ul>
     </Popover>
+  )
+}
+
+/**
+ * 「需要你确认」：该刊 v2 事实里带文字条件（或程序判不出）的数值要求，树的末尾一个折叠组。
+ * 不计入问题数、不标红 / 黄、没有等级记号、没有底色；每行 = 要求 + 灰字原文条件（逐字），点开是出处卡。
+ * 只读本次会话取到的 v2 结果（`journalV2Store`）：取不到（离线 / 被拒 / 开关关）= 不出现，不报错。
+ */
+export function ConfirmEntry() {
+  const ref = useDocumentStore((s) => s.doc.profile?.journalRef)
+  const patch = useJournalV2Store((s) => (ref ? s.byJournal[ref.id] : null))
+  if (!journalCatalogUi() || !ref || !patch || patch.confirm.length === 0) return null
+  return <ConfirmGroup rows={patch.confirm} depth={0} journalId={ref.id} journal={ref.label} />
+}
+
+export function ConfirmGroup({
+  rows,
+  depth,
+  journalId,
+  journal,
+}: {
+  rows: V2ConfirmRow[]
+  depth: number
+  journalId: string
+  journal: string
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <li data-confirm-group>
+      <button
+        type="button"
+        data-confirm-group-toggle
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        style={treeIndent(depth)}
+        className={cn(listRowClass({ size: 'sm', muted: true }), 'w-[calc(100%-0.5rem)] text-left')}
+      >
+        <TreeChevron expanded={open} />
+        <span className="min-w-0 flex-1 truncate">{translate('journal.confirm.title', { ns: 'dialogs', count: rows.length })}</span>
+      </button>
+      {open && (
+        <ul aria-label={translate('journal.confirm.aria', { ns: 'dialogs' })}>
+          {rows.map((row) => {
+            const entry = confirmEntries(row)
+            const requirement = `${fieldLabel(entry[0])} ${valueText(entry[0], entry[1])}`
+            const condition = translate('journal.confirm.condition', { ns: 'dialogs', text: row.condition })
+            // 只举例 / 约数的，语气写在行里（举例 / 约），免得被当成硬要求
+            const note = v2StrengthNote(row.strength)
+            return (
+              <li key={row.id}>
+                <Popover
+                  width={360}
+                  flush
+                  align="start"
+                  ariaLabel={translate('journal.card.aria', { ns: 'dialogs' })}
+                  trigger={
+                    <button
+                      type="button"
+                      data-confirm-row
+                      style={treeIndent(depth + 1)}
+                      className={cn(listRowClass({ size: 'sm' }), 'w-[calc(100%-0.5rem)] text-left')}
+                    >
+                      <TreeChevron />
+                      <span className="min-w-0 flex-1 truncate" title={row.condition ? `${requirement} · ${condition}` : requirement}>
+                        {requirement}
+                        {note && <span className="text-ink-3">{` · ${note}`}</span>}
+                        {row.condition && <span className="text-ink-3">{` · ${condition}`}</span>}
+                      </span>
+                    </button>
+                  }
+                >
+                  <SourceCardBody journal={journal} journalId={journalId} entries={[entry]} />
+                </Popover>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </li>
   )
 }

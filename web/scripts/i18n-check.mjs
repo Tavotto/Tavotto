@@ -24,6 +24,8 @@
  *   5. 两种语言的插值变量是否一致；
  *   6. 两种语言的复数形态是否配套；
  *   7. 调用点有没有把文案里的插值变量传齐（看得全的实参才判）。
+ *   8. 资源文件里同一个对象出现重复键（`JSON.parse` 不报错、后一个盖掉前一个；
+ *      git 自动合并把一整段重复了一份时，别的检查都照常通过）。
  *
  * 硬编码字符串由 `i18next-cli lint` 查，生成的类型是否过期由
  * `i18next-cli types --ci` 查——三条一起构成 `i18n:check`。
@@ -34,6 +36,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { topLevelKeys } from './i18n-args.mjs'
+import { duplicateKeys } from './i18n-dupes.mjs'
 
 const WEB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const LOCALES_DIR = path.join(WEB, 'src/i18n/locales')
@@ -349,6 +352,17 @@ function main() {
   const res = readResources()
   const problems = []
   const add = (kind, msg) => problems.push({ kind, msg })
+
+  /* --- 8. 重复键（先于别的检查：下面用的是 JSON.parse 之后的表，重复键在那里已经看不见了） --- */
+  for (const locale of LOCALES) {
+    for (const ns of NAMESPACES) {
+      const file = path.join(LOCALES_DIR, locale, `${ns}.json`)
+      if (!fs.existsSync(file)) continue
+      for (const key of duplicateKeys(fs.readFileSync(file, 'utf8'))) {
+        add('duplicate-key', `${locale} ${ns}:${key} 在同一个对象里出现了不止一次（后一个会悄悄盖掉前一个）`)
+      }
+    }
+  }
 
   const used = new Set(ALWAYS_USED)
   const prefixes = new Set()

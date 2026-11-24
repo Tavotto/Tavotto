@@ -11,8 +11,14 @@ import { isKnownObject, isLinear, objectRotation, panelRotation } from '@/types/
 import { PATH_HIT_SHAPES } from '@/lib/shapeGeometry'
 import { startMoveDrag } from './interactions'
 import { openQuickEdit } from './quickEditStore'
+import { editAnchors } from '@/store/pathActions'
+import { enterGroupAt } from '@/store/groupActions'
+import { trackKeyClick } from '@/store/keyObject'
+import { editPathTextPath } from '@/store/pathTextActions'
 import { ArrowView } from './ArrowView'
 import { PanelView } from './PanelView'
+import { PathTextView } from './PathTextView'
+import { PathView } from './PathView'
 import { ShapeView } from './ShapeView'
 import { TextView } from './TextView'
 
@@ -20,10 +26,13 @@ import { TextView } from './TextView'
 export const ObjectView = memo(function ObjectView({
   obj,
   preview = false,
+  outside = false,
 }: {
   obj: CanvasObject
   /** 科研预设缩略图不是文档对象，不触发文字高度回写。 */
   preview?: boolean
+  /** 组内编辑时组外的对象（ADR 0191）：命中线写的是显式 pointer-events，压得过祖先的 none，所以要在这里一并交掉 */
+  outside?: boolean
 }) {
   perfCount('render.ObjectView')
   const editing = useUiStore((s) => s.editingTextId === obj.id)
@@ -44,12 +53,14 @@ export const ObjectView = memo(function ObjectView({
   // 椭圆 / 三角 / 菱形 / 多边形 / 大括号的包围盒里大半是空白，按盒命中会让
   // 空白角也吃点击（还挡住底下的面板）。与细长线状对象同一个修法：外层 div
   // 整个让位，命中交给 ShapeView 里沿真实轮廓的透明层
-  const pathHitShape = obj.type === 'shape' && PATH_HIT_SHAPES.has(obj.shape)
+  // 自由路径（ADR 0185）同理：命中交给 PathView 里沿真实轮廓的透明层（填充按 fill-rule）
+  const pathHitShape = (obj.type === 'shape' && PATH_HIT_SHAPES.has(obj.shape)) || obj.type === 'path' || obj.type === 'pathText'
   // 更新的构建写进来的对象：只画占位框，不接指针（不能选中 / 拖动 / 删除），文档里原样保留（`isKnownObject`）
   const known = isKnownObject(obj)
-  const hit = obj.locked || drawing || spaceDown ? 'none' : 'stroke'
+  const hit = obj.locked || drawing || spaceDown || outside ? 'none' : 'stroke'
 
   const onPointerDown = (e: React.PointerEvent) => {
+    if (outside) return
     if (e.button !== 0 || editing || cropping) return
     e.stopPropagation()
 
@@ -74,9 +85,13 @@ export const ObjectView = memo(function ObjectView({
       sel.set([...sel.ids, ...mates.filter((id) => !sel.ids.includes(id))])
     } else if (!mates.every((id) => sel.ids.includes(id))) {
       sel.set(mates)
-    } else if (sel.ids.at(-1) !== obj.id) {
-      // 已在选区内：把它提为主选，供对齐 / 等宽等高作基准
-      sel.set([...sel.ids.filter((id) => id !== obj.id), obj.id])
+    } else {
+      // 多选里再点一下（不拖）= 设成关键对象，再点一下取消（Illustrator 的 key object，`store/keyObject`）
+      if (sel.ids.length > mates.length) trackKeyClick(obj.id, e)
+      if (sel.ids.at(-1) !== obj.id) {
+        // 已在选区内：把它提为主选，供对齐 / 等宽等高作基准
+        sel.set([...sel.ids.filter((id) => id !== obj.id), obj.id])
+      }
     }
     startMoveDrag(e, obj.id)
   }
@@ -92,7 +107,7 @@ export const ObjectView = memo(function ObjectView({
    * 标注已经在选区里，右键它不退编辑态。
    */
   const onContextMenu = (e: React.MouseEvent) => {
-    if (editing || cropping) return
+    if (outside || editing || cropping) return
     e.preventDefault()
     e.stopPropagation()
     const sel = useSelectionStore.getState()
@@ -106,7 +121,17 @@ export const ObjectView = memo(function ObjectView({
 
   const onDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (obj.type === 'text') useUiStore.getState().setEditingText(obj.id)
+    if (outside) return
+    // 组里的对象：双击先进到组里（组内编辑，ADR 0191），进到它是直接成员的那一层后，双击才改字 / 编辑锚点 / 进图内编辑
+    // 路径文字：⌘ / Ctrl 双击 = 直接编辑它自带的那份路径（ADR 0190）；与直接选择一样不管它在不在组里
+    if (obj.type === 'pathText' && (e.metaKey || e.ctrlKey)) {
+      editPathTextPath(obj.id)
+      return
+    }
+    if (enterGroupAt(obj.id)) return
+    if (obj.type === 'text' || obj.type === 'pathText') useUiStore.getState().setEditingText(obj.id)
+    // 路径：双击进锚点编辑（直接选择，ADR 0185 M1）
+    else if (obj.type === 'path') editAnchors(obj.id)
     else if (obj.type === 'panel') {
       // 已经在编辑的面板不能再进一次：enterElementEdit 会清掉图内选区。
       if (useUiStore.getState().elementPanelId === obj.id) return
@@ -160,6 +185,8 @@ export const ObjectView = memo(function ObjectView({
       {obj.type === 'text' && <TextView obj={obj} preview={preview} />}
       {obj.type === 'arrow' && <ArrowView obj={obj} hit={hit} />}
       {obj.type === 'shape' && <ShapeView obj={obj} hit={hit} />}
+      {obj.type === 'path' && <PathView obj={obj} hit={hit} />}
+      {obj.type === 'pathText' && <PathTextView obj={obj} hit={hit} />}
       {!known && <div data-unknown-object className="absolute inset-0 border border-dashed border-ink-3" />}
     </div>
   )

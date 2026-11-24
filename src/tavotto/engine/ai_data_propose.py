@@ -17,11 +17,15 @@ Flask 父进程 import；**不调模型**（模型工具集是下一个 PR，复
 同时至多 `MAX_SESSIONS` 个（超了先删最老的）；提交后**不**删（用户可以接着出同一批里的另一个备选），放弃（`discard`）立刻删；同一会话里数据文件只有**一份**副本（所有备选共用，≤ 5 MiB，`data_too_large` 上限），整个会话目录随会话删，磁盘上界 ≈ `MAX_SESSIONS` × （5 MiB + 每张缩略图 ≤ 4 MiB × 4）、常态每会话只有「数据文件 + 几十 KB 的小图」；每次出备选 / 提交前 `sweep()` 把过期会话与上一个进程留下的
 孤儿目录（`mtime` 超过 TTL）一并删。删除一律不用 `ignore_errors=True`：删不掉记日志并留给下一次 sweep，不假装删了。
 
+**合画**（`propose(tables=[…])`，`ai_data_merge.py`）：几份列名相同的数据在内存里拼成一张逻辑表再走同一条流水；候选目录里放的是**每一份**的字节副本（布局 = 相对落点目录的路径，落点 = 这几份的最近公共父文件夹），
+总大小受 `ai_data_merge.MAX_TOTAL_BYTES` 约束（不是 5 MiB），其余（`MAX_SESSIONS`、TTL、写入根绊线、用户文件夹零写入）不变。
+
 会话只在内存里：进程重启 = 会话过期（`propose_session_expired`），前端据此重新出备选。会话属于项目：别的项目拿同一个 id 也是过期。
 """
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import logging
@@ -39,7 +43,10 @@ from pathlib import Path, PurePosixPath
 
 from . import (
     ai_data_figure as adf,
+    ai_data_merge as merge_mod,
+    ai_data_progress as progress,
     ai_data_recipe as recipe_mod,
+    ai_data_roles as roles_mod,
     ai_data_template as tpl,
     ai_figure_edit,
     config,
@@ -61,7 +68,11 @@ ERROR_CODES = (
     "propose_input_invalid",  # 请求体的字段类型不对 / 超长
     "propose_cells_invalid",  # 数值列里夹着的文字格的处理规则不合格（`params.reason` 是拒绝码，`params.key` 点名哪一项）
     "propose_cells_need_rule",  # 用户只用文字说明了怎么处理（`describe`）：要先由助手整理成规则，不猜
+    "propose_cancelled",  # 前端取消了这个读表类请求（概览 / 出备选；`/api/ai/data-progress/<rid>/cancel`）：什么都没留下
     "propose_thumbnail_failed",  # 懒渲染（`render="lazy"`）：这一张缩略图画不出来（`params.reason` 是 `DROP_REASONS` 里的码）
+    "tables_columns_differ",  # 合画（`tables`）：这几份的列名集合或顺序不一样，拼不成一张表（`params.index` = 第一个与第一份不同的下标）
+    "tables_limit_exceeded",  # 合画：份数超过上限（`params.max`）
+    "tables_labels_collide",  # 合画：两个文件的标签在分组时会被并成一组（内部保险，正常不会出现；绝不静默并组）
 )
 #: 一个备选没能出现在结果里的原因（`dropped[].reason_code` / `nothing.reasons`；文案在前端 `dataFigure.reason.<码>`）
 DROP_REASONS = (
@@ -75,6 +86,9 @@ DROP_REASONS = (
 CANDIDATE_ROOT = config.data_dir() / "cache" / "ai_data_candidates"
 SESSION_TTL_S = 30 * 60
 MAX_SESSIONS = 6
+#: 候选目录里**大表字节副本**的总量上限：每个会话放一份选中那张表的副本（≤ `adf.MAX_BYTES`），最多 6 个会话会占满磁盘；
+#: 新会话放不下就先丢最老的（用户已经往前走了的）。小表（≤ `adf.SMALL_BYTES`）不计入。
+LARGE_STAGE_BUDGET = 1024 * 1024 * 1024
 #: 缩略图宽度（像素）与单张字节上限
 THUMB_WIDTH_PX = 640
 MAX_THUMB_BYTES = 4 * 1024 * 1024
@@ -92,7 +106,8 @@ UNPLOTTED_CODE = "rows_not_plotted"
 _ID = re.compile(r"[0-9a-f]{12}")
 _SESSION_ID = re.compile(r"[0-9a-f]{24}")
 _HINT_MAX = 400
-_ANSWER_KEYS = ("table", "sheet", "y", "group", "x", "design", "unit")
+#: `x_measure`（G-018，读懂数据派生）：模型判「规则选作横轴的那一列是测量值、不是有序自变量」时给出的**列名**；不是用户动过的下拉（不进 `picks` 的 x / y / group）
+_ANSWER_KEYS = ("table", "sheet", "y", "group", "x", "design", "unit", "x_measure")
 _ANSWER_MAX = 400
 
 
@@ -155,12 +170,19 @@ class Item:
     recipe: recipe_mod.FigureRecipe
     coverage: dict
     thumb: Path | None = None
-    unplotted: int = 0  # 有多少行因为横轴没有值而没画（稳定码 `rows_not_plotted` + 计数）
+    unplotted: int = 0  # 有多少行没画（`unplotted_rows` 的总数；稳定码 `rows_not_plotted` + 计数）
     cells: list | None = None  # 处理规则作用的统计（没有规则 = None）
+    #: 大表：画出来的是缩减后的点 `{"rows": 整表行数, "kept": 留下的行数}`；小表 = None（响应里没有这一项）
+    reduced: dict | None = None
     #: 缩略图状态：`ready`（已有 PNG；旧模式一律如此）/ `pending`（懒模式，还没画）/ `failed`（`reason` 是 `DROP_REASONS` 里的码）
     state: str = "ready"
     reason: str | None = None
     fallback: bool = False  # 画这张时项目解释器没画成、回退过（诊断标记）
+    #: 合画且文件里原本有可再拆的分组列时，成对出现的两种画法各自的标记：`{"kind": "split", "column": 列名}`（按它再拆开）/
+    #: `{"kind": "by_file"}`（不拆、只按文件比较）；没有成对的另一张（两种画法画出来一样）就是 None
+    variant: dict | None = None
+    #: 这张图上每条拟合线的系数（`tpl.fit_report`；没有拟合线 = 空，响应里没有这一项）
+    fits: list = field(default_factory=list)
     # 懒渲染的素材：候选脚本在会话目录里，这里记下渲染一张要的最少东西
     stem: str | None = None
     n: int = 0
@@ -187,6 +209,12 @@ class Session:
     root: Path | None = None  # 项目目录（懒渲染取项目解释器用）
     #: 懒渲染：画哪些备选（`items` 的插入顺序就是推荐顺序）
     lazy: bool = False
+    #: 大表（`DataSummary.large`）：进度只对大表有条目
+    large: bool = False
+    #: 合画（几份拼一张）：各份与合成列；单份 = None（`table` / `sheet` / `data_sha256` 在合画时是第一份的 / 拼后的身份，`folder_rel` 是落点目录）
+    merge: merge_mod.MergeSpec | None = None
+    #: 出备选时用的样式（请求带了出版规范才有；None = 默认规范）。提交按同一份出脚本，预览与落盘的图同宽同字号
+    style: dict | None = None
 
     def item(self, item_id: str) -> Item | None:
         return self.items.get(item_id)
@@ -223,6 +251,22 @@ def _drop(sess: Session) -> None:
             _REQUESTS.pop(key, None)
     if _inside_root(sess.dir):
         _rmtree(sess.dir)
+
+
+def _staged_bytes(sess: Session) -> int:
+    return sess.data_size if sess.data_size > adf.SMALL_BYTES else 0
+
+
+def make_room(extra: int) -> None:
+    """要放进 `extra` 字节的大表副本之前：丢最老的会话，直到所有会话的大表副本加上它不超过 `LARGE_STAGE_BUDGET`。"""
+    if extra <= adf.SMALL_BYTES:
+        return
+    with _LOCK:
+        for sess in sorted(_SESSIONS.values(), key=lambda s: s.touched):
+            if sum(_staged_bytes(s) for s in _SESSIONS.values()) + extra <= LARGE_STAGE_BUDGET:
+                break
+            if _staged_bytes(sess):
+                _drop(sess)
 
 
 def sweep(now: float | None = None) -> None:
@@ -331,6 +375,29 @@ def parse_header_row(v) -> int:
     return v
 
 
+def parse_tables(raw) -> list[tuple[str, str | None]] | None:
+    """`tables`：合画的几份数据 `[{path, sheet?}]`（`path` 与 `table` 同口径：相对所选文件夹的 POSIX 路径）。不给 = None（走单份流程）；
+    不是列表 / 不足 2 份 / 项的形状不对 → `propose_input_invalid`；超过 `merge_mod.MAX_TABLES` 份 → `tables_limit_exceeded`（`params.max`）。
+    只校验形状：路径对不对由遍历结果逐字比对。"""
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise ProposeError("propose_input_invalid", "tables")
+    if len(raw) > merge_mod.MAX_TABLES:
+        raise ProposeError("tables_limit_exceeded", params={"max": merge_mod.MAX_TABLES})
+    if len(raw) < 2:
+        raise ProposeError("propose_input_invalid", "tables")
+    out: list[tuple[str, str | None]] = []
+    for item in raw:
+        if not isinstance(item, dict) or not set(item) <= {"path", "sheet"}:
+            raise ProposeError("propose_input_invalid", "tables")
+        path = _text(item.get("path"), "tables", 1024)
+        if not path:
+            raise ProposeError("propose_input_invalid", "tables")
+        out.append((path, _text(item.get("sheet"), "tables")))
+    return out
+
+
 def _text(value, what: str, limit: int = _ANSWER_MAX) -> str | None:
     if value is None:
         return None
@@ -364,6 +431,66 @@ def parse_cells(raw) -> dict[str, recipe_mod.CellRule]:
     return out
 
 
+#: 请求里那份出版规范的体积上限（内置最大的一份约 10 KB；期刊覆盖并入后同量级）
+SPEC_MAX_BYTES = 256 * 1024
+#: 期刊字号范围里一个数的合理区间（pt）
+FONT_PT_MIN, FONT_PT_MAX = 1.0, 72.0
+
+
+def parse_font_range(raw) -> tuple[float | None, float | None] | None:
+    """请求带的期刊字号范围 `{min_pt?, max_pt?}` → `(下限, 上限)`；形状不对 / 数不合理 / 上下限写反 = 当作没给（不报错，按规范出图）。"""
+    if not isinstance(raw, dict):
+        return None
+    out = []
+    for key in ("min_pt", "max_pt"):
+        v = raw.get(key)
+        if v is None:
+            out.append(None)
+        elif (
+            isinstance(v, (int, float))
+            and not isinstance(v, bool)
+            and FONT_PT_MIN <= v <= FONT_PT_MAX
+        ):
+            out.append(float(v))
+        else:
+            return None
+    lo, hi = out
+    if (lo is None and hi is None) or (lo is not None and hi is not None and lo > hi):
+        return None
+    return lo, hi
+
+
+def parse_spec(raw, font_range=None) -> tuple[dict | None, str | None, bool]:
+    """请求带的出版规范 → `(模板样式 | None, 幂等摘要 | None, 是否退回了默认)`。不给 = `(None, None, False)`。
+    不是对象 / 过大 / 过不了 `profiles.validate_spec` 都算「不合法」：退回默认规范并如实标出，不抛错（出图不该因为规范坏了而失败）。"""
+    if raw is None:
+        return None, None, False
+    from . import profiles
+
+    try:
+        if not isinstance(raw, dict):
+            raise profiles.ProfileError("spec")
+        text = json.dumps(raw, ensure_ascii=False, sort_keys=True)
+        if len(text.encode("utf-8")) > SPEC_MAX_BYTES:
+            raise profiles.ProfileError("spec")
+        fonts = parse_font_range(font_range)
+        style = tpl.style_from_profile(profiles.validate_spec(json.loads(text)), fonts)
+    except (profiles.ProfileError, TypeError, ValueError, RecursionError):
+        return None, "invalid", True
+    digest = hashlib.sha256((text + json.dumps(fonts)).encode("utf-8")).hexdigest()
+    return style, digest, False
+
+
+def figure_style(style: dict) -> dict:
+    out = {k: style[k] for k in ("width_single_mm", "width_double_mm", "font_pt")}
+    lo, hi = style.get("font_range") or (None, None)
+    if lo is not None:
+        out["font_min_pt"] = lo
+    if hi is not None:
+        out["font_max_pt"] = hi
+    return out
+
+
 def parse_answers(answers) -> dict:
     """对上一轮选择题的回答：只认 `_ANSWER_KEYS`，值是字符串（列名 / 文件名 / `unsure` …）；别的键丢弃（不报错）。"""
     if answers is None:
@@ -373,6 +500,17 @@ def parse_answers(answers) -> dict:
     out: dict = {}
     for key in _ANSWER_KEYS:
         if key in answers:
+            if key == "y" and isinstance(answers[key], list):
+                # 多列纵轴（读懂数据 / 用户点名）：1 到 `STACK_MAX_COLUMNS` 个列名（有有序横轴时每列一条线，至多 `MULTI_Y_MAX` 个；没有横轴时是
+                # 「把这几列当分组」，至多 `STACK_MAX_COLUMNS` 个）；形状不对 = 错误，取值合不合格由列角色规则判（不合格当没给）
+                raw = answers[key]
+                if not 1 <= len(raw) <= max(recipe_mod.MULTI_Y_MAX, recipe_mod.STACK_MAX_COLUMNS):
+                    raise ProposeError("propose_input_invalid", key)
+                names = [_text(c, key) for c in raw]
+                if any(c is None for c in names):
+                    raise ProposeError("propose_input_invalid", key)
+                out[key] = names[0] if len(names) == 1 else names
+                continue
             val = _text(answers[key], key)
             if val is not None:
                 out[key] = val
@@ -390,6 +528,8 @@ def confirmed_from(answers: dict[str, str]) -> tuple[recipe_mod.Confirmed, dict]
         picks["design"] = "unsure"
     if "unit" in answers:
         picks["unit"] = answers["unit"]
+    if "x_measure" in answers:
+        picks["x_measure"] = answers["x_measure"]
     if design == "repeated":
         return recipe_mod.Confirmed(
             "repeated", answers.get("unit") if "unit" in answers else None
@@ -399,13 +539,68 @@ def confirmed_from(answers: dict[str, str]) -> tuple[recipe_mod.Confirmed, dict]
     return recipe_mod.Confirmed(), picks
 
 
+def unplotted_unmet(rows: list[dict]) -> int:
+    """没画的行里「有数据却没画上」的有多少（`goal.rows_plotted` 看这个数）：纵轴空着的行（`y_missing`）没有可画的点，是缺失，不算。
+    大表的清单只有前 100 个样例、不逐行分原因，这个数由缩减那一遍单独记（`Examples.unmet`）。"""
+    unmet = getattr(rows, "unmet", None)
+    return unmet if unmet is not None else sum(1 for r in rows if r.get("reason") != "y_missing")
+
+
+class Examples(list):
+    """大表上「没画的行」只给前 100 个例子；`total` 是精确的总数（来自概览扫描）。小表直接是普通列表（`total` 同长度）。"""
+
+    total: int = 0
+    #: 「有数据却没画上」的行数（见 `unplotted_unmet`）；None = 没单独记，按每行的原因数
+    unmet: int | None = None
+
+
+def unplotted_total(rows: list[dict]) -> int:
+    return getattr(rows, "total", len(rows))
+
+
 def unplotted_rows(values: adf.DataSummary, recipe) -> list[dict]:
-    """配方画不出来的行（`row` 是文件里的行号，表头算第 1 行，XLSX 是表内行号）：横轴（trend / relationship）没有值（空 / NaN / 不是数或日期）的行
-    画不到坐标里。y 列的空 / NaN 是缺失，折线在那里断开，不算没画；夹着文字格的数值列用户已选了处理方式（`recipe.cells`），
-    那些格子是用户明确决定过的，不在这里报（统计在 `cell_stats`）。"""
+    """配方画不出来的行（`row` 是文件里的行号，表头算第 1 行，XLSX 是表内行号）。**脚本里每一处跳过一行的地方，这里都有对应的一条**
+    （sciviz G-055「没画的观测要有计数和规则」；每行只记一个原因）：
+
+    * `x_not_a_value`：折线 / 散点的横轴没有值（空 / NaN / 不是数或日期），画不到坐标里；
+    * `category_empty`：比较类的类别那一格是空的；
+    * `group_empty` / `facet_empty` / `unit_empty`：分组 / 分面 / 个体那一格是空的，归不到任何一组里；
+    * `not_a_number`：纵轴那一格是文字（用户还没选处理方式的）；
+    * `y_missing`：比较类 / 分布类 / 散点类的纵轴是空的或 NaN——这一行没有可画的点。
+
+    折线的纵轴空 / NaN 是缺失（线在那里断开，看得见），不算没画；夹着文字格的数值列用户已选了处理方式（`recipe.cells`）的，
+    那些格子是用户明确决定过的，不在这里报（统计在 `cell_stats`）。大表只给总数与前 100 个行号，不逐行分原因（全都是横轴不是值记 `x_not_a_value`，全都是纵轴空着记 `y_missing`，混着的记 `row_not_plotted`；「有数据却没画上」的行数另记在 `Examples.unmet`）。"""
+    if (
+        recipe.stack
+    ):  # 把列当分组：被转的列都是纯数值列，空格 / NaN 是缺失（不是「没画」），没有横轴
+        return []
+    if values.large is not None:
+        total, numbers, counts = tpl.large_unplotted(values, recipe)
+        if total == counts["x"]:
+            why, col = "x_not_a_value", recipe.x
+        elif total == counts["y"]:
+            why, col = "y_missing", recipe.y[0]
+        else:
+            why, col = "row_not_plotted", recipe.x
+        ex = Examples({"row": n, "column": col, "reason": why} for n in numbers)
+        ex.total = total
+        # 「有数据却没画上」的行数（横轴不是值、分组 / 分面 / 个体空）：纵轴空着的是缺失，不算（与小表同一口径）
+        ex.unmet = counts["x"] + counts["key"]
+        return ex
     out: list[dict] = []
     idx = {c: i for i, c in enumerate(values.columns)}
     x = recipe.x if recipe.family in ("trend", "relationship") else None
+    category = recipe.x if recipe.family == "comparison" else None
+    keys = [
+        (category, "category_empty"),
+        (recipe.group, "group_empty"),
+        (recipe.facet, "facet_empty"),
+    ]
+    if recipe.family == "trend":
+        keys.append((recipe.unit, "unit_empty"))
+    keys = [(c, why) for c, why in keys if c and c in idx]
+    # 比较 / 分布（都走 `comparison_data`）与散点：一行一个点，纵轴没有数就没有这个点；折线的缺失是断开，不在此列
+    point_needs_y = recipe.family != "trend"
     covered = {c.column for c in recipe.cells}
     # 横轴列有处理规则时按**规则作用之后**的格子判：「取数字部分」取出了数的行画得出来，不算；「不画那几行」之后是空格，算没画
     applied = (
@@ -421,12 +616,37 @@ def unplotted_rows(values: adf.DataSummary, recipe) -> list[dict]:
             else:
                 ok = adf.parse_cell(cell)[0] == "numeric"
             if not ok:
-                out.append({"row": values.row_number(n), "column": x, "reason": "x_not_a_value"})
+                out.append(_unplotted(values, n, x, "x_not_a_value"))
                 continue
+        empty = next(((c, why) for c, why in keys if not row[idx[c]].strip()), None)
+        if empty is not None:
+            out.append(_unplotted(values, n, *empty))
+            continue
         for y in recipe.y:
-            if y not in covered and adf.parse_cell(row[idx[y]])[0] == "text":
-                out.append({"row": values.row_number(n), "column": y, "reason": "not_a_number"})
+            if y in covered:
+                continue
+            kind = adf.parse_cell(row[idx[y]])[0]
+            if kind == "text":
+                out.append(_unplotted(values, n, y, "not_a_number"))
+            elif kind != "numeric" and point_needs_y:
+                out.append(_unplotted(values, n, y, "y_missing"))
     return out
+
+
+def _unplotted(values: adf.DataSummary, n: int, column: str, reason: str) -> dict:
+    item = {"row": values.row_number(n), "column": column, "reason": reason}
+    src = values.row_source(n)
+    if src is not None:  # 合画：行号是那一份自己的文件行号，要带上是哪一份
+        item["file"] = src
+    return item
+
+
+def reduced_of(values: adf.DataSummary, recipe) -> dict | None:
+    """大表：`{"rows": 整表行数, "kept": 缩减后画出的行数}`（缩减结果在 `large_reduce` 的缓存里，不再读文件）；小表 None。"""
+    if values.large is None:
+        return None
+    _rows, info = tpl.large_reduce(values, recipe)
+    return {"rows": info["rows"], "kept": info["kept"]}
 
 
 def cell_stats(values: adf.DataSummary, recipe) -> list[dict]:
@@ -523,10 +743,21 @@ def _render_attempt(sdir: Path, rel: str, stem: str, thumb: Path) -> _Rendered:
             LOG.warning("数据出图候选渲染后 worker 退役失败", exc_info=True)
 
 
-def _stage_table(sdir: Path, source: Path, table_rel: str) -> None:
+def _stage_table(sdir: Path, source: Path, table_rel: str, tracked: bool = False) -> None:
     """把选中的那一张数据文件的**字节副本**放进候选目录（布局与将来落盘后相同）。只复制不链接；源文件只读。"""
     dest = sdir.joinpath(*PurePosixPath(normalize_rel(table_rel)).parts)
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if tracked and progress.active():
+        # 大表副本按块复制：每块记字节进度并查取消（`shutil.copyfile` 一口气拷 500 MB 不能中途停）。取消 / 出错由调用方删整个会话目录
+        total = source.stat().st_size
+        done = 0
+        with source.open("rb") as src, dest.open("wb") as out:
+            for chunk in iter(lambda: src.read(8 * 1024 * 1024), b""):
+                out.write(chunk)
+                done += len(chunk)
+                progress.tick("stage", done, total)
+        shutil.copystat(source, dest)
+        return
     shutil.copyfile(source, dest)
 
 
@@ -546,19 +777,32 @@ def _plan_candidates(
     entry: adf.TableEntry,
     values: adf.DataSummary,
     recipes: list[recipe_mod.FigureRecipe],
+    style: dict | None = None,
 ) -> list[_Planned]:
     """每个备选出脚本 + 公共模块写进候选目录、算期望指纹。**不渲染**（便宜，毫秒级）。"""
     figures = sdir / "tavotto_figures"
     figures.mkdir(parents=True, exist_ok=True)
     data_rel = script_data_rel(entry.path)
     plan: list[_Planned] = []
+    if values.large is not None:
+        progress.set_passes("reduce", max(1, tpl.large_reduce_pending(values, recipes)))
     for n, recipe in enumerate(recipes, start=1):
         stem = f"cand_{n}"
         try:
-            rendered = tpl.render_recipe_script(entry, recipe, data_rel=data_rel, stem=stem)
+            rendered = tpl.render_recipe_script(
+                entry,
+                recipe,
+                data_rel=data_rel,
+                stem=stem,
+                style=style,
+                fits=tpl.fit_report(values, recipe),
+            )
             expected = tpl.expected_fingerprints(values, recipe)
         except tpl.TemplateError:
             plan.append(_Planned(n, stem, recipe, "candidate_template_unsupported", []))
+            continue
+        except tpl.LargeRuleError as exc:  # 大表：整表流过才知道的资格判据没过（折线的 x 重复 / 没排序等），码与小表上同一条规则一致
+            plan.append(_Planned(n, stem, recipe, exc.code, []))
             continue
         (figures / rendered.runtime_name).write_bytes(rendered.runtime)
         (figures / f"{stem}.py").write_text(rendered.script, encoding="utf-8")
@@ -585,9 +829,10 @@ def _render_candidates(
     values: adf.DataSummary,
     recipes: list[recipe_mod.FigureRecipe],
     pin=None,
+    style: dict | None = None,
 ) -> list[tuple[recipe_mod.FigureRecipe, dict | None, str | None, Path | None, bool]]:
     """每个备选 → `(配方, 覆盖情况, 剔除原因 | None, 缩略图, 是否回退过解释器)`。覆盖情况 = `fingerprint_coverage`；剔除原因在 `DROP_REASONS` 里。"""
-    plan = _plan_candidates(sdir, entry, values, recipes)
+    plan = _plan_candidates(sdir, entry, values, recipes, style)
 
     def work(p: _Planned):
         if p.bad:
@@ -652,6 +897,10 @@ def ensure_thumbnail(project: str, session_id: str, item_id: str) -> Path:
     if item.state == "pending":
         with item.lock:
             if item.state == "pending":
+                if sess.large:
+                    progress.enter(
+                        "render"
+                    )  # worker 里读 + 缩减 + 画图：没有字节进度，如实标「不确定」
                 _finish_lazy_item(sess, item)
     if item.state == "failed":
         raise ProposeError("propose_thumbnail_failed", params={"reason": item.reason})
@@ -711,9 +960,18 @@ def with_explicit_table(
     if rel is None:
         return profile
     values = adf.inspect_data_source(
-        folder / PurePosixPath(rel), sheet, v2=True, header_row=(header_rows or {}).get(rel)
+        folder / PurePosixPath(rel),
+        sheet,
+        v2=True,
+        header_row=(header_rows or {}).get(rel),
+        allow_large=True,
     )
-    summary = replace(values, rows=[], row_numbers=[], row_count=len(values.rows))
+    summary = replace(
+        values,
+        rows=[],
+        row_numbers=[],
+        row_count=values.row_count if values.large is not None else len(values.rows),
+    )
     entry = adf.TableEntry(rel, values.sheet, False, summary)
     return adf.FolderProfile(
         (*profile.tables, entry), profile.skipped, profile.truncated, profile.truncated_reason
@@ -722,12 +980,126 @@ def with_explicit_table(
 
 def _table_for_values(root_folder: Path, entry: adf.TableEntry) -> adf.DataSummary:
     # 同一读法：表头行取摘要里实际用的那一行（预览 / 资格判定 / 脚本读出来的是同一张表）
+    if entry.summary.large is not None:
+        return entry.summary  # 大表：概览那一遍扫描就是整表摘要（没有行数据），不再整份扫第二遍
     return adf.inspect_data_source(
         root_folder / PurePosixPath(entry.path),
         entry.sheet,
         v2=True,
         header_row=entry.summary.header_line,
+        allow_large=True,
     )
+
+
+def _recipe_key(rec: recipe_mod.FigureRecipe) -> str:
+    return json.dumps({k: v for k, v in rec.to_dict().items() if k != "why"}, sort_keys=True)
+
+
+def _with_file_only_variants(
+    res, merged, values, confirmed, hint, picks, rules
+) -> tuple[recipe_mod.Candidates, dict[int, dict]]:
+    """合画且文件里**原本就有**在文件内取多个值的分组列（`MergeSpec.splittable`）：除了现状的画法（按文件上色、再按那一列拆开 / 分面），
+    再给一份**只按文件比较**的（把那些列当不存在重新出一遍备选）。两份各自走完整的 `default_candidates`（同一套校验与排序），这里只负责并起来：
+    现状的顺序不变（推荐仍是它的第一张），每张后面紧跟它只按文件比较的那一张；两种画法画出来一样的（配方除 `why` 外逐项相同）只留一张、不加标记。
+    返回 `(并好的 Candidates, {id(配方): 标记})`。"""
+    keep = {k: n for k, n in merged.summary.groups.items() if k not in merged.merge.splittable}
+    entry_b = replace(merged, summary=replace(merged.summary, groups=keep))
+    res_b = recipe_mod.default_candidates(
+        adf.FolderProfile((entry_b,), (), False, None),
+        table=entry_b.path,
+        sheet=entry_b.sheet,
+        confirmed=confirmed,
+        hint=hint,
+        values=replace(values, groups=keep),
+        picks=picks,
+        cells=rules,
+    )
+    if not isinstance(res_b, recipe_mod.Candidates) or not res_b.items:
+        return res, {}
+    seen = {_recipe_key(c.recipe) for c in res.items}
+    only_b = [c for c in res_b.items if _recipe_key(c.recipe) not in seen]
+    by_code = {c.code: c for c in only_b}
+    column = merged.merge.splittable[0]
+    out: list[recipe_mod.Candidate] = []
+    marks: dict[int, dict] = {}
+    used: set[str] = set()
+    for cand in res.items:
+        out.append(cand)
+        twin = by_code.get(cand.code)
+        if twin is not None:
+            marks[id(cand.recipe)] = {"kind": "split", "column": column}
+            marks[id(twin.recipe)] = {"kind": "by_file"}
+            out.append(twin)
+            used.add(cand.code)
+    out += [
+        c for c in only_b if c.code not in used
+    ]  # 只有「只按文件」才画得出来的（现状那一边被剔除了）排在最后
+    return replace(res, items=tuple(out)), marks
+
+
+def _read_merged(
+    root: Path,
+    folder_path: Path,
+    folder_rel: str,
+    tables: list[tuple[str, str | None]],
+    hrows: dict[str, int],
+) -> tuple[merge_mod.MergedEntry, adf.DataSummary, Path, str] | str:
+    """合画：逐份按单份的读法读（用户指定的表头行按文件各管各的）→ 要求列名集合与顺序一致 → 拼成一张逻辑表。
+    返回 `(拼好的条目, 带行数据的摘要, 落点目录, 落点的项目相对路径)`；某份不是所选文件夹里发现遍历认得的表 → 原因码 `table_not_found`
+    （与单份指名一张不存在的表同一形状）；读不了 / 没认准表头沿用单份的 `DataSourceError`；列名不一致 `tables_columns_differ`；
+    合计字节超 `MAX_TOTAL_BYTES` 沿用 `data_too_large`。只读，不往任何地方写。"""
+    # 与 `with_explicit_table` 同一条规则：只认发现遍历实际列得出的文件，路径取自遍历结果（隐藏 / 剪枝 / 链接 / 非表格后缀都落不进来）
+    found, _ = discover.walk_files(folder_path, adf.TABLE_SUFFIXES, scan_max=adf.PROFILE_SCAN_MAX)
+    known = {f[0] for f in found if not Path(f[0]).name.startswith("~$")}
+    rels: list[str] = []
+    summaries: list[adf.DataSummary] = []
+    seen: set[tuple[str, str | None]] = set()
+    total = 0
+    for path, sheet in tables:
+        try:
+            rel = normalize_rel(path)
+        except ValueError:
+            raise adf.DataSourceError("data_path_outside_project") from None
+        if rel not in known:
+            return "table_not_found"
+        values = adf.inspect_data_source(
+            folder_path / PurePosixPath(rel), sheet, v2=True, header_row=hrows.get(rel)
+        )
+        if (rel, values.sheet) in seen:  # 同一份（同文件同工作表）给了两次
+            raise ProposeError("propose_input_invalid", "tables")
+        if not any(
+            r == rel for r in rels
+        ):  # 同一个工作簿的几张表只算一次（候选目录里也只有一份副本）
+            total += values.size
+        seen.add((rel, values.sheet))
+        if total > merge_mod.MAX_TOTAL_BYTES:
+            raise adf.DataSourceError("data_too_large", str(total))
+        rels.append(rel)
+        summaries.append(values)
+    try:
+        merge_mod.check_same_columns(summaries)
+        landing = merge_mod.common_parent(rels)
+        labels = merge_mod.unique_labels([(r, v.sheet) for r, v in zip(rels, summaries)])
+        sources = [
+            merge_mod.Source(
+                path=r,
+                rel=merge_mod.rebase(r, landing),
+                sheet=v.sheet,
+                label=lab,
+                sha256=v.sha256,
+                size=v.size,
+                header_line=v.header_line,
+            )
+            for r, v, lab in zip(rels, summaries, labels, strict=True)
+        ]
+        entry, values = merge_mod.build(sources, summaries, landing)
+    except merge_mod.MergeError as exc:
+        raise ProposeError(exc.code, params=exc.params) from None
+    landing_rel = "/".join(p for p in (folder_rel, landing) if p)
+    real = projectenv.contained_path(root, landing_rel)
+    if real is None or not Path(real).is_dir():
+        raise adf.DataSourceError("data_path_outside_project")
+    return entry, values, Path(real), landing_rel
 
 
 def item_to_dict(sess: Session, item: Item, recommended: bool) -> dict:
@@ -737,15 +1109,17 @@ def item_to_dict(sess: Session, item: Item, recommended: bool) -> dict:
         "title_code": item.code,
         "why_code": item.code,
         "values": {
-            "table": r.table,
+            "table": sess.merge.sources[0].path if sess.merge is not None else r.table,
             "sheet": r.sheet,
             "family": r.family,
-            "x": r.x,
-            "y": list(r.y),
-            "group": r.group,
+            # 把列当分组：`y` 是被当分组的那几列（与响应里 `roles.y` 一致），配方里转换后的值 / 类别列是内部的，不对外；多一项 `stack` 标明
+            "x": None if r.stack else r.x,
+            "y": list(r.stack or r.y),
+            "group": None if r.stack else r.group,
             "facet": r.facet,
             "unit": r.unit,
             "layers": [layer.to_dict() for layer in r.layers],
+            **({"stack": list(r.stack)} if r.stack else {}),
         },
         "recommended": recommended,
         "coverage": item.coverage,
@@ -756,6 +1130,10 @@ def item_to_dict(sess: Session, item: Item, recommended: bool) -> dict:
         },
         "thumbnail_url": f"/api/ai/data-figure/thumbnail/{sess.id}/{item.id}",
         "thumbnail_status": item.state,
+        **({"reduced": item.reduced} if item.reduced is not None else {}),
+        # 有拟合线才有：每条线的截距 / 斜率 / n（描述性的最小二乘直线；对数轴那一维是 log10）
+        **({"fits": item.fits} if item.fits else {}),
+        **({"variant": item.variant} if sess.merge is not None and sess.merge.splittable else {}),
     }
 
 
@@ -771,6 +1149,9 @@ def propose(
     header_rows=None,
     client_request_id: str | None = None,
     render: str | None = None,
+    tables=None,
+    spec=None,
+    font_range=None,
 ) -> dict:
     """出备选。返回三选一：`{"kind": "ask", question_code, options, unsure}` / `{"kind": "candidates", session, items, dropped}` /
     `{"kind": "nothing", reasons}`。数据读不了（文件夹不存在 / 不在项目内）抛 `DataSourceError`（app 转 400 + 稳定码）。
@@ -781,8 +1162,18 @@ def propose(
     （`defaults` / `header_row` / `roles` / `mixed_cells`），用户在面板上改了就把改动放进 `answers`（`y` / `x` / `group` 的列名或 `none`、
     `cells`）与 `header_rows` 重来。
 
-    **不往用户文件夹写任何东西**（候选目录在 `data_dir()/cache/`，见模块说明）；幂等：同一 `(项目, client_request_id)` 在 TTL 内回同一份响应。"""
+    `tables`（合画，`[{path, sheet?}]`，2 到 `merge_mod.MAX_TABLES` 份；与 `table` 互斥）：几份列名相同的数据拼成一张逻辑表（`ai_data_merge`），
+    加一列合成的分组列（值是各份的文件标签），分组角色默认就是这一列；响应另有 `sources`（各份的路径 / 工作表 / 标签）与 `group_column`；
+    单份请求的响应逐字不变。
+
+    **不往用户文件夹写任何东西**（候选目录在 `data_dir()/cache/`，见模块说明）；幂等：同一 `(项目, client_request_id)` 在 TTL 内回同一份响应。
+
+    `spec`（可选）：前端按画布绑定解析好的出版规范（期刊覆盖已并入；快照优先那套取舍在前端 `resolveDocumentSpec`，这里不重做）。
+    过 `profiles.validate_spec` 后只取模板要的数字（`tpl.style_from_profile`）；不给 = 默认规范，响应逐字不变。规范不合法**不让出图失败**：
+    退回默认规范，响应带 `spec_fallback: true`。规范有效时响应带 `figure_style`（实际用的栏宽、起始字号，以及接受了的期刊字号范围 `font_min_pt` / `font_max_pt`）。
+    `font_range`（可选，`{min_pt?, max_pt?}`，随 `spec` 一起才有意义）：期刊自己规定的字号上下限，读法见 `tpl.style_from_profile`。规范进幂等键：换了期刊必须重新出图。只在本机用，不进给模型的内容。"""
     sweep()
+    progress.check()
     if render is not None and render not in RENDER_MODES:
         raise ProposeError("propose_input_invalid", "render")
     auto = render == "lazy"
@@ -792,10 +1183,21 @@ def propose(
     sheet = _text(sheet, "sheet")
     ans = parse_answers(answers)
     hrows = parse_header_rows(header_rows)
+    user_took_over = _user_took_over(
+        ans
+    )  # 懒模式的循环会往 `ans` 里补默认答案，所以在它之前记下请求原本带没带
+    tabs = parse_tables(tables)
+    style, spec_digest, spec_bad = parse_spec(spec, font_range)
+    if tabs is not None and table is not None:  # `table` 与 `tables` 只能给一个
+        raise ProposeError("propose_input_invalid", "tables")
     # 幂等键 = (项目, 请求号, 请求内容的摘要)：同一请求号带了不同的回答（换了处理方式）必须重新出图，不回旧的
     digest_parts = [folder, table, sheet, hint, _answers_digest(ans), hrows]
     if auto:
         digest_parts.append("lazy")
+    if tabs is not None:
+        digest_parts.append(["tables", tabs])
+    if spec_digest is not None:
+        digest_parts.append(["spec", spec_digest])
     digest = hashlib.sha256(
         json.dumps(digest_parts, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
@@ -808,8 +1210,9 @@ def propose(
     def remember(response: dict, session_id: str | None = None) -> dict:
         return _remember(project, client_request_id, response, session_id, digest)
 
-    table = table or ans.get("table")
-    sheet = sheet or ans.get("sheet")
+    if tabs is None:
+        table = table or ans.get("table")
+        sheet = sheet or ans.get("sheet")
     try:
         folder_rel = normalize_rel(folder)
     except ValueError:
@@ -822,11 +1225,23 @@ def propose(
         raise adf.DataSourceError("data_not_found")
     root_real = Path(os.path.realpath(root))
     folder_rel = folder_path.relative_to(root_real).as_posix() if folder_path != root_real else ""
-    folder_profile = adf.profile_folder(folder_path, hrows)
-    for bad in folder_profile.skipped:
-        if bad.path in hrows:  # 用户指定了表头行、按它读不出来：直说原因（不是悄悄「没有可画的」）
-            raise adf.DataSourceError(bad.code)
-    profile = with_explicit_table(folder_profile, folder_path, table, sheet, hrows)
+    merged: merge_mod.MergedEntry | None = None
+    merged_values: adf.DataSummary | None = None
+    if tabs is not None:
+        got = _read_merged(root, folder_path, folder_rel, tabs, hrows)
+        if isinstance(got, str):
+            return remember({"kind": "nothing", "reasons": [got], "dropped": []})
+        merged, merged_values, folder_path, folder_rel = got  # 落点目录成了这一次的「数据文件夹」
+        profile = adf.FolderProfile((merged,), (), False, None)
+        table, sheet = merged.path, merged.sheet
+    else:
+        folder_profile = adf.profile_folder(folder_path, hrows)
+        for bad in folder_profile.skipped:
+            if (
+                bad.path in hrows
+            ):  # 用户指定了表头行、按它读不出来：直说原因（不是悄悄「没有可画的」）
+                raise adf.DataSourceError(bad.code)
+        profile = with_explicit_table(folder_profile, folder_path, table, sheet, hrows)
     rules: dict[str, recipe_mod.CellRule] = dict(ans.get("cells") or {})
     defaults: list[dict] = []
     mixed_auto: list[dict] = []
@@ -834,8 +1249,22 @@ def propose(
     values_key: tuple | None = None
     res = None
     chosen = None
+    # 合画：分组角色默认是合成的那一列（用户在右栏换了 / 选「无」就用他的；这一列成不了分组——如每份只有一行——就按原规则）
+    file_group = None
+    if merged is not None and merged_values is not None:
+        col = merged.merge.column
+        if col in merged_values.groups and col not in merged_values.id_like:
+            file_group = col
+            if auto and "group" not in ans:
+                others = [
+                    c for c in merged_values.groups if c != col and c not in merged_values.id_like
+                ]
+                if others:  # 原本要问「按哪一列分组」：记下替用户选了合成列
+                    defaults.append({"question_code": "pick_group", "answer": {"group": col}})
     for _round in range(MAX_AUTO_ROUNDS if auto else 1):
         confirmed, picks = confirmed_from(ans)
+        if file_group is not None and "group" not in picks:
+            picks["group"] = file_group
         chosen = recipe_mod.pick_table(profile, table, sheet, hint)
         if isinstance(chosen, recipe_mod.NeedsChoice):
             if auto and chosen.options:  # 懒模式：不问，用第一张（发现遍历的顺序）
@@ -847,7 +1276,7 @@ def propose(
         if isinstance(chosen, str):
             return remember({"kind": "nothing", "reasons": [chosen], "dropped": []})
         if values_key != (chosen.path, chosen.sheet):
-            values = _table_for_values(folder_path, chosen)
+            values = merged_values if merged is not None else _table_for_values(folder_path, chosen)
             values_key = (chosen.path, chosen.sheet)
         if rules:
             bad = recipe_mod.check_cell_rules(list(rules.values()), chosen.summary, values)
@@ -898,14 +1327,42 @@ def propose(
     ):
         # 懒模式迭代用尽仍没落定（防御）：不出 ask，当「没有可画的」
         return remember({"kind": "nothing", "reasons": ["no_renderable_family"], "dropped": []})
+    variants: dict[int, dict] = {}
+    if (
+        merged is not None
+        and file_group is not None
+        and merged.merge.splittable
+        and "group" not in ans
+        and res.items
+    ):
+        res, variants = _with_file_only_variants(res, merged, values, confirmed, hint, picks, rules)
+
+    def merged_info() -> dict:
+        """合画：各份是哪几份（路径与请求里一致）、各自的标签、合成的分组列名；单份没有这两项。"""
+        if merged is None:
+            return {}
+        return {
+            "sources": [
+                {
+                    "path": src.path,
+                    "sheet": src.sheet,
+                    "label": src.label,
+                    "header_row": src.header_line,
+                    "units_row": bool(src.entry and src.entry.summary.units_row),
+                }
+                for src in merged.merge.sources
+            ],
+            "group_column": merged.merge.column,
+        }
 
     def basics() -> dict:
         """懒模式响应里**说清这次用了什么**：表 / 表头行 / 列角色与可换的列 / 默认决定 / 自动跳过的文字格。"""
         if not auto:
-            return {}
+            return merged_info()
         return {
+            **merged_info(),
             "render": "lazy",
-            "table": chosen.path,
+            "table": merged.merge.sources[0].path if merged is not None else chosen.path,
             "sheet": chosen.sheet,
             "header_row": values.header_line,
             "units_row": values.units_row,  # 表头后紧跟的单位行已被切掉（它是 `header_row + 1` 行）；没有 = False
@@ -933,19 +1390,38 @@ def propose(
         tuple[recipe_mod.Candidate, dict | None, str | None, Path | None, _Planned | None]
     ] = []
     try:
-        _stage_table(sdir, folder_path / PurePosixPath(chosen.path), chosen.path)
+        if merged is not None:
+            for src in merged.merge.sources:
+                _stage_table(sdir, folder_path / PurePosixPath(src.rel), src.rel)
+        else:
+            progress.check()
+            make_room(values.size)
+            _stage_table(
+                sdir,
+                folder_path / PurePosixPath(chosen.path),
+                chosen.path,
+                tracked=values.large is not None,
+            )
         if auto:
-            plan = _plan_candidates(sdir, chosen, values, [c.recipe for c in res.items])
+            plan = _plan_candidates(sdir, chosen, values, [c.recipe for c in res.items], style)
             for cand, p in zip(res.items, plan, strict=True):
                 cov = None if p.bad else tpl.fingerprint_coverage(p.recipe).to_dict()
                 ready.append((cand, cov, p.bad, None, p))
         else:
             rendered = _render_candidates(
-                sdir, chosen, values, [c.recipe for c in res.items], _project_pin(root)
+                sdir, chosen, values, [c.recipe for c in res.items], _project_pin(root), style
             )
             for cand, (_recipe, coverage, reason, png, fb) in zip(res.items, rendered, strict=True):
                 fallback = fallback or fb
                 ready.append((cand, coverage, reason, png, None))
+    except OSError as exc:
+        _rmtree(sdir)
+        if exc.errno not in (errno.ENOSPC, errno.EDQUOT):
+            raise
+        # 候选目录所在的磁盘放不下大表的副本：结构化的「没有备选」，不是 500（原因码复用既有的 `candidate_render_failed`）
+        return remember(
+            {"kind": "nothing", "reasons": ["candidate_render_failed"], "dropped": [], **basics()}
+        )
     except BaseException:
         _rmtree(sdir)
         raise
@@ -962,9 +1438,12 @@ def propose(
             cand.recipe,
             coverage or {},
             png,
-            len(unplotted_rows(values, cand.recipe)),
+            unplotted_total(unplotted_rows(values, cand.recipe)),
             cell_stats(values, cand.recipe) or None,
+            reduced=reduced_of(values, cand.recipe),
             state="pending" if planned is not None else "ready",
+            variant=variants.get(id(cand.recipe)),
+            fits=tpl.fit_report(values, cand.recipe),
             stem=planned.stem if planned is not None else None,
             n=planned.n if planned is not None else 0,
             expected=planned.expected if planned is not None else [],
@@ -989,12 +1468,15 @@ def propose(
         data_sha256=values.sha256,
         data_size=values.size,
         header_line=values.header_line,
+        merge=merged.merge if merged is not None else None,
         confirmed=res.confirmed,
         items=items,
         dir=sdir,
         touched=time.time(),
         root=Path(root),
         lazy=auto,
+        large=values.large is not None,
+        style=style,
     )
     with _LOCK:
         _SESSIONS[sid] = sess
@@ -1005,9 +1487,28 @@ def propose(
         "dropped": dropped,
         # 诊断标记：至少有一张小图是项目解释器没画成、回退到默认链条画的
         "interpreter_fallback": fallback,
+        **({"spec_fallback": True} if spec_bad else {}),
+        # 带了规范才有：这批图实际用的栏宽、起始字号与期刊字号范围（面板上如实显示，前端不另算一遍）
+        **({"figure_style": figure_style(style)} if style is not None else {}),
         **basics(),
     }
+    if auto and not hrows and not user_took_over:
+        # 第 1 步「读懂数据」：有可用的 Key 连接才起后台任务、响应里才多这一个键；没有时响应与从前逐字相同
+        und = roles_mod.start(
+            project=project,
+            entry=chosen,
+            values=values,
+            hint=hint,
+            data_path=None if merged is not None else folder_path / PurePosixPath(chosen.path),
+        )
+        if und is not None:
+            out["understanding"] = und
     return remember(out, sid)
+
+
+def _user_took_over(ans: dict) -> bool:
+    """请求里已有用户（或前端替用户带上的模型建议）定下的列角色 / 处理规则：不再起模型任务，也避免「采纳建议 → 再来一次 → 再起任务」的循环。"""
+    return any(k in ans for k in ("y", "x", "group", "cells", "x_measure"))
 
 
 def _answers_digest(ans: dict) -> dict:

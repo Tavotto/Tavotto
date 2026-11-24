@@ -214,6 +214,8 @@ interface NumberFieldProps {
    * 在空框里按 Backspace / Delete 也算。不给时空框照旧还原（属性页：数不能「没有」）
    */
   onClear?: () => void
+  /** ⇧ 时步长乘几（方向键与拖标签同一个）；缺省 10 */
+  shiftMult?: number
   className?: string
   title?: string
   /** 无障碍名。缺省时从字符串 prefix/unit 推导（"X (mm)"）；prefix 不是
@@ -250,6 +252,7 @@ export function NumberField({
   mixed,
   mixedPlaceholder,
   onClear,
+  shiftMult = 10,
   className,
   title,
   ariaLabel,
@@ -336,7 +339,7 @@ export function NumberField({
       if (Math.abs(dx) < 2 && !moved) return
       if (!moved) onScrubStart?.()
       moved = true
-      const mult = ev.shiftKey ? 10 : ev.altKey ? 0.1 : 1
+      const mult = ev.shiftKey ? shiftMult : ev.altKey ? 0.1 : 1
       onChange(clampVal(startVal + dx * step * mult))
     }
     const finish = (cancelled: boolean) => {
@@ -459,7 +462,7 @@ export function NumberField({
             } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
               e.preventDefault()
               // 修饰键与拖动改数同一张表：Shift ×10、Alt ×0.1（2026-09-14 审计 S13：此前键盘缺 Alt）
-              const mult = e.shiftKey ? 10 : e.altKey ? 0.1 : 1
+              const mult = e.shiftKey ? shiftMult : e.altKey ? 0.1 : 1
               const next = commit(value + (e.key === 'ArrowUp' ? step : -step) * mult)
               setText(String(Number(next.toFixed(precision))))
             }
@@ -642,6 +645,8 @@ export function ColorField({
             <ColorPanel
               value={mixed ? null : value}
               documentColors={host?.documentColors ?? []}
+              figureColors={host?.figureColors ?? []}
+              recommended={host?.recommended ?? null}
               onPick={(c) => {
                 pick(c)
                 setOpen(false)
@@ -754,18 +759,22 @@ function HexInput({
 }
 
 /**
- * 取色面板：文档颜色 / 最近 / 系统取色器。
+ * 取色面板：排版里的颜色 / 最近 / 图内配色 / 推荐配色（色盲友好，ADR 0185 M3）/ 系统取色器。
  * 「无」与不透明度不在这里：能取「无」的属性各有自己的开关（形状填充、文字底色的 EffectToggle），
  * 不透明度各有自己的一行——同一个属性不出第二个控件。
  */
 function ColorPanel({
   value,
   documentColors,
+  figureColors,
+  recommended,
   onPick,
   onSystem,
 }: {
   value: string | null
   documentColors: readonly string[]
+  figureColors: readonly string[]
+  recommended: { colors: readonly string[]; journal: string | null } | null
   onPick: (c: string) => void
   onSystem: () => void
 }) {
@@ -797,10 +806,12 @@ function ColorPanel({
       </button>
     )
   }
-  const group = (title: string, colors: readonly string[], attr: string) =>
+  const group = (title: string, colors: readonly string[], attr: string, tip?: string) =>
     colors.length > 0 && (
       <div data-color-group={attr} className="flex flex-col gap-1">
-        <p className="type-meta">{title}</p>
+        <p className="type-meta" title={tip}>
+          {title}
+        </p>
         <div className="flex flex-wrap gap-1">{colors.map((c) => chip(c, `${attr}-${c}`))}</div>
       </div>
     )
@@ -808,6 +819,16 @@ function ColorPanel({
     <div className="flex flex-col gap-2" data-color-panel>
       {group(t('colorField.documentColors'), documentColors.slice(0, 16), 'document')}
       {group(t('colorField.recent'), recentColors, 'recent')}
+      {group(t('colorField.figureColors'), figureColors, 'figure')}
+      {recommended &&
+        group(
+          t('colorField.recommended'),
+          recommended.colors,
+          'recommended',
+          recommended.journal
+            ? t('colorField.recommendedTipJournal', { journal: recommended.journal })
+            : t('colorField.recommendedTip'),
+        )}
       <button
         type="button"
         data-color-system

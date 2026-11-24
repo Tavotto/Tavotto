@@ -30,21 +30,39 @@ def project(tmp_path, monkeypatch):
     root.mkdir()
     (root / "chart.svg").write_bytes((CORPUS / "line_two_series.svg").read_bytes())
     m.open_project(str(root))
-    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", str(REPO / ".venv" / "Scripts" / "python.exe"))
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", pool.find_worker_python())
     monkeypatch.setattr(
         pool, "get", lambda *a, **k: pytest.fail("chart compute built a script session")
     )
-    yield m.app.test_client(), root
-    m.reset_projects()
-    project_watch.stop()
+    try:
+        yield m.app.test_client(), root
+    finally:
+        pool.shutdown_all(figures_dir=str(root), wait=True)
+        m.reset_projects()
+        project_watch.stop()
+
+
+def _inspect(client):
+    response = client.get("/api/svg/chart/inspect?id=chart.svg")
+    assert response.status_code == 200, response.json
+    return response.json
+
+
+def _bind(client, **overrides):
+    return client.post(
+        "/api/svg/chart/bind",
+        json={
+            **BIND_REQUEST,
+            "file": "chart.svg",
+            "scene_digest": _inspect(client)["scene_digest"],
+            **overrides,
+        },
+    )
 
 
 def test_bind_endpoint_returns_model_and_binding(project):
     client, _root = project
-    response = client.post(
-        "/api/svg/chart/bind",
-        json={**BIND_REQUEST, "file": "chart.svg"},
-    )
+    response = _bind(client)
     assert response.status_code == 200
     body = response.json
     assert body["model"]["series"][0]["node"] == "line2d_13"
@@ -53,19 +71,45 @@ def test_bind_endpoint_returns_model_and_binding(project):
 
 def test_bind_endpoint_refuses_dirty_data_and_missing_file(project):
     client, root = project
-    bad = client.post(
-        "/api/svg/chart/bind",
-        json={**BIND_REQUEST, "file": "chart.svg", "dataset_text": "x,y1\noops\n"},
-    )
+    bad = _bind(client, dataset_text="x,y1\noops\n")
     assert bad.status_code == 422
     assert bad.json["code"] == "bind_evidence_invalid"
     missing = client.post("/api/svg/chart/bind", json={**BIND_REQUEST, "file": ""})
     assert missing.status_code == 422
 
 
+def test_bind_requires_a_scene_digest(project):
+    client, _root = project
+    result = client.post("/api/svg/chart/bind", json={**BIND_REQUEST, "file": "chart.svg"})
+    assert result.status_code == 422
+    assert result.json["code"] == "chart_model_invalid"
+
+
+def test_bind_rejects_regenerated_svg_with_the_same_node_ids(project):
+    client, root = project
+    before = _inspect(client)
+    source = root / "chart.svg"
+    original = source.read_bytes()
+    regenerated = original.replace(b'viewBox="0 0 360 252"', b'viewBox="0 0 720 504"', 1)
+    assert regenerated != original
+    source.write_bytes(regenerated)
+    current = _inspect(client)
+    assert current["nodes"] == before["nodes"]
+    assert current["view_box"] != before["view_box"]
+
+    rejected = _bind(client, scene_digest=before["scene_digest"])
+
+    assert rejected.status_code == 409
+    assert rejected.json["code"] == "chart_source_changed"
+    assert source.read_bytes() == regenerated
+    rebound = _bind(client)
+    assert rebound.status_code == 200
+    assert rebound.json["binding"]["scene_digest"] == current["scene_digest"]
+
+
 def test_compute_endpoint_renders_bound_region(project):
     client, root = project
-    bound = client.post("/api/svg/chart/bind", json={**BIND_REQUEST, "file": "chart.svg"})
+    bound = _bind(client)
     model, binding = bound.json["model"], bound.json["binding"]
     before = (root / "chart.svg").read_bytes()
     response = client.post(
@@ -84,7 +128,7 @@ def test_compute_endpoint_renders_bound_region(project):
 
 def test_compute_endpoint_refuses_changed_scene(project):
     client, root = project
-    bound = client.post("/api/svg/chart/bind", json={**BIND_REQUEST, "file": "chart.svg"})
+    bound = _bind(client)
     model, binding = bound.json["model"], bound.json["binding"]
     (root / "chart.svg").write_bytes(
         b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect/></svg>'
@@ -98,7 +142,7 @@ def test_compute_endpoint_refuses_changed_scene(project):
 
 def test_compute_endpoint_refuses_engine_mismatch(project):
     client, _root = project
-    bound = client.post("/api/svg/chart/bind", json={**BIND_REQUEST, "file": "chart.svg"})
+    bound = _bind(client)
     model = bound.json["model"]
     model["engine"]["matplotlib"] = "9.9.9-fake"
     response = client.post(
@@ -117,7 +161,7 @@ def test_compute_endpoint_refuses_engine_mismatch(project):
 def test_compute_source_changed_during_subprocess_returns_conflict(project, monkeypatch):
     """计算期间来源文件被改 → 409 `chart_source_changed`，不混合新旧字节。"""
     client, root = project
-    bound = client.post("/api/svg/chart/bind", json={**BIND_REQUEST, "file": "chart.svg"})
+    bound = _bind(client)
     model, binding = bound.json["model"], bound.json["binding"]
     from tavotto import app as m
 
@@ -144,7 +188,7 @@ def test_compute_source_changed_during_subprocess_returns_conflict(project, monk
 def test_compute_returns_full_render_identity(project):
     """响应带 render_revision + model/binding digest + engine（R03 完整渲染身份）。"""
     client, _root = project
-    bound = client.post("/api/svg/chart/bind", json={**BIND_REQUEST, "file": "chart.svg"})
+    bound = _bind(client)
     model, binding = bound.json["model"], bound.json["binding"]
     response = client.post(
         "/api/svg/chart/compute",
@@ -172,7 +216,7 @@ def test_compute_returns_full_render_identity(project):
 
 def test_compute_same_data_different_range_is_a_different_revision(project):
     client, _root = project
-    bound = client.post("/api/svg/chart/bind", json={**BIND_REQUEST, "file": "chart.svg"})
+    bound = _bind(client)
     model, binding = bound.json["model"], bound.json["binding"]
     r1 = client.post(
         "/api/svg/chart/compute", json={"file": "chart.svg", "model": model, "binding": binding}
@@ -187,7 +231,7 @@ def test_compute_same_data_different_range_is_a_different_revision(project):
 
 def test_compute_rejects_missing_scene_digest_mismatch_in_model(project):
     client, _root = project
-    bound = client.post("/api/svg/chart/bind", json={**BIND_REQUEST, "file": "chart.svg"})
+    bound = _bind(client)
     model = JSON_DEEPCOPY(bound.json["model"])
     binding = bound.json["binding"]
     # 模型里钉的场景摘要与实际文件不一致 → verify_scene 拒绝

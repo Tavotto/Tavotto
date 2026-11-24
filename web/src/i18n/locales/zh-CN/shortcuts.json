@@ -48,7 +48,15 @@
     "timeline": "打开 / 关闭排版时间线",
     "saveNamed": "把现在存为命名节点",
     "zoomSelection": "缩放到选中的对象",
-    "tabs": "焦点在画布标签上时：重命名 / 关闭 / 左右挪动"
+    "tabs": "焦点在画布标签上时：重命名 / 关闭 / 左右挪动",
+    "pen": "钢笔",
+    "anchors": "锚点编辑里：添加 / 删除 / 转换锚点",
+    "pathJoin": "连接路径 / 平均锚点",
+    "appearance": "默认填色描边 / 互换填色和描边 / 无填充",
+    "eyedropper": "吸管",
+    "compoundPath": "建立 / 释放复合路径",
+    "shapeBuilder": "形状生成器",
+    "pencil": "铅笔"
   },
   "or": "或",
   "title": "快捷键",

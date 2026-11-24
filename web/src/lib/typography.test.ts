@@ -174,9 +174,9 @@ describe('校验与规整', () => {
 
   it('数值区间取「本表与目标值域的更紧者」——宽的那个会让某个目标收到越界值', () => {
     const field = canvasFieldOf('sizePt')!
-    expect(coerceTypography('sizePt', 200, field)).toEqual({ ok: false, reason: 'out_of_range' })
-    // 不带 field 时 200 在兜底区间内，两个答案不同 = 确实按 field 收紧了
-    expect(coerceTypography('sizePt', 200)).toEqual({ ok: true, value: 200 })
+    expect(coerceTypography('sizePt', 300, field)).toEqual({ ok: false, reason: 'out_of_range' })
+    // 不带 field 时 300 在兜底区间内，两个答案不同 = 确实按 field 收紧了
+    expect(coerceTypography('sizePt', 300)).toEqual({ ok: true, value: 300 })
   })
 
   it('枚举：选项表之外的值一律拒绝，不落到"最接近的那个"', () => {

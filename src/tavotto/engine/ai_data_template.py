@@ -35,19 +35,27 @@ import io
 import json
 import math
 import re
+import threading
 import tokenize
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from . import ai_data_figure as adf, ai_data_recipe as recipe_mod, xlsxread
 from .ai_data_figure import (
+    NumCat,
     SemicolonCell,
     apply_cells,
+    apply_numcat,
+    apply_stack,
     date_number,
     delimited_records,
+    iter_records,
+    iter_table,
     parse_cell,
     parse_date,
     resolve_header,
     table_from_text,
+    xvg_label,
+    xvg_text,
 )
 
 # --------------------------------------------------------------------------- 错误
@@ -66,6 +74,15 @@ class TemplateError(ValueError):
         if code not in TEMPLATE_ERROR_CODES:
             raise ValueError(f"未登记的 TemplateError 码：{code}")
         super().__init__(f"{code}: {detail}" if detail else code)
+        self.code = code
+
+
+class LargeRuleError(ValueError):
+    """大表上数据相关的资格判据没过（折线的 x 有重复 / 没排序、系列不够多个 x……）：`code` 是 `ai_data_recipe.REJECTIONS` 里的稳定码
+    （与小表上 `validate_recipe` 对同一条规则报的码一致，前端已有文案）。小表的这些规则读行数据判，大表要把整表流过一遍才知道，所以在缩减那一遍里判。"""
+
+    def __init__(self, code: str):
+        super().__init__(code)
         self.code = code
 
 
@@ -91,9 +108,35 @@ def read_xlsx(path, sheet):
     return [h.strip() for h in table[0]], table[1:]
 
 
+def group_key(label):
+    """一个分组列的单元格在分组时的键：去首尾空白、区分大小写、不做 Unicode 规范化——`comparison_data` / `trend_data` / `relationship_data` 与
+    `ai_data_figure._summarize` 的取值集合都是这个写法（`cell.strip()`）。合画的文件标签是否「分得开」就按它判（`merge_tables` 与父进程同一个函数）。"""
+    return label.strip()
+
+
+def merge_tables(tables, labels, column):
+    """几份列名与顺序都相同的表 → 一张表（合画）：按给定顺序逐份拼行，表头末尾多一列 `column`，值是该份的 `labels[i]`。
+    `tables` 是 `[(表头, 数据行), …]`（各份读法与单份一样，由调用方先读好）；某份表头与第一份不同直接 `ValueError`——数据在生成之后变了，
+    不悄悄错位拼接；标签按 `group_key` 有重复也直接 `ValueError("tables_labels_collide")`。只拼内存里的副本，数据文件不动。"""
+    header = list(tables[0][0])
+    if len({group_key(lab) for lab in labels}) != len(labels):
+        raise ValueError(
+            "tables_labels_collide"
+        )  # 两个文件的标签在分组时会被并成一组：绝不静默并组
+    out = []
+    for (head, rows), label in zip(tables, labels):
+        if list(head) != header:
+            raise ValueError("tables_columns_differ")
+        out.extend([*r, label] for r in rows)
+    return [*header, column], out
+
+
 def distinct(values):
-    """按首次出现的顺序去重。"""
-    return list(dict.fromkeys(values))
+    """按首次出现的顺序去重；整列都是整数编码的类别（`NumCat`，见 `apply_numcat`）时改按数值升序（类别顺序按编码大小，不看谁先出现）。"""
+    out = list(dict.fromkeys(values))
+    if out and all(isinstance(v, NumCat) for v in out):
+        out.sort(key=lambda v: v.number)
+    return out
 
 
 def make_label(mark, *parts):
@@ -567,6 +610,347 @@ def ecdf_xy(vals):
     return [s[0]] + s, [0.0] + [(i + 1) / n for i in range(n)]
 
 
+# ---- 大表缩减（ADR 0178 修订·大表）：流式一遍，内存只与「箱数 × 系列数」有关
+def bin_update(b, yv, row):
+    """把一行（`row = (行序号, 单元格)`，`yv` = 各 y 列的有限数值或 None）并进箱 `b` 的 y 角色：每个 y 列记最小 / 最大值所在行。
+    严格比较、行序号递增，所以并列时先出现的赢——与 `bin_merge` 的并列规则（行序号小的赢）一致。"""
+    for j in range(len(yv)):
+        v = yv[j]
+        if v is None:
+            continue
+        o = 4 + 4 * j
+        if b[o] is None or v < b[o]:
+            b[o], b[o + 1] = v, row
+        if b[o + 2] is None or v > b[o + 2]:
+            b[o + 2], b[o + 3] = v, row
+
+
+def bin_merge(a, b, ny):
+    """两个相邻箱并成一个（箱宽翻倍时）：每个角色取两边更极端的；并列取行序号小的。结果只取决于两个箱里的行，与并入的先后无关。"""
+    out = list(a)
+    if b[0] < a[0] or (b[0] == a[0] and b[1][0] < a[1][0]):
+        out[0], out[1] = b[0], b[1]
+    if b[2] > a[2] or (b[2] == a[2] and b[3][0] < a[3][0]):
+        out[2], out[3] = b[2], b[3]
+    for j in range(ny):
+        o = 4 + 4 * j
+        if b[o] is not None and (
+            a[o] is None or b[o] < a[o] or (b[o] == a[o] and b[o + 1][0] < a[o + 1][0])
+        ):
+            out[o], out[o + 1] = b[o], b[o + 1]
+        if b[o + 2] is not None and (
+            a[o + 2] is None
+            or b[o + 2] > a[o + 2]
+            or (b[o + 2] == a[o + 2] and b[o + 3][0] < a[o + 3][0])
+        ):
+            out[o + 2], out[o + 3] = b[o + 2], b[o + 3]
+    return out
+
+
+def bin_rows(b, ny):
+    """一个箱要留下的行：最左 / 最右（按 x）、每个 y 列的最小 / 最大。"""
+    out = [b[1], b[3]]
+    for j in range(ny):
+        o = 4 + 4 * j
+        out += [s for s in (b[o + 1], b[o + 3]) if s is not None]
+    return out
+
+
+def reduce_trend(header, body, spec):
+    """流式缩减一张大表给「趋势」图（折线 / 阶梯 / 点）用：`(留下的行, 信息)`。行是原文单元格（与读表读出来的行同形），按文件顺序；
+    下游的 `trend_data` 与小表一字不差地吃这些行。
+
+    **做法**：行按（分面, 分组）分系列，与 `trend_data` 同口径（分组 / 分面为空的行不画；x 不是值的行不画）；每个系列在 **x 值**上分箱
+    （不是文件里的位置：未排序、多条交错的序列照样对）：箱宽是 2 的幂、起点是该系列第一行的 x，箱数超过 `spec["bins"]` 时箱宽翻倍并箱
+    （一遍扫完，不要先知道 x 的范围）。每个箱留下 最左 / 最右 的行与每个 y 列取最小 / 最大值的行（上下包络），所以
+    **每个 y 的全局最小 / 最大、x 的两端都原样在图上**。
+    **断开**（`spec["lines"]`，有折线 / 阶梯层时）：折线在 y 不是数的地方断开，所以每个系列每个 y 列里**每一段**缺失（夹在两个有限值之间的连续非数行）
+    各留下它的第一行——这样留下的任意两个相邻点之间，只要原数据在它们之间断开过，就一定有一条断开标记；每个系列每个 y 列至多留 `spec["gap_max"]`
+    段，更多就不再留并标 `gap_over`（调用方拒绝这张折线，不画一条会把断开连起来的线）。系列数超过 `spec["series_max"]` →
+    `ValueError("reduce_series_overflow")`（数据与出备选时不一样了，不悄悄多画）。
+    `信息`：读到的行数、x 不是值的行数与前 100 个行号、每个 y 列的（有限数个数, 最小, 最大）——整表上的独立累计，父进程拿它与概览扫描的
+    统计对账；`mono`：每个系列的 x 是否按文件顺序不减；`dup`：某个 y 列在同一系列里是否有两个有限观测的 x 相同（只数 x 与该 y 都有限的行，
+    与小表的规则同口径；只在 `mono` 时可信）；`x_counts`：每个有（x 与第一个 y 都有限的）观测的系列的不同 x 个数（封顶 4）；
+    `ords`：留下的行的行序号；`gap_runs` / `gap_over`：断开的段数 / 是否超过上限；`grid`：每个系列最终的箱（起点, 箱宽）。"""
+    xi = header.index(spec["x"])
+    yis = [header.index(y) for y in spec["ys"]]
+    kis = [header.index(k) for k in spec["keys"]]
+    x_is_date = spec["date"]
+    nb = spec["bins"]
+    smax = spec["series_max"]
+    lines = spec.get("lines", False)
+    gap_max = spec.get("gap_max", 0)
+    ny = len(yis)
+    series = {}
+    gap_rows = {}
+    gap_runs = 0
+    gap_over = False
+    n_rows = 0
+    x_invalid = 0
+    key_empty = 0  # 横轴有值、但分组 / 分面 / 个体那一格是空的行（归不到任何一条线 / 一组点里）
+    y_invalid = 0  # 只有散点类会加：横轴有值、纵轴不是数的行
+    examples = []
+    ystat = [[0, None, None] for _ in yis]
+    for ln, r in body:
+        n_rows += 1
+        yv = [None] * ny
+        for j in range(ny):
+            kind, v = parse_cell(r[yis[j]])
+            if kind == "numeric":
+                yv[j] = v
+                s = ystat[j]
+                s[0] += 1
+                if s[1] is None:
+                    s[1] = s[2] = v
+                elif v < s[1]:
+                    s[1] = v
+                elif v > s[2]:
+                    s[2] = v
+        if x_is_date:
+            dv = parse_date(r[xi])
+            xv = date_number(dv) if dv is not None else None
+        else:
+            kind, v = parse_cell(r[xi])
+            xv = v if kind == "numeric" else None
+        if xv is None:
+            x_invalid += 1
+            if len(examples) < 100:
+                examples.append(ln)
+            continue
+        key = tuple(r[k].strip() for k in kis)
+        if "" in key:
+            key_empty += 1
+            if len(examples) < 100:
+                examples.append(ln)
+            continue
+        st = series.get(key)
+        if st is None:
+            if len(series) >= smax:
+                raise ValueError("reduce_series_overflow")
+            e = math.frexp(abs(xv))[1] if xv else 0
+            st = series[key] = {
+                "w": 2.0 ** (e - 52),
+                "o": xv,
+                "bins": {},
+                "prev": None,
+                "mono": True,
+                "pv": [None] * ny,
+                "dup": False,
+                "xs": set(),
+                "seen": [False] * ny,
+                "ingap": [False] * ny,
+                "gaps": [0] * ny,
+            }
+        prev = st["prev"]
+        if prev is not None and xv < prev:
+            st["mono"] = False
+        st["prev"] = xv
+        pv = st["pv"]
+        for j in range(ny):
+            if yv[j] is not None:
+                if pv[j] is not None and xv == pv[j]:
+                    st["dup"] = True
+                pv[j] = xv
+        if yv[0] is not None and len(st["xs"]) < 4:
+            st["xs"].add(xv)
+        row = (n_rows, r)
+        if lines:
+            for j in range(ny):
+                if yv[j] is None:
+                    if st["seen"][j] and not st["ingap"][j]:
+                        st["ingap"][j] = True
+                        gap_runs += 1
+                        if st["gaps"][j] < gap_max:
+                            st["gaps"][j] += 1
+                            gap_rows[n_rows] = r
+                        else:
+                            gap_over = True
+                else:
+                    st["seen"][j] = True
+                    st["ingap"][j] = False
+        bins = st["bins"]
+        k = math.floor((xv - st["o"]) / st["w"])
+        b = bins.get(k)
+        if b is None:
+            b = bins[k] = [xv, row, xv, row] + [None] * (4 * ny)
+            bin_update(b, yv, row)
+            while len(bins) > nb:
+                st["w"] *= 2.0
+                merged = {}
+                for kk, bb in bins.items():
+                    nk = kk // 2
+                    cur = merged.get(nk)
+                    merged[nk] = bb if cur is None else bin_merge(cur, bb, ny)
+                bins = st["bins"] = merged
+            continue
+        if xv < b[0]:
+            b[0], b[1] = xv, row
+        if xv > b[2]:
+            b[2], b[3] = xv, row
+        bin_update(b, yv, row)
+    kept = dict(gap_rows)
+    for st in series.values():
+        for b in st["bins"].values():
+            for slot in bin_rows(b, ny):
+                kept[slot[0]] = slot[1]
+    ords = sorted(kept)
+    rows = [kept[i] for i in ords]
+    counts = [len(s["xs"]) for s in series.values() if s["xs"]]
+    info = {
+        "rows": n_rows,
+        "kept": len(rows),
+        "ords": ords,
+        "x_invalid": x_invalid,
+        "key_empty": key_empty,
+        "y_invalid": y_invalid,
+        "examples": examples,
+        "series": len(series),
+        "y": [tuple(s) for s in ystat],
+        "mono": all(s["mono"] for s in series.values()),
+        "dup": any(s["dup"] for s in series.values()),
+        "x_counts": counts,
+        "bins": max((len(s["bins"]) for s in series.values()), default=0),
+        "gap_runs": gap_runs,
+        "gap_over": gap_over,
+        "grid": {k: (s["o"], s["w"]) for k, s in series.items()},
+    }
+    return rows, info
+
+
+def reduce_relationship(header, body, spec):
+    """流式缩减一张大表给「两个量的关系」图（散点）用：`(留下的行, 信息)`。系列 = （分面, 分组），与 `relationship_data` 同口径（分组 / 分面为空、
+    x 或 y 不是有限数的行不画）。每个系列留下 **等距抽样 + 四个极值点**：等距抽样 = 该系列第 0, K, 2K… 个有效点（K 是 2 的幂，留下的超过
+    `spec["points"]` 就翻倍并丢掉不再满足的，一遍扫完、不要先知道行数）；极值点 = x 与 y 各自的最小 / 最大所在行（并列取先出现的），
+    所以坐标范围与离群点照实在图上。系列数超过 `spec["series_max"]` → `ValueError("reduce_series_overflow")`。`信息`：读到的行数、x 不是有限数的行数与前
+    100 个行号、x 与 y 在**整表**上的（有限数个数, 最小, 最大）（独立累计，父进程对账用）。"""
+    xi = header.index(spec["x"])
+    yi = header.index(spec["ys"][0])
+    kis = [header.index(k) for k in spec["keys"]]
+    cap = spec["points"]
+    smax = spec["series_max"]
+    series = {}
+    n_rows = 0
+    x_invalid = 0
+    key_empty = 0  # 横轴有值、但分组 / 分面 / 个体那一格是空的行（归不到任何一条线 / 一组点里）
+    y_invalid = 0  # 只有散点类会加：横轴有值、纵轴不是数的行
+    examples = []
+    xstat = [0, None, None]
+    ystat = [0, None, None]
+    for ln, r in body:
+        n_rows += 1
+        kx, vx = parse_cell(r[xi])
+        ky, vy = parse_cell(r[yi])
+        if kx == "numeric":
+            xstat[0] += 1
+            if xstat[1] is None:
+                xstat[1] = xstat[2] = vx
+            elif vx < xstat[1]:
+                xstat[1] = vx
+            elif vx > xstat[2]:
+                xstat[2] = vx
+        else:
+            x_invalid += 1
+            if len(examples) < 100:
+                examples.append(ln)
+        if ky == "numeric":
+            ystat[0] += 1
+            if ystat[1] is None:
+                ystat[1] = ystat[2] = vy
+            elif vy < ystat[1]:
+                ystat[1] = vy
+            elif vy > ystat[2]:
+                ystat[2] = vy
+        if kx != "numeric" or ky != "numeric":
+            if kx == "numeric":  # 横轴有值、纵轴没有：这个点也画不出来（横轴不是值的上面已经记过）
+                y_invalid += 1
+                if len(examples) < 100:
+                    examples.append(ln)
+            continue
+        key = tuple(r[k].strip() for k in kis)
+        if "" in key:
+            key_empty += 1
+            if len(examples) < 100:
+                examples.append(ln)
+            continue
+        st = series.get(key)
+        if st is None:
+            if len(series) >= smax:
+                raise ValueError("reduce_series_overflow")
+            st = series[key] = {"n": 0, "k": 1, "kept": [], "ext": [None] * 4}
+        i = st["n"]
+        st["n"] = i + 1
+        row = (n_rows, r)
+        if i % st["k"] == 0:
+            st["kept"].append((i, row))
+            while len(st["kept"]) > cap:
+                st["k"] *= 2
+                st["kept"] = [t for t in st["kept"] if t[0] % st["k"] == 0]
+        ext = st["ext"]
+        if ext[0] is None or vx < ext[0][0]:
+            ext[0] = (vx, row)
+        if ext[1] is None or vx > ext[1][0]:
+            ext[1] = (vx, row)
+        if ext[2] is None or vy < ext[2][0]:
+            ext[2] = (vy, row)
+        if ext[3] is None or vy > ext[3][0]:
+            ext[3] = (vy, row)
+    kept = {}
+    for st in series.values():
+        for _i, slot in st["kept"]:
+            kept[slot[0]] = slot[1]
+        for e in st["ext"]:
+            if e is not None:
+                kept[e[1][0]] = e[1][1]
+    ords = sorted(kept)
+    rows = [kept[i] for i in ords]
+    info = {
+        "rows": n_rows,
+        "kept": len(rows),
+        "ords": ords,
+        "x_invalid": x_invalid,
+        "key_empty": key_empty,
+        "y_invalid": y_invalid,
+        "examples": examples,
+        "series": len(series),
+        "x": tuple(xstat),
+        "y": [tuple(ystat)],
+        "valid": min((s["n"] for s in series.values()), default=0),
+        "strides": {k: s["k"] for k, s in series.items()},
+    }
+    return rows, info
+
+
+def tick_rows(body, raw, progress):
+    """透传 `body`，每 65536 行调一次 `progress(已读字节)`（父进程的进度 / 取消检查点；脚本里不传，不经过这里）。"""
+    n = 0
+    for item in body:
+        n += 1
+        if not n & 0xFFFF:
+            progress(raw.tell())
+        yield item
+
+
+def reduce_file(path, delimiter, header_row, units_row, codec, spec, progress=None):
+    """大表文件 → `(表头, 缩减后的行, 信息)`：流式读（`iter_table`，读法与小表同一份）+ 按 `spec["kind"]` 缩减。`codec` 是 Python 的 codec 名
+    （由父进程按文件定下、以字面量写进脚本，脚本不探测）。`progress`：可选的 `f(已读字节)`，父进程用它报进度并在取消时抛异常。"""
+    with open(path, "rb") as raw, io.TextIOWrapper(raw, encoding=codec, newline="") as fh:
+        header, body = iter_table(fh, delimiter, header_row, units_row)
+        if progress is not None:
+            body = tick_rows(body, raw, progress)
+        if spec["kind"] == "trend":
+            rows, info = reduce_trend(header, body, spec)
+        elif spec["kind"] == "relationship":
+            rows, info = reduce_relationship(header, body, spec)
+        else:
+            raise ValueError("reduce_kind_unsupported")
+    return header, rows, info
+
+
+def read_reduced(path, delimiter, header_row, units_row, codec, spec):
+    """生成的脚本在大表上读表的那一句：`(表头, 缩减后的行)`；之后与小表同一份画图代码。"""
+    return reduce_file(path, delimiter, header_row, units_row, codec, spec)[:2]
+
+
 def pick_fonts(latin, cjk):
     """从候选里各挑**第一个本机真有的**（常规与粗体字重都在）字体（拉丁文一个、中文回退一个）：整张候选清单都塞进 `font.family` 会让
     matplotlib 为每个缺字重 / 缺字体的名字各报一条 findfont 警告。"""
@@ -585,17 +969,227 @@ def pick_fonts(latin, cjk):
     ]
 
 
+def legend_hits_data(ax, leg, pad=1.0):
+    """图例有没有压到这个坐标区里画的数据（线、点、柱 / 箱、填充带）。图例一侧取**真正挡住数据的东西**（与预检同一口径：`docs/sciviz/validation-spec.md` V-011「图例一侧的取法（与数据出图摆放共用）」）：
+    画了不透明底框的，整块框都算（图例画在数据上面，框里的空白也把线盖住了）；没有底框或底框全透明的，只算每条文字和每个色块
+    各自的外接框——空白处压着线不算。数据一侧用真实几何。调用前图要先排过版（`fig.draw_without_rendering()`）。"""
+    from matplotlib.collections import PathCollection, PolyCollection
+    from matplotlib.transforms import Bbox
+
+    # 「有框且不透明」= `frameon` 为真且实际画出来的框颜色 alpha > 0（matplotlib 的 framealpha 直接替换颜色里的 alpha）
+    if leg.get_frame_on() and leg.get_frame().get_facecolor()[3] > 0:
+        boxes = [leg.get_window_extent()]
+    else:
+        handles = getattr(leg, "legend_handles", None) or leg.legendHandles
+        boxes = [t.get_window_extent() for t in leg.get_texts() if t.get_text()]
+        boxes += [h.get_window_extent() for h in handles]
+    boxes = [
+        Bbox.from_extents(b.x0 - pad, b.y0 - pad, b.x1 + pad, b.y1 + pad)
+        for b in boxes
+        if b.width > 0 and b.height > 0
+    ]
+    if not boxes:
+        return False
+
+    def path_hits(path, transform, filled):
+        shown = transform.transform_path(path)
+        return any(shown.intersects_bbox(b, filled=filled) for b in boxes)
+
+    def points_hit(points, radius):
+        return any(
+            b.x0 - radius <= x <= b.x1 + radius and b.y0 - radius <= y <= b.y1 + radius
+            for x, y in points
+            for b in boxes
+        )
+
+    scale = ax.figure.dpi / 72.0
+    for line in ax.lines:
+        if not line.get_visible():
+            continue
+        if line.get_linestyle() not in ("None", "none", " ", ""):
+            if path_hits(line.get_path(), line.get_transform(), False):
+                return True
+        if line.get_marker() not in ("None", "none", " ", "", None):
+            pts = line.get_transform().transform(line.get_xydata())
+            if points_hit(pts, line.get_markersize() * scale / 2):
+                return True
+    for col in ax.collections:
+        if not col.get_visible():
+            continue
+        if isinstance(col, PathCollection):  # 散点：一个记号形状 + 一批位置
+            sizes = col.get_sizes()
+            radius = (max(sizes) ** 0.5 if len(sizes) else 3.0) * scale / 2
+            if points_hit(col.get_offset_transform().transform(col.get_offsets()), radius):
+                return True
+        else:  # 填充带 / 小提琴（PolyCollection，哪怕只有一块）按填充路径；线段集合（误差线的帽）按线段
+            filled = isinstance(col, PolyCollection)
+            if any(path_hits(path, col.get_transform(), filled) for path in col.get_paths()):
+                return True
+    for patch in ax.patches:
+        if patch.get_visible() and path_hits(patch.get_path(), patch.get_transform(), True):
+            return True
+    return False
+
+
+def build_legend(ax, loc=None, outside=False, fontsize=None):
+    """照原来的条目重建这个坐标区的图例（色块、间距跟着字号走）。`outside`：放到坐标区正上方，列数取「宽度不超过坐标区」的最大值。"""
+    old = ax.get_legend()
+    handles = getattr(old, "legend_handles", None) or old.legendHandles
+    labels = [t.get_text() for t in old.get_texts()]
+    size = fontsize if fontsize is not None else old.get_texts()[0].get_fontsize()
+    frame = old.get_frame_on()
+    if not outside:
+        return ax.legend(handles, labels, loc=loc or "best", fontsize=size, frameon=frame)
+    leg = None
+    for ncol in range(len(labels), 0, -1):
+        leg = ax.legend(
+            handles,
+            labels,
+            loc="lower left",
+            bbox_to_anchor=(0.0, 1.02),
+            borderaxespad=0.0,
+            ncol=ncol,
+            fontsize=size,
+            frameon=frame,
+        )
+        ax.figure.draw_without_rendering()
+        if leg.get_window_extent().width <= ax.bbox.width + 1:
+            break
+    return leg
+
+
+def place_legends(fig):
+    """每个坐标区的图例：**图内放得下就放图内**（现在的位置不压数据就不动；压了就把图内几个位置挨个试，第一个不压的就用），
+    **都放不下才挪到图外**——坐标区正上方排成一行（一行排不下就换行，宽度不超过坐标区），之后的 `tight_layout()` 会给它让出地方。
+    「压到」的判法在 `legend_hits_data`（无底框时只看文字和色块，有不透明底框时看整块框）。返回挪到图外的坐标区（退字号时照同样的摆法重建）。"""
+    inside = (
+        "upper right",
+        "upper left",
+        "lower right",
+        "lower left",
+        "center right",
+        "center left",
+        "upper center",
+        "lower center",
+    )
+    outside = []
+    for ax in fig.axes:
+        leg = ax.get_legend()
+        if leg is None or not leg.get_texts():
+            continue
+        fig.draw_without_rendering()
+        if not legend_hits_data(ax, leg):
+            continue
+        for loc in inside:
+            leg = build_legend(ax, loc=loc)
+            fig.draw_without_rendering()
+            if not legend_hits_data(ax, leg):
+                break
+        else:
+            build_legend(ax, outside=True)
+            outside.append(ax)
+    return outside
+
+
+def fit_fonts(fig, floor=None, step=0.5):
+    """排完版后的收尾：先摆图例（`place_legends`：图内放得下就图内，放不下挪到图外），再在给了 `floor`（期刊的字号下限）时，
+    让**同一类文字一起**往下退字号，直到互不干涉或退到下限为止。三类各自一个字号：刻度数字、轴标题（含子图标题）、图例。
+    判「干涉」：相邻刻度数字的框相交；轴标题 / 图例伸出了图的边界；图外的图例比坐标区还宽，或高过坐标区的四分之一。退的是整类（所有子图一起），
+    所以同一类对象的字号始终一致；一类退到下限还干涉就不再动它。每退一步重新 `tight_layout()`。"""
+    outside = place_legends(fig)
+    if outside:
+        fig.tight_layout()
+    if floor is None:
+        return
+
+    def roles():
+        ticks, labels, legends = [], [], []
+        for ax in fig.axes:
+            ticks += [t for t in ax.get_xticklabels() + ax.get_yticklabels() if t.get_text()]
+            labels += [t for t in (ax.xaxis.label, ax.yaxis.label, ax.title) if t.get_text()]
+        for leg in [*fig.legends, *(ax.get_legend() for ax in fig.axes)]:
+            if leg is not None:
+                legends += [t for t in leg.get_texts() if t.get_text()]
+        return {"tick": ticks, "label": labels, "legend": legends}
+
+    def beyond(b, whole):
+        return (
+            b.x0 < whole.x0 - 1 or b.y0 < whole.y0 - 1 or b.x1 > whole.x1 + 1 or b.y1 > whole.y1 + 1
+        )
+
+    def crowded():
+        fig.draw_without_rendering()
+        whole = fig.bbox
+        bad = set()
+        for ax in fig.axes:
+            for axis in (ax.xaxis, ax.yaxis):
+                boxes = [
+                    t.get_window_extent()
+                    for t in axis.get_ticklabels()
+                    if t.get_visible() and t.get_text()
+                ]
+                if any(a.overlaps(b) for a, b in zip(boxes, boxes[1:])):
+                    bad.add("tick")
+            for t in (ax.xaxis.label, ax.yaxis.label, ax.title):
+                if t.get_text() and beyond(t.get_window_extent(), whole):
+                    bad.add("label")
+            leg = ax.get_legend()
+            if leg is not None:
+                b = leg.get_window_extent()
+                tall = (
+                    ax in outside and b.height > 0.25 * ax.bbox.height
+                )  # 图外的图例把坐标区挤扁了
+                if beyond(b, whole) or tall or (ax in outside and b.width > ax.bbox.width + 1):
+                    bad.add("legend")
+        for leg in fig.legends:
+            if beyond(leg.get_window_extent(), whole):
+                bad.add("legend")
+        return bad
+
+    for _ in range(200):
+        bad = crowded()
+        moved = False
+        texts = roles()
+        for role in sorted(bad):
+            size = max((t.get_fontsize() for t in texts[role]), default=0.0)
+            if size - step < floor - 1e-9:
+                continue
+            if role == "legend":
+                for ax in fig.axes:
+                    if ax.get_legend() is not None and ax.get_legend().get_texts():
+                        build_legend(ax, outside=ax in outside, fontsize=size - step)
+                for leg in fig.legends:
+                    for t in leg.get_texts():
+                        t.set_fontsize(size - step)
+            else:
+                for t in texts[role]:
+                    t.set_fontsize(size - step)
+            moved = True
+        if not moved:
+            break
+        fig.tight_layout()
+
+
 RUNTIME_FUNCTIONS = (
     SemicolonCell,
+    NumCat,
     parse_cell,
     parse_date,
     date_number,
+    iter_records,
     delimited_records,
     resolve_header,
+    xvg_label,
+    xvg_text,
+    iter_table,
     table_from_text,
     read_delimited,
     read_xlsx,
     apply_cells,
+    apply_numcat,
+    apply_stack,
+    group_key,
+    merge_tables,
     distinct,
     make_label,
     mean_of,
@@ -639,7 +1233,19 @@ RUNTIME_FUNCTIONS = (
     hist_heights,
     density_curve,
     ecdf_xy,
+    bin_update,
+    bin_merge,
+    bin_rows,
+    reduce_trend,
+    reduce_relationship,
+    tick_rows,
+    reduce_file,
+    read_reduced,
     pick_fonts,
+    legend_hits_data,
+    build_legend,
+    place_legends,
+    fit_fonts,
 )
 #: 只有 XLSX 数据源的脚本才内嵌 `read_xlsx` 与 xlsxread；CSV / TSV 的脚本里没有它们
 
@@ -659,8 +1265,18 @@ SUMMARY_TEXT = {
 }
 
 
-def style_from_profile(profile: dict | None = None) -> dict:
-    """出版规范 profile → 模板要的数字。取不到的项才用具名默认（`_STYLE_DEFAULTS`）。"""
+def _num(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def style_from_profile(
+    profile: dict | None = None, font_range: tuple[float | None, float | None] | None = None
+) -> dict:
+    """出版规范 profile → 模板要的数字。取不到的项才用具名默认（`_STYLE_DEFAULTS`）。
+
+    `font_range`（期刊自己规定的字号 `(下限, 上限)`，没规定的一端是 None）：有它时字号的首要条件是落在这个范围里，并且取范围内最大的
+    （只规定了下限就取默认字号与下限中较大的）；刻度、轴标题、图例三类都从这个字号起，画完后由脚本里的 `fit_fonts` 在互相干涉时
+    整类往下退（`fit_floor_pt`，不低于下限）。没有它 = 从前的读法（默认字号夹进规范范围、图例用小一号），脚本逐字不变。"""
     if profile is None:
         from . import profiles
 
@@ -674,8 +1290,39 @@ def style_from_profile(profile: dict | None = None) -> dict:
     w = profile.get("widths_mm") or {}
     pick("width_single_mm", w.get("single"))
     pick("width_double_mm", w.get("double"))
+    if not (_num(w.get("single")) and _num(w.get("double"))):
+        # 期刊只写了栏位（`page_columns`）或只规定了一档：栏宽按规范的唯一读法 `profiles.derive_page_columns` 取——最窄的一档当单栏、
+        # 最宽的一档当双栏；只有一档就两处都用它。一档都没规定才落到具名默认（期刊没写就是没写，ADR 0155 §2）
+        from . import profiles
+
+        cols = sorted(
+            float(c["width_mm"])
+            for c in profiles.derive_page_columns(profile)
+            if _num(c.get("width_mm")) and c["width_mm"] > 0
+        )
+        if cols:
+            if not _num(w.get("single")):
+                d["width_single_mm"] = cols[0]
+            if not _num(w.get("double")):
+                d["width_double_mm"] = cols[-1]
     pick("font_pt", profile.get("default_font_size_pt"))
-    pick("min_font_pt", profile.get("min_effective_font_size_pt"))
+    # 规范不一定规定「默认字号」（期刊只给上下限）：正文字号夹进规范允许的范围；下限 0 = 没规定（期刊中性底），不当成数字用
+    lo, hi = profile.get("min_effective_font_size_pt"), profile.get("max_font_size_pt")
+    if _num(lo) and lo > 0:
+        d["min_font_pt"] = float(lo)
+        d["font_pt"] = max(d["font_pt"], float(lo))
+    if _num(hi) and hi > 0:
+        d["font_pt"] = min(d["font_pt"], float(hi))
+    d["min_font_pt"] = min(d["min_font_pt"], d["font_pt"])
+    if font_range is not None and (font_range[0] is not None or font_range[1] is not None):
+        lo_j, hi_j = font_range
+        d["font_pt"] = float(hi_j) if hi_j is not None else max(d["font_pt"], float(lo_j))
+        d["min_font_pt"] = d["font_pt"]  # 图例与正文同一起点；挤的时候各类自己退
+        # 没规定下限：最多退到从前的小字字号，不无限缩小
+        d["fit_floor_pt"] = (
+            float(lo_j) if lo_j is not None else min(d["font_pt"], _STYLE_DEFAULTS["min_font_pt"])
+        )
+        d["font_range"] = [lo_j, hi_j]
     lws = [v for v in (profile.get("line_widths_pt") or []) if isinstance(v, (int, float))]
     if lws:
         d["line_widths_pt"] = [float(v) for v in sorted(lws)]
@@ -742,7 +1389,25 @@ def _check(entry: adf.TableEntry, recipe: recipe_mod.FigureRecipe) -> None:
         raise TemplateError("template_family_unsupported", recipe.family)
     if recipe.table != entry.path or recipe.sheet != entry.sheet:
         raise TemplateError("template_recipe_mismatch", "table")
+    if entry.summary.large is not None and (
+        recipe.family not in ("trend", "relationship") or recipe.unit is not None or recipe.cells
+    ):
+        raise TemplateError(
+            "template_option_unsupported", "large"
+        )  # 大表只有趋势的缩减实现（见 `recipe_mod.LARGE_MARKS`）
     cols = entry.summary.per_column
+    if recipe.stack:  # 把列当分组：被转的列在原表里，作图用的列在转换后的长表里（`stack_view`）
+        if (
+            recipe.family not in ("comparison", "distribution")
+            or recipe.cells
+            or recipe.numcat
+            or recipe.unit is not None
+            or entry.summary.large is not None
+            or _merge_of(entry) is not None
+            or any(c not in cols for c in recipe.stack)
+        ):
+            raise TemplateError("template_option_unsupported", "stack")
+        cols = recipe_mod.stack_view(entry.summary, recipe.stack).per_column
     named = [recipe.x, *recipe.y, recipe.group, recipe.facet, recipe.unit]
     if any(c is not None and c not in cols for c in named):
         raise TemplateError("template_recipe_mismatch", "column")
@@ -799,13 +1464,19 @@ def _summary_layers(recipe: recipe_mod.FigureRecipe) -> list[str]:
 
 def _footer(recipe, style) -> list[str]:
     """图的收尾排版。**图里不写任何自动加的脚注**（2026-11-17 用户决定：没画的行、汇总 / 拟合的定义、n 都不进图；这些在界面右栏与响应字段里给）。
-    只做 `tight_layout()`，不为脚注留白。"""
-    return ["    fig.tight_layout()"]
+    `tight_layout()` 之后交给公共模块的 `fit_fonts` 收尾，不为脚注留白。"""
+    # 图例：图内放得下就图内，文字或色块压到数据才挪到图外（2026-11-23 用户决定）；按期刊字号范围出图时（`fit_floor_pt`）
+    # 另从范围内最大的字号起，挤了才整类往下退
+    floor = style.get("fit_floor_pt")
+    call = f"fit_fonts(fig, {floor!r})" if floor is not None else "fit_fonts(fig)"
+    return ["    fig.tight_layout()", f"    {call}"]
 
 
 #: 脚本头的来源注释：生产（`_source_comment`、`_header`）与解析（`parse_source_comment`）共用这两个常量
 SOURCE_COMMENT_PREFIX = "# tavotto-source: "
 SOURCE_GENERATOR = "data_to_figure/v2"
+#: 合画（几份数据拼成一张图）的脚本用另一个 `generator`：`parse_source_comment` 只认 `SOURCE_GENERATOR`，所以合画脚本不会被当成「来自某一份数据」
+SOURCE_GENERATOR_MERGE = "data_to_figure/v2-merge"
 #: 解析来源注释只看脚本开头这么多行 / 字符，注释本身最长这么多字符（脚本是不可信输入）
 SOURCE_SCAN_LINES = 64
 SOURCE_SCAN_CHARS = 16 * 1024
@@ -817,12 +1488,15 @@ def _source_comment(entry: adf.TableEntry, recipe: recipe_mod.FigureRecipe, data
     body = {
         k: v for k, v in recipe.to_dict().items() if k != "why"
     }  # why 只显示给用户，不进脚本（ADR 0178）
+    merge = _merge_of(entry)
+    if merge is not None:
+        body["tables"] = [s.data_rel for s in merge.sources]
     return json.dumps(
         {
             "data": data_rel,
             "sha256": entry.summary.sha256,
             "recipe": body,
-            "generator": SOURCE_GENERATOR,
+            "generator": SOURCE_GENERATOR if merge is None else SOURCE_GENERATOR_MERGE,
         },
         ensure_ascii=True,
         sort_keys=True,
@@ -925,6 +1599,7 @@ def _runtime_source() -> str:
         "import bisect",
         "import csv",
         "import io",
+        "import itertools",
         "import math",
         "import re",
         "",
@@ -954,12 +1629,46 @@ def _read_lines(recipe, reader: str) -> list[str]:
     out = [f"    header, rows = {reader}"]
     if recipe.cells:
         out.append("    rows, _cell_notes, _cell_stats = apply_cells(header, rows, CELLS)")
+    if recipe.numcat:
+        out.append("    rows = apply_numcat(header, rows, NUMCATS)")
+    if recipe.stack:  # 把列当分组：宽表转长表（只剩 值 / 类别 两列），之后与别的长表一样画
+        out.append("    header, rows = apply_stack(header, rows, STACK, *STACK_NAMES)")
     return out
+
+
+def _merge_of(entry):
+    """合画的条目（`ai_data_merge.MergedEntry`）带 `merge`；单份条目没有这个属性。"""
+    return getattr(entry, "merge", None)
+
+
+def _is_xlsx(entry) -> bool:
+    return _merge_of(entry) is None and entry.path.lower().endswith(".xlsx")
+
+
+def _data_lines(entry, data_rel) -> list[str]:
+    merge = _merge_of(entry)
+    if merge is None:
+        return [f"DATA = Path(__file__).resolve().parent / {data_rel!r}"]
+    return [
+        "DATAS = [",
+        *[f"    Path(__file__).resolve().parent / {s.data_rel!r}," for s in merge.sources],
+        "]",
+        f"SHEETS = {[s.entry.sheet for s in merge.sources]!r}",
+        f"LABELS = {[s.label for s in merge.sources]!r}",
+        f"FILE_COLUMN = {merge.column!r}",
+    ]
 
 
 def _header(entry, recipe, data_rel, title, is_xlsx):
     name = runtime_module()[0][: -len(".py")]
     cells = [f"CELLS = {[c.args() for c in recipe.cells]!r}"] if recipe.cells else []
+    if recipe.numcat:  # 整数编码的类别列（读表后规范成整数写法，类别按数值升序）
+        cells.append(f"NUMCATS = {list(recipe.numcat)!r}")
+    if (
+        recipe.stack
+    ):  # 把这几列当分组：被转成长表的列（顺序 = 类别顺序）与转换后「值 / 类别」两列的名字
+        cells.append(f"STACK = {list(recipe.stack)!r}")
+        cells.append(f"STACK_NAMES = {list(recipe_mod.stack_names(recipe.stack))!r}")
     return [
         f'"""由 Tavotto 根据数据生成的图（data_to_figure v2：{title}）。之后就是一份普通的绘图脚本，可以随意修改。\n\n'
         f'读表、汇总、布局的函数在同目录的 {name}.py 里（Tavotto 生成，别改它；它不含数据）。"""',
@@ -973,7 +1682,7 @@ def _header(entry, recipe, data_rel, title, is_xlsx):
         "",
         f"import {name} as {RUNTIME_ALIAS}",
         "",
-        f"DATA = Path(__file__).resolve().parent / {data_rel!r}",
+        *_data_lines(entry, data_rel),
         *cells,
     ]
 
@@ -1090,7 +1799,7 @@ def _comparison_layer_lines(layer, tag: str, lw: list[float]) -> list[str]:
 
 
 def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
-    is_xlsx = entry.path.lower().endswith(".xlsx")
+    is_xlsx = _is_xlsx(entry)
     lw = style["line_widths_pt"]
     with_n = (
         any(layer.summary != "none" for layer in recipe.layers) or recipe.family == "distribution"
@@ -1100,13 +1809,21 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
     )
     if is_xlsx:
         L.append(f"SHEET = {recipe.sheet!r}")
+    # 把列当分组：类别轴是合成的占位列（`group`），不写轴标题；普通分组列 / numcat 不变
+    xlabel = (
+        ""
+        if recipe.stack and recipe.x == recipe_mod.STACK_CAT
+        else adf.axis_label(recipe.x)
+        if recipe.x
+        else ""
+    )
     L += [
         f"X = {recipe.x!r}",
         f"Y = {recipe.y[0]!r}",
         f"GROUP = {recipe.group!r}",
         f"FACET = {recipe.facet!r}",
         f"ORDER = {recipe.order!r}",
-        f"XLABEL = {adf.axis_label(recipe.x) if recipe.x else ''!r}",
+        f"XLABEL = {xlabel!r}",
         f"YLABEL = {adf.axis_label(recipe.y[0])!r}",
         f"PALETTE = {list(PALETTE)!r}",
     ]
@@ -1232,12 +1949,15 @@ def _trend_layer_lines(layer, tag_m: str, lw: list[float], logs=(False, False)) 
 
 
 def _render_trend(entry, recipe, data_rel, stem, style) -> str:
-    is_xlsx = entry.path.lower().endswith(".xlsx")
+    is_xlsx = _is_xlsx(entry)
     x_is_date = entry.summary.per_column[recipe.x].kind == "date"
     lw = style["line_widths_pt"]
     L = _header(entry, recipe, data_rel, "变化趋势", is_xlsx)
     if is_xlsx:
         L.append(f"SHEET = {recipe.sheet!r}")
+    large = entry.summary.large is not None
+    if large:
+        L.append(f"REDUCE = {large_spec(entry.summary, recipe)!r}")
     ylabel = ", ".join(adf.axis_label(y) for y in recipe.y)
     L += [
         f"X = {recipe.x!r}",
@@ -1254,6 +1974,8 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
     ]
     if is_xlsx:
         reader = "read_xlsx(DATA, SHEET)"
+    elif large:
+        reader = _large_reader_expr(entry)
     else:
         reader = _reader_expr(entry, False)
     L += ["", "", "def main():"]
@@ -1327,13 +2049,16 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
 
 # --------------------------------------------------------------------------- relationship
 def _render_relationship(entry, recipe, data_rel, stem, style) -> str:
-    is_xlsx = entry.path.lower().endswith(".xlsx")
+    is_xlsx = _is_xlsx(entry)
     lw = style["line_widths_pt"]
     mid = lw[min(1, len(lw) - 1)]
     logx, logy = recipe.scale in ("log_x", "log_xy"), recipe.scale in ("log_y", "log_xy")
     L = _header(entry, recipe, data_rel, "看两个量的关系", is_xlsx)
     if is_xlsx:
         L.append(f"SHEET = {recipe.sheet!r}")
+    large = entry.summary.large is not None
+    if large:
+        L.append(f"REDUCE = {large_spec(entry.summary, recipe)!r}")
     L += [
         f"X = {recipe.x!r}",
         f"Y = {recipe.y[0]!r}",
@@ -1343,7 +2068,7 @@ def _render_relationship(entry, recipe, data_rel, stem, style) -> str:
         f"YLABEL = {adf.axis_label(recipe.y[0])!r}",
         f"PALETTE = {list(PALETTE)!r}",
     ]
-    reader = _reader_expr(entry, is_xlsx)
+    reader = _large_reader_expr(entry) if large else _reader_expr(entry, is_xlsx)
     L += ["", "", "def main():"]
     main_at = len(L)
     L += _read_lines(recipe, reader)
@@ -1394,7 +2119,7 @@ def _render_distribution(entry, recipe, data_rel, stem, style) -> str:
     marks = {layer.mark for layer in recipe.layers}
     if not marks & VALUE_ON_X:  # 值在纵轴：与 comparison 同一套布局（类别 x 可选）
         return _render_comparison(entry, recipe, data_rel, stem, style)
-    is_xlsx = entry.path.lower().endswith(".xlsx")
+    is_xlsx = _is_xlsx(entry)
     lw = style["line_widths_pt"]
     thin, thick = lw[0], lw[-1]
     density_units = "density" in marks
@@ -1470,23 +2195,47 @@ def _render_distribution(entry, recipe, data_rel, stem, style) -> str:
     return "\n".join(L[:main_at] + _via_runtime(L[main_at:]))
 
 
-def _reader_expr(entry, is_xlsx: bool) -> str:
+def _merged_reader_expr(merge) -> str:
+    """合画：每一份各按自己的读法（分隔符 / 表头行 / 单位行 / 编码 / 工作表）读，再经公共模块的 `merge_tables` 拼成一张表。"""
+    parts = [
+        "            "
+        + _reader_expr(
+            s.entry, s.entry.path.lower().endswith(".xlsx"), f"DATAS[{i}]", f"SHEETS[{i}]"
+        )
+        + ","
+        for i, s in enumerate(merge.sources)
+    ]
+    return (
+        "merge_tables(\n        [\n"
+        + "\n".join(parts)
+        + "\n        ],\n        LABELS,\n        FILE_COLUMN,\n    )"
+    )
+
+
+def _reader_expr(entry, is_xlsx: bool, data: str = "DATA", sheet: str = "SHEET") -> str:
     """脚本里读表那一句。文本表格的读法（编码 + 分隔符 + 显式表头行）取自摘要（`read_text_table` 嗅探 / 调用方指定的结果），以字面量写进脚本——
     脚本不嗅探；Tavotto 算期望值读表用的是同一组参数（同一个 `table_from_text`），所以脚本读出来的和预览 / 资格判定读出来的是同一张表。
     老读法（首行表头、按后缀分隔）写成 `read_delimited(DATA, ',')`，与此前生成的脚本逐字相同。"""
+    merge = _merge_of(entry)
+    if merge is not None:
+        return _merged_reader_expr(merge)
     if is_xlsx:
-        return "read_xlsx(DATA, SHEET)"
+        return f"read_xlsx({data}, {sheet})"
     s = entry.summary
     delim = s.delimiter or ("\t" if entry.path.lower().endswith((".tsv", ".tab")) else ",")
     args = [repr(delim)] + ([repr(s.header_row)] if s.header_row is not None else [])
     if s.units_row:  # 只在嗅探到单位行时多写这一项：其余脚本逐字不变
         args = [*args[:1], repr(s.header_row), "True"]
     codec = adf.script_codec(s.encoding)
+    if entry.path.lower().endswith(adf.XVG_SUFFIXES):
+        # `.xvg`：列名在 `@` 指令里，先经运行时函数 `xvg_text` 改写成带表头行的制表符文本（父进程读表是同一个函数），再按嗅探出的读法读
+        text = f"{data}.read_bytes().decode({(codec or 'utf-8-sig')!r})"
+        return f"table_from_text(xvg_text({text}), {', '.join(args)})[:2]"
     if codec is not None:
         # 非 UTF-8（GB18030 / 有 BOM 的 UTF-16）：编码由父进程定下、以字面量写进脚本，脚本不探测。字节原样 `decode`（不经平台换行转换），
         # 再交给公共模块里同一个 `table_from_text`——与父进程读出的是同一张表；公共模块不变（哈希不换）。
-        return f"table_from_text(DATA.read_bytes().decode({codec!r}), {', '.join(args)})[:2]"
-    return f"read_delimited(DATA, {', '.join(args)})"
+        return f"table_from_text({data}.read_bytes().decode({codec!r}), {', '.join(args)})[:2]"
+    return f"read_delimited({data}, {', '.join(args)})"
 
 
 def _group_legend(style) -> list[str]:
@@ -1539,16 +2288,24 @@ def render_recipe_script(
     data_rel: str,
     stem: str,
     style: dict | None = None,
+    fits: list[dict] | None = None,
 ) -> Rendered:
     """配方 → 短脚本 + 公共模块。`entry` 是配方指的那张表（来自 `profile_folder`，不带行数据：脚本运行时自己读文件）；
     `data_rel` 是数据文件相对**脚本所在目录**的 POSIX 路径（调用方保证不出数据文件夹）；`stem` 决定输出 `<stem>.pdf`；
     `style` 缺省取 `profiles.load()` 的默认出版规范。调用方须先 `validate_recipe`；对不认识的组合抛 `TemplateError`。
-    脚本里数据文字只以 `repr()` 字面量出现；公共模块不含任何数据。"""
+    脚本里数据文字只以 `repr()` 字面量出现；公共模块不含任何数据。`fits`（可选，`fit_report` 的结果）：生成那一刻的拟合线系数，
+    写成来源注释下面的一行注释（不给 / 为空时脚本逐字不变）。"""
     _check(entry, recipe)
     if style is None:
         style = style_from_profile()
     name, data = runtime_module()
-    return Rendered(RENDERERS[recipe.family](entry, recipe, data_rel, stem, style), name, data)
+    script = RENDERERS[recipe.family](entry, recipe, data_rel, stem, style)
+    if fits:  # 拟合线的系数写在来源注释下面一行（`fit_report` 给的；内容是 ASCII JSON，不会把数据里的文字带出注释）
+        lines = script.split("\n")
+        at = next(i for i, ln in enumerate(lines) if ln.startswith(SOURCE_COMMENT_PREFIX))
+        lines.insert(at + 1, fit_comment(fits))
+        script = "\n".join(lines)
+    return Rendered(script, name, data)
 
 
 # =========================================================================== 期望数据指纹（父进程；与脚本同一批函数）
@@ -1613,11 +2370,210 @@ def _interleave(xs, ys) -> list[float]:
     return [v for pair in zip(xs, ys) for v in pair]
 
 
+# --------------------------------------------------------------------------- 大表：缩减的参数、对账与判据（父进程）
+#: 缩减后画出的数值总数的预算（两个坐标一起算）：manifest 的 `FINGERPRINT_BUDGET` 的一半，另一半留给图上别的元素与余量
+LARGE_POINT_BUDGET = 1_000_000
+#: 每个系列的箱数上限（再多就是一个像素里画几个箱，没有意义）
+LARGE_BINS_MAX = 2000
+LARGE_BINS_MIN = 20
+#: 折线每个系列每个 y 列最多保留多少段断开（见 `reduce_trend`）；更多的断开就不画折线（散点照常）
+LARGE_GAP_RUNS_MAX = 200
+#: 关系图每个系列留下的点数上限 / 下限（等距抽样的点，另加 4 个极值点）
+LARGE_POINTS_MAX = 20_000
+LARGE_POINTS_MIN = 50
+
+
+def large_spec(summary: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> dict:
+    """缩减的参数（字面量写进脚本的 `REDUCE`）：只由配方与摘要里的**结构**事实定（系列数上界 = 分组 × 分面的取值个数），不含数据值。
+    点数按预算反推：系列数 × 每系列最多留的点 × y 列数 × 层数 × 2 个坐标 ≤ `LARGE_POINT_BUDGET`——所以任何大表画出的数据总量都在
+    manifest 的指纹预算以内，核对不会因超预算变成 unknown。趋势：按 x 分箱留包络（每箱最多 `2 + 3 × y 列数` 行）；关系：每系列等距抽样 + 4 个极值点。"""
+    keys = [c for c in (recipe.group, recipe.facet) if c is not None]
+    series = 1
+    for c in keys:
+        series *= max(1, summary.groups.get(c, 1))
+    ny = len(recipe.y)
+    layers = max(1, len(recipe.layers))
+    if recipe.family == "relationship":
+        points = LARGE_POINTS_MAX
+        points = min(points, LARGE_POINT_BUDGET // (series * layers * 2) - 4)
+        return {
+            "kind": "relationship",
+            "x": recipe.x,
+            "ys": list(recipe.y),
+            "keys": keys,
+            "points": max(LARGE_POINTS_MIN, points),
+            "series_max": series,
+        }
+    lines = any(
+        ly.mark in recipe_mod.POINTWISE_LINES and ly.summary == recipe_mod.SUMMARY_NONE
+        for ly in recipe.layers
+    )
+    gap_max = LARGE_GAP_RUNS_MAX if lines else 0
+    per_bin_rows = 2 + 2 * ny
+    # 每系列最多 `bins × 每箱行数 + y 列数 × 断开段数` 行，每行在每个 y 列、每层各画一个点（x、y 两个坐标）
+    rows_budget = LARGE_POINT_BUDGET // (series * ny * layers * 2) - ny * gap_max
+    bins = rows_budget // per_bin_rows
+    return {
+        "kind": "trend",
+        "x": recipe.x,
+        "ys": list(recipe.y),
+        "keys": keys,
+        "date": summary.per_column[recipe.x].kind == "date",
+        "bins": max(LARGE_BINS_MIN, min(LARGE_BINS_MAX, bins)),
+        "series_max": series,
+        "lines": lines,
+        "gap_max": gap_max,
+    }
+
+
+def _large_reader_expr(entry) -> str:
+    s = entry.summary
+    delim = s.delimiter or ("\t" if entry.path.lower().endswith((".tsv", ".tab")) else ",")
+    codec = adf.large_codec(s.encoding)
+    return (
+        f"read_reduced(DATA, {delim!r}, {s.header_row!r}, {bool(s.units_row)!r}, {codec!r}, REDUCE)"
+    )
+
+
+_REDUCE_CACHE: dict = {}
+_REDUCE_CACHE_MAX = 6
+_REDUCE_LOCK = threading.Lock()
+
+
+def gap_audit(values: adf.DataSummary, spec: dict, ords) -> int:
+    """**独立于缩减**的断开对账（只在父进程、只在折线 + 有断开时多读一遍文件）：数「某个系列某个 y 列里，夹在两个有限值之间的连续非数行（一段断开）
+    里一行都没被留下」的段数。缩减把断开弄丢（留下的点之间会被连成线）时它大于 0。不复用缩减里的任何状态，只用留下的行序号。"""
+    keep = set(ords)
+    xi = values.columns.index(spec["x"])
+    yis = [values.columns.index(y) for y in spec["ys"]]
+    kis = [values.columns.index(k) for k in spec["keys"]]
+    state: dict = {}
+    lost = 0
+    with (
+        open(values.large.path, "rb") as raw,
+        io.TextIOWrapper(raw, encoding=adf.large_codec(values.encoding), newline="") as fh,
+    ):
+        _h, body = adf.iter_table(fh, values.delimiter or ",", values.header_row, values.units_row)
+        for n, (_ln, r) in enumerate(body, start=1):
+            if spec["date"]:
+                good = adf.parse_date(r[xi]) is not None
+            else:
+                good = adf.parse_cell(r[xi])[0] == "numeric"
+            key = tuple(r[k].strip() for k in kis)
+            if not good or "" in key:
+                continue
+            sts = state.setdefault(key, [None] * len(yis))
+            for j, yi in enumerate(yis):
+                finite = adf.parse_cell(r[yi])[0] == "numeric"
+                cur = sts[j]
+                if finite:
+                    if isinstance(cur, list) and not cur[0]:
+                        lost += 1  # 这一段断开里没有任何一行被留下
+                    sts[j] = True
+                elif cur is True:
+                    sts[j] = [n in keep]
+                elif isinstance(cur, list) and n in keep:
+                    cur[0] = True
+    return lost
+
+
+def large_reduce(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> tuple[list, dict]:
+    """大表对这份配方的缩减结果 `(行, 信息)`（同一文件内容 + 同一参数的结果缓存，出备选的几个候选共用一遍）：父进程这一遍与脚本里的 `read_reduced`
+    是同一份源码。**对账**：缩减那一遍读到的行数与每个 y 列的（有限数个数, 最小, 最大）必须等于概览扫描的整表统计（两遍是独立的累计）——
+    对不上说明文件在两遍之间变了或缩减丢了行，抛 `TemplateError("template_recipe_mismatch")`。再判数据相关的资格（见 `LargeRuleError`）。"""
+    info_s = values.large
+    if info_s is None or not info_s.path:
+        raise TemplateError("template_recipe_mismatch", "large")
+    spec = large_spec(values, recipe)
+    key = (values.sha256, json.dumps(spec, sort_keys=True))
+    with _REDUCE_LOCK:
+        hit = _REDUCE_CACHE.get(key)
+        if hit is not None:
+            _REDUCE_CACHE[key] = _REDUCE_CACHE.pop(key)
+    if hit is None:
+        total = values.size
+        _header_cells, rows, info = reduce_file(
+            info_s.path,
+            values.delimiter or ",",
+            values.header_row,
+            values.units_row,
+            adf.large_codec(values.encoding),
+            spec,
+            (lambda pos: adf.progress.tick("reduce", pos, total))
+            if adf.progress.active()
+            else None,
+        )
+        hit = (rows, info)
+        with _REDUCE_LOCK:
+            _REDUCE_CACHE[key] = hit
+            while len(_REDUCE_CACHE) > _REDUCE_CACHE_MAX:
+                _REDUCE_CACHE.pop(next(iter(_REDUCE_CACHE)))
+    rows, info = hit
+    if info["rows"] != info_s.rows:
+        raise TemplateError("template_recipe_mismatch", "large_rows")
+    stats = [(y, got) for y, got in zip(recipe.y, info["y"], strict=True)]
+    if spec["kind"] == "relationship":
+        stats.append((recipe.x, info["x"]))
+    for col, (n, lo, hi) in stats:
+        st = info_s.stats[col]
+        if (n, lo, hi) != (st.numeric, st.lo, st.hi):
+            raise TemplateError("template_recipe_mismatch", "large_stats")
+    if spec["kind"] == "relationship":
+        return rows, info
+    if info["series"] == 0 or recipe_mod.trend_too_few_x(info["x_counts"]):
+        raise LargeRuleError("trend_too_few_x")
+    if spec["lines"]:
+        if not (info["mono"] and not info["dup"]):
+            raise LargeRuleError("line_duplicate_x_unconfirmed")
+        if info["gap_over"]:
+            raise TemplateError("template_option_unsupported", "large_gaps")
+        if info["gap_runs"] and gap_audit(values, spec, info["ords"]):
+            raise TemplateError("template_recipe_mismatch", "large_gaps")
+    return rows, info
+
+
+def large_reduce_pending(values: adf.DataSummary, recipes) -> int:
+    """这批配方的缩减还要读几遍文件（同一参数的共用一遍，缓存里已有的不读）：给进度摊遍数用。"""
+    todo = set()
+    with _REDUCE_LOCK:
+        for r in recipes:
+            try:
+                key = (values.sha256, json.dumps(large_spec(values, r), sort_keys=True))
+            except (KeyError, ValueError):
+                continue
+            if key not in _REDUCE_CACHE:
+                todo.add(key)
+    return len(todo)
+
+
+def large_unplotted(
+    values: adf.DataSummary, recipe: recipe_mod.FigureRecipe
+) -> tuple[int, list[int], dict]:
+    """大表上画不出的行：`(总数, 前 100 个文件行号, 各原因的行数 {x, key, y})`，都取自缩减那一遍（精确）：横轴不是值（空 / NaN / 不是数或日期）、
+    分组 / 分面 / 个体那一格是空的、散点类里纵轴不是数的。折线的纵轴空格是缺失（线在那里断开），不算没画。"""
+    s = values.per_column[recipe.x]
+    roles = [c for c in (recipe.group, recipe.facet, recipe.unit) if c]
+    maybe = s.empty + s.nan + (s.text_count if s.kind != "date" else 0)
+    maybe += sum(values.per_column[c].empty for c in roles)
+    if recipe.family == "relationship":
+        sy = values.per_column[recipe.y[0]]
+        maybe += sy.empty + sy.nan + sy.text_count
+    if maybe == 0:  # 概览扫描已经说明没有任何一格会让行画不出来：不用为计数再缩减一遍
+        return 0, [], {"x": 0, "key": 0, "y": 0}
+    _rows, info = large_reduce(values, recipe)
+    counts = {"x": info["x_invalid"], "key": info["key_empty"], "y": info["y_invalid"]}
+    return sum(counts.values()), list(info["examples"]), counts
+
+
 def expected_fingerprints(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> list[dict]:
     """`[{label, part, digest}]`：按配方「这份脚本画出来应当是什么数据」，只含能逐字节算准的层（见模块文档与
     `fingerprint_coverage`）。`values` 是带行数据的摘要（对配方指的那张表 `inspect_data_source`）；与脚本调用同一批函数。"""
     if recipe.family not in RENDERERS:
         raise TemplateError("template_family_unsupported", recipe.family)
+    if values.large is not None:
+        # 大表：期望值按「缩减后的那张表」算——缩减用的就是脚本里的 `reduce_file`（同一份源码），之后与小表同一批函数
+        rows, _info = large_reduce(values, recipe)
+        values = replace(values, rows=rows, row_numbers=[], row_count=None, large=None)
     values = recipe_mod.with_cells_applied(
         values, recipe
     )  # 与脚本读表后套的是同一份规则、同一份源码
@@ -1629,6 +2585,53 @@ def expected_fingerprints(values: adf.DataSummary, recipe: recipe_mod.FigureReci
     if recipe.family == "relationship":
         return _expected_relationship(values, recipe)
     return _expected_trend(values, recipe)
+
+
+#: 脚本头里「拟合线系数」那一行注释的前缀（紧跟在来源注释后面；内容是一行 ASCII JSON）
+FIT_COMMENT_PREFIX = "# tavotto-fit: "
+
+
+def _fit_record(pool, logx: bool, logy: bool, group: str, panel: str, y: str) -> dict:
+    """一条拟合线的系数（与 `fit_segment` 同一份数据、同一个 `linear_fit`）：在**画出来的坐标**里 `y' = intercept + slope · x'`，
+    对数轴那一维 `x'` / `y'` 是 log10。描述性的最小二乘直线，不带显著性。"""
+    xs, ys = finite_pairs(*pool)
+    tx = [math.log10(x) for x in xs] if logx else xs
+    ty = [math.log10(v) for v in ys] if logy else ys
+    intercept, slope = linear_fit(tx, ty)
+    return {
+        "y": y,
+        "group": group or None,
+        "panel": panel or None,
+        "n": len(tx),
+        "intercept": intercept,
+        "slope": slope,
+        "log_x": logx,
+        "log_y": logy,
+    }
+
+
+def fit_report(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> list[dict]:
+    """这份配方画出来的每一条拟合线的系数（没有拟合线层 = 空）：`[{y, group, panel, n, intercept, slope, log_x, log_y}]`。
+    与期望指纹走同一条路（同样的规则、同样的数据准备函数），所以报的就是图上那条线。大表不画拟合线（汇总类），回空。"""
+    if not any(layer.mark == "fit_line" for layer in recipe.layers) or values.large is not None:
+        return []
+    values = recipe_mod.with_cells_applied(values, recipe)
+    fits: list[dict] = []
+    if recipe.family == "relationship":
+        _expected_relationship(values, recipe, fits)
+    elif recipe.family == "trend":
+        _expected_trend(values, recipe, fits)
+    return fits
+
+
+def fit_comment(fits: list[dict]) -> str:
+    """脚本头里的一行注释：生成那一刻的拟合线系数（之后数据变了它不会跟着变——脚本运行时仍然现算现画）。"""
+    return FIT_COMMENT_PREFIX + json.dumps(
+        {"at": "generation", "method": "least_squares", "fits": fits},
+        ensure_ascii=True,
+        sort_keys=True,
+        allow_nan=False,
+    )
 
 
 def _expected_comparison(values, recipe) -> list[dict]:
@@ -1666,7 +2669,7 @@ def _expected_comparison(values, recipe) -> list[dict]:
     return out
 
 
-def _expected_relationship(values, recipe) -> list[dict]:
+def _expected_relationship(values, recipe, fits: list | None = None) -> list[dict]:
     d = relationship_data(
         values.columns, values.rows, recipe.x, recipe.y[0], recipe.group, recipe.facet
     )
@@ -1685,6 +2688,8 @@ def _expected_relationship(values, recipe) -> list[dict]:
                     seg = fit_segment((xs, ys), logx, logy)
                     if seg:
                         out.append(_entry(lab, "xy", _interleave(*seg), (len(seg[0]), 2)))
+                        if fits is not None:
+                            fits.append(_fit_record((xs, ys), logx, logy, g, p, recipe.y[0]))
     return out
 
 
@@ -1726,7 +2731,7 @@ def _expected_distribution_x(values, recipe) -> list[dict]:
     return out
 
 
-def _expected_trend(values, recipe) -> list[dict]:
+def _expected_trend(values, recipe, fits: list | None = None) -> list[dict]:
     x_is_date = values.per_column[recipe.x].kind == "date"
     d = trend_data(
         values.columns,
@@ -1778,6 +2783,17 @@ def _expected_trend(values, recipe) -> list[dict]:
                         )
                         if seg:
                             out.append(_entry(lab, "xy", _interleave(*seg), (len(seg[0]), 2)))
+                            if fits is not None:
+                                fits.append(
+                                    _fit_record(
+                                        pool,
+                                        recipe.scale in ("log_x", "log_xy"),
+                                        recipe.scale in ("log_y", "log_xy"),
+                                        g,
+                                        p,
+                                        y,
+                                    )
+                                )
                     elif m == "hline_summary":
                         seg = hline_segment(pool, s)
                         if seg:

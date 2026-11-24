@@ -771,6 +771,12 @@ def agent_caps(agent_id: str) -> dict | None:
     return None
 
 
+def capabilities_if_cached() -> dict | None:
+    """已有的能力缓存（**绝不触发探测**——探测要起 CLI 子进程）；还没探测过 = None。同步路径（`propose` 要立刻回响应）用。"""
+    with _CAPS_LOCK:
+        return _CAPS_CACHE or None
+
+
 def require_usable(agent_id: str) -> dict:
     """派活之前的最后一道闸。**判据就是 `usable` 那一个字段**。
 
@@ -2031,6 +2037,10 @@ def run(
             )
             if cand is not None:
                 prompt += "\n\n" + ai_figure_edit.prompt_note(cand)
+            # 科学图形准则（docs/sciviz/）：只给改图，转换任务（ADR 0143）不加
+            from . import ai_prompt_pack
+
+            prompt += "\n\n" + ai_prompt_pack.sciviz_note()
         # 用户附的参考图（ADR 0175）：不附图时这一段一行都不执行
         ref_note, ref_dirs, attachment_count = _attach_attachments(
             sid, cand if convert is None else None, attachments

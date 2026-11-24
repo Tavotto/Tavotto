@@ -452,7 +452,9 @@ def _apply_stem_aliases() -> None:
 # ---------------------------------------------------------------------------
 # 用户上下文（与真实 python 对拍，见 tests/bridge/test_bridge_invocation.py）
 # ---------------------------------------------------------------------------
-def run_script(target: str, argv: list, on_start=None, on_source=None) -> None:
+def run_script(
+    target: str, argv: list, on_start=None, on_source=None, source: str | None = None
+) -> None:
     """等价于 `python <target> <argv…>`。
 
     **不用 `runpy.run_path`**：它把 `__file__` 设成传进去的原串、把
@@ -469,10 +471,11 @@ def run_script(target: str, argv: list, on_start=None, on_source=None) -> None:
     abspath = os.path.abspath(target)
     sys.argv = [target, *argv]
     sys.path.insert(0, os.path.dirname(abspath))
-    with io.open_code(abspath) as f:
-        source = f.read()
+    # `source`（ADR 0194 启动脚本）：字节来自它，身份（`__file__` / 编译文件名 / argv[0]）仍是 target
+    with io.open_code(os.path.abspath(source) if source else abspath) as f:
+        code_bytes = f.read()
     if on_source is not None:
-        on_source(abspath, source)
+        on_source(abspath, code_bytes)
     # `dont_inherit=True` **是必须的**：本文件自己有 `from __future__ import
     # annotations`，而 `compile()` 默认会把**调用处生效的** future 语句一并
     # 传给被编译的代码。于是用户脚本会在不知情的情况下拿到 PEP 563 语义——
@@ -483,7 +486,7 @@ def run_script(target: str, argv: list, on_start=None, on_source=None) -> None:
     # 这正是 native 最不能出的那类错：脚本在 Tavotto 里的行为与他自己敲
     # `python fig.py` 不一样，而且是**朝着"更宽松"的方向**静默不一样。
     # 脚本自己写的 `from __future__ import ...` 不受影响（它在源码里）。
-    code = compile(source, abspath, "exec", dont_inherit=True)
+    code = compile(code_bytes, abspath, "exec", dont_inherit=True)
     main_mod = types.ModuleType("__main__")
     main_mod.__file__ = abspath
     main_mod.__builtins__ = builtins
@@ -492,10 +495,50 @@ def run_script(target: str, argv: list, on_start=None, on_source=None) -> None:
     main_mod.__loader__ = None
     main_mod.__cached__ = None
     main_mod.__doc__ = None
+    if source:
+        # 启动脚本（ADR 0194）：与 safe worker 同一个 `run_original()`，跑用户原件
+        main_mod.run_original = bridgeboot.make_run_original(abspath)
     sys.modules["__main__"] = main_mod
     if on_start is not None:
         on_start(abspath)
     exec(code, main_mod.__dict__)
+
+
+def run_script_entry(target: str, argv: list, entry: str, on_start=None, on_source=None) -> None:
+    """库式模块的函数入口（ADR 0127 修订 2026-11-18，TVD-YB4Q）：整份模块执行完再调零参函数 `entry`。
+
+    只在 `discover.native_entry_of` 判 `call` 时由父进程经 `--entry` 要：脚本没有 `if __name__` 守卫、顶层代码也不画图，
+    `python fig.py` 跑完什么都不会发生，而 safe worker 调的正是 `getattr(module, entry)()`。装载口径与 safe worker 的
+    函数入口一致：模块名是文件名主干（`__name__ != "__main__"`）、登记进 `sys.modules`、绝对 `__file__`、
+    `sys.path[0]` = 脚本目录；argv 与 `run_script` 相同。编译同样 `dont_inherit=True`（理由见 `run_script`）。
+    """
+    abspath = os.path.abspath(target)
+    sys.argv = [target, *argv]
+    sys.path.insert(0, os.path.dirname(abspath))
+    with io.open_code(abspath) as f:
+        source = f.read()
+    if on_source is not None:
+        # Declared-input capture binds the bytes this entry actually compiles.
+        on_source(abspath, source)
+    code = compile(source, abspath, "exec", dont_inherit=True)
+    name = os.path.splitext(os.path.basename(abspath))[0]
+    mod = types.ModuleType(name)
+    mod.__file__ = abspath
+    mod.__builtins__ = builtins
+    mod.__package__ = ""
+    mod.__spec__ = None
+    mod.__loader__ = None
+    mod.__cached__ = None
+    mod.__doc__ = None
+    sys.modules[name] = mod
+    if on_start is not None:
+        on_start(abspath)
+    exec(code, mod.__dict__)
+    fn = mod.__dict__.get(entry)
+    if not callable(fn):
+        # 父进程按静态判据才会要这个入口；运行期又没有了（脚本在判定之后被改写）：如实失败，不静默「没有图」
+        raise RuntimeError(f"脚本里没有入口函数 {entry}（脚本可能被改写过）")
+    fn()
 
 
 def resolve_module_origin(target: str) -> str:
@@ -525,7 +568,14 @@ def resolve_module_origin(target: str) -> str:
     return getattr(spec, "origin", "") or ""
 
 
-def run_module(target: str, argv: list, on_origin=None, on_start=None) -> None:
+def run_module(
+    target: str,
+    argv: list,
+    on_origin=None,
+    on_start=None,
+    path_root: str | None = None,
+    on_source=None,
+) -> None:
     """等价于 `python -m <target> <argv…>`。
 
     `runpy.run_module(..., run_name="__main__", alter_sys=True)` 在
@@ -537,11 +587,33 @@ def run_module(target: str, argv: list, on_origin=None, on_start=None) -> None:
 
     `on_origin` 在**开跑之前**收到目标模块的源文件路径（见
     `resolve_module_origin`）。
+
+    `path_root`（ADR 0196，桌面拥有的 native 把包里的脚本按模块运行）：`sys.path[0]` 用它——包根的上一级，
+    而不是 cwd（桌面的 cwd 是脚本目录或项目根，那里 import 不到 `plots`）；没给 = 与真实 `-m` 一样放 cwd。
     """
-    import runpy  # noqa: PLC0415 — 只有 module 目标才需要，脚本目标不必付这份 import
+    import runpy  # noqa: PLC0415 — 只有 module 目标才需要付这份 import
 
     sys.argv = [target, *argv]  # run_module(alter_sys=True) 会把 argv[0] 换成模块文件
-    sys.path.insert(0, os.getcwd())
+    sys.path.insert(0, path_root or os.getcwd())
+    if path_root is not None:
+        # 包里的脚本按模块运行（ADR 0196）：入口的代码一律**从当前源码编译**，不用 `.pyc`（Codex #2055 P1）——
+        # 同一秒内等长改写会让旧 `.pyc` 时间戳仍然有效，`run_module` 照用它就静默跑出改写前的图。safe 侧同样从源码编译
+        _, spec, _cached = runpy._get_module_details(target)  # noqa: SLF001
+        origin = spec.origin or ""
+        with io.open_code(origin) as fh:
+            code_bytes = fh.read()
+        if on_source is not None:
+            # Only the target module's own source read binds the capture; the
+            # parent-package imports _get_module_details may have triggered are
+            # not target execution.
+            on_source(origin, code_bytes)
+        code = compile(code_bytes, origin, "exec", dont_inherit=True)
+        if on_origin is not None:
+            on_origin(origin)
+        if on_start is not None:
+            on_start(origin)
+        runpy._run_module_code(code, None, "__main__", spec)  # noqa: SLF001
+        return
     if on_start is not None:
         # These are run_module(alter_sys=True)'s own two operations, split at
         # the compiled-code boundary. A missing/invalid target must not report
@@ -960,8 +1032,15 @@ class BridgeRun:
         with _engine_reads():
             self._input_capture = _PKG.inputdeclaration.begin(
                 candidate,
+                # scope identity stays the original script; the byte identity is
+                # what this process actually reads and compiles (ADR 0194: the
+                # AI-repair launcher's bytes, original script's identity).
                 script=self.args.rel_target,
-                script_path=self.args.source_path,
+                script_path=(
+                    os.path.abspath(self.args.script_source)
+                    if self.args.script_source
+                    else self.args.source_path
+                ),
                 cwd_mode=candidate["scope"]["cwd_mode"],
                 run_config=self.args.run_config or None,
                 remap_rules=(),
@@ -978,6 +1057,15 @@ class BridgeRun:
         self._captured_inputs = None
         self._captured_input_archive = None
         if self._input_capture is None:
+            return
+        if self._capture_source_sha256 is None:
+            # Pre-target barrier (Codex #1925 P2): a parent package imported by
+            # runpy._get_module_details may show a Figure before the target
+            # module's source is ever read. finish() would fail without
+            # sticking — no bound bytes yet — and discarding the still-healthy
+            # pending capture here would leave the real target boundary without
+            # evidence. Keep it armed: this barrier stays a plain control-plane
+            # release, and the target's own read boundary captures as designed.
             return
         try:
             # Raw runner callers historically let the first preview create this
@@ -1224,7 +1312,9 @@ class BridgeRun:
         )
         # 与 safe worker 同一份自报（ADR 0053）：native 的 prefix / cwd 正是
         # 「用户自己的解释器、用户自己的 cwd」这两条承诺的可核对证据。
-        out["runtime"] = _PKG.figsession.runtime_report(import_skips=bridgeboot.skip_events())
+        out["runtime"] = _PKG.figsession.runtime_report(
+            import_skips=bridgeboot.skip_events(), gui_backends=bridgeboot.gui_backend_events()
+        )
         if self.inputs_report is not None:
             # 桌面拥有的运行在脚本结束后的屏障上才有（#1047）：父进程据此给 native 成功记录补上 helper / 数据依据。
             # 不放进 `runtime`：那一段进回执身份，同一会话前后两次 build 不该因为「跑没跑完」换身份
@@ -1541,6 +1631,9 @@ def _parse_args(argv: list):
     ap = argparse.ArgumentParser(prog="tavotto-bridge-runner", allow_abbrev=False)
     ap.add_argument("--target-kind", choices=("script", "module"), required=True)
     ap.add_argument("--target", required=True)
+    # ADR 0196：包里的脚本按模块运行（`python -m 包.模块`）。身份参数仍是脚本（`--target-kind script --target <脚本>`：
+    # 描述符 / 资产 id / 指纹从一开始就与按脚本运行相同），这里只换执行那一步；终端的 `tavotto run` 永远不带
+    ap.add_argument("--as-module", default=None)
     ap.add_argument("--out-dir", default="")
     ap.add_argument("--preview-dpi", type=int, default=200)
     ap.add_argument("--control-host", default="127.0.0.1")
@@ -1558,6 +1651,10 @@ def _parse_args(argv: list):
     ap.add_argument("--ignore-paths", default=None)
     # ADR 0162：图名别名表（JSON `[[原图名, 登记图名], …]`）；没有别名时不出现
     ap.add_argument("--stem-aliases", default=None)
+    # ADR 0127 修订 2026-11-18：库式模块的函数入口（只有脚本目标、桌面拥有的启动才会带）；没有时整份模块照原样跑
+    ap.add_argument("--entry", default=None)
+    # ADR 0194：AI 修复写的启动脚本（字节来源）；身份仍是 --target。没有时整份按 target 原样跑
+    ap.add_argument("--script-source", default=None)
     if "--" in argv:
         cut = argv.index("--")
         mine, user_argv = argv[:cut], argv[cut + 1 :]
@@ -1565,6 +1662,14 @@ def _parse_args(argv: list):
         mine, user_argv = argv, []
     args = ap.parse_args(mine)
     args.user_argv = user_argv
+    args.module_path_root = None
+    if args.as_module:
+        if args.target_kind == "script":
+            args.module_path_root = bridgeboot.package_path_root(args.target, args.as_module)
+        if args.module_path_root is None:
+            args.as_module = (
+                None  # 模块名与脚本路径对不上：不猜，照旧按脚本运行（失败的样子与以前一字不差）
+            )
     return args
 
 
@@ -1582,7 +1687,9 @@ def _derive_target_facts(args) -> None:
         args.source_path = ""
         stem = args.target.rpartition(".")[2] or args.target
     _SCRIPT_STEM[0] = stem
-    args.entry = "__main__"
+    args.call_entry = args.entry if args.target_kind == "script" else None
+    # 描述符 / 指纹里的 entry：与 safe 调同一个函数入口时就写那个函数名（同一张图同一份身份口径）
+    args.entry = args.call_entry or "__main__"
     root = args.project_root or os.getcwd()
     try:
         rel = os.path.relpath(args.source_path or os.path.join(root, stem + ".py"), root)
@@ -1698,9 +1805,16 @@ def main(argv: list | None = None) -> int:
     _derive_target_facts(args)
     run = BridgeRun(args)
 
+    # 脚本写死 GUI 后端时不切换（ADR 0195）：与 safe worker 同一个装配点；这里只登记回调，等用户 import 到的那一刻才装，
+    # 自己不 import matplotlib（`matplotlib.use` 在 `matplotlib` 载入完成时包，pyplot 的 `switch_backend` 在 pyplot 载入时包）
+    gui_backends = bridgeboot.install_gui_backend_neutralizer()
     callbacks = {
+        "matplotlib": gui_backends.patch_matplotlib,
         "matplotlib.figure": _install_savefig_hook,
-        "matplotlib.pyplot": lambda plt: _install_show_hook(plt, run.barrier),
+        "matplotlib.pyplot": lambda plt: (
+            gui_backends.patch_pyplot(plt),
+            _install_show_hook(plt, run.barrier),
+        ),
     }
     if args.observe_inputs and args.project_root:
         # 输入观察装在用户代码之前；numpy 那条通道等用户 import numpy 时补（观察器自己不 import 任何东西）
@@ -1719,13 +1833,36 @@ def main(argv: list | None = None) -> int:
 
     exit_code = 0
     try:
-        if args.target_kind == "script":
+        if args.as_module:
+            # Package script run as a module (ADR 0196): same declared-input
+            # capture, bound at the target module's own source read.
+            run.begin_input_capture()
+            run_module(
+                args.as_module,
+                args.user_argv,
+                on_start=run.execution_started,
+                path_root=args.module_path_root,
+                on_source=run.capture_source if run._input_capture is not None else None,
+            )
+        elif args.target_kind == "script" and args.call_entry:
+            # Registered function entry (ADR 0127): same capture boundary at
+            # the module's actual source read.
+            run.begin_input_capture()
+            run_script_entry(
+                args.target,
+                args.user_argv,
+                args.call_entry,
+                on_start=run.execution_started,
+                on_source=run.capture_source if run._input_capture is not None else None,
+            )
+        elif args.target_kind == "script":
             run.begin_input_capture()
             run_script(
                 args.target,
                 args.user_argv,
                 on_start=run.execution_started,
                 on_source=run.capture_source if run._input_capture is not None else None,
+                source=args.script_source,
             )
         else:
             run_module(
@@ -1733,6 +1870,7 @@ def main(argv: list | None = None) -> int:
                 args.user_argv,
                 on_origin=_set_module_source(args),
                 on_start=run.execution_started,
+                path_root=args.module_path_root,
             )
     except SystemExit as exc:  # 用户脚本自己 sys.exit(...)：图仍然算数
         exit_code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
@@ -1894,6 +2032,8 @@ def _write_report(run, args, exit_code: int) -> None:
             if n in sys.modules
         },
         "matplotlib_backend": _backend_name(),
+        # 脚本想用、被中和成非交互后端的 GUI 后端名（ADR 0195；与回执 `runtime.gui_backends_neutralized` 同一份，只有名字）
+        "gui_backends_neutralized": bridgeboot.gui_backend_events(),
         "tavotto_importable": _tavotto_importable(),
         # `--observe-inputs` 时脚本结束那一刻定格的输入观察（与 build 响应的 `observed_inputs` 同一份，#1047）
         "observed_inputs": run.inputs_report,

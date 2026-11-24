@@ -534,6 +534,10 @@
       "skip": "Don’t plot these {{count}} rows",
       "extract": "Use only the numbers inside"
     },
+    "variant": {
+      "split": "Grouped by file + “{{column}}”",
+      "by_file": "Grouped by file only"
+    },
     "candidate": {
       "points_mean": {
         "title": "Points + mean",
@@ -640,7 +644,14 @@
     "working": {
       "reading": "Reading…",
       "drawing": "Drawing…",
-      "slow": "Still drawing. More data takes a bit longer."
+      "slow": "Still drawing. More data takes a bit longer.",
+      "readingLarge": "Reading a large file, this takes a moment…",
+      "cancel": "Cancel",
+      "cancelHint": "Stop waiting for this read. You can read it again anytime."
+    },
+    "reduced": {
+      "text": "{{kept}} points from {{rows}} rows",
+      "hint": "The table has {{rows}} rows. This plot draws {{kept}} representative points, with the minimum and maximum values kept."
     },
     "preview": {
       "headerPick": "Which row holds the column names",
@@ -675,6 +686,8 @@
       "allText": "This table is all text, so there is nothing numeric to draw.",
       "unreadable": "This file is not a table and can't be read.",
       "failed": "That didn't draw. Your data is fine.",
+      "cancelled": "Cancelled. This file wasn't fully read.",
+      "readAgain": "Read again",
       "stripInfo": "First {{shown}} rows of {{total}} · {{columns}} columns",
       "expand": "Expand",
       "collapse": "Collapse"
@@ -688,10 +701,44 @@
       "noX": "No X axis",
       "noGroup": "No grouping"
     },
+    "connect": {
+      "pill": "Connect AI for smart analysis"
+    },
+    "suggest": {
+      "apply": "Try suggested",
+      "reading": "Checking columns…",
+      "connectHint": "Once connected, it works out what each column is and picks the X axis, Y axis and grouping."
+    },
+    "spec": {
+      "line": "Drawn at {{parts}}",
+      "join": ", ",
+      "widthTwo": "{{single}} mm single / {{double}} mm double column",
+      "widthOne": "{{single}} mm width",
+      "fontRange": "{{min}}–{{max}} pt text",
+      "fontOne": "{{min}} pt text",
+      "fontMin": "≥ {{min}} pt text",
+      "fontMax": "≤ {{max}} pt text"
+    },
     "redraw": {
       "from": "Drawn from {{file}}",
       "again": "Try another style",
       "undo": "Undo"
+    },
+    "batch": {
+      "pick": "Select",
+      "idle": "None selected",
+      "selected": "{{count}} selected",
+      "progress": "Plotting {{done}}/{{total}}",
+      "partial": "{{done}} done, {{failed}} failed",
+      "draw": "Plot each",
+      "merge": "Plot combined",
+      "stop": "Stop",
+      "showDone": "View assets",
+      "retry": "Retry",
+      "queued": "Queued",
+      "done": "Done",
+      "failed": "Failed",
+      "groupTitle": "{{count}} files"
     }
   }
 }

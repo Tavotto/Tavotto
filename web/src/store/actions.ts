@@ -20,7 +20,7 @@ import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geomet
 import { clamp, DUPLICATE_OFFSET_MM } from '@/lib/units'
 import { PAGE_MM_MAX, PAGE_MM_MIN } from '@/lib/pageRange'
 import { pickJournal } from '@/lib/journalPick'
-import { bindingFor, builtinEntryById, type JournalPrev } from '@/lib/specBinding'
+import { bindingFor, builtinEntryById, type JournalPrev, type SpecBinding } from '@/lib/specBinding'
 import { DEFAULT_PROFILE_ID } from '@/lib/profile'
 import { useJournalCatalogStore } from './journalCatalogStore'
 import { placePanelInPage } from '@/lib/panelPlacement'
@@ -65,10 +65,11 @@ import type {
   LayoutGroup,
   PanelObject,
   PanelOverride,
+  PathObject,
   ShapeObject,
   TextObject,
 } from '@/types/document'
-import { emptyProject, isKnownObject, migrateToProject, objectLabel, type ProjectDocument } from '@/types/document'
+import { arrowHeads, emptyProject, isKnownObject, legacyHead, migrateToProject, objectLabel, objectRotation, type ArrowHeadType, type PathTextObject, type ProjectDocument } from '@/types/document'
 import { findDocumentsForProjectFile, bindingForReuse, type ProjectFileBinding } from '@/lib/projectFile'
 import { isDocHeldElsewhere } from '@/lib/docPresence'
 import { useAssetStore } from './assetStore'
@@ -96,6 +97,20 @@ import { aliasClearPlan } from '@/lib/aliasOverrides'
 import { fitContentCrop, isContentFit } from '@/lib/panelEdgeCrop'
 import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, structuralPanelManifest, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
+import { isolationScope } from './isolationStore'
+import { useTransformPrefs } from './transformPrefs'
+import { useArrangeStore } from './arrangeStore'
+import {
+  gatherContiguous,
+  gidOfKey,
+  groupPathOf,
+  isGroupKey,
+  orphanMasks,
+  remapGroupPath,
+  setGroupPath,
+  unitKeyOf,
+  unitMembers,
+} from '@/lib/groupTree'
 import { askConfirm, isTimelineOpen, useUiStore, type StatusAction, type StatusTone } from './uiStore'
 import { feedbackStatusAction, retryOrFeedback, tooNewAction } from './failureExit'
 import { useViewportStore } from './viewportStore'
@@ -109,9 +124,14 @@ import {
 } from '@/types/document'
 import { contentToPageVec, panelContentTransform } from '@/lib/panelTransform'
 import { emitLayoutSaved } from '@/lib/layoutSaved'
+import { applyV2, pickV2OnlyJournal, type V2IndexEntry, type V2Patch } from '@/lib/journalV2'
+import { useJournalV2Store } from './journalV2Store'
 import { useTimelineStore } from './timelineStore'
 import { hasPendingStyleWork } from './styleWork'
+import { canConvertToPath, toPathObject } from '@/lib/convertToPath'
+import { styleFamilyOf } from '@/lib/markStyle'
 import { fitStageNow } from '@/store/zoomToSelection'
+import { remapLineIds } from '@/lib/pathText'
 
 /** 本文件的历史标签与状态提示都在 workspace 命名空间下 */
 const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
@@ -339,6 +359,30 @@ export function addShape(shape: ShapeObject['shape'], partial: Partial<ShapeObje
   return obj
 }
 
+/**
+ * 一个子图标签（小写字母 + 括号，加粗，字号 / 颜色 / 对齐取画布文字默认值，10 × 5 mm）。
+ * `addSubLabels` 与一键排版（ADR 0199 §二，`quickLayoutActions`）共用这一处，两条路出来的标签长得一样；
+ * 位置由调用方给（`addSubLabels` 自己加 x+1.5、y+1 的偏移）。**免费能力的模块，不放任何权益判断。**
+ */
+export function makeSubLabel(index: number, x: number, y: number): TextObject {
+  const def = canvasTextDefaults()
+  return {
+    id: newId('t'),
+    type: 'text',
+    text: `(${String.fromCharCode(97 + index)})`,
+    x,
+    y,
+    w: 10,
+    h: 5,
+    sizePt: def.sizePt,
+    color: def.color,
+    align: def.halign,
+    // 子图序号约定是加粗的——这是这一个入口自己的取舍，
+    // 不是另一套默认值，所以它叠在共用默认值**之上**
+    bold: true,
+  }
+}
+
 /** 按阅读顺序给所有面板添加 (a)(b)(c) 标签 */
 export function addSubLabels() {
   const panels = readingOrder(doc().objects.filter((o) => o.type === 'panel'))
@@ -349,22 +393,7 @@ export function addSubLabels() {
   const created: string[] = []
   commit(hist('addSubLabels'), (d) => {
     panels.forEach((p, i) => {
-      const def = canvasTextDefaults()
-      const label: TextObject = {
-        id: newId('t'),
-        type: 'text',
-        text: `(${String.fromCharCode(97 + i)})`,
-        x: p.x + 1.5,
-        y: p.y + 1,
-        w: 10,
-        h: 5,
-        sizePt: def.sizePt,
-        color: def.color,
-        align: def.halign,
-        // 子图序号约定是加粗的——这是这一个入口自己的取舍，
-        // 不是另一套默认值，所以它叠在共用默认值**之上**
-        bold: true,
-      }
+      const label = makeSubLabel(i, p.x + 1.5, p.y + 1)
       created.push(label.id)
       d.objects.push(label)
     })
@@ -513,6 +542,8 @@ export function deleteSelected() {
     ids.length === 1 ? hist('deleteObject', { name }) : hist('deleteObjects', { count: ids.length })
   commit(label, (d) => {
     d.objects = d.objects.filter((o) => !ids.includes(o.id))
+    // 剪切组里被裁的对象删光了：蒙版还原成普通可见对象，不留一个看不见的东西（ADR 0191）
+    releaseOrphanMasks(d)
     // 成员不足 2 个的布局组失去意义，一并清掉（约束消失，剩余对象原地不动）
     if (d.layoutGroups?.length) {
       d.layoutGroups = d.layoutGroups.filter(
@@ -534,26 +565,56 @@ export function duplicateSelected() {
   // 对任何 Proxy 都直接抛 DataCloneError（引擎级行为）——复制会 100% 静默失败。
   // 对已 finalize 的 plain object 克隆好再整体 push，与 clipboard.materializePaste 同一模式。
   const regroup = new Map<string, string>()
-  const clones: CanvasObject[] = doc()
-    .objects.filter((o) => ids.includes(o.id))
+  const renamed = new Map<string, string>()
+  const sources = doc().objects.filter((o) => ids.includes(o.id))
+  const step = duplicateStep(sources)
+  const scope = isolationScope()
+  const clones: CanvasObject[] = sources
     .map((o) => {
       const copy = structuredClone(o)
       copy.id = newId(o.type[0])
-      copy.x += DUPLICATE_OFFSET_MM
-      copy.y += DUPLICATE_OFFSET_MM
-      // 组要跟着复制成新的一份，否则副本会和原件粘成同一组
-      if (copy.groupId) {
-        const next = regroup.get(copy.groupId) ?? newId('g')
-        regroup.set(copy.groupId, next)
-        copy.groupId = next
+      renamed.set(o.id, copy.id)
+      copy.x += step.dx
+      copy.y += step.dy
+      // 重复复制（ADR 0185 M4 第二批）：副本上次被转过，这一份再转同样的角度（面板只走 90°，不跟）
+      if (step.ddeg && copy.type !== 'panel') {
+        const d = (((objectRotation(copy) + step.ddeg) % 360) + 540) % 360 - 180
+        if (Math.abs(d) > 1e-9) copy.rotationDeg = d
+        else delete copy.rotationDeg
       }
+      // 组要跟着复制成新的一份，否则副本会和原件粘成同一组（嵌套组整条链一起换）
+      // 组内编辑里复制：正在编辑的那一层及其外层祖先原样保留（副本仍留在这个组里），只换它下面的子组
+      const keep = scope ? groupPathOf(copy).indexOf(scope) + 1 : 0
+      remapGroupPath(copy, (g, i) => {
+        if (i < keep) return g
+        const next = regroup.get(g) ?? newId('g')
+        regroup.set(g, next)
+        return next
+      })
       return copy
     })
   if (!clones.length) return
+  remapLineIds(clones, renamed)
   commit(hist('duplicateObjects'), (d) => {
     d.objects.push(...clones)
   })
+  useTransformPrefs.getState().rememberDup(sources.map((o) => o.id), clones.map((c) => c.id))
   select(clones.map((c) => c.id))
+}
+
+/**
+ * ⌘D 这一次的位移与角度差（ADR 0185 M4 第二批「重复复制和位移」）：选区正好是上一次 ⌘D 的副本、而且副本之后被挪 / 转过，
+ * 就按「副本 − 原件」再走一步（Figma / PPT 的做法，用来排一排）；否则照旧错开 `DUPLICATE_OFFSET_MM`。
+ */
+export function duplicateStep(sources: readonly CanvasObject[]): { dx: number; dy: number; ddeg: number } {
+  const plain = { dx: DUPLICATE_OFFSET_MM, dy: DUPLICATE_OFFSET_MM, ddeg: 0 }
+  const last = useTransformPrefs.getState().lastDup
+  if (!last || last.to.length !== sources.length || !sources.every((o) => last.to.includes(o.id))) return plain
+  const objs = doc().objects
+  const a = objs.find((o) => o.id === last.from[0])
+  const b = objs.find((o) => o.id === last.to[0])
+  if (!a || !b) return plain
+  return { dx: b.x - a.x, dy: b.y - a.y, ddeg: a.type === 'panel' ? 0 : objectRotation(b) - objectRotation(a) }
 }
 
 export type ZMove = 'top' | 'bottom' | 'up' | 'down'
@@ -626,7 +687,13 @@ export const isSelectAllTarget = (o: CanvasObject): boolean => !o.hidden && !o.l
  * 走这一处——快速编辑里曾经把整版看不见的对象全选上，接着 Delete 就把它们从版上删掉（Codex #833）。
  */
 export function selectAllIds(objects: readonly CanvasObject[]): string[] {
-  return objects.filter(isSelectAllTarget).map((o) => o.id)
+  // 剪切组的蒙版是隐藏的（给旧构建的，ADR 0191），但它是组的一部分：组里有成员被全选，蒙版跟着进选区——
+  // 否则 ⌘A + Delete 删掉内容、蒙版被当成孤立的还原出来，平白多出一个形状
+  const base = objects.filter(isSelectAllTarget)
+  const gids = new Set(base.flatMap((o) => groupPathOf(o)))
+  return objects
+    .filter((o) => isSelectAllTarget(o) || (!!o.clipMask && !o.locked && !!o.groupId && gids.has(o.groupId)))
+    .map((o) => o.id)
 }
 
 export function selectAll() {
@@ -931,19 +998,51 @@ export function applyPageSize(
   })
 }
 
+/** 用户自己改页面尺寸（属性栏宽高 / 预设 / 横竖交换）：记下「这张画布的大小是用户定的」，一键排版的「画布：自动」据此保持画布大小 */
+export function markPageUserSized(d: FigureDocument): void {
+  d.page.userSized = true
+}
+
 export function setPageSize(w: number, h: number) {
-  commit(hist('setPageSize'), (d) => applyPageSize(d, w, h))
+  commit(hist('setPageSize'), (d) => {
+    applyPageSize(d, w, h)
+    markPageUserSized(d)
+  })
 }
 
 /**
  * 选一本期刊（ADR 0155）：**一次提交**写绑定（中性底 + 该期刊的覆盖 + 出处）并把页宽跟到该期刊最近的一栏——
  * 撤销一步全回去。期刊没规定栏宽就只写绑定，页宽不动。确认只用胶囊 toast（不推挤版面）。
  */
-export function selectJournal(journalId: string): void {
+export function selectJournal(journalId: string, v2: V2Patch | null = null): void {
   const d0 = doc()
-  // 退路只记「选期刊之前」那一份：从一本期刊换到另一本时沿用最初的，不把上一本期刊当成「之前」
+  const prev = journalPrevOf(d0)
+  const pick = pickJournal(journalId, useJournalCatalogStore.getState().catalog, {
+    pageW: d0.page.w,
+    follow: d0.profile?.follow,
+    prev,
+  })
+  // v2 事实（取到了才有）按项叠上去，v2 优先；预检求值器不变（ADR 0155 §14）
+  pick.binding = applyV2(pick.binding, v2)
+  useJournalV2Store.getState().remember(journalId, v2)
+  commitJournalPick(pick)
+}
+
+/**
+ * 选一本只在 v2 里有的刊（v1 目录没有；2026-11-17 用户拍板进选刊列表）：绑定只含 v2 无条件事实折出的规则，
+ * 其余一律不补。补丁必须已经在手（没有 v2 就没有内容可绑——调用方先判终态，取不到不调这里）。
+ */
+export function selectV2OnlyJournal(entry: Pick<V2IndexEntry, 'id' | 'label'>, v2: V2Patch): void {
+  const d0 = doc()
+  const pick = pickV2OnlyJournal(entry, v2, { pageW: d0.page.w, follow: d0.profile?.follow, prev: journalPrevOf(d0) })
+  useJournalV2Store.getState().remember(entry.id, v2)
+  commitJournalPick(pick)
+}
+
+/** 退路只记「选期刊之前」那一份：从一本期刊换到另一本时沿用最初的，不把上一本期刊当成「之前」 */
+function journalPrevOf(d0: ReturnType<typeof doc>): JournalPrev | undefined {
   const p0 = d0.profile
-  const prev: JournalPrev | undefined = p0?.journalRef
+  return p0?.journalRef
     ? p0.journalPrev
     : {
         profile: p0
@@ -951,11 +1050,11 @@ export function selectJournal(journalId: string): void {
           : null,
         pageW: d0.page.w,
       }
-  const pick = pickJournal(journalId, useJournalCatalogStore.getState().catalog, {
-    pageW: d0.page.w,
-    follow: p0?.follow,
-    prev,
-  })
+}
+
+function commitJournalPick(pick: { binding: SpecBinding; pageW: number | null; label: string }): void {
+  const d0 = doc()
+  const p0 = d0.profile
   // 期刊把页宽设成了多少：「不按期刊」只在页宽仍是它时才退回原页宽
   // 新期刊没给页宽（pageW = null）时沿用已记的 setW：当前页宽可能是用户手改的，不能把它当成「期刊设的」
   if (pick.binding.journalPrev) {
@@ -973,6 +1072,39 @@ export function selectJournal(journalId: string): void {
         : msg('journal.picked', { name: pick.label }, 'dialogs'),
       'done',
     )
+}
+
+/**
+ * 打开项目 / 切画布后，已按期刊检查的画布按该刊的 v2 事实自动更新（2026-11-17 用户拍板：自动，不要确认）。
+ * 只叠 v2 那几项；v1 的部分原样不动（库更新不改已定稿项目的 v1 结论）。叠完没变化就什么都不写。
+ * 取不到 v2（离线 / 被拒 / 开关关）= 什么都不做，预检照绑定里存着的判。
+ */
+export function refreshJournalV2(journalId: string, v2: V2Patch | null): void {
+  useJournalV2Store.getState().remember(journalId, v2)
+  const p = doc().profile
+  if (!v2 || !p?.journalRef || p.journalRef.id !== journalId) return
+  const next = applyV2(p, v2)
+  if (next === p) return
+  commit(hist('refreshJournalV2'), (d) => {
+    d.profile = next
+  })
+  useUiStore.getState().setStatus(msg('journal.v2Updated', { name: p.journalRef.label }, 'dialogs'), 'done')
+}
+
+/**
+ * 旧期刊 id 换绑到它现在的 id（目录里该刊把旧 id 记成了别名，`resolveJournalAlias`）：只改 `journalRef.id`，
+ * 绑定里的规则快照、出处、版本号、label 原样不动（库更新不改已定稿项目的 v1 结论）。
+ * 这是数据迁移不是用户编辑：走 `silent`，不进撤销栈、不清 future（否则撤销换绑会被 effect 立刻换回并吞掉重做历史）。
+ * 静默：不弹胶囊、不报错；
+ * 绑定已不是 `oldId`（用户换了刊 / 换了画布）就什么都不做。返回是否写了。
+ */
+export function rebindJournalId(oldId: string, newId: string): boolean {
+  const p = doc().profile
+  if (!p?.journalRef || p.journalRef.id !== oldId || oldId === newId) return false
+  useDocumentStore.getState().silent((d) => {
+    if (d.profile?.journalRef) d.profile.journalRef.id = newId
+  })
+  return true
 }
 
 /**
@@ -1054,6 +1186,14 @@ export function reorderObject(fromId: string, targetId: string, position: 'above
 export function toggleHidden(id: string) {
   const o = findObject(id)
   if (!o) return
+  // 剪切路径（ADR 0191）：隐藏 / 显示的是「裁不裁」（`clipOff`），`hidden` 永远留给旧构建
+  if (o.clipMask) {
+    updateObject(id, hist(o.clipOff ? 'showObject' : 'hideObject'), (obj) => {
+      if (obj.clipOff) delete obj.clipOff
+      else obj.clipOff = true
+    })
+    return
+  }
   updateObject(id, hist(o.hidden ? 'showObject' : 'hideObject'), (obj) => {
     obj.hidden = !obj.hidden
   })
@@ -1099,7 +1239,8 @@ export function setObjectsLocked(ids: string[], locked: boolean) {
 
 /** 批量隐藏 / 显示：同上，一条历史。隐藏后对象仍留在选区里（与 `toggleHidden` 一致，图层树里可恢复） */
 export function setObjectsHidden(ids: string[], hidden: boolean) {
-  const targets = doc().objects.filter((o) => ids.includes(o.id) && !!o.hidden !== hidden)
+  // 剪切路径不跟着批量隐藏 / 显示走：它的 hidden 是给旧构建的，「裁不裁」只在图层树那一行上切（ADR 0191）
+  const targets = doc().objects.filter((o) => ids.includes(o.id) && !o.clipMask && !!o.hidden !== hidden)
   if (!targets.length) return
   finishActiveGesture()
   const tids = targets.map((o) => o.id)
@@ -1156,6 +1297,32 @@ export function switchObjectKind(ids: string[], target: SwitchKind) {
     d.objects.forEach((o, i) => {
       const switched = next.get(o.id)
       if (switched) d.objects[i] = switched
+    })
+  })
+}
+
+/**
+ * 「转为路径」（ADR 0185 §二）：形状 / 箭头 → 自由路径 `path`。**一条 commit、一条历史**。
+ *
+ * 与 `switchObjectKind` 同三条纪律：不换 id、就地替换（数组位置 = z 序不动）、在 draft 外面算
+ * （`lib/convertToPath.toPathObject` 是纯函数，画面逐点不动）。选区里不能转的对象（文字 / 面板 / 已经是路径）
+ * 原样不动、能转的照转；一个都转不了就什么都不做（不进历史、不打断手势）。单向——撤销负责回去。
+ */
+export function convertToPath(ids: string[]) {
+  const next = new Map<string, CanvasObject>()
+  for (const o of doc().objects) {
+    if (!ids.includes(o.id) || !canConvertToPath(o)) continue
+    const converted = toPathObject(o)
+    if (converted) next.set(o.id, converted)
+  }
+  if (!next.size) return
+  finishActiveGesture()
+  const label =
+    next.size === 1 ? hist('convertToPath') : hist('convertToPathCount', { count: next.size })
+  commit(label, (d) => {
+    d.objects.forEach((o, i) => {
+      const converted = next.get(o.id)
+      if (converted) d.objects[i] = converted
     })
   })
 }
@@ -2784,18 +2951,26 @@ export function startLayoutAutoReflow(): () => void {
 /*  成组                                                                       */
 /* ========================================================================== */
 
-/** 该对象所在组的全部成员 id（无组则只有它自己），保持文档顺序 */
+/**
+ * 点中这个对象时一起选中的对象 id（文档顺序）：它在当前这一层（组内编辑的作用域，`isolationStore`）里所在的
+ * 单元——直接成员就是它自己，否则是它所在的、紧挨着这一层的那个子组的全员（嵌套组，ADR 0191）。
+ * 不在当前这一层里（组外的对象）= 只有它自己。
+ * 不含更新的构建写进来的组员（`isKnownObject`，#2037）：点中组里认识的成员不会把它们带进选区。
+ */
 export function groupMates(id: string): string[] {
   const objs = doc().objects
   const self = objs.find((o) => o.id === id)
-  if (!self?.groupId) return self ? [id] : []
-  return objs.filter((o) => o.groupId === self.groupId).map((o) => o.id)
+  if (!self) return []
+  const key = unitKeyOf(self, isolationScope(objs))
+  if (!key) return [id]
+  const byId = new Map(objs.map((o) => [o.id, o]))
+  return unitMembers(objs, key).filter((m) => m === id || isKnownObject(byId.get(m)!))
 }
 
 /**
  * 选区里这次真正能移动的对象。组的意义是「保持相对排布」，所以**组内任一成员
  * 锁定就整组不动**——只动没锁的那一半等于把组悄悄拆散（成员的锁定状态不限于
- * 选区内，按 groupId 全量扫文档）。不成组的锁定对象照旧逐个过滤。
+ * 选区内，按单元全量扫文档）。不成组的锁定对象照旧逐个过滤。
  */
 export function movableTargets(ids: string[]): {
   objects: CanvasObject[]
@@ -2803,15 +2978,18 @@ export function movableTargets(ids: string[]): {
   blockedGroups: number
 } {
   const objs = doc().objects
-  const expanded = expandGroups(ids)
-  const lockedGids = new Set(
-    objs.filter((o) => o.locked && o.groupId).map((o) => o.groupId as string),
+  const expanded = new Set(expandGroups(ids))
+  const scope = isolationScope(objs)
+  const unitOf = new Map(objs.map((o) => [o.id, unitKeyOf(o, scope)]))
+  const lockedUnits = new Set(
+    objs.filter((o) => o.locked && isGroupKey(unitOf.get(o.id) ?? '')).map((o) => unitOf.get(o.id) as string),
   )
   const blocked = new Set<string>()
   const objects = objs.filter((o) => {
-    if (!expanded.includes(o.id)) return false
-    if (o.groupId && lockedGids.has(o.groupId)) {
-      blocked.add(o.groupId)
+    if (!expanded.has(o.id)) return false
+    const u = unitOf.get(o.id)
+    if (u && lockedUnits.has(u)) {
+      blocked.add(u)
       return false
     }
     return !o.locked
@@ -2830,48 +3008,126 @@ export function warnBlockedGroups(blockedGroups: number, movedAny: boolean) {
   )
 }
 
-/** 选区补齐成整组：点中组里任意一个 = 选中整组 */
+/**
+ * 选区补齐成整组：点中组里任意一个 = 选中它在当前这一层里的整个单元（`groupMates`）。
+ * 更新的构建写进来的组员（`isKnownObject`，#2037）不补进来：它们不能选中、不能移动，原样留在文档里（与图层树选组一致）。
+ */
 export function expandGroups(ids: string[]): string[] {
   const objs = doc().objects
-  const gids = new Set(
-    ids.map((id) => objs.find((o) => o.id === id)?.groupId).filter(Boolean) as string[],
-  )
-  if (!gids.size) return ids
+  const scope = isolationScope(objs)
+  const keys = new Set<string>()
+  for (const id of ids) {
+    const o = objs.find((x) => x.id === id)
+    const k = o ? unitKeyOf(o, scope) : null
+    if (k && isGroupKey(k)) keys.add(k)
+  }
+  if (!keys.size) return ids
   const out = [...ids]
+  const byId = new Map(objs.map((o) => [o.id, o]))
+  for (const k of keys)
+    for (const m of unitMembers(objs, k)) if (isKnownObject(byId.get(m)!) && !out.includes(m)) out.push(m)
+  return out
+}
+
+/**
+ * 选区在当前这一层里的单元键（去重，按文档顺序）。组内编辑时组外的对象不算。
+ * 成组 / 取消成组 / 建剪切蒙版都按单元算：选中一个子组 = 那个子组整体是一个成员。
+ */
+export function selectedUnits(ids: readonly string[] = useSelectionStore.getState().ids): string[] {
+  const objs = doc().objects
+  const scope = isolationScope(objs)
+  const want = new Set(ids)
+  const out: string[] = []
   for (const o of objs) {
-    if (o.groupId && gids.has(o.groupId) && !out.includes(o.id)) out.push(o.id)
+    if (!want.has(o.id)) continue
+    const k = unitKeyOf(o, scope)
+    if (k && !out.includes(k)) out.push(k)
   }
   return out
 }
 
+/**
+ * 把选区里的单元收进一个新组（⌘G，嵌套组 ADR 0191）：新组挂在当前这一层下面，子组整体成为它的成员；
+ * 成员挪成连续的一段、落在最上面那个的位置（Illustrator 同一做法）。返回新组 id；不足两个单元 = null。
+ * `extra` 在同一次 commit 里对草稿再做一步（建剪切蒙版用）。
+ */
+export function groupUnits(
+  label: UiMessage,
+  extra?: (d: FigureDocument, gid: string) => void,
+): string | null {
+  const units = selectedUnits()
+  if (units.length < 2) return null
+  // 离散动作：先收掉还开着的连续手势，否则这次 commit 会并进上一条历史
+  finishActiveGesture()
+  const objs = doc().objects
+  const scope = isolationScope(objs)
+  const gid = newId('g')
+  const members = new Set(units.flatMap((k) => unitMembers(objs, k)))
+  commit(label, (d) => {
+    for (const o of d.objects) {
+      if (!members.has(o.id)) continue
+      const p = groupPathOf(o)
+      const at = scope ? p.indexOf(scope) + 1 : 0
+      setGroupPath(o, [...p.slice(0, at), gid, ...p.slice(at)])
+    }
+    d.objects = gatherContiguous(d.objects, members)
+    extra?.(d, gid)
+  })
+  return gid
+}
+
 export function groupSelected() {
   const ids = useSelectionStore.getState().ids
-  if (ids.length < 2) {
+  if (selectedUnits(ids).length < 2) {
     status(note('needTwoForGroup'), 'info')
     return
   }
-  // 离散动作：先收掉还开着的连续手势，否则这次 commit 会并进上一条历史
-  finishActiveGesture()
-  const gid = newId('g')
-  updateObjects(ids, hist('group', { count: ids.length }), (o) => {
-    o.groupId = gid
-  })
+  if (!groupUnits(hist('group', { count: ids.length }))) return
   status(note('grouped', { count: ids.length }), 'done')
   emitActivity({ kind: 'selection.grouped', count: ids.length })
 }
 
+/** 剪切组里没东西可裁的蒙版还原成普通可见对象（就地改草稿；删对象、取消成组之后调用） */
+export function releaseOrphanMasks(d: FigureDocument) {
+  const orphans = new Set(orphanMasks(d.objects))
+  if (!orphans.size) return
+  for (const o of d.objects) {
+    if (!orphans.has(o.id)) continue
+    delete o.clipMask
+    delete o.clipOff
+    delete o.hidden
+    // 组里只剩它自己：这一层组也拿掉（不留一个「组 · 1 个对象」）
+    const p = groupPathOf(o)
+    const gid = p[p.length - 1]
+    if (gid && !d.objects.some((x) => x.id !== o.id && groupPathOf(x).includes(gid))) setGroupPath(o, p.slice(0, -1))
+  }
+}
+
+/**
+ * 取消成组（⇧⌘G）：拆掉选区在当前这一层里的组单元，只拆一层——它的成员（对象与子组）升到它原来所在的那一层。
+ * 拆的是剪切组时，蒙版一起还原成普通可见对象（Illustrator 同一做法）。
+ */
 export function ungroupSelected() {
   const ids = useSelectionStore.getState().ids
-  const gids = new Set(
-    selectedObjects().map((o) => o.groupId).filter(Boolean) as string[],
-  )
+  const gids = new Set(selectedUnits(ids).filter(isGroupKey).map(gidOfKey))
   if (!gids.size) {
     status(note('notInAnyGroup'), 'info')
     return
   }
   finishActiveGesture()
   commit(hist('ungroup'), (d) => {
-    for (const o of d.objects) if (ids.includes(o.id)) o.groupId = undefined
+    for (const o of d.objects) {
+      const p = groupPathOf(o)
+      if (!p.some((g) => gids.has(g))) continue
+      // 这个组自己的蒙版：拆组 = 释放蒙版
+      if (o.clipMask && gids.has(p[p.length - 1])) {
+        delete o.clipMask
+        delete o.clipOff
+        delete o.hidden
+      }
+      setGroupPath(o, p.filter((g) => !gids.has(g)))
+    }
+    releaseOrphanMasks(d)
     // 该组若带布局约束，成员散了约束也一并移除
     if (d.layoutGroups?.length) {
       d.layoutGroups = d.layoutGroups.filter(
@@ -2886,8 +3142,10 @@ export function ungroupSelected() {
  * 这批对象里有没有成组的——「取消成组」可不可用的唯一判据。
  * 属性页（非响应式地问当前选区）与浮动栏（订阅着 objects 的组件）都读它。
  */
-export const selectionHasGroupIn = (objs: readonly CanvasObject[]): boolean =>
-  objs.some((o) => !!o.groupId)
+export const selectionHasGroupIn = (objs: readonly CanvasObject[]): boolean => {
+  const scope = isolationScope()
+  return objs.some((o) => isGroupKey(unitKeyOf(o, scope) ?? ''))
+}
 
 /** 选区里存在成组对象——决定「取消成组」是否可用 */
 export const selectionHasGroup = () => selectionHasGroupIn(selectedObjects())
@@ -3008,17 +3266,23 @@ export function alignSelectedTo(mode: AlignMode, ref: AlignRef) {
 export function setSelectionSpacing(axis: 'x' | 'y', gap: number) {
   const ids = useSelectionStore.getState().ids
   if (ids.length < 2) return
+  finishActiveGesture()
+  // 有关键对象（ADR 0185 M6）：它不动，其余的按间距排在它两边；没有就是第一个不动（原来的规则）
+  const key = useArrangeStore.getState().alignRef === 'primary' ? ids.at(-1) : undefined
   commit(hist(axis === 'x' ? 'spacingX' : 'spacingY'), (d) => {
     const objs = d.objects.filter((o) => ids.includes(o.id))
     const s = axis === 'x' ? 'w' : 'h'
     // 间距量的是看得见的盒（旋转过的标注取外接框），写回只平移
     const sorted = objs.slice().sort((a, b) => visualBounds(a)[axis] - visualBounds(b)[axis])
+    const starts = new Map<CanvasObject, number>()
     let cur = visualBounds(sorted[0])[axis]
     for (const o of sorted) {
-      const vb = visualBounds(o)
-      o[axis] += cur - vb[axis]
-      cur += vb[s] + gap
+      starts.set(o, cur)
+      cur += visualBounds(o)[s] + gap
     }
+    const anchor = sorted.find((o) => o.id === key)
+    const shift = anchor ? visualBounds(anchor)[axis] - starts.get(anchor)! : 0
+    for (const o of sorted) o[axis] += starts.get(o)! + shift - visualBounds(o)[axis]
   })
 }
 
@@ -3029,16 +3293,48 @@ export function setSelectionSpacing(axis: 'x' | 'y', gap: number) {
 type StyleClip =
   | { kind: 'panel'; crop?: CropRect; rotation?: PanelRotation; opacity?: number }
   | ({ kind: 'text' } & Partial<TextObject>)
+  | ({ kind: 'pathText' } & Partial<PathTextObject>)
   | ({ kind: 'arrow' } & Partial<ArrowObject>)
   | ({ kind: 'shape' } & Partial<ShapeObject>)
+  | ({ kind: 'path' } & Partial<PathObject>)
 
-/** 每类对象参与样式复制的键（几何 x/y/w/h 与内容永不复制） */
+/**
+ * 每类对象参与样式复制的键（几何 x/y/w/h 与内容永不复制）。2026-11-16 起（ADR 0185 M7）补全：文字带上字体（三个通用族 /
+ * 原图字体身份）与科学文本解释，路径带上描边对齐，路径文字也能刷；描边一族（箭头 / 形状 / 路径）之间互刷线宽、颜色、虚线、
+ * 线端拐角、不透明度，箭头 ↔ 路径还带端型；文字一族（文字 / 路径文字）之间互刷字号、粗斜、颜色、字体。
+ */
 const TEXT_STYLE_KEYS = ['sizePt', 'bold', 'italic', 'underline', 'color', 'align',
-  'lineHeight', 'padding', 'bg', 'borderColor', 'borderPt', 'rotationDeg'] as const
+  'lineHeight', 'padding', 'bg', 'borderColor', 'borderPt', 'rotationDeg',
+  'fontFamily', 'sourceFont', 'interpretation'] as const
+const PATHTEXT_STYLE_KEYS = ['sizePt', 'bold', 'italic', 'color', 'fontFamily', 'textAlign', 'flip', 'baselineOffsetPt'] as const
 const ARROW_STYLE_KEYS = ['strokePt', 'color', 'head', 'headStart', 'headEnd',
-  'dash', 'rotationDeg'] as const
+  'headSizeStart', 'headSizeEnd', 'dash', 'strokeOpacity', 'lineCap', 'lineJoin',
+  'miterLimit', 'dashPattern', 'rotationDeg'] as const
+/** 2026-11-14 起格式刷把描边的全部外观都带上（ADR 0174 的描边开关 / 不透明度 / 线端拐角，ADR 0185 的斜接上限 / 自定义虚线 / 描边对齐） */
 const SHAPE_STYLE_KEYS = ['strokePt', 'color', 'fill', 'cornerRadius',
-  'fillOpacity', 'dash', 'rotationDeg'] as const
+  'fillOpacity', 'dash', 'stroke', 'strokeOpacity', 'lineCap', 'lineJoin', 'miterLimit',
+  'dashPattern', 'strokeAlign', 'fillGradient', 'strokeGradient', 'rotationDeg'] as const
+/**
+ * 自由路径（ADR 0185）：填充 / 描边字段与形状同名同义，端型与箭头同名同义。形状 ↔ 路径同族互刷
+ * （`markStyle.styleFamilyOf`），写的是两边**都有**的那几个键（`styleKeysOf` 取交集）——圆角不刷到路径上、端型不刷到形状上。
+ * 描边对齐两边缺省不同（形状缺省内侧、路径缺省居中），跨类刷时按实际生效的值换（`transferStyle`）。
+ */
+const PATH_STYLE_KEYS = ['strokePt', 'color', 'fill', 'fillOpacity', 'fillRule', 'dash', 'stroke',
+  'strokeOpacity', 'lineCap', 'lineJoin', 'miterLimit', 'dashPattern', 'fillGradient', 'strokeGradient',
+  'strokeAlign', 'headStart', 'headEnd', 'headSizeStart', 'headSizeEnd', 'rotationDeg'] as const
+const STYLE_KEYS: Record<StyleClip['kind'], readonly string[]> = {
+  panel: [],
+  text: TEXT_STYLE_KEYS,
+  pathText: PATHTEXT_STYLE_KEYS,
+  arrow: ARROW_STYLE_KEYS,
+  shape: SHAPE_STYLE_KEYS,
+  path: PATH_STYLE_KEYS,
+}
+/** 跨类刷时另外换算的键：描边对齐（两边缺省不同）、端型（箭头的旧 `head` 字段） */
+const CONVERTED = new Set(['strokeAlign', 'head', 'headStart', 'headEnd'])
+/** 从 `from` 类型刷到 `to` 类型时照搬的键：两边都参与样式复制的键（同类全部照搬；跨类时换算的那几个另算） */
+const styleKeysOf = (from: StyleClip['kind'], to: StyleClip['kind']): string[] =>
+  STYLE_KEYS[from].filter((k) => STYLE_KEYS[to].includes(k) && (from === to || !CONVERTED.has(k)))
 
 function pickKeys(src: object, keys: readonly string[]): Record<string, unknown> {
   const from = src as Record<string, unknown>
@@ -3054,10 +3350,58 @@ function assignKeys(target: object, clip: object, keys: readonly string[]): void
   }
 }
 
+/** 描边对齐实际生效的值：形状缺省内侧、路径缺省居中 */
+const effectiveAlign = (kind: StyleClip['kind'], v: unknown): 'inside' | 'center' | 'outside' =>
+  v === 'inside' || v === 'center' || v === 'outside' ? v : kind === 'shape' ? 'inside' : 'center'
+
+/** 来源的两端端型（箭头按 `arrowHeads` 读旧 `head`；路径缺省无） */
+function headsOf(clip: StyleClip): { start: ArrowHeadType; end: ArrowHeadType } | null {
+  if (clip.kind === 'arrow') return arrowHeads(clip as ArrowObject)
+  if (clip.kind === 'path') return { start: (clip as PathObject).headStart ?? 'none', end: (clip as PathObject).headEnd ?? 'none' }
+  return null
+}
+
+/** 把样式刷到一个对象上：同族的键照搬，跨类时描边对齐、端型按实际生效的值换算 */
+function transferStyle(o: CanvasObject, clip: StyleClip): void {
+  assignKeys(o, clip, styleKeysOf(clip.kind, o.type as StyleClip['kind']))
+  if (clip.kind === o.type) return
+  const target = o as unknown as Record<string, unknown>
+  // 描边对齐：形状 ↔ 路径
+  if (STYLE_KEYS[clip.kind].includes('strokeAlign') && (o.type === 'shape' || o.type === 'path')) {
+    const eff = effectiveAlign(clip.kind, (clip as Record<string, unknown>).strokeAlign)
+    if (eff === (o.type === 'shape' ? 'inside' : 'center') || (o.type === 'path' && eff === 'center')) delete target.strokeAlign
+    else target.strokeAlign = eff
+  }
+  // 端型：箭头 ↔ 路径
+  const heads = headsOf(clip)
+  if (heads && (o.type === 'arrow' || o.type === 'path')) {
+    if (o.type === 'arrow') {
+      target.headStart = heads.start
+      target.headEnd = heads.end
+      target.head = legacyHead(heads)
+    } else {
+      if (heads.start === 'none') delete target.headStart
+      else target.headStart = heads.start
+      if (heads.end === 'none') delete target.headEnd
+      else target.headEnd = heads.end
+    }
+  }
+}
+
 /** 样式剪贴板不属于文档，不进 undo；粘贴才是一条历史 */
 let styleClip: StyleClip | null = null
+/** 样式是从哪个对象复制的：粘贴时它还在选区里就跳过（它本来就是这个样式，不该算进「已粘贴到 N 个对象」） */
+let styleSourceId: string | null = null
 
 export const styleClipKind = () => styleClip?.kind ?? null
+
+const COPIED_NOTE: Record<Exclude<StyleClip['kind'], 'panel'>, string> = {
+  text: 'styleCopiedText',
+  pathText: 'styleCopiedText',
+  arrow: 'styleCopiedArrow',
+  shape: 'styleCopiedShape',
+  path: 'styleCopiedPath',
+}
 
 export function copySelectionStyle() {
   const src = selectedObjects().at(-1)
@@ -3068,16 +3412,13 @@ export function copySelectionStyle() {
       rotation: src.rotation,
       opacity: src.opacity,
     }
+    styleSourceId = src.id
     status(note('styleCopiedPanel'), 'done')
-  } else if (src?.type === 'text') {
-    styleClip = { kind: 'text', ...pickKeys(src, TEXT_STYLE_KEYS) }
-    status(note('styleCopiedText'), 'done')
-  } else if (src?.type === 'arrow') {
-    styleClip = { kind: 'arrow', ...pickKeys(src, ARROW_STYLE_KEYS) }
-    status(note('styleCopiedArrow'), 'done')
-  } else if (src?.type === 'shape') {
-    styleClip = { kind: 'shape', ...pickKeys(src, SHAPE_STYLE_KEYS) }
-    status(note('styleCopiedShape'), 'done')
+  } else if (src && src.type in COPIED_NOTE) {
+    const kind = src.type as Exclude<StyleClip['kind'], 'panel'>
+    styleClip = { kind, ...pickKeys(src, STYLE_KEYS[kind]) } as StyleClip
+    styleSourceId = src.id
+    status(note(COPIED_NOTE[kind]), 'done')
   } else {
     status(note('styleCopyNeedSelection'), 'error')
   }
@@ -3086,8 +3427,9 @@ export function copySelectionStyle() {
 export function pasteSelectionStyle() {
   const clip = styleClip
   if (!clip) return
+  // 同族就能刷：描边一族（箭头 / 形状 / 路径）、文字一族（文字 / 路径文字）、图（`markStyle.styleFamilyOf`）
   const ids = selectedObjects()
-    .filter((o) => o.type === clip.kind)
+    .filter((o) => o.id !== styleSourceId && styleFamilyOf(o.type) === styleFamilyOf(clip.kind))
     .map((o) => o.id)
   if (!ids.length) {
     status(note('stylePasteNoTarget', { kind: t(`objectType.${clip.kind}`) }), 'error')
@@ -3098,12 +3440,8 @@ export function pasteSelectionStyle() {
       rotatePanelDraft(o, clip.rotation ?? 0)
       applyCropDraft(o, clip.crop)
       o.opacity = clip.opacity
-    } else if (clip.kind === 'text' && o.type === 'text') {
-      assignKeys(o, clip, TEXT_STYLE_KEYS)
-    } else if (clip.kind === 'arrow' && o.type === 'arrow') {
-      assignKeys(o, clip, ARROW_STYLE_KEYS)
-    } else if (clip.kind === 'shape' && o.type === 'shape') {
-      assignKeys(o, clip, SHAPE_STYLE_KEYS)
+    } else if (o.type !== 'panel') {
+      transferStyle(o, clip)
     }
   })
   status(note('stylePasted', { count: ids.length }), 'done')
