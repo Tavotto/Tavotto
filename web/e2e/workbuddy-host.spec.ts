@@ -498,13 +498,13 @@ test('c01 真引擎：1.35 MB 画布经 guest 回拉进 ready；拖动 → 权�
     ])
     await expect(frame.getByText('已同步')).toBeVisible({ timeout: 60_000 })
 
-    // ⑥ 预检（另一个工具 = 另一次授权）
-    // 编辑之后这颗按钮写的是「预检已过期」，编辑前写计数——两种都含「预检」或「阻断」
-    await frame.getByRole('button', { name: /预检|阻断/ }).click()
+    // ⑥ 投稿前检查（另一个工具 = 另一次授权）
+    // 编辑之后这颗按钮写的是「投稿前检查已过期」，编辑前写计数——两种都含「投稿前检查」或「项要改」
+    await frame.getByRole('button', { name: /投稿前检查|项要改/ }).click()
     await expect.poll(() => w<string[]>(page, '__PROMPTS__')).toContain('tavotto_preflight')
     await expect(frame.getByText(/仍要导出/)).toBeVisible({ timeout: 60_000 })
 
-    // ⑦ 导出：c01_line 在课题组规范下有阻断项，先按界面要求显式确认再导出
+    // ⑦ 导出：c01_line 在课题组规范下有要改的问题，先按界面要求显式确认再导出
     await frame.getByText(/仍要导出/).click()
     await frame.getByRole('button', { name: /导出 PDF\+PNG/ }).click()
     // 判据是「已导出」那条提示——面包屑里本来就写着 c01_line.pdf，按 .pdf 找会提前成立

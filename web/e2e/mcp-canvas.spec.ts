@@ -357,7 +357,7 @@ test('投稿前检查与导出都走 tools/call，结果回到界面上', async 
 
   // 按可访问名定位：按钮的名字是它的**文字内容**（title 只是补充说明），
   // 拿 title 当 name 找不到它
-  await frame.getByRole('button', { name: /阻断/ }).click()
+  await frame.getByRole('button', { name: /项要改/ }).click()
   await expect(frame.getByText('投稿前检查通过')).toBeVisible({ timeout: 20_000 })
 
   await frame.getByRole('button', { name: /导出 PDF\+PNG/ }).click()
