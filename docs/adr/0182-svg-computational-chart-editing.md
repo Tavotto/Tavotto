@@ -30,8 +30,14 @@
 场景、数据和模型以字节摘要及 revision 绑定，Python/TypeScript 镜像共用 golden 向量。
 场景解析沿用 `svgcheck` 的安全边界；坐标先由 SVG 用户单位转换为物理 pt，再进入现有面板放置链。
 
+HTTP 绑定请求携带校准时 `/api/svg/chart/inspect` 返回的 `scene_digest`。摘要缺失时返回 422，
+重新读取的场景摘要不符时返回 409 `chart_source_changed`，调用方需重新检查并校准。
+重放按完整场景索引验证绑定节点。新建绑定目前仍受检视清单上限约束，见 [#2147](https://github.com/Tavotto/Tavotto/issues/2147)。
+
 计算仍由 Matplotlib 的 locator、formatter、scale、norm 和既有 override/manifest 权威完成。
 组合器替换明确归属的区域，并保持 defs/use、clip、透明度和层序；未绑定内容不被整体重画。
+PNG 预览与 manifest 使用同一次 worker 绘制。预览转为 RenderCore 路径时，
+字形定义的缩放和各实例的位移直接并入无描边的轮廓坐标，避免为这两种变换增加分组。
 
 与 ADR 0178 的关系：两者都需要确定性计算和数据事实，但本方案服务于“已有 SVG 的显式绑定”，
 不增加模型写代码或任意执行入口。配方、统计规则、数据出图工具集继续以 ADR 0178 为唯一权威；
@@ -117,6 +123,8 @@ workerd 消费。workerd 通过 `bounded_chart_tasks` 能力握手；旧二进�
 
 - 同一计算 revision 冻结模型、绑定、数据、来源、profile 和原序 overrides；各导出 scope 消费同一事实。
 - PDF 经 `pdfbackend`/RenderCore；零 PyMuPDF 不变。不能表达的格式能力按既有逐格式结果披露。
+- PNG 预览以 worker 在测量 manifest 的同一次绘制中输出的字形轮廓生成 Canonical PDF。
+  导入计算包时先按包的原有 SVG 表示验证冷重放，再生成用于 PNG 的轮廓。
 - 原件写回仍是 prepare → 全量重放/几何/像素 verify → commit；失败保持原件，外部新版本不得被覆盖。
 - 历史来源意图与当前执行权限分开；重跑、取消、失败、旧响应和跨项目切换不提升历史来源权限。
 - 诊断、遥测和运行目录继续沿现有边界，不新增用户文字、数据或路径的遥测入口。

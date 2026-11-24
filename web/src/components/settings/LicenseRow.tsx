@@ -4,6 +4,7 @@ import { t as translate } from '@/i18n'
 import { formatDate } from '@/i18n/format'
 import type { LicenseFailureCode } from '@/lib/api'
 import { licenseVisible, useLicenseStore } from '@/store/licenseStore'
+import { FoundingPlate } from '../license/FoundingPlate'
 import { Button } from '../ui/Button'
 import { ICON_SIZE } from '../ui/Icon'
 import { ExternalLink } from '../ui/icons'
@@ -48,7 +49,7 @@ export function LicenseRow() {
   const status = useLicenseStore((s) => s.status)
   const failure = useLicenseStore((s) => s.failure)
   const busy = useLicenseStore((s) => s.busy)
-  const { load, activate, refresh, release, buy, clearFailure } = useLicenseStore.getState()
+  const { load, activate, refresh, release, buy, setPlateName, clearFailure } = useLicenseStore.getState()
   const [entering, setEntering] = useState(false)
   const [code, setCode] = useState('')
   /** 上一次联网做的是哪一件：失败后的「重试」重做那一件，不拿刷新顶替解绑（Codex #2071 P2） */
@@ -139,6 +140,7 @@ export function LicenseRow() {
     control = (
       <Button
         variant="ghost"
+        className="text-ink-2 hover:text-ink"
         loading={busy}
         title={st('releaseTitle')}
         onClick={() => void doRelease()}
@@ -224,6 +226,13 @@ export function LicenseRow() {
                 spellCheck={false}
                 autoComplete="off"
                 className="max-w-xs font-mono text-xs tracking-wider"
+              />
+            ) : status.founding ? (
+              <FoundingPlate
+                no={status.founding.no}
+                since={status.founding.since}
+                name={status.founding.name}
+                onName={(n) => void setPlateName(n)}
               />
             ) : undefined
           }

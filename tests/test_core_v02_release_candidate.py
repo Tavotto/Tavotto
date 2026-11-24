@@ -10,6 +10,7 @@ import urllib.request
 from pathlib import Path
 from xml.etree import ElementTree
 
+import pikepdf
 import pymupdf
 import pytest
 from PIL import Image
@@ -205,6 +206,76 @@ def _png_pixels(path):
     return rgba.tobytes()
 
 
+def _assert_structured_pdf_export(app, doc):
+    request = _canvas_export_request(doc, "Plain native figures")
+    request["formats"] = ["pdf"]
+    mpl, r = request["canvas"]["objects"]
+    mpl["bookmark_title"] = "Matplotlib signal"
+    r["bookmark_title"] = "ggplot2 fuel economy"
+    caption = "Notes on native figures"
+    request["canvas"]["objects"].append(
+        {
+            "type": "text",
+            "text": caption,
+            "x_mm": 5,
+            "y_mm": 56,
+            "w_mm": 155,
+            "h_mm": 4,
+            "size_pt": 8,
+        }
+    )
+    plain = _export_files(app, request)["pdf"]
+    structured = _export_files(
+        app,
+        {
+            **request,
+            "filename": "Native figures with bookmarks and notes",
+            "pdf_panel_bookmarks": True,
+            "pdf_panel_layers": True,
+            "pdf_annotation_layer": True,
+            "pdf_text_attachment": True,
+        },
+    )["pdf"]
+    titles = ["1. Matplotlib signal", "2. ggplot2 fuel economy"]
+    with pikepdf.Pdf.open(structured) as pdf:
+        outline = pdf.Root.Outlines
+        first = outline.First
+        second = first.Next
+        assert outline.Count == 2 and second.objgen == outline.Last.objgen
+        rectangles_mm = [(5, 5.2, 81.2, 56), (88, 5.2, 164.2, 56)]
+        for node, title, rect in zip((first, second), titles, rectangles_mm, strict=True):
+            page, fit, *coords = node.Dest
+            assert str(node.Title) == title
+            assert page.objgen == pdf.pages[0].obj.objgen
+            assert fit == pikepdf.Name.FitR
+            assert [float(value) for value in coords] == pytest.approx(
+                [mm * 72 / 25.4 for mm in rect], abs=0.001
+            )
+
+    with pymupdf.open(plain) as baseline, pymupdf.open(structured) as actual:
+        assert baseline.get_toc() == [] and baseline.embfile_names() == []
+        assert actual.get_toc() == [[1, title, 1] for title in titles]
+        attachment = "tavotto-canvas-text.json"
+        assert actual.embfile_names() == [attachment]
+        payload = json.loads(actual.embfile_get(attachment))
+        assert payload["source"] == "tavotto.canvas.text"
+        assert payload["page"] == payload["schema_version"] == 1
+        assert payload["annotations"] == [{"text": caption}]
+        assert caption in actual[0].get_text()
+        assert actual[0].get_pixmap(dpi=144).samples == baseline[0].get_pixmap(dpi=144).samples
+        layers = actual.layer_ui_configs()
+        assert [layer["text"] for layer in layers] == [*titles, "Canvas annotations"]
+        assert all(layer["on"] for layer in layers)
+        left = pymupdf.Rect(0, 0, actual[0].rect.width / 2, actual[0].rect.height)
+        right = pymupdf.Rect(left.x1, 0, actual[0].rect.width, actual[0].rect.height)
+        before = actual[0].get_pixmap(clip=right).samples
+        actual.set_layer_ui_config(layers[1]["number"], action=pymupdf.PDF_OC_OFF)
+        assert actual[0].get_pixmap(clip=right).samples != before
+        assert actual[0].get_pixmap(clip=left).samples == baseline[0].get_pixmap(clip=left).samples
+        actual.set_layer_ui_config(layers[1]["number"], action=pymupdf.PDF_OC_ON)
+        assert actual[0].get_pixmap(clip=right).samples == before
+
+
 def _assert_partial_svg_export(app, doc, project):
     supplement = "supplement.pdf"
     with pymupdf.open() as pdf:
@@ -359,6 +430,7 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         assert _archived_previews(app, reopened) == expected_previews
         exported = _export_files(app, _canvas_export_request(reopened, "After transfer"))
         assert _format_pixels(exported) == expected
+        _assert_structured_pdf_export(app, reopened)
         _assert_partial_svg_export(app, reopened, receiver)
         query = urllib.parse.urlencode({"project_root": str(receiver.resolve())})
         _, sessions = app.call(f"/api/native/sessions?{query}")

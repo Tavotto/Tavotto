@@ -920,7 +920,16 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
         assert all(not active.alive() for active in nativesession.REGISTRY.list(str(root)))
 
         (root / "chart.svg").write_bytes((CORPUS / "line_two_series.svg").read_bytes())
-        binding = client.post("/api/svg/chart/bind", json={**BIND_REQUEST, "file": "chart.svg"})
+        inspected = client.get("/api/svg/chart/inspect?id=chart.svg")
+        assert inspected.status_code == 200, inspected.get_json()
+        binding = client.post(
+            "/api/svg/chart/bind",
+            json={
+                **BIND_REQUEST,
+                "file": "chart.svg",
+                "scene_digest": inspected.json["scene_digest"],
+            },
+        )
         assert binding.status_code == 200, binding.get_json()
         chart = {key: binding.get_json()[key] for key in ("model", "binding")}
         mixed_document = opened.get_json()

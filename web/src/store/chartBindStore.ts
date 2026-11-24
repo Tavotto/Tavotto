@@ -271,7 +271,8 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
       } catch (err) { fail(s, err) }
     },
     confirmBinding: async () => {
-      if (!get().file) return
+      const { file, scene } = get()
+      if (!file || !scene) return
       const s = startRequest()
       set({ result: null, previewSvg: null, previewFrame: null, previewOk: false })
       try {
@@ -284,7 +285,8 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
         }
         const f = s.form
         const result = await chartBind({
-          file: s.file!, ...chartSourceFields(s.chartSource), axes_id: 'ax1', rect: f.rect, axes_nodes: f.axesNodes,
+          file, scene_digest: scene.scene_digest, ...chartSourceFields(s.chartSource),
+          axes_id: 'ax1', rect: f.rect, axes_nodes: f.axesNodes,
           y: { ...f.y },
           ...(f.xKind === 'categorical'
             ? { x_kind: 'categorical' as const, categories_col: f.categoriesCol }

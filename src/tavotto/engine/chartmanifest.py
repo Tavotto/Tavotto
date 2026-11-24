@@ -349,6 +349,7 @@ def render_scaffold(
     coordinate_space: str = "viewbox-user",
     complete_frame: bool = False,
     legend_follow: dict | None = None,
+    outline_text: bool = False,
 ) -> dict:
     """全新 scaffold Figure + 完整 patch 列表 → 配对 SVG/native manifest。
 
@@ -410,7 +411,8 @@ def render_scaffold(
     gid_roles = _owners(state, claims, runtime)
     members = _svg_members(state, gid_roles, runtime)
     stream = io.BytesIO()
-    with rc_context({"svg.fonttype": "none", "svg.hashsalt": salt, "savefig.bbox": None}):
+    fonttype = "path" if outline_text else "none"
+    with rc_context({"svg.fonttype": fonttype, "svg.hashsalt": salt, "savefig.bbox": None}):
         with runtime.manifest.capture_preview_manifest(state, stem) as measured:
             fig.savefig(stream, format="svg", metadata={"Date": None, "Creator": None})
             manifest = measured()

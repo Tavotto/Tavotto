@@ -9637,6 +9637,8 @@ export type LicenseStatus =
       /** 打码后的邮箱（`m***@gmail.com`），只用于显示 */
       email_hint: string
       needs_refresh: boolean
+      /** 创始会员（令牌里签了席位号）：永久身份，过期也在，吊销时没有；常规授权没有这个键 */
+      founding?: { no: number; since: number; /** 刻在铭牌上的名字（只存本机；没刻 = 空串） */ name: string }
     }
 
 const licenseBody = (body?: unknown): RequestInit => ({
@@ -9648,6 +9650,8 @@ const licenseBody = (body?: unknown): RequestInit => ({
 export const fetchLicenseStatus = () => jsonFetch<LicenseStatus>('/api/license/status')
 export const activateLicense = (code: string) =>
   jsonFetch<LicenseStatus>('/api/license/activate', licenseBody({ code }))
+export const setLicensePlateName = (name: string) =>
+  jsonFetch<LicenseStatus>('/api/license/plate-name', licenseBody({ name }))
 export const refreshLicense = () => jsonFetch<LicenseStatus>('/api/license/refresh', licenseBody())
 export const releaseLicense = () => jsonFetch<LicenseStatus>('/api/license/release', licenseBody())
 export const licenseCheckout = (lookupKey: string, locale: string, renew = false) =>

@@ -235,7 +235,6 @@ USER_VISIBLE_CODES = {
     # Journal facts inspection may return a bounded result error.
     "result_too_large": set(),
     "journal_catalog_disabled": set(),
-    "svg_scene_invalid": set(),
     # --- ADR 0175：改图助手附文件（`POST /api/ai/attachments`）；固定文案 ---
     "attachment_too_large": set(),
     "attachment_empty": set(),
@@ -258,6 +257,7 @@ USER_VISIBLE_CODES = {
     "chart_render_unsupported": set(),
     "chart_source_changed": set(),
     "svg_resource_limit": set(),
+    "svg_scene_invalid": set(),
     "no_project": set(),
     "missing_path": set(),
     "mkdir_failed": {"reason"},
@@ -269,7 +269,6 @@ USER_VISIBLE_CODES = {
     "permission_denied": {"path"},
     "read_failed": {"reason"},
     "internal_error": {"reason"},
-    # U10（ADR 0072）：退役 / 不认识的渲染后端名，params 带原始取值
     "backend_retired": {"value"},
     "backend_unknown": {"value"},
     "backend_unavailable": {"reason"},
@@ -312,6 +311,8 @@ USER_VISIBLE_CODES = {
     "repair_has_links": set(),
     "repair_too_large": set(),
     "export_raster_too_large": {"height", "max_pixels", "width"},
+    # TeX 工具链（`texdiag`）：参数来自错误转换合同 `pool.recovery_params`；`tex_failed` 的 `{{error}}`
+    # 与 `script_error` 同一来源（traceback 末行，前端 `engineErrorMsg` 填）
     "tex_command_missing": {"command"},
     "tex_package_missing": {"file"},
     "tex_compile_failed": {"line"},

@@ -1,7 +1,6 @@
 // SVG 计算图表的服务调用（ADR 0182）。判据在后端（chartmodel/chartbind/
 // svgcompose）；这里只做形状化的请求/响应与稳定错误码透传，不做第二份判定。
 import type { ApiError, Manifest } from './api'
-import type { ComputedRenderFrame } from '@/lib/chartFrame'
 import { apiUrl, withProject } from '@/lib/session'
 import type { ChartBinding, ChartModel } from '../types/chartModel'
 import type { ChartSourceRef, PanelChartState, PanelOverride } from '../types/document'
@@ -51,6 +50,7 @@ export interface ChartBindLegendRequest {
 
 interface ChartBindBaseRequest {
   file: string
+  scene_digest: string
   chart_source?: ChartSourceRef
   axes_id: string
   rect: [number, number, number, number]
@@ -89,8 +89,6 @@ export interface ChartComputeResult {
   model_digest: string
   binding_digest: string
   engine: { matplotlib: string, numpy: string, tavotto: string }
-  /** native-manifest/2 才有：这次实际 draw 的外框声明（含在 manifest 内，顶层是稳定出口）。 */
-  render_frame?: ComputedRenderFrame
   /** 引擎算出 manifest 时就有（native-manifest/1、/2 都发）；老引擎不发。 */
   manifest?: Manifest
 }
