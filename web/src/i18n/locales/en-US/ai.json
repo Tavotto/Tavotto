@@ -722,25 +722,31 @@
       "fontMax": "≤ {{max}} pt text"
     },
     "basis": {
-      "line": "Basis: {{text}}",
-      "points": "{{drawn}} points, one per row.",
-      "groupsEqual": "{{drawn}} values in {{groups}} groups, {{n}} each.",
-      "groupsRange": "{{drawn}} values in {{groups}} groups, {{min}}–{{max}} each.",
-      "xAlso": "{{x}} distinct x values.",
-      "xOnly": "{{drawn}} values, {{x}} distinct x values.",
-      "unplotted": "{{count}} more rows not drawn."
+      "line": "Basis: {{text}}.",
+      "then": ", ",
+      "join": "; ",
+      "points": "drawn from {{drawn}} points, one per row",
+      "plain": "drawn from {{drawn}} values",
+      "groupsEqual": "drawn from {{groups}} groups of {{n}} values each",
+      "groupsRange": "drawn from {{groups}} groups of {{min}}–{{max}} values each",
+      "xAlso": "{{x}} distinct x values",
+      "xOnly": "drawn from {{drawn}} values, {{x}} distinct x values",
+      "skippedMissing": "{{count}} more rows left out for missing values",
+      "skippedOther": "{{count}} more rows left out for non-numeric values",
+      "skippedBoth": "{{missing}} more rows left out for missing values and {{other}} for non-numeric values",
+      "skippedAll": "{{count}} more rows left out"
     },
     "confirm": {
       "title": "Needs your confirmation",
-      "error": "Error",
-      "design": "Repeats",
+      "error": "Error bars",
+      "design": "Repeated measures",
       "option": {
         "sd": "Standard deviation (SD)",
         "sem": "Standard error (SEM)",
         "ci95": "95% confidence interval",
-        "unsure": "Not sure",
-        "independent": "Rows are independent",
-        "repeated": "Same subject measured repeatedly"
+        "unsure": "Not sure yet",
+        "independent": "No, each row is a different sample",
+        "repeated": "Yes, the same sample measured again"
       }
     },
     "redraw": {

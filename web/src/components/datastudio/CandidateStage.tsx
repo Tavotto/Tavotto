@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/utils'
-import { basisSentences } from '@/lib/dataBasis'
+import { basisOf } from '@/lib/dataBasis'
 import { previewOf, type Candidate, type ThumbState } from '@/lib/dataFigureAdapter'
 import { reducedNumbers } from '@/lib/dataFigure'
 import { FigureThumb } from './FigureThumb'
@@ -132,7 +132,7 @@ export function CandidateStage({
   const mine = drawingId === sel.id
   const ready = thumbs[sel.id] === 'ready'
   const red = reducedOf(sel)
-  const basis = basisSentences(sel)
+  const basis = basisOf(sel)
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0
@@ -177,7 +177,12 @@ export function CandidateStage({
         <p data-candidate-why className="text-sm text-ink-2">{why(sel.why_code)}</p>
         {basis && (
           <p data-candidate-basis className="mt-1 text-xs text-ink-3">
-            {t('dataFigureV2.basis.line', { text: basis.map((b) => t(`dataFigureV2.basis.${b.key}`, b.values)).join(/^zh/i.test(i18n.language) ? '' : ' ') })}
+            {t('dataFigureV2.basis.line', {
+              text: [
+                basis.main.map((b) => t(`dataFigureV2.basis.${b.key}`, b.values)).join(t('dataFigureV2.basis.then')),
+                ...(basis.skipped ? [t(`dataFigureV2.basis.${basis.skipped.key}`, basis.skipped.values)] : []),
+              ].join(t('dataFigureV2.basis.join')),
+            })}
           </p>
         )}
       </div>

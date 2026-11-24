@@ -93,7 +93,7 @@ describe('CandidateStage：一张主图 + 一排切换', () => {
     expect(q('[data-candidate-title]')!.textContent).toBe('均值线 + 误差带')
     expect(q('[data-candidate-stage]')!.textContent).toContain('推荐')
     expect(q('[data-candidate-why]')!.textContent).not.toBe('')
-    expect(q('[data-candidate-basis]')!.textContent).toBe('依据：36 个值，分成 3 组，每组 12 个。横轴有 6 个不同取值。')
+    expect(q('[data-candidate-basis]')!.textContent).toBe('依据：按 3 组各 12 个数值绘制，横轴有 6 个不同取值。')
     const head = q('[data-candidate-title]')!.parentElement!
     expect(head.lastElementChild).toBe(q('[data-candidate-create]'))
     expect(q('[data-candidate-create]')!.textContent).toBe('创建可编辑图')
@@ -125,6 +125,31 @@ describe('CandidateStage：一张主图 + 一排切换', () => {
     host.remove()
     await mount(<Harness items={items} thumbs={{ a: 'pending', b: 'ready', c: 'ready' }} />)
     expect(q<HTMLButtonElement>('[data-candidate-create]')!.disabled).toBe(true)
+  })
+
+  const BasisStage = ({ items }: { items: ReturnType<typeof candidatesFromResponse> }) => (
+    <CandidateStage items={items} thumbs={Object.fromEntries(items.map((c) => [c.id, 'ready' as const]))} drawingId={null} previewKey={null} onPreview={() => {}} onCreate={() => {}} onThumb={() => {}} />
+  )
+  it('依据句整句：「依据：」+ 主句 +「；」+ 没画的行 +「。」，中文各部分直接相连', async () => {
+    const items = candidatesFromResponse(
+      [item('a', 'points_mean', { facts: { rows: 26, drawn: 24, groups: 3, n_min: 8, n_max: 8, x_values: null, skipped_missing: 2, skipped_other: 0 }, unplotted: { count: 2, code: null } })],
+      'pa',
+    )
+    await mount(<BasisStage items={items} />)
+    expect(q('[data-candidate-basis]')!.textContent).toBe('依据：按 3 组各 8 个数值绘制；另有 2 行因缺值未计入。')
+  })
+
+  it('依据句：两种原因都有、旧响应只有总数', async () => {
+    const mk = (facts: Record<string, unknown>, count: number) =>
+      candidatesFromResponse([item('a', 'hist', { facts: { rows: 30, drawn: 24, groups: null, n_min: null, n_max: null, x_values: null, ...facts }, unplotted: { count, code: null } })], 'pa')
+    let items = mk({ skipped_missing: 2, skipped_other: 3 }, 5)
+    await mount(<BasisStage items={items} />)
+    expect(q('[data-candidate-basis]')!.textContent).toBe('依据：按 24 个数值绘制；另有 2 行因缺值、3 行因不是数值未计入。')
+    act(() => root.unmount())
+    host.remove()
+    items = mk({}, 4)
+    await mount(<BasisStage items={items} />)
+    expect(q('[data-candidate-basis]')!.textContent).toBe('依据：按 24 个数值绘制；另有 4 行未计入。')
   })
 
   it('1 张候选：没有切换排', async () => {
@@ -245,13 +270,17 @@ describe('DataPanel：需要你确认', () => {
     propose.mockResolvedValue(resp({ items: [item('n1', 'scatter')], defaults: [] }))
     await mountPanel()
     const row = q('[data-data-confirm] [data-data-role="design"]')!
-    expect(row.textContent).toContain('重复')
-    expect(row.textContent).toContain('不确定')
+    expect(row.textContent).toContain('重复测量')
+    expect(row.textContent).toContain('还不确定')
+    // 标签列统一 56px、放得下「重复测量」；选项放不下时截断并带 title，不撑高行
+    expect(row.querySelector<HTMLElement>('[data-select-trigger]')!.title).toBe('还不确定')
+    expect(q('[data-data-role="design"] span[style]')!.getAttribute('style')).toContain('width: 56px')
+    expect(row.querySelector('[title="重复测量"]')!.className).toContain('truncate')
     expect(q('[data-data-role="error"]')).toBeNull()
-    await choose('design', '同一对象测了多次')
+    await choose('design', '是，同一个样本测了多次')
     expect(propose.mock.calls[0]![0].answers).toEqual({ design: 'repeated' })
     expect(q('[data-data-confirm-title]')).toBeNull()
-    expect(q('[data-data-roles] [data-data-role="design"]')!.textContent).toContain('同一对象测了多次')
+    expect(q('[data-data-roles] [data-data-role="design"]')!.textContent).toContain('是，同一个样本测了多次')
   })
 
   it('读表 / 出图中禁用', async () => {

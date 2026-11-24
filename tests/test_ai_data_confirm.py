@@ -105,6 +105,8 @@ def test_facts_are_counted_from_the_rows_that_are_drawn(project):
     f = item["facts"]
     assert f["rows"] == 21 and f["drawn"] == 18
     assert f["rows"] - f["drawn"] == item["unplotted"]["count"] == 3
+    # 三行都是缺值（分组空、纵轴空、纵轴 NaN），没有「不是数」的
+    assert (f["skipped_missing"], f["skipped_other"]) == (3, 0)
     assert (f["groups"], f["n_min"], f["n_max"]) == (3, 6, 6)
     assert f["x_values"] is None
 
@@ -124,4 +126,20 @@ def test_facts_for_a_trend_count_series_and_x_values(project):
         "n_min": 9,
         "n_max": 9,
         "x_values": 9,
+        "skipped_missing": 0,
+        "skipped_other": 0,
     }
+
+
+def test_facts_tell_missing_cells_from_cells_that_are_not_numbers(project):
+    """横轴那一格是文字（不是数）与是空的（缺值）分开数：依据句里说的原因要对得上。"""
+    _, client, figs, _ = project
+    rows = (
+        [["dose", "resp"]] + [[d, 1 + 0.5 * d] for d in range(1, 11)] + [["", 9.0], ["high", 9.5]]
+    )
+    put(figs, "data/x.csv", rows)
+    out = propose(client, render="lazy", answers={"x": "dose", "y": "resp"}).get_json()
+    item = next(i for i in out["items"] if i["values"]["family"] == "relationship")
+    f = item["facts"]
+    assert (f["skipped_missing"], f["skipped_other"]) == (1, 1)
+    assert f["skipped_missing"] + f["skipped_other"] == item["unplotted"]["count"]

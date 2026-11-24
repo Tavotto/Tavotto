@@ -59,13 +59,19 @@ export default interface Resources {
     },
     "dataFigureV2": {
       "basis": {
-        "groupsEqual": "{{drawn}} 个值，分成 {{groups}} 组，每组 {{n}} 个。",
-        "groupsRange": "{{drawn}} 个值，分成 {{groups}} 组，每组 {{min}}–{{max}} 个。",
-        "line": "依据：{{text}}",
-        "points": "{{drawn}} 个点，每行一个。",
-        "unplotted": "另有 {{count}} 行没画。",
-        "xAlso": "横轴有 {{x}} 个不同取值。",
-        "xOnly": "{{drawn}} 个值，横轴有 {{x}} 个不同取值。"
+        "groupsEqual": "按 {{groups}} 组各 {{n}} 个数值绘制",
+        "groupsRange": "按 {{groups}} 组、每组 {{min}}–{{max}} 个数值绘制",
+        "join": "；",
+        "line": "依据：{{text}}。",
+        "plain": "按 {{drawn}} 个数值绘制",
+        "points": "按 {{drawn}} 个点绘制，每行一个点",
+        "skippedAll": "另有 {{count}} 行未计入",
+        "skippedBoth": "另有 {{missing}} 行因缺值、{{other}} 行因不是数值未计入",
+        "skippedMissing": "另有 {{count}} 行因缺值未计入",
+        "skippedOther": "另有 {{count}} 行因不是数值未计入",
+        "then": "，",
+        "xAlso": "横轴有 {{x}} 个不同取值",
+        "xOnly": "按 {{drawn}} 个数值绘制，横轴有 {{x}} 个不同取值"
       },
       "batch": {
         "done": "已完成",
@@ -146,15 +152,15 @@ export default interface Resources {
         }
       },
       "confirm": {
-        "design": "重复",
+        "design": "重复测量",
         "error": "误差线",
         "option": {
           "ci95": "95% 置信区间",
-          "independent": "各行互相独立",
-          "repeated": "同一对象测了多次",
+          "independent": "不是，每行是不同的样本",
+          "repeated": "是，同一个样本测了多次",
           "sd": "标准差 (SD)",
           "sem": "标准误 (SEM)",
-          "unsure": "不确定"
+          "unsure": "还不确定"
         },
         "title": "需要你确认"
       },

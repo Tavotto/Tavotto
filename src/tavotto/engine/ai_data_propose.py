@@ -513,7 +513,8 @@ def error_of(recipe: recipe_mod.FigureRecipe) -> str | None:
 def candidate_facts(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> dict | None:
     """这张图是按什么数出来的——给界面那句「依据」用的**数**（只有数与列名，文案在前端按封闭句式拼）：
     `{rows: 表里的行数, drawn: 画进去的行数, groups: 组数 | None, n_min / n_max: 每组（每个类别 × 分组 × 分面格子）的观测数范围 | None,
-    x_values: 不同横轴取值的个数 | None}`。大表不逐行数（None）；把列当分组的也先不给。"""
+    x_values: 不同横轴取值的个数 | None, skipped_missing: 因为缺值（某一格是空的 / NaN）没画的行数, skipped_other: 因为那一格不是数（文字）没画的行数}`。
+    两个 skipped 加起来就是 `unplotted_rows` 的总数。大表不逐行数（None）；把列当分组的也先不给。"""
     if values.large is not None or recipe.stack:
         return None
     rows = recipe_mod.drawn_rows(recipe, values)
@@ -527,7 +528,18 @@ def candidate_facts(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) ->
         "n_min": None,
         "n_max": None,
         "x_values": None,
+        "skipped_missing": 0,
+        "skipped_other": 0,
     }
+    row_at = {values.row_number(n): n for n in range(len(values.rows))}
+    for item in unplotted_rows(values, recipe):
+        cell = ""
+        n = row_at.get(item["row"])
+        if n is not None and item["column"] in idx:
+            cell = values.rows[n][idx[item["column"]]]
+        # 缺值 = 那一格是空的或 NaN；其余（横轴 / 纵轴那一格是文字）算「不是数」
+        missing = item["reason"] != "not_a_number" and adf.parse_cell(cell)[0] != "text"
+        out["skipped_missing" if missing else "skipped_other"] += 1
     by = [c for c in (recipe.group, recipe.facet) if c]
     if recipe.family == "comparison" and recipe.x:
         by = [recipe.x, *by]

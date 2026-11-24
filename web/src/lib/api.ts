@@ -5177,6 +5177,9 @@ export interface AiDataFacts {
   n_min: number | null
   n_max: number | null
   x_values: number | null
+  /** 没画的行里因缺值没画的行数 / 因那一格不是数没画的行数（两者之和 = `unplotted.count`）；旧响应没有 */
+  skipped_missing?: number
+  skipped_other?: number
 }
 
 /** 懒模式（`render: "lazy"`）响应里说清这次用了什么：列角色与每个角色可换成的列 */

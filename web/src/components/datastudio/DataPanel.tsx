@@ -42,6 +42,13 @@ function draftTarget(ref: JournalPickTarget['ref']): JournalPickTarget {
 /** 触发器长得和同一列里的下拉一样（同一个框、同高、同内边距） */
 const JOURNAL_TRIGGER = cn(FIELD_BOX, FIELD_OPEN, 'w-full rounded-sm px-2 active:bg-field data-[state=open]:bg-field')
 
+/** 标签放不下就截断、悬停看全（英文标签比列宽长时不撑高行） */
+const rowLabel = (text: string) => (
+  <span className="block truncate" title={text}>
+    {text}
+  </span>
+)
+
 const baseName = (p: string): string => p.slice(p.lastIndexOf('/') + 1)
 /** 「不要横轴 / 不分组」的取值：不会和任何列名撞（列名里不会有控制字符） */
 const NONE = '\u0000none'
@@ -106,13 +113,14 @@ export function DataPanel() {
   /** 一行确认项：待确认时控件是空值 + 把当前取值写在触发器上（选任何一项，包括仍选当前这个，才算确认） */
   const confirmRow = (key: ConfirmKey, kinds: readonly string[], now: string, done: boolean) => (
     <div key={key} data-data-role={key} className="contents">
-      <Row label={t(`dataFigureV2.confirm.${key}`)} labelWidth={LABEL_W}>
+      <Row label={rowLabel(t(`dataFigureV2.confirm.${key}`))} labelWidth={LABEL_W}>
         <Select
           value={done ? now : ''}
           disabled={busy}
           ariaLabel={t(`dataFigureV2.confirm.${key}`)}
           onChange={confirm(key)}
           options={kinds.map((k) => ({ value: k, label: optLabel(k) }))}
+          title={optLabel(now)}
           // 待确认时值是空的（选「当前这个」也要算一次选择），当前取值写在占位上
           placeholder={done ? undefined : optLabel(now)}
         />
@@ -153,11 +161,11 @@ export function DataPanel() {
       </header>
       {journalCatalogUi() && (
         <div data-data-role="journal" className="mb-3 flex flex-col gap-1">
-          <Row label={t('journal.title', { ns: 'dialogs' })} labelWidth={LABEL_W}>
+          <Row label={rowLabel(t('journal.title', { ns: 'dialogs' }))} labelWidth={LABEL_W}>
             <JournalPicker target={target} triggerClassName={JOURNAL_TRIGGER} disabled={busy} />
           </Row>
           {figureStyle && (
-            <p data-data-spec className="pl-[calc(44px+1rem)] text-xs text-balance text-ink-3 tabular-nums">
+            <p data-data-spec className="pl-[calc(56px+1rem)] text-xs text-balance text-ink-3 tabular-nums">
               {t('dataFigureV2.spec.line', {
                 parts: specParts(figureStyle)
                   .map((p) => t(`dataFigureV2.spec.${p.key}`, p.values))
@@ -171,7 +179,7 @@ export function DataPanel() {
         <div data-data-roles className="flex flex-col gap-1">
           {roles.options.x.length > 0 && (
             <div data-data-role="x" className="contents">
-              <Row label={t('dataFigureV2.panel.x')} labelWidth={LABEL_W}>
+              <Row label={rowLabel(t('dataFigureV2.panel.x'))} labelWidth={LABEL_W}>
                 <Select
                   value={roles.x ?? NONE}
                   disabled={busy}
@@ -184,7 +192,7 @@ export function DataPanel() {
           )}
           {roles.options.y.length > 0 && (
             <div data-data-role="y" className="contents">
-              <Row label={t('dataFigureV2.panel.y')} labelWidth={LABEL_W}>
+              <Row label={rowLabel(t('dataFigureV2.panel.y'))} labelWidth={LABEL_W}>
                 <Select
                   value={roles.y ?? ''}
                   disabled={busy}
@@ -199,7 +207,7 @@ export function DataPanel() {
           )}
           {roles.options.group.length > 0 && (
             <div data-data-role="group" className="contents">
-              <Row label={t('dataFigureV2.panel.group')} labelWidth={LABEL_W}>
+              <Row label={rowLabel(t('dataFigureV2.panel.group'))} labelWidth={LABEL_W}>
                 <Select
                   value={roles.group ?? NONE}
                   disabled={busy}
@@ -245,7 +253,8 @@ export function DataPanel() {
   )
 }
 
-const LABEL_W = 44
+/** 标签列宽：放得下「重复测量」四个字（12px 字约 48px）；所有行同一个宽度，控件左缘对齐 */
+const LABEL_W = 56
 
 const ERROR_KINDS = ['sd', 'sem', 'ci95'] as const
 const DESIGNS = ['unsure', 'independent', 'repeated'] as const
