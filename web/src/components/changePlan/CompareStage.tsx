@@ -9,6 +9,7 @@ import { cp, type GroupView, type PlanBox } from './changePlanModel'
 
 export type CompareMode = 'slide' | 'side' | 'toggle'
 
+const pctOf = (r: number) => Math.round(Math.min(1, Math.max(0, r)) * 1e4) / 100
 const pct = (n: number) => `${n * 100}%`
 const boxStyle = (b: PlanBox) => ({ left: pct(b[0]), top: pct(b[1]), width: pct(b[2]), height: pct(b[3]) })
 
@@ -115,13 +116,28 @@ export function CompareStage({
     e.preventDefault()
   }
 
-  /** 改动框：after 侧画修改后的位置，before 侧画同一处改前的位置 */
-  const boxes = (side: 'before' | 'after', visible: (b: PlanBox) => boolean = () => true) =>
+  /**
+   * 改动框：每个框取它所在那一侧的 manifest 的框（before 侧画改前的位置，after 侧画改后的位置）。
+   * 滑动对比里 `split`（分隔线位置，0–1）把框按分隔线裁开：左边只画 before 框在线左的部分，右边只画 after 框在线右的部分——
+   * 一个元素跨过分隔线时两侧各画各自的那一段（clip-path 裁，不会在分隔线上多出一道边）。
+   */
+  const boxes = (side: 'before' | 'after', split?: number) =>
     groups.flatMap((g) =>
       g.boxes.map((pair, i) => {
         const b = side === 'before' ? pair.before : pair.after
         // 改前没有这一处（新长出来的东西）：修改前那一侧不画框
-        if (!b || !visible(b)) return null
+        if (!b) return null
+        let clip: string | undefined
+        if (split !== undefined) {
+          const w = Math.max(b[2], 1e-6)
+          if (side === 'before') {
+            if (b[0] >= split) return null
+            clip = `inset(0 ${pctOf((b[0] + b[2] - split) / w)}% 0 0)`
+          } else {
+            if (b[0] + b[2] <= split) return null
+            clip = `inset(0 0 0 ${pctOf((split - b[0]) / w)}%)`
+          }
+        }
         const on = g.key === activeId
         return (
           <span
@@ -133,7 +149,7 @@ export function CompareStage({
               'pointer-events-none absolute rounded-xs bg-sel/6 inset-ring inset-ring-sel/60 transition-opacity duration-fast',
               on ? 'opacity-100' : 'opacity-0',
             )}
-            style={boxStyle(b)}
+            style={clip ? { ...boxStyle(b), clipPath: clip } : boxStyle(b)}
           />
         )
       }),
@@ -159,8 +175,8 @@ export function CompareStage({
             <Img src={before} />
             <Img src={after} className={cn(!dragging && 'transition-[clip-path] duration-base', busyCls)} style={{ clipPath: `inset(0 0 0 ${p}%)` }} />
             <div className="absolute inset-0">
-              {boxes('before', (b) => b[0] + b[2] / 2 < p / 100)}
-              {boxes('after', (b) => b[0] + b[2] / 2 >= p / 100)}
+              {boxes('before', p / 100)}
+              {boxes('after', p / 100)}
             </div>
             <div
               className={cn('absolute inset-y-0 -ml-4 flex w-8 touch-none justify-center', dragging ? 'cursor-grabbing' : 'cursor-grab')}
@@ -187,7 +203,7 @@ export function CompareStage({
                 aria-valuemax={100}
                 aria-valuenow={Math.round(p)}
                 onKeyDown={onKey}
-                className="absolute top-1/2 flex size-[26px] -translate-y-1/2 items-center justify-center rounded-full bg-paper text-paper-ink inset-ring inset-ring-paper-ink-2 shadow-pop outline-none focus-visible:focus-ring"
+                className="absolute top-1/3 flex size-[26px] -translate-y-1/2 items-center justify-center rounded-full bg-paper text-paper-ink inset-ring inset-ring-paper-ink-2 shadow-pop outline-none focus-visible:focus-ring"
               >
                 <ChevronRight size={ICON_SIZE.xs} className="rotate-180" />
                 <ChevronRight size={ICON_SIZE.xs} />

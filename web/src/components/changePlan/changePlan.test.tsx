@@ -358,3 +358,31 @@ it('替换素材后（面板 id 不变、overrides 为空）：待确认的方�
   expect(useChangePlanStore.getState().apply('a')).toBe('stale')
   expect((useDocumentStore.getState().doc.objects.find((x) => x.id === 'p1') as PanelObject).overrides).toEqual([])
 })
+
+it('滑动对比：每个框按所在一侧取框（左 before、右 after），跨过分隔线的元素两侧各画各自那一段；把手在上三分之一', () => {
+  const span: ChangePlan = {
+    ...PLAN,
+    groups: [{ ...PLAN.groups[0], boxes: { before: [{ gid: 'ax.title', box: [0.3, 0, 0.4, 0.2] }], after: [{ gid: 'ax.title', box: [0.3, 0, 0.5, 0.2] }] } }],
+  }
+  put(entry('a', { plan: span }))
+  act(() => useChangePlanStore.getState().openDialog('a'))
+  render(<ChangePlanDialog />)
+  const boxes = qa('[data-change-plan-stage] [data-change-plan-box]')
+  expect(boxes).toHaveLength(2)
+  // 分隔线默认在 50%：左段 = before 框（宽 0.4）里线左的 50%，右段 = after 框（宽 0.5）里线右的 60%
+  expect(boxes[0].style.width).toBe('40%')
+  expect(boxes[0].style.clipPath).toBe('inset(0 50% 0 0)')
+  expect(boxes[1].style.width).toBe('50%')
+  expect(boxes[1].style.clipPath).toBe('inset(0 0 0 40%)')
+  expect(q('[data-change-plan-divider] [role="slider"]')!.className).toContain('top-1/3')
+})
+
+it('并排：左图画改前的框、右图画改后的框', () => {
+  put(entry('a'))
+  act(() => useChangePlanStore.getState().openDialog('a'))
+  render(<ChangePlanDialog />)
+  act(() => qa('[role="radio"]')[1].click())
+  const [l, r] = qa('[data-change-plan-frame]')
+  expect(l.querySelector<HTMLElement>('[data-change-plan-box]')!.style.width).toBe('20%')
+  expect(r.querySelector<HTMLElement>('[data-change-plan-box]')!.style.width).toBe('30%')
+})
