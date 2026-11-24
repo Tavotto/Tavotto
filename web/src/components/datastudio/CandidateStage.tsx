@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import { basisOf } from '@/lib/dataBasis'
 import { previewOf, type Candidate, type ThumbState } from '@/lib/dataFigureAdapter'
 import { reducedNumbers } from '@/lib/dataFigure'
+import { OptionGrid } from '@/components/inspector/controls/OptionGrid'
 import { FigureThumb } from './FigureThumb'
 
 const KNOWN_CANDIDATES = [
@@ -28,6 +29,9 @@ export function useDrawingLine(active: boolean): string {
   }, [active])
   return t(slow ? 'dataFigureV2.working.slow' : 'dataFigureV2.working.drawing')
 }
+
+/** 切换排最多几列（合画最多 8 张候选 = 两行） */
+const SWITCH_COLS = 4
 
 /** 主图的最大高度：容器（临时标签的内容区，`containerType: size`）高度减去标题行 / 说明 / 依据 / 切换排与间距，一屏放得下；再小也留 240px */
 const STAGE_MAX_H = 'max(240px, calc(100cqh - 250px))'
@@ -96,7 +100,6 @@ export function CandidateStage({
   onThumb: (id: string, ok: boolean) => void
 }) {
   const { t, i18n } = useTranslation('ai')
-  const row = useRef<HTMLDivElement>(null)
   const known = (c: string) => KNOWN_CANDIDATES.includes(c)
   const title = (c: string) => (known(c) ? t(`dataFigureV2.candidate.${c}.title`) : t('dataFigureV2.candidate.other.title'))
   // 带误差线 / 误差带的画法：说明里写的是这张图**实际**画的那一种（用户在「需要你确认」里改过就跟着变），没有这一项的按默认的标准差说
@@ -136,22 +139,6 @@ export function CandidateStage({
   const red = reducedOf(sel)
   const basis = basisOf(sel)
 
-  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0
-    if (!step) return
-    const tiles = [...(row.current?.querySelectorAll<HTMLButtonElement>('[data-candidate]') ?? [])]
-    const i = tiles.indexOf(document.activeElement as HTMLButtonElement)
-    if (i < 0) return
-    // 跳过还没到图的项（不可选）
-    for (let k = i + step; k >= 0 && k < tiles.length; k += step) {
-      if (tiles[k]!.disabled) continue
-      e.preventDefault()
-      tiles[k]!.focus()
-      onPreview(tiles[k]!.dataset.candidate!)
-      return
-    }
-  }
-
   return (
     <div data-candidate-stage className="mx-auto flex max-w-[860px] flex-col gap-3">
       <div>
@@ -189,44 +176,34 @@ export function CandidateStage({
         )}
       </div>
       {items.length > 1 && (
-        <div
-          ref={row}
-          role="radiogroup"
-          aria-label={t('dataFigureV2.draft.switchLabel')}
-          onKeyDown={onKeyDown}
-          data-candidate-switch
-          className={cn('flex gap-0.5 self-start overflow-x-auto rounded-lg bg-surface-hover p-0.5', busy && 'opacity-60')}
-          style={{ maxWidth: '100%' }}
-        >
-          {items.map((it) => {
-            const on = it.id === sel.id
-            return (
-              <button
-                key={it.id}
-                type="button"
-                role="radio"
-                aria-checked={on}
-                data-candidate={it.id}
-                data-selected={on || undefined}
-                tabIndex={on ? 0 : -1}
-                // 图没到的项不可选：选了也没有东西可看；出图期间整排置灰
-                disabled={busy || thumbs[it.id] !== 'ready'}
-                onClick={() => onPreview(it.id)}
-                className={cn(
-                  'flex w-36 shrink-0 flex-col gap-1 rounded-md p-1.5 text-left text-sm outline-none transition-colors duration-fast ease-standard focus-visible:focus-ring disabled:cursor-default',
-                  on ? 'bg-thumb font-semibold text-ink shadow-thumb' : 'text-ink-2 enabled:hover:bg-surface-active enabled:hover:text-ink',
-                )}
-              >
-                <FigureThumb src={it.thumb} alt="" onSettled={(ok) => onThumb(it.id, ok)} className="aspect-16/10" />
-                <span className="truncate">{title(it.title_code)}</span>
-                {it.variant && (
-                  <span data-candidate-variant={it.variant.kind} className="truncate text-xs font-normal text-ink-3" title={variantText(it.variant)}>
-                    {variantText(it.variant)}
-                  </span>
-                )}
-              </button>
-            )
-          })}
+        // 切换排 = 公共的 `OptionGrid`（选中浮成白底 + 阴影 + 600、方向键漫游即预览都是它自带的）。每格竖排：小缩略图 + 画法名 + （合画）variant 一行。
+        // 最多 4 列、多了换行（合画最多 8 张 = 两行），一屏看全、不横向滚动；单格宽 ≤ 150px，候选少时排不撑满整行
+        <div data-candidate-switch className={cn('w-full self-start', busy && 'opacity-60')} style={{ maxWidth: Math.min(items.length, SWITCH_COLS) * 150 }}>
+          <OptionGrid
+            value={sel.id}
+            ariaLabel={t('dataFigureV2.draft.switchLabel')}
+            columns={Math.min(items.length, SWITCH_COLS)}
+            previewHasLabel
+            cellClassName="h-auto flex-col items-stretch justify-start gap-1 p-1.5 text-left text-sm"
+            onChange={onPreview}
+            options={items.map((it) => ({
+              value: it.id,
+              label: title(it.title_code),
+              // 图没到的项不可选：选了也没有东西可看；出图期间整排不可选
+              disabled: busy || thumbs[it.id] !== 'ready',
+              preview: (
+                <>
+                  <FigureThumb src={it.thumb} alt="" onSettled={(ok) => onThumb(it.id, ok)} className="aspect-16/10" />
+                  <span className="truncate">{title(it.title_code)}</span>
+                  {it.variant && (
+                    <span data-candidate-variant={it.variant.kind} className="truncate text-xs font-normal text-ink-3" title={variantText(it.variant)}>
+                      {variantText(it.variant)}
+                    </span>
+                  )}
+                </>
+              ),
+            }))}
+          />
         </div>
       )}
     </div>
