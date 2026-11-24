@@ -3,6 +3,8 @@
 import random
 import re
 
+import pytest
+
 from tavotto.rendercore import svgcheck
 
 #: #1893 起用的正则（平方级）：只当对照的标准答案，产品代码里已不再用
@@ -68,3 +70,24 @@ def test_repair_urls_scans_each_char_for_a_stop_once(monkeypatch):
         value = unit * 20000  # 没有一个 `)`：每个起点都不成立，旧正则每个起点都扫到串尾
         assert svgcheck._repair_urls(value, {"a": "z"}) == value
         assert counter.scanned <= len(value), (unit, counter.scanned, len(value))
+
+
+def test_repair_worker_ids_rewrites_url_references_in_attributes_and_stylesheets():
+    # 端到端走 repair_worker_ids：gid「面板 A」被改名，属性与 <style> 里的 url(#面板 A) 都跟着改，结果过严格解析
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">'
+        '<defs><linearGradient id="面板 A"><stop offset="0" stop-color="#000"/></linearGradient></defs>'
+        "<style>rect{fill:url( '#面板 A' )}</style>"
+        '<rect width="5" height="5" fill="url(#面板 A)" style="stroke:url(&quot;#面板 A&quot;)"/>'
+        "</svg>"
+    ).encode()
+    with pytest.raises(svgcheck.SVGError):
+        svgcheck.parse_svg(svg)
+    repaired = svgcheck.repair_worker_ids(svg)
+    root = svgcheck.parse_svg(repaired)
+    text = repaired.decode()
+    assert "面板 A" not in text
+    (grad,) = [n for n in root.iter() if n.tag.endswith("linearGradient")]
+    new = grad.get("id")
+    assert f"url('#{new}')" in text and f'fill="url(#{new})"' in text
+    assert f"stroke:url(&quot;#{new}&quot;)" in text or f'stroke:url("#{new}")' in text
