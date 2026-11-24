@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -283,7 +285,7 @@ def test_pending_input_is_not_a_barrier(tmp_path):
 def test_answer_publishes_session_change_for_other_windows(tmp_path):
     """Pending 出现 / 消失都推一次会话事件（SSE 的来源），序号单调；事件里没有提示词与答案。"""
     seen = []
-    nativesession.REGISTRY.on_change = lambda s, entry: seen.append((s.sequence, dict(entry)))
+    nativesession.REGISTRY.on_change = lambda _, entry: seen.append(dict(entry))
     try:
         script = dk.FIGURE_HEADER + "getpass_value = __import__('getpass').getpass('PW: ')\n"
         session = start(tmp_path, script)
@@ -292,12 +294,42 @@ def test_answer_publishes_session_change_for_other_windows(tmp_path):
         dk.finish(session)
     finally:
         nativesession.REGISTRY.on_change = None
-    input_events = [e for _, e in seen if e.get("input")]
+    input_events = [e for e in seen if e.get("input")]
     assert [e["input"] for e in input_events][:2] == ["requested", "answered"]
     text = json.dumps(input_events, ensure_ascii=False)
     assert SECRET not in text and "PW: " not in text
-    seqs = [s for s, _ in seen]
+    seqs = [event["seq"] for event in seen]
     assert seqs == sorted(seqs)
+
+
+def test_adoption_replay_is_delivered_before_new_session_events(tmp_path):
+    registry = nativesession.NativeSessionRegistry()
+    session = nativesession.NativeSession(
+        session_id="ordering",
+        descriptor={"native_id": "n", "out_dir": str(tmp_path), "metadata": {}},
+    )
+    session._set_state(nativesession.STARTING_PYTHON)  # noqa: SLF001
+    replaying = threading.Event()
+    allow_replay = threading.Event()
+    delivered = []
+
+    def receive(_, event):
+        if event["state"] == nativesession.STARTING_PYTHON:
+            replaying.set()
+            assert allow_replay.wait(10)
+        delivered.append(event["state"])
+
+    registry.on_change = receive
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        adoption = executor.submit(registry.adopt, session)
+        try:
+            assert replaying.wait(10)
+            session._set_state(nativesession.RUNNING_SCRIPT)  # noqa: SLF001
+        finally:
+            allow_replay.set()
+        adoption.result(timeout=10)
+
+    assert delivered == [nativesession.STARTING_PYTHON, nativesession.RUNNING_SCRIPT]
 
 
 def test_terminal_owned_sessions_keep_the_real_stdin(tmp_path):

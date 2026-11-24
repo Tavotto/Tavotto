@@ -62,6 +62,7 @@ import collections
 import copy
 import hashlib
 import json
+import logging
 import os
 import socket
 import threading
@@ -81,6 +82,8 @@ from . import (
     runcodes,
 )
 from .runcodes import RunError
+
+LOG = logging.getLogger(__name__)
 
 #: 带外事件的键——**与 `bridge_runner.EVENT_KEY` 严格同源**。
 EVENT_KEY = "bridge_event"
@@ -459,6 +462,7 @@ class NativeSession:
         self._lock = threading.Lock()
         self._changed = threading.Condition(self._lock)
         self._on_change = None
+        self._change_notifications: collections.deque[dict] = collections.deque()
         #: 本会话占着的环境租约有没有被释放过（只释放一次）。
         self._lease_released = False
         #: 「与文档不一致」的图：stem → 让它停在这一档的那份全量列表的 canonical hash。
@@ -506,9 +510,39 @@ class NativeSession:
                 setattr(self, k, v)
             entry = {"seq": self.sequence, "state": state, "at": self.last_event_at, **fields}
             self.events.append(entry)
+            drain = self._queue_change_locked(entry)
             self._changed.notify_all()
-        if self._on_change is not None:
-            self._on_change(self, entry)
+        if drain:
+            self._drain_changes()
+
+    def _subscribe_to_changes(self, callback) -> None:
+        with self._changed:
+            self._on_change = callback
+            drain = bool(self.events) and self._queue_change_locked(self.events[-1])
+        if drain:
+            self._drain_changes()
+
+    def _queue_change_locked(self, entry: dict) -> bool:
+        if self._on_change is None:
+            return False
+        self._change_notifications.append(entry)
+        return len(self._change_notifications) == 1
+
+    def _drain_changes(self) -> None:
+        # Keep the current event in the queue until delivered. Concurrent publishers
+        # enqueue in sequence order while the callback can safely read session state.
+        while True:
+            with self._lock:
+                entry = self._change_notifications[0]
+                callback = self._on_change
+            try:
+                callback(self, entry)
+            except Exception:  # noqa: BLE001 — one subscriber failure must not stall later events
+                LOG.exception("Native session change notification failed")
+            with self._lock:
+                self._change_notifications.popleft()
+                if not self._change_notifications:
+                    return
 
     def wait_for_state(self, states, timeout: float) -> str:
         """阻塞等状态落进 `states`（或任意终态）。**给 CLI 集成与用例用。**
@@ -803,9 +837,10 @@ class NativeSession:
             self.last_event_at = time.time()
             entry = {"seq": self.sequence, "state": self.state, "at": self.last_event_at, **fields}
             self.events.append(entry)
+            drain = self._queue_change_locked(entry)
             self._changed.notify_all()
-        if self._on_change is not None:
-            self._on_change(self, entry)
+        if drain:
+            self._drain_changes()
 
     def _on_input_request(self, frame: dict) -> None:
         """reader 线程里跑。终端拥有的会话从不装输入桥，收到也不信（没有人能答）。"""
@@ -1599,7 +1634,7 @@ class NativeSessionRegistry:
             envlease.release_native(interpreter, session_id)
             raise
         session = NativeSession(session_id=session_id, descriptor=descriptor)
-        session._on_change = self._changed  # noqa: SLF001 — 注册表持有会话
+        session._subscribe_to_changes(self._changed)  # noqa: SLF001 — 注册表持有会话
         transport = NativeTransport(
             sock,
             on_event=session._on_frame,
@@ -1744,14 +1779,9 @@ class NativeSessionRegistry:
                 prev.alive() or (prev.owned is not None and not prev.owned.finished)
             ):
                 raise RunError(runcodes.NATIVE_SESSION_CONFLICT)
-            session._on_change = self._changed  # noqa: SLF001 — 注册表持有会话
             self._sessions[session.session_id] = session
-        # 传输 reader 在登记之前就已经在跑:脚本一起来就 `input()` / 到屏障时,那条事件发出时回调还没装上,
-        # 会被丢掉而界面再也收不到(准备一直等着)。登记完成后把当前最新一条补发出去(序号单调,重复无害)
-        with session._lock:  # noqa: SLF001
-            last = session.events[-1] if session.events else None
-        if last is not None:
-            self._changed(session, last)
+        # 传输 reader 已在运行。订阅和补发最后一条事件同时入队，随后即时事件按序送到界面。
+        session._subscribe_to_changes(self._changed)  # noqa: SLF001 — 注册表持有会话
 
     def _changed(self, session: NativeSession, entry: dict) -> None:
         if session.state in TERMINAL_STATES:
