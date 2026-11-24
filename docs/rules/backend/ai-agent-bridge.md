@@ -2,13 +2,13 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「编码 Agent 桥」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_ai_data_recipe.py`、`tests/test_ai_data_template.py`、`tests/test_ai_data_propose.py`、`tests/test_ai_data_merge.py`、`tests/test_ai_structured.py`、`tests/test_ai_structured_cli.py`、`tests/test_ai_data_model.py`、`tests/test_data_figure_bench.py`、`tests/test_ai_data_roles.py`、`tests/test_ai_data_text_tables.py`、`tests/test_ai_agents.py`、`test_ai_login.py`、`test_ai_bridge.py`、`tests/test_ai_probe.py`、`test_ai_capabilities.py`、`test_ai_refresh.py`、`test_ai_history.py`、`test_ai_idempotency.py`、`test_ai_revert_stale.py`、`test_codex_install_cli.py`、`test_managed_cli.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_ai_data_recipe.py`、`tests/test_ai_data_template.py`、`tests/test_ai_data_propose.py`、`tests/test_ai_data_merge.py`、`tests/test_ai_structured.py`、`tests/test_ai_structured_cli.py`、`tests/test_ai_data_model.py`、`tests/test_data_figure_bench.py`、`tests/test_ai_data_roles.py`、`tests/test_ai_data_text_tables.py`、`tests/test_changeplan.py`、`tests/test_changeplan_endpoints.py`、`tests/test_ai_agents.py`、`test_ai_login.py`、`test_ai_bridge.py`、`tests/test_ai_probe.py`、`test_ai_capabilities.py`、`test_ai_refresh.py`、`test_ai_history.py`、`test_ai_idempotency.py`、`test_ai_revert_stale.py`、`test_codex_install_cli.py`、`test_managed_cli.py`
 > `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml；revert 只回滚本次 AI 那一版（细则见 `ai-agent-bridge.md`）
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 240
-改到: `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`ai_structured.py`、`ai_data_*.py`、`codexinstall.py`、`managedcli.py`、`resources/managed_cli_lock.json`、`/api/ai/*`
+改到: `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`ai_structured.py`、`ai_data_*.py`、`changeplan.py`、`codexinstall.py`、`managedcli.py`、`resources/managed_cli_lock.json`、`/api/ai/*`、`/api/change-plans*`
 主题: 编码 Agent 桥 → `ai-agent-bridge.md`
 必守要点: 「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml
 -->
@@ -1034,3 +1034,11 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 - **手动基准**：`scripts/dev/data_figure_bench.py --suite roles`（默认假回答；`--arm rules` 只跑规则（与 `--real` / `--key-file` 同用直接 exit 2，在解析任何凭据之前）；`--real` 要 `--max-calls` ≥ 用例数 × 2 且硬拦实际请求数）。**真实跑分花额度，开跑前先报预算。** `--real --key-file PATH --model NAME [--base-url] [--effort low|medium|high]` 用一把单独存的 key 组**临时**连接（不读不写应用配置与 provider 存储，数据 / 配置目录指到临时目录；key 文件必须仅本人可读写，比 600 宽就拒绝；只能和 `--real` 同用、仍强制 `--max-calls`）；key 不出现在 stdout / stderr / 报告里（输出流与报告统一替换，`tests/test_data_figure_bench.py` 钉住），报告写型号 / 强度 / 实际请求数 / 输入输出（含推理）token / 按定价表的估算花费。
 
 - **小型号 + 最低档（2026-11-21）**：`ai_catalog.json` 顶层 `structured_small` 按「官方端点 + 协议」登记结构化调用用的 `(型号, effort)`（现只有 OpenAI 官方 + Responses → `gpt-6-luna` + `none`，出处是 2026-11-21 实测 + API 回的档位）；`call_structured(auto_small=True)` 才生效（默认关，只有 `ai_data_roles` 开，`ai_data_model` 不开），不登记的连接请求逐字不变，改图 / 修复路径不受影响。小型号失败为 `http_400/404/422`（transport）或 `http_403`（auth）→ 同一总时限 / `max_requests` 内改用用户原型号与原强度再试一次并记 10 分钟；其余失败码不换。`wires.RESPONSES_WIRE_EFFORTS` 比用户可选的 `RESPONSES_EFFORTS` 多 `none`；目录 `hidden_efforts` 放界面不露出的 none（`ai_catalog.verified_efforts`）。缓存键带实际型号与强度。看护 `tests/test_ai_structured_small.py`、`tests/test_ai_data_roles.py`（小型号三条）、`tests/test_data_figure_bench.py`（`--auto-small` / `--effort none`）。**只作用于 Key 连接：订阅登录（CLI）连接走 `_call_cli`，不受影响**（`small_plan` 对 CLI 连接返回 None）。全文见 ADR 0178 修订 2026-11-21。
+
+## 修改方案（`engine/changeplan.py` + `/api/change-plans*`，ADR 0206 §一，只算不写）
+
+- 模型通道就是上面的 `call_structured`（不新增执行器工具）；`changeplan.py` 是它第二个调用方（`tests/test_ai_data_roles.py::test_only_propose_and_the_model_pair_reach_the_model_modules` 列着调用方名单）。纯标准库，Flask 父进程 import。
+- **谁的话算数**：审阅意见是外来文本，只进用户内容的 `<comments>` 数据块（`<` 转义），称呼不发；模型的 `gid / prop / value` 只是提议，`validate_proposal` 逐条对 manifest 的 `editable` 核；卡上的改前 / 改后 / 框一律从 B0 与候选两份**真实渲染的 manifest** 现算（`effective_changes`），值没变的进 `unhandled(no_effect)`。每条输入意见必须落在某个组或 `unhandled`。
+- **渲染**：B0 / 候选的图与 manifest 走状态中立的 `preview_png_snapshot`；它不回 warnings，所以另走 `override(B0)`（基线 warning）与 `override(候选)`：候选比基线多出来的 warning = 不出方案。**只要对热 worker 做过 `override`，任务结束（成败都是）就 `_retire_hot_worker`、不还原 B0**（B0 是请求时的列表，期间用户可能已改过图），回包与 plan 带 `replay_required: true`，前端按自己的全量列表重放。全程 `bound_project(ctx)`、`safe_only=True`、每次渲染前 `_require_route_unchanged`，模型调用前后各算一次脚本修订（变了 = `change_plan_figure_changed`）。native 图 409 `change_plan_native_unsupported`，不渲染。
+- **落盘**：只写 `data_dir()/cache/change_plans/<项目id>/<方案id>/`，按项目隔离、TTL + 条数上限、`sweep()`；删除不用 `ignore_errors`；方案 id 过 `^[0-9a-f]{24}$` 才拼路径，图名只收 `before | after`。
+- **长任务**：POST 回 202 + 方案 id、后台线程、GET 轮询；同一张图同一时刻一个任务（进程内表，**不持 `script_guard`**——方案任务不写脚本；该脚本有改图助手会话在跑 = `ai_bridge.script_busy` → `change_plan_busy`），同一 `client_request_id` 回同一任务。稳定码闭集在 `changeplan.ERROR_CODES`（登记 `tests/test_error_codes.py` 与两份 `errors.json`）。
