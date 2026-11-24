@@ -3222,7 +3222,7 @@ export default interface Resources {
           "tip": "{{pro}} 功能，点一下了解"
         },
         "none": "还没激活",
-        "open": "打开 {{pro}}",
+        "open": "{{pro}} 与激活",
         "plate": {
           "defaultName": "早期同行者",
           "engrave": "刻上你的名字",

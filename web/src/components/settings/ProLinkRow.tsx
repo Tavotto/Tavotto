@@ -6,6 +6,8 @@ import { PRO_NAME } from '@/lib/brand'
 import { licenseVisible, useLicenseStore } from '@/store/licenseStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button } from '../ui/Button'
+import { ICON_SIZE } from '../ui/Icon'
+import { ChevronRight } from '../ui/icons'
 import { FieldGroup, FormSection } from '../ui/FormSection'
 import { SettingRow } from './SettingRow'
 
@@ -48,6 +50,7 @@ export function ProLinkRow() {
             data-license-open
           >
             {st('open', { pro: PRO_NAME })}
+            <ChevronRight size={ICON_SIZE.xs} aria-hidden />
           </Button>
         </SettingRow>
       </FieldGroup>

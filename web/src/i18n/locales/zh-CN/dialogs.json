@@ -2287,7 +2287,7 @@
         "turnTitle": "拖一下可以翻面",
         "issued": "ISSUED ON"
       },
-      "open": "打开 {{pro}}"
+      "open": "{{pro}} 与激活"
     }
   },
   "style": {
