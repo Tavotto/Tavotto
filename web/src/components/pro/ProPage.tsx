@@ -3,12 +3,15 @@ import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { formatDate } from '@/i18n/format'
 import { currentLocale } from '@/i18n'
+import { cn } from '@/lib/utils'
 import { PRODUCT_NAME, PRO_NAME, premiumPageUrl } from '@/lib/brand'
 import { licenseVisible, useLicenseStore } from '@/store/licenseStore'
 import { FoundingPlate } from '../license/FoundingPlate'
 import { LicenseRow } from '../settings/LicenseRow'
 import { SettingRow, SettingValueRow } from '../settings/SettingRow'
 import { FieldGroup, FormSection } from '../ui/FormSection'
+import { ICON_SIZE } from '../ui/Icon'
+import { ExternalLink } from '../ui/icons'
 import { ProgressBar } from '../ui/ProgressBar'
 
 const ps = (key: string, values?: Record<string, unknown>) =>
@@ -85,8 +88,8 @@ export function ProPage() {
       )}
       <LicenseRow
         plate={false}
-        title={ps('pass')}
-        label={tierName}
+        title={state === 'none' ? undefined : ps('pass')}
+        label={tierName ?? (state === 'none' ? ps('pass') : undefined)}
         renewable={active}
         extra={rows.length ? rows : undefined}
       />
@@ -99,6 +102,7 @@ export function ProPage() {
             className="rounded-sm text-ink-2 underline decoration-current/35 underline-offset-[3px] hover:text-ink hover:decoration-current focus-visible:focus-ring outline-none"
           >
             {ps('learn.link', { pro: PRO_NAME })}
+            <ExternalLink size={ICON_SIZE.xs} className="ml-1 inline" aria-hidden />
           </button>
         </p>
       ) : (
@@ -116,11 +120,12 @@ export function ProPage() {
               ) : undefined
             }
             data-pro-usage="agent"
+            control="auto"
           >
             {active && used !== null && (
               <div className="flex w-full items-center justify-end gap-3">
                 <ProgressBar className="w-36 shrink-0" pct={Math.round(used * 100)} label={ps('usage.agentBar', { name: agentName })} />
-                <span className="shrink-0 text-sm tabular-nums text-ink-2" data-pro-usage-pct>
+                <span className={cn('shrink-0 text-sm tabular-nums', used >= NEAR_END ? 'font-medium text-ink' : 'text-ink-2')} data-pro-usage-pct>
                   {ps('usage.used', { pct: Math.round(used * 100) })}
                 </span>
               </div>

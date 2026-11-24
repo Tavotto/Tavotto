@@ -3005,11 +3005,12 @@
     },
     "review": {
       "label": "External review",
-      "left": "{{count}} new links left today"
+      "left_one": "{{count}} new link left today",
+      "left_other": "{{count}} new links left today"
     },
     "pass": "Pass",
     "learn": {
-      "line": "{{pro}} brings built-in AI and more review quota",
+      "line": "{{pro}} includes built-in AI and more external review links",
       "link": "Learn about {{pro}}"
     }
   }

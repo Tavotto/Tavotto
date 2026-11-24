@@ -11,10 +11,10 @@ export function ProDialog() {
   useTranslation('dialogs')
   const open = useUiStore((s) => s.proOpen)
   const visible = useLicenseStore((s) => licenseVisible(s.status))
-  if (!open || !visible) return null
+  if (!visible) return null
   return (
     <Dialog
-      open
+      open={open}
       onOpenChange={(v) => useUiStore.getState().setProOpen(v)}
       title={translate('pro.title', { ns: 'dialogs', pro: PRO_NAME })}
       width={640}

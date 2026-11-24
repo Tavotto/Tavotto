@@ -29,7 +29,11 @@ export function ProLinkRow() {
       ? st('until', { date: formatDate(status.exp * 1000) })
       : status.state === 'expired' && status.exp
         ? st('state.expired', { date: formatDate(status.exp * 1000) })
-        : st('none')
+        : status.state === 'revoked'
+          ? st('state.revoked')
+          : status.state === 'lapsed'
+            ? st('state.lapsed')
+            : st('none')
   return (
     <FormSection data-settings-anchor="about.license" data-license-link>
       <FieldGroup>

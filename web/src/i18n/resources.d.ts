@@ -2002,13 +2002,13 @@ export default interface Resources {
         "value": "已用 {{used}} / {{limit}} 台"
       },
       "learn": {
-        "line": "{{pro}} 内置 AI，也有更多审阅额度",
+        "line": "{{pro}} 包含内置 AI 与更多外部审阅额度",
         "link": "了解 {{pro}}"
       },
       "pass": "通行证",
       "review": {
         "label": "外部审阅",
-        "left": "今天还可新建 {{count}} 个链接"
+        "left_other": "今天还可新建 {{count}} 个链接"
       },
       "tier": {
         "label": "类型",
@@ -3235,7 +3235,7 @@ export default interface Resources {
         },
         "releaseTitle": "解绑后可以在另一台电脑上激活",
         "state": {
-          "expired": "已于{{date}}到期",
+          "expired": "已于 {{date}} 到期",
           "lapsed": "需要联网确认一下授权",
           "revoked": "这份授权已失效"
         },

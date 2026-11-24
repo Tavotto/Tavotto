@@ -113,7 +113,13 @@ export function LicenseRow({
         {hint && <span className="font-mono text-ink-3"> · {hint}</span>}
       </>
     )
-  else if (state === 'expired') line = st('state.expired', { date })
+  else if (state === 'expired')
+    line = (
+      <>
+        {st('state.expired', { date })}
+        {hint && <span className="font-mono text-ink-3"> · {hint}</span>}
+      </>
+    )
   else if (state === 'revoked') line = st('state.revoked')
   else if (state === 'lapsed') line = st('state.lapsed')
   else line = st('none')
@@ -146,11 +152,6 @@ export function LicenseRow({
   } else if (active) {
     control = (
       <div className="flex items-center gap-2">
-        {renewable && (
-          <Button variant="secondary" loading={busy} onClick={() => void buy()} data-license-action="renew">
-            {st('action.renew')}
-          </Button>
-        )}
         <Button
           variant="ghost"
           className="text-ink-2 hover:text-ink"
@@ -161,6 +162,11 @@ export function LicenseRow({
         >
           {st('action.release')}
         </Button>
+        {renewable && (
+          <Button variant="secondary" loading={busy} onClick={() => void buy()} data-license-action="renew">
+            {st('action.renew')}
+          </Button>
+        )}
       </div>
     )
   } else if (state === 'lapsed') {
