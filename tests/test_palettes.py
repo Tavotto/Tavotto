@@ -31,7 +31,7 @@ def _contrast_on_white(h: str) -> float:
 
 
 def test_both_files_validate_and_ids_are_disjoint():
-    pal._load.cache_clear()
+    pal._clear_cache()
     permissive, copyleft = pal._load()
     assert len(permissive["palettes"]) >= 20
     assert {p["source"] for p in copyleft["palettes"]} == {"ggsci"}
@@ -68,6 +68,24 @@ def test_env_switch_drops_copyleft(monkeypatch):
     assert not any(p["copyleft"] for p in pal.catalog()["palettes"])
     monkeypatch.delenv(pal.NO_COPYLEFT_ENV)
     assert any(p["copyleft"] for p in pal.catalog()["palettes"])
+
+
+def test_excluding_copyleft_never_reads_that_file(monkeypatch, tmp_path):
+    """发行版可以整个删掉 GPL 文件：排除时只读宽松那份，开关 / 显式 False 都行；要它时才报缺。"""
+    (tmp_path / pal.PERMISSIVE_FILE).write_text(
+        (pal.PROFILES_DIR / pal.PERMISSIVE_FILE).read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    monkeypatch.setattr(pal, "palettes_path", lambda name: tmp_path / name)
+    pal._clear_cache()
+    try:
+        lean = pal.catalog(include_copyleft=False)
+        assert lean["palettes"] and not any(p["copyleft"] for p in lean["palettes"])
+        monkeypatch.setenv(pal.NO_COPYLEFT_ENV, "1")
+        assert pal.catalog() == lean
+        with pytest.raises(pal.PaletteCatalogError, match=pal.COPYLEFT_FILE):
+            pal.catalog(include_copyleft=True)
+    finally:
+        pal._clear_cache()
 
 
 def test_catalog_returns_fresh_objects():

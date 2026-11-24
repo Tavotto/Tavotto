@@ -121,15 +121,31 @@ def validate(doc: dict, *, copyleft: bool, name: str = "<palettes>") -> None:
 
 
 @lru_cache(maxsize=1)
-def _load() -> tuple[dict, dict]:
-    permissive = _read(PERMISSIVE_FILE)
-    copyleft = _read(COPYLEFT_FILE)
-    validate(permissive, copyleft=False, name=PERMISSIVE_FILE)
-    validate(copyleft, copyleft=True, name=COPYLEFT_FILE)
-    clash = {p["id"] for p in permissive["palettes"]} & {p["id"] for p in copyleft["palettes"]}
+def _load_permissive() -> dict:
+    doc = _read(PERMISSIVE_FILE)
+    validate(doc, copyleft=False, name=PERMISSIVE_FILE)
+    return doc
+
+
+@lru_cache(maxsize=1)
+def _load_copyleft() -> dict:
+    """GPL 那份：只在调用方要它时才读（排除时**不读、不验**，缺了这个文件的发行版照样能用宽松目录）。"""
+    doc = _read(COPYLEFT_FILE)
+    validate(doc, copyleft=True, name=COPYLEFT_FILE)
+    clash = {p["id"] for p in _load_permissive()["palettes"]} & {p["id"] for p in doc["palettes"]}
     if clash:
         raise PaletteCatalogError(f"两份目录 id 重复：{sorted(clash)}")
-    return permissive, copyleft
+    return doc
+
+
+def _load() -> tuple[dict, dict]:
+    """两份都读（目录自检用；运行时走 `catalog`，按开关只读需要的那份）。"""
+    return _load_permissive(), _load_copyleft()
+
+
+def _clear_cache() -> None:
+    _load_permissive.cache_clear()
+    _load_copyleft.cache_clear()
 
 
 def copyleft_enabled() -> bool:
@@ -142,10 +158,11 @@ def catalog(*, include_copyleft: bool | None = None) -> dict:
 
     `include_copyleft=None` 时按环境开关；闭源组件的调用方一律显式传 `False`。返回的是新对象，可以随便改。
     """
-    permissive, copyleft = _load()
     if include_copyleft is None:
         include_copyleft = copyleft_enabled()
-    docs = [(permissive, False)] + ([(copyleft, True)] if include_copyleft else [])
+    # 先定开关再读：排除时 GPL 文件一个字节都不碰（文件级边界，profiles-and-preflight.md）
+    permissive = _load_permissive()
+    docs = [(permissive, False)] + ([(_load_copyleft(), True)] if include_copyleft else [])
     sources: dict[str, dict] = {}
     palettes: list[dict] = []
     for doc, is_copyleft in docs:
