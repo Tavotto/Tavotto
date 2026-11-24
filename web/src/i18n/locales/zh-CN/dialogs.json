@@ -201,6 +201,8 @@
     "batchNames": "每张图用各自的名字",
     "exportAgain": "再次导出",
     "newerObjects_other": "有 {{count}} 个对象来自更新的版本，更新后才能导出",
+    "redrawBitmaps_other": "有脚本的位图（{{count}} 张）导出前先用脚本重画成矢量图；取消勾选则用原文件",
+    "redrawBitmapsKept": "这些图没能确认重画和原件一致，这次用原文件：{{files}}。在画布上选中它，点角标「用脚本重画」可以对照后改用重画。",
     "routeNeedsScript": "这些图带着编辑，但找不到它们的脚本，画布导出画不出来：{{files}}。请先恢复脚本或撤销这些图的编辑。",
     "showInFolder": "在文件夹中显示",
     "finish": "完成",

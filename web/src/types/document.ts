@@ -251,6 +251,12 @@ export interface PanelObject extends ObjectBase {
    */
   sourceBackedFigure?: SourceBackedFigure
   /**
+   * 用户点了「用脚本重画」（T-005，ADR 0139 修订 2026-11-24）：零编辑也**显示重画**，不显示磁盘原像素——
+   * 画布与画布导出是同一份重画。只在来源驱动采用（`sourceBackedFigure`）旁边有意义；清采用时一并清掉。
+   * 旧前端读到会忽略——回到「零编辑显示原像素」（安全的降级）。
+   */
+  showsRedraw?: true
+  /**
    * SVG 计算图表状态（ADR 0182，仅 fileKind === 'svg'）：显式绑定的声明式模型与绑定。
    * 只存**语义真值**（模型 + 绑定）；组合后的 SVG 是派生物，按模型 rev 重算，不进文档。
    * 旧前端读到它会忽略——面板退化为静态 SVG 预览，不丢数据。

@@ -607,7 +607,10 @@
     "stale": "Script changed",
     "frameLegacy": "Shown at figsize",
     "frameLegacyHint": "The script saved this figure cropped differently. Switch to the saved figure size in Properties.",
-    "frameLegacyBlockedHint": "The script saved this figure cropped differently, but this figure’s crop lies entirely outside it. Adjust or reset the crop in Properties first."
+    "frameLegacyBlockedHint": "The script saved this figure cropped differently, but this figure’s crop lies entirely outside it. Adjust or reset the crop in Properties first.",
+    "bitmapOriginal": "Bitmap original",
+    "redraw": "Redraw with script",
+    "redrawHint": "The canvas shows the bitmap file the script saved, and a PDF export embeds that bitmap as it is (boxes for missing characters included). Redraw with script runs the script once more and uses the redrawn vector figure on the canvas and in exports; if it differs from the original you compare the two first. You can undo it."
   },
   "quickEdit": {
     "aria": "Quick edit",

@@ -1,4 +1,5 @@
 import { adoptionGuardOf, adoptionOf, clearAdoption, isAdoptedPanel, SCRIPT_BACKED_SOURCE_POLICY, sourceBackedGuard, verdictFromResponse, verifiedSource, type AdoptionGuard, type SourceBackedFigure, type SourceBackedVerdict, artifactBackgroundOriginal, artifactRequestFields, isUnadoptedPngSource, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
+import { redrawOffered } from '@/lib/scriptedBitmaps'
 import { currentProjectId } from '@/lib/session'
 import { isCanvasCovered } from '@/store/canvasCover'
 import '@/store/figureSnapshotInvalidation'
@@ -2149,7 +2150,11 @@ function showAdmissionFailure(panel: PanelObject, failure: ArtifactFailure): voi
  * 进来时传 `'keep'`——那份清单就是用户此刻的导航，切走它等于每定位一条都要
  * 重新打开问题面板（审计 T09）。
  */
-async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): Promise<boolean> {
+/**
+ * 准入一张 PNG 源图（ADR 0139）。`redraw`：用户点的是「用脚本重画」（T-005）而不是进图内编辑——
+ * 准入与对照确认完全相同，成功后不进编辑，来源驱动采用的面板记 `showsRedraw`（零编辑也显示重画）。
+ */
+async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep', redraw = false): Promise<boolean> {
   finishActiveGesture()
   const initial = useDocumentStore.getState()
   let epoch = renderEpoch()
@@ -2231,6 +2236,7 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
           const p = d.objects.find(o => o.id === panel.id) as PanelObject
           p.overrides = [structuredClone(LEGACY_FRAME_OVERRIDE)]
           p.sourceBackedFigure = guard
+          if (redraw) p.showsRedraw = true
           p.nativeW = w
           p.nativeH = h
         })
@@ -2242,6 +2248,13 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
           return false
         }
         if (settled === 'stale') return false
+        const now = findObject(panel.id)
+        if (redraw && now?.type === 'panel' && !now.showsRedraw) {
+          commit(msg('artifact.showRedraw', undefined, 'errors'), d => {
+            const p = d.objects.find(o => o.id === panel.id) as PanelObject
+            p.showsRedraw = true
+          })
+        }
       }
     } else {
       const guard = validationFromSource(res.artifact_source, panel.fileId, panel.artifactValidation)
@@ -2258,6 +2271,10 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
     // 采用成功：这张图之前被拒的 toast 与会话记忆都不再成立
     useUiStore.getState().clearStatusOwnedBy(pngAdmitOwner(panel.id))
     usePngAdmissionMemory.getState().forget(panel.fileId)
+    if (redraw) {
+      status(msg('artifact.redrawn', undefined, 'errors'), 'done')
+      return true
+    }
     return finishElementEntry(panel.id, leftTab)
   } catch (error) {
     if (current() && error instanceof EngineError &&
@@ -2274,7 +2291,7 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
           // validation can ask about another missing file without its offer being dropped.
           const env = useEnvStore.getState()
           if (error.missingInput && env.missingInput === error.missingInput) env.dismissMissingInput()
-          void admitPngEntry(panel, leftTab)
+          void admitPngEntry(panel, leftTab, redraw)
         }
       })
       const env = useEnvStore.getState()
@@ -2508,6 +2525,34 @@ function swapToVectorPrimary(panel: PanelObject): boolean {
   return true
 }
 
+/**
+ * 画布角标「用脚本重画」（T-005，ADR 0139 修订 2026-11-24）：有脚本、零编辑的位图原件，由用户点了才重画。
+ *
+ * 与进图内编辑同一套准入（矢量主文件 → 精确 → 来源驱动 + 对照确认），成功后不进编辑：
+ * 换成矢量主文件 / 精确采用的面板本来就显示引擎图；来源驱动采用的面板记 `showsRedraw`，零编辑也显示那份重画。
+ * 于是画布显示、画布导出、原图导出是同一份重画。每一步都是可撤销的提交；撤销回到原像素。
+ */
+export function redrawWithScript(panelId: string): Promise<boolean> | boolean {
+  finishActiveGesture()
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel' || !redrawOffered(panel)) return false
+  const issue = artifactValidationIssue(panel)
+  if (issue) {
+    status(engineErrorMsg(new ArtifactValidationError(issue)), 'error', { action: feedbackStatusAction() })
+    return false
+  }
+  if (!isAdoptedPanel(panel) && swapToVectorPrimary(panel)) {
+    status(msg('artifact.redrawn', undefined, 'errors'), 'done')
+    return true
+  }
+  const refused = isAdoptedPanel(panel) ? null : pngRefusalOf(panel.fileId)
+  if (refused) {
+    showAdmissionFailure(panel, refused.failure)
+    return false
+  }
+  return admitPngEntry(panel, 'keep', true)
+}
+
 export function enterElementEdit(
   panelId: string,
   { leftTab = 'elements' }: { leftTab?: 'elements' | 'keep' } = {},
@@ -2542,6 +2587,89 @@ export function enterElementEdit(
     status(engineErrorMsg(new ArtifactValidationError('not_untouched')), 'info')
   }
   return entered
+}
+
+/** 一张有脚本的位图在画布导出前的处置（`prepareScriptedBitmapsForRedraw`） */
+export type BitmapRedrawOutcome =
+  /** 换成了同一张图的矢量主文件（ADR 0184 §二） */
+  | 'vector'
+  /** 精确采用通过：脚本零编辑重画与磁盘原件逐像素相同，画布导出改由脚本重画 */
+  | 'adopted'
+  /** 保留原件：精确采用被拒（像素对不上、保存不唯一……）、要先在画布上处理环境，或本次会话已被拒过 */
+  | 'kept'
+
+/**
+ * 画布导出前，把「有脚本、没动过、还没采用」的位图面板转成能由脚本重画的图（ADR 0139 修订 2026-11-24）。
+ *
+ * 只做两件不需要用户对照的事：有矢量主文件就换成它；否则只试**精确**策略（`selected-figsize-v1`，逐像素零差）。
+ * 来源驱动策略（重画与原件有可见差异）在这里**一律不试**——差异要用户亲眼对照才算数（ADR 0139 §二），
+ * 那些图保留原件，导出结果里如实提示。不进图内编辑、不弹环境对话框、不发 toast；每一项都是一次可撤销的提交。
+ * 由用户按下导出触发（ADR 0013 §6：导出是「对这个面板动手了」），打开项目 / 打开对话框不执行。
+ */
+export async function prepareScriptedBitmapsForRedraw(panelIds: readonly string[]): Promise<Record<string, BitmapRedrawOutcome>> {
+  const out: Record<string, BitmapRedrawOutcome> = {}
+  for (const id of panelIds) {
+    const panel = findObject(id)
+    if (panel?.type !== 'panel') continue
+    out[id] = await adoptBitmapForRedraw(panel)
+  }
+  return out
+}
+
+async function adoptBitmapForRedraw(panel: PanelObject): Promise<BitmapRedrawOutcome> {
+  finishActiveGesture()
+  if (isAdoptedPanel(panel) || !isUnadoptedPngSource(panel) || engineTransport()) return 'kept'
+  if (!useAssetStore.getState().byId[panel.fileId]?.script) return 'kept'
+  if (pngRefusalOf(panel.fileId)) return 'kept'
+  if (swapToVectorPrimary(panel)) return 'vector'
+  const initial = useDocumentStore.getState()
+  const epoch = renderEpoch()
+  const pj = currentProjectId()
+  const snapshot = JSON.stringify(panel)
+  const eligible = () => {
+    const style = useDocumentStore.getState().doc.style
+    return (!style || style.detached) && !hasPendingStyleWork(panel) &&
+      !useRenderStore.getState().tracked[panel.fileId] &&
+      !(useAssetStore.getState().byId[panel.fileId]?.baked_overrides?.length)
+  }
+  // 与 admitPngEntry 同一套「这次结果还算数」：项目、渲染纪元、文档、撤销栈、这块面板本身都没变
+  const current = () => {
+    const now = useDocumentStore.getState()
+    return renderEpoch() === epoch && currentProjectId() === pj &&
+      now.documentId === initial.documentId && now.loadSeq === initial.loadSeq &&
+      now.activeCanvasId === initial.activeCanvasId && now.doc === initial.doc &&
+      now.past === initial.past && now.future === initial.future && !now.txn &&
+      JSON.stringify(findObject(panel.id)) === snapshot
+  }
+  if (!eligible()) return 'kept'
+  let res: Awaited<ReturnType<typeof engineRender>>
+  try {
+    res = await engineRender(panel.fileId, [], { source_policy: FIGSIZE_SOURCE_POLICY })
+  } catch (error) {
+    if (renderEpoch() === epoch && currentProjectId() === pj && error instanceof EngineError &&
+        error.code === 'artifact_source_unavailable') {
+      // 与进图内编辑共用同一份会话记忆：脚本已为此跑过一遍，同一张图不再重跑
+      usePngAdmissionMemory.getState().remember(panel.fileId, classifyArtifactFailure(error))
+    }
+    return 'kept'
+  }
+  if (!current() || !eligible()) return 'kept'
+  const [w, h] = res.manifest.size_mm
+  if (![w, h].every(n => Number.isFinite(n) && n > 0)) return 'kept'
+  let guard: ReturnType<typeof validationFromSource>
+  try {
+    guard = validationFromSource(res.artifact_source, panel.fileId, panel.artifactValidation)
+  } catch {
+    return 'kept'
+  }
+  commit(msg('artifact.adoptFrame', undefined, 'errors'), d => {
+    const p = d.objects.find(o => o.id === panel.id) as PanelObject
+    p.overrides = [structuredClone(LEGACY_FRAME_OVERRIDE)]
+    p.artifactValidation = guard
+    p.nativeW = w
+    p.nativeH = h
+  })
+  return 'adopted'
 }
 
 function finishElementEntry(panelId: string, leftTab: 'elements' | 'keep'): boolean {
