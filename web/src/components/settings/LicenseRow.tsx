@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { formatDate } from '@/i18n/format'
@@ -44,7 +44,11 @@ const dateOf = (expSeconds: number | null): string => (expSeconds ? formatDate(e
  *
  * 没有令牌时 `status` 是纯本机读取，不联网；联网只在用户点按钮时。
  */
-export function LicenseRow() {
+export function LicenseRow({
+  plate = true,
+  extra,
+  label,
+}: { plate?: boolean; extra?: ReactNode; label?: string } = {}) {
   useTranslation('dialogs')
   const status = useLicenseStore((s) => s.status)
   const failure = useLicenseStore((s) => s.failure)
@@ -202,7 +206,7 @@ export function LicenseRow() {
     <FormSection data-settings-anchor="about.license" data-license-state={failure ? `failed:${failure}` : state}>
       <FieldGroup>
         <SettingRow
-          label={st('label')}
+          label={label ?? st('label')}
           description={<span data-license-line>{line}</span>}
           below={
             entering && !active ? (
@@ -227,7 +231,7 @@ export function LicenseRow() {
                 autoComplete="off"
                 className="max-w-xs font-mono text-xs tracking-wider"
               />
-            ) : status.founding ? (
+            ) : plate && status.founding ? (
               <FoundingPlate
                 no={status.founding.no}
                 since={status.founding.since}
@@ -240,6 +244,7 @@ export function LicenseRow() {
         >
           {control}
         </SettingRow>
+        {extra}
       </FieldGroup>
     </FormSection>
   )

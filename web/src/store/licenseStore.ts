@@ -3,10 +3,12 @@ import {
   ApiError,
   activateLicense,
   fetchLicenseStatus,
+  fetchLicenseUsage,
   refreshLicense,
   releaseLicense,
   setLicensePlateName,
   type LicenseFailureCode,
+  type LicenseUsage,
   type LicenseStatus,
 } from '@/lib/api'
 import { currentLocale } from '@/i18n'
@@ -38,6 +40,9 @@ interface LicenseState {
   status: LicenseStatus | null
   failure: LicenseFailureCode | null
   busy: boolean
+  /** 用量：null = 还没取 / 取不到（界面不画） */
+  usage: LicenseUsage | null
+  loadUsage: () => Promise<void>
   load: () => Promise<void>
   activate: (code: string) => Promise<boolean>
   refresh: () => Promise<boolean>
@@ -66,6 +71,14 @@ export const useLicenseStore = create<LicenseState>((set, get) => {
     status: null,
     failure: null,
     busy: false,
+    usage: null,
+    loadUsage: async () => {
+      try {
+        set({ usage: await fetchLicenseUsage() })
+      } catch {
+        set({ usage: null })
+      }
+    },
     load: async () => {
       try {
         set({ status: await fetchLicenseStatus() })

@@ -1992,6 +1992,43 @@ export default interface Resources {
       "symbolsHeading": "常用符号",
       "title": "科研预设"
     },
+    "pro": {
+      "chip": {
+        "expired": "高级版 · 已到期",
+        "none": "高级版",
+        "soon": "高级版 · 剩 {{count}} 天"
+      },
+      "days": {
+        "label": "剩余",
+        "value": "还剩 {{count}} 天"
+      },
+      "devices": {
+        "label": "电脑",
+        "value": "已用 {{used}} / {{limit}} 台"
+      },
+      "pass": "通行证",
+      "review": {
+        "label": "外部审阅",
+        "left": "今天还可新建 {{count}} 个链接"
+      },
+      "tier": {
+        "label": "类型",
+        "season": "投稿季通行证",
+        "sprint": "冲刺月通行证",
+        "team": "课题组通行证",
+        "year": "年度通行证"
+      },
+      "title": "高级版",
+      "usage": {
+        "agentBar": "{{name}} 本期已用",
+        "expired": "已到期",
+        "locked": "激活后可用",
+        "nearEnd": "快用完了，用完后会改用你自己的连接",
+        "title": "用量",
+        "unknown": "暂时看不到用量",
+        "used": "已用 {{pct}}%"
+      }
+    },
     "profiles": {
       "adviceHint": "建议 {{pt}} pt",
       "binding": {
@@ -8082,6 +8119,7 @@ export default interface Resources {
       "elements": "图内元素",
       "navLabel": "工作区侧栏",
       "outline": "大纲",
+      "pro": "高级版",
       "problems": "问题",
       "problemsBlocking_other": "问题 · {{count}} 项阻断（共 {{total}}）",
       "problemsCount_other": "问题 · {{count}}",
@@ -8091,6 +8129,7 @@ export default interface Resources {
         "data": "数据",
         "elements": "图内",
         "outline": "大纲",
+        "pro": "高级版",
         "problems": "问题",
         "settings": "设置",
         "style": "样式",

@@ -2944,5 +2944,42 @@
     "privacyFoot": "只上传画面，脚本和数据不出本机",
     "dailyNew": "每天可新建 1 个",
     "notePlaceholder": "给审阅者的话（选填）…"
+  },
+  "pro": {
+    "title": "高级版",
+    "tier": {
+      "label": "类型",
+      "year": "年度通行证",
+      "season": "投稿季通行证",
+      "sprint": "冲刺月通行证",
+      "team": "课题组通行证"
+    },
+    "days": {
+      "label": "剩余",
+      "value": "还剩 {{count}} 天"
+    },
+    "devices": {
+      "label": "电脑",
+      "value": "已用 {{used}} / {{limit}} 台"
+    },
+    "usage": {
+      "title": "用量",
+      "locked": "激活后可用",
+      "expired": "已到期",
+      "unknown": "暂时看不到用量",
+      "nearEnd": "快用完了，用完后会改用你自己的连接",
+      "agentBar": "{{name}} 本期已用",
+      "used": "已用 {{pct}}%"
+    },
+    "review": {
+      "label": "外部审阅",
+      "left": "今天还可新建 {{count}} 个链接"
+    },
+    "chip": {
+      "none": "高级版",
+      "expired": "高级版 · 已到期",
+      "soon": "高级版 · 剩 {{count}} 天"
+    },
+    "pass": "通行证"
   }
 }

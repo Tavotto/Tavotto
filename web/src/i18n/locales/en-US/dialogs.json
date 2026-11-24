@@ -2975,5 +2975,42 @@
     "privacyFoot": "Only the picture is uploaded; scripts and data stay on this computer",
     "dailyNew": "1 new link per day",
     "notePlaceholder": "Note for reviewers (optional)…"
+  },
+  "pro": {
+    "title": "Premium",
+    "tier": {
+      "label": "Plan",
+      "year": "Annual pass",
+      "season": "Submission-season pass",
+      "sprint": "Sprint-month pass",
+      "team": "Lab pass"
+    },
+    "days": {
+      "label": "Remaining",
+      "value": "{{count}} days left"
+    },
+    "devices": {
+      "label": "Computers",
+      "value": "{{used}} of {{limit}} used"
+    },
+    "usage": {
+      "title": "Usage",
+      "locked": "Available after activation",
+      "expired": "Expired",
+      "unknown": "Usage isn't available right now",
+      "nearEnd": "Almost used up. It will switch to your own connection when it runs out",
+      "agentBar": "{{name}} used this period",
+      "used": "{{pct}}% used"
+    },
+    "review": {
+      "label": "External review",
+      "left": "{{count}} new links left today"
+    },
+    "chip": {
+      "none": "Premium",
+      "expired": "Premium · expired",
+      "soon": "Premium · {{count}} days left"
+    },
+    "pass": "Pass"
   }
 }
