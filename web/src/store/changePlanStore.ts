@@ -94,6 +94,8 @@ export interface PlanEntry {
   notes?: PlanNote[]
   /** 写过的批注原话（批注 id → 文字）：后面的版本里没处理的批注按它显示 */
   noteTexts?: Record<string, string>
+  /** 这次重改提交的批注快照（id → 文字）：回包只清掉仍与它一致的批注 */
+  sentNotes?: Record<string, string>
   /** 按批注重改进行中：新一版的方案 id（请求还没回时是空串） */
   revising?: string
   /** 上一次按批注重改没成：稳定码（弹窗里一句灰字，下一次动作清掉） */
@@ -266,9 +268,11 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         if (view.code === 'change_plan_empty') failRevise('change_plan_empty')
         else {
           // 新一版入列并切过去；各版的勾选各记各的，批注随这次重改清空
+          // 重改期间新写 / 改过的批注是用户的新工作：只清掉仍与提交时一致的那些
+          const e0 = get().entries[key] ?? e
           const prev = versionsOf(e).map((v) => (v.planId === e.planId ? { ...v, unchecked: e.unchecked } : v))
           const rec: PlanVersionRec = { planId, plan, beforeSrc: src(plan.preview.before), afterSrc: src(plan.preview.after), unchecked: {} }
-          patch(key, { versions: [...prev, rec], planId, plan, beforeSrc: rec.beforeSrc, afterSrc: rec.afterSrc, unchecked: {}, notes: [], revising: undefined, reviseError: undefined, notice: undefined })
+          patch(key, { versions: [...prev, rec], planId, plan, beforeSrc: rec.beforeSrc, afterSrc: rec.afterSrc, unchecked: {}, notes: notesOf(e0).filter((n) => e0.sentNotes?.[n.id] !== n.text), sentNotes: undefined, revising: undefined, reviseError: undefined, notice: undefined })
         }
         if ((view as { replay_required?: boolean }).replay_required) replay(e)
         return
@@ -453,7 +457,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       if (e.revising !== undefined) return 'busy'
       if (!notes.length) return 'nothing'
       const guard = captureProjectEpoch()
-      patch(key, { revising: '', reviseError: undefined, noteTexts: { ...e.noteTexts, ...Object.fromEntries(notes.map((n) => [n.id, n.text])) } })
+      patch(key, { revising: '', reviseError: undefined, sentNotes: Object.fromEntries(notes.map((n) => [n.id, n.text])), noteTexts: { ...e.noteTexts, ...Object.fromEntries(notes.map((n) => [n.id, n.text])) } })
       try {
         const task = await reviseChangePlan(e.planId, {
           notes: notes.map((n) => ({ id: n.id, anchor: n.anchor, text: n.text })),

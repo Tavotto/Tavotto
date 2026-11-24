@@ -234,7 +234,8 @@ export function ChangePlanDialog() {
             groups={chosen}
             activeId={activeId}
             quick={
-              pro && !annotating
+              // 悬停点选用的是完整「修改后」的元素表：只有对比里显示的正是它（全部勾选）才开
+              pro && !annotating && !partial && chosen.length === groups.length && groups.length > 0
                 ? {
                     manifest,
                     onArm: () => setArmed(true),

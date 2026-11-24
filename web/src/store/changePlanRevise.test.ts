@@ -106,6 +106,21 @@ describe('批注', () => {
   })
 })
 
+describe('重改期间的批注', () => {
+  it('回包只清掉仍与提交快照一致的批注；进行中新增的、提交后又改过的保留', async () => {
+    const key = await readyEntry()
+    cps().saveNote(key, note('n1', '甲'))
+    cps().saveNote(key, note('n2', '乙'))
+    getChangePlan.mockResolvedValue({ plan_id: 'p2', state: 'running', phase: 'model' })
+    await cps().revise(key)
+    cps().saveNote(key, note('n3', '新增'))
+    cps().saveNote(key, note('n2', '乙改过'))
+    getChangePlan.mockResolvedValue(ready(V2))
+    await tick()
+    expect(notesOf(cps().entries[key]).map((n) => [n.id, n.text])).toEqual([['n2', '乙改过'], ['n3', '新增']])
+  })
+})
+
 describe('按批注重改', () => {
   it('带批注发起（id / 锚点 / 文字）；出好后新一版入列并切过去、批注清空，第 1 版的勾选留着', async () => {
     const key = await readyEntry()

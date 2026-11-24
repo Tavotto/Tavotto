@@ -309,3 +309,15 @@ it('批注模式：在图上拖一块 = 框选批注（标「框选的一块」�
     rect.mockRestore()
   }
 })
+
+it('部分勾选时悬停「写批注」不出现（命中的是完整「修改后」，与显示不一致）；底栏「写批注」仍可进批注模式', () => {
+  status(PRO)
+  const p = plan('pp', 1)
+  const two = { ...p, groups: [p.groups[0], { ...p.groups[0], key: 'g2', comment_id: 'c2' }] }
+  put(entry({ planId: 'pp', plan: two, unchecked: { g2: true } }))
+  render()
+  expect(q('[data-change-plan-pick="quick"]')).toBeNull()
+  act(() => q('[data-change-plan-write-note]')!.click())
+  expect(view()).toBe('annotate')
+  expect(q('[data-change-plan-pick="annotate"]')).not.toBeNull()
+})
