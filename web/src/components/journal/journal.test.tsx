@@ -630,3 +630,16 @@ describe('historical panel width display', () => {
     expect(row.querySelector('[data-journal-panel-history]')?.textContent).toContain('Current requirements are unverified')
   })
 })
+
+describe('Nature 种子：字号区间与子图标签', () => {
+  it('最小 / 最大字号各一行（5 / 7 pt），子图标签 8 pt 粗体一行单独列出', async () => {
+    useJournalCatalogStore.setState({ catalog: loadCatalog() })
+    act(() => selectJournal('nature'))
+    await mount(<JournalRequirements />)
+    expect(q('[data-journal-row="min_effective_font_size_pt"]')!.textContent).toContain('5 pt')
+    expect(q('[data-journal-row="max_font_size_pt"]')!.textContent).toContain('7 pt')
+    const label = q('[data-journal-row="info.panel_label"]')!
+    expect(label.textContent).toContain('子图标签')
+    expect(label.textContent).toContain('8 pt bold, upright (not italic) a, b, c')
+  })
+})

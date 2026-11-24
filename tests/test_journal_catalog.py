@@ -505,3 +505,57 @@ def test_every_strength_value_is_accepted_and_others_are_schema_errors():
 def test_a_client_that_ignores_strength_reads_the_same_catalog():
     """旧客户端不认识 strength：没有任何一处按未知键拒绝（去掉后能照常加载，且折叠相同）。"""
     journals.load_catalog(_without_strength(_fixture()))
+
+
+def _nature_text_spec(sizes: dict[str, float]) -> dict:
+    """一个面板、若干画出来的文字元素（gid → 字号 pt），scale = 1。"""
+    elements = [
+        {
+            "gid": gid,
+            "role": "text",
+            "label": gid,
+            "draggable": False,
+            "bbox": [0.1, 0.1, 0.2, 0.2],
+            "editable": [{"prop": "fontsize", "type": "number", "value": size}],
+        }
+        for gid, size in sizes.items()
+    ]
+    rect = [0, 0, 80.0, 60.0]
+    return {
+        "page": {"w_mm": 80.0, "h_mm": 60.0, "margin_mm": 0.0},
+        "panels": [
+            {
+                "id": "p1",
+                "name": "p1",
+                "kind": "pdf",
+                "rect_mm": rect,
+                "scale": 1.0,
+                "manifest": {"stem": "Fig1", "size_mm": [80.0, 60.0], "elements": elements},
+                "px_w": None,
+                "missing": False,
+                "stale": False,
+                "render_error": None,
+                "unapplied_overrides": 0,
+                "hidden": False,
+            }
+        ],
+        "texts": [],
+        "objects": [{"id": "p1", "type": "panel", "rect_mm": rect, "hidden": False}],
+    }
+
+
+def test_nature_seed_max_font_is_recommended_and_not_a_preflight_limit():
+    """Nature 种子记着 7 pt 上限（recommended），它不折进 override：预检不按 7 pt 判，
+    原文要求 8 pt 粗体的面板标号不会被报 font-too-large（面板标号另记在 info.panel_label）。"""
+    from tavotto.engine import preflight
+
+    doc = journals.load_catalog()
+    rules = doc["journals"]["nature"]["rules"]
+    assert rules["max_font_size_pt"]["value"] == 7
+    assert rules["max_font_size_pt"]["qualifier"] == "recommended"
+    assert "info.panel_label" in rules
+    assert "max_font_size_pt" not in journals.journal_override("nature")
+    profile = journals.journal_profile("nature")
+    issues = preflight.run(_nature_text_spec({"panel_label_a": 8.0, "body_text": 6.0}), profile)
+    ids = {i["id"] for i in issues}
+    assert not ids & {"font-too-large", "font-too-small", "font-below-absolute-floor"}, ids
