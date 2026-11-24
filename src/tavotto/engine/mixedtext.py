@@ -26,6 +26,7 @@ renderer 的公开协议，3.8–3.11 同一份。
 
 from __future__ import annotations
 
+import functools
 import math
 import re
 from contextlib import contextmanager
@@ -212,8 +213,7 @@ def _measure_with(original):
             descent = max(descent, d)
         return width, ascent + descent, descent
 
-    setattr(get_text_width_height_descent, _MARK, True)
-    get_text_width_height_descent.__wrapped__ = original
+    _carry(original, get_text_width_height_descent)
     return get_text_width_height_descent
 
 
@@ -238,9 +238,18 @@ def _draw_with(original):
                 original(self, gc, x + at * dx, y + at * dy, body, prop, angle, is_math, None)
             pen += measure(text, prop, is_math)[0]
 
-    setattr(draw_text, _MARK, True)
-    draw_text.__wrapped__ = original
+    _carry(original, draw_text)
     return draw_text
+
+
+def _carry(original, wrapper) -> None:
+    """包装带上被包函数的属性（`functools.update_wrapper`）再打自己的标记。
+
+    别的包装认自己的标记判幂等（`figcapture.install_agg_unhinted_glyph_fallback` 认
+    `_tavotto_unhinted_fallback`，safe worker 每次 build 都调一遍）：标记丢了它就会在同一 worker 重试时再包一层，
+    可信方法面对不上、存盘那一刻的还原就丢了（`matplotlib_patched`）。"""
+    functools.update_wrapper(wrapper, original)
+    setattr(wrapper, _MARK, True)
 
 
 def _patch(cls, name: str, wrap) -> None:

@@ -228,3 +228,66 @@ def test_drawn_ink_stays_inside_the_measured_box(has_cjk):
         if span_box is not None:
             span_ink = max(ix1 - ix0, iy1 - iy0)
             assert span_box - span_ink < 6.0, row
+
+
+_STROKE = r"""
+from matplotlib import backend_bases, patheffects
+mixedtext.arm()
+drawn = []
+real = backend_bases.RendererBase._draw_text_as_path
+def spy(self, gc, x, y, s, prop, angle, ismath, mtext=None):
+    drawn.append([type(self).__name__, s, ismath is True])
+    return real(self, gc, x, y, s, prop, angle, ismath, mtext)
+backend_bases.RendererBase._draw_text_as_path = spy
+fig, ax = plt.subplots(figsize=(4, 3), dpi=100)
+t = ax.set_ylabel("浓度 ($\\mu$mol/L)")
+# 与 `overrides.text_stroke` 同一种描边：文字改由 PathEffectRenderer 落笔
+t.set_path_effects([patheffects.withStroke(linewidth=3, foreground="w")])
+fig.canvas.draw()
+print(json.dumps(drawn))
+"""
+
+
+def test_stroked_labels_draw_the_split_runs_too(has_cjk):
+    """描边（路径特效）的标签也走分段：PathEffectRenderer 继承 RendererBase.draw_text，落笔的是各段，不是整行 mathtext。"""
+    if not has_cjk:
+        pytest.skip("worker 的解释器找不到任何中日韩候选字体")
+    drawn = _run(_STROKE)
+    assert drawn, drawn
+    assert all(cls == "PathEffectRenderer" for cls, _s, _m in drawn), drawn
+    texts = [(s, m) for _cls, s, m in drawn]
+    assert ("浓度", False) in texts, drawn
+    assert all("浓度" not in s for s, m in texts if m), drawn
+
+
+_SURFACE = r"""
+import figcapture
+from matplotlib.backends import backend_agg
+# 与 safe worker 每次 build 的顺序一致：Agg 无 hinting 回退 →（分段排只装不武装）→ 冻结可信方法面
+figcapture.install_agg_unhinted_glyph_fallback(backend_agg)
+if sys.argv[2] == "before":
+    mixedtext.install()
+figcapture.freeze_trusted_surface()
+mixedtext.arm()  # safe worker 在脚本跑完、采 baseline 时才武装
+# 同一 worker 重试：再走一遍 build 的装配（冻结只拍一次）
+figcapture.install_agg_unhinted_glyph_fallback(backend_agg)
+mixedtext.install()
+print(json.dumps({"intact": figcapture.trusted_surface_intact()}))
+"""
+
+
+@pytest.mark.parametrize("order", ["before", "after"])
+def test_wrappers_installed_before_the_trusted_surface_freeze_are_not_a_patch(order):
+    """同一 worker 重试时可信方法面要对得上：包装得在冻结之前装上（只装不武装），且带着被包函数的标记——
+    否则每次 build 都装的 Agg 回退认不出自己、再包一层，都会被判成脚本 patch 了 matplotlib。"""
+    intact = _run(_SURFACE, order)["intact"]
+    # 尺子先验活：冻结之后才装，就是被判成改过
+    assert intact is (order == "before")
+
+
+def test_the_safe_worker_installs_the_wrappers_before_freezing():
+    src = (ENGINE_DIR / "worker.py").read_text(encoding="utf-8")
+    install = src.index("_PKG.mixedtext.install()")
+    assert install < src.index("figcapture.freeze_trusted_surface()"), (
+        "mixedtext 包装要在可信方法面冻结之前装"
+    )
