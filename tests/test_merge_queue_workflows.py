@@ -1229,7 +1229,10 @@ class TestGates:
     #: backend-platforms 2026-10-21 起 4 片、2026-10-24 起 8 片、2026-11-24 起按系统分（docs/rules/ci/pytest-shards.md）。改一个 job
     #: 的片数要同时改这里与文档里的实测。
     #: 2026-11-24 起 backend-platforms 片数按系统分（include 形状，每格带 of）：Windows 16、macOS 8。
-    _EXPECTED_SHARD_COUNTS = {"backend-fast": 12, "backend-platforms": {"macos-latest": 8, "windows-latest": 16}}
+    _EXPECTED_SHARD_COUNTS = {
+        "backend-fast": 12,
+        "backend-platforms": {"macos-latest": 8, "windows-latest": 16},
+    }
 
     @pytest.mark.parametrize("job_id", ["backend-fast", "backend-platforms"])
     def test_pytest_shards_agree_between_the_matrix_and_the_command(self, job_id):
@@ -1248,7 +1251,9 @@ class TestGates:
             cells = _matrix_cells(block)
             by_os: dict[str, list[dict[str, str]]] = {}
             for c in cells:
-                assert {"os", "shard", "of"} <= set(c), f"{job_id} 的 include 格缺 os / shard / of：{c}"
+                assert {"os", "shard", "of"} <= set(c), (
+                    f"{job_id} 的 include 格缺 os / shard / of：{c}"
+                )
                 by_os.setdefault(c["os"], []).append(c)
             assert set(by_os) == set(expected), f"{job_id} 的系统集合漂了：{sorted(by_os)}"
             for os_name, n in expected.items():
@@ -1256,8 +1261,12 @@ class TestGates:
                 assert [c["shard"] for c in group] == [str(i) for i in range(1, n + 1)], (
                     f"{job_id} {os_name} 的片号必须恰好是 1..{n}，收到 {[c['shard'] for c in group]}"
                 )
-                assert {c["of"] for c in group} == {str(n)}, f"{job_id} {os_name} 的 of 必须都是 {n}"
-            assert re.search(r"python -m pytest --shard=\$\{\{ matrix\.shard \}\}/\$\{\{ matrix\.of \}\}", code), (
+                assert {c["of"] for c in group} == {str(n)}, (
+                    f"{job_id} {os_name} 的 of 必须都是 {n}"
+                )
+            assert re.search(
+                r"python -m pytest --shard=\$\{\{ matrix\.shard \}\}/\$\{\{ matrix\.of \}\}", code
+            ), (
                 f"{job_id} 的 pytest 命令要写成 `--shard=${{{{ matrix.shard }}}}/${{{{ matrix.of }}}}`"
             )
             n = None
@@ -1268,7 +1277,9 @@ class TestGates:
             assert axes["shard"] == [str(i) for i in range(1, n + 1)], (
                 f"{job_id} 的 shard 轴必须恰好是 1..N，收到 {axes['shard']}"
             )
-            assert n == expected, f"{job_id} 现在定的是 {expected} 片；改片数要同时改这里与文档里的实测"
+            assert n == expected, (
+                f"{job_id} 现在定的是 {expected} 片；改片数要同时改这里与文档里的实测"
+            )
         # `--shard=K/N` 与 `--shard-manifest=PATH` **必须是 `=` 形式**：这两个选项在
         # tests/conftest.py 里注册，pytest 预解析时把未知选项的下一个 token 当路径去找
         # conftest；`--shard-manifest PATH` 在 PATH 已存在时只加载 PATH 所在目录的 conftest，
