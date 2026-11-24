@@ -6652,6 +6652,7 @@ export default interface Resources {
       "pan": "平移画布",
       "pathJoin": "连接路径 / 平均锚点",
       "pen": "钢笔",
+      "pencil": "铅笔",
       "quickEdit": "按对象打开快捷编辑菜单",
       "saveDocument": "保存排版",
       "saveLayout": "另存为新排版",
@@ -6814,7 +6815,9 @@ export default interface Resources {
     "canvasTools": {
       "fit": "适应",
       "label": "画布工具",
+      "pathTools": "钢笔与铅笔",
       "pen": "钢笔",
+      "pencil": "铅笔",
       "quickLayout": "一键排版",
       "select": "选择",
       "subLabels": "序号"
@@ -7155,6 +7158,7 @@ export default interface Resources {
       "deleteObjects": "删除 {{count}} 个对象",
       "dissolveLayoutGroup": "解散布局组",
       "drawPath": "画路径",
+      "drawPencil": "铅笔画线",
       "duplicateCanvasSuffix": "{{name}} 副本",
       "duplicateObjects": "复制对象",
       "editPathTextPath": "编辑路径文字的路径",
@@ -8608,6 +8612,7 @@ export default interface Resources {
       "eyedropper": "点画布上的东西，把它的颜色给选中的对象；Esc 退出",
       "line": "拖动画出直线；Esc 取消",
       "pen": "点一下加尖角点，按住拖拉出平滑点；点起点闭合，Enter / Esc 结束",
+      "pencil": "按住拖动画线，松手自动平滑；回到起点闭合，按住 {{alt}} 松手保留原样",
       "polygon": "拖动画出多边形；Esc 取消",
       "rect": "拖动绘制矩形；Esc 取消",
       "star": "拖动画出星形；Esc 取消",

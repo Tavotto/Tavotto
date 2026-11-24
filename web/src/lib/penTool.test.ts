@@ -157,4 +157,17 @@ describe('penReduce', () => {
     // 正在画的时候来 resume：忽略
     expect(penReduce(s2, { type: 'resume', nodes }, OPTS).state).toBe(s2)
   })
+
+  it('折线模式（⌘ / Ctrl 按着拖，ADR 0185 M7）：不拉手柄，按下的点跟着指针走、仍是尖角；⇧ 相对上一个点锁 45°', () => {
+    const { s } = run([...click(0, 0), { type: 'down', at: [5, 0] }, { type: 'move', at: [6, 3], mod: true }])
+    if (s.kind !== 'drawing') throw new Error('没在画')
+    expect(s.nodes[1]).toEqual({ p: [6, 3], in: [6, 3], out: [6, 3], smooth: false })
+    const locked = run([...click(0, 0), { type: 'down', at: [5, 0] }, { type: 'move', at: [6, 0.4], mod: true, shift: true }]).s
+    if (locked.kind !== 'drawing') throw new Error('没在画')
+    expect(locked.nodes[1].p[1]).toBe(0)
+    expect(locked.nodes[1].smooth).toBe(false)
+    // 松手接着画：上一段是直线（没有手柄）
+    const done = run([...click(0, 0), { type: 'down', at: [5, 0] }, { type: 'move', at: [6, 3], mod: true }, { type: 'up', at: [6, 3] }, { type: 'finish' }])
+    expect(done.commits[0].nodes.every((n) => n.in[0] === n.p[0] && n.out[1] === n.p[1])).toBe(true)
+  })
 })

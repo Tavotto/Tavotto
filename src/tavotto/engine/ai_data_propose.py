@@ -169,7 +169,7 @@ class Item:
     recipe: recipe_mod.FigureRecipe
     coverage: dict
     thumb: Path | None = None
-    unplotted: int = 0  # 有多少行因为横轴没有值而没画（稳定码 `rows_not_plotted` + 计数）
+    unplotted: int = 0  # 有多少行没画（`unplotted_rows` 的总数；稳定码 `rows_not_plotted` + 计数）
     cells: list | None = None  # 处理规则作用的统计（没有规则 = None）
     #: 大表：画出来的是缩减后的点 `{"rows": 整表行数, "kept": 留下的行数}`；小表 = None（响应里没有这一项）
     reduced: dict | None = None
@@ -180,6 +180,8 @@ class Item:
     #: 合画且文件里原本有可再拆的分组列时，成对出现的两种画法各自的标记：`{"kind": "split", "column": 列名}`（按它再拆开）/
     #: `{"kind": "by_file"}`（不拆、只按文件比较）；没有成对的另一张（两种画法画出来一样）就是 None
     variant: dict | None = None
+    #: 这张图上每条拟合线的系数（`tpl.fit_report`；没有拟合线 = 空，响应里没有这一项）
+    fits: list = field(default_factory=list)
     # 懒渲染的素材：候选脚本在会话目录里，这里记下渲染一张要的最少东西
     stem: str | None = None
     n: int = 0
@@ -534,10 +536,19 @@ def confirmed_from(answers: dict[str, str]) -> tuple[recipe_mod.Confirmed, dict]
     return recipe_mod.Confirmed(), picks
 
 
+def unplotted_unmet(rows: list[dict]) -> int:
+    """没画的行里「有数据却没画上」的有多少（`goal.rows_plotted` 看这个数）：纵轴空着的行（`y_missing`）没有可画的点，是缺失，不算。
+    大表的清单只有前 100 个样例、不逐行分原因，这个数由缩减那一遍单独记（`Examples.unmet`）。"""
+    unmet = getattr(rows, "unmet", None)
+    return unmet if unmet is not None else sum(1 for r in rows if r.get("reason") != "y_missing")
+
+
 class Examples(list):
     """大表上「没画的行」只给前 100 个例子；`total` 是精确的总数（来自概览扫描）。小表直接是普通列表（`total` 同长度）。"""
 
     total: int = 0
+    #: 「有数据却没画上」的行数（见 `unplotted_unmet`）；None = 没单独记，按每行的原因数
+    unmet: int | None = None
 
 
 def unplotted_total(rows: list[dict]) -> int:
@@ -545,21 +556,48 @@ def unplotted_total(rows: list[dict]) -> int:
 
 
 def unplotted_rows(values: adf.DataSummary, recipe) -> list[dict]:
-    """配方画不出来的行（`row` 是文件里的行号，表头算第 1 行，XLSX 是表内行号）：横轴（trend / relationship）没有值（空 / NaN / 不是数或日期）的行
-    画不到坐标里。y 列的空 / NaN 是缺失，折线在那里断开，不算没画；夹着文字格的数值列用户已选了处理方式（`recipe.cells`），
-    那些格子是用户明确决定过的，不在这里报（统计在 `cell_stats`）。"""
+    """配方画不出来的行（`row` 是文件里的行号，表头算第 1 行，XLSX 是表内行号）。**脚本里每一处跳过一行的地方，这里都有对应的一条**
+    （sciviz G-055「没画的观测要有计数和规则」；每行只记一个原因）：
+
+    * `x_not_a_value`：折线 / 散点的横轴没有值（空 / NaN / 不是数或日期），画不到坐标里；
+    * `category_empty`：比较类的类别那一格是空的；
+    * `group_empty` / `facet_empty` / `unit_empty`：分组 / 分面 / 个体那一格是空的，归不到任何一组里；
+    * `not_a_number`：纵轴那一格是文字（用户还没选处理方式的）；
+    * `y_missing`：比较类 / 分布类 / 散点类的纵轴是空的或 NaN——这一行没有可画的点。
+
+    折线的纵轴空 / NaN 是缺失（线在那里断开，看得见），不算没画；夹着文字格的数值列用户已选了处理方式（`recipe.cells`）的，
+    那些格子是用户明确决定过的，不在这里报（统计在 `cell_stats`）。大表只给总数与前 100 个行号，不逐行分原因（全都是横轴不是值记 `x_not_a_value`，全都是纵轴空着记 `y_missing`，混着的记 `row_not_plotted`；「有数据却没画上」的行数另记在 `Examples.unmet`）。"""
     if (
         recipe.stack
     ):  # 把列当分组：被转的列都是纯数值列，空格 / NaN 是缺失（不是「没画」），没有横轴
         return []
     if values.large is not None:
-        total, numbers = tpl.large_unplotted(values, recipe)
-        ex = Examples({"row": n, "column": recipe.x, "reason": "x_not_a_value"} for n in numbers)
+        total, numbers, counts = tpl.large_unplotted(values, recipe)
+        if total == counts["x"]:
+            why, col = "x_not_a_value", recipe.x
+        elif total == counts["y"]:
+            why, col = "y_missing", recipe.y[0]
+        else:
+            why, col = "row_not_plotted", recipe.x
+        ex = Examples({"row": n, "column": col, "reason": why} for n in numbers)
         ex.total = total
+        # 「有数据却没画上」的行数（横轴不是值、分组 / 分面 / 个体空）：纵轴空着的是缺失，不算（与小表同一口径）
+        ex.unmet = counts["x"] + counts["key"]
         return ex
     out: list[dict] = []
     idx = {c: i for i, c in enumerate(values.columns)}
     x = recipe.x if recipe.family in ("trend", "relationship") else None
+    category = recipe.x if recipe.family == "comparison" else None
+    keys = [
+        (category, "category_empty"),
+        (recipe.group, "group_empty"),
+        (recipe.facet, "facet_empty"),
+    ]
+    if recipe.family == "trend":
+        keys.append((recipe.unit, "unit_empty"))
+    keys = [(c, why) for c, why in keys if c and c in idx]
+    # 比较 / 分布（都走 `comparison_data`）与散点：一行一个点，纵轴没有数就没有这个点；折线的缺失是断开，不在此列
+    point_needs_y = recipe.family != "trend"
     covered = {c.column for c in recipe.cells}
     # 横轴列有处理规则时按**规则作用之后**的格子判：「取数字部分」取出了数的行画得出来，不算；「不画那几行」之后是空格，算没画
     applied = (
@@ -577,9 +615,18 @@ def unplotted_rows(values: adf.DataSummary, recipe) -> list[dict]:
             if not ok:
                 out.append(_unplotted(values, n, x, "x_not_a_value"))
                 continue
+        empty = next(((c, why) for c, why in keys if not row[idx[c]].strip()), None)
+        if empty is not None:
+            out.append(_unplotted(values, n, *empty))
+            continue
         for y in recipe.y:
-            if y not in covered and adf.parse_cell(row[idx[y]])[0] == "text":
+            if y in covered:
+                continue
+            kind = adf.parse_cell(row[idx[y]])[0]
+            if kind == "text":
                 out.append(_unplotted(values, n, y, "not_a_number"))
+            elif kind != "numeric" and point_needs_y:
+                out.append(_unplotted(values, n, y, "y_missing"))
     return out
 
 
@@ -740,7 +787,12 @@ def _plan_candidates(
         stem = f"cand_{n}"
         try:
             rendered = tpl.render_recipe_script(
-                entry, recipe, data_rel=data_rel, stem=stem, style=style
+                entry,
+                recipe,
+                data_rel=data_rel,
+                stem=stem,
+                style=style,
+                fits=tpl.fit_report(values, recipe),
             )
             expected = tpl.expected_fingerprints(values, recipe)
         except tpl.TemplateError:
@@ -1076,6 +1128,8 @@ def item_to_dict(sess: Session, item: Item, recommended: bool) -> dict:
         "thumbnail_url": f"/api/ai/data-figure/thumbnail/{sess.id}/{item.id}",
         "thumbnail_status": item.state,
         **({"reduced": item.reduced} if item.reduced is not None else {}),
+        # 有拟合线才有：每条线的截距 / 斜率 / n（描述性的最小二乘直线；对数轴那一维是 log10）
+        **({"fits": item.fits} if item.fits else {}),
         **({"variant": item.variant} if sess.merge is not None and sess.merge.splittable else {}),
     }
 
@@ -1386,6 +1440,7 @@ def propose(
             reduced=reduced_of(values, cand.recipe),
             state="pending" if planned is not None else "ready",
             variant=variants.get(id(cand.recipe)),
+            fits=tpl.fit_report(values, cand.recipe),
             stem=planned.stem if planned is not None else None,
             n=planned.n if planned is not None else 0,
             expected=planned.expected if planned is not None else [],
