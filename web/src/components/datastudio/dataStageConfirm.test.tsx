@@ -100,6 +100,19 @@ describe('CandidateStage：一张主图 + 一排切换', () => {
     expect(q('[data-candidate-why]')!.textContent).toBe('各组均值一目了然，误差线是标准误；个别点会藏在柱里。')
   })
 
+  it('切换排永远一行：候选多了（合画最多 8 张）在这一排里横向滚动，不换行、不把区域撑高', async () => {
+    const codes = ['points_mean', 'box_points', 'violin_points', 'ecdf_groups', 'bar_error', 'line_points', 'line_band', 'scatter']
+    const items = candidatesFromResponse(codes.map((c, i) => item(`m${i}`, c)), 'pa')
+    await mount(<Harness items={items} thumbs={allReady(items)} />)
+    const wrap = q('[data-candidate-switch]') as HTMLElement
+    expect(wrap.className).toContain('overflow-x-auto')
+    const grid = wrap.querySelector('[data-option-grid]') as HTMLElement
+    expect(grid.querySelectorAll('[role="radio"]')).toHaveLength(8)
+    // 8 列 = 一行；内层按 8 × 150 定宽，超出外层就滚动
+    expect(grid.style.gridTemplateColumns).toBe('repeat(8, minmax(0, 1fr))')
+    expect((grid.parentElement as HTMLElement).style.width).toBe('1200px')
+  })
+
   it('默认主图是第一张（推荐）：标题 +「推荐」+ 说明 + 依据；创建按钮在标题行右端', async () => {
     const items = list()
     await mount(<Harness items={items} thumbs={allReady(items)} />)

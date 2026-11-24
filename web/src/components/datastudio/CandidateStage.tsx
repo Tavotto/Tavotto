@@ -31,7 +31,8 @@ export function useDrawingLine(active: boolean): string {
 }
 
 /** 切换排最多几列（合画最多 8 张候选 = 两行） */
-const SWITCH_COLS = 4
+/** 切换排里一格的宽度（px） */
+const SWITCH_CELL_PX = 150
 
 /** 主图的最大高度：容器（临时标签的内容区，`containerType: size`）高度减去标题行 / 说明 / 依据 / 切换排与间距，一屏放得下；再小也留 240px */
 const STAGE_MAX_H = 'max(240px, calc(100cqh - 250px))'
@@ -177,12 +178,14 @@ export function CandidateStage({
       </div>
       {items.length > 1 && (
         // 切换排 = 公共的 `OptionGrid`（选中浮成白底 + 阴影 + 600、方向键漫游即预览都是它自带的）。每格竖排：小缩略图 + 画法名 + （合画）variant 一行。
-        // 最多 4 列、多了换行（合画最多 8 张 = 两行），一屏看全、不横向滚动；单格宽 ≤ 150px，候选少时排不撑满整行
-        <div data-candidate-switch className={cn('w-full self-start', busy && 'opacity-60')} style={{ maxWidth: Math.min(items.length, SWITCH_COLS) * 150 }}>
+        // **永远一行**：候选多了（合画最多 8 张）就在这一排里横向滚动，不换行——换行会把这块区域撑高、把主图挤小（用户 2026-11-06：新控件不许撑大原有的区域）。
+        // 单格宽 150px：外层限宽并横向滚动，内层按「候选数 × 150」定宽；候选少时这一排不撑满整行
+        <div data-candidate-switch className={cn('max-w-full self-start overflow-x-auto', busy && 'opacity-60')}>
+          <div style={{ width: items.length * SWITCH_CELL_PX }}>
           <OptionGrid
             value={sel.id}
             ariaLabel={t('dataFigureV2.draft.switchLabel')}
-            columns={Math.min(items.length, SWITCH_COLS)}
+            columns={items.length}
             previewHasLabel
             cellClassName="h-auto flex-col items-stretch justify-start gap-1 p-1.5 text-left text-sm"
             onChange={onPreview}
@@ -204,6 +207,7 @@ export function CandidateStage({
               ),
             }))}
           />
+          </div>
         </div>
       )}
     </div>
