@@ -70,3 +70,16 @@ P=3 带共同作者就超，回 `budget_deferred`。这由**队列深度**决定
 
 不做：只判「这一组新增的那段前缀」。那要改服务端的前缀评估与 `members` 协议（本 ADR 与 ADR 0137 的纵深防御：
 不靠前面条目的检查结论），属于另一个决定。
+
+## 修订（2026-11-23）：外部请求预算随 Workers 付费计划调整
+
+事实：合并组在队列深处被服务按预算延后（`budget_deferred`，#2064）。服务每次调用的外部请求上限按 Free 计划（50 个子请求）
+定为 35 / 40。维护者已开通 Workers Paid（单次调用默认 10,000 个子请求）。
+
+决定：新增部署开关 `CLA_WORKERS_PAID_BUDGET=true`（与其它开关一样随 `wrangler deploy --var` 给出，默认关），只对三个 CI 只读接口
+（`/eligibility/*`、`/verification/*`）把外部请求上限由 35 / 40 提到 480 / 500；SQL 与时间上限不随计划变，后台与 webhook 路径
+仍按 Free 数。生产清单另写 `limits.subrequests: 1000` 作平台层兜底（也让在 Free 计划上误部署直接失败）。
+上限仍有限：前缀过大照旧整体拒绝（`budget_deferred`），绝不截断成员；应答形状、`members` 对账与判定器都不变，
+所以安全模型不变——只是同一个只读评估在更宽的预算里完成。服务对 `budget_deferred` 的 403 应答额外带 `reason`
+（time / external / sql / confirmation_capacity）并写一行日志，CI 端只读 `error`，不受影响。
+
