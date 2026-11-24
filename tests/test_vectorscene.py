@@ -284,3 +284,25 @@ def test_statistical_texts_are_listed_for_the_user_even_with_provenance():
     ]
     r = vectorscene.solve(items, _panels(), measure=_measure)
     assert r["ok"] and r["statistical"] == [{"item": "stars", "provenance": "user"}]
+
+
+def test_element_anchor_records_carry_the_identity():
+    manifest = {
+        "size_mm": [80, 40],
+        "elements": [
+            {"gid": "axes_0", "role": "axes", "bbox": [0.1, 0.1, 0.8, 0.7]},
+            {
+                "gid": "axes_0.lines_0",
+                "role": "line",
+                "bbox": [0, 0, 1, 1],
+                "identity": "l1:0123456789abcdef",
+                "geometry": {"paths": [{"points": [[0.25, 0.5], [0.75, 0.25]]}]},
+            },
+        ],
+    }
+    panels = {"P1": {"panel": PANEL, "draw_manifest": manifest, "requests": [], "data_points": []}}
+    at = {"anchor": {"element": {"panel": "P1", "gid": "axes_0.lines_0", "point": "ne"}}}
+    r = vectorscene.solve(
+        [{"kind": "shape", "name": "s", "at": at, "size_mm": [1, 1]}], panels, measure=_measure
+    )
+    assert r["anchors"][0]["identity"] == "l1:0123456789abcdef"

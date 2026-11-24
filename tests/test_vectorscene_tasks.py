@@ -448,3 +448,50 @@ def test_five_real_tasks_end_to_end(world):
         blue_c = np.array([(xs[near] + 0.5).mean(), (ys[near] + 0.5).mean()])
         miss_mm = float(np.hypot(*(blue_c - red_c))) / px_per_mm
         assert miss_mm <= 0.5 / px_per_mm + 0.1 * 25.4 / 72, (ring_name, miss_mm)
+
+
+def test_scene_is_readable_and_its_free_space_is_really_free(world):
+    """读场景（ADR 0208 §二）：短号、坐标轴毫米框、墨迹框、空白区、样式记号、指纹。
+    把一段字放进 (a) 图最大的那块空白里，核对必须全部通过——空白区说的是真空白。"""
+    scene = vectorscene.build_scene(world["panels"], page=world["page"])
+    p1 = next(p for p in scene["panels"] if p["ref"] == "P1")
+    assert [a["ref"] for a in p1["axes"]] == ["P1.A1"]
+    assert p1["free"], "constrained 布局下的峰形图里应当有空白"
+    style = scene["style"]
+    assert style["font_family"] and style["size_pt"]["tick_label"] and style["axis_line_pt"]
+    # 右图缩放 0.8：刻度字号按画布上的实际值报（比左图小）
+    big = max(p1["free"], key=lambda r: r["box_mm"][2] * r["box_mm"][3])["box_mm"]
+    x, y, w, h = big
+    item = {
+        "kind": "text",
+        "name": "in_free",
+        "text": "note",
+        "sizePt": 7,
+        "attach": "center",
+        "at": {
+            "anchor": {"panel": {"id": "P1", "point": "nw"}},
+            "offset_mm": [
+                x + w / 2 - world["placed"]["P1"]["x"],
+                y + h / 2 - world["placed"]["P1"]["y"],
+            ],
+        },
+    }
+    solved = vectorscene.solve(
+        [item], world["panels"], fingerprint=scene["fingerprint"], page=world["page"]
+    )
+    assert solved["ok"], solved["errors"]
+    checked = agentobjects.validate_new_objects(solved["objects"])
+    v = vectorcheck.check(
+        solved,
+        checked["objects"],
+        world["panels"],
+        [item],
+        page=world["page"],
+        profile=world["profile"],
+    )
+    assert v["ok"] and v["verified"], v["facts"]
+    # 场景过期：子图挪了 1 mm，按旧指纹落地被拒
+    moved = json.loads(json.dumps(world["panels"]))
+    moved["P1"]["panel"]["x"] += 1.0
+    stale = vectorscene.solve([item], moved, fingerprint=scene["fingerprint"], page=world["page"])
+    assert not stale["ok"] and stale["errors"][0]["code"] == "scene_stale"

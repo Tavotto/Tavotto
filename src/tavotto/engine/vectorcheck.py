@@ -361,6 +361,27 @@ def check(
             **({"outside": outside} if outside else {}),
         )
 
+    # ---- style：与原图一致（字体族同一类；ADR 0208 §四 第 8 条）
+    figure_family = vectorscene._figure_family(panels)  # noqa: SLF001
+    has_text = any(
+        el.get("role") in interference.TEXT_ROLES
+        for p in panels.values()
+        for el in (p.get("draw_manifest") or {}).get("elements", [])
+    )
+    for name, e in by_name.items():
+        if e["type"] != "text":
+            continue
+        if not has_text:
+            facts.add("style", "unknown", name, reason="no_figure_text")
+            continue
+        fam = vectorscene.family_class(e.get("font_family") or "serif")
+        facts.add(
+            "style",
+            "pass" if fam == figure_family else "fail",
+            name,
+            **({} if fam == figure_family else {"family": fam, "figure": figure_family}),
+        )
+
     statuses = {f["status"] for f in facts.items}
     return {
         "ok": "fail" not in statuses,

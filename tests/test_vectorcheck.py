@@ -238,3 +238,31 @@ def test_item_anchor_link_does_not_depend_on_key_order():
     ]
     v = _run(items)
     assert _status(v, "text", "a") == ["pass"] and _status(v, "text", "t") == ["pass"]
+
+
+def test_text_family_must_match_the_figure():
+    # 手写的图里刻度文字是衬线
+    manifest = {
+        **MANIFEST,
+        "elements": MANIFEST["elements"]
+        + [
+            {
+                "gid": "axes_0.yticklabels_1",
+                "role": "ticklabel",
+                "bbox": [0.02, 0.3, 0.07, 0.05],
+                "editable": [{"prop": "fontfamily", "type": "enum", "value": "Times New Roman"}],
+            },
+        ],
+    }
+    panels = {
+        "P1": {"panel": dict(PANEL), "draw_manifest": manifest, "requests": [], "data_points": []}
+    }
+
+    def run(item):
+        solved = vectorscene.solve([item], panels, measure=_measure)
+        checked = agentobjects.validate_new_objects(solved["objects"])
+        return vectorcheck.check(solved, checked["objects"], panels, [item], page=PAGE)
+
+    item = {"kind": "text", "name": "t", "text": "ok", "at": _at(60, 26), "attach": "nw"}
+    assert _status(run(item), "style", "t") == ["pass"]  # 缺省跟着图走：衬线
+    assert _status(run({**item, "fontFamily": "sans-serif"}), "style", "t") == ["fail"]

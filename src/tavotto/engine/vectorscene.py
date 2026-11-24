@@ -51,6 +51,7 @@ ERROR_CODES = (
     "anchor_unresolvable",  # 数据点换算不了（worker 回 unresolvable / 没回）
     "panel_transformed",  # 子图旋转或翻转过：这一版不给子元素锚点
     "bad_point",  # 方位名不认识
+    "scene_stale",  # 场景指纹变了（文档被改、脚本重跑出了新图）：方案作废，重新读场景
     "needs_confirmation",  # 统计标注（星号 / n.s. / p 值 / n）没写明来自用户或数据：不由 Agent 编（ADR 0208 §四）
 )
 
@@ -177,8 +178,35 @@ def _anchors_of(it: object) -> list:
     return found
 
 
+def family_class(name: object) -> str:
+    """图里的字体名 → 画布文字的三类族（`TextObject.fontFamily`）：含 mono → 等宽；含 serif 且不含 sans → 衬线；其余无衬线。"""
+    n = str(name or "").lower()
+    if "mono" in n or "courier" in n:
+        return "monospace"
+    if (
+        "serif" in n
+        and "sans" not in n
+        or n in ("times", "times new roman", "stix", "cmr10", "dejavu serif")
+    ):
+        return "serif"
+    return "sans-serif"
+
+
+def _figure_family(panels: dict) -> str:
+    """这批子图里最常见的文字字体族（三类之一）；没有文字就无衬线。"""
+    counts: dict[str, int] = {}
+    for p in panels.values():
+        for el in (p.get("draw_manifest") or {}).get("elements", []):
+            fam = _field(el, "fontfamily")
+            if isinstance(fam, str):
+                k = family_class(fam)
+                counts[k] = counts.get(k, 0) + 1
+    return max(counts, key=counts.get) if counts else "sans-serif"
+
+
 class _Ctx:
     def __init__(self, panels: dict):
+        self.family = _figure_family(panels)
         self.panels = panels  # id -> {"panel": PanelObject, "draw_manifest": …, "data_points": […], "requests": […]}
         self.items: dict[str, tuple[float, float, float, float]] = {}  # 已解出的本批元素的外接框
 
@@ -325,7 +353,7 @@ def _text(it: dict, ctx: _Ctx, name: str, faces) -> dict:
         raise SceneError("needs_confirmation", name, "statistical_text")
     size = float(it.get("sizePt", 8))
     bold, italic = bool(it.get("bold", False)), bool(it.get("italic", False))
-    family = it.get("fontFamily", "sans-serif")
+    family = it.get("fontFamily", ctx.family)
     natural_mm = faces(text, size, bold, italic, family) * PT_TO_MM
     em = size * PT_TO_MM
     w = natural_mm * 1.04 + 0.5 * em  # 与前端 `textFit.fitWidthMm` 同一个余量
@@ -566,11 +594,28 @@ ITEM_KEYS = {
 }
 
 
-def solve(items: object, panels: dict, *, measure=_measure_text_mm) -> dict:
+def solve(
+    items: object,
+    panels: dict,
+    *,
+    measure=_measure_text_mm,
+    fingerprint: str | None = None,
+    page: dict | None = None,
+) -> dict:
     """场景描述 → 文档对象（局部 id = 元素名）+ 锚点记录。整批要么全解出、要么全拒（`ok` 为假时 `objects` 为空）。
 
     `panels`：子图 id → `{"panel": PanelObject, "draw_manifest": …, "requests": [...], "data_points": [...]}`
-    （`requests` 与 `data_points` 一一对应，来自同一次 `export(..., data_points=requests)`）。"""
+    （`requests` 与 `data_points` 一一对应，来自同一次 `export(..., data_points=requests)`）。
+    `fingerprint`：读场景时拿到的 `build_scene(...)["fingerprint"]`；给了就先核，对不上回 `scene_stale`。"""
+    if fingerprint is not None and fingerprint != scene_fingerprint(panels, page):
+        return {
+            "ok": False,
+            "objects": [],
+            "anchors": [],
+            "fits": [],
+            "statistical": [],
+            "errors": [SceneError("scene_stale").as_dict()],
+        }
     ctx = _Ctx(panels)
     if not isinstance(items, list):
         return {
@@ -640,6 +685,22 @@ def solve(items: object, panels: dict, *, measure=_measure_text_mm) -> dict:
             "statistical": [],
             "errors": [exc.as_dict()],
         }
+    # 锚点的持久身份：元素锚点带上 manifest 的 `identity`（脚本 label= 的摘要，ADR 0208 §六）——脚本重跑、gid
+    # 重新编号后据它认回同一个元素；没有 label 的元素没有 identity，只能按 gid（与 override 的口径一致）
+    for rec in anchors:
+        spec = rec["anchor"].get("element") if isinstance(rec.get("anchor"), dict) else None
+        if isinstance(spec, dict):
+            p = panels.get(spec.get("panel"))
+            el = next(
+                (
+                    e
+                    for e in ((p or {}).get("draw_manifest") or {}).get("elements", [])
+                    if e.get("gid") == spec.get("gid")
+                ),
+                None,
+            )
+            if el is not None and isinstance(el.get("identity"), str):
+                rec["identity"] = el["identity"]
     # 统计标注即使写了来源，也单独列出来交给宿主给用户确认（来源是 Agent 自己填的，不等于用户确认过）
     statistical = [
         {"item": it["name"], "provenance": it.get("provenance")}
@@ -654,3 +715,267 @@ def solve(items: object, panels: dict, *, measure=_measure_text_mm) -> dict:
         "statistical": statistical,
         "errors": [],
     }
+
+
+# ------------------------------------------------------------------ 读：图的几何场景（ADR 0208 §二）
+
+#: 空白区的网格步长与最小矩形（ADR 0208 §十一 暂定数）
+FREE_CELL_MM = 0.5
+FREE_MIN_MM = 2.0
+FREE_MAX_RECTS = 6
+
+
+def _field(el: dict, prop: str):
+    for f in el.get("editable") or []:
+        if f.get("prop") == prop:
+            return f.get("value")
+    return None
+
+
+def _scale_of(p: dict) -> float:
+    size = (p.get("draw_manifest") or {}).get("size_mm") or [0, 0]
+    full = panel_full_rect(p["panel"])
+    return full[2] / size[0] if size and size[0] else 1.0
+
+
+def scene_fingerprint(panels: dict, page: dict | None = None) -> str:
+    """场景指纹：每张子图的落位与这次导出绘制的 manifest + 页面。落地前再算一次，不同 = 场景过期（`scene_stale`）。"""
+    import hashlib
+    import json
+
+    blob = {
+        "page": page or {},
+        "panels": {
+            pid: {"panel": p["panel"], "manifest": p.get("draw_manifest")}
+            for pid, p in sorted(panels.items())
+        },
+    }
+    return hashlib.sha256(
+        json.dumps(blob, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+
+
+def build_scene(panels: dict, *, page: dict | None = None, objects: list | None = None) -> dict:
+    """给 Agent 看的场景：全部是短号 + 画布毫米（不含任何文字内容之外的脚本信息）。
+
+    - `panels[].axes[]`：每根坐标轴（短号、gid、毫米框、范围、刻度类型）；
+    - `panels[].elements[]`：带 gid 的数据 / 文字 / 图例元素（短号、角色、标签、墨迹框，没有墨迹几何的标 `ink: false`）；
+    - `panels[].free[]`：每根坐标轴里的空白矩形（没有数据墨迹、没有文字），按面积排序，每块至少 2 × 2 mm；
+    - `style`：图里的字体族、刻度 / 轴标题字号、轴线线宽（都已乘子图缩放，是画布上的实际值）、系列配色；
+    - `annotations[]`：画布上已有的标注对象（id、类型、毫米框）；
+    - `fingerprint`：`scene_fingerprint`。翻转 / 旋转过的子图只给外框（`transformed: true`）。"""
+    from . import interference
+
+    roles = set(interference.DATA_ROLES) | set(interference.TEXT_ROLES) | {"legend"}
+    out_panels = []
+    fonts: dict[str, int] = {}
+    sizes: dict[str, list[float]] = {"tick_label": [], "axis_label": [], "title": []}
+    spines: list[float] = []
+    palette: list[str] = []
+    for pid, p in panels.items():
+        pn = p["panel"]
+        entry: dict = {"ref": pid, "box_mm": [pn["x"], pn["y"], pn["w"], pn["h"]]}
+        if panel_rotation(pn) or pn.get("flipH") or pn.get("flipV"):
+            entry["transformed"] = True
+            out_panels.append(entry)
+            continue
+        scale = _scale_of(p)
+        man = p.get("draw_manifest") or {}
+        axes_out, elements_out = [], []
+        for el in man.get("elements", []):
+            role, gid = el.get("role"), el.get("gid")
+            if role == "axes" and isinstance(el.get("bbox"), list):
+                x, y, w, h = panel_rect_to_page(pn, el["bbox"])
+                axes_out.append(
+                    {
+                        "ref": f"{pid}.A{len(axes_out) + 1}",
+                        "gid": gid,
+                        "box_mm": [x, y, w, h],
+                        "xlim": _field(el, "xlim"),
+                        "ylim": _field(el, "ylim"),
+                        "xscale": _field(el, "xscale"),
+                        "yscale": _field(el, "yscale"),
+                    }
+                )
+                lw = _field(el, "spine_linewidth")
+                if isinstance(lw, (int, float)):
+                    spines.append(float(lw) * scale)
+                tf = _field(el, "tick_fontsize")
+                if isinstance(tf, (int, float)):
+                    sizes["tick_label"].append(float(tf) * scale)
+                continue
+            if role == "ticks":  # 刻度集合（`TickSet`）：刻度文字的字号挂在它身上
+                fs = _field(el, "fontsize")
+                if isinstance(fs, (int, float)) and interference.is_visible(el):
+                    sizes["tick_label"].append(float(fs) * scale)
+                continue
+            if role not in roles or not interference.is_visible(el):
+                continue
+            try:
+                ink = element_ink_box(p, gid, "scene")
+                x, y, w, h = panel_rect_to_page(pn, ink)
+                rec = {
+                    "ref": f"{pid}.E{len(elements_out) + 1}",
+                    "gid": gid,
+                    "role": role,
+                    "label": el.get("label"),
+                    "box_mm": [x, y, w, h],
+                    "ink": True,
+                }
+            except SceneError:
+                if not isinstance(el.get("bbox"), list):
+                    continue
+                x, y, w, h = panel_rect_to_page(pn, el["bbox"])
+                rec = {
+                    "ref": f"{pid}.E{len(elements_out) + 1}",
+                    "gid": gid,
+                    "role": role,
+                    "label": el.get("label"),
+                    "box_mm": [x, y, w, h],
+                    "ink": False,
+                }
+            elements_out.append(rec)
+            fam = _field(el, "fontfamily")
+            if isinstance(fam, str):
+                fonts[fam] = fonts.get(fam, 0) + 1
+            fs = _field(el, "fontsize")
+            if isinstance(fs, (int, float)):
+                bucket = {
+                    "ticklabel": "tick_label",
+                    "axis_label": "axis_label",
+                    "title": "title",
+                }.get(role)
+                if bucket:
+                    sizes[bucket].append(float(fs) * scale)
+            col = _field(el, "color")
+            if role in interference.DATA_ROLES and isinstance(col, str) and col not in palette:
+                palette.append(col)
+        entry.update(
+            axes=axes_out,
+            elements=elements_out,
+            free=[r for a in axes_out for r in _free_rects(p, a["box_mm"])],
+        )
+        out_panels.append(entry)
+
+    def typical(vals):
+        return round(sorted(vals)[len(vals) // 2], 2) if vals else None
+
+    return {
+        "page": page,
+        "panels": out_panels,
+        "annotations": [
+            {
+                "id": o.get("id"),
+                "type": o.get("type"),
+                "box_mm": [o.get("x"), o.get("y"), o.get("w"), o.get("h")],
+            }
+            for o in (objects or [])
+            if isinstance(o, dict) and o.get("type") != "panel" and not o.get("hidden")
+        ],
+        "style": {
+            "font_family": max(fonts, key=fonts.get) if fonts else None,
+            "size_pt": {k: typical(v) for k, v in sizes.items()},
+            "axis_line_pt": typical(spines),
+            "palette": palette[:12],
+        },
+        "fingerprint": scene_fingerprint(panels, page),
+    }
+
+
+def _free_rects(p: dict, axes_box: list) -> list[dict]:
+    """一根坐标轴绘图区里的空白矩形：按 0.5 mm 网格标出数据墨迹与文字占的格子，反复取最大的空矩形。"""
+    from . import interference
+
+    pn = p["panel"]
+    ax0, ay0, aw, ah = axes_box
+    nx, ny = max(1, int(aw / FREE_CELL_MM)), max(1, int(ah / FREE_CELL_MM))
+    full = panel_full_rect(pn)
+    busy = [[False] * nx for _ in range(ny)]
+
+    def mark_rect(x0, y0, x1, y1, pad=1):
+        i0 = max(0, int((x0 - ax0) / FREE_CELL_MM) - pad)
+        i1 = min(nx - 1, int((x1 - ax0) / FREE_CELL_MM) + pad)
+        j0 = max(0, int((y0 - ay0) / FREE_CELL_MM) - pad)
+        j1 = min(ny - 1, int((y1 - ay0) / FREE_CELL_MM) + pad)
+        for j in range(j0, j1 + 1):
+            for i in range(i0, i1 + 1):
+                busy[j][i] = True
+
+    def to_mm(q):
+        return (full[0] + q[0] * full[2], full[1] + q[1] * full[3])
+
+    for el in (p.get("draw_manifest") or {}).get("elements", []):
+        role = el.get("role")
+        if not interference.is_visible(el):
+            continue
+        if role in interference.DATA_ROLES:
+            paths = (el.get("geometry") or {}).get("paths")
+            if not paths or role in interference.BBOX_BASIS_ROLES:
+                r = interference.visible_rect(el)
+                if r:
+                    a, b = to_mm((r[0], r[1])), to_mm((r[2], r[3]))
+                    mark_rect(a[0], a[1], b[0], b[1], pad=0)
+                continue
+            for path in paths:
+                pts = [
+                    to_mm(q)
+                    for q in path.get("points") or []
+                    if isinstance(q, (list, tuple)) and len(q) == 2
+                ]
+                for a, b in zip(pts, pts[1:] + (pts[:1] if path.get("closed") else [])):
+                    n = max(1, int(math.hypot(b[0] - a[0], b[1] - a[1]) / (FREE_CELL_MM / 2)))
+                    for k in range(n + 1):
+                        x, y = a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n
+                        mark_rect(x, y, x, y)
+                if path.get("closed") and len(pts) > 2:
+                    xs, ys = [q[0] for q in pts], [q[1] for q in pts]
+                    mark_rect(min(xs), min(ys), max(xs), max(ys), pad=0)
+        elif role in interference.TEXT_ROLES:
+            r = interference.visible_rect(el)
+            if r:
+                a, b = to_mm((r[0], r[1])), to_mm((r[2], r[3]))
+                mark_rect(a[0], a[1], b[0], b[1], pad=0)
+    out = []
+    min_cells = int(FREE_MIN_MM / FREE_CELL_MM)
+    for _ in range(FREE_MAX_RECTS):
+        best = _largest_empty(busy, nx, ny)
+        if best is None:
+            break
+        i0, j0, i1, j1 = best
+        if i1 - i0 + 1 < min_cells or j1 - j0 + 1 < min_cells:
+            break
+        out.append(
+            {
+                "box_mm": [
+                    ax0 + i0 * FREE_CELL_MM,
+                    ay0 + j0 * FREE_CELL_MM,
+                    (i1 - i0 + 1) * FREE_CELL_MM,
+                    (j1 - j0 + 1) * FREE_CELL_MM,
+                ]
+            }
+        )
+        for j in range(j0, j1 + 1):
+            for i in range(i0, i1 + 1):
+                busy[j][i] = True
+    return out
+
+
+def _largest_empty(busy, nx, ny):
+    """最大全空矩形（直方图 + 单调栈，O(nx·ny)）：(i0, j0, i1, j1) 或 None。"""
+    heights = [0] * nx
+    best, best_area = None, 0
+    for j in range(ny):
+        for i in range(nx):
+            heights[i] = 0 if busy[j][i] else heights[i] + 1
+        stack: list[int] = []
+        for i in range(nx + 1):
+            h = heights[i] if i < nx else 0
+            while stack and heights[stack[-1]] >= h:
+                top = stack.pop()
+                height = heights[top]
+                left = stack[-1] + 1 if stack else 0
+                area = height * (i - left)
+                if height and area > best_area:
+                    best_area, best = area, (left, j - height + 1, i - 1, j)
+            stack.append(i)
+    return best
