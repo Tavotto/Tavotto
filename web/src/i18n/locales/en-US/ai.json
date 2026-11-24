@@ -557,7 +557,7 @@
       },
       "bar_error": {
         "title": "Bars + error bars",
-        "why": "Group means at a glance, error bars are the SD; individual points are hidden inside the bars."
+        "why": "Group means at a glance, error bars are {{error}}; individual points are hidden inside the bars."
       },
       "line_points": {
         "title": "Points + line",
@@ -565,7 +565,7 @@
       },
       "line_band": {
         "title": "Mean line + band",
-        "why": "The mean at each x position with an SD band, for the overall trend and its spread."
+        "why": "The mean at each x position with a band showing {{error}}, for the overall trend and its spread."
       },
       "line_units": {
         "title": "One line per subject",
@@ -735,6 +735,11 @@
       "skippedOther": "{{count}} more rows left out for non-numeric values",
       "skippedBoth": "{{missing}} more rows left out for missing values and {{other}} for non-numeric values",
       "skippedAll": "{{count}} more rows left out"
+    },
+    "errorName": {
+      "sd": "the SD",
+      "sem": "the SEM",
+      "ci95": "the 95% CI"
     },
     "confirm": {
       "title": "Needs your confirmation",

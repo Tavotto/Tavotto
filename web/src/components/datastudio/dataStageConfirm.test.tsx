@@ -87,6 +87,19 @@ describe('CandidateStage：一张主图 + 一排切换', () => {
     onPreview.mockReset()
   })
 
+  it('说明里的误差类型跟着这张图实际画的那一种走：没点过 = 标准差，点了标准误 / 置信区间就改口（Codex 评审 #2176）', async () => {
+    for (const [error, word] of [[undefined, '标准差'], ['sd', '标准差'], ['sem', '标准误'], ['ci95', '95% 置信区间']] as const) {
+      const items = candidatesFromResponse([item('a', 'line_band', error ? { error } : {})], 'pa')
+      await mount(<Harness items={items} thumbs={allReady(items)} />)
+      expect(q('[data-candidate-why]')!.textContent).toBe(`每个横轴位置取均值，带是${word}，看总体趋势和波动。`)
+      act(() => root.unmount())
+      root = createRoot(host)
+    }
+    const bar = candidatesFromResponse([item('b', 'bar_error', { error: 'sem' })], 'pa')
+    await mount(<Harness items={bar} thumbs={allReady(bar)} />)
+    expect(q('[data-candidate-why]')!.textContent).toBe('各组均值一目了然，误差线是标准误；个别点会藏在柱里。')
+  })
+
   it('默认主图是第一张（推荐）：标题 +「推荐」+ 说明 + 依据；创建按钮在标题行右端', async () => {
     const items = list()
     await mount(<Harness items={items} thumbs={allReady(items)} />)

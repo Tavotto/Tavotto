@@ -99,7 +99,9 @@ export function CandidateStage({
   const row = useRef<HTMLDivElement>(null)
   const known = (c: string) => KNOWN_CANDIDATES.includes(c)
   const title = (c: string) => (known(c) ? t(`dataFigureV2.candidate.${c}.title`) : t('dataFigureV2.candidate.other.title'))
-  const why = (c: string) => (known(c) ? t(`dataFigureV2.candidate.${c}.why`) : t('dataFigureV2.candidate.other.why'))
+  // 带误差线 / 误差带的画法：说明里写的是这张图**实际**画的那一种（用户在「需要你确认」里改过就跟着变），没有这一项的按默认的标准差说
+  const why = (c: string, error?: string | null) =>
+    known(c) ? t(`dataFigureV2.candidate.${c}.why`, { error: t(`dataFigureV2.errorName.${error === 'sem' || error === 'ci95' ? error : 'sd'}`) }) : t('dataFigureV2.candidate.other.why')
   const variantText = (v: NonNullable<Candidate['variant']>) => (v.kind === 'split' ? t('dataFigureV2.variant.split', { column: v.column }) : t('dataFigureV2.variant.by_file'))
   // 大表的候选带 `reduced`（整表行数 / 画出的点数）：安静的一小段灰字 + 悬停说明；没少画（小表 / kept ≥ rows）就没有
   const reducedOf = (it: Candidate) => {
@@ -174,7 +176,7 @@ export function CandidateStage({
       </div>
       <StageImage key={sel.thumb} src={sel.thumb} sweeping={mine} onSettled={(ok) => onThumb(sel.id, ok)} />
       <div>
-        <p data-candidate-why className="text-sm text-ink-2">{why(sel.why_code)}</p>
+        <p data-candidate-why className="text-sm text-ink-2">{why(sel.why_code, sel.error)}</p>
         {basis && (
           <p data-candidate-basis className="mt-1 text-xs text-ink-3">
             {t('dataFigureV2.basis.line', {

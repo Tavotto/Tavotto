@@ -92,7 +92,7 @@ export default interface Resources {
       "candidate": {
         "bar_error": {
           "title": "柱 + 误差线",
-          "why": "各组均值一目了然，误差线是标准差；个别点会藏在柱里。"
+          "why": "各组均值一目了然，误差线是{{error}}；个别点会藏在柱里。"
         },
         "box_points": {
           "title": "箱线 + 原始点",
@@ -120,7 +120,7 @@ export default interface Resources {
         },
         "line_band": {
           "title": "均值线 + 误差带",
-          "why": "每个横轴位置取均值，带是标准差，看总体趋势和波动。"
+          "why": "每个横轴位置取均值，带是{{error}}，看总体趋势和波动。"
         },
         "line_points": {
           "title": "点 + 折线",
@@ -180,6 +180,11 @@ export default interface Resources {
         "stripInfo": "前 {{shown}} 行，共 {{total}} 行 · {{columns}} 列",
         "switchLabel": "候选画法",
         "unreadable": "这个文件不是表格，读不了。"
+      },
+      "errorName": {
+        "ci95": "95% 置信区间",
+        "sd": "标准差",
+        "sem": "标准误"
       },
       "list": {
         "empty": "这个文件夹里没找到数据文件。",

@@ -143,3 +143,44 @@ def test_facts_tell_missing_cells_from_cells_that_are_not_numbers(project):
     f = item["facts"]
     assert (f["skipped_missing"], f["skipped_other"]) == (1, 1)
     assert f["skipped_missing"] + f["skipped_other"] == item["unplotted"]["count"]
+
+
+def test_confirming_the_error_keeps_the_paired_variants_of_a_merged_figure(project):
+    """合画里成对的两种画法（按文件再拆开 / 只按文件）靠 `variant` 分清；用户点选误差类型换了配方之后，这个标记不能丢（Codex 评审 #2176）。"""
+    from tests.test_ai_data_merge import _arms
+
+    _, client, figs, _ = project
+    rows = _arms(lambda i, k: "p" if k % 2 == 0 else "q")
+    for i, n in enumerate(("a", "b")):
+        put(figs, f"data/{n}.csv", rows(i))
+    tables = [{"path": "a.csv"}, {"path": "b.csv"}]
+    base = propose(client, tables=tables, render="lazy", answers={"y": "resp_mV"}).get_json()
+    out = propose(
+        client, tables=tables, render="lazy", answers={"y": "resp_mV", "error": "sem"}
+    ).get_json()
+    assert out["error_confirmed"] is True
+    marks = [(i["title_code"], i.get("variant")) for i in base["items"]]
+    assert any(v for _c, v in marks), marks  # 这张表确实有成对的画法
+    assert [(i["title_code"], i.get("variant")) for i in out["items"]] == marks
+    # 成对的那几张里确实有配方被换过的（均值 ± 标准差的层变成了均值 ± 标准误），而它们的标记还在
+    changed = [
+        i
+        for i in out["items"]
+        if i.get("variant")
+        and any(layer["summary"] == "mean_sem" for layer in i["values"]["layers"])
+    ]
+    assert changed, [summaries(i) for i in out["items"]]
+
+
+def test_facts_count_only_the_points_that_are_really_drawn_on_a_scatter(project):
+    """散点一行一个点：横轴不是值的行纵轴再有数也没画上，「画进去的」不能把它算进去（Codex 评审 #2176）。"""
+    _, client, figs, _ = project
+    rows = (
+        [["dose", "resp"]] + [[d, 1 + 0.5 * d] for d in range(1, 11)] + [["", 9.0], ["high", 9.5]]
+    )
+    put(figs, "data/x.csv", rows)
+    out = propose(client, render="lazy", answers={"x": "dose", "y": "resp"}).get_json()
+    item = next(i for i in out["items"] if i["values"]["family"] == "relationship")
+    f = item["facts"]
+    assert f["drawn"] == 10 and item["unplotted"]["count"] == 2
+    assert f["drawn"] + f["skipped_missing"] + f["skipped_other"] == f["rows"] == 12
