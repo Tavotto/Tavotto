@@ -333,6 +333,12 @@ function pruneToStyle(debt: StyleProfileData, style: StyleProfileData): StylePro
  */
 const missingNow = (doc: FigureDocument): string[] => panelsOf(doc).filter((p) => !manifestOf(p)).map(figKey)
 
+function prepareArchivedStyleManifest(panel: PanelObject) {
+  if (engineTransport() || panel.fileKind === 'runtime' || !hasFigureSnapshotPreview(panel)) return
+  const render = useRenderStore.getState().get(renderKeyOf(panel))
+  if (render.wantPatches !== JSON.stringify(panel.overrides)) requestRender(panel, true)
+}
+
 /**
  * `full`：此刻整份样式（`presetDelta(null, 样式)`）。**还没对齐过的新图**欠的是整份，不是这一笔变化量——
  * 存库在飞时加进来的图（自动对齐被队列挡着）只记变化量的话，渲染回来按欠账补了这一项、记成看过了，
@@ -374,14 +380,12 @@ function owe(
       else keep.delete(fig)
     }
     map.set(fig, mergeDelta(prev, owed))
-    if (prepareArchived && !engineTransport() && p.fileKind !== 'runtime' && hasFigureSnapshotPreview(p)) prepare.push(p)
+    if (prepareArchived) prepare.push(p)
   }
   if (map.size) pending.set(key, map)
   if (keep.size) keeping.set(key, keep)
   else keeping.delete(key)
-  for (const p of prepare) {
-    if (useRenderStore.getState().get(renderKeyOf(p)).wantPatches !== JSON.stringify(p.overrides)) requestRender(p, true)
-  }
+  for (const p of prepare) prepareArchivedStyleManifest(p)
 }
 
 /** `a` 里去掉 `b` 也有的项（图内角色按 role × prop，配色整体算一项） */
@@ -922,7 +926,11 @@ export function followLibrary(): boolean {
   const rec = recordOf(binding.id)
   if (!rec || sameRules(rec.data, binding.snapshot)) return false
   // 还有图没渲染出来：先不前进快照，等它们到齐再一起跟上
-  if (panelsOf(doc).some(awaitingManifest)) return false
+  const awaiting = panelsOf(doc).filter(awaitingManifest)
+  if (awaiting.length) {
+    for (const p of awaiting) prepareArchivedStyleManifest(p)
+    return false
+  }
   const before = binding.snapshot as unknown as StyleProfileData
   const data = rec.data as unknown as StyleProfileData
   const name = profileName(rec)

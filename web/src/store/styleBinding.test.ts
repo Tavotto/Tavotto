@@ -426,6 +426,28 @@ describe('新加进绑定画布的图：第一次拿到 manifest 时对齐一次
 })
 
 describe('库里那一条在别处改了（设置里保存）', () => {
+  it('prepares a saved Figure only when its bound library style changes', async () => {
+    const saved = panel('a', 'FigA')
+    saved.figureSnapshot = {
+      version: 1, sourceId: saved.fileId, snapshotId: 'saved', receiptId: 'receipt', patchHash: 'patch',
+    }
+    await seed([saved], (p) => {
+      p.canvases[0].style = { id: 's1', snapshot: structuredClone(USER.data) }
+    })
+    useRenderStore.getState().clear()
+    const current = () => useRenderStore.getState().get(renderKeyOf(panelById('a')))
+    expect(followLibrary()).toBe(false)
+    expect(current().wantPatches).toBeNull()
+    useProfileStore.setState({
+      styles: [record({ id: 's1', data: { element: { axis_label: { fontsize: 12 } }, pt_basis: 'page' } })],
+    })
+    expect(followLibrary()).toBe(false)
+    expect(current().wantPatches).toBe(JSON.stringify(saved.overrides))
+    rerender('a')
+    expect(followLibrary()).toBe(true)
+    expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBe(12)
+  })
+
   it('回到画布时跟上，只对齐变了的那一项；一条「按样式更新」', async () => {
     await seed([panel('a', 'FigA')])
     fakeLibrary([record({ id: 's1', data: { element: { axis_label: { fontsize: 10 }, title: { fontsize: 11 } } } })])
