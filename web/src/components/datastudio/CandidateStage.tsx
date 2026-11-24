@@ -141,7 +141,8 @@ export function CandidateStage({
   const red = reducedOf(sel)
   const basis = basisOf(sel)
   // 算出来的误差线缺了哪几处：只放在整句的 title 里（最多 8 个，多了加「等」），灰字本身仍是一行
-  const missingTip = basis?.missingFor.length
+  // 只有一处时句子里已经点了名，不再用 title 重复一遍
+  const missingTip = basis && basis.missingFor.length > 1
     ? basis.missingFor.slice(0, 8).join(t('dataFigureV2.basis.listJoin')) + (basis.missingFor.length > 8 ? t('dataFigureV2.basis.etc') : '')
     : undefined
 

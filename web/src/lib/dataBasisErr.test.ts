@@ -24,12 +24,14 @@ describe('现成的误差列', () => {
 })
 
 describe('算出来的误差线缺了几处', () => {
-  it('bar_error 等写「画不出误差线」，line_band 写「画不出误差带」；位置标签原样带出', () => {
+  it('bar_error 等写「算不出误差线」，line_band 写「算不出误差带」；只有一处时点名，位置标签原样带出', () => {
     const missing = ['A', 'B', 'C']
     const bar = basisOf({ title_code: 'bar_error', facts: facts(), error_missing_for: missing })!
     expect(bar.errMissing).toEqual({ key: 'errMissing', values: { count: 3 } })
     expect(bar.missingFor).toEqual(missing)
-    expect(basisOf({ title_code: 'line_band', facts: facts(), error_missing_for: ['x=1'] })!.errMissing).toEqual({ key: 'bandMissing', values: { count: 1 } })
+    expect(basisOf({ title_code: 'line_band', facts: facts(), error_missing_for: ['x=1'] })!.errMissing).toEqual({ key: 'bandMissingOne', values: { label: 'x=1' } })
+    expect(basisOf({ title_code: 'bar_error', facts: facts(), error_missing_for: ['C'] })!.errMissing).toEqual({ key: 'errMissingOne', values: { label: 'C' } })
+    expect(basisOf({ title_code: 'line_band', facts: facts(), error_missing_for: ['1', '2'] })!.errMissing).toEqual({ key: 'bandMissing', values: { count: 2 } })
   })
 
   it('没有缺的：没有这一句', () => {

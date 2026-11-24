@@ -2592,6 +2592,11 @@ def default_candidates(
     summ = _summarised_shape(entry, values, roles, unit) if view_entry is entry else None
     if summ is not None:
         err_roles = {"err": summ["err"], "err_kind": summ["kind"]}
+        if summ["shape"] == "category" and not cats:
+            # 类别轴取的是「每行一个名字」的那一列（规则别处不当它是分组列）：右栏的「分组」一行要如实显示它，不能写着没有分组而图上按它排开
+            opts = role_info["options"]
+            role_info["group"] = summ["x"]
+            opts["group"] = [summ["x"], *(c for c in opts.get("group", []) if c != summ["x"])]
         if summ["shape"] == "trend":
             if "trend" in ok_families:
                 grp(

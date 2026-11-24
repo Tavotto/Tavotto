@@ -59,17 +59,17 @@ describe('主图：两种新画法', () => {
     return mount(<CandidateStage items={items} thumbs={{ a: 'ready' }} drawingId={null} previewKey={null} onPreview={() => {}} onCreate={() => {}} onThumb={() => {}} />)
   }
 
-  it('points_err：标题「点 + 误差线」，说明里写列名（只当文本）', async () => {
+  it('points_err：标题「点 + 误差线」，说明不重复列名（列名在依据句里，只当文本）', async () => {
     await show('points_err')
     expect(q('[data-candidate-title]')!.textContent).toBe('点 + 误差线')
-    expect(q('[data-candidate-why]')!.textContent).toBe('表里已经是各组的均值，直接画出来，误差线取自「<b>SD</b> of 值」列。')
+    expect(q('[data-candidate-why]')!.textContent).toBe('表里已经是各组的均值，直接画出来。')
     expect(q('[data-candidate-why] b')).toBeNull()
   })
 
   it('line_err：标题「点 + 折线 + 误差线」；说明不写误差种类', async () => {
     await show('line_err')
     expect(q('[data-candidate-title]')!.textContent).toBe('点 + 折线 + 误差线')
-    expect(q('[data-candidate-why]')!.textContent).toBe('表里已经是每个位置的均值，按顺序连起来，误差线取自「<b>SD</b> of 值」列。')
+    expect(q('[data-candidate-why]')!.textContent).toBe('表里已经是每个位置的均值，按顺序连起来。')
     expect(q('[data-candidate-why]')!.textContent).not.toMatch(/标准差|标准误|置信/)
   })
 
@@ -86,18 +86,25 @@ describe('主图：算出来的误差线缺了几处', () => {
     return mount(<CandidateStage items={items} thumbs={{ a: 'ready' }} drawingId={null} previewKey={null} onPreview={() => {}} onCreate={() => {}} onThumb={() => {}} />)
   }
 
-  it('bar_error：句末接「N 处只有 1 个数值，画不出误差线」，位置只在 title 里（「、」连）；灰字仍是同一个 p', async () => {
+  it('bar_error：句末接「N 处只有 1 个数值，算不出误差线」，位置只在 title 里（「、」连）；灰字仍是同一个 p', async () => {
     await show('bar_error', ['A 组', 'B 组'])
     const p = q('[data-candidate-basis]')!
-    expect(p.textContent).toBe('依据：按 4 组各 3 个数值绘制；2 处只有 1 个数值，画不出误差线。')
+    expect(p.textContent).toBe('依据：按 4 组各 3 个数值绘制；2 处只有 1 个数值，算不出误差线。')
     expect(p.getAttribute('title')).toBe('A 组、B 组')
     expect(qa('[data-candidate-basis]')).toHaveLength(1)
+  })
+
+  it('只有一处：句子里直接点名，不再用 title 重复', async () => {
+    await show('bar_error', ['C'])
+    const p = q('[data-candidate-basis]')!
+    expect(p.textContent).toBe('依据：按 4 组各 3 个数值绘制；「C」只有 1 个数值，算不出误差线。')
+    expect(p.getAttribute('title')).toBeNull()
   })
 
   it('line_band 写「误差带」；超过 8 个位置截断加「等」', async () => {
     await show('line_band', Array.from({ length: 10 }, (_, i) => `x=${i + 1}`))
     const p = q('[data-candidate-basis]')!
-    expect(p.textContent).toContain('10 处只有 1 个数值，画不出误差带')
+    expect(p.textContent).toContain('10 处只有 1 个数值，算不出误差带')
     expect(p.getAttribute('title')).toBe('x=1、x=2、x=3、x=4、x=5、x=6、x=7、x=8等')
   })
 

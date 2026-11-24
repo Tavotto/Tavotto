@@ -59,9 +59,11 @@ export default interface Resources {
     },
     "dataFigureV2": {
       "basis": {
-        "bandMissing": "{{count}} 处只有 1 个数值，画不出误差带",
+        "bandMissing": "{{count}} 处只有 1 个数值，算不出误差带",
+        "bandMissingOne": "「{{label}}」只有 1 个数值，算不出误差带",
         "errColumn": "误差线取自「{{column}}」列",
-        "errMissing": "{{count}} 处只有 1 个数值，画不出误差线",
+        "errMissing": "{{count}} 处只有 1 个数值，算不出误差线",
+        "errMissingOne": "「{{label}}」只有 1 个数值，算不出误差线",
         "etc": "等",
         "groupsEqual": "按 {{groups}} 组各 {{n}} 个数值绘制",
         "groupsRange": "按 {{groups}} 组、每组 {{min}}–{{max}} 个数值绘制",
@@ -130,7 +132,7 @@ export default interface Resources {
         },
         "line_err": {
           "title": "点 + 折线 + 误差线",
-          "why": "表里已经是每个位置的均值，按顺序连起来，误差线取自「{{column}}」列。"
+          "why": "表里已经是每个位置的均值，按顺序连起来。"
         },
         "line_points": {
           "title": "点 + 折线",
@@ -146,7 +148,7 @@ export default interface Resources {
         },
         "points_err": {
           "title": "点 + 误差线",
-          "why": "表里已经是各组的均值，直接画出来，误差线取自「{{column}}」列。"
+          "why": "表里已经是各组的均值，直接画出来。"
         },
         "points_mean": {
           "title": "原始点 + 均值",

@@ -891,3 +891,15 @@ def test_an_id_like_column_without_an_error_column_is_not_promoted(tmp_path):
     ]
     res = candidates(tmp_path, rows)
     assert "points_err" not in codes(res)
+
+
+def test_the_label_column_used_as_the_category_axis_is_reported_as_the_group_role(tmp_path):
+    """类别轴取的是「每行一个名字」的那一列时，响应的列角色如实把它报成分组（右栏那一行不能写着没有分组而图上按它排开）；有序横轴的趋势表不受影响。"""
+    rows = [["sample", "mean_yield", "err"]] + [
+        [s, m, e] for s, m, e in (("a", 1.0, 0.1), ("b", 2.0, 0.2), ("c", 3.0, 0.3))
+    ]
+    res = candidates(tmp_path, rows)
+    assert res.roles["group"] == "sample" and res.roles["options"]["group"][0] == "sample"
+    assert res.roles["x"] is None
+    trend = candidates(tmp_path, DOSE, picks={"y": "unsure"})
+    assert trend.roles["group"] is None and trend.roles["x"] == "dose_uM"

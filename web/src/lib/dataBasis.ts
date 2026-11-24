@@ -7,7 +7,7 @@
  *    散点（`scatter` / `scatter_fit`）=「按 N 个点绘制，每行一个点」；其它 =「按 N 个数值绘制」
  *  - 没画的行：只有缺值 / 只有不是数 / 两种都有；旧响应没有拆开的两个数时按总数「另有 N 行未计入」；0 行没有这一句
  *  - 现成的误差列（`points_err` / `line_err`）：主句「按表里的 N 行绘制，每行一个点」，再接「误差线取自「列名」列」
- *  - 算出来的误差线 / 带有位置只有 1 个数值：句末再接「N 处只有 1 个数值，画不出误差线（带）」；位置标签在 `missingFor`（整句的 title 提示里列出）
+ *  - 算出来的误差线 / 带有位置只有 1 个数值：句末再接「N 处只有 1 个数值，算不出误差线（带）」（只有一处时点名：「「C」只有 1 个数值，算不出误差线」）；位置标签在 `missingFor`（整句的 title 提示里列出）
  *  - 没有 `facts` = 不显示（null）
  */
 import type { AiDataFacts } from '@/lib/api'
@@ -19,7 +19,7 @@ const TREND = ['line_points', 'line_band', 'line_units']
 const ERR_COLUMN = ['points_err', 'line_err']
 
 export interface BasisSentence {
-  key: 'rowsErr' | 'errColumn' | 'errMissing' | 'bandMissing' | 'points' | 'plain' | 'groupsEqual' | 'groupsRange' | 'xAlso' | 'xOnly' | 'skippedMissing' | 'skippedOther' | 'skippedBoth' | 'skippedAll'
+  key: 'rowsErr' | 'errColumn' | 'errMissing' | 'bandMissing' | 'errMissingOne' | 'bandMissingOne' | 'points' | 'plain' | 'groupsEqual' | 'groupsRange' | 'xAlso' | 'xOnly' | 'skippedMissing' | 'skippedOther' | 'skippedBoth' | 'skippedAll'
   values: Record<string, number | string>
 }
 
@@ -69,7 +69,7 @@ export function basisOf(c: {
     main,
     errColumn: viaColumn && c.error_column ? { key: 'errColumn', values: { column: c.error_column } } : null,
     skipped: skippedOf(f, c.unplotted?.count ?? 0),
-    errMissing: missingFor.length ? { key: c.title_code === 'line_band' ? 'bandMissing' : 'errMissing', values: { count: missingFor.length } } : null,
+    errMissing: missingOf(missingFor, c.title_code === 'line_band'),
     missingFor,
   }
 }
@@ -82,4 +82,11 @@ function skippedOf(f: AiDataFacts, total: number): BasisSentence | null {
   if (m > 0) return { key: 'skippedMissing', values: { count: m } }
   if (o > 0) return { key: 'skippedOther', values: { count: o } }
   return null
+}
+
+/** 只有一处时直接说是哪一处（用户不用再去 title 里找）；多处说个数，位置在 title 提示里 */
+function missingOf(labels: string[], band: boolean): BasisSentence | null {
+  if (!labels.length) return null
+  if (labels.length === 1) return { key: band ? 'bandMissingOne' : 'errMissingOne', values: { label: labels[0] } }
+  return { key: band ? 'bandMissing' : 'errMissing', values: { count: labels.length } }
 }
