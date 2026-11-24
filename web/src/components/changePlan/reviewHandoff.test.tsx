@@ -353,6 +353,34 @@ describe('应用后收尾', () => {
     expect(cps().entries.k1.resolvedIds).toEqual(['c2', 'c3'])
   })
 
+  it('等待中切图：请求仍发往原分享、resolvedIds 照记，撤销也还原到原分享', async () => {
+    setReview([cm('c2'), cm('c3')])
+    await mount()
+    putEntry(entry())
+    let release: () => void = () => {}
+    const gate = new Promise<void>((r) => (release = r))
+    resolveReviewComment.mockImplementation(async (_s: string, id: string, resolved: boolean) => {
+      await gate
+      server = server.map((x) => (x.id === id ? { ...x, resolved } : x))
+      return { ok: true, comment: server.find((x) => x.id === id) }
+    })
+    await act(async () => void cps().apply('k1'))
+    await flush()
+    // 此刻用户切到了另一张图 / 另一份分享
+    act(() => useReviewStore.setState({ share: { ...SHARE, share_id: 'sh_other' }, detail: { ...detailOf([cm('x1')]), share_id: 'sh_other' } }))
+    release()
+    await flush(200)
+    expect(resolveReviewComment.mock.calls.map((c) => [c[0], c[1], c[2]])).toEqual([['sh_1', 'c2', true], ['sh_1', 'c3', true]])
+    expect(cps().entries.k1.resolvedIds).toEqual(['c2', 'c3'])
+    // 切回来，撤销：发往原分享
+    act(() => setReview(server))
+    resolveReviewComment.mockClear()
+    await act(async () => void cps().undo('k1'))
+    await flush(200)
+    expect(resolveReviewComment.mock.calls.map((c) => [c[0], c[1], c[2]])).toEqual([['sh_1', 'c2', false], ['sh_1', 'c3', false]])
+    expect(cps().entries.k1.resolvedIds).toEqual([])
+  })
+
   it('取消勾选的组不标已处理', async () => {
     setReview([cm('c2'), cm('c3')])
     await mount()

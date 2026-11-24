@@ -6,7 +6,8 @@
  * 失败不自动重试（免得反复打后端）：条目上记一个 `resolveFailed`，审阅页签给一句灰字 + 「重试」。
  */
 import { useEffect, useMemo } from 'react'
-import type { ChangePlanChange, ReviewShareDetail } from '@/lib/api'
+import { resolveReviewComment, type ChangePlanChange, type ReviewShareDetail } from '@/lib/api'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { draftReply } from '@/lib/changePlanReplyDraft'
 import { effectiveStatus } from '@/lib/changePlanApply'
 import type { PlanSource } from '@/lib/changePlanApply'
@@ -50,17 +51,33 @@ const inflight = new Set<string>()
 
 async function runSync(key: string, todo: SyncTodo): Promise<void> {
   if (inflight.has(key)) return
+  const pinned = useChangePlanStore.getState().entries[key]?.request.share_id
+  if (!pinned) return
   inflight.add(key)
+  // 发起时钉住：项目代际、分享记录 id、要处理的意见 id。等待中切图 / 切项目，请求仍发往原分享，结果按这张卡记回；项目换了就停（不写别的项目）
+  const guard = captureProjectEpoch()
   try {
     const want = todo.kind === 'mark'
     const done: string[] = []
     let failed = false
     for (const id of todo.ids) {
-      await useReviewStore.getState().setResolved(id, want)
-      // setResolved 不抛：没成就保持原样，所以以详情里的结果为准
-      const c = useReviewStore.getState().detail?.comments.find((x) => x.id === id)
-      if (c && c.resolved === want) done.push(id)
-      else failed = true
+      if (!guard.still()) return
+      try {
+        const r = await resolveReviewComment(pinned, id, want)
+        if (!guard.still()) return
+        if (r.ok) {
+          done.push(id)
+          // 页签此刻显示的还是这份分享才同步界面；别的分享的详情不碰
+          const rs = useReviewStore.getState()
+          if (rs.share?.share_id === pinned) {
+            useReviewStore.setState((s) => (s.detail?.share_id === pinned ? { detail: { ...s.detail, comments: s.detail.comments.map((x) => (x.id === id ? r.comment : x)) } } : {}))
+            void rs.reloadShare()
+          }
+        } else failed = true
+      } catch {
+        if (!guard.still()) return
+        failed = true
+      }
     }
     const st = useChangePlanStore.getState()
     const e = st.entries[key]

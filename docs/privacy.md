@@ -647,9 +647,13 @@ figure changes when you press *Apply*.
   names are not sent.** Scripts, data, project files, file paths and computer
   details are not sent either.
 * **What stays on your computer.** The plan, the before/after pictures and your
-  edits to it. Marking comments as resolved and the drafted reply are local until
-  you press *Send* on a reply or *Update same link* (the existing review upload,
-  described above); the reply draft is composed in the app without calling any model.
+  edits to it. When you apply a plan, the app automatically marks the matching
+  comments as resolved and syncs that to the review service (undoing the plan
+  syncs the reversal); only the comment IDs and their resolved state are sent.
+  The drafted reply stays on your computer and is composed in the app without
+  calling any model; it is sent only when you press *Send* on it. *Update same
+  link* (the existing review upload, described above) uploads a new version only
+  when you press it.
 * **Turning it off.** Not connecting an AI is enough; there is no other network
   request for this feature.
 
