@@ -836,13 +836,17 @@ def test_status_has_no_founding_for_a_regular_license(server):
     assert "founding" not in lic.status()
 
 
-def test_status_carries_founding_when_the_signed_token_has_it(server):
+def test_status_carries_founding_when_the_signed_token_has_it(server, clock):
+    server.exp = 1_798_113_375  # The ordinary expiration also contains the digits 37.
+    clock["now"] = server.exp - 30 * 86400
+    activated(server)
+    regular = lic.status()
+    assert regular["state"] == "active"
+    assert regular["exp"] == server.exp
+
     server.extra = dict(FOUNDING)
     activated(server)
-    st = lic.status()
-    assert st["founding"] == {"no": 37, "since": 1_763_000_000, "name": ""}
-    assert st["state"] == "active"
-    assert "37" not in json.dumps({k: v for k, v in st.items() if k != "founding"})
+    assert lic.status() == {**regular, "founding": {"no": 37, "since": 1_763_000_000, "name": ""}}
 
 
 def test_founding_survives_expiry_and_lapse_but_not_revocation(server, clock):
