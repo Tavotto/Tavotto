@@ -231,7 +231,7 @@ describe('改字号：按缩放比换算回脚本值，一次 commit', () => {
   })
 })
 
-it('画布样式的轴标题粗体和斜体分别写进 Matplotlib 与原生 ggplot2 面板', async () => {
+it('画布样式同时调整 Matplotlib 与原生 ggplot2 的轴标题字号、粗体和斜体', async () => {
   onTestFinished(registerOverrideStamper((draft, base, next) =>
     stampOverrideIdentities(draft, base, next, (p) => panelRender(useRenderStore.getState(), p)?.manifest),
   ))
@@ -241,10 +241,10 @@ it('画布样式的轴标题粗体和斜体分别写进 Matplotlib 与原生 ggp
   const face = (prop: string, on: string) => ({
     prop, type: 'enum', value: 'normal', options: ['normal', on],
   })
-  const fields = [face('weight', 'bold'), face('style', 'italic')]
+  const fields = [face('weight', 'bold'), face('style', 'italic'), num('fontsize', 11)]
   await seed(panel, { ...manifest(), elements: [el(mplGid, 'axis_label', fields)] })
   const rPanel: PanelObject = {
-    ...panel, id: 'r', fileId: 'runtime:r', fileKind: 'runtime', script: 'fuel.R',
+    ...panel, id: 'r', fileId: 'runtime:r', fileKind: 'runtime', script: 'fuel.R', w: 64, h: 48,
     source: {
       script: 'fuel.R', entry: '__main__', stem: 'plot', captureSource: 'ggplot2',
       sizeMm: [80, 60], fingerprint: 'source',
@@ -259,7 +259,10 @@ it('画布样式的轴标题粗体和斜体分别写进 Matplotlib 与原生 ggp
   const rManifest = {
     ...manifest(),
     elements: [
-      { ...el(rGid, 'axis_label', fields.map((f) => ({ ...f, strict_options: true }))), identity: rIdentity },
+      {
+        ...el(rGid, 'axis_label', fields.map((f) => f.type === 'enum' ? { ...f, strict_options: true } : f)),
+        identity: rIdentity,
+      },
       el('axis.x.bottom.ticks', 'ticks', [{ prop: 'color', type: 'color', value: '#223344' }]),
     ],
   }
@@ -293,6 +296,12 @@ it('画布样式的轴标题粗体和斜体分别写进 Matplotlib 与原生 ggp
   expect(current().overrides).toContainEqual({ gid: mplGid, prop: 'style', value: 'italic' })
   expect(rCurrent().overrides).toContainEqual({ gid: rGid, prop: 'style', value: 'italic', identity: rIdentity })
   expect(s().past.length - before).toBe(2)
+  seedExactRender(current(), { ...manifest(), elements: [el(mplGid, 'axis_label', fields)] } as never)
+  seedExactRender(rCurrent(), rManifest as never)
+  await type(input('轴标题字号'), '12.4')
+  expect(current().overrides).toContainEqual({ gid: mplGid, prop: 'fontsize', value: 20.67 })
+  expect(rCurrent().overrides).toContainEqual({ gid: rGid, prop: 'fontsize', value: 15.5, identity: rIdentity })
+  expect(s().past.length - before).toBe(3)
   const savedR = rCurrent()
   seedExactRender(current(), { ...manifest(), elements: [el(mplGid, 'axis_label', fields)] } as never)
   seedExactRender(savedR, rManifest as never)
@@ -302,9 +311,12 @@ it('画布样式的轴标题粗体和斜体分别写进 Matplotlib 与原生 ggp
   await click(toggle('weight'))
   expect(current().overrides).toContainEqual({ gid: mplGid, prop: 'weight', value: 'normal' })
   expect(rCurrent()).toEqual(savedR)
-  expect(s().past.length - before).toBe(3)
+  expect(s().past.length - before).toBe(4)
   await act(async () => { s().undo() })
   expect(current().overrides).toContainEqual({ gid: mplGid, prop: 'weight', value: 'bold' })
+  await act(async () => { s().undo() })
+  expect(current().overrides.map((item) => item.prop)).toEqual(['weight', 'style'])
+  expect(rCurrent().overrides.map((item) => item.prop)).toEqual(['weight', 'style'])
   await act(async () => { s().undo() })
   expect(current().overrides).toHaveLength(1)
   expect(rCurrent().overrides).toHaveLength(1)

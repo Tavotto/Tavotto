@@ -193,6 +193,22 @@ stopifnot(grepl("font-weight: bold", axis_variant(list(weight = "bold")), fixed 
           identical(adapter$render_ggplot(baseline$state), baseline$svg),
           summary_calls == count_at_capture, identical(.Random.seed, rng_at_capture))
 
+sizes <- setNames(rep(list(list(fontsize = 21.25)), length(axis_titles)), axis_titles)
+sized_svg <- adapter$render_ggplot(baseline$state, sizes)
+sized <- adapter$ggplot_manifest(baseline$state, "baseline", sizes)$elements
+for (gid in axis_titles) {
+  item <- Filter(function(el) identical(el$gid, gid), sized)[[1L]]
+  original <- baseline$state$text_targets[[gid]]
+  size <- Filter(function(field) identical(field$prop, "fontsize"), item$editable)[[1L]]
+  stopifnot(identical(size$value, 21.25), identical(size$value_original, original$paint$fontsize),
+            prod(unlist(item$bbox[3:4])) > prod(original$bbox[3:4]))
+  line <- grep(paste0(">", original$label, "</text>"), strsplit(sized_svg, "\n")[[1L]],
+               value = TRUE, fixed = TRUE)
+  stopifnot(length(line) == 1L, grepl("font-size: 21.25px", line, fixed = TRUE))
+}
+stopifnot(identical(adapter$render_ggplot(baseline$state), baseline$svg),
+          summary_calls == count_at_capture, identical(.Random.seed, rng_at_capture))
+
 bad_value <- tryCatch(render_colors(baseline$state, list("plot.title" = "not-a-colour")),
                       error = conditionMessage)
 stopifnot(identical(bad_value, "The native R text color must be an RGB hex color."))
@@ -539,25 +555,26 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
             "color": "#112233",
             "weight": "normal",
             "style": "normal",
+            "fontsize": 13.2,
         }
         top = elements["axis.x.top.title"]
         bottom = elements[X_BOTTOM]
         assert top["label"] == bottom["label"] == "Engine displacement"
         assert top["identity"] != bottom["identity"]
         assert bottom["editable"][0]["value"] == "#6B6B6B"
-        face_patches = [
+        typography_patches = [
             {"gid": X_BOTTOM, "prop": prop, "value": value, "identity": bottom["identity"]}
-            for prop, value in (("weight", "bold"), ("style", "italic"))
+            for prop, value in (("weight", "bold"), ("style", "italic"), ("fontsize", 19.25))
         ]
         plain_png = session.preview_png_snapshot(stem, [], 400)
-        edited_png = session.preview_png_snapshot(stem, face_patches, 400)
+        edited_png = session.preview_png_snapshot(stem, typography_patches, 400)
         with (
             Image.open(io.BytesIO(base64.b64decode(plain_png["png"]))) as plain,
             Image.open(io.BytesIO(base64.b64decode(edited_png["png"]))) as edited,
         ):
             assert plain.size == edited.size == (400, 267)
             assert plain.tobytes() != edited.tobytes()
-        assert session.preview_png(stem, face_patches, 400, "font-preview").read_bytes() == (
+        assert session.preview_png(stem, typography_patches, 400, "font-preview").read_bytes() == (
             base64.b64decode(edited_png["png"])
         )
         axis = next(
@@ -568,7 +585,23 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
             "color": "#6B6B6B",
             "weight": "bold",
             "style": "italic",
+            "fontsize": 19.25,
         }
+        size_field = next(field for field in axis["editable"] if field["prop"] == "fontsize")
+        assert size_field["value_original"] == 11
+        original_ticks = next(
+            el for el in plain_png["manifest"]["elements"] if el["gid"] == TICKS_BOTTOM
+        )
+        resized_ticks = next(
+            el for el in edited_png["manifest"]["elements"] if el["gid"] == TICKS_BOTTOM
+        )
+        assert resized_ticks["bbox"][1] < original_ticks["bbox"][1]
+        assert axis["bbox"][1] > resized_ticks["bbox"][1] + resized_ticks["bbox"][3]
+        for invalid in (0, -2.5, "19.25"):
+            with pytest.raises(pool.WorkerError, match="font size must be a positive number"):
+                session.override(
+                    stem, [{**typography_patches[-1], "value": invalid}], inline_svg=True
+                )
         assert session.svg_path(stem).read_text(encoding="utf-8") == baseline["svg"]
         tick_group = elements[TICKS_BOTTOM]
         assert tick_group["label"] == "下轴刻度文字"

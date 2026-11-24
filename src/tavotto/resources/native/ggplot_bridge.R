@@ -83,7 +83,8 @@ main <- function() {
           !is.character(patch$gid) || length(patch$gid) != 1L ||
           is.na(patch$gid) || !nzchar(patch$gid) ||
           !is.character(patch$prop) || length(patch$prop) != 1L ||
-          is.na(patch$prop) || !nzchar(patch$prop) || !is.character(patch$value)) {
+          is.na(patch$prop) || !nzchar(patch$prop) ||
+          (!is.character(patch$value) && !is.numeric(patch$value))) {
         stop("Invalid native R text edit.")
       }
       edits[[patch$gid]][[patch$prop]] <- patch$value

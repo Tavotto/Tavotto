@@ -43,6 +43,9 @@ LAYOUT = "/api/layouts/Mixed%20native"
 MPL_EDIT = "Reviewed signal"
 R_EDIT = "#6C3799"
 AXIS_FACES = {"weight": "bold", "style": "italic"}
+AXIS_PAGE_SIZE = 12.4
+R_AXIS_PAGE_SIZE = 13.8
+R_PANEL_SCALE = 0.8
 
 
 def _run_ggplot(app, script, rscript):
@@ -83,7 +86,7 @@ def _title(body, prop):
     )
 
 
-def _panel(id_, asset, x, patches):
+def _panel(id_, asset, x, patches, *, scale=1):
     return {
         "id": id_,
         "type": "panel",
@@ -91,8 +94,8 @@ def _panel(id_, asset, x, patches):
         "fileKind": "runtime",
         "x": x,
         "y": 5,
-        "w": 76.2,
-        "h": 50.8,
+        "w": 76.2 * scale,
+        "h": 50.8 * scale,
         "nativeW": 76.2,
         "nativeH": 50.8,
         "figureFrame": 1,
@@ -100,7 +103,7 @@ def _panel(id_, asset, x, patches):
     }
 
 
-def _axis_face_patches(render):
+def _axis_style_patches(render, size):
     titles = [
         element for element in render["manifest"]["elements"] if element["role"] == "axis_label"
     ]
@@ -113,7 +116,7 @@ def _axis_face_patches(render):
             **({"identity": element["identity"]} if "identity" in element else {}),
         }
         for element in titles
-        for prop, value in AXIS_FACES.items()
+        for prop, value in {**AXIS_FACES, "fontsize": size}.items()
     ]
 
 
@@ -196,12 +199,15 @@ def _pdf_pixels(path):
         assert min(span["bbox"][0] for span in ggplot) > page.rect.width / 2
         assert {span["color"] for span in ggplot} == {int(R_EDIT[1:], 16)}
         bold_italic = pymupdf.TEXT_FONT_BOLD | pymupdf.TEXT_FONT_ITALIC
-        for title in ("Time (min)", "Signal (mV)", "Displacement (L)", "Highway mileage"):
-            assert all(
-                span["flags"] & bold_italic == bold_italic
-                for span in by_text[title]
-                if span["text"].strip()
-            ), by_text[title]
+        for title, size in {
+            "Time (min)": AXIS_PAGE_SIZE,
+            "Signal (mV)": AXIS_PAGE_SIZE,
+            "Displacement (L)": R_AXIS_PAGE_SIZE,
+            "Highway mileage": AXIS_PAGE_SIZE,
+        }.items():
+            spans = [span for span in by_text[title] if span["text"].strip()]
+            assert all(span["flags"] & bold_italic == bold_italic for span in spans), by_text[title]
+            assert [span["size"] for span in spans] == pytest.approx([size] * len(spans), abs=0.025)
         return page.get_pixmap().samples
 
 
@@ -213,10 +219,21 @@ def _format_pixels(files):
     assert svg_tree.find(f".//{ns}image") is None
     (title,) = [node for node in svg_tree.iter(f"{ns}text") if node.text == "Fuel economy"]
     assert R_EDIT.lower() in title.attrib["style"].lower()
-    for label in ("Displacement (L)", "Highway mileage"):
+    for label, page_size in (
+        ("Displacement (L)", R_AXIS_PAGE_SIZE),
+        ("Highway mileage", AXIS_PAGE_SIZE),
+    ):
         (axis_title,) = [node for node in svg_tree.iter(f"{ns}text") if node.text == label]
         assert "font-weight: bold" in axis_title.attrib["style"]
         assert "font-style: italic" in axis_title.attrib["style"]
+        css = dict(
+            item.strip().split(":", 1)
+            for item in axis_title.attrib["style"].split(";")
+            if ":" in item
+        )
+        assert float(css["font-size"].strip().removesuffix("px")) == pytest.approx(
+            page_size / R_PANEL_SCALE
+        )
     with pymupdf.open(files["svg"]) as svg:
         assert len(svg) == 1
         _assert_canvas_size(svg[0])
@@ -271,7 +288,10 @@ def _assert_structured_pdf_export(app, doc):
         first = outline.First
         second = first.Next
         assert outline.Count == 2 and second.objgen == outline.Last.objgen
-        rectangles_mm = [(5, 5.2, 81.2, 56), (88, 5.2, 164.2, 56)]
+        rectangles_mm = [
+            (5, 5.2, 81.2, 56),
+            (88, 56 - 50.8 * R_PANEL_SCALE, 88 + 76.2 * R_PANEL_SCALE, 56),
+        ]
         for node, title, rect in zip((first, second), titles, rectangles_mm, strict=True):
             page, fit, *coords = node.Dest
             assert str(node.Title) == title
@@ -409,6 +429,17 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
                 next(item["value"] for item in after["editable"] if item["prop"] == patch["prop"])
                 == patch["value"]
             )
+        mpl_patches = [mpl_patch, *_axis_style_patches(mpl_baseline, AXIS_PAGE_SIZE)]
+        r_bulk = [r_patch, *_axis_style_patches(r_baseline, AXIS_PAGE_SIZE / R_PANEL_SCALE)]
+        r_single = [
+            {**patch, "value": R_AXIS_PAGE_SIZE / R_PANEL_SCALE}
+            if patch["gid"] == "axis.x.bottom.title" and patch["prop"] == "fontsize"
+            else patch
+            for patch in r_bulk
+        ]
+        bulk_svg = _render(app, r_asset, r_bulk)["svg"]
+        assert _render(app, r_asset, r_single)["svg"] != bulk_svg
+        assert _render(app, r_asset, r_bulk)["svg"] == bulk_svg
         document = {
             "schema": 3,
             "project": {"id": "mixed", "name": "Mixed native"},
@@ -421,8 +452,8 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
                     "page": {"w": 170, "h": 61},
                     "guides": [],
                     "objects": [
-                        _panel("mpl", mpl_asset, 5, [mpl_patch, *_axis_face_patches(mpl_baseline)]),
-                        _panel("r", r_asset, 88, [r_patch, *_axis_face_patches(r_baseline)]),
+                        _panel("mpl", mpl_asset, 5, mpl_patches),
+                        _panel("r", r_asset, 88, r_single, scale=R_PANEL_SCALE),
                     ],
                 }
             ],

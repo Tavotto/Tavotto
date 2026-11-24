@@ -230,7 +230,14 @@ ggplot_text_targets <- function(table, frame_pt, colourbar_titles) {
     slot <- which(table$layout$name == ggplot_text_slots[[gid]])
     if (length(slot) != 1L) next
     role <- if (gid == "plot.title") "title" else if (startsWith(gid, "axis.")) "axis_label" else "text"
-    targets[[gid]] <- ggplot_text_target(table, slot, role)
+    target <- ggplot_text_target(table, slot, role)
+    if (is.null(target)) next
+    if (inherits(table$grobs[[slot]], "titleGrob") &&
+        is_positive_ggplot_number(target$paint$fontsize) &&
+        is_positive_ggplot_number(ggplot_text_cex(target$paint))) {
+      target$title_dimension <- if (startsWith(gid, "axis.y.")) "width" else "height"
+    }
+    targets[[gid]] <- target
   }
   targets <- c(targets, ggplot_legend_targets(table, colourbar_titles), ggplot_facet_labels(table),
                ggplot_axis_ticks(table))
@@ -291,11 +298,25 @@ edit_ggplot_text <- function(table, slots, path, paint) {
 
 ggplot_face_options <- list(weight = c("normal", "bold"), style = c("normal", "italic"))
 
+is_positive_ggplot_number <- function(value) {
+  is.numeric(value) && length(value) == 1L && is.finite(value) && value > 0
+}
+
+ggplot_text_cex <- function(paint) {
+  if (is.null(paint$cex)) 1 else paint$cex
+}
+
 ggplot_text_paint <- function(target, edits) {
   paint <- target$paint
   face <- target$face
   for (prop in names(edits)) {
     value <- edits[[prop]]
+    if (prop == "fontsize") {
+      if (is.null(target$title_dimension)) stop("The requested native R text style is unavailable.")
+      if (!is_positive_ggplot_number(value)) stop("The native R font size must be a positive number.")
+      paint$fontsize <- value / ggplot_text_cex(paint)
+      next
+    }
     if (!is.character(value) || length(value) != 1L || is.na(value)) {
       stop("Invalid native R text style.")
     }
@@ -318,6 +339,20 @@ ggplot_text_paint <- function(target, edits) {
   list(paint = paint, face = face)
 }
 
+resize_ggplot_title_cell <- function(table, target, original) {
+  slot <- target$slots[[1L]]
+  cell <- table$layout[slot, ]
+  edited <- table$grobs[[slot]]$children[[1L]]
+  # The gtable row/column embeds the original title grob in a grid unit. Keep
+  # its padding and reserve the difference measured on the current device.
+  if (target$title_dimension == "width") {
+    table$widths[cell$l] <- table$widths[cell$l] + grid::grobWidth(edited) - grid::grobWidth(original)
+  } else {
+    table$heights[cell$t] <- table$heights[cell$t] + grid::grobHeight(edited) - grid::grobHeight(original)
+  }
+  table
+}
+
 ggplot_table_for <- function(state, edits) {
   table <- state$table
   for (gid in names(edits)) {
@@ -325,6 +360,10 @@ ggplot_table_for <- function(state, edits) {
     if (is.null(target)) stop("The requested native R text is unavailable.")
     paint <- ggplot_text_paint(target, edits[[gid]])$paint
     table <- edit_ggplot_text(table, target$slots, target$edit_path, paint)
+    if (!is.null(edits[[gid]]$fontsize)) {
+      original <- state$table$grobs[[target$slots[[1L]]]]$children[[1L]]
+      table <- resize_ggplot_title_cell(table, target, original)
+    }
   }
   table
 }
@@ -388,19 +427,25 @@ preview_ggplot_png <- function(state, edits, path, width, with_manifest) {
 }
 
 ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
-  face_gids <- names(Filter(function(edit) any(names(edit) %in% names(ggplot_face_options)), edits))
+  # A resized title can move the entire plot. Re-measure even targets whose
+  # own paint was left alone so the hit regions follow the rendered layout.
+  if (any(vapply(edits, function(edit) !is.null(edit$fontsize), logical(1L)))) {
+    geometry_gids <- names(state$text_targets)
+  } else {
+    geometry_gids <- names(Filter(function(edit) any(names(edit) %in% names(ggplot_face_options)), edits))
+  }
   if (!is.null(measured)) {
     if (length(measured) != length(state$text_targets)) {
       stop("The native R text could not be measured in the PNG.")
     }
-  } else if (length(face_gids)) {
+  } else if (length(geometry_gids)) {
     table <- ggplot_table_for(state, edits)
     measured <- with_svg_frame(state$frame_pt, function() {
       grid::grid.newpage()
       grid::grid.draw(table)
-      measure_ggplot_targets(state$text_targets[face_gids], state$frame_pt)
+      measure_ggplot_targets(state$text_targets[geometry_gids], state$frame_pt)
     })$value
-    if (length(measured) != length(face_gids)) {
+    if (length(measured) != length(geometry_gids)) {
       stop("The edited native R text could not be measured.")
     }
   }
@@ -408,13 +453,22 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     target <- state$text_targets[[gid]]
     patch <- edits[[gid]]
     color <- if (is.null(patch$color)) target$color else patch$color
-    face <- ggplot_text_paint(target, patch)$face
+    painted <- ggplot_text_paint(target, patch)
+    face <- painted$face
     bbox <- if (is.null(measured[[gid]])) target$bbox else measured[[gid]]$bbox
     editable <- list(list(prop = "color", type = "color", value = color))
     for (prop in names(face)) {
       field <- list(prop = prop, type = "enum", value = face[[prop]],
                     options = as.list(ggplot_face_options[[prop]]), strict_options = TRUE)
       if (!is.null(patch[[prop]])) field$value_original <- target$face[[prop]]
+      editable[[length(editable) + 1L]] <- field
+    }
+    if (!is.null(target$title_dimension)) {
+      value_original <- round(target$paint$fontsize * ggplot_text_cex(target$paint), 2)
+      fontsize <- round(painted$paint$fontsize * ggplot_text_cex(painted$paint), 2)
+      field <- list(prop = "fontsize", type = "number", value = fontsize,
+                    min = 3, max = 200, step = 0.5, unit = "pt")
+      if (!is.null(patch$fontsize)) field$value_original <- value_original
       editable[[length(editable) + 1L]] <- field
     }
     element <- list(
