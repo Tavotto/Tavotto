@@ -205,6 +205,8 @@ order: 330
   （深度 / Form 数 / 指令数），耗尽 → 全 unknown；客户端的样式检查报告从不进检查器；检查器自己炸 → `uninspected()` 全 unknown。
   没有 pikepdf 的机器 PDF 走 `probe_asset` 基本观测（完整性 + 尺寸），其余 unknown 并写明。生产者没交计划半张
   （MCP 直出路 / 别的生产者）时文字层是 unknown / not_applicable，不显示成绿。
+  可选项 `glyphs`（`.notdef` / LastResort = 缺字方块）与不影响 verdict 的 `advisories`（Type 3 字体、有脚本的图整张是位图）
+  见 ADR 0068 §6。
 - **四身份、来源段与公开投影（U09，ADR 0070）**：`rendercore/identity.py`——`semantic` = `plan_identity`、`render` =
   semantic + 后端 build + 栅格器与版本 + 字体政策版本（`identity.fonts_policy_version()`，与预览缓存键同一份）+ 像素参数、
   `artifact` = 封口字节 sha256（**绝不**再写进文件）、`run` = 作业 id（不进前三个）；不知道的一维写 None 不省略键。

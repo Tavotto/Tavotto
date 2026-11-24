@@ -83,7 +83,7 @@ import {
   writeExportDefaults,
 } from "@/lib/exportDefaults";
 import { adoptionGuardOf, artifactValidationIssue } from "@/lib/artifactValidation";
-import { inspectionState } from "@/lib/artifactInspection";
+import { inspectionState, knownAdvisories } from "@/lib/artifactInspection";
 import { RetryImg } from "@/components/ui/RetryImg";
 import {
   contextFigureId,
@@ -3305,6 +3305,10 @@ export function ResultBlock({
   const inspectionFailedCount = job.outputs.filter(
     (o) => outputSaved(o) && inspectionState(o.manifest).tone === "failed",
   ).length;
+  // 「留意」（Type 3 字体、有脚本的图整张是位图）：文件照常交付，但投稿时可能被退——和核验未通过一样上到摘要行
+  const advisoryCount = job.outputs.filter(
+    (o) => outputSaved(o) && knownAdvisories(o.manifest).length > 0,
+  ).length;
   const warningCount = job.warnings?.length ?? 0;
   // 脚本少了几处修改：拿去运行之前得知道，和核验未通过一样上到摘要行
   const scriptSkippedCount = job.outputs.reduce((n, o) => n + (o.script_report?.skipped.length ?? 0), 0);
@@ -3314,6 +3318,7 @@ export function ResultBlock({
   const noteParts = [
     firstFailure ? outputFailureReason(firstFailure) : null,
     inspectionFailedCount > 0 ? ex("resultInspectionFailed", { count: inspectionFailedCount }) : null,
+    advisoryCount > 0 ? ex("resultAdvisories", { count: advisoryCount }) : null,
     warningCount > 0 ? ex("resultWarnings", { count: warningCount }) : null,
     scriptSkippedCount > 0 ? ex("resultScriptSkipped", { count: scriptSkippedCount }) : null,
     job.outputs.some((o) => outputSaved(o) && svgTextOutlined(o)) ? ex("svgTextOutlined") : null,
@@ -3430,6 +3435,8 @@ export function exportResultClean(job: ExportJob, edited: boolean): boolean {
   if ((job.warnings?.length ?? 0) > 0) return false;
   // 文字转成了轮廓要在回执里说一句（`ResultBlock` 摘要行），所以这种结果不能只剩一个胶囊
   if (saved.some(svgTextOutlined)) return false;
+  // 有「留意」的产物也要留在对话框里说（胶囊装不下那句话）
+  if (saved.some((o) => knownAdvisories(o.manifest).length > 0)) return false;
   return !saved.some((o) => inspectionState(o.manifest).tone === "failed");
 }
 
@@ -3545,23 +3552,45 @@ function ScriptSkipped({ report }: { report: ExportScriptReport }) {
  * 这一件产物核验没过（ADR 0068）：standard 政策下文件照样交付了，用户投出去之前得知道。
  * 解读只有 `lib/artifactInspection.inspectionState()` 一份。核验过、没核验都不画：用户不需要理解这些，
  * 「未核验不显示绿」照样成立（2026-11-06 用户：用户不需要理解的东西不用放上去）。
+ * 「留意」（`manifest.advisories`，T-004）在同一行下面用警示色说：不是失败，但投稿前得知道。
  */
 function InspectionLine({ manifest }: { manifest: ExportOutput["manifest"] }) {
   useTranslation("dialogs");
   const state = inspectionState(manifest);
-  if (state.tone !== "failed") return null;
+  const advisories = knownAdvisories(manifest);
+  if (state.tone !== "failed" && advisories.length === 0) return null;
   return (
-    <p
-      data-inspection="failed"
-      className="flex items-start gap-1 text-sm text-danger-content"
-    >
-      <IconSlot>
-        <TriangleAlert size={ICON_SIZE.xs} aria-hidden />
-      </IconSlot>
-      {ex("inspection.failedItems", {
-        items: state.failed.map((k) => ex(`inspection.check.${k}`, { defaultValue: k })).join("、"),
-      })}
-    </p>
+    <>
+      {state.tone === "failed" && (
+        <p
+          data-inspection="failed"
+          className="flex items-start gap-1 text-sm text-danger-content"
+        >
+          <IconSlot>
+            <TriangleAlert size={ICON_SIZE.xs} aria-hidden />
+          </IconSlot>
+          {ex("inspection.failedItems", {
+            items: state.failed.map((k) => ex(`inspection.check.${k}`, { defaultValue: k })).join("、"),
+          })}
+        </p>
+      )}
+      {/* 留意（不是失败）：投稿时可能被退，或者有更好的做法——说清楚是哪几个字体 / 哪几张图 */}
+      {advisories.map((a) => (
+        <p
+          key={a.code}
+          data-inspection-advisory={a.code}
+          className="flex items-start gap-1 text-sm text-warn-content"
+        >
+          <IconSlot>
+            <TriangleAlert size={ICON_SIZE.xs} aria-hidden />
+          </IconSlot>
+          {ex(`inspection.advisory.${a.code}`, {
+            fonts: (a.fonts ?? []).join("、"),
+            panels: (a.panels ?? []).map((id) => id.split(/[\\/]/).pop() || id).join("、"),
+          })}
+        </p>
+      ))}
+    </>
   );
 }
 

@@ -78,6 +78,7 @@ CHECKS_PDF = (
     "text_layer",
     "image_ppi",
     "clipping",
+    "glyphs",
 )
 CHECKS_RASTER = ("integrity", "size", "dpi_tag", "raster_density")
 CHECKS_SVG = ("integrity", "size", "structure", "carrier", "fonts_embedded", "text_layer")
@@ -305,6 +306,12 @@ class _Font:
     used: bool = False
     #: `Tf` 的数就是字的大小（em）吗。Type 3 没有声明 em，只有 FontMatrix 是千分之一时才按惯例认（matplotlib / dvips 如此）
     sized: bool = True
+    #: 一个字符码画出来是不是 `.notdef`（缺字方块）：True / False / None（这种字体这个码判不了）；整个字体判不了时为 None
+    notdef_of: object = None
+    #: 画出来的码里落到 `.notdef` 的个数（只计数，不带文字内容）
+    notdef: int = 0
+    #: 有画出来的码判不了是不是 `.notdef`
+    notdef_unchecked: bool = False
 
 
 @dataclass
@@ -366,8 +373,102 @@ def _font_record(name: str, obj, seen: dict) -> _Font:
     rec = _Font(name, base, subtype, embedded, subset, mapping, code_len, type3, key)
     if type3:
         rec.sized = _type3_em_is_standard(obj.get("/FontMatrix"))
+    try:
+        rec.notdef_of = _notdef_probe(obj, subtype)
+    except Exception:  # noqa: BLE001 —— 结构读不懂 = 判不了，不是「没有缺字」
+        rec.notdef_of = None
     seen[key] = rec
     return rec
+
+
+#: 系统「最后一招」字体（macOS 的 LastResort / LastResortHE）：字体里没有真字形，每个字都画成一个方块——用到它就是缺字
+_LAST_RESORT = re.compile(r"^LastResort", re.IGNORECASE)
+
+
+def is_last_resort(base: str) -> bool:
+    return bool(_LAST_RESORT.match(base or ""))
+
+
+def _differences(encoding) -> dict[int, str]:
+    """简单字体 `/Encoding` 字典里 `/Differences` 给出的 码 → 字形名（没有就空）。"""
+    out: dict[int, str] = {}
+    diffs = (
+        encoding.get("/Differences") if encoding is not None and hasattr(encoding, "get") else None
+    )
+    if diffs is None:
+        return out
+    code = 0
+    for item in diffs:
+        if isinstance(item, int):
+            code = int(item)
+        else:
+            out[code] = str(item).lstrip("/")
+            code += 1
+    return out
+
+
+def _notdef_probe(obj, subtype: str):
+    """这种字体的「码 → 是不是 .notdef」判据；结构不在能判的范围里回 None（判不了，不猜）。
+
+    * Type0 + `Identity-H/V`：CID = 码。`CIDFontType2` 经 `/CIDToGIDMap`（Identity 或映射流）得 GID，GID 0 是 .notdef；
+      `CIDFontType0` 的 CID 0 是 .notdef（RenderCore 与 matplotlib Type 42 都走这一类）；
+    * Type 3：`/Differences` 里的名字是 `.notdef`，或 `CharProcs` 里没有这个名字，就是缺字（matplotlib Type 3 如此）；
+      `/Differences` 没覆盖的码判不了；
+    * 其余简单字体：只有 `/Differences` 明写 `.notdef` 的码能判，其余判不了。
+    """
+    if subtype == "Type0":
+        enc = str(obj.get("/Encoding", "")).lstrip("/")
+        kids = obj.get("/DescendantFonts")
+        if enc not in ("Identity-H", "Identity-V") or kids is None or len(kids) == 0:
+            return None
+        kid = kids[0]
+        kind = str(kid.get("/Subtype", "")).lstrip("/")
+        if kind == "CIDFontType0":
+            return lambda code: code == 0
+        if kind != "CIDFontType2":
+            return None
+        c2g = kid.get("/CIDToGIDMap")
+        if c2g is None or str(c2g).lstrip("/") == "Identity":
+            return lambda code: code == 0
+        table = bytes(c2g.read_bytes())
+
+        def via_map(code: int) -> bool:
+            pair = table[2 * code : 2 * code + 2]
+            return len(pair) < 2 or int.from_bytes(pair, "big") == 0
+
+        return via_map
+    names = _differences(obj.get("/Encoding"))
+    if subtype == "Type3":
+        procs = obj.get("/CharProcs")
+        glyphs = {str(k).lstrip("/") for k in procs.keys()} if procs is not None else set()
+
+        def type3(code: int):
+            name = names.get(code)
+            if name is None:
+                return None
+            return name == ".notdef" or name not in glyphs
+
+        return type3
+    if not names:
+        return None
+    return lambda code: True if names.get(code) == ".notdef" else None
+
+
+def _note_notdef(font: _Font, raw: bytes) -> None:
+    """一段文字里有几个码落到 `.notdef`（缺字方块）；判不了的码让这个字体记「未核」。"""
+    probe = font.notdef_of
+    if probe is None:
+        font.notdef_unchecked = True
+        return
+    n = (
+        2 if font.subtype == "Type0" else 1
+    )  # 能判的 Type0 只有 Identity-H/V（两字节）；简单字体一字节
+    for i in range(0, len(raw) - n + 1, n):
+        hit = probe(int.from_bytes(raw[i : i + n], "big"))
+        if hit is None:
+            font.notdef_unchecked = True
+        elif hit:
+            font.notdef += 1
 
 
 def _type3_em_is_standard(matrix) -> bool:
@@ -525,6 +626,10 @@ def _walk(
                 pieces = [bytes(a) for a in args[-1] if isinstance(a, pikepdf.String)]
             elif args and isinstance(args[-1], pikepdf.String):
                 pieces = [bytes(args[-1])]
+            if font is not None and text_mode not in (3, 7):
+                # 缺字只看**画出来**的字（渲染模式 3 / 7 只进文字层、不上墨）；与 ActualText 无关——那只是检索用的文字
+                for raw in pieces:
+                    _note_notdef(font, raw)
             scope = actual[-1] if actual else None
             if scope is not None and scope[0] is not None:
                 if not scope[1]:
@@ -741,6 +846,9 @@ def observe_pdf(path: Path, *, budget: Budget | None = None) -> dict:
                 "subset": f.subset,
                 "tounicode": f.tounicode is not None,
                 "type3": f.type3,
+                "last_resort": is_last_resort(f.base),
+                "notdef": f.notdef,
+                "notdef_unchecked": f.notdef_unchecked,
             }
             for f in walk.fonts.values()
             if f.used
@@ -964,7 +1072,7 @@ def _check_pdf(observed: dict, plan: dict, profile: dict | None) -> tuple[dict, 
         checks["size"] = VERIFIED if ok else FAILED
     exceeded = observed.get("budget_exceeded")
     if exceeded:
-        for k in ("carrier", "fonts_embedded", "text_layer", "image_ppi"):
+        for k in ("carrier", "fonts_embedded", "text_layer", "image_ppi", "glyphs"):
             checks[k] = UNKNOWN
         notes.append(f"内容流遍历预算耗尽（{exceeded}），普查 / 字体 / 文字 / 位图未核验")
     else:
@@ -992,6 +1100,16 @@ def _check_pdf(observed: dict, plan: dict, profile: dict | None) -> tuple[dict, 
             notes.append("有 Type 3 字体（字形在 CharProcs 里），嵌入这一维记 unknown")
         else:
             checks["fonts_embedded"] = VERIFIED
+        tofu = sorted({f["name"] for f in used if f.get("last_resort") or f.get("notdef")})
+        if not used:
+            checks["glyphs"] = NOT_APPLICABLE
+        elif tofu:
+            checks["glyphs"] = FAILED
+            notes.append(f"有字画成了缺字方块（.notdef 或 LastResort 字体）：{tofu[:5]}")
+        elif any(f.get("notdef_unchecked") for f in used):
+            checks["glyphs"] = UNKNOWN
+        else:
+            checks["glyphs"] = VERIFIED
         expected = plan.get("text")
         if expected is None:
             checks["text_layer"] = UNKNOWN if used else NOT_APPLICABLE
@@ -1101,6 +1219,32 @@ def _check_raster(observed: dict, plan: dict, profile: dict | None) -> tuple[dic
     return checks, notes
 
 
+#: 「留意」（不是失败、不拦交付）：成品能用，但投稿时可能被退，或者有更好的做法。闭集，前端按码出文案
+ADVISORY_TYPE3_FONTS = "type3_fonts"
+ADVISORY_SCRIPTED_RASTER = "scripted_raster"
+ADVISORIES = (ADVISORY_TYPE3_FONTS, ADVISORY_SCRIPTED_RASTER)
+
+
+def advisories(fmt: str, observed: dict, plan: dict) -> list[dict]:
+    """PDF 成品上要「留意」的事：
+
+    * `type3_fonts`：用到了 Type 3 字体（只量字节）——IEEE、Elsevier 等会退稿；
+    * `scripted_raster`：生产者说这几张有脚本的图是按磁盘上的位图原件整张嵌进来的（`plan.scripted_raster_panels`），
+      而成品里确实有位图——用脚本重画就是矢量。
+
+    预算耗尽 / 没有读取器时字体没看完，不报 `type3_fonts`（不知道 ≠ 没有，但也不编一条）。"""
+    if fmt != "pdf" or observed.get("integrity") != VERIFIED or observed.get("budget_exceeded"):
+        return []
+    out: list[dict] = []
+    type3 = sorted({f["name"] or "?" for f in observed.get("fonts_used", []) if f.get("type3")})
+    if type3:
+        out.append({"code": ADVISORY_TYPE3_FONTS, "fonts": type3[:5], "count": len(type3)})
+    panels = [str(x) for x in (plan.get("scripted_raster_panels") or [])]
+    if panels and observed.get("images"):
+        out.append({"code": ADVISORY_SCRIPTED_RASTER, "panels": panels[:5], "count": len(panels)})
+    return out
+
+
 def inspect(
     path: Path,
     fmt: str,
@@ -1187,6 +1331,7 @@ def inspect(
             "optional_unknown": optional_unknown,
         },
         "notes": notes,
+        "advisories": advisories(fmt, observed, plan),
         "scope": {
             "budget": asdict(svg_budget or SVGBudget())
             if fmt == "svg"
@@ -1292,6 +1437,7 @@ def summary(manifest: dict) -> dict:
         "required": list(manifest["policy"]["required"]),
         "checks": dict(manifest["checks"]),
         "notes": list(manifest["notes"]),
+        "advisories": [dict(a) for a in manifest.get("advisories") or []],
         "carrier": manifest["observed"].get("carrier"),
         "size_pt": manifest["observed"].get("size_pt"),
         "px": manifest["observed"].get("px"),

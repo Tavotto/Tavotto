@@ -2233,6 +2233,8 @@ export interface ArtifactManifestSummary {
   required: string[]
   checks: Record<string, ArtifactCheckVerdict>
   notes: string[]
+  /** 「留意」：不是失败、照常交付，但投稿时可能被退或有更好的做法（Type 3 字体、有脚本的图整张是位图）；老服务端没有 */
+  advisories?: ArtifactAdvisory[]
   carrier?: string | null
   size_pt?: [number, number] | null
   px?: [number, number] | null
@@ -2246,6 +2248,17 @@ export interface ArtifactManifestSummary {
   identity?: ArtifactIdentity | null
   /** 来源：源产物公开身份、回执公开事实、节点表（U09）；老服务端没有 */
   provenance?: ArtifactProvenance | null
+}
+
+export interface ArtifactAdvisory {
+  /** 闭集：`lib/artifactInspection.ADVISORY_CODES` */
+  code: string
+  /** `type3_fonts`：用到的 Type 3 字体名（至多 5 个） */
+  fonts?: string[]
+  /** `scripted_raster`：整张嵌成位图、却有脚本的图（项目内相对 id，至多 5 个） */
+  panels?: string[]
+  /** 全部个数（`fonts` / `panels` 只带前几个） */
+  count?: number
 }
 
 export interface ArtifactIdentity {

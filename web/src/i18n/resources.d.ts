@@ -1039,11 +1039,16 @@ export default interface Resources {
       "groupFormat": "格式",
       "groupOutput": "输出",
       "inspection": {
+        "advisory": {
+          "scripted_raster": "留意：{{panels}} 是整张位图嵌进来的。它有脚本，可以重画成矢量。",
+          "type3_fonts": "留意：用了 Type 3 字体（{{fonts}}），IEEE、Elsevier 等期刊会退回。有脚本的图用脚本重画就不再有 Type 3。"
+        },
         "check": {
           "carrier": "矢量构成",
           "clipping": "裁切",
           "dpi_tag": "分辨率标签",
           "fonts_embedded": "字体嵌入",
+          "glyphs": "缺字（显示成方块）",
           "image_ppi": "图像分辨率",
           "integrity": "完整性",
           "raster_density": "像素密度",
@@ -1117,6 +1122,7 @@ export default interface Resources {
       "profileUpdateAvailable": "这套规范有了新版本。",
       "reportTitle": "随导出生成一份 JSON 报告，供投稿留档。",
       "reportToggle": "生成样式检查报告",
+      "resultAdvisories_other": "{{count}} 个文件有要留意的地方，见详情",
       "resultInspectionFailed_other": "{{count}} 个文件核验未通过，见详情",
       "resultScriptSkipped_other": "{{count}} 处修改未写入 .py",
       "resultWarnings_other": "有 {{count}} 条提示，见详情",

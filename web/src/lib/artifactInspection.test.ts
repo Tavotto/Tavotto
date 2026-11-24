@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ArtifactManifestSummary } from './api'
-import { inspectionRollup, inspectionState, noticeTone } from './artifactInspection'
+import { inspectionRollup, inspectionState, knownAdvisories, noticeTone } from './artifactInspection'
 
 const base: ArtifactManifestSummary = {
   manifest_version: 1,
@@ -81,5 +81,22 @@ describe('noticeTone', () => {
     expect(noticeTone({ failed: ['Fig1.png'], unknown: [] })).toBe('bad')
     expect(noticeTone({ failed: [], unknown: ['Fig1.svg'] })).toBe('ok')
     expect(noticeTone({ failed: [], unknown: [] })).toBe('ok')
+  })
+})
+
+describe('knownAdvisories', () => {
+  it('只留前端认得的码，顺序照服务端；老服务端没有这个键 = 没有留意', () => {
+    expect(knownAdvisories(base)).toEqual([])
+    expect(knownAdvisories(null)).toEqual([])
+    const m = {
+      ...base,
+      advisories: [{ code: 'later_code' }, { code: 'scripted_raster', panels: ['a.png'] }, { code: 'type3_fonts' }],
+    }
+    expect(knownAdvisories(m).map((a) => a.code)).toEqual(['scripted_raster', 'type3_fonts'])
+  })
+
+  it('留意不改变核验语气（不是失败）', () => {
+    const m = { ...base, checks: { integrity: 'verified', size: 'verified' } as const, advisories: [{ code: 'type3_fonts' }] }
+    expect(inspectionState(m).tone).toBe('verified')
   })
 })
