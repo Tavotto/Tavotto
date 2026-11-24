@@ -865,3 +865,29 @@ def test_unique_label_axis_with_a_negative_error_falls_back_to_old_behaviour(tmp
     res = candidates(tmp_path, rows)
     assert all(c.recipe.err is None for c in res.items)
     assert not [p for d in res.dropped for p in d.problems if p.code == "summarised_not_raw"]
+
+
+def test_a_label_column_with_an_id_like_name_is_still_the_category_axis(tmp_path):
+    """`sample, mean_yield, err`：`sample` 这个名字像编号，但已汇总的表里它就是每一行的名字——照样一个类别一个点，误差线取自 `err`（种类 unknown）。"""
+    rows = [["sample", "mean_yield", "err"]] + [
+        [s, m, e]
+        for s, m, e in (
+            ("control", 10.2, 1.1),
+            ("low", 14.8, 1.9),
+            ("mid", 21.3, 2.2),
+            ("high", 27.9, 3.0),
+        )
+    ]
+    res = candidates(tmp_path, rows)
+    assert codes(res) == ["points_err"]
+    top = res.items[0].recipe
+    assert (top.x, top.y, top.err, top.err_kind) == ("sample", ("mean_yield",), "err", "unknown")
+
+
+def test_an_id_like_column_without_an_error_column_is_not_promoted(tmp_path):
+    """没有误差列就不是已汇总的表：名字像编号的列照旧不当类别轴（不出现 `points_err`）。"""
+    rows = [["sample", "yield"]] + [
+        [s, v] for s, v in (("s1", 10.2), ("s2", 14.8), ("s3", 21.3), ("s4", 27.9))
+    ]
+    res = candidates(tmp_path, rows)
+    assert "points_err" not in codes(res)

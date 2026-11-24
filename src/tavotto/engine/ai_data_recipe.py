@@ -2395,7 +2395,7 @@ def _summarised_shape(
     """表是不是「已汇总」的形状：**只有这两种都满足才是**——①单个测量列配着一个误差列（`paired_error`，名字规则同 `adf.error_kind`，配不准 = 不是）；
     ②每个位置恰好一行（`_one_row_per_cell`；有序横轴时是分组 × 分面 × 横轴取值，否则是类别 × 分组）。返回
     `{"shape": "trend" | "category", "err", "kind", "x", "group", "facet"}`（给 `line_err` / `points_err` 用的列角色），不是 = None。
-    没有有序横轴、也没有分组列时，表里**恰好一个**每格都不同的文字列（一行一个组，`group, mean, sd, n`）当类别轴——只用于这里的 `*_err` 备选，规则别处仍把它当标签。
+    没有有序横轴、也没有分组列时，表里**恰好一个**每格都不同的文字列（一行一个组，`group, mean, sd, n`；列名像编号的 `sample, mean, err` 也算）当类别轴——只用于这里的 `*_err` 备选，规则别处仍把它当标签。
     要带行数据的小表；个体编号（`unit`）、合画、把列当分组、多列纵轴一概不是（宁可不画误差线，不猜）。"""
     s = entry.summary
     if (
@@ -2440,7 +2440,8 @@ def _summarised_shape(
     v = _Values(values)
     labels = []
     for c in s.columns:
-        if s.per_column[c].kind != "text" or c in s.groups or c in s.id_like or c == err:
+        # 名字像编号的列（`sample` / `id`）也算：已汇总的表里它就是那一行的名字，表里没有别的轴可当类别
+        if s.per_column[c].kind != "text" or c in s.groups or c == err:
             continue
         cells = [t for t in v.cells(c) if t]
         if 2 <= len(cells) <= MAX_RANKING_ITEMS and len(set(cells)) == len(cells):
