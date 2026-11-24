@@ -2248,7 +2248,19 @@ def default_candidates(
             eff = Confirmed()
         else:
             return NeedsChoice("pick_unit", _col_options("unit", ids, s), _unsure("unit"))
-    can_trend = roles.x_ord is not None
+    # G-018：折线只用于有序横轴。读懂数据判过「规则选作横轴的这一列是测量值」（`picks.x_measure` = 那一列的列名）时，这一列与纵轴是两个独立测量，
+    # 趋势类不出、关系类（散点）排第一。事实绑在列名上：用户换了横轴（`roles.x_ord` 不是它）就不生效；没带这个键 = 与从前逐字相同。
+    # 没有关系图可换（x 不是数值 / 关系图资格不过）或纵轴是多列（散点画不全这几列）就不拿掉趋势类——宁可保留从前的结果，也不出零备选、不丢列
+    x_independent = (
+        roles.x_ord is not None
+        and roles.x_numeric
+        and isinstance(picks.get("x_measure"), str)
+        and picks["x_measure"] == roles.x_ord
+        and not roles.stack
+        # 多列纵轴只有趋势类画得全（每列一条线）：拿掉趋势类会把选好的列悄悄丢成一列，所以这时不生效、保持从前的结果
+        and len(roles.ys) == 1
+    )
+    can_trend = roles.x_ord is not None and not x_independent
     repeats = s.repeats and not (promoted and set(s.id_like) <= set(promoted))
     if eff.design is None and repeats and can_trend and picks.get("design") != "unsure":
         return NeedsChoice(
@@ -2298,7 +2310,11 @@ def default_candidates(
         for e in eligible(view_entry, eff, values=view_values, numcat=roles.numcat)
         if e.status in ("ok", "partial") and e.renderable
     }
+    x_independent = x_independent and "relationship" in ok_families
     groups: list[list[tuple[str, FigureRecipe]]] = []
+    dropped: list[Dropped] = []
+    if x_independent and "trend" in ok_families:
+        dropped.append(Dropped(0, (Problem("roles_invalid", "x", "x_is_measure"),)))
 
     def grp(*alts: tuple[str, FigureRecipe]) -> None:
         groups.append(list(alts))
@@ -2308,7 +2324,7 @@ def default_candidates(
     gx = {"group": cats[0], **({"facet": cats[1]} if len(cats) == 2 else {})} if cats else {}
     if roles.x_ord is not None:
         x = roles.x_ord
-        if "trend" in ok_families:
+        if "trend" in ok_families and not x_independent:
             alts = []
             if unit:
                 alts.append(
@@ -2386,6 +2402,22 @@ def default_candidates(
                     ),
                 ),
             )
+            if x_independent:
+                # 趋势类拿掉之后关系图是主图：不带拟合线的散点单独再给一张（同一组里它只是拟合线不合格时的退路），备选才不少于两个
+                grp(
+                    (
+                        "scatter",
+                        _recipe(
+                            entry,
+                            "scatter",
+                            "relationship",
+                            [("points", "none", "main")],
+                            [y],
+                            x=x,
+                            **({"group": cats[0]} if cats else {}),
+                        ),
+                    )
+                )
     if cats and "comparison" in ok_families:
         xc = cats[0]
         g2 = cats[1] if len(cats) == 2 else None
@@ -2466,7 +2498,6 @@ def default_candidates(
             roles=role_info,
         )
     picked: list[tuple[str, FigureRecipe]] = []
-    dropped: list[Dropped] = []
     y_filtered = False
     for gi, alts in enumerate(groups):
         for code, rec in alts:
@@ -2502,6 +2533,8 @@ def default_candidates(
                 problems = [Problem("roles_invalid", "y", "multi_y_not_drawn")]
                 y_filtered = True
             if not problems:
+                if x_independent and any(c == code for c, _ in picked):
+                    break  # 退路与前一组落到同一个画法：不重复出（不记 dropped）
                 picked.append((code, rec))
                 break
             dropped.append(Dropped(gi, tuple(problems)))

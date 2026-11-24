@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import contextvars
 import copy
 import dataclasses
 import errno
@@ -3195,22 +3196,270 @@ def _save_svg_snapshot(
     if companion is None:
         return
     root = project_root if project_root is not None else require_project()
-    return svgstore.save(
-        root,
-        frozen.artifact.source_id,
-        frozen.artifact.patch_hash,
-        pdf=read_frozen(frozen),
-        svg=read_frozen(companion),
-        artifact=frozen.artifact.to_payload(),
-        receipt=frozen.receipt,
-        static_sha256=static_sha256,
-        execution_owner=execution_owner,
-        remap_fingerprint=engine_inputremap.fingerprint(root),
-        storage_root=_svg_storage_root(root),
-        # 缺省调用形状逐字不变（看护：test_svg_input_capture_handoff 的精确 kwargs）
-        **({"activate": True} if activate else {}),
-        **_svg_input_archive_kwargs(captured_input_archive),
-    )
+    pdf = read_frozen(frozen)
+    svg = read_frozen(companion)
+
+    def save():
+        return svgstore.save(
+            root,
+            frozen.artifact.source_id,
+            frozen.artifact.patch_hash,
+            pdf=pdf,
+            svg=svg,
+            artifact=frozen.artifact.to_payload(),
+            receipt=frozen.receipt,
+            static_sha256=static_sha256,
+            execution_owner=execution_owner,
+            remap_fingerprint=engine_inputremap.fingerprint(root),
+            storage_root=_svg_storage_root(root),
+            # 缺省调用形状逐字不变（看护：test_svg_input_capture_handoff 的精确 kwargs）
+            **({"activate": True} if activate else {}),
+            **_svg_input_archive_kwargs(captured_input_archive),
+        )
+
+    try:
+        return save()
+    except svgstore.SnapshotBudgetExceeded:
+        # 项目里的导出快照满了：回收没有任何文档 / 版本引用的旧变体再试一次；
+        # 引用扫不全就一个都不删，照旧报满（细则「项目配对存储与不可变 archive」）。
+        if not _reclaim_svg_snapshots(root, incoming_bytes=len(pdf) + len(svg)):
+            raise
+        return save()
+
+
+#: 正在冻结、尚未落盘的文档正文：同一次保存里前一个面板刚写下的引用还不在磁盘上，
+#: 回收必须把它算作「被引用」。
+_SVG_PENDING_DOCUMENT: contextvars.ContextVar = contextvars.ContextVar(
+    "svg_pending_document", default=None
+)
+_SVG_REFERENCE_SCAN_MAX_FILES = 20000
+_SVG_REFERENCE_SCAN_MAX_FILE_BYTES = 128 * 1024 * 1024
+_SVG_REFERENCE_SCAN_MAX_BYTES = 512 * 1024 * 1024  # 持全部文档锁扫，远短于 30 s 锁等待
+_SVG_REFERENCE_ID = re.compile(rb"(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])")
+
+
+def _svg_reference_corpus(root: Path) -> frozenset[bytes] | None:
+    """已存文档里出现过的 64 位十六进制串（快照 ID 的候选）；扫不全返回 None（调用方据此不删）。
+
+    不按键名解析（`figureSnapshot` / `figure_origin` / 版本里的整份文档……），快照 ID 作为独立的
+    十六进制串出现就算被引用：宁可多留，不误删。版本时间线里只有**自动检查点**不算引用
+    （维护者 2026-11-24 裁决：它们每两分钟一条、最多上百条，算的话长时间编辑大图会再次占满）；
+    命名 / 手动 / 时刻节点照算，读不懂的版本按原始字节保守地算。
+    """
+    from .engine import svgstore
+
+    store = engine_config.project_store_dir(root)
+    snapshot_dir = store / svgstore.STORE_DIRNAME
+    versions_dirs = {store / "versions", LAYOUT_DIR / engine_documents.VERSIONS_DIRNAME}
+    found: set[bytes] = set()
+    pending = _SVG_PENDING_DOCUMENT.get()
+    if pending is not None:
+        found.update(_SVG_REFERENCE_ID.findall(json.dumps(pending).encode("utf-8")))
+    budget = {"files": 0, "bytes": 0}
+
+    def admit(size: int) -> bool:
+        budget["files"] += 1
+        budget["bytes"] += size
+        return (
+            budget["files"] <= _SVG_REFERENCE_SCAN_MAX_FILES
+            and size <= _SVG_REFERENCE_SCAN_MAX_FILE_BYTES
+            and budget["bytes"] <= _SVG_REFERENCE_SCAN_MAX_BYTES
+        )
+
+    try:
+        for base in (store, Path(root) / "canvases", LAYOUT_DIR):
+            if not base.is_dir():
+                continue
+            for directory, dirnames, filenames in os.walk(base, onerror=_raise_walk_error):
+                here = Path(directory)
+                if here == snapshot_dir or snapshot_dir in here.parents:
+                    dirnames[:] = []
+                    continue
+                if here in versions_dirs:
+                    dirnames[:] = []
+                    if not _svg_version_references(here, found, admit):
+                        return None
+                    continue
+                for name in filenames:
+                    if ".json" not in name:
+                        continue
+                    path = here / name
+                    try:
+                        size = path.stat().st_size
+                    except FileNotFoundError:
+                        continue
+                    if not admit(size):
+                        return None
+                    try:
+                        found.update(_SVG_REFERENCE_ID.findall(path.read_bytes()))
+                    except FileNotFoundError:
+                        continue
+    except OSError:
+        return None
+    return frozenset(found)
+
+
+def _svg_version_references(versions_dir: Path, found: set, admit) -> bool:
+    """版本时间线（旧单文件与 `.vx` 新存储）里非自动检查点的引用；超出扫描预算返回 False。
+
+    读哪边只认 `versionstore.has_store` 的权威判据（迁移被打断时旧文件仍是权威）；判不了、
+    索引读不懂、某条信封读不出就把那部分按原始字节保守地算。列目录 / 读文件的 `OSError`
+    一律往上抛，由调用方折成「扫不全」（不删）。
+    """
+
+    def raw(path: Path) -> bool:
+        try:
+            data = path.read_bytes()
+        except FileNotFoundError:
+            return True
+        if not admit(len(data)):
+            return False
+        found.update(_SVG_REFERENCE_ID.findall(data))
+        return True
+
+    def envelopes(store_root: Path) -> bool:
+        directory = store_root / engine_versionstore.ENVELOPE_DIR
+        try:
+            names = sorted(os.listdir(directory))  # 列不出（权限 / I/O）照抛，不折成空
+        except FileNotFoundError:
+            return True
+        return all(raw(directory / name) for name in names if name.endswith(".json"))
+
+    def entry(version) -> bool:
+        if isinstance(version, dict) and engine_versionstore.kind(version) == "auto":
+            return True
+        data = json.dumps(version).encode("utf-8")
+        if not admit(len(data)):
+            return False
+        found.update(_SVG_REFERENCE_ID.findall(data))
+        return True
+
+    def legacy(path: Path) -> bool:
+        try:
+            data = engine_documents.loads_document(path.read_bytes())
+        except FileNotFoundError:
+            return True
+        except (engine_documents.DocumentError, ValueError):
+            return raw(path)
+        versions = data.get("versions") if isinstance(data, dict) else None
+        if not isinstance(versions, list):
+            return raw(path)
+        return all(entry(version) for version in versions)
+
+    suffix = engine_versionstore.STORE_SUFFIX
+    names = os.listdir(versions_dir)
+    doc_ids = {name[: -len(suffix)] for name in names if name.endswith(suffix)}
+    doc_ids |= {name[:-5] for name in names if name.endswith(".json")}
+    for doc_id in sorted(doc_ids):
+        store_root = engine_versionstore.store_dir(versions_dir, doc_id)
+        legacy_path = versions_dir / f"{doc_id}.json"
+        try:
+            authority = engine_versionstore.has_store(versions_dir, doc_id)
+        except engine_versionstore.VersionStoreError:
+            authority = None
+        if authority is None:
+            if not (raw(legacy_path) and envelopes(store_root)):
+                return False
+            continue
+        if not authority:
+            # 旧文件是权威；迁移被打断时已复制的信封也保守地算
+            if not (legacy(legacy_path) and envelopes(store_root)):
+                return False
+            continue
+        try:
+            index = engine_versionstore.list_index(versions_dir, doc_id)
+        except (engine_versionstore.VersionStoreError, ValueError):
+            index = None
+        if index is None:
+            if not envelopes(store_root):
+                return False
+            continue
+        for meta in index["entries"]:
+            if engine_versionstore.kind(engine_versionstore.public_entry(meta)) == "auto":
+                continue
+            try:
+                version = engine_versionstore.read(versions_dir, doc_id, meta["id"])
+            except (engine_versionstore.VersionStoreError, ValueError):
+                if not raw(engine_versionstore._meta_path(store_root, meta)):
+                    return False
+                continue
+            if not entry(version):
+                return False
+    return True
+
+
+def _raise_walk_error(error: OSError) -> None:
+    raise error
+
+
+#: 回收不出空间后多久内不再扫文档（每次编辑都会保存，满了又回收不动时别每次都扫两遍）
+_SVG_RECLAIM_BACKOFF_SECONDS = 300.0
+_SVG_RECLAIM_BACKOFF: dict[str, float] = {}
+_SVG_RECLAIM_THREADS: dict[str, threading.Thread] = {}
+_SVG_RECLAIM_BACKOFF_LOCK = threading.Lock()
+
+
+def _reclaim_svg_snapshots(root, *, incoming_bytes: int) -> int:
+    """满额时回收一次；任何失败都只记日志、返回 0，调用方照旧抛原来的满额错误。
+
+    扫描引用到删除持全部文档锁，与文档 / 版本提交互斥。本线程正持着文档锁（保存时冻结快照）
+    就不能在这里等——改由后台线程回收、这次返回 0，下一次保存即可写进去。
+    """
+    key = str(Path(root).resolve())
+    with _SVG_RECLAIM_BACKOFF_LOCK:
+        if time.monotonic() < _SVG_RECLAIM_BACKOFF.get(key, 0.0):
+            return 0
+        if _holds_document_lock():
+            running = _SVG_RECLAIM_THREADS.get(key)
+            if running is None or not running.is_alive():
+                thread = threading.Thread(
+                    target=_reclaim_svg_snapshots_now,
+                    args=(Path(root), incoming_bytes),
+                    name="svg-snapshot-reclaim",
+                    daemon=True,
+                )
+                _SVG_RECLAIM_THREADS[key] = thread
+                thread.start()
+            return 0
+    return _reclaim_svg_snapshots_now(Path(root), incoming_bytes)
+
+
+def _reclaim_svg_snapshots_now(root: Path, incoming_bytes: int) -> int:
+    from .engine import svgstore
+
+    key = str(root.resolve())
+    removed = 0
+    try:
+        with _all_document_locks():
+            corpus = _svg_reference_corpus(root)
+            if corpus is None:
+                LOG.info(
+                    "Figure snapshot store is full; reference scan incomplete, nothing reclaimed"
+                )
+            else:
+                removed = svgstore.reclaim(
+                    _svg_storage_root(root),
+                    referenced=lambda snapshot_id: snapshot_id.encode("ascii") in corpus,
+                    incoming_bytes=incoming_bytes,
+                )
+                LOG.info(
+                    "Figure snapshot store was full; reclaimed %d unreferenced variants", removed
+                )
+    except Exception:
+        LOG.info("Figure snapshot store is full; reclaim failed", exc_info=True)
+        removed = 0
+    if not removed:
+        with _SVG_RECLAIM_BACKOFF_LOCK:
+            _SVG_RECLAIM_BACKOFF[key] = time.monotonic() + _SVG_RECLAIM_BACKOFF_SECONDS
+    return removed
+
+
+def _wait_svg_reclaim(timeout: float = 60.0) -> None:
+    """等后台回收线程结束（测试与进程收尾用）。"""
+    with _SVG_RECLAIM_BACKOFF_LOCK:
+        threads = list(_SVG_RECLAIM_THREADS.values())
+    for thread in threads:
+        thread.join(timeout)
 
 
 def _svg_worker_owner(worker, script=None):
@@ -3860,7 +4109,12 @@ def _freeze_document_svg_sources_best_effort(document: dict) -> list[str]:
     warnings = set()
     directory = engine_config.data_path("svg-snapshot-staging")
     directory.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="save-", dir=directory) as temporary:
+    pending = _SVG_PENDING_DOCUMENT.set(document)
+    with (
+        contextlib.ExitStack() as cleanup,
+        tempfile.TemporaryDirectory(prefix="save-", dir=directory) as temporary,
+    ):
+        cleanup.callback(_SVG_PENDING_DOCUMENT.reset, pending)
         for obj in _doc_objects(document):
             if obj.get("type") != "panel" or not obj.get("fileId"):
                 continue
@@ -7514,6 +7768,10 @@ def reset_projects(wait: bool = False) -> None:
         DEFAULT_PROJECT = None
     for pid in ids:
         close_project(pid, wait=wait)
+    _wait_svg_reclaim()
+    with _SVG_RECLAIM_BACKOFF_LOCK:
+        _SVG_RECLAIM_BACKOFF.clear()
+        _SVG_RECLAIM_THREADS.clear()
     # native 会话：**只放手，不杀**（ADR 0021 §8.1）。用户的脚本是他自己的
     # 进程，关掉 Tavotto 不该把它一起带走——runner 看到控制通道 EOF 会先把
     # Figure 恢复成脚本原样，再放开屏障让脚本跑完。这就是「关掉 App 默认
@@ -13094,6 +13352,10 @@ REPLAY_SIZE_TOL = 0.01
 POST_CHECK_SIZE_TOL = 0.5
 #: 分歧清单最多回多少条（够定位问题，又不至于把响应撑成一页 JSON）。
 REPLAY_DIFF_LIMIT = 20
+#: 几何分歧最多记几行日志：409 让用户「报告给开发者」，诊断包里得看得出是哪个元素分岔。
+REPLAY_DIFF_LOG_LIMIT = 5
+#: 几何分歧的字段闭集（`_compare_manifests` 只产出这几种），日志里明文放行。
+REPLAY_DIFF_FIELDS = ("size_mm", "bbox", "anchor", "missing_in_replay", "missing_in_hot")
 #: 像素门探针的目标像素宽（热态与重放各出一张，逐 RGBA 通道比差异）。
 #: 3×2 英寸的图在这一档约 66 万像素——线型 / 字形级的差异足够显影，
 #: 两张探针图合计也只要几十毫秒，相对整个写回（重跑一遍脚本）可以忽略。
@@ -13188,6 +13450,31 @@ def _compare_manifests(hot: dict, fresh: dict) -> tuple[list[dict], int]:
             elif any(abs(x - y) > REPLAY_GEOM_TOL for x, y in zip(va, vb)):
                 diffs.append({"gid": gid, "field": field, "hot": va, "fresh": vb})
     return diffs, len(common)
+
+
+def _log_replay_divergence(stem: str, diffs: list[dict]) -> None:
+    """几何分歧逐条进日志（前 `REPLAY_DIFF_LOG_LIMIT` 条）：元素 gid、字段、两边的数值。
+
+    像素门发现分歧时本来就打 WARNING；几何这道以前只把 `diffs` 放进 409 响应体，
+    服务端一个字不记，用户照提示发来的诊断包里查不到是哪个元素分岔（反馈包 WY3Y）。
+    gid 是结构名、数值是 figure 分数坐标，不含文件内容与文字。
+    """
+    # 位置 / 尺寸分歧排在元素增减之前：挪位通常是根因，刻度文字多一个少一个往往是它的连带
+    geom = sorted(
+        (d for d in diffs if d.get("field") in REPLAY_DIFF_FIELDS),
+        key=lambda d: REPLAY_DIFF_FIELDS.index(d["field"]),
+    )
+    for i, d in enumerate(geom[:REPLAY_DIFF_LOG_LIMIT], 1):
+        LOG.warning(
+            "写回几何门发现分歧 %d/%d: %s %s %s 热态=%s 重放=%s",
+            i,
+            len(geom),
+            stem,
+            d.get("gid") or "<figure>",
+            engine_logsafe.known(d.get("field"), REPLAY_DIFF_FIELDS),
+            d.get("hot"),
+            d.get("fresh"),
+        )
 
 
 def _replay_pixel_diff(worker, fresh, stem: str) -> dict | None:
@@ -13575,6 +13862,7 @@ def _write_source_files(
         if future_props:
             raise WriteBackFutureError(future_props)
         if diffs:
+            _log_replay_divergence(stem, diffs)
             raise ReplayDivergenceError(diffs[:REPLAY_DIFF_LIMIT])
     except BaseException:
         _discard_updating(tmps)
@@ -20020,6 +20308,7 @@ def _autosave_path(doc_id: str) -> Path:
 #: （什么时候能删掉一把锁没有可靠信号，而它会随打开过的文档数一直长），
 #: 锁带的内存是常数。不同文档偶尔共用一把锁只是多串行一点点，正确性不受影响。
 _DOCUMENT_LOCKS = [threading.Lock() for _ in range(64)]
+_DOCUMENT_LOCKS_HELD = threading.local()
 
 
 #: 等槽位文档锁的上限（秒；要大于持锁方最长的合理停顿——有用例会让持锁方停 10 s）。超时抛 `SessionStateUnavailable` → 503 `session_unavailable`，正文一个字节没写
@@ -20051,15 +20340,37 @@ class _DocumentLock:
         except BaseException:
             thread_lock.release()
             raise
+        _DOCUMENT_LOCKS_HELD.depth = getattr(_DOCUMENT_LOCKS_HELD, "depth", 0) + 1
         return self
 
     def __exit__(self, *exc: object) -> None:
         fd, self._fd = self._fd, None
+        _DOCUMENT_LOCKS_HELD.depth = getattr(_DOCUMENT_LOCKS_HELD, "depth", 1) - 1
         try:
             if fd is not None:
                 engine_layoutsession.release_file_lock(fd)
         finally:
             _DOCUMENT_LOCKS[self._stripe].release()
+
+
+def _holds_document_lock() -> bool:
+    """本线程此刻是否持着任一文档锁条带（锁不可重入：持着时不许再去拿全部条带）。"""
+    return getattr(_DOCUMENT_LOCKS_HELD, "depth", 0) > 0
+
+
+@contextlib.contextmanager
+def _all_document_locks():
+    """按条带升序拿下**全部**文档锁（跨进程）：期间没有任何文档 / 版本 / 自动保存能提交。
+
+    只给导出快照回收用（扫描引用到删除必须是一个原子段）。顺序全局固定为升序，
+    与「每个写者只持一个条带」的规则一起保证不死锁；调用方自己不得持有任何条带。
+    """
+    if _holds_document_lock():
+        raise RuntimeError("all document locks requested while holding one")
+    with contextlib.ExitStack() as stack:
+        for stripe in range(len(_DOCUMENT_LOCKS)):
+            stack.enter_context(_DocumentLock(stripe))
+        yield
 
 
 def _lock_stripe(path: Path) -> int:
