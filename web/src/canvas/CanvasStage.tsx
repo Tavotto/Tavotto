@@ -48,6 +48,7 @@ import { CanvasContextMenu } from './CanvasContextMenu'
 import { placePanelInPage } from '@/lib/panelPlacement'
 import { startDraw, startMarquee, startPan } from './interactions'
 import { penHover, penPointerDown } from './penController'
+import { pencilPointerDown } from './pencilController'
 import { eyedropperPointerDown } from './eyedropper'
 import { startAnchorMarquee } from './pathEditDrag'
 import { activePathEdit } from '@/store/pathEditStore'
@@ -207,6 +208,11 @@ export function CanvasStage() {
     // 钢笔（ADR 0185 M1）：加点 / 拉手柄 / 点起点闭合，状态机在 `lib/penTool`
     if (tool === 'pen') {
       penPointerDown(e)
+      return
+    }
+    // 铅笔（ADR 0185 M8）：拖一笔，松手拟合（`canvas/pencilController`）
+    if (tool === 'pencil') {
+      pencilPointerDown(e)
       return
     }
     // 吸管：读点到的东西画出来的颜色，给选区上色（`canvas/eyedropper`）

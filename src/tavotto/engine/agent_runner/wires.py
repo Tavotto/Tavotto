@@ -214,6 +214,8 @@ class Request:
     url: str
     headers: dict[str, str]
     body: dict
+    #: 2xx 响应体的读取器（`post_json(reader=…)`）；None = 整体读（三条原协议）。`siwc_wire` 用它边读边丢 SSE 增量帧
+    reader: Any = None
 
 
 class Wire(Protocol):
@@ -837,9 +839,13 @@ def post_json(
     *,
     timeout: float,
     max_bytes: int | None = None,
+    reader: Any = None,
 ) -> tuple[int, dict[str, str], bytes]:
     """发一次 POST。任何 HTTP 状态都回 `(status, 小写头, 体)`（3xx 不跟随）；传输层失败抛 `RunnerFailure`
-    （可重试的 network）。URL 与头不进异常文本。"""
+    （可重试的 network）。URL 与头不进异常文本。
+
+    `reader`（只对 2xx 生效）：`reader(resp) -> bytes` 代替整体读取，自己负责体积上限（SSE，见 `siwc_wire.compact_sse`）；
+    它抛的 `RunnerFailure` 原样上抛。"""
     max_bytes = MAX_RESPONSE_BYTES if max_bytes is None else max_bytes
     bad = check_base_url(url)
     if bad:
@@ -863,16 +869,24 @@ def post_json(
                 path = u.path or "/"
                 conn.request("POST", path, body=payload, headers=hdrs)
                 resp = conn.getresponse()
-                data = resp.read(max_bytes + 1)
                 status, rh = resp.status, {k.lower(): v for k, v in resp.getheaders()}
+                data = (
+                    reader(resp)
+                    if reader is not None and 200 <= status < 300
+                    else resp.read(max_bytes + 1)
+                )
             finally:
                 conn.close()
         else:
             req = urllib.request.Request(url, data=payload, headers=hdrs, method="POST")
             try:
                 with _opener().open(req, timeout=timeout) as resp:
-                    data = resp.read(max_bytes + 1)
                     status = resp.status
+                    data = (
+                        reader(resp)
+                        if reader is not None and 200 <= status < 300
+                        else resp.read(max_bytes + 1)
+                    )
                     rh = {k.lower(): v for k, v in resp.headers.items()}
             except urllib.error.HTTPError as err:
                 try:

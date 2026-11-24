@@ -1,4 +1,4 @@
-import type { CanvasObject, EndPoint, Gradient, PanelObject, PathObject, PathTextObject, ShapeObject, TextObject } from '@/types/document'
+import type { CanvasObject, EndPoint, Gradient, PanelObject, PathNode, PathObject, PathTextObject, ShapeObject, TextObject } from '@/types/document'
 import { lineEndpoints, objectRotation, panelRotation } from '@/types/document'
 import { toPathObject } from './convertToPath'
 import { pathToMm, rotatePoint, toPathSubpaths, type MmSubpath, type XY } from './pathEdit'
@@ -184,18 +184,20 @@ function flipGradient(g: Gradient | undefined, axis: Axis): Gradient | undefined
     : { ...g, center: flipPt(g.center, axis) }
 }
 
-/** 路径在自己的框里镜像：锚点与手柄的比例坐标翻过来，渐变跟着翻 */
+/** 路径在自己的框里镜像：锚点与手柄的比例坐标翻过来，渐变跟着翻；实时圆角记录里的尖角一起翻（ADR 0185 M7，半径不变） */
 function flipPathLocal(p: PathObject, axis: Axis): PathObject {
+  const flipNode = (n: PathNode): PathNode => ({
+    ...n,
+    p: flipPt(n.p, axis),
+    ...(n.in ? { in: flipPt(n.in, axis) } : {}),
+    ...(n.out ? { out: flipPt(n.out, axis) } : {}),
+  })
   return {
     ...p,
     subpaths: p.subpaths.map((sp) => ({
       ...sp,
-      nodes: sp.nodes.map((n) => ({
-        ...n,
-        p: flipPt(n.p, axis),
-        ...(n.in ? { in: flipPt(n.in, axis) } : {}),
-        ...(n.out ? { out: flipPt(n.out, axis) } : {}),
-      })),
+      nodes: sp.nodes.map(flipNode),
+      ...(sp.liveCorners ? { liveCorners: { ...sp.liveCorners, sharp: sp.liveCorners.sharp.map(flipNode) } } : {}),
     })),
     ...(p.fillGradient ? { fillGradient: flipGradient(p.fillGradient, axis) } : {}),
     ...(p.strokeGradient ? { strokeGradient: flipGradient(p.strokeGradient, axis) } : {}),

@@ -3184,9 +3184,19 @@ export default interface Resources {
           "tip": "高级版功能，点一下了解"
         },
         "none": "还没激活",
+        "plate": {
+          "defaultName": "早期同行者",
+          "engrave": "刻上你的名字",
+          "issued": "ISSUED ON",
+          "label": "创始会员",
+          "nameLabel": "刻在铭牌上的名字",
+          "nameTitle": "名字只保存在这台电脑上",
+          "rename": "重新刻名",
+          "turnTitle": "拖一下可以翻面"
+        },
         "releaseTitle": "解绑后可以在另一台电脑上激活",
         "state": {
-          "expired": "已于 {{date}} 到期",
+          "expired": "已于{{date}}到期",
           "lapsed": "需要联网确认一下授权",
           "revoked": "这份授权已失效"
         },
@@ -3853,6 +3863,7 @@ export default interface Resources {
       "chart_model_unsupported": "当前不支持这份计算图表的模型或编辑方式。",
       "chart_render_pair_missing": "计算图表没有返回同一版的图像与几何，暂未应用本次渲染。",
       "chart_render_unsupported": "当前无法完整渲染这张计算图表。",
+      "chart_source_changed": "计算图表的源文件已变化，本次操作未应用。请恢复匹配的源文件或重新导入。",
       "column_not_found": "这张表里没有这一列。",
       "column_type_mismatch": "这一列的类型不适合画在这个位置，比如把文字当数值用。",
       "composition_negative": "占比图里有负数，不能画。",
@@ -4696,6 +4707,8 @@ export default interface Resources {
     },
     "preflight": {
       "axisLabelFormat": "坐标轴标题「{{label}}」不是规范的「{{want}}」形式",
+      "barBaselineTruncatedX": "柱子从 {{baseline}} 画起，但横轴只显示 {{low}} 到 {{high}}，{{baseline}} 不在图里，每根柱子都被切掉一截，长短看起来和数值不成比例了",
+      "barBaselineTruncatedY": "柱子从 {{baseline}} 画起，但纵轴只显示 {{low}} 到 {{high}}，{{baseline}} 不在图里，每根柱子都被切掉一截，高矮看起来和数值不成比例了",
       "barWithoutErrorbar": "柱状图没有误差棒。柱子若是多次测量的均值，规范要求标出误差。",
       "cjkFallbackMissing": "含中日韩字符的文字用了 {{family}}，没有声明回退字体，导出 PDF 里是方框。",
       "cjkFallbackUnaccepted": "含中日韩字符的文字由 {{face}} 画出（正文字体 {{family}}），不在规范接受的中文字体里。",
@@ -4885,6 +4898,7 @@ export default interface Resources {
       "tierUnverifiable": "无法自动检查",
       "title": {
         "axis-label-format": "坐标轴标题格式不符",
+        "bar-baseline-truncated": "柱子的起点被截掉",
         "bar-without-errorbar": "柱状图没有误差棒",
         "cjk-fallback-missing": "缺中文字体回退",
         "discouraged-colormap": "不推荐的色谱",
@@ -6619,6 +6633,7 @@ export default interface Resources {
       "pan": "平移画布",
       "pathJoin": "连接路径 / 平均锚点",
       "pen": "钢笔",
+      "pencil": "铅笔",
       "quickEdit": "按对象打开快捷编辑菜单",
       "saveDocument": "保存排版",
       "saveLayout": "另存为新排版",
@@ -6781,7 +6796,9 @@ export default interface Resources {
     "canvasTools": {
       "fit": "适应",
       "label": "画布工具",
+      "pathTools": "钢笔与铅笔",
       "pen": "钢笔",
+      "pencil": "铅笔",
       "quickLayout": "一键排版",
       "select": "选择",
       "subLabels": "序号"
@@ -7117,6 +7134,7 @@ export default interface Resources {
       "deleteObjects": "删除 {{count}} 个对象",
       "dissolveLayoutGroup": "解散布局组",
       "drawPath": "画路径",
+      "drawPencil": "铅笔画线",
       "duplicateCanvasSuffix": "{{name}} 副本",
       "duplicateObjects": "复制对象",
       "editPathTextPath": "编辑路径文字的路径",
@@ -8558,6 +8576,7 @@ export default interface Resources {
       "eyedropper": "点画布上的东西，把它的颜色给选中的对象；Esc 退出",
       "line": "拖动画出直线；Esc 取消",
       "pen": "点一下加尖角点，按住拖拉出平滑点；点起点闭合，Enter / Esc 结束",
+      "pencil": "按住拖动画线，松手自动平滑；回到起点闭合，按住 {{alt}} 松手保留原样",
       "polygon": "拖动画出多边形；Esc 取消",
       "rect": "拖动绘制矩形；Esc 取消",
       "star": "拖动画出星形；Esc 取消",

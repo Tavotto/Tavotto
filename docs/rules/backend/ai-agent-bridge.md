@@ -598,6 +598,16 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
     执行器特有的部分（只写一个新文件、不运行脚本、check ≤ 3 次）写在 `tools.py`。`ai_prompt_pack` 是纯标准库，所以 `agent_runner` 对它的 import 不破坏依赖方向（`test_import_architecture` 兜底）。
   - 看护 `tests/test_agent_runner_convert.py`（Demo 协议端到端 + 单元）。
 
+### SIWC 专用协议 `siwc-responses`（`agent_runner/siwc_wire.py`，ADR 0201，默认关）
+
+- **不是第四条普通协议**：不在 `wires.WIRES` / `ai_providers.PROTOCOLS` 里（保存时探测、`--fallback`、AI 修复 `build_model`、用户记录都写不出它），只有 `runner_cli` 的 `--wire` 多认这个名字；
+  起跑硬约束（`siwc_wire.runner_args_ok`）：`TAVOTTO_EXPERIMENTAL_SIWC=1`、`--auth bearer`、`--base-url` 恰为 `https://api.openai.com/v1`、无 `--fallback` / `--effort` / `--thinking`，否则 `bad_args` 零请求。
+- **请求体白名单**（`_ALLOWED_FIELDS`）：`model / instructions / input / tools / store:false / stream:true`；官方禁用清单 `FORBIDDEN_FIELDS`（含循环总会传入的 `max_output_tokens`）、`reasoning` / `include`、回放里的 `reasoning` 条目、`role:"system"` 条目一律不出现；函数工具包进 namespace `tavotto`。
+- **SSE**：`Request.reader = compact_sse` → `wires.post_json(reader=…)` 对 2xx 边读边丢 `*.delta` 帧、终态后停读（总读入 64 MiB、留下 8 MiB 上限）；`HttpModel` 对带 `decode` 的协议用它折叠成最终响应再交 `OpenAIResponsesWire.parse`。只有 `response.completed` 是成功；无终态 = 可重试 `network/stream_incomplete`。三条原协议的 `post` 调用形状逐字不变（不传 `reader`）。
+- **错误码闭集**（`failure_for_code`，预流与流中 `response.failed` / `error` 同一张表）：用量超限 → `quota/plan_usage_limit` 不重试；`…usage_unavailable` / `…user_unavailable` → 可重试 `network`；`…user_not_eligible` → `refused/plan_not_eligible`（**不是 auth**）；403 无码 → `refused/plan_forbidden`；
+  `…unsupported_capability` / `…route_not_supported` / `chatpass_v2_*` → `internal`；`…invalid_user` → `auth`。带 `classify` 的协议**不走换协议与字段降级**（官方：不得静默切换计费方式）。
+- 看护 `tests/test_agent_runner_siwc.py`（全 Mock）。真服务未验证项见模块说明，不得写成已验证。
+
 ### 连接（`engine/ai_connections.py`，ADR 0147 第二阶段）
 
 界面不讲「执行器 / CLI / agent」，只讲「连接 AI」。`ai_connections` 在 `ai.providers[]` 与两家 CLI 的官方登录态之上给一份**视图**，**不迁移存储**

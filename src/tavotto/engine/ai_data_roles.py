@@ -188,6 +188,16 @@ def column_stats(values: adf.DataSummary, name: str) -> dict:
     return out
 
 
+def continuous_columns(values: adf.DataSummary) -> frozenset[str]:
+    """客观上是连续量的数值列：有非整数取值，且不同取值多于 2 个。整数列（行号、样本量、重复序号）与常数 / 二值列不算。"""
+    out = set()
+    for name in values.columns:
+        st = column_stats(values, name)
+        if st and st.get("all_int") is False and st.get("n_unique", 0) > 2:
+            out.add(name)
+    return frozenset(out)
+
+
 # --------------------------------------------------------------------------- 请求
 @dataclass(frozen=True)
 class Preview:
@@ -562,12 +572,20 @@ def suggest(
     roles: dict[str, str],
     model_picks: dict,
     fixed: dict | None = None,
+    continuous: frozenset[str] = frozenset(),
 ) -> tuple[dict, int]:
     """规则此刻会怎么选 / 问什么，再决定采纳模型的哪几个选择 → `(要交给规则的 picks, 丢弃个数)`。**规则无歧义且没被明确否决的，保持规则结果。**
 
-    `fixed`：用户已经定的选择（永远优先，模型不碰）。"""
+    `fixed`：用户已经定的选择（永远优先，模型不碰）。`continuous`：客观上是连续量的数值列（`continuous_columns`）——模型对这种列
+    只说「看不出来」（`other`）不算否决规则选好的横轴。"""
     s = entry.summary
     dropped = 0
+
+    def vetoed(key: str, col: str) -> bool:
+        if key == "x" and roles.get(col) == "other" and col in continuous:
+            return False  # 拿不准 ≠ 否决：连续取值的数值列不会是行号 / 样本量 / 常数（RC-21：身高偶尔被判成 other）
+        return _vetoed(key, roles.get(col))
+
     valid: dict[str, str] = {}
     for key, raw in model_picks.items():
         v = _valid_pick(s, key, raw, roles)
@@ -648,7 +666,7 @@ def suggest(
             if key in valid and _multi_y_without_x(entry, hint, loop, key, valid, roles):
                 dropped += 1
                 valid.pop(key)
-            if _vetoed(key, roles.get(col)) and key in valid and valid[key] != col:
+            if vetoed(key, col) and key in valid and valid[key] != col:
                 # 规则已经落定了一个分组列，模型判它是「重复 / 批次编号」并建议干脆不分组：不采纳——按板号 / 批次分开画没有害处，
                 # 去掉分组却是把规则本来对的结果改差（HO-23：酶标板的板号）。换成另一个分组列、或判成备注 / 行号的照常采纳。
                 if key == "group" and valid[key] == "none" and roles.get(col) == "replicate_unit":
@@ -694,7 +712,9 @@ def interpret(
     """模型的列判断（已过形状校验）→ 逐字段降级后的 `Understanding`。"""
     s = entry.summary
     roles, dropped = valid_roles(s, shape)
-    picks, d2 = suggest(entry, hint, roles, shape.get("picks", {}), fixed)
+    picks, d2 = suggest(
+        entry, hint, roles, shape.get("picks", {}), fixed, continuous_columns(values)
+    )
     dropped += d2
     # 处理规则：只给最终会用到的、夹着文字的数值列；逐条判，一条不合格只丢这一条
     cells: dict[str, recipe_mod.CellRule] = {}

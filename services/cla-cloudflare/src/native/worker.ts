@@ -10,7 +10,9 @@ import { uiHTML, uiCSS, uiScript } from './ui.ts';
 import { reconcileOne, rejectionCode } from './background.ts';
 import { eligibility, ELIGIBILITY_NONCE } from './eligibility.ts';
 import { verification } from './verification.ts';
-import { InvocationBudget } from './budget.ts';
+import { BudgetDeferred, InvocationBudget, PAID_EXTERNAL } from './budget.ts';
+// Only the three CI read routes opt in; scheduled/background work keeps the Free ceilings.
+export const ciBudget=(env:{CLA_WORKERS_PAID_BUDGET?:string})=>new InvocationBudget(undefined,undefined,env.CLA_WORKERS_PAID_BUDGET==='true'?PAID_EXTERNAL:undefined);
 import { validId, validSha } from '../core/policy.ts';
 import {admitHead,verifyHeadOne,AUTOMATIC_CRON} from './automatic.ts';
 
@@ -22,6 +24,7 @@ export interface Env {
   CLA_GITHUB_ENABLED?:string; CLA_OAUTH_ENABLED?:string; CLA_SIGNING_ENABLED?:string; CLA_CHECK_PUBLISHING_ENABLED?:string;
   CLA_UI_ENABLED?:string; CLA_BACKGROUND_ENABLED?:string;
   CLA_CI_VERIFICATION_ENABLED?:string;
+  CLA_WORKERS_PAID_BUDGET?:string;
   CLA_DELEGATED_COUNTERSIGNING_ENABLED?:string;
   CLA_AUTOMATIC_VERIFICATION_ENABLED?:string;
   CLA_AUTOMATIC_PUBLISHING_ENABLED?:string;
@@ -186,7 +189,7 @@ export default {async scheduled(controller:{cron?:string},env:Env):Promise<void>
       if(!env.CLA_VERIFICATION_LIMITER)return json({error:'verification_abuse_control_required'},503);
       let admitted=false;try{admitted=(await env.CLA_VERIFICATION_LIMITER.limit({key:group?'eligibility-group':'eligibility-pr'})).success===true;}catch{return json({error:'verification_abuse_control_unavailable'},503);}
       if(!admitted)return json({error:'verification_busy'},429,{'retry-after':'60'});
-      return json(await eligibility(await service(env,new InvocationBudget()),group?{kind:'merge_group',headSha:head,baseSha:base}:{kind:'pr',number:Number(pr)},head,nonce));
+      return json(await eligibility(await service(env,ciBudget(env)),group?{kind:'merge_group',headSha:head,baseSha:base}:{kind:'pr',number:Number(pr)},head,nonce));
     }
     if(req.method==='GET' && url.pathname==='/verification/group') {
       if(env.CLA_CI_VERIFICATION_ENABLED!=='true')throw new Rejected('ci_verification_disabled');
@@ -196,7 +199,7 @@ export default {async scheduled(controller:{cron?:string},env:Env):Promise<void>
       if(!env.CLA_VERIFICATION_LIMITER)return json({error:'verification_abuse_control_required'},503);
       let admitted=false;try{admitted=(await env.CLA_VERIFICATION_LIMITER.limit({key:'verification-group'})).success===true;}catch{return json({error:'verification_abuse_control_unavailable'},503);}
       if(!admitted)return json({error:'verification_busy'},429,{'retry-after':'60'});
-      return json(await verification(await service(env,new InvocationBudget()),{kind:'merge_group',headSha:head,baseSha:base},head,run,attempt));
+      return json(await verification(await service(env,ciBudget(env)),{kind:'merge_group',headSha:head,baseSha:base},head,run,attempt));
     }
     if(req.method==='GET' && url.pathname==='/verification/pr') {
       if(env.CLA_CI_VERIFICATION_ENABLED!=='true')throw new Rejected('ci_verification_disabled');
@@ -209,7 +212,7 @@ export default {async scheduled(controller:{cron?:string},env:Env):Promise<void>
       try{admitted=(await env.CLA_VERIFICATION_LIMITER.limit({key:'verification-pr'})).success===true;}
       catch{return json({error:'verification_abuse_control_unavailable'},503);}
       if(!admitted)return json({error:'verification_busy'},429,{'retry-after':'60'});
-      return json(await verification(await service(env,new InvocationBudget()),pr,head,run,attempt));
+      return json(await verification(await service(env,ciBudget(env)),pr,head,run,attempt));
     }
     if(req.method==='GET' && url.pathname==='/agreement' && !url.search)return publicAgreement(env,c);
     if(req.method==='GET' && !url.search && PDF_ASSETS.has(url.pathname))return pdfAsset(env,url.pathname);
@@ -265,6 +268,9 @@ export default {async scheduled(controller:{cron?:string},env:Env):Promise<void>
   } catch(error) {
     // Never log upstream responses, OAuth URLs/codes, request data, cookies, evidence or secrets.
     if(error instanceof Rejected && error.code==='oauth_busy')return json({error:error.code},429,{'retry-after':'300'});
+    // Which ceiling deferred (time / external / sql / confirmation_capacity) is a fixed vocabulary, not request data;
+    // the CI client keeps only `error`, so this exists to tell a Free-plan cap from a time or SQL cap in the logs.
+    if(error instanceof BudgetDeferred){console.log('budget_deferred:'+error.reason);return json({error:error.code,reason:error.reason},403);}
     return json({error:error instanceof Rejected ? error.code : 'request_unavailable'},error instanceof Rejected ? 403 : 503);
   }
 }};

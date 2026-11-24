@@ -42,6 +42,7 @@ import {
   migrateToProject,
 } from '@/types/document'
 import { remapLineIds } from '@/lib/pathText'
+import { pruneLiveCorners } from '@/lib/liveCornerRecord'
 
 enablePatches()
 
@@ -155,6 +156,8 @@ function produceStamped(
   const [stamped, more, moreInverse] = produceWithPatches(next, (d) => {
     stamp?.(d, base, next)
     clearChangedFigureSnapshots(d, base)
+    // 路径实时圆角的记录：几何改过、对不上就删（集中在这一处，ADR 0185 M7 方案 B）
+    pruneLiveCorners(d, base, next)
   })
   return [stamped, [...patches, ...more], [...moreInverse, ...inverse]]
 }

@@ -500,6 +500,7 @@
     "chart_model_invalid": "计算图表的模型或来源引用无效，无法应用本次操作。",
     "chart_model_unsupported": "当前不支持这份计算图表的模型或编辑方式。",
     "chart_render_unsupported": "当前无法完整渲染这张计算图表。",
+    "chart_source_changed": "计算图表的源文件已变化，本次操作未应用。请恢复匹配的源文件或重新导入。",
     "chart_render_pair_missing": "计算图表没有返回同一版的图像与几何，暂未应用本次渲染。",
     "figure_snapshot_unavailable": "项目包引用的 Figure 配对或原件无法核验，未生成项目包。请恢复缺失资源或重新生成这张图。",
     "script_source_missing": "找不到这个脚本的文件（{{script}}）：它可能被移动或删除了。请把脚本放回项目里再运行；Tavotto 不会用同名的其它文件代替它。",
@@ -946,6 +947,8 @@
   },
   "preflight": {
     "axisLabelFormat": "坐标轴标题「{{label}}」不是规范的「{{want}}」形式",
+    "barBaselineTruncatedX": "柱子从 {{baseline}} 画起，但横轴只显示 {{low}} 到 {{high}}，{{baseline}} 不在图里，每根柱子都被切掉一截，长短看起来和数值不成比例了",
+    "barBaselineTruncatedY": "柱子从 {{baseline}} 画起，但纵轴只显示 {{low}} 到 {{high}}，{{baseline}} 不在图里，每根柱子都被切掉一截，高矮看起来和数值不成比例了",
     "barWithoutErrorbar": "柱状图没有误差棒。柱子若是多次测量的均值，规范要求标出误差。",
     "cjkFallbackMissing": "含中日韩字符的文字用了 {{family}}，没有声明回退字体，导出 PDF 里是方框。",
     "cjkFallbackUnaccepted": "含中日韩字符的文字由 {{face}} 画出（正文字体 {{family}}），不在规范接受的中文字体里。",
@@ -1107,6 +1110,7 @@
     "techTitle": "技术详情",
     "title": {
       "axis-label-format": "坐标轴标题格式不符",
+      "bar-baseline-truncated": "柱子的起点被截掉",
       "bar-without-errorbar": "柱状图没有误差棒",
       "cjk-fallback-missing": "缺中文字体回退",
       "discouraged-colormap": "不推荐的色谱",

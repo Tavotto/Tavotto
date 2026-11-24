@@ -1698,6 +1698,22 @@
           "title": "路径文字 › 文字工具点在斜线路径上打字：字沿路径斜着排出来；撤销后路径文字消失"
         }
       ]
+    },
+    {
+      "id": "canvas.pencil",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "铅笔（N）拖一笔，松手后拟合成光滑的路径",
+        "en-US": "The pencil (N) draws a stroke that is fitted to a smooth path on release"
+      },
+      "entry": "画布工具栏 → 铅笔（N，与钢笔同一格）",
+      "e2e": [
+        {
+          "spec": "vector-pencil.spec.ts",
+          "title": "铅笔 › N 铅笔拖一条正弦形的笔迹：松手得到一个光滑 path（三次贝塞尔、段数远少于采样点）；一次撤销撤回"
+        }
+      ]
     }
   ]
 }

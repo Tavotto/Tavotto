@@ -5,6 +5,7 @@ import {
   fetchLicenseStatus,
   refreshLicense,
   releaseLicense,
+  setLicensePlateName,
   type LicenseFailureCode,
   type LicenseStatus,
 } from '@/lib/api'
@@ -43,6 +44,8 @@ interface LicenseState {
   release: () => Promise<boolean>
   /** 在系统浏览器打开官网价格页（购买 / 续费共用） */
   buy: () => Promise<boolean>
+  /** 铭牌刻字：写本机（引擎 license/plate.json），不联网；失败就保持原名 */
+  setPlateName: (name: string) => Promise<void>
   clearFailure: () => void
 }
 
@@ -78,6 +81,13 @@ export const useLicenseStore = create<LicenseState>((set, get) => {
       // 档位在官网价格页选，应用里不指定某一档（购买 / 续费都一样）；点了才出网，由系统浏览器打开
       window.open(premiumPageUrl(currentLocale()), '_blank', 'noopener,noreferrer')
       return true
+    },
+    setPlateName: async (name) => {
+      try {
+        set({ status: await setLicensePlateName(name) })
+      } catch {
+        /* 刻不上就保持原名，不打扰 */
+      }
     },
     clearFailure: () => set({ failure: null }),
   }

@@ -583,8 +583,8 @@ describe('文字 / 箭头 / 形状', () => {
         'convert-to-path',
         // 路径文字（ADR 0190）：能放字的路径 / 形状 / 箭头都给
         'add-path-text',
-        // 封闭形状能偏移路径 / 轮廓化描边（ADR 0185 M2），收在「路径查找器 ›」里；箭头两样都不适用
-        ...(id === 's1' ? ['pathfinder'] : []),
+        // 「路径查找器 ›」：封闭形状能偏移路径 / 轮廓化描边（ADR 0185 M2）；箭头从 M7 起也能轮廓化描边（端型一起转）
+        'pathfinder',
         'open-inspector',
         'copy',
         'copy-as-svg',

@@ -47,6 +47,8 @@ _NEEDS_INPUT = frozenset(
         "environment_generation_required",
         "workdir_confirmation_required",
         "argv_unverifiable",
+        # 外部审阅分享（ADR 0205）：不带 explicit_confirm 的那次回包，等用户点头
+        "review_confirmation_required",
     }
 )
 _REQUEST = frozenset(

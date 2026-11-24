@@ -54,7 +54,7 @@ Tavotto 要有收入来抵持续的开销（模型调用、CloudBase、CDN），
 | `POST /v1/recover` | `{email}`：把激活码重新发到这个邮箱；不论邮箱是否存在，回答一样 |
 | `POST /v1/devices/release` | `{license_id, device_pub, ts, sig}`：本机解绑，腾出名额 |
 | `GET` · `POST /v1/devices/reset?t=<令牌>` | 电脑丢了时清空这份授权的所有设备：GET 只回确认页、不写任何东西，POST 才清空；令牌来自 `recover` 邮件 |
-| `POST /v1/pro/manifest` | 已授权设备取高级版闭源组件的发布清单与限时下载地址；契约以 [ADR 0198](0198-closed-source-pro-extension.md) §五 为唯一出处（Proposed，实现 PR 才同步 §五 的 `op` 闭集） |
+| `POST /v1/pro/manifest` | 已授权设备取高级版闭源组件的发布清单与限时下载地址；契约以 [ADR 0198](0198-closed-source-pro-extension.md) §五 为唯一出处；本机客户端 `license.pro_manifest()`，设备签名 `op = pro_manifest`（同 §五 的 `op` 闭集） |
 
 - **webhook 处理**：
   - 用 Stripe 官方库对**原始请求体**验签（`constructEvent`），验不过回 400。
@@ -99,7 +99,7 @@ Tavotto 要有收入来抵持续的开销（模型调用、CloudBase、CDN），
   - 验签走 PyNaCl，延后到用的时候才 import（与 `journalremote._ed25519_verify` 同一个函数，提出来共用，不复制）。
   - `has(feature)` 成立的条件：签名有效、`kid` 已知、`device` 是本机、`now < offline_until`、`now < exp`。任何一项不满足都当作免费版，不报错。
 - 联网时机：只有用户点「激活」，或本机已有令牌且过了 `refresh_after` 时（每次启动最多一次，之后每天最多一次）。**没有令牌时一次网络都不发。** 出站全走 `diagsend._send`，目的地钉死在 `LICENSE_HOSTS = {"license.tavotto.cn"}`。
-- 作者端请求（`activate` / `refresh` / `release`）带设备签名：请求体含 `op`（闭集 `activate | refresh | release | renew`，服务端核对与端点一致，防止截获的签名拿去别的端点重放）、`device_pub`、`ts`，对去掉 `sig` 的规范化请求体（键排序、紧凑 JSON、不许浮点）的 sha256 连同时间戳用本机设备私钥签名，时间戳偏差 > 10 分钟服务端拒收；被签名字节串的精确定义以 `serverless/license/README.md` 与它的固定向量测试为准（与 ADR 0187 §三 同形，但是**另一把**设备密钥，不与审阅共用）。
+- 作者端请求（`activate` / `refresh` / `release`）带设备签名：请求体含 `op`（闭集 `activate | refresh | release | renew | pro_manifest`，服务端核对与端点一致，防止截获的签名拿去别的端点重放）、`device_pub`、`ts`，对去掉 `sig` 的规范化请求体（键排序、紧凑 JSON、不许浮点）的 sha256 连同时间戳用本机设备私钥签名，时间戳偏差 > 10 分钟服务端拒收；被签名字节串的精确定义以 `serverless/license/README.md` 与它的固定向量测试为准（与 ADR 0187 §三 同形，但是**另一把**设备密钥，不与审阅共用）。
 - `/api/license/*`（会话认证照旧）：`status`、`activate`、`refresh`、`release`、`checkout`（返回付款页地址，由前端在系统浏览器打开）。
 - 编辑器经 MCP 接入时与桌面版共用同一个数据目录，所以应用里激活一次，编辑器那边也生效。
 - 诊断包与遥测：`license/` 目录整个排除；激活码、令牌、`email_hint` 列入脱敏规则。

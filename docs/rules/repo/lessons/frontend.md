@@ -219,3 +219,10 @@
 - Seen: 2026-11-18, 2026-11-19
 - 为什么: 设置页的 `toPass` 只等清单可见一次，随后能力接口 1 秒内刷新多次、重挂载视图把「高级」收回，后面的点击落在隐藏元素上；点击没有短超时，每次白烧约 3 分钟到用例超时，Windows 打包版分片两天里踢出合并队列 8 次以上。每次需要前置状态的交互都在动作里重新确立它，并整段重试。
 - 证据: #2059
+
+### L-178 本地 e2e 或登记检查报行号对不上，先清 Playwright 编译缓存
+- 类: 别这样
+- 触发: scripts/ci/feature_registry.py, web/playwright.config.ts
+- Seen: 2026-11-22
+- 为什么: Playwright 的 transform 缓存在 $TMPDIR，所有 worktree 共用；来回切提交后拿到旧的编译结果。feature_registry check 在 main 上也报「扫描器与 Playwright 对不上位置」（说用例在 76 行，源码在 64 行），CI 是绿的。跑 playwright clear-cache 后即过；多 worktree 并行时先清缓存再判红。
+- 证据: #2034

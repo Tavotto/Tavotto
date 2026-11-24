@@ -13,9 +13,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import math
+import os
 import re
 import shutil
 import threading
@@ -55,6 +57,91 @@ _OWNER_TOKEN = re.compile(r"^[A-Za-z0-9_-]{22,128}$")
 _TARGET_ID = re.compile(r"^[^\x00-\x1f]{1,512}$")
 
 _LOCK = threading.RLock()
+
+# ---------------------------------------------------------------------------
+# 跨进程锁（ADR 0205 §四）：桌面与插件的 MCP 进程可能同时写同一份 `shares.json`。
+# 写路径一律「进程内锁 → 文件锁 → 重新读盘 → 改 → 原子写回」；只读路径不加文件锁。
+# ---------------------------------------------------------------------------
+LOCK_NAME = "shares.lock"
+LOCK_TIMEOUT_S = 5.0
+_LOCK_POLL_S = 0.02
+#: 本进程持有文件锁的重入深度；只在持有 `_LOCK` 的线程里读写，所以不必另加锁
+_depth = 0
+
+
+def lock_path() -> Path:
+    return dir_path() / LOCK_NAME
+
+
+def _try_lock(fh) -> bool:
+    """非阻塞地试一次；拿到 True，被别的进程占着 False。"""
+    if os.name == "nt":
+        import msvcrt
+
+        fh.seek(0)
+        try:
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            return False
+        return True
+    import fcntl
+
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (BlockingIOError, PermissionError):
+        return False
+    return True
+
+
+def _unlock(fh) -> None:
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass  # 关文件时内核也会放
+
+
+@contextlib.contextmanager
+def file_lock(timeout: float | None = None):
+    """`review/shares.lock` 上的跨进程互斥（进程内可重入）。超时抛 `TimeoutError`（是 `OSError`）——
+    调用方按写盘失败处理，绝不跳过锁直接写。"""
+    global _depth
+    with _LOCK:
+        if _depth:
+            _depth += 1
+            try:
+                yield
+            finally:
+                _depth -= 1
+            return
+        p = lock_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            p.parent.chmod(0o700)
+        except OSError:
+            pass
+        fh = open(p, "a+b")  # noqa: SIM115 — 生命周期跨 yield
+        try:
+            deadline = time.monotonic() + (LOCK_TIMEOUT_S if timeout is None else timeout)
+            while not _try_lock(fh):
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("review inbox lock timeout")
+                time.sleep(_LOCK_POLL_S)
+            _depth = 1
+            try:
+                yield
+            finally:
+                _depth = 0
+                _unlock(fh)
+        finally:
+            fh.close()
 
 
 def dir_path() -> Path:
@@ -451,7 +538,7 @@ def _remove_snapshots(share_id: str) -> None:
     shutil.rmtree(dir_path() / SNAPSHOT_DIR / share_id, ignore_errors=True)
 
 
-def _prune_locked(data: dict) -> None:
+def _prune_locked(data: dict, *, remove_files: bool = True) -> None:
     now = _now()
     keep = []
     for rec in data["shares"]:
@@ -463,7 +550,7 @@ def _prune_locked(data: dict) -> None:
     keep = keep[-MAX_SHARES:]
     live = {r["share_id"] for r in keep}
     for rec in data["shares"]:
-        if rec["share_id"] not in live:
+        if remove_files and rec["share_id"] not in live:
             _remove_snapshots(rec["share_id"])
     data["shares"] = keep
 
@@ -471,9 +558,20 @@ def _prune_locked(data: dict) -> None:
 def _load_pruned_locked() -> dict:
     data = _load_locked()
     before = len(data["shares"])
-    _prune_locked(data)
-    if len(data["shares"]) != before:
-        _save_locked(data)
+    probe = {"shares": list(data["shares"])}
+    _prune_locked(probe, remove_files=False)
+    if len(probe["shares"]) == before:
+        return data
+    # 修剪要写盘：读路径本身不加文件锁，要写才在锁里重读一次再修剪。拿不到锁就只给这次的内存视图，不落盘（下次再剪）。
+    try:
+        with file_lock():
+            data = _load_locked()
+            before = len(data["shares"])
+            _prune_locked(data)
+            if len(data["shares"]) != before:
+                _save_locked(data)
+    except OSError:
+        _prune_locked(data, remove_files=False)
     return data
 
 
@@ -618,7 +716,7 @@ def add_pending(
     }
     if not _valid_record(rec):
         return False
-    with _LOCK:
+    with file_lock():
         data = _load_pruned_locked()
         if _find(data, share_id) is not None:
             return True
@@ -639,7 +737,7 @@ def add_version(
     digest: str = "",
 ) -> dict | None:
     """一个版本 complete 之后：存元素表与快照、更新最新版本号与到期时间；首版同时把记录转正（`delivered`）。"""
-    with _LOCK:
+    with file_lock():
         data = _load_pruned_locked()
         rec = _find(data, share_id)
         if rec is None:
@@ -695,7 +793,7 @@ def snapshot_file(share_id: str, v: int) -> Path | None:
 
 
 def mark_revoked(share_id: str) -> bool:
-    with _LOCK:
+    with file_lock():
         data = _load_locked()
         rec = _find(data, share_id)
         if rec is None:
@@ -707,7 +805,7 @@ def mark_revoked(share_id: str) -> bool:
 
 def forget(share_id: str) -> str:
     """删本机记录：`ok` / `missing` / `active`（还没 revoke 也没到期，不许删）。"""
-    with _LOCK:
+    with file_lock():
         data = _load_locked()
         rec = _find(data, share_id)
         if rec is None:
@@ -721,7 +819,7 @@ def forget(share_id: str) -> str:
 
 
 def mark_read(share_id: str) -> bool:
-    with _LOCK:
+    with file_lock():
         data = _load_locked()
         rec = _find(data, share_id)
         if rec is None:
@@ -735,7 +833,7 @@ def mark_read(share_id: str) -> bool:
 def merge_feed(share_id: str, feed: dict) -> dict | None:
     """把一次 feed 合并进记录：新意见 / 回复 / 删除 / 结论 / 已处理，游标，到期与停止状态，未读数。
     返回合并后的记录拷贝；没有这份记录 None。`feed` 已由 `reviewshare` 验过顶层形状；事件逐条再清洗。"""
-    with _LOCK:
+    with file_lock():
         data = _load_locked()
         rec = _find(data, share_id)
         if rec is None:
@@ -818,7 +916,7 @@ def _has(rec: dict, cid: object) -> dict | None:
 
 def apply_reply(share_id: str, comment_id: str, reply: dict) -> dict | None:
     """作者自己的回复（服务端 201 之后）：并进副本，不计未读。返回该条意见。"""
-    with _LOCK:
+    with file_lock():
         data = _load_locked()
         rec = _find(data, share_id)
         r = clean_reply(reply)
@@ -835,7 +933,7 @@ def apply_reply(share_id: str, comment_id: str, reply: dict) -> dict | None:
 
 def apply_comment(share_id: str, comment: dict) -> dict | None:
     """服务端回的整条意见（PATCH resolved 之后）覆盖副本里的那一条。"""
-    with _LOCK:
+    with file_lock():
         data = _load_locked()
         rec = _find(data, share_id)
         c = clean_comment(comment)

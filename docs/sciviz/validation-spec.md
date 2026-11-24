@@ -15,6 +15,7 @@
 | `palette-semantic` | visual | G-022 |
 | `palette-line-markers` | visual | G-024 |
 | `log-axis-nonpositive` | encoding | G-001（V-001） |
+| `bar-baseline-truncated` | encoding | G-002（V-002） |
 
 ### V-001 对数轴上有画不出来的数据
 
@@ -42,7 +43,7 @@
 
 ### V-002 线性轴上柱的基线被截掉
 
-- **预检 id**：（待定）· **basis**：encoding（**这是 Tavotto 的工程归类**：FDV 把截断柱标为「misleading」，没有贴 wrong）· **状态**：设计中。
+- **预检 id**：`bar-baseline-truncated` · **basis**：encoding（**这是 Tavotto 的工程归类**：FDV 把截断柱标为「misleading」，没有贴 wrong）· **状态**：已实现（维护者 2026-11-21 定 warn、`fix: none`、归 `lines`，1.0 豁免与 V-001 同一行）。看护：`tests/test_preflight_bar_baseline.py`。
 - **依据**：
   - FDV 第 17 章，「Bars on a linear scale should always start at 0.」（p.209）[原文]。
   - 注意：GoG p.92 反而说条形的定义本身不要求底在零，所以不能拿它当支持证据。
@@ -55,7 +56,13 @@
   - 共同基线不在可见范围内时报。
   - 没有共同基线（浮动柱、甘特图）时不判。
   - 差值柱（有正有负、0 可见）不报。
-- **严重度**：warn · **修复**：none · **误报风险**：中。
+- **实现口径**：worker 只读事实 `bar_baseline` 只记基线（只看可见柱、直角坐标轴、竖柱 y / 横柱 x，堆叠上层与浮动柱不收）；
+  范围与尺度由规则从同一 axes 元素的 `[xy]lim` / `[xy]scale` 读，尺度正是 `linear` 才判；可见范围按 min / max 取闭区间。
+  直方图（`hist` 也是 `BarContainer`）按同一规则判。全文见 `docs/rules/backend/profiles-and-preflight.md`。
+- **严重度**：warn · **修复**：none（MCP 手修提示只说两种改法：从 0 起，或改成点图）· **误报风险**：中。
+  已知会报、尚未裁决的写法：inset 放大图、断轴图的上半幅、逐柱循环画的瀑布 / 甘特图（每个容器一根柱，天然有共同基线）。
+  仓库里含柱的真脚本实测都不报：figurebench `grouped_bars` 与 examples / compat / acceptance 共 10 份量到了柱；
+  `ca_projections` 只有极坐标柱，不发事实；另 5 份跑不起来（要命令行参数、没有 `main` 入口、缺 pandas），未执行。
 - **测试**：
   - 正常：0 可见。
   - 错误：柱高 5、8，ylim 设为 4–9。

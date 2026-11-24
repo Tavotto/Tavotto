@@ -55,6 +55,7 @@ class FakeServer:
         self.features = ["review-plus"]
         self.exp = int(now()) + 30 * 86400
         self.offline_days = 14
+        self.extra: dict = {}  # 额外的令牌键（创始标记等）
 
     @property
     def pubkey_b64(self) -> str:
@@ -72,6 +73,7 @@ class FakeServer:
             "refresh_after": iat + 86400,
             "offline_until": min(self.exp, iat + self.offline_days * 86400),
             "email_hint": "m***@gmail.com",
+            **self.extra,
             **over,
         }
         raw = json.dumps(payload, separators=(",", ":")).encode()
@@ -323,8 +325,14 @@ def test_builtin_public_keys_take_precedence_over_the_test_key(server, monkeypat
     assert lic.has("review-plus") is True
 
 
-def test_production_public_keys_start_empty():
-    assert lic.PUBLIC_KEYS == {}  # 正式签名密钥还没有；加了要同步 ADR / 发版
+def test_production_public_keys_are_pinned():
+    # 只有正式 kid；测试密钥的公钥绝不进这张表（ADR 0193 §七）。换 / 加 kid 要同步 ADR 与发版
+    assert set(lic.PUBLIC_KEYS) == {"live-2026-11"}
+    assert all(len(v) == 32 for v in lic.PUBLIC_KEYS.values())
+    assert (
+        lic.PUBLIC_KEYS["live-2026-11"].hex()
+        == "c4e27e8827e05bd65a60243f3e176dfa93fe923ff8ee91d7b8937be1e8857056"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -684,7 +692,13 @@ def test_failure_codes_are_the_adr_closed_set():
         "rate_limited", "network", "server", "client_error",
     }  # fmt: skip
     assert set(lic.HTTP_STATUS) == set(lic.FAILURES)
-    assert lic.OPS == {"activate", "refresh", "release", "renew"}
+    assert lic.OPS == {
+        "activate",
+        "refresh",
+        "release",
+        "renew",
+        "pro_manifest",
+    }  # pro_manifest：ADR 0198 §五
     assert lic.FEATURES == {"hosted-ai", "review-plus", "quick-layout"}  # quick-layout：ADR 0199
 
 
@@ -809,3 +823,141 @@ def test_route_failures_use_the_closed_codes(client, server):
     assert res.status_code == 400 and res.get_json()["error"] == "invalid_code"
     res = client.post("/api/license/checkout", json={})
     assert res.get_json()["error"] == "client_error"
+
+
+# ---------------------------------------------------------------------------
+# 创始会员标记（founding_no / founding_since）
+# ---------------------------------------------------------------------------
+FOUNDING = {"founding_no": 37, "founding_since": 1_763_000_000}
+
+
+def test_status_has_no_founding_for_a_regular_license(server):
+    activated(server)
+    assert "founding" not in lic.status()
+
+
+def test_status_carries_founding_when_the_signed_token_has_it(server):
+    server.extra = dict(FOUNDING)
+    activated(server)
+    st = lic.status()
+    assert st["founding"] == {"no": 37, "since": 1_763_000_000, "name": ""}
+    assert st["state"] == "active"
+    assert "37" not in json.dumps({k: v for k, v in st.items() if k != "founding"})
+
+
+def test_founding_survives_expiry_and_lapse_but_not_revocation(server, clock):
+    server.extra = dict(FOUNDING)
+    activated(server)
+    clock["now"] += 14 * 86400 + 5  # lapsed
+    st = lic.status()
+    assert st["state"] == "lapsed" and st["founding"]["no"] == 37
+    clock["now"] = server.exp + 5
+    st = lic.status()
+    assert st["state"] == "expired" and st["founding"]["no"] == 37
+    # 服务端判吊销：标记不给
+    rec = json.loads(lic._token_path().read_text())
+    rec["state"] = "revoked"
+    lic._token_path().write_text(json.dumps(rec))
+    st = lic.status()
+    assert st["state"] == "revoked" and "founding" not in st
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"founding_no": 0, "founding_since": 1_763_000_000},
+        {"founding_no": 1000, "founding_since": 1_763_000_000},
+        {"founding_no": -3, "founding_since": 1_763_000_000},
+        {"founding_no": True, "founding_since": 1_763_000_000},
+        {"founding_no": 5.0, "founding_since": 1_763_000_000},
+        {"founding_no": "5", "founding_since": 1_763_000_000},
+        {"founding_no": 5, "founding_since": 0},
+        {"founding_no": 5, "founding_since": -1},
+        {"founding_no": 5, "founding_since": True},
+        {"founding_no": 5, "founding_since": "1763000000"},
+        {"founding_no": 5},
+        {"founding_since": 1_763_000_000},
+    ],
+)
+def test_malformed_founding_is_treated_as_absent_and_never_raises(server, extra):
+    server.extra = extra
+    activated(server)
+    st = lic.status()
+    assert "founding" not in st
+    assert st["state"] == "active" and st["licensed"] is True  # 授权本身不受影响
+
+
+def test_founding_bounds_are_inclusive(server):
+    for no in (1, 999):
+        server.extra = {"founding_no": no, "founding_since": 1}
+        lic.activate(CODE)
+        assert lic.status()["founding"] == {"no": no, "since": 1, "name": ""}
+
+
+def test_unsigned_founding_cannot_be_forged_by_editing_the_token(server):
+    activated(server)
+
+    def tamper(env):
+        raw = json.loads(base64.b64decode(env["payload"]))
+        raw.update(FOUNDING)
+        env["payload"] = _b64(json.dumps(raw, separators=(",", ":")).encode())
+
+    _rewrite(tamper)
+    assert "founding" not in lic.status()
+
+
+# ---------------------------------------------------------------------------
+# 铭牌刻字：只存本机，不联网，不进令牌 / 诊断包
+# ---------------------------------------------------------------------------
+def test_plate_name_roundtrip_is_local_only_and_in_the_license_dir(server):
+    server.extra = dict(FOUNDING)
+    activated(server)
+    assert lic.status()["founding"]["name"] == ""
+    n = len(server.calls)
+    out = lic.set_plate_name("  林小雨  ")
+    assert out["founding"]["name"] == "林小雨" and lic.plate_name() == "林小雨"
+    assert len(server.calls) == n  # 零网络
+    p = lic._plate_path()
+    assert p.parent == lic._token_path().parent and p.parent.name == "license"
+    if os.name != "nt":
+        assert stat.S_IMODE(p.stat().st_mode) == 0o600
+    # 令牌文件里没有名字
+    assert "林小雨" not in lic._token_path().read_text(encoding="utf-8")
+    lic.set_plate_name("")
+    assert not p.exists() and lic.status()["founding"]["name"] == ""
+
+
+def test_plate_name_is_cleaned_and_capped(server):
+    server.extra = dict(FOUNDING)
+    activated(server)
+    lic.set_plate_name("a\n\tb\x00c" + "x" * 100)
+    got = lic.plate_name()
+    assert len(got) == lic.PLATE_NAME_MAX
+    assert "\n" not in got and "\x00" not in got and "\t" not in got
+    with pytest.raises(lic.LicenseError) as e:
+        lic.set_plate_name(123)  # type: ignore[arg-type]
+    assert e.value.code == "client_error"
+
+
+def test_plate_name_survives_release_and_reactivation_and_junk_file_is_empty(server):
+    server.extra = dict(FOUNDING)
+    activated(server)
+    lic.set_plate_name("林小雨")
+    lic.release()
+    assert lic.plate_name() == "林小雨"
+    lic._plate_path().write_text("{not json", encoding="utf-8")
+    assert lic.plate_name() == ""
+    lic._plate_path().write_text(json.dumps({"name": ["x"]}), encoding="utf-8")
+    assert lic.plate_name() == ""
+
+
+def test_plate_name_is_not_in_status_for_non_founders_and_route_is_gated(
+    server, monkeypatch, client
+):
+    activated(server)
+    lic.set_plate_name("路人")
+    assert "founding" not in lic.status()
+    r = client.post("/api/license/plate-name", json={"name": "林小雨"})
+    assert r.status_code == 200 and r.get_json()["ok"] is True
+    monkeypatch.setenv(lic.ENV_HARD_OFF, "1")
+    assert client.post("/api/license/plate-name", json={"name": "x"}).status_code == 404

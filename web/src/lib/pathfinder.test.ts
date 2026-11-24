@@ -355,9 +355,59 @@ describe('轮廓化描边', () => {
     expect(objs()[1]).toMatchObject({ type: 'path', stroke: false, fill: '#000000' })
   })
 
-  it('虚线不能轮廓化（内核不画虚线，转出来会和画面不一样）：命令不出现', async () => {
-    await seed([rect('r', 10, 10, 20, 10, { dash: 'dashed' })], ['r'])
-    expect(pathfinderCommand('outline-stroke').available()).toBe(false)
+  // 虚线、端型、内外对齐（ADR 0185 M7，`lib/outlineStroke`）：与导出按像素对拍的在 `tests/test_outline_stroke.py`，这里核面积
+  const sq = (over: Partial<PathObject> = {}): PathObject => ({
+    id: 'q',
+    type: 'path',
+    x: 10,
+    y: 10,
+    w: 20,
+    h: 10,
+    subpaths: [{ closed: true, nodes: [{ p: [0, 0] }, { p: [1, 0] }, { p: [1, 1] }, { p: [0, 1] }] }],
+    strokePt: 2,
+    color: '#aa0000',
+    fill: null,
+    ...over,
+  })
+  const SW = (2 * 25.4) / 72
+
+  it('内侧对齐：两倍宽的描边裁在里面 = 框里一圈宽一个线宽的带', async () => {
+    await seed([sq({ strokeAlign: 'inside' })], ['q'])
+    await outlineSelected()
+    near(area(objs()[0] as PathObject), 20 * 10 - (20 - 2 * SW) * (10 - 2 * SW), 0.01)
+  })
+
+  it('外侧对齐：裁在外面 = 框外一圈（圆角拐角多出四个四分之一圆）', async () => {
+    await seed([sq({ strokeAlign: 'outside' })], ['q'])
+    await outlineSelected()
+    near(area(objs()[0] as PathObject), 2 * (20 + 10) * SW + Math.PI * SW * SW, 0.01)
+  })
+
+  it('虚线：切成一段段各自拓宽，面积大约是实线的「画 / (画 + 空)」', async () => {
+    await seed([sq({ dash: 'dashed', lineCap: 'butt', lineJoin: 'miter', subpaths: [{ closed: false, nodes: [{ p: [0, 0.5] }, { p: [1, 0.5] }] }], h: 1 })], ['q'])
+    expect(pathfinderCommand('outline-stroke').available()).toBe(true)
+    await outlineSelected()
+    const p = objs()[0] as PathObject
+    // 20 mm 长、虚线 4 : 2.5（× 线宽）：画的部分占 4 / 6.5，末尾那一段按实际剩下的长度
+    const period = 6.5 * SW
+    const whole = Math.floor(20 / period)
+    const rest = Math.min(20 - whole * period, 4 * SW)
+    near(area(p), (whole * 4 * SW + rest) * SW, 0.01)
+    expect(readPath(p).subpaths.length).toBe(whole + (rest > 0 ? 1 : 0))
+  })
+
+  it('端型：箭头的杆与三角头并成一块；开口端型按线宽描成面积', async () => {
+    const arrow = { id: 'a', type: 'arrow', x: 10, y: 10, w: 30, h: 0.01, start: { rx: 0, ry: 0.5 }, end: { rx: 1, ry: 0.5 }, strokePt: 1, color: '#123456', head: 'end' } as CanvasObject
+    await seed([arrow], ['a'])
+    expect(pathfinderCommand('outline-stroke').available()).toBe(true)
+    await outlineSelected()
+    const p = objs()[0] as PathObject
+    expect(p).toMatchObject({ id: 'a', type: 'path', fill: '#123456', stroke: false })
+    const stem = 30 * (25.4 / 72)
+    expect(area(p)).toBeGreaterThan(stem * 0.95)
+    await seed([sq({ headEnd: 'open', subpaths: [{ closed: false, nodes: [{ p: [0, 0.5] }, { p: [1, 0.5] }] }], h: 1 })], ['q'])
+    await outlineSelected()
+    expect(readPath(objs()[0] as PathObject).subpaths.length).toBeGreaterThanOrEqual(1)
   })
 })
 
