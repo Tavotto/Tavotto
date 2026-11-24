@@ -106,7 +106,8 @@ UNPLOTTED_CODE = "rows_not_plotted"
 _ID = re.compile(r"[0-9a-f]{12}")
 _SESSION_ID = re.compile(r"[0-9a-f]{24}")
 _HINT_MAX = 400
-_ANSWER_KEYS = ("table", "sheet", "y", "group", "x", "design", "unit")
+#: `x_measure`（G-018，读懂数据派生）：模型判「规则选作横轴的那一列是测量值、不是有序自变量」时给出的**列名**；不是用户动过的下拉（不进 `picks` 的 x / y / group）
+_ANSWER_KEYS = ("table", "sheet", "y", "group", "x", "design", "unit", "x_measure")
 _ANSWER_MAX = 400
 
 
@@ -527,6 +528,8 @@ def confirmed_from(answers: dict[str, str]) -> tuple[recipe_mod.Confirmed, dict]
         picks["design"] = "unsure"
     if "unit" in answers:
         picks["unit"] = answers["unit"]
+    if "x_measure" in answers:
+        picks["x_measure"] = answers["x_measure"]
     if design == "repeated":
         return recipe_mod.Confirmed(
             "repeated", answers.get("unit") if "unit" in answers else None
@@ -1505,7 +1508,7 @@ def propose(
 
 def _user_took_over(ans: dict) -> bool:
     """请求里已有用户（或前端替用户带上的模型建议）定下的列角色 / 处理规则：不再起模型任务，也避免「采纳建议 → 再来一次 → 再起任务」的循环。"""
-    return any(k in ans for k in ("y", "x", "group", "cells"))
+    return any(k in ans for k in ("y", "x", "group", "cells", "x_measure"))
 
 
 def _answers_digest(ans: dict) -> dict:
