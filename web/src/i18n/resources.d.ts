@@ -2027,6 +2027,41 @@ export default interface Resources {
       "symbolsHeading": "常用符号",
       "title": "科研预设"
     },
+    "pro": {
+      "days": {
+        "label": "剩余天数",
+        "value": "{{count}} 天"
+      },
+      "devices": {
+        "label": "电脑",
+        "value": "已用 {{used}} / {{limit}} 台"
+      },
+      "learn": {
+        "line": "{{pro}} 包含内置 AI 与更多外部审阅额度",
+        "link": "了解 {{pro}}"
+      },
+      "pass": "通行证",
+      "review": {
+        "label": "外部审阅",
+        "left_other": "今天还可新建 {{count}} 个链接"
+      },
+      "tier": {
+        "label": "类型",
+        "season": "投稿季通行证",
+        "sprint": "冲刺月通行证",
+        "team": "课题组通行证",
+        "year": "年度通行证"
+      },
+      "title": "{{pro}}",
+      "usage": {
+        "agentBar": "{{name}} 本期已用",
+        "expired": "续费后恢复",
+        "nearEnd": "快用完了，用完后会改用你自己的连接",
+        "title": "用量",
+        "unknown": "用量暂不可用",
+        "used": "已用 {{pct}}%"
+      }
+    },
     "profiles": {
       "adviceHint": "建议 {{pt}} pt",
       "binding": {
@@ -3201,6 +3236,7 @@ export default interface Resources {
           "refresh": "现在确认",
           "release": "解绑这台电脑",
           "renew": "续费",
+          "renewed": "我已续费",
           "retry": "再试一次"
         },
         "codeLabel": "激活码",
@@ -3215,12 +3251,13 @@ export default interface Resources {
           "revoked": "这份授权已失效",
           "server": "授权服务暂时不可用，请稍后再试"
         },
-        "label": "高级版",
+        "label": "{{pro}}",
         "lock": {
-          "aria": "高级版功能，了解高级版",
-          "tip": "高级版功能，点一下了解"
+          "aria": "{{pro}} 功能，了解 {{pro}}",
+          "tip": "{{pro}} 功能，点一下了解"
         },
         "none": "还没激活",
+        "open": "{{pro}} 与激活",
         "plate": {
           "defaultName": "早期同行者",
           "engrave": "刻上你的名字",
@@ -3233,7 +3270,7 @@ export default interface Resources {
         },
         "releaseTitle": "解绑后可以在另一台电脑上激活",
         "state": {
-          "expired": "已于{{date}}到期",
+          "expired": "已于 {{date}} 到期",
           "lapsed": "需要联网确认一下授权",
           "revoked": "这份授权已失效"
         },
@@ -8138,6 +8175,7 @@ export default interface Resources {
       "elements": "图内元素",
       "navLabel": "工作区侧栏",
       "outline": "大纲",
+      "pro": "{{pro}}",
       "problems": "问题",
       "problemsBlocking_other": "问题 · {{count}} 项阻断（共 {{total}}）",
       "problemsCount_other": "问题 · {{count}}",
@@ -8147,6 +8185,7 @@ export default interface Resources {
         "data": "数据",
         "elements": "图内",
         "outline": "大纲",
+        "pro": "{{pro}}",
         "problems": "问题",
         "settings": "设置",
         "style": "样式",

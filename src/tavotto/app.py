@@ -7872,6 +7872,18 @@ def api_license_release():
     return _license_result(engine_license.release)
 
 
+@app.get("/api/license/account")
+def api_license_account():
+    """Pro 页的账户详情（类型 / 设备名额）：包一层 infra `/v1/me`，失败静默 `{ok: false}`。入口没开 404。"""
+    return _license_result(engine_license.account)
+
+
+@app.get("/api/license/usage")
+def api_license_usage():
+    """Pro 页的内置 AI 用量比例：包一层 infra `/v1/ai/usage`，失败静默 `{agent_used: null}`。入口没开 404。"""
+    return _license_result(engine_license.ai_usage)
+
+
 @app.post("/api/license/plate-name")
 def api_license_plate_name():
     """创始会员铭牌上的刻字：只写本机 `license/plate.json`，不联网（ADR 0193）。"""

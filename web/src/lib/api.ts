@@ -9885,3 +9885,23 @@ export const refreshLicense = () => jsonFetch<LicenseStatus>('/api/license/refre
 export const releaseLicense = () => jsonFetch<LicenseStatus>('/api/license/release', licenseBody())
 export const licenseCheckout = (lookupKey: string, locale: string, renew = false) =>
   jsonFetch<{ ok: true; url: string }>('/api/license/checkout', licenseBody({ lookup_key: lookupKey, locale, renew }))
+
+/**
+ * 账户详情（`GET /api/license/account`，引擎包一层 infra `POST /v1/me`，设备签名 `op = "me"`；失败一律静默降级成 `{ok:false}`）：
+ * `tier.key` 是档名（year / season / sprint / other；创始年度也归 year，创始身份看 `status.founding`），`term_days` 是那一笔的时长，
+ * `devices` 是这份授权的设备名额，`paid_at` / `exp` 是秒。拿不到 = 这几行不显示。
+ */
+export type LicenseAccount =
+  | { ok: true; tier: { key: string; term_days: number }; devices: { used: number; limit: number }; paid_at: number; exp: number }
+  | { ok: false }
+export const fetchLicenseAccount = () => jsonFetch<LicenseAccount>('/api/license/account')
+
+/**
+ * 内置 AI 用量（`GET /api/license/usage`，引擎包一层 infra `POST /v1/ai/usage`，设备签名 `op = "ai_usage"`）：
+ * `agent_used` = 1 − remaining，0–1 两位小数；`null` = 额度暂时算不准（界面写「用量暂不可用」）。失败 / 403 一律静默降级成 `null`，不报错。
+ * 外部审阅今天还剩几次走现有 `GET /api/review/quota` 的 `new_left`，不在这里。
+ */
+export interface LicenseUsage {
+  agent_used: number | null
+}
+export const fetchLicenseUsage = () => jsonFetch<LicenseUsage>('/api/license/usage')

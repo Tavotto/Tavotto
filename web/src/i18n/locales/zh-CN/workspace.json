@@ -649,12 +649,14 @@
       "settings": "设置",
       "style": "样式",
       "workspace": "项目",
-      "data": "数据"
+      "data": "数据",
+      "pro": "{{pro}}"
     },
     "style": "样式",
     "workspace": "项目",
     "problemsBlocking_other": "问题 · {{count}} 项阻断（共 {{total}}）",
-    "data": "数据"
+    "data": "数据",
+    "pro": "{{pro}}"
   },
   "readiness": {
     "foreign": {

@@ -675,13 +675,15 @@
       "settings": "Settings",
       "style": "Style",
       "workspace": "Project",
-      "data": "Data"
+      "data": "Data",
+      "pro": "{{pro}}"
     },
     "style": "Style",
     "workspace": "Projects",
     "problemsBlocking_one": "Problems · {{count}} blocking (of {{total}})",
     "problemsBlocking_other": "Problems · {{count}} blocking (of {{total}})",
-    "data": "Data"
+    "data": "Data",
+    "pro": "{{pro}}"
   },
   "readiness": {
     "foreign": {

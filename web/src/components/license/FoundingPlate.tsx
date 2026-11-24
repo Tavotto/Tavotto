@@ -221,7 +221,7 @@ export function FoundingPlate({
   }
 
   return (
-    <div className="flex flex-col items-center gap-6 pb-2 pt-7" data-founding-plate>
+    <div className="flex flex-col items-center gap-3 pb-1 pt-4" data-founding-plate>
       <div
         ref={root}
         className="fp"
