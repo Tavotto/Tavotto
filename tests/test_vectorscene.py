@@ -21,6 +21,8 @@ def test_vectors_are_fresh():
         [sys.executable, str(ROOT / "scripts" / "gen_vectorscene_vectors.py")],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     assert r.returncode == 0, r.stderr
 
