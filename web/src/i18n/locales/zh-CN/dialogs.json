@@ -2954,7 +2954,8 @@
       "pillUpdated": "链接已更新",
       "resolveFailed": "没能把意见标成已处理",
       "resolveRetry": "重试",
-      "draftLabel": "回复草稿"
+      "draftLabel": "回复草稿",
+      "draftHint": "点发送才会回复给审阅者"
     }
   },
   "pro": {

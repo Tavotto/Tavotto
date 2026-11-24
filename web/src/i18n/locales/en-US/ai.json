@@ -878,7 +878,8 @@
         "lower_center": "bottom center",
         "upper_center": "top center",
         "center": "center"
-      }
+      },
+      "many": "these {{count}} items"
     }
   }
 }

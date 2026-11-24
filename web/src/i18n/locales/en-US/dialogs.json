@@ -2985,7 +2985,8 @@
       "pillUpdated": "Link updated",
       "resolveFailed": "Couldn't mark the comments as resolved",
       "resolveRetry": "Retry",
-      "draftLabel": "Draft reply"
+      "draftLabel": "Draft reply",
+      "draftHint": "Sent to the reviewer only when you press Send"
     }
   },
   "pro": {

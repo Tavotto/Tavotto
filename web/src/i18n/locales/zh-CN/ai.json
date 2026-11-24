@@ -868,7 +868,8 @@
         "lower_center": "下方中间",
         "upper_center": "上方中间",
         "center": "正中"
-      }
+      },
+      "many": "这 {{count}} 处"
     }
   }
 }

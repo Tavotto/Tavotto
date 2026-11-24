@@ -74,6 +74,7 @@ export default interface Resources {
           "upper_left": "左上角",
           "upper_right": "右上角"
         },
+        "many": "这 {{count}} 处",
         "markersize": "已把{{el}}的标记改到 {{to}}",
         "more": "（另有 {{count}} 处）",
         "move": "已把{{el}}挪到{{where}}",
@@ -2467,6 +2468,7 @@ export default interface Resources {
       "capsuleOpen": "查看",
       "capsule_other": "{{author}}留了 {{count}} 条意见",
       "changePlan": {
+        "draftHint": "点发送才会回复给审阅者",
         "draftLabel": "回复草稿",
         "pill": "交给 Agent 修改",
         "pillTip": "让 Agent 按这些意见改一版，改好之前不会动你的图",

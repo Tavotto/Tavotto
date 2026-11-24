@@ -6,6 +6,7 @@
  * 只产出文案参数，不碰文档、不联网；文案在 `ai:changePlan.draft.*`。
  */
 import { t as translate } from '@/i18n'
+import { listJoin } from '@/i18n/format'
 import type { ChangePlanChange } from '@/lib/api'
 
 const dt = (key: string, values?: Record<string, unknown>) => translate(`changePlan.draft.${key}`, { ns: 'ai', ...(values ?? {}) })
@@ -35,58 +36,79 @@ function locKey(v: unknown): string | null {
 
 const isBool = (v: unknown): v is boolean => typeof v === 'boolean'
 
-/** 一条改动的一句话（认不出 = null） */
-function sentence(c: ChangePlanChange, el: string): string | null {
+/** 一条改动的说法：同一个模板、同样的参数 = 同一句，只是元素不同（合并成一句） */
+interface Phrase {
+  tpl: string
+  params: Record<string, unknown>
+}
+
+function phrase(c: ChangePlanChange): Phrase | null {
   const { prop, before, after } = c
   if (prop === 'fontsize') {
     const to = num(after)
     if (!to) return null
     const from = num(before)
-    return from && from !== to ? dt('fontsize', { el, from, to }) : dt('fontsizeTo', { el, to })
+    return from && from !== to ? { tpl: 'fontsize', params: { from, to } } : { tpl: 'fontsizeTo', params: { to } }
   }
   if (WIDTH_PROPS.has(prop)) {
     const to = num(after)
     if (!to) return null
     const from = num(before)
-    return from && from !== to ? dt('linewidth', { el, from, to }) : dt('linewidthTo', { el, to })
+    return from && from !== to ? { tpl: 'linewidth', params: { from, to } } : { tpl: 'linewidthTo', params: { to } }
   }
-  if (COLOR_PROPS.has(prop)) return dt('color', { el })
-  if (prop === 'visible') return isBool(after) ? dt(after ? 'show' : 'hide', { el }) : null
-  if (prop === 'frameon') return isBool(after) ? dt(after ? 'frameOn' : 'frameOff', { el }) : null
+  if (COLOR_PROPS.has(prop)) return { tpl: 'color', params: {} }
+  if (prop === 'visible') return isBool(after) ? { tpl: after ? 'show' : 'hide', params: {} } : null
+  if (prop === 'frameon') return isBool(after) ? { tpl: after ? 'frameOn' : 'frameOff', params: {} } : null
   if (prop === 'loc') {
     const k = locKey(after)
-    return k ? dt('move', { el, where: dt(`loc.${k}`) }) : dt('moveOther', { el })
+    return k ? { tpl: 'move', params: { where: dt(`loc.${k}`) } } : { tpl: 'moveOther', params: {} }
   }
-  if (prop === 'text' || prop === 'label') return typeof after === 'string' && after.trim() ? dt('text', { el, to: after.trim() }) : null
+  if (prop === 'text' || prop === 'label') return typeof after === 'string' && after.trim() ? { tpl: 'text', params: { to: after.trim() } } : null
   if (prop === 'weight') {
     const w = typeof after === 'string' ? after.toLowerCase() : ''
-    if (w === 'bold') return dt('bold', { el })
-    return w === 'normal' || w === 'regular' ? dt('unbold', { el }) : null
+    if (w === 'bold') return { tpl: 'bold', params: {} }
+    return w === 'normal' || w === 'regular' ? { tpl: 'unbold', params: {} } : null
   }
-  if (prop === 'alpha') return dt('alpha', { el })
+  if (prop === 'alpha') return { tpl: 'alpha', params: {} }
   if (prop === 'markersize') {
     const to = num(after)
-    return to ? dt('markersize', { el, to }) : null
+    return to ? { tpl: 'markersize', params: { to } } : null
   }
   if (prop === 'ncol') {
     const to = num(after)
-    return to ? dt('ncol', { el, to }) : null
+    return to ? { tpl: 'ncol', params: { to } } : null
   }
   return null
 }
 
+/** 中文与英文 / 数字相邻处补一个空格（模板拼出来的「把Y 轴」读着像拼接） */
+export function spaceCjk(s: string): string {
+  return s.replace(/([\u4e00-\u9fff])([A-Za-z0-9])/g, '$1 $2').replace(/([A-Za-z0-9])([\u4e00-\u9fff])/g, '$1 $2')
+}
+
+/** 几处元素的合并称呼：两处以内报名字，再多说「这 N 处」 */
+const elementsOf = (names: string[]): string => (names.length <= 2 ? listJoin(names) : dt('many', { count: names.length }))
+
 /**
- * 一组改动的回复草稿：认得出的改动各一句（最多两句，其余并成「另有 N 处」），一句也认不出 = 「已按意见调整」。
- * `labelOf`：元素 gid → 审阅者看到的名字（没有就说「这一处」）。
+ * 一组改动的回复草稿：同一种说法（同属性、同改法）的多处合并成一句；认得出的至多说两类，其余并成「（另有 N 处）」；
+ * 一句也认不出 = 「已按意见调整」。`labelOf`：元素 gid → 审阅者看到的名字（没有就说「这一处」）。
  */
 export function draftReply(changes: readonly ChangePlanChange[], labelOf: (gid: string) => string | undefined): string {
-  const parts: string[] = []
+  const merged = new Map<string, { p: Phrase; names: string[]; n: number }>()
   for (const c of changes) {
-    const s = sentence(c, labelOf(c.target_gid) || dt('thisOne'))
-    if (s && !parts.includes(s)) parts.push(s)
+    const p = phrase(c)
+    if (!p) continue
+    const k = JSON.stringify([p.tpl, p.params])
+    const m = merged.get(k) ?? { p, names: [], n: 0 }
+    const name = labelOf(c.target_gid) || dt('thisOne')
+    if (!m.names.includes(name)) m.names.push(name)
+    m.n += 1
+    merged.set(k, m)
   }
-  if (!parts.length) return dt('fallback')
-  const rest = changes.length - Math.min(parts.length, MAX_SENTENCES)
-  const head = parts.slice(0, MAX_SENTENCES).join(dt('join'))
-  return rest > 0 && parts.length >= MAX_SENTENCES ? `${head}${dt('more', { count: rest })}` : head
+  if (!merged.size) return dt('fallback')
+  const all = [...merged.values()]
+  const shown = all.slice(0, MAX_SENTENCES)
+  const head = shown.map((m) => dt(m.p.tpl, { ...m.p.params, el: elementsOf(m.names) })).join(dt('join'))
+  const rest = all.slice(MAX_SENTENCES).reduce((a, m) => a + m.n, 0)
+  return spaceCjk(rest > 0 ? `${head}${dt('more', { count: rest })}` : head)
 }

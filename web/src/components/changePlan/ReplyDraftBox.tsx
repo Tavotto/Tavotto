@@ -27,20 +27,26 @@ export function ReplyDraftBox({ commentId }: { commentId: string }) {
   return (
     <div
       data-review-reply-draft={commentId}
-      className="relative"
+      className="flex items-start gap-1.5"
       onClick={(e) => e.stopPropagation()}
       onFocus={() => setOpen(true)}
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false)
       }}
     >
+      <span className="shrink-0 pt-1.5 text-xs leading-relaxed text-ink-3" data-review-reply-draft-tag>
+        {rs('changePlan.draftLabel')}
+      </span>
+      <div className="relative min-w-0 flex-1">
       <TextArea
         value={draft.text}
         rows={open ? 3 : 2}
         maxRows={6}
         maxLength={500}
         aria-label={rs('changePlan.draftLabel')}
-        className={cn('text-xs', open && 'pb-9')}
+        className={cn('cursor-text text-xs', open && 'pb-9')}
+        title={rs('changePlan.draftHint')}
+        placeholder={rs('changePlan.draftHint')}
         onChange={(e) => set(e.target.value)}
         data-review-reply-draft-input
       />
@@ -58,6 +64,7 @@ export function ReplyDraftBox({ commentId }: { commentId: string }) {
           {rs('comment.send')}
         </Button>
       )}
+      </div>
     </div>
   )
 }

@@ -46,7 +46,7 @@ vi.mock('@/store/connectAiStore', async (importOriginal) => ({
 
 import { ReviewPanel } from '@/components/review/ReviewPanel'
 import { TooltipProvider } from '@/components/ui/Tooltip'
-import { draftReply } from '@/lib/changePlanReplyDraft'
+import { draftReply, spaceCjk } from '@/lib/changePlanReplyDraft'
 import { useAiStore } from '@/store/aiStore'
 import { useChangePlanStore, type PlanEntry } from '@/store/changePlanStore'
 import { setChangePlanUndoRunner } from '@/store/changePlanStore'
@@ -421,21 +421,21 @@ describe('回复草稿', () => {
   it('模板：字号 / 线宽 / 颜色 / 显隐 / 图例位置 / 文字 / 加粗 / 认不出的 → 兜底', () => {
     const label = (g: string) => ({ 'ax.y': 'y 轴标签', 'ax.legend': '图例', 'ax.c': '曲线' })[g]
     const d = (...c: ChangePlanChange[]) => draftReply(c, label)
-    expect(d(ch('ax.y', 'fontsize', 9, 11))).toBe('已把y 轴标签的字号从 9 pt 改到 11 pt')
-    expect(d(ch('ax.y', 'fontsize', undefined, 11))).toBe('已把y 轴标签的字号改到 11 pt')
+    expect(d(ch('ax.y', 'fontsize', 9, 11))).toBe('已把 y 轴标签的字号从 9 pt 改到 11 pt')
+    expect(d(ch('ax.y', 'fontsize', undefined, 11))).toBe('已把 y 轴标签的字号改到 11 pt')
     expect(d(ch('ax.c', 'linewidth', 1, 2))).toBe('已把曲线的线宽从 1 改到 2')
     expect(d(ch('ax.c', 'color', '#000', '#f00'))).toBe('已改了曲线的颜色')
     expect(d(ch('ax.legend', 'visible', true, false))).toBe('已隐藏图例')
     expect(d(ch('ax.legend', 'frameon', true, false))).toBe('已去掉图例的边框')
     expect(d(ch('ax.legend', 'loc', 'upper right', 'lower right'))).toBe('已把图例挪到右下角')
     expect(d(ch('ax.legend', 'loc', 1, 4))).toBe('已把图例挪到右下角')
-    expect(d(ch('ax.y', 'text', 'a', 'Stress (MPa)'))).toBe('已把y 轴标签的文字改成「Stress (MPa)」')
-    expect(d(ch('ax.y', 'weight', 'normal', 'bold'))).toBe('已把y 轴标签加粗')
+    expect(d(ch('ax.y', 'text', 'a', 'Stress (MPa)'))).toBe('已把 y 轴标签的文字改成「Stress (MPa)」')
+    expect(d(ch('ax.y', 'weight', 'normal', 'bold'))).toBe('已把 y 轴标签加粗')
     expect(d(ch('ax.y', 'weird_prop', 1, 2))).toBe('已按意见调整')
     expect(d(ch('nope', 'visible', false, true))).toBe('已显示这一处')
     // 多处：最多两句，其余并成一个数
     expect(d(ch('ax.y', 'fontsize', 9, 11), ch('ax.legend', 'visible', true, false), ch('ax.c', 'linewidth', 1, 2))).toBe(
-      '已把y 轴标签的字号从 9 pt 改到 11 pt；已隐藏图例（另有 1 处）',
+      '已把 y 轴标签的字号从 9 pt 改到 11 pt；已隐藏图例（另有 1 处）',
     )
     // 认不出的夹在里面：只说认得出的
     expect(d(ch('ax.c', 'weird_prop', 1, 2), ch('ax.legend', 'visible', true, false))).toBe('已隐藏图例')
@@ -498,4 +498,34 @@ it('回复草稿里的元素名走元素树同一个显示名：mathtext 读作 
   expect(text).not.toContain('$')
   expect(draftReply([ch('ax.legend', 'color', '#000', '#f00')], labelOf)).toBe('已改了图例的颜色')
   expect(draftReply([ch('ax.blank', 'color', '#000', '#f00')], labelOf)).toBe('已改了这一处的颜色')
+})
+
+it('草稿：同一说法的多处合并成一句、中英文之间补空格、超过两类才写「另有 N 处」', () => {
+  const names: Record<string, string> = { a: 'Y 轴 “Conversion (mM)”', b: 'Y 轴 “Yield (mM)”', c: 'Y 轴 “Rate”', l: '图例', k: '曲线' }
+  const label = (g: string) => names[g]
+  const d = (...c: ChangePlanChange[]) => draftReply(c, label)
+  // 两处同一改法 → 一句，两个名字都在
+  expect(d(ch('a', 'fontsize', 5, 9), ch('b', 'fontsize', 5, 9))).toBe('已把 Y 轴 “Conversion (mM)”和 Y 轴 “Yield (mM)”的字号从 5 pt 改到 9 pt')
+  // 三处以上 → 「这 N 处」，没有一处被静默
+  expect(d(ch('a', 'fontsize', 5, 9), ch('b', 'fontsize', 5, 9), ch('c', 'fontsize', 5, 9))).toBe('已把这 3 处的字号从 5 pt 改到 9 pt')
+  // 改法不同不合并；两类之内都写，第三类起并成计数（按处数）
+  expect(d(ch('a', 'fontsize', 5, 9), ch('b', 'fontsize', 6, 9))).toContain('；')
+  const three = d(ch('a', 'fontsize', 5, 9), ch('l', 'visible', true, false), ch('k', 'linewidth', 1, 2), ch('b', 'linewidth', 1, 2))
+  expect(three).toBe('已把 Y 轴 “Conversion (mM)” 的字号从 5 pt 改到 9 pt；已隐藏图例（另有 2 处）')
+  // 中文与英文 / 数字相邻处有空格
+  expect(spaceCjk('已把Y轴改到9')).toBe('已把 Y 轴改到 9')
+})
+
+it('回复草稿框：前置小字「回复草稿」、点发送才回复的说明（placeholder / title）、收拢时没有发送钮', async () => {
+  setReview([cm('c2'), cm('c3')])
+  await mount()
+  putEntry(entry())
+  await act(async () => void cps().apply('k1'))
+  await flush()
+  const tag = q('[data-review-comment="c2"] [data-review-reply-draft-tag]')
+  expect(tag?.textContent).toBe('回复草稿')
+  const input = q('[data-review-comment="c2"] [data-review-reply-draft-input]') as HTMLTextAreaElement
+  expect(input.title).toBe('点发送才会回复给审阅者')
+  expect(input.placeholder).toBe('点发送才会回复给审阅者')
+  expect(q('[data-review-reply-draft-send]')).toBeNull()
 })
