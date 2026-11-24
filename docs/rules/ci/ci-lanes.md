@@ -157,6 +157,14 @@ test_same_sha_events_queue_and_never_cancel_each_other`、`TestConcurrency`。
 check 名与闭集不变、`cancel-in-progress` 仍只对 PR、Gate 只读 actions、归因步骤只在 merge_group 且取不到不打红、
 归因经环境变量）、`TestMergeGroupFailFastAttribution`、`TestFailFastRootFromRunJobs`。
 
+**cla-check 在合并组上会等（2026-11-23，ADR 0172 修订）。** 事实：队列深处的候选，CLA 服务一次读不完整个前缀，回
+`budget_deferred`（P=4 必超、P=3 带共同作者就超；#2064 在第 3 位整组被踢）。做法：`cla-check` 在合并组上多一步
+「等服务有预算（只延后不判定）」——每圈先读候选的队列位置，同一位置最多问服务 3 次，位置变小才再问；候选已在队首仍延后
+就只再试 3 次、不占住队列；等过之后整套重采合并组快照，结论仍只由原来的「判定」一步给出。上限 7200 秒、job 超时 140 分钟：
+fast gate 关键路径 150 分钟，正好等于 `check_response_timeout`(180) − 30 的余量，**改这里的超时要先跑 `merge_queue_ruleset.py verify-live`**。
+代价：一个 runner 槽最长占 2 小时（免费计划共 20 槽）；非全员豁免的合并组多问服务一次。看护：
+`tests/test_cla_workflow_service_mode.py` 的延后用例（收缩后通过 / 只延后不判定 / 到上限仍红 / 队首截止 / PR 事件不受影响）。
+
 **main 红时修复插到队首（2026-11-03）。** 事实：10-13 ~ 11-02 Windows 腿红的 194 个合并组 run 里约 67%
 是**连坐**——一个坏提交（两个各自绿的 PR 的组合、或没带 full-ci 的 Windows-only 缺陷）进了 main 或排在队列前面，
 之后每个组都带着它红；只对应 84 个独立事件。10-31 两个 PR 撞了同一个 ADR 号 0154，合入后 main 红，修复 PR 排在
