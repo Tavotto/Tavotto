@@ -38,9 +38,6 @@ function draftTarget(ref: JournalPickTarget['ref']): JournalPickTarget {
   }
 }
 
-/** 触发器长得和同一列里的下拉一样（同一个框、同高、同内边距） */
-const JOURNAL_TRIGGER = cn(FIELD_BOX, FIELD_OPEN, 'w-full rounded-sm px-2 active:bg-field data-[state=open]:bg-field')
-
 /** 标签放不下就截断、悬停看全（英文标签比列宽长时不撑高行） */
 const rowLabel = (text: string) => (
   <span className="block truncate" title={text}>
@@ -161,7 +158,7 @@ export function DataPanel() {
       {journalCatalogUi() && (
         <div data-data-role="journal" className="mb-3 flex flex-col gap-1">
           <Row label={rowLabel(t('journal.title', { ns: 'dialogs' }))} labelWidth={LABEL_W}>
-            <JournalPicker target={target} triggerClassName={JOURNAL_TRIGGER} disabled={busy} />
+            <JournalPicker target={target} triggerClassName={fieldBoxTrigger} disabled={busy} />
           </Row>
           {figureStyle && (
             <p data-data-spec className="pl-[calc(56px+1rem)] text-xs text-balance text-ink-3 tabular-nums">
