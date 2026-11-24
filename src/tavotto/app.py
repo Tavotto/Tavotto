@@ -18242,6 +18242,9 @@ def _data_figure_commit(ctx, project: str, session_id: str, item_id: str, rid):
             "rows": prepared.not_plotted[:50],
             "code": engine_ai_data_propose.UNPLOTTED_CODE if prepared.not_plotted else None,
         }
+        fits = engine_ai_data_propose.tpl.fit_report(prepared.values, prepared.selection.recipe)
+        if fits:  # 有拟合线才有这一项（与候选卡上的 `fits` 同一个来源）
+            out["fits"] = fits
     else:
         unmet = ((res.get("verification") or {}).get("unmet")) or []
         if unmet:
