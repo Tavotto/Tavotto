@@ -328,7 +328,7 @@
     "cancelFailed": "尚未确认取消，导出可能仍在继续",
     "failTitle": "导出没有完成",
     "cancelNotAccepted": "未能取消这次导出。请先查看导出状态与输出文件夹，再决定是否重试。",
-    "statusFailed": "暂时无法获取导出状态，作业仍可能完成",
+    "statusFailed": "暂时查不到导出进度，导出可能仍在进行",
     "retryStatus": "重试获取状态",
     "connectionFailed": "无法连接导出服务。请检查连接并确认 {{app}} 正在运行，再重试。重新导出前请先检查输出文件夹。",
     "groupOutput": "输出",

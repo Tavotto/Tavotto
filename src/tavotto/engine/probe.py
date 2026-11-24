@@ -264,7 +264,7 @@ def _error_from_worker(
     if exc.code in ("worker_timeout", pool.BUILD_TIMEOUT_CODE):
         return _err(
             ERROR_TIMEOUT,
-            f"脚本执行超时（入口 {entry}）",
+            f"脚本运行超时：{entry}",
             params={"entry": entry},
             traceback_text=exc.traceback_text,
         )
@@ -591,7 +591,7 @@ def _probe(
         if first_error is None:
             first_error = _err(
                 ERROR_NO_FIGURE,
-                f"脚本跑通了，但没有捕获到任何 Figure（入口 {entry} 可能不出图）",
+                f"脚本跑完了，但没有画出图（{entry} 里可能没有画图的代码）",
                 params={"entry": entry},
             )
             # 多半是先 `exists()` 判空再自己退出（ADR 0106）：脚本里写着、此刻哪儿都找不到的路径
