@@ -20,6 +20,18 @@ sys.path.insert(0, str(ROOT / "src"))
 from tavotto.engine import vectorscene  # noqa: E402
 
 OUT = ROOT / "tests" / "golden" / "vectorscene_vectors.json"
+
+
+def _force_utf8() -> None:
+    """把自己的 stdout/stderr 钉成 UTF-8（输出是中文；Windows 上被捕获时会退回系统区域编码）。"""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass
+
+
 BOXES = [[0, 0, 1, 1], [0.1, 0.2, 0.3, 0.25], [0.62, 0.05, 0.2, 0.6], [0.5, 0.5, 0, 0]]
 
 
@@ -59,6 +71,7 @@ def build() -> dict:
 
 
 def main(argv=None) -> int:
+    _force_utf8()
     ap = argparse.ArgumentParser()
     ap.add_argument("--write", action="store_true")
     a = ap.parse_args(argv)
