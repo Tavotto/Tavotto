@@ -378,13 +378,15 @@ CASES = [
     ("axes_0.copy_ab12cd39", "axes_0.texts_2", "axes_0"),
 ]
 NAMES = ["text", "color", "rotation", "rotation_mode", "horizontalalignment", "verticalalignment", "zorder",
-         "wrap", "parse_math", "label", "alpha", "visible", "in_layout", "clip_on", "linespacing", "fontsize",
+         "wrap", "parse_math", "label", "alpha", "visible", "in_layout", "clip_on", "fontsize",
          "fontweight", "fontstyle", "fontfamily", "antialiased", "usetex", "position",
          "math_fontfamily", "snap", "rasterized", "sketch_params", "animated", "url"]
 
 
 def dump(t, host, fig):
     out = {n: repr(getattr(t, "get_" + n)()) for n in NAMES}
+    # `Text.get_linespacing` 是 matplotlib 3.11 才有的；3.10（CI 的 3.10 腿）只有私有属性
+    out["linespacing"] = repr(t.get_linespacing() if hasattr(t, "get_linespacing") else t._linespacing)
     simple = (str, int, float, bool, type(None))
     # 登记留下的痕迹（gid / picker / 私有标记）不是样式；其余凡是标量属性一律逐项比，引擎以后补抄一项而脚本没跟，这里就红
     out["props"] = {k: repr(v) for k, v in t.properties().items()
